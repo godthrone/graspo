@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "graspo"
+version = "0.1.0"
+description = "Model-agnostic GRASPO training with LoRA and single-node multi-GPU FSDP."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Godthrone" }]
+dependencies = [
+  "accelerate>=1.10.0",
+  "datasets>=3.0.0",
+  "pandas>=2.0.0",
+  "peft>=0.17.0",
+  "pyyaml>=6.0.0",
+  "safetensors>=0.4.0",
+  "torch>=2.5.0",
+  "transformers>=4.53.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "ruff>=0.6.0",
+]
+
+[project.scripts]
+graspo = "graspo.cli.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
