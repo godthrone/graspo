@@ -1,0 +1,3 @@
+{"prompt":"Extract JSON with the APN and fault number.\nTicket: user 13800138000 cannot use apn cmnet.","ground_truth":{"APN":"cmnet","fault_number":"13800138000"}}
+{"prompt":"Classify the ticket.\nTicket: roaming user cannot access mobile internet.","ground_truth":{"category":"mobile internet","scenario":"roaming access failure"}}
+
