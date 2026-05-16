@@ -1,0 +1,6 @@
+{
+  "style": ["concise", "step-by-step", "professional", "plain language"],
+  "format": ["bullet list", "short paragraph", "JSON-like constraints", "code block"],
+  "difficulty": ["basic", "intermediate", "ambiguous input", "edge case"],
+  "interaction": ["asks for clarification", "uses context", "mentions constraints", "requires exact output"]
+}

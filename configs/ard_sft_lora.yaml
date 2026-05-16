@@ -1,0 +1,40 @@
+model:
+  model_path: ${MODEL_PATH}
+  trust_remote_code: true
+  torch_dtype: bfloat16
+  attn_implementation: null
+  gradient_checkpointing: true
+  chat_template_kwargs: {}
+
+data:
+  hard_train_path: ${HARD_DATA_PATH}
+  anchor_train_path: ${ANCHOR_DATA_PATH}
+  max_length: 4096
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules: null
+  auto_target_modules: true
+  bias: none
+  task_type: CAUSAL_LM
+
+training:
+  output_dir: ${OUTPUT_DIR}
+  seed: 42
+  total_epochs: 1
+  max_steps: -1
+  per_device_batch_size: 1
+  learning_rate: 2.0e-5
+  weight_decay: 0.0
+  max_grad_norm: 1.0
+  anchor_ce_weight: 0.2
+  save_steps: 100
+  logging_steps: 10
+  dataloader_num_workers: 0
+
+kl_distillation:
+  enabled: false
+  weight: 0.05
+  temperature: 1.0
