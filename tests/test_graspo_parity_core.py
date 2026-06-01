@@ -1,0 +1,155 @@
+from graspo.core.graspo_parity import (
+    GroupDecision,
+    classify_group,
+    group_advantages,
+    is_invalid_group,
+    is_uniform_partial_content,
+    lower_median,
+    replay_ready,
+    replay_buffer_optimize_threshold,
+)
+
+
+def test_lower_median_matches_original_even_group_rule():
+    assert lower_median([0.0, 0.2, 0.4, 1.0]) == 0.2
+
+
+def test_first_group_perfect_skip_uses_lower_median():
+    decision = classify_group(
+        [1.0, 1.0, 1.0, 0.5],
+        [1.0, 1.0, 1.0, 0.5],
+        retry_count=0,
+        rollout_max_retry_times=5,
+    )
+
+    assert decision.decision == GroupDecision.PERFECT_SKIP
+    assert not decision.should_train
+
+
+def test_retry_continues_until_rollout_max_retry_or_max_reward_reaches_threshold():
+    retry = classify_group(
+        [0.2, 0.2],
+        [0.2, 0.2],
+        retry_count=0,
+        rollout_max_retry_times=1,
+    )
+    exhausted = classify_group(
+        [0.2, 0.2],
+        [0.2, 0.2],
+        retry_count=1,
+        rollout_max_retry_times=1,
+    )
+
+    assert retry.decision == GroupDecision.RETRY
+    assert exhausted.decision == GroupDecision.INVALID_NO_PREFERENCE_GAP
+
+
+def test_no_right_preference_gap_trains_before_retry():
+    decision = classify_group(
+        [0.1, 0.2],
+        [0.1, 0.2],
+        retry_count=0,
+        rollout_max_retry_times=5,
+    )
+
+    assert decision.decision == GroupDecision.TRAINABLE_NOT_CORRECT
+    assert decision.should_train
+
+
+def test_no_right_group_requires_max_above_lower_median_to_train():
+    no_gap = classify_group(
+        [0.1, 0.2, 0.2, 0.2],
+        [0.0, 0.8, 0.8, 0.8],
+        retry_count=5,
+        rollout_max_retry_times=5,
+    )
+    has_gap = classify_group(
+        [0.1, 0.2, 0.2, 0.3],
+        [0.0, 0.8, 0.8, 0.9],
+        retry_count=5,
+        rollout_max_retry_times=5,
+    )
+
+    assert no_gap.reward_max_median_gap == 0.0
+    assert no_gap.decision == GroupDecision.INVALID_NO_PREFERENCE_GAP
+    assert not no_gap.should_train
+    assert has_gap.reward_max_median_gap > 0.0
+    assert has_gap.decision == GroupDecision.TRAINABLE_NOT_CORRECT
+    assert has_gap.should_train
+
+
+def test_no_right_gap_takes_priority_over_uniform_partial_invalid_filter():
+    decision = classify_group(
+        [0.1, 0.2, 0.2, 0.3],
+        [0.8, 0.8, 0.8, 0.8],
+        retry_count=5,
+        rollout_max_retry_times=5,
+    )
+
+    assert is_uniform_partial_content([0.8, 0.8, 0.8, 0.8])
+    assert decision.decision == GroupDecision.TRAINABLE_NOT_CORRECT
+    assert decision.should_train
+
+
+def test_invalid_group_matches_original_filters():
+    assert is_invalid_group([0.0, 0.0], [0.0, 0.0])
+    assert is_invalid_group([0.2, 0.8], [0.5, 0.5])
+    assert is_uniform_partial_content([0.5, 0.5, 0.5])
+    assert not is_uniform_partial_content([0.0, 0.0, 0.0])
+    assert not is_uniform_partial_content([1.0, 1.0, 1.0])
+
+
+def test_trainable_max_correct_after_retry_success():
+    decision = classify_group(
+        [0.1, 1.0],
+        [0.1, 1.0],
+        retry_count=1,
+        rollout_max_retry_times=5,
+    )
+
+    assert decision.decision == GroupDecision.TRAINABLE_MAX_CORRECT
+    assert decision.should_train
+
+
+def test_perfect_priority_applies_before_max_correct_after_retry():
+    perfect = classify_group(
+        [1.0, 1.0, 1.0, 1.0],
+        [1.0, 1.0, 1.0, 1.0],
+        retry_count=1,
+        rollout_max_retry_times=5,
+    )
+    max_correct = classify_group(
+        [0.5, 0.5, 0.5, 1.0],
+        [0.5, 0.5, 0.5, 1.0],
+        retry_count=1,
+        rollout_max_retry_times=5,
+    )
+
+    assert perfect.decision == GroupDecision.PERFECT_SKIP
+    assert not perfect.should_train
+    assert max_correct.decision == GroupDecision.TRAINABLE_MAX_CORRECT
+    assert max_correct.should_train
+
+
+def test_group_advantages_matches_original_sample_std_formula():
+    actual = group_advantages([0.0, 1.0])
+
+    assert round(actual[0], 6) == -0.707107
+    assert round(actual[1], 6) == 0.707107
+
+
+def test_replay_buffer_optimize_threshold_uses_completion_batch_times_rollout_group():
+    assert replay_buffer_optimize_threshold(
+        optimize_completion_batch_size=4,
+        rollout_group_size=8,
+    ) == 32
+    assert replay_ready(
+        replay_size=32,
+        optimize_completion_batch_size=4,
+        rollout_group_size=8,
+    )
+    assert not replay_ready(
+        replay_size=31,
+        optimize_completion_batch_size=4,
+        rollout_group_size=8,
+    )

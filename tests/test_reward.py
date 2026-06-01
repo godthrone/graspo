@@ -9,7 +9,9 @@ def test_reward_perfect_json_fence():
 
     assert result.all_right is True
     assert result.content_score == 1.0
-    assert result.reward >= 1.0
+    assert result.reward > 1.0
+    assert result.max_score == 230.0
+    assert result.raw_score == 231.0
 
 
 def test_reward_partial_json_fence():
@@ -27,6 +29,7 @@ def test_reward_rejects_missing_marker_when_required():
 
     assert result.all_right is False
     assert result.content_score == 0
+    assert 0 <= result.reward < 1
 
 
 def test_reward_penalizes_large_useless_text():
@@ -44,3 +47,24 @@ def test_invalid_ground_truth_type():
     with pytest.raises(ValueError):
         reward.score("{}", ["not a dict"])
 
+
+def test_reward_tool_call_matches_original_scoring_shape():
+    reward = GraspoReward(RewardConfig(check_json_markdown=True, check_tool_call=True))
+    result = reward.score(
+        '```json\n{"answer":"ok"}\n```\n<tool_call>{"name":"search","arguments":{"q":"apn"}}</tool_call>',
+        {"answer": "ok"},
+        {"name": "search", "arguments": {"q": "apn"}},
+    )
+
+    assert result.all_right is True
+    assert result.content_score == 1.0
+    assert result.max_score == 460.0
+    assert result.reward > 1.0
+
+
+def test_reward_list_ground_truth_uses_first_reference():
+    reward = GraspoReward(RewardConfig(check_json_markdown=False))
+    result = reward.score('{"APN":"cmnet"}', [{"APN": "cmnet"}, {"APN": "wrong"}])
+
+    assert result.all_right is True
+    assert result.reward > 1.0
