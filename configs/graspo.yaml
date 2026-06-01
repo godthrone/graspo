@@ -1,10 +1,13 @@
+﻿backend: auto
+
 model:
   model_path: ${MODEL_PATH}
   trust_remote_code: true
   torch_dtype: bfloat16
   attn_implementation: null
   gradient_checkpointing: true
-  chat_template_kwargs: {}
+  chat_template_kwargs:
+    enable_thinking: false
 
 data:
   train_path: ${DATA_PATH}
@@ -35,22 +38,20 @@ reward:
 training:
   output_dir: ${OUTPUT_DIR}
   seed: 42
-  total_epochs: 1
+  training_epoch_count: 100
   max_steps: -1
-  prompts_per_rank: 1
-  group_size: 8
-  train_batch_size: 4
-  epochs_per_step: 4
-  max_retry: 5
+  rollout_group_size: 8
+  optimize_completion_batch_size: 4
+  optimize_times_per_step: 4
+  rollout_max_retry_times: 5
   learning_rate: 5.0e-6
   weight_decay: 0.01
   max_grad_norm: 1.0
-  clip_eps: 0.2
-  max_new_tokens: 1024
+  policy_ratio_clip_eps: 0.2
+  max_new_tokens: 2048
   temperature: 1.0
   top_p: 1.0
   save_steps: 50
   logging_steps: 1
-  perfect_reward_threshold: 1.0
+  perfect_skip_reward_threshold: 1.0
   dataloader_num_workers: 0
-

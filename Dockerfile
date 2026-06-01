@@ -1,36 +1,40 @@
-FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
+FROM pytorch/pytorch:2.5.1-cuda12.4-cudnn9-devel
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PIP_NO_CACHE_DIR=1
 
+# --- System dependencies (cached after first build) ---
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
     ca-certificates \
     curl \
     git \
-    python3 \
-    python3-dev \
-    python3-pip \
-    python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python3 -m pip install --upgrade pip setuptools wheel
-
-RUN python3 -m pip install \
-    torch==2.5.1 \
-    torchvision==0.20.1 \
-    torchaudio==2.5.1 \
-    --index-url https://download.pytorch.org/whl/cu124
+RUN python -m pip install --upgrade setuptools wheel
 
 WORKDIR /workspace/graspo
-COPY pyproject.toml README.md LICENSE ./
+
+# --- GRASPO pip dependencies (cached as long as pyproject.toml deps don't change) ---
+COPY pyproject.toml ./
+RUN python3 -m pip install \
+    "datasets>=3.0.0" \
+    "pandas>=2.0.0" \
+    "peft>=0.17.0" \
+    "pyyaml>=6.0.0" \
+    "safetensors>=0.4.0" \
+    "transformers>=4.53.0"
+
+# --- Source code (only these layers rebuild on code change, no network needed) ---
+COPY README.md LICENSE ./
 COPY src ./src
 COPY configs ./configs
 COPY examples ./examples
 COPY data ./data
-RUN python3 -m pip install -e .[dev]
+
+# --- Editable install without dependency resolution (no network needed) ---
+RUN python -m pip install -e . --no-deps
 
 CMD ["graspo", "--help"]
-
