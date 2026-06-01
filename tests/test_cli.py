@@ -8,16 +8,15 @@ def test_cli_validate_reward():
     assert args.func(args) == 0
 
 
-def test_cli_new_commands_parse():
+def test_cli_main_commands_parse():
     parser = build_parser()
 
     commands = [
-        ["anchor-generate", "--knowledge-ontology", "k.json", "--language-ontology", "l.json", "--output", "o.jsonl"],
-        ["anchor-answer", "--model-path", "model", "--input", "i.jsonl", "--output", "o.jsonl"],
-        ["anchor-filter", "--input", "i.jsonl", "--output", "o.jsonl"],
-        ["anchor-split", "--input", "i.jsonl", "--train-output", "train.jsonl", "--eval-output", "eval.jsonl"],
-        ["train-sft-ard", "--config", "configs/ard_sft_lora.yaml"],
-        ["eval-forgetting", "--anchor-eval", "anchor.jsonl", "--completions", "completions.jsonl"],
+        ["prepare-data", "--input", "data/sample.jsonl", "--output", "out.jsonl"],
+        ["analyze", "--rewards", "rewards.jsonl"],
+        ["train", "--config", "configs/graspo.yaml"],
+        ["train", "--config", "configs/graspo.yaml", "--backend", "megatron-native"],
+        ["train", "--config", "configs/graspo.yaml", "--backend", "hf-reference"],
     ]
     for command in commands:
         args = parser.parse_args(command)
