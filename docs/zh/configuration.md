@@ -1,37 +1,35 @@
 # 配置说明
 
-主训练配置：
+主配置是 `configs/graspo.yaml`。当前生产路线只保留 `megatron-native`
+和本地 parity 用的 `hf-reference`。
 
-```text
-configs/fsdp_lora_graspo.yaml
+## Backend
+
+```yaml
+backend: auto
 ```
 
-默认 8 卡 FSDP 启动配置：
+- `megatron-native`：单机 tensor parallel 生产后端。
+- `hf-reference`：单进程参考后端，只用于小模型 parity 和本地调试。
+- `auto`：多 GPU 且检测到 Megatron-LM/Core 时选择 `megatron-native`。
 
-```text
-configs/accelerate_fsdp_8gpu.yaml
+Native Megatron v1 只支持单机 TP、PP=1：
+
+```yaml
+backend_config:
+  megatron_native:
+    tensor_model_parallel_size: 2
+    pipeline_model_parallel_size: 1
+    sequence_parallel: false
+    train_micro_batch_size: 1
+    generation_micro_batch_size: 1
+    raw_log_enabled: true
+    readable_log_enabled: true
 ```
-
-ARD 相关配置：
-
-```text
-configs/anchor_generation.yaml
-configs/ard_sft_lora.yaml
-```
-
-## 模型
-
-通过环境变量或 YAML 指定基础模型：
-
-```bash
-export MODEL_PATH=/data/models/your-base-model
-```
-
-模型需要能被 Hugging Face `AutoModelForCausalLM` 加载。
 
 ## LoRA
 
-默认会自动识别常见 LoRA target modules。也可以手动覆盖：
+第一阶段生产目标是 LoRA-only：
 
 ```yaml
 lora:
@@ -39,30 +37,19 @@ lora:
   target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"]
 ```
 
-## 奖励
+## 训练默认
 
-默认奖励要求模型输出 Markdown JSON 代码块：
-
-```yaml
-reward:
-  check_think: false
-  check_json_markdown: true
-  check_list_order: false
-```
-
-## 训练参数
+- 真实 GRASPO 训练固定使用 `max_new_tokens: 2048`。
+- 快速检查只能减少 `max_steps`，不能降低生成长度。
+- 默认 `training_epoch_count: 100`。
+- GRASPO 依赖长训练监控和异常早停，不是短 epoch 试跑。
 
 关键参数：
 
-- `group_size`：每个 prompt 生成多少条回答
-- `max_retry`：自适应重试次数
-- `train_batch_size`：优化阶段 micro-batch
-- `epochs_per_step`：ReplayBuffer 同一批经验复用多少轮
-- `max_new_tokens`：生成 token 上限
-
-## ARD 参数
-
-- `training.anchor_ce_weight`：anchor replay 的 CE loss 权重
-- `kl_distillation.enabled`：是否开启 teacher KL distillation
-- `data.hard_train_path`：困难样本 SFT 数据
-- `data.anchor_train_path`：离线 anchor bank 训练切分
+- `rollout_group_size`：每个 prompt 的 completion 数。
+- `rollout_max_retry_times`：自适应重试次数。
+- `optimize_completion_batch_size`：优化阶段 completion micro-batch，不是 prompt group 数。
+- `replay_buffer_optimize_threshold`：派生值，等于
+  `optimize_completion_batch_size * rollout_group_size`，默认 `32`，不允许在 YAML 中手配。
+- `optimize_times_per_step`：ReplayBuffer 同一批经验复用轮数。
+- `max_new_tokens`：生成长度，真实训练必须为 `2048`。

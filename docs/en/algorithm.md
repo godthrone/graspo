@@ -1,4 +1,4 @@
-# Algorithm
+﻿# Algorithm
 
 GRASPO stands for Group Relative Adaptive Structured Policy Optimization. It is
 best understood as a GRPO-style algorithm specialized for industrial Agent
@@ -73,14 +73,3 @@ prompts where the model often fails but can produce high-reward answers after
 retry; those high-quality trajectories can then be converted into SFT data. This
 is especially useful for small datasets because it consolidates trajectories
 discovered by RL exploration.
-
-## ARD Anti-Forgetting
-
-Hard-sample-only SFT can make the model overfit to business formats and forget
-general QA, coding, reasoning, and explanation skills. ARD mixes in a base-model
-anchor bank during SFT and uses low-weight CE replay or optional KL distillation
-to keep the model from drifting too far from its general capabilities.
-
-ARD does not change the GRASPO rollout objective. It is a companion workflow for
-hard-sample SFT. Generate the anchor bank offline once, then reuse it in every
-`GRASPO -> hard sample mining -> ARD-SFT` iteration.

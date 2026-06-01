@@ -1,4 +1,4 @@
-# 数据格式
+﻿# 数据格式
 
 GRASPO 使用 JSONL 作为训练数据格式。
 
@@ -14,7 +14,7 @@ GRASPO 使用 JSONL 作为训练数据格式。
 {"messages": [{"role": "user", "content": "任务"}, {"role": "assistant", "content": "{\"key\":\"value\"}"}]}
 ```
 
-最后一条 assistant 消息会作为标准答案。
+标准监督数据中，最后一条 assistant 消息会作为标准答案。
 
 ## Excel 转换
 
@@ -28,18 +28,4 @@ Excel 行建议包含：
 
 ```bash
 python -m graspo prepare-data --input dataset.xlsx --output data/train.jsonl
-```
-
-## ARD-SFT 格式
-
-困难样本：
-
-```json
-{"sample_type": "hard", "messages": [{"role": "user", "content": "..."}], "target": "..."}
-```
-
-Anchor 样本：
-
-```json
-{"sample_type": "anchor", "messages": [{"role": "user", "content": "..."}], "teacher_answer": "...", "teacher_model": "...", "anchor_meta": {}}
 ```
