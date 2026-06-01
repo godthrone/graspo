@@ -1,12 +1,13 @@
-# GRASPO Documentation
+﻿# GRASPO Documentation
 
 - [English documentation](en/README.md)
-- [中文文档](zh/README.md)
+- [Chinese documentation](zh/README.md)
 
-The English and Chinese document trees use matching filenames. When adding or
-renaming a document, update both `docs/en/` and `docs/zh/`.
+The English and Chinese document trees use matching filenames for the active
+native Megatron route.
 
 Shared topics:
 
 - GRASPO rollout training
-- Anchor Replay Distillation (ARD) anti-forgetting workflow
+- Native Megatron tensor-parallel training
+- Hugging Face reference parity runs

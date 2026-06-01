@@ -1,37 +1,39 @@
-# Configuration
+﻿# Configuration
 
-The main training config is:
+The main config is `configs/graspo.yaml`. The first native server profile is
+`configs/profiles/qwen3_8b_megatron_native_tp2_smoke.yaml`.
 
-```text
-configs/fsdp_lora_graspo.yaml
+## Backend
+
+```yaml
+backend: auto
 ```
 
-The default 8-GPU FSDP launcher config is:
+Supported values:
 
-```text
-configs/accelerate_fsdp_8gpu.yaml
+- `megatron-native`: production backend for single-node tensor parallelism.
+- `hf-reference`: single-process reference backend.
+- `auto`: chooses `megatron-native` when multiple GPUs and Megatron-LM/Core are
+  detected, otherwise chooses `hf-reference`; large-model paths fail early if
+  Megatron is unavailable.
+
+Native Megatron v1 supports single-node TP only:
+
+```yaml
+backend_config:
+  megatron_native:
+    tensor_model_parallel_size: 2
+    pipeline_model_parallel_size: 1
+    sequence_parallel: false
+    train_micro_batch_size: 1
+    generation_micro_batch_size: 1
+    raw_log_enabled: true
+    readable_log_enabled: true
 ```
-
-ARD-related configs:
-
-```text
-configs/anchor_generation.yaml
-configs/ard_sft_lora.yaml
-```
-
-## Model
-
-Set the base model by environment variable or by editing YAML:
-
-```bash
-export MODEL_PATH=/data/models/your-base-model
-```
-
-The model must be loadable by Hugging Face `AutoModelForCausalLM`.
 
 ## LoRA
 
-By default GRASPO auto-detects common LoRA target modules. To override:
+The first production target is LoRA-only:
 
 ```yaml
 lora:
@@ -39,30 +41,18 @@ lora:
   target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"]
 ```
 
-## Reward
-
-Default reward settings expect markdown JSON fences:
-
-```yaml
-reward:
-  check_think: false
-  check_json_markdown: true
-  check_list_order: false
-```
-
 ## Training
 
 Important knobs:
 
-- `group_size`: generations per prompt
-- `max_retry`: adaptive retry count
-- `train_batch_size`: optimization micro-batch size
-- `epochs_per_step`: reuse each replay buffer batch for multiple updates
-- `max_new_tokens`: generation budget
-
-## ARD Parameters
-
-- `training.anchor_ce_weight`: CE loss weight for anchor replay
-- `kl_distillation.enabled`: whether to enable teacher KL distillation
-- `data.hard_train_path`: hard-sample SFT data
-- `data.anchor_train_path`: offline anchor bank training split
+- `rollout_group_size`: completions sampled for one prompt in one rollout attempt.
+- `rollout_max_retry_times`: extra rollout attempts after the initial group.
+- `optimize_completion_batch_size`: completion micro-batch size for one optimizer step.
+- `replay_buffer_optimize_threshold`: derived as
+  `optimize_completion_batch_size * rollout_group_size`; this is the number of
+  completion-level experiences required before one optimize step is triggered.
+- `optimize_times_per_step`: how many passes to train over the same ReplayBuffer batch.
+- `max_new_tokens`: generation budget. Real GRASPO training uses `2048`;
+  reduce `max_steps` for quick checks instead of lowering generation length.
+- `training_epoch_count`: default long-training budget is `100`; GRASPO relies on
+  monitored early stopping, not short fixed epochs.
