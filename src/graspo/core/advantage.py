@@ -2,18 +2,13 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from graspo.core.graspo_parity import group_advantages as _parity_group_advantages
+from graspo.core.graspo_parity import has_reward_variance as _parity_has_reward_variance
+
 
 def group_advantages(rewards: Sequence[float], eps: float = 1e-8) -> list[float]:
-    if not rewards:
-        return []
-    mean = sum(rewards) / len(rewards)
-    variance = sum((reward - mean) ** 2 for reward in rewards) / max(len(rewards) - 1, 1)
-    std = variance**0.5
-    return [(reward - mean) / (std + eps) for reward in rewards]
+    return _parity_group_advantages(rewards, eps=eps)
 
 
 def has_reward_variance(rewards: Sequence[float], eps: float = 1e-12) -> bool:
-    if len(rewards) < 2:
-        return False
-    return max(rewards) - min(rewards) > eps
-
+    return _parity_has_reward_variance(rewards, eps=eps)

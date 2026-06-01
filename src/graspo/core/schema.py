@@ -34,24 +34,28 @@ class ModelConfig:
 class TrainingConfig:
     output_dir: str = "${OUTPUT_DIR}"
     seed: int = 42
-    total_epochs: int = 1
+    training_epoch_count: int = 100
     max_steps: int = -1
-    prompts_per_rank: int = 1
-    group_size: int = 8
-    train_batch_size: int = 4
-    epochs_per_step: int = 4
-    max_retry: int = 5
+    rollout_group_size: int = 8
+    optimize_completion_batch_size: int = 4
+    optimize_times_per_step: int = 4
+    rollout_max_retry_times: int = 5
     learning_rate: float = 5e-6
     weight_decay: float = 0.01
     max_grad_norm: float = 1.0
-    clip_eps: float = 0.2
-    max_new_tokens: int = 1024
+    policy_ratio_clip_eps: float = 0.2
+    max_new_tokens: int = 2048
     temperature: float = 1.0
     top_p: float = 1.0
     save_steps: int = 50
     logging_steps: int = 1
-    perfect_reward_threshold: float = 1.0
+    perfect_skip_reward_threshold: float = 1.0
     dataloader_num_workers: int = 0
+    legacy_config_aliases: list[str] = field(default_factory=list)
+
+    @property
+    def replay_buffer_optimize_threshold(self) -> int:
+        return int(self.optimize_completion_batch_size) * int(self.rollout_group_size)
 
 
 @dataclass(slots=True)
@@ -64,7 +68,26 @@ class DataConfig:
 
 
 @dataclass(slots=True)
+class MegatronNativeConfig:
+    tensor_model_parallel_size: int = 2
+    pipeline_model_parallel_size: int = 1
+    sequence_parallel: bool = False
+    train_micro_batch_size: int = 1
+    generation_micro_batch_size: int = 1
+    use_kv_cache_for_rollout: bool = True
+    rollout_kv_cache_max_reserved_fraction: float = 0.60
+    empty_cache_after_rollout_split: bool = True
+    empty_cache_before_train: bool = False
+    checkpoint_format: str = "safetensors_or_megatron"
+    raw_log_enabled: bool = True
+    readable_log_enabled: bool = True
+
+
+@dataclass(slots=True)
 class GraspoConfig:
+    backend: str = "auto"
+    backend_config: dict[str, Any] = field(default_factory=dict)
+    megatron_native: MegatronNativeConfig = field(default_factory=MegatronNativeConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     data: DataConfig = field(default_factory=DataConfig)
     lora: LoRAConfig = field(default_factory=LoRAConfig)
@@ -82,12 +105,19 @@ class GraspoConfig:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "GraspoConfig":
         data = data or {}
+        backend_config = dict(data.get("backend_config", {}) or {})
+        native_cfg = dict(backend_config.get("megatron_native", {}) or {})
+        native_cfg.update(data.get("megatron_native", {}) or {})
+        training_cfg = _normalize_training_config(data.get("training", {}))
         return cls(
+            backend=data.get("backend", "auto"),
+            backend_config=backend_config,
+            megatron_native=MegatronNativeConfig(**native_cfg),
             model=ModelConfig(**data.get("model", {})),
             data=DataConfig(**data.get("data", {})),
             lora=LoRAConfig(**data.get("lora", {})),
             reward=RewardConfig(**data.get("reward", {})),
-            training=TrainingConfig(**data.get("training", {})),
+            training=TrainingConfig(**training_cfg),
         )
 
 
@@ -99,3 +129,35 @@ class Sample:
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False)
+
+
+def _normalize_training_config(raw: dict[str, Any] | None) -> dict[str, Any]:
+    config = dict(raw or {})
+    if "replay_buffer_optimize_threshold" in config:
+        raise ValueError(
+            "training.replay_buffer_optimize_threshold is derived from "
+            "optimize_completion_batch_size * rollout_group_size and must not be configured"
+        )
+
+    aliases = {
+        "total_epochs": "training_epoch_count",
+        "group_size": "rollout_group_size",
+        "train_batch_size": "optimize_completion_batch_size",
+        "buffer_train_rounds": "optimize_times_per_step",
+        "max_retry": "rollout_max_retry_times",
+        "clip_eps": "policy_ratio_clip_eps",
+        "perfect_reward_threshold": "perfect_skip_reward_threshold",
+    }
+    used_aliases: list[str] = []
+    for old_name, new_name in aliases.items():
+        if old_name not in config:
+            continue
+        if new_name in config:
+            raise ValueError(f"training.{old_name} and training.{new_name} cannot both be set")
+        config[new_name] = config.pop(old_name)
+        used_aliases.append(old_name)
+
+    config.pop("each_step_prompts_per_device", None)
+    if used_aliases:
+        config["legacy_config_aliases"] = used_aliases
+    return config

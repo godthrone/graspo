@@ -37,9 +37,9 @@ def sequences_log_probs(
 
 
 class GRASPOLoss(nn.Module):
-    def __init__(self, clip_eps: float = 0.2) -> None:
+    def __init__(self, policy_ratio_clip_eps: float = 0.2) -> None:
         super().__init__()
-        self.clip_eps = clip_eps
+        self.policy_ratio_clip_eps = policy_ratio_clip_eps
 
     def forward(
         self,
@@ -50,7 +50,6 @@ class GRASPOLoss(nn.Module):
     ) -> torch.Tensor:
         ratio = (log_probs - old_log_probs).exp()
         surr1 = ratio * advantages
-        surr2 = ratio.clamp(1 - self.clip_eps, 1 + self.clip_eps) * advantages
+        surr2 = ratio.clamp(1 - self.policy_ratio_clip_eps, 1 + self.policy_ratio_clip_eps) * advantages
         loss = -torch.min(surr1, surr2)
         return masked_mean(loss, action_mask, dim=-1).mean()
-

@@ -49,7 +49,12 @@ def sample_from_record(
     return Sample(prompt=prompt, ground_truth=ground_truth, metadata=metadata)
 
 
-def load_jsonl(path: str | Path) -> list[Sample]:
+def load_jsonl(
+    path: str | Path,
+    prompt_field: str = "prompt",
+    ground_truth_field: str = "ground_truth",
+    messages_field: str = "messages",
+) -> list[Sample]:
     samples: list[Sample] = []
     with Path(path).open("r", encoding="utf-8") as handle:
         for line_no, line in enumerate(handle, start=1):
@@ -57,19 +62,39 @@ def load_jsonl(path: str | Path) -> list[Sample]:
                 continue
             try:
                 record = json.loads(line)
-                samples.append(sample_from_record(record))
+                samples.append(
+                    sample_from_record(
+                        record,
+                        prompt_field=prompt_field,
+                        ground_truth_field=ground_truth_field,
+                        messages_field=messages_field,
+                    )
+                )
             except Exception as exc:  # noqa: BLE001
                 raise ValueError(f"invalid JSONL record at {path}:{line_no}: {exc}") from exc
     return samples
 
 
-def load_json(path: str | Path) -> list[Sample]:
+def load_json(
+    path: str | Path,
+    prompt_field: str = "prompt",
+    ground_truth_field: str = "ground_truth",
+    messages_field: str = "messages",
+) -> list[Sample]:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     if isinstance(data, dict) and "data" in data:
         data = data["data"]
     if not isinstance(data, list):
         raise ValueError("JSON input must be a list or an object with a 'data' list")
-    return [sample_from_record(record) for record in data]
+    return [
+        sample_from_record(
+            record,
+            prompt_field=prompt_field,
+            ground_truth_field=ground_truth_field,
+            messages_field=messages_field,
+        )
+        for record in data
+    ]
 
 
 def write_jsonl(samples: list[Sample], path: str | Path) -> None:

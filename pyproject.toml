@@ -1,17 +1,16 @@
 [build-system]
-requires = ["setuptools>=69", "wheel"]
+requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "graspo"
 version = "0.1.0"
-description = "Model-agnostic GRASPO training with LoRA and single-node multi-GPU FSDP."
+description = "GRASPO training with a native Megatron tensor-parallel backend and a Hugging Face reference backend."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Godthrone" }]
 dependencies = [
-  "accelerate>=1.10.0",
   "datasets>=3.0.0",
   "pandas>=2.0.0",
   "peft>=0.17.0",
@@ -35,7 +34,7 @@ where = ["src"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
