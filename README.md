@@ -161,14 +161,15 @@ Group decisions are evaluated in order:
 2. `trainable_max_correct`: at least one completion is fully correct.
 3. `trainable_not_correct`: no full solution, but `reward_max > reward_median`.
 4. `retry`: retry budget remains.
-5. `invalid_no_preference_gap`: no useful preference gap after retries.
-6. `invalid`: fallback invalid group.
+5. `invalid`: original hard invalid filters, such as no reward variance or
+   uniform partial content.
+6. `invalid_no_preference_gap`: no useful preference gap after retries.
 
 `invalid_no_preference_gap` is an information-extraction guard: when a no-right
-group has `reward_max == reward_median`, it does not enter ReplayBuffer because
-there is no useful preference signal. Groups with max reward at or above the
-perfect threshold must become `trainable_max_correct` or `perfect_skip`, never an
-invalid bucket.
+group is not already hard-invalid but has `reward_max == reward_median`, it does
+not enter ReplayBuffer because there is no useful preference signal. Groups with
+max reward at or above the perfect threshold must become `trainable_max_correct`
+or `perfect_skip`, never an invalid bucket.
 
 ## Outputs
 
