@@ -7,7 +7,7 @@ name = "graspo"
 version = "0.1.0"
 description = "GRASPO training with a native Megatron tensor-parallel backend and a Hugging Face reference backend."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 license = { text = "MIT" }
 authors = [{ name = "Godthrone" }]
 dependencies = [
@@ -16,7 +16,7 @@ dependencies = [
   "peft>=0.17.0",
   "pyyaml>=6.0.0",
   "safetensors>=0.4.0",
-  "torch>=2.5.0",
+  "torch>=2.5.0,<2.6.0",
   "transformers>=4.53.0",
 ]
 

@@ -29,23 +29,26 @@ DeepSpeed, FSDP, DDP, Accelerate, TransformerEngine, or Apex.
 
 ## Install
 
-Python 3.11+ is recommended.
+Python 3.11-3.13 is supported by the pinned training dependency stack. The
+quick-start path uses Python 3.11 because large PyTorch wheels often lag the
+newest Python releases on Linux servers.
 
 ```bash
 # Install uv if it is not already available. uv will create/use a
-# Python >=3.11 environment even when the system Python is older.
+# Python 3.11 environment even when the system Python is older.
 command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
+uv python install 3.11
 
 git clone https://github.com/godthrone/graspo.git
 cd graspo
-uv sync --extra dev
+uv sync --extra dev --python 3.11
 ```
 
 If you do not use `uv`, create a virtual environment and install the project:
 
 ```bash
-python -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 ```
@@ -53,6 +56,10 @@ pip install -e ".[dev]"
 For the native Megatron backend, install a compatible open-source Megatron-LM or
 Megatron Core package in the same environment. Keep model weights outside the
 repository.
+
+GRASPO pins PyTorch to the `2.5.x` line in `pyproject.toml` because some
+long-lived Linux GPU servers still expose a `manylinux_2_17` baseline, while
+newer PyTorch wheels may require a newer platform baseline.
 
 ## Quick Start
 
