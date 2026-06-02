@@ -1,7 +1,7 @@
-﻿backend: megatron-native
+backend: native-tp
 
 backend_config:
-  megatron_native:
+  native_tp:
     tensor_model_parallel_size: 2
     pipeline_model_parallel_size: 1
     sequence_parallel: false
@@ -11,6 +11,6 @@ backend_config:
     rollout_kv_cache_max_reserved_fraction: 0.60
     empty_cache_after_rollout_split: true
     empty_cache_before_train: false
-    checkpoint_format: safetensors_or_megatron
+    checkpoint_format: safetensors_or_native_tp
     raw_log_enabled: true
     readable_log_enabled: true

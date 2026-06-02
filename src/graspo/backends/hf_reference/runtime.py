@@ -6,7 +6,7 @@ from typing import Any
 import torch
 from torch.nn.utils.rnn import pad_sequence
 
-from graspo.backends.megatron_native.runtime import NativeGeneration
+from graspo.backends.native_tp.runtime import NativeGeneration
 from graspo.core.buffer import Experience
 from graspo.core.schema import GraspoConfig
 from graspo.trainer.checkpoint import save_lora_adapter
@@ -31,7 +31,14 @@ class HFReferenceRuntime:
             raise ValueError("Set model.model_path in config or MODEL_PATH environment variable")
 
     def setup(self) -> None:
-        from peft import get_peft_model
+        try:
+            from peft import get_peft_model
+        except ImportError as exc:
+            raise RuntimeError(
+                "hf-reference requires the optional PEFT dependency. "
+                "Install it with `uv sync --extra reference` or `pip install -e .[reference]`. "
+                "The production native-tp backend does not use PEFT at runtime."
+            ) from exc
         from transformers import AutoModelForCausalLM, AutoTokenizer, set_seed
 
         self.validate()

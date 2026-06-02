@@ -1,4 +1,4 @@
-﻿backend: hf-reference
+backend: hf-reference
 
 backend_config:
   purpose: algorithm-reference

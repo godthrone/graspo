@@ -9,11 +9,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from graspo.backends.megatron_native.checkpoint import save_native_checkpoint
-from graspo.backends.megatron_native.logger import NativeRolloutLogger
-from graspo.backends.megatron_native.runtime import (
-    MegatronNativeRuntime,
-    MegatronNativeRuntimeProtocol,
+from graspo.backends.native_tp.checkpoint import save_native_checkpoint
+from graspo.backends.native_tp.logger import NativeRolloutLogger
+from graspo.backends.native_tp.runtime import (
+    NativeTPRuntime,
+    NativeTPRuntimeProtocol,
     NativeGeneration,
     validate_native_runtime_config,
 )
@@ -56,22 +56,22 @@ class NativeEpochStats:
     best_reward: float = 0.0
 
 
-class MegatronNativeGraspoTrainer:
-    """Self-owned GRASPO loop backed by native Megatron tensor parallel runtime."""
+class NativeTPGraspoTrainer:
+    """Self-owned GRASPO loop backed by native TP tensor parallel runtime."""
 
     def __init__(
         self,
         config: GraspoConfig,
         selection: Any | None = None,
-        runtime: MegatronNativeRuntimeProtocol | None = None,
+        runtime: NativeTPRuntimeProtocol | None = None,
     ) -> None:
         self.config = config
         self.selection = selection
-        self.runtime = runtime or MegatronNativeRuntime.from_config(config)
+        self.runtime = runtime or NativeTPRuntime.from_config(config)
         self.reward = GraspoReward(config.reward)
         self.replay_buffer = ReplayBuffer()
         self.stats = NativeTrainStats()
-        self.backend_name = "megatron-native"
+        self.backend_name = "native-tp"
         self.global_step = 0
         self.sample_index = 0
         self.total_samples = 0
@@ -79,7 +79,7 @@ class MegatronNativeGraspoTrainer:
         self.current_epoch_stats = NativeEpochStats()
         self.recent_groups: deque[dict[str, Any]] = deque(maxlen=50)
         self.pending_batch_attempts: list[dict[str, Any]] = []
-        native = self.config.megatron_native
+        native = self.config.native_tp
         self.logger = NativeRolloutLogger(
             self.config.training.output_dir,
             readable_enabled=native.readable_log_enabled,
@@ -97,13 +97,13 @@ class MegatronNativeGraspoTrainer:
                 "backend": self.backend_name,
                 "reason": self.selection.reason if self.selection is not None else "configured",
                 "dependency_boundary": (
-                    "Megatron Core/L.M. TP only; no NeMo/vLLM/Ray/DeepSpeed/FSDP/DDP/Accelerate"
-                    if self.backend_name == "megatron-native"
+                    "PyTorch distributed TP only; no NeMo/vLLM/Ray/DeepSpeed/FSDP/DDP/Accelerate"
+                    if self.backend_name == "native-tp"
                     else "single-process Hugging Face reference; not a production multi-card backend"
                 ),
                 "model_path": self.config.model.model_path,
                 "train_path": self.config.data.train_path,
-                "tensor_model_parallel_size": self.config.megatron_native.tensor_model_parallel_size,
+                "tensor_model_parallel_size": self.config.native_tp.tensor_model_parallel_size,
             }
         )
 
@@ -134,8 +134,8 @@ class MegatronNativeGraspoTrainer:
                     "save_steps": self.config.training.save_steps,
                     "activation_checkpointing_enabled": bool(self.config.model.gradient_checkpointing),
                     "lora_target_modules": list(self.config.lora.target_modules or ["q_proj", "v_proj"]),
-                    "rollout_kv_cache_max_reserved_fraction": self.config.megatron_native.rollout_kv_cache_max_reserved_fraction,
-                    "empty_cache_after_rollout_split": self.config.megatron_native.empty_cache_after_rollout_split,
+                    "rollout_kv_cache_max_reserved_fraction": self.config.native_tp.rollout_kv_cache_max_reserved_fraction,
+                    "empty_cache_after_rollout_split": self.config.native_tp.empty_cache_after_rollout_split,
                     "legacy_config_alias_used": bool(self.config.training.legacy_config_aliases),
                 },
             }

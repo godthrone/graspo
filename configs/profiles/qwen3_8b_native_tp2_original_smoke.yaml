@@ -1,4 +1,4 @@
-﻿backend: megatron-native
+backend: native-tp
 
 model:
   model_path: ${MODEL_PATH}
@@ -56,7 +56,7 @@ training:
   dataloader_num_workers: 0
 
 backend_config:
-  megatron_native:
+  native_tp:
     tensor_model_parallel_size: 2
     pipeline_model_parallel_size: 1
     sequence_parallel: false
@@ -69,4 +69,3 @@ backend_config:
     checkpoint_format: recoverable_lora_tp
     raw_log_enabled: true
     readable_log_enabled: true
-

@@ -5,7 +5,7 @@ CODE_DIR=${CODE_DIR:-$(pwd)}
 VENV=${VENV:-"$CODE_DIR/.venv"}
 MODEL_PATH=${MODEL_PATH:-}
 DATA_PATH=${DATA_PATH:-"$CODE_DIR/data/sample.jsonl"}
-PROFILE=${PROFILE:-"$CODE_DIR/configs/profiles/qwen3_8b_megatron_native_tp2_overnight.yaml"}
+PROFILE=${PROFILE:-"$CODE_DIR/configs/profiles/qwen3_8b_native_tp2_overnight.yaml"}
 GPUS=${GPUS:-0,1}
 PORT=${PORT:-29623}
 TAG=${TAG:-longrun}
@@ -14,15 +14,16 @@ SAVE_STEPS=${SAVE_STEPS:-20}
 LATEST_PATH=${LATEST_PATH:-"$CODE_DIR/latest_graspo_longrun.out"}
 MEMORY_INTERVAL_SEC=${MEMORY_INTERVAL_SEC:-1}
 TORCHINDUCTOR_COMPILE_THREADS=${TORCHINDUCTOR_COMPILE_THREADS:-1}
+NPROC_PER_NODE=${NPROC_PER_NODE:-}
 
 usage() {
   cat <<'USAGE'
-Usage: launch_megatron_native_tp2_remote.sh [options]
+Usage: launch_native_tp2_remote.sh [options]
 
 Options:
   --code-dir PATH       Deployed GRASPO code directory. Default: current directory.
   --venv PATH           Python venv containing torchrun. Default: CODE_DIR/.venv.
-  --model-path PATH     Qwen3-8B HF weight directory.
+  --model-path PATH     Local Hugging Face Qwen weight directory.
   --data-path PATH      Training JSONL path.
   --profile PATH        Base YAML profile to copy into the run output directory.
   --gpus IDS            CUDA_VISIBLE_DEVICES value. Default: 0,1.
@@ -32,6 +33,7 @@ Options:
   --save-steps N        Override training.save_steps. Default: 20.
   --latest-path PATH    File updated with output directory.
   --memory-interval N   nvidia-smi recorder interval seconds. Default: 1.
+  --nproc N            torchrun processes. Default: number of comma-separated GPUs.
 USAGE
 }
 
@@ -49,6 +51,7 @@ while [[ $# -gt 0 ]]; do
     --save-steps) SAVE_STEPS=$2; shift 2 ;;
     --latest-path) LATEST_PATH=$2; shift 2 ;;
     --memory-interval) MEMORY_INTERVAL_SEC=$2; shift 2 ;;
+    --nproc) NPROC_PER_NODE=$2; shift 2 ;;
     --help|-h) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -67,8 +70,13 @@ if [[ ! -f "$DATA_PATH" ]]; then
   exit 1
 fi
 
+if [[ -z "$NPROC_PER_NODE" ]]; then
+  IFS=',' read -r -a GPU_ARRAY <<< "$GPUS"
+  NPROC_PER_NODE=${#GPU_ARRAY[@]}
+fi
+
 RUN_TS=$(date +%Y%m%d_%H%M%S)
-OUT="$CODE_DIR/outputs/tp2_${TAG}_2048_$RUN_TS"
+OUT="$CODE_DIR/outputs/tp${NPROC_PER_NODE}_${TAG}_2048_$RUN_TS"
 CONFIG="$OUT/$(basename "$PROFILE")"
 
 mkdir -p "$OUT/gpu_memory"
@@ -97,6 +105,7 @@ PY
   echo "venv=$VENV"
   echo "gpus=$GPUS"
   echo "port=$PORT"
+  echo "nproc_per_node=$NPROC_PER_NODE"
   echo "max_steps=$MAX_STEPS"
   echo "save_steps=$SAVE_STEPS"
   echo "torchinductor_compile_threads=$TORCHINDUCTOR_COMPILE_THREADS"
@@ -134,11 +143,11 @@ export TORCHINDUCTOR_COMPILE_THREADS
 nohup "$VENV/bin/torchrun" \
   --nnodes=1 \
   --node_rank=0 \
-  --nproc_per_node=2 \
+  --nproc_per_node="$NPROC_PER_NODE" \
   --master_addr=127.0.0.1 \
   --master_port="$PORT" \
   -m graspo train \
-  --backend megatron-native \
+  --backend native-tp \
   --config "$CONFIG" \
   > "$OUT/nohup.out" 2>&1 &
 echo $! > "$OUT/torchrun.pid"

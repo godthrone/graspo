@@ -41,7 +41,7 @@ def test_retry_continues_until_rollout_max_retry_or_max_reward_reaches_threshold
     )
 
     assert retry.decision == GroupDecision.RETRY
-    assert exhausted.decision == GroupDecision.INVALID
+    assert exhausted.decision == GroupDecision.INVALID_NO_PREFERENCE_GAP
 
 
 def test_no_right_preference_gap_trains_before_retry():
@@ -98,6 +98,18 @@ def test_invalid_group_matches_original_filters():
     assert is_uniform_partial_content([0.5, 0.5, 0.5])
     assert not is_uniform_partial_content([0.0, 0.0, 0.0])
     assert not is_uniform_partial_content([1.0, 1.0, 1.0])
+
+
+def test_invalid_no_preference_gap_takes_priority_after_retry_exhausted():
+    decision = classify_group(
+        [0.2, 0.2, 0.2, 0.2],
+        [0.5, 0.5, 0.5, 0.5],
+        retry_count=5,
+        rollout_max_retry_times=5,
+    )
+
+    assert is_invalid_group([0.2, 0.2, 0.2, 0.2], [0.5, 0.5, 0.5, 0.5])
+    assert decision.decision == GroupDecision.INVALID_NO_PREFERENCE_GAP
 
 
 def test_trainable_max_correct_after_retry_success():

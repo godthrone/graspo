@@ -9,15 +9,15 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from graspo.backends.megatron_native.logger import NativeRolloutLogger  # noqa: E402
-from graspo.backends.megatron_native.qwen_tp_adapter import QwenMegatronNativeAdapter  # noqa: E402
-from graspo.backends.megatron_native import qwen_tp_adapter as qwen_tp_adapter_module  # noqa: E402
-from graspo.backends.megatron_native.runtime import (  # noqa: E402
+from graspo.backends.native_tp.logger import NativeRolloutLogger  # noqa: E402
+from graspo.backends.native_tp.qwen_tp_adapter import QwenNativeTPAdapter  # noqa: E402
+from graspo.backends.native_tp import qwen_tp_adapter as qwen_tp_adapter_module  # noqa: E402
+from graspo.backends.native_tp.runtime import (  # noqa: E402
     NativeGeneration,
     assert_forbidden_runtime_modules_not_imported,
     validate_native_runtime_config,
 )
-from graspo.backends.megatron_native.trainer import MegatronNativeGraspoTrainer  # noqa: E402
+from graspo.backends.native_tp.trainer import NativeTPGraspoTrainer  # noqa: E402
 from graspo.core.schema import GraspoConfig  # noqa: E402
 
 
@@ -65,12 +65,12 @@ def test_replay_buffer_optimize_threshold_is_derived():
         GraspoConfig.from_dict({"training": {"replay_buffer_optimize_threshold": 32}})
 
 
-def test_megatron_native_config_parses_nested_backend_config():
+def test_native_tp_config_parses_nested_backend_config():
     config = GraspoConfig.from_dict(
         {
-            "backend": "megatron-native",
+            "backend": "native-tp",
             "backend_config": {
-                "megatron_native": {
+                "native_tp": {
                     "tensor_model_parallel_size": 2,
                     "pipeline_model_parallel_size": 1,
                     "sequence_parallel": False,
@@ -81,16 +81,16 @@ def test_megatron_native_config_parses_nested_backend_config():
         }
     )
 
-    assert config.megatron_native.tensor_model_parallel_size == 2
-    assert config.megatron_native.rollout_kv_cache_max_reserved_fraction == 0.65
-    assert config.megatron_native.empty_cache_after_rollout_split is True
+    assert config.native_tp.tensor_model_parallel_size == 2
+    assert config.native_tp.rollout_kv_cache_max_reserved_fraction == 0.65
+    assert config.native_tp.empty_cache_after_rollout_split is True
     validate_native_runtime_config(config)
 
 
-def test_megatron_native_rejects_forbidden_framework_config():
+def test_native_tp_rejects_forbidden_framework_config():
     config = GraspoConfig.from_dict(
         {
-            "backend": "megatron-native",
+            "backend": "native-tp",
             "backend_config": {"vllm_gpu_memory_utilization": 0.5},
         }
     )
@@ -99,7 +99,7 @@ def test_megatron_native_rejects_forbidden_framework_config():
         validate_native_runtime_config(config)
 
 
-def test_megatron_native_import_path_does_not_load_forbidden_frameworks():
+def test_native_tp_import_path_does_not_load_forbidden_frameworks():
     forbidden = ("nemo_rl", "vllm", "ray", "deepspeed", "accelerate", "transformer_engine", "apex")
     before = {name for name in forbidden if name in sys.modules}
 
@@ -218,9 +218,9 @@ def test_production_configs_use_canonical_training_names():
     assert offenders == []
 
 
-def test_megatron_native_reproduction_profiles_use_original_lora_targets():
+def test_native_tp_reproduction_profiles_use_original_lora_targets():
     offenders: list[str] = []
-    for path in Path("configs/profiles").glob("qwen3_8b_megatron_native_tp2*.yaml"):
+    for path in Path("configs/profiles").glob("qwen3_8b_native_tp2*.yaml"):
         config = GraspoConfig.from_yaml(path)
         if config.lora.target_modules != ["q_proj", "v_proj"]:
             offenders.append(str(path))
@@ -372,7 +372,7 @@ def _native_test_config(
 ):
     return GraspoConfig.from_dict(
         {
-            "backend": "megatron-native",
+            "backend": "native-tp",
             "data": {"train_path": str(data)},
             "training": {
                 "output_dir": str(tmp_path / "out"),
@@ -384,7 +384,7 @@ def _native_test_config(
                 "max_steps": max_steps,
                 "save_steps": 1,
             },
-            "backend_config": {"megatron_native": {"tensor_model_parallel_size": 2}},
+            "backend_config": {"native_tp": {"tensor_model_parallel_size": 2}},
         }
     )
 
@@ -397,7 +397,7 @@ def test_native_trainer_retries_then_trains_with_fake_runtime(tmp_path):
     )
     config = GraspoConfig.from_dict(
         {
-            "backend": "megatron-native",
+            "backend": "native-tp",
             "data": {"train_path": str(data)},
             "training": {
                 "output_dir": str(tmp_path / "out"),
@@ -408,11 +408,11 @@ def test_native_trainer_retries_then_trains_with_fake_runtime(tmp_path):
                 "max_steps": 1,
                 "save_steps": 1,
             },
-            "backend_config": {"megatron_native": {"tensor_model_parallel_size": 2}},
+            "backend_config": {"native_tp": {"tensor_model_parallel_size": 2}},
         }
     )
     runtime = FakeNativeRuntime()
-    trainer = MegatronNativeGraspoTrainer(config, runtime=runtime)
+    trainer = NativeTPGraspoTrainer(config, runtime=runtime)
 
     trainer.train()
 
@@ -430,7 +430,7 @@ def test_four_trainable_groups_trigger_one_optimize_with_original_threshold(tmp_
     data = tmp_path / "train.jsonl"
     _write_train_data(data, 4)
     runtime = ScriptedGroupRuntime([_mixed_group(8), _mixed_group(8), _mixed_group(8), _mixed_group(8)])
-    trainer = MegatronNativeGraspoTrainer(_native_test_config(tmp_path, data), runtime=runtime)
+    trainer = NativeTPGraspoTrainer(_native_test_config(tmp_path, data), runtime=runtime)
 
     trainer.train()
 
@@ -477,7 +477,7 @@ def test_three_trainable_groups_wait_for_more_replay_items(tmp_path, capsys):
     data = tmp_path / "train.jsonl"
     _write_train_data(data, 3)
     runtime = ScriptedGroupRuntime([_mixed_group(8), _mixed_group(8), _mixed_group(8)])
-    trainer = MegatronNativeGraspoTrainer(
+    trainer = NativeTPGraspoTrainer(
         _native_test_config(tmp_path, data, max_steps=-1),
         runtime=runtime,
     )
@@ -502,7 +502,7 @@ def test_no_preference_gap_group_is_logged_invalid_and_not_trained(tmp_path):
         rollout_max_retry_times=0,
         max_steps=-1,
     )
-    trainer = MegatronNativeGraspoTrainer(config, runtime=runtime)
+    trainer = NativeTPGraspoTrainer(config, runtime=runtime)
 
     trainer.train()
 
@@ -520,7 +520,7 @@ def test_native_trainer_shuffles_prompt_order_each_epoch_on_cpu(tmp_path):
     runtime = ScriptedGroupRuntime([[_ok_completion(), _ok_completion()] for _ in range(sample_count * 2)])
     config = GraspoConfig.from_dict(
         {
-            "backend": "megatron-native",
+            "backend": "native-tp",
             "data": {"train_path": str(data)},
             "training": {
                 "output_dir": str(tmp_path / "out"),
@@ -531,10 +531,10 @@ def test_native_trainer_shuffles_prompt_order_each_epoch_on_cpu(tmp_path):
                 "rollout_max_retry_times": 0,
                 "max_steps": -1,
             },
-            "backend_config": {"megatron_native": {"tensor_model_parallel_size": 2}},
+            "backend_config": {"native_tp": {"tensor_model_parallel_size": 2}},
         }
     )
-    trainer = MegatronNativeGraspoTrainer(config, runtime=runtime)
+    trainer = NativeTPGraspoTrainer(config, runtime=runtime)
 
     trainer.train()
 
@@ -553,7 +553,7 @@ def test_train_batch_log_counts_group8_retry_once(tmp_path, capsys):
     runtime = ScriptedGroupRuntime(
         [_bad_group(8), _mixed_group(8), _mixed_group(8), _mixed_group(8), _mixed_group(8)]
     )
-    trainer = MegatronNativeGraspoTrainer(_native_test_config(tmp_path, data), runtime=runtime)
+    trainer = NativeTPGraspoTrainer(_native_test_config(tmp_path, data), runtime=runtime)
 
     trainer.train()
 
@@ -581,7 +581,7 @@ def test_train_batch_log_counts_batch2_with_one_retry(tmp_path, capsys):
     data = tmp_path / "train.jsonl"
     _write_train_data(data, 2)
     runtime = ScriptedGroupRuntime([_bad_group(8), _mixed_group(8), _mixed_group(8)])
-    trainer = MegatronNativeGraspoTrainer(
+    trainer = NativeTPGraspoTrainer(
         _native_test_config(
             tmp_path,
             data,
@@ -610,7 +610,7 @@ def test_train_batch_log_counts_batch2_with_one_retry(tmp_path, capsys):
 def test_native_trainer_global_stdout_is_rank0_only(capsys):
     config = GraspoConfig()
     runtime = FakeNativeRuntime(primary=False)
-    trainer = MegatronNativeGraspoTrainer(config, runtime=runtime)
+    trainer = NativeTPGraspoTrainer(config, runtime=runtime)
 
     trainer._print_json({"event": "train_step"})
 
@@ -619,7 +619,7 @@ def test_native_trainer_global_stdout_is_rank0_only(capsys):
 
 def test_qwen_adapter_writes_rank_memory_event(tmp_path):
     config = GraspoConfig.from_dict({"training": {"output_dir": str(tmp_path)}})
-    adapter = QwenMegatronNativeAdapter(config)
+    adapter = QwenNativeTPAdapter(config)
 
     adapter._emit_rank_memory_event("unit_test", {"marker": "ok"})
 
@@ -637,7 +637,7 @@ def test_qwen_adapter_writes_rank_memory_event(tmp_path):
 
 def test_qwen_adapter_close_destroys_process_group(monkeypatch):
     config = GraspoConfig()
-    adapter = QwenMegatronNativeAdapter(config)
+    adapter = QwenNativeTPAdapter(config)
     calls: list[str] = []
 
     monkeypatch.setattr(qwen_tp_adapter_module.dist, "is_available", lambda: True)
