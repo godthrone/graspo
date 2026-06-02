@@ -3,7 +3,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from graspo.trainer.lora import detect_lora_target_modules
+from graspo.trainer.lora import detect_lora_target_modules  # noqa: E402
 
 
 class TinyAttention(torch.nn.Module):
@@ -24,4 +24,3 @@ def test_detect_lora_targets():
 def test_detect_lora_targets_fails_clearly():
     with pytest.raises(ValueError, match="Could not auto-detect"):
         detect_lora_target_modules(torch.nn.Sequential(torch.nn.ReLU()))
-
