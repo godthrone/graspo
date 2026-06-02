@@ -13,6 +13,33 @@ NODE_RANK="${NODE_RANK:-0}"
 MASTER_ADDR="${MASTER_ADDR:-127.0.0.1}"
 MASTER_PORT="${MASTER_PORT:-29500}"
 
+if [[ -n "${PYTHON:-}" ]]; then
+  PYTHON_BIN="${PYTHON}"
+elif [[ -x "${PROJECT_DIR}/.venv/bin/python" ]]; then
+  PYTHON_BIN="${PROJECT_DIR}/.venv/bin/python"
+elif [[ -x "${PROJECT_DIR}/.venv/Scripts/python.exe" ]]; then
+  PYTHON_BIN="${PROJECT_DIR}/.venv/Scripts/python.exe"
+elif command -v python3 >/dev/null 2>&1; then
+  PYTHON_BIN="python3"
+elif command -v python >/dev/null 2>&1; then
+  PYTHON_BIN="python"
+else
+  echo "ERROR: Python was not found. Set PYTHON=/path/to/python and retry." >&2
+  exit 1
+fi
+
+if [[ -n "${TORCHRUN:-}" ]]; then
+  TORCHRUN_BIN="${TORCHRUN}"
+elif [[ -x "${PROJECT_DIR}/.venv/bin/torchrun" ]]; then
+  TORCHRUN_BIN="${PROJECT_DIR}/.venv/bin/torchrun"
+elif [[ -x "${PROJECT_DIR}/.venv/Scripts/torchrun.exe" ]]; then
+  TORCHRUN_BIN="${PROJECT_DIR}/.venv/Scripts/torchrun.exe"
+elif command -v torchrun >/dev/null 2>&1; then
+  TORCHRUN_BIN="torchrun"
+else
+  TORCHRUN_BIN=""
+fi
+
 if [[ -z "${MODEL_PATH}" ]]; then
   echo "ERROR: MODEL_PATH is required. Example: MODEL_PATH=\$HOME/models/Qwen3-8B bash scripts/run_train.sh" >&2
   exit 1
@@ -36,7 +63,12 @@ export PYTHONPATH="${PROJECT_DIR}/src:${PYTHONPATH:-}"
 export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 
 if [[ "${BACKEND}" == "hf-reference" ]]; then
-  exec python -m graspo train --backend hf-reference --config "${CONFIG_PATH}"
+  exec "${PYTHON_BIN}" -m graspo train --backend hf-reference --config "${CONFIG_PATH}"
+fi
+
+if [[ -z "${TORCHRUN_BIN}" ]]; then
+  echo "ERROR: torchrun was not found. Run 'uv sync --extra train --python 3.11' first." >&2
+  exit 1
 fi
 
 echo "Backend: ${BACKEND}"
@@ -46,7 +78,7 @@ echo "Data:    ${DATA_PATH}"
 echo "Output:  ${OUTPUT_DIR}"
 echo "Config:  ${CONFIG_PATH}"
 
-exec torchrun \
+exec "${TORCHRUN_BIN}" \
   --nnodes="${NNODES}" \
   --node_rank="${NODE_RANK}" \
   --nproc_per_node="${TP_SIZE}" \
