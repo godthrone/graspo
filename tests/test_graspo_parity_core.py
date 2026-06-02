@@ -41,7 +41,7 @@ def test_retry_continues_until_rollout_max_retry_or_max_reward_reaches_threshold
     )
 
     assert retry.decision == GroupDecision.RETRY
-    assert exhausted.decision == GroupDecision.INVALID_NO_PREFERENCE_GAP
+    assert exhausted.decision == GroupDecision.INVALID
 
 
 def test_no_right_preference_gap_trains_before_retry():
@@ -71,6 +71,7 @@ def test_no_right_group_requires_max_above_lower_median_to_train():
     )
 
     assert no_gap.reward_max_median_gap == 0.0
+    assert not is_invalid_group([0.1, 0.2, 0.2, 0.2], [0.0, 0.8, 0.8, 0.8])
     assert no_gap.decision == GroupDecision.INVALID_NO_PREFERENCE_GAP
     assert not no_gap.should_train
     assert has_gap.reward_max_median_gap > 0.0
