@@ -42,7 +42,7 @@ uv python install 3.11
 
 git clone https://github.com/godthrone/graspo.git
 cd graspo
-uv sync --extra dev --python 3.11
+uv sync --python 3.11
 ```
 
 If you do not use `uv`, create a virtual environment and install the project:
@@ -57,7 +57,15 @@ For the native Megatron backend, install a compatible open-source Megatron-LM or
 Megatron Core package in the same environment. Keep model weights outside the
 repository.
 
-GRASPO pins PyTorch to the `2.5.x` line in `pyproject.toml` because some
+GRASPO keeps the default install lightweight so the smoke path does not download
+the full PyTorch GPU stack. Install training dependencies explicitly when you
+are ready to run a model:
+
+```bash
+uv sync --extra train --python 3.11
+```
+
+GRASPO pins PyTorch to the `2.5.x` line in the `train` extra because some
 long-lived Linux GPU servers still expose a `manylinux_2_17` baseline, while
 newer PyTorch wheels may require a newer platform baseline.
 
@@ -78,6 +86,8 @@ python -m graspo validate-reward --data data/sample.jsonl --limit 2
 Run a single-process reference job with a small local causal LM:
 
 ```bash
+uv sync --extra train --python 3.11
+
 BACKEND=hf-reference \
 MODEL_PATH=$HOME/models/small-causal-lm \
 DATA_PATH=data/sample.jsonl \
@@ -89,6 +99,8 @@ bash scripts/run_train.sh
 Run native Megatron TP=2 training:
 
 ```bash
+uv sync --extra train --python 3.11
+
 CUDA_VISIBLE_DEVICES=0,1 \
 TP_SIZE=2 \
 BACKEND=megatron-native \
@@ -131,6 +143,9 @@ Supported fields:
 Convert local JSON, JSONL, or spreadsheet data into the standard JSONL shape:
 
 ```bash
+# Required only for spreadsheet input.
+uv sync --extra data --python 3.11
+
 python -m graspo prepare-data --input raw_data.jsonl --output outputs/train.jsonl
 ```
 
@@ -212,6 +227,7 @@ datasets, logs, and checkpoints are intentionally ignored by Git.
 Run the full local check:
 
 ```bash
+uv sync --extra train --extra data --extra dev --python 3.11
 python -m pytest -q
 ruff check src tests
 python -m graspo --help
