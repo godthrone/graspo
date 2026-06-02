@@ -148,12 +148,12 @@ bash scripts/split_train_eval_jsonl.sh
 2. `trainable_max_correct`：至少一条 completion 全对。
 3. `trainable_not_correct`：没有全对，但 `reward_max > reward_median`。
 4. `retry`：还有 retry 预算。
-5. `invalid_no_preference_gap`：retry 后仍没有有效偏好差异。
-6. `invalid`：fallback invalid group。
+5. `invalid`：原始硬过滤，例如无 reward 方差或 uniform partial content。
+6. `invalid_no_preference_gap`：retry 后仍没有有效偏好差异。
 
-`invalid_no_preference_gap` 是信息抽取增强过滤：没有全对且 `reward_max == reward_median` 的组不进入
-ReplayBuffer，因为没有有效偏好信号。最大 reward 达到 perfect 阈值的组必须是 `trainable_max_correct` 或
-`perfect_skip`，不能落入 invalid。
+`invalid_no_preference_gap` 是信息抽取增强过滤：没有全对、没有触发原始 invalid、且
+`reward_max == reward_median` 的组不进入 ReplayBuffer，因为没有有效偏好信号。最大 reward 达到
+perfect 阈值的组必须是 `trainable_max_correct` 或 `perfect_skip`，不能落入 invalid。
 
 ## 输出文件
 
