@@ -11,7 +11,7 @@ External dependencies are used through their public Python APIs:
 - Transformers: tokenizer/config loading and the small `hf-reference` backend.
 - safetensors: safe model/checkpoint tensor loading and saving.
 - PyYAML: configuration loading.
-- pandas and datasets: optional local data preparation utilities.
+- pandas: optional local spreadsheet data preparation utility.
 - PEFT: optional LoRA reference/export helper. The production
   `megatron-native` training path must not rely on Accelerate at runtime.
 - Megatron-LM / Megatron Core: optional open-source tensor-parallel runtime
