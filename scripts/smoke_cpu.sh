@@ -6,14 +6,14 @@ cd "${ROOT_DIR}"
 
 if [[ -n "${PYTHON:-}" ]]; then
   PYTHON_BIN="${PYTHON}"
+elif [[ -x ".venv/bin/python" ]]; then
+  PYTHON_BIN=".venv/bin/python"
+elif [[ -x ".venv/Scripts/python.exe" ]]; then
+  PYTHON_BIN=".venv/Scripts/python.exe"
 elif command -v python3 >/dev/null 2>&1; then
   PYTHON_BIN="python3"
 elif command -v python >/dev/null 2>&1; then
   PYTHON_BIN="python"
-elif [[ -x ".venv/Scripts/python.exe" ]]; then
-  PYTHON_BIN=".venv/Scripts/python.exe"
-elif [[ -x ".venv/bin/python" ]]; then
-  PYTHON_BIN=".venv/bin/python"
 else
   echo "ERROR: Python was not found. Set PYTHON=/path/to/python and retry." >&2
   exit 1
