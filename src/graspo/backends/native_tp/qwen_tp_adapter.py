@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import random
 import time
 from collections.abc import Iterable
@@ -18,29 +17,25 @@ from torch.nn import functional as F
 from torch.utils.checkpoint import checkpoint as activation_checkpoint
 from torch.nn.utils.rnn import pad_sequence
 
-from graspo.backends.megatron_native.runtime import NativeGeneration
+from graspo.backends.native_tp.parallel_state import NativeTPState, destroy_native_tp
+from graspo.backends.native_tp.runtime import NativeGeneration
 from graspo.core.buffer import Experience
 from graspo.core.schema import GraspoConfig
-from graspo.trainer.loss import GRASPOLoss, sequence_log_probs_from_logits
+from graspo.trainer.loss import GRASPOLoss
 
 
-class QwenMegatronNativeAdapter:
-    """Qwen causal LM adapter backed by Megatron tensor-parallel process groups.
-
-    The implementation keeps the GRASPO loop independent from Megatron while
-    using Megatron Core/L.M. only to initialize and manage tensor-parallel
-    groups. The model weights are loaded from Hugging Face safetensors and
-    sliced per tensor-parallel rank.
-    """
+class QwenNativeTPAdapter:
+    """Qwen causal LM adapter backed by self-owned PyTorch tensor parallel."""
 
     def __init__(self, config: GraspoConfig) -> None:
         self.config = config
         self.rank = 0
         self.local_rank = 0
         self.world_size = 1
-        self.tp_size = int(config.megatron_native.tensor_model_parallel_size)
+        self.tp_size = int(config.native_tp.tensor_model_parallel_size)
         self.tp_rank = 0
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.tp_state: NativeTPState | None = None
         self.model: TensorParallelQwenForCausalLM | None = None
         self.tokenizer: Any | None = None
         self.optimizer: torch.optim.Optimizer | None = None
@@ -49,18 +44,13 @@ class QwenMegatronNativeAdapter:
 
     def setup(self) -> None:
         self._setup_distributed()
-        self._setup_megatron_parallel()
-
-        from transformers import AutoConfig, AutoTokenizer
+        from transformers import AutoTokenizer
 
         model_path = Path(self.config.model.model_path)
         if not model_path.exists():
             raise FileNotFoundError(f"model.model_path does not exist: {model_path}")
 
-        hf_config = AutoConfig.from_pretrained(
-            model_path,
-            trust_remote_code=self.config.model.trust_remote_code,
-        )
+        hf_config = load_native_qwen_config(model_path)
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_path,
             trust_remote_code=self.config.model.trust_remote_code,
@@ -70,7 +60,7 @@ class QwenMegatronNativeAdapter:
 
         torch_dtype = _resolve_dtype(self.config.model.torch_dtype)
         loader = SafetensorIndex(model_path)
-        self.model = TensorParallelQwenForCausalLM(
+        self.model = build_native_qwen_model(
             hf_config=hf_config,
             loader=loader,
             tp_rank=self.tp_rank,
@@ -96,8 +86,8 @@ class QwenMegatronNativeAdapter:
                 "trainable_parameters_local": sum(param.numel() for param in trainable),
                 "activation_checkpointing_enabled": bool(self.model.gradient_checkpointing),
                 "lora_target_modules": sorted(self.model.lora_targets),
-                "rollout_kv_cache_max_reserved_fraction": self.config.megatron_native.rollout_kv_cache_max_reserved_fraction,
-                "empty_cache_after_rollout_split": self.config.megatron_native.empty_cache_after_rollout_split,
+                "rollout_kv_cache_max_reserved_fraction": self.config.native_tp.rollout_kv_cache_max_reserved_fraction,
+                "empty_cache_after_rollout_split": self.config.native_tp.empty_cache_after_rollout_split,
             },
         )
         self._print_rank0(
@@ -141,7 +131,7 @@ class QwenMegatronNativeAdapter:
         prompt_len = int(prompt_input_ids.shape[1])
         eos_token_id = int(self.tokenizer.eos_token_id)
         pad_token_id = int(self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else eos_token_id)
-        use_kv_cache = bool(self.config.megatron_native.use_kv_cache_for_rollout)
+        use_kv_cache = bool(self.config.native_tp.use_kv_cache_for_rollout)
         generation_micro_batch_size = self._shared_generation_micro_batch_size(
             prompt_len=prompt_len,
             rollout_group_size=rollout_group_size,
@@ -212,7 +202,7 @@ class QwenMegatronNativeAdapter:
         empty_cache_after_split = (
             self.device.type == "cuda"
             and len(sequence_chunks) > 1
-            and bool(self.config.megatron_native.empty_cache_after_rollout_split)
+            and bool(self.config.native_tp.empty_cache_after_rollout_split)
         )
         if empty_cache_after_split:
             torch.cuda.empty_cache()
@@ -237,7 +227,7 @@ class QwenMegatronNativeAdapter:
             completions=completions,
             prompt_len=prompt_len,
             metadata={
-                "adapter": "qwen_tp",
+                "adapter": "qwen_native_tp",
                 "rollout_group_size": rollout_group_size,
                 "rollout_use_kv_cache": use_kv_cache,
                 "rollout_generation_micro_batch_size": generation_micro_batch_size,
@@ -311,8 +301,7 @@ class QwenMegatronNativeAdapter:
         sequences = sequences.to(self.device)
         attention_mask = attention_mask.to(self.device).bool()
         with torch.no_grad():
-            logits = self.model(sequences, attention_mask=attention_mask)
-            log_probs = sequence_log_probs_from_logits(logits[:, :-1].float(), sequences[:, 1:])
+            log_probs = self.model.sequence_log_probs(sequences, attention_mask)
         self._emit_rank_memory_event(
             "logprob_after",
             {
@@ -335,7 +324,7 @@ class QwenMegatronNativeAdapter:
         assert self.optimizer is not None
         self.loss_fn.policy_ratio_clip_eps = policy_ratio_clip_eps
         self.model.train()
-        if bool(self.config.megatron_native.empty_cache_before_train) and self.device.type == "cuda":
+        if bool(self.config.native_tp.empty_cache_before_train) and self.device.type == "cuda":
             torch.cuda.empty_cache()
             self._emit_rank_memory_event("train_before_empty_cache")
 
@@ -361,8 +350,7 @@ class QwenMegatronNativeAdapter:
                 batch_indices = indices[start : start + batch_size]
                 batch = collate_experiences([experiences[idx] for idx in batch_indices], self.device)
                 self.optimizer.zero_grad(set_to_none=True)
-                logits = self.model(batch.sequences, attention_mask=batch.attention_mask)
-                log_probs = sequence_log_probs_from_logits(logits[:, :-1].float(), batch.sequences[:, 1:])
+                log_probs = self.model.sequence_log_probs(batch.sequences, batch.attention_mask)
                 loss = self.loss_fn(
                     log_probs,
                     batch.old_log_probs,
@@ -449,7 +437,7 @@ class QwenMegatronNativeAdapter:
         max_new_tokens: int,
         use_kv_cache: bool,
     ) -> int:
-        configured = max(1, int(self.config.megatron_native.generation_micro_batch_size))
+        configured = max(1, int(self.config.native_tp.generation_micro_batch_size))
         if not use_kv_cache or self.device.type != "cuda" or self.model is None:
             return min(rollout_group_size, configured)
         candidate = min(rollout_group_size, max(configured, rollout_group_size))
@@ -465,7 +453,7 @@ class QwenMegatronNativeAdapter:
         assert self.model is not None
         if self.device.type != "cuda":
             return True
-        fraction = float(self.config.megatron_native.rollout_kv_cache_max_reserved_fraction)
+        fraction = float(self.config.native_tp.rollout_kv_cache_max_reserved_fraction)
         fraction = min(max(fraction, 0.05), 1.0)
         total = int(torch.cuda.get_device_properties(self.device).total_memory)
         reserved = int(torch.cuda.memory_reserved(self.device))
@@ -482,7 +470,7 @@ class QwenMegatronNativeAdapter:
         output = Path(path)
         output.mkdir(parents=True, exist_ok=True)
         payload = {
-            "adapter": "qwen_tp",
+            "adapter": "qwen_native_tp",
             "rank": self.rank,
             "tp_rank": self.tp_rank,
             "tp_size": self.tp_size,
@@ -498,7 +486,7 @@ class QwenMegatronNativeAdapter:
             (output / "manifest.json").write_text(
                 json.dumps(
                     {
-                        "format": "graspo-native-lora-tp",
+                        "format": "graspo-native-tp-lora",
                         "tp_size": self.tp_size,
                         "world_size": self.world_size,
                         "checkpoint_type": "recoverable_lora_training_state",
@@ -510,40 +498,16 @@ class QwenMegatronNativeAdapter:
             )
 
     def close(self) -> None:
-        if dist.is_available() and dist.is_initialized():
-            try:
-                dist.barrier()
-            finally:
-                dist.destroy_process_group()
+        destroy_native_tp()
 
     def _setup_distributed(self) -> None:
-        self.rank = int(os.environ.get("RANK", "0"))
-        self.local_rank = int(os.environ.get("LOCAL_RANK", "0"))
-        self.world_size = int(os.environ.get("WORLD_SIZE", "1"))
-        if torch.cuda.is_available():
-            self.device = torch.device(f"cuda:{self.local_rank}")
-            torch.cuda.set_device(self.device)
-        if self.world_size > 1 and not dist.is_initialized():
-            backend = "nccl" if torch.cuda.is_available() else "gloo"
-            dist.init_process_group(backend=backend)
-        if self.world_size != self.tp_size:
-            raise RuntimeError(
-                f"megatron-native v1 requires WORLD_SIZE == tensor_model_parallel_size "
-                f"({self.world_size} != {self.tp_size})"
-            )
-        self.tp_rank = self.rank
-
-    def _setup_megatron_parallel(self) -> None:
-        try:
-            from megatron.core import parallel_state
-        except Exception as exc:  # pragma: no cover - depends on server runtime.
-            raise RuntimeError(
-                "Megatron Core/L.M. is required for qwen_tp adapter. Install open-source "
-                "Megatron-LM/Core on the training server; do not use NeMo/NeMo-RL."
-            ) from exc
-        if not parallel_state.model_parallel_is_initialized():
-            parallel_state.initialize_model_parallel(tensor_model_parallel_size=self.tp_size)
-        self.tp_rank = int(parallel_state.get_tensor_model_parallel_rank())
+        state = NativeTPState.initialize(self.tp_size)
+        self.tp_state = state
+        self.rank = state.rank
+        self.local_rank = state.local_rank
+        self.world_size = state.world_size
+        self.tp_rank = state.tp_rank
+        self.device = state.device
 
     def _format_prompt(self, prompt: str, chat_template_kwargs: dict[str, Any] | None) -> str:
         assert self.tokenizer is not None
@@ -558,7 +522,7 @@ class QwenMegatronNativeAdapter:
 
     def _require_ready(self) -> None:
         if self.model is None or self.tokenizer is None or self.optimizer is None:
-            raise RuntimeError("QwenMegatronNativeAdapter is not set up")
+            raise RuntimeError("QwenNativeTPAdapter is not set up")
 
     def _print_rank0(self, payload: dict[str, Any]) -> None:
         if self.rank == 0:
@@ -606,6 +570,73 @@ class QwenMegatronNativeAdapter:
             handle.write(json.dumps(_jsonable(payload), ensure_ascii=False) + "\n")
 
 
+class NativeQwenConfig:
+    def __init__(self, values: dict[str, Any], *, family: str, key_prefix: str) -> None:
+        self.family = family
+        self.key_prefix = key_prefix
+        for key, value in values.items():
+            setattr(self, key, value)
+
+
+def load_native_qwen_config(model_path: Path) -> NativeQwenConfig:
+    config = json.loads((model_path / "config.json").read_text(encoding="utf-8"))
+    model_type = str(config.get("model_type") or "")
+    if model_type == "qwen3":
+        return NativeQwenConfig(config, family="qwen3", key_prefix="model")
+    text_config = dict(config.get("text_config") or {})
+    if model_type == "qwen3_5" and text_config.get("model_type") == "qwen3_5_text":
+        return NativeQwenConfig(text_config, family="qwen3_5_text", key_prefix="model.language_model")
+    raise ValueError(
+        "native-tp supports text-only qwen3 and qwen3_5_text models; "
+        f"got model_type={model_type!r}"
+    )
+
+
+def build_native_qwen_model(
+    *,
+    hf_config: NativeQwenConfig,
+    loader: "SafetensorIndex",
+    tp_rank: int,
+    tp_size: int,
+    lora_r: int,
+    lora_alpha: int,
+    lora_dropout: float,
+    lora_targets: set[str],
+    gradient_checkpointing: bool,
+    torch_dtype: torch.dtype,
+    device: torch.device,
+) -> nn.Module:
+    if hf_config.family == "qwen3":
+        return TensorParallelQwenForCausalLM(
+            hf_config=hf_config,
+            loader=loader,
+            tp_rank=tp_rank,
+            tp_size=tp_size,
+            lora_r=lora_r,
+            lora_alpha=lora_alpha,
+            lora_dropout=lora_dropout,
+            lora_targets=lora_targets,
+            gradient_checkpointing=gradient_checkpointing,
+            torch_dtype=torch_dtype,
+            device=device,
+        )
+    if hf_config.family == "qwen3_5_text":
+        return TensorParallelQwen35TextForCausalLM(
+            hf_config=hf_config,
+            loader=loader,
+            tp_rank=tp_rank,
+            tp_size=tp_size,
+            lora_r=lora_r,
+            lora_alpha=lora_alpha,
+            lora_dropout=lora_dropout,
+            lora_targets=lora_targets,
+            gradient_checkpointing=gradient_checkpointing,
+            torch_dtype=torch_dtype,
+            device=device,
+        )
+    raise ValueError(f"Unsupported native Qwen family: {hf_config.family}")
+
+
 class TensorParallelQwenForCausalLM(nn.Module):
     def __init__(
         self,
@@ -629,12 +660,16 @@ class TensorParallelQwenForCausalLM(nn.Module):
         self.device_ref = device
         self.gradient_checkpointing = bool(gradient_checkpointing)
         self.lora_targets = set(lora_targets)
+        self.key_prefix = str(getattr(hf_config, "key_prefix", "model"))
         self.embed_tokens = nn.Embedding(hf_config.vocab_size, hf_config.hidden_size, device=device, dtype=torch_dtype)
-        self.embed_tokens.weight.data.copy_(loader.get("model.embed_tokens.weight").to(device=device, dtype=torch_dtype))
+        self.embed_tokens.weight.data.copy_(
+            loader.get(f"{self.key_prefix}.embed_tokens.weight").to(device=device, dtype=torch_dtype)
+        )
         self.layers = nn.ModuleList(
             [
                 TensorParallelQwenDecoderLayer(
                     layer_idx=idx,
+                    key_prefix=self.key_prefix,
                     hf_config=hf_config,
                     loader=loader,
                     tp_rank=tp_rank,
@@ -650,11 +685,11 @@ class TensorParallelQwenForCausalLM(nn.Module):
             ]
         )
         self.norm = QwenRMSNorm(hf_config.hidden_size, eps=hf_config.rms_norm_eps, device=device, dtype=torch_dtype)
-        self.norm.weight.data.copy_(loader.get("model.norm.weight").to(device=device, dtype=torch_dtype))
+        self.norm.weight.data.copy_(loader.get(f"{self.key_prefix}.norm.weight").to(device=device, dtype=torch_dtype))
         self.lm_head = nn.Linear(hf_config.hidden_size, hf_config.vocab_size, bias=False, device=device, dtype=torch_dtype)
         lm_head = loader.get_optional("lm_head.weight")
         if lm_head is None:
-            lm_head = loader.get("model.embed_tokens.weight")
+            lm_head = loader.get(f"{self.key_prefix}.embed_tokens.weight")
         self.lm_head.weight.data.copy_(lm_head.to(device=device, dtype=torch_dtype))
         for name, param in self.named_parameters():
             param.requires_grad = "lora_" in name
@@ -706,6 +741,61 @@ class TensorParallelQwenForCausalLM(nn.Module):
             return logits, tuple(present_key_values)
         return logits
 
+    def sequence_log_probs(self, sequences: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+        hidden_states = self._forward_hidden(sequences, attention_mask=attention_mask)
+        assert isinstance(hidden_states, torch.Tensor)
+        return _selected_token_log_probs_from_hidden(
+            hidden_states[:, :-1].float(),
+            self.lm_head.weight.float(),
+            sequences[:, 1:],
+        )
+
+    def _forward_hidden(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        *,
+        past_key_values: tuple[tuple[torch.Tensor, torch.Tensor], ...] | None = None,
+        use_cache: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, tuple[tuple[torch.Tensor, torch.Tensor], ...]]:
+        hidden_states = self.embed_tokens(input_ids)
+        if attention_mask is None:
+            past_len = int(past_key_values[0][0].shape[2]) if past_key_values else 0
+            attention_mask = torch.ones(
+                (input_ids.shape[0], past_len + input_ids.shape[1]),
+                dtype=torch.bool,
+                device=input_ids.device,
+            )
+        position_ids = _position_ids(attention_mask)[:, -input_ids.shape[1] :]
+        present_key_values: list[tuple[torch.Tensor, torch.Tensor]] = []
+        for idx, layer in enumerate(self.layers):
+            layer_past = past_key_values[idx] if past_key_values is not None else None
+            if use_cache:
+                hidden_states, present = layer(
+                    hidden_states,
+                    position_ids,
+                    attention_mask,
+                    past_key_value=layer_past,
+                    use_cache=True,
+                )
+                present_key_values.append(present)
+            elif self.training and self.gradient_checkpointing and torch.is_grad_enabled():
+                hidden_states = activation_checkpoint(
+                    _checkpoint_decoder_layer_forward,
+                    layer,
+                    hidden_states,
+                    position_ids,
+                    attention_mask,
+                    use_reentrant=False,
+                    preserve_rng_state=True,
+                )
+            else:
+                hidden_states = layer(hidden_states, position_ids, attention_mask)
+        hidden_states = self.norm(hidden_states)
+        if use_cache:
+            return hidden_states, tuple(present_key_values)
+        return hidden_states
+
     def estimate_kv_cache_bytes(self, *, batch_size: int, sequence_len: int) -> int:
         dtype_size = _dtype_size(self.embed_tokens.weight.dtype)
         local_kv_heads = int(self.config.num_key_value_heads) // int(self.tp_size)
@@ -730,11 +820,50 @@ class TensorParallelQwenForCausalLM(nn.Module):
         )
 
 
+class TensorParallelQwen35TextForCausalLM(nn.Module):
+    """Qwen3.5 text-only model gate.
+
+    Qwen3.5/Qwen3.6 text checkpoints mix full-attention layers with a separate
+    linear-attention kernel. The model registry detects these checkpoints and
+    keeps vision weights out of scope, but the linear-attention kernel must be
+    implemented before training can start. Failing here is intentional: it
+    prevents silently training with an incorrect approximation.
+    """
+
+    def __init__(
+        self,
+        *,
+        hf_config: NativeQwenConfig,
+        loader: "SafetensorIndex",
+        tp_rank: int,
+        tp_size: int,
+        lora_r: int,
+        lora_alpha: int,
+        lora_dropout: float,
+        lora_targets: set[str],
+        gradient_checkpointing: bool,
+        torch_dtype: torch.dtype,
+        device: torch.device,
+    ) -> None:
+        super().__init__()
+        del loader, tp_rank, tp_size, lora_r, lora_alpha, lora_dropout
+        del lora_targets, gradient_checkpointing, torch_dtype, device
+        layer_types = list(getattr(hf_config, "layer_types", []) or [])
+        if any(layer_type == "linear_attention" for layer_type in layer_types):
+            raise NotImplementedError(
+                "native-tp detected qwen3_5_text with linear_attention layers. "
+                "The checkpoint is text-only compatible, but the qwen3_5 linear-attention "
+                "kernel is not implemented yet; do not fall back to an approximate layer."
+            )
+        raise NotImplementedError("qwen3_5_text without linear_attention is not implemented")
+
+
 class TensorParallelQwenDecoderLayer(nn.Module):
     def __init__(
         self,
         *,
         layer_idx: int,
+        key_prefix: str,
         hf_config: Any,
         loader: "SafetensorIndex",
         tp_rank: int,
@@ -747,7 +876,7 @@ class TensorParallelQwenDecoderLayer(nn.Module):
         device: torch.device,
     ) -> None:
         super().__init__()
-        prefix = f"model.layers.{layer_idx}"
+        prefix = f"{key_prefix}.layers.{layer_idx}"
         self.input_layernorm = QwenRMSNorm(hf_config.hidden_size, eps=hf_config.rms_norm_eps, device=device, dtype=torch_dtype)
         self.post_attention_layernorm = QwenRMSNorm(hf_config.hidden_size, eps=hf_config.rms_norm_eps, device=device, dtype=torch_dtype)
         self.input_layernorm.weight.data.copy_(loader.get(f"{prefix}.input_layernorm.weight").to(device=device, dtype=torch_dtype))
@@ -1161,6 +1290,28 @@ def _shard_tensor(tensor: torch.Tensor, *, dim: int, tp_rank: int, tp_size: int)
 def _all_reduce_tp(tensor: torch.Tensor) -> None:
     if dist.is_available() and dist.is_initialized():
         dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
+
+
+def _selected_token_log_probs_from_hidden(
+    hidden_states: torch.Tensor,
+    lm_head_weight: torch.Tensor,
+    output_ids: torch.Tensor,
+    *,
+    vocab_chunk_size: int = 32768,
+) -> torch.Tensor:
+    selected = lm_head_weight.index_select(0, output_ids.reshape(-1)).view(
+        *output_ids.shape,
+        hidden_states.shape[-1],
+    )
+    selected_logits = (hidden_states * selected).sum(dim=-1)
+    logsumexp: torch.Tensor | None = None
+    for start in range(0, lm_head_weight.shape[0], vocab_chunk_size):
+        chunk = lm_head_weight[start : start + vocab_chunk_size]
+        logits = F.linear(hidden_states, chunk)
+        chunk_lse = torch.logsumexp(logits, dim=-1)
+        logsumexp = chunk_lse if logsumexp is None else torch.logaddexp(logsumexp, chunk_lse)
+    assert logsumexp is not None
+    return selected_logits - logsumexp
 
 
 def _mean_present(values: Iterable[Any]) -> float | None:

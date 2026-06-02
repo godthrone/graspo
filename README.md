@@ -1,39 +1,41 @@
 # GRASPO
 
-[中文说明](README.zh-CN.md)
+[中文 README](README.zh-CN.md)
 
-GRASPO is a standalone implementation of **Group Relative Adaptive Structured
+GRASPO is a README-first implementation of **Group Relative Adaptive Structured
 Policy Optimization** for structured-output language-model training. It is built
 for tasks where outputs can be checked field by field, such as JSON extraction,
 classification, form parsing, and tool-call argument generation.
 
-The project is intentionally README-first: install it, run the CPU smoke test,
-prepare a JSONL file, then launch either the local reference backend or the
-native Megatron tensor-parallel backend.
+The production route is **self-owned `native-tp`**: GRASPO keeps rollout,
+retry/filtering, ReplayBuffer, reward, advantage, policy-ratio clipped loss,
+LoRA checkpoints, and monitoring in this repository, and uses only PyTorch
+distributed process groups for tensor parallelism.
 
 ## What This Repository Provides
 
-- `megatron-native`: the production path. GRASPO owns rollout, retry/filtering,
-  ReplayBuffer, reward, advantage, policy-ratio clipped loss, readable/raw logs,
-  LoRA checkpoints, and run monitoring while using open-source Megatron-LM/Core
-  tensor-parallel process groups.
+- `native-tp`: the production tensor-parallel backend. No Megatron, NeMo, vLLM,
+  Ray, DeepSpeed, FSDP, DDP, Accelerate, TransformerEngine, or Apex is required.
 - `hf-reference`: a single-process Hugging Face backend for algorithm parity,
-  small-model debugging, and local smoke tests.
-- Qwen-style native tensor-parallel adapter with LoRA-only training on frozen
-  base weights.
+  small-model debugging, and CPU/GPU smoke tests.
+- Frozen-base LoRA training with repository-native LoRA modules.
 - Human-readable rollout logs, raw replay JSONL logs, per-rank diagnostics, and
-  recoverable LoRA TP checkpoints.
+  recoverable native TP LoRA checkpoints.
 
-The production training route does **not** depend on NeMo, NeMo-RL, vLLM, Ray,
-DeepSpeed, FSDP, DDP, Accelerate, TransformerEngine, or Apex.
+Current model status:
+
+- Qwen3 dense causal LM, for example Qwen3-8B: supported by the current native TP
+  adapter.
+- Qwen3.5/Qwen3.6 text-only checkpoints: config registry and text weight prefix
+  detection are implemented. Hybrid `linear_attention` layers fail closed until
+  the exact native linear-attention kernel is implemented, so the project will
+  not silently train them with an incorrect approximation.
 
 ## Install
 
 Python 3.11+ is recommended.
 
 ```bash
-# Install uv if it is not already available. uv will create/use a
-# Python >=3.11 environment even when the system Python is older.
 command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 
@@ -42,7 +44,7 @@ cd graspo
 uv sync --extra dev
 ```
 
-If you do not use `uv`, create a virtual environment and install the project:
+Without `uv`:
 
 ```bash
 python -m venv .venv
@@ -50,9 +52,7 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-For the native Megatron backend, install a compatible open-source Megatron-LM or
-Megatron Core package in the same environment. Keep model weights outside the
-repository.
+Keep model weights and real datasets outside the repository.
 
 ## Quick Start
 
@@ -79,23 +79,23 @@ CONFIG_PATH=configs/graspo.yaml \
 bash scripts/run_train.sh
 ```
 
-Run native Megatron TP=2 training:
+Run native TP TP=2 training on Qwen3-8B:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0,1 \
 TP_SIZE=2 \
-BACKEND=megatron-native \
+BACKEND=native-tp \
 MODEL_PATH=$HOME/models/Qwen3-8B \
 DATA_PATH=$HOME/datasets/graspo/train.jsonl \
 OUTPUT_DIR=outputs/qwen3-8b-tp2 \
-CONFIG_PATH=configs/profiles/qwen3_8b_megatron_native_tp2_overnight.yaml \
+CONFIG_PATH=configs/profiles/qwen3_8b_native_tp2_overnight.yaml \
 bash scripts/run_train.sh
 ```
 
 For a detached long run on a server, use the generic launcher:
 
 ```bash
-bash scripts/launch_megatron_native_tp2_remote.sh \
+bash scripts/launch_native_tp2_remote.sh \
   --model-path $HOME/models/Qwen3-8B \
   --data-path $HOME/datasets/graspo/train.jsonl \
   --gpus 0,1 \
@@ -117,17 +117,17 @@ Supported fields:
 
 - `prompt`: plain text prompt.
 - `ground_truth`: expected structured output, usually a JSON object.
-- `messages`: optional chat messages. If present, the tokenizer chat template
-  can render the prompt.
+- `messages`: optional chat messages. If present, the tokenizer chat template can
+  render the prompt.
 - extra fields are treated as metadata.
 
-Convert local JSON, JSONL, or spreadsheet data into the standard JSONL shape:
+Prepare data:
 
 ```bash
 python -m graspo prepare-data --input raw_data.jsonl --output outputs/train.jsonl
 ```
 
-Split a dataset into train/eval JSONL files:
+Split train/eval JSONL:
 
 ```bash
 SOURCE_DATA_PATH=outputs/train.jsonl \
@@ -138,7 +138,7 @@ bash scripts/split_train_eval_jsonl.sh
 
 ## Core Algorithm Settings
 
-The default profile follows the GRASPO queue semantics used by this project:
+The production profile uses these canonical names:
 
 - `training.training_epoch_count=100`: full dataset training epochs.
 - `training.rollout_group_size=8`: completions sampled per prompt attempt.
@@ -161,12 +161,14 @@ Group decisions are evaluated in order:
 2. `trainable_max_correct`: at least one completion is fully correct.
 3. `trainable_not_correct`: no full solution, but `reward_max > reward_median`.
 4. `retry`: retry budget remains.
-5. `invalid`: hard invalid group.
-6. `invalid_no_preference_gap`: no useful preference gap after retries.
+5. `invalid_no_preference_gap`: no useful preference gap after retries.
+6. `invalid`: fallback invalid group.
 
 `invalid_no_preference_gap` is an information-extraction guard: when a no-right
 group has `reward_max == reward_median`, it does not enter ReplayBuffer because
-there is no useful preference signal.
+there is no useful preference signal. Groups with max reward at or above the
+perfect threshold must become `trainable_max_correct` or `perfect_skip`, never an
+invalid bucket.
 
 ## Outputs
 
@@ -181,7 +183,8 @@ Each run writes to `training.output_dir`:
 - `train_batches.readable.jsonl`: one line per optimize-trigger batch.
 - `rank_metrics.rank_*.jsonl`: per-rank memory, timing, LoRA, and optimizer
   diagnostics.
-- `checkpoints/step_*`: recoverable LoRA TP checkpoints and optimizer state.
+- `checkpoints/step_*`: recoverable LoRA native TP checkpoints and optimizer
+  state.
 
 Useful monitoring command:
 
@@ -189,20 +192,22 @@ Useful monitoring command:
 tail -f outputs/qwen3-8b-tp2/nohup.out
 ```
 
-## Docker
+## Native TP Notes
 
-Build the project image:
+The first production implementation shards the large Qwen dense matrices:
+attention `q/k/v`, attention output, MLP `gate/up/down`, and LoRA targets.
+Embedding and LM head are currently replicated. Training logprob uses exact
+selected-token logprob to avoid keeping full vocab logits alive for the loss
+path.
 
-```bash
-bash scripts/build_docker.sh
-```
-
-Mount model and data directories when running containers. Model weights,
-datasets, logs, and checkpoints are intentionally ignored by Git.
+Qwen3.5/Qwen3.6 support requires an exact native implementation of their hybrid
+linear-attention text layers. The registry already detects those checkpoints and
+ignores vision weights, but training intentionally fails closed until that kernel
+is present.
 
 ## Development
 
-Run the full local check:
+Run the local checks:
 
 ```bash
 python -m pytest -q
@@ -227,9 +232,7 @@ and the dependency lock file should be tracked.
 - `DATA_PATH does not exist`: pass a JSONL file with `prompt` and
   `ground_truth`.
 - Tokenizer has no pad token: GRASPO tries to use `eos_token` as `pad_token`.
-  Define one in the tokenizer if both are missing.
-- Native backend import fails: install PyTorch and open-source Megatron-LM/Core
-  in the active environment.
+- Native backend import fails: install PyTorch in the active environment.
 - OOM during rollout: keep `max_new_tokens=2048`; reduce concurrency or use KV
   cache splitting rather than lowering the generation budget.
 

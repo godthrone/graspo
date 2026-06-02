@@ -15,7 +15,7 @@ def test_cli_main_commands_parse():
         ["prepare-data", "--input", "data/sample.jsonl", "--output", "out.jsonl"],
         ["analyze", "--rewards", "rewards.jsonl"],
         ["train", "--config", "configs/graspo.yaml"],
-        ["train", "--config", "configs/graspo.yaml", "--backend", "megatron-native"],
+        ["train", "--config", "configs/graspo.yaml", "--backend", "native-tp"],
         ["train", "--config", "configs/graspo.yaml", "--backend", "hf-reference"],
     ]
     for command in commands:

@@ -43,7 +43,7 @@ def generate_group(
     prompt_len = 0
 
     # Micro-batch generation to avoid OOM from KV cache on large groups.
-    # Each micro-batch stores its own KV cache; with 8×A800 80GB, batch_size=1
+    # Each micro-batch stores its own KV cache; with 8xA800 80GB, batch_size=1
     # is safe (~54 GB model + ~6 GB KV cache/seq = ~60 GB < 80 GB).
     micro_batch_size = 1
     all_sequences = []

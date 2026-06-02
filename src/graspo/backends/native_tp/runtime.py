@@ -8,11 +8,13 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from graspo.core.buffer import Experience
-from graspo.core.schema import GraspoConfig, MegatronNativeConfig
+from graspo.core.schema import GraspoConfig, NativeTPConfig
 
 
-DEFAULT_NATIVE_ADAPTER = "graspo.backends.megatron_native.qwen_tp_adapter:QwenMegatronNativeAdapter"
+DEFAULT_NATIVE_ADAPTER = "graspo.backends.native_tp.qwen_tp_adapter:QwenNativeTPAdapter"
+NATIVE_TP_ADAPTER_ENV = "GRASPO_NATIVE_TP_ADAPTER"
 FORBIDDEN_RUNTIME_MODULES = (
+    "megatron",
     "nemo_rl",
     "vllm",
     "ray",
@@ -22,6 +24,7 @@ FORBIDDEN_RUNTIME_MODULES = (
     "apex",
 )
 FORBIDDEN_CONFIG_KEYS = (
+    "megatron",
     "nemo",
     "vllm",
     "ray",
@@ -45,7 +48,7 @@ class NativeGeneration:
     metadata: dict[str, Any] | None = None
 
 
-class MegatronNativeRuntimeProtocol(Protocol):
+class NativeTPRuntimeProtocol(Protocol):
     def validate(self) -> None: ...
 
     def setup(self) -> None: ...
@@ -80,39 +83,33 @@ class MegatronNativeRuntimeProtocol(Protocol):
     def is_primary(self) -> bool: ...
 
 
-class MegatronNativeRuntime:
-    """Strict native Megatron runtime boundary.
+class NativeTPRuntime:
+    """Strict self-owned tensor-parallel runtime boundary.
 
-    This class intentionally does not import NeMo-RL, vLLM, Ray, DeepSpeed,
-    DDP, or FSDP. The concrete Megatron Core/L.M. model adapter lives behind
-    this boundary so GRASPO control flow remains self-owned and unit-testable.
+    The production path uses PyTorch distributed directly and intentionally does
+    not import Megatron, NeMo-RL, vLLM, Ray, DeepSpeed, DDP, FSDP, Accelerate,
+    TransformerEngine, or Apex.
     """
 
     def __init__(self, config: GraspoConfig) -> None:
         self.config = config
-        self.native_config = config.megatron_native
+        self.native_config = config.native_tp
         self._adapter: Any | None = None
 
     @classmethod
-    def from_config(cls, config: GraspoConfig) -> "MegatronNativeRuntime":
+    def from_config(cls, config: GraspoConfig) -> "NativeTPRuntime":
         return cls(config)
 
     def validate(self) -> None:
         validate_native_runtime_config(self.config, self.native_config)
         assert_forbidden_runtime_modules_not_imported()
-        if not has_native_megatron_runtime():
-            raise RuntimeError(
-                "megatron-native requires Megatron Core/L.M. on the training server. "
-                "Install Megatron as an optional external dependency; this backend does not "
-                "fall back to NeMo-RL, vLLM, Ray, DeepSpeed, DDP, FSDP, or Accelerate."
-            )
 
     def setup(self) -> None:
         self.validate()
-        adapter_path = os.environ.get("GRASPO_MEGATRON_NATIVE_ADAPTER") or DEFAULT_NATIVE_ADAPTER
+        adapter_path = os.environ.get(NATIVE_TP_ADAPTER_ENV) or DEFAULT_NATIVE_ADAPTER
         module_name, sep, class_name = adapter_path.partition(":")
         if not sep:
-            raise ValueError("GRASPO_MEGATRON_NATIVE_ADAPTER must use 'module:Class' format")
+            raise ValueError(f"{NATIVE_TP_ADAPTER_ENV} must use 'module:Class' format")
         module = importlib.import_module(module_name)
         adapter_cls = getattr(module, class_name)
         self._adapter = adapter_cls(self.config)
@@ -156,50 +153,39 @@ class MegatronNativeRuntime:
 
     def _require_adapter(self):
         if self._adapter is None:
-            raise RuntimeError("Megatron native runtime is not set up")
+            raise RuntimeError("Native TP runtime is not set up")
         return self._adapter
-
-
-def has_native_megatron_runtime() -> bool:
-    return _has_module("megatron.core") or _has_module("megatron")
-
-
-def _has_module(name: str) -> bool:
-    try:
-        return importlib.util.find_spec(name) is not None
-    except ModuleNotFoundError:
-        return False
 
 
 def validate_native_runtime_config(
     config: GraspoConfig,
-    native_config: MegatronNativeConfig | None = None,
+    native_config: NativeTPConfig | None = None,
 ) -> None:
-    native = native_config or config.megatron_native
+    native = native_config or config.native_tp
     if int(native.pipeline_model_parallel_size) != 1:
-        raise ValueError("megatron-native v1 supports pipeline_model_parallel_size=1 only")
+        raise ValueError("native-tp v1 supports pipeline_model_parallel_size=1 only")
     if bool(native.sequence_parallel):
-        raise ValueError("megatron-native v1 requires sequence_parallel=false")
+        raise ValueError("native-tp v1 requires sequence_parallel=false")
     if int(native.tensor_model_parallel_size) < 1:
         raise ValueError("tensor_model_parallel_size must be >= 1")
     if int(native.train_micro_batch_size) != 1:
-        raise ValueError("megatron-native v1 requires train_micro_batch_size=1")
+        raise ValueError("native-tp v1 requires train_micro_batch_size=1")
     if int(native.generation_micro_batch_size) != 1:
-        raise ValueError("megatron-native v1 requires generation_micro_batch_size=1")
+        raise ValueError("native-tp v1 requires generation_micro_batch_size=1")
 
     flattened = _flatten_keys(config.backend_config)
     forbidden = sorted(
         key for key in flattened if any(marker in key.lower() for marker in FORBIDDEN_CONFIG_KEYS)
     )
-    allowed_native_prefix = "megatron_native."
+    allowed_native_prefix = "native_tp."
     forbidden = [
         key
         for key in forbidden
-        if not key.startswith(allowed_native_prefix) and key != "megatron_native"
+        if not key.startswith(allowed_native_prefix) and key != "native_tp"
     ]
     if forbidden:
         raise ValueError(
-            "megatron-native forbids NeMo/vLLM/Ray/DeepSpeed/FSDP/DDP/ZeRO/Accelerate config keys: "
+            "native-tp forbids Megatron/NeMo/vLLM/Ray/DeepSpeed/FSDP/DDP/ZeRO/Accelerate config keys: "
             + ", ".join(forbidden)
         )
 
@@ -208,7 +194,7 @@ def assert_forbidden_runtime_modules_not_imported() -> None:
     imported = [name for name in FORBIDDEN_RUNTIME_MODULES if name in sys.modules]
     if imported:
         raise RuntimeError(
-            "megatron-native runtime must not import forbidden frameworks: "
+            "native-tp runtime must not import forbidden frameworks: "
             + ", ".join(imported)
         )
 

@@ -539,7 +539,6 @@ source = { editable = "." }
 dependencies = [
     { name = "datasets" },
     { name = "pandas" },
-    { name = "peft" },
     { name = "pyyaml" },
     { name = "safetensors" },
     { name = "torch" },
@@ -548,15 +547,20 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "peft" },
     { name = "pytest" },
     { name = "ruff" },
+]
+reference = [
+    { name = "peft" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "datasets", specifier = ">=3.0.0" },
     { name = "pandas", specifier = ">=2.0.0" },
-    { name = "peft", specifier = ">=0.17.0" },
+    { name = "peft", marker = "extra == 'dev'", specifier = ">=0.17.0" },
+    { name = "peft", marker = "extra == 'reference'", specifier = ">=0.17.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "pyyaml", specifier = ">=6.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6.0" },
@@ -564,7 +568,7 @@ requires-dist = [
     { name = "torch", specifier = ">=2.5.0" },
     { name = "transformers", specifier = ">=4.53.0" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["reference", "dev"]
 
 [[package]]
 name = "h11"

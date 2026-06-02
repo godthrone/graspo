@@ -6,29 +6,33 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from graspo.backends.megatron_native.qwen_tp_adapter import (  # noqa: E402
+from graspo.backends.native_tp.qwen_tp_adapter import (  # noqa: E402
     LoRALinear,
-    QwenMegatronNativeAdapter,
+    QwenNativeTPAdapter,
+    NativeQwenConfig,
     TensorParallelQwenForCausalLM,
+    TensorParallelQwen35TextForCausalLM,
     collate_experiences,
+    load_native_qwen_config,
+    _selected_token_log_probs_from_hidden,
 )
-from graspo.backends.megatron_native.runtime import MegatronNativeRuntime  # noqa: E402
+from graspo.backends.native_tp.runtime import NativeTPRuntime  # noqa: E402
 from graspo.core.buffer import Experience  # noqa: E402
 from graspo.core.schema import GraspoConfig  # noqa: E402
 
 
 def test_runtime_uses_builtin_qwen_adapter_by_default(monkeypatch):
-    monkeypatch.delenv("GRASPO_MEGATRON_NATIVE_ADAPTER", raising=False)
-    monkeypatch.setattr(MegatronNativeRuntime, "validate", lambda self: None)
+    monkeypatch.delenv("GRASPO_NATIVE_TP_ADAPTER", raising=False)
+    monkeypatch.setattr(NativeTPRuntime, "validate", lambda self: None)
     monkeypatch.setattr(
-        "graspo.backends.megatron_native.qwen_tp_adapter.QwenMegatronNativeAdapter.setup",
+        "graspo.backends.native_tp.qwen_tp_adapter.QwenNativeTPAdapter.setup",
         lambda self: None,
     )
 
-    runtime = MegatronNativeRuntime(GraspoConfig())
+    runtime = NativeTPRuntime(GraspoConfig())
     runtime.setup()
 
-    assert runtime._adapter.__class__.__name__ == "QwenMegatronNativeAdapter"
+    assert runtime._adapter.__class__.__name__ == "QwenNativeTPAdapter"
 
 
 def test_lora_linear_shards_hf_weights_by_tensor_parallel_rank():
@@ -177,7 +181,7 @@ def test_qwen_activation_checkpointing_only_wraps_training_forward(monkeypatch):
         return function(*args)
 
     monkeypatch.setattr(
-        "graspo.backends.megatron_native.qwen_tp_adapter.activation_checkpoint",
+        "graspo.backends.native_tp.qwen_tp_adapter.activation_checkpoint",
         fake_checkpoint,
     )
     input_ids = torch.tensor([[1, 2, 3, 4]])
@@ -228,9 +232,83 @@ def test_qwen_kv_cache_estimate_is_per_tp_rank():
     assert model.estimate_kv_cache_bytes(batch_size=8, sequence_len=2048) == 8 * 3 * 2 * 1 * 4 * 2048 * 2
 
 
+def test_native_qwen_registry_selects_qwen3_dense_text(tmp_path):
+    (tmp_path / "config.json").write_text(
+        (
+            '{"model_type":"qwen3","vocab_size":17,"hidden_size":8,'
+            '"num_hidden_layers":1,"num_attention_heads":2}'
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_native_qwen_config(tmp_path)
+
+    assert config.family == "qwen3"
+    assert config.key_prefix == "model"
+    assert config.model_type == "qwen3"
+
+
+def test_native_qwen_registry_selects_qwen35_text_only(tmp_path):
+    (tmp_path / "config.json").write_text(
+        (
+            '{"model_type":"qwen3_5","text_config":{'
+            '"model_type":"qwen3_5_text","vocab_size":17,"hidden_size":8,'
+            '"num_hidden_layers":2,"layer_types":["linear_attention","full_attention"]'
+            "}}"
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_native_qwen_config(tmp_path)
+
+    assert config.family == "qwen3_5_text"
+    assert config.key_prefix == "model.language_model"
+    assert config.model_type == "qwen3_5_text"
+
+
+def test_qwen35_linear_attention_fails_closed_until_kernel_exists():
+    config = NativeQwenConfig(
+        {
+            "model_type": "qwen3_5_text",
+            "layer_types": ["linear_attention", "full_attention"],
+            "num_hidden_layers": 2,
+        },
+        family="qwen3_5_text",
+        key_prefix="model.language_model",
+    )
+
+    with pytest.raises(NotImplementedError, match="linear-attention kernel is not implemented"):
+        TensorParallelQwen35TextForCausalLM(
+            hf_config=config,
+            loader=object(),
+            tp_rank=0,
+            tp_size=2,
+            lora_r=0,
+            lora_alpha=1,
+            lora_dropout=0.0,
+            lora_targets=set(),
+            gradient_checkpointing=False,
+            torch_dtype=torch.float32,
+            device=torch.device("cpu"),
+        )
+
+
+def test_selected_token_log_probs_match_full_vocab_log_softmax():
+    torch.manual_seed(1234)
+    hidden = torch.randn(2, 3, 5)
+    weight = torch.randn(11, 5)
+    output_ids = torch.tensor([[1, 2, 3], [4, 5, 6]])
+
+    selected = _selected_token_log_probs_from_hidden(hidden, weight, output_ids, vocab_chunk_size=4)
+    full = torch.log_softmax(torch.matmul(hidden, weight.t()), dim=-1)
+    expected = full.gather(-1, output_ids.unsqueeze(-1)).squeeze(-1)
+
+    assert torch.allclose(selected, expected, atol=1e-6, rtol=1e-6)
+
+
 def test_adapter_training_indices_are_stable_without_mutating_global_random_state():
     config = GraspoConfig.from_dict({"training": {"seed": 123}})
-    adapter = QwenMegatronNativeAdapter(config)
+    adapter = QwenNativeTPAdapter(config)
     before = torch.random.get_rng_state().clone()
 
     first = adapter._shared_training_indices(8, optimize_round=0)
@@ -250,14 +328,14 @@ def test_adapter_generation_micro_batch_uses_shared_dispatch_when_distributed(mo
     config = GraspoConfig.from_dict(
         {
             "backend_config": {
-                "megatron_native": {
+                "native_tp": {
                     "generation_micro_batch_size": 1,
                     "use_kv_cache_for_rollout": True,
                 }
             }
         }
     )
-    adapter = QwenMegatronNativeAdapter(config)
+    adapter = QwenNativeTPAdapter(config)
     adapter.rank = 1
     adapter.device = torch.device("cuda")
     monkeypatch.setattr(
@@ -266,11 +344,11 @@ def test_adapter_generation_micro_batch_uses_shared_dispatch_when_distributed(mo
         lambda **_: 1,
     )
     monkeypatch.setattr(
-        "graspo.backends.megatron_native.qwen_tp_adapter.dist.is_available",
+        "graspo.backends.native_tp.qwen_tp_adapter.dist.is_available",
         lambda: True,
     )
     monkeypatch.setattr(
-        "graspo.backends.megatron_native.qwen_tp_adapter.dist.is_initialized",
+        "graspo.backends.native_tp.qwen_tp_adapter.dist.is_initialized",
         lambda: True,
     )
 
@@ -280,7 +358,7 @@ def test_adapter_generation_micro_batch_uses_shared_dispatch_when_distributed(mo
         payload[0] = 4
 
     monkeypatch.setattr(
-        "graspo.backends.megatron_native.qwen_tp_adapter.dist.broadcast_object_list",
+        "graspo.backends.native_tp.qwen_tp_adapter.dist.broadcast_object_list",
         fake_broadcast_object_list,
     )
 

@@ -138,7 +138,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     train = subparsers.add_parser("train", help="Start training.")
     train.add_argument("--config", "-c", required=True)
-    train.add_argument("--backend", choices=["auto", "megatron-native", "hf-reference"])
+    train.add_argument("--backend", choices=["auto", "native-tp", "hf-reference"])
     train.add_argument(
         "--print-backend",
         action="store_true",

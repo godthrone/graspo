@@ -6,31 +6,27 @@ from graspo.backends.selector import looks_like_large_model, select_backend
 from graspo.core.schema import GraspoConfig
 
 
-def test_backend_auto_uses_hf_reference_without_runtime(monkeypatch):
+def test_backend_auto_uses_hf_reference_for_small_local_model_without_gpus(monkeypatch):
     monkeypatch.setattr("graspo.backends.selector.detect_gpu_count", lambda: 0)
-    monkeypatch.setattr("graspo.backends.selector._has_module", lambda name: False)
     config = GraspoConfig()
     selection = select_backend(config)
     assert selection.name == "hf-reference"
 
 
-def test_backend_auto_fails_for_large_model_without_megatron(monkeypatch):
-    monkeypatch.setattr("graspo.backends.selector.detect_gpu_count", lambda: 8)
-    monkeypatch.setattr("graspo.backends.selector._has_native_megatron_runtime", lambda: False)
-    monkeypatch.setattr("graspo.backends.selector._has_module", lambda name: False)
+def test_backend_auto_uses_native_tp_for_large_model_without_external_runtime(monkeypatch):
+    monkeypatch.setattr("graspo.backends.selector.detect_gpu_count", lambda: 0)
     config = GraspoConfig()
     config.model.model_path = "/models/Qwen3.6-27B"
-    with pytest.raises(RuntimeError, match="megatron-native backend is required"):
-        select_backend(config)
+    selection = select_backend(config)
+    assert selection.name == "native-tp"
+    assert selection.native_tp_available is True
 
 
-def test_backend_auto_uses_native_megatron_when_runtime_detected(monkeypatch):
+def test_backend_auto_uses_native_tp_when_multiple_gpus_detected(monkeypatch):
     monkeypatch.setattr("graspo.backends.selector.detect_gpu_count", lambda: 8)
-    monkeypatch.setattr("graspo.backends.selector._has_native_megatron_runtime", lambda: True)
-    monkeypatch.setattr("graspo.backends.selector._has_module", lambda name: False)
     config = GraspoConfig()
     selection = select_backend(config)
-    assert selection.name == "megatron-native"
+    assert selection.name == "native-tp"
 
 
 def test_backend_rejects_legacy_megatron_vllm():
@@ -39,9 +35,14 @@ def test_backend_rejects_legacy_megatron_vllm():
         select_backend(config, requested="megatron-vllm")
 
 
-def test_backend_explicit_hf_reference_ignores_megatron(monkeypatch):
+def test_backend_rejects_removed_megatron_native_name():
+    config = GraspoConfig()
+    with pytest.raises(ValueError, match="Unsupported backend"):
+        select_backend(config, requested="megatron-native")
+
+
+def test_backend_explicit_hf_reference_works_on_multi_gpu(monkeypatch):
     monkeypatch.setattr("graspo.backends.selector.detect_gpu_count", lambda: 8)
-    monkeypatch.setattr("graspo.backends.selector._has_native_megatron_runtime", lambda: False)
     config = GraspoConfig()
     selection = select_backend(config, requested="hf-reference")
     assert selection.name == "hf-reference"

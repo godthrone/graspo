@@ -1,4 +1,4 @@
-﻿# GRASPO Trainer Constitution
+# GRASPO Trainer Constitution
 
 This file is the standing instruction set for GRASPO work in this repository.
 Treat these rules as higher priority than runbooks, profiles, or ad hoc smoke
@@ -62,12 +62,12 @@ commands unless the user explicitly overrides them in the current conversation.
   step. It is not a dataset mini-batch and should not expose a generic
   `progress`; progress belongs to `run` or `epoch`.
 
-## Native Megatron Boundary
+## Native TP Boundary
 
-- Production backend is `megatron-native`.
+- Production backend is `native-tp`.
 - Allowed dependencies: PyTorch, Transformers tokenizer/config utilities,
-  safetensors, PyYAML, open-source Megatron-LM/Core, and repository-native
-  LoRA/training code.
+  safetensors, PyYAML, PyTorch distributed, and repository-native LoRA/training
+  code.
 - Forbidden production training dependencies: NeMo, NeMo-RL, NGC NeMo
   containers, vLLM, Ray, DeepSpeed, FSDP, DDP, Accelerate,
   TransformerEngine/Apex as required dependencies, and ZeRO-style fallbacks.
@@ -105,8 +105,11 @@ entries.
 
 ## Known Follow-Ups
 
-- Native Qwen TP adapter still needs full Megatron Core `ColumnParallelLinear`,
-  `RowParallelLinear`, and vocab-parallel embedding/lm_head primitives.
+- Native Qwen3.5/Qwen3.6 support still needs an exact text-only hybrid
+  linear-attention kernel. Do not approximate those layers or silently fall back
+  to Qwen3 full attention.
+- Native Qwen TP adapter should eventually add vocab-parallel embedding/lm_head
+  when replicated vocabulary weights become the bottleneck.
 - Rank logs should be aggregated so global training events are printed once,
   while per-rank metrics remain available for diagnostics.
 - Checkpoint resume needs an explicit smoke test: resume from `step_N`, continue

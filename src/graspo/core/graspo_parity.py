@@ -117,10 +117,10 @@ def classify_group(
         decision = GroupDecision.TRAINABLE_NOT_CORRECT
     elif reward_max < perfect_skip_reward_threshold and retry_count < rollout_max_retry_times:
         decision = GroupDecision.RETRY
-    elif is_invalid_group(values, content_scores):
-        decision = GroupDecision.INVALID
     elif reward_max == reward_median:
         decision = GroupDecision.INVALID_NO_PREFERENCE_GAP
+    elif is_invalid_group(values, content_scores):
+        decision = GroupDecision.INVALID
     else:
         decision = GroupDecision.INVALID
 

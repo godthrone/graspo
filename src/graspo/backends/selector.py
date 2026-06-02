@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import re
@@ -10,7 +9,7 @@ from dataclasses import asdict, dataclass
 from graspo.core.schema import GraspoConfig
 
 
-SUPPORTED_BACKENDS = {"auto", "megatron-native", "hf-reference"}
+SUPPORTED_BACKENDS = {"auto", "native-tp", "hf-reference"}
 
 
 @dataclass(slots=True)
@@ -19,7 +18,7 @@ class BackendSelection:
     reason: str
     requested: str
     gpu_count: int
-    megatron_available: bool
+    native_tp_available: bool
     model_looks_large: bool
 
     def to_json(self) -> str:
@@ -35,18 +34,16 @@ def select_backend(config: GraspoConfig, requested: str | None = None) -> Backen
         )
 
     gpu_count = detect_gpu_count()
-    megatron_available = _has_native_megatron_runtime()
     model_looks_large = looks_like_large_model(config.model.model_path)
+    native_tp_available = True
 
-    if requested_backend == "megatron-native":
-        if not megatron_available:
-            raise RuntimeError(_missing_native_megatron_message("requested explicitly"))
+    if requested_backend == "native-tp":
         return BackendSelection(
-            name="megatron-native",
+            name="native-tp",
             reason="requested explicitly",
             requested=requested_backend,
             gpu_count=gpu_count,
-            megatron_available=megatron_available,
+            native_tp_available=native_tp_available,
             model_looks_large=model_looks_large,
         )
 
@@ -56,29 +53,36 @@ def select_backend(config: GraspoConfig, requested: str | None = None) -> Backen
             reason="requested explicitly",
             requested=requested_backend,
             gpu_count=gpu_count,
-            megatron_available=megatron_available,
+            native_tp_available=native_tp_available,
             model_looks_large=model_looks_large,
         )
 
-    if gpu_count >= 2 and megatron_available:
+    if gpu_count >= 2:
         return BackendSelection(
-            name="megatron-native",
-            reason="auto: multiple GPUs and native Megatron runtime detected",
+            name="native-tp",
+            reason="auto: multiple GPUs detected, using self-owned native tensor parallel",
             requested=requested_backend,
             gpu_count=gpu_count,
-            megatron_available=megatron_available,
+            native_tp_available=native_tp_available,
             model_looks_large=model_looks_large,
         )
 
     if model_looks_large:
-        raise RuntimeError(_missing_native_megatron_message("large model detected by backend=auto"))
+        return BackendSelection(
+            name="native-tp",
+            reason="auto: large model detected, using self-owned native tensor parallel",
+            requested=requested_backend,
+            gpu_count=gpu_count,
+            native_tp_available=native_tp_available,
+            model_looks_large=model_looks_large,
+        )
 
     return BackendSelection(
         name="hf-reference",
-        reason="auto: native Megatron runtime not detected, using reference backend",
+        reason="auto: small/local model detected, using reference backend",
         requested=requested_backend,
         gpu_count=gpu_count,
-        megatron_available=megatron_available,
+        native_tp_available=native_tp_available,
         model_looks_large=model_looks_large,
     )
 
@@ -88,10 +92,10 @@ def create_trainer(config: GraspoConfig, selection: BackendSelection):
         from graspo.backends.hf_reference import HFReferenceGraspoTrainer
 
         return HFReferenceGraspoTrainer(config, selection=selection)
-    if selection.name == "megatron-native":
-        from graspo.backends.megatron_native import MegatronNativeGraspoTrainer
+    if selection.name == "native-tp":
+        from graspo.backends.native_tp import NativeTPGraspoTrainer
 
-        return MegatronNativeGraspoTrainer(config, selection=selection)
+        return NativeTPGraspoTrainer(config, selection=selection)
     raise ValueError(f"Unsupported selected backend: {selection.name}")
 
 
@@ -128,22 +132,3 @@ def looks_like_large_model(model_path: str) -> bool:
     if re.search(r"(?:^|[-_/])(?:2[0-9]|3[0-9]|4[0-9]|7[0-9]|100)b(?:$|[-_/])", value):
         return True
     return any(marker in value for marker in ("27b", "30b", "32b", "70b", "qwen3.6-27"))
-
-
-def _has_module(name: str) -> bool:
-    try:
-        return importlib.util.find_spec(name) is not None
-    except ModuleNotFoundError:
-        return False
-
-
-def _has_native_megatron_runtime() -> bool:
-    return _has_module("megatron.core") or _has_module("megatron")
-
-
-def _missing_native_megatron_message(reason: str) -> str:
-    return (
-        "megatron-native backend is required but Megatron Core/L.M. was not detected "
-        f"({reason}). Install the optional native Megatron runtime on the training server. "
-        "This backend does not use NeMo-RL, vLLM, Ray, DeepSpeed, DDP, FSDP, or Accelerate fallbacks."
-    )
