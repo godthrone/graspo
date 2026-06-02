@@ -11,15 +11,19 @@ requires-python = ">=3.11,<3.14"
 license = { text = "MIT" }
 authors = [{ name = "Godthrone" }]
 dependencies = [
-  "pandas>=2.0.0",
-  "peft>=0.17.0",
   "pyyaml>=6.0.0",
+]
+
+[project.optional-dependencies]
+train = [
+  "peft>=0.17.0",
   "safetensors>=0.4.0",
   "torch>=2.5.0,<2.6.0",
   "transformers>=4.53.0",
 ]
-
-[project.optional-dependencies]
+data = [
+  "pandas>=2.0.0",
+]
 dev = [
   "pytest>=8.0.0",
   "ruff>=0.6.0",

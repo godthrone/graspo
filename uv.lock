@@ -103,32 +103,36 @@ name = "graspo"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "pandas" },
-    { name = "peft" },
     { name = "pyyaml" },
+]
+
+[package.optional-dependencies]
+data = [
+    { name = "pandas" },
+]
+dev = [
+    { name = "pytest" },
+    { name = "ruff" },
+]
+train = [
+    { name = "peft" },
     { name = "safetensors" },
     { name = "torch" },
     { name = "transformers" },
 ]
 
-[package.optional-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "ruff" },
-]
-
 [package.metadata]
 requires-dist = [
-    { name = "pandas", specifier = ">=2.0.0" },
-    { name = "peft", specifier = ">=0.17.0" },
+    { name = "pandas", marker = "extra == 'data'", specifier = ">=2.0.0" },
+    { name = "peft", marker = "extra == 'train'", specifier = ">=0.17.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "pyyaml", specifier = ">=6.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6.0" },
-    { name = "safetensors", specifier = ">=0.4.0" },
-    { name = "torch", specifier = ">=2.5.0,<2.6.0" },
-    { name = "transformers", specifier = ">=4.53.0" },
+    { name = "safetensors", marker = "extra == 'train'", specifier = ">=0.4.0" },
+    { name = "torch", marker = "extra == 'train'", specifier = ">=2.5.0,<2.6.0" },
+    { name = "transformers", marker = "extra == 'train'", specifier = ">=4.53.0" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["train", "data", "dev"]
 
 [[package]]
 name = "h11"
