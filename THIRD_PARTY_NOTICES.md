@@ -10,6 +10,9 @@ used only as an optional external tensor-parallel runtime dependency.
   repository without preserving its license and notices.
 - NVIDIA NeMo, NeMo-RL, vLLM, Ray, DeepSpeed, FSDP, DDP, and Accelerate are
   not production training dependencies of this repository.
+- PEFT is allowed as a LoRA reference/export helper. It may install ecosystem
+  dependencies such as Accelerate, but the `megatron-native` production
+  training path must not import or rely on Accelerate.
 - flash-linear-attention and causal-conv1d may be used by specific model
   families for fast GDN/linear-attention execution.
 
