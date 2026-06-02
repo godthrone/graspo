@@ -1,0 +1,71 @@
+backend: native-tp
+
+model:
+  model_path: ${MODEL_PATH}
+  trust_remote_code: true
+  torch_dtype: bfloat16
+  gradient_checkpointing: true
+  chat_template_kwargs:
+    enable_thinking: false
+
+data:
+  train_path: ${DATA_PATH}
+  prompt_field: prompt
+  ground_truth_field: ground_truth
+  messages_field: messages
+  max_prompt_length: 2048
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.1
+  target_modules: ["q_proj", "v_proj"]
+  auto_target_modules: false
+  bias: none
+  task_type: CAUSAL_LM
+
+reward:
+  check_think: false
+  check_json_markdown: true
+  check_tool_call: false
+  check_list_order: false
+  marker_reward_weight: 10
+  content_reward_weight: 100
+  anti_useless_str_reward_weight: 1
+  anti_useless_str_half_reward_len: 100
+
+training:
+  output_dir: ${OUTPUT_DIR}
+  seed: 42
+  training_epoch_count: 100
+  max_steps: 10
+  rollout_group_size: 2
+  optimize_completion_batch_size: 1
+  optimize_times_per_step: 4
+  rollout_max_retry_times: 5
+  learning_rate: 5.0e-6
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  policy_ratio_clip_eps: 0.2
+  max_new_tokens: 2048
+  temperature: 1.0
+  top_p: 1.0
+  save_steps: 1
+  logging_steps: 1
+  perfect_skip_reward_threshold: 1.0
+  dataloader_num_workers: 0
+
+backend_config:
+  native_tp:
+    tensor_model_parallel_size: 2
+    pipeline_model_parallel_size: 1
+    sequence_parallel: false
+    train_micro_batch_size: 1
+    generation_micro_batch_size: 1
+    use_kv_cache_for_rollout: true
+    rollout_kv_cache_max_reserved_fraction: 0.60
+    empty_cache_after_rollout_split: true
+    empty_cache_before_train: false
+    checkpoint_format: recoverable_lora_tp
+    raw_log_enabled: true
+    readable_log_enabled: true

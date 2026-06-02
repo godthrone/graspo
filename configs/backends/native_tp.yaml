@@ -1,0 +1,16 @@
+backend: native-tp
+
+backend_config:
+  native_tp:
+    tensor_model_parallel_size: 2
+    pipeline_model_parallel_size: 1
+    sequence_parallel: false
+    train_micro_batch_size: 1
+    generation_micro_batch_size: 1
+    use_kv_cache_for_rollout: true
+    rollout_kv_cache_max_reserved_fraction: 0.60
+    empty_cache_after_rollout_split: true
+    empty_cache_before_train: false
+    checkpoint_format: safetensors_or_native_tp
+    raw_log_enabled: true
+    readable_log_enabled: true

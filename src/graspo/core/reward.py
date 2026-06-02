@@ -131,8 +131,13 @@ class GraspoReward:
         raw_score += self._useless_text_score(useless_text)
         all_right = all_right_count == len(targets)
 
+        # Match the original GRASPO implementation: the anti-useless bonus is
+        # added after normalization's max-score denominator is computed, so a
+        # clean perfect answer can be slightly above 1.0.
+        normalized_reward = raw_score / max_score if max_score else 0.0
+
         return RewardResult(
-            reward=raw_score / max_score if max_score else 0.0,
+            reward=normalized_reward,
             content_score=content_score,
             all_right=all_right,
             extracted={key: value for key, value in extracted.items()},
