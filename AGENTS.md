@@ -83,7 +83,7 @@ commands unless the user explicitly overrides them in the current conversation.
 Public repository files must not contain private hostnames, IP addresses,
 usernames, relay endpoints, API keys, or concrete internal filesystem paths.
 Keep site-specific deployment notes in ignored local files such as
-`AGENTS.local.md` or `docs/internal/`.
+`AGENTS.local.md`.
 
 Host-key safety matters. If SSH reports a changed host key, stop and get an
 explicit fingerprint confirmation before removing or bypassing known-hosts

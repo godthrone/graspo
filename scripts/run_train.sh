@@ -4,7 +4,7 @@ set -euo pipefail
 BACKEND="${BACKEND:-megatron-native}"
 PROJECT_DIR="${PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 MODEL_PATH="${MODEL_PATH:-}"
-DATA_PATH="${DATA_PATH:-${PROJECT_DIR}/data/train.jsonl}"
+DATA_PATH="${DATA_PATH:-${PROJECT_DIR}/data/sample.jsonl}"
 OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_DIR}/outputs/run}"
 CONFIG_PATH="${CONFIG_PATH:-${PROJECT_DIR}/configs/graspo.yaml}"
 TP_SIZE="${TP_SIZE:-2}"
@@ -14,7 +14,7 @@ MASTER_ADDR="${MASTER_ADDR:-127.0.0.1}"
 MASTER_PORT="${MASTER_PORT:-29500}"
 
 if [[ -z "${MODEL_PATH}" ]]; then
-  echo "ERROR: MODEL_PATH is required. Example: MODEL_PATH=/data/models/Qwen3-8B bash scripts/run_train.sh" >&2
+  echo "ERROR: MODEL_PATH is required. Example: MODEL_PATH=\$HOME/models/Qwen3-8B bash scripts/run_train.sh" >&2
   exit 1
 fi
 if [[ ! -e "${MODEL_PATH}" ]]; then
