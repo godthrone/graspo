@@ -32,6 +32,11 @@ DeepSpeed, FSDP, DDP, Accelerate, TransformerEngine, or Apex.
 Python 3.11+ is recommended.
 
 ```bash
+# Install uv if it is not already available. uv will create/use a
+# Python >=3.11 environment even when the system Python is older.
+command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
+
 git clone https://github.com/godthrone/graspo.git
 cd graspo
 uv sync --extra dev
