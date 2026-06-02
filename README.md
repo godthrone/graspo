@@ -2,23 +2,33 @@
 
 [中文说明](README.zh-CN.md)
 
-GRASPO is a native tensor-parallel trainer for structured-output language
-models. It trains Qwen-style causal language models to produce verifiable JSON
-or other field-structured answers by rolling out multiple completions for each
-prompt, scoring them with a deterministic reward function, and optimizing only
-the useful preference groups with a clipped policy-ratio objective.
+GRASPO is an improved reinforcement-learning algorithm based on GRPO, designed
+for language-model tasks whose outputs can be checked structurally, such as JSON
+generation, information extraction, classification, form parsing, and tool-call
+argument generation.
 
-The project is designed for information extraction, classification, form
-parsing, and tool-call argument generation, where a model answer can be compared
-against ground truth field by field.
+Compared with generic GRPO training, GRASPO adds rollout retry, perfect-answer
+skipping, invalid group filtering, no-preference-gap filtering, completion-level
+ReplayBuffer training, and readable reward/debug logs. These changes make the
+algorithm better suited to formatted outputs where a response can be valid,
+malformed, partially correct, or fully correct.
 
 ## Why GRASPO
 
-Structured-output tasks often have sparse or awkward supervision: a completion
-can be mostly correct, partially correct, malformed, or perfectly correct. A
-single sampled answer does not expose enough preference signal. GRASPO turns
-each prompt into a small rollout group, compares completions inside the group,
-and trains on the groups that contain useful differences.
+GRPO works well when a group of sampled completions contains useful reward
+differences. Structured-output tasks add a few extra problems:
+
+- many completions are invalid because they miss JSON fences, tool-call markers,
+  required fields, or parseable structure;
+- some prompts are already solved and should not consume optimizer budget;
+- some no-right groups have identical or near-identical rewards, so they do not
+  provide a useful preference signal;
+- long formatted answers can be truncated, making reward debugging impossible
+  without storing the actual model outputs.
+
+GRASPO keeps the useful GRPO idea of comparing completions inside a rollout
+group, then adds task-specific filtering and replay behavior so training focuses
+on groups that can teach the model something.
 
 This repository focuses on a production path that is easy to inspect and adapt:
 
@@ -41,6 +51,20 @@ For each dataset sample, GRASPO runs this loop:
 6. optimize LoRA parameters when the replay queue reaches the threshold;
 7. keep readable/raw JSONL logs so low rewards can be debugged from actual model
    outputs.
+
+The main algorithmic changes from plain GRPO are:
+
+- `retry`: retry low-quality groups before giving up, up to
+  `rollout_max_retry_times`;
+- `perfect_skip`: skip groups whose lower median reward is already perfect;
+- `invalid`: drop hard-invalid groups such as no reward variance or uniform
+  partial content;
+- `invalid_no_preference_gap`: drop no-right groups whose max reward does not
+  beat the median;
+- ReplayBuffer optimization: store completion-level experiences and optimize
+  them for `optimize_times_per_step` passes;
+- readable/raw logging: save model outputs, reward details, masks, logprobs, and
+  metadata separately for monitoring and debugging.
 
 Group decisions are evaluated in order:
 
