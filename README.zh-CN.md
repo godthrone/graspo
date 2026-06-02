@@ -23,29 +23,33 @@ TransformerEngine 或 Apex。
 
 ## 安装
 
-推荐 Python 3.11+。
+当前固定的训练依赖栈支持 Python 3.11-3.13。快速开始路径固定使用 Python 3.11，因为
+Linux 服务器上的 PyTorch 大 wheel 经常滞后于最新 Python 版本。
 
 ```bash
-# 如果机器上还没有 uv，先安装 uv。即使系统 Python 较旧，uv 也会创建/使用
-# Python >=3.11 的环境。
+# 如果机器上还没有 uv，先安装 uv。即使系统 Python 较旧，uv 也会创建/使用 Python 3.11 环境。
 command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
+uv python install 3.11
 
 git clone https://github.com/godthrone/graspo.git
 cd graspo
-uv sync --extra dev
+uv sync --extra dev --python 3.11
 ```
 
 如果不用 `uv`：
 
 ```bash
-python -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
 如果要使用 native Megatron 后端，请在同一个环境中安装兼容的开源 Megatron-LM 或 Megatron
 Core。模型权重不要放进仓库。
+
+`pyproject.toml` 中把 PyTorch 固定在 `2.5.x` 系列，因为一些长期运行的 Linux GPU 服务器仍是
+`manylinux_2_17` 基线，而更新的 PyTorch wheel 可能要求更新的平台基线。
 
 ## 快速开始
 
