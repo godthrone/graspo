@@ -26,6 +26,11 @@ TransformerEngine 或 Apex。
 推荐 Python 3.11+。
 
 ```bash
+# 如果机器上还没有 uv，先安装 uv。即使系统 Python 较旧，uv 也会创建/使用
+# Python >=3.11 的环境。
+command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
+
 git clone https://github.com/godthrone/graspo.git
 cd graspo
 uv sync --extra dev
