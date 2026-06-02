@@ -264,13 +264,6 @@ ruff check src tests
 python -m graspo --help
 ```
 
-Open-source hygiene checks:
-
-```bash
-git ls-files
-rg -n "10\\.1\\.|192\\.168|ssh -p" .
-```
-
 Only code, configs, tests, scripts, README files, sample data, license files,
 and the dependency lock file should be tracked.
 

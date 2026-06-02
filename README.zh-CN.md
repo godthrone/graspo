@@ -231,13 +231,6 @@ ruff check src tests
 python -m graspo --help
 ```
 
-开源卫生检查：
-
-```bash
-git ls-files
-rg -n "10\\.1\\.|192\\.168|ssh -p" .
-```
-
 Git 只应跟踪代码、配置、测试、脚本、README、样例数据、license 文件和依赖 lock 文件。
 
 ## 常见问题
