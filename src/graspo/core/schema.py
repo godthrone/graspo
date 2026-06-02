@@ -68,7 +68,7 @@ class DataConfig:
 
 
 @dataclass(slots=True)
-class MegatronNativeConfig:
+class NativeTPConfig:
     tensor_model_parallel_size: int = 2
     pipeline_model_parallel_size: int = 1
     sequence_parallel: bool = False
@@ -78,7 +78,7 @@ class MegatronNativeConfig:
     rollout_kv_cache_max_reserved_fraction: float = 0.60
     empty_cache_after_rollout_split: bool = True
     empty_cache_before_train: bool = False
-    checkpoint_format: str = "safetensors_or_megatron"
+    checkpoint_format: str = "safetensors_or_native_tp"
     raw_log_enabled: bool = True
     readable_log_enabled: bool = True
 
@@ -87,7 +87,7 @@ class MegatronNativeConfig:
 class GraspoConfig:
     backend: str = "auto"
     backend_config: dict[str, Any] = field(default_factory=dict)
-    megatron_native: MegatronNativeConfig = field(default_factory=MegatronNativeConfig)
+    native_tp: NativeTPConfig = field(default_factory=NativeTPConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     data: DataConfig = field(default_factory=DataConfig)
     lora: LoRAConfig = field(default_factory=LoRAConfig)
@@ -106,13 +106,13 @@ class GraspoConfig:
     def from_dict(cls, data: dict[str, Any]) -> "GraspoConfig":
         data = data or {}
         backend_config = dict(data.get("backend_config", {}) or {})
-        native_cfg = dict(backend_config.get("megatron_native", {}) or {})
-        native_cfg.update(data.get("megatron_native", {}) or {})
+        native_cfg = dict(backend_config.get("native_tp", {}) or {})
+        native_cfg.update(data.get("native_tp", {}) or {})
         training_cfg = _normalize_training_config(data.get("training", {}))
         return cls(
             backend=data.get("backend", "auto"),
             backend_config=backend_config,
-            megatron_native=MegatronNativeConfig(**native_cfg),
+            native_tp=NativeTPConfig(**native_cfg),
             model=ModelConfig(**data.get("model", {})),
             data=DataConfig(**data.get("data", {})),
             lora=LoRAConfig(**data.get("lora", {})),

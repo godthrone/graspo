@@ -1,4 +1,4 @@
-﻿backend: megatron-native
+backend: native-tp
 
 model:
   model_path: ${MODEL_PATH}
@@ -38,9 +38,9 @@ training:
   output_dir: ${OUTPUT_DIR}
   seed: 42
   training_epoch_count: 100
-  max_steps: -1
-  rollout_group_size: 8
-  optimize_completion_batch_size: 4
+  max_steps: 50
+  rollout_group_size: 2
+  optimize_completion_batch_size: 1
   optimize_times_per_step: 4
   rollout_max_retry_times: 5
   learning_rate: 5.0e-6
@@ -50,13 +50,13 @@ training:
   max_new_tokens: 2048
   temperature: 1.0
   top_p: 1.0
-  save_steps: 20
+  save_steps: 5
   logging_steps: 1
   perfect_skip_reward_threshold: 1.0
   dataloader_num_workers: 0
 
 backend_config:
-  megatron_native:
+  native_tp:
     tensor_model_parallel_size: 2
     pipeline_model_parallel_size: 1
     sequence_parallel: false
@@ -69,4 +69,3 @@ backend_config:
     checkpoint_format: recoverable_lora_tp
     raw_log_enabled: true
     readable_log_enabled: true
-

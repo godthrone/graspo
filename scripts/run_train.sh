@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BACKEND="${BACKEND:-megatron-native}"
+BACKEND="${BACKEND:-native-tp}"
 PROJECT_DIR="${PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 MODEL_PATH="${MODEL_PATH:-}"
 DATA_PATH="${DATA_PATH:-${PROJECT_DIR}/data/sample.jsonl}"
@@ -53,8 +53,8 @@ if [[ ! -f "${DATA_PATH}" ]]; then
   exit 1
 fi
 case "${BACKEND}" in
-  megatron-native|hf-reference|auto) ;;
-  *) echo "ERROR: BACKEND must be megatron-native, hf-reference, or auto" >&2; exit 1 ;;
+  native-tp|hf-reference|auto) ;;
+  *) echo "ERROR: BACKEND must be native-tp, hf-reference, or auto" >&2; exit 1 ;;
 esac
 
 mkdir -p "${OUTPUT_DIR}"
