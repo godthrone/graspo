@@ -209,4 +209,4 @@ Git 只应跟踪代码、配置、测试、脚本、README、样例数据、lice
 
 ## License
 
-GRASPO 使用 MIT License。见 [LICENSE](LICENSE) 和 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+GRASPO 使用 MIT License。见 [LICENSE](LICENSE)。

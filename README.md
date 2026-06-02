@@ -239,5 +239,4 @@ and the dependency lock file should be tracked.
 
 ## License
 
-GRASPO is released under the MIT License. See [LICENSE](LICENSE) and
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+GRASPO is released under the MIT License. See [LICENSE](LICENSE).
