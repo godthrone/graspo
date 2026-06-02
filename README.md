@@ -1,35 +1,86 @@
 # GRASPO
 
-[中文 README](README.zh-CN.md)
+[中文说明](README.zh-CN.md)
 
-GRASPO is a README-first implementation of **Group Relative Adaptive Structured
-Policy Optimization** for structured-output language-model training. It is built
-for tasks where outputs can be checked field by field, such as JSON extraction,
-classification, form parsing, and tool-call argument generation.
+GRASPO is a native tensor-parallel trainer for structured-output language
+models. It trains Qwen-style causal language models to produce verifiable JSON
+or other field-structured answers by rolling out multiple completions for each
+prompt, scoring them with a deterministic reward function, and optimizing only
+the useful preference groups with a clipped policy-ratio objective.
 
-The production route is **self-owned `native-tp`**: GRASPO keeps rollout,
-retry/filtering, ReplayBuffer, reward, advantage, policy-ratio clipped loss,
-LoRA checkpoints, and monitoring in this repository, and uses only PyTorch
-distributed process groups for tensor parallelism.
+The project is designed for information extraction, classification, form
+parsing, and tool-call argument generation, where a model answer can be compared
+against ground truth field by field.
 
-## What This Repository Provides
+## Why GRASPO
 
-- `native-tp`: the production tensor-parallel backend. No Megatron, NeMo, vLLM,
-  Ray, DeepSpeed, FSDP, DDP, Accelerate, TransformerEngine, or Apex is required.
-- `hf-reference`: a single-process Hugging Face backend for algorithm parity,
-  small-model debugging, and CPU/GPU smoke tests.
-- Frozen-base LoRA training with repository-native LoRA modules.
-- Human-readable rollout logs, raw replay JSONL logs, per-rank diagnostics, and
-  recoverable native TP LoRA checkpoints.
+Structured-output tasks often have sparse or awkward supervision: a completion
+can be mostly correct, partially correct, malformed, or perfectly correct. A
+single sampled answer does not expose enough preference signal. GRASPO turns
+each prompt into a small rollout group, compares completions inside the group,
+and trains on the groups that contain useful differences.
 
-Current model status:
+This repository focuses on a production path that is easy to inspect and adapt:
 
-- Qwen3 dense causal LM, for example Qwen3-8B: supported by the current native TP
-  adapter.
-- Qwen3.5/Qwen3.6 text-only checkpoints: config registry and text weight prefix
-  detection are implemented. Hybrid `linear_attention` layers fail closed until
-  the exact native linear-attention kernel is implemented, so the project will
-  not silently train them with an incorrect approximation.
+- the GRASPO algorithm, replay queue, reward, logging, and LoRA training are
+  kept in this codebase;
+- the multi-GPU backend is self-owned `native-tp`, implemented with PyTorch
+  distributed tensor parallelism;
+- the production path does not require Megatron, NeMo, vLLM, Ray, DeepSpeed,
+  FSDP, DDP, Accelerate, TransformerEngine, Apex, or ZeRO fallbacks.
+
+## How It Works
+
+For each dataset sample, GRASPO runs this loop:
+
+1. render one prompt;
+2. generate `rollout_group_size` completions;
+3. score every completion against `ground_truth`;
+4. classify the group as perfect, trainable, retry, or invalid;
+5. push trainable completion-level experiences into ReplayBuffer;
+6. optimize LoRA parameters when the replay queue reaches the threshold;
+7. keep readable/raw JSONL logs so low rewards can be debugged from actual model
+   outputs.
+
+Group decisions are evaluated in order:
+
+1. `perfect_skip`: lower median reward reaches the perfect threshold;
+2. `trainable_max_correct`: at least one completion is fully correct;
+3. `trainable_not_correct`: no full solution, but `reward_max > reward_median`;
+4. `retry`: retry budget remains;
+5. `invalid`: original hard invalid filters, such as no reward variance or
+   uniform partial content;
+6. `invalid_no_preference_gap`: no useful preference gap after retries.
+
+`invalid_no_preference_gap` is an information-extraction guard: a no-right group
+that is not already hard-invalid and has `reward_max == reward_median` does not
+enter ReplayBuffer, because it has no useful preference signal.
+
+## Current Status
+
+Supported today:
+
+- Qwen3 dense causal LM, such as Qwen3-8B, through the native TP adapter;
+- LoRA-only training with frozen base weights;
+- TP sharding for large dense attention and MLP matrices;
+- exact selected-token logprob for the training loss path;
+- rollout KV cache with generation micro-batch splitting;
+- readable rollout logs, raw replay logs, per-rank metrics, and recoverable LoRA
+  native TP checkpoints;
+- `hf-reference`, a single-process Hugging Face backend for parity and smoke
+  tests.
+
+Planned next:
+
+- exact native text-only hybrid `linear_attention` kernel for Qwen3.5/Qwen3.6;
+- PEFT adapter import/export helpers for offline compatibility;
+- optional vocab-parallel embedding/lm_head if replicated vocabulary weights
+  become the bottleneck.
+
+Qwen3.5/Qwen3.6 text configs are detected, and vision weights are kept out of
+scope, but checkpoints with hybrid `linear_attention` fail closed until the
+exact kernel exists. GRASPO will not silently train them with an approximate
+Qwen3 full-attention layer.
 
 ## Install
 
@@ -52,11 +103,11 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-Keep model weights and real datasets outside the repository.
+Keep model weights, real datasets, logs, and checkpoints outside the repository.
 
 ## Quick Start
 
-Run the local smoke test first:
+Run the local CPU smoke test:
 
 ```bash
 bash scripts/smoke_cpu.sh
@@ -92,7 +143,7 @@ CONFIG_PATH=configs/profiles/qwen3_8b_native_tp2_overnight.yaml \
 bash scripts/run_train.sh
 ```
 
-For a detached long run on a server, use the generic launcher:
+Run a detached long training job on a server:
 
 ```bash
 bash scripts/launch_native_tp2_remote.sh \
@@ -115,10 +166,9 @@ Training data is JSONL. Each line is one prompt:
 
 Supported fields:
 
-- `prompt`: plain text prompt.
-- `ground_truth`: expected structured output, usually a JSON object.
-- `messages`: optional chat messages. If present, the tokenizer chat template can
-  render the prompt.
+- `prompt`: plain text prompt;
+- `ground_truth`: expected structured output, usually a JSON object;
+- `messages`: optional chat messages for tokenizer chat templates;
 - extra fields are treated as metadata.
 
 Prepare data:
@@ -136,54 +186,37 @@ EVAL_OUTPUT_PATH=outputs/eval_split.jsonl \
 bash scripts/split_train_eval_jsonl.sh
 ```
 
-## Core Algorithm Settings
+## Core Configuration
 
-The production profile uses these canonical names:
+The production profile uses canonical GRASPO names:
 
-- `training.training_epoch_count=100`: full dataset training epochs.
-- `training.rollout_group_size=8`: completions sampled per prompt attempt.
+- `training.training_epoch_count=100`: full dataset training epochs;
+- `training.rollout_group_size=8`: completions sampled per prompt attempt;
 - `training.optimize_completion_batch_size=4`: completion micro-batch size for
-  each optimizer step.
+  one optimizer step;
 - `training.replay_buffer_optimize_threshold=32`: derived from
-  `optimize_completion_batch_size * rollout_group_size`.
-- `training.optimize_times_per_step=4`: repeat optimization passes over the same
-  replay completions.
+  `optimize_completion_batch_size * rollout_group_size`;
+- `training.optimize_times_per_step=4`: repeated optimization passes over the
+  same replay completions;
 - `training.rollout_max_retry_times=5`: extra rollout attempts after the first
-  attempt.
+  attempt;
 - `training.max_new_tokens=2048`: real training generation length. Use
   `max_steps` for short checks; do not lower generation length for production
-  profiles.
+  profiles;
 - `training.policy_ratio_clip_eps=0.2`: clipped policy-ratio objective epsilon.
 
-Group decisions are evaluated in order:
-
-1. `perfect_skip`: lower median reward reaches the perfect threshold.
-2. `trainable_max_correct`: at least one completion is fully correct.
-3. `trainable_not_correct`: no full solution, but `reward_max > reward_median`.
-4. `retry`: retry budget remains.
-5. `invalid`: original hard invalid filters, such as no reward variance or
-   uniform partial content.
-6. `invalid_no_preference_gap`: no useful preference gap after retries.
-
-`invalid_no_preference_gap` is an information-extraction guard: when a no-right
-group is not already hard-invalid but has `reward_max == reward_median`, it does
-not enter ReplayBuffer because there is no useful preference signal. Groups with
-max reward at or above the perfect threshold must become `trainable_max_correct`
-or `perfect_skip`, never an invalid bucket.
-
-## Outputs
+## Outputs And Monitoring
 
 Each run writes to `training.output_dir`:
 
-- `nohup.out` or stdout: compact progress JSON.
-- `train.log`: compact rank-0 training events.
-- `rollouts.readable.jsonl`: prompt, completions, rewards, and debug details for
-  humans.
+- `nohup.out` or stdout: compact progress JSON;
+- `train.log`: compact rank-0 training events;
+- `rollouts.readable.jsonl`: prompt, completions, rewards, and debug details;
 - `rollouts.raw.jsonl`: replay tensors, masks, old logprobs, advantages, and
-  reward metadata.
-- `train_batches.readable.jsonl`: one line per optimize-trigger batch.
+  reward metadata;
+- `train_batches.readable.jsonl`: one line per optimize-trigger batch;
 - `rank_metrics.rank_*.jsonl`: per-rank memory, timing, LoRA, and optimizer
-  diagnostics.
+  diagnostics;
 - `checkpoints/step_*`: recoverable LoRA native TP checkpoints and optimizer
   state.
 
@@ -193,22 +226,13 @@ Useful monitoring command:
 tail -f outputs/qwen3-8b-tp2/nohup.out
 ```
 
-## Native TP Notes
-
-The first production implementation shards the large Qwen dense matrices:
-attention `q/k/v`, attention output, MLP `gate/up/down`, and LoRA targets.
-Embedding and LM head are currently replicated. Training logprob uses exact
-selected-token logprob to avoid keeping full vocab logits alive for the loss
-path.
-
-Qwen3.5/Qwen3.6 support requires an exact native implementation of their hybrid
-linear-attention text layers. The registry already detects those checkpoints and
-ignores vision weights, but training intentionally fails closed until that kernel
-is present.
+A healthy GRASPO run is not just a process that stays alive. Watch reward,
+content score, group reward range, decision distribution, finite loss/grad,
+nonzero LoRA deltas, checkpoint writes, and GPU/NCCL health.
 
 ## Development
 
-Run the local checks:
+Run local checks:
 
 ```bash
 python -m pytest -q
