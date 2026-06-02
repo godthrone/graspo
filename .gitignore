@@ -45,6 +45,7 @@ train_grpo.jsonl
 venv/
 .idea/
 docs/internal/
+AGENTS.md
 AGENTS.local.md
 CLAUDE.local.md
 *API*.txt
