@@ -36,6 +36,7 @@ class TrainingConfig:
     seed: int = 42
     training_epoch_count: int = 100
     max_steps: int = -1
+    rollout_prompt_queue_size: int = 1
     rollout_group_size: int = 8
     optimize_completion_batch_size: int = 4
     optimize_times_per_step: int = 4
