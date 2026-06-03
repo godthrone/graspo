@@ -17,7 +17,7 @@ from graspo.backends.native_tp.runtime import (  # noqa: E402
     assert_forbidden_runtime_modules_not_imported,
     validate_native_runtime_config,
 )
-from graspo.backends.native_tp.trainer import NativeTPGraspoTrainer  # noqa: E402
+from graspo.backends.native_tp.trainer import NativeTPGraspoTrainer, _migrate_legacy_trainer_state  # noqa: E402
 from graspo.core.schema import GraspoConfig  # noqa: E402
 
 
@@ -233,6 +233,8 @@ class FakeNativeRuntime:
         self.generate_calls = 0
         self.train_batches = []
         self.saved = []
+        self.saved_trainer_states = []
+        self.loaded = []
         self.primary = primary
 
     def validate(self) -> None:
@@ -268,8 +270,13 @@ class FakeNativeRuntime:
         self.train_batches.append((experiences, kwargs))
         return {"optimized": True, "usable_experiences": len(experiences), "optimizer_steps": 1}
 
-    def save_checkpoint(self, path):
+    def save_checkpoint(self, path, *, trainer_state=None):
         self.saved.append(str(path))
+        self.saved_trainer_states.append(trainer_state)
+
+    def load_checkpoint(self, path):
+        self.loaded.append(str(path))
+        return None
 
     def close(self) -> None:
         pass
@@ -285,6 +292,9 @@ class ScriptedGroupRuntime:
         self.prompts = []
         self.train_batches = []
         self.saved = []
+        self.saved_trainer_states = []
+        self.loaded = []
+        self.resume_state = None
         self.primary = primary
 
     def validate(self) -> None:
@@ -320,8 +330,13 @@ class ScriptedGroupRuntime:
             "skipped_nonfinite": 0,
         }
 
-    def save_checkpoint(self, path):
+    def save_checkpoint(self, path, *, trainer_state=None):
         self.saved.append(str(path))
+        self.saved_trainer_states.append(trainer_state)
+
+    def load_checkpoint(self, path):
+        self.loaded.append(str(path))
+        return self.resume_state
 
     def close(self) -> None:
         pass
@@ -436,7 +451,7 @@ def test_four_trainable_groups_trigger_one_optimize_with_original_threshold(tmp_
 
     stdout_events = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")]
     train_step = next(event for event in stdout_events if event.get("event") == "train_step")
-    assert set(train_step) >= {"timestamp", "run", "epoch", "batch", "optimize", "health", "elapsed_sec"}
+    assert set(train_step) >= {"timestamp", "run", "epoch", "batch", "optimize", "timing", "health", "elapsed_sec"}
     assert "reward_window" not in train_step
     assert "rank_metrics" not in json.dumps(train_step)
     assert "prompt" not in json.dumps(train_step)
@@ -460,9 +475,24 @@ def test_four_trainable_groups_trigger_one_optimize_with_original_threshold(tmp_
     assert train_step["optimize"]["optimize_times_per_step"] == 1
     assert train_step["optimize"]["replay_buffer_trainable_completion_count"] == 32
     assert train_step["optimize"]["replay_buffer_trainable_group_count"] == 4.0
+    assert set(train_step["timing"]) >= {
+        "attempt_count",
+        "rollout_sec",
+        "reward_cpu_sec",
+        "decision_sec",
+        "old_logprob_sec",
+        "replay_append_sec",
+        "optimize_sec",
+        "checkpoint_sec",
+        "micro_batch_count",
+        "total_observed_sec",
+    }
+    assert train_step["timing"]["attempt_count"] == 4
+    assert train_step["timing"]["micro_batch_count"] >= 1
 
     batch_log = json.loads((tmp_path / "out" / "train_batches.readable.jsonl").read_text(encoding="utf-8"))
     assert batch_log["batch"]["completions"] == 32
+    assert batch_log["timing"]["attempt_count"] == 4
     assert batch_log["batch"]["decisions"]["trainable"]["max_correct"] == 4
     assert len(batch_log["attempts"]) == 4
     assert "completions" not in batch_log["attempts"][0]
@@ -471,6 +501,25 @@ def test_four_trainable_groups_trigger_one_optimize_with_original_threshold(tmp_
         (tmp_path / "out" / "rollouts.readable.jsonl").read_text(encoding="utf-8").splitlines()[0]
     )
     assert "completion" in json.dumps(rollout_log["completions"])
+    timing_events = [
+        json.loads(line)
+        for line in (tmp_path / "out" / "timing_events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert [event["phase"] for event in timing_events].count("rollout_attempt") == 4
+    assert timing_events[-1]["phase"] == "optimize"
+    assert set(timing_events[0]) >= {"timestamp", "elapsed_sec", "phase", "duration_sec", "step", "epoch"}
+    assert set(timing_events[0]["details"]) >= {
+        "rollout_sec",
+        "reward_cpu_sec",
+        "decision_sec",
+        "old_logprob_sec",
+        "replay_append_sec",
+        "completion_count",
+        "sequence_len",
+    }
+    assert "prompt" not in json.dumps(timing_events)
+    checkpoint_event = next(event for event in stdout_events if event.get("event") == "checkpoint_saved")
+    assert checkpoint_event["checkpoint_save_sec"] >= 0.0
 
 
 def test_three_trainable_groups_wait_for_more_replay_items(tmp_path, capsys):
@@ -545,6 +594,134 @@ def test_native_trainer_shuffles_prompt_order_each_epoch_on_cpu(tmp_path):
     assert runtime.prompts[:sample_count] == expected_epoch_0
     assert runtime.prompts[sample_count:] == expected_epoch_1
     assert expected_epoch_0 != expected_epoch_1
+
+
+def test_native_trainer_resumes_from_trainer_state_without_repeating_samples(tmp_path, capsys):
+    data = tmp_path / "train.jsonl"
+    sample_count = 6
+    _write_train_data(data, sample_count)
+    checkpoint_dir = tmp_path / "step_5"
+    checkpoint_dir.mkdir()
+    runtime = ScriptedGroupRuntime([_mixed_group(2)])
+    runtime.resume_state = {
+        "global_step": 5,
+        "sample_index": 2,
+        "run_stats": {
+            "total_groups": 2,
+            "perfect_skipped": 0,
+            "retries": 0,
+            "invalid": 0,
+            "invalid_no_preference_gap": 0,
+            "trainable": 2,
+            "trainable_max_correct": 2,
+            "trainable_not_correct": 0,
+            "optimized_steps": 5,
+        },
+        "epoch_stats": {
+            "epoch": 0,
+            "samples_seen": 2,
+            "attempt_groups": 2,
+            "completion_count": 4,
+            "perfect_skipped": 0,
+            "retries": 0,
+            "invalid": 0,
+            "invalid_no_preference_gap": 0,
+            "trainable": 2,
+            "trainable_max_correct": 2,
+            "trainable_not_correct": 0,
+            "reward_mean_sum": 1.0,
+            "content_mean_sum": 1.0,
+            "best_reward": 1.0,
+        },
+    }
+    config = GraspoConfig.from_dict(
+        {
+            "backend": "native-tp",
+            "data": {"train_path": str(data)},
+            "training": {
+                "output_dir": str(tmp_path / "out"),
+                "seed": 123,
+                "training_epoch_count": 1,
+                "rollout_group_size": 2,
+                "optimize_completion_batch_size": 1,
+                "optimize_times_per_step": 1,
+                "rollout_max_retry_times": 0,
+                "max_steps": 6,
+                "save_steps": 1,
+                "resume_from_checkpoint": str(checkpoint_dir),
+            },
+            "backend_config": {"native_tp": {"tensor_model_parallel_size": 2}},
+        }
+    )
+    trainer = NativeTPGraspoTrainer(config, runtime=runtime)
+
+    trainer.train()
+
+    expected_epoch = [f"p{idx}" for idx in range(sample_count)]
+    random.Random(123).shuffle(expected_epoch)
+    assert runtime.loaded == [str(checkpoint_dir)]
+    assert runtime.prompts == [expected_epoch[2]]
+    assert runtime.saved_trainer_states[-1]["global_step"] == 6
+    assert runtime.saved_trainer_states[-1]["epoch_stats"]["samples_seen"] == 3
+    stdout_events = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")]
+    resumed = next(event for event in stdout_events if event.get("event") == "checkpoint_resumed")
+    assert resumed["global_step"] == 5
+    assert resumed["resume_migrated_from_legacy_checkpoint"] is False
+
+
+def test_legacy_checkpoint_state_migrates_from_train_step_log(tmp_path):
+    checkpoint_dir = tmp_path / "step_580"
+    checkpoint_dir.mkdir()
+    event = {
+        "event": "train_step",
+        "step": 580,
+        "run": {
+            "attempt_groups": 24000,
+            "decisions": {
+                "rollout_attempts": {"total": 24000, "retry": 9800, "terminal": 14200},
+                "terminal": {
+                    "perfect_skip": 10000,
+                    "trainable": 2300,
+                    "invalid": 10,
+                    "invalid_no_preference_gap": 1890,
+                    "total": 14200,
+                },
+                "trainable": {"max_correct": 1300, "not_correct": 1000, "total": 2300},
+            },
+            "optimized_steps": 580,
+        },
+        "epoch": {
+            "epoch": 38,
+            "samples_seen": 120,
+            "samples_total": 372,
+            "attempt_groups": 180,
+            "completions": 1440,
+            "decisions": {
+                "rollout_attempts": {"total": 180, "retry": 60, "terminal": 120},
+                "terminal": {
+                    "perfect_skip": 80,
+                    "trainable": 25,
+                    "invalid": 1,
+                    "invalid_no_preference_gap": 14,
+                    "total": 120,
+                },
+                "trainable": {"max_correct": 15, "not_correct": 10, "total": 25},
+            },
+            "reward_mean": 0.75,
+            "content_mean": 0.93,
+            "best_reward": 1.0,
+        },
+    }
+    (tmp_path / "nohup.out").write_text(json.dumps(event, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    state = _migrate_legacy_trainer_state(checkpoint_dir)
+
+    assert state["global_step"] == 580
+    assert state["sample_index"] == 14200
+    assert state["epoch_stats"]["epoch"] == 38
+    assert state["epoch_stats"]["samples_seen"] == 120
+    assert state["run_stats"]["invalid"] == 10
+    assert state["run_stats"]["invalid_no_preference_gap"] == 1890
 
 
 def test_train_batch_log_counts_group8_retry_once(tmp_path, capsys):
