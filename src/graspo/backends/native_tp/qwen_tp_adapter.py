@@ -98,7 +98,7 @@ class QwenNativeTPAdapter:
                 "tp_rank": self.tp_rank,
                 "tp_size": self.tp_size,
                 "trainable_parameters_local": sum(param.numel() for param in trainable),
-                "group_batch_semantics": "one prompt, rollout_group_size completions per TP forward batch",
+                "group_batch_semantics": "rollout_prompt_queue_size prompts, each with rollout_group_size completions per TP forward batch when budget permits",
                 "activation_checkpointing_enabled": bool(self.model.gradient_checkpointing),
                 "lora_target_modules": sorted(self.model.lora_targets),
             }
@@ -115,69 +115,197 @@ class QwenNativeTPAdapter:
         top_p: float,
         chat_template_kwargs: dict[str, Any] | None,
     ) -> NativeGeneration:
+        return self.generate_groups(
+            prompts=[prompt],
+            rollout_group_size=rollout_group_size,
+            max_new_tokens=max_new_tokens,
+            max_prompt_length=max_prompt_length,
+            temperature=temperature,
+            top_p=top_p,
+            chat_template_kwargs=chat_template_kwargs,
+        )[0]
+
+    def generate_groups(
+        self,
+        *,
+        prompts: list[str],
+        rollout_group_size: int,
+        max_new_tokens: int,
+        max_prompt_length: int,
+        temperature: float,
+        top_p: float,
+        chat_template_kwargs: dict[str, Any] | None,
+    ) -> list[NativeGeneration]:
         self._require_ready()
         assert self.model is not None
         assert self.tokenizer is not None
+        if not prompts:
+            return []
         self.model.eval()
         tokenize_started_at = time.monotonic()
-        prompt_text = self._format_prompt(prompt, chat_template_kwargs)
+        prompt_texts = [self._format_prompt(prompt, chat_template_kwargs) for prompt in prompts]
         encoded = self.tokenizer(
-            [prompt_text],
-            return_tensors="pt",
+            prompt_texts,
             truncation=True,
             max_length=max_prompt_length,
             padding=False,
         )
         tokenize_sec = time.monotonic() - tokenize_started_at
         rollout_started_at = time.monotonic()
-        prompt_input_ids = encoded["input_ids"].to(self.device)
-        prompt_len = int(prompt_input_ids.shape[1])
         eos_token_id = int(self.tokenizer.eos_token_id)
         pad_token_id = int(self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else eos_token_id)
+        prompt_input_ids, prompt_lens = _left_pad_token_rows(
+            encoded["input_ids"],
+            pad_token_id=pad_token_id,
+            device=self.device,
+        )
+        prompt_len = int(prompt_input_ids.shape[1])
         use_kv_cache = bool(self.config.native_tp.use_kv_cache_for_rollout)
-        generation_micro_batch_size = self._shared_generation_micro_batch_size(
+        requested_prompt_queue_size = len(prompts)
+        prompt_chunk_size = self._shared_rollout_prompt_chunk_size(
             prompt_len=prompt_len,
+            requested_prompt_count=requested_prompt_queue_size,
             rollout_group_size=rollout_group_size,
             max_new_tokens=max_new_tokens,
             use_kv_cache=use_kv_cache,
         )
-        sequence_chunks: list[torch.Tensor] = []
-        chunk_timings: list[dict[str, float | int]] = []
+        prompt_chunk_size = max(1, min(prompt_chunk_size, requested_prompt_queue_size))
+        all_generations: list[NativeGeneration] = []
+        all_chunk_timings: list[dict[str, float | int]] = []
+        all_sequence_chunks: list[torch.Tensor] = []
+        for prompt_start in range(0, requested_prompt_queue_size, prompt_chunk_size):
+            prompt_stop = min(prompt_start + prompt_chunk_size, requested_prompt_queue_size)
+            prompt_chunk = prompt_input_ids[prompt_start:prompt_stop]
+            chunk_prompt_count = int(prompt_chunk.shape[0])
+            flat_prompt_input_ids = prompt_chunk.repeat_interleave(rollout_group_size, dim=0)
+            chunk_generation_micro_batch_size = self._shared_generation_micro_batch_size(
+                prompt_len=prompt_len,
+                rollout_group_size=chunk_prompt_count * rollout_group_size,
+                max_new_tokens=max_new_tokens,
+                use_kv_cache=use_kv_cache,
+            )
+            sequence_chunks: list[torch.Tensor] = []
+            chunk_timings: list[dict[str, float | int]] = []
 
-        with torch.no_grad():
-            for start in range(0, rollout_group_size, generation_micro_batch_size):
-                current_batch_size = min(generation_micro_batch_size, rollout_group_size - start)
-                sequences = prompt_input_ids.repeat(current_batch_size, 1)
-                finished = torch.zeros(current_batch_size, dtype=torch.bool, device=self.device)
-                if use_kv_cache:
-                    sequences, chunk_timing = self._generate_group_with_kv_cache(
-                        sequences=sequences,
-                        finished=finished,
-                        eos_token_id=eos_token_id,
-                        pad_token_id=pad_token_id,
-                        max_new_tokens=max_new_tokens,
-                        temperature=temperature,
-                        top_p=top_p,
-                    )
-                else:
-                    sequences, chunk_timing = self._generate_group_full_forward(
-                        sequences=sequences,
-                        finished=finished,
-                        eos_token_id=eos_token_id,
-                        pad_token_id=pad_token_id,
-                        max_new_tokens=max_new_tokens,
-                        temperature=temperature,
-                        top_p=top_p,
-                    )
-                sequence_chunks.append(sequences)
-                chunk_timings.append(chunk_timing)
+            with torch.no_grad():
+                for start in range(0, flat_prompt_input_ids.shape[0], chunk_generation_micro_batch_size):
+                    current_batch = flat_prompt_input_ids[start : start + chunk_generation_micro_batch_size]
+                    sequences = current_batch.clone()
+                    finished = torch.zeros(sequences.shape[0], dtype=torch.bool, device=self.device)
+                    if use_kv_cache:
+                        sequences, chunk_timing = self._generate_group_with_kv_cache(
+                            sequences=sequences,
+                            finished=finished,
+                            eos_token_id=eos_token_id,
+                            pad_token_id=pad_token_id,
+                            max_new_tokens=max_new_tokens,
+                            temperature=temperature,
+                            top_p=top_p,
+                        )
+                    else:
+                        sequences, chunk_timing = self._generate_group_full_forward(
+                            sequences=sequences,
+                            finished=finished,
+                            eos_token_id=eos_token_id,
+                            pad_token_id=pad_token_id,
+                            max_new_tokens=max_new_tokens,
+                            temperature=temperature,
+                            top_p=top_p,
+                        )
+                    sequence_chunks.append(sequences)
+                    chunk_timings.append(chunk_timing)
 
-        sequences = pad_sequence(
-            [row for chunk in sequence_chunks for row in chunk],
-            batch_first=True,
-            padding_value=pad_token_id,
+            flat_sequences = pad_sequence(
+                [row for chunk in sequence_chunks for row in chunk],
+                batch_first=True,
+                padding_value=pad_token_id,
+            )
+            all_sequence_chunks.append(flat_sequences)
+            all_chunk_timings.extend(chunk_timings)
+            for local_prompt_idx in range(chunk_prompt_count):
+                row_start = local_prompt_idx * rollout_group_size
+                row_stop = row_start + rollout_group_size
+                prompt_sequences = flat_sequences[row_start:row_stop]
+                all_generations.append(
+                    self._generation_from_sequences(
+                        sequences=prompt_sequences,
+                        prompt_len=prompt_len,
+                        prompt_lens=[int(prompt_lens[prompt_start + local_prompt_idx])],
+                        pad_token_id=pad_token_id,
+                        rollout_group_size=rollout_group_size,
+                        requested_prompt_queue_size=requested_prompt_queue_size,
+                        effective_prompt_queue_size=prompt_chunk_size,
+                        use_kv_cache=use_kv_cache,
+                        generation_micro_batch_size=chunk_generation_micro_batch_size,
+                        split_count=len(sequence_chunks),
+                        tokenize_sec=tokenize_sec / max(requested_prompt_queue_size, 1),
+                        chunk_timings=chunk_timings,
+                        timing_divisor=chunk_prompt_count,
+                        rollout_started_at=rollout_started_at,
+                    )
+                )
+
+        rollout_summary = {
+            "rollout_group_size": rollout_group_size,
+            "rollout_prompt_queue_size": requested_prompt_queue_size,
+            "rollout_prompt_queue_effective_size": prompt_chunk_size,
+            "rollout_prompt_queue_fallback": prompt_chunk_size < requested_prompt_queue_size,
+            "prompt_len": prompt_len,
+            "prompt_lens": prompt_lens,
+            "sequence_len": max((int(chunk.shape[1]) for chunk in all_sequence_chunks), default=prompt_len),
+            "generated_tokens_max": max((int(chunk.shape[1] - prompt_len) for chunk in all_sequence_chunks), default=0),
+            "rollout_use_kv_cache": use_kv_cache,
+            "rollout_generation_micro_batch_size": max(
+                (int(gen.metadata.get("rollout_generation_micro_batch_size", 1)) for gen in all_generations),
+                default=1,
+            ),
+            "rollout_generation_split_count": sum(
+                int(gen.metadata.get("rollout_generation_split_count", 1)) for gen in all_generations
+            ),
+            **_rollout_timing_summary(tokenize_sec, all_chunk_timings),
+            "rollout_elapsed_sec": round(time.monotonic() - rollout_started_at, 6),
+        }
+        self._emit_rank_memory_event("rollout_after", rollout_summary)
+        empty_cache_after_split = (
+            self.device.type == "cuda"
+            and bool(self.config.native_tp.empty_cache_after_rollout_split)
+            and (
+                prompt_chunk_size < requested_prompt_queue_size
+                or any(int(gen.metadata.get("rollout_generation_split_count", 1)) > 1 for gen in all_generations)
+            )
         )
+        if empty_cache_after_split:
+            torch.cuda.empty_cache()
+            self._emit_rank_memory_event(
+                "rollout_after_empty_cache",
+                {**rollout_summary, "rollout_empty_cache_after_split": True},
+            )
+            for generation in all_generations:
+                generation.metadata = {
+                    **(generation.metadata or {}),
+                    "rollout_empty_cache_after_split": True,
+                }
+        return all_generations
 
+    def _generation_from_sequences(
+        self,
+        *,
+        sequences: torch.Tensor,
+        prompt_len: int,
+        prompt_lens: list[int],
+        pad_token_id: int,
+        rollout_group_size: int,
+        requested_prompt_queue_size: int,
+        effective_prompt_queue_size: int,
+        use_kv_cache: bool,
+        generation_micro_batch_size: int,
+        split_count: int,
+        tokenize_sec: float,
+        chunk_timings: list[dict[str, float | int]],
+        timing_divisor: int,
+        rollout_started_at: float,
+    ) -> NativeGeneration:
+        assert self.tokenizer is not None
         attention_mask = sequences.ne(pad_token_id)
         action_mask = torch.zeros(
             (sequences.shape[0], max(sequences.shape[1] - 1, 0)),
@@ -191,42 +319,6 @@ class QwenNativeTPAdapter:
             sequences[:, prompt_len:],
             skip_special_tokens=True,
         )
-        self._emit_rank_memory_event(
-            "rollout_after",
-            {
-                "rollout_group_size": rollout_group_size,
-                "prompt_len": prompt_len,
-                "sequence_len": int(sequences.shape[1]),
-                "generated_tokens_max": max(int(sequences.shape[1] - prompt_len), 0),
-                "rollout_use_kv_cache": use_kv_cache,
-                "rollout_generation_micro_batch_size": generation_micro_batch_size,
-                "rollout_generation_split_count": len(sequence_chunks),
-                **_rollout_timing_summary(tokenize_sec, chunk_timings),
-                "rollout_elapsed_sec": round(time.monotonic() - rollout_started_at, 6),
-            },
-        )
-        empty_cache_after_split = (
-            self.device.type == "cuda"
-            and len(sequence_chunks) > 1
-            and bool(self.config.native_tp.empty_cache_after_rollout_split)
-        )
-        if empty_cache_after_split:
-            torch.cuda.empty_cache()
-            self._emit_rank_memory_event(
-                "rollout_after_empty_cache",
-                {
-                    "rollout_group_size": rollout_group_size,
-                    "prompt_len": prompt_len,
-                    "sequence_len": int(sequences.shape[1]),
-                    "generated_tokens_max": max(int(sequences.shape[1] - prompt_len), 0),
-                    "rollout_use_kv_cache": use_kv_cache,
-                    "rollout_generation_micro_batch_size": generation_micro_batch_size,
-                    "rollout_generation_split_count": len(sequence_chunks),
-                    "rollout_empty_cache_after_split": True,
-                    **_rollout_timing_summary(tokenize_sec, chunk_timings),
-                    "rollout_elapsed_sec": round(time.monotonic() - rollout_started_at, 6),
-                },
-            )
         return NativeGeneration(
             sequences=sequences,
             attention_mask=attention_mask,
@@ -236,13 +328,17 @@ class QwenNativeTPAdapter:
             metadata={
                 "adapter": "qwen_native_tp",
                 "rollout_group_size": rollout_group_size,
+                "rollout_prompt_queue_size": requested_prompt_queue_size,
+                "rollout_prompt_queue_effective_size": effective_prompt_queue_size,
+                "rollout_prompt_queue_fallback": effective_prompt_queue_size < requested_prompt_queue_size,
                 "rollout_use_kv_cache": use_kv_cache,
                 "rollout_generation_micro_batch_size": generation_micro_batch_size,
-                "rollout_generation_split_count": len(sequence_chunks),
-                "rollout_empty_cache_after_split": empty_cache_after_split,
-                **_rollout_timing_summary(tokenize_sec, chunk_timings),
+                "rollout_generation_split_count": split_count,
+                "rollout_empty_cache_after_split": False,
+                **_rollout_timing_summary(tokenize_sec, _scale_rollout_timings(chunk_timings, timing_divisor)),
                 "rollout_elapsed_sec": round(time.monotonic() - rollout_started_at, 6),
                 "prefill_len": prompt_len,
+                "prompt_lens": prompt_lens,
                 "generated_tokens_max": max(int(sequences.shape[1] - prompt_len), 0),
                 "tp_rank": self.tp_rank,
                 "tp_size": self.tp_size,
@@ -486,6 +582,52 @@ class QwenNativeTPAdapter:
         if shared_size is None:
             raise RuntimeError("Failed to broadcast shared rollout generation micro-batch size")
         return max(1, min(int(shared_size), int(rollout_group_size)))
+
+    def _shared_rollout_prompt_chunk_size(
+        self,
+        *,
+        prompt_len: int,
+        requested_prompt_count: int,
+        rollout_group_size: int,
+        max_new_tokens: int,
+        use_kv_cache: bool,
+    ) -> int:
+        local_size = self._resolve_rollout_prompt_chunk_size(
+            prompt_len=prompt_len,
+            requested_prompt_count=requested_prompt_count,
+            rollout_group_size=rollout_group_size,
+            max_new_tokens=max_new_tokens,
+            use_kv_cache=use_kv_cache,
+        )
+        if not (dist.is_available() and dist.is_initialized()):
+            return local_size
+        payload: list[int | None] = [local_size if self.rank == 0 else None]
+        dist.broadcast_object_list(payload, src=0)
+        shared_size = payload[0]
+        if shared_size is None:
+            raise RuntimeError("Failed to broadcast shared rollout prompt chunk size")
+        return max(1, min(int(shared_size), int(requested_prompt_count)))
+
+    def _resolve_rollout_prompt_chunk_size(
+        self,
+        *,
+        prompt_len: int,
+        requested_prompt_count: int,
+        rollout_group_size: int,
+        max_new_tokens: int,
+        use_kv_cache: bool,
+    ) -> int:
+        requested = max(1, int(requested_prompt_count))
+        if not use_kv_cache or self.device.type != "cuda" or self.model is None:
+            return requested
+        candidate = requested
+        while candidate > 1 and not self._kv_cache_batch_fits_budget(
+            batch_size=candidate * int(rollout_group_size),
+            prompt_len=prompt_len,
+            max_new_tokens=max_new_tokens,
+        ):
+            candidate = max(1, candidate // 2)
+        return max(1, min(requested, candidate))
 
     def _resolve_generation_micro_batch_size(
         self,
@@ -1451,6 +1593,21 @@ def _rollout_timing_summary(tokenize_sec: float, chunk_timings: list[dict[str, f
     }
 
 
+def _scale_rollout_timings(
+    chunk_timings: list[dict[str, float | int]],
+    divisor: int,
+) -> list[dict[str, float | int]]:
+    divisor = max(1, int(divisor))
+    return [
+        {
+            "prefill_sec": float(item.get("prefill_sec") or 0.0) / divisor,
+            "decode_sec": float(item.get("decode_sec") or 0.0) / divisor,
+            "decode_tokens": int(item.get("decode_tokens") or 0),
+        }
+        for item in chunk_timings
+    ]
+
+
 def _cuda_memory_snapshot(device: torch.device) -> dict[str, float | int]:
     if device.type != "cuda" or not torch.cuda.is_available():
         return {
@@ -1493,6 +1650,25 @@ def _jsonable(value: Any) -> Any:
     if hasattr(value, "tolist"):
         return value.tolist()
     return value
+
+
+def _left_pad_token_rows(
+    rows: Iterable[Iterable[int]],
+    *,
+    pad_token_id: int,
+    device: torch.device,
+) -> tuple[torch.Tensor, list[int]]:
+    values = [list(row) for row in rows]
+    if not values:
+        return torch.empty((0, 0), dtype=torch.long, device=device), []
+    lengths = [len(row) for row in values]
+    width = max(max(lengths), 1)
+    output = torch.full((len(values), width), int(pad_token_id), dtype=torch.long, device=device)
+    for idx, row in enumerate(values):
+        if not row:
+            continue
+        output[idx, width - len(row) :] = torch.tensor(row, dtype=torch.long, device=device)
+    return output, lengths
 
 
 def _position_ids(attention_mask: torch.Tensor) -> torch.Tensor:

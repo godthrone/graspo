@@ -4,7 +4,7 @@ import json
 import random
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -54,6 +54,27 @@ class NativeEpochStats:
     reward_mean_sum: float = 0.0
     content_mean_sum: float = 0.0
     best_reward: float = 0.0
+
+
+@dataclass(slots=True)
+class _QueuedSample:
+    sample: Sample
+    retry_count: int = 0
+    attempts: list[Any] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class _AttemptRecord:
+    sample: Sample
+    generation: NativeGeneration
+    rewards: list[float]
+    content_scores: list[float]
+    all_right: list[bool]
+    reward_details: list[dict[str, Any]]
+    decision: Any
+    retry_count: int
+    readable: dict[str, Any]
+    timing: dict[str, Any]
 
 
 class NativeTPGraspoTrainer:
@@ -128,6 +149,7 @@ class NativeTPGraspoTrainer:
                 "resume": self.resume_info,
                 "config": {
                     "rollout_group_size": self.config.training.rollout_group_size,
+                    "rollout_prompt_queue_size": self.config.training.rollout_prompt_queue_size,
                     "optimize_completion_batch_size": self.config.training.optimize_completion_batch_size,
                     "optimize_times_per_step": self.config.training.optimize_times_per_step,
                     "replay_buffer_optimize_threshold": self.config.training.replay_buffer_optimize_threshold,
@@ -160,12 +182,13 @@ class NativeTPGraspoTrainer:
                     if epoch == start_epoch
                     else 0
                 )
-                for sample in epoch_samples[resume_sample_offset:]:
-                    self._sample_one(sample, epoch=epoch)
-                    if self._maybe_optimize(epoch=epoch):
-                        if 0 < self.config.training.max_steps <= self.global_step:
-                            self._save_checkpoint(output_dir / "final", epoch=epoch)
-                            return
+                queue_size = max(1, int(self.config.training.rollout_prompt_queue_size))
+                pending_samples = epoch_samples[resume_sample_offset:]
+                for start in range(0, len(pending_samples), queue_size):
+                    sample_queue = pending_samples[start : start + queue_size]
+                    if self._sample_queue(sample_queue, epoch=epoch):
+                        self._save_checkpoint(output_dir / "final", epoch=epoch)
+                        return
                 self._print_json(
                     {
                         "timestamp": _timestamp(),
@@ -181,22 +204,45 @@ class NativeTPGraspoTrainer:
         finally:
             self.runtime.close()
 
-    def _sample_one(self, sample: Sample, *, epoch: int) -> None:
-        for retry_count in range(self.config.training.rollout_max_retry_times + 1):
+    def _sample_one(self, sample: Sample, *, epoch: int) -> bool:
+        return self._sample_queue([sample], epoch=epoch)
+
+    def _sample_queue(self, samples: list[Sample], *, epoch: int) -> bool:
+        active = [_QueuedSample(sample=sample) for sample in samples]
+        finished: list[_QueuedSample] = []
+        max_attempts = self.config.training.rollout_max_retry_times + 1
+        while active:
+            attempt_records = self._rollout_queue_attempt(active, epoch=epoch)
+            next_active: list[_QueuedSample] = []
+            for state, record in zip(active, attempt_records, strict=True):
+                if record.decision.should_retry:
+                    state.attempts.append(record)
+                    state.retry_count += 1
+                    if state.retry_count >= max_attempts:
+                        raise RuntimeError("GRASPO retry state exceeded configured max attempts")
+                    next_active.append(state)
+                else:
+                    state.attempts.append(record)
+                    finished.append(state)
+            active = next_active
+
+        stop_requested = False
+        for state in finished:
+            if self._finalize_sample(state, epoch=epoch):
+                stop_requested = True
+        return stop_requested
+
+    def _rollout_queue_attempt(self, active: list[_QueuedSample], *, epoch: int) -> list[_AttemptRecord]:
+        prompts = [state.sample.prompt for state in active]
+        rollout_started_at = time.monotonic()
+        generations = self._generate_groups(prompts)
+        rollout_sec = time.monotonic() - rollout_started_at
+        rollout_sec_per_prompt = rollout_sec / max(len(generations), 1)
+        records: list[_AttemptRecord] = []
+        for state, generation in zip(active, generations, strict=True):
             attempt_started_at = time.monotonic()
-            rollout_started_at = time.monotonic()
-            generation = self.runtime.generate_group(
-                prompt=sample.prompt,
-                rollout_group_size=self.config.training.rollout_group_size,
-                max_new_tokens=self.config.training.max_new_tokens,
-                max_prompt_length=self.config.data.max_prompt_length,
-                temperature=self.config.training.temperature,
-                top_p=self.config.training.top_p,
-                chat_template_kwargs=self.config.model.chat_template_kwargs,
-            )
-            rollout_sec = time.monotonic() - rollout_started_at
             reward_started_at = time.monotonic()
-            results = [self.reward.score(text, sample.ground_truth) for text in generation.completions]
+            results = [self.reward.score(text, state.sample.ground_truth) for text in generation.completions]
             reward_cpu_sec = time.monotonic() - reward_started_at
             rewards = [float(result.reward) for result in results]
             content_scores = [float(result.content_score) for result in results]
@@ -206,7 +252,7 @@ class NativeTPGraspoTrainer:
             decision = classify_group(
                 rewards,
                 content_scores,
-                retry_count=retry_count,
+                retry_count=state.retry_count,
                 rollout_max_retry_times=self.config.training.rollout_max_retry_times,
                 perfect_skip_reward_threshold=self.config.training.perfect_skip_reward_threshold,
             )
@@ -216,7 +262,7 @@ class NativeTPGraspoTrainer:
                 self.stats.retries += 1
 
             readable = self._group_payload(
-                sample=sample,
+                sample=state.sample,
                 epoch=epoch,
                 generation=generation,
                 rewards=rewards,
@@ -224,22 +270,19 @@ class NativeTPGraspoTrainer:
                 all_right=all_right,
                 reward_details=reward_details,
                 decision=decision,
-                retry_count=retry_count,
+                retry_count=state.retry_count,
             )
             if self._is_primary():
                 self.logger.write_readable(readable)
-            self.recent_groups.append(_monitor_group(readable))
-            self.pending_batch_attempts.append(readable)
-            self._record_epoch_attempt(readable)
             timing = {
-                "rollout_sec": rollout_sec,
+                "rollout_sec": rollout_sec_per_prompt,
                 "reward_cpu_sec": reward_cpu_sec,
                 "decision_sec": decision_sec,
                 "old_logprob_sec": 0.0,
                 "replay_append_sec": 0.0,
                 "attempt_total_sec": time.monotonic() - attempt_started_at,
                 "decision": decision.decision.value,
-                "retry_count": retry_count,
+                "retry_count": state.retry_count,
                 "reward_max_median_gap": decision.reward_max_median_gap,
                 "completion_count": len(generation.completions),
                 "sequence_len": int(getattr(generation.sequences, "shape", [0, 0])[1]),
@@ -247,59 +290,127 @@ class NativeTPGraspoTrainer:
                 **_scalar_generation_timing(generation.metadata or {}),
             }
 
-            if decision.should_retry:
-                self._record_attempt_timing(epoch=epoch, retry_count=retry_count, timing=timing)
-                continue
-            if not decision.should_train:
-                if decision.decision.value == "perfect_skip":
-                    self.stats.perfect_skipped += 1
-                elif decision.decision.value == "invalid_no_preference_gap":
-                    self.stats.invalid_no_preference_gap += 1
-                else:
-                    self.stats.invalid += 1
-                if self._is_primary():
-                    self.logger.write_raw({**readable, "raw": self._raw_generation(generation)})
-                self._record_attempt_timing(epoch=epoch, retry_count=retry_count, timing=timing)
-                break
-            if not has_reward_variance(rewards):
-                self.stats.invalid += 1
-                if self._is_primary():
-                    self.logger.write_raw({**readable, "raw": self._raw_generation(generation)})
-                timing["decision"] = "invalid"
-                self._record_attempt_timing(epoch=epoch, retry_count=retry_count, timing=timing)
-                break
-
-            old_logprob_started_at = time.monotonic()
-            old_log_probs = self.runtime.sequence_log_probs(
-                generation.sequences,
-                generation.attention_mask,
-            )
-            timing["old_logprob_sec"] = time.monotonic() - old_logprob_started_at
-            replay_started_at = time.monotonic()
-            advantages = _expand_advantages_like(rewards, old_log_probs)
-            self._append_experiences(generation, rewards, old_log_probs, advantages)
-            timing["replay_append_sec"] = time.monotonic() - replay_started_at
-            timing["attempt_total_sec"] = time.monotonic() - attempt_started_at
-            self.stats.trainable += 1
-            if decision.decision.value == "trainable_max_correct":
-                self.stats.trainable_max_correct += 1
-            else:
-                self.stats.trainable_not_correct += 1
-            if self._is_primary():
-                self.logger.write_raw(
-                    {
-                        **readable,
-                        "raw": {
-                            **self._raw_generation(generation),
-                            "old_log_probs": old_log_probs,
-                            "advantages": advantages,
-                        },
-                    }
+            records.append(
+                _AttemptRecord(
+                    sample=state.sample,
+                    generation=generation,
+                    rewards=rewards,
+                    content_scores=content_scores,
+                    all_right=all_right,
+                    reward_details=reward_details,
+                    decision=decision,
+                    retry_count=state.retry_count,
+                    readable=readable,
+                    timing=timing,
                 )
-            self._record_attempt_timing(epoch=epoch, retry_count=retry_count, timing=timing)
-            break
+            )
+        return records
+
+    def _generate_groups(self, prompts: list[str]) -> list[NativeGeneration]:
+        generate_groups = getattr(self.runtime, "generate_groups", None)
+        if callable(generate_groups):
+            generations = generate_groups(
+                prompts=prompts,
+                rollout_group_size=self.config.training.rollout_group_size,
+                max_new_tokens=self.config.training.max_new_tokens,
+                max_prompt_length=self.config.data.max_prompt_length,
+                temperature=self.config.training.temperature,
+                top_p=self.config.training.top_p,
+                chat_template_kwargs=self.config.model.chat_template_kwargs,
+            )
+            if len(generations) != len(prompts):
+                raise RuntimeError(
+                    f"native-tp generate_groups returned {len(generations)} groups for {len(prompts)} prompts"
+                )
+            return generations
+        return [
+            self.runtime.generate_group(
+                prompt=prompt,
+                rollout_group_size=self.config.training.rollout_group_size,
+                max_new_tokens=self.config.training.max_new_tokens,
+                max_prompt_length=self.config.data.max_prompt_length,
+                temperature=self.config.training.temperature,
+                top_p=self.config.training.top_p,
+                chat_template_kwargs=self.config.model.chat_template_kwargs,
+            )
+            for prompt in prompts
+        ]
+
+    def _finalize_sample(self, state: _QueuedSample, *, epoch: int) -> bool:
+        if not state.attempts:
+            raise RuntimeError("Cannot finalize queued sample without rollout attempts")
+        record = state.attempts[-1]
+        generation = record.generation
+        rewards = record.rewards
+        decision = record.decision
+        readable = record.readable
+        timing = record.timing
+        if not decision.should_train:
+            if decision.decision.value == "perfect_skip":
+                self.stats.perfect_skipped += 1
+            elif decision.decision.value == "invalid_no_preference_gap":
+                self.stats.invalid_no_preference_gap += 1
+            else:
+                self.stats.invalid += 1
+            if self._is_primary():
+                self.logger.write_raw({**readable, "raw": self._raw_generation(generation)})
+            self._commit_sample_attempts(state, epoch=epoch)
+            return self._finish_sample_and_maybe_optimize(epoch=epoch)
+        if not has_reward_variance(rewards):
+            self.stats.invalid += 1
+            if self._is_primary():
+                self.logger.write_raw({**readable, "raw": self._raw_generation(generation)})
+            timing["decision"] = "invalid"
+            self._commit_sample_attempts(state, epoch=epoch)
+            return self._finish_sample_and_maybe_optimize(epoch=epoch)
+
+        old_logprob_started_at = time.monotonic()
+        old_log_probs = self.runtime.sequence_log_probs(
+            generation.sequences,
+            generation.attention_mask,
+        )
+        timing["old_logprob_sec"] = time.monotonic() - old_logprob_started_at
+        replay_started_at = time.monotonic()
+        advantages = _expand_advantages_like(rewards, old_log_probs)
+        self._append_experiences(generation, rewards, old_log_probs, advantages)
+        timing["replay_append_sec"] = time.monotonic() - replay_started_at
+        timing["attempt_total_sec"] = (
+            float(timing.get("rollout_sec") or 0.0)
+            + float(timing.get("reward_cpu_sec") or 0.0)
+            + float(timing.get("decision_sec") or 0.0)
+            + float(timing.get("old_logprob_sec") or 0.0)
+            + float(timing.get("replay_append_sec") or 0.0)
+        )
+        self.stats.trainable += 1
+        if decision.decision.value == "trainable_max_correct":
+            self.stats.trainable_max_correct += 1
+        else:
+            self.stats.trainable_not_correct += 1
+        if self._is_primary():
+            self.logger.write_raw(
+                {
+                    **readable,
+                    "raw": {
+                        **self._raw_generation(generation),
+                        "old_log_probs": old_log_probs,
+                        "advantages": advantages,
+                    },
+                }
+            )
+        self._commit_sample_attempts(state, epoch=epoch)
+        return self._finish_sample_and_maybe_optimize(epoch=epoch)
+
+    def _commit_sample_attempts(self, state: _QueuedSample, *, epoch: int) -> None:
+        for record in state.attempts:
+            self.recent_groups.append(_monitor_group(record.readable))
+            self.pending_batch_attempts.append(record.readable)
+            self._record_epoch_attempt(record.readable)
+            self._record_attempt_timing(epoch=epoch, retry_count=record.retry_count, timing=record.timing)
+
+    def _finish_sample_and_maybe_optimize(self, *, epoch: int) -> bool:
         self.current_epoch_stats.samples_seen += 1
         self.sample_index += 1
+        return self._maybe_optimize(epoch=epoch) and 0 < self.config.training.max_steps <= self.global_step
 
     def _maybe_optimize(self, *, epoch: int, force: bool = False) -> bool:
         threshold = self.config.training.replay_buffer_optimize_threshold
@@ -458,6 +569,7 @@ class NativeTPGraspoTrainer:
             "config_snapshot": {
                 "backend": self.backend_name,
                 "rollout_group_size": self.config.training.rollout_group_size,
+                "rollout_prompt_queue_size": self.config.training.rollout_prompt_queue_size,
                 "optimize_completion_batch_size": self.config.training.optimize_completion_batch_size,
                 "optimize_times_per_step": self.config.training.optimize_times_per_step,
                 "rollout_max_retry_times": self.config.training.rollout_max_retry_times,
@@ -1140,8 +1252,21 @@ def _compact_timing_summary(
     replay_append_sec = _sum_timing(attempt_timings, "replay_append_sec")
     total = rollout_sec + reward_cpu_sec + decision_sec + old_logprob_sec + replay_append_sec
     total += float(optimize_sec) + float(checkpoint_sec)
+    requested_queue_size = max(
+        [int(item.get("rollout_prompt_queue_size") or 1) for item in attempt_timings],
+        default=1,
+    )
+    effective_queue_size = max(
+        [int(item.get("rollout_prompt_queue_effective_size") or 1) for item in attempt_timings],
+        default=1,
+    )
     return {
         "attempt_count": len(attempt_timings),
+        "rollout_prompt_queue_size": requested_queue_size,
+        "rollout_prompt_queue_effective_size": effective_queue_size,
+        "rollout_prompt_queue_fallback_count": sum(
+            bool(item.get("rollout_prompt_queue_fallback")) for item in attempt_timings
+        ),
         "rollout_sec": round(rollout_sec, 6),
         "reward_cpu_sec": round(reward_cpu_sec, 6),
         "decision_sec": round(decision_sec, 6),
@@ -1155,6 +1280,8 @@ def _compact_timing_summary(
         "backward_sec": round(float(metrics.get("backward_sec") or 0.0), 6),
         "optimizer_step_sec": round(float(metrics.get("optimizer_step_sec") or 0.0), 6),
         "micro_batch_count": int(metrics.get("micro_batch_count") or metrics.get("optimizer_steps") or 0),
+        "decode_tokens": int(_sum_timing(attempt_timings, "decode_tokens")),
+        "rollout_generation_split_count": int(_sum_timing(attempt_timings, "rollout_generation_split_count")),
         "total_observed_sec": round(total, 6),
     }
 
@@ -1186,6 +1313,9 @@ def _scalar_generation_timing(metadata: dict[str, Any]) -> dict[str, Any]:
         "rollout_empty_cache_after_split",
         "prefill_len",
         "generated_tokens_max",
+        "rollout_prompt_queue_size",
+        "rollout_prompt_queue_effective_size",
+        "rollout_prompt_queue_fallback",
     }
     return {key: value for key, value in metadata.items() if key in keys}
 
