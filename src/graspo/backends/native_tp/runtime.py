@@ -65,6 +65,18 @@ class NativeTPRuntimeProtocol(Protocol):
         chat_template_kwargs: dict[str, Any] | None,
     ) -> NativeGeneration: ...
 
+    def generate_groups(
+        self,
+        *,
+        prompts: list[str],
+        rollout_group_size: int,
+        max_new_tokens: int,
+        max_prompt_length: int,
+        temperature: float,
+        top_p: float,
+        chat_template_kwargs: dict[str, Any] | None,
+    ) -> list[NativeGeneration]: ...
+
     def sequence_log_probs(self, sequences: Any, attention_mask: Any) -> Any: ...
 
     def train_batch(
@@ -124,6 +136,14 @@ class NativeTPRuntime:
 
     def generate_group(self, **kwargs: Any) -> NativeGeneration:
         return self._require_adapter().generate_group(**kwargs)
+
+    def generate_groups(self, **kwargs: Any) -> list[NativeGeneration]:
+        adapter = self._require_adapter()
+        generate_groups = getattr(adapter, "generate_groups", None)
+        if callable(generate_groups):
+            return generate_groups(**kwargs)
+        prompts = list(kwargs.pop("prompts"))
+        return [adapter.generate_group(prompt=prompt, **kwargs) for prompt in prompts]
 
     def sequence_log_probs(self, sequences: Any, attention_mask: Any) -> Any:
         return self._require_adapter().sequence_log_probs(sequences, attention_mask)
@@ -190,6 +210,8 @@ def validate_native_runtime_config(
         raise ValueError("native-tp v1 requires train_micro_batch_size=1")
     if int(native.generation_micro_batch_size) != 1:
         raise ValueError("native-tp v1 requires generation_micro_batch_size=1")
+    if int(config.training.rollout_prompt_queue_size) < 1:
+        raise ValueError("training.rollout_prompt_queue_size must be >= 1")
 
     flattened = _flatten_keys(config.backend_config)
     forbidden = sorted(

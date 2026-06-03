@@ -25,6 +25,7 @@ def test_training_defaults_are_long_run_safe():
     config = GraspoConfig()
 
     assert config.training.training_epoch_count == 100
+    assert config.training.rollout_prompt_queue_size == 1
     assert config.training.rollout_group_size == 8
     assert config.training.optimize_completion_batch_size == 4
     assert config.training.optimize_times_per_step == 4
@@ -345,6 +346,42 @@ class ScriptedGroupRuntime:
         return self.primary
 
 
+class ScriptedQueuedRuntime(ScriptedGroupRuntime):
+    def __init__(self, groups_by_prompt: dict[str, list[list[str]]], *, primary: bool = True) -> None:
+        super().__init__([], primary=primary)
+        self.groups_by_prompt = groups_by_prompt
+        self.generate_group_batches: list[list[str]] = []
+        self.prompt_attempt_counts = {prompt: 0 for prompt in groups_by_prompt}
+
+    def generate_groups(self, **kwargs):
+        prompts = list(kwargs["prompts"])
+        self.generate_group_batches.append(prompts)
+        group_size = int(kwargs["rollout_group_size"])
+        generations = []
+        for prompt in prompts:
+            attempt_idx = self.prompt_attempt_counts[prompt]
+            self.prompt_attempt_counts[prompt] = attempt_idx + 1
+            completions = self.groups_by_prompt[prompt][attempt_idx]
+            assert len(completions) == group_size
+            generations.append(
+                NativeGeneration(
+                    sequences=torch.arange(group_size * 3).view(group_size, 3),
+                    attention_mask=torch.ones((group_size, 3), dtype=torch.bool),
+                    action_mask=torch.tensor([[0, 1] for _ in range(group_size)], dtype=torch.bool),
+                    completions=completions,
+                    prompt_len=1,
+                    metadata={
+                        "rollout_prompt_queue_size": len(prompts),
+                        "rollout_prompt_queue_effective_size": len(prompts),
+                        "rollout_prompt_queue_fallback": False,
+                        "rollout_generation_split_count": 1,
+                        "decode_tokens": 2,
+                    },
+                )
+            )
+        return generations
+
+
 def _ok_completion() -> str:
     return '```json\n{"x": "ok"}\n```'
 
@@ -380,6 +417,7 @@ def _native_test_config(
     data: Path,
     *,
     rollout_group_size: int = 8,
+    rollout_prompt_queue_size: int = 1,
     optimize_completion_batch_size: int = 4,
     optimize_times_per_step: int = 1,
     rollout_max_retry_times: int = 1,
@@ -393,6 +431,7 @@ def _native_test_config(
                 "output_dir": str(tmp_path / "out"),
                 "training_epoch_count": 1,
                 "rollout_group_size": rollout_group_size,
+                "rollout_prompt_queue_size": rollout_prompt_queue_size,
                 "optimize_completion_batch_size": optimize_completion_batch_size,
                 "optimize_times_per_step": optimize_times_per_step,
                 "rollout_max_retry_times": rollout_max_retry_times,
@@ -454,7 +493,7 @@ def test_four_trainable_groups_trigger_one_optimize_with_original_threshold(tmp_
     assert set(train_step) >= {"timestamp", "run", "epoch", "batch", "optimize", "timing", "health", "elapsed_sec"}
     assert "reward_window" not in train_step
     assert "rank_metrics" not in json.dumps(train_step)
-    assert "prompt" not in json.dumps(train_step)
+    assert '"prompt":' not in json.dumps(train_step)
     reward_batch = train_step["batch"]
     assert reward_batch["attempt_groups"] == 4
     assert reward_batch["completions"] == 32
@@ -488,6 +527,8 @@ def test_four_trainable_groups_trigger_one_optimize_with_original_threshold(tmp_
         "total_observed_sec",
     }
     assert train_step["timing"]["attempt_count"] == 4
+    assert train_step["timing"]["rollout_prompt_queue_size"] == 1
+    assert train_step["timing"]["rollout_prompt_queue_effective_size"] == 1
     assert train_step["timing"]["micro_batch_count"] >= 1
 
     batch_log = json.loads((tmp_path / "out" / "train_batches.readable.jsonl").read_text(encoding="utf-8"))
@@ -517,9 +558,71 @@ def test_four_trainable_groups_trigger_one_optimize_with_original_threshold(tmp_
         "completion_count",
         "sequence_len",
     }
-    assert "prompt" not in json.dumps(timing_events)
+    assert '"prompt":' not in json.dumps(timing_events)
     checkpoint_event = next(event for event in stdout_events if event.get("event") == "checkpoint_saved")
     assert checkpoint_event["checkpoint_save_sec"] >= 0.0
+
+
+def test_rollout_prompt_queue_size_batches_multiple_prompts_without_changing_threshold(tmp_path, capsys):
+    data = tmp_path / "train.jsonl"
+    _write_train_data(data, 4)
+    runtime = ScriptedQueuedRuntime(
+        {
+            "p0": [_mixed_group(8)],
+            "p1": [_mixed_group(8)],
+            "p2": [_mixed_group(8)],
+            "p3": [_mixed_group(8)],
+        }
+    )
+    config = _native_test_config(tmp_path, data, rollout_prompt_queue_size=2)
+    trainer = NativeTPGraspoTrainer(config, runtime=runtime)
+
+    trainer.train()
+
+    assert [len(batch) for batch in runtime.generate_group_batches] == [2, 2]
+    assert sorted(prompt for batch in runtime.generate_group_batches for prompt in batch) == ["p0", "p1", "p2", "p3"]
+    assert len(runtime.train_batches) == 1
+    experiences, _ = runtime.train_batches[0]
+    assert len(experiences) == 32
+    stdout_events = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")]
+    train_step = next(event for event in stdout_events if event.get("event") == "train_step")
+    assert train_step["timing"]["rollout_prompt_queue_size"] == 2
+    assert train_step["timing"]["rollout_prompt_queue_effective_size"] == 2
+    assert train_step["batch"]["decisions"]["trainable"]["total"] == 4
+    assert train_step["batch"]["attempt_groups"] == 4
+
+
+def test_rollout_prompt_queue_retries_only_unfinished_prompt(tmp_path):
+    data = tmp_path / "train.jsonl"
+    _write_train_data(data, 2)
+    runtime = ScriptedQueuedRuntime(
+        {
+            "p0": [_bad_group(2), _mixed_group(2)],
+            "p1": [_mixed_group(2)],
+        }
+    )
+    config = _native_test_config(
+        tmp_path,
+        data,
+        rollout_group_size=2,
+        rollout_prompt_queue_size=2,
+        optimize_completion_batch_size=2,
+        rollout_max_retry_times=1,
+    )
+    trainer = NativeTPGraspoTrainer(config, runtime=runtime)
+
+    trainer.train()
+
+    assert len(runtime.generate_group_batches) == 2
+    assert sorted(runtime.generate_group_batches[0]) == ["p0", "p1"]
+    assert runtime.generate_group_batches[1] == ["p0"]
+    batch_log = json.loads((tmp_path / "out" / "train_batches.readable.jsonl").read_text(encoding="utf-8"))
+    assert batch_log["batch"]["decisions"]["rollout_attempts"] == {
+        "total": 3,
+        "retry": 1,
+        "terminal": 2,
+    }
+    assert batch_log["batch"]["decisions"]["trainable"]["total"] == 2
 
 
 def test_three_trainable_groups_wait_for_more_replay_items(tmp_path, capsys):
