@@ -51,6 +51,7 @@ class TrainingConfig:
     logging_steps: int = 1
     perfect_skip_reward_threshold: float = 1.0
     dataloader_num_workers: int = 0
+    resume_from_checkpoint: str | None = None
     legacy_config_aliases: list[str] = field(default_factory=list)
 
     @property
@@ -81,6 +82,7 @@ class NativeTPConfig:
     checkpoint_format: str = "safetensors_or_native_tp"
     raw_log_enabled: bool = True
     readable_log_enabled: bool = True
+    synchronize_cuda_timing: bool = False
 
 
 @dataclass(slots=True)
