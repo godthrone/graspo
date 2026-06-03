@@ -88,6 +88,7 @@ class QwenNativeTPAdapter:
                 "lora_target_modules": sorted(self.model.lora_targets),
                 "rollout_kv_cache_max_reserved_fraction": self.config.native_tp.rollout_kv_cache_max_reserved_fraction,
                 "empty_cache_after_rollout_split": self.config.native_tp.empty_cache_after_rollout_split,
+                "synchronize_cuda_timing": self.config.native_tp.synchronize_cuda_timing,
             },
         )
         self._print_rank0(
@@ -118,8 +119,8 @@ class QwenNativeTPAdapter:
         assert self.model is not None
         assert self.tokenizer is not None
         self.model.eval()
+        tokenize_started_at = time.monotonic()
         prompt_text = self._format_prompt(prompt, chat_template_kwargs)
-        rollout_started_at = time.monotonic()
         encoded = self.tokenizer(
             [prompt_text],
             return_tensors="pt",
@@ -127,6 +128,8 @@ class QwenNativeTPAdapter:
             max_length=max_prompt_length,
             padding=False,
         )
+        tokenize_sec = time.monotonic() - tokenize_started_at
+        rollout_started_at = time.monotonic()
         prompt_input_ids = encoded["input_ids"].to(self.device)
         prompt_len = int(prompt_input_ids.shape[1])
         eos_token_id = int(self.tokenizer.eos_token_id)
@@ -139,6 +142,7 @@ class QwenNativeTPAdapter:
             use_kv_cache=use_kv_cache,
         )
         sequence_chunks: list[torch.Tensor] = []
+        chunk_timings: list[dict[str, float | int]] = []
 
         with torch.no_grad():
             for start in range(0, rollout_group_size, generation_micro_batch_size):
@@ -146,7 +150,7 @@ class QwenNativeTPAdapter:
                 sequences = prompt_input_ids.repeat(current_batch_size, 1)
                 finished = torch.zeros(current_batch_size, dtype=torch.bool, device=self.device)
                 if use_kv_cache:
-                    sequences = self._generate_group_with_kv_cache(
+                    sequences, chunk_timing = self._generate_group_with_kv_cache(
                         sequences=sequences,
                         finished=finished,
                         eos_token_id=eos_token_id,
@@ -156,7 +160,7 @@ class QwenNativeTPAdapter:
                         top_p=top_p,
                     )
                 else:
-                    sequences = self._generate_group_full_forward(
+                    sequences, chunk_timing = self._generate_group_full_forward(
                         sequences=sequences,
                         finished=finished,
                         eos_token_id=eos_token_id,
@@ -166,6 +170,7 @@ class QwenNativeTPAdapter:
                         top_p=top_p,
                     )
                 sequence_chunks.append(sequences)
+                chunk_timings.append(chunk_timing)
 
         sequences = pad_sequence(
             [row for chunk in sequence_chunks for row in chunk],
@@ -196,6 +201,7 @@ class QwenNativeTPAdapter:
                 "rollout_use_kv_cache": use_kv_cache,
                 "rollout_generation_micro_batch_size": generation_micro_batch_size,
                 "rollout_generation_split_count": len(sequence_chunks),
+                **_rollout_timing_summary(tokenize_sec, chunk_timings),
                 "rollout_elapsed_sec": round(time.monotonic() - rollout_started_at, 6),
             },
         )
@@ -217,6 +223,7 @@ class QwenNativeTPAdapter:
                     "rollout_generation_micro_batch_size": generation_micro_batch_size,
                     "rollout_generation_split_count": len(sequence_chunks),
                     "rollout_empty_cache_after_split": True,
+                    **_rollout_timing_summary(tokenize_sec, chunk_timings),
                     "rollout_elapsed_sec": round(time.monotonic() - rollout_started_at, 6),
                 },
             )
@@ -233,6 +240,7 @@ class QwenNativeTPAdapter:
                 "rollout_generation_micro_batch_size": generation_micro_batch_size,
                 "rollout_generation_split_count": len(sequence_chunks),
                 "rollout_empty_cache_after_split": empty_cache_after_split,
+                **_rollout_timing_summary(tokenize_sec, chunk_timings),
                 "rollout_elapsed_sec": round(time.monotonic() - rollout_started_at, 6),
                 "prefill_len": prompt_len,
                 "generated_tokens_max": max(int(sequences.shape[1] - prompt_len), 0),
@@ -251,18 +259,27 @@ class QwenNativeTPAdapter:
         max_new_tokens: int,
         temperature: float,
         top_p: float,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, dict[str, float | int]]:
         assert self.model is not None
+        decode_started_at = time.monotonic()
+        decode_tokens = 0
+        self._sync_timing()
         for _ in range(max_new_tokens):
             attention_mask = sequences.ne(pad_token_id)
             logits = self.model(sequences, attention_mask=attention_mask).float()[:, -1, :]
             next_token = _next_token_from_logits(logits, temperature=temperature, top_p=top_p)
             next_token = _broadcast_and_pad_finished(next_token, finished, pad_token_id)
             sequences = torch.cat([sequences, next_token.unsqueeze(1)], dim=1)
+            decode_tokens += 1
             finished |= next_token.eq(eos_token_id)
             if bool(finished.all()):
                 break
-        return sequences
+        self._sync_timing()
+        return sequences, {
+            "prefill_sec": 0.0,
+            "decode_sec": time.monotonic() - decode_started_at,
+            "decode_tokens": decode_tokens,
+        }
 
     def _generate_group_with_kv_cache(
         self,
@@ -274,14 +291,21 @@ class QwenNativeTPAdapter:
         max_new_tokens: int,
         temperature: float,
         top_p: float,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, dict[str, float | int]]:
         assert self.model is not None
         attention_mask = sequences.ne(pad_token_id)
+        self._sync_timing()
+        prefill_started_at = time.monotonic()
         logits, past_key_values = self.model(sequences, attention_mask=attention_mask, use_cache=True)
+        self._sync_timing()
+        prefill_sec = time.monotonic() - prefill_started_at
+        decode_started_at = time.monotonic()
+        decode_tokens = 0
         for _ in range(max_new_tokens):
             next_token = _next_token_from_logits(logits.float()[:, -1, :], temperature=temperature, top_p=top_p)
             next_token = _broadcast_and_pad_finished(next_token, finished, pad_token_id)
             sequences = torch.cat([sequences, next_token.unsqueeze(1)], dim=1)
+            decode_tokens += 1
             finished |= next_token.eq(eos_token_id)
             if bool(finished.all()):
                 break
@@ -292,7 +316,12 @@ class QwenNativeTPAdapter:
                 past_key_values=past_key_values,
                 use_cache=True,
             )
-        return sequences
+        self._sync_timing()
+        return sequences, {
+            "prefill_sec": prefill_sec,
+            "decode_sec": time.monotonic() - decode_started_at,
+            "decode_tokens": decode_tokens,
+        }
 
     def sequence_log_probs(self, sequences: Any, attention_mask: Any) -> torch.Tensor:
         self._require_ready()
@@ -335,6 +364,12 @@ class QwenNativeTPAdapter:
         nonzero_grad_count = 0
         lora_norm_before = self.model.lora_parameter_norm()
         batch_size = int(self.config.training.optimize_completion_batch_size)
+        train_batch_started_at = time.monotonic()
+        round_secs: list[float] = []
+        micro_batch_forward_sec = 0.0
+        backward_sec = 0.0
+        optimizer_step_sec = 0.0
+        micro_batch_count = 0
         self._emit_rank_memory_event(
             "train_batch_start",
             {
@@ -345,12 +380,17 @@ class QwenNativeTPAdapter:
             },
         )
         for optimize_round in range(optimize_times_per_step):
+            round_started_at = time.monotonic()
             indices = self._shared_training_indices(len(experiences), optimize_round=optimize_round)
             for start in range(0, len(indices) - batch_size + 1, batch_size):
                 batch_indices = indices[start : start + batch_size]
                 batch = collate_experiences([experiences[idx] for idx in batch_indices], self.device)
                 self.optimizer.zero_grad(set_to_none=True)
+                self._sync_timing()
+                forward_started_at = time.monotonic()
                 log_probs = self.model.sequence_log_probs(batch.sequences, batch.attention_mask)
+                self._sync_timing()
+                micro_batch_forward_sec += time.monotonic() - forward_started_at
                 loss = self.loss_fn(
                     log_probs,
                     batch.old_log_probs,
@@ -360,16 +400,26 @@ class QwenNativeTPAdapter:
                 if not torch.isfinite(loss):
                     skipped_nonfinite += 1
                     continue
+                self._sync_timing()
+                backward_started_at = time.monotonic()
                 loss.backward()
+                self._sync_timing()
+                backward_sec += time.monotonic() - backward_started_at
                 grad_norm = torch.nn.utils.clip_grad_norm_(
                     [param for param in self.model.parameters() if param.requires_grad],
                     max_grad_norm,
                 )
+                self._sync_timing()
+                optimizer_started_at = time.monotonic()
                 self.optimizer.step()
+                self._sync_timing()
+                optimizer_step_sec += time.monotonic() - optimizer_started_at
                 optimizer_steps += 1
+                micro_batch_count += 1
                 loss_sum += float(loss.detach().cpu())
                 grad_norm_sum += float(grad_norm.detach().float().cpu())
                 nonzero_grad_count += self.model.nonzero_lora_grad_count()
+            round_secs.append(time.monotonic() - round_started_at)
         self._train_batch_call_index += 1
 
         lora_norm_after = self.model.lora_parameter_norm()
@@ -385,6 +435,14 @@ class QwenNativeTPAdapter:
             "lora_norm_after": lora_norm_after,
             "lora_norm_delta": lora_norm_after - lora_norm_before,
             "activation_checkpointing_enabled": bool(self.model.gradient_checkpointing),
+            "train_batch_total_sec": time.monotonic() - train_batch_started_at,
+            "optimize_round_sec": round_secs,
+            "optimize_round_sec_sum": sum(round_secs),
+            "micro_batch_forward_sec": micro_batch_forward_sec,
+            "backward_sec": backward_sec,
+            "optimizer_step_sec": optimizer_step_sec,
+            "micro_batch_count": micro_batch_count,
+            "synchronize_cuda_timing": bool(self.config.native_tp.synchronize_cuda_timing),
         }
         metrics = self._aggregate_rank_metrics(metrics)
         self._emit_rank_memory_event("train_batch_after", {"metrics": metrics})
@@ -463,7 +521,12 @@ class QwenNativeTPAdapter:
             sequence_len=prompt_len + max_new_tokens,
         ) <= budget
 
-    def save_checkpoint(self, path: str | Path) -> None:
+    def save_checkpoint(
+        self,
+        path: str | Path,
+        *,
+        trainer_state: dict[str, Any] | None = None,
+    ) -> None:
         self._require_ready()
         assert self.model is not None
         assert self.optimizer is not None
@@ -478,6 +541,10 @@ class QwenNativeTPAdapter:
             "optimizer_state_dict": self.optimizer.state_dict(),
             "torch_rng_state": torch.get_rng_state(),
             "cuda_rng_state": torch.cuda.get_rng_state(self.device) if self.device.type == "cuda" else None,
+            "adapter_state": {
+                "train_batch_call_index": self._train_batch_call_index,
+            },
+            "trainer_state": trainer_state,
             "config": asdict(self.config),
         }
         torch.save(payload, output / f"rank_{self.rank:05d}_tp_{self.tp_rank:02d}.pt")
@@ -490,12 +557,58 @@ class QwenNativeTPAdapter:
                         "tp_size": self.tp_size,
                         "world_size": self.world_size,
                         "checkpoint_type": "recoverable_lora_training_state",
+                        "has_trainer_state": trainer_state is not None,
                     },
                     ensure_ascii=False,
                     indent=2,
                 ),
                 encoding="utf-8",
             )
+
+    def load_checkpoint(self, path: str | Path) -> dict[str, Any] | None:
+        self._require_ready()
+        assert self.model is not None
+        assert self.optimizer is not None
+        checkpoint_dir = Path(path)
+        rank_path = checkpoint_dir / f"rank_{self.rank:05d}_tp_{self.tp_rank:02d}.pt"
+        if not rank_path.exists():
+            candidates = sorted(checkpoint_dir.glob(f"rank_*_tp_{self.tp_rank:02d}.pt"))
+            if len(candidates) == 1:
+                rank_path = candidates[0]
+            else:
+                raise FileNotFoundError(f"Missing native TP checkpoint shard for rank={self.rank} tp_rank={self.tp_rank}: {rank_path}")
+        try:
+            payload = torch.load(rank_path, map_location=self.device, weights_only=False)
+        except TypeError:
+            payload = torch.load(rank_path, map_location=self.device)
+        if int(payload.get("tp_size", self.tp_size)) != self.tp_size:
+            raise ValueError(
+                f"Checkpoint TP size {payload.get('tp_size')} does not match runtime TP size {self.tp_size}"
+            )
+        missing, unexpected = self.model.load_state_dict(payload["lora_state_dict"], strict=False)
+        unexpected_lora = [name for name in unexpected if "lora_" in name]
+        if unexpected_lora:
+            raise RuntimeError(f"Unexpected LoRA tensors in checkpoint: {unexpected_lora}")
+        missing_lora = [name for name in missing if "lora_" in name]
+        if missing_lora:
+            raise RuntimeError(f"Missing LoRA tensors while loading checkpoint: {missing_lora}")
+        self.optimizer.load_state_dict(payload["optimizer_state_dict"])
+        torch.set_rng_state(payload["torch_rng_state"].detach().cpu())
+        cuda_rng_state = payload.get("cuda_rng_state")
+        if cuda_rng_state is not None and self.device.type == "cuda":
+            torch.cuda.set_rng_state(cuda_rng_state.to("cpu"), self.device)
+        adapter_state = payload.get("adapter_state") or {}
+        self._train_batch_call_index = int(adapter_state.get("train_batch_call_index") or 0)
+        self._emit_rank_memory_event(
+            "checkpoint_loaded",
+            {
+                "checkpoint_dir": str(checkpoint_dir),
+                "checkpoint_rank_file": str(rank_path),
+                "has_trainer_state": payload.get("trainer_state") is not None,
+                "train_batch_call_index": self._train_batch_call_index,
+            },
+        )
+        return payload.get("trainer_state")
 
     def close(self) -> None:
         destroy_native_tp()
@@ -527,6 +640,14 @@ class QwenNativeTPAdapter:
     def _print_rank0(self, payload: dict[str, Any]) -> None:
         if self.rank == 0:
             print(json.dumps(payload, ensure_ascii=False), flush=True)
+
+    def _sync_timing(self) -> None:
+        if (
+            bool(self.config.native_tp.synchronize_cuda_timing)
+            and self.device.type == "cuda"
+            and torch.cuda.is_available()
+        ):
+            torch.cuda.synchronize(self.device)
 
     def is_primary(self) -> bool:
         return self.rank == 0
@@ -1319,6 +1440,15 @@ def _mean_present(values: Iterable[Any]) -> float | None:
     if not present:
         return None
     return sum(present) / len(present)
+
+
+def _rollout_timing_summary(tokenize_sec: float, chunk_timings: list[dict[str, float | int]]) -> dict[str, Any]:
+    return {
+        "tokenize_sec": round(float(tokenize_sec), 6),
+        "prefill_sec": round(sum(float(item.get("prefill_sec") or 0.0) for item in chunk_timings), 6),
+        "decode_sec": round(sum(float(item.get("decode_sec") or 0.0) for item in chunk_timings), 6),
+        "decode_tokens": sum(int(item.get("decode_tokens") or 0) for item in chunk_timings),
+    }
 
 
 def _cuda_memory_snapshot(device: torch.device) -> dict[str, float | int]:

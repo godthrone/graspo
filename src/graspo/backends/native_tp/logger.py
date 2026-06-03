@@ -20,6 +20,7 @@ class NativeRolloutLogger:
         self.readable_path = self.output_dir / "rollouts.readable.jsonl"
         self.raw_path = self.output_dir / "rollouts.raw.jsonl"
         self.train_batches_readable_path = self.output_dir / "train_batches.readable.jsonl"
+        self.timing_path = self.output_dir / "timing_events.jsonl"
 
     def write_readable(self, payload: dict[str, Any]) -> None:
         if self.readable_enabled:
@@ -32,6 +33,10 @@ class NativeRolloutLogger:
     def write_train_batch_readable(self, payload: dict[str, Any]) -> None:
         if self.readable_enabled:
             self._append(self.train_batches_readable_path, train_batch_readable_payload(payload))
+
+    def write_timing_event(self, payload: dict[str, Any]) -> None:
+        if self.readable_enabled:
+            self._append(self.timing_path, timing_event_payload(payload))
 
     @staticmethod
     def _append(path: Path, payload: dict[str, Any]) -> None:
@@ -99,6 +104,7 @@ def train_batch_readable_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "step": payload.get("step"),
         "batch": payload.get("batch") or payload.get("reward_batch"),
         "optimize": payload.get("optimize"),
+        "timing": payload.get("timing"),
         "health": payload.get("health"),
         "attempts": [train_batch_attempt_summary(attempt) for attempt in payload.get("attempts", [])],
     }
@@ -126,6 +132,25 @@ def train_batch_attempt_summary(payload: dict[str, Any]) -> dict[str, Any]:
     if payload.get("invalid_reason") is not None:
         compact["invalid_reason"] = payload.get("invalid_reason")
     return compact
+
+
+def timing_event_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    compact = {
+        "event": "timing_event",
+        "timestamp": payload.get("timestamp"),
+        "elapsed_sec": payload.get("elapsed_sec"),
+        "phase": payload.get("phase"),
+        "duration_sec": payload.get("duration_sec"),
+        "step": payload.get("step"),
+        "epoch": payload.get("epoch"),
+        "sample_index": payload.get("sample_index"),
+        "attempt_index": payload.get("attempt_index"),
+        "retry_count": payload.get("retry_count"),
+        "rank": payload.get("rank"),
+        "tp_rank": payload.get("tp_rank"),
+        "details": payload.get("details", {}),
+    }
+    return {key: value for key, value in compact.items() if value is not None}
 
 
 def summarize_think(text: str) -> dict[str, Any]:

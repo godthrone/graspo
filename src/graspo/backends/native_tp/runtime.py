@@ -76,7 +76,14 @@ class NativeTPRuntimeProtocol(Protocol):
         max_grad_norm: float,
     ) -> dict[str, Any]: ...
 
-    def save_checkpoint(self, path: str | Path) -> None: ...
+    def save_checkpoint(
+        self,
+        path: str | Path,
+        *,
+        trainer_state: dict[str, Any] | None = None,
+    ) -> None: ...
+
+    def load_checkpoint(self, path: str | Path) -> dict[str, Any] | None: ...
 
     def close(self) -> None: ...
 
@@ -136,8 +143,19 @@ class NativeTPRuntime:
             max_grad_norm=max_grad_norm,
         )
 
-    def save_checkpoint(self, path: str | Path) -> None:
-        self._require_adapter().save_checkpoint(path)
+    def save_checkpoint(
+        self,
+        path: str | Path,
+        *,
+        trainer_state: dict[str, Any] | None = None,
+    ) -> None:
+        self._require_adapter().save_checkpoint(path, trainer_state=trainer_state)
+
+    def load_checkpoint(self, path: str | Path) -> dict[str, Any] | None:
+        adapter = self._require_adapter()
+        if not hasattr(adapter, "load_checkpoint"):
+            raise RuntimeError("Native TP adapter does not support checkpoint resume")
+        return adapter.load_checkpoint(path)
 
     def close(self) -> None:
         if self._adapter is not None and hasattr(self._adapter, "close"):
