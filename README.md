@@ -215,6 +215,9 @@ bash scripts/split_train_eval_jsonl.sh
 The production profile uses canonical GRASPO names:
 
 - `training.training_epoch_count=100`: full dataset training epochs;
+- `training.rollout_prompt_queue_batch_size=1`: how many prompts are scheduled
+  together for rollout. Each prompt still owns its own
+  `rollout_group_size` completions and independent retry/decision path;
 - `training.rollout_group_size=8`: completions sampled per prompt attempt;
 - `training.optimize_completion_batch_size=4`: completion micro-batch size for
   one optimizer step;
@@ -228,6 +231,31 @@ The production profile uses canonical GRASPO names:
   `max_steps` for short checks; do not lower generation length for production
   profiles;
 - `training.policy_ratio_clip_eps=0.2`: clipped policy-ratio objective epsilon.
+
+## Rollout Performance
+
+Rollout is usually the largest wall-clock cost. Native TP can batch multiple
+prompt groups during rollout while keeping GRASPO semantics unchanged: retry,
+perfect skip, invalid filtering, ReplayBuffer insertion, advantage, and loss are
+still computed per prompt group.
+
+The tuning knobs are:
+
+```yaml
+training:
+  rollout_prompt_queue_batch_size: 2
+
+backend_config:
+  native_tp:
+    rollout_kv_cache_max_reserved_fraction: 0.90
+```
+
+For Qwen3-8B on two 80 GB GPUs, `rollout_prompt_queue_batch_size=2` with KV
+fraction `0.90` is the recommended accelerated profile. It improves rollout GPU
+utilization while keeping peak memory far below the 80 GB edge in long runs.
+`rollout_prompt_queue_batch_size=3` may pass short profiling but can hit
+allocator and long-sequence peaks in real long training, so treat it as a
+profiling boundary rather than a stable default.
 
 ## Outputs And Monitoring
 
