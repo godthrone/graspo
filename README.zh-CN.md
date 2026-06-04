@@ -77,7 +77,7 @@ Qwen3.5/Qwen3.6 的 text config 已能识别，vision weights 不进入训练范
 
 ## 安装
 
-推荐 Python 3.11+。
+推荐并固定使用 Python 3.11。
 
 ```bash
 command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -85,18 +85,23 @@ export PATH="$HOME/.local/bin:$PATH"
 
 git clone https://github.com/godthrone/graspo.git
 cd graspo
-uv sync --extra dev
+uv sync --extra dev --python 3.11
 ```
 
 不用 `uv` 也可以：
 
 ```bash
-python -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
 模型权重、真实数据、日志和 checkpoint 请放在仓库外。
+只有需要 Excel 转换时才安装可选数据依赖：
+
+```bash
+uv sync --extra dev --extra data --python 3.11
+```
 
 ## 快速开始
 

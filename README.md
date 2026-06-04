@@ -110,7 +110,9 @@ long training yet.
 
 ## Install
 
-Python 3.11+ is recommended.
+Python 3.11 is recommended and pinned for the default environment. Some older
+Linux servers still use glibc 2.17, while newer PyTorch wheels may require a
+newer manylinux baseline; the pinned range keeps the README path portable.
 
 ```bash
 command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -118,18 +120,23 @@ export PATH="$HOME/.local/bin:$PATH"
 
 git clone https://github.com/godthrone/graspo.git
 cd graspo
-uv sync --extra dev
+uv sync --extra dev --python 3.11
 ```
 
 Without `uv`:
 
 ```bash
-python -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
 Keep model weights, real datasets, logs, and checkpoints outside the repository.
+Install the optional data extra only if you need Excel conversion:
+
+```bash
+uv sync --extra dev --extra data --python 3.11
+```
 
 ## Quick Start
 
