@@ -20,7 +20,9 @@ else
 fi
 
 if "${PYTHON_BIN}" -c "import pytest" >/dev/null 2>&1; then
-  PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src "${PYTHON_BIN}" -B -m pytest tests
+  SMOKE_TMP_DIR="${SMOKE_TMP_DIR:-${ROOT_DIR}/.pytest_smoke_tmp}"
+  mkdir -p "${SMOKE_TMP_DIR}"
+  PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src "${PYTHON_BIN}" -B -m pytest tests --basetemp "${SMOKE_TMP_DIR}/basetemp"
 else
   echo "pytest is not installed; running lightweight stdlib smoke checks."
   PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src "${PYTHON_BIN}" -B -c 'from graspo.core.reward import GraspoReward, RewardConfig; r=GraspoReward(RewardConfig(check_json_markdown=False)).score("{\"a\":1}", {"a":1}); assert r.all_right'

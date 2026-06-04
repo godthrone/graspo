@@ -36,6 +36,7 @@ class TrainingConfig:
     seed: int = 42
     training_epoch_count: int = 100
     max_steps: int = -1
+    rollout_prompt_queue_batch_size: int = 1
     rollout_group_size: int = 8
     optimize_completion_batch_size: int = 4
     optimize_times_per_step: int = 4
@@ -51,6 +52,7 @@ class TrainingConfig:
     logging_steps: int = 1
     perfect_skip_reward_threshold: float = 1.0
     dataloader_num_workers: int = 0
+    resume_from_checkpoint: str | None = None
     legacy_config_aliases: list[str] = field(default_factory=list)
 
     @property
@@ -81,6 +83,7 @@ class NativeTPConfig:
     checkpoint_format: str = "safetensors_or_native_tp"
     raw_log_enabled: bool = True
     readable_log_enabled: bool = True
+    synchronize_cuda_timing: bool = False
 
 
 @dataclass(slots=True)
@@ -141,6 +144,7 @@ def _normalize_training_config(raw: dict[str, Any] | None) -> dict[str, Any]:
 
     aliases = {
         "total_epochs": "training_epoch_count",
+        "rollout_prompt_queue_size": "rollout_prompt_queue_batch_size",
         "group_size": "rollout_group_size",
         "train_batch_size": "optimize_completion_batch_size",
         "buffer_train_rounds": "optimize_times_per_step",

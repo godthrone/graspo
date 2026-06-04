@@ -105,6 +105,8 @@ def cmd_train(args: argparse.Namespace) -> int:
     config = GraspoConfig.from_yaml(args.config)
     if args.backend:
         config.backend = args.backend
+    if args.resume_from:
+        config.training.resume_from_checkpoint = args.resume_from
     from graspo.backends import create_trainer, select_backend
 
     selection = select_backend(config)
@@ -139,6 +141,10 @@ def build_parser() -> argparse.ArgumentParser:
     train = subparsers.add_parser("train", help="Start training.")
     train.add_argument("--config", "-c", required=True)
     train.add_argument("--backend", choices=["auto", "native-tp", "hf-reference"])
+    train.add_argument(
+        "--resume-from",
+        help="Resume native-tp training from a recoverable checkpoint directory.",
+    )
     train.add_argument(
         "--print-backend",
         action="store_true",

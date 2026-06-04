@@ -65,6 +65,18 @@ class NativeTPRuntimeProtocol(Protocol):
         chat_template_kwargs: dict[str, Any] | None,
     ) -> NativeGeneration: ...
 
+    def generate_groups(
+        self,
+        *,
+        prompts: list[str],
+        rollout_group_size: int,
+        max_new_tokens: int,
+        max_prompt_length: int,
+        temperature: float,
+        top_p: float,
+        chat_template_kwargs: dict[str, Any] | None,
+    ) -> list[NativeGeneration]: ...
+
     def sequence_log_probs(self, sequences: Any, attention_mask: Any) -> Any: ...
 
     def train_batch(
@@ -76,7 +88,14 @@ class NativeTPRuntimeProtocol(Protocol):
         max_grad_norm: float,
     ) -> dict[str, Any]: ...
 
-    def save_checkpoint(self, path: str | Path) -> None: ...
+    def save_checkpoint(
+        self,
+        path: str | Path,
+        *,
+        trainer_state: dict[str, Any] | None = None,
+    ) -> None: ...
+
+    def load_checkpoint(self, path: str | Path) -> dict[str, Any] | None: ...
 
     def close(self) -> None: ...
 
@@ -118,6 +137,14 @@ class NativeTPRuntime:
     def generate_group(self, **kwargs: Any) -> NativeGeneration:
         return self._require_adapter().generate_group(**kwargs)
 
+    def generate_groups(self, **kwargs: Any) -> list[NativeGeneration]:
+        adapter = self._require_adapter()
+        generate_groups = getattr(adapter, "generate_groups", None)
+        if callable(generate_groups):
+            return generate_groups(**kwargs)
+        prompts = list(kwargs.pop("prompts"))
+        return [adapter.generate_group(prompt=prompt, **kwargs) for prompt in prompts]
+
     def sequence_log_probs(self, sequences: Any, attention_mask: Any) -> Any:
         return self._require_adapter().sequence_log_probs(sequences, attention_mask)
 
@@ -136,8 +163,19 @@ class NativeTPRuntime:
             max_grad_norm=max_grad_norm,
         )
 
-    def save_checkpoint(self, path: str | Path) -> None:
-        self._require_adapter().save_checkpoint(path)
+    def save_checkpoint(
+        self,
+        path: str | Path,
+        *,
+        trainer_state: dict[str, Any] | None = None,
+    ) -> None:
+        self._require_adapter().save_checkpoint(path, trainer_state=trainer_state)
+
+    def load_checkpoint(self, path: str | Path) -> dict[str, Any] | None:
+        adapter = self._require_adapter()
+        if not hasattr(adapter, "load_checkpoint"):
+            raise RuntimeError("Native TP adapter does not support checkpoint resume")
+        return adapter.load_checkpoint(path)
 
     def close(self) -> None:
         if self._adapter is not None and hasattr(self._adapter, "close"):
@@ -172,6 +210,8 @@ def validate_native_runtime_config(
         raise ValueError("native-tp v1 requires train_micro_batch_size=1")
     if int(native.generation_micro_batch_size) != 1:
         raise ValueError("native-tp v1 requires generation_micro_batch_size=1")
+    if int(config.training.rollout_prompt_queue_batch_size) < 1:
+        raise ValueError("training.rollout_prompt_queue_batch_size must be >= 1")
 
     flattened = _flatten_keys(config.backend_config)
     forbidden = sorted(
