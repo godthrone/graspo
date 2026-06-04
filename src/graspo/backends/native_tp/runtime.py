@@ -210,8 +210,8 @@ def validate_native_runtime_config(
         raise ValueError("native-tp v1 requires train_micro_batch_size=1")
     if int(native.generation_micro_batch_size) != 1:
         raise ValueError("native-tp v1 requires generation_micro_batch_size=1")
-    if int(config.training.rollout_prompt_queue_size) < 1:
-        raise ValueError("training.rollout_prompt_queue_size must be >= 1")
+    if int(config.training.rollout_prompt_queue_batch_size) < 1:
+        raise ValueError("training.rollout_prompt_queue_batch_size must be >= 1")
 
     flattened = _flatten_keys(config.backend_config)
     forbidden = sorted(

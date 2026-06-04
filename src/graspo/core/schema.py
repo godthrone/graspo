@@ -36,7 +36,7 @@ class TrainingConfig:
     seed: int = 42
     training_epoch_count: int = 100
     max_steps: int = -1
-    rollout_prompt_queue_size: int = 1
+    rollout_prompt_queue_batch_size: int = 1
     rollout_group_size: int = 8
     optimize_completion_batch_size: int = 4
     optimize_times_per_step: int = 4
@@ -144,6 +144,7 @@ def _normalize_training_config(raw: dict[str, Any] | None) -> dict[str, Any]:
 
     aliases = {
         "total_epochs": "training_epoch_count",
+        "rollout_prompt_queue_size": "rollout_prompt_queue_batch_size",
         "group_size": "rollout_group_size",
         "train_batch_size": "optimize_completion_batch_size",
         "buffer_train_rounds": "optimize_times_per_step",

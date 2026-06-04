@@ -25,7 +25,7 @@ def test_training_defaults_are_long_run_safe():
     config = GraspoConfig()
 
     assert config.training.training_epoch_count == 100
-    assert config.training.rollout_prompt_queue_size == 1
+    assert config.training.rollout_prompt_queue_batch_size == 1
     assert config.training.rollout_group_size == 8
     assert config.training.optimize_completion_batch_size == 4
     assert config.training.optimize_times_per_step == 4
@@ -98,6 +98,13 @@ def test_native_tp_rejects_forbidden_framework_config():
 
     with pytest.raises(ValueError, match="forbids"):
         validate_native_runtime_config(config)
+
+
+def test_rollout_prompt_queue_size_alias_normalizes_to_batch_size():
+    config = GraspoConfig.from_dict({"training": {"rollout_prompt_queue_size": 3}})
+
+    assert config.training.rollout_prompt_queue_batch_size == 3
+    assert "rollout_prompt_queue_size" in config.training.legacy_config_aliases
 
 
 def test_native_tp_import_path_does_not_load_forbidden_frameworks():
@@ -371,7 +378,7 @@ class ScriptedQueuedRuntime(ScriptedGroupRuntime):
                     completions=completions,
                     prompt_len=1,
                     metadata={
-                        "rollout_prompt_queue_size": len(prompts),
+                        "rollout_prompt_queue_batch_size": len(prompts),
                         "rollout_prompt_queue_effective_size": len(prompts),
                         "rollout_prompt_queue_fallback": False,
                         "rollout_generation_split_count": 1,
@@ -417,7 +424,7 @@ def _native_test_config(
     data: Path,
     *,
     rollout_group_size: int = 8,
-    rollout_prompt_queue_size: int = 1,
+    rollout_prompt_queue_batch_size: int = 1,
     optimize_completion_batch_size: int = 4,
     optimize_times_per_step: int = 1,
     rollout_max_retry_times: int = 1,
@@ -431,7 +438,7 @@ def _native_test_config(
                 "output_dir": str(tmp_path / "out"),
                 "training_epoch_count": 1,
                 "rollout_group_size": rollout_group_size,
-                "rollout_prompt_queue_size": rollout_prompt_queue_size,
+                "rollout_prompt_queue_batch_size": rollout_prompt_queue_batch_size,
                 "optimize_completion_batch_size": optimize_completion_batch_size,
                 "optimize_times_per_step": optimize_times_per_step,
                 "rollout_max_retry_times": rollout_max_retry_times,
@@ -527,7 +534,7 @@ def test_four_trainable_groups_trigger_one_optimize_with_original_threshold(tmp_
         "total_observed_sec",
     }
     assert train_step["timing"]["attempt_count"] == 4
-    assert train_step["timing"]["rollout_prompt_queue_size"] == 1
+    assert train_step["timing"]["rollout_prompt_queue_batch_size"] == 1
     assert train_step["timing"]["rollout_prompt_queue_effective_size"] == 1
     assert train_step["timing"]["micro_batch_count"] >= 1
 
@@ -563,7 +570,7 @@ def test_four_trainable_groups_trigger_one_optimize_with_original_threshold(tmp_
     assert checkpoint_event["checkpoint_save_sec"] >= 0.0
 
 
-def test_rollout_prompt_queue_size_batches_multiple_prompts_without_changing_threshold(tmp_path, capsys):
+def test_rollout_prompt_queue_batch_size_batches_multiple_prompts_without_changing_threshold(tmp_path, capsys):
     data = tmp_path / "train.jsonl"
     _write_train_data(data, 4)
     runtime = ScriptedQueuedRuntime(
@@ -574,7 +581,7 @@ def test_rollout_prompt_queue_size_batches_multiple_prompts_without_changing_thr
             "p3": [_mixed_group(8)],
         }
     )
-    config = _native_test_config(tmp_path, data, rollout_prompt_queue_size=2)
+    config = _native_test_config(tmp_path, data, rollout_prompt_queue_batch_size=2)
     trainer = NativeTPGraspoTrainer(config, runtime=runtime)
 
     trainer.train()
@@ -586,7 +593,7 @@ def test_rollout_prompt_queue_size_batches_multiple_prompts_without_changing_thr
     assert len(experiences) == 32
     stdout_events = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")]
     train_step = next(event for event in stdout_events if event.get("event") == "train_step")
-    assert train_step["timing"]["rollout_prompt_queue_size"] == 2
+    assert train_step["timing"]["rollout_prompt_queue_batch_size"] == 2
     assert train_step["timing"]["rollout_prompt_queue_effective_size"] == 2
     assert train_step["batch"]["decisions"]["trainable"]["total"] == 4
     assert train_step["batch"]["attempt_groups"] == 4
@@ -605,7 +612,7 @@ def test_rollout_prompt_queue_retries_only_unfinished_prompt(tmp_path):
         tmp_path,
         data,
         rollout_group_size=2,
-        rollout_prompt_queue_size=2,
+        rollout_prompt_queue_batch_size=2,
         optimize_completion_batch_size=2,
         rollout_max_retry_times=1,
     )
