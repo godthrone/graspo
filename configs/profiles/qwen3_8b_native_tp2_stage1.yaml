@@ -39,6 +39,7 @@ training:
   seed: 42
   training_epoch_count: 100
   max_steps: 10
+  rollout_prompt_queue_batch_size: 1
   rollout_group_size: 2
   optimize_completion_batch_size: 1
   optimize_times_per_step: 4
