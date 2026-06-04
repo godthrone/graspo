@@ -98,7 +98,7 @@ class QwenNativeTPAdapter:
                 "tp_rank": self.tp_rank,
                 "tp_size": self.tp_size,
                 "trainable_parameters_local": sum(param.numel() for param in trainable),
-                "group_batch_semantics": "rollout_prompt_queue_size prompts, each with rollout_group_size completions per TP forward batch when budget permits",
+                "group_batch_semantics": "rollout_prompt_queue_batch_size prompts, each with rollout_group_size completions per TP forward batch when budget permits",
                 "activation_checkpointing_enabled": bool(self.model.gradient_checkpointing),
                 "lora_target_modules": sorted(self.model.lora_targets),
             }
@@ -247,7 +247,7 @@ class QwenNativeTPAdapter:
 
         rollout_summary = {
             "rollout_group_size": rollout_group_size,
-            "rollout_prompt_queue_size": requested_prompt_queue_size,
+            "rollout_prompt_queue_batch_size": requested_prompt_queue_size,
             "rollout_prompt_queue_effective_size": prompt_chunk_size,
             "rollout_prompt_queue_fallback": prompt_chunk_size < requested_prompt_queue_size,
             "prompt_len": prompt_len,
@@ -328,7 +328,7 @@ class QwenNativeTPAdapter:
             metadata={
                 "adapter": "qwen_native_tp",
                 "rollout_group_size": rollout_group_size,
-                "rollout_prompt_queue_size": requested_prompt_queue_size,
+                "rollout_prompt_queue_batch_size": requested_prompt_queue_size,
                 "rollout_prompt_queue_effective_size": effective_prompt_queue_size,
                 "rollout_prompt_queue_fallback": effective_prompt_queue_size < requested_prompt_queue_size,
                 "rollout_use_kv_cache": use_kv_cache,
@@ -359,22 +359,39 @@ class QwenNativeTPAdapter:
         assert self.model is not None
         decode_started_at = time.monotonic()
         decode_tokens = 0
+        sampling_sec = 0.0
+        stop_check_sec = 0.0
         self._sync_timing()
         for _ in range(max_new_tokens):
             attention_mask = sequences.ne(pad_token_id)
             logits = self.model(sequences, attention_mask=attention_mask).float()[:, -1, :]
-            next_token = _next_token_from_logits(logits, temperature=temperature, top_p=top_p)
+            self._sync_timing()
+            sampling_started_at = time.monotonic()
+            next_token = _next_token_from_logits(
+                logits,
+                temperature=temperature,
+                top_p=top_p,
+            )
+            self._sync_timing()
+            sampling_sec += time.monotonic() - sampling_started_at
             next_token = _broadcast_and_pad_finished(next_token, finished, pad_token_id)
             sequences = torch.cat([sequences, next_token.unsqueeze(1)], dim=1)
             decode_tokens += 1
             finished |= next_token.eq(eos_token_id)
-            if bool(finished.all()):
+            self._sync_timing()
+            stop_check_started_at = time.monotonic()
+            all_finished = bool(finished.all())
+            self._sync_timing()
+            stop_check_sec += time.monotonic() - stop_check_started_at
+            if all_finished:
                 break
         self._sync_timing()
         return sequences, {
             "prefill_sec": 0.0,
             "decode_sec": time.monotonic() - decode_started_at,
             "decode_tokens": decode_tokens,
+            "sampling_sec": sampling_sec,
+            "stop_check_sec": stop_check_sec,
         }
 
     def _generate_group_with_kv_cache(
@@ -397,13 +414,28 @@ class QwenNativeTPAdapter:
         prefill_sec = time.monotonic() - prefill_started_at
         decode_started_at = time.monotonic()
         decode_tokens = 0
+        sampling_sec = 0.0
+        stop_check_sec = 0.0
         for _ in range(max_new_tokens):
-            next_token = _next_token_from_logits(logits.float()[:, -1, :], temperature=temperature, top_p=top_p)
+            self._sync_timing()
+            sampling_started_at = time.monotonic()
+            next_token = _next_token_from_logits(
+                logits.float()[:, -1, :],
+                temperature=temperature,
+                top_p=top_p,
+            )
+            self._sync_timing()
+            sampling_sec += time.monotonic() - sampling_started_at
             next_token = _broadcast_and_pad_finished(next_token, finished, pad_token_id)
             sequences = torch.cat([sequences, next_token.unsqueeze(1)], dim=1)
             decode_tokens += 1
             finished |= next_token.eq(eos_token_id)
-            if bool(finished.all()):
+            self._sync_timing()
+            stop_check_started_at = time.monotonic()
+            all_finished = bool(finished.all())
+            self._sync_timing()
+            stop_check_sec += time.monotonic() - stop_check_started_at
+            if all_finished:
                 break
             attention_mask = sequences.ne(pad_token_id)
             logits, past_key_values = self.model(
@@ -417,6 +449,8 @@ class QwenNativeTPAdapter:
             "prefill_sec": prefill_sec,
             "decode_sec": time.monotonic() - decode_started_at,
             "decode_tokens": decode_tokens,
+            "sampling_sec": sampling_sec,
+            "stop_check_sec": stop_check_sec,
         }
 
     def sequence_log_probs(self, sequences: Any, attention_mask: Any) -> torch.Tensor:
@@ -1589,6 +1623,8 @@ def _rollout_timing_summary(tokenize_sec: float, chunk_timings: list[dict[str, f
         "tokenize_sec": round(float(tokenize_sec), 6),
         "prefill_sec": round(sum(float(item.get("prefill_sec") or 0.0) for item in chunk_timings), 6),
         "decode_sec": round(sum(float(item.get("decode_sec") or 0.0) for item in chunk_timings), 6),
+        "sampling_sec": round(sum(float(item.get("sampling_sec") or 0.0) for item in chunk_timings), 6),
+        "stop_check_sec": round(sum(float(item.get("stop_check_sec") or 0.0) for item in chunk_timings), 6),
         "decode_tokens": sum(int(item.get("decode_tokens") or 0) for item in chunk_timings),
     }
 
@@ -1602,6 +1638,8 @@ def _scale_rollout_timings(
         {
             "prefill_sec": float(item.get("prefill_sec") or 0.0) / divisor,
             "decode_sec": float(item.get("decode_sec") or 0.0) / divisor,
+            "sampling_sec": float(item.get("sampling_sec") or 0.0) / divisor,
+            "stop_check_sec": float(item.get("stop_check_sec") or 0.0) / divisor,
             "decode_tokens": int(item.get("decode_tokens") or 0),
         }
         for item in chunk_timings
@@ -1722,7 +1760,12 @@ def _causal_attention_mask(
     return causal.view(1, 1, query_len, key_len) & key_mask
 
 
-def _next_token_from_logits(logits: torch.Tensor, *, temperature: float, top_p: float) -> torch.Tensor:
+def _next_token_from_logits(
+    logits: torch.Tensor,
+    *,
+    temperature: float,
+    top_p: float,
+) -> torch.Tensor:
     if temperature > 0:
         logits = logits / max(float(temperature), 1e-6)
         return _sample_next_token(logits, top_p=top_p)
