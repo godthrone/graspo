@@ -149,7 +149,7 @@ class NativeTPGraspoTrainer:
                 "resume": self.resume_info,
                 "config": {
                     "rollout_group_size": self.config.training.rollout_group_size,
-                    "rollout_prompt_queue_size": self.config.training.rollout_prompt_queue_size,
+                    "rollout_prompt_queue_batch_size": self.config.training.rollout_prompt_queue_batch_size,
                     "optimize_completion_batch_size": self.config.training.optimize_completion_batch_size,
                     "optimize_times_per_step": self.config.training.optimize_times_per_step,
                     "replay_buffer_optimize_threshold": self.config.training.replay_buffer_optimize_threshold,
@@ -182,7 +182,7 @@ class NativeTPGraspoTrainer:
                     if epoch == start_epoch
                     else 0
                 )
-                queue_size = max(1, int(self.config.training.rollout_prompt_queue_size))
+                queue_size = max(1, int(self.config.training.rollout_prompt_queue_batch_size))
                 pending_samples = epoch_samples[resume_sample_offset:]
                 for start in range(0, len(pending_samples), queue_size):
                     sample_queue = pending_samples[start : start + queue_size]
@@ -569,7 +569,7 @@ class NativeTPGraspoTrainer:
             "config_snapshot": {
                 "backend": self.backend_name,
                 "rollout_group_size": self.config.training.rollout_group_size,
-                "rollout_prompt_queue_size": self.config.training.rollout_prompt_queue_size,
+                "rollout_prompt_queue_batch_size": self.config.training.rollout_prompt_queue_batch_size,
                 "optimize_completion_batch_size": self.config.training.optimize_completion_batch_size,
                 "optimize_times_per_step": self.config.training.optimize_times_per_step,
                 "rollout_max_retry_times": self.config.training.rollout_max_retry_times,
@@ -1253,7 +1253,7 @@ def _compact_timing_summary(
     total = rollout_sec + reward_cpu_sec + decision_sec + old_logprob_sec + replay_append_sec
     total += float(optimize_sec) + float(checkpoint_sec)
     requested_queue_size = max(
-        [int(item.get("rollout_prompt_queue_size") or 1) for item in attempt_timings],
+        [int(item.get("rollout_prompt_queue_batch_size") or 1) for item in attempt_timings],
         default=1,
     )
     effective_queue_size = max(
@@ -1262,7 +1262,7 @@ def _compact_timing_summary(
     )
     return {
         "attempt_count": len(attempt_timings),
-        "rollout_prompt_queue_size": requested_queue_size,
+        "rollout_prompt_queue_batch_size": requested_queue_size,
         "rollout_prompt_queue_effective_size": effective_queue_size,
         "rollout_prompt_queue_fallback_count": sum(
             bool(item.get("rollout_prompt_queue_fallback")) for item in attempt_timings
@@ -1274,6 +1274,10 @@ def _compact_timing_summary(
         "replay_append_sec": round(replay_append_sec, 6),
         "optimize_sec": round(float(optimize_sec), 6),
         "checkpoint_sec": round(float(checkpoint_sec), 6),
+        "prefill_sec": round(_sum_timing(attempt_timings, "prefill_sec"), 6),
+        "decode_sec": round(_sum_timing(attempt_timings, "decode_sec"), 6),
+        "sampling_sec": round(_sum_timing(attempt_timings, "sampling_sec"), 6),
+        "stop_check_sec": round(_sum_timing(attempt_timings, "stop_check_sec"), 6),
         "train_batch_total_sec": round(float(metrics.get("train_batch_total_sec") or optimize_sec), 6),
         "optimize_round_sec_sum": round(float(metrics.get("optimize_round_sec_sum") or 0.0), 6),
         "micro_batch_forward_sec": round(float(metrics.get("micro_batch_forward_sec") or 0.0), 6),
@@ -1305,6 +1309,8 @@ def _scalar_generation_timing(metadata: dict[str, Any]) -> dict[str, Any]:
         "tokenize_sec",
         "prefill_sec",
         "decode_sec",
+        "sampling_sec",
+        "stop_check_sec",
         "decode_tokens",
         "rollout_elapsed_sec",
         "rollout_use_kv_cache",
@@ -1313,7 +1319,7 @@ def _scalar_generation_timing(metadata: dict[str, Any]) -> dict[str, Any]:
         "rollout_empty_cache_after_split",
         "prefill_len",
         "generated_tokens_max",
-        "rollout_prompt_queue_size",
+        "rollout_prompt_queue_batch_size",
         "rollout_prompt_queue_effective_size",
         "rollout_prompt_queue_fallback",
     }
