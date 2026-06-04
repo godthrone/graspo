@@ -34,6 +34,7 @@ data/*.xlsx
 data/*.xls
 data/*.csv
 !data/sample.jsonl
+experiment_data/
 train_grpo.jsonl
 *.xlsx
 *.xls
