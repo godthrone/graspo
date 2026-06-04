@@ -31,7 +31,6 @@ RUN python3 -m pip install \
 COPY README.md LICENSE ./
 COPY src ./src
 COPY configs ./configs
-COPY examples ./examples
 COPY data ./data
 
 # --- Editable install without dependency resolution (no network needed) ---

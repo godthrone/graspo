@@ -104,7 +104,9 @@ Planned next:
 Qwen3.5/Qwen3.6 text configs are detected, and vision weights are kept out of
 scope, but checkpoints with hybrid `linear_attention` fail closed until the
 exact kernel exists. GRASPO will not silently train them with an approximate
-Qwen3 full-attention layer.
+Qwen3 full-attention layer. Their shipped profiles are intentionally named
+`experimental_*` and are meant for config/load smoke checks, not production
+long training yet.
 
 ## Install
 
