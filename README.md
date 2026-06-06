@@ -176,18 +176,21 @@ CONFIG_PATH=configs/profiles/qwen3_8b_native_tp2_overnight.yaml \
 bash scripts/run_train.sh
 ```
 
-Run a detached long training job on a server:
+Run a detached native placement job on a server:
 
 ```bash
-bash scripts/launch_native_tp2_remote.sh \
+bash scripts/launch_native_placement_remote.sh \
   --model-path $HOME/models/Qwen3-8B \
   --data-path $HOME/datasets/graspo/train.jsonl \
+  --profile configs/profiles/qwen3_8b_native_tp2_overnight.yaml \
   --gpus 0,1 \
   --tag longrun
 ```
 
 The launcher writes the output directory to `latest_graspo_longrun.out`, starts
-`nohup` training, and starts `scripts/record_gpu_memory.py` beside the run.
+`nohup` training, starts `scripts/record_gpu_memory.py` beside the run, and
+checks that the imported `graspo` package comes from the current checkout before
+launching distributed training.
 
 ## Data Format
 
@@ -265,6 +268,56 @@ utilization while keeping peak memory far below the 80 GB edge in long runs.
 `rollout_prompt_queue_batch_size=3` may pass short profiling but can hit
 allocator and long-sequence peaks in real long training, so treat it as a
 profiling boundary rather than a stable default.
+
+## Native Placement Runtime
+
+The native backend uses one placement runtime for both tensor parallel and
+pipeline parallel layouts:
+
+- `placement_strategy: qwen3_tp`: the stable Qwen3-8B path. It keeps the current
+  tensor-parallel math: q/k/v/gate/up are output-sharded, o/down are
+  input-sharded, and each attention/MLP block all-reduces inside the TP group.
+- `placement_strategy: qwen36_pp8_static`: experimental Qwen3.6-27B text-only
+  pipeline parallelism. It uses `tensor_model_parallel_size=1` and
+  `pipeline_model_parallel_size=8`, places embeddings on stage 0, final
+  norm/lm_head on stage 7, and splits the 64 hybrid text layers across the
+  eight stages.
+
+Qwen3-8B TP=2 remains the compatibility baseline. Qwen3.6 PP=8 is intended for
+short load/rollout/training smoke tests before longer runs; it is not an
+adaptive placement system yet.
+
+For Qwen3.6 PP profiling, keep `placement_strategy=qwen36_pp8_static` as the
+stable baseline. The experimental `pipeline_train_schedule=one_f_one_b` can be
+tested with short runs to reduce pipeline bubbles during optimize/backward, but
+it is not the default production setting. Use larger optimizer batches only as
+profiling experiments because they also change the ReplayBuffer optimize
+threshold.
+
+The remote launcher exposes the common profiling overrides:
+
+```bash
+bash scripts/launch_native_placement_remote.sh \
+  --model-path /path/to/Qwen3.6-27B \
+  --data-path /path/to/train_grpo.jsonl \
+  --profile configs/profiles/experimental_qwen3_6_27b_native_tp8.yaml \
+  --gpus 0,1,2,3,4,5,6,7 \
+  --nproc 8 \
+  --max-steps 3 \
+  --rollout-queue 2 \
+  --kv-fraction 0.90 \
+  --placement qwen36_pp8_static \
+  --pipeline-schedule one_f_one_b \
+  --max-inflight 4 \
+  --optimize-batch 8 \
+  --train-micro-batch 1
+```
+
+After several isolated runs, summarize them with:
+
+```bash
+python scripts/analyze_native_profile.py outputs/run_a outputs/run_b --skip-warmup-steps 1
+```
 
 ## Outputs And Monitoring
 

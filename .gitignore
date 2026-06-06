@@ -4,6 +4,8 @@ __pycache__/
 src/*.egg-info/
 .pytest_cache/
 .pytest_tmp*/
+.pytest_verify_tmp/
+_pytest_basetemp_*/
 .mypy_cache/
 .ruff_cache/
 .uv-cache/
@@ -27,6 +29,8 @@ models/
 _deploy_*
 _relay_*
 _launch_*.sh
+_router_*.sh
+_graspo_*_upload.tgz
 qwen3-8b-megatron-smoke-*
 latest_*.out
 data/*.jsonl
@@ -50,4 +54,5 @@ AGENTS.md
 AGENTS.local.md
 CLAUDE.local.md
 *API*.txt
+shell-router-api.md
 xxx.json

@@ -4,6 +4,7 @@ backend_config:
   native_tp:
     tensor_model_parallel_size: 2
     pipeline_model_parallel_size: 1
+    placement_strategy: auto
     sequence_parallel: false
     train_micro_batch_size: 1
     generation_micro_batch_size: 1
