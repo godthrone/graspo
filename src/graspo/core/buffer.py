@@ -12,6 +12,7 @@ class Experience:
     attention_mask: Any
     action_mask: Any
     rewards: Any
+    metadata: dict[str, Any] | None = None
 
 
 class ReplayBuffer:
@@ -35,4 +36,3 @@ class ReplayBuffer:
 
     def __getitem__(self, index: int) -> Experience:
         return self.items[index]
-

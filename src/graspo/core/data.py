@@ -11,9 +11,9 @@ def prompt_from_messages(messages: list[dict[str, Any]]) -> str:
     parts: list[str] = []
     for message in messages:
         role = str(message.get("role", "user"))
-        content = str(message.get("content", ""))
         if role == "assistant":
             continue
+        content, _ = _content_to_text_and_media(message.get("content", ""))
         parts.append(content)
     return "\n\n".join(part for part in parts if part)
 
@@ -45,8 +45,81 @@ def sample_from_record(
     else:
         raise ValueError(f"record must contain '{ground_truth_field}', assistant message, or 'output'")
 
-    metadata = {key: value for key, value in record.items() if key not in {prompt_field, ground_truth_field}}
-    return Sample(prompt=prompt, ground_truth=ground_truth, metadata=metadata)
+    media = _record_media(record, messages_field=messages_field)
+    metadata = {
+        key: value
+        for key, value in record.items()
+        if key not in {prompt_field, ground_truth_field, "image", "images", "video", "videos"}
+    }
+    return Sample(prompt=prompt, ground_truth=ground_truth, metadata=metadata, media=media)
+
+
+def _record_media(record: dict[str, Any], *, messages_field: str) -> list[dict[str, Any]]:
+    media: list[dict[str, Any]] = []
+    if messages_field in record and isinstance(record[messages_field], list):
+        for message in record[messages_field]:
+            _, content_media = _content_to_text_and_media(message.get("content", ""))
+            media.extend(content_media)
+    for field_name, media_type in (("image", "image"), ("video", "video")):
+        value = record.get(field_name)
+        if value:
+            media.append({"type": media_type, "path": str(value)})
+    for field_name, media_type in (("images", "image"), ("videos", "video")):
+        values = record.get(field_name) or []
+        if isinstance(values, (str, bytes)):
+            values = [values]
+        for value in values:
+            if value:
+                media.append({"type": media_type, "path": str(value)})
+    return _dedupe_media(media)
+
+
+def _content_to_text_and_media(content: Any) -> tuple[str, list[dict[str, Any]]]:
+    if isinstance(content, str):
+        return content, []
+    if not isinstance(content, list):
+        return str(content or ""), []
+    parts: list[str] = []
+    media: list[dict[str, Any]] = []
+    for item in content:
+        if isinstance(item, str):
+            parts.append(item)
+            continue
+        if not isinstance(item, dict):
+            parts.append(str(item))
+            continue
+        item_type = str(item.get("type") or "").lower()
+        if item_type == "text":
+            parts.append(str(item.get("text") or ""))
+        elif item_type in {"image", "image_url"}:
+            path = item.get("image") or item.get("path") or item.get("url")
+            if isinstance(item.get("image_url"), dict):
+                path = item["image_url"].get("url") or path
+            if path:
+                media.append({"type": "image", "path": str(path)})
+            parts.append("<image>")
+        elif item_type == "video":
+            path = item.get("video") or item.get("path") or item.get("url")
+            if path:
+                media.append({"type": "video", "path": str(path)})
+            parts.append("<video>")
+        else:
+            raise ValueError(f"unsupported multimodal content type: {item_type!r}")
+    return "\n".join(part for part in parts if part), media
+
+
+def _dedupe_media(media: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[tuple[str, str]] = set()
+    deduped: list[dict[str, Any]] = []
+    for item in media:
+        media_type = str(item.get("type") or "")
+        path = str(item.get("path") or "")
+        key = (media_type, path)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
 
 
 def load_jsonl(
