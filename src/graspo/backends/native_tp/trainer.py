@@ -159,7 +159,7 @@ class NativeTPGraspoTrainer:
                     "max_new_tokens": self.config.training.max_new_tokens,
                     "save_steps": self.config.training.save_steps,
                     "activation_checkpointing_enabled": bool(self.config.model.gradient_checkpointing),
-                    "lora_target_modules": list(self.config.lora.target_modules or ["q_proj", "v_proj"]),
+                    "lora_target_modules": list(self.config.lora.target_modules or [self.config.lora.target_preset]),
                     "rollout_kv_cache_max_reserved_fraction": self.config.native_tp.rollout_kv_cache_max_reserved_fraction,
                     "empty_cache_after_rollout_split": self.config.native_tp.empty_cache_after_rollout_split,
                     "synchronize_cuda_timing": self.config.native_tp.synchronize_cuda_timing,
@@ -235,7 +235,11 @@ class NativeTPGraspoTrainer:
     def _rollout_queue_attempt(self, active: list[_QueuedSample], *, epoch: int) -> list[_AttemptRecord]:
         prompts = [state.sample.prompt for state in active]
         rollout_started_at = time.monotonic()
-        generations = self._generate_groups(prompts)
+        generations = (
+            self._generate_sample_groups([state.sample for state in active])
+            if any(state.sample.media for state in active)
+            else self._generate_groups(prompts)
+        )
         rollout_sec = time.monotonic() - rollout_started_at
         rollout_sec_per_prompt = rollout_sec / max(len(generations), 1)
         records: list[_AttemptRecord] = []
@@ -336,6 +340,28 @@ class NativeTPGraspoTrainer:
             for prompt in prompts
         ]
 
+    def _generate_sample_groups(self, samples: list[Sample]) -> list[NativeGeneration]:
+        generate_sample_groups = getattr(self.runtime, "generate_sample_groups", None)
+        if not callable(generate_sample_groups):
+            raise RuntimeError(
+                "Input samples contain image/video media, but the selected native runtime "
+                "does not implement multimodal generate_sample_groups"
+            )
+        generations = generate_sample_groups(
+            samples=samples,
+            rollout_group_size=self.config.training.rollout_group_size,
+            max_new_tokens=self.config.training.max_new_tokens,
+            max_prompt_length=self.config.data.max_prompt_length,
+            temperature=self.config.training.temperature,
+            top_p=self.config.training.top_p,
+            chat_template_kwargs=self.config.model.chat_template_kwargs,
+        )
+        if len(generations) != len(samples):
+            raise RuntimeError(
+                f"native-tp generate_sample_groups returned {len(generations)} groups for {len(samples)} samples"
+            )
+        return generations
+
     def _finalize_sample(self, state: _QueuedSample, *, epoch: int) -> bool:
         if not state.attempts:
             raise RuntimeError("Cannot finalize queued sample without rollout attempts")
@@ -365,10 +391,17 @@ class NativeTPGraspoTrainer:
             return self._finish_sample_and_maybe_optimize(epoch=epoch)
 
         old_logprob_started_at = time.monotonic()
-        old_log_probs = self.runtime.sequence_log_probs(
-            generation.sequences,
-            generation.attention_mask,
-        )
+        if isinstance(generation.metadata, dict) and "_multimodal_rows" in generation.metadata:
+            old_log_probs = self.runtime.sequence_log_probs(
+                generation.sequences,
+                generation.attention_mask,
+                metadata=generation.metadata,
+            )
+        else:
+            old_log_probs = self.runtime.sequence_log_probs(
+                generation.sequences,
+                generation.attention_mask,
+            )
         timing["old_logprob_sec"] = time.monotonic() - old_logprob_started_at
         replay_started_at = time.monotonic()
         advantages = _expand_advantages_like(rewards, old_log_probs)
@@ -654,6 +687,7 @@ class NativeTPGraspoTrainer:
                     attention_mask=generation.attention_mask[idx].detach().cpu(),
                     action_mask=generation.action_mask[idx].detach().cpu(),
                     rewards=reward_tensor[idx].detach().cpu(),
+                    metadata=_experience_metadata_for_row(generation.metadata, idx),
                 )
             )
         self.replay_buffer.append_many(items)
@@ -679,7 +713,7 @@ class NativeTPGraspoTrainer:
             "sample_index": self.sample_index,
             "prompt": sample.prompt,
             "ground_truth": sample.ground_truth,
-            "metadata": sample.metadata,
+            "metadata": _safe_sample_metadata(sample),
             "completions": generation.completions,
             "rewards": rewards,
             "content_scores": content_scores,
@@ -692,7 +726,7 @@ class NativeTPGraspoTrainer:
             "retry_count": retry_count,
             "group_stats": _group_stats(rewards),
             "reward_max_median_gap": decision.reward_max_median_gap,
-            "generation_metadata": generation.metadata or {},
+            "generation_metadata": _public_generation_metadata(generation.metadata or {}),
         }
         if decision.decision.value == "invalid_no_preference_gap":
             payload["invalid_reason"] = "no_preference_gap"
@@ -998,6 +1032,57 @@ def _generated_token_counts(generation: NativeGeneration) -> list[int]:
         return [int(value) for value in generation.action_mask.detach().sum(dim=1).cpu().tolist()]
     except Exception:
         return []
+
+
+def _safe_sample_metadata(sample: Sample) -> dict[str, Any]:
+    redacted = {
+        key: value
+        for key, value in sample.metadata.items()
+        if key not in {"image", "images", "video", "videos"}
+    }
+    if sample.media:
+        counts: dict[str, int] = {}
+        for item in sample.media:
+            media_type = str(item.get("type") or "unknown")
+            counts[media_type] = counts.get(media_type, 0) + 1
+        redacted["media"] = {
+            "count": len(sample.media),
+            "types": counts,
+        }
+    return redacted
+
+
+def _public_generation_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    public = {key: value for key, value in metadata.items() if not str(key).startswith("_")}
+    private_rows = metadata.get("_multimodal_rows")
+    if isinstance(private_rows, list) and private_rows:
+        media_counts: dict[str, int] = {}
+        for row in private_rows:
+            if not isinstance(row, dict):
+                continue
+            for item in row.get("media") or []:
+                if not isinstance(item, dict):
+                    continue
+                media_type = str(item.get("type") or "unknown")
+                media_counts[media_type] = media_counts.get(media_type, 0) + 1
+        public["multimodal"] = {
+            "row_count": len(private_rows),
+            "media_counts": media_counts,
+        }
+    return public
+
+
+def _experience_metadata_for_row(metadata: dict[str, Any] | None, row_index: int) -> dict[str, Any] | None:
+    if not metadata:
+        return None
+    rows = metadata.get("_multimodal_rows")
+    if isinstance(rows, list):
+        if row_index >= len(rows):
+            raise RuntimeError(
+                f"generation multimodal metadata has {len(rows)} rows, cannot index row {row_index}"
+            )
+        return {"_multimodal_rows": [rows[row_index]]}
+    return dict(metadata)
 
 
 def _monitor_group(payload: dict[str, Any]) -> dict[str, Any]:

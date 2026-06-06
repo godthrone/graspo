@@ -3,7 +3,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from graspo.trainer.lora import detect_lora_target_modules  # noqa: E402
+from graspo.trainer.lora import detect_lora_target_modules, resolve_lora_target_modules  # noqa: E402
 
 
 class TinyAttention(torch.nn.Module):
@@ -24,3 +24,34 @@ def test_detect_lora_targets():
 def test_detect_lora_targets_fails_clearly():
     with pytest.raises(ValueError, match="Could not auto-detect"):
         detect_lora_target_modules(torch.nn.Sequential(torch.nn.ReLU()))
+
+
+def test_resolve_lora_targets_supports_presets_globs_and_legacy_aliases():
+    available = [
+        "language.self_attn.q_proj",
+        "language.self_attn.v_proj",
+        "language.self_attn.o_proj",
+        "language.mlp.gate_proj",
+        "visual.merger.linear_fc1",
+        "visual.merger.linear_fc2",
+    ]
+
+    assert resolve_lora_target_modules(None, available=available).resolved == (
+        "language.self_attn.q_proj",
+        "language.self_attn.v_proj",
+    )
+    assert resolve_lora_target_modules(["q_proj"], available=available).resolved == (
+        "language.self_attn.q_proj",
+    )
+    assert resolve_lora_target_modules(["language.*.o_proj"], available=available).resolved == (
+        "language.self_attn.o_proj",
+    )
+    assert resolve_lora_target_modules(["vision_merger"], available=available).resolved == (
+        "visual.merger.linear_fc1",
+        "visual.merger.linear_fc2",
+    )
+
+
+def test_resolve_lora_targets_fails_closed_for_unknown_target():
+    with pytest.raises(ValueError, match="Unsupported LoRA target"):
+        resolve_lora_target_modules(["conv1d"], available=["language.self_attn.q_proj"])

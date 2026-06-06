@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from graspo.core.buffer import Experience
-from graspo.core.schema import GraspoConfig, NativeTPConfig
+from graspo.core.schema import GraspoConfig, NativeTPConfig, Sample
 
 
 DEFAULT_NATIVE_ADAPTER = "graspo.backends.native_tp.qwen_tp_adapter:QwenNativeTPAdapter"
@@ -77,7 +77,24 @@ class NativeTPRuntimeProtocol(Protocol):
         chat_template_kwargs: dict[str, Any] | None,
     ) -> list[NativeGeneration]: ...
 
-    def sequence_log_probs(self, sequences: Any, attention_mask: Any) -> Any: ...
+    def generate_sample_groups(
+        self,
+        *,
+        samples: list[Sample],
+        rollout_group_size: int,
+        max_new_tokens: int,
+        max_prompt_length: int,
+        temperature: float,
+        top_p: float,
+        chat_template_kwargs: dict[str, Any] | None,
+    ) -> list[NativeGeneration]: ...
+
+    def sequence_log_probs(
+        self,
+        sequences: Any,
+        attention_mask: Any,
+        metadata: Any | None = None,
+    ) -> Any: ...
 
     def train_batch(
         self,
@@ -145,8 +162,20 @@ class NativeTPRuntime:
         prompts = list(kwargs.pop("prompts"))
         return [adapter.generate_group(prompt=prompt, **kwargs) for prompt in prompts]
 
-    def sequence_log_probs(self, sequences: Any, attention_mask: Any) -> Any:
-        return self._require_adapter().sequence_log_probs(sequences, attention_mask)
+    def generate_sample_groups(self, **kwargs: Any) -> list[NativeGeneration]:
+        adapter = self._require_adapter()
+        generate_sample_groups = getattr(adapter, "generate_sample_groups", None)
+        if not callable(generate_sample_groups):
+            raise RuntimeError("Native adapter does not support multimodal sample generation")
+        return generate_sample_groups(**kwargs)
+
+    def sequence_log_probs(
+        self,
+        sequences: Any,
+        attention_mask: Any,
+        metadata: Any | None = None,
+    ) -> Any:
+        return self._require_adapter().sequence_log_probs(sequences, attention_mask, metadata=metadata)
 
     def train_batch(
         self,
@@ -200,16 +229,25 @@ def validate_native_runtime_config(
     native_config: NativeTPConfig | None = None,
 ) -> None:
     native = native_config or config.native_tp
-    if int(native.pipeline_model_parallel_size) != 1:
-        raise ValueError("native-tp v1 supports pipeline_model_parallel_size=1 only")
+    if int(native.pipeline_model_parallel_size) < 1:
+        raise ValueError("pipeline_model_parallel_size must be >= 1")
     if bool(native.sequence_parallel):
         raise ValueError("native-tp v1 requires sequence_parallel=false")
     if int(native.tensor_model_parallel_size) < 1:
         raise ValueError("tensor_model_parallel_size must be >= 1")
-    if int(native.train_micro_batch_size) != 1:
-        raise ValueError("native-tp v1 requires train_micro_batch_size=1")
+    if int(native.pipeline_model_parallel_size) > 1 and int(native.tensor_model_parallel_size) != 1:
+        raise ValueError("native placement v1 supports pipeline_model_parallel_size>1 only with tensor_model_parallel_size=1")
+    if int(native.train_micro_batch_size) < 1:
+        raise ValueError("native_tp.train_micro_batch_size must be >= 1")
     if int(native.generation_micro_batch_size) != 1:
         raise ValueError("native-tp v1 requires generation_micro_batch_size=1")
+    schedule = str(native.pipeline_train_schedule or "simple")
+    if schedule not in {"simple", "one_f_one_b"}:
+        raise ValueError("native_tp.pipeline_train_schedule must be simple or one_f_one_b")
+    if int(native.pipeline_max_inflight_microbatches) < 0:
+        raise ValueError("native_tp.pipeline_max_inflight_microbatches must be >= 0")
+    if schedule == "one_f_one_b" and int(native.pipeline_model_parallel_size) <= 1:
+        raise ValueError("one_f_one_b pipeline_train_schedule requires pipeline_model_parallel_size>1")
     if int(config.training.rollout_prompt_queue_batch_size) < 1:
         raise ValueError("training.rollout_prompt_queue_batch_size must be >= 1")
 

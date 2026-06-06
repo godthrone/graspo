@@ -17,6 +17,7 @@ from graspo.backends.native_tp.runtime import (  # noqa: E402
     assert_forbidden_runtime_modules_not_imported,
     validate_native_runtime_config,
 )
+from graspo.backends.native_tp.placement import build_placement_plan  # noqa: E402
 from graspo.backends.native_tp.trainer import NativeTPGraspoTrainer, _migrate_legacy_trainer_state  # noqa: E402
 from graspo.core.schema import GraspoConfig  # noqa: E402
 
@@ -86,6 +87,151 @@ def test_native_tp_config_parses_nested_backend_config():
     assert config.native_tp.rollout_kv_cache_max_reserved_fraction == 0.65
     assert config.native_tp.empty_cache_after_rollout_split is True
     validate_native_runtime_config(config)
+
+
+def test_native_placement_config_accepts_pipeline_parallel():
+    config = GraspoConfig.from_dict(
+        {
+            "backend": "native-tp",
+            "backend_config": {
+                "native_tp": {
+                    "tensor_model_parallel_size": 1,
+                    "pipeline_model_parallel_size": 8,
+                    "placement_strategy": "qwen36_pp8_static",
+                    "pipeline_train_schedule": "simple",
+                    "pipeline_max_inflight_microbatches": 4,
+                }
+            },
+        }
+    )
+
+    validate_native_runtime_config(config)
+    assert config.native_tp.pipeline_train_schedule == "simple"
+    assert config.native_tp.pipeline_max_inflight_microbatches == 4
+
+
+def test_native_placement_config_accepts_one_f_one_b_pipeline_schedule():
+    config = GraspoConfig.from_dict(
+        {
+            "backend": "native-tp",
+            "backend_config": {
+                "native_tp": {
+                    "tensor_model_parallel_size": 1,
+                    "pipeline_model_parallel_size": 8,
+                    "placement_strategy": "qwen36_pp8_lm_head_only_final",
+                    "train_micro_batch_size": 1,
+                    "pipeline_train_schedule": "one_f_one_b",
+                    "pipeline_max_inflight_microbatches": 4,
+                }
+            },
+        }
+    )
+
+    validate_native_runtime_config(config)
+
+
+def test_native_placement_config_rejects_invalid_pipeline_schedule():
+    config = GraspoConfig.from_dict(
+        {
+            "backend": "native-tp",
+            "backend_config": {
+                "native_tp": {
+                    "pipeline_train_schedule": "sideways",
+                }
+            },
+        }
+    )
+
+    with pytest.raises(ValueError, match="pipeline_train_schedule"):
+        validate_native_runtime_config(config)
+
+
+def test_native_placement_config_rejects_one_f_one_b_without_pipeline_parallel():
+    config = GraspoConfig.from_dict(
+        {
+            "backend": "native-tp",
+            "backend_config": {
+                "native_tp": {
+                    "tensor_model_parallel_size": 2,
+                    "pipeline_model_parallel_size": 1,
+                    "pipeline_train_schedule": "one_f_one_b",
+                }
+            },
+        }
+    )
+
+    with pytest.raises(ValueError, match="requires pipeline_model_parallel_size>1"):
+        validate_native_runtime_config(config)
+
+
+def test_native_placement_config_rejects_mixed_tp_pp_v1():
+    config = GraspoConfig.from_dict(
+        {
+            "backend": "native-tp",
+            "backend_config": {
+                "native_tp": {
+                    "tensor_model_parallel_size": 2,
+                    "pipeline_model_parallel_size": 4,
+                }
+            },
+        }
+    )
+
+    with pytest.raises(ValueError, match="pipeline_model_parallel_size>1"):
+        validate_native_runtime_config(config)
+
+
+def test_qwen36_static_pipeline_placement_covers_layers_once():
+    plans = [
+        build_placement_plan(
+            strategy="qwen36_pp8_static",
+            model_family="qwen3_5_text",
+            num_hidden_layers=64,
+            tp_size=1,
+            pp_size=8,
+            tp_rank=0,
+            pp_rank=rank,
+            layer_types=["linear_attention", "linear_attention", "linear_attention", "full_attention"] * 16,
+        )
+        for rank in range(8)
+    ]
+
+    layers = [layer for plan in plans for layer in plan.local_layer_indices]
+
+    assert sorted(layers) == list(range(64))
+    assert plans[0].include_embeddings is True
+    assert plans[0].include_lm_head is False
+    assert plans[-1].include_embeddings is False
+    assert plans[-1].include_lm_head is True
+    assert all(plan.tp_size == 1 and plan.pp_size == 8 for plan in plans)
+    assert len(plans[-1].local_layer_indices) < len(plans[3].local_layer_indices)
+    assert len(plans[-1].local_layer_indices) <= 2
+
+
+def test_qwen36_lm_head_only_final_pipeline_placement_keeps_final_stage_layerless():
+    plans = [
+        build_placement_plan(
+            strategy="qwen36_pp8_lm_head_only_final",
+            model_family="qwen3_5_text",
+            num_hidden_layers=64,
+            tp_size=1,
+            pp_size=8,
+            tp_rank=0,
+            pp_rank=rank,
+            layer_types=["linear_attention", "linear_attention", "linear_attention", "full_attention"] * 16,
+        )
+        for rank in range(8)
+    ]
+
+    layers = [layer for plan in plans for layer in plan.local_layer_indices]
+
+    assert sorted(layers) == list(range(64))
+    assert plans[0].include_embeddings is True
+    assert plans[0].include_lm_head is False
+    assert plans[-1].include_embeddings is False
+    assert plans[-1].include_lm_head is True
+    assert plans[-1].local_layer_indices == ()
+    assert all(len(plan.local_layer_indices) > 0 for plan in plans[:-1])
 
 
 def test_native_tp_rejects_forbidden_framework_config():

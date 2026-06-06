@@ -14,6 +14,7 @@ class LoRAConfig:
     r: int = 16
     alpha: int = 32
     dropout: float = 0.1
+    target_preset: str = "language_safe"
     target_modules: list[str] | None = None
     auto_target_modules: bool = True
     bias: str = "none"
@@ -73,6 +74,7 @@ class DataConfig:
 class NativeTPConfig:
     tensor_model_parallel_size: int = 2
     pipeline_model_parallel_size: int = 1
+    placement_strategy: str = "auto"
     sequence_parallel: bool = False
     train_micro_batch_size: int = 1
     generation_micro_batch_size: int = 1
@@ -84,6 +86,8 @@ class NativeTPConfig:
     raw_log_enabled: bool = True
     readable_log_enabled: bool = True
     synchronize_cuda_timing: bool = False
+    pipeline_train_schedule: str = "simple"
+    pipeline_max_inflight_microbatches: int = 0
 
 
 @dataclass(slots=True)
@@ -129,6 +133,7 @@ class Sample:
     prompt: str
     ground_truth: Any
     metadata: dict[str, Any] = field(default_factory=dict)
+    media: list[dict[str, Any]] = field(default_factory=list)
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False)

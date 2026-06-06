@@ -144,9 +144,10 @@ bash scripts/run_train.sh
 服务器 nohup 长训：
 
 ```bash
-bash scripts/launch_native_tp2_remote.sh \
+bash scripts/launch_native_placement_remote.sh \
   --model-path $HOME/models/Qwen3-8B \
   --data-path $HOME/datasets/graspo/train.jsonl \
+  --profile configs/profiles/qwen3_8b_native_tp2_overnight.yaml \
   --gpus 0,1 \
   --tag longrun
 ```
@@ -213,6 +214,43 @@ backend_config:
 ```
 
 在两张 80 GB GPU 上训练 Qwen3-8B 时，推荐加速配置是 `rollout_prompt_queue_batch_size=2`、KV fraction `0.90`。它能显著提升 rollout GPU 利用率，同时长训峰值显存远离 80 GB 边界。`rollout_prompt_queue_batch_size=3` 可能通过短 profiling，但真实长训会遇到 allocator 和长序列峰值，因此只建议作为 profiling 边界，不建议作为稳定默认。
+
+## Native Placement Runtime
+
+native backend 现在用同一套 placement runtime 支持 tensor parallel 和 pipeline parallel：
+
+- `placement_strategy: qwen3_tp`：稳定的 Qwen3-8B 路线。它保持当前 tensor-parallel 数学语义：q/k/v/gate/up 按输出维分片，o/down 按输入维分片，attention/MLP 后在 TP group 内 all-reduce。
+- `placement_strategy: qwen36_pp8_static`：实验性的 Qwen3.6-27B text-only pipeline parallel 路线。它使用 `tensor_model_parallel_size=1`、`pipeline_model_parallel_size=8`，embedding 放在 stage 0，final norm/lm_head 放在 stage 7，并把 64 层 hybrid text decoder 静态切到 8 个 stage。
+
+Qwen3-8B TP=2 仍然是兼容性基线。Qwen3.6 PP=8 需要先做 load/rollout/training smoke，再考虑长训；它还不是自动重分层系统。
+
+Qwen3.6 PP 性能实验请先保留 `placement_strategy=qwen36_pp8_static` 作为稳定基线。实验性的
+`pipeline_train_schedule=one_f_one_b` 可以用短 run 验证是否降低 optimize/backward 的 pipeline bubble，但它不是默认生产配置。更大的 optimizer batch 只建议作为 profiling 实验，因为它同时会改变 ReplayBuffer optimize threshold。
+
+远端 launcher 暴露了常用 profiling 参数：
+
+```bash
+bash scripts/launch_native_placement_remote.sh \
+  --model-path /path/to/Qwen3.6-27B \
+  --data-path /path/to/train_grpo.jsonl \
+  --profile configs/profiles/experimental_qwen3_6_27b_native_tp8.yaml \
+  --gpus 0,1,2,3,4,5,6,7 \
+  --nproc 8 \
+  --max-steps 3 \
+  --rollout-queue 2 \
+  --kv-fraction 0.90 \
+  --placement qwen36_pp8_static \
+  --pipeline-schedule one_f_one_b \
+  --max-inflight 4 \
+  --optimize-batch 8 \
+  --train-micro-batch 1
+```
+
+多个隔离 run 完成后，用下面的命令汇总速度、显存、GPU 利用率和 stage timing：
+
+```bash
+python scripts/analyze_native_profile.py outputs/run_a outputs/run_b --skip-warmup-steps 1
+```
 
 ## 输出和监控
 
