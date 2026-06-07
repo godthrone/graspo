@@ -13,7 +13,9 @@ def ensure_tokenizer_ready(tokenizer: Any) -> None:
     tokenizer.padding_side = "left"
 
 
-def render_prompt(tokenizer: Any, prompt: str, chat_template_kwargs: dict[str, Any] | None = None) -> str:
+def render_prompt(
+    tokenizer: Any, prompt: str, chat_template_kwargs: dict[str, Any] | None = None
+) -> str:
     if getattr(tokenizer, "chat_template", None):
         messages = [{"role": "user", "content": prompt}]
         return tokenizer.apply_chat_template(

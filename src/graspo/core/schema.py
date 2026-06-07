@@ -14,6 +14,7 @@ class LoRAConfig:
     r: int = 16
     alpha: int = 32
     dropout: float = 0.1
+    adapter_path: str | None = None
     target_preset: str = "language_safe"
     target_modules: list[str] | None = None
     auto_target_modules: bool = True
@@ -91,6 +92,24 @@ class NativeTPConfig:
 
 
 @dataclass(slots=True)
+class ExportConfig:
+    final_formats: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class LaunchConfig:
+    gpus: list[int] | str | None = None
+    nproc_per_node: int | None = None
+    nnodes: int = 1
+    node_rank: int = 0
+    master_addr: str = "127.0.0.1"
+    master_port: int = 29500
+    python: str | None = None
+    torchrun: str | None = None
+    env: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class GraspoConfig:
     backend: str = "auto"
     backend_config: dict[str, Any] = field(default_factory=dict)
@@ -98,6 +117,8 @@ class GraspoConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     data: DataConfig = field(default_factory=DataConfig)
     lora: LoRAConfig = field(default_factory=LoRAConfig)
+    export: ExportConfig = field(default_factory=ExportConfig)
+    launch: LaunchConfig = field(default_factory=LaunchConfig)
     reward: RewardConfig = field(default_factory=RewardConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
 
@@ -123,6 +144,8 @@ class GraspoConfig:
             model=ModelConfig(**data.get("model", {})),
             data=DataConfig(**data.get("data", {})),
             lora=LoRAConfig(**data.get("lora", {})),
+            export=ExportConfig(**data.get("export", {})),
+            launch=LaunchConfig(**data.get("launch", {})),
             reward=RewardConfig(**data.get("reward", {})),
             training=TrainingConfig(**training_cfg),
         )

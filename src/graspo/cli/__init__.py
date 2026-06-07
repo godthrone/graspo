@@ -1,2 +1,1 @@
 """Command line interface package."""
-

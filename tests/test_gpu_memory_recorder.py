@@ -36,8 +36,7 @@ def test_record_gpu_memory_parses_nvidia_smi_gpu_rows():
 def test_record_gpu_memory_filters_and_summarizes_samples():
     recorder = _load_recorder_module()
     process_rows = recorder.parse_process_query(
-        "GPU-abc, 1234, /usr/bin/python, 2048\n"
-        "GPU-def, 4567, /usr/bin/other, 1024\n"
+        "GPU-abc, 1234, /usr/bin/python, 2048\nGPU-def, 4567, /usr/bin/other, 1024\n"
     )
     samples = [
         {"gpu_index": 6, "memory_used_mib": 100.0, "utilization_gpu_pct": 10.0},

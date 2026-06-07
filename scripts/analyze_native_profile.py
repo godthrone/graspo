@@ -29,7 +29,10 @@ TIMING_KEYS = (
 
 def main() -> int:
     args = parse_args()
-    summaries = [summarize_run(Path(path), skip_warmup_steps=args.skip_warmup_steps) for path in args.run_dirs]
+    summaries = [
+        summarize_run(Path(path), skip_warmup_steps=args.skip_warmup_steps)
+        for path in args.run_dirs
+    ]
     if args.json:
         print(json.dumps(summaries, ensure_ascii=False, indent=2))
     else:
@@ -38,16 +41,22 @@ def main() -> int:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Summarize GRASPO native placement profiling outputs.")
+    parser = argparse.ArgumentParser(
+        description="Summarize GRASPO native placement profiling outputs."
+    )
     parser.add_argument("run_dirs", nargs="+", help="One or more GRASPO output directories.")
-    parser.add_argument("--skip-warmup-steps", type=int, default=1, help="Train steps skipped for mean timing.")
+    parser.add_argument(
+        "--skip-warmup-steps", type=int, default=1, help="Train steps skipped for mean timing."
+    )
     parser.add_argument("--json", action="store_true", help="Emit JSON instead of a compact table.")
     return parser.parse_args()
 
 
 def summarize_run(run_dir: Path, *, skip_warmup_steps: int = 1) -> dict[str, Any]:
     train_steps = _read_train_steps(run_dir)
-    measured = train_steps[skip_warmup_steps:] if len(train_steps) > skip_warmup_steps else train_steps
+    measured = (
+        train_steps[skip_warmup_steps:] if len(train_steps) > skip_warmup_steps else train_steps
+    )
     latest = train_steps[-1] if train_steps else {}
     timing_rows = [dict(step.get("timing") or {}) for step in measured]
     gpu_summary = _read_gpu_summary(run_dir)
@@ -63,21 +72,29 @@ def summarize_run(run_dir: Path, *, skip_warmup_steps: int = 1) -> dict[str, Any
     total_sec = _mean_key(timing_rows, "total_observed_sec")
     decode_tokens = _sum_key(timing_rows, "decode_tokens")
     rollout_sec = _sum_key(timing_rows, "rollout_sec")
-    trainable_groups = _sum_latest_or_batch(train_steps, measured, ("batch", "decisions", "trainable", "total"))
+    trainable_groups = _sum_latest_or_batch(
+        train_steps, measured, ("batch", "decisions", "trainable", "total")
+    )
     return {
         "run_dir": str(run_dir),
         "name": run_dir.name,
         "step_count": len(train_steps),
         "measured_step_count": len(measured),
-        "latest_step": latest.get("run", {}).get("step") or latest.get("run", {}).get("optimized_steps"),
-        "latest_epoch": latest.get("epoch", {}).get("index") or latest.get("epoch", {}).get("epoch"),
+        "latest_step": latest.get("run", {}).get("step")
+        or latest.get("run", {}).get("optimized_steps"),
+        "latest_epoch": latest.get("epoch", {}).get("index")
+        or latest.get("epoch", {}).get("epoch"),
         "latest_reward_mean": latest_reward,
         "latest_content_mean": latest_content,
         "latest_trainable_groups": decisions.get("trainable", {}).get("total"),
         "latest_invalid": decisions.get("terminal", {}).get("invalid"),
-        "latest_invalid_no_preference_gap": decisions.get("terminal", {}).get("invalid_no_preference_gap"),
+        "latest_invalid_no_preference_gap": decisions.get("terminal", {}).get(
+            "invalid_no_preference_gap"
+        ),
         "timing_mean": {key: _mean_key(timing_rows, key) for key in TIMING_KEYS},
-        "latest_timing": {key: latest_timing.get(key) for key in TIMING_KEYS if key in latest_timing},
+        "latest_timing": {
+            key: latest_timing.get(key) for key in TIMING_KEYS if key in latest_timing
+        },
         "decode_tokens_per_sec": decode_tokens / rollout_sec if rollout_sec > 0 else None,
         "trainable_groups_per_hour": trainable_groups * 3600.0 / (total_sec * len(measured))
         if total_sec and measured
@@ -242,8 +259,16 @@ def print_table(summaries: list[dict[str, Any]]) -> None:
 
 def _gpu_rollup(summary: dict[str, Any]) -> tuple[float | None, float | None]:
     per_gpu = summary.get("per_gpu") or {}
-    utils = [float(item["utilization_gpu_pct_mean"]) for item in per_gpu.values() if item.get("utilization_gpu_pct_mean") is not None]
-    peaks = [float(item["memory_used_mib_peak"]) for item in per_gpu.values() if item.get("memory_used_mib_peak") is not None]
+    utils = [
+        float(item["utilization_gpu_pct_mean"])
+        for item in per_gpu.values()
+        if item.get("utilization_gpu_pct_mean") is not None
+    ]
+    peaks = [
+        float(item["memory_used_mib_peak"])
+        for item in per_gpu.values()
+        if item.get("memory_used_mib_peak") is not None
+    ]
     return (mean(utils) if utils else None, max(peaks) / 1024.0 if peaks else None)
 
 
