@@ -4,7 +4,9 @@ import torch
 from torch import nn
 
 
-def masked_mean(tensor: torch.Tensor, mask: torch.Tensor | None, dim: int | None = None) -> torch.Tensor:
+def masked_mean(
+    tensor: torch.Tensor, mask: torch.Tensor | None, dim: int | None = None
+) -> torch.Tensor:
     if mask is None:
         return tensor.mean(dim=dim)
     denom = mask.sum(dim=dim).clamp_min(1)
@@ -50,6 +52,8 @@ class GRASPOLoss(nn.Module):
     ) -> torch.Tensor:
         ratio = (log_probs - old_log_probs).exp()
         surr1 = ratio * advantages
-        surr2 = ratio.clamp(1 - self.policy_ratio_clip_eps, 1 + self.policy_ratio_clip_eps) * advantages
+        surr2 = (
+            ratio.clamp(1 - self.policy_ratio_clip_eps, 1 + self.policy_ratio_clip_eps) * advantages
+        )
         loss = -torch.min(surr1, surr2)
         return masked_mean(loss, action_mask, dim=-1).mean()

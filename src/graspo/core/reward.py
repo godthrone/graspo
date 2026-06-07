@@ -46,23 +46,18 @@ def is_valid_json(value: str) -> bool:
 
 
 def normalize_ground_truth(value: Any) -> dict[str, Any]:
-    if isinstance(value, str):
-        parsed = json.loads(value)
-    else:
-        parsed = value
-
-    if isinstance(parsed, list) and parsed:
-        parsed = parsed[0]
-    if not isinstance(parsed, dict):
-        raise ValueError("ground_truth must be a JSON object, a JSON object string, or a non-empty list")
-    return parsed
+    if not isinstance(value, dict):
+        raise ValueError("ground_truth must be a JSON object")
+    return value
 
 
 class GraspoReward:
     def __init__(self, config: RewardConfig | None = None) -> None:
         self.config = config or RewardConfig()
 
-    def score(self, completion: str, ground_truth: Any, tool_call: Any | None = None) -> RewardResult:
+    def score(
+        self, completion: str, ground_truth: Any, tool_call: Any | None = None
+    ) -> RewardResult:
         answer_target = normalize_ground_truth(ground_truth)
         targets: dict[ContentField, dict[str, Any]] = {"answer": answer_target}
         if self.config.check_tool_call and tool_call not in (None, ""):

@@ -120,9 +120,7 @@ class NativeTPGraspoTrainer:
                 "backend": self.backend_name,
                 "reason": self.selection.reason if self.selection is not None else "configured",
                 "dependency_boundary": (
-                    "PyTorch distributed TP only; no NeMo/vLLM/Ray/DeepSpeed/FSDP/DDP/Accelerate"
-                    if self.backend_name == "native-tp"
-                    else "single-process Hugging Face reference; not a production multi-card backend"
+                    "PyTorch distributed TP/PP only; no NeMo/vLLM/Ray/DeepSpeed/FSDP/DDP/Accelerate"
                 ),
                 "model_path": self.config.model.model_path,
                 "train_path": self.config.data.train_path,
@@ -130,12 +128,7 @@ class NativeTPGraspoTrainer:
             }
         )
 
-        samples = load_jsonl(
-            self.config.data.train_path,
-            prompt_field=self.config.data.prompt_field,
-            ground_truth_field=self.config.data.ground_truth_field,
-            messages_field=self.config.data.messages_field,
-        )
+        samples = load_jsonl(self.config.data.train_path)
         self.total_samples = len(samples)
         output_dir = Path(self.config.training.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -158,19 +151,25 @@ class NativeTPGraspoTrainer:
                     "max_steps": self.config.training.max_steps,
                     "max_new_tokens": self.config.training.max_new_tokens,
                     "save_steps": self.config.training.save_steps,
-                    "activation_checkpointing_enabled": bool(self.config.model.gradient_checkpointing),
-                    "lora_target_modules": list(self.config.lora.target_modules or ["q_proj", "v_proj"]),
+                    "activation_checkpointing_enabled": bool(
+                        self.config.model.gradient_checkpointing
+                    ),
+                    "lora_target_modules": list(
+                        self.config.lora.target_modules or [self.config.lora.target_preset]
+                    ),
                     "rollout_kv_cache_max_reserved_fraction": self.config.native_tp.rollout_kv_cache_max_reserved_fraction,
                     "empty_cache_after_rollout_split": self.config.native_tp.empty_cache_after_rollout_split,
                     "synchronize_cuda_timing": self.config.native_tp.synchronize_cuda_timing,
-                    "legacy_config_alias_used": bool(self.config.training.legacy_config_aliases),
                 },
             }
         )
 
         try:
             start_epoch = int(self.current_epoch_stats.epoch)
-            if self.total_samples and int(self.current_epoch_stats.samples_seen) >= self.total_samples:
+            if (
+                self.total_samples
+                and int(self.current_epoch_stats.samples_seen) >= self.total_samples
+            ):
                 start_epoch += 1
             for epoch in range(start_epoch, self.config.training.training_epoch_count):
                 if epoch != start_epoch or self.current_epoch_stats.samples_seen == 0:
@@ -178,9 +177,7 @@ class NativeTPGraspoTrainer:
                 epoch_samples = list(samples)
                 random.Random(int(self.config.training.seed) + epoch).shuffle(epoch_samples)
                 resume_sample_offset = (
-                    int(self.current_epoch_stats.samples_seen)
-                    if epoch == start_epoch
-                    else 0
+                    int(self.current_epoch_stats.samples_seen) if epoch == start_epoch else 0
                 )
                 queue_size = max(1, int(self.config.training.rollout_prompt_queue_batch_size))
                 pending_samples = epoch_samples[resume_sample_offset:]
@@ -199,8 +196,12 @@ class NativeTPGraspoTrainer:
                     }
                 )
             if len(self.replay_buffer) > 0:
-                self._maybe_optimize(epoch=self.config.training.training_epoch_count - 1, force=True)
-            self._save_checkpoint(output_dir / "final", epoch=self.config.training.training_epoch_count - 1)
+                self._maybe_optimize(
+                    epoch=self.config.training.training_epoch_count - 1, force=True
+                )
+            self._save_checkpoint(
+                output_dir / "final", epoch=self.config.training.training_epoch_count - 1
+            )
         finally:
             self.runtime.close()
 
@@ -232,17 +233,25 @@ class NativeTPGraspoTrainer:
                 stop_requested = True
         return stop_requested
 
-    def _rollout_queue_attempt(self, active: list[_QueuedSample], *, epoch: int) -> list[_AttemptRecord]:
-        prompts = [state.sample.prompt for state in active]
+    def _rollout_queue_attempt(
+        self, active: list[_QueuedSample], *, epoch: int
+    ) -> list[_AttemptRecord]:
         rollout_started_at = time.monotonic()
-        generations = self._generate_groups(prompts)
+        generations = (
+            self._generate_sample_groups([state.sample for state in active])
+            if any(state.sample.media for state in active)
+            else self._generate_groups([state.sample.messages for state in active])
+        )
         rollout_sec = time.monotonic() - rollout_started_at
         rollout_sec_per_prompt = rollout_sec / max(len(generations), 1)
         records: list[_AttemptRecord] = []
         for state, generation in zip(active, generations, strict=True):
             attempt_started_at = time.monotonic()
             reward_started_at = time.monotonic()
-            results = [self.reward.score(text, state.sample.ground_truth) for text in generation.completions]
+            results = [
+                self.reward.score(text, state.sample.ground_truth)
+                for text in generation.completions
+            ]
             reward_cpu_sec = time.monotonic() - reward_started_at
             rewards = [float(result.reward) for result in results]
             content_scores = [float(result.content_score) for result in results]
@@ -306,11 +315,11 @@ class NativeTPGraspoTrainer:
             )
         return records
 
-    def _generate_groups(self, prompts: list[str]) -> list[NativeGeneration]:
+    def _generate_groups(self, message_batches: list[list[dict[str, Any]]]) -> list[NativeGeneration]:
         generate_groups = getattr(self.runtime, "generate_groups", None)
         if callable(generate_groups):
             generations = generate_groups(
-                prompts=prompts,
+                message_batches=message_batches,
                 rollout_group_size=self.config.training.rollout_group_size,
                 max_new_tokens=self.config.training.max_new_tokens,
                 max_prompt_length=self.config.data.max_prompt_length,
@@ -318,14 +327,14 @@ class NativeTPGraspoTrainer:
                 top_p=self.config.training.top_p,
                 chat_template_kwargs=self.config.model.chat_template_kwargs,
             )
-            if len(generations) != len(prompts):
+            if len(generations) != len(message_batches):
                 raise RuntimeError(
-                    f"native-tp generate_groups returned {len(generations)} groups for {len(prompts)} prompts"
+                    f"native-tp generate_groups returned {len(generations)} groups for {len(message_batches)} prompts"
                 )
             return generations
         return [
             self.runtime.generate_group(
-                prompt=prompt,
+                messages=messages,
                 rollout_group_size=self.config.training.rollout_group_size,
                 max_new_tokens=self.config.training.max_new_tokens,
                 max_prompt_length=self.config.data.max_prompt_length,
@@ -333,8 +342,30 @@ class NativeTPGraspoTrainer:
                 top_p=self.config.training.top_p,
                 chat_template_kwargs=self.config.model.chat_template_kwargs,
             )
-            for prompt in prompts
+            for messages in message_batches
         ]
+
+    def _generate_sample_groups(self, samples: list[Sample]) -> list[NativeGeneration]:
+        generate_sample_groups = getattr(self.runtime, "generate_sample_groups", None)
+        if not callable(generate_sample_groups):
+            raise RuntimeError(
+                "Input samples contain image/video media, but the selected native runtime "
+                "does not implement multimodal generate_sample_groups"
+            )
+        generations = generate_sample_groups(
+            samples=samples,
+            rollout_group_size=self.config.training.rollout_group_size,
+            max_new_tokens=self.config.training.max_new_tokens,
+            max_prompt_length=self.config.data.max_prompt_length,
+            temperature=self.config.training.temperature,
+            top_p=self.config.training.top_p,
+            chat_template_kwargs=self.config.model.chat_template_kwargs,
+        )
+        if len(generations) != len(samples):
+            raise RuntimeError(
+                f"native-tp generate_sample_groups returned {len(generations)} groups for {len(samples)} samples"
+            )
+        return generations
 
     def _finalize_sample(self, state: _QueuedSample, *, epoch: int) -> bool:
         if not state.attempts:
@@ -365,10 +396,17 @@ class NativeTPGraspoTrainer:
             return self._finish_sample_and_maybe_optimize(epoch=epoch)
 
         old_logprob_started_at = time.monotonic()
-        old_log_probs = self.runtime.sequence_log_probs(
-            generation.sequences,
-            generation.attention_mask,
-        )
+        if isinstance(generation.metadata, dict) and "_multimodal_rows" in generation.metadata:
+            old_log_probs = self.runtime.sequence_log_probs(
+                generation.sequences,
+                generation.attention_mask,
+                metadata=generation.metadata,
+            )
+        else:
+            old_log_probs = self.runtime.sequence_log_probs(
+                generation.sequences,
+                generation.attention_mask,
+            )
         timing["old_logprob_sec"] = time.monotonic() - old_logprob_started_at
         replay_started_at = time.monotonic()
         advantages = _expand_advantages_like(rewards, old_log_probs)
@@ -405,12 +443,17 @@ class NativeTPGraspoTrainer:
             self.recent_groups.append(_monitor_group(record.readable))
             self.pending_batch_attempts.append(record.readable)
             self._record_epoch_attempt(record.readable)
-            self._record_attempt_timing(epoch=epoch, retry_count=record.retry_count, timing=record.timing)
+            self._record_attempt_timing(
+                epoch=epoch, retry_count=record.retry_count, timing=record.timing
+            )
 
     def _finish_sample_and_maybe_optimize(self, *, epoch: int) -> bool:
         self.current_epoch_stats.samples_seen += 1
         self.sample_index += 1
-        return self._maybe_optimize(epoch=epoch) and 0 < self.config.training.max_steps <= self.global_step
+        return (
+            self._maybe_optimize(epoch=epoch)
+            and 0 < self.config.training.max_steps <= self.global_step
+        )
 
     def _maybe_optimize(self, *, epoch: int, force: bool = False) -> bool:
         threshold = self.config.training.replay_buffer_optimize_threshold
@@ -438,8 +481,12 @@ class NativeTPGraspoTrainer:
         )
         metrics["replay_buffer_optimize_threshold"] = threshold
         metrics["replay_buffer_trainable_completion_count"] = usable
-        metrics["replay_buffer_trainable_group_count"] = usable / max(int(self.config.training.rollout_group_size), 1)
-        metrics["optimize_completion_batch_size"] = self.config.training.optimize_completion_batch_size
+        metrics["replay_buffer_trainable_group_count"] = usable / max(
+            int(self.config.training.rollout_group_size), 1
+        )
+        metrics["optimize_completion_batch_size"] = (
+            self.config.training.optimize_completion_batch_size
+        )
         metrics["optimize_times_per_step"] = self.config.training.optimize_times_per_step
         metrics["force_flush"] = bool(force)
         self.replay_buffer.clear()
@@ -523,6 +570,29 @@ class NativeTPGraspoTrainer:
             path,
             trainer_state=self._checkpoint_trainer_state(epoch=epoch),
         )
+        if path.name == "final" and self.config.export.final_formats and self.runtime.is_primary():
+            self._export_final_checkpoint(path)
+
+    def _export_final_checkpoint(self, checkpoint_dir: Path) -> None:
+        from graspo.backends.native_tp.lora_io import export_from_checkpoint
+
+        for export_format in self.config.export.final_formats:
+            output_dir = checkpoint_dir / str(export_format)
+            export_from_checkpoint(
+                checkpoint_dir,
+                output_dir,
+                export_format=str(export_format),
+                base_model_path=self.config.model.model_path,
+            )
+            self._print_json(
+                {
+                    "timestamp": _timestamp(),
+                    "event": "checkpoint_exported",
+                    "checkpoint": str(checkpoint_dir),
+                    "format": str(export_format),
+                    "output": str(output_dir),
+                }
+            )
 
     def _resume_if_requested(self) -> None:
         checkpoint = self.config.training.resume_from_checkpoint
@@ -530,21 +600,29 @@ class NativeTPGraspoTrainer:
             return
         checkpoint_dir = Path(checkpoint)
         if not checkpoint_dir.exists():
-            raise FileNotFoundError(f"training.resume_from_checkpoint does not exist: {checkpoint_dir}")
+            raise FileNotFoundError(
+                f"training.resume_from_checkpoint does not exist: {checkpoint_dir}"
+            )
         loader = getattr(self.runtime, "load_checkpoint", None)
         if not callable(loader):
             raise RuntimeError("Selected runtime does not support checkpoint resume")
         trainer_state = loader(checkpoint_dir)
-        migrated_from_legacy = trainer_state is None
         if trainer_state is None:
-            trainer_state = _migrate_legacy_trainer_state(checkpoint_dir)
+            raise RuntimeError(
+                "GRASPO checkpoint is missing trainer_state; latest-only resume requires "
+                "a current recoverable native checkpoint"
+            )
+        if trainer_state.get("format") != "graspo-native-tp-trainer-state":
+            raise RuntimeError(
+                "Unsupported trainer_state format: "
+                f"{trainer_state.get('format')!r}; latest-only resume requires current GRASPO"
+            )
         self._restore_trainer_state(trainer_state)
         self.resume_info = {
             "checkpoint": str(checkpoint_dir),
             "global_step": self.global_step,
             "epoch": self.current_epoch_stats.epoch,
             "samples_seen": self.current_epoch_stats.samples_seen,
-            "resume_migrated_from_legacy_checkpoint": migrated_from_legacy,
         }
         self._print_json(
             {
@@ -589,7 +667,9 @@ class NativeTPGraspoTrainer:
         self.pending_batch_attempts.clear()
         self.pending_batch_timings.clear()
 
-    def _record_attempt_timing(self, *, epoch: int, retry_count: int, timing: dict[str, Any]) -> None:
+    def _record_attempt_timing(
+        self, *, epoch: int, retry_count: int, timing: dict[str, Any]
+    ) -> None:
         self.pending_batch_timings.append(timing)
         if self._is_primary():
             self.logger.write_timing_event(
@@ -654,6 +734,7 @@ class NativeTPGraspoTrainer:
                     attention_mask=generation.attention_mask[idx].detach().cpu(),
                     action_mask=generation.action_mask[idx].detach().cpu(),
                     rewards=reward_tensor[idx].detach().cpu(),
+                    metadata=_experience_metadata_for_row(generation.metadata, idx),
                 )
             )
         self.replay_buffer.append_many(items)
@@ -677,9 +758,10 @@ class NativeTPGraspoTrainer:
             "epoch": epoch,
             "step": self.global_step,
             "sample_index": self.sample_index,
-            "prompt": sample.prompt,
+            "messages": sample.messages,
+            "prompt_preview": sample.prompt_preview,
             "ground_truth": sample.ground_truth,
-            "metadata": sample.metadata,
+            "metadata": _safe_sample_metadata(sample),
             "completions": generation.completions,
             "rewards": rewards,
             "content_scores": content_scores,
@@ -692,7 +774,7 @@ class NativeTPGraspoTrainer:
             "retry_count": retry_count,
             "group_stats": _group_stats(rewards),
             "reward_max_median_gap": decision.reward_max_median_gap,
-            "generation_metadata": generation.metadata or {},
+            "generation_metadata": _public_generation_metadata(generation.metadata or {}),
         }
         if decision.decision.value == "invalid_no_preference_gap":
             payload["invalid_reason"] = "no_preference_gap"
@@ -715,7 +797,9 @@ class NativeTPGraspoTrainer:
         self.current_epoch_stats.completion_count += len(rewards)
         if rewards:
             self.current_epoch_stats.reward_mean_sum += sum(rewards) / len(rewards)
-            self.current_epoch_stats.best_reward = max(self.current_epoch_stats.best_reward, max(rewards))
+            self.current_epoch_stats.best_reward = max(
+                self.current_epoch_stats.best_reward, max(rewards)
+            )
         if content_scores:
             self.current_epoch_stats.content_mean_sum += sum(content_scores) / len(content_scores)
         if decision == "retry":
@@ -767,7 +851,9 @@ class NativeTPGraspoTrainer:
                 retry_attempts=stats.retries,
             ),
             "reward_mean": stats.reward_mean_sum / attempt_groups if stats.attempt_groups else 0.0,
-            "content_mean": stats.content_mean_sum / attempt_groups if stats.attempt_groups else 0.0,
+            "content_mean": stats.content_mean_sum / attempt_groups
+            if stats.attempt_groups
+            else 0.0,
             "best_reward": stats.best_reward,
         }
 
@@ -859,107 +945,6 @@ def _epoch_stats_from_dict(raw: dict[str, Any]) -> NativeEpochStats:
     )
 
 
-def _migrate_legacy_trainer_state(checkpoint_dir: Path) -> dict[str, Any]:
-    step = _step_from_checkpoint_dir(checkpoint_dir)
-    event = _find_legacy_train_step(checkpoint_dir.parent, max_step=step)
-    if event is None:
-        raise RuntimeError(
-            "Legacy checkpoint does not include trainer_state and no matching train_step log "
-            f"was found near {checkpoint_dir}"
-        )
-    return {
-        "format": "graspo-native-tp-trainer-state",
-        "version": 0,
-        "global_step": int(event.get("step") or step),
-        "sample_index": _terminal_total(event.get("run")),
-        "total_samples": int((event.get("epoch") or {}).get("samples_total") or 0),
-        "epoch": int((event.get("epoch") or {}).get("epoch") or 0),
-        "run_stats": _legacy_run_stats(event.get("run") or {}, global_step=int(event.get("step") or step)),
-        "epoch_stats": _legacy_epoch_stats(event.get("epoch") or {}),
-        "config_snapshot": {"migrated_from_legacy_checkpoint": True},
-    }
-
-
-def _step_from_checkpoint_dir(checkpoint_dir: Path) -> int:
-    name = checkpoint_dir.name
-    if name.startswith("step_"):
-        return int(name.split("_", 1)[1])
-    return 0
-
-
-def _find_legacy_train_step(output_dir: Path, *, max_step: int) -> dict[str, Any] | None:
-    best: dict[str, Any] | None = None
-    for filename in ("nohup.out", "train.log"):
-        path = output_dir / filename
-        if not path.exists():
-            continue
-        with path.open("r", encoding="utf-8", errors="ignore") as handle:
-            for line in handle:
-                start = line.find("{")
-                if start < 0:
-                    continue
-                try:
-                    event = json.loads(line[start:])
-                except json.JSONDecodeError:
-                    continue
-                if event.get("event") != "train_step":
-                    continue
-                step = int(event.get("step") or 0)
-                if max_step > 0 and step > max_step:
-                    continue
-                if best is None or step >= int(best.get("step") or 0):
-                    best = event
-    return best
-
-
-def _legacy_run_stats(run: dict[str, Any], *, global_step: int) -> dict[str, Any]:
-    decisions = run.get("decisions") or {}
-    terminal = decisions.get("terminal") or {}
-    trainable = decisions.get("trainable") or {}
-    rollout_attempts = decisions.get("rollout_attempts") or {}
-    return {
-        "total_groups": int(run.get("attempt_groups") or rollout_attempts.get("total") or 0),
-        "perfect_skipped": int(terminal.get("perfect_skip") or 0),
-        "retries": int(rollout_attempts.get("retry") or 0),
-        "invalid": int(terminal.get("invalid") or 0),
-        "invalid_no_preference_gap": int(terminal.get("invalid_no_preference_gap") or 0),
-        "trainable": int(trainable.get("total") or terminal.get("trainable") or 0),
-        "trainable_max_correct": int(trainable.get("max_correct") or 0),
-        "trainable_not_correct": int(trainable.get("not_correct") or 0),
-        "optimized_steps": int(run.get("optimized_steps") or global_step),
-    }
-
-
-def _legacy_epoch_stats(epoch: dict[str, Any]) -> dict[str, Any]:
-    decisions = epoch.get("decisions") or {}
-    terminal = decisions.get("terminal") or {}
-    trainable = decisions.get("trainable") or {}
-    rollout_attempts = decisions.get("rollout_attempts") or {}
-    attempt_groups = int(epoch.get("attempt_groups") or rollout_attempts.get("total") or 0)
-    return {
-        "epoch": int(epoch.get("epoch") or 0),
-        "samples_seen": int(epoch.get("samples_seen") or 0),
-        "attempt_groups": attempt_groups,
-        "completion_count": int(epoch.get("completions") or 0),
-        "perfect_skipped": int(terminal.get("perfect_skip") or 0),
-        "retries": int(rollout_attempts.get("retry") or 0),
-        "invalid": int(terminal.get("invalid") or 0),
-        "invalid_no_preference_gap": int(terminal.get("invalid_no_preference_gap") or 0),
-        "trainable": int(trainable.get("total") or terminal.get("trainable") or 0),
-        "trainable_max_correct": int(trainable.get("max_correct") or 0),
-        "trainable_not_correct": int(trainable.get("not_correct") or 0),
-        "reward_mean_sum": float(epoch.get("reward_mean") or 0.0) * attempt_groups,
-        "content_mean_sum": float(epoch.get("content_mean") or 0.0) * attempt_groups,
-        "best_reward": float(epoch.get("best_reward") or 0.0),
-    }
-
-
-def _terminal_total(run: Any) -> int:
-    decisions = (run or {}).get("decisions") or {}
-    terminal = decisions.get("terminal") or {}
-    return int(terminal.get("total") or 0)
-
-
 def _group_stats(rewards: list[float]) -> dict[str, float | int]:
     if not rewards:
         return {"count": 0, "min": 0.0, "median": 0.0, "max": 0.0, "mean": 0.0, "range": 0.0}
@@ -1000,6 +985,59 @@ def _generated_token_counts(generation: NativeGeneration) -> list[int]:
         return []
 
 
+def _safe_sample_metadata(sample: Sample) -> dict[str, Any]:
+    redacted = {
+        key: value
+        for key, value in sample.metadata.items()
+        if key not in {"image", "images", "video", "videos"}
+    }
+    if sample.media:
+        counts: dict[str, int] = {}
+        for item in sample.media:
+            media_type = str(item.get("type") or "unknown")
+            counts[media_type] = counts.get(media_type, 0) + 1
+        redacted["media"] = {
+            "count": len(sample.media),
+            "types": counts,
+        }
+    return redacted
+
+
+def _public_generation_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    public = {key: value for key, value in metadata.items() if not str(key).startswith("_")}
+    private_rows = metadata.get("_multimodal_rows")
+    if isinstance(private_rows, list) and private_rows:
+        media_counts: dict[str, int] = {}
+        for row in private_rows:
+            if not isinstance(row, dict):
+                continue
+            for item in row.get("media") or []:
+                if not isinstance(item, dict):
+                    continue
+                media_type = str(item.get("type") or "unknown")
+                media_counts[media_type] = media_counts.get(media_type, 0) + 1
+        public["multimodal"] = {
+            "row_count": len(private_rows),
+            "media_counts": media_counts,
+        }
+    return public
+
+
+def _experience_metadata_for_row(
+    metadata: dict[str, Any] | None, row_index: int
+) -> dict[str, Any] | None:
+    if not metadata:
+        return None
+    rows = metadata.get("_multimodal_rows")
+    if isinstance(rows, list):
+        if row_index >= len(rows):
+            raise RuntimeError(
+                f"generation multimodal metadata has {len(rows)} rows, cannot index row {row_index}"
+            )
+        return {"_multimodal_rows": [rows[row_index]]}
+    return dict(metadata)
+
+
 def _monitor_group(payload: dict[str, Any]) -> dict[str, Any]:
     rewards = [float(value) for value in payload.get("rewards", [])]
     content_scores = [float(value) for value in payload.get("content_scores", [])]
@@ -1014,8 +1052,12 @@ def _monitor_group(payload: dict[str, Any]) -> dict[str, Any]:
         "content_all_zero": bool(content_scores) and all(value == 0.0 for value in content_scores),
         "content_all_one": bool(content_scores) and all(value == 1.0 for value in content_scores),
         "missing_json_marker_count": sum(1 for text in completions if "```json" not in text),
-        "unclosed_json_fence_count": sum(1 for text in completions if "```json" in text and text.count("```") < 2),
-        "invalid_extracted_json_count": sum(1 for detail in details if detail.get("valid_extracted_json") is False),
+        "unclosed_json_fence_count": sum(
+            1 for text in completions if "```json" in text and text.count("```") < 2
+        ),
+        "invalid_extracted_json_count": sum(
+            1 for detail in details if detail.get("valid_extracted_json") is False
+        ),
         "likely_truncated_json_count": sum(
             1
             for text, detail in zip(completions, details, strict=False)
@@ -1057,8 +1099,12 @@ def _reward_window_summary(groups: deque[dict[str, Any]]) -> dict[str, Any]:
         "content_all_one_rate": sum(bool(item["content_all_one"]) for item in items) / count,
         "missing_json_marker_count": sum(int(item["missing_json_marker_count"]) for item in items),
         "unclosed_json_fence_count": sum(int(item["unclosed_json_fence_count"]) for item in items),
-        "invalid_extracted_json_count": sum(int(item["invalid_extracted_json_count"]) for item in items),
-        "likely_truncated_json_count": sum(int(item["likely_truncated_json_count"]) for item in items),
+        "invalid_extracted_json_count": sum(
+            int(item["invalid_extracted_json_count"]) for item in items
+        ),
+        "likely_truncated_json_count": sum(
+            int(item["likely_truncated_json_count"]) for item in items
+        ),
     }
 
 
@@ -1104,9 +1150,8 @@ def _reward_batch_summary(
         )
 
     attempt_group_count = len(attempts)
-    trainable_group_count = (
-        decision_counts.get("trainable_max_correct", 0)
-        + decision_counts.get("trainable_not_correct", 0)
+    trainable_group_count = decision_counts.get("trainable_max_correct", 0) + decision_counts.get(
+        "trainable_not_correct", 0
     )
     retry_group_count = decision_counts.get("retry", 0)
     invalid_group_count = decision_counts.get("invalid", 0)
@@ -1141,7 +1186,9 @@ def _reward_batch_summary(
             sum(value > 0.0 for value in group_ranges) / len(group_ranges) if group_ranges else 0.0
         ),
         "reward_max_median_gap_mean": (
-            sum(group_max_median_gaps) / len(group_max_median_gaps) if group_max_median_gaps else 0.0
+            sum(group_max_median_gaps) / len(group_max_median_gaps)
+            if group_max_median_gaps
+            else 0.0
         ),
         "content_mean": sum(content_scores) / len(content_scores) if content_scores else 0.0,
         "content_all_zero_group_count": sum(
@@ -1216,7 +1263,9 @@ def _compact_decisions(
     retry_attempts: int,
 ) -> dict[str, Any]:
     trainable_total = int(trainable_max_correct) + int(trainable_not_correct)
-    terminal_total = int(perfect_skip) + trainable_total + int(invalid) + int(invalid_no_preference_gap)
+    terminal_total = (
+        int(perfect_skip) + trainable_total + int(invalid) + int(invalid_no_preference_gap)
+    )
     return {
         "rollout_attempts": {
             "total": terminal_total + int(retry_attempts),
@@ -1278,14 +1327,20 @@ def _compact_timing_summary(
         "decode_sec": round(_sum_timing(attempt_timings, "decode_sec"), 6),
         "sampling_sec": round(_sum_timing(attempt_timings, "sampling_sec"), 6),
         "stop_check_sec": round(_sum_timing(attempt_timings, "stop_check_sec"), 6),
-        "train_batch_total_sec": round(float(metrics.get("train_batch_total_sec") or optimize_sec), 6),
+        "train_batch_total_sec": round(
+            float(metrics.get("train_batch_total_sec") or optimize_sec), 6
+        ),
         "optimize_round_sec_sum": round(float(metrics.get("optimize_round_sec_sum") or 0.0), 6),
         "micro_batch_forward_sec": round(float(metrics.get("micro_batch_forward_sec") or 0.0), 6),
         "backward_sec": round(float(metrics.get("backward_sec") or 0.0), 6),
         "optimizer_step_sec": round(float(metrics.get("optimizer_step_sec") or 0.0), 6),
-        "micro_batch_count": int(metrics.get("micro_batch_count") or metrics.get("optimizer_steps") or 0),
+        "micro_batch_count": int(
+            metrics.get("micro_batch_count") or metrics.get("optimizer_steps") or 0
+        ),
         "decode_tokens": int(_sum_timing(attempt_timings, "decode_tokens")),
-        "rollout_generation_split_count": int(_sum_timing(attempt_timings, "rollout_generation_split_count")),
+        "rollout_generation_split_count": int(
+            _sum_timing(attempt_timings, "rollout_generation_split_count")
+        ),
         "total_observed_sec": round(total, 6),
     }
 
@@ -1332,12 +1387,20 @@ def _timestamp() -> str:
 
 def _compact_optimize_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
     optimizer_steps_per_rank = int(metrics.get("optimizer_steps") or 0)
-    global_optimizer_steps = int(metrics.get("global_optimizer_steps_sum") or optimizer_steps_per_rank)
+    global_optimizer_steps = int(
+        metrics.get("global_optimizer_steps_sum") or optimizer_steps_per_rank
+    )
     return {
         "optimized": bool(metrics.get("optimized")),
-        "replay_buffer_trainable_completion_count": int(metrics.get("replay_buffer_trainable_completion_count") or 0),
-        "replay_buffer_trainable_group_count": float(metrics.get("replay_buffer_trainable_group_count") or 0.0),
-        "replay_buffer_optimize_threshold": int(metrics.get("replay_buffer_optimize_threshold") or 0),
+        "replay_buffer_trainable_completion_count": int(
+            metrics.get("replay_buffer_trainable_completion_count") or 0
+        ),
+        "replay_buffer_trainable_group_count": float(
+            metrics.get("replay_buffer_trainable_group_count") or 0.0
+        ),
+        "replay_buffer_optimize_threshold": int(
+            metrics.get("replay_buffer_optimize_threshold") or 0
+        ),
         "optimize_completion_batch_size": int(metrics.get("optimize_completion_batch_size") or 0),
         "optimize_times_per_step": int(metrics.get("optimize_times_per_step") or 0),
         "optimizer_steps_per_rank": optimizer_steps_per_rank,

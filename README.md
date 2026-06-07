@@ -2,309 +2,352 @@
 
 [中文说明](README.zh-CN.md)
 
-GRASPO is an improved reinforcement-learning algorithm based on GRPO, designed
-for language-model tasks whose outputs can be checked structurally, such as JSON
-generation, information extraction, classification, form parsing, and tool-call
-argument generation.
+GRASPO is a GRPO-style reinforcement-learning trainer for language-model tasks
+whose answers can be checked structurally, such as JSON generation, information
+extraction, classification, form parsing, and tool-call argument generation.
+It is designed for low-cost LoRA-based structured-output training: keep the base
+model frozen, train only compact LoRA adapters, and use reward rules that can be
+audited from the generated text.
+The built-in reward checks required markers, parses fenced JSON or tool-call
+payloads, compares structured fields against `ground_truth`, and turns the
+result into group-level preference signals for GRASPO.
 
-Compared with generic GRPO training, GRASPO adds rollout retry, perfect-answer
-skipping, invalid group filtering, no-preference-gap filtering, completion-level
-ReplayBuffer training, and readable reward/debug logs. These changes make the
-algorithm better suited to formatted outputs where a response can be valid,
-malformed, partially correct, or fully correct.
+GRASPO keeps the useful GRPO idea of comparing multiple completions for the same
+prompt, then adds production-oriented behavior for structured outputs:
 
-## Why GRASPO
+- practical RL fine-tuning for 9B-class models on a single 80 GB GPU when using
+  the LoRA/native memory-aware path;
+- rollout retry when a group is too weak to train on;
+- perfect-answer skip so solved prompts do not consume optimizer budget;
+- invalid and no-preference-gap filtering for groups with no useful reward
+  signal;
+- completion-level ReplayBuffer optimization;
+- readable reward/debug logs that preserve real model outputs for inspection;
+- self-owned `native-tp` training with tensor parallel and pipeline placement;
+- LoRA-only training with frozen base weights.
 
-GRPO works well when a group of sampled completions contains useful reward
-differences. Structured-output tasks add a few extra problems:
-
-- many completions are invalid because they miss JSON fences, tool-call markers,
-  required fields, or parseable structure;
-- some prompts are already solved and should not consume optimizer budget;
-- some no-right groups have identical or near-identical rewards, so they do not
-  provide a useful preference signal;
-- long formatted answers can be truncated, making reward debugging impossible
-  without storing the actual model outputs.
-
-GRASPO keeps the useful GRPO idea of comparing completions inside a rollout
-group, then adds task-specific filtering and replay behavior so training focuses
-on groups that can teach the model something.
-
-This repository focuses on a production path that is easy to inspect and adapt:
-
-- the GRASPO algorithm, replay queue, reward, logging, and LoRA training are
-  kept in this codebase;
-- the multi-GPU backend is self-owned `native-tp`, implemented with PyTorch
-  distributed tensor parallelism;
-- the production path does not require Megatron, NeMo, vLLM, Ray, DeepSpeed,
-  FSDP, DDP, Accelerate, TransformerEngine, Apex, or ZeRO fallbacks.
-
-## How It Works
-
-For each dataset sample, GRASPO runs this loop:
-
-1. render one prompt;
-2. generate `rollout_group_size` completions;
-3. score every completion against `ground_truth`;
-4. classify the group as perfect, trainable, retry, or invalid;
-5. push trainable completion-level experiences into ReplayBuffer;
-6. optimize LoRA parameters when the replay queue reaches the threshold;
-7. keep readable/raw JSONL logs so low rewards can be debugged from actual model
-   outputs.
-
-The main algorithmic changes from plain GRPO are:
-
-- `retry`: retry low-quality groups before giving up, up to
-  `rollout_max_retry_times`;
-- `perfect_skip`: skip groups whose lower median reward is already perfect;
-- `invalid`: drop hard-invalid groups such as no reward variance or uniform
-  partial content;
-- `invalid_no_preference_gap`: drop no-right groups whose max reward does not
-  beat the median;
-- ReplayBuffer optimization: store completion-level experiences and optimize
-  them for `optimize_times_per_step` passes;
-- readable/raw logging: save model outputs, reward details, masks, logprobs, and
-  metadata separately for monitoring and debugging.
-
-Group decisions are evaluated in order:
-
-1. `perfect_skip`: lower median reward reaches the perfect threshold;
-2. `trainable_max_correct`: at least one completion is fully correct;
-3. `trainable_not_correct`: no full solution, but `reward_max > reward_median`;
-4. `retry`: retry budget remains;
-5. `invalid`: original hard invalid filters, such as no reward variance or
-   uniform partial content;
-6. `invalid_no_preference_gap`: no useful preference gap after retries.
-
-`invalid_no_preference_gap` is an information-extraction guard: a no-right group
-that is not already hard-invalid and has `reward_max == reward_median` does not
-enter ReplayBuffer, because it has no useful preference signal.
-
-## Current Status
-
-Supported today:
-
-- Qwen3 dense causal LM, such as Qwen3-8B, through the native TP adapter;
-- LoRA-only training with frozen base weights;
-- TP sharding for large dense attention and MLP matrices;
-- exact selected-token logprob for the training loss path;
-- rollout KV cache with generation micro-batch splitting;
-- readable rollout logs, raw replay logs, per-rank metrics, and recoverable LoRA
-  native TP checkpoints;
-- `hf-reference`, a single-process Hugging Face backend for parity and smoke
-  tests.
-
-Planned next:
-
-- exact native text-only hybrid `linear_attention` kernel for Qwen3.5/Qwen3.6;
-- PEFT adapter import/export helpers for offline compatibility;
-- optional vocab-parallel embedding/lm_head if replicated vocabulary weights
-  become the bottleneck.
-
-Qwen3.5/Qwen3.6 text configs are detected, and vision weights are kept out of
-scope, but checkpoints with hybrid `linear_attention` fail closed until the
-exact kernel exists. GRASPO will not silently train them with an approximate
-Qwen3 full-attention layer.
+The production training path uses native TP/PP LoRA modules. PEFT is treated as
+an external compatibility format for warm-start import and offline export. Full
+parameter training is not supported in v1.
 
 ## Install
 
-Python 3.11+ is recommended.
+Python 3.11 is recommended.
 
 ```bash
-command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh
-export PATH="$HOME/.local/bin:$PATH"
-
 git clone https://github.com/godthrone/graspo.git
 cd graspo
-uv sync --extra dev
+uv sync --extra dev --python 3.11
 ```
-
-Without `uv`:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-```
-
-Keep model weights, real datasets, logs, and checkpoints outside the repository.
 
 ## Quick Start
 
-Run the local CPU smoke test:
+Edit the root sample config:
 
 ```bash
-bash scripts/smoke_cpu.sh
+cp config_example.yaml my_graspo.yaml
 ```
 
-Validate the bundled sample data and reward function:
+Set at least these fields in `my_graspo.yaml`:
+
+- `model.model_path`: local Hugging Face model directory or model id;
+- `data.train_path`: JSONL training data;
+- `training.output_dir`: run output directory;
+- `launch.gpus`: local GPU ids for this node;
+- `backend_config.native_tp.tensor_model_parallel_size` and
+  `backend_config.native_tp.pipeline_model_parallel_size`: native placement
+  world size.
+
+Launch training with one YAML argument:
 
 ```bash
-python -m graspo validate-reward --data data/sample.jsonl --limit 2
+uv run graspo launch --config config_example.yaml
 ```
 
-Run a single-process reference job with a small local causal LM:
+For a short smoke, keep `training.max_new_tokens=2048` and reduce
+`training.max_steps`. Real GRASPO training should keep
+`training.training_epoch_count=100` unless you intentionally run a bounded test.
+
+Validate sample data and reward behavior:
 
 ```bash
-BACKEND=hf-reference \
-MODEL_PATH=$HOME/models/small-causal-lm \
-DATA_PATH=data/sample.jsonl \
-OUTPUT_DIR=outputs/hf-reference-demo \
-CONFIG_PATH=configs/graspo.yaml \
-bash scripts/run_train.sh
+uv run graspo validate-reward --data data/sample.jsonl --limit 2
 ```
-
-Run native TP TP=2 training on Qwen3-8B:
-
-```bash
-CUDA_VISIBLE_DEVICES=0,1 \
-TP_SIZE=2 \
-BACKEND=native-tp \
-MODEL_PATH=$HOME/models/Qwen3-8B \
-DATA_PATH=$HOME/datasets/graspo/train.jsonl \
-OUTPUT_DIR=outputs/qwen3-8b-tp2 \
-CONFIG_PATH=configs/profiles/qwen3_8b_native_tp2_overnight.yaml \
-bash scripts/run_train.sh
-```
-
-Run a detached long training job on a server:
-
-```bash
-bash scripts/launch_native_tp2_remote.sh \
-  --model-path $HOME/models/Qwen3-8B \
-  --data-path $HOME/datasets/graspo/train.jsonl \
-  --gpus 0,1 \
-  --tag longrun
-```
-
-The launcher writes the output directory to `latest_graspo_longrun.out`, starts
-`nohup` training, and starts `scripts/record_gpu_memory.py` beside the run.
 
 ## Data Format
 
-Training data is JSONL. Each line is one prompt:
+Training data is JSONL. Each line is one prompt/context represented as chat
+messages plus a reward target:
 
 ```jsonl
-{"prompt":"Extract JSON with the APN and fault number.\nTicket: user 13800138000 cannot use apn cmnet.","ground_truth":{"APN":"cmnet","fault_number":"13800138000"}}
+{"messages":[{"role":"system","content":"You extract structured telecom ticket fields as fenced JSON."},{"role":"user","content":"Ticket: user 13800138000 cannot use apn cmnet."},{"role":"assistant","content":"I will identify the phone number and APN from the ticket."},{"role":"user","content":"Extract JSON with the APN and fault number."}],"ground_truth":{"APN":"cmnet","fault_number":"13800138000"}}
+```
+
+Multimodal records use the same `messages` field and preserve message roles and
+content order:
+
+```jsonl
+{"messages":[{"role":"system","content":"Extract fields from ticket screenshots."},{"role":"user","content":"Use exact snake_case values."},{"role":"assistant","content":"Understood."},{"role":"user","content":[{"type":"image","image":"images/panel_0001.png"},{"type":"text","text":"Extract the ticket fields as strict JSON."}]}],"ground_truth":{"ticket_id":"T-0001","status":"critical"}}
 ```
 
 Supported fields:
 
-- `prompt`: plain text prompt;
-- `ground_truth`: expected structured output, usually a JSON object;
-- `messages`: optional chat messages for tokenizer chat templates;
-- extra fields are treated as metadata.
+- `ground_truth`: expected structured output as a JSON object;
+- `messages`: required prompt/context messages for tokenizer or processor chat templates;
+- image/video items inside `messages[].content`: parsed by the data layer for
+  multimodal routing; image training is supported, while video should be
+  smoke-tested before production use;
+- extra fields are kept as metadata.
 
-Prepare data:
+The final message must not have role `assistant`; `ground_truth` is the reward
+target and must not be leaked into the input messages. GRASPO only accepts JSONL
+records with `messages` and JSON-object `ground_truth`; plain `prompt`, JSON,
+Excel, and top-level media fields are not supported.
+
+## Reward Scoring
+
+GRASPO currently ships one built-in structured-output reward. It is rule-based,
+auditable, and designed for tasks where the target answer is a JSON object. A
+completion is scored in four steps:
+
+1. Check output markers. Depending on `reward` config, the scorer can require
+   `<think>...</think>`, fenced JSON Markdown blocks, and
+   `<tool_call>...</tool_call>` sections.
+2. Extract answer text. The answer is read from the configured marker region;
+   if `check_json_markdown=false`, the full answer region is treated as JSON.
+3. Parse and compare JSON. Parsed completion JSON is compared with
+   `ground_truth` using recursive dictionary/list matching. Fields present in
+   the target get partial credit; exact values get additional credit; unexpected
+   extra keys reduce the structural match.
+4. Normalize reward. Marker score, structured content score, perfect-match
+   bonus, and the extra-text penalty/bonus are combined into `reward`,
+   `content_score`, and `all_right`.
+
+The important outputs are:
+
+- `reward`: scalar used for GRASPO group decisions, advantage calculation, and
+  ReplayBuffer training;
+- `content_score`: normalized structured-content match before group filtering;
+- `all_right`: true only when every checked target is fully correct.
+
+GRASPO uses the reward distribution inside each rollout group, not just one
+absolute score. Groups with useful differences become trainable; already-perfect
+groups can be skipped; groups with no reward variance or no preference gap are
+discarded or retried. The readable rollout log stores the completion, extracted
+fields, reward details, and invalid reason so reward behavior can be inspected
+without rerunning generation.
+
+## Configuration
+
+All normal training configuration lives in YAML. `config_example.yaml` is the
+complete public example.
+
+### `backend`
+
+- `native-tp`: the only supported training backend. It uses native TP/PP LoRA
+  placement and frozen base weights.
+
+### `model`
+
+- `model_path`: base Hugging Face model path or id.
+- `trust_remote_code`: passed to Hugging Face loaders.
+- `torch_dtype`: model dtype, usually `bfloat16`.
+- `attn_implementation`: optional Hugging Face attention implementation.
+- `gradient_checkpointing`: enable model gradient checkpointing where supported.
+- `chat_template_kwargs`: extra tokenizer chat-template options.
+
+### `data`
+
+- `train_path`: JSONL training file.
+- `max_prompt_length`: prompt truncation/tokenization limit.
+
+### `lora`
+
+- `r`: LoRA rank.
+- `alpha`: LoRA alpha.
+- `dropout`: LoRA dropout.
+- `adapter_path`: optional PEFT adapter directory used only for warm-start.
+- `target_preset`: safe named target set, such as `language_safe`.
+- `target_modules`: explicit LoRA targets. If set, `lora.target_modules` takes
+  precedence over `target_preset`.
+- `auto_target_modules`: allow automatic target detection when explicit targets
+  are absent.
+- `bias`: PEFT-compatible bias setting, usually `none`.
+- `task_type`: PEFT-compatible task type, usually `CAUSAL_LM`.
+
+GRASPO currently supports LoRA training only. It does not support full parameter
+training.
+
+### `reward`
+
+- `check_think`: require `<think>...</think>` markers before the answer.
+- `check_json_markdown`: require fenced JSON output.
+- `check_tool_call`: score a tool-call target in addition to the answer.
+- `check_list_order`: make list order matter in structured comparison.
+- `marker_reward_weight`: reward for required output markers.
+- `content_reward_weight`: reward for structured content match.
+- `anti_useless_str_reward_weight`: bonus/penalty weight for extra text.
+- `anti_useless_str_half_reward_len`: length scale for extra-text penalty.
+- `answer_field`: ground-truth answer field.
+
+### `training`
+
+- `output_dir`: run output directory.
+- `seed`: random seed.
+- `training_epoch_count`: full dataset training epochs. Production default is
+  `100`.
+- `max_steps`: optional step cap for smoke/debug runs. `-1` means no cap.
+- `rollout_prompt_queue_batch_size`: prompt groups scheduled together for
+  rollout.
+- `rollout_group_size`: completions sampled per prompt attempt.
+- `optimize_completion_batch_size`: completion micro-batch size for one
+  optimizer step.
+- `optimize_times_per_step`: repeated optimization passes over the same replay
+  completions.
+- `rollout_max_retry_times`: retry budget after the initial rollout attempt.
+- `learning_rate`, `weight_decay`, `max_grad_norm`: optimizer settings.
+- `policy_ratio_clip_eps`: clipped policy-ratio objective epsilon.
+- `max_new_tokens`: real training generation length. Keep
+  `training.max_new_tokens=2048`.
+- `temperature`, `top_p`: rollout sampling settings.
+- `save_steps`: native checkpoint interval.
+- `logging_steps`: compact training log interval.
+- `perfect_skip_reward_threshold`: threshold for skipping already-solved groups.
+- `dataloader_num_workers`: data loading worker count.
+- `resume_from_checkpoint`: recoverable GRASPO native checkpoint directory.
+
+`training.replay_buffer_optimize_threshold` is derived as
+`optimize_completion_batch_size * rollout_group_size` and must not be configured.
+`training.resume_from_checkpoint` and `lora.adapter_path` are mutually
+exclusive: resume restores native checkpoint state, while PEFT adapter loading
+is only a LoRA warm-start.
+
+### `backend_config.native_tp`
+
+- `tensor_model_parallel_size`: TP size.
+- `pipeline_model_parallel_size`: PP size.
+- `placement_strategy`: placement policy such as `qwen3_tp` or
+  `qwen36_pp8_static`.
+- `sequence_parallel`: must stay `false` in v1.
+- `train_micro_batch_size`: native train micro-batch size.
+- `generation_micro_batch_size`: native generation micro-batch split.
+- `use_kv_cache_for_rollout`: use KV cache only for rollout generation.
+- `rollout_kv_cache_max_reserved_fraction`: rollout KV memory reservation.
+- `empty_cache_after_rollout_split`, `empty_cache_before_train`: CUDA cache
+  controls.
+- `checkpoint_format`: native recoverable checkpoint format label.
+- `raw_log_enabled`, `readable_log_enabled`: rollout/replay log toggles.
+- `synchronize_cuda_timing`: synchronize CUDA events for timing diagnostics.
+- `pipeline_train_schedule`: pipeline train schedule, default `simple`.
+- `pipeline_max_inflight_microbatches`: 1F1B inflight cap for experiments.
+
+### `export`
+
+- `final_formats`: optional list of formats to export after the clean `final/`
+  checkpoint, for example `["peft-adapter"]`. Step checkpoints are not
+  auto-exported.
+
+### `launch`
+
+- `gpus`: local GPU ids for this node.
+- `nproc_per_node`: worker count per node. If omitted for `native-tp`, it is
+  derived from TP * PP / nodes.
+- `nnodes`, `node_rank`, `master_addr`, `master_port`: distributed launch
+  settings.
+- `python`: optional Python executable override.
+- `torchrun`: optional torchrun executable override.
+- `env`: extra environment variables for the launched training process.
+
+## LoRA Targets
+
+Preset values:
+
+- `language_safe`: language-side `q_proj` and `v_proj`;
+- `language_all_linear`: supported language attention, linear-attention, and
+  MLP matrices;
+- `vision_merger`: visual merger linear layers only;
+- `vision_common`: visual merger plus supported visual attention/MLP linear
+  layers.
+
+Explicit `lora.target_modules` may use canonical names such as
+`language.self_attn.q_proj` or glob patterns such as `visual.blocks.*.attn.*`.
+Leaf aliases such as `q_proj` are not accepted. Resolution is fail-closed:
+unknown targets, unsupported conv/norm parameters, and empty matches stop before
+training. Native checkpoints store the resolved LoRA target signature and reject
+resume with a different target configuration.
+
+## Export
+
+GRASPO native checkpoints are recoverable training checkpoints. Portable model
+artifacts are produced with `graspo export`.
+
+Export a PEFT LoRA adapter:
 
 ```bash
-python -m graspo prepare-data --input raw_data.jsonl --output outputs/train.jsonl
+uv run graspo export --config config_example.yaml --checkpoint outputs/example-run/final --format peft-adapter --output outputs/export/adapter
 ```
 
-Split train/eval JSONL:
+Export a merged Hugging Face full model:
 
 ```bash
-SOURCE_DATA_PATH=outputs/train.jsonl \
-TRAIN_OUTPUT_PATH=outputs/train_split.jsonl \
-EVAL_OUTPUT_PATH=outputs/eval_split.jsonl \
-bash scripts/split_train_eval_jsonl.sh
+uv run graspo export --config config_example.yaml --checkpoint outputs/example-run/final --format merged-hf --output outputs/export/merged
 ```
 
-## Core Configuration
+`peft-adapter` reconstructs PEFT `adapter_config.json` and
+`adapter_model.safetensors` from GRASPO native rank shards. For fused/split
+native targets, GRASPO writes an additional `graspo_adapter_metadata.json` so
+GRASPO can warm-start those adapters losslessly. Standard PEFT tools can read
+the adapter tensors, but the GRASPO metadata is required to map fused/split
+targets back into native training modules without ambiguity.
 
-The production profile uses canonical GRASPO names:
+`merged-hf` streams the base HF safetensors on CPU, applies LoRA deltas, copies
+tokenizer/config sidecar files, and writes a HF-compatible merged model
+directory.
 
-- `training.training_epoch_count=100`: full dataset training epochs;
-- `training.rollout_prompt_queue_batch_size=1`: how many prompts are scheduled
-  together for rollout. Each prompt still owns its own
-  `rollout_group_size` completions and independent retry/decision path;
-- `training.rollout_group_size=8`: completions sampled per prompt attempt;
-- `training.optimize_completion_batch_size=4`: completion micro-batch size for
-  one optimizer step;
-- `training.replay_buffer_optimize_threshold=32`: derived from
-  `optimize_completion_batch_size * rollout_group_size`;
-- `training.optimize_times_per_step=4`: repeated optimization passes over the
-  same replay completions;
-- `training.rollout_max_retry_times=5`: extra rollout attempts after the first
-  attempt;
-- `training.max_new_tokens=2048`: real training generation length. Use
-  `max_steps` for short checks; do not lower generation length for production
-  profiles;
-- `training.policy_ratio_clip_eps=0.2`: clipped policy-ratio objective epsilon.
-
-## Rollout Performance
-
-Rollout is usually the largest wall-clock cost. Native TP can batch multiple
-prompt groups during rollout while keeping GRASPO semantics unchanged: retry,
-perfect skip, invalid filtering, ReplayBuffer insertion, advantage, and loss are
-still computed per prompt group.
-
-The tuning knobs are:
-
-```yaml
-training:
-  rollout_prompt_queue_batch_size: 2
-
-backend_config:
-  native_tp:
-    rollout_kv_cache_max_reserved_fraction: 0.90
-```
-
-For Qwen3-8B on two 80 GB GPUs, `rollout_prompt_queue_batch_size=2` with KV
-fraction `0.90` is the recommended accelerated profile. It improves rollout GPU
-utilization while keeping peak memory far below the 80 GB edge in long runs.
-`rollout_prompt_queue_batch_size=3` may pass short profiling but can hit
-allocator and long-sequence peaks in real long training, so treat it as a
-profiling boundary rather than a stable default.
+Exported PEFT adapters and merged full models are deployment/compatibility
+artifacts. They do not contain optimizer, RNG, replay buffer, or trainer state,
+and cannot replace `step_*` or `final` for full training resume.
 
 ## Outputs And Monitoring
 
 Each run writes to `training.output_dir`:
 
-- `nohup.out` or stdout: compact progress JSON;
 - `train.log`: compact rank-0 training events;
-- `rollouts.readable.jsonl`: prompt, completions, rewards, and debug details;
+- `rollouts.readable.jsonl`: human-readable messages, completion, reward, and
+  debug details;
 - `rollouts.raw.jsonl`: replay tensors, masks, old logprobs, advantages, and
   reward metadata;
-- `train_batches.readable.jsonl`: one line per optimize-trigger batch;
+- `train_batches.readable.jsonl`: one row per optimize-trigger batch;
 - `rank_metrics.rank_*.jsonl`: per-rank memory, timing, LoRA, and optimizer
   diagnostics;
-- `checkpoints/step_*`: recoverable LoRA native TP checkpoints and optimizer
-  state.
+- `step_*`: periodic recoverable GRASPO native training checkpoints;
+- `final`: final recoverable checkpoint after a clean exit.
 
-Useful monitoring command:
-
-```bash
-tail -f outputs/qwen3-8b-tp2/nohup.out
-```
-
-A healthy GRASPO run is not just a process that stays alive. Watch reward,
-content score, group reward range, decision distribution, finite loss/grad,
-nonzero LoRA deltas, checkpoint writes, and GPU/NCCL health.
+A healthy GRASPO run is not just a process that stays alive. Watch reward trend,
+reward range inside each group, content-score validity, decision distribution,
+finite loss/grad, nonzero LoRA gradients, LoRA tensor changes, replay-buffer
+progress, checkpoint writes, and GPU/NCCL health.
 
 ## Development
 
-Run local checks:
-
 ```bash
-python -m pytest -q
-ruff check src tests
-python -m graspo --help
+uv run --extra dev ruff check src tests scripts
+uv run --extra dev ruff format --check src tests scripts
+uv run --extra dev pytest -q
+uv run --extra dev python -m graspo --help
 ```
 
-Only code, configs, tests, scripts, README files, sample data, license files,
-and the dependency lock file should be tracked.
+## FAQ
 
-## Troubleshooting
-
-- `MODEL_PATH is required`: set `MODEL_PATH` to a local Hugging Face model
-  directory.
-- `DATA_PATH does not exist`: pass a JSONL file with `prompt` and
-  `ground_truth`.
-- Tokenizer has no pad token: GRASPO tries to use `eos_token` as `pad_token`.
-- Native backend import fails: install PyTorch in the active environment.
-- OOM during rollout: keep `max_new_tokens=2048`; reduce concurrency or use KV
-  cache splitting rather than lowering the generation budget.
+- `model.model_path must be set`: edit `config_example.yaml` and point it at a
+  real base model.
+- `data.train_path does not exist`: point `data.train_path` at a JSONL file.
+- Native launch world size mismatch: make `launch.nproc_per_node * launch.nnodes`
+  equal `tensor_model_parallel_size * pipeline_model_parallel_size`.
+- Rollout OOM: keep `training.max_new_tokens=2048`; reduce rollout concurrency
+  or KV cache reservation instead of lowering production generation length.
+- Need PEFT compatibility: load PEFT adapters through `lora.adapter_path`, and
+  export portable artifacts with `graspo export`.
 
 ## License
 

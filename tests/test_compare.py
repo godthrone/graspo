@@ -28,4 +28,3 @@ def test_dict_compare_list_order_optional():
     )
 
     assert unordered > ordered
-

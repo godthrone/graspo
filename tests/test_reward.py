@@ -5,7 +5,10 @@ from graspo.core.reward import GraspoReward, RewardConfig
 
 def test_reward_perfect_json_fence():
     reward = GraspoReward(RewardConfig(check_json_markdown=True))
-    result = reward.score('```json\n{"APN":"cmnet","fault_number":"138"}\n```', {"APN": "cmnet", "fault_number": "138"})
+    result = reward.score(
+        '```json\n{"APN":"cmnet","fault_number":"138"}\n```',
+        {"APN": "cmnet", "fault_number": "138"},
+    )
 
     assert result.all_right is True
     assert result.content_score == 1.0
@@ -16,7 +19,10 @@ def test_reward_perfect_json_fence():
 
 def test_reward_partial_json_fence():
     reward = GraspoReward(RewardConfig(check_json_markdown=True))
-    result = reward.score('```json\n{"APN":"wrong","fault_number":"138"}\n```', {"APN": "cmnet", "fault_number": "138"})
+    result = reward.score(
+        '```json\n{"APN":"wrong","fault_number":"138"}\n```',
+        {"APN": "cmnet", "fault_number": "138"},
+    )
 
     assert result.all_right is False
     assert 0 < result.content_score < 1.0
@@ -62,9 +68,8 @@ def test_reward_tool_call_matches_original_scoring_shape():
     assert result.reward > 1.0
 
 
-def test_reward_list_ground_truth_uses_first_reference():
+def test_reward_list_ground_truth_is_rejected():
     reward = GraspoReward(RewardConfig(check_json_markdown=False))
-    result = reward.score('{"APN":"cmnet"}', [{"APN": "cmnet"}, {"APN": "wrong"}])
 
-    assert result.all_right is True
-    assert result.reward > 1.0
+    with pytest.raises(ValueError, match="JSON object"):
+        reward.score('{"APN":"cmnet"}', [{"APN": "cmnet"}, {"APN": "wrong"}])
