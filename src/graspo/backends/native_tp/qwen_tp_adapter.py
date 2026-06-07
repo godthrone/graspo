@@ -174,7 +174,7 @@ class QwenNativeTPAdapter:
     def generate_group(
         self,
         *,
-        prompt: str,
+        messages: list[dict[str, Any]],
         rollout_group_size: int,
         max_new_tokens: int,
         max_prompt_length: int,
@@ -183,7 +183,7 @@ class QwenNativeTPAdapter:
         chat_template_kwargs: dict[str, Any] | None,
     ) -> NativeGeneration:
         return self.generate_groups(
-            prompts=[prompt],
+            message_batches=[messages],
             rollout_group_size=rollout_group_size,
             max_new_tokens=max_new_tokens,
             max_prompt_length=max_prompt_length,
@@ -195,7 +195,7 @@ class QwenNativeTPAdapter:
     def generate_groups(
         self,
         *,
-        prompts: list[str],
+        message_batches: list[list[dict[str, Any]]],
         rollout_group_size: int,
         max_new_tokens: int,
         max_prompt_length: int,
@@ -208,7 +208,7 @@ class QwenNativeTPAdapter:
         assert self.tokenizer is not None
         if self._is_pipeline_parallel():
             return self._pipeline_generate_groups(
-                prompts=prompts,
+                message_batches=message_batches,
                 rollout_group_size=rollout_group_size,
                 max_new_tokens=max_new_tokens,
                 max_prompt_length=max_prompt_length,
@@ -216,11 +216,14 @@ class QwenNativeTPAdapter:
                 top_p=top_p,
                 chat_template_kwargs=chat_template_kwargs,
             )
-        if not prompts:
+        if not message_batches:
             return []
         self.model.eval()
         tokenize_started_at = time.monotonic()
-        prompt_texts = [self._format_prompt(prompt, chat_template_kwargs) for prompt in prompts]
+        prompt_texts = [
+            self._format_messages(messages, chat_template_kwargs)
+            for messages in message_batches
+        ]
         encoded = self.tokenizer(
             prompt_texts,
             truncation=True,
@@ -242,7 +245,7 @@ class QwenNativeTPAdapter:
         use_kv_cache = bool(self.config.native_tp.use_kv_cache_for_rollout) and bool(
             getattr(self.model, "supports_kv_cache", True)
         )
-        requested_prompt_queue_size = len(prompts)
+        requested_prompt_queue_size = len(message_batches)
         prompt_chunk_size = self._shared_rollout_prompt_chunk_size(
             prompt_len=prompt_len,
             requested_prompt_count=requested_prompt_queue_size,
@@ -826,7 +829,7 @@ class QwenNativeTPAdapter:
     def _pipeline_generate_groups(
         self,
         *,
-        prompts: list[str],
+        message_batches: list[list[dict[str, Any]]],
         rollout_group_size: int,
         max_new_tokens: int,
         max_prompt_length: int,
@@ -836,11 +839,14 @@ class QwenNativeTPAdapter:
     ) -> list[NativeGeneration]:
         assert self.tokenizer is not None
         assert self.model is not None
-        if not prompts:
+        if not message_batches:
             return []
         self.model.eval()
         tokenize_started_at = time.monotonic()
-        prompt_texts = [self._format_prompt(prompt, chat_template_kwargs) for prompt in prompts]
+        prompt_texts = [
+            self._format_messages(messages, chat_template_kwargs)
+            for messages in message_batches
+        ]
         encoded = self.tokenizer(
             prompt_texts,
             truncation=True,
@@ -859,7 +865,7 @@ class QwenNativeTPAdapter:
             device=self.device,
         )
         prompt_len = int(prompt_input_ids.shape[1])
-        requested_prompt_queue_size = len(prompts)
+        requested_prompt_queue_size = len(message_batches)
         prompt_chunk_size = self._shared_rollout_prompt_chunk_size(
             prompt_len=prompt_len,
             requested_prompt_count=requested_prompt_queue_size,
@@ -2209,17 +2215,10 @@ class QwenNativeTPAdapter:
             checkpoint_dir / f"rank_{self.rank:05d}_tp_{self.tp_rank:02d}_pp_{self.pp_rank:02d}.pt"
         )
         if not rank_path.exists():
-            candidates = sorted(
-                checkpoint_dir.glob(f"rank_*_tp_{self.tp_rank:02d}_pp_{self.pp_rank:02d}.pt")
+            raise FileNotFoundError(
+                "Missing current GRASPO checkpoint shard "
+                f"for rank={self.rank} tp_rank={self.tp_rank} pp_rank={self.pp_rank}: {rank_path}"
             )
-            if not candidates and self.pp_size == 1:
-                candidates = sorted(checkpoint_dir.glob(f"rank_*_tp_{self.tp_rank:02d}.pt"))
-            if len(candidates) == 1:
-                rank_path = candidates[0]
-            else:
-                raise FileNotFoundError(
-                    f"Missing native TP checkpoint shard for rank={self.rank} tp_rank={self.tp_rank}: {rank_path}"
-                )
         try:
             payload = torch.load(rank_path, map_location=self.device, weights_only=False)
         except TypeError:
@@ -2282,16 +2281,23 @@ class QwenNativeTPAdapter:
         self.device = state.device
         _set_tensor_parallel_group(state.tp_group, state.tp_size)
 
-    def _format_prompt(self, prompt: str, chat_template_kwargs: dict[str, Any] | None) -> str:
+    def _format_messages(
+        self,
+        messages: list[dict[str, Any]],
+        chat_template_kwargs: dict[str, Any] | None,
+    ) -> str:
         assert self.tokenizer is not None
         if getattr(self.tokenizer, "chat_template", None):
             return self.tokenizer.apply_chat_template(
-                [{"role": "user", "content": prompt}],
+                messages,
                 tokenize=False,
                 add_generation_prompt=True,
                 **(chat_template_kwargs or {}),
             )
-        return prompt
+        return "\n\n".join(
+            f"{message.get('role', 'user')}: {message.get('content', '')}"
+            for message in messages
+        )
 
     def _encode_multimodal_rows(
         self,
@@ -2439,35 +2445,16 @@ class NativeQwenConfig:
 
 def _multimodal_row_from_sample(sample: Any) -> dict[str, Any]:
     return {
-        "prompt": str(sample.prompt),
-        "media": [
-            {
-                "type": str(item.get("type") or "unknown"),
-                "path": str(item.get("path") or item.get("url") or ""),
-            }
-            for item in (sample.media or [])
-            if isinstance(item, dict)
-        ],
+        "messages": [dict(message) for message in sample.messages],
+        "media": _media_counts(sample.media or []),
     }
 
 
 def _messages_from_multimodal_row(row: dict[str, Any]) -> list[dict[str, Any]]:
-    content: list[dict[str, str]] = []
-    for item in row.get("media") or []:
-        if not isinstance(item, dict):
-            continue
-        media_type = str(item.get("type") or "").lower()
-        path = str(item.get("path") or "")
-        if not path:
-            continue
-        if media_type == "image":
-            content.append({"type": "image", "image": path})
-        elif media_type == "video":
-            content.append({"type": "video", "video": path})
-        else:
-            raise ValueError(f"unsupported multimodal media type: {media_type!r}")
-    content.append({"type": "text", "text": str(row.get("prompt") or "")})
-    return [{"role": "user", "content": content}]
+    messages = row.get("messages")
+    if not isinstance(messages, list) or not messages:
+        raise ValueError("multimodal row must contain non-empty messages")
+    return [dict(message) for message in messages if isinstance(message, dict)]
 
 
 def _multimodal_rows_from_metadata(

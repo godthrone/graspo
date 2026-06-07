@@ -2,26 +2,26 @@
 
 [English README](README.md)
 
-GRASPO 是一个基于 GRPO 思路改进的强化学习训练器，适用于可以做结构化校验的语言模型任务，例如 JSON 生成、信息抽取、分类、表单解析和工具调用参数生成。
-它面向基于 LoRA 的低成本结构化输出训练：冻结 base model，只训练紧凑的 LoRA adapter，并用可审计的规则 reward 从真实生成文本中判断好坏。
-内置 reward 会检查必要标记、解析 fenced JSON 或 tool-call 内容，把结构化字段和 `ground_truth` 对齐比较，再转成 GRASPO 需要的组内偏好信号。
+GRASPO 是一个面向结构化输出任务的 GRPO-style 强化学习训练器，适合 JSON 生成、信息抽取、分类、表单解析和工具调用参数生成等可以自动校验答案的场景。它面向基于 LoRA 的低成本训练：冻结 base model，只训练紧凑 LoRA adapter，用可审计的 reward 规则从真实生成文本里判断好坏。
 
-GRASPO 保留“同一个 prompt 采样多条 completion，并在组内比较 reward”的核心思想，同时加入更适合结构化输出训练的机制：
+内置 reward 会检查必要输出标记，解析 fenced JSON 或 tool-call 内容，将结构化字段和 `ground_truth` 对齐比较，再转成 GRASPO 需要的组内偏好信号。使用 LoRA/native memory-aware 路径时，GRASPO 的目标是支持单张 80 GB GPU 对 9B 级别模型做强化学习训练。
 
-- 使用 LoRA/native memory-aware 路径时，可在单张 80 GB GPU 上对 9B 级模型做强化学习训练；
-- rollout retry：低质量组先重试；
-- perfect-answer skip：已经稳定答对的 prompt 不再消耗 optimizer budget；
-- invalid 和 no-preference-gap filtering：丢弃没有有效偏好信号的组；
-- completion-level ReplayBuffer 优化；
-- readable reward/debug 日志，保留真实模型输出方便排查；
-- 自研 `native-tp` 训练路径，支持 tensor parallel 和 pipeline placement；
-- 冻结 base weights，只训练 LoRA。
+GRASPO 的训练主线是：
 
-生产训练内部使用 native TP/PP LoRA modules。PEFT 只作为外部兼容格式，用于 warm-start 导入和离线导出。v1 暂不支持全参数训练。
+- 同一条 prompt/context 采样多条 completion，并在组内比较 reward；
+- 低质量 rollout group 自动 retry；
+- 已经稳定答对的 prompt 可以 perfect-skip，避免浪费 optimizer budget；
+- 没有 reward 方差或没有偏好差异的 group 会被过滤；
+- ReplayBuffer 保存 completion-level experience；
+- readable 日志保留真实 messages、completion、reward 和 debug 细节；
+- 生产训练只使用自研 `native-tp` TP/PP LoRA 路径；
+- 只支持 LoRA 训练，不支持全参数训练。
+
+训练内部使用 native TP/PP LoRA modules。PEFT 只作为外部兼容格式，用于 warm-start 导入和离线导出。
 
 ## 安装
 
-推荐使用 Python 3.11。
+推荐 Python 3.11。
 
 ```bash
 git clone https://github.com/godthrone/graspo.git
@@ -29,36 +29,29 @@ cd graspo
 uv sync --extra dev --python 3.11
 ```
 
-只有需要 Excel 转换时才安装可选数据依赖：
-
-```bash
-uv sync --extra dev --extra data --python 3.11
-```
-
 ## 快速开始
 
-复制并编辑根目录样例配置：
+复制并编辑根目录完整样例配置：
 
 ```bash
 cp config_example.yaml my_graspo.yaml
 ```
 
-至少需要设置这些字段：
+至少需要设置：
 
 - `model.model_path`：本地 Hugging Face 模型目录或模型 id；
 - `data.train_path`：JSONL 训练数据；
-- `training.output_dir`：输出目录；
+- `training.output_dir`：run 输出目录；
 - `launch.gpus`：当前节点使用的 GPU id；
-- `backend_config.native_tp.tensor_model_parallel_size` 和
-  `backend_config.native_tp.pipeline_model_parallel_size`：native placement 的 world size。
+- `backend_config.native_tp.tensor_model_parallel_size` 和 `backend_config.native_tp.pipeline_model_parallel_size`：native TP/PP world size。
 
-只传一个 YAML 参数启动训练：
+训练只需要一个 YAML 参数：
 
 ```bash
 uv run graspo launch --config config_example.yaml
 ```
 
-短测时保持 `training.max_new_tokens=2048`，只降低 `training.max_steps`。真实 GRASPO 训练默认保持 `training.training_epoch_count=100`。
+短测时保持 `training.max_new_tokens=2048`，只降低 `training.max_steps`。真实训练默认保持 `training.training_epoch_count=100`。
 
 验证样例数据和 reward：
 
@@ -68,43 +61,43 @@ uv run graspo validate-reward --data data/sample.jsonl --limit 2
 
 ## 数据格式
 
-训练数据是 JSONL，每行一个 prompt：
+训练数据只支持 JSONL。每行是一条由 chat messages 表示的 prompt/context，以及独立的 JSON object reward 目标：
 
 ```jsonl
-{"prompt":"Extract JSON with the APN and fault number.\nTicket: user 13800138000 cannot use apn cmnet.","ground_truth":{"APN":"cmnet","fault_number":"13800138000"}}
+{"messages":[{"role":"system","content":"You extract structured telecom ticket fields as fenced JSON."},{"role":"user","content":"Ticket: user 13800138000 cannot use apn cmnet."},{"role":"assistant","content":"I will identify the phone number and APN from the ticket."},{"role":"user","content":"Extract JSON with the APN and fault number."}],"ground_truth":{"APN":"cmnet","fault_number":"13800138000"}}
 ```
 
-也支持 chat-style 和多模态记录：
+多模态数据也使用同一个 `messages` 字段，role 和 content 顺序会保真进入 tokenizer/processor：
 
 ```jsonl
-{"messages":[{"role":"user","content":[{"type":"image","image":"images/panel_0001.png"},{"type":"text","text":"Extract the ticket fields as strict JSON."}]}],"ground_truth":{"ticket_id":"T-0001","status":"critical"}}
+{"messages":[{"role":"system","content":"Extract fields from ticket screenshots."},{"role":"user","content":"Use exact snake_case values."},{"role":"assistant","content":"Understood."},{"role":"user","content":[{"type":"image","image":"images/panel_0001.png"},{"type":"text","text":"Extract the ticket fields as strict JSON."}]}],"ground_truth":{"ticket_id":"T-0001","status":"critical"}}
 ```
 
 支持字段：
 
-- `prompt`：纯文本 prompt；
-- `ground_truth`：期望结构化输出，通常是 JSON object；
-- `messages`：可选 chat messages，用于 tokenizer chat template；
-- `image` / `images`：单张图片路径或图片路径列表；
-- `video` / `videos`：数据层可以解析，但生产训练前应单独 smoke；
+- `messages`：必填 prompt/context messages，用于 tokenizer 或 processor chat template；
+- `ground_truth`：必填 JSON object，是唯一 reward 目标；
+- `messages[].content` 内的 image/video 条目：用于多模态路由；图片训练已支持，视频训练前应单独 smoke；
 - 其它字段会作为 metadata。
+
+最后一条 message 不能是 `assistant`，避免把监督答案泄漏进输入。GRASPO 不支持纯文本 prompt 字段、JSON 文件、Excel 文件或 top-level `image/images/video/videos` 字段。
 
 ## Reward 计分方式
 
-GRASPO 当前提供一个内置结构化输出 reward。它是规则型、可审计的，适合目标答案为 JSON object 的任务。每条 completion 的计分流程分四步：
+GRASPO 当前提供一个内置结构化输出 reward，适合目标答案为 JSON object 的任务。每条 completion 的计分流程：
 
-1. 检查输出标记。根据 `reward` 配置，scorer 可以要求 `<think>...</think>`、fenced JSON Markdown block，以及 `<tool_call>...</tool_call>`。
-2. 抽取答案文本。answer 会从配置要求的标记区域里取出；如果 `check_json_markdown=false`，则直接把 answer 区域当作 JSON。
-3. 解析并比较 JSON。completion JSON 会和 `ground_truth` 做递归 dict/list 匹配。目标字段存在会得部分分，值完全相等会继续加分，额外字段会降低结构化匹配度。
-4. 归一化 reward。标记分、结构化内容分、完全正确 bonus，以及多余文本惩罚/奖励会合成 `reward`、`content_score` 和 `all_right`。
+1. 检查输出标记：可要求 `<think>...</think>`、fenced JSON Markdown block 和 `<tool_call>...</tool_call>`。
+2. 抽取答案文本：从配置要求的标记区域中取出 answer；如果 `check_json_markdown=false`，则直接把 answer 区域当作 JSON。
+3. 解析并比较 JSON：completion JSON 和 `ground_truth` 做递归 dict/list 匹配，目标字段存在得部分分，值完全相等继续加分，额外字段会降低结构化匹配度。
+4. 归一化 reward：标记分、结构化内容分、完全正确 bonus 和多余文本惩罚/奖励合成 `reward`、`content_score` 和 `all_right`。
 
-几个关键输出：
+关键输出：
 
-- `reward`：用于 GRASPO group decision、advantage 计算和 ReplayBuffer 训练的标量；
+- `reward`：用于 GRASPO group decision、advantage 计算和 ReplayBuffer 训练；
 - `content_score`：组过滤前的结构化内容匹配分；
 - `all_right`：只有所有检查目标都完全正确时才为 true。
 
-GRASPO 使用的是同一 rollout group 内的 reward 分布，而不是单条 completion 的绝对分数。有有效差异的组会进入训练；已经 perfect 的组可以跳过；没有 reward 方差或没有偏好差异的组会被丢弃或重试。`rollouts.readable.jsonl` 会记录 completion、抽取字段、reward 细节和 invalid reason，方便不用重新生成就检查 reward 行为。
+GRASPO 使用同一 rollout group 内的 reward 分布，而不是单条 completion 的绝对分数。有有效差异的 group 会进入训练；已经 perfect 的 group 可以跳过；没有 reward 方差或没有偏好差异的 group 会被丢弃或重试。`rollouts.readable.jsonl` 会记录 messages、completion、抽取字段、reward 细节和 invalid reason，方便检查 reward 行为。
 
 ## 配置说明
 
@@ -112,9 +105,7 @@ GRASPO 使用的是同一 rollout group 内的 reward 分布，而不是单条 c
 
 ### `backend`
 
-- `native-tp`：生产多 GPU 路线。
-- `hf-reference`：单进程 Hugging Face 参考后端，用于 parity 和小 smoke。
-- `auto`：根据本机 GPU 和模型线索自动选择。
+- `native-tp`：唯一支持的训练 backend，使用 native TP/PP LoRA placement 和冻结 base weights。
 
 ### `model`
 
@@ -128,9 +119,6 @@ GRASPO 使用的是同一 rollout group 内的 reward 分布，而不是单条 c
 ### `data`
 
 - `train_path`：JSONL 训练文件。
-- `prompt_field`：纯文本 prompt 字段名。
-- `ground_truth_field`：期望答案字段名。
-- `messages_field`：chat messages 字段名。
 - `max_prompt_length`：prompt token 长度限制。
 
 ### `lora`
@@ -138,14 +126,12 @@ GRASPO 使用的是同一 rollout group 内的 reward 分布，而不是单条 c
 - `r`：LoRA rank。
 - `alpha`：LoRA alpha。
 - `dropout`：LoRA dropout。
-- `adapter_path`：可选 PEFT adapter 目录，只用于 warm-start。
-- `target_preset`：安全 target preset，例如 `language_safe`。
-- `target_modules`：显式 LoRA targets。设置后，`lora.target_modules` 优先于 `target_preset`。
-- `auto_target_modules`：未显式设置 targets 时是否允许自动检测。
+- `adapter_path`：可选 PEFT 或 GRASPO-PEFT adapter 目录，只用于 warm-start。
+- `target_preset`：target preset，例如 `language_safe`。
+- `target_modules`：显式 LoRA targets；设置后优先于 `target_preset`。
+- `auto_target_modules`：保留为配置字段；native 训练推荐使用 preset 或显式 canonical targets。
 - `bias`：PEFT-compatible bias 设置，通常为 `none`。
 - `task_type`：PEFT-compatible task type，通常为 `CAUSAL_LM`。
-
-GRASPO 当前只支持 LoRA 训练，不支持全参数训练。
 
 ### `reward`
 
@@ -163,8 +149,8 @@ GRASPO 当前只支持 LoRA 训练，不支持全参数训练。
 
 - `output_dir`：run 输出目录。
 - `seed`：随机种子。
-- `training_epoch_count`：完整数据集训练轮数，生产默认是 `100`。
-- `max_steps`：短测/debug step 上限，`-1` 表示不限制。
+- `training_epoch_count`：完整数据集训练轮数；生产默认 `100`。
+- `max_steps`：短测/debug step 上限；`-1` 表示不限制。
 - `rollout_prompt_queue_batch_size`：一次调度多少个 prompt group 做 rollout。
 - `rollout_group_size`：每个 prompt attempt 采样多少条 completion。
 - `optimize_completion_batch_size`：每个 optimizer step 的 completion micro-batch。
@@ -172,7 +158,7 @@ GRASPO 当前只支持 LoRA 训练，不支持全参数训练。
 - `rollout_max_retry_times`：初始 rollout 后的 retry 预算。
 - `learning_rate`、`weight_decay`、`max_grad_norm`：optimizer 设置。
 - `policy_ratio_clip_eps`：policy-ratio clipped objective epsilon。
-- `max_new_tokens`：真实训练生成长度。保持 `training.max_new_tokens=2048`。
+- `max_new_tokens`：真实训练生成长度；保持 `training.max_new_tokens=2048`。
 - `temperature`、`top_p`：rollout sampling 设置。
 - `save_steps`：native checkpoint 间隔。
 - `logging_steps`：紧凑训练日志间隔。
@@ -180,7 +166,7 @@ GRASPO 当前只支持 LoRA 训练，不支持全参数训练。
 - `dataloader_num_workers`：数据加载 worker 数。
 - `resume_from_checkpoint`：可恢复 GRASPO native checkpoint 目录。
 
-`training.replay_buffer_optimize_threshold` 由 `optimize_completion_batch_size * rollout_group_size` 派生，不能手动配置。`training.resume_from_checkpoint` 和 `lora.adapter_path` 互斥：前者恢复 native checkpoint 状态，后者只是 PEFT LoRA warm-start。
+`training.replay_buffer_optimize_threshold` 由 `optimize_completion_batch_size * rollout_group_size` 派生，不能手动配置。`training.resume_from_checkpoint` 和 `lora.adapter_path` 互斥：前者恢复 native checkpoint 状态，后者只是 PEFT/GRASPO-PEFT LoRA warm-start。
 
 ### `backend_config.native_tp`
 
@@ -197,7 +183,7 @@ GRASPO 当前只支持 LoRA 训练，不支持全参数训练。
 - `raw_log_enabled`、`readable_log_enabled`：rollout/replay 日志开关。
 - `synchronize_cuda_timing`：是否同步 CUDA timing。
 - `pipeline_train_schedule`：pipeline train schedule，默认 `simple`。
-- `pipeline_max_inflight_microbatches`：实验性 1F1B inflight 上限。
+- `pipeline_max_inflight_microbatches`：1F1B inflight 上限。
 
 ### `export`
 
@@ -206,7 +192,7 @@ GRASPO 当前只支持 LoRA 训练，不支持全参数训练。
 ### `launch`
 
 - `gpus`：当前节点使用的 GPU id。
-- `nproc_per_node`：当前节点 worker 数。native-tp 下为空时会从 TP * PP / nodes 派生。
+- `nproc_per_node`：当前节点 worker 数；为空时从 TP * PP / nodes 派生。
 - `nnodes`、`node_rank`、`master_addr`、`master_port`：distributed launch 设置。
 - `python`：可选 Python executable override。
 - `torchrun`：可选 torchrun executable override。
@@ -221,7 +207,7 @@ Preset 取值：
 - `vision_merger`：只训练 visual merger 线性层；
 - `vision_common`：visual merger 加上已支持的 visual attention/MLP 线性层。
 
-显式 `lora.target_modules` 可以使用 `language.self_attn.q_proj` 这样的 canonical name、`q_proj` 这样的 legacy leaf name，或 `visual.blocks.*.attn.*` 这样的 glob pattern。解析是 fail-closed：未知 target、不支持的 conv/norm 参数和空匹配都会在训练前报错。Native checkpoint 会保存 resolved LoRA target signature，并拒绝用不同 target 配置 resume。
+显式 `lora.target_modules` 只能使用 canonical name，例如 `language.self_attn.q_proj`，或 glob pattern，例如 `visual.blocks.*.attn.*`。不接受 `q_proj` 这样的 leaf alias。解析是 fail-closed：未知 target、不支持的 conv/norm 参数和空匹配都会在训练前报错。Native checkpoint 会保存 resolved LoRA target signature，并拒绝使用不同 target 配置 resume。
 
 ## 导出
 
@@ -239,11 +225,9 @@ uv run graspo export --config config_example.yaml --checkpoint outputs/example-r
 uv run graspo export --config config_example.yaml --checkpoint outputs/example-run/final --format merged-hf --output outputs/export/merged
 ```
 
-`peft-adapter` 会从 GRASPO native rank shards 重建 PEFT `adapter_config.json` 和 `adapter_model.safetensors`，只支持 PEFT 能一对一表达的 targets。
+`peft-adapter` 会从 GRASPO native rank shards 重建 PEFT `adapter_config.json` 和 `adapter_model.safetensors`。对于 fused/split native targets，GRASPO 会额外写出 `graspo_adapter_metadata.json`，使 GRASPO 可以无损 warm-start 这些 adapter。普通 PEFT 工具可以读取 adapter tensors，但要无歧义地映射回 native fused/split 训练模块，需要 GRASPO metadata。
 
 `merged-hf` 会在 CPU 上流式读取 base HF safetensors，注入 LoRA delta，复制 tokenizer/config 等 sidecar 文件，并写出 HF-compatible merged model 目录。
-
-Qwen3.5/Qwen3.6 中无法严格表示为 PEFT adapter 的 fused/split native targets，会在 `peft-adapter` 导出时严格失败。此类 checkpoint 请使用 `merged-hf`。
 
 导出的 PEFT adapter 和 merged full model 是部署/兼容产物，不包含 optimizer、RNG、replay buffer 或 trainer state，不能替代 `step_*` 或 `final` 做完整训练恢复。
 
@@ -252,7 +236,7 @@ Qwen3.5/Qwen3.6 中无法严格表示为 PEFT adapter 的 fused/split native tar
 每个 run 写入 `training.output_dir`：
 
 - `train.log`：rank-0 紧凑训练事件；
-- `rollouts.readable.jsonl`：人类可读的 prompt、completion、reward 和 debug 细节；
+- `rollouts.readable.jsonl`：人类可读的 messages、completion、reward 和 debug 细节；
 - `rollouts.raw.jsonl`：replay tensors、masks、old logprobs、advantages 和 reward metadata；
 - `train_batches.readable.jsonl`：每个 optimize-trigger batch 一行；
 - `rank_metrics.rank_*.jsonl`：每 rank 显存、耗时、LoRA 和 optimizer 诊断；
@@ -275,8 +259,8 @@ uv run --extra dev python -m graspo --help
 - `model.model_path must be set`：编辑 `config_example.yaml`，指向真实 base model。
 - `data.train_path does not exist`：将 `data.train_path` 指向 JSONL 文件。
 - Native launch world size mismatch：让 `launch.nproc_per_node * launch.nnodes` 等于 `tensor_model_parallel_size * pipeline_model_parallel_size`。
-- rollout OOM：保持 `training.max_new_tokens=2048`；降低 rollout 并发或 KV cache 预留，而不是降低生产生成长度。
-- 需要 PEFT 兼容：通过 `lora.adapter_path` 加载 PEFT adapter，通过 `graspo export` 导出便携产物。
+- Rollout OOM：保持 `training.max_new_tokens=2048`；降低 rollout 并发或 KV cache 预留，而不是降低生产生成长度。
+- 需要 PEFT 兼容：通过 `lora.adapter_path` 加载 PEFT/GRASPO-PEFT adapter，通过 `graspo export` 导出便携产物。
 
 ## License
 

@@ -56,7 +56,7 @@ class NativeTPRuntimeProtocol(Protocol):
     def generate_group(
         self,
         *,
-        prompt: str,
+        messages: list[dict[str, Any]],
         rollout_group_size: int,
         max_new_tokens: int,
         max_prompt_length: int,
@@ -68,7 +68,7 @@ class NativeTPRuntimeProtocol(Protocol):
     def generate_groups(
         self,
         *,
-        prompts: list[str],
+        message_batches: list[list[dict[str, Any]]],
         rollout_group_size: int,
         max_new_tokens: int,
         max_prompt_length: int,
@@ -159,8 +159,10 @@ class NativeTPRuntime:
         generate_groups = getattr(adapter, "generate_groups", None)
         if callable(generate_groups):
             return generate_groups(**kwargs)
-        prompts = list(kwargs.pop("prompts"))
-        return [adapter.generate_group(prompt=prompt, **kwargs) for prompt in prompts]
+        message_batches = list(kwargs.pop("message_batches"))
+        return [
+            adapter.generate_group(messages=messages, **kwargs) for messages in message_batches
+        ]
 
     def generate_sample_groups(self, **kwargs: Any) -> list[NativeGeneration]:
         adapter = self._require_adapter()

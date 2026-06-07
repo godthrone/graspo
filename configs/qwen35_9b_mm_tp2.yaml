@@ -10,10 +10,7 @@ model:
     enable_thinking: false
 
 data:
-  train_path: data/sample.jsonl
-  prompt_field: prompt
-  ground_truth_field: ground_truth
-  messages_field: messages
+  train_path: data/sample_multimodal.jsonl
   max_prompt_length: 2048
 
 lora:
