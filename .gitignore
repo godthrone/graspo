@@ -1,17 +1,30 @@
+# Python caches and build artifacts
 __pycache__/
 *.py[cod]
 *.egg-info/
 src/*.egg-info/
+.mypy_cache/
 .pytest_cache/
 .pytest_tmp*/
 .pytest_verify_tmp/
 _pytest_basetemp_*/
-.mypy_cache/
 .ruff_cache/
 .uv-cache/
 .coverage
 dist/
 build/
+
+# Local environments and editor state
+.env
+.venv/
+.venv-*/
+venv/
+.idea/
+
+# Local notes, credentials, runbooks, and ad hoc files
+.local/
+
+# Training outputs and experiment artifacts
 outputs/
 checkpoints/
 anchor_bank/
@@ -19,40 +32,24 @@ wandb/
 runs/
 logs/
 reports/
+experiment_data/
 *.log
+
+# Large model and checkpoint files
 models/
 *.safetensors
 *.bin
 *.pt
 *.pth
 *.tar.gz
-_deploy_*
-_relay_*
-_launch_*.sh
-_router_*.sh
-_graspo_*_upload.tgz
-qwen3-8b-megatron-smoke-*
-latest_*.out
+
+# Local datasets; keep the public sample
 data/*.jsonl
 data/*.xlsx
 data/*.xls
 data/*.csv
 !data/sample.jsonl
-experiment_data/
-train_grpo.jsonl
 *.xlsx
 *.xls
 .dataset/
 .datasets/
-.env
-.venv/
-.venv-*/
-venv/
-.idea/
-docs/internal/
-AGENTS.md
-AGENTS.local.md
-CLAUDE.local.md
-*API*.txt
-shell-router-api.md
-xxx.json
