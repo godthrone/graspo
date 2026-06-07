@@ -34,7 +34,9 @@ def build_placement_plan(
 ) -> NativePlacementPlan:
     requested = (strategy or "auto").strip()
     if requested == "auto":
-        requested = "qwen36_pp8_static" if model_family == "qwen3_5_text" and pp_size > 1 else "qwen3_tp"
+        requested = (
+            "qwen36_pp8_static" if model_family == "qwen3_5_text" and pp_size > 1 else "qwen3_tp"
+        )
     if pp_size == 1:
         return NativePlacementPlan(
             strategy=requested,
@@ -115,10 +117,15 @@ def _qwen36_lm_head_only_final_ranges(
     costs = [1.18 if layer_type == "full_attention" else 1.0 for layer_type in layer_types]
     stage_overheads = [0.0 for _ in range(pp_size - 1)]
     stage_overheads[0] = 1.5
-    return [*_minimax_contiguous_ranges(costs, stage_overheads), (num_hidden_layers, num_hidden_layers)]
+    return [
+        *_minimax_contiguous_ranges(costs, stage_overheads),
+        (num_hidden_layers, num_hidden_layers),
+    ]
 
 
-def _minimax_contiguous_ranges(costs: list[float], stage_overheads: list[float]) -> list[tuple[int, int]]:
+def _minimax_contiguous_ranges(
+    costs: list[float], stage_overheads: list[float]
+) -> list[tuple[int, int]]:
     num_layers = len(costs)
     pp_size = len(stage_overheads)
     if pp_size > num_layers:

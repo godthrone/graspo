@@ -291,7 +291,10 @@ def test_qwen_kv_cache_estimate_is_per_tp_rank():
         device=torch.device("cpu"),
     )
 
-    assert model.estimate_kv_cache_bytes(batch_size=8, sequence_len=2048) == 8 * 3 * 2 * 1 * 4 * 2048 * 2
+    assert (
+        model.estimate_kv_cache_bytes(batch_size=8, sequence_len=2048)
+        == 8 * 3 * 2 * 1 * 4 * 2048 * 2
+    )
 
 
 def test_native_qwen_registry_selects_qwen3_dense_text(tmp_path):
@@ -357,7 +360,9 @@ def test_qwen35_hybrid_text_model_builds_and_disables_kv_cache():
 
     cached_logits, cache = model(input_ids, attention_mask=attention_mask, use_cache=True)
     next_mask = torch.ones((2, 4), dtype=torch.bool)
-    next_logits, next_cache = model(torch.tensor([[7], [8]]), attention_mask=next_mask, past_key_values=cache, use_cache=True)
+    next_logits, next_cache = model(
+        torch.tensor([[7], [8]]), attention_mask=next_mask, past_key_values=cache, use_cache=True
+    )
 
     assert cached_logits.shape == logits.shape
     assert len(cache) == config.num_hidden_layers
@@ -367,7 +372,9 @@ def test_qwen35_hybrid_text_model_builds_and_disables_kv_cache():
 
 def test_qwen35_pipeline_stage_loads_only_local_layers_and_boundary_modules():
     torch.manual_seed(1234)
-    config = _tiny_qwen35_config(num_hidden_layers=4, layer_types=["linear_attention", "full_attention"] * 2)
+    config = _tiny_qwen35_config(
+        num_hidden_layers=4, layer_types=["linear_attention", "full_attention"] * 2
+    )
     first_plan = build_placement_plan(
         strategy="qwen36_pp8_static",
         model_family="qwen3_5_text",
@@ -512,7 +519,9 @@ def test_qwen35_hybrid_cache_logits_match_full_forward_prefix():
 
     with torch.no_grad():
         _, cache = model(prefix, attention_mask=prefix_mask, use_cache=True)
-        cached_next, _ = model(next_token, attention_mask=full_mask, past_key_values=cache, use_cache=True)
+        cached_next, _ = model(
+            next_token, attention_mask=full_mask, past_key_values=cache, use_cache=True
+        )
         full_logits = model(full, attention_mask=full_mask)
 
     assert torch.allclose(cached_next[:, -1], full_logits[:, -1], atol=5e-4, rtol=5e-4)
@@ -565,7 +574,9 @@ def test_qwen35_linear_attention_matches_transformers_torch_fallback():
 
     with torch.no_grad():
         expected = reference(hidden_states, attention_mask=attention_mask)
-        actual = candidate(hidden_states, position_ids=torch.arange(5).expand(2, 5), attention_mask=attention_mask)
+        actual = candidate(
+            hidden_states, position_ids=torch.arange(5).expand(2, 5), attention_mask=attention_mask
+        )
 
     assert torch.allclose(actual, expected, atol=3e-5, rtol=3e-5)
 
@@ -661,16 +672,32 @@ class _TinyQwenLoader:
         for idx in range(config.num_hidden_layers):
             prefix = f"model.layers.{idx}"
             self.tensors[f"{prefix}.input_layernorm.weight"] = torch.ones(config.hidden_size)
-            self.tensors[f"{prefix}.post_attention_layernorm.weight"] = torch.ones(config.hidden_size)
-            self.tensors[f"{prefix}.self_attn.q_proj.weight"] = torch.randn(config.hidden_size, config.hidden_size) * 0.02
-            self.tensors[f"{prefix}.self_attn.k_proj.weight"] = torch.randn(config.hidden_size, config.hidden_size) * 0.02
-            self.tensors[f"{prefix}.self_attn.v_proj.weight"] = torch.randn(config.hidden_size, config.hidden_size) * 0.02
-            self.tensors[f"{prefix}.self_attn.o_proj.weight"] = torch.randn(config.hidden_size, config.hidden_size) * 0.02
+            self.tensors[f"{prefix}.post_attention_layernorm.weight"] = torch.ones(
+                config.hidden_size
+            )
+            self.tensors[f"{prefix}.self_attn.q_proj.weight"] = (
+                torch.randn(config.hidden_size, config.hidden_size) * 0.02
+            )
+            self.tensors[f"{prefix}.self_attn.k_proj.weight"] = (
+                torch.randn(config.hidden_size, config.hidden_size) * 0.02
+            )
+            self.tensors[f"{prefix}.self_attn.v_proj.weight"] = (
+                torch.randn(config.hidden_size, config.hidden_size) * 0.02
+            )
+            self.tensors[f"{prefix}.self_attn.o_proj.weight"] = (
+                torch.randn(config.hidden_size, config.hidden_size) * 0.02
+            )
             self.tensors[f"{prefix}.self_attn.q_norm.weight"] = torch.ones(config.head_dim)
             self.tensors[f"{prefix}.self_attn.k_norm.weight"] = torch.ones(config.head_dim)
-            self.tensors[f"{prefix}.mlp.gate_proj.weight"] = torch.randn(config.intermediate_size, config.hidden_size) * 0.02
-            self.tensors[f"{prefix}.mlp.up_proj.weight"] = torch.randn(config.intermediate_size, config.hidden_size) * 0.02
-            self.tensors[f"{prefix}.mlp.down_proj.weight"] = torch.randn(config.hidden_size, config.intermediate_size) * 0.02
+            self.tensors[f"{prefix}.mlp.gate_proj.weight"] = (
+                torch.randn(config.intermediate_size, config.hidden_size) * 0.02
+            )
+            self.tensors[f"{prefix}.mlp.up_proj.weight"] = (
+                torch.randn(config.intermediate_size, config.hidden_size) * 0.02
+            )
+            self.tensors[f"{prefix}.mlp.down_proj.weight"] = (
+                torch.randn(config.hidden_size, config.intermediate_size) * 0.02
+            )
 
     def get(self, name: str) -> torch.Tensor:
         return self.tensors[name]
@@ -690,7 +717,11 @@ def _tiny_qwen35_config(**overrides):
         "num_key_value_heads": 1,
         "head_dim": 4,
         "rms_norm_eps": 1e-6,
-        "rope_parameters": {"rope_type": "default", "rope_theta": 10000, "partial_rotary_factor": 1.0},
+        "rope_parameters": {
+            "rope_type": "default",
+            "rope_theta": 10000,
+            "partial_rotary_factor": 1.0,
+        },
         "linear_num_key_heads": 2,
         "linear_num_value_heads": 4,
         "linear_key_head_dim": 2,
@@ -706,30 +737,47 @@ def _tiny_qwen35_config(**overrides):
 class _TinyQwen35Loader:
     def __init__(self, config) -> None:
         self.tensors: dict[str, torch.Tensor] = {
-            "model.language_model.embed_tokens.weight": torch.randn(config.vocab_size, config.hidden_size) * 0.02,
+            "model.language_model.embed_tokens.weight": torch.randn(
+                config.vocab_size, config.hidden_size
+            )
+            * 0.02,
             "model.language_model.norm.weight": torch.zeros(config.hidden_size),
             "lm_head.weight": torch.randn(config.vocab_size, config.hidden_size) * 0.02,
         }
         for idx, layer_type in enumerate(config.layer_types):
             prefix = f"model.language_model.layers.{idx}"
             self.tensors[f"{prefix}.input_layernorm.weight"] = torch.zeros(config.hidden_size)
-            self.tensors[f"{prefix}.post_attention_layernorm.weight"] = torch.zeros(config.hidden_size)
-            self.tensors[f"{prefix}.mlp.gate_proj.weight"] = torch.randn(config.intermediate_size, config.hidden_size) * 0.02
-            self.tensors[f"{prefix}.mlp.up_proj.weight"] = torch.randn(config.intermediate_size, config.hidden_size) * 0.02
-            self.tensors[f"{prefix}.mlp.down_proj.weight"] = torch.randn(config.hidden_size, config.intermediate_size) * 0.02
+            self.tensors[f"{prefix}.post_attention_layernorm.weight"] = torch.zeros(
+                config.hidden_size
+            )
+            self.tensors[f"{prefix}.mlp.gate_proj.weight"] = (
+                torch.randn(config.intermediate_size, config.hidden_size) * 0.02
+            )
+            self.tensors[f"{prefix}.mlp.up_proj.weight"] = (
+                torch.randn(config.intermediate_size, config.hidden_size) * 0.02
+            )
+            self.tensors[f"{prefix}.mlp.down_proj.weight"] = (
+                torch.randn(config.hidden_size, config.intermediate_size) * 0.02
+            )
             if layer_type == "full_attention":
                 attn = f"{prefix}.self_attn"
                 self.tensors[f"{attn}.q_proj.weight"] = (
-                    torch.randn(config.num_attention_heads * config.head_dim * 2, config.hidden_size) * 0.02
+                    torch.randn(
+                        config.num_attention_heads * config.head_dim * 2, config.hidden_size
+                    )
+                    * 0.02
                 )
                 self.tensors[f"{attn}.k_proj.weight"] = (
-                    torch.randn(config.num_key_value_heads * config.head_dim, config.hidden_size) * 0.02
+                    torch.randn(config.num_key_value_heads * config.head_dim, config.hidden_size)
+                    * 0.02
                 )
                 self.tensors[f"{attn}.v_proj.weight"] = (
-                    torch.randn(config.num_key_value_heads * config.head_dim, config.hidden_size) * 0.02
+                    torch.randn(config.num_key_value_heads * config.head_dim, config.hidden_size)
+                    * 0.02
                 )
                 self.tensors[f"{attn}.o_proj.weight"] = (
-                    torch.randn(config.hidden_size, config.num_attention_heads * config.head_dim) * 0.02
+                    torch.randn(config.hidden_size, config.num_attention_heads * config.head_dim)
+                    * 0.02
                 )
                 self.tensors[f"{attn}.q_norm.weight"] = torch.zeros(config.head_dim)
                 self.tensors[f"{attn}.k_norm.weight"] = torch.zeros(config.head_dim)
@@ -738,15 +786,27 @@ class _TinyQwen35Loader:
                 key_dim = config.linear_num_key_heads * config.linear_key_head_dim
                 value_dim = config.linear_num_value_heads * config.linear_value_head_dim
                 conv_dim = key_dim * 2 + value_dim
-                self.tensors[f"{attn}.in_proj_qkv.weight"] = torch.randn(conv_dim, config.hidden_size) * 0.02
-                self.tensors[f"{attn}.conv1d.weight"] = torch.randn(conv_dim, 1, config.linear_conv_kernel_dim) * 0.02
-                self.tensors[f"{attn}.in_proj_z.weight"] = torch.randn(value_dim, config.hidden_size) * 0.02
-                self.tensors[f"{attn}.in_proj_b.weight"] = torch.randn(config.linear_num_value_heads, config.hidden_size) * 0.02
-                self.tensors[f"{attn}.in_proj_a.weight"] = torch.randn(config.linear_num_value_heads, config.hidden_size) * 0.02
+                self.tensors[f"{attn}.in_proj_qkv.weight"] = (
+                    torch.randn(conv_dim, config.hidden_size) * 0.02
+                )
+                self.tensors[f"{attn}.conv1d.weight"] = (
+                    torch.randn(conv_dim, 1, config.linear_conv_kernel_dim) * 0.02
+                )
+                self.tensors[f"{attn}.in_proj_z.weight"] = (
+                    torch.randn(value_dim, config.hidden_size) * 0.02
+                )
+                self.tensors[f"{attn}.in_proj_b.weight"] = (
+                    torch.randn(config.linear_num_value_heads, config.hidden_size) * 0.02
+                )
+                self.tensors[f"{attn}.in_proj_a.weight"] = (
+                    torch.randn(config.linear_num_value_heads, config.hidden_size) * 0.02
+                )
                 self.tensors[f"{attn}.dt_bias"] = torch.randn(config.linear_num_value_heads) * 0.02
                 self.tensors[f"{attn}.A_log"] = torch.randn(config.linear_num_value_heads) * 0.02
                 self.tensors[f"{attn}.norm.weight"] = torch.ones(config.linear_value_head_dim)
-                self.tensors[f"{attn}.out_proj.weight"] = torch.randn(config.hidden_size, value_dim) * 0.02
+                self.tensors[f"{attn}.out_proj.weight"] = (
+                    torch.randn(config.hidden_size, value_dim) * 0.02
+                )
 
     def get(self, name: str) -> torch.Tensor:
         return self.tensors[name]

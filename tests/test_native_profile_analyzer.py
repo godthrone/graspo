@@ -72,7 +72,9 @@ def test_analyze_native_profile_summarizes_train_gpu_and_rank_metrics(tmp_path):
             ]
         },
     }
-    (run_dir / "rank_metrics.rank_00000.jsonl").write_text(json.dumps(rank_event) + "\n", encoding="utf-8")
+    (run_dir / "rank_metrics.rank_00000.jsonl").write_text(
+        json.dumps(rank_event) + "\n", encoding="utf-8"
+    )
 
     summary = analyzer.summarize_run(run_dir, skip_warmup_steps=0)
 

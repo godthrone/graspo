@@ -17,12 +17,20 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Evaluate a native-tp checkpoint by generating rollout groups and scoring rewards."
     )
-    parser.add_argument("--config", required=True, help="Training YAML config used to build the native runtime.")
+    parser.add_argument(
+        "--config", required=True, help="Training YAML config used to build the native runtime."
+    )
     parser.add_argument("--data", required=True, help="Evaluation JSONL path.")
     parser.add_argument("--checkpoint", help="Recoverable native checkpoint directory to load.")
-    parser.add_argument("--output-dir", required=True, help="Directory for completions and summary JSON.")
-    parser.add_argument("--limit", type=int, default=0, help="Optional number of samples to evaluate; 0 means all.")
-    parser.add_argument("--rollout-group-size", type=int, help="Override training.rollout_group_size.")
+    parser.add_argument(
+        "--output-dir", required=True, help="Directory for completions and summary JSON."
+    )
+    parser.add_argument(
+        "--limit", type=int, default=0, help="Optional number of samples to evaluate; 0 means all."
+    )
+    parser.add_argument(
+        "--rollout-group-size", type=int, help="Override training.rollout_group_size."
+    )
     parser.add_argument("--temperature", type=float, help="Override training.temperature.")
     parser.add_argument("--top-p", type=float, help="Override training.top_p.")
     return parser.parse_args()
@@ -102,10 +110,15 @@ def evaluate_samples(
                 top_p=config.training.top_p,
                 chat_template_kwargs=config.model.chat_template_kwargs,
             )[0]
-            results = [reward.score(completion, sample.ground_truth) for completion in generation.completions]
+            results = [
+                reward.score(completion, sample.ground_truth)
+                for completion in generation.completions
+            ]
             group_rewards = [result.reward for result in results]
             if primary and handle is not None:
-                for completion_idx, (completion, result) in enumerate(zip(generation.completions, results, strict=True)):
+                for completion_idx, (completion, result) in enumerate(
+                    zip(generation.completions, results, strict=True)
+                ):
                     handle.write(
                         json.dumps(
                             {

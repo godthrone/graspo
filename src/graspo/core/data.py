@@ -43,7 +43,9 @@ def sample_from_record(
     elif "output" in record:
         ground_truth = record["output"]
     else:
-        raise ValueError(f"record must contain '{ground_truth_field}', assistant message, or 'output'")
+        raise ValueError(
+            f"record must contain '{ground_truth_field}', assistant message, or 'output'"
+        )
 
     media = _record_media(record, messages_field=messages_field)
     metadata = {
