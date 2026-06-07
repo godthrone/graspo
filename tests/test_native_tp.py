@@ -386,14 +386,28 @@ def test_production_configs_use_canonical_training_names():
     assert offenders == []
 
 
-def test_native_tp_reproduction_profiles_use_original_lora_targets():
-    offenders: list[str] = []
-    for path in Path("configs/profiles").glob("qwen3_8b_native_tp2*.yaml"):
-        config = GraspoConfig.from_yaml(path)
-        if config.lora.target_modules != ["q_proj", "v_proj"]:
-            offenders.append(str(path))
+def test_public_configs_are_complete_launch_configs():
+    expected = {
+        Path("configs/qwen3_8b_tp2.yaml"),
+        Path("configs/qwen35_9b_mm_tp2.yaml"),
+        Path("configs/qwen36_27b_pp8.yaml"),
+    }
+    actual = set(Path("configs").glob("*.yaml"))
 
-    assert offenders == []
+    assert actual == expected
+    assert not Path("configs/profiles").exists()
+    assert not Path("configs/backends").exists()
+
+    for path in sorted(actual):
+        config = GraspoConfig.from_yaml(path)
+        validate_native_runtime_config(config)
+        assert config.backend == "native-tp"
+        assert config.training.training_epoch_count == 100
+        assert config.training.max_new_tokens == 2048
+        assert config.lora.adapter_path is None
+        assert config.lora.target_preset == "language_safe"
+        assert config.export.final_formats == []
+        assert config.launch.gpus
 
 
 class FakeNativeRuntime:

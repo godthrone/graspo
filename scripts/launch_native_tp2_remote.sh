@@ -5,7 +5,7 @@ CODE_DIR=${CODE_DIR:-$(pwd)}
 VENV=${VENV:-"$CODE_DIR/.venv"}
 MODEL_PATH=${MODEL_PATH:-}
 DATA_PATH=${DATA_PATH:-"$CODE_DIR/data/sample.jsonl"}
-PROFILE=${PROFILE:-"$CODE_DIR/configs/profiles/qwen3_8b_native_tp2_overnight.yaml"}
+PROFILE=${PROFILE:-"$CODE_DIR/configs/qwen3_8b_tp2.yaml"}
 GPUS=${GPUS:-0,1}
 PORT=${PORT:-29623}
 TAG=${TAG:-longrun}
@@ -82,15 +82,30 @@ CONFIG="$OUT/$(basename "$PROFILE")"
 mkdir -p "$OUT/gpu_memory"
 cp "$PROFILE" "$CONFIG"
 
-python3 - "$CONFIG" "$MAX_STEPS" "$SAVE_STEPS" <<'PY'
+python3 - "$CONFIG" "$MAX_STEPS" "$SAVE_STEPS" "$MODEL_PATH" "$DATA_PATH" "$OUT" <<'PY'
 from pathlib import Path
+import json
 import re
 import sys
 
 path = Path(sys.argv[1])
 max_steps = sys.argv[2]
 save_steps = sys.argv[3]
+model_path = sys.argv[4]
+data_path = sys.argv[5]
+output_dir = sys.argv[6]
+
+def replace_scalar(text: str, key: str, value: str) -> str:
+    return re.sub(
+        rf"(?m)^(\s*){re.escape(key)}:\s*.*$",
+        lambda match: f"{match.group(1)}{key}: {value}",
+        text,
+    )
+
 text = path.read_text(encoding="utf-8")
+text = replace_scalar(text, "model_path", json.dumps(model_path))
+text = replace_scalar(text, "train_path", json.dumps(data_path))
+text = replace_scalar(text, "output_dir", json.dumps(output_dir))
 text = re.sub(r"(?m)^(\s*)max_steps:\s*[-0-9]+", rf"\1max_steps: {max_steps}", text)
 text = re.sub(r"(?m)^(\s*)save_steps:\s*[-0-9]+", rf"\1save_steps: {save_steps}", text)
 path.write_text(text, encoding="utf-8")
