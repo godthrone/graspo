@@ -7,72 +7,58 @@ from typing import Any
 from graspo.core.schema import Sample
 
 
-def prompt_from_messages(messages: list[dict[str, Any]]) -> str:
-    parts: list[str] = []
-    for message in messages:
-        role = str(message.get("role", "user"))
-        if role == "assistant":
-            continue
-        content, _ = _content_to_text_and_media(message.get("content", ""))
-        parts.append(content)
-    return "\n\n".join(part for part in parts if part)
-
-
-def sample_from_record(
-    record: dict[str, Any],
-    prompt_field: str = "prompt",
-    ground_truth_field: str = "ground_truth",
-    messages_field: str = "messages",
-) -> Sample:
-    if prompt_field in record:
-        prompt = str(record[prompt_field])
-    elif messages_field in record:
-        prompt = prompt_from_messages(record[messages_field])
-    else:
-        raise ValueError(f"record must contain '{prompt_field}' or '{messages_field}'")
-
-    if ground_truth_field in record:
-        ground_truth = record[ground_truth_field]
-    elif messages_field in record:
-        assistant_messages = [
-            message for message in record[messages_field] if message.get("role") == "assistant"
-        ]
-        if not assistant_messages:
-            raise ValueError("messages record has no assistant ground truth")
-        ground_truth = assistant_messages[-1].get("content", "{}")
-    elif "output" in record:
-        ground_truth = record["output"]
-    else:
+def sample_from_record(record: dict[str, Any]) -> Sample:
+    removed_input_fields = {"prompt", "image", "images", "video", "videos"}
+    present_removed = sorted(field for field in removed_input_fields if field in record)
+    if present_removed:
         raise ValueError(
-            f"record must contain '{ground_truth_field}', assistant message, or 'output'"
+            "removed input field(s): "
+            + ", ".join(present_removed)
+            + "; use messages + ground_truth JSONL"
         )
+    messages = _validate_messages(record.get("messages"))
 
-    media = _record_media(record, messages_field=messages_field)
+    if "ground_truth" in record:
+        ground_truth = record["ground_truth"]
+    else:
+        raise ValueError("record must contain 'ground_truth'")
+    if not isinstance(ground_truth, dict):
+        raise ValueError("record 'ground_truth' must be a JSON object")
+
+    media = _messages_media(messages)
     metadata = {
         key: value
         for key, value in record.items()
-        if key not in {prompt_field, ground_truth_field, "image", "images", "video", "videos"}
+        if key not in {"messages", "ground_truth"}
     }
-    return Sample(prompt=prompt, ground_truth=ground_truth, metadata=metadata, media=media)
+    return Sample(messages=messages, ground_truth=ground_truth, metadata=metadata, media=media)
 
 
-def _record_media(record: dict[str, Any], *, messages_field: str) -> list[dict[str, Any]]:
+def _validate_messages(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list) or not value:
+        raise ValueError("record must contain a non-empty 'messages' list")
+    messages: list[dict[str, Any]] = []
+    for idx, message in enumerate(value):
+        if not isinstance(message, dict):
+            raise ValueError(f"messages[{idx}] must be an object")
+        role = str(message.get("role") or "").strip()
+        if not role:
+            raise ValueError(f"messages[{idx}].role is required")
+        if "content" not in message:
+            raise ValueError(f"messages[{idx}].content is required")
+        messages.append(dict(message))
+    if str(messages[-1].get("role") or "").lower() == "assistant":
+        raise ValueError(
+            "messages must be prompt/context only; final assistant messages leak the target"
+        )
+    return messages
+
+
+def _messages_media(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     media: list[dict[str, Any]] = []
-    if messages_field in record and isinstance(record[messages_field], list):
-        for message in record[messages_field]:
-            _, content_media = _content_to_text_and_media(message.get("content", ""))
-            media.extend(content_media)
-    for field_name, media_type in (("image", "image"), ("video", "video")):
-        value = record.get(field_name)
-        if value:
-            media.append({"type": media_type, "path": str(value)})
-    for field_name, media_type in (("images", "image"), ("videos", "video")):
-        values = record.get(field_name) or []
-        if isinstance(values, (str, bytes)):
-            values = [values]
-        for value in values:
-            if value:
-                media.append({"type": media_type, "path": str(value)})
+    for message in messages:
+        _, content_media = _content_to_text_and_media(message.get("content", ""))
+        media.extend(content_media)
     return _dedupe_media(media)
 
 
@@ -100,8 +86,10 @@ def _content_to_text_and_media(content: Any) -> tuple[str, list[dict[str, Any]]]
             if path:
                 media.append({"type": "image", "path": str(path)})
             parts.append("<image>")
-        elif item_type == "video":
+        elif item_type in {"video", "video_url"}:
             path = item.get("video") or item.get("path") or item.get("url")
+            if isinstance(item.get("video_url"), dict):
+                path = item["video_url"].get("url") or path
             if path:
                 media.append({"type": "video", "path": str(path)})
             parts.append("<video>")
@@ -124,12 +112,7 @@ def _dedupe_media(media: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return deduped
 
 
-def load_jsonl(
-    path: str | Path,
-    prompt_field: str = "prompt",
-    ground_truth_field: str = "ground_truth",
-    messages_field: str = "messages",
-) -> list[Sample]:
+def load_jsonl(path: str | Path) -> list[Sample]:
     samples: list[Sample] = []
     with Path(path).open("r", encoding="utf-8") as handle:
         for line_no, line in enumerate(handle, start=1):
@@ -137,39 +120,10 @@ def load_jsonl(
                 continue
             try:
                 record = json.loads(line)
-                samples.append(
-                    sample_from_record(
-                        record,
-                        prompt_field=prompt_field,
-                        ground_truth_field=ground_truth_field,
-                        messages_field=messages_field,
-                    )
-                )
+                samples.append(sample_from_record(record))
             except Exception as exc:  # noqa: BLE001
                 raise ValueError(f"invalid JSONL record at {path}:{line_no}: {exc}") from exc
     return samples
-
-
-def load_json(
-    path: str | Path,
-    prompt_field: str = "prompt",
-    ground_truth_field: str = "ground_truth",
-    messages_field: str = "messages",
-) -> list[Sample]:
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
-    if isinstance(data, dict) and "data" in data:
-        data = data["data"]
-    if not isinstance(data, list):
-        raise ValueError("JSON input must be a list or an object with a 'data' list")
-    return [
-        sample_from_record(
-            record,
-            prompt_field=prompt_field,
-            ground_truth_field=ground_truth_field,
-            messages_field=messages_field,
-        )
-        for record in data
-    ]
 
 
 def write_jsonl(samples: list[Sample], path: str | Path) -> None:
@@ -178,28 +132,3 @@ def write_jsonl(samples: list[Sample], path: str | Path) -> None:
     with output.open("w", encoding="utf-8") as handle:
         for sample in samples:
             handle.write(sample.to_json() + "\n")
-
-
-def convert_excel_to_samples(path: str | Path) -> list[Sample]:
-    import pandas as pd
-
-    rows: list[Sample] = []
-    xls = pd.ExcelFile(path)
-    for sheet_name in xls.sheet_names:
-        df = pd.read_excel(xls, sheet_name=sheet_name, dtype=str).fillna("")
-        for _, row in df.iterrows():
-            record = row.to_dict()
-            instruction = str(record.get("instruction", "")).strip()
-            user_input = str(record.get("input", "")).strip()
-            output = str(record.get("output", "")).strip()
-            if not user_input or not output:
-                continue
-            prompt = f"{instruction}\n\n{user_input}".strip()
-            rows.append(
-                Sample(
-                    prompt=prompt,
-                    ground_truth=output,
-                    metadata={"sheet": sheet_name},
-                )
-            )
-    return rows

@@ -31,12 +31,16 @@ class _EvalRuntime:
         assert len(kwargs["samples"]) == 1
         return [_Generation(self.completions)]
 
+    def generate_groups(self, **kwargs):
+        assert len(kwargs["message_batches"]) == 1
+        return [_Generation(self.completions)]
+
 
 def test_evaluate_samples_scores_groups_and_scrubs_media_paths(tmp_path: Path) -> None:
     config = GraspoConfig()
     config.training.rollout_group_size = 2
     sample = Sample(
-        prompt="read the panel",
+        messages=[{"role": "user", "content": "read the panel"}],
         ground_truth={"status": "ok"},
         metadata={"source": "synthetic"},
         media=[{"type": "image", "path": "/private/panel.png"}],

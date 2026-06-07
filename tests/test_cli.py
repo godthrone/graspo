@@ -1,4 +1,5 @@
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -18,13 +19,7 @@ def test_cli_main_commands_parse():
     parser = build_parser()
 
     commands = [
-        ["prepare-data", "--input", "data/sample.jsonl", "--output", "out.jsonl"],
-        ["analyze", "--rewards", "rewards.jsonl"],
         ["launch", "--config", "config_example.yaml"],
-        ["train", "--config", "config_example.yaml"],
-        ["train", "--config", "config_example.yaml", "--backend", "native-tp"],
-        ["train", "--config", "config_example.yaml", "--backend", "hf-reference"],
-        ["train", "--config", "config_example.yaml", "--lora-adapter", "adapter"],
         [
             "export",
             "--config",
@@ -53,6 +48,14 @@ def test_cli_main_commands_parse():
     for command in commands:
         args = parser.parse_args(command)
         assert callable(args.func)
+
+
+@pytest.mark.parametrize("command", ["train", "prepare-data", "analyze"])
+def test_cli_removed_commands_are_not_public(command):
+    parser = build_parser()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args([command])
 
 
 def test_config_example_loads():
@@ -86,14 +89,15 @@ def test_launch_plan_native_tp_uses_torchrun(tmp_path):
         "--nproc_per_node=2",
         "--master_addr=127.0.0.1",
     ]
+    assert "graspo.cli.train_worker" in plan.command
     assert "CUDA_VISIBLE_DEVICES" in plan.env
     assert plan.env["CUDA_VISIBLE_DEVICES"] == "0,1"
 
 
-def test_launch_plan_hf_reference_uses_single_process(tmp_path):
+def test_launch_plan_native_tp_world_size_one_uses_single_process(tmp_path):
     config_path = _write_launch_config(
         tmp_path,
-        backend="hf-reference",
+        backend="native-tp",
         gpus="null",
         nproc_per_node="null",
         tensor_parallel=1,
@@ -102,10 +106,10 @@ def test_launch_plan_hf_reference_uses_single_process(tmp_path):
 
     plan = build_launch_plan(config_path)
 
-    assert plan.backend == "hf-reference"
+    assert plan.backend == "native-tp"
     assert not plan.uses_torchrun
     assert plan.nproc_per_node == 1
-    assert plan.command[:4] == ["python", "-m", "graspo", "train"]
+    assert plan.command[:3] == ["python", "-m", "graspo.cli.train_worker"]
 
 
 def test_launch_plan_rejects_world_size_mismatch(tmp_path):
@@ -125,7 +129,7 @@ def test_launch_plan_rejects_world_size_mismatch(tmp_path):
 def test_launch_plan_rejects_missing_paths(tmp_path):
     config_path = _write_launch_config(
         tmp_path,
-        backend="hf-reference",
+        backend="native-tp",
         model_path="<MODEL_PATH>",
         gpus="null",
         tensor_parallel=1,
@@ -149,6 +153,21 @@ def test_readmes_document_single_yaml_entry_and_exports():
         text = path.read_text(encoding="utf-8")
         for item in expected:
             assert item in text
+        forbidden = ["hf-reference", "prepare-data", "train --config", "prompt-only"]
+        for item in forbidden:
+            assert item not in text
+
+
+def test_only_readmes_are_tracked_markdown_docs():
+    result = subprocess.run(
+        ["git", "ls-files", "*.md"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    tracked_markdown = {line.strip().replace("\\", "/") for line in result.stdout.splitlines() if line.strip()}
+
+    assert tracked_markdown == {"README.md", "README.zh-CN.md"}
 
 
 def _write_launch_config(
@@ -162,7 +181,10 @@ def _write_launch_config(
     model_path: str | None = None,
 ) -> Path:
     data_path = tmp_path / "train.jsonl"
-    data_path.write_text('{"prompt":"p","ground_truth":{"x":1}}\n', encoding="utf-8")
+    data_path.write_text(
+        '{"messages":[{"role":"user","content":"p"}],"ground_truth":{"x":1}}\n',
+        encoding="utf-8",
+    )
     output_dir = tmp_path / "out"
     model_value = model_path or str(tmp_path / "model")
     config_path = tmp_path / "config.yaml"

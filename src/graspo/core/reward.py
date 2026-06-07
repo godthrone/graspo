@@ -46,18 +46,9 @@ def is_valid_json(value: str) -> bool:
 
 
 def normalize_ground_truth(value: Any) -> dict[str, Any]:
-    if isinstance(value, str):
-        parsed = json.loads(value)
-    else:
-        parsed = value
-
-    if isinstance(parsed, list) and parsed:
-        parsed = parsed[0]
-    if not isinstance(parsed, dict):
-        raise ValueError(
-            "ground_truth must be a JSON object, a JSON object string, or a non-empty list"
-        )
-    return parsed
+    if not isinstance(value, dict):
+        raise ValueError("ground_truth must be a JSON object")
+    return value
 
 
 class GraspoReward:

@@ -48,12 +48,7 @@ def main() -> int:
     if args.top_p is not None:
         config.training.top_p = args.top_p
 
-    samples = load_jsonl(
-        args.data,
-        prompt_field=config.data.prompt_field,
-        ground_truth_field=config.data.ground_truth_field,
-        messages_field=config.data.messages_field,
-    )
+    samples = load_jsonl(args.data)
     if args.limit and args.limit > 0:
         samples = samples[: args.limit]
 
@@ -101,15 +96,26 @@ def evaluate_samples(
     handle = completions_path.open("w", encoding="utf-8") if primary else None
     try:
         for index, sample in enumerate(samples):
-            generation = runtime.generate_sample_groups(
-                samples=[sample],
-                rollout_group_size=config.training.rollout_group_size,
-                max_new_tokens=config.training.max_new_tokens,
-                max_prompt_length=config.data.max_prompt_length,
-                temperature=config.training.temperature,
-                top_p=config.training.top_p,
-                chat_template_kwargs=config.model.chat_template_kwargs,
-            )[0]
+            if sample.media:
+                generation = runtime.generate_sample_groups(
+                    samples=[sample],
+                    rollout_group_size=config.training.rollout_group_size,
+                    max_new_tokens=config.training.max_new_tokens,
+                    max_prompt_length=config.data.max_prompt_length,
+                    temperature=config.training.temperature,
+                    top_p=config.training.top_p,
+                    chat_template_kwargs=config.model.chat_template_kwargs,
+                )[0]
+            else:
+                generation = runtime.generate_groups(
+                    message_batches=[sample.messages],
+                    rollout_group_size=config.training.rollout_group_size,
+                    max_new_tokens=config.training.max_new_tokens,
+                    max_prompt_length=config.data.max_prompt_length,
+                    temperature=config.training.temperature,
+                    top_p=config.training.top_p,
+                    chat_template_kwargs=config.model.chat_template_kwargs,
+                )[0]
             results = [
                 reward.score(completion, sample.ground_truth)
                 for completion in generation.completions

@@ -68,9 +68,8 @@ def test_reward_tool_call_matches_original_scoring_shape():
     assert result.reward > 1.0
 
 
-def test_reward_list_ground_truth_uses_first_reference():
+def test_reward_list_ground_truth_is_rejected():
     reward = GraspoReward(RewardConfig(check_json_markdown=False))
-    result = reward.score('{"APN":"cmnet"}', [{"APN": "cmnet"}, {"APN": "wrong"}])
 
-    assert result.all_right is True
-    assert result.reward > 1.0
+    with pytest.raises(ValueError, match="JSON object"):
+        reward.score('{"APN":"cmnet"}', [{"APN": "cmnet"}, {"APN": "wrong"}])

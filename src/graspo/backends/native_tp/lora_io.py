@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 import torch
-from safetensors import safe_open
 from safetensors.torch import load_file, save_file
 
 
@@ -17,7 +16,7 @@ def load_peft_adapter_into_native_model(
     base_model_path: str,
 ) -> None:
     adapter_dir = Path(adapter_path)
-    config, tensors = _load_peft_adapter(adapter_dir)
+    config, tensors, graspo_metadata = _load_peft_adapter(adapter_dir)
     expected_base = str(config.get("base_model_name_or_path") or "")
     if expected_base and expected_base != str(base_model_path):
         raise ValueError(
@@ -33,11 +32,18 @@ def load_peft_adapter_into_native_model(
         return
 
     for record in metadata:
+        hf_module = str(record["hf_module_path"])
         if not bool(record.get("peft_exportable", True)):
-            raise ValueError(
-                "PEFT adapter warm-start cannot initialize native fused/split LoRA target "
-                f"{record['target_name']}; use a GRASPO native checkpoint or export merged-hf"
+            lora_a, lora_b = _slice_graspo_peft_tensor(
+                grouped,
+                graspo_metadata,
+                record,
             )
+            module = modules[str(record["module_name"])]
+            _copy_parameter(module, "lora_a", lora_a, hf_module)
+            _copy_parameter(module, "lora_b", lora_b, hf_module)
+            consumed.add(hf_module)
+            continue
         if "r" in config and int(config["r"]) != int(record["r"]):
             raise ValueError(
                 f"PEFT adapter r={config['r']} does not match native LoRA r={record['r']}"
@@ -47,7 +53,6 @@ def load_peft_adapter_into_native_model(
                 "PEFT adapter lora_alpha="
                 f"{config['lora_alpha']} does not match native LoRA alpha={record['alpha']}"
             )
-        hf_module = str(record["hf_module_path"])
         pair = grouped.get(hf_module)
         if pair is None:
             raise ValueError(f"PEFT adapter is missing LoRA tensors for {hf_module}")
@@ -69,39 +74,52 @@ def export_peft_adapter_from_checkpoint(
     *,
     base_model_path: str | Path | None = None,
 ) -> None:
-    payloads = _load_native_payloads(checkpoint_dir)
+    payloads = _load_native_payloads(checkpoint_dir, require_metadata=True)
     config = _payload_config(payloads[0])
     lora_config = dict(config.get("lora", {}) or {})
     base_model = str(base_model_path or (config.get("model", {}) or {}).get("model_path") or "")
-    tensors = _reconstruct_peft_tensors(payloads)
+    tensors, module_specs, graspo_metadata = _reconstruct_peft_export(payloads)
+    if not module_specs:
+        raise ValueError("Native checkpoint contains no enabled LoRA tensors")
+    first_spec = next(iter(module_specs.values()))
+    target_modules = sorted({module.rsplit(".", 1)[-1] for module in module_specs})
+    rank_pattern = {
+        module: int(spec["r"])
+        for module, spec in sorted(module_specs.items())
+        if int(spec["r"]) != int(first_spec["r"])
+    }
+    alpha_pattern = {
+        module: int(spec["alpha"])
+        for module, spec in sorted(module_specs.items())
+        if int(spec["alpha"]) != int(first_spec["alpha"])
+    }
+    adapter_config: dict[str, Any] = {
+        "base_model_name_or_path": base_model,
+        "bias": lora_config.get("bias", "none"),
+        "fan_in_fan_out": False,
+        "inference_mode": True,
+        "lora_alpha": int(first_spec["alpha"]),
+        "lora_dropout": float(lora_config.get("dropout", 0.0)),
+        "peft_type": "LORA",
+        "r": int(first_spec["r"]),
+        "target_modules": target_modules,
+        "task_type": lora_config.get("task_type", "CAUSAL_LM"),
+    }
+    if rank_pattern:
+        adapter_config["rank_pattern"] = rank_pattern
+    if alpha_pattern:
+        adapter_config["alpha_pattern"] = alpha_pattern
     output = _prepare_output_dir(output_dir)
     save_file(tensors, str(output / "adapter_model.safetensors"))
     (output / "adapter_config.json").write_text(
-        json.dumps(
-            {
-                "base_model_name_or_path": base_model,
-                "bias": lora_config.get("bias", "none"),
-                "fan_in_fan_out": False,
-                "inference_mode": True,
-                "lora_alpha": int(lora_config.get("alpha", _first_metadata(payloads)["alpha"])),
-                "lora_dropout": float(lora_config.get("dropout", 0.0)),
-                "peft_type": "LORA",
-                "r": int(lora_config.get("r", _first_metadata(payloads)["r"])),
-                "target_modules": sorted(
-                    {
-                        str(record["hf_module_path"]).rsplit(".", 1)[-1]
-                        for record in _all_metadata(payloads)
-                        if bool(record.get("peft_exportable", True))
-                    }
-                ),
-                "task_type": lora_config.get("task_type", "CAUSAL_LM"),
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
-        + "\n",
+        json.dumps(adapter_config, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+    if graspo_metadata["modules"]:
+        (output / "graspo_adapter_metadata.json").write_text(
+            json.dumps(graspo_metadata, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
 
 
 def export_merged_hf_from_checkpoint(
@@ -113,8 +131,8 @@ def export_merged_hf_from_checkpoint(
     base = Path(base_model_path)
     if _is_relative_to(Path(output_dir).resolve(), base.resolve()):
         raise ValueError("merged-hf output directory must not be inside the base model directory")
-    payloads = _load_native_payloads(checkpoint_dir, require_metadata=False)
-    deltas = _collect_weight_deltas(payloads, base_model_path=base)
+    payloads = _load_native_payloads(checkpoint_dir, require_metadata=True)
+    deltas = _collect_weight_deltas(payloads)
     output = _prepare_output_dir(output_dir)
     _copy_hf_sidecar_files(base, output)
 
@@ -185,16 +203,23 @@ def _model_lora_metadata(model: torch.nn.Module) -> list[dict[str, Any]]:
     return list(getter())
 
 
-def _load_peft_adapter(adapter_dir: Path) -> tuple[dict[str, Any], dict[str, torch.Tensor]]:
+def _load_peft_adapter(
+    adapter_dir: Path,
+) -> tuple[dict[str, Any], dict[str, torch.Tensor], dict[str, Any]]:
     config_path = adapter_dir / "adapter_config.json"
     tensor_path = adapter_dir / "adapter_model.safetensors"
+    graspo_metadata_path = adapter_dir / "graspo_adapter_metadata.json"
     if not config_path.exists():
         raise FileNotFoundError(f"Missing PEFT adapter_config.json: {config_path}")
     if not tensor_path.exists():
         raise FileNotFoundError(f"Missing PEFT adapter_model.safetensors: {tensor_path}")
+    graspo_metadata: dict[str, Any] = {}
+    if graspo_metadata_path.exists():
+        graspo_metadata = json.loads(graspo_metadata_path.read_text(encoding="utf-8"))
     return (
         json.loads(config_path.read_text(encoding="utf-8")),
         load_file(str(tensor_path), device="cpu"),
+        graspo_metadata,
     )
 
 
@@ -261,6 +286,46 @@ def _slice_lora_b(tensor: torch.Tensor, record: dict[str, Any]) -> torch.Tensor:
     return tensor.contiguous()
 
 
+def _slice_graspo_peft_tensor(
+    grouped: dict[str, dict[str, torch.Tensor]],
+    graspo_metadata: dict[str, Any],
+    record: dict[str, Any],
+) -> tuple[torch.Tensor, torch.Tensor]:
+    hf_module = str(record["hf_module_path"])
+    modules = dict(graspo_metadata.get("modules") or {})
+    slices = modules.get(hf_module)
+    if not isinstance(slices, list):
+        raise ValueError(
+            "PEFT adapter warm-start cannot initialize native fused/split LoRA target "
+            f"{record['target_name']}; missing graspo_adapter_metadata.json slice metadata"
+        )
+    matched = [
+        item
+        for item in slices
+        if isinstance(item, dict)
+        and str(item.get("target_name")) == str(record["target_name"])
+        and str(item.get("base_weight_name")) == str(record["base_weight_name"])
+    ]
+    if len(matched) != 1:
+        raise ValueError(
+            "PEFT adapter warm-start cannot uniquely map native fused/split LoRA target "
+            f"{record['target_name']} in {hf_module}"
+        )
+    pair = grouped.get(hf_module)
+    if pair is None:
+        raise ValueError(f"PEFT adapter is missing LoRA tensors for {hf_module}")
+    item = matched[0]
+    rank_start = int(item["rank_start"])
+    rank_stop = int(item["rank_stop"])
+    lora_a = pair["A"][rank_start:rank_stop].contiguous()
+    lora_b = pair["B"][:, rank_start:rank_stop].contiguous()
+    adapter_b_scale = float(item.get("adapter_b_scale") or 1.0)
+    if adapter_b_scale == 0.0:
+        raise ValueError(f"Invalid zero adapter_b_scale for {hf_module}")
+    lora_b = lora_b / adapter_b_scale
+    return _slice_lora_a(lora_a, record), _slice_lora_b(lora_b, record)
+
+
 def _load_native_payloads(
     checkpoint_dir: str | Path,
     *,
@@ -305,20 +370,108 @@ def _first_metadata(payloads: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _reconstruct_peft_tensors(payloads: list[dict[str, Any]]) -> dict[str, torch.Tensor]:
+    tensors, _, _ = _reconstruct_peft_export(payloads)
+    return tensors
+
+
+def _reconstruct_peft_export(
+    payloads: list[dict[str, Any]],
+) -> tuple[dict[str, torch.Tensor], dict[str, dict[str, int]], dict[str, Any]]:
     grouped = _records_with_tensors(payloads)
     output: dict[str, torch.Tensor] = {}
+    module_specs: dict[str, dict[str, int]] = {}
+    graspo_metadata: dict[str, Any] = {
+        "format": "graspo-peft-adapter-metadata",
+        "version": 1,
+        "modules": {},
+    }
     for hf_module, items in grouped.items():
         if any(not bool(record.get("peft_exportable", True)) for record, _ in items):
-            target_names = sorted({str(record["target_name"]) for record, _ in items})
-            raise ValueError(
-                "Cannot export fused/split native LoRA target(s) as strict PEFT adapter: "
-                + ", ".join(target_names)
-                + ". Use --format merged-hf instead."
-            )
+            lora_a, lora_b, slices = _reconstruct_combined_peft_pair(hf_module, items)
+            output[f"base_model.model.{hf_module}.lora_A.weight"] = lora_a.contiguous()
+            output[f"base_model.model.{hf_module}.lora_B.weight"] = lora_b.contiguous()
+            module_specs[hf_module] = {"r": int(lora_a.shape[0]), "alpha": int(lora_a.shape[0])}
+            graspo_metadata["modules"][hf_module] = slices
+            continue
         lora_a, lora_b = _reconstruct_peft_pair(hf_module, items)
         output[f"base_model.model.{hf_module}.lora_A.weight"] = lora_a.contiguous()
         output[f"base_model.model.{hf_module}.lora_B.weight"] = lora_b.contiguous()
-    return output
+        record = items[0][0]
+        module_specs[hf_module] = {
+            "r": int(record["r"]),
+            "alpha": int(record["alpha"]),
+        }
+    return output, module_specs, graspo_metadata
+
+
+def _reconstruct_combined_peft_pair(
+    hf_module: str,
+    items: list[tuple[dict[str, Any], dict[str, torch.Tensor]]],
+) -> tuple[torch.Tensor, torch.Tensor, list[dict[str, Any]]]:
+    target_groups: dict[str, list[tuple[dict[str, Any], dict[str, torch.Tensor]]]] = {}
+    for record, pair in items:
+        key = str(record["target_name"])
+        target_groups.setdefault(key, []).append((record, pair))
+
+    rows = _row_count(items)
+    cols = _column_count(items)
+    target_pairs: list[tuple[dict[str, Any], torch.Tensor, torch.Tensor, float]] = []
+    for target_name, target_items in sorted(target_groups.items()):
+        shard_kinds = {str(record["shard_kind"]) for record, _ in target_items}
+        if not shard_kinds <= {"out", "rows", "none"}:
+            raise ValueError(
+                f"Cannot export mixed/column-sharded fused LoRA target {target_name} "
+                f"for {hf_module} as a PEFT adapter"
+            )
+        a = _require_replicated(
+            hf_module,
+            [pair["A"] for _, pair in target_items],
+            f"{target_name}.lora_A",
+        )
+        if int(a.shape[1]) != cols:
+            raise ValueError(
+                f"Native LoRA A for {target_name} has {a.shape[1]} columns, "
+                f"but {hf_module} expects {cols}"
+            )
+        b = torch.zeros(rows, a.shape[0], dtype=target_items[0][1]["B"].dtype)
+        for record, pair in target_items:
+            if str(record["shard_kind"]) == "none":
+                if tuple(pair["B"].shape) != tuple(b.shape):
+                    raise ValueError(
+                        f"Native LoRA B for {target_name} cannot be embedded into {hf_module}: "
+                        f"{tuple(pair['B'].shape)} != {tuple(b.shape)}"
+                    )
+                b += pair["B"]
+            else:
+                _place_rows(b, torch.zeros(rows, dtype=torch.bool), pair["B"], record)
+        representative = target_items[0][0]
+        native_scale = float(representative["alpha"]) / float(representative["r"])
+        target_pairs.append((representative, a.cpu(), b.cpu() * native_scale, native_scale))
+
+    total_rank = sum(int(a.shape[0]) for _, a, _, _ in target_pairs)
+    if total_rank <= 0:
+        raise ValueError(f"Native checkpoint contains no enabled LoRA tensors for {hf_module}")
+    combined_a = torch.zeros(total_rank, cols, dtype=target_pairs[0][1].dtype)
+    combined_b = torch.zeros(rows, total_rank, dtype=target_pairs[0][2].dtype)
+    slices: list[dict[str, Any]] = []
+    rank_offset = 0
+    for record, a, b, native_scale in target_pairs:
+        rank_stop = rank_offset + int(a.shape[0])
+        combined_a[rank_offset:rank_stop] = a
+        combined_b[:, rank_offset:rank_stop] = b
+        slices.append(
+            {
+                "target_name": str(record["target_name"]),
+                "base_weight_name": str(record["base_weight_name"]),
+                "rank_start": rank_offset,
+                "rank_stop": rank_stop,
+                "native_r": int(record["r"]),
+                "native_alpha": int(record["alpha"]),
+                "adapter_b_scale": native_scale,
+            }
+        )
+        rank_offset = rank_stop
+    return combined_a.cpu(), combined_b.cpu(), slices
 
 
 def _records_with_tensors(
@@ -335,327 +488,6 @@ def _records_with_tensors(
             }
             grouped.setdefault(str(rec["hf_module_path"]), []).append((rec, pair))
     return grouped
-
-
-def _ensure_merge_metadata(
-    payloads: list[dict[str, Any]],
-    *,
-    base_model_path: Path,
-) -> None:
-    if all(payload.get("lora_tensor_metadata") for payload in payloads):
-        return
-    base_shapes = _base_safetensor_shapes(base_model_path)
-    for payload in payloads:
-        if payload.get("lora_tensor_metadata"):
-            continue
-        payload["lora_tensor_metadata"] = _infer_merge_metadata(payload, base_shapes)
-
-
-def _base_safetensor_shapes(base: Path) -> dict[str, tuple[int, ...]]:
-    index_path = base / "model.safetensors.index.json"
-    if index_path.exists():
-        index = json.loads(index_path.read_text(encoding="utf-8"))
-        filenames = sorted(set(dict(index["weight_map"]).values()))
-    else:
-        filenames = sorted(file.name for file in base.glob("*.safetensors"))
-    if not filenames:
-        raise FileNotFoundError(f"No safetensors files found in {base}")
-    shapes: dict[str, tuple[int, ...]] = {}
-    for filename in filenames:
-        with safe_open(str(base / filename), framework="pt", device="cpu") as handle:
-            for key in handle.keys():
-                shapes[str(key)] = tuple(int(v) for v in handle.get_slice(key).get_shape())
-    return shapes
-
-
-def _infer_merge_metadata(
-    payload: dict[str, Any],
-    base_shapes: dict[str, tuple[int, ...]],
-) -> list[dict[str, Any]]:
-    state = dict(payload.get("lora_state_dict") or {})
-    if not state:
-        raise ValueError("Native checkpoint contains no lora_state_dict")
-    config = _payload_config(payload)
-    lora_config = dict(config.get("lora", {}) or {})
-    default_r = int(lora_config.get("r", 0) or 0)
-    default_alpha = int(lora_config.get("alpha", default_r or 1))
-    records: list[dict[str, Any]] = []
-    for a_name in sorted(k for k in state if k.endswith(".lora_a")):
-        module_name = a_name[: -len(".lora_a")]
-        b_name = f"{module_name}.lora_b"
-        if b_name not in state:
-            raise ValueError(f"Native checkpoint has {a_name} without matching {b_name}")
-        record = _infer_merge_record(
-            module_name,
-            state[a_name],
-            state[b_name],
-            payload,
-            base_shapes,
-            default_r=default_r,
-            default_alpha=default_alpha,
-        )
-        record["lora_a_name"] = a_name
-        record["lora_b_name"] = b_name
-        records.append(record)
-    if not records:
-        raise ValueError("Native checkpoint contains no enabled LoRA tensors")
-    return records
-
-
-def _infer_merge_record(
-    module_name: str,
-    lora_a: torch.Tensor,
-    lora_b: torch.Tensor,
-    payload: dict[str, Any],
-    base_shapes: dict[str, tuple[int, ...]],
-    *,
-    default_r: int,
-    default_alpha: int,
-) -> dict[str, Any]:
-    tp_rank = int(payload.get("tp_rank", 0))
-    tp_size = int(payload.get("tp_size", 1))
-    base_module_name = _globalize_legacy_module_name(module_name, payload)
-    candidates = _legacy_merge_candidates(base_module_name, lora_a, lora_b, tp_rank, tp_size)
-    matches = [
-        candidate
-        for candidate in candidates
-        if _candidate_matches_base(candidate, lora_a, lora_b, base_shapes)
-    ]
-    if len(matches) != 1:
-        detail = ", ".join(str(c["base_weight_name"]) for c in candidates)
-        if not matches:
-            raise ValueError(
-                f"Cannot infer LoRA merge target for legacy checkpoint tensor {module_name}; "
-                f"tried: {detail}"
-            )
-        raise ValueError(
-            f"Ambiguous LoRA merge target for legacy checkpoint tensor {module_name}: "
-            + ", ".join(str(c["base_weight_name"]) for c in matches)
-        )
-    record = matches[0]
-    base_name = str(record["base_weight_name"])
-    record = _resolve_legacy_dynamic_offsets(record, int(base_shapes[base_name][0]))
-    record["module_name"] = module_name
-    record["r"] = int(default_r or lora_a.shape[0])
-    record["alpha"] = int(default_alpha)
-    return record
-
-
-def _globalize_legacy_module_name(module_name: str, payload: dict[str, Any]) -> str:
-    parts = module_name.split(".")
-    if len(parts) < 2 or parts[0] != "layers" or not parts[1].isdigit():
-        return module_name
-    local_index = int(parts[1])
-    placement = dict(payload.get("placement") or {})
-    local_layers = placement.get("local_layer_indices")
-    if not isinstance(local_layers, list) or local_index >= len(local_layers):
-        return module_name
-    global_index = int(local_layers[local_index])
-    return ".".join(["layers", str(global_index), *parts[2:]])
-
-
-def _legacy_merge_candidates(
-    module_name: str,
-    lora_a: torch.Tensor,
-    lora_b: torch.Tensor,
-    tp_rank: int,
-    tp_size: int,
-) -> list[dict[str, Any]]:
-    parts = module_name.split(".")
-    if len(parts) < 4 or parts[0] != "layers" or not parts[1].isdigit():
-        return []
-    layer = int(parts[1])
-    suffix = ".".join(parts[2:])
-    prefixes = [
-        f"model.language_model.layers.{layer}",
-        f"model.layers.{layer}",
-    ]
-    records: list[dict[str, Any]] = []
-    if suffix.startswith("token_mixer."):
-        name = suffix[len("token_mixer.") :]
-        for prefix in prefixes:
-            if name in {"q_proj", "k_proj", "v_proj"}:
-                records.append(
-                    _record_template(
-                        target_name=f"language.full_attn.{name}",
-                        hf_module_path=f"{prefix}.self_attn.{name}",
-                        shard_kind="rows",
-                        row_start=tp_rank * int(lora_b.shape[0]),
-                        row_stop=(tp_rank + 1) * int(lora_b.shape[0]),
-                    )
-                )
-                records.append(
-                    _linear_qkv_record(
-                        prefix=f"{prefix}.linear_attn",
-                        name=name,
-                        lora_b=lora_b,
-                        tp_rank=tp_rank,
-                        tp_size=tp_size,
-                    )
-                )
-            elif name == "o_proj":
-                records.append(
-                    _record_template(
-                        target_name="language.full_attn.o_proj",
-                        hf_module_path=f"{prefix}.self_attn.o_proj",
-                        shard_kind="in",
-                        col_start=tp_rank * int(lora_a.shape[1]),
-                        col_stop=(tp_rank + 1) * int(lora_a.shape[1]),
-                    )
-                )
-            elif name in {"in_proj_z", "out_proj"}:
-                shard = "out" if name == "in_proj_z" else "in"
-                kwargs: dict[str, int] = {}
-                if shard == "out":
-                    kwargs = {
-                        "row_start": tp_rank * int(lora_b.shape[0]),
-                        "row_stop": (tp_rank + 1) * int(lora_b.shape[0]),
-                    }
-                else:
-                    kwargs = {
-                        "col_start": tp_rank * int(lora_a.shape[1]),
-                        "col_stop": (tp_rank + 1) * int(lora_a.shape[1]),
-                    }
-                records.append(
-                    _record_template(
-                        target_name=f"language.linear_attn.{name}",
-                        hf_module_path=f"{prefix}.linear_attn.{name}",
-                        shard_kind=shard,
-                        **kwargs,
-                    )
-                )
-        return records
-    if suffix.startswith("mlp."):
-        name = suffix[len("mlp.") :]
-        if name not in {"gate_proj", "up_proj", "down_proj"}:
-            return []
-        for prefix in prefixes:
-            shard = "in" if name == "down_proj" else "out"
-            kwargs = (
-                {
-                    "col_start": tp_rank * int(lora_a.shape[1]),
-                    "col_stop": (tp_rank + 1) * int(lora_a.shape[1]),
-                }
-                if shard == "in"
-                else {
-                    "row_start": tp_rank * int(lora_b.shape[0]),
-                    "row_stop": (tp_rank + 1) * int(lora_b.shape[0]),
-                }
-            )
-            records.append(
-                _record_template(
-                    target_name=f"language.mlp.{name}",
-                    hf_module_path=f"{prefix}.mlp.{name}",
-                    shard_kind=shard,
-                    **kwargs,
-                )
-            )
-    return records
-
-
-def _linear_qkv_record(
-    *,
-    prefix: str,
-    name: str,
-    lora_b: torch.Tensor,
-    tp_rank: int,
-    tp_size: int,
-) -> dict[str, Any]:
-    local_rows = int(lora_b.shape[0])
-    # The exact q/k/v offset is validated later against the base fused weight
-    # shape. Value rows are placed after the full q and k blocks.
-    if name == "q_proj":
-        row_start = tp_rank * local_rows
-    elif name == "k_proj":
-        row_start = local_rows * tp_size + tp_rank * local_rows
-    else:
-        row_start = -1
-    record = _record_template(
-        target_name=f"language.linear_attn.{name}",
-        hf_module_path=f"{prefix}.in_proj_qkv",
-        base_weight_name=f"{prefix}.in_proj_qkv.weight",
-        shard_kind="rows",
-        row_start=row_start,
-        row_stop=row_start + local_rows if row_start >= 0 else -1,
-        peft_exportable=False,
-    )
-    if name == "v_proj":
-        record["_legacy_linear_qkv_value_rows"] = local_rows * tp_size
-        record["_legacy_linear_qkv_local_rows"] = local_rows
-        record["_legacy_linear_qkv_tp_rank"] = tp_rank
-    return record
-
-
-def _record_template(
-    *,
-    target_name: str,
-    hf_module_path: str,
-    shard_kind: str,
-    base_weight_name: str | None = None,
-    row_start: int | None = None,
-    row_stop: int | None = None,
-    col_start: int | None = None,
-    col_stop: int | None = None,
-    peft_exportable: bool = True,
-) -> dict[str, Any]:
-    return {
-        "target_name": target_name,
-        "hf_module_path": hf_module_path,
-        "base_weight_name": base_weight_name or f"{hf_module_path}.weight",
-        "shard_kind": shard_kind,
-        "row_start": row_start,
-        "row_stop": row_stop,
-        "col_start": col_start,
-        "col_stop": col_stop,
-        "row_indices": None,
-        "peft_exportable": peft_exportable,
-    }
-
-
-def _candidate_matches_base(
-    candidate: dict[str, Any],
-    lora_a: torch.Tensor,
-    lora_b: torch.Tensor,
-    base_shapes: dict[str, tuple[int, ...]],
-) -> bool:
-    base_name = str(candidate["base_weight_name"])
-    shape = base_shapes.get(base_name)
-    if shape is None or len(shape) != 2:
-        return False
-    rows, cols = shape
-    candidate = _resolve_legacy_dynamic_offsets(candidate, rows)
-    kind = str(candidate["shard_kind"])
-    if kind in {"out", "rows"}:
-        start = int(candidate["row_start"])
-        stop = int(candidate["row_stop"])
-        return (
-            stop <= rows and stop - start == int(lora_b.shape[0]) and cols == int(lora_a.shape[1])
-        )
-    if kind in {"in", "cols"}:
-        start = int(candidate["col_start"])
-        stop = int(candidate["col_stop"])
-        return (
-            rows == int(lora_b.shape[0]) and stop <= cols and stop - start == int(lora_a.shape[1])
-        )
-    if kind == "none":
-        return rows == int(lora_b.shape[0]) and cols == int(lora_a.shape[1])
-    return False
-
-
-def _resolve_legacy_dynamic_offsets(candidate: dict[str, Any], base_rows: int) -> dict[str, Any]:
-    if "_legacy_linear_qkv_value_rows" not in candidate:
-        return candidate
-    record = dict(candidate)
-    value_rows = int(record.pop("_legacy_linear_qkv_value_rows"))
-    local_rows = int(record.pop("_legacy_linear_qkv_local_rows"))
-    tp_rank = int(record.pop("_legacy_linear_qkv_tp_rank"))
-    key_rows_twice = base_rows - value_rows
-    if key_rows_twice <= 0 or key_rows_twice % 2 != 0:
-        return record
-    row_start = key_rows_twice + tp_rank * local_rows
-    record["row_start"] = row_start
-    record["row_stop"] = row_start + local_rows
-    return record
 
 
 def _reconstruct_peft_pair(
@@ -717,6 +549,17 @@ def _row_count(items: list[tuple[dict[str, Any], dict[str, torch.Tensor]]]) -> i
     return max_row
 
 
+def _column_count(items: list[tuple[dict[str, Any], dict[str, torch.Tensor]]]) -> int:
+    max_col = 0
+    for record, pair in items:
+        kind = str(record["shard_kind"])
+        if kind in {"in", "cols"}:
+            max_col = max(max_col, int(record["col_stop"]))
+        else:
+            max_col = max(max_col, int(pair["A"].shape[1]))
+    return max_col
+
+
 def _place_rows(
     output: torch.Tensor,
     filled: torch.Tensor,
@@ -742,10 +585,7 @@ def _require_all_filled(hf_module: str, filled: torch.Tensor) -> None:
 
 def _collect_weight_deltas(
     payloads: list[dict[str, Any]],
-    *,
-    base_model_path: Path,
 ) -> dict[str, list[tuple[dict[str, Any], torch.Tensor]]]:
-    _ensure_merge_metadata(payloads, base_model_path=base_model_path)
     grouped: dict[str, list[tuple[dict[str, Any], torch.Tensor]]] = {}
     for items in _records_with_tensors(payloads).values():
         for record, pair in items:

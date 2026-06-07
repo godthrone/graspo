@@ -20,6 +20,7 @@ from graspo.backends.native_tp.qwen_tp_adapter import (  # noqa: E402
     load_native_qwen_config,
     native_qwen_lora_available_targets,
     _add_pipeline_stage_timing,
+    _messages_from_multimodal_row,
     _new_pipeline_stage_timing,
     _round_pipeline_stage_timing,
     _selected_token_log_probs_from_hidden,
@@ -42,6 +43,23 @@ def test_runtime_uses_builtin_qwen_adapter_by_default(monkeypatch):
     runtime.setup()
 
     assert runtime._adapter.__class__.__name__ == "QwenNativeTPAdapter"
+
+
+def test_multimodal_row_messages_are_preserved_for_processor_template():
+    messages = [
+        {"role": "system", "content": "s"},
+        {"role": "user", "content": "q1"},
+        {"role": "assistant", "content": "a1"},
+        {
+            "role": "user",
+            "content": [
+                {"type": "image", "image": "images/a.png"},
+                {"type": "text", "text": "q2"},
+            ],
+        },
+    ]
+
+    assert _messages_from_multimodal_row({"messages": messages}) == messages
 
 
 def test_native_qwen_lora_available_targets_cover_text_and_visual():

@@ -18,7 +18,7 @@ from graspo.backends.native_tp.runtime import (  # noqa: E402
     validate_native_runtime_config,
 )
 from graspo.backends.native_tp.placement import build_placement_plan  # noqa: E402
-from graspo.backends.native_tp.trainer import NativeTPGraspoTrainer, _migrate_legacy_trainer_state  # noqa: E402
+from graspo.backends.native_tp.trainer import NativeTPGraspoTrainer  # noqa: E402
 from graspo.core.schema import GraspoConfig  # noqa: E402
 
 
@@ -36,30 +36,14 @@ def test_training_defaults_are_long_run_safe():
     assert config.training.max_new_tokens == 2048
 
 
-def test_training_legacy_aliases_normalize_to_canonical_names():
-    config = GraspoConfig.from_dict(
-        {
-            "training": {
-                "total_epochs": 7,
-                "group_size": 3,
-                "train_batch_size": 2,
-                "buffer_train_rounds": 5,
-                "max_retry": 4,
-                "clip_eps": 0.3,
-                "perfect_reward_threshold": 0.9,
-            }
-        }
-    )
+def test_training_removed_aliases_are_rejected():
+    with pytest.raises(ValueError, match="Removed training config field"):
+        GraspoConfig.from_dict({"training": {"train_batch_size": 2}})
 
-    assert config.training.training_epoch_count == 7
-    assert config.training.rollout_group_size == 3
-    assert config.training.optimize_completion_batch_size == 2
-    assert config.training.optimize_times_per_step == 5
-    assert config.training.rollout_max_retry_times == 4
-    assert config.training.policy_ratio_clip_eps == 0.3
-    assert config.training.perfect_skip_reward_threshold == 0.9
-    assert config.training.replay_buffer_optimize_threshold == 6
-    assert set(config.training.legacy_config_aliases) >= {"train_batch_size", "buffer_train_rounds"}
+
+def test_data_field_aliases_are_rejected():
+    with pytest.raises(ValueError, match="Removed data config field"):
+        GraspoConfig.from_dict({"data": {"messages_field": "conversation"}})
 
 
 def test_replay_buffer_optimize_threshold_is_derived():
@@ -258,11 +242,9 @@ def test_native_tp_rejects_forbidden_framework_config():
         validate_native_runtime_config(config)
 
 
-def test_rollout_prompt_queue_size_alias_normalizes_to_batch_size():
-    config = GraspoConfig.from_dict({"training": {"rollout_prompt_queue_size": 3}})
-
-    assert config.training.rollout_prompt_queue_batch_size == 3
-    assert "rollout_prompt_queue_size" in config.training.legacy_config_aliases
+def test_rollout_prompt_queue_size_alias_is_rejected():
+    with pytest.raises(ValueError, match="Removed training config field"):
+        GraspoConfig.from_dict({"training": {"rollout_prompt_queue_size": 3}})
 
 
 def test_native_tp_import_path_does_not_load_forbidden_frameworks():
@@ -365,8 +347,8 @@ def test_production_configs_do_not_use_low_generation_caps():
     assert offenders == []
 
 
-def test_production_configs_use_canonical_training_names():
-    legacy_keys = {
+def test_production_configs_use_current_training_names():
+    removed_keys = {
         "total_epochs",
         "group_size",
         "train_batch_size",
@@ -380,7 +362,7 @@ def test_production_configs_use_canonical_training_names():
     for path in Path("configs").rglob("*.yaml"):
         for line in path.read_text(encoding="utf-8").splitlines():
             key = line.strip().split(":", 1)[0]
-            if key in legacy_keys:
+            if key in removed_keys:
                 offenders.append(f"{path}:{key}")
 
     assert offenders == []
@@ -471,7 +453,7 @@ class ScriptedGroupRuntime:
     def __init__(self, groups: list[list[str]], *, primary: bool = True) -> None:
         self.groups = groups
         self.generate_calls = 0
-        self.prompts = []
+        self.message_keys = []
         self.train_batches = []
         self.saved = []
         self.saved_trainer_states = []
@@ -486,7 +468,7 @@ class ScriptedGroupRuntime:
         pass
 
     def generate_group(self, **kwargs):
-        self.prompts.append(kwargs["prompt"])
+        self.message_keys.append(_message_key(kwargs["messages"]))
         group_size = int(kwargs["rollout_group_size"])
         completions = self.groups[self.generate_calls]
         self.generate_calls += 1
@@ -537,7 +519,7 @@ class ScriptedQueuedRuntime(ScriptedGroupRuntime):
         self.prompt_attempt_counts = {prompt: 0 for prompt in groups_by_prompt}
 
     def generate_groups(self, **kwargs):
-        prompts = list(kwargs["prompts"])
+        prompts = [_message_key(messages) for messages in kwargs["message_batches"]]
         self.generate_group_batches.append(prompts)
         group_size = int(kwargs["rollout_group_size"])
         generations = []
@@ -581,6 +563,10 @@ def _bad_group(group_size: int) -> list[str]:
     return [_bad_completion(str(idx)) for idx in range(group_size)]
 
 
+def _message_key(messages: list[dict[str, object]]) -> str:
+    return str(messages[-1]["content"])
+
+
 def _no_preference_gap_group(group_size: int) -> list[str]:
     return ["{}"] + [_bad_completion(str(idx)) for idx in range(group_size - 1)]
 
@@ -588,7 +574,13 @@ def _no_preference_gap_group(group_size: int) -> list[str]:
 def _write_train_data(path: Path, count: int) -> None:
     path.write_text(
         "".join(
-            json.dumps({"prompt": f"p{idx}", "ground_truth": {"x": "ok"}}, ensure_ascii=False)
+            json.dumps(
+                {
+                    "messages": [{"role": "user", "content": f"p{idx}"}],
+                    "ground_truth": {"x": "ok"},
+                },
+                ensure_ascii=False,
+            )
             + "\n"
             for idx in range(count)
         ),
@@ -630,7 +622,11 @@ def _native_test_config(
 def test_native_trainer_retries_then_trains_with_fake_runtime(tmp_path):
     data = tmp_path / "train.jsonl"
     data.write_text(
-        json.dumps({"prompt": "p", "ground_truth": {"x": "ok"}}, ensure_ascii=False) + "\n",
+        json.dumps(
+            {"messages": [{"role": "user", "content": "p"}], "ground_truth": {"x": "ok"}},
+            ensure_ascii=False,
+        )
+        + "\n",
         encoding="utf-8",
     )
     config = GraspoConfig.from_dict(
@@ -921,8 +917,8 @@ def test_native_trainer_shuffles_prompt_order_each_epoch_on_cpu(tmp_path):
     random.Random(123).shuffle(expected_epoch_0)
     expected_epoch_1 = [f"p{idx}" for idx in range(sample_count)]
     random.Random(124).shuffle(expected_epoch_1)
-    assert runtime.prompts[:sample_count] == expected_epoch_0
-    assert runtime.prompts[sample_count:] == expected_epoch_1
+    assert runtime.message_keys[:sample_count] == expected_epoch_0
+    assert runtime.message_keys[sample_count:] == expected_epoch_1
     assert expected_epoch_0 != expected_epoch_1
 
 
@@ -934,6 +930,7 @@ def test_native_trainer_resumes_from_trainer_state_without_repeating_samples(tmp
     checkpoint_dir.mkdir()
     runtime = ScriptedGroupRuntime([_mixed_group(2)])
     runtime.resume_state = {
+        "format": "graspo-native-tp-trainer-state",
         "global_step": 5,
         "sample_index": 2,
         "run_stats": {
@@ -990,7 +987,7 @@ def test_native_trainer_resumes_from_trainer_state_without_repeating_samples(tmp
     expected_epoch = [f"p{idx}" for idx in range(sample_count)]
     random.Random(123).shuffle(expected_epoch)
     assert runtime.loaded == [str(checkpoint_dir)]
-    assert runtime.prompts == [expected_epoch[2]]
+    assert runtime.message_keys == [expected_epoch[2]]
     assert runtime.saved_trainer_states[-1]["global_step"] == 6
     assert runtime.saved_trainer_states[-1]["epoch_stats"]["samples_seen"] == 3
     stdout_events = [
@@ -998,64 +995,21 @@ def test_native_trainer_resumes_from_trainer_state_without_repeating_samples(tmp
     ]
     resumed = next(event for event in stdout_events if event.get("event") == "checkpoint_resumed")
     assert resumed["global_step"] == 5
-    assert resumed["resume_migrated_from_legacy_checkpoint"] is False
 
 
-def test_legacy_checkpoint_state_migrates_from_train_step_log(tmp_path):
-    checkpoint_dir = tmp_path / "step_580"
+def test_checkpoint_resume_requires_current_trainer_state(tmp_path):
+    data = tmp_path / "train.jsonl"
+    _write_train_data(data, 1)
+    checkpoint_dir = tmp_path / "step_1"
     checkpoint_dir.mkdir()
-    event = {
-        "event": "train_step",
-        "step": 580,
-        "run": {
-            "attempt_groups": 24000,
-            "decisions": {
-                "rollout_attempts": {"total": 24000, "retry": 9800, "terminal": 14200},
-                "terminal": {
-                    "perfect_skip": 10000,
-                    "trainable": 2300,
-                    "invalid": 10,
-                    "invalid_no_preference_gap": 1890,
-                    "total": 14200,
-                },
-                "trainable": {"max_correct": 1300, "not_correct": 1000, "total": 2300},
-            },
-            "optimized_steps": 580,
-        },
-        "epoch": {
-            "epoch": 38,
-            "samples_seen": 120,
-            "samples_total": 372,
-            "attempt_groups": 180,
-            "completions": 1440,
-            "decisions": {
-                "rollout_attempts": {"total": 180, "retry": 60, "terminal": 120},
-                "terminal": {
-                    "perfect_skip": 80,
-                    "trainable": 25,
-                    "invalid": 1,
-                    "invalid_no_preference_gap": 14,
-                    "total": 120,
-                },
-                "trainable": {"max_correct": 15, "not_correct": 10, "total": 25},
-            },
-            "reward_mean": 0.75,
-            "content_mean": 0.93,
-            "best_reward": 1.0,
-        },
-    }
-    (tmp_path / "nohup.out").write_text(
-        json.dumps(event, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
+    runtime = ScriptedGroupRuntime([_mixed_group(2)])
+    runtime.resume_state = None
+    config = _native_test_config(tmp_path, data, rollout_group_size=2)
+    config.training.resume_from_checkpoint = str(checkpoint_dir)
+    trainer = NativeTPGraspoTrainer(config, runtime=runtime)
 
-    state = _migrate_legacy_trainer_state(checkpoint_dir)
-
-    assert state["global_step"] == 580
-    assert state["sample_index"] == 14200
-    assert state["epoch_stats"]["epoch"] == 38
-    assert state["epoch_stats"]["samples_seen"] == 120
-    assert state["run_stats"]["invalid"] == 10
-    assert state["run_stats"]["invalid_no_preference_gap"] == 1890
+    with pytest.raises(RuntimeError, match="trainer_state"):
+        trainer.train()
 
 
 def test_train_batch_log_counts_group8_retry_once(tmp_path, capsys):
