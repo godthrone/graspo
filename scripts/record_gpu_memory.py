@@ -78,23 +78,35 @@ def main() -> int:
                 "sample_count": len(samples),
             }
         )
-        summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        summary_path.write_text(
+            json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
     return 0
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Record nvidia-smi GPU memory/utilization to JSONL.")
+    parser = argparse.ArgumentParser(
+        description="Record nvidia-smi GPU memory/utilization to JSONL."
+    )
     parser.add_argument("--gpus", default="0", help="Comma-separated GPU indices, e.g. 6,7.")
-    parser.add_argument("--interval-sec", type=float, default=1.0, help="Sampling interval in seconds.")
-    parser.add_argument("--output-dir", required=True, help="Directory for gpu_memory.jsonl and summary.")
+    parser.add_argument(
+        "--interval-sec", type=float, default=1.0, help="Sampling interval in seconds."
+    )
+    parser.add_argument(
+        "--output-dir", required=True, help="Directory for gpu_memory.jsonl and summary."
+    )
     parser.add_argument("--tag", default="", help="Optional run tag written into each row.")
     parser.add_argument(
         "--pid-filter",
         default="",
         help="Comma-separated substrings matched against process_name or pid. Empty records all GPU processes.",
     )
-    parser.add_argument("--duration-sec", type=float, default=None, help="Optional duration for smoke/dry runs.")
-    parser.add_argument("--recent-limit", type=int, default=120, help="Recent GPU rows copied into summary.")
+    parser.add_argument(
+        "--duration-sec", type=float, default=None, help="Optional duration for smoke/dry runs."
+    )
+    parser.add_argument(
+        "--recent-limit", type=int, default=120, help="Recent GPU rows copied into summary."
+    )
     return parser.parse_args()
 
 
@@ -172,7 +184,9 @@ def parse_process_query(text: str) -> list[dict[str, Any]]:
     return rows
 
 
-def summarize_samples(samples: list[dict[str, Any]], recent_samples: list[dict[str, Any]]) -> dict[str, Any]:
+def summarize_samples(
+    samples: list[dict[str, Any]], recent_samples: list[dict[str, Any]]
+) -> dict[str, Any]:
     by_gpu: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for sample in samples:
         by_gpu[int(sample["gpu_index"])].append(sample)
@@ -191,7 +205,9 @@ def summarize_samples(samples: list[dict[str, Any]], recent_samples: list[dict[s
     peak_values = [item["memory_used_mib_peak"] for item in per_gpu.values()]
     return {
         "per_gpu": per_gpu,
-        "max_peak_memory_gap_mib": max(peak_values) - min(peak_values) if len(peak_values) >= 2 else 0.0,
+        "max_peak_memory_gap_mib": max(peak_values) - min(peak_values)
+        if len(peak_values) >= 2
+        else 0.0,
         "recent_samples": recent_samples,
     }
 

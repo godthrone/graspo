@@ -56,7 +56,9 @@ def main() -> None:
     (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 
-def _make_record(*, image_dir: Path, rng: random.Random, index: int, split: str) -> dict[str, object]:
+def _make_record(
+    *, image_dir: Path, rng: random.Random, index: int, split: str
+) -> dict[str, object]:
     status = rng.choice(STATUSES)
     priority = _priority_for_status(status, rng)
     temperature = rng.randint(22, 98)
@@ -93,7 +95,10 @@ def _make_record(*, image_dir: Path, rng: random.Random, index: int, split: str)
                     {"type": "text", "text": prompt},
                 ],
             },
-            {"role": "assistant", "content": "```json\n" + json.dumps(expected, separators=(",", ":")) + "\n```"},
+            {
+                "role": "assistant",
+                "content": "```json\n" + json.dumps(expected, separators=(",", ":")) + "\n```",
+            },
         ],
         "prompt": prompt,
         "image": str(image_path),

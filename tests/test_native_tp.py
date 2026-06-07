@@ -191,7 +191,13 @@ def test_qwen36_static_pipeline_placement_covers_layers_once():
             pp_size=8,
             tp_rank=0,
             pp_rank=rank,
-            layer_types=["linear_attention", "linear_attention", "linear_attention", "full_attention"] * 16,
+            layer_types=[
+                "linear_attention",
+                "linear_attention",
+                "linear_attention",
+                "full_attention",
+            ]
+            * 16,
         )
         for rank in range(8)
     ]
@@ -218,7 +224,13 @@ def test_qwen36_lm_head_only_final_pipeline_placement_keeps_final_stage_layerles
             pp_size=8,
             tp_rank=0,
             pp_rank=rank,
-            layer_types=["linear_attention", "linear_attention", "linear_attention", "full_attention"] * 16,
+            layer_types=[
+                "linear_attention",
+                "linear_attention",
+                "linear_attention",
+                "full_attention",
+            ]
+            * 16,
         )
         for rank in range(8)
     ]
@@ -287,7 +299,9 @@ def test_native_rollout_logger_splits_readable_and_raw(tmp_path):
             "group_stats": {"count": 1},
         }
     )
-    logger.write_raw({"old_log_probs": torch.tensor([[0.1, 0.2]]), "sequences": torch.tensor([[1, 2]])})
+    logger.write_raw(
+        {"old_log_probs": torch.tensor([[0.1, 0.2]]), "sequences": torch.tensor([[1, 2]])}
+    )
 
     readable = json.loads((tmp_path / "rollouts.readable.jsonl").read_text(encoding="utf-8"))
     raw = json.loads((tmp_path / "rollouts.raw.jsonl").read_text(encoding="utf-8"))
@@ -311,9 +325,9 @@ def test_readable_logger_flags_truncated_or_invalid_json(tmp_path):
         {
             "prompt": "p",
             "completions": [
-                "```json\n{\"x\": ",
+                '```json\n{"x": ',
                 "{}",
-                "```json\n{\"x\": \"ok\"}\n```",
+                '```json\n{"x": "ok"}\n```',
             ],
             "rewards": [0.01, 0.0, 1.0],
             "content_scores": [0.0, 0.0, 1.0],
@@ -401,13 +415,13 @@ class FakeNativeRuntime:
         self.generate_calls += 1
         if self.generate_calls == 1:
             completions = [
-                "```json\n{\"x\": \"bad\"}\n```",
-                "```json\n{\"x\": \"also_bad\"}\n```",
+                '```json\n{"x": "bad"}\n```',
+                '```json\n{"x": "also_bad"}\n```',
             ]
         else:
             completions = [
-                "```json\n{\"x\": \"bad\"}\n```",
-                "```json\n{\"x\": \"ok\"}\n```",
+                '```json\n{"x": "bad"}\n```',
+                '```json\n{"x": "ok"}\n```',
             ]
         return NativeGeneration(
             sequences=torch.tensor([[1, 2, 3], [1, 2, 4]]),
@@ -500,7 +514,9 @@ class ScriptedGroupRuntime:
 
 
 class ScriptedQueuedRuntime(ScriptedGroupRuntime):
-    def __init__(self, groups_by_prompt: dict[str, list[list[str]]], *, primary: bool = True) -> None:
+    def __init__(
+        self, groups_by_prompt: dict[str, list[list[str]]], *, primary: bool = True
+    ) -> None:
         super().__init__([], primary=primary)
         self.groups_by_prompt = groups_by_prompt
         self.generate_group_batches: list[list[str]] = []
@@ -558,7 +574,8 @@ def _no_preference_gap_group(group_size: int) -> list[str]:
 def _write_train_data(path: Path, count: int) -> None:
     path.write_text(
         "".join(
-            json.dumps({"prompt": f"p{idx}", "ground_truth": {"x": "ok"}}, ensure_ascii=False) + "\n"
+            json.dumps({"prompt": f"p{idx}", "ground_truth": {"x": "ok"}}, ensure_ascii=False)
+            + "\n"
             for idx in range(count)
         ),
         encoding="utf-8",
@@ -636,14 +653,27 @@ def test_native_trainer_retries_then_trains_with_fake_runtime(tmp_path):
 def test_four_trainable_groups_trigger_one_optimize_with_original_threshold(tmp_path, capsys):
     data = tmp_path / "train.jsonl"
     _write_train_data(data, 4)
-    runtime = ScriptedGroupRuntime([_mixed_group(8), _mixed_group(8), _mixed_group(8), _mixed_group(8)])
+    runtime = ScriptedGroupRuntime(
+        [_mixed_group(8), _mixed_group(8), _mixed_group(8), _mixed_group(8)]
+    )
     trainer = NativeTPGraspoTrainer(_native_test_config(tmp_path, data), runtime=runtime)
 
     trainer.train()
 
-    stdout_events = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")]
+    stdout_events = [
+        json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")
+    ]
     train_step = next(event for event in stdout_events if event.get("event") == "train_step")
-    assert set(train_step) >= {"timestamp", "run", "epoch", "batch", "optimize", "timing", "health", "elapsed_sec"}
+    assert set(train_step) >= {
+        "timestamp",
+        "run",
+        "epoch",
+        "batch",
+        "optimize",
+        "timing",
+        "health",
+        "elapsed_sec",
+    }
     assert "reward_window" not in train_step
     assert "rank_metrics" not in json.dumps(train_step)
     assert '"prompt":' not in json.dumps(train_step)
@@ -684,7 +714,9 @@ def test_four_trainable_groups_trigger_one_optimize_with_original_threshold(tmp_
     assert train_step["timing"]["rollout_prompt_queue_effective_size"] == 1
     assert train_step["timing"]["micro_batch_count"] >= 1
 
-    batch_log = json.loads((tmp_path / "out" / "train_batches.readable.jsonl").read_text(encoding="utf-8"))
+    batch_log = json.loads(
+        (tmp_path / "out" / "train_batches.readable.jsonl").read_text(encoding="utf-8")
+    )
     assert batch_log["batch"]["completions"] == 32
     assert batch_log["timing"]["attempt_count"] == 4
     assert batch_log["batch"]["decisions"]["trainable"]["max_correct"] == 4
@@ -697,11 +729,20 @@ def test_four_trainable_groups_trigger_one_optimize_with_original_threshold(tmp_
     assert "completion" in json.dumps(rollout_log["completions"])
     timing_events = [
         json.loads(line)
-        for line in (tmp_path / "out" / "timing_events.jsonl").read_text(encoding="utf-8").splitlines()
+        for line in (tmp_path / "out" / "timing_events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
     ]
     assert [event["phase"] for event in timing_events].count("rollout_attempt") == 4
     assert timing_events[-1]["phase"] == "optimize"
-    assert set(timing_events[0]) >= {"timestamp", "elapsed_sec", "phase", "duration_sec", "step", "epoch"}
+    assert set(timing_events[0]) >= {
+        "timestamp",
+        "elapsed_sec",
+        "phase",
+        "duration_sec",
+        "step",
+        "epoch",
+    }
     assert set(timing_events[0]["details"]) >= {
         "rollout_sec",
         "reward_cpu_sec",
@@ -712,11 +753,15 @@ def test_four_trainable_groups_trigger_one_optimize_with_original_threshold(tmp_
         "sequence_len",
     }
     assert '"prompt":' not in json.dumps(timing_events)
-    checkpoint_event = next(event for event in stdout_events if event.get("event") == "checkpoint_saved")
+    checkpoint_event = next(
+        event for event in stdout_events if event.get("event") == "checkpoint_saved"
+    )
     assert checkpoint_event["checkpoint_save_sec"] >= 0.0
 
 
-def test_rollout_prompt_queue_batch_size_batches_multiple_prompts_without_changing_threshold(tmp_path, capsys):
+def test_rollout_prompt_queue_batch_size_batches_multiple_prompts_without_changing_threshold(
+    tmp_path, capsys
+):
     data = tmp_path / "train.jsonl"
     _write_train_data(data, 4)
     runtime = ScriptedQueuedRuntime(
@@ -733,11 +778,18 @@ def test_rollout_prompt_queue_batch_size_batches_multiple_prompts_without_changi
     trainer.train()
 
     assert [len(batch) for batch in runtime.generate_group_batches] == [2, 2]
-    assert sorted(prompt for batch in runtime.generate_group_batches for prompt in batch) == ["p0", "p1", "p2", "p3"]
+    assert sorted(prompt for batch in runtime.generate_group_batches for prompt in batch) == [
+        "p0",
+        "p1",
+        "p2",
+        "p3",
+    ]
     assert len(runtime.train_batches) == 1
     experiences, _ = runtime.train_batches[0]
     assert len(experiences) == 32
-    stdout_events = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")]
+    stdout_events = [
+        json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")
+    ]
     train_step = next(event for event in stdout_events if event.get("event") == "train_step")
     assert train_step["timing"]["rollout_prompt_queue_batch_size"] == 2
     assert train_step["timing"]["rollout_prompt_queue_effective_size"] == 2
@@ -769,7 +821,9 @@ def test_rollout_prompt_queue_retries_only_unfinished_prompt(tmp_path):
     assert len(runtime.generate_group_batches) == 2
     assert sorted(runtime.generate_group_batches[0]) == ["p0", "p1"]
     assert runtime.generate_group_batches[1] == ["p0"]
-    batch_log = json.loads((tmp_path / "out" / "train_batches.readable.jsonl").read_text(encoding="utf-8"))
+    batch_log = json.loads(
+        (tmp_path / "out" / "train_batches.readable.jsonl").read_text(encoding="utf-8")
+    )
     assert batch_log["batch"]["decisions"]["rollout_attempts"] == {
         "total": 3,
         "retry": 1,
@@ -789,7 +843,9 @@ def test_three_trainable_groups_wait_for_more_replay_items(tmp_path, capsys):
 
     trainer.train()
 
-    stdout_events = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")]
+    stdout_events = [
+        json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")
+    ]
     train_step = next(event for event in stdout_events if event.get("event") == "train_step")
     assert train_step["optimize"]["force_flush"] is True
     assert train_step["optimize"]["replay_buffer_trainable_completion_count"] == 24
@@ -812,7 +868,9 @@ def test_no_preference_gap_group_is_logged_invalid_and_not_trained(tmp_path):
     trainer.train()
 
     assert runtime.train_batches == []
-    rollout_log = json.loads((tmp_path / "out" / "rollouts.readable.jsonl").read_text(encoding="utf-8"))
+    rollout_log = json.loads(
+        (tmp_path / "out" / "rollouts.readable.jsonl").read_text(encoding="utf-8")
+    )
     assert rollout_log["decision"] == "invalid_no_preference_gap"
     assert rollout_log["invalid_reason"] == "no_preference_gap"
     assert rollout_log["reward_max_median_gap"] == 0.0
@@ -822,7 +880,9 @@ def test_native_trainer_shuffles_prompt_order_each_epoch_on_cpu(tmp_path):
     data = tmp_path / "train.jsonl"
     sample_count = 6
     _write_train_data(data, sample_count)
-    runtime = ScriptedGroupRuntime([[_ok_completion(), _ok_completion()] for _ in range(sample_count * 2)])
+    runtime = ScriptedGroupRuntime(
+        [[_ok_completion(), _ok_completion()] for _ in range(sample_count * 2)]
+    )
     config = GraspoConfig.from_dict(
         {
             "backend": "native-tp",
@@ -919,7 +979,9 @@ def test_native_trainer_resumes_from_trainer_state_without_repeating_samples(tmp
     assert runtime.prompts == [expected_epoch[2]]
     assert runtime.saved_trainer_states[-1]["global_step"] == 6
     assert runtime.saved_trainer_states[-1]["epoch_stats"]["samples_seen"] == 3
-    stdout_events = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")]
+    stdout_events = [
+        json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")
+    ]
     resumed = next(event for event in stdout_events if event.get("event") == "checkpoint_resumed")
     assert resumed["global_step"] == 5
     assert resumed["resume_migrated_from_legacy_checkpoint"] is False
@@ -968,7 +1030,9 @@ def test_legacy_checkpoint_state_migrates_from_train_step_log(tmp_path):
             "best_reward": 1.0,
         },
     }
-    (tmp_path / "nohup.out").write_text(json.dumps(event, ensure_ascii=False) + "\n", encoding="utf-8")
+    (tmp_path / "nohup.out").write_text(
+        json.dumps(event, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
 
     state = _migrate_legacy_trainer_state(checkpoint_dir)
 
@@ -990,7 +1054,9 @@ def test_train_batch_log_counts_group8_retry_once(tmp_path, capsys):
 
     trainer.train()
 
-    stdout_events = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")]
+    stdout_events = [
+        json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")
+    ]
     run_start = next(event for event in stdout_events if event.get("event") == "run_start")
     assert run_start["config"]["rollout_group_size"] == 8
     assert run_start["config"]["optimize_completion_batch_size"] == 4
@@ -1026,7 +1092,9 @@ def test_train_batch_log_counts_batch2_with_one_retry(tmp_path, capsys):
 
     trainer.train()
 
-    stdout_events = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")]
+    stdout_events = [
+        json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")
+    ]
     train_step = next(event for event in stdout_events if event.get("event") == "train_step")
     reward_batch = train_step["batch"]
     assert reward_batch["attempt_groups"] == 3
@@ -1076,7 +1144,9 @@ def test_qwen_adapter_close_destroys_process_group(monkeypatch):
     monkeypatch.setattr(qwen_tp_adapter_module.dist, "is_available", lambda: True)
     monkeypatch.setattr(qwen_tp_adapter_module.dist, "is_initialized", lambda: True)
     monkeypatch.setattr(qwen_tp_adapter_module.dist, "barrier", lambda: calls.append("barrier"))
-    monkeypatch.setattr(qwen_tp_adapter_module.dist, "destroy_process_group", lambda: calls.append("destroy"))
+    monkeypatch.setattr(
+        qwen_tp_adapter_module.dist, "destroy_process_group", lambda: calls.append("destroy")
+    )
 
     adapter.close()
 

@@ -13,4 +13,3 @@ def save_lora_adapter(model, tokenizer, output_dir: str | Path) -> None:
         unwrapped.save_pretrained(path)
     if tokenizer is not None and hasattr(tokenizer, "save_pretrained"):
         tokenizer.save_pretrained(path)
-

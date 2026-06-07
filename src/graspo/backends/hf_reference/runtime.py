@@ -55,11 +55,17 @@ class HFReferenceRuntime:
         }
         if self.config.model.attn_implementation:
             model_kwargs["attn_implementation"] = self.config.model.attn_implementation
-        self.model = AutoModelForCausalLM.from_pretrained(model_path, **model_kwargs).to(self.device)
+        self.model = AutoModelForCausalLM.from_pretrained(model_path, **model_kwargs).to(
+            self.device
+        )
         if self.config.model.gradient_checkpointing:
-            self.model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+            self.model.gradient_checkpointing_enable(
+                gradient_checkpointing_kwargs={"use_reentrant": False}
+            )
             self.model.config.use_cache = False
-        self.model = get_peft_model(self.model, build_peft_config(self.config, self.model)).to(self.device)
+        self.model = get_peft_model(self.model, build_peft_config(self.config, self.model)).to(
+            self.device
+        )
         self.optimizer = torch.optim.AdamW(
             [param for param in self.model.parameters() if param.requires_grad],
             lr=self.config.training.learning_rate,
@@ -120,7 +126,9 @@ class HFReferenceRuntime:
                 batch = _collate(experiences[start : start + batch_size], self.device)
                 self.optimizer.zero_grad(set_to_none=True)
                 log_probs = sequences_log_probs(self.model, batch.sequences, batch.attention_mask)
-                loss = self.loss_fn(log_probs, batch.old_log_probs, batch.advantages, batch.action_mask)
+                loss = self.loss_fn(
+                    log_probs, batch.old_log_probs, batch.advantages, batch.action_mask
+                )
                 if not torch.isfinite(loss):
                     skipped_nonfinite += 1
                     continue
@@ -154,11 +162,23 @@ class HFReferenceRuntime:
 
 class _Batch:
     def __init__(self, items: list[Experience], device: torch.device) -> None:
-        self.sequences = pad_sequence([item.sequences for item in items], batch_first=True).to(device)
-        self.old_log_probs = pad_sequence([item.old_log_probs for item in items], batch_first=True).to(device)
-        self.advantages = pad_sequence([item.advantages for item in items], batch_first=True, padding_value=0.0).to(device)
-        self.attention_mask = pad_sequence([item.attention_mask for item in items], batch_first=True).bool().to(device)
-        self.action_mask = pad_sequence([item.action_mask for item in items], batch_first=True).bool().to(device)
+        self.sequences = pad_sequence([item.sequences for item in items], batch_first=True).to(
+            device
+        )
+        self.old_log_probs = pad_sequence(
+            [item.old_log_probs for item in items], batch_first=True
+        ).to(device)
+        self.advantages = pad_sequence(
+            [item.advantages for item in items], batch_first=True, padding_value=0.0
+        ).to(device)
+        self.attention_mask = (
+            pad_sequence([item.attention_mask for item in items], batch_first=True)
+            .bool()
+            .to(device)
+        )
+        self.action_mask = (
+            pad_sequence([item.action_mask for item in items], batch_first=True).bool().to(device)
+        )
 
 
 def _collate(items: list[Experience], device: torch.device) -> _Batch:

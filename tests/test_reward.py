@@ -5,7 +5,10 @@ from graspo.core.reward import GraspoReward, RewardConfig
 
 def test_reward_perfect_json_fence():
     reward = GraspoReward(RewardConfig(check_json_markdown=True))
-    result = reward.score('```json\n{"APN":"cmnet","fault_number":"138"}\n```', {"APN": "cmnet", "fault_number": "138"})
+    result = reward.score(
+        '```json\n{"APN":"cmnet","fault_number":"138"}\n```',
+        {"APN": "cmnet", "fault_number": "138"},
+    )
 
     assert result.all_right is True
     assert result.content_score == 1.0
@@ -16,7 +19,10 @@ def test_reward_perfect_json_fence():
 
 def test_reward_partial_json_fence():
     reward = GraspoReward(RewardConfig(check_json_markdown=True))
-    result = reward.score('```json\n{"APN":"wrong","fault_number":"138"}\n```', {"APN": "cmnet", "fault_number": "138"})
+    result = reward.score(
+        '```json\n{"APN":"wrong","fault_number":"138"}\n```',
+        {"APN": "cmnet", "fault_number": "138"},
+    )
 
     assert result.all_right is False
     assert 0 < result.content_score < 1.0

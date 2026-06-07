@@ -106,7 +106,9 @@ def train_batch_readable_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "optimize": payload.get("optimize"),
         "timing": payload.get("timing"),
         "health": payload.get("health"),
-        "attempts": [train_batch_attempt_summary(attempt) for attempt in payload.get("attempts", [])],
+        "attempts": [
+            train_batch_attempt_summary(attempt) for attempt in payload.get("attempts", [])
+        ],
     }
 
 
@@ -191,17 +193,23 @@ def group_debug_summary(payload: dict[str, Any]) -> dict[str, Any]:
     summaries = [summarize_json_markers(text) for text in completions]
     return {
         "reward_range_zero": len(set(float(value) for value in rewards)) <= 1 if rewards else True,
-        "content_all_zero": bool(content_scores) and all(float(value) == 0.0 for value in content_scores),
-        "content_all_one": bool(content_scores) and all(float(value) == 1.0 for value in content_scores),
+        "content_all_zero": bool(content_scores)
+        and all(float(value) == 0.0 for value in content_scores),
+        "content_all_one": bool(content_scores)
+        and all(float(value) == 1.0 for value in content_scores),
         "missing_json_marker_count": sum(1 for item in summaries if not item["has_markdown_json"]),
         "unclosed_json_fence_count": sum(
-            1 for item in summaries if item["has_markdown_json"] and not item["has_closing_json_fence"]
+            1
+            for item in summaries
+            if item["has_markdown_json"] and not item["has_closing_json_fence"]
         ),
         "invalid_extracted_json_count": sum(
             1 for item in reward_details if item.get("valid_extracted_json") is False
         ),
         "likely_truncated_json_count": sum(
-            1 for text, detail in zip(completions, reward_details, strict=False) if likely_truncated_json(text, detail)
+            1
+            for text, detail in zip(completions, reward_details, strict=False)
+            if likely_truncated_json(text, detail)
         ),
     }
 

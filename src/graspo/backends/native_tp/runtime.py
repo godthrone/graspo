@@ -175,7 +175,9 @@ class NativeTPRuntime:
         attention_mask: Any,
         metadata: Any | None = None,
     ) -> Any:
-        return self._require_adapter().sequence_log_probs(sequences, attention_mask, metadata=metadata)
+        return self._require_adapter().sequence_log_probs(
+            sequences, attention_mask, metadata=metadata
+        )
 
     def train_batch(
         self,
@@ -236,7 +238,9 @@ def validate_native_runtime_config(
     if int(native.tensor_model_parallel_size) < 1:
         raise ValueError("tensor_model_parallel_size must be >= 1")
     if int(native.pipeline_model_parallel_size) > 1 and int(native.tensor_model_parallel_size) != 1:
-        raise ValueError("native placement v1 supports pipeline_model_parallel_size>1 only with tensor_model_parallel_size=1")
+        raise ValueError(
+            "native placement v1 supports pipeline_model_parallel_size>1 only with tensor_model_parallel_size=1"
+        )
     if int(native.train_micro_batch_size) < 1:
         raise ValueError("native_tp.train_micro_batch_size must be >= 1")
     if int(native.generation_micro_batch_size) != 1:
@@ -244,10 +248,18 @@ def validate_native_runtime_config(
     schedule = str(native.pipeline_train_schedule or "simple")
     if schedule not in {"simple", "one_f_one_b"}:
         raise ValueError("native_tp.pipeline_train_schedule must be simple or one_f_one_b")
+    if config.training.resume_from_checkpoint and config.lora.adapter_path:
+        raise ValueError(
+            "training.resume_from_checkpoint and lora.adapter_path cannot both be set; "
+            "native checkpoint resume takes the full training state, while PEFT adapters are "
+            "warm-start weights only"
+        )
     if int(native.pipeline_max_inflight_microbatches) < 0:
         raise ValueError("native_tp.pipeline_max_inflight_microbatches must be >= 0")
     if schedule == "one_f_one_b" and int(native.pipeline_model_parallel_size) <= 1:
-        raise ValueError("one_f_one_b pipeline_train_schedule requires pipeline_model_parallel_size>1")
+        raise ValueError(
+            "one_f_one_b pipeline_train_schedule requires pipeline_model_parallel_size>1"
+        )
     if int(config.training.rollout_prompt_queue_batch_size) < 1:
         raise ValueError("training.rollout_prompt_queue_batch_size must be >= 1")
 
@@ -257,9 +269,7 @@ def validate_native_runtime_config(
     )
     allowed_native_prefix = "native_tp."
     forbidden = [
-        key
-        for key in forbidden
-        if not key.startswith(allowed_native_prefix) and key != "native_tp"
+        key for key in forbidden if not key.startswith(allowed_native_prefix) and key != "native_tp"
     ]
     if forbidden:
         raise ValueError(
@@ -272,8 +282,7 @@ def assert_forbidden_runtime_modules_not_imported() -> None:
     imported = [name for name in FORBIDDEN_RUNTIME_MODULES if name in sys.modules]
     if imported:
         raise RuntimeError(
-            "native-tp runtime must not import forbidden frameworks: "
-            + ", ".join(imported)
+            "native-tp runtime must not import forbidden frameworks: " + ", ".join(imported)
         )
 
 

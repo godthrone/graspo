@@ -34,7 +34,9 @@ def test_ppo_clip_loss_matches_original_formula():
     expected = -torch.min(surr1, surr2)
     expected = ((expected * action_mask).sum(dim=-1) / action_mask.sum(dim=-1)).mean()
 
-    actual = GRASPOLoss(policy_ratio_clip_eps=0.2)(log_probs, old_log_probs, advantages, action_mask)
+    actual = GRASPOLoss(policy_ratio_clip_eps=0.2)(
+        log_probs, old_log_probs, advantages, action_mask
+    )
 
     assert torch.allclose(actual, expected)
 
@@ -87,6 +89,9 @@ def test_generate_group_action_mask_tracks_completion_after_padding():
 
     assert prompt_len == 3
     assert sequences.tolist() == [[1, 2, 3, 4, 5], [1, 2, 3, 6, 0]]
-    assert attention_mask.tolist() == [[True, True, True, True, True], [True, True, True, True, False]]
+    assert attention_mask.tolist() == [
+        [True, True, True, True, True],
+        [True, True, True, True, False],
+    ]
     assert action_mask.tolist() == [[False, False, True, True], [False, False, True, False]]
     assert completions == ["decoded", "decoded"]

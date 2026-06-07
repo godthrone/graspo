@@ -18,10 +18,15 @@ from torch.utils.checkpoint import checkpoint as activation_checkpoint
 from torch.nn.utils.rnn import pad_sequence
 
 from graspo.backends.native_tp.parallel_state import NativeTPState, destroy_native_tp
-from graspo.backends.native_tp.placement import NativePlacementPlan, build_placement_plan, placement_summary
+from graspo.backends.native_tp.placement import (
+    NativePlacementPlan,
+    build_placement_plan,
+    placement_summary,
+)
 from graspo.backends.native_tp.runtime import NativeGeneration
 from graspo.core.buffer import Experience
 from graspo.core.schema import GraspoConfig
+from graspo.backends.native_tp.lora_io import load_peft_adapter_into_native_model
 from graspo.trainer.lora import resolve_lora_target_modules
 from graspo.trainer.loss import GRASPOLoss
 
@@ -130,6 +135,12 @@ class QwenNativeTPAdapter:
             if trainable
             else None
         )
+        if self.config.lora.adapter_path:
+            load_peft_adapter_into_native_model(
+                self.model,
+                self.config.lora.adapter_path,
+                base_model_path=str(model_path),
+            )
         self._emit_rank_memory_event(
             "setup_after",
             {
@@ -219,7 +230,9 @@ class QwenNativeTPAdapter:
         tokenize_sec = time.monotonic() - tokenize_started_at
         rollout_started_at = time.monotonic()
         eos_token_id = int(self.tokenizer.eos_token_id)
-        pad_token_id = int(self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else eos_token_id)
+        pad_token_id = int(
+            self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else eos_token_id
+        )
         prompt_input_ids, prompt_lens = _left_pad_token_rows(
             encoded["input_ids"],
             pad_token_id=pad_token_id,
@@ -256,8 +269,12 @@ class QwenNativeTPAdapter:
             chunk_timings: list[dict[str, float | int]] = []
 
             with torch.no_grad():
-                for start in range(0, flat_prompt_input_ids.shape[0], chunk_generation_micro_batch_size):
-                    current_batch = flat_prompt_input_ids[start : start + chunk_generation_micro_batch_size]
+                for start in range(
+                    0, flat_prompt_input_ids.shape[0], chunk_generation_micro_batch_size
+                ):
+                    current_batch = flat_prompt_input_ids[
+                        start : start + chunk_generation_micro_batch_size
+                    ]
                     sequences = current_batch.clone()
                     finished = torch.zeros(sequences.shape[0], dtype=torch.bool, device=self.device)
                     if use_kv_cache:
@@ -320,15 +337,23 @@ class QwenNativeTPAdapter:
             "rollout_prompt_queue_fallback": prompt_chunk_size < requested_prompt_queue_size,
             "prompt_len": prompt_len,
             "prompt_lens": prompt_lens,
-            "sequence_len": max((int(chunk.shape[1]) for chunk in all_sequence_chunks), default=prompt_len),
-            "generated_tokens_max": max((int(chunk.shape[1] - prompt_len) for chunk in all_sequence_chunks), default=0),
+            "sequence_len": max(
+                (int(chunk.shape[1]) for chunk in all_sequence_chunks), default=prompt_len
+            ),
+            "generated_tokens_max": max(
+                (int(chunk.shape[1] - prompt_len) for chunk in all_sequence_chunks), default=0
+            ),
             "rollout_use_kv_cache": use_kv_cache,
             "rollout_generation_micro_batch_size": max(
-                (int(gen.metadata.get("rollout_generation_micro_batch_size", 1)) for gen in all_generations),
+                (
+                    int(gen.metadata.get("rollout_generation_micro_batch_size", 1))
+                    for gen in all_generations
+                ),
                 default=1,
             ),
             "rollout_generation_split_count": sum(
-                int(gen.metadata.get("rollout_generation_split_count", 1)) for gen in all_generations
+                int(gen.metadata.get("rollout_generation_split_count", 1))
+                for gen in all_generations
             ),
             **_rollout_timing_summary(tokenize_sec, all_chunk_timings),
             "rollout_elapsed_sec": round(time.monotonic() - rollout_started_at, 6),
@@ -339,7 +364,10 @@ class QwenNativeTPAdapter:
             and bool(self.config.native_tp.empty_cache_after_rollout_split)
             and (
                 prompt_chunk_size < requested_prompt_queue_size
-                or any(int(gen.metadata.get("rollout_generation_split_count", 1)) > 1 for gen in all_generations)
+                or any(
+                    int(gen.metadata.get("rollout_generation_split_count", 1)) > 1
+                    for gen in all_generations
+                )
             )
         )
         if empty_cache_after_split:
@@ -367,13 +395,18 @@ class QwenNativeTPAdapter:
         chat_template_kwargs: dict[str, Any] | None,
     ) -> list[NativeGeneration]:
         self._require_ready()
-        if any(any(str(item.get("type") or "") == "video" for item in sample.media) for sample in samples):
+        if any(
+            any(str(item.get("type") or "") == "video" for item in sample.media)
+            for sample in samples
+        ):
             raise NotImplementedError(
                 "Qwen3.5-family video generation is reserved for the next phase; "
                 "image multimodal samples are supported first"
             )
         if any(not sample.media for sample in samples):
-            raise ValueError("generate_sample_groups expects every sample to contain image/video media")
+            raise ValueError(
+                "generate_sample_groups expects every sample to contain image/video media"
+            )
         if self._is_pipeline_parallel():
             return self._pipeline_generate_sample_groups(
                 samples=samples,
@@ -427,7 +460,11 @@ class QwenNativeTPAdapter:
         attention_mask = encoded["attention_mask"].to(self.device).bool()
         prompt_len = int(input_ids.shape[1])
         prompt_lens = [int(mask.sum().item()) for mask in attention_mask]
-        pad_token_id = int(self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else self.tokenizer.eos_token_id)
+        pad_token_id = int(
+            self.tokenizer.pad_token_id
+            if self.tokenizer.pad_token_id is not None
+            else self.tokenizer.eos_token_id
+        )
         eos_token_id = int(self.tokenizer.eos_token_id)
         rollout_started_at = time.monotonic()
         use_kv_cache = bool(self.config.native_tp.use_kv_cache_for_rollout) and bool(
@@ -480,7 +517,9 @@ class QwenNativeTPAdapter:
             **(generation.metadata or {}),
             "multimodal_enabled": True,
             "multimodal_media_counts": _media_counts(sample.media),
-            "_multimodal_rows": [_multimodal_row_from_sample(sample) for _ in range(rollout_group_size)],
+            "_multimodal_rows": [
+                _multimodal_row_from_sample(sample) for _ in range(rollout_group_size)
+            ],
         }
         self._emit_rank_memory_event(
             "multimodal_rollout_after",
@@ -489,7 +528,11 @@ class QwenNativeTPAdapter:
                 "prompt_len": prompt_len,
                 "sequence_len": int(sequences.shape[1]),
                 "multimodal_media_counts": _media_counts(sample.media),
-                "image_token_count": int((input_ids == int(getattr(self.model.config, "image_token_id", -1))).sum().item()),
+                "image_token_count": int(
+                    (input_ids == int(getattr(self.model.config, "image_token_id", -1)))
+                    .sum()
+                    .item()
+                ),
                 **_rollout_timing_summary(tokenize_sec, [timing]),
             },
         )
@@ -526,7 +569,9 @@ class QwenNativeTPAdapter:
         for _ in range(max_new_tokens):
             self._sync_timing()
             sampling_started_at = time.monotonic()
-            next_token = _next_token_from_logits(logits.float()[:, -1, :], temperature=temperature, top_p=top_p)
+            next_token = _next_token_from_logits(
+                logits.float()[:, -1, :], temperature=temperature, top_p=top_p
+            )
             self._sync_timing()
             sampling_sec += time.monotonic() - sampling_started_at
             next_token = _broadcast_and_pad_finished(next_token, finished, pad_token_id)
@@ -579,7 +624,9 @@ class QwenNativeTPAdapter:
             logits = self.model(
                 sequences,
                 attention_mask=attention_mask,
-                multimodal_inputs=multimodal_inputs if int(sequences.shape[1]) == prompt_len else None,
+                multimodal_inputs=multimodal_inputs
+                if int(sequences.shape[1]) == prompt_len
+                else None,
             ).float()[:, -1, :]
             self._sync_timing()
             sampling_started_at = time.monotonic()
@@ -648,12 +695,15 @@ class QwenNativeTPAdapter:
                 "rollout_group_size": rollout_group_size,
                 "rollout_prompt_queue_batch_size": requested_prompt_queue_size,
                 "rollout_prompt_queue_effective_size": effective_prompt_queue_size,
-                "rollout_prompt_queue_fallback": effective_prompt_queue_size < requested_prompt_queue_size,
+                "rollout_prompt_queue_fallback": effective_prompt_queue_size
+                < requested_prompt_queue_size,
                 "rollout_use_kv_cache": use_kv_cache,
                 "rollout_generation_micro_batch_size": generation_micro_batch_size,
                 "rollout_generation_split_count": split_count,
                 "rollout_empty_cache_after_split": False,
-                **_rollout_timing_summary(tokenize_sec, _scale_rollout_timings(chunk_timings, timing_divisor)),
+                **_rollout_timing_summary(
+                    tokenize_sec, _scale_rollout_timings(chunk_timings, timing_divisor)
+                ),
                 "rollout_elapsed_sec": round(time.monotonic() - rollout_started_at, 6),
                 "prefill_len": prompt_len,
                 "prompt_lens": prompt_lens,
@@ -727,7 +777,9 @@ class QwenNativeTPAdapter:
         attention_mask = sequences.ne(pad_token_id)
         self._sync_timing()
         prefill_started_at = time.monotonic()
-        logits, past_key_values = self.model(sequences, attention_mask=attention_mask, use_cache=True)
+        logits, past_key_values = self.model(
+            sequences, attention_mask=attention_mask, use_cache=True
+        )
         self._sync_timing()
         prefill_sec = time.monotonic() - prefill_started_at
         decode_started_at = time.monotonic()
@@ -798,7 +850,9 @@ class QwenNativeTPAdapter:
         tokenize_sec = time.monotonic() - tokenize_started_at
         rollout_started_at = time.monotonic()
         eos_token_id = int(self.tokenizer.eos_token_id)
-        pad_token_id = int(self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else eos_token_id)
+        pad_token_id = int(
+            self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else eos_token_id
+        )
         prompt_input_ids, prompt_lens = _left_pad_token_rows(
             encoded["input_ids"],
             pad_token_id=pad_token_id,
@@ -831,8 +885,12 @@ class QwenNativeTPAdapter:
                 )
                 sequence_chunks: list[torch.Tensor] = []
                 chunk_timings: list[dict[str, float | int]] = []
-                for start in range(0, flat_prompt_input_ids.shape[0], chunk_generation_micro_batch_size):
-                    current_batch = flat_prompt_input_ids[start : start + chunk_generation_micro_batch_size]
+                for start in range(
+                    0, flat_prompt_input_ids.shape[0], chunk_generation_micro_batch_size
+                ):
+                    current_batch = flat_prompt_input_ids[
+                        start : start + chunk_generation_micro_batch_size
+                    ]
                     sequences, timing = self._pipeline_generate_sequences_with_cache(
                         sequences=current_batch,
                         eos_token_id=eos_token_id,
@@ -856,41 +914,51 @@ class QwenNativeTPAdapter:
                     prompt_sequences = flat_sequences[row_start:row_stop]
                     all_generations.append(
                         self._generation_from_sequences(
-                        sequences=prompt_sequences,
-                        prompt_len=prompt_len,
-                        prompt_lens=[int(prompt_lens[prompt_start + local_prompt_idx])],
-                        pad_token_id=pad_token_id,
-                        rollout_group_size=rollout_group_size,
-                        requested_prompt_queue_size=requested_prompt_queue_size,
-                        effective_prompt_queue_size=prompt_chunk_size,
-                        use_kv_cache=True,
-                        generation_micro_batch_size=chunk_generation_micro_batch_size,
-                        split_count=len(sequence_chunks),
-                        tokenize_sec=tokenize_sec / max(requested_prompt_queue_size, 1),
-                        chunk_timings=chunk_timings,
-                        timing_divisor=chunk_prompt_count,
-                        rollout_started_at=rollout_started_at,
-                    )
+                            sequences=prompt_sequences,
+                            prompt_len=prompt_len,
+                            prompt_lens=[int(prompt_lens[prompt_start + local_prompt_idx])],
+                            pad_token_id=pad_token_id,
+                            rollout_group_size=rollout_group_size,
+                            requested_prompt_queue_size=requested_prompt_queue_size,
+                            effective_prompt_queue_size=prompt_chunk_size,
+                            use_kv_cache=True,
+                            generation_micro_batch_size=chunk_generation_micro_batch_size,
+                            split_count=len(sequence_chunks),
+                            tokenize_sec=tokenize_sec / max(requested_prompt_queue_size, 1),
+                            chunk_timings=chunk_timings,
+                            timing_divisor=chunk_prompt_count,
+                            rollout_started_at=rollout_started_at,
+                        )
                     )
         self._emit_rank_memory_event(
             "pipeline_rollout_after",
             {
-                "placement": placement_summary(self.placement) if self.placement is not None else None,
+                "placement": placement_summary(self.placement)
+                if self.placement is not None
+                else None,
                 "rollout_group_size": rollout_group_size,
                 "rollout_prompt_queue_batch_size": requested_prompt_queue_size,
                 "rollout_prompt_queue_effective_size": prompt_chunk_size,
                 "rollout_prompt_queue_fallback": prompt_chunk_size < requested_prompt_queue_size,
                 "prompt_len": prompt_len,
                 "prompt_lens": prompt_lens,
-                "sequence_len": max((int(chunk.shape[1]) for chunk in all_sequence_chunks), default=prompt_len),
-                "generated_tokens_max": max((int(chunk.shape[1] - prompt_len) for chunk in all_sequence_chunks), default=0),
+                "sequence_len": max(
+                    (int(chunk.shape[1]) for chunk in all_sequence_chunks), default=prompt_len
+                ),
+                "generated_tokens_max": max(
+                    (int(chunk.shape[1] - prompt_len) for chunk in all_sequence_chunks), default=0
+                ),
                 "rollout_use_kv_cache": True,
                 "rollout_generation_micro_batch_size": max(
-                    (int(gen.metadata.get("rollout_generation_micro_batch_size", 1)) for gen in all_generations),
+                    (
+                        int(gen.metadata.get("rollout_generation_micro_batch_size", 1))
+                        for gen in all_generations
+                    ),
                     default=1,
                 ),
                 "rollout_generation_split_count": sum(
-                    int(gen.metadata.get("rollout_generation_split_count", 1)) for gen in all_generations
+                    int(gen.metadata.get("rollout_generation_split_count", 1))
+                    for gen in all_generations
                 ),
                 **_rollout_timing_summary(tokenize_sec, all_timings),
                 "rollout_elapsed_sec": round(time.monotonic() - rollout_started_at, 6),
@@ -952,7 +1020,11 @@ class QwenNativeTPAdapter:
         attention_mask = encoded["attention_mask"].to(self.device).bool()
         prompt_len = int(sequences.shape[1])
         prompt_lens = [int(mask.sum().item()) for mask in attention_mask]
-        pad_token_id = int(self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else self.tokenizer.eos_token_id)
+        pad_token_id = int(
+            self.tokenizer.pad_token_id
+            if self.tokenizer.pad_token_id is not None
+            else self.tokenizer.eos_token_id
+        )
         eos_token_id = int(self.tokenizer.eos_token_id)
         rollout_started_at = time.monotonic()
         multimodal_inputs = self._multimodal_inputs_to_device(encoded)
@@ -1033,7 +1105,9 @@ class QwenNativeTPAdapter:
             )
             self._sync_timing()
             sampling_sec += time.monotonic() - sampling_started_at
-            next_token = torch.where(finished, torch.full_like(next_token, pad_token_id), next_token)
+            next_token = torch.where(
+                finished, torch.full_like(next_token, pad_token_id), next_token
+            )
             sequences = torch.cat([sequences, next_token.unsqueeze(1)], dim=1)
             decode_tokens += 1
             finished |= next_token.eq(eos_token_id)
@@ -1083,7 +1157,9 @@ class QwenNativeTPAdapter:
         hidden_size = int(self.model.config.hidden_size)
         dtype = next(self.model.parameters()).dtype
         if self.pp_rank > 0:
-            hidden_states = torch.empty((batch, query_len, hidden_size), device=self.device, dtype=dtype)
+            hidden_states = torch.empty(
+                (batch, query_len, hidden_size), device=self.device, dtype=dtype
+            )
             recv_started_at = time.monotonic()
             dist.recv(hidden_states, src=int(self.tp_state.prev_pp_rank))
             _add_pipeline_stage_timing(timing, "pipeline_recv_sec", recv_started_at)
@@ -1107,7 +1183,9 @@ class QwenNativeTPAdapter:
             dist.send(output.contiguous(), dst=int(self.tp_state.next_pp_rank))
             _add_pipeline_stage_timing(timing, "pipeline_send_sec", send_started_at)
             if timing is not None:
-                timing["pipeline_forward_calls"] = int(timing.get("pipeline_forward_calls") or 0) + 1
+                timing["pipeline_forward_calls"] = (
+                    int(timing.get("pipeline_forward_calls") or 0) + 1
+                )
             return None, present
         if timing is not None:
             timing["pipeline_forward_calls"] = int(timing.get("pipeline_forward_calls") or 0) + 1
@@ -1142,7 +1220,9 @@ class QwenNativeTPAdapter:
         if self.pp_rank == self.pp_size - 1:
             assert logits is not None
             sample_started_at = time.monotonic()
-            next_token = _next_token_from_logits(logits.float()[:, -1, :], temperature=temperature, top_p=top_p)
+            next_token = _next_token_from_logits(
+                logits.float()[:, -1, :], temperature=temperature, top_p=top_p
+            )
             _add_pipeline_stage_timing(timing, "pipeline_sample_compute_sec", sample_started_at)
         else:
             next_token = torch.empty((0,), dtype=torch.long, device=self.device)
@@ -1150,7 +1230,9 @@ class QwenNativeTPAdapter:
         broadcast_started_at = time.monotonic()
         dist.broadcast(batch_size, src=(self.pp_size - 1) * self.tp_size)
         if self.pp_rank != self.pp_size - 1:
-            next_token = torch.empty((int(batch_size.item()),), dtype=torch.long, device=self.device)
+            next_token = torch.empty(
+                (int(batch_size.item()),), dtype=torch.long, device=self.device
+            )
         dist.broadcast(next_token, src=(self.pp_size - 1) * self.tp_size)
         _add_pipeline_stage_timing(timing, "pipeline_token_broadcast_sec", broadcast_started_at)
         return next_token
@@ -1168,11 +1250,15 @@ class QwenNativeTPAdapter:
         self.model.eval()
         sequences = sequences.to(self.device)
         attention_mask = attention_mask.to(self.device).bool()
-        multimodal_inputs = self._multimodal_inputs_from_metadata(metadata, batch_size=int(sequences.shape[0]))
+        multimodal_inputs = self._multimodal_inputs_from_metadata(
+            metadata, batch_size=int(sequences.shape[0])
+        )
         with torch.no_grad():
             if multimodal_inputs is not None:
                 if not isinstance(self.model, Qwen35HybridTextModel):
-                    raise ValueError("multimodal metadata was provided for a non-multimodal native model")
+                    raise ValueError(
+                        "multimodal metadata was provided for a non-multimodal native model"
+                    )
                 log_probs = self.model.sequence_log_probs(
                     sequences,
                     attention_mask,
@@ -1241,7 +1327,9 @@ class QwenNativeTPAdapter:
             indices = self._shared_training_indices(len(experiences), optimize_round=optimize_round)
             for start in range(0, len(indices) - batch_size + 1, batch_size):
                 batch_indices = indices[start : start + batch_size]
-                batch = collate_experiences([experiences[idx] for idx in batch_indices], self.device)
+                batch = collate_experiences(
+                    [experiences[idx] for idx in batch_indices], self.device
+                )
                 self.optimizer.zero_grad(set_to_none=True)
                 self._sync_timing()
                 forward_started_at = time.monotonic()
@@ -1251,7 +1339,9 @@ class QwenNativeTPAdapter:
                 )
                 if multimodal_inputs is not None:
                     if not isinstance(self.model, Qwen35HybridTextModel):
-                        raise ValueError("multimodal batch metadata was provided for a non-multimodal model")
+                        raise ValueError(
+                            "multimodal batch metadata was provided for a non-multimodal model"
+                        )
                     log_probs = self.model.sequence_log_probs(
                         batch.sequences,
                         batch.attention_mask,
@@ -1329,7 +1419,9 @@ class QwenNativeTPAdapter:
         sequences = sequences.to(self.device)
         attention_mask = attention_mask.to(self.device).bool()
         stage_timing = _new_pipeline_stage_timing()
-        multimodal_inputs = self._multimodal_inputs_from_metadata(metadata, batch_size=int(sequences.shape[0]))
+        multimodal_inputs = self._multimodal_inputs_from_metadata(
+            metadata, batch_size=int(sequences.shape[0])
+        )
         with torch.no_grad():
             hidden, _ = self._pipeline_forward_stage(
                 input_ids=sequences,
@@ -1366,7 +1458,9 @@ class QwenNativeTPAdapter:
                 "batch_size": int(sequences.shape[0]),
                 "sequence_len": int(sequences.shape[1]),
                 "multimodal_enabled": multimodal_inputs is not None,
-                "placement": placement_summary(self.placement) if self.placement is not None else None,
+                "placement": placement_summary(self.placement)
+                if self.placement is not None
+                else None,
                 "pipeline_stage_timing": _round_pipeline_stage_timing(stage_timing),
             },
         )
@@ -1411,7 +1505,9 @@ class QwenNativeTPAdapter:
             indices = self._shared_training_indices(len(experiences), optimize_round=optimize_round)
             for start in range(0, len(indices) - batch_size + 1, batch_size):
                 batch_indices = indices[start : start + batch_size]
-                batch = collate_experiences([experiences[idx] for idx in batch_indices], self.device)
+                batch = collate_experiences(
+                    [experiences[idx] for idx in batch_indices], self.device
+                )
                 if self.optimizer is not None:
                     self.optimizer.zero_grad(set_to_none=True)
                 self._sync_timing()
@@ -1437,9 +1533,13 @@ class QwenNativeTPAdapter:
                         self.model.lm_head.weight.float(),
                         batch.sequences[:, 1:],
                     )
-                    _add_pipeline_stage_timing(stage_timing, "pipeline_lm_head_sec", lm_head_started_at)
+                    _add_pipeline_stage_timing(
+                        stage_timing, "pipeline_lm_head_sec", lm_head_started_at
+                    )
                     loss_started_at = time.monotonic()
-                    loss = self.loss_fn(log_probs, batch.old_log_probs, batch.advantages, batch.action_mask)
+                    loss = self.loss_fn(
+                        log_probs, batch.old_log_probs, batch.advantages, batch.action_mask
+                    )
                     _add_pipeline_stage_timing(stage_timing, "pipeline_loss_sec", loss_started_at)
                     finite = bool(torch.isfinite(loss).detach().cpu())
                 else:
@@ -1455,38 +1555,62 @@ class QwenNativeTPAdapter:
                     assert loss is not None
                     autograd_started_at = time.monotonic()
                     loss.backward()
-                    _add_pipeline_stage_timing(stage_timing, "pipeline_backward_autograd_sec", autograd_started_at)
+                    _add_pipeline_stage_timing(
+                        stage_timing, "pipeline_backward_autograd_sec", autograd_started_at
+                    )
                     if stage_input is not None and stage_input.grad is not None:
                         grad_send_started_at = time.monotonic()
-                        dist.send(stage_input.grad.contiguous(), dst=int(self.tp_state.prev_pp_rank))
-                        _add_pipeline_stage_timing(stage_timing, "pipeline_grad_send_sec", grad_send_started_at)
+                        dist.send(
+                            stage_input.grad.contiguous(), dst=int(self.tp_state.prev_pp_rank)
+                        )
+                        _add_pipeline_stage_timing(
+                            stage_timing, "pipeline_grad_send_sec", grad_send_started_at
+                        )
                     loss_value = float(loss.detach().cpu())
                 else:
                     assert stage_output is not None
                     grad_output = torch.empty_like(stage_output)
                     grad_recv_started_at = time.monotonic()
                     dist.recv(grad_output, src=int(self.tp_state.next_pp_rank))
-                    _add_pipeline_stage_timing(stage_timing, "pipeline_grad_recv_sec", grad_recv_started_at)
+                    _add_pipeline_stage_timing(
+                        stage_timing, "pipeline_grad_recv_sec", grad_recv_started_at
+                    )
                     autograd_started_at = time.monotonic()
                     stage_output.backward(grad_output)
-                    _add_pipeline_stage_timing(stage_timing, "pipeline_backward_autograd_sec", autograd_started_at)
+                    _add_pipeline_stage_timing(
+                        stage_timing, "pipeline_backward_autograd_sec", autograd_started_at
+                    )
                     if stage_input is not None and stage_input.grad is not None:
                         grad_send_started_at = time.monotonic()
-                        dist.send(stage_input.grad.contiguous(), dst=int(self.tp_state.prev_pp_rank))
-                        _add_pipeline_stage_timing(stage_timing, "pipeline_grad_send_sec", grad_send_started_at)
+                        dist.send(
+                            stage_input.grad.contiguous(), dst=int(self.tp_state.prev_pp_rank)
+                        )
+                        _add_pipeline_stage_timing(
+                            stage_timing, "pipeline_grad_send_sec", grad_send_started_at
+                        )
                     loss_value = 0.0
                 self._sync_timing()
                 backward_sec += time.monotonic() - backward_started_at
-                trainable_params = [param for param in self.model.parameters() if param.requires_grad]
+                trainable_params = [
+                    param for param in self.model.parameters() if param.requires_grad
+                ]
                 grad_clip_started_at = time.monotonic()
-                grad_norm = torch.nn.utils.clip_grad_norm_(trainable_params, max_grad_norm) if trainable_params else torch.tensor(0.0)
-                _add_pipeline_stage_timing(stage_timing, "pipeline_grad_clip_sec", grad_clip_started_at)
+                grad_norm = (
+                    torch.nn.utils.clip_grad_norm_(trainable_params, max_grad_norm)
+                    if trainable_params
+                    else torch.tensor(0.0)
+                )
+                _add_pipeline_stage_timing(
+                    stage_timing, "pipeline_grad_clip_sec", grad_clip_started_at
+                )
                 self._sync_timing()
                 optimizer_started_at = time.monotonic()
                 if self.optimizer is not None:
                     self.optimizer.step()
                 self._sync_timing()
-                _add_pipeline_stage_timing(stage_timing, "pipeline_optimizer_step_sec", optimizer_started_at)
+                _add_pipeline_stage_timing(
+                    stage_timing, "pipeline_optimizer_step_sec", optimizer_started_at
+                )
                 optimizer_step_sec += time.monotonic() - optimizer_started_at
                 optimizer_steps += 1
                 micro_batch_count += 1
@@ -1568,14 +1692,21 @@ class QwenNativeTPAdapter:
                 batch_indices = indices[start : start + batch_size]
                 chunk_batches = [
                     collate_experiences(
-                        [experiences[idx] for idx in batch_indices[chunk_start : chunk_start + pipeline_micro_batch_size]],
+                        [
+                            experiences[idx]
+                            for idx in batch_indices[
+                                chunk_start : chunk_start + pipeline_micro_batch_size
+                            ]
+                        ],
                         self.device,
                     )
                     for chunk_start in range(0, len(batch_indices), pipeline_micro_batch_size)
                 ]
                 if not chunk_batches:
                     continue
-                max_chunks_per_optimizer_step = max(max_chunks_per_optimizer_step, len(chunk_batches))
+                max_chunks_per_optimizer_step = max(
+                    max_chunks_per_optimizer_step, len(chunk_batches)
+                )
                 if self.optimizer is not None:
                     self.optimizer.zero_grad(set_to_none=True)
                 result = self._pipeline_one_f_one_b_optimizer_step(
@@ -1595,20 +1726,26 @@ class QwenNativeTPAdapter:
                         self.optimizer.zero_grad(set_to_none=True)
                     skipped_nonfinite += 1
                     continue
-                trainable_params = [param for param in self.model.parameters() if param.requires_grad]
+                trainable_params = [
+                    param for param in self.model.parameters() if param.requires_grad
+                ]
                 grad_clip_started_at = time.monotonic()
                 grad_norm = (
                     torch.nn.utils.clip_grad_norm_(trainable_params, max_grad_norm)
                     if trainable_params
                     else torch.tensor(0.0)
                 )
-                _add_pipeline_stage_timing(stage_timing, "pipeline_grad_clip_sec", grad_clip_started_at)
+                _add_pipeline_stage_timing(
+                    stage_timing, "pipeline_grad_clip_sec", grad_clip_started_at
+                )
                 self._sync_timing()
                 optimizer_started_at = time.monotonic()
                 if self.optimizer is not None:
                     self.optimizer.step()
                 self._sync_timing()
-                _add_pipeline_stage_timing(stage_timing, "pipeline_optimizer_step_sec", optimizer_started_at)
+                _add_pipeline_stage_timing(
+                    stage_timing, "pipeline_optimizer_step_sec", optimizer_started_at
+                )
                 optimizer_step_sec += time.monotonic() - optimizer_started_at
                 optimizer_steps += 1
                 loss_payload = [float(result["loss_value"])]
@@ -1715,7 +1852,9 @@ class QwenNativeTPAdapter:
                 )
                 _add_pipeline_stage_timing(timing, "pipeline_lm_head_sec", lm_head_started_at)
                 loss_started_at = time.monotonic()
-                chunk_loss = self.loss_fn(log_probs, batch.old_log_probs, batch.advantages, batch.action_mask)
+                chunk_loss = self.loss_fn(
+                    log_probs, batch.old_log_probs, batch.advantages, batch.action_mask
+                )
                 _add_pipeline_stage_timing(timing, "pipeline_loss_sec", loss_started_at)
                 finite = bool(torch.isfinite(chunk_loss).detach().cpu())
                 weight = float(batch.sequences.shape[0]) / max(1, int(full_batch_size))
@@ -1743,13 +1882,21 @@ class QwenNativeTPAdapter:
                 if loss is not None:
                     autograd_started_at = time.monotonic()
                     loss.backward()
-                    _add_pipeline_stage_timing(timing, "pipeline_backward_autograd_sec", autograd_started_at)
+                    _add_pipeline_stage_timing(
+                        timing, "pipeline_backward_autograd_sec", autograd_started_at
+                    )
                 if stage_input is not None:
-                    grad = stage_input.grad if stage_input.grad is not None else torch.zeros_like(stage_input)
+                    grad = (
+                        stage_input.grad
+                        if stage_input.grad is not None
+                        else torch.zeros_like(stage_input)
+                    )
                     grad_send_started_at = time.monotonic()
                     assert self.tp_state is not None
                     dist.send(grad.contiguous(), dst=int(self.tp_state.prev_pp_rank))
-                    _add_pipeline_stage_timing(timing, "pipeline_grad_send_sec", grad_send_started_at)
+                    _add_pipeline_stage_timing(
+                        timing, "pipeline_grad_send_sec", grad_send_started_at
+                    )
             else:
                 stage_output = record["stage_output"]
                 assert stage_output is not None
@@ -1760,13 +1907,21 @@ class QwenNativeTPAdapter:
                 _add_pipeline_stage_timing(timing, "pipeline_grad_recv_sec", grad_recv_started_at)
                 autograd_started_at = time.monotonic()
                 stage_output.backward(grad_output)
-                _add_pipeline_stage_timing(timing, "pipeline_backward_autograd_sec", autograd_started_at)
+                _add_pipeline_stage_timing(
+                    timing, "pipeline_backward_autograd_sec", autograd_started_at
+                )
                 stage_input = record["stage_input"]
                 if stage_input is not None:
-                    grad = stage_input.grad if stage_input.grad is not None else torch.zeros_like(stage_input)
+                    grad = (
+                        stage_input.grad
+                        if stage_input.grad is not None
+                        else torch.zeros_like(stage_input)
+                    )
                     grad_send_started_at = time.monotonic()
                     dist.send(grad.contiguous(), dst=int(self.tp_state.prev_pp_rank))
-                    _add_pipeline_stage_timing(timing, "pipeline_grad_send_sec", grad_send_started_at)
+                    _add_pipeline_stage_timing(
+                        timing, "pipeline_grad_send_sec", grad_send_started_at
+                    )
             self._sync_timing()
             backward_sec += time.monotonic() - backward_started_at
             records[chunk_idx] = None
@@ -1831,7 +1986,9 @@ class QwenNativeTPAdapter:
             )
             _add_pipeline_stage_timing(timing, "pipeline_stage_compute_sec", compute_started_at)
         else:
-            stage_input = torch.empty((batch, seq_len, hidden_size), device=self.device, dtype=dtype)
+            stage_input = torch.empty(
+                (batch, seq_len, hidden_size), device=self.device, dtype=dtype
+            )
             recv_started_at = time.monotonic()
             dist.recv(stage_input, src=int(self.tp_state.prev_pp_rank))
             _add_pipeline_stage_timing(timing, "pipeline_recv_sec", recv_started_at)
@@ -1857,7 +2014,11 @@ class QwenNativeTPAdapter:
 
     def _shared_training_indices(self, experience_count: int, *, optimize_round: int) -> list[int]:
         indices = list(range(experience_count))
-        seed = int(self.config.training.seed) + (self._train_batch_call_index * 1_000_003) + int(optimize_round)
+        seed = (
+            int(self.config.training.seed)
+            + (self._train_batch_call_index * 1_000_003)
+            + int(optimize_round)
+        )
         if dist.is_available() and dist.is_initialized():
             payload: list[list[int] | None] = [None]
             if self.rank == 0:
@@ -1960,7 +2121,9 @@ class QwenNativeTPAdapter:
             candidate = max(1, candidate // 2)
         return max(1, min(rollout_group_size, candidate))
 
-    def _kv_cache_batch_fits_budget(self, *, batch_size: int, prompt_len: int, max_new_tokens: int) -> bool:
+    def _kv_cache_batch_fits_budget(
+        self, *, batch_size: int, prompt_len: int, max_new_tokens: int
+    ) -> bool:
         assert self.model is not None
         if self.device.type != "cuda":
             return True
@@ -1969,10 +2132,13 @@ class QwenNativeTPAdapter:
         total = int(torch.cuda.get_device_properties(self.device).total_memory)
         reserved = int(torch.cuda.memory_reserved(self.device))
         budget = max(0, int(total * fraction) - reserved)
-        return self.model.estimate_kv_cache_bytes(
-            batch_size=batch_size,
-            sequence_len=prompt_len + max_new_tokens,
-        ) <= budget
+        return (
+            self.model.estimate_kv_cache_bytes(
+                batch_size=batch_size,
+                sequence_len=prompt_len + max_new_tokens,
+            )
+            <= budget
+        )
 
     def save_checkpoint(
         self,
@@ -1993,17 +2159,26 @@ class QwenNativeTPAdapter:
             "pp_size": self.pp_size,
             "placement": placement_summary(self.placement) if self.placement is not None else None,
             "lora_target_signature": self.model.lora_target_signature(),
+            "lora_tensor_metadata": self.model.lora_tensor_metadata(),
             "lora_state_dict": self.model.lora_state_dict(),
-            "optimizer_state_dict": self.optimizer.state_dict() if self.optimizer is not None else None,
+            "optimizer_state_dict": self.optimizer.state_dict()
+            if self.optimizer is not None
+            else None,
             "torch_rng_state": torch.get_rng_state(),
-            "cuda_rng_state": torch.cuda.get_rng_state(self.device) if self.device.type == "cuda" else None,
+            "cuda_rng_state": torch.cuda.get_rng_state(self.device)
+            if self.device.type == "cuda"
+            else None,
             "adapter_state": {
                 "train_batch_call_index": self._train_batch_call_index,
             },
             "trainer_state": trainer_state,
             "config": asdict(self.config),
         }
-        torch.save(payload, output / f"rank_{self.rank:05d}_tp_{self.tp_rank:02d}_pp_{self.pp_rank:02d}.pt")
+        torch.save(
+            payload, output / f"rank_{self.rank:05d}_tp_{self.tp_rank:02d}_pp_{self.pp_rank:02d}.pt"
+        )
+        if dist.is_available() and dist.is_initialized():
+            dist.barrier()
         self._emit_rank_memory_event("checkpoint_after", {"checkpoint_dir": str(output)})
         if self.rank == 0:
             (output / "manifest.json").write_text(
@@ -2012,7 +2187,9 @@ class QwenNativeTPAdapter:
                         "format": "graspo-native-tp-lora",
                         "tp_size": self.tp_size,
                         "pp_size": self.pp_size,
-                        "placement": placement_summary(self.placement) if self.placement is not None else None,
+                        "placement": placement_summary(self.placement)
+                        if self.placement is not None
+                        else None,
                         "lora_target_signature": self.model.lora_target_signature(),
                         "world_size": self.world_size,
                         "checkpoint_type": "recoverable_lora_training_state",
@@ -2028,15 +2205,21 @@ class QwenNativeTPAdapter:
         self._require_ready()
         assert self.model is not None
         checkpoint_dir = Path(path)
-        rank_path = checkpoint_dir / f"rank_{self.rank:05d}_tp_{self.tp_rank:02d}_pp_{self.pp_rank:02d}.pt"
+        rank_path = (
+            checkpoint_dir / f"rank_{self.rank:05d}_tp_{self.tp_rank:02d}_pp_{self.pp_rank:02d}.pt"
+        )
         if not rank_path.exists():
-            candidates = sorted(checkpoint_dir.glob(f"rank_*_tp_{self.tp_rank:02d}_pp_{self.pp_rank:02d}.pt"))
+            candidates = sorted(
+                checkpoint_dir.glob(f"rank_*_tp_{self.tp_rank:02d}_pp_{self.pp_rank:02d}.pt")
+            )
             if not candidates and self.pp_size == 1:
                 candidates = sorted(checkpoint_dir.glob(f"rank_*_tp_{self.tp_rank:02d}.pt"))
             if len(candidates) == 1:
                 rank_path = candidates[0]
             else:
-                raise FileNotFoundError(f"Missing native TP checkpoint shard for rank={self.rank} tp_rank={self.tp_rank}: {rank_path}")
+                raise FileNotFoundError(
+                    f"Missing native TP checkpoint shard for rank={self.rank} tp_rank={self.tp_rank}: {rank_path}"
+                )
         try:
             payload = torch.load(rank_path, map_location=self.device, weights_only=False)
         except TypeError:
@@ -2143,7 +2326,9 @@ class QwenNativeTPAdapter:
                     **template_kwargs,
                 )
         else:
-            raise RuntimeError("AutoProcessor does not implement apply_chat_template for multimodal samples")
+            raise RuntimeError(
+                "AutoProcessor does not implement apply_chat_template for multimodal samples"
+            )
         return dict(encoded)
 
     def _multimodal_inputs_to_device(self, encoded: dict[str, Any]) -> dict[str, torch.Tensor]:
@@ -2211,11 +2396,17 @@ class QwenNativeTPAdapter:
             "rank": self.rank,
             "tp_rank": self.tp_rank,
             "rank_metrics": ranks,
-            "global_optimizer_steps_sum": sum(int(item.get("optimizer_steps") or 0) for item in ranks),
-            "global_nonzero_grad_count_sum": sum(int(item.get("nonzero_grad_count") or 0) for item in ranks),
+            "global_optimizer_steps_sum": sum(
+                int(item.get("optimizer_steps") or 0) for item in ranks
+            ),
+            "global_nonzero_grad_count_sum": sum(
+                int(item.get("nonzero_grad_count") or 0) for item in ranks
+            ),
             "global_loss_mean": _mean_present(item.get("loss_mean") for item in ranks),
             "global_grad_norm_mean": _mean_present(item.get("grad_norm_mean") for item in ranks),
-            "global_lora_norm_delta_mean": _mean_present(item.get("lora_norm_delta") for item in ranks),
+            "global_lora_norm_delta_mean": _mean_present(
+                item.get("lora_norm_delta") for item in ranks
+            ),
         }
 
     def _emit_rank_memory_event(self, phase: str, extra: dict[str, Any] | None = None) -> None:
@@ -2250,7 +2441,10 @@ def _multimodal_row_from_sample(sample: Any) -> dict[str, Any]:
     return {
         "prompt": str(sample.prompt),
         "media": [
-            {"type": str(item.get("type") or "unknown"), "path": str(item.get("path") or item.get("url") or "")}
+            {
+                "type": str(item.get("type") or "unknown"),
+                "path": str(item.get("path") or item.get("url") or ""),
+            }
             for item in (sample.media or [])
             if isinstance(item, dict)
         ],
@@ -2276,7 +2470,9 @@ def _messages_from_multimodal_row(row: dict[str, Any]) -> list[dict[str, Any]]:
     return [{"role": "user", "content": content}]
 
 
-def _multimodal_rows_from_metadata(metadata: Any | None, *, expected_rows: int) -> list[dict[str, Any]]:
+def _multimodal_rows_from_metadata(
+    metadata: Any | None, *, expected_rows: int
+) -> list[dict[str, Any]]:
     if metadata is None:
         return []
     if isinstance(metadata, list):
@@ -2287,7 +2483,9 @@ def _multimodal_rows_from_metadata(metadata: Any | None, *, expected_rows: int) 
         if not rows:
             return []
         if len(rows) != expected_rows:
-            raise RuntimeError(f"expected {expected_rows} multimodal metadata rows, got {len(rows)}")
+            raise RuntimeError(
+                f"expected {expected_rows} multimodal metadata rows, got {len(rows)}"
+            )
         return rows
     if not isinstance(metadata, dict):
         return []
@@ -2373,14 +2571,26 @@ class NativeTPCausalLMBase(nn.Module):
 
     supports_kv_cache = False
 
-    def sequence_log_probs(self, sequences: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+    def sequence_log_probs(
+        self, sequences: torch.Tensor, attention_mask: torch.Tensor
+    ) -> torch.Tensor:
         raise NotImplementedError
 
     def estimate_kv_cache_bytes(self, *, batch_size: int, sequence_len: int) -> int:
         raise NotImplementedError
 
     def lora_state_dict(self) -> dict[str, torch.Tensor]:
-        return {name: param.detach().cpu() for name, param in self.named_parameters() if "lora_" in name}
+        return {
+            name: param.detach().cpu() for name, param in self.named_parameters() if "lora_" in name
+        }
+
+    def lora_tensor_metadata(self) -> list[dict[str, Any]]:
+        metadata: list[dict[str, Any]] = []
+        for module_name, module in self.named_modules():
+            if not isinstance(module, LoRALinear) or not module.lora_enabled:
+                continue
+            metadata.append(module.lora_metadata(module_name))
+        return metadata
 
     def lora_parameter_norm(self) -> float:
         total = 0.0
@@ -2406,7 +2616,9 @@ class NativeTPCausalLMBase(nn.Module):
     def lora_target_signature(self) -> dict[str, object]:
         return {
             "resolved": list(self.enabled_lora_target_names()),
-            "parameter_count": sum(param.numel() for name, param in self.named_parameters() if "lora_" in name),
+            "parameter_count": sum(
+                param.numel() for name, param in self.named_parameters() if "lora_" in name
+            ),
         }
 
 
@@ -2426,10 +2638,11 @@ def load_native_qwen_config(model_path: Path) -> NativeQwenConfig:
         text_config["image_token_id"] = config.get("image_token_id")
         text_config["video_token_id"] = config.get("video_token_id")
         text_config["root_model_type"] = model_type
-        return NativeQwenConfig(text_config, family="qwen3_5_text", key_prefix="model.language_model")
+        return NativeQwenConfig(
+            text_config, family="qwen3_5_text", key_prefix="model.language_model"
+        )
     raise ValueError(
-        "native-tp supports text-only qwen3 and qwen3_5_text models; "
-        f"got model_type={model_type!r}"
+        f"native-tp supports text-only qwen3 and qwen3_5_text models; got model_type={model_type!r}"
     )
 
 
@@ -2568,6 +2781,7 @@ def _replace_visual_lora_modules(
             linear.bias.detach() if linear.bias is not None else None,
             lora_enabled=True,
             target_name=target_name,
+            hf_module_path=f"model.visual.{module_path}",
             r=lora_r,
             alpha=lora_alpha,
             dropout=lora_dropout,
@@ -2581,7 +2795,11 @@ def _module_parent_and_attr(module: nn.Module, path: str) -> tuple[nn.Module, st
     parts = path.split(".")
     parent: nn.Module = module
     for part in parts[:-1]:
-        parent = parent[int(part)] if part.isdigit() and isinstance(parent, nn.ModuleList) else getattr(parent, part)
+        parent = (
+            parent[int(part)]
+            if part.isdigit() and isinstance(parent, nn.ModuleList)
+            else getattr(parent, part)
+        )
     return parent, parts[-1]
 
 
@@ -2612,9 +2830,13 @@ class Qwen3DenseModel(QwenFamilyBase):
         self.supports_kv_cache = True
         self.lora_targets = set(lora_targets)
         self.key_prefix = str(getattr(hf_config, "key_prefix", "model"))
-        self.embed_tokens = nn.Embedding(hf_config.vocab_size, hf_config.hidden_size, device=device, dtype=torch_dtype)
+        self.embed_tokens = nn.Embedding(
+            hf_config.vocab_size, hf_config.hidden_size, device=device, dtype=torch_dtype
+        )
         self.embed_tokens.weight.data.copy_(
-            loader.get(f"{self.key_prefix}.embed_tokens.weight").to(device=device, dtype=torch_dtype)
+            loader.get(f"{self.key_prefix}.embed_tokens.weight").to(
+                device=device, dtype=torch_dtype
+            )
         )
         self.layers = nn.ModuleList(
             [
@@ -2635,9 +2857,19 @@ class Qwen3DenseModel(QwenFamilyBase):
                 for idx in range(hf_config.num_hidden_layers)
             ]
         )
-        self.norm = QwenRMSNorm(hf_config.hidden_size, eps=hf_config.rms_norm_eps, device=device, dtype=torch_dtype)
-        self.norm.weight.data.copy_(loader.get(f"{self.key_prefix}.norm.weight").to(device=device, dtype=torch_dtype))
-        self.lm_head = nn.Linear(hf_config.hidden_size, hf_config.vocab_size, bias=False, device=device, dtype=torch_dtype)
+        self.norm = QwenRMSNorm(
+            hf_config.hidden_size, eps=hf_config.rms_norm_eps, device=device, dtype=torch_dtype
+        )
+        self.norm.weight.data.copy_(
+            loader.get(f"{self.key_prefix}.norm.weight").to(device=device, dtype=torch_dtype)
+        )
+        self.lm_head = nn.Linear(
+            hf_config.hidden_size,
+            hf_config.vocab_size,
+            bias=False,
+            device=device,
+            dtype=torch_dtype,
+        )
         lm_head = loader.get_optional("lm_head.weight")
         if lm_head is None:
             lm_head = loader.get(f"{self.key_prefix}.embed_tokens.weight")
@@ -2692,7 +2924,9 @@ class Qwen3DenseModel(QwenFamilyBase):
             return logits, tuple(present_key_values)
         return logits
 
-    def sequence_log_probs(self, sequences: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+    def sequence_log_probs(
+        self, sequences: torch.Tensor, attention_mask: torch.Tensor
+    ) -> torch.Tensor:
         hidden_states = self._forward_hidden(sequences, attention_mask=attention_mask)
         assert isinstance(hidden_states, torch.Tensor)
         return _selected_token_log_probs_from_hidden(
@@ -2750,8 +2984,20 @@ class Qwen3DenseModel(QwenFamilyBase):
     def estimate_kv_cache_bytes(self, *, batch_size: int, sequence_len: int) -> int:
         dtype_size = _dtype_size(self.embed_tokens.weight.dtype)
         local_kv_heads = int(self.config.num_key_value_heads) // int(self.tp_size)
-        head_dim = int(getattr(self.config, "head_dim", self.config.hidden_size // self.config.num_attention_heads))
-        return int(batch_size) * int(self.config.num_hidden_layers) * 2 * local_kv_heads * head_dim * int(sequence_len) * dtype_size
+        head_dim = int(
+            getattr(
+                self.config, "head_dim", self.config.hidden_size // self.config.num_attention_heads
+            )
+        )
+        return (
+            int(batch_size)
+            * int(self.config.num_hidden_layers)
+            * 2
+            * local_kv_heads
+            * head_dim
+            * int(sequence_len)
+            * dtype_size
+        )
 
 
 class TensorParallelQwenForCausalLM(Qwen3DenseModel):
@@ -2791,17 +3037,23 @@ class Qwen35HybridTextModel(QwenFamilyBase):
 
         include_embeddings = placement.include_embeddings if placement is not None else True
         include_lm_head = placement.include_lm_head if placement is not None else True
-        local_layer_indices = list(placement.local_layer_indices) if placement is not None else list(
-            range(hf_config.num_hidden_layers)
+        local_layer_indices = (
+            list(placement.local_layer_indices)
+            if placement is not None
+            else list(range(hf_config.num_hidden_layers))
         )
         self.embed_tokens = (
-            nn.Embedding(hf_config.vocab_size, hf_config.hidden_size, device=device, dtype=torch_dtype)
+            nn.Embedding(
+                hf_config.vocab_size, hf_config.hidden_size, device=device, dtype=torch_dtype
+            )
             if include_embeddings
             else None
         )
         if self.embed_tokens is not None:
             self.embed_tokens.weight.data.copy_(
-                loader.get(f"{self.key_prefix}.embed_tokens.weight").to(device=device, dtype=torch_dtype)
+                loader.get(f"{self.key_prefix}.embed_tokens.weight").to(
+                    device=device, dtype=torch_dtype
+                )
             )
         self.visual = (
             _build_qwen35_visual_tower(
@@ -2838,11 +3090,25 @@ class Qwen35HybridTextModel(QwenFamilyBase):
                 for idx in local_layer_indices
             ]
         )
-        self.norm = Qwen35RMSNorm(hf_config.hidden_size, eps=hf_config.rms_norm_eps, device=device, dtype=torch_dtype) if include_lm_head else None
+        self.norm = (
+            Qwen35RMSNorm(
+                hf_config.hidden_size, eps=hf_config.rms_norm_eps, device=device, dtype=torch_dtype
+            )
+            if include_lm_head
+            else None
+        )
         if self.norm is not None:
-            self.norm.weight.data.copy_(loader.get(f"{self.key_prefix}.norm.weight").to(device=device, dtype=torch_dtype))
+            self.norm.weight.data.copy_(
+                loader.get(f"{self.key_prefix}.norm.weight").to(device=device, dtype=torch_dtype)
+            )
         self.lm_head = (
-            nn.Linear(hf_config.hidden_size, hf_config.vocab_size, bias=False, device=device, dtype=torch_dtype)
+            nn.Linear(
+                hf_config.hidden_size,
+                hf_config.vocab_size,
+                bias=False,
+                device=device,
+                dtype=torch_dtype,
+            )
             if include_lm_head
             else None
         )
@@ -2960,7 +3226,9 @@ class Qwen35HybridTextModel(QwenFamilyBase):
         if multimodal_inputs is None:
             return hidden_states
         if self.visual is None:
-            raise RuntimeError("Qwen3.5 multimodal inputs require visual tower on the embedding stage")
+            raise RuntimeError(
+                "Qwen3.5 multimodal inputs require visual tower on the embedding stage"
+            )
         image_features = self._visual_features(multimodal_inputs, kind="image")
         if image_features is not None:
             image_token_id = int(getattr(self.config, "image_token_id"))
@@ -2970,7 +3238,9 @@ class Qwen35HybridTextModel(QwenFamilyBase):
                     "Image features and image placeholder tokens do not match: "
                     f"tokens={int(image_mask.sum().item())}, features={int(image_features.numel())}"
                 )
-            hidden_states = hidden_states.masked_scatter(image_mask, image_features.to(hidden_states.dtype))
+            hidden_states = hidden_states.masked_scatter(
+                image_mask, image_features.to(hidden_states.dtype)
+            )
         video_features = self._visual_features(multimodal_inputs, kind="video")
         if video_features is not None:
             video_token_id = int(getattr(self.config, "video_token_id"))
@@ -2980,7 +3250,9 @@ class Qwen35HybridTextModel(QwenFamilyBase):
                     "Video features and video placeholder tokens do not match: "
                     f"tokens={int(video_mask.sum().item())}, features={int(video_features.numel())}"
                 )
-            hidden_states = hidden_states.masked_scatter(video_mask, video_features.to(hidden_states.dtype))
+            hidden_states = hidden_states.masked_scatter(
+                video_mask, video_features.to(hidden_states.dtype)
+            )
         return hidden_states
 
     def _visual_features(
@@ -3058,25 +3330,45 @@ class Qwen35HybridTextModel(QwenFamilyBase):
         return hidden_states
 
     def estimate_kv_cache_bytes(self, *, batch_size: int, sequence_len: int) -> int:
-        dtype_source = self.embed_tokens.weight if self.embed_tokens is not None else next(self.parameters())
+        dtype_source = (
+            self.embed_tokens.weight if self.embed_tokens is not None else next(self.parameters())
+        )
         dtype_size = _dtype_size(dtype_source.dtype)
         total = 0
         layer_types = list(getattr(self.config, "layer_types", []) or [])
-        full_head_dim = int(getattr(self.config, "head_dim", self.config.hidden_size // self.config.num_attention_heads))
+        full_head_dim = int(
+            getattr(
+                self.config, "head_dim", self.config.hidden_size // self.config.num_attention_heads
+            )
+        )
         local_layers = set(getattr(self, "local_layer_indices", tuple(range(len(layer_types)))))
         for idx, layer_type in enumerate(layer_types):
             if idx not in local_layers:
                 continue
             if layer_type == "full_attention":
-                local_kv_heads = max(1, math.ceil(int(self.config.num_key_value_heads) / int(self.tp_size)))
-                total += int(batch_size) * 2 * local_kv_heads * full_head_dim * int(sequence_len) * dtype_size
+                local_kv_heads = max(
+                    1, math.ceil(int(self.config.num_key_value_heads) / int(self.tp_size))
+                )
+                total += (
+                    int(batch_size)
+                    * 2
+                    * local_kv_heads
+                    * full_head_dim
+                    * int(sequence_len)
+                    * dtype_size
+                )
             elif layer_type == "linear_attention":
                 local_v_heads = int(self.config.linear_num_value_heads) // int(self.tp_size)
                 local_k_heads = int(self.config.linear_num_key_heads) // int(self.tp_size)
                 key_dim = local_k_heads * int(self.config.linear_key_head_dim)
                 value_dim = local_v_heads * int(self.config.linear_value_head_dim)
                 conv_dim = 2 * key_dim + value_dim
-                recurrent = int(batch_size) * local_v_heads * int(self.config.linear_key_head_dim) * int(self.config.linear_value_head_dim)
+                recurrent = (
+                    int(batch_size)
+                    * local_v_heads
+                    * int(self.config.linear_key_head_dim)
+                    * int(self.config.linear_value_head_dim)
+                )
                 conv = int(batch_size) * conv_dim * int(self.config.linear_conv_kernel_dim)
                 total += (recurrent + conv) * dtype_size
         return int(total)
@@ -3107,11 +3399,19 @@ class TensorParallelQwen35DecoderLayer(nn.Module):
         super().__init__()
         prefix = f"{key_prefix}.layers.{layer_idx}"
         self.layer_type = layer_type
-        self.input_layernorm = Qwen35RMSNorm(hf_config.hidden_size, eps=hf_config.rms_norm_eps, device=device, dtype=torch_dtype)
-        self.post_attention_layernorm = Qwen35RMSNorm(hf_config.hidden_size, eps=hf_config.rms_norm_eps, device=device, dtype=torch_dtype)
-        self.input_layernorm.weight.data.copy_(loader.get(f"{prefix}.input_layernorm.weight").to(device=device, dtype=torch_dtype))
+        self.input_layernorm = Qwen35RMSNorm(
+            hf_config.hidden_size, eps=hf_config.rms_norm_eps, device=device, dtype=torch_dtype
+        )
+        self.post_attention_layernorm = Qwen35RMSNorm(
+            hf_config.hidden_size, eps=hf_config.rms_norm_eps, device=device, dtype=torch_dtype
+        )
+        self.input_layernorm.weight.data.copy_(
+            loader.get(f"{prefix}.input_layernorm.weight").to(device=device, dtype=torch_dtype)
+        )
         self.post_attention_layernorm.weight.data.copy_(
-            loader.get(f"{prefix}.post_attention_layernorm.weight").to(device=device, dtype=torch_dtype)
+            loader.get(f"{prefix}.post_attention_layernorm.weight").to(
+                device=device, dtype=torch_dtype
+            )
         )
         if layer_type == "linear_attention":
             self.token_mixer = TensorParallelQwen35LinearAttention(
@@ -3211,29 +3511,47 @@ class TensorParallelQwen35FullAttention(nn.Module):
         super().__init__()
         self.num_heads = int(hf_config.num_attention_heads)
         self.num_kv_heads = int(hf_config.num_key_value_heads)
-        self.head_dim = int(getattr(hf_config, "head_dim", hf_config.hidden_size // hf_config.num_attention_heads))
+        self.head_dim = int(
+            getattr(hf_config, "head_dim", hf_config.hidden_size // hf_config.num_attention_heads)
+        )
         if self.num_heads % tp_size != 0:
             raise ValueError("Qwen3.5 full-attention query heads must be divisible by TP size")
         self.local_heads = self.num_heads // tp_size
         self.num_key_value_groups = self.num_heads // self.num_kv_heads
-        self.rope_theta = float((getattr(hf_config, "rope_parameters", {}) or {}).get("rope_theta", 1000000.0))
-        partial = float((getattr(hf_config, "rope_parameters", {}) or {}).get("partial_rotary_factor", 1.0))
+        self.rope_theta = float(
+            (getattr(hf_config, "rope_parameters", {}) or {}).get("rope_theta", 1000000.0)
+        )
+        partial = float(
+            (getattr(hf_config, "rope_parameters", {}) or {}).get("partial_rotary_factor", 1.0)
+        )
         self.rotary_dim = int(self.head_dim * partial)
         self.local_q_head_start = tp_rank * self.local_heads
         self.local_q_head_stop = self.local_q_head_start + self.local_heads
         self.local_kv_indices = sorted(
-            {head // self.num_key_value_groups for head in range(self.local_q_head_start, self.local_q_head_stop)}
+            {
+                head // self.num_key_value_groups
+                for head in range(self.local_q_head_start, self.local_q_head_stop)
+            }
         )
 
         local_q_heads = range(self.local_q_head_start, self.local_q_head_stop)
         q_bias = loader.get_optional(f"{prefix}.q_proj.bias")
         if q_bias is not None:
-            q_bias = _select_head_rows(q_bias, head_indices=local_q_heads, head_width=self.head_dim * 2)
+            q_bias = _select_head_rows(
+                q_bias, head_indices=local_q_heads, head_width=self.head_dim * 2
+            )
         self.q_proj = LoRALinear(
-            _select_head_rows(loader.get(f"{prefix}.q_proj.weight"), head_indices=local_q_heads, head_width=self.head_dim * 2),
+            _select_head_rows(
+                loader.get(f"{prefix}.q_proj.weight"),
+                head_indices=local_q_heads,
+                head_width=self.head_dim * 2,
+            ),
             q_bias,
             lora_enabled=_lora_target_enabled(lora_targets, "language.full_attn.q_proj"),
             target_name="language.full_attn.q_proj",
+            hf_module_path=f"{prefix}.q_proj",
+            shard_kind="rows",
+            row_indices=_head_row_indices(local_q_heads, self.head_dim * 2),
             r=lora_r,
             alpha=lora_alpha,
             dropout=lora_dropout,
@@ -3242,12 +3560,21 @@ class TensorParallelQwen35FullAttention(nn.Module):
         )
         k_bias = loader.get_optional(f"{prefix}.k_proj.bias")
         if k_bias is not None:
-            k_bias = _select_head_rows(k_bias, head_indices=self.local_kv_indices, head_width=self.head_dim)
+            k_bias = _select_head_rows(
+                k_bias, head_indices=self.local_kv_indices, head_width=self.head_dim
+            )
         self.k_proj = LoRALinear(
-            _select_head_rows(loader.get(f"{prefix}.k_proj.weight"), head_indices=self.local_kv_indices, head_width=self.head_dim),
+            _select_head_rows(
+                loader.get(f"{prefix}.k_proj.weight"),
+                head_indices=self.local_kv_indices,
+                head_width=self.head_dim,
+            ),
             k_bias,
             lora_enabled=_lora_target_enabled(lora_targets, "language.full_attn.k_proj"),
             target_name="language.full_attn.k_proj",
+            hf_module_path=f"{prefix}.k_proj",
+            shard_kind="rows",
+            row_indices=_head_row_indices(self.local_kv_indices, self.head_dim),
             r=lora_r,
             alpha=lora_alpha,
             dropout=lora_dropout,
@@ -3256,22 +3583,39 @@ class TensorParallelQwen35FullAttention(nn.Module):
         )
         v_bias = loader.get_optional(f"{prefix}.v_proj.bias")
         if v_bias is not None:
-            v_bias = _select_head_rows(v_bias, head_indices=self.local_kv_indices, head_width=self.head_dim)
+            v_bias = _select_head_rows(
+                v_bias, head_indices=self.local_kv_indices, head_width=self.head_dim
+            )
         self.v_proj = LoRALinear(
-            _select_head_rows(loader.get(f"{prefix}.v_proj.weight"), head_indices=self.local_kv_indices, head_width=self.head_dim),
+            _select_head_rows(
+                loader.get(f"{prefix}.v_proj.weight"),
+                head_indices=self.local_kv_indices,
+                head_width=self.head_dim,
+            ),
             v_bias,
             lora_enabled=_lora_target_enabled(lora_targets, "language.full_attn.v_proj"),
             target_name="language.full_attn.v_proj",
+            hf_module_path=f"{prefix}.v_proj",
+            shard_kind="rows",
+            row_indices=_head_row_indices(self.local_kv_indices, self.head_dim),
             r=lora_r,
             alpha=lora_alpha,
             dropout=lora_dropout,
             device=device,
             dtype=torch_dtype,
         )
-        self.q_norm = Qwen35RMSNorm(self.head_dim, eps=hf_config.rms_norm_eps, device=device, dtype=torch_dtype)
-        self.k_norm = Qwen35RMSNorm(self.head_dim, eps=hf_config.rms_norm_eps, device=device, dtype=torch_dtype)
-        self.q_norm.weight.data.copy_(loader.get(f"{prefix}.q_norm.weight").to(device=device, dtype=torch_dtype))
-        self.k_norm.weight.data.copy_(loader.get(f"{prefix}.k_norm.weight").to(device=device, dtype=torch_dtype))
+        self.q_norm = Qwen35RMSNorm(
+            self.head_dim, eps=hf_config.rms_norm_eps, device=device, dtype=torch_dtype
+        )
+        self.k_norm = Qwen35RMSNorm(
+            self.head_dim, eps=hf_config.rms_norm_eps, device=device, dtype=torch_dtype
+        )
+        self.q_norm.weight.data.copy_(
+            loader.get(f"{prefix}.q_norm.weight").to(device=device, dtype=torch_dtype)
+        )
+        self.k_norm.weight.data.copy_(
+            loader.get(f"{prefix}.k_norm.weight").to(device=device, dtype=torch_dtype)
+        )
         self.o_proj = LoRALinear.from_hf(
             loader.get(f"{prefix}.o_proj.weight"),
             bias=loader.get_optional(f"{prefix}.o_proj.bias"),
@@ -3280,6 +3624,7 @@ class TensorParallelQwen35FullAttention(nn.Module):
             tp_size=tp_size,
             lora_enabled=_lora_target_enabled(lora_targets, "language.full_attn.o_proj"),
             target_name="language.full_attn.o_proj",
+            hf_module_path=f"{prefix}.o_proj",
             r=lora_r,
             alpha=lora_alpha,
             dropout=lora_dropout,
@@ -3303,14 +3648,20 @@ class TensorParallelQwen35FullAttention(nn.Module):
             dim=-1,
         )
         gate = gate.reshape(batch, query_len, self.local_heads * self.head_dim)
-        key = self.k_proj(hidden_states).view(batch, query_len, len(self.local_kv_indices), self.head_dim)
-        value = self.v_proj(hidden_states).view(batch, query_len, len(self.local_kv_indices), self.head_dim)
+        key = self.k_proj(hidden_states).view(
+            batch, query_len, len(self.local_kv_indices), self.head_dim
+        )
+        value = self.v_proj(hidden_states).view(
+            batch, query_len, len(self.local_kv_indices), self.head_dim
+        )
         query = self.q_norm(query).transpose(1, 2)
         key = self.k_norm(key).transpose(1, 2)
         value = value.transpose(1, 2)
         past_len = int(past_key_value[0].shape[2]) if past_key_value is not None else 0
         key_len = past_len + query_len
-        cos, sin = _rope_cache(key_len, self.rotary_dim, self.rope_theta, hidden_states.device, hidden_states.dtype)
+        cos, sin = _rope_cache(
+            key_len, self.rotary_dim, self.rope_theta, hidden_states.device, hidden_states.dtype
+        )
         query, key = _apply_rope_partial(query, key, cos, sin, position_ids)
         if past_key_value is not None:
             key = torch.cat([past_key_value[0], key], dim=2)
@@ -3324,7 +3675,11 @@ class TensorParallelQwen35FullAttention(nn.Module):
         value = value[:, local_kv_for_heads]
         attn_mask = _causal_attention_mask(attention_mask, query_len, key_len, hidden_states.device)
         attn = F.scaled_dot_product_attention(query, key, value, attn_mask=attn_mask, dropout_p=0.0)
-        attn = attn.transpose(1, 2).contiguous().view(batch, query_len, self.local_heads * self.head_dim)
+        attn = (
+            attn.transpose(1, 2)
+            .contiguous()
+            .view(batch, query_len, self.local_heads * self.head_dim)
+        )
         output = self.o_proj(attn * torch.sigmoid(gate))
         output = _all_reduce_tp(output)
         if use_cache:
@@ -3354,7 +3709,9 @@ class TensorParallelQwen35LinearAttention(nn.Module):
         self.head_k_dim = int(hf_config.linear_key_head_dim)
         self.head_v_dim = int(hf_config.linear_value_head_dim)
         if self.num_k_heads % tp_size != 0 or self.num_v_heads % tp_size != 0:
-            raise ValueError("Qwen3.5 linear-attention key/value heads must be divisible by TP size")
+            raise ValueError(
+                "Qwen3.5 linear-attention key/value heads must be divisible by TP size"
+            )
         self.local_k_heads = self.num_k_heads // tp_size
         self.local_v_heads = self.num_v_heads // tp_size
         self.local_key_dim = self.local_k_heads * self.head_k_dim
@@ -3372,6 +3729,12 @@ class TensorParallelQwen35LinearAttention(nn.Module):
             None,
             lora_enabled=_lora_target_enabled(lora_targets, "language.linear_attn.q_proj"),
             target_name="language.linear_attn.q_proj",
+            hf_module_path=f"{prefix}.in_proj_qkv",
+            base_weight_name=f"{prefix}.in_proj_qkv.weight",
+            shard_kind="rows",
+            row_start=self.local_k_start,
+            row_stop=self.local_k_stop,
+            peft_exportable=False,
             r=lora_r,
             alpha=lora_alpha,
             dropout=lora_dropout,
@@ -3383,6 +3746,12 @@ class TensorParallelQwen35LinearAttention(nn.Module):
             None,
             lora_enabled=_lora_target_enabled(lora_targets, "language.linear_attn.k_proj"),
             target_name="language.linear_attn.k_proj",
+            hf_module_path=f"{prefix}.in_proj_qkv",
+            base_weight_name=f"{prefix}.in_proj_qkv.weight",
+            shard_kind="rows",
+            row_start=key_dim + self.local_k_start,
+            row_stop=key_dim + self.local_k_stop,
+            peft_exportable=False,
             r=lora_r,
             alpha=lora_alpha,
             dropout=lora_dropout,
@@ -3394,6 +3763,12 @@ class TensorParallelQwen35LinearAttention(nn.Module):
             None,
             lora_enabled=_lora_target_enabled(lora_targets, "language.linear_attn.v_proj"),
             target_name="language.linear_attn.v_proj",
+            hf_module_path=f"{prefix}.in_proj_qkv",
+            base_weight_name=f"{prefix}.in_proj_qkv.weight",
+            shard_kind="rows",
+            row_start=2 * key_dim + self.local_v_start,
+            row_stop=2 * key_dim + self.local_v_stop,
+            peft_exportable=False,
             r=lora_r,
             alpha=lora_alpha,
             dropout=lora_dropout,
@@ -3409,7 +3784,9 @@ class TensorParallelQwen35LinearAttention(nn.Module):
             dtype=torch.long,
         )
         self.conv1d_weight = nn.Parameter(
-            loader.get(f"{prefix}.conv1d.weight").index_select(0, conv_indices).to(device=device, dtype=torch_dtype),
+            loader.get(f"{prefix}.conv1d.weight")
+            .index_select(0, conv_indices)
+            .to(device=device, dtype=torch_dtype),
             requires_grad=False,
         )
         self.in_proj_z = LoRALinear.from_hf(
@@ -3420,6 +3797,7 @@ class TensorParallelQwen35LinearAttention(nn.Module):
             tp_size=tp_size,
             lora_enabled=_lora_target_enabled(lora_targets, "language.linear_attn.in_proj_z"),
             target_name="language.linear_attn.in_proj_z",
+            hf_module_path=f"{prefix}.in_proj_z",
             r=lora_r,
             alpha=lora_alpha,
             dropout=lora_dropout,
@@ -3434,6 +3812,7 @@ class TensorParallelQwen35LinearAttention(nn.Module):
             tp_size=tp_size,
             lora_enabled=False,
             target_name="language.linear_attn.in_proj_b",
+            hf_module_path=f"{prefix}.in_proj_b",
             r=0,
             alpha=1,
             dropout=0.0,
@@ -3448,6 +3827,7 @@ class TensorParallelQwen35LinearAttention(nn.Module):
             tp_size=tp_size,
             lora_enabled=False,
             target_name="language.linear_attn.in_proj_a",
+            hf_module_path=f"{prefix}.in_proj_a",
             r=0,
             alpha=1,
             dropout=0.0,
@@ -3455,15 +3835,23 @@ class TensorParallelQwen35LinearAttention(nn.Module):
             dtype=torch_dtype,
         )
         self.dt_bias = nn.Parameter(
-            _shard_tensor(loader.get(f"{prefix}.dt_bias"), dim=0, tp_rank=tp_rank, tp_size=tp_size).to(device=device, dtype=torch_dtype),
+            _shard_tensor(
+                loader.get(f"{prefix}.dt_bias"), dim=0, tp_rank=tp_rank, tp_size=tp_size
+            ).to(device=device, dtype=torch_dtype),
             requires_grad=False,
         )
         self.A_log = nn.Parameter(
-            _shard_tensor(loader.get(f"{prefix}.A_log"), dim=0, tp_rank=tp_rank, tp_size=tp_size).to(device=device, dtype=torch_dtype),
+            _shard_tensor(
+                loader.get(f"{prefix}.A_log"), dim=0, tp_rank=tp_rank, tp_size=tp_size
+            ).to(device=device, dtype=torch_dtype),
             requires_grad=False,
         )
-        self.norm = Qwen35RMSNormGated(self.head_v_dim, eps=hf_config.rms_norm_eps, device=device, dtype=torch_dtype)
-        self.norm.weight.data.copy_(loader.get(f"{prefix}.norm.weight").to(device=device, dtype=torch_dtype))
+        self.norm = Qwen35RMSNormGated(
+            self.head_v_dim, eps=hf_config.rms_norm_eps, device=device, dtype=torch_dtype
+        )
+        self.norm.weight.data.copy_(
+            loader.get(f"{prefix}.norm.weight").to(device=device, dtype=torch_dtype)
+        )
         self.out_proj = LoRALinear.from_hf(
             loader.get(f"{prefix}.out_proj.weight"),
             bias=None,
@@ -3472,6 +3860,7 @@ class TensorParallelQwen35LinearAttention(nn.Module):
             tp_size=tp_size,
             lora_enabled=_lora_target_enabled(lora_targets, "language.linear_attn.out_proj"),
             target_name="language.linear_attn.out_proj",
+            hf_module_path=f"{prefix}.out_proj",
             r=lora_r,
             alpha=lora_alpha,
             dropout=lora_dropout,
@@ -3532,7 +3921,9 @@ class TensorParallelQwen35LinearAttention(nn.Module):
         query = query.reshape(batch, seq_len, self.local_k_heads, self.head_k_dim)
         key = key.reshape(batch, seq_len, self.local_k_heads, self.head_k_dim)
         value = value.reshape(batch, seq_len, self.local_v_heads, self.head_v_dim)
-        z = self.in_proj_z(hidden_states).reshape(batch, seq_len, self.local_v_heads, self.head_v_dim)
+        z = self.in_proj_z(hidden_states).reshape(
+            batch, seq_len, self.local_v_heads, self.head_v_dim
+        )
         beta = self.in_proj_b(hidden_states).sigmoid()
         a = self.in_proj_a(hidden_states)
         g = -self.A_log.float().exp() * F.softplus(a.float() + self.dt_bias.float())
@@ -3593,11 +3984,19 @@ class TensorParallelQwenDecoderLayer(nn.Module):
     ) -> None:
         super().__init__()
         prefix = f"{key_prefix}.layers.{layer_idx}"
-        self.input_layernorm = QwenRMSNorm(hf_config.hidden_size, eps=hf_config.rms_norm_eps, device=device, dtype=torch_dtype)
-        self.post_attention_layernorm = QwenRMSNorm(hf_config.hidden_size, eps=hf_config.rms_norm_eps, device=device, dtype=torch_dtype)
-        self.input_layernorm.weight.data.copy_(loader.get(f"{prefix}.input_layernorm.weight").to(device=device, dtype=torch_dtype))
+        self.input_layernorm = QwenRMSNorm(
+            hf_config.hidden_size, eps=hf_config.rms_norm_eps, device=device, dtype=torch_dtype
+        )
+        self.post_attention_layernorm = QwenRMSNorm(
+            hf_config.hidden_size, eps=hf_config.rms_norm_eps, device=device, dtype=torch_dtype
+        )
+        self.input_layernorm.weight.data.copy_(
+            loader.get(f"{prefix}.input_layernorm.weight").to(device=device, dtype=torch_dtype)
+        )
         self.post_attention_layernorm.weight.data.copy_(
-            loader.get(f"{prefix}.post_attention_layernorm.weight").to(device=device, dtype=torch_dtype)
+            loader.get(f"{prefix}.post_attention_layernorm.weight").to(
+                device=device, dtype=torch_dtype
+            )
         )
         self.self_attn = TensorParallelQwenAttention(
             prefix=f"{prefix}.self_attn",
@@ -3681,7 +4080,9 @@ class TensorParallelQwenAttention(nn.Module):
         super().__init__()
         self.num_heads = int(hf_config.num_attention_heads)
         self.num_kv_heads = int(hf_config.num_key_value_heads)
-        self.head_dim = int(getattr(hf_config, "head_dim", hf_config.hidden_size // hf_config.num_attention_heads))
+        self.head_dim = int(
+            getattr(hf_config, "head_dim", hf_config.hidden_size // hf_config.num_attention_heads)
+        )
         if self.num_heads % tp_size != 0 or self.num_kv_heads % tp_size != 0:
             raise ValueError("Qwen attention heads and kv heads must be divisible by TP size")
         self.local_heads = self.num_heads // tp_size
@@ -3696,6 +4097,7 @@ class TensorParallelQwenAttention(nn.Module):
             tp_size=tp_size,
             lora_enabled=_lora_target_enabled(lora_targets, "language.self_attn.q_proj"),
             target_name="language.self_attn.q_proj",
+            hf_module_path=f"{prefix}.q_proj",
             r=lora_r,
             alpha=lora_alpha,
             dropout=lora_dropout,
@@ -3710,6 +4112,7 @@ class TensorParallelQwenAttention(nn.Module):
             tp_size=tp_size,
             lora_enabled=_lora_target_enabled(lora_targets, "language.self_attn.k_proj"),
             target_name="language.self_attn.k_proj",
+            hf_module_path=f"{prefix}.k_proj",
             r=lora_r,
             alpha=lora_alpha,
             dropout=lora_dropout,
@@ -3724,14 +4127,19 @@ class TensorParallelQwenAttention(nn.Module):
             tp_size=tp_size,
             lora_enabled=_lora_target_enabled(lora_targets, "language.self_attn.v_proj"),
             target_name="language.self_attn.v_proj",
+            hf_module_path=f"{prefix}.v_proj",
             r=lora_r,
             alpha=lora_alpha,
             dropout=lora_dropout,
             device=device,
             dtype=torch_dtype,
         )
-        self.q_norm = QwenRMSNorm(self.head_dim, eps=hf_config.rms_norm_eps, device=device, dtype=torch_dtype)
-        self.k_norm = QwenRMSNorm(self.head_dim, eps=hf_config.rms_norm_eps, device=device, dtype=torch_dtype)
+        self.q_norm = QwenRMSNorm(
+            self.head_dim, eps=hf_config.rms_norm_eps, device=device, dtype=torch_dtype
+        )
+        self.k_norm = QwenRMSNorm(
+            self.head_dim, eps=hf_config.rms_norm_eps, device=device, dtype=torch_dtype
+        )
         q_norm_weight = loader.get_optional(f"{prefix}.q_norm.weight")
         k_norm_weight = loader.get_optional(f"{prefix}.k_norm.weight")
         if q_norm_weight is not None:
@@ -3746,6 +4154,7 @@ class TensorParallelQwenAttention(nn.Module):
             tp_size=tp_size,
             lora_enabled=_lora_target_enabled(lora_targets, "language.self_attn.o_proj"),
             target_name="language.self_attn.o_proj",
+            hf_module_path=f"{prefix}.o_proj",
             r=lora_r,
             alpha=lora_alpha,
             dropout=lora_dropout,
@@ -3763,12 +4172,22 @@ class TensorParallelQwenAttention(nn.Module):
         use_cache: bool = False,
     ) -> torch.Tensor | tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
         batch, query_len, _ = hidden_states.shape
-        query = self.q_norm(self.q_proj(hidden_states).view(batch, query_len, self.local_heads, self.head_dim)).transpose(1, 2)
-        key = self.k_norm(self.k_proj(hidden_states).view(batch, query_len, self.local_kv_heads, self.head_dim)).transpose(1, 2)
-        value = self.v_proj(hidden_states).view(batch, query_len, self.local_kv_heads, self.head_dim).transpose(1, 2)
+        query = self.q_norm(
+            self.q_proj(hidden_states).view(batch, query_len, self.local_heads, self.head_dim)
+        ).transpose(1, 2)
+        key = self.k_norm(
+            self.k_proj(hidden_states).view(batch, query_len, self.local_kv_heads, self.head_dim)
+        ).transpose(1, 2)
+        value = (
+            self.v_proj(hidden_states)
+            .view(batch, query_len, self.local_kv_heads, self.head_dim)
+            .transpose(1, 2)
+        )
         past_len = int(past_key_value[0].shape[2]) if past_key_value is not None else 0
         key_len = past_len + query_len
-        cos, sin = _rope_cache(key_len, self.head_dim, self.rope_theta, hidden_states.device, hidden_states.dtype)
+        cos, sin = _rope_cache(
+            key_len, self.head_dim, self.rope_theta, hidden_states.device, hidden_states.dtype
+        )
         query, key = _apply_rope(query, key, cos, sin, position_ids)
         if past_key_value is not None:
             key = torch.cat([past_key_value[0], key], dim=2)
@@ -3780,7 +4199,11 @@ class TensorParallelQwenAttention(nn.Module):
             value = value.repeat_interleave(repeat, dim=1)
         attn_mask = _causal_attention_mask(attention_mask, query_len, key_len, hidden_states.device)
         attn = F.scaled_dot_product_attention(query, key, value, attn_mask=attn_mask, dropout_p=0.0)
-        attn = attn.transpose(1, 2).contiguous().view(batch, query_len, self.local_heads * self.head_dim)
+        attn = (
+            attn.transpose(1, 2)
+            .contiguous()
+            .view(batch, query_len, self.local_heads * self.head_dim)
+        )
         output = self.o_proj(attn)
         output = _all_reduce_tp(output)
         if use_cache:
@@ -3813,6 +4236,7 @@ class TensorParallelQwenMLP(nn.Module):
             tp_size=tp_size,
             lora_enabled=_lora_target_enabled(lora_targets, "language.mlp.gate_proj"),
             target_name="language.mlp.gate_proj",
+            hf_module_path=f"{prefix}.gate_proj",
             r=lora_r,
             alpha=lora_alpha,
             dropout=lora_dropout,
@@ -3827,6 +4251,7 @@ class TensorParallelQwenMLP(nn.Module):
             tp_size=tp_size,
             lora_enabled=_lora_target_enabled(lora_targets, "language.mlp.up_proj"),
             target_name="language.mlp.up_proj",
+            hf_module_path=f"{prefix}.up_proj",
             r=lora_r,
             alpha=lora_alpha,
             dropout=lora_dropout,
@@ -3841,6 +4266,7 @@ class TensorParallelQwenMLP(nn.Module):
             tp_size=tp_size,
             lora_enabled=_lora_target_enabled(lora_targets, "language.mlp.down_proj"),
             target_name="language.mlp.down_proj",
+            hf_module_path=f"{prefix}.down_proj",
             r=lora_r,
             alpha=lora_alpha,
             dropout=lora_dropout,
@@ -3866,13 +4292,41 @@ class LoRALinear(nn.Module):
         device: torch.device,
         dtype: torch.dtype,
         target_name: str | None = None,
+        hf_module_path: str | None = None,
+        base_weight_name: str | None = None,
+        shard_kind: str = "none",
+        row_start: int | None = None,
+        row_stop: int | None = None,
+        col_start: int | None = None,
+        col_stop: int | None = None,
+        row_indices: Iterable[int] | None = None,
+        peft_exportable: bool = True,
     ) -> None:
         super().__init__()
         out_features, in_features = weight.shape
         self.weight = nn.Parameter(weight.to(device=device, dtype=dtype), requires_grad=False)
-        self.bias = nn.Parameter(bias.to(device=device, dtype=dtype), requires_grad=False) if bias is not None else None
+        self.bias = (
+            nn.Parameter(bias.to(device=device, dtype=dtype), requires_grad=False)
+            if bias is not None
+            else None
+        )
         self.lora_target_name = str(target_name or "unknown")
+        self.hf_module_path = str(hf_module_path) if hf_module_path else None
+        self.base_weight_name = (
+            str(base_weight_name)
+            if base_weight_name
+            else (f"{self.hf_module_path}.weight" if self.hf_module_path else None)
+        )
+        self.lora_shard_kind = str(shard_kind or "none")
+        self.lora_row_start = row_start
+        self.lora_row_stop = row_stop
+        self.lora_col_start = col_start
+        self.lora_col_stop = col_stop
+        self.lora_row_indices = tuple(int(idx) for idx in row_indices) if row_indices else None
+        self.peft_exportable = bool(peft_exportable)
         self.lora_enabled = bool(lora_enabled and r > 0)
+        self.lora_r = int(r)
+        self.lora_alpha = int(alpha)
         self.scaling = float(alpha) / float(r) if r > 0 else 1.0
         self.dropout = nn.Dropout(dropout)
         if self.lora_enabled:
@@ -3899,8 +4353,16 @@ class LoRALinear(nn.Module):
         device: torch.device,
         dtype: torch.dtype,
         target_name: str | None = None,
+        hf_module_path: str | None = None,
+        base_weight_name: str | None = None,
+        peft_exportable: bool = True,
     ) -> "LoRALinear":
         dim = 0 if shard == "out" else 1
+        row_start = row_stop = col_start = col_stop = None
+        if shard == "out":
+            row_start, row_stop = _shard_bounds(weight.shape[0], tp_rank=tp_rank, tp_size=tp_size)
+        elif shard == "in":
+            col_start, col_stop = _shard_bounds(weight.shape[1], tp_rank=tp_rank, tp_size=tp_size)
         weight = _shard_tensor(weight, dim=dim, tp_rank=tp_rank, tp_size=tp_size)
         if bias is not None and shard == "out":
             bias = _shard_tensor(bias, dim=0, tp_rank=tp_rank, tp_size=tp_size)
@@ -3911,12 +4373,43 @@ class LoRALinear(nn.Module):
             bias,
             lora_enabled=lora_enabled,
             target_name=target_name,
+            hf_module_path=hf_module_path,
+            base_weight_name=base_weight_name,
+            shard_kind=shard,
+            row_start=row_start,
+            row_stop=row_stop,
+            col_start=col_start,
+            col_stop=col_stop,
+            peft_exportable=peft_exportable,
             r=r,
             alpha=alpha,
             dropout=dropout,
             device=device,
             dtype=dtype,
         )
+
+    def lora_metadata(self, module_name: str) -> dict[str, Any]:
+        if self.hf_module_path is None or self.base_weight_name is None:
+            raise RuntimeError(f"Enabled LoRA module {module_name} is missing HF module metadata")
+        return {
+            "module_name": module_name,
+            "lora_a_name": f"{module_name}.lora_a",
+            "lora_b_name": f"{module_name}.lora_b",
+            "target_name": self.lora_target_name,
+            "hf_module_path": self.hf_module_path,
+            "base_weight_name": self.base_weight_name,
+            "shard_kind": self.lora_shard_kind,
+            "row_start": self.lora_row_start,
+            "row_stop": self.lora_row_stop,
+            "col_start": self.lora_col_start,
+            "col_stop": self.lora_col_stop,
+            "row_indices": list(self.lora_row_indices)
+            if self.lora_row_indices is not None
+            else None,
+            "peft_exportable": self.peft_exportable,
+            "r": self.lora_r,
+            "alpha": self.lora_alpha,
+        }
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         output = F.linear(hidden_states, self.weight, self.bias)
@@ -3927,9 +4420,13 @@ class LoRALinear(nn.Module):
 
 
 class QwenRMSNorm(nn.Module):
-    def __init__(self, hidden_size: int, eps: float, device: torch.device, dtype: torch.dtype) -> None:
+    def __init__(
+        self, hidden_size: int, eps: float, device: torch.device, dtype: torch.dtype
+    ) -> None:
         super().__init__()
-        self.weight = nn.Parameter(torch.ones(hidden_size, device=device, dtype=dtype), requires_grad=False)
+        self.weight = nn.Parameter(
+            torch.ones(hidden_size, device=device, dtype=dtype), requires_grad=False
+        )
         self.eps = eps
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
@@ -3939,27 +4436,39 @@ class QwenRMSNorm(nn.Module):
 
 
 class Qwen35RMSNorm(nn.Module):
-    def __init__(self, hidden_size: int, eps: float, device: torch.device, dtype: torch.dtype) -> None:
+    def __init__(
+        self, hidden_size: int, eps: float, device: torch.device, dtype: torch.dtype
+    ) -> None:
         super().__init__()
-        self.weight = nn.Parameter(torch.zeros(hidden_size, device=device, dtype=dtype), requires_grad=False)
+        self.weight = nn.Parameter(
+            torch.zeros(hidden_size, device=device, dtype=dtype), requires_grad=False
+        )
         self.eps = eps
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        output = hidden_states.float() * torch.rsqrt(hidden_states.float().pow(2).mean(dim=-1, keepdim=True) + self.eps)
+        output = hidden_states.float() * torch.rsqrt(
+            hidden_states.float().pow(2).mean(dim=-1, keepdim=True) + self.eps
+        )
         output = output * (1.0 + self.weight.float())
         return output.to(hidden_states.dtype)
 
 
 class Qwen35RMSNormGated(nn.Module):
-    def __init__(self, hidden_size: int, eps: float, device: torch.device, dtype: torch.dtype) -> None:
+    def __init__(
+        self, hidden_size: int, eps: float, device: torch.device, dtype: torch.dtype
+    ) -> None:
         super().__init__()
-        self.weight = nn.Parameter(torch.ones(hidden_size, device=device, dtype=dtype), requires_grad=False)
+        self.weight = nn.Parameter(
+            torch.ones(hidden_size, device=device, dtype=dtype), requires_grad=False
+        )
         self.eps = eps
 
     def forward(self, hidden_states: torch.Tensor, gate: torch.Tensor) -> torch.Tensor:
         input_dtype = hidden_states.dtype
         hidden_states = hidden_states.float()
-        hidden_states = hidden_states * torch.rsqrt(hidden_states.pow(2).mean(dim=-1, keepdim=True) + self.eps)
+        hidden_states = hidden_states * torch.rsqrt(
+            hidden_states.pow(2).mean(dim=-1, keepdim=True) + self.eps
+        )
         hidden_states = self.weight * hidden_states.to(input_dtype)
         hidden_states = hidden_states * F.silu(gate.float())
         return hidden_states.to(input_dtype)
@@ -4000,11 +4509,23 @@ class SafetensorIndex:
 class CollatedExperience:
     def __init__(self, items: Iterable[Experience], device: torch.device) -> None:
         items = list(items)
-        self.sequences = pad_sequence([item.sequences for item in items], batch_first=True).to(device)
-        self.old_log_probs = pad_sequence([item.old_log_probs for item in items], batch_first=True).to(device)
-        self.advantages = pad_sequence([item.advantages for item in items], batch_first=True, padding_value=0.0).to(device)
-        self.attention_mask = pad_sequence([item.attention_mask for item in items], batch_first=True).bool().to(device)
-        self.action_mask = pad_sequence([item.action_mask for item in items], batch_first=True).bool().to(device)
+        self.sequences = pad_sequence([item.sequences for item in items], batch_first=True).to(
+            device
+        )
+        self.old_log_probs = pad_sequence(
+            [item.old_log_probs for item in items], batch_first=True
+        ).to(device)
+        self.advantages = pad_sequence(
+            [item.advantages for item in items], batch_first=True, padding_value=0.0
+        ).to(device)
+        self.attention_mask = (
+            pad_sequence([item.attention_mask for item in items], batch_first=True)
+            .bool()
+            .to(device)
+        )
+        self.action_mask = (
+            pad_sequence([item.action_mask for item in items], batch_first=True).bool().to(device)
+        )
         self.metadata = [item.metadata for item in items]
 
 
@@ -4037,8 +4558,18 @@ def _dtype_size(dtype: torch.dtype) -> int:
 
 def _shard_tensor(tensor: torch.Tensor, *, dim: int, tp_rank: int, tp_size: int) -> torch.Tensor:
     if tensor.shape[dim] % tp_size != 0:
-        raise ValueError(f"Cannot shard tensor shape {tuple(tensor.shape)} on dim={dim} by TP={tp_size}")
+        raise ValueError(
+            f"Cannot shard tensor shape {tuple(tensor.shape)} on dim={dim} by TP={tp_size}"
+        )
     return tensor.chunk(tp_size, dim=dim)[tp_rank].contiguous()
+
+
+def _shard_bounds(size: int, *, tp_rank: int, tp_size: int) -> tuple[int, int]:
+    if int(size) % int(tp_size) != 0:
+        raise ValueError(f"Cannot shard size {size} by TP={tp_size}")
+    chunk = int(size) // int(tp_size)
+    start = int(tp_rank) * chunk
+    return start, start + chunk
 
 
 def _select_head_rows(
@@ -4047,11 +4578,18 @@ def _select_head_rows(
     head_indices: Iterable[int],
     head_width: int,
 ) -> torch.Tensor:
+    indices = _head_row_indices(head_indices, head_width)
+    return tensor.index_select(
+        0, torch.tensor(indices, dtype=torch.long, device=tensor.device)
+    ).contiguous()
+
+
+def _head_row_indices(head_indices: Iterable[int], head_width: int) -> list[int]:
     indices: list[int] = []
     for head in head_indices:
         start = int(head) * int(head_width)
         indices.extend(range(start, start + int(head_width)))
-    return tensor.index_select(0, torch.tensor(indices, dtype=torch.long, device=tensor.device)).contiguous()
+    return indices
 
 
 class _TensorParallelAllReduce(torch.autograd.Function):
@@ -4104,13 +4642,21 @@ def _mean_present(values: Iterable[Any]) -> float | None:
     return sum(present) / len(present)
 
 
-def _rollout_timing_summary(tokenize_sec: float, chunk_timings: list[dict[str, float | int]]) -> dict[str, Any]:
+def _rollout_timing_summary(
+    tokenize_sec: float, chunk_timings: list[dict[str, float | int]]
+) -> dict[str, Any]:
     summary = {
         "tokenize_sec": round(float(tokenize_sec), 6),
-        "prefill_sec": round(sum(float(item.get("prefill_sec") or 0.0) for item in chunk_timings), 6),
+        "prefill_sec": round(
+            sum(float(item.get("prefill_sec") or 0.0) for item in chunk_timings), 6
+        ),
         "decode_sec": round(sum(float(item.get("decode_sec") or 0.0) for item in chunk_timings), 6),
-        "sampling_sec": round(sum(float(item.get("sampling_sec") or 0.0) for item in chunk_timings), 6),
-        "stop_check_sec": round(sum(float(item.get("stop_check_sec") or 0.0) for item in chunk_timings), 6),
+        "sampling_sec": round(
+            sum(float(item.get("sampling_sec") or 0.0) for item in chunk_timings), 6
+        ),
+        "stop_check_sec": round(
+            sum(float(item.get("stop_check_sec") or 0.0) for item in chunk_timings), 6
+        ),
         "decode_tokens": sum(int(item.get("decode_tokens") or 0) for item in chunk_timings),
     }
     for key in _PIPELINE_STAGE_TIMING_FLOAT_KEYS:
@@ -4266,7 +4812,9 @@ def _rope_cache(
     device: torch.device,
     dtype: torch.dtype,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    inv_freq = 1.0 / (theta ** (torch.arange(0, head_dim, 2, device=device, dtype=torch.float32) / head_dim))
+    inv_freq = 1.0 / (
+        theta ** (torch.arange(0, head_dim, 2, device=device, dtype=torch.float32) / head_dim)
+    )
     positions = torch.arange(seq_len, device=device, dtype=torch.float32)
     freqs = torch.outer(positions, inv_freq)
     emb = torch.cat((freqs, freqs), dim=-1)
@@ -4322,7 +4870,9 @@ def _causal_attention_mask(
     return causal.view(1, 1, query_len, key_len) & key_mask
 
 
-def _apply_mask_to_padding_states(hidden_states: torch.Tensor, attention_mask: torch.Tensor | None) -> torch.Tensor:
+def _apply_mask_to_padding_states(
+    hidden_states: torch.Tensor, attention_mask: torch.Tensor | None
+) -> torch.Tensor:
     if attention_mask is not None and attention_mask.shape[1] > 1 and attention_mask.shape[0] > 1:
         query_mask = attention_mask[:, -hidden_states.shape[1] :]
         return (hidden_states * query_mask[:, :, None]).to(hidden_states.dtype)
@@ -4338,7 +4888,11 @@ def _left_pad_last_dim(value: torch.Tensor, width: int) -> torch.Tensor:
 def _qwen35_cache_sequence_len(layer_cache: Any) -> int:
     if layer_cache is None:
         return 0
-    if len(layer_cache) >= 2 and hasattr(layer_cache[0], "shape") and len(layer_cache[0].shape) == 4:
+    if (
+        len(layer_cache) >= 2
+        and hasattr(layer_cache[0], "shape")
+        and len(layer_cache[0].shape) == 4
+    ):
         return int(layer_cache[0].shape[2])
     return 0
 
@@ -4358,7 +4912,9 @@ def _torch_causal_conv1d_update(
     state_len = conv_state.shape[-1]
     hidden_states_new = torch.cat([conv_state, hidden_states], dim=-1).to(weight.dtype)
     conv_state.copy_(hidden_states_new[:, :, -state_len:])
-    output = F.conv1d(hidden_states_new, weight.unsqueeze(1), bias=None, padding=0, groups=hidden_size)
+    output = F.conv1d(
+        hidden_states_new, weight.unsqueeze(1), bias=None, padding=0, groups=hidden_size
+    )
     if activation == "silu":
         output = F.silu(output)
     return output[:, :, -seq_len:].to(hidden_states.dtype)
@@ -4400,7 +4956,9 @@ def _torch_chunk_gated_delta_rule(
         for item in (query, key, value, k_beta, v_beta)
     ]
     g = g.reshape(g.shape[0], g.shape[1], -1, chunk_size)
-    mask = torch.triu(torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=query.device), diagonal=0)
+    mask = torch.triu(
+        torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=query.device), diagonal=0
+    )
     g = g.cumsum(dim=-1)
     decay_mask = ((g.unsqueeze(-1) - g.unsqueeze(-2)).tril().exp().float()).tril()
     attn = -((k_beta @ key.transpose(-1, -2)) * decay_mask).masked_fill(mask, 0)
@@ -4412,7 +4970,14 @@ def _torch_chunk_gated_delta_rule(
     value = attn @ v_beta
     k_cumdecay = attn @ (k_beta * g.exp().unsqueeze(-1))
     last_recurrent_state = (
-        torch.zeros(batch_size, num_heads, key_head_dim, value_head_dim, dtype=value.dtype, device=value.device)
+        torch.zeros(
+            batch_size,
+            num_heads,
+            key_head_dim,
+            value_head_dim,
+            dtype=value.dtype,
+            device=value.device,
+        )
         if initial_state is None
         else initial_state.to(value)
     )
@@ -4426,11 +4991,14 @@ def _torch_chunk_gated_delta_rule(
         core_attn_out[:, :, idx] = attn_inter + attn @ value_new
         last_recurrent_state = (
             last_recurrent_state * g[:, :, idx, -1, None, None].exp()
-            + (key_i * (g[:, :, idx, -1, None] - g[:, :, idx]).exp()[..., None]).transpose(-1, -2) @ value_new
+            + (key_i * (g[:, :, idx, -1, None] - g[:, :, idx]).exp()[..., None]).transpose(-1, -2)
+            @ value_new
         )
     if not output_final_state:
         last_recurrent_state = None
-    core_attn_out = core_attn_out.reshape(core_attn_out.shape[0], core_attn_out.shape[1], -1, core_attn_out.shape[-1])
+    core_attn_out = core_attn_out.reshape(
+        core_attn_out.shape[0], core_attn_out.shape[1], -1, core_attn_out.shape[-1]
+    )
     core_attn_out = core_attn_out[:, :, :sequence_length]
     return core_attn_out.transpose(1, 2).contiguous().to(initial_dtype), last_recurrent_state
 
@@ -4465,7 +5033,14 @@ def _torch_recurrent_gated_delta_rule(
         device=value.device,
     )
     last_recurrent_state = (
-        torch.zeros(batch_size, num_heads, key_head_dim, value_head_dim, dtype=value.dtype, device=value.device)
+        torch.zeros(
+            batch_size,
+            num_heads,
+            key_head_dim,
+            value_head_dim,
+            dtype=value.dtype,
+            device=value.device,
+        )
         if initial_state is None
         else initial_state.to(value)
     )
