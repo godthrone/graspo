@@ -3,9 +3,12 @@
 [English README](README.md)
 
 GRASPO 是一个基于 GRPO 思路改进的强化学习训练器，适用于可以做结构化校验的语言模型任务，例如 JSON 生成、信息抽取、分类、表单解析和工具调用参数生成。
+它面向基于 LoRA 的低成本结构化输出训练：冻结 base model，只训练紧凑的 LoRA adapter，并用可审计的规则 reward 从真实生成文本中判断好坏。
+内置 reward 会检查必要标记、解析 fenced JSON 或 tool-call 内容，把结构化字段和 `ground_truth` 对齐比较，再转成 GRASPO 需要的组内偏好信号。
 
 GRASPO 保留“同一个 prompt 采样多条 completion，并在组内比较 reward”的核心思想，同时加入更适合结构化输出训练的机制：
 
+- 使用 LoRA/native memory-aware 路径时，可在单张 80 GB GPU 上对 9B 级模型做强化学习训练；
 - rollout retry：低质量组先重试；
 - perfect-answer skip：已经稳定答对的 prompt 不再消耗 optimizer budget；
 - invalid 和 no-preference-gap filtering：丢弃没有有效偏好信号的组；
@@ -85,6 +88,23 @@ uv run graspo validate-reward --data data/sample.jsonl --limit 2
 - `image` / `images`：单张图片路径或图片路径列表；
 - `video` / `videos`：数据层可以解析，但生产训练前应单独 smoke；
 - 其它字段会作为 metadata。
+
+## Reward 计分方式
+
+GRASPO 当前提供一个内置结构化输出 reward。它是规则型、可审计的，适合目标答案为 JSON object 的任务。每条 completion 的计分流程分四步：
+
+1. 检查输出标记。根据 `reward` 配置，scorer 可以要求 `<think>...</think>`、fenced JSON Markdown block，以及 `<tool_call>...</tool_call>`。
+2. 抽取答案文本。answer 会从配置要求的标记区域里取出；如果 `check_json_markdown=false`，则直接把 answer 区域当作 JSON。
+3. 解析并比较 JSON。completion JSON 会和 `ground_truth` 做递归 dict/list 匹配。目标字段存在会得部分分，值完全相等会继续加分，额外字段会降低结构化匹配度。
+4. 归一化 reward。标记分、结构化内容分、完全正确 bonus，以及多余文本惩罚/奖励会合成 `reward`、`content_score` 和 `all_right`。
+
+几个关键输出：
+
+- `reward`：用于 GRASPO group decision、advantage 计算和 ReplayBuffer 训练的标量；
+- `content_score`：组过滤前的结构化内容匹配分；
+- `all_right`：只有所有检查目标都完全正确时才为 true。
+
+GRASPO 使用的是同一 rollout group 内的 reward 分布，而不是单条 completion 的绝对分数。有有效差异的组会进入训练；已经 perfect 的组可以跳过；没有 reward 方差或没有偏好差异的组会被丢弃或重试。`rollouts.readable.jsonl` 会记录 completion、抽取字段、reward 细节和 invalid reason，方便不用重新生成就检查 reward 行为。
 
 ## 配置说明
 
