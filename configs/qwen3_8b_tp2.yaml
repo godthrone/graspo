@@ -1,26 +1,26 @@
 backend: native-tp
 
 model:
-  model_path: ${MODEL_PATH}
+  model_path: models/Qwen3-8B
   trust_remote_code: true
   torch_dtype: bfloat16
+  attn_implementation: null
   gradient_checkpointing: true
   chat_template_kwargs:
     enable_thinking: false
 
 data:
-  train_path: ${DATA_PATH}
-  prompt_field: prompt
-  ground_truth_field: ground_truth
-  messages_field: messages
+  train_path: data/sample.jsonl
   max_prompt_length: 2048
 
 lora:
   r: 16
   alpha: 32
   dropout: 0.1
-  target_modules: ["q_proj", "v_proj"]
-  auto_target_modules: false
+  adapter_path: null
+  target_preset: language_safe
+  target_modules: null
+  auto_target_modules: true
   bias: none
   task_type: CAUSAL_LM
 
@@ -33,15 +33,16 @@ reward:
   content_reward_weight: 100
   anti_useless_str_reward_weight: 1
   anti_useless_str_half_reward_len: 100
+  answer_field: ground_truth
 
 training:
-  output_dir: ${OUTPUT_DIR}
+  output_dir: outputs/qwen3-8b-tp2
   seed: 42
   training_epoch_count: 100
-  max_steps: 10
-  rollout_prompt_queue_batch_size: 1
-  rollout_group_size: 2
-  optimize_completion_batch_size: 1
+  max_steps: -1
+  rollout_prompt_queue_batch_size: 2
+  rollout_group_size: 8
+  optimize_completion_batch_size: 4
   optimize_times_per_step: 4
   rollout_max_retry_times: 5
   learning_rate: 5.0e-6
@@ -51,22 +52,41 @@ training:
   max_new_tokens: 2048
   temperature: 1.0
   top_p: 1.0
-  save_steps: 1
+  save_steps: 20
   logging_steps: 1
   perfect_skip_reward_threshold: 1.0
   dataloader_num_workers: 0
+  resume_from_checkpoint: null
 
 backend_config:
   native_tp:
     tensor_model_parallel_size: 2
     pipeline_model_parallel_size: 1
+    placement_strategy: qwen3_tp
     sequence_parallel: false
     train_micro_batch_size: 1
     generation_micro_batch_size: 1
     use_kv_cache_for_rollout: true
-    rollout_kv_cache_max_reserved_fraction: 0.60
+    rollout_kv_cache_max_reserved_fraction: 0.90
     empty_cache_after_rollout_split: true
     empty_cache_before_train: false
     checkpoint_format: recoverable_lora_tp
     raw_log_enabled: true
     readable_log_enabled: true
+    synchronize_cuda_timing: false
+    pipeline_train_schedule: simple
+    pipeline_max_inflight_microbatches: 0
+
+export:
+  final_formats: []
+
+launch:
+  gpus: [0, 1]
+  nproc_per_node: null
+  nnodes: 1
+  node_rank: 0
+  master_addr: 127.0.0.1
+  master_port: 29500
+  python: null
+  torchrun: null
+  env: {}

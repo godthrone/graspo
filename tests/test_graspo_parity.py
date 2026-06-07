@@ -4,7 +4,7 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from graspo.core.graspo_parity import is_uniform_partial_content, lower_median  # noqa: E402
-from graspo.trainer.generation import generate_group  # noqa: E402
+from graspo.trainer.generation import generate_group, render_messages  # noqa: E402
 from graspo.trainer.loss import GRASPOLoss  # noqa: E402
 
 
@@ -34,7 +34,9 @@ def test_ppo_clip_loss_matches_original_formula():
     expected = -torch.min(surr1, surr2)
     expected = ((expected * action_mask).sum(dim=-1) / action_mask.sum(dim=-1)).mean()
 
-    actual = GRASPOLoss(policy_ratio_clip_eps=0.2)(log_probs, old_log_probs, advantages, action_mask)
+    actual = GRASPOLoss(policy_ratio_clip_eps=0.2)(
+        log_probs, old_log_probs, advantages, action_mask
+    )
 
     assert torch.allclose(actual, expected)
 
@@ -70,11 +72,50 @@ class FakeTokenizer:
         return ["decoded"] * sequences.shape[0]
 
 
+class FakeChatTokenizer:
+    chat_template = "template"
+
+    def __init__(self):
+        self.calls = []
+
+    def apply_chat_template(self, messages, **kwargs):
+        self.calls.append((messages, kwargs))
+        return "rendered"
+
+
+def test_render_messages_preserves_multiturn_messages_and_template_kwargs():
+    tokenizer = FakeChatTokenizer()
+    messages = [
+        {"role": "system", "content": "s"},
+        {"role": "user", "content": "q1"},
+        {"role": "assistant", "content": "a1"},
+        {"role": "user", "content": "q2"},
+    ]
+
+    rendered = render_messages(
+        tokenizer,
+        messages,
+        chat_template_kwargs={"enable_thinking": False},
+    )
+
+    assert rendered == "rendered"
+    assert tokenizer.calls == [
+        (
+            messages,
+            {
+                "tokenize": False,
+                "add_generation_prompt": True,
+                "enable_thinking": False,
+            },
+        )
+    ]
+
+
 def test_generate_group_action_mask_tracks_completion_after_padding():
     sequences, attention_mask, action_mask, completions, prompt_len = generate_group(
         model=FakeModel(),
         tokenizer=FakeTokenizer(),
-        prompt="q",
+        messages=[{"role": "user", "content": "q"}],
         group_size=2,
         device=torch.device("cpu"),
         max_new_tokens=4,
@@ -87,6 +128,9 @@ def test_generate_group_action_mask_tracks_completion_after_padding():
 
     assert prompt_len == 3
     assert sequences.tolist() == [[1, 2, 3, 4, 5], [1, 2, 3, 6, 0]]
-    assert attention_mask.tolist() == [[True, True, True, True, True], [True, True, True, True, False]]
+    assert attention_mask.tolist() == [
+        [True, True, True, True, True],
+        [True, True, True, True, False],
+    ]
     assert action_mask.tolist() == [[False, False, True, True], [False, False, True, False]]
     assert completions == ["decoded", "decoded"]

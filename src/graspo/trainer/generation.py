@@ -13,23 +13,28 @@ def ensure_tokenizer_ready(tokenizer: Any) -> None:
     tokenizer.padding_side = "left"
 
 
-def render_prompt(tokenizer: Any, prompt: str, chat_template_kwargs: dict[str, Any] | None = None) -> str:
+def render_messages(
+    tokenizer: Any,
+    messages: list[dict[str, Any]],
+    chat_template_kwargs: dict[str, Any] | None = None,
+) -> str:
     if getattr(tokenizer, "chat_template", None):
-        messages = [{"role": "user", "content": prompt}]
         return tokenizer.apply_chat_template(
             messages,
             tokenize=False,
             add_generation_prompt=True,
             **(chat_template_kwargs or {}),
         )
-    return prompt
+    return "\n\n".join(
+        f"{message.get('role', 'user')}: {message.get('content', '')}" for message in messages
+    )
 
 
 @torch.no_grad()
 def generate_group(
     model,
     tokenizer,
-    prompt: str,
+    messages: list[dict[str, Any]],
     group_size: int,
     device: torch.device,
     max_new_tokens: int,
@@ -39,7 +44,7 @@ def generate_group(
     synced_gpus: bool,
     chat_template_kwargs: dict[str, Any] | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, list[str], int]:
-    text = render_prompt(tokenizer, prompt, chat_template_kwargs)
+    text = render_messages(tokenizer, messages, chat_template_kwargs)
     prompt_len = 0
 
     # Micro-batch generation to avoid OOM from KV cache on large groups.
