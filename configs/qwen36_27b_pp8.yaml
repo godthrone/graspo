@@ -1,15 +1,16 @@
 backend: native-tp
 
 model:
-  model_path: ${MODEL_PATH}
+  model_path: models/Qwen3.6-27B
   trust_remote_code: true
   torch_dtype: bfloat16
+  attn_implementation: null
   gradient_checkpointing: true
   chat_template_kwargs:
     enable_thinking: false
 
 data:
-  train_path: ${DATA_PATH}
+  train_path: data/sample.jsonl
   prompt_field: prompt
   ground_truth_field: ground_truth
   messages_field: messages
@@ -19,8 +20,10 @@ lora:
   r: 16
   alpha: 32
   dropout: 0.1
-  target_modules: ["q_proj", "v_proj"]
-  auto_target_modules: false
+  adapter_path: null
+  target_preset: language_safe
+  target_modules: null
+  auto_target_modules: true
   bias: none
   task_type: CAUSAL_LM
 
@@ -33,9 +36,10 @@ reward:
   content_reward_weight: 100
   anti_useless_str_reward_weight: 1
   anti_useless_str_half_reward_len: 100
+  answer_field: ground_truth
 
 training:
-  output_dir: ${OUTPUT_DIR}
+  output_dir: outputs/qwen36-27b-pp8
   seed: 42
   training_epoch_count: 100
   max_steps: -1
@@ -55,6 +59,7 @@ training:
   logging_steps: 1
   perfect_skip_reward_threshold: 1.0
   dataloader_num_workers: 0
+  resume_from_checkpoint: null
 
 backend_config:
   native_tp:
@@ -71,3 +76,20 @@ backend_config:
     checkpoint_format: recoverable_lora_tp
     raw_log_enabled: true
     readable_log_enabled: true
+    synchronize_cuda_timing: false
+    pipeline_train_schedule: simple
+    pipeline_max_inflight_microbatches: 0
+
+export:
+  final_formats: []
+
+launch:
+  gpus: [0, 1, 2, 3, 4, 5, 6, 7]
+  nproc_per_node: null
+  nnodes: 1
+  node_rank: 0
+  master_addr: 127.0.0.1
+  master_port: 29500
+  python: null
+  torchrun: null
+  env: {}

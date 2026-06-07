@@ -8,6 +8,7 @@ src/*.egg-info/
 .pytest_tmp*/
 .pytest_verify_tmp/
 _pytest_basetemp_*/
+.tmp/
 .ruff_cache/
 .uv-cache/
 .coverage
