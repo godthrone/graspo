@@ -50,6 +50,7 @@ data/*.xlsx
 data/*.xls
 data/*.csv
 !data/sample.jsonl
+!data/sample_multimodal.jsonl
 *.xlsx
 *.xls
 .dataset/

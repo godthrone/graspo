@@ -120,9 +120,7 @@ class NativeTPGraspoTrainer:
                 "backend": self.backend_name,
                 "reason": self.selection.reason if self.selection is not None else "configured",
                 "dependency_boundary": (
-                    "PyTorch distributed TP only; no NeMo/vLLM/Ray/DeepSpeed/FSDP/DDP/Accelerate"
-                    if self.backend_name == "native-tp"
-                    else "single-process Hugging Face reference; not a production multi-card backend"
+                    "PyTorch distributed TP/PP only; no NeMo/vLLM/Ray/DeepSpeed/FSDP/DDP/Accelerate"
                 ),
                 "model_path": self.config.model.model_path,
                 "train_path": self.config.data.train_path,
@@ -130,12 +128,7 @@ class NativeTPGraspoTrainer:
             }
         )
 
-        samples = load_jsonl(
-            self.config.data.train_path,
-            prompt_field=self.config.data.prompt_field,
-            ground_truth_field=self.config.data.ground_truth_field,
-            messages_field=self.config.data.messages_field,
-        )
+        samples = load_jsonl(self.config.data.train_path)
         self.total_samples = len(samples)
         output_dir = Path(self.config.training.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -167,7 +160,6 @@ class NativeTPGraspoTrainer:
                     "rollout_kv_cache_max_reserved_fraction": self.config.native_tp.rollout_kv_cache_max_reserved_fraction,
                     "empty_cache_after_rollout_split": self.config.native_tp.empty_cache_after_rollout_split,
                     "synchronize_cuda_timing": self.config.native_tp.synchronize_cuda_timing,
-                    "legacy_config_alias_used": bool(self.config.training.legacy_config_aliases),
                 },
             }
         )
@@ -244,12 +236,11 @@ class NativeTPGraspoTrainer:
     def _rollout_queue_attempt(
         self, active: list[_QueuedSample], *, epoch: int
     ) -> list[_AttemptRecord]:
-        prompts = [state.sample.prompt for state in active]
         rollout_started_at = time.monotonic()
         generations = (
             self._generate_sample_groups([state.sample for state in active])
             if any(state.sample.media for state in active)
-            else self._generate_groups(prompts)
+            else self._generate_groups([state.sample.messages for state in active])
         )
         rollout_sec = time.monotonic() - rollout_started_at
         rollout_sec_per_prompt = rollout_sec / max(len(generations), 1)
@@ -324,11 +315,11 @@ class NativeTPGraspoTrainer:
             )
         return records
 
-    def _generate_groups(self, prompts: list[str]) -> list[NativeGeneration]:
+    def _generate_groups(self, message_batches: list[list[dict[str, Any]]]) -> list[NativeGeneration]:
         generate_groups = getattr(self.runtime, "generate_groups", None)
         if callable(generate_groups):
             generations = generate_groups(
-                prompts=prompts,
+                message_batches=message_batches,
                 rollout_group_size=self.config.training.rollout_group_size,
                 max_new_tokens=self.config.training.max_new_tokens,
                 max_prompt_length=self.config.data.max_prompt_length,
@@ -336,14 +327,14 @@ class NativeTPGraspoTrainer:
                 top_p=self.config.training.top_p,
                 chat_template_kwargs=self.config.model.chat_template_kwargs,
             )
-            if len(generations) != len(prompts):
+            if len(generations) != len(message_batches):
                 raise RuntimeError(
-                    f"native-tp generate_groups returned {len(generations)} groups for {len(prompts)} prompts"
+                    f"native-tp generate_groups returned {len(generations)} groups for {len(message_batches)} prompts"
                 )
             return generations
         return [
             self.runtime.generate_group(
-                prompt=prompt,
+                messages=messages,
                 rollout_group_size=self.config.training.rollout_group_size,
                 max_new_tokens=self.config.training.max_new_tokens,
                 max_prompt_length=self.config.data.max_prompt_length,
@@ -351,7 +342,7 @@ class NativeTPGraspoTrainer:
                 top_p=self.config.training.top_p,
                 chat_template_kwargs=self.config.model.chat_template_kwargs,
             )
-            for prompt in prompts
+            for messages in message_batches
         ]
 
     def _generate_sample_groups(self, samples: list[Sample]) -> list[NativeGeneration]:
@@ -616,16 +607,22 @@ class NativeTPGraspoTrainer:
         if not callable(loader):
             raise RuntimeError("Selected runtime does not support checkpoint resume")
         trainer_state = loader(checkpoint_dir)
-        migrated_from_legacy = trainer_state is None
         if trainer_state is None:
-            trainer_state = _migrate_legacy_trainer_state(checkpoint_dir)
+            raise RuntimeError(
+                "GRASPO checkpoint is missing trainer_state; latest-only resume requires "
+                "a current recoverable native checkpoint"
+            )
+        if trainer_state.get("format") != "graspo-native-tp-trainer-state":
+            raise RuntimeError(
+                "Unsupported trainer_state format: "
+                f"{trainer_state.get('format')!r}; latest-only resume requires current GRASPO"
+            )
         self._restore_trainer_state(trainer_state)
         self.resume_info = {
             "checkpoint": str(checkpoint_dir),
             "global_step": self.global_step,
             "epoch": self.current_epoch_stats.epoch,
             "samples_seen": self.current_epoch_stats.samples_seen,
-            "resume_migrated_from_legacy_checkpoint": migrated_from_legacy,
         }
         self._print_json(
             {
@@ -761,7 +758,8 @@ class NativeTPGraspoTrainer:
             "epoch": epoch,
             "step": self.global_step,
             "sample_index": self.sample_index,
-            "prompt": sample.prompt,
+            "messages": sample.messages,
+            "prompt_preview": sample.prompt_preview,
             "ground_truth": sample.ground_truth,
             "metadata": _safe_sample_metadata(sample),
             "completions": generation.completions,
@@ -945,109 +943,6 @@ def _epoch_stats_from_dict(raw: dict[str, Any]) -> NativeEpochStats:
         content_mean_sum=float(raw.get("content_mean_sum") or 0.0),
         best_reward=float(raw.get("best_reward") or 0.0),
     )
-
-
-def _migrate_legacy_trainer_state(checkpoint_dir: Path) -> dict[str, Any]:
-    step = _step_from_checkpoint_dir(checkpoint_dir)
-    event = _find_legacy_train_step(checkpoint_dir.parent, max_step=step)
-    if event is None:
-        raise RuntimeError(
-            "Legacy checkpoint does not include trainer_state and no matching train_step log "
-            f"was found near {checkpoint_dir}"
-        )
-    return {
-        "format": "graspo-native-tp-trainer-state",
-        "version": 0,
-        "global_step": int(event.get("step") or step),
-        "sample_index": _terminal_total(event.get("run")),
-        "total_samples": int((event.get("epoch") or {}).get("samples_total") or 0),
-        "epoch": int((event.get("epoch") or {}).get("epoch") or 0),
-        "run_stats": _legacy_run_stats(
-            event.get("run") or {}, global_step=int(event.get("step") or step)
-        ),
-        "epoch_stats": _legacy_epoch_stats(event.get("epoch") or {}),
-        "config_snapshot": {"migrated_from_legacy_checkpoint": True},
-    }
-
-
-def _step_from_checkpoint_dir(checkpoint_dir: Path) -> int:
-    name = checkpoint_dir.name
-    if name.startswith("step_"):
-        return int(name.split("_", 1)[1])
-    return 0
-
-
-def _find_legacy_train_step(output_dir: Path, *, max_step: int) -> dict[str, Any] | None:
-    best: dict[str, Any] | None = None
-    for filename in ("nohup.out", "train.log"):
-        path = output_dir / filename
-        if not path.exists():
-            continue
-        with path.open("r", encoding="utf-8", errors="ignore") as handle:
-            for line in handle:
-                start = line.find("{")
-                if start < 0:
-                    continue
-                try:
-                    event = json.loads(line[start:])
-                except json.JSONDecodeError:
-                    continue
-                if event.get("event") != "train_step":
-                    continue
-                step = int(event.get("step") or 0)
-                if max_step > 0 and step > max_step:
-                    continue
-                if best is None or step >= int(best.get("step") or 0):
-                    best = event
-    return best
-
-
-def _legacy_run_stats(run: dict[str, Any], *, global_step: int) -> dict[str, Any]:
-    decisions = run.get("decisions") or {}
-    terminal = decisions.get("terminal") or {}
-    trainable = decisions.get("trainable") or {}
-    rollout_attempts = decisions.get("rollout_attempts") or {}
-    return {
-        "total_groups": int(run.get("attempt_groups") or rollout_attempts.get("total") or 0),
-        "perfect_skipped": int(terminal.get("perfect_skip") or 0),
-        "retries": int(rollout_attempts.get("retry") or 0),
-        "invalid": int(terminal.get("invalid") or 0),
-        "invalid_no_preference_gap": int(terminal.get("invalid_no_preference_gap") or 0),
-        "trainable": int(trainable.get("total") or terminal.get("trainable") or 0),
-        "trainable_max_correct": int(trainable.get("max_correct") or 0),
-        "trainable_not_correct": int(trainable.get("not_correct") or 0),
-        "optimized_steps": int(run.get("optimized_steps") or global_step),
-    }
-
-
-def _legacy_epoch_stats(epoch: dict[str, Any]) -> dict[str, Any]:
-    decisions = epoch.get("decisions") or {}
-    terminal = decisions.get("terminal") or {}
-    trainable = decisions.get("trainable") or {}
-    rollout_attempts = decisions.get("rollout_attempts") or {}
-    attempt_groups = int(epoch.get("attempt_groups") or rollout_attempts.get("total") or 0)
-    return {
-        "epoch": int(epoch.get("epoch") or 0),
-        "samples_seen": int(epoch.get("samples_seen") or 0),
-        "attempt_groups": attempt_groups,
-        "completion_count": int(epoch.get("completions") or 0),
-        "perfect_skipped": int(terminal.get("perfect_skip") or 0),
-        "retries": int(rollout_attempts.get("retry") or 0),
-        "invalid": int(terminal.get("invalid") or 0),
-        "invalid_no_preference_gap": int(terminal.get("invalid_no_preference_gap") or 0),
-        "trainable": int(trainable.get("total") or terminal.get("trainable") or 0),
-        "trainable_max_correct": int(trainable.get("max_correct") or 0),
-        "trainable_not_correct": int(trainable.get("not_correct") or 0),
-        "reward_mean_sum": float(epoch.get("reward_mean") or 0.0) * attempt_groups,
-        "content_mean_sum": float(epoch.get("content_mean") or 0.0) * attempt_groups,
-        "best_reward": float(epoch.get("best_reward") or 0.0),
-    }
-
-
-def _terminal_total(run: Any) -> int:
-    decisions = (run or {}).get("decisions") or {}
-    terminal = decisions.get("terminal") or {}
-    return int(terminal.get("total") or 0)
 
 
 def _group_stats(rewards: list[float]) -> dict[str, float | int]:

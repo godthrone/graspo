@@ -89,19 +89,25 @@ def _make_record(
     return {
         "messages": [
             {
+                "role": "system",
+                "content": "Extract structured fields from synthetic ticket/device panel screenshots.",
+            },
+            {
+                "role": "user",
+                "content": "Use exact snake_case values for recommended_action.",
+            },
+            {
+                "role": "assistant",
+                "content": "Understood. I will preserve exact enum values from the schema.",
+            },
+            {
                 "role": "user",
                 "content": [
                     {"type": "image", "image": str(image_path)},
                     {"type": "text", "text": prompt},
                 ],
             },
-            {
-                "role": "assistant",
-                "content": "```json\n" + json.dumps(expected, separators=(",", ":")) + "\n```",
-            },
         ],
-        "prompt": prompt,
-        "image": str(image_path),
         "ground_truth": expected,
         "metadata": {"split": split, "synthetic": True, "task_family": "ticket_panel"},
     }

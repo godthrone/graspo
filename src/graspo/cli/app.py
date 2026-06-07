@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from graspo.core.data import convert_excel_to_samples, load_json, load_jsonl, write_jsonl
+from graspo.core.data import load_jsonl
 from graspo.core.reward import GraspoReward, RewardConfig
 from graspo.core.schema import GraspoConfig
 
@@ -23,23 +23,6 @@ class LaunchPlan:
     uses_torchrun: bool
     nproc_per_node: int
     nnodes: int
-
-
-def cmd_prepare_data(args: argparse.Namespace) -> int:
-    input_path = Path(args.input)
-    output_path = Path(args.output)
-    suffix = input_path.suffix.lower()
-    if suffix in {".xlsx", ".xls"}:
-        samples = convert_excel_to_samples(input_path)
-    elif suffix == ".jsonl":
-        samples = load_jsonl(input_path)
-    elif suffix == ".json":
-        samples = load_json(input_path)
-    else:
-        raise SystemExit("Only .json, .jsonl, .xlsx, and .xls are supported.")
-    write_jsonl(samples, output_path)
-    print(f"Wrote {len(samples)} samples to {output_path}")
-    return 0
 
 
 def cmd_validate_reward(args: argparse.Namespace) -> int:
@@ -90,52 +73,6 @@ def cmd_validate_reward(args: argparse.Namespace) -> int:
                 ensure_ascii=False,
             )
         )
-    return 0
-
-
-def cmd_analyze(args: argparse.Namespace) -> int:
-    groups: list[list[float]] = []
-    with Path(args.rewards).open("r", encoding="utf-8") as handle:
-        for line in handle:
-            if not line.strip():
-                continue
-            rewards = json.loads(line).get("rewards")
-            if isinstance(rewards, list) and rewards:
-                groups.append([float(value) for value in rewards])
-
-    invalid = sum(1 for group in groups if max(group) == min(group))
-    perfect = sum(1 for group in groups if max(group) >= 1.0)
-    effective = len(groups) - invalid
-    print(
-        json.dumps(
-            {
-                "groups": len(groups),
-                "invalid_rate": invalid / len(groups) if groups else 0,
-                "effective_groups": effective,
-                "effective_rate": effective / len(groups) if groups else 0,
-                "perfect_rate": perfect / len(groups) if groups else 0,
-            },
-            ensure_ascii=False,
-        )
-    )
-    return 0
-
-
-def cmd_train(args: argparse.Namespace) -> int:
-    config = GraspoConfig.from_yaml(args.config)
-    if args.backend:
-        config.backend = args.backend
-    if args.resume_from:
-        config.training.resume_from_checkpoint = args.resume_from
-    if args.lora_adapter:
-        config.lora.adapter_path = args.lora_adapter
-    from graspo.backends import create_trainer, select_backend
-
-    selection = select_backend(config)
-    if args.print_backend:
-        print(selection.to_json())
-        return 0
-    create_trainer(config, selection).train()
     return 0
 
 
@@ -203,7 +140,7 @@ def build_launch_plan(config_path: str | Path, config: GraspoConfig | None = Non
 
     env = _build_launch_env(config)
     python = str(launch.python or sys.executable)
-    train_command = [python, "-m", "graspo", "train", "--config", str(config_path)]
+    train_command = [python, "-m", "graspo.cli.train_worker", "--config", str(config_path)]
 
     uses_torchrun = selection.name == "native-tp" and nnodes * nproc_per_node > 1
     if uses_torchrun:
@@ -214,8 +151,7 @@ def build_launch_plan(config_path: str | Path, config: GraspoConfig | None = Non
             f"--master_addr={launch.master_addr}",
             f"--master_port={int(launch.master_port)}",
             "-m",
-            "graspo",
-            "train",
+            "graspo.cli.train_worker",
             "--config",
             str(config_path),
         ]
@@ -259,16 +195,13 @@ def _validate_launch_world(
     nproc_per_node: int,
 ) -> None:
     actual_world = nnodes * nproc_per_node
-    if backend == "native-tp":
-        expected_world = _native_world_size(config)
-        if actual_world != expected_world:
-            raise SystemExit(
-                "native-tp launch world size must match "
-                "native tensor/pipeline parallel size "
-                f"({actual_world} != {expected_world})"
-            )
-    elif actual_world != 1:
-        raise SystemExit("hf-reference launch must use a single process")
+    expected_world = _native_world_size(config)
+    if actual_world != expected_world:
+        raise SystemExit(
+            "native-tp launch world size must match "
+            "native tensor/pipeline parallel size "
+            f"({actual_world} != {expected_world})"
+        )
 
     gpus = _format_gpus(config.launch.gpus)
     if gpus is not None and len(gpus.split(",")) != nproc_per_node:
@@ -345,11 +278,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="graspo", description="GRASPO training utilities.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    prepare = subparsers.add_parser("prepare-data", help="Convert JSONL/XLSX to standard JSONL.")
-    prepare.add_argument("--input", "-i", required=True)
-    prepare.add_argument("--output", "-o", required=True)
-    prepare.set_defaults(func=cmd_prepare_data)
-
     validate = subparsers.add_parser("validate-reward", help="Validate reward on local data.")
     validate.add_argument("--data", "-d", required=True)
     validate.add_argument("--completions", "-c")
@@ -360,31 +288,9 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--limit", type=int, default=20)
     validate.set_defaults(func=cmd_validate_reward)
 
-    analyze = subparsers.add_parser("analyze", help="Analyze rollout reward groups.")
-    analyze.add_argument("--rewards", "-r", required=True)
-    analyze.set_defaults(func=cmd_analyze)
-
     launch = subparsers.add_parser("launch", help="Launch training from a single YAML config.")
     launch.add_argument("--config", "-c", required=True)
     launch.set_defaults(func=cmd_launch)
-
-    train = subparsers.add_parser("train", help="Start training.")
-    train.add_argument("--config", "-c", required=True)
-    train.add_argument("--backend", choices=["auto", "native-tp", "hf-reference"])
-    train.add_argument(
-        "--resume-from",
-        help="Resume native-tp training from a recoverable checkpoint directory.",
-    )
-    train.add_argument(
-        "--lora-adapter",
-        help="Warm-start native LoRA weights from a strict PEFT adapter directory.",
-    )
-    train.add_argument(
-        "--print-backend",
-        action="store_true",
-        help="Resolve backend selection and exit without starting training.",
-    )
-    train.set_defaults(func=cmd_train)
 
     export = subparsers.add_parser(
         "export", help="Export a native GRASPO checkpoint to a portable model artifact."

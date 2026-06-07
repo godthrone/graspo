@@ -34,6 +34,58 @@ class _TinyNativeModel(torch.nn.Module):
         return [self.proj.lora_metadata("proj")]
 
 
+class _TinyFusedNativeModel(torch.nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.q = LoRALinear(
+            torch.zeros(2, 4),
+            None,
+            lora_enabled=True,
+            r=1,
+            alpha=2,
+            dropout=0.0,
+            device=torch.device("cpu"),
+            dtype=torch.float32,
+            target_name="language.linear_attn.q_proj",
+            hf_module_path="model.layers.0.linear_attn.in_proj_qkv",
+        )
+        self.v = LoRALinear(
+            torch.zeros(2, 4),
+            None,
+            lora_enabled=True,
+            r=1,
+            alpha=2,
+            dropout=0.0,
+            device=torch.device("cpu"),
+            dtype=torch.float32,
+            target_name="language.linear_attn.v_proj",
+            hf_module_path="model.layers.0.linear_attn.in_proj_qkv",
+        )
+
+    def lora_tensor_metadata(self):
+        q = self.q.lora_metadata("q")
+        q.update(
+            {
+                "base_weight_name": "model.layers.0.linear_attn.in_proj_qkv.weight",
+                "shard_kind": "rows",
+                "row_start": 0,
+                "row_stop": 2,
+                "peft_exportable": False,
+            }
+        )
+        v = self.v.lora_metadata("v")
+        v.update(
+            {
+                "base_weight_name": "model.layers.0.linear_attn.in_proj_qkv.weight",
+                "shard_kind": "rows",
+                "row_start": 4,
+                "row_stop": 6,
+                "peft_exportable": False,
+            }
+        )
+        return [q, v]
+
+
 def test_load_peft_adapter_into_native_model(tmp_path):
     adapter = tmp_path / "adapter"
     adapter.mkdir()
@@ -133,85 +185,49 @@ def test_export_merged_hf_from_native_checkpoint_adds_lora_delta(tmp_path):
     assert (output / "config.json").exists()
 
 
-def test_export_merged_hf_infers_metadata_for_legacy_lora_state_dict(tmp_path):
+def test_export_merged_hf_requires_current_lora_metadata(tmp_path):
     base = tmp_path / "base"
     base.mkdir()
     (base / "config.json").write_text("{}", encoding="utf-8")
-    qkv = torch.zeros(6, 4)
-    save_file(
-        {"model.language_model.layers.0.linear_attn.in_proj_qkv.weight": qkv},
-        str(base / "model.safetensors"),
-    )
-    checkpoint = tmp_path / "final"
-    checkpoint.mkdir()
-    for tp_rank in (0, 1):
-        _write_payload(
-            checkpoint / f"rank_0000{tp_rank}_tp_0{tp_rank}_pp_00.pt",
-            metadata=None,
-            state={
-                "layers.0.token_mixer.q_proj.lora_a": torch.ones(1, 4),
-                "layers.0.token_mixer.q_proj.lora_b": torch.ones(1, 1),
-                "layers.0.token_mixer.v_proj.lora_a": torch.ones(1, 4),
-                "layers.0.token_mixer.v_proj.lora_b": torch.full((1, 1), 2.0),
-            },
-            tp_rank=tp_rank,
-            tp_size=2,
-            r=1,
-            alpha=2,
-        )
-
-    output = tmp_path / "merged"
-    export_merged_hf_from_checkpoint(checkpoint, output, base_model_path=base)
-
-    merged = load_file(str(output / "model.safetensors"), device="cpu")
-    actual = merged["model.language_model.layers.0.linear_attn.in_proj_qkv.weight"]
-    expected = torch.zeros(6, 4)
-    expected[0] = 2
-    expected[1] = 2
-    expected[4] = 4
-    expected[5] = 4
-    assert torch.equal(actual, expected)
-
-
-def test_export_merged_hf_maps_legacy_pp_local_layer_indices(tmp_path):
-    base = tmp_path / "base"
-    base.mkdir()
-    (base / "config.json").write_text("{}", encoding="utf-8")
-    save_file(
-        {"model.language_model.layers.5.linear_attn.in_proj_qkv.weight": torch.zeros(6, 4)},
-        str(base / "model.safetensors"),
-    )
+    save_file({"model.layers.0.self_attn.q_proj.weight": torch.zeros(3, 4)}, str(base / "model.safetensors"))
     checkpoint = tmp_path / "final"
     checkpoint.mkdir()
     _write_payload(
-        checkpoint / "rank_00001_tp_00_pp_01.pt",
+        checkpoint / "rank_00000_tp_00_pp_00.pt",
         metadata=None,
         state={
-            "layers.0.token_mixer.q_proj.lora_a": torch.ones(1, 4),
-            "layers.0.token_mixer.q_proj.lora_b": torch.ones(2, 1),
+            "layers.0.self_attn.q_proj.lora_a": torch.ones(2, 4),
+            "layers.0.self_attn.q_proj.lora_b": torch.ones(3, 2),
         },
-        tp_rank=0,
-        tp_size=1,
-        pp_rank=1,
-        pp_size=2,
-        local_layer_indices=[5],
-        r=1,
-        alpha=2,
     )
 
-    output = tmp_path / "merged"
-    export_merged_hf_from_checkpoint(checkpoint, output, base_model_path=base)
-
-    merged = load_file(str(output / "model.safetensors"), device="cpu")
-    actual = merged["model.language_model.layers.5.linear_attn.in_proj_qkv.weight"]
-    expected = torch.zeros(6, 4)
-    expected[0:2] = 2
-    assert torch.equal(actual, expected)
+    with pytest.raises(ValueError, match="lora_tensor_metadata"):
+        export_merged_hf_from_checkpoint(checkpoint, tmp_path / "merged", base_model_path=base)
 
 
-def test_export_peft_adapter_fails_for_fused_split_target(tmp_path):
+def test_export_peft_adapter_requires_current_lora_metadata(tmp_path):
     checkpoint = tmp_path / "step_1"
     checkpoint.mkdir()
+    _write_payload(
+        checkpoint / "rank_00000_tp_00_pp_00.pt",
+        metadata=None,
+        state={
+            "layers.0.self_attn.q_proj.lora_a": torch.ones(2, 4),
+            "layers.0.self_attn.q_proj.lora_b": torch.ones(3, 2),
+        },
+    )
+
+    with pytest.raises(ValueError, match="lora_tensor_metadata"):
+        export_peft_adapter_from_checkpoint(checkpoint, tmp_path / "peft")
+
+
+def test_export_peft_adapter_combines_fused_split_target(tmp_path):
+    checkpoint = tmp_path / "step_1"
+    checkpoint.mkdir()
+    q_a = torch.ones(1, 4)
+    q_b = torch.ones(2, 1)
+    v_a = torch.full((1, 4), 2.0)
+    v_b = torch.full((2, 1), 3.0)
     _write_payload(
         checkpoint / "rank_00000_tp_00_pp_00.pt",
         metadata=[
@@ -220,17 +236,107 @@ def test_export_peft_adapter_fails_for_fused_split_target(tmp_path):
                 hf_module_path="model.language_model.layers.0.linear_attn.in_proj_qkv",
                 base_weight_name="model.language_model.layers.0.linear_attn.in_proj_qkv.weight",
                 target_name="language.linear_attn.q_proj",
+                shard_kind="rows",
+                row_start=0,
+                row_stop=2,
                 peft_exportable=False,
+                r=1,
+                alpha=2,
+            ),
+            _record(
+                module_name="layers.0.token_mixer.v_proj",
+                hf_module_path="model.language_model.layers.0.linear_attn.in_proj_qkv",
+                base_weight_name="model.language_model.layers.0.linear_attn.in_proj_qkv.weight",
+                target_name="language.linear_attn.v_proj",
+                shard_kind="rows",
+                row_start=4,
+                row_stop=6,
+                peft_exportable=False,
+                r=1,
+                alpha=2,
             )
         ],
         state={
-            "layers.0.token_mixer.q_proj.lora_a": torch.ones(2, 4),
-            "layers.0.token_mixer.q_proj.lora_b": torch.ones(3, 2),
+            "layers.0.token_mixer.q_proj.lora_a": q_a,
+            "layers.0.token_mixer.q_proj.lora_b": q_b,
+            "layers.0.token_mixer.v_proj.lora_a": v_a,
+            "layers.0.token_mixer.v_proj.lora_b": v_b,
         },
+        r=1,
+        alpha=2,
     )
 
-    with pytest.raises(ValueError, match="merged-hf"):
-        export_peft_adapter_from_checkpoint(checkpoint, tmp_path / "peft")
+    output = tmp_path / "peft"
+    export_peft_adapter_from_checkpoint(checkpoint, output)
+
+    config = json.loads((output / "adapter_config.json").read_text(encoding="utf-8"))
+    tensors = load_file(str(output / "adapter_model.safetensors"), device="cpu")
+    metadata = json.loads((output / "graspo_adapter_metadata.json").read_text(encoding="utf-8"))
+    key_a = "base_model.model.model.language_model.layers.0.linear_attn.in_proj_qkv.lora_A.weight"
+    key_b = "base_model.model.model.language_model.layers.0.linear_attn.in_proj_qkv.lora_B.weight"
+    assert config["r"] == 2
+    assert config["lora_alpha"] == 2
+    assert tensors[key_a].shape == (2, 4)
+    assert tensors[key_b].shape == (6, 2)
+    assert torch.equal(tensors[key_b][0:2, 0:1], q_b * 2)
+    assert torch.equal(tensors[key_b][4:6, 1:2], v_b * 2)
+    assert metadata["modules"]["model.language_model.layers.0.linear_attn.in_proj_qkv"]
+
+
+def test_load_graspo_peft_adapter_into_native_fused_split_model(tmp_path):
+    checkpoint = tmp_path / "step_1"
+    checkpoint.mkdir()
+    q_a = torch.ones(1, 4)
+    q_b = torch.ones(2, 1)
+    v_a = torch.full((1, 4), 2.0)
+    v_b = torch.full((2, 1), 3.0)
+    _write_payload(
+        checkpoint / "rank_00000_tp_00_pp_00.pt",
+        metadata=[
+            _record(
+                module_name="layers.0.token_mixer.q_proj",
+                hf_module_path="model.layers.0.linear_attn.in_proj_qkv",
+                base_weight_name="model.layers.0.linear_attn.in_proj_qkv.weight",
+                target_name="language.linear_attn.q_proj",
+                shard_kind="rows",
+                row_start=0,
+                row_stop=2,
+                peft_exportable=False,
+                r=1,
+                alpha=2,
+            ),
+            _record(
+                module_name="layers.0.token_mixer.v_proj",
+                hf_module_path="model.layers.0.linear_attn.in_proj_qkv",
+                base_weight_name="model.layers.0.linear_attn.in_proj_qkv.weight",
+                target_name="language.linear_attn.v_proj",
+                shard_kind="rows",
+                row_start=4,
+                row_stop=6,
+                peft_exportable=False,
+                r=1,
+                alpha=2,
+            ),
+        ],
+        state={
+            "layers.0.token_mixer.q_proj.lora_a": q_a,
+            "layers.0.token_mixer.q_proj.lora_b": q_b,
+            "layers.0.token_mixer.v_proj.lora_a": v_a,
+            "layers.0.token_mixer.v_proj.lora_b": v_b,
+        },
+        r=1,
+        alpha=2,
+    )
+    adapter = tmp_path / "peft"
+    export_peft_adapter_from_checkpoint(checkpoint, adapter)
+
+    model = _TinyFusedNativeModel()
+    load_peft_adapter_into_native_model(model, adapter, base_model_path="/models/base")
+
+    assert torch.equal(model.q.lora_a, q_a)
+    assert torch.equal(model.q.lora_b, q_b)
+    assert torch.equal(model.v.lora_a, v_a)
+    assert torch.equal(model.v.lora_b, v_b)
 
 
 def test_native_runtime_rejects_resume_checkpoint_with_peft_adapter():
@@ -280,6 +386,11 @@ def _record(
     base_weight_name=None,
     target_name="language.self_attn.q_proj",
     shard_kind="none",
+    row_start=None,
+    row_stop=None,
+    col_start=None,
+    col_stop=None,
+    row_indices=None,
     peft_exportable=True,
     alpha=4,
     r=2,
@@ -292,11 +403,11 @@ def _record(
         "hf_module_path": hf_module_path,
         "base_weight_name": base_weight_name or f"{hf_module_path}.weight",
         "shard_kind": shard_kind,
-        "row_start": None,
-        "row_stop": None,
-        "col_start": None,
-        "col_stop": None,
-        "row_indices": None,
+        "row_start": row_start,
+        "row_stop": row_stop,
+        "col_start": col_start,
+        "col_stop": col_stop,
+        "row_indices": row_indices,
         "peft_exportable": peft_exportable,
         "r": r,
         "alpha": alpha,

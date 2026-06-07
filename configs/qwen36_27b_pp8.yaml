@@ -11,9 +11,6 @@ model:
 
 data:
   train_path: data/sample.jsonl
-  prompt_field: prompt
-  ground_truth_field: ground_truth
-  messages_field: messages
   max_prompt_length: 2048
 
 lora:

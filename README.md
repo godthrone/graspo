@@ -40,12 +40,6 @@ cd graspo
 uv sync --extra dev --python 3.11
 ```
 
-Install the optional data extra only if you need Excel conversion:
-
-```bash
-uv sync --extra dev --extra data --python 3.11
-```
-
 ## Quick Start
 
 Edit the root sample config:
@@ -82,27 +76,33 @@ uv run graspo validate-reward --data data/sample.jsonl --limit 2
 
 ## Data Format
 
-Training data is JSONL. Each line is one prompt:
+Training data is JSONL. Each line is one prompt/context represented as chat
+messages plus a reward target:
 
 ```jsonl
-{"prompt":"Extract JSON with the APN and fault number.\nTicket: user 13800138000 cannot use apn cmnet.","ground_truth":{"APN":"cmnet","fault_number":"13800138000"}}
+{"messages":[{"role":"system","content":"You extract structured telecom ticket fields as fenced JSON."},{"role":"user","content":"Ticket: user 13800138000 cannot use apn cmnet."},{"role":"assistant","content":"I will identify the phone number and APN from the ticket."},{"role":"user","content":"Extract JSON with the APN and fault number."}],"ground_truth":{"APN":"cmnet","fault_number":"13800138000"}}
 ```
 
-Chat-style and multimodal records are also accepted:
+Multimodal records use the same `messages` field and preserve message roles and
+content order:
 
 ```jsonl
-{"messages":[{"role":"user","content":[{"type":"image","image":"images/panel_0001.png"},{"type":"text","text":"Extract the ticket fields as strict JSON."}]}],"ground_truth":{"ticket_id":"T-0001","status":"critical"}}
+{"messages":[{"role":"system","content":"Extract fields from ticket screenshots."},{"role":"user","content":"Use exact snake_case values."},{"role":"assistant","content":"Understood."},{"role":"user","content":[{"type":"image","image":"images/panel_0001.png"},{"type":"text","text":"Extract the ticket fields as strict JSON."}]}],"ground_truth":{"ticket_id":"T-0001","status":"critical"}}
 ```
 
 Supported fields:
 
-- `prompt`: plain text prompt;
-- `ground_truth`: expected structured output, usually a JSON object;
-- `messages`: optional chat messages for tokenizer chat templates;
-- `image` / `images`: one image path or a list of image paths;
-- `video` / `videos`: parsed by the data layer, but should be smoke-tested
-  before production use;
+- `ground_truth`: expected structured output as a JSON object;
+- `messages`: required prompt/context messages for tokenizer or processor chat templates;
+- image/video items inside `messages[].content`: parsed by the data layer for
+  multimodal routing; image training is supported, while video should be
+  smoke-tested before production use;
 - extra fields are kept as metadata.
+
+The final message must not have role `assistant`; `ground_truth` is the reward
+target and must not be leaked into the input messages. GRASPO only accepts JSONL
+records with `messages` and JSON-object `ground_truth`; plain `prompt`, JSON,
+Excel, and top-level media fields are not supported.
 
 ## Reward Scoring
 
@@ -144,10 +144,8 @@ complete public example.
 
 ### `backend`
 
-- `native-tp`: production multi-GPU route.
-- `hf-reference`: single-process Hugging Face reference backend for parity and
-  small smoke tests.
-- `auto`: select a backend from local GPU/model hints.
+- `native-tp`: the only supported training backend. It uses native TP/PP LoRA
+  placement and frozen base weights.
 
 ### `model`
 
@@ -161,9 +159,6 @@ complete public example.
 ### `data`
 
 - `train_path`: JSONL training file.
-- `prompt_field`: plain prompt field name.
-- `ground_truth_field`: expected answer field name.
-- `messages_field`: chat messages field name.
 - `max_prompt_length`: prompt truncation/tokenization limit.
 
 ### `lora`
@@ -275,9 +270,9 @@ Preset values:
   layers.
 
 Explicit `lora.target_modules` may use canonical names such as
-`language.self_attn.q_proj`, legacy leaf names such as `q_proj`, or glob
-patterns such as `visual.blocks.*.attn.*`. Resolution is fail-closed: unknown
-targets, unsupported conv/norm parameters, and empty matches stop before
+`language.self_attn.q_proj` or glob patterns such as `visual.blocks.*.attn.*`.
+Leaf aliases such as `q_proj` are not accepted. Resolution is fail-closed:
+unknown targets, unsupported conv/norm parameters, and empty matches stop before
 training. Native checkpoints store the resolved LoRA target signature and reject
 resume with a different target configuration.
 
@@ -299,16 +294,15 @@ uv run graspo export --config config_example.yaml --checkpoint outputs/example-r
 ```
 
 `peft-adapter` reconstructs PEFT `adapter_config.json` and
-`adapter_model.safetensors` from GRASPO native rank shards. It only supports
-targets that PEFT can express one-to-one.
+`adapter_model.safetensors` from GRASPO native rank shards. For fused/split
+native targets, GRASPO writes an additional `graspo_adapter_metadata.json` so
+GRASPO can warm-start those adapters losslessly. Standard PEFT tools can read
+the adapter tensors, but the GRASPO metadata is required to map fused/split
+targets back into native training modules without ambiguity.
 
 `merged-hf` streams the base HF safetensors on CPU, applies LoRA deltas, copies
 tokenizer/config sidecar files, and writes a HF-compatible merged model
 directory.
-
-Qwen3.5/Qwen3.6 fused or split native targets that cannot be represented as a
-strict PEFT adapter fail closed during `peft-adapter` export. Use `merged-hf`
-for those checkpoints.
 
 Exported PEFT adapters and merged full models are deployment/compatibility
 artifacts. They do not contain optimizer, RNG, replay buffer, or trainer state,
@@ -319,7 +313,7 @@ and cannot replace `step_*` or `final` for full training resume.
 Each run writes to `training.output_dir`:
 
 - `train.log`: compact rank-0 training events;
-- `rollouts.readable.jsonl`: human-readable prompt, completion, reward, and
+- `rollouts.readable.jsonl`: human-readable messages, completion, reward, and
   debug details;
 - `rollouts.raw.jsonl`: replay tensors, masks, old logprobs, advantages, and
   reward metadata;
