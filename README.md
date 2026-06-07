@@ -5,10 +5,18 @@
 GRASPO is a GRPO-style reinforcement-learning trainer for language-model tasks
 whose answers can be checked structurally, such as JSON generation, information
 extraction, classification, form parsing, and tool-call argument generation.
+It is designed for low-cost LoRA-based structured-output training: keep the base
+model frozen, train only compact LoRA adapters, and use reward rules that can be
+audited from the generated text.
+The built-in reward checks required markers, parses fenced JSON or tool-call
+payloads, compares structured fields against `ground_truth`, and turns the
+result into group-level preference signals for GRASPO.
 
 GRASPO keeps the useful GRPO idea of comparing multiple completions for the same
 prompt, then adds production-oriented behavior for structured outputs:
 
+- practical RL fine-tuning for 9B-class models on a single 80 GB GPU when using
+  the LoRA/native memory-aware path;
 - rollout retry when a group is too weak to train on;
 - perfect-answer skip so solved prompts do not consume optimizer budget;
 - invalid and no-preference-gap filtering for groups with no useful reward
@@ -95,6 +103,39 @@ Supported fields:
 - `video` / `videos`: parsed by the data layer, but should be smoke-tested
   before production use;
 - extra fields are kept as metadata.
+
+## Reward Scoring
+
+GRASPO currently ships one built-in structured-output reward. It is rule-based,
+auditable, and designed for tasks where the target answer is a JSON object. A
+completion is scored in four steps:
+
+1. Check output markers. Depending on `reward` config, the scorer can require
+   `<think>...</think>`, fenced JSON Markdown blocks, and
+   `<tool_call>...</tool_call>` sections.
+2. Extract answer text. The answer is read from the configured marker region;
+   if `check_json_markdown=false`, the full answer region is treated as JSON.
+3. Parse and compare JSON. Parsed completion JSON is compared with
+   `ground_truth` using recursive dictionary/list matching. Fields present in
+   the target get partial credit; exact values get additional credit; unexpected
+   extra keys reduce the structural match.
+4. Normalize reward. Marker score, structured content score, perfect-match
+   bonus, and the extra-text penalty/bonus are combined into `reward`,
+   `content_score`, and `all_right`.
+
+The important outputs are:
+
+- `reward`: scalar used for GRASPO group decisions, advantage calculation, and
+  ReplayBuffer training;
+- `content_score`: normalized structured-content match before group filtering;
+- `all_right`: true only when every checked target is fully correct.
+
+GRASPO uses the reward distribution inside each rollout group, not just one
+absolute score. Groups with useful differences become trainable; already-perfect
+groups can be skipped; groups with no reward variance or no preference gap are
+discarded or retried. The readable rollout log stores the completion, extracted
+fields, reward details, and invalid reason so reward behavior can be inspected
+without rerunning generation.
 
 ## Configuration
 
