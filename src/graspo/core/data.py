@@ -14,7 +14,7 @@ def sample_from_record(record: dict[str, Any]) -> Sample:
         raise ValueError(
             "removed input field(s): "
             + ", ".join(present_removed)
-            + "; use messages + ground_truth JSONL"
+            + "; use messages + optional tools + ground_truth JSONL"
         )
     messages = _validate_messages(record.get("messages"))
 
@@ -25,11 +25,20 @@ def sample_from_record(record: dict[str, Any]) -> Sample:
     if not isinstance(ground_truth, dict):
         raise ValueError("record 'ground_truth' must be a JSON object")
 
+    tools = _validate_tools(record.get("tools"))
     media = _messages_media(messages)
     metadata = {
-        key: value for key, value in record.items() if key not in {"messages", "ground_truth"}
+        key: value
+        for key, value in record.items()
+        if key not in {"messages", "ground_truth", "tools"}
     }
-    return Sample(messages=messages, ground_truth=ground_truth, metadata=metadata, media=media)
+    return Sample(
+        messages=messages,
+        ground_truth=ground_truth,
+        tools=tools,
+        metadata=metadata,
+        media=media,
+    )
 
 
 def _validate_messages(value: Any) -> list[dict[str, Any]]:
@@ -50,6 +59,19 @@ def _validate_messages(value: Any) -> list[dict[str, Any]]:
             "messages must be prompt/context only; final assistant messages leak the target"
         )
     return messages
+
+
+def _validate_tools(value: Any) -> list[dict[str, Any]] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise ValueError("record 'tools' must be a list of JSON objects")
+    tools: list[dict[str, Any]] = []
+    for idx, tool in enumerate(value):
+        if not isinstance(tool, dict):
+            raise ValueError(f"tools[{idx}] must be an object")
+        tools.append(dict(tool))
+    return tools
 
 
 def _messages_media(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:

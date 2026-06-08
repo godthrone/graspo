@@ -53,6 +53,7 @@ def readable_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "attempt_index": payload.get("attempt_index"),
         "max_attempts": payload.get("max_attempts"),
         "messages": payload.get("messages"),
+        "tools": payload.get("tools"),
         "prompt_preview": payload.get("prompt_preview"),
         "ground_truth": payload.get("ground_truth"),
         "decision": payload.get("decision"),

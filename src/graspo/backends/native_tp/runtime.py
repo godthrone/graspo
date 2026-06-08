@@ -57,6 +57,7 @@ class NativeTPRuntimeProtocol(Protocol):
         self,
         *,
         messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
         rollout_group_size: int,
         max_new_tokens: int,
         max_prompt_length: int,
@@ -69,6 +70,7 @@ class NativeTPRuntimeProtocol(Protocol):
         self,
         *,
         message_batches: list[list[dict[str, Any]]],
+        tool_batches: list[list[dict[str, Any]] | None] | None = None,
         rollout_group_size: int,
         max_new_tokens: int,
         max_prompt_length: int,
@@ -160,7 +162,13 @@ class NativeTPRuntime:
         if callable(generate_groups):
             return generate_groups(**kwargs)
         message_batches = list(kwargs.pop("message_batches"))
-        return [adapter.generate_group(messages=messages, **kwargs) for messages in message_batches]
+        tool_batches = kwargs.pop("tool_batches", None)
+        if tool_batches is None:
+            tool_batches = [None] * len(message_batches)
+        return [
+            adapter.generate_group(messages=messages, tools=tools, **kwargs)
+            for messages, tools in zip(message_batches, tool_batches, strict=True)
+        ]
 
     def generate_sample_groups(self, **kwargs: Any) -> list[NativeGeneration]:
         adapter = self._require_adapter()
