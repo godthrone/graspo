@@ -149,6 +149,7 @@ class GraspoConfig:
 class Sample:
     messages: list[dict[str, Any]]
     ground_truth: Any
+    tools: list[dict[str, Any]] | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     media: list[dict[str, Any]] = field(default_factory=list)
 
@@ -223,6 +224,6 @@ def _normalize_data_config(raw: dict[str, Any] | None) -> dict[str, Any]:
         raise ValueError(
             "Removed data config field(s): "
             + ", ".join(f"data.{key}" for key in present)
-            + ". GRASPO data is fixed to JSONL records with messages + ground_truth."
+            + ". GRASPO data is fixed to JSONL records with messages + optional tools + ground_truth."
         )
     return config

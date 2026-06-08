@@ -77,7 +77,7 @@ uv run graspo validate-reward --data data/sample.jsonl --limit 2
 ## Data Format
 
 Training data is JSONL. Each line is one prompt/context represented as chat
-messages plus a reward target:
+messages, optional tool declarations, and a reward target:
 
 ```jsonl
 {"messages":[{"role":"system","content":"You extract structured telecom ticket fields as fenced JSON."},{"role":"user","content":"Ticket: user 13800138000 cannot use apn cmnet."},{"role":"assistant","content":"I will identify the phone number and APN from the ticket."},{"role":"user","content":"Extract JSON with the APN and fault number."}],"ground_truth":{"APN":"cmnet","fault_number":"13800138000"}}
@@ -90,19 +90,32 @@ content order:
 {"messages":[{"role":"system","content":"Extract fields from ticket screenshots."},{"role":"user","content":"Use exact snake_case values."},{"role":"assistant","content":"Understood."},{"role":"user","content":[{"type":"image","image":"images/panel_0001.png"},{"type":"text","text":"Extract the ticket fields as strict JSON."}]}],"ground_truth":{"ticket_id":"T-0001","status":"critical"}}
 ```
 
+Tool-call records can provide model-native tool declarations in the optional
+`tools` field. GRASPO passes `messages + tools` to the model tokenizer or
+processor chat template at runtime; users should not pre-render model template
+strings in the dataset:
+
+```jsonl
+{"messages":[{"role":"system","content":"Use tools when needed. Output only the tool call."},{"role":"user","content":"Query device OLT-17 status at 2026-06-08 10:30."}],"tools":[{"type":"function","function":{"name":"query_device_status","description":"Query network device panel status.","parameters":{"type":"object","properties":{"device_id":{"type":"string"},"panel_time":{"type":"string"}},"required":["device_id","panel_time"]}}}],"ground_truth":{"name":"query_device_status","arguments":{"device_id":"OLT-17","panel_time":"2026-06-08T10:30:00+08:00"}}}
+```
+
+See `data/sample_tool_call.jsonl` for a runnable tool-call dataset row.
+
 Supported fields:
 
 - `ground_truth`: expected structured output as a JSON object;
 - `messages`: required prompt/context messages for tokenizer or processor chat templates;
+- `tools`: optional list of tool declarations passed to model chat templates;
 - image/video items inside `messages[].content`: parsed by the data layer for
   multimodal routing; image training is supported, while video should be
   smoke-tested before production use;
 - extra fields are kept as metadata.
 
-The final message must not have role `assistant`; `ground_truth` is the reward
-target and must not be leaked into the input messages. GRASPO only accepts JSONL
-records with `messages` and JSON-object `ground_truth`; plain `prompt`, JSON,
-Excel, and top-level media fields are not supported.
+The final message must not have role `assistant`; `ground_truth` is the raw
+reward target and must not be leaked into the input messages or converted to a
+model chat template. GRASPO only accepts JSONL records with `messages`, optional
+`tools`, and JSON-object `ground_truth`; plain `prompt`, JSON, Excel, and
+top-level media fields are not supported.
 
 ## Reward Scoring
 
