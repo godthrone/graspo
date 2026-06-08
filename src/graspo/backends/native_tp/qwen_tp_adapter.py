@@ -183,6 +183,7 @@ class QwenNativeTPAdapter:
         self,
         *,
         messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
         rollout_group_size: int,
         max_new_tokens: int,
         max_prompt_length: int,
@@ -192,6 +193,7 @@ class QwenNativeTPAdapter:
     ) -> NativeGeneration:
         return self.generate_groups(
             message_batches=[messages],
+            tool_batches=[tools],
             rollout_group_size=rollout_group_size,
             max_new_tokens=max_new_tokens,
             max_prompt_length=max_prompt_length,
@@ -204,6 +206,7 @@ class QwenNativeTPAdapter:
         self,
         *,
         message_batches: list[list[dict[str, Any]]],
+        tool_batches: list[list[dict[str, Any]] | None] | None = None,
         rollout_group_size: int,
         max_new_tokens: int,
         max_prompt_length: int,
@@ -214,9 +217,11 @@ class QwenNativeTPAdapter:
         self._require_ready()
         assert self.model is not None
         assert self.tokenizer is not None
+        tool_batches = _normalize_tool_batches(tool_batches, len(message_batches))
         if self._is_pipeline_parallel():
             return self._pipeline_generate_groups(
                 message_batches=message_batches,
+                tool_batches=tool_batches,
                 rollout_group_size=rollout_group_size,
                 max_new_tokens=max_new_tokens,
                 max_prompt_length=max_prompt_length,
@@ -229,7 +234,8 @@ class QwenNativeTPAdapter:
         self.model.eval()
         tokenize_started_at = time.monotonic()
         prompt_texts = [
-            self._format_messages(messages, chat_template_kwargs) for messages in message_batches
+            self._format_messages(messages, chat_template_kwargs, tools=tools)
+            for messages, tools in zip(message_batches, tool_batches, strict=True)
         ]
         encoded = self.tokenizer(
             prompt_texts,
@@ -837,6 +843,7 @@ class QwenNativeTPAdapter:
         self,
         *,
         message_batches: list[list[dict[str, Any]]],
+        tool_batches: list[list[dict[str, Any]] | None] | None = None,
         rollout_group_size: int,
         max_new_tokens: int,
         max_prompt_length: int,
@@ -848,10 +855,12 @@ class QwenNativeTPAdapter:
         assert self.model is not None
         if not message_batches:
             return []
+        tool_batches = _normalize_tool_batches(tool_batches, len(message_batches))
         self.model.eval()
         tokenize_started_at = time.monotonic()
         prompt_texts = [
-            self._format_messages(messages, chat_template_kwargs) for messages in message_batches
+            self._format_messages(messages, chat_template_kwargs, tools=tools)
+            for messages, tools in zip(message_batches, tool_batches, strict=True)
         ]
         encoded = self.tokenizer(
             prompt_texts,
@@ -2291,17 +2300,29 @@ class QwenNativeTPAdapter:
         self,
         messages: list[dict[str, Any]],
         chat_template_kwargs: dict[str, Any] | None,
+        *,
+        tools: list[dict[str, Any]] | None = None,
     ) -> str:
         assert self.tokenizer is not None
+        template_kwargs = dict(chat_template_kwargs or {})
+        if tools is not None:
+            template_kwargs["tools"] = tools
         if getattr(self.tokenizer, "chat_template", None):
             return self.tokenizer.apply_chat_template(
                 messages,
                 tokenize=False,
                 add_generation_prompt=True,
-                **(chat_template_kwargs or {}),
+                **template_kwargs,
             )
-        return "\n\n".join(
-            f"{message.get('role', 'user')}: {message.get('content', '')}" for message in messages
+        tools_text = ""
+        if tools is not None:
+            tools_text = "\n\ntools: " + json.dumps(tools, ensure_ascii=False)
+        return (
+            "\n\n".join(
+                f"{message.get('role', 'user')}: {message.get('content', '')}"
+                for message in messages
+            )
+            + tools_text
         )
 
     def _encode_multimodal_rows(
@@ -2316,6 +2337,7 @@ class QwenNativeTPAdapter:
                 "This model did not expose an AutoProcessor; image/video samples cannot be encoded"
             )
         messages = [_messages_from_multimodal_row(row) for row in rows]
+        tool_batches = [_tools_from_multimodal_row(row) for row in rows]
         if hasattr(self.processor, "apply_chat_template"):
             template_kwargs = {
                 "tokenize": True,
@@ -2324,6 +2346,9 @@ class QwenNativeTPAdapter:
                 "return_tensors": "pt",
                 **(chat_template_kwargs or {}),
             }
+            tools_arg = _tools_for_chat_template(tool_batches)
+            if tools_arg is not None:
+                template_kwargs["tools"] = tools_arg
             try:
                 encoded = self.processor.apply_chat_template(
                     messages,
@@ -2449,10 +2474,14 @@ class NativeQwenConfig:
 
 
 def _multimodal_row_from_sample(sample: Any) -> dict[str, Any]:
-    return {
+    row = {
         "messages": [dict(message) for message in sample.messages],
         "media": _media_counts(sample.media or []),
     }
+    tools = getattr(sample, "tools", None)
+    if tools is not None:
+        row["tools"] = [dict(tool) for tool in tools]
+    return row
 
 
 def _messages_from_multimodal_row(row: dict[str, Any]) -> list[dict[str, Any]]:
@@ -2460,6 +2489,39 @@ def _messages_from_multimodal_row(row: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(messages, list) or not messages:
         raise ValueError("multimodal row must contain non-empty messages")
     return [dict(message) for message in messages if isinstance(message, dict)]
+
+
+def _tools_from_multimodal_row(row: dict[str, Any]) -> list[dict[str, Any]] | None:
+    tools = row.get("tools")
+    if tools is None:
+        return None
+    if not isinstance(tools, list):
+        raise ValueError("multimodal row tools must be a list")
+    return [dict(tool) for tool in tools if isinstance(tool, dict)]
+
+
+def _normalize_tool_batches(
+    tool_batches: list[list[dict[str, Any]] | None] | None,
+    expected_len: int,
+) -> list[list[dict[str, Any]] | None]:
+    if tool_batches is None:
+        return [None] * expected_len
+    if len(tool_batches) != expected_len:
+        raise ValueError(
+            f"tool_batches length must match message_batches ({len(tool_batches)} != {expected_len})"
+        )
+    return tool_batches
+
+
+def _tools_for_chat_template(
+    tool_batches: list[list[dict[str, Any]] | None],
+) -> list[dict[str, Any]] | list[list[dict[str, Any]] | None] | None:
+    if not any(tools is not None for tools in tool_batches):
+        return None
+    first = tool_batches[0]
+    if all(tools == first for tools in tool_batches):
+        return first
+    return tool_batches
 
 
 def _multimodal_rows_from_metadata(

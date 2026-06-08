@@ -237,11 +237,7 @@ class NativeTPGraspoTrainer:
         self, active: list[_QueuedSample], *, epoch: int
     ) -> list[_AttemptRecord]:
         rollout_started_at = time.monotonic()
-        generations = (
-            self._generate_sample_groups([state.sample for state in active])
-            if any(state.sample.media for state in active)
-            else self._generate_groups([state.sample.messages for state in active])
-        )
+        generations = self._generate_sample_groups([state.sample for state in active])
         rollout_sec = time.monotonic() - rollout_started_at
         rollout_sec_per_prompt = rollout_sec / max(len(generations), 1)
         records: list[_AttemptRecord] = []
@@ -315,13 +311,14 @@ class NativeTPGraspoTrainer:
             )
         return records
 
-    def _generate_groups(
-        self, message_batches: list[list[dict[str, Any]]]
-    ) -> list[NativeGeneration]:
+    def _generate_groups(self, samples: list[Sample]) -> list[NativeGeneration]:
+        message_batches = [sample.messages for sample in samples]
+        tool_batches = [sample.tools for sample in samples]
         generate_groups = getattr(self.runtime, "generate_groups", None)
         if callable(generate_groups):
             generations = generate_groups(
                 message_batches=message_batches,
+                tool_batches=tool_batches,
                 rollout_group_size=self.config.training.rollout_group_size,
                 max_new_tokens=self.config.training.max_new_tokens,
                 max_prompt_length=self.config.data.max_prompt_length,
@@ -337,6 +334,7 @@ class NativeTPGraspoTrainer:
         return [
             self.runtime.generate_group(
                 messages=messages,
+                tools=tools,
                 rollout_group_size=self.config.training.rollout_group_size,
                 max_new_tokens=self.config.training.max_new_tokens,
                 max_prompt_length=self.config.data.max_prompt_length,
@@ -344,10 +342,12 @@ class NativeTPGraspoTrainer:
                 top_p=self.config.training.top_p,
                 chat_template_kwargs=self.config.model.chat_template_kwargs,
             )
-            for messages in message_batches
+            for messages, tools in zip(message_batches, tool_batches, strict=True)
         ]
 
     def _generate_sample_groups(self, samples: list[Sample]) -> list[NativeGeneration]:
+        if not any(sample.media for sample in samples):
+            return self._generate_groups(samples)
         generate_sample_groups = getattr(self.runtime, "generate_sample_groups", None)
         if not callable(generate_sample_groups):
             raise RuntimeError(
@@ -761,6 +761,7 @@ class NativeTPGraspoTrainer:
             "step": self.global_step,
             "sample_index": self.sample_index,
             "messages": sample.messages,
+            "tools": sample.tools,
             "prompt_preview": sample.prompt_preview,
             "ground_truth": sample.ground_truth,
             "metadata": _safe_sample_metadata(sample),

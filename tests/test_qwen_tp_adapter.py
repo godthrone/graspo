@@ -62,6 +62,44 @@ def test_multimodal_row_messages_are_preserved_for_processor_template():
     assert _messages_from_multimodal_row({"messages": messages}) == messages
 
 
+def test_qwen_format_messages_passes_tools_to_chat_template():
+    class Tokenizer:
+        chat_template = "template"
+
+        def __init__(self) -> None:
+            self.calls = []
+
+        def apply_chat_template(self, messages, **kwargs):
+            self.calls.append((messages, kwargs))
+            return "rendered"
+
+    tokenizer = Tokenizer()
+    adapter = QwenNativeTPAdapter(GraspoConfig())
+    adapter.tokenizer = tokenizer
+    messages = [{"role": "user", "content": "query status"}]
+    tools = [
+        {
+            "type": "function",
+            "function": {"name": "query_device_status", "parameters": {"type": "object"}},
+        }
+    ]
+
+    rendered = adapter._format_messages(messages, {"enable_thinking": False}, tools=tools)
+
+    assert rendered == "rendered"
+    assert tokenizer.calls == [
+        (
+            messages,
+            {
+                "tokenize": False,
+                "add_generation_prompt": True,
+                "enable_thinking": False,
+                "tools": tools,
+            },
+        )
+    ]
+
+
 def test_native_qwen_lora_available_targets_cover_text_and_visual():
     qwen3 = NativeQwenConfig(
         {"num_hidden_layers": 2},

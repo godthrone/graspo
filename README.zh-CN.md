@@ -61,7 +61,7 @@ uv run graspo validate-reward --data data/sample.jsonl --limit 2
 
 ## 数据格式
 
-训练数据只支持 JSONL。每行是一条由 chat messages 表示的 prompt/context，以及独立的 JSON object reward 目标：
+训练数据只支持 JSONL。每行是一条由 chat messages 表示的 prompt/context、可选工具声明，以及独立的 JSON object reward 目标：
 
 ```jsonl
 {"messages":[{"role":"system","content":"You extract structured telecom ticket fields as fenced JSON."},{"role":"user","content":"Ticket: user 13800138000 cannot use apn cmnet."},{"role":"assistant","content":"I will identify the phone number and APN from the ticket."},{"role":"user","content":"Extract JSON with the APN and fault number."}],"ground_truth":{"APN":"cmnet","fault_number":"13800138000"}}
@@ -73,14 +73,23 @@ uv run graspo validate-reward --data data/sample.jsonl --limit 2
 {"messages":[{"role":"system","content":"Extract fields from ticket screenshots."},{"role":"user","content":"Use exact snake_case values."},{"role":"assistant","content":"Understood."},{"role":"user","content":[{"type":"image","image":"images/panel_0001.png"},{"type":"text","text":"Extract the ticket fields as strict JSON."}]}],"ground_truth":{"ticket_id":"T-0001","status":"critical"}}
 ```
 
+工具调用数据可以在可选 `tools` 字段中提供模型原生工具声明。GRASPO 会在运行时把 `messages + tools` 交给 tokenizer 或 processor 的 chat template；用户不需要、也不应该在数据集中提前渲染模型模板字符串：
+
+```jsonl
+{"messages":[{"role":"system","content":"Use tools when needed. Output only the tool call."},{"role":"user","content":"Query device OLT-17 status at 2026-06-08 10:30."}],"tools":[{"type":"function","function":{"name":"query_device_status","description":"Query network device panel status.","parameters":{"type":"object","properties":{"device_id":{"type":"string"},"panel_time":{"type":"string"}},"required":["device_id","panel_time"]}}}],"ground_truth":{"name":"query_device_status","arguments":{"device_id":"OLT-17","panel_time":"2026-06-08T10:30:00+08:00"}}}
+```
+
+可运行的工具调用数据样例见 `data/sample_tool_call.jsonl`。
+
 支持字段：
 
 - `messages`：必填 prompt/context messages，用于 tokenizer 或 processor chat template；
 - `ground_truth`：必填 JSON object，是唯一 reward 目标；
+- `tools`：可选工具声明列表，会传给模型 chat template；
 - `messages[].content` 内的 image/video 条目：用于多模态路由；图片训练已支持，视频训练前应单独 smoke；
 - 其它字段会作为 metadata。
 
-最后一条 message 不能是 `assistant`，避免把监督答案泄漏进输入。GRASPO 不支持纯文本 prompt 字段、JSON 文件、Excel 文件或 top-level `image/images/video/videos` 字段。
+最后一条 message 不能是 `assistant`；`ground_truth` 是原始 reward 目标，不能泄漏进输入，也不能转换成模型 chat template。GRASPO 只接受 `messages + 可选 tools + ground_truth` 的 JSONL 记录，不支持纯文本 prompt 字段、JSON 文件、Excel 文件或 top-level `image/images/video/videos` 字段。
 
 ## Reward 计分方式
 

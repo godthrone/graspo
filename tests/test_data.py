@@ -44,6 +44,44 @@ def test_load_messages_jsonl(tmp_path):
     assert sample.ground_truth == {"a": 1}
 
 
+def test_load_tools_jsonl(tmp_path):
+    path = tmp_path / "tools.jsonl"
+    path.write_text(
+        '{"messages":[{"role":"user","content":"query device status"}],'
+        '"tools":[{"type":"function","function":{"name":"query_device_status",'
+        '"parameters":{"type":"object","properties":{"device_id":{"type":"string"}}}}}],'
+        '"ground_truth":{"name":"query_device_status","arguments":{"device_id":"OLT-17"}}}\n',
+        encoding="utf-8",
+    )
+
+    sample = load_jsonl(path)[0]
+
+    assert sample.tools == [
+        {
+            "type": "function",
+            "function": {
+                "name": "query_device_status",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"device_id": {"type": "string"}},
+                },
+            },
+        }
+    ]
+    assert "tools" not in sample.metadata
+
+
+def test_non_list_tools_is_rejected(tmp_path):
+    path = tmp_path / "bad_tools.jsonl"
+    path.write_text(
+        '{"messages":[{"role":"user","content":"q"}],"tools":{},"ground_truth":{}}\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="tools"):
+        load_jsonl(path)
+
+
 def test_json_file_is_not_a_training_format(tmp_path):
     path = tmp_path / "data.json"
     path.write_text(

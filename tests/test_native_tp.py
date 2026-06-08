@@ -516,11 +516,13 @@ class ScriptedQueuedRuntime(ScriptedGroupRuntime):
         super().__init__([], primary=primary)
         self.groups_by_prompt = groups_by_prompt
         self.generate_group_batches: list[list[str]] = []
+        self.generate_tool_batches = []
         self.prompt_attempt_counts = {prompt: 0 for prompt in groups_by_prompt}
 
     def generate_groups(self, **kwargs):
         prompts = [_message_key(messages) for messages in kwargs["message_batches"]]
         self.generate_group_batches.append(prompts)
+        self.generate_tool_batches.append(kwargs.get("tool_batches"))
         group_size = int(kwargs["rollout_group_size"])
         generations = []
         for prompt in prompts:
@@ -805,6 +807,50 @@ def test_rollout_prompt_queue_batch_size_batches_multiple_prompts_without_changi
     assert train_step["timing"]["rollout_prompt_queue_effective_size"] == 2
     assert train_step["batch"]["decisions"]["trainable"]["total"] == 4
     assert train_step["batch"]["attempt_groups"] == 4
+
+
+def test_rollout_prompt_queue_passes_tools_to_runtime(tmp_path):
+    data = tmp_path / "train.jsonl"
+    tool = {
+        "type": "function",
+        "function": {"name": "query_device_status", "parameters": {"type": "object"}},
+    }
+    rows = [
+        {
+            "messages": [{"role": "user", "content": "p0"}],
+            "tools": [tool],
+            "ground_truth": {"x": "ok"},
+        },
+        {
+            "messages": [{"role": "user", "content": "p1"}],
+            "ground_truth": {"x": "ok"},
+        },
+    ]
+    data.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+    runtime = ScriptedQueuedRuntime(
+        {
+            "p0": [_mixed_group(2)],
+            "p1": [_mixed_group(2)],
+        }
+    )
+    config = _native_test_config(
+        tmp_path,
+        data,
+        rollout_group_size=2,
+        rollout_prompt_queue_batch_size=2,
+        optimize_completion_batch_size=2,
+    )
+    trainer = NativeTPGraspoTrainer(config, runtime=runtime)
+
+    trainer.train()
+
+    observed = dict(
+        zip(runtime.generate_group_batches[0], runtime.generate_tool_batches[0], strict=True)
+    )
+    assert observed == {"p0": [tool], "p1": None}
 
 
 def test_rollout_prompt_queue_retries_only_unfinished_prompt(tmp_path):
