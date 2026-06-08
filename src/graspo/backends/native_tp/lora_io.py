@@ -44,14 +44,16 @@ def load_peft_adapter_into_native_model(
             _copy_parameter(module, "lora_b", lora_b, hf_module)
             consumed.add(hf_module)
             continue
-        if "r" in config and int(config["r"]) != int(record["r"]):
+        adapter_r = _peft_module_int(config, hf_module, "rank_pattern", "r")
+        if adapter_r is not None and adapter_r != int(record["r"]):
             raise ValueError(
-                f"PEFT adapter r={config['r']} does not match native LoRA r={record['r']}"
+                f"PEFT adapter r={adapter_r} does not match native LoRA r={record['r']}"
             )
-        if "lora_alpha" in config and int(config["lora_alpha"]) != int(record["alpha"]):
+        adapter_alpha = _peft_module_int(config, hf_module, "alpha_pattern", "lora_alpha")
+        if adapter_alpha is not None and adapter_alpha != int(record["alpha"]):
             raise ValueError(
                 "PEFT adapter lora_alpha="
-                f"{config['lora_alpha']} does not match native LoRA alpha={record['alpha']}"
+                f"{adapter_alpha} does not match native LoRA alpha={record['alpha']}"
             )
         pair = grouped.get(hf_module)
         if pair is None:
@@ -64,7 +66,9 @@ def load_peft_adapter_into_native_model(
         consumed.add(hf_module)
 
     extra = sorted(set(grouped) - consumed)
-    if extra:
+    placement = getattr(model, "placement", None)
+    is_pipeline_stage = bool(getattr(placement, "is_pipeline", False))
+    if extra and not is_pipeline_stage:
         raise ValueError("PEFT adapter contains unsupported LoRA target(s): " + ", ".join(extra))
 
 
@@ -267,6 +271,26 @@ def _copy_parameter(
         )
     with torch.no_grad():
         param.copy_(value.to(device=param.device, dtype=param.dtype))
+
+
+def _peft_module_int(
+    config: dict[str, Any],
+    hf_module: str,
+    pattern_key: str,
+    default_key: str,
+) -> int | None:
+    pattern = config.get(pattern_key)
+    if isinstance(pattern, dict):
+        for key in (
+            hf_module,
+            f"base_model.model.{hf_module}",
+            hf_module.rsplit(".", 1)[-1],
+        ):
+            if key in pattern:
+                return int(pattern[key])
+    if default_key in config:
+        return int(config[default_key])
+    return None
 
 
 def _slice_lora_a(tensor: torch.Tensor, record: dict[str, Any]) -> torch.Tensor:

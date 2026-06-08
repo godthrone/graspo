@@ -34,6 +34,16 @@ class _TinyNativeModel(torch.nn.Module):
         return [self.proj.lora_metadata("proj")]
 
 
+class _Placement:
+    is_pipeline = True
+
+
+class _TinyPipelineStageModel(_TinyNativeModel):
+    def __init__(self) -> None:
+        super().__init__()
+        self.placement = _Placement()
+
+
 class _TinyFusedNativeModel(torch.nn.Module):
     def __init__(self) -> None:
         super().__init__()
@@ -96,6 +106,107 @@ def test_load_peft_adapter_into_native_model(tmp_path):
                 "peft_type": "LORA",
                 "r": 2,
                 "lora_alpha": 4,
+                "target_modules": ["q_proj"],
+                "task_type": "CAUSAL_LM",
+            }
+        ),
+        encoding="utf-8",
+    )
+    a = torch.arange(8, dtype=torch.float32).view(2, 4)
+    b = torch.arange(6, dtype=torch.float32).view(3, 2)
+    save_file(
+        {
+            "base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight": a,
+            "base_model.model.model.layers.0.self_attn.q_proj.lora_B.weight": b,
+        },
+        str(adapter / "adapter_model.safetensors"),
+    )
+    model = _TinyNativeModel()
+
+    load_peft_adapter_into_native_model(model, adapter, base_model_path="/models/base")
+
+    assert torch.equal(model.proj.lora_a, a)
+    assert torch.equal(model.proj.lora_b, b)
+
+
+def test_load_peft_adapter_rejects_extra_targets_without_pipeline(tmp_path):
+    adapter = tmp_path / "adapter"
+    adapter.mkdir()
+    (adapter / "adapter_config.json").write_text(
+        json.dumps(
+            {
+                "base_model_name_or_path": "/models/base",
+                "peft_type": "LORA",
+                "r": 2,
+                "lora_alpha": 4,
+                "target_modules": ["q_proj"],
+                "task_type": "CAUSAL_LM",
+            }
+        ),
+        encoding="utf-8",
+    )
+    save_file(
+        {
+            "base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight": torch.zeros(2, 4),
+            "base_model.model.model.layers.0.self_attn.q_proj.lora_B.weight": torch.zeros(3, 2),
+            "base_model.model.model.layers.1.self_attn.q_proj.lora_A.weight": torch.zeros(2, 4),
+            "base_model.model.model.layers.1.self_attn.q_proj.lora_B.weight": torch.zeros(3, 2),
+        },
+        str(adapter / "adapter_model.safetensors"),
+    )
+
+    with pytest.raises(ValueError, match="unsupported LoRA target"):
+        load_peft_adapter_into_native_model(
+            _TinyNativeModel(), adapter, base_model_path="/models/base"
+        )
+
+
+def test_pipeline_stage_ignores_adapter_targets_for_other_stages(tmp_path):
+    adapter = tmp_path / "adapter"
+    adapter.mkdir()
+    (adapter / "adapter_config.json").write_text(
+        json.dumps(
+            {
+                "base_model_name_or_path": "/models/base",
+                "peft_type": "LORA",
+                "r": 2,
+                "lora_alpha": 4,
+                "target_modules": ["q_proj"],
+                "task_type": "CAUSAL_LM",
+            }
+        ),
+        encoding="utf-8",
+    )
+    a = torch.arange(8, dtype=torch.float32).view(2, 4)
+    b = torch.arange(6, dtype=torch.float32).view(3, 2)
+    save_file(
+        {
+            "base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight": a,
+            "base_model.model.model.layers.0.self_attn.q_proj.lora_B.weight": b,
+            "base_model.model.model.layers.1.self_attn.q_proj.lora_A.weight": torch.ones(2, 4),
+            "base_model.model.model.layers.1.self_attn.q_proj.lora_B.weight": torch.ones(3, 2),
+        },
+        str(adapter / "adapter_model.safetensors"),
+    )
+    model = _TinyPipelineStageModel()
+
+    load_peft_adapter_into_native_model(model, adapter, base_model_path="/models/base")
+
+    assert torch.equal(model.proj.lora_a, a)
+    assert torch.equal(model.proj.lora_b, b)
+
+
+def test_load_peft_adapter_uses_rank_pattern_for_module(tmp_path):
+    adapter = tmp_path / "adapter"
+    adapter.mkdir()
+    (adapter / "adapter_config.json").write_text(
+        json.dumps(
+            {
+                "base_model_name_or_path": "/models/base",
+                "peft_type": "LORA",
+                "r": 4,
+                "lora_alpha": 4,
+                "rank_pattern": {"model.layers.0.self_attn.q_proj": 2},
                 "target_modules": ["q_proj"],
                 "task_type": "CAUSAL_LM",
             }
@@ -189,7 +300,10 @@ def test_export_merged_hf_requires_current_lora_metadata(tmp_path):
     base = tmp_path / "base"
     base.mkdir()
     (base / "config.json").write_text("{}", encoding="utf-8")
-    save_file({"model.layers.0.self_attn.q_proj.weight": torch.zeros(3, 4)}, str(base / "model.safetensors"))
+    save_file(
+        {"model.layers.0.self_attn.q_proj.weight": torch.zeros(3, 4)},
+        str(base / "model.safetensors"),
+    )
     checkpoint = tmp_path / "final"
     checkpoint.mkdir()
     _write_payload(
@@ -254,7 +368,7 @@ def test_export_peft_adapter_combines_fused_split_target(tmp_path):
                 peft_exportable=False,
                 r=1,
                 alpha=2,
-            )
+            ),
         ],
         state={
             "layers.0.token_mixer.q_proj.lora_a": q_a,
