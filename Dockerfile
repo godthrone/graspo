@@ -19,13 +19,11 @@ WORKDIR /workspace/graspo
 
 # --- GRASPO pip dependencies (cached as long as pyproject.toml deps don't change) ---
 COPY pyproject.toml ./
-RUN python3 -m pip install \
-    "datasets>=3.0.0" \
-    "pandas>=2.0.0" \
-    "peft>=0.17.0" \
+RUN python -m pip install \
     "pyyaml>=6.0.0" \
     "safetensors>=0.4.0" \
-    "transformers>=4.53.0"
+    "transformers>=4.53.0,<5.0.0" \
+    "pillow>=10.0.0"
 
 # --- Source code (only these layers rebuild on code change, no network needed) ---
 COPY README.md LICENSE ./

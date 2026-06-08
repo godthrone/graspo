@@ -165,7 +165,9 @@ def test_only_readmes_are_tracked_markdown_docs():
         capture_output=True,
         text=True,
     )
-    tracked_markdown = {line.strip().replace("\\", "/") for line in result.stdout.splitlines() if line.strip()}
+    tracked_markdown = {
+        line.strip().replace("\\", "/") for line in result.stdout.splitlines() if line.strip()
+    }
 
     assert tracked_markdown == {"README.md", "README.zh-CN.md"}
 

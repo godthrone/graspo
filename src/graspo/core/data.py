@@ -27,9 +27,7 @@ def sample_from_record(record: dict[str, Any]) -> Sample:
 
     media = _messages_media(messages)
     metadata = {
-        key: value
-        for key, value in record.items()
-        if key not in {"messages", "ground_truth"}
+        key: value for key, value in record.items() if key not in {"messages", "ground_truth"}
     }
     return Sample(messages=messages, ground_truth=ground_truth, metadata=metadata, media=media)
 
