@@ -16,7 +16,9 @@ def test_load_standard_jsonl():
 
 def test_write_and_load_roundtrip(tmp_path):
     path = tmp_path / "train.jsonl"
-    write_jsonl([Sample(messages=[{"role": "user", "content": "hello"}], ground_truth={"x": 1})], path)
+    write_jsonl(
+        [Sample(messages=[{"role": "user", "content": "hello"}], ground_truth={"x": 1})], path
+    )
 
     loaded = load_jsonl(path)
     assert loaded[0].messages == [{"role": "user", "content": "hello"}]
@@ -109,9 +111,7 @@ def test_top_level_media_fields_are_rejected(tmp_path):
 def test_non_object_ground_truth_is_rejected(tmp_path, ground_truth):
     path = tmp_path / "bad_gt.jsonl"
     path.write_text(
-        '{"messages":[{"role":"user","content":"q"}],"ground_truth":'
-        + ground_truth
-        + "}\n",
+        '{"messages":[{"role":"user","content":"q"}],"ground_truth":' + ground_truth + "}\n",
         encoding="utf-8",
     )
 

@@ -315,7 +315,9 @@ class NativeTPGraspoTrainer:
             )
         return records
 
-    def _generate_groups(self, message_batches: list[list[dict[str, Any]]]) -> list[NativeGeneration]:
+    def _generate_groups(
+        self, message_batches: list[list[dict[str, Any]]]
+    ) -> list[NativeGeneration]:
         generate_groups = getattr(self.runtime, "generate_groups", None)
         if callable(generate_groups):
             generations = generate_groups(

@@ -210,8 +210,7 @@ def _normalize_training_config(raw: dict[str, Any] | None) -> dict[str, Any]:
     present = sorted(key for key in removed if key in config)
     if present:
         raise ValueError(
-            "Removed training config field(s): "
-            + ", ".join(f"training.{key}" for key in present)
+            "Removed training config field(s): " + ", ".join(f"training.{key}" for key in present)
         )
     return config
 

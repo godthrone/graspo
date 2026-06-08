@@ -160,9 +160,7 @@ class NativeTPRuntime:
         if callable(generate_groups):
             return generate_groups(**kwargs)
         message_batches = list(kwargs.pop("message_batches"))
-        return [
-            adapter.generate_group(messages=messages, **kwargs) for messages in message_batches
-        ]
+        return [adapter.generate_group(messages=messages, **kwargs) for messages in message_batches]
 
     def generate_sample_groups(self, **kwargs: Any) -> list[NativeGeneration]:
         adapter = self._require_adapter()

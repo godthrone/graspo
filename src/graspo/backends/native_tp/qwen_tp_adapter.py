@@ -35,6 +35,13 @@ _TENSOR_PARALLEL_GROUP: dist.ProcessGroup | None = None
 _TENSOR_PARALLEL_SIZE = 1
 
 
+def _patch_transformers_float8_import_compat() -> None:
+    """Keep optional Transformers FP8 imports working on supported torch versions."""
+
+    if not hasattr(torch, "float8_e8m0fnu"):
+        torch.float8_e8m0fnu = torch.uint8  # type: ignore[attr-defined]
+
+
 def _set_tensor_parallel_group(group: dist.ProcessGroup | None, size: int) -> None:
     global _TENSOR_PARALLEL_GROUP, _TENSOR_PARALLEL_SIZE
     _TENSOR_PARALLEL_GROUP = group
@@ -65,6 +72,7 @@ class QwenNativeTPAdapter:
 
     def setup(self) -> None:
         self._setup_distributed()
+        _patch_transformers_float8_import_compat()
         from transformers import AutoProcessor, AutoTokenizer
 
         model_path = Path(self.config.model.model_path)
@@ -221,8 +229,7 @@ class QwenNativeTPAdapter:
         self.model.eval()
         tokenize_started_at = time.monotonic()
         prompt_texts = [
-            self._format_messages(messages, chat_template_kwargs)
-            for messages in message_batches
+            self._format_messages(messages, chat_template_kwargs) for messages in message_batches
         ]
         encoded = self.tokenizer(
             prompt_texts,
@@ -844,8 +851,7 @@ class QwenNativeTPAdapter:
         self.model.eval()
         tokenize_started_at = time.monotonic()
         prompt_texts = [
-            self._format_messages(messages, chat_template_kwargs)
-            for messages in message_batches
+            self._format_messages(messages, chat_template_kwargs) for messages in message_batches
         ]
         encoded = self.tokenizer(
             prompt_texts,
@@ -2295,8 +2301,7 @@ class QwenNativeTPAdapter:
                 **(chat_template_kwargs or {}),
             )
         return "\n\n".join(
-            f"{message.get('role', 'user')}: {message.get('content', '')}"
-            for message in messages
+            f"{message.get('role', 'user')}: {message.get('content', '')}" for message in messages
         )
 
     def _encode_multimodal_rows(
