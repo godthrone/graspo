@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from graspo.core.completion import ParsedCompletion, raw_parsed_completion
 from graspo.core.data import load_jsonl
 from graspo.core.reward import GraspoReward, RewardConfig
 from graspo.core.schema import GraspoConfig
@@ -38,7 +39,8 @@ def cmd_validate_reward(args: argparse.Namespace) -> int:
     )
     scores: list[float] = []
     for idx, sample in enumerate(samples):
-        if idx < len(completions):
+        has_explicit_completion = idx < len(completions)
+        if has_explicit_completion:
             completion = completions[idx]
         else:
             gt = (
@@ -47,7 +49,23 @@ def cmd_validate_reward(args: argparse.Namespace) -> int:
                 else json.dumps(sample.ground_truth)
             )
             completion = f"```json\n{gt}\n```" if args.check_json_markdown else gt
-        result = reward.score(completion, sample.ground_truth)
+        if sample.tools:
+            parsed = (
+                raw_parsed_completion(completion)
+                if has_explicit_completion
+                else ParsedCompletion(
+                    raw_text=completion,
+                    tool_calls=(
+                        sample.ground_truth
+                        if isinstance(sample.ground_truth, list)
+                        else [sample.ground_truth]
+                    ),
+                    parser_name="validate_reward_canonical",
+                )
+            )
+            result = reward.score_parsed(parsed, sample.ground_truth, is_tool_call=True)
+        else:
+            result = reward.score(completion, sample.ground_truth)
         scores.append(result.reward)
         print(
             json.dumps(

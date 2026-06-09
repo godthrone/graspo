@@ -70,9 +70,11 @@ def readable_payload(payload: dict[str, Any]) -> dict[str, Any]:
     content_scores = payload.get("content_scores", [])
     all_right = payload.get("all_right", [])
     reward_details = payload.get("reward_details", [])
+    parsed_completions = payload.get("parsed_completions", [])
     generated_tokens = payload.get("generated_tokens", [])
     for idx, completion in enumerate(completions):
         detail = _get_index(reward_details, idx) or {}
+        parsed = _get_index(parsed_completions, idx) or {}
         json_summary = summarize_json_markers(completion)
         compact["completions"].append(
             {
@@ -84,6 +86,10 @@ def readable_payload(payload: dict[str, Any]) -> dict[str, Any]:
                 "raw_score": detail.get("raw_score"),
                 "max_score": detail.get("max_score"),
                 "extracted": detail.get("extracted"),
+                "parsed": parsed,
+                "parsed_tool_calls": detail.get("parsed_tool_calls"),
+                "parser": detail.get("parser"),
+                "parse_errors": detail.get("parse_errors"),
                 "useless_text_length": detail.get("useless_text_length"),
                 "valid_extracted_json": detail.get("valid_extracted_json"),
                 "completion_chars": len(completion),
@@ -192,7 +198,9 @@ def group_debug_summary(payload: dict[str, Any]) -> dict[str, Any]:
     content_scores = payload.get("content_scores", [])
     rewards = payload.get("rewards", [])
     reward_details = payload.get("reward_details", [])
+    ground_truth = payload.get("ground_truth")
     summaries = [summarize_json_markers(text) for text in completions]
+    target_count = len(ground_truth) if isinstance(ground_truth, list) else 1
     return {
         "reward_range_zero": len(set(float(value) for value in rewards)) <= 1 if rewards else True,
         "content_all_zero": bool(content_scores)
@@ -213,6 +221,18 @@ def group_debug_summary(payload: dict[str, Any]) -> dict[str, Any]:
             for text, detail in zip(completions, reward_details, strict=False)
             if likely_truncated_json(text, detail)
         ),
+        "tool_call_parse_error_count": sum(
+            1 for item in reward_details if item.get("parse_errors")
+        ),
+        "tool_call_count_mismatch_count": sum(
+            1
+            for item in reward_details
+            if item.get("parsed_tool_calls") is not None
+            and len(item.get("parsed_tool_calls") or []) != target_count
+        ),
+        "tool_call_content_all_zero": bool(content_scores)
+        and any(item.get("parsed_tool_calls") is not None for item in reward_details)
+        and all(float(value) == 0.0 for value in content_scores),
     }
 
 
