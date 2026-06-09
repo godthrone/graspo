@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from graspo.core.buffer import Experience
+from graspo.core.completion import ParsedCompletion, raw_parsed_completion
 from graspo.core.schema import GraspoConfig, NativeTPConfig, Sample
 
 
@@ -90,6 +91,8 @@ class NativeTPRuntimeProtocol(Protocol):
         top_p: float,
         chat_template_kwargs: dict[str, Any] | None,
     ) -> list[NativeGeneration]: ...
+
+    def parse_completion(self, completion: str, sample: Sample) -> ParsedCompletion: ...
 
     def sequence_log_probs(
         self,
@@ -176,6 +179,13 @@ class NativeTPRuntime:
         if not callable(generate_sample_groups):
             raise RuntimeError("Native adapter does not support multimodal sample generation")
         return generate_sample_groups(**kwargs)
+
+    def parse_completion(self, completion: str, sample: Sample) -> ParsedCompletion:
+        adapter = self._require_adapter()
+        parse_completion = getattr(adapter, "parse_completion", None)
+        if callable(parse_completion):
+            return parse_completion(completion, sample)
+        return raw_parsed_completion(completion)
 
     def sequence_log_probs(
         self,

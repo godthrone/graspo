@@ -71,6 +71,52 @@ def test_load_tools_jsonl(tmp_path):
     assert "tools" not in sample.metadata
 
 
+def test_load_tools_jsonl_allows_canonical_tool_call_list(tmp_path):
+    path = tmp_path / "tools_list.jsonl"
+    path.write_text(
+        '{"messages":[{"role":"user","content":"query device status"}],'
+        '"tools":[{"type":"function","function":{"name":"query_device_status",'
+        '"parameters":{"type":"object","properties":{"device_id":{"type":"string"}},'
+        '"required":["device_id"]}}}],'
+        '"ground_truth":[{"name":"query_device_status","arguments":{"device_id":"OLT-17"}}]}\n',
+        encoding="utf-8",
+    )
+
+    sample = load_jsonl(path)[0]
+
+    assert sample.ground_truth == [
+        {"name": "query_device_status", "arguments": {"device_id": "OLT-17"}}
+    ]
+
+
+def test_tool_ground_truth_unknown_tool_is_rejected(tmp_path):
+    path = tmp_path / "bad_tool_name.jsonl"
+    path.write_text(
+        '{"messages":[{"role":"user","content":"q"}],'
+        '"tools":[{"type":"function","function":{"name":"known","parameters":{"type":"object"}}}],'
+        '"ground_truth":{"name":"other","arguments":{}}}\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="not declared"):
+        load_jsonl(path)
+
+
+def test_tool_ground_truth_enum_value_is_rejected(tmp_path):
+    path = tmp_path / "bad_tool_enum.jsonl"
+    path.write_text(
+        '{"messages":[{"role":"user","content":"q"}],'
+        '"tools":[{"type":"function","function":{"name":"move","parameters":{"type":"object",'
+        '"properties":{"action":{"type":"string","enum":["向下"]}},'
+        '"required":["action"]}}}],'
+        '"ground_truth":{"name":"move","arguments":{"action":"向上"}}}\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="enum"):
+        load_jsonl(path)
+
+
 def test_non_list_tools_is_rejected(tmp_path):
     path = tmp_path / "bad_tools.jsonl"
     path.write_text(

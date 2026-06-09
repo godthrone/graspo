@@ -61,7 +61,7 @@ uv run graspo validate-reward --data data/sample.jsonl --limit 2
 
 ## 数据格式
 
-训练数据只支持 JSONL。每行是一条由 chat messages 表示的 prompt/context、可选工具声明，以及独立的 JSON object reward 目标：
+训练数据只支持 JSONL。每行是一条由 chat messages 表示的 prompt/context、可选工具声明，以及独立的 reward 目标：
 
 ```jsonl
 {"messages":[{"role":"system","content":"You extract structured telecom ticket fields as fenced JSON."},{"role":"user","content":"Ticket: user 13800138000 cannot use apn cmnet."},{"role":"assistant","content":"I will identify the phone number and APN from the ticket."},{"role":"user","content":"Extract JSON with the APN and fault number."}],"ground_truth":{"APN":"cmnet","fault_number":"13800138000"}}
@@ -84,20 +84,22 @@ uv run graspo validate-reward --data data/sample.jsonl --limit 2
 支持字段：
 
 - `messages`：必填 prompt/context messages，用于 tokenizer 或 processor chat template；
-- `ground_truth`：必填 JSON object，是唯一 reward 目标；
+- `ground_truth`：必填 reward 目标；普通结构化答案使用 JSON object，工具调用样本使用 canonical tool-call object/list；
 - `tools`：可选工具声明列表，会传给模型 chat template；
 - `messages[].content` 内的 image/video 条目：用于多模态路由；图片训练已支持，视频训练前应单独 smoke；
 - 其它字段会作为 metadata。
+
+工具调用样本的 `ground_truth` 使用 canonical tool-call JSON：单次调用写 `{"name":"...","arguments":{...}}`，多次调用写这些对象组成的列表，并按顺序比较。Qwen XML 等模型私有输出格式由对应模型 adapter 在 reward 前解析成 canonical 结构，不能写入数据集。
 
 最后一条 message 不能是 `assistant`；`ground_truth` 是原始 reward 目标，不能泄漏进输入，也不能转换成模型 chat template。GRASPO 只接受 `messages + 可选 tools + ground_truth` 的 JSONL 记录，不支持纯文本 prompt 字段、JSON 文件、Excel 文件或 top-level `image/images/video/videos` 字段。
 
 ## Reward 计分方式
 
-GRASPO 当前提供一个内置结构化输出 reward，适合目标答案为 JSON object 的任务。每条 completion 的计分流程：
+GRASPO 当前提供一个内置结构化输出 reward，适合目标答案为 JSON object 或 canonical tool-call object/list 的任务。每条 completion 的计分流程：
 
-1. 检查输出标记：可要求 `<think>...</think>`、fenced JSON Markdown block 和 `<tool_call>...</tool_call>`。
-2. 抽取答案文本：从配置要求的标记区域中取出 answer；如果 `check_json_markdown=false`，则直接把 answer 区域当作 JSON。
-3. 解析并比较 JSON：completion JSON 和 `ground_truth` 做递归 dict/list 匹配，目标字段存在得部分分，值完全相等继续加分，额外字段会降低结构化匹配度。
+1. 解析模型私有输出格式：模型 adapter 把 raw completion 中的 Qwen XML tool call 等格式转成 canonical 结构，同时保留 raw text 和 `<think>...</think>`。
+2. 检查输出标记：根据 reward 配置，可要求 `<think>...</think>`；普通 answer 任务还可以要求 fenced JSON Markdown block。
+3. 比较结构化内容：普通 answer 任务比较 parsed JSON 和 `ground_truth`；工具调用任务比较 canonical tool-call JSON/list 和 `ground_truth`，多次调用按列表顺序比较。
 4. 归一化 reward：标记分、结构化内容分、完全正确 bonus 和多余文本惩罚/奖励合成 `reward`、`content_score` 和 `all_right`。
 
 关键输出：
@@ -106,7 +108,7 @@ GRASPO 当前提供一个内置结构化输出 reward，适合目标答案为 JS
 - `content_score`：组过滤前的结构化内容匹配分；
 - `all_right`：只有所有检查目标都完全正确时才为 true。
 
-GRASPO 使用同一 rollout group 内的 reward 分布，而不是单条 completion 的绝对分数。有有效差异的 group 会进入训练；已经 perfect 的 group 可以跳过；没有 reward 方差或没有偏好差异的 group 会被丢弃或重试。`rollouts.readable.jsonl` 会记录 messages、completion、抽取字段、reward 细节和 invalid reason，方便检查 reward 行为。
+GRASPO 使用同一 rollout group 内的 reward 分布，而不是单条 completion 的绝对分数。有有效差异的 group 会进入训练；已经 perfect 的 group 可以跳过；没有 reward 方差或没有偏好差异的 group 会被丢弃或重试。`rollouts.readable.jsonl` 会记录 messages、completion、parsed tool calls、抽取字段、parser errors、reward 细节和 invalid reason，方便检查 reward 行为。
 
 ## 配置说明
 
@@ -146,7 +148,7 @@ GRASPO 使用同一 rollout group 内的 reward 分布，而不是单条 complet
 
 - `check_think`：要求 `<think>...</think>` 标记。
 - `check_json_markdown`：要求 fenced JSON 输出。
-- `check_tool_call`：额外检查 tool-call target。
+- `check_tool_call`：旧版 tool-call 开关；当前训练会从带 `tools` 的样本推断 tool-call 评分目标。
 - `check_list_order`：结构化比较时 list 顺序是否敏感。
 - `marker_reward_weight`：输出标记 reward 权重。
 - `content_reward_weight`：结构化内容匹配 reward 权重。

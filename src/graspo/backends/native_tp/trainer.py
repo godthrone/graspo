@@ -19,6 +19,7 @@ from graspo.backends.native_tp.runtime import (
 )
 from graspo.core.advantage import group_advantages
 from graspo.core.buffer import Experience, ReplayBuffer
+from graspo.core.completion import ParsedCompletion, raw_parsed_completion
 from graspo.core.data import load_jsonl
 from graspo.core.graspo_parity import classify_group, has_reward_variance, lower_median
 from graspo.core.reward import GraspoReward
@@ -67,6 +68,7 @@ class _QueuedSample:
 class _AttemptRecord:
     sample: Sample
     generation: NativeGeneration
+    parsed_completions: list[ParsedCompletion]
     rewards: list[float]
     content_scores: list[float]
     all_right: list[bool]
@@ -124,6 +126,7 @@ class NativeTPGraspoTrainer:
                 ),
                 "model_path": self.config.model.model_path,
                 "train_path": self.config.data.train_path,
+                "completion_parser": self._completion_parser_name(),
                 "tensor_model_parallel_size": self.config.native_tp.tensor_model_parallel_size,
             }
         )
@@ -244,9 +247,16 @@ class NativeTPGraspoTrainer:
         for state, generation in zip(active, generations, strict=True):
             attempt_started_at = time.monotonic()
             reward_started_at = time.monotonic()
+            parsed_completions = [
+                self._parse_completion(text, state.sample) for text in generation.completions
+            ]
             results = [
-                self.reward.score(text, state.sample.ground_truth)
-                for text in generation.completions
+                self.reward.score_parsed(
+                    parsed,
+                    state.sample.ground_truth,
+                    is_tool_call=bool(state.sample.tools),
+                )
+                for parsed in parsed_completions
             ]
             reward_cpu_sec = time.monotonic() - reward_started_at
             rewards = [float(result.reward) for result in results]
@@ -274,6 +284,7 @@ class NativeTPGraspoTrainer:
                 content_scores=content_scores,
                 all_right=all_right,
                 reward_details=reward_details,
+                parsed_completions=parsed_completions,
                 decision=decision,
                 retry_count=state.retry_count,
             )
@@ -299,6 +310,7 @@ class NativeTPGraspoTrainer:
                 _AttemptRecord(
                     sample=state.sample,
                     generation=generation,
+                    parsed_completions=parsed_completions,
                     rewards=rewards,
                     content_scores=content_scores,
                     all_right=all_right,
@@ -368,6 +380,24 @@ class NativeTPGraspoTrainer:
                 f"native-tp generate_sample_groups returned {len(generations)} groups for {len(samples)} samples"
             )
         return generations
+
+    def _parse_completion(self, completion: str, sample: Sample) -> ParsedCompletion:
+        parse_completion = getattr(self.runtime, "parse_completion", None)
+        if callable(parse_completion):
+            return parse_completion(completion, sample)
+        return raw_parsed_completion(completion)
+
+    def _completion_parser_name(self) -> str:
+        adapter = getattr(self.runtime, "_adapter", None)
+        if adapter is not None:
+            parser_name = getattr(adapter, "completion_parser_name", None)
+            if parser_name:
+                return str(parser_name)
+            if hasattr(adapter, "parse_completion"):
+                return adapter.__class__.__name__
+        if hasattr(self.runtime, "parse_completion"):
+            return self.runtime.__class__.__name__
+        return "raw"
 
     def _finalize_sample(self, state: _QueuedSample, *, epoch: int) -> bool:
         if not state.attempts:
@@ -751,6 +781,7 @@ class NativeTPGraspoTrainer:
         content_scores: list[float],
         all_right: list[bool],
         reward_details: list[dict[str, Any]],
+        parsed_completions: list[ParsedCompletion],
         decision: Any,
         retry_count: int,
     ) -> dict[str, Any]:
@@ -766,6 +797,7 @@ class NativeTPGraspoTrainer:
             "ground_truth": sample.ground_truth,
             "metadata": _safe_sample_metadata(sample),
             "completions": generation.completions,
+            "parsed_completions": [parsed.to_dict() for parsed in parsed_completions],
             "rewards": rewards,
             "content_scores": content_scores,
             "all_right": all_right,
@@ -968,14 +1000,20 @@ def _reward_detail(result: Any) -> dict[str, Any]:
     valid_extracted_json = None
     if "answer" in extracted:
         try:
-            json.loads(str(extracted["answer"]).strip())
-            valid_extracted_json = True
+            answer = extracted["answer"]
+            if isinstance(answer, str) and answer.strip():
+                json.loads(answer.strip())
+                valid_extracted_json = True
         except (TypeError, ValueError):
             valid_extracted_json = False
     return {
         "raw_score": float(result.raw_score),
         "max_score": float(result.max_score),
         "extracted": extracted,
+        "parsed_tool_calls": extracted.get("tool_calls"),
+        "parser": extracted.get("parser"),
+        "parse_errors": extracted.get("parse_errors"),
+        "extra_text": extracted.get("extra_text"),
         "useless_text_length": len(result.useless_text),
         "valid_extracted_json": valid_extracted_json,
     }
@@ -1066,6 +1104,10 @@ def _monitor_group(payload: dict[str, Any]) -> dict[str, Any]:
             for text, detail in zip(completions, details, strict=False)
             if _likely_truncated_json(text, detail)
         ),
+        "tool_call_parse_error_count": sum(1 for detail in details if detail.get("parse_errors")),
+        "tool_call_count_mismatch_count": _tool_call_count_mismatch_count(
+            details, payload.get("ground_truth")
+        ),
     }
 
 
@@ -1085,6 +1127,8 @@ def _reward_window_summary(groups: deque[dict[str, Any]]) -> dict[str, Any]:
             "unclosed_json_fence_count": 0,
             "invalid_extracted_json_count": 0,
             "likely_truncated_json_count": 0,
+            "tool_call_parse_error_count": 0,
+            "tool_call_count_mismatch_count": 0,
         }
     decision_counts: dict[str, int] = {}
     for item in items:
@@ -1108,6 +1152,12 @@ def _reward_window_summary(groups: deque[dict[str, Any]]) -> dict[str, Any]:
         "likely_truncated_json_count": sum(
             int(item["likely_truncated_json_count"]) for item in items
         ),
+        "tool_call_parse_error_count": sum(
+            int(item.get("tool_call_parse_error_count") or 0) for item in items
+        ),
+        "tool_call_count_mismatch_count": sum(
+            int(item.get("tool_call_count_mismatch_count") or 0) for item in items
+        ),
     }
 
 
@@ -1126,6 +1176,8 @@ def _reward_batch_summary(
     unclosed_json_fence_count = 0
     invalid_extracted_json_count = 0
     likely_truncated_json_count = 0
+    tool_call_parse_error_count = 0
+    tool_call_count_mismatch_count = 0
 
     for attempt in attempts:
         decision = str(attempt.get("decision"))
@@ -1150,6 +1202,10 @@ def _reward_batch_summary(
             1
             for text, detail in zip(completions, details, strict=False)
             if _likely_truncated_json(text, detail)
+        )
+        tool_call_parse_error_count += sum(1 for detail in details if detail.get("parse_errors"))
+        tool_call_count_mismatch_count += _tool_call_count_mismatch_count(
+            details, attempt.get("ground_truth")
         )
 
     attempt_group_count = len(attempts)
@@ -1208,6 +1264,8 @@ def _reward_batch_summary(
         "unclosed_json_fence_count": unclosed_json_fence_count,
         "invalid_extracted_json_count": invalid_extracted_json_count,
         "likely_truncated_json_count": likely_truncated_json_count,
+        "tool_call_parse_error_count": tool_call_parse_error_count,
+        "tool_call_count_mismatch_count": tool_call_count_mismatch_count,
     }
 
 
@@ -1252,8 +1310,20 @@ def _compact_batch_summary(summary: dict[str, Any]) -> dict[str, Any]:
             "unclosed_json_fence": int(summary.get("unclosed_json_fence_count") or 0),
             "invalid_json": int(summary.get("invalid_extracted_json_count") or 0),
             "truncated_json": int(summary.get("likely_truncated_json_count") or 0),
+            "tool_call_parse_error": int(summary.get("tool_call_parse_error_count") or 0),
+            "tool_call_count_mismatch": int(summary.get("tool_call_count_mismatch_count") or 0),
         },
     }
+
+
+def _tool_call_count_mismatch_count(details: list[dict[str, Any]], ground_truth: Any) -> int:
+    target_count = len(ground_truth) if isinstance(ground_truth, list) else 1
+    return sum(
+        1
+        for detail in details
+        if detail.get("parsed_tool_calls") is not None
+        and len(detail.get("parsed_tool_calls") or []) != target_count
+    )
 
 
 def _compact_decisions(

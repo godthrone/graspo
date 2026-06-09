@@ -548,6 +548,20 @@ class ScriptedQueuedRuntime(ScriptedGroupRuntime):
             )
         return generations
 
+    def parse_completion(self, completion, sample):
+        return qwen_tp_adapter_module._parse_qwen_tool_completion(
+            completion,
+            expect_tool_calls=bool(sample.tools),
+        )
+
+
+class ToolParsingRuntime(ScriptedGroupRuntime):
+    def parse_completion(self, completion, sample):
+        return qwen_tp_adapter_module._parse_qwen_tool_completion(
+            completion,
+            expect_tool_calls=bool(sample.tools),
+        )
+
 
 def _ok_completion() -> str:
     return '```json\n{"x": "ok"}\n```'
@@ -819,7 +833,10 @@ def test_rollout_prompt_queue_passes_tools_to_runtime(tmp_path):
         {
             "messages": [{"role": "user", "content": "p0"}],
             "tools": [tool],
-            "ground_truth": {"x": "ok"},
+            "ground_truth": {
+                "name": "query_device_status",
+                "arguments": {},
+            },
         },
         {
             "messages": [{"role": "user", "content": "p1"}],
@@ -832,7 +849,12 @@ def test_rollout_prompt_queue_passes_tools_to_runtime(tmp_path):
     )
     runtime = ScriptedQueuedRuntime(
         {
-            "p0": [_mixed_group(2)],
+            "p0": [
+                [
+                    "<tool_call><function=query_device_status></function></tool_call>",
+                    '<tool_call>{"name":"query_device_status","arguments":{}}</tool_call>',
+                ]
+            ],
             "p1": [_mixed_group(2)],
         }
     )
@@ -851,6 +873,64 @@ def test_rollout_prompt_queue_passes_tools_to_runtime(tmp_path):
         zip(runtime.generate_group_batches[0], runtime.generate_tool_batches[0], strict=True)
     )
     assert observed == {"p0": [tool], "p1": None}
+
+
+def test_trainer_scores_qwen_xml_tool_call_via_runtime_parser(tmp_path):
+    data = tmp_path / "train.jsonl"
+    tool = {
+        "type": "function",
+        "function": {
+            "name": "robot_atomic_control",
+            "parameters": {
+                "type": "object",
+                "properties": {"action": {"type": "string", "enum": ["向下", "向上"]}},
+                "required": ["action"],
+            },
+        },
+    }
+    data.write_text(
+        json.dumps(
+            {
+                "messages": [{"role": "user", "content": "p0"}],
+                "tools": [tool],
+                "ground_truth": {
+                    "name": "robot_atomic_control",
+                    "arguments": {"action": "向下"},
+                },
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    runtime = ToolParsingRuntime(
+        [
+            [
+                "<tool_call><function=robot_atomic_control>"
+                "<parameter=action>向上</parameter></function></tool_call>",
+                "<think>ok</think><tool_call><function=robot_atomic_control>"
+                "<parameter=action>向下</parameter></function></tool_call>",
+            ]
+        ]
+    )
+    config = _native_test_config(
+        tmp_path,
+        data,
+        rollout_group_size=2,
+        optimize_completion_batch_size=2,
+    )
+    trainer = NativeTPGraspoTrainer(config, runtime=runtime)
+
+    trainer.train()
+
+    readable = json.loads(
+        (tmp_path / "out" / "rollouts.readable.jsonl").read_text(encoding="utf-8")
+    )
+    assert readable["completions"][1]["all_right"] is True
+    assert readable["completions"][1]["parsed_tool_calls"] == [
+        {"name": "robot_atomic_control", "arguments": {"action": "向下"}}
+    ]
+    assert readable["group_debug"]["tool_call_parse_error_count"] == 0
 
 
 def test_rollout_prompt_queue_retries_only_unfinished_prompt(tmp_path):

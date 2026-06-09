@@ -15,6 +15,15 @@ def test_cli_validate_reward():
     assert args.func(args) == 0
 
 
+def test_cli_validate_reward_tool_call_sample():
+    parser = build_parser()
+    args = parser.parse_args(
+        ["validate-reward", "--data", "data/sample_tool_call.jsonl", "--limit", "1"]
+    )
+
+    assert args.func(args) == 0
+
+
 def test_cli_main_commands_parse():
     parser = build_parser()
 
