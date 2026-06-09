@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import random
+import re
 import time
 from collections.abc import Iterable
 from dataclasses import asdict
@@ -25,6 +26,7 @@ from graspo.backends.native_tp.placement import (
 )
 from graspo.backends.native_tp.runtime import NativeGeneration
 from graspo.core.buffer import Experience
+from graspo.core.completion import ParsedCompletion
 from graspo.core.schema import GraspoConfig
 from graspo.backends.native_tp.lora_io import load_peft_adapter_into_native_model
 from graspo.trainer.lora import resolve_lora_target_modules
@@ -50,6 +52,8 @@ def _set_tensor_parallel_group(group: dist.ProcessGroup | None, size: int) -> No
 
 class QwenNativeTPAdapter:
     """Qwen causal LM adapter backed by self-owned PyTorch tensor parallel."""
+
+    completion_parser_name = "qwen_tool_call"
 
     def __init__(self, config: GraspoConfig) -> None:
         self.config = config
@@ -2325,6 +2329,12 @@ class QwenNativeTPAdapter:
             + tools_text
         )
 
+    def parse_completion(self, completion: str, sample: Any | None = None) -> ParsedCompletion:
+        return _parse_qwen_tool_completion(
+            completion,
+            expect_tool_calls=bool(getattr(sample, "tools", None)),
+        )
+
     def _encode_multimodal_rows(
         self,
         rows: list[dict[str, Any]],
@@ -2482,6 +2492,90 @@ def _multimodal_row_from_sample(sample: Any) -> dict[str, Any]:
     if tools is not None:
         row["tools"] = [dict(tool) for tool in tools]
     return row
+
+
+_THINK_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL)
+_TOOL_CALL_RE = re.compile(r"<tool_call>(.*?)</tool_call>", re.DOTALL)
+_FUNCTION_RE = re.compile(r"<function=([^>\n]+)>(.*?)</function>", re.DOTALL)
+_PARAMETER_RE = re.compile(r"<parameter=([^>\n]+)>(.*?)</parameter>", re.DOTALL)
+
+
+def _parse_qwen_tool_completion(text: str, *, expect_tool_calls: bool = False) -> ParsedCompletion:
+    think_parts = [match.group(1).strip() for match in _THINK_RE.finditer(text)]
+    tool_calls: list[dict[str, Any]] = []
+    parse_errors: list[str] = []
+    parser_names: list[str] = []
+    for idx, match in enumerate(_TOOL_CALL_RE.finditer(text)):
+        body = match.group(1).strip()
+        parsed_json = _try_parse_json_tool_call(body)
+        if parsed_json is not None:
+            tool_calls.extend(parsed_json)
+            parser_names.append("qwen_json_tool_call")
+            continue
+        parsed_xml = _try_parse_qwen_xml_tool_call(body)
+        if parsed_xml:
+            tool_calls.extend(parsed_xml)
+            parser_names.append("qwen_xml_tool_call")
+            continue
+        parse_errors.append(f"tool_call[{idx}] is neither canonical JSON nor Qwen XML")
+    if not tool_calls and "<function=" in text:
+        parsed_xml = _try_parse_qwen_xml_tool_call(_THINK_RE.sub("", text))
+        if parsed_xml:
+            tool_calls.extend(parsed_xml)
+            parser_names.append("qwen_xml_tool_call_unwrapped")
+    if expect_tool_calls and not tool_calls:
+        parse_errors.append("no tool call found")
+    extra_text = _FUNCTION_RE.sub("", _TOOL_CALL_RE.sub("", _THINK_RE.sub("", text))).strip()
+    parser_name = "+".join(sorted(set(parser_names))) if parser_names else "qwen_tool_call"
+    return ParsedCompletion(
+        raw_text=text,
+        think_text="\n\n".join(part for part in think_parts if part),
+        tool_calls=tool_calls,
+        answer_text=extra_text or text,
+        parser_name=parser_name,
+        parse_errors=parse_errors,
+        extra_text=extra_text,
+    )
+
+
+def _try_parse_json_tool_call(text: str) -> list[dict[str, Any]] | None:
+    try:
+        value = json.loads(text)
+    except (TypeError, ValueError):
+        return None
+    values = value if isinstance(value, list) else [value]
+    if not isinstance(values, list):
+        return None
+    calls: list[dict[str, Any]] = []
+    for item in values:
+        call = _canonical_tool_call(item)
+        if call is None:
+            return None
+        calls.append(call)
+    return calls
+
+
+def _try_parse_qwen_xml_tool_call(text: str) -> list[dict[str, Any]]:
+    calls: list[dict[str, Any]] = []
+    for match in _FUNCTION_RE.finditer(text):
+        name = match.group(1).strip()
+        body = match.group(2)
+        arguments: dict[str, Any] = {}
+        for param_match in _PARAMETER_RE.finditer(body):
+            arguments[param_match.group(1).strip()] = param_match.group(2).strip()
+        if name and arguments:
+            calls.append({"name": name, "arguments": arguments})
+    return calls
+
+
+def _canonical_tool_call(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    name = value.get("name")
+    arguments = value.get("arguments")
+    if not isinstance(name, str) or not isinstance(arguments, dict):
+        return None
+    return {"name": name, "arguments": dict(arguments)}
 
 
 def _messages_from_multimodal_row(row: dict[str, Any]) -> list[dict[str, Any]]:

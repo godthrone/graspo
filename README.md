@@ -103,7 +103,8 @@ See `data/sample_tool_call.jsonl` for a runnable tool-call dataset row.
 
 Supported fields:
 
-- `ground_truth`: expected structured output as a JSON object;
+- `ground_truth`: expected structured output as a JSON object, or canonical
+  tool-call object/list when `tools` is present;
 - `messages`: required prompt/context messages for tokenizer or processor chat templates;
 - `tools`: optional list of tool declarations passed to model chat templates;
 - image/video items inside `messages[].content`: parsed by the data layer for
@@ -111,27 +112,31 @@ Supported fields:
   smoke-tested before production use;
 - extra fields are kept as metadata.
 
+For tool-call records, `ground_truth` is canonical tool-call JSON:
+`{"name":"...","arguments":{...}}` for one call, or a list of those objects for
+ordered multi-call targets. Model-specific output formats, such as Qwen XML
+tool calls, are parsed by the model adapter before reward scoring.
+
 The final message must not have role `assistant`; `ground_truth` is the raw
 reward target and must not be leaked into the input messages or converted to a
 model chat template. GRASPO only accepts JSONL records with `messages`, optional
-`tools`, and JSON-object `ground_truth`; plain `prompt`, JSON, Excel, and
-top-level media fields are not supported.
+`tools`, and JSON-object/canonical-tool-call `ground_truth`; plain `prompt`,
+JSON, Excel, and top-level media fields are not supported.
 
 ## Reward Scoring
 
 GRASPO currently ships one built-in structured-output reward. It is rule-based,
-auditable, and designed for tasks where the target answer is a JSON object. A
-completion is scored in four steps:
+auditable, and designed for tasks where the target answer is a JSON object or a
+canonical tool-call object/list. A completion is scored in four steps:
 
-1. Check output markers. Depending on `reward` config, the scorer can require
-   `<think>...</think>`, fenced JSON Markdown blocks, and
-   `<tool_call>...</tool_call>` sections.
-2. Extract answer text. The answer is read from the configured marker region;
-   if `check_json_markdown=false`, the full answer region is treated as JSON.
-3. Parse and compare JSON. Parsed completion JSON is compared with
-   `ground_truth` using recursive dictionary/list matching. Fields present in
-   the target get partial credit; exact values get additional credit; unexpected
-   extra keys reduce the structural match.
+1. Parse model-specific completion format. The model adapter converts raw
+   output, including Qwen XML tool calls, into canonical parsed fields while
+   preserving raw text and `<think>...</think>`.
+2. Check output markers. Depending on `reward` config, the scorer can require
+   `<think>...</think>` and fenced JSON Markdown blocks for normal answer tasks.
+3. Compare structured content. Normal answer tasks compare parsed JSON with
+   `ground_truth`; tool-call tasks compare canonical tool-call JSON/list with
+   `ground_truth`, preserving multi-call order.
 4. Normalize reward. Marker score, structured content score, perfect-match
    bonus, and the extra-text penalty/bonus are combined into `reward`,
    `content_score`, and `all_right`.
@@ -146,9 +151,9 @@ The important outputs are:
 GRASPO uses the reward distribution inside each rollout group, not just one
 absolute score. Groups with useful differences become trainable; already-perfect
 groups can be skipped; groups with no reward variance or no preference gap are
-discarded or retried. The readable rollout log stores the completion, extracted
-fields, reward details, and invalid reason so reward behavior can be inspected
-without rerunning generation.
+discarded or retried. The readable rollout log stores the completion, parsed
+tool calls, extracted fields, reward details, parser errors, and invalid reason
+so reward behavior can be inspected without rerunning generation.
 
 ## Configuration
 
@@ -195,7 +200,8 @@ training.
 
 - `check_think`: require `<think>...</think>` markers before the answer.
 - `check_json_markdown`: require fenced JSON output.
-- `check_tool_call`: score a tool-call target in addition to the answer.
+- `check_tool_call`: legacy switch for tool-call scoring; current training
+  infers tool-call targets from samples with `tools`.
 - `check_list_order`: make list order matter in structured comparison.
 - `marker_reward_weight`: reward for required output markers.
 - `content_reward_weight`: reward for structured content match.

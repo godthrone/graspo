@@ -22,6 +22,7 @@ from graspo.backends.native_tp.qwen_tp_adapter import (  # noqa: E402
     _add_pipeline_stage_timing,
     _messages_from_multimodal_row,
     _new_pipeline_stage_timing,
+    _parse_qwen_tool_completion,
     _round_pipeline_stage_timing,
     _selected_token_log_probs_from_hidden,
 )
@@ -98,6 +99,55 @@ def test_qwen_format_messages_passes_tools_to_chat_template():
             },
         )
     ]
+
+
+def test_qwen_parser_extracts_xml_tool_call_and_think():
+    parsed = _parse_qwen_tool_completion(
+        "<think>look</think>\n"
+        "<tool_call>\n"
+        "<function=robot_atomic_control>\n"
+        "<parameter=action>\n"
+        "向下\n"
+        "</parameter>\n"
+        "</function>\n"
+        "</tool_call>",
+        expect_tool_calls=True,
+    )
+
+    assert parsed.think_text == "look"
+    assert parsed.tool_calls == [{"name": "robot_atomic_control", "arguments": {"action": "向下"}}]
+    assert parsed.parse_errors == []
+    assert parsed.extra_text == ""
+
+
+def test_qwen_parser_extracts_json_tool_call():
+    parsed = _parse_qwen_tool_completion(
+        '<tool_call>{"name":"search","arguments":{"q":"apn"}}</tool_call>',
+        expect_tool_calls=True,
+    )
+
+    assert parsed.tool_calls == [{"name": "search", "arguments": {"q": "apn"}}]
+    assert parsed.parser_name == "qwen_json_tool_call"
+
+
+def test_qwen_parser_preserves_multiple_tool_call_order():
+    parsed = _parse_qwen_tool_completion(
+        '<tool_call>{"name":"first","arguments":{"x":1}}</tool_call>'
+        '<tool_call>{"name":"second","arguments":{"y":2}}</tool_call>',
+        expect_tool_calls=True,
+    )
+
+    assert parsed.tool_calls == [
+        {"name": "first", "arguments": {"x": 1}},
+        {"name": "second", "arguments": {"y": 2}},
+    ]
+
+
+def test_qwen_parser_reports_bad_tool_call():
+    parsed = _parse_qwen_tool_completion("<tool_call><function=bad></function></tool_call>")
+
+    assert parsed.tool_calls == []
+    assert parsed.parse_errors
 
 
 def test_native_qwen_lora_available_targets_cover_text_and_visual():
