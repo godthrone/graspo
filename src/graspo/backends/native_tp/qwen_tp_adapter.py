@@ -2333,7 +2333,7 @@ class QwenNativeTPAdapter:
     def parse_completion(self, completion: str, sample: Any | None = None) -> ParsedCompletion:
         return _parse_qwen_tool_completion(
             completion,
-            expect_tool_calls=bool(getattr(sample, "tools", None)),
+            expect_tool_calls=bool(getattr(sample, "expects_tool_calls", False)),
             tools=getattr(sample, "tools", None),
         )
 

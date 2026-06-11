@@ -33,7 +33,6 @@ reward:
   content_reward_weight: 100
   anti_useless_str_reward_weight: 1
   anti_useless_str_half_reward_len: 100
-  answer_field: ground_truth
 
 training:
   output_dir: outputs/qwen36-27b-pp8

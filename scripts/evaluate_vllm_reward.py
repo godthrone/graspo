@@ -126,7 +126,7 @@ def evaluate(
                 completion = str(message.get("content") or "")
                 parsed = _parsed_vllm_message(message, completion, sample=sample)
                 result = reward.score_parsed(
-                    parsed, sample.ground_truth, is_tool_call=bool(sample.tools)
+                    parsed, sample.targets, is_tool_call=sample.expects_tool_calls
                 )
                 completion_count += 1
                 all_right_count += int(result.all_right)
@@ -143,8 +143,11 @@ def evaluate(
                             "parsed_tool_calls": parsed.tool_calls,
                             "parser_name": parsed.parser_name,
                             "parser_errors": parsed.parse_errors,
+                            "matched_target_index": result.matched_target_index,
+                            "matched_target_id": result.matched_target_id,
+                            "target_scores": result.target_scores,
                             "completion": completion,
-                            "ground_truth": sample.ground_truth,
+                            "targets": sample.targets,
                         },
                         ensure_ascii=False,
                     )
@@ -246,7 +249,7 @@ def _parsed_vllm_message(
         )
     return _parse_qwen_tool_completion(
         completion,
-        expect_tool_calls=bool(sample.tools),
+        expect_tool_calls=sample.expects_tool_calls,
         tools=sample.tools,
     )
 
