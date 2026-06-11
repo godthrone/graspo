@@ -108,7 +108,7 @@ def _make_record(
                 ],
             },
         ],
-        "ground_truth": expected,
+        "targets": [{"id": "expected", "output": {"content": expected}}],
         "metadata": {"split": split, "synthetic": True, "task_family": "ticket_panel"},
     }
 

@@ -193,7 +193,7 @@ def _write_launch_config(
 ) -> Path:
     data_path = tmp_path / "train.jsonl"
     data_path.write_text(
-        '{"messages":[{"role":"user","content":"p"}],"ground_truth":{"x":1}}\n',
+        '{"messages":[{"role":"user","content":"p"}],"targets":[{"output":{"content":{"x":1}}}]}\n',
         encoding="utf-8",
     )
     output_dir = tmp_path / "out"

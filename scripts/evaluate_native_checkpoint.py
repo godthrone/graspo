@@ -124,8 +124,8 @@ def evaluate_samples(
             results = [
                 reward.score_parsed(
                     parsed,
-                    sample.ground_truth,
-                    is_tool_call=bool(sample.tools),
+                    sample.targets,
+                    is_tool_call=sample.expects_tool_calls,
                 )
                 for parsed in parsed_completions
             ]
@@ -145,8 +145,11 @@ def evaluate_samples(
                                 "parsed_tool_calls": parsed.tool_calls,
                                 "parser_name": parsed.parser_name,
                                 "parser_errors": parsed.parse_errors,
+                                "matched_target_index": result.matched_target_index,
+                                "matched_target_id": result.matched_target_id,
+                                "target_scores": result.target_scores,
                                 "completion": completion,
-                                "ground_truth": sample.ground_truth,
+                                "targets": sample.targets,
                                 "metadata": _safe_metadata(sample),
                             },
                             ensure_ascii=False,

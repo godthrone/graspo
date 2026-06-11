@@ -6,23 +6,37 @@ from graspo.core.data import load_jsonl, write_jsonl
 from graspo.core.schema import Sample
 
 
+def _content_target(content: dict) -> list[dict]:
+    return [{"id": "expected", "output": {"content": content}}]
+
+
+def _tool_target(*calls: dict, target_id: str = "expected") -> list[dict]:
+    return [{"id": target_id, "output": {"tool_calls": list(calls)}}]
+
+
 def test_load_standard_jsonl():
     samples = load_jsonl(Path("data/sample.jsonl"))
 
     assert len(samples) == 2
     assert samples[0].messages
-    assert isinstance(samples[0].ground_truth, dict)
+    assert isinstance(samples[0].targets, list)
+    assert samples[0].targets[0]["output"]["content"]["APN"] == "cmnet"
 
 
 def test_write_and_load_roundtrip(tmp_path):
     path = tmp_path / "train.jsonl"
     write_jsonl(
-        [Sample(messages=[{"role": "user", "content": "hello"}], ground_truth={"x": 1})], path
+        [
+            Sample(
+                messages=[{"role": "user", "content": "hello"}], targets=_content_target({"x": 1})
+            )
+        ],
+        path,
     )
 
     loaded = load_jsonl(path)
     assert loaded[0].messages == [{"role": "user", "content": "hello"}]
-    assert loaded[0].ground_truth == {"x": 1}
+    assert loaded[0].targets == _content_target({"x": 1})
 
 
 def test_load_messages_jsonl(tmp_path):
@@ -30,7 +44,7 @@ def test_load_messages_jsonl(tmp_path):
     path.write_text(
         '{"messages":[{"role":"system","content":"s"},{"role":"user","content":"q1"},'
         '{"role":"assistant","content":"a1"},{"role":"user","content":"q2"}],'
-        '"ground_truth":{"a":1}}\n',
+        '"targets":[{"output":{"content":{"a":1}}}]}\n',
         encoding="utf-8",
     )
 
@@ -41,60 +55,69 @@ def test_load_messages_jsonl(tmp_path):
         {"role": "assistant", "content": "a1"},
         {"role": "user", "content": "q2"},
     ]
-    assert sample.ground_truth == {"a": 1}
+    assert sample.targets == [{"id": None, "output": {"content": {"a": 1}}}]
 
 
-def test_load_tools_jsonl(tmp_path):
-    path = tmp_path / "tools.jsonl"
-    path.write_text(
-        '{"messages":[{"role":"user","content":"query device status"}],'
-        '"tools":[{"type":"function","function":{"name":"query_device_status",'
-        '"parameters":{"type":"object","properties":{"device_id":{"type":"string"}}}}}],'
-        '"ground_truth":{"name":"query_device_status","arguments":{"device_id":"OLT-17"}}}\n',
-        encoding="utf-8",
-    )
+def test_load_tools_jsonl():
+    sample = load_jsonl(Path("data/sample_tool_call.jsonl"))[0]
 
-    sample = load_jsonl(path)[0]
-
-    assert sample.tools == [
+    assert sample.expects_tool_calls is True
+    assert sample.targets == _tool_target(
         {
-            "type": "function",
-            "function": {
-                "name": "query_device_status",
-                "parameters": {
-                    "type": "object",
-                    "properties": {"device_id": {"type": "string"}},
-                },
+            "name": "query_device_status",
+            "arguments": {
+                "device_id": "OLT-17",
+                "panel_time": "2026-06-08T10:30:00+08:00",
             },
         }
-    ]
+    )
     assert "tools" not in sample.metadata
 
 
-def test_load_tools_jsonl_allows_canonical_tool_call_list(tmp_path):
-    path = tmp_path / "tools_list.jsonl"
+def test_load_tools_jsonl_allows_alternative_targets(tmp_path):
+    path = tmp_path / "tools_alternatives.jsonl"
     path.write_text(
-        '{"messages":[{"role":"user","content":"query device status"}],'
-        '"tools":[{"type":"function","function":{"name":"query_device_status",'
-        '"parameters":{"type":"object","properties":{"device_id":{"type":"string"}},'
-        '"required":["device_id"]}}}],'
-        '"ground_truth":[{"name":"query_device_status","arguments":{"device_id":"OLT-17"}}]}\n',
+        '{"messages":[{"role":"user","content":"move"}],'
+        '"tools":[{"type":"function","function":{"name":"move",'
+        '"parameters":{"type":"object","properties":{"action":{"type":"string"},'
+        '"distance_cm":{"type":"integer"}},"required":["action","distance_cm"]}}}],'
+        '"targets":['
+        '{"id":"left","output":{"tool_calls":[{"name":"move","arguments":{"action":"left","distance_cm":6}}]}},'
+        '{"id":"down","output":{"tool_calls":[{"name":"move","arguments":{"action":"down","distance_cm":4}}]}}'
+        "]}\n",
         encoding="utf-8",
     )
 
     sample = load_jsonl(path)[0]
 
-    assert sample.ground_truth == [
-        {"name": "query_device_status", "arguments": {"device_id": "OLT-17"}}
-    ]
+    assert [target["id"] for target in sample.targets] == ["left", "down"]
+    assert sample.targets[1]["output"]["tool_calls"][0]["arguments"]["action"] == "down"
 
 
-def test_tool_ground_truth_unknown_tool_is_rejected(tmp_path):
+def test_load_tools_jsonl_allows_ordered_multi_step_tool_calls(tmp_path):
+    path = tmp_path / "tools_multi_step.jsonl"
+    path.write_text(
+        '{"messages":[{"role":"user","content":"move then inspect"}],'
+        '"tools":[{"type":"function","function":{"name":"move","parameters":{"type":"object"}}},'
+        '{"type":"function","function":{"name":"inspect","parameters":{"type":"object"}}}],'
+        '"targets":[{"output":{"tool_calls":['
+        '{"name":"move","arguments":{"action":"left"}},'
+        '{"name":"inspect","arguments":{"object":"target"}}'
+        "]}}]}\n",
+        encoding="utf-8",
+    )
+
+    sample = load_jsonl(path)[0]
+
+    assert len(sample.targets[0]["output"]["tool_calls"]) == 2
+
+
+def test_tool_target_unknown_tool_is_rejected(tmp_path):
     path = tmp_path / "bad_tool_name.jsonl"
     path.write_text(
         '{"messages":[{"role":"user","content":"q"}],'
         '"tools":[{"type":"function","function":{"name":"known","parameters":{"type":"object"}}}],'
-        '"ground_truth":{"name":"other","arguments":{}}}\n',
+        '"targets":[{"output":{"tool_calls":[{"name":"other","arguments":{}}]}}]}\n',
         encoding="utf-8",
     )
 
@@ -102,14 +125,14 @@ def test_tool_ground_truth_unknown_tool_is_rejected(tmp_path):
         load_jsonl(path)
 
 
-def test_tool_ground_truth_enum_value_is_rejected(tmp_path):
+def test_tool_target_enum_value_is_rejected(tmp_path):
     path = tmp_path / "bad_tool_enum.jsonl"
     path.write_text(
         '{"messages":[{"role":"user","content":"q"}],'
         '"tools":[{"type":"function","function":{"name":"move","parameters":{"type":"object",'
-        '"properties":{"action":{"type":"string","enum":["向下"]}},'
+        '"properties":{"action":{"type":"string","enum":["down"]}},'
         '"required":["action"]}}}],'
-        '"ground_truth":{"name":"move","arguments":{"action":"向上"}}}\n',
+        '"targets":[{"output":{"tool_calls":[{"name":"move","arguments":{"action":"up"}}]}}]}\n',
         encoding="utf-8",
     )
 
@@ -120,7 +143,8 @@ def test_tool_ground_truth_enum_value_is_rejected(tmp_path):
 def test_non_list_tools_is_rejected(tmp_path):
     path = tmp_path / "bad_tools.jsonl"
     path.write_text(
-        '{"messages":[{"role":"user","content":"q"}],"tools":{},"ground_truth":{}}\n',
+        '{"messages":[{"role":"user","content":"q"}],"tools":{},'
+        '"targets":[{"output":{"content":{}}}]}\n',
         encoding="utf-8",
     )
 
@@ -131,7 +155,7 @@ def test_non_list_tools_is_rejected(tmp_path):
 def test_json_file_is_not_a_training_format(tmp_path):
     path = tmp_path / "data.json"
     path.write_text(
-        '[{"messages":[{"role":"user","content":"q"}],"ground_truth":{"a":1}}]',
+        '[{"messages":[{"role":"user","content":"q"}],"targets":[{"output":{"content":{"a":1}}}]}]',
         encoding="utf-8",
     )
 
@@ -146,7 +170,7 @@ def test_load_multimodal_messages_jsonl(tmp_path):
         '{"type":"text","text":"describe"},'
         '{"type":"image","image":"images/a.png"},'
         '{"type":"video","video":"videos/a.mp4"}'
-        ']}],"ground_truth":{"a":1}}\n',
+        ']}],"targets":[{"output":{"content":{"a":1}}}]}\n',
         encoding="utf-8",
     )
 
@@ -170,20 +194,17 @@ def test_load_multimodal_messages_jsonl(tmp_path):
 
 def test_prompt_only_jsonl_is_rejected(tmp_path):
     path = tmp_path / "prompt_only.jsonl"
-    path.write_text('{"prompt":"q","ground_truth":{}}\n', encoding="utf-8")
+    path.write_text('{"prompt":"q","targets":[{"output":{"content":{}}}]}\n', encoding="utf-8")
 
-    try:
+    with pytest.raises(ValueError, match="messages"):
         load_jsonl(path)
-    except ValueError as exc:
-        assert "messages" in str(exc)
-    else:
-        raise AssertionError("prompt-only records must be rejected")
 
 
 def test_top_level_media_fields_are_rejected(tmp_path):
     path = tmp_path / "top_level_media.jsonl"
     path.write_text(
-        '{"messages":[{"role":"user","content":"q"}],"ground_truth":{},"images":["a.png"]}\n',
+        '{"messages":[{"role":"user","content":"q"}],"targets":[{"output":{"content":{}}}],'
+        '"images":["a.png"]}\n',
         encoding="utf-8",
     )
 
@@ -191,15 +212,36 @@ def test_top_level_media_fields_are_rejected(tmp_path):
         load_jsonl(path)
 
 
-@pytest.mark.parametrize("ground_truth", ['"answer"', '[{"a":1}]'])
-def test_non_object_ground_truth_is_rejected(tmp_path, ground_truth):
-    path = tmp_path / "bad_gt.jsonl"
+@pytest.mark.parametrize(
+    "targets",
+    [
+        '"answer"',
+        "[]",
+        '[{"id":"missing-output"}]',
+        '[{"output":{}}]',
+        '[{"output":{"content":"answer"}}]',
+        '[{"output":{"tool_calls":[]}}]',
+    ],
+)
+def test_invalid_targets_are_rejected(tmp_path, targets):
+    path = tmp_path / "bad_targets.jsonl"
     path.write_text(
-        '{"messages":[{"role":"user","content":"q"}],"ground_truth":' + ground_truth + "}\n",
+        '{"messages":[{"role":"user","content":"q"}],"targets":' + targets + "}\n",
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match="JSON object"):
+    with pytest.raises(ValueError, match="targets|output|tool_calls|content"):
+        load_jsonl(path)
+
+
+def test_removed_ground_truth_is_rejected(tmp_path):
+    path = tmp_path / "old_gt.jsonl"
+    path.write_text(
+        '{"messages":[{"role":"user","content":"q"}],"ground_truth":{"a":1}}\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="ground_truth.*targets"):
         load_jsonl(path)
 
 
@@ -207,13 +249,9 @@ def test_final_assistant_message_is_rejected(tmp_path):
     path = tmp_path / "leaky.jsonl"
     path.write_text(
         '{"messages":[{"role":"user","content":"q"},{"role":"assistant","content":"answer"}],'
-        '"ground_truth":{}}\n',
+        '"targets":[{"output":{"content":{}}}]}\n',
         encoding="utf-8",
     )
 
-    try:
+    with pytest.raises(ValueError, match="final assistant"):
         load_jsonl(path)
-    except ValueError as exc:
-        assert "final assistant" in str(exc)
-    else:
-        raise AssertionError("final assistant messages must be rejected")

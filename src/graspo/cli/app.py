@@ -43,29 +43,27 @@ def cmd_validate_reward(args: argparse.Namespace) -> int:
         if has_explicit_completion:
             completion = completions[idx]
         else:
-            gt = (
-                sample.ground_truth
-                if isinstance(sample.ground_truth, str)
-                else json.dumps(sample.ground_truth)
-            )
-            completion = f"```json\n{gt}\n```" if args.check_json_markdown else gt
-        if sample.tools:
+            output = sample.targets[0]["output"]
+            if sample.expects_tool_calls:
+                calls = output.get("tool_calls") or []
+                completion = json.dumps(calls, ensure_ascii=False)
+            else:
+                content = output.get("content") or {}
+                gt = json.dumps(content, ensure_ascii=False)
+                completion = f"```json\n{gt}\n```" if args.check_json_markdown else gt
+        if sample.expects_tool_calls:
             parsed = (
                 raw_parsed_completion(completion)
                 if has_explicit_completion
                 else ParsedCompletion(
                     raw_text=completion,
-                    tool_calls=(
-                        sample.ground_truth
-                        if isinstance(sample.ground_truth, list)
-                        else [sample.ground_truth]
-                    ),
+                    tool_calls=list(sample.targets[0]["output"].get("tool_calls") or []),
                     parser_name="validate_reward_canonical",
                 )
             )
-            result = reward.score_parsed(parsed, sample.ground_truth, is_tool_call=True)
+            result = reward.score_parsed(parsed, sample.targets, is_tool_call=True)
         else:
-            result = reward.score(completion, sample.ground_truth)
+            result = reward.score(completion, sample.targets)
         scores.append(result.reward)
         print(
             json.dumps(
