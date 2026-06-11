@@ -25,6 +25,7 @@ from graspo.backends.native_tp.qwen_tp_adapter import (  # noqa: E402
     _messages_from_multimodal_row,
     _new_pipeline_stage_timing,
     _parse_qwen_tool_completion,
+    _processor_chat_messages,
     _qwen35_mrope_embeddings,
     _round_pipeline_stage_timing,
     _selected_token_log_probs_from_hidden,
@@ -64,6 +65,31 @@ def test_multimodal_row_messages_are_preserved_for_processor_template():
     ]
 
     assert _messages_from_multimodal_row({"messages": messages}) == messages
+
+
+def test_processor_chat_messages_wrap_text_content_blocks():
+    messages = [
+        {"role": "system", "content": "s"},
+        {
+            "role": "user",
+            "content": [
+                {"type": "image", "image": "images/a.png"},
+                {"type": "text", "text": "q2"},
+            ],
+        },
+    ]
+
+    assert _processor_chat_messages(messages) == [
+        {"role": "system", "content": [{"type": "text", "text": "s"}]},
+        {
+            "role": "user",
+            "content": [
+                {"type": "image", "image": "images/a.png"},
+                {"type": "text", "text": "q2"},
+            ],
+        },
+    ]
+    assert messages[0]["content"] == "s"
 
 
 def test_qwen_format_messages_passes_tools_to_chat_template():
