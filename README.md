@@ -295,6 +295,24 @@ unknown targets, unsupported conv/norm parameters, and empty matches stop before
 training. Native checkpoints store the resolved LoRA target signature and reject
 resume with a different target configuration.
 
+## Native Model Implementation Boundary
+
+Native model math belongs in the native model classes. RoPE/M-RoPE, position
+IDs, KV-cache continuation, visual feature injection, TP shard-local layer
+math, and LoRA target metadata should live on classes such as
+`Qwen3DenseModel`, `Qwen35HybridTextModel`, and their attention/layer modules.
+
+`QwenNativeTPAdapter` is responsible for processor/tokenizer calls, batching,
+rollout splitting, sampling, pipeline send/recv orchestration, checkpoint
+delegation, and logging. Runtime and placement modules own backend lifecycle,
+config validation, and TP/PP layout only; they should not implement
+model-family math.
+
+Qwen3.6 uses the Qwen3.5-family hybrid text/vision native class in GRASPO
+because its architecture is compatible with that family. If a future model uses
+a different `model_type`, such as `qwen3_vl` or `qwen3_omni`, add a dedicated
+native model class instead of introducing adapter-level special cases.
+
 ## Export
 
 GRASPO native checkpoints are recoverable training checkpoints. Portable model

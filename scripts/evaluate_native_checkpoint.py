@@ -116,14 +116,22 @@ def evaluate_samples(
                     top_p=config.training.top_p,
                     chat_template_kwargs=config.model.chat_template_kwargs,
                 )[0]
-            results = [
-                reward.score(completion, sample.ground_truth)
+            parsed_completions = [
+                runtime.parse_completion(completion, sample)
                 for completion in generation.completions
+            ]
+            results = [
+                reward.score_parsed(
+                    parsed,
+                    sample.ground_truth,
+                    is_tool_call=bool(sample.tools),
+                )
+                for parsed in parsed_completions
             ]
             group_rewards = [result.reward for result in results]
             if primary and handle is not None:
-                for completion_idx, (completion, result) in enumerate(
-                    zip(generation.completions, results, strict=True)
+                for completion_idx, (completion, result, parsed) in enumerate(
+                    zip(generation.completions, results, parsed_completions, strict=True)
                 ):
                     handle.write(
                         json.dumps(
@@ -133,6 +141,9 @@ def evaluate_samples(
                                 "reward": result.reward,
                                 "content_score": result.content_score,
                                 "all_right": result.all_right,
+                                "parsed_tool_calls": parsed.tool_calls,
+                                "parser_name": parsed.parser_name,
+                                "parser_errors": parsed.parse_errors,
                                 "completion": completion,
                                 "ground_truth": sample.ground_truth,
                                 "metadata": _safe_metadata(sample),
