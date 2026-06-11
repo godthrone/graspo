@@ -97,16 +97,18 @@ uv run graspo validate-reward --data data/sample.jsonl --limit 2
 
 GRASPO 当前提供一个内置结构化输出 reward，适合目标答案为 JSON object 或 canonical tool-call object/list 的任务。每条 completion 的计分流程：
 
-1. 解析模型私有输出格式：模型 adapter 把 raw completion 中的 Qwen XML tool call 等格式转成 canonical 结构，同时保留 raw text 和 `<think>...</think>`。
+1. 解析模型私有输出格式：模型 adapter 把 raw completion 中的 Qwen XML tool call 等格式转成 canonical 结构，同时保留 raw text 和 `<think>...</think>`。Qwen XML tool-call 参数会根据工具 schema 中的 `integer`、`number`、`boolean` 类型先转成对应 JSON 类型，再进入 reward。
 2. 检查输出标记：根据 reward 配置，可要求 `<think>...</think>`；普通 answer 任务还可以要求 fenced JSON Markdown block。
-3. 比较结构化内容：普通 answer 任务比较 parsed JSON 和 `ground_truth`；工具调用任务比较 canonical tool-call JSON/list 和 `ground_truth`，多次调用按列表顺序比较。
+3. 比较结构化内容：普通 answer 任务比较 parsed JSON 和 `ground_truth`；工具调用任务比较 canonical tool-call JSON/list 和 `ground_truth`，多次调用按列表顺序比较。JSON number 字段使用 `1 / (1 + abs(predicted - target))` 连续计分；非数字字段和类型不匹配仍按严格相等比较。
 4. 归一化 reward：标记分、结构化内容分、完全正确 bonus 和多余文本惩罚/奖励合成 `reward`、`content_score` 和 `all_right`。
 
 关键输出：
 
 - `reward`：用于 GRASPO group decision、advantage 计算和 ReplayBuffer 训练；
 - `content_score`：组过滤前的结构化内容匹配分；
-- `all_right`：只有所有检查目标都完全正确时才为 true。
+- `all_right`：只有所有检查目标都完全正确时才为 true，因此数字字段也必须误差为 0 才算 perfect。
+
+不应该获得连续数字分的 ID 或类别编码，应该在数据集中写成 JSON string。
 
 GRASPO 使用同一 rollout group 内的 reward 分布，而不是单条 completion 的绝对分数。有有效差异的 group 会进入训练；已经 perfect 的 group 可以跳过；没有 reward 方差或没有偏好差异的 group 会被丢弃或重试。`rollouts.readable.jsonl` 会记录 messages、completion、parsed tool calls、抽取字段、parser errors、reward 细节和 invalid reason，方便检查 reward 行为。
 

@@ -131,12 +131,16 @@ canonical tool-call object/list. A completion is scored in four steps:
 
 1. Parse model-specific completion format. The model adapter converts raw
    output, including Qwen XML tool calls, into canonical parsed fields while
-   preserving raw text and `<think>...</think>`.
+   preserving raw text and `<think>...</think>`. For Qwen XML tool calls,
+   `integer`, `number`, and `boolean` parameters are typed from the declared
+   tool schema before reward scoring.
 2. Check output markers. Depending on `reward` config, the scorer can require
    `<think>...</think>` and fenced JSON Markdown blocks for normal answer tasks.
 3. Compare structured content. Normal answer tasks compare parsed JSON with
    `ground_truth`; tool-call tasks compare canonical tool-call JSON/list with
-   `ground_truth`, preserving multi-call order.
+   `ground_truth`, preserving multi-call order. JSON number fields are scored
+   with `1 / (1 + abs(predicted - target))`; non-numeric fields and mismatched
+   types still use strict equality.
 4. Normalize reward. Marker score, structured content score, perfect-match
    bonus, and the extra-text penalty/bonus are combined into `reward`,
    `content_score`, and `all_right`.
@@ -146,7 +150,11 @@ The important outputs are:
 - `reward`: scalar used for GRASPO group decisions, advantage calculation, and
   ReplayBuffer training;
 - `content_score`: normalized structured-content match before group filtering;
-- `all_right`: true only when every checked target is fully correct.
+- `all_right`: true only when every checked target is fully correct, so numeric
+  fields must still match exactly for a perfect result.
+
+Identifiers or categorical codes that should not receive continuous numeric
+credit should be represented as JSON strings in the dataset.
 
 GRASPO uses the reward distribution inside each rollout group, not just one
 absolute score. Groups with useful differences become trainable; already-perfect

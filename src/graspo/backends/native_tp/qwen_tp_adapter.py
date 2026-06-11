@@ -2334,6 +2334,7 @@ class QwenNativeTPAdapter:
         return _parse_qwen_tool_completion(
             completion,
             expect_tool_calls=bool(getattr(sample, "tools", None)),
+            tools=getattr(sample, "tools", None),
         )
 
     def _encode_multimodal_rows(
@@ -2501,7 +2502,12 @@ _FUNCTION_RE = re.compile(r"<function=([^>\n]+)>(.*?)</function>", re.DOTALL)
 _PARAMETER_RE = re.compile(r"<parameter=([^>\n]+)>(.*?)</parameter>", re.DOTALL)
 
 
-def _parse_qwen_tool_completion(text: str, *, expect_tool_calls: bool = False) -> ParsedCompletion:
+def _parse_qwen_tool_completion(
+    text: str,
+    *,
+    expect_tool_calls: bool = False,
+    tools: list[dict[str, Any]] | None = None,
+) -> ParsedCompletion:
     think_parts = [match.group(1).strip() for match in _THINK_RE.finditer(text)]
     tool_calls: list[dict[str, Any]] = []
     parse_errors: list[str] = []
@@ -2513,16 +2519,26 @@ def _parse_qwen_tool_completion(text: str, *, expect_tool_calls: bool = False) -
             tool_calls.extend(parsed_json)
             parser_names.append("qwen_json_tool_call")
             continue
-        parsed_xml = _try_parse_qwen_xml_tool_call(body)
+        parsed_xml, xml_errors = _try_parse_qwen_xml_tool_call(
+            body,
+            tools=tools,
+            error_prefix=f"tool_call[{idx}]",
+        )
         if parsed_xml:
             tool_calls.extend(parsed_xml)
+            parse_errors.extend(xml_errors)
             parser_names.append("qwen_xml_tool_call")
             continue
         parse_errors.append(f"tool_call[{idx}] is neither canonical JSON nor Qwen XML")
     if not tool_calls and "<function=" in text:
-        parsed_xml = _try_parse_qwen_xml_tool_call(_THINK_RE.sub("", text))
+        parsed_xml, xml_errors = _try_parse_qwen_xml_tool_call(
+            _THINK_RE.sub("", text),
+            tools=tools,
+            error_prefix="tool_call",
+        )
         if parsed_xml:
             tool_calls.extend(parsed_xml)
+            parse_errors.extend(xml_errors)
             parser_names.append("qwen_xml_tool_call_unwrapped")
     if expect_tool_calls and not tool_calls:
         parse_errors.append("no tool call found")
@@ -2556,17 +2572,93 @@ def _try_parse_json_tool_call(text: str) -> list[dict[str, Any]] | None:
     return calls
 
 
-def _try_parse_qwen_xml_tool_call(text: str) -> list[dict[str, Any]]:
+def _try_parse_qwen_xml_tool_call(
+    text: str,
+    *,
+    tools: list[dict[str, Any]] | None = None,
+    error_prefix: str = "tool_call",
+) -> tuple[list[dict[str, Any]], list[str]]:
     calls: list[dict[str, Any]] = []
+    parse_errors: list[str] = []
     for match in _FUNCTION_RE.finditer(text):
         name = match.group(1).strip()
         body = match.group(2)
         arguments: dict[str, Any] = {}
         for param_match in _PARAMETER_RE.finditer(body):
-            arguments[param_match.group(1).strip()] = param_match.group(2).strip()
+            param_name = param_match.group(1).strip()
+            raw_value = param_match.group(2).strip()
+            value, error = _coerce_xml_tool_argument(
+                name,
+                param_name,
+                raw_value,
+                tools=tools,
+            )
+            arguments[param_name] = value
+            if error:
+                parse_errors.append(f"{error_prefix}.arguments.{param_name} {error}")
         if name and arguments:
             calls.append({"name": name, "arguments": arguments})
-    return calls
+    return calls, parse_errors
+
+
+def _coerce_xml_tool_argument(
+    tool_name: str,
+    param_name: str,
+    raw_value: str,
+    *,
+    tools: list[dict[str, Any]] | None,
+) -> tuple[Any, str | None]:
+    schema_type = _tool_argument_schema_type(tools, tool_name, param_name)
+    if schema_type == "integer":
+        if re.fullmatch(r"[+-]?\d+", raw_value):
+            return int(raw_value), None
+        return raw_value, "expected integer"
+    if schema_type == "number":
+        try:
+            value = float(raw_value)
+        except ValueError:
+            return raw_value, "expected number"
+        if not math.isfinite(value):
+            return raw_value, "expected finite number"
+        return value, None
+    if schema_type == "boolean":
+        lowered = raw_value.lower()
+        if lowered == "true":
+            return True, None
+        if lowered == "false":
+            return False, None
+        return raw_value, "expected boolean"
+    return raw_value, None
+
+
+def _tool_argument_schema_type(
+    tools: list[dict[str, Any]] | None,
+    tool_name: str,
+    param_name: str,
+) -> str | None:
+    if not tools:
+        return None
+    for tool in tools:
+        function = tool.get("function") if isinstance(tool, dict) else None
+        if not isinstance(function, dict) or function.get("name") != tool_name:
+            continue
+        parameters = function.get("parameters")
+        if not isinstance(parameters, dict):
+            return None
+        properties = parameters.get("properties")
+        if not isinstance(properties, dict):
+            return None
+        spec = properties.get(param_name)
+        if not isinstance(spec, dict):
+            return None
+        raw_type = spec.get("type")
+        if isinstance(raw_type, str):
+            return raw_type
+        if isinstance(raw_type, list):
+            for item in raw_type:
+                if isinstance(item, str) and item != "null":
+                    return item
+    return None
 
 
 def _canonical_tool_call(value: Any) -> dict[str, Any] | None:

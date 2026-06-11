@@ -33,6 +33,7 @@ from graspo.backends.native_tp.qwen_tp_adapter import (  # noqa: E402
 from graspo.backends.native_tp.runtime import NativeTPRuntime  # noqa: E402
 from graspo.backends.native_tp.placement import build_placement_plan  # noqa: E402
 from graspo.core.buffer import Experience  # noqa: E402
+from graspo.core.reward import GraspoReward, RewardConfig  # noqa: E402
 from graspo.core.schema import GraspoConfig  # noqa: E402
 
 
@@ -149,6 +150,75 @@ def test_qwen_parser_extracts_xml_tool_call_and_think():
     assert parsed.extra_text == ""
 
 
+def test_qwen_parser_coerces_xml_integer_argument_from_tool_schema():
+    tools = [_robot_tool_schema({"action": {"type": "string"}, "distance_cm": {"type": "integer"}})]
+    parsed = _parse_qwen_tool_completion(
+        "<tool_call><function=robot_atomic_control>"
+        "<parameter=action>left</parameter>"
+        "<parameter=distance_cm>6</parameter>"
+        "</function></tool_call>",
+        expect_tool_calls=True,
+        tools=tools,
+    )
+
+    assert parsed.tool_calls == [
+        {"name": "robot_atomic_control", "arguments": {"action": "left", "distance_cm": 6}}
+    ]
+    assert parsed.parse_errors == []
+
+
+def test_qwen_parser_coerces_xml_number_argument_from_tool_schema():
+    tools = [_robot_tool_schema({"distance_cm": {"type": "number"}})]
+    parsed = _parse_qwen_tool_completion(
+        "<tool_call><function=robot_atomic_control>"
+        "<parameter=distance_cm>6.5</parameter>"
+        "</function></tool_call>",
+        expect_tool_calls=True,
+        tools=tools,
+    )
+
+    assert parsed.tool_calls == [
+        {"name": "robot_atomic_control", "arguments": {"distance_cm": 6.5}}
+    ]
+    assert parsed.parse_errors == []
+
+
+def test_qwen_parser_reports_xml_integer_schema_mismatch():
+    tools = [_robot_tool_schema({"distance_cm": {"type": "integer"}})]
+    parsed = _parse_qwen_tool_completion(
+        "<tool_call><function=robot_atomic_control>"
+        "<parameter=distance_cm>6.5</parameter>"
+        "</function></tool_call>",
+        expect_tool_calls=True,
+        tools=tools,
+    )
+    result = GraspoReward(RewardConfig(check_json_markdown=False)).score_parsed(
+        parsed,
+        {"name": "robot_atomic_control", "arguments": {"distance_cm": 6}},
+        is_tool_call=True,
+    )
+
+    assert parsed.tool_calls == [
+        {"name": "robot_atomic_control", "arguments": {"distance_cm": "6.5"}}
+    ]
+    assert parsed.parse_errors == ["tool_call[0].arguments.distance_cm expected integer"]
+    assert result.all_right is False
+
+
+def test_qwen_parser_leaves_xml_argument_string_without_schema():
+    parsed = _parse_qwen_tool_completion(
+        "<tool_call><function=robot_atomic_control>"
+        "<parameter=distance_cm>6</parameter>"
+        "</function></tool_call>",
+        expect_tool_calls=True,
+    )
+
+    assert parsed.tool_calls == [
+        {"name": "robot_atomic_control", "arguments": {"distance_cm": "6"}}
+    ]
+    assert parsed.parse_errors == []
+
+
 def test_qwen_parser_extracts_json_tool_call():
     parsed = _parse_qwen_tool_completion(
         '<tool_call>{"name":"search","arguments":{"q":"apn"}}</tool_call>',
@@ -157,6 +227,17 @@ def test_qwen_parser_extracts_json_tool_call():
 
     assert parsed.tool_calls == [{"name": "search", "arguments": {"q": "apn"}}]
     assert parsed.parser_name == "qwen_json_tool_call"
+
+
+def test_qwen_parser_preserves_json_tool_call_argument_types_with_schema():
+    parsed = _parse_qwen_tool_completion(
+        '<tool_call>{"name":"robot_atomic_control","arguments":{"distance_cm":6}}</tool_call>',
+        expect_tool_calls=True,
+        tools=[_robot_tool_schema({"distance_cm": {"type": "integer"}})],
+    )
+
+    assert parsed.tool_calls == [{"name": "robot_atomic_control", "arguments": {"distance_cm": 6}}]
+    assert parsed.parse_errors == []
 
 
 def test_qwen_parser_preserves_multiple_tool_call_order():
@@ -177,6 +258,19 @@ def test_qwen_parser_reports_bad_tool_call():
 
     assert parsed.tool_calls == []
     assert parsed.parse_errors
+
+
+def _robot_tool_schema(properties):
+    return {
+        "type": "function",
+        "function": {
+            "name": "robot_atomic_control",
+            "parameters": {
+                "type": "object",
+                "properties": properties,
+            },
+        },
+    }
 
 
 def test_native_qwen_lora_available_targets_cover_text_and_visual():

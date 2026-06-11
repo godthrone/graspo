@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from graspo.backends.native_tp.runtime import NativeTPRuntime
+from graspo.core.completion import raw_parsed_completion
 from graspo.core.data import load_jsonl
 from graspo.core.reward import GraspoReward
 from graspo.core.schema import GraspoConfig, Sample
@@ -117,7 +118,7 @@ def evaluate_samples(
                     chat_template_kwargs=config.model.chat_template_kwargs,
                 )[0]
             parsed_completions = [
-                runtime.parse_completion(completion, sample)
+                _parse_completion(runtime, completion, sample)
                 for completion in generation.completions
             ]
             results = [
@@ -192,6 +193,13 @@ def _safe_metadata(sample: Sample) -> dict[str, Any]:
     if media:
         metadata["media"] = media
     return metadata
+
+
+def _parse_completion(runtime: NativeTPRuntime, completion: str, sample: Sample):
+    parse_completion = getattr(runtime, "parse_completion", None)
+    if callable(parse_completion):
+        return parse_completion(completion, sample)
+    return raw_parsed_completion(completion)
 
 
 if __name__ == "__main__":

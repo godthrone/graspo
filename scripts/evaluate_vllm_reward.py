@@ -244,7 +244,11 @@ def _parsed_vllm_message(
             parse_errors=[],
             extra_text=completion,
         )
-    return _parse_qwen_tool_completion(completion, expect_tool_calls=bool(sample.tools))
+    return _parse_qwen_tool_completion(
+        completion,
+        expect_tool_calls=bool(sample.tools),
+        tools=sample.tools,
+    )
 
 
 def _mean(values: list[float]) -> float:
