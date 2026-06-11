@@ -30,6 +30,33 @@ def test_reward_partial_json_fence():
     assert 0 < result.reward < 1.0
 
 
+def test_reward_numeric_json_field_uses_continuous_distance_score():
+    reward = GraspoReward(RewardConfig(check_json_markdown=True))
+    result = reward.score(
+        '```json\n{"action":"left","distance_cm":8}\n```',
+        {"action": "left", "distance_cm": 6},
+    )
+    type_mismatch = reward.score(
+        '```json\n{"action":"left","distance_cm":"6"}\n```',
+        {"action": "left", "distance_cm": 6},
+    )
+
+    assert result.all_right is False
+    assert result.content_score == pytest.approx((4 + 1 / 3) / 5)
+    assert result.content_score > type_mismatch.content_score
+
+
+def test_reward_numeric_json_field_exact_match_is_all_right():
+    reward = GraspoReward(RewardConfig(check_json_markdown=True))
+    result = reward.score(
+        '```json\n{"distance_cm":6.0}\n```',
+        {"distance_cm": 6},
+    )
+
+    assert result.all_right is True
+    assert result.content_score == 1.0
+
+
 def test_reward_rejects_missing_marker_when_required():
     reward = GraspoReward(RewardConfig(check_json_markdown=True))
     result = reward.score('{"APN":"cmnet"}', {"APN": "cmnet"})
@@ -74,6 +101,26 @@ def test_reward_parsed_tool_call_matches_canonical_ground_truth():
     assert result.extracted["tool_calls"] == [
         {"name": "robot_atomic_control", "arguments": {"action": "向下"}}
     ]
+
+
+def test_reward_parsed_tool_call_numeric_argument_gets_partial_credit():
+    reward = GraspoReward(RewardConfig(check_json_markdown=False))
+    partial = ParsedCompletion(
+        raw_text="",
+        tool_calls=[{"name": "robot_atomic_control", "arguments": {"distance_cm": 8}}],
+    )
+    type_mismatch = ParsedCompletion(
+        raw_text="",
+        tool_calls=[{"name": "robot_atomic_control", "arguments": {"distance_cm": "6"}}],
+    )
+    target = {"name": "robot_atomic_control", "arguments": {"distance_cm": 6}}
+
+    partial_result = reward.score_parsed(partial, target, is_tool_call=True)
+    mismatch_result = reward.score_parsed(type_mismatch, target, is_tool_call=True)
+
+    assert partial_result.all_right is False
+    assert 0 < partial_result.content_score < 1
+    assert partial_result.content_score > mismatch_result.content_score
 
 
 def test_reward_parsed_multi_tool_calls_use_ordered_canonical_list():
