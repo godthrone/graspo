@@ -148,9 +148,18 @@ class GraspoConfig:
 @dataclass(slots=True)
 class Sample:
     messages: list[dict[str, Any]]
-    ground_truth: Any
+    targets: list[dict[str, Any]]
+    tools: list[dict[str, Any]] | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     media: list[dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def expects_tool_calls(self) -> bool:
+        for target in self.targets:
+            output = target.get("output") if isinstance(target, dict) else None
+            if isinstance(output, dict) and output.get("tool_calls") is not None:
+                return True
+        return False
 
     @property
     def prompt_preview(self) -> str:
@@ -210,8 +219,7 @@ def _normalize_training_config(raw: dict[str, Any] | None) -> dict[str, Any]:
     present = sorted(key for key in removed if key in config)
     if present:
         raise ValueError(
-            "Removed training config field(s): "
-            + ", ".join(f"training.{key}" for key in present)
+            "Removed training config field(s): " + ", ".join(f"training.{key}" for key in present)
         )
     return config
 
@@ -224,6 +232,6 @@ def _normalize_data_config(raw: dict[str, Any] | None) -> dict[str, Any]:
         raise ValueError(
             "Removed data config field(s): "
             + ", ".join(f"data.{key}" for key in present)
-            + ". GRASPO data is fixed to JSONL records with messages + ground_truth."
+            + ". GRASPO data is fixed to JSONL records with messages + optional tools + targets."
         )
     return config

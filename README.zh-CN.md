@@ -4,7 +4,7 @@
 
 GRASPO 是一个面向结构化输出任务的 GRPO-style 强化学习训练器，适合 JSON 生成、信息抽取、分类、表单解析和工具调用参数生成等可以自动校验答案的场景。它面向基于 LoRA 的低成本训练：冻结 base model，只训练紧凑 LoRA adapter，用可审计的 reward 规则从真实生成文本里判断好坏。
 
-内置 reward 会检查必要输出标记，解析 fenced JSON 或 tool-call 内容，将结构化字段和 `ground_truth` 对齐比较，再转成 GRASPO 需要的组内偏好信号。使用 LoRA/native memory-aware 路径时，GRASPO 的目标是支持单张 80 GB GPU 对 9B 级别模型做强化学习训练。
+内置 reward 会检查必要输出标记，解析 fenced JSON 或 tool-call 内容，将结构化字段和 `targets` 对齐比较，再转成 GRASPO 需要的组内偏好信号。使用 LoRA/native memory-aware 路径时，GRASPO 的目标是支持单张 80 GB GPU 对 9B 级别模型做强化学习训练。
 
 GRASPO 的训练主线是：
 
@@ -61,43 +61,63 @@ uv run graspo validate-reward --data data/sample.jsonl --limit 2
 
 ## 数据格式
 
-训练数据只支持 JSONL。每行是一条由 chat messages 表示的 prompt/context，以及独立的 JSON object reward 目标：
+训练数据只支持 JSONL。每行是一条由 chat messages 表示的 prompt/context、可选工具声明，以及一个或多个可接受的 reward 目标：
 
 ```jsonl
-{"messages":[{"role":"system","content":"You extract structured telecom ticket fields as fenced JSON."},{"role":"user","content":"Ticket: user 13800138000 cannot use apn cmnet."},{"role":"assistant","content":"I will identify the phone number and APN from the ticket."},{"role":"user","content":"Extract JSON with the APN and fault number."}],"ground_truth":{"APN":"cmnet","fault_number":"13800138000"}}
+{"messages":[{"role":"system","content":"You extract structured telecom ticket fields as fenced JSON."},{"role":"user","content":"Ticket: user 13800138000 cannot use apn cmnet."},{"role":"assistant","content":"I will identify the phone number and APN from the ticket."},{"role":"user","content":"Extract JSON with the APN and fault number."}],"targets":[{"id":"expected","output":{"content":{"APN":"cmnet","fault_number":"13800138000"}}}]}
 ```
 
 多模态数据也使用同一个 `messages` 字段，role 和 content 顺序会保真进入 tokenizer/processor：
 
 ```jsonl
-{"messages":[{"role":"system","content":"Extract fields from ticket screenshots."},{"role":"user","content":"Use exact snake_case values."},{"role":"assistant","content":"Understood."},{"role":"user","content":[{"type":"image","image":"images/panel_0001.png"},{"type":"text","text":"Extract the ticket fields as strict JSON."}]}],"ground_truth":{"ticket_id":"T-0001","status":"critical"}}
+{"messages":[{"role":"system","content":"Extract fields from ticket screenshots."},{"role":"user","content":"Use exact snake_case values."},{"role":"assistant","content":"Understood."},{"role":"user","content":[{"type":"image","image":"images/panel_0001.png"},{"type":"text","text":"Extract the ticket fields as strict JSON."}]}],"targets":[{"id":"expected","output":{"content":{"ticket_id":"T-0001","status":"critical"}}}]}
+```
+
+工具调用数据可以在可选 `tools` 字段中提供模型原生工具声明。GRASPO 会在运行时把 `messages + tools` 交给 tokenizer 或 processor 的 chat template；用户不需要、也不应该在数据集中提前渲染模型模板字符串：
+
+```jsonl
+{"messages":[{"role":"system","content":"Use tools when needed. Output only the tool call."},{"role":"user","content":"Query device OLT-17 status at 2026-06-08 10:30."}],"tools":[{"type":"function","function":{"name":"query_device_status","description":"Query network device panel status.","parameters":{"type":"object","properties":{"device_id":{"type":"string"},"panel_time":{"type":"string"}},"required":["device_id","panel_time"]}}}],"targets":[{"id":"expected","output":{"tool_calls":[{"name":"query_device_status","arguments":{"device_id":"OLT-17","panel_time":"2026-06-08T10:30:00+08:00"}}]}}]}
+```
+
+可运行的工具调用数据样例见 `data/sample_tool_call.jsonl`。
+
+多个合理答案写成多个 `targets`；顺序执行的多步工具调用只写在单个 target 的 `output.tool_calls` 里：
+
+```jsonl
+{"messages":[{"role":"user","content":"Move toward the object."}],"tools":[{"type":"function","function":{"name":"robot_atomic_control","parameters":{"type":"object","properties":{"action":{"type":"string"},"distance_cm":{"type":"integer"}},"required":["action","distance_cm"]}}}],"targets":[{"id":"left-first","output":{"tool_calls":[{"name":"robot_atomic_control","arguments":{"action":"向左","distance_cm":6}}]}},{"id":"down-first","output":{"tool_calls":[{"name":"robot_atomic_control","arguments":{"action":"向下","distance_cm":4}}]}}]}
+{"messages":[{"role":"user","content":"Move, then inspect."}],"tools":[{"type":"function","function":{"name":"move","parameters":{"type":"object"}}},{"type":"function","function":{"name":"inspect","parameters":{"type":"object"}}}],"targets":[{"id":"move-inspect","output":{"tool_calls":[{"name":"move","arguments":{"action":"left"}},{"name":"inspect","arguments":{"object":"target"}}]}}]}
 ```
 
 支持字段：
 
 - `messages`：必填 prompt/context messages，用于 tokenizer 或 processor chat template；
-- `ground_truth`：必填 JSON object，是唯一 reward 目标；
+- `tools`：可选工具声明列表，会传给模型 chat template；
+- `targets`：必填非空 list，表示多个可接受答案；每个 target 可以有 `id`，并必须有 `output`。普通答案写 `output.content` JSON object，工具调用写 `output.tool_calls` ordered canonical tool-call list；
 - `messages[].content` 内的 image/video 条目：用于多模态路由；图片训练已支持，视频训练前应单独 smoke；
 - 其它字段会作为 metadata。
 
-最后一条 message 不能是 `assistant`，避免把监督答案泄漏进输入。GRASPO 不支持纯文本 prompt 字段、JSON 文件、Excel 文件或 top-level `image/images/video/videos` 字段。
+工具调用样本的 `targets[].output.tool_calls` 使用 canonical tool-call JSON：每一项都是 `{"name":"...","arguments":{...}}`，列表顺序就是执行顺序。多个可接受答案必须拆成多个 `targets`。Qwen XML 等模型私有输出格式由对应模型 adapter 在 reward 前解析成 canonical 结构，不能写入数据集。
+
+最后一条 message 不能是 `assistant`；`targets` 是原始 reward 目标，不能泄漏进输入，也不能转换成模型 chat template。GRASPO 只接受 `messages + 可选 tools + targets` 的 JSONL 记录，不支持纯文本 prompt 字段、JSON 文件、Excel 文件、旧 `ground_truth` 字段或 top-level `image/images/video/videos` 字段。
 
 ## Reward 计分方式
 
-GRASPO 当前提供一个内置结构化输出 reward，适合目标答案为 JSON object 的任务。每条 completion 的计分流程：
+GRASPO 当前提供一个内置结构化输出 reward，适合目标答案为 JSON object 或 canonical tool-call sequence 的任务，并支持多个可接受 target。每条 completion 的计分流程：
 
-1. 检查输出标记：可要求 `<think>...</think>`、fenced JSON Markdown block 和 `<tool_call>...</tool_call>`。
-2. 抽取答案文本：从配置要求的标记区域中取出 answer；如果 `check_json_markdown=false`，则直接把 answer 区域当作 JSON。
-3. 解析并比较 JSON：completion JSON 和 `ground_truth` 做递归 dict/list 匹配，目标字段存在得部分分，值完全相等继续加分，额外字段会降低结构化匹配度。
+1. 解析模型私有输出格式：模型 adapter 把 raw completion 中的 Qwen XML tool call 等格式转成 canonical 结构，同时保留 raw text 和 `<think>...</think>`。Qwen XML tool-call 参数会根据工具 schema 中的 `integer`、`number`、`boolean` 类型先转成对应 JSON 类型，再进入 reward。
+2. 检查输出标记：根据 reward 配置，可要求 `<think>...</think>`；普通 answer 任务还可以要求 fenced JSON Markdown block。
+3. 比较结构化内容：普通 answer 任务逐个比较 parsed JSON 和 `targets[].output.content`；工具调用任务逐个比较 canonical tool-call sequence 和 `targets[].output.tool_calls`，并保持同一 target 内的多步调用顺序。最终使用得分最高的 target。JSON number 字段使用 `1 / (1 + abs(predicted - target))` 连续计分；非数字字段和类型不匹配仍按严格相等比较。
 4. 归一化 reward：标记分、结构化内容分、完全正确 bonus 和多余文本惩罚/奖励合成 `reward`、`content_score` 和 `all_right`。
 
 关键输出：
 
 - `reward`：用于 GRASPO group decision、advantage 计算和 ReplayBuffer 训练；
 - `content_score`：组过滤前的结构化内容匹配分；
-- `all_right`：只有所有检查目标都完全正确时才为 true。
+- `all_right`：只要任意一个 target 完全正确就是 true，因此数字字段也必须误差为 0 才算 perfect。
 
-GRASPO 使用同一 rollout group 内的 reward 分布，而不是单条 completion 的绝对分数。有有效差异的 group 会进入训练；已经 perfect 的 group 可以跳过；没有 reward 方差或没有偏好差异的 group 会被丢弃或重试。`rollouts.readable.jsonl` 会记录 messages、completion、抽取字段、reward 细节和 invalid reason，方便检查 reward 行为。
+不应该获得连续数字分的 ID 或类别编码，应该在数据集中写成 JSON string。
+
+GRASPO 使用同一 rollout group 内的 reward 分布，而不是单条 completion 的绝对分数。有有效差异的 group 会进入训练；已经 perfect 的 group 可以跳过；没有 reward 方差或没有偏好差异的 group 会被丢弃或重试。`rollouts.readable.jsonl` 会记录 messages、completion、parsed tool calls、抽取字段、parser errors、reward 细节和 invalid reason，方便检查 reward 行为。
 
 ## 配置说明
 
@@ -137,13 +157,12 @@ GRASPO 使用同一 rollout group 内的 reward 分布，而不是单条 complet
 
 - `check_think`：要求 `<think>...</think>` 标记。
 - `check_json_markdown`：要求 fenced JSON 输出。
-- `check_tool_call`：额外检查 tool-call target。
+- `check_tool_call`：旧版 tool-call 开关；当前训练会从 `targets[].output.tool_calls` 推断 tool-call 评分目标。
 - `check_list_order`：结构化比较时 list 顺序是否敏感。
 - `marker_reward_weight`：输出标记 reward 权重。
 - `content_reward_weight`：结构化内容匹配 reward 权重。
 - `anti_useless_str_reward_weight`：多余文本惩罚/奖励权重。
 - `anti_useless_str_half_reward_len`：多余文本惩罚长度尺度。
-- `answer_field`：ground-truth answer 字段。
 
 ### `training`
 
@@ -208,6 +227,22 @@ Preset 取值：
 - `vision_common`：visual merger 加上已支持的 visual attention/MLP 线性层。
 
 显式 `lora.target_modules` 只能使用 canonical name，例如 `language.self_attn.q_proj`，或 glob pattern，例如 `visual.blocks.*.attn.*`。不接受 `q_proj` 这样的 leaf alias。解析是 fail-closed：未知 target、不支持的 conv/norm 参数和空匹配都会在训练前报错。Native checkpoint 会保存 resolved LoRA target signature，并拒绝使用不同 target 配置 resume。
+
+## Native 模型实现边界
+
+Native 模型数学必须落在 native model class 内。RoPE/M-RoPE、position
+IDs、KV-cache continuation、visual feature injection、TP shard-local layer
+math 和 LoRA target metadata，应由 `Qwen3DenseModel`、
+`Qwen35HybridTextModel` 及其 attention/layer modules 负责。
+
+`QwenNativeTPAdapter` 只负责 processor/tokenizer 调用、batch/split、
+sampling、pipeline send/recv 编排、checkpoint delegation 和 logging。
+Runtime/placement 只负责 backend lifecycle、config validation 和 TP/PP
+layout，不实现模型 family 的数学逻辑。
+
+GRASPO 中 Qwen3.6 复用 Qwen3.5-family hybrid text/vision native class，因为
+它的结构与该 family 兼容。未来如果出现 `qwen3_vl`、`qwen3_omni` 等不同
+`model_type`，需要新增对应 native model class，不能在 adapter 层塞特判。
 
 ## 导出
 

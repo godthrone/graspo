@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from graspo.core.buffer import Experience
+from graspo.core.completion import ParsedCompletion, raw_parsed_completion
 from graspo.core.schema import GraspoConfig, NativeTPConfig, Sample
 
 
@@ -57,6 +58,7 @@ class NativeTPRuntimeProtocol(Protocol):
         self,
         *,
         messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
         rollout_group_size: int,
         max_new_tokens: int,
         max_prompt_length: int,
@@ -69,6 +71,7 @@ class NativeTPRuntimeProtocol(Protocol):
         self,
         *,
         message_batches: list[list[dict[str, Any]]],
+        tool_batches: list[list[dict[str, Any]] | None] | None = None,
         rollout_group_size: int,
         max_new_tokens: int,
         max_prompt_length: int,
@@ -88,6 +91,8 @@ class NativeTPRuntimeProtocol(Protocol):
         top_p: float,
         chat_template_kwargs: dict[str, Any] | None,
     ) -> list[NativeGeneration]: ...
+
+    def parse_completion(self, completion: str, sample: Sample) -> ParsedCompletion: ...
 
     def sequence_log_probs(
         self,
@@ -160,8 +165,12 @@ class NativeTPRuntime:
         if callable(generate_groups):
             return generate_groups(**kwargs)
         message_batches = list(kwargs.pop("message_batches"))
+        tool_batches = kwargs.pop("tool_batches", None)
+        if tool_batches is None:
+            tool_batches = [None] * len(message_batches)
         return [
-            adapter.generate_group(messages=messages, **kwargs) for messages in message_batches
+            adapter.generate_group(messages=messages, tools=tools, **kwargs)
+            for messages, tools in zip(message_batches, tool_batches, strict=True)
         ]
 
     def generate_sample_groups(self, **kwargs: Any) -> list[NativeGeneration]:
@@ -170,6 +179,13 @@ class NativeTPRuntime:
         if not callable(generate_sample_groups):
             raise RuntimeError("Native adapter does not support multimodal sample generation")
         return generate_sample_groups(**kwargs)
+
+    def parse_completion(self, completion: str, sample: Sample) -> ParsedCompletion:
+        adapter = self._require_adapter()
+        parse_completion = getattr(adapter, "parse_completion", None)
+        if callable(parse_completion):
+            return parse_completion(completion, sample)
+        return raw_parsed_completion(completion)
 
     def sequence_log_probs(
         self,

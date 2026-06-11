@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import random
+import re
 import time
 from collections.abc import Iterable
 from dataclasses import asdict
@@ -25,6 +26,7 @@ from graspo.backends.native_tp.placement import (
 )
 from graspo.backends.native_tp.runtime import NativeGeneration
 from graspo.core.buffer import Experience
+from graspo.core.completion import ParsedCompletion
 from graspo.core.schema import GraspoConfig
 from graspo.backends.native_tp.lora_io import load_peft_adapter_into_native_model
 from graspo.trainer.lora import resolve_lora_target_modules
@@ -35,6 +37,13 @@ _TENSOR_PARALLEL_GROUP: dist.ProcessGroup | None = None
 _TENSOR_PARALLEL_SIZE = 1
 
 
+def _patch_transformers_float8_import_compat() -> None:
+    """Keep optional Transformers FP8 imports working on supported torch versions."""
+
+    if not hasattr(torch, "float8_e8m0fnu"):
+        torch.float8_e8m0fnu = torch.uint8  # type: ignore[attr-defined]
+
+
 def _set_tensor_parallel_group(group: dist.ProcessGroup | None, size: int) -> None:
     global _TENSOR_PARALLEL_GROUP, _TENSOR_PARALLEL_SIZE
     _TENSOR_PARALLEL_GROUP = group
@@ -43,6 +52,8 @@ def _set_tensor_parallel_group(group: dist.ProcessGroup | None, size: int) -> No
 
 class QwenNativeTPAdapter:
     """Qwen causal LM adapter backed by self-owned PyTorch tensor parallel."""
+
+    completion_parser_name = "qwen_tool_call"
 
     def __init__(self, config: GraspoConfig) -> None:
         self.config = config
@@ -65,6 +76,7 @@ class QwenNativeTPAdapter:
 
     def setup(self) -> None:
         self._setup_distributed()
+        _patch_transformers_float8_import_compat()
         from transformers import AutoProcessor, AutoTokenizer
 
         model_path = Path(self.config.model.model_path)
@@ -175,6 +187,7 @@ class QwenNativeTPAdapter:
         self,
         *,
         messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
         rollout_group_size: int,
         max_new_tokens: int,
         max_prompt_length: int,
@@ -184,6 +197,7 @@ class QwenNativeTPAdapter:
     ) -> NativeGeneration:
         return self.generate_groups(
             message_batches=[messages],
+            tool_batches=[tools],
             rollout_group_size=rollout_group_size,
             max_new_tokens=max_new_tokens,
             max_prompt_length=max_prompt_length,
@@ -196,6 +210,7 @@ class QwenNativeTPAdapter:
         self,
         *,
         message_batches: list[list[dict[str, Any]]],
+        tool_batches: list[list[dict[str, Any]] | None] | None = None,
         rollout_group_size: int,
         max_new_tokens: int,
         max_prompt_length: int,
@@ -206,9 +221,11 @@ class QwenNativeTPAdapter:
         self._require_ready()
         assert self.model is not None
         assert self.tokenizer is not None
+        tool_batches = _normalize_tool_batches(tool_batches, len(message_batches))
         if self._is_pipeline_parallel():
             return self._pipeline_generate_groups(
                 message_batches=message_batches,
+                tool_batches=tool_batches,
                 rollout_group_size=rollout_group_size,
                 max_new_tokens=max_new_tokens,
                 max_prompt_length=max_prompt_length,
@@ -221,8 +238,8 @@ class QwenNativeTPAdapter:
         self.model.eval()
         tokenize_started_at = time.monotonic()
         prompt_texts = [
-            self._format_messages(messages, chat_template_kwargs)
-            for messages in message_batches
+            self._format_messages(messages, chat_template_kwargs, tools=tools)
+            for messages, tools in zip(message_batches, tool_batches, strict=True)
         ]
         encoded = self.tokenizer(
             prompt_texts,
@@ -621,15 +638,12 @@ class QwenNativeTPAdapter:
         decode_tokens = 0
         sampling_sec = 0.0
         stop_check_sec = 0.0
-        prompt_len = int(sequences.shape[1])
         for _ in range(max_new_tokens):
             attention_mask = sequences.ne(pad_token_id)
             logits = self.model(
                 sequences,
                 attention_mask=attention_mask,
-                multimodal_inputs=multimodal_inputs
-                if int(sequences.shape[1]) == prompt_len
-                else None,
+                multimodal_inputs=multimodal_inputs,
             ).float()[:, -1, :]
             self._sync_timing()
             sampling_started_at = time.monotonic()
@@ -830,6 +844,7 @@ class QwenNativeTPAdapter:
         self,
         *,
         message_batches: list[list[dict[str, Any]]],
+        tool_batches: list[list[dict[str, Any]] | None] | None = None,
         rollout_group_size: int,
         max_new_tokens: int,
         max_prompt_length: int,
@@ -841,11 +856,12 @@ class QwenNativeTPAdapter:
         assert self.model is not None
         if not message_batches:
             return []
+        tool_batches = _normalize_tool_batches(tool_batches, len(message_batches))
         self.model.eval()
         tokenize_started_at = time.monotonic()
         prompt_texts = [
-            self._format_messages(messages, chat_template_kwargs)
-            for messages in message_batches
+            self._format_messages(messages, chat_template_kwargs, tools=tools)
+            for messages, tools in zip(message_batches, tool_batches, strict=True)
         ]
         encoded = self.tokenizer(
             prompt_texts,
@@ -1176,7 +1192,8 @@ class QwenNativeTPAdapter:
             attention_mask,
             past_key_values=past_key_values,
             use_cache=use_cache,
-            multimodal_inputs=multimodal_inputs if self.pp_rank == 0 else None,
+            multimodal_inputs=multimodal_inputs,
+            position_input_ids=input_ids,
             apply_lm_head=False,
         )
         _add_pipeline_stage_timing(timing, "pipeline_stage_compute_sec", compute_started_at)
@@ -1978,8 +1995,8 @@ class QwenNativeTPAdapter:
         hidden_size = int(self.model.config.hidden_size)
         dtype = next(self.model.parameters()).dtype
         stage_input: torch.Tensor | None = None
+        multimodal_inputs = self._multimodal_inputs_from_metadata(metadata, batch_size=batch)
         if self.pp_rank == 0:
-            multimodal_inputs = self._multimodal_inputs_from_metadata(metadata, batch_size=batch)
             compute_started_at = time.monotonic()
             output = self.model.forward_stage(
                 None,
@@ -1988,6 +2005,7 @@ class QwenNativeTPAdapter:
                 past_key_values=None,
                 use_cache=False,
                 multimodal_inputs=multimodal_inputs,
+                position_input_ids=sequences,
                 apply_lm_head=False,
             )
             _add_pipeline_stage_timing(timing, "pipeline_stage_compute_sec", compute_started_at)
@@ -2006,6 +2024,8 @@ class QwenNativeTPAdapter:
                 attention_mask,
                 past_key_values=None,
                 use_cache=False,
+                multimodal_inputs=multimodal_inputs,
+                position_input_ids=sequences,
                 apply_lm_head=False,
             )
             _add_pipeline_stage_timing(timing, "pipeline_stage_compute_sec", compute_started_at)
@@ -2285,18 +2305,36 @@ class QwenNativeTPAdapter:
         self,
         messages: list[dict[str, Any]],
         chat_template_kwargs: dict[str, Any] | None,
+        *,
+        tools: list[dict[str, Any]] | None = None,
     ) -> str:
         assert self.tokenizer is not None
+        template_kwargs = dict(chat_template_kwargs or {})
+        if tools is not None:
+            template_kwargs["tools"] = tools
         if getattr(self.tokenizer, "chat_template", None):
             return self.tokenizer.apply_chat_template(
                 messages,
                 tokenize=False,
                 add_generation_prompt=True,
-                **(chat_template_kwargs or {}),
+                **template_kwargs,
             )
-        return "\n\n".join(
-            f"{message.get('role', 'user')}: {message.get('content', '')}"
-            for message in messages
+        tools_text = ""
+        if tools is not None:
+            tools_text = "\n\ntools: " + json.dumps(tools, ensure_ascii=False)
+        return (
+            "\n\n".join(
+                f"{message.get('role', 'user')}: {message.get('content', '')}"
+                for message in messages
+            )
+            + tools_text
+        )
+
+    def parse_completion(self, completion: str, sample: Any | None = None) -> ParsedCompletion:
+        return _parse_qwen_tool_completion(
+            completion,
+            expect_tool_calls=bool(getattr(sample, "expects_tool_calls", False)),
+            tools=getattr(sample, "tools", None),
         )
 
     def _encode_multimodal_rows(
@@ -2310,7 +2348,8 @@ class QwenNativeTPAdapter:
             raise RuntimeError(
                 "This model did not expose an AutoProcessor; image/video samples cannot be encoded"
             )
-        messages = [_messages_from_multimodal_row(row) for row in rows]
+        messages = [_processor_chat_messages(_messages_from_multimodal_row(row)) for row in rows]
+        tool_batches = [_tools_from_multimodal_row(row) for row in rows]
         if hasattr(self.processor, "apply_chat_template"):
             template_kwargs = {
                 "tokenize": True,
@@ -2319,6 +2358,9 @@ class QwenNativeTPAdapter:
                 "return_tensors": "pt",
                 **(chat_template_kwargs or {}),
             }
+            tools_arg = _tools_for_chat_template(tool_batches)
+            if tools_arg is not None:
+                template_kwargs["tools"] = tools_arg
             try:
                 encoded = self.processor.apply_chat_template(
                     messages,
@@ -2444,10 +2486,189 @@ class NativeQwenConfig:
 
 
 def _multimodal_row_from_sample(sample: Any) -> dict[str, Any]:
-    return {
+    row = {
         "messages": [dict(message) for message in sample.messages],
         "media": _media_counts(sample.media or []),
     }
+    tools = getattr(sample, "tools", None)
+    if tools is not None:
+        row["tools"] = [dict(tool) for tool in tools]
+    return row
+
+
+_THINK_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL)
+_TOOL_CALL_RE = re.compile(r"<tool_call>(.*?)</tool_call>", re.DOTALL)
+_FUNCTION_RE = re.compile(r"<function=([^>\n]+)>(.*?)</function>", re.DOTALL)
+_PARAMETER_RE = re.compile(r"<parameter=([^>\n]+)>(.*?)</parameter>", re.DOTALL)
+
+
+def _parse_qwen_tool_completion(
+    text: str,
+    *,
+    expect_tool_calls: bool = False,
+    tools: list[dict[str, Any]] | None = None,
+) -> ParsedCompletion:
+    think_parts = [match.group(1).strip() for match in _THINK_RE.finditer(text)]
+    tool_calls: list[dict[str, Any]] = []
+    parse_errors: list[str] = []
+    parser_names: list[str] = []
+    for idx, match in enumerate(_TOOL_CALL_RE.finditer(text)):
+        body = match.group(1).strip()
+        parsed_json = _try_parse_json_tool_call(body)
+        if parsed_json is not None:
+            tool_calls.extend(parsed_json)
+            parser_names.append("qwen_json_tool_call")
+            continue
+        parsed_xml, xml_errors = _try_parse_qwen_xml_tool_call(
+            body,
+            tools=tools,
+            error_prefix=f"tool_call[{idx}]",
+        )
+        if parsed_xml:
+            tool_calls.extend(parsed_xml)
+            parse_errors.extend(xml_errors)
+            parser_names.append("qwen_xml_tool_call")
+            continue
+        parse_errors.append(f"tool_call[{idx}] is neither canonical JSON nor Qwen XML")
+    if not tool_calls and "<function=" in text:
+        parsed_xml, xml_errors = _try_parse_qwen_xml_tool_call(
+            _THINK_RE.sub("", text),
+            tools=tools,
+            error_prefix="tool_call",
+        )
+        if parsed_xml:
+            tool_calls.extend(parsed_xml)
+            parse_errors.extend(xml_errors)
+            parser_names.append("qwen_xml_tool_call_unwrapped")
+    if expect_tool_calls and not tool_calls:
+        parse_errors.append("no tool call found")
+    extra_text = _FUNCTION_RE.sub("", _TOOL_CALL_RE.sub("", _THINK_RE.sub("", text))).strip()
+    parser_name = "+".join(sorted(set(parser_names))) if parser_names else "qwen_tool_call"
+    return ParsedCompletion(
+        raw_text=text,
+        think_text="\n\n".join(part for part in think_parts if part),
+        tool_calls=tool_calls,
+        answer_text=extra_text or text,
+        parser_name=parser_name,
+        parse_errors=parse_errors,
+        extra_text=extra_text,
+    )
+
+
+def _try_parse_json_tool_call(text: str) -> list[dict[str, Any]] | None:
+    try:
+        value = json.loads(text)
+    except (TypeError, ValueError):
+        return None
+    values = value if isinstance(value, list) else [value]
+    if not isinstance(values, list):
+        return None
+    calls: list[dict[str, Any]] = []
+    for item in values:
+        call = _canonical_tool_call(item)
+        if call is None:
+            return None
+        calls.append(call)
+    return calls
+
+
+def _try_parse_qwen_xml_tool_call(
+    text: str,
+    *,
+    tools: list[dict[str, Any]] | None = None,
+    error_prefix: str = "tool_call",
+) -> tuple[list[dict[str, Any]], list[str]]:
+    calls: list[dict[str, Any]] = []
+    parse_errors: list[str] = []
+    for match in _FUNCTION_RE.finditer(text):
+        name = match.group(1).strip()
+        body = match.group(2)
+        arguments: dict[str, Any] = {}
+        for param_match in _PARAMETER_RE.finditer(body):
+            param_name = param_match.group(1).strip()
+            raw_value = param_match.group(2).strip()
+            value, error = _coerce_xml_tool_argument(
+                name,
+                param_name,
+                raw_value,
+                tools=tools,
+            )
+            arguments[param_name] = value
+            if error:
+                parse_errors.append(f"{error_prefix}.arguments.{param_name} {error}")
+        if name and arguments:
+            calls.append({"name": name, "arguments": arguments})
+    return calls, parse_errors
+
+
+def _coerce_xml_tool_argument(
+    tool_name: str,
+    param_name: str,
+    raw_value: str,
+    *,
+    tools: list[dict[str, Any]] | None,
+) -> tuple[Any, str | None]:
+    schema_type = _tool_argument_schema_type(tools, tool_name, param_name)
+    if schema_type == "integer":
+        if re.fullmatch(r"[+-]?\d+", raw_value):
+            return int(raw_value), None
+        return raw_value, "expected integer"
+    if schema_type == "number":
+        try:
+            value = float(raw_value)
+        except ValueError:
+            return raw_value, "expected number"
+        if not math.isfinite(value):
+            return raw_value, "expected finite number"
+        return value, None
+    if schema_type == "boolean":
+        lowered = raw_value.lower()
+        if lowered == "true":
+            return True, None
+        if lowered == "false":
+            return False, None
+        return raw_value, "expected boolean"
+    return raw_value, None
+
+
+def _tool_argument_schema_type(
+    tools: list[dict[str, Any]] | None,
+    tool_name: str,
+    param_name: str,
+) -> str | None:
+    if not tools:
+        return None
+    for tool in tools:
+        function = tool.get("function") if isinstance(tool, dict) else None
+        if not isinstance(function, dict) or function.get("name") != tool_name:
+            continue
+        parameters = function.get("parameters")
+        if not isinstance(parameters, dict):
+            return None
+        properties = parameters.get("properties")
+        if not isinstance(properties, dict):
+            return None
+        spec = properties.get(param_name)
+        if not isinstance(spec, dict):
+            return None
+        raw_type = spec.get("type")
+        if isinstance(raw_type, str):
+            return raw_type
+        if isinstance(raw_type, list):
+            for item in raw_type:
+                if isinstance(item, str) and item != "null":
+                    return item
+    return None
+
+
+def _canonical_tool_call(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    name = value.get("name")
+    arguments = value.get("arguments")
+    if not isinstance(name, str) or not isinstance(arguments, dict):
+        return None
+    return {"name": name, "arguments": dict(arguments)}
 
 
 def _messages_from_multimodal_row(row: dict[str, Any]) -> list[dict[str, Any]]:
@@ -2455,6 +2676,50 @@ def _messages_from_multimodal_row(row: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(messages, list) or not messages:
         raise ValueError("multimodal row must contain non-empty messages")
     return [dict(message) for message in messages if isinstance(message, dict)]
+
+
+def _processor_chat_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for message in messages:
+        item = dict(message)
+        content = item.get("content")
+        if isinstance(content, str):
+            item["content"] = [{"type": "text", "text": content}]
+        normalized.append(item)
+    return normalized
+
+
+def _tools_from_multimodal_row(row: dict[str, Any]) -> list[dict[str, Any]] | None:
+    tools = row.get("tools")
+    if tools is None:
+        return None
+    if not isinstance(tools, list):
+        raise ValueError("multimodal row tools must be a list")
+    return [dict(tool) for tool in tools if isinstance(tool, dict)]
+
+
+def _normalize_tool_batches(
+    tool_batches: list[list[dict[str, Any]] | None] | None,
+    expected_len: int,
+) -> list[list[dict[str, Any]] | None]:
+    if tool_batches is None:
+        return [None] * expected_len
+    if len(tool_batches) != expected_len:
+        raise ValueError(
+            f"tool_batches length must match message_batches ({len(tool_batches)} != {expected_len})"
+        )
+    return tool_batches
+
+
+def _tools_for_chat_template(
+    tool_batches: list[list[dict[str, Any]] | None],
+) -> list[dict[str, Any]] | list[list[dict[str, Any]] | None] | None:
+    if not any(tools is not None for tools in tool_batches):
+        return None
+    first = tool_batches[0]
+    if all(tools == first for tools in tool_batches):
+        return first
+    return tool_batches
 
 
 def _multimodal_rows_from_metadata(
@@ -3018,6 +3283,7 @@ class Qwen35HybridTextModel(QwenFamilyBase):
         self.supports_kv_cache = True
         self.lora_targets = set(lora_targets)
         self.key_prefix = str(getattr(hf_config, "key_prefix", "model.language_model"))
+        self.rope_deltas: torch.Tensor | None = None
         layer_types = list(getattr(hf_config, "layer_types", []) or [])
         if len(layer_types) != int(hf_config.num_hidden_layers):
             raise ValueError("qwen3_5_text layer_types length must match num_hidden_layers")
@@ -3169,7 +3435,13 @@ class Qwen35HybridTextModel(QwenFamilyBase):
                 dtype=torch.bool,
                 device=input_ids.device,
             )
-        position_ids = _position_ids(attention_mask)[:, -input_ids.shape[1] :]
+        position_ids = self.compute_multimodal_position_ids(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            multimodal_inputs=multimodal_inputs,
+            past_key_values=past_key_values,
+            query_len=int(input_ids.shape[1]),
+        )
         present_key_values: list[Any] = []
         for idx, layer in enumerate(self.layers):
             layer_past = past_key_values[idx] if past_key_values is not None else None
@@ -3242,6 +3514,182 @@ class Qwen35HybridTextModel(QwenFamilyBase):
             )
         return hidden_states
 
+    def compute_multimodal_position_ids(
+        self,
+        *,
+        input_ids: torch.Tensor | None,
+        attention_mask: torch.Tensor,
+        multimodal_inputs: dict[str, torch.Tensor] | None,
+        past_key_values: tuple[Any, ...] | None,
+        query_len: int,
+    ) -> torch.Tensor:
+        past_len = _qwen35_cache_sequence_len(past_key_values[0]) if past_key_values else 0
+        has_multimodal = bool(
+            multimodal_inputs is not None
+            and (
+                multimodal_inputs.get("image_grid_thw") is not None
+                or multimodal_inputs.get("video_grid_thw") is not None
+            )
+        )
+        if has_multimodal and input_ids is not None and past_len == 0:
+            assert multimodal_inputs is not None
+            mm_token_type_ids = self._multimodal_token_type_ids(input_ids, multimodal_inputs)
+            position_ids, rope_deltas = self.get_rope_index(
+                input_ids=input_ids,
+                mm_token_type_ids=mm_token_type_ids,
+                image_grid_thw=multimodal_inputs.get("image_grid_thw"),
+                video_grid_thw=multimodal_inputs.get("video_grid_thw"),
+                attention_mask=attention_mask,
+            )
+            self.rope_deltas = rope_deltas
+            return position_ids[:, :, -query_len:]
+        if past_len == 0 and not has_multimodal:
+            self.rope_deltas = None
+        if self.rope_deltas is not None and (past_len > 0 or input_ids is None):
+            position_ids = _position_ids(attention_mask).view(
+                1, attention_mask.shape[0], attention_mask.shape[1]
+            )
+            deltas = self.rope_deltas.to(device=attention_mask.device)
+            if deltas.shape[0] != attention_mask.shape[0]:
+                repeat = max(1, attention_mask.shape[0] // max(int(deltas.shape[0]), 1))
+                deltas = deltas.repeat_interleave(repeat, dim=0)
+            position_ids = position_ids.expand(3, -1, -1) + deltas[: attention_mask.shape[0]].view(
+                1, -1, 1
+            )
+            return position_ids[:, :, -query_len:]
+        return _position_ids(attention_mask)[:, -query_len:]
+
+    def _multimodal_token_type_ids(
+        self,
+        input_ids: torch.Tensor,
+        multimodal_inputs: dict[str, torch.Tensor],
+    ) -> torch.Tensor:
+        provided = multimodal_inputs.get("mm_token_type_ids")
+        if isinstance(provided, torch.Tensor) and tuple(provided.shape) == tuple(input_ids.shape):
+            return provided.to(device=input_ids.device, dtype=torch.long)
+        token_types = torch.zeros_like(input_ids, dtype=torch.long)
+        image_token_id = getattr(self.config, "image_token_id", None)
+        if image_token_id is not None:
+            token_types = token_types.masked_fill(input_ids.eq(int(image_token_id)), 1)
+        video_token_id = getattr(self.config, "video_token_id", None)
+        if video_token_id is not None:
+            token_types = token_types.masked_fill(input_ids.eq(int(video_token_id)), 2)
+        return token_types
+
+    def get_vision_position_ids(
+        self,
+        start_position: int,
+        grid_thw: torch.Tensor,
+        *,
+        temp_merge_size: int = 1,
+        spatial_merge_size: int = 1,
+        time_interval: int = 1,
+        device: torch.device,
+    ) -> torch.Tensor:
+        llm_grid_t = int(grid_thw[0].item()) // int(temp_merge_size)
+        llm_grid_h = int(grid_thw[1].item()) // int(spatial_merge_size)
+        llm_grid_w = int(grid_thw[2].item()) // int(spatial_merge_size)
+        position_temporal = torch.arange(llm_grid_t, device=device) * int(time_interval)
+        position_height = torch.arange(llm_grid_h, device=device) + int(start_position)
+        position_width = torch.arange(llm_grid_w, device=device) + int(start_position)
+        position_width = position_width.repeat(llm_grid_h * llm_grid_t)
+        position_height = position_height.repeat_interleave(llm_grid_w).repeat(llm_grid_t)
+        position_temporal = position_temporal.repeat_interleave(llm_grid_h * llm_grid_w) + int(
+            start_position
+        )
+        return torch.stack([position_temporal, position_height, position_width], dim=0)
+
+    def get_rope_index(
+        self,
+        *,
+        input_ids: torch.Tensor,
+        mm_token_type_ids: torch.Tensor,
+        image_grid_thw: torch.Tensor | None,
+        video_grid_thw: torch.Tensor | None,
+        attention_mask: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if video_grid_thw is not None:
+            video_grid_thw = torch.repeat_interleave(video_grid_thw, video_grid_thw[:, 0], dim=0)
+            video_grid_thw[:, 0] = 1
+        spatial_merge_size = int(
+            (getattr(self.config, "vision_config", {}) or {}).get("spatial_merge_size", 1)
+        )
+        position_ids = torch.zeros(
+            3,
+            input_ids.shape[0],
+            input_ids.shape[1],
+            dtype=input_ids.dtype,
+            device=input_ids.device,
+        )
+        grid_iters: dict[int, Any] = {
+            1: iter(image_grid_thw) if image_grid_thw is not None else None,
+            2: iter(video_grid_thw) if video_grid_thw is not None else None,
+        }
+        mrope_position_deltas: list[torch.Tensor] = []
+        for batch_idx in range(input_ids.shape[0]):
+            input_token_type = mm_token_type_ids[batch_idx]
+            current_input_ids = input_ids[batch_idx]
+            current_attention_mask = (
+                attention_mask[batch_idx].bool() if attention_mask is not None else None
+            )
+            if current_attention_mask is not None:
+                current_input_ids = current_input_ids[current_attention_mask]
+                input_token_type = input_token_type[current_attention_mask]
+            groups: list[tuple[int, int, int]] = []
+            token_types = [int(value) for value in input_token_type.tolist()]
+            if token_types:
+                start_idx = 0
+                current_type = token_types[0]
+                for idx, token_type in enumerate(token_types[1:], start=1):
+                    if token_type != current_type:
+                        groups.append((current_type, start_idx, idx))
+                        start_idx = idx
+                        current_type = token_type
+                groups.append((current_type, start_idx, len(token_types)))
+            current_pos = 0
+            positions: list[torch.Tensor] = []
+            for modality_type, start_idx, end_idx in groups:
+                if modality_type == 0:
+                    text_len = end_idx - start_idx
+                    positions.append(
+                        torch.arange(text_len, device=input_ids.device).view(1, -1).expand(3, -1)
+                        + current_pos
+                    )
+                    current_pos += text_len
+                    continue
+                grid_iter = grid_iters.get(modality_type)
+                if grid_iter is None:
+                    raise RuntimeError(
+                        f"Missing grid_thw for multimodal token type {modality_type}"
+                    )
+                grid_thw = next(grid_iter)
+                vision_position_ids = self.get_vision_position_ids(
+                    current_pos,
+                    grid_thw,
+                    spatial_merge_size=spatial_merge_size,
+                    device=input_ids.device,
+                )
+                positions.append(vision_position_ids)
+                current_pos += max(int(grid_thw[1].item()), int(grid_thw[2].item())) // max(
+                    spatial_merge_size, 1
+                )
+            llm_positions = (
+                torch.cat(positions, dim=1).reshape(3, -1)
+                if positions
+                else torch.empty(3, 0, dtype=input_ids.dtype, device=input_ids.device)
+            )
+            if current_attention_mask is not None:
+                position_ids[:, batch_idx, current_attention_mask] = llm_positions.to(
+                    position_ids.device
+                )
+            else:
+                position_ids[:, batch_idx] = llm_positions.to(position_ids.device)
+            if llm_positions.numel():
+                mrope_position_deltas.append(llm_positions.max() + 1 - len(current_input_ids))
+            else:
+                mrope_position_deltas.append(torch.tensor(0, device=input_ids.device))
+        return position_ids, torch.stack(mrope_position_deltas).to(input_ids.device).unsqueeze(1)
+
     def _visual_features(
         self,
         multimodal_inputs: dict[str, torch.Tensor],
@@ -3274,6 +3722,7 @@ class Qwen35HybridTextModel(QwenFamilyBase):
         use_cache: bool = False,
         apply_lm_head: bool = False,
         multimodal_inputs: dict[str, torch.Tensor] | None = None,
+        position_input_ids: torch.Tensor | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, tuple[Any, ...]]:
         if hidden_states is None:
             if input_ids is None or self.embed_tokens is None:
@@ -3282,7 +3731,13 @@ class Qwen35HybridTextModel(QwenFamilyBase):
             query_len = int(input_ids.shape[1])
         else:
             query_len = int(hidden_states.shape[1])
-        position_ids = _position_ids(attention_mask)[:, -query_len:]
+        position_ids = self.compute_multimodal_position_ids(
+            input_ids=position_input_ids if position_input_ids is not None else input_ids,
+            attention_mask=attention_mask,
+            multimodal_inputs=multimodal_inputs,
+            past_key_values=past_key_values,
+            query_len=query_len,
+        )
         present_key_values: list[Any] = []
         for idx, layer in enumerate(self.layers):
             layer_past = past_key_values[idx] if past_key_values is not None else None
@@ -3508,10 +3963,13 @@ class TensorParallelQwen35FullAttention(nn.Module):
         self.rope_theta = float(
             (getattr(hf_config, "rope_parameters", {}) or {}).get("rope_theta", 1000000.0)
         )
-        partial = float(
-            (getattr(hf_config, "rope_parameters", {}) or {}).get("partial_rotary_factor", 1.0)
-        )
+        rope_parameters = getattr(hf_config, "rope_parameters", {}) or {}
+        partial = float(rope_parameters.get("partial_rotary_factor", 1.0))
         self.rotary_dim = int(self.head_dim * partial)
+        self.mrope_section = tuple(int(value) for value in rope_parameters.get("mrope_section", ()))
+        self.mrope_interleaved = bool(
+            rope_parameters.get("mrope_interleaved", bool(self.mrope_section))
+        )
         self.local_q_head_start = tp_rank * self.local_heads
         self.local_q_head_stop = self.local_q_head_start + self.local_heads
         self.local_kv_indices = sorted(
@@ -3646,9 +4104,24 @@ class TensorParallelQwen35FullAttention(nn.Module):
         value = value.transpose(1, 2)
         past_len = int(past_key_value[0].shape[2]) if past_key_value is not None else 0
         key_len = past_len + query_len
-        cos, sin = _rope_cache(
-            key_len, self.rotary_dim, self.rope_theta, hidden_states.device, hidden_states.dtype
-        )
+        if position_ids.ndim == 3:
+            cos, sin = _qwen35_mrope_embeddings(
+                position_ids,
+                self.rotary_dim,
+                self.rope_theta,
+                self.mrope_section,
+                self.mrope_interleaved,
+                hidden_states.device,
+                hidden_states.dtype,
+            )
+        else:
+            cos, sin = _rope_cache(
+                key_len,
+                self.rotary_dim,
+                self.rope_theta,
+                hidden_states.device,
+                hidden_states.dtype,
+            )
         query, key = _apply_rope_partial(query, key, cos, sin, position_ids)
         if past_key_value is not None:
             key = torch.cat([past_key_value[0], key], dim=2)
@@ -4808,6 +5281,47 @@ def _rope_cache(
     return emb.cos().to(dtype), emb.sin().to(dtype)
 
 
+def _qwen35_mrope_embeddings(
+    position_ids: torch.Tensor,
+    head_dim: int,
+    theta: float,
+    mrope_section: tuple[int, ...],
+    mrope_interleaved: bool,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    inv_freq = 1.0 / (
+        theta ** (torch.arange(0, head_dim, 2, device=device, dtype=torch.float32) / head_dim)
+    )
+    inv_freq_expanded = inv_freq[None, None, :, None].expand(3, position_ids.shape[1], -1, 1)
+    position_ids_expanded = position_ids[:, :, None, :].to(device=device, dtype=torch.float32)
+    freqs = (inv_freq_expanded @ position_ids_expanded).transpose(2, 3)
+    freqs = _qwen35_apply_mrope_layout(freqs, mrope_section, mrope_interleaved)
+    emb = torch.cat((freqs, freqs), dim=-1)
+    return emb.cos().to(dtype), emb.sin().to(dtype)
+
+
+def _qwen35_apply_mrope_layout(
+    freqs: torch.Tensor,
+    mrope_section: tuple[int, ...],
+    mrope_interleaved: bool,
+) -> torch.Tensor:
+    if len(mrope_section) != 3 or sum(mrope_section) != freqs.shape[-1]:
+        return freqs[0].clone()
+    if not mrope_interleaved:
+        chunks: list[torch.Tensor] = []
+        offset = 0
+        for dim, section in enumerate(mrope_section):
+            chunks.append(freqs[dim, ..., offset : offset + section])
+            offset += section
+        return torch.cat(chunks, dim=-1)
+    output = freqs[0].clone()
+    for dim, offset in enumerate((1, 2), start=1):
+        length = mrope_section[dim] * 3
+        output[..., slice(offset, length, 3)] = freqs[dim, ..., slice(offset, length, 3)]
+    return output
+
+
 def _rotate_half(value: torch.Tensor) -> torch.Tensor:
     first, second = value.chunk(2, dim=-1)
     return torch.cat((-second, first), dim=-1)
@@ -4820,8 +5334,12 @@ def _apply_rope(
     sin: torch.Tensor,
     position_ids: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    cos = cos[position_ids].unsqueeze(1)
-    sin = sin[position_ids].unsqueeze(1)
+    if cos.ndim == 3:
+        cos = cos.unsqueeze(1)
+        sin = sin.unsqueeze(1)
+    else:
+        cos = cos[position_ids].unsqueeze(1)
+        sin = sin[position_ids].unsqueeze(1)
     return (query * cos) + (_rotate_half(query) * sin), (key * cos) + (_rotate_half(key) * sin)
 
 
@@ -4832,8 +5350,12 @@ def _apply_rope_partial(
     sin: torch.Tensor,
     position_ids: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    cos = cos[position_ids].unsqueeze(1)
-    sin = sin[position_ids].unsqueeze(1)
+    if cos.ndim == 3:
+        cos = cos.unsqueeze(1)
+        sin = sin.unsqueeze(1)
+    else:
+        cos = cos[position_ids].unsqueeze(1)
+        sin = sin[position_ids].unsqueeze(1)
     rotary_dim = cos.shape[-1]
     query_rot, query_pass = query[..., :rotary_dim], query[..., rotary_dim:]
     key_rot, key_pass = key[..., :rotary_dim], key[..., rotary_dim:]

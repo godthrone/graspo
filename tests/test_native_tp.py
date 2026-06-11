@@ -266,12 +266,17 @@ def test_native_rollout_logger_splits_readable_and_raw(tmp_path):
             "rewards": [1.0],
             "content_scores": [1.0],
             "all_right": [True],
-            "ground_truth": {"x": "ok"},
+            "targets": [{"id": "expected", "output": {"content": {"x": "ok"}}}],
             "reward_details": [
                 {
                     "raw_score": 231.0,
                     "max_score": 230.0,
                     "extracted": {"answer": "{}"},
+                    "matched_target_id": "expected",
+                    "matched_target_index": 0,
+                    "target_scores": [
+                        {"target_index": 0, "target_id": "expected", "content_score": 1.0}
+                    ],
                     "useless_text_length": 0,
                     "valid_extracted_json": True,
                 }
@@ -288,13 +293,14 @@ def test_native_rollout_logger_splits_readable_and_raw(tmp_path):
     readable = json.loads((tmp_path / "rollouts.readable.jsonl").read_text(encoding="utf-8"))
     raw = json.loads((tmp_path / "rollouts.raw.jsonl").read_text(encoding="utf-8"))
     assert "old_log_probs" not in readable
-    assert readable["ground_truth"] == {"x": "ok"}
+    assert readable["targets"] == [{"id": "expected", "output": {"content": {"x": "ok"}}}]
     assert readable["group_debug"]["likely_truncated_json_count"] == 0
     assert readable["completions"][0]["think"]["has_open"] is True
     assert readable["completions"][0]["json"]["has_markdown_json"] is True
     assert readable["completions"][0]["has_closing_json_fence"] is True
     assert readable["completions"][0]["raw_score"] == 231.0
     assert readable["completions"][0]["max_score"] == 230.0
+    assert readable["completions"][0]["matched_target_id"] == "expected"
     assert readable["completions"][0]["extracted"] == {"answer": "{}"}
     assert readable["completions"][0]["valid_extracted_json"] is True
     assert readable["completions"][0]["generated_tokens"] == 8
@@ -516,11 +522,13 @@ class ScriptedQueuedRuntime(ScriptedGroupRuntime):
         super().__init__([], primary=primary)
         self.groups_by_prompt = groups_by_prompt
         self.generate_group_batches: list[list[str]] = []
+        self.generate_tool_batches = []
         self.prompt_attempt_counts = {prompt: 0 for prompt in groups_by_prompt}
 
     def generate_groups(self, **kwargs):
         prompts = [_message_key(messages) for messages in kwargs["message_batches"]]
         self.generate_group_batches.append(prompts)
+        self.generate_tool_batches.append(kwargs.get("tool_batches"))
         group_size = int(kwargs["rollout_group_size"])
         generations = []
         for prompt in prompts:
@@ -545,6 +553,20 @@ class ScriptedQueuedRuntime(ScriptedGroupRuntime):
                 )
             )
         return generations
+
+    def parse_completion(self, completion, sample):
+        return qwen_tp_adapter_module._parse_qwen_tool_completion(
+            completion,
+            expect_tool_calls=bool(sample.tools),
+        )
+
+
+class ToolParsingRuntime(ScriptedGroupRuntime):
+    def parse_completion(self, completion, sample):
+        return qwen_tp_adapter_module._parse_qwen_tool_completion(
+            completion,
+            expect_tool_calls=bool(sample.tools),
+        )
 
 
 def _ok_completion() -> str:
@@ -577,7 +599,7 @@ def _write_train_data(path: Path, count: int) -> None:
             json.dumps(
                 {
                     "messages": [{"role": "user", "content": f"p{idx}"}],
-                    "ground_truth": {"x": "ok"},
+                    "targets": [{"id": "expected", "output": {"content": {"x": "ok"}}}],
                 },
                 ensure_ascii=False,
             )
@@ -623,7 +645,10 @@ def test_native_trainer_retries_then_trains_with_fake_runtime(tmp_path):
     data = tmp_path / "train.jsonl"
     data.write_text(
         json.dumps(
-            {"messages": [{"role": "user", "content": "p"}], "ground_truth": {"x": "ok"}},
+            {
+                "messages": [{"role": "user", "content": "p"}],
+                "targets": [{"id": "expected", "output": {"content": {"x": "ok"}}}],
+            },
             ensure_ascii=False,
         )
         + "\n",
@@ -805,6 +830,127 @@ def test_rollout_prompt_queue_batch_size_batches_multiple_prompts_without_changi
     assert train_step["timing"]["rollout_prompt_queue_effective_size"] == 2
     assert train_step["batch"]["decisions"]["trainable"]["total"] == 4
     assert train_step["batch"]["attempt_groups"] == 4
+
+
+def test_rollout_prompt_queue_passes_tools_to_runtime(tmp_path):
+    data = tmp_path / "train.jsonl"
+    tool = {
+        "type": "function",
+        "function": {"name": "query_device_status", "parameters": {"type": "object"}},
+    }
+    rows = [
+        {
+            "messages": [{"role": "user", "content": "p0"}],
+            "tools": [tool],
+            "targets": [
+                {
+                    "id": "expected",
+                    "output": {"tool_calls": [{"name": "query_device_status", "arguments": {}}]},
+                }
+            ],
+        },
+        {
+            "messages": [{"role": "user", "content": "p1"}],
+            "targets": [{"id": "expected", "output": {"content": {"x": "ok"}}}],
+        },
+    ]
+    data.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+    runtime = ScriptedQueuedRuntime(
+        {
+            "p0": [
+                [
+                    "<tool_call><function=query_device_status></function></tool_call>",
+                    '<tool_call>{"name":"query_device_status","arguments":{}}</tool_call>',
+                ]
+            ],
+            "p1": [_mixed_group(2)],
+        }
+    )
+    config = _native_test_config(
+        tmp_path,
+        data,
+        rollout_group_size=2,
+        rollout_prompt_queue_batch_size=2,
+        optimize_completion_batch_size=2,
+    )
+    trainer = NativeTPGraspoTrainer(config, runtime=runtime)
+
+    trainer.train()
+
+    observed = dict(
+        zip(runtime.generate_group_batches[0], runtime.generate_tool_batches[0], strict=True)
+    )
+    assert observed == {"p0": [tool], "p1": None}
+
+
+def test_trainer_scores_qwen_xml_tool_call_via_runtime_parser(tmp_path):
+    data = tmp_path / "train.jsonl"
+    tool = {
+        "type": "function",
+        "function": {
+            "name": "robot_atomic_control",
+            "parameters": {
+                "type": "object",
+                "properties": {"action": {"type": "string", "enum": ["鍚戜笅", "鍚戜笂"]}},
+                "required": ["action"],
+            },
+        },
+    }
+    data.write_text(
+        json.dumps(
+            {
+                "messages": [{"role": "user", "content": "p0"}],
+                "tools": [tool],
+                "targets": [
+                    {
+                        "id": "expected",
+                        "output": {
+                            "tool_calls": [
+                                {
+                                    "name": "robot_atomic_control",
+                                    "arguments": {"action": "鍚戜笅"},
+                                }
+                            ]
+                        },
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    runtime = ToolParsingRuntime(
+        [
+            [
+                "<tool_call><function=robot_atomic_control>"
+                "<parameter=action>鍚戜笂</parameter></function></tool_call>",
+                "<think>ok</think><tool_call><function=robot_atomic_control>"
+                "<parameter=action>鍚戜笅</parameter></function></tool_call>",
+            ]
+        ]
+    )
+    config = _native_test_config(
+        tmp_path,
+        data,
+        rollout_group_size=2,
+        optimize_completion_batch_size=2,
+    )
+    trainer = NativeTPGraspoTrainer(config, runtime=runtime)
+
+    trainer.train()
+
+    readable = json.loads(
+        (tmp_path / "out" / "rollouts.readable.jsonl").read_text(encoding="utf-8")
+    )
+    assert readable["completions"][1]["all_right"] is True
+    assert readable["completions"][1]["parsed_tool_calls"] == [
+        {"name": "robot_atomic_control", "arguments": {"action": "鍚戜笅"}}
+    ]
+    assert readable["group_debug"]["tool_call_parse_error_count"] == 0
 
 
 def test_rollout_prompt_queue_retries_only_unfinished_prompt(tmp_path):
