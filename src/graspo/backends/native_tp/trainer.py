@@ -253,8 +253,8 @@ class NativeTPGraspoTrainer:
             results = [
                 self.reward.score_parsed(
                     parsed,
-                    state.sample.ground_truth,
-                    is_tool_call=bool(state.sample.tools),
+                    state.sample.targets,
+                    is_tool_call=state.sample.expects_tool_calls,
                 )
                 for parsed in parsed_completions
             ]
@@ -794,7 +794,7 @@ class NativeTPGraspoTrainer:
             "messages": sample.messages,
             "tools": sample.tools,
             "prompt_preview": sample.prompt_preview,
-            "ground_truth": sample.ground_truth,
+            "targets": sample.targets,
             "metadata": _safe_sample_metadata(sample),
             "completions": generation.completions,
             "parsed_completions": [parsed.to_dict() for parsed in parsed_completions],
@@ -1014,6 +1014,9 @@ def _reward_detail(result: Any) -> dict[str, Any]:
         "parser": extracted.get("parser"),
         "parse_errors": extracted.get("parse_errors"),
         "extra_text": extracted.get("extra_text"),
+        "matched_target_index": result.matched_target_index,
+        "matched_target_id": result.matched_target_id,
+        "target_scores": result.target_scores,
         "useless_text_length": len(result.useless_text),
         "valid_extracted_json": valid_extracted_json,
     }
@@ -1106,7 +1109,7 @@ def _monitor_group(payload: dict[str, Any]) -> dict[str, Any]:
         ),
         "tool_call_parse_error_count": sum(1 for detail in details if detail.get("parse_errors")),
         "tool_call_count_mismatch_count": _tool_call_count_mismatch_count(
-            details, payload.get("ground_truth")
+            details, payload.get("targets")
         ),
     }
 
@@ -1205,7 +1208,7 @@ def _reward_batch_summary(
         )
         tool_call_parse_error_count += sum(1 for detail in details if detail.get("parse_errors"))
         tool_call_count_mismatch_count += _tool_call_count_mismatch_count(
-            details, attempt.get("ground_truth")
+            details, attempt.get("targets")
         )
 
     attempt_group_count = len(attempts)
@@ -1316,14 +1319,26 @@ def _compact_batch_summary(summary: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _tool_call_count_mismatch_count(details: list[dict[str, Any]], ground_truth: Any) -> int:
-    target_count = len(ground_truth) if isinstance(ground_truth, list) else 1
+def _tool_call_count_mismatch_count(details: list[dict[str, Any]], targets: Any) -> int:
+    target_counts = _target_tool_call_counts(targets)
     return sum(
         1
         for detail in details
         if detail.get("parsed_tool_calls") is not None
-        and len(detail.get("parsed_tool_calls") or []) != target_count
+        and len(detail.get("parsed_tool_calls") or []) not in target_counts
     )
+
+
+def _target_tool_call_counts(targets: Any) -> set[int]:
+    counts: set[int] = set()
+    if not isinstance(targets, list):
+        return {1}
+    for target in targets:
+        output = target.get("output") if isinstance(target, dict) else None
+        calls = output.get("tool_calls") if isinstance(output, dict) else None
+        if isinstance(calls, list):
+            counts.add(len(calls))
+    return counts or {1}
 
 
 def _compact_decisions(

@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from graspo.core.reward import normalize_tool_call_target
+from graspo.core.reward import normalize_targets
 from graspo.core.schema import Sample
 
 
@@ -15,27 +15,25 @@ def sample_from_record(record: dict[str, Any]) -> Sample:
         raise ValueError(
             "removed input field(s): "
             + ", ".join(present_removed)
-            + "; use messages + optional tools + ground_truth JSONL"
+            + "; use messages + optional tools + targets JSONL"
         )
+    if "ground_truth" in record:
+        raise ValueError("record field 'ground_truth' was removed; use targets[].output")
     messages = _validate_messages(record.get("messages"))
 
-    if "ground_truth" not in record:
-        raise ValueError("record must contain 'ground_truth'")
+    if "targets" not in record:
+        raise ValueError("record must contain 'targets'")
     tools = _validate_tools(record.get("tools"))
-    ground_truth = record["ground_truth"]
+    targets = normalize_targets(record["targets"])
     if tools is not None:
-        _validate_tool_call_ground_truth(ground_truth, tools)
-    elif not isinstance(ground_truth, dict):
-        raise ValueError("record 'ground_truth' must be a JSON object")
+        _validate_tool_call_targets(targets, tools)
     media = _messages_media(messages)
     metadata = {
-        key: value
-        for key, value in record.items()
-        if key not in {"messages", "ground_truth", "tools"}
+        key: value for key, value in record.items() if key not in {"messages", "targets", "tools"}
     }
     return Sample(
         messages=messages,
-        ground_truth=ground_truth,
+        targets=targets,
         tools=tools,
         metadata=metadata,
         media=media,
@@ -75,20 +73,27 @@ def _validate_tools(value: Any) -> list[dict[str, Any]] | None:
     return tools
 
 
-def _validate_tool_call_ground_truth(value: Any, tools: list[dict[str, Any]]) -> None:
-    calls = normalize_tool_call_target(value)
+def _validate_tool_call_targets(targets: list[dict[str, Any]], tools: list[dict[str, Any]]) -> None:
     tool_names = {
         str(function.get("name"))
         for tool in tools
         if isinstance((function := tool.get("function")), dict) and function.get("name")
     }
-    for call in calls:
-        name = str(call["name"])
-        if tool_names and name not in tool_names:
-            raise ValueError(f"tool-call ground_truth name {name!r} is not declared in tools")
-        declaration = _tool_declaration_by_name(tools, name)
-        if declaration is not None:
-            _validate_tool_arguments_against_declaration(call["arguments"], declaration)
+    for target_index, target in enumerate(targets):
+        calls = target["output"].get("tool_calls")
+        if not isinstance(calls, list):
+            continue
+        for call in calls:
+            name = str(call["name"])
+            if tool_names and name not in tool_names:
+                raise ValueError(
+                    f"targets[{target_index}].output.tool_calls name {name!r} is not declared in tools"
+                )
+            declaration = _tool_declaration_by_name(tools, name)
+            if declaration is not None:
+                _validate_tool_arguments_against_declaration(
+                    call["arguments"], declaration, target_index=target_index
+                )
 
 
 def _tool_declaration_by_name(tools: list[dict[str, Any]], name: str) -> dict[str, Any] | None:
@@ -100,7 +105,7 @@ def _tool_declaration_by_name(tools: list[dict[str, Any]], name: str) -> dict[st
 
 
 def _validate_tool_arguments_against_declaration(
-    arguments: dict[str, Any], declaration: dict[str, Any]
+    arguments: dict[str, Any], declaration: dict[str, Any], *, target_index: int
 ) -> None:
     parameters = declaration.get("parameters")
     if not isinstance(parameters, dict):
@@ -110,7 +115,8 @@ def _validate_tool_arguments_against_declaration(
         missing = [str(key) for key in required if key not in arguments]
         if missing:
             raise ValueError(
-                "tool-call ground_truth missing required argument(s): " + ", ".join(missing)
+                f"targets[{target_index}].output.tool_calls missing required argument(s): "
+                + ", ".join(missing)
             )
     properties = parameters.get("properties")
     if not isinstance(properties, dict):
@@ -122,7 +128,8 @@ def _validate_tool_arguments_against_declaration(
         enum_values = spec.get("enum")
         if isinstance(enum_values, list) and value not in enum_values:
             raise ValueError(
-                f"tool-call ground_truth argument {key!r} value {value!r} is not in enum"
+                f"targets[{target_index}].output.tool_calls argument {key!r} "
+                f"value {value!r} is not in enum"
             )
 
 

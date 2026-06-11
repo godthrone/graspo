@@ -194,7 +194,19 @@ def test_qwen_parser_reports_xml_integer_schema_mismatch():
     )
     result = GraspoReward(RewardConfig(check_json_markdown=False)).score_parsed(
         parsed,
-        {"name": "robot_atomic_control", "arguments": {"distance_cm": 6}},
+        [
+            {
+                "id": "expected",
+                "output": {
+                    "tool_calls": [
+                        {
+                            "name": "robot_atomic_control",
+                            "arguments": {"distance_cm": 6},
+                        }
+                    ]
+                },
+            }
+        ],
         is_tool_call=True,
     )
 

@@ -266,12 +266,17 @@ def test_native_rollout_logger_splits_readable_and_raw(tmp_path):
             "rewards": [1.0],
             "content_scores": [1.0],
             "all_right": [True],
-            "ground_truth": {"x": "ok"},
+            "targets": [{"id": "expected", "output": {"content": {"x": "ok"}}}],
             "reward_details": [
                 {
                     "raw_score": 231.0,
                     "max_score": 230.0,
                     "extracted": {"answer": "{}"},
+                    "matched_target_id": "expected",
+                    "matched_target_index": 0,
+                    "target_scores": [
+                        {"target_index": 0, "target_id": "expected", "content_score": 1.0}
+                    ],
                     "useless_text_length": 0,
                     "valid_extracted_json": True,
                 }
@@ -288,13 +293,14 @@ def test_native_rollout_logger_splits_readable_and_raw(tmp_path):
     readable = json.loads((tmp_path / "rollouts.readable.jsonl").read_text(encoding="utf-8"))
     raw = json.loads((tmp_path / "rollouts.raw.jsonl").read_text(encoding="utf-8"))
     assert "old_log_probs" not in readable
-    assert readable["ground_truth"] == {"x": "ok"}
+    assert readable["targets"] == [{"id": "expected", "output": {"content": {"x": "ok"}}}]
     assert readable["group_debug"]["likely_truncated_json_count"] == 0
     assert readable["completions"][0]["think"]["has_open"] is True
     assert readable["completions"][0]["json"]["has_markdown_json"] is True
     assert readable["completions"][0]["has_closing_json_fence"] is True
     assert readable["completions"][0]["raw_score"] == 231.0
     assert readable["completions"][0]["max_score"] == 230.0
+    assert readable["completions"][0]["matched_target_id"] == "expected"
     assert readable["completions"][0]["extracted"] == {"answer": "{}"}
     assert readable["completions"][0]["valid_extracted_json"] is True
     assert readable["completions"][0]["generated_tokens"] == 8
@@ -593,7 +599,7 @@ def _write_train_data(path: Path, count: int) -> None:
             json.dumps(
                 {
                     "messages": [{"role": "user", "content": f"p{idx}"}],
-                    "ground_truth": {"x": "ok"},
+                    "targets": [{"id": "expected", "output": {"content": {"x": "ok"}}}],
                 },
                 ensure_ascii=False,
             )
@@ -639,7 +645,10 @@ def test_native_trainer_retries_then_trains_with_fake_runtime(tmp_path):
     data = tmp_path / "train.jsonl"
     data.write_text(
         json.dumps(
-            {"messages": [{"role": "user", "content": "p"}], "ground_truth": {"x": "ok"}},
+            {
+                "messages": [{"role": "user", "content": "p"}],
+                "targets": [{"id": "expected", "output": {"content": {"x": "ok"}}}],
+            },
             ensure_ascii=False,
         )
         + "\n",
@@ -833,14 +842,16 @@ def test_rollout_prompt_queue_passes_tools_to_runtime(tmp_path):
         {
             "messages": [{"role": "user", "content": "p0"}],
             "tools": [tool],
-            "ground_truth": {
-                "name": "query_device_status",
-                "arguments": {},
-            },
+            "targets": [
+                {
+                    "id": "expected",
+                    "output": {"tool_calls": [{"name": "query_device_status", "arguments": {}}]},
+                }
+            ],
         },
         {
             "messages": [{"role": "user", "content": "p1"}],
-            "ground_truth": {"x": "ok"},
+            "targets": [{"id": "expected", "output": {"content": {"x": "ok"}}}],
         },
     ]
     data.write_text(
@@ -883,7 +894,7 @@ def test_trainer_scores_qwen_xml_tool_call_via_runtime_parser(tmp_path):
             "name": "robot_atomic_control",
             "parameters": {
                 "type": "object",
-                "properties": {"action": {"type": "string", "enum": ["向下", "向上"]}},
+                "properties": {"action": {"type": "string", "enum": ["鍚戜笅", "鍚戜笂"]}},
                 "required": ["action"],
             },
         },
@@ -893,10 +904,19 @@ def test_trainer_scores_qwen_xml_tool_call_via_runtime_parser(tmp_path):
             {
                 "messages": [{"role": "user", "content": "p0"}],
                 "tools": [tool],
-                "ground_truth": {
-                    "name": "robot_atomic_control",
-                    "arguments": {"action": "向下"},
-                },
+                "targets": [
+                    {
+                        "id": "expected",
+                        "output": {
+                            "tool_calls": [
+                                {
+                                    "name": "robot_atomic_control",
+                                    "arguments": {"action": "鍚戜笅"},
+                                }
+                            ]
+                        },
+                    }
+                ],
             },
             ensure_ascii=False,
         )
@@ -907,9 +927,9 @@ def test_trainer_scores_qwen_xml_tool_call_via_runtime_parser(tmp_path):
         [
             [
                 "<tool_call><function=robot_atomic_control>"
-                "<parameter=action>向上</parameter></function></tool_call>",
+                "<parameter=action>鍚戜笂</parameter></function></tool_call>",
                 "<think>ok</think><tool_call><function=robot_atomic_control>"
-                "<parameter=action>向下</parameter></function></tool_call>",
+                "<parameter=action>鍚戜笅</parameter></function></tool_call>",
             ]
         ]
     )
@@ -928,7 +948,7 @@ def test_trainer_scores_qwen_xml_tool_call_via_runtime_parser(tmp_path):
     )
     assert readable["completions"][1]["all_right"] is True
     assert readable["completions"][1]["parsed_tool_calls"] == [
-        {"name": "robot_atomic_control", "arguments": {"action": "向下"}}
+        {"name": "robot_atomic_control", "arguments": {"action": "鍚戜笅"}}
     ]
     assert readable["group_debug"]["tool_call_parse_error_count"] == 0
 
