@@ -9,8 +9,8 @@ It is designed for low-cost LoRA-based structured-output training: keep the base
 model frozen, train only compact LoRA adapters, and use reward rules that can be
 audited from the generated text.
 The built-in reward checks required markers, parses fenced JSON or tool-call
-payloads, compares structured fields against `ground_truth`, and turns the
-result into group-level preference signals for GRASPO.
+payloads, compares structured fields against `targets`, and turns the result
+into group-level preference signals for GRASPO.
 
 GRASPO keeps the useful GRPO idea of comparing multiple completions for the same
 prompt, then adds production-oriented behavior for structured outputs:
@@ -77,48 +77,83 @@ uv run graspo validate-reward --data data/sample.jsonl --limit 2
 ## Data Format
 
 Training data is JSONL. Each line is one prompt/context represented as chat
-messages plus a reward target:
+messages, optional tool declarations, and one or more acceptable targets:
 
 ```jsonl
-{"messages":[{"role":"system","content":"You extract structured telecom ticket fields as fenced JSON."},{"role":"user","content":"Ticket: user 13800138000 cannot use apn cmnet."},{"role":"assistant","content":"I will identify the phone number and APN from the ticket."},{"role":"user","content":"Extract JSON with the APN and fault number."}],"ground_truth":{"APN":"cmnet","fault_number":"13800138000"}}
+{"messages":[{"role":"system","content":"You extract structured telecom ticket fields as fenced JSON."},{"role":"user","content":"Ticket: user 13800138000 cannot use apn cmnet."},{"role":"assistant","content":"I will identify the phone number and APN from the ticket."},{"role":"user","content":"Extract JSON with the APN and fault number."}],"targets":[{"id":"expected","output":{"content":{"APN":"cmnet","fault_number":"13800138000"}}}]}
 ```
 
 Multimodal records use the same `messages` field and preserve message roles and
 content order:
 
 ```jsonl
-{"messages":[{"role":"system","content":"Extract fields from ticket screenshots."},{"role":"user","content":"Use exact snake_case values."},{"role":"assistant","content":"Understood."},{"role":"user","content":[{"type":"image","image":"images/panel_0001.png"},{"type":"text","text":"Extract the ticket fields as strict JSON."}]}],"ground_truth":{"ticket_id":"T-0001","status":"critical"}}
+{"messages":[{"role":"system","content":"Extract fields from ticket screenshots."},{"role":"user","content":"Use exact snake_case values."},{"role":"assistant","content":"Understood."},{"role":"user","content":[{"type":"image","image":"images/panel_0001.png"},{"type":"text","text":"Extract the ticket fields as strict JSON."}]}],"targets":[{"id":"expected","output":{"content":{"ticket_id":"T-0001","status":"critical"}}}]}
+```
+
+Tool-call records can provide model-native tool declarations in the optional
+`tools` field. GRASPO passes `messages + tools` to the model tokenizer or
+processor chat template at runtime; users should not pre-render model template
+strings in the dataset:
+
+```jsonl
+{"messages":[{"role":"system","content":"Use tools when needed. Output only the tool call."},{"role":"user","content":"Query device OLT-17 status at 2026-06-08 10:30."}],"tools":[{"type":"function","function":{"name":"query_device_status","description":"Query network device panel status.","parameters":{"type":"object","properties":{"device_id":{"type":"string"},"panel_time":{"type":"string"}},"required":["device_id","panel_time"]}}}],"targets":[{"id":"expected","output":{"tool_calls":[{"name":"query_device_status","arguments":{"device_id":"OLT-17","panel_time":"2026-06-08T10:30:00+08:00"}}]}}]}
+```
+
+See `data/sample_tool_call.jsonl` for a runnable tool-call dataset row.
+
+Alternative targets are expressed as multiple `targets` entries. Ordered
+multi-step tool execution is expressed only inside `output.tool_calls`:
+
+```jsonl
+{"messages":[{"role":"user","content":"Move toward the object."}],"tools":[{"type":"function","function":{"name":"robot_atomic_control","parameters":{"type":"object","properties":{"action":{"type":"string"},"distance_cm":{"type":"integer"}},"required":["action","distance_cm"]}}}],"targets":[{"id":"left-first","output":{"tool_calls":[{"name":"robot_atomic_control","arguments":{"action":"向左","distance_cm":6}}]}},{"id":"down-first","output":{"tool_calls":[{"name":"robot_atomic_control","arguments":{"action":"向下","distance_cm":4}}]}}]}
+{"messages":[{"role":"user","content":"Move, then inspect."}],"tools":[{"type":"function","function":{"name":"move","parameters":{"type":"object"}}},{"type":"function","function":{"name":"inspect","parameters":{"type":"object"}}}],"targets":[{"id":"move-inspect","output":{"tool_calls":[{"name":"move","arguments":{"action":"left"}},{"name":"inspect","arguments":{"object":"target"}}]}}]}
 ```
 
 Supported fields:
 
-- `ground_truth`: expected structured output as a JSON object;
 - `messages`: required prompt/context messages for tokenizer or processor chat templates;
+- `tools`: optional list of tool declarations passed to model chat templates;
+- `targets`: required non-empty list of acceptable outputs. Each target has an
+  optional `id` and an `output` object. `output.content` is a JSON object for
+  normal answer tasks; `output.tool_calls` is an ordered list of canonical tool
+  calls for tool-call tasks;
 - image/video items inside `messages[].content`: parsed by the data layer for
   multimodal routing; image training is supported, while video should be
   smoke-tested before production use;
 - extra fields are kept as metadata.
 
-The final message must not have role `assistant`; `ground_truth` is the reward
-target and must not be leaked into the input messages. GRASPO only accepts JSONL
-records with `messages` and JSON-object `ground_truth`; plain `prompt`, JSON,
-Excel, and top-level media fields are not supported.
+For tool-call records, `targets[].output.tool_calls` is canonical tool-call
+JSON: each item is `{"name":"...","arguments":{...}}`, and list order is the
+execution order. Alternative valid answers are separate entries in `targets`.
+Model-specific output formats, such as Qwen XML tool calls, are parsed by the
+model adapter before reward scoring.
+
+The final message must not have role `assistant`; `targets` are raw reward
+targets and must not be leaked into the input messages or converted to a
+model chat template. GRASPO only accepts JSONL records with `messages`, optional
+`tools`, and `targets`; plain `prompt`, JSON, Excel, legacy `ground_truth`, and
+top-level media fields are not supported.
 
 ## Reward Scoring
 
 GRASPO currently ships one built-in structured-output reward. It is rule-based,
-auditable, and designed for tasks where the target answer is a JSON object. A
-completion is scored in four steps:
+auditable, and designed for tasks where one or more acceptable targets contain
+a JSON object or canonical tool-call sequence. A completion is scored in four
+steps:
 
-1. Check output markers. Depending on `reward` config, the scorer can require
-   `<think>...</think>`, fenced JSON Markdown blocks, and
-   `<tool_call>...</tool_call>` sections.
-2. Extract answer text. The answer is read from the configured marker region;
-   if `check_json_markdown=false`, the full answer region is treated as JSON.
-3. Parse and compare JSON. Parsed completion JSON is compared with
-   `ground_truth` using recursive dictionary/list matching. Fields present in
-   the target get partial credit; exact values get additional credit; unexpected
-   extra keys reduce the structural match.
+1. Parse model-specific completion format. The model adapter converts raw
+   output, including Qwen XML tool calls, into canonical parsed fields while
+   preserving raw text and `<think>...</think>`. For Qwen XML tool calls,
+   `integer`, `number`, and `boolean` parameters are typed from the declared
+   tool schema before reward scoring.
+2. Check output markers. Depending on `reward` config, the scorer can require
+   `<think>...</think>` and fenced JSON Markdown blocks for normal answer tasks.
+3. Compare structured content. Normal answer tasks compare parsed JSON with
+   each `targets[].output.content`; tool-call tasks compare canonical tool
+   calls with each `targets[].output.tool_calls`, preserving sequence order
+   inside each target. GRASPO uses the best-scoring target. JSON number fields
+   are scored with `1 / (1 + abs(predicted - target))`; non-numeric fields and
+   mismatched types still use strict equality.
 4. Normalize reward. Marker score, structured content score, perfect-match
    bonus, and the extra-text penalty/bonus are combined into `reward`,
    `content_score`, and `all_right`.
@@ -128,14 +163,18 @@ The important outputs are:
 - `reward`: scalar used for GRASPO group decisions, advantage calculation, and
   ReplayBuffer training;
 - `content_score`: normalized structured-content match before group filtering;
-- `all_right`: true only when every checked target is fully correct.
+- `all_right`: true when at least one target is fully correct, so numeric fields
+  must still match exactly for a perfect result.
+
+Identifiers or categorical codes that should not receive continuous numeric
+credit should be represented as JSON strings in the dataset.
 
 GRASPO uses the reward distribution inside each rollout group, not just one
 absolute score. Groups with useful differences become trainable; already-perfect
 groups can be skipped; groups with no reward variance or no preference gap are
-discarded or retried. The readable rollout log stores the completion, extracted
-fields, reward details, and invalid reason so reward behavior can be inspected
-without rerunning generation.
+discarded or retried. The readable rollout log stores the completion, parsed
+tool calls, extracted fields, reward details, parser errors, and invalid reason
+so reward behavior can be inspected without rerunning generation.
 
 ## Configuration
 
@@ -182,13 +221,13 @@ training.
 
 - `check_think`: require `<think>...</think>` markers before the answer.
 - `check_json_markdown`: require fenced JSON output.
-- `check_tool_call`: score a tool-call target in addition to the answer.
+- `check_tool_call`: legacy switch retained in config; current training infers
+  tool-call scoring from `targets[].output.tool_calls`.
 - `check_list_order`: make list order matter in structured comparison.
 - `marker_reward_weight`: reward for required output markers.
 - `content_reward_weight`: reward for structured content match.
 - `anti_useless_str_reward_weight`: bonus/penalty weight for extra text.
 - `anti_useless_str_half_reward_len`: length scale for extra-text penalty.
-- `answer_field`: ground-truth answer field.
 
 ### `training`
 
@@ -275,6 +314,24 @@ Leaf aliases such as `q_proj` are not accepted. Resolution is fail-closed:
 unknown targets, unsupported conv/norm parameters, and empty matches stop before
 training. Native checkpoints store the resolved LoRA target signature and reject
 resume with a different target configuration.
+
+## Native Model Implementation Boundary
+
+Native model math belongs in the native model classes. RoPE/M-RoPE, position
+IDs, KV-cache continuation, visual feature injection, TP shard-local layer
+math, and LoRA target metadata should live on classes such as
+`Qwen3DenseModel`, `Qwen35HybridTextModel`, and their attention/layer modules.
+
+`QwenNativeTPAdapter` is responsible for processor/tokenizer calls, batching,
+rollout splitting, sampling, pipeline send/recv orchestration, checkpoint
+delegation, and logging. Runtime and placement modules own backend lifecycle,
+config validation, and TP/PP layout only; they should not implement
+model-family math.
+
+Qwen3.6 uses the Qwen3.5-family hybrid text/vision native class in GRASPO
+because its architecture is compatible with that family. If a future model uses
+a different `model_type`, such as `qwen3_vl` or `qwen3_omni`, add a dedicated
+native model class instead of introducing adapter-level special cases.
 
 ## Export
 

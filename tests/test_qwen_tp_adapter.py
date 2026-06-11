@@ -5,6 +5,8 @@ from types import SimpleNamespace
 import pytest
 
 torch = pytest.importorskip("torch")
+if not hasattr(torch, "float8_e8m0fnu"):
+    torch.float8_e8m0fnu = torch.uint8  # type: ignore[attr-defined]
 
 from graspo.backends.native_tp.qwen_tp_adapter import (  # noqa: E402
     LoRALinear,
@@ -22,12 +24,16 @@ from graspo.backends.native_tp.qwen_tp_adapter import (  # noqa: E402
     _add_pipeline_stage_timing,
     _messages_from_multimodal_row,
     _new_pipeline_stage_timing,
+    _parse_qwen_tool_completion,
+    _processor_chat_messages,
+    _qwen35_mrope_embeddings,
     _round_pipeline_stage_timing,
     _selected_token_log_probs_from_hidden,
 )
 from graspo.backends.native_tp.runtime import NativeTPRuntime  # noqa: E402
 from graspo.backends.native_tp.placement import build_placement_plan  # noqa: E402
 from graspo.core.buffer import Experience  # noqa: E402
+from graspo.core.reward import GraspoReward, RewardConfig  # noqa: E402
 from graspo.core.schema import GraspoConfig  # noqa: E402
 
 
@@ -60,6 +66,223 @@ def test_multimodal_row_messages_are_preserved_for_processor_template():
     ]
 
     assert _messages_from_multimodal_row({"messages": messages}) == messages
+
+
+def test_processor_chat_messages_wrap_text_content_blocks():
+    messages = [
+        {"role": "system", "content": "s"},
+        {
+            "role": "user",
+            "content": [
+                {"type": "image", "image": "images/a.png"},
+                {"type": "text", "text": "q2"},
+            ],
+        },
+    ]
+
+    assert _processor_chat_messages(messages) == [
+        {"role": "system", "content": [{"type": "text", "text": "s"}]},
+        {
+            "role": "user",
+            "content": [
+                {"type": "image", "image": "images/a.png"},
+                {"type": "text", "text": "q2"},
+            ],
+        },
+    ]
+    assert messages[0]["content"] == "s"
+
+
+def test_qwen_format_messages_passes_tools_to_chat_template():
+    class Tokenizer:
+        chat_template = "template"
+
+        def __init__(self) -> None:
+            self.calls = []
+
+        def apply_chat_template(self, messages, **kwargs):
+            self.calls.append((messages, kwargs))
+            return "rendered"
+
+    tokenizer = Tokenizer()
+    adapter = QwenNativeTPAdapter(GraspoConfig())
+    adapter.tokenizer = tokenizer
+    messages = [{"role": "user", "content": "query status"}]
+    tools = [
+        {
+            "type": "function",
+            "function": {"name": "query_device_status", "parameters": {"type": "object"}},
+        }
+    ]
+
+    rendered = adapter._format_messages(messages, {"enable_thinking": False}, tools=tools)
+
+    assert rendered == "rendered"
+    assert tokenizer.calls == [
+        (
+            messages,
+            {
+                "tokenize": False,
+                "add_generation_prompt": True,
+                "enable_thinking": False,
+                "tools": tools,
+            },
+        )
+    ]
+
+
+def test_qwen_parser_extracts_xml_tool_call_and_think():
+    parsed = _parse_qwen_tool_completion(
+        "<think>look</think>\n"
+        "<tool_call>\n"
+        "<function=robot_atomic_control>\n"
+        "<parameter=action>\n"
+        "向下\n"
+        "</parameter>\n"
+        "</function>\n"
+        "</tool_call>",
+        expect_tool_calls=True,
+    )
+
+    assert parsed.think_text == "look"
+    assert parsed.tool_calls == [{"name": "robot_atomic_control", "arguments": {"action": "向下"}}]
+    assert parsed.parse_errors == []
+    assert parsed.extra_text == ""
+
+
+def test_qwen_parser_coerces_xml_integer_argument_from_tool_schema():
+    tools = [_robot_tool_schema({"action": {"type": "string"}, "distance_cm": {"type": "integer"}})]
+    parsed = _parse_qwen_tool_completion(
+        "<tool_call><function=robot_atomic_control>"
+        "<parameter=action>left</parameter>"
+        "<parameter=distance_cm>6</parameter>"
+        "</function></tool_call>",
+        expect_tool_calls=True,
+        tools=tools,
+    )
+
+    assert parsed.tool_calls == [
+        {"name": "robot_atomic_control", "arguments": {"action": "left", "distance_cm": 6}}
+    ]
+    assert parsed.parse_errors == []
+
+
+def test_qwen_parser_coerces_xml_number_argument_from_tool_schema():
+    tools = [_robot_tool_schema({"distance_cm": {"type": "number"}})]
+    parsed = _parse_qwen_tool_completion(
+        "<tool_call><function=robot_atomic_control>"
+        "<parameter=distance_cm>6.5</parameter>"
+        "</function></tool_call>",
+        expect_tool_calls=True,
+        tools=tools,
+    )
+
+    assert parsed.tool_calls == [
+        {"name": "robot_atomic_control", "arguments": {"distance_cm": 6.5}}
+    ]
+    assert parsed.parse_errors == []
+
+
+def test_qwen_parser_reports_xml_integer_schema_mismatch():
+    tools = [_robot_tool_schema({"distance_cm": {"type": "integer"}})]
+    parsed = _parse_qwen_tool_completion(
+        "<tool_call><function=robot_atomic_control>"
+        "<parameter=distance_cm>6.5</parameter>"
+        "</function></tool_call>",
+        expect_tool_calls=True,
+        tools=tools,
+    )
+    result = GraspoReward(RewardConfig(check_json_markdown=False)).score_parsed(
+        parsed,
+        [
+            {
+                "id": "expected",
+                "output": {
+                    "tool_calls": [
+                        {
+                            "name": "robot_atomic_control",
+                            "arguments": {"distance_cm": 6},
+                        }
+                    ]
+                },
+            }
+        ],
+        is_tool_call=True,
+    )
+
+    assert parsed.tool_calls == [
+        {"name": "robot_atomic_control", "arguments": {"distance_cm": "6.5"}}
+    ]
+    assert parsed.parse_errors == ["tool_call[0].arguments.distance_cm expected integer"]
+    assert result.all_right is False
+
+
+def test_qwen_parser_leaves_xml_argument_string_without_schema():
+    parsed = _parse_qwen_tool_completion(
+        "<tool_call><function=robot_atomic_control>"
+        "<parameter=distance_cm>6</parameter>"
+        "</function></tool_call>",
+        expect_tool_calls=True,
+    )
+
+    assert parsed.tool_calls == [
+        {"name": "robot_atomic_control", "arguments": {"distance_cm": "6"}}
+    ]
+    assert parsed.parse_errors == []
+
+
+def test_qwen_parser_extracts_json_tool_call():
+    parsed = _parse_qwen_tool_completion(
+        '<tool_call>{"name":"search","arguments":{"q":"apn"}}</tool_call>',
+        expect_tool_calls=True,
+    )
+
+    assert parsed.tool_calls == [{"name": "search", "arguments": {"q": "apn"}}]
+    assert parsed.parser_name == "qwen_json_tool_call"
+
+
+def test_qwen_parser_preserves_json_tool_call_argument_types_with_schema():
+    parsed = _parse_qwen_tool_completion(
+        '<tool_call>{"name":"robot_atomic_control","arguments":{"distance_cm":6}}</tool_call>',
+        expect_tool_calls=True,
+        tools=[_robot_tool_schema({"distance_cm": {"type": "integer"}})],
+    )
+
+    assert parsed.tool_calls == [{"name": "robot_atomic_control", "arguments": {"distance_cm": 6}}]
+    assert parsed.parse_errors == []
+
+
+def test_qwen_parser_preserves_multiple_tool_call_order():
+    parsed = _parse_qwen_tool_completion(
+        '<tool_call>{"name":"first","arguments":{"x":1}}</tool_call>'
+        '<tool_call>{"name":"second","arguments":{"y":2}}</tool_call>',
+        expect_tool_calls=True,
+    )
+
+    assert parsed.tool_calls == [
+        {"name": "first", "arguments": {"x": 1}},
+        {"name": "second", "arguments": {"y": 2}},
+    ]
+
+
+def test_qwen_parser_reports_bad_tool_call():
+    parsed = _parse_qwen_tool_completion("<tool_call><function=bad></function></tool_call>")
+
+    assert parsed.tool_calls == []
+    assert parsed.parse_errors
+
+
+def _robot_tool_schema(properties):
+    return {
+        "type": "function",
+        "function": {
+            "name": "robot_atomic_control",
+            "parameters": {
+                "type": "object",
+                "properties": properties,
+            },
+        },
+    }
 
 
 def test_native_qwen_lora_available_targets_cover_text_and_visual():
@@ -386,6 +609,142 @@ def test_qwen35_hybrid_text_model_builds_and_disables_kv_cache():
     assert len(cache) == config.num_hidden_layers
     assert next_logits.shape == (2, 1, config.vocab_size)
     assert len(next_cache) == config.num_hidden_layers
+
+
+def test_qwen35_multimodal_rope_index_matches_transformers_reference():
+    pytest.importorskip("transformers.models.qwen3_5")
+    from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5Model
+
+    config = _tiny_qwen35_config(
+        image_token_id=15,
+        video_token_id=16,
+        vision_config={"spatial_merge_size": 2},
+    )
+    model = TensorParallelQwen35TextForCausalLM(
+        hf_config=config,
+        loader=_TinyQwen35Loader(config),
+        tp_rank=0,
+        tp_size=1,
+        lora_r=0,
+        lora_alpha=1,
+        lora_dropout=0.0,
+        lora_targets=set(),
+        gradient_checkpointing=False,
+        torch_dtype=torch.float32,
+        device=torch.device("cpu"),
+    )
+    input_ids = torch.tensor(
+        [
+            [1, 2, 15, 15, 15, 15, 3, 4],
+            [5, 15, 15, 15, 15, 6, 7, 8],
+        ]
+    )
+    mm_token_type_ids = torch.where(input_ids == 15, torch.ones_like(input_ids), 0)
+    image_grid_thw = torch.tensor([[1, 4, 4], [1, 4, 4]])
+    attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
+
+    actual_position_ids, actual_deltas = model.get_rope_index(
+        input_ids=input_ids,
+        mm_token_type_ids=mm_token_type_ids,
+        image_grid_thw=image_grid_thw,
+        video_grid_thw=None,
+        attention_mask=attention_mask,
+    )
+    reference = Qwen3_5Model.__new__(Qwen3_5Model)
+    reference.config = SimpleNamespace(vision_config=SimpleNamespace(spatial_merge_size=2))
+    expected_position_ids, expected_deltas = Qwen3_5Model.get_rope_index(
+        reference,
+        input_ids=input_ids,
+        mm_token_type_ids=mm_token_type_ids,
+        image_grid_thw=image_grid_thw,
+        video_grid_thw=None,
+        attention_mask=attention_mask,
+    )
+
+    assert torch.equal(actual_position_ids, expected_position_ids)
+    assert torch.equal(actual_deltas, expected_deltas)
+
+
+def test_qwen35_mrope_embeddings_match_transformers_reference():
+    pytest.importorskip("transformers.models.qwen3_5")
+    from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5TextConfig
+    from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5TextRotaryEmbedding
+
+    config = Qwen3_5TextConfig(
+        vocab_size=17,
+        hidden_size=24,
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        num_key_value_heads=1,
+        head_dim=12,
+        intermediate_size=32,
+        rope_parameters={
+            "rope_type": "default",
+            "rope_theta": 10000,
+            "partial_rotary_factor": 1.0,
+            "mrope_section": [2, 2, 2],
+            "mrope_interleaved": True,
+        },
+        layer_types=["full_attention"],
+    )
+    reference = Qwen3_5TextRotaryEmbedding(config)
+    position_ids = torch.tensor(
+        [
+            [[0, 1, 2, 3], [2, 3, 4, 5]],
+            [[0, 0, 1, 1], [2, 2, 3, 3]],
+            [[0, 1, 0, 1], [3, 4, 3, 4]],
+        ]
+    )
+    hidden_states = torch.zeros((2, 4, 24), dtype=torch.float32)
+
+    expected_cos, expected_sin = reference(hidden_states, position_ids)
+    actual_cos, actual_sin = _qwen35_mrope_embeddings(
+        position_ids,
+        12,
+        10000.0,
+        (2, 2, 2),
+        True,
+        torch.device("cpu"),
+        torch.float32,
+    )
+
+    assert torch.allclose(actual_cos, expected_cos, atol=1e-5, rtol=1e-5)
+    assert torch.allclose(actual_sin, expected_sin, atol=1e-5, rtol=1e-5)
+
+
+def test_qwen35_text_prefill_clears_stale_mrope_delta():
+    torch.manual_seed(1234)
+    config = _tiny_qwen35_config(
+        image_token_id=15,
+        vision_config={"spatial_merge_size": 2},
+    )
+    model = TensorParallelQwen35TextForCausalLM(
+        hf_config=config,
+        loader=_TinyQwen35Loader(config),
+        tp_rank=0,
+        tp_size=1,
+        lora_r=0,
+        lora_alpha=1,
+        lora_dropout=0.0,
+        lora_targets=set(),
+        gradient_checkpointing=False,
+        torch_dtype=torch.float32,
+        device=torch.device("cpu"),
+    )
+    model.rope_deltas = torch.tensor([[7], [7]])
+    input_ids = torch.tensor([[1, 2, 3], [4, 5, 6]])
+    attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
+
+    position_ids = model.compute_multimodal_position_ids(
+        input_ids=input_ids,
+        attention_mask=attention_mask,
+        multimodal_inputs=None,
+        past_key_values=None,
+        query_len=input_ids.shape[1],
+    )
+
+    assert model.rope_deltas is None
+    assert torch.equal(position_ids, torch.tensor([[0, 1, 2], [0, 1, 2]]))
 
 
 def test_qwen35_pipeline_stage_loads_only_local_layers_and_boundary_modules():

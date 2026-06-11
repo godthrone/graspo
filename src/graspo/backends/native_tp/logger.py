@@ -53,8 +53,9 @@ def readable_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "attempt_index": payload.get("attempt_index"),
         "max_attempts": payload.get("max_attempts"),
         "messages": payload.get("messages"),
+        "tools": payload.get("tools"),
         "prompt_preview": payload.get("prompt_preview"),
-        "ground_truth": payload.get("ground_truth"),
+        "targets": payload.get("targets"),
         "decision": payload.get("decision"),
         "retry_count": payload.get("retry_count"),
         "reward_max_median_gap": payload.get("reward_max_median_gap"),
@@ -69,9 +70,11 @@ def readable_payload(payload: dict[str, Any]) -> dict[str, Any]:
     content_scores = payload.get("content_scores", [])
     all_right = payload.get("all_right", [])
     reward_details = payload.get("reward_details", [])
+    parsed_completions = payload.get("parsed_completions", [])
     generated_tokens = payload.get("generated_tokens", [])
     for idx, completion in enumerate(completions):
         detail = _get_index(reward_details, idx) or {}
+        parsed = _get_index(parsed_completions, idx) or {}
         json_summary = summarize_json_markers(completion)
         compact["completions"].append(
             {
@@ -83,6 +86,13 @@ def readable_payload(payload: dict[str, Any]) -> dict[str, Any]:
                 "raw_score": detail.get("raw_score"),
                 "max_score": detail.get("max_score"),
                 "extracted": detail.get("extracted"),
+                "parsed": parsed,
+                "parsed_tool_calls": detail.get("parsed_tool_calls"),
+                "parser": detail.get("parser"),
+                "parse_errors": detail.get("parse_errors"),
+                "matched_target_index": detail.get("matched_target_index"),
+                "matched_target_id": detail.get("matched_target_id"),
+                "target_scores": detail.get("target_scores"),
                 "useless_text_length": detail.get("useless_text_length"),
                 "valid_extracted_json": detail.get("valid_extracted_json"),
                 "completion_chars": len(completion),
@@ -191,7 +201,9 @@ def group_debug_summary(payload: dict[str, Any]) -> dict[str, Any]:
     content_scores = payload.get("content_scores", [])
     rewards = payload.get("rewards", [])
     reward_details = payload.get("reward_details", [])
+    targets = payload.get("targets")
     summaries = [summarize_json_markers(text) for text in completions]
+    target_counts = _target_tool_call_counts(targets)
     return {
         "reward_range_zero": len(set(float(value) for value in rewards)) <= 1 if rewards else True,
         "content_all_zero": bool(content_scores)
@@ -212,6 +224,18 @@ def group_debug_summary(payload: dict[str, Any]) -> dict[str, Any]:
             for text, detail in zip(completions, reward_details, strict=False)
             if likely_truncated_json(text, detail)
         ),
+        "tool_call_parse_error_count": sum(
+            1 for item in reward_details if item.get("parse_errors")
+        ),
+        "tool_call_count_mismatch_count": sum(
+            1
+            for item in reward_details
+            if item.get("parsed_tool_calls") is not None
+            and len(item.get("parsed_tool_calls") or []) not in target_counts
+        ),
+        "tool_call_content_all_zero": bool(content_scores)
+        and any(item.get("parsed_tool_calls") is not None for item in reward_details)
+        and all(float(value) == 0.0 for value in content_scores),
     }
 
 
@@ -219,6 +243,18 @@ def _get_index(values: Any, index: int) -> Any:
     if isinstance(values, (list, tuple)) and index < len(values):
         return values[index]
     return None
+
+
+def _target_tool_call_counts(targets: Any) -> set[int]:
+    counts: set[int] = set()
+    if not isinstance(targets, list):
+        return {1}
+    for target in targets:
+        output = target.get("output") if isinstance(target, dict) else None
+        calls = output.get("tool_calls") if isinstance(output, dict) else None
+        if isinstance(calls, list):
+            counts.add(len(calls))
+    return counts or {1}
 
 
 def _to_jsonable(value: Any) -> Any:

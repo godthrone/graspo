@@ -19,6 +19,7 @@ from graspo.backends.native_tp.runtime import (
 )
 from graspo.core.advantage import group_advantages
 from graspo.core.buffer import Experience, ReplayBuffer
+from graspo.core.completion import ParsedCompletion, raw_parsed_completion
 from graspo.core.data import load_jsonl
 from graspo.core.graspo_parity import classify_group, has_reward_variance, lower_median
 from graspo.core.reward import GraspoReward
@@ -67,6 +68,7 @@ class _QueuedSample:
 class _AttemptRecord:
     sample: Sample
     generation: NativeGeneration
+    parsed_completions: list[ParsedCompletion]
     rewards: list[float]
     content_scores: list[float]
     all_right: list[bool]
@@ -124,6 +126,7 @@ class NativeTPGraspoTrainer:
                 ),
                 "model_path": self.config.model.model_path,
                 "train_path": self.config.data.train_path,
+                "completion_parser": self._completion_parser_name(),
                 "tensor_model_parallel_size": self.config.native_tp.tensor_model_parallel_size,
             }
         )
@@ -237,20 +240,23 @@ class NativeTPGraspoTrainer:
         self, active: list[_QueuedSample], *, epoch: int
     ) -> list[_AttemptRecord]:
         rollout_started_at = time.monotonic()
-        generations = (
-            self._generate_sample_groups([state.sample for state in active])
-            if any(state.sample.media for state in active)
-            else self._generate_groups([state.sample.messages for state in active])
-        )
+        generations = self._generate_sample_groups([state.sample for state in active])
         rollout_sec = time.monotonic() - rollout_started_at
         rollout_sec_per_prompt = rollout_sec / max(len(generations), 1)
         records: list[_AttemptRecord] = []
         for state, generation in zip(active, generations, strict=True):
             attempt_started_at = time.monotonic()
             reward_started_at = time.monotonic()
+            parsed_completions = [
+                self._parse_completion(text, state.sample) for text in generation.completions
+            ]
             results = [
-                self.reward.score(text, state.sample.ground_truth)
-                for text in generation.completions
+                self.reward.score_parsed(
+                    parsed,
+                    state.sample.targets,
+                    is_tool_call=state.sample.expects_tool_calls,
+                )
+                for parsed in parsed_completions
             ]
             reward_cpu_sec = time.monotonic() - reward_started_at
             rewards = [float(result.reward) for result in results]
@@ -278,6 +284,7 @@ class NativeTPGraspoTrainer:
                 content_scores=content_scores,
                 all_right=all_right,
                 reward_details=reward_details,
+                parsed_completions=parsed_completions,
                 decision=decision,
                 retry_count=state.retry_count,
             )
@@ -303,6 +310,7 @@ class NativeTPGraspoTrainer:
                 _AttemptRecord(
                     sample=state.sample,
                     generation=generation,
+                    parsed_completions=parsed_completions,
                     rewards=rewards,
                     content_scores=content_scores,
                     all_right=all_right,
@@ -315,11 +323,14 @@ class NativeTPGraspoTrainer:
             )
         return records
 
-    def _generate_groups(self, message_batches: list[list[dict[str, Any]]]) -> list[NativeGeneration]:
+    def _generate_groups(self, samples: list[Sample]) -> list[NativeGeneration]:
+        message_batches = [sample.messages for sample in samples]
+        tool_batches = [sample.tools for sample in samples]
         generate_groups = getattr(self.runtime, "generate_groups", None)
         if callable(generate_groups):
             generations = generate_groups(
                 message_batches=message_batches,
+                tool_batches=tool_batches,
                 rollout_group_size=self.config.training.rollout_group_size,
                 max_new_tokens=self.config.training.max_new_tokens,
                 max_prompt_length=self.config.data.max_prompt_length,
@@ -335,6 +346,7 @@ class NativeTPGraspoTrainer:
         return [
             self.runtime.generate_group(
                 messages=messages,
+                tools=tools,
                 rollout_group_size=self.config.training.rollout_group_size,
                 max_new_tokens=self.config.training.max_new_tokens,
                 max_prompt_length=self.config.data.max_prompt_length,
@@ -342,10 +354,12 @@ class NativeTPGraspoTrainer:
                 top_p=self.config.training.top_p,
                 chat_template_kwargs=self.config.model.chat_template_kwargs,
             )
-            for messages in message_batches
+            for messages, tools in zip(message_batches, tool_batches, strict=True)
         ]
 
     def _generate_sample_groups(self, samples: list[Sample]) -> list[NativeGeneration]:
+        if not any(sample.media for sample in samples):
+            return self._generate_groups(samples)
         generate_sample_groups = getattr(self.runtime, "generate_sample_groups", None)
         if not callable(generate_sample_groups):
             raise RuntimeError(
@@ -366,6 +380,24 @@ class NativeTPGraspoTrainer:
                 f"native-tp generate_sample_groups returned {len(generations)} groups for {len(samples)} samples"
             )
         return generations
+
+    def _parse_completion(self, completion: str, sample: Sample) -> ParsedCompletion:
+        parse_completion = getattr(self.runtime, "parse_completion", None)
+        if callable(parse_completion):
+            return parse_completion(completion, sample)
+        return raw_parsed_completion(completion)
+
+    def _completion_parser_name(self) -> str:
+        adapter = getattr(self.runtime, "_adapter", None)
+        if adapter is not None:
+            parser_name = getattr(adapter, "completion_parser_name", None)
+            if parser_name:
+                return str(parser_name)
+            if hasattr(adapter, "parse_completion"):
+                return adapter.__class__.__name__
+        if hasattr(self.runtime, "parse_completion"):
+            return self.runtime.__class__.__name__
+        return "raw"
 
     def _finalize_sample(self, state: _QueuedSample, *, epoch: int) -> bool:
         if not state.attempts:
@@ -749,6 +781,7 @@ class NativeTPGraspoTrainer:
         content_scores: list[float],
         all_right: list[bool],
         reward_details: list[dict[str, Any]],
+        parsed_completions: list[ParsedCompletion],
         decision: Any,
         retry_count: int,
     ) -> dict[str, Any]:
@@ -759,10 +792,12 @@ class NativeTPGraspoTrainer:
             "step": self.global_step,
             "sample_index": self.sample_index,
             "messages": sample.messages,
+            "tools": sample.tools,
             "prompt_preview": sample.prompt_preview,
-            "ground_truth": sample.ground_truth,
+            "targets": sample.targets,
             "metadata": _safe_sample_metadata(sample),
             "completions": generation.completions,
+            "parsed_completions": [parsed.to_dict() for parsed in parsed_completions],
             "rewards": rewards,
             "content_scores": content_scores,
             "all_right": all_right,
@@ -965,14 +1000,23 @@ def _reward_detail(result: Any) -> dict[str, Any]:
     valid_extracted_json = None
     if "answer" in extracted:
         try:
-            json.loads(str(extracted["answer"]).strip())
-            valid_extracted_json = True
+            answer = extracted["answer"]
+            if isinstance(answer, str) and answer.strip():
+                json.loads(answer.strip())
+                valid_extracted_json = True
         except (TypeError, ValueError):
             valid_extracted_json = False
     return {
         "raw_score": float(result.raw_score),
         "max_score": float(result.max_score),
         "extracted": extracted,
+        "parsed_tool_calls": extracted.get("tool_calls"),
+        "parser": extracted.get("parser"),
+        "parse_errors": extracted.get("parse_errors"),
+        "extra_text": extracted.get("extra_text"),
+        "matched_target_index": result.matched_target_index,
+        "matched_target_id": result.matched_target_id,
+        "target_scores": result.target_scores,
         "useless_text_length": len(result.useless_text),
         "valid_extracted_json": valid_extracted_json,
     }
@@ -1063,6 +1107,10 @@ def _monitor_group(payload: dict[str, Any]) -> dict[str, Any]:
             for text, detail in zip(completions, details, strict=False)
             if _likely_truncated_json(text, detail)
         ),
+        "tool_call_parse_error_count": sum(1 for detail in details if detail.get("parse_errors")),
+        "tool_call_count_mismatch_count": _tool_call_count_mismatch_count(
+            details, payload.get("targets")
+        ),
     }
 
 
@@ -1082,6 +1130,8 @@ def _reward_window_summary(groups: deque[dict[str, Any]]) -> dict[str, Any]:
             "unclosed_json_fence_count": 0,
             "invalid_extracted_json_count": 0,
             "likely_truncated_json_count": 0,
+            "tool_call_parse_error_count": 0,
+            "tool_call_count_mismatch_count": 0,
         }
     decision_counts: dict[str, int] = {}
     for item in items:
@@ -1105,6 +1155,12 @@ def _reward_window_summary(groups: deque[dict[str, Any]]) -> dict[str, Any]:
         "likely_truncated_json_count": sum(
             int(item["likely_truncated_json_count"]) for item in items
         ),
+        "tool_call_parse_error_count": sum(
+            int(item.get("tool_call_parse_error_count") or 0) for item in items
+        ),
+        "tool_call_count_mismatch_count": sum(
+            int(item.get("tool_call_count_mismatch_count") or 0) for item in items
+        ),
     }
 
 
@@ -1123,6 +1179,8 @@ def _reward_batch_summary(
     unclosed_json_fence_count = 0
     invalid_extracted_json_count = 0
     likely_truncated_json_count = 0
+    tool_call_parse_error_count = 0
+    tool_call_count_mismatch_count = 0
 
     for attempt in attempts:
         decision = str(attempt.get("decision"))
@@ -1147,6 +1205,10 @@ def _reward_batch_summary(
             1
             for text, detail in zip(completions, details, strict=False)
             if _likely_truncated_json(text, detail)
+        )
+        tool_call_parse_error_count += sum(1 for detail in details if detail.get("parse_errors"))
+        tool_call_count_mismatch_count += _tool_call_count_mismatch_count(
+            details, attempt.get("targets")
         )
 
     attempt_group_count = len(attempts)
@@ -1205,6 +1267,8 @@ def _reward_batch_summary(
         "unclosed_json_fence_count": unclosed_json_fence_count,
         "invalid_extracted_json_count": invalid_extracted_json_count,
         "likely_truncated_json_count": likely_truncated_json_count,
+        "tool_call_parse_error_count": tool_call_parse_error_count,
+        "tool_call_count_mismatch_count": tool_call_count_mismatch_count,
     }
 
 
@@ -1249,8 +1313,32 @@ def _compact_batch_summary(summary: dict[str, Any]) -> dict[str, Any]:
             "unclosed_json_fence": int(summary.get("unclosed_json_fence_count") or 0),
             "invalid_json": int(summary.get("invalid_extracted_json_count") or 0),
             "truncated_json": int(summary.get("likely_truncated_json_count") or 0),
+            "tool_call_parse_error": int(summary.get("tool_call_parse_error_count") or 0),
+            "tool_call_count_mismatch": int(summary.get("tool_call_count_mismatch_count") or 0),
         },
     }
+
+
+def _tool_call_count_mismatch_count(details: list[dict[str, Any]], targets: Any) -> int:
+    target_counts = _target_tool_call_counts(targets)
+    return sum(
+        1
+        for detail in details
+        if detail.get("parsed_tool_calls") is not None
+        and len(detail.get("parsed_tool_calls") or []) not in target_counts
+    )
+
+
+def _target_tool_call_counts(targets: Any) -> set[int]:
+    counts: set[int] = set()
+    if not isinstance(targets, list):
+        return {1}
+    for target in targets:
+        output = target.get("output") if isinstance(target, dict) else None
+        calls = output.get("tool_calls") if isinstance(output, dict) else None
+        if isinstance(calls, list):
+            counts.add(len(calls))
+    return counts or {1}
 
 
 def _compact_decisions(

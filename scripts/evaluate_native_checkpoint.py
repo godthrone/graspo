@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from graspo.backends.native_tp.runtime import NativeTPRuntime
+from graspo.core.completion import raw_parsed_completion
 from graspo.core.data import load_jsonl
 from graspo.core.reward import GraspoReward
 from graspo.core.schema import GraspoConfig, Sample
@@ -116,14 +117,22 @@ def evaluate_samples(
                     top_p=config.training.top_p,
                     chat_template_kwargs=config.model.chat_template_kwargs,
                 )[0]
-            results = [
-                reward.score(completion, sample.ground_truth)
+            parsed_completions = [
+                _parse_completion(runtime, completion, sample)
                 for completion in generation.completions
+            ]
+            results = [
+                reward.score_parsed(
+                    parsed,
+                    sample.targets,
+                    is_tool_call=sample.expects_tool_calls,
+                )
+                for parsed in parsed_completions
             ]
             group_rewards = [result.reward for result in results]
             if primary and handle is not None:
-                for completion_idx, (completion, result) in enumerate(
-                    zip(generation.completions, results, strict=True)
+                for completion_idx, (completion, result, parsed) in enumerate(
+                    zip(generation.completions, results, parsed_completions, strict=True)
                 ):
                     handle.write(
                         json.dumps(
@@ -133,8 +142,14 @@ def evaluate_samples(
                                 "reward": result.reward,
                                 "content_score": result.content_score,
                                 "all_right": result.all_right,
+                                "parsed_tool_calls": parsed.tool_calls,
+                                "parser_name": parsed.parser_name,
+                                "parser_errors": parsed.parse_errors,
+                                "matched_target_index": result.matched_target_index,
+                                "matched_target_id": result.matched_target_id,
+                                "target_scores": result.target_scores,
                                 "completion": completion,
-                                "ground_truth": sample.ground_truth,
+                                "targets": sample.targets,
                                 "metadata": _safe_metadata(sample),
                             },
                             ensure_ascii=False,
@@ -181,6 +196,13 @@ def _safe_metadata(sample: Sample) -> dict[str, Any]:
     if media:
         metadata["media"] = media
     return metadata
+
+
+def _parse_completion(runtime: NativeTPRuntime, completion: str, sample: Sample):
+    parse_completion = getattr(runtime, "parse_completion", None)
+    if callable(parse_completion):
+        return parse_completion(completion, sample)
+    return raw_parsed_completion(completion)
 
 
 if __name__ == "__main__":

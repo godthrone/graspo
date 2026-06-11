@@ -41,7 +41,7 @@ def test_evaluate_samples_scores_groups_and_scrubs_media_paths(tmp_path: Path) -
     config.training.rollout_group_size = 2
     sample = Sample(
         messages=[{"role": "user", "content": "read the panel"}],
-        ground_truth={"status": "ok"},
+        targets=[{"id": "ok", "output": {"content": {"status": "ok"}}}],
         metadata={"source": "synthetic"},
         media=[{"type": "image", "path": "/private/panel.png"}],
     )
@@ -68,4 +68,6 @@ def test_evaluate_samples_scores_groups_and_scrubs_media_paths(tmp_path: Path) -
     ]
     assert len(rows) == 2
     assert rows[0]["metadata"]["media"] == [{"type": "image"}]
+    assert rows[0]["targets"] == [{"id": "ok", "output": {"content": {"status": "ok"}}}]
+    assert rows[0]["matched_target_id"] == "ok"
     assert "/private/panel.png" not in (tmp_path / "completions.jsonl").read_text(encoding="utf-8")

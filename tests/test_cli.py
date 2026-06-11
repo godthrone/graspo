@@ -15,6 +15,15 @@ def test_cli_validate_reward():
     assert args.func(args) == 0
 
 
+def test_cli_validate_reward_tool_call_sample():
+    parser = build_parser()
+    args = parser.parse_args(
+        ["validate-reward", "--data", "data/sample_tool_call.jsonl", "--limit", "1"]
+    )
+
+    assert args.func(args) == 0
+
+
 def test_cli_main_commands_parse():
     parser = build_parser()
 
@@ -165,7 +174,9 @@ def test_only_readmes_are_tracked_markdown_docs():
         capture_output=True,
         text=True,
     )
-    tracked_markdown = {line.strip().replace("\\", "/") for line in result.stdout.splitlines() if line.strip()}
+    tracked_markdown = {
+        line.strip().replace("\\", "/") for line in result.stdout.splitlines() if line.strip()
+    }
 
     assert tracked_markdown == {"README.md", "README.zh-CN.md"}
 
@@ -182,7 +193,7 @@ def _write_launch_config(
 ) -> Path:
     data_path = tmp_path / "train.jsonl"
     data_path.write_text(
-        '{"messages":[{"role":"user","content":"p"}],"ground_truth":{"x":1}}\n',
+        '{"messages":[{"role":"user","content":"p"}],"targets":[{"output":{"content":{"x":1}}}]}\n',
         encoding="utf-8",
     )
     output_dir = tmp_path / "out"

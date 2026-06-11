@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from graspo.core.completion import ParsedCompletion, raw_parsed_completion
 from graspo.core.data import load_jsonl
 from graspo.core.reward import GraspoReward, RewardConfig
 from graspo.core.schema import GraspoConfig
@@ -38,16 +39,31 @@ def cmd_validate_reward(args: argparse.Namespace) -> int:
     )
     scores: list[float] = []
     for idx, sample in enumerate(samples):
-        if idx < len(completions):
+        has_explicit_completion = idx < len(completions)
+        if has_explicit_completion:
             completion = completions[idx]
         else:
-            gt = (
-                sample.ground_truth
-                if isinstance(sample.ground_truth, str)
-                else json.dumps(sample.ground_truth)
+            output = sample.targets[0]["output"]
+            if sample.expects_tool_calls:
+                calls = output.get("tool_calls") or []
+                completion = json.dumps(calls, ensure_ascii=False)
+            else:
+                content = output.get("content") or {}
+                gt = json.dumps(content, ensure_ascii=False)
+                completion = f"```json\n{gt}\n```" if args.check_json_markdown else gt
+        if sample.expects_tool_calls:
+            parsed = (
+                raw_parsed_completion(completion)
+                if has_explicit_completion
+                else ParsedCompletion(
+                    raw_text=completion,
+                    tool_calls=list(sample.targets[0]["output"].get("tool_calls") or []),
+                    parser_name="validate_reward_canonical",
+                )
             )
-            completion = f"```json\n{gt}\n```" if args.check_json_markdown else gt
-        result = reward.score(completion, sample.ground_truth)
+            result = reward.score_parsed(parsed, sample.targets, is_tool_call=True)
+        else:
+            result = reward.score(completion, sample.targets)
         scores.append(result.reward)
         print(
             json.dumps(
