@@ -220,6 +220,22 @@ Preset 取值：
 
 显式 `lora.target_modules` 只能使用 canonical name，例如 `language.self_attn.q_proj`，或 glob pattern，例如 `visual.blocks.*.attn.*`。不接受 `q_proj` 这样的 leaf alias。解析是 fail-closed：未知 target、不支持的 conv/norm 参数和空匹配都会在训练前报错。Native checkpoint 会保存 resolved LoRA target signature，并拒绝使用不同 target 配置 resume。
 
+## Native 模型实现边界
+
+Native 模型数学必须落在 native model class 内。RoPE/M-RoPE、position
+IDs、KV-cache continuation、visual feature injection、TP shard-local layer
+math 和 LoRA target metadata，应由 `Qwen3DenseModel`、
+`Qwen35HybridTextModel` 及其 attention/layer modules 负责。
+
+`QwenNativeTPAdapter` 只负责 processor/tokenizer 调用、batch/split、
+sampling、pipeline send/recv 编排、checkpoint delegation 和 logging。
+Runtime/placement 只负责 backend lifecycle、config validation 和 TP/PP
+layout，不实现模型 family 的数学逻辑。
+
+GRASPO 中 Qwen3.6 复用 Qwen3.5-family hybrid text/vision native class，因为
+它的结构与该 family 兼容。未来如果出现 `qwen3_vl`、`qwen3_omni` 等不同
+`model_type`，需要新增对应 native model class，不能在 adapter 层塞特判。
+
 ## 导出
 
 GRASPO native checkpoint 是可恢复训练 checkpoint。便携模型产物通过 `graspo export` 生成。

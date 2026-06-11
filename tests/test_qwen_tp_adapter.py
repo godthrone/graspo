@@ -5,6 +5,8 @@ from types import SimpleNamespace
 import pytest
 
 torch = pytest.importorskip("torch")
+if not hasattr(torch, "float8_e8m0fnu"):
+    torch.float8_e8m0fnu = torch.uint8  # type: ignore[attr-defined]
 
 from graspo.backends.native_tp.qwen_tp_adapter import (  # noqa: E402
     LoRALinear,
@@ -23,6 +25,7 @@ from graspo.backends.native_tp.qwen_tp_adapter import (  # noqa: E402
     _messages_from_multimodal_row,
     _new_pipeline_stage_timing,
     _parse_qwen_tool_completion,
+    _qwen35_mrope_embeddings,
     _round_pipeline_stage_timing,
     _selected_token_log_probs_from_hidden,
 )
@@ -474,6 +477,142 @@ def test_qwen35_hybrid_text_model_builds_and_disables_kv_cache():
     assert len(cache) == config.num_hidden_layers
     assert next_logits.shape == (2, 1, config.vocab_size)
     assert len(next_cache) == config.num_hidden_layers
+
+
+def test_qwen35_multimodal_rope_index_matches_transformers_reference():
+    pytest.importorskip("transformers.models.qwen3_5")
+    from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5Model
+
+    config = _tiny_qwen35_config(
+        image_token_id=15,
+        video_token_id=16,
+        vision_config={"spatial_merge_size": 2},
+    )
+    model = TensorParallelQwen35TextForCausalLM(
+        hf_config=config,
+        loader=_TinyQwen35Loader(config),
+        tp_rank=0,
+        tp_size=1,
+        lora_r=0,
+        lora_alpha=1,
+        lora_dropout=0.0,
+        lora_targets=set(),
+        gradient_checkpointing=False,
+        torch_dtype=torch.float32,
+        device=torch.device("cpu"),
+    )
+    input_ids = torch.tensor(
+        [
+            [1, 2, 15, 15, 15, 15, 3, 4],
+            [5, 15, 15, 15, 15, 6, 7, 8],
+        ]
+    )
+    mm_token_type_ids = torch.where(input_ids == 15, torch.ones_like(input_ids), 0)
+    image_grid_thw = torch.tensor([[1, 4, 4], [1, 4, 4]])
+    attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
+
+    actual_position_ids, actual_deltas = model.get_rope_index(
+        input_ids=input_ids,
+        mm_token_type_ids=mm_token_type_ids,
+        image_grid_thw=image_grid_thw,
+        video_grid_thw=None,
+        attention_mask=attention_mask,
+    )
+    reference = Qwen3_5Model.__new__(Qwen3_5Model)
+    reference.config = SimpleNamespace(vision_config=SimpleNamespace(spatial_merge_size=2))
+    expected_position_ids, expected_deltas = Qwen3_5Model.get_rope_index(
+        reference,
+        input_ids=input_ids,
+        mm_token_type_ids=mm_token_type_ids,
+        image_grid_thw=image_grid_thw,
+        video_grid_thw=None,
+        attention_mask=attention_mask,
+    )
+
+    assert torch.equal(actual_position_ids, expected_position_ids)
+    assert torch.equal(actual_deltas, expected_deltas)
+
+
+def test_qwen35_mrope_embeddings_match_transformers_reference():
+    pytest.importorskip("transformers.models.qwen3_5")
+    from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5TextConfig
+    from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5TextRotaryEmbedding
+
+    config = Qwen3_5TextConfig(
+        vocab_size=17,
+        hidden_size=24,
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        num_key_value_heads=1,
+        head_dim=12,
+        intermediate_size=32,
+        rope_parameters={
+            "rope_type": "default",
+            "rope_theta": 10000,
+            "partial_rotary_factor": 1.0,
+            "mrope_section": [2, 2, 2],
+            "mrope_interleaved": True,
+        },
+        layer_types=["full_attention"],
+    )
+    reference = Qwen3_5TextRotaryEmbedding(config)
+    position_ids = torch.tensor(
+        [
+            [[0, 1, 2, 3], [2, 3, 4, 5]],
+            [[0, 0, 1, 1], [2, 2, 3, 3]],
+            [[0, 1, 0, 1], [3, 4, 3, 4]],
+        ]
+    )
+    hidden_states = torch.zeros((2, 4, 24), dtype=torch.float32)
+
+    expected_cos, expected_sin = reference(hidden_states, position_ids)
+    actual_cos, actual_sin = _qwen35_mrope_embeddings(
+        position_ids,
+        12,
+        10000.0,
+        (2, 2, 2),
+        True,
+        torch.device("cpu"),
+        torch.float32,
+    )
+
+    assert torch.allclose(actual_cos, expected_cos, atol=1e-5, rtol=1e-5)
+    assert torch.allclose(actual_sin, expected_sin, atol=1e-5, rtol=1e-5)
+
+
+def test_qwen35_text_prefill_clears_stale_mrope_delta():
+    torch.manual_seed(1234)
+    config = _tiny_qwen35_config(
+        image_token_id=15,
+        vision_config={"spatial_merge_size": 2},
+    )
+    model = TensorParallelQwen35TextForCausalLM(
+        hf_config=config,
+        loader=_TinyQwen35Loader(config),
+        tp_rank=0,
+        tp_size=1,
+        lora_r=0,
+        lora_alpha=1,
+        lora_dropout=0.0,
+        lora_targets=set(),
+        gradient_checkpointing=False,
+        torch_dtype=torch.float32,
+        device=torch.device("cpu"),
+    )
+    model.rope_deltas = torch.tensor([[7], [7]])
+    input_ids = torch.tensor([[1, 2, 3], [4, 5, 6]])
+    attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
+
+    position_ids = model.compute_multimodal_position_ids(
+        input_ids=input_ids,
+        attention_mask=attention_mask,
+        multimodal_inputs=None,
+        past_key_values=None,
+        query_len=input_ids.shape[1],
+    )
+
+    assert model.rope_deltas is None
+    assert torch.equal(position_ids, torch.tensor([[0, 1, 2], [0, 1, 2]]))
 
 
 def test_qwen35_pipeline_stage_loads_only_local_layers_and_boundary_modules():
