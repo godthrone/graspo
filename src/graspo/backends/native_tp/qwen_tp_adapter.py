@@ -2347,7 +2347,7 @@ class QwenNativeTPAdapter:
             raise RuntimeError(
                 "This model did not expose an AutoProcessor; image/video samples cannot be encoded"
             )
-        messages = [_messages_from_multimodal_row(row) for row in rows]
+        messages = [_processor_chat_messages(_messages_from_multimodal_row(row)) for row in rows]
         tool_batches = [_tools_from_multimodal_row(row) for row in rows]
         if hasattr(self.processor, "apply_chat_template"):
             template_kwargs = {
@@ -2584,6 +2584,17 @@ def _messages_from_multimodal_row(row: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(messages, list) or not messages:
         raise ValueError("multimodal row must contain non-empty messages")
     return [dict(message) for message in messages if isinstance(message, dict)]
+
+
+def _processor_chat_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for message in messages:
+        item = dict(message)
+        content = item.get("content")
+        if isinstance(content, str):
+            item["content"] = [{"type": "text", "text": content}]
+        normalized.append(item)
+    return normalized
 
 
 def _tools_from_multimodal_row(row: dict[str, Any]) -> list[dict[str, Any]] | None:
