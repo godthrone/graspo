@@ -1,126 +1,133 @@
-# GRASPO 快速上手
+# 228 ELAM v11 FK 长训运维
 
-GRPO-style LoRA 训练器，支持多模态（图像+文本）结构化输出 RL（JSON、tool call）。
+端午节 100-epoch 训练，Qwen3.5-9B + 405 条多模态 tool-call 数据。
 
-## 环境
-
-- **Python 3.11+**, PyTorch 2.5+, CUDA 12.4
-- **模型**: Qwen3-8B, Qwen3.5-9B, Qwen3.6-27B
-- **GPU**: 推荐 A800 80GB × N，支持 TP（Tensor Parallel）和 PP（Pipeline Parallel）
-
-## 快速启动
+## 服务器
 
 ```bash
-# 1. 安装
-pip install graspo
-
-# 2. 准备数据（JSONL 格式）
-# 每行: {"messages": [...], "targets": [{"id": "...", "output": {...}}], "tools": [...]}
-
-# 3. 写配置（或复制 config_example.yaml 修改）
-# 4. 启动训练
-python -m graspo launch --config config_example.yaml
+ssh -p 22022 zhangzy@10.1.251.228
 ```
 
-## 核心概念
+GPU: 8× A800 80GB，当前用卡 4-7，TP=4。
 
-### 两个正交参数
+## 训练配置
 
-| 参数 | 含义 | 默认值 |
-|------|------|--------|
-| `rollout_group_size` | **算法参数**：每个样本生成几条 completion 算 advantage | 8 |
-| `gpu_memory_utilization` | **资源参数**：用多少 GPU 显存做 rollout generation（0~1） | 0.90 |
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| `gpu_memory_utilization` | 0.70~0.80 | 显存利用率，越高越快但 OOM 风险越大 |
+| `rollout_group_size` | 8 | 算法参数，不动 |
+| `training_epoch_count` | 100 | 长训 |
+| `max_prompt_length` | 8192 | 多模态 prompt 较长 |
+| `max_new_tokens` | 512 | tool call 很短 |
+| `check_tool_call` | true | 工具调用评分 |
 
-只需调 `gpu_memory_utilization` 控制吞吐。越高 → batch 越大 → 吞吐越高，但 OOM 风险越大。其他正交参数（如 `optimize_completion_batch_size`）一般不动。
-
-### Reward 机制
-
-1. 解析模型输出 → 提取 JSON / tool call
-2. 与 `targets` 列表比较，取最高分
-3. 评分 = 标记分（marker）+ 结构分（content）+ 完全匹配 bonus - 多余文本惩罚
-4. **`all_right`**：只看非数值字段是否完全匹配（数值字段只影响 `content_score` 梯度，不影响 perfect_skip 决策）
-
-## 多模态训练
-
-数据格式：messages 中嵌入 `<image>` 类型 content，tools 声明工具定义。示例见 `data/sample_multimodal.jsonl` 和 `data/sample_tool_call.jsonl`。
-
-关键配置：
-```yaml
-check_tool_call: true         # tool call 格式用 score_parsed
-check_json_markdown: false    # tool call 不需要 fenced JSON
-max_prompt_length: 8192       # 多模态 prompt 较长
-gpu_memory_utilization: 0.70  # 8K prompt 用保守值
-```
-
-## Docker 部署（228 示例）
+## 启动/重启
 
 ```bash
-docker run -d --name graspo_training \
+docker run -d --name graspo_elam_v11_fk \
   --gpus all \
   -e CUDA_VISIBLE_DEVICES=4,5,6,7 \
-  -v /path/to/model:/workspace/models/model:ro \
-  -v /path/to/data:/workspace/data \
+  -v /home/zhangzy/models/Qwen3.5-9B:/workspace/models/Qwen3.5-9B:ro \
+  -v /home/zhangzy/elam_v11_fk:/workspace/data \
   --ipc=host --shm-size=16g \
-  graspo:latest \
+  graspo:v11-final \
   python -m graspo launch --config /workspace/data/config_docker.yaml
 ```
 
-> ⚠️ **必须用 `--gpus all` + `CUDA_VISIBLE_DEVICES`**，不能用 `--gpus '"device=4,5,6,7"'`。后者会导致 `torch.cuda.is_available() == False`。
+> ⚠️ 必须 `--gpus all` + `CUDA_VISIBLE_DEVICES`。用 `--gpus '"device=4,5,6,7"'` 会导致 `torch.cuda.is_available() == False`，模型全部跑在 CPU 上。
 
-## 常用故障排查
-
-### OOM（显存溢出）
-
-| 症状 | 原因 | 解决 |
-|------|------|------|
-| 启动即 OOM | `gpu_memory_utilization` 太高 | 降到 0.65~0.70 |
-| 跑几轮后 OOM | 显存积累未释放 | 确认 `empty_cache_after_rollout_split: true` |
-| 持续 OOM | 估计过于乐观 | 增大安全因子（`_kv_cache_batch_fits_budget` 中的 `peak_bytes * 1.5`） |
-
-### 训练不收敛
-
-- 检查 reward 是否合理：看 `rollouts.readable.jsonl` 中 `reward_mean` 趋势
-- 确认 `all_right` 不要过于严格（数值字段应只影响 content_score，不阻塞 all_right）
-- 加 `check_think: false` 简化任务
-
-### 多模态训练慢
-
-- 降低 `_MAX_MULTIMODAL_SAMPLES_PER_CALL`（trainer.py）减少 CPU 编码批次
-- 确认 `gpu_memory_utilization` 合理（`nvidia-smi` 看生成阶段显存 > 60%）
+数据路径：`~/elam_v11_fk/data/train_docker.jsonl`（图片用绝对路径 `/workspace/data/images/`）。
 
 ## 监控
 
+### 实时状态
+
 ```bash
-# GPU 显存/利用率
+# GPU
 nvidia-smi --query-gpu=index,memory.used,utilization.gpu --format=csv,noheader
 
-# 实时训练事件
-docker logs -f <container> | grep '"event"'
-
-# 奖励趋势
-cat outputs/xxx/rollouts.readable.jsonl | jq '.group_stats.reward_mean'
-
-# 训练指标
-cat outputs/xxx/train_batches.readable.jsonl | jq '{step, loss, grad_norm}'
+# 容器
+docker ps --filter name=graspo_elam_v11_fk
+docker logs -f graspo_elam_v11_fk 2>&1 | grep '"event"'
 ```
 
-## 导出模型
+### 奖励
 
 ```bash
-python -m graspo export --format peft-adapter --output-dir ./exported
+tail -f ~/elam_v11_fk/outputs/elam_v11_fk_graspo_v1/rollouts.readable.jsonl \
+  | python3 -c "
+import json, sys
+for line in sys.stdin:
+    d = json.loads(line)
+    g = d.get('group_stats', {})
+    print(f\"step={d.get('step')} reward={g.get('reward_mean',0):.3f} content={g.get('content_mean',0):.3f} all_right_any={g.get('all_right_any')} decision={d.get('decision')}\")
+"
 ```
 
-## 目录结构
+### 训练指标
 
+```bash
+tail -f ~/elam_v11_fk/outputs/elam_v11_fk_graspo_v1/train_batches.readable.jsonl \
+  | python3 -c "
+import json, sys
+for line in sys.stdin:
+    d = json.loads(line)
+    print(f\"step={d.get('step')} loss={d.get('loss',0):.4f} grad_norm={d.get('grad_norm',0):.2f} lr={d.get('learning_rate')}\")
+"
 ```
-src/graspo/
-├── core/           # reward, compare, schema, advantage, buffer
-├── backends/
-│   └── native_tp/  # 自研 TP/PP 后端（无 vLLM/Megatron 依赖）
-│       ├── qwen_tp_adapter.py  # ★ 主力：generation + training + LoRA
-│       ├── trainer.py          # GRASPO 训练循环 + retry + replay buffer
-│       ├── runtime.py          # runtime 协议 + 参数校验
-│       └── logger.py           # rollout / timing / train_batch 日志
-└── trainer/
-    └── lora.py     # LoRA target module 解析
+
+### 直观一句话
+
+```bash
+# 正常状态：4 张卡显存 ~60-80GB，利用率 80-100%，retry_count 在 0-3 之间
+watch -n 5 'echo "--- GPU ---"; nvidia-smi --query-gpu=index,memory.used,utilization.gpu --format=csv,noheader | grep -E "^4,|^5,|^6,|^7,"; echo "--- Rollouts ---"; wc -l ~/elam_v11_fk/outputs/elam_v11_fk_graspo_v1/rollouts.readable.jsonl 2>/dev/null; echo "--- Train batches ---"; wc -l ~/elam_v11_fk/outputs/elam_v11_fk_graspo_v1/train_batches.readable.jsonl 2>/dev/null'
 ```
+
+## 调参
+
+### 改 gpu_memory_utilization
+
+```bash
+vim ~/elam_v11_fk/config_docker.yaml   # 改 gpu_memory_utilization
+docker restart graspo_elam_v11_fk       # 重启即可生效
+```
+
+| gmu | 峰值显存 | prompt_chunk | 吞吐 | 风险 |
+|-----|---------|-------------|------|------|
+| 0.65 | ~60 GB | 2 | 低 | 最安全 |
+| 0.70 | ~63 GB | 3 | 中 | 安全 |
+| 0.78 | ~75 GB | 3 | 中高 | 略紧张 |
+| 0.80 | ~80 GB | 4 | 高 | 可能 OOM |
+
+### OOM 了怎么办
+
+1. 看日志确认是哪个阶段 OOM：`docker logs graspo_elam_v11_fk | grep OutOfMemory`
+2. 降 `gpu_memory_utilization` 0.05~0.10
+3. 重启
+4. 如果反复 OOM，检查代码是否有修改（`_kv_cache_batch_fits_budget` 中的安全因子）
+
+## 文件位置
+
+| 内容 | 路径 |
+|------|------|
+| 训练数据 | `~/elam_v11_fk/data/train_docker.jsonl` |
+| 图片 | `~/elam_v11_fk/images/` (810 张，640×360) |
+| 配置 | `~/elam_v11_fk/config_docker.yaml` |
+| 输出 | `~/elam_v11_fk/outputs/elam_v11_fk_graspo_v1/` |
+| rollouts 日志 | `.../rollouts.readable.jsonl` |
+| 训练日志 | `.../train_batches.readable.jsonl` |
+| timing 日志 | `.../timing_events.jsonl` |
+| 模型权重 | `/home/zhangzy/models/Qwen3.5-9B/` (只读挂载) |
+| 镜像 | `graspo:v11-final` |
+| 容器 | `graspo_elam_v11_fk` |
+
+## 预期指标
+
+| 阶段 | reward_mean | content_score | perfect_skip | trainable_max_correct |
+|------|-------------|---------------|-------------|----------------------|
+| 早期 (step 0-50) | 0.2~0.5 | 0.3~0.6 | 很少 | 少量 |
+| 中期 (step 50-200) | 0.5~0.7 | 0.6~0.8 | 开始出现 | 增加 |
+| 后期 (step 200+) | 0.7~0.9 | 0.8~0.95 | 频繁 | 多数 |
+
+正常信号：reward 持续上升，trainable_max_correct 增加，loss 平稳下降。  
+危险信号：reward 长期不涨、all_right 始终为零、loss NaN/爆炸。
