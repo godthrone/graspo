@@ -261,8 +261,12 @@ def validate_native_runtime_config(
         )
     if int(native.train_micro_batch_size) < 1:
         raise ValueError("native_tp.train_micro_batch_size must be >= 1")
-    if int(native.generation_micro_batch_size) != 1:
-        raise ValueError("native-tp v1 requires generation_micro_batch_size=1")
+    gmu = float(native.gpu_memory_utilization)
+    if not (0.0 < gmu <= 1.0):
+        raise ValueError(
+            "native_tp.gpu_memory_utilization must be in (0.0, 1.0], got "
+            f"{gmu}"
+        )
     schedule = str(native.pipeline_train_schedule or "simple")
     if schedule not in {"simple", "one_f_one_b"}:
         raise ValueError("native_tp.pipeline_train_schedule must be simple or one_f_one_b")
@@ -278,9 +282,6 @@ def validate_native_runtime_config(
         raise ValueError(
             "one_f_one_b pipeline_train_schedule requires pipeline_model_parallel_size>1"
         )
-    if int(config.training.rollout_prompt_queue_batch_size) < 1:
-        raise ValueError("training.rollout_prompt_queue_batch_size must be >= 1")
-
     flattened = _flatten_keys(config.backend_config)
     forbidden = sorted(
         key for key in flattened if any(marker in key.lower() for marker in FORBIDDEN_CONFIG_KEYS)

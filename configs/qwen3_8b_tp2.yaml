@@ -39,7 +39,6 @@ training:
   seed: 42
   training_epoch_count: 100
   max_steps: -1
-  rollout_prompt_queue_batch_size: 2
   rollout_group_size: 8
   optimize_completion_batch_size: 4
   optimize_times_per_step: 4
@@ -64,9 +63,8 @@ backend_config:
     placement_strategy: qwen3_tp
     sequence_parallel: false
     train_micro_batch_size: 1
-    generation_micro_batch_size: 1
+    gpu_memory_utilization: 0.90
     use_kv_cache_for_rollout: true
-    rollout_kv_cache_max_reserved_fraction: 0.90
     empty_cache_after_rollout_split: true
     empty_cache_before_train: false
     checkpoint_format: recoverable_lora_tp

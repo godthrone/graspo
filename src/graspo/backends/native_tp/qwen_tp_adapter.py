@@ -162,7 +162,7 @@ class QwenNativeTPAdapter:
                 "lora_target_signature": self.model.lora_target_signature(),
                 "rollout_kv_cache_supported": bool(getattr(self.model, "supports_kv_cache", True)),
                 "placement": placement_summary(self.placement),
-                "rollout_kv_cache_max_reserved_fraction": self.config.native_tp.rollout_kv_cache_max_reserved_fraction,
+                "gpu_memory_utilization": self.config.native_tp.gpu_memory_utilization,
                 "empty_cache_after_rollout_split": self.config.native_tp.empty_cache_after_rollout_split,
                 "synchronize_cuda_timing": self.config.native_tp.synchronize_cuda_timing,
             },
@@ -428,7 +428,7 @@ class QwenNativeTPAdapter:
                 "generate_sample_groups expects every sample to contain image/video media"
             )
         if self._is_pipeline_parallel():
-            return self._pipeline_generate_sample_groups(
+            return self._pipeline_generate_multimodal_groups(
                 samples=samples,
                 rollout_group_size=rollout_group_size,
                 max_new_tokens=max_new_tokens,
@@ -437,18 +437,273 @@ class QwenNativeTPAdapter:
                 top_p=top_p,
                 chat_template_kwargs=chat_template_kwargs,
             )
-        return [
-            self._generate_multimodal_sample_group(
-                sample=sample,
-                rollout_group_size=rollout_group_size,
-                max_new_tokens=max_new_tokens,
-                max_prompt_length=max_prompt_length,
-                temperature=temperature,
-                top_p=top_p,
-                chat_template_kwargs=chat_template_kwargs,
+        return self._generate_multimodal_groups(
+            samples=samples,
+            rollout_group_size=rollout_group_size,
+            max_new_tokens=max_new_tokens,
+            max_prompt_length=max_prompt_length,
+            temperature=temperature,
+            top_p=top_p,
+            chat_template_kwargs=chat_template_kwargs,
+        )
+
+    def _generate_multimodal_groups(
+        self,
+        *,
+        samples: list[Any],
+        rollout_group_size: int,
+        max_new_tokens: int,
+        max_prompt_length: int,
+        temperature: float,
+        top_p: float,
+        chat_template_kwargs: dict[str, Any] | None,
+    ) -> list[NativeGeneration]:
+        """Generate rollouts for multiple multimodal samples batched together.
+
+        Mirrors the text path generate_groups: encodes all samples×G rows in one
+        processor call, then applies Level 1 (prompt chunk) and Level 2
+        (micro-batch) chunking with offset-based multimodal input slicing.
+        """
+        assert self.model is not None
+        assert self.tokenizer is not None
+        self.model.eval()
+        N = len(samples)
+        G = rollout_group_size
+        tokenize_started_at = time.monotonic()
+
+        # Build all N*G rows and count per-sample images from media metadata
+        rows: list[dict[str, Any]] = []
+        per_sample_image_counts: list[int] = []
+        per_sample_media_counts: list[dict[str, int]] = []
+        for sample in samples:
+            row = _multimodal_row_from_sample(sample)
+            img_count = sum(
+                1 for item in sample.media if str(item.get("type") or "") == "image"
             )
-            for sample in samples
-        ]
+            per_sample_image_counts.append(img_count)
+            per_sample_media_counts.append(_media_counts(sample.media))
+            for _ in range(G):
+                rows.append(row)
+
+        encoded = self._encode_multimodal_rows(
+            rows,
+            add_generation_prompt=True,
+            chat_template_kwargs=chat_template_kwargs,
+        )
+        tokenize_sec = time.monotonic() - tokenize_started_at
+
+        input_ids = encoded["input_ids"].to(self.device)
+        if input_ids.shape[1] > max_prompt_length:
+            raise ValueError(
+                f"multimodal prompt length {input_ids.shape[1]} exceeds "
+                f"data.max_prompt_length={max_prompt_length}; "
+                "increase max_prompt_length instead of truncating image placeholders"
+            )
+        attention_mask = encoded["attention_mask"].to(self.device).bool()
+        prompt_len = int(input_ids.shape[1])
+        prompt_lens = [int(mask.sum().item()) for mask in attention_mask]
+        pad_token_id = int(
+            self.tokenizer.pad_token_id
+            if self.tokenizer.pad_token_id is not None
+            else self.tokenizer.eos_token_id
+        )
+        eos_token_id = int(self.tokenizer.eos_token_id)
+        rollout_started_at = time.monotonic()
+        use_kv_cache = bool(self.config.native_tp.use_kv_cache_for_rollout) and bool(
+            getattr(self.model, "supports_kv_cache", True)
+        )
+        multimodal_inputs = self._multimodal_inputs_to_device(encoded)
+
+        # Build offset tables for heterogeneous samples
+        image_offsets, patch_offsets, video_offsets, video_patch_offsets = (
+            _compute_multimodal_offset_tables(
+                per_sample_image_counts=per_sample_image_counts,
+                rollout_group_size=G,
+                image_grid_thw=multimodal_inputs.get("image_grid_thw"),
+                pixel_values=multimodal_inputs.get("pixel_values"),
+            )
+        )
+
+        total_rows = N * G
+        requested_prompt_queue_size = N
+        # Use max_prompt_length for budget estimation to guard against
+        # heterogeneous prompt lengths across encoding chunks.  The first
+        # chunk may have short prompts (→ generous budget), but later
+        # chunks can be longer and would OOM.
+        budget_prompt_len = max(prompt_len, max_prompt_length)
+        prompt_chunk_size = self._shared_rollout_prompt_chunk_size(
+            prompt_len=budget_prompt_len,
+            requested_prompt_count=N,
+            rollout_group_size=G,
+            max_new_tokens=max_new_tokens,
+            use_kv_cache=use_kv_cache,
+        )
+        # Cap prompt_chunk at 3 to prevent over-ambitious batching.
+        prompt_chunk_size = max(1, min(prompt_chunk_size, N, 3))
+
+        all_generations: list[NativeGeneration] = []
+        all_timings: list[dict[str, float | int]] = []
+        with torch.no_grad():
+            for prompt_start in range(0, N, prompt_chunk_size):
+                prompt_stop = min(prompt_start + prompt_chunk_size, N)
+                chunk_prompt_count = prompt_stop - prompt_start
+
+                # Row range in the flat batch for this prompt chunk
+                row_start = prompt_start * G
+                row_stop = prompt_stop * G
+                chunk_input_ids = input_ids[row_start:row_stop]
+                chunk_attention_mask = attention_mask[row_start:row_stop]
+                flat_B = int(chunk_input_ids.shape[0])
+
+                # Per-prompt lengths for these prompts
+                chunk_prompt_lens = prompt_lens[row_start:row_stop]
+
+                chunk_generation_micro_batch_size = self._shared_generation_micro_batch_size(
+                    prompt_len=budget_prompt_len,
+                    rollout_group_size=flat_B,
+                    max_new_tokens=max_new_tokens,
+                    use_kv_cache=use_kv_cache,
+                )
+
+                sequence_chunks: list[torch.Tensor] = []
+                chunk_timings: list[dict[str, float | int]] = []
+                for start in range(0, flat_B, chunk_generation_micro_batch_size):
+                    stop = min(start + chunk_generation_micro_batch_size, flat_B)
+                    # local_start/stop are relative to the chunk; global positions
+                    # use row_start as base for offset table indexing
+                    local_start = start
+                    local_stop = stop
+                    global_start = row_start + local_start
+                    global_stop = row_start + local_stop
+
+                    current_input_ids = chunk_input_ids[local_start:local_stop]
+                    current_attention_mask = chunk_attention_mask[local_start:local_stop]
+                    current_mm_inputs = _slice_multimodal_inputs_offset(
+                        multimodal_inputs,
+                        global_start, global_stop,
+                        image_offsets=image_offsets,
+                        patch_offsets=patch_offsets,
+                        video_offsets=video_offsets,
+                        video_patch_offsets=video_patch_offsets,
+                    )
+                    finished = torch.zeros(
+                        local_stop - local_start, dtype=torch.bool, device=self.device
+                    )
+                    if use_kv_cache:
+                        seq, timing = self._generate_multimodal_with_kv_cache(
+                            sequences=current_input_ids,
+                            attention_mask=current_attention_mask,
+                            multimodal_inputs=current_mm_inputs,
+                            finished=finished,
+                            eos_token_id=eos_token_id,
+                            pad_token_id=pad_token_id,
+                            max_new_tokens=max_new_tokens,
+                            temperature=temperature,
+                            top_p=top_p,
+                        )
+                    else:
+                        seq, timing = self._generate_multimodal_full_forward(
+                            sequences=current_input_ids,
+                            multimodal_inputs=current_mm_inputs,
+                            finished=finished,
+                            eos_token_id=eos_token_id,
+                            pad_token_id=pad_token_id,
+                            max_new_tokens=max_new_tokens,
+                            temperature=temperature,
+                            top_p=top_p,
+                        )
+                    sequence_chunks.append(seq)
+                    chunk_timings.append(timing)
+
+                flat_sequences = pad_sequence(
+                    [row for chunk in sequence_chunks for row in chunk],
+                    batch_first=True,
+                    padding_value=pad_token_id,
+                )
+                all_timings.extend(chunk_timings)
+
+                for local_prompt_idx in range(chunk_prompt_count):
+                    global_sample_idx = prompt_start + local_prompt_idx
+                    row_start_inner = local_prompt_idx * G
+                    row_stop_inner = row_start_inner + G
+                    # # Clone to break the view chain from flat_sequences,
+                    # so the large pad_sequence tensor can be freed.
+                    prompt_sequences = flat_sequences[row_start_inner:row_stop_inner].clone()
+                    all_generations.append(
+                        self._generation_from_sequences(
+                            sequences=prompt_sequences,
+                            prompt_len=prompt_len,
+                            prompt_lens=chunk_prompt_lens[
+                                row_start_inner : row_start_inner + 1
+                            ],
+                            pad_token_id=pad_token_id,
+                            rollout_group_size=G,
+                            requested_prompt_queue_size=requested_prompt_queue_size,
+                            effective_prompt_queue_size=prompt_chunk_size,
+                            use_kv_cache=use_kv_cache,
+                            generation_micro_batch_size=chunk_generation_micro_batch_size,
+                            split_count=len(sequence_chunks),
+                            tokenize_sec=tokenize_sec / max(N, 1),
+                            chunk_timings=chunk_timings,
+                            timing_divisor=chunk_prompt_count,
+                            rollout_started_at=rollout_started_at,
+                        )
+                    )
+
+                # Free GPU memory between prompt chunks to prevent
+                # accumulation across Level-1 iterations.
+                del flat_sequences
+                del sequence_chunks
+                sequence_chunks = []
+                if self.device.type == "cuda" and use_kv_cache:
+                    torch.cuda.empty_cache()
+
+        # Emit memory event (once, after all chunks)
+        self._emit_rank_memory_event(
+            "multimodal_rollout_after",
+            {
+                "rollout_group_size": G,
+                "prompt_len": prompt_len,
+                "sequence_len": max(
+                    (int(chunk.shape[1]) for chunk in [gen.sequences for gen in all_generations]),
+                    default=prompt_len,
+                ),
+                "multimodal_media_counts": per_sample_media_counts[0]
+                if len(per_sample_media_counts) == 1
+                else None,
+                "image_token_count": int(
+                    (input_ids == int(getattr(self.model.config, "image_token_id", -1)))
+                    .sum()
+                    .item()
+                ),
+                **_rollout_timing_summary(tokenize_sec, all_timings),
+            },
+        )
+
+        # Empty CUDA cache when splits occurred
+        if (
+            self.device.type == "cuda"
+            and bool(self.config.native_tp.empty_cache_after_rollout_split)
+            and (
+                prompt_chunk_size < N
+                or any(
+                    int(gen.metadata.get("rollout_generation_split_count", 1)) > 1
+                    for gen in all_generations
+                )
+            )
+        ):
+            torch.cuda.empty_cache()
+            self._emit_rank_memory_event(
+                "multimodal_rollout_after_empty_cache",
+                {"rollout_empty_cache_after_split": True},
+            )
+            for generation in all_generations:
+                generation.metadata = {
+                    **(generation.metadata or {}),
+                    "rollout_empty_cache_after_split": True,
+                }
+
+        return all_generations
 
     def _generate_multimodal_sample_group(
         self,
@@ -491,32 +746,82 @@ class QwenNativeTPAdapter:
             getattr(self.model, "supports_kv_cache", True)
         )
         multimodal_inputs = self._multimodal_inputs_to_device(encoded)
-        sequences = input_ids
-        finished = torch.zeros(sequences.shape[0], dtype=torch.bool, device=self.device)
+        B = int(input_ids.shape[0])
+
+        # Precompute per-row image/patch counts for equal-stride slicing.
+        # All rollout_group_size rows are copies of the same sample, so every
+        # row contributes identical image/patch counts and even division holds.
+        images_per_row = 0
+        patches_per_row = 0
+        if "image_grid_thw" in multimodal_inputs:
+            grid_rows = int(multimodal_inputs["image_grid_thw"].shape[0])
+            assert grid_rows % B == 0, (
+                f"image_grid_thw rows {grid_rows} not divisible by batch size {B}; "
+                "expected equal image counts per row during multimodal rollout"
+            )
+            images_per_row = grid_rows // B
+        if "pixel_values" in multimodal_inputs:
+            pv_rows = int(multimodal_inputs["pixel_values"].shape[0])
+            assert pv_rows % B == 0, (
+                f"pixel_values rows {pv_rows} not divisible by batch size {B}; "
+                "expected equal patch counts per row during multimodal rollout"
+            )
+            patches_per_row = pv_rows // B
+
+        micro_batch_size = self._shared_generation_micro_batch_size(
+            prompt_len=prompt_len,
+            rollout_group_size=rollout_group_size,
+            max_new_tokens=max_new_tokens,
+            use_kv_cache=use_kv_cache,
+        )
+        micro_batch_size = max(1, min(micro_batch_size, B))
+
+        sequence_chunks: list[torch.Tensor] = []
+        chunk_timings: list[dict[str, float | int]] = []
         with torch.no_grad():
-            if use_kv_cache:
-                sequences, timing = self._generate_multimodal_with_kv_cache(
-                    sequences=sequences,
-                    attention_mask=attention_mask,
-                    multimodal_inputs=multimodal_inputs,
-                    finished=finished,
-                    eos_token_id=eos_token_id,
-                    pad_token_id=pad_token_id,
-                    max_new_tokens=max_new_tokens,
-                    temperature=temperature,
-                    top_p=top_p,
+            for start in range(0, B, micro_batch_size):
+                stop = min(start + micro_batch_size, B)
+                current_input_ids = input_ids[start:stop]
+                current_attention_mask = attention_mask[start:stop]
+                current_mm_inputs = _slice_multimodal_inputs(
+                    multimodal_inputs, start, stop,
+                    images_per_row=images_per_row,
+                    patches_per_row=patches_per_row,
                 )
-            else:
-                sequences, timing = self._generate_multimodal_full_forward(
-                    sequences=sequences,
-                    multimodal_inputs=multimodal_inputs,
-                    finished=finished,
-                    eos_token_id=eos_token_id,
-                    pad_token_id=pad_token_id,
-                    max_new_tokens=max_new_tokens,
-                    temperature=temperature,
-                    top_p=top_p,
+                finished = torch.zeros(
+                    stop - start, dtype=torch.bool, device=self.device
                 )
+                if use_kv_cache:
+                    seq, timing = self._generate_multimodal_with_kv_cache(
+                        sequences=current_input_ids,
+                        attention_mask=current_attention_mask,
+                        multimodal_inputs=current_mm_inputs,
+                        finished=finished,
+                        eos_token_id=eos_token_id,
+                        pad_token_id=pad_token_id,
+                        max_new_tokens=max_new_tokens,
+                        temperature=temperature,
+                        top_p=top_p,
+                    )
+                else:
+                    seq, timing = self._generate_multimodal_full_forward(
+                        sequences=current_input_ids,
+                        multimodal_inputs=current_mm_inputs,
+                        finished=finished,
+                        eos_token_id=eos_token_id,
+                        pad_token_id=pad_token_id,
+                        max_new_tokens=max_new_tokens,
+                        temperature=temperature,
+                        top_p=top_p,
+                    )
+                sequence_chunks.append(seq)
+                chunk_timings.append(timing)
+
+        sequences = pad_sequence(
+            [row for chunk in sequence_chunks for row in chunk],
+            batch_first=True,
+            padding_value=pad_token_id,
+        )
         generation = self._generation_from_sequences(
             sequences=sequences,
             prompt_len=prompt_len,
@@ -526,10 +831,10 @@ class QwenNativeTPAdapter:
             requested_prompt_queue_size=1,
             effective_prompt_queue_size=1,
             use_kv_cache=use_kv_cache,
-            generation_micro_batch_size=rollout_group_size,
-            split_count=1,
+            generation_micro_batch_size=micro_batch_size,
+            split_count=len(sequence_chunks),
             tokenize_sec=tokenize_sec,
-            chunk_timings=[timing],
+            chunk_timings=chunk_timings,
             timing_divisor=1,
             rollout_started_at=rollout_started_at,
         )
@@ -553,7 +858,7 @@ class QwenNativeTPAdapter:
                     .sum()
                     .item()
                 ),
-                **_rollout_timing_summary(tokenize_sec, [timing]),
+                **_rollout_timing_summary(tokenize_sec, chunk_timings),
             },
         )
         return generation
@@ -988,7 +1293,7 @@ class QwenNativeTPAdapter:
         )
         return all_generations
 
-    def _pipeline_generate_sample_groups(
+    def _pipeline_generate_multimodal_groups(
         self,
         *,
         samples: list[Any],
@@ -999,18 +1304,193 @@ class QwenNativeTPAdapter:
         top_p: float,
         chat_template_kwargs: dict[str, Any] | None,
     ) -> list[NativeGeneration]:
-        return [
-            self._pipeline_generate_multimodal_sample_group(
-                sample=sample,
-                rollout_group_size=rollout_group_size,
-                max_new_tokens=max_new_tokens,
-                max_prompt_length=max_prompt_length,
-                temperature=temperature,
-                top_p=top_p,
-                chat_template_kwargs=chat_template_kwargs,
+        """Pipeline-parallel batched multimodal generation (Level 1 + Level 2)."""
+        assert self.tokenizer is not None
+        assert self.model is not None
+        self.model.eval()
+        N = len(samples)
+        G = rollout_group_size
+        tokenize_started_at = time.monotonic()
+
+        rows: list[dict[str, Any]] = []
+        per_sample_image_counts: list[int] = []
+        for sample in samples:
+            row = _multimodal_row_from_sample(sample)
+            img_count = sum(
+                1 for item in sample.media if str(item.get("type") or "") == "image"
             )
-            for sample in samples
-        ]
+            per_sample_image_counts.append(img_count)
+            for _ in range(G):
+                rows.append(row)
+
+        encoded = self._encode_multimodal_rows(
+            rows,
+            add_generation_prompt=True,
+            chat_template_kwargs=chat_template_kwargs,
+        )
+        tokenize_sec = time.monotonic() - tokenize_started_at
+
+        sequences = encoded["input_ids"].to(self.device)
+        if sequences.shape[1] > max_prompt_length:
+            raise ValueError(
+                f"multimodal prompt length {sequences.shape[1]} exceeds "
+                f"data.max_prompt_length={max_prompt_length}"
+            )
+        attention_mask = encoded["attention_mask"].to(self.device).bool()
+        prompt_len = int(sequences.shape[1])
+        prompt_lens = [int(mask.sum().item()) for mask in attention_mask]
+        pad_token_id = int(
+            self.tokenizer.pad_token_id
+            if self.tokenizer.pad_token_id is not None
+            else self.tokenizer.eos_token_id
+        )
+        eos_token_id = int(self.tokenizer.eos_token_id)
+        rollout_started_at = time.monotonic()
+        multimodal_inputs = self._multimodal_inputs_to_device(encoded)
+
+        image_offsets, patch_offsets, video_offsets, video_patch_offsets = (
+            _compute_multimodal_offset_tables(
+                per_sample_image_counts=per_sample_image_counts,
+                rollout_group_size=G,
+                image_grid_thw=multimodal_inputs.get("image_grid_thw"),
+                pixel_values=multimodal_inputs.get("pixel_values"),
+            )
+        )
+
+        total_rows = N * G
+        requested_prompt_queue_size = N
+        budget_prompt_len = max(prompt_len, max_prompt_length)
+        prompt_chunk_size = self._shared_rollout_prompt_chunk_size(
+            prompt_len=budget_prompt_len,
+            requested_prompt_count=requested_prompt_queue_size,
+            rollout_group_size=G,
+            max_new_tokens=max_new_tokens,
+            use_kv_cache=True,
+        )
+        prompt_chunk_size = max(1, min(prompt_chunk_size, requested_prompt_queue_size))
+
+        all_generations: list[NativeGeneration] = []
+        all_timings: list[dict[str, float | int]] = []
+        with torch.no_grad():
+            for prompt_start in range(0, N, prompt_chunk_size):
+                prompt_stop = min(prompt_start + prompt_chunk_size, N)
+                chunk_prompt_count = prompt_stop - prompt_start
+                row_start = prompt_start * G
+                row_stop = prompt_stop * G
+                chunk_sequences = sequences[row_start:row_stop]
+                flat_B = int(chunk_sequences.shape[0])
+                chunk_prompt_lens = prompt_lens[row_start:row_stop]
+
+                chunk_generation_micro_batch_size = self._shared_generation_micro_batch_size(
+                    prompt_len=budget_prompt_len,
+                    rollout_group_size=flat_B,
+                    max_new_tokens=max_new_tokens,
+                    use_kv_cache=True,
+                )
+
+                sequence_chunks: list[torch.Tensor] = []
+                chunk_timings: list[dict[str, float | int]] = []
+                for start in range(0, flat_B, chunk_generation_micro_batch_size):
+                    stop = min(start + chunk_generation_micro_batch_size, flat_B)
+                    local_start = start
+                    local_stop = stop
+                    global_start = row_start + local_start
+                    global_stop = row_start + local_stop
+
+                    current_sequences = chunk_sequences[local_start:local_stop]
+                    current_mm_inputs = _slice_multimodal_inputs_offset(
+                        multimodal_inputs,
+                        global_start, global_stop,
+                        image_offsets=image_offsets,
+                        patch_offsets=patch_offsets,
+                        video_offsets=video_offsets,
+                        video_patch_offsets=video_patch_offsets,
+                    )
+                    seq, timing = self._pipeline_generate_sequences_with_cache(
+                        sequences=current_sequences,
+                        eos_token_id=eos_token_id,
+                        pad_token_id=pad_token_id,
+                        max_new_tokens=max_new_tokens,
+                        temperature=temperature,
+                        top_p=top_p,
+                        multimodal_inputs=current_mm_inputs,
+                    )
+                    sequence_chunks.append(seq)
+                    chunk_timings.append(timing)
+
+                flat_sequences = pad_sequence(
+                    [row for chunk in sequence_chunks for row in chunk],
+                    batch_first=True,
+                    padding_value=pad_token_id,
+                )
+                all_timings.extend(chunk_timings)
+
+                for local_prompt_idx in range(chunk_prompt_count):
+                    row_start_inner = local_prompt_idx * G
+                    row_stop_inner = row_start_inner + G
+                    # Clone to break the view chain (see TP path comment).
+                    prompt_sequences = flat_sequences[row_start_inner:row_stop_inner].clone()
+                    all_generations.append(
+                        self._generation_from_sequences(
+                            sequences=prompt_sequences,
+                            prompt_len=prompt_len,
+                            prompt_lens=chunk_prompt_lens[
+                                row_start_inner : row_start_inner + 1
+                            ],
+                            pad_token_id=pad_token_id,
+                            rollout_group_size=G,
+                            requested_prompt_queue_size=requested_prompt_queue_size,
+                            effective_prompt_queue_size=prompt_chunk_size,
+                            use_kv_cache=True,
+                            generation_micro_batch_size=chunk_generation_micro_batch_size,
+                            split_count=len(sequence_chunks),
+                            tokenize_sec=tokenize_sec / max(N, 1),
+                            chunk_timings=chunk_timings,
+                            timing_divisor=chunk_prompt_count,
+                            rollout_started_at=rollout_started_at,
+                        )
+                    )
+
+                # Free GPU memory between prompt chunks to prevent
+                # accumulation across Level-1 iterations.
+                del flat_sequences
+                del sequence_chunks
+                sequence_chunks = []
+                if self.device.type == "cuda":
+                    torch.cuda.empty_cache()
+
+        self._emit_rank_memory_event(
+            "pipeline_multimodal_rollout_after",
+            {
+                "placement": placement_summary(self.placement)
+                if self.placement is not None
+                else None,
+                "rollout_group_size": G,
+                "prompt_len": prompt_len,
+                "prompt_lens": prompt_lens,
+                "sequence_len": max(
+                    (int(chunk.shape[1]) for chunk in [gen.sequences for gen in all_generations]),
+                    default=prompt_len,
+                ),
+                "generated_tokens_max": max(
+                    (int(chunk.shape[1] - prompt_len) for chunk in [gen.sequences for gen in all_generations]),
+                    default=0,
+                ),
+                "rollout_use_kv_cache": True,
+                "rollout_generation_micro_batch_size": max(
+                    (int(gen.metadata.get("rollout_generation_micro_batch_size", 1))
+                     for gen in all_generations),
+                    default=1,
+                ),
+                "rollout_generation_split_count": sum(
+                    int(gen.metadata.get("rollout_generation_split_count", 1))
+                    for gen in all_generations
+                ),
+                **_rollout_timing_summary(tokenize_sec, all_timings),
+                "rollout_elapsed_sec": round(time.monotonic() - rollout_started_at, 6),
+            },
+        )
+        return all_generations
 
     def _pipeline_generate_multimodal_sample_group(
         self,
@@ -1050,16 +1530,62 @@ class QwenNativeTPAdapter:
         eos_token_id = int(self.tokenizer.eos_token_id)
         rollout_started_at = time.monotonic()
         multimodal_inputs = self._multimodal_inputs_to_device(encoded)
-        with torch.no_grad():
-            sequences, timing = self._pipeline_generate_sequences_with_cache(
-                sequences=sequences,
-                eos_token_id=eos_token_id,
-                pad_token_id=pad_token_id,
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
-                top_p=top_p,
-                multimodal_inputs=multimodal_inputs,
+        B = int(sequences.shape[0])
+
+        # Precompute per-row image/patch counts for equal-stride slicing.
+        images_per_row = 0
+        patches_per_row = 0
+        if "image_grid_thw" in multimodal_inputs:
+            grid_rows = int(multimodal_inputs["image_grid_thw"].shape[0])
+            assert grid_rows % B == 0, (
+                f"image_grid_thw rows {grid_rows} not divisible by batch size {B}; "
+                "expected equal image counts per row during multimodal rollout"
             )
+            images_per_row = grid_rows // B
+        if "pixel_values" in multimodal_inputs:
+            pv_rows = int(multimodal_inputs["pixel_values"].shape[0])
+            assert pv_rows % B == 0, (
+                f"pixel_values rows {pv_rows} not divisible by batch size {B}; "
+                "expected equal patch counts per row during multimodal rollout"
+            )
+            patches_per_row = pv_rows // B
+
+        micro_batch_size = self._shared_generation_micro_batch_size(
+            prompt_len=prompt_len,
+            rollout_group_size=rollout_group_size,
+            max_new_tokens=max_new_tokens,
+            use_kv_cache=True,
+        )
+        micro_batch_size = max(1, min(micro_batch_size, B))
+
+        sequence_chunks: list[torch.Tensor] = []
+        chunk_timings: list[dict[str, float | int]] = []
+        with torch.no_grad():
+            for start in range(0, B, micro_batch_size):
+                stop = min(start + micro_batch_size, B)
+                current_sequences = sequences[start:stop]
+                current_mm_inputs = _slice_multimodal_inputs(
+                    multimodal_inputs, start, stop,
+                    images_per_row=images_per_row,
+                    patches_per_row=patches_per_row,
+                )
+                seq, timing = self._pipeline_generate_sequences_with_cache(
+                    sequences=current_sequences,
+                    eos_token_id=eos_token_id,
+                    pad_token_id=pad_token_id,
+                    max_new_tokens=max_new_tokens,
+                    temperature=temperature,
+                    top_p=top_p,
+                    multimodal_inputs=current_mm_inputs,
+                )
+                sequence_chunks.append(seq)
+                chunk_timings.append(timing)
+
+        sequences = pad_sequence(
+            [row for chunk in sequence_chunks for row in chunk],
+            batch_first=True,
+            padding_value=pad_token_id,
+        )
         generation = self._generation_from_sequences(
             sequences=sequences,
             prompt_len=prompt_len,
@@ -1069,10 +1595,10 @@ class QwenNativeTPAdapter:
             requested_prompt_queue_size=1,
             effective_prompt_queue_size=1,
             use_kv_cache=True,
-            generation_micro_batch_size=rollout_group_size,
-            split_count=1,
+            generation_micro_batch_size=micro_batch_size,
+            split_count=len(sequence_chunks),
             tokenize_sec=tokenize_sec,
-            chunk_timings=[timing],
+            chunk_timings=chunk_timings,
             timing_divisor=1,
             rollout_started_at=rollout_started_at,
         )
@@ -2135,17 +2661,18 @@ class QwenNativeTPAdapter:
         max_new_tokens: int,
         use_kv_cache: bool,
     ) -> int:
-        configured = max(1, int(self.config.native_tp.generation_micro_batch_size))
+        # Auto-compute from gpu_memory_utilization.  Start from the full flat
+        # batch and halve until the KV cache budget fits.
         if not use_kv_cache or self.device.type != "cuda" or self.model is None:
-            return min(rollout_group_size, configured)
-        candidate = min(rollout_group_size, max(configured, rollout_group_size))
+            return int(rollout_group_size)
+        candidate = int(rollout_group_size)
         while candidate > 1 and not self._kv_cache_batch_fits_budget(
             batch_size=candidate,
             prompt_len=prompt_len,
             max_new_tokens=max_new_tokens,
         ):
             candidate = max(1, candidate // 2)
-        return max(1, min(rollout_group_size, candidate))
+        return max(1, min(int(rollout_group_size), candidate))
 
     def _kv_cache_batch_fits_budget(
         self, *, batch_size: int, prompt_len: int, max_new_tokens: int
@@ -2153,18 +2680,63 @@ class QwenNativeTPAdapter:
         assert self.model is not None
         if self.device.type != "cuda":
             return True
-        fraction = float(self.config.native_tp.rollout_kv_cache_max_reserved_fraction)
-        fraction = min(max(fraction, 0.05), 1.0)
+        utilization = float(self.config.native_tp.gpu_memory_utilization)
+        utilization = min(max(utilization, 0.1), 1.0)
         total = int(torch.cuda.get_device_properties(self.device).total_memory)
         reserved = int(torch.cuda.memory_reserved(self.device))
-        budget = max(0, int(total * fraction) - reserved)
-        return (
-            self.model.estimate_kv_cache_bytes(
-                batch_size=batch_size,
-                sequence_len=prompt_len + max_new_tokens,
-            )
-            <= budget
+        budget = max(0, int(total * utilization) - reserved)
+
+        seq_len = prompt_len + max_new_tokens
+        kv_bytes = self.model.estimate_kv_cache_bytes(
+            batch_size=batch_size, sequence_len=seq_len,
         )
+        # Also estimate peak activation / attention memory for prefill.
+        # For full-attention layers (Qwen35 hybrid), the prefill attention
+        # can dominate: B × num_heads × seq_len² × dtype_size even with
+        # flash attention, and far more without it.
+        act_bytes = self._estimate_peak_activation_bytes(
+            batch_size=batch_size, prompt_len=prompt_len,
+        )
+        peak_bytes = max(kv_bytes, act_bytes)
+        # Add safety margin for multimodal generation overhead
+        # (KV cache, pixel values, output tensors, CUDA context).
+        # 1.5× prevents the budget check from being too optimistic
+        # while still allowing efficient batching.
+        peak_bytes = int(peak_bytes * 1.5)
+        return peak_bytes <= budget
+
+    def _estimate_peak_activation_bytes(
+        self, *, batch_size: int, prompt_len: int
+    ) -> int:
+        """Estimate peak memory for one multimodal forward pass.
+
+        The dominant cost comes from full-attention layers that may materialize
+        the QK^T matrix (B × local_heads × L × L).  We use a conservative
+        upper bound: assume the worst-case full-attention layer is active.
+        """
+        assert self.model is not None
+        if self.device.type != "cuda":
+            return 0
+        dtype_size = 2  # bfloat16
+        layer_types = list(getattr(self.model.config, "layer_types", []) or [])
+        if not layer_types:
+            return 0
+        full_attn_count = sum(1 for t in layer_types if t == "full_attention")
+        if full_attn_count == 0:
+            hidden_size = getattr(self.model.config, "hidden_size", 3584)
+            return batch_size * prompt_len * hidden_size * 8 * dtype_size
+
+        # Full-attention QK^T matrix: the worst-case allocation during prefill
+        num_heads = getattr(self.model.config, "num_attention_heads", 28)
+        tp_size = max(1, int(self.tp_size))
+        local_heads = max(1, num_heads // tp_size)
+        attn_matrix_bytes = (
+            batch_size * local_heads * prompt_len * prompt_len * dtype_size
+        )
+        # Residual + MLP intermediates for one layer
+        hidden_size = getattr(self.model.config, "hidden_size", 3584)
+        residual_bytes = batch_size * prompt_len * hidden_size * 6 * dtype_size
+        return attn_matrix_bytes + residual_bytes
 
     def save_checkpoint(
         self,
@@ -2759,6 +3331,166 @@ def _media_counts(media: list[dict[str, Any]]) -> dict[str, int]:
         media_type = str(item.get("type") or "unknown") if isinstance(item, dict) else "unknown"
         counts[media_type] = counts.get(media_type, 0) + 1
     return counts
+
+
+def _slice_multimodal_inputs(
+    inputs: dict[str, torch.Tensor],
+    start: int,
+    stop: int,
+    *,
+    images_per_row: int = 0,
+    patches_per_row: int = 0,
+    videos_per_row: int = 0,
+    video_patches_per_row: int = 0,
+) -> dict[str, torch.Tensor]:
+    """Slice multimodal_inputs dict to rows [start:stop] batch dimension.
+
+    Assumes all batch rows have identical image/video counts, which holds during
+    rollout where the same sample is repeated rollout_group_size times.
+    Simple row-sliced keys (input_ids, attention_mask, mm_token_type_ids) are NOT
+    included -- only the image/video tensors whose batch dimension differs from
+    the input_ids batch dimension are sliced here.
+
+    The caller must separately slice input_ids and attention_mask with [start:stop].
+    """
+    sliced: dict[str, torch.Tensor] = {}
+    if "image_grid_thw" in inputs and images_per_row > 0:
+        sliced["image_grid_thw"] = inputs["image_grid_thw"][
+            start * images_per_row : stop * images_per_row
+        ]
+    if "pixel_values" in inputs and patches_per_row > 0:
+        sliced["pixel_values"] = inputs["pixel_values"][
+            start * patches_per_row : stop * patches_per_row
+        ]
+    if "video_grid_thw" in inputs and videos_per_row > 0:
+        sliced["video_grid_thw"] = inputs["video_grid_thw"][
+            start * videos_per_row : stop * videos_per_row
+        ]
+    if "pixel_values_videos" in inputs and video_patches_per_row > 0:
+        sliced["pixel_values_videos"] = inputs["pixel_values_videos"][
+            start * video_patches_per_row : stop * video_patches_per_row
+        ]
+    if "mm_token_type_ids" in inputs:
+        sliced["mm_token_type_ids"] = inputs["mm_token_type_ids"][start:stop]
+    return sliced
+
+
+def _slice_multimodal_inputs_offset(
+    inputs: dict[str, torch.Tensor],
+    row_start: int,
+    row_stop: int,
+    *,
+    image_offsets: torch.Tensor | None = None,
+    patch_offsets: torch.Tensor | None = None,
+    video_offsets: torch.Tensor | None = None,
+    video_patch_offsets: torch.Tensor | None = None,
+) -> dict[str, torch.Tensor]:
+    """Slice multimodal_inputs dict to rows [row_start:row_stop) using per-row
+    cumulative offset tables.
+
+    Prefer _slice_multimodal_inputs (equal-stride) when all rows have identical
+    image counts.  Use this offset-based variant when batching heterogeneous
+    samples that have different numbers of images per row.
+    """
+    sliced: dict[str, torch.Tensor] = {}
+    if "image_grid_thw" in inputs and image_offsets is not None:
+        i_start = int(image_offsets[row_start].item())
+        i_stop = int(image_offsets[row_stop].item())
+        if i_stop > i_start:
+            sliced["image_grid_thw"] = inputs["image_grid_thw"][i_start:i_stop]
+    if "pixel_values" in inputs and patch_offsets is not None:
+        p_start = int(patch_offsets[row_start].item())
+        p_stop = int(patch_offsets[row_stop].item())
+        if p_stop > p_start:
+            sliced["pixel_values"] = inputs["pixel_values"][p_start:p_stop]
+    if "video_grid_thw" in inputs and video_offsets is not None:
+        v_start = int(video_offsets[row_start].item())
+        v_stop = int(video_offsets[row_stop].item())
+        if v_stop > v_start:
+            sliced["video_grid_thw"] = inputs["video_grid_thw"][v_start:v_stop]
+    if "pixel_values_videos" in inputs and video_patch_offsets is not None:
+        vp_start = int(video_patch_offsets[row_start].item())
+        vp_stop = int(video_patch_offsets[row_stop].item())
+        if vp_stop > vp_start:
+            sliced["pixel_values_videos"] = inputs["pixel_values_videos"][vp_start:vp_stop]
+    if "mm_token_type_ids" in inputs:
+        sliced["mm_token_type_ids"] = inputs["mm_token_type_ids"][row_start:row_stop]
+    return sliced
+
+
+def _compute_multimodal_offset_tables(
+    *,
+    per_sample_image_counts: list[int],
+    rollout_group_size: int,
+    image_grid_thw: torch.Tensor | None,
+    pixel_values: torch.Tensor | None,
+    video_grid_thw: torch.Tensor | None = None,
+    pixel_values_videos: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Build per-row cumulative offset tables for heterogeneous multimodal rows.
+
+    Given per-sample image counts (one per original sample, NOT per row),
+    this expands each sample's count across rollout_group_size identical rows
+    and returns cumulative offset tensors for direct use in
+    _slice_multimodal_inputs_offset.
+
+    The encoded image_grid_thw and pixel_values tensors are consumed
+    sequentially in document order (row by row, left to right).
+    Since all rows for a given sample are identical copies with the same
+    image count, the per-sample counts suffice to construct the full table.
+    """
+    total_rows = len(per_sample_image_counts) * rollout_group_size
+    image_offsets = torch.zeros(total_rows + 1, dtype=torch.int64)
+    patch_offsets = torch.zeros(total_rows + 1, dtype=torch.int64)
+    video_offsets = torch.zeros(total_rows + 1, dtype=torch.int64)
+    video_patch_offsets = torch.zeros(total_rows + 1, dtype=torch.int64)
+
+    # For per-sample video counts, default to 0 since currently blocked.
+    per_sample_video_counts = [0] * len(per_sample_image_counts)
+
+    # Build per-row image/patch counts.
+    # image_grid_thw has shape (total_images, 3).  Patches per image = H * W.
+    grid_rows = int(image_grid_thw.shape[0]) if image_grid_thw is not None else 0
+    pv_rows = int(pixel_values.shape[0]) if pixel_values is not None else 0
+
+    img_cursor = 0
+    patch_cursor = 0
+    vid_cursor = 0
+    vid_patch_cursor = 0
+
+    for sample_idx, (n_img, n_vid) in enumerate(
+        zip(per_sample_image_counts, per_sample_video_counts)
+    ):
+        # Compute patch count for this sample from image_grid_thw
+        sample_patches = 0
+        for j in range(n_img):
+            if img_cursor + j < grid_rows:
+                h = int(image_grid_thw[img_cursor + j, 1].item())
+                w = int(image_grid_thw[img_cursor + j, 2].item())
+                sample_patches += h * w
+        # Repeat for all rollout_group_size identical rows of this sample
+        for _r in range(rollout_group_size):
+            img_cursor += n_img
+            patch_cursor += sample_patches
+            vid_cursor += n_vid
+            vid_patch_cursor += 0  # video patches (not yet supported)
+            row = sample_idx * rollout_group_size + _r + 1
+            image_offsets[row] = img_cursor
+            patch_offsets[row] = patch_cursor
+            video_offsets[row] = vid_cursor
+            video_patch_offsets[row] = vid_patch_cursor
+
+    # Verify total counts match encoded tensors
+    if grid_rows > 0:
+        assert img_cursor == grid_rows, (
+            f"Offset table image count {img_cursor} != actual {grid_rows}"
+        )
+    if pv_rows > 0:
+        assert patch_cursor == pv_rows, (
+            f"Offset table patch count {patch_cursor} != actual {pv_rows}"
+        )
+
+    return image_offsets, patch_offsets, video_offsets, video_patch_offsets
 
 
 def native_qwen_lora_available_targets(hf_config: NativeQwenConfig) -> tuple[str, ...]:
