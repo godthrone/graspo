@@ -37,7 +37,6 @@ class TrainingConfig:
     seed: int = 42
     training_epoch_count: int = 100
     max_steps: int = -1
-    rollout_prompt_queue_batch_size: int = 1
     rollout_group_size: int = 8
     optimize_completion_batch_size: int = 4
     optimize_times_per_step: int = 4
@@ -73,9 +72,8 @@ class NativeTPConfig:
     placement_strategy: str = "auto"
     sequence_parallel: bool = False
     train_micro_batch_size: int = 1
-    generation_micro_batch_size: int = 1
+    gpu_memory_utilization: float = 0.90
     use_kv_cache_for_rollout: bool = True
-    rollout_kv_cache_max_reserved_fraction: float = 0.60
     empty_cache_after_rollout_split: bool = True
     empty_cache_before_train: bool = False
     checkpoint_format: str = "recoverable_lora_tp"
@@ -126,10 +124,27 @@ class GraspoConfig:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "GraspoConfig":
+        import warnings
+
         data = data or {}
         backend_config = dict(data.get("backend_config", {}) or {})
         native_cfg = dict(backend_config.get("native_tp", {}) or {})
         native_cfg.update(data.get("native_tp", {}) or {})
+
+        # Backward compat: warn about removed fields
+        _removed_native = {
+            "generation_micro_batch_size",
+            "rollout_kv_cache_max_reserved_fraction",
+        }
+        for key in sorted(_removed_native & set(native_cfg)):
+            warnings.warn(
+                f"native_tp.{key} is removed. "
+                f"Use native_tp.gpu_memory_utilization instead (default 0.90).",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            del native_cfg[key]
+
         training_cfg = _normalize_training_config(data.get("training", {}))
         return cls(
             backend=data.get("backend", "native-tp"),
@@ -208,6 +223,7 @@ def _normalize_training_config(raw: dict[str, Any] | None) -> dict[str, Any]:
     removed = {
         "total_epochs",
         "rollout_prompt_queue_size",
+        "rollout_prompt_queue_batch_size",
         "group_size",
         "train_batch_size",
         "buffer_train_rounds",

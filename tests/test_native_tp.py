@@ -26,7 +26,6 @@ def test_training_defaults_are_long_run_safe():
     config = GraspoConfig()
 
     assert config.training.training_epoch_count == 100
-    assert config.training.rollout_prompt_queue_batch_size == 1
     assert config.training.rollout_group_size == 8
     assert config.training.optimize_completion_batch_size == 4
     assert config.training.optimize_times_per_step == 4
@@ -60,7 +59,7 @@ def test_native_tp_config_parses_nested_backend_config():
                     "tensor_model_parallel_size": 2,
                     "pipeline_model_parallel_size": 1,
                     "sequence_parallel": False,
-                    "rollout_kv_cache_max_reserved_fraction": 0.65,
+                    "gpu_memory_utilization": 0.65,
                     "empty_cache_after_rollout_split": True,
                 }
             },
@@ -68,7 +67,7 @@ def test_native_tp_config_parses_nested_backend_config():
     )
 
     assert config.native_tp.tensor_model_parallel_size == 2
-    assert config.native_tp.rollout_kv_cache_max_reserved_fraction == 0.65
+    assert config.native_tp.gpu_memory_utilization == 0.65
     assert config.native_tp.empty_cache_after_rollout_split is True
     validate_native_runtime_config(config)
 
@@ -615,7 +614,6 @@ def _native_test_config(
     data: Path,
     *,
     rollout_group_size: int = 8,
-    rollout_prompt_queue_batch_size: int = 1,
     optimize_completion_batch_size: int = 4,
     optimize_times_per_step: int = 1,
     rollout_max_retry_times: int = 1,
@@ -629,7 +627,6 @@ def _native_test_config(
                 "output_dir": str(tmp_path / "out"),
                 "training_epoch_count": 1,
                 "rollout_group_size": rollout_group_size,
-                "rollout_prompt_queue_batch_size": rollout_prompt_queue_batch_size,
                 "optimize_completion_batch_size": optimize_completion_batch_size,
                 "optimize_times_per_step": optimize_times_per_step,
                 "rollout_max_retry_times": rollout_max_retry_times,
@@ -794,9 +791,7 @@ def test_four_trainable_groups_trigger_one_optimize_with_original_threshold(tmp_
     assert checkpoint_event["checkpoint_save_sec"] >= 0.0
 
 
-def test_rollout_prompt_queue_batch_size_batches_multiple_prompts_without_changing_threshold(
-    tmp_path, capsys
-):
+def test_prompt_batching_passes_all_samples_at_once(tmp_path, capsys):
     data = tmp_path / "train.jsonl"
     _write_train_data(data, 4)
     runtime = ScriptedQueuedRuntime(
@@ -807,12 +802,13 @@ def test_rollout_prompt_queue_batch_size_batches_multiple_prompts_without_changi
             "p3": [_mixed_group(8)],
         }
     )
-    config = _native_test_config(tmp_path, data, rollout_prompt_queue_batch_size=2)
+    config = _native_test_config(tmp_path, data)
     trainer = NativeTPGraspoTrainer(config, runtime=runtime)
 
     trainer.train()
 
-    assert [len(batch) for batch in runtime.generate_group_batches] == [2, 2]
+    # All 4 prompts passed at once; adapter handles internal chunking
+    assert [len(batch) for batch in runtime.generate_group_batches] == [4]
     assert sorted(prompt for batch in runtime.generate_group_batches for prompt in batch) == [
         "p0",
         "p1",
@@ -826,8 +822,6 @@ def test_rollout_prompt_queue_batch_size_batches_multiple_prompts_without_changi
         json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")
     ]
     train_step = next(event for event in stdout_events if event.get("event") == "train_step")
-    assert train_step["timing"]["rollout_prompt_queue_batch_size"] == 2
-    assert train_step["timing"]["rollout_prompt_queue_effective_size"] == 2
     assert train_step["batch"]["decisions"]["trainable"]["total"] == 4
     assert train_step["batch"]["attempt_groups"] == 4
 
@@ -873,7 +867,6 @@ def test_rollout_prompt_queue_passes_tools_to_runtime(tmp_path):
         tmp_path,
         data,
         rollout_group_size=2,
-        rollout_prompt_queue_batch_size=2,
         optimize_completion_batch_size=2,
     )
     trainer = NativeTPGraspoTrainer(config, runtime=runtime)
@@ -966,7 +959,6 @@ def test_rollout_prompt_queue_retries_only_unfinished_prompt(tmp_path):
         tmp_path,
         data,
         rollout_group_size=2,
-        rollout_prompt_queue_batch_size=2,
         optimize_completion_batch_size=2,
         rollout_max_retry_times=1,
     )
@@ -1074,7 +1066,7 @@ def test_native_trainer_resumes_from_trainer_state_without_repeating_samples(tmp
     _write_train_data(data, sample_count)
     checkpoint_dir = tmp_path / "step_5"
     checkpoint_dir.mkdir()
-    runtime = ScriptedGroupRuntime([_mixed_group(2)])
+    runtime = ScriptedGroupRuntime([_mixed_group(2) for _ in range(4)])
     runtime.resume_state = {
         "format": "graspo-native-tp-trainer-state",
         "global_step": 5,
@@ -1133,9 +1125,10 @@ def test_native_trainer_resumes_from_trainer_state_without_repeating_samples(tmp
     expected_epoch = [f"p{idx}" for idx in range(sample_count)]
     random.Random(123).shuffle(expected_epoch)
     assert runtime.loaded == [str(checkpoint_dir)]
-    assert runtime.message_keys == [expected_epoch[2]]
-    assert runtime.saved_trainer_states[-1]["global_step"] == 6
-    assert runtime.saved_trainer_states[-1]["epoch_stats"]["samples_seen"] == 3
+    # All 4 remaining samples passed at once (adapter handles internal chunking)
+    assert runtime.message_keys == expected_epoch[2:]
+    assert runtime.saved_trainer_states[-1]["global_step"] >= 6
+    assert runtime.saved_trainer_states[-1]["epoch_stats"]["samples_seen"] == 6
     stdout_events = [
         json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")
     ]

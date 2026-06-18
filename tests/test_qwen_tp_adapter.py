@@ -29,6 +29,7 @@ from graspo.backends.native_tp.qwen_tp_adapter import (  # noqa: E402
     _qwen35_mrope_embeddings,
     _round_pipeline_stage_timing,
     _selected_token_log_probs_from_hidden,
+    _slice_multimodal_inputs,
 )
 from graspo.backends.native_tp.runtime import NativeTPRuntime  # noqa: E402
 from graspo.backends.native_tp.placement import build_placement_plan  # noqa: E402
@@ -994,7 +995,7 @@ def test_adapter_generation_micro_batch_uses_shared_dispatch_when_distributed(mo
         {
             "backend_config": {
                 "native_tp": {
-                    "generation_micro_batch_size": 1,
+                    "gpu_memory_utilization": 0.90,
                     "use_kv_cache_for_rollout": True,
                 }
             }
@@ -1204,3 +1205,124 @@ class _TinyQwen35LinearLoader:
 
     def get_optional(self, name: str) -> torch.Tensor | None:
         return self.tensors.get(name)
+
+
+# ---------------------------------------------------------------------------
+# _slice_multimodal_inputs tests
+# ---------------------------------------------------------------------------
+
+
+class TestSliceMultimodalInputs:
+    """Tests for _slice_multimodal_inputs -- the helper that slices multimodal
+    tensors (pixel_values, image_grid_thw, etc.) by batch row range under the
+    equal-per-row assumption that holds during multimodal rollout."""
+
+    @staticmethod
+    def _make_inputs(
+        B: int = 4,
+        images_per_row: int = 2,
+        patches_per_row: int = 6,
+        include_video: bool = False,
+    ) -> dict[str, torch.Tensor]:
+        """Build a plausible multimodal_inputs dict for B identical rows."""
+        total_images = B * images_per_row
+        total_patches = B * patches_per_row
+        inputs: dict[str, torch.Tensor] = {
+            "pixel_values": torch.randn(total_patches, 3, 16, 16),
+            "image_grid_thw": torch.randint(1, 4, (total_images, 3)),
+            "mm_token_type_ids": torch.zeros(B, 128, dtype=torch.long),
+        }
+        if include_video:
+            inputs["pixel_values_videos"] = torch.randn(total_patches, 3, 16, 16)
+            inputs["video_grid_thw"] = torch.randint(1, 4, (total_images, 3))
+        return inputs
+
+    def test_full_batch_slice_same_as_input(self):
+        """Slicing [0, B) should return the full tensors unchanged."""
+        B = 4
+        inputs = self._make_inputs(B=B, images_per_row=2, patches_per_row=6)
+        sliced = _slice_multimodal_inputs(
+            inputs, 0, B, images_per_row=2, patches_per_row=6,
+        )
+        assert torch.equal(sliced["pixel_values"], inputs["pixel_values"])
+        assert torch.equal(sliced["image_grid_thw"], inputs["image_grid_thw"])
+        assert torch.equal(sliced["mm_token_type_ids"], inputs["mm_token_type_ids"])
+
+    def test_slice_first_two_rows(self):
+        """Slice rows [0, 2) out of B=4."""
+        B = 4
+        img_per = 2
+        patch_per = 6
+        inputs = self._make_inputs(B=B, images_per_row=img_per, patches_per_row=patch_per)
+        sliced = _slice_multimodal_inputs(
+            inputs, 0, 2, images_per_row=img_per, patches_per_row=patch_per,
+        )
+        assert sliced["pixel_values"].shape == (2 * patch_per, 3, 16, 16)
+        assert sliced["image_grid_thw"].shape == (2 * img_per, 3)
+        assert sliced["mm_token_type_ids"].shape == (2, 128)
+        # Verify pixel_values content: first 12 patches
+        assert torch.equal(sliced["pixel_values"], inputs["pixel_values"][:12])
+        # Verify image_grid_thw content: first 4 images
+        assert torch.equal(sliced["image_grid_thw"], inputs["image_grid_thw"][:4])
+
+    def test_slice_last_row_partial(self):
+        """Slice a single row from the end: [3, 4)."""
+        B = 4
+        img_per = 2
+        patch_per = 6
+        inputs = self._make_inputs(B=B, images_per_row=img_per, patches_per_row=patch_per)
+        sliced = _slice_multimodal_inputs(
+            inputs, 3, 4, images_per_row=img_per, patches_per_row=patch_per,
+        )
+        assert sliced["pixel_values"].shape == (6, 3, 16, 16)
+        assert sliced["image_grid_thw"].shape == (2, 3)
+        # Last row's pixel_values: patches [18, 24)
+        assert torch.equal(sliced["pixel_values"], inputs["pixel_values"][18:24])
+        # Last row's image_grid_thw: images [6, 8)
+        assert torch.equal(sliced["image_grid_thw"], inputs["image_grid_thw"][6:8])
+
+    def test_no_images_returns_empty_dict(self):
+        """When images_per_row=0 and patches_per_row=0, no image keys should appear."""
+        inputs = {"mm_token_type_ids": torch.zeros(4, 128, dtype=torch.long)}
+        sliced = _slice_multimodal_inputs(
+            inputs, 0, 2, images_per_row=0, patches_per_row=0,
+        )
+        assert "pixel_values" not in sliced
+        assert "image_grid_thw" not in sliced
+        # mm_token_type_ids is always included if present
+        assert sliced["mm_token_type_ids"].shape == (2, 128)
+
+    def test_mm_token_type_ids_always_sliced(self):
+        """mm_token_type_ids is sliced by simple row indexing regardless of images."""
+        inputs = self._make_inputs(B=4)
+        sliced = _slice_multimodal_inputs(
+            inputs, 1, 3, images_per_row=2, patches_per_row=6,
+        )
+        assert torch.equal(sliced["mm_token_type_ids"], inputs["mm_token_type_ids"][1:3])
+
+    def test_video_keys_sliced_when_present(self):
+        """Video tensors are sliced when video_per_row > 0."""
+        B = 3
+        vid_per = 1
+        vid_patch_per = 4
+        inputs = {
+            "pixel_values_videos": torch.randn(B * vid_patch_per, 3, 16, 16),
+            "video_grid_thw": torch.randint(1, 4, (B * vid_per, 3)),
+        }
+        sliced = _slice_multimodal_inputs(
+            inputs, 0, 2,
+            videos_per_row=vid_per,
+            video_patches_per_row=vid_patch_per,
+        )
+        assert sliced["pixel_values_videos"].shape == (2 * vid_patch_per, 3, 16, 16)
+        assert sliced["video_grid_thw"].shape == (2 * vid_per, 3)
+
+    def test_missing_keys_not_in_output(self):
+        """A key not present in inputs should not appear in output."""
+        inputs = {"mm_token_type_ids": torch.zeros(4, 128, dtype=torch.long)}
+        sliced = _slice_multimodal_inputs(
+            inputs, 0, 2, images_per_row=2, patches_per_row=6,
+        )
+        # images_per_row > 0 but key missing → not added
+        assert "pixel_values" not in sliced
+        assert "image_grid_thw" not in sliced

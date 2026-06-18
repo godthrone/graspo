@@ -196,13 +196,33 @@ def likely_truncated_json(text: str, detail: dict[str, Any] | None = None) -> bo
     return False
 
 
+def _is_pure_tool_call_task(targets: Any) -> bool:
+    """Return True when targets only use tool_calls (no output.content entries)."""
+    if not isinstance(targets, list) or not targets:
+        return False
+    has_content = any(
+        isinstance(t, dict)
+        and isinstance(t.get("output"), dict)
+        and "content" in t["output"]
+        for t in targets
+    )
+    has_tool_calls = any(
+        isinstance(t, dict)
+        and isinstance(t.get("output"), dict)
+        and "tool_calls" in t["output"]
+        for t in targets
+    )
+    return has_tool_calls and not has_content
+
+
 def group_debug_summary(payload: dict[str, Any]) -> dict[str, Any]:
     completions = payload.get("completions", [])
     content_scores = payload.get("content_scores", [])
     rewards = payload.get("rewards", [])
     reward_details = payload.get("reward_details", [])
     targets = payload.get("targets")
-    summaries = [summarize_json_markers(text) for text in completions]
+    pure_tool_call = _is_pure_tool_call_task(targets)
+    summaries = [summarize_json_markers(text) for text in completions] if not pure_tool_call else []
     target_counts = _target_tool_call_counts(targets)
     return {
         "reward_range_zero": len(set(float(value) for value in rewards)) <= 1 if rewards else True,
@@ -210,19 +230,31 @@ def group_debug_summary(payload: dict[str, Any]) -> dict[str, Any]:
         and all(float(value) == 0.0 for value in content_scores),
         "content_all_one": bool(content_scores)
         and all(float(value) == 1.0 for value in content_scores),
-        "missing_json_marker_count": sum(1 for item in summaries if not item["has_markdown_json"]),
-        "unclosed_json_fence_count": sum(
-            1
-            for item in summaries
-            if item["has_markdown_json"] and not item["has_closing_json_fence"]
+        "missing_json_marker_count": (
+            0 if pure_tool_call
+            else sum(1 for item in summaries if not item["has_markdown_json"])
         ),
-        "invalid_extracted_json_count": sum(
-            1 for item in reward_details if item.get("valid_extracted_json") is False
+        "unclosed_json_fence_count": (
+            0 if pure_tool_call
+            else sum(
+                1
+                for item in summaries
+                if item["has_markdown_json"] and not item["has_closing_json_fence"]
+            )
         ),
-        "likely_truncated_json_count": sum(
-            1
-            for text, detail in zip(completions, reward_details, strict=False)
-            if likely_truncated_json(text, detail)
+        "invalid_extracted_json_count": (
+            0 if pure_tool_call
+            else sum(
+                1 for item in reward_details if item.get("valid_extracted_json") is False
+            )
+        ),
+        "likely_truncated_json_count": (
+            0 if pure_tool_call
+            else sum(
+                1
+                for text, detail in zip(completions, reward_details, strict=False)
+                if likely_truncated_json(text, detail)
+            )
         ),
         "tool_call_parse_error_count": sum(
             1 for item in reward_details if item.get("parse_errors")

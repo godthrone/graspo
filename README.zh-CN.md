@@ -107,13 +107,18 @@ GRASPO 当前提供一个内置结构化输出 reward，适合目标答案为 JS
 1. 解析模型私有输出格式：模型 adapter 把 raw completion 中的 Qwen XML tool call 等格式转成 canonical 结构，同时保留 raw text 和 `<think>...</think>`。Qwen XML tool-call 参数会根据工具 schema 中的 `integer`、`number`、`boolean` 类型先转成对应 JSON 类型，再进入 reward。
 2. 检查输出标记：根据 reward 配置，可要求 `<think>...</think>`；普通 answer 任务还可以要求 fenced JSON Markdown block。
 3. 比较结构化内容：普通 answer 任务逐个比较 parsed JSON 和 `targets[].output.content`；工具调用任务逐个比较 canonical tool-call sequence 和 `targets[].output.tool_calls`，并保持同一 target 内的多步调用顺序。最终使用得分最高的 target。JSON number 字段使用 `1 / (1 + abs(predicted - target))` 连续计分；非数字字段和类型不匹配仍按严格相等比较。
+
+   列表（list）内的 dict 元素会递归展开计分：`count_target_score` 将 dict 元素按完整结构计入分母，`count_check_score` 使用 raw check score 而非压缩后的 normalized 0-1 分。这确保复杂 dict 列表（如 tool-call `arguments`）的字段差异能正确反映在 reward 信号中，同时不影响 scalar 列表和扁平大 JSON（如工单字段抽取）的计分行为。
 4. 归一化 reward：标记分、结构化内容分、完全正确 bonus 和多余文本惩罚/奖励合成 `reward`、`content_score` 和 `all_right`。
+
+   `dict_compare_score` 返回 `CompareResult`，同时携带两个并行分数：完整 `dcs`（含数值叶节点，保留训练梯度）和 `base_dcs`（两边同步去除数值字段后比较，用于 `all_right` 判定）。这样 `distance_cm`、`angle_deg` 等数值字段仍通过 `content_score` 参与训练，但 `all_right` 只要求非数值结构匹配——动作正确但距离略有偏差的 completion 也算 "all right"，`perfect_skip` 和 `max_correct` 组决策不再被连续数值打分阻塞。
 
 关键输出：
 
 - `reward`：用于 GRASPO group decision、advantage 计算和 ReplayBuffer 训练；
-- `content_score`：组过滤前的结构化内容匹配分；
-- `all_right`：只要任意一个 target 完全正确就是 true，因此数字字段也必须误差为 0 才算 perfect。
+- `content_score`：组过滤前的结构化内容匹配分（含数值连续打分）；
+- `base_content_score`：去数值后的结构匹配分，用于诊断数值字段贡献；
+- `all_right`：非数值字段完全匹配即为 true，不再要求数值误差为 0。
 
 不应该获得连续数字分的 ID 或类别编码，应该在数据集中写成 JSON string。
 
