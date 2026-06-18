@@ -154,9 +154,26 @@ steps:
    inside each target. GRASPO uses the best-scoring target. JSON number fields
    are scored with `1 / (1 + abs(predicted - target))`; non-numeric fields and
    mismatched types still use strict equality.
+
+   Dict elements inside lists are recursively expanded in the denominator:
+   `count_target_score` counts each dict element's full structure, and
+   `count_check_score` uses the raw check score rather than a compressed 0-1
+   normalized value.  This gives deep dict lists (e.g. tool-call `arguments`)
+   proper reward differentiation while leaving scalar lists and large flat JSON
+   (e.g. field-extraction tasks) unchanged.
 4. Normalize reward. Marker score, structured content score, perfect-match
    bonus, and the extra-text penalty/bonus are combined into `reward`,
    `content_score`, and `all_right`.
+
+   `dict_compare_score` returns a ``CompareResult`` that carries two parallel
+   scores: the full ``dcs`` (numeric leaf values included, for gradient signal)
+   and ``base_dcs`` (numeric leaves stripped from both sides, for ``all_right``
+   gating).  This means numeric fields like ``distance_cm`` or ``angle_deg``
+   still flow through ``content_score`` for training, but ``all_right`` only
+   requires non-numeric structure to match — an action-type-correct completion
+   with a slightly-off distance is still considered "all right", so
+   `perfect_skip` and `max_correct` group decisions are no longer blocked by
+   continuous numeric scores.
 
 The important outputs are:
 

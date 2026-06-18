@@ -5,7 +5,7 @@ import math
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from graspo.core.compare import dict_compare_score
+from graspo.core.compare import CompareResult, dict_compare_score
 from graspo.core.completion import ParsedCompletion, raw_parsed_completion
 
 
@@ -30,6 +30,7 @@ class RewardConfig:
 class RewardResult:
     reward: float
     content_score: float
+    base_content_score: float
     all_right: bool
     extracted: dict[str, Any]
     useless_text: str
@@ -112,6 +113,7 @@ class GraspoReward:
         max_score = self._max_reward(check_list)
         raw_score = 0.0
         content_score = 0.0
+        base_content_score = 0.0
         extracted: dict[ContentField, str] = {}
         useless_text = ""
         content_type: ContentField | None = None
@@ -165,21 +167,23 @@ class GraspoReward:
                 content = target["output"].get("content")
                 if not isinstance(content, dict):
                     continue
-                dcs, total_score, check_score = dict_compare_score(
+                result = dict_compare_score(
                     checked=checked,
                     target=content,
                     check_list_order=self.config.check_list_order,
                 )
                 score.update(
                     {
-                        "content_score": dcs,
-                        "all_right": total_score == check_score,
+                        "content_score": result.dcs,
+                        "base_content_score": result.base_dcs,
+                        "all_right": result.all_right,
                     }
                 )
-                if best is None or dcs > float(best["content_score"]):
+                if best is None or result.dcs > float(best["content_score"]):
                     best = score
             if best is not None:
                 content_score = float(best["content_score"])
+                base_content_score = float(best.get("base_content_score", 0.0))
                 raw_score += content_score * self.config.content_reward_weight
                 if bool(best["all_right"]):
                     raw_score += self.config.content_reward_weight
@@ -196,6 +200,7 @@ class GraspoReward:
         return RewardResult(
             reward=normalized_reward,
             content_score=content_score,
+            base_content_score=base_content_score,
             all_right=all_right,
             extracted={key: value for key, value in extracted.items()},
             useless_text=useless_text,
@@ -228,6 +233,7 @@ class GraspoReward:
         max_score = self._tool_call_max_reward()
         raw_score = think_score
         content_score = 0.0
+        base_content_score = 0.0
         all_right = False
         target_scores: list[dict[str, Any]] = [
             _empty_target_score(target, idx) for idx, target in enumerate(normalized_targets)
@@ -242,21 +248,23 @@ class GraspoReward:
                     calls = target["output"].get("tool_calls")
                     if not isinstance(calls, list):
                         continue
-                    dcs, total_score, check_score = dict_compare_score(
+                    result = dict_compare_score(
                         checked=checked,
                         target={"tool_calls": calls},
                         check_list_order=True,
                     )
                     score.update(
                         {
-                            "content_score": dcs,
-                            "all_right": total_score == check_score and not parsed.parse_errors,
+                            "content_score": result.dcs,
+                            "base_content_score": result.base_dcs,
+                            "all_right": result.all_right and not parsed.parse_errors,
                         }
                     )
-                    if best is None or dcs > float(best["content_score"]):
+                    if best is None or result.dcs > float(best["content_score"]):
                         best = score
                 if best is not None:
                     content_score = float(best["content_score"])
+                    base_content_score = float(best.get("base_content_score", 0.0))
                 raw_score += content_score * self.config.content_reward_weight
                 all_right = bool(best and best["all_right"])
                 if all_right:
@@ -266,6 +274,7 @@ class GraspoReward:
         return RewardResult(
             reward=normalized_reward,
             content_score=content_score,
+            base_content_score=base_content_score,
             all_right=all_right,
             extracted={
                 "tool_calls": parsed.tool_calls,
@@ -340,5 +349,6 @@ def _empty_target_score(target: dict[str, Any], index: int) -> dict[str, Any]:
         "target_index": index,
         "target_id": target.get("id"),
         "content_score": 0.0,
+        "base_content_score": 0.0,
         "all_right": False,
     }

@@ -56,7 +56,9 @@ def test_reward_numeric_json_field_uses_continuous_distance_score():
         _content_targets({"action": "left", "distance_cm": 6}),
     )
 
-    assert result.all_right is False
+    # all_right strips numeric leaves → both {"action": "left"} → all_right is True
+    assert result.all_right is True
+    # content_score includes numeric fields (gradient signal preserved)
     assert result.content_score == pytest.approx((4 + 1 / 3) / 5)
     assert result.content_score > type_mismatch.content_score
 
@@ -82,7 +84,8 @@ def test_reward_selects_best_content_target():
         ),
     )
 
-    assert result.all_right is False
+    # target-1 matches structurally ("down"), numeric distance_cm stripped → all_right is True
+    assert result.all_right is True
     assert result.matched_target_index == 1
     assert result.matched_target_id == "target-1"
     assert result.target_scores is not None
@@ -157,7 +160,8 @@ def test_reward_parsed_tool_call_numeric_argument_gets_partial_credit():
     partial_result = reward.score_parsed(partial, targets, is_tool_call=True)
     mismatch_result = reward.score_parsed(type_mismatch, targets, is_tool_call=True)
 
-    assert partial_result.all_right is False
+    # numeric distance_cm stripped → structural match → all_right is True
+    assert partial_result.all_right is True
     assert 0 < partial_result.content_score < 1
     assert partial_result.content_score > mismatch_result.content_score
 
