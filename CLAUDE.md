@@ -44,6 +44,20 @@ The activation estimate accounts for full-attention QK^T materialisation
 For Qwen3.5's hybrid architecture (8 full-attn + 24 linear-attn layers),
 the full-attention layers dominate the prefill peak.
 
+## Known Bug: mRoPE ndim=4 in `_apply_rope` / `_apply_rope_partial`
+
+**Fixed in 0.6.0.** On PyTorch ≥ 2.12 with CUDA 13.2, `_qwen35_mrope_embeddings` returns
+cos/sin with ndim=4 (shape `(1, B, S, head_dim)`).  The old code only handled
+ndim=2 and ndim=3; ndim=4 fell through to `cos[position_ids].unsqueeze(1)`,
+which double-indexed the already position-aware mRoPE cos tensor and caused a
+dimension mismatch (`RuntimeError: size 926 ≠ 925 at dim 2`) on the second
+decode step of multimodal generation.
+
+**Fix** (`tensor_utils.py`): added `elif cos.ndim == 4: cos.squeeze(0).unsqueeze(1)`
+to both `_apply_rope` and `_apply_rope_partial`.  This strips the mRoPE dimension
+(always 1) and adds the head dimension, matching the ndim=3 pattern.  See
+`tests/test_rope_ndim.py`.
+
 ## Deploy
 
 ```bash
