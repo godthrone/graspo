@@ -65,6 +65,28 @@ gibberish.
 adapter.py now imports them from tensor_utils.  See `tests/test_rope_ndim.py`
 (`TestTPGlobals`).
 
+## Known Bug: `_causal_attention_mask` KV-cache dimension mismatch
+
+**Fixed in 0.6.0.**  `tensor_utils.py:_causal_attention_mask` used the full
+`attention_mask` as `key_mask` (`attention_mask[:, None, None, :]`).  During
+incremental KV-cache decode the attention mask grows longer than `key_len`
+(new query positions are appended each step), causing a broadcast mismatch:
+
+```
+causal.view(1, 1, query_len, key_len)  &  key_mask  # [:, :, :, 32] vs [:, :, :, 33]
+```
+
+**Fix**: truncate `key_mask` to the last `key_len` positions:
+`attention_mask[:, None, None, -key_len:]`.
+
+Verified with gold-standard HF `generate()` comparison: all tokens match
+(TP=1, greedy decode, 3 prompts × 20 tokens).
+
+**Why training was broken**: with TP>1 and empty_cache disabled between
+phases, the KV cache from a previous step could leak into the next rollout
+if the attention mask shape was wrong for certain prompt lengths.  This
+caused the 100% gibberish output observed during training.
+
 ## Deploy
 
 ```bash
