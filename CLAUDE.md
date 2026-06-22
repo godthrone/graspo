@@ -46,17 +46,20 @@ the full-attention layers dominate the prefill peak.
 
 ## Known Bug: mRoPE ndim=4 in `_apply_rope` / `_apply_rope_partial`
 
-**Fixed in 0.6.0.** On PyTorch ≥ 2.12 with CUDA 13.2, `_qwen35_mrope_embeddings` returns
-cos/sin with ndim=4 (shape `(1, B, S, head_dim)`).  The old code only handled
-ndim=2 and ndim=3; ndim=4 fell through to `cos[position_ids].unsqueeze(1)`,
-which double-indexed the already position-aware mRoPE cos tensor and caused a
-dimension mismatch (`RuntimeError: size 926 ≠ 925 at dim 2`) on the second
-decode step of multimodal generation.
+**Fixed in 0.6.0.** See `tests/test_rope_ndim.py`.
 
-**Fix** (`tensor_utils.py`): added `elif cos.ndim == 4: cos.squeeze(0).unsqueeze(1)`
-to both `_apply_rope` and `_apply_rope_partial`.  This strips the mRoPE dimension
-(always 1) and adds the head dimension, matching the ndim=3 pattern.  See
-`tests/test_rope_ndim.py`.
+## Known Bug: TP all-reduce silently disabled
+
+**Fixed in 0.6.0.** `_TENSOR_PARALLEL_GROUP` and `_TENSOR_PARALLEL_SIZE` were
+duplicated in `adapter.py` and `tensor_utils.py`.  `_set_tensor_parallel_group()`
+in adapter.py set the adapter.py copies; `_all_reduce_tp()` in tensor_utils.py
+read the tensor_utils.py copies — which were always `None`/`1`.  Every TP>1
+training run was silently running without cross-rank reduction, producing
+gibberish.
+
+**Fix**: moved globals and `_set_tensor_parallel_group()` to `tensor_utils.py`.
+adapter.py now imports them from tensor_utils.  See `tests/test_rope_ndim.py`
+(`TestTPGlobals`).
 
 ## Deploy
 

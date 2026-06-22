@@ -1,3 +1,7 @@
+# GRASPO 0.6.0 — Example Configuration
+# Requires: PyTorch >= 2.12, CUDA >= 13.2
+# For multimodal (vision-language) training, set reward.check_tool_call: true
+# and use a multimodal model (Qwen3.5-9B, etc.).
 backend: native-tp
 
 model:
