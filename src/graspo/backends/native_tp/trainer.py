@@ -111,10 +111,42 @@ class NativeTPGraspoTrainer:
             raw_enabled=native.raw_log_enabled,
         )
 
+    def _setup_memory_guard(self) -> None:
+        """Allocate a persistent tensor to keep GPU memory near peak usage.
+
+        This prevents nvidia-smi from showing large memory swings between
+        rollout and optimize phases, which helps avoid GPU resource contention
+        on shared machines.
+        """
+        import torch
+
+        if not torch.cuda.is_available():
+            return
+        free_bytes, total_bytes = torch.cuda.mem_get_info()
+        target_free = 3 * 1024**3  # 3 GiB headroom
+        padding_bytes = int(free_bytes) - target_free
+        if padding_bytes <= 0:
+            return
+        self._memory_guard = torch.empty(
+            padding_bytes, dtype=torch.uint8, device="cuda"
+        )
+        self._print_json(
+            {
+                "timestamp": _timestamp(),
+                "event": "memory_guard_allocated",
+                "allocated_gib": round(padding_bytes / (1024**3), 2),
+                "free_after_gib": round(
+                    torch.cuda.mem_get_info()[0] / (1024**3), 2
+                ),
+                "total_gib": round(total_bytes / (1024**3), 2),
+            }
+        )
+
     def train(self) -> None:
         validate_native_runtime_config(self.config)
         self.runtime.validate()
         self.runtime.setup()
+        self._setup_memory_guard()
         self._print_json(
             {
                 "timestamp": _timestamp(),
