@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-IMAGE_NAME="${IMAGE_NAME:-graspo:cuda12.4}"
+IMAGE_NAME="${IMAGE_NAME:-graspo:0.6.0-cuda13.2}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 echo "Building ${IMAGE_NAME} from ${ROOT_DIR}"
