@@ -111,55 +111,10 @@ class NativeTPGraspoTrainer:
             raw_enabled=native.raw_log_enabled,
         )
 
-    def _setup_memory_guard(self) -> None:
-        """Allocate a persistent tensor to keep GPU memory near peak usage.
-
-        Controlled by ``native_tp.memory_guard_headroom_gib`` (default 0 = disabled).
-        When set to a positive value N, allocates free_memory − N GiB as a
-        persistent uint8 tensor so nvidia-smi shows stable high utilisation.
-        This can help avoid GPU resource contention on shared machines, but
-        setting the headroom too low will cause OOM during multimodal prefill
-        or decode.  Reasonable values for 80 GiB GPUs: 12–20 GiB.
-        """
-        import torch
-
-        headroom = int(self.config.native_tp.memory_guard_headroom_gib)
-        if headroom <= 0 or not torch.cuda.is_available():
-            return
-        free_bytes, total_bytes = torch.cuda.mem_get_info()
-        target_free = headroom * 1024**3
-        padding_bytes = int(free_bytes) - target_free
-        if padding_bytes <= 0:
-            self._print_json(
-                {
-                    "timestamp": _timestamp(),
-                    "event": "memory_guard_skipped",
-                    "free_gib": round(free_bytes / (1024**3), 2),
-                    "headroom_gib": headroom,
-                    "reason": "insufficient free memory",
-                }
-            )
-            return
-        self._memory_guard = torch.empty(
-            padding_bytes, dtype=torch.uint8, device="cuda"
-        )
-        self._print_json(
-            {
-                "timestamp": _timestamp(),
-                "event": "memory_guard_allocated",
-                "allocated_gib": round(padding_bytes / (1024**3), 2),
-                "free_after_gib": round(
-                    torch.cuda.mem_get_info()[0] / (1024**3), 2
-                ),
-                "total_gib": round(total_bytes / (1024**3), 2),
-            }
-        )
-
     def train(self) -> None:
         validate_native_runtime_config(self.config)
         self.runtime.validate()
         self.runtime.setup()
-        self._setup_memory_guard()
         self._print_json(
             {
                 "timestamp": _timestamp(),
