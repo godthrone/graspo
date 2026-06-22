@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "graspo"
-version = "0.3.0"
+version = "0.6.0"
 description = "GRASPO LoRA reinforcement learning with a self-owned native TP/PP backend."
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
@@ -33,6 +33,7 @@ where = ["src"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+extend-exclude = ["*.jsonl"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

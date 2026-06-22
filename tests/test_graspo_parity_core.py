@@ -154,18 +154,18 @@ def test_group_advantages_matches_original_sample_std_formula():
 def test_replay_buffer_optimize_threshold_uses_completion_batch_times_rollout_group():
     assert (
         replay_buffer_optimize_threshold(
-            optimize_completion_batch_size=4,
+            optimize_prompt_batch_size=4,
             rollout_group_size=8,
         )
         == 32
     )
     assert replay_ready(
         replay_size=32,
-        optimize_completion_batch_size=4,
+        optimize_prompt_batch_size=4,
         rollout_group_size=8,
     )
     assert not replay_ready(
         replay_size=31,
-        optimize_completion_batch_size=4,
+        optimize_prompt_batch_size=4,
         rollout_group_size=8,
     )

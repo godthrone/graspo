@@ -174,8 +174,7 @@ def _list_element_raw_score(
             if result.total_score > 0 and (
                 best_total == 1
                 and best_check == 0.0
-                or result.check_score / result.total_score
-                > best_check / best_total
+                or result.check_score / result.total_score > best_check / best_total
             ):
                 best_check = result.check_score
                 best_total = result.total_score

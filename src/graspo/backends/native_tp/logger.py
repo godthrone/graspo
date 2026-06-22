@@ -201,15 +201,11 @@ def _is_pure_tool_call_task(targets: Any) -> bool:
     if not isinstance(targets, list) or not targets:
         return False
     has_content = any(
-        isinstance(t, dict)
-        and isinstance(t.get("output"), dict)
-        and "content" in t["output"]
+        isinstance(t, dict) and isinstance(t.get("output"), dict) and "content" in t["output"]
         for t in targets
     )
     has_tool_calls = any(
-        isinstance(t, dict)
-        and isinstance(t.get("output"), dict)
-        and "tool_calls" in t["output"]
+        isinstance(t, dict) and isinstance(t.get("output"), dict) and "tool_calls" in t["output"]
         for t in targets
     )
     return has_tool_calls and not has_content
@@ -231,11 +227,11 @@ def group_debug_summary(payload: dict[str, Any]) -> dict[str, Any]:
         "content_all_one": bool(content_scores)
         and all(float(value) == 1.0 for value in content_scores),
         "missing_json_marker_count": (
-            0 if pure_tool_call
-            else sum(1 for item in summaries if not item["has_markdown_json"])
+            0 if pure_tool_call else sum(1 for item in summaries if not item["has_markdown_json"])
         ),
         "unclosed_json_fence_count": (
-            0 if pure_tool_call
+            0
+            if pure_tool_call
             else sum(
                 1
                 for item in summaries
@@ -243,13 +239,13 @@ def group_debug_summary(payload: dict[str, Any]) -> dict[str, Any]:
             )
         ),
         "invalid_extracted_json_count": (
-            0 if pure_tool_call
-            else sum(
-                1 for item in reward_details if item.get("valid_extracted_json") is False
-            )
+            0
+            if pure_tool_call
+            else sum(1 for item in reward_details if item.get("valid_extracted_json") is False)
         ),
         "likely_truncated_json_count": (
-            0 if pure_tool_call
+            0
+            if pure_tool_call
             else sum(
                 1
                 for text, detail in zip(completions, reward_details, strict=False)

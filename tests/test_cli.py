@@ -73,7 +73,7 @@ def test_config_example_loads():
     assert config.training.training_epoch_count == 100
     assert config.training.max_new_tokens == 2048
     assert config.launch.gpus == [0, 1]
-    assert config.native_tp.tensor_model_parallel_size == 2
+    assert config.native_tp.tp_size == 2
 
 
 def test_launch_plan_native_tp_uses_torchrun(tmp_path):
@@ -178,7 +178,7 @@ def test_only_readmes_are_tracked_markdown_docs():
         line.strip().replace("\\", "/") for line in result.stdout.splitlines() if line.strip()
     }
 
-    assert tracked_markdown == {"README.md", "README.zh-CN.md"}
+    assert tracked_markdown == {"CLAUDE.md", "QUICKSTART.md", "README.md", "README.zh-CN.md"}
 
 
 def _write_launch_config(
@@ -210,8 +210,8 @@ training:
   output_dir: {json.dumps(str(output_dir))}
 backend_config:
   native_tp:
-    tensor_model_parallel_size: {tensor_parallel}
-    pipeline_model_parallel_size: {pipeline_parallel}
+    tp_size: {tensor_parallel}
+    pp_size: {pipeline_parallel}
 launch:
   gpus: {gpus}
   nproc_per_node: {nproc_per_node}
