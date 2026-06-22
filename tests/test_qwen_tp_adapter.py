@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any
 
 import pytest
+
+if TYPE_CHECKING:
+    import torch
 
 torch = pytest.importorskip("torch")
 if not hasattr(torch, "float8_e8m0fnu"):
@@ -99,7 +103,7 @@ def test_qwen_format_messages_passes_tools_to_chat_template():
         chat_template = "template"
 
         def __init__(self) -> None:
-            self.calls = []
+            self.calls: list[tuple[Any, Any]] = []
 
         def apply_chat_template(self, messages, **kwargs):
             self.calls.append((messages, kwargs))
@@ -995,7 +999,7 @@ def test_adapter_generation_micro_batch_uses_shared_dispatch_when_distributed(mo
         {
             "backend_config": {
                 "native_tp": {
-                    "gpu_memory_utilization": 0.90,
+                    "forward_batch_size": 8,
                     "use_kv_cache_for_rollout": True,
                 }
             }
@@ -1242,7 +1246,11 @@ class TestSliceMultimodalInputs:
         B = 4
         inputs = self._make_inputs(B=B, images_per_row=2, patches_per_row=6)
         sliced = _slice_multimodal_inputs(
-            inputs, 0, B, images_per_row=2, patches_per_row=6,
+            inputs,
+            0,
+            B,
+            images_per_row=2,
+            patches_per_row=6,
         )
         assert torch.equal(sliced["pixel_values"], inputs["pixel_values"])
         assert torch.equal(sliced["image_grid_thw"], inputs["image_grid_thw"])
@@ -1255,7 +1263,11 @@ class TestSliceMultimodalInputs:
         patch_per = 6
         inputs = self._make_inputs(B=B, images_per_row=img_per, patches_per_row=patch_per)
         sliced = _slice_multimodal_inputs(
-            inputs, 0, 2, images_per_row=img_per, patches_per_row=patch_per,
+            inputs,
+            0,
+            2,
+            images_per_row=img_per,
+            patches_per_row=patch_per,
         )
         assert sliced["pixel_values"].shape == (2 * patch_per, 3, 16, 16)
         assert sliced["image_grid_thw"].shape == (2 * img_per, 3)
@@ -1272,7 +1284,11 @@ class TestSliceMultimodalInputs:
         patch_per = 6
         inputs = self._make_inputs(B=B, images_per_row=img_per, patches_per_row=patch_per)
         sliced = _slice_multimodal_inputs(
-            inputs, 3, 4, images_per_row=img_per, patches_per_row=patch_per,
+            inputs,
+            3,
+            4,
+            images_per_row=img_per,
+            patches_per_row=patch_per,
         )
         assert sliced["pixel_values"].shape == (6, 3, 16, 16)
         assert sliced["image_grid_thw"].shape == (2, 3)
@@ -1285,7 +1301,11 @@ class TestSliceMultimodalInputs:
         """When images_per_row=0 and patches_per_row=0, no image keys should appear."""
         inputs = {"mm_token_type_ids": torch.zeros(4, 128, dtype=torch.long)}
         sliced = _slice_multimodal_inputs(
-            inputs, 0, 2, images_per_row=0, patches_per_row=0,
+            inputs,
+            0,
+            2,
+            images_per_row=0,
+            patches_per_row=0,
         )
         assert "pixel_values" not in sliced
         assert "image_grid_thw" not in sliced
@@ -1296,7 +1316,11 @@ class TestSliceMultimodalInputs:
         """mm_token_type_ids is sliced by simple row indexing regardless of images."""
         inputs = self._make_inputs(B=4)
         sliced = _slice_multimodal_inputs(
-            inputs, 1, 3, images_per_row=2, patches_per_row=6,
+            inputs,
+            1,
+            3,
+            images_per_row=2,
+            patches_per_row=6,
         )
         assert torch.equal(sliced["mm_token_type_ids"], inputs["mm_token_type_ids"][1:3])
 
@@ -1310,7 +1334,9 @@ class TestSliceMultimodalInputs:
             "video_grid_thw": torch.randint(1, 4, (B * vid_per, 3)),
         }
         sliced = _slice_multimodal_inputs(
-            inputs, 0, 2,
+            inputs,
+            0,
+            2,
             videos_per_row=vid_per,
             video_patches_per_row=vid_patch_per,
         )
@@ -1321,7 +1347,11 @@ class TestSliceMultimodalInputs:
         """A key not present in inputs should not appear in output."""
         inputs = {"mm_token_type_ids": torch.zeros(4, 128, dtype=torch.long)}
         sliced = _slice_multimodal_inputs(
-            inputs, 0, 2, images_per_row=2, patches_per_row=6,
+            inputs,
+            0,
+            2,
+            images_per_row=2,
+            patches_per_row=6,
         )
         # images_per_row > 0 but key missing → not added
         assert "pixel_values" not in sliced

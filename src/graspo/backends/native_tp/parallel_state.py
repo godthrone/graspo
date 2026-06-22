@@ -39,8 +39,8 @@ class NativeTPState:
         expected_world_size = tp_size * pp_size
         if world_size != expected_world_size:
             raise RuntimeError(
-                "native placement requires WORLD_SIZE == tensor_model_parallel_size * "
-                f"pipeline_model_parallel_size ({world_size} != {tp_size} * {pp_size})"
+                "native placement requires WORLD_SIZE == tp_size * "
+                f"pp_size ({world_size} != {tp_size} * {pp_size})"
             )
         pp_rank = rank // tp_size
         tp_rank = rank % tp_size

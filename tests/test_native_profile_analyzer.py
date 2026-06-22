@@ -63,7 +63,7 @@ def test_analyze_native_profile_summarizes_train_gpu_and_rank_metrics(tmp_path):
             "rank_metrics": [
                 {
                     "rank": 0,
-                    "pipeline_train_schedule": "one_f_one_b",
+                    "pp_schedule": "one_f_one_b",
                     "pipeline_stage_timing": {
                         "pipeline_stage_compute_sec": 3.0,
                         "pipeline_backward_autograd_sec": 4.0,
@@ -83,4 +83,4 @@ def test_analyze_native_profile_summarizes_train_gpu_and_rank_metrics(tmp_path):
     assert summary["decode_tokens_per_sec"] == 5.0
     assert summary["trainable_groups_per_hour"] == 144.0
     assert summary["gpu"]["per_gpu"]["0"]["memory_used_mib_peak"] == 2048.0
-    assert summary["rank"]["per_rank"]["0"]["pipeline_train_schedule"] == "one_f_one_b"
+    assert summary["rank"]["per_rank"]["0"]["pp_schedule"] == "one_f_one_b"

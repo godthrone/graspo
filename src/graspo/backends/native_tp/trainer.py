@@ -127,7 +127,7 @@ class NativeTPGraspoTrainer:
                 "model_path": self.config.model.model_path,
                 "train_path": self.config.data.train_path,
                 "completion_parser": self._completion_parser_name(),
-                "tensor_model_parallel_size": self.config.native_tp.tensor_model_parallel_size,
+                "tp_size": self.config.native_tp.tp_size,
             }
         )
 
@@ -145,8 +145,7 @@ class NativeTPGraspoTrainer:
                 "resume": self.resume_info,
                 "config": {
                     "rollout_group_size": self.config.training.rollout_group_size,
-                    "rollout_group_size": self.config.training.rollout_group_size,
-                    "optimize_completion_batch_size": self.config.training.optimize_completion_batch_size,
+                    "optimize_prompt_batch_size": self.config.training.optimize_prompt_batch_size,
                     "optimize_times_per_step": self.config.training.optimize_times_per_step,
                     "replay_buffer_optimize_threshold": self.config.training.replay_buffer_optimize_threshold,
                     "rollout_max_retry_times": self.config.training.rollout_max_retry_times,
@@ -160,7 +159,7 @@ class NativeTPGraspoTrainer:
                     "lora_target_modules": list(
                         self.config.lora.target_modules or [self.config.lora.target_preset]
                     ),
-                    "gpu_memory_utilization": self.config.native_tp.gpu_memory_utilization,
+                    "forward_batch_size": self.config.native_tp.forward_batch_size,
                     "empty_cache_after_rollout_split": self.config.native_tp.empty_cache_after_rollout_split,
                     "synchronize_cuda_timing": self.config.native_tp.synchronize_cuda_timing,
                 },
@@ -183,14 +182,19 @@ class NativeTPGraspoTrainer:
                     int(self.current_epoch_stats.samples_seen) if epoch == start_epoch else 0
                 )
                 pending_samples = epoch_samples[resume_sample_offset:]
-                # Pass all pending samples; the adapter handles Level 1 chunking
-                # internally based on gpu_memory_utilization.
+                # Process samples in groups that match the replay buffer threshold.
+                # Each group of optimize_prompt_batch_size samples produces enough
+                # completions to trigger one optimize step, interleaving rollout
+                # generation with training for better GPU utilisation and lower
+                # time-to-first-step latency.
                 if not pending_samples:
                     continue
-                sample_queue = pending_samples
-                if self._sample_queue(sample_queue, epoch=epoch):
-                    self._save_checkpoint(output_dir / "final", epoch=epoch)
-                    return
+                queue_size = max(1, int(self.config.training.optimize_prompt_batch_size))
+                for start in range(0, len(pending_samples), queue_size):
+                    sample_queue = pending_samples[start : start + queue_size]
+                    if self._sample_queue(sample_queue, epoch=epoch):
+                        self._save_checkpoint(output_dir / "final", epoch=epoch)
+                        return
                 self._print_json(
                     {
                         "timestamp": _timestamp(),
@@ -359,13 +363,6 @@ class NativeTPGraspoTrainer:
             for messages, tools in zip(message_batches, tool_batches, strict=True)
         ]
 
-    #: Max multimodal samples to encode in one processor call.  Large N
-    #: causes ``apply_chat_template(padding=True)`` to materialise huge
-    #: padded tensors on CPU, which is extremely slow.  When the epoch
-    #: contains more multimodal samples, they are split into CPU-friendly
-    #: chunks; the GPU-side Level-1 / Level-2 chunking is unchanged.
-    _MAX_MULTIMODAL_SAMPLES_PER_CALL: int = 16
-
     def _generate_sample_groups(self, samples: list[Sample]) -> list[NativeGeneration]:
         if not any(sample.media for sample in samples):
             return self._generate_groups(samples)
@@ -375,26 +372,21 @@ class NativeTPGraspoTrainer:
                 "Input samples contain image/video media, but the selected native runtime "
                 "does not implement multimodal generate_sample_groups"
             )
-        _chunk_max = max(1, int(self._MAX_MULTIMODAL_SAMPLES_PER_CALL))
-        all_generations: list[NativeGeneration] = []
-        for _start in range(0, len(samples), _chunk_max):
-            chunk = samples[_start : _start + _chunk_max]
-            generations = generate_sample_groups(
-                samples=chunk,
-                rollout_group_size=self.config.training.rollout_group_size,
-                max_new_tokens=self.config.training.max_new_tokens,
-                max_prompt_length=self.config.data.max_prompt_length,
-                temperature=self.config.training.temperature,
-                top_p=self.config.training.top_p,
-                chat_template_kwargs=self.config.model.chat_template_kwargs,
-            )
-            all_generations.extend(generations)
-        if len(all_generations) != len(samples):
+        generations = generate_sample_groups(
+            samples=samples,
+            rollout_group_size=self.config.training.rollout_group_size,
+            max_new_tokens=self.config.training.max_new_tokens,
+            max_prompt_length=self.config.data.max_prompt_length,
+            temperature=self.config.training.temperature,
+            top_p=self.config.training.top_p,
+            chat_template_kwargs=self.config.model.chat_template_kwargs,
+        )
+        if len(generations) != len(samples):
             raise RuntimeError(
-                f"native-tp generate_sample_groups returned {len(all_generations)} "
+                f"native-tp generate_sample_groups returned {len(generations)} "
                 f"groups for {len(samples)} samples"
             )
-        return all_generations
+        return generations
 
     def _parse_completion(self, completion: str, sample: Sample) -> ParsedCompletion:
         parse_completion = getattr(self.runtime, "parse_completion", None)
@@ -524,16 +516,14 @@ class NativeTPGraspoTrainer:
         reward_batch = _reward_batch_summary(
             attempts,
             rollout_group_size=self.config.training.rollout_group_size,
-            optimize_completion_batch_size=self.config.training.optimize_completion_batch_size,
+            optimize_prompt_batch_size=self.config.training.optimize_prompt_batch_size,
         )
         metrics["replay_buffer_optimize_threshold"] = threshold
         metrics["replay_buffer_trainable_completion_count"] = usable
         metrics["replay_buffer_trainable_group_count"] = usable / max(
             int(self.config.training.rollout_group_size), 1
         )
-        metrics["optimize_completion_batch_size"] = (
-            self.config.training.optimize_completion_batch_size
-        )
+        metrics["optimize_prompt_batch_size"] = self.config.training.optimize_prompt_batch_size
         metrics["optimize_times_per_step"] = self.config.training.optimize_times_per_step
         metrics["force_flush"] = bool(force)
         self.replay_buffer.clear()
@@ -694,8 +684,7 @@ class NativeTPGraspoTrainer:
             "config_snapshot": {
                 "backend": self.backend_name,
                 "rollout_group_size": self.config.training.rollout_group_size,
-                "rollout_group_size": self.config.training.rollout_group_size,
-                "optimize_completion_batch_size": self.config.training.optimize_completion_batch_size,
+                "optimize_prompt_batch_size": self.config.training.optimize_prompt_batch_size,
                 "optimize_times_per_step": self.config.training.optimize_times_per_step,
                 "rollout_max_retry_times": self.config.training.rollout_max_retry_times,
                 "max_new_tokens": self.config.training.max_new_tokens,
@@ -1102,15 +1091,11 @@ def _is_pure_tool_call_task(targets: Any) -> bool:
     if not isinstance(targets, list) or not targets:
         return False
     has_content = any(
-        isinstance(t, dict)
-        and isinstance(t.get("output"), dict)
-        and "content" in t["output"]
+        isinstance(t, dict) and isinstance(t.get("output"), dict) and "content" in t["output"]
         for t in targets
     )
     has_tool_calls = any(
-        isinstance(t, dict)
-        and isinstance(t.get("output"), dict)
-        and "tool_calls" in t["output"]
+        isinstance(t, dict) and isinstance(t.get("output"), dict) and "tool_calls" in t["output"]
         for t in targets
     )
     return has_tool_calls and not has_content
@@ -1131,20 +1116,17 @@ def _monitor_group(payload: dict[str, Any]) -> dict[str, Any]:
         "content_all_zero": bool(content_scores) and all(value == 0.0 for value in content_scores),
         "content_all_one": bool(content_scores) and all(value == 1.0 for value in content_scores),
         "missing_json_marker_count": (
-            0 if pure_tool_call
-            else sum(1 for text in completions if "```json" not in text)
+            0 if pure_tool_call else sum(1 for text in completions if "```json" not in text)
         ),
         "unclosed_json_fence_count": (
-            0 if pure_tool_call
-            else sum(
-                1 for text in completions if "```json" in text and text.count("```") < 2
-            )
+            0
+            if pure_tool_call
+            else sum(1 for text in completions if "```json" in text and text.count("```") < 2)
         ),
         "invalid_extracted_json_count": (
-            0 if pure_tool_call
-            else sum(
-                1 for detail in details if detail.get("valid_extracted_json") is False
-            )
+            0
+            if pure_tool_call
+            else sum(1 for detail in details if detail.get("valid_extracted_json") is False)
         ),
         "likely_truncated_json_count": sum(
             1
@@ -1212,7 +1194,7 @@ def _reward_batch_summary(
     attempts: list[dict[str, Any]],
     *,
     rollout_group_size: int,
-    optimize_completion_batch_size: int,
+    optimize_prompt_batch_size: int,
 ) -> dict[str, Any]:
     decision_counts: dict[str, int] = {}
     rewards: list[float] = []
@@ -1252,7 +1234,7 @@ def _reward_batch_summary(
                 1
                 for text, detail in zip(completions, details, strict=False)
                 if _likely_truncated_json(text, detail)
-        )
+            )
         tool_call_parse_error_count += sum(1 for detail in details if detail.get("parse_errors"))
         tool_call_count_mismatch_count += _tool_call_count_mismatch_count(
             details, attempt.get("targets")
@@ -1269,7 +1251,7 @@ def _reward_batch_summary(
     return {
         "unit": "batch_attempt",
         "rollout_group_size": int(rollout_group_size),
-        "optimize_completion_batch_size": int(optimize_completion_batch_size),
+        "optimize_prompt_batch_size": int(optimize_prompt_batch_size),
         "attempt_group_count": attempt_group_count,
         "completion_count": attempt_group_count * int(rollout_group_size),
         "observed_completion_count": len(rewards),
@@ -1536,7 +1518,7 @@ def _compact_optimize_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
         "replay_buffer_optimize_threshold": int(
             metrics.get("replay_buffer_optimize_threshold") or 0
         ),
-        "optimize_completion_batch_size": int(metrics.get("optimize_completion_batch_size") or 0),
+        "optimize_prompt_batch_size": int(metrics.get("optimize_prompt_batch_size") or 0),
         "optimize_times_per_step": int(metrics.get("optimize_times_per_step") or 0),
         "optimizer_steps_per_rank": optimizer_steps_per_rank,
         "global_optimizer_steps_sum": global_optimizer_steps,

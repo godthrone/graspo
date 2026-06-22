@@ -12,7 +12,7 @@ from graspo.core.completion import ParsedCompletion, raw_parsed_completion
 from graspo.core.schema import GraspoConfig, NativeTPConfig, Sample
 
 
-DEFAULT_NATIVE_ADAPTER = "graspo.backends.native_tp.qwen_tp_adapter:QwenNativeTPAdapter"
+DEFAULT_NATIVE_ADAPTER = "graspo.backends.native_tp.models.qwen.adapter:QwenNativeTPAdapter"
 NATIVE_TP_ADAPTER_ENV = "GRASPO_NATIVE_TP_ADAPTER"
 FORBIDDEN_RUNTIME_MODULES = (
     "megatron",
@@ -249,39 +249,33 @@ def validate_native_runtime_config(
     native_config: NativeTPConfig | None = None,
 ) -> None:
     native = native_config or config.native_tp
-    if int(native.pipeline_model_parallel_size) < 1:
-        raise ValueError("pipeline_model_parallel_size must be >= 1")
+    if int(native.pp_size) < 1:
+        raise ValueError("pp_size must be >= 1")
     if bool(native.sequence_parallel):
         raise ValueError("native-tp v1 requires sequence_parallel=false")
-    if int(native.tensor_model_parallel_size) < 1:
-        raise ValueError("tensor_model_parallel_size must be >= 1")
-    if int(native.pipeline_model_parallel_size) > 1 and int(native.tensor_model_parallel_size) != 1:
+    if int(native.tp_size) < 1:
+        raise ValueError("tp_size must be >= 1")
+    if int(native.pp_size) > 1 and int(native.tp_size) != 1:
+        raise ValueError("native placement v1 supports pp_size>1 only with tp_size=1")
+    if int(native.pp_micro_batch_size) < 1:
+        raise ValueError("native_tp.pp_micro_batch_size must be >= 1")
+    if int(native.forward_batch_size) < 1:
         raise ValueError(
-            "native placement v1 supports pipeline_model_parallel_size>1 only with tensor_model_parallel_size=1"
+            f"native_tp.forward_batch_size must be >= 1, got {native.forward_batch_size}"
         )
-    if int(native.train_micro_batch_size) < 1:
-        raise ValueError("native_tp.train_micro_batch_size must be >= 1")
-    gmu = float(native.gpu_memory_utilization)
-    if not (0.0 < gmu <= 1.0):
-        raise ValueError(
-            "native_tp.gpu_memory_utilization must be in (0.0, 1.0], got "
-            f"{gmu}"
-        )
-    schedule = str(native.pipeline_train_schedule or "simple")
+    schedule = str(native.pp_schedule or "simple")
     if schedule not in {"simple", "one_f_one_b"}:
-        raise ValueError("native_tp.pipeline_train_schedule must be simple or one_f_one_b")
+        raise ValueError("native_tp.pp_schedule must be simple or one_f_one_b")
     if config.training.resume_from_checkpoint and config.lora.adapter_path:
         raise ValueError(
             "training.resume_from_checkpoint and lora.adapter_path cannot both be set; "
             "native checkpoint resume takes the full training state, while PEFT adapters are "
             "warm-start weights only"
         )
-    if int(native.pipeline_max_inflight_microbatches) < 0:
-        raise ValueError("native_tp.pipeline_max_inflight_microbatches must be >= 0")
-    if schedule == "one_f_one_b" and int(native.pipeline_model_parallel_size) <= 1:
-        raise ValueError(
-            "one_f_one_b pipeline_train_schedule requires pipeline_model_parallel_size>1"
-        )
+    if int(native.pp_max_inflight_microbatches) < 0:
+        raise ValueError("native_tp.pp_max_inflight_microbatches must be >= 0")
+    if schedule == "one_f_one_b" and int(native.pp_size) <= 1:
+        raise ValueError("one_f_one_b pp_schedule requires pp_size>1")
     flattened = _flatten_keys(config.backend_config)
     forbidden = sorted(
         key for key in flattened if any(marker in key.lower() for marker in FORBIDDEN_CONFIG_KEYS)

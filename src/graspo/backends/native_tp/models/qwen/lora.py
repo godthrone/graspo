@@ -11,6 +11,7 @@ from torch.nn import functional as F
 from graspo.backends.native_tp.models.qwen.config import NativeQwenConfig
 from graspo.backends.native_tp.tensor_utils import _shard_bounds, _shard_tensor
 
+
 def native_qwen_lora_available_targets(hf_config: NativeQwenConfig) -> tuple[str, ...]:
     language_mlp = (
         "language.mlp.gate_proj",
@@ -260,5 +261,3 @@ class LoRALinear(nn.Module):
             lora = F.linear(F.linear(self.dropout(hidden_states), self.lora_a), self.lora_b)
             output = output + lora * self.scaling
         return output
-
-

@@ -1,6 +1,6 @@
 import pytest
 
-from graspo.core.compare import CompareResult, dict_compare_score
+from graspo.core.compare import dict_compare_score
 
 
 def test_dict_compare_exact():
