@@ -54,8 +54,8 @@ Set at least these fields in `my_graspo.yaml`:
 - `data.train_path`: JSONL training data;
 - `training.output_dir`: run output directory;
 - `launch.gpus`: local GPU ids for this node;
-- `backend_config.native_tp.tensor_model_parallel_size` and
-  `backend_config.native_tp.pipeline_model_parallel_size`: native placement
+- `backend_config.native_tp.tp_size` and
+  `backend_config.native_tp.pp_size`: native placement
   world size.
 
 Launch training with one YAML argument:
@@ -277,11 +277,9 @@ training.
 - `training_epoch_count`: full dataset training epochs. Production default is
   `100`.
 - `max_steps`: optional step cap for smoke/debug runs. `-1` means no cap.
-- `rollout_prompt_queue_batch_size`: prompt groups scheduled together for
-  rollout.
-- `rollout_group_size`: completions sampled per prompt attempt.
-- `optimize_completion_batch_size`: completion micro-batch size for one
-  optimizer step.
+- `rollout_group_size`: completions sampled per prompt.
+- `optimize_prompt_batch_size`: prompts scheduled together for one optimize
+  step; replay buffer threshold is `optimize_prompt_batch_size × rollout_group_size`.
 - `optimize_times_per_step`: repeated optimization passes over the same replay
   completions.
 - `rollout_max_retry_times`: retry budget after the initial rollout attempt.
@@ -297,29 +295,29 @@ training.
 - `resume_from_checkpoint`: recoverable GRASPO native checkpoint directory.
 
 `training.replay_buffer_optimize_threshold` is derived as
-`optimize_completion_batch_size * rollout_group_size` and must not be configured.
+`optimize_prompt_batch_size * rollout_group_size` and must not be configured.
 `training.resume_from_checkpoint` and `lora.adapter_path` are mutually
 exclusive: resume restores native checkpoint state, while PEFT adapter loading
 is only a LoRA warm-start.
 
 ### `backend_config.native_tp`
 
-- `tensor_model_parallel_size`: TP size.
-- `pipeline_model_parallel_size`: PP size.
+- `tp_size`: TP size (default 2).
+- `pp_size`: PP size (default 1).
 - `placement_strategy`: placement policy such as `qwen3_tp` or
   `qwen36_pp8_static`.
 - `sequence_parallel`: must stay `false` in v1.
-- `train_micro_batch_size`: native train micro-batch size.
-- `generation_micro_batch_size`: native generation micro-batch split.
+- `pp_micro_batch_size`: PP micro-batch size (default 1).
+- `forward_batch_size`: rollout forward batch size (default 8). Replaces
+  the old `gpu_memory_utilization`.
 - `use_kv_cache_for_rollout`: use KV cache only for rollout generation.
-- `rollout_kv_cache_max_reserved_fraction`: rollout KV memory reservation.
 - `empty_cache_after_rollout_split`, `empty_cache_before_train`: CUDA cache
   controls.
 - `checkpoint_format`: native recoverable checkpoint format label.
 - `raw_log_enabled`, `readable_log_enabled`: rollout/replay log toggles.
 - `synchronize_cuda_timing`: synchronize CUDA events for timing diagnostics.
-- `pipeline_train_schedule`: pipeline train schedule, default `simple`.
-- `pipeline_max_inflight_microbatches`: 1F1B inflight cap for experiments.
+- `pp_schedule`: pipeline schedule, default `simple`.
+- `pp_max_inflight_microbatches`: 1F1B inflight cap for experiments.
 
 ### `export`
 
@@ -441,7 +439,7 @@ uv run --extra dev python -m graspo --help
   real base model.
 - `data.train_path does not exist`: point `data.train_path` at a JSONL file.
 - Native launch world size mismatch: make `launch.nproc_per_node * launch.nnodes`
-  equal `tensor_model_parallel_size * pipeline_model_parallel_size`.
+  equal `tp_size * pp_size`.
 - Rollout OOM: keep `training.max_new_tokens=2048`; reduce rollout concurrency
   or KV cache reservation instead of lowering production generation length.
 - Need PEFT compatibility: load PEFT adapters through `lora.adapter_path`, and
