@@ -64,19 +64,19 @@ adapter.py now imports them from tensor_utils.  See `tests/test_rope_ndim.py`
 ## Deploy
 
 ```bash
-# 228 training (A800 80GB × 4, TP=4)
-docker run -d --name graspo_elam_v11_fk \
-  --gpus all \
-  -e CUDA_VISIBLE_DEVICES=4,5,6,7 \
+# 228 training (A800 80GB × 4, TP=4, GPUs 4-7)
+docker run -d --name graspo_elam_v12_fk \
+  -e NVIDIA_VISIBLE_DEVICES=4,5,6,7 \
   -v /home/zhangzy/models/Qwen3.5-9B:/workspace/models/Qwen3.5-9B:ro \
-  -v /home/zhangzy/elam_v11_fk:/workspace/data \
+  -v /home/zhangzy/elam_v12_fk:/workspace/data \
+  -v /home/zhangzy/elam_v12_fk/images:/workspace/images:ro \
   --ipc=host --shm-size=16g \
-  graspo:latest \
-  python -m graspo launch --config /workspace/data/config_docker.yaml
+  graspo:0.6.0-cuda13.2 \
+  python -m graspo launch --config /workspace/data/data/config_docker.yaml
 
-# CRITICAL: Use --gpus all + CUDA_VISIBLE_DEVICES, NOT --gpus '"device=..."'!
-# The latter sets CUDA_VISIBLE_DEVICES=4,5,6,7 which makes
-# torch.cuda.is_available() return False inside the container.
+# CRITICAL: Docker 29+ uses CDI mode. Do NOT use --gpus all or --gpus device=X!
+# Only use -e NVIDIA_VISIBLE_DEVICES=X,Y,Z to select GPUs.
+# The env var alone works because nvidia-container-toolkit CDI mode reads it directly.
 ```
 
 ## Testing
