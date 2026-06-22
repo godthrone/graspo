@@ -76,7 +76,6 @@ class NativeTPConfig:
     use_kv_cache_for_rollout: bool = True
     empty_cache_after_rollout_split: bool = True
     empty_cache_before_train: bool = False
-    memory_guard_headroom_gib: int = 0  # 0 = disabled; 12–20 for 80 GiB GPU
     checkpoint_format: str = "recoverable_lora_tp"
     raw_log_enabled: bool = True
     readable_log_enabled: bool = True
