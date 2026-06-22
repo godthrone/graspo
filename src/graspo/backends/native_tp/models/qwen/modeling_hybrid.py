@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import os
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -314,10 +315,17 @@ class Qwen35HybridTextModel(QwenFamilyBase):
                 attention_mask=attention_mask,
             )
             self.rope_deltas = rope_deltas
+            if os.environ.get("GRASPO_DEBUG_DECODE") == "1":
+                print(f"  [model] rope_deltas SET shape={list(rope_deltas.shape)} past_len={past_len}", flush=True)
             return position_ids[:, :, -query_len:]
         if past_len == 0 and not has_multimodal:
             self.rope_deltas = None
+            if os.environ.get("GRASPO_DEBUG_DECODE") == "1":
+                print("  [model] rope_deltas RESET to None (past_len=0, has_mm=False)", flush=True)
         if self.rope_deltas is not None and (past_len > 0 or input_ids is None):
+            if os.environ.get("GRASPO_DEBUG_DECODE") == "1":
+                print(f"  [model] rope_deltas USED for decode: deltas_shape={list(self.rope_deltas.shape)} "
+                      f"attn_mask_batch={attention_mask.shape[0]}", flush=True)
             position_ids = _position_ids(attention_mask).view(
                 1, attention_mask.shape[0], attention_mask.shape[1]
             )
@@ -329,6 +337,10 @@ class Qwen35HybridTextModel(QwenFamilyBase):
                 1, -1, 1
             )
             return position_ids[:, :, -query_len:]
+        _debug_decode = os.environ.get("GRASPO_DEBUG_DECODE") == "1"
+        if _debug_decode and past_len > 0:
+            print(f"  [model] rope_deltas NOT used for decode! self.rope_deltas={self.rope_deltas is not None} "
+                  f"past_len={past_len}", flush=True)
         return _position_ids(attention_mask)[:, -query_len:]
 
     def _multimodal_token_type_ids(

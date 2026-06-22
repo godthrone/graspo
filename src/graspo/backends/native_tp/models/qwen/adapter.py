@@ -934,26 +934,6 @@ class QwenNativeTPAdapter(
         stop_check_sec = 0.0
         _debug_decode = os.environ.get("GRASPO_DEBUG_DECODE") == "1"
         if _debug_decode and self.rank == 0:
-            # Monkey-patch the model to log rope_deltas resets
-            _orig_cmpi = self.model.compute_multimodal_position_ids
-            def _debug_cmpi(*, input_ids, attention_mask, multimodal_inputs,
-                            past_key_values, query_len, **kw):
-                past_len = _qwen35_cache_sequence_len(past_key_values[0]) if past_key_values else 0
-                has_mm = bool(multimodal_inputs is not None
-                    and (multimodal_inputs.get("image_grid_thw") is not None
-                         or multimodal_inputs.get("video_grid_thw") is not None))
-                old_rd = getattr(self.model, "rope_deltas", None)
-                result = _orig_cmpi(input_ids=input_ids, attention_mask=attention_mask,
-                                    multimodal_inputs=multimodal_inputs,
-                                    past_key_values=past_key_values, query_len=query_len, **kw)
-                new_rd = getattr(self.model, "rope_deltas", None)
-                if old_rd is not None and new_rd is None:
-                    print(f"  [BUG!] rope_deltas was RESET! past_len={past_len} has_mm={has_mm} "
-                          f"query_len={query_len}", flush=True)
-                return result
-            self.model.compute_multimodal_position_ids = _debug_cmpi.__get__(self.model)
-            from graspo.backends.native_tp.models.qwen.layers import _qwen35_cache_sequence_len
-        if _debug_decode and self.rank == 0:
             _row_lens = attention_mask.sum(dim=1).tolist()
             _min_len, _max_len = min(_row_lens), max(_row_lens)
             # Check rope_deltas batch size vs actual batch size
