@@ -20,6 +20,8 @@ warnings.warn(
 from graspo.backends.native_tp.models.qwen.adapter import (  # noqa: E402, F401
     QwenNativeTPAdapter,
     _patch_transformers_float8_import_compat,
+)
+from graspo.backends.native_tp.tensor_utils import (  # noqa: E402, F401
     _set_tensor_parallel_group,
     _TENSOR_PARALLEL_GROUP,
     _TENSOR_PARALLEL_SIZE,

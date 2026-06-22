@@ -28,11 +28,11 @@ def test_training_defaults_are_long_run_safe():
 
     assert config.training.training_epoch_count == 100
     assert config.training.rollout_group_size == 8
-    assert config.training.optimize_prompt_batch_size == 4
+    assert config.training.optimize_prompt_batch_size == 8
     assert config.training.optimize_times_per_step == 4
     assert config.training.rollout_max_retry_times == 5
     assert config.training.policy_ratio_clip_eps == 0.2
-    assert config.training.replay_buffer_optimize_threshold == 32
+    assert config.training.replay_buffer_optimize_threshold == 64
     assert config.training.max_new_tokens == 2048
 
 

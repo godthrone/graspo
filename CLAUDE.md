@@ -12,10 +12,12 @@ tensor parallel (TP) / pipeline parallel (PP) backends.
 - `src/graspo/core/reward.py` — `GraspoReward.score()` and `.score_parsed()` use
   `result.all_right` for gating.  `RewardResult` includes `base_content_score`.
   Supports multi-target alternatives; best-scoring target wins.
-- `src/graspo/core/schema.py` — `NativeTPConfig.gpu_memory_utilization` (0-1,
-  default 0.90) replaces the old inter-dependent
-  `generation_micro_batch_size` / `rollout_kv_cache_max_reserved_fraction`.
-  `TrainingConfig.rollout_group_size` is the sole algorithm parameter.
+- `src/graspo/core/schema.py` — `NativeTPConfig.forward_batch_size` (default 8)
+  controls rollout batch sizing; old `gpu_memory_utilization`,
+  `generation_micro_batch_size`, and `rollout_kv_cache_max_reserved_fraction`
+  are removed. `TrainingConfig.rollout_group_size` (default 8) and
+  `TrainingConfig.optimize_prompt_batch_size` (default 8) are the core
+  algorithm parameters.
 - `src/graspo/backends/native_tp/trainer.py` — Multimodal samples are chunked in
   CPU-friendly encoding batches (`_MAX_MULTIMODAL_SAMPLES_PER_CALL = 16`).
   `_is_pure_tool_call_task()` guards JSON-marker debug counts.
@@ -32,9 +34,11 @@ tensor parallel (TP) / pipeline parallel (PP) backends.
 
 | Parameter | Default | Role |
 |-----------|---------|------|
-| `rollout_group_size` | 8 | Algorithm: completions per sample (do NOT change lightly) |
-| `gpu_memory_utilization` | 0.90 | Resource: fraction of GPU memory for rollout (like vLLM's) |
+| `rollout_group_size` | 8 | Algorithm: completions per prompt (do NOT change lightly) |
+| `optimize_prompt_batch_size` | 8 | Prompts per optimize step; replay threshold = G × B |
+| `forward_batch_size` | 8 | Rollout micro-batch size (GPU memory trade-off) |
 | `empty_cache_after_rollout_split` | true | Frees PyTorch cache between Level 1 chunks |
+| `empty_cache_before_train` | false | Frees PyTorch cache before optimize step |
 
 ## GPU Memory Estimation
 

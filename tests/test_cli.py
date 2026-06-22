@@ -178,7 +178,7 @@ def test_only_readmes_are_tracked_markdown_docs():
         line.strip().replace("\\", "/") for line in result.stdout.splitlines() if line.strip()
     }
 
-    assert tracked_markdown == {"CLAUDE.md", "QUICKSTART.md", "README.md", "README.zh-CN.md"}
+    assert tracked_markdown == {"CLAUDE.md", "README.md", "README.zh-CN.md"}
 
 
 def _write_launch_config(
