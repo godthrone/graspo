@@ -934,6 +934,10 @@ class QwenNativeTPAdapter(
         stop_check_sec = 0.0
         _debug_decode = os.environ.get("GRASPO_DEBUG_DECODE") == "1"
         if _debug_decode and self.rank == 0:
+            _row_lens = attention_mask.sum(dim=1).tolist()
+            _min_len, _max_len = min(_row_lens), max(_row_lens)
+            print(f"  [prefill] seq_len={sequences.shape[1]} batch={sequences.shape[0]} "
+                  f"prompt_lens=min={_min_len} max={_max_len}", flush=True)
             _preview_first = self.tokenizer.decode(
                 [_first_logits[0].argmax().item()]
             ) if _first_logits.shape[0] > 0 else "?"
@@ -959,7 +963,14 @@ class QwenNativeTPAdapter(
                 _tok_ids = next_token.tolist()
                 _decoded = [self.tokenizer.decode([t]) if t != pad_token_id else "<PAD>"
                             for t in _tok_ids[:3]]
-                print(f"  [step {_step_idx}] tokens={_tok_ids[:8]} decoded={_decoded}", flush=True)
+                _eos_rows = [i for i, t in enumerate(_tok_ids) if t == eos_token_id]
+                _pad_rows = [i for i, t in enumerate(_tok_ids) if t == pad_token_id]
+                _extra = ""
+                if _eos_rows:
+                    _extra += f" EOS_at={_eos_rows}"
+                if _pad_rows:
+                    _extra += f" PAD_at={_pad_rows}"
+                print(f"  [step {_step_idx}] tokens={_tok_ids[:8]} decoded={_decoded}{_extra}", flush=True)
             finished |= next_token.eq(eos_token_id)
             self._sync_timing()
             stop_check_started_at = time.monotonic()
