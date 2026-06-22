@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import os
+import traceback
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -321,7 +322,11 @@ class Qwen35HybridTextModel(QwenFamilyBase):
         if past_len == 0 and not has_multimodal:
             self.rope_deltas = None
             if os.environ.get("GRASPO_DEBUG_DECODE") == "1":
-                print("  [model] rope_deltas RESET to None (past_len=0, has_mm=False)", flush=True)
+                # Print last 3 frames to identify the caller
+                frames = traceback.extract_stack()[:-1]
+                callers = [f"{f.name}:{f.lineno}" for f in frames[-4:]]
+                print(f"  [model] rope_deltas RESET to None (past_len=0, has_mm=False) "
+                      f"callers={' -> '.join(callers)}", flush=True)
         if self.rope_deltas is not None and (past_len > 0 or input_ids is None):
             if os.environ.get("GRASPO_DEBUG_DECODE") == "1":
                 print(f"  [model] rope_deltas USED for decode: deltas_shape={list(self.rope_deltas.shape)} "
