@@ -71,7 +71,6 @@ backend_config:
     use_kv_cache_for_rollout: true
     empty_cache_after_rollout_split: true
     empty_cache_before_train: false
-    memory_guard_headroom_gib: 0  # 0=disabled; set 12-20 to lock GPU mem (avoid resource contention)
     checkpoint_format: recoverable_lora_tp
     raw_log_enabled: true
     readable_log_enabled: true
