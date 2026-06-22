@@ -55,7 +55,7 @@ def build_placement_plan(
     if model_family != "qwen3_5_text":
         raise ValueError(f"{requested} placement requires qwen3_5_text model family")
     if int(tp_size) != 1:
-        raise ValueError(f"{requested} v1 requires tensor_model_parallel_size=1")
+        raise ValueError(f"{requested} v1 requires tp_size=1")
     if requested == "qwen36_pp8_lm_head_only_final":
         ranges = _qwen36_lm_head_only_final_ranges(
             num_hidden_layers=int(num_hidden_layers),
@@ -91,7 +91,7 @@ def _balanced_qwen36_layer_ranges(
     if num_hidden_layers <= 0:
         raise ValueError("num_hidden_layers must be positive")
     if pp_size <= 0:
-        raise ValueError("pipeline_model_parallel_size must be positive")
+        raise ValueError("pp_size must be positive")
     if len(layer_types) != num_hidden_layers:
         layer_types = tuple("linear_attention" for _ in range(num_hidden_layers))
     costs = [1.18 if layer_type == "full_attention" else 1.0 for layer_type in layer_types]
@@ -129,7 +129,7 @@ def _minimax_contiguous_ranges(
     num_layers = len(costs)
     pp_size = len(stage_overheads)
     if pp_size > num_layers:
-        raise ValueError("pipeline_model_parallel_size cannot exceed num_hidden_layers")
+        raise ValueError("pp_size cannot exceed num_hidden_layers")
     prefix = [0.0]
     for cost in costs:
         prefix.append(prefix[-1] + float(cost))
@@ -168,8 +168,8 @@ def placement_summary(plan: NativePlacementPlan) -> dict[str, Any]:
     return {
         "placement_strategy": plan.strategy,
         "model_family": plan.model_family,
-        "tensor_model_parallel_size": plan.tp_size,
-        "pipeline_model_parallel_size": plan.pp_size,
+        "tp_size": plan.tp_size,
+        "pp_size": plan.pp_size,
         "tp_rank": plan.tp_rank,
         "pp_rank": plan.pp_rank,
         "local_layer_indices": list(plan.local_layer_indices),

@@ -38,7 +38,7 @@ class TrainingConfig:
     training_epoch_count: int = 100
     max_steps: int = -1
     rollout_group_size: int = 8
-    optimize_completion_batch_size: int = 4
+    optimize_prompt_batch_size: int = 8
     optimize_times_per_step: int = 4
     rollout_max_retry_times: int = 5
     learning_rate: float = 5e-6
@@ -56,7 +56,7 @@ class TrainingConfig:
 
     @property
     def replay_buffer_optimize_threshold(self) -> int:
-        return int(self.optimize_completion_batch_size) * int(self.rollout_group_size)
+        return int(self.optimize_prompt_batch_size) * int(self.rollout_group_size)
 
 
 @dataclass(slots=True)
@@ -67,12 +67,12 @@ class DataConfig:
 
 @dataclass(slots=True)
 class NativeTPConfig:
-    tensor_model_parallel_size: int = 2
-    pipeline_model_parallel_size: int = 1
+    tp_size: int = 2
+    pp_size: int = 1
     placement_strategy: str = "auto"
     sequence_parallel: bool = False
-    train_micro_batch_size: int = 1
-    gpu_memory_utilization: float = 0.90
+    pp_micro_batch_size: int = 1
+    forward_batch_size: int = 8
     use_kv_cache_for_rollout: bool = True
     empty_cache_after_rollout_split: bool = True
     empty_cache_before_train: bool = False
@@ -80,8 +80,8 @@ class NativeTPConfig:
     raw_log_enabled: bool = True
     readable_log_enabled: bool = True
     synchronize_cuda_timing: bool = False
-    pipeline_train_schedule: str = "simple"
-    pipeline_max_inflight_microbatches: int = 0
+    pp_schedule: str = "simple"
+    pp_max_inflight_microbatches: int = 0
 
 
 @dataclass(slots=True)
@@ -135,14 +135,22 @@ class GraspoConfig:
         _removed_native = {
             "generation_micro_batch_size",
             "rollout_kv_cache_max_reserved_fraction",
+            "gpu_memory_utilization",
         }
         for key in sorted(_removed_native & set(native_cfg)):
-            warnings.warn(
-                f"native_tp.{key} is removed. "
-                f"Use native_tp.gpu_memory_utilization instead (default 0.90).",
-                DeprecationWarning,
-                stacklevel=2,
-            )
+            if key == "gpu_memory_utilization":
+                warnings.warn(
+                    "native_tp.gpu_memory_utilization is removed. "
+                    "Use native_tp.forward_batch_size instead (default 8).",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+            else:
+                warnings.warn(
+                    f"native_tp.{key} is removed.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
             del native_cfg[key]
 
         training_cfg = _normalize_training_config(data.get("training", {}))
@@ -218,7 +226,7 @@ def _normalize_training_config(raw: dict[str, Any] | None) -> dict[str, Any]:
     if "replay_buffer_optimize_threshold" in config:
         raise ValueError(
             "training.replay_buffer_optimize_threshold is derived from "
-            "optimize_completion_batch_size * rollout_group_size and must not be configured"
+            "optimize_prompt_batch_size * rollout_group_size and must not be configured"
         )
     removed = {
         "total_epochs",

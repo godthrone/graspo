@@ -40,7 +40,7 @@ training:
   training_epoch_count: 100
   max_steps: -1
   rollout_group_size: 8
-  optimize_completion_batch_size: 4
+  optimize_prompt_batch_size: 4
   optimize_times_per_step: 4
   rollout_max_retry_times: 5
   learning_rate: 5.0e-6
@@ -58,12 +58,12 @@ training:
 
 backend_config:
   native_tp:
-    tensor_model_parallel_size: 2
-    pipeline_model_parallel_size: 1
+    tp_size: 2
+    pp_size: 1
     placement_strategy: qwen3_tp
     sequence_parallel: false
-    train_micro_batch_size: 1
-    gpu_memory_utilization: 0.90
+    pp_micro_batch_size: 1
+    forward_batch_size: 8
     use_kv_cache_for_rollout: true
     empty_cache_after_rollout_split: true
     empty_cache_before_train: false
@@ -71,8 +71,8 @@ backend_config:
     raw_log_enabled: true
     readable_log_enabled: true
     synchronize_cuda_timing: false
-    pipeline_train_schedule: simple
-    pipeline_max_inflight_microbatches: 0
+    pp_schedule: simple
+    pp_max_inflight_microbatches: 0
 
 export:
   final_formats: []

@@ -25,6 +25,7 @@ from graspo.backends.native_tp.tensor_utils import (
     _selected_token_log_probs_from_hidden,
 )
 
+
 class Qwen35HybridTextModel(QwenFamilyBase):
     def __init__(
         self,
@@ -78,6 +79,7 @@ class Qwen35HybridTextModel(QwenFamilyBase):
                 )
             )
         from graspo.backends.native_tp.models.qwen.modeling import _build_qwen35_visual_tower
+
         self.visual = (
             _build_qwen35_visual_tower(
                 hf_config=hf_config,
@@ -588,5 +590,3 @@ class Qwen35HybridTextModel(QwenFamilyBase):
 
 class TensorParallelQwen35TextForCausalLM(Qwen35HybridTextModel):
     """Compatibility alias for older tests/imports."""
-
-

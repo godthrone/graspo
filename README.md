@@ -112,7 +112,9 @@ multi-step tool execution is expressed only inside `output.tool_calls`:
 Supported fields:
 
 - `messages`: required prompt/context messages for tokenizer or processor chat templates;
-- `tools`: optional list of tool declarations passed to model chat templates;
+- `tools`: optional list of tool declarations in OpenAI function-calling format,
+  passed to model chat templates. Each entry is
+  `{"type":"function","function":{"name":"...","description":"...","parameters":{...}}}`;
 - `targets`: required non-empty list of acceptable outputs. Each target has an
   optional `id` and an `output` object. `output.content` is a JSON object for
   normal answer tasks; `output.tool_calls` is an ordered list of canonical tool
@@ -133,6 +135,28 @@ targets and must not be leaked into the input messages or converted to a
 model chat template. GRASPO only accepts JSONL records with `messages`, optional
 `tools`, and `targets`; plain `prompt`, JSON, Excel, legacy `ground_truth`, and
 top-level media fields are not supported.
+
+### Assistant messages with tool calls
+
+In multi-turn conversations, assistant messages that contain tool calls MUST
+use the structured `tool_calls` field. GRASPO validates this at startup and
+rejects any record that embeds raw tool-call text in `content`:
+
+```json
+{
+  "role": "assistant",
+  "content": "I will rotate the arm toward the target.",
+  "tool_calls": [
+    {"name": "robot_atomic_control", "arguments": {"action_type": "顺时针旋转", "angle_deg": 38.3}}
+  ]
+}
+```
+
+Raw Qwen XML (`<function=...><parameter=...>`), raw JSON strings, and any
+other model-specific tool-call formats MUST NOT be placed in `content`.
+Use `tool_calls` with canonical JSON `{"name":"...","arguments":{...}}`.
+The model's chat template renders `tool_calls` into the correct native format
+automatically.
 
 ## Reward Scoring
 

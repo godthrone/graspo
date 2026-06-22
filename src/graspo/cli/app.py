@@ -228,9 +228,7 @@ def _validate_launch_world(
 
 
 def _native_world_size(config: GraspoConfig) -> int:
-    return int(config.native_tp.tensor_model_parallel_size) * int(
-        config.native_tp.pipeline_model_parallel_size
-    )
+    return int(config.native_tp.tp_size) * int(config.native_tp.pp_size)
 
 
 def _validate_launch_paths(config: GraspoConfig) -> None:

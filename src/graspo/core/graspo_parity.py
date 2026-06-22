@@ -136,18 +136,18 @@ def classify_group(
 
 
 def replay_buffer_optimize_threshold(
-    optimize_completion_batch_size: int,
+    optimize_prompt_batch_size: int,
     rollout_group_size: int,
 ) -> int:
-    return int(optimize_completion_batch_size) * int(rollout_group_size)
+    return int(optimize_prompt_batch_size) * int(rollout_group_size)
 
 
 def replay_ready(
     replay_size: int,
-    optimize_completion_batch_size: int,
+    optimize_prompt_batch_size: int,
     rollout_group_size: int,
 ) -> bool:
     return int(replay_size) >= replay_buffer_optimize_threshold(
-        optimize_completion_batch_size,
+        optimize_prompt_batch_size,
         rollout_group_size,
     )

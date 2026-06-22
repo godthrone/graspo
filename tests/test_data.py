@@ -255,3 +255,176 @@ def test_final_assistant_message_is_rejected(tmp_path):
 
     with pytest.raises(ValueError, match="final assistant"):
         load_jsonl(path)
+
+
+# ---- assistant tool_calls validation ----
+
+
+def test_assistant_with_valid_tool_calls_is_accepted(tmp_path):
+    path = tmp_path / "valid_tool_call_asst.jsonl"
+    path.write_text(
+        '{"messages":['
+        '{"role":"user","content":"pick up"},'
+        '{"role":"assistant","content":"extending","tool_calls":['
+        '{"name":"robot_atomic_control","arguments":{"action_type":"伸长手臂","distance_cm":12.5}}'
+        "]},"
+        '{"role":"user","content":"continue"}'
+        '],"targets":[{"output":{"tool_calls":[{"name":"robot_atomic_control","arguments":{"action_type":"降低","distance_cm":5}}]}}]}\n',
+        encoding="utf-8",
+    )
+
+    sample = load_jsonl(path)[0]
+    # Assistant message is preserved with tool_calls intact.
+    asst = sample.messages[1]
+    assert asst["role"] == "assistant"
+    assert asst["tool_calls"] == [
+        {
+            "name": "robot_atomic_control",
+            "arguments": {"action_type": "伸长手臂", "distance_cm": 12.5},
+        }
+    ]
+
+
+def test_assistant_with_raw_xml_in_content_is_rejected(tmp_path):
+    path = tmp_path / "raw_xml_asst.jsonl"
+    path.write_text(
+        '{"messages":['
+        '{"role":"user","content":"pick up"},'
+        '{"role":"assistant","content":"<tool_call>\\n<function=robot_atomic_control>\\n'
+        '<parameter=action_type>\\n伸长手臂\\n</parameter>\\n</function>\\n</tool_call>"},'
+        '{"role":"user","content":"continue"}'
+        '],"targets":[{"output":{"tool_calls":[{"name":"robot_atomic_control","arguments":{"action_type":"降低","distance_cm":5}}]}}]}\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="raw tool-call text"):
+        load_jsonl(path)
+
+
+def test_assistant_with_raw_function_marker_in_content_is_rejected(tmp_path):
+    path = tmp_path / "raw_func_asst.jsonl"
+    path.write_text(
+        '{"messages":['
+        '{"role":"user","content":"q"},'
+        '{"role":"assistant","content":"use <function=move> to proceed"},'
+        '{"role":"user","content":"ok"}'
+        '],"targets":[{"output":{"content":{"a":1}}}]}\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="raw tool-call text"):
+        load_jsonl(path)
+
+
+def test_assistant_tool_calls_non_list_is_rejected(tmp_path):
+    path = tmp_path / "bad_tc_type.jsonl"
+    path.write_text(
+        '{"messages":['
+        '{"role":"user","content":"q"},'
+        '{"role":"assistant","content":"ok","tool_calls":{"name":"x","arguments":{}}},'
+        '{"role":"user","content":"continue"}'
+        '],"targets":[{"output":{"tool_calls":[{"name":"x","arguments":{}}]}}]}\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="tool_calls.*non-empty list"):
+        load_jsonl(path)
+
+
+def test_assistant_tool_calls_empty_list_is_rejected(tmp_path):
+    path = tmp_path / "empty_tc.jsonl"
+    path.write_text(
+        '{"messages":['
+        '{"role":"user","content":"q"},'
+        '{"role":"assistant","content":"ok","tool_calls":[]},'
+        '{"role":"user","content":"continue"}'
+        '],"targets":[{"output":{"tool_calls":[{"name":"x","arguments":{}}]}}]}\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="tool_calls.*non-empty list"):
+        load_jsonl(path)
+
+
+def test_assistant_tool_calls_missing_name_is_rejected(tmp_path):
+    path = tmp_path / "no_name_tc.jsonl"
+    path.write_text(
+        '{"messages":['
+        '{"role":"user","content":"q"},'
+        '{"role":"assistant","content":"ok","tool_calls":[{"arguments":{}}]},'
+        '{"role":"user","content":"continue"}'
+        '],"targets":[{"output":{"tool_calls":[{"name":"x","arguments":{}}]}}]}\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="\.name must be"):
+        load_jsonl(path)
+
+
+def test_assistant_tool_calls_missing_arguments_is_rejected(tmp_path):
+    path = tmp_path / "no_args_tc.jsonl"
+    path.write_text(
+        '{"messages":['
+        '{"role":"user","content":"q"},'
+        '{"role":"assistant","content":"ok","tool_calls":[{"name":"move"}]},'
+        '{"role":"user","content":"continue"}'
+        '],"targets":[{"output":{"tool_calls":[{"name":"move","arguments":{}}]}}]}\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="\.arguments must be"):
+        load_jsonl(path)
+
+
+def test_assistant_tool_calls_arguments_with_raw_xml_is_rejected(tmp_path):
+    path = tmp_path / "xml_in_args.jsonl"
+    path.write_text(
+        '{"messages":['
+        '{"role":"user","content":"q"},'
+        '{"role":"assistant","content":"ok","tool_calls":['
+        '{"name":"move","arguments":{"desc":"use <function=move>"}}'
+        "]},"
+        '{"role":"user","content":"continue"}'
+        '],"targets":[{"output":{"tool_calls":[{"name":"move","arguments":{}}]}}]}\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="raw tool-call markers"):
+        load_jsonl(path)
+
+
+def test_assistant_without_tool_calls_plain_text_is_accepted(tmp_path):
+    """Assistant with plain text (no tool-call markers, no tool_calls field) is fine."""
+    path = tmp_path / "plain_asst.jsonl"
+    path.write_text(
+        '{"messages":['
+        '{"role":"system","content":"You are helpful."},'
+        '{"role":"user","content":"what is 2+2?"},'
+        '{"role":"assistant","content":"Let me think about this."},'
+        '{"role":"user","content":"now answer please"}'
+        '],"targets":[{"output":{"content":{"answer":4}}}]}\n',
+        encoding="utf-8",
+    )
+
+    sample = load_jsonl(path)[0]
+    assert sample.messages[2]["role"] == "assistant"
+    assert sample.messages[2]["content"] == "Let me think about this."
+    assert "tool_calls" not in sample.messages[2]
+
+
+def test_assistant_multimodal_content_with_xml_is_rejected(tmp_path):
+    """Even in list-type (multimodal) content, raw XML in text blocks is caught."""
+    path = tmp_path / "mm_xml_asst.jsonl"
+    path.write_text(
+        '{"messages":['
+        '{"role":"user","content":"pick up"},'
+        '{"role":"assistant","content":['
+        '{"type":"text","text":"here is the call: <tool_call><function=move>"}'
+        "]},"
+        '{"role":"user","content":"continue"}'
+        '],"targets":[{"output":{"tool_calls":[{"name":"move","arguments":{}}]}}]}\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="raw tool-call text"):
+        load_jsonl(path)

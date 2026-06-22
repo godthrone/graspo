@@ -4,6 +4,7 @@ import json
 import random
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -27,7 +28,7 @@ def test_training_defaults_are_long_run_safe():
 
     assert config.training.training_epoch_count == 100
     assert config.training.rollout_group_size == 8
-    assert config.training.optimize_completion_batch_size == 4
+    assert config.training.optimize_prompt_batch_size == 4
     assert config.training.optimize_times_per_step == 4
     assert config.training.rollout_max_retry_times == 5
     assert config.training.policy_ratio_clip_eps == 0.2
@@ -56,18 +57,18 @@ def test_native_tp_config_parses_nested_backend_config():
             "backend": "native-tp",
             "backend_config": {
                 "native_tp": {
-                    "tensor_model_parallel_size": 2,
-                    "pipeline_model_parallel_size": 1,
+                    "tp_size": 2,
+                    "pp_size": 1,
                     "sequence_parallel": False,
-                    "gpu_memory_utilization": 0.65,
+                    "forward_batch_size": 8,
                     "empty_cache_after_rollout_split": True,
                 }
             },
         }
     )
 
-    assert config.native_tp.tensor_model_parallel_size == 2
-    assert config.native_tp.gpu_memory_utilization == 0.65
+    assert config.native_tp.tp_size == 2
+    assert config.native_tp.forward_batch_size == 8
     assert config.native_tp.empty_cache_after_rollout_split is True
     validate_native_runtime_config(config)
 
@@ -78,19 +79,19 @@ def test_native_placement_config_accepts_pipeline_parallel():
             "backend": "native-tp",
             "backend_config": {
                 "native_tp": {
-                    "tensor_model_parallel_size": 1,
-                    "pipeline_model_parallel_size": 8,
+                    "tp_size": 1,
+                    "pp_size": 8,
                     "placement_strategy": "qwen36_pp8_static",
-                    "pipeline_train_schedule": "simple",
-                    "pipeline_max_inflight_microbatches": 4,
+                    "pp_schedule": "simple",
+                    "pp_max_inflight_microbatches": 4,
                 }
             },
         }
     )
 
     validate_native_runtime_config(config)
-    assert config.native_tp.pipeline_train_schedule == "simple"
-    assert config.native_tp.pipeline_max_inflight_microbatches == 4
+    assert config.native_tp.pp_schedule == "simple"
+    assert config.native_tp.pp_max_inflight_microbatches == 4
 
 
 def test_native_placement_config_accepts_one_f_one_b_pipeline_schedule():
@@ -99,12 +100,12 @@ def test_native_placement_config_accepts_one_f_one_b_pipeline_schedule():
             "backend": "native-tp",
             "backend_config": {
                 "native_tp": {
-                    "tensor_model_parallel_size": 1,
-                    "pipeline_model_parallel_size": 8,
+                    "tp_size": 1,
+                    "pp_size": 8,
                     "placement_strategy": "qwen36_pp8_lm_head_only_final",
-                    "train_micro_batch_size": 1,
-                    "pipeline_train_schedule": "one_f_one_b",
-                    "pipeline_max_inflight_microbatches": 4,
+                    "pp_micro_batch_size": 1,
+                    "pp_schedule": "one_f_one_b",
+                    "pp_max_inflight_microbatches": 4,
                 }
             },
         }
@@ -119,13 +120,13 @@ def test_native_placement_config_rejects_invalid_pipeline_schedule():
             "backend": "native-tp",
             "backend_config": {
                 "native_tp": {
-                    "pipeline_train_schedule": "sideways",
+                    "pp_schedule": "sideways",
                 }
             },
         }
     )
 
-    with pytest.raises(ValueError, match="pipeline_train_schedule"):
+    with pytest.raises(ValueError, match="pp_schedule"):
         validate_native_runtime_config(config)
 
 
@@ -135,15 +136,15 @@ def test_native_placement_config_rejects_one_f_one_b_without_pipeline_parallel()
             "backend": "native-tp",
             "backend_config": {
                 "native_tp": {
-                    "tensor_model_parallel_size": 2,
-                    "pipeline_model_parallel_size": 1,
-                    "pipeline_train_schedule": "one_f_one_b",
+                    "tp_size": 2,
+                    "pp_size": 1,
+                    "pp_schedule": "one_f_one_b",
                 }
             },
         }
     )
 
-    with pytest.raises(ValueError, match="requires pipeline_model_parallel_size>1"):
+    with pytest.raises(ValueError, match="requires pp_size>1"):
         validate_native_runtime_config(config)
 
 
@@ -153,14 +154,14 @@ def test_native_placement_config_rejects_mixed_tp_pp_v1():
             "backend": "native-tp",
             "backend_config": {
                 "native_tp": {
-                    "tensor_model_parallel_size": 2,
-                    "pipeline_model_parallel_size": 4,
+                    "tp_size": 2,
+                    "pp_size": 4,
                 }
             },
         }
     )
 
-    with pytest.raises(ValueError, match="pipeline_model_parallel_size>1"):
+    with pytest.raises(ValueError, match="pp_size>1"):
         validate_native_runtime_config(config)
 
 
@@ -400,10 +401,10 @@ def test_public_configs_are_complete_launch_configs():
 class FakeNativeRuntime:
     def __init__(self, *, primary: bool = True) -> None:
         self.generate_calls = 0
-        self.train_batches = []
-        self.saved = []
-        self.saved_trainer_states = []
-        self.loaded = []
+        self.train_batches: list[dict[str, Any]] = []
+        self.saved: list[str] = []
+        self.saved_trainer_states: list[dict[str, Any]] = []
+        self.loaded: list[dict[str, Any]] = []
         self.primary = primary
 
     def validate(self) -> None:
@@ -458,11 +459,11 @@ class ScriptedGroupRuntime:
     def __init__(self, groups: list[list[str]], *, primary: bool = True) -> None:
         self.groups = groups
         self.generate_calls = 0
-        self.message_keys = []
-        self.train_batches = []
-        self.saved = []
-        self.saved_trainer_states = []
-        self.loaded = []
+        self.message_keys: list[str] = []
+        self.train_batches: list[dict[str, Any]] = []
+        self.saved: list[str] = []
+        self.saved_trainer_states: list[dict[str, Any]] = []
+        self.loaded: list[dict[str, Any]] = []
         self.resume_state = None
         self.primary = primary
 
@@ -521,7 +522,7 @@ class ScriptedQueuedRuntime(ScriptedGroupRuntime):
         super().__init__([], primary=primary)
         self.groups_by_prompt = groups_by_prompt
         self.generate_group_batches: list[list[str]] = []
-        self.generate_tool_batches = []
+        self.generate_tool_batches: list[list[dict[str, Any]] | None] = []
         self.prompt_attempt_counts = {prompt: 0 for prompt in groups_by_prompt}
 
     def generate_groups(self, **kwargs):
@@ -614,7 +615,7 @@ def _native_test_config(
     data: Path,
     *,
     rollout_group_size: int = 8,
-    optimize_completion_batch_size: int = 4,
+    optimize_prompt_batch_size: int = 4,
     optimize_times_per_step: int = 1,
     rollout_max_retry_times: int = 1,
     max_steps: int = 1,
@@ -627,13 +628,13 @@ def _native_test_config(
                 "output_dir": str(tmp_path / "out"),
                 "training_epoch_count": 1,
                 "rollout_group_size": rollout_group_size,
-                "optimize_completion_batch_size": optimize_completion_batch_size,
+                "optimize_prompt_batch_size": optimize_prompt_batch_size,
                 "optimize_times_per_step": optimize_times_per_step,
                 "rollout_max_retry_times": rollout_max_retry_times,
                 "max_steps": max_steps,
                 "save_steps": 1,
             },
-            "backend_config": {"native_tp": {"tensor_model_parallel_size": 2}},
+            "backend_config": {"native_tp": {"tp_size": 2}},
         }
     )
 
@@ -658,13 +659,13 @@ def test_native_trainer_retries_then_trains_with_fake_runtime(tmp_path):
             "training": {
                 "output_dir": str(tmp_path / "out"),
                 "rollout_group_size": 2,
-                "optimize_completion_batch_size": 1,
+                "optimize_prompt_batch_size": 1,
                 "optimize_times_per_step": 1,
                 "rollout_max_retry_times": 1,
                 "max_steps": 1,
                 "save_steps": 1,
             },
-            "backend_config": {"native_tp": {"tensor_model_parallel_size": 2}},
+            "backend_config": {"native_tp": {"tp_size": 2}},
         }
     )
     runtime = FakeNativeRuntime()
@@ -725,7 +726,7 @@ def test_four_trainable_groups_trigger_one_optimize_with_original_threshold(tmp_
     assert train_step["epoch"]["decisions"]["trainable"]["max_correct"] == 4
     assert train_step["run"]["decisions"]["trainable"]["max_correct"] == 4
     assert train_step["optimize"]["replay_buffer_optimize_threshold"] == 32
-    assert train_step["optimize"]["optimize_completion_batch_size"] == 4
+    assert train_step["optimize"]["optimize_prompt_batch_size"] == 4
     assert train_step["optimize"]["optimize_times_per_step"] == 1
     assert train_step["optimize"]["replay_buffer_trainable_completion_count"] == 32
     assert train_step["optimize"]["replay_buffer_trainable_group_count"] == 4.0
@@ -867,7 +868,7 @@ def test_rollout_prompt_queue_passes_tools_to_runtime(tmp_path):
         tmp_path,
         data,
         rollout_group_size=2,
-        optimize_completion_batch_size=2,
+        optimize_prompt_batch_size=2,
     )
     trainer = NativeTPGraspoTrainer(config, runtime=runtime)
 
@@ -930,7 +931,7 @@ def test_trainer_scores_qwen_xml_tool_call_via_runtime_parser(tmp_path):
         tmp_path,
         data,
         rollout_group_size=2,
-        optimize_completion_batch_size=2,
+        optimize_prompt_batch_size=2,
     )
     trainer = NativeTPGraspoTrainer(config, runtime=runtime)
 
@@ -959,7 +960,7 @@ def test_rollout_prompt_queue_retries_only_unfinished_prompt(tmp_path):
         tmp_path,
         data,
         rollout_group_size=2,
-        optimize_completion_batch_size=2,
+        optimize_prompt_batch_size=2,
         rollout_max_retry_times=1,
     )
     trainer = NativeTPGraspoTrainer(config, runtime=runtime)
@@ -1007,7 +1008,7 @@ def test_no_preference_gap_group_is_logged_invalid_and_not_trained(tmp_path):
         tmp_path,
         data,
         rollout_group_size=4,
-        optimize_completion_batch_size=1,
+        optimize_prompt_batch_size=1,
         rollout_max_retry_times=0,
         max_steps=-1,
     )
@@ -1040,11 +1041,11 @@ def test_native_trainer_shuffles_prompt_order_each_epoch_on_cpu(tmp_path):
                 "seed": 123,
                 "training_epoch_count": 2,
                 "rollout_group_size": 2,
-                "optimize_completion_batch_size": 1,
+                "optimize_prompt_batch_size": 1,
                 "rollout_max_retry_times": 0,
                 "max_steps": -1,
             },
-            "backend_config": {"native_tp": {"tensor_model_parallel_size": 2}},
+            "backend_config": {"native_tp": {"tp_size": 2}},
         }
     )
     trainer = NativeTPGraspoTrainer(config, runtime=runtime)
@@ -1108,14 +1109,14 @@ def test_native_trainer_resumes_from_trainer_state_without_repeating_samples(tmp
                 "seed": 123,
                 "training_epoch_count": 1,
                 "rollout_group_size": 2,
-                "optimize_completion_batch_size": 1,
+                "optimize_prompt_batch_size": 1,
                 "optimize_times_per_step": 1,
                 "rollout_max_retry_times": 0,
                 "max_steps": 6,
                 "save_steps": 1,
                 "resume_from_checkpoint": str(checkpoint_dir),
             },
-            "backend_config": {"native_tp": {"tensor_model_parallel_size": 2}},
+            "backend_config": {"native_tp": {"tp_size": 2}},
         }
     )
     trainer = NativeTPGraspoTrainer(config, runtime=runtime)
@@ -1166,7 +1167,7 @@ def test_train_batch_log_counts_group8_retry_once(tmp_path, capsys):
     ]
     run_start = next(event for event in stdout_events if event.get("event") == "run_start")
     assert run_start["config"]["rollout_group_size"] == 8
-    assert run_start["config"]["optimize_completion_batch_size"] == 4
+    assert run_start["config"]["optimize_prompt_batch_size"] == 4
     assert run_start["config"]["replay_buffer_optimize_threshold"] == 32
     train_step = next(event for event in stdout_events if event.get("event") == "train_step")
     reward_batch = train_step["batch"]
@@ -1192,7 +1193,7 @@ def test_train_batch_log_counts_batch2_with_one_retry(tmp_path, capsys):
             tmp_path,
             data,
             rollout_group_size=8,
-            optimize_completion_batch_size=2,
+            optimize_prompt_batch_size=2,
         ),
         runtime=runtime,
     )

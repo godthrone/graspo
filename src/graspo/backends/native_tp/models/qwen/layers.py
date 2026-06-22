@@ -26,6 +26,7 @@ from graspo.backends.native_tp.tensor_utils import (
     _torch_recurrent_gated_delta_rule,
 )
 
+
 class TensorParallelQwen35DecoderLayer(nn.Module):
     def __init__(
         self,
@@ -1051,5 +1052,3 @@ def _qwen35_cache_sequence_len(layer_cache: Any) -> int:
     ):
         return int(layer_cache[0].shape[2])
     return 0
-
-

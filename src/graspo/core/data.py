@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
 from graspo.core.reward import normalize_targets
 from graspo.core.schema import Sample
+
+# Matches raw Qwen XML / tool-call markers that should not appear in content.
+_TOOL_CALL_MARKER_RE = re.compile(r"<(?:tool_call|function=|parameter=)")
 
 
 def sample_from_record(record: dict[str, Any]) -> Sample:
@@ -57,7 +61,83 @@ def _validate_messages(value: Any) -> list[dict[str, Any]]:
         raise ValueError(
             "messages must be prompt/context only; final assistant messages leak the target"
         )
+    _validate_assistant_tool_calls(messages)
     return messages
+
+
+def _validate_assistant_tool_calls(messages: list[dict[str, Any]]) -> None:
+    """Validate assistant messages use structured tool_calls, not raw text in content.
+
+    Raises ValueError if any assistant message embeds raw tool-call markers
+    (``<tool_call>``, ``<function=``) in its content field, or if a
+    ``tool_calls`` field does not conform to canonical JSON format.
+    """
+    for idx, message in enumerate(messages):
+        if str(message.get("role") or "").lower() != "assistant":
+            continue
+
+        # ---------- 1. raw tool-call markers in content ----------
+        content = message.get("content", "")
+        content_texts: list[str] = []
+
+        if isinstance(content, str):
+            content_texts.append(content)
+        elif isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and str(block.get("type") or "").lower() == "text":
+                    content_texts.append(str(block.get("text") or ""))
+                elif isinstance(block, str):
+                    content_texts.append(block)
+
+        for text in content_texts:
+            if _TOOL_CALL_MARKER_RE.search(text):
+                snippet = text.strip()[:200]
+                raise ValueError(
+                    f"messages[{idx}] (assistant) has raw tool-call text in content. "
+                    f"Use structured 'tool_calls' field instead:\n"
+                    f'  {{"tool_calls": [{{"name": "...", "arguments": {{...}}}}]}}\n'
+                    f"  Found in content: {snippet!r}"
+                )
+
+        # ---------- 2. validate tool_calls field format ----------
+        tool_calls = message.get("tool_calls")
+        if tool_calls is not None:
+            _require_canonical_tool_calls(tool_calls, path=f"messages[{idx}].tool_calls")
+
+
+def _require_canonical_tool_calls(value: Any, *, path: str = "tool_calls") -> None:
+    """Validate *value* is a canonical tool-call list.  Raises ``ValueError``.
+
+    Canonical form::
+
+        [{"name": "<non-empty-str>", "arguments": {<dict>}}, ...]
+
+    ``arguments`` values must not contain raw tool-call markers
+    (avoids XML smuggled inside JSON string values).
+    """
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"{path} must be a non-empty list")
+
+    for idx, call in enumerate(value):
+        if not isinstance(call, dict):
+            raise ValueError(f"{path}[{idx}] must be a JSON object")
+
+        name = call.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f"{path}[{idx}].name must be a non-empty string")
+
+        arguments = call.get("arguments")
+        if not isinstance(arguments, dict):
+            raise ValueError(f"{path}[{idx}].arguments must be a JSON object")
+
+        # Reject raw tool-call markers smuggled inside argument values.
+        for arg_key, arg_val in arguments.items():
+            if isinstance(arg_val, str) and _TOOL_CALL_MARKER_RE.search(arg_val):
+                raise ValueError(
+                    f"{path}[{idx}].arguments.{arg_key} contains raw tool-call markers "
+                    f"in its string value; use structured JSON values instead: "
+                    f"{arg_val!r}"
+                )
 
 
 def _validate_tools(value: Any) -> list[dict[str, Any]] | None:
@@ -87,7 +167,8 @@ def _validate_tool_call_targets(targets: list[dict[str, Any]], tools: list[dict[
             name = str(call["name"])
             if tool_names and name not in tool_names:
                 raise ValueError(
-                    f"targets[{target_index}].output.tool_calls name {name!r} is not declared in tools"
+                    f"targets[{target_index}].output.tool_calls name {name!r}"
+                    f" is not declared in tools"
                 )
             declaration = _tool_declaration_by_name(tools, name)
             if declaration is not None:

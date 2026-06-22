@@ -20,13 +20,15 @@ from graspo.backends.native_tp.models.qwen.layers import (
     _checkpoint_decoder_layer_forward,
 )
 from graspo.backends.native_tp.models.qwen.lora import (
-    LoRALinear, _replace_visual_lora_modules,
+    LoRALinear,
+    _replace_visual_lora_modules,
 )
 from graspo.backends.native_tp.tensor_utils import (
     _dtype_size,
     _position_ids,
     _selected_token_log_probs_from_hidden,
 )
+
 
 class NativeTPCausalLMBase(nn.Module):
     """Shared contract for repository-native tensor-parallel causal LMs.
@@ -144,6 +146,7 @@ def build_native_qwen_model(
         )
     if hf_config.family == "qwen3_5_text":
         from graspo.backends.native_tp.models.qwen.modeling_hybrid import Qwen35HybridTextModel
+
         return Qwen35HybridTextModel(
             hf_config=hf_config,
             loader=loader,
@@ -411,5 +414,3 @@ class Qwen3DenseModel(QwenFamilyBase):
 
 class TensorParallelQwenForCausalLM(Qwen3DenseModel):
     """Compatibility alias for older tests/imports."""
-
-

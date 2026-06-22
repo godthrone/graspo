@@ -5,7 +5,7 @@ import math
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from graspo.core.compare import CompareResult, dict_compare_score
+from graspo.core.compare import dict_compare_score
 from graspo.core.completion import ParsedCompletion, raw_parsed_completion
 
 

@@ -36,8 +36,8 @@ reports/
 experiment_data/
 *.log
 
-# Large model and checkpoint files
-models/
+# Large model and checkpoint files (repo root only)
+/models/
 *.safetensors
 *.bin
 *.pt

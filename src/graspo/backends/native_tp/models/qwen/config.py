@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+
 class NativeQwenConfig:
     def __init__(self, values: dict[str, Any], *, family: str, key_prefix: str) -> None:
         self.family: str = family
@@ -11,5 +12,3 @@ class NativeQwenConfig:
 
     def __getattr__(self, name: str) -> Any:
         raise AttributeError(f"'NativeQwenConfig' object has no attribute '{name}'")
-
-

@@ -91,7 +91,8 @@ uv run graspo validate-reward --data data/sample.jsonl --limit 2
 支持字段：
 
 - `messages`：必填 prompt/context messages，用于 tokenizer 或 processor chat template；
-- `tools`：可选工具声明列表，会传给模型 chat template；
+- `tools`：可选工具声明列表，使用 OpenAI function-calling 格式，传给模型 chat
+  template。每项为 `{"type":"function","function":{"name":"...","description":"...","parameters":{...}}}`；
 - `targets`：必填非空 list，表示多个可接受答案；每个 target 可以有 `id`，并必须有 `output`。普通答案写 `output.content` JSON object，工具调用写 `output.tool_calls` ordered canonical tool-call list；
 - `messages[].content` 内的 image/video 条目：用于多模态路由；图片训练已支持，视频训练前应单独 smoke；
 - 其它字段会作为 metadata。
@@ -99,6 +100,26 @@ uv run graspo validate-reward --data data/sample.jsonl --limit 2
 工具调用样本的 `targets[].output.tool_calls` 使用 canonical tool-call JSON：每一项都是 `{"name":"...","arguments":{...}}`，列表顺序就是执行顺序。多个可接受答案必须拆成多个 `targets`。Qwen XML 等模型私有输出格式由对应模型 adapter 在 reward 前解析成 canonical 结构，不能写入数据集。
 
 最后一条 message 不能是 `assistant`；`targets` 是原始 reward 目标，不能泄漏进输入，也不能转换成模型 chat template。GRASPO 只接受 `messages + 可选 tools + targets` 的 JSONL 记录，不支持纯文本 prompt 字段、JSON 文件、Excel 文件、旧 `ground_truth` 字段或 top-level `image/images/video/videos` 字段。
+
+### 含工具调用的 assistant 消息
+
+多轮对话中，含工具调用的 assistant 消息**必须**使用结构化 `tool_calls` 字段。
+GRASPO 在启动时会校验数据，任何在 `content` 中嵌入裸工具调用文本的记录都会被拒绝：
+
+```json
+{
+  "role": "assistant",
+  "content": "我来旋转机械臂靠近目标。",
+  "tool_calls": [
+    {"name": "robot_atomic_control", "arguments": {"action_type": "顺时针旋转", "angle_deg": 38.3}}
+  ]
+}
+```
+
+裸 Qwen XML（`<function=...><parameter=...>`）、裸 JSON 字符串以及其他模型私有的
+工具调用格式**不能**放在 `content` 中。请使用 `tool_calls` 字段，格式为 canonical JSON
+`{"name":"...","arguments":{...}}`。模型的 chat template 会自动将 `tool_calls` 渲染为
+正确的原生格式。
 
 ## Reward 计分方式
 
