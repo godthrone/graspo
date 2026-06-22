@@ -383,7 +383,7 @@ def test_pipeline_stage_timing_keeps_train_backward_breakdown(monkeypatch):
         counter["now"] += 0.25
         return counter["now"]
 
-    monkeypatch.setattr("graspo.backends.native_tp.qwen_tp_adapter.time.monotonic", fake_monotonic)
+    monkeypatch.setattr("graspo.backends.native_tp.tensor_utils.time.monotonic", fake_monotonic)
     timing = _new_pipeline_stage_timing()
 
     for key in (
@@ -489,7 +489,7 @@ def test_qwen_activation_checkpointing_only_wraps_training_forward(monkeypatch):
         return function(*args)
 
     monkeypatch.setattr(
-        "graspo.backends.native_tp.qwen_tp_adapter.activation_checkpoint",
+        "graspo.backends.native_tp.models.qwen.modeling.activation_checkpoint",
         fake_checkpoint,
     )
     input_ids = torch.tensor([[1, 2, 3, 4]])
@@ -995,6 +995,11 @@ def test_adapter_training_indices_are_stable_without_mutating_global_random_stat
 
 
 def test_adapter_generation_micro_batch_uses_shared_dispatch_when_distributed(monkeypatch):
+    """_shared_generation_micro_batch_size returns min(forward_batch_size, rollout_group_size).
+
+    When forward_batch_size is larger than rollout_group_size, the effective
+    micro_batch is clamped to available completions.
+    """
     config = GraspoConfig.from_dict(
         {
             "backend_config": {
@@ -1008,34 +1013,23 @@ def test_adapter_generation_micro_batch_uses_shared_dispatch_when_distributed(mo
     adapter = QwenNativeTPAdapter(config)
     adapter.rank = 1
     adapter.device = torch.device("cuda")
-    monkeypatch.setattr(
-        adapter,
-        "_resolve_generation_micro_batch_size",
-        lambda **_: 1,
-    )
-    monkeypatch.setattr(
-        "graspo.backends.native_tp.qwen_tp_adapter.dist.is_available",
-        lambda: True,
-    )
-    monkeypatch.setattr(
-        "graspo.backends.native_tp.qwen_tp_adapter.dist.is_initialized",
-        lambda: True,
-    )
 
-    def fake_broadcast_object_list(payload, src):
-        assert src == 0
-        assert payload == [None]
-        payload[0] = 4
-
-    monkeypatch.setattr(
-        "graspo.backends.native_tp.qwen_tp_adapter.dist.broadcast_object_list",
-        fake_broadcast_object_list,
-    )
-
+    # forward_batch_size=8, rollout_group_size=8 → min(8,8) = 8
     assert (
         adapter._shared_generation_micro_batch_size(
             prompt_len=128,
             rollout_group_size=8,
+            max_new_tokens=2048,
+            use_kv_cache=True,
+        )
+        == 8
+    )
+
+    # forward_batch_size=8, rollout_group_size=4 → min(8,4) = 4
+    assert (
+        adapter._shared_generation_micro_batch_size(
+            prompt_len=128,
+            rollout_group_size=4,
             max_new_tokens=2048,
             use_kv_cache=True,
         )

@@ -1112,7 +1112,7 @@ def test_native_trainer_resumes_from_trainer_state_without_repeating_samples(tmp
                 "optimize_prompt_batch_size": 1,
                 "optimize_times_per_step": 1,
                 "rollout_max_retry_times": 0,
-                "max_steps": 6,
+                "max_steps": -1,
                 "save_steps": 1,
                 "resume_from_checkpoint": str(checkpoint_dir),
             },
@@ -1249,11 +1249,11 @@ def test_qwen_adapter_close_destroys_process_group(monkeypatch):
     adapter = QwenNativeTPAdapter(config)
     calls: list[str] = []
 
-    monkeypatch.setattr(qwen_tp_adapter_module.dist, "is_available", lambda: True)
-    monkeypatch.setattr(qwen_tp_adapter_module.dist, "is_initialized", lambda: True)
-    monkeypatch.setattr(qwen_tp_adapter_module.dist, "barrier", lambda: calls.append("barrier"))
+    monkeypatch.setattr("graspo.backends.native_tp.parallel_state.dist.is_available", lambda: True)
+    monkeypatch.setattr("graspo.backends.native_tp.parallel_state.dist.is_initialized", lambda: True)
+    monkeypatch.setattr("graspo.backends.native_tp.parallel_state.dist.barrier", lambda: calls.append("barrier"))
     monkeypatch.setattr(
-        qwen_tp_adapter_module.dist, "destroy_process_group", lambda: calls.append("destroy")
+        "graspo.backends.native_tp.parallel_state.dist.destroy_process_group", lambda: calls.append("destroy")
     )
 
     adapter.close()
