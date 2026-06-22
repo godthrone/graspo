@@ -1,63 +1,30 @@
 from __future__ import annotations
 
 import json
-import math
 import random
-import re
 import time
-from collections.abc import Iterable
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 import torch
 import torch.distributed as dist
-from safetensors.torch import load_file
-from torch import nn
-from torch.nn import functional as F
-from torch.utils.checkpoint import checkpoint as activation_checkpoint
 from torch.nn.utils.rnn import pad_sequence
 
 from graspo.backends.native_tp.base_adapter import BaseNativeTPAdapter
 from graspo.backends.native_tp.models.qwen.checkpoint import QwenCheckpointMixin
-from graspo.backends.native_tp.models.qwen.config import NativeQwenConfig
 from graspo.backends.native_tp.models.qwen.encoding import QwenEncodingMixin
 from graspo.backends.native_tp.models.qwen.generator import QwenGeneratorMixin
-from graspo.backends.native_tp.models.qwen.layers import (
-    TensorParallelQwenDecoderLayer,
-    TensorParallelQwen35DecoderLayer,
-    TensorParallelQwen35FullAttention,
-    TensorParallelQwen35LinearAttention,
-    TensorParallelQwenAttention,
-    TensorParallelQwenMLP,
-    QwenRMSNorm,
-    Qwen35RMSNorm,
-    Qwen35RMSNormGated,
-    _checkpoint_decoder_layer_forward,
-    _checkpoint_qwen35_decoder_layer_forward,
-    _qwen35_mrope_embeddings,
-    _qwen35_apply_mrope_layout,
-    _qwen35_cache_sequence_len,
-)
 from graspo.backends.native_tp.models.qwen.lora import (
-    LoRALinear,
     native_qwen_lora_available_targets,
-    _lora_target_enabled,
-    _replace_visual_lora_modules,
-    _module_parent_and_attr,
 )
 from graspo.backends.native_tp.models.qwen.modeling import (
-    NativeTPCausalLMBase,
-    QwenFamilyBase,
-    Qwen3DenseModel,
     TensorParallelQwenForCausalLM,
     load_native_qwen_config,
     build_native_qwen_model,
-    _build_qwen35_visual_tower,
 )
 from graspo.backends.native_tp.models.qwen.modeling_hybrid import (
     Qwen35HybridTextModel,
-    TensorParallelQwen35TextForCausalLM,
 )
 from graspo.backends.native_tp.multimodal import (
     _multimodal_row_from_sample,
@@ -81,16 +48,8 @@ from graspo.backends.native_tp.placement import (
 from graspo.backends.native_tp.runtime import NativeGeneration
 from graspo.backends.native_tp.tensor_utils import (
     SafetensorIndex,
-    CollatedExperience,
     collate_experiences,
     _resolve_dtype,
-    _dtype_size,
-    _shard_tensor,
-    _shard_bounds,
-    _select_head_rows,
-    _head_row_indices,
-    _TensorParallelAllReduce,
-    _all_reduce_tp,
     _selected_token_log_probs_from_hidden,
     _mean_present,
     _rollout_timing_summary,
@@ -101,21 +60,8 @@ from graspo.backends.native_tp.tensor_utils import (
     _cuda_memory_snapshot,
     _jsonable,
     _left_pad_token_rows,
-    _position_ids,
-    _rope_cache,
-    _rotate_half,
-    _apply_rope,
-    _apply_rope_partial,
-    _causal_attention_mask,
-    _apply_mask_to_padding_states,
-    _left_pad_last_dim,
-    _l2norm,
-    _torch_causal_conv1d_update,
-    _torch_chunk_gated_delta_rule,
-    _torch_recurrent_gated_delta_rule,
     _next_token_from_logits,
     _broadcast_and_pad_finished,
-    _sample_next_token,
 )
 from graspo.backends.native_tp.tool_parser import (
     parse_qwen_tool_completion,
@@ -128,19 +74,12 @@ from graspo.trainer.lora import resolve_lora_target_modules
 from graspo.trainer.loss import GRASPOLoss
 
 
-_TENSOR_PARALLEL_GROUP: dist.ProcessGroup | None = None
-_TENSOR_PARALLEL_SIZE = 1
+from graspo.backends.native_tp.tensor_utils import _set_tensor_parallel_group
 
 
 def _patch_transformers_float8_import_compat() -> None:
     if not hasattr(torch, "float8_e8m0fnu"):
         torch.float8_e8m0fnu = torch.uint8  # type: ignore[attr-defined]
-
-
-def _set_tensor_parallel_group(group: dist.ProcessGroup | None, size: int) -> None:
-    global _TENSOR_PARALLEL_GROUP, _TENSOR_PARALLEL_SIZE
-    _TENSOR_PARALLEL_GROUP = group
-    _TENSOR_PARALLEL_SIZE = int(size)
 
 
 class QwenNativeTPAdapter(
@@ -210,7 +149,7 @@ class QwenNativeTPAdapter(
             pp_rank=self.pp_rank,
             layer_types=list(getattr(hf_config, "layer_types", []) or []),
         )
-        self.model = build_native_qwen_model(
+        self.model = build_native_qwen_model(  # type: ignore[assignment]
             hf_config=hf_config,
             loader=loader,
             tp_rank=self.tp_rank,
@@ -224,6 +163,7 @@ class QwenNativeTPAdapter(
             torch_dtype=torch_dtype,
             device=self.device,
         )
+        assert self.model is not None
         missing_lora_targets = sorted(
             target
             for target in set(lora_targets.resolved) - set(self.model.enabled_lora_target_names())
@@ -304,7 +244,7 @@ class QwenNativeTPAdapter(
             chat_template_kwargs=chat_template_kwargs,
         )[0]
 
-    def generate_groups(
+    def generate_groups(  # type: ignore[override]
         self,
         *,
         message_batches: list[list[dict[str, Any]]],
@@ -464,13 +404,13 @@ class QwenNativeTPAdapter(
             "rollout_use_kv_cache": use_kv_cache,
             "rollout_generation_micro_batch_size": max(
                 (
-                    int(gen.metadata.get("rollout_generation_micro_batch_size", 1))
+                    int((gen.metadata or {}).get("rollout_generation_micro_batch_size", 1))
                     for gen in all_generations
                 ),
                 default=1,
             ),
             "rollout_generation_split_count": sum(
-                int(gen.metadata.get("rollout_generation_split_count", 1))
+                int((gen.metadata or {}).get("rollout_generation_split_count", 1))
                 for gen in all_generations
             ),
             **_rollout_timing_summary(tokenize_sec, all_chunk_timings),
@@ -483,7 +423,7 @@ class QwenNativeTPAdapter(
             and (
                 prompt_chunk_size < requested_prompt_queue_size
                 or any(
-                    int(gen.metadata.get("rollout_generation_split_count", 1)) > 1
+                    int((gen.metadata or {}).get("rollout_generation_split_count", 1)) > 1
                     for gen in all_generations
                 )
             )
@@ -501,7 +441,7 @@ class QwenNativeTPAdapter(
                 }
         return all_generations
 
-    def generate_sample_groups(
+    def generate_sample_groups(  # type: ignore[override]
         self,
         *,
         samples: list[Any],
@@ -575,9 +515,7 @@ class QwenNativeTPAdapter(
         per_sample_media_counts: list[dict[str, int]] = []
         for sample in samples:
             row = _multimodal_row_from_sample(sample)
-            img_count = sum(
-                1 for item in sample.media if str(item.get("type") or "") == "image"
-            )
+            img_count = sum(1 for item in sample.media if str(item.get("type") or "") == "image")
             per_sample_image_counts.append(img_count)
             per_sample_media_counts.append(_media_counts(sample.media))
             for _ in range(G):
@@ -622,7 +560,6 @@ class QwenNativeTPAdapter(
             )
         )
 
-        total_rows = N * G
         requested_prompt_queue_size = N
         # Use max_prompt_length for budget estimation to guard against
         # heterogeneous prompt lengths across encoding chunks.  The first
@@ -678,7 +615,8 @@ class QwenNativeTPAdapter(
                     current_attention_mask = chunk_attention_mask[local_start:local_stop]
                     current_mm_inputs = _slice_multimodal_inputs_offset(
                         multimodal_inputs,
-                        global_start, global_stop,
+                        global_start,
+                        global_stop,
                         image_offsets=image_offsets,
                         patch_offsets=patch_offsets,
                         video_offsets=video_offsets,
@@ -721,7 +659,6 @@ class QwenNativeTPAdapter(
                 all_timings.extend(chunk_timings)
 
                 for local_prompt_idx in range(chunk_prompt_count):
-                    global_sample_idx = prompt_start + local_prompt_idx
                     row_start_inner = local_prompt_idx * G
                     row_stop_inner = row_start_inner + G
                     # # Clone to break the view chain from flat_sequences,
@@ -731,9 +668,7 @@ class QwenNativeTPAdapter(
                         self._generation_from_sequences(
                             sequences=prompt_sequences,
                             prompt_len=prompt_len,
-                            prompt_lens=chunk_prompt_lens[
-                                row_start_inner : row_start_inner + 1
-                            ],
+                            prompt_lens=chunk_prompt_lens[row_start_inner : row_start_inner + 1],
                             pad_token_id=pad_token_id,
                             rollout_group_size=G,
                             requested_prompt_queue_size=requested_prompt_queue_size,
@@ -752,7 +687,6 @@ class QwenNativeTPAdapter(
                 # accumulation across Level-1 iterations.
                 del flat_sequences
                 del sequence_chunks
-                sequence_chunks = []
                 if self.device.type == "cuda" and use_kv_cache:
                     torch.cuda.empty_cache()
 
@@ -785,7 +719,7 @@ class QwenNativeTPAdapter(
             and (
                 prompt_chunk_size < N
                 or any(
-                    int(gen.metadata.get("rollout_generation_split_count", 1)) > 1
+                    int((gen.metadata or {}).get("rollout_generation_split_count", 1)) > 1
                     for gen in all_generations
                 )
             )
@@ -882,13 +816,13 @@ class QwenNativeTPAdapter(
                 current_input_ids = input_ids[start:stop]
                 current_attention_mask = attention_mask[start:stop]
                 current_mm_inputs = _slice_multimodal_inputs(
-                    multimodal_inputs, start, stop,
+                    multimodal_inputs,
+                    start,
+                    stop,
                     images_per_row=images_per_row,
                     patches_per_row=patches_per_row,
                 )
-                finished = torch.zeros(
-                    stop - start, dtype=torch.bool, device=self.device
-                )
+                finished = torch.zeros(stop - start, dtype=torch.bool, device=self.device)
                 if use_kv_cache:
                     seq, timing = self._generate_multimodal_with_kv_cache(
                         sequences=current_input_ids,
@@ -1395,13 +1329,13 @@ class QwenNativeTPAdapter(
                 "rollout_use_kv_cache": True,
                 "rollout_generation_micro_batch_size": max(
                     (
-                        int(gen.metadata.get("rollout_generation_micro_batch_size", 1))
+                        int((gen.metadata or {}).get("rollout_generation_micro_batch_size", 1))
                         for gen in all_generations
                     ),
                     default=1,
                 ),
                 "rollout_generation_split_count": sum(
-                    int(gen.metadata.get("rollout_generation_split_count", 1))
+                    int((gen.metadata or {}).get("rollout_generation_split_count", 1))
                     for gen in all_generations
                 ),
                 **_rollout_timing_summary(tokenize_sec, all_timings),
@@ -1433,9 +1367,7 @@ class QwenNativeTPAdapter(
         per_sample_image_counts: list[int] = []
         for sample in samples:
             row = _multimodal_row_from_sample(sample)
-            img_count = sum(
-                1 for item in sample.media if str(item.get("type") or "") == "image"
-            )
+            img_count = sum(1 for item in sample.media if str(item.get("type") or "") == "image")
             per_sample_image_counts.append(img_count)
             for _ in range(G):
                 rows.append(row)
@@ -1474,7 +1406,6 @@ class QwenNativeTPAdapter(
             )
         )
 
-        total_rows = N * G
         requested_prompt_queue_size = N
         budget_prompt_len = max(prompt_len, max_prompt_length)
         prompt_chunk_size = self._shared_rollout_prompt_chunk_size(
@@ -1517,7 +1448,8 @@ class QwenNativeTPAdapter(
                     current_sequences = chunk_sequences[local_start:local_stop]
                     current_mm_inputs = _slice_multimodal_inputs_offset(
                         multimodal_inputs,
-                        global_start, global_stop,
+                        global_start,
+                        global_stop,
                         image_offsets=image_offsets,
                         patch_offsets=patch_offsets,
                         video_offsets=video_offsets,
@@ -1551,9 +1483,7 @@ class QwenNativeTPAdapter(
                         self._generation_from_sequences(
                             sequences=prompt_sequences,
                             prompt_len=prompt_len,
-                            prompt_lens=chunk_prompt_lens[
-                                row_start_inner : row_start_inner + 1
-                            ],
+                            prompt_lens=chunk_prompt_lens[row_start_inner : row_start_inner + 1],
                             pad_token_id=pad_token_id,
                             rollout_group_size=G,
                             requested_prompt_queue_size=requested_prompt_queue_size,
@@ -1572,7 +1502,6 @@ class QwenNativeTPAdapter(
                 # accumulation across Level-1 iterations.
                 del flat_sequences
                 del sequence_chunks
-                sequence_chunks = []
                 if self.device.type == "cuda":
                     torch.cuda.empty_cache()
 
@@ -1590,17 +1519,22 @@ class QwenNativeTPAdapter(
                     default=prompt_len,
                 ),
                 "generated_tokens_max": max(
-                    (int(chunk.shape[1] - prompt_len) for chunk in [gen.sequences for gen in all_generations]),
+                    (
+                        int(chunk.shape[1] - prompt_len)
+                        for chunk in [gen.sequences for gen in all_generations]
+                    ),
                     default=0,
                 ),
                 "rollout_use_kv_cache": True,
                 "rollout_generation_micro_batch_size": max(
-                    (int(gen.metadata.get("rollout_generation_micro_batch_size", 1))
-                     for gen in all_generations),
+                    (
+                        int((gen.metadata or {}).get("rollout_generation_micro_batch_size", 1))
+                        for gen in all_generations
+                    ),
                     default=1,
                 ),
                 "rollout_generation_split_count": sum(
-                    int(gen.metadata.get("rollout_generation_split_count", 1))
+                    int((gen.metadata or {}).get("rollout_generation_split_count", 1))
                     for gen in all_generations
                 ),
                 **_rollout_timing_summary(tokenize_sec, all_timings),
@@ -1682,7 +1616,9 @@ class QwenNativeTPAdapter(
                 stop = min(start + micro_batch_size, B)
                 current_sequences = sequences[start:stop]
                 current_mm_inputs = _slice_multimodal_inputs(
-                    multimodal_inputs, start, stop,
+                    multimodal_inputs,
+                    start,
+                    stop,
                     images_per_row=images_per_row,
                     patches_per_row=patches_per_row,
                 )
@@ -1903,7 +1839,7 @@ class QwenNativeTPAdapter(
         _add_pipeline_stage_timing(timing, "pipeline_token_broadcast_sec", broadcast_started_at)
         return next_token
 
-    def sequence_log_probs(
+    def sequence_log_probs(  # type: ignore[override]
         self,
         sequences: Any,
         attention_mask: Any,
@@ -1942,7 +1878,7 @@ class QwenNativeTPAdapter(
         )
         return log_probs
 
-    def train_batch(
+    def train_batch(  # type: ignore[override]
         self,
         experiences: list[Experience],
         *,
@@ -2559,7 +2495,7 @@ class QwenNativeTPAdapter(
                     )
                     grad_send_started_at = time.monotonic()
                     assert self.tp_state is not None
-                    dist.send(grad.contiguous(), dst=int(self.tp_state.prev_pp_rank))
+                    dist.send(grad.contiguous(), dst=int(self.tp_state.prev_pp_rank or 0))
                     _add_pipeline_stage_timing(
                         timing, "pipeline_grad_send_sec", grad_send_started_at
                     )
@@ -2569,7 +2505,7 @@ class QwenNativeTPAdapter(
                 grad_output = torch.empty_like(stage_output)
                 grad_recv_started_at = time.monotonic()
                 assert self.tp_state is not None
-                dist.recv(grad_output, src=int(self.tp_state.next_pp_rank))
+                dist.recv(grad_output, src=int(self.tp_state.next_pp_rank or 0))
                 _add_pipeline_stage_timing(timing, "pipeline_grad_recv_sec", grad_recv_started_at)
                 autograd_started_at = time.monotonic()
                 stage_output.backward(grad_output)
@@ -2584,7 +2520,7 @@ class QwenNativeTPAdapter(
                         else torch.zeros_like(stage_input)
                     )
                     grad_send_started_at = time.monotonic()
-                    dist.send(grad.contiguous(), dst=int(self.tp_state.prev_pp_rank))
+                    dist.send(grad.contiguous(), dst=int(self.tp_state.prev_pp_rank or 0))
                     _add_pipeline_stage_timing(
                         timing, "pipeline_grad_send_sec", grad_send_started_at
                     )
@@ -2723,29 +2659,6 @@ class QwenNativeTPAdapter(
     ) -> int:
         # Encode all queued samples together (no more auto-chunking).
         return max(1, int(requested_prompt_count))
-        assert self.model is not None
-        if self.device.type != "cuda":
-            return 0
-        dtype_size = 2  # bfloat16
-        layer_types = list(getattr(self.model.config, "layer_types", []) or [])
-        if not layer_types:
-            return 0
-        full_attn_count = sum(1 for t in layer_types if t == "full_attention")
-        if full_attn_count == 0:
-            hidden_size = getattr(self.model.config, "hidden_size", 3584)
-            return batch_size * prompt_len * hidden_size * 8 * dtype_size
-
-        # Full-attention QK^T matrix: the worst-case allocation during prefill
-        num_heads = getattr(self.model.config, "num_attention_heads", 28)
-        tp_size = max(1, int(self.tp_size))
-        local_heads = max(1, num_heads // tp_size)
-        attn_matrix_bytes = (
-            batch_size * local_heads * prompt_len * prompt_len * dtype_size
-        )
-        # Residual + MLP intermediates for one layer
-        hidden_size = getattr(self.model.config, "hidden_size", 3584)
-        residual_bytes = batch_size * prompt_len * hidden_size * 6 * dtype_size
-        return attn_matrix_bytes + residual_bytes
 
     def save_checkpoint(
         self,
@@ -3065,4 +2978,3 @@ class QwenNativeTPAdapter(
         path = output_dir / f"rank_metrics.rank_{self.rank:05d}.jsonl"
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(_jsonable(payload), ensure_ascii=False) + "\n")
-

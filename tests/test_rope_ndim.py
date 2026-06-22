@@ -1,7 +1,23 @@
-"""Tests for RoPE application with different cos ndim (including mRoPE ndim=4)."""
-
+"""Tests for RoPE ndim handling and TP group globals."""
 import torch
-from graspo.backends.native_tp.tensor_utils import _apply_rope, _apply_rope_partial
+from graspo.backends.native_tp.tensor_utils import (
+    _apply_rope, _apply_rope_partial,
+    _TENSOR_PARALLEL_GROUP, _TENSOR_PARALLEL_SIZE, _set_tensor_parallel_group,
+)
+
+
+class TestTPGlobals:
+    """_TENSOR_PARALLEL_SIZE / _TENSOR_PARALLEL_GROUP must live in tensor_utils
+    alongside _all_reduce_tp so they share the same module namespace."""
+
+    def test_globals_in_correct_module(self):
+        assert _TENSOR_PARALLEL_SIZE == 1
+        assert _TENSOR_PARALLEL_GROUP is None
+
+    def test_setter_updates_same_globals(self):
+        _set_tensor_parallel_group(None, 1)
+        assert _TENSOR_PARALLEL_SIZE == 1
+        assert _TENSOR_PARALLEL_GROUP is None
 
 
 def _dummy_rope_cache(seq_len: int, head_dim: int) -> tuple[torch.Tensor, torch.Tensor]:
