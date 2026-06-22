@@ -459,7 +459,11 @@ def _causal_attention_mask(
     causal = key_positions <= query_positions
     if attention_mask is None:
         return causal.view(1, 1, query_len, key_len)
-    key_mask = attention_mask[:, None, None, :].bool()
+    # During incremental decode the attention mask may be longer than
+    # key_len (the caller appends positions for new query tokens).
+    # Truncate to the last key_len positions so the mask length aligns
+    # with the KV cache.
+    key_mask = attention_mask[:, None, None, -key_len:].bool()
     return causal.view(1, 1, query_len, key_len) & key_mask
 
 
