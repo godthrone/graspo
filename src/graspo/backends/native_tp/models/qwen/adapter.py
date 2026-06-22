@@ -937,8 +937,11 @@ class QwenNativeTPAdapter(
             _preview_first = self.tokenizer.decode(
                 [_first_logits[0].argmax().item()]
             ) if _first_logits.shape[0] > 0 else "?"
+            _top5_vals, _top5_idx = _first_logits[0].float().topk(5)
+            _top5_txt = [self.tokenizer.decode([int(t)]) for t in _top5_idx]
             print(f"  [prefill] seq_len={sequences.shape[1]} batch={sequences.shape[0]} "
-                  f"first_tok_greedy={_preview_first!r}", flush=True)
+                  f"first_tok_greedy={_preview_first!r} "
+                  f"top5={list(zip(_top5_txt, _top5_vals.tolist()))}", flush=True)
         # Per-row logits for the first token; subsequent steps use logits[:, -1, :]
         _step_logits = _first_logits
         for _step_idx in range(max_new_tokens):
