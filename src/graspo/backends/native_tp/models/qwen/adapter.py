@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import random
 import time
 from dataclasses import asdict
@@ -931,9 +932,16 @@ class QwenNativeTPAdapter(
         decode_tokens = 0
         sampling_sec = 0.0
         stop_check_sec = 0.0
+        _debug_decode = os.environ.get("GRASPO_DEBUG_DECODE") == "1"
+        if _debug_decode and self.rank == 0:
+            _preview_first = self.tokenizer.decode(
+                [_first_logits[0].argmax().item()]
+            ) if _first_logits.shape[0] > 0 else "?"
+            print(f"  [prefill] seq_len={sequences.shape[1]} batch={sequences.shape[0]} "
+                  f"first_tok_greedy={_preview_first!r}", flush=True)
         # Per-row logits for the first token; subsequent steps use logits[:, -1, :]
         _step_logits = _first_logits
-        for _ in range(max_new_tokens):
+        for _step_idx in range(max_new_tokens):
             self._sync_timing()
             sampling_started_at = time.monotonic()
             next_token = _next_token_from_logits(
@@ -944,6 +952,11 @@ class QwenNativeTPAdapter(
             next_token = _broadcast_and_pad_finished(next_token, finished, pad_token_id)
             sequences = torch.cat([sequences, next_token.unsqueeze(1)], dim=1)
             decode_tokens += 1
+            if _debug_decode and self.rank == 0:
+                _tok_ids = next_token.tolist()
+                _decoded = [self.tokenizer.decode([t]) if t != pad_token_id else "<PAD>"
+                            for t in _tok_ids[:3]]
+                print(f"  [step {_step_idx}] tokens={_tok_ids[:8]} decoded={_decoded}", flush=True)
             finished |= next_token.eq(eos_token_id)
             self._sync_timing()
             stop_check_started_at = time.monotonic()
@@ -961,6 +974,8 @@ class QwenNativeTPAdapter(
             )
             _step_logits = logits[:, -1, :]  # shape (B, vocab) for next decode step
         self._sync_timing()
+        if _debug_decode and self.rank == 0:
+            print(f"  [decode done] total_steps={decode_tokens}", flush=True)
         return sequences, {
             "prefill_sec": prefill_sec,
             "decode_sec": time.monotonic() - decode_started_at,
