@@ -315,8 +315,6 @@ class Qwen35HybridTextModel(QwenFamilyBase):
             )
             self.rope_deltas = rope_deltas
             return position_ids[:, :, -query_len:]
-        if past_len == 0 and not has_multimodal:
-            self.rope_deltas = None
         if self.rope_deltas is not None and (past_len > 0 or input_ids is None):
             position_ids = _position_ids(attention_mask).view(
                 1, attention_mask.shape[0], attention_mask.shape[1]
