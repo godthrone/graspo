@@ -123,7 +123,7 @@ class NativeTPGraspoTrainer:
         if not torch.cuda.is_available():
             return
         free_bytes, total_bytes = torch.cuda.mem_get_info()
-        target_free = 3 * 1024**3  # 3 GiB headroom
+        target_free = 8 * 1024**3  # 8 GiB headroom (multimodal prefill needs ~2-5 GiB)
         padding_bytes = int(free_bytes) - target_free
         if padding_bytes <= 0:
             return
