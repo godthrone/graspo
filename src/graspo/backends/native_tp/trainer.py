@@ -115,6 +115,18 @@ class NativeTPGraspoTrainer:
         validate_native_runtime_config(self.config)
         self.runtime.validate()
         self.runtime.setup()
+        # Force CUDA expandable segments to prevent fragmentation when
+        # empty_cache_after_rollout_split is disabled.  Without this,
+        # the allocator holds free-but-reserved KV-cache blocks that
+        # fragment and cause OOM during the next optimize phase.
+        import os
+
+        os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "")
+        conf = os.environ["PYTORCH_CUDA_ALLOC_CONF"]
+        if "expandable_segments:True" not in conf:
+            os.environ["PYTORCH_CUDA_ALLOC_CONF"] = (
+                conf + ("," if conf else "") + "expandable_segments:True"
+            )
         self._print_json(
             {
                 "timestamp": _timestamp(),
