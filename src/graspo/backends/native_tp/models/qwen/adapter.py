@@ -1895,9 +1895,6 @@ class QwenNativeTPAdapter(
         multimodal_inputs = self._multimodal_inputs_from_metadata(
             metadata, batch_size=int(sequences.shape[0])
         )
-        # Protect rope_deltas: logprob model calls without multimodal inputs
-        # reset rope_deltas to None, corrupting subsequent decode steps.
-        _saved_rope_deltas = getattr(self.model, "rope_deltas", None)
         with torch.no_grad():
             if multimodal_inputs is not None:
                 if not isinstance(self.model, Qwen35HybridTextModel):
@@ -1911,8 +1908,6 @@ class QwenNativeTPAdapter(
                 )
             else:
                 log_probs = self.model.sequence_log_probs(sequences, attention_mask)
-        if _saved_rope_deltas is not None:
-            self.model.rope_deltas = _saved_rope_deltas
         self._emit_rank_memory_event(
             "logprob_after",
             {
