@@ -683,11 +683,12 @@ class QwenNativeTPAdapter(
                         )
                     )
 
-                # Free GPU memory between prompt chunks to prevent
-                # accumulation across Level-1 iterations.
+                # Free GPU memory between prompt chunks (respect the unified flag).
                 del flat_sequences
                 del sequence_chunks
-                if self.device.type == "cuda" and use_kv_cache:
+                if self.device.type == "cuda" and bool(
+                    self.config.native_tp.empty_cache_after_rollout_split
+                ):
                     torch.cuda.empty_cache()
 
         # Emit memory event (once, after all chunks)
@@ -1498,11 +1499,12 @@ class QwenNativeTPAdapter(
                         )
                     )
 
-                # Free GPU memory between prompt chunks to prevent
-                # accumulation across Level-1 iterations.
+                # Free GPU memory between prompt chunks (respect the unified flag).
                 del flat_sequences
                 del sequence_chunks
-                if self.device.type == "cuda":
+                if self.device.type == "cuda" and bool(
+                    self.config.native_tp.empty_cache_after_rollout_split
+                ):
                     torch.cuda.empty_cache()
 
         self._emit_rank_memory_event(
