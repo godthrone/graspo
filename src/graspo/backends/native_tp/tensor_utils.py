@@ -15,8 +15,15 @@ from torch.nn.utils.rnn import pad_sequence
 from graspo.core.buffer import Experience
 
 
-_TENSOR_PARALLEL_GROUP = None
-_TENSOR_PARALLEL_SIZE = 1
+_TENSOR_PARALLEL_GROUP: dist.ProcessGroup | None = None
+_TENSOR_PARALLEL_SIZE: int = 1
+
+
+def _set_tensor_parallel_group(group: dist.ProcessGroup | None, size: int) -> None:
+    """Set the global tensor-parallel group used by _all_reduce_tp."""
+    global _TENSOR_PARALLEL_GROUP, _TENSOR_PARALLEL_SIZE
+    _TENSOR_PARALLEL_GROUP = group
+    _TENSOR_PARALLEL_SIZE = int(size)
 
 
 class SafetensorIndex:
