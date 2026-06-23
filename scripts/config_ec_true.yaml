@@ -1,0 +1,54 @@
+backend: native-tp
+model:
+  model_path: /workspace/models/Qwen3.5-9B
+  trust_remote_code: true
+  torch_dtype: bfloat16
+  gradient_checkpointing: true
+  chat_template_kwargs:
+    enable_thinking: false
+data:
+  train_path: /workspace/data/data/elam_graspo_train.jsonl
+  max_prompt_length: 2048
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_preset: language_safe
+reward:
+  check_tool_call: true
+  check_list_order: true
+  marker_reward_weight: 10
+  content_reward_weight: 100
+  anti_useless_str_reward_weight: 1
+training:
+  output_dir: /workspace/data/outputs/fix_val2
+  seed: 42
+  max_steps: 10
+  rollout_group_size: 8
+  optimize_prompt_batch_size: 8
+  optimize_times_per_step: 1
+  rollout_max_retry_times: 1
+  learning_rate: 5.0e-6
+  max_grad_norm: 1.0
+  policy_ratio_clip_eps: 0.2
+  max_new_tokens: 64
+  temperature: 1.0
+  top_p: 1.0
+  save_steps: 999
+  logging_steps: 1
+  dataloader_num_workers: 0
+backend_config:
+  native_tp:
+    tp_size: 4
+    pp_size: 1
+    placement_strategy: qwen3_tp
+    forward_batch_size: 64
+    use_kv_cache_for_rollout: true
+    empty_cache_after_rollout_split: true
+    raw_log_enabled: true
+launch:
+  gpus: [0, 1, 2, 3]
+  nproc_per_node: 4
+  master_addr: 127.0.0.1
+  master_port: 29503
+  env: {}
