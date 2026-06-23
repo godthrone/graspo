@@ -2,14 +2,47 @@
 
 ## Date: 2026-06-22/23
 
-## STATUS: ROOT CAUSE FOUND ✅ — FIXES COMMITTED ✅
+## STATUS: Two fixes committed, ~31% parse errors remain — THIRD ISSUE SUSPECTED
 
-### Root Cause 1: Visual tower inv_freq (commit 4ca329e) — SECONDARY
+### Fix 1: Visual tower inv_freq (commit 4ca329e) — CONFIRMED, SECONDARY
+### Fix 2: LoRA TP weight sync (commit 87123ea) — CONFIRMED, PARTIAL
+### Fix 3: ? — UNDER INVESTIGATION
+
+### Current state (2026-06-23, post-fix 1+2)
+
+TP=4 training with G=8, B=8, T=1.0, empty_cache_after_rollout_split=false:
+
+| Step | Parse errors |
+|------|-------------|
+| 1 | 15/64 (23%) |
+| 2 | 3/64 (5%) |
+| 3 | 0/64 (0%) |
+| 4 | 39/64 (61%) |
+| 5 | 39/64 (61%) |
+| 6 | 26/64 (41%) |
+| 7 | 18/64 (28%) |
+| **Total** | **140/448 (31%)** |
+
+Pre-fix: 154/448 (34%). Improvement is real but small.
+
+lora_a divergence is eliminated (0/64 modules after fix vs 56/64 without).
+lora_b divergence is expected (sharded dimension, different per rank).
+
+### Remaining hypotheses
+
+1. **empty_cache_after_rollout_split=false causes KV cache issues**: The 5-step test
+   with empty_cache=true showed 5% errors vs 31% with empty_cache=false.
+2. **Third numerical issue in TP path**: Possibly lora_b gradient computation or
+   Adam optimizer state divergence across ranks.
+3. **SDPA non-determinism at TP>1**: Each rank's flash attention may produce
+   slightly different results, amplified by T=1.0 sampling.
+4. **Sample-dependent difficulty**: Some samples are inherently harder for the
+   model to generate correct tool calls for with T=1.0.
 
 The visual tower's `inv_freq` buffer was cast to bfloat16 by `.to(dtype=torch_dtype)`,
 losing ~3 decimal digits.  Fix: recompute in float32 after `load_state_dict`.
 
-### Root Cause 2: LoRA non-sharded matrix TP divergence (commit 87123ea) — PRIMARY
+### Root Cause 2: LoRA non-sharded matrix TP divergence (commit 87123ea) — PRIMARY BUT NOT SUFFICIENT
 
 **Mechanism**: In TP-sharded decoder layers (shard_kind="rows" for q_proj/v_proj),
 the `lora_a` matrix maps from full input dimension → should be **identical**
