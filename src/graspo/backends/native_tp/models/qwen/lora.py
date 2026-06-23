@@ -265,15 +265,20 @@ class LoRALinear(nn.Module):
 
 
 def _sync_nonsharded_lora_grads(model: nn.Module, tp_group: Any) -> None:
-    """All-reduce (average) the gradient of the non-sharded LoRA matrix across TP ranks.
+    """All-reduce (sum) the gradient of the non-sharded LoRA matrix across TP ranks.
 
     In TP-sharded layers, the non-sharded LoRA matrix receives different gradients
     per rank because the input/output gradient is partial.  All-reducing the
     gradient BEFORE the optimizer step ensures that every rank computes the same
     weight update, keeping both the weights AND the Adam optimizer state in sync.
 
-    - shard_kind="rows" / shard="out": lora_a maps from full input → avg lora_a.grad
-    - shard_kind="in":               lora_b maps to full output   → avg lora_b.grad
+    Uses SUM (not AVG) because TP ranks process the SAME data and compute PARTIAL
+    gradients.  The full gradient = sum of partial gradients across ranks.
+    This differs from DDP where each rank processes DIFFERENT data and AVG is
+    the correct reduction.
+
+    - shard_kind="rows" / shard="out": lora_a maps from full input → sum lora_a.grad
+    - shard_kind="in":               lora_b maps to full output   → sum lora_b.grad
     """
     for _mod in model.modules():
         if not isinstance(_mod, LoRALinear) or not _mod.lora_enabled or _mod.lora_a is None:
@@ -281,7 +286,7 @@ def _sync_nonsharded_lora_grads(model: nn.Module, tp_group: Any) -> None:
         _shard = getattr(_mod, "lora_shard_kind", None)
         if _shard in ("rows", "out"):
             if _mod.lora_a.grad is not None:
-                dist.all_reduce(_mod.lora_a.grad, op=dist.ReduceOp.AVG, group=tp_group)
+                dist.all_reduce(_mod.lora_a.grad, op=dist.ReduceOp.SUM, group=tp_group)
         elif _shard == "in":
             if _mod.lora_b.grad is not None:
-                dist.all_reduce(_mod.lora_b.grad, op=dist.ReduceOp.AVG, group=tp_group)
+                dist.all_reduce(_mod.lora_b.grad, op=dist.ReduceOp.SUM, group=tp_group)
