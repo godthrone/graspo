@@ -86,7 +86,18 @@ def classify_group(
     retry_count: int,
     rollout_max_retry_times: int,
     perfect_skip_reward_threshold: float = 1.0,
+    best_completion_has_parse_error: bool = False,
+    skip_format_broken_groups: bool = True,
 ) -> GroupSampleDecision:
+    """Classify a rollout group into a training decision.
+
+    When ``skip_format_broken_groups`` is True and the best-scoring completion
+    has parse errors (invalid JSON, unclosed fences, tool-call count mismatch,
+    etc.), the group is retried or discarded.  This prevents the model from
+    learning from completions whose format is broken — modern LLMs rarely
+    produce format errors by accident, so format-broken completions are almost
+    always noise.
+    """
     values = [float(reward) for reward in rewards]
     if not values:
         return GroupSampleDecision(
@@ -113,7 +124,14 @@ def classify_group(
         decision = GroupDecision.PERFECT_SKIP
     elif reward_max >= perfect_skip_reward_threshold:
         decision = GroupDecision.TRAINABLE_MAX_CORRECT
-    elif reward_max > reward_median and reward_median >= 0.4:
+    elif skip_format_broken_groups and best_completion_has_parse_error:
+        # The best completion's format is broken — the group has no valid
+        # template to learn from.  Retry if we can, otherwise discard.
+        if retry_count < rollout_max_retry_times:
+            decision = GroupDecision.RETRY
+        else:
+            decision = GroupDecision.INVALID
+    elif reward_max > reward_median:
         decision = GroupDecision.TRAINABLE_NOT_CORRECT
     elif reward_max < perfect_skip_reward_threshold and retry_count < rollout_max_retry_times:
         decision = GroupDecision.RETRY

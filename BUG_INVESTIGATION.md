@@ -85,8 +85,11 @@ elif reward_max > reward_median and reward_median >= 0.4:
 
 **文件**：`src/graspo/core/graspo_parity.py:116`
 
-**验证状态**：`reward_max >= 0.4` 版本已测试，效果有限（1 个 outlier 仍可通过）。
-正在测试 `reward_median >= 0.4` 版本。见下方实验数据。
+**验证**（TP=4, `reward_median >= 0.4` guard, Step 1）：
+- retry=12/23 (52%) vs max-gating 的 27% — 过滤更激进
+- **首次出现 invalid=3** — 低质量 group 被正确丢弃
+- reward_median=0.387 — 接近阈值，证明 guard 在生效
+- ⚠️ OOM at Step 2（retry 翻倍导致 completion 数暴增），需减小 forward_batch_size 重跑
 
 ---
 

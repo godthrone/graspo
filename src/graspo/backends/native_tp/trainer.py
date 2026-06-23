@@ -282,12 +282,20 @@ class NativeTPGraspoTrainer:
             all_right = [bool(result.all_right) for result in results]
             reward_details = [_reward_detail(result) for result in results]
             decision_started_at = time.monotonic()
+            best_idx = max(range(len(rewards)), key=lambda i: rewards[i])
+            best_has_parse_error = bool(
+                parsed_completions[best_idx].parse_errors
+                if best_idx < len(parsed_completions)
+                else False
+            )
             decision = classify_group(
                 rewards,
                 content_scores,
                 retry_count=state.retry_count,
                 rollout_max_retry_times=self.config.training.rollout_max_retry_times,
                 perfect_skip_reward_threshold=self.config.training.perfect_skip_reward_threshold,
+                best_completion_has_parse_error=best_has_parse_error,
+                skip_format_broken_groups=self.config.training.skip_format_broken_groups,
             )
             decision_sec = time.monotonic() - decision_started_at
             self.stats.total_groups += 1
