@@ -283,11 +283,26 @@ class NativeTPGraspoTrainer:
             reward_details = [_reward_detail(result) for result in results]
             decision_started_at = time.monotonic()
             best_idx = max(range(len(rewards)), key=lambda i: rewards[i])
-            best_has_parse_error = bool(
-                parsed_completions[best_idx].parse_errors
-                if best_idx < len(parsed_completions)
-                else False
-            )
+            if best_idx < len(parsed_completions):
+                best_parsed = parsed_completions[best_idx]
+                has_parse_error = bool(best_parsed.parse_errors)
+                # Also catch tool_call_count_mismatch: the best completion produced
+                # valid XML/JSON but the wrong number of tool calls.  The parser
+                # does not flag this as a parse error, so we check it explicitly.
+                has_count_mismatch = False
+                if (
+                    state.sample.expects_tool_calls
+                    and state.sample.targets
+                    and not has_parse_error
+                ):
+                    first_target = state.sample.targets[0]
+                    tc = first_target.get("output", {}).get("tool_calls")
+                    expected_count = len(tc) if isinstance(tc, list) else 0
+                    actual_count = len(best_parsed.tool_calls)
+                    has_count_mismatch = expected_count > 0 and actual_count != expected_count
+                best_has_parse_error = has_parse_error or has_count_mismatch
+            else:
+                best_has_parse_error = False
             decision = classify_group(
                 rewards,
                 content_scores,
