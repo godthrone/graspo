@@ -201,6 +201,17 @@ def _build_qwen35_visual_tower(
             "Failed to load Qwen3.5 visual tower weights: "
             f"missing={list(missing)[:8]}, unexpected={list(unexpected)[:8]}"
         )
+    # Fix: .to(dtype=torch_dtype) casts the inv_freq buffer from float32 to the
+    # model dtype (e.g. bfloat16), losing ~3 significant digits.  That tiny error
+    # compounds across 27 ViT layers and destroys image features, which then
+    # propagates through the decoder and corrupts tool-call generation.
+    # Recompute inv_freq in float32 explicitly to match HF precision.
+    for _mod in visual.modules():
+        if hasattr(_mod, "inv_freq"):
+            _inv_freq = 1.0 / (
+                _mod.theta ** (torch.arange(0, _mod.dim, 2, dtype=torch.float, device=device) / _mod.dim)
+            )
+            _mod.register_buffer("inv_freq", _inv_freq, persistent=False)
     for param in visual.parameters():
         param.requires_grad = False
     _replace_visual_lora_modules(
