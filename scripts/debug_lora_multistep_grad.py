@@ -95,13 +95,13 @@ def worker():
         loss = -log_probs.mean()
         adapter.optimizer.zero_grad()
         loss.backward()
-        torch.nn.utils.clip_grad_norm_([p for p in model.parameters() if p.requires_grad], 1.0)
-        adapter.optimizer.step()
-        # Sync non-sharded LoRA matrices across TP ranks
-        from graspo.backends.native_tp.models.qwen.lora import _sync_nonsharded_lora_weights
+        # Sync non-sharded LoRA gradients BEFORE optimizer step
+        from graspo.backends.native_tp.models.qwen.lora import _sync_nonsharded_lora_grads
         from graspo.backends.native_tp.tensor_utils import _TENSOR_PARALLEL_GROUP
         if _TENSOR_PARALLEL_GROUP is not None:
-            _sync_nonsharded_lora_weights(model, _TENSOR_PARALLEL_GROUP)
+            _sync_nonsharded_lora_grads(model, _TENSOR_PARALLEL_GROUP)
+        torch.nn.utils.clip_grad_norm_([p for p in model.parameters() if p.requires_grad], 1.0)
+        adapter.optimizer.step()
         after_stats = _lora_stats(model)
 
         all_before = [None] * world_size; all_after = [None] * world_size
