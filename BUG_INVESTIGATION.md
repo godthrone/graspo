@@ -70,6 +70,162 @@
 
 ---
 
+## 测试环境与方法
+
+### 硬件
+
+| 项目 | 值 |
+|------|-----|
+| 服务器 | `10.1.251.228`，SSH 端口 `22022`，用户 `zhangzy` |
+| GPU | NVIDIA A800 80GB × 8，本次使用 GPU 4-7 |
+| CUDA | 容器内由 `graspo:0.6.0-cuda13.2` 提供 |
+
+### Docker 镜像
+
+| 镜像 | 说明 |
+|------|------|
+| `graspo:0.6.0-cuda13.2` | 原始 0.6.0 发布版（有 bug） |
+| `graspo:0.6.0-inv-freq-fix` | + Fix 1 (visual tower inv_freq) |
+| `graspo:0.6.0-full-fix` | + Fix 1 + Fix 2 weight sync（已废弃） |
+| `graspo:0.6.0-grad-sync` | + Fix 1 + Fix 2 gradient sync（推荐） |
+
+镜像构建方式（在 228 上）：
+
+```bash
+# 将修改后的源文件 scp 到 228
+scp -P 22022 modeling.py zhangzy@10.1.251.228:/home/zhangzy/elam_v12_fk/scripts/
+scp -P 22022 lora.py zhangzy@10.1.251.228:/home/zhangzy/elam_v12_fk/scripts/
+scp -P 22022 adapter.py zhangzy@10.1.251.228:/home/zhangzy/elam_v12_fk/scripts/
+
+# 在 228 上构建
+ssh -p 22022 zhangzy@10.1.251.228
+cat > Dockerfile << 'EOF'
+FROM graspo:0.6.0-cuda13.2
+COPY modeling_fixed.py /workspace/graspo/src/graspo/backends/native_tp/models/qwen/modeling.py
+COPY lora_fixed.py /workspace/graspo/src/graspo/backends/native_tp/models/qwen/lora.py
+COPY adapter_fixed.py /workspace/graspo/src/graspo/backends/native_tp/models/qwen/adapter.py
+EOF
+docker build -f Dockerfile -t graspo:0.6.0-grad-sync .
+```
+
+### 运行容器
+
+```bash
+# TP=4 训练（推荐用 nohup 避免 SSH 断开导致容器被杀）
+docker run --rm --name <name> \
+  -e NVIDIA_VISIBLE_DEVICES=4,5,6,7 \       # 只选 GPU 4-7，不要用 --gpus
+  -v /home/zhangzy/models/Qwen3.5-9B:/workspace/models/Qwen3.5-9B:ro \
+  -v /home/zhangzy/elam_v12_fk:/workspace/data \
+  -v /home/zhangzy/elam_v12_fk/images:/workspace/images:ro \
+  --ipc=host --shm-size=16g \
+  <image> \
+  torchrun --nproc_per_node=4 --master_port=29500 <script.py>
+
+# 单 GPU 调试（TP=1）
+docker run --rm --name <name> \
+  -e NVIDIA_VISIBLE_DEVICES=4 \
+  -v /home/zhangzy/models/Qwen3.5-9B:/workspace/models/Qwen3.5-9B:ro \
+  -v /home/zhangzy/elam_v12_fk:/workspace/data \
+  -v /home/zhangzy/elam_v12_fk/images:/workspace/images:ro \
+  --ipc=host --shm-size=16g \
+  <image> \
+  python <script.py>
+```
+
+**关键约束**（来自 CLAUDE.md）：
+- Docker 29+ 使用 CDI 模式，**不要用 `--gpus`**，只用 `-e NVIDIA_VISIBLE_DEVICES`
+- 必须 `--ipc=host --shm-size=16g`
+
+### 数据与模型路径（容器内）
+
+| 路径 | 内容 |
+|------|------|
+| `/workspace/models/Qwen3.5-9B` | Qwen3.5-9B 模型权重 (read-only) |
+| `/workspace/data/data/elam_graspo_train.jsonl` | 405 条多模态训练样本 |
+| `/workspace/images/` | 图像文件 (read-only) |
+
+### 调试脚本
+
+所有脚本位于 `scripts/` 目录，需要 scp 到 228 运行。
+
+**Phase 0 — 原始调查（已有）**：
+
+| 脚本 | 用途 |
+|------|------|
+| `debug_tp1_compare.py` | TP=1 GRASPO vs HF 逐 token 对比 |
+| `debug_tp4_compare.py` | TP=4 GRASPO vs HF 对比 |
+| `debug_tp4_adapter_test.py` | TP=4 + LoRA B_init=0 + T=1.0 批量测试 |
+| `debug_embed_diff.py` | 对比 embedding + visual tower 输出 |
+| `debug_per_layer_hidden.py` | 逐层 hidden state 对比 |
+| `debug_visual_weights.py` | Visual tower 权重/ buffer 对比 |
+| `hf_full_baseline.py` | HF baseline on 405 样本 |
+
+**Phase 1 — inv_freq 根因验证（新增）**：
+
+| 脚本 | 用途 |
+|------|------|
+| `debug_inv_freq_verify.py` | 全面比对 visual tower 参数/buffer + inv_freq swap test |
+| `debug_inv_freq_dtype.py` | inv_freq dtype 验证 + float32 fix test |
+| `debug_visual_trace.py` | Visual config/结构/attention 实现/first block 对比 |
+| `debug_e2e_generation.py` | TP=1 greedy decode 50 token vs HF 全流程验证 |
+
+**Phase 2 — LoRA TP 发散验证（新增）**：
+
+| 脚本 | 用途 |
+|------|------|
+| `debug_lora_tp_grad.py` | 单步训练后 visual/decoder LoRA 权重 cross-rank 对比 |
+| `debug_lora_multistep_grad.py` | 3 步训练，每步记录 lora_a/b 发散数量 |
+| `debug_logit_crossrank.py` | 训练前后 logits cross-rank 一致性检查（关键诊断） |
+
+**关键诊断命令**：
+
+```bash
+# 验证 inv_freq fix
+docker run ... graspo:0.6.0-grad-sync python /workspace/data/scripts/debug_inv_freq_verify.py
+
+# 验证 LoRA 发散已修复
+docker run ... graspo:0.6.0-grad-sync torchrun --nproc_per_node=4 ... \
+  /workspace/data/scripts/debug_lora_multistep_grad.py
+
+# 验证 logits 跨 rank 一致（最关键的诊断）
+docker run ... graspo:0.6.0-grad-sync torchrun --nproc_per_node=4 ... \
+  /workspace/data/scripts/debug_logit_crossrank.py
+
+# 观察训练中的 parse error
+docker run ... graspo:0.6.0-grad-sync python -m graspo launch --config <config.yaml>
+# 在另一个终端：
+ssh -p 22022 zhangzy@10.1.251.228 \
+  "grep 'tool_call_parse_error' /tmp/grad_sync_train.log | python3 -c \"
+import sys,json
+for l in sys.stdin:
+    d=json.loads(l)
+    if d.get('event')=='train_step':
+        print(f'Step {d[\"step\"]}: {d[\"batch\"][\"debug\"][\"tool_call_parse_error\"]} errors')
+\""
+```
+
+### 训练配置
+
+测试用配置（与生产配置的主要差异：减少步数和 batch 大小）：
+
+```yaml
+training:
+  max_steps: 10          # 生产: 999999
+  rollout_group_size: 8  # 每个 prompt 的 completion 数
+  optimize_prompt_batch_size: 8  # 每次 optimizer step 的 prompt 数
+  optimize_times_per_step: 1
+  max_new_tokens: 64     # 生产: 512
+  temperature: 1.0
+  top_p: 1.0
+backend_config:
+  native_tp:
+    tp_size: 4
+    forward_batch_size: 64
+    empty_cache_after_rollout_split: false  # true 可能降低 OOM 风险
+```
+
+---
+
 ## 所有排除的假设
 
 | # | 假设 | 结果 |
