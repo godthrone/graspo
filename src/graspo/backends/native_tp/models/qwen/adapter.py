@@ -2014,6 +2014,16 @@ class QwenNativeTPAdapter(
                 self._sync_timing()
                 optimizer_started_at = time.monotonic()
                 self.optimizer.step()
+                # Fix: sync non-sharded LoRA matrices across TP ranks.
+                # In TP-sharded layers, the non-sharded LoRA matrix receives
+                # different gradients per rank because the input/output gradient
+                # is partial.  Without this sync the LoRA weights diverge and
+                # corrupt generation.
+                from graspo.backends.native_tp.models.qwen.lora import _sync_nonsharded_lora_weights
+                from graspo.backends.native_tp.tensor_utils import _TENSOR_PARALLEL_GROUP
+
+                if _TENSOR_PARALLEL_GROUP is not None:
+                    _sync_nonsharded_lora_weights(self.model, _TENSOR_PARALLEL_GROUP)
                 self._sync_timing()
                 optimizer_step_sec += time.monotonic() - optimizer_started_at
                 optimizer_steps += 1

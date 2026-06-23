@@ -5,6 +5,7 @@ from collections.abc import Iterable
 from typing import Any
 
 import torch
+import torch.distributed as dist
 from torch import nn
 from torch.nn import functional as F
 
@@ -261,3 +262,25 @@ class LoRALinear(nn.Module):
             lora = F.linear(F.linear(self.dropout(hidden_states), self.lora_a), self.lora_b)
             output = output + lora * self.scaling
         return output
+
+
+def _sync_nonsharded_lora_weights(model: nn.Module, tp_group: Any) -> None:
+    """All-reduce (average) the non-sharded LoRA matrix across TP ranks.
+
+    In TP-sharded layers, one of the two LoRA matrices is sharded (different
+    per rank, correct), but the other is NOT sharded (should be identical
+    across ranks).  During backward, the non-sharded matrix receives different
+    gradients per rank because the input or output gradient is partial.  This
+    function re-synchronises them after each optimizer step.
+
+    - shard_kind="rows" / shard="out": lora_a maps from full input → avg lora_a
+    - shard_kind="in":               lora_b maps to full output   → avg lora_b
+    """
+    for _mod in model.modules():
+        if not isinstance(_mod, LoRALinear) or not _mod.lora_enabled or _mod.lora_a is None:
+            continue
+        _shard = getattr(_mod, "lora_shard_kind", None)
+        if _shard in ("rows", "out"):
+            dist.all_reduce(_mod.lora_a.data, op=dist.ReduceOp.AVG, group=tp_group)
+        elif _shard == "in":
+            dist.all_reduce(_mod.lora_b.data, op=dist.ReduceOp.AVG, group=tp_group)
