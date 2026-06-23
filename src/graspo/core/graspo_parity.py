@@ -113,7 +113,7 @@ def classify_group(
         decision = GroupDecision.PERFECT_SKIP
     elif reward_max >= perfect_skip_reward_threshold:
         decision = GroupDecision.TRAINABLE_MAX_CORRECT
-    elif reward_max > reward_median:
+    elif reward_max > reward_median and reward_max >= 0.4:
         decision = GroupDecision.TRAINABLE_NOT_CORRECT
     elif reward_max < perfect_skip_reward_threshold and retry_count < rollout_max_retry_times:
         decision = GroupDecision.RETRY
