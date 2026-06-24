@@ -48,7 +48,8 @@ class TrainingConfig:
     max_new_tokens: int = 2048
     temperature: float = 1.0
     top_p: float = 1.0
-    save_steps: int = 50
+    save_steps: int = -1
+    save_epoch_checkpoint: bool = True
     logging_steps: int = 1
     perfect_skip_reward_threshold: float = 1.0
     skip_format_broken_groups: bool = True
