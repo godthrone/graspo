@@ -9,10 +9,10 @@ from urllib import request
 
 sys.path.insert(0, "/workspace/graspo/src")
 from graspo.core.reward import GraspoReward, RewardConfig
-from graspo.backends.native_tp.qwen_tp_adapter import _parse_qwen_tool_completion
+from graspo.backends.native_tp.tool_parser import parse_qwen_tool_completion
 
-VLLM_URL = "http://10.1.251.228:18000/v1/chat/completions"
-DATA = "/workspace/data/data/train_docker.jsonl"
+VLLM_URL = "http://localhost:18000/v1/chat/completions"
+DATA = "data/train.jsonl"
 NUM_COMPLETIONS = 8
 
 
@@ -66,12 +66,13 @@ def vllm_generate(messages: list, tools: list | None, n: int, max_tokens: int) -
         tc_list = msg.get("tool_calls") or []
         if tc_list:
             # Convert vLLM tool_calls to Qwen XML format that GRASPO parser expects
-            xml_parts = []
+            lines = []
             for tc in tc_list:
                 func = tc["function"]
                 args_str = func["arguments"]
                 args = json.loads(args_str) if isinstance(args_str, str) else args_str
-                lines = ["<tool_call>", f"<function={func['name']}>"]
+                lines.append("<tool_call>")
+                lines.append(f"<function={func['name']}>")
                 for k, v in args.items():
                     lines.append(f"<parameter={k}>{v}</parameter>")
                 lines.append("</function>")
@@ -111,7 +112,7 @@ def main():
 
         sample_rewards = []
         for comp in completions:
-            parsed = _parse_qwen_tool_completion(comp, tools=tools)
+            parsed = parse_qwen_tool_completion(comp, tools=tools)
             result = scorer.score_parsed(parsed, targets, is_tool_call=True)
             sample_rewards.append(result.reward)
             if result.all_right:
