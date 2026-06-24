@@ -1,53 +1,45 @@
+# GRASPO 0.7.0 — Qwen3.5-9B TP=4 生产配置
+# 适用于 4×80GB GPU，多模态工具调用训练
 backend: native-tp
 
 model:
   model_path: models/Qwen3.5-9B
   trust_remote_code: true
   torch_dtype: bfloat16
-  attn_implementation: null
   gradient_checkpointing: true
   chat_template_kwargs:
     enable_thinking: false
 
 data:
-  train_path: data/sample_multimodal.jsonl
+  train_path: data/train.jsonl
   max_prompt_length: 2048
 
 lora:
   r: 16
   alpha: 32
-  dropout: 0.1
-  adapter_path: null
+  dropout: 0.05
   target_preset: language_safe
-  target_modules: null
-  auto_target_modules: true
-  bias: none
-  task_type: CAUSAL_LM
 
 reward:
-  check_think: false
-  check_json_markdown: true
-  check_tool_call: false
-  check_list_order: false
+  check_tool_call: true
+  check_list_order: true
   marker_reward_weight: 10
   content_reward_weight: 100
   anti_useless_str_reward_weight: 1
-  anti_useless_str_half_reward_len: 100
 
 training:
-  output_dir: outputs/qwen35-9b-mm-tp2
+  output_dir: outputs/qwen35-9b-tp4
   seed: 42
-  training_epoch_count: 100
+  training_epoch_count: 10
   max_steps: -1
   rollout_group_size: 8
   optimize_prompt_batch_size: 4
   optimize_times_per_step: 3
   rollout_max_retry_times: 5
   learning_rate: 5.0e-6
-  weight_decay: 0.01
   max_grad_norm: 1.0
   policy_ratio_clip_eps: 0.2
-  max_new_tokens: 2048
+  max_new_tokens: 512
   temperature: 1.0
   top_p: 1.0
   save_steps: -1
@@ -56,36 +48,20 @@ training:
   perfect_skip_reward_threshold: 1.0
   skip_format_broken_groups: true
   dataloader_num_workers: 0
-  resume_from_checkpoint: null
 
 backend_config:
   native_tp:
-    tp_size: 2
+    tp_size: 4
     pp_size: 1
     placement_strategy: qwen3_tp
-    sequence_parallel: false
-    pp_micro_batch_size: 1
-    forward_batch_size: 8
+    forward_batch_size: 32
     use_kv_cache_for_rollout: true
     empty_cache_after_rollout_split: false
-    empty_cache_before_train: false
-    checkpoint_format: recoverable_lora_tp
     raw_log_enabled: true
-    readable_log_enabled: true
-    synchronize_cuda_timing: false
-    pp_schedule: simple
-    pp_max_inflight_microbatches: 0
-
-export:
-  final_formats: []
 
 launch:
-  gpus: [0, 1]
-  nproc_per_node: null
-  nnodes: 1
-  node_rank: 0
+  gpus: [0, 1, 2, 3]
+  nproc_per_node: 4
   master_addr: 127.0.0.1
-  master_port: 29500
-  python: null
-  torchrun: null
+  master_port: 29506
   env: {}
