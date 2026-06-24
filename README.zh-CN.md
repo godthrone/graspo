@@ -206,7 +206,8 @@ GRASPO 使用同一 rollout group 内的 reward 分布，而不是单条 complet
 - `policy_ratio_clip_eps`：policy-ratio clipped objective epsilon。
 - `max_new_tokens`：真实训练生成长度；保持 `training.max_new_tokens=2048`。
 - `temperature`、`top_p`：rollout sampling 设置。
-- `save_steps`：native checkpoint 间隔。
+- `save_steps`：native checkpoint 间隔。`-1`（默认）禁用 step 级别 checkpoint，仅保留 epoch checkpoint。
+- `save_epoch_checkpoint`：每个 epoch 结束时保存可恢复 checkpoint（默认 `true`）。生产训练推荐保持开启。
 - `logging_steps`：紧凑训练日志间隔。
 - `perfect_skip_reward_threshold`：跳过已解 prompt 的阈值。
 - `skip_format_broken_groups`：默认 true，当最好 completion 有 parse error 或 tool-call count mismatch 时，group 会被 retry 或丢弃，不参与训练。
@@ -302,7 +303,8 @@ uv run graspo export --config config_example.yaml --checkpoint outputs/example-r
 - `rollouts.raw.jsonl`：replay tensors、masks、old logprobs、advantages 和 reward metadata；
 - `train_batches.readable.jsonl`：每个 optimize-trigger batch 一行；
 - `rank_metrics.rank_*.jsonl`：每 rank 显存、耗时、LoRA 和 optimizer 诊断；
-- `step_*`：周期性可恢复 GRASPO native training checkpoint；
+- `epoch_*`：每个 epoch 结束时的可恢复 checkpoint（当 `save_epoch_checkpoint` 为 true 时）；
+- `step_*`：周期性可恢复 checkpoint（当 `save_steps > 0` 时）；
 - `final`：干净退出后的最终可恢复 checkpoint。
 
 健康的 GRASPO 训练不只是“进程没挂”。需要观察 reward trend、组内 reward range、content-score validity、decision distribution、finite loss/grad、非零 LoRA gradients、LoRA tensor changes、replay-buffer progress、checkpoint writes 和 GPU/NCCL health。

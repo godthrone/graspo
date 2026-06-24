@@ -216,6 +216,10 @@ class NativeTPGraspoTrainer:
                         "run": self._run_summary(),
                     }
                 )
+                if self.config.training.save_epoch_checkpoint:
+                    self._save_checkpoint(
+                        output_dir / f"epoch_{epoch}", epoch=epoch
+                    )
             if len(self.replay_buffer) > 0:
                 self._maybe_optimize(
                     epoch=self.config.training.training_epoch_count - 1, force=True
@@ -568,7 +572,7 @@ class NativeTPGraspoTrainer:
         self.stats.optimized_steps += 1
         checkpoint_sec = 0.0
         checkpoint_dir: Path | None = None
-        if self.global_step % self.config.training.save_steps == 0:
+        if self.config.training.save_steps > 0 and self.global_step % self.config.training.save_steps == 0:
             checkpoint_dir = Path(self.config.training.output_dir) / f"step_{self.global_step}"
             checkpoint_started_at = time.monotonic()
             self._save_checkpoint(checkpoint_dir, epoch=epoch)

@@ -291,7 +291,10 @@ training.
 - `max_new_tokens`: real training generation length. Keep
   `training.max_new_tokens=2048`.
 - `temperature`, `top_p`: rollout sampling settings.
-- `save_steps`: native checkpoint interval.
+- `save_steps`: native checkpoint interval. `-1` (default) disables per-step
+  checkpoints, leaving only epoch checkpoints.
+- `save_epoch_checkpoint`: save a recoverable checkpoint at the end of each
+  epoch (default `true`). Recommended for production training.
 - `logging_steps`: compact training log interval.
 - `perfect_skip_reward_threshold`: threshold for skipping already-solved groups.
 - `skip_format_broken_groups`: when true (default), groups whose best completion
@@ -422,7 +425,8 @@ Each run writes to `training.output_dir`:
 - `train_batches.readable.jsonl`: one row per optimize-trigger batch;
 - `rank_metrics.rank_*.jsonl`: per-rank memory, timing, LoRA, and optimizer
   diagnostics;
-- `step_*`: periodic recoverable GRASPO native training checkpoints;
+- `epoch_*`: epoch-end recoverable checkpoints (when `save_epoch_checkpoint` is true);
+- `step_*`: periodic recoverable checkpoints (when `save_steps > 0`);
 - `final`: final recoverable checkpoint after a clean exit.
 
 A healthy GRASPO run is not just a process that stays alive. Watch reward trend,
