@@ -1,0 +1,12 @@
+# Build from an existing local GRASPO image when Docker Hub is unreachable.
+# Usage: docker build -f docker/Dockerfile.from-local -t graspo:0.7.0 .
+FROM graspo:0.6.0-skip-fmt2
+
+WORKDIR /workspace/graspo
+COPY src ./src
+COPY configs ./configs
+COPY data ./data
+COPY pyproject.toml README.md LICENSE ./
+
+RUN uv pip install --system --break-system-packages --no-deps -e .
+CMD ["graspo", "--help"]
