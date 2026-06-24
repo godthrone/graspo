@@ -50,7 +50,8 @@ training:
   max_new_tokens: 2048
   temperature: 1.0
   top_p: 1.0
-  save_steps: 20
+  save_steps: -1
+  save_epoch_checkpoint: true
   logging_steps: 1
   perfect_skip_reward_threshold: 1.0
   skip_format_broken_groups: true
