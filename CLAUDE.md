@@ -13,17 +13,15 @@ tensor parallel (TP) / pipeline parallel (PP) backends.
   `result.all_right` for gating.  `RewardResult` includes `base_content_score`.
   Supports multi-target alternatives; best-scoring target wins.
 - `src/graspo/core/schema.py` — `NativeTPConfig.forward_batch_size` (default 8)
-  controls rollout batch sizing; old `gpu_memory_utilization`,
-  `generation_micro_batch_size`, and `rollout_kv_cache_max_reserved_fraction`
-  are removed. `TrainingConfig.rollout_group_size` (default 8) and
-  `TrainingConfig.optimize_prompt_batch_size` (default 8) are the core
+  controls rollout batch sizing. `TrainingConfig.rollout_group_size` (default 8)
+  and `TrainingConfig.optimize_prompt_batch_size` (default 8) are the core
   algorithm parameters.
 - `src/graspo/backends/native_tp/trainer.py` — Multimodal samples are chunked in
   CPU-friendly encoding batches (`_MAX_MULTIMODAL_SAMPLES_PER_CALL = 16`).
   `_is_pure_tool_call_task()` guards JSON-marker debug counts.
 - `src/graspo/backends/native_tp/logger.py` — Same guard in
   `group_debug_summary()`.
-- `src/graspo/backends/native_tp/qwen_tp_adapter.py` — Multimodal Level 1
+- `src/graspo/backends/native_tp/models/qwen/adapter.py` — Multimodal Level 1
   (prompt chunk) + Level 2 (micro-batch) generation with offset-based
   multimodal input slicing for heterogeneous image counts.  Budget estimate
   uses `budget_prompt_len = max(prompt_len, max_prompt_length)` with a 1.5×
@@ -48,6 +46,14 @@ The activation estimate accounts for full-attention QK^T materialisation
 For Qwen3.5's hybrid architecture (8 full-attn + 24 linear-attn layers),
 the full-attention layers dominate the prefill peak.
 
+## TP LoRA Gradient Sync
+
+In TP mode, all ranks process the same data and compute partial gradients.
+The full gradient is the SUM of partial gradients (not AVG as in DDP).
+`lora_a` (input projection) is non-sharded → gradient must be all-reduced
+with SUM across TP ranks.  `lora_b` (output projection) is sharded along
+the output dimension → no sync needed for the sharded dimension.
+
 ## Known Bug: mRoPE ndim=4 in `_apply_rope` / `_apply_rope_partial`
 
 **Fixed in 0.6.0.** See `tests/test_rope_ndim.py`.
@@ -58,55 +64,25 @@ the full-attention layers dominate the prefill peak.
 duplicated in `adapter.py` and `tensor_utils.py`.  `_set_tensor_parallel_group()`
 in adapter.py set the adapter.py copies; `_all_reduce_tp()` in tensor_utils.py
 read the tensor_utils.py copies — which were always `None`/`1`.  Every TP>1
-training run was silently running without cross-rank reduction, producing
-gibberish.
+training run was silently running without cross-rank reduction.
 
 **Fix**: moved globals and `_set_tensor_parallel_group()` to `tensor_utils.py`.
-adapter.py now imports them from tensor_utils.  See `tests/test_rope_ndim.py`
-(`TestTPGlobals`).
+adapter.py now imports them from tensor_utils.
 
 ## Known Bug: `_causal_attention_mask` KV-cache dimension mismatch
 
 **Fixed in 0.6.0.**  `tensor_utils.py:_causal_attention_mask` used the full
 `attention_mask` as `key_mask` (`attention_mask[:, None, None, :]`).  During
-incremental KV-cache decode the attention mask grows longer than `key_len`
-(new query positions are appended each step), causing a broadcast mismatch:
-
-```
-causal.view(1, 1, query_len, key_len)  &  key_mask  # [:, :, :, 32] vs [:, :, :, 33]
-```
+incremental KV-cache decode the attention mask grows longer than `key_len`,
+causing a broadcast mismatch.
 
 **Fix**: truncate `key_mask` to the last `key_len` positions:
 `attention_mask[:, None, None, -key_len:]`.
-
-Verified with gold-standard HF `generate()` comparison: all tokens match
-(TP=1, greedy decode, 3 prompts × 20 tokens).
-
-**Why training was broken**: with TP>1 and empty_cache disabled between
-phases, the KV cache from a previous step could leak into the next rollout
-if the attention mask shape was wrong for certain prompt lengths.  This
-caused the 100% gibberish output observed during training.
-
-## Deploy
-
-```bash
-# 228 training (A800 80GB × 4, TP=4, GPUs 4-7)
-docker run -d --name graspo_elam_v12_fk \
-  -e NVIDIA_VISIBLE_DEVICES=4,5,6,7 \
-  -v /home/zhangzy/models/Qwen3.5-9B:/workspace/models/Qwen3.5-9B:ro \
-  -v /home/zhangzy/elam_v12_fk:/workspace/data \
-  -v /home/zhangzy/elam_v12_fk/images:/workspace/images:ro \
-  --ipc=host --shm-size=16g \
-  graspo:0.6.0-cuda13.2 \
-  python -m graspo launch --config /workspace/data/data/config_docker.yaml
-
-# CRITICAL: Docker 29+ uses CDI mode. Do NOT use --gpus all or --gpus device=X!
-# Only use -e NVIDIA_VISIBLE_DEVICES=X,Y,Z to select GPUs.
-# The env var alone works because nvidia-container-toolkit CDI mode reads it directly.
-```
 
 ## Testing
 
 ```bash
 python -m pytest tests/ -x -q
+ruff check src/ tests/
+mypy src/
 ```

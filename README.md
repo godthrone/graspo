@@ -19,6 +19,9 @@ prompt, then adds production-oriented behavior for structured outputs:
   the LoRA/native memory-aware path;
 - rollout retry when a group is too weak to train on;
 - perfect-answer skip so solved prompts do not consume optimizer budget;
+- format-broken group filtering: when the best completion has parse errors or
+  tool-call count mismatch, the group is retried or discarded instead of
+  training on broken output;
 - invalid and no-preference-gap filtering for groups with no useful reward
   signal;
 - completion-level ReplayBuffer optimization;
@@ -291,6 +294,9 @@ training.
 - `save_steps`: native checkpoint interval.
 - `logging_steps`: compact training log interval.
 - `perfect_skip_reward_threshold`: threshold for skipping already-solved groups.
+- `skip_format_broken_groups`: when true (default), groups whose best completion
+  has parse errors or tool-call count mismatch are retried or discarded instead
+  of being used for training.
 - `dataloader_num_workers`: data loading worker count.
 - `resume_from_checkpoint`: recoverable GRASPO native checkpoint directory.
 

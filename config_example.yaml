@@ -1,4 +1,4 @@
-# GRASPO 0.6.0 — Example Configuration
+# GRASPO 0.7.0 — Example Configuration
 # Requires: PyTorch >= 2.12, CUDA >= 13.2
 # For multimodal (vision-language) training, set reward.check_tool_call: true
 # and use a multimodal model (Qwen3.5-9B, etc.).
@@ -57,6 +57,7 @@ training:
   save_steps: 50
   logging_steps: 1
   perfect_skip_reward_threshold: 1.0
+  skip_format_broken_groups: true
   dataloader_num_workers: 0
   resume_from_checkpoint: null
 
@@ -67,7 +68,7 @@ backend_config:
     placement_strategy: qwen3_tp
     sequence_parallel: false
     pp_micro_batch_size: 1
-    forward_batch_size: 8
+    forward_batch_size: 32
     use_kv_cache_for_rollout: true
     empty_cache_after_rollout_split: true
     empty_cache_before_train: false

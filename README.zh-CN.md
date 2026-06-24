@@ -11,6 +11,7 @@ GRASPO 的训练主线是：
 - 同一条 prompt/context 采样多条 completion，并在组内比较 reward；
 - 低质量 rollout group 自动 retry；
 - 已经稳定答对的 prompt 可以 perfect-skip，避免浪费 optimizer budget；
+- 格式损坏的 group 会被过滤：当最好 completion 有 parse error 或 tool-call count mismatch 时，group 会被 retry 或丢弃，不参与训练；
 - 没有 reward 方差或没有偏好差异的 group 会被过滤；
 - ReplayBuffer 保存 completion-level experience；
 - readable 日志保留真实 messages、completion、reward 和 debug 细节；
@@ -43,7 +44,7 @@ cp config_example.yaml my_graspo.yaml
 - `data.train_path`：JSONL 训练数据；
 - `training.output_dir`：run 输出目录；
 - `launch.gpus`：当前节点使用的 GPU id；
-- `backend_config.native_tp.tensor_model_parallel_size` 和 `backend_config.native_tp.pipeline_model_parallel_size`：native TP/PP world size。
+- `backend_config.native_tp.tp_size` 和 `backend_config.native_tp.pp_size`：native TP/PP world size。
 
 训练只需要一个 YAML 参数：
 
@@ -196,9 +197,9 @@ GRASPO 使用同一 rollout group 内的 reward 分布，而不是单条 complet
 - `seed`：随机种子。
 - `training_epoch_count`：完整数据集训练轮数；生产默认 `100`。
 - `max_steps`：短测/debug step 上限；`-1` 表示不限制。
-- `rollout_prompt_queue_batch_size`：一次调度多少个 prompt group 做 rollout。
 - `rollout_group_size`：每个 prompt attempt 采样多少条 completion。
-- `optimize_completion_batch_size`：每个 optimizer step 的 completion micro-batch。
+- `optimize_prompt_batch_size`：每个 optimizer step 的 prompt 数量；
+  replay buffer threshold = `optimize_prompt_batch_size × rollout_group_size`。
 - `optimize_times_per_step`：同一批 replay completion 重复优化几轮。
 - `rollout_max_retry_times`：初始 rollout 后的 retry 预算。
 - `learning_rate`、`weight_decay`、`max_grad_norm`：optimizer 设置。
@@ -208,27 +209,27 @@ GRASPO 使用同一 rollout group 内的 reward 分布，而不是单条 complet
 - `save_steps`：native checkpoint 间隔。
 - `logging_steps`：紧凑训练日志间隔。
 - `perfect_skip_reward_threshold`：跳过已解 prompt 的阈值。
+- `skip_format_broken_groups`：默认 true，当最好 completion 有 parse error 或 tool-call count mismatch 时，group 会被 retry 或丢弃，不参与训练。
 - `dataloader_num_workers`：数据加载 worker 数。
 - `resume_from_checkpoint`：可恢复 GRASPO native checkpoint 目录。
 
-`training.replay_buffer_optimize_threshold` 由 `optimize_completion_batch_size * rollout_group_size` 派生，不能手动配置。`training.resume_from_checkpoint` 和 `lora.adapter_path` 互斥：前者恢复 native checkpoint 状态，后者只是 PEFT/GRASPO-PEFT LoRA warm-start。
+`training.replay_buffer_optimize_threshold` 由 `optimize_prompt_batch_size * rollout_group_size` 派生，不能手动配置。`training.resume_from_checkpoint` 和 `lora.adapter_path` 互斥：前者恢复 native checkpoint 状态，后者只是 PEFT/GRASPO-PEFT LoRA warm-start。
 
 ### `backend_config.native_tp`
 
-- `tensor_model_parallel_size`：TP size。
-- `pipeline_model_parallel_size`：PP size。
+- `tp_size`：TP size。
+- `pp_size`：PP size。
 - `placement_strategy`：placement 策略，例如 `qwen3_tp` 或 `qwen36_pp8_static`。
 - `sequence_parallel`：v1 必须保持 `false`。
-- `train_micro_batch_size`：native train micro-batch size。
-- `generation_micro_batch_size`：native generation micro-batch split。
+- `pp_micro_batch_size`：PP micro-batch size。
+- `forward_batch_size`：rollout forward batch size（默认 8），替代旧的 `gpu_memory_utilization`。
 - `use_kv_cache_for_rollout`：KV cache 只用于 rollout generation。
-- `rollout_kv_cache_max_reserved_fraction`：rollout KV 显存预留比例。
 - `empty_cache_after_rollout_split`、`empty_cache_before_train`：CUDA cache 控制。
 - `checkpoint_format`：native recoverable checkpoint 格式标签。
 - `raw_log_enabled`、`readable_log_enabled`：rollout/replay 日志开关。
 - `synchronize_cuda_timing`：是否同步 CUDA timing。
-- `pipeline_train_schedule`：pipeline train schedule，默认 `simple`。
-- `pipeline_max_inflight_microbatches`：1F1B inflight 上限。
+- `pp_schedule`：pipeline schedule，默认 `simple`。
+- `pp_max_inflight_microbatches`：1F1B inflight 上限。
 
 ### `export`
 
@@ -319,7 +320,7 @@ uv run --extra dev python -m graspo --help
 
 - `model.model_path must be set`：编辑 `config_example.yaml`，指向真实 base model。
 - `data.train_path does not exist`：将 `data.train_path` 指向 JSONL 文件。
-- Native launch world size mismatch：让 `launch.nproc_per_node * launch.nnodes` 等于 `tensor_model_parallel_size * pipeline_model_parallel_size`。
+- Native launch world size mismatch：让 `launch.nproc_per_node * launch.nnodes` 等于 `tp_size * pp_size`。
 - Rollout OOM：保持 `training.max_new_tokens=2048`；降低 rollout 并发或 KV cache 预留，而不是降低生产生成长度。
 - 需要 PEFT 兼容：通过 `lora.adapter_path` 加载 PEFT/GRASPO-PEFT adapter，通过 `graspo export` 导出便携产物。
 

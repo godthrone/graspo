@@ -6,16 +6,15 @@ enable_thinking=False.
 
 Usage:
     python hf_full_baseline.py \
-        --model /home/zhangzy/models/Qwen3.5-9B \
-        --data /home/zhangzy/elam_v12_fk/data/elam_graspo_train.jsonl \
-        --images /home/zhangzy/elam_v12_fk/images \
-        --output /home/zhangzy/hf_baseline_results.json \
+        --model models/Qwen3.5-9B \
+        --data data/train.jsonl \
+        --images data/images \
+        --output hf_baseline_results.json \
         --start 0 --count 405
 """
 
 import argparse
 import json
-import sys
 import time
 from pathlib import Path
 
@@ -168,8 +167,6 @@ def main():
             results.append(result)
 
             elapsed = time.time() - start_time
-            rate = (i + 1) / elapsed if elapsed > 0 else 0
-            eta = (len(samples) - i - 1) / rate if rate > 0 else 0
             flag = "ERR" if has_err else "OK"
             eos_flag = "EOS" if hit_eos else ("TRUNC" if truncated else "NOEOS")
             print(
