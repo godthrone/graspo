@@ -39,7 +39,7 @@ class TrainingConfig:
     max_steps: int = -1
     rollout_group_size: int = 8
     optimize_prompt_batch_size: int = 8
-    optimize_times_per_step: int = 4
+    optimize_times_per_step: int = 3
     rollout_max_retry_times: int = 5
     learning_rate: float = 5e-6
     weight_decay: float = 0.01
@@ -76,7 +76,7 @@ class NativeTPConfig:
     pp_micro_batch_size: int = 1
     forward_batch_size: int = 8
     use_kv_cache_for_rollout: bool = True
-    empty_cache_after_rollout_split: bool = True
+    empty_cache_after_rollout_split: bool = False
     empty_cache_before_train: bool = False
     checkpoint_format: str = "recoverable_lora_tp"
     raw_log_enabled: bool = True
