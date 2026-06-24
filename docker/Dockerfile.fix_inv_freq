@@ -1,7 +1,0 @@
-FROM graspo:0.6.0-cuda13.2
-
-# Fix: recompute visual tower inv_freq in float32 to match HF precision.
-# The .to(dtype=torch_dtype) in _build_qwen35_visual_tower casts the
-# inv_freq buffer from float32 to bfloat16, losing ~3 significant digits.
-# That error compounds across 27 ViT layers and corrupts image features.
-COPY modeling_fixed.py /workspace/graspo/src/graspo/backends/native_tp/models/qwen/modeling.py
