@@ -217,6 +217,8 @@ class NativeTPGraspoTrainer:
                     }
                 )
                 if self.config.training.save_epoch_checkpoint:
+                    if len(self.replay_buffer) > 0:
+                        self._maybe_optimize(epoch=epoch, force=True)
                     self._save_checkpoint(
                         output_dir / f"epoch_{epoch}", epoch=epoch
                     )
