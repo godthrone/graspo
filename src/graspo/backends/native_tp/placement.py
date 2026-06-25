@@ -54,8 +54,10 @@ def build_placement_plan(
         raise ValueError(f"Unsupported pipeline placement strategy: {requested}")
     if model_family != "qwen3_5_text":
         raise ValueError(f"{requested} placement requires qwen3_5_text model family")
-    if int(tp_size) != 1:
-        raise ValueError(f"{requested} v1 requires tp_size=1")
+    # NOTE: As of GraspoFlow, tp_size>1 + pp_size>1 is allowed.
+    # TP shards attention heads per layer; PP divides layers across stages.
+    # The placement only cares about layer-to-stage assignment (PP); TP is
+    # handled inside TensorParallelQwen35DecoderLayer.
     if requested == "qwen36_pp8_lm_head_only_final":
         ranges = _qwen36_lm_head_only_final_ranges(
             num_hidden_layers=int(num_hidden_layers),
@@ -72,10 +74,10 @@ def build_placement_plan(
     return NativePlacementPlan(
         strategy=requested,
         model_family=model_family,
-        tp_size=1,
+        tp_size=int(tp_size),
         pp_size=int(pp_size),
         pp_rank=int(pp_rank),
-        tp_rank=0,
+        tp_rank=int(tp_rank),
         local_layer_indices=local_layers,
         include_embeddings=int(pp_rank) == 0,
         include_lm_head=int(pp_rank) == int(pp_size) - 1,
