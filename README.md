@@ -227,8 +227,12 @@ complete public example.
 
 ### `backend`
 
-- `native-tp`: the only supported training backend. It uses native TP/PP LoRA
-  placement and frozen base weights.
+- `graspoflow`: **Recommended.** Unified TP+PP Flink-style streaming pipeline.
+  Supports all parallel modes: single-GPU (`tp=1,pp=1`), pure TP (`tp=N,pp=1`),
+  pure PP (`tp=1,pp=N`), and TP+PP mixed (`tp=M,pp=N`).
+  See `configs/graspoflow_example.yaml`.
+- `native-tp`: Legacy native TP/PP LoRA backend. Still supported for TP-only
+  training. PP methods are deprecated and will be removed.
 
 ### `model`
 

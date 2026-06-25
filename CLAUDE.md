@@ -3,8 +3,26 @@
 GRPO-style LoRA trainer for structured-output RL (JSON, tool calls) with native
 tensor parallel (TP) / pipeline parallel (PP) backends.
 
+## Backends
+
+| Backend | Config key | Status |
+|---------|-----------|--------|
+| **GraspoFlow** | `backend: graspoflow` | **Recommended**. Unified TP+PP Flink-style streaming pipeline. `src/graspo/backends/graspoflow/` |
+| Native TP (legacy) | `backend: native-tp` | Still supported. PP methods deprecated, will be removed after GraspoFlow validation. `adapter.py` |
+
+GraspoFlow unifies all parallel modes: `pp=1,tp=1` (single-GPU), `pp=1,tp=N` (pure TP), `pp=N,tp=1` (pure PP), `pp=M,tp=N` (TP+PP mixed).
+
 ## Key Architecture
 
+- `src/graspo/backends/graspoflow/` — **GraspoFlow** unified TP+PP framework:
+  - `operator.py` — `ComputeOperator`, `OpBuffer`, `Microbatch` (Layer 1: scheduling primitives)
+  - `schedule.py` — Pluggable schedulers: `GPipeScheduler`, `OneFOneBScheduler` (Layer 1)
+  - `memory.py` — Memory budget calculator (Layer 1)
+  - `qwen_ops.py` — Qwen-specific operators: `QwenEmbedStageOp`, `QwenDecoderStageOp`, `QwenHeadStageOp` (Layer 1)
+  - `graph.py` — `PipelineGraph` wires operators + buffers (Layer 2)
+  - `rollout.py` — `RolloutPipeline` Flink-style streaming generation (Layer 2)
+  - `optimize.py` — `OptimizePipeline` 1F1B training + memory budget (Layer 2)
+  - `qwen_adapter.py` — `QwenPPTrainingAdapter` model-specific training (Layer 3)
 - `src/graspo/core/compare.py` — `dict_compare_score` returns `CompareResult`
   (dataclass with `.dcs`, `.base_dcs`, `.all_right`).  Numeric leaves
   participate in `dcs` (gradient signal) but are stripped for
@@ -21,12 +39,8 @@ tensor parallel (TP) / pipeline parallel (PP) backends.
   `_is_pure_tool_call_task()` guards JSON-marker debug counts.
 - `src/graspo/backends/native_tp/logger.py` — Same guard in
   `group_debug_summary()`.
-- `src/graspo/backends/native_tp/models/qwen/adapter.py` — Multimodal Level 1
-  (prompt chunk) + Level 2 (micro-batch) generation with offset-based
-  multimodal input slicing for heterogeneous image counts.  Budget estimate
-  uses `budget_prompt_len = max(prompt_len, max_prompt_length)` with a 1.5×
-  safety factor to prevent OOM at 8K prompt lengths.  `prompt_chunk` is capped
-  at 3 to prevent over-ambitious batching.
+- `src/graspo/backends/native_tp/models/qwen/adapter.py` — **PP methods deprecated.**
+  Use GraspoFlow (`backend: graspoflow`) for PP training.
 
 ## Core Parameters
 

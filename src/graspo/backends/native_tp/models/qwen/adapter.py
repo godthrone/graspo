@@ -83,6 +83,18 @@ def _patch_transformers_float8_import_compat() -> None:
         torch.float8_e8m0fnu = torch.uint8  # type: ignore[attr-defined]
 
 
+# ── Deprecation notice ──────────────────────────────────────────────────────
+# The PP (pipeline parallel) methods in this adapter are superseded by
+# GraspoFlow (src/graspo/backends/graspoflow/), the unified TP+PP framework.
+#
+#   backend: native-tp  → legacy TP/PP (this adapter, still supported)
+#   backend: graspoflow → new unified Flink-style pipeline (recommended)
+#
+# Once GraspoFlow is validated, the PP methods in this adapter will be
+# removed.  TP-only methods remain for backward compatibility.
+# ────────────────────────────────────────────────────────────────────────────
+
+
 class QwenNativeTPAdapter(
     BaseNativeTPAdapter,
     QwenEncodingMixin,

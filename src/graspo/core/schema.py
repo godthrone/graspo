@@ -109,6 +109,7 @@ class GraspoConfig:
     backend: str = "native-tp"
     backend_config: dict[str, Any] = field(default_factory=dict)
     native_tp: NativeTPConfig = field(default_factory=NativeTPConfig)
+    graspoflow: NativeTPConfig = field(default_factory=NativeTPConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     data: DataConfig = field(default_factory=DataConfig)
     lora: LoRAConfig = field(default_factory=LoRAConfig)
@@ -132,6 +133,9 @@ class GraspoConfig:
         backend_config = dict(data.get("backend_config", {}) or {})
         native_cfg = dict(backend_config.get("native_tp", {}) or {})
         native_cfg.update(data.get("native_tp", {}) or {})
+
+        # GraspoFlow config: shares the same fields as NativeTPConfig
+        flow_cfg = dict(backend_config.get("graspoflow", {}) or {})
 
         # Backward compat: warn about removed fields
         _removed_native = {
@@ -160,6 +164,7 @@ class GraspoConfig:
             backend=data.get("backend", "native-tp"),
             backend_config=backend_config,
             native_tp=NativeTPConfig(**native_cfg),
+            graspoflow=NativeTPConfig(**flow_cfg),
             model=ModelConfig(**data.get("model", {})),
             data=DataConfig(**_normalize_data_config(data.get("data", {}))),
             lora=LoRAConfig(**data.get("lora", {})),
