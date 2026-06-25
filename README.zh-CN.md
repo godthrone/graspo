@@ -152,7 +152,12 @@ GRASPO 使用同一 rollout group 内的 reward 分布，而不是单条 complet
 
 ### `backend`
 
-- `native-tp`：唯一支持的训练 backend，使用 native TP/PP LoRA placement 和冻结 base weights。
+- `graspoflow`：**推荐。** 统一 TP+PP Flink 风格流式流水线框架。
+  支持所有并行模式：单卡（`tp=1,pp=1`）、纯 TP（`tp=N,pp=1`）、
+  纯 PP（`tp=1,pp=N`）、TP+PP 混合（`tp=M,pp=N`）。
+  参见 `configs/graspoflow_example.yaml`。
+- `native-tp`：旧版 native TP/PP LoRA 后端。仍支持纯 TP 训练，
+  PP 方法已废弃，将在 GraspoFlow 验证后移除。
 
 ### `model`
 

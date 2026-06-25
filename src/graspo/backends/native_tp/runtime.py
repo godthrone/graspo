@@ -255,8 +255,9 @@ def validate_native_runtime_config(
         raise ValueError("native-tp v1 requires sequence_parallel=false")
     if int(native.tp_size) < 1:
         raise ValueError("tp_size must be >= 1")
-    if int(native.pp_size) > 1 and int(native.tp_size) != 1:
-        raise ValueError("native placement v1 supports pp_size>1 only with tp_size=1")
+    # NOTE: tp_size>1 + pp_size>1 is allowed as of GraspoFlow.
+    # Each PP stage may internally use TP for attention head sharding.
+    # P2P between stages uses rank ± tp_size neighbours (set up in parallel_state.py).
     if int(native.pp_micro_batch_size) < 1:
         raise ValueError("native_tp.pp_micro_batch_size must be >= 1")
     if int(native.forward_batch_size) < 1:
