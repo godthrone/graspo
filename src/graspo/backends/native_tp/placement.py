@@ -21,6 +21,41 @@ class NativePlacementPlan:
         return self.pp_size > 1
 
 
+def _validate_manual_ranges(
+    ranges: list[list[int]],
+    num_hidden_layers: int,
+    pp_size: int,
+) -> None:
+    """Validate manual layer_ranges cover all layers exactly once."""
+    # Check contiguous coverage from 0 to num_hidden_layers
+    flat = []
+    for i, (start, end) in enumerate(ranges):
+        if start >= end:
+            raise ValueError(
+                f"layer_ranges[{i}]=[{start},{end}) is invalid: start must be < end"
+            )
+        flat.extend(range(start, end))
+    expected = set(range(num_hidden_layers))
+    actual = set(flat)
+    if actual != expected:
+        missing = expected - actual
+        extra = actual - expected
+        msg = f"layer_ranges covers {len(actual)} layers, but model has {num_hidden_layers} layers."
+        if missing:
+            msg += f" Missing: {sorted(missing)[:20]}..."
+        if extra:
+            msg += f" Extra: {sorted(extra)[:20]}..."
+        raise ValueError(msg)
+    # Check no gaps or overlaps
+    for i in range(len(ranges) - 1):
+        if ranges[i][1] != ranges[i + 1][0]:
+            raise ValueError(
+                f"layer_ranges[{i}] ends at {ranges[i][1]} but "
+                f"layer_ranges[{i + 1}] starts at {ranges[i + 1][0]}: "
+                f"ranges must be contiguous without gaps or overlaps"
+            )
+
+
 def build_placement_plan(
     *,
     strategy: str,
@@ -54,6 +89,7 @@ def build_placement_plan(
     # ── manual layer ranges (from config) ──
     if manual_ranges is not None and len(manual_ranges) == int(pp_size):
         requested = "manual"
+        _validate_manual_ranges(manual_ranges, num_hidden_layers, pp_size)
         start, end = manual_ranges[int(pp_rank)]
         local_layers = tuple(range(start, end))
         return NativePlacementPlan(
