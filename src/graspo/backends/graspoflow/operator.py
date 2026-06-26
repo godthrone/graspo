@@ -91,9 +91,7 @@ class OpMemoryProfile:
     @property
     def total_per_microbatch(self) -> int:
         return (
-            self.forward_activation_bytes
-            + self.backward_intermediate_bytes
-            + self.gradient_bytes
+            self.forward_activation_bytes + self.backward_intermediate_bytes + self.gradient_bytes
         )
 
 
@@ -199,9 +197,7 @@ class ComputeOperator(ABC):
 
     # ── public API ──
 
-    def attach_buffers(
-        self, input_buffer: OpBuffer | None, output_buffer: OpBuffer | None
-    ) -> None:
+    def attach_buffers(self, input_buffer: OpBuffer | None, output_buffer: OpBuffer | None) -> None:
         """Wire this operator into the pipeline DAG."""
         self.input_buffer = input_buffer
         self.output_buffer = output_buffer

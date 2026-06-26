@@ -95,7 +95,9 @@ def _multimodal_rows_from_metadata(
     if len(multimodal_rows) == 1 and expected_rows > 1:
         return [dict(multimodal_rows[0]) for _ in range(expected_rows)]
     if len(multimodal_rows) != expected_rows:
-        raise RuntimeError(f"expected {expected_rows} multimodal metadata rows, got {len(multimodal_rows)}")
+        raise RuntimeError(
+            f"expected {expected_rows} multimodal metadata rows, got {len(multimodal_rows)}"
+        )
     return [dict(row) for row in multimodal_rows]
 
 

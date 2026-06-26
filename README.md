@@ -459,6 +459,30 @@ uv run --extra dev python -m graspo --help
 - Need PEFT compatibility: load PEFT adapters through `lora.adapter_path`, and
   export portable artifacts with `graspo export`.
 
+## Changelog
+
+### 0.8.0
+
+- **GraspoFlow TP+PP**: the `graspoflow` backend now supports arbitrary `tp_size ×
+  pp_size` combinations. Tested on Qwen3.6-27B with tp=2, pp=4 on 8× H100.
+- **Prefill memory fix**: `last_token_only` in `_pipeline_logits_from_last_hidden`
+  avoids materializing the full `[B, S, vocab_size]` logits tensor during rollout
+  prefill, saving ~32 GB on the last PP stage.
+- **Manual `layer_ranges`**: users can specify per-stage layer distribution via
+  `backend_config.native_tp.layer_ranges` to fine-tune memory balance across PP
+  stages. A validation check prevents misconfigurations (missing/gapped layers).
+- **1F1B batch scaling**: `forward_batch_size=64`, `pp_micro_batch_size=2`, and
+  `optimize_prompt_batch_size=8` produce 32-microbatch 1F1B schedules with low
+  pipeline bubble.
+
+### 0.7.0
+
+- Initial GraspoFlow architecture: three-layer Flink-style pipeline (Operator,
+  Scheduler, Graph) with compute-communication separation.
+- 1F1B pipeline schedule with memory-aware `pp_max_inflight_microbatches`.
+- Backend selection: `graspoflow` (recommended) vs legacy `native-tp`.
+- Epoch-level checkpoints with `save_epoch_checkpoint: true`.
+
 ## License
 
 GRASPO is released under the MIT License. See [LICENSE](LICENSE).

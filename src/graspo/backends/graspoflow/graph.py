@@ -68,10 +68,8 @@ class PipelineGraph:
         """Create and wire inter-stage OpBuffers."""
         buf_size = max(1, self.config.max_inflight)
         for i in range(len(self.ops) - 1):
-            buf = OpBuffer(max_slots=buf_size, name=f"stage_{i}_to_{i+1}")
-            self.ops[i].attach_buffers(
-                input_buffer=self.ops[i].input_buffer, output_buffer=buf
-            )
+            buf = OpBuffer(max_slots=buf_size, name=f"stage_{i}_to_{i + 1}")
+            self.ops[i].attach_buffers(input_buffer=self.ops[i].input_buffer, output_buffer=buf)
             self.ops[i + 1].attach_buffers(
                 input_buffer=buf, output_buffer=self.ops[i + 1].output_buffer
             )
@@ -111,9 +109,7 @@ class PipelineGraph:
         """
         return None  # override in subclasses
 
-    def execute_plan(
-        self, plan: list[SchedulerStep]
-    ) -> dict[int, Microbatch]:
+    def execute_plan(self, plan: list[SchedulerStep]) -> dict[int, Microbatch]:
         """Execute a pre-computed scheduler plan.
 
         Returns a dict mapping microbatch_idx → final Microbatch after all

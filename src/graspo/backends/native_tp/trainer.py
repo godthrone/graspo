@@ -219,9 +219,7 @@ class NativeTPGraspoTrainer:
                 if self.config.training.save_epoch_checkpoint:
                     if len(self.replay_buffer) > 0:
                         self._maybe_optimize(epoch=epoch, force=True)
-                    self._save_checkpoint(
-                        output_dir / f"epoch_{epoch}", epoch=epoch
-                    )
+                    self._save_checkpoint(output_dir / f"epoch_{epoch}", epoch=epoch)
             if len(self.replay_buffer) > 0:
                 self._maybe_optimize(
                     epoch=self.config.training.training_epoch_count - 1, force=True
@@ -296,11 +294,7 @@ class NativeTPGraspoTrainer:
                 # valid XML/JSON but the wrong number of tool calls.  The parser
                 # does not flag this as a parse error, so we check it explicitly.
                 has_count_mismatch = False
-                if (
-                    state.sample.expects_tool_calls
-                    and state.sample.targets
-                    and not has_parse_error
-                ):
+                if state.sample.expects_tool_calls and state.sample.targets and not has_parse_error:
                     first_target = state.sample.targets[0]
                     tc = first_target.get("output", {}).get("tool_calls")
                     expected_count = len(tc) if isinstance(tc, list) else 0
@@ -574,7 +568,10 @@ class NativeTPGraspoTrainer:
         self.stats.optimized_steps += 1
         checkpoint_sec = 0.0
         checkpoint_dir: Path | None = None
-        if self.config.training.save_steps > 0 and self.global_step % self.config.training.save_steps == 0:
+        if (
+            self.config.training.save_steps > 0
+            and self.global_step % self.config.training.save_steps == 0
+        ):
             checkpoint_dir = Path(self.config.training.output_dir) / f"step_{self.global_step}"
             checkpoint_started_at = time.monotonic()
             self._save_checkpoint(checkpoint_dir, epoch=epoch)
