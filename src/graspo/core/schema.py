@@ -72,6 +72,10 @@ class NativeTPConfig:
     tp_size: int = 2
     pp_size: int = 1
     placement_strategy: str = "auto"
+    # Manual layer ranges: per-stage [start, end) pairs.  Overrides the
+    # automatic placement strategy when set.  Example for pp=4, 32 layers:
+    #   layer_ranges: [[0,9], [9,17], [17,25], [25,32]]
+    layer_ranges: list[list[int]] | None = None
     sequence_parallel: bool = False
     pp_micro_batch_size: int = 1
     forward_batch_size: int = 8
