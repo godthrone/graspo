@@ -93,15 +93,11 @@ class QwenPPTrainingAdapter:
         # Skeleton: ops will be built from the loaded model
         ops: list = []  # placeholder — populated after model load
 
-        self._pipeline = OptimizePipeline(
-            ops, self._scheduler, config=pipeline_config
-        )
+        self._pipeline = OptimizePipeline(ops, self._scheduler, config=pipeline_config)
 
     # ── training cycle ─────────────────────────────────────────────────────
 
-    def train_step(
-        self, experiences: list[Any]
-    ) -> dict[str, Any]:
+    def train_step(self, experiences: list[Any]) -> dict[str, Any]:
         """Run one training step: forward → backward → optimizer step.
 
         Args:
@@ -133,7 +129,8 @@ class QwenPPTrainingAdapter:
 
         # Create rollout pipeline and generate
         rollout = RolloutPipeline(
-            self._pipeline.ops, self._scheduler,
+            self._pipeline.ops,
+            self._scheduler,
             config=PipelineConfig(max_inflight=self.config.forward_batch_size),
         )
         generated, timing = rollout.generate(
@@ -144,9 +141,7 @@ class QwenPPTrainingAdapter:
 
     # ── microbatch construction ────────────────────────────────────────────
 
-    def _experiences_to_microbatches(
-        self, experiences: list[Any]
-    ) -> list[Microbatch]:
+    def _experiences_to_microbatches(self, experiences: list[Any]) -> list[Microbatch]:
         """Convert training experiences into pipeline microbatches."""
         mbs: list[Microbatch] = []
         for i, exp in enumerate(experiences):

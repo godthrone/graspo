@@ -138,10 +138,7 @@ class BaseNativeTPAdapter(ABC):
         dev = getattr(self, "device", None)
         if (
             cfg is not None
-            and bool(
-                getattr(cfg, "native_tp", None)
-                and cfg.native_tp.synchronize_cuda_timing
-            )
+            and bool(getattr(cfg, "native_tp", None) and cfg.native_tp.synchronize_cuda_timing)
             and dev is not None
             and dev.type == "cuda"
             and torch.cuda.is_available()

@@ -111,9 +111,7 @@ class QwenStageOp(ComputeOperator):
     ) -> torch.Tensor:
         """Receive hidden states from upstream."""
         src = int(self.tp_state.prev_pp_rank or 0)
-        tensor = torch.empty(
-            (batch, seq_len, hidden_size), device=self.device, dtype=dtype
-        )
+        tensor = torch.empty((batch, seq_len, hidden_size), device=self.device, dtype=dtype)
         dist.recv(tensor, src=src)
         return tensor
 
@@ -141,9 +139,7 @@ class QwenEmbedStageOp(QwenStageOp):
         assert mb.attention_mask is not None, "EmbedStageOp requires attention_mask"
 
         # Embed + visual
-        hidden = self.model.embed_inputs(
-            mb.input_ids, multimodal_inputs=mb.multimodal_inputs
-        )
+        hidden = self.model.embed_inputs(mb.input_ids, multimodal_inputs=mb.multimodal_inputs)
         seq_len = int(hidden.shape[1])
 
         # Build position_ids
@@ -417,8 +413,10 @@ def build_qwen_ops(
     pp_size = tp_state.pp_size
     is_first = pp_rank == 0
     is_last = pp_rank == pp_size - 1
-    has_visual = placement is not None and placement.include_embeddings and bool(
-        getattr(model.config, "has_vision_config", False)
+    has_visual = (
+        placement is not None
+        and placement.include_embeddings
+        and bool(getattr(model.config, "has_vision_config", False))
     )
 
     if is_first and has_visual:

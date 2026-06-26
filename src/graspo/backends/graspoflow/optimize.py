@@ -54,9 +54,7 @@ class OptimizePipeline(PipelineGraph):
 
     # ── memory budget ──────────────────────────────────────────────────────
 
-    def _compute_memory_budget(
-        self, batch_size: int, seq_len: int, hidden_size: int
-    ) -> int:
+    def _compute_memory_budget(self, batch_size: int, seq_len: int, hidden_size: int) -> int:
         """Compute max_inflight from current GPU free memory."""
         free_bytes = get_gpu_free_memory_bytes()
         if free_bytes <= 0:

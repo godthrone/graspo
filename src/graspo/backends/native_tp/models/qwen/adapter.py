@@ -954,16 +954,24 @@ class QwenNativeTPAdapter(
             # Check rope_deltas batch size vs actual batch size
             _rd = getattr(self.model, "rope_deltas", None)
             _rd_shape = list(_rd.shape) if _rd is not None else None
-            print(f"  [prefill] batch={sequences.shape[0]} pad_len={sequences.shape[1]} "
-                  f"prompt_lens={_min_len}..{_max_len} rope_deltas_shape={_rd_shape}", flush=True)
-            _preview_first = self.tokenizer.decode(
-                [_first_logits[0].argmax().item()]
-            ) if _first_logits.shape[0] > 0 else "?"
+            print(
+                f"  [prefill] batch={sequences.shape[0]} pad_len={sequences.shape[1]} "
+                f"prompt_lens={_min_len}..{_max_len} rope_deltas_shape={_rd_shape}",
+                flush=True,
+            )
+            _preview_first = (
+                self.tokenizer.decode([_first_logits[0].argmax().item()])
+                if _first_logits.shape[0] > 0
+                else "?"
+            )
             _top5_vals, _top5_idx = _first_logits[0].float().topk(5)
             _top5_txt = [self.tokenizer.decode([int(t)]) for t in _top5_idx]
-            print(f"  [prefill] seq_len={sequences.shape[1]} batch={sequences.shape[0]} "
-                  f"first_tok_greedy={_preview_first!r} "
-                  f"top5={list(zip(_top5_txt, _top5_vals.tolist()))}", flush=True)
+            print(
+                f"  [prefill] seq_len={sequences.shape[1]} batch={sequences.shape[0]} "
+                f"first_tok_greedy={_preview_first!r} "
+                f"top5={list(zip(_top5_txt, _top5_vals.tolist()))}",
+                flush=True,
+            )
         # Per-row logits for the first token; subsequent steps use logits[:, -1, :]
         _step_logits = _first_logits
         for _step_idx in range(max_new_tokens):
@@ -979,8 +987,10 @@ class QwenNativeTPAdapter(
             decode_tokens += 1
             if _debug_decode and self.rank == 0:
                 _tok_ids = next_token.tolist()
-                _decoded = [self.tokenizer.decode([t]) if t != pad_token_id else "<PAD>"
-                            for t in _tok_ids[:3]]
+                _decoded = [
+                    self.tokenizer.decode([t]) if t != pad_token_id else "<PAD>"
+                    for t in _tok_ids[:3]
+                ]
                 _eos_rows = [i for i, t in enumerate(_tok_ids) if t == eos_token_id]
                 _pad_rows = [i for i, t in enumerate(_tok_ids) if t == pad_token_id]
                 _extra = ""
@@ -988,7 +998,10 @@ class QwenNativeTPAdapter(
                     _extra += f" EOS_at={_eos_rows}"
                 if _pad_rows:
                     _extra += f" PAD_at={_pad_rows}"
-                print(f"  [step {_step_idx}] tokens={_tok_ids[:8]} decoded={_decoded}{_extra}", flush=True)
+                print(
+                    f"  [step {_step_idx}] tokens={_tok_ids[:8]} decoded={_decoded}{_extra}",
+                    flush=True,
+                )
             finished |= next_token.eq(eos_token_id)
             self._sync_timing()
             stop_check_started_at = time.monotonic()
@@ -1008,8 +1021,11 @@ class QwenNativeTPAdapter(
                 _rd = getattr(self.model, "rope_deltas", None)
                 _rd_shape = list(_rd.shape) if _rd is not None else None
                 _attn_lens = attention_mask.sum(dim=1).tolist()
-                print(f"  [decode step 1] attn_lens[:8]={_attn_lens[:8]} "
-                      f"rope_deltas_shape={_rd_shape}", flush=True)
+                print(
+                    f"  [decode step 1] attn_lens[:8]={_attn_lens[:8]} "
+                    f"rope_deltas_shape={_rd_shape}",
+                    flush=True,
+                )
             _step_logits = logits[:, -1, :]  # shape (B, vocab) for next decode step
         self._sync_timing()
         if _debug_decode and self.rank == 0:

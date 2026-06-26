@@ -331,6 +331,29 @@ uv run --extra dev python -m graspo --help
 - Rollout OOM：保持 `training.max_new_tokens=2048`；降低 rollout 并发或 KV cache 预留，而不是降低生产生成长度。
 - 需要 PEFT 兼容：通过 `lora.adapter_path` 加载 PEFT/GRASPO-PEFT adapter，通过 `graspo export` 导出便携产物。
 
+## 更新日志
+
+### 0.8.0
+
+- **GraspoFlow TP+PP 混合并行**：`graspoflow` 后端现已支持任意 `tp_size ×
+  pp_size` 组合。已在 Qwen3.6-27B 上以 tp=2, pp=4 在 8× H100 上验证。
+- **Prefill 显存优化**：`_pipeline_logits_from_last_hidden` 新增 `last_token_only`
+  参数，避免 rollout prefill 时物化完整的 `[B, S, vocab_size]` logits 张量，为
+  最后一个 PP stage 节省约 32 GB 显存。
+- **手动 `layer_ranges`**：支持通过 `backend_config.native_tp.layer_ranges` 指定
+  每个 PP stage 的层数分配，并加入校验逻辑防止配置错误（层数不足/遗漏/重叠）。
+- **1F1B 批处理扩展**：`forward_batch_size=64`、`pp_micro_batch_size=2`、
+  `optimize_prompt_batch_size=8`，产生 32 个 microbatch 的 1F1B 调度，pipeline
+  bubble 极低。
+
+### 0.7.0
+
+- 初始 GraspoFlow 架构：三层 Flink 风格流水线（Operator、Scheduler、Graph），
+  计算与通信分离。
+- 1F1B 流水线调度，支持 `pp_max_inflight_microbatches` 显存感知。
+- 后端选择：`graspoflow`（推荐）vs 旧版 `native-tp`。
+- Epoch 级 checkpoint：`save_epoch_checkpoint: true`。
+
 ## License
 
 GRASPO 使用 MIT License。见 [LICENSE](LICENSE)。
