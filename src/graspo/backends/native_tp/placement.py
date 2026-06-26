@@ -31,6 +31,7 @@ def build_placement_plan(
     tp_rank: int,
     pp_rank: int,
     layer_types: list[str] | tuple[str, ...] | None = None,
+    manual_ranges: list[list[int]] | None = None,
 ) -> NativePlacementPlan:
     requested = (strategy or "auto").strip()
     if requested == "auto":
@@ -49,7 +50,25 @@ def build_placement_plan(
             include_embeddings=True,
             include_lm_head=True,
         )
-    supported_pipeline_strategies = {"qwen36_pp8_static", "qwen36_pp8_lm_head_only_final"}
+
+    # ── manual layer ranges (from config) ──
+    if manual_ranges is not None and len(manual_ranges) == int(pp_size):
+        requested = "manual"
+        start, end = manual_ranges[int(pp_rank)]
+        local_layers = tuple(range(start, end))
+        return NativePlacementPlan(
+            strategy=requested,
+            model_family=model_family,
+            tp_size=int(tp_size),
+            pp_size=int(pp_size),
+            pp_rank=int(pp_rank),
+            tp_rank=int(tp_rank),
+            local_layer_indices=local_layers,
+            include_embeddings=int(pp_rank) == 0,
+            include_lm_head=int(pp_rank) == int(pp_size) - 1,
+        )
+
+    supported_pipeline_strategies = {"qwen36_pp8_static", "qwen36_pp8_lm_head_only_final", "manual"}
     if requested not in supported_pipeline_strategies:
         raise ValueError(f"Unsupported pipeline placement strategy: {requested}")
     if model_family != "qwen3_5_text":
@@ -98,11 +117,15 @@ def _balanced_qwen36_layer_ranges(
         layer_types = tuple("linear_attention" for _ in range(num_hidden_layers))
     costs = [1.18 if layer_type == "full_attention" else 1.0 for layer_type in layer_types]
     stage_overheads = [0.0 for _ in range(pp_size)]
-    stage_overheads[0] = 1.5
+    # Overheads scale inversely with pp_size: with fewer (larger) stages the
+    # fixed-cost components (embed, lm_head) represent a smaller fraction of
+    # total stage work.  Calibrated at pp=8 (embed=1.5, lm_head=8.0).
+    scale = float(pp_size) / 8.0
+    stage_overheads[0] = 1.5 * scale
     # The final stage owns final norm and lm_head. It consistently has much
     # higher memory pressure and backward cost, so keep fewer decoder layers
     # there than a pure layer-count balance would choose.
-    stage_overheads[-1] = 8.0
+    stage_overheads[-1] = 8.0 * scale
     return _minimax_contiguous_ranges(costs, stage_overheads)
 
 

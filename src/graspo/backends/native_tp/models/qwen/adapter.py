@@ -161,6 +161,9 @@ class QwenNativeTPAdapter(
             tp_rank=self.tp_rank,
             pp_rank=self.pp_rank,
             layer_types=list(getattr(hf_config, "layer_types", []) or []),
+            manual_ranges=[list(r) for r in self.config.native_tp.layer_ranges]
+            if self.config.native_tp.layer_ranges is not None
+            else None,
         )
         self.model = build_native_qwen_model(  # type: ignore[assignment]
             hf_config=hf_config,
@@ -1740,7 +1743,9 @@ class QwenNativeTPAdapter(
             multimodal_inputs=multimodal_inputs,
             timing=stage_timing,
         )
-        logits = self._pipeline_logits_from_last_hidden(hidden, timing=stage_timing)
+        logits = self._pipeline_logits_from_last_hidden(
+            hidden, timing=stage_timing, last_token_only=True
+        )
         self._sync_timing()
         prefill_sec = time.monotonic() - prefill_started_at
         decode_started_at = time.monotonic()
@@ -1850,6 +1855,7 @@ class QwenNativeTPAdapter(
         hidden_states: torch.Tensor | None,
         *,
         timing: dict[str, float | int] | None = None,
+        last_token_only: bool = False,
     ) -> torch.Tensor | None:
         assert isinstance(self.model, Qwen35HybridTextModel)
         if self.pp_rank != self.pp_size - 1:
@@ -1857,7 +1863,12 @@ class QwenNativeTPAdapter(
         assert hidden_states is not None
         assert self.model.norm is not None and self.model.lm_head is not None
         lm_head_started_at = time.monotonic()
-        hidden_states = self.model.norm(hidden_states)
+        if last_token_only:
+            # Only compute lm_head on the last token position to avoid
+            # materializing [B, S, vocab_size] during prefill (10+ GB).
+            hidden_states = self.model.norm(hidden_states[:, -1:, :])
+        else:
+            hidden_states = self.model.norm(hidden_states)
         logits = self.model.lm_head(hidden_states)
         _add_pipeline_stage_timing(timing, "pipeline_lm_head_sec", lm_head_started_at)
         return logits
