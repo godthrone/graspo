@@ -209,7 +209,8 @@ def _build_qwen35_visual_tower(
     for _mod in visual.modules():
         if hasattr(_mod, "inv_freq"):
             _inv_freq = 1.0 / (
-                _mod.theta ** (torch.arange(0, _mod.dim, 2, dtype=torch.float, device=device) / _mod.dim)
+                _mod.theta
+                ** (torch.arange(0, _mod.dim, 2, dtype=torch.float, device=device) / _mod.dim)
             )
             _mod.register_buffer("inv_freq", _inv_freq, persistent=False)
     for param in visual.parameters():

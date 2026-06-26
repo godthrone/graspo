@@ -31,9 +31,7 @@ def _validate_manual_ranges(
     flat = []
     for i, (start, end) in enumerate(ranges):
         if start >= end:
-            raise ValueError(
-                f"layer_ranges[{i}]=[{start},{end}) is invalid: start must be < end"
-            )
+            raise ValueError(f"layer_ranges[{i}]=[{start},{end}) is invalid: start must be < end")
         flat.extend(range(start, end))
     expected = set(range(num_hidden_layers))
     actual = set(flat)
