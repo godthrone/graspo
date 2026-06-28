@@ -21,6 +21,16 @@ build/
 .venv-*/
 venv/
 .idea/
+.vscode/
+
+# AI assistant files (generated on demand, not versioned)
+CLAUDE.md
+CLAUDE.zh-CN.md
+AGENTS.md
+
+# OS files
+.DS_Store
+Thumbs.db
 
 # Local notes, credentials, runbooks, and ad hoc files
 .local/
@@ -43,6 +53,7 @@ experiment_data/
 *.pt
 *.pth
 *.tar.gz
+*.tar
 
 # Local datasets; keep the public sample
 data/*.jsonl
@@ -51,6 +62,7 @@ data/*.xls
 data/*.csv
 !data/sample.jsonl
 !data/sample_multimodal.jsonl
+!data/sample_tool_call.jsonl
 *.xlsx
 *.xls
 .dataset/
