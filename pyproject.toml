@@ -1,16 +1,17 @@
 [build-system]
-requires = ["setuptools", "wheel"]
+requires = ["setuptools>=75.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "graspo"
-version = "0.8.0"
+version = "0.9.1"
 description = "GRASPO LoRA reinforcement learning with a self-owned native TP/PP backend."
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
 license = "MIT"
 authors = [{ name = "Godthrone" }]
 dependencies = [
+  "pydantic>=2.0",
   "pyyaml>=6.0.0",
   "safetensors>=0.4.0",
   "torch>=2.5.0",
@@ -22,19 +23,27 @@ dependencies = [
 dev = [
   "pytest>=8.0.0",
   "ruff>=0.6.0",
+  "mypy>=1.0",
 ]
 
 [project.scripts]
 graspo = "graspo.cli.app:main"
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.setuptools.package-dir]
+"" = "src"
 
 [tool.ruff]
 line-length = 100
 target-version = "py311"
 extend-exclude = ["*.jsonl"]
 
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "BLE"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
