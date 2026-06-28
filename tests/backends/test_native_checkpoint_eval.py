@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import json
 import importlib.util
+import json
 from pathlib import Path
 
 from graspo.core.schema import GraspoConfig, Sample
-
 
 _SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "evaluate_native_checkpoint.py"
 _SPEC = importlib.util.spec_from_file_location("evaluate_native_checkpoint", _SCRIPT_PATH)

@@ -9,7 +9,7 @@
 #   pp_size=M, tp_size=N  → TP+PP 混合
 #
 # 用 backend: graspoflow 切换到新框架。
-# 旧 backend: native-tp 保持不变，共存运行。
+# GraspoFlow 是唯一的训练后端。
 # ─────────────────────────────────────────────────────────────
 
 # ── 模式 1: 单卡训练 ──

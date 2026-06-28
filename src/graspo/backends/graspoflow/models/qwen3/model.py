@@ -10,34 +10,35 @@ from torch import nn
 from torch.utils.checkpoint import checkpoint as activation_checkpoint
 
 if TYPE_CHECKING:
-    from graspo.backends.native_tp.placement import NativePlacementPlan
-    from graspo.backends.native_tp.tensor_utils import SafetensorIndex
+    from graspo.backends.graspoflow.placement import NativePlacementPlan
+    from graspo.backends.graspoflow.tensor_utils import SafetensorIndex
 
-from graspo.backends.native_tp.models.qwen.config import NativeQwenConfig
-from graspo.backends.native_tp.models.qwen.layers import (
+from graspo.backends.graspoflow.lora import (
+    LoRALinear,
+    _replace_visual_lora_modules,
+)
+from graspo.backends.graspoflow.models.qwen3.config import NativeQwenConfig
+from graspo.backends.graspoflow.models.qwen3.layers import (
     QwenRMSNorm,
     TensorParallelQwenDecoderLayer,
     _checkpoint_decoder_layer_forward,
 )
-from graspo.backends.native_tp.models.qwen.lora import (
-    LoRALinear,
-    _replace_visual_lora_modules,
-)
-from graspo.backends.native_tp.tensor_utils import (
+from graspo.backends.graspoflow.tensor_utils import (
     _dtype_size,
     _position_ids,
     _selected_token_log_probs_from_hidden,
 )
 
 
-class NativeTPCausalLMBase(nn.Module):
-    """Shared contract for repository-native tensor-parallel causal LMs.
+class GraspoFlowCausalLMBase(nn.Module):
+    """所有原生 tensor-parallel causal LM 的共享基类。
 
-    Unknown models should fail closed in the registry instead of inheriting this
-    class and silently attempting an unsafe best-effort sharding scheme.
+    未知模型应在注册表中 fail-closed，不应继承此类尝试不做安全检查的 sharding。
     """
 
     supports_kv_cache = False
+    lora_targets: set[str] = set()
+    placement: Any = None
 
     def sequence_log_probs(
         self, sequences: torch.Tensor, attention_mask: torch.Tensor
@@ -90,7 +91,7 @@ class NativeTPCausalLMBase(nn.Module):
         }
 
 
-class QwenFamilyBase(NativeTPCausalLMBase):
+class QwenFamilyBase(GraspoFlowCausalLMBase):
     """Common Qwen native-TP helpers shared by Qwen generations."""
 
 
@@ -110,14 +111,14 @@ def load_native_qwen_config(model_path: Path) -> NativeQwenConfig:
             text_config, family="qwen3_5_text", key_prefix="model.language_model"
         )
     raise ValueError(
-        f"native-tp supports text-only qwen3 and qwen3_5_text models; got model_type={model_type!r}"
+        f"graspoflow supports text-only qwen3 and qwen3_5_text models; got model_type={model_type!r}"
     )
 
 
 def build_native_qwen_model(
     *,
     hf_config: NativeQwenConfig,
-    loader: "SafetensorIndex",
+    loader: SafetensorIndex,
     tp_rank: int,
     tp_size: int,
     placement: NativePlacementPlan | None = None,
@@ -145,7 +146,7 @@ def build_native_qwen_model(
             device=device,
         )
     if hf_config.family == "qwen3_5_text":
-        from graspo.backends.native_tp.models.qwen.modeling_hybrid import Qwen35HybridTextModel
+        from graspo.backends.graspoflow.models.qwen35_36.model import Qwen35HybridTextModel
 
         return Qwen35HybridTextModel(
             hf_config=hf_config,
@@ -167,7 +168,7 @@ def build_native_qwen_model(
 def _build_qwen35_visual_tower(
     *,
     hf_config: NativeQwenConfig,
-    loader: "SafetensorIndex",
+    loader: SafetensorIndex,
     lora_r: int,
     lora_alpha: int,
     lora_dropout: float,
@@ -187,6 +188,7 @@ def _build_qwen35_visual_tower(
     if not vision_values:
         raise RuntimeError("Qwen3.5-family config has no vision_config")
     vision_config = Qwen3_5VisionConfig(**vision_values)
+    # HF Transformers 版本兼容：某些版本不会自动设置 _attn_implementation
     if hasattr(vision_config, "_attn_implementation"):
         setattr(vision_config, "_attn_implementation", "sdpa")
     visual = Qwen3_5VisionModel(vision_config).to(device=device, dtype=torch_dtype)  # type: ignore[call-arg]
@@ -207,6 +209,7 @@ def _build_qwen35_visual_tower(
     # propagates through the decoder and corrupts tool-call generation.
     # Recompute inv_freq in float32 explicitly to match HF precision.
     for _mod in visual.modules():
+        # 仅为 RoPE 模块重新计算 inv_freq（HF 模块内部探测）
         if hasattr(_mod, "inv_freq"):
             _inv_freq = 1.0 / (
                 _mod.theta
@@ -232,7 +235,7 @@ class Qwen3DenseModel(QwenFamilyBase):
         self,
         *,
         hf_config: Any,
-        loader: "SafetensorIndex",
+        loader: SafetensorIndex,
         tp_rank: int,
         tp_size: int,
         placement: NativePlacementPlan | None = None,

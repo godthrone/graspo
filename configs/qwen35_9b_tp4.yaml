@@ -1,6 +1,6 @@
-# GRASPO 0.7.0 — Qwen3.5-9B TP=4 生产配置
+# GRASPO 0.8.0 — Qwen3.5-9B TP=4 生产配置
 # 适用于 4×80GB GPU，多模态工具调用训练
-backend: native-tp
+backend: graspoflow
 
 model:
   model_path: models/Qwen3.5-9B
@@ -50,7 +50,7 @@ training:
   dataloader_num_workers: 0
 
 backend_config:
-  native_tp:
+  graspoflow:
     tp_size: 4
     pp_size: 1
     placement_strategy: qwen3_tp

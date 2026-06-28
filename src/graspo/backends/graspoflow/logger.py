@@ -286,10 +286,16 @@ def _target_tool_call_counts(targets: Any) -> set[int]:
 
 
 def _to_jsonable(value: Any) -> Any:
+    """将任意值递归转换为 JSON 可序列化类型。
+
+    对 torch.Tensor 的鸭子类型检测是合理的——这不是探测接口契约，
+    而是处理运行时可能出现的多种 tensor 类型（CPU/GPU/不同 dtype）。
+    """
     if isinstance(value, dict):
         return {str(key): _to_jsonable(child) for key, child in value.items()}
     if isinstance(value, (list, tuple)):
         return [_to_jsonable(child) for child in value]
+    # 鸭子类型检测 tensor 能力，非接口契约探测
     if hasattr(value, "detach") and hasattr(value, "cpu"):
         value = value.detach().cpu()
         if hasattr(value, "tolist"):

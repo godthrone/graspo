@@ -1,6 +1,6 @@
-# GRASPO 0.7.0 — Qwen3.6-27B PP=8 长训配置 (114 H100)
+# GRASPO 0.8.0 — Qwen3.6-27B PP=8 长训配置 (114 H100)
 # 8×H100 80GB, 1F1B pipeline schedule
-backend: native-tp
+backend: graspoflow
 
 model:
   model_path: /workspace/models/Qwen3.6-27B
@@ -50,7 +50,7 @@ training:
   dataloader_num_workers: 0
 
 backend_config:
-  native_tp:
+  graspoflow:
     tp_size: 1
     pp_size: 8
     placement_strategy: qwen36_pp8_static

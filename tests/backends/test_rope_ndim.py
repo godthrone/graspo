@@ -1,8 +1,11 @@
 """Tests for RoPE ndim handling and TP group globals."""
 import torch
 from graspo.backends.native_tp.tensor_utils import (
-    _apply_rope, _apply_rope_partial,
-    _TENSOR_PARALLEL_GROUP, _TENSOR_PARALLEL_SIZE, _set_tensor_parallel_group,
+    _TENSOR_PARALLEL_GROUP,
+    _TENSOR_PARALLEL_SIZE,
+    _apply_rope,
+    _apply_rope_partial,
+    _set_tensor_parallel_group,
 )
 
 

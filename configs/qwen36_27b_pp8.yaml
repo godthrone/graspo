@@ -1,4 +1,4 @@
-backend: native-tp
+backend: graspoflow
 
 model:
   model_path: models/Qwen3.6-27B
@@ -59,7 +59,7 @@ training:
   resume_from_checkpoint: null
 
 backend_config:
-  native_tp:
+  graspoflow:
     tp_size: 1
     pp_size: 8
     placement_strategy: qwen36_pp8_static

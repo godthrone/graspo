@@ -15,7 +15,7 @@ GRASPO 的训练主线是：
 - 没有 reward 方差或没有偏好差异的 group 会被过滤；
 - ReplayBuffer 保存 completion-level experience；
 - readable 日志保留真实 messages、completion、reward 和 debug 细节；
-- 生产训练只使用自研 `native-tp` TP/PP LoRA 路径；
+- 生产训练只使用自研 GraspoFlow TP/PP LoRA 路径；
 - 只支持 LoRA 训练，不支持全参数训练。
 
 训练内部使用 native TP/PP LoRA modules。PEFT 只作为外部兼容格式，用于 warm-start 导入和离线导出。
@@ -44,7 +44,7 @@ cp config_example.yaml my_graspo.yaml
 - `data.train_path`：JSONL 训练数据；
 - `training.output_dir`：run 输出目录；
 - `launch.gpus`：当前节点使用的 GPU id；
-- `backend_config.native_tp.tp_size` 和 `backend_config.native_tp.pp_size`：native TP/PP world size。
+- `backend_config.graspoflow.tp_size` 和 `backend_config.graspoflow.pp_size`：native TP/PP world size。
 
 训练只需要一个 YAML 参数：
 
@@ -152,12 +152,10 @@ GRASPO 使用同一 rollout group 内的 reward 分布，而不是单条 complet
 
 ### `backend`
 
-- `graspoflow`：**推荐。** 统一 TP+PP Flink 风格流式流水线框架。
+- `graspoflow`：**唯一后端。** 统一 TP+PP Flink 风格流式流水线框架。
   支持所有并行模式：单卡（`tp=1,pp=1`）、纯 TP（`tp=N,pp=1`）、
   纯 PP（`tp=1,pp=N`）、TP+PP 混合（`tp=M,pp=N`）。
   参见 `configs/graspoflow_example.yaml`。
-- `native-tp`：旧版 native TP/PP LoRA 后端。仍支持纯 TP 训练，
-  PP 方法已废弃，将在 GraspoFlow 验证后移除。
 
 ### `model`
 
@@ -221,20 +219,22 @@ GRASPO 使用同一 rollout group 内的 reward 分布，而不是单条 complet
 
 `training.replay_buffer_optimize_threshold` 由 `optimize_prompt_batch_size * rollout_group_size` 派生，不能手动配置。`training.resume_from_checkpoint` 和 `lora.adapter_path` 互斥：前者恢复 native checkpoint 状态，后者只是 PEFT/GRASPO-PEFT LoRA warm-start。
 
-### `backend_config.native_tp`
+### `backend_config.graspoflow`
 
-- `tp_size`：TP size。
-- `pp_size`：PP size。
-- `placement_strategy`：placement 策略，例如 `qwen3_tp` 或 `qwen36_pp8_static`。
+- `tp_size`：TP size（默认 2）。
+- `pp_size`：PP size（默认 1）。
+- `placement_strategy`：placement 策略，例如 `qwen3_tp` 或 `qwen36_pp8_static`（默认 `auto`）。
+- `layer_ranges`：手动逐 stage 层数分配。例如 pp=4, 32 层：
+  `[[0,9], [9,17], [17,25], [25,32]]`。设置后覆盖 `placement_strategy`。
 - `sequence_parallel`：v1 必须保持 `false`。
-- `pp_micro_batch_size`：PP micro-batch size。
+- `pp_micro_batch_size`：PP micro-batch size（默认 1）。
 - `forward_batch_size`：rollout forward batch size（默认 8），替代旧的 `gpu_memory_utilization`。
 - `use_kv_cache_for_rollout`：KV cache 只用于 rollout generation。
 - `empty_cache_after_rollout_split`、`empty_cache_before_train`：CUDA cache 控制。
 - `checkpoint_format`：native recoverable checkpoint 格式标签。
 - `raw_log_enabled`、`readable_log_enabled`：rollout/replay 日志开关。
 - `synchronize_cuda_timing`：是否同步 CUDA timing。
-- `pp_schedule`：pipeline schedule，默认 `simple`。
+- `pp_schedule`：pipeline schedule，`simple`（默认）或 `one_f_one_b`。
 - `pp_max_inflight_microbatches`：1F1B inflight 上限。
 
 ### `export`
@@ -268,10 +268,10 @@ IDs、KV-cache continuation、visual feature injection、TP shard-local layer
 math 和 LoRA target metadata，应由 `Qwen3DenseModel`、
 `Qwen35HybridTextModel` 及其 attention/layer modules 负责。
 
-`QwenNativeTPAdapter` 只负责 processor/tokenizer 调用、batch/split、
-sampling、pipeline send/recv 编排、checkpoint delegation 和 logging。
-Runtime/placement 只负责 backend lifecycle、config validation 和 TP/PP
-layout，不实现模型 family 的数学逻辑。
+`TransformerAdapter` 及其模型家族子类（如 `Qwen3Adapter`、`Qwen35Adapter`）只负责
+processor/tokenizer 调用、batch/split、sampling、pipeline send/recv 编排、
+checkpoint delegation 和 logging。Runtime/placement 只负责 backend lifecycle、
+config validation 和 TP/PP layout，不实现模型 family 的数学逻辑。
 
 GRASPO 中 Qwen3.6 复用 Qwen3.5-family hybrid text/vision native class，因为
 它的结构与该 family 兼容。未来如果出现 `qwen3_vl`、`qwen3_omni` 等不同
@@ -340,8 +340,10 @@ uv run --extra dev python -m graspo --help
 - **Prefill 显存优化**：`_pipeline_logits_from_last_hidden` 新增 `last_token_only`
   参数，避免 rollout prefill 时物化完整的 `[B, S, vocab_size]` logits 张量，为
   最后一个 PP stage 节省约 32 GB 显存。
-- **手动 `layer_ranges`**：支持通过 `backend_config.native_tp.layer_ranges` 指定
+- **手动 `layer_ranges`**：支持通过 `backend_config.graspoflow.layer_ranges` 指定
   每个 PP stage 的层数分配，并加入校验逻辑防止配置错误（层数不足/遗漏/重叠）。
+- **移除旧版 `native-tp` 后端**：GraspoFlow 是唯一训练后端，所有 `native_tp` / `native-tp`
+  配置键和相关代码已删除。
 - **1F1B 批处理扩展**：`forward_batch_size=64`、`pp_micro_batch_size=2`、
   `optimize_prompt_batch_size=8`，产生 32 个 microbatch 的 1F1B 调度，pipeline
   bubble 极低。
@@ -351,7 +353,7 @@ uv run --extra dev python -m graspo --help
 - 初始 GraspoFlow 架构：三层 Flink 风格流水线（Operator、Scheduler、Graph），
   计算与通信分离。
 - 1F1B 流水线调度，支持 `pp_max_inflight_microbatches` 显存感知。
-- 后端选择：`graspoflow`（推荐）vs 旧版 `native-tp`。
+- 后端选择：`graspoflow` 是唯一后端。
 - Epoch 级 checkpoint：`save_epoch_checkpoint: true`。
 
 ## License
