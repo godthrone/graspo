@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict
 
 from graspo.core.reward import RewardConfig
 
 
-@dataclass(slots=True)
-class LoRAConfig:
+class LoRAConfig(BaseModel):
+    """LoRA 微调配置。"""
+
+    model_config = ConfigDict(extra="forbid")
+
     r: int = 16
     alpha: int = 32
     dropout: float = 0.1
@@ -21,18 +25,24 @@ class LoRAConfig:
     task_type: str = "CAUSAL_LM"
 
 
-@dataclass(slots=True)
-class ModelConfig:
+class ModelConfig(BaseModel):
+    """模型加载配置。"""
+
+    model_config = ConfigDict(extra="forbid")
+
     model_path: str = ""
     trust_remote_code: bool = True
     torch_dtype: str = "bfloat16"
     attn_implementation: str | None = None
     gradient_checkpointing: bool = True
-    chat_template_kwargs: dict[str, Any] = field(default_factory=dict)
+    chat_template_kwargs: dict[str, Any] = {}
 
 
-@dataclass(slots=True)
-class TrainingConfig:
+class TrainingConfig(BaseModel):
+    """训练超参数配置。"""
+
+    model_config = ConfigDict(extra="forbid")
+
     output_dir: str = ""
     seed: int = 42
     training_epoch_count: int = 100
@@ -61,20 +71,26 @@ class TrainingConfig:
         return int(self.optimize_prompt_batch_size) * int(self.rollout_group_size)
 
 
-@dataclass(slots=True)
-class DataConfig:
+class DataConfig(BaseModel):
+    """训练数据配置。"""
+
+    model_config = ConfigDict(extra="forbid")
+
     train_path: str = ""
     max_prompt_length: int = 2048
 
 
-@dataclass(slots=True)
-class NativeTPConfig:
+class GraspoFlowConfig(BaseModel):
+    """GraspoFlow 分布式训练配置。"""
+
+    model_config = ConfigDict(extra="forbid")
+
     tp_size: int = 2
     pp_size: int = 1
+    # 模型适配器路径，默认使用 qwen35_36（兼容 Qwen3.5/3.6 系列）
+    adapter: str = "graspo.backends.graspoflow.models.qwen35_36.adapter:Qwen35Adapter"
     placement_strategy: str = "auto"
-    # Manual layer ranges: per-stage [start, end) pairs.  Overrides the
-    # automatic placement strategy when set.  Example for pp=4, 32 layers:
-    #   layer_ranges: [[0,9], [9,17], [17,25], [25,32]]
+    # 手动指定每层的 stage 分布 [start, end) 区间，设置后覆盖 placement_strategy
     layer_ranges: list[list[int]] | None = None
     sequence_parallel: bool = False
     pp_micro_batch_size: int = 1
@@ -90,13 +106,19 @@ class NativeTPConfig:
     pp_max_inflight_microbatches: int = 0
 
 
-@dataclass(slots=True)
-class ExportConfig:
-    final_formats: list[str] = field(default_factory=list)
+class ExportConfig(BaseModel):
+    """模型导出配置。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    final_formats: list[str] = []
 
 
-@dataclass(slots=True)
-class LaunchConfig:
+class LaunchConfig(BaseModel):
+    """分布式启动配置。"""
+
+    model_config = ConfigDict(extra="forbid")
+
     gpus: list[int] | str | None = None
     nproc_per_node: int | None = None
     nnodes: int = 1
@@ -105,87 +127,72 @@ class LaunchConfig:
     master_port: int = 29500
     python: str | None = None
     torchrun: str | None = None
-    env: dict[str, str] = field(default_factory=dict)
+    env: dict[str, str] = {}
 
 
-@dataclass(slots=True)
-class GraspoConfig:
-    backend: str = "native-tp"
-    backend_config: dict[str, Any] = field(default_factory=dict)
-    native_tp: NativeTPConfig = field(default_factory=NativeTPConfig)
-    graspoflow: NativeTPConfig = field(default_factory=NativeTPConfig)
-    model: ModelConfig = field(default_factory=ModelConfig)
-    data: DataConfig = field(default_factory=DataConfig)
-    lora: LoRAConfig = field(default_factory=LoRAConfig)
-    export: ExportConfig = field(default_factory=ExportConfig)
-    launch: LaunchConfig = field(default_factory=LaunchConfig)
-    reward: RewardConfig = field(default_factory=RewardConfig)
-    training: TrainingConfig = field(default_factory=TrainingConfig)
+class GraspoConfig(BaseModel):
+    """GRASPO 训练主配置，单一 YAML 入口，加载即校验。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    backend: str = "graspoflow"
+    graspoflow: GraspoFlowConfig = GraspoFlowConfig()
+    model: ModelConfig = ModelConfig()
+    data: DataConfig = DataConfig()
+    lora: LoRAConfig = LoRAConfig()
+    export: ExportConfig = ExportConfig()
+    launch: LaunchConfig = LaunchConfig()
+    reward: RewardConfig = RewardConfig()
+    training: TrainingConfig = TrainingConfig()
 
     @classmethod
-    def from_yaml(cls, path: str | Path) -> "GraspoConfig":
+    def from_yaml(cls, path: str | Path) -> GraspoConfig:
+        """从 YAML 文件加载配置，加载时完成全部校验。"""
         import yaml
 
         text = Path(path).read_text(encoding="utf-8")
         return cls.from_dict(yaml.safe_load(text))
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "GraspoConfig":
-        import warnings
-
+    def from_dict(cls, data: dict[str, Any]) -> GraspoConfig:
+        """从字典构建配置，拒绝未知字段和已废弃的字段名。"""
         data = data or {}
-        backend_config = dict(data.get("backend_config", {}) or {})
-        native_cfg = dict(backend_config.get("native_tp", {}) or {})
-        native_cfg.update(data.get("native_tp", {}) or {})
+        flow_cfg = _resolve_graspoflow_config(data)
 
-        # GraspoFlow config: shares the same fields as NativeTPConfig
-        flow_cfg = dict(backend_config.get("graspoflow", {}) or {})
+        # 训练配置校验：拒绝已废弃的字段名
+        _check_removed_fields(data.get("training", {}), "training", _REMOVED_TRAINING_FIELDS)
+        # 数据配置校验：拒绝已废弃的字段名
+        _check_removed_fields(data.get("data", {}), "data", _REMOVED_DATA_FIELDS)
+        # 拒绝 replay_buffer_optimize_threshold（派生值，不可配置）
+        if "replay_buffer_optimize_threshold" in data.get("training", {}):
+            raise ValueError(
+                "training.replay_buffer_optimize_threshold 是派生值"
+                "（optimize_prompt_batch_size × rollout_group_size），不可手动配置"
+            )
 
-        # Backward compat: warn about removed fields
-        _removed_native = {
-            "generation_micro_batch_size",
-            "rollout_kv_cache_max_reserved_fraction",
-            "gpu_memory_utilization",
-        }
-        for key in sorted(_removed_native & set(native_cfg)):
-            if key == "gpu_memory_utilization":
-                warnings.warn(
-                    "native_tp.gpu_memory_utilization is removed. "
-                    "Use native_tp.forward_batch_size instead (default 8).",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-            else:
-                warnings.warn(
-                    f"native_tp.{key} is removed.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-            del native_cfg[key]
-
-        training_cfg = _normalize_training_config(data.get("training", {}))
         return cls(
-            backend=data.get("backend", "native-tp"),
-            backend_config=backend_config,
-            native_tp=NativeTPConfig(**native_cfg),
-            graspoflow=NativeTPConfig(**flow_cfg),
+            backend=data.get("backend", "graspoflow"),
+            graspoflow=GraspoFlowConfig(**flow_cfg),
             model=ModelConfig(**data.get("model", {})),
-            data=DataConfig(**_normalize_data_config(data.get("data", {}))),
+            data=DataConfig(**data.get("data", {})),
             lora=LoRAConfig(**data.get("lora", {})),
             export=ExportConfig(**data.get("export", {})),
             launch=LaunchConfig(**data.get("launch", {})),
             reward=RewardConfig(**data.get("reward", {})),
-            training=TrainingConfig(**training_cfg),
+            training=TrainingConfig(**data.get("training", {})),
         )
 
 
-@dataclass(slots=True)
-class Sample:
+class Sample(BaseModel):
+    """单条训练样本，包含 messages、targets 和可选的 tools。"""
+
+    model_config = ConfigDict(extra="forbid")
+
     messages: list[dict[str, Any]]
     targets: list[dict[str, Any]]
     tools: list[dict[str, Any]] | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
-    media: list[dict[str, Any]] = field(default_factory=list)
+    metadata: dict[str, Any] = {}
+    media: list[dict[str, Any]] = []
 
     @property
     def expects_tool_calls(self) -> bool:
@@ -205,10 +212,55 @@ class Sample:
         return "\n\n".join(part for part in parts if part)
 
     def to_json(self) -> str:
-        return json.dumps(asdict(self), ensure_ascii=False)
+        return json.dumps(self.model_dump(), ensure_ascii=False)
+
+
+# ── 已废弃字段名，配置加载时拒绝 ──────────────────────────────────────────
+
+_REMOVED_TRAINING_FIELDS = {
+    "total_epochs",
+    "rollout_prompt_queue_size",
+    "rollout_prompt_queue_batch_size",
+    "group_size",
+    "train_batch_size",
+    "buffer_train_rounds",
+    "max_retry",
+    "clip_eps",
+    "perfect_reward_threshold",
+    "each_step_prompts_per_device",
+}
+
+_REMOVED_DATA_FIELDS = {"prompt_field", "messages_field", "ground_truth_field"}
+
+
+# ── 辅助函数 ────────────────────────────────────────────────────────────────
+
+
+def _resolve_graspoflow_config(data: dict[str, Any]) -> dict[str, Any]:
+    """解析 graspoflow 配置，支持两种格式并给出迁移提示。
+
+    规范格式：顶层 ``graspoflow:`` 键。
+    旧格式：``backend_config.graspoflow:`` 嵌套键（仍然兼容，但输出 DEPRECATION 警告）。
+    """
+    if "graspoflow" in data and data["graspoflow"]:
+        return dict(data["graspoflow"])
+    if "backend_config" in data and isinstance(data["backend_config"], dict):
+        bc = data["backend_config"]
+        if "graspoflow" in bc and bc["graspoflow"]:
+            import warnings
+
+            warnings.warn(
+                "backend_config.graspoflow 已废弃，请将 graspoflow 配置提升到 YAML 顶层。"
+                " 参考 config_example.yaml 的最新格式。",
+                FutureWarning,
+                stacklevel=3,
+            )
+            return dict(bc["graspoflow"])
+    return {}
 
 
 def _content_preview(content: Any) -> str:
+    """生成消息内容的可读预览。"""
     if isinstance(content, str):
         return content
     if not isinstance(content, list):
@@ -232,41 +284,15 @@ def _content_preview(content: Any) -> str:
     return "\n".join(part for part in parts if part)
 
 
-def _normalize_training_config(raw: dict[str, Any] | None) -> dict[str, Any]:
-    config = dict(raw or {})
-    if "replay_buffer_optimize_threshold" in config:
-        raise ValueError(
-            "training.replay_buffer_optimize_threshold is derived from "
-            "optimize_prompt_batch_size * rollout_group_size and must not be configured"
-        )
-    removed = {
-        "total_epochs",
-        "rollout_prompt_queue_size",
-        "rollout_prompt_queue_batch_size",
-        "group_size",
-        "train_batch_size",
-        "buffer_train_rounds",
-        "max_retry",
-        "clip_eps",
-        "perfect_reward_threshold",
-        "each_step_prompts_per_device",
-    }
-    present = sorted(key for key in removed if key in config)
+def _check_removed_fields(
+    raw: dict[str, Any] | None, section: str, removed: set[str]
+) -> None:
+    """拒绝已废弃的配置字段，给出明确错误信息。"""
+    if raw is None:
+        return
+    present = sorted(key for key in removed if key in raw)
     if present:
         raise ValueError(
-            "Removed training config field(s): " + ", ".join(f"training.{key}" for key in present)
+            f"已废弃的 {section} 配置字段: "
+            + ", ".join(f"{section}.{key}" for key in present)
         )
-    return config
-
-
-def _normalize_data_config(raw: dict[str, Any] | None) -> dict[str, Any]:
-    config = dict(raw or {})
-    removed = {"prompt_field", "messages_field", "ground_truth_field"}
-    present = sorted(key for key in removed if key in config)
-    if present:
-        raise ValueError(
-            "Removed data config field(s): "
-            + ", ".join(f"data.{key}" for key in present)
-            + ". GRASPO data is fixed to JSONL records with messages + optional tools + targets."
-        )
-    return config

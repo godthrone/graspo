@@ -1,8 +1,8 @@
-# GRASPO 0.7.0 — Example Configuration
+# GRASPO 0.9.1 — Example Configuration
 # Requires: PyTorch >= 2.12, CUDA >= 13.2
 # For multimodal (vision-language) training, set reward.check_tool_call: true
 # and use a multimodal model (Qwen3.5-9B, etc.).
-backend: native-tp
+backend: graspoflow
 
 model:
   model_path: models/Qwen3-8B
@@ -62,23 +62,22 @@ training:
   dataloader_num_workers: 0
   resume_from_checkpoint: null
 
-backend_config:
-  native_tp:
-    tp_size: 2
-    pp_size: 1
-    placement_strategy: qwen3_tp
-    sequence_parallel: false
-    pp_micro_batch_size: 1
-    forward_batch_size: 32
-    use_kv_cache_for_rollout: true
-    empty_cache_after_rollout_split: false
-    empty_cache_before_train: false
-    checkpoint_format: recoverable_lora_tp
-    raw_log_enabled: true
-    readable_log_enabled: true
-    synchronize_cuda_timing: false
-    pp_schedule: simple
-    pp_max_inflight_microbatches: 0
+graspoflow:
+  tp_size: 2
+  pp_size: 1
+  placement_strategy: qwen3_tp
+  sequence_parallel: false
+  pp_micro_batch_size: 1
+  forward_batch_size: 32
+  use_kv_cache_for_rollout: true
+  empty_cache_after_rollout_split: false
+  empty_cache_before_train: false
+  checkpoint_format: recoverable_lora_tp
+  raw_log_enabled: true
+  readable_log_enabled: true
+  synchronize_cuda_timing: false
+  pp_schedule: simple
+  pp_max_inflight_microbatches: 0
 
 export:
   final_formats: []
