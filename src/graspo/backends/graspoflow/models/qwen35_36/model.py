@@ -8,18 +8,18 @@ from torch import nn
 from torch.utils.checkpoint import checkpoint as activation_checkpoint
 
 if TYPE_CHECKING:
-    from graspo.backends.native_tp.tensor_utils import SafetensorIndex
+    from graspo.backends.graspoflow.tensor_utils import SafetensorIndex
 
-from graspo.backends.native_tp.models.qwen.config import NativeQwenConfig
-from graspo.backends.native_tp.models.qwen.layers import (
+from graspo.backends.graspoflow.models.qwen3.config import NativeQwenConfig
+from graspo.backends.graspoflow.models.qwen3.model import QwenFamilyBase
+from graspo.backends.graspoflow.models.qwen35_36.layers import (
     Qwen35RMSNorm,
     TensorParallelQwen35DecoderLayer,
     _checkpoint_qwen35_decoder_layer_forward,
     _qwen35_cache_sequence_len,
 )
-from graspo.backends.native_tp.models.qwen.modeling import QwenFamilyBase
-from graspo.backends.native_tp.placement import NativePlacementPlan
-from graspo.backends.native_tp.tensor_utils import (
+from graspo.backends.graspoflow.placement import NativePlacementPlan
+from graspo.backends.graspoflow.tensor_utils import (
     _dtype_size,
     _position_ids,
     _selected_token_log_probs_from_hidden,
@@ -31,7 +31,7 @@ class Qwen35HybridTextModel(QwenFamilyBase):
         self,
         *,
         hf_config: NativeQwenConfig,
-        loader: "SafetensorIndex",
+        loader: SafetensorIndex,
         tp_rank: int,
         tp_size: int,
         placement: NativePlacementPlan | None = None,
@@ -78,7 +78,7 @@ class Qwen35HybridTextModel(QwenFamilyBase):
                     device=device, dtype=torch_dtype
                 )
             )
-        from graspo.backends.native_tp.models.qwen.modeling import _build_qwen35_visual_tower
+        from graspo.backends.graspoflow.models.qwen3.model import _build_qwen35_visual_tower
 
         self.visual = (
             _build_qwen35_visual_tower(
@@ -479,6 +479,7 @@ class Qwen35HybridTextModel(QwenFamilyBase):
         assert self.visual is not None
         dtype = next(self.visual.parameters()).dtype
         output = self.visual(pixel_values.to(dtype=dtype), grid_thw=grid_thw)
+        # HF 视觉模型输出兼容：pooler_output 是 BaseModelOutputWithPooling 的属性
         features = output.pooler_output if hasattr(output, "pooler_output") else output[1]
         return features.to(device=pixel_values.device)
 

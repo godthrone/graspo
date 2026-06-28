@@ -2,8 +2,6 @@ import json
 
 import pytest
 import torch
-from safetensors.torch import load_file, save_file
-
 from graspo.backends.native_tp.lora_io import (
     export_merged_hf_from_checkpoint,
     export_peft_adapter_from_checkpoint,
@@ -11,6 +9,8 @@ from graspo.backends.native_tp.lora_io import (
 )
 from graspo.backends.native_tp.qwen_tp_adapter import LoRALinear
 from graspo.backends.native_tp.runtime import validate_native_runtime_config
+from safetensors.torch import load_file, save_file
+
 from graspo.core.schema import GraspoConfig
 
 

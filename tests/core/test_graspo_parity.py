@@ -1,6 +1,5 @@
 import pytest
 
-
 torch = pytest.importorskip("torch")
 
 from graspo.core.graspo_parity import is_uniform_partial_content, lower_median  # noqa: E402

@@ -13,7 +13,6 @@ from typing import Any
 
 import torch
 
-
 # ── Microbatch ────────────────────────────────────────────────────────────────
 
 
@@ -61,7 +60,7 @@ class Microbatch:
             return int(self.hidden_states.shape[1])
         return 0
 
-    def clone_for_retry(self, idx: int) -> "Microbatch":
+    def clone_for_retry(self, idx: int) -> Microbatch:
         """Shallow-clone with a new index (used by rollout retry)."""
         return Microbatch(
             idx=idx,

@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from graspo.backends.native_tp.runtime import NativeTPRuntime
+from graspo.backends.graspoflow.runtime import GraspoFlowRuntime
 from graspo.core.completion import raw_parsed_completion
 from graspo.core.data import load_jsonl
 from graspo.core.reward import GraspoReward
@@ -16,7 +16,7 @@ from graspo.core.schema import GraspoConfig, Sample
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Evaluate a native-tp checkpoint by generating rollout groups and scoring rewards."
+        description="Evaluate a graspoflow checkpoint by generating rollout groups and scoring rewards."
     )
     parser.add_argument(
         "--config", required=True, help="Training YAML config used to build the native runtime."
@@ -54,7 +54,7 @@ def main() -> int:
         samples = samples[: args.limit]
 
     output_dir = Path(args.output_dir)
-    runtime = NativeTPRuntime.from_config(config)
+    runtime = GraspoFlowRuntime.from_config(config)
     started_at = time.monotonic()
     try:
         runtime.setup()
@@ -76,7 +76,7 @@ def main() -> int:
 
 
 def evaluate_samples(
-    runtime: NativeTPRuntime,
+    runtime: GraspoFlowRuntime,
     config: GraspoConfig,
     samples: list[Sample],
     output_dir: Path,
@@ -198,7 +198,7 @@ def _safe_metadata(sample: Sample) -> dict[str, Any]:
     return metadata
 
 
-def _parse_completion(runtime: NativeTPRuntime, completion: str, sample: Sample):
+def _parse_completion(runtime: GraspoFlowRuntime, completion: str, sample: Sample):
     parse_completion = getattr(runtime, "parse_completion", None)
     if callable(parse_completion):
         return parse_completion(completion, sample)

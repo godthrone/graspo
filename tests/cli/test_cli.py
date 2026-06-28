@@ -8,22 +8,6 @@ from graspo.cli.app import build_launch_plan, build_parser
 from graspo.core.schema import GraspoConfig
 
 
-def test_cli_validate_reward():
-    parser = build_parser()
-    args = parser.parse_args(["validate-reward", "--data", "data/sample.jsonl", "--limit", "1"])
-
-    assert args.func(args) == 0
-
-
-def test_cli_validate_reward_tool_call_sample():
-    parser = build_parser()
-    args = parser.parse_args(
-        ["validate-reward", "--data", "data/sample_tool_call.jsonl", "--limit", "1"]
-    )
-
-    assert args.func(args) == 0
-
-
 def test_cli_main_commands_parse():
     parser = build_parser()
 
@@ -59,7 +43,7 @@ def test_cli_main_commands_parse():
         assert callable(args.func)
 
 
-@pytest.mark.parametrize("command", ["train", "prepare-data", "analyze"])
+@pytest.mark.parametrize("command", ["train", "prepare-data", "analyze", "validate-reward"])
 def test_cli_removed_commands_are_not_public(command):
     parser = build_parser()
 
@@ -73,13 +57,13 @@ def test_config_example_loads():
     assert config.training.training_epoch_count == 100
     assert config.training.max_new_tokens == 2048
     assert config.launch.gpus == [0, 1]
-    assert config.native_tp.tp_size == 2
+    assert config.graspoflow.tp_size == 2
 
 
-def test_launch_plan_native_tp_uses_torchrun(tmp_path):
+def test_launch_plan_graspoflow_uses_torchrun(tmp_path):
     config_path = _write_launch_config(
         tmp_path,
-        backend="native-tp",
+        backend="graspoflow",
         gpus="[0, 1]",
         nproc_per_node="null",
         tensor_parallel=2,
@@ -88,7 +72,7 @@ def test_launch_plan_native_tp_uses_torchrun(tmp_path):
 
     plan = build_launch_plan(config_path)
 
-    assert plan.backend == "native-tp"
+    assert plan.backend == "graspoflow"
     assert plan.uses_torchrun
     assert plan.nproc_per_node == 2
     assert plan.command[:5] == [
@@ -103,10 +87,10 @@ def test_launch_plan_native_tp_uses_torchrun(tmp_path):
     assert plan.env["CUDA_VISIBLE_DEVICES"] == "0,1"
 
 
-def test_launch_plan_native_tp_world_size_one_uses_single_process(tmp_path):
+def test_launch_plan_graspoflow_world_size_one_uses_single_process(tmp_path):
     config_path = _write_launch_config(
         tmp_path,
-        backend="native-tp",
+        backend="graspoflow",
         gpus="null",
         nproc_per_node="null",
         tensor_parallel=1,
@@ -115,7 +99,7 @@ def test_launch_plan_native_tp_world_size_one_uses_single_process(tmp_path):
 
     plan = build_launch_plan(config_path)
 
-    assert plan.backend == "native-tp"
+    assert plan.backend == "graspoflow"
     assert not plan.uses_torchrun
     assert plan.nproc_per_node == 1
     assert plan.command[:3] == ["python", "-m", "graspo.cli.train_worker"]
@@ -124,7 +108,7 @@ def test_launch_plan_native_tp_world_size_one_uses_single_process(tmp_path):
 def test_launch_plan_rejects_world_size_mismatch(tmp_path):
     config_path = _write_launch_config(
         tmp_path,
-        backend="native-tp",
+        backend="graspoflow",
         gpus="[0]",
         nproc_per_node=1,
         tensor_parallel=2,
@@ -138,7 +122,7 @@ def test_launch_plan_rejects_world_size_mismatch(tmp_path):
 def test_launch_plan_rejects_missing_paths(tmp_path):
     config_path = _write_launch_config(
         tmp_path,
-        backend="native-tp",
+        backend="graspoflow",
         model_path="<MODEL_PATH>",
         gpus="null",
         tensor_parallel=1,
@@ -178,7 +162,7 @@ def test_only_readmes_are_tracked_markdown_docs():
         line.strip().replace("\\", "/") for line in result.stdout.splitlines() if line.strip()
     }
 
-    assert tracked_markdown == {"CLAUDE.md", "README.md", "README.zh-CN.md"}
+    assert tracked_markdown == {"LONG_RUN.md", "README.md", "README.zh-CN.md"}
 
 
 def _write_launch_config(
@@ -208,10 +192,9 @@ data:
   train_path: {json.dumps(str(data_path))}
 training:
   output_dir: {json.dumps(str(output_dir))}
-backend_config:
-  native_tp:
-    tp_size: {tensor_parallel}
-    pp_size: {pipeline_parallel}
+graspoflow:
+  tp_size: {tensor_parallel}
+  pp_size: {pipeline_parallel}
 launch:
   gpus: {gpus}
   nproc_per_node: {nproc_per_node}

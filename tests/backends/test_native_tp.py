@@ -10,16 +10,17 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from graspo.backends.native_tp.logger import NativeRolloutLogger  # noqa: E402
-from graspo.backends.native_tp.qwen_tp_adapter import QwenNativeTPAdapter  # noqa: E402
 from graspo.backends.native_tp import qwen_tp_adapter as qwen_tp_adapter_module  # noqa: E402
+from graspo.backends.native_tp.logger import NativeRolloutLogger  # noqa: E402
+from graspo.backends.native_tp.placement import build_placement_plan  # noqa: E402
+from graspo.backends.native_tp.qwen_tp_adapter import QwenNativeTPAdapter  # noqa: E402
 from graspo.backends.native_tp.runtime import (  # noqa: E402
     NativeGeneration,
     assert_forbidden_runtime_modules_not_imported,
     validate_native_runtime_config,
 )
-from graspo.backends.native_tp.placement import build_placement_plan  # noqa: E402
 from graspo.backends.native_tp.trainer import NativeTPGraspoTrainer  # noqa: E402
+
 from graspo.core.schema import GraspoConfig  # noqa: E402
 
 

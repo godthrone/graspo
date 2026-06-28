@@ -11,7 +11,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from graspo.backends.native_tp.qwen_tp_adapter import _parse_qwen_tool_completion
+from graspo.backends.graspoflow.tool_parser import _parse_qwen_tool_completion
 from graspo.core.completion import ParsedCompletion
 from graspo.core.data import load_jsonl
 from graspo.core.reward import GraspoReward

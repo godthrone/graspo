@@ -10,9 +10,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from graspo.core.completion import ParsedCompletion, raw_parsed_completion
-from graspo.core.data import load_jsonl
-from graspo.core.reward import GraspoReward, RewardConfig
 from graspo.core.schema import GraspoConfig
 
 
@@ -26,77 +23,11 @@ class LaunchPlan:
     nnodes: int
 
 
-def cmd_validate_reward(args: argparse.Namespace) -> int:
-    samples = load_jsonl(args.data)[: args.limit]
-    completions: list[str] = []
-    if args.completions:
-        with Path(args.completions).open("r", encoding="utf-8") as handle:
-            for line in handle:
-                completions.append(json.loads(line)["completion"])
-
-    reward = GraspoReward(
-        RewardConfig(check_think=args.check_think, check_json_markdown=args.check_json_markdown)
-    )
-    scores: list[float] = []
-    for idx, sample in enumerate(samples):
-        has_explicit_completion = idx < len(completions)
-        if has_explicit_completion:
-            completion = completions[idx]
-        else:
-            output = sample.targets[0]["output"]
-            if sample.expects_tool_calls:
-                calls = output.get("tool_calls") or []
-                completion = json.dumps(calls, ensure_ascii=False)
-            else:
-                content = output.get("content") or {}
-                gt = json.dumps(content, ensure_ascii=False)
-                completion = f"```json\n{gt}\n```" if args.check_json_markdown else gt
-        if sample.expects_tool_calls:
-            parsed = (
-                raw_parsed_completion(completion)
-                if has_explicit_completion
-                else ParsedCompletion(
-                    raw_text=completion,
-                    tool_calls=list(sample.targets[0]["output"].get("tool_calls") or []),
-                    parser_name="validate_reward_canonical",
-                )
-            )
-            result = reward.score_parsed(parsed, sample.targets, is_tool_call=True)
-        else:
-            result = reward.score(completion, sample.targets)
-        scores.append(result.reward)
-        print(
-            json.dumps(
-                {
-                    "idx": idx,
-                    "reward": round(result.reward, 6),
-                    "content_score": round(result.content_score, 6),
-                    "all_right": result.all_right,
-                    "useless_len": len(result.useless_text),
-                },
-                ensure_ascii=False,
-            )
-        )
-    if scores:
-        print(
-            json.dumps(
-                {
-                    "count": len(scores),
-                    "mean": sum(scores) / len(scores),
-                    "min": min(scores),
-                    "max": max(scores),
-                },
-                ensure_ascii=False,
-            )
-        )
-    return 0
-
-
 def cmd_export(args: argparse.Namespace) -> int:
     config = GraspoConfig.from_yaml(args.config)
     if args.base_model:
         config.model.model_path = args.base_model
-    from graspo.backends.native_tp.lora_io import export_from_checkpoint
+    from graspo.backends.graspoflow.lora_io import export_from_checkpoint
 
     export_from_checkpoint(
         args.checkpoint,
@@ -158,7 +89,7 @@ def build_launch_plan(config_path: str | Path, config: GraspoConfig | None = Non
     python = str(launch.python or sys.executable)
     train_command = [python, "-m", "graspo.cli.train_worker", "--config", str(config_path)]
 
-    uses_torchrun = selection.name == "native-tp" and nnodes * nproc_per_node > 1
+    uses_torchrun = nnodes * nproc_per_node > 1
     if uses_torchrun:
         command = _torchrun_prefix(config, python) + [
             f"--nnodes={nnodes}",
@@ -188,17 +119,15 @@ def _resolve_nproc_per_node(config: GraspoConfig, backend: str) -> int:
     launch = config.launch
     if launch.nproc_per_node is not None:
         nproc_per_node = int(launch.nproc_per_node)
-    elif backend == "native-tp":
-        expected_world = _native_world_size(config)
+    else:
+        expected_world = _graspoflow_world_size(config)
         nnodes = int(launch.nnodes)
         if expected_world % nnodes != 0:
             raise SystemExit(
-                "native-tp world size must divide evenly across launch.nnodes "
+                "graspoflow world size must divide evenly across launch.nnodes "
                 f"({expected_world} % {nnodes} != 0)"
             )
         nproc_per_node = expected_world // nnodes
-    else:
-        nproc_per_node = 1
     if nproc_per_node < 1:
         raise SystemExit("launch.nproc_per_node must be >= 1")
     return nproc_per_node
@@ -211,11 +140,11 @@ def _validate_launch_world(
     nproc_per_node: int,
 ) -> None:
     actual_world = nnodes * nproc_per_node
-    expected_world = _native_world_size(config)
+    expected_world = _graspoflow_world_size(config)
     if actual_world != expected_world:
         raise SystemExit(
-            "native-tp launch world size must match "
-            "native tensor/pipeline parallel size "
+            "graspoflow launch world size must match "
+            "tp_size × pp_size "
             f"({actual_world} != {expected_world})"
         )
 
@@ -227,8 +156,8 @@ def _validate_launch_world(
         )
 
 
-def _native_world_size(config: GraspoConfig) -> int:
-    return int(config.native_tp.tp_size) * int(config.native_tp.pp_size)
+def _graspoflow_world_size(config: GraspoConfig) -> int:
+    return int(config.graspoflow.tp_size) * int(config.graspoflow.pp_size)
 
 
 def _validate_launch_paths(config: GraspoConfig) -> None:
@@ -291,16 +220,6 @@ def _project_src_dir() -> Path:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="graspo", description="GRASPO training utilities.")
     subparsers = parser.add_subparsers(dest="command", required=True)
-
-    validate = subparsers.add_parser("validate-reward", help="Validate reward on local data.")
-    validate.add_argument("--data", "-d", required=True)
-    validate.add_argument("--completions", "-c")
-    validate.add_argument("--check-think", action="store_true")
-    validate.add_argument(
-        "--check-json-markdown", action=argparse.BooleanOptionalAction, default=True
-    )
-    validate.add_argument("--limit", type=int, default=20)
-    validate.set_defaults(func=cmd_validate_reward)
 
     launch = subparsers.add_parser("launch", help="Launch training from a single YAML config.")
     launch.add_argument("--config", "-c", required=True)

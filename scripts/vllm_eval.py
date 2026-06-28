@@ -9,7 +9,7 @@ from urllib import request
 
 sys.path.insert(0, "/workspace/graspo/src")
 from graspo.core.reward import GraspoReward, RewardConfig
-from graspo.backends.native_tp.tool_parser import parse_qwen_tool_completion
+from graspo.backends.graspoflow.tool_parser import parse_qwen_tool_completion
 
 VLLM_URL = "http://localhost:18000/v1/chat/completions"
 DATA = "data/train.jsonl"

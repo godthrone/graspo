@@ -12,19 +12,17 @@ torch = pytest.importorskip("torch")
 if not hasattr(torch, "float8_e8m0fnu"):
     torch.float8_e8m0fnu = torch.uint8  # type: ignore[attr-defined]
 
+from graspo.backends.native_tp.placement import build_placement_plan  # noqa: E402
 from graspo.backends.native_tp.qwen_tp_adapter import (  # noqa: E402
     LoRALinear,
-    NativeTPCausalLMBase,
-    QwenNativeTPAdapter,
-    Qwen35HybridTextModel,
-    Qwen3DenseModel,
     NativeQwenConfig,
+    NativeTPCausalLMBase,
+    Qwen3DenseModel,
+    Qwen35HybridTextModel,
+    QwenNativeTPAdapter,
     TensorParallelQwen35LinearAttention,
-    TensorParallelQwenForCausalLM,
     TensorParallelQwen35TextForCausalLM,
-    collate_experiences,
-    load_native_qwen_config,
-    native_qwen_lora_available_targets,
+    TensorParallelQwenForCausalLM,
     _add_pipeline_stage_timing,
     _messages_from_multimodal_row,
     _new_pipeline_stage_timing,
@@ -34,9 +32,12 @@ from graspo.backends.native_tp.qwen_tp_adapter import (  # noqa: E402
     _round_pipeline_stage_timing,
     _selected_token_log_probs_from_hidden,
     _slice_multimodal_inputs,
+    collate_experiences,
+    load_native_qwen_config,
+    native_qwen_lora_available_targets,
 )
 from graspo.backends.native_tp.runtime import NativeTPRuntime  # noqa: E402
-from graspo.backends.native_tp.placement import build_placement_plan  # noqa: E402
+
 from graspo.core.buffer import Experience  # noqa: E402
 from graspo.core.reward import GraspoReward, RewardConfig  # noqa: E402
 from graspo.core.schema import GraspoConfig  # noqa: E402
