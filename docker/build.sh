@@ -3,7 +3,7 @@
 #   IMAGE_NAME=graspo:0.7.0 bash docker/build.sh
 set -euo pipefail
 
-IMAGE_NAME="${IMAGE_NAME:-graspo:0.7.0}"
+IMAGE_NAME="${IMAGE_NAME:-graspo:0.9.1}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 echo "Building ${IMAGE_NAME} from ${ROOT_DIR}"

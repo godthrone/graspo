@@ -1,6 +1,6 @@
-# GRASPO 0.7.0 — Qwen3.5-9B TP=4 长训配置 (100 epochs)
+# GRASPO 0.8.0 — Qwen3.5-9B TP=4 长训配置 (100 epochs)
 # 228 服务器，GPU 4-7
-backend: native-tp
+backend: graspoflow
 
 model:
   model_path: /workspace/models/Qwen3.5-9B
@@ -50,7 +50,7 @@ training:
   dataloader_num_workers: 0
 
 backend_config:
-  native_tp:
+  graspoflow:
     tp_size: 4
     pp_size: 1
     placement_strategy: qwen3_tp

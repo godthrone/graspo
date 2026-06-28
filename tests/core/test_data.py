@@ -357,7 +357,7 @@ def test_assistant_tool_calls_missing_name_is_rejected(tmp_path):
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match="\.name must be"):
+    with pytest.raises(ValueError, match=r"\.name must be"):
         load_jsonl(path)
 
 
@@ -372,7 +372,7 @@ def test_assistant_tool_calls_missing_arguments_is_rejected(tmp_path):
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match="\.arguments must be"):
+    with pytest.raises(ValueError, match=r"\.arguments must be"):
         load_jsonl(path)
 
 

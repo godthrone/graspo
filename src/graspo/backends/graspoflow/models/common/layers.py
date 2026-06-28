@@ -7,10 +7,10 @@ from torch import nn
 from torch.nn import functional as F
 
 if TYPE_CHECKING:
-    from graspo.backends.native_tp.tensor_utils import SafetensorIndex
+    from graspo.backends.graspoflow.tensor_utils import SafetensorIndex
 
-from graspo.backends.native_tp.models.qwen.lora import LoRALinear, _lora_target_enabled
-from graspo.backends.native_tp.tensor_utils import (
+from graspo.backends.graspoflow.lora import LoRALinear, _lora_target_enabled
+from graspo.backends.graspoflow.tensor_utils import (
     _all_reduce_tp,
     _apply_mask_to_padding_states,
     _apply_rope,
@@ -21,8 +21,8 @@ from graspo.backends.native_tp.tensor_utils import (
     _rope_cache,
     _select_head_rows,
     _shard_tensor,
-    _torch_chunk_gated_delta_rule,
     _torch_causal_conv1d_update,
+    _torch_chunk_gated_delta_rule,
     _torch_recurrent_gated_delta_rule,
 )
 
@@ -35,7 +35,7 @@ class TensorParallelQwen35DecoderLayer(nn.Module):
         layer_type: str,
         key_prefix: str,
         hf_config: Any,
-        loader: "SafetensorIndex",
+        loader: SafetensorIndex,
         tp_rank: int,
         tp_size: int,
         lora_r: int,
@@ -133,7 +133,7 @@ class TensorParallelQwen35DecoderLayer(nn.Module):
 
 
 def _checkpoint_qwen35_decoder_layer_forward(
-    layer: "TensorParallelQwen35DecoderLayer",
+    layer: TensorParallelQwen35DecoderLayer,
     hidden_states: torch.Tensor,
     position_ids: torch.Tensor,
     attention_mask: torch.Tensor | None,
@@ -147,7 +147,7 @@ class TensorParallelQwen35FullAttention(nn.Module):
         *,
         prefix: str,
         hf_config: Any,
-        loader: "SafetensorIndex",
+        loader: SafetensorIndex,
         tp_rank: int,
         tp_size: int,
         lora_r: int,
@@ -360,7 +360,7 @@ class TensorParallelQwen35LinearAttention(nn.Module):
         *,
         prefix: str,
         hf_config: Any,
-        loader: "SafetensorIndex",
+        loader: SafetensorIndex,
         tp_rank: int,
         tp_size: int,
         lora_r: int,
@@ -639,7 +639,7 @@ class TensorParallelQwenDecoderLayer(nn.Module):
         layer_idx: int,
         key_prefix: str,
         hf_config: Any,
-        loader: "SafetensorIndex",
+        loader: SafetensorIndex,
         tp_rank: int,
         tp_size: int,
         lora_r: int,
@@ -720,7 +720,7 @@ class TensorParallelQwenDecoderLayer(nn.Module):
 
 
 def _checkpoint_decoder_layer_forward(
-    layer: "TensorParallelQwenDecoderLayer",
+    layer: TensorParallelQwenDecoderLayer,
     hidden_states: torch.Tensor,
     position_ids: torch.Tensor,
     attention_mask: torch.Tensor | None,
@@ -734,7 +734,7 @@ class TensorParallelQwenAttention(nn.Module):
         *,
         prefix: str,
         hf_config: Any,
-        loader: "SafetensorIndex",
+        loader: SafetensorIndex,
         tp_rank: int,
         tp_size: int,
         lora_r: int,
@@ -884,7 +884,7 @@ class TensorParallelQwenMLP(nn.Module):
         *,
         prefix: str,
         hf_config: Any,
-        loader: "SafetensorIndex",
+        loader: SafetensorIndex,
         tp_rank: int,
         tp_size: int,
         lora_r: int,
@@ -1047,6 +1047,7 @@ def _qwen35_cache_sequence_len(layer_cache: Any) -> int:
         return 0
     if (
         len(layer_cache) >= 2
+        # 鸭子类型检测 tensor shape（GPU/CPU tensor 均支持）
         and hasattr(layer_cache[0], "shape")
         and len(layer_cache[0].shape) == 4
     ):

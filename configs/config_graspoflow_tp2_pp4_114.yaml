@@ -1,6 +1,6 @@
 # GraspoFlow TP+PP 混合测试 — Qwen3.6-27B tp=2 pp=4 on 114 H100
 # 8 GPU: 4 PP stages × 2-way TP per stage
-backend: native-tp
+backend: graspoflow
 
 model:
   model_path: /workspace/models/Qwen3.6-27B
@@ -50,7 +50,7 @@ training:
   dataloader_num_workers: 0
 
 backend_config:
-  native_tp:
+  graspoflow:
     tp_size: 2
     pp_size: 4
     placement_strategy: manual

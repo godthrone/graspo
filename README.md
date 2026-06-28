@@ -26,7 +26,7 @@ prompt, then adds production-oriented behavior for structured outputs:
   signal;
 - completion-level ReplayBuffer optimization;
 - readable reward/debug logs that preserve real model outputs for inspection;
-- self-owned `native-tp` training with tensor parallel and pipeline placement;
+- self-owned GraspoFlow training with tensor parallel and pipeline placement;
 - LoRA-only training with frozen base weights.
 
 The production training path uses native TP/PP LoRA modules. PEFT is treated as
@@ -57,8 +57,8 @@ Set at least these fields in `my_graspo.yaml`:
 - `data.train_path`: JSONL training data;
 - `training.output_dir`: run output directory;
 - `launch.gpus`: local GPU ids for this node;
-- `backend_config.native_tp.tp_size` and
-  `backend_config.native_tp.pp_size`: native placement
+- `backend_config.graspoflow.tp_size` and
+  `backend_config.graspoflow.pp_size`: native placement
   world size.
 
 Launch training with one YAML argument:
@@ -74,8 +74,10 @@ For a short smoke, keep `training.max_new_tokens=2048` and reduce
 Validate sample data and reward behavior:
 
 ```bash
-uv run graspo validate-reward --data data/sample.jsonl --limit 2
+uv run python scripts/eval_inference.py --help
 ```
+
+For reward validation testing, use the scripts in `scripts/` directory.
 
 ## Data Format
 
@@ -227,12 +229,10 @@ complete public example.
 
 ### `backend`
 
-- `graspoflow`: **Recommended.** Unified TP+PP Flink-style streaming pipeline.
+- `graspoflow`: **The only backend.** Unified TP+PP Flink-style streaming pipeline.
   Supports all parallel modes: single-GPU (`tp=1,pp=1`), pure TP (`tp=N,pp=1`),
   pure PP (`tp=1,pp=N`), and TP+PP mixed (`tp=M,pp=N`).
   See `configs/graspoflow_example.yaml`.
-- `native-tp`: Legacy native TP/PP LoRA backend. Still supported for TP-only
-  training. PP methods are deprecated and will be removed.
 
 ### `model`
 
@@ -313,12 +313,14 @@ training.
 exclusive: resume restores native checkpoint state, while PEFT adapter loading
 is only a LoRA warm-start.
 
-### `backend_config.native_tp`
+### `backend_config.graspoflow`
 
 - `tp_size`: TP size (default 2).
 - `pp_size`: PP size (default 1).
 - `placement_strategy`: placement policy such as `qwen3_tp` or
-  `qwen36_pp8_static`.
+  `qwen36_pp8_static` (default `auto`).
+- `layer_ranges`: manual per-stage layer distribution. Example for pp=4, 32 layers:
+  `[[0,9], [9,17], [17,25], [25,32]]`. Overrides `placement_strategy` when set.
 - `sequence_parallel`: must stay `false` in v1.
 - `pp_micro_batch_size`: PP micro-batch size (default 1).
 - `forward_batch_size`: rollout forward batch size (default 8). Replaces
@@ -329,7 +331,7 @@ is only a LoRA warm-start.
 - `checkpoint_format`: native recoverable checkpoint format label.
 - `raw_log_enabled`, `readable_log_enabled`: rollout/replay log toggles.
 - `synchronize_cuda_timing`: synchronize CUDA events for timing diagnostics.
-- `pp_schedule`: pipeline schedule, default `simple`.
+- `pp_schedule`: pipeline schedule, `simple` (default) or `one_f_one_b`.
 - `pp_max_inflight_microbatches`: 1F1B inflight cap for experiments.
 
 ### `export`
@@ -341,7 +343,7 @@ is only a LoRA warm-start.
 ### `launch`
 
 - `gpus`: local GPU ids for this node.
-- `nproc_per_node`: worker count per node. If omitted for `native-tp`, it is
+- `nproc_per_node`: worker count per node. If omitted, it is
   derived from TP * PP / nodes.
 - `nnodes`, `node_rank`, `master_addr`, `master_port`: distributed launch
   settings.
@@ -374,7 +376,8 @@ IDs, KV-cache continuation, visual feature injection, TP shard-local layer
 math, and LoRA target metadata should live on classes such as
 `Qwen3DenseModel`, `Qwen35HybridTextModel`, and their attention/layer modules.
 
-`QwenNativeTPAdapter` is responsible for processor/tokenizer calls, batching,
+`TransformerAdapter` and its model-family subclasses (e.g. `Qwen3Adapter`,
+`Qwen35Adapter`) are responsible for processor/tokenizer calls, batching,
 rollout splitting, sampling, pipeline send/recv orchestration, checkpoint
 delegation, and logging. Runtime and placement modules own backend lifecycle,
 config validation, and TP/PP layout only; they should not implement
@@ -469,8 +472,10 @@ uv run --extra dev python -m graspo --help
   avoids materializing the full `[B, S, vocab_size]` logits tensor during rollout
   prefill, saving ~32 GB on the last PP stage.
 - **Manual `layer_ranges`**: users can specify per-stage layer distribution via
-  `backend_config.native_tp.layer_ranges` to fine-tune memory balance across PP
+  `backend_config.graspoflow.layer_ranges` to fine-tune memory balance across PP
   stages. A validation check prevents misconfigurations (missing/gapped layers).
+- **Removed legacy `native-tp` backend**: GraspoFlow is the only training backend.
+  All `native_tp` / `native-tp` configuration keys and code have been removed.
 - **1F1B batch scaling**: `forward_batch_size=64`, `pp_micro_batch_size=2`, and
   `optimize_prompt_batch_size=8` produce 32-microbatch 1F1B schedules with low
   pipeline bubble.
@@ -480,7 +485,7 @@ uv run --extra dev python -m graspo --help
 - Initial GraspoFlow architecture: three-layer Flink-style pipeline (Operator,
   Scheduler, Graph) with compute-communication separation.
 - 1F1B pipeline schedule with memory-aware `pp_max_inflight_microbatches`.
-- Backend selection: `graspoflow` (recommended) vs legacy `native-tp`.
+- Backend selection: `graspoflow` is the only backend.
 - Epoch-level checkpoints with `save_epoch_checkpoint: true`.
 
 ## License

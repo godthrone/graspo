@@ -8,7 +8,7 @@ import torch.distributed as dist
 
 
 @dataclass(slots=True)
-class NativeTPState:
+class GraspoFlowState:
     rank: int
     local_rank: int
     world_size: int
@@ -23,7 +23,7 @@ class NativeTPState:
     device: torch.device
 
     @classmethod
-    def initialize(cls, tp_size: int, pp_size: int = 1) -> "NativeTPState":
+    def initialize(cls, tp_size: int, pp_size: int = 1) -> GraspoFlowState:
         rank = int(os.environ.get("RANK", "0"))
         local_rank = int(os.environ.get("LOCAL_RANK", "0"))
         world_size = int(os.environ.get("WORLD_SIZE", "1"))
@@ -75,7 +75,7 @@ class NativeTPState:
         )
 
 
-def destroy_native_tp() -> None:
+def destroy_parallel_state() -> None:
     if dist.is_available() and dist.is_initialized():
         try:
             dist.barrier()

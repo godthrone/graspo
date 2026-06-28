@@ -31,6 +31,7 @@ def sequences_log_probs(
         position_ids=position_ids,
         use_cache=False,
     )
+    # HF 模型输出兼容：部分模型返回对象，部分返回字典
     logits = output.logits if hasattr(output, "logits") else output["logits"]
     return sequence_log_probs_from_logits(
         logits=logits[:, :-1].float(),

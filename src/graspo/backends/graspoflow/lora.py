@@ -9,8 +9,8 @@ import torch.distributed as dist
 from torch import nn
 from torch.nn import functional as F
 
-from graspo.backends.native_tp.models.qwen.config import NativeQwenConfig
-from graspo.backends.native_tp.tensor_utils import _shard_bounds, _shard_tensor
+from graspo.backends.graspoflow.models.qwen3.config import NativeQwenConfig
+from graspo.backends.graspoflow.tensor_utils import _shard_bounds, _shard_tensor
 
 
 def native_qwen_lora_available_targets(hf_config: NativeQwenConfig) -> tuple[str, ...]:
@@ -201,7 +201,7 @@ class LoRALinear(nn.Module):
         hf_module_path: str | None = None,
         base_weight_name: str | None = None,
         peft_exportable: bool = True,
-    ) -> "LoRALinear":
+    ) -> LoRALinear:
         dim = 0 if shard == "out" else 1
         row_start = row_stop = col_start = col_stop = None
         if shard == "out":

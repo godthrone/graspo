@@ -14,7 +14,6 @@ from torch.nn.utils.rnn import pad_sequence
 
 from graspo.core.buffer import Experience
 
-
 _TENSOR_PARALLEL_GROUP: dist.ProcessGroup | None = None
 _TENSOR_PARALLEL_SIZE: int = 1
 
@@ -320,10 +319,12 @@ def _cuda_memory_snapshot(device: torch.device) -> dict[str, float | int]:
 
 
 def _jsonable(value: Any) -> Any:
+    """递归转换为 JSON 可序列化类型，使用鸭子类型检测 tensor 能力。"""
     if isinstance(value, dict):
         return {str(key): _jsonable(child) for key, child in value.items()}
     if isinstance(value, (list, tuple)):
         return [_jsonable(child) for child in value]
+    # 鸭子类型检测 tensor 能力，非接口契约探测
     if hasattr(value, "detach") and hasattr(value, "cpu"):
         value = value.detach().cpu()
         if hasattr(value, "tolist"):

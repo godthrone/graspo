@@ -2,20 +2,23 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass
 from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict
 
 from graspo.core.compare import dict_compare_score
 from graspo.core.completion import ParsedCompletion, raw_parsed_completion
-
 
 ContentField = Literal["answer"]
 FieldItem = tuple[Literal["field"], ContentField]
 CheckItem = str | FieldItem | None
 
 
-@dataclass(slots=True)
-class RewardConfig:
+class RewardConfig(BaseModel):
+    """奖励评分配置，所有字段在加载时校验，拒绝未知字段。"""
+
+    model_config = ConfigDict(extra="forbid")
+
     check_think: bool = False
     check_json_markdown: bool = True
     check_tool_call: bool = False
@@ -26,8 +29,11 @@ class RewardConfig:
     anti_useless_str_half_reward_len: int = 100
 
 
-@dataclass(slots=True)
-class RewardResult:
+class RewardResult(BaseModel):
+    """单条 completion 的奖励评分结果。"""
+
+    model_config = ConfigDict(extra="forbid")
+
     reward: float
     content_score: float
     base_content_score: float

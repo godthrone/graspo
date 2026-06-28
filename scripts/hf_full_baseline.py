@@ -81,7 +81,7 @@ def main():
     print(f"Processing samples {args.start}-{end_idx-1} ({len(samples)} total)", flush=True)
 
     # Lazy import after torch is loaded (graspo imports torch)
-    from graspo.backends.native_tp.tool_parser import parse_qwen_tool_completion
+    from graspo.backends.graspoflow.tool_parser import parse_qwen_tool_completion
 
     results = []
     total_parse_err = 0
