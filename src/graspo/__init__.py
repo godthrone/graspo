@@ -10,5 +10,3 @@ __all__ = [
     "RewardResult",
     "Sample",
 ]
-
-__version__ = "0.9.1"
