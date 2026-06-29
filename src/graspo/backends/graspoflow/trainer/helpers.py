@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections import deque
 from datetime import datetime
 from typing import Any
@@ -162,11 +163,8 @@ def generated_token_counts(generation: Any) -> list[int]:
     try:
         return [int(value) for value in generation.action_mask.detach().sum(dim=1).cpu().tolist()]
     except (AttributeError, TypeError, RuntimeError):
-        import warnings
-
-        warnings.warn(
-            "generated_token_counts: action_mask unavailable, token counts will be empty",
-            stacklevel=2,
+        logging.getLogger("graspo.trainer").warning(
+            "generated_token_counts: action_mask unavailable, token counts will be empty"
         )
         return []
 

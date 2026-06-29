@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any
 
@@ -476,4 +477,8 @@ class RolloutMixin:
                 "group_stats": readable.get("group_stats"),
                 "invalid_reason": readable.get("invalid_reason"),
             }
+        )
+        logging.getLogger("graspo.trainer").error(
+            "Invalid group: sample_index=%s step=%s reason=%s",
+            self.sample_index, self.global_step, reason,
         )
