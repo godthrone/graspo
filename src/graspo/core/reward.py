@@ -36,7 +36,7 @@ class RewardConfig(BaseModel):
 class RewardResult(BaseModel):
     """单条 completion 的奖励评分结果。"""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     reward: float
     content_score: float

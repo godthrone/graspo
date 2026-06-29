@@ -4,7 +4,9 @@
 # that need to point to your local model and data.  Then launch with:
 #   uv run graspo launch --config <your-config>.yaml
 #
-# Requires: PyTorch >= 2.12, CUDA >= 13.2
+# Dependencies: pyproject.toml declares constraints; uv.lock records the
+# fully resolved graph (generated via `uv lock`).  Run `uv sync` to
+# install the exact versions.  No other dependency sources exist.
 
 # ── Backend selection ─────────────────────────────────────────────────────
 # Currently only "graspoflow" (unified TP+PP backend).  Single-GPU runs set
