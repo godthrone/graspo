@@ -11,10 +11,12 @@ from graspo.backends.graspoflow.trainer.helpers import (
     experience_metadata_for_row,
     generated_token_counts,
     group_stats,
-    monitor_group,
     public_generation_metadata,
     reward_detail,
     safe_sample_metadata,
+)
+from graspo.backends.graspoflow.trainer.summary import (
+    monitor_group,
     scalar_generation_timing,
 )
 from graspo.backends.graspoflow.trainer.stats import _AttemptRecord, _QueuedSample
