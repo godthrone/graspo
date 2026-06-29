@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from graspo.backends.graspoflow.trainer.helpers import (
+from graspo.backends.graspoflow.trainer.summary import (
     compact_batch_summary,
     compact_optimize_metrics,
     compact_timing_summary,
@@ -144,7 +144,7 @@ class OptimizeMixin:
 
     def _run_summary(self) -> dict[str, Any]:
         """生成全局运行摘要。"""
-        from graspo.backends.graspoflow.trainer.helpers import compact_decisions
+        from graspo.backends.graspoflow.trainer.summary import compact_decisions
 
         return {
             "attempt_groups": self.stats.total_groups,
@@ -162,7 +162,7 @@ class OptimizeMixin:
 
     def _epoch_summary(self) -> dict[str, Any]:
         """生成当前 epoch 摘要。"""
-        from graspo.backends.graspoflow.trainer.helpers import compact_decisions
+        from graspo.backends.graspoflow.trainer.summary import compact_decisions
 
         stats = self.current_epoch_stats
         attempt_groups = max(stats.attempt_groups, 1)

@@ -1,6 +1,6 @@
-"""Qwen3 模型层实现（已提取到公共模块，此文件保留为向后兼容的 re-export）。"""
+"""Qwen3 模型层实现（按模型族拆分，宪法 §8.4）。"""
 
-from graspo.backends.graspoflow.models.common.layers import *  # noqa: F403
-from graspo.backends.graspoflow.models.common.layers import (  # noqa: F401
+from graspo.backends.graspoflow.models.common.layers_qwen3 import *  # noqa: F403
+from graspo.backends.graspoflow.models.common.layers_qwen3 import (  # noqa: F401
     _checkpoint_decoder_layer_forward,
 )

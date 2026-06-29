@@ -203,9 +203,9 @@ class GraspoConfig(BaseModel):
 
 
 class Sample(BaseModel):
-    """单条训练样本，包含 messages、targets 和可选的 tools。"""
+    """单条训练样本，包含 messages、targets 和可选的 tools（不可变）。"""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     messages: list[dict[str, Any]]
     targets: list[dict[str, Any]]

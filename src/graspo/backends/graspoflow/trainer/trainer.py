@@ -23,7 +23,7 @@ from graspo.backends.graspoflow.runtime import (
     validate_graspoflow_runtime_config,
 )
 from graspo.backends.graspoflow.trainer.checkpoint import CheckpointMixin
-from graspo.backends.graspoflow.trainer.helpers import round_timing_details
+from graspo.backends.graspoflow.trainer.summary import round_timing_details
 from graspo.backends.graspoflow.trainer.optimize import OptimizeMixin
 from graspo.backends.graspoflow.trainer.rollout import RolloutMixin
 from graspo.backends.graspoflow.trainer.stats import (
