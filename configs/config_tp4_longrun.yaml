@@ -1,9 +1,9 @@
-# GRASPO 0.8.0 — Qwen3.5-9B TP=4 长训配置 (100 epochs)
+# GraspoFlow — Qwen3.5-9B TP=4 长训配置 (100 epochs)
 # 228 服务器，GPU 4-7
 backend: graspoflow
 
 model:
-  model_path: /workspace/models/Qwen3.5-9B
+  model_path: models/Qwen3.5-9B
   trust_remote_code: true
   torch_dtype: bfloat16
   gradient_checkpointing: true
@@ -11,7 +11,7 @@ model:
     enable_thinking: false
 
 data:
-  train_path: /workspace/data/data/elam_graspo_train.jsonl
+  train_path: data/elam_graspo_train.jsonl
   max_prompt_length: 2048
 
 lora:
@@ -28,7 +28,7 @@ reward:
   anti_useless_str_reward_weight: 1
 
 training:
-  output_dir: /workspace/data/outputs/tp4_v0.7.0_longrun
+  output_dir: outputs/tp4_longrun
   seed: 42
   training_epoch_count: 100
   max_steps: -1
@@ -49,15 +49,14 @@ training:
   skip_format_broken_groups: true
   dataloader_num_workers: 0
 
-backend_config:
-  graspoflow:
-    tp_size: 4
-    pp_size: 1
-    placement_strategy: qwen3_tp
-    forward_batch_size: 32
-    use_kv_cache_for_rollout: true
-    empty_cache_after_rollout_split: false
-    raw_log_enabled: true
+graspoflow:
+  tp_size: 4
+  pp_size: 1
+  placement_strategy: qwen3_tp
+  forward_batch_size: 32
+  use_kv_cache_for_rollout: true
+  empty_cache_after_rollout_split: false
+  raw_log_enabled: true
 
 launch:
   gpus: [0, 1, 2, 3]

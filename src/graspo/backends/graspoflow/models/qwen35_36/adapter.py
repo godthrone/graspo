@@ -761,28 +761,13 @@ class Qwen35Adapter(TransformerAdapter):
     def _pipeline_generate_groups(
         self, **kwargs
     ) -> list[NativeGeneration]:
-        """PP generation delegates to the same `_pipeline_generate_sequences_with_cache`
-        path used by the old adapter.  During Step 4 this will be refactored to
-        use the GraspoFlow RolloutPipeline, but for now the tested path is
-        preserved."""
-        return self._legacy_pipeline_generate_groups(**kwargs)
-
-    def _pipeline_generate_multimodal_groups(
-        self, **kwargs
-    ) -> list[NativeGeneration]:
-        return self._legacy_pipeline_generate_multimodal_groups(**kwargs)
-
-    # ── Legacy PP methods (preserved from old adapter, to be refactored in Step 4) ──
-
-    def _legacy_pipeline_generate_groups(self, **kwargs) -> list[NativeGeneration]:
-        # Delegate to the old adapter's PP methods for now.
-        # This is a transitional bridge — Step 4 replaces this with
-        # RolloutPipeline-based implementation.
         raise NotImplementedError(
             "PP generation will be refactored in Step 4 using RolloutPipeline"
         )
 
-    def _legacy_pipeline_generate_multimodal_groups(self, **kwargs) -> list[NativeGeneration]:
+    def _pipeline_generate_multimodal_groups(
+        self, **kwargs
+    ) -> list[NativeGeneration]:
         raise NotImplementedError(
             "PP multimodal generation will be refactored in Step 4"
         )
