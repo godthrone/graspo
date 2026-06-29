@@ -13,30 +13,7 @@ def test_cli_main_commands_parse():
 
     commands = [
         ["launch", "--config", "config_example.yaml"],
-        [
-            "export",
-            "--config",
-            "config_example.yaml",
-            "--checkpoint",
-            "outputs/run/final",
-            "--format",
-            "peft-adapter",
-            "--output",
-            "adapter",
-        ],
-        [
-            "export",
-            "--config",
-            "config_example.yaml",
-            "--checkpoint",
-            "outputs/run/final",
-            "--format",
-            "merged-hf",
-            "--output",
-            "merged",
-            "--base-model",
-            "model",
-        ],
+        ["export", "--config", "config_example.yaml"],
     ]
     for command in commands:
         args = parser.parse_args(command)
@@ -162,7 +139,72 @@ def test_only_readmes_are_tracked_markdown_docs():
         line.strip().replace("\\", "/") for line in result.stdout.splitlines() if line.strip()
     }
 
-    assert tracked_markdown == {"LONG_RUN.md", "README.md", "README.zh-CN.md"}
+    assert tracked_markdown == {
+        "LONG_RUN.md",
+        "MIGRATION_PLAN.md",
+        "README.md",
+        "README.zh-CN.md",
+        "docs/architecture.md",
+        "docs/BADGE-constitution.zh-CN.md",
+    }
+
+
+def test_export_config_fields_default_and_validate(tmp_path):
+    """ExportConfig drives export from YAML, no CLI overrides."""
+    from graspo.core.schema import ExportConfig
+
+    cfg = ExportConfig()
+    assert cfg.checkpoint_path == ""
+    assert cfg.export_format == "peft-adapter"
+    assert cfg.export_output == ""
+    assert cfg.final_formats == []
+
+    # Validate choices via a full config load
+    config_path = _write_export_config(tmp_path, export_format="merged-hf")
+    config = GraspoConfig.from_yaml(config_path)
+    assert config.export.checkpoint_path == "outputs/test/final"
+    assert config.export.export_format == "merged-hf"
+    assert config.export.export_output == "outputs/test/merged"
+
+
+def test_export_cli_only_accepts_config():
+    """graspo export only accepts --config (Constitution 10.1)."""
+    parser = build_parser()
+    args = parser.parse_args(["export", "--config", "config_example.yaml"])
+    assert callable(args.func)
+
+
+def test_e2e_config_roundtrip(tmp_path):
+    """Minimal e2e: write a complete config, load it, verify all sections."""
+    config_path = _write_launch_config(
+        tmp_path,
+        backend="graspoflow",
+        gpus="[0, 1]",
+        tensor_parallel=2,
+        pipeline_parallel=1,
+    )
+    config = GraspoConfig.from_yaml(config_path)
+    assert config.backend == "graspoflow"
+    assert config.training.seed == 42
+    assert config.training.reject_unparseable_groups is True
+    assert config.graspoflow.tp_size == 2
+    assert config.launch.nnodes == 1
+
+
+def _write_export_config(tmp_path: Path, *, export_format: str) -> Path:
+    config_path = tmp_path / "export_config.yaml"
+    config_path.write_text(
+        f"""backend: graspoflow
+model:
+  model_path: models/test
+export:
+  checkpoint_path: outputs/test/final
+  export_format: {export_format}
+  export_output: outputs/test/merged
+""",
+        encoding="utf-8",
+    )
+    return config_path
 
 
 def _write_launch_config(

@@ -557,7 +557,7 @@ def _require_replicated(
         ):
             raise ValueError(
                 f"Native TP shards for {hf_module} have non-identical replicated {label}; "
-                "strict PEFT adapter export is not representable. Use --format merged-hf instead."
+                "strict PEFT adapter export is not representable. Set export.export_format: merged-hf in your config instead."
             )
     return first
 

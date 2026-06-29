@@ -90,7 +90,7 @@ training:
   save_epoch_checkpoint: true
   logging_steps: 1
   perfect_skip_reward_threshold: 1.0
-  skip_format_broken_groups: true
+  reject_unparseable_groups: true
   dataloader_num_workers: 0
 
 graspoflow:

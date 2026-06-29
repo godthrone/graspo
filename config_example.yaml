@@ -1,94 +1,112 @@
 # GRASPO — Example Configuration
+#
+# Copy this file and edit the values marked with angle brackets or paths
+# that need to point to your local model and data.  Then launch with:
+#   uv run graspo launch --config <your-config>.yaml
+#
 # Requires: PyTorch >= 2.12, CUDA >= 13.2
-# For multimodal (vision-language) training, set reward.check_tool_call: true
-# and use a multimodal model (Qwen3.5-9B, etc.).
+
+# ── Backend selection ─────────────────────────────────────────────────────
+# Currently only "graspoflow" (unified TP+PP backend).  Single-GPU runs set
+# tp_size=1 and pp_size=1 below.
 backend: graspoflow
 
+# ── Base model ────────────────────────────────────────────────────────────
 model:
-  model_path: models/Qwen3-8B
-  trust_remote_code: true
-  torch_dtype: bfloat16
-  attn_implementation: null
-  gradient_checkpointing: true
+  model_path: models/Qwen3-8B        # Path to HuggingFace model directory
+  trust_remote_code: true            # Required for Qwen-family models
+  torch_dtype: bfloat16              # "bfloat16", "float16", or "float32"
+  attn_implementation: null          # null=auto, "flash_attention_2", "sdpa", "eager"
+  gradient_checkpointing: true       # Trade compute for memory
   chat_template_kwargs:
-    enable_thinking: false
+    enable_thinking: false           # Qwen3 series thinking mode (off for structured-output RL)
 
+# ── Training data ─────────────────────────────────────────────────────────
 data:
-  train_path: data/sample.jsonl
-  max_prompt_length: 2048
+  train_path: data/sample.jsonl      # Path to JSONL training file
+  max_prompt_length: 2048            # Truncate prompts longer than this (tokens)
 
+# ── LoRA configuration ────────────────────────────────────────────────────
 lora:
-  r: 16
-  alpha: 32
-  dropout: 0.1
-  adapter_path: null
-  target_preset: language_safe
-  target_modules: null
-  auto_target_modules: true
-  bias: none
-  task_type: CAUSAL_LM
+  r: 16                              # LoRA rank
+  alpha: 32                          # LoRA scaling factor
+  dropout: 0.1                       # LoRA dropout
+  adapter_path: null                 # Path to existing PEFT adapter for warm-start (null=none)
+  target_preset: language_safe       # Built-in module selection preset
+  target_modules: null               # Explicit module list (null=use target_preset)
+  auto_target_modules: true          # Auto-detect LoRA-compatible linear layers
+  bias: none                         # "none", "all", or "lora_only"
+  task_type: CAUSAL_LM               # LoRA task type
 
+# ── Reward function ───────────────────────────────────────────────────────
 reward:
-  check_think: false
-  check_json_markdown: true
-  check_tool_call: false
-  check_list_order: false
-  marker_reward_weight: 10
-  content_reward_weight: 100
-  anti_useless_str_reward_weight: 1
-  anti_useless_str_half_reward_len: 100
+  check_think: false                 # Score adherence to Qwen think/answer structure
+  check_json_markdown: true          # Score JSON-in-fence extraction (+1 all-right bonus)
+  check_tool_call: false             # Score tool-call structure (enable for tool-call data)
+  check_list_order: false            # Score list element ordering
+  marker_reward_weight: 10           # Weight for structural markers in reward
+  content_reward_weight: 100         # Weight for content correctness (numeric field match)
+  anti_useless_str_reward_weight: 1  # Penalty weight for useless filler text
+  anti_useless_str_half_reward_len: 100  # Half-penalty text length for anti-useless reward
 
+# ── Training hyperparameters ──────────────────────────────────────────────
 training:
-  output_dir: outputs/example-run
-  seed: 42
-  training_epoch_count: 100
-  max_steps: -1
-  rollout_group_size: 8
-  optimize_prompt_batch_size: 4
-  optimize_times_per_step: 3
-  rollout_max_retry_times: 5
-  learning_rate: 5.0e-6
-  weight_decay: 0.01
-  max_grad_norm: 1.0
-  policy_ratio_clip_eps: 0.2
-  max_new_tokens: 2048
-  temperature: 1.0
-  top_p: 1.0
-  save_steps: -1
-  save_epoch_checkpoint: true
-  logging_steps: 1
-  perfect_skip_reward_threshold: 1.0
-  skip_format_broken_groups: true
-  dataloader_num_workers: 0
-  resume_from_checkpoint: null
+  output_dir: outputs/example-run    # Output directory (auto-created, config backed up here)
+  seed: 42                           # Random seed for reproducibility
+  training_epoch_count: 100          # Max epochs (-1 for unlimited)
+  max_steps: -1                      # Max optimize steps (-1 for unlimited)
+  rollout_group_size: 8              # Completions per prompt (core algorithm param)
+  optimize_prompt_batch_size: 4      # Prompts per optimize step; replay threshold = G × B
+  optimize_times_per_step: 3         # Optimize iterations per step
+  rollout_max_retry_times: 5         # Max retries for failed rollouts (same-result fallback)
+  learning_rate: 5.0e-6              # Optimizer learning rate
+  weight_decay: 0.01                 # AdamW weight decay
+  max_grad_norm: 1.0                 # Gradient clipping threshold
+  policy_ratio_clip_eps: 0.2         # PPO-style policy ratio clipping epsilon
+  max_new_tokens: 2048               # Max tokens generated per completion
+  temperature: 1.0                   # Sampling temperature
+  top_p: 1.0                         # Nucleus sampling threshold
+  save_steps: -1                     # Save checkpoint every N steps (-1=disabled)
+  save_epoch_checkpoint: true        # Save checkpoint at end of each epoch
+  logging_steps: 1                   # Log metrics every N steps
+  perfect_skip_reward_threshold: 1.0 # Skip group when median reward >= this value
+  reject_unparseable_groups: true    # Defense line: reject groups with unparseable completions
+  dataloader_num_workers: 0          # DataLoader worker processes (0=main process)
+  resume_from_checkpoint: null       # Path to checkpoint for resuming (null=fresh start)
 
+# ── GraspoFlow distributed backend ────────────────────────────────────────
 graspoflow:
-  tp_size: 2
-  pp_size: 1
-  placement_strategy: qwen3_tp
-  sequence_parallel: false
-  pp_micro_batch_size: 1
-  forward_batch_size: 32
-  use_kv_cache_for_rollout: true
-  empty_cache_after_rollout_split: false
-  empty_cache_before_train: false
-  checkpoint_format: recoverable_lora_tp
-  raw_log_enabled: true
-  readable_log_enabled: true
-  synchronize_cuda_timing: false
-  pp_schedule: simple
-  pp_max_inflight_microbatches: 0
+  tp_size: 2                         # Tensor-parallel size (1=single GPU)
+  pp_size: 1                         # Pipeline-parallel size (1=no pipeline)
+  placement_strategy: qwen3_tp       # Layer placement strategy ("auto", "qwen3_tp", custom name)
+  sequence_parallel: false           # Enable sequence parallelism
+  pp_micro_batch_size: 1             # Micro-batch size per pipeline stage
+  forward_batch_size: 32             # Rollout micro-batch size (GPU memory trade-off)
+  use_kv_cache_for_rollout: true     # Use KV cache during rollout generation
+  empty_cache_after_rollout_split: false  # Free CUDA cache between rollout chunks
+  empty_cache_before_train: false    # Free CUDA cache before optimize step
+  checkpoint_format: recoverable_lora_tp  # Checkpoint format
+  raw_log_enabled: true              # Write raw (full-detail) JSONL rollout logs
+  readable_log_enabled: true         # Write readable (summary) JSONL rollout logs
+  synchronize_cuda_timing: false     # Sync CUDA for precise timing (adds overhead)
+  pp_schedule: simple                # Pipeline schedule: "simple" or "1f1b"
+  pp_max_inflight_microbatches: 0    # Max inflight microbatches (0=auto)
 
+# ── Model export ──────────────────────────────────────────────────────────
 export:
-  final_formats: []
+  checkpoint_path: ""                # Path to checkpoint dir for `graspo export --config`
+  export_format: peft-adapter        # "peft-adapter" or "merged-hf"
+  export_output: ""                  # Output path for exported artifact
+  final_formats: []                  # Auto-export at end of training, e.g. ["peft-adapter"]
 
+# ── Distributed launch ────────────────────────────────────────────────────
 launch:
-  gpus: [0, 1]
-  nproc_per_node: null
-  nnodes: 1
-  node_rank: 0
-  master_addr: 127.0.0.1
-  master_port: 29500
-  python: null
-  torchrun: null
-  env: {}
+  gpus: [0, 1]                       # GPU indices for this node ([] or null=auto)
+  nproc_per_node: null               # Processes per node (null=derive from tp_size × pp_size)
+  nnodes: 1                          # Number of nodes
+  node_rank: 0                       # Rank of this node (0-indexed)
+  master_addr: 127.0.0.1             # Master node IP
+  master_port: 29500                 # Master node port
+  python: null                       # Python executable (null=current interpreter)
+  torchrun: null                     # torchrun executable (null=auto-detect)
+  env: {}                            # Extra environment variables for the training process

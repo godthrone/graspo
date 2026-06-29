@@ -112,7 +112,7 @@ wheels = [
 
 [[package]]
 name = "graspo"
-version = "0.8.0"
+version = "0.9.1"
 source = { editable = "." }
 dependencies = [
     { name = "pillow" },

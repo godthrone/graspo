@@ -18,10 +18,11 @@ RUN python -m pip install --break-system-packages --upgrade pip setuptools wheel
 
 WORKDIR /workspace/graspo
 
-# Layer 1: dependencies (cached when pyproject.toml unchanged)
-COPY pyproject.toml README.md LICENSE ./
-RUN uv pip install --system --break-system-packages \
-    $(python -c "import tomllib; print(' '.join(tomllib.load(open('pyproject.toml','rb'))['project']['dependencies']))")
+# Layer 1: dependencies (cached when pyproject.toml and uv.lock unchanged)
+# --no-install-project resolves only the locked dependencies, leaving the
+# project itself for Layer 2 (so the source COPY doesn't break the cache).
+COPY pyproject.toml uv.lock .python-version README.md LICENSE ./
+RUN uv sync --no-install-project --frozen --system
 
 # Layer 2: source code
 COPY src ./src

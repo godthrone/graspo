@@ -173,7 +173,7 @@ class RolloutMixin:
                 rollout_max_retry_times=self.config.training.rollout_max_retry_times,
                 perfect_skip_reward_threshold=self.config.training.perfect_skip_reward_threshold,
                 best_completion_has_parse_error=best_has_parse_error,
-                skip_format_broken_groups=self.config.training.skip_format_broken_groups,
+                reject_unparseable_groups=self.config.training.reject_unparseable_groups,
             )
             decision_sec = time.monotonic() - decision_started_at
             self.stats.total_groups += 1
