@@ -51,7 +51,8 @@ reward:
 
 # ── Training hyperparameters ──────────────────────────────────────────────
 training:
-  output_dir: outputs/example-run    # Output directory (auto-created, config backed up here)
+  output_dir: ""                     # Output directory (default: auto-generated as outputs/<run_name>)
+  run_name: ""                       # Run identifier (default: auto-generated as graspo_YYYYMMDD_HHMMSS)
   seed: 42                           # Random seed for reproducibility
   training_epoch_count: 100          # Max epochs (-1 for unlimited)
   max_steps: -1                      # Max optimize steps (-1 for unlimited)

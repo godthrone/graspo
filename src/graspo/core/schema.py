@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import datetime
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +46,7 @@ class TrainingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     output_dir: str = ""
+    run_name: str = ""
     seed: int = 42
     training_epoch_count: int = 100
     max_steps: int = -1
@@ -173,6 +176,19 @@ class GraspoConfig(BaseModel):
                 "（optimize_prompt_batch_size × rollout_group_size），不可手动配置"
             )
 
+        # 解析 output_dir 和 run_name（宪法 §8.5：默认 Outputs + 自动 run_name）
+        training_raw = dict(data.get("training", {}) or {})
+        output_dir = str(training_raw.get("output_dir", "") or "").strip()
+        run_name = str(training_raw.get("run_name", "") or "").strip()
+        if not output_dir:
+            if not run_name:
+                run_name = _generate_run_name()
+            output_dir = str(Path("outputs") / run_name)
+            training_raw["output_dir"] = output_dir
+            training_raw["run_name"] = run_name
+        elif not run_name:
+            training_raw["run_name"] = str(Path(output_dir).name)
+
         return cls(
             backend=data.get("backend", "graspoflow"),
             graspoflow=GraspoFlowConfig(**flow_cfg),
@@ -182,7 +198,7 @@ class GraspoConfig(BaseModel):
             export=ExportConfig(**data.get("export", {})),
             launch=LaunchConfig(**data.get("launch", {})),
             reward=RewardConfig(**data.get("reward", {})),
-            training=TrainingConfig(**data.get("training", {})),
+            training=TrainingConfig(**training_raw),
         )
 
 
@@ -238,6 +254,18 @@ _REMOVED_DATA_FIELDS = {"prompt_field", "messages_field", "ground_truth_field"}
 
 # ── 辅助函数 ────────────────────────────────────────────────────────────────
 
+_RUN_NAME_CACHE: dict[str, str] = {}
+"""模块级缓存，确保同一秒内多次调用（如 torchrun 多 worker）得到相同的 run_name。"""
+
+
+def _generate_run_name() -> str:
+    """生成基于时间戳的唯一运行标识（宪法 §8.5）。"""
+    if "current" not in _RUN_NAME_CACHE:
+        _RUN_NAME_CACHE["current"] = (
+            f"graspo_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        )
+    return _RUN_NAME_CACHE["current"]
+
 
 def _resolve_graspoflow_config(data: dict[str, Any]) -> dict[str, Any]:
     """解析 graspoflow 配置，支持两种格式并给出迁移提示。
@@ -252,12 +280,12 @@ def _resolve_graspoflow_config(data: dict[str, Any]) -> dict[str, Any]:
         if "graspoflow" in bc and bc["graspoflow"]:
             import warnings
 
-            warnings.warn(
+            msg = (
                 "backend_config.graspoflow 已废弃，请将 graspoflow 配置提升到 YAML 顶层。"
-                " 参考 config_example.yaml 的最新格式。",
-                FutureWarning,
-                stacklevel=3,
+                " 参考 config_example.yaml 的最新格式。"
             )
+            warnings.warn(msg, FutureWarning, stacklevel=3)
+            logging.getLogger("graspo.config").warning(msg)
             return dict(bc["graspoflow"])
     return {}
 
