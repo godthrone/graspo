@@ -1,6 +1,8 @@
-# 生产构建时请锁定 SHA256 digest 替代 tag：
+# 生产构建请锁定 SHA256 digest 替代 tag：
 #   docker pull pytorch/pytorch:2.12.1-cuda13.2-cudnn9-devel
-# 获取 digest 后替换为 FROM pytorch/pytorch@sha256:...
+#   docker inspect pytorch/pytorch:2.12.1-cuda13.2-cudnn9-devel --format='{{index .RepoDigests 0}}'
+# 将输出结果替换下方 FROM 行，例如：
+#   FROM pytorch/pytorch@sha256:abc123...
 FROM pytorch/pytorch:2.12.1-cuda13.2-cudnn9-devel
 
 ENV DEBIAN_FRONTEND=noninteractive

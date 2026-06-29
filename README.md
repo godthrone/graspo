@@ -424,17 +424,23 @@ and cannot replace `step_*` or `final` for full training resume.
 
 Each run writes to `training.output_dir`:
 
-- `train.log`: compact rank-0 training events;
-- `rollouts.readable.jsonl`: human-readable messages, completion, reward, and
+- `logs/train.log`: compact rank-0 training events;
+- `logs/rollouts.readable.jsonl`: human-readable messages, completion, reward, and
   debug details;
-- `rollouts.raw.jsonl`: replay tensors, masks, old logprobs, advantages, and
+- `logs/rollouts.raw.jsonl`: replay tensors, masks, old logprobs, advantages, and
   reward metadata;
-- `train_batches.readable.jsonl`: one row per optimize-trigger batch;
-- `rank_metrics.rank_*.jsonl`: per-rank memory, timing, LoRA, and optimizer
+- `logs/train_batches.readable.jsonl`: one row per optimize-trigger batch;
+- `logs/rank_metrics.rank_*.jsonl`: per-rank memory, timing, LoRA, and optimizer
   diagnostics;
+- `logs/error.log`: aggregated ERROR-level events (invalid groups, reward variance
+  failures, format-broken groups);
+- `logs/timing_events.jsonl`: timing diagnostics for each phase;
 - `epoch_*`: epoch-end recoverable checkpoints (when `save_epoch_checkpoint` is true);
 - `step_*`: periodic recoverable checkpoints (when `save_steps > 0`);
-- `final`: final recoverable checkpoint after a clean exit.
+- `final`: final recoverable checkpoint after a clean exit;
+- `config.yaml`: configuration backup for full reproducibility.
+
+All log files live under the `logs/` subdirectory.
 
 A healthy GRASPO run is not just a process that stays alive. Watch reward trend,
 reward range inside each group, content-score validity, decision distribution,

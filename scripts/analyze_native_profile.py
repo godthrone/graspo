@@ -106,7 +106,7 @@ def summarize_run(run_dir: Path, *, skip_warmup_steps: int = 1) -> dict[str, Any
 
 def _read_train_steps(run_dir: Path) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
-    for path in (run_dir / "nohup.out", run_dir / "train.log"):
+    for path in (run_dir / "nohup.out", run_dir / "logs" / "train.log", run_dir / "train.log"):
         if not path.exists():
             continue
         for payload in _iter_json_lines(path):

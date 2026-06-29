@@ -606,7 +606,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
         }
         if extra:
             payload.update(extra)
-        path = output_dir / f"rank_metrics.rank_{self.rank:05d}.jsonl"
+        path = output_dir / "logs" / f"rank_metrics.rank_{self.rank:05d}.jsonl"
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(_jsonable(payload), ensure_ascii=False) + "\n")
 

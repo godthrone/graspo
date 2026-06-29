@@ -303,14 +303,19 @@ uv run graspo export --config config_example.yaml --checkpoint outputs/example-r
 
 每个 run 写入 `training.output_dir`：
 
-- `train.log`：rank-0 紧凑训练事件；
-- `rollouts.readable.jsonl`：人类可读的 messages、completion、reward 和 debug 细节；
-- `rollouts.raw.jsonl`：replay tensors、masks、old logprobs、advantages 和 reward metadata；
-- `train_batches.readable.jsonl`：每个 optimize-trigger batch 一行；
-- `rank_metrics.rank_*.jsonl`：每 rank 显存、耗时、LoRA 和 optimizer 诊断；
+- `logs/train.log`：rank-0 紧凑训练事件；
+- `logs/rollouts.readable.jsonl`：人类可读的 messages、completion、reward 和 debug 细节；
+- `logs/rollouts.raw.jsonl`：replay tensors、masks、old logprobs、advantages 和 reward metadata；
+- `logs/train_batches.readable.jsonl`：每个 optimize-trigger batch 一行；
+- `logs/rank_metrics.rank_*.jsonl`：每 rank 显存、耗时、LoRA 和 optimizer 诊断；
+- `logs/error.log`：ERROR 级别事件汇聚（无效 group、reward 方差失败、格式损坏 group）；
+- `logs/timing_events.jsonl`：各阶段 timing 诊断；
 - `epoch_*`：每个 epoch 结束时的可恢复 checkpoint（当 `save_epoch_checkpoint` 为 true 时）；
 - `step_*`：周期性可恢复 checkpoint（当 `save_steps > 0` 时）；
-- `final`：干净退出后的最终可恢复 checkpoint。
+- `final`：干净退出后的最终可恢复 checkpoint；
+- `config.yaml`：本次运行的配置备份，确保可完整复现。
+
+所有日志文件位于 `logs/` 子目录下。
 
 健康的 GRASPO 训练不只是“进程没挂”。需要观察 reward trend、组内 reward range、content-score validity、decision distribution、finite loss/grad、非零 LoRA gradients、LoRA tensor changes、replay-buffer progress、checkpoint writes 和 GPU/NCCL health。
 
