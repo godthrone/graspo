@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 from pathlib import Path
 from typing import Any
@@ -60,7 +62,7 @@ class TrainingConfig(BaseModel):
     save_epoch_checkpoint: bool = True
     logging_steps: int = 1
     perfect_skip_reward_threshold: float = 1.0
-    skip_format_broken_groups: bool = True
+    reject_unparseable_groups: bool = True
     dataloader_num_workers: int = 0
     resume_from_checkpoint: str | None = None
 
@@ -105,10 +107,13 @@ class GraspoFlowConfig(BaseModel):
 
 
 class ExportConfig(BaseModel):
-    """模型导出配置。"""
+    """模型导出配置。通过 ``graspo export --config <yaml>`` 驱动。"""
 
     model_config = ConfigDict(extra="forbid")
 
+    checkpoint_path: str = ""
+    export_format: str = "peft-adapter"
+    export_output: str = ""
     final_formats: list[str] = []
 
 

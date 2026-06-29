@@ -301,7 +301,7 @@ training.
   epoch (default `true`). Recommended for production training.
 - `logging_steps`: compact training log interval.
 - `perfect_skip_reward_threshold`: threshold for skipping already-solved groups.
-- `skip_format_broken_groups`: when true (default), groups whose best completion
+- `reject_unparseable_groups`: when true (default), groups whose best completion
   has parse errors or tool-call count mismatch are retried or discarded instead
   of being used for training.
 - `dataloader_num_workers`: data loading worker count.
@@ -391,18 +391,22 @@ native model class instead of introducing adapter-level special cases.
 ## Export
 
 GRASPO native checkpoints are recoverable training checkpoints. Portable model
-artifacts are produced with `graspo export`.
-
-Export a PEFT LoRA adapter:
+artifacts are produced with `graspo export`. Set `export.checkpoint_path`,
+`export.export_format`, and `export.export_output` in your YAML config, then run:
 
 ```bash
-uv run graspo export --config config_example.yaml --checkpoint outputs/example-run/final --format peft-adapter --output outputs/export/adapter
+uv run graspo export --config config_example.yaml
 ```
 
-Export a merged Hugging Face full model:
-
-```bash
-uv run graspo export --config config_example.yaml --checkpoint outputs/example-run/final --format merged-hf --output outputs/export/merged
+Example minimal export config:
+```yaml
+backend: graspoflow
+model:
+  model_path: models/Qwen3-8B
+export:
+  checkpoint_path: outputs/example-run/final
+  export_format: peft-adapter   # or "merged-hf"
+  export_output: outputs/export/adapter
 ```
 
 `peft-adapter` reconstructs PEFT `adapter_config.json` and
@@ -466,7 +470,7 @@ uv run --extra dev python -m graspo --help
 - Rollout OOM: keep `training.max_new_tokens=2048`; reduce rollout concurrency
   or KV cache reservation instead of lowering production generation length.
 - Need PEFT compatibility: load PEFT adapters through `lora.adapter_path`, and
-  export portable artifacts with `graspo export`.
+  export portable artifacts with `graspo export --config <yaml>`.
 
 ## Changelog
 
