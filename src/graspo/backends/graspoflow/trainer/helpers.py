@@ -156,12 +156,18 @@ def reward_detail(result: Any) -> dict[str, Any]:
 def generated_token_counts(generation: Any) -> list[int]:
     """从 generation 中提取每条 completion 的生成 token 数。
 
-    当 action_mask 不可用时返回空列表——这是透明降级，不影响训练，
-    仅影响监控日志中的 token 计数。
+    当 action_mask 不可用时返回空列表——这是透明降级（宪法 3.2），不影响训练，
+    仅影响监控日志中的 token 计数。降级原因通过 warnings 告知用户。
     """
     try:
         return [int(value) for value in generation.action_mask.detach().sum(dim=1).cpu().tolist()]
-    except Exception:
+    except (AttributeError, TypeError, RuntimeError):
+        import warnings
+
+        warnings.warn(
+            "generated_token_counts: action_mask unavailable, token counts will be empty",
+            stacklevel=2,
+        )
         return []
 
 

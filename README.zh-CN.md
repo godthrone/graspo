@@ -44,7 +44,7 @@ cp config_example.yaml my_graspo.yaml
 - `data.train_path`：JSONL 训练数据；
 - `training.output_dir`：run 输出目录；
 - `launch.gpus`：当前节点使用的 GPU id；
-- `backend_config.graspoflow.tp_size` 和 `backend_config.graspoflow.pp_size`：native TP/PP world size。
+- `graspoflow.tp_size` 和 `graspoflow.pp_size`：native TP/PP world size。
 
 训练只需要一个 YAML 参数：
 
@@ -219,7 +219,7 @@ GRASPO 使用同一 rollout group 内的 reward 分布，而不是单条 complet
 
 `training.replay_buffer_optimize_threshold` 由 `optimize_prompt_batch_size * rollout_group_size` 派生，不能手动配置。`training.resume_from_checkpoint` 和 `lora.adapter_path` 互斥：前者恢复 native checkpoint 状态，后者只是 PEFT/GRASPO-PEFT LoRA warm-start。
 
-### `backend_config.graspoflow`
+### `graspoflow`
 
 - `tp_size`：TP size（默认 2）。
 - `pp_size`：PP size（默认 1）。
@@ -345,7 +345,7 @@ uv run --extra dev python -m graspo --help
 - **Prefill 显存优化**：`_pipeline_logits_from_last_hidden` 新增 `last_token_only`
   参数，避免 rollout prefill 时物化完整的 `[B, S, vocab_size]` logits 张量，为
   最后一个 PP stage 节省约 32 GB 显存。
-- **手动 `layer_ranges`**：支持通过 `backend_config.graspoflow.layer_ranges` 指定
+- **手动 `layer_ranges`**：支持通过 `graspoflow.layer_ranges` 指定
   每个 PP stage 的层数分配，并加入校验逻辑防止配置错误（层数不足/遗漏/重叠）。
 - **移除旧版 `native-tp` 后端**：GraspoFlow 是唯一训练后端，所有 `native_tp` / `native-tp`
   配置键和相关代码已删除。

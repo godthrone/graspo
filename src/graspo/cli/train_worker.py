@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import argparse
 
 from graspo.backends import create_trainer, select_backend

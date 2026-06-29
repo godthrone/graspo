@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from collections.abc import Sequence
 
 from graspo.core.graspo_parity import group_advantages as _parity_group_advantages
