@@ -151,6 +151,55 @@ def test_group_advantages_matches_original_sample_std_formula():
     assert round(actual[1], 6) == 0.707107
 
 
+def test_reject_unparseable_groups_retries_before_exhausted():
+    """Defense line: unparseable completions trigger retry, then discard on exhaustion."""
+    retry = classify_group(
+        [0.1, 0.2],
+        [0.1, 0.2],
+        retry_count=0,
+        rollout_max_retry_times=5,
+        best_completion_has_parse_error=True,
+        reject_unparseable_groups=True,
+    )
+    assert retry.decision == GroupDecision.RETRY
+
+    exhausted = classify_group(
+        [0.1, 0.2],
+        [0.1, 0.2],
+        retry_count=5,
+        rollout_max_retry_times=5,
+        best_completion_has_parse_error=True,
+        reject_unparseable_groups=True,
+    )
+    assert exhausted.decision == GroupDecision.INVALID
+
+
+def test_reject_unparseable_groups_when_false_trains_despite_parse_error():
+    """When defense line is off, parse errors don't trigger retry/invalid."""
+    decision = classify_group(
+        [0.1, 0.2],
+        [0.1, 0.2],
+        retry_count=5,
+        rollout_max_retry_times=5,
+        best_completion_has_parse_error=True,
+        reject_unparseable_groups=False,
+    )
+    # Falls through to normal decision logic (not RETRY/INVALID from parse error)
+    assert decision.decision not in (GroupDecision.RETRY, GroupDecision.INVALID)
+
+
+def test_reject_unparseable_groups_defaults_to_true():
+    """Defense line is active by default (reject invalid data at boundary)."""
+    decision = classify_group(
+        [0.1, 0.2],
+        [0.1, 0.2],
+        retry_count=0,
+        rollout_max_retry_times=5,
+        best_completion_has_parse_error=True,
+    )
+    assert decision.decision == GroupDecision.RETRY
+
+
 def test_replay_buffer_optimize_threshold_uses_completion_batch_times_rollout_group():
     assert (
         replay_buffer_optimize_threshold(

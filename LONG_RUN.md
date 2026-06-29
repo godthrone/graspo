@@ -26,7 +26,7 @@
 | max_new_tokens | 512 |
 | empty_cache_after_rollout_split | **false** (v0.7.0 默认) |
 | save_epoch_checkpoint | **true** (v0.7.0 新功能) |
-| skip_format_broken_groups | true |
+| reject_unparseable_groups | true |
 | perfect_skip_reward_threshold | 1.0 |
 
 ## 与上次对比 (v0.6.0-skip-fmt2, Epoch 0-4)
