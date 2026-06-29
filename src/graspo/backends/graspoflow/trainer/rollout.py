@@ -303,12 +303,14 @@ class RolloutMixin:
                 self.stats.invalid_no_preference_gap += 1
             else:
                 self.stats.invalid += 1
+                self._write_error_log(readable, decision.decision.value)
             if self._is_primary():
                 self.logger.write_raw({**readable, "raw": self._raw_generation(generation)})
             self._commit_sample_attempts(state, epoch=epoch)
             return self._finish_sample_and_maybe_optimize(epoch=epoch)
         if not has_reward_variance(rewards):
             self.stats.invalid += 1
+            self._write_error_log(readable, "no_reward_variance")
             if self._is_primary():
                 self.logger.write_raw({**readable, "raw": self._raw_generation(generation)})
             timing["decision"] = "invalid"
@@ -453,3 +455,25 @@ class RolloutMixin:
                     details=timing,
                 )
             )
+
+    # ── 错误日志汇聚 ────────────────────────────────────────────────────────────
+
+    def _write_error_log(self, readable: dict[str, Any], reason: str) -> None:
+        """Write an ERROR-level event to the common error log.
+
+        Called when a group is classified as invalid or has no reward variance,
+        so errors are aggregated in ``logs/error.log`` for post-run inspection.
+        """
+        self.logger.write_error(
+            {
+                "event": "group_decision",
+                "decision": "invalid",
+                "reason": reason,
+                "sample_index": self.sample_index,
+                "global_step": self.global_step,
+                "messages": readable.get("messages"),
+                "prompt_preview": readable.get("prompt_preview"),
+                "group_stats": readable.get("group_stats"),
+                "invalid_reason": readable.get("invalid_reason"),
+            }
+        )

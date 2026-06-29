@@ -14,33 +14,30 @@
 
 # ── 模式 1: 单卡训练 ──
 # backend: graspoflow
-# backend_config:
-#   graspoflow:
-#     tp_size: 1
-#     pp_size: 1
+# graspoflow:
+#   tp_size: 1
+#   pp_size: 1
 # launch:
 #   gpus: [0]
 #   master_port: 29500
 
 # ── 模式 2: 纯 TP（4 卡注意力切分）──
 # backend: graspoflow
-# backend_config:
-#   graspoflow:
-#     tp_size: 4
-#     pp_size: 1
+# graspoflow:
+#   tp_size: 4
+#   pp_size: 1
 # launch:
 #   gpus: [0, 1, 2, 3]
 #   master_port: 29500
 
 # ── 模式 3: 纯 PP（8 卡层间流水线）──
 # backend: graspoflow
-# backend_config:
-#   graspoflow:
-#     tp_size: 1
-#     pp_size: 8
-#     placement_strategy: qwen36_pp8_static
-#     pp_schedule: one_f_one_b
-#     pp_micro_batch_size: 1
+# graspoflow:
+#   tp_size: 1
+#   pp_size: 8
+#   placement_strategy: qwen36_pp8_static
+#   pp_schedule: one_f_one_b
+#   pp_micro_batch_size: 1
 # launch:
 #   gpus: [0, 1, 2, 3, 4, 5, 6, 7]
 #   master_port: 29500
@@ -96,17 +93,16 @@ training:
   skip_format_broken_groups: true
   dataloader_num_workers: 0
 
-backend_config:
-  graspoflow:
-    tp_size: 1
-    pp_size: 8
-    placement_strategy: qwen36_pp8_static
-    pp_schedule: one_f_one_b
-    pp_micro_batch_size: 1
-    forward_batch_size: 8
-    use_kv_cache_for_rollout: true
-    empty_cache_after_rollout_split: false
-    raw_log_enabled: true
+graspoflow:
+  tp_size: 1
+  pp_size: 8
+  placement_strategy: qwen36_pp8_static
+  pp_schedule: one_f_one_b
+  pp_micro_batch_size: 1
+  forward_batch_size: 8
+  use_kv_cache_for_rollout: true
+  empty_cache_after_rollout_split: false
+  raw_log_enabled: true
 
 launch:
   gpus: [0, 1, 2, 3, 4, 5, 6, 7]

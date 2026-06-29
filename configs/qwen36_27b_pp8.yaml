@@ -58,23 +58,22 @@ training:
   dataloader_num_workers: 0
   resume_from_checkpoint: null
 
-backend_config:
-  graspoflow:
-    tp_size: 1
-    pp_size: 8
-    placement_strategy: qwen36_pp8_static
-    sequence_parallel: false
-    pp_micro_batch_size: 1
-    forward_batch_size: 8
-    use_kv_cache_for_rollout: true
-    empty_cache_after_rollout_split: false
-    empty_cache_before_train: false
-    checkpoint_format: recoverable_lora_tp
-    raw_log_enabled: true
-    readable_log_enabled: true
-    synchronize_cuda_timing: false
-    pp_schedule: simple
-    pp_max_inflight_microbatches: 0
+graspoflow:
+  tp_size: 1
+  pp_size: 8
+  placement_strategy: qwen36_pp8_static
+  sequence_parallel: false
+  pp_micro_batch_size: 1
+  forward_batch_size: 8
+  use_kv_cache_for_rollout: true
+  empty_cache_after_rollout_split: false
+  empty_cache_before_train: false
+  checkpoint_format: recoverable_lora_tp
+  raw_log_enabled: true
+  readable_log_enabled: true
+  synchronize_cuda_timing: false
+  pp_schedule: simple
+  pp_max_inflight_microbatches: 0
 
 export:
   final_formats: []

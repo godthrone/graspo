@@ -3,7 +3,7 @@
 backend: graspoflow
 
 model:
-  model_path: /workspace/models/Qwen3.6-27B
+  model_path: models/Qwen3.6-27B
   trust_remote_code: true
   torch_dtype: bfloat16
   gradient_checkpointing: true
@@ -11,7 +11,7 @@ model:
     enable_thinking: false
 
 data:
-  train_path: /workspace/data/elam_graspo_train.jsonl
+  train_path: data/elam_graspo_train.jsonl
   max_prompt_length: 2048
 
 lora:
@@ -28,7 +28,7 @@ reward:
   anti_useless_str_reward_weight: 1
 
 training:
-  output_dir: /workspace/outputs/graspoflow_tp2_pp4_114_longrun
+  output_dir: outputs/graspoflow_tp2_pp4_114_longrun
   seed: 42
   training_epoch_count: 100
   max_steps: -1
@@ -49,20 +49,19 @@ training:
   skip_format_broken_groups: true
   dataloader_num_workers: 0
 
-backend_config:
-  graspoflow:
-    tp_size: 2
-    pp_size: 4
-    placement_strategy: manual
-    layer_ranges: [[0, 17], [17, 33], [33, 49], [49, 64]]   # 17-16-16-15, balances lm_head on Stage 3
-    sequence_parallel: false
-    pp_micro_batch_size: 2            # 64/2 = 32 microbatches, low bubble
-    forward_batch_size: 64           # 8 prompts × 8 completions
-    use_kv_cache_for_rollout: true
-    empty_cache_after_rollout_split: false
-    raw_log_enabled: true
-    pp_schedule: one_f_one_b
-    pp_max_inflight_microbatches: 0
+graspoflow:
+  tp_size: 2
+  pp_size: 4
+  placement_strategy: manual
+  layer_ranges: [[0, 17], [17, 33], [33, 49], [49, 64]]   # 17-16-16-15, balances lm_head on Stage 3
+  sequence_parallel: false
+  pp_micro_batch_size: 2            # 64/2 = 32 microbatches, low bubble
+  forward_batch_size: 64           # 8 prompts × 8 completions
+  use_kv_cache_for_rollout: true
+  empty_cache_after_rollout_split: false
+  raw_log_enabled: true
+  pp_schedule: one_f_one_b
+  pp_max_inflight_microbatches: 0
 
 launch:
   gpus: [0, 1, 2, 3, 4, 5, 6, 7]
