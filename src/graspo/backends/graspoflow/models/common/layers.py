@@ -9,7 +9,8 @@ from torch.nn import functional as F
 if TYPE_CHECKING:
     from graspo.backends.graspoflow.tensor_utils import SafetensorIndex
 
-from graspo.backends.graspoflow.lora import LoRALinear, _lora_target_enabled
+from graspo.backends.graspoflow.lora import LoRALinear
+from graspo.backends.graspoflow.lora_helpers import _lora_target_enabled
 from graspo.backends.graspoflow.tensor_utils import (
     _all_reduce_tp,
     _apply_mask_to_padding_states,
