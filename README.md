@@ -57,8 +57,8 @@ Set at least these fields in `my_graspo.yaml`:
 - `data.train_path`: JSONL training data;
 - `training.output_dir`: run output directory;
 - `launch.gpus`: local GPU ids for this node;
-- `backend_config.graspoflow.tp_size` and
-  `backend_config.graspoflow.pp_size`: native placement
+- `graspoflow.tp_size` and
+  `graspoflow.pp_size`: native placement
   world size.
 
 Launch training with one YAML argument:
@@ -313,7 +313,7 @@ training.
 exclusive: resume restores native checkpoint state, while PEFT adapter loading
 is only a LoRA warm-start.
 
-### `backend_config.graspoflow`
+### `graspoflow`
 
 - `tp_size`: TP size (default 2).
 - `pp_size`: PP size (default 1).
@@ -478,7 +478,7 @@ uv run --extra dev python -m graspo --help
   avoids materializing the full `[B, S, vocab_size]` logits tensor during rollout
   prefill, saving ~32 GB on the last PP stage.
 - **Manual `layer_ranges`**: users can specify per-stage layer distribution via
-  `backend_config.graspoflow.layer_ranges` to fine-tune memory balance across PP
+  `graspoflow.layer_ranges` to fine-tune memory balance across PP
   stages. A validation check prevents misconfigurations (missing/gapped layers).
 - **Removed legacy `native-tp` backend**: GraspoFlow is the only training backend.
   All `native_tp` / `native-tp` configuration keys and code have been removed.
