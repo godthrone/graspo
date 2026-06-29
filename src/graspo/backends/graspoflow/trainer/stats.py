@@ -1,7 +1,5 @@
 """训练统计数据结构。"""
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from typing import Any
 
