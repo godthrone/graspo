@@ -11,7 +11,7 @@ import torch
 import torch.distributed as dist
 from torch.nn.utils.rnn import pad_sequence
 
-from graspo.backends.graspoflow.lora import native_qwen_lora_available_targets
+from graspo.backends.graspoflow.lora_helpers import native_qwen_lora_available_targets
 from graspo.backends.graspoflow.lora_io import load_peft_adapter_into_native_model
 from graspo.backends.graspoflow.models.qwen3.model import (
     build_native_qwen_model,
