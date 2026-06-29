@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import random
 import time
@@ -32,6 +33,7 @@ from graspo.backends.graspoflow.trainer.stats import (
 )
 from graspo.core.buffer import ReplayBuffer
 from graspo.core.data import load_jsonl
+from graspo.core.logging import setup_logging
 from graspo.core.reward import GraspoReward
 from graspo.core.schema import GraspoConfig
 
@@ -79,6 +81,10 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
         validate_graspoflow_runtime_config(self.config)
         self.runtime.validate()
         self.runtime.setup()
+        # 初始化标准 Python logging 通道（宪法 §13.2）
+        rank = int(getattr(self.runtime, "rank", 0))
+        setup_logging(self.config.training.output_dir, rank=rank)
+        _log = logging.getLogger("graspo.trainer")
         os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "")
         conf = os.environ["PYTORCH_CUDA_ALLOC_CONF"]
         if "expandable_segments:True" not in conf:
@@ -100,6 +106,8 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
                 "tp_size": self.config.graspoflow.tp_size,
             }
         )
+        _log.info("Training started: backend=%s model=%s samples=%d",
+                   self.backend_name, self.config.model.model_path, self.total_samples)
 
         samples = load_jsonl(self.config.data.train_path)
         self.total_samples = len(samples)
@@ -109,6 +117,12 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
         # 将当前配置备份到输出目录，确保可完整复现
         if self.resume_info is None:
             _backup_config(self.config, output_dir)
+        _log.info("Run config: rollout_group_size=%d optimize_prompt_batch_size=%d "
+                  "training_epoch_count=%d max_new_tokens=%d",
+                  self.config.training.rollout_group_size,
+                  self.config.training.optimize_prompt_batch_size,
+                  self.config.training.training_epoch_count,
+                  self.config.training.max_new_tokens)
         self._print_json(
             {
                 "timestamp": _timestamp(),
@@ -172,6 +186,10 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
                         "run": self._run_summary(),
                     }
                 )
+                _log.info("Epoch %d/%d finished: elapsed=%.1fs samples_seen=%d",
+                          epoch + 1, self.config.training.training_epoch_count,
+                          time.monotonic() - self.started_at,
+                          self.current_epoch_stats.samples_seen)
                 if self.config.training.save_epoch_checkpoint:
                     if len(self.replay_buffer) > 0:
                         self._maybe_optimize(epoch=epoch, force=True)

@@ -162,10 +162,10 @@ def _graspoflow_world_size(config: GraspoConfig) -> int:
 def _validate_launch_paths(config: GraspoConfig) -> None:
     _require_config_value(config.model.model_path, "model.model_path")
     _require_config_value(config.data.train_path, "data.train_path")
-    _require_config_value(config.training.output_dir, "training.output_dir")
     data_path = Path(config.data.train_path)
     if not data_path.is_file():
         raise SystemExit(f"data.train_path does not exist: {data_path}")
+    # output_dir 现在总是有默认值（§8.5），但需确保目录提前创建好
     Path(config.training.output_dir).mkdir(parents=True, exist_ok=True)
 
 
