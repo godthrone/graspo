@@ -8,6 +8,7 @@ from graspo.core.compare import dict_compare_score
 from graspo.core.completion import ParsedCompletion, raw_parsed_completion
 from graspo.core.reward_helpers import (
     _normalize_target,
+    empty_target_score,
     is_valid_json,
     normalize_targets,
     normalize_tool_calls,
@@ -98,7 +99,7 @@ class GraspoReward:
             extracted[content_type] = completion[mark_pos:]
 
         target_scores: list[dict[str, Any]] = [
-            _empty_target_score(target, idx) for idx, target in enumerate(normalized_targets)
+            empty_target_score(target, idx) for idx, target in enumerate(normalized_targets)
         ]
         best: dict[str, Any] | None = None
         for key in check_targets:
@@ -189,7 +190,7 @@ class GraspoReward:
         base_content_score = 0.0
         all_right = False
         target_scores: list[dict[str, Any]] = [
-            _empty_target_score(target, idx) for idx, target in enumerate(normalized_targets)
+            empty_target_score(target, idx) for idx, target in enumerate(normalized_targets)
         ]
         best: dict[str, Any] | None = None
         if parsed.tool_calls and think_ok:
@@ -297,11 +298,3 @@ class GraspoReward:
         )
 
 
-def _empty_target_score(target: dict[str, Any], index: int) -> dict[str, Any]:
-    return {
-        "target_index": index,
-        "target_id": target.get("id"),
-        "content_score": 0.0,
-        "base_content_score": 0.0,
-        "all_right": False,
-    }

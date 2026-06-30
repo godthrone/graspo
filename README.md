@@ -431,7 +431,7 @@ and cannot replace `step_*` or `final` for full training resume.
 
 Each run writes to `training.output_dir`:
 
-- `logs/train.log`: compact rank-0 training events;
+- `logs/training.log`: compact rank-0 training events;
 - `logs/rollouts.readable.jsonl`: human-readable messages, completion, reward, and
   debug details;
 - `logs/rollouts.raw.jsonl`: replay tensors, masks, old logprobs, advantages, and

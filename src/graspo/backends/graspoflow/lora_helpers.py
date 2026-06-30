@@ -1,10 +1,9 @@
 """Pure helpers for LoRA target module resolution.
 
-Extracted from ``lora.py`` per BADGE Constitution v1.5 §8.4 (Type B):
+Extracted from ``lora.py`` (Type B helpers):
 these functions don't depend on ``LoRALinear``'s state and are independently testable.
 """
 
-from __future__ import annotations
 
 from graspo.backends.graspoflow.models.qwen3.config import NativeQwenConfig
 

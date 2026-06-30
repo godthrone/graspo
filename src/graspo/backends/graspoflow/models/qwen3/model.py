@@ -31,9 +31,10 @@ from graspo.backends.graspoflow.tensor_utils import (
 
 
 class GraspoFlowCausalLMBase(nn.Module):
-    """所有原生 tensor-parallel causal LM 的共享基类。
+    """Shared base class for all native tensor-parallel causal LMs.
 
-    未知模型应在注册表中 fail-closed，不应继承此类尝试不做安全检查的 sharding。
+    Unknown models should fail-closed in the registry, not inherit from this
+    class and attempt unchecked sharding.
     """
 
     supports_kv_cache = False

@@ -4,7 +4,6 @@ Extracted from ``qwen_ops.py``.  Every model family (Qwen3, Qwen3.5/3.6,
 DeepSeek, …) subclasses this and only implements ``forward()`` / ``backward()``.
 """
 
-from __future__ import annotations
 
 from abc import abstractmethod
 
