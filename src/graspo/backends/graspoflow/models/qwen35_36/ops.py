@@ -3,7 +3,6 @@
 Refactored from ``graspoflow/qwen_ops.py``.  Supports visual tower for multimodal.
 """
 
-from __future__ import annotations
 
 import torch
 

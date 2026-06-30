@@ -7,7 +7,6 @@ microbatches can I safely keep in-flight at once?"
 All numbers are estimates (not exact) — we always apply a safety factor.
 """
 
-from __future__ import annotations
 
 
 def estimate_per_microbatch_activation_bytes(

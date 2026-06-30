@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from graspo.core.buffer import Experience
-from graspo.core.completion import ParsedCompletion, raw_parsed_completion
+from graspo.core.completion import ParsedCompletion
 from graspo.core.schema import GraspoConfig, Sample
 
 FORBIDDEN_RUNTIME_MODULES = (
@@ -42,9 +42,35 @@ class NativeGeneration:
 class GraspoFlowRuntimeProtocol(Protocol):
     def validate(self) -> None: ...
     def setup(self) -> None: ...
-    def generate_group(self, **kwargs: Any) -> NativeGeneration: ...
-    def generate_groups(self, **kwargs: Any) -> list[NativeGeneration]: ...
-    def generate_sample_groups(self, **kwargs: Any) -> list[NativeGeneration]: ...
+
+    def generate_group(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        rollout_group_size: int,
+        max_new_tokens: int,
+        chat_template_kwargs: dict[str, Any] | None = None,
+    ) -> NativeGeneration: ...
+
+    def generate_groups(
+        self,
+        *,
+        message_batches: list[list[dict[str, Any]]],
+        tool_batches: list[list[dict[str, Any]] | None] | None = None,
+        rollout_group_size: int,
+        max_new_tokens: int,
+        chat_template_kwargs: dict[str, Any] | None = None,
+    ) -> list[NativeGeneration]: ...
+
+    def generate_sample_groups(
+        self,
+        *,
+        samples: list[Any],
+        rollout_group_size: int,
+        max_new_tokens: int,
+        chat_template_kwargs: dict[str, Any] | None = None,
+    ) -> list[NativeGeneration]: ...
     def parse_completion(self, completion: str, sample: Sample) -> ParsedCompletion: ...
     def sequence_log_probs(self, sequences: Any, attention_mask: Any, metadata: Any | None = None) -> Any: ...
     def train_batch(self, experiences: list[Experience], *, policy_ratio_clip_eps: float, optimize_times_per_step: int, max_grad_norm: float) -> dict[str, Any]: ...
@@ -86,38 +112,57 @@ class GraspoFlowRuntime:
         self._adapter = adapter_cls(self.config)
         self._adapter.setup()
 
-    def generate_group(self, **kwargs: Any) -> NativeGeneration:
-        return self._require_adapter().generate_group(**kwargs)
+    def generate_group(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        rollout_group_size: int,
+        max_new_tokens: int,
+        chat_template_kwargs: dict[str, Any] | None = None,
+    ) -> NativeGeneration:
+        return self._require_adapter().generate_group(
+            messages=messages,
+            tools=tools,
+            rollout_group_size=rollout_group_size,
+            max_new_tokens=max_new_tokens,
+            chat_template_kwargs=chat_template_kwargs,
+        )
 
-    def generate_groups(self, **kwargs: Any) -> list[NativeGeneration]:
-        adapter = self._require_adapter()
-        generate_groups = getattr(adapter, "generate_groups", None)
-        if callable(generate_groups):
-            return generate_groups(**kwargs)
-        message_batches = list(kwargs.pop("message_batches"))
-        tool_batches = kwargs.pop("tool_batches", None)
-        if tool_batches is None:
-            tool_batches = [None] * len(message_batches)
-        return [
-            adapter.generate_group(messages=messages, tools=tools, **kwargs)
-            for messages, tools in zip(message_batches, tool_batches, strict=True)
-        ]
+    def generate_groups(
+        self,
+        *,
+        message_batches: list[list[dict[str, Any]]],
+        tool_batches: list[list[dict[str, Any]] | None] | None = None,
+        rollout_group_size: int,
+        max_new_tokens: int,
+        chat_template_kwargs: dict[str, Any] | None = None,
+    ) -> list[NativeGeneration]:
+        return self._require_adapter().generate_groups(
+            message_batches=message_batches,
+            tool_batches=tool_batches,
+            rollout_group_size=rollout_group_size,
+            max_new_tokens=max_new_tokens,
+            chat_template_kwargs=chat_template_kwargs,
+        )
 
-    def generate_sample_groups(self, **kwargs: Any) -> list[NativeGeneration]:
-        adapter = self._require_adapter()
-        generate_sample_groups = getattr(adapter, "generate_sample_groups", None)
-        if not callable(generate_sample_groups):
-            raise RuntimeError(
-                "GraspoFlow adapter does not support multimodal sample generation"
-            )
-        return generate_sample_groups(**kwargs)
+    def generate_sample_groups(
+        self,
+        *,
+        samples: list[Any],
+        rollout_group_size: int,
+        max_new_tokens: int,
+        chat_template_kwargs: dict[str, Any] | None = None,
+    ) -> list[NativeGeneration]:
+        return self._require_adapter().generate_sample_groups(
+            samples=samples,
+            rollout_group_size=rollout_group_size,
+            max_new_tokens=max_new_tokens,
+            chat_template_kwargs=chat_template_kwargs,
+        )
 
     def parse_completion(self, completion: str, sample: Sample) -> ParsedCompletion:
-        adapter = self._require_adapter()
-        parse_completion = getattr(adapter, "parse_completion", None)
-        if callable(parse_completion):
-            return parse_completion(completion, sample)
-        return raw_parsed_completion(completion)
+        return self._require_adapter().parse_completion(completion, sample)
 
     def sequence_log_probs(
         self, sequences: Any, attention_mask: Any, metadata: Any | None = None

@@ -1,6 +1,6 @@
 """Pure helper functions for reward target normalization and JSON validation.
 
-Extracted from ``reward.py`` per BADGE Constitution v1.5 §8.4 (Type B):
+Extracted from ``reward.py`` (Type B helpers):
 these functions don't depend on ``GraspoReward``'s state and are independently testable.
 """
 
@@ -46,6 +46,21 @@ def _normalize_target(value: Any, index: int) -> dict[str, Any]:
             f"targets[{index}].output must contain content and/or non-empty tool_calls"
         )
     return {"id": target_id, "output": normalized_output}
+
+
+def empty_target_score(target: dict[str, Any], index: int) -> dict[str, Any]:
+    """Return a zeroed score entry for a single target.
+
+    This is used as the initial state before scoring populates real values.
+    It does not depend on ``GraspoReward`` state and is independently testable.
+    """
+    return {
+        "target_index": index,
+        "target_id": target.get("id"),
+        "content_score": 0.0,
+        "base_content_score": 0.0,
+        "all_right": False,
+    }
 
 
 def normalize_tool_calls(value: Any, *, path: str = "tool_calls") -> list[dict[str, Any]]:
