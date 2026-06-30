@@ -74,7 +74,7 @@ For a short smoke, keep `training.max_new_tokens=2048` and reduce
 Validate sample data and reward behavior:
 
 ```bash
-uv run python scripts/eval_inference.py --help
+uv run graspo validate-reward --data data/sample.jsonl --limit 2
 ```
 
 For reward validation testing, use the scripts in `scripts/` directory.
@@ -208,9 +208,12 @@ The important outputs are:
 
 - `reward`: scalar used for GRASPO group decisions, advantage calculation, and
   ReplayBuffer training;
-- `content_score`: normalized structured-content match before group filtering;
-- `all_right`: true when at least one target is fully correct, so numeric fields
-  must still match exactly for a perfect result.
+- `content_score`: normalized structured-content match before group filtering
+  (includes numeric continuous scoring);
+- `base_content_score`: structural match with numeric fields stripped, used to
+  diagnose numeric field contribution;
+- `all_right`: true when at least one target's non-numeric structure is fully
+  correct — numeric fields like distances and angles do not need to match exactly.
 
 Identifiers or categorical codes that should not receive continuous numeric
 credit should be represented as JSON strings in the dataset.
@@ -253,7 +256,7 @@ complete public example.
 - `r`: LoRA rank.
 - `alpha`: LoRA alpha.
 - `dropout`: LoRA dropout.
-- `adapter_path`: optional PEFT adapter directory used only for warm-start.
+- `adapter_path`: optional PEFT or GRASPO-PEFT adapter directory used only for warm-start.
 - `target_preset`: safe named target set, such as `language_safe`.
 - `target_modules`: explicit LoRA targets. If set, `lora.target_modules` takes
   precedence over `target_preset`.
@@ -469,34 +472,8 @@ uv run --extra dev python -m graspo --help
   equal `tp_size * pp_size`.
 - Rollout OOM: keep `training.max_new_tokens=2048`; reduce rollout concurrency
   or KV cache reservation instead of lowering production generation length.
-- Need PEFT compatibility: load PEFT adapters through `lora.adapter_path`, and
+- Need PEFT compatibility: load PEFT/GRASPO-PEFT adapters through `lora.adapter_path`, and
   export portable artifacts with `graspo export --config <yaml>`.
-
-## Changelog
-
-### 0.8.0
-
-- **GraspoFlow TP+PP**: the `graspoflow` backend now supports arbitrary `tp_size ×
-  pp_size` combinations. Tested on Qwen3.6-27B with tp=2, pp=4 on 8× H100.
-- **Prefill memory fix**: `last_token_only` in `_pipeline_logits_from_last_hidden`
-  avoids materializing the full `[B, S, vocab_size]` logits tensor during rollout
-  prefill, saving ~32 GB on the last PP stage.
-- **Manual `layer_ranges`**: users can specify per-stage layer distribution via
-  `graspoflow.layer_ranges` to fine-tune memory balance across PP
-  stages. A validation check prevents misconfigurations (missing/gapped layers).
-- **Removed legacy `native-tp` backend**: GraspoFlow is the only training backend.
-  All `native_tp` / `native-tp` configuration keys and code have been removed.
-- **1F1B batch scaling**: `forward_batch_size=64`, `pp_micro_batch_size=2`, and
-  `optimize_prompt_batch_size=8` produce 32-microbatch 1F1B schedules with low
-  pipeline bubble.
-
-### 0.7.0
-
-- Initial GraspoFlow architecture: three-layer Flink-style pipeline (Operator,
-  Scheduler, Graph) with compute-communication separation.
-- 1F1B pipeline schedule with memory-aware `pp_max_inflight_microbatches`.
-- Backend selection: `graspoflow` is the only backend.
-- Epoch-level checkpoints with `save_epoch_checkpoint: true`.
 
 ## License
 
