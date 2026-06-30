@@ -3,7 +3,6 @@
 EmbedStageOp, DecoderStageOp, HeadStageOp for the Qwen3 family.
 """
 
-from __future__ import annotations
 
 import torch
 

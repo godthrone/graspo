@@ -1,6 +1,6 @@
 """Standard Python ``logging`` channel for GRASPO.
 
-Per BADGE Constitution v1.4 §13.2, every project must provide at least one
+Every project must provide at least one
 standard ``logging`` channel using the four canonical levels
 (DEBUG / INFO / WARNING / ERROR).  This module satisfies that requirement
 while the existing ``NativeRolloutLogger`` continues to serve as the
@@ -17,8 +17,6 @@ Usage::
 ``setup_logging`` is idempotent — repeated calls with the same *output_dir*
 are harmless.
 """
-
-from __future__ import annotations
 
 import logging
 import sys

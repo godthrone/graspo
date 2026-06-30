@@ -1,6 +1,6 @@
 """Pure helpers for log payload formatting and JSON serialization.
 
-Extracted from ``logger.py`` per BADGE Constitution v1.5 §8.4 (Type B):
+Extracted from ``logger.py`` (Type B helpers):
 these functions don't depend on ``NativeRolloutLogger``'s state and form a
 self-contained utility module for readable/raw payload construction.
 """
