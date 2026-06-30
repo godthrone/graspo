@@ -692,15 +692,45 @@ class _Qwen35GenerationMethods:
     # ── PP generation ───────────────────────────────────────────────────────
 
     def _pipeline_generate_groups(
-        self, **kwargs
+        self,
+        *,
+        message_batches: list[list[dict[str, Any]]],
+        tool_batches: list[list[dict[str, Any]] | None],
+        rollout_group_size: int,
+        max_new_tokens: int,
+        max_prompt_length: int,
+        temperature: float,
+        top_p: float,
+        chat_template_kwargs: dict[str, Any] | None = None,
     ) -> list[NativeGeneration]:
+        """Pipeline-parallel generate for text-only message batches.
+
+        Parameters are forwarded from :meth:`generate_groups` verbatim; see its
+        docstring for semantics.  This stub always raises *NotImplementedError*
+        until the PP generation path is refactored.
+        """
         raise NotImplementedError(
             "PP generation will be refactored in Step 4 using RolloutPipeline"
         )
 
     def _pipeline_generate_multimodal_groups(
-        self, **kwargs
+        self,
+        *,
+        samples: list[Any],
+        rollout_group_size: int,
+        max_new_tokens: int,
+        max_prompt_length: int,
+        temperature: float,
+        top_p: float,
+        chat_template_kwargs: dict[str, Any] | None = None,
     ) -> list[NativeGeneration]:
+        """Pipeline-parallel generate for multimodal :class:`Sample` batches.
+
+        Parameters are forwarded from :meth:`generate_sample_groups` verbatim;
+        see its docstring for semantics.  This stub always raises
+        *NotImplementedError* until the PP multimodal generation path is
+        refactored.
+        """
         raise NotImplementedError(
             "PP multimodal generation will be refactored in Step 4"
         )
