@@ -19,7 +19,7 @@ def test_first_group_perfect_skip_uses_lower_median():
         [1.0, 1.0, 1.0, 0.5],
         [1.0, 1.0, 1.0, 0.5],
         retry_count=0,
-        rollout_max_retry_times=5,
+        rollout_max_retries=5,
     )
 
     assert decision.decision == GroupDecision.PERFECT_SKIP
@@ -31,13 +31,13 @@ def test_retry_continues_until_rollout_max_retry_or_max_reward_reaches_threshold
         [0.2, 0.2],
         [0.2, 0.2],
         retry_count=0,
-        rollout_max_retry_times=1,
+        rollout_max_retries=1,
     )
     exhausted = classify_group(
         [0.2, 0.2],
         [0.2, 0.2],
         retry_count=1,
-        rollout_max_retry_times=1,
+        rollout_max_retries=1,
     )
 
     assert retry.decision == GroupDecision.RETRY
@@ -49,7 +49,7 @@ def test_no_right_preference_gap_trains_before_retry():
         [0.1, 0.2],
         [0.1, 0.2],
         retry_count=0,
-        rollout_max_retry_times=5,
+        rollout_max_retries=5,
     )
 
     assert decision.decision == GroupDecision.TRAINABLE_NOT_CORRECT
@@ -61,13 +61,13 @@ def test_no_right_group_requires_max_above_lower_median_to_train():
         [0.1, 0.2, 0.2, 0.2],
         [0.0, 0.8, 0.8, 0.8],
         retry_count=5,
-        rollout_max_retry_times=5,
+        rollout_max_retries=5,
     )
     has_gap = classify_group(
         [0.1, 0.2, 0.2, 0.3],
         [0.0, 0.8, 0.8, 0.9],
         retry_count=5,
-        rollout_max_retry_times=5,
+        rollout_max_retries=5,
     )
 
     assert no_gap.reward_max_median_gap == 0.0
@@ -84,7 +84,7 @@ def test_no_right_gap_takes_priority_over_uniform_partial_invalid_filter():
         [0.1, 0.2, 0.2, 0.3],
         [0.8, 0.8, 0.8, 0.8],
         retry_count=5,
-        rollout_max_retry_times=5,
+        rollout_max_retries=5,
     )
 
     assert is_uniform_partial_content([0.8, 0.8, 0.8, 0.8])
@@ -105,7 +105,7 @@ def test_invalid_takes_priority_over_no_preference_gap_after_retry_exhausted():
         [0.2, 0.2, 0.2, 0.2],
         [0.5, 0.5, 0.5, 0.5],
         retry_count=5,
-        rollout_max_retry_times=5,
+        rollout_max_retries=5,
     )
 
     assert is_invalid_group([0.2, 0.2, 0.2, 0.2], [0.5, 0.5, 0.5, 0.5])
@@ -117,7 +117,7 @@ def test_trainable_max_correct_after_retry_success():
         [0.1, 1.0],
         [0.1, 1.0],
         retry_count=1,
-        rollout_max_retry_times=5,
+        rollout_max_retries=5,
     )
 
     assert decision.decision == GroupDecision.TRAINABLE_MAX_CORRECT
@@ -129,13 +129,13 @@ def test_perfect_priority_applies_before_max_correct_after_retry():
         [1.0, 1.0, 1.0, 1.0],
         [1.0, 1.0, 1.0, 1.0],
         retry_count=1,
-        rollout_max_retry_times=5,
+        rollout_max_retries=5,
     )
     max_correct = classify_group(
         [0.5, 0.5, 0.5, 1.0],
         [0.5, 0.5, 0.5, 1.0],
         retry_count=1,
-        rollout_max_retry_times=5,
+        rollout_max_retries=5,
     )
 
     assert perfect.decision == GroupDecision.PERFECT_SKIP
@@ -157,7 +157,7 @@ def test_reject_unparseable_groups_retries_before_exhausted():
         [0.1, 0.2],
         [0.1, 0.2],
         retry_count=0,
-        rollout_max_retry_times=5,
+        rollout_max_retries=5,
         best_completion_has_parse_error=True,
         reject_unparseable_groups=True,
     )
@@ -167,7 +167,7 @@ def test_reject_unparseable_groups_retries_before_exhausted():
         [0.1, 0.2],
         [0.1, 0.2],
         retry_count=5,
-        rollout_max_retry_times=5,
+        rollout_max_retries=5,
         best_completion_has_parse_error=True,
         reject_unparseable_groups=True,
     )
@@ -180,7 +180,7 @@ def test_reject_unparseable_groups_when_false_trains_despite_parse_error():
         [0.1, 0.2],
         [0.1, 0.2],
         retry_count=5,
-        rollout_max_retry_times=5,
+        rollout_max_retries=5,
         best_completion_has_parse_error=True,
         reject_unparseable_groups=False,
     )
@@ -194,7 +194,7 @@ def test_reject_unparseable_groups_defaults_to_true():
         [0.1, 0.2],
         [0.1, 0.2],
         retry_count=0,
-        rollout_max_retry_times=5,
+        rollout_max_retries=5,
         best_completion_has_parse_error=True,
     )
     assert decision.decision == GroupDecision.RETRY

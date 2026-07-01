@@ -22,7 +22,6 @@ class LoRAConfig(BaseModel):
     adapter_path: str | None = None
     target_preset: str = "language_safe"
     target_modules: list[str] | None = None
-    auto_target_modules: bool = True
     bias: str = "none"
     task_type: str = "CAUSAL_LM"
 
@@ -40,6 +39,16 @@ class ModelConfig(BaseModel):
     chat_template_kwargs: dict[str, Any] = {}
 
 
+class LRSchedulerConfig(BaseModel):
+    """学习率调度器配置。默认 ``type="constant"`` 保持 LR 不变，向后兼容。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: str = "constant"  # "constant" | "cosine" | "linear"
+    warmup_steps: int = 0  # 线性 warmup 步数（仅 cosine / linear）
+    min_lr_ratio: float = 0.0  # 最终 LR = learning_rate × min_lr_ratio
+
+
 class TrainingConfig(BaseModel):
     """训练超参数配置。"""
 
@@ -48,12 +57,12 @@ class TrainingConfig(BaseModel):
     output_dir: str = ""
     run_name: str = ""
     seed: int = 42
-    training_epoch_count: int = 100
+    max_epochs: int = 100
     max_steps: int = -1
     rollout_group_size: int = 8
     optimize_prompt_batch_size: int = 8
-    optimize_times_per_step: int = 3
-    rollout_max_retry_times: int = 5
+    optimize_iterations_per_step: int = 3
+    rollout_max_retries: int = 5
     learning_rate: float = 5e-6
     weight_decay: float = 0.01
     max_grad_norm: float = 1.0
@@ -62,12 +71,11 @@ class TrainingConfig(BaseModel):
     temperature: float = 1.0
     top_p: float = 1.0
     save_steps: int = -1
-    save_epoch_checkpoint: bool = True
-    logging_steps: int = 1
+    save_checkpoint_every_epoch: bool = True
     perfect_skip_reward_threshold: float = 1.0
     reject_unparseable_groups: bool = True
-    dataloader_num_workers: int = 0
     resume_from_checkpoint: str | None = None
+    lr_scheduler: LRSchedulerConfig = LRSchedulerConfig()
 
     @property
     def replay_buffer_optimize_threshold(self) -> int:
@@ -101,7 +109,6 @@ class GraspoFlowConfig(BaseModel):
     use_kv_cache_for_rollout: bool = True
     empty_cache_after_rollout_split: bool = False
     empty_cache_before_train: bool = False
-    checkpoint_format: str = "recoverable_lora_tp"
     raw_log_enabled: bool = True
     readable_log_enabled: bool = True
     synchronize_cuda_timing: bool = False
@@ -169,6 +176,10 @@ class GraspoConfig(BaseModel):
         _check_removed_fields(data.get("training", {}), "training", _REMOVED_TRAINING_FIELDS)
         # 数据配置校验：拒绝已废弃的字段名
         _check_removed_fields(data.get("data", {}), "data", _REMOVED_DATA_FIELDS)
+        # LoRA 配置校验：拒绝已废弃的字段名
+        _check_removed_fields(data.get("lora", {}), "lora", _REMOVED_LORA_FIELDS)
+        # graspoflow 配置校验：拒绝已废弃的字段名
+        _check_removed_fields(data.get("graspoflow", {}), "graspoflow", _REMOVED_GRASPOFLOW_FIELDS)
         # 拒绝 replay_buffer_optimize_threshold（派生值，不可配置）
         if "replay_buffer_optimize_threshold" in data.get("training", {}):
             raise ValueError(
@@ -238,18 +249,28 @@ class Sample(BaseModel):
 
 _REMOVED_TRAINING_FIELDS = {
     "total_epochs",
+    "training_epoch_count",
     "rollout_prompt_queue_size",
     "rollout_prompt_queue_batch_size",
     "group_size",
     "train_batch_size",
     "buffer_train_rounds",
     "max_retry",
+    "optimize_times_per_step",
+    "rollout_max_retry_times",
+    "save_epoch_checkpoint",
     "clip_eps",
     "perfect_reward_threshold",
     "each_step_prompts_per_device",
+    "logging_steps",
+    "dataloader_num_workers",
 }
 
 _REMOVED_DATA_FIELDS = {"prompt_field", "messages_field", "ground_truth_field"}
+
+_REMOVED_LORA_FIELDS = {"auto_target_modules"}
+
+_REMOVED_GRASPOFLOW_FIELDS = {"checkpoint_format"}
 
 
 # ── 辅助函数 ────────────────────────────────────────────────────────────────
@@ -261,9 +282,7 @@ _RUN_NAME_CACHE: dict[str, str] = {}
 def _generate_run_name() -> str:
     """生成基于时间戳的唯一运行标识（宪法 §8.5）。"""
     if "current" not in _RUN_NAME_CACHE:
-        _RUN_NAME_CACHE["current"] = (
-            f"graspo_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        )
+        _RUN_NAME_CACHE["current"] = f"graspo_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
     return _RUN_NAME_CACHE["current"]
 
 
@@ -315,15 +334,12 @@ def _content_preview(content: Any) -> str:
     return "\n".join(part for part in parts if part)
 
 
-def _check_removed_fields(
-    raw: dict[str, Any] | None, section: str, removed: set[str]
-) -> None:
+def _check_removed_fields(raw: dict[str, Any] | None, section: str, removed: set[str]) -> None:
     """拒绝已废弃的配置字段，给出明确错误信息。"""
     if raw is None:
         return
     present = sorted(key for key in removed if key in raw)
     if present:
         raise ValueError(
-            f"已废弃的 {section} 配置字段: "
-            + ", ".join(f"{section}.{key}" for key in present)
+            f"已废弃的 {section} 配置字段: " + ", ".join(f"{section}.{key}" for key in present)
         )

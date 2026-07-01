@@ -1,23 +1,14 @@
+"""Qwen3.5/3.6 adapter — generation methods (rollout, multimodal, KV cache)."""
+
 from __future__ import annotations
 
-"""Qwen3.5/3.6 adapter — generation methods (rollout, multimodal, KV cache).
-"""
-
 import time
-from pathlib import Path
 from typing import Any
 
 import torch
-import torch.distributed as dist
 from torch.nn.utils.rnn import pad_sequence
 
-from graspo.backends.graspoflow.lora_helpers import native_qwen_lora_available_targets
-from graspo.backends.graspoflow.lora_io import load_peft_adapter_into_native_model
-from graspo.backends.graspoflow.models.qwen3.model import (
-    build_native_qwen_model,
-)
 from graspo.backends.graspoflow.models.qwen35_36.model import Qwen35HybridTextModel
-from graspo.backends.graspoflow.models.qwen35_36.ops import build_qwen35_ops
 from graspo.backends.graspoflow.multimodal import (
     _compute_multimodal_offset_tables,
     _media_counts,
@@ -25,30 +16,12 @@ from graspo.backends.graspoflow.multimodal import (
     _normalize_tool_batches,
     _slice_multimodal_inputs_offset,
 )
-from graspo.backends.graspoflow.placement import (
-    build_placement_plan,
-    placement_summary,
-)
 from graspo.backends.graspoflow.runtime import NativeGeneration
 from graspo.backends.graspoflow.tensor_utils import (
-    SafetensorIndex,
-    _add_pipeline_stage_timing,
     _broadcast_and_pad_finished,
     _left_pad_token_rows,
-    _new_pipeline_stage_timing,
     _next_token_from_logits,
-    _resolve_dtype,
-    _round_pipeline_stage_timing,
-    _selected_token_log_probs_from_hidden,
-    collate_experiences,
 )
-from graspo.backends.graspoflow.tool_parser import parse_qwen_tool_completion
-from graspo.backends.graspoflow.transformer_adapter import TransformerAdapter
-from graspo.core.buffer import Experience
-from graspo.core.completion import ParsedCompletion
-from graspo.trainer.lora import resolve_lora_target_modules
-
-
 
 
 class _Qwen35GenerationMethods:
@@ -102,9 +75,7 @@ class _Qwen35GenerationMethods:
         rollout_started_at = time.monotonic()
         eos_token_id = int(self.tokenizer.eos_token_id)
         pad_token_id = int(
-            self.tokenizer.pad_token_id
-            if self.tokenizer.pad_token_id is not None
-            else eos_token_id
+            self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else eos_token_id
         )
         prompt_input_ids, prompt_lens = _left_pad_token_rows(
             encoded["input_ids"],
@@ -149,9 +120,7 @@ class _Qwen35GenerationMethods:
                         start : start + chunk_generation_micro_batch_size
                     ]
                     sequences = current_batch.clone()
-                    finished = torch.zeros(
-                        sequences.shape[0], dtype=torch.bool, device=self.device
-                    )
+                    finished = torch.zeros(sequences.shape[0], dtype=torch.bool, device=self.device)
                     if use_kv_cache:
                         sequences, chunk_timing = self._generate_group_with_kv_cache(
                             sequences=sequences,
@@ -287,9 +256,7 @@ class _Qwen35GenerationMethods:
             )
             self._sync_timing()
             sampling_sec += time.monotonic() - sampling_started_at
-            next_token = _broadcast_and_pad_finished(
-                next_token, finished, pad_token_id
-            )
+            next_token = _broadcast_and_pad_finished(next_token, finished, pad_token_id)
             sequences = torch.cat([sequences, next_token.unsqueeze(1)], dim=1)
             decode_tokens += 1
             finished |= next_token.eq(eos_token_id)
@@ -338,14 +305,10 @@ class _Qwen35GenerationMethods:
             logits = self.model(sequences, attention_mask=attention_mask).float()[:, -1, :]
             self._sync_timing()
             sampling_started_at = time.monotonic()
-            next_token = _next_token_from_logits(
-                logits, temperature=temperature, top_p=top_p
-            )
+            next_token = _next_token_from_logits(logits, temperature=temperature, top_p=top_p)
             self._sync_timing()
             sampling_sec += time.monotonic() - sampling_started_at
-            next_token = _broadcast_and_pad_finished(
-                next_token, finished, pad_token_id
-            )
+            next_token = _broadcast_and_pad_finished(next_token, finished, pad_token_id)
             sequences = torch.cat([sequences, next_token.unsqueeze(1)], dim=1)
             decode_tokens += 1
             finished |= next_token.eq(eos_token_id)
@@ -381,8 +344,8 @@ class _Qwen35GenerationMethods:
         assert self.model is not None
         assert self.tokenizer is not None
         self.model.eval()
-        N = len(samples)
-        G = rollout_group_size
+        N = len(samples)  # noqa: N806
+        G = rollout_group_size  # noqa: N806
         tokenize_started_at = time.monotonic()
 
         rows: list[dict[str, Any]] = []
@@ -390,9 +353,7 @@ class _Qwen35GenerationMethods:
         per_sample_media_counts: list[dict[str, int]] = []
         for sample in samples:
             row = _multimodal_row_from_sample(sample)
-            img_count = sum(
-                1 for item in sample.media if str(item.get("type") or "") == "image"
-            )
+            img_count = sum(1 for item in sample.media if str(item.get("type") or "") == "image")
             per_sample_image_counts.append(img_count)
             per_sample_media_counts.append(_media_counts(sample.media))
             for _ in range(G):
@@ -456,7 +417,7 @@ class _Qwen35GenerationMethods:
                 row_stop = prompt_stop * G
                 chunk_input_ids = input_ids[row_start:row_stop]
                 chunk_attention_mask = attention_mask[row_start:row_stop]
-                flat_B = int(chunk_input_ids.shape[0])
+                flat_B = int(chunk_input_ids.shape[0])  # noqa: N806
                 chunk_prompt_lens = prompt_lens[row_start:row_stop]
 
                 chunk_generation_micro_batch_size = self._shared_generation_micro_batch_size(
@@ -525,16 +486,12 @@ class _Qwen35GenerationMethods:
                 for local_prompt_idx in range(chunk_prompt_count):
                     row_start_inner = local_prompt_idx * G
                     row_stop_inner = row_start_inner + G
-                    prompt_sequences = flat_sequences[
-                        row_start_inner:row_stop_inner
-                    ].clone()
+                    prompt_sequences = flat_sequences[row_start_inner:row_stop_inner].clone()
                     all_generations.append(
                         self._generation_from_sequences(
                             sequences=prompt_sequences,
                             prompt_len=prompt_len,
-                            prompt_lens=chunk_prompt_lens[
-                                row_start_inner : row_start_inner + 1
-                            ],
+                            prompt_lens=chunk_prompt_lens[row_start_inner : row_start_inner + 1],
                             pad_token_id=pad_token_id,
                             rollout_group_size=G,
                             requested_prompt_queue_size=requested_prompt_queue_size,
@@ -598,9 +555,7 @@ class _Qwen35GenerationMethods:
             )
             self._sync_timing()
             sampling_sec += time.monotonic() - sampling_started_at
-            next_token = _broadcast_and_pad_finished(
-                next_token, finished, pad_token_id
-            )
+            next_token = _broadcast_and_pad_finished(next_token, finished, pad_token_id)
             sequences = torch.cat([sequences, next_token.unsqueeze(1)], dim=1)
             decode_tokens += 1
             finished |= next_token.eq(eos_token_id)
@@ -663,14 +618,10 @@ class _Qwen35GenerationMethods:
                 logits = raw_logits[:, -1, :]
             self._sync_timing()
             sampling_started_at = time.monotonic()
-            next_token = _next_token_from_logits(
-                logits, temperature=temperature, top_p=top_p
-            )
+            next_token = _next_token_from_logits(logits, temperature=temperature, top_p=top_p)
             self._sync_timing()
             sampling_sec += time.monotonic() - sampling_started_at
-            next_token = _broadcast_and_pad_finished(
-                next_token, finished, pad_token_id
-            )
+            next_token = _broadcast_and_pad_finished(next_token, finished, pad_token_id)
             sequences = torch.cat([sequences, next_token.unsqueeze(1)], dim=1)
             decode_tokens += 1
             finished |= next_token.eq(eos_token_id)
@@ -731,8 +682,6 @@ class _Qwen35GenerationMethods:
         *NotImplementedError* until the PP multimodal generation path is
         refactored.
         """
-        raise NotImplementedError(
-            "PP multimodal generation will be refactored in Step 4"
-        )
+        raise NotImplementedError("PP multimodal generation will be refactored in Step 4")
 
     # ── Training ────────────────────────────────────────────────────────────

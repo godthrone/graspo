@@ -1,54 +1,23 @@
+"""Qwen3.5/3.6 adapter — sequence log-probability methods."""
+
 from __future__ import annotations
 
-"""Qwen3.5/3.6 adapter — sequence log-probability methods.
-"""
-
 import time
-from pathlib import Path
 from typing import Any
 
 import torch
 import torch.distributed as dist
-from torch.nn.utils.rnn import pad_sequence
 
-from graspo.backends.graspoflow.lora_helpers import native_qwen_lora_available_targets
-from graspo.backends.graspoflow.lora_io import load_peft_adapter_into_native_model
-from graspo.backends.graspoflow.models.qwen3.model import (
-    build_native_qwen_model,
-)
 from graspo.backends.graspoflow.models.qwen35_36.model import Qwen35HybridTextModel
-from graspo.backends.graspoflow.models.qwen35_36.ops import build_qwen35_ops
-from graspo.backends.graspoflow.multimodal import (
-    _compute_multimodal_offset_tables,
-    _media_counts,
-    _multimodal_row_from_sample,
-    _normalize_tool_batches,
-    _slice_multimodal_inputs_offset,
-)
 from graspo.backends.graspoflow.placement import (
-    build_placement_plan,
     placement_summary,
 )
-from graspo.backends.graspoflow.runtime import NativeGeneration
 from graspo.backends.graspoflow.tensor_utils import (
-    SafetensorIndex,
     _add_pipeline_stage_timing,
-    _broadcast_and_pad_finished,
-    _left_pad_token_rows,
     _new_pipeline_stage_timing,
-    _next_token_from_logits,
-    _resolve_dtype,
     _round_pipeline_stage_timing,
     _selected_token_log_probs_from_hidden,
-    collate_experiences,
 )
-from graspo.backends.graspoflow.tool_parser import parse_qwen_tool_completion
-from graspo.backends.graspoflow.transformer_adapter import TransformerAdapter
-from graspo.core.buffer import Experience
-from graspo.core.completion import ParsedCompletion
-from graspo.trainer.lora import resolve_lora_target_modules
-
-
 
 
 class _Qwen35LogprobsMethods:
@@ -65,9 +34,7 @@ class _Qwen35LogprobsMethods:
         self._require_ready()
         assert self.model is not None
         if self._is_pipeline_parallel():
-            return self._pipeline_sequence_log_probs(
-                sequences, attention_mask, metadata=metadata
-            )
+            return self._pipeline_sequence_log_probs(sequences, attention_mask, metadata=metadata)
         self.model.eval()
         sequences = sequences.to(self.device)
         attention_mask = attention_mask.to(self.device).bool()
@@ -77,9 +44,7 @@ class _Qwen35LogprobsMethods:
         with torch.no_grad():
             if multimodal_inputs is not None:
                 if not isinstance(self.model, Qwen35HybridTextModel):
-                    raise ValueError(
-                        "multimodal metadata was provided for a non-multimodal model"
-                    )
+                    raise ValueError("multimodal metadata was provided for a non-multimodal model")
                 log_probs = self.model.sequence_log_probs(
                     sequences,
                     attention_mask,
@@ -126,18 +91,14 @@ class _Qwen35LogprobsMethods:
                 assert self.model.norm is not None and self.model.lm_head is not None
                 norm_started_at = time.monotonic()
                 hidden = self.model.norm(hidden)
-                _add_pipeline_stage_timing(
-                    stage_timing, "pipeline_norm_sec", norm_started_at
-                )
+                _add_pipeline_stage_timing(stage_timing, "pipeline_norm_sec", norm_started_at)
                 lm_head_started_at = time.monotonic()
                 log_probs = _selected_token_log_probs_from_hidden(
                     hidden[:, :-1].float(),
                     self.model.lm_head.weight.float(),
                     sequences[:, 1:],
                 )
-                _add_pipeline_stage_timing(
-                    stage_timing, "pipeline_lm_head_sec", lm_head_started_at
-                )
+                _add_pipeline_stage_timing(stage_timing, "pipeline_lm_head_sec", lm_head_started_at)
             else:
                 log_probs = torch.empty(
                     (sequences.shape[0], max(sequences.shape[1] - 1, 0)),
@@ -152,9 +113,7 @@ class _Qwen35LogprobsMethods:
                 "sequence_len": int(sequences.shape[1]),
                 "multimodal_enabled": multimodal_inputs is not None,
                 "placement": (
-                    placement_summary(self.placement)
-                    if self.placement is not None
-                    else None
+                    placement_summary(self.placement) if self.placement is not None else None
                 ),
                 "pipeline_stage_timing": _round_pipeline_stage_timing(stage_timing),
             },
@@ -175,9 +134,7 @@ class _Qwen35LogprobsMethods:
         assert isinstance(self.model, Qwen35HybridTextModel)
         assert self.tp_state is not None
         batch = int(attention_mask.shape[0])
-        query_len = int(
-            input_ids.shape[1] if input_ids is not None else hidden_states.shape[1]
-        )
+        query_len = int(input_ids.shape[1] if input_ids is not None else hidden_states.shape[1])
         hidden_size = int(self.model.config.hidden_size)
         dtype = next(self.model.parameters()).dtype
         if self.pp_rank > 0:
@@ -186,9 +143,7 @@ class _Qwen35LogprobsMethods:
             )
             recv_started_at = time.monotonic()
             dist.recv(hidden_states, src=int(self.tp_state.prev_pp_rank))
-            _add_pipeline_stage_timing(
-                timing, "pipeline_recv_sec", recv_started_at
-            )
+            _add_pipeline_stage_timing(timing, "pipeline_recv_sec", recv_started_at)
         compute_started_at = time.monotonic()
         output = self.model.forward_stage(
             hidden_states,
@@ -200,9 +155,7 @@ class _Qwen35LogprobsMethods:
             position_input_ids=input_ids,
             apply_lm_head=False,
         )
-        _add_pipeline_stage_timing(
-            timing, "pipeline_stage_compute_sec", compute_started_at
-        )
+        _add_pipeline_stage_timing(timing, "pipeline_stage_compute_sec", compute_started_at)
         present = None
         if use_cache:
             output, present = output
@@ -210,17 +163,12 @@ class _Qwen35LogprobsMethods:
         if self.pp_rank < self.pp_size - 1:
             send_started_at = time.monotonic()
             dist.send(output.contiguous(), dst=int(self.tp_state.next_pp_rank))
-            _add_pipeline_stage_timing(
-                timing, "pipeline_send_sec", send_started_at
-            )
+            _add_pipeline_stage_timing(timing, "pipeline_send_sec", send_started_at)
             if timing is not None:
                 timing["pipeline_forward_calls"] = (
                     int(timing.get("pipeline_forward_calls") or 0) + 1
                 )
             return None, present
         if timing is not None:
-            timing["pipeline_forward_calls"] = (
-                int(timing.get("pipeline_forward_calls") or 0) + 1
-            )
+            timing["pipeline_forward_calls"] = int(timing.get("pipeline_forward_calls") or 0) + 1
         return output, present
-

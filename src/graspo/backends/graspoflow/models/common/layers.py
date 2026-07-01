@@ -4,13 +4,14 @@ from typing import TYPE_CHECKING, Any
 
 import torch
 from torch import nn
-from torch.nn import functional as F
+from torch.nn import functional as F  # noqa: N812
 
 if TYPE_CHECKING:
     from graspo.backends.graspoflow.tensor_utils import SafetensorIndex
 
 from graspo.backends.graspoflow.lora import LoRALinear
 from graspo.backends.graspoflow.lora_helpers import _lora_target_enabled
+from graspo.backends.graspoflow.models.common.layers_qwen3 import TensorParallelQwenMLP
 from graspo.backends.graspoflow.tensor_utils import (
     _all_reduce_tp,
     _apply_mask_to_padding_states,
@@ -630,7 +631,6 @@ class TensorParallelQwen35LinearAttention(nn.Module):
             assert next_recurrent_state is not None
             return output, (next_conv_state, next_recurrent_state)
         return output
-
 
 
 class Qwen35RMSNorm(nn.Module):

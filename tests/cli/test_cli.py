@@ -31,7 +31,7 @@ def test_cli_removed_commands_are_not_public(command):
 def test_config_example_loads():
     config = GraspoConfig.from_yaml("config_example.yaml")
 
-    assert config.training.training_epoch_count == 100
+    assert config.training.max_epochs == 100
     assert config.training.max_new_tokens == 2048
     assert config.launch.gpus == [0, 1]
     assert config.graspoflow.tp_size == 2
@@ -140,12 +140,11 @@ def test_only_readmes_are_tracked_markdown_docs():
     }
 
     assert tracked_markdown == {
-        "LONG_RUN.md",
-        "MIGRATION_PLAN.md",
         "README.md",
         "README.zh-CN.md",
         "docs/architecture.md",
-        "docs/BADGE-constitution.zh-CN.md",
+        "docs/graspoflow.md",
+        "docs/training_methodology.md",
     }
 
 

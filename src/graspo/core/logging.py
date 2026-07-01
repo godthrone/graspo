@@ -55,9 +55,7 @@ def setup_logging(output_dir: str | Path, *, rank: int = 0) -> None:
     if rank == 0 and log_path not in _SETUP_DONE:
         file_dir = Path(output_dir) / "logs"
         file_dir.mkdir(parents=True, exist_ok=True)
-        file_handler = logging.FileHandler(
-            file_dir / "training.log", encoding="utf-8"
-        )
+        file_handler = logging.FileHandler(file_dir / "training.log", encoding="utf-8")
         file_handler.setLevel(logging.DEBUG)
         file_handler.setFormatter(
             logging.Formatter(

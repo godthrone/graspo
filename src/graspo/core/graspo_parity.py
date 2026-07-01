@@ -1,9 +1,9 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 
-class GroupDecision(str, Enum):
+class GroupDecision(StrEnum):
     PERFECT_SKIP = "perfect_skip"
     RETRY = "retry"
     INVALID = "invalid"
@@ -82,7 +82,7 @@ def classify_group(
     content_scores: Sequence[float],
     *,
     retry_count: int,
-    rollout_max_retry_times: int,
+    rollout_max_retries: int,
     perfect_skip_reward_threshold: float = 1.0,
     best_completion_has_parse_error: bool = False,
     reject_unparseable_groups: bool = True,
@@ -125,13 +125,13 @@ def classify_group(
     elif reject_unparseable_groups and best_completion_has_parse_error:
         # The best completion's format is broken — the group has no valid
         # template to learn from.  Retry if we can, otherwise discard.
-        if retry_count < rollout_max_retry_times:
+        if retry_count < rollout_max_retries:
             decision = GroupDecision.RETRY
         else:
             decision = GroupDecision.INVALID
     elif reward_max > reward_median:
         decision = GroupDecision.TRAINABLE_NOT_CORRECT
-    elif reward_max < perfect_skip_reward_threshold and retry_count < rollout_max_retry_times:
+    elif reward_max < perfect_skip_reward_threshold and retry_count < rollout_max_retries:
         decision = GroupDecision.RETRY
     elif is_invalid_group(values, content_scores):
         decision = GroupDecision.INVALID

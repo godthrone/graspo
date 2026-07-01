@@ -82,8 +82,7 @@ class Qwen3Adapter(TransformerAdapter):
         assert self.model is not None
         missing_lora_targets = sorted(
             target
-            for target in set(lora_targets.resolved)
-            - set(self.model.enabled_lora_target_names())
+            for target in set(lora_targets.resolved) - set(self.model.enabled_lora_target_names())
         )
         if missing_lora_targets:
             raise ValueError(
@@ -145,9 +144,7 @@ class Qwen3Adapter(TransformerAdapter):
         rollout_started_at = time.monotonic()
         eos_token_id = int(self.tokenizer.eos_token_id)
         pad_token_id = int(
-            self.tokenizer.pad_token_id
-            if self.tokenizer.pad_token_id is not None
-            else eos_token_id
+            self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else eos_token_id
         )
         prompt_input_ids, prompt_lens = _left_pad_token_rows(
             encoded["input_ids"],
@@ -192,9 +189,7 @@ class Qwen3Adapter(TransformerAdapter):
                         start : start + chunk_generation_micro_batch_size
                     ]
                     sequences = current_batch.clone()
-                    finished = torch.zeros(
-                        sequences.shape[0], dtype=torch.bool, device=self.device
-                    )
+                    finished = torch.zeros(sequences.shape[0], dtype=torch.bool, device=self.device)
                     if use_kv_cache:
                         sequences, chunk_timing = self._generate_group_with_kv_cache(
                             sequences=sequences,
@@ -250,9 +245,7 @@ class Qwen3Adapter(TransformerAdapter):
 
         return all_generations
 
-    def generate_sample_groups(
-        self, **kwargs: Any
-    ) -> list[NativeGeneration]:
+    def generate_sample_groups(self, **kwargs: Any) -> list[NativeGeneration]:
         raise NotImplementedError("Qwen3 does not support multimodal")
 
     # ── TP-only generation helpers ──────────────────────────────────────────
@@ -291,9 +284,7 @@ class Qwen3Adapter(TransformerAdapter):
             )
             self._sync_timing()
             sampling_sec += time.monotonic() - sampling_started_at
-            next_token = _broadcast_and_pad_finished(
-                next_token, finished, pad_token_id
-            )
+            next_token = _broadcast_and_pad_finished(next_token, finished, pad_token_id)
             sequences = torch.cat([sequences, next_token.unsqueeze(1)], dim=1)
             decode_tokens += 1
             finished |= next_token.eq(eos_token_id)
@@ -342,14 +333,10 @@ class Qwen3Adapter(TransformerAdapter):
             logits = self.model(sequences, attention_mask=attention_mask).float()[:, -1, :]
             self._sync_timing()
             sampling_started_at = time.monotonic()
-            next_token = _next_token_from_logits(
-                logits, temperature=temperature, top_p=top_p
-            )
+            next_token = _next_token_from_logits(logits, temperature=temperature, top_p=top_p)
             self._sync_timing()
             sampling_sec += time.monotonic() - sampling_started_at
-            next_token = _broadcast_and_pad_finished(
-                next_token, finished, pad_token_id
-            )
+            next_token = _broadcast_and_pad_finished(next_token, finished, pad_token_id)
             sequences = torch.cat([sequences, next_token.unsqueeze(1)], dim=1)
             decode_tokens += 1
             finished |= next_token.eq(eos_token_id)
@@ -376,7 +363,7 @@ class Qwen3Adapter(TransformerAdapter):
         experiences: list[Experience],
         *,
         policy_ratio_clip_eps: float,
-        optimize_times_per_step: int,
+        optimize_iterations_per_step: int,
         max_grad_norm: float,
     ) -> dict[str, Any]:
         self._require_ready()
@@ -384,10 +371,7 @@ class Qwen3Adapter(TransformerAdapter):
         assert self.optimizer is not None
         self.loss_fn.policy_ratio_clip_eps = policy_ratio_clip_eps
         self.model.train()
-        if (
-            bool(self.config.graspoflow.empty_cache_before_train)
-            and self.device.type == "cuda"
-        ):
+        if bool(self.config.graspoflow.empty_cache_before_train) and self.device.type == "cuda":
             torch.cuda.empty_cache()
             self._emit_rank_memory_event("train_before_empty_cache")
 
@@ -404,11 +388,9 @@ class Qwen3Adapter(TransformerAdapter):
         backward_sec = 0.0
         optimizer_step_sec = 0.0
         micro_batch_count = 0
-        for optimize_round in range(optimize_times_per_step):
+        for optimize_round in range(optimize_iterations_per_step):
             round_started_at = time.monotonic()
-            indices = self._shared_training_indices(
-                len(experiences), optimize_round=optimize_round
-            )
+            indices = self._shared_training_indices(len(experiences), optimize_round=optimize_round)
             for start in range(0, len(indices) - batch_size + 1, batch_size):
                 batch_indices = indices[start : start + batch_size]
                 batch = collate_experiences(
@@ -417,9 +399,7 @@ class Qwen3Adapter(TransformerAdapter):
                 self.optimizer.zero_grad(set_to_none=True)
                 self._sync_timing()
                 forward_started_at = time.monotonic()
-                log_probs = self.model.sequence_log_probs(
-                    batch.sequences, batch.attention_mask
-                )
+                log_probs = self.model.sequence_log_probs(batch.sequences, batch.attention_mask)
                 self._sync_timing()
                 micro_batch_forward_sec += time.monotonic() - forward_started_at
                 loss = self.loss_fn(
@@ -450,6 +430,8 @@ class Qwen3Adapter(TransformerAdapter):
                 self.optimizer.step()
                 self._sync_timing()
                 optimizer_step_sec += time.monotonic() - optimizer_started_at
+                if self.scheduler is not None:
+                    self.scheduler.step()
                 optimizer_steps += 1
                 micro_batch_count += 1
                 loss_sum += float(loss.detach().cpu())
@@ -480,9 +462,8 @@ class Qwen3Adapter(TransformerAdapter):
             "backward_sec": backward_sec,
             "optimizer_step_sec": optimizer_step_sec,
             "micro_batch_count": micro_batch_count,
-            "synchronize_cuda_timing": bool(
-                self.config.graspoflow.synchronize_cuda_timing
-            ),
+            "synchronize_cuda_timing": bool(self.config.graspoflow.synchronize_cuda_timing),
+            "current_lr": self._current_lr(),
         }
         metrics = self._aggregate_rank_metrics(metrics)
         self._emit_rank_memory_event("train_batch_after", {"metrics": metrics})
@@ -514,9 +495,7 @@ class Qwen3Adapter(TransformerAdapter):
 
     # ── Parse completion ────────────────────────────────────────────────────
 
-    def parse_completion(
-        self, completion: str, sample: Any | None = None
-    ) -> ParsedCompletion:
+    def parse_completion(self, completion: str, sample: Any | None = None) -> ParsedCompletion:
         return parse_qwen_tool_completion(
             completion,
             expect_tool_calls=bool(getattr(sample, "expects_tool_calls", False)),

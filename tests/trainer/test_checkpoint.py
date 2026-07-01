@@ -3,8 +3,6 @@
 from pathlib import Path
 from unittest import mock
 
-import pytest
-
 from graspo.trainer.checkpoint import save_lora_adapter
 
 

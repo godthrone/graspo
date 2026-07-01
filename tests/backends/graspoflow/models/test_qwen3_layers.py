@@ -6,7 +6,7 @@ torch = pytest.importorskip("torch", reason="torch required")
 if not torch.cuda.is_available():
     pytest.skip("CUDA required for Qwen3 layer tests", allow_module_level=True)
 
-from graspo.backends.graspoflow.models.common.layers_qwen3 import (
+from graspo.backends.graspoflow.models.common.layers_qwen3 import (  # noqa: E402
     QwenRMSNorm,
     TensorParallelQwenAttention,
     TensorParallelQwenDecoderLayer,
@@ -17,8 +17,14 @@ from graspo.backends.graspoflow.models.common.layers_qwen3 import (
 class FakeSafetensorIndex:
     """A minimal fake weight loader for testing layer construction."""
 
-    def __init__(self, hidden_size: int = 64, num_heads: int = 8, num_kv_heads: int = 8,
-                 intermediate_size: int = 256, num_layers: int = 1):
+    def __init__(
+        self,
+        hidden_size: int = 64,
+        num_heads: int = 8,
+        num_kv_heads: int = 8,
+        intermediate_size: int = 256,
+        num_layers: int = 1,
+    ):
         self.hidden_size = hidden_size
         self.num_heads = num_heads
         self.num_kv_heads = num_kv_heads
@@ -48,9 +54,16 @@ class FakeSafetensorIndex:
 
 
 class FakeHFConfig:
-    def __init__(self, hidden_size=64, num_attention_heads=8, num_key_value_heads=8,
-                 intermediate_size=256, rms_norm_eps=1e-6, rope_theta=1000000.0,
-                 head_dim=None):
+    def __init__(
+        self,
+        hidden_size=64,
+        num_attention_heads=8,
+        num_key_value_heads=8,
+        intermediate_size=256,
+        rms_norm_eps=1e-6,
+        rope_theta=1000000.0,
+        head_dim=None,
+    ):
         self.hidden_size = hidden_size
         self.num_attention_heads = num_attention_heads
         self.num_key_value_heads = num_key_value_heads

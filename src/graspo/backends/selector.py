@@ -20,8 +20,7 @@ def select_backend(config: GraspoConfig, requested: str | None = None) -> Backen
     requested_backend = (requested or config.backend or "graspoflow").strip()
     if requested_backend not in SUPPORTED_BACKENDS:
         raise ValueError(
-            f"Unsupported backend '{requested_backend}'. "
-            "GRASPO only supports 'graspoflow'."
+            f"Unsupported backend '{requested_backend}'. GRASPO only supports 'graspoflow'."
         )
 
     return BackendSelection(

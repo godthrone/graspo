@@ -8,7 +8,6 @@ All numbers are estimates (not exact) — we always apply a safety factor.
 """
 
 
-
 def estimate_per_microbatch_activation_bytes(
     *,
     batch_size: int,

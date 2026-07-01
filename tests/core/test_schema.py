@@ -11,7 +11,6 @@ from graspo.core.schema import (
     _generate_run_name,
 )
 
-
 # ── TrainingConfig 校验 ──────────────────────────────────────────────────────
 
 
@@ -174,7 +173,9 @@ def test_sample_media_default_is_empty():
 
 def test_check_removed_fields_present_raises():
     with pytest.raises(ValueError, match="test_section.field_a"):
-        _check_removed_fields({"field_a": 1, "field_b": 2, "ok": 3}, "test_section", {"field_a", "field_b"})
+        _check_removed_fields(
+            {"field_a": 1, "field_b": 2, "ok": 3}, "test_section", {"field_a", "field_b"}
+        )
 
 
 def test_check_removed_fields_none_does_not_raise():
@@ -193,16 +194,20 @@ def test_check_removed_fields_no_match_does_not_raise():
 
 
 def test_from_dict_accepts_backend_config_graspoflow_format():
-    cfg = GraspoConfig.from_dict({
-        "backend_config": {"graspoflow": {"tp_size": 4, "pp_size": 2}},
-    })
+    cfg = GraspoConfig.from_dict(
+        {
+            "backend_config": {"graspoflow": {"tp_size": 4, "pp_size": 2}},
+        }
+    )
     assert cfg.graspoflow.tp_size == 4
     assert cfg.graspoflow.pp_size == 2
 
 
 def test_from_dict_top_level_graspoflow_takes_priority():
-    cfg = GraspoConfig.from_dict({
-        "graspoflow": {"tp_size": 8},
-        "backend_config": {"graspoflow": {"tp_size": 4}},
-    })
+    cfg = GraspoConfig.from_dict(
+        {
+            "graspoflow": {"tp_size": 8},
+            "backend_config": {"graspoflow": {"tp_size": 4}},
+        }
+    )
     assert cfg.graspoflow.tp_size == 8

@@ -36,7 +36,6 @@ lora:
   adapter_path: null                 # Path to existing PEFT adapter for warm-start (null=none)
   target_preset: language_safe       # Built-in module selection preset
   target_modules: null               # Explicit module list (null=use target_preset)
-  auto_target_modules: true          # Auto-detect LoRA-compatible linear layers
   bias: none                         # "none", "all", or "lora_only"
   task_type: CAUSAL_LM               # LoRA task type
 
@@ -56,25 +55,28 @@ training:
   output_dir: ""                     # Output directory (default: auto-generated as outputs/<run_name>)
   run_name: ""                       # Run identifier (default: auto-generated as graspo_YYYYMMDD_HHMMSS)
   seed: 42                           # Random seed for reproducibility
-  training_epoch_count: 100          # Max epochs (-1 for unlimited)
+  max_epochs: 100          # Max epochs (-1 for unlimited)
   max_steps: -1                      # Max optimize steps (-1 for unlimited)
   rollout_group_size: 8              # Completions per prompt (core algorithm param)
   optimize_prompt_batch_size: 4      # Prompts per optimize step; replay threshold = G × B
-  optimize_times_per_step: 3         # Optimize iterations per step
-  rollout_max_retry_times: 5         # Max retries for failed rollouts (same-result fallback)
-  learning_rate: 5.0e-6              # Optimizer learning rate
+  optimize_iterations_per_step: 3         # Optimize iterations per step
+  rollout_max_retries: 5         # Max retries for failed rollouts (same-result fallback)
+  learning_rate: 5.0e-6              # Optimizer peak learning rate
   weight_decay: 0.01                 # AdamW weight decay
+  # ── Learning rate scheduler (per optimizer-step) ────────────────────────
+  lr_scheduler:
+    type: constant                   # "constant" | "cosine" | "linear"
+    warmup_steps: 0                  # Linear warmup steps (0=disabled)
+    min_lr_ratio: 0.0                # Final LR = learning_rate * min_lr_ratio
   max_grad_norm: 1.0                 # Gradient clipping threshold
   policy_ratio_clip_eps: 0.2         # PPO-style policy ratio clipping epsilon
   max_new_tokens: 2048               # Max tokens generated per completion
   temperature: 1.0                   # Sampling temperature
   top_p: 1.0                         # Nucleus sampling threshold
   save_steps: -1                     # Save checkpoint every N steps (-1=disabled)
-  save_epoch_checkpoint: true        # Save checkpoint at end of each epoch
-  logging_steps: 1                   # Log metrics every N steps
+  save_checkpoint_every_epoch: true        # Save checkpoint at end of each epoch
   perfect_skip_reward_threshold: 1.0 # Skip group when median reward >= this value
   reject_unparseable_groups: true    # Defense line: reject groups with unparseable completions
-  dataloader_num_workers: 0          # DataLoader worker processes (0=main process)
   resume_from_checkpoint: null       # Path to checkpoint for resuming (null=fresh start)
 
 # ── GraspoFlow distributed backend ────────────────────────────────────────
@@ -88,7 +90,6 @@ graspoflow:
   use_kv_cache_for_rollout: true     # Use KV cache during rollout generation
   empty_cache_after_rollout_split: false  # Free CUDA cache between rollout chunks
   empty_cache_before_train: false    # Free CUDA cache before optimize step
-  checkpoint_format: recoverable_lora_tp  # Checkpoint format
   raw_log_enabled: true              # Write raw (full-detail) JSONL rollout logs
   readable_log_enabled: true         # Write readable (summary) JSONL rollout logs
   synchronize_cuda_timing: false     # Sync CUDA for precise timing (adds overhead)

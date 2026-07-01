@@ -1,11 +1,6 @@
 """Tests for group advantage computation — BADGE §11.1."""
 
-import math
-
-import pytest
-
 from graspo.core.advantage import group_advantages, has_reward_variance
-
 
 # ── group_advantages ─────────────────────────────────────────────────────────
 

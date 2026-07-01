@@ -69,7 +69,7 @@ uv run graspo launch --config config_example.yaml
 
 For a short smoke, keep `training.max_new_tokens=2048` and reduce
 `training.max_steps`. Real GRASPO training should keep
-`training.training_epoch_count=100` unless you intentionally run a bounded test.
+`training.max_epochs=100` unless you intentionally run a bounded test.
 
 Validate sample data and reward behavior:
 
@@ -258,10 +258,8 @@ complete public example.
 - `dropout`: LoRA dropout.
 - `adapter_path`: optional PEFT or GRASPO-PEFT adapter directory used only for warm-start.
 - `target_preset`: safe named target set, such as `language_safe`.
-- `target_modules`: explicit LoRA targets. If set, `lora.target_modules` takes
-  precedence over `target_preset`.
-- `auto_target_modules`: allow automatic target detection when explicit targets
-  are absent.
+- `target_modules`: explicit LoRA targets. If set, takes precedence over
+  `target_preset`.
 - `bias`: PEFT-compatible bias setting, usually `none`.
 - `task_type`: PEFT-compatible task type, usually `CAUSAL_LM`.
 
@@ -284,15 +282,15 @@ training.
 
 - `output_dir`: run output directory.
 - `seed`: random seed.
-- `training_epoch_count`: full dataset training epochs. Production default is
+- `max_epochs`: full dataset training epochs. Production default is
   `100`.
 - `max_steps`: optional step cap for smoke/debug runs. `-1` means no cap.
 - `rollout_group_size`: completions sampled per prompt.
 - `optimize_prompt_batch_size`: prompts scheduled together for one optimize
   step; replay buffer threshold is `optimize_prompt_batch_size × rollout_group_size`.
-- `optimize_times_per_step`: repeated optimization passes over the same replay
+- `optimize_iterations_per_step`: repeated optimization passes over the same replay
   completions.
-- `rollout_max_retry_times`: retry budget after the initial rollout attempt.
+- `rollout_max_retries`: retry budget after the initial rollout attempt.
 - `learning_rate`, `weight_decay`, `max_grad_norm`: optimizer settings.
 - `policy_ratio_clip_eps`: clipped policy-ratio objective epsilon.
 - `max_new_tokens`: real training generation length. Keep
@@ -300,14 +298,12 @@ training.
 - `temperature`, `top_p`: rollout sampling settings.
 - `save_steps`: native checkpoint interval. `-1` (default) disables per-step
   checkpoints, leaving only epoch checkpoints.
-- `save_epoch_checkpoint`: save a recoverable checkpoint at the end of each
+- `save_checkpoint_every_epoch`: save a recoverable checkpoint at the end of each
   epoch (default `true`). Recommended for production training.
-- `logging_steps`: compact training log interval.
 - `perfect_skip_reward_threshold`: threshold for skipping already-solved groups.
 - `reject_unparseable_groups`: when true (default), groups whose best completion
   has parse errors or tool-call count mismatch are retried or discarded instead
   of being used for training.
-- `dataloader_num_workers`: data loading worker count.
 - `resume_from_checkpoint`: recoverable GRASPO native checkpoint directory.
 
 `training.replay_buffer_optimize_threshold` is derived as
@@ -331,7 +327,6 @@ is only a LoRA warm-start.
 - `use_kv_cache_for_rollout`: use KV cache only for rollout generation.
 - `empty_cache_after_rollout_split`, `empty_cache_before_train`: CUDA cache
   controls.
-- `checkpoint_format`: native recoverable checkpoint format label.
 - `raw_log_enabled`, `readable_log_enabled`: rollout/replay log toggles.
 - `synchronize_cuda_timing`: synchronize CUDA events for timing diagnostics.
 - `pp_schedule`: pipeline schedule, `simple` (default) or `one_f_one_b`.
@@ -442,7 +437,7 @@ Each run writes to `training.output_dir`:
 - `logs/error.log`: aggregated ERROR-level events (invalid groups, reward variance
   failures, format-broken groups);
 - `logs/timing_events.jsonl`: timing diagnostics for each phase;
-- `epoch_*`: epoch-end recoverable checkpoints (when `save_epoch_checkpoint` is true);
+- `epoch_*`: epoch-end recoverable checkpoints (when `save_checkpoint_every_epoch` is true);
 - `step_*`: periodic recoverable checkpoints (when `save_steps > 0`);
 - `final`: final recoverable checkpoint after a clean exit;
 - `config.yaml`: configuration backup for full reproducibility.

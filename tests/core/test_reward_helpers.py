@@ -8,7 +8,6 @@ from graspo.core.reward_helpers import (
     normalize_tool_calls,
 )
 
-
 # ── is_valid_json ────────────────────────────────────────────────────────────
 
 
@@ -17,7 +16,7 @@ def test_is_valid_json_true_for_valid_object():
 
 
 def test_is_valid_json_true_for_valid_array():
-    assert is_valid_json('[1, 2, 3]') is True
+    assert is_valid_json("[1, 2, 3]") is True
 
 
 def test_is_valid_json_false_for_empty_string():
@@ -49,7 +48,9 @@ def test_normalize_targets_content_target():
 
 
 def test_normalize_targets_tool_call_target():
-    targets = [{"id": "t1", "output": {"tool_calls": [{"name": "search", "arguments": {"q": "x"}}]}}]
+    targets = [
+        {"id": "t1", "output": {"tool_calls": [{"name": "search", "arguments": {"q": "x"}}]}}
+    ]
     result = normalize_targets(targets)
     assert len(result) == 1
     assert result[0]["output"]["tool_calls"] == [{"name": "search", "arguments": {"q": "x"}}]

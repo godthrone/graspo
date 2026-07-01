@@ -45,7 +45,7 @@ class OptimizeMixin:
         metrics = self.runtime.train_batch(
             data,
             policy_ratio_clip_eps=self.config.training.policy_ratio_clip_eps,
-            optimize_times_per_step=self.config.training.optimize_times_per_step,
+            optimize_iterations_per_step=self.config.training.optimize_iterations_per_step,
             max_grad_norm=self.config.training.max_grad_norm,
         )
         optimize_sec = time.monotonic() - optimize_started_at
@@ -62,7 +62,7 @@ class OptimizeMixin:
             int(self.config.training.rollout_group_size), 1
         )
         metrics["optimize_prompt_batch_size"] = self.config.training.optimize_prompt_batch_size
-        metrics["optimize_times_per_step"] = self.config.training.optimize_times_per_step
+        metrics["optimize_iterations_per_step"] = self.config.training.optimize_iterations_per_step
         metrics["force_flush"] = bool(force)
         self.replay_buffer.clear()
         self.pending_batch_attempts.clear()

@@ -118,8 +118,8 @@ class CheckpointMixin:
                 "backend": self.backend_name,
                 "rollout_group_size": self.config.training.rollout_group_size,
                 "optimize_prompt_batch_size": self.config.training.optimize_prompt_batch_size,
-                "optimize_times_per_step": self.config.training.optimize_times_per_step,
-                "rollout_max_retry_times": self.config.training.rollout_max_retry_times,
+                "optimize_iterations_per_step": self.config.training.optimize_iterations_per_step,
+                "rollout_max_retries": self.config.training.rollout_max_retries,
                 "max_new_tokens": self.config.training.max_new_tokens,
             },
         }

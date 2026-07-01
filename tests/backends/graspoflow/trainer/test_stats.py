@@ -51,7 +51,10 @@ def test_train_stats_perfect_skip_counting():
         invalid_no_preference_gap=5,
     )
     # Verify decomposition: 30 + 50 + 15 + 5 = 100
-    assert stats.perfect_skipped + stats.trainable + stats.invalid + stats.invalid_no_preference_gap == 100
+    assert (
+        stats.perfect_skipped + stats.trainable + stats.invalid + stats.invalid_no_preference_gap
+        == 100
+    )
 
 
 # ── GraspoFlowEpochStats ──────────────────────────────────────────────────

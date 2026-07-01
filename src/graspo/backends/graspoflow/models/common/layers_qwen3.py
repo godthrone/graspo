@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 import torch
 from torch import nn
-from torch.nn import functional as F
+from torch.nn import functional as F  # noqa: N812
 
 if TYPE_CHECKING:
     from graspo.backends.graspoflow.tensor_utils import SafetensorIndex

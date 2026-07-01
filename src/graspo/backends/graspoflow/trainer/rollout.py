@@ -15,11 +15,11 @@ from graspo.backends.graspoflow.trainer.helpers import (
     reward_detail,
     safe_sample_metadata,
 )
+from graspo.backends.graspoflow.trainer.stats import _AttemptRecord, _QueuedSample
 from graspo.backends.graspoflow.trainer.summary import (
     monitor_group,
     scalar_generation_timing,
 )
-from graspo.backends.graspoflow.trainer.stats import _AttemptRecord, _QueuedSample
 from graspo.core.buffer import Experience
 from graspo.core.completion import raw_parsed_completion
 from graspo.core.graspo_parity import classify_group, has_reward_variance
@@ -173,7 +173,7 @@ class RolloutMixin:
                 rewards,
                 content_scores,
                 retry_count=state.retry_count,
-                rollout_max_retry_times=self.config.training.rollout_max_retry_times,
+                rollout_max_retries=self.config.training.rollout_max_retries,
                 perfect_skip_reward_threshold=self.config.training.perfect_skip_reward_threshold,
                 best_completion_has_parse_error=best_has_parse_error,
                 reject_unparseable_groups=self.config.training.reject_unparseable_groups,
@@ -267,7 +267,7 @@ class RolloutMixin:
             "generated_tokens": generated_token_counts(generation),
             "decision": decision.decision.value,
             "attempt_index": retry_count + 1,
-            "max_attempts": self.config.training.rollout_max_retry_times + 1,
+            "max_attempts": self.config.training.rollout_max_retries + 1,
             "retry_count": retry_count,
             "group_stats": group_stats(rewards),
             "reward_max_median_gap": decision.reward_max_median_gap,
@@ -482,5 +482,7 @@ class RolloutMixin:
         )
         logging.getLogger("graspo.trainer").error(
             "Invalid group: sample_index=%s step=%s reason=%s",
-            self.sample_index, self.global_step, reason,
+            self.sample_index,
+            self.global_step,
+            reason,
         )

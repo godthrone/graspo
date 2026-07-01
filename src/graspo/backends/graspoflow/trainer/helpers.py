@@ -1,4 +1,7 @@
-"""GraspoFlowTrainer 纯函数工具，不依赖 self 状态，可独立测试（宪法 §8.4 拆分后保留数据变换工具）。"""
+"""GraspoFlowTrainer 纯函数工具。
+
+不依赖 self 状态，可独立测试（宪法 §8.4 拆分后保留数据变换工具）。
+"""
 
 from __future__ import annotations
 
@@ -12,6 +15,7 @@ from graspo.backends.graspoflow.trainer.stats import (
     GraspoFlowTrainStats,
 )
 from graspo.core.advantage import group_advantages
+from graspo.core.graspo_parity import lower_median
 
 # ── 时间戳 ────────────────────────────────────────────────────────────────────
 
@@ -265,6 +269,3 @@ def _target_tool_call_counts(targets: Any) -> set[int]:
         if isinstance(calls, list):
             counts.add(len(calls))
     return counts or {1}
-
-
-
