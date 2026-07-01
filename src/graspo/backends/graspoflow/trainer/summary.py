@@ -6,12 +6,10 @@ from collections import deque
 from typing import Any
 
 from graspo.backends.graspoflow.trainer.helpers import (
-    _timestamp,
     is_pure_tool_call_task,
     tool_call_count_mismatch_count,
 )
 from graspo.core.graspo_parity import lower_median
-
 
 # ── 监控与摘要 ─────────────────────────────────────────────────────────────────
 
@@ -154,9 +152,7 @@ def reward_batch_summary(
                 if _likely_truncated_json(text, detail)
             )
         tool_call_parse_error_count += sum(1 for detail in details if detail.get("parse_errors"))
-        tool_call_count_mismatch += tool_call_count_mismatch_count(
-            details, attempt.get("targets")
-        )
+        tool_call_count_mismatch += tool_call_count_mismatch_count(details, attempt.get("targets"))
 
     attempt_group_count = len(attempts)
     trainable_group_count = decision_counts.get("trainable_max_correct", 0) + decision_counts.get(
@@ -418,14 +414,12 @@ def compact_optimize_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
             metrics.get("replay_buffer_optimize_threshold") or 0
         ),
         "optimize_prompt_batch_size": int(metrics.get("optimize_prompt_batch_size") or 0),
-        "optimize_times_per_step": int(metrics.get("optimize_times_per_step") or 0),
+        "optimize_iterations_per_step": int(metrics.get("optimize_iterations_per_step") or 0),
         "optimizer_steps_per_rank": optimizer_steps_per_rank,
         "global_optimizer_steps_sum": global_optimizer_steps,
         "loss_mean": _metric_float(metrics, "global_loss_mean", "loss_mean"),
         "grad_norm_mean": _metric_float(metrics, "global_grad_norm_mean", "grad_norm_mean"),
-        "lora_delta_mean": _metric_float(
-            metrics, "global_lora_norm_delta_mean", "lora_norm_delta"
-        ),
+        "lora_delta_mean": _metric_float(metrics, "global_lora_norm_delta_mean", "lora_norm_delta"),
         "skipped_nonfinite": int(metrics.get("skipped_nonfinite") or 0),
         "force_flush": bool(metrics.get("force_flush")),
     }

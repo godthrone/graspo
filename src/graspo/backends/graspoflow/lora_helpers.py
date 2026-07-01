@@ -4,11 +4,17 @@ Extracted from ``lora.py`` (Type B helpers):
 these functions don't depend on ``LoRALinear``'s state and are independently testable.
 """
 
+from __future__ import annotations
 
-from graspo.backends.graspoflow.models.qwen3.config import NativeQwenConfig
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from graspo.backends.graspoflow.models.qwen3.config import NativeQwenConfig
 
 
-def native_qwen_lora_available_targets(hf_config: NativeQwenConfig) -> tuple[str, ...]:
+def native_qwen_lora_available_targets(
+    hf_config: NativeQwenConfig,
+) -> tuple[str, ...]:
     language_mlp = (
         "language.mlp.gate_proj",
         "language.mlp.up_proj",

@@ -37,7 +37,7 @@ GRASPO 在 GRPO 基础上针对结构化输出场景做了以下改进：
 │  对 trainable group：                                    │
 │  · group_advantages() → 组内相对优势                      │
 │  · 将 Experience 加入 ReplayBuffer                       │
-│  · 重复 optimize_times_per_step 次                       │
+│  · 重复 optimize_iterations_per_step 次                       │
 │  · 从 ReplayBuffer 采样 optimize_prompt_batch_size 个     │
 │  · PPO-style policy ratio clipping + LoRA 更新           │
 └──────────────────────────────────────────────────────────┘

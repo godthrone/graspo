@@ -2,18 +2,14 @@
 
 from pathlib import Path
 
-from graspo.core.completion import ParsedCompletion
 from graspo.core.data import load_jsonl
 from graspo.core.graspo_parity import (
     GroupDecision,
     classify_group,
-    group_advantages,
-    has_reward_variance,
     replay_ready,
 )
 from graspo.core.reward import GraspoReward, RewardConfig
 from graspo.core.schema import GraspoConfig
-
 
 # ── Full pipeline: YAML config → data → reward → decision ───────────────────
 
@@ -118,7 +114,7 @@ def test_smoke_reward_on_tool_call_sample():
     good = (
         '<tool_call>{"name":"query_device_status",'
         '"arguments":{"device_id":"OLT-17","panel_time":"2026-06-08T10:30:00+08:00"}}'
-        '</tool_call>'
+        "</tool_call>"
     )
     result = reward_fn.score_parsed(good, sample.targets, is_tool_call=True)
     assert result.reward >= 0, f"Tool call reward should be non-negative, got {result.reward}"
@@ -132,9 +128,10 @@ def test_smoke_group_classification_perfect_skip():
     rewards = [1.0, 1.0, 1.0, 1.0]
     content_scores = [1.0, 1.0, 1.0, 1.0]
     decision = classify_group(
-        rewards, content_scores,
+        rewards,
+        content_scores,
         retry_count=0,
-        rollout_max_retry_times=5,
+        rollout_max_retries=5,
         perfect_skip_reward_threshold=1.0,
         best_completion_has_parse_error=False,
     )
@@ -147,9 +144,10 @@ def test_smoke_group_classification_trainable():
     rewards = [0.0, 0.3, 0.7, 1.0]
     content_scores = [0.0, 0.3, 0.7, 1.0]
     decision = classify_group(
-        rewards, content_scores,
+        rewards,
+        content_scores,
         retry_count=0,
-        rollout_max_retry_times=5,
+        rollout_max_retries=5,
         perfect_skip_reward_threshold=1.0,
         best_completion_has_parse_error=False,
     )
@@ -165,9 +163,10 @@ def test_smoke_group_classification_reject_unparseable():
     rewards = [0.0, 0.0, 0.3, 0.5]
     content_scores = [0.0, 0.0, 0.3, 0.5]
     decision = classify_group(
-        rewards, content_scores,
+        rewards,
+        content_scores,
         retry_count=0,
-        rollout_max_retry_times=5,
+        rollout_max_retries=5,
         perfect_skip_reward_threshold=1.0,
         best_completion_has_parse_error=True,
         reject_unparseable_groups=True,
@@ -181,9 +180,10 @@ def test_smoke_group_classification_no_variance():
     rewards = [0.5, 0.5, 0.5, 0.5]
     content_scores = [0.5, 0.5, 0.5, 0.5]
     decision = classify_group(
-        rewards, content_scores,
+        rewards,
+        content_scores,
         retry_count=0,
-        rollout_max_retry_times=5,
+        rollout_max_retries=5,
         perfect_skip_reward_threshold=1.0,
         best_completion_has_parse_error=False,
     )

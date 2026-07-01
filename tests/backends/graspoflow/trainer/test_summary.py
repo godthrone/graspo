@@ -19,9 +19,7 @@ def test_monitor_group_perfect_all_right():
             "```json\n{}\n```",
             "```json\n{}\n```",
         ],
-        "targets": [
-            {"output": {"content": {"key": "val"}}}
-        ],
+        "targets": [{"output": {"content": {"key": "val"}}}],
     }
 
     result = monitor_group(payload)

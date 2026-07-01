@@ -7,7 +7,7 @@ from typing import Any
 import torch
 import torch.distributed as dist
 from torch import nn
-from torch.nn import functional as F
+from torch.nn import functional as F  # noqa: N812
 
 from graspo.backends.graspoflow.lora_helpers import (
     _lora_target_enabled,

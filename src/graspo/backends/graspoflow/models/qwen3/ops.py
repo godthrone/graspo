@@ -3,7 +3,6 @@
 EmbedStageOp, DecoderStageOp, HeadStageOp for the Qwen3 family.
 """
 
-
 import torch
 
 from graspo.backends.graspoflow.operator import Microbatch
@@ -19,7 +18,6 @@ class Qwen3EmbedStageOp(TransformerStageOp):
 
         # Embed
         hidden = self.model.embed_tokens(mb.input_ids)
-        seq_len = int(hidden.shape[1])
 
         # Build position_ids
         from graspo.backends.graspoflow.tensor_utils import _position_ids
@@ -228,7 +226,6 @@ def build_qwen3_ops(
     tp_size: int,
 ) -> list[TransformerStageOp]:
     """Build the list of Qwen3 pipeline operators."""
-    placement = model.placement
     pp_rank = tp_state.pp_rank
     pp_size = tp_state.pp_size
     is_first = pp_rank == 0

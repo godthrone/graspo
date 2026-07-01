@@ -50,6 +50,9 @@ class GraspoFlowRuntimeProtocol(Protocol):
         tools: list[dict[str, Any]] | None = None,
         rollout_group_size: int,
         max_new_tokens: int,
+        temperature: float = 1.0,
+        top_p: float = 1.0,
+        max_prompt_length: int | None = None,
         chat_template_kwargs: dict[str, Any] | None = None,
     ) -> NativeGeneration: ...
 
@@ -60,6 +63,9 @@ class GraspoFlowRuntimeProtocol(Protocol):
         tool_batches: list[list[dict[str, Any]] | None] | None = None,
         rollout_group_size: int,
         max_new_tokens: int,
+        temperature: float = 1.0,
+        top_p: float = 1.0,
+        max_prompt_length: int | None = None,
         chat_template_kwargs: dict[str, Any] | None = None,
     ) -> list[NativeGeneration]: ...
 
@@ -69,12 +75,26 @@ class GraspoFlowRuntimeProtocol(Protocol):
         samples: list[Any],
         rollout_group_size: int,
         max_new_tokens: int,
+        temperature: float = 1.0,
+        top_p: float = 1.0,
+        max_prompt_length: int | None = None,
         chat_template_kwargs: dict[str, Any] | None = None,
     ) -> list[NativeGeneration]: ...
     def parse_completion(self, completion: str, sample: Sample) -> ParsedCompletion: ...
-    def sequence_log_probs(self, sequences: Any, attention_mask: Any, metadata: Any | None = None) -> Any: ...
-    def train_batch(self, experiences: list[Experience], *, policy_ratio_clip_eps: float, optimize_times_per_step: int, max_grad_norm: float) -> dict[str, Any]: ...
-    def save_checkpoint(self, path: str | Path, *, trainer_state: dict[str, Any] | None = None) -> None: ...
+    def sequence_log_probs(
+        self, sequences: Any, attention_mask: Any, metadata: Any | None = None
+    ) -> Any: ...
+    def train_batch(
+        self,
+        experiences: list[Experience],
+        *,
+        policy_ratio_clip_eps: float,
+        optimize_iterations_per_step: int,
+        max_grad_norm: float,
+    ) -> dict[str, Any]: ...
+    def save_checkpoint(
+        self, path: str | Path, *, trainer_state: dict[str, Any] | None = None
+    ) -> None: ...
     def load_checkpoint(self, path: str | Path) -> dict[str, Any] | None: ...
     def close(self) -> None: ...
     def is_primary(self) -> bool: ...
@@ -119,6 +139,9 @@ class GraspoFlowRuntime:
         tools: list[dict[str, Any]] | None = None,
         rollout_group_size: int,
         max_new_tokens: int,
+        temperature: float = 1.0,
+        top_p: float = 1.0,
+        max_prompt_length: int | None = None,
         chat_template_kwargs: dict[str, Any] | None = None,
     ) -> NativeGeneration:
         return self._require_adapter().generate_group(
@@ -126,6 +149,9 @@ class GraspoFlowRuntime:
             tools=tools,
             rollout_group_size=rollout_group_size,
             max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            max_prompt_length=max_prompt_length,
             chat_template_kwargs=chat_template_kwargs,
         )
 
@@ -136,6 +162,9 @@ class GraspoFlowRuntime:
         tool_batches: list[list[dict[str, Any]] | None] | None = None,
         rollout_group_size: int,
         max_new_tokens: int,
+        temperature: float = 1.0,
+        top_p: float = 1.0,
+        max_prompt_length: int | None = None,
         chat_template_kwargs: dict[str, Any] | None = None,
     ) -> list[NativeGeneration]:
         return self._require_adapter().generate_groups(
@@ -143,6 +172,9 @@ class GraspoFlowRuntime:
             tool_batches=tool_batches,
             rollout_group_size=rollout_group_size,
             max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            max_prompt_length=max_prompt_length,
             chat_template_kwargs=chat_template_kwargs,
         )
 
@@ -152,12 +184,18 @@ class GraspoFlowRuntime:
         samples: list[Any],
         rollout_group_size: int,
         max_new_tokens: int,
+        temperature: float = 1.0,
+        top_p: float = 1.0,
+        max_prompt_length: int | None = None,
         chat_template_kwargs: dict[str, Any] | None = None,
     ) -> list[NativeGeneration]:
         return self._require_adapter().generate_sample_groups(
             samples=samples,
             rollout_group_size=rollout_group_size,
             max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            max_prompt_length=max_prompt_length,
             chat_template_kwargs=chat_template_kwargs,
         )
 
@@ -176,13 +214,13 @@ class GraspoFlowRuntime:
         experiences: list[Experience],
         *,
         policy_ratio_clip_eps: float,
-        optimize_times_per_step: int,
+        optimize_iterations_per_step: int,
         max_grad_norm: float,
     ) -> dict[str, Any]:
         return self._require_adapter().train_batch(
             experiences,
             policy_ratio_clip_eps=policy_ratio_clip_eps,
-            optimize_times_per_step=optimize_times_per_step,
+            optimize_iterations_per_step=optimize_iterations_per_step,
             max_grad_norm=max_grad_norm,
         )
 
@@ -230,9 +268,7 @@ def validate_graspoflow_runtime_config(
     if schedule not in {"simple", "one_f_one_b"}:
         raise ValueError("graspoflow.pp_schedule must be simple or one_f_one_b")
     if config.training.resume_from_checkpoint and config.lora.adapter_path:
-        raise ValueError(
-            "training.resume_from_checkpoint and lora.adapter_path cannot both be set"
-        )
+        raise ValueError("training.resume_from_checkpoint and lora.adapter_path cannot both be set")
     if int(native.pp_max_inflight_microbatches) < 0:
         raise ValueError("graspoflow.pp_max_inflight_microbatches must be >= 0")
     if schedule == "one_f_one_b" and int(native.pp_size) <= 1:
@@ -243,6 +279,5 @@ def assert_forbidden_runtime_modules_not_imported() -> None:
     imported = [name for name in FORBIDDEN_RUNTIME_MODULES if name in sys.modules]
     if imported:
         raise RuntimeError(
-            "graspoflow runtime must not import forbidden frameworks: "
-            + ", ".join(imported)
+            "graspoflow runtime must not import forbidden frameworks: " + ", ".join(imported)
         )

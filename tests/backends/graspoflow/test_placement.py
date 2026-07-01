@@ -10,7 +10,6 @@ from graspo.backends.graspoflow.placement import (
     placement_summary,
 )
 
-
 # ── build_placement_plan: single GPU (pp_size=1) ────────────────────────────
 
 

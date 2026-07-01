@@ -52,7 +52,7 @@ cp config_example.yaml my_graspo.yaml
 uv run graspo launch --config config_example.yaml
 ```
 
-短测时保持 `training.max_new_tokens=2048`，只降低 `training.max_steps`。真实训练默认保持 `training.training_epoch_count=100`，除非你刻意做有限步数测试。
+短测时保持 `training.max_new_tokens=2048`，只降低 `training.max_steps`。真实训练默认保持 `training.max_epochs=100`，除非你刻意做有限步数测试。
 
 验证样例数据和 reward：
 
@@ -179,7 +179,6 @@ GRASPO 使用同一 rollout group 内的 reward 分布，而不是单条 complet
 - `adapter_path`：可选 PEFT 或 GRASPO-PEFT adapter 目录，只用于 warm-start。
 - `target_preset`：target preset，例如 `language_safe`。
 - `target_modules`：显式 LoRA targets；设置后优先于 `target_preset`。
-- `auto_target_modules`：保留为配置字段；native 训练推荐使用 preset 或显式 canonical targets。
 - `bias`：PEFT-compatible bias 设置，通常为 `none`。
 - `task_type`：PEFT-compatible task type，通常为 `CAUSAL_LM`。
 
@@ -198,23 +197,21 @@ GRASPO 使用同一 rollout group 内的 reward 分布，而不是单条 complet
 
 - `output_dir`：run 输出目录。
 - `seed`：随机种子。
-- `training_epoch_count`：完整数据集训练轮数；生产默认 `100`。
+- `max_epochs`：完整数据集训练轮数；生产默认 `100`。
 - `max_steps`：短测/debug step 上限；`-1` 表示不限制。
 - `rollout_group_size`：每个 prompt attempt 采样多少条 completion。
 - `optimize_prompt_batch_size`：每个 optimizer step 的 prompt 数量；
   replay buffer threshold = `optimize_prompt_batch_size × rollout_group_size`。
-- `optimize_times_per_step`：同一批 replay completion 重复优化几轮。
-- `rollout_max_retry_times`：初始 rollout 后的 retry 预算。
+- `optimize_iterations_per_step`：同一批 replay completion 重复优化几轮。
+- `rollout_max_retries`：初始 rollout 后的 retry 预算。
 - `learning_rate`、`weight_decay`、`max_grad_norm`：optimizer 设置。
 - `policy_ratio_clip_eps`：policy-ratio clipped objective epsilon。
 - `max_new_tokens`：真实训练生成长度；保持 `training.max_new_tokens=2048`。
 - `temperature`、`top_p`：rollout sampling 设置。
 - `save_steps`：native checkpoint 间隔。`-1`（默认）禁用 step 级别 checkpoint，仅保留 epoch checkpoint。
-- `save_epoch_checkpoint`：每个 epoch 结束时保存可恢复 checkpoint（默认 `true`）。生产训练推荐保持开启。
-- `logging_steps`：紧凑训练日志间隔。
+- `save_checkpoint_every_epoch`：每个 epoch 结束时保存可恢复 checkpoint（默认 `true`）。生产训练推荐保持开启。
 - `perfect_skip_reward_threshold`：跳过已解 prompt 的阈值。
 - `reject_unparseable_groups`：默认 true，当最好 completion 有 parse error 或 tool-call count mismatch 时，group 会被 retry 或丢弃，不参与训练。
-- `dataloader_num_workers`：数据加载 worker 数。
 - `resume_from_checkpoint`：可恢复 GRASPO native checkpoint 目录。
 
 `training.replay_buffer_optimize_threshold` 由 `optimize_prompt_batch_size * rollout_group_size` 派生，不能手动配置。`training.resume_from_checkpoint` 和 `lora.adapter_path` 互斥：前者恢复 native checkpoint 状态，后者只是 PEFT/GRASPO-PEFT LoRA warm-start。
@@ -231,7 +228,6 @@ GRASPO 使用同一 rollout group 内的 reward 分布，而不是单条 complet
 - `forward_batch_size`：rollout forward batch size（默认 8），替代旧的 `gpu_memory_utilization`。
 - `use_kv_cache_for_rollout`：KV cache 只用于 rollout generation。
 - `empty_cache_after_rollout_split`、`empty_cache_before_train`：CUDA cache 控制。
-- `checkpoint_format`：native recoverable checkpoint 格式标签。
 - `raw_log_enabled`、`readable_log_enabled`：rollout/replay 日志开关。
 - `synchronize_cuda_timing`：是否同步 CUDA timing。
 - `pp_schedule`：pipeline schedule，`simple`（默认）或 `one_f_one_b`。
@@ -313,7 +309,7 @@ export:
 - `logs/rank_metrics.rank_*.jsonl`：每 rank 显存、耗时、LoRA 和 optimizer 诊断；
 - `logs/error.log`：ERROR 级别事件汇聚（无效 group、reward 方差失败、格式损坏 group）；
 - `logs/timing_events.jsonl`：各阶段 timing 诊断；
-- `epoch_*`：每个 epoch 结束时的可恢复 checkpoint（当 `save_epoch_checkpoint` 为 true 时）；
+- `epoch_*`：每个 epoch 结束时的可恢复 checkpoint（当 `save_checkpoint_every_epoch` 为 true 时）；
 - `step_*`：周期性可恢复 checkpoint（当 `save_steps > 0` 时）；
 - `final`：干净退出后的最终可恢复 checkpoint；
 - `config.yaml`：本次运行的配置备份，确保可完整复现。

@@ -46,6 +46,7 @@ class NativeRolloutLogger:
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
+
 from graspo.backends.graspoflow.logger_helpers import (  # noqa: E402, F401
     _get_index,
     _is_pure_tool_call_task,

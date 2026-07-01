@@ -7,13 +7,8 @@
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
 from typing import Any
-
-import torch
-import torch.distributed as dist
-from torch.nn.utils.rnn import pad_sequence
 
 from graspo.backends.graspoflow.lora_helpers import native_qwen_lora_available_targets
 from graspo.backends.graspoflow.lora_io import load_peft_adapter_into_native_model
@@ -22,36 +17,17 @@ from graspo.backends.graspoflow.models.qwen3.model import (
 )
 from graspo.backends.graspoflow.models.qwen35_36.generation import _Qwen35GenerationMethods
 from graspo.backends.graspoflow.models.qwen35_36.logprobs import _Qwen35LogprobsMethods
-from graspo.backends.graspoflow.models.qwen35_36.model import Qwen35HybridTextModel
 from graspo.backends.graspoflow.models.qwen35_36.ops import build_qwen35_ops
 from graspo.backends.graspoflow.models.qwen35_36.training import _Qwen35TrainingMethods
-from graspo.backends.graspoflow.multimodal import (
-    _compute_multimodal_offset_tables,
-    _media_counts,
-    _multimodal_row_from_sample,
-    _normalize_tool_batches,
-    _slice_multimodal_inputs_offset,
-)
 from graspo.backends.graspoflow.placement import (
     build_placement_plan,
-    placement_summary,
 )
-from graspo.backends.graspoflow.runtime import NativeGeneration
 from graspo.backends.graspoflow.tensor_utils import (
     SafetensorIndex,
-    _add_pipeline_stage_timing,
-    _broadcast_and_pad_finished,
-    _left_pad_token_rows,
-    _new_pipeline_stage_timing,
-    _next_token_from_logits,
     _resolve_dtype,
-    _round_pipeline_stage_timing,
-    _selected_token_log_probs_from_hidden,
-    collate_experiences,
 )
 from graspo.backends.graspoflow.tool_parser import parse_qwen_tool_completion
 from graspo.backends.graspoflow.transformer_adapter import TransformerAdapter
-from graspo.core.buffer import Experience
 from graspo.core.completion import ParsedCompletion
 from graspo.trainer.lora import resolve_lora_target_modules
 
@@ -110,11 +86,8 @@ class Qwen35Adapter(
         assert self.model is not None
         missing_lora_targets = sorted(
             target
-            for target in set(lora_targets.resolved)
-            - set(self.model.enabled_lora_target_names())
-            if not (
-                target.startswith("visual.") and getattr(self.model, "visual", None) is None
-            )
+            for target in set(lora_targets.resolved) - set(self.model.enabled_lora_target_names())
+            if not (target.startswith("visual.") and getattr(self.model, "visual", None) is None)
         )
         if missing_lora_targets:
             raise ValueError(
@@ -136,9 +109,7 @@ class Qwen35Adapter(
             tp_size=self.tp_size,
         )
 
-    def parse_completion(
-        self, completion: str, sample: Any | None = None
-    ) -> ParsedCompletion:
+    def parse_completion(self, completion: str, sample: Any | None = None) -> ParsedCompletion:
         return parse_qwen_tool_completion(
             completion,
             expect_tool_calls=bool(getattr(sample, "expects_tool_calls", False)),

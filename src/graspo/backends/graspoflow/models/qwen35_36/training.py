@@ -1,66 +1,33 @@
+"""Qwen3.5/3.6 adapter — training methods (TP-only, PP, 1F1B)."""
+
 from __future__ import annotations
 
-"""Qwen3.5/3.6 adapter — training methods (TP-only, PP, 1F1B).
-"""
-
 import time
-from pathlib import Path
 from typing import Any
 
 import torch
 import torch.distributed as dist
-from torch.nn.utils.rnn import pad_sequence
 
-from graspo.backends.graspoflow.lora_helpers import native_qwen_lora_available_targets
-from graspo.backends.graspoflow.lora_io import load_peft_adapter_into_native_model
-from graspo.backends.graspoflow.models.qwen3.model import (
-    build_native_qwen_model,
-)
 from graspo.backends.graspoflow.models.qwen35_36.model import Qwen35HybridTextModel
-from graspo.backends.graspoflow.models.qwen35_36.ops import build_qwen35_ops
-from graspo.backends.graspoflow.multimodal import (
-    _compute_multimodal_offset_tables,
-    _media_counts,
-    _multimodal_row_from_sample,
-    _normalize_tool_batches,
-    _slice_multimodal_inputs_offset,
-)
-from graspo.backends.graspoflow.placement import (
-    build_placement_plan,
-    placement_summary,
-)
-from graspo.backends.graspoflow.runtime import NativeGeneration
 from graspo.backends.graspoflow.tensor_utils import (
-    SafetensorIndex,
     _add_pipeline_stage_timing,
-    _broadcast_and_pad_finished,
-    _left_pad_token_rows,
     _new_pipeline_stage_timing,
-    _next_token_from_logits,
-    _resolve_dtype,
     _round_pipeline_stage_timing,
     _selected_token_log_probs_from_hidden,
     collate_experiences,
 )
-from graspo.backends.graspoflow.tool_parser import parse_qwen_tool_completion
-from graspo.backends.graspoflow.transformer_adapter import TransformerAdapter
 from graspo.core.buffer import Experience
-from graspo.core.completion import ParsedCompletion
-from graspo.trainer.lora import resolve_lora_target_modules
-
-
 
 
 class _Qwen35TrainingMethods:
     """Mixin: training/batch optimization methods for Qwen35Adapter."""
-
 
     def train_batch(
         self,
         experiences: list[Experience],
         *,
         policy_ratio_clip_eps: float,
-        optimize_times_per_step: int,
+        optimize_iterations_per_step: int,
         max_grad_norm: float,
     ) -> dict[str, Any]:
         self._require_ready()
@@ -70,15 +37,12 @@ class _Qwen35TrainingMethods:
             return self._pipeline_train_batch(
                 experiences,
                 policy_ratio_clip_eps=policy_ratio_clip_eps,
-                optimize_times_per_step=optimize_times_per_step,
+                optimize_iterations_per_step=optimize_iterations_per_step,
                 max_grad_norm=max_grad_norm,
             )
         self.loss_fn.policy_ratio_clip_eps = policy_ratio_clip_eps
         self.model.train()
-        if (
-            bool(self.config.graspoflow.empty_cache_before_train)
-            and self.device.type == "cuda"
-        ):
+        if bool(self.config.graspoflow.empty_cache_before_train) and self.device.type == "cuda":
             torch.cuda.empty_cache()
             self._emit_rank_memory_event("train_before_empty_cache")
 
@@ -95,11 +59,9 @@ class _Qwen35TrainingMethods:
         backward_sec = 0.0
         optimizer_step_sec = 0.0
         micro_batch_count = 0
-        for optimize_round in range(optimize_times_per_step):
+        for optimize_round in range(optimize_iterations_per_step):
             round_started_at = time.monotonic()
-            indices = self._shared_training_indices(
-                len(experiences), optimize_round=optimize_round
-            )
+            indices = self._shared_training_indices(len(experiences), optimize_round=optimize_round)
             for start in range(0, len(indices) - batch_size + 1, batch_size):
                 batch_indices = indices[start : start + batch_size]
                 batch = collate_experiences(
@@ -114,18 +76,14 @@ class _Qwen35TrainingMethods:
                 )
                 if multimodal_inputs is not None:
                     if not isinstance(self.model, Qwen35HybridTextModel):
-                        raise ValueError(
-                            "multimodal batch metadata for a non-multimodal model"
-                        )
+                        raise ValueError("multimodal batch metadata for a non-multimodal model")
                     log_probs = self.model.sequence_log_probs(
                         batch.sequences,
                         batch.attention_mask,
                         multimodal_inputs=multimodal_inputs,
                     )
                 else:
-                    log_probs = self.model.sequence_log_probs(
-                        batch.sequences, batch.attention_mask
-                    )
+                    log_probs = self.model.sequence_log_probs(batch.sequences, batch.attention_mask)
                 self._sync_timing()
                 micro_batch_forward_sec += time.monotonic() - forward_started_at
                 loss = self.loss_fn(
@@ -156,6 +114,8 @@ class _Qwen35TrainingMethods:
                 self.optimizer.step()
                 self._sync_timing()
                 optimizer_step_sec += time.monotonic() - optimizer_started_at
+                if self.scheduler is not None:
+                    self.scheduler.step()
                 optimizer_steps += 1
                 micro_batch_count += 1
                 loss_sum += float(loss.detach().cpu())
@@ -186,9 +146,8 @@ class _Qwen35TrainingMethods:
             "backward_sec": backward_sec,
             "optimizer_step_sec": optimizer_step_sec,
             "micro_batch_count": micro_batch_count,
-            "synchronize_cuda_timing": bool(
-                self.config.graspoflow.synchronize_cuda_timing
-            ),
+            "synchronize_cuda_timing": bool(self.config.graspoflow.synchronize_cuda_timing),
+            "current_lr": self._current_lr(),
         }
         metrics = self._aggregate_rank_metrics(metrics)
         self._emit_rank_memory_event("train_batch_after", {"metrics": metrics})
@@ -199,7 +158,7 @@ class _Qwen35TrainingMethods:
         experiences: list[Experience],
         *,
         policy_ratio_clip_eps: float,
-        optimize_times_per_step: int,
+        optimize_iterations_per_step: int,
         max_grad_norm: float,
     ) -> dict[str, Any]:
         """PP training — delegates to 1F1B or simple schedule."""
@@ -210,13 +169,13 @@ class _Qwen35TrainingMethods:
             return self._pipeline_train_batch_one_f_one_b(
                 experiences,
                 policy_ratio_clip_eps=policy_ratio_clip_eps,
-                optimize_times_per_step=optimize_times_per_step,
+                optimize_iterations_per_step=optimize_iterations_per_step,
                 max_grad_norm=max_grad_norm,
             )
         return self._pipeline_train_batch_simple(
             experiences,
             policy_ratio_clip_eps=policy_ratio_clip_eps,
-            optimize_times_per_step=optimize_times_per_step,
+            optimize_iterations_per_step=optimize_iterations_per_step,
             max_grad_norm=max_grad_norm,
         )
 
@@ -235,9 +194,7 @@ class _Qwen35TrainingMethods:
         hidden_size = int(self.model.config.hidden_size)
         dtype = next(self.model.parameters()).dtype
         stage_input: torch.Tensor | None = None
-        multimodal_inputs = self._multimodal_inputs_from_metadata(
-            metadata, batch_size=batch
-        )
+        multimodal_inputs = self._multimodal_inputs_from_metadata(metadata, batch_size=batch)
         if self.pp_rank == 0:
             compute_started_at = time.monotonic()
             output = self.model.forward_stage(
@@ -250,9 +207,7 @@ class _Qwen35TrainingMethods:
                 position_input_ids=sequences,
                 apply_lm_head=False,
             )
-            _add_pipeline_stage_timing(
-                timing, "pipeline_stage_compute_sec", compute_started_at
-            )
+            _add_pipeline_stage_timing(timing, "pipeline_stage_compute_sec", compute_started_at)
         else:
             stage_input = torch.empty(
                 (batch, seq_len, hidden_size), device=self.device, dtype=dtype
@@ -272,20 +227,14 @@ class _Qwen35TrainingMethods:
                 position_input_ids=sequences,
                 apply_lm_head=False,
             )
-            _add_pipeline_stage_timing(
-                timing, "pipeline_stage_compute_sec", compute_started_at
-            )
+            _add_pipeline_stage_timing(timing, "pipeline_stage_compute_sec", compute_started_at)
         assert isinstance(output, torch.Tensor)
         if self.pp_rank < self.pp_size - 1:
             send_started_at = time.monotonic()
-            dist.send(
-                output.detach().contiguous(), dst=int(self.tp_state.next_pp_rank)
-            )
+            dist.send(output.detach().contiguous(), dst=int(self.tp_state.next_pp_rank))
             _add_pipeline_stage_timing(timing, "pipeline_send_sec", send_started_at)
         if timing is not None:
-            timing["pipeline_forward_calls"] = (
-                int(timing.get("pipeline_forward_calls") or 0) + 1
-            )
+            timing["pipeline_forward_calls"] = int(timing.get("pipeline_forward_calls") or 0) + 1
         return output, stage_input
 
     def _pipeline_train_batch_simple(
@@ -293,7 +242,7 @@ class _Qwen35TrainingMethods:
         experiences: list[Experience],
         *,
         policy_ratio_clip_eps: float,
-        optimize_times_per_step: int,
+        optimize_iterations_per_step: int,
         max_grad_norm: float,
     ) -> dict[str, Any]:
         self.loss_fn.policy_ratio_clip_eps = policy_ratio_clip_eps
@@ -312,11 +261,9 @@ class _Qwen35TrainingMethods:
         round_secs: list[float] = []
         micro_batch_count = 0
         stage_timing = _new_pipeline_stage_timing()
-        for optimize_round in range(optimize_times_per_step):
+        for optimize_round in range(optimize_iterations_per_step):
             round_started_at = time.monotonic()
-            indices = self._shared_training_indices(
-                len(experiences), optimize_round=optimize_round
-            )
+            indices = self._shared_training_indices(len(experiences), optimize_round=optimize_round)
             for start in range(0, len(indices) - batch_size + 1, batch_size):
                 batch_indices = indices[start : start + batch_size]
                 batch = collate_experiences(
@@ -340,9 +287,7 @@ class _Qwen35TrainingMethods:
                     assert self.model.norm is not None and self.model.lm_head is not None
                     norm_started_at = time.monotonic()
                     hidden = self.model.norm(stage_output)
-                    _add_pipeline_stage_timing(
-                        stage_timing, "pipeline_norm_sec", norm_started_at
-                    )
+                    _add_pipeline_stage_timing(stage_timing, "pipeline_norm_sec", norm_started_at)
                     lm_head_started_at = time.monotonic()
                     log_probs = _selected_token_log_probs_from_hidden(
                         hidden[:, :-1].float(),
@@ -359,16 +304,12 @@ class _Qwen35TrainingMethods:
                         batch.advantages,
                         batch.action_mask,
                     )
-                    _add_pipeline_stage_timing(
-                        stage_timing, "pipeline_loss_sec", loss_started_at
-                    )
+                    _add_pipeline_stage_timing(stage_timing, "pipeline_loss_sec", loss_started_at)
                     finite = bool(torch.isfinite(loss).detach().cpu())
                 else:
                     finite = True
                 finite_payload = [finite]
-                dist.broadcast_object_list(
-                    finite_payload, src=(self.pp_size - 1) * self.tp_size
-                )
+                dist.broadcast_object_list(finite_payload, src=(self.pp_size - 1) * self.tp_size)
                 if not bool(finite_payload[0]):
                     skipped_nonfinite += 1
                     continue
@@ -410,12 +351,12 @@ class _Qwen35TrainingMethods:
                     self.optimizer.step()
                 self._sync_timing()
                 optimizer_step_sec += time.monotonic() - optimizer_started_at
+                if self.scheduler is not None and self.optimizer is not None:
+                    self.scheduler.step()
                 optimizer_steps += 1
                 micro_batch_count += 1
                 loss_payload = [loss_value]
-                dist.broadcast_object_list(
-                    loss_payload, src=(self.pp_size - 1) * self.tp_size
-                )
+                dist.broadcast_object_list(loss_payload, src=(self.pp_size - 1) * self.tp_size)
                 loss_sum += float(loss_payload[0])
                 grad_norm_sum += float(grad_norm.detach().float().cpu())
                 nonzero_grad_count += self.model.nonzero_lora_grad_count()
@@ -445,15 +386,12 @@ class _Qwen35TrainingMethods:
             "micro_batch_count": micro_batch_count,
             "pp_size": self.pp_size,
             "pipeline_stage_rank": self.pp_rank,
-            "placement_strategy": (
-                self.placement.strategy if self.placement is not None else None
-            ),
+            "placement_strategy": (self.placement.strategy if self.placement is not None else None),
             "pp_schedule": "simple",
             "pp_max_inflight_microbatches": 1,
             "pipeline_stage_timing": _round_pipeline_stage_timing(stage_timing),
-            "synchronize_cuda_timing": bool(
-                self.config.graspoflow.synchronize_cuda_timing
-            ),
+            "synchronize_cuda_timing": bool(self.config.graspoflow.synchronize_cuda_timing),
+            "current_lr": self._current_lr(),
         }
         metrics = self._aggregate_rank_metrics(metrics)
         self._emit_rank_memory_event("pipeline_train_batch_after", {"metrics": metrics})
@@ -464,7 +402,7 @@ class _Qwen35TrainingMethods:
         experiences: list[Experience],
         *,
         policy_ratio_clip_eps: float,
-        optimize_times_per_step: int,
+        optimize_iterations_per_step: int,
         max_grad_norm: float,
     ) -> dict[str, Any]:
         assert isinstance(self.model, Qwen35HybridTextModel)
@@ -478,9 +416,7 @@ class _Qwen35TrainingMethods:
         nonzero_grad_count = 0
         lora_norm_before = self.model.lora_parameter_norm()
         batch_size = int(self.config.training.optimize_prompt_batch_size)
-        pipeline_micro_batch_size = max(
-            1, int(self.config.graspoflow.pp_micro_batch_size)
-        )
+        pipeline_micro_batch_size = max(1, int(self.config.graspoflow.pp_micro_batch_size))
         train_batch_started_at = time.monotonic()
         micro_batch_forward_sec = 0.0
         backward_sec = 0.0
@@ -493,11 +429,9 @@ class _Qwen35TrainingMethods:
         drain_sec = 0.0
         max_chunks_per_optimizer_step = 0
         configured_inflight = int(self.config.graspoflow.pp_max_inflight_microbatches)
-        for optimize_round in range(optimize_times_per_step):
+        for optimize_round in range(optimize_iterations_per_step):
             round_started_at = time.monotonic()
-            indices = self._shared_training_indices(
-                len(experiences), optimize_round=optimize_round
-            )
+            indices = self._shared_training_indices(len(experiences), optimize_round=optimize_round)
             for start in range(0, len(indices) - batch_size + 1, batch_size):
                 batch_indices = indices[start : start + batch_size]
                 chunk_batches = [
@@ -510,9 +444,7 @@ class _Qwen35TrainingMethods:
                         ],
                         self.device,
                     )
-                    for chunk_start in range(
-                        0, len(batch_indices), pipeline_micro_batch_size
-                    )
+                    for chunk_start in range(0, len(batch_indices), pipeline_micro_batch_size)
                 ]
                 if not chunk_batches:
                     continue
@@ -559,11 +491,11 @@ class _Qwen35TrainingMethods:
                     stage_timing, "pipeline_optimizer_step_sec", optimizer_started_at
                 )
                 optimizer_step_sec += time.monotonic() - optimizer_started_at
+                if self.scheduler is not None and self.optimizer is not None:
+                    self.scheduler.step()
                 optimizer_steps += 1
                 loss_payload = [float(result["loss_value"])]
-                dist.broadcast_object_list(
-                    loss_payload, src=(self.pp_size - 1) * self.tp_size
-                )
+                dist.broadcast_object_list(loss_payload, src=(self.pp_size - 1) * self.tp_size)
                 loss_sum += float(loss_payload[0])
                 grad_norm_sum += float(grad_norm.detach().float().cpu())
                 nonzero_grad_count += self.model.nonzero_lora_grad_count()
@@ -596,9 +528,7 @@ class _Qwen35TrainingMethods:
             "micro_batch_count": micro_batch_count,
             "pp_size": self.pp_size,
             "pipeline_stage_rank": self.pp_rank,
-            "placement_strategy": (
-                self.placement.strategy if self.placement is not None else None
-            ),
+            "placement_strategy": (self.placement.strategy if self.placement is not None else None),
             "pp_schedule": "one_f_one_b",
             "pipeline_pp_micro_batch_size": pipeline_micro_batch_size,
             "pipeline_chunks_per_optimizer_step": max_chunks_per_optimizer_step,
@@ -607,16 +537,13 @@ class _Qwen35TrainingMethods:
             "pipeline_fill_sec": fill_sec,
             "pipeline_steady_sec": steady_sec,
             "pipeline_drain_sec": drain_sec,
-            "pipeline_backpressure_wait_sec": float(
-                stage_timing.get("pipeline_recv_sec") or 0.0
-            )
+            "pipeline_backpressure_wait_sec": float(stage_timing.get("pipeline_recv_sec") or 0.0)
             + float(stage_timing.get("pipeline_send_sec") or 0.0)
             + float(stage_timing.get("pipeline_grad_recv_sec") or 0.0)
             + float(stage_timing.get("pipeline_grad_send_sec") or 0.0),
             "pipeline_stage_timing": _round_pipeline_stage_timing(stage_timing),
-            "synchronize_cuda_timing": bool(
-                self.config.graspoflow.synchronize_cuda_timing
-            ),
+            "synchronize_cuda_timing": bool(self.config.graspoflow.synchronize_cuda_timing),
+            "current_lr": self._current_lr(),
         }
         metrics = self._aggregate_rank_metrics(metrics)
         self._emit_rank_memory_event("pipeline_train_batch_after", {"metrics": metrics})
@@ -665,18 +592,14 @@ class _Qwen35TrainingMethods:
                 assert self.model.norm is not None and self.model.lm_head is not None
                 norm_started_at = time.monotonic()
                 hidden = self.model.norm(stage_output)
-                _add_pipeline_stage_timing(
-                    timing, "pipeline_norm_sec", norm_started_at
-                )
+                _add_pipeline_stage_timing(timing, "pipeline_norm_sec", norm_started_at)
                 lm_head_started_at = time.monotonic()
                 log_probs = _selected_token_log_probs_from_hidden(
                     hidden[:, :-1].float(),
                     self.model.lm_head.weight.float(),
                     batch.sequences[:, 1:],
                 )
-                _add_pipeline_stage_timing(
-                    timing, "pipeline_lm_head_sec", lm_head_started_at
-                )
+                _add_pipeline_stage_timing(timing, "pipeline_lm_head_sec", lm_head_started_at)
                 loss_started_at = time.monotonic()
                 chunk_loss = self.loss_fn(
                     log_probs,
@@ -684,13 +607,9 @@ class _Qwen35TrainingMethods:
                     batch.advantages,
                     batch.action_mask,
                 )
-                _add_pipeline_stage_timing(
-                    timing, "pipeline_loss_sec", loss_started_at
-                )
+                _add_pipeline_stage_timing(timing, "pipeline_loss_sec", loss_started_at)
                 finite = bool(torch.isfinite(chunk_loss).detach().cpu())
-                weight = float(batch.sequences.shape[0]) / max(
-                    1, int(full_batch_size)
-                )
+                weight = float(batch.sequences.shape[0]) / max(1, int(full_batch_size))
                 loss = chunk_loss * weight if finite else None
                 loss_value = float(chunk_loss.detach().cpu()) * weight if finite else 0.0
             records[chunk_idx] = {
@@ -740,9 +659,7 @@ class _Qwen35TrainingMethods:
                 grad_recv_started_at = time.monotonic()
                 assert self.tp_state is not None
                 dist.recv(grad_output, src=int(self.tp_state.next_pp_rank or 0))
-                _add_pipeline_stage_timing(
-                    timing, "pipeline_grad_recv_sec", grad_recv_started_at
-                )
+                _add_pipeline_stage_timing(timing, "pipeline_grad_recv_sec", grad_recv_started_at)
                 autograd_started_at = time.monotonic()
                 stage_output.backward(grad_output)
                 _add_pipeline_stage_timing(
@@ -787,9 +704,7 @@ class _Qwen35TrainingMethods:
         all_finite = all(finite_flags)
         finite_payload = [all_finite]
         if dist.is_available() and dist.is_initialized():
-            dist.broadcast_object_list(
-                finite_payload, src=(self.pp_size - 1) * self.tp_size
-            )
+            dist.broadcast_object_list(finite_payload, src=(self.pp_size - 1) * self.tp_size)
         return {
             "finite": bool(finite_payload[0]),
             "loss_value": sum(loss_values),
@@ -799,4 +714,3 @@ class _Qwen35TrainingMethods:
             "steady_sec": steady_sec,
             "drain_sec": drain_sec,
         }
-
