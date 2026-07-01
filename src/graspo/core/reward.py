@@ -7,11 +7,9 @@ from pydantic import BaseModel, ConfigDict
 from graspo.core.compare import dict_compare_score
 from graspo.core.completion import ParsedCompletion, raw_parsed_completion
 from graspo.core.reward_helpers import (
-    _normalize_target,
     empty_target_score,
     is_valid_json,
     normalize_targets,
-    normalize_tool_calls,
 )
 
 ContentField = Literal["answer"]
@@ -296,5 +294,3 @@ class GraspoReward:
             2,
             len(useless_text) / self.config.anti_useless_str_half_reward_len,
         )
-
-

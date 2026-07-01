@@ -6,10 +6,9 @@ torch = pytest.importorskip("torch", reason="torch required")
 if not torch.cuda.is_available():
     pytest.skip("CUDA required for LoRA I/O GPU tests", allow_module_level=True)
 
-from pathlib import Path
 
-from graspo.backends.graspoflow.lora import LoRALinear
-from graspo.backends.graspoflow.lora_io import (
+from graspo.backends.graspoflow.lora import LoRALinear  # noqa: E402
+from graspo.backends.graspoflow.lora_io import (  # noqa: E402
     load_lora_weights,
     save_lora_weights,
 )

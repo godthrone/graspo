@@ -1,4 +1,3 @@
-
 import pytest
 
 from graspo.backends.selector import select_backend

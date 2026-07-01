@@ -2,7 +2,6 @@
 
 from graspo.backends.graspoflow.tool_parser import parse_qwen_tool_completion
 
-
 # ── parse_qwen_tool_completion: JSON tool calls ──────────────────────────────
 
 
@@ -70,20 +69,14 @@ def test_parse_extra_text_strips_empty():
 
 
 def test_parse_xml_tool_call_with_function_parameters():
-    text = (
-        '<tool_call>'
-        '<function=search>'
-        '<parameter=query>hello</parameter>'
-        '</function>'
-        '</tool_call>'
-    )
+    text = "<tool_call><function=search><parameter=query>hello</parameter></function></tool_call>"
     parsed = parse_qwen_tool_completion(text)
     # XML tool calls are parsed when JSON fails
     assert len(parsed.tool_calls) >= 1 or len(parsed.parse_errors) >= 1
 
 
 def test_parse_unwrapped_xml_function():
-    text = '<function=search><parameter=q>hello</parameter></function>'
+    text = "<function=search><parameter=q>hello</parameter></function>"
     parsed = parse_qwen_tool_completion(text)
     # Should attempt unwrapped XML parsing
     assert parsed.parser_name in (
@@ -104,7 +97,9 @@ def test_parse_empty_string():
 
 
 def test_parse_invalid_json_tool_call():
-    text = '<tool_call>{invalid json}</tool_call>'
+    text = "<tool_call>{invalid json}</tool_call>"
     parsed = parse_qwen_tool_completion(text, expect_tool_calls=True)
     # Should report parse error and empty tool calls
-    assert any("canonical JSON" in err for err in parsed.parse_errors) or len(parsed.tool_calls) == 0
+    assert (
+        any("canonical JSON" in err for err in parsed.parse_errors) or len(parsed.tool_calls) == 0
+    )

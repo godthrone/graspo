@@ -8,6 +8,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PIP_NO_CACHE_DIR=1
+ENV UV_SYSTEM_PYTHON=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash ca-certificates curl git \
@@ -22,13 +23,17 @@ WORKDIR /workspace/graspo
 # --no-install-project resolves only the locked dependencies, leaving the
 # project itself for Layer 2 (so the source COPY doesn't break the cache).
 COPY pyproject.toml uv.lock .python-version README.md LICENSE ./
-RUN uv sync --no-install-project --frozen --system
+RUN uv sync --no-install-project --frozen
 
 # Layer 2: source code
 COPY src ./src
 COPY configs ./configs
 COPY data ./data
 
-RUN uv pip install --system --break-system-packages --no-deps -e .
+RUN uv pip install --break-system-packages --no-deps -e .
+
+# torchvision required by Qwen3.5 VideoProcessor import path (even text-only)
+# UV_SYSTEM_PYTHON=1 is set above, must override to install into venv
+RUN UV_SYSTEM_PYTHON=0 uv pip install torchvision
 
 CMD ["graspo", "--help"]

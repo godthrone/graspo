@@ -4,7 +4,6 @@ import pytest
 
 from graspo.core.completion import ParsedCompletion, raw_parsed_completion
 
-
 # ── raw_parsed_completion ───────────────────────────────────────────────────
 
 
