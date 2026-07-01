@@ -168,24 +168,9 @@ class GraspoConfig(BaseModel):
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> GraspoConfig:
-        """从字典构建配置，拒绝未知字段和已废弃的字段名。"""
+        """从字典构建配置，pydantic ``extra="forbid"`` 自动拒绝未知字段。"""
         data = data or {}
         flow_cfg = _resolve_graspoflow_config(data)
-
-        # 训练配置校验：拒绝已废弃的字段名
-        _check_removed_fields(data.get("training", {}), "training", _REMOVED_TRAINING_FIELDS)
-        # 数据配置校验：拒绝已废弃的字段名
-        _check_removed_fields(data.get("data", {}), "data", _REMOVED_DATA_FIELDS)
-        # LoRA 配置校验：拒绝已废弃的字段名
-        _check_removed_fields(data.get("lora", {}), "lora", _REMOVED_LORA_FIELDS)
-        # graspoflow 配置校验：拒绝已废弃的字段名
-        _check_removed_fields(data.get("graspoflow", {}), "graspoflow", _REMOVED_GRASPOFLOW_FIELDS)
-        # 拒绝 replay_buffer_optimize_threshold（派生值，不可配置）
-        if "replay_buffer_optimize_threshold" in data.get("training", {}):
-            raise ValueError(
-                "training.replay_buffer_optimize_threshold 是派生值"
-                "（optimize_prompt_batch_size × rollout_group_size），不可手动配置"
-            )
 
         # 解析 output_dir 和 run_name（宪法 §8.5：默认 Outputs + 自动 run_name）
         training_raw = dict(data.get("training", {}) or {})
@@ -243,34 +228,6 @@ class Sample(BaseModel):
 
     def to_json(self) -> str:
         return json.dumps(self.model_dump(), ensure_ascii=False)
-
-
-# ── 已废弃字段名，配置加载时拒绝 ──────────────────────────────────────────
-
-_REMOVED_TRAINING_FIELDS = {
-    "total_epochs",
-    "training_epoch_count",
-    "rollout_prompt_queue_size",
-    "rollout_prompt_queue_batch_size",
-    "group_size",
-    "train_batch_size",
-    "buffer_train_rounds",
-    "max_retry",
-    "optimize_times_per_step",
-    "rollout_max_retry_times",
-    "save_epoch_checkpoint",
-    "clip_eps",
-    "perfect_reward_threshold",
-    "each_step_prompts_per_device",
-    "logging_steps",
-    "dataloader_num_workers",
-}
-
-_REMOVED_DATA_FIELDS = {"prompt_field", "messages_field", "ground_truth_field"}
-
-_REMOVED_LORA_FIELDS = {"auto_target_modules"}
-
-_REMOVED_GRASPOFLOW_FIELDS = {"checkpoint_format"}
 
 
 # ── 辅助函数 ────────────────────────────────────────────────────────────────
@@ -332,14 +289,3 @@ def _content_preview(content: Any) -> str:
         else:
             parts.append(str(item))
     return "\n".join(part for part in parts if part)
-
-
-def _check_removed_fields(raw: dict[str, Any] | None, section: str, removed: set[str]) -> None:
-    """拒绝已废弃的配置字段，给出明确错误信息。"""
-    if raw is None:
-        return
-    present = sorted(key for key in removed if key in raw)
-    if present:
-        raise ValueError(
-            f"已废弃的 {section} 配置字段: " + ", ".join(f"{section}.{key}" for key in present)
-        )
