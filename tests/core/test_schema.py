@@ -7,41 +7,10 @@ from graspo.core.schema import (
     GraspoConfig,
     Sample,
     TrainingConfig,
-    _check_removed_fields,
     _generate_run_name,
 )
 
-# ── TrainingConfig 校验 ──────────────────────────────────────────────────────
-
-
-def test_training_config_rejects_removed_field_total_epochs():
-    with pytest.raises(ValueError, match="已废弃的 training 配置字段"):
-        GraspoConfig.from_dict({"training": {"total_epochs": 10}})
-
-
-def test_training_config_rejects_removed_field_group_size():
-    with pytest.raises(ValueError, match="已废弃的 training 配置字段"):
-        GraspoConfig.from_dict({"training": {"group_size": 8}})
-
-
-def test_training_config_rejects_removed_field_train_batch_size():
-    with pytest.raises(ValueError, match="已废弃的 training 配置字段"):
-        GraspoConfig.from_dict({"training": {"train_batch_size": 32}})
-
-
-def test_training_config_rejects_removed_field_max_retry():
-    with pytest.raises(ValueError, match="已废弃的 training 配置字段"):
-        GraspoConfig.from_dict({"training": {"max_retry": 3}})
-
-
-def test_training_config_rejects_multiple_removed_fields():
-    with pytest.raises(ValueError, match="已废弃的 training 配置字段"):
-        GraspoConfig.from_dict({"training": {"total_epochs": 10, "group_size": 8}})
-
-
-def test_training_config_rejects_replay_buffer_threshold():
-    with pytest.raises(ValueError, match="replay_buffer_optimize_threshold"):
-        GraspoConfig.from_dict({"training": {"replay_buffer_optimize_threshold": 64}})
+# ── TrainingConfig extra="forbid" ─────────────────────────────────────────────
 
 
 def test_training_config_rejects_unknown_field():
@@ -49,17 +18,15 @@ def test_training_config_rejects_unknown_field():
         TrainingConfig(nonexistent_field=42)
 
 
-# ── DataConfig 校验 ──────────────────────────────────────────────────────────
+def test_training_config_rejects_removed_legacy_field():
+    """pydantic ``extra="forbid"`` 自动拒绝任意旧字段，无需手写黑名单。"""
+    with pytest.raises(ValidationError, match="total_epochs"):
+        TrainingConfig(total_epochs=10)
 
 
-def test_data_config_rejects_removed_field_prompt_field():
-    with pytest.raises(ValueError, match="已废弃的 data 配置字段"):
-        GraspoConfig.from_dict({"data": {"prompt_field": "text"}})
-
-
-def test_data_config_rejects_removed_field_messages_field():
-    with pytest.raises(ValueError, match="已废弃的 data 配置字段"):
-        GraspoConfig.from_dict({"data": {"messages_field": "msgs"}})
+def test_graspo_config_rejects_removed_legacy_field_in_nested_section():
+    with pytest.raises(ValidationError, match="total_epochs"):
+        GraspoConfig.from_dict({"training": {"total_epochs": 10}})
 
 
 # ── GraspoConfig output_dir / run_name 默认值 ────────────────────────────────
@@ -166,28 +133,6 @@ def test_sample_media_default_is_empty():
         targets=[{"id": "t1", "output": {"content": {"key": "value"}}}],
     )
     assert sample.media == []
-
-
-# ── _check_removed_fields ────────────────────────────────────────────────────
-
-
-def test_check_removed_fields_present_raises():
-    with pytest.raises(ValueError, match="test_section.field_a"):
-        _check_removed_fields(
-            {"field_a": 1, "field_b": 2, "ok": 3}, "test_section", {"field_a", "field_b"}
-        )
-
-
-def test_check_removed_fields_none_does_not_raise():
-    _check_removed_fields(None, "test_section", {"field_a"})
-
-
-def test_check_removed_fields_empty_does_not_raise():
-    _check_removed_fields({}, "test_section", {"field_a"})
-
-
-def test_check_removed_fields_no_match_does_not_raise():
-    _check_removed_fields({"valid_field": 1}, "test_section", {"field_a", "field_b"})
 
 
 # ── Backward compat: backend_config.graspoflow ────────────────────────────────
