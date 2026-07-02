@@ -30,10 +30,14 @@ COPY src ./src
 COPY configs ./configs
 COPY data ./data
 
-RUN uv pip install --break-system-packages --no-deps -e .
+# Install project into the same venv as dependencies (not system Python)
+RUN uv sync --frozen
 
 # torchvision required by Qwen3.5 VideoProcessor import path (even text-only)
 # UV_SYSTEM_PYTHON=1 is set above, must override to install into venv
 RUN UV_SYSTEM_PYTHON=0 uv pip install torchvision
+
+# Use venv Python as the entry point so all deps are available
+ENV PATH="/workspace/graspo/.venv/bin:$PATH"
 
 CMD ["graspo", "--help"]
