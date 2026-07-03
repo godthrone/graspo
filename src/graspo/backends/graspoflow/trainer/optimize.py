@@ -41,13 +41,38 @@ class OptimizeMixin:
 
         usable = len(self.replay_buffer) if force else threshold
         data = self.replay_buffer.take(usable)
+
+        mc_data = [e for e in data if e.decision == "trainable_max_correct"]
+        nc_data = [e for e in data if e.decision == "trainable_not_correct"]
+
         optimize_started_at = time.monotonic()
+
+        # 主优化：全员跑 3 步
         metrics = self.runtime.train_batch(
             data,
             policy_ratio_clip_eps=self.config.training.policy_ratio_clip_eps,
             optimize_iterations_per_step=self.config.training.optimize_iterations_per_step,
             max_grad_norm=self.config.training.max_grad_norm,
         )
+
+        # max_correct 组追加优化 30 步
+        mc_extra_metrics = None
+        if mc_data and len(mc_data) >= self.config.training.rollout_group_size:
+            mc_extra_metrics = self.runtime.train_batch(
+                mc_data,
+                policy_ratio_clip_eps=self.config.training.policy_ratio_clip_eps,
+                optimize_iterations_per_step=30,
+                max_grad_norm=self.config.training.max_grad_norm,
+            )
+            # 合并 mc 指标
+            metrics["mc_loss_mean"] = mc_extra_metrics.get("loss_mean")
+            metrics["mc_grad_norm_mean"] = mc_extra_metrics.get("grad_norm_mean")
+            metrics["mc_optimizer_steps"] = mc_extra_metrics.get("optimizer_steps")
+        else:
+            metrics["mc_loss_mean"] = None
+            metrics["mc_grad_norm_mean"] = None
+            metrics["mc_optimizer_steps"] = 0
+
         optimize_sec = time.monotonic() - optimize_started_at
         attempts = list(self.pending_batch_attempts)
         timings = list(self.pending_batch_timings)

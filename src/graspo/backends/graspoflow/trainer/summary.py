@@ -402,7 +402,7 @@ def compact_optimize_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
     global_optimizer_steps = int(
         metrics.get("global_optimizer_steps_sum") or optimizer_steps_per_rank
     )
-    return {
+    result = {
         "optimized": bool(metrics.get("optimized")),
         "replay_buffer_trainable_completion_count": int(
             metrics.get("replay_buffer_trainable_completion_count") or 0
@@ -423,6 +423,14 @@ def compact_optimize_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
         "skipped_nonfinite": int(metrics.get("skipped_nonfinite") or 0),
         "force_flush": bool(metrics.get("force_flush")),
     }
+    # max_correct 额外优化指标
+    if metrics.get("mc_loss_mean") is not None:
+        result["mc_extra"] = {
+            "loss_mean": metrics["mc_loss_mean"],
+            "grad_norm_mean": metrics["mc_grad_norm_mean"],
+            "optimizer_steps": metrics["mc_optimizer_steps"],
+        }
+    return result
 
 
 def _metric_float(metrics: dict[str, Any], preferred: str, fallback: str) -> float:

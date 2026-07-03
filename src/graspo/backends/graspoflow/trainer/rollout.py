@@ -335,7 +335,9 @@ class RolloutMixin:
         timing["old_logprob_sec"] = time.monotonic() - old_logprob_started_at
         replay_started_at = time.monotonic()
         advantages = expand_advantages_like(rewards, old_log_probs)
-        self._append_experiences(generation, rewards, old_log_probs, advantages)
+        self._append_experiences(
+            generation, rewards, old_log_probs, advantages, decision=decision.decision.value
+        )
         timing["replay_append_sec"] = time.monotonic() - replay_started_at
         timing["attempt_total_sec"] = (
             float(timing.get("rollout_sec") or 0.0)
@@ -369,6 +371,8 @@ class RolloutMixin:
         rewards: list[float],
         old_log_probs: Any,
         advantages: Any,
+        *,
+        decision: str = "",
     ) -> None:
         """将单条 generation 的 experiences 追加到 replay buffer。"""
         import torch
@@ -389,6 +393,7 @@ class RolloutMixin:
                     action_mask=generation.action_mask[idx].detach().cpu(),
                     rewards=reward_tensor[idx].detach().cpu(),
                     metadata=experience_metadata_for_row(generation.metadata, idx),
+                    decision=decision,
                 )
             )
         self.replay_buffer.append_many(items)
