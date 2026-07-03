@@ -11,7 +11,6 @@ class Experience:
     action_mask: Any
     rewards: Any
     metadata: dict[str, Any] | None = None
-    decision: str | None = None  # "trainable_max_correct" | "trainable_not_correct" | …
 
 
 class ReplayBuffer:
