@@ -23,7 +23,7 @@ model:
 
 # ── Training data ─────────────────────────────────────────────────────────
 data:
-  train_path: data/train.jsonl        # Path to GRASPO-format JSONL (messages + targets)
+  train_path: data/sample.jsonl        # Path to GRASPO-format JSONL (messages + targets)
   max_prompt_length: 4096             # Max sequence length (prompt + response)
 
 # ── LoRA configuration ────────────────────────────────────────────────────

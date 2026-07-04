@@ -45,6 +45,8 @@ uv sync --extra dev --python 3.11
 
 ## Quick Start
 
+### RL Training (GRASPO)
+
 Edit the root sample config:
 
 ```bash
@@ -53,6 +55,7 @@ cp config_example.yaml my_graspo.yaml
 
 Set at least these fields in `my_graspo.yaml`:
 
+- `train_method`: `graspo` (RL) or `sft` (supervised fine-tuning);
 - `model.model_path`: local Hugging Face model directory or model id;
 - `data.train_path`: JSONL training data;
 - `training.output_dir`: run output directory;
@@ -70,6 +73,35 @@ uv run graspo launch --config config_example.yaml
 For a short smoke, keep `training.max_new_tokens=2048` and reduce
 `training.max_steps`. Real GRASPO training should keep
 `training.max_epochs=100` unless you intentionally run a bounded test.
+
+### SFT Training
+
+SFT mode reuses the same GraspoFlow infrastructure (TP/PP, LoRA, checkpoint)
+and the same JSONL data format. Copy the dedicated SFT example config:
+
+```bash
+cp configs/sft_example.yaml my_sft.yaml
+```
+
+Key differences from RL:
+
+- `train_method: sft` — dispatches to supervised fine-tuning instead of RL;
+- `forward_batch_size` acts as micro-batch size;
+- `optimize_iterations_per_step` acts as gradient accumulation steps;
+- `max_prompt_length` is the full sequence length (prompt + response);
+- `learning_rate` is typically higher than RL (e.g. `5e-5` vs `5e-6`);
+- `reward` section is ignored by SFT.
+
+Launch the same way:
+
+```bash
+uv run graspo launch --config my_sft.yaml
+```
+
+After SFT, continue with RL by changing `train_method` to `graspo` and
+pointing `lora.adapter_path` to the SFT checkpoint.
+
+### Validate Data
 
 Validate sample data and reward behavior:
 
@@ -228,7 +260,14 @@ so reward behavior can be inspected without rerunning generation.
 ## Configuration
 
 All normal training configuration lives in YAML. `config_example.yaml` is the
-complete public example.
+complete public example for RL training. `configs/sft_example.yaml` is the
+dedicated SFT template.
+
+### `train_method`
+
+- `graspo`: RL training with GRASPO algorithm (default).
+- `sft`: supervised fine-tuning with cross-entropy loss. Reuses the same
+  config fields — no new fields needed. `reward` section is ignored.
 
 ### `backend`
 
@@ -444,6 +483,10 @@ Each run writes to `training.output_dir`:
 
 All log files live under the `logs/` subdirectory.
 
+SFT runs produce a subset of these outputs: `training.log`, `rank_metrics.*.jsonl`,
+`error.log`, checkpoints, `final`, and `config.yaml`. Rollout and replay logs are
+RL-only and not written during SFT training.
+
 A healthy GRASPO run is not just a process that stays alive. Watch reward trend,
 reward range inside each group, content-score validity, decision distribution,
 finite loss/grad, nonzero LoRA gradients, LoRA tensor changes, replay-buffer
@@ -469,6 +512,13 @@ uv run --extra dev python -m graspo --help
   or KV cache reservation instead of lowering production generation length.
 - Need PEFT compatibility: load PEFT/GRASPO-PEFT adapters through `lora.adapter_path`, and
   export portable artifacts with `graspo export --config <yaml>`.
+- **SFT to RL**: after SFT training, set `train_method: graspo`, point
+  `lora.adapter_path` to the SFT checkpoint's adapter, and adjust
+  `learning_rate` down (e.g. `1e-6`). The SFT LoRA adapter is directly
+  compatible with GRASPO RL training.
+- **SFT OOM**: reduce `forward_batch_size` (micro-batch) or `max_prompt_length`;
+  increase `optimize_iterations_per_step` (gradient accumulation) to keep the
+  effective batch size.
 
 ## License
 
