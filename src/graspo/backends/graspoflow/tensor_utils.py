@@ -9,7 +9,7 @@ from typing import Any
 import torch
 import torch.distributed as dist
 from safetensors.torch import load_file
-from torch.nn import functional as F
+from torch.nn import functional as F  # noqa: N812
 from torch.nn.utils.rnn import pad_sequence
 
 from graspo.core.buffer import Experience
@@ -319,7 +319,7 @@ def _cuda_memory_snapshot(device: torch.device) -> dict[str, float | int]:
 
 
 def _jsonable(value: Any) -> Any:
-    """递归转换为 JSON 可序列化类型，使用鸭子类型检测 tensor 能力。"""
+    """Recursively convert to JSON-serializable types using duck-typing for tensor capabilities."""
     if isinstance(value, dict):
         return {str(key): _jsonable(child) for key, child in value.items()}
     if isinstance(value, (list, tuple)):

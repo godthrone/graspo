@@ -250,8 +250,7 @@ class TestOneFOneBScheduler:
             if step.action == PipelineAction.BACKWARD:
                 # Check that this microbatch was forwarded earlier
                 fwd_seen = any(
-                    s2.action == PipelineAction.FORWARD
-                    and s2.microbatch_idx == step.microbatch_idx
+                    s2.action == PipelineAction.FORWARD and s2.microbatch_idx == step.microbatch_idx
                     for s2 in plan[: plan.index(step)]
                 )
                 assert fwd_seen, f"backward {step.microbatch_idx} without forward"

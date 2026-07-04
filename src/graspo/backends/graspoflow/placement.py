@@ -28,7 +28,7 @@ def _validate_manual_ranges(
 ) -> None:
     """Validate manual layer_ranges cover all layers exactly once."""
     # Check contiguous coverage from 0 to num_hidden_layers
-    flat = []
+    flat: list[int] = []
     for i, (start, end) in enumerate(ranges):
         if start >= end:
             raise ValueError(f"layer_ranges[{i}]=[{start},{end}) is invalid: start must be < end")

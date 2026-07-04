@@ -16,8 +16,6 @@ TP awareness:
     P2P uses rank ± tp_size neighbours, which is handled inside the Op.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 
 from graspo.backends.graspoflow.operator import ComputeOperator, Microbatch, OpBuffer

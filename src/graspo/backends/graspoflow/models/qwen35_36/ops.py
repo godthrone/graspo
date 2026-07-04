@@ -3,8 +3,6 @@
 Refactored from ``graspoflow/qwen_ops.py``.  Supports visual tower for multimodal.
 """
 
-from __future__ import annotations
-
 import torch
 
 from graspo.backends.graspoflow.operator import Microbatch
@@ -19,9 +17,7 @@ class Qwen35EmbedStageOp(TransformerStageOp):
         assert mb.attention_mask is not None, "EmbedStageOp requires attention_mask"
 
         # Embed + visual
-        hidden = self.model.embed_inputs(
-            mb.input_ids, multimodal_inputs=mb.multimodal_inputs
-        )
+        hidden = self.model.embed_inputs(mb.input_ids, multimodal_inputs=mb.multimodal_inputs)
         seq_len = int(hidden.shape[1])
 
         # Build position_ids

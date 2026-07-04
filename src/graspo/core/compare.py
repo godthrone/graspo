@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import math
 from dataclasses import dataclass
 from typing import Any
@@ -140,22 +138,6 @@ def leaf_compare_score(checked: Any, target: Any) -> float:
 # ---------------------------------------------------------------------------
 # List-element helpers
 # ---------------------------------------------------------------------------
-
-
-def _list_element_match_score(
-    checked_items: list[Any],
-    target_element: Any,
-    check_list_order: bool,
-) -> float:
-    """Legacy normalized 0-1 score; kept for backward compatibility."""
-    if not isinstance(target_element, dict):
-        return 1.0 if target_element in checked_items else 0.0
-    scores = [
-        dict_compare_score(checked_element, target_element, check_list_order).dcs
-        for checked_element in checked_items
-        if isinstance(checked_element, dict)
-    ]
-    return max(scores, default=0.0)
 
 
 def _list_element_raw_score(

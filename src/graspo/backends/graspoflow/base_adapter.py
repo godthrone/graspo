@@ -99,9 +99,7 @@ class BaseGraspoFlowAdapter(ABC):
         ...
 
     @abstractmethod
-    def parse_completion(
-        self, completion: str, sample: Any | None = None
-    ) -> ParsedCompletion:
+    def parse_completion(self, completion: str, sample: Any | None = None) -> ParsedCompletion:
         """Convert raw model output into a canonical :class:`ParsedCompletion`."""
         ...
 

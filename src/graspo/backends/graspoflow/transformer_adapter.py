@@ -74,6 +74,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
         self.tokenizer: Any = None
         self.processor: Any = None
         self.optimizer: torch.optim.Optimizer | None = None
+        self.scheduler: Any = None
         self._train_batch_call_index = 0
 
     # ── Setup (template method) ─────────────────────────────────────────────
@@ -127,6 +128,63 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
             if trainable
             else None
         )
+        self.scheduler = self._build_scheduler()
+
+    def _build_scheduler(self) -> Any:
+        """根据 ``lr_scheduler`` 配置构建学习率调度器，默认返回 None（恒定 LR）。"""
+        import math
+
+        sched_cfg = self.config.training.lr_scheduler
+        if sched_cfg.type == "constant":
+            return None
+
+        base_lr = float(self.config.training.learning_rate)
+        warmup_steps = max(0, int(sched_cfg.warmup_steps))
+        min_lr = base_lr * float(sched_cfg.min_lr_ratio)
+
+        max_steps = int(self.config.training.max_steps)
+        if max_steps <= 0:
+            raise ValueError(
+                "lr_scheduler.type 非 constant 时，training.max_steps 必须 > 0，"
+                "否则无法推算总 optimizer step 数"
+            )
+        total_steps = (
+            max_steps
+            * int(self.config.training.optimize_iterations_per_step)
+            * int(self.config.training.rollout_group_size)
+        )
+
+        if total_steps <= warmup_steps:
+            raise ValueError(
+                f"lr_scheduler: 自动推算的总步数 ({total_steps})"
+                f" 必须大于 warmup_steps ({warmup_steps})"
+            )
+
+        decay_steps = total_steps - warmup_steps
+
+        if sched_cfg.type == "cosine":
+
+            def lr_lambda(step: int) -> float:
+                if step < warmup_steps:
+                    return float(step) / max(1, warmup_steps)
+                progress = min(float(step - warmup_steps) / max(1, decay_steps), 1.0)
+                cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+                return (min_lr + (base_lr - min_lr) * cosine) / base_lr
+
+        elif sched_cfg.type == "linear":
+
+            def lr_lambda(step: int) -> float:
+                if step < warmup_steps:
+                    return float(step) / max(1, warmup_steps)
+                progress = min(float(step - warmup_steps) / max(1, decay_steps), 1.0)
+                return (min_lr + (base_lr - min_lr) * (1.0 - progress)) / base_lr
+
+        else:
+            raise ValueError(
+                f"不支持的 lr_scheduler.type: {sched_cfg.type}，可选: constant, cosine, linear"
+            )
+
+        return torch.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda)
 
     def _emit_setup_event(self) -> None:
         trainable = [param for param in self.model.parameters() if param.requires_grad]
@@ -139,12 +197,12 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
                 ),
                 "lora_target_modules": sorted(self.model.lora_targets),
                 "lora_target_signature": self.model.lora_target_signature(),
-                "rollout_kv_cache_supported": bool(
-                    getattr(self.model, "supports_kv_cache", True)
-                ),
+                "rollout_kv_cache_supported": bool(getattr(self.model, "supports_kv_cache", True)),
                 "placement": placement_summary(self.placement),
                 "forward_batch_size": self.config.graspoflow.forward_batch_size,
-                "empty_cache_after_rollout_split": self.config.graspoflow.empty_cache_after_rollout_split,
+                "empty_cache_after_rollout_split": (
+                    self.config.graspoflow.empty_cache_after_rollout_split
+                ),
                 "synchronize_cuda_timing": self.config.graspoflow.synchronize_cuda_timing,
             },
         )
@@ -164,9 +222,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
                 ),
                 "lora_target_modules": sorted(self.model.lora_targets),
                 "lora_target_signature": self.model.lora_target_signature(),
-                "rollout_kv_cache_supported": bool(
-                    getattr(self.model, "supports_kv_cache", True)
-                ),
+                "rollout_kv_cache_supported": bool(getattr(self.model, "supports_kv_cache", True)),
                 "placement": placement_summary(self.placement),
             }
         )
@@ -260,11 +316,12 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
             "optimizer_state_dict": (
                 self.optimizer.state_dict() if self.optimizer is not None else None
             ),
+            "scheduler_state_dict": (
+                self.scheduler.state_dict() if self.scheduler is not None else None
+            ),
             "torch_rng_state": torch.get_rng_state(),
             "cuda_rng_state": (
-                torch.cuda.get_rng_state(self.device)
-                if self.device.type == "cuda"
-                else None
+                torch.cuda.get_rng_state(self.device) if self.device.type == "cuda" else None
             ),
             "adapter_state": {
                 "train_batch_call_index": self._train_batch_call_index,
@@ -307,8 +364,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
         assert self.model is not None
         checkpoint_dir = Path(path)
         rank_path = (
-            checkpoint_dir
-            / f"rank_{self.rank:05d}_tp_{self.tp_rank:02d}_pp_{self.pp_rank:02d}.pt"
+            checkpoint_dir / f"rank_{self.rank:05d}_tp_{self.tp_rank:02d}_pp_{self.pp_rank:02d}.pt"
         )
         if not rank_path.exists():
             raise FileNotFoundError(
@@ -336,9 +392,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
                 "Checkpoint LoRA target signature does not match runtime configuration: "
                 f"checkpoint={checkpoint_signature}, runtime={current_signature}"
             )
-        missing, unexpected = self.model.load_state_dict(
-            payload["lora_state_dict"], strict=False
-        )
+        missing, unexpected = self.model.load_state_dict(payload["lora_state_dict"], strict=False)
         unexpected_lora = [name for name in unexpected if "lora_" in name]
         if unexpected_lora:
             raise RuntimeError(f"Unexpected LoRA tensors in checkpoint: {unexpected_lora}")
@@ -350,6 +404,9 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
             self.optimizer.load_state_dict(optimizer_state)
         elif self.optimizer is not None and optimizer_state is None:
             raise RuntimeError("Checkpoint shard is missing optimizer state for a trainable rank")
+        scheduler_state = payload.get("scheduler_state_dict")
+        if self.scheduler is not None and scheduler_state is not None:
+            self.scheduler.load_state_dict(scheduler_state)
         torch.set_rng_state(payload["torch_rng_state"].detach().cpu())
         cuda_rng_state = payload.get("cuda_rng_state")
         if cuda_rng_state is not None and self.device.type == "cuda":
@@ -369,9 +426,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
 
     # ── Training helpers ────────────────────────────────────────────────────
 
-    def _shared_training_indices(
-        self, experience_count: int, *, optimize_round: int
-    ) -> list[int]:
+    def _shared_training_indices(self, experience_count: int, *, optimize_round: int) -> list[int]:
         import random
 
         indices = list(range(experience_count))
@@ -388,9 +443,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
             dist.broadcast_object_list(payload, src=0)
             shared = payload[0]
             if shared is None:
-                raise RuntimeError(
-                    "Failed to broadcast shared GRASPO train-batch shuffle indices"
-                )
+                raise RuntimeError("Failed to broadcast shared GRASPO train-batch shuffle indices")
             return list(shared)
         random.Random(seed).shuffle(indices)
         return indices
@@ -448,9 +501,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
                 int(item.get("nonzero_grad_count") or 0) for item in ranks
             ),
             "global_loss_mean": _mean_present(item.get("loss_mean") for item in ranks),
-            "global_grad_norm_mean": _mean_present(
-                item.get("grad_norm_mean") for item in ranks
-            ),
+            "global_grad_norm_mean": _mean_present(item.get("grad_norm_mean") for item in ranks),
             "global_lora_norm_delta_mean": _mean_present(
                 item.get("lora_norm_delta") for item in ranks
             ),
@@ -484,7 +535,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
             device=self.device,
         )
         if sequences.shape[1] > prompt_len:
-            action_mask[:, prompt_len - 1:] = True
+            action_mask[:, prompt_len - 1 :] = True
             action_mask &= attention_mask[:, 1:]
         completions = self.tokenizer.batch_decode(
             sequences[:, prompt_len:],
@@ -589,9 +640,15 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
     def _is_pipeline_parallel(self) -> bool:
         return bool(self.placement is not None and self.placement.is_pipeline)
 
-    def _emit_rank_memory_event(
-        self, phase: str, extra: dict[str, Any] | None = None
-    ) -> None:
+    def _current_lr(self) -> float:
+        """返回当前学习率（优先从 scheduler 读取，否则从 optimizer 读取）。"""
+        if self.scheduler is not None:
+            return float(self.scheduler.get_last_lr()[0])
+        if self.optimizer is not None:
+            return float(self.optimizer.param_groups[0]["lr"])
+        return float(self.config.training.learning_rate)
+
+    def _emit_rank_memory_event(self, phase: str, extra: dict[str, Any] | None = None) -> None:
         output_dir = Path(self.config.training.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         payload = {
@@ -606,7 +663,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
         }
         if extra:
             payload.update(extra)
-        path = output_dir / f"rank_metrics.rank_{self.rank:05d}.jsonl"
+        path = output_dir / "logs" / f"rank_metrics.rank_{self.rank:05d}.jsonl"
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(_jsonable(payload), ensure_ascii=False) + "\n")
 
@@ -628,9 +685,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
             raise RuntimeError(
                 "This model did not expose an AutoProcessor; image/video samples cannot be encoded"
             )
-        messages = [
-            _processor_chat_messages(_messages_from_multimodal_row(row)) for row in rows
-        ]
+        messages = [_processor_chat_messages(_messages_from_multimodal_row(row)) for row in rows]
         tool_batches = [_tools_from_multimodal_row(row) for row in rows]
         # 外部 HF processor 对象：部分 processor 直接暴露 apply_chat_template，
         # 部分通过 tokenizer 间接暴露，此处检测 processor 的能力边界
@@ -663,9 +718,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
             )
         return dict(encoded)
 
-    def _multimodal_inputs_to_device(
-        self, encoded: dict[str, Any]
-    ) -> dict[str, torch.Tensor]:
+    def _multimodal_inputs_to_device(self, encoded: dict[str, Any]) -> dict[str, torch.Tensor]:
         keys = (
             "pixel_values",
             "pixel_values_videos",

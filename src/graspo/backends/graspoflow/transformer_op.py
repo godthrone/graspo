@@ -4,8 +4,6 @@ Extracted from ``qwen_ops.py``.  Every model family (Qwen3, Qwen3.5/3.6,
 DeepSeek, …) subclasses this and only implements ``forward()`` / ``backward()``.
 """
 
-from __future__ import annotations
-
 from abc import abstractmethod
 
 import torch
@@ -94,9 +92,7 @@ class TransformerStageOp(ComputeOperator):
     ) -> torch.Tensor:
         """Receive hidden states from upstream."""
         src = int(self.tp_state.prev_pp_rank or 0)
-        tensor = torch.empty(
-            (batch, seq_len, hidden_size), device=self.device, dtype=dtype
-        )
+        tensor = torch.empty((batch, seq_len, hidden_size), device=self.device, dtype=dtype)
         dist.recv(tensor, src=src)
         return tensor
 

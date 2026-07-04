@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any
 
@@ -10,13 +11,15 @@ from graspo.backends.graspoflow.trainer.helpers import (
     experience_metadata_for_row,
     generated_token_counts,
     group_stats,
-    monitor_group,
     public_generation_metadata,
     reward_detail,
     safe_sample_metadata,
-    scalar_generation_timing,
 )
 from graspo.backends.graspoflow.trainer.stats import _AttemptRecord, _QueuedSample
+from graspo.backends.graspoflow.trainer.summary import (
+    monitor_group,
+    scalar_generation_timing,
+)
 from graspo.core.buffer import Experience
 from graspo.core.completion import raw_parsed_completion
 from graspo.core.graspo_parity import classify_group, has_reward_variance
@@ -170,10 +173,10 @@ class RolloutMixin:
                 rewards,
                 content_scores,
                 retry_count=state.retry_count,
-                rollout_max_retry_times=self.config.training.rollout_max_retry_times,
+                rollout_max_retries=self.config.training.rollout_max_retries,
                 perfect_skip_reward_threshold=self.config.training.perfect_skip_reward_threshold,
                 best_completion_has_parse_error=best_has_parse_error,
-                skip_format_broken_groups=self.config.training.skip_format_broken_groups,
+                reject_unparseable_groups=self.config.training.reject_unparseable_groups,
             )
             decision_sec = time.monotonic() - decision_started_at
             self.stats.total_groups += 1
@@ -264,7 +267,7 @@ class RolloutMixin:
             "generated_tokens": generated_token_counts(generation),
             "decision": decision.decision.value,
             "attempt_index": retry_count + 1,
-            "max_attempts": self.config.training.rollout_max_retry_times + 1,
+            "max_attempts": self.config.training.rollout_max_retries + 1,
             "retry_count": retry_count,
             "group_stats": group_stats(rewards),
             "reward_max_median_gap": decision.reward_max_median_gap,
@@ -303,12 +306,14 @@ class RolloutMixin:
                 self.stats.invalid_no_preference_gap += 1
             else:
                 self.stats.invalid += 1
+                self._write_error_log(readable, decision.decision.value)
             if self._is_primary():
                 self.logger.write_raw({**readable, "raw": self._raw_generation(generation)})
             self._commit_sample_attempts(state, epoch=epoch)
             return self._finish_sample_and_maybe_optimize(epoch=epoch)
         if not has_reward_variance(rewards):
             self.stats.invalid += 1
+            self._write_error_log(readable, "no_reward_variance")
             if self._is_primary():
                 self.logger.write_raw({**readable, "raw": self._raw_generation(generation)})
             timing["decision"] = "invalid"
@@ -453,3 +458,31 @@ class RolloutMixin:
                     details=timing,
                 )
             )
+
+    # ── 错误日志汇聚 ────────────────────────────────────────────────────────────
+
+    def _write_error_log(self, readable: dict[str, Any], reason: str) -> None:
+        """Write an ERROR-level event to the common error log.
+
+        Called when a group is classified as invalid or has no reward variance,
+        so errors are aggregated in ``logs/error.log`` for post-run inspection.
+        """
+        self.logger.write_error(
+            {
+                "event": "group_decision",
+                "decision": "invalid",
+                "reason": reason,
+                "sample_index": self.sample_index,
+                "global_step": self.global_step,
+                "messages": readable.get("messages"),
+                "prompt_preview": readable.get("prompt_preview"),
+                "group_stats": readable.get("group_stats"),
+                "invalid_reason": readable.get("invalid_reason"),
+            }
+        )
+        logging.getLogger("graspo.trainer").error(
+            "Invalid group: sample_index=%s step=%s reason=%s",
+            self.sample_index,
+            self.global_step,
+            reason,
+        )

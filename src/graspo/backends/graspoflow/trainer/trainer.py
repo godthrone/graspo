@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import random
 import time
@@ -22,7 +23,6 @@ from graspo.backends.graspoflow.runtime import (
     validate_graspoflow_runtime_config,
 )
 from graspo.backends.graspoflow.trainer.checkpoint import CheckpointMixin
-from graspo.backends.graspoflow.trainer.helpers import round_timing_details
 from graspo.backends.graspoflow.trainer.optimize import OptimizeMixin
 from graspo.backends.graspoflow.trainer.rollout import RolloutMixin
 from graspo.backends.graspoflow.trainer.stats import (
@@ -30,8 +30,10 @@ from graspo.backends.graspoflow.trainer.stats import (
     GraspoFlowTrainStats,
     _QueuedSample,
 )
+from graspo.backends.graspoflow.trainer.summary import round_timing_details
 from graspo.core.buffer import ReplayBuffer
 from graspo.core.data import load_jsonl
+from graspo.core.logging import setup_logging
 from graspo.core.reward import GraspoReward
 from graspo.core.schema import GraspoConfig
 
@@ -79,6 +81,10 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
         validate_graspoflow_runtime_config(self.config)
         self.runtime.validate()
         self.runtime.setup()
+        # 初始化标准 Python logging 通道（宪法 §13.2）
+        rank = int(getattr(self.runtime, "rank", 0))
+        setup_logging(self.config.training.output_dir, rank=rank)
+        _log = logging.getLogger("graspo.trainer")
         os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "")
         conf = os.environ["PYTORCH_CUDA_ALLOC_CONF"]
         if "expandable_segments:True" not in conf:
@@ -100,6 +106,12 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
                 "tp_size": self.config.graspoflow.tp_size,
             }
         )
+        _log.info(
+            "Training started: backend=%s model=%s samples=%d",
+            self.backend_name,
+            self.config.model.model_path,
+            self.total_samples,
+        )
 
         samples = load_jsonl(self.config.data.train_path)
         self.total_samples = len(samples)
@@ -109,6 +121,14 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
         # 将当前配置备份到输出目录，确保可完整复现
         if self.resume_info is None:
             _backup_config(self.config, output_dir)
+        _log.info(
+            "Run config: rollout_group_size=%d optimize_prompt_batch_size=%d "
+            "max_epochs=%d max_new_tokens=%d",
+            self.config.training.rollout_group_size,
+            self.config.training.optimize_prompt_batch_size,
+            self.config.training.max_epochs,
+            self.config.training.max_new_tokens,
+        )
         self._print_json(
             {
                 "timestamp": _timestamp(),
@@ -119,10 +139,14 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
                 "config": {
                     "rollout_group_size": self.config.training.rollout_group_size,
                     "optimize_prompt_batch_size": self.config.training.optimize_prompt_batch_size,
-                    "optimize_times_per_step": self.config.training.optimize_times_per_step,
-                    "replay_buffer_optimize_threshold": self.config.training.replay_buffer_optimize_threshold,
-                    "rollout_max_retry_times": self.config.training.rollout_max_retry_times,
-                    "training_epoch_count": self.config.training.training_epoch_count,
+                    "optimize_iterations_per_step": (
+                        self.config.training.optimize_iterations_per_step
+                    ),
+                    "replay_buffer_optimize_threshold": (
+                        self.config.training.replay_buffer_optimize_threshold
+                    ),
+                    "rollout_max_retries": self.config.training.rollout_max_retries,
+                    "max_epochs": self.config.training.max_epochs,
                     "max_steps": self.config.training.max_steps,
                     "max_new_tokens": self.config.training.max_new_tokens,
                     "save_steps": self.config.training.save_steps,
@@ -133,7 +157,9 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
                         self.config.lora.target_modules or [self.config.lora.target_preset]
                     ),
                     "forward_batch_size": self.config.graspoflow.forward_batch_size,
-                    "empty_cache_after_rollout_split": self.config.graspoflow.empty_cache_after_rollout_split,
+                    "empty_cache_after_rollout_split": (
+                        self.config.graspoflow.empty_cache_after_rollout_split
+                    ),
                     "synchronize_cuda_timing": self.config.graspoflow.synchronize_cuda_timing,
                 },
             }
@@ -146,7 +172,7 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
                 and int(self.current_epoch_stats.samples_seen) >= self.total_samples
             ):
                 start_epoch += 1
-            for epoch in range(start_epoch, self.config.training.training_epoch_count):
+            for epoch in range(start_epoch, self.config.training.max_epochs):
                 if epoch != start_epoch or self.current_epoch_stats.samples_seen == 0:
                     self.current_epoch_stats = GraspoFlowEpochStats(epoch=epoch)
                 epoch_samples = list(samples)
@@ -172,17 +198,20 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
                         "run": self._run_summary(),
                     }
                 )
-                if self.config.training.save_epoch_checkpoint:
+                _log.info(
+                    "Epoch %d/%d finished: elapsed=%.1fs samples_seen=%d",
+                    epoch + 1,
+                    self.config.training.max_epochs,
+                    time.monotonic() - self.started_at,
+                    self.current_epoch_stats.samples_seen,
+                )
+                if self.config.training.save_checkpoint_every_epoch:
                     if len(self.replay_buffer) > 0:
                         self._maybe_optimize(epoch=epoch, force=True)
                     self._save_checkpoint(output_dir / f"epoch_{epoch}", epoch=epoch)
             if len(self.replay_buffer) > 0:
-                self._maybe_optimize(
-                    epoch=self.config.training.training_epoch_count - 1, force=True
-                )
-            self._save_checkpoint(
-                output_dir / "final", epoch=self.config.training.training_epoch_count - 1
-            )
+                self._maybe_optimize(epoch=self.config.training.max_epochs - 1, force=True)
+            self._save_checkpoint(output_dir / "final", epoch=self.config.training.max_epochs - 1)
         finally:
             self.runtime.close()
 
@@ -196,7 +225,7 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
         """处理一批样本：rollout → 评分 → 重试 → 最终化。"""
         active = [_QueuedSample(sample=sample) for sample in samples]
         finished: list[_QueuedSample] = []
-        max_attempts = self.config.training.rollout_max_retry_times + 1
+        max_attempts = self.config.training.rollout_max_retries + 1
         while active:
             attempt_records = self._rollout_queue_attempt(active, epoch=epoch)
             next_active: list[_QueuedSample] = []

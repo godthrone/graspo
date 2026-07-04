@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import argparse
 import json
 import os
@@ -25,22 +23,23 @@ class LaunchPlan:
 
 def cmd_export(args: argparse.Namespace) -> int:
     config = GraspoConfig.from_yaml(args.config)
-    if args.base_model:
-        config.model.model_path = args.base_model
+    _require_config_value(config.export.checkpoint_path, "export.checkpoint_path")
+    _require_config_value(config.export.export_output, "export.export_output")
+    _require_config_value(config.model.model_path, "model.model_path")
     from graspo.backends.graspoflow.lora_io import export_from_checkpoint
 
     export_from_checkpoint(
-        args.checkpoint,
-        args.output,
-        export_format=args.format,
+        config.export.checkpoint_path,
+        config.export.export_output,
+        export_format=config.export.export_format,
         base_model_path=config.model.model_path,
     )
     print(
         json.dumps(
             {
-                "checkpoint": args.checkpoint,
-                "format": args.format,
-                "output": args.output,
+                "checkpoint": config.export.checkpoint_path,
+                "format": config.export.export_format,
+                "output": config.export.export_output,
                 "base_model": config.model.model_path,
             },
             ensure_ascii=False,
@@ -163,10 +162,10 @@ def _graspoflow_world_size(config: GraspoConfig) -> int:
 def _validate_launch_paths(config: GraspoConfig) -> None:
     _require_config_value(config.model.model_path, "model.model_path")
     _require_config_value(config.data.train_path, "data.train_path")
-    _require_config_value(config.training.output_dir, "training.output_dir")
     data_path = Path(config.data.train_path)
     if not data_path.is_file():
         raise SystemExit(f"data.train_path does not exist: {data_path}")
+    # output_dir 现在总是有默认值（§8.5），但需确保目录提前创建好
     Path(config.training.output_dir).mkdir(parents=True, exist_ok=True)
 
 
@@ -229,10 +228,6 @@ def build_parser() -> argparse.ArgumentParser:
         "export", help="Export a native GRASPO checkpoint to a portable model artifact."
     )
     export.add_argument("--config", "-c", required=True)
-    export.add_argument("--checkpoint", required=True)
-    export.add_argument("--format", choices=["peft-adapter", "merged-hf"], required=True)
-    export.add_argument("--output", "-o", required=True)
-    export.add_argument("--base-model", help="Override config.model.model_path for export.")
     export.set_defaults(func=cmd_export)
 
     return parser

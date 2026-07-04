@@ -1,11 +1,9 @@
-from __future__ import annotations
-
 import json
 import re
 from pathlib import Path
 from typing import Any
 
-from graspo.core.reward import normalize_targets
+from graspo.core.reward_helpers import normalize_targets
 from graspo.core.schema import Sample
 
 # Matches raw Qwen XML / tool-call markers that should not appear in content.

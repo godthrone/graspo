@@ -57,8 +57,8 @@ Set at least these fields in `my_graspo.yaml`:
 - `data.train_path`: JSONL training data;
 - `training.output_dir`: run output directory;
 - `launch.gpus`: local GPU ids for this node;
-- `backend_config.graspoflow.tp_size` and
-  `backend_config.graspoflow.pp_size`: native placement
+- `graspoflow.tp_size` and
+  `graspoflow.pp_size`: native placement
   world size.
 
 Launch training with one YAML argument:
@@ -69,12 +69,12 @@ uv run graspo launch --config config_example.yaml
 
 For a short smoke, keep `training.max_new_tokens=2048` and reduce
 `training.max_steps`. Real GRASPO training should keep
-`training.training_epoch_count=100` unless you intentionally run a bounded test.
+`training.max_epochs=100` unless you intentionally run a bounded test.
 
 Validate sample data and reward behavior:
 
 ```bash
-uv run python scripts/eval_inference.py --help
+uv run graspo validate-reward --data data/sample.jsonl --limit 2
 ```
 
 For reward validation testing, use the scripts in `scripts/` directory.
@@ -208,9 +208,12 @@ The important outputs are:
 
 - `reward`: scalar used for GRASPO group decisions, advantage calculation, and
   ReplayBuffer training;
-- `content_score`: normalized structured-content match before group filtering;
-- `all_right`: true when at least one target is fully correct, so numeric fields
-  must still match exactly for a perfect result.
+- `content_score`: normalized structured-content match before group filtering
+  (includes numeric continuous scoring);
+- `base_content_score`: structural match with numeric fields stripped, used to
+  diagnose numeric field contribution;
+- `all_right`: true when at least one target's non-numeric structure is fully
+  correct — numeric fields like distances and angles do not need to match exactly.
 
 Identifiers or categorical codes that should not receive continuous numeric
 credit should be represented as JSON strings in the dataset.
@@ -253,12 +256,10 @@ complete public example.
 - `r`: LoRA rank.
 - `alpha`: LoRA alpha.
 - `dropout`: LoRA dropout.
-- `adapter_path`: optional PEFT adapter directory used only for warm-start.
+- `adapter_path`: optional PEFT or GRASPO-PEFT adapter directory used only for warm-start.
 - `target_preset`: safe named target set, such as `language_safe`.
-- `target_modules`: explicit LoRA targets. If set, `lora.target_modules` takes
-  precedence over `target_preset`.
-- `auto_target_modules`: allow automatic target detection when explicit targets
-  are absent.
+- `target_modules`: explicit LoRA targets. If set, takes precedence over
+  `target_preset`.
 - `bias`: PEFT-compatible bias setting, usually `none`.
 - `task_type`: PEFT-compatible task type, usually `CAUSAL_LM`.
 
@@ -281,15 +282,15 @@ training.
 
 - `output_dir`: run output directory.
 - `seed`: random seed.
-- `training_epoch_count`: full dataset training epochs. Production default is
+- `max_epochs`: full dataset training epochs. Production default is
   `100`.
 - `max_steps`: optional step cap for smoke/debug runs. `-1` means no cap.
 - `rollout_group_size`: completions sampled per prompt.
 - `optimize_prompt_batch_size`: prompts scheduled together for one optimize
   step; replay buffer threshold is `optimize_prompt_batch_size × rollout_group_size`.
-- `optimize_times_per_step`: repeated optimization passes over the same replay
+- `optimize_iterations_per_step`: repeated optimization passes over the same replay
   completions.
-- `rollout_max_retry_times`: retry budget after the initial rollout attempt.
+- `rollout_max_retries`: retry budget after the initial rollout attempt.
 - `learning_rate`, `weight_decay`, `max_grad_norm`: optimizer settings.
 - `policy_ratio_clip_eps`: clipped policy-ratio objective epsilon.
 - `max_new_tokens`: real training generation length. Keep
@@ -297,14 +298,12 @@ training.
 - `temperature`, `top_p`: rollout sampling settings.
 - `save_steps`: native checkpoint interval. `-1` (default) disables per-step
   checkpoints, leaving only epoch checkpoints.
-- `save_epoch_checkpoint`: save a recoverable checkpoint at the end of each
+- `save_checkpoint_every_epoch`: save a recoverable checkpoint at the end of each
   epoch (default `true`). Recommended for production training.
-- `logging_steps`: compact training log interval.
 - `perfect_skip_reward_threshold`: threshold for skipping already-solved groups.
-- `skip_format_broken_groups`: when true (default), groups whose best completion
+- `reject_unparseable_groups`: when true (default), groups whose best completion
   has parse errors or tool-call count mismatch are retried or discarded instead
   of being used for training.
-- `dataloader_num_workers`: data loading worker count.
 - `resume_from_checkpoint`: recoverable GRASPO native checkpoint directory.
 
 `training.replay_buffer_optimize_threshold` is derived as
@@ -313,7 +312,7 @@ training.
 exclusive: resume restores native checkpoint state, while PEFT adapter loading
 is only a LoRA warm-start.
 
-### `backend_config.graspoflow`
+### `graspoflow`
 
 - `tp_size`: TP size (default 2).
 - `pp_size`: PP size (default 1).
@@ -328,7 +327,6 @@ is only a LoRA warm-start.
 - `use_kv_cache_for_rollout`: use KV cache only for rollout generation.
 - `empty_cache_after_rollout_split`, `empty_cache_before_train`: CUDA cache
   controls.
-- `checkpoint_format`: native recoverable checkpoint format label.
 - `raw_log_enabled`, `readable_log_enabled`: rollout/replay log toggles.
 - `synchronize_cuda_timing`: synchronize CUDA events for timing diagnostics.
 - `pp_schedule`: pipeline schedule, `simple` (default) or `one_f_one_b`.
@@ -391,18 +389,22 @@ native model class instead of introducing adapter-level special cases.
 ## Export
 
 GRASPO native checkpoints are recoverable training checkpoints. Portable model
-artifacts are produced with `graspo export`.
-
-Export a PEFT LoRA adapter:
+artifacts are produced with `graspo export`. Set `export.checkpoint_path`,
+`export.export_format`, and `export.export_output` in your YAML config, then run:
 
 ```bash
-uv run graspo export --config config_example.yaml --checkpoint outputs/example-run/final --format peft-adapter --output outputs/export/adapter
+uv run graspo export --config config_example.yaml
 ```
 
-Export a merged Hugging Face full model:
-
-```bash
-uv run graspo export --config config_example.yaml --checkpoint outputs/example-run/final --format merged-hf --output outputs/export/merged
+Example minimal export config:
+```yaml
+backend: graspoflow
+model:
+  model_path: models/Qwen3-8B
+export:
+  checkpoint_path: outputs/example-run/final
+  export_format: peft-adapter   # or "merged-hf"
+  export_output: outputs/export/adapter
 ```
 
 `peft-adapter` reconstructs PEFT `adapter_config.json` and
@@ -424,17 +426,23 @@ and cannot replace `step_*` or `final` for full training resume.
 
 Each run writes to `training.output_dir`:
 
-- `train.log`: compact rank-0 training events;
-- `rollouts.readable.jsonl`: human-readable messages, completion, reward, and
+- `logs/training.log`: compact rank-0 training events;
+- `logs/rollouts.readable.jsonl`: human-readable messages, completion, reward, and
   debug details;
-- `rollouts.raw.jsonl`: replay tensors, masks, old logprobs, advantages, and
+- `logs/rollouts.raw.jsonl`: replay tensors, masks, old logprobs, advantages, and
   reward metadata;
-- `train_batches.readable.jsonl`: one row per optimize-trigger batch;
-- `rank_metrics.rank_*.jsonl`: per-rank memory, timing, LoRA, and optimizer
+- `logs/train_batches.readable.jsonl`: one row per optimize-trigger batch;
+- `logs/rank_metrics.rank_*.jsonl`: per-rank memory, timing, LoRA, and optimizer
   diagnostics;
-- `epoch_*`: epoch-end recoverable checkpoints (when `save_epoch_checkpoint` is true);
+- `logs/error.log`: aggregated ERROR-level events (invalid groups, reward variance
+  failures, format-broken groups);
+- `logs/timing_events.jsonl`: timing diagnostics for each phase;
+- `epoch_*`: epoch-end recoverable checkpoints (when `save_checkpoint_every_epoch` is true);
 - `step_*`: periodic recoverable checkpoints (when `save_steps > 0`);
-- `final`: final recoverable checkpoint after a clean exit.
+- `final`: final recoverable checkpoint after a clean exit;
+- `config.yaml`: configuration backup for full reproducibility.
+
+All log files live under the `logs/` subdirectory.
 
 A healthy GRASPO run is not just a process that stays alive. Watch reward trend,
 reward range inside each group, content-score validity, decision distribution,
@@ -459,34 +467,8 @@ uv run --extra dev python -m graspo --help
   equal `tp_size * pp_size`.
 - Rollout OOM: keep `training.max_new_tokens=2048`; reduce rollout concurrency
   or KV cache reservation instead of lowering production generation length.
-- Need PEFT compatibility: load PEFT adapters through `lora.adapter_path`, and
-  export portable artifacts with `graspo export`.
-
-## Changelog
-
-### 0.8.0
-
-- **GraspoFlow TP+PP**: the `graspoflow` backend now supports arbitrary `tp_size ×
-  pp_size` combinations. Tested on Qwen3.6-27B with tp=2, pp=4 on 8× H100.
-- **Prefill memory fix**: `last_token_only` in `_pipeline_logits_from_last_hidden`
-  avoids materializing the full `[B, S, vocab_size]` logits tensor during rollout
-  prefill, saving ~32 GB on the last PP stage.
-- **Manual `layer_ranges`**: users can specify per-stage layer distribution via
-  `backend_config.graspoflow.layer_ranges` to fine-tune memory balance across PP
-  stages. A validation check prevents misconfigurations (missing/gapped layers).
-- **Removed legacy `native-tp` backend**: GraspoFlow is the only training backend.
-  All `native_tp` / `native-tp` configuration keys and code have been removed.
-- **1F1B batch scaling**: `forward_batch_size=64`, `pp_micro_batch_size=2`, and
-  `optimize_prompt_batch_size=8` produce 32-microbatch 1F1B schedules with low
-  pipeline bubble.
-
-### 0.7.0
-
-- Initial GraspoFlow architecture: three-layer Flink-style pipeline (Operator,
-  Scheduler, Graph) with compute-communication separation.
-- 1F1B pipeline schedule with memory-aware `pp_max_inflight_microbatches`.
-- Backend selection: `graspoflow` is the only backend.
-- Epoch-level checkpoints with `save_epoch_checkpoint: true`.
+- Need PEFT compatibility: load PEFT/GRASPO-PEFT adapters through `lora.adapter_path`, and
+  export portable artifacts with `graspo export --config <yaml>`.
 
 ## License
 

@@ -1,9 +1,9 @@
-# GRASPO 0.8.0 — Qwen3.6-27B PP=8 长训配置 (114 H100)
+# GraspoFlow — Qwen3.6-27B PP=8 长训配置 (114 H100)
 # 8×H100 80GB, 1F1B pipeline schedule
 backend: graspoflow
 
 model:
-  model_path: /workspace/models/Qwen3.6-27B
+  model_path: models/Qwen3.6-27B
   trust_remote_code: true
   torch_dtype: bfloat16
   gradient_checkpointing: true
@@ -11,7 +11,7 @@ model:
     enable_thinking: false
 
 data:
-  train_path: /workspace/data/elam_graspo_train.jsonl
+  train_path: data/elam_graspo_train.jsonl
   max_prompt_length: 2048
 
 lora:
@@ -28,14 +28,14 @@ reward:
   anti_useless_str_reward_weight: 1
 
 training:
-  output_dir: /workspace/outputs/pp8_v0.7.0_27b
+  output_dir: outputs/pp8_longrun
   seed: 42
-  training_epoch_count: 100
+  max_epochs: 100
   max_steps: -1
   rollout_group_size: 8
   optimize_prompt_batch_size: 4
-  optimize_times_per_step: 3
-  rollout_max_retry_times: 5
+  optimize_iterations_per_step: 3
+  rollout_max_retries: 5
   learning_rate: 5.0e-6
   max_grad_norm: 1.0
   policy_ratio_clip_eps: 0.2
@@ -43,25 +43,22 @@ training:
   temperature: 1.0
   top_p: 1.0
   save_steps: -1
-  save_epoch_checkpoint: true
-  logging_steps: 1
+  save_checkpoint_every_epoch: true
   perfect_skip_reward_threshold: 1.0
-  skip_format_broken_groups: true
-  dataloader_num_workers: 0
+  reject_unparseable_groups: true
 
-backend_config:
-  graspoflow:
-    tp_size: 1
-    pp_size: 8
-    placement_strategy: qwen36_pp8_static
-    sequence_parallel: false
-    pp_micro_batch_size: 1
-    forward_batch_size: 8
-    use_kv_cache_for_rollout: true
-    empty_cache_after_rollout_split: false
-    raw_log_enabled: true
-    pp_schedule: one_f_one_b
-    pp_max_inflight_microbatches: 0
+graspoflow:
+  tp_size: 1
+  pp_size: 8
+  placement_strategy: qwen36_pp8_static
+  sequence_parallel: false
+  pp_micro_batch_size: 1
+  forward_batch_size: 8
+  use_kv_cache_for_rollout: true
+  empty_cache_after_rollout_split: false
+  raw_log_enabled: true
+  pp_schedule: one_f_one_b
+  pp_max_inflight_microbatches: 0
 
 launch:
   gpus: [0, 1, 2, 3, 4, 5, 6, 7]

@@ -31,9 +31,10 @@ from graspo.backends.graspoflow.tensor_utils import (
 
 
 class GraspoFlowCausalLMBase(nn.Module):
-    """所有原生 tensor-parallel causal LM 的共享基类。
+    """Shared base class for all native tensor-parallel causal LMs.
 
-    未知模型应在注册表中 fail-closed，不应继承此类尝试不做安全检查的 sharding。
+    Unknown models should fail-closed in the registry, not inherit from this
+    class and attempt unchecked sharding.
     """
 
     supports_kv_cache = False
@@ -111,7 +112,8 @@ def load_native_qwen_config(model_path: Path) -> NativeQwenConfig:
             text_config, family="qwen3_5_text", key_prefix="model.language_model"
         )
     raise ValueError(
-        f"graspoflow supports text-only qwen3 and qwen3_5_text models; got model_type={model_type!r}"
+        f"graspoflow supports text-only qwen3 and qwen3_5_text models; "
+        f"got model_type={model_type!r}"
     )
 
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import datetime
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +22,6 @@ class LoRAConfig(BaseModel):
     adapter_path: str | None = None
     target_preset: str = "language_safe"
     target_modules: list[str] | None = None
-    auto_target_modules: bool = True
     bias: str = "none"
     task_type: str = "CAUSAL_LM"
 
@@ -38,19 +39,30 @@ class ModelConfig(BaseModel):
     chat_template_kwargs: dict[str, Any] = {}
 
 
+class LRSchedulerConfig(BaseModel):
+    """学习率调度器配置。默认 ``type="constant"`` 保持 LR 不变，向后兼容。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: str = "constant"  # "constant" | "cosine" | "linear"
+    warmup_steps: int = 0  # 线性 warmup 步数（仅 cosine / linear）
+    min_lr_ratio: float = 0.0  # 最终 LR = learning_rate × min_lr_ratio
+
+
 class TrainingConfig(BaseModel):
     """训练超参数配置。"""
 
     model_config = ConfigDict(extra="forbid")
 
     output_dir: str = ""
+    run_name: str = ""
     seed: int = 42
-    training_epoch_count: int = 100
+    max_epochs: int = 100
     max_steps: int = -1
     rollout_group_size: int = 8
     optimize_prompt_batch_size: int = 8
-    optimize_times_per_step: int = 3
-    rollout_max_retry_times: int = 5
+    optimize_iterations_per_step: int = 3
+    rollout_max_retries: int = 5
     learning_rate: float = 5e-6
     weight_decay: float = 0.01
     max_grad_norm: float = 1.0
@@ -59,12 +71,11 @@ class TrainingConfig(BaseModel):
     temperature: float = 1.0
     top_p: float = 1.0
     save_steps: int = -1
-    save_epoch_checkpoint: bool = True
-    logging_steps: int = 1
+    save_checkpoint_every_epoch: bool = True
     perfect_skip_reward_threshold: float = 1.0
-    skip_format_broken_groups: bool = True
-    dataloader_num_workers: int = 0
+    reject_unparseable_groups: bool = True
     resume_from_checkpoint: str | None = None
+    lr_scheduler: LRSchedulerConfig = LRSchedulerConfig()
 
     @property
     def replay_buffer_optimize_threshold(self) -> int:
@@ -98,7 +109,6 @@ class GraspoFlowConfig(BaseModel):
     use_kv_cache_for_rollout: bool = True
     empty_cache_after_rollout_split: bool = False
     empty_cache_before_train: bool = False
-    checkpoint_format: str = "recoverable_lora_tp"
     raw_log_enabled: bool = True
     readable_log_enabled: bool = True
     synchronize_cuda_timing: bool = False
@@ -107,10 +117,13 @@ class GraspoFlowConfig(BaseModel):
 
 
 class ExportConfig(BaseModel):
-    """模型导出配置。"""
+    """模型导出配置。通过 ``graspo export --config <yaml>`` 驱动。"""
 
     model_config = ConfigDict(extra="forbid")
 
+    checkpoint_path: str = ""
+    export_format: str = "peft-adapter"
+    export_output: str = ""
     final_formats: list[str] = []
 
 
@@ -155,20 +168,22 @@ class GraspoConfig(BaseModel):
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> GraspoConfig:
-        """从字典构建配置，拒绝未知字段和已废弃的字段名。"""
+        """从字典构建配置，pydantic ``extra="forbid"`` 自动拒绝未知字段。"""
         data = data or {}
         flow_cfg = _resolve_graspoflow_config(data)
 
-        # 训练配置校验：拒绝已废弃的字段名
-        _check_removed_fields(data.get("training", {}), "training", _REMOVED_TRAINING_FIELDS)
-        # 数据配置校验：拒绝已废弃的字段名
-        _check_removed_fields(data.get("data", {}), "data", _REMOVED_DATA_FIELDS)
-        # 拒绝 replay_buffer_optimize_threshold（派生值，不可配置）
-        if "replay_buffer_optimize_threshold" in data.get("training", {}):
-            raise ValueError(
-                "training.replay_buffer_optimize_threshold 是派生值"
-                "（optimize_prompt_batch_size × rollout_group_size），不可手动配置"
-            )
+        # 解析 output_dir 和 run_name（宪法 §8.5：默认 Outputs + 自动 run_name）
+        training_raw = dict(data.get("training", {}) or {})
+        output_dir = str(training_raw.get("output_dir", "") or "").strip()
+        run_name = str(training_raw.get("run_name", "") or "").strip()
+        if not output_dir:
+            if not run_name:
+                run_name = _generate_run_name()
+            output_dir = str(Path("outputs") / run_name)
+            training_raw["output_dir"] = output_dir
+            training_raw["run_name"] = run_name
+        elif not run_name:
+            training_raw["run_name"] = str(Path(output_dir).name)
 
         return cls(
             backend=data.get("backend", "graspoflow"),
@@ -179,14 +194,14 @@ class GraspoConfig(BaseModel):
             export=ExportConfig(**data.get("export", {})),
             launch=LaunchConfig(**data.get("launch", {})),
             reward=RewardConfig(**data.get("reward", {})),
-            training=TrainingConfig(**data.get("training", {})),
+            training=TrainingConfig(**training_raw),
         )
 
 
 class Sample(BaseModel):
-    """单条训练样本，包含 messages、targets 和可选的 tools。"""
+    """单条训练样本，包含 messages、targets 和可选的 tools（不可变）。"""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     messages: list[dict[str, Any]]
     targets: list[dict[str, Any]]
@@ -215,25 +230,17 @@ class Sample(BaseModel):
         return json.dumps(self.model_dump(), ensure_ascii=False)
 
 
-# ── 已废弃字段名，配置加载时拒绝 ──────────────────────────────────────────
-
-_REMOVED_TRAINING_FIELDS = {
-    "total_epochs",
-    "rollout_prompt_queue_size",
-    "rollout_prompt_queue_batch_size",
-    "group_size",
-    "train_batch_size",
-    "buffer_train_rounds",
-    "max_retry",
-    "clip_eps",
-    "perfect_reward_threshold",
-    "each_step_prompts_per_device",
-}
-
-_REMOVED_DATA_FIELDS = {"prompt_field", "messages_field", "ground_truth_field"}
-
-
 # ── 辅助函数 ────────────────────────────────────────────────────────────────
+
+_RUN_NAME_CACHE: dict[str, str] = {}
+"""模块级缓存，确保同一秒内多次调用（如 torchrun 多 worker）得到相同的 run_name。"""
+
+
+def _generate_run_name() -> str:
+    """生成基于时间戳的唯一运行标识（宪法 §8.5）。"""
+    if "current" not in _RUN_NAME_CACHE:
+        _RUN_NAME_CACHE["current"] = f"graspo_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    return _RUN_NAME_CACHE["current"]
 
 
 def _resolve_graspoflow_config(data: dict[str, Any]) -> dict[str, Any]:
@@ -249,12 +256,12 @@ def _resolve_graspoflow_config(data: dict[str, Any]) -> dict[str, Any]:
         if "graspoflow" in bc and bc["graspoflow"]:
             import warnings
 
-            warnings.warn(
+            msg = (
                 "backend_config.graspoflow 已废弃，请将 graspoflow 配置提升到 YAML 顶层。"
-                " 参考 config_example.yaml 的最新格式。",
-                FutureWarning,
-                stacklevel=3,
+                " 参考 config_example.yaml 的最新格式。"
             )
+            warnings.warn(msg, FutureWarning, stacklevel=3)
+            logging.getLogger("graspo.config").warning(msg)
             return dict(bc["graspoflow"])
     return {}
 
@@ -282,17 +289,3 @@ def _content_preview(content: Any) -> str:
         else:
             parts.append(str(item))
     return "\n".join(part for part in parts if part)
-
-
-def _check_removed_fields(
-    raw: dict[str, Any] | None, section: str, removed: set[str]
-) -> None:
-    """拒绝已废弃的配置字段，给出明确错误信息。"""
-    if raw is None:
-        return
-    present = sorted(key for key in removed if key in raw)
-    if present:
-        raise ValueError(
-            f"已废弃的 {section} 配置字段: "
-            + ", ".join(f"{section}.{key}" for key in present)
-        )

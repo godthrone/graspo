@@ -368,7 +368,8 @@ def _load_native_payloads(
         if require_metadata and "lora_tensor_metadata" not in payload:
             raise ValueError(
                 f"Checkpoint shard {path} has no lora_tensor_metadata; "
-                "rerun training with a newer GRASPO checkpoint or export from a newer final checkpoint"
+                "rerun training with a newer GRASPO checkpoint "
+                "or export from a newer final checkpoint"
             )
         payloads.append(payload)
     return payloads
@@ -557,7 +558,8 @@ def _require_replicated(
         ):
             raise ValueError(
                 f"Native TP shards for {hf_module} have non-identical replicated {label}; "
-                "strict PEFT adapter export is not representable. Use --format merged-hf instead."
+                "strict PEFT adapter export is not representable. "
+                "Set export.export_format: merged-hf in your config instead."
             )
     return first
 
@@ -629,7 +631,8 @@ def _apply_deltas(
         if kind in {"none"}:
             if tuple(delta.shape) != tuple(merged.shape):
                 raise ValueError(
-                    f"LoRA delta shape {tuple(delta.shape)} does not match {record['base_weight_name']} {tuple(merged.shape)}"
+                    f"LoRA delta shape {tuple(delta.shape)} does not match "
+                    f"{record['base_weight_name']} {tuple(merged.shape)}"
                 )
             merged += delta
         elif kind == "out":
