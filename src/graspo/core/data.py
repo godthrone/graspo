@@ -284,9 +284,130 @@ def load_jsonl(path: str | Path) -> list[Sample]:
     return samples
 
 
+def build_sft_target_text(target_output: dict[str, Any]) -> str:
+    """将 target output 转换为模型应该生成的文本。
+
+    - tool_calls: 转为 Qwen XML 格式
+      ``<tool_call><function=name><parameter=key>value</parameter></function></tool_call>``
+    - content: 转为 markdown-fenced JSON
+    """
+    tool_calls = target_output.get("tool_calls")
+    if isinstance(tool_calls, list) and tool_calls:
+        return _tool_calls_to_xml(tool_calls)
+    content = target_output.get("content")
+    if isinstance(content, dict):
+        import json as _json
+
+        return "```json\n" + _json.dumps(content, ensure_ascii=False, indent=2) + "\n```"
+    return ""
+
+
+def _tool_calls_to_xml(tool_calls: list[dict[str, Any]]) -> str:
+    """将 canonical tool_calls 转为 Qwen XML 格式。"""
+    parts: list[str] = []
+    for call in tool_calls:
+        name = call["name"]
+        arguments = call["arguments"]
+        params = "".join(
+            f"<parameter={key}>{_format_xml_param_value(value)}</parameter>"
+            for key, value in arguments.items()
+        )
+        parts.append(f"<tool_call>\n<function={name}>\n{params}\n</function>\n</tool_call>")
+    return "\n".join(parts)
+
+
+def _format_xml_param_value(value: Any) -> str:
+    """格式化参数值为 XML 文本。"""
+    if isinstance(value, bool):
+        return str(value).lower()
+    if isinstance(value, float):
+        if value == int(value) and not (value != value):  # 非 NaN 的整数值
+            return str(int(value))
+        return str(value)
+    return str(value)
+
+
 def write_jsonl(samples: list[Sample], path: str | Path) -> None:
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("w", encoding="utf-8") as handle:
         for sample in samples:
             handle.write(sample.to_json() + "\n")
+
+
+def sft_tokenize(
+    sample: Sample,
+    tokenizer: Any,
+    *,
+    max_seq_length: int = 4096,
+    chat_template_kwargs: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """将一条 GRASPO JSONL 样本转换为 SFT 训练所需的 token 序列。
+
+    关键对齐逻辑：
+    - 用 ``apply_chat_template(enable_thinking=False, add_generation_prompt=True)``
+      生成 prompt，与 GRASPO 推理时的 prompt 前缀**完全一致**
+    - 从 primary target 提取 ground truth 作为 response
+    - labels mask 掉 prompt 部分，只对 response 部分计算 loss
+
+    注意：多模态样本（含 image/video）当前仅支持纯文本 tokenization；
+    视觉特征通过 processor 单独编码，需在 trainer 层处理。
+    """
+    import torch
+
+    # 1. 提取 primary target 并构建 response 文本
+    primary = sample.targets[0]
+    target_text = build_sft_target_text(primary["output"])
+    if not target_text:
+        raise ValueError("primary target has no content or tool_calls")
+
+    # 2. 生成 prompt（与 GRASPO 推理完全一致）
+    template_kwargs = dict(chat_template_kwargs or {})
+    template_kwargs.setdefault("enable_thinking", False)
+    tools = sample.tools if sample.expects_tool_calls else None
+    if tools is not None:
+        template_kwargs["tools"] = tools
+    prompt = tokenizer.apply_chat_template(
+        sample.messages,
+        tokenize=False,
+        add_generation_prompt=True,
+        **template_kwargs,
+    )
+
+    # 3. 拼接完整序列
+    full_text = prompt + target_text + tokenizer.eos_token
+
+    # 4. Tokenize
+    full_ids = tokenizer.encode(full_text, add_special_tokens=False)
+    prompt_ids = tokenizer.encode(prompt, add_special_tokens=False)
+
+    # 5. 截断
+    if len(full_ids) > max_seq_length:
+        full_ids = full_ids[:max_seq_length]
+
+    prompt_len = min(len(prompt_ids), len(full_ids))
+
+    # 6. 构建 labels（mask prompt 部分）
+    labels = list(full_ids)
+    labels[:prompt_len] = [-100] * prompt_len
+
+    input_ids = torch.tensor(full_ids, dtype=torch.long)
+    labels = torch.tensor(labels, dtype=torch.long)
+    attention_mask = torch.ones_like(input_ids)
+
+    result: dict[str, Any] = {
+        "input_ids": input_ids,
+        "labels": labels,
+        "attention_mask": attention_mask,
+        "prompt_len": prompt_len,
+        "metadata": sample.metadata if sample.metadata else {},
+    }
+
+    # 多模态：保存原始 messages 和 media 信息，由 trainer 层的 processor 编码
+    if sample.media:
+        from graspo.backends.graspoflow.multimodal import _multimodal_row_from_sample
+
+        result["_multimodal_row"] = _multimodal_row_from_sample(sample)
+        result["_target_text"] = target_text
+
+    return result
