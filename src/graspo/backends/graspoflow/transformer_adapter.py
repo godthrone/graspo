@@ -426,6 +426,59 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
 
     # ── Training helpers ────────────────────────────────────────────────────
 
+    def compute_loss(
+        self,
+        hidden_states: torch.Tensor,
+        batch: Any,
+        lm_head: torch.nn.Module | None = None,
+    ) -> torch.Tensor:
+        """Hook: 从 hidden states 计算 loss。默认 PPO loss，SFT 子类可覆盖。
+
+        Args:
+            hidden_states: 模型最后一层的 hidden states (batch, seq_len, hidden_size)
+            batch: RL 时为 CollatedExperience，SFT 时为 dict with ``labels``
+            lm_head: 语言模型头（TP-only 场景为 None 时从 self.model.lm_head 获取）
+
+        Returns:
+            标量 loss
+        """
+        from graspo.backends.graspoflow.tensor_utils import (
+            _selected_token_log_probs_from_hidden,
+        )
+        from graspo.core.buffer import Experience
+
+        # 判断 batch 类型：RL (CollatedExperience) 或 SFT (dict with labels)
+        if isinstance(batch, Experience) or hasattr(batch, "old_log_probs"):
+            # PPO loss（默认行为）
+            norm = self.model.norm if hasattr(self.model, "norm") else None
+            if lm_head is None:
+                lm_head = self.model.lm_head if hasattr(self.model, "lm_head") else None
+            if norm is None or lm_head is None:
+                raise RuntimeError("compute_loss requires model.norm and model.lm_head")
+            normalized = norm(hidden_states)
+            log_probs = _selected_token_log_probs_from_hidden(
+                normalized[:, :-1].float(),
+                lm_head.weight.float(),
+                batch.sequences[:, 1:],
+            )
+            return self.loss_fn(log_probs, batch.old_log_probs, batch.advantages, batch.action_mask)
+        # SFT path
+        if isinstance(batch, dict) and "labels" in batch:
+            from graspo.core.sft_loss import sft_cross_entropy_loss
+
+            norm = self.model.norm if hasattr(self.model, "norm") else None
+            if lm_head is None:
+                lm_head = self.model.lm_head if hasattr(self.model, "lm_head") else None
+            if norm is None or lm_head is None:
+                raise RuntimeError("compute_loss requires model.norm and model.lm_head")
+            normalized = norm(hidden_states)
+            logits = torch.nn.functional.linear(normalized.float(), lm_head.weight.float())
+            return sft_cross_entropy_loss(logits, batch["labels"].to(hidden_states.device))
+        raise TypeError(
+            f"compute_loss: unsupported batch type {type(batch).__name__}, "
+            "expected CollatedExperience or dict with 'labels'"
+        )
+
     def _shared_training_indices(self, experience_count: int, *, optimize_round: int) -> list[int]:
         import random
 
