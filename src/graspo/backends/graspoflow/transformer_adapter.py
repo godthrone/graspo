@@ -156,7 +156,8 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
 
         if total_steps <= warmup_steps:
             raise ValueError(
-                f"lr_scheduler: 自动推算的总步数 ({total_steps}) 必须大于 warmup_steps ({warmup_steps})"
+                f"lr_scheduler: 自动推算的总步数 ({total_steps})"
+                f" 必须大于 warmup_steps ({warmup_steps})"
             )
 
         decay_steps = total_steps - warmup_steps

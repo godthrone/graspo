@@ -8,7 +8,6 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-
 STATUSES = ("normal", "warning", "critical", "maintenance")
 PRIORITIES = ("low", "medium", "high", "urgent")
 DEVICES = ("PUMP", "VALVE", "CTRL", "MOTOR", "SENSOR", "COMP")
@@ -90,7 +89,9 @@ def _make_record(
         "messages": [
             {
                 "role": "system",
-                "content": "Extract structured fields from synthetic ticket/device panel screenshots.",
+                "content": (
+                    "Extract structured fields from synthetic ticket/device panel screenshots."
+                ),
             },
             {
                 "role": "user",

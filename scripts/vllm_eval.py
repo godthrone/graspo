@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Send 30 training samples to vLLM, score completions with GRASPO reward."""
+
 import base64
 import json
 import sys
@@ -8,8 +9,8 @@ from pathlib import Path
 from urllib import request
 
 sys.path.insert(0, "/workspace/graspo/src")
-from graspo.core.reward import GraspoReward, RewardConfig
 from graspo.backends.graspoflow.tool_parser import parse_qwen_tool_completion
+from graspo.core.reward import GraspoReward, RewardConfig
 
 VLLM_URL = "http://localhost:18000/v1/chat/completions"
 DATA = "data/train.jsonl"
@@ -29,10 +30,12 @@ def convert_message(msg: dict) -> dict:
     parts = []
     for item in content:
         if item["type"] == "image":
-            parts.append({
-                "type": "image_url",
-                "image_url": {"url": image_to_data_url(item["image"])},
-            })
+            parts.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": image_to_data_url(item["image"])},
+                }
+            )
         elif item["type"] == "text":
             parts.append({"type": "text", "text": item["text"]})
     return {"role": msg["role"], "content": parts}
@@ -91,11 +94,16 @@ def main():
             samples.append(json.loads(line.strip()))
     print(f"Loaded {len(samples)} samples")
 
-    scorer = GraspoReward(RewardConfig(
-        check_think=False, check_json_markdown=False,
-        check_tool_call=True, check_list_order=False,
-        marker_reward_weight=10, content_reward_weight=100,
-    ))
+    scorer = GraspoReward(
+        RewardConfig(
+            check_think=False,
+            check_json_markdown=False,
+            check_tool_call=True,
+            check_list_order=False,
+            marker_reward_weight=10,
+            content_reward_weight=100,
+        )
+    )
 
     all_rewards = []
     all_right_count = 0
@@ -127,13 +135,15 @@ def main():
             perf_samples += 1
 
         marker = " ★" if has_perfect else ""
-        print(f"sample {si:2d}  reward={r_mean:.4f}  max={r_max:.4f}  "
-              f"time={elapsed:.1f}s  n={len(completions)}{marker}")
+        print(
+            f"sample {si:2d}  reward={r_mean:.4f}  max={r_max:.4f}  "
+            f"time={elapsed:.1f}s  n={len(completions)}{marker}"
+        )
 
     print()
     print("=" * 60)
     print(f"Total: {len(all_rewards)} completions, {len(samples)} samples")
-    print(f"reward mean:  {sum(all_rewards)/len(all_rewards):.4f}")
+    print(f"reward mean:  {sum(all_rewards) / len(all_rewards):.4f}")
     print(f"reward min:   {min(all_rewards):.4f}")
     print(f"reward max:   {max(all_rewards):.4f}")
     print(f"all_right:    {all_right_count}/{len(all_rewards)}")

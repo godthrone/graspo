@@ -139,7 +139,9 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
                 "config": {
                     "rollout_group_size": self.config.training.rollout_group_size,
                     "optimize_prompt_batch_size": self.config.training.optimize_prompt_batch_size,
-                    "optimize_iterations_per_step": self.config.training.optimize_iterations_per_step,
+                    "optimize_iterations_per_step": (
+                        self.config.training.optimize_iterations_per_step
+                    ),
                     "replay_buffer_optimize_threshold": (
                         self.config.training.replay_buffer_optimize_threshold
                     ),
@@ -208,12 +210,8 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
                         self._maybe_optimize(epoch=epoch, force=True)
                     self._save_checkpoint(output_dir / f"epoch_{epoch}", epoch=epoch)
             if len(self.replay_buffer) > 0:
-                self._maybe_optimize(
-                    epoch=self.config.training.max_epochs - 1, force=True
-                )
-            self._save_checkpoint(
-                output_dir / "final", epoch=self.config.training.max_epochs - 1
-            )
+                self._maybe_optimize(epoch=self.config.training.max_epochs - 1, force=True)
+            self._save_checkpoint(output_dir / "final", epoch=self.config.training.max_epochs - 1)
         finally:
             self.runtime.close()
 
