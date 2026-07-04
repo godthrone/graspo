@@ -4,7 +4,7 @@ import datetime
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -148,6 +148,7 @@ class GraspoConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    train_method: Literal["graspo", "sft"] = "graspo"
     backend: str = "graspoflow"
     graspoflow: GraspoFlowConfig = GraspoFlowConfig()
     model: ModelConfig = ModelConfig()
@@ -186,6 +187,7 @@ class GraspoConfig(BaseModel):
             training_raw["run_name"] = str(Path(output_dir).name)
 
         return cls(
+            train_method=data.get("train_method", "graspo"),
             backend=data.get("backend", "graspoflow"),
             graspoflow=GraspoFlowConfig(**flow_cfg),
             model=ModelConfig(**data.get("model", {})),

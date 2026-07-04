@@ -1,4 +1,4 @@
-# GRASPO
+# GRASPO (Group Relative Adaptive Structured Policy Optimization)
 
 [English README](README.md)
 

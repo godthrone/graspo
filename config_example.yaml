@@ -8,6 +8,10 @@
 # fully resolved graph (generated via `uv lock`).  Run `uv sync` to
 # install the exact versions.  No other dependency sources exist.
 
+# ── Train method ───────────────────────────────────────────────────────────
+# "graspo" for RL training, "sft" for supervised fine-tuning.
+train_method: graspo
+
 # ── Backend selection ─────────────────────────────────────────────────────
 # Currently only "graspoflow" (unified TP+PP backend).  Single-GPU runs set
 # tp_size=1 and pp_size=1 below.
