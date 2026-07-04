@@ -16,7 +16,9 @@ from graspo.core.schema import GraspoConfig, Sample
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Evaluate a graspoflow checkpoint by generating rollout groups and scoring rewards."
+        description=(
+            "Evaluate a graspoflow checkpoint by generating rollout groups and scoring rewards."
+        )
     )
     parser.add_argument(
         "--config", required=True, help="Training YAML config used to build the native runtime."

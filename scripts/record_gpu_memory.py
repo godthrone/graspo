@@ -7,10 +7,9 @@ import signal
 import subprocess
 import time
 from collections import defaultdict, deque
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-
 
 GPU_FIELDS = (
     "index",
@@ -99,7 +98,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--pid-filter",
         default="",
-        help="Comma-separated substrings matched against process_name or pid. Empty records all GPU processes.",
+        help=(
+            "Comma-separated substrings matched against process_name or pid."
+            " Empty records all GPU processes."
+        ),
     )
     parser.add_argument(
         "--duration-sec", type=float, default=None, help="Optional duration for smoke/dry runs."
@@ -237,7 +239,7 @@ def append_jsonl(path: Path, payload: dict[str, Any]) -> None:
 
 
 def utc_timestamp() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 if __name__ == "__main__":
