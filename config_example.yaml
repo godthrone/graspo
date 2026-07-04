@@ -10,6 +10,7 @@
 
 # ── Train method ───────────────────────────────────────────────────────────
 # "graspo" for RL training, "sft" for supervised fine-tuning.
+# For SFT, see configs/sft_example.yaml for a ready-to-use template.
 train_method: graspo
 
 # ── Backend selection ─────────────────────────────────────────────────────

@@ -32,6 +32,8 @@ uv sync --extra dev --python 3.11
 
 ## 快速开始
 
+### RL 训练（GRASPO）
+
 复制并编辑根目录完整样例配置：
 
 ```bash
@@ -40,6 +42,7 @@ cp config_example.yaml my_graspo.yaml
 
 至少需要设置：
 
+- `train_method`：`graspo`（RL 训练）或 `sft`（监督微调）；
 - `model.model_path`：本地 Hugging Face 模型目录或模型 id；
 - `data.train_path`：JSONL 训练数据；
 - `training.output_dir`：run 输出目录；
@@ -53,6 +56,35 @@ uv run graspo launch --config config_example.yaml
 ```
 
 短测时保持 `training.max_new_tokens=2048`，只降低 `training.max_steps`。真实训练默认保持 `training.max_epochs=100`，除非你刻意做有限步数测试。
+
+### SFT 训练
+
+SFT 模式复用同一套 GraspoFlow 基础设施（TP/PP、LoRA、checkpoint），
+使用相同的 JSONL 数据格式。复制专用 SFT 配置模板：
+
+```bash
+cp configs/sft_example.yaml my_sft.yaml
+```
+
+与 RL 的主要区别：
+
+- `train_method: sft` — 切换到监督微调，而非 RL；
+- `forward_batch_size` 作为 micro-batch size；
+- `optimize_iterations_per_step` 作为梯度累积步数；
+- `max_prompt_length` 是完整序列长度（prompt + response）；
+- `learning_rate` 通常比 RL 高（如 `5e-5` vs `5e-6`）；
+- `reward` 配置段在 SFT 中被忽略。
+
+启动方式相同：
+
+```bash
+uv run graspo launch --config my_sft.yaml
+```
+
+SFT 完成后可以无缝切换到 RL：将 `train_method` 改为 `graspo`，
+将 `lora.adapter_path` 指向 SFT checkpoint 的 adapter 目录即可。
+
+### 验证数据
 
 验证样例数据和 reward：
 
@@ -148,7 +180,14 @@ GRASPO 使用同一 rollout group 内的 reward 分布，而不是单条 complet
 
 ## 配置说明
 
-所有常规训练配置都在 YAML 内完成。`config_example.yaml` 是完整公开样例。
+所有常规训练配置都在 YAML 内完成。`config_example.yaml` 是 RL 训练的完整公开样例，
+`configs/sft_example.yaml` 是 SFT 专用模板。
+
+### `train_method`
+
+- `graspo`：使用 GRASPO 算法进行 RL 训练（默认）。
+- `sft`：使用交叉熵损失进行监督微调。复用相同配置字段，无需新增字段。
+  `reward` 配置段在 SFT 中被忽略。
 
 ### `backend`
 
@@ -316,7 +355,11 @@ export:
 
 所有日志文件位于 `logs/` 子目录下。
 
-健康的 GRASPO 训练不只是“进程没挂”。需要观察 reward trend、组内 reward range、content-score validity、decision distribution、finite loss/grad、非零 LoRA gradients、LoRA tensor changes、replay-buffer progress、checkpoint writes 和 GPU/NCCL health。
+SFT 运行只产生其中一部分：`training.log`、`rank_metrics.*.jsonl`、`error.log`、
+checkpoint、`final` 和 `config.yaml`。rollout 和 replay 日志仅 RL 模式产生，
+SFT 训练不写入。
+
+健康的 GRASPO 训练不只是”进程没挂”。需要观察 reward trend、组内 reward range、content-score validity、decision distribution、finite loss/grad、非零 LoRA gradients、LoRA tensor changes、replay-buffer progress、checkpoint writes 和 GPU/NCCL health。
 
 ## 开发检查
 
@@ -334,6 +377,11 @@ uv run --extra dev python -m graspo --help
 - Native launch world size mismatch：让 `launch.nproc_per_node * launch.nnodes` 等于 `tp_size * pp_size`。
 - Rollout OOM：保持 `training.max_new_tokens=2048`；降低 rollout 并发或 KV cache 预留，而不是降低生产生成长度。
 - 需要 PEFT 兼容：通过 `lora.adapter_path` 加载 PEFT/GRASPO-PEFT adapter，通过 `graspo export --config <yaml>` 导出便携产物。
+- **SFT 转 RL**：SFT 训练完成后，将 `train_method` 改为 `graspo`，
+  将 `lora.adapter_path` 指向 SFT checkpoint 的 adapter，
+  降低 `learning_rate`（如 `1e-6`）。SFT LoRA adapter 可直接用于 GRASPO RL 训练。
+- **SFT OOM**：减小 `forward_batch_size`（micro-batch）或 `max_prompt_length`；
+  增大 `optimize_iterations_per_step`（梯度累积）以保持有效 batch size 不变。
 
 ## License
 
