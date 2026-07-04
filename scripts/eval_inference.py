@@ -10,13 +10,17 @@ from transformers import AutoModelForCausalLM, AutoProcessor
 
 # Add GRASPO source to path (mounted in Docker at /workspace/graspo/src)
 sys.path.insert(0, "/workspace/graspo/src")
-from graspo.core.reward import GraspoReward, RewardConfig
 from graspo.core.completion import raw_parsed_completion
+from graspo.core.reward import GraspoReward, RewardConfig
 
 
 def main():
-    model_path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("/workspace/data/outputs/merged_model")
-    data_path = Path(sys.argv[2]) if len(sys.argv) > 2 else Path("/workspace/data/data/train_docker.jsonl")
+    model_path = (
+        Path(sys.argv[1]) if len(sys.argv) > 1 else Path("/workspace/data/outputs/merged_model")
+    )
+    data_path = (
+        Path(sys.argv[2]) if len(sys.argv) > 2 else Path("/workspace/data/data/train_docker.jsonl")
+    )
     num_completions = int(sys.argv[3]) if len(sys.argv) > 3 else 8
     max_new_tokens = int(sys.argv[4]) if len(sys.argv) > 4 else 512
 
@@ -123,10 +127,12 @@ def main():
         r_max = max(sample_rewards)
         sample_all_right = sum(1 for r in sample_rewards if r >= 1.0)
 
-        print(f"sample {si:2d}  reward_mean={r_mean:.4f}  max={r_max:.4f}  "
-              f"content_mean={sum(sample_contents)/len(sample_contents):.4f}  "
-              f"all_right={sample_all_right}/{num_completions}",
-              end="")
+        print(
+            f"sample {si:2d}  reward_mean={r_mean:.4f}  max={r_max:.4f}  "
+            f"content_mean={sum(sample_contents) / len(sample_contents):.4f}  "
+            f"all_right={sample_all_right}/{num_completions}",
+            end="",
+        )
         if r_max >= 1.0:
             print(" ★", end="")
         print()
@@ -135,9 +141,9 @@ def main():
     print()
     print("=" * 60)
     print(f"Total: {total_comps} completions across {len(samples)} samples")
-    print(f"reward mean:  {sum(all_rewards)/len(all_rewards):.4f}")
+    print(f"reward mean:  {sum(all_rewards) / len(all_rewards):.4f}")
     print(f"reward range: {min(all_rewards):.4f} - {max(all_rewards):.4f}")
-    print(f"content mean: {sum(all_contents)/len(all_contents):.4f}")
+    print(f"content mean: {sum(all_contents) / len(all_contents):.4f}")
     print(f"all_right count: {all_right_count}/{total_comps}")
     print(f"perfect samples (reward>=1): {sum(1 for r in all_rewards if r >= 1.0)}")
 

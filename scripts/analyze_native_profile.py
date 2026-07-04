@@ -7,7 +7,6 @@ from pathlib import Path
 from statistics import mean
 from typing import Any
 
-
 TIMING_KEYS = (
     "total_observed_sec",
     "rollout_sec",

@@ -47,10 +47,12 @@ def build_messages(sample, images_dir):
             for item in content:
                 if isinstance(item, dict) and item.get("type") == "image":
                     img_name = Path(item["image"]).name
-                    new_content.append({
-                        "type": "image",
-                        "image": f"{images_dir}/{img_name}",
-                    })
+                    new_content.append(
+                        {
+                            "type": "image",
+                            "image": f"{images_dir}/{img_name}",
+                        }
+                    )
                 else:
                     new_content.append(item)
             msgs.append({"role": m["role"], "content": new_content})
@@ -64,12 +66,20 @@ def main():
 
     print(f"Loading model from {args.model}...", flush=True)
     processor = AutoProcessor.from_pretrained(
-        args.model, trust_remote_code=True, local_files_only=True,
-    )
-    model = Qwen3_5ForConditionalGeneration.from_pretrained(
-        args.model, torch_dtype=torch.bfloat16, trust_remote_code=True,
+        args.model,
+        trust_remote_code=True,
         local_files_only=True,
-    ).to(args.device).eval()
+    )
+    model = (
+        Qwen3_5ForConditionalGeneration.from_pretrained(
+            args.model,
+            torch_dtype=torch.bfloat16,
+            trust_remote_code=True,
+            local_files_only=True,
+        )
+        .to(args.device)
+        .eval()
+    )
     print("Model loaded.", flush=True)
 
     with open(args.data) as f:
@@ -77,8 +87,8 @@ def main():
     print(f"Loaded {len(all_samples)} samples from {args.data}", flush=True)
 
     end_idx = min(args.start + args.count, len(all_samples))
-    samples = all_samples[args.start:end_idx]
-    print(f"Processing samples {args.start}-{end_idx-1} ({len(samples)} total)", flush=True)
+    samples = all_samples[args.start : end_idx]
+    print(f"Processing samples {args.start}-{end_idx - 1} ({len(samples)} total)", flush=True)
 
     # Lazy import after torch is loaded (graspo imports torch)
     from graspo.backends.graspoflow.tool_parser import parse_qwen_tool_completion
@@ -108,10 +118,11 @@ def main():
             inputs = processor.apply_chat_template(msgs, **chat_kwargs)
             if hasattr(inputs, "input_ids"):
                 input_ids = inputs.input_ids.to(args.device)
-                attn = inputs.attention_mask.to(args.device) if (
-                    hasattr(inputs, "attention_mask")
-                    and inputs.attention_mask is not None
-                ) else None
+                attn = (
+                    inputs.attention_mask.to(args.device)
+                    if (hasattr(inputs, "attention_mask") and inputs.attention_mask is not None)
+                    else None
+                )
             else:
                 input_ids = inputs.to(args.device)
                 attn = None
@@ -170,21 +181,23 @@ def main():
             flag = "ERR" if has_err else "OK"
             eos_flag = "EOS" if hit_eos else ("TRUNC" if truncated else "NOEOS")
             print(
-                f"  [{i+1:3d}/{len(samples)}] idx={sidx:3d} [{flag}] [{eos_flag}] "
+                f"  [{i + 1:3d}/{len(samples)}] idx={sidx:3d} [{flag}] [{eos_flag}] "
                 f"len={len(completion_ids):3d} | {result['text_preview'][:80]}",
                 flush=True,
             )
 
-        except Exception as e:
-            print(f"  [{i+1:3d}/{len(samples)}] idx={sidx:3d} EXCEPTION: {e}", flush=True)
-            results.append({
-                "idx": sidx,
-                "id": sample.get("id", f"sample_{sidx}"),
-                "parse_err": True,
-                "parse_errors": [f"EXCEPTION: {e}"],
-                "text_preview": "",
-                "text_full": "",
-            })
+        except Exception as e:  # noqa: BLE001
+            print(f"  [{i + 1:3d}/{len(samples)}] idx={sidx:3d} EXCEPTION: {e}", flush=True)
+            results.append(
+                {
+                    "idx": sidx,
+                    "id": sample.get("id", f"sample_{sidx}"),
+                    "parse_err": True,
+                    "parse_errors": [f"EXCEPTION: {e}"],
+                    "text_preview": "",
+                    "text_full": "",
+                }
+            )
             total_parse_err += 1
             total_completions += 1
 
@@ -211,12 +224,21 @@ def main():
     with open(args.output, "w") as f:
         json.dump(output, f, ensure_ascii=False, indent=2)
 
-    print(f"\n{'='*60}", flush=True)
-    print(f"Summary: {total_parse_err}/{total_completions} parse errors "
-          f"({100*total_parse_err/max(total_completions,1):.1f}%)", flush=True)
-    print(f"EOS: {total_eos}/{total_completions} ({100*total_eos/max(total_completions,1):.1f}%)", flush=True)
+    print(f"\n{'=' * 60}", flush=True)
+    print(
+        f"Summary: {total_parse_err}/{total_completions} parse errors "
+        f"({100 * total_parse_err / max(total_completions, 1):.1f}%)",
+        flush=True,
+    )
+    print(
+        (
+            f"EOS: {total_eos}/{total_completions}"
+            f" ({100 * total_eos / max(total_completions, 1):.1f}%)"
+        ),
+        flush=True,
+    )
     print(f"Truncated: {total_truncated}/{total_completions}", flush=True)
-    print(f"Time: {elapsed:.0f}s ({len(samples)/elapsed:.2f} samples/s)", flush=True)
+    print(f"Time: {elapsed:.0f}s ({len(samples) / elapsed:.2f} samples/s)", flush=True)
     print(f"Results saved to {args.output}", flush=True)
 
 

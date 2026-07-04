@@ -246,6 +246,12 @@ class Qwen3Adapter(TransformerAdapter):
         return all_generations
 
     def generate_sample_groups(self, **kwargs: Any) -> list[NativeGeneration]:
+        """Qwen3 不支持多模态；调用此方法总是抛出 NotImplementedError。
+
+        **kwargs 接收基类的所有扩展参数（samples, rollout_group_size,
+        max_new_tokens, chat_template_kwargs 等），保持与 BaseGraspoFlowAdapter
+        接口的兼容。
+        """
         raise NotImplementedError("Qwen3 does not support multimodal")
 
     # ── TP-only generation helpers ──────────────────────────────────────────
