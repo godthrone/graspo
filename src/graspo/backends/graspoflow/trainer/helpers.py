@@ -3,10 +3,11 @@
 不依赖 self 状态，可独立测试（宪法 §8.4 拆分后保留数据变换工具）。
 """
 
-
 import json
 import logging
+import random
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from graspo.backends.graspoflow.trainer.stats import (
@@ -22,6 +23,35 @@ from graspo.core.graspo_parity import lower_median
 def _timestamp() -> str:
     """返回当前时区的 ISO 格式时间戳。"""
     return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+# ── 随机种子 ──────────────────────────────────────────────────────────────────
+
+
+def _set_random_seed(seed: int, *, rank: int = 0) -> None:
+    """设置所有随机数生成器的种子，确保可复现性（宪法 §6）。"""
+    import numpy as np
+    import torch
+
+    random.seed(seed + rank)
+    np.random.seed(seed + rank)
+    torch.manual_seed(seed + rank)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed + rank)
+
+
+# ── 配置备份 ──────────────────────────────────────────────────────────────────
+
+
+def _backup_config(config: Any, output_dir: Path) -> None:
+    """将当前配置写入输出目录，确保事后可完整复现。"""
+    import yaml
+
+    config_path = output_dir / "config.yaml"
+    config_path.write_text(
+        yaml.dump(config.model_dump(), allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
 
 
 # ── advantage 扩展 ─────────────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 """GraspoFlowTrainer 监控摘要与统计压缩（宪法 §8.4 从 helpers.py 按功能域拆分）。"""
 
-
+import logging
 from collections import deque
 from typing import Any
 
@@ -428,6 +428,11 @@ def _metric_float(metrics: dict[str, Any], preferred: str, fallback: str) -> flo
     value = metrics.get(preferred)
     if value is None:
         value = metrics.get(fallback)
+        logging.getLogger("graspo.trainer").warning(
+            "metric %r not available, falling back to %r (transparent degradation per §3.2)",
+            preferred,
+            fallback,
+        )
     return float(value or 0.0)
 
 
