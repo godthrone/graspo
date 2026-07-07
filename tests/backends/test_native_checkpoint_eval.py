@@ -4,7 +4,7 @@ from pathlib import Path
 
 from graspo.core.schema import GraspoConfig, Sample
 
-_SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "evaluate_native_checkpoint.py"
+_SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "evaluate_native_checkpoint.py"
 _SPEC = importlib.util.spec_from_file_location("evaluate_native_checkpoint", _SCRIPT_PATH)
 assert _SPEC is not None and _SPEC.loader is not None
 _MODULE = importlib.util.module_from_spec(_SPEC)
