@@ -105,8 +105,12 @@ class SFTTrainer:
                     for start in range(0, len(tokenized), optimize_prompt_batch_size)
                 ]
 
-                _log.info("SFT epoch %d/%d: %d batches", epoch + 1,
-                          self.config.training.max_epochs, len(batches))
+                _log.info(
+                    "SFT epoch %d/%d: %d batches",
+                    epoch + 1,
+                    self.config.training.max_epochs,
+                    len(batches),
+                )
 
                 for batch_idx, batch in enumerate(batches):
                     batch_started_at = time.monotonic()

@@ -29,7 +29,7 @@ from graspo.backends.graspoflow.tensor_utils import (
 from graspo.backends.graspoflow.tool_parser import parse_qwen_tool_completion
 from graspo.backends.graspoflow.transformer_adapter import TransformerAdapter
 from graspo.core.completion import ParsedCompletion
-from graspo.trainer.lora import resolve_lora_target_modules
+from graspo.core.lora import resolve_lora_target_modules
 
 
 class Qwen35Adapter(

@@ -1,6 +1,6 @@
 import pytest
 
-from graspo.trainer.lora import resolve_lora_target_modules
+from graspo.core.lora import resolve_lora_target_modules
 
 
 def test_resolve_lora_targets_supports_presets_globs_and_canonical_names():
