@@ -256,6 +256,27 @@ def _content_to_text_and_media(content: Any) -> tuple[str, list[dict[str, Any]]]
     return "\n".join(part for part in parts if part), media
 
 
+def _multimodal_row_from_sample(sample: Any) -> dict[str, Any]:
+    """从 Sample 构建多模态行数据（纯数据转换，无设施依赖）。"""
+    row: dict[str, Any] = {
+        "messages": [dict(message) for message in sample.messages],
+        "media": _media_counts(sample.media or []),
+    }
+    tools = getattr(sample, "tools", None)
+    if tools is not None:
+        row["tools"] = [dict(tool) for tool in tools]
+    return row
+
+
+def _media_counts(media: list[dict[str, Any]]) -> dict[str, int]:
+    """统计多模态媒体类型计数（纯数据转换）。"""
+    counts: dict[str, int] = {}
+    for item in media:
+        media_type = str(item.get("type") or "unknown") if isinstance(item, dict) else "unknown"
+        counts[media_type] = counts.get(media_type, 0) + 1
+    return counts
+
+
 def _dedupe_media(media: list[dict[str, Any]]) -> list[dict[str, Any]]:
     seen: set[tuple[str, str]] = set()
     deduped: list[dict[str, Any]] = []
@@ -405,8 +426,6 @@ def sft_tokenize(
 
     # 多模态：保存原始 messages 和 media 信息，由 trainer 层的 processor 编码
     if sample.media:
-        from graspo.backends.graspoflow.multimodal import _multimodal_row_from_sample
-
         result["_multimodal_row"] = _multimodal_row_from_sample(sample)
         result["_target_text"] = target_text
 

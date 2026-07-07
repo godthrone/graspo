@@ -79,7 +79,8 @@ class Qwen3Adapter(TransformerAdapter):
             torch_dtype=torch_dtype,
             device=self.device,
         )
-        assert self.model is not None
+        if self.model is None:
+            raise RuntimeError("model not loaded; call setup() first")
         missing_lora_targets = sorted(
             target
             for target in set(lora_targets.resolved) - set(self.model.enabled_lora_target_names())
@@ -120,8 +121,8 @@ class Qwen3Adapter(TransformerAdapter):
         **kwargs: Any,
     ) -> list[NativeGeneration]:
         self._require_ready()
-        assert self.model is not None
-        assert self.tokenizer is not None
+        if self.model is None or self.tokenizer is None:
+            raise RuntimeError("model or tokenizer not loaded; call setup() first")
         if not message_batches:
             return []
         self.model.eval()
@@ -267,7 +268,8 @@ class Qwen3Adapter(TransformerAdapter):
         temperature: float,
         top_p: float,
     ) -> tuple[torch.Tensor, dict[str, float | int]]:
-        assert self.model is not None
+        if self.model is None:
+            raise RuntimeError("model not loaded; call setup() first")
         attention_mask = sequences.ne(pad_token_id)
         self._sync_timing()
         prefill_started_at = time.monotonic()
@@ -328,7 +330,8 @@ class Qwen3Adapter(TransformerAdapter):
         temperature: float,
         top_p: float,
     ) -> tuple[torch.Tensor, dict[str, float | int]]:
-        assert self.model is not None
+        if self.model is None:
+            raise RuntimeError("model not loaded; call setup() first")
         decode_started_at = time.monotonic()
         decode_tokens = 0
         sampling_sec = 0.0
@@ -373,8 +376,8 @@ class Qwen3Adapter(TransformerAdapter):
         max_grad_norm: float,
     ) -> dict[str, Any]:
         self._require_ready()
-        assert self.model is not None
-        assert self.optimizer is not None
+        if self.model is None or self.optimizer is None:
+            raise RuntimeError("model or optimizer not loaded; call setup() first")
         self.loss_fn.policy_ratio_clip_eps = policy_ratio_clip_eps
         self.model.train()
         if bool(self.config.graspoflow.empty_cache_before_train) and self.device.type == "cuda":
@@ -484,7 +487,8 @@ class Qwen3Adapter(TransformerAdapter):
         metadata: Any | None = None,
     ) -> torch.Tensor:
         self._require_ready()
-        assert self.model is not None
+        if self.model is None:
+            raise RuntimeError("model not loaded; call setup() first")
         self.model.eval()
         sequences = sequences.to(self.device)
         attention_mask = attention_mask.to(self.device).bool()
