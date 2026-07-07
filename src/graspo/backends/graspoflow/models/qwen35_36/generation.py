@@ -1,7 +1,5 @@
 """Qwen3.5/3.6 adapter — generation methods (rollout, multimodal, KV cache)."""
 
-from __future__ import annotations
-
 import time
 from typing import Any
 
@@ -41,6 +39,11 @@ class _Qwen35GenerationMethods:
         chat_template_kwargs: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> list[NativeGeneration]:
+        """Generate *rollout_group_size* completions per message batch (TP/PP).
+
+        ``**kwargs`` 接收基类 ``BaseGraspoFlowAdapter.generate_groups`` 的扩展参数，
+        保持接口兼容；当前实现不使用额外的 kwargs。
+        """
         self._require_ready()
         assert self.model is not None
         assert self.tokenizer is not None
@@ -187,6 +190,11 @@ class _Qwen35GenerationMethods:
         chat_template_kwargs: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> list[NativeGeneration]:
+        """Generate completions for multimodal :class:`Sample` objects (TP/PP).
+
+        ``**kwargs`` 接收基类 ``BaseGraspoFlowAdapter.generate_sample_groups``
+        的扩展参数，保持接口兼容；当前实现不使用额外的 kwargs。
+        """
         self._require_ready()
         if any(
             any(str(item.get("type") or "") == "video" for item in sample.media)

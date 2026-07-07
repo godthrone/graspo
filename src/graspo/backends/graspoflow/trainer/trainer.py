@@ -4,19 +4,14 @@
 通过 mixin 组合到主类。外部使用者只 import 类名，完全不感知内部拆分。
 """
 
-
 import json
 import logging
 import os
 import random
 import time
 from collections import deque
-from datetime import datetime
 from pathlib import Path
 from typing import Any
-
-import numpy as np
-import torch
 
 from graspo.backends.graspoflow.logger import NativeRolloutLogger
 from graspo.backends.graspoflow.runtime import (
@@ -25,6 +20,11 @@ from graspo.backends.graspoflow.runtime import (
     validate_graspoflow_runtime_config,
 )
 from graspo.backends.graspoflow.trainer.checkpoint import CheckpointMixin
+from graspo.backends.graspoflow.trainer.helpers import (
+    _backup_config,
+    _set_random_seed,
+    _timestamp,
+)
 from graspo.backends.graspoflow.trainer.optimize import OptimizeMixin
 from graspo.backends.graspoflow.trainer.rollout import RolloutMixin
 from graspo.backends.graspoflow.trainer.stats import (
@@ -255,9 +255,7 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
     def _print_json(self, payload: dict[str, Any]) -> None:
         """主 rank 通过 logging 输出结构化 JSON 日志。"""
         if self._is_primary():
-            logging.getLogger("graspo.trainer").info(
-                json.dumps(payload, ensure_ascii=False)
-            )
+            logging.getLogger("graspo.trainer").info(json.dumps(payload, ensure_ascii=False))
 
     def _is_primary(self) -> bool:
         """判断当前 rank 是否为主 rank（负责日志 I/O）。"""
@@ -296,27 +294,3 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
             "tp_rank": int(getattr(self.runtime, "tp_rank", 0)),
             "details": round_timing_details(details),
         }
-
-
-def _timestamp() -> str:
-    return datetime.now().astimezone().isoformat(timespec="seconds")
-
-
-def _set_random_seed(seed: int, *, rank: int = 0) -> None:
-    """设置所有随机数生成器的种子，确保可复现性（宪法 §6）。"""
-    random.seed(seed + rank)
-    np.random.seed(seed + rank)
-    torch.manual_seed(seed + rank)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed + rank)
-
-
-def _backup_config(config: Any, output_dir: Path) -> None:
-    """将当前配置写入输出目录，确保事后可完整复现。"""
-    import yaml
-
-    config_path = output_dir / "config.yaml"
-    config_path.write_text(
-        yaml.dump(config.model_dump(), allow_unicode=True, sort_keys=False),
-        encoding="utf-8",
-    )

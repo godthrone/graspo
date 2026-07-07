@@ -1,7 +1,5 @@
 """Unit tests for graspoflow Layer 1 — operator, schedule, memory."""
 
-from __future__ import annotations
-
 import math
 
 import pytest

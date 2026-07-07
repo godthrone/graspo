@@ -186,18 +186,20 @@ class GraspoConfig(BaseModel):
         elif not run_name:
             training_raw["run_name"] = str(Path(output_dir).name)
 
-        return cls.model_validate({
-            "train_method": data.get("train_method", "graspo"),
-            "backend": data.get("backend", "graspoflow"),
-            "graspoflow": flow_cfg,
-            "model": data.get("model", {}),
-            "data": data.get("data", {}),
-            "lora": data.get("lora", {}),
-            "export": data.get("export", {}),
-            "launch": data.get("launch", {}),
-            "reward": data.get("reward", {}),
-            "training": training_raw,
-        })
+        return cls.model_validate(
+            {
+                "train_method": data.get("train_method", "graspo"),
+                "backend": data.get("backend", "graspoflow"),
+                "graspoflow": flow_cfg,
+                "model": data.get("model", {}),
+                "data": data.get("data", {}),
+                "lora": data.get("lora", {}),
+                "export": data.get("export", {}),
+                "launch": data.get("launch", {}),
+                "reward": data.get("reward", {}),
+                "training": training_raw,
+            }
+        )
 
 
 class Sample(BaseModel):

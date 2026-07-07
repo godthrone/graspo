@@ -9,7 +9,6 @@ This is the Flink-inspired separation: the scheduler knows *when* to execute
 *which* microbatch, but it does NOT know *how* to compute or communicate.
 """
 
-
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import StrEnum

@@ -8,7 +8,6 @@ Each rank runs exactly one Op (the layers it owns).  The scheduler's plan
 is a sequence of forward/backward indices.  The pipeline executes them in order.
 """
 
-
 import time
 from typing import Any
 

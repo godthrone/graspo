@@ -3,7 +3,6 @@
 不依赖任何 RL 模块（reward/advantage/buffer/rollout）。
 """
 
-
 import json
 import logging
 import random
@@ -182,9 +181,7 @@ class SFTTrainer:
 
     def _print_json(self, payload: dict[str, Any]) -> None:
         if self._is_primary():
-            logging.getLogger("graspo.sft_trainer").info(
-                json.dumps(payload, ensure_ascii=False)
-            )
+            logging.getLogger("graspo.sft_trainer").info(json.dumps(payload, ensure_ascii=False))
 
 
 def _timestamp() -> str:

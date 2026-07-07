@@ -3,7 +3,6 @@
 该模块可在 CPU 上独立测试，不依赖 GPU、分布式或任何模型实现。
 """
 
-
 import torch
 from torch.nn import functional as F  # noqa: N812
 

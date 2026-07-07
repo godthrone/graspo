@@ -4,8 +4,6 @@ Every model-family adapter must implement this interface.  The Trainer and
 Runtime only see this ABC, so they are completely model-agnostic.
 """
 
-from __future__ import annotations
-
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -51,7 +49,12 @@ class BaseGraspoFlowAdapter(ABC):
         chat_template_kwargs: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> list[NativeGeneration]:
-        """Generate *rollout_group_size* completions per message batch."""
+        """Generate *rollout_group_size* completions per message batch.
+
+        Subclasses may accept additional keyword arguments via ``**kwargs``:
+        ``max_prompt_length``, ``temperature``, ``top_p``, ``samples``,
+        ``tool_batches``, and backend-specific generation parameters.
+        """
         ...
 
     @abstractmethod
@@ -64,7 +67,12 @@ class BaseGraspoFlowAdapter(ABC):
         chat_template_kwargs: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> list[NativeGeneration]:
-        """Generate completions for multimodal :class:`Sample` objects."""
+        """Generate completions for multimodal :class:`Sample` objects.
+
+        Subclasses may accept additional keyword arguments via ``**kwargs``:
+        ``max_prompt_length``, ``temperature``, ``top_p``,
+        and backend-specific multimodal generation parameters.
+        """
         ...
 
     @abstractmethod
@@ -74,7 +82,12 @@ class BaseGraspoFlowAdapter(ABC):
         attention_mask: list[list[int]] | torch.Tensor | None = None,
         **kwargs: Any,
     ) -> torch.Tensor:
-        """Return per-token log-probabilities under the current policy."""
+        """Return per-token log-probabilities under the current policy.
+
+        Subclasses may accept additional keyword arguments via ``**kwargs``:
+        ``metadata`` (multimodal context), ``multimodal_inputs``, and
+        backend-specific forwarding parameters.
+        """
         ...
 
     @abstractmethod
@@ -85,7 +98,13 @@ class BaseGraspoFlowAdapter(ABC):
         optimizer_steps: int = 1,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """Run one or more optimizer steps over a batch of experiences."""
+        """Run one or more optimizer steps over a batch of experiences.
+
+        Subclasses may accept additional keyword arguments via ``**kwargs``:
+        ``policy_ratio_clip_eps``, ``optimize_iterations_per_step``,
+        ``max_grad_norm``, ``sft_batches`` (for SFT mode),
+        and backend-specific training parameters.
+        """
         ...
 
     @abstractmethod
