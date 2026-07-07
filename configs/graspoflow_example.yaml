@@ -8,8 +8,7 @@
 #   pp_size=N, tp_size=1  → 纯 PP（层间流水线）
 #   pp_size=M, tp_size=N  → TP+PP 混合
 #
-# 用 backend: graspoflow 切换到新框架。
-# GraspoFlow 是唯一的训练后端。
+# 使用 backend: graspoflow。GraspoFlow 是唯一的训练后端。
 # ─────────────────────────────────────────────────────────────
 
 # ── 模式 1: 单卡训练 ──
@@ -42,7 +41,7 @@
 #   gpus: [0, 1, 2, 3, 4, 5, 6, 7]
 #   master_port: 29500
 
-# ── 当前激活: 模式 3 — 纯 PP=8（Qwen3.6-27B）──
+# ── 模式 3 激活示例: 纯 PP=8（Qwen3.6-27B）──
 
 backend: graspoflow
 
@@ -55,7 +54,7 @@ model:
     enable_thinking: false
 
 data:
-  train_path: data/train.jsonl
+  train_path: data/elam_graspo_train.jsonl   # Replace with your data file
   max_prompt_length: 2048
 
 lora:
@@ -65,7 +64,6 @@ lora:
   target_preset: language_safe
 
 reward:
-  check_tool_call: true
   check_list_order: true
   marker_reward_weight: 10
   content_reward_weight: 100

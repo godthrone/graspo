@@ -24,7 +24,6 @@ class RewardConfig(BaseModel):
 
     check_think: bool = False
     check_json_markdown: bool = True
-    check_tool_call: bool = False
     check_list_order: bool = False
     marker_reward_weight: float = 10.0
     content_reward_weight: float = 100.0

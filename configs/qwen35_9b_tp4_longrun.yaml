@@ -1,0 +1,63 @@
+# GraspoFlow — Qwen3.5-9B TP=4 长训配置 (100 epochs)
+# 4×80GB GPU
+backend: graspoflow
+
+model:
+  model_path: models/Qwen3.5-9B
+  trust_remote_code: true
+  torch_dtype: bfloat16
+  gradient_checkpointing: true
+  chat_template_kwargs:
+    enable_thinking: false
+
+data:
+  train_path: data/elam_graspo_train.jsonl
+  max_prompt_length: 2048
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_preset: language_safe
+
+reward:
+  check_list_order: true
+  marker_reward_weight: 10
+  content_reward_weight: 100
+  anti_useless_str_reward_weight: 1
+
+training:
+  output_dir: outputs/tp4_longrun
+  seed: 42
+  max_epochs: 100
+  max_steps: -1
+  rollout_group_size: 8
+  optimize_prompt_batch_size: 4
+  optimize_iterations_per_step: 3
+  rollout_max_retries: 5
+  learning_rate: 5.0e-6
+  max_grad_norm: 1.0
+  policy_ratio_clip_eps: 0.2
+  max_new_tokens: 512
+  temperature: 1.0
+  top_p: 1.0
+  save_steps: -1
+  save_checkpoint_every_epoch: true
+  perfect_skip_reward_threshold: 1.0
+  reject_unparseable_groups: true
+
+graspoflow:
+  tp_size: 4
+  pp_size: 1
+  placement_strategy: qwen3_tp
+  forward_batch_size: 32
+  use_kv_cache_for_rollout: true
+  empty_cache_after_rollout_split: false
+  raw_log_enabled: true
+
+launch:
+  gpus: [0, 1, 2, 3]
+  nproc_per_node: 4
+  master_addr: 127.0.0.1
+  master_port: 29506
+  env: {}

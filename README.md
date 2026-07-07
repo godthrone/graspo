@@ -1,4 +1,4 @@
-# GRASPO
+# GRASPO (Group Relative Adaptive Structured Policy Optimization)
 
 [中文说明](README.zh-CN.md)
 
@@ -33,9 +33,43 @@ The production training path uses native TP/PP LoRA modules. PEFT is treated as
 an external compatibility format for warm-start import and offline export. Full
 parameter training is not supported in v1.
 
-## Install
+## Quick Start
 
-Python 3.11 is recommended.
+### Docker (production path)
+
+Docker is the primary training method. It locks the runtime environment and
+avoids host dependency conflicts.
+
+```bash
+# 1. Build the image (reads version from pyproject.toml automatically)
+bash docker/build.sh
+
+# 2. Run training — mounts your model and config
+docker run --gpus all \
+  -v /path/to/your/model:/workspace/graspo/models \
+  -v /path/to/your/config.yaml:/workspace/graspo/my_config.yaml \
+  graspo:0.10.0 \
+  launch --config my_config.yaml
+```
+
+> **Need a model?** The default config points to `models/Qwen3-8B`. Download it with:
+> ```bash
+> # On the host, before launching the container
+> huggingface-cli download Qwen/Qwen3-8B --local-dir /path/to/models/Qwen3-8B
+> ```
+
+For a smoke test, keep `training.max_new_tokens=2048` and reduce
+`training.max_steps`. Real GRASPO training keeps
+`training.max_epochs=100` unless you intentionally run a bounded test.
+
+**Custom image name:**
+```bash
+IMAGE_NAME=graspo:test bash docker/build.sh
+```
+
+### Local Install (development)
+
+Python 3.11 is required.
 
 ```bash
 git clone https://github.com/godthrone/graspo.git
@@ -43,9 +77,15 @@ cd graspo
 uv sync --extra dev --python 3.11
 ```
 
-## Quick Start
+Now edit `config_example.yaml` to point at your model and data, then launch:
 
-Edit the root sample config:
+```bash
+uv run graspo launch --config config_example.yaml
+```
+
+### RL Training (GRASPO)
+
+Copy and edit the root sample config:
 
 ```bash
 cp config_example.yaml my_graspo.yaml
@@ -61,15 +101,34 @@ Set at least these fields in `my_graspo.yaml`:
   `graspoflow.pp_size`: native placement
   world size.
 
-Launch training with one YAML argument:
+### SFT Training
+
+SFT mode reuses the same GraspoFlow infrastructure (TP/PP, LoRA, checkpoint)
+and the same JSONL data format. Copy the dedicated SFT example config:
 
 ```bash
-uv run graspo launch --config config_example.yaml
+cp configs/sft_example.yaml my_sft.yaml
 ```
 
-For a short smoke, keep `training.max_new_tokens=2048` and reduce
-`training.max_steps`. Real GRASPO training should keep
-`training.max_epochs=100` unless you intentionally run a bounded test.
+Key differences from RL:
+
+- `train_method: sft` — dispatches to supervised fine-tuning instead of RL;
+- `forward_batch_size` acts as micro-batch size;
+- `optimize_iterations_per_step` acts as gradient accumulation steps;
+- `max_prompt_length` is the full sequence length (prompt + response);
+- `learning_rate` is typically higher than RL (e.g. `5e-5` vs `5e-6`);
+- `reward` section is ignored by SFT.
+
+Launch the same way:
+
+```bash
+uv run graspo launch --config my_sft.yaml
+```
+
+After SFT, continue with RL by changing `train_method` to `graspo` and
+pointing `lora.adapter_path` to the SFT checkpoint.
+
+### Validate Data
 
 Validate sample data and reward behavior:
 
@@ -228,7 +287,14 @@ so reward behavior can be inspected without rerunning generation.
 ## Configuration
 
 All normal training configuration lives in YAML. `config_example.yaml` is the
-complete public example.
+complete public example for RL training. `configs/sft_example.yaml` is the
+dedicated SFT template.
+
+### `train_method`
+
+- `graspo`: RL training with GRASPO algorithm (default).
+- `sft`: supervised fine-tuning with cross-entropy loss. Reuses the same
+  config fields — no new fields needed. `reward` section is ignored.
 
 ### `backend`
 
@@ -270,8 +336,6 @@ training.
 
 - `check_think`: require `<think>...</think>` markers before the answer.
 - `check_json_markdown`: require fenced JSON output.
-- `check_tool_call`: legacy switch retained in config; current training infers
-  tool-call scoring from `targets[].output.tool_calls`.
 - `check_list_order`: make list order matter in structured comparison.
 - `marker_reward_weight`: reward for required output markers.
 - `content_reward_weight`: reward for structured content match.
@@ -444,12 +508,18 @@ Each run writes to `training.output_dir`:
 
 All log files live under the `logs/` subdirectory.
 
+SFT runs produce a subset of these outputs: `training.log`, `rank_metrics.*.jsonl`,
+`error.log`, checkpoints, `final`, and `config.yaml`. Rollout and replay logs are
+RL-only and not written during SFT training.
+
 A healthy GRASPO run is not just a process that stays alive. Watch reward trend,
 reward range inside each group, content-score validity, decision distribution,
 finite loss/grad, nonzero LoRA gradients, LoRA tensor changes, replay-buffer
 progress, checkpoint writes, and GPU/NCCL health.
 
 ## Development
+
+### Local
 
 ```bash
 uv run --extra dev ruff check src tests scripts
@@ -458,17 +528,43 @@ uv run --extra dev pytest -q
 uv run --extra dev python -m graspo --help
 ```
 
+### Docker
+
+```bash
+# Check CLI works
+docker run --rm graspo:0.10.0
+# → shows graspo --help output
+
+# Run quick smoke test (requires a mounted model)
+docker run --rm --gpus all \
+  -v /path/to/model:/workspace/graspo/models \
+  graspo:0.10.0 \
+  launch --config config_example.yaml
+```
+
 ## FAQ
 
 - `model.model_path must be set`: edit `config_example.yaml` and point it at a
   real base model.
 - `data.train_path does not exist`: point `data.train_path` at a JSONL file.
+- **Docker: model not found in container**: mount your model directory with
+  `-v /host/path/to/model:/workspace/graspo/models`.
+- **Docker: `torchrun` not found**: the Docker image installs GRASPO as a CLI
+  entry point. Run `graspo launch --config ...` directly; the container's PATH
+  includes the venv with torch and torchrun.
 - Native launch world size mismatch: make `launch.nproc_per_node * launch.nnodes`
   equal `tp_size * pp_size`.
 - Rollout OOM: keep `training.max_new_tokens=2048`; reduce rollout concurrency
   or KV cache reservation instead of lowering production generation length.
 - Need PEFT compatibility: load PEFT/GRASPO-PEFT adapters through `lora.adapter_path`, and
   export portable artifacts with `graspo export --config <yaml>`.
+- **SFT to RL**: after SFT training, set `train_method: graspo`, point
+  `lora.adapter_path` to the SFT checkpoint's adapter, and adjust
+  `learning_rate` down (e.g. `1e-6`). The SFT LoRA adapter is directly
+  compatible with GRASPO RL training.
+- **SFT OOM**: reduce `forward_batch_size` (micro-batch) or `max_prompt_length`;
+  increase `optimize_iterations_per_step` (gradient accumulation) to keep the
+  effective batch size.
 
 ## License
 

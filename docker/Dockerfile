@@ -23,21 +23,22 @@ WORKDIR /workspace/graspo
 # --no-install-project resolves only the locked dependencies, leaving the
 # project itself for Layer 2 (so the source COPY doesn't break the cache).
 COPY pyproject.toml uv.lock .python-version README.md LICENSE ./
-RUN uv sync --no-install-project --frozen
+RUN uv sync --no-install-project --frozen --no-dev
 
 # Layer 2: source code
 COPY src ./src
 COPY configs ./configs
 COPY data ./data
 
-# Install project into the same venv as dependencies (not system Python)
-RUN uv sync --frozen
+# Install project into the same venv as dependencies
+# --no-dev keeps the production image lean (dev deps not needed at runtime)
+RUN uv sync --frozen --no-dev
 
 # torchvision required by Qwen3.5 VideoProcessor import path (even text-only)
-# UV_SYSTEM_PYTHON=1 is set above, must override to install into venv
-RUN UV_SYSTEM_PYTHON=0 uv pip install torchvision
+RUN uv pip install torchvision
 
 # Use venv Python as the entry point so all deps are available
 ENV PATH="/workspace/graspo/.venv/bin:$PATH"
 
-CMD ["graspo", "--help"]
+ENTRYPOINT ["graspo"]
+CMD ["--help"]

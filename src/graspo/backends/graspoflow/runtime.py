@@ -92,6 +92,13 @@ class GraspoFlowRuntimeProtocol(Protocol):
         optimize_iterations_per_step: int,
         max_grad_norm: float,
     ) -> dict[str, Any]: ...
+    def train_batch_sft(
+        self,
+        sft_batches: list[dict[str, Any]],
+        *,
+        optimize_iterations_per_step: int,
+        max_grad_norm: float,
+    ) -> dict[str, Any]: ...
     def save_checkpoint(
         self, path: str | Path, *, trainer_state: dict[str, Any] | None = None
     ) -> None: ...
@@ -220,6 +227,19 @@ class GraspoFlowRuntime:
         return self._require_adapter().train_batch(
             experiences,
             policy_ratio_clip_eps=policy_ratio_clip_eps,
+            optimize_iterations_per_step=optimize_iterations_per_step,
+            max_grad_norm=max_grad_norm,
+        )
+
+    def train_batch_sft(
+        self,
+        sft_batches: list[dict[str, Any]],
+        *,
+        optimize_iterations_per_step: int,
+        max_grad_norm: float,
+    ) -> dict[str, Any]:
+        return self._require_adapter().train_batch_sft(
+            sft_batches,
             optimize_iterations_per_step=optimize_iterations_per_step,
             max_grad_norm=max_grad_norm,
         )

@@ -63,6 +63,7 @@ data/*.csv
 !data/sample.jsonl
 !data/sample_multimodal.jsonl
 !data/sample_tool_call.jsonl
+!data/elam_graspo_train.jsonl
 *.xlsx
 *.xls
 .dataset/

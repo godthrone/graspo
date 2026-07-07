@@ -1,0 +1,73 @@
+# GRASPO SFT — Example Configuration
+#
+# Supervised Fine-Tuning for structured-output tasks.
+# Reuses the same infrastructure as GRASPO RL (TP/PP, LoRA, checkpoint).
+# Launch with:
+#   uv run graspo launch --config configs/sft_example.yaml
+#
+# After SFT, continue with RL:
+#   1. Change train_method to "graspo"
+#   2. Set lora.adapter_path to the SFT checkpoint
+#   3. Adjust learning_rate and reward settings
+
+train_method: sft
+
+# ── Backend selection ─────────────────────────────────────────────────────
+# Currently only "graspoflow" (unified TP+PP backend).
+backend: graspoflow
+
+# ── Base model ────────────────────────────────────────────────────────────
+model:
+  model_path: models/Qwen3.5-9B       # Path to HuggingFace model directory
+  trust_remote_code: true             # Required for Qwen-family models
+  torch_dtype: bfloat16               # "bfloat16", "float16", or "float32"
+  gradient_checkpointing: true        # Trade compute for memory
+  chat_template_kwargs:
+    enable_thinking: false            # MUST match GRASPO inference format
+
+# ── Training data ─────────────────────────────────────────────────────────
+data:
+  train_path: data/sample.jsonl        # Path to GRASPO-format JSONL (messages + targets)
+  max_prompt_length: 4096             # Max sequence length (prompt + response)
+
+# ── LoRA configuration ────────────────────────────────────────────────────
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  adapter_path: null                  # Start from scratch (or set to existing adapter for warm-start)
+  target_preset: language_safe
+
+# ── GraspoFlow distributed backend ────────────────────────────────────────
+graspoflow:
+  tp_size: 4                          # Tensor-parallel size (1=single GPU)
+  pp_size: 1                          # Pipeline-parallel size (1=no PP)
+  forward_batch_size: 4               # Micro-batch size per forward pass
+
+# ── Training hyperparameters ──────────────────────────────────────────────
+training:
+  output_dir: ""                      # Auto-generated outputs/sft_<timestamp>
+  seed: 42
+  max_epochs: 20                      # SFT typically needs fewer epochs than RL
+  learning_rate: 5.0e-5               # SFT LR (higher than RL's 5e-6~5e-7)
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  optimize_prompt_batch_size: 8       # Samples per optimizer step
+  optimize_iterations_per_step: 3     # Gradient accumulation steps
+  lr_scheduler:
+    type: cosine                      # "constant", "cosine", or "linear"
+    warmup_steps: 50                  # Linear warmup steps
+    min_lr_ratio: 0.0                 # Final LR = learning_rate * min_lr_ratio
+  save_steps: 100                     # Checkpoint every N steps (-1 to disable)
+  save_checkpoint_every_epoch: true
+
+# ── Launch configuration ──────────────────────────────────────────────────
+launch:
+  gpus: [0, 1, 2, 3]                  # GPU indices for this run
+
+# ── Reward (ignored by SFT, kept for easy switch to RL) ──────────────────
+reward:
+  check_think: false
+  check_json_markdown: true
+  marker_reward_weight: 10
+  content_reward_weight: 100
