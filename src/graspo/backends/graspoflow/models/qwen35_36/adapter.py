@@ -5,8 +5,6 @@
 外部使用者只 import 类名，完全不感知内部拆分。
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +17,7 @@ from graspo.backends.graspoflow.models.qwen35_36.generation import _Qwen35Genera
 from graspo.backends.graspoflow.models.qwen35_36.logprobs import _Qwen35LogprobsMethods
 from graspo.backends.graspoflow.models.qwen35_36.ops import build_qwen35_ops
 from graspo.backends.graspoflow.models.qwen35_36.training import _Qwen35TrainingMethods
+from graspo.backends.graspoflow.models.qwen35_36.training_sft import _Qwen35SFTTrainingMethods
 from graspo.backends.graspoflow.placement import (
     build_placement_plan,
 )
@@ -35,6 +34,7 @@ from graspo.core.lora import resolve_lora_target_modules
 class Qwen35Adapter(
     _Qwen35GenerationMethods,
     _Qwen35TrainingMethods,
+    _Qwen35SFTTrainingMethods,
     _Qwen35LogprobsMethods,
     TransformerAdapter,
 ):
@@ -44,7 +44,9 @@ class Qwen35Adapter(
     TP-only / PP / TP+PP training.
 
     使用 mixin 组合：_Qwen35GenerationMethods（生成/rollout）、
-    _Qwen35TrainingMethods（训练/优化）、_Qwen35LogprobsMethods（log 概率）。
+    _Qwen35TrainingMethods（RL 训练/优化）、
+    _Qwen35SFTTrainingMethods（SFT 训练）、
+    _Qwen35LogprobsMethods（log 概率）。
     """
 
     completion_parser_name = "qwen_tool_call"

@@ -1,6 +1,5 @@
 """Qwen3.5/3.6 adapter — sequence log-probability methods."""
 
-
 import time
 from typing import Any
 

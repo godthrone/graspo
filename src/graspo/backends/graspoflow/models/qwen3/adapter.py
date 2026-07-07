@@ -3,8 +3,6 @@
 Lighter than Qwen35Adapter — no visual tower, no multimodal.
 """
 
-from __future__ import annotations
-
 import time
 from pathlib import Path
 from typing import Any
@@ -120,6 +118,11 @@ class Qwen3Adapter(TransformerAdapter):
         chat_template_kwargs: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> list[NativeGeneration]:
+        """Generate *rollout_group_size* completions per message batch (TP-only).
+
+        ``**kwargs`` 接收基类 ``BaseGraspoFlowAdapter.generate_groups`` 的扩展参数，
+        保持接口兼容；当前实现不使用额外的 kwargs。
+        """
         self._require_ready()
         if self.model is None or self.tokenizer is None:
             raise RuntimeError("model or tokenizer not loaded; call setup() first")

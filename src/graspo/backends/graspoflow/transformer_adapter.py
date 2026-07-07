@@ -6,7 +6,6 @@ only implements the model-specific parts (``_load_model``, ``_build_ops``,
 ``sequence_log_probs``, ``parse_completion``).
 """
 
-
 import json
 import logging
 import time
@@ -684,9 +683,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
 
     def _print_rank0(self, payload: dict[str, Any]) -> None:
         if self.rank == 0:
-            logging.getLogger("graspo.adapter").info(
-                json.dumps(payload, ensure_ascii=False)
-            )
+            logging.getLogger("graspo.adapter").info(json.dumps(payload, ensure_ascii=False))
 
     def _sync_timing(self) -> None:
         if (
