@@ -1,0 +1,62 @@
+# Python caches and artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.uv-cache/
+.coverage
+dist/
+build/
+
+# Local environments and editor state
+.env
+.venv/
+.venv-*/
+venv/
+.idea/
+.vscode/
+
+# AI assistant files
+CLAUDE.md
+CLAUDE.zh-CN.md
+AGENTS.md
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local notes and ad hoc files
+.local/
+
+# Training outputs and experiment artifacts (never in image)
+outputs/
+checkpoints/
+anchor_bank/
+wandb/
+runs/
+logs/
+reports/
+experiment_data/
+
+# Large model and checkpoint files (mount at runtime)
+models/
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.tar.gz
+*.tar
+
+# Local datasets (sample data is small and committed)
+data/*.xlsx
+data/*.xls
+data/*.csv
+.dataset/
+.datasets/
+
+# Git
+.git/
+.gitignore
+README.md.orig

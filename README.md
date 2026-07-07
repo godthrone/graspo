@@ -33,9 +33,43 @@ The production training path uses native TP/PP LoRA modules. PEFT is treated as
 an external compatibility format for warm-start import and offline export. Full
 parameter training is not supported in v1.
 
-## Install
+## Quick Start
 
-Python 3.11 is recommended.
+### Docker (production path)
+
+Docker is the primary training method. It locks the runtime environment and
+avoids host dependency conflicts.
+
+```bash
+# 1. Build the image (reads version from pyproject.toml automatically)
+bash docker/build.sh
+
+# 2. Run training — mounts your model and config
+docker run --gpus all \
+  -v /path/to/your/model:/workspace/graspo/models \
+  -v /path/to/your/config.yaml:/workspace/graspo/my_config.yaml \
+  graspo:0.10.0 \
+  launch --config my_config.yaml
+```
+
+> **Need a model?** The default config points to `models/Qwen3-8B`. Download it with:
+> ```bash
+> # On the host, before launching the container
+> huggingface-cli download Qwen/Qwen3-8B --local-dir /path/to/models/Qwen3-8B
+> ```
+
+For a smoke test, keep `training.max_new_tokens=2048` and reduce
+`training.max_steps`. Real GRASPO training keeps
+`training.max_epochs=100` unless you intentionally run a bounded test.
+
+**Custom image name:**
+```bash
+IMAGE_NAME=graspo:test bash docker/build.sh
+```
+
+### Local Install (development)
+
+Python 3.11 is required.
 
 ```bash
 git clone https://github.com/godthrone/graspo.git
@@ -43,11 +77,15 @@ cd graspo
 uv sync --extra dev --python 3.11
 ```
 
-## Quick Start
+Now edit `config_example.yaml` to point at your model and data, then launch:
+
+```bash
+uv run graspo launch --config config_example.yaml
+```
 
 ### RL Training (GRASPO)
 
-Edit the root sample config:
+Copy and edit the root sample config:
 
 ```bash
 cp config_example.yaml my_graspo.yaml
@@ -55,7 +93,6 @@ cp config_example.yaml my_graspo.yaml
 
 Set at least these fields in `my_graspo.yaml`:
 
-- `train_method`: `graspo` (RL) or `sft` (supervised fine-tuning);
 - `model.model_path`: local Hugging Face model directory or model id;
 - `data.train_path`: JSONL training data;
 - `training.output_dir`: run output directory;
@@ -63,16 +100,6 @@ Set at least these fields in `my_graspo.yaml`:
 - `graspoflow.tp_size` and
   `graspoflow.pp_size`: native placement
   world size.
-
-Launch training with one YAML argument:
-
-```bash
-uv run graspo launch --config config_example.yaml
-```
-
-For a short smoke, keep `training.max_new_tokens=2048` and reduce
-`training.max_steps`. Real GRASPO training should keep
-`training.max_epochs=100` unless you intentionally run a bounded test.
 
 ### SFT Training
 
@@ -309,8 +336,6 @@ training.
 
 - `check_think`: require `<think>...</think>` markers before the answer.
 - `check_json_markdown`: require fenced JSON output.
-- `check_tool_call`: legacy switch retained in config; current training infers
-  tool-call scoring from `targets[].output.tool_calls`.
 - `check_list_order`: make list order matter in structured comparison.
 - `marker_reward_weight`: reward for required output markers.
 - `content_reward_weight`: reward for structured content match.
@@ -494,6 +519,8 @@ progress, checkpoint writes, and GPU/NCCL health.
 
 ## Development
 
+### Local
+
 ```bash
 uv run --extra dev ruff check src tests scripts
 uv run --extra dev ruff format --check src tests scripts
@@ -501,11 +528,30 @@ uv run --extra dev pytest -q
 uv run --extra dev python -m graspo --help
 ```
 
+### Docker
+
+```bash
+# Check CLI works
+docker run --rm graspo:0.10.0
+# → shows graspo --help output
+
+# Run quick smoke test (requires a mounted model)
+docker run --rm --gpus all \
+  -v /path/to/model:/workspace/graspo/models \
+  graspo:0.10.0 \
+  launch --config config_example.yaml
+```
+
 ## FAQ
 
 - `model.model_path must be set`: edit `config_example.yaml` and point it at a
   real base model.
 - `data.train_path does not exist`: point `data.train_path` at a JSONL file.
+- **Docker: model not found in container**: mount your model directory with
+  `-v /host/path/to/model:/workspace/graspo/models`.
+- **Docker: `torchrun` not found**: the Docker image installs GRASPO as a CLI
+  entry point. Run `graspo launch --config ...` directly; the container's PATH
+  includes the venv with torch and torchrun.
 - Native launch world size mismatch: make `launch.nproc_per_node * launch.nnodes`
   equal `tp_size * pp_size`.
 - Rollout OOM: keep `training.max_new_tokens=2048`; reduce rollout concurrency

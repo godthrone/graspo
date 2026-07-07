@@ -20,7 +20,7 @@ backend: graspoflow
 
 # ── Base model ────────────────────────────────────────────────────────────
 model:
-  model_path: models/Qwen3-8B        # Path to HuggingFace model directory
+  model_path: models/Qwen3.5-9B      # Path to HuggingFace model directory
   trust_remote_code: true            # Required for Qwen-family models
   torch_dtype: bfloat16              # "bfloat16", "float16", or "float32"
   attn_implementation: null          # null=auto, "flash_attention_2", "sdpa", "eager"
@@ -30,7 +30,7 @@ model:
 
 # ── Training data ─────────────────────────────────────────────────────────
 data:
-  train_path: data/sample.jsonl      # Path to JSONL training file
+  train_path: data/sample.jsonl      # Path to JSONL training file (tool-call + multimodal sample)
   max_prompt_length: 2048            # Truncate prompts longer than this (tokens)
 
 # ── LoRA configuration ────────────────────────────────────────────────────
@@ -47,9 +47,8 @@ lora:
 # ── Reward function ───────────────────────────────────────────────────────
 reward:
   check_think: false                 # Score adherence to Qwen think/answer structure
-  check_json_markdown: true          # Score JSON-in-fence extraction (+1 all-right bonus)
-  check_tool_call: false             # Score tool-call structure (enable for tool-call data)
-  check_list_order: false            # Score list element ordering
+  check_json_markdown: false         # Score JSON-in-fence extraction (set true for JSON tasks)
+  check_list_order: true             # Score list element ordering
   marker_reward_weight: 10           # Weight for structural markers in reward
   content_reward_weight: 100         # Weight for content correctness (numeric field match)
   anti_useless_str_reward_weight: 1  # Penalty weight for useless filler text

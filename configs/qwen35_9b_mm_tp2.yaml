@@ -26,7 +26,6 @@ lora:
 reward:
   check_think: false
   check_json_markdown: true
-  check_tool_call: false
   check_list_order: false
   marker_reward_weight: 10
   content_reward_weight: 100

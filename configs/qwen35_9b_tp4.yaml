@@ -11,7 +11,7 @@ model:
     enable_thinking: false
 
 data:
-  train_path: data/train.jsonl
+  train_path: data/elam_graspo_train.jsonl
   max_prompt_length: 2048
 
 lora:
@@ -21,7 +21,6 @@ lora:
   target_preset: language_safe
 
 reward:
-  check_tool_call: true
   check_list_order: true
   marker_reward_weight: 10
   content_reward_weight: 100
