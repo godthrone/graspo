@@ -2,7 +2,7 @@
 
 import pytest
 
-torch = pytest.importorskip("torch", reason="torch required")
+torch = pytest.importorskip("torch", exc_type=ImportError, reason="torch required")
 if not torch.cuda.is_available():
     pytest.skip("CUDA required for LoRA I/O GPU tests", allow_module_level=True)
 

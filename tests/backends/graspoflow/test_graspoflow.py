@@ -4,6 +4,8 @@ import math
 
 import pytest
 
+pytest.importorskip("torch", exc_type=ImportError)
+
 from graspo.backends.graspoflow.memory import (
     compute_max_inflight,
     estimate_per_microbatch_activation_bytes,

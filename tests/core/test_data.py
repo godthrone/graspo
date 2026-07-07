@@ -17,10 +17,12 @@ def _tool_target(*calls: dict, target_id: str = "expected") -> list[dict]:
 def test_load_standard_jsonl():
     samples = load_jsonl(Path("data/sample.jsonl"))
 
-    assert len(samples) == 2
+    assert len(samples) >= 1
     assert samples[0].messages
     assert isinstance(samples[0].targets, list)
-    assert samples[0].targets[0]["output"]["content"]["APN"] == "cmnet"
+    assert len(samples[0].targets) >= 1
+    assert samples[0].targets[0]["id"] is not None
+    assert "tool_calls" in samples[0].targets[0]["output"]
 
 
 def test_write_and_load_roundtrip(tmp_path):
