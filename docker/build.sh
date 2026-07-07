@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build GRASPO Docker image. Run from repository root.
-#   IMAGE_NAME=graspo:0.7.0 bash docker/build.sh
+#   IMAGE_NAME=graspo:test bash docker/build.sh
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
