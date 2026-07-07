@@ -6,9 +6,9 @@ only implements the model-specific parts (``_load_model``, ``_build_ops``,
 ``sequence_log_probs``, ``parse_completion``).
 """
 
-from __future__ import annotations
 
 import json
+import logging
 import time
 from abc import abstractmethod
 from pathlib import Path
@@ -268,7 +268,8 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
         *,
         tools: list[dict[str, Any]] | None = None,
     ) -> str:
-        assert self.tokenizer is not None
+        if self.tokenizer is None:
+            raise RuntimeError(f"{type(self).__name__} is not set up; call setup() first")
         template_kwargs = dict(chat_template_kwargs or {})
         if tools is not None:
             template_kwargs["tools"] = tools
@@ -299,7 +300,8 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
         trainer_state: dict[str, Any] | None = None,
     ) -> None:
         self._require_ready()
-        assert self.model is not None
+        if self.model is None:
+            raise RuntimeError(f"{type(self).__name__} is not set up; call setup() first")
         output = Path(path)
         output.mkdir(parents=True, exist_ok=True)
         payload = {
@@ -361,7 +363,8 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
 
     def load_checkpoint(self, path: str | Path) -> dict[str, Any] | None:
         self._require_ready()
-        assert self.model is not None
+        if self.model is None:
+            raise RuntimeError(f"{type(self).__name__} is not set up; call setup() first")
         checkpoint_dir = Path(path)
         rank_path = (
             checkpoint_dir / f"rank_{self.rank:05d}_tp_{self.tp_rank:02d}_pp_{self.pp_rank:02d}.pt"
@@ -580,7 +583,8 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
         timing_divisor: int,
         rollout_started_at: float,
     ) -> NativeGeneration:
-        assert self.tokenizer is not None
+        if self.tokenizer is None:
+            raise RuntimeError(f"{type(self).__name__} is not set up; call setup() first")
         attention_mask = sequences.ne(pad_token_id)
         action_mask = torch.zeros(
             (sequences.shape[0], max(sequences.shape[1] - 1, 0)),
@@ -680,7 +684,9 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
 
     def _print_rank0(self, payload: dict[str, Any]) -> None:
         if self.rank == 0:
-            print(json.dumps(payload, ensure_ascii=False), flush=True)
+            logging.getLogger("graspo.adapter").info(
+                json.dumps(payload, ensure_ascii=False)
+            )
 
     def _sync_timing(self) -> None:
         if (

@@ -585,7 +585,3 @@ class Qwen35HybridTextModel(QwenFamilyBase):
                 conv = int(batch_size) * conv_dim * int(self.config.linear_conv_kernel_dim)
                 total += (recurrent + conv) * dtype_size
         return int(total)
-
-
-class TensorParallelQwen35TextForCausalLM(Qwen35HybridTextModel):
-    """Compatibility alias for older tests/imports."""

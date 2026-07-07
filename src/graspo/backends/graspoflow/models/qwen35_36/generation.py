@@ -11,8 +11,6 @@ from torch.nn.utils.rnn import pad_sequence
 from graspo.backends.graspoflow.models.qwen35_36.model import Qwen35HybridTextModel
 from graspo.backends.graspoflow.multimodal import (
     _compute_multimodal_offset_tables,
-    _media_counts,
-    _multimodal_row_from_sample,
     _normalize_tool_batches,
     _slice_multimodal_inputs_offset,
 )
@@ -22,6 +20,7 @@ from graspo.backends.graspoflow.tensor_utils import (
     _left_pad_token_rows,
     _next_token_from_logits,
 )
+from graspo.core.data import _media_counts, _multimodal_row_from_sample
 
 
 class _Qwen35GenerationMethods:

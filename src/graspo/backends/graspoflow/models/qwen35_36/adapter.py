@@ -83,7 +83,8 @@ class Qwen35Adapter(
             torch_dtype=torch_dtype,
             device=self.device,
         )
-        assert self.model is not None
+        if self.model is None:
+            raise RuntimeError("model not loaded; call setup() first")
         missing_lora_targets = sorted(
             target
             for target in set(lora_targets.resolved) - set(self.model.enabled_lora_target_names())

@@ -1,6 +1,5 @@
 """GraspoFlowTrainer 优化步骤的 mixin。"""
 
-from __future__ import annotations
 
 import time
 from pathlib import Path

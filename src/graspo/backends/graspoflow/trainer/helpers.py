@@ -3,7 +3,6 @@
 不依赖 self 状态，可独立测试（宪法 §8.4 拆分后保留数据变换工具）。
 """
 
-from __future__ import annotations
 
 import json
 import logging

@@ -1,6 +1,5 @@
 """Qwen 系列模型的公共配置基类。"""
 
-from __future__ import annotations
 
 from typing import Any
 

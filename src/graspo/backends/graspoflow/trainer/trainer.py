@@ -4,7 +4,6 @@
 通过 mixin 组合到主类。外部使用者只 import 类名，完全不感知内部拆分。
 """
 
-from __future__ import annotations
 
 import json
 import logging
@@ -15,6 +14,9 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+import numpy as np
+import torch
 
 from graspo.backends.graspoflow.logger import NativeRolloutLogger
 from graspo.backends.graspoflow.runtime import (
@@ -84,6 +86,7 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
         # 初始化标准 Python logging 通道（宪法 §13.2）
         rank = int(getattr(self.runtime, "rank", 0))
         setup_logging(self.config.training.output_dir, rank=rank)
+        _set_random_seed(int(self.config.training.seed), rank=rank)
         _log = logging.getLogger("graspo.trainer")
         os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "")
         conf = os.environ["PYTORCH_CUDA_ALLOC_CONF"]
@@ -250,9 +253,11 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
     # ── 日志输出辅助 ──────────────────────────────────────────────────────────
 
     def _print_json(self, payload: dict[str, Any]) -> None:
-        """主 rank 输出 JSON 日志。"""
+        """主 rank 通过 logging 输出结构化 JSON 日志。"""
         if self._is_primary():
-            print(json.dumps(payload, ensure_ascii=False), flush=True)
+            logging.getLogger("graspo.trainer").info(
+                json.dumps(payload, ensure_ascii=False)
+            )
 
     def _is_primary(self) -> bool:
         """判断当前 rank 是否为主 rank（负责日志 I/O）。"""
@@ -295,6 +300,15 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
 
 def _timestamp() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _set_random_seed(seed: int, *, rank: int = 0) -> None:
+    """设置所有随机数生成器的种子，确保可复现性（宪法 §6）。"""
+    random.seed(seed + rank)
+    np.random.seed(seed + rank)
+    torch.manual_seed(seed + rank)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed + rank)
 
 
 def _backup_config(config: Any, output_dir: Path) -> None:

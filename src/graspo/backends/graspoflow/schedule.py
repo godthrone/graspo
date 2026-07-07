@@ -9,7 +9,6 @@ This is the Flink-inspired separation: the scheduler knows *when* to execute
 *which* microbatch, but it does NOT know *how* to compute or communicate.
 """
 
-from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass

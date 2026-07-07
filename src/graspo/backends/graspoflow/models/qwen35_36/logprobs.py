@@ -1,6 +1,5 @@
 """Qwen3.5/3.6 adapter — sequence log-probability methods."""
 
-from __future__ import annotations
 
 import time
 from typing import Any

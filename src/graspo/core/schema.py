@@ -169,7 +169,7 @@ class GraspoConfig(BaseModel):
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> GraspoConfig:
-        """从字典构建配置，pydantic ``extra="forbid"`` 自动拒绝未知字段。"""
+        """从字典构建配置，pydantic ``model_validate`` 一次性校验所有字段。"""
         data = data or {}
         flow_cfg = _resolve_graspoflow_config(data)
 
@@ -186,18 +186,18 @@ class GraspoConfig(BaseModel):
         elif not run_name:
             training_raw["run_name"] = str(Path(output_dir).name)
 
-        return cls(
-            train_method=data.get("train_method", "graspo"),
-            backend=data.get("backend", "graspoflow"),
-            graspoflow=GraspoFlowConfig(**flow_cfg),
-            model=ModelConfig(**data.get("model", {})),
-            data=DataConfig(**data.get("data", {})),
-            lora=LoRAConfig(**data.get("lora", {})),
-            export=ExportConfig(**data.get("export", {})),
-            launch=LaunchConfig(**data.get("launch", {})),
-            reward=RewardConfig(**data.get("reward", {})),
-            training=TrainingConfig(**training_raw),
-        )
+        return cls.model_validate({
+            "train_method": data.get("train_method", "graspo"),
+            "backend": data.get("backend", "graspoflow"),
+            "graspoflow": flow_cfg,
+            "model": data.get("model", {}),
+            "data": data.get("data", {}),
+            "lora": data.get("lora", {}),
+            "export": data.get("export", {}),
+            "launch": data.get("launch", {}),
+            "reward": data.get("reward", {}),
+            "training": training_raw,
+        })
 
 
 class Sample(BaseModel):

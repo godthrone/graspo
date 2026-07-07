@@ -3,7 +3,6 @@
 不依赖任何 RL 模块（reward/advantage/buffer/rollout）。
 """
 
-from __future__ import annotations
 
 import json
 import logging
@@ -12,6 +11,9 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+import numpy as np
+import torch
 
 from graspo.backends.graspoflow.runtime import (
     GraspoFlowRuntime,
@@ -54,6 +56,7 @@ class SFTTrainer:
         self.runtime.setup()
         rank = int(getattr(self.runtime, "rank", 0))
         setup_logging(self.config.training.output_dir, rank=rank)
+        _set_random_seed(int(self.config.training.seed), rank=rank)
         _log = logging.getLogger("graspo.sft_trainer")
 
         # 加载并 tokenize 数据（所有 rank 各自执行，因为 train_batch_sft 在所有 rank 上调用）
@@ -179,11 +182,22 @@ class SFTTrainer:
 
     def _print_json(self, payload: dict[str, Any]) -> None:
         if self._is_primary():
-            print(json.dumps(payload, ensure_ascii=False), flush=True)
+            logging.getLogger("graspo.sft_trainer").info(
+                json.dumps(payload, ensure_ascii=False)
+            )
 
 
 def _timestamp() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _set_random_seed(seed: int, *, rank: int = 0) -> None:
+    """设置所有随机数生成器的种子，确保可复现性（宪法 §6）。"""
+    random.seed(seed + rank)
+    np.random.seed(seed + rank)
+    torch.manual_seed(seed + rank)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed + rank)
 
 
 def _backup_config(config: Any, output_dir: Path) -> None:
