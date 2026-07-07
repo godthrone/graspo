@@ -1043,9 +1043,7 @@ class _Qwen35TrainingMethods:
         }
 
 
-def _collate_sft_batch(
-    items: list[dict[str, Any]], device: torch.device
-) -> dict[str, Any]:
+def _collate_sft_batch(items: list[dict[str, Any]], device: torch.device) -> dict[str, Any]:
     """将多个 SFT tokenized 样本拼接为 micro-batch。
 
     每个 item 来自 ``sft_tokenize()``，包含 ``input_ids``, ``labels``,
@@ -1060,9 +1058,11 @@ def _collate_sft_batch(
     labels = pad_sequence(
         [item["labels"] for item in items], batch_first=True, padding_value=-100
     ).to(device)
-    attention_mask = pad_sequence(
-        [item["attention_mask"] for item in items], batch_first=True, padding_value=0
-    ).bool().to(device)
+    attention_mask = (
+        pad_sequence([item["attention_mask"] for item in items], batch_first=True, padding_value=0)
+        .bool()
+        .to(device)
+    )
 
     micro_batch: dict[str, Any] = {
         "input_ids": input_ids,

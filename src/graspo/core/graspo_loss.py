@@ -1,3 +1,8 @@
+"""GRASPO PPO-clip loss 与 log-prob 工具函数 —— 纯计算层，零设施依赖。
+
+该模块可在 CPU 上独立测试，不依赖 GPU、分布式或任何模型实现。
+"""
+
 import torch
 from torch import nn
 
