@@ -1,3 +1,8 @@
+"""LoRA target module resolution —— 纯计算层，零设施依赖。
+
+该模块可在 CPU 上独立测试，不依赖 GPU、分布式或任何模型实现。
+"""
+
 from collections.abc import Iterable
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
@@ -50,7 +55,7 @@ def resolve_lora_target_modules(
     available: Iterable[str],
     default_preset: str = "language_safe",
 ) -> ResolvedLoRATargets:
-    """Resolve native LoRA targets from exact canonical names, globs, or presets."""
+    """从精确规范名、glob 或 preset 解析原生 LoRA target 模块。"""
 
     available_targets = tuple(sorted(set(str(item) for item in available)))
     raw_requested = tuple(str(item) for item in (requested or (default_preset,)))

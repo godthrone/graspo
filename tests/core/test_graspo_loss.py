@@ -2,7 +2,7 @@ import pytest
 
 torch = pytest.importorskip("torch", exc_type=ImportError)
 
-from graspo.trainer.loss import GRASPOLoss  # noqa: E402
+from graspo.core.graspo_loss import GRASPOLoss  # noqa: E402
 
 
 def test_ppo_clip_loss_matches_original_formula():

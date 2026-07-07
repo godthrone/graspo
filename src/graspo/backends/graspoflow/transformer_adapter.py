@@ -115,7 +115,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
         """Build pipeline operators.  Subclass implements."""
 
     def _build_optimizer(self) -> None:
-        from graspo.trainer.loss import GRASPOLoss
+        from graspo.core.graspo_loss import GRASPOLoss
 
         self.loss_fn = GRASPOLoss(self.config.training.policy_ratio_clip_eps)
         trainable = [param for param in self.model.parameters() if param.requires_grad]

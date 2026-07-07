@@ -1,9 +1,13 @@
-"""Tests for ``graspo.trainer.checkpoint`` — LoRA adapter save utilities."""
+"""Tests for ``graspo.backends.graspoflow.lora_io`` — LoRA adapter save utilities."""
 
-from pathlib import Path
-from unittest import mock
+import pytest
 
-from graspo.trainer.checkpoint import save_lora_adapter
+torch = pytest.importorskip("torch", exc_type=ImportError, reason="torch not available")
+
+from pathlib import Path  # noqa: E402
+from unittest import mock  # noqa: E402
+
+from graspo.backends.graspoflow.lora_io import save_lora_adapter  # noqa: E402
 
 
 def test_save_lora_adapter_delegates_to_save_pretrained(tmp_path):
