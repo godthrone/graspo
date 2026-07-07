@@ -12,6 +12,10 @@
 
 train_method: sft
 
+# ── Backend selection ─────────────────────────────────────────────────────
+# Currently only "graspoflow" (unified TP+PP backend).
+backend: graspoflow
+
 # ── Base model ────────────────────────────────────────────────────────────
 model:
   model_path: models/Qwen3.5-9B       # Path to HuggingFace model directory
@@ -38,7 +42,6 @@ lora:
 graspoflow:
   tp_size: 4                          # Tensor-parallel size (1=single GPU)
   pp_size: 1                          # Pipeline-parallel size (1=no PP)
-  adapter: graspo.backends.graspoflow.models.qwen35_36.adapter:Qwen35Adapter
   forward_batch_size: 4               # Micro-batch size per forward pass
 
 # ── Training hyperparameters ──────────────────────────────────────────────
@@ -66,6 +69,5 @@ launch:
 reward:
   check_think: false
   check_json_markdown: true
-  check_tool_call: true
   marker_reward_weight: 10
   content_reward_weight: 100
