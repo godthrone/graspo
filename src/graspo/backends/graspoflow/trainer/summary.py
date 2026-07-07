@@ -1,6 +1,5 @@
 """GraspoFlowTrainer 监控摘要与统计压缩（宪法 §8.4 从 helpers.py 按功能域拆分）。"""
 
-from __future__ import annotations
 
 from collections import deque
 from typing import Any

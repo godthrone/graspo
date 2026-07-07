@@ -427,7 +427,3 @@ class Qwen3DenseModel(QwenFamilyBase):
             * int(sequence_len)
             * dtype_size
         )
-
-
-class TensorParallelQwenForCausalLM(Qwen3DenseModel):
-    """Compatibility alias for older tests/imports."""

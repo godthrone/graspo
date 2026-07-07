@@ -1,19 +1,13 @@
-from __future__ import annotations
-
 from typing import Any
 
 import torch
 
+from graspo.core.data import _media_counts, _multimodal_row_from_sample  # noqa: F401 重新导出
 
-def _multimodal_row_from_sample(sample: Any) -> dict[str, Any]:
-    row = {
-        "messages": [dict(message) for message in sample.messages],
-        "media": _media_counts(sample.media or []),
-    }
-    tools = getattr(sample, "tools", None)
-    if tools is not None:
-        row["tools"] = [dict(tool) for tool in tools]
-    return row
+__all__ = [
+    "_media_counts",
+    "_multimodal_row_from_sample",
+]
 
 
 def _messages_from_multimodal_row(row: dict[str, Any]) -> list[dict[str, Any]]:
@@ -99,14 +93,6 @@ def _multimodal_rows_from_metadata(
             f"expected {expected_rows} multimodal metadata rows, got {len(multimodal_rows)}"
         )
     return [dict(row) for row in multimodal_rows]
-
-
-def _media_counts(media: list[dict[str, Any]]) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for item in media:
-        media_type = str(item.get("type") or "unknown") if isinstance(item, dict) else "unknown"
-        counts[media_type] = counts.get(media_type, 0) + 1
-    return counts
 
 
 def _slice_multimodal_inputs(

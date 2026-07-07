@@ -1,6 +1,5 @@
 """GraspoFlowTrainer rollout 生成与评分的 mixin。"""
 
-from __future__ import annotations
 
 import logging
 import time

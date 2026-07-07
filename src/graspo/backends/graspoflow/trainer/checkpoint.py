@@ -1,6 +1,5 @@
 """GraspoFlowTrainer checkpoint 保存与恢复的 mixin。"""
 
-from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
