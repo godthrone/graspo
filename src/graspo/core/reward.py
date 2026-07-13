@@ -202,7 +202,7 @@ class GraspoReward:
                     result = dict_compare_score(
                         checked=checked,
                         target={"tool_calls": calls},
-                        check_list_order=True,
+                        check_list_order=self.config.check_list_order,
                     )
                     score.update(
                         {
