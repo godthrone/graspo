@@ -19,20 +19,33 @@ RUN python -m pip install --break-system-packages --upgrade pip setuptools wheel
 
 WORKDIR /workspace/graspo
 
-# Layer 1: dependencies (cached when pyproject.toml and uv.lock unchanged)
-# --no-install-project resolves only the locked dependencies, leaving the
-# project itself for Layer 2 (so the source COPY doesn't break the cache).
-COPY pyproject.toml uv.lock .python-version README.md LICENSE ./
-RUN uv sync --no-install-project --frozen --no-dev
+# Layer 1: dependencies (cached when uv.lock unchanged)
+# pyproject.toml is NOT copied here — version is managed by setuptools-scm
+# (git tags), so version bumps don't invalidate the dependency cache.
+# --mount=type=cache,target=/root/.cache/uv persists uv's download cache
+# across builds, so even if this layer is rebuilt (e.g. uv.lock changes),
+# packages are read from local cache instead of re-downloaded from PyPI.
+COPY uv.lock .python-version README.md LICENSE ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --no-install-project --frozen --no-dev
 
-# Layer 2: source code
+# Layer 2: source code + build metadata
+# SETUPTOOLS_SCM_PRETEND_VERSION is derived from the build arg VERSION —
+# set via build.sh which reads it from `git describe`. This allows the
+# Docker build to work without a full git history (important for CI
+# shallow clones and COPY-only contexts).
 COPY src ./src
 COPY configs ./configs
 COPY data ./data
+COPY pyproject.toml ./
+
+ARG VERSION=0.0.0
+ENV SETUPTOOLS_SCM_PRETEND_VERSION=${VERSION}
 
 # Install project into the same venv as dependencies
 # --no-dev keeps the production image lean (dev deps not needed at runtime)
-RUN uv sync --frozen --no-dev
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev
 
 # torchvision required by Qwen3.5 VideoProcessor import path (even text-only)
 RUN uv pip install torchvision
