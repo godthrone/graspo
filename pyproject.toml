@@ -7,7 +7,7 @@ name = "graspo"
 dynamic = ["version"]
 description = "GRASPO (Group Relative Adaptive Structured Policy Optimization) — LoRA reinforcement learning with a self-owned native TP/PP backend."
 readme = "README.md"
-requires-python = ">=3.11,<3.12"
+requires-python = ">=3.11,<3.13"
 license = "MIT"
 authors = [{ name = "Godthrone" }]
 dependencies = [
@@ -50,5 +50,5 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 ignore_missing_imports = true
