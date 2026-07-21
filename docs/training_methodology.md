@@ -29,6 +29,20 @@ SFT 和 RL 使用同一份 JSONL 数据，但 target text 生成方式不同：
 > 使用 `apply_chat_template` 会引入 `\n response\n` 前缀，与 RL 推理时的
 > assistant prefix 不一致，导致 SFT 教的格式和模型输出格式错位。
 
+**两层对齐**：
+1. **不经过 chat template**（避免 assistant prefix 错位）
+2. **XML 格式与 base model 原生输出一致**（避免灾难性干扰）
+
+Qwen3.5 预训练中学会的 XML 格式是参数值位于独立行
+（`<parameter=key>\nvalue\n</parameter>`）。如果 SFT target 使用内联紧凑格式，
+LoRA（30M 参数，模型 0.3%）被迫同时改写格式和内容，在 405 条小样本上导致灾难性
+干扰——模型在新旧格式间摇摆，输出 `<<tool_call>`、`<parameter=distance</parameter>`
+等崩溃 XML。
+
+**验证方法**：用 `scripts/debug_inference.py` 对 base model 推理，观察原生 XML
+输出格式，确保 `_tool_calls_to_xml` 产出格式与之完全相同。格式对齐后 step 1 loss
+从 0.64 降至 0.28。
+
 ## 背景：GRPO 与结构化输出
 
 GRPO（Group Relative Policy Optimization）的核心思想是：对同一个 prompt 采样多条 completion，在组内比较 reward，用组内相对优势信号（而非绝对 reward）来更新策略。这天然适合结构化输出任务——JSON 生成、工具调用、信息抽取——因为这些任务的答案可以**自动校验**，不需要人工标注 reward。
