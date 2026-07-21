@@ -139,7 +139,6 @@ class LaunchConfig(BaseModel):
     master_addr: str = "127.0.0.1"
     master_port: int = 29500
     python: str | None = None
-    torchrun: str | None = None
     env: dict[str, str] = {}
 
 

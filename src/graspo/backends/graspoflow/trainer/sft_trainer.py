@@ -19,7 +19,7 @@ from graspo.backends.graspoflow.runtime import (
     GraspoFlowRuntimeProtocol,
     validate_graspoflow_runtime_config,
 )
-from graspo.core.data import load_jsonl, sft_tokenize
+from graspo.core.data import SFTTokenized, load_jsonl, sft_tokenize
 from graspo.core.logging import setup_logging
 from graspo.core.schema import GraspoConfig
 
@@ -51,6 +51,9 @@ class SFTTrainer:
     def train(self) -> None:
         """SFT 训练主入口。"""
         validate_graspoflow_runtime_config(self.config)
+        output_dir = Path(self.config.training.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "logs").mkdir(parents=True, exist_ok=True)
         self.runtime.validate()
         self.runtime.setup()
         rank = int(getattr(self.runtime, "rank", 0))
@@ -63,25 +66,38 @@ class SFTTrainer:
         self.total_samples = len(samples)
         _log.info("SFT: loaded %d samples from %s", self.total_samples, self.config.data.train_path)
 
-        output_dir = Path(self.config.training.output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
         if self._is_primary():
             _backup_config(self.config, output_dir)
 
         _log.info("SFT: tokenizing %d samples...", self.total_samples)
-        tokenized = [
+        data_dir = str(Path(self.config.data.train_path).parent)
+        processor = getattr(self.runtime._adapter, "processor", None)
+        tokenized: list[SFTTokenized] = [
             sft_tokenize(
                 s,
                 self.runtime._adapter.tokenizer,
                 max_seq_length=self.config.data.max_prompt_length,
                 chat_template_kwargs=self.config.model.chat_template_kwargs,
+                data_dir=data_dir,
+                processor=processor,
             )
             for s in samples
         ]
-        _log.info(
-            "SFT: tokenization complete, avg tokens=%.0f",
-            sum(len(t["input_ids"]) for t in tokenized) / max(len(tokenized), 1),
-        )
+        # 纯文本样本：直接统计；多模态样本：延迟编码，token 数在 collate 阶段确定
+        text_tokenized = [t for t in tokenized if t.deferred_multimodal is None]
+        multimodal_count = len(tokenized) - len(text_tokenized)
+        if text_tokenized:
+            _log.info(
+                "SFT: tokenization complete, text=%d (avg tokens=%.0f), multimodal=%d (deferred)",
+                len(text_tokenized),
+                sum(len(t.input_ids) for t in text_tokenized if t.input_ids is not None) / max(len(text_tokenized), 1),
+                multimodal_count,
+            )
+        else:
+            _log.info(
+                "SFT: tokenization complete, all %d samples multimodal (deferred encoding)",
+                multimodal_count,
+            )
 
         optimize_prompt_batch_size = max(1, int(self.config.training.optimize_prompt_batch_size))
         optimize_iterations_per_step = max(

@@ -37,14 +37,73 @@ GRASPO 是一个 GRPO 风格的 LoRA 强化学习训练器，面向结构化输�
 - **计算层（core/）**：纯逻辑，零 GPU/网络/IO 依赖。奖励计算、advantage 计算、结构化比较、缓冲区管理。可在单线程本地运行，可独立测试。
 - **设施层（backends/graspoflow/）**：GPU 通信、TP/PP 分布式、模型加载、checkpoint 读写。唯一训练后端。
 
+## 训练模式
+
+GRASPO 支持两种训练模式，通过配置 `train_method` 选择：
+
+| 模式 | train_method | 训练器 | 用途 |
+|------|-------------|--------|------|
+| **RL** | `graspo` | `GraspoFlowTrainer` | GRPO 风格强化学习，group-based 相对优势 |
+| **SFT** | `sft` | `SftTrainer` | 监督微调，直接教模型输出 target text |
+
+### SFT → RL 两阶段训练
+
+典型 pipeline：先用 SFT 教模型输出格式，再用 RL 优化输出质量。
+
+```
+SFT 配置 (train_method: sft)
+  │
+  ├─ SftTrainer 加载 JSONL 数据
+  │   ├─ 纯文本样本: sft_tokenize_text → 预 tokenize
+  │   └─ 多模态样本: sft_tokenize_multimodal → MultimodalDeferred 延迟编码
+  │
+  ├─ 训练 10 epochs，保存 LoRA checkpoint
+  │
+  ├─ graspo export → 合并 LoRA 到 HF 模型
+  │
+  └─ RL 配置 (train_method: graspo)
+       │
+       └─ GraspoFlowTrainer 加载合并后的模型 + 新 LoRA
+            └─ 100 epochs RL 长训
+```
+
+### SFT 数据格式对齐（关键不变式）
+
+SFT 和 RL 共享同一套 JSONL 数据格式，但 target text 的生成方式不同：
+
+- **RL**：推理时模型生成 completion → parser 解析 → 与 target 比较计算 reward
+- **SFT**：`build_sft_target_text` 直接生成 XML，**不经过** `tokenizer.apply_chat_template`
+
+**为什么不能走 chat template？** Qwen 的 chat template 在 assistant 消息前插入
+`\n response\n` 前缀，但 RL 推理时 `enable_thinking=false` 的 assistant prefix 是
+`<|im_start|>assistant\n`。两者不一致会导致 SFT 教的格式和模型实际输出格式错位，
+模型会输出 `\n\nfunction\n response\n\n response\n` 等垃圾。
+
+**正确做法**：`build_sft_target_text` → `_tool_calls_to_xml` 直接生成纯
+`<tool_call>...</tool_call>` XML，与模型 RL 推理时的实际输出字符级一致。
+
+### 多模态延迟编码
+
+SFT 多模态路径与 RL 完全对齐编码流程：
+
+```
+SFT: sft_tokenize_multimodal → MultimodalDeferred → _collate_sft_multimodal_batch
+       → _encode_multimodal_rows (单次 processor 调用)
+RL:  _multimodal_row_from_sample → _encode_multimodal_rows (单次 processor 调用)
+```
+
+两者都通过 `_encode_multimodal_rows` 一次性完成 tokenize + 视觉编码，确保
+`input_ids` 和 `pixel_values` 来自同一次 processor 调用。SFT 的 `_resolve_messages_media_paths`
+和 RL 的 `_multimodal_row_from_sample(data_dir=...)` 均将相对图像路径解析为绝对路径。
+
 ## 数据流
 
 ```
-配置文件(YAML) → GraspoConfig(pydantic校验) → CLI → GraspoFlowTrainer
+配置文件(YAML) → GraspoConfig(pydantic校验) → CLI → SftTrainer / GraspoFlowTrainer
                                                       ↓
-                    JSONL数据 → load_jsonl → Sample → rollout → reward评分
+                    JSONL数据 → load_jsonl → Sample → rollout / tokenize → reward评分
                                                       ↓
-                                              ReplayBuffer → 优化步骤
+                                              ReplayBuffer / collate batch → 优化步骤
                                                       ↓
                                               checkpoint 保存
 ```

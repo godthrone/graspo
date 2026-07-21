@@ -1,7 +1,6 @@
 import argparse
 import json
 import os
-import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -90,7 +89,7 @@ def build_launch_plan(config_path: str | Path, config: GraspoConfig | None = Non
 
     uses_torchrun = nnodes * nproc_per_node > 1
     if uses_torchrun:
-        command = _torchrun_prefix(config, python) + [
+        command = _torchrun_prefix(python) + [
             f"--nnodes={nnodes}",
             f"--node_rank={int(launch.node_rank)}",
             f"--nproc_per_node={nproc_per_node}",
@@ -203,12 +202,8 @@ def _format_gpus(value: list[int] | str | None) -> str | None:
     return ",".join(parts)
 
 
-def _torchrun_prefix(config: GraspoConfig, python: str) -> list[str]:
-    if config.launch.torchrun:
-        return [str(config.launch.torchrun)]
-    torchrun = shutil.which("torchrun")
-    if torchrun:
-        return [torchrun]
+def _torchrun_prefix(python: str) -> list[str]:
+    """Distributed launcher in the venv — no system binary dependency."""
     return [python, "-m", "torch.distributed.run"]
 
 

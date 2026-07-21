@@ -1,5 +1,34 @@
 # GRASPO 训练方法论
 
+## 训练模式概览
+
+GRASPO 支持两种训练模式，通过 `config.yaml` 的 `train_method` 字段选择：
+
+| 模式 | train_method | 训练器 | 学习方式 | 典型用途 |
+|------|-------------|--------|---------|---------|
+| **SFT** | `sft` | `SftTrainer` | 监督学习，直接模仿 target | 教模型输出格式、初始化策略 |
+| **RL** | `graspo` | `GraspoFlowTrainer` | 强化学习，组内相对优势 | 优化输出质量、奖励最大化 |
+
+### SFT → RL 两阶段训练
+
+对于复杂结构化输出任务（如机器人控制、工具调用），推荐 SFT 先教模型输出格式，再用 RL 优化：
+
+1. **SFT 阶段**（10 epochs）：模型学习输出格式（XML tool-call），loss 快速下降
+2. **合并阶段**：`graspo export` 将 LoRA 合并到 HF 模型，得到完整基础模型
+3. **RL 阶段**（100 epochs）：在 SFT 基础上用 GRPO 算法优化 reward，逐步提升输出质量
+
+### SFT 数据格式对齐
+
+SFT 和 RL 使用同一份 JSONL 数据，但 target text 生成方式不同：
+
+- **RL**：推理时模型生成 completion → parser 解析 → 与 target 比较计算 reward
+- **SFT**：`build_sft_target_text` 直接生成 XML，**不经过** `tokenizer.apply_chat_template`
+
+> **架构不变式**：SFT target text 必须是模型推理时实际输出的字符级拷贝。
+> 对 Qwen 模型，这意味着纯 `<tool_call>...</tool_call>` XML，无任何前缀或后缀。
+> 使用 `apply_chat_template` 会引入 `\n response\n` 前缀，与 RL 推理时的
+> assistant prefix 不一致，导致 SFT 教的格式和模型输出格式错位。
+
 ## 背景：GRPO 与结构化输出
 
 GRPO（Group Relative Policy Optimization）的核心思想是：对同一个 prompt 采样多条 completion，在组内比较 reward，用组内相对优势信号（而非绝对 reward）来更新策略。这天然适合结构化输出任务——JSON 生成、工具调用、信息抽取——因为这些任务的答案可以**自动校验**，不需要人工标注 reward。
