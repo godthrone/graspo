@@ -59,14 +59,20 @@ Layer 0 是整个系统的基石，完全不知道模型、训练目标或层的
 - 加载模型权重（通过 `SafetensorIndex` per-rank 缓存）
 - 构建流水线图（`PipelineGraph`）
 - 管理模型 sharding 和 placement plan
-- 提供 `generate_group` / `train_batch` 等高层接口
+- 提供 `generate_group` / `train_batch` / `train_batch_sft` 等高层接口
 
-**GraspoFlowTrainer** — 训练循环主类。通过 mixin 组合：`RolloutMixin`（生成+打分）、`OptimizeMixin`（优化步骤）、`CheckpointMixin`（保存恢复）、`stats.py`（统计追踪）。训练主循环：
+**GraspoFlowTrainer** — RL 训练循环主类。通过 mixin 组合：`RolloutMixin`（生成+打分）、`OptimizeMixin`（优化步骤）、`CheckpointMixin`（保存恢复）、`stats.py`（统计追踪）。训练主循环：
 1. 从 ReplayBuffer 或 DataLoader 获取 prompt batch
 2. Rollout：对每个 prompt 采样 `rollout_group_size` 个 completion
 3. 打分：`GraspoReward.score()` 计算每个 completion 的 reward
 4. 决策：根据 reward 分布和规则将 group 分类为 `perfect_skip`/`trainable`/`retry`/`invalid`
 5. 训练：对 trainable group 计算 advantage、构建 Experience 并优化 LoRA
+
+**SftTrainer** — SFT 训练循环。复用 GraspoFlow 的模型加载和 TP/PP 基础设施，但训练逻辑更简单：
+1. 加载 JSONL 数据 → `sft_tokenize` 分派纯文本/多模态路径
+2. 多模态路径：延迟编码（`MultimodalDeferred`），在 `_collate_sft_multimodal_batch` 中统一编码
+3. 标准 cross-entropy loss，labels 中 mask 掉 prompt 部分
+4. 每 epoch 保存 checkpoint，与 RL 共享同一套 checkpoint 格式
 
 ### Layer 3：模型族
 

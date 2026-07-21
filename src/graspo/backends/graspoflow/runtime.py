@@ -94,7 +94,7 @@ class GraspoFlowRuntimeProtocol(Protocol):
     ) -> dict[str, Any]: ...
     def train_batch_sft(
         self,
-        sft_batches: list[dict[str, Any]],
+        sft_batches: list[Any],  # SFTTokenized
         *,
         optimize_iterations_per_step: int,
         max_grad_norm: float,
@@ -233,7 +233,7 @@ class GraspoFlowRuntime:
 
     def train_batch_sft(
         self,
-        sft_batches: list[dict[str, Any]],
+        sft_batches: list[Any],  # SFTTokenized
         *,
         optimize_iterations_per_step: int,
         max_grad_norm: float,

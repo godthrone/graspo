@@ -1,0 +1,76 @@
+# GRASPO RL — ELAM Robot Control, TP=2 (GPU 6,7)
+# 对标 graspo_tp2_and_t1.0_p0.5 配置，LoRA: language_all_linear + vision_merger
+# SFT 合并后的模型作为 base model
+train_method: graspo
+backend: graspoflow
+
+model:
+  model_path: /data/models/Qwen3.5-9B-SFT-ELAM
+  trust_remote_code: true
+  torch_dtype: bfloat16
+  gradient_checkpointing: true
+  chat_template_kwargs:
+    enable_thinking: false
+
+data:
+  train_path: /data/v12_fk_scenes/data/elam_graspo_train_and.jsonl
+  max_prompt_length: 2048
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.1
+  adapter_path: null
+  target_modules:
+    - language_all_linear
+    - vision_merger
+
+reward:
+  check_think: false
+  check_json_markdown: true
+  check_list_order: false
+  marker_reward_weight: 10.0
+  content_reward_weight: 100.0
+  anti_useless_str_reward_weight: 1.0
+  anti_useless_str_half_reward_len: 100
+
+training:
+  output_dir: /data/outputs/rl_elam_v2
+  seed: 42
+  max_epochs: 100
+  max_steps: 40800
+  rollout_group_size: 8
+  optimize_prompt_batch_size: 8
+  optimize_iterations_per_step: 4
+  rollout_max_retries: 5
+  learning_rate: 5.0e-06
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  policy_ratio_clip_eps: 0.2
+  max_new_tokens: 256
+  temperature: 1.0
+  top_p: 0.8
+  save_checkpoint_every_epoch: true
+  perfect_skip_reward_threshold: 1.0
+  reject_unparseable_groups: true
+  lr_scheduler:
+    type: cosine
+    warmup_steps: 0
+    min_lr_ratio: 0.1
+
+graspoflow:
+  tp_size: 2
+  pp_size: 1
+  placement_strategy: qwen3_tp
+  forward_batch_size: 32
+  use_kv_cache_for_rollout: true
+  raw_log_enabled: true
+  readable_log_enabled: true
+
+launch:
+  gpus:
+    - 0
+    - 1
+  master_addr: 127.0.0.1
+  master_port: 29510
+  env: {}

@@ -1,0 +1,58 @@
+# SFT — ELAM Robot Control, TP=2 (GPU 6,7)
+# 对标 sft_and_large_lora 配置，LoRA: language_all_linear + vision_merger
+train_method: sft
+backend: graspoflow
+
+model:
+  model_path: /data/zhangzy/models/Qwen3.5-9B
+  trust_remote_code: true
+  torch_dtype: bfloat16
+  gradient_checkpointing: true
+  chat_template_kwargs:
+    enable_thinking: false
+
+data:
+  train_path: /data/v12_fk_scenes/data/elam_graspo_train_and.jsonl
+  max_prompt_length: 2048
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  adapter_path: null
+  target_modules:
+    - language_all_linear
+    - vision_merger
+
+training:
+  output_dir: /data/outputs/sft_elam_v2
+  seed: 42
+  max_epochs: 10
+  max_steps: 5000
+  optimize_prompt_batch_size: 8
+  optimize_iterations_per_step: 3
+  learning_rate: 5.0e-05
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  save_checkpoint_every_epoch: true
+  lr_scheduler:
+    type: cosine
+    warmup_steps: 50
+    min_lr_ratio: 0.0
+
+graspoflow:
+  tp_size: 2
+  pp_size: 1
+  placement_strategy: qwen3_tp
+  forward_batch_size: 1
+  use_kv_cache_for_rollout: true
+  raw_log_enabled: true
+  readable_log_enabled: true
+
+launch:
+  gpus:
+    - 0
+    - 1
+  master_addr: 127.0.0.1
+  master_port: 29510
+  env: {}

@@ -12,6 +12,7 @@ from graspo.backends.graspoflow.tensor_utils import (
     _new_pipeline_stage_timing,
     _round_pipeline_stage_timing,
 )
+from graspo.core.data import SFTTokenized
 
 
 class _Qwen35SFTTrainingMethods:
@@ -21,16 +22,16 @@ class _Qwen35SFTTrainingMethods:
 
     def train_batch_sft(
         self,
-        sft_batches: list[dict[str, Any]],
+        sft_batches: list[SFTTokenized],
         *,
         optimize_iterations_per_step: int,
         max_grad_norm: float,
     ) -> dict[str, Any]:
-        """SFT 训练：对一批 tokenized 样本执行 forward → cross-entropy loss → backward。
+        """SFT 训练：对一批 ``SFTTokenized`` 样本执行 forward → cross-entropy loss → backward。
 
         Args:
-            sft_batches: 来自 ``sft_tokenize()`` 的 dict 列表，每项包含
-                ``input_ids``, ``labels``, ``attention_mask``, 可选的 ``multimodal_inputs``
+            sft_batches: ``sft_tokenize_text`` / ``sft_tokenize_multimodal`` 产出的
+                ``SFTTokenized`` 列表。
             optimize_iterations_per_step: 梯度累积步数
             max_grad_norm: 梯度裁剪阈值
         """
@@ -65,17 +66,16 @@ class _Qwen35SFTTrainingMethods:
             round_started_at = time.monotonic()
             for start in range(0, len(sft_batches), forward_batch_size):
                 batch_items = sft_batches[start : start + forward_batch_size]
-                micro_batch = _collate_sft_batch(batch_items, self.device)
+                micro_batch = _collate_sft_batch(
+                    batch_items,
+                    self.device,
+                    adapter=self,
+                    max_seq_length=int(self.config.data.max_prompt_length),
+                )
                 self.optimizer.zero_grad(set_to_none=True)
                 self._sync_timing()
                 forward_started_at = time.monotonic()
-                multimodal_inputs = None
-                multimodal_rows = micro_batch.get("_multimodal_rows")
-                if multimodal_rows:
-                    multimodal_inputs = self._multimodal_inputs_from_metadata(
-                        {"_multimodal_rows": multimodal_rows},
-                        batch_size=int(micro_batch["input_ids"].shape[0]),
-                    )
+                multimodal_inputs = micro_batch.get("multimodal_inputs")
                 if multimodal_inputs is not None:
                     if not isinstance(self.model, Qwen35HybridTextModel):
                         raise ValueError("multimodal SFT batch for a non-multimodal model")
@@ -154,7 +154,7 @@ class _Qwen35SFTTrainingMethods:
 
     def _pipeline_train_batch_sft(
         self,
-        sft_batches: list[dict[str, Any]],
+        sft_batches: list[SFTTokenized],
         *,
         optimize_iterations_per_step: int,
         max_grad_norm: float,
@@ -179,18 +179,17 @@ class _Qwen35SFTTrainingMethods:
             round_started_at = time.monotonic()
             for start in range(0, len(sft_batches), forward_batch_size):
                 batch_items = sft_batches[start : start + forward_batch_size]
-                micro_batch = _collate_sft_batch(batch_items, self.device)
+                micro_batch = _collate_sft_batch(
+                    batch_items,
+                    self.device,
+                    adapter=self,
+                    max_seq_length=int(self.config.data.max_prompt_length),
+                )
                 if self.optimizer is not None:
                     self.optimizer.zero_grad(set_to_none=True)
                 self._sync_timing()
                 forward_started_at = time.monotonic()
-                multimodal_inputs = None
-                multimodal_rows = micro_batch.get("_multimodal_rows")
-                if multimodal_rows:
-                    multimodal_inputs = self._multimodal_inputs_from_metadata(
-                        {"_multimodal_rows": multimodal_rows},
-                        batch_size=int(micro_batch["input_ids"].shape[0]),
-                    )
+                multimodal_inputs = micro_batch.get("multimodal_inputs")
                 stage_output, stage_input = self._pipeline_forward_for_sft(
                     micro_batch["input_ids"],
                     micro_batch["attention_mask"],
@@ -352,37 +351,164 @@ class _Qwen35SFTTrainingMethods:
 # ── SFT batch collation ──────────────────────────────────────────────────────
 
 
-def _collate_sft_batch(items: list[dict[str, Any]], device: torch.device) -> dict[str, Any]:
-    """将多个 SFT tokenized 样本拼接为 micro-batch。
+def _collate_sft_batch(
+    items: list[SFTTokenized],
+    device: torch.device,
+    *,
+    adapter: Any,
+    max_seq_length: int = 4096,
+) -> dict[str, Any]:
+    """将多个 ``SFTTokenized`` 样本拼接为 micro-batch（统一入口，自动分派）。
 
-    每个 item 来自 ``sft_tokenize()``，包含 ``input_ids``, ``labels``,
-    ``attention_mask``, ``prompt_len``, ``metadata``,
-    可选的 ``_multimodal_row``。
+    纯文本 → ``_collate_sft_text_batch``（预 tokenized 张量 padding）
+    多模态 → ``_collate_sft_multimodal_batch``（复用 RL 的 ``_encode_multimodal_rows``）
     """
+    if any(item.deferred_multimodal is not None for item in items):
+        if any(item.deferred_multimodal is None for item in items):
+            raise ValueError(
+                "Cannot mix multimodal and text-only samples in one micro-batch. "
+                "Ensure all samples in a batch have the same type."
+            )
+        return _collate_sft_multimodal_batch(items, device, adapter=adapter, max_seq_length=max_seq_length)
+    return _collate_sft_text_batch(items, device)
+
+
+def _collate_sft_text_batch(
+    items: list[SFTTokenized], device: torch.device
+) -> dict[str, Any]:
+    """纯文本 SFT batch：pad 预 tokenized 张量。"""
     from torch.nn.utils.rnn import pad_sequence
 
     input_ids = pad_sequence(
-        [item["input_ids"] for item in items], batch_first=True, padding_value=0
+        [item.input_ids for item in items], batch_first=True, padding_value=0
     ).to(device)
     labels = pad_sequence(
-        [item["labels"] for item in items], batch_first=True, padding_value=-100
+        [item.labels for item in items], batch_first=True, padding_value=-100
     ).to(device)
     attention_mask = (
-        pad_sequence([item["attention_mask"] for item in items], batch_first=True, padding_value=0)
+        pad_sequence(
+            [item.attention_mask for item in items], batch_first=True, padding_value=0
+        )
         .bool()
         .to(device)
     )
 
-    micro_batch: dict[str, Any] = {
+    return {
         "input_ids": input_ids,
         "labels": labels,
         "attention_mask": attention_mask,
-        "metadata": [item.get("metadata", {}) for item in items],
+        "metadata": [item.metadata for item in items],
     }
 
-    # 多模态：收集 _multimodal_row 并按 row 组织
-    multimodal_rows = [item["_multimodal_row"] for item in items if "_multimodal_row" in item]
-    if multimodal_rows:
-        micro_batch["_multimodal_rows"] = multimodal_rows
 
-    return micro_batch
+def _collate_sft_multimodal_batch(
+    items: list[SFTTokenized],
+    device: torch.device,
+    *,
+    adapter: Any,
+    max_seq_length: int = 4096,
+) -> dict[str, Any]:
+    """多模态 SFT batch：调用 ``_encode_multimodal_rows`` 一次性编码，复用 RL 路径。
+
+    RL 的 ``generate_sample_groups`` → ``_encode_multimodal_rows`` 是同一次调用产出
+    ``input_ids`` + ``pixel_values`` + ``image_grid_thw``。SFT 对齐：在 collate 阶段
+    一次性编码，而非在 ``sft_tokenize`` 中预编码、训练时再二次编码。
+    """
+    tokenizer = adapter.tokenizer
+
+    # 1. 构建 rows（与 RL 的 _multimodal_row_from_sample 格式一致）
+    rows: list[dict[str, Any]] = []
+    target_texts: list[str] = []
+    for item in items:
+        assert item.deferred_multimodal is not None
+        deferred = item.deferred_multimodal
+        media_types = _count_media_types_from_messages(deferred.prompt_messages)
+        row: dict[str, Any] = {
+            "messages": deferred.prompt_messages,
+            "media": media_types,
+        }
+        tools = deferred.tools
+        if tools is not None:
+            row["tools"] = tools
+        rows.append(row)
+        target_texts.append(deferred.target_text)
+
+    # 2. 单次编码 prompt（复用 RL 路径，一次性产出 input_ids + pixel_values）
+    # SFT 禁用 thinking：与 sft_tokenize_text 的 setdefault("enable_thinking", False) 一致
+    chat_template_kwargs = dict(adapter.config.model.chat_template_kwargs or {})
+    chat_template_kwargs.setdefault("enable_thinking", False)
+    encoded = adapter._encode_multimodal_rows(
+        rows,
+        add_generation_prompt=True,
+        chat_template_kwargs=chat_template_kwargs,
+    )
+    prompt_ids = encoded["input_ids"].to(device)  # (batch, padded_prompt_len)
+    prompt_mask = encoded["attention_mask"].to(device)  # (batch, padded_prompt_len)
+    multimodal_inputs = adapter._multimodal_inputs_to_device(encoded)
+
+    # 3. 编码 target text（纯文本，tokenizer 即可）
+    eos_id = int(tokenizer.eos_token_id)
+    response_ids_list = [
+        tokenizer.encode(text, add_special_tokens=False) + [eos_id]
+        for text in target_texts
+    ]
+
+    # 4. 拼接 prompt + response，构建 input_ids / labels / attention_mask
+    batch_size = len(items)
+    prompt_len_padded = int(prompt_ids.shape[1])
+    max_response_len = max(len(ids) for ids in response_ids_list)
+    total_len = prompt_len_padded + max_response_len
+
+    input_ids = torch.zeros(batch_size, total_len, dtype=torch.long, device=device)
+    labels = torch.full((batch_size, total_len), -100, dtype=torch.long, device=device)
+    attention_mask = torch.zeros(batch_size, total_len, dtype=torch.bool, device=device)
+
+    for i in range(batch_size):
+        actual_prompt_len = int(prompt_mask[i].sum().item())
+        # 复制 prompt tokens（仅有效部分，padding 区域保持 0）
+        input_ids[i, :actual_prompt_len] = prompt_ids[i, :actual_prompt_len]
+        attention_mask[i, :actual_prompt_len] = True
+        # 追加 response tokens
+        r_ids = response_ids_list[i]
+        r_len = len(r_ids)
+        input_ids[i, actual_prompt_len : actual_prompt_len + r_len] = torch.tensor(
+            r_ids, dtype=torch.long, device=device
+        )
+        labels[i, actual_prompt_len : actual_prompt_len + r_len] = torch.tensor(
+            r_ids, dtype=torch.long, device=device
+        )
+        attention_mask[i, actual_prompt_len : actual_prompt_len + r_len] = True
+
+    # 5. 截断
+    if total_len > max_seq_length:
+        input_ids = input_ids[:, :max_seq_length]
+        labels = labels[:, :max_seq_length]
+        attention_mask = attention_mask[:, :max_seq_length]
+
+    return {
+        "input_ids": input_ids,
+        "labels": labels,
+        "attention_mask": attention_mask,
+        "multimodal_inputs": multimodal_inputs,
+        "metadata": [item.metadata for item in items],
+    }
+
+
+def _count_media_types_from_messages(
+    messages: list[dict[str, Any]],
+) -> dict[str, int]:
+    """从 messages 中统计媒体类型数量（与 ``_media_counts`` 格式一致）。"""
+    counts: dict[str, int] = {}
+    for message in messages:
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            media_type = block.get("type")
+            if media_type in ("image", "image_url"):
+                counts["image"] = counts.get("image", 0) + 1
+            elif media_type in ("video", "video_url"):
+                counts["video"] = counts.get("video", 0) + 1
+    return counts

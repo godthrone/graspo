@@ -1,6 +1,7 @@
 """Qwen3.5/3.6 adapter — generation methods (rollout, multimodal, KV cache)."""
 
 import time
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -358,8 +359,9 @@ class _Qwen35GenerationMethods:
         rows: list[dict[str, Any]] = []
         per_sample_image_counts: list[int] = []
         per_sample_media_counts: list[dict[str, int]] = []
+        data_dir = str(Path(self.config.data.train_path).parent)
         for sample in samples:
-            row = _multimodal_row_from_sample(sample)
+            row = _multimodal_row_from_sample(sample, data_dir=data_dir)
             img_count = sum(1 for item in sample.media if str(item.get("type") or "") == "image")
             per_sample_image_counts.append(img_count)
             per_sample_media_counts.append(_media_counts(sample.media))
