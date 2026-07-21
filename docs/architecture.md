@@ -82,6 +82,39 @@ SFT 和 RL 共享同一套 JSONL 数据格式，但 target text 的生成方式�
 **正确做法**：`build_sft_target_text` → `_tool_calls_to_xml` 直接生成纯
 `<tool_call>...</tool_call>` XML，与模型 RL 推理时的实际输出字符级一致。
 
+### XML 格式对齐：与 Base Model 原生输出一致
+
+仅仅"不走 chat template"还不够。Qwen3.5 在预训练中学会的 XML 工具调用格式是参数值
+位于独立行：
+
+```xml
+<parameter=action_type>
+逆时针旋转
+</parameter>
+```
+
+而早期实现使用内联紧凑格式 `<parameter=action_type>逆时针旋转</parameter>`。
+这种格式差异导致 **灾难性干扰（catastrophic interference）**：LoRA 仅 30M 参数
+（模型 0.3%），被迫同时改写 XML 格式风格和内容知识。在 405 条小样本上，模型在
+新旧格式间摇摆，输出崩溃的 XML（如 `<<tool_call>`、`<parameter=distance</parameter>`）。
+
+**验证方法**：`debug_inference.py` 对 base model 推理一条纯文本 prompt，观察其
+原生 XML 输出格式，然后确保 `_tool_calls_to_xml` 产出的格式与之完全一致。
+
+**修复效果**：格式对齐后，step 1 loss 从 0.64 降至 0.28，模型不再需要为格式风格
+消耗 LoRA 容量，所有参数专注于学习内容（动作名、数值）。
+
+### 灾难性干扰与 LoRA 容量
+
+灾难性干扰不是过拟合——过拟合是 loss 很低但泛化差。这里是 loss 也降不下去（卡在
+0.15），模型处于"半吊子"状态，新旧知识混在一起。根本原因是 LoRA 容量不足以同时：
+1. 改写预训练中嵌入的格式习惯
+2. 学习新的领域知识
+
+**原则**：SFT 应该只教模型**内容**（what to say），不改变**格式**（how to say）。
+格式是预训练已经学会的能力，不应该被 LoRA 覆盖。如果确实需要改变格式，要么增大
+LoRA 容量（r >= 64），要么考虑全量微调。
+
 ### 多模态延迟编码
 
 SFT 多模态路径与 RL 完全对齐编码流程：
