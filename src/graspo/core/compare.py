@@ -124,6 +124,15 @@ def count_check_score(
 
 
 def leaf_compare_score(checked: Any, target: Any) -> float:
+    """Score a leaf value against a target.
+
+    Non-numeric values: exact match → 1.0, mismatch → 0.0.
+    Numeric values: proportional error score.  Relative error is used when
+    *target* is non-zero so that ``30 vs 20`` (50% error) gets a higher
+    score than ``10 vs 0`` (100% error), even though both have the same
+    absolute difference.  When target is zero, absolute error is used as
+    the fallback denominator.
+    """
     if isinstance(checked, bool) or isinstance(target, bool):
         return 1.0 if type(checked) is bool and type(target) is bool and checked == target else 0.0
     if _is_json_number(checked) and _is_json_number(target):
@@ -131,7 +140,9 @@ def leaf_compare_score(checked: Any, target: Any) -> float:
         target_float = float(target)
         if not (math.isfinite(checked_float) and math.isfinite(target_float)):
             return 1.0 if checked == target else 0.0
-        return 1.0 / (1.0 + abs(checked_float - target_float))
+        if target_float == 0.0:
+            return 1.0 / (1.0 + abs(checked_float - target_float))
+        return 1.0 / (1.0 + abs(checked_float - target_float) / abs(target_float))
     return 1.0 if checked == target else 0.0
 
 

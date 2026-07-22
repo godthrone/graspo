@@ -135,10 +135,15 @@ class GraspoReward:
             if best is not None:
                 content_score = float(best["content_score"])
                 base_content_score = float(best.get("base_content_score", 0.0))
-                raw_score += content_score * self.config.content_reward_weight
-                if bool(best["all_right"]):
-                    raw_score += self.config.content_reward_weight
-                    all_right_count += 1
+                if base_content_score >= 1.0:
+                    # 动作类型全对 → 数值精度决定优劣
+                    raw_score += content_score * self.config.content_reward_weight
+                    if bool(best["all_right"]):
+                        raw_score += self.config.content_reward_weight
+                        all_right_count += 1
+                else:
+                    # 动作类型有错 → 数值精度是噪声，只用 base_content_score
+                    raw_score += base_content_score * self.config.content_reward_weight
 
         raw_score += self._useless_text_score(useless_text)
         all_right = all_right_count > 0
@@ -216,10 +221,13 @@ class GraspoReward:
                 if best is not None:
                     content_score = float(best["content_score"])
                     base_content_score = float(best.get("base_content_score", 0.0))
-                raw_score += content_score * self.config.content_reward_weight
-                all_right = bool(best and best["all_right"])
-                if all_right:
-                    raw_score += self.config.content_reward_weight
+                    if base_content_score >= 1.0:
+                        raw_score += content_score * self.config.content_reward_weight
+                        all_right = bool(best["all_right"])
+                        if all_right:
+                            raw_score += self.config.content_reward_weight
+                    else:
+                        raw_score += base_content_score * self.config.content_reward_weight
         raw_score += self._useless_text_score(parsed.extra_text)
         normalized_reward = raw_score / max_score if max_score else 0.0
         return RewardResult(

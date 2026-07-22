@@ -32,22 +32,44 @@ def test_dict_compare_list_order_optional():
     assert unordered.dcs > ordered.dcs
 
 
-def test_dict_compare_numeric_leaf_uses_absolute_error_score():
+def test_dict_compare_numeric_leaf_uses_relative_error_score():
+    """数值比较使用相对误差，target=0 时回退到绝对误差。"""
+    # target=6, checked=8: relative error = 2/6 ≈ 0.333
     result = dict_compare_score(
         {"distance_cm": 8},
         {"distance_cm": 6},
     )
 
+    rel_score = 1.0 / (1.0 + 2.0 / 6.0)  # 1/(1+0.333) = 0.75
     assert result.total_score == 3
-    assert result.check_score == pytest.approx(2 + 1 / 3)
-    assert result.dcs == pytest.approx((2 + 1 / 3) / 3)
+    assert result.check_score == pytest.approx(2 + rel_score)
+    assert result.dcs == pytest.approx((2 + rel_score) / 3)
 
     # base should exclude numeric: numeric leaves are stripped, keys
     # whose only children are numeric collapse → empty dict remains
-    assert result.base_total == 1  # only the dict itself (key stripped)
-    assert result.base_check == 1.0  # all-checked-keys-in-target
+    assert result.base_total == 1
+    assert result.base_check == 1.0
     assert result.base_dcs == 1.0
     assert result.all_right is True
+
+
+def test_dict_compare_numeric_relative_error_is_proportional():
+    """相同绝对误差，不同相对误差 → 得分不同。"""
+    # target=10, checked=0: relative = 10/10 = 1.0 → score = 1/(1+1) = 0.5
+    # target=30, checked=20: relative = 10/30 ≈ 0.333 → score = 1/(1+0.333) ≈ 0.75
+    result_small = dict_compare_score({"val": 0}, {"val": 10})
+    result_large = dict_compare_score({"val": 20}, {"val": 30})
+
+    assert result_small.dcs < result_large.dcs
+
+
+def test_dict_compare_numeric_zero_target_falls_back_to_absolute():
+    """target=0 时使用绝对误差作为分母。"""
+    result = dict_compare_score({"val": 10}, {"val": 0})
+
+    abs_score = 1.0 / (1.0 + 10.0)  # 1/11 ≈ 0.0909
+    assert result.total_score == 3
+    assert result.check_score == pytest.approx(2 + abs_score)
 
 
 def test_dict_compare_numeric_string_type_mismatch_gets_no_leaf_score():
@@ -94,10 +116,13 @@ def test_dict_compare_list_dict_element_uses_nested_numeric_score():
         check_list_order=True,
     )
 
-    # Full score: list dict elements are recursively expanded in denominator
+    # Full score: list dict elements are recursively expanded in denominator.
+    # Numeric comparison uses relative error: target=6, checked=8 → rel=2/6≈0.333
+    # leaf_compare_score = 1/(1+0.333) = 0.75
+    # check_score = 2 + 0.75 (arguments dict) + ... = 8.75
     assert result.total_score == 11
-    assert result.check_score == pytest.approx(25 / 3)
-    assert result.dcs == pytest.approx(25 / 33)
+    assert result.check_score == pytest.approx(8.75)
+    assert result.dcs == pytest.approx(8.75 / 11)
 
     # Base score strips numeric → arguments dict becomes empty, stripped entirely
     # target after strip: {"tool_calls": [{"name": "move"}]}

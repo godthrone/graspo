@@ -34,6 +34,7 @@ def test_reward_perfect_json_fence():
 
 
 def test_reward_partial_json_fence():
+    """动作类型错误 → base_content_score < 1.0 → 使用 base_dcs 而非 dcs。"""
     reward = GraspoReward(RewardConfig(check_json_markdown=True))
     result = reward.score(
         '```json\n{"APN":"wrong","fault_number":"138"}\n```',
@@ -41,6 +42,8 @@ def test_reward_partial_json_fence():
     )
 
     assert result.all_right is False
+    assert result.base_content_score < 1.0
+    # 数值精度被忽略，只用 base_content_score
     assert 0 < result.content_score < 1.0
     assert 0 < result.reward < 1.0
 
