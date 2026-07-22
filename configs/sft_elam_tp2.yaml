@@ -16,13 +16,13 @@ data:
   max_prompt_length: 2048
 
 lora:
-  r: 16
-  alpha: 32
+  r: 128
+  alpha: 256
   dropout: 0.05
   adapter_path: null
   target_modules:
     - language_all_linear
-    - vision_merger
+    - vision_common
 
 training:
   output_dir: /data/outputs/sft_elam_v2
@@ -30,7 +30,7 @@ training:
   max_epochs: 10
   max_steps: 5000
   optimize_prompt_batch_size: 8
-  optimize_iterations_per_step: 3
+  optimize_iterations_per_step: 4
   learning_rate: 5.0e-05
   weight_decay: 0.01
   max_grad_norm: 1.0
@@ -44,15 +44,20 @@ graspoflow:
   tp_size: 2
   pp_size: 1
   placement_strategy: qwen3_tp
-  forward_batch_size: 1
+  forward_batch_size: 4
   use_kv_cache_for_rollout: true
   raw_log_enabled: true
   readable_log_enabled: true
 
 launch:
   gpus:
-    - 0
-    - 1
+    - 6
+    - 7
   master_addr: 127.0.0.1
   master_port: 29510
   env: {}
+
+export:
+  checkpoint_path: /data/outputs/sft_elam_v2/epoch_5
+  export_format: merged-hf
+  export_output: /data/outputs/sft_elam_v2_merged

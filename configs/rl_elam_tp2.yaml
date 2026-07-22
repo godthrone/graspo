@@ -1,11 +1,11 @@
 # GRASPO RL — ELAM Robot Control, TP=2 (GPU 6,7)
-# 对标 graspo_tp2_and_t1.0_p0.5 配置，LoRA: language_all_linear + vision_merger
-# SFT 合并后的模型作为 base model
+# SFT init: r=128 + vision_common, epoch 5 merged model
+# LoRA: r=128, alpha=256, language_all_linear + vision_common (与SFT保持一致)
 train_method: graspo
 backend: graspoflow
 
 model:
-  model_path: /data/models/Qwen3.5-9B-SFT-ELAM
+  model_path: /data/outputs/sft_elam_v2_merged
   trust_remote_code: true
   torch_dtype: bfloat16
   gradient_checkpointing: true
@@ -17,13 +17,13 @@ data:
   max_prompt_length: 2048
 
 lora:
-  r: 16
-  alpha: 32
-  dropout: 0.1
+  r: 128
+  alpha: 256
+  dropout: 0.05
   adapter_path: null
   target_modules:
     - language_all_linear
-    - vision_merger
+    - vision_common
 
 reward:
   check_think: false
@@ -35,7 +35,7 @@ reward:
   anti_useless_str_half_reward_len: 100
 
 training:
-  output_dir: /data/outputs/rl_elam_v2
+  output_dir: /data/outputs/rl_elam_v3
   seed: 42
   max_epochs: 100
   max_steps: 40800
@@ -69,8 +69,8 @@ graspoflow:
 
 launch:
   gpus:
-    - 0
-    - 1
+    - 6
+    - 7
   master_addr: 127.0.0.1
   master_port: 29510
   env: {}
