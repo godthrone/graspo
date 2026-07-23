@@ -156,6 +156,7 @@ class RolloutMixin:
             best_idx = max(range(len(rewards)), key=lambda i: rewards[i])
             best_has_parse_error = (
                 bool(parsed_completions[best_idx].parse_errors)
+                or float(content_scores[best_idx]) == 0.0
                 if best_idx < len(parsed_completions)
                 else False
             )
