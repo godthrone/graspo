@@ -150,6 +150,7 @@ class RolloutMixin:
             reward_cpu_sec = time.monotonic() - reward_started_at
             rewards = [float(result.reward) for result in results]
             content_scores = [float(result.content_score) for result in results]
+            base_content_scores = [float(result.base_content_score) for result in results]
             all_right = [bool(result.all_right) for result in results]
             reward_details = [reward_detail(result) for result in results]
             decision_started_at = time.monotonic()
@@ -180,6 +181,7 @@ class RolloutMixin:
                 generation=generation,
                 rewards=rewards,
                 content_scores=content_scores,
+                base_content_scores=base_content_scores,
                 all_right=all_right,
                 reward_details=reward_details,
                 parsed_completions=parsed_completions,
@@ -211,6 +213,7 @@ class RolloutMixin:
                     parsed_completions=parsed_completions,
                     rewards=rewards,
                     content_scores=content_scores,
+                    base_content_scores=base_content_scores,
                     all_right=all_right,
                     reward_details=reward_details,
                     decision=decision,
@@ -231,6 +234,7 @@ class RolloutMixin:
         generation: Any,
         rewards: list[float],
         content_scores: list[float],
+        base_content_scores: list[float],
         all_right: list[bool],
         reward_details: list[dict[str, Any]],
         parsed_completions: list[Any],
@@ -253,6 +257,7 @@ class RolloutMixin:
             "parsed_completions": [parsed.to_dict() for parsed in parsed_completions],
             "rewards": rewards,
             "content_scores": content_scores,
+            "base_content_scores": base_content_scores,
             "all_right": all_right,
             "reward_details": reward_details,
             "generated_tokens": generated_token_counts(generation),
@@ -407,6 +412,7 @@ class RolloutMixin:
         """将单次 attempt 的指标累加到当前 epoch 统计中。"""
         rewards = [float(value) for value in payload.get("rewards", [])]
         content_scores = [float(value) for value in payload.get("content_scores", [])]
+        base_content_scores = [float(value) for value in payload.get("base_content_scores", [])]
         decision = str(payload.get("decision"))
         self.current_epoch_stats.attempt_groups += 1
         self.current_epoch_stats.completion_count += len(rewards)
@@ -417,6 +423,10 @@ class RolloutMixin:
             )
         if content_scores:
             self.current_epoch_stats.content_mean_sum += sum(content_scores) / len(content_scores)
+        if base_content_scores:
+            self.current_epoch_stats.base_content_mean_sum += (
+                sum(base_content_scores) / len(base_content_scores)
+            )
         if decision == "retry":
             self.current_epoch_stats.retries += 1
         elif decision == "perfect_skip":

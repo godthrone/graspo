@@ -101,6 +101,7 @@ def epoch_stats_to_dict(stats: GraspoFlowEpochStats) -> dict[str, Any]:
         "trainable_not_correct": stats.trainable_not_correct,
         "reward_mean_sum": stats.reward_mean_sum,
         "content_mean_sum": stats.content_mean_sum,
+        "base_content_mean_sum": stats.base_content_mean_sum,
         "best_reward": stats.best_reward,
     }
 
@@ -134,6 +135,7 @@ def epoch_stats_from_dict(raw: dict[str, Any]) -> GraspoFlowEpochStats:
         trainable_not_correct=int(raw.get("trainable_not_correct") or 0),
         reward_mean_sum=float(raw.get("reward_mean_sum") or 0.0),
         content_mean_sum=float(raw.get("content_mean_sum") or 0.0),
+        base_content_mean_sum=float(raw.get("base_content_mean_sum") or 0.0),
         best_reward=float(raw.get("best_reward") or 0.0),
     )
 

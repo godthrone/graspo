@@ -38,6 +38,7 @@ class GraspoFlowEpochStats:
     trainable_not_correct: int = 0
     reward_mean_sum: float = 0.0
     content_mean_sum: float = 0.0
+    base_content_mean_sum: float = 0.0
     best_reward: float = 0.0
 
 
@@ -59,6 +60,7 @@ class _AttemptRecord:
     parsed_completions: list[Any]  # ParsedCompletion
     rewards: list[float]
     content_scores: list[float]
+    base_content_scores: list[float]
     all_right: list[bool]
     reward_details: list[dict[str, Any]]
     decision: Any
