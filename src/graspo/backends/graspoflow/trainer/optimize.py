@@ -183,5 +183,8 @@ class OptimizeMixin:
             "content_mean": stats.content_mean_sum / attempt_groups
             if stats.attempt_groups
             else 0.0,
+            "base_content_mean": stats.base_content_mean_sum / attempt_groups
+            if stats.attempt_groups
+            else 0.0,
             "best_reward": stats.best_reward,
         }

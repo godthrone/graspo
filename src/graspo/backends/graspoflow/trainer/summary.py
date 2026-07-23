@@ -17,6 +17,7 @@ def monitor_group(payload: dict[str, Any]) -> dict[str, Any]:
     """从 group payload 生成监控用的摘要数据。"""
     rewards = [float(value) for value in payload.get("rewards", [])]
     content_scores = [float(value) for value in payload.get("content_scores", [])]
+    base_content_scores = [float(value) for value in payload.get("base_content_scores", [])]
     details = payload.get("reward_details", [])
     completions = payload.get("completions", [])
     pure_tool_call = is_pure_tool_call_task(payload.get("targets"))
@@ -26,6 +27,7 @@ def monitor_group(payload: dict[str, Any]) -> dict[str, Any]:
         "reward_max": max(rewards) if rewards else 0.0,
         "reward_range": max(rewards) - min(rewards) if rewards else 0.0,
         "content_mean": sum(content_scores) / len(content_scores) if content_scores else 0.0,
+        "base_content_mean": sum(base_content_scores) / len(base_content_scores) if base_content_scores else 0.0,
         "content_all_zero": bool(content_scores) and all(value == 0.0 for value in content_scores),
         "content_all_one": bool(content_scores) and all(value == 1.0 for value in content_scores),
         "missing_json_marker_count": (
@@ -114,6 +116,7 @@ def reward_batch_summary(
     decision_counts: dict[str, int] = {}
     rewards: list[float] = []
     content_scores: list[float] = []
+    base_content_scores: list[float] = []
     group_ranges: list[float] = []
     group_max_median_gaps: list[float] = []
     missing_json_marker_count = 0
@@ -128,8 +131,10 @@ def reward_batch_summary(
         decision_counts[decision] = decision_counts.get(decision, 0) + 1
         attempt_rewards = [float(value) for value in attempt.get("rewards", [])]
         attempt_content = [float(value) for value in attempt.get("content_scores", [])]
+        attempt_base_content = [float(value) for value in attempt.get("base_content_scores", [])]
         rewards.extend(attempt_rewards)
         content_scores.extend(attempt_content)
+        base_content_scores.extend(attempt_base_content)
         if attempt_rewards:
             group_ranges.append(max(attempt_rewards) - min(attempt_rewards))
             group_max_median_gaps.append(max(attempt_rewards) - lower_median(attempt_rewards))
@@ -195,6 +200,7 @@ def reward_batch_summary(
             else 0.0
         ),
         "content_mean": sum(content_scores) / len(content_scores) if content_scores else 0.0,
+        "base_content_mean": sum(base_content_scores) / len(base_content_scores) if base_content_scores else 0.0,
         "content_all_zero_group_count": sum(
             bool(attempt.get("content_scores"))
             and all(float(value) == 0.0 for value in attempt.get("content_scores", []))
@@ -251,6 +257,7 @@ def compact_batch_summary(summary: dict[str, Any]) -> dict[str, Any]:
         },
         "content": {
             "mean": float(summary.get("content_mean") or 0.0),
+            "base_mean": float(summary.get("base_content_mean") or 0.0),
             "all_zero_groups": int(summary.get("content_all_zero_group_count") or 0),
             "all_one_groups": int(summary.get("content_all_one_group_count") or 0),
         },
