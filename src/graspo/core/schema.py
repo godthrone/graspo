@@ -128,11 +128,14 @@ class ExportConfig(BaseModel):
 
 
 class LaunchConfig(BaseModel):
-    """分布式启动配置。"""
+    """分布式启动配置。
+
+    GPU 选择由用户通过 Docker ``--gpus`` 或环境变量 ``CUDA_VISIBLE_DEVICES``
+    控制，不在配置中指定。``nproc_per_node`` 默认从 ``tp_size × pp_size`` 自动推导。
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    gpus: list[int] | str | None = None
     nproc_per_node: int | None = None
     nnodes: int = 1
     node_rank: int = 0

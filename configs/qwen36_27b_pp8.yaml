@@ -74,7 +74,6 @@ export:
   final_formats: []
 
 launch:
-  gpus: [0, 1, 2, 3, 4, 5, 6, 7]
   nproc_per_node: null
   nnodes: 1
   node_rank: 0

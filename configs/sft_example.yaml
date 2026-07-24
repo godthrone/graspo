@@ -63,7 +63,6 @@ training:
 
 # ── Launch configuration ──────────────────────────────────────────────────
 launch:
-  gpus: [0, 1, 2, 3]                  # GPU indices for this run
 
 # ── Reward (ignored by SFT, kept for easy switch to RL) ──────────────────
 reward:
