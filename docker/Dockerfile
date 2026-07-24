@@ -4,6 +4,7 @@ FROM pytorch/pytorch@sha256:91629be68c98490a987b243b176757e8549336b98296933448fe
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl python3.12-venv \
