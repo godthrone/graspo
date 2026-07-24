@@ -146,13 +146,6 @@ def _validate_launch_world(
             f"({actual_world} != {expected_world})"
         )
 
-    gpus = _format_gpus(config.launch.gpus)
-    if gpus is not None and len(gpus.split(",")) != nproc_per_node:
-        raise SystemExit(
-            "launch.gpus count must match launch.nproc_per_node "
-            f"({len(gpus.split(','))} != {nproc_per_node})"
-        )
-
 
 def _graspoflow_world_size(config: GraspoConfig) -> int:
     return int(config.graspoflow.tp_size) * int(config.graspoflow.pp_size)
@@ -179,27 +172,12 @@ def _build_launch_env(config: GraspoConfig) -> dict[str, str]:
     for key, value in config.launch.env.items():
         env[str(key)] = str(value)
     env.setdefault("TOKENIZERS_PARALLELISM", "false")
-    gpus = _format_gpus(config.launch.gpus)
-    if gpus is not None:
-        env["CUDA_VISIBLE_DEVICES"] = gpus
 
     src_dir = _project_src_dir()
     if src_dir.is_dir():
         current = env.get("PYTHONPATH")
         env["PYTHONPATH"] = str(src_dir) if not current else f"{src_dir}{os.pathsep}{current}"
     return env
-
-
-def _format_gpus(value: list[int] | str | None) -> str | None:
-    if value is None:
-        return None
-    if isinstance(value, str):
-        parts = [part.strip() for part in value.split(",") if part.strip()]
-    else:
-        parts = [str(int(item)) for item in value]
-    if not parts:
-        return None
-    return ",".join(parts)
 
 
 def _torchrun_prefix(python: str) -> list[str]:

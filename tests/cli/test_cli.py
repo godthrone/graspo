@@ -33,7 +33,6 @@ def test_config_example_loads():
 
     assert config.training.max_epochs == 100
     assert config.training.max_new_tokens == 2048
-    assert config.launch.gpus == [0, 1]
     assert config.graspoflow.tp_size == 2
 
 
@@ -41,7 +40,6 @@ def test_launch_plan_graspoflow_uses_torchrun(tmp_path):
     config_path = _write_launch_config(
         tmp_path,
         backend="graspoflow",
-        gpus="[0, 1]",
         nproc_per_node="null",
         tensor_parallel=2,
         pipeline_parallel=1,
@@ -60,15 +58,12 @@ def test_launch_plan_graspoflow_uses_torchrun(tmp_path):
         "--master_addr=127.0.0.1",
     ]
     assert "graspo.cli.train_worker" in plan.command
-    assert "CUDA_VISIBLE_DEVICES" in plan.env
-    assert plan.env["CUDA_VISIBLE_DEVICES"] == "0,1"
 
 
 def test_launch_plan_graspoflow_world_size_one_uses_single_process(tmp_path):
     config_path = _write_launch_config(
         tmp_path,
         backend="graspoflow",
-        gpus="null",
         nproc_per_node="null",
         tensor_parallel=1,
         pipeline_parallel=1,
@@ -86,7 +81,6 @@ def test_launch_plan_rejects_world_size_mismatch(tmp_path):
     config_path = _write_launch_config(
         tmp_path,
         backend="graspoflow",
-        gpus="[0]",
         nproc_per_node=1,
         tensor_parallel=2,
         pipeline_parallel=1,
@@ -101,7 +95,6 @@ def test_launch_plan_rejects_missing_paths(tmp_path):
         tmp_path,
         backend="graspoflow",
         model_path="<MODEL_PATH>",
-        gpus="null",
         tensor_parallel=1,
         pipeline_parallel=1,
     )
@@ -178,7 +171,6 @@ def test_e2e_config_roundtrip(tmp_path):
     config_path = _write_launch_config(
         tmp_path,
         backend="graspoflow",
-        gpus="[0, 1]",
         tensor_parallel=2,
         pipeline_parallel=1,
     )
@@ -210,7 +202,6 @@ def _write_launch_config(
     tmp_path: Path,
     *,
     backend: str,
-    gpus: str,
     tensor_parallel: int,
     pipeline_parallel: int,
     nproc_per_node: int | str = "null",
@@ -237,7 +228,6 @@ graspoflow:
   tp_size: {tensor_parallel}
   pp_size: {pipeline_parallel}
 launch:
-  gpus: {gpus}
   nproc_per_node: {nproc_per_node}
   nnodes: 1
   node_rank: 0
