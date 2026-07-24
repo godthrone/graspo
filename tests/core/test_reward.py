@@ -242,3 +242,125 @@ def test_reward_parsed_tool_call_parse_error_is_not_all_right():
 
     assert result.all_right is False
     assert result.content_score == 1.0
+
+
+def test_reward_parsed_too_many_tool_calls_gets_zero_reward():
+    """模型生成多于 target 的 tool call → 按格式错误处理，reward ≈ 0。"""
+    reward = GraspoReward(RewardConfig(check_json_markdown=False))
+    parsed = ParsedCompletion(
+        raw_text="",
+        tool_calls=[
+            {"name": "move", "arguments": {"action": "forward", "distance_cm": 30}},
+            {"name": "turn", "arguments": {"action": "left", "angle_deg": 90}},
+            {"name": "move", "arguments": {"action": "forward", "distance_cm": 50}},
+            {"name": "move", "arguments": {"action": "backward", "distance_cm": 10}},
+            {"name": "turn", "arguments": {"action": "right", "angle_deg": 45}},
+        ],
+    )
+    targets = _tool_targets(
+        [
+            {"name": "move", "arguments": {"action": "forward", "distance_cm": 30}},
+            {"name": "turn", "arguments": {"action": "left", "angle_deg": 90}},
+            {"name": "move", "arguments": {"action": "forward", "distance_cm": 50}},
+        ]
+    )
+
+    result = reward.score_parsed(parsed, targets, is_tool_call=True)
+
+    assert result.content_score == 0.0
+    assert result.reward == pytest.approx(0.0, abs=0.01)
+    assert result.all_right is False
+    assert "too many tool calls" in result.extracted["parse_errors"]
+
+
+def test_reward_parsed_fewer_tool_calls_not_penalized():
+    """模型生成少于 target 的 tool call → 不惩罚，正常评分。"""
+    reward = GraspoReward(RewardConfig(check_json_markdown=False))
+    parsed = ParsedCompletion(
+        raw_text="",
+        tool_calls=[{"name": "move", "arguments": {"action": "forward", "distance_cm": 30}}],
+    )
+    targets = _tool_targets(
+        [
+            {"name": "move", "arguments": {"action": "forward", "distance_cm": 30}},
+            {"name": "turn", "arguments": {"action": "left", "angle_deg": 90}},
+            {"name": "move", "arguments": {"action": "forward", "distance_cm": 50}},
+        ]
+    )
+
+    result = reward.score_parsed(parsed, targets, is_tool_call=True)
+
+    assert result.content_score > 0.0
+    assert result.reward > 0.0
+    assert "too many tool calls" not in result.extracted["parse_errors"]
+
+
+def test_reward_parsed_exact_tool_call_count_not_penalized():
+    """模型生成与 target 相同数量的 tool call → 正常评分，不触发 penalty。"""
+    reward = GraspoReward(RewardConfig(check_json_markdown=False))
+    parsed = ParsedCompletion(
+        raw_text="",
+        tool_calls=[
+            {"name": "move", "arguments": {"action": "forward", "distance_cm": 30}},
+            {"name": "turn", "arguments": {"action": "left", "angle_deg": 90}},
+            {"name": "move", "arguments": {"action": "forward", "distance_cm": 50}},
+        ],
+    )
+    targets = _tool_targets(
+        [
+            {"name": "move", "arguments": {"action": "forward", "distance_cm": 30}},
+            {"name": "turn", "arguments": {"action": "left", "angle_deg": 90}},
+            {"name": "move", "arguments": {"action": "forward", "distance_cm": 50}},
+        ]
+    )
+
+    result = reward.score_parsed(parsed, targets, is_tool_call=True)
+
+    assert result.content_score == 1.0
+    assert result.reward > 0.0
+    assert "too many tool calls" not in result.extracted["parse_errors"]
+    assert result.all_right is True
+
+
+def test_reward_parsed_too_many_uses_max_target_count():
+    """多个 target 有不同 tc 数量时，以最大值为准。"""
+    reward = GraspoReward(RewardConfig(check_json_markdown=False))
+    parsed = ParsedCompletion(
+        raw_text="",
+        tool_calls=[
+            {"name": "move", "arguments": {"action": "forward", "distance_cm": 30}},
+            {"name": "turn", "arguments": {"action": "left", "angle_deg": 90}},
+            {"name": "move", "arguments": {"action": "forward", "distance_cm": 50}},
+            {"name": "move", "arguments": {"action": "backward", "distance_cm": 10}},
+        ],
+    )
+    # target-0 has 2 tool calls, target-1 has 3 → max = 3, so 4 is too many
+    targets = _tool_targets(
+        [
+            {"name": "move", "arguments": {"action": "forward", "distance_cm": 30}},
+            {"name": "turn", "arguments": {"action": "left", "angle_deg": 90}},
+        ],
+        [
+            {"name": "move", "arguments": {"action": "forward", "distance_cm": 30}},
+            {"name": "turn", "arguments": {"action": "left", "angle_deg": 90}},
+            {"name": "move", "arguments": {"action": "forward", "distance_cm": 50}},
+        ],
+    )
+
+    result = reward.score_parsed(parsed, targets, is_tool_call=True)
+
+    assert result.content_score == 0.0
+    assert "too many tool calls" in result.extracted["parse_errors"]
+
+
+def test_reward_parsed_too_many_does_not_affect_content_score_target():
+    """tc_count 惩罚不影响 content 评分路径（非 tool call 场景）。"""
+    reward = GraspoReward(RewardConfig(check_json_markdown=True))
+    result = reward.score(
+        '```json\n{"APN":"cmnet","fault_number":"138"}\n```',
+        _content_targets({"APN": "cmnet", "fault_number": "138"}),
+    )
+
+    assert result.all_right is True
+    assert result.content_score == 1.0
+    assert result.reward > 1.0
