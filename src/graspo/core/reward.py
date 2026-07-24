@@ -196,8 +196,16 @@ class GraspoReward:
         ]
         best: dict[str, Any] | None = None
         if parsed.tool_calls and think_ok:
-            raw_score += self.config.marker_reward_weight
-            if len(parsed.extra_text) <= self.config.anti_useless_str_half_reward_len:
+            max_tc = self._max_target_tool_call_count(normalized_targets)
+            if len(parsed.tool_calls) > max_tc:
+                # 模型生成了比任何 target 都多的 tool call —— 这是格式错误。
+                # 跳过 marker 奖励和 content 比较，raw_score 停留在 think_score 水平，
+                # content_score 保持 0.0 → classify_group 将其标记为 RETRY/INVALID。
+                # 不进入 replay buffer，不污染训练。
+                parsed.parse_errors.append("too many tool calls")
+            else:
+                raw_score += self.config.marker_reward_weight
+            if len(parsed.extra_text) <= self.config.anti_useless_str_half_reward_len and len(parsed.tool_calls) <= max_tc:
                 checked = {"tool_calls": parsed.tool_calls}
                 for score in target_scores:
                     target = normalized_targets[int(score["target_index"])]
@@ -286,6 +294,21 @@ class GraspoReward:
         if self.config.check_think:
             total += self.config.marker_reward_weight * 2
         return total
+
+    @staticmethod
+    def _max_target_tool_call_count(normalized_targets: list[dict[str, Any]]) -> int:
+        """返回所有 target 中 tool call 数量的最大值。
+
+        模型生成的 tool call 数量超过此值即视为格式错误，因为不存在需要
+        那么多 tool call 的正确答案。少于或等于此值均不惩罚——少生成工具
+        调用可能是空间感知不足，不应扣分。
+        """
+        max_count = 0
+        for target in normalized_targets:
+            calls = target["output"].get("tool_calls")
+            if isinstance(calls, list):
+                max_count = max(max_count, len(calls))
+        return max_count
 
     def _think_marker_score(self, text: str) -> tuple[float, bool]:
         if not self.config.check_think:
