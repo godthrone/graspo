@@ -29,6 +29,7 @@ class RewardConfig(BaseModel):
     content_reward_weight: float = 100.0
     anti_useless_str_reward_weight: float = 1.0
     anti_useless_str_half_reward_len: int = 100
+    numeric_tolerance: float = 0.2
 
 
 class RewardResult(BaseModel):
@@ -122,6 +123,7 @@ class GraspoReward:
                     checked=checked,
                     target=content,
                     check_list_order=self.config.check_list_order,
+                    numeric_tolerance=self.config.numeric_tolerance,
                 )
                 score.update(
                     {
@@ -216,6 +218,7 @@ class GraspoReward:
                         checked=checked,
                         target={"tool_calls": calls},
                         check_list_order=self.config.check_list_order,
+                        numeric_tolerance=self.config.numeric_tolerance,
                     )
                     score.update(
                         {

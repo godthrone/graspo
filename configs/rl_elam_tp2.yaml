@@ -33,6 +33,7 @@ reward:
   content_reward_weight: 100.0
   anti_useless_str_reward_weight: 1.0
   anti_useless_str_half_reward_len: 100
+  numeric_tolerance: 0.2
 
 training:
   output_dir: /data/outputs/rl_elam_v3
