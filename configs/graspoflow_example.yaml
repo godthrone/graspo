@@ -65,6 +65,7 @@ reward:
   marker_reward_weight: 10
   content_reward_weight: 100
   anti_useless_str_reward_weight: 1
+  numeric_tolerance: 0.2
 
 training:
   output_dir: outputs/graspoflow_27b

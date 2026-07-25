@@ -70,3 +70,4 @@ reward:
   check_json_markdown: true
   marker_reward_weight: 10
   content_reward_weight: 100
+  numeric_tolerance: 0.2

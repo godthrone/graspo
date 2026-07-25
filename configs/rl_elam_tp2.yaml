@@ -5,7 +5,7 @@ train_method: graspo
 backend: graspoflow
 
 model:
-  model_path: /data/outputs/sft_elam_v2_merged
+  model_path: /data/zhangzy/models/Qwen3.5-9B
   trust_remote_code: true
   torch_dtype: bfloat16
   gradient_checkpointing: true
