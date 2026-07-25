@@ -33,10 +33,10 @@ reward:
   content_reward_weight: 100.0
   anti_useless_str_reward_weight: 1.0
   anti_useless_str_half_reward_len: 100
-  numeric_tolerance: 0.2
+  numeric_tolerance: 10.0
 
 training:
-  output_dir: /data/outputs/rl_elam_v3
+  output_dir: /data/outputs/rl_elam_v4
   seed: 42
   max_epochs: 100
   max_steps: 40800
