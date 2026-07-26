@@ -17,13 +17,13 @@ data:
   max_prompt_length: 2048
 
 lora:
-  r: 128
-  alpha: 256
+  r: 16
+  alpha: 32
   dropout: 0.05
   adapter_path: null
   target_modules:
     - language_all_linear
-    - vision_common
+    - vision_merger
 
 reward:
   check_think: false
@@ -36,7 +36,7 @@ reward:
   numeric_tolerance: 10.0
 
 training:
-  output_dir: /data/outputs/rl_elam_v4
+  output_dir: /data/outputs/rl_elam_v5
   seed: 42
   max_epochs: 100
   max_steps: 40800
@@ -51,6 +51,7 @@ training:
   max_new_tokens: 256
   temperature: 1.0
   top_p: 0.8
+  resume_from_checkpoint: /data/outputs/sft_elam_v2/final
   save_checkpoint_every_epoch: true
   perfect_skip_reward_threshold: 1.0
   reject_unparseable_groups: true
