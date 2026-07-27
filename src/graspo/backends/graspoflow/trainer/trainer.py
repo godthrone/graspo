@@ -175,6 +175,7 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
                 and int(self.current_epoch_stats.samples_seen) >= self.total_samples
             ):
                 start_epoch += 1
+                self.current_epoch_stats.epoch = start_epoch
             for epoch in range(start_epoch, self.config.training.max_epochs):
                 if epoch != start_epoch or self.current_epoch_stats.samples_seen == 0:
                     self.current_epoch_stats = GraspoFlowEpochStats(epoch=epoch)
