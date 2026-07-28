@@ -10,7 +10,7 @@
 
 # ── Train method ───────────────────────────────────────────────────────────
 # "graspo" for RL training, "sft" for supervised fine-tuning.
-# For SFT, see configs/sft_example.yaml for a ready-to-use template.
+# For SFT, see samples/configs/sft_example.yaml for a ready-to-use template.
 train_method: graspo
 
 # ── Backend selection ─────────────────────────────────────────────────────
@@ -30,7 +30,7 @@ model:
 
 # ── Training data ─────────────────────────────────────────────────────────
 data:
-  train_path: data/sample.jsonl      # Path to JSONL training file (tool-call + multimodal sample)
+  train_path: samples/data/sample.jsonl      # Path to JSONL training file (tool-call + multimodal sample)
   max_prompt_length: 2048            # Truncate prompts longer than this (tokens)
 
 # ── LoRA configuration ────────────────────────────────────────────────────
@@ -109,12 +109,10 @@ export:
 
 # ── Distributed launch ────────────────────────────────────────────────────
 launch:
-  gpus: [0, 1]                       # GPU indices for this node ([] or null=auto)
   nproc_per_node: null               # Processes per node (null=derive from tp_size × pp_size)
   nnodes: 1                          # Number of nodes
   node_rank: 0                       # Rank of this node (0-indexed)
   master_addr: 127.0.0.1             # Master node IP
   master_port: 29500                 # Master node port
   python: null                       # Python executable (null=current interpreter)
-  torchrun: null                     # torchrun executable (null=auto-detect)
   env: {}                            # Extra environment variables for the training process
