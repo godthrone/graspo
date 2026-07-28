@@ -22,7 +22,7 @@ COPY uv.lock pyproject.toml .python-version README.md LICENSE ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     python3 -m venv --system-site-packages .venv \
     && .venv/bin/pip install --no-cache-dir \
-      pydantic pyyaml safetensors "transformers>=5.9.0" pillow accelerate
+      pydantic pyyaml safetensors tokenizers "transformers>=5.9.0" pillow accelerate
 
 # Layer 2: source code
 COPY src ./src
