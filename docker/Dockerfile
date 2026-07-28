@@ -26,8 +26,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 # Layer 2: source code
 COPY src ./src
-COPY configs ./configs
-COPY data ./data
+COPY samples ./samples
 
 ARG VERSION=0.0.0
 ENV SETUPTOOLS_SCM_PRETEND_VERSION=${VERSION}
