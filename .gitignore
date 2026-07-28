@@ -55,15 +55,13 @@ experiment_data/
 *.tar.gz
 *.tar
 
-# Local datasets; keep the public sample
-data/*.jsonl
-data/*.xlsx
-data/*.xls
-data/*.csv
-!data/sample.jsonl
-!data/sample_multimodal.jsonl
-!data/sample_tool_call.jsonl
-!data/graspo_train.jsonl
+# Prevent accidental recreation of old data/config directories at root
+data/
+configs/
+config_example.yaml
+
+# Sample data and configs live in samples/ (tracked);
+# production data belongs outside the repository.
 *.xlsx
 *.xls
 .dataset/
