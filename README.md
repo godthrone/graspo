@@ -35,13 +35,20 @@ parameter training is not supported in v1.
 
 ## Quick Start
 
+> **Sample files** live in `samples/`:
+> - `samples/configs/` — ready-to-copy YAML configs for different model/GPU setups;
+> - `samples/data/` — small JSONL datasets for validation and smoke tests.
+>
+> Production data and personal configs belong outside the repository — see
+> `data.train_path` and `training.output_dir` in your config.
+
 ### Docker (production path)
 
 Docker is the primary training method. It locks the runtime environment and
 avoids host dependency conflicts.
 
 ```bash
-# 1. Build the image (reads version from pyproject.toml automatically)
+# 1. Build the image (reads version from git tag automatically)
 bash docker/build.sh
 
 # 2. Run training — mounts your model and config
@@ -77,10 +84,11 @@ cd graspo
 uv sync --extra dev --python 3.11
 ```
 
-Now edit `config_example.yaml` to point at your model and data, then launch:
+Now copy a sample config and point it at your model and data, then launch:
 
 ```bash
-uv run graspo launch --config config_example.yaml
+cp samples/configs/config_example.yaml my_config.yaml
+uv run graspo launch --config my_config.yaml
 ```
 
 ### RL Training (GRASPO)
@@ -88,7 +96,7 @@ uv run graspo launch --config config_example.yaml
 Copy and edit the root sample config:
 
 ```bash
-cp config_example.yaml my_graspo.yaml
+cp samples/configs/config_example.yaml my_graspo.yaml
 ```
 
 Set at least these fields in `my_graspo.yaml`:
@@ -107,7 +115,7 @@ SFT mode reuses the same GraspoFlow infrastructure (TP/PP, LoRA, checkpoint)
 and the same JSONL data format. Copy the dedicated SFT example config:
 
 ```bash
-cp configs/sft_example.yaml my_sft.yaml
+cp samples/configs/sft_example.yaml my_sft.yaml
 ```
 
 Key differences from RL:
@@ -133,7 +141,7 @@ pointing `lora.adapter_path` to the SFT checkpoint.
 Validate sample data and reward behavior:
 
 ```bash
-uv run graspo validate-reward --data data/sample.jsonl --limit 2
+uv run graspo validate-reward --data samples/data/sample.jsonl --limit 2
 ```
 
 For reward validation testing, use the scripts in `scripts/` directory.
@@ -163,7 +171,7 @@ strings in the dataset:
 {"messages":[{"role":"system","content":"Use tools when needed. Output only the tool call."},{"role":"user","content":"Query device OLT-17 status at 2026-06-08 10:30."}],"tools":[{"type":"function","function":{"name":"query_device_status","description":"Query network device panel status.","parameters":{"type":"object","properties":{"device_id":{"type":"string"},"panel_time":{"type":"string"}},"required":["device_id","panel_time"]}}}],"targets":[{"id":"expected","output":{"tool_calls":[{"name":"query_device_status","arguments":{"device_id":"OLT-17","panel_time":"2026-06-08T10:30:00+08:00"}}]}}]}
 ```
 
-See `data/sample_tool_call.jsonl` for a runnable tool-call dataset row.
+See `samples/data/sample_tool_call.jsonl` for a runnable tool-call dataset row.
 
 Alternative targets are expressed as multiple `targets` entries. Ordered
 multi-step tool execution is expressed only inside `output.tool_calls`:
@@ -286,8 +294,8 @@ so reward behavior can be inspected without rerunning generation.
 
 ## Configuration
 
-All normal training configuration lives in YAML. `config_example.yaml` is the
-complete public example for RL training. `configs/sft_example.yaml` is the
+All normal training configuration lives in YAML. `samples/configs/config_example.yaml` is the
+complete public example for RL training. `samples/configs/sft_example.yaml` is the
 dedicated SFT template.
 
 ### `train_method`
@@ -301,7 +309,7 @@ dedicated SFT template.
 - `graspoflow`: **The only backend.** Unified TP+PP Flink-style streaming pipeline.
   Supports all parallel modes: single-GPU (`tp=1,pp=1`), pure TP (`tp=N,pp=1`),
   pure PP (`tp=1,pp=N`), and TP+PP mixed (`tp=M,pp=N`).
-  See `configs/graspoflow_example.yaml`.
+  See `samples/configs/graspoflow_example.yaml`.
 
 ### `model`
 
@@ -457,7 +465,7 @@ artifacts are produced with `graspo export`. Set `export.checkpoint_path`,
 `export.export_format`, and `export.export_output` in your YAML config, then run:
 
 ```bash
-uv run graspo export --config config_example.yaml
+uv run graspo export --config samples/configs/config_example.yaml
 ```
 
 Example minimal export config:
@@ -539,12 +547,12 @@ docker run --rm graspo:0.10.0
 docker run --rm --gpus all \
   -v /path/to/model:/workspace/graspo/models \
   graspo:0.10.0 \
-  launch --config config_example.yaml
+  launch --config samples/configs/config_example.yaml
 ```
 
 ## FAQ
 
-- `model.model_path must be set`: edit `config_example.yaml` and point it at a
+- `model.model_path must be set`: edit `samples/configs/config_example.yaml` and point it at a
   real base model.
 - `data.train_path does not exist`: point `data.train_path` at a JSONL file.
 - **Docker: model not found in container**: mount your model directory with
