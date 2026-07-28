@@ -122,7 +122,7 @@ Key differences from RL:
 
 - `train_method: sft` — dispatches to supervised fine-tuning instead of RL;
 - `forward_batch_size` acts as micro-batch size;
-- `optimize_iterations_per_step` acts as gradient accumulation steps;
+- GRPO optimization runs a single pass per training step (no gradient accumulation iterations).
 - `max_prompt_length` is the full sequence length (prompt + response);
 - `learning_rate` is typically higher than RL (e.g. `5e-5` vs `5e-6`);
 - `reward` section is ignored by SFT.
@@ -360,8 +360,6 @@ training.
 - `rollout_group_size`: completions sampled per prompt.
 - `optimize_prompt_batch_size`: prompts scheduled together for one optimize
   step; replay buffer threshold is `optimize_prompt_batch_size × rollout_group_size`.
-- `optimize_iterations_per_step`: repeated optimization passes over the same replay
-  completions.
 - `rollout_max_retries`: retry budget after the initial rollout attempt.
 - `learning_rate`, `weight_decay`, `max_grad_norm`: optimizer settings.
 - `policy_ratio_clip_eps`: clipped policy-ratio objective epsilon.
@@ -571,7 +569,7 @@ docker run --rm --gpus all \
   `learning_rate` down (e.g. `1e-6`). The SFT LoRA adapter is directly
   compatible with GRASPO RL training.
 - **SFT OOM**: reduce `forward_batch_size` (micro-batch) or `max_prompt_length`;
-  increase `optimize_iterations_per_step` (gradient accumulation) to keep the
+  increase `forward_batch_size` to keep the
   effective batch size.
 
 ## License

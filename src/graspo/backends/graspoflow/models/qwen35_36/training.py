@@ -27,7 +27,6 @@ class _Qwen35TrainingMethods:
         experiences: list[Experience],
         *,
         policy_ratio_clip_eps: float,
-        optimize_iterations_per_step: int,
         max_grad_norm: float,
     ) -> dict[str, Any]:
         self._require_ready()
@@ -37,7 +36,6 @@ class _Qwen35TrainingMethods:
             return self._pipeline_train_batch(
                 experiences,
                 policy_ratio_clip_eps=policy_ratio_clip_eps,
-                optimize_iterations_per_step=optimize_iterations_per_step,
                 max_grad_norm=max_grad_norm,
             )
         self.loss_fn.policy_ratio_clip_eps = policy_ratio_clip_eps
@@ -59,69 +57,70 @@ class _Qwen35TrainingMethods:
         backward_sec = 0.0
         optimizer_step_sec = 0.0
         micro_batch_count = 0
-        for optimize_round in range(optimize_iterations_per_step):
-            round_started_at = time.monotonic()
-            indices = self._shared_training_indices(len(experiences), optimize_round=optimize_round)
-            for start in range(0, len(indices) - batch_size + 1, batch_size):
-                batch_indices = indices[start : start + batch_size]
-                batch = collate_experiences(
-                    [experiences[idx] for idx in batch_indices], self.device
+        # Single pass — no repeated iterations (avoids stale old_log_probs).
+        optimize_round = 0
+        round_started_at = time.monotonic()
+        indices = self._shared_training_indices(len(experiences), optimize_round=optimize_round)
+        for start in range(0, len(indices) - batch_size + 1, batch_size):
+            batch_indices = indices[start : start + batch_size]
+            batch = collate_experiences(
+                [experiences[idx] for idx in batch_indices], self.device
+            )
+            self.optimizer.zero_grad(set_to_none=True)
+            self._sync_timing()
+            forward_started_at = time.monotonic()
+            multimodal_inputs = self._multimodal_inputs_from_metadata(
+                batch.metadata,
+                batch_size=int(batch.sequences.shape[0]),
+            )
+            if multimodal_inputs is not None:
+                if not isinstance(self.model, Qwen35HybridTextModel):
+                    raise ValueError("multimodal batch metadata for a non-multimodal model")
+                log_probs = self.model.sequence_log_probs(
+                    batch.sequences,
+                    batch.attention_mask,
+                    multimodal_inputs=multimodal_inputs,
                 )
-                self.optimizer.zero_grad(set_to_none=True)
-                self._sync_timing()
-                forward_started_at = time.monotonic()
-                multimodal_inputs = self._multimodal_inputs_from_metadata(
-                    batch.metadata,
-                    batch_size=int(batch.sequences.shape[0]),
-                )
-                if multimodal_inputs is not None:
-                    if not isinstance(self.model, Qwen35HybridTextModel):
-                        raise ValueError("multimodal batch metadata for a non-multimodal model")
-                    log_probs = self.model.sequence_log_probs(
-                        batch.sequences,
-                        batch.attention_mask,
-                        multimodal_inputs=multimodal_inputs,
-                    )
-                else:
-                    log_probs = self.model.sequence_log_probs(batch.sequences, batch.attention_mask)
-                self._sync_timing()
-                micro_batch_forward_sec += time.monotonic() - forward_started_at
-                loss = self.loss_fn(
-                    log_probs,
-                    batch.old_log_probs,
-                    batch.advantages,
-                    batch.action_mask,
-                )
-                if not torch.isfinite(loss):
-                    skipped_nonfinite += 1
-                    continue
-                self._sync_timing()
-                backward_started_at = time.monotonic()
-                loss.backward()
-                from graspo.backends.graspoflow.lora import _sync_nonsharded_lora_grads
-                from graspo.backends.graspoflow.tensor_utils import _TENSOR_PARALLEL_GROUP
+            else:
+                log_probs = self.model.sequence_log_probs(batch.sequences, batch.attention_mask)
+            self._sync_timing()
+            micro_batch_forward_sec += time.monotonic() - forward_started_at
+            loss = self.loss_fn(
+                log_probs,
+                batch.old_log_probs,
+                batch.advantages,
+                batch.action_mask,
+            )
+            if not torch.isfinite(loss):
+                skipped_nonfinite += 1
+                continue
+            self._sync_timing()
+            backward_started_at = time.monotonic()
+            loss.backward()
+            from graspo.backends.graspoflow.lora import _sync_nonsharded_lora_grads
+            from graspo.backends.graspoflow.tensor_utils import _TENSOR_PARALLEL_GROUP
 
-                if _TENSOR_PARALLEL_GROUP is not None:
-                    _sync_nonsharded_lora_grads(self.model, _TENSOR_PARALLEL_GROUP)
-                self._sync_timing()
-                backward_sec += time.monotonic() - backward_started_at
-                grad_norm = torch.nn.utils.clip_grad_norm_(
-                    [param for param in self.model.parameters() if param.requires_grad],
-                    max_grad_norm,
-                )
-                self._sync_timing()
-                optimizer_started_at = time.monotonic()
-                self.optimizer.step()
-                self._sync_timing()
-                optimizer_step_sec += time.monotonic() - optimizer_started_at
-                if self.scheduler is not None:
-                    self.scheduler.step()
-                optimizer_steps += 1
-                micro_batch_count += 1
-                loss_sum += float(loss.detach().cpu())
-                grad_norm_sum += float(grad_norm.detach().float().cpu())
-                nonzero_grad_count += self.model.nonzero_lora_grad_count()
-            round_secs.append(time.monotonic() - round_started_at)
+            if _TENSOR_PARALLEL_GROUP is not None:
+                _sync_nonsharded_lora_grads(self.model, _TENSOR_PARALLEL_GROUP)
+            self._sync_timing()
+            backward_sec += time.monotonic() - backward_started_at
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                [param for param in self.model.parameters() if param.requires_grad],
+                max_grad_norm,
+            )
+            self._sync_timing()
+            optimizer_started_at = time.monotonic()
+            self.optimizer.step()
+            self._sync_timing()
+            optimizer_step_sec += time.monotonic() - optimizer_started_at
+            if self.scheduler is not None:
+                self.scheduler.step()
+            optimizer_steps += 1
+            micro_batch_count += 1
+            loss_sum += float(loss.detach().cpu())
+            grad_norm_sum += float(grad_norm.detach().float().cpu())
+            nonzero_grad_count += self.model.nonzero_lora_grad_count()
+        round_secs.append(time.monotonic() - round_started_at)
         self._train_batch_call_index += 1
 
         lora_norm_after = self.model.lora_parameter_norm()
@@ -160,7 +159,6 @@ class _Qwen35TrainingMethods:
         experiences: list[Experience],
         *,
         policy_ratio_clip_eps: float,
-        optimize_iterations_per_step: int,
         max_grad_norm: float,
     ) -> dict[str, Any]:
         """PP training — delegates to 1F1B or simple schedule."""
@@ -171,13 +169,11 @@ class _Qwen35TrainingMethods:
             return self._pipeline_train_batch_one_f_one_b(
                 experiences,
                 policy_ratio_clip_eps=policy_ratio_clip_eps,
-                optimize_iterations_per_step=optimize_iterations_per_step,
                 max_grad_norm=max_grad_norm,
             )
         return self._pipeline_train_batch_simple(
             experiences,
             policy_ratio_clip_eps=policy_ratio_clip_eps,
-            optimize_iterations_per_step=optimize_iterations_per_step,
             max_grad_norm=max_grad_norm,
         )
 
@@ -248,7 +244,6 @@ class _Qwen35TrainingMethods:
         experiences: list[Experience],
         *,
         policy_ratio_clip_eps: float,
-        optimize_iterations_per_step: int,
         max_grad_norm: float,
     ) -> dict[str, Any]:
         self.loss_fn.policy_ratio_clip_eps = policy_ratio_clip_eps
@@ -267,9 +262,10 @@ class _Qwen35TrainingMethods:
         round_secs: list[float] = []
         micro_batch_count = 0
         stage_timing = _new_pipeline_stage_timing()
-        for optimize_round in range(optimize_iterations_per_step):
-            round_started_at = time.monotonic()
-            indices = self._shared_training_indices(len(experiences), optimize_round=optimize_round)
+        # Single pass — no repeated iterations.
+        optimize_round = 0
+        round_started_at = time.monotonic()
+        indices = self._shared_training_indices(len(experiences), optimize_round=optimize_round)
             for start in range(0, len(indices) - batch_size + 1, batch_size):
                 batch_indices = indices[start : start + batch_size]
                 batch = collate_experiences(
@@ -366,7 +362,7 @@ class _Qwen35TrainingMethods:
                 loss_sum += float(loss_payload[0])
                 grad_norm_sum += float(grad_norm.detach().float().cpu())
                 nonzero_grad_count += self.model.nonzero_lora_grad_count()
-            round_secs.append(time.monotonic() - round_started_at)
+        round_secs.append(time.monotonic() - round_started_at)
         self._train_batch_call_index += 1
         lora_norm_after = self.model.lora_parameter_norm()
         metrics = {
@@ -410,7 +406,6 @@ class _Qwen35TrainingMethods:
         experiences: list[Experience],
         *,
         policy_ratio_clip_eps: float,
-        optimize_iterations_per_step: int,
         max_grad_norm: float,
     ) -> dict[str, Any]:
         assert isinstance(self.model, Qwen35HybridTextModel)
@@ -437,9 +432,10 @@ class _Qwen35TrainingMethods:
         drain_sec = 0.0
         max_chunks_per_optimizer_step = 0
         configured_inflight = int(self.config.graspoflow.pp_max_inflight_microbatches)
-        for optimize_round in range(optimize_iterations_per_step):
-            round_started_at = time.monotonic()
-            indices = self._shared_training_indices(len(experiences), optimize_round=optimize_round)
+        # Single pass — no repeated iterations.
+        optimize_round = 0
+        round_started_at = time.monotonic()
+        indices = self._shared_training_indices(len(experiences), optimize_round=optimize_round)
             for start in range(0, len(indices) - batch_size + 1, batch_size):
                 batch_indices = indices[start : start + batch_size]
                 chunk_batches = [

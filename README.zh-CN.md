@@ -275,7 +275,7 @@ GRASPO 使用同一 rollout group 内的 reward 分布，而不是单条 complet
 - `rollout_group_size`：每个 prompt attempt 采样多少条 completion。
 - `optimize_prompt_batch_size`：每个 optimizer step 的 prompt 数量；
   replay buffer threshold = `optimize_prompt_batch_size × rollout_group_size`。
-- `optimize_iterations_per_step`：同一批 replay completion 重复优化几轮。
+- GRPO 优化每次训练步只执行一次 pass（无梯度累积迭代）。
 - `rollout_max_retries`：初始 rollout 后的 retry 预算。
 - `learning_rate`、`weight_decay`、`max_grad_norm`：optimizer 设置。
 - `policy_ratio_clip_eps`：policy-ratio clipped objective epsilon。
@@ -433,7 +433,7 @@ docker run --rm --gpus all \
   将 `lora.adapter_path` 指向 SFT checkpoint 的 adapter，
   降低 `learning_rate`（如 `1e-6`）。SFT LoRA adapter 可直接用于 GRASPO RL 训练。
 - **SFT OOM**：减小 `forward_batch_size`（micro-batch）或 `max_prompt_length`；
-  增大 `optimize_iterations_per_step`（梯度累积）以保持有效 batch size 不变。
+  增大 `forward_batch_size` 以保持有效 batch size 不变。
 
 ## License
 

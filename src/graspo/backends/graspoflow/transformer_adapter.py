@@ -147,11 +147,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
                 "lr_scheduler.type 非 constant 时，training.max_steps 必须 > 0，"
                 "否则无法推算总 optimizer step 数"
             )
-        total_steps = (
-            max_steps
-            * int(self.config.training.optimize_iterations_per_step)
-            * int(self.config.training.rollout_group_size)
-        )
+        total_steps = max_steps * int(self.config.training.rollout_group_size)
 
         if total_steps <= warmup_steps:
             raise ValueError(

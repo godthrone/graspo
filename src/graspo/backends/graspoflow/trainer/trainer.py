@@ -142,9 +142,7 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
                 "config": {
                     "rollout_group_size": self.config.training.rollout_group_size,
                     "optimize_prompt_batch_size": self.config.training.optimize_prompt_batch_size,
-                    "optimize_iterations_per_step": (
-                        self.config.training.optimize_iterations_per_step
-                    ),
+                    "optimize_iterations_per_step": 1,
                     "replay_buffer_optimize_threshold": (
                         self.config.training.replay_buffer_optimize_threshold
                     ),

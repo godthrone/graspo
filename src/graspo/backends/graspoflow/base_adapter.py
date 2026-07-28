@@ -101,8 +101,7 @@ class BaseGraspoFlowAdapter(ABC):
         """Run one or more optimizer steps over a batch of experiences.
 
         Subclasses may accept additional keyword arguments via ``**kwargs``:
-        ``policy_ratio_clip_eps``, ``optimize_iterations_per_step``,
-        ``max_grad_norm``, ``sft_batches`` (for SFT mode),
+        ``policy_ratio_clip_eps``, ``max_grad_norm``, ``sft_batches`` (for SFT mode),
         and backend-specific training parameters.
         """
         ...

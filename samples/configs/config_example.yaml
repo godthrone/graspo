@@ -63,7 +63,8 @@ training:
   max_steps: -1                      # Max optimize steps (-1 for unlimited)
   rollout_group_size: 8              # Completions per prompt (core algorithm param)
   optimize_prompt_batch_size: 4      # Prompts per optimize step; replay threshold = G × B
-  optimize_iterations_per_step: 3         # Optimize iterations per step
+  # optimize_iterations_per_step removed — always 1 iteration per step.
+  # Repeated GRPO iterations on stale old_log_probs causes catastrophic forgetting.
   rollout_max_retries: 5         # Max retries for failed rollouts (same-result fallback)
   learning_rate: 5.0e-6              # Optimizer peak learning rate
   weight_decay: 0.01                 # AdamW weight decay

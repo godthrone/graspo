@@ -34,7 +34,7 @@ training:
   max_steps: -1
   rollout_group_size: 8
   optimize_prompt_batch_size: 8     # 8 prompts × 8 groups = 64 experiences
-  optimize_iterations_per_step: 3
+  # optimize_iterations_per_step removed — always 1 iteration per step.
   rollout_max_retries: 5
   learning_rate: 5.0e-6
   max_grad_norm: 1.0

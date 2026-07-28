@@ -100,16 +100,12 @@ class SFTTrainer:
             )
 
         optimize_prompt_batch_size = max(1, int(self.config.training.optimize_prompt_batch_size))
-        optimize_iterations_per_step = max(
-            1, int(self.config.training.optimize_iterations_per_step)
-        )
         max_grad_norm = float(self.config.training.max_grad_norm)
         save_steps = int(self.config.training.save_steps)
 
         _log.info(
-            "SFT config: batch_size=%d grad_accum=%d max_epochs=%d lr=%.1e max_seq_len=%d",
+            "SFT config: batch_size=%d max_epochs=%d lr=%.1e max_seq_len=%d",
             optimize_prompt_batch_size,
-            optimize_iterations_per_step,
             self.config.training.max_epochs,
             self.config.training.learning_rate,
             self.config.data.max_prompt_length,
@@ -134,7 +130,6 @@ class SFTTrainer:
                     batch_started_at = time.monotonic()
                     metrics = self.runtime.train_batch_sft(
                         batch,
-                        optimize_iterations_per_step=optimize_iterations_per_step,
                         max_grad_norm=max_grad_norm,
                     )
                     self.global_step += 1

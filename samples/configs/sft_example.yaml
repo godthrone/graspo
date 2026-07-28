@@ -53,7 +53,7 @@ training:
   weight_decay: 0.01
   max_grad_norm: 1.0
   optimize_prompt_batch_size: 8       # Samples per optimizer step
-  optimize_iterations_per_step: 3     # Gradient accumulation steps
+  # optimize_iterations_per_step removed — always 1 iteration per step.
   lr_scheduler:
     type: cosine                      # "constant", "cosine", or "linear"
     warmup_steps: 50                  # Linear warmup steps
