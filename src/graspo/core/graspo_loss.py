@@ -55,6 +55,7 @@ class GRASPOLoss(nn.Module):
         action_mask: torch.Tensor,
     ) -> torch.Tensor:
         ratio = (log_probs - old_log_probs).exp()
+        ratio = ratio.clamp(0.1, 10.0)
         surr1 = ratio * advantages
         surr2 = (
             ratio.clamp(1 - self.policy_ratio_clip_eps, 1 + self.policy_ratio_clip_eps) * advantages
