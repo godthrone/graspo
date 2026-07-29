@@ -20,9 +20,11 @@ WORKDIR /workspace/graspo
 # pyproject.toml IS copied here — version is managed by setuptools-scm
 # (dynamic = ["version"]), so version bumps don't change this file's hash
 # and don't invalidate this layer.
+# --system-site-packages inherits torch + torchvision from the base image.
 COPY uv.lock pyproject.toml .python-version README.md LICENSE ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-install-project
+    uv venv --system-site-packages .venv \
+    && uv sync --frozen --no-dev --no-install-project
 
 # Layer 2: source code
 COPY src ./src
