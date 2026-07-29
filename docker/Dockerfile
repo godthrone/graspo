@@ -8,7 +8,7 @@ ENV PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 # Install system deps + uv (official standalone installer)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git curl ca-certificates \
+    git curl ca-certificates libjpeg-turbo8 libpng16-16 \
     && curl -LsSf https://astral.sh/uv/install.sh | sh \
     && rm -rf /var/lib/apt/lists/*
 
