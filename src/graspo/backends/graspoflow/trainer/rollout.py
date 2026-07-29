@@ -5,6 +5,7 @@ import time
 from typing import Any
 
 from graspo.backends.graspoflow.trainer.helpers import (
+    compute_ripple_advantages,
     expand_advantages_like,
     experience_metadata_for_row,
     generated_token_counts,
@@ -13,6 +14,7 @@ from graspo.backends.graspoflow.trainer.helpers import (
     reward_detail,
     safe_sample_metadata,
 )
+from graspo.core.token_reward import compute_token_rewards
 from graspo.backends.graspoflow.trainer.stats import _AttemptRecord, _QueuedSample
 from graspo.backends.graspoflow.trainer.summary import (
     monitor_group,
@@ -330,7 +332,21 @@ class RolloutMixin:
             )
         timing["old_logprob_sec"] = time.monotonic() - old_logprob_started_at
         replay_started_at = time.monotonic()
-        advantages = expand_advantages_like(rewards, old_log_probs)
+        # GRASPO-Ripple: token-level rewards and advantages
+        tokenizer = self.runtime._require_adapter().tokenizer
+        if tokenizer is not None and record.parsed_completions:
+            token_rewards = _compute_token_rewards_for_group(
+                generation=generation,
+                parsed_completions=record.parsed_completions,
+                targets=state.sample.targets,
+                tokenizer=tokenizer,
+                reward_config=self.reward.config,
+            )
+            advantages = compute_ripple_advantages(
+                token_rewards, old_log_probs, generation.prompt_len,
+            )
+        else:
+            advantages = expand_advantages_like(rewards, old_log_probs)
         self._append_experiences(generation, rewards, old_log_probs, advantages)
         timing["replay_append_sec"] = time.monotonic() - replay_started_at
         timing["attempt_total_sec"] = (
@@ -487,3 +503,49 @@ class RolloutMixin:
             self.global_step,
             reason,
         )
+
+
+# ── GRASPO-Ripple 辅助函数 ──────────────────────────────────────────────────
+
+
+def _compute_token_rewards_for_group(
+    *,
+    generation: Any,
+    parsed_completions: list[Any],
+    targets: Any,
+    tokenizer: Any,
+    reward_config: Any,
+) -> list[list[float]]:
+    """为一个 rollout group 的每个 completion 计算 token 级 reward。
+
+    Args:
+        generation: NativeGeneration，包含 sequences、completions、prompt_len。
+        parsed_completions: 每个 completion 的 ParsedCompletion。
+        targets: 标准化后的 target 列表。
+        tokenizer: HuggingFace tokenizer。
+        reward_config: RewardConfig 实例。
+
+    Returns:
+        每个 completion 的 reward 列表（ragged）。
+    """
+    from graspo.core.reward import normalize_targets
+
+    normalized_targets = normalize_targets(targets)
+    token_rewards: list[list[float]] = []
+    prompt_len = int(generation.prompt_len)
+
+    for idx, completion_text in enumerate(generation.completions):
+        parsed = parsed_completions[idx]
+        gen_ids = generation.sequences[idx, prompt_len:].tolist()
+        tr = compute_token_rewards(
+            generated_token_ids=gen_ids,
+            completion_text=completion_text,
+            parsed=parsed,
+            targets=normalized_targets,
+            tokenizer=tokenizer,
+            check_list_order=bool(reward_config.check_list_order),
+            numeric_tolerance=float(reward_config.numeric_tolerance),
+        )
+        token_rewards.append(tr)
+
+    return token_rewards

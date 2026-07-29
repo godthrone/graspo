@@ -54,11 +54,16 @@ def _backup_config(config: Any, output_dir: Path) -> None:
     )
 
 
-# ── advantage 扩展 ─────────────────────────────────────────────────────────────
+# ── advantage 计算 ─────────────────────────────────────────────────────────────
 
 
 def expand_advantages_like(rewards: list[float], old_log_probs: Any) -> Any:
-    """将 group 级 advantage 扩展为与 old_log_probs 同 shape 的 tensor。"""
+    """将 group 级 advantage 扩展为与 old_log_probs 同 shape 的 tensor。
+
+    .. deprecated::
+        此函数将被 GRASPO-Ripple 的 token 级 advantage 替代。
+        当前保留用于 compatibility 过渡期。
+    """
     import torch
 
     values = torch.tensor(
@@ -67,6 +72,65 @@ def expand_advantages_like(rewards: list[float], old_log_probs: Any) -> Any:
         device=old_log_probs.device,
     ).unsqueeze(1)
     return values.expand_as(old_log_probs)
+
+
+def compute_ripple_advantages(
+    token_rewards: list[list[float]],
+    old_log_probs: Any,
+    prompt_len: int,
+    *,
+    eps: float = 1e-8,
+) -> Any:
+    """GRASPO-Ripple: token 级 GRPO advantage 计算。
+
+    将 per-token reward 向量对齐到 old_log_probs 的 shape，
+    并对每个 token 位置独立做 group normalization。
+
+    Args:
+        token_rewards: 每个 completion 的 per-token reward 列表。
+                       长度 = rollout_group_size，每个元素长度 = 该 completion
+                       生成的 token 数。
+        old_log_probs: shape (B, seq_len-1) 的 log-prob tensor。
+        prompt_len: prompt 的 token 长度（用于对齐）。
+        eps: 数值稳定常数。
+
+    Returns:
+        shape (B, seq_len-1) 的 per-token advantage tensor。
+    """
+    import torch
+
+    from graspo.core.token_reward import compute_token_advantages
+
+    B = old_log_probs.shape[0]
+    seq_len_m1 = old_log_probs.shape[1]
+
+    # 将 ragged token rewards 转为 padded tensor
+    max_gen = max(len(r) for r in token_rewards)
+    rewards_tensor = torch.zeros(
+        B, max_gen, dtype=old_log_probs.dtype, device=old_log_probs.device
+    )
+    for i, r in enumerate(token_rewards):
+        if r:
+            rewards_tensor[i, : len(r)] = torch.tensor(
+                r, dtype=old_log_probs.dtype, device=old_log_probs.device
+            )
+
+    # 计算 token 级 advantage
+    ragged_advantages = compute_token_advantages(token_rewards, eps=eps)
+
+    # 对齐到 old_log_probs shape: 前面 prompt 部分填 0，中间是 token rewards，
+    # 后面超出部分填 0
+    advantages = torch.zeros(B, seq_len_m1, dtype=old_log_probs.dtype, device=old_log_probs.device)
+    gen_start = prompt_len - 1  # old_log_probs 中第一个生成 token 的位置
+    for i in range(B):
+        adv = ragged_advantages[i]
+        end = min(gen_start + len(adv), seq_len_m1)
+        for t in range(len(adv)):
+            pos = gen_start + t
+            if pos < seq_len_m1:
+                advantages[i, pos] = adv[t]
+
+    return advantages
 
 
 # ── 统计序列化/反序列化 ──────────────────────────────────────────────────────
