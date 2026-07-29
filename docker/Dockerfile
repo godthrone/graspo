@@ -7,8 +7,11 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git curl python3.12-venv \
+    git curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+# Install uv (official standalone binary)
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /workspace/graspo
 
@@ -16,13 +19,9 @@ WORKDIR /workspace/graspo
 # pyproject.toml IS copied here — version is managed by setuptools-scm
 # (dynamic = ["version"]), so version bumps don't change this file's hash
 # and don't invalidate this layer.
-# venv with --system-site-packages inherits torch from the base image,
-# avoiding 2.5GB of CUDA downloads from PyPI.
 COPY uv.lock pyproject.toml .python-version README.md LICENSE ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    python3 -m venv --system-site-packages .venv \
-    && .venv/bin/pip install --no-cache-dir \
-      pydantic pyyaml safetensors tokenizers "transformers>=5.9.0" pillow accelerate
+    uv sync --frozen --no-dev --no-install-project
 
 # Layer 2: source code
 COPY src ./src
@@ -31,7 +30,7 @@ COPY samples ./samples
 ARG VERSION=0.0.0
 ENV SETUPTOOLS_SCM_PRETEND_VERSION=${VERSION}
 
-RUN .venv/bin/pip install --no-cache-dir --no-deps -e .
+RUN uv sync --frozen --no-dev
 
 ENV PATH="/workspace/graspo/.venv/bin:$PATH"
 
