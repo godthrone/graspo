@@ -19,13 +19,10 @@ ENV PATH="/root/.local/bin:$PATH"
 WORKDIR /workspace/graspo
 
 # Layer 1: dependencies (cached when uv.lock AND pyproject.toml unchanged)
-# --system-site-packages inherits torch+torchvision from the base image.
-# uv pip install reads pyproject.toml, resolves via uv.lock, skips torch
-# (already satisfied by system site-packages).
+# pyproject.toml pins torch==2.12.1, torchvision==0.27.1 matching the base image.
 COPY uv.lock pyproject.toml .python-version README.md LICENSE ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv venv --system-site-packages .venv \
-    && uv pip install --python .venv/bin/python -r pyproject.toml
+    uv sync --frozen --no-dev --no-install-project
 
 # Layer 2: source code
 COPY src ./src
@@ -34,7 +31,7 @@ COPY samples ./samples
 ARG VERSION=0.0.0
 ENV SETUPTOOLS_SCM_PRETEND_VERSION=${VERSION}
 
-RUN uv pip install --python .venv/bin/python --no-deps -e .
+RUN uv sync --frozen --no-dev
 
 ENV PATH="/workspace/graspo/.venv/bin:/root/.local/bin:$PATH"
 
