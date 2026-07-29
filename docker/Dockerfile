@@ -7,9 +7,14 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 # Install system deps + uv (official standalone installer)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update \
+    -o Acquire::Retries=10 \
+    -o Acquire::http::Timeout=30 \
+    && apt-get install -y --no-install-recommends \
+    -o Acquire::Retries=10 \
+    -o Acquire::http::Timeout=30 \
     git curl ca-certificates libjpeg-turbo8 libpng16-16 \
-    && curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && curl --retry 5 --retry-max-time 120 -LsSf https://astral.sh/uv/install.sh | sh \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PATH="/root/.local/bin:$PATH"
