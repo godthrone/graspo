@@ -33,5 +33,7 @@ ENV SETUPTOOLS_SCM_PRETEND_VERSION=${VERSION}
 
 RUN uv sync --frozen --no-dev
 
+ENV PATH="/workspace/graspo/.venv/bin:/root/.local/bin:$PATH"
+
 ENTRYPOINT ["graspo"]
 CMD ["--help"]
