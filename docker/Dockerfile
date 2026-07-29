@@ -6,13 +6,10 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
-# Install system deps + uv (official standalone installer)
 RUN apt-get update \
-    -o Acquire::Retries=10 \
-    -o Acquire::http::Timeout=30 \
+    -o Acquire::Retries=10 -o Acquire::http::Timeout=30 \
     && apt-get install -y --no-install-recommends \
-    -o Acquire::Retries=10 \
-    -o Acquire::http::Timeout=30 \
+    -o Acquire::Retries=10 -o Acquire::http::Timeout=30 \
     git curl ca-certificates libjpeg-turbo8 libpng16-16 \
     && curl --retry 5 --retry-max-time 120 -LsSf https://astral.sh/uv/install.sh | sh \
     && rm -rf /var/lib/apt/lists/*
@@ -22,14 +19,13 @@ ENV PATH="/root/.local/bin:$PATH"
 WORKDIR /workspace/graspo
 
 # Layer 1: dependencies (cached when uv.lock AND pyproject.toml unchanged)
-# pyproject.toml IS copied here — version is managed by setuptools-scm
-# (dynamic = ["version"]), so version bumps don't change this file's hash
-# and don't invalidate this layer.
-# --system-site-packages inherits torch + torchvision from the base image.
+# --system-site-packages inherits torch+torchvision from the base image.
+# uv pip install reads pyproject.toml, resolves via uv.lock, skips torch
+# (already satisfied by system site-packages).
 COPY uv.lock pyproject.toml .python-version README.md LICENSE ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv venv --system-site-packages .venv \
-    && uv sync --frozen --no-dev --no-install-project
+    && uv pip install --python .venv/bin/python -r pyproject.toml
 
 # Layer 2: source code
 COPY src ./src
@@ -38,7 +34,7 @@ COPY samples ./samples
 ARG VERSION=0.0.0
 ENV SETUPTOOLS_SCM_PRETEND_VERSION=${VERSION}
 
-RUN uv sync --frozen --no-dev
+RUN uv pip install --python .venv/bin/python --no-deps -e .
 
 ENV PATH="/workspace/graspo/.venv/bin:/root/.local/bin:$PATH"
 
