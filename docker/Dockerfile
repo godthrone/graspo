@@ -6,12 +6,13 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
+# Install system deps + uv (official standalone installer)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl ca-certificates \
+    && curl -LsSf https://astral.sh/uv/install.sh | sh \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv (official standalone binary)
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+ENV PATH="/root/.local/bin:$PATH"
 
 WORKDIR /workspace/graspo
 
@@ -31,8 +32,6 @@ ARG VERSION=0.0.0
 ENV SETUPTOOLS_SCM_PRETEND_VERSION=${VERSION}
 
 RUN uv sync --frozen --no-dev
-
-ENV PATH="/workspace/graspo/.venv/bin:$PATH"
 
 ENTRYPOINT ["graspo"]
 CMD ["--help"]
