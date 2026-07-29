@@ -266,102 +266,102 @@ class _Qwen35TrainingMethods:
         optimize_round = 0
         round_started_at = time.monotonic()
         indices = self._shared_training_indices(len(experiences), optimize_round=optimize_round)
-            for start in range(0, len(indices) - batch_size + 1, batch_size):
-                batch_indices = indices[start : start + batch_size]
-                batch = collate_experiences(
-                    [experiences[idx] for idx in batch_indices], self.device
+        for start in range(0, len(indices) - batch_size + 1, batch_size):
+            batch_indices = indices[start : start + batch_size]
+            batch = collate_experiences(
+                [experiences[idx] for idx in batch_indices], self.device
+            )
+            if self.optimizer is not None:
+                self.optimizer.zero_grad(set_to_none=True)
+            self._sync_timing()
+            forward_started_at = time.monotonic()
+            stage_output, stage_input = self._pipeline_forward_for_training(
+                batch.sequences,
+                batch.attention_mask,
+                metadata=batch.metadata,
+                timing=stage_timing,
+            )
+            self._sync_timing()
+            micro_batch_forward_sec += time.monotonic() - forward_started_at
+            loss: torch.Tensor | None = None
+            if self.pp_rank == self.pp_size - 1:
+                assert stage_output is not None
+                assert self.model.norm is not None and self.model.lm_head is not None
+                norm_started_at = time.monotonic()
+                hidden = self.model.norm(stage_output)
+                _add_pipeline_stage_timing(stage_timing, "pipeline_norm_sec", norm_started_at)
+                lm_head_started_at = time.monotonic()
+                log_probs = _selected_token_log_probs_from_hidden(
+                    hidden[:, :-1].float(),
+                    self.model.lm_head.weight.float(),
+                    batch.sequences[:, 1:],
                 )
-                if self.optimizer is not None:
-                    self.optimizer.zero_grad(set_to_none=True)
-                self._sync_timing()
-                forward_started_at = time.monotonic()
-                stage_output, stage_input = self._pipeline_forward_for_training(
-                    batch.sequences,
-                    batch.attention_mask,
-                    metadata=batch.metadata,
-                    timing=stage_timing,
+                _add_pipeline_stage_timing(
+                    stage_timing, "pipeline_lm_head_sec", lm_head_started_at
                 )
-                self._sync_timing()
-                micro_batch_forward_sec += time.monotonic() - forward_started_at
-                loss: torch.Tensor | None = None
-                if self.pp_rank == self.pp_size - 1:
-                    assert stage_output is not None
-                    assert self.model.norm is not None and self.model.lm_head is not None
-                    norm_started_at = time.monotonic()
-                    hidden = self.model.norm(stage_output)
-                    _add_pipeline_stage_timing(stage_timing, "pipeline_norm_sec", norm_started_at)
-                    lm_head_started_at = time.monotonic()
-                    log_probs = _selected_token_log_probs_from_hidden(
-                        hidden[:, :-1].float(),
-                        self.model.lm_head.weight.float(),
-                        batch.sequences[:, 1:],
-                    )
-                    _add_pipeline_stage_timing(
-                        stage_timing, "pipeline_lm_head_sec", lm_head_started_at
-                    )
-                    loss_started_at = time.monotonic()
-                    loss = self.loss_fn(
-                        log_probs,
-                        batch.old_log_probs,
-                        batch.advantages,
-                        batch.action_mask,
-                    )
-                    _add_pipeline_stage_timing(stage_timing, "pipeline_loss_sec", loss_started_at)
-                    finite = bool(torch.isfinite(loss).detach().cpu())
-                else:
-                    finite = True
-                finite_payload = [finite]
-                dist.broadcast_object_list(finite_payload, src=(self.pp_size - 1) * self.tp_size)
-                if not bool(finite_payload[0]):
-                    skipped_nonfinite += 1
-                    continue
-                self._sync_timing()
-                backward_started_at = time.monotonic()
-                if self.pp_rank == self.pp_size - 1:
-                    assert loss is not None
-                    loss.backward()
-                    if stage_input is not None and stage_input.grad is not None:
-                        dist.send(
-                            stage_input.grad.contiguous(),
-                            dst=int(self.tp_state.prev_pp_rank),
-                        )
-                    loss_value = float(loss.detach().cpu())
-                else:
-                    assert stage_output is not None
-                    grad_output = torch.empty_like(stage_output)
-                    dist.recv(grad_output, src=int(self.tp_state.next_pp_rank))
-                    stage_output.backward(grad_output)
-                    if stage_input is not None and stage_input.grad is not None:
-                        dist.send(
-                            stage_input.grad.contiguous(),
-                            dst=int(self.tp_state.prev_pp_rank),
-                        )
-                    loss_value = 0.0
-                self._sync_timing()
-                backward_sec += time.monotonic() - backward_started_at
-                trainable_params = [
-                    param for param in self.model.parameters() if param.requires_grad
-                ]
-                grad_norm = (
-                    torch.nn.utils.clip_grad_norm_(trainable_params, max_grad_norm)
-                    if trainable_params
-                    else torch.tensor(0.0)
+                loss_started_at = time.monotonic()
+                loss = self.loss_fn(
+                    log_probs,
+                    batch.old_log_probs,
+                    batch.advantages,
+                    batch.action_mask,
                 )
-                self._sync_timing()
-                optimizer_started_at = time.monotonic()
-                if self.optimizer is not None:
-                    self.optimizer.step()
-                self._sync_timing()
-                optimizer_step_sec += time.monotonic() - optimizer_started_at
-                if self.scheduler is not None and self.optimizer is not None:
-                    self.scheduler.step()
-                optimizer_steps += 1
-                micro_batch_count += 1
-                loss_payload = [loss_value]
-                dist.broadcast_object_list(loss_payload, src=(self.pp_size - 1) * self.tp_size)
-                loss_sum += float(loss_payload[0])
-                grad_norm_sum += float(grad_norm.detach().float().cpu())
-                nonzero_grad_count += self.model.nonzero_lora_grad_count()
+                _add_pipeline_stage_timing(stage_timing, "pipeline_loss_sec", loss_started_at)
+                finite = bool(torch.isfinite(loss).detach().cpu())
+            else:
+                finite = True
+            finite_payload = [finite]
+            dist.broadcast_object_list(finite_payload, src=(self.pp_size - 1) * self.tp_size)
+            if not bool(finite_payload[0]):
+                skipped_nonfinite += 1
+                continue
+            self._sync_timing()
+            backward_started_at = time.monotonic()
+            if self.pp_rank == self.pp_size - 1:
+                assert loss is not None
+                loss.backward()
+                if stage_input is not None and stage_input.grad is not None:
+                    dist.send(
+                        stage_input.grad.contiguous(),
+                        dst=int(self.tp_state.prev_pp_rank),
+                    )
+                loss_value = float(loss.detach().cpu())
+            else:
+                assert stage_output is not None
+                grad_output = torch.empty_like(stage_output)
+                dist.recv(grad_output, src=int(self.tp_state.next_pp_rank))
+                stage_output.backward(grad_output)
+                if stage_input is not None and stage_input.grad is not None:
+                    dist.send(
+                        stage_input.grad.contiguous(),
+                        dst=int(self.tp_state.prev_pp_rank),
+                    )
+                loss_value = 0.0
+            self._sync_timing()
+            backward_sec += time.monotonic() - backward_started_at
+            trainable_params = [
+                param for param in self.model.parameters() if param.requires_grad
+            ]
+            grad_norm = (
+                torch.nn.utils.clip_grad_norm_(trainable_params, max_grad_norm)
+                if trainable_params
+                else torch.tensor(0.0)
+            )
+            self._sync_timing()
+            optimizer_started_at = time.monotonic()
+            if self.optimizer is not None:
+                self.optimizer.step()
+            self._sync_timing()
+            optimizer_step_sec += time.monotonic() - optimizer_started_at
+            if self.scheduler is not None and self.optimizer is not None:
+                self.scheduler.step()
+            optimizer_steps += 1
+            micro_batch_count += 1
+            loss_payload = [loss_value]
+            dist.broadcast_object_list(loss_payload, src=(self.pp_size - 1) * self.tp_size)
+            loss_sum += float(loss_payload[0])
+            grad_norm_sum += float(grad_norm.detach().float().cpu())
+            nonzero_grad_count += self.model.nonzero_lora_grad_count()
         round_secs.append(time.monotonic() - round_started_at)
         self._train_batch_call_index += 1
         lora_norm_after = self.model.lora_parameter_norm()
@@ -436,74 +436,74 @@ class _Qwen35TrainingMethods:
         optimize_round = 0
         round_started_at = time.monotonic()
         indices = self._shared_training_indices(len(experiences), optimize_round=optimize_round)
-            for start in range(0, len(indices) - batch_size + 1, batch_size):
-                batch_indices = indices[start : start + batch_size]
-                chunk_batches = [
-                    collate_experiences(
-                        [
-                            experiences[idx]
-                            for idx in batch_indices[
-                                chunk_start : chunk_start + pipeline_micro_batch_size
-                            ]
-                        ],
-                        self.device,
-                    )
-                    for chunk_start in range(0, len(batch_indices), pipeline_micro_batch_size)
-                ]
-                if not chunk_batches:
-                    continue
-                max_chunks_per_optimizer_step = max(
-                    max_chunks_per_optimizer_step, len(chunk_batches)
+        for start in range(0, len(indices) - batch_size + 1, batch_size):
+            batch_indices = indices[start : start + batch_size]
+            chunk_batches = [
+                collate_experiences(
+                    [
+                        experiences[idx]
+                        for idx in batch_indices[
+                            chunk_start : chunk_start + pipeline_micro_batch_size
+                        ]
+                    ],
+                    self.device,
                 )
+                for chunk_start in range(0, len(batch_indices), pipeline_micro_batch_size)
+            ]
+            if not chunk_batches:
+                continue
+            max_chunks_per_optimizer_step = max(
+                max_chunks_per_optimizer_step, len(chunk_batches)
+            )
+            if self.optimizer is not None:
+                self.optimizer.zero_grad(set_to_none=True)
+            result = self._pipeline_one_f_one_b_optimizer_step(
+                chunk_batches,
+                full_batch_size=len(batch_indices),
+                timing=stage_timing,
+                max_inflight=configured_inflight,
+            )
+            micro_batch_forward_sec += result["forward_sec"]
+            backward_sec += result["backward_sec"]
+            fill_sec += result["fill_sec"]
+            steady_sec += result["steady_sec"]
+            drain_sec += result["drain_sec"]
+            micro_batch_count += len(chunk_batches)
+            if not result["finite"]:
                 if self.optimizer is not None:
                     self.optimizer.zero_grad(set_to_none=True)
-                result = self._pipeline_one_f_one_b_optimizer_step(
-                    chunk_batches,
-                    full_batch_size=len(batch_indices),
-                    timing=stage_timing,
-                    max_inflight=configured_inflight,
-                )
-                micro_batch_forward_sec += result["forward_sec"]
-                backward_sec += result["backward_sec"]
-                fill_sec += result["fill_sec"]
-                steady_sec += result["steady_sec"]
-                drain_sec += result["drain_sec"]
-                micro_batch_count += len(chunk_batches)
-                if not result["finite"]:
-                    if self.optimizer is not None:
-                        self.optimizer.zero_grad(set_to_none=True)
-                    skipped_nonfinite += 1
-                    continue
-                trainable_params = [
-                    param for param in self.model.parameters() if param.requires_grad
-                ]
-                grad_clip_started_at = time.monotonic()
-                grad_norm = (
-                    torch.nn.utils.clip_grad_norm_(trainable_params, max_grad_norm)
-                    if trainable_params
-                    else torch.tensor(0.0)
-                )
-                _add_pipeline_stage_timing(
-                    stage_timing, "pipeline_grad_clip_sec", grad_clip_started_at
-                )
-                self._sync_timing()
-                optimizer_started_at = time.monotonic()
-                if self.optimizer is not None:
-                    self.optimizer.step()
-                self._sync_timing()
-                _add_pipeline_stage_timing(
-                    stage_timing, "pipeline_optimizer_step_sec", optimizer_started_at
-                )
-                optimizer_step_sec += time.monotonic() - optimizer_started_at
-                if self.scheduler is not None and self.optimizer is not None:
-                    self.scheduler.step()
-                optimizer_steps += 1
-                loss_payload = [float(result["loss_value"])]
-                dist.broadcast_object_list(loss_payload, src=(self.pp_size - 1) * self.tp_size)
-                loss_sum += float(loss_payload[0])
-                grad_norm_sum += float(grad_norm.detach().float().cpu())
-                nonzero_grad_count += self.model.nonzero_lora_grad_count()
-            round_secs.append(time.monotonic() - round_started_at)
+                skipped_nonfinite += 1
+                continue
+            trainable_params = [
+                param for param in self.model.parameters() if param.requires_grad
+            ]
+            grad_clip_started_at = time.monotonic()
+            grad_norm = (
+                torch.nn.utils.clip_grad_norm_(trainable_params, max_grad_norm)
+                if trainable_params
+                else torch.tensor(0.0)
+            )
+            _add_pipeline_stage_timing(
+                stage_timing, "pipeline_grad_clip_sec", grad_clip_started_at
+            )
+            self._sync_timing()
+            optimizer_started_at = time.monotonic()
+            if self.optimizer is not None:
+                self.optimizer.step()
+            self._sync_timing()
+            _add_pipeline_stage_timing(
+                stage_timing, "pipeline_optimizer_step_sec", optimizer_started_at
+            )
+            optimizer_step_sec += time.monotonic() - optimizer_started_at
+            if self.scheduler is not None and self.optimizer is not None:
+                self.scheduler.step()
+            optimizer_steps += 1
+            loss_payload = [float(result["loss_value"])]
+            dist.broadcast_object_list(loss_payload, src=(self.pp_size - 1) * self.tp_size)
+            loss_sum += float(loss_payload[0])
+            grad_norm_sum += float(grad_norm.detach().float().cpu())
+            nonzero_grad_count += self.model.nonzero_lora_grad_count()
+        round_secs.append(time.monotonic() - round_started_at)
         self._train_batch_call_index += 1
         lora_norm_after = self.model.lora_parameter_norm()
         effective_inflight = max_chunks_per_optimizer_step
