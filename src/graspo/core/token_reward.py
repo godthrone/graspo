@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from graspo.core.compare import dict_compare_score
+from graspo.core.compare import dict_compare_score, leaf_compare_score
 from graspo.core.completion import ParsedCompletion
 from graspo.core.data import _format_xml_param_value
 
