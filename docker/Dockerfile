@@ -9,7 +9,9 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
-RUN apt-get update \
+RUN export http_proxy="${HTTP_PROXY:-}" https_proxy="${HTTPS_PROXY:-}" \
+    HTTP_PROXY="${HTTP_PROXY:-}" HTTPS_PROXY="${HTTPS_PROXY:-}" \
+    && apt-get update \
     -o Acquire::Retries=10 -o Acquire::http::Timeout=30 \
     && apt-get install -y --no-install-recommends \
     -o Acquire::Retries=10 -o Acquire::http::Timeout=30 \
@@ -24,8 +26,11 @@ WORKDIR /workspace/graspo
 # Layer 1: dependencies (cached when uv.lock AND pyproject.toml unchanged)
 # pyproject.toml pins torch==2.12.1, torchvision==0.27.1 matching the base image.
 COPY uv.lock pyproject.toml .python-version README.md LICENSE ./
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
 RUN --mount=type=cache,target=/root/.cache/uv \
     HTTP_PROXY="${HTTP_PROXY:-}" HTTPS_PROXY="${HTTPS_PROXY:-}" \
+    http_proxy="${HTTP_PROXY:-}" https_proxy="${HTTPS_PROXY:-}" \
     uv sync --frozen --no-dev --no-install-project
 
 # Layer 2: source code
@@ -33,9 +38,12 @@ COPY src ./src
 COPY samples ./samples
 
 ARG VERSION=0.0.0
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
 ENV SETUPTOOLS_SCM_PRETEND_VERSION=${VERSION}
 
 RUN HTTP_PROXY="${HTTP_PROXY:-}" HTTPS_PROXY="${HTTPS_PROXY:-}" \
+    http_proxy="${HTTP_PROXY:-}" https_proxy="${HTTPS_PROXY:-}" \
     uv sync --frozen --no-dev
 
 ENV PATH="/workspace/graspo/.venv/bin:/root/.local/bin:$PATH"
