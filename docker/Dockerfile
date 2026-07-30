@@ -1,6 +1,9 @@
 # 基础镜像：Python 3.12 + torch 2.12.1 + CUDA 13.2
 FROM pytorch/pytorch@sha256:91629be68c98490a987b243b176757e8549336b98296933448fe496427118569
 
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
@@ -22,6 +25,7 @@ WORKDIR /workspace/graspo
 # pyproject.toml pins torch==2.12.1, torchvision==0.27.1 matching the base image.
 COPY uv.lock pyproject.toml .python-version README.md LICENSE ./
 RUN --mount=type=cache,target=/root/.cache/uv \
+    HTTP_PROXY="${HTTP_PROXY:-}" HTTPS_PROXY="${HTTPS_PROXY:-}" \
     uv sync --frozen --no-dev --no-install-project
 
 # Layer 2: source code
@@ -31,7 +35,8 @@ COPY samples ./samples
 ARG VERSION=0.0.0
 ENV SETUPTOOLS_SCM_PRETEND_VERSION=${VERSION}
 
-RUN uv sync --frozen --no-dev
+RUN HTTP_PROXY="${HTTP_PROXY:-}" HTTPS_PROXY="${HTTPS_PROXY:-}" \
+    uv sync --frozen --no-dev
 
 ENV PATH="/workspace/graspo/.venv/bin:/root/.local/bin:$PATH"
 
