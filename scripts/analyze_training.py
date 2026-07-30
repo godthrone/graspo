@@ -149,7 +149,12 @@ def parse_training_log(log_path: str) -> dict:
         try:
             result["last_log_timestamp"] = steps[-1]["timestamp"]
         except (KeyError, TypeError):
-            pass
+            print(
+                f"Error: step at index {len(steps)-1} has no 'timestamp' field. "
+                f"Training log format may have changed — fix the script.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
     # Build epoch summary list sorted by epoch number
     epochs_list = []
@@ -488,7 +493,14 @@ def analyze_rollouts(rollout_path: str) -> dict:
                                                 else:
                                                     angle_diffs.append(diff)
                                             except (ValueError, TypeError):
-                                                pass
+                                                print(
+                                                    f"Error: cannot convert "
+                                                    f"tc_val={tc_val!r} or tgt_val={tgt_val!r} "
+                                                    f"to float for parameter {pkey!r}. "
+                                                    f"Training log format may have changed — fix the script.",
+                                                    file=sys.stderr,
+                                                )
+                                                sys.exit(1)
 
                 # Content score buckets
                 cs = c.get("content_score", 0)

@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Any
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class Experience:
     sequences: Any
     old_log_probs: Any

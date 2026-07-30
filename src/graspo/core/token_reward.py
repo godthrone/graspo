@@ -17,6 +17,7 @@ from typing import Any
 
 from graspo.core.compare import dict_compare_score
 from graspo.core.completion import ParsedCompletion
+from graspo.core.data import _format_xml_param_value
 
 _log = logging.getLogger(__name__)
 
@@ -254,8 +255,6 @@ def _compute_field_scores(
                     tgt_value = tgt_args.get(pname)
                     field_key = f"{fn_name}.{pname}"
                     if tgt_value is not None:
-                        from graspo.core.compare import leaf_compare_score
-
                         score = leaf_compare_score(pvalue, tgt_value, numeric_tolerance=numeric_tolerance)
                         best_scores[field_key] = float(score)
                     else:
@@ -309,7 +308,7 @@ def _build_ground_truth_token_ids(
         parts.append(f"<function={fn_name}>")
         for pname, pvalue in fn_args.items():
             parts.append(f"<parameter={pname}>")
-            parts.append(str(pvalue))
+            parts.append(_format_xml_param_value(pvalue))
             parts.append(f"</parameter>")
         parts.append("</function>")
         parts.append("</tool_call>")

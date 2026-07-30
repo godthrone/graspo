@@ -420,7 +420,7 @@ def write_jsonl(samples: list[Sample], path: str | Path) -> None:
             handle.write(sample.to_json() + "\n")
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class MultimodalDeferred:
     """多模态延迟编码数据，由 ``_collate_sft_multimodal_batch`` 消费。
 
@@ -435,7 +435,7 @@ class MultimodalDeferred:
     tools: list[dict[str, Any]] | None
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class SFTTokenized:
     """``sft_tokenize_text`` / ``sft_tokenize_multimodal`` 的统一输出。
 
