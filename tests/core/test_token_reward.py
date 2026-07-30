@@ -277,13 +277,15 @@ def test_token_advantages_mixed():
     ]
     advantages = compute_token_advantages(rewards)
 
-    # Position 0: two 1.0, one 0.0 → 1.0 has positive advantage, 0.0 has negative
+    # Position 0: two 1.0, one 0.0 → 1.0 has positive advantage.
+    # 0.0 has advantage clamped to 0 (non-negative, reward-only).
     assert advantages[0][0] > 0  # 1.0 should have positive advantage
-    assert advantages[2][0] < 0  # 0.0 should have negative advantage
+    assert advantages[2][0] == 0.0  # 0.0 clamped to 0 (non-negative)
 
-    # Position 1: one 1.0, two 0.0 → 1.0 has positive advantage (best in group)
+    # Position 1: one 1.0, two 0.0 → 1.0 has positive advantage (best in group).
+    # 0.0 has advantage clamped to 0.
     assert advantages[0][1] > 0
-    assert advantages[1][1] < 0
+    assert advantages[1][1] == 0.0  # clamped to 0
 
 
 def test_token_advantages_ragged_lengths():

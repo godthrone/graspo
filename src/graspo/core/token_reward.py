@@ -331,7 +331,11 @@ def compute_token_advantages(
     For each token position t, computes:
         mean[t] = mean of rewards at position t across the group
         std[t]  = std of rewards at position t across the group
-        A_i[t]  = (r_i[t] - mean[t]) / (std[t] + eps)
+        A_i[t]  = max(0, (r_i[t] - mean[t]) / (std[t] + eps))
+
+    Advantages are clamped to non-negative (reward-only, no penalty).
+    This prevents broken-format completions from producing large negative
+    gradients that destabilize format generation through shared LoRA weights.
 
     Positions beyond a completion's length are excluded from mean/std
     computation.  For positions that exist in some completions but not
@@ -373,7 +377,7 @@ def compute_token_advantages(
         # Assign advantage for each completion at this position
         for i in range(group_size):
             if t < len(token_rewards[i]):
-                a = (token_rewards[i][t] - mean) / (std + eps) if (std + eps) > 0 else 0.0
+                a = max(0.0, (token_rewards[i][t] - mean) / (std + eps)) if (std + eps) > 0 else 0.0
                 advantages[i].append(a)
             else:
                 advantages[i].append(0.0)
