@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from graspo.core.reward import RewardConfig
 
@@ -78,6 +78,16 @@ class TrainingConfig(BaseModel):
     reject_unparseable_groups: bool = True
     resume_from_checkpoint: str | None = None
     lr_scheduler: LRSchedulerConfig = LRSchedulerConfig()
+
+    @model_validator(mode="after")
+    def _validate_max_steps_for_scheduler(self) -> "TrainingConfig":
+        if self.lr_scheduler.type != "constant" and self.max_steps <= 0:
+            raise ValueError(
+                f"training.max_steps must be > 0 when "
+                f"lr_scheduler.type={self.lr_scheduler.type!r}, "
+                f"got {self.max_steps}"
+            )
+        return self
 
     @property
     def replay_buffer_optimize_threshold(self) -> int:

@@ -48,5 +48,8 @@ RUN HTTP_PROXY="${HTTP_PROXY:-}" HTTPS_PROXY="${HTTPS_PROXY:-}" \
 
 ENV PATH="/workspace/graspo/.venv/bin:/root/.local/bin:$PATH"
 
+# Smoke test: ensure the package imports and CLI is functional before the image is used.
+RUN graspo --help
+
 ENTRYPOINT ["graspo"]
 CMD ["--help"]
