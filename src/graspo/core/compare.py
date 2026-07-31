@@ -110,6 +110,7 @@ def count_check_score(
                 numeric_tolerance=numeric_tolerance,
             )
         elif isinstance(checked_value, list) and isinstance(target_value, list):
+            # Score each target element against all checked elements.
             all_target_items_found = True
             for element in target_value:
                 element_check, element_total = _list_element_raw_score(
@@ -120,7 +121,19 @@ def count_check_score(
                 if element_total == 0 or element_check < element_total:
                     all_target_items_found = False
 
-            if all(element in target_value for element in checked_value):
+            # Score each checked element against all target elements
+            # (symmetric direction), using tolerant comparison instead of
+            # Python ``==`` which ignores numeric_tolerance.
+            all_checked_items_found = True
+            for element in checked_value:
+                element_check, element_total = _list_element_raw_score(
+                    target_value, element, check_list_order,
+                    numeric_tolerance=numeric_tolerance,
+                )
+                if element_total == 0 or element_check < element_total:
+                    all_checked_items_found = False
+
+            if all_checked_items_found:
                 score += 1
                 if all_target_items_found and check_list_order and checked_value == target_value:
                     score += 1
