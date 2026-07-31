@@ -131,3 +131,56 @@ def test_dict_compare_list_dict_element_uses_nested_numeric_score():
     assert result.base_check == 7.0
     assert result.base_dcs == 1.0
     assert result.all_right is True
+
+
+def test_dict_compare_numeric_tolerance_applies_to_list_element_containment():
+    """List element containment check uses tolerance, not Python ==.
+
+    When numeric_tolerance is set, leaf values that differ but are within
+    tolerance should be treated as matches — including at the list-element
+    containment level.  Before the fix, ``element in target_value`` used
+    Python ``==`` which ignores tolerance, capping content_score at 0.9167
+    for otherwise-perfect GRASPO training completions.
+    """
+    checked = {
+        "tool_calls": [
+            {"name": "robot_atomic_control",
+             "arguments": {"action_type": "逆时针旋转", "angle_deg": 90.0}}
+        ]
+    }
+    target = {
+        "tool_calls": [
+            {"name": "robot_atomic_control",
+             "arguments": {"action_type": "逆时针旋转", "angle_deg": 19.1}}
+        ]
+    }
+    result = dict_compare_score(
+        checked=checked, target=target,
+        check_list_order=False, numeric_tolerance=10.0,
+    )
+    assert result.dcs == 1.0
+    assert result.total_score == result.check_score
+    assert result.all_right is True
+
+
+def test_dict_compare_numeric_tolerance_partial_list_match():
+    """When a checked element partially matches, containment is not granted."""
+    checked = {
+        "tool_calls": [
+            {"name": "robot_atomic_control",
+             "arguments": {"action_type": "伸长手臂", "distance_cm": 10.0}}
+        ]
+    }
+    target = {
+        "tool_calls": [
+            {"name": "robot_atomic_control",
+             "arguments": {"action_type": "逆时针旋转", "angle_deg": 19.1}}
+        ]
+    }
+    result = dict_compare_score(
+        checked=checked, target=target,
+        check_list_order=False, numeric_tolerance=10.0,
+    )
+    assert result.dcs < 1.0
+    assert result.base_dcs < 1.0
+    assert result.all_right is False
