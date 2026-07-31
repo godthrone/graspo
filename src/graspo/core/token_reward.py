@@ -385,12 +385,27 @@ def compute_token_advantages(
 
     # --- Step 1: compute field-level advantages for content tokens ---
 
-    # Determine which completions are format-clean (have at least one content token).
-    is_clean = [
-        any(not is_format_masks[i][t] for t in range(len(is_format_masks[i]))
-            if t < len(is_format_masks[i]))
-        for i in range(group_size)
-    ]
+    # Determine which completions are format-clean.
+    # A completion is clean if it passed format validation: either it has
+    # content tokens (is_format=False) from successful XML parsing, or all
+    # its tokens are format tokens with high reward (the entire output is
+    # format tokens and they're correct).
+    is_clean: list[bool] = []
+    for i in range(group_size):
+        num_tokens = min(len(is_format_masks[i]), len(token_rewards[i]))
+        if num_tokens == 0:
+            is_clean.append(False)
+            continue
+        has_content = any(not is_format_masks[i][t] for t in range(num_tokens))
+        if has_content:
+            is_clean.append(True)
+        else:
+            # All format tokens — check if they're correct (reward > 0.5).
+            clean_format_count = sum(
+                1 for t in range(num_tokens)
+                if is_format_masks[i][t] and token_rewards[i][t] > 0.5
+            )
+            is_clean.append(clean_format_count >= num_tokens * 0.5)
 
     # Collect per-field scores from clean completions.
     field_scores_by_key: dict[str, list[tuple[int, float]]] = {}
