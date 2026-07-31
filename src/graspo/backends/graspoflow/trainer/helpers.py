@@ -76,26 +76,31 @@ def expand_advantages_like(rewards: list[float], old_log_probs: Any) -> Any:
 
 def compute_ripple_advantages(
     token_rewards: list[list[float]],
+    is_format_masks: list[list[bool]],
+    field_keys: list[list[str | None]],
     old_log_probs: Any,
     prompt_len: int,
     *,
     eps: float = 1e-8,
 ) -> Any:
-    """GRASPO-Ripple: token 级 GRPO advantage 计算。
+    """GRASPO-Ripple: token-level advantage with format/content separation.
 
-    将 per-token reward 向量对齐到 old_log_probs 的 shape，
-    并对每个 token 位置独立做 group normalization。
+    Format tokens receive fixed ±1.0.  Content tokens receive field-level
+    advantages (z-scored across clean completions per field, distributed
+    to the corresponding content tokens).
+
+    The ragged advantages are aligned to the ``old_log_probs`` tensor shape.
 
     Args:
-        token_rewards: 每个 completion 的 per-token reward 列表。
-                       长度 = rollout_group_size，每个元素长度 = 该 completion
-                       生成的 token 数。
-        old_log_probs: shape (B, seq_len-1) 的 log-prob tensor。
-        prompt_len: prompt 的 token 长度（用于对齐）。
-        eps: 数值稳定常数。
+        token_rewards: Ragged per-completion reward lists.
+        is_format_masks: Parallel ragged list; True for format tokens.
+        field_keys: Parallel ragged list; field key for content tokens.
+        old_log_probs: shape (B, seq_len-1) log-prob tensor.
+        prompt_len: Prompt token count (used for alignment).
+        eps: Numerical stability constant.
 
     Returns:
-        shape (B, seq_len-1) 的 per-token advantage tensor。
+        shape (B, seq_len-1) per-token advantage tensor.
     """
     import torch
 
@@ -104,27 +109,19 @@ def compute_ripple_advantages(
     B = old_log_probs.shape[0]
     seq_len_m1 = old_log_probs.shape[1]
 
-    # 将 ragged token rewards 转为 padded tensor
-    max_gen = max(len(r) for r in token_rewards)
-    rewards_tensor = torch.zeros(
-        B, max_gen, dtype=old_log_probs.dtype, device=old_log_probs.device
+    # Compute token-level advantages (ragged, matching token_rewards shape).
+    ragged_advantages = compute_token_advantages(
+        token_rewards, is_format_masks, field_keys, eps=eps,
     )
-    for i, r in enumerate(token_rewards):
-        if r:
-            rewards_tensor[i, : len(r)] = torch.tensor(
-                r, dtype=old_log_probs.dtype, device=old_log_probs.device
-            )
 
-    # 计算 token 级 advantage
-    ragged_advantages = compute_token_advantages(token_rewards, eps=eps)
-
-    # 对齐到 old_log_probs shape: 前面 prompt 部分填 0，中间是 token rewards，
-    # 后面超出部分填 0
-    advantages = torch.zeros(B, seq_len_m1, dtype=old_log_probs.dtype, device=old_log_probs.device)
-    gen_start = prompt_len - 1  # old_log_probs 中第一个生成 token 的位置
+    # Align to old_log_probs shape: prompt positions → 0, generated region →
+    # ragged advantages, trailing padding → 0.
+    advantages = torch.zeros(
+        B, seq_len_m1, dtype=old_log_probs.dtype, device=old_log_probs.device,
+    )
+    gen_start = prompt_len - 1  # first generated token index in old_log_probs
     for i in range(B):
         adv = ragged_advantages[i]
-        end = min(gen_start + len(adv), seq_len_m1)
         for t in range(len(adv)):
             pos = gen_start + t
             if pos < seq_len_m1:

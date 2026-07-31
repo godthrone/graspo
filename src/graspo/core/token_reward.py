@@ -1,9 +1,12 @@
 """GRASPO-Ripple: Token-level reward computation.
 
 Ripple replaces completion-level GRPO rewards with per-token reward vectors.
-This ensures format tokens (tool-call XML markers, think tags) naturally
-have zero advantage when all completions in a group share the same format,
-preventing the gradual gradient drift that causes catastrophic forgetting.
+Format tokens (tool-call XML markers) receive fixed ±1.0 advantages — clean
+completions get +1.0 and broken get -1.0 regardless of group composition.
+Content tokens receive field-level advantages: per-field scores are z-scored
+across clean completions and distributed to the corresponding tokens, so
+content quality is compared at the semantic field level rather than raw token
+position.
 
 Two-path logic per completion:
 1. Format correct (parsed successfully) → format tokens = 1.0, content tokens = field scores
@@ -22,6 +25,9 @@ from graspo.core.data import _format_xml_param_value
 _log = logging.getLogger(__name__)
 
 
+# ── Public API ────────────────────────────────────────────────────────────────────
+
+
 def compute_token_rewards(
     generated_token_ids: list[int],
     completion_text: str,
@@ -31,8 +37,8 @@ def compute_token_rewards(
     *,
     check_list_order: bool = False,
     numeric_tolerance: float = 0.2,
-) -> list[float]:
-    """Compute per-token rewards for a single completion.
+) -> "tuple[list[float], list[bool], list[str | None]]":
+    """Compute per-token rewards with format/content labels.
 
     Args:
         generated_token_ids: Token IDs of the generated portion (after prompt).
@@ -44,7 +50,13 @@ def compute_token_rewards(
         numeric_tolerance: Relative error dead zone for numeric field scoring.
 
     Returns:
-        List of floats, one per generated token.  Length == len(generated_token_ids).
+        Tuple of (rewards, is_format, field_keys) — three parallel lists of
+        equal length (== len(generated_token_ids)).
+
+        - *rewards*: per-token float in [0, 1].
+        - *is_format*: True for format tokens, False for content tokens.
+        - *field_keys*: the field key (e.g. "fn.param") for content tokens,
+          ``None`` for format tokens.
     """
     format_valid = _is_format_valid(parsed, targets)
 
@@ -64,7 +76,7 @@ def compute_token_rewards(
         )
 
 
-# ── Format validity ────────────────────────────────────────────────────────────
+# ── Format validity ────────────────────────────────────────────────────────────────
 
 
 def _is_format_valid(parsed: ParsedCompletion, targets: list[dict[str, Any]]) -> bool:
@@ -85,7 +97,7 @@ def _is_format_valid(parsed: ParsedCompletion, targets: list[dict[str, Any]]) ->
     return True
 
 
-# ── Path 1: Format correct ─────────────────────────────────────────────────────
+# ── Path 1: Format correct ─────────────────────────────────────────────────────────
 
 
 def _rewards_format_correct(
@@ -97,7 +109,7 @@ def _rewards_format_correct(
     *,
     check_list_order: bool = False,
     numeric_tolerance: float = 0.2,
-) -> list[float]:
+) -> "tuple[list[float], list[bool], list[str | None]]":
     """Format is correct.  Format tokens = 1.0, content tokens = field scores.
 
     Uses tokenizer offset mapping to identify which token positions correspond
@@ -113,12 +125,16 @@ def _rewards_format_correct(
 
     num_generated = len(generated_token_ids)
     rewards = [0.0] * num_generated
+    is_format = [True] * num_generated
+    field_keys: list[str | None] = [None] * num_generated
     tok_idx = 0  # index into encoding tokens
 
     for gen_idx in range(num_generated):
         if tok_idx >= len(offsets):
             # Completion longer than what offsets cover
             rewards[gen_idx] = 0.0
+            is_format[gen_idx] = True
+            field_keys[gen_idx] = None
             continue
 
         char_start, char_end = offsets[tok_idx]
@@ -127,14 +143,18 @@ def _rewards_format_correct(
         if field_name is not None:
             # Content token: use field score
             rewards[gen_idx] = field_scores.get(field_name, 0.0)
+            is_format[gen_idx] = False
+            field_keys[gen_idx] = field_name
         else:
             # Format token: correct format = 1.0
             rewards[gen_idx] = 1.0
+            is_format[gen_idx] = True
+            field_keys[gen_idx] = None
 
         tok_idx += 1
 
-    # Remaining generated positions (beyond encoding length) → 0
-    return rewards
+    # Remaining generated positions (beyond encoding length) → 0, format
+    return rewards, is_format, field_keys
 
 
 def _identify_content_spans(
@@ -263,25 +283,32 @@ def _compute_field_scores(
     return best_scores
 
 
-# ── Path 2: Format broken ──────────────────────────────────────────────────────
+# ── Path 2: Format broken ──────────────────────────────────────────────────────────
 
 
 def _rewards_format_broken(
     generated_token_ids: list[int],
     targets: list[dict[str, Any]],
     tokenizer: Any,
-) -> list[float]:
+) -> "tuple[list[float], list[bool], list[str | None]]":
     """Format is broken.  Compare token-by-token with ground truth format.
 
     The ground truth is reconstructed from the targets using the deterministic
     Qwen XML tool-call format.  Each token position gets 1.0 for match, 0.0 for
     mismatch.  Extra generated tokens get 0.0.
+
+    All tokens are marked as format tokens — there is no meaningful content
+    extraction from a broken-format completion.
     """
     gt_ids = _build_ground_truth_token_ids(targets, tokenizer)
-    return [
+    num_gen = len(generated_token_ids)
+    rewards = [
         1.0 if i < len(gt_ids) and gen_id == gt_ids[i] else 0.0
         for i, gen_id in enumerate(generated_token_ids)
     ]
+    is_format = [True] * num_gen
+    field_keys: list[str | None] = [None] * num_gen
+    return rewards, is_format, field_keys
 
 
 def _build_ground_truth_token_ids(
@@ -317,34 +344,33 @@ def _build_ground_truth_token_ids(
     return tokenizer.encode(gt_text, add_special_tokens=False)
 
 
-# ── Token-level advantage (group normalization) ─────────────────────────────────
+# ── Token-level advantage ──────────────────────────────────────────────────────────
 
 
 def compute_token_advantages(
-    token_rewards: "list[list[float]]",  # (B, L) — ragged or padded
+    token_rewards: "list[list[float]]",
+    is_format_masks: "list[list[bool]]",
+    field_keys: "list[list[str | None]]",
     *,
     eps: float = 1e-8,
 ) -> "list[list[float]]":
-    """Compute token-level GRPO advantages from per-token rewards.
+    """Compute token-level advantages with format/content separation.
 
-    For each token position t, computes:
-        mean[t] = mean of rewards at position t across the group
-        std[t]  = std of rewards at position t across the group
-        raw_i[t] = (r_i[t] - mean[t]) / (std[t] + eps)
+    **Format tokens** receive fixed advantages: clean completions get +1.0,
+    broken get -1.0.  This is independent of group composition — format
+    correctness is an absolute signal.
 
-    Advantages are symmetrically clamped: negative advantage magnitude cannot
-    exceed the maximum positive advantage in the group.  This prevents the
-    v0.11.0 bug (broken completions with 7:1 negative advantage) while
-    preserving corrective gradient signal for format errors that v0.11.1's
-    non-negative clamping threw away.
-
-    Positions beyond a completion's length are excluded from mean/std
-    computation.  For positions that exist in some completions but not
-    others, only the existing completions participate in the statistics.
+    **Content tokens** receive field-level advantages: per-field scores are
+    z-scored across clean completions in the group, then distributed to all
+    tokens belonging to that field.  This compares content quality at the
+    semantic field level rather than raw token position, which avoids
+    misalignment when completions have different content lengths.
 
     Args:
-        token_rewards: List of per-completion reward lists.  Each inner list
-                       may have different length (ragged).
+        token_rewards: Ragged per-completion reward lists.
+        is_format_masks: Parallel ragged list; True for format tokens.
+        field_keys: Parallel ragged list; field key string for content tokens,
+                    ``None`` for format tokens.
         eps: Small constant for numerical stability.
 
     Returns:
@@ -353,43 +379,79 @@ def compute_token_advantages(
     if not token_rewards:
         return []
 
-    # Find max length
-    max_len = max(len(r) for r in token_rewards)
     group_size = len(token_rewards)
-
+    max_len = max(len(r) for r in token_rewards)
     advantages: list[list[float]] = [[] for _ in range(group_size)]
 
-    for t in range(max_len):
-        # Collect rewards at this position across all completions that have it
-        pos_rewards = [
-            token_rewards[i][t]
-            for i in range(group_size)
-            if t < len(token_rewards[i])
-        ]
-        if len(pos_rewards) < 2:
-            # Not enough data for meaningful statistics
-            mean = pos_rewards[0] if pos_rewards else 0.0
-            std = 0.0
-        else:
-            mean = sum(pos_rewards) / len(pos_rewards)
-            variance = sum((r - mean) ** 2 for r in pos_rewards) / (len(pos_rewards) - 1)
+    # --- Step 1: compute field-level advantages for content tokens ---
+
+    # Determine which completions are format-clean (have at least one content token).
+    is_clean = [
+        any(not is_format_masks[i][t] for t in range(len(is_format_masks[i]))
+            if t < len(is_format_masks[i]))
+        for i in range(group_size)
+    ]
+
+    # Collect per-field scores from clean completions.
+    field_scores_by_key: dict[str, list[tuple[int, float]]] = {}
+    for i in range(group_size):
+        if not is_clean[i]:
+            continue
+        seen: set[str] = set()
+        for t in range(min(len(token_rewards[i]), len(field_keys[i]))):
+            fk = field_keys[i][t]
+            if fk is not None and fk not in seen:
+                seen.add(fk)
+                field_scores_by_key.setdefault(fk, []).append(
+                    (i, token_rewards[i][t])
+                )
+
+    # Compute z-score per field across clean completions.
+    field_adv: dict[str, dict[int, float]] = {}  # field_key → {completion_idx: advantage}
+    for fk, entries in field_scores_by_key.items():
+        scores = [e[1] for e in entries]
+        indices = [e[0] for e in entries]
+        if len(scores) >= 2:
+            mean = sum(scores) / len(scores)
+            variance = sum((s - mean) ** 2 for s in scores) / (len(scores) - 1)
             std = variance ** 0.5
+        else:
+            mean = scores[0] if scores else 0.0
+            std = 0.0
+        field_adv[fk] = {}
+        for idx, s in zip(indices, scores):
+            field_adv[fk][idx] = (s - mean) / (std + eps) if std > 0 else 0.0
 
-        # Compute raw advantages for this position, then clamp symmetrically:
-        # negative advantage magnitude cannot exceed the max positive advantage.
-        # This prevents a few broken completions from dominating the gradient
-        # (v0.11.0 bug) while preserving corrective signal for format errors
-        # (v0.11.1 shortcoming).
-        raw = []
+    # --- Step 2: assign advantages per token ---
+
+    # Determine which positions are format-token positions.
+    # A token position t is a "format position" if ANY clean completion
+    # marks it as a format token.
+    max_len_any = max(len(is_format_masks[i]) for i in range(group_size))
+    is_format_pos = [False] * max_len_any
+    for t in range(max_len_any):
         for i in range(group_size):
-            if t < len(token_rewards[i]):
-                raw.append((token_rewards[i][t] - mean) / (std + eps) if (std + eps) > 0 else 0.0)
+            if t < len(is_format_masks[i]) and is_clean[i]:
+                if is_format_masks[i][t]:
+                    is_format_pos[t] = True
+                    break
+
+    for i in range(group_size):
+        for t in range(len(token_rewards[i])):
+            is_fmt = is_format_masks[i][t]
+            fk = field_keys[i][t] if t < len(field_keys[i]) else None
+
+            if is_format_pos[t] and t < len(is_format_pos):
+                # Format token position: fixed ±1.0
+                advantages[i].append(1.0 if is_clean[i] else -1.0)
+            elif fk is not None and not is_fmt:
+                # Content token: look up field-level advantage
+                if is_clean[i] and fk in field_adv and i in field_adv[fk]:
+                    advantages[i].append(field_adv[fk][i])
+                else:
+                    advantages[i].append(0.0)
             else:
-                raw.append(0.0)
-
-        max_pos = max((a for a in raw if a > 0), default=0.0)
-        clamped = [max(a, -max_pos) if max_pos > 0 else 0.0 for a in raw]
-        for i in range(group_size):
-            advantages[i].append(clamped[i])
+                # Remaining tokens (e.g. broken at a content-only position)
+                advantages[i].append(0.0)
 
     return advantages

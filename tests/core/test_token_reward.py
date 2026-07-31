@@ -252,55 +252,191 @@ def test_format_broken_shorter_completion():
         assert rewards[i] == 1.0, f"All tokens in matching prefix should be 1.0"
 
 
-# ── Tests: compute_token_advantages ─────────────────────────────────────────────
+# ── Helpers for building parallel format/content masks ────────────────────────
 
 
-def test_token_advantages_all_same():
-    """When all completions have the same token rewards, advantage = 0."""
+def _fmt(rewards: list[float]) -> "tuple[list[bool], list[str | None]]":
+    """Build is_format and field_keys for a completion where all tokens are format."""
+    return [True] * len(rewards), [None] * len(rewards)
+
+
+def _ct(rewards: list[float], fk: str) -> "tuple[list[bool], list[str | None]]":
+    """Build is_format and field_keys for a completion where all tokens are content
+    belonging to field *fk*."""
+    return [False] * len(rewards), [fk] * len(rewards)
+
+
+def _mixed(
+    rewards: list[float],
+    is_fmt: list[bool],
+    fk: "list[str | None]",
+) -> "tuple[list[bool], list[str | None]]":
+    """Explicit format/content masks."""
+    return is_fmt, fk
+
+
+# ── Tests: compute_token_advantages (new format/content API) ────────────────────
+
+
+def test_format_tokens_fixed_plus_minus_one():
+    """Format tokens get +1.0 (clean) or -1.0 (broken), independent of group."""
     rewards = [
-        [1.0, 1.0, 0.5],
-        [1.0, 1.0, 0.5],
-        [1.0, 1.0, 0.5],
+        [1.0, 1.0, 1.0],   # clean
+        [1.0, 1.0, 1.0],   # clean
+        [0.0, 0.0, 0.0],   # broken
     ]
-    advantages = compute_token_advantages(rewards)
-    assert len(advantages) == 3
-    for adv in advantages:
-        assert all(abs(a) < 1e-6 for a in adv), f"Advantage should be ~0, got {adv}"
+    # All tokens are format tokens
+    is_fmt = [
+        [True, True, True],
+        [True, True, True],
+        [True, True, True],
+    ]
+    fk = [
+        [None, None, None],
+        [None, None, None],
+        [None, None, None],
+    ]
+    advantages = compute_token_advantages(rewards, is_fmt, fk)
+    # Clean → +1.0
+    for t in range(3):
+        assert advantages[0][t] == 1.0
+        assert advantages[1][t] == 1.0
+    # Broken → -1.0
+    for t in range(3):
+        assert advantages[2][t] == -1.0
 
 
-def test_token_advantages_mixed():
-    """Mixed rewards produce non-zero advantages with correct direction."""
+def test_content_tokens_field_level_z_score():
+    """Content tokens get field-level advantage (z-score across clean only)."""
+    # 2 clean, 1 broken. Content tokens for field "a.p".
     rewards = [
-        [1.0, 1.0, 1.0],  # perfect
-        [1.0, 0.0, 0.5],  # format ok, content wrong at pos 1
-        [0.0, 0.0, 0.0],  # format broken
+        [1.0, 0.8, 0.0],    # clean, field scores for "a.p": 1.0, 0.8
+        [0.0, 0.0, 0.0],    # broken — excluded from content stats
+        [1.0, 0.0, 0.0],    # clean, field score for "a.p": 1.0
     ]
-    advantages = compute_token_advantages(rewards)
+    # position 0: format; positions 1-2: content for "a.p"
+    is_fmt = [
+        [True, False, False],
+        [True, True, True],    # broken: all format
+        [True, False, False],
+    ]
+    fk = [
+        [None, "a.p", "a.p"],
+        [None, None, None],
+        [None, "a.p", "a.p"],
+    ]
+    advantages = compute_token_advantages(rewards, is_fmt, fk)
 
-    # Position 0: two 1.0, one 0.0 → 1.0 has positive advantage.
-    # 0.0 has advantage clamped to 0 (non-negative, reward-only).
-    assert advantages[0][0] > 0  # 1.0 should have positive advantage
-    assert advantages[2][0] == 0.0  # 0.0 clamped to 0 (non-negative)
+    # Format tokens at position 0: clean +1.0, broken -1.0
+    assert advantages[0][0] == 1.0
+    assert advantages[1][0] == -1.0
+    assert advantages[2][0] == 1.0
 
-    # Position 1: one 1.0, two 0.0 → 1.0 has positive advantage (best in group).
-    # 0.0 has advantage clamped to 0.
-    assert advantages[0][1] > 0
-    assert advantages[1][1] == 0.0  # clamped to 0
+    # Content tokens at position 1 (field "a.p"):
+    # clean scores: [0.8, 0.0], mean=0.4, std=0.5657
+    # idx 0: (0.8-0.4)/0.5657 ≈ 0.707
+    # idx 2: (0.0-0.4)/0.5657 ≈ -0.707
+    assert advantages[0][1] > 0  # above mean
+    assert advantages[2][1] < 0  # below mean
+    # broken content token → 0
+    assert advantages[1][1] == 0.0
 
 
-def test_token_advantages_ragged_lengths():
-    """Completions with different lengths are padded to max length."""
+def test_content_tokens_broken_completion_gets_zero():
+    """Broken completion content tokens get A=0 (no meaningful content)."""
+    rewards = [
+        [1.0, 0.5],
+        [0.0, 0.0],    # broken
+    ]
+    is_fmt = [
+        [True, False],
+        [True, True],
+    ]
+    fk = [
+        [None, "a.p"],
+        [None, None],
+    ]
+    advantages = compute_token_advantages(rewards, is_fmt, fk)
+    # Broken content token at pos 1: A=0
+    assert advantages[1][1] == 0.0
+
+
+def test_all_clean_format_tokens_no_variance():
+    """All clean format tokens: all get +1.0 (harmless — no gradient difference)."""
     rewards = [
         [1.0, 1.0, 1.0],
-        [0.0, 0.0],  # shorter
-        [1.0, 0.0],
+        [1.0, 1.0, 1.0],
+        [1.0, 1.0, 1.0],
     ]
-    advantages = compute_token_advantages(rewards)
+    is_fmt = [
+        [True, True, True],
+        [True, True, True],
+        [True, True, True],
+    ]
+    fk = [
+        [None, None, None],
+        [None, None, None],
+        [None, None, None],
+    ]
+    advantages = compute_token_advantages(rewards, is_fmt, fk)
+    # All +1.0 → no variance → no gradient for format tokens (already learned).
+    for i in range(3):
+        for t in range(3):
+            assert advantages[i][t] == 1.0
 
-    # All padded to max length
-    assert len(advantages[0]) == 3
-    assert len(advantages[1]) == 3  # padded to 3
-    assert len(advantages[2]) == 3  # padded to 3
 
-    # Position 2: completion 1 doesn't have it, filled with 0
-    assert advantages[1][2] == 0.0
+def test_compute_token_rewards_returns_triple():
+    """compute_token_rewards now returns (rewards, is_format, field_keys)."""
+    tokenizer = FakeTokenizer()
+    targets = _make_targets([("robot_atomic_control", {"action_type": "逆时针旋转", "distance_cm": 10, "angle_deg": 30})])
+
+    # Format-correct completion
+    completion_text = (
+        "<tool_call>\n"
+        "<function=robot_atomic_control>\n"
+        "<parameter=action_type>\n逆时针旋转\n</parameter>\n"
+        "<parameter=distance_cm>\n10\n</parameter>\n"
+        "<parameter=angle_deg>\n30\n</parameter>\n"
+        "</function>\n</tool_call>"
+    )
+    gen_ids = [ord(c) % 1000 for c in completion_text]
+    parsed = ParsedCompletion(
+        raw_text=completion_text,
+        tool_calls=[{
+            "name": "robot_atomic_control",
+            "arguments": {"action_type": "逆时针旋转", "distance_cm": "10", "angle_deg": "30"},
+        }],
+    )
+    rewards, is_format, field_keys = compute_token_rewards(
+        gen_ids, completion_text, parsed, targets, tokenizer,
+        numeric_tolerance=10,
+    )
+    assert len(rewards) == len(is_format) == len(field_keys)
+    # At least some format tokens
+    assert any(is_format)
+    # At least some content tokens
+    assert any(not f for f in is_format)
+    # Content tokens have non-None field keys
+    for idx, is_fmt in enumerate(is_format):
+        if not is_fmt:
+            assert field_keys[idx] is not None, f"Content token at {idx} must have field_key"
+    # Format tokens have None field keys
+    for idx, is_fmt in enumerate(is_format):
+        if is_fmt:
+            assert field_keys[idx] is None, f"Format token at {idx} must have None field_key"
+
+    # Format-broken completion
+    broken_text = "唱跳演唱演唱會"
+    broken_ids = [ord(c) % 1000 for c in broken_text]
+    broken_parsed = ParsedCompletion(
+        raw_text=broken_text,
+        parse_errors=["parse error"],
+        tool_calls=[],
+    )
+    rewards_b, is_fmt_b, fk_b = compute_token_rewards(
+        broken_ids, broken_text, broken_parsed, targets, tokenizer,
+        numeric_tolerance=10,
+    )
+    # All tokens should be format tokens for broken
+    assert all(is_fmt_b)
+    assert all(f is None for f in fk_b)

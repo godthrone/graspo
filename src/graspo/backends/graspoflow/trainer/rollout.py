@@ -335,7 +335,7 @@ class RolloutMixin:
         # GRASPO-Ripple: token-level rewards and advantages
         tokenizer = self.runtime._require_adapter().tokenizer
         if tokenizer is not None and record.parsed_completions:
-            token_rewards = _compute_token_rewards_for_group(
+            token_rewards, is_format_masks, field_keys = _compute_token_rewards_for_group(
                 generation=generation,
                 parsed_completions=record.parsed_completions,
                 targets=state.sample.targets,
@@ -343,7 +343,8 @@ class RolloutMixin:
                 reward_config=self.reward.config,
             )
             advantages = compute_ripple_advantages(
-                token_rewards, old_log_probs, generation.prompt_len,
+                token_rewards, is_format_masks, field_keys,
+                old_log_probs, generation.prompt_len,
             )
         else:
             advantages = expand_advantages_like(rewards, old_log_probs)
@@ -515,29 +516,24 @@ def _compute_token_rewards_for_group(
     targets: Any,
     tokenizer: Any,
     reward_config: Any,
-) -> list[list[float]]:
+) -> "tuple[list[list[float]], list[list[bool]], list[list[str | None]]]":
     """为一个 rollout group 的每个 completion 计算 token 级 reward。
 
-    Args:
-        generation: NativeGeneration，包含 sequences、completions、prompt_len。
-        parsed_completions: 每个 completion 的 ParsedCompletion。
-        targets: 标准化后的 target 列表。
-        tokenizer: HuggingFace tokenizer。
-        reward_config: RewardConfig 实例。
-
     Returns:
-        每个 completion 的 reward 列表（ragged）。
+        (token_rewards, is_format_masks, field_keys) — three ragged lists.
     """
     from graspo.core.reward import normalize_targets
 
     normalized_targets = normalize_targets(targets)
     token_rewards: list[list[float]] = []
+    is_format_masks: list[list[bool]] = []
+    field_keys: list[list[str | None]] = []
     prompt_len = int(generation.prompt_len)
 
     for idx, completion_text in enumerate(generation.completions):
         parsed = parsed_completions[idx]
         gen_ids = generation.sequences[idx, prompt_len:].tolist()
-        tr = compute_token_rewards(
+        tr, is_fmt, fk = compute_token_rewards(
             generated_token_ids=gen_ids,
             completion_text=completion_text,
             parsed=parsed,
@@ -547,5 +543,7 @@ def _compute_token_rewards_for_group(
             numeric_tolerance=float(reward_config.numeric_tolerance),
         )
         token_rewards.append(tr)
+        is_format_masks.append(is_fmt)
+        field_keys.append(fk)
 
-    return token_rewards
+    return token_rewards, is_format_masks, field_keys
