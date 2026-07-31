@@ -330,11 +330,13 @@ def compute_token_advantages(
     For each token position t, computes:
         mean[t] = mean of rewards at position t across the group
         std[t]  = std of rewards at position t across the group
-        A_i[t]  = max(0, (r_i[t] - mean[t]) / (std[t] + eps))
+        raw_i[t] = (r_i[t] - mean[t]) / (std[t] + eps)
 
-    Advantages are clamped to non-negative (reward-only, no penalty).
-    This prevents broken-format completions from producing large negative
-    gradients that destabilize format generation through shared LoRA weights.
+    Advantages are symmetrically clamped: negative advantage magnitude cannot
+    exceed the maximum positive advantage in the group.  This prevents the
+    v0.11.0 bug (broken completions with 7:1 negative advantage) while
+    preserving corrective gradient signal for format errors that v0.11.1's
+    non-negative clamping threw away.
 
     Positions beyond a completion's length are excluded from mean/std
     computation.  For positions that exist in some completions but not
@@ -373,12 +375,21 @@ def compute_token_advantages(
             variance = sum((r - mean) ** 2 for r in pos_rewards) / (len(pos_rewards) - 1)
             std = variance ** 0.5
 
-        # Assign advantage for each completion at this position
+        # Compute raw advantages for this position, then clamp symmetrically:
+        # negative advantage magnitude cannot exceed the max positive advantage.
+        # This prevents a few broken completions from dominating the gradient
+        # (v0.11.0 bug) while preserving corrective signal for format errors
+        # (v0.11.1 shortcoming).
+        raw = []
         for i in range(group_size):
             if t < len(token_rewards[i]):
-                a = max(0.0, (token_rewards[i][t] - mean) / (std + eps)) if (std + eps) > 0 else 0.0
-                advantages[i].append(a)
+                raw.append((token_rewards[i][t] - mean) / (std + eps) if (std + eps) > 0 else 0.0)
             else:
-                advantages[i].append(0.0)
+                raw.append(0.0)
+
+        max_pos = max((a for a in raw if a > 0), default=0.0)
+        clamped = [max(a, -max_pos) if max_pos > 0 else 0.0 for a in raw]
+        for i in range(group_size):
+            advantages[i].append(clamped[i])
 
     return advantages
