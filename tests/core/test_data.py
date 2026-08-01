@@ -15,7 +15,7 @@ def _tool_target(*calls: dict, target_id: str = "expected") -> list[dict]:
 
 
 def test_load_standard_jsonl():
-    samples = load_jsonl(Path("data/sample.jsonl"))
+    samples = load_jsonl(Path("samples/data/sample.jsonl"))
 
     assert len(samples) >= 1
     assert samples[0].messages
@@ -61,7 +61,7 @@ def test_load_messages_jsonl(tmp_path):
 
 
 def test_load_tools_jsonl():
-    sample = load_jsonl(Path("data/sample_tool_call.jsonl"))[0]
+    sample = load_jsonl(Path("samples/data/sample_tool_call.jsonl"))[0]
 
     assert sample.expects_tool_calls is True
     assert sample.targets == _tool_target(

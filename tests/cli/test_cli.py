@@ -12,8 +12,8 @@ def test_cli_main_commands_parse():
     parser = build_parser()
 
     commands = [
-        ["launch", "--config", "config_example.yaml"],
-        ["export", "--config", "config_example.yaml"],
+        ["launch", "--config", "samples/configs/config_example.yaml"],
+        ["export", "--config", "samples/configs/config_example.yaml"],
     ]
     for command in commands:
         args = parser.parse_args(command)
@@ -29,7 +29,7 @@ def test_cli_removed_commands_are_not_public(command):
 
 
 def test_config_example_loads():
-    config = GraspoConfig.from_yaml("config_example.yaml")
+    config = GraspoConfig.from_yaml("samples/configs/config_example.yaml")
 
     assert config.training.max_epochs == 100
     assert config.training.max_new_tokens == 2048
@@ -51,11 +51,11 @@ def test_launch_plan_graspoflow_uses_torchrun(tmp_path):
     assert plan.uses_torchrun
     assert plan.nproc_per_node == 2
     assert plan.command[:5] == [
-        "torchrun",
+        "python",
+        "-m",
+        "torch.distributed.run",
         "--nnodes=1",
         "--node_rank=0",
-        "--nproc_per_node=2",
-        "--master_addr=127.0.0.1",
     ]
     assert "graspo.cli.train_worker" in plan.command
 
@@ -105,8 +105,8 @@ def test_launch_plan_rejects_missing_paths(tmp_path):
 
 def test_readmes_document_single_yaml_entry_and_exports():
     expected = [
-        "uv run graspo launch --config config_example.yaml",
-        "config_example.yaml",
+        "uv run graspo launch --config",
+        "samples/configs/config_example.yaml",
         "lora.target_modules",
         "peft-adapter",
         "merged-hf",
@@ -162,7 +162,7 @@ def test_export_config_fields_default_and_validate(tmp_path):
 def test_export_cli_only_accepts_config():
     """graspo export only accepts --config (Constitution 10.1)."""
     parser = build_parser()
-    args = parser.parse_args(["export", "--config", "config_example.yaml"])
+    args = parser.parse_args(["export", "--config", "samples/configs/config_example.yaml"])
     assert callable(args.func)
 
 
@@ -234,7 +234,6 @@ launch:
   master_addr: 127.0.0.1
   master_port: 29500
   python: python
-  torchrun: torchrun
   env: {{}}
 """,
         encoding="utf-8",

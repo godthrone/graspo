@@ -16,8 +16,8 @@ from graspo.core.schema import GraspoConfig
 
 def test_smoke_config_load_from_yaml():
     """Config loads and validates from the example YAML file."""
-    config_path = Path("config_example.yaml")
-    assert config_path.exists(), "config_example.yaml not found"
+    config_path = Path("samples/configs/config_example.yaml")
+    assert config_path.exists(), "samples/configs/config_example.yaml not found"
     cfg = GraspoConfig.from_yaml(config_path)
     assert cfg.backend == "graspoflow"
     assert cfg.training.seed == 42
@@ -26,7 +26,7 @@ def test_smoke_config_load_from_yaml():
 
 def test_smoke_data_load():
     """Sample JSONL loads into valid Sample objects."""
-    samples = load_jsonl(Path("data/sample.jsonl"))
+    samples = load_jsonl(Path("samples/data/sample.jsonl"))
     assert len(samples) >= 1
     for sample in samples:
         assert sample.messages
@@ -101,7 +101,7 @@ def test_smoke_reward_on_tool_call_sample():
     config = RewardConfig(check_json_markdown=False)
     reward_fn = GraspoReward(config)
 
-    samples = load_jsonl(Path("data/sample_tool_call.jsonl"))
+    samples = load_jsonl(Path("samples/data/sample_tool_call.jsonl"))
     assert len(samples) >= 1
     sample = samples[0]
     assert sample.expects_tool_calls

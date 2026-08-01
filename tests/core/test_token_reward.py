@@ -62,6 +62,12 @@ def _make_target(tool_calls: list[dict]) -> list[dict]:
     return [{"output": {"tool_calls": tool_calls}}]
 
 
+def _make_targets(tool_call_specs: list[tuple[str, dict]]) -> list[dict]:
+    """Build targets from (name, arguments) tuple specs."""
+    calls = [{"name": name, "arguments": args} for name, args in tool_call_specs]
+    return [{"output": {"tool_calls": calls}}]
+
+
 # ── Tests: format validity ─────────────────────────────────────────────────────
 
 
@@ -114,7 +120,7 @@ def test_format_correct_all_tokens_reward_one_for_format():
     text = "<tool_call>\n<function=move>\n</function>\n</tool_call>"
     gen_ids = tokenizer.encode(text)
 
-    rewards = compute_token_rewards(
+    rewards, is_format, field_keys = compute_token_rewards(
         generated_token_ids=gen_ids,
         completion_text=text,
         parsed=parsed,
@@ -122,7 +128,7 @@ def test_format_correct_all_tokens_reward_one_for_format():
         tokenizer=tokenizer,
     )
 
-    assert len(rewards) == len(gen_ids)
+    assert len(rewards) == len(gen_ids) == len(is_format) == len(field_keys)
     assert all(r == 1.0 for r in rewards), f"All format tokens should be 1.0, got {rewards}"
 
 
@@ -137,7 +143,7 @@ def test_format_correct_content_tokens_get_field_score():
     text = "<tool_call>\n<function=move>\n<parameter=action>\nforward\n</parameter>\n</function>\n</tool_call>"
     gen_ids = tokenizer.encode(text)
 
-    rewards = compute_token_rewards(
+    rewards, _is_format, _field_keys = compute_token_rewards(
         generated_token_ids=gen_ids,
         completion_text=text,
         parsed=parsed,
@@ -171,7 +177,7 @@ def test_format_broken_token_by_token_match():
     completion_text = "<tool_call>\n<function=move>\n<parameter=wrong>\nright\n</parameter>\n</function>\n</tool_call>"
     gen_ids = tokenizer.encode(completion_text)
 
-    rewards = compute_token_rewards(
+    rewards, _is_format, _field_keys = compute_token_rewards(
         generated_token_ids=gen_ids,
         completion_text=completion_text,
         parsed=parsed,
@@ -210,7 +216,7 @@ def test_format_broken_extra_tokens_zero():
     completion_text = gt_text + "extra garbage"
     gen_ids = tokenizer.encode(completion_text)
 
-    rewards = compute_token_rewards(
+    rewards, _is_format, _field_keys = compute_token_rewards(
         generated_token_ids=gen_ids,
         completion_text=completion_text,
         parsed=parsed,
@@ -238,7 +244,7 @@ def test_format_broken_shorter_completion():
     completion_text = "<tool_call>\n<function=move>\n<para"
     gen_ids = tokenizer.encode(completion_text)
 
-    rewards = compute_token_rewards(
+    rewards, _is_format, _field_keys = compute_token_rewards(
         generated_token_ids=gen_ids,
         completion_text=completion_text,
         parsed=parsed,

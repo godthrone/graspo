@@ -61,8 +61,11 @@ def test_reward_numeric_json_field_uses_continuous_distance_score():
 
     # all_right strips numeric leaves → both {"action": "left"} → all_right is True
     assert result.all_right is True
-    # content_score includes numeric fields (gradient signal preserved)
-    assert result.content_score == pytest.approx((4 + 1 / 3) / 5)
+    # content_score includes numeric fields (gradient signal preserved).
+    # leaf_compare_score uses relative error with numeric_tolerance=0.2:
+    # rel error = 2/6 = 1/3 → clipped to 2/15 → leaf score 15/17;
+    # check = 4 (keys + all-keys + action match) + 15/17, total = 5.
+    assert result.content_score == pytest.approx((4 + 15 / 17) / 5)
     assert result.content_score > type_mismatch.content_score
 
 
@@ -191,7 +194,9 @@ def test_reward_parsed_tool_call_selects_best_numeric_target():
 
 
 def test_reward_parsed_multi_tool_calls_use_ordered_sequence_inside_target():
-    reward = GraspoReward(RewardConfig(check_json_markdown=False))
+    # check_list_order is config-driven (default False = order-insensitive);
+    # opt in to ordered comparison to test sequence semantics.
+    reward = GraspoReward(RewardConfig(check_json_markdown=False, check_list_order=True))
     parsed = ParsedCompletion(
         raw_text="",
         tool_calls=[
