@@ -23,6 +23,7 @@ from graspo.backends.graspoflow.placement import (
     placement_summary,
 )
 from graspo.backends.graspoflow.runtime import NativeGeneration
+from graspo.ripple.multimodal.rows import attach_rows
 from graspo.backends.graspoflow.tensor_utils import (
     _cuda_memory_snapshot,
     _jsonable,
@@ -577,6 +578,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
         chunk_timings: list[dict[str, float | int]],
         timing_divisor: int,
         rollout_started_at: float,
+        multimodal_rows: list[dict[str, Any]] | None = None,
     ) -> NativeGeneration:
         if self.tokenizer is None:
             raise RuntimeError(f"{type(self).__name__} is not set up; call setup() first")
@@ -593,13 +595,14 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
             sequences[:, prompt_len:],
             skip_special_tokens=True,
         )
+        metadata = attach_rows({}, multimodal_rows) if multimodal_rows else {}
         return NativeGeneration(
             sequences=sequences,
             attention_mask=attention_mask,
             action_mask=action_mask,
             completions=completions,
             prompt_len=prompt_len,
-            metadata={
+            metadata={**metadata,
                 "adapter": "graspoflow",
                 "rollout_group_size": rollout_group_size,
                 "rollout_prompt_queue_batch_size": requested_prompt_queue_size,

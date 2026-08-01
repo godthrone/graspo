@@ -15,6 +15,7 @@ from graspo.backends.graspoflow.tensor_utils import (
     collate_experiences,
 )
 from graspo.core.buffer import Experience
+from graspo.ripple.multimodal.contract import assert_rl_training_has_multimodal
 
 
 class _Qwen35TrainingMethods:
@@ -72,6 +73,15 @@ class _Qwen35TrainingMethods:
             multimodal_inputs = self._multimodal_inputs_from_metadata(
                 batch.metadata,
                 batch_size=int(batch.sequences.shape[0]),
+            )
+            # 防呆（§2.3）：sequences 含图像 token 但 metadata 无 rows → 硬失败。
+            # 修复前的断链正是静默走到 else 分支（图像占位符按纯文本嵌入），
+            # 训练 19.5 小时视觉 LoRA 从未收到梯度（previous_experiment 教训）。
+            assert_rl_training_has_multimodal(
+                batch.metadata,
+                batch.sequences,
+                image_token_id=getattr(getattr(self.model, "config", None), "image_token_id", None),
+                expected_rows=int(batch.sequences.shape[0]),
             )
             if multimodal_inputs is not None:
                 if not isinstance(self.model, Qwen35HybridTextModel):

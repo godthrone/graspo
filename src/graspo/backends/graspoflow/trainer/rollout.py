@@ -23,6 +23,7 @@ from graspo.backends.graspoflow.trainer.summary import (
 from graspo.core.buffer import Experience
 from graspo.core.completion import raw_parsed_completion
 from graspo.core.graspo_parity import classify_group, has_reward_variance
+from graspo.ripple.multimodal.contract import assert_rl_training_has_multimodal
 
 
 class RolloutMixin:
@@ -319,7 +320,23 @@ class RolloutMixin:
             return self._finish_sample_and_maybe_optimize(epoch=epoch)
 
         old_logprob_started_at = time.monotonic()
-        if isinstance(generation.metadata, dict) and "_multimodal_rows" in generation.metadata:
+        has_multimodal_rows = isinstance(generation.metadata, dict) and (
+            "_multimodal_rows" in generation.metadata
+        )
+        # 防呆（§2.3）：多模态模型生成序列含图像 token 但 metadata 无 rows →
+        # 硬失败。断链修复后此检查防止回归（视觉 LoRA 再次静默失训）。
+        assert_rl_training_has_multimodal(
+            generation.metadata,
+            generation.sequences,
+            image_token_id=getattr(
+                getattr(self.runtime._require_adapter().model, "config", None),
+                "image_token_id",
+                None,
+            ),
+            expected_rows=int(generation.sequences.shape[0]),
+            context="rollout old_logprob",
+        )
+        if has_multimodal_rows:
             old_log_probs = self.runtime.sequence_log_probs(
                 generation.sequences,
                 generation.attention_mask,

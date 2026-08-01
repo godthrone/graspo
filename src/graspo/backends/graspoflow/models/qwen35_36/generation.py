@@ -512,6 +512,10 @@ class _Qwen35GenerationMethods:
                             chunk_timings=chunk_timings,
                             timing_divisor=chunk_prompt_count,
                             rollout_started_at=rollout_started_at,
+                            # 断链修复：把当前 prompt 的 G 行多模态 rows 挂到
+                            # generation metadata 上，训练 forward 才能拿到图像。
+                            # 修复前此参数缺失导致 previous_experiment 视觉 LoRA 从未训练。
+                            multimodal_rows=rows[row_start_inner:row_stop_inner],
                         )
                     )
 
