@@ -47,17 +47,49 @@ parameter training is not supported in v1.
 Docker is the primary training method. It locks the runtime environment and
 avoids host dependency conflicts.
 
+**Launch via `run.sh` (the single, defensive entry point):**
+
 ```bash
 # 1. Build the image (reads version from git tag automatically)
 bash docker/build.sh
 
-# 2. Run training — mounts your model and config
-docker run --gpus all \
-  -v /path/to/your/model:/workspace/graspo/models \
-  -v /path/to/your/config.yaml:/workspace/graspo/my_config.yaml \
-  graspo:0.10.0 \
-  launch --config my_config.yaml
+# 2. Train — run.sh auto-picks free GPUs, sets NCCL-safe flags,
+#    and mounts your config directory
+bash run.sh my_config.yaml
+
+# 3. Smoke test first (optional but recommended): run 1 step to verify
+#    the environment (model load, multimodal pipeline, training forward)
+bash run.sh my_config.yaml --smoke
+
+# 4. Pin specific GPUs (e.g. 4 and 5)
+GPU_IDS=4,5 bash run.sh my_config.yaml
 ```
+
+`run.sh` is defensive by design (Constitution §2.3):
+
+- **Auto-selects free GPUs** via `nvidia-smi` (no manual GPU counting);
+- **Only passes `--gpus device=<ids>`** — never injects
+  `CUDA_VISIBLE_DEVICES`, which combined with Docker device binding
+  deadlocks NCCL initialization;
+- **Always sets `--ipc=host --shm-size=16g`** (required for NCCL shared memory);
+- **Resolves the image tag from `git describe`** — never hardcodes a version;
+- **`--smoke` goes through the CLI** (`graspo launch --smoke`), which sets
+  `max_steps=1` in memory only — your config file is never modified.
+
+Manual invocation (for reference, e.g. inside your own orchestration):
+
+```bash
+docker run --gpus "device=0,1" --ipc=host --shm-size=16g \
+  -v /path/to/config/dir:/data/configs \
+  -v /path/to/your/model:/workspace/graspo/models \
+  graspo:<version> \
+  launch --config /data/configs/my_config.yaml
+```
+
+> **Never combine `--gpus device=` with `CUDA_VISIBLE_DEVICES`** — the
+> mismatch between Docker's device mapping and the env var deadlocks NCCL.
+> GPU selection is handled by `run.sh`; see `launch` in your config for
+> distributed settings (nnodes, master_addr, port).
 
 > **Need a model?** The default config points to `models/Qwen3-8B`. Download it with:
 > ```bash
@@ -104,7 +136,8 @@ Set at least these fields in `my_graspo.yaml`:
 - `model.model_path`: local Hugging Face model directory or model id;
 - `data.train_path`: JSONL training data;
 - `training.output_dir`: run output directory;
-- `launch.gpus`: local GPU ids for this node;
+- GPU selection is **not** in the config — use `run.sh` (auto-picks free
+  GPUs) or `GPU_IDS=4,5 bash run.sh config.yaml` (see Docker section);
 - `graspoflow.tp_size` and
   `graspoflow.pp_size`: native placement
   world size.
@@ -410,7 +443,8 @@ is only a LoRA warm-start.
 
 ### `launch`
 
-- `gpus`: local GPU ids for this node.
+- GPU selection is **not** configured here — it is handled by `run.sh`
+  (`GPU_IDS=4,5 bash run.sh config.yaml`) or by Docker `--gpus` directly.
 - `nproc_per_node`: worker count per node. If omitted, it is
   derived from TP * PP / nodes.
 - `nnodes`, `node_rank`, `master_addr`, `master_port`: distributed launch
@@ -538,14 +572,13 @@ uv run --extra dev python -m graspo --help
 
 ```bash
 # Check CLI works
-docker run --rm graspo:0.10.0
+docker run --rm graspo:<version>
 # → shows graspo --help output
 
-# Run quick smoke test (requires a mounted model)
-docker run --rm --gpus all \
-  -v /path/to/model:/workspace/graspo/models \
-  graspo:0.10.0 \
-  launch --config samples/configs/config_example.yaml
+# Run quick smoke test (requires a mounted model):
+#   graspo launch --smoke runs 1 training step, verifies model load,
+#   multimodal pipeline, and training forward, then stops.
+bash run.sh samples/configs/config_example.yaml --smoke
 ```
 
 ## FAQ

@@ -37,13 +37,40 @@ Docker 是推荐的训练方式，锁定运行环境，避免宿主机依赖冲�
 # 1. 构建镜像（自动从 git tag 读取版本号）
 bash docker/build.sh
 
-# 2. 运行训练 — 挂载模型和配置
-docker run --gpus all \
-  -v /path/to/your/model:/workspace/graspo/models \
-  -v /path/to/your/config.yaml:/workspace/graspo/my_config.yaml \
-  graspo:0.10.0 \
-  launch --config my_config.yaml
+# 2. 训练 — run.sh 自动选择空闲 GPU、设置 NCCL 安全参数、挂载配置目录
+bash run.sh my_config.yaml
+
+# 3. 先冒烟测试（推荐）：跑 1 步验证环境（模型加载、多模态链路、训练前向）
+bash run.sh my_config.yaml --smoke
+
+# 4. 指定 GPU（例如 4 和 5）
+GPU_IDS=4,5 bash run.sh my_config.yaml
 ```
+
+`run.sh` 是防呆设计（宪法 §2.3）：
+
+- **自动选择空闲 GPU**（通过 `nvidia-smi` 检测），无需手动数卡；
+- **只传 `--gpus device=<ids>`**，绝不注入 `CUDA_VISIBLE_DEVICES`——
+  两者混用会导致 NCCL 初始化死锁；
+- **固定 `--ipc=host --shm-size=16g`**（NCCL 共享内存必需）；
+- **镜像 tag 自动取 `git describe`**，不硬编码版本；
+- **`--smoke` 走 CLI**（`graspo launch --smoke`），仅内存中设置
+  `max_steps=1`，绝不修改你的 config 文件。
+
+手动调用（参考，例如自定义编排）：
+
+```bash
+docker run --gpus "device=0,1" --ipc=host --shm-size=16g \
+  -v /path/to/config/dir:/data/configs \
+  -v /path/to/your/model:/workspace/graspo/models \
+  graspo:<version> \
+  launch --config /data/configs/my_config.yaml
+```
+
+> **绝不要把 `--gpus device=` 与 `CUDA_VISIBLE_DEVICES` 混用** ——
+> Docker 设备映射与环境变量的错配会导致 NCCL 死锁。GPU 选择由
+> `run.sh` 处理；分布式设置（nnodes、master_addr、端口）见 config 的
+> `launch` 段。
 
 > **没有模型？** 默认配置指向 `models/Qwen3-8B`。下载方式：
 > ```bash
@@ -89,7 +116,8 @@ cp samples/configs/config_example.yaml my_graspo.yaml
 - `model.model_path`：本地 Hugging Face 模型目录或模型 id；
 - `data.train_path`：JSONL 训练数据；
 - `training.output_dir`：run 输出目录；
-- `launch.gpus`：当前节点使用的 GPU id；
+- GPU 选择**不在配置中**——用 `run.sh`（自动选空闲 GPU）或
+  `GPU_IDS=4,5 bash run.sh config.yaml`（见 Docker 章节）；
 - `graspoflow.tp_size` 和 `graspoflow.pp_size`：native TP/PP world size。
 
 ### SFT 训练
@@ -312,7 +340,8 @@ GRASPO 使用同一 rollout group 内的 reward 分布，而不是单条 complet
 
 ### `launch`
 
-- `gpus`：当前节点使用的 GPU id。
+- GPU 选择**不在此配置**——由 `run.sh`（`GPU_IDS=4,5 bash run.sh config.yaml`）
+  或 Docker `--gpus` 直接处理。
 - `nproc_per_node`：当前节点 worker 数；为空时从 TP * PP / nodes 派生。
 - `nnodes`、`node_rank`、`master_addr`、`master_port`：distributed launch 设置。
 - `python`：可选 Python executable override。
@@ -410,14 +439,13 @@ uv run --extra dev python -m graspo --help
 
 ```bash
 # 检查 CLI 是否正常
-docker run --rm graspo:0.10.0
+docker run --rm graspo:<version>
 # → 显示 graspo --help 输出
 
-# 快速冒烟测试（需要挂载模型）
-docker run --rm --gpus all \
-  -v /path/to/model:/workspace/graspo/models \
-  graspo:0.10.0 \
-  launch --config samples/configs/config_example.yaml
+# 快速冒烟测试（需要挂载模型）：
+#   graspo launch --smoke 跑 1 步训练，验证模型加载、多模态链路、
+#   训练前向后停止。
+bash run.sh samples/configs/config_example.yaml --smoke
 ```
 
 ## 常见问题

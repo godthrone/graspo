@@ -48,7 +48,7 @@ def cmd_export(args: argparse.Namespace) -> int:
 
 
 def cmd_launch(args: argparse.Namespace) -> int:
-    plan = build_launch_plan(args.config)
+    plan = build_launch_plan(args.config, smoke=bool(getattr(args, "smoke", False)))
     print(
         json.dumps(
             {
@@ -65,7 +65,12 @@ def cmd_launch(args: argparse.Namespace) -> int:
     return int(completed.returncode)
 
 
-def build_launch_plan(config_path: str | Path, config: GraspoConfig | None = None) -> LaunchPlan:
+def build_launch_plan(
+    config_path: str | Path,
+    config: GraspoConfig | None = None,
+    *,
+    smoke: bool = False,
+) -> LaunchPlan:
     config_path = Path(config_path)
     if not config_path.is_file():
         raise SystemExit(f"Config file does not exist: {config_path}")
@@ -102,6 +107,11 @@ def build_launch_plan(config_path: str | Path, config: GraspoConfig | None = Non
         ]
     else:
         command = train_command
+
+    if smoke:
+        # 冒烟模式：跑 1 步即停，验证环境链路（模型加载、多模态、训练 forward）。
+        # 通过追加 --smoke 传给 worker，不修改用户 config 文件。
+        command.append("--smoke")
 
     return LaunchPlan(
         command=command,
@@ -195,6 +205,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     launch = subparsers.add_parser("launch", help="Launch training from a single YAML config.")
     launch.add_argument("--config", "-c", required=True)
+    launch.add_argument(
+        "--smoke",
+        action="store_true",
+        help="Smoke mode: run 1 training step then stop. Verifies model loading, "
+        "multimodal pipeline, and training forward without a long run.",
+    )
     launch.set_defaults(func=cmd_launch)
 
     export = subparsers.add_parser(

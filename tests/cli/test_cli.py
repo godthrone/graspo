@@ -239,3 +239,35 @@ launch:
         encoding="utf-8",
     )
     return config_path
+
+
+def test_launch_plan_smoke_appends_flag(tmp_path):
+    """--smoke 时命令追加 --smoke，跑 1 步即停。"""
+    config_path = _write_launch_config(
+        tmp_path,
+        backend="graspoflow",
+        nproc_per_node="null",
+        tensor_parallel=2,
+        pipeline_parallel=1,
+    )
+    plan = build_launch_plan(config_path, smoke=True)
+    assert plan.command[-1] == "--smoke"
+    # 非 smoke 不加
+    plan2 = build_launch_plan(config_path)
+    assert plan2.command[-1] != "--smoke"
+
+
+def test_launch_plan_smoke_keeps_config_untouched(tmp_path):
+    """--smoke 不修改 config 文件（max_steps 保留原值）。"""
+    config_path = _write_launch_config(
+        tmp_path,
+        backend="graspoflow",
+        nproc_per_node="null",
+        tensor_parallel=1,
+        pipeline_parallel=1,
+    )
+    config = GraspoConfig.from_yaml(config_path)
+    original_max_steps = config.training.max_steps
+    build_launch_plan(config_path, smoke=True)
+    config_after = GraspoConfig.from_yaml(config_path)
+    assert config_after.training.max_steps == original_max_steps

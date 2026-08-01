@@ -9,9 +9,17 @@ def main() -> None:
         description="Internal GRASPO training worker. Use `graspo launch --config ...`.",
     )
     parser.add_argument("--config", "-c", required=True)
+    parser.add_argument(
+        "--smoke",
+        action="store_true",
+        help="Smoke mode: run 1 training step then stop (set by `graspo launch --smoke`).",
+    )
     args = parser.parse_args()
 
     config = GraspoConfig.from_yaml(args.config)
+    if args.smoke:
+        # 冒烟：跑 1 步即停。仅改内存中的 config，不写回文件。
+        config.training.max_steps = 1
 
     if config.train_method == "sft":
         from graspo.backends.graspoflow.runtime import GraspoFlowRuntime
