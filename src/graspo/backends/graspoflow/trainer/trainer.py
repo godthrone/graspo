@@ -118,6 +118,9 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
 
         samples = load_jsonl(self.config.data.train_path)
         self.total_samples = len(samples)
+        # 多模态训练启动预检（防线 §2.3）：数据含图时验证视觉链路完整、
+        # visual LoRA 可训练，失败即拒绝启动，避免 v13 式静默丢图空跑。
+        self._preflight_multimodal(samples)
         output_dir = Path(self.config.training.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         self._resume_if_requested()
@@ -251,6 +254,35 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
         return stop_requested
 
     # ── 日志输出辅助 ──────────────────────────────────────────────────────────
+
+    def _preflight_multimodal(self, samples: list[Any]) -> None:
+        """多模态训练启动预检（防线 §2.3）。
+
+        数据含图时验证 encode → attach → resolve 链路完整、visual LoRA
+        可训练（fake 1-step 前向梯度非零），失败即拒绝启动训练——
+        避免 v13 式的静默丢图空跑 19.5 小时。纯文本数据直接跳过。
+        """
+        from graspo.backends.graspoflow.trainer.preflight import (
+            run_multimodal_preflight,
+        )
+
+        model = getattr(self.runtime, "_require_adapter", lambda: None)()
+        model_config = getattr(getattr(model, "model", None), "config", None)
+        image_token_id = getattr(model_config, "image_token_id", None)
+        if image_token_id is not None and self._is_primary():
+            _log = logging.getLogger("graspo.trainer")
+            _log.info(
+                "multimodal training detected (image_token_id=%s); running "
+                "visual-link preflight before training starts",
+                image_token_id,
+            )
+        run_multimodal_preflight(
+            self.runtime,
+            samples,
+            data_dir=str(Path(self.config.data.train_path).parent),
+            image_token_id=image_token_id,
+            model_name=str(self.config.model.model_path),
+        )
 
     def _print_json(self, payload: dict[str, Any]) -> None:
         """主 rank 通过 logging 输出结构化 JSON 日志。"""
