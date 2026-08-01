@@ -200,21 +200,29 @@ def test_reject_unparseable_groups_defaults_to_true():
     assert decision.decision == GroupDecision.RETRY
 
 
-def test_replay_buffer_optimize_threshold_uses_completion_batch_times_rollout_group():
+def test_replay_buffer_optimize_threshold_uses_queue_batch_times_rollout_group():
+    # 阈值 = rollout queue 的 prompt 数 × 每组 completion 数（与训练微批解耦）
     assert (
         replay_buffer_optimize_threshold(
-            optimize_prompt_batch_size=4,
+            rollout_queue_batch_size=4,
             rollout_group_size=8,
         )
         == 32
     )
+    assert (
+        replay_buffer_optimize_threshold(
+            rollout_queue_batch_size=8,
+            rollout_group_size=8,
+        )
+        == 64
+    )
     assert replay_ready(
         replay_size=32,
-        optimize_prompt_batch_size=4,
+        rollout_queue_batch_size=4,
         rollout_group_size=8,
     )
     assert not replay_ready(
         replay_size=31,
-        optimize_prompt_batch_size=4,
+        rollout_queue_batch_size=4,
         rollout_group_size=8,
     )

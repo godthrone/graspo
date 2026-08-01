@@ -60,6 +60,11 @@ class TrainingConfig(BaseModel):
     max_epochs: int = 100
     max_steps: int = -1
     rollout_group_size: int = 8
+    # 每次 rollout queue 的 prompt 数（默认 8）。与 optimize_prompt_batch_size
+    # 解耦：队列决定采样吞吐与 replay 阈值（G × queue），optimize_prompt_batch_size
+    # 决定训练 forward 每批序列数（显存峰值）。OOM 时单独调小后者即可，
+    # 不需要牺牲吞吐。
+    rollout_queue_batch_size: int = 8
     optimize_prompt_batch_size: int = 8
     # optimize_iterations_per_step removed — always 1 iteration per step.
     # GRPO with repeated iterations on stale old_log_probs causes catastrophic
@@ -91,7 +96,7 @@ class TrainingConfig(BaseModel):
 
     @property
     def replay_buffer_optimize_threshold(self) -> int:
-        return int(self.optimize_prompt_batch_size) * int(self.rollout_group_size)
+        return int(self.rollout_queue_batch_size) * int(self.rollout_group_size)
 
 
 class DataConfig(BaseModel):

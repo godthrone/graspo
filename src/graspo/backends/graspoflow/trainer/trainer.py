@@ -144,6 +144,7 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
                 "resume": self.resume_info,
                 "config": {
                     "rollout_group_size": self.config.training.rollout_group_size,
+                    "rollout_queue_batch_size": self.config.training.rollout_queue_batch_size,
                     "optimize_prompt_batch_size": self.config.training.optimize_prompt_batch_size,
                     "optimize_iterations_per_step": 1,
                     "replay_buffer_optimize_threshold": (
@@ -189,7 +190,7 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
                 pending_samples = epoch_samples[resume_sample_offset:]
                 if not pending_samples:
                     continue
-                queue_size = max(1, int(self.config.training.optimize_prompt_batch_size))
+                queue_size = max(1, int(self.config.training.rollout_queue_batch_size))
                 for start in range(0, len(pending_samples), queue_size):
                     sample_queue = pending_samples[start : start + queue_size]
                     if self._sample_queue(sample_queue, epoch=epoch):

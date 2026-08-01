@@ -51,7 +51,7 @@ else
 fi
 
 # ── 防呆 4: 镜像 tag 自动取 git 版本 ───────────────────────────────────────
-VERSION="$(git -C "$ROOT_DIR" describe --tags --abbrev=0 2>/dev/null || echo "0.14.4")"
+VERSION="$(git -C "$ROOT_DIR" describe --tags --abbrev=0 2>/dev/null || echo "0.14.5")"
 IMAGE="graspo:${VERSION}"
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
     echo "镜像 $IMAGE 不存在，先构建（bash docker/build.sh 或 docker/Dockerfile.from-local）"
