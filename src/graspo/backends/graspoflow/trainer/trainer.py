@@ -193,6 +193,11 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
                 for start in range(0, len(pending_samples), queue_size):
                     sample_queue = pending_samples[start : start + queue_size]
                     if self._sample_queue(sample_queue, epoch=epoch):
+                        # max_steps 提前终止：先 flush replay buffer 再保存，
+                        # 否则 _checkpoint_trainer_state 会因 buffer 非空而
+                        # 拒绝保存（防线 §2.3 生效，但提前终止路径漏了 flush）。
+                        if len(self.replay_buffer) > 0:
+                            self._maybe_optimize(epoch=epoch, force=True)
                         self._save_checkpoint(output_dir / "final", epoch=epoch)
                         return
                 self._print_json(
