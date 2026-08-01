@@ -73,7 +73,7 @@ echo "  配置: $CONFIG_ABS"
 echo "  GPU:  $GPU_IDS"
 
 docker run -d --name "$CONTAINER_NAME" \
-    --gpus "device=$GPU_IDS" \
+    --gpus "\"device=$GPU_IDS\"" \
     --ipc=host --shm-size=16g \
     -v "$CONFIG_DIR:/data/configs" \
     -v "$ROOT_DIR/models:/workspace/graspo/models" \
