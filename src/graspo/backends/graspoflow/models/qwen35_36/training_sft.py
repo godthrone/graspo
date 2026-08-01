@@ -13,6 +13,7 @@ from graspo.backends.graspoflow.tensor_utils import (
     _round_pipeline_stage_timing,
 )
 from graspo.core.data import SFTTokenized
+from graspo.ripple.multimodal.contract import assert_sft_batch_has_multimodal
 
 
 class _Qwen35SFTTrainingMethods:
@@ -71,6 +72,14 @@ class _Qwen35SFTTrainingMethods:
             self._sync_timing()
             forward_started_at = time.monotonic()
             multimodal_inputs = micro_batch.get("multimodal_inputs")
+            # 防呆（§2.3）：样本含媒体但 batch 无 multimodal_inputs → 硬失败。
+            # 与 RL 路径的 assert_rl_training_has_multimodal 对应，
+            # 防止多模态样本静默走纯文本 forward（图像丢失）。
+            assert_sft_batch_has_multimodal(
+                any(item.deferred_multimodal is not None for item in batch_items),
+                multimodal_inputs,
+                context="SFT training forward",
+            )
             if multimodal_inputs is not None:
                 if not isinstance(self.model, Qwen35HybridTextModel):
                     raise ValueError("multimodal SFT batch for a non-multimodal model")
