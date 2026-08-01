@@ -165,19 +165,28 @@ def _assert_visual_gradients_nonzero(
                 "Refusing to start training."
             )
         loss.backward()
+        # 注意：必须在 zero_grad 之前检查梯度——zero_grad(set_to_none=True)
+        # 会把 grad 置为 None，提前清理会导致下面的检查永远全零。
+        # TP 分片下 lora_a（输入投影，SUM 同步）在本 rank 梯度可能为零，
+        # 属正常现象；判定标准是"至少一个视觉 LoRA 参数收到非零梯度"。
+        nonzero = [
+            name
+            for name, param in visual_params
+            if param.grad is not None and bool(param.grad.abs().sum() > 0)
+        ]
+        if not nonzero:
+            raise RuntimeError(
+                "multimodal preflight failed: visual LoRA gradients are all zero "
+                "in fake 1-step forward. Vision tower is not receiving gradients — "
+                "the exact failure mode of previous_experiment. Refusing to start training."
+            )
+        _log.debug(
+            "preflight fake-forward visual gradient signal: %d/%d params non-zero "
+            "(TP 下 lora_a 分片梯度为零属正常)",
+            len(nonzero),
+            len(visual_params),
+        )
     finally:
         model.zero_grad(set_to_none=True)
         if not was_training:
             model.eval()
-
-    nonzero = [
-        name
-        for name, param in visual_params
-        if param.grad is not None and bool(param.grad.abs().sum() > 0)
-    ]
-    if not nonzero:
-        raise RuntimeError(
-            "multimodal preflight failed: visual LoRA gradients are all zero "
-            "in fake 1-step forward. Vision tower is not receiving gradients — "
-            "the exact failure mode of previous_experiment. Refusing to start training."
-        )
