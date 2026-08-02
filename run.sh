@@ -58,6 +58,19 @@ if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
     exit 1
 fi
 
+# ── 防呆 5: 对齐宿主时区（动态获取，换机器自动适配）──────────────
+# 容器默认 Etc/UTC，不设 TZ 则日志/date 显示与宿主差时区。镜像内有
+# tzdata 即可运行时注入，无需重建镜像。优先级：/etc/timezone →
+# /etc/localtime 符号链接 → UTC 兜底（覆盖 Debian/macOS/Alpine）。
+if [ -f /etc/timezone ]; then
+    TZ_VALUE="$(cat /etc/timezone)"
+elif [ -L /etc/localtime ]; then
+    TZ_VALUE="$(readlink /etc/localtime | sed 's|^.*zoneinfo/||')"
+else
+    TZ_VALUE="UTC"
+fi
+echo "容器时区: $TZ_VALUE"
+
 # ── 启动容器 ────────────────────────────────────────────────────────────────
 CONTAINER_NAME="graspo-$(basename "$CONFIG" .yaml)"
 CONFIG_DIR="$(dirname "$CONFIG_ABS")"
@@ -75,6 +88,7 @@ echo "  GPU:  $GPU_IDS"
 docker run -d --name "$CONTAINER_NAME" \
     --gpus "\"device=$GPU_IDS\"" \
     --ipc=host --shm-size=16g \
+    -e "TZ=${TZ_VALUE}" \
     -v "$CONFIG_DIR:/data/configs" \
     -v "$ROOT_DIR/models:/workspace/graspo/models" \
     "$IMAGE" \
