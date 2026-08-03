@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from graspo.flow.adapters.models.qwen3.config import NativeQwenConfig
+    from graspo.flow.adapters.models.common.config import NativeQwenConfig
 
 
 def native_qwen_lora_available_targets(

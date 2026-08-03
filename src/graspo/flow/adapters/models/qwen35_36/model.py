@@ -10,9 +10,9 @@ from torch.utils.checkpoint import checkpoint as activation_checkpoint
 if TYPE_CHECKING:
     from graspo.flow.parallel.tensor_utils import SafetensorIndex
 
-from graspo.flow.adapters.models.qwen3.config import NativeQwenConfig
-from graspo.flow.adapters.models.qwen3.model import QwenFamilyBase
-from graspo.flow.adapters.models.qwen35_36.layers import (
+from graspo.flow.adapters.models.common.base import QwenFamilyBase
+from graspo.flow.adapters.models.common.config import NativeQwenConfig
+from graspo.flow.adapters.models.common.layers import (
     Qwen35RMSNorm,
     TensorParallelQwen35DecoderLayer,
     _checkpoint_qwen35_decoder_layer_forward,
@@ -78,10 +78,10 @@ class Qwen35HybridTextModel(QwenFamilyBase):
                     device=device, dtype=torch_dtype
                 )
             )
-        from graspo.flow.adapters.models.qwen3.model import _build_qwen35_visual_tower
+        from graspo.flow.adapters.models.common.model_builders import build_qwen35_visual_tower
 
         self.visual = (
-            _build_qwen35_visual_tower(
+            build_qwen35_visual_tower(
                 hf_config=hf_config,
                 loader=loader,
                 lora_r=lora_r,

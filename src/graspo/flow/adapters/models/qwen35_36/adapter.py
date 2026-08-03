@@ -9,9 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from graspo.core.lora import resolve_lora_target_modules
-from graspo.flow.adapters.models.qwen3.model import (
-    build_native_qwen_model,
-)
+from graspo.flow.adapters.models.common.model_builders import build_native_qwen_model
 from graspo.flow.adapters.models.qwen35_36.generation import _Qwen35GenerationMethods
 from graspo.flow.adapters.models.qwen35_36.logprobs import _Qwen35LogprobsMethods
 from graspo.flow.adapters.models.qwen35_36.ops import build_qwen35_ops

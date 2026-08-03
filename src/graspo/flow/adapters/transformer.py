@@ -237,7 +237,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
         _set_tensor_parallel_group(state.tp_group, state.tp_size)
 
     def _load_native_qwen_config(self, model_path: Path) -> Any:
-        from graspo.flow.adapters.models.qwen3.model import load_native_qwen_config
+        from graspo.flow.adapters.models.common.model_builders import load_native_qwen_config
 
         return load_native_qwen_config(model_path)
 
