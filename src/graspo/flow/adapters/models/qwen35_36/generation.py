@@ -185,9 +185,9 @@ class _Qwen35GenerationMethods:
         samples=None,
         rollout_group_size: int,
         max_new_tokens: int,
-        max_prompt_length: int,
-        temperature: float,
-        top_p: float,
+        max_prompt_length: int | None = None,
+        temperature: float = 1.0,
+        top_p: float = 1.0,
         chat_template_kwargs: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> list[NativeGeneration]:

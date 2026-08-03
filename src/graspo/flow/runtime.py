@@ -40,6 +40,8 @@ class NativeGeneration:
 
 
 class GraspoFlowRuntimeProtocol(Protocol):
+    _adapter: Any | None  # 内部状态：setup 后加载的模型适配器（sft_trainer 访问）
+
     def validate(self) -> None: ...
     def setup(self) -> None: ...
 

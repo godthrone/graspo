@@ -73,11 +73,14 @@ class SFTTrainer:
 
         _log.info("SFT: tokenizing %d samples...", self.total_samples)
         data_dir = str(Path(self.config.data.train_path).parent)
-        processor = getattr(self.runtime._adapter, "processor", None)
+        adapter = self.runtime._adapter
+        if adapter is None:
+            raise RuntimeError("runtime adapter not loaded")
+        processor = getattr(adapter, "processor", None)
         tokenized: list[SFTTokenized] = [
             sft_tokenize(
                 s,
-                self.runtime._adapter.tokenizer,
+                adapter.tokenizer,
                 max_seq_length=self.config.data.max_prompt_length,
                 chat_template_kwargs=self.config.model.chat_template_kwargs,
                 data_dir=data_dir,

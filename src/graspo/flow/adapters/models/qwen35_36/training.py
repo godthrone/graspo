@@ -25,10 +25,12 @@ class _Qwen35TrainingMethods:
 
     def train_batch(
         self,
-        experiences: list[Experience],
         *,
+        experiences: list[Experience],
+        optimizer_steps: int = 1,
         policy_ratio_clip_eps: float,
         max_grad_norm: float,
+        **kwargs: Any,
     ) -> dict[str, Any]:
         self._require_ready()
         assert self.model is not None

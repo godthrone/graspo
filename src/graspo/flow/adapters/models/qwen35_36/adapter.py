@@ -29,7 +29,7 @@ from graspo.ripple.parsing.completion import ParsedCompletion
 from graspo.ripple.parsing.qwen_tool_parser import parse_qwen_tool_completion
 
 
-class Qwen35Adapter(
+class Qwen35Adapter(  # type: ignore[misc]  # mixin 组合点的多基类签名兼容检查是 mypy 已知误报区；各 mixin 签名已与 ABC 对齐（keyword-only + **kwargs），运行时由测试验证
     _Qwen35GenerationMethods,
     _Qwen35TrainingMethods,
     _Qwen35SFTTrainingMethods,

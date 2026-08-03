@@ -25,9 +25,11 @@ class _Qwen35LogprobsMethods:
 
     def sequence_log_probs(
         self,
+        *,
         sequences: Any,
-        attention_mask: Any,
+        attention_mask: Any = None,
         metadata: Any | None = None,
+        **kwargs: Any,
     ) -> torch.Tensor:
         self._require_ready()
         assert self.model is not None

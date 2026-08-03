@@ -41,9 +41,9 @@ class BaseGraspoFlowAdapter(ABC):
     @abstractmethod
     def generate_groups(
         self,
+        *,
         message_batches: list[list[dict[str, Any]]],
         tool_batches: list[list[dict[str, Any]] | None],
-        *,
         rollout_group_size: int,
         max_new_tokens: int,
         chat_template_kwargs: dict[str, Any] | None = None,
@@ -60,8 +60,8 @@ class BaseGraspoFlowAdapter(ABC):
     @abstractmethod
     def generate_sample_groups(
         self,
-        samples: list[Any],
         *,
+        samples: list[Any],
         rollout_group_size: int,
         max_new_tokens: int,
         chat_template_kwargs: dict[str, Any] | None = None,
@@ -78,6 +78,7 @@ class BaseGraspoFlowAdapter(ABC):
     @abstractmethod
     def sequence_log_probs(
         self,
+        *,
         sequences: list[list[int]] | torch.Tensor,
         attention_mask: list[list[int]] | torch.Tensor | None = None,
         **kwargs: Any,
@@ -93,8 +94,8 @@ class BaseGraspoFlowAdapter(ABC):
     @abstractmethod
     def train_batch(
         self,
-        experiences: list[Any],
         *,
+        experiences: list[Any],
         optimizer_steps: int = 1,
         **kwargs: Any,
     ) -> dict[str, Any]:

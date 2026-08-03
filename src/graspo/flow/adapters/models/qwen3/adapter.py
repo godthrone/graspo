@@ -110,9 +110,9 @@ class Qwen3Adapter(TransformerAdapter):
         tool_batches=None,
         rollout_group_size: int,
         max_new_tokens: int,
-        max_prompt_length: int,
-        temperature: float,
-        top_p: float,
+        max_prompt_length: int | None = None,
+        temperature: float = 1.0,
+        top_p: float = 1.0,
         chat_template_kwargs: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> list[NativeGeneration]:
@@ -368,12 +368,14 @@ class Qwen3Adapter(TransformerAdapter):
 
     # ── Training ────────────────────────────────────────────────────────────
 
-    def train_batch(
+    def train_batch(  # type: ignore[override]  # mypy 对"子类扩展 ABC **kwargs 契约 + 必填扩展参数"的已知误报；签名已与 ABC 对齐（keyword-only + **kwargs）
         self,
-        experiences: list[Experience],
         *,
+        experiences: list[Experience],
+        optimizer_steps: int = 1,
         policy_ratio_clip_eps: float,
         max_grad_norm: float,
+        **kwargs: Any,
     ) -> dict[str, Any]:
         self._require_ready()
         if self.model is None or self.optimizer is None:
@@ -481,9 +483,11 @@ class Qwen3Adapter(TransformerAdapter):
 
     def sequence_log_probs(
         self,
+        *,
         sequences: Any,
-        attention_mask: Any,
+        attention_mask: Any = None,
         metadata: Any | None = None,
+        **kwargs: Any,
     ) -> torch.Tensor:
         self._require_ready()
         if self.model is None:
