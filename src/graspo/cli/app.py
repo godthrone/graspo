@@ -25,7 +25,7 @@ def cmd_export(args: argparse.Namespace) -> int:
     _require_config_value(config.export.checkpoint_path, "export.checkpoint_path")
     _require_config_value(config.export.export_output, "export.export_output")
     _require_config_value(config.model.model_path, "model.model_path")
-    from graspo.backends.graspoflow.lora_io import export_from_checkpoint
+    from graspo.flow.lora.lora_io import export_from_checkpoint
 
     export_from_checkpoint(
         config.export.checkpoint_path,
@@ -76,7 +76,7 @@ def build_launch_plan(
         raise SystemExit(f"Config file does not exist: {config_path}")
     config = config or GraspoConfig.from_yaml(config_path)
 
-    from graspo.backends import select_backend
+    from graspo.flow.selector import select_backend
 
     selection = select_backend(config)
     launch = config.launch

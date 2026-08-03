@@ -81,9 +81,7 @@ def test_training_config_replay_buffer_threshold_is_derived():
     # 阈值由 rollout queue 决定（默认 8），与训练微批 optimize_prompt_batch_size 解耦
     cfg = TrainingConfig(optimize_prompt_batch_size=4, rollout_group_size=8)
     assert cfg.replay_buffer_optimize_threshold == 64
-    cfg_small_queue = TrainingConfig(
-        rollout_queue_batch_size=4, rollout_group_size=8
-    )
+    cfg_small_queue = TrainingConfig(rollout_queue_batch_size=4, rollout_group_size=8)
     assert cfg_small_queue.replay_buffer_optimize_threshold == 32
     assert cfg_small_queue.optimize_prompt_batch_size == 8
 

@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
-from graspo.core.reward import RewardConfig
+from graspo.ripple.reward.reward import RewardConfig
 
 
 class LoRAConfig(BaseModel):
@@ -85,7 +85,7 @@ class TrainingConfig(BaseModel):
     lr_scheduler: LRSchedulerConfig = LRSchedulerConfig()
 
     @model_validator(mode="after")
-    def _validate_max_steps_for_scheduler(self) -> "TrainingConfig":
+    def _validate_max_steps_for_scheduler(self) -> TrainingConfig:
         if self.lr_scheduler.type != "constant" and self.max_steps <= 0:
             raise ValueError(
                 f"training.max_steps must be > 0 when "
@@ -116,7 +116,7 @@ class GraspoFlowConfig(BaseModel):
     tp_size: int = 2
     pp_size: int = 1
     # 模型适配器路径，默认使用 qwen35_36（兼容 Qwen3.5/3.6 系列）
-    adapter: str = "graspo.backends.graspoflow.models.qwen35_36.adapter:Qwen35Adapter"
+    adapter: str = "graspo.flow.adapters.models.qwen35_36.adapter:Qwen35Adapter"
     placement_strategy: str = "auto"
     # 手动指定每层的 stage 分布 [start, end) 区间，设置后覆盖 placement_strategy
     layer_ranges: list[list[int]] | None = None

@@ -65,9 +65,7 @@ def media_counts(media: list[dict[str, Any]]) -> dict[str, int]:
     """统计多模态媒体类型计数（纯数据转换）。"""
     counts: dict[str, int] = {}
     for item in media:
-        media_type = (
-            str(item.get("type") or "unknown") if isinstance(item, dict) else "unknown"
-        )
+        media_type = str(item.get("type") or "unknown") if isinstance(item, dict) else "unknown"
         counts[media_type] = counts.get(media_type, 0) + 1
     return counts
 
@@ -110,9 +108,7 @@ def attach_rows(metadata: dict[str, Any], rows: list[dict[str, Any]]) -> dict[st
     return metadata
 
 
-def rows_from_metadata(
-    metadata: Any | None, *, expected_rows: int
-) -> list[dict[str, Any]]:
+def rows_from_metadata(metadata: Any | None, *, expected_rows: int) -> list[dict[str, Any]]:
     """从 metadata 读取多模态 rows（**只读**，缺键返回空列表）。
 
     :param metadata: 生成 metadata（dict）、experience metadata 列表（list[dict]）或 None

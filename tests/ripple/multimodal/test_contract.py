@@ -38,10 +38,10 @@ class _FakeTensor:
     def __init__(self, values: list[int]):
         self._values = values
 
-    def __eq__(self, other: int) -> "_FakeTensor":  # type: ignore[override]
+    def __eq__(self, other: int) -> _FakeTensor:  # type: ignore[override]
         return _FakeTensor([1 if v == other else 0 for v in self._values])
 
-    def any(self) -> "_FakeTensor":
+    def any(self) -> _FakeTensor:
         return _FakeTensor([1 if any(self._values) else 0])
 
     def item(self) -> int:
@@ -76,15 +76,11 @@ class TestContainsImageTokens:
 class TestRlContract:
     def test_plain_text_model_skips_check(self) -> None:
         # image_token_id 为 None = 模型不支持多模态，不检查
-        assert_rl_training_has_multimodal(
-            None, [IMAGE_TOKEN_ID], None, expected_rows=1
-        )
+        assert_rl_training_has_multimodal(None, [IMAGE_TOKEN_ID], None, expected_rows=1)
 
     def test_no_image_token_skips_check(self) -> None:
         # sequences 纯文本，metadata 为空也放行
-        assert_rl_training_has_multimodal(
-            None, [100, 200], IMAGE_TOKEN_ID, expected_rows=1
-        )
+        assert_rl_training_has_multimodal(None, [100, 200], IMAGE_TOKEN_ID, expected_rows=1)
 
     def test_image_token_with_rows_passes(self) -> None:
         metadata = attach_rows({}, [{"messages": [], "media": {"image": 1}}])
@@ -101,9 +97,7 @@ class TestRlContract:
 
     def test_image_token_with_empty_metadata_dict_raises(self) -> None:
         with pytest.raises(RuntimeError):
-            assert_rl_training_has_multimodal(
-                {}, [IMAGE_TOKEN_ID], IMAGE_TOKEN_ID, expected_rows=1
-            )
+            assert_rl_training_has_multimodal({}, [IMAGE_TOKEN_ID], IMAGE_TOKEN_ID, expected_rows=1)
 
 
 # ---------------------------------------------------------------------------

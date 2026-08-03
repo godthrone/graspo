@@ -3,13 +3,13 @@
 from pathlib import Path
 
 from graspo.core.data import load_jsonl
-from graspo.core.graspo_parity import (
+from graspo.core.schema import GraspoConfig
+from graspo.ripple.parity import (
     GroupDecision,
     classify_group,
     replay_ready,
 )
-from graspo.core.reward import GraspoReward, RewardConfig
-from graspo.core.schema import GraspoConfig
+from graspo.ripple.reward.reward import GraspoReward, RewardConfig
 
 # ── Full pipeline: YAML config → data → reward → decision ───────────────────
 
@@ -42,7 +42,12 @@ def test_smoke_reward_on_sample_data():
     config = RewardConfig(check_json_markdown=True, content_reward_weight=100.0)
     reward_fn = GraspoReward(config)
 
-    targets = [{"id": "expected", "output": {"content": {"APN": "cmnet", "fault_number": "13800138000"}}}]
+    targets = [
+        {
+            "id": "expected",
+            "output": {"content": {"APN": "cmnet", "fault_number": "13800138000"}},
+        }
+    ]
 
     # A "correct" completion that should score well
     good_completion = '```json\n{"APN":"cmnet","fault_number":"13800138000"}\n```'
@@ -61,7 +66,12 @@ def test_smoke_reward_poor_format_scores_lower():
     config = RewardConfig(check_json_markdown=True)
     reward_fn = GraspoReward(config)
 
-    targets = [{"id": "expected", "output": {"content": {"APN": "cmnet", "fault_number": "13800138000"}}}]
+    targets = [
+        {
+            "id": "expected",
+            "output": {"content": {"APN": "cmnet", "fault_number": "13800138000"}},
+        }
+    ]
 
     good = '```json\n{"APN":"cmnet","fault_number":"13800138000"}\n```'
     no_fence = '{"APN":"cmnet","fault_number":"13800138000"}'  # missing ```
@@ -78,7 +88,12 @@ def test_smoke_reward_anti_useless_penalty():
     config = RewardConfig(check_json_markdown=True)
     reward_fn = GraspoReward(config)
 
-    targets = [{"id": "expected", "output": {"content": {"APN": "cmnet", "fault_number": "13800138000"}}}]
+    targets = [
+        {
+            "id": "expected",
+            "output": {"content": {"APN": "cmnet", "fault_number": "13800138000"}},
+        }
+    ]
 
     clean = '```json\n{"APN":"cmnet","fault_number":"13800138000"}\n```'
     verbose = (

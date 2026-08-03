@@ -22,13 +22,13 @@ def main() -> None:
         config.training.max_steps = 1
 
     if config.train_method == "sft":
-        from graspo.backends.graspoflow.runtime import GraspoFlowRuntime
-        from graspo.backends.graspoflow.trainer.sft_trainer import SFTTrainer
+        from graspo.flow.runtime import GraspoFlowRuntime
+        from graspo.flow.trainer.sft_trainer import SFTTrainer
 
         runtime = GraspoFlowRuntime.from_config(config)
         SFTTrainer(config, runtime).train()
     else:
-        from graspo.backends import create_trainer, select_backend
+        from graspo.flow.selector import create_trainer, select_backend
 
         selection = select_backend(config)
         create_trainer(config, selection).train()

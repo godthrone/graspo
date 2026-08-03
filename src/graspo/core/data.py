@@ -7,8 +7,8 @@ from typing import Any
 
 import torch
 
-from graspo.core.reward_helpers import normalize_targets
 from graspo.core.schema import Sample
+from graspo.ripple.reward.normalize import normalize_targets
 
 # Matches raw Qwen XML / tool-call markers that should not appear in content.
 _TOOL_CALL_MARKER_RE = re.compile(r"<(?:tool_call|function=|parameter=)")
@@ -403,12 +403,16 @@ def _resolve_messages_media_paths(
             if block.get("type") in ("image", "image_url"):
                 for key in ("image", "path", "url"):
                     path = block.get(key)
-                    if isinstance(path, str) and not path.startswith(("http://", "https://", "/", "data:")):
+                    if isinstance(path, str) and not path.startswith(
+                        ("http://", "https://", "/", "data:")
+                    ):
                         block[key] = str((base / path).resolve())
             elif block.get("type") in ("video", "video_url"):
                 for key in ("video", "path", "url"):
                     path = block.get(key)
-                    if isinstance(path, str) and not path.startswith(("http://", "https://", "/", "data:")):
+                    if isinstance(path, str) and not path.startswith(
+                        ("http://", "https://", "/", "data:")
+                    ):
                         block[key] = str((base / path).resolve())
 
 

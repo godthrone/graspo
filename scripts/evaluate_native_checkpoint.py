@@ -7,10 +7,10 @@ import time
 from pathlib import Path
 from typing import Any
 
-from graspo.backends.graspoflow.runtime import GraspoFlowRuntime
-from graspo.core.completion import raw_parsed_completion
+from graspo.flow.runtime import GraspoFlowRuntime
+from graspo.ripple.parsing.completion import raw_parsed_completion
 from graspo.core.data import load_jsonl
-from graspo.core.reward import GraspoReward
+from graspo.ripple.reward.reward import GraspoReward
 from graspo.core.schema import GraspoConfig, Sample
 
 

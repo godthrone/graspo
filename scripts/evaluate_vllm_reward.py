@@ -11,10 +11,10 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from graspo.backends.graspoflow.tool_parser import _parse_qwen_tool_completion
-from graspo.core.completion import ParsedCompletion
+from graspo.ripple.parsing.json_tool_parser import _parse_qwen_tool_completion
+from graspo.ripple.parsing.completion import ParsedCompletion
 from graspo.core.data import load_jsonl
-from graspo.core.reward import GraspoReward
+from graspo.ripple.reward.reward import GraspoReward
 from graspo.core.schema import GraspoConfig, Sample
 
 
