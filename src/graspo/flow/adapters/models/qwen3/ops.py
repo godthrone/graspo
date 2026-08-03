@@ -22,7 +22,7 @@ class Qwen3EmbedStageOp(TransformerStageOp):
         # Build position_ids
         from graspo.flow.parallel.tensor_utils import _position_ids
 
-        position_ids = _position_ids(mb.input_ids, mb.attention_mask)
+        position_ids = _position_ids(mb.attention_mask)
 
         # Run decoder layers
         for layer in self.model.layers:
@@ -88,7 +88,7 @@ class Qwen3DecoderStageOp(TransformerStageOp):
 
         position_ids = None
         if mb.input_ids is not None and mb.attention_mask is not None:
-            position_ids = _position_ids(mb.input_ids, mb.attention_mask)
+            position_ids = _position_ids(mb.attention_mask)
 
         hidden = stage_input
         if position_ids is not None and mb.attention_mask is not None:
@@ -178,7 +178,7 @@ class Qwen3HeadStageOp(TransformerStageOp):
 
         position_ids = None
         if mb.input_ids is not None and mb.attention_mask is not None:
-            position_ids = _position_ids(mb.input_ids, mb.attention_mask)
+            position_ids = _position_ids(mb.attention_mask)
 
         hidden = stage_input
         if position_ids is not None and mb.attention_mask is not None:

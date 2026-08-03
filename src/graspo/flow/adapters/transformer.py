@@ -181,6 +181,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
                 f"不支持的 lr_scheduler.type: {sched_cfg.type}，可选: constant, cosine, linear"
             )
 
+        assert self.optimizer is not None, "optimizer must be built before scheduler"
         return torch.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda)
 
     def _emit_setup_event(self) -> None:
@@ -195,7 +196,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
                 "lora_target_modules": sorted(self.model.lora_targets),
                 "lora_target_signature": self.model.lora_target_signature(),
                 "rollout_kv_cache_supported": bool(getattr(self.model, "supports_kv_cache", True)),
-                "placement": placement_summary(self.placement),
+                "placement": placement_summary(self.placement) if self.placement else {},
                 "forward_batch_size": self.config.graspoflow.forward_batch_size,
                 "empty_cache_after_rollout_split": (
                     self.config.graspoflow.empty_cache_after_rollout_split
@@ -220,7 +221,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
                 "lora_target_modules": sorted(self.model.lora_targets),
                 "lora_target_signature": self.model.lora_target_signature(),
                 "rollout_kv_cache_supported": bool(getattr(self.model, "supports_kv_cache", True)),
-                "placement": placement_summary(self.placement),
+                "placement": placement_summary(self.placement) if self.placement else {},
             }
         )
 

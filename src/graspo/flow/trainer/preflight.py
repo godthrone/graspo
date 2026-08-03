@@ -86,6 +86,8 @@ def run_multimodal_preflight(
     adapter = runtime._require_adapter()  # noqa: SLF001 同包编排
     model = getattr(adapter, "model", None)
     has_vision = model is not None and bool(getattr(model, "visual", None))
+    if model is None:
+        raise RuntimeError("preflight requires a loaded model")
     assert_data_vision_compatible(samples, model_supports_vision=has_vision, model_name=model_name)
     if not has_vision:
         return  # 模型无视觉塔（与数据不匹配已在 assert 中拦截）

@@ -5,6 +5,7 @@ DeepSeek, …) subclasses this and only implements ``forward()`` / ``backward()`
 """
 
 from abc import abstractmethod
+from typing import Any
 
 import torch
 import torch.distributed as dist
@@ -46,7 +47,8 @@ class TransformerStageOp(ComputeOperator):
         tp_size: int = 1,
     ) -> None:
         super().__init__(name=name, tp_size=tp_size)
-        self.model = model
+        # 模型实现各异（Qwen3 / Qwen3.5 hybrid），Any 是模板方法模式的抽象边界
+        self.model: Any = model
         self.tp_state = tp_state
 
     # ── Common properties ───────────────────────────────────────────────────
