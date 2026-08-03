@@ -160,3 +160,22 @@ def test_from_dict_top_level_graspoflow_takes_priority():
         }
     )
     assert cfg.graspoflow.tp_size == 8
+
+
+def test_top_level_unknown_field_is_rejected_not_silently_dropped():
+    """P0-1 防呆回归：顶层拼错字段名（train_methodd）必须报错。
+
+    曾用手动挑键导致 `extra="forbid"` 形同虚设——拼错字段被静默忽略，
+    用户拿默认值训练而不自知。现在直通 model_validate，未知键即拒绝。
+    """
+    with pytest.raises(ValidationError, match="train_methodd"):
+        GraspoConfig.from_dict({"train_methodd": "sft"})
+    with pytest.raises(ValidationError, match="backendd"):
+        GraspoConfig.from_dict({"backendd": "graspoflow"})
+
+
+def test_top_level_none_section_treated_as_default():
+    """显式 `section: null` 等价于缺省（合法），不触发拒绝。"""
+    cfg = GraspoConfig.from_dict({"training": None, "model": None})
+    assert cfg.training.seed == 42
+    assert cfg.graspoflow.tp_size == 2

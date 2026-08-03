@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from graspo.ripple.reward.reward import RewardConfig
 
@@ -83,6 +83,20 @@ class TrainingConfig(BaseModel):
     reject_unparseable_groups: bool = True
     resume_from_checkpoint: str | None = None
     lr_scheduler: LRSchedulerConfig = LRSchedulerConfig()
+
+    @model_validator(mode="after")
+    def _validate_output_dir(self) -> TrainingConfig:
+        """默认输出目录推导（宪法 §8.5）：outputs/<run_name>，run_name 自动生成。"""
+        output_dir = str(self.output_dir or "").strip()
+        run_name = str(self.run_name or "").strip()
+        if not output_dir:
+            if not run_name:
+                run_name = _generate_run_name()
+            self.output_dir = str(Path("outputs") / run_name)
+            self.run_name = run_name
+        elif not run_name:
+            self.run_name = str(Path(output_dir).name)
+        return self
 
     @model_validator(mode="after")
     def _validate_max_steps_for_scheduler(self) -> TrainingConfig:
@@ -176,7 +190,7 @@ class GraspoConfig(BaseModel):
     export: ExportConfig = ExportConfig()
     launch: LaunchConfig = LaunchConfig()
     reward: RewardConfig = RewardConfig()
-    training: TrainingConfig = TrainingConfig()
+    training: TrainingConfig = Field(default_factory=TrainingConfig)
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> GraspoConfig:
@@ -188,37 +202,21 @@ class GraspoConfig(BaseModel):
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> GraspoConfig:
-        """从字典构建配置，pydantic ``model_validate`` 一次性校验所有字段。"""
-        data = data or {}
-        flow_cfg = _resolve_graspoflow_config(data)
+        """从字典构建配置，pydantic ``model_validate`` 一次性校验所有字段。
 
-        # 解析 output_dir 和 run_name（宪法 §8.5：默认 Outputs + 自动 run_name）
-        training_raw = dict(data.get("training", {}) or {})
-        output_dir = str(training_raw.get("output_dir", "") or "").strip()
-        run_name = str(training_raw.get("run_name", "") or "").strip()
-        if not output_dir:
-            if not run_name:
-                run_name = _generate_run_name()
-            output_dir = str(Path("outputs") / run_name)
-            training_raw["output_dir"] = output_dir
-            training_raw["run_name"] = run_name
-        elif not run_name:
-            training_raw["run_name"] = str(Path(output_dir).name)
-
-        return cls.model_validate(
-            {
-                "train_method": data.get("train_method", "graspo"),
-                "backend": data.get("backend", "graspoflow"),
-                "graspoflow": flow_cfg,
-                "model": data.get("model", {}),
-                "data": data.get("data", {}),
-                "lora": data.get("lora", {}),
-                "export": data.get("export", {}),
-                "launch": data.get("launch", {}),
-                "reward": data.get("reward", {}),
-                "training": training_raw,
-            }
-        )
+        **防呆（宪法 §7.2/§2.3）：** 不手动挑键——顶层任何未知键（拼写错误）
+        由 ``extra="forbid"`` 直接拒绝，而不是静默忽略后用默认值训练。
+        仅做两件显式处理：
+        1. 废弃格式迁移（§18.2）：``backend_config.graspoflow`` → 顶层 ``graspoflow``
+        2. None 段防御：显式 ``section: null`` 等价于缺省（合法），未知键仍被拒绝
+        """
+        data = dict(data or {})
+        data["graspoflow"] = _resolve_graspoflow_config(data) or {}
+        data.pop("backend_config", None)
+        for section in ("model", "data", "lora", "export", "launch", "reward", "training"):
+            if data.get(section) is None:
+                data[section] = {}
+        return cls.model_validate(data)
 
 
 class Sample(BaseModel):
