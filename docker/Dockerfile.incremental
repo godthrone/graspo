@@ -1,0 +1,18 @@
+# 增量构建：FROM 已有的本地 graspo 镜像，只 COPY 新代码（121 无外网时用）。
+# 用法：docker build -f docker/Dockerfile.incremental -t graspo:v0.15.0 .
+# 注意：必须 --pull=false（本地镜像，不拉远端）；DOCKER_BUILDKIT=0 兼容旧构建器。
+FROM graspo:v0.14.5
+
+WORKDIR /workspace/graspo
+COPY src ./src
+COPY samples ./samples
+COPY docker ./docker
+COPY scripts ./scripts
+COPY tests ./tests
+COPY run.sh ./run.sh
+COPY pyproject.toml README.md README.zh-CN.md LICENSE uv.lock ./
+
+# 重新 install -e（源码变更后 editable install 需要刷新）
+RUN uv pip install --system --break-system-packages --no-deps -e .
+
+CMD ["graspo", "--help"]
