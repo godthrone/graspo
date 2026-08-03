@@ -1,6 +1,9 @@
 # GRASPO 架构重构计划 v2.1（1.0.0 发布前最后一次重构）
 
 > 日期：2026-08-03（v2.0 → v2.1：按用户裁定修订——A/D 阶段不做、ripple 允许 torch、health 暂缓）
+> **执行状态（2026-08-04 更新）**：阶段 B（B1-B6）✅ 完成、阶段 C（C1-C8）✅ 完成——
+> 16 commit，379 测试 + ruff + mypy 全绿；已部署 121（graspo:v0.16.0），v16 训练验证中。
+> 阶段 D（发布）按用户裁定独立于重构，等训练结果。
 > 决策人：用户（graspo 架构所有者）
 > 前置文档：`.local/multimodal-fix-plan-20260801.md`（旧计划）、`.local/multimodal-bug-investigation-20260801.md`（根因调查）、`.local/work_log_current.md`（状态区）
 > 输入：3 份并行审查报告（代码盘点 / 原计划审查 / 宪法合规审计，2026-08-03）
