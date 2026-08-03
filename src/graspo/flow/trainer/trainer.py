@@ -83,7 +83,7 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
         validate_graspoflow_runtime_config(self.config)
         self.runtime.validate()
         self.runtime.setup()
-        # 初始化标准 Python logging 通道（宪法 §13.2）
+        # 初始化标准 Python logging 通道
         rank = int(getattr(self.runtime, "rank", 0))
         setup_logging(self.config.training.output_dir, rank=rank)
         _set_random_seed(int(self.config.training.seed), rank=rank)

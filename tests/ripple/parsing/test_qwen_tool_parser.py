@@ -1,4 +1,4 @@
-"""Qwen XML tool call 解析器的测试（BADGE §11.1，CPU 零依赖）。
+"""Qwen XML tool call 解析器的测试（CPU 零依赖）。
 
 覆盖防呆回归（v0.14 崩溃根因）：
 - 双 <tool_call> 开标记的"作弊模板"必须报 parse_error（曾静默接受）

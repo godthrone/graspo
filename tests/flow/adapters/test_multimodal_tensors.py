@@ -1,4 +1,4 @@
-"""multimodal_tensors 设施函数测试（BADGE §11.1，CPU 零 GPU 依赖）。
+"""multimodal_tensors 设施函数测试（CPU 零 GPU 依赖）。
 
 覆盖 attach → resolve → encode → slice 链路的关键环节（旧重构计划承诺的
 端到端回归）：

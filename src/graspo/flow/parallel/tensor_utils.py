@@ -1,3 +1,5 @@
+"""TP 张量工具：all-reduce、显存快照、safetensors、collate 与纯张量数学。"""
+
 import json
 import time
 from collections.abc import Iterable

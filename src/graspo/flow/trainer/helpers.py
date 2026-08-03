@@ -1,6 +1,6 @@
 """GraspoFlowTrainer 纯函数工具。
 
-不依赖 self 状态，可独立测试（宪法 §8.4 拆分后保留数据变换工具）。
+不依赖 self 状态，可独立测试（ 拆分后保留数据变换工具）。
 """
 
 import json
@@ -28,7 +28,7 @@ def _timestamp() -> str:
 
 
 def _set_random_seed(seed: int, *, rank: int = 0) -> None:
-    """设置所有随机数生成器的种子，确保可复现性（宪法 §6）。"""
+    """设置所有随机数生成器的种子，确保可复现性。"""
     import numpy as np
     import torch
 

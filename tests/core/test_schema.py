@@ -1,4 +1,4 @@
-"""Tests for config schema validation — BADGE §11.1."""
+"""Tests for config schema validation —"""
 
 import pytest
 from pydantic import ValidationError

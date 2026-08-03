@@ -1,6 +1,6 @@
 """Qwen 家族共享的 tool call 解析器：XML 规范化 + 严格解析 + required 校验。
 
-职责边界（宪法 §1.1）：
+职责边界：
 - 本模块解析 **Qwen 特有的 XML tool call 格式**（``<function=NAME>`` 语法），
   这是 qwen3 / qwen3.5 / qwen3.6 家族共享的输出格式，其他模型族（如
   JSON 系模型）不依赖本模块。

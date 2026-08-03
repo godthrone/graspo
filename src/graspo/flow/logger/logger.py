@@ -1,3 +1,5 @@
+"""rollout JSONL 领域日志：NativeRolloutLogger（结构化事件日志）。"""
+
 import json
 from pathlib import Path
 from typing import Any

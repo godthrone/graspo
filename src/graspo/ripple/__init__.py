@@ -5,7 +5,7 @@ Ripple（涟漪）命名哲学：在强化学习中，一个 Token 的即时奖�
 Ripple 层承载逐 Token 传播的微观动态与信用分配的波浪式回传——
 GRASPO-Ripple token 级奖励算法（reward/token_reward.py）即本层命名出处。
 
-层边界（BADGE 宪法 §1.3）：
+层边界：
 - 允许：标准库、pydantic、torch 纯张量计算（CPU 可单测）
 - 禁止：GPU 设备调用（torch.cuda）、分布式、网络、文件 IO
 

@@ -1,3 +1,5 @@
+"""经验回放缓冲：Experience 数据容器 + ReplayBuffer（算法层数据结构）。"""
+
 from dataclasses import dataclass
 from typing import Any
 

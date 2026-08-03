@@ -1,6 +1,6 @@
 """通用 tool call 解析：跨模型标准 JSON 格式（<tool_call>{...}</tool_call>）。
 
-职责边界（宪法 §1.1）：
+职责边界：
 - 本模块解析 **跨模型通用** 的 JSON tool call 格式（OpenAI 风格
   ``{"name": ..., "arguments": {...}}``），任何模型族都可使用。
 - Qwen 特有的 XML tool call 格式（``<function=NAME>`` 语法）在

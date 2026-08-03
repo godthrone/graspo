@@ -1,3 +1,5 @@
+"""checkpoint 保存兜底：save_native_checkpoint（异常降级重试的兼容分支）。"""
+
 from pathlib import Path
 from typing import Any
 

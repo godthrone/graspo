@@ -1,4 +1,4 @@
-"""End-to-end smoke test — BADGE §11.1 (CPU-only pipeline validation)."""
+"""End-to-end smoke test —  (CPU-only pipeline validation)."""
 
 from pathlib import Path
 

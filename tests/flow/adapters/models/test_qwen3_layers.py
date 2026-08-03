@@ -1,4 +1,4 @@
-"""GPU tests for Qwen3 model layers — BADGE §11.1 (CUDA required)."""
+"""GPU tests for Qwen3 model layers —  (CUDA required)."""
 
 import pytest
 

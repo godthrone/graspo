@@ -1,4 +1,4 @@
-"""Tests for group advantage computation — BADGE §11.1."""
+"""Tests for group advantage computation —"""
 
 from graspo.ripple.parity import group_advantages, has_reward_variance
 

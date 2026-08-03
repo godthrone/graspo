@@ -1,3 +1,5 @@
+"""ParsedCompletion：模型输出解析结果数据模型（reward 前置）。"""
+
 from dataclasses import asdict, dataclass, field
 from typing import Any
 

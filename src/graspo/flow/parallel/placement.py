@@ -1,3 +1,5 @@
+"""层放置规划：minimax/手动区间 → 每层的 stage 分布。"""
+
 from dataclasses import dataclass
 from typing import Any
 

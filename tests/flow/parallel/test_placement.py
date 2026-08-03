@@ -1,4 +1,4 @@
-"""Tests for layer placement planning — BADGE §11.1."""
+"""Tests for layer placement planning —"""
 
 import pytest
 

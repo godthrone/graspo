@@ -1,3 +1,5 @@
+"""结构化 dict 比较评分：dcs/base_dcs/all_right、数值剥离与容差匹配。"""
+
 import math
 from dataclasses import dataclass
 from typing import Any

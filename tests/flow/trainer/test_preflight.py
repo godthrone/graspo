@@ -1,6 +1,6 @@
 """预检纯逻辑单测（不触 GPU）。
 
-覆盖（宪法 §11.3）:
+覆盖:
 - assert_data_vision_compatible: 数据含图 + 模型无视觉 → raise；纯文本 → 通过
 - run_multimodal_preflight 的纯文本短路路径（无 GPU 依赖部分）
 """

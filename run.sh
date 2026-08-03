@@ -7,7 +7,7 @@
 #   bash run.sh my_config.yaml --smoke        # 冒烟：跑 1 步验证环境后停止
 #   GPU_IDS=4,5 bash run.sh my_config.yaml    # 指定 GPU
 #
-# 防呆设计（宪法 §2.3）:
+# 防呆设计:
 #   1. 自动选择空闲 GPU（nvidia-smi 检测显存占用为 0 的卡），无需手动数卡
 #   2. 只传 --gpus device=<ids>，绝不注入 CUDA_VISIBLE_DEVICES——
 #      两者混用会导致 NCCL 初始化死锁（实测卡死）

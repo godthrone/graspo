@@ -1,3 +1,5 @@
+"""GraspoReward：三层奖励评分（marker/content/target 加权，多 target 择优）。"""
+
 import json
 import math
 from typing import Any, Literal

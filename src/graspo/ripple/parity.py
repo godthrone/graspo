@@ -1,3 +1,5 @@
+"""公式 A：质量加权 z-score advantage、组分类决策（GRASPO 算法核心）。"""
+
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum

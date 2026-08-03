@@ -1,4 +1,4 @@
-"""Tests for training stats data structures — BADGE §11.1."""
+"""Tests for training stats data structures —"""
 
 import pytest
 

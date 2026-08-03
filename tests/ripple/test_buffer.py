@@ -1,4 +1,4 @@
-"""Tests for ReplayBuffer — BADGE §11.1."""
+"""Tests for ReplayBuffer —"""
 
 from graspo.ripple.buffer import Experience, ReplayBuffer
 

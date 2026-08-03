@@ -1,3 +1,5 @@
+"""LoRA 权重 IO：safetensors 读写、切片重建、checkpoint 导出。"""
+
 import json
 import shutil
 from pathlib import Path

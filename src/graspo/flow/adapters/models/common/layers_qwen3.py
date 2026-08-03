@@ -1,4 +1,4 @@
-"""Qwen3 模型层实现（从 layers.py 按模型族拆分，宪法 §8.4）。"""
+"""Qwen3 模型层实现（从 layers.py 按模型族拆分）。"""
 
 from __future__ import annotations
 

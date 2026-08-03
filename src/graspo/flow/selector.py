@@ -1,3 +1,5 @@
+"""后端注册表：select_backend / create_trainer（graspoflow 唯一后端）。"""
+
 import json
 from dataclasses import asdict, dataclass
 

@@ -1,4 +1,4 @@
-"""Tests for reward helper functions — BADGE §11.1."""
+"""Tests for reward helper functions —"""
 
 import pytest
 

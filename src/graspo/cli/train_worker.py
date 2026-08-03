@@ -1,3 +1,5 @@
+"""训练 worker 进程入口：按 train_method 分派 SFT/RL 训练器（支持 --smoke 冒烟）。"""
+
 import argparse
 
 from graspo.core.schema import GraspoConfig

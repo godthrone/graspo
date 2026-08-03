@@ -86,7 +86,7 @@ class TrainingConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_output_dir(self) -> TrainingConfig:
-        """默认输出目录推导（宪法 §8.5）：outputs/<run_name>，run_name 自动生成。"""
+        """默认输出目录推导：outputs/<run_name>，run_name 自动生成。"""
         output_dir = str(self.output_dir or "").strip()
         run_name = str(self.run_name or "").strip()
         if not output_dir:
@@ -204,7 +204,7 @@ class GraspoConfig(BaseModel):
     def from_dict(cls, data: dict[str, Any]) -> GraspoConfig:
         """从字典构建配置，pydantic ``model_validate`` 一次性校验所有字段。
 
-        **防呆（宪法 §7.2/§2.3）：** 不手动挑键——顶层任何未知键（拼写错误）
+        **防呆（/§2.3）：** 不手动挑键——顶层任何未知键（拼写错误）
         由 ``extra="forbid"`` 直接拒绝，而不是静默忽略后用默认值训练。
         仅做两件显式处理：
         1. 废弃格式迁移（§18.2）：``backend_config.graspoflow`` → 顶层 ``graspoflow``
@@ -258,7 +258,7 @@ _RUN_NAME_CACHE: dict[str, str] = {}
 
 
 def _generate_run_name() -> str:
-    """生成基于时间戳的唯一运行标识（宪法 §8.5）。"""
+    """生成基于时间戳的唯一运行标识。"""
     if "current" not in _RUN_NAME_CACHE:
         _RUN_NAME_CACHE["current"] = f"graspo_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
     return _RUN_NAME_CACHE["current"]

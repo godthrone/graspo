@@ -1,4 +1,4 @@
-"""Tests for ParsedCompletion — BADGE §11.1."""
+"""Tests for ParsedCompletion —"""
 
 import pytest
 

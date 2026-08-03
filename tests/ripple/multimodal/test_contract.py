@@ -1,6 +1,6 @@
 """防呆契约单测：RL 与 SFT 两条路径的"缺图即抛异常"防线。
 
-覆盖（宪法 §11.3：做什么、什么条件下、期望什么结果）:
+覆盖（：做什么、什么条件下、期望什么结果）:
 - contains_image_tokens: tensor/列表/None 的图像 token 检测
 - assert_rl_training_has_multimodal: RL 有图无 rows → raise 等 4 个分支
 - assert_sft_batch_has_multimodal: SFT 有图无 inputs → raise 等 3 个分支

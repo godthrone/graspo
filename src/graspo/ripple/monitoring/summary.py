@@ -1,4 +1,4 @@
-"""GraspoFlowTrainer 监控摘要与统计压缩（宪法 §8.4 从 helpers.py 按功能域拆分）。"""
+"""GraspoFlowTrainer 监控摘要与统计压缩（ 从 helpers.py 按功能域拆分）。"""
 
 import logging
 from collections import deque

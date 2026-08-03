@@ -1,3 +1,8 @@
+"""CLI 命令入口：``graspo launch`` / ``graspo export``。
+
+配置驱动：解析 --config → 加载并校验配置 → 构建 torchrun 启动计划。
+"""
+
 import argparse
 import json
 import os

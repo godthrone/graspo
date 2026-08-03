@@ -1,3 +1,9 @@
+"""训练数据校验、加载与编码：JSONL 读写、SFT tokenize、样本校验。
+
+纯数据变换（XML 构建、多模态行构建）已迁 ripple/parsing 与 ripple/multimodal
+——本文件只保留数据 IO 与校验（core 通用件）。
+"""
+
 import copy
 import json
 import re

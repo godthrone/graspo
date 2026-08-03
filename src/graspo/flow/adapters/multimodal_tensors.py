@@ -1,3 +1,8 @@
+"""多模态张量工具：rows → 处理器输入编码、等步长/offset 切片。
+
+行构建（纯数据）在 ripple/multimodal/rows.py，本文件只处理张量面。
+"""
+
 from typing import Any
 
 import torch

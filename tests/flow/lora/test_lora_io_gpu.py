@@ -1,4 +1,4 @@
-"""GPU tests for LoRA weight I/O roundtrip — BADGE §11.1 (CUDA required)."""
+"""GPU tests for LoRA weight I/O roundtrip —  (CUDA required)."""
 
 import pytest
 
