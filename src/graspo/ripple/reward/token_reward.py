@@ -18,8 +18,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from graspo.core.data import _format_xml_param_value
 from graspo.ripple.parsing.completion import ParsedCompletion
+from graspo.ripple.parsing.xml import format_xml_param_value
 from graspo.ripple.reward.compare import dict_compare_score, leaf_compare_score
 
 _log = logging.getLogger(__name__)
@@ -329,7 +329,7 @@ def _build_ground_truth_token_ids(targets: list[dict[str, Any]], tokenizer: Any)
         parts.append(f"<function={fn_name}>")
         for pname, pvalue in fn_args.items():
             parts.append(f"<parameter={pname}>")
-            parts.append(_format_xml_param_value(pvalue))
+            parts.append(format_xml_param_value(pvalue))
             parts.append("</parameter>")
         parts.append("</function>")
         parts.append("</tool_call>")

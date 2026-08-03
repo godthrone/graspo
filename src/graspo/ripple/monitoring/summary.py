@@ -4,11 +4,9 @@ import logging
 from collections import deque
 from typing import Any
 
-from graspo.flow.trainer.helpers import (
-    is_pure_tool_call_task,
-    tool_call_count_mismatch_count,
-)
+from graspo.flow.trainer.helpers import tool_call_count_mismatch_count
 from graspo.ripple.parity import lower_median
+from graspo.ripple.parsing.classification import is_pure_tool_call_task, likely_truncated_json
 
 # ── 监控与摘要 ─────────────────────────────────────────────────────────────────
 
@@ -48,7 +46,7 @@ def monitor_group(payload: dict[str, Any]) -> dict[str, Any]:
         "likely_truncated_json_count": sum(
             1
             for text, detail in zip(completions, details, strict=False)
-            if _likely_truncated_json(text, detail)
+            if likely_truncated_json(text, detail)
         ),
         "tool_call_parse_error_count": sum(1 for detail in details if detail.get("parse_errors")),
         "tool_call_count_mismatch_count": tool_call_count_mismatch_count(
@@ -155,7 +153,7 @@ def reward_batch_summary(
             likely_truncated_json_count += sum(
                 1
                 for text, detail in zip(completions, details, strict=False)
-                if _likely_truncated_json(text, detail)
+                if likely_truncated_json(text, detail)
             )
         tool_call_parse_error_count += sum(1 for detail in details if detail.get("parse_errors"))
         tool_call_count_mismatch += tool_call_count_mismatch_count(details, attempt.get("targets"))
@@ -222,16 +220,6 @@ def reward_batch_summary(
         "tool_call_parse_error_count": tool_call_parse_error_count,
         "tool_call_count_mismatch_count": tool_call_count_mismatch,
     }
-
-
-def _likely_truncated_json(text: str, detail: dict[str, Any]) -> bool:
-    has_json = "```json" in text
-    if has_json and text.count("```") < 2:
-        return True
-    if detail.get("valid_extracted_json") is False and has_json:
-        stripped = text.rstrip()
-        return not (stripped.endswith("```") or stripped.endswith("}"))
-    return False
 
 
 # ── 摘要压缩 ───────────────────────────────────────────────────────────────────

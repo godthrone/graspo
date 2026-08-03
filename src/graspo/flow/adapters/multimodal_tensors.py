@@ -2,13 +2,6 @@ from typing import Any
 
 import torch
 
-from graspo.core.data import _media_counts, _multimodal_row_from_sample  # noqa: F401 重新导出
-
-__all__ = [
-    "_media_counts",
-    "_multimodal_row_from_sample",
-]
-
 
 def _messages_from_multimodal_row(row: dict[str, Any]) -> list[dict[str, Any]]:
     messages = row.get("messages")

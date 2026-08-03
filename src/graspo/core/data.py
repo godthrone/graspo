@@ -8,6 +8,8 @@ from typing import Any
 import torch
 
 from graspo.core.schema import Sample
+from graspo.ripple.multimodal.rows import resolve_messages_media_paths
+from graspo.ripple.parsing.xml import build_sft_target_text
 from graspo.ripple.reward.normalize import normalize_targets
 
 # Matches raw Qwen XML / tool-call markers that should not appear in content.
@@ -260,37 +262,6 @@ def _content_to_text_and_media(content: Any) -> tuple[str, list[dict[str, Any]]]
     return "\n".join(part for part in parts if part), media
 
 
-def _multimodal_row_from_sample(
-    sample: Any, *, data_dir: str | Path | None = None
-) -> dict[str, Any]:
-    """从 Sample 构建多模态行数据，解析媒体相对路径为绝对路径。
-
-    与 SFT 的 ``_resolve_messages_media_paths`` 对齐：RL 路径也需要将
-    messages 中的相对图像路径转换为绝对路径，否则 HuggingFace processor
-    无法识别 ``../images/...`` 格式的路径。
-    """
-    messages = [dict(message) for message in sample.messages]
-    if data_dir is not None:
-        _resolve_messages_media_paths(messages, data_dir)
-    row: dict[str, Any] = {
-        "messages": messages,
-        "media": _media_counts(sample.media or []),
-    }
-    tools = getattr(sample, "tools", None)
-    if tools is not None:
-        row["tools"] = [dict(tool) for tool in tools]
-    return row
-
-
-def _media_counts(media: list[dict[str, Any]]) -> dict[str, int]:
-    """统计多模态媒体类型计数（纯数据转换）。"""
-    counts: dict[str, int] = {}
-    for item in media:
-        media_type = str(item.get("type") or "unknown") if isinstance(item, dict) else "unknown"
-        counts[media_type] = counts.get(media_type, 0) + 1
-    return counts
-
-
 def _dedupe_media(media: list[dict[str, Any]]) -> list[dict[str, Any]]:
     seen: set[tuple[str, str]] = set()
     deduped: list[dict[str, Any]] = []
@@ -317,103 +288,6 @@ def load_jsonl(path: str | Path) -> list[Sample]:
             except Exception as exc:  # noqa: BLE001
                 raise ValueError(f"invalid JSONL record at {path}:{line_no}: {exc}") from exc
     return samples
-
-
-def build_sft_target_text(target_output: dict[str, Any]) -> str:
-    """将 target output 转换为模型应该生成的文本。
-
-    - tool_calls: 转为 Qwen XML 格式，与 base model 原生输出格式完全一致
-    - content: 转为 markdown-fenced JSON
-
-    **格式对齐：** Qwen3.5 预训练中学会的 XML 工具调用格式是参数值占据独立行
-    （``<parameter=key>\\nvalue\\n</parameter>``），不是内联紧凑格式。SFT target
-    必须匹配这一原生格式，否则 LoRA 需要同时改写格式和内容，在参数量有限时导致
-    灾难性干扰——模型在新旧格式间摇摆，输出结构崩溃。
-
-    .. warning::
-        **DO NOT** refactor this to use ``tokenizer.apply_chat_template``.
-        Qwen's chat template inserts ``\\n response\\n`` before assistant tool_calls
-        when ``enable_thinking`` is not set, but RL inference runs with
-        ``enable_thinking=false`` whose assistant prefix is ``<|im_start|>assistant\\n``.
-        The two prefixes mismatch, causing SFT to teach the wrong format and the
-        model to output garbage like ``\\n\\nfunction\\n response\\n\\n response\\n``.
-        Direct XML generation ensures the target text matches the model's actual
-        inference output character-for-character.
-
-    Architecture invariant: the SFT target text MUST be the exact text the model
-    is expected to generate during inference.  For Qwen models this means bare
-    ``<tool_call>...</tool_call>`` XML without any prefix or suffix.
-    """
-    tool_calls = target_output.get("tool_calls")
-    if isinstance(tool_calls, list) and tool_calls:
-        return _tool_calls_to_xml(tool_calls)
-    content = target_output.get("content")
-    if isinstance(content, dict):
-        import json as _json
-
-        return "```json\n" + _json.dumps(content, ensure_ascii=False, indent=2) + "\n```"
-    return ""
-
-
-def _tool_calls_to_xml(tool_calls: list[dict[str, Any]]) -> str:
-    """将 canonical tool_calls 转为 Qwen XML 格式。
-
-    格式与 Qwen3.5 预训练中学会的原生 tool-call 输出严格对齐：参数值
-    位于独立行，标签之间用换行分隔。这是 base model 的默认输出风格，
-    SFT 不应改变它——只需教会模型输出正确的参数名和数值。
-    """
-    parts: list[str] = []
-    for call in tool_calls:
-        name = call["name"]
-        arguments = call["arguments"]
-        params = "\n".join(
-            f"<parameter={key}>\n{_format_xml_param_value(value)}\n</parameter>"
-            for key, value in arguments.items()
-        )
-        parts.append(f"<tool_call>\n<function={name}>\n{params}\n</function>\n</tool_call>")
-    return "\n".join(parts)
-
-
-def _format_xml_param_value(value: Any) -> str:
-    """格式化参数值为 XML 文本。"""
-    if isinstance(value, bool):
-        return str(value).lower()
-    if isinstance(value, float):
-        if value == int(value) and not (value != value):  # 非 NaN 的整数值
-            return str(int(value))
-        return str(value)
-    return str(value)
-
-
-def _resolve_messages_media_paths(
-    messages: list[dict[str, Any]],
-    data_dir: str | Path | None,
-) -> None:
-    """将 messages 中的相对图像/视频路径就地解析为绝对路径。"""
-    if data_dir is None:
-        return
-    base = Path(data_dir)
-    for message in messages:
-        content = message.get("content")
-        if not isinstance(content, list):
-            continue
-        for block in content:
-            if not isinstance(block, dict):
-                continue
-            if block.get("type") in ("image", "image_url"):
-                for key in ("image", "path", "url"):
-                    path = block.get(key)
-                    if isinstance(path, str) and not path.startswith(
-                        ("http://", "https://", "/", "data:")
-                    ):
-                        block[key] = str((base / path).resolve())
-            elif block.get("type") in ("video", "video_url"):
-                for key in ("video", "path", "url"):
-                    path = block.get(key)
-                    if isinstance(path, str) and not path.startswith(
-                        ("http://", "https://", "/", "data:")
-                    ):
-                        block[key] = str((base / path).resolve())
 
 
 def write_jsonl(samples: list[Sample], path: str | Path) -> None:
@@ -526,8 +400,8 @@ def sft_tokenize_multimodal(
 
     关键对齐点（SFT → RL pipeline）：
     1. target text 用 ``build_sft_target_text`` 生成纯 XML（不经过 chat template）
-    2. 图像路径用 ``_resolve_messages_media_paths`` 解析为绝对路径
-    3. 编码时由 ``_encode_multimodal_rows`` 统一处理，RL 的 ``_multimodal_row_from_sample``
+    2. 图像路径用 ripple.multimodal.rows.resolve_messages_media_paths 解析为绝对路径
+    3. 编码时由 ``_encode_multimodal_rows`` 统一处理，RL 的 ripple.multimodal.rows 版 multimodal_row_from_sample
        也通过 ``data_dir`` 参数解析路径
 
     .. warning::
@@ -542,7 +416,7 @@ def sft_tokenize_multimodal(
 
     # 2. 深拷贝 messages 并解析相对路径 → 绝对路径
     messages_for_processor = copy.deepcopy(sample.messages)
-    _resolve_messages_media_paths(messages_for_processor, data_dir)
+    resolve_messages_media_paths(messages_for_processor, data_dir)
 
     tools = sample.tools if sample.expects_tool_calls else None
 

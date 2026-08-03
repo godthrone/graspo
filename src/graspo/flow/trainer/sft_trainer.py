@@ -7,12 +7,8 @@ import json
 import logging
 import random
 import time
-from datetime import datetime
 from pathlib import Path
 from typing import Any
-
-import numpy as np
-import torch
 
 from graspo.core.data import SFTTokenized, load_jsonl, sft_tokenize
 from graspo.core.schema import GraspoConfig
@@ -22,6 +18,7 @@ from graspo.flow.runtime import (
     GraspoFlowRuntimeProtocol,
     validate_graspoflow_runtime_config,
 )
+from graspo.flow.trainer.helpers import _backup_config, _set_random_seed, _timestamp
 
 
 class SFTTrainer:
@@ -194,26 +191,3 @@ class SFTTrainer:
     def _print_json(self, payload: dict[str, Any]) -> None:
         if self._is_primary():
             logging.getLogger("graspo.sft_trainer").info(json.dumps(payload, ensure_ascii=False))
-
-
-def _timestamp() -> str:
-    return datetime.now().astimezone().isoformat(timespec="seconds")
-
-
-def _set_random_seed(seed: int, *, rank: int = 0) -> None:
-    """设置所有随机数生成器的种子，确保可复现性（宪法 §6）。"""
-    random.seed(seed + rank)
-    np.random.seed(seed + rank)
-    torch.manual_seed(seed + rank)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed + rank)
-
-
-def _backup_config(config: Any, output_dir: Path) -> None:
-    import yaml
-
-    config_path = output_dir / "config.yaml"
-    config_path.write_text(
-        yaml.dump(config.model_dump(), allow_unicode=True, sort_keys=False),
-        encoding="utf-8",
-    )

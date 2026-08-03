@@ -332,21 +332,6 @@ def experience_metadata_for_row(
 # ── tool-call 辅助 ─────────────────────────────────────────────────────────────
 
 
-def is_pure_tool_call_task(targets: Any) -> bool:
-    """判断 targets 是否为纯 tool-call 任务（无 content 字段）。"""
-    if not isinstance(targets, list) or not targets:
-        return False
-    has_content = any(
-        isinstance(t, dict) and isinstance(t.get("output"), dict) and "content" in t["output"]
-        for t in targets
-    )
-    has_tool_calls = any(
-        isinstance(t, dict) and isinstance(t.get("output"), dict) and "tool_calls" in t["output"]
-        for t in targets
-    )
-    return has_tool_calls and not has_content
-
-
 def tool_call_count_mismatch_count(details: list[dict[str, Any]], targets: Any) -> int:
     """统计 tool-call 数量与 targets 不匹配的 completion 数量。"""
     target_counts = _target_tool_call_counts(targets)

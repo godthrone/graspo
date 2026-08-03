@@ -7,6 +7,12 @@ self-contained utility module for readable/raw payload construction.
 
 from typing import Any
 
+from graspo.ripple.parsing.classification import (
+    is_pure_tool_call_task,
+    likely_truncated_json,
+    summarize_json_markers,
+)
+
 
 def readable_payload(payload: dict[str, Any]) -> dict[str, Any]:
     compact: dict[str, Any] = {
@@ -139,49 +145,13 @@ def summarize_think(text: str) -> dict[str, Any]:
     }
 
 
-def summarize_json_markers(text: str) -> dict[str, Any]:
-    fence_count = text.count("```")
-    has_markdown_json = "```json" in text
-    return {
-        "has_markdown_json": has_markdown_json,
-        "fence_count": fence_count,
-        "has_closing_json_fence": has_markdown_json and fence_count >= 2,
-        "starts_with_object": text.lstrip().startswith("{"),
-    }
-
-
-def likely_truncated_json(text: str, detail: dict[str, Any] | None = None) -> bool:
-    summary = summarize_json_markers(text)
-    if summary["has_markdown_json"] and not summary["has_closing_json_fence"]:
-        return True
-    if detail and detail.get("valid_extracted_json") is False and summary["has_markdown_json"]:
-        stripped = text.rstrip()
-        return not (stripped.endswith("```") or stripped.endswith("}"))
-    return False
-
-
-def _is_pure_tool_call_task(targets: Any) -> bool:
-    """Return True when targets only use tool_calls (no output.content entries)."""
-    if not isinstance(targets, list) or not targets:
-        return False
-    has_content = any(
-        isinstance(t, dict) and isinstance(t.get("output"), dict) and "content" in t["output"]
-        for t in targets
-    )
-    has_tool_calls = any(
-        isinstance(t, dict) and isinstance(t.get("output"), dict) and "tool_calls" in t["output"]
-        for t in targets
-    )
-    return has_tool_calls and not has_content
-
-
 def group_debug_summary(payload: dict[str, Any]) -> dict[str, Any]:
     completions = payload.get("completions", [])
     content_scores = payload.get("content_scores", [])
     rewards = payload.get("rewards", [])
     reward_details = payload.get("reward_details", [])
     targets = payload.get("targets")
-    pure_tool_call = _is_pure_tool_call_task(targets)
+    pure_tool_call = is_pure_tool_call_task(targets)
     summaries = [summarize_json_markers(text) for text in completions] if not pure_tool_call else []
     target_counts = _target_tool_call_counts(targets)
     return {

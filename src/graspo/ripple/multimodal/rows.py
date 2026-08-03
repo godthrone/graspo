@@ -32,7 +32,7 @@ def resolve_messages_media_paths(
 ) -> None:
     """将 messages 中的相对图像/视频路径就地解析为绝对路径。
 
-    与 SFT 的 ``_resolve_messages_media_paths`` 对齐：processor 无法识别
+    与 SFT 侧 resolve_messages_media_paths 对齐：processor 无法识别
     ``../images/...`` 格式的相对路径。
     """
     if data_dir is None:

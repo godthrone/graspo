@@ -7,7 +7,6 @@ from typing import Any
 import torch
 from torch.nn.utils.rnn import pad_sequence
 
-from graspo.core.data import _media_counts, _multimodal_row_from_sample
 from graspo.flow.adapters.models.qwen35_36.model import Qwen35HybridTextModel
 from graspo.flow.adapters.multimodal_tensors import (
     _compute_multimodal_offset_tables,
@@ -20,6 +19,7 @@ from graspo.flow.parallel.tensor_utils import (
     _next_token_from_logits,
 )
 from graspo.flow.runtime import NativeGeneration
+from graspo.ripple.multimodal.rows import media_counts, multimodal_row_from_sample
 
 
 class _Qwen35GenerationMethods:
@@ -361,10 +361,10 @@ class _Qwen35GenerationMethods:
         per_sample_media_counts: list[dict[str, int]] = []
         data_dir = str(Path(self.config.data.train_path).parent)
         for sample in samples:
-            row = _multimodal_row_from_sample(sample, data_dir=data_dir)
+            row = multimodal_row_from_sample(sample, data_dir=data_dir)
             img_count = sum(1 for item in sample.media if str(item.get("type") or "") == "image")
             per_sample_image_counts.append(img_count)
-            per_sample_media_counts.append(_media_counts(sample.media))
+            per_sample_media_counts.append(media_counts(sample.media))
             for _ in range(G):
                 rows.append(row)
 

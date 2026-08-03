@@ -49,13 +49,10 @@ class NativeRolloutLogger:
 
 from graspo.flow.logger.logger_helpers import (  # noqa: E402, F401
     _get_index,
-    _is_pure_tool_call_task,
     _target_tool_call_counts,
     _to_jsonable,
     group_debug_summary,
-    likely_truncated_json,
     readable_payload,
-    summarize_json_markers,
     summarize_think,
     timing_event_payload,
     train_batch_attempt_summary,
