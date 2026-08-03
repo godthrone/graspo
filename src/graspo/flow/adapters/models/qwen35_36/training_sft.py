@@ -411,7 +411,7 @@ def _collate_sft_multimodal_batch(
     """
     tokenizer = adapter.tokenizer
 
-    # 1. 构建 rows（与 RL 的 _multimodal_row_from_sample 格式一致）
+    # 1. 构建 rows（与 RL 的 ripple.multimodal.rows.multimodal_row_from_sample 格式一致）
     rows: list[dict[str, Any]] = []
     target_texts: list[str] = []
     for item in items:
@@ -491,7 +491,7 @@ def _collate_sft_multimodal_batch(
 def _count_media_types_from_messages(
     messages: list[dict[str, Any]],
 ) -> dict[str, int]:
-    """从 messages 中统计媒体类型数量（与 ``_media_counts`` 格式一致）。"""
+    """从 messages 中统计媒体类型数量（与 ``ripple.multimodal.rows.media_counts`` 格式一致）。"""
     counts: dict[str, int] = {}
     for message in messages:
         content = message.get("content")
