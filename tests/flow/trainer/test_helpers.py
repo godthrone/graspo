@@ -1,5 +1,7 @@
 """Tests for ``graspo.flow.trainer.helpers`` — pure functions."""
 
+import pytest
+
 from graspo.flow.trainer.helpers import (
     epoch_stats_from_dict,
     epoch_stats_to_dict,
@@ -55,3 +57,51 @@ def test_epoch_stats_from_dict_empty_returns_defaults():
     stats = epoch_stats_from_dict({})
     assert stats.epoch == 0
     assert stats.samples_seen == 0
+
+
+def test_resume_config_snapshot_mismatch_raises():
+    """防呆：checkpoint config_snapshot 与当前配置不一致 → 拒绝恢复。
+
+    恢复训练用旧超参数语义会导致分布漂移而不自知。
+    """
+    from graspo.flow.trainer.checkpoint import CheckpointMixin
+
+    class _Stub(CheckpointMixin):
+        def __init__(self) -> None:
+            self.backend_name = "graspoflow"
+            self.config = _FakeConfig()
+
+    class _FakeConfig:
+        class Training:  # noqa: N801 测试桩（小写匹配 config.training）
+            rollout_group_size = 8
+            optimize_prompt_batch_size = 8
+            rollout_max_retries = 5
+            max_new_tokens = 2048
+
+        training = Training()
+
+    stub = _Stub()
+    mismatched = {
+        "format": "graspoflow-trainer-state",
+        "config_snapshot": {
+            "backend": "graspoflow",
+            "rollout_group_size": 4,  # 与当前 8 不一致
+            "optimize_prompt_batch_size": 8,
+            "optimize_iterations_per_step": 1,
+            "rollout_max_retries": 5,
+            "max_new_tokens": 2048,
+        },
+    }
+    with pytest.raises(RuntimeError, match="rollout_group_size"):
+        stub._assert_resume_config_consistent(mismatched)
+
+    consistent = dict(mismatched)
+    consistent["config_snapshot"] = {
+        "backend": "graspoflow",
+        "rollout_group_size": 8,
+        "optimize_prompt_batch_size": 8,
+        "optimize_iterations_per_step": 1,
+        "rollout_max_retries": 5,
+        "max_new_tokens": 2048,
+    }
+    stub._assert_resume_config_consistent(consistent)  # 不抛错

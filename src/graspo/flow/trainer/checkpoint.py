@@ -60,6 +60,32 @@ class CheckpointMixin:
                 }
             )
 
+    def _assert_resume_config_consistent(self, trainer_state: dict[str, Any]) -> None:
+        """防呆：checkpoint 的 config_snapshot 与当前配置不一致时拒绝恢复。
+
+        恢复训练使用旧超参数语义（组大小/重试/生成长度）会导致分布漂移
+        而不自知——用旧 checkpoint 配合新配置继续训练是静默的坏退路。
+        """
+        snapshot = trainer_state.get("config_snapshot") or {}
+        current = {
+            "backend": self.backend_name,
+            "rollout_group_size": self.config.training.rollout_group_size,
+            "optimize_prompt_batch_size": self.config.training.optimize_prompt_batch_size,
+            "optimize_iterations_per_step": 1,
+            "rollout_max_retries": self.config.training.rollout_max_retries,
+            "max_new_tokens": self.config.training.max_new_tokens,
+        }
+        mismatches = [
+            f"{key}: checkpoint={snapshot.get(key)!r} current={value!r}"
+            for key, value in current.items()
+            if key in snapshot and snapshot.get(key) != value
+        ]
+        if mismatches:
+            raise RuntimeError(
+                "checkpoint config_snapshot does not match current config; refusing to "
+                "resume (training would silently drift). Mismatches: " + "; ".join(mismatches)
+            )
+
     def _resume_if_requested(self) -> None:
         """从配置指定的 checkpoint 恢复训练状态。"""
         checkpoint = self.config.training.resume_from_checkpoint
@@ -84,6 +110,7 @@ class CheckpointMixin:
                 "Unsupported trainer_state format: "
                 f"{trainer_state.get('format')!r}; latest-only resume requires current GRASPO"
             )
+        self._assert_resume_config_consistent(trainer_state)
         self._restore_trainer_state(trainer_state)
         self.resume_info = {
             "checkpoint": str(checkpoint_dir),

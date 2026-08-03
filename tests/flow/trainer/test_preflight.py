@@ -67,3 +67,30 @@ class TestPreflightShortCircuit:
             image_token_id=151655,
             model_name="Qwen3.5-9B",
         )
+
+
+class TestPpMultimodalGuard:
+    def test_media_data_with_pp_gt_1_raises(self) -> None:
+        """多模态 + PP>1 是未实现路径——启动即拒绝（不跑到 generate 才炸）。"""
+        with pytest.raises(RuntimeError, match="pp_size=2 is not supported"):
+            run_multimodal_preflight(
+                _FakeRuntime(),
+                [_Sample(media=[{"type": "image"}])],
+                data_dir="/tmp",
+                image_token_id=151655,
+                model_name="Qwen3.5-9B",
+                pp_size=2,
+            )
+
+    def test_media_data_with_pp_1_passes_guard(self) -> None:
+        """PP=1 时防线不拦截（继续走设施检查，由后续链路抛错）。"""
+        # _FakeRuntime 无 adapter → 抛其固有断言，而不是 pp 防线错误
+        with pytest.raises(AssertionError, match="should not be reached"):
+            run_multimodal_preflight(
+                _FakeRuntime(),
+                [_Sample(media=[{"type": "image"}])],
+                data_dir="/tmp",
+                image_token_id=151655,
+                model_name="Qwen3.5-9B",
+                pp_size=1,
+            )

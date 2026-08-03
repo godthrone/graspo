@@ -56,6 +56,7 @@ def run_multimodal_preflight(
     data_dir: str,
     image_token_id: int | None,
     model_name: str,
+    pp_size: int = 1,
 ) -> None:
     """设施层预检：encode → attach → resolve → fake forward 梯度检查。
 
@@ -64,6 +65,7 @@ def run_multimodal_preflight(
     :param data_dir: 训练数据目录（解析相对媒体路径）
     :param image_token_id: 图像占位 token id（None = 模型不支持视觉）
     :param model_name: 模型名（错误消息用）
+    :param pp_size: 流水线并行度——多模态 + PP>1 是未实现路径，启动即拒绝
     :raises RuntimeError: 任一环节不满足防线要求
 
     本函数需要 GPU/分布式上下文，只能真机执行；逻辑校验部分
@@ -74,6 +76,13 @@ def run_multimodal_preflight(
         # 数据纯文本 → 无需预检；模型纯文本 → 无需预检。
         # 两者都不触 adapter/GPU（纯文本训练零开销）。
         return
+    if int(pp_size) > 1:
+        # 多模态生成在 PP>1 路径未实现（qwen35_36 generation 会抛
+        # NotImplementedError）——启动即拒绝，不跑到 generate 才炸。
+        raise RuntimeError(
+            f"multimodal training with pp_size={pp_size} is not supported "
+            "(PP multimodal generation is unimplemented); use pp_size=1"
+        )
     adapter = runtime._require_adapter()  # noqa: SLF001 同包编排
     model = getattr(adapter, "model", None)
     has_vision = model is not None and bool(getattr(model, "visual", None))

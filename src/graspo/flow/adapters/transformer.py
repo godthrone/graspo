@@ -6,6 +6,7 @@ only implements the model-specific parts (``_load_model``, ``_build_ops``,
 ``sequence_log_probs``, ``parse_completion``).
 """
 
+import datetime
 import json
 import logging
 import time
@@ -656,6 +657,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
         output_dir.mkdir(parents=True, exist_ok=True)
         payload = {
             "event": "rank_memory",
+            "timestamp": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
             "phase": phase,
             "rank": self.rank,
             "local_rank": self.local_rank,

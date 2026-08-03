@@ -294,6 +294,7 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
             data_dir=str(Path(self.config.data.train_path).parent),
             image_token_id=image_token_id,
             model_name=str(self.config.model.model_path),
+            pp_size=int(self.config.graspoflow.pp_size),
         )
 
     def _print_json(self, payload: dict[str, Any]) -> None:
