@@ -212,8 +212,11 @@ class GraspoFlowRuntime:
     def sequence_log_probs(
         self, sequences: Any, attention_mask: Any, metadata: Any | None = None
     ) -> Any:
+        # 适配器契约 keyword-only（C8 对齐 ABC）——调用必须用关键字
         return self._require_adapter().sequence_log_probs(
-            sequences, attention_mask, metadata=metadata
+            sequences=sequences,
+            attention_mask=attention_mask,
+            metadata=metadata,
         )
 
     def train_batch(
@@ -224,7 +227,7 @@ class GraspoFlowRuntime:
         max_grad_norm: float,
     ) -> dict[str, Any]:
         return self._require_adapter().train_batch(
-            experiences,
+            experiences=experiences,
             policy_ratio_clip_eps=policy_ratio_clip_eps,
             max_grad_norm=max_grad_norm,
         )
