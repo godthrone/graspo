@@ -59,31 +59,13 @@ GRASPO 在 GRPO 基础上针对结构化输出场景做了以下改进：
 
 每个训练 step 包含以下阶段：
 
-```
-┌──────────────────────────────────────────────────────────┐
-│  Phase 1: Rollout 生成                                    │
-│  prompt batch → 每个 prompt 采样 G 个 completion          │
-│  G = rollout_group_size (默认 8)                         │
-├──────────────────────────────────────────────────────────┤
-│  Phase 2: Reward 评分                                     │
-│  每个 completion → GraspoReward.score() → 结构化 reward  │
-│  提取 JSON/tool-call → 与 targets 比较 → 计算分数        │
-├──────────────────────────────────────────────────────────┤
-│  Phase 3: 组决策                                         │
-│  每个 group 根据 reward 分布分类：                         │
-│  · median_reward >= perfect_skip_threshold → perfect_skip│
-│  · 有 reward 方差 → trainable (max_correct/not_correct)  │
-│  · 无方差 → invalid_no_preference_gap                    │
-│  · 格式损坏 → invalid → retry (最多 5 次)                 │
-├──────────────────────────────────────────────────────────┤
-│  Phase 4: 优化                                           │
-│  对 trainable group：                                    │
-│  · group_advantages() → 组内相对优势                      │
-│  · 将 Experience 加入 ReplayBuffer                       │
-│  · 重复 optimize_iterations_per_step 次                       │
-│  · 从 ReplayBuffer 采样 optimize_prompt_batch_size 个     │
-│  · PPO-style policy ratio clipping + LoRA 更新           │
-└──────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    P1["Phase 1: Rollout 生成<br/>prompt batch → 每 prompt 采样 G 个 completion<br/>G = rollout_group_size（默认 8）"]
+    P2["Phase 2: Reward 评分<br/>每 completion → GraspoReward.score()<br/>提取 JSON/tool-call → 与 targets 比较"]
+    P3["Phase 3: 组决策<br/>median_reward ≥ threshold → perfect_skip<br/>有方差 → trainable · 无方差 → invalid<br/>格式损坏 → invalid → retry（最多 5 次）"]
+    P4["Phase 4: 优化<br/>group_advantages() → 组内相对优势<br/>Experience 入 ReplayBuffer → 采样 batch<br/>PPO-style ratio clipping + LoRA 更新"]
+    P1 --> P2 --> P3 --> P4
 ```
 
 ## 三层奖励体系

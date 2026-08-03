@@ -45,7 +45,12 @@ class SFTTrainer:
         self.global_step = 0
         self.total_samples = 0
 
-    def train(self) -> None:
+    def train(self, *, smoke: bool = False) -> None:
+        """SFT 训练主入口。
+
+        :param smoke: 冒烟运行边界（基础设施参数）——运行 1 个 batch 后停止，
+            **不修改任何配置值**。
+        """
         """SFT 训练主入口。"""
         validate_graspoflow_runtime_config(self.config)
         output_dir = Path(self.config.training.output_dir)
@@ -131,6 +136,14 @@ class SFTTrainer:
                         max_grad_norm=max_grad_norm,
                     )
                     self.global_step += 1
+                    if smoke:
+                        # 冒烟边界：1 个 batch 后停止（基础设施参数，不改配置）
+                        _log.info("SFT smoke: stopping after step 1 (boundary reached)")
+                        self.runtime.save_checkpoint(
+                            output_dir / "final",
+                            trainer_state={"step": self.global_step, "epoch": epoch},
+                        )
+                        return
                     if self._is_primary():
                         batch_sec = time.monotonic() - batch_started_at
                         _log.info(

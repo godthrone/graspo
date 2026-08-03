@@ -8,18 +8,13 @@ GraspoFlow 是 GRASPO 的唯一训练后端。它将 tensor parallel (TP)、pipe
 
 ## 四层架构
 
-```
-Layer 3: 模型族         models/qwen3/          models/qwen35_36/
-                        架构特定实现              hybrid text+vision
-
-Layer 2: 训练编排       GraspoFlowTrainer       GraspoFlowRuntime
-                        GRASPO 训练循环          分布式运行时边界
-
-Layer 1: 通用适配       TransformerAdapter      TransformerStageOp
-                        模型族共享逻辑            PP 阶段封装
-
-Layer 0: 调度框架       operator schedule graph memory
-                        完全模型无关的 Flink 原语
+```mermaid
+flowchart TB
+    L3["Layer 3: 模型族<br/>models/qwen3/ · models/qwen35_36/ · models/common/<br/>架构特定实现 · hybrid text+vision · 家族共享件"]
+    L2["Layer 2: 训练编排<br/>trainer/ · runtime.py<br/>GRASPO 训练循环 · 分布式运行时边界"]
+    L1["Layer 1: 通用适配<br/>adapters/base.py · adapters/transformer.py<br/>scheduling/transformer_op.py<br/>模型族共享逻辑 · PP 阶段封装"]
+    L0["Layer 0: 调度框架<br/>scheduling/operator · schedule · graph · memory<br/>完全模型无关的 Flink 原语"]
+    L3 --> L2 --> L1 --> L0
 ```
 
 ### Layer 0：调度框架（模型无关）

@@ -58,6 +58,7 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
         self.runtime = runtime or GraspoFlowRuntime.from_config(config)
         self.reward = GraspoReward(config.reward)
         self.replay_buffer = ReplayBuffer()
+        self._smoke_boundary = False  # 冒烟运行边界：首轮 optimize 后停止（见 train(smoke=)）
         self.stats = GraspoFlowTrainStats()
         self.backend_name = "graspoflow"
         self.global_step = 0
@@ -78,8 +79,13 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
 
     # ── 主训练循环 ────────────────────────────────────────────────────────────
 
-    def train(self) -> None:
-        """GRASPO 训练主入口。"""
+    def train(self, *, smoke: bool = False) -> None:
+        """GRASPO 训练主入口。
+
+        :param smoke: 冒烟运行边界（基础设施参数，宪法 §10.1 合理例外）——
+            运行到首轮 optimize 后停止，**不修改任何配置值**。
+        """
+        self._smoke_boundary = bool(smoke)
         validate_graspoflow_runtime_config(self.config)
         self.runtime.validate()
         self.runtime.setup()

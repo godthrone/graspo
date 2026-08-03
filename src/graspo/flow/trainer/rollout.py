@@ -440,10 +440,10 @@ class RolloutMixin:
         """样本处理完成后的收尾：递增计数器，检查是否需要优化。"""
         self.current_epoch_stats.samples_seen += 1
         self.sample_index += 1
-        return (
-            self._maybe_optimize(epoch=epoch)
-            and 0 < self.config.training.max_steps <= self.global_step
+        boundary_reached = 0 < self.config.training.max_steps <= self.global_step or (
+            self._smoke_boundary and self.global_step >= 1
         )
+        return self._maybe_optimize(epoch=epoch) and boundary_reached
 
     def _record_epoch_attempt(self, payload: dict[str, Any]) -> None:
         """将单次 attempt 的指标累加到当前 epoch 统计中。"""

@@ -14,26 +14,26 @@ def main() -> None:
     parser.add_argument(
         "--smoke",
         action="store_true",
-        help="Smoke mode: run 1 training step then stop (set by `graspo launch --smoke`).",
+        help=(
+            "Smoke boundary (infrastructure param): run until the first optimize"
+            " step then stop. Never mutates the config object."
+        ),
     )
     args = parser.parse_args()
 
     config = GraspoConfig.from_yaml(args.config)
-    if args.smoke:
-        # 冒烟：跑 1 步即停。仅改内存中的 config，不写回文件。
-        config.training.max_steps = 1
 
     if config.train_method == "sft":
         from graspo.flow.runtime import GraspoFlowRuntime
         from graspo.flow.trainer.sft_trainer import SFTTrainer
 
         runtime = GraspoFlowRuntime.from_config(config)
-        SFTTrainer(config, runtime).train()
+        SFTTrainer(config, runtime).train(smoke=args.smoke)
     else:
         from graspo.flow.selector import create_trainer, select_backend
 
         selection = select_backend(config)
-        create_trainer(config, selection).train()
+        create_trainer(config, selection).train(smoke=args.smoke)
 
 
 if __name__ == "__main__":

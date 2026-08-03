@@ -10,27 +10,31 @@ GRASPO 是一个 GRPO 风格的 LoRA 强化学习训练器，面向结构化输�
 
 ## 三层架构
 
-```
-┌─────────────────────────────────────────────────┐
-│  Layer 3: 模型族                                  │
-│  models/qwen3/       models/qwen35_36/          │
-│  纯模型实现，不依赖训练框架                        │
-├─────────────────────────────────────────────────┤
-│  Layer 2: 训练编排                                │
-│  trainer/            runtime.py                 │
-│  GRASPO 训练循环 + 分布式运行时边界                │
-├─────────────────────────────────────────────────┤
-│  Layer 1: 通用 Transformer 适配                   │
-│  transformer_adapter.py  transformer_op.py      │
-│  跨模型族的通用逻辑                                │
-├─────────────────────────────────────────────────┤
-│  Layer 0: 调度框架                                │
-│  operator.py  schedule.py  graph.py  memory.py  │
-│  Flink 风格的计算-通信分离流水线                    │
-└─────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph L0 ["入口层 cli/"]
+        CLI["cli/app.py<br/>launch / export"]
+    end
+    subgraph L1 ["算法层 ripple/ · 纯计算"]
+        R["reward/ · parity · loss · buffer<br/>parsing/ · monitoring/ · multimodal/"]
+    end
+    subgraph L2 ["通用件 core/"]
+        C["schema.py · chat_template.py"]
+    end
+    subgraph L3 ["设施层 flow/"]
+        T["trainer/"]
+        A["adapters/<br/>models/common + qwen3 + qwen35_36"]
+        S["scheduling/ · parallel/ · lora/ · logger/<br/>runtime · memory · selector"]
+    end
+    CLI --> C
+    CLI --> T
+    T --> R
+    T --> A
+    A --> S
+    T --> S
 ```
 
-依赖方向：`trainer → runtime → adapter → transformer_adapter → transformer_op → Layer 0`
+依赖方向：`cli → trainer → adapters → scheduling/parallel`；`flow → ripple/core` 单向（设施消费算法）。
 
 ## 计算与设施分离（宪法 §1.3）
 
@@ -50,21 +54,17 @@ GRASPO 支持两种训练模式，通过配置 `train_method` 选择：
 
 典型 pipeline：先用 SFT 教模型输出格式，再用 RL 优化输出质量。
 
-```
-SFT 配置 (train_method: sft)
-  │
-  ├─ SftTrainer 加载 JSONL 数据
-  │   ├─ 纯文本样本: sft_tokenize_text → 预 tokenize
-  │   └─ 多模态样本: sft_tokenize_multimodal → MultimodalDeferred 延迟编码
-  │
-  ├─ 训练 10 epochs，保存 LoRA checkpoint
-  │
-  ├─ graspo export → 合并 LoRA 到 HF 模型
-  │
-  └─ RL 配置 (train_method: graspo)
-       │
-       └─ GraspoFlowTrainer 加载合并后的模型 + 新 LoRA
-            └─ 100 epochs RL 长训
+```mermaid
+flowchart LR
+    SFT["SFT 配置<br/>train_method: sft"] --> LOAD["SftTrainer 加载 JSONL"]
+    LOAD --> TXT["纯文本: sft_tokenize_text"]
+    LOAD --> MM["多模态: sft_tokenize_multimodal<br/>→ MultimodalDeferred 延迟编码"]
+    TXT --> EPOCH["训练 10 epochs<br/>保存 LoRA checkpoint"]
+    MM --> EPOCH
+    EPOCH --> EXPORT["graspo export<br/>合并 LoRA 到 HF 模型"]
+    EXPORT --> RL["RL 配置<br/>train_method: graspo"]
+    RL --> RLN["GraspoFlowTrainer<br/>加载合并模型 + 新 LoRA"]
+    RLN --> RLL["100 epochs RL 长训"]
 ```
 
 ### SFT 数据格式对齐（关键不变式）
@@ -119,10 +119,17 @@ LoRA 容量（r >= 64），要么考虑全量微调。
 
 SFT 多模态路径与 RL 完全对齐编码流程：
 
-```
-SFT: sft_tokenize_multimodal → MultimodalDeferred → _collate_sft_multimodal_batch
-       → _encode_multimodal_rows (单次 processor 调用)
-RL:  _multimodal_row_from_sample → _encode_multimodal_rows (单次 processor 调用)
+```mermaid
+flowchart LR
+    subgraph SFT_PATH ["SFT 路径"]
+        S1["sft_tokenize_multimodal"] --> S2["MultimodalDeferred"]
+        S2 --> S3["_collate_sft_multimodal_batch"]
+        S3 --> ENC["_encode_multimodal_rows<br/>单次 processor 调用"]
+    end
+    subgraph RL_PATH ["RL 路径"]
+        R1["ripple.multimodal.rows<br/>multimodal_row_from_sample"]
+        R1 --> ENC
+    end
 ```
 
 两者都通过 `_encode_multimodal_rows` 一次性完成 tokenize + 视觉编码，确保
@@ -131,14 +138,14 @@ RL:  _multimodal_row_from_sample → _encode_multimodal_rows (单次 processor �
 
 ## 数据流
 
-```
-配置文件(YAML) → GraspoConfig(pydantic校验) → CLI → SftTrainer / GraspoFlowTrainer
-                                                      ↓
-                    JSONL数据 → load_jsonl → Sample → rollout / tokenize → reward评分
-                                                      ↓
-                                              ReplayBuffer / collate batch → 优化步骤
-                                                      ↓
-                                              checkpoint 保存
+```mermaid
+flowchart TD
+    CFG["配置文件 YAML"] --> SCHEMA["GraspoConfig<br/>pydantic 校验"] --> CLI["CLI"]
+    CLI --> TRAINER["SftTrainer / GraspoFlowTrainer"]
+    DATA["JSONL 数据"] --> LOAD["load_jsonl"] --> SAMPLE["Sample"]
+    SAMPLE --> RLO["rollout / tokenize"] --> REW["reward 评分"]
+    RLO --> BUF["ReplayBuffer / collate batch"] --> OPT["优化步骤"]
+    OPT --> CKPT["checkpoint 保存"]
 ```
 
 ## 为什么用 ABC 模板方法（宪法 §9.2）
