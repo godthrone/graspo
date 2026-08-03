@@ -1,7 +1,10 @@
 """Tests for config schema validation —"""
 
+from pathlib import Path
+from typing import Any
+
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from graspo.core.schema import (
     GraspoConfig,
@@ -179,3 +182,38 @@ def test_top_level_none_section_treated_as_default():
     cfg = GraspoConfig.from_dict({"training": None, "model": None})
     assert cfg.training.seed == 42
     assert cfg.graspoflow.tp_size == 2
+
+
+def _field_paths(model_type: type[BaseModel], prefix: str = "") -> set[str]:  # noqa: F821
+    """递归收集 pydantic 模型的全部字段路径（含嵌套模型）。"""
+    paths: set[str] = set()
+    for name, field in model_type.model_fields.items():
+        path = f"{prefix}.{name}" if prefix else name
+        paths.add(path)
+        nested = getattr(field.annotation, "model_fields", None)
+        if nested:
+            paths |= _field_paths(field.annotation, path)
+    return paths
+
+
+def _nested_get(mapping: dict, path: str) -> bool:
+    node: Any = mapping
+    for part in path.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return False
+        node = node[part]
+    return True
+
+
+def test_config_example_covers_all_schema_fields():
+    """模板即文档防呆（§7.3）：config_example.yaml 必须覆盖 schema 全部字段。
+
+    新字段发布后若忘记同步模板，此测试直接失败——防第三次脱节。
+    """
+    import yaml
+
+    example = yaml.safe_load(
+        Path("samples/configs/config_example.yaml").read_text(encoding="utf-8")
+    )
+    missing = sorted(path for path in _field_paths(GraspoConfig) if not _nested_get(example, path))
+    assert not missing, f"config_example.yaml missing schema fields: {missing}"

@@ -53,6 +53,7 @@ reward:
   content_reward_weight: 100         # Weight for content correctness (numeric field match)
   anti_useless_str_reward_weight: 1  # Penalty weight for useless filler text
   anti_useless_str_half_reward_len: 100  # Half-penalty text length for anti-useless reward
+  numeric_tolerance: 10.0           # Relative numeric error tolerance for full marks (0.0-1.0)
 
 # ── Training hyperparameters ──────────────────────────────────────────────
 training:
@@ -62,6 +63,7 @@ training:
   max_epochs: 100          # Max epochs (-1 for unlimited)
   max_steps: -1                      # Max optimize steps (-1 for unlimited)
   rollout_group_size: 8              # Completions per prompt (core algorithm param)
+  rollout_queue_batch_size: 8       # Prompts per rollout queue; replay threshold = G × queue
   optimize_prompt_batch_size: 4      # Prompts per optimize step; replay threshold = G × B
   # optimize_iterations_per_step removed — always 1 iteration per step.
   # Repeated GRPO iterations on stale old_log_probs causes catastrophic forgetting.
@@ -86,10 +88,12 @@ training:
 
 # ── GraspoFlow distributed backend ────────────────────────────────────────
 graspoflow:
+  adapter: graspo.flow.adapters.models.qwen35_36.adapter:Qwen35Adapter  # Model adapter path (module:Class)
   tp_size: 2                         # Tensor-parallel size (1=single GPU)
   pp_size: 1                         # Pipeline-parallel size (1=no pipeline)
   placement_strategy: qwen3_tp       # Layer placement strategy ("auto", "qwen3_tp", custom name)
   sequence_parallel: false           # Enable sequence parallelism
+  layer_ranges: []                  # Manual [start, end) ranges per stage; overrides placement_strategy
   pp_micro_batch_size: 1             # Micro-batch size per pipeline stage
   forward_batch_size: 32             # Rollout micro-batch size (GPU memory trade-off)
   use_kv_cache_for_rollout: true     # Use KV cache during rollout generation
