@@ -10,6 +10,7 @@ from typing import Any
 
 from graspo.backends.graspoflow.lora_helpers import native_qwen_lora_available_targets
 from graspo.backends.graspoflow.lora_io import load_peft_adapter_into_native_model
+from graspo.backends.graspoflow.models.common.qwen_tool_parser import parse_qwen_tool_completion
 from graspo.backends.graspoflow.models.qwen3.model import (
     build_native_qwen_model,
 )
@@ -25,7 +26,6 @@ from graspo.backends.graspoflow.tensor_utils import (
     SafetensorIndex,
     _resolve_dtype,
 )
-from graspo.backends.graspoflow.tool_parser import parse_qwen_tool_completion
 from graspo.backends.graspoflow.transformer_adapter import TransformerAdapter
 from graspo.core.completion import ParsedCompletion
 from graspo.core.lora import resolve_lora_target_modules
