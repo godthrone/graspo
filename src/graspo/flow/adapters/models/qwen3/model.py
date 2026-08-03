@@ -1,3 +1,5 @@
+"""Qwen3 模型适配器实现——设施层，模型特定逻辑。"""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any

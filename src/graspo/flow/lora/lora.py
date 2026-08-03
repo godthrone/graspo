@@ -1,3 +1,5 @@
+"""LoRA 注入与 I/O 工具：微调参数应用、保存、加载、合并（设施层）。"""
+
 from __future__ import annotations
 
 import math

@@ -155,7 +155,11 @@ flowchart TD
 
 ## 为什么用 ABC 模板方法（宪法 §9.2）
 
-每个模型族（Qwen3、Qwen3.5/3.6）有大量共享逻辑（tokenizer、chat template、batch 管理），但模型结构不同（dense vs hybrid text+vision、full-attn vs linear-attn）。ABC 基类 `TransformerAdapter` 定义流程骨架，子类只覆盖差异部分。新增模型只需定义新类并注册，零侵入现有代码。
+**运行时 ABC 契约**：`GraspoFlowRuntimeBase(ABC)` 定义所有 runtime 必须实现的抽象方法（`generate_group`、`sequence_log_probs`、`train_batch`、`save_checkpoint` 等）。`GraspoFlowRuntime` 是生产实现，`GraspoFlowTrainer`/`SFTTrainer` 的 mixin 通过 ABC 调用 runtime，无需任何 `getattr`/`callable()` 探测（宪法 §2.2 防呆）。
+
+**适配器 ABC 继承**：每个模型族（Qwen3、Qwen3.5/3.6）有大量共享逻辑（tokenizer、chat template、batch 管理），但模型结构不同（dense vs hybrid text+vision、full-attn vs linear-attn）。ABC 基类 `TransformerAdapter` 定义流程骨架，子类只覆盖差异部分。新增模型只需定义新类并注册，零侵入现有代码。
+
+**核心数据模型**：`Experience`、`NativeGeneration`、`ParsedCompletion`、`GroupSampleDecision` 均使用 pydantic `BaseModel` + `extra="forbid"` + `frozen=True`（宪法 §9.1），在模块边界上完成校验，非法数据在边界被拦截（宪法 §2.3）。
 
 ## 为什么用类改目录（宪法 §8.3）
 

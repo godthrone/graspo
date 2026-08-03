@@ -64,7 +64,7 @@ training:
   max_steps: -1                      # Max optimize steps (-1 for unlimited)
   rollout_group_size: 8              # Completions per prompt (core algorithm param)
   rollout_queue_batch_size: 8       # Prompts per rollout queue; replay threshold = G × queue
-  optimize_prompt_batch_size: 4      # Prompts per optimize step; replay threshold = G × B
+  optimize_prompt_batch_size: 8      # Prompts per optimize step (controls train forward peak memory)
   # optimize_iterations_per_step removed — always 1 iteration per step.
   # Repeated GRPO iterations on stale old_log_probs causes catastrophic forgetting.
   rollout_max_retries: 5         # Max retries for failed rollouts (same-result fallback)
@@ -95,7 +95,7 @@ graspoflow:
   sequence_parallel: false           # Enable sequence parallelism
   layer_ranges: []                  # Manual [start, end) ranges per stage; overrides placement_strategy
   pp_micro_batch_size: 1             # Micro-batch size per pipeline stage
-  forward_batch_size: 32             # Rollout micro-batch size (GPU memory trade-off)
+  forward_batch_size: 8             # Rollout micro-batch size (GPU memory trade-off)
   use_kv_cache_for_rollout: true     # Use KV cache during rollout generation
   empty_cache_after_rollout_split: false  # Free CUDA cache between rollout chunks
   empty_cache_before_train: false    # Free CUDA cache before optimize step

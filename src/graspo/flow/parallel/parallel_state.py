@@ -1,3 +1,5 @@
+"""TP/PP 分布式状态容器：GraspoFlowState 数据类及进程组管理（设施层）。"""
+
 from __future__ import annotations
 
 import os

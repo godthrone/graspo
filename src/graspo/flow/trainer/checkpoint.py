@@ -96,10 +96,7 @@ class CheckpointMixin:
             raise FileNotFoundError(
                 f"training.resume_from_checkpoint does not exist: {checkpoint_dir}"
             )
-        loader = getattr(self.runtime, "load_checkpoint", None)
-        if not callable(loader):
-            raise RuntimeError("Selected runtime does not support checkpoint resume")
-        trainer_state = loader(checkpoint_dir)
+        trainer_state = self.runtime.load_checkpoint(checkpoint_dir)
         if trainer_state is None:
             raise RuntimeError(
                 "GRASPO checkpoint is missing trainer_state; latest-only resume requires "

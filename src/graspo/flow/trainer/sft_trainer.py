@@ -15,7 +15,7 @@ from graspo.core.schema import GraspoConfig
 from graspo.flow.logging import setup_logging
 from graspo.flow.runtime import (
     GraspoFlowRuntime,
-    GraspoFlowRuntimeProtocol,
+    GraspoFlowRuntimeBase,
     validate_graspoflow_runtime_config,
 )
 from graspo.flow.trainer.helpers import _backup_config, _set_random_seed, _timestamp
@@ -37,7 +37,7 @@ class SFTTrainer:
     def __init__(
         self,
         config: GraspoConfig,
-        runtime: GraspoFlowRuntimeProtocol | None = None,
+        runtime: GraspoFlowRuntimeBase | None = None,
     ) -> None:
         self.config = config
         self.runtime = runtime or GraspoFlowRuntime.from_config(config)
@@ -47,18 +47,14 @@ class SFTTrainer:
 
     def train(self, *, smoke: bool = False) -> None:
         """SFT 训练主入口。
-
-        :param smoke: 冒烟运行边界（基础设施参数）——运行 1 个 batch 后停止，
-            **不修改任何配置值**。
         """
-        """SFT 训练主入口。"""
         validate_graspoflow_runtime_config(self.config)
         output_dir = Path(self.config.training.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         (output_dir / "logs").mkdir(parents=True, exist_ok=True)
         self.runtime.validate()
         self.runtime.setup()
-        rank = int(getattr(self.runtime, "rank", 0))
+        rank = self.runtime.rank
         setup_logging(self.config.training.output_dir, rank=rank)
         _set_random_seed(int(self.config.training.seed), rank=rank)
         _log = logging.getLogger("graspo.sft_trainer")
@@ -199,10 +195,7 @@ class SFTTrainer:
             self.runtime.close()
 
     def _is_primary(self) -> bool:
-        is_primary = getattr(self.runtime, "is_primary", None)
-        if callable(is_primary):
-            return bool(is_primary())
-        return int(getattr(self.runtime, "rank", 0)) == 0
+        return self.runtime.is_primary()
 
     def _print_json(self, payload: dict[str, Any]) -> None:
         if self._is_primary():

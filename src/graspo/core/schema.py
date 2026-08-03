@@ -1,3 +1,5 @@
+"""配置模型定义：GraspoConfig 及所有子配置段的 pydantic 模型，加载即校验。"""
+
 from __future__ import annotations
 
 import datetime

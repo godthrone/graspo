@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "GRASPO (Group Relative Adaptive Structured Policy Optimization) — LoRA reinforcement learning with a self-owned native TP/PP backend."
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
-license = "MIT"
+license = {text = "MIT"}
 authors = [{ name = "Godthrone" }]
 dependencies = [
   "pydantic>=2.0",
@@ -40,7 +40,7 @@ tag_regex = "^(?:v)?(?P<version>[0-9]+\\.[0-9]+\\.[0-9]+)$"
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py311"
 extend-exclude = ["*.jsonl"]
 
 [tool.ruff.lint]
@@ -51,7 +51,7 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.11"
 ignore_missing_imports = true
 
 # 类改目录的 mixin 模块豁免（结构性类型盲区）：

@@ -64,6 +64,16 @@ def setup_logging(output_dir: str | Path, *, rank: int = 0) -> None:
             )
         )
         root.addHandler(file_handler)
+        # ERROR 汇聚到独立错误日志（宪法 §13.3）
+        error_handler = logging.FileHandler(file_dir / "error.log", encoding="utf-8")
+        error_handler.setLevel(logging.ERROR)
+        error_handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s [%(levelname)-5s] %(name)s: %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S",
+            )
+        )
+        root.addHandler(error_handler)
         _SETUP_DONE.add(log_path)
 
 

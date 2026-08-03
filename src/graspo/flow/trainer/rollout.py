@@ -22,7 +22,6 @@ from graspo.ripple.monitoring.summary import (
 )
 from graspo.ripple.multimodal.contract import assert_rl_training_has_multimodal
 from graspo.ripple.parity import classify_group, has_reward_variance
-from graspo.ripple.parsing.completion import raw_parsed_completion
 from graspo.ripple.reward.token_reward import compute_token_rewards
 
 
@@ -48,49 +47,28 @@ class RolloutMixin:
         """为 samples 生成 rollout groups。"""
         message_batches = [sample.messages for sample in samples]
         tool_batches = [sample.tools for sample in samples]
-        generate_groups = getattr(self.runtime, "generate_groups", None)
-        if callable(generate_groups):
-            generations = generate_groups(
-                message_batches=message_batches,
-                tool_batches=tool_batches,
-                rollout_group_size=self.config.training.rollout_group_size,
-                max_new_tokens=self.config.training.max_new_tokens,
-                max_prompt_length=self.config.data.max_prompt_length,
-                temperature=self.config.training.temperature,
-                top_p=self.config.training.top_p,
-                chat_template_kwargs=self.config.model.chat_template_kwargs,
+        generations = self.runtime.generate_groups(
+            message_batches=message_batches,
+            tool_batches=tool_batches,
+            rollout_group_size=self.config.training.rollout_group_size,
+            max_new_tokens=self.config.training.max_new_tokens,
+            max_prompt_length=self.config.data.max_prompt_length,
+            temperature=self.config.training.temperature,
+            top_p=self.config.training.top_p,
+            chat_template_kwargs=self.config.model.chat_template_kwargs,
+        )
+        if len(generations) != len(message_batches):
+            raise RuntimeError(
+                f"graspoflow generate_groups returned {len(generations)} "
+                f"groups for {len(message_batches)} prompts"
             )
-            if len(generations) != len(message_batches):
-                raise RuntimeError(
-                    f"graspoflow generate_groups returned {len(generations)} "
-                    f"groups for {len(message_batches)} prompts"
-                )
-            return generations
-        return [
-            self.runtime.generate_group(
-                messages=messages,
-                tools=tools,
-                rollout_group_size=self.config.training.rollout_group_size,
-                max_new_tokens=self.config.training.max_new_tokens,
-                max_prompt_length=self.config.data.max_prompt_length,
-                temperature=self.config.training.temperature,
-                top_p=self.config.training.top_p,
-                chat_template_kwargs=self.config.model.chat_template_kwargs,
-            )
-            for messages, tools in zip(message_batches, tool_batches, strict=True)
-        ]
+        return generations
 
     def _generate_sample_groups(self, samples: list[Any]) -> list[Any]:
         """为 samples 生成 rollout groups（支持多模态）。"""
         if not any(sample.media for sample in samples):
             return self._generate_groups(samples)
-        generate_sample_groups = getattr(self.runtime, "generate_sample_groups", None)
-        if not callable(generate_sample_groups):
-            raise RuntimeError(
-                "Input samples contain image/video media, but the runtime "
-                "does not implement multimodal generate_sample_groups"
-            )
-        generations = generate_sample_groups(
+        generations = self.runtime.generate_sample_groups(
             samples=samples,
             rollout_group_size=self.config.training.rollout_group_size,
             max_new_tokens=self.config.training.max_new_tokens,
@@ -110,20 +88,15 @@ class RolloutMixin:
 
     def _parse_completion(self, completion: str, sample: Any) -> Any:
         """解析单条 completion 为 ParsedCompletion。"""
-        parse_completion = getattr(self.runtime, "parse_completion", None)
-        if callable(parse_completion):
-            return parse_completion(completion, sample)
-        return raw_parsed_completion(completion)
+        return self.runtime.parse_completion(completion, sample)
 
     def _completion_parser_name(self) -> str:
         """获取 completion 解析器名称。"""
-        adapter = getattr(self.runtime, "_adapter", None)
-        if adapter is not None:
-            parser_name = getattr(adapter, "completion_parser_name", None)
-            if parser_name:
-                return str(parser_name)
-            return adapter.__class__.__name__
-        return "raw"
+        adapter = self.runtime._require_adapter()
+        parser_name = getattr(adapter, "completion_parser_name", None)
+        if parser_name:
+            return str(parser_name)
+        return adapter.__class__.__name__
 
     # ── rollout 批次 ──────────────────────────────────────────────────────────
 

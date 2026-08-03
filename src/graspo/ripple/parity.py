@@ -1,8 +1,9 @@
 """公式 A：质量加权 z-score advantage、组分类决策（GRASPO 算法核心）。"""
 
 from collections.abc import Sequence
-from dataclasses import dataclass
 from enum import StrEnum
+
+from pydantic import BaseModel, ConfigDict
 
 
 class GroupDecision(StrEnum):
@@ -14,8 +15,11 @@ class GroupDecision(StrEnum):
     TRAINABLE_NOT_CORRECT = "trainable_not_correct"
 
 
-@dataclass(frozen=True, slots=True)
-class GroupSampleDecision:
+class GroupSampleDecision(BaseModel):
+    """组分类决策结果（不可变数据模型）。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
     decision: GroupDecision
     reward_min: float
     reward_median: float
@@ -155,8 +159,6 @@ def classify_group(
     elif reward_max >= perfect_skip_reward_threshold:
         decision = GroupDecision.TRAINABLE_MAX_CORRECT
     elif reject_unparseable_groups and best_completion_has_parse_error:
-        # The best completion's format is broken — the group has no valid
-        # template to learn from.  Retry if we can, otherwise discard.
         if retry_count < rollout_max_retries:
             decision = GroupDecision.RETRY
         else:

@@ -1,3 +1,5 @@
+"""Qwen3.5/3.6 混合注意力层实现（TP-aware）—— 设施层，与模型家族解耦。"""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any

@@ -19,7 +19,7 @@ from graspo.flow.logger.logger import NativeRolloutLogger
 from graspo.flow.logging import setup_logging
 from graspo.flow.runtime import (
     GraspoFlowRuntime,
-    GraspoFlowRuntimeProtocol,
+    GraspoFlowRuntimeBase,
     validate_graspoflow_runtime_config,
 )
 from graspo.flow.trainer.checkpoint import CheckpointMixin
@@ -51,7 +51,7 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
         self,
         config: GraspoConfig,
         selection: Any | None = None,
-        runtime: GraspoFlowRuntimeProtocol | None = None,
+        runtime: GraspoFlowRuntimeBase | None = None,
     ) -> None:
         self.config = config
         self.selection = selection
@@ -90,7 +90,7 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
         self.runtime.validate()
         self.runtime.setup()
         # 初始化标准 Python logging 通道
-        rank = int(getattr(self.runtime, "rank", 0))
+        rank = self.runtime.rank
         setup_logging(self.config.training.output_dir, rank=rank)
         _set_random_seed(int(self.config.training.seed), rank=rank)
         _log = logging.getLogger("graspo.trainer")
@@ -278,7 +278,7 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
             run_multimodal_preflight,
         )
 
-        model = getattr(self.runtime, "_require_adapter", lambda: None)()
+        model = self.runtime._require_adapter()
         model_config = getattr(getattr(model, "model", None), "config", None)
         image_token_id = getattr(model_config, "image_token_id", None)
         if image_token_id is not None and self._is_primary():
@@ -304,10 +304,7 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
 
     def _is_primary(self) -> bool:
         """判断当前 rank 是否为主 rank（负责日志 I/O）。"""
-        is_primary = getattr(self.runtime, "is_primary", None)
-        if callable(is_primary):
-            return bool(is_primary())
-        return int(getattr(self.runtime, "rank", 0)) == 0
+        return self.runtime.is_primary()
 
     def _timestamp(self) -> str:
         """返回当前时区的 ISO 格式时间戳。"""
@@ -335,7 +332,7 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
             "sample_index": sample_index,
             "attempt_index": attempt_index,
             "retry_count": retry_count,
-            "rank": int(getattr(self.runtime, "rank", 0)),
-            "tp_rank": int(getattr(self.runtime, "tp_rank", 0)),
+            "rank": self.runtime.rank,
+            "tp_rank": self.runtime.tp_rank,
             "details": round_timing_details(details),
         }

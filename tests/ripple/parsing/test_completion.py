@@ -92,14 +92,12 @@ def test_parsed_completion_to_dict_includes_all_fields():
 
 
 def test_parsed_completion_slots_prevents_new_attributes():
-    """ParsedCompletion uses slots=True — cannot add arbitrary attributes."""
+    """ParsedCompletion uses frozen=True —— 不能添加任意属性。"""
     pc = ParsedCompletion(raw_text="test")
-    # Python 3.12's dataclasses generates the frozen __setattr__ before
-    # _add_slots() recreates the class, so its super(cls, self) check fails
-    # with TypeError for unknown attributes; newer Pythons raise
-    # AttributeError (FrozenInstanceError). Either way the assignment is
-    # blocked, which is what the slots guard guarantees.
-    with pytest.raises((AttributeError, TypeError)):
+    # pydantic frozen=True 将任意属性赋值拦截为 ValidationError
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
         pc.nonexistent_field = "value"
     assert not hasattr(pc, "nonexistent_field")
 

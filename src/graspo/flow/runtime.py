@@ -1,17 +1,19 @@
 """Layer 2 — GraspoFlowRuntime: tensor-parallel runtime boundary.
 
-Delegates all work to a model-specific adapter.  The adapter is loaded
-dynamically via ``GRASPO_ADAPTER`` environment variable or
-a sensible default.
+Delegates all work to a model-specific adapter.  The adapter class path is
+configured via ``graspoflow.adapter`` in the YAML config (default:
+``graspo.flow.adapters.models.qwen35_36.adapter:Qwen35Adapter``).
 """
 
 from __future__ import annotations
 
 import importlib
 import sys
-from dataclasses import dataclass
+from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict
 
 from graspo.core.schema import GraspoConfig, Sample
 from graspo.ripple.buffer import Experience
@@ -29,8 +31,11 @@ FORBIDDEN_RUNTIME_MODULES = (
 )
 
 
-@dataclass(slots=True)
-class NativeGeneration:
+class NativeGeneration(BaseModel):
+    """生成结果数据容器（不可变，跨模块边界传递）。"""
+
+    model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
+
     sequences: Any
     attention_mask: Any
     action_mask: Any
@@ -39,12 +44,40 @@ class NativeGeneration:
     metadata: dict[str, Any] | None = None
 
 
-class GraspoFlowRuntimeProtocol(Protocol):
-    _adapter: Any | None  # 内部状态：setup 后加载的模型适配器（sft_trainer 访问）
+class GraspoFlowRuntimeBase(ABC):
+    """GraspoFlow 运行时抽象基类——所有 runtime 实现的契约。
 
+    Trainer 混合类通过此 ABC 调用 runtime，无需任何 ``getattr``/``callable()``
+    探测（宪法 §2.2 防呆）。子类必须实现所有抽象方法。
+    """
+
+    _adapter: Any | None  # 内部状态：setup 后加载的模型适配器
+
+    @property
+    @abstractmethod
+    def rank(self) -> int:
+        """当前进程的分布式 rank。"""
+        ...
+
+    @property
+    @abstractmethod
+    def tp_rank(self) -> int:
+        """当前进程的 tensor-parallel rank。"""
+        ...
+
+    @abstractmethod
     def validate(self) -> None: ...
+
+    @abstractmethod
     def setup(self) -> None: ...
 
+    @abstractmethod
+    def is_primary(self) -> bool: ...
+
+    @abstractmethod
+    def close(self) -> None: ...
+
+    @abstractmethod
     def generate_group(
         self,
         *,
@@ -58,6 +91,7 @@ class GraspoFlowRuntimeProtocol(Protocol):
         chat_template_kwargs: dict[str, Any] | None = None,
     ) -> NativeGeneration: ...
 
+    @abstractmethod
     def generate_groups(
         self,
         *,
@@ -71,6 +105,7 @@ class GraspoFlowRuntimeProtocol(Protocol):
         chat_template_kwargs: dict[str, Any] | None = None,
     ) -> list[NativeGeneration]: ...
 
+    @abstractmethod
     def generate_sample_groups(
         self,
         *,
@@ -82,10 +117,16 @@ class GraspoFlowRuntimeProtocol(Protocol):
         max_prompt_length: int | None = None,
         chat_template_kwargs: dict[str, Any] | None = None,
     ) -> list[NativeGeneration]: ...
+
+    @abstractmethod
     def parse_completion(self, completion: str, sample: Sample) -> ParsedCompletion: ...
+
+    @abstractmethod
     def sequence_log_probs(
         self, sequences: Any, attention_mask: Any, metadata: Any | None = None
     ) -> Any: ...
+
+    @abstractmethod
     def train_batch(
         self,
         experiences: list[Experience],
@@ -93,21 +134,29 @@ class GraspoFlowRuntimeProtocol(Protocol):
         policy_ratio_clip_eps: float,
         max_grad_norm: float,
     ) -> dict[str, Any]: ...
+
+    @abstractmethod
     def train_batch_sft(
         self,
         sft_batches: list[Any],  # SFTTokenized
         *,
         max_grad_norm: float,
     ) -> dict[str, Any]: ...
+
+    @abstractmethod
     def save_checkpoint(
         self, path: str | Path, *, trainer_state: dict[str, Any] | None = None
     ) -> None: ...
+
+    @abstractmethod
     def load_checkpoint(self, path: str | Path) -> dict[str, Any] | None: ...
-    def close(self) -> None: ...
-    def is_primary(self) -> bool: ...
+
+    def _require_adapter(self) -> Any:
+        """返回已加载的模型适配器（子类可覆盖以提供具体实现）。"""
+        raise NotImplementedError
 
 
-class GraspoFlowRuntime:
+class GraspoFlowRuntime(GraspoFlowRuntimeBase):
     """Strict self-owned tensor-parallel runtime boundary.
 
     The production path uses PyTorch distributed directly and intentionally does
@@ -123,6 +172,20 @@ class GraspoFlowRuntime:
     @classmethod
     def from_config(cls, config: GraspoConfig) -> GraspoFlowRuntime:
         return cls(config)
+
+    @property
+    def rank(self) -> int:
+        adapter = self._adapter
+        if adapter is not None:
+            return int(getattr(adapter, "rank", 0))
+        return 0
+
+    @property
+    def tp_rank(self) -> int:
+        adapter = self._adapter
+        if adapter is not None:
+            return int(getattr(adapter, "tp_rank", 0))
+        return 0
 
     def validate(self) -> None:
         validate_graspoflow_runtime_config(self.config, self.graspoflow_config)
@@ -212,7 +275,6 @@ class GraspoFlowRuntime:
     def sequence_log_probs(
         self, sequences: Any, attention_mask: Any, metadata: Any | None = None
     ) -> Any:
-        # 适配器契约 keyword-only（C8 对齐 ABC）——调用必须用关键字
         return self._require_adapter().sequence_log_probs(
             sequences=sequences,
             attention_mask=attention_mask,
@@ -261,7 +323,7 @@ class GraspoFlowRuntime:
             return True
         return bool(adapter.is_primary())
 
-    def _require_adapter(self):
+    def _require_adapter(self) -> Any:
         if self._adapter is None:
             raise RuntimeError("GraspoFlow runtime is not set up")
         return self._adapter
