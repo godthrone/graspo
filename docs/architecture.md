@@ -36,10 +36,15 @@ flowchart TB
 
 依赖方向：`cli → trainer → adapters → scheduling/parallel`；`flow → ripple/core` 单向（设施消费算法）。
 
-## 计算与设施分离（宪法 §1.3）
+## 三层边界（宪法 §1.3）
 
-- **计算层（core/）**：纯逻辑，零 GPU/网络/IO 依赖。奖励计算、advantage 计算、结构化比较、缓冲区管理。可在单线程本地运行，可独立测试。
-- **设施层（backends/graspoflow/）**：GPU 通信、TP/PP 分布式、模型加载、checkpoint 读写。唯一训练后端。
+| 层 | 职责 | 允许依赖 | 禁止 |
+|----|------|---------|------|
+| **ripple/**（算法层） | 训练方法论：奖励评分、advantage、loss、解析、监控、多模态行构建 | 标准库、pydantic、torch 纯张量计算（CPU 可单测） | GPU 设备调用、分布式、网络、文件 IO |
+| **core/**（通用件） | 跨层契约：配置模型、chat template | 标准库、pydantic、yaml（仅配置读取） | 其他设施 |
+| **flow/**（设施层） | 执行载体：TP/PP 分布式、模型加载、checkpoint、训练循环 | 一切设施 + 单向依赖 ripple/core | 无（反向被 FORBIDDEN 守卫拦截） |
+
+**边界判断**：改这个文件会让训练结果变吗？会 → ripple；不会但和配置有关 → core；其余 → flow。
 
 ## 训练模式
 
@@ -79,7 +84,7 @@ SFT 和 RL 共享同一套 JSONL 数据格式，但 target text 的生成方式�
 `<|im_start|>assistant\n`。两者不一致会导致 SFT 教的格式和模型实际输出格式错位，
 模型会输出 `\n\nfunction\n response\n\n response\n` 等垃圾。
 
-**正确做法**：`build_sft_target_text` → `_tool_calls_to_xml` 直接生成纯
+**正确做法**：`ripple/parsing/xml.py` 的 `build_sft_target_text`/`tool_calls_to_xml` 直接生成纯
 `<tool_call>...</tool_call>` XML，与模型 RL 推理时的实际输出字符级一致。
 
 ### XML 格式对齐：与 Base Model 原生输出一致
@@ -99,7 +104,7 @@ SFT 和 RL 共享同一套 JSONL 数据格式，但 target text 的生成方式�
 新旧格式间摇摆，输出崩溃的 XML（如 `<<tool_call>`、`<parameter=distance</parameter>`）。
 
 **验证方法**：`debug_inference.py` 对 base model 推理一条纯文本 prompt，观察其
-原生 XML 输出格式，然后确保 `_tool_calls_to_xml` 产出的格式与之完全一致。
+原生 XML 输出格式，然后确保 `tool_calls_to_xml`（ripple/parsing/xml.py）产出的格式与之完全一致。
 
 **修复效果**：格式对齐后，step 1 loss 从 0.64 降至 0.28，模型不再需要为格式风格
 消耗 LoRA 容量，所有参数专注于学习内容（动作名、数值）。
@@ -133,8 +138,8 @@ flowchart LR
 ```
 
 两者都通过 `_encode_multimodal_rows` 一次性完成 tokenize + 视觉编码，确保
-`input_ids` 和 `pixel_values` 来自同一次 processor 调用。SFT 的 `_resolve_messages_media_paths`
-和 RL 的 `_multimodal_row_from_sample(data_dir=...)` 均将相对图像路径解析为绝对路径。
+`input_ids` 和 `pixel_values` 来自同一次 processor 调用。SFT 与 RL 均通过 `ripple/multimodal/rows.py` 的 `resolve_messages_media_paths`
+（`multimodal_row_from_sample(data_dir=...)` 内部调用）将相对图像路径解析为绝对路径。
 
 ## 数据流
 
