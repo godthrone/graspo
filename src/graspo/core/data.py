@@ -400,9 +400,9 @@ def sft_tokenize_multimodal(
 
     关键对齐点（SFT → RL pipeline）：
     1. target text 用 ``build_sft_target_text`` 生成纯 XML（不经过 chat template）
-    2. 图像路径用 ripple.multimodal.rows.resolve_messages_media_paths 解析为绝对路径
-    3. 编码时由 ``_encode_multimodal_rows`` 统一处理，RL 的 ripple.multimodal.rows 版 multimodal_row_from_sample
-       也通过 ``data_dir`` 参数解析路径
+    2. 图像路径用 ripple/multimodal/rows.py 的 resolve_messages_media_paths 解析
+    3. 编码时由 ``_encode_multimodal_rows`` 统一处理，RL 侧 rows 构建同样
+       通过 ``data_dir`` 参数解析路径
 
     .. warning::
         ``build_sft_target_text`` 的调用**不传** tokenizer——它直接生成 XML，

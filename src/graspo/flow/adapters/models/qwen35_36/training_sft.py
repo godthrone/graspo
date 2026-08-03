@@ -17,6 +17,18 @@ from graspo.ripple.multimodal.contract import assert_sft_batch_has_multimodal
 
 
 class _Qwen35SFTTrainingMethods:
+    def _compute_sft_loss(self, hidden_states: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        """从 hidden states 计算 SFT cross-entropy loss（设施层不持有算法分派）。"""
+        from graspo.ripple.loss import sft_cross_entropy_loss
+
+        norm = self.model.norm if hasattr(self.model, "norm") else None
+        lm_head = self.model.lm_head if hasattr(self.model, "lm_head") else None
+        if norm is None or lm_head is None:
+            raise RuntimeError("SFT loss requires model.norm and model.lm_head")
+        normalized = norm(hidden_states)
+        logits = torch.nn.functional.linear(normalized.float(), lm_head.weight.float())
+        return sft_cross_entropy_loss(logits, labels.to(hidden_states.device))
+
     """Mixin: SFT training/batch optimization methods for Qwen35Adapter."""
 
     # ── TP-only SFT training ─────────────────────────────────────────────────
@@ -96,7 +108,7 @@ class _Qwen35SFTTrainingMethods:
             assert isinstance(hidden, torch.Tensor)
             self._sync_timing()
             micro_batch_forward_sec += time.monotonic() - forward_started_at
-            loss = self.compute_loss(hidden, micro_batch)
+            loss = self._compute_sft_loss(hidden, micro_batch["labels"])
             if not torch.isfinite(loss):
                 skipped_nonfinite += 1
                 continue
@@ -202,7 +214,7 @@ class _Qwen35SFTTrainingMethods:
             loss_value = 0.0
             if self.pp_rank == self.pp_size - 1:
                 assert stage_output is not None
-                loss = self.compute_loss(stage_output, micro_batch)
+                loss = self._compute_sft_loss(stage_output, micro_batch["labels"])
                 finite = bool(torch.isfinite(loss).detach().cpu())
                 loss_value = float(loss.detach().cpu())
             else:
