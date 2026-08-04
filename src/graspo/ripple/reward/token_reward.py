@@ -460,3 +460,46 @@ def compute_token_advantages(
                 advantages[i].append(0.0)
 
     return advantages
+
+
+# ── Group-level wrapper ──────────────────────────────────────────────────────────
+
+
+def compute_token_rewards_for_group(
+    *,
+    generation: Any,
+    parsed_completions: list[Any],
+    targets: Any,
+    tokenizer: Any,
+    reward_config: Any,
+) -> tuple[list[list[float]], list[list[bool]], list[list[str | None]]]:
+    """为一个 rollout group 的每个 completion 计算 token 级 reward。
+
+    Returns:
+        (token_rewards, is_format_masks, field_keys) — three ragged lists.
+    """
+    from graspo.ripple.reward.reward import normalize_targets
+
+    normalized_targets = normalize_targets(targets)
+    token_rewards: list[list[float]] = []
+    is_format_masks: list[list[bool]] = []
+    field_keys: list[list[str | None]] = []
+    prompt_len = int(generation.prompt_len)
+
+    for idx, completion_text in enumerate(generation.completions):
+        parsed = parsed_completions[idx]
+        gen_ids = generation.sequences[idx, prompt_len:].tolist()
+        tr, is_fmt, fk = compute_token_rewards(
+            generated_token_ids=gen_ids,
+            completion_text=completion_text,
+            parsed=parsed,
+            targets=normalized_targets,
+            tokenizer=tokenizer,
+            check_list_order=bool(reward_config.check_list_order),
+            numeric_tolerance=float(reward_config.numeric_tolerance),
+        )
+        token_rewards.append(tr)
+        is_format_masks.append(is_fmt)
+        field_keys.append(fk)
+
+    return token_rewards, is_format_masks, field_keys

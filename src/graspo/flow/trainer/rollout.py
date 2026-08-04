@@ -11,6 +11,7 @@ from graspo.flow.trainer.helpers import (
     generated_token_counts,
     group_stats,
     public_generation_metadata,
+    raw_generation_payload,
     reward_detail,
     safe_sample_metadata,
 )
@@ -22,7 +23,7 @@ from graspo.ripple.monitoring.summary import (
 )
 from graspo.ripple.multimodal.contract import assert_rl_training_has_multimodal
 from graspo.ripple.parity import classify_group, has_reward_variance
-from graspo.ripple.reward.token_reward import compute_token_rewards
+from graspo.ripple.reward.token_reward import compute_token_rewards_for_group
 
 
 class RolloutMixin:
@@ -249,15 +250,6 @@ class RolloutMixin:
             payload["invalid_reason"] = "no_preference_gap"
         return payload
 
-    @staticmethod
-    def _raw_generation(generation: Any) -> dict[str, Any]:
-        """提取 generation 的原始 tensor 数据。"""
-        return {
-            "sequences": generation.sequences,
-            "attention_mask": generation.attention_mask,
-            "action_mask": generation.action_mask,
-            "prompt_len": generation.prompt_len,
-        }
 
     # ── 样本最终化 ────────────────────────────────────────────────────────────
 
@@ -280,14 +272,14 @@ class RolloutMixin:
                 self.stats.invalid += 1
                 self._write_error_log(readable, decision.decision.value)
             if self._is_primary():
-                self.logger.write_raw({**readable, "raw": self._raw_generation(generation)})
+                self.logger.write_raw({**readable, "raw": raw_generation_payload(generation)})
             self._commit_sample_attempts(state, epoch=epoch)
             return self._finish_sample_and_maybe_optimize(epoch=epoch)
         if not has_reward_variance(rewards):
             self.stats.invalid += 1
             self._write_error_log(readable, "no_reward_variance")
             if self._is_primary():
-                self.logger.write_raw({**readable, "raw": self._raw_generation(generation)})
+                self.logger.write_raw({**readable, "raw": raw_generation_payload(generation)})
             timing["decision"] = "invalid"
             self._commit_sample_attempts(state, epoch=epoch)
             return self._finish_sample_and_maybe_optimize(epoch=epoch)
@@ -325,7 +317,7 @@ class RolloutMixin:
         # GRASPO-Ripple: token-level rewards and advantages
         tokenizer = self.runtime._require_adapter().tokenizer
         if tokenizer is not None and record.parsed_completions:
-            token_rewards, is_format_masks, field_keys = _compute_token_rewards_for_group(
+            token_rewards, is_format_masks, field_keys = compute_token_rewards_for_group(
                 generation=generation,
                 parsed_completions=record.parsed_completions,
                 targets=state.sample.targets,
@@ -360,7 +352,7 @@ class RolloutMixin:
                 {
                     **readable,
                     "raw": {
-                        **self._raw_generation(generation),
+                        **raw_generation_payload(generation),
                         "old_log_probs": old_log_probs,
                         "advantages": advantages,
                     },
@@ -500,43 +492,5 @@ class RolloutMixin:
 
 
 # ── GRASPO-Ripple 辅助函数 ──────────────────────────────────────────────────
-
-
-def _compute_token_rewards_for_group(
-    *,
-    generation: Any,
-    parsed_completions: list[Any],
-    targets: Any,
-    tokenizer: Any,
-    reward_config: Any,
-) -> "tuple[list[list[float]], list[list[bool]], list[list[str | None]]]":
-    """为一个 rollout group 的每个 completion 计算 token 级 reward。
-
-    Returns:
-        (token_rewards, is_format_masks, field_keys) — three ragged lists.
-    """
-    from graspo.ripple.reward.reward import normalize_targets
-
-    normalized_targets = normalize_targets(targets)
-    token_rewards: list[list[float]] = []
-    is_format_masks: list[list[bool]] = []
-    field_keys: list[list[str | None]] = []
-    prompt_len = int(generation.prompt_len)
-
-    for idx, completion_text in enumerate(generation.completions):
-        parsed = parsed_completions[idx]
-        gen_ids = generation.sequences[idx, prompt_len:].tolist()
-        tr, is_fmt, fk = compute_token_rewards(
-            generated_token_ids=gen_ids,
-            completion_text=completion_text,
-            parsed=parsed,
-            targets=normalized_targets,
-            tokenizer=tokenizer,
-            check_list_order=bool(reward_config.check_list_order),
-            numeric_tolerance=float(reward_config.numeric_tolerance),
-        )
-        token_rewards.append(tr)
-        is_format_masks.append(is_fmt)
-        field_keys.append(fk)
-
-    return token_rewards, is_format_masks, field_keys
+# compute_token_rewards_for_group 已迁入 ripple/reward/token_reward.py
+# （算法层，供 flow 与 ripple 共用，受 mypy 检查）。

@@ -54,8 +54,8 @@ GPU_IDS=4,5 bash run.sh my_config.yaml
   两者混用会导致 NCCL 初始化死锁；
 - **固定 `--ipc=host --shm-size=16g`**（NCCL 共享内存必需）；
 - **镜像 tag 自动取 `git describe`**，不硬编码版本；
-- **`--smoke` 走 CLI**（`graspo launch --smoke`），仅内存中设置
-  `max_steps=1`，绝不修改你的 config 文件。
+- **`--smoke` 走 CLI**（`graspo launch --smoke`）作为运行边界标志：训练跑完
+  第 1 步即停止——语义等价于 `max_steps=1` 的 config，绝不修改你的 config 文件。
 
 手动调用（参考，例如自定义编排）：
 

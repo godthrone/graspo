@@ -82,7 +82,7 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
     def train(self, *, smoke: bool = False) -> None:
         """GRASPO 训练主入口。
 
-        :param smoke: 冒烟运行边界（基础设施参数，宪法 §10.1 合理例外）——
+        :param smoke: 冒烟运行边界（运行边界参数，不改变训练语义）——
             运行到首轮 optimize 后停止，**不修改任何配置值**。
         """
         self._smoke_boundary = bool(smoke)

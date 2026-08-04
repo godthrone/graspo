@@ -258,7 +258,7 @@ def reward_detail(result: Any) -> dict[str, Any]:
 def generated_token_counts(generation: Any) -> list[int]:
     """从 generation 中提取每条 completion 的生成 token 数。
 
-    当 action_mask 不可用时返回空列表——这是透明降级（宪法 3.2），不影响训练，
+    当 action_mask 不可用时返回空列表——这是透明降级（不改变训练结果），不影响训练，
     仅影响监控日志中的 token 计数。降级原因通过 warnings 告知用户。
     """
     try:
@@ -332,3 +332,16 @@ def experience_metadata_for_row(
 # ── tool-call 辅助 ─────────────────────────────────────────────────────────────
 # tool_call_count_mismatch_count / _target_tool_call_counts 已迁入
 # ripple/parsing/classification.py（算法层，供 flow 与 ripple 共用）。
+
+
+# ── 生成数据提取 ──────────────────────────────────────────────────────────────
+
+
+def raw_generation_payload(generation: Any) -> dict[str, Any]:
+    """提取 generation 的原始 tensor 数据（写入 raw 日志用）。"""
+    return {
+        "sequences": generation.sequences,
+        "attention_mask": generation.attention_mask,
+        "action_mask": generation.action_mask,
+        "prompt_len": generation.prompt_len,
+    }

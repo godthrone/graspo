@@ -1,6 +1,6 @@
 """Qwen3.5/3.6 adapter — hybrid attention + visual tower + multimodal.
 
-采用类改目录模式（宪法 8.3）：模型加载/构建驻留在本文件，
+采用类改目录模式：模型加载/构建驻留在本文件，
 生成/训练/logprobs 方法分布在 generation.py / training.py / logprobs.py 中。
 外部使用者只 import 类名，完全不感知内部拆分。
 """

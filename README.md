@@ -73,8 +73,9 @@ GPU_IDS=4,5 bash run.sh my_config.yaml
   deadlocks NCCL initialization;
 - **Always sets `--ipc=host --shm-size=16g`** (required for NCCL shared memory);
 - **Resolves the image tag from `git describe`** — never hardcodes a version;
-- **`--smoke` goes through the CLI** (`graspo launch --smoke`), which sets
-  `max_steps=1` in memory only — your config file is never modified.
+- **`--smoke` goes through the CLI** (`graspo launch --smoke`) as a run-boundary
+  flag: training stops after the first step — semantically equivalent to a
+  `max_steps=1` config, and your config file is never modified.
 
 Manual invocation (for reference, e.g. inside your own orchestration):
 
@@ -176,8 +177,6 @@ Validate sample data and reward behavior:
 ```bash
 uv run graspo validate-reward --data samples/data/sample.jsonl --limit 2
 ```
-
-For reward validation testing, use the scripts in `scripts/` directory.
 
 ## Data Format
 

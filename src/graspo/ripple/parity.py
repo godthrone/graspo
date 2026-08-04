@@ -127,7 +127,7 @@ def classify_group(
 
     When ``reject_unparseable_groups`` is True and the best-scoring completion
     has parse errors (invalid JSON, unclosed fences, tool-call count mismatch,
-    etc.), the group is rejected — this is a **defense line** (Constitution 2.3),
+    etc.), the group is rejected — this is a **defense line** (fail-closed),
     not a fallback.  Unparseable completions are invalid data that cannot produce
     meaningful training signals; blocking them at the boundary prevents noise
     from entering the training pipeline.

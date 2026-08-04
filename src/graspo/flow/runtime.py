@@ -48,7 +48,7 @@ class GraspoFlowRuntimeBase(ABC):
     """GraspoFlow 运行时抽象基类——所有 runtime 实现的契约。
 
     Trainer 混合类通过此 ABC 调用 runtime，无需任何 ``getattr``/``callable()``
-    探测（宪法 §2.2 防呆）。子类必须实现所有抽象方法。
+    探测（防呆）。子类必须实现所有抽象方法。
     """
 
     _adapter: Any | None  # 内部状态：setup 后加载的模型适配器

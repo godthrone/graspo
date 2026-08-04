@@ -14,13 +14,22 @@ def test_cli_main_commands_parse():
     commands = [
         ["launch", "--config", "samples/configs/config_example.yaml"],
         ["export", "--config", "samples/configs/config_example.yaml"],
+        ["validate-reward", "--data", "samples/data/sample.jsonl"],
+        [
+            "evaluate-checkpoint",
+            "--config",
+            "samples/configs/config_example.yaml",
+            "--data",
+            "samples/data/sample.jsonl",
+        ],
+        ["analyze-profile", "outputs/some_run"],
     ]
     for command in commands:
         args = parser.parse_args(command)
         assert callable(args.func)
 
 
-@pytest.mark.parametrize("command", ["train", "prepare-data", "analyze", "validate-reward"])
+@pytest.mark.parametrize("command", ["train", "prepare-data", "analyze"])
 def test_cli_removed_commands_are_not_public(command):
     parser = build_parser()
 

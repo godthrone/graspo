@@ -56,7 +56,8 @@ ignore_missing_imports = true
 
 # 类改目录的 mixin 模块豁免（结构性类型盲区）：
 # mixin 方法引用兄弟 mixin/主类属性（self._print_json 等），mypy 按单类
-# 视角无法验证组合后的完整类。运行时由 376 测试验证。
+# 视角无法验证组合后的完整类；组合正确性由测试覆盖（豁免文件内的模块级
+# 纯函数已提取到 helpers.py，恢复 mypy 检查）。
 # 约束：tests/core/test_mypy_exemptions.py 保证豁免列表只覆盖 mixin 文件。
 [[tool.mypy.overrides]]
 module = [

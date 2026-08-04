@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+"""GPU 显存/利用率采样记录（运维监控工具）。
+
+保留在 scripts/ 的理由：运维监控脚本，实验性、按需运行、无测试固化、
+不被文档引用——按"制度化判据"不属于 CLI 子命令（§10.2），
+保持开发者工具定位。
+"""
+
 from __future__ import annotations
 
 import argparse

@@ -1,6 +1,8 @@
-"""CLI 命令入口：``graspo launch`` / ``graspo export``。
+"""CLI 命令入口：``graspo launch`` / ``graspo export`` / 工具命令。
 
 配置驱动：解析 --config → 加载并校验配置 → 构建 torchrun 启动计划。
+工具命令（validate-reward / evaluate-checkpoint / analyze-profile）实现在
+``cli.tools``，按配置驱动命令 §10.1 约束：只 print 或输出由 config 决定。
 """
 
 import argparse
@@ -48,6 +50,62 @@ def cmd_export(args: argparse.Namespace) -> int:
             },
             ensure_ascii=False,
         )
+    )
+    return 0
+
+
+def cmd_validate_reward(args: argparse.Namespace) -> int:
+    """校验 reward 评分链路：加载数据 → 评分 → 只 print，不落盘。"""
+    from graspo.cli.tools import validate_reward_scores
+    from graspo.core.data import load_jsonl
+
+    samples = load_jsonl(args.data)
+    if args.limit and args.limit > 0:
+        samples = samples[: args.limit]
+    completions: list[str] = []
+    if args.completions:
+        with Path(args.completions).open("r", encoding="utf-8") as handle:
+            for line in handle:
+                completions.append(json.loads(line)["completion"])
+    scores = validate_reward_scores(samples, completions)
+    for score in scores:
+        print(json.dumps(score, ensure_ascii=False))
+    if scores:
+        print(
+            json.dumps(
+                {
+                    "samples": len(scores),
+                    "mean": round(sum(score["reward"] for score in scores) / len(scores), 6),
+                    "all_right": sum(1 for score in scores if score["all_right"]),
+                },
+                ensure_ascii=False,
+            )
+        )
+    return 0
+
+
+def cmd_evaluate_checkpoint(args: argparse.Namespace) -> int:
+    """评测 checkpoint：生成 rollout groups 并评分，输出到 config 决定的目录。"""
+    from graspo.cli.tools import run_evaluate
+
+    summary = run_evaluate(
+        args.config,
+        args.data,
+        checkpoint=args.checkpoint,
+        limit=args.limit,
+    )
+    print(json.dumps(summary, ensure_ascii=False))
+    return 0
+
+
+def cmd_analyze_profile(args: argparse.Namespace) -> int:
+    """汇总运行目录的性能指标，只 print 不落盘。"""
+    from graspo.cli.tools import run_analyze
+
+    run_analyze(
+        args.run_dirs,
+        skip_warmup_steps=args.skip_warmup_steps,
+        as_json=args.json,
     )
     return 0
 
@@ -223,6 +281,54 @@ def build_parser() -> argparse.ArgumentParser:
     )
     export.add_argument("--config", "-c", required=True)
     export.set_defaults(func=cmd_export)
+
+    validate = subparsers.add_parser(
+        "validate-reward",
+        help="Validate reward scoring on a data file. Prints per-sample scores, writes nothing.",
+    )
+    validate.add_argument("--data", required=True, help="JSONL data file to score.")
+    validate.add_argument(
+        "--limit", type=int, default=0, help="Only score the first N samples (0 = all)."
+    )
+    validate.add_argument(
+        "--completions", default="", help="Optional JSONL of explicit completions to score."
+    )
+    validate.set_defaults(func=cmd_validate_reward)
+
+    evaluate = subparsers.add_parser(
+        "evaluate-checkpoint",
+        help=(
+            "Evaluate a checkpoint by generating rollout groups and scoring rewards. "
+            "Output goes to the config's output_dir/evaluate/."
+        ),
+    )
+    evaluate.add_argument("--config", "-c", required=True)
+    evaluate.add_argument("--data", required=True, help="Evaluation JSONL path.")
+    evaluate.add_argument(
+        "--checkpoint", help="Recoverable native checkpoint directory to load."
+    )
+    evaluate.add_argument(
+        "--limit", type=int, default=0, help="Optional number of samples to evaluate; 0 means all."
+    )
+    evaluate.set_defaults(func=cmd_evaluate_checkpoint)
+
+    analyze = subparsers.add_parser(
+        "analyze-profile",
+        help="Summarize profiling outputs from one or more run directories. Prints only.",
+    )
+    analyze.add_argument(
+        "run_dirs", nargs="+", help="One or more GRASPO output directories."
+    )
+    analyze.add_argument(
+        "--skip-warmup-steps",
+        type=int,
+        default=1,
+        help="Train steps skipped for mean timing.",
+    )
+    analyze.add_argument(
+        "--json", action="store_true", help="Emit JSON instead of a compact table."
+    )
+    analyze.set_defaults(func=cmd_analyze_profile)
 
     return parser
 

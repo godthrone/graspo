@@ -70,7 +70,7 @@ class TrainingConfig(BaseModel):
     optimize_prompt_batch_size: int = 8
     # optimize_iterations_per_step removed — always 1 iteration per step.
     # GRPO with repeated iterations on stale old_log_probs causes catastrophic
-    # forgetting of shared tokens (e.g. tool-call formatting).  See Constitution §5.
+    # forgetting of shared tokens (e.g. tool-call formatting).
     rollout_max_retries: int = 5
     learning_rate: float = 5e-6
     weight_decay: float = 0.01
