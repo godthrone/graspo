@@ -17,7 +17,7 @@ from typing import Any
 import torch
 import torch.distributed as dist
 
-from graspo.flow.adapters.base import BaseGraspoFlowAdapter
+from graspo.flow.adapters.base_graspo_flow_adapter import BaseGraspoFlowAdapter
 from graspo.flow.parallel.parallel_state import GraspoFlowState, destroy_parallel_state
 from graspo.flow.parallel.placement import (
     NativePlacementPlan,

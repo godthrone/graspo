@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from graspo.core.schema import RewardConfig
 from graspo.ripple.parsing.completion import ParsedCompletion, raw_parsed_completion
 from graspo.ripple.reward.compare import dict_compare_score
 from graspo.ripple.reward.normalize import (
@@ -17,21 +18,6 @@ from graspo.ripple.reward.normalize import (
 ContentField = Literal["answer"]
 FieldItem = tuple[Literal["field"], ContentField]
 CheckItem = str | FieldItem | None
-
-
-class RewardConfig(BaseModel):
-    """奖励评分配置，所有字段在加载时校验，拒绝未知字段。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    check_think: bool = False
-    check_json_markdown: bool = True
-    check_list_order: bool = False
-    marker_reward_weight: float = 10.0
-    content_reward_weight: float = 100.0
-    anti_useless_str_reward_weight: float = 1.0
-    anti_useless_str_half_reward_len: int = 100
-    numeric_tolerance: float = 0.2
 
 
 class RewardResult(BaseModel):
@@ -332,3 +318,19 @@ class GraspoReward:
             2,
             len(useless_text) / self.config.anti_useless_str_half_reward_len,
         )
+
+
+# ── 奖励实现注册表（§9.3）────────────────────────────────────────────────────
+
+
+REWARD_REGISTRY: dict[str, type[GraspoReward]] = {"graspo": GraspoReward}
+
+
+def create_reward(config: RewardConfig) -> GraspoReward:
+    """按配置的 reward.kind 实例化奖励实现；未知实现报错并列出可用选项。"""
+    reward_cls = REWARD_REGISTRY.get(config.kind)
+    if reward_cls is None:
+        raise ValueError(
+            f"unknown reward backend {config.kind!r}; available: {sorted(REWARD_REGISTRY)}"
+        )
+    return reward_cls(config)

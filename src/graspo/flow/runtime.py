@@ -19,6 +19,11 @@ from graspo.core.schema import GraspoConfig, Sample
 from graspo.ripple.buffer import Experience
 from graspo.ripple.parsing.completion import ParsedCompletion
 
+_AVAILABLE_ADAPTERS = (
+    "graspo.flow.adapters.models.qwen3.adapter:Qwen3Adapter",
+    "graspo.flow.adapters.models.qwen35_36.adapter:Qwen35Adapter",
+)
+
 FORBIDDEN_RUNTIME_MODULES = (
     "megatron",
     "nemo_rl",
@@ -196,9 +201,18 @@ class GraspoFlowRuntime(GraspoFlowRuntimeBase):
         adapter_path = self.graspoflow_config.adapter
         module_name, sep, class_name = adapter_path.partition(":")
         if not sep:
-            raise ValueError("graspoflow.adapter 必须使用 'module:Class' 格式")
-        module = importlib.import_module(module_name)
-        adapter_cls = getattr(module, class_name)
+            raise ValueError(
+                "graspoflow.adapter 必须使用 'module:Class' 格式；"
+                f"可用适配器：{', '.join(_AVAILABLE_ADAPTERS)}"
+            )
+        try:
+            module = importlib.import_module(module_name)
+            adapter_cls = getattr(module, class_name)
+        except (ModuleNotFoundError, AttributeError) as exc:
+            raise ValueError(
+                f"无法加载适配器 {adapter_path!r}: {exc}；"
+                f"可用适配器：{', '.join(_AVAILABLE_ADAPTERS)}"
+            ) from exc
         self._adapter = adapter_cls(self.config)
         self._adapter.setup()
 

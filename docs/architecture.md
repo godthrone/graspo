@@ -36,7 +36,7 @@ flowchart TB
 
 依赖方向：`cli → trainer → adapters → scheduling/parallel`；`flow → ripple/core` 单向（设施消费算法）。
 
-## 三层边界（宪法 §1.3）
+## 三层边界（单向依赖）
 
 | 层 | 职责 | 允许依赖 | 禁止 |
 |----|------|---------|------|
@@ -153,18 +153,32 @@ flowchart TD
     OPT --> CKPT["checkpoint 保存"]
 ```
 
-## 为什么用 ABC 模板方法（宪法 §9.2）
+## 为什么用 ABC 模板方法（模板方法）
 
-**运行时 ABC 契约**：`GraspoFlowRuntimeBase(ABC)` 定义所有 runtime 必须实现的抽象方法（`generate_group`、`sequence_log_probs`、`train_batch`、`save_checkpoint` 等）。`GraspoFlowRuntime` 是生产实现，`GraspoFlowTrainer`/`SFTTrainer` 的 mixin 通过 ABC 调用 runtime，无需任何 `getattr`/`callable()` 探测（宪法 §2.2 防呆）。
+**运行时 ABC 契约**：`GraspoFlowRuntimeBase(ABC)` 定义所有 runtime 必须实现的抽象方法（`generate_group`、`sequence_log_probs`、`train_batch`、`save_checkpoint` 等）。`GraspoFlowRuntime` 是生产实现，`GraspoFlowTrainer`/`SFTTrainer` 的 mixin 通过 ABC 调用 runtime，无需任何 `getattr`/`callable()` 探测（防呆）。
 
 **适配器 ABC 继承**：每个模型族（Qwen3、Qwen3.5/3.6）有大量共享逻辑（tokenizer、chat template、batch 管理），但模型结构不同（dense vs hybrid text+vision、full-attn vs linear-attn）。ABC 基类 `TransformerAdapter` 定义流程骨架，子类只覆盖差异部分。新增模型只需定义新类并注册，零侵入现有代码。
 
-**核心数据模型**：`Experience`、`NativeGeneration`、`ParsedCompletion`、`GroupSampleDecision` 均使用 pydantic `BaseModel` + `extra="forbid"` + `frozen=True`（宪法 §9.1），在模块边界上完成校验，非法数据在边界被拦截（宪法 §2.3）。
+**核心数据模型**：`Experience`、`NativeGeneration`、`ParsedCompletion`、`GroupSampleDecision` 均使用 pydantic `BaseModel` + `extra="forbid"` + `frozen=True`，在模块边界上完成校验，非法数据在边界被拦截（防呆）。
 
-## 为什么用类改目录（宪法 §8.3）
+## 为什么用类改目录（类改目录）
 
 `GraspoFlowTrainer` 包含训练循环、rollout、优化、checkpoint 四个关注点。按功能域拆分为多个 mixin 文件后，每个文件聚焦一个概念。外部使用者通过 `__init__.py` 只 import 类名，完全不感知内部拆分。
 
-## 为什么只有 GraspoFlow 一个后端（宪法 §16.1）
+## 为什么只有 GraspoFlow 一个后端（不留负债）
 
 历史上有过 `native_tp` 后端。v0.9 完成 GraspoFlow 迁移后立即删除旧代码——不保留"兼容模式"，不保留 `legacy/` 目录。代码库中只存在一套当前架构。这是宪法"不留技术负债"原则的直接体现。
+
+## 确定性边界（复现性）
+
+训练的可复现性遵循"同一 config + 同一 seed 下，排除不可控随机性后，落盘输出一致"的
+定义（见宪法复现定义）。GRASPO 的确定性保证范围：
+
+- **受控随机性**：`training.seed`（配置显式设定）覆盖 random/numpy/torch/cuda RNG；
+  epoch shuffle 用独立 `random.Random(seed + epoch)` 实例；多 rank 的 batch shuffle
+  由 rank 0 广播保持一致；torch/cuda RNG 状态随 checkpoint 保存与恢复。
+- **不可控随机性**：GPU 内核选择（cudnn autotune 等）、机器负载导致的耗时差异
+  不在复现保证范围内——同 config 两次运行的落盘结果文件一致，日志中的耗时字段
+  允许有差异。
+- **边界**：跨不同 GPU 型号/驱动版本训练不承诺比特级一致；需要比特级复现的场景
+  应在同一台机器同一驱动下运行。

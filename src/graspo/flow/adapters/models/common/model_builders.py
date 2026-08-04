@@ -17,8 +17,8 @@ from typing import TYPE_CHECKING
 import torch
 from torch import nn
 
-from graspo.flow.adapters.models.common.config import NativeQwenConfig
-from graspo.flow.lora.lora import _replace_visual_lora_modules
+from graspo.flow.adapters.models.common.native_qwen_config import NativeQwenConfig
+from graspo.flow.lora.lora_linear import _replace_visual_lora_modules
 
 if TYPE_CHECKING:
     from graspo.flow.parallel.placement import NativePlacementPlan

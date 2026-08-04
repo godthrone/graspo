@@ -4,10 +4,10 @@ import pytest
 
 from graspo.core.schema import Sample
 from graspo.ripple.monitoring.stats import (
+    AttemptRecord,
     GraspoFlowEpochStats,
     GraspoFlowTrainStats,
-    _AttemptRecord,
-    _QueuedSample,
+    QueuedSample,
 )
 
 
@@ -92,27 +92,27 @@ def test_epoch_stats_counts_increment():
     assert stats.completion_count == 160
 
 
-# ── _QueuedSample ──────────────────────────────────────────────────────────
+# ── QueuedSample ──────────────────────────────────────────────────────────
 
 
 def test_queued_sample_holds_reference():
     sample = _make_sample()
-    queued = _QueuedSample(sample=sample, retry_count=0)
+    queued = QueuedSample(sample=sample, retry_count=0)
     assert queued.sample is sample
     assert queued.retry_count == 0
     assert queued.attempts == []
 
 
 def test_queued_sample_tracks_retry():
-    queued = _QueuedSample(sample=_make_sample(), retry_count=3)
+    queued = QueuedSample(sample=_make_sample(), retry_count=3)
     assert queued.retry_count == 3
 
 
-# ── _AttemptRecord ────────────────────────────────────────────────────────
+# ── AttemptRecord ────────────────────────────────────────────────────────
 
 
 def test_attempt_record_stores_rewards():
-    record = _AttemptRecord(
+    record = AttemptRecord(
         sample=_make_sample(),
         generation=None,
         parsed_completions=[],
@@ -133,7 +133,7 @@ def test_attempt_record_stores_rewards():
 
 
 def test_attempt_record_decision():
-    record = _AttemptRecord(
+    record = AttemptRecord(
         sample=_make_sample(),
         generation=None,
         parsed_completions=[],

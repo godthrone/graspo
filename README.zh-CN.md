@@ -44,10 +44,10 @@ bash run.sh my_config.yaml
 bash run.sh my_config.yaml --smoke
 
 # 4. 指定 GPU（例如 4 和 5）
-GPU_IDS=4,5 bash run.sh my_config.yaml
+bash run.sh my_config.yaml --gpus 4,5
 ```
 
-`run.sh` 是防呆设计（宪法 §2.3）：
+`run.sh` 是防呆设计：
 
 - **自动选择空闲 GPU**（通过 `nvidia-smi` 检测），无需手动数卡；
 - **只传 `--gpus device=<ids>`**，绝不注入 `CUDA_VISIBLE_DEVICES`——
@@ -72,10 +72,10 @@ docker run --gpus "device=0,1" --ipc=host --shm-size=16g \
 > `run.sh` 处理；分布式设置（nnodes、master_addr、端口）见 config 的
 > `launch` 段。
 
-> **没有模型？** 默认配置指向 `models/Qwen3-8B`。下载方式：
+> **没有模型？** 默认配置指向 `models/Qwen3.5-9B`。下载方式：
 > ```bash
 > # 在宿主机上，启动容器前执行
-> huggingface-cli download Qwen/Qwen3-8B --local-dir /path/to/models/Qwen3-8B
+> huggingface-cli download Qwen/Qwen3.5-9B --local-dir /path/to/models/Qwen3.5-9B
 > ```
 
 短测时保持 `training.max_new_tokens=2048`，只降低 `training.max_steps`。
@@ -117,7 +117,7 @@ cp samples/configs/config_example.yaml my_graspo.yaml
 - `data.train_path`：JSONL 训练数据；
 - `training.output_dir`：run 输出目录；
 - GPU 选择**不在配置中**——用 `run.sh`（自动选空闲 GPU）或
-  `GPU_IDS=4,5 bash run.sh config.yaml`（见 Docker 章节）；
+  `bash run.sh config.yaml --gpus 4,5`（见 Docker 章节）；
 - `graspoflow.tp_size` 和 `graspoflow.pp_size`：native TP/PP world size。
 
 ### SFT 训练
@@ -340,12 +340,11 @@ GRASPO 使用同一 rollout group 内的 reward 分布，而不是单条 complet
 
 ### `launch`
 
-- GPU 选择**不在此配置**——由 `run.sh`（`GPU_IDS=4,5 bash run.sh config.yaml`）
+- GPU 选择**不在此配置**——由 `run.sh`（`bash run.sh config.yaml --gpus 4,5`）
   或 Docker `--gpus` 直接处理。
 - `nproc_per_node`：当前节点 worker 数；为空时从 TP * PP / nodes 派生。
 - `nnodes`、`node_rank`、`master_addr`、`master_port`：distributed launch 设置。
 - `python`：可选 Python executable override。
-- `torchrun`：可选 torchrun executable override。
 - `env`：传给训练进程的额外环境变量。
 
 ## LoRA Targets
@@ -387,7 +386,7 @@ uv run graspo export --config samples/configs/config_example.yaml
 ```yaml
 backend: graspoflow
 model:
-  model_path: models/Qwen3-8B
+  model_path: models/Qwen3.5-9B
 export:
   checkpoint_path: outputs/example-run/final
   export_format: peft-adapter   # 或 "merged-hf"
@@ -466,3 +465,7 @@ bash run.sh samples/configs/config_example.yaml --smoke
 ## License
 
 GRASPO 使用 MIT License。见 [LICENSE](LICENSE)。
+
+依赖许可：所有运行时依赖均为宽松许可（MIT/Apache-2.0/BSD）。PyTorch CUDA wheel
+捆绑的 NVIDIA 运行时库采用 NVIDIA 专有 EULA（可再分发、无传染性），详见
+NVIDIA Software License。

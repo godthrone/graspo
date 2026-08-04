@@ -160,7 +160,7 @@ def test_resolve_with_stale_rows_key_raises():
     这是 v13 断链（图像 token 静默按纯文本嵌入）的回归防线（B3 新增）。
     """
     stale = {MULTIMODAL_ROWS_KEY: None}
-    from graspo.flow.adapters.transformer import TransformerAdapter
+    from graspo.flow.adapters.transformer_adapter import TransformerAdapter
 
     class _Stub(TransformerAdapter):
         def _encode_multimodal_rows(self, *args: Any, **kwargs: Any) -> dict[str, Any]:

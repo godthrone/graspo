@@ -4,5 +4,5 @@
 职责边界：
 - rows 构建、metadata 读写：纯数据变换（rows.py）
 - 防呆契约校验：纯逻辑校验，缺图即抛异常（contract.py）
-- processor 编码、张量移动：属于 flow 设施层（backends/graspoflow/transformer_adapter.py）
+- processor 编码、张量移动：属于 flow 设施层（flow/adapters/transformer_adapter.py）
 """

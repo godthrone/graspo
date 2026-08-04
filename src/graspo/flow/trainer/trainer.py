@@ -1,4 +1,4 @@
-"""Layer 2 — GraspoFlowTrainer: GRASPO 训练循环主类。
+"""Layer 2 — GraspoFlowTrainer：GRASPO 训练循环主类。
 
 采用类改目录模式：统计、rollout、优化、checkpoint 分别驻留在独立文件中，
 通过 mixin 组合到主类。外部使用者只 import 类名，完全不感知内部拆分。
@@ -13,9 +13,8 @@ from collections import deque
 from pathlib import Path
 from typing import Any
 
-from graspo.core.data import load_jsonl
 from graspo.core.schema import GraspoConfig
-from graspo.flow.logger.logger import NativeRolloutLogger
+from graspo.flow.logger.native_rollout_logger import NativeRolloutLogger
 from graspo.flow.logging import setup_logging
 from graspo.flow.runtime import (
     GraspoFlowRuntime,
@@ -31,13 +30,14 @@ from graspo.flow.trainer.helpers import (
 from graspo.flow.trainer.optimize import OptimizeMixin
 from graspo.flow.trainer.rollout import RolloutMixin
 from graspo.ripple.buffer import ReplayBuffer
+from graspo.ripple.data import load_jsonl
 from graspo.ripple.monitoring.stats import (
     GraspoFlowEpochStats,
     GraspoFlowTrainStats,
-    _QueuedSample,
+    QueuedSample,
 )
 from graspo.ripple.monitoring.summary import round_timing_details
-from graspo.ripple.reward.reward import GraspoReward
+from graspo.ripple.reward.reward import create_reward
 
 
 class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
@@ -56,7 +56,7 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
         self.config = config
         self.selection = selection
         self.runtime = runtime or GraspoFlowRuntime.from_config(config)
-        self.reward = GraspoReward(config.reward)
+        self.reward = create_reward(config.reward)
         self.replay_buffer = ReplayBuffer()
         self._smoke_boundary = False  # 冒烟运行边界：首轮 optimize 后停止（见 train(smoke=)）
         self.stats = GraspoFlowTrainStats()
@@ -241,12 +241,12 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
 
     def _sample_queue(self, samples: list[Any], *, epoch: int) -> bool:
         """处理一批样本：rollout → 评分 → 重试 → 最终化。"""
-        active = [_QueuedSample(sample=sample) for sample in samples]
-        finished: list[_QueuedSample] = []
+        active = [QueuedSample(sample=sample) for sample in samples]
+        finished: list[QueuedSample] = []
         max_attempts = self.config.training.rollout_max_retries + 1
         while active:
             attempt_records = self._rollout_queue_attempt(active, epoch=epoch)
-            next_active: list[_QueuedSample] = []
+            next_active: list[QueuedSample] = []
             for state, record in zip(active, attempt_records, strict=True):
                 if record.decision.should_retry:
                     state.attempts.append(record)

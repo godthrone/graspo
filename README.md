@@ -62,10 +62,10 @@ bash run.sh my_config.yaml
 bash run.sh my_config.yaml --smoke
 
 # 4. Pin specific GPUs (e.g. 4 and 5)
-GPU_IDS=4,5 bash run.sh my_config.yaml
+bash run.sh my_config.yaml --gpus 4,5
 ```
 
-`run.sh` is defensive by design (Constitution §2.3):
+`run.sh` is defensive by design:
 
 - **Auto-selects free GPUs** via `nvidia-smi` (no manual GPU counting);
 - **Only passes `--gpus device=<ids>`** — never injects
@@ -92,10 +92,10 @@ docker run --gpus "device=0,1" --ipc=host --shm-size=16g \
 > GPU selection is handled by `run.sh`; see `launch` in your config for
 > distributed settings (nnodes, master_addr, port).
 
-> **Need a model?** The default config points to `models/Qwen3-8B`. Download it with:
+> **Need a model?** The default config points to `models/Qwen3.5-9B`. Download it with:
 > ```bash
 > # On the host, before launching the container
-> huggingface-cli download Qwen/Qwen3-8B --local-dir /path/to/models/Qwen3-8B
+> huggingface-cli download Qwen/Qwen3.5-9B --local-dir /path/to/models/Qwen3.5-9B
 > ```
 
 For a smoke test, keep `training.max_new_tokens=2048` and reduce
@@ -138,7 +138,7 @@ Set at least these fields in `my_graspo.yaml`:
 - `data.train_path`: JSONL training data;
 - `training.output_dir`: run output directory;
 - GPU selection is **not** in the config — use `run.sh` (auto-picks free
-  GPUs) or `GPU_IDS=4,5 bash run.sh config.yaml` (see Docker section);
+  GPUs) or `bash run.sh config.yaml --gpus 4,5` (see Docker section);
 - `graspoflow.tp_size` and
   `graspoflow.pp_size`: native placement
   world size.
@@ -443,13 +443,12 @@ is only a LoRA warm-start.
 ### `launch`
 
 - GPU selection is **not** configured here — it is handled by `run.sh`
-  (`GPU_IDS=4,5 bash run.sh config.yaml`) or by Docker `--gpus` directly.
+  (`bash run.sh config.yaml --gpus 4,5`) or by Docker `--gpus` directly.
 - `nproc_per_node`: worker count per node. If omitted, it is
   derived from TP * PP / nodes.
 - `nnodes`, `node_rank`, `master_addr`, `master_port`: distributed launch
   settings.
 - `python`: optional Python executable override.
-- `torchrun`: optional torchrun executable override.
 - `env`: extra environment variables for the launched training process.
 
 ## LoRA Targets
@@ -503,7 +502,7 @@ Example minimal export config:
 ```yaml
 backend: graspoflow
 model:
-  model_path: models/Qwen3-8B
+  model_path: models/Qwen3.5-9B
 export:
   checkpoint_path: outputs/example-run/final
   export_format: peft-adapter   # or "merged-hf"
@@ -607,3 +606,8 @@ bash run.sh samples/configs/config_example.yaml --smoke
 ## License
 
 GRASPO is released under the MIT License. See [LICENSE](LICENSE).
+
+Dependency licenses: all runtime dependencies are permissively licensed
+(MIT/Apache-2.0/BSD). The PyTorch CUDA wheels bundle NVIDIA runtime libraries
+under NVIDIA's proprietary EULA (redistributable, non-copyleft); see the
+NVIDIA Software License for details.

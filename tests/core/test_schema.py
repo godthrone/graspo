@@ -142,27 +142,16 @@ def test_sample_media_default_is_empty():
     assert sample.media == []
 
 
-# ── Backward compat: backend_config.graspoflow ────────────────────────────────
+# ── 废弃格式拒绝（backend_config shim 已删除，§18.1 不留负债）───────────────
 
 
-def test_from_dict_accepts_backend_config_graspoflow_format():
-    cfg = GraspoConfig.from_dict(
-        {
-            "backend_config": {"graspoflow": {"tp_size": 4, "pp_size": 2}},
-        }
-    )
-    assert cfg.graspoflow.tp_size == 4
-    assert cfg.graspoflow.pp_size == 2
-
-
-def test_from_dict_top_level_graspoflow_takes_priority():
-    cfg = GraspoConfig.from_dict(
-        {
-            "graspoflow": {"tp_size": 8},
-            "backend_config": {"graspoflow": {"tp_size": 4}},
-        }
-    )
-    assert cfg.graspoflow.tp_size == 8
+def test_from_dict_rejects_deprecated_backend_config_format():
+    with pytest.raises(ValidationError):
+        GraspoConfig.from_dict(
+            {
+                "backend_config": {"graspoflow": {"tp_size": 4, "pp_size": 2}},
+            }
+        )
 
 
 def test_top_level_unknown_field_is_rejected_not_silently_dropped():

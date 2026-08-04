@@ -125,7 +125,7 @@ normalized_reward = raw_score / max_score
 | **invalid_no_preference_gap** | reward 完全相同（无组内方差） | 丢弃（无偏好信号） |
 | **retry** | rollout 失败（如内存不足） | 重试（最多 5 次） |
 
-**防线角色**：`reject_unparseable_groups = True`（默认）是防线——格式损坏的 group 被拦截在训练边界之外。这是宪法 §2.3（边界校验即防呆）的具体体现。
+**防线角色**：`reject_unparseable_groups = True`（默认）是防线——格式损坏的 group 被拦截在训练边界之外。这是"边界校验即防呆"原则的具体体现。
 
 ## ReplayBuffer
 
@@ -201,7 +201,7 @@ retry:           rollout 失败后重试
 | `no_group_reward_variance_window` | 近期无组内区分度，所有 completion 相同 |
 | `content_score_all_zero_window` | 近期 ≥80% 为内容零分 |
 
-当 `early_stop_recommended = True` 时，训练可能需要干预。
+当 `health.ok = false` 时，训练日志输出 WARNING 告警（不自动中断训练，由用户判断是否干预）。
 
 ### 5. Timing 分析
 

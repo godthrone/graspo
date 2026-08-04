@@ -7,11 +7,11 @@ if not torch.cuda.is_available():
     pytest.skip("CUDA required for LoRA I/O GPU tests", allow_module_level=True)
 
 
-from graspo.flow.lora.lora import LoRALinear  # noqa: E402
 from graspo.flow.lora.lora_io import (  # noqa: E402
     load_lora_weights,
     save_lora_weights,
 )
+from graspo.flow.lora.lora_linear import LoRALinear  # noqa: E402
 
 
 @pytest.fixture

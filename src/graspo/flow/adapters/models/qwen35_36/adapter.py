@@ -1,8 +1,9 @@
 """Qwen3.5/3.6 adapter — hybrid attention + visual tower + multimodal.
 
-采用类改目录模式：模型加载/构建驻留在本文件，
-生成/训练/logprobs 方法分布在 generation.py / training.py / logprobs.py 中。
-外部使用者只 import 类名，完全不感知内部拆分。
+Class-directory pattern: model loading/construction lives in this file;
+generation/training/logprobs methods live in generation.py / training.py /
+logprobs.py. External users import only the class name and never see the
+internal split.
 """
 
 from pathlib import Path
@@ -15,7 +16,7 @@ from graspo.flow.adapters.models.qwen35_36.logprobs import _Qwen35LogprobsMethod
 from graspo.flow.adapters.models.qwen35_36.ops import build_qwen35_ops
 from graspo.flow.adapters.models.qwen35_36.training import _Qwen35TrainingMethods
 from graspo.flow.adapters.models.qwen35_36.training_sft import _Qwen35SFTTrainingMethods
-from graspo.flow.adapters.transformer import TransformerAdapter
+from graspo.flow.adapters.transformer_adapter import TransformerAdapter
 from graspo.flow.lora.lora_helpers import native_qwen_lora_available_targets
 from graspo.flow.lora.lora_io import load_peft_adapter_into_native_model
 from graspo.flow.parallel.placement import (

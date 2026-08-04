@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from graspo.core.data import load_jsonl
 from graspo.core.schema import GraspoConfig
+from graspo.ripple.data import load_jsonl
 from graspo.ripple.parity import (
     GroupDecision,
     classify_group,

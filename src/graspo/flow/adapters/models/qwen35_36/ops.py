@@ -6,7 +6,7 @@ Refactored from ``graspoflow/qwen_ops.py``.  Supports visual tower for multimoda
 import torch
 
 from graspo.flow.scheduling.operator import Microbatch
-from graspo.flow.scheduling.transformer_op import TransformerStageOp
+from graspo.flow.scheduling.transformer_stage_op import TransformerStageOp
 
 
 class Qwen35EmbedStageOp(TransformerStageOp):

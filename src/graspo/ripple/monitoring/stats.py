@@ -43,7 +43,7 @@ class GraspoFlowEpochStats:
 
 
 @dataclass(slots=True)
-class _QueuedSample:
+class QueuedSample:
     """训练队列中的待处理样本。"""
 
     sample: Sample
@@ -52,7 +52,7 @@ class _QueuedSample:
 
 
 @dataclass(slots=True)
-class _AttemptRecord:
+class AttemptRecord:
     """单次 rollout 尝试的完整记录。"""
 
     sample: Sample

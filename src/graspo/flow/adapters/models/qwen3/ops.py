@@ -6,7 +6,7 @@ EmbedStageOp, DecoderStageOp, HeadStageOp for the Qwen3 family.
 import torch
 
 from graspo.flow.scheduling.operator import Microbatch
-from graspo.flow.scheduling.transformer_op import TransformerStageOp
+from graspo.flow.scheduling.transformer_stage_op import TransformerStageOp
 
 
 class Qwen3EmbedStageOp(TransformerStageOp):

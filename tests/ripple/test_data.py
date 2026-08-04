@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from graspo.core.data import load_jsonl, write_jsonl
 from graspo.core.schema import Sample
+from graspo.ripple.data import load_jsonl, write_jsonl
 
 
 def _content_target(content: dict) -> list[dict]:

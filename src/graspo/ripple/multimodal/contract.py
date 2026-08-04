@@ -35,15 +35,19 @@ def contains_image_tokens(sequences: Any, image_token_id: int) -> bool:
     if sequences is None:
         return False
     # tensor 类：.item() 存在即视为张量标量接口（运行时能力检测）
+    tensor_scan_result: bool | None = None
     if hasattr(sequences, "item") and hasattr(sequences, "__eq__"):
         try:
             eq = sequences == image_token_id
             if hasattr(eq, "any"):
-                return bool(eq.any().item())
-            return bool(eq.item())
+                tensor_scan_result = bool(eq.any().item())
+            else:
+                tensor_scan_result = bool(eq.item())
         except (RuntimeError, TypeError):
-            # 张量类型/形状不兼容时退回逐元素扫描
-            pass
+            # 张量类型/形状不兼容：保持 None，显式落入逐元素扫描备用路径
+            tensor_scan_result = None
+    if tensor_scan_result is not None:
+        return tensor_scan_result
     try:
         return image_token_id in sequences
     except TypeError:

@@ -4,13 +4,26 @@ from __future__ import annotations
 
 import datetime
 import json
-import logging
 from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from graspo.ripple.reward.reward import RewardConfig
+
+class RewardConfig(BaseModel):
+    """奖励评分配置，所有字段在加载时校验，拒绝未知字段。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["graspo"] = "graspo"
+    check_think: bool = False
+    check_json_markdown: bool = True
+    check_list_order: bool = False
+    marker_reward_weight: float = 10.0
+    content_reward_weight: float = 100.0
+    anti_useless_str_reward_weight: float = 1.0
+    anti_useless_str_half_reward_len: int = 100
+    numeric_tolerance: float = 0.2
 
 
 class LoRAConfig(BaseModel):
@@ -163,8 +176,9 @@ class ExportConfig(BaseModel):
 class LaunchConfig(BaseModel):
     """分布式启动配置。
 
-    GPU 选择由用户通过 Docker ``--gpus`` 或环境变量 ``CUDA_VISIBLE_DEVICES``
-    控制，不在配置中指定。``nproc_per_node`` 默认从 ``tp_size × pp_size`` 自动推导。
+    GPU 选择由用户通过 run.sh ``--gpus`` 控制（绝不使用 CUDA_VISIBLE_DEVICES，
+    与 --gpus 混用会导致 NCCL 死锁），不在配置中指定。
+    ``nproc_per_node`` 默认从 ``tp_size × pp_size`` 自动推导。
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -208,13 +222,11 @@ class GraspoConfig(BaseModel):
 
         **防呆：** 不手动挑键——顶层任何未知键（拼写错误）
         由 ``extra="forbid"`` 直接拒绝，而不是静默忽略后用默认值训练。
-        仅做两件显式处理：
-        1. 废弃格式迁移（迁移条款）：``backend_config.graspoflow`` → 顶层 ``graspoflow``
-        2. None 段防御：显式 ``section: null`` 等价于缺省（合法），未知键仍被拒绝
+        仅做一件显式处理：None 段防御——显式 ``section: null`` 等价于缺省
+        （合法），未知键仍被拒绝。
         """
         data = dict(data or {})
-        data["graspoflow"] = _resolve_graspoflow_config(data) or {}
-        data.pop("backend_config", None)
+        data["graspoflow"] = dict(data.get("graspoflow") or {})
         for section in ("model", "data", "lora", "export", "launch", "reward", "training"):
             if data.get(section) is None:
                 data[section] = {}
@@ -264,29 +276,6 @@ def _generate_run_name() -> str:
     if "current" not in _RUN_NAME_CACHE:
         _RUN_NAME_CACHE["current"] = f"graspo_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
     return _RUN_NAME_CACHE["current"]
-
-
-def _resolve_graspoflow_config(data: dict[str, Any]) -> dict[str, Any]:
-    """解析 graspoflow 配置，支持两种格式并给出迁移提示。
-
-    规范格式：顶层 ``graspoflow:`` 键。
-    旧格式：``backend_config.graspoflow:`` 嵌套键（仍然兼容，但输出 DEPRECATION 警告）。
-    """
-    if "graspoflow" in data and data["graspoflow"]:
-        return dict(data["graspoflow"])
-    if "backend_config" in data and isinstance(data["backend_config"], dict):
-        bc = data["backend_config"]
-        if "graspoflow" in bc and bc["graspoflow"]:
-            import warnings
-
-            msg = (
-                "backend_config.graspoflow 已废弃，请将 graspoflow 配置提升到 YAML 顶层。"
-                " 参考 config_example.yaml 的最新格式。"
-            )
-            warnings.warn(msg, FutureWarning, stacklevel=3)
-            logging.getLogger("graspo.config").warning(msg)
-            return dict(bc["graspoflow"])
-    return {}
 
 
 def _content_preview(content: Any) -> str:

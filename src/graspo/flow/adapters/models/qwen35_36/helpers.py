@@ -8,7 +8,7 @@ from typing import Any
 
 import torch
 
-from graspo.core.data import SFTTokenized
+from graspo.ripple.data import SFTTokenized
 
 
 def collate_sft_batch(

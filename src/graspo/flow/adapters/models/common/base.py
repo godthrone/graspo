@@ -14,7 +14,7 @@ from typing import Any
 import torch
 from torch import nn
 
-from graspo.flow.lora.lora import LoRALinear
+from graspo.flow.lora.lora_linear import LoRALinear
 
 
 class GraspoFlowCausalLMBase(nn.Module):

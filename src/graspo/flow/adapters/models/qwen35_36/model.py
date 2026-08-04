@@ -13,13 +13,13 @@ if TYPE_CHECKING:
     from graspo.flow.parallel.tensor_utils import SafetensorIndex
 
 from graspo.flow.adapters.models.common.base import QwenFamilyBase
-from graspo.flow.adapters.models.common.config import NativeQwenConfig
 from graspo.flow.adapters.models.common.layers import (
     Qwen35RMSNorm,
     TensorParallelQwen35DecoderLayer,
     _checkpoint_qwen35_decoder_layer_forward,
     _qwen35_cache_sequence_len,
 )
+from graspo.flow.adapters.models.common.native_qwen_config import NativeQwenConfig
 from graspo.flow.parallel.placement import NativePlacementPlan
 from graspo.flow.parallel.tensor_utils import (
     _dtype_size,

@@ -7,6 +7,8 @@ microbatches can I safely keep in-flight at once?"
 All numbers are estimates (not exact) — we always apply a safety factor.
 """
 
+import logging
+
 
 def estimate_per_microbatch_activation_bytes(
     *,
@@ -95,4 +97,8 @@ def get_gpu_free_memory_bytes(device: int | None = None) -> int:
         free_bytes, _total_bytes = torch.cuda.mem_get_info(device)
         return int(free_bytes)
     except (ImportError, RuntimeError, AssertionError):
+        # 透明降级：查询失败时调用方回退到配置默认值，但必须告知用户
+        logging.getLogger("graspo.trainer").warning(
+            "GPU memory query failed, falling back to config defaults"
+        )
         return 0

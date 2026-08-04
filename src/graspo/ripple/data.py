@@ -1,7 +1,8 @@
 """训练数据校验、加载与编码：JSONL 读写、SFT tokenize、样本校验。
 
-纯数据变换（XML 构建、多模态行构建）已迁 ripple/parsing 与 ripple/multimodal
-——本文件只保留数据 IO 与校验（core 通用件）。
+算法层（ripple）数据变换：Sample 构造依赖 targets 归一化（reward/normalize）、
+SFT target 文本构建（parsing/xml）、多模态路径解析（multimodal/rows）——
+因此本文件位于 ripple 层，只依赖 core 的 Sample 契约（单向依赖）。
 """
 
 import copy

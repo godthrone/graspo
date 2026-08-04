@@ -13,11 +13,11 @@ from pathlib import Path
 from statistics import mean
 from typing import Any
 
-from graspo.core.data import load_jsonl
 from graspo.core.schema import GraspoConfig, Sample
 from graspo.flow.runtime import GraspoFlowRuntime
+from graspo.ripple.data import load_jsonl
 from graspo.ripple.parsing.completion import ParsedCompletion, raw_parsed_completion
-from graspo.ripple.reward.reward import GraspoReward, RewardConfig
+from graspo.ripple.reward.reward import RewardConfig, create_reward
 
 # ── validate-reward ──────────────────────────────────────────────────────────
 
@@ -31,7 +31,7 @@ def validate_reward_scores(
     - 提供显式 completion 时按该 completion 评分；
     - 否则用 ground truth 构造理想 completion（工具调用取 tool_calls，纯文本取 content）。
     """
-    reward = GraspoReward(RewardConfig())
+    reward = create_reward(RewardConfig())
     completions = completions or []
     scores: list[dict[str, Any]] = []
     for idx, sample in enumerate(samples):
@@ -87,7 +87,7 @@ def evaluate_samples(
 
     output_dir 由调用方（config 决定的评测目录）传入；本函数只负责写入。
     """
-    reward = GraspoReward(config.reward)
+    reward = create_reward(config.reward)
     output_dir.mkdir(parents=True, exist_ok=True)
     completions_path = output_dir / "completions.jsonl"
     rewards: list[float] = []

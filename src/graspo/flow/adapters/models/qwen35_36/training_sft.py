@@ -6,7 +6,6 @@ from typing import Any
 import torch
 import torch.distributed as dist
 
-from graspo.core.data import SFTTokenized
 from graspo.flow.adapters.models.qwen35_36.helpers import collate_sft_batch
 from graspo.flow.adapters.models.qwen35_36.model import Qwen35HybridTextModel
 from graspo.flow.parallel.tensor_utils import (
@@ -14,6 +13,7 @@ from graspo.flow.parallel.tensor_utils import (
     _new_pipeline_stage_timing,
     _round_pipeline_stage_timing,
 )
+from graspo.ripple.data import SFTTokenized
 from graspo.ripple.multimodal.contract import assert_sft_batch_has_multimodal
 
 
@@ -116,7 +116,7 @@ class _Qwen35SFTTrainingMethods:
             self._sync_timing()
             backward_started_at = time.monotonic()
             loss.backward()
-            from graspo.flow.lora.lora import _sync_nonsharded_lora_grads
+            from graspo.flow.lora.lora_linear import _sync_nonsharded_lora_grads
             from graspo.flow.parallel.tensor_utils import _TENSOR_PARALLEL_GROUP
 
             if _TENSOR_PARALLEL_GROUP is not None:

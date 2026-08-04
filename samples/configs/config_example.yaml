@@ -46,6 +46,7 @@ lora:
 
 # ── Reward function ───────────────────────────────────────────────────────
 reward:
+  kind: graspo                      # Reward backend (registry name, see ripple/reward)
   check_think: false                 # Score adherence to Qwen think/answer structure
   check_json_markdown: false         # Score JSON-in-fence extraction (set true for JSON tasks)
   check_list_order: true             # Score list element ordering

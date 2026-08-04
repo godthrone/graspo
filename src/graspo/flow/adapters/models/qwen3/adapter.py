@@ -13,7 +13,7 @@ from torch.nn.utils.rnn import pad_sequence
 from graspo.core.lora import resolve_lora_target_modules
 from graspo.flow.adapters.models.common.model_builders import build_native_qwen_model
 from graspo.flow.adapters.models.qwen3.ops import build_qwen3_ops
-from graspo.flow.adapters.transformer import TransformerAdapter
+from graspo.flow.adapters.transformer_adapter import TransformerAdapter
 from graspo.flow.lora.lora_helpers import native_qwen_lora_available_targets
 from graspo.flow.lora.lora_io import load_peft_adapter_into_native_model
 from graspo.flow.parallel.placement import (
@@ -424,7 +424,7 @@ class Qwen3Adapter(TransformerAdapter):
             self._sync_timing()
             backward_started_at = time.monotonic()
             loss.backward()
-            from graspo.flow.lora.lora import _sync_nonsharded_lora_grads
+            from graspo.flow.lora.lora_linear import _sync_nonsharded_lora_grads
             from graspo.flow.parallel.tensor_utils import _TENSOR_PARALLEL_GROUP
 
             if _TENSOR_PARALLEL_GROUP is not None:

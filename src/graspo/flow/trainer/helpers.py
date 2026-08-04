@@ -59,9 +59,7 @@ def _backup_config(config: Any, output_dir: Path) -> None:
 def expand_advantages_like(rewards: list[float], old_log_probs: Any) -> Any:
     """将 group 级 advantage 扩展为与 old_log_probs 同 shape 的 tensor。
 
-    .. deprecated::
-        此函数将被 GRASPO-Ripple 的 token 级 advantage 替代。
-        当前保留用于 compatibility 过渡期。
+    非 Ripple 路径（rollout 组合级 GRPO 时）仍在使用。
     """
     import torch
 

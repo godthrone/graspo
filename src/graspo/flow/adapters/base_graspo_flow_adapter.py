@@ -21,6 +21,9 @@ class BaseGraspoFlowAdapter(ABC):
     ``TransformerAdapter``.
     """
 
+    # completion 解析器标识（trainer 用它命名 ParsedCompletion.parser_name）
+    completion_parser_name: str = "unknown"
+
     # ── Subclass responsibility ─────────────────────────────────────────────
 
     @abstractmethod

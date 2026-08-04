@@ -192,16 +192,16 @@ class TestRowsBuild:
             messages=[{"role": "user", "content": [{"type": "image", "image": "a.jpg"}]}],
             media=[{"type": "image"}],
         )
-        row = multimodal_row_from_sample(sample, data_dir="/data/v13_fk_scenes")
+        row = multimodal_row_from_sample(sample, data_dir="/data/some_dataset")
         image = row["messages"][0]["content"][0]["image"]
-        assert image.startswith("/data/v13_fk_scenes/")
+        assert image.startswith("/data/some_dataset/")
 
     def test_row_from_sample_keeps_absolute_path(self) -> None:
         sample = _Sample(
             messages=[{"role": "user", "content": [{"type": "image", "image": "/abs/a.jpg"}]}],
             media=[{"type": "image"}],
         )
-        row = multimodal_row_from_sample(sample, data_dir="/data/v13_fk_scenes")
+        row = multimodal_row_from_sample(sample, data_dir="/data/some_dataset")
         assert row["messages"][0]["content"][0]["image"] == "/abs/a.jpg"
 
     def test_row_from_sample_tools(self) -> None:

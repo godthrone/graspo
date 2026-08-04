@@ -79,7 +79,7 @@ Layer 0 是整个系统的基石，完全不知道模型、训练目标或层的
 - `ops.py` — 模型特定的算子
 - `generation.py` / `logprobs.py` / `training.py` — 模型特定的方法
 
-公共层实现在 `models/common/layers.py`（Qwen3.5/3.6 族）和 `layers_qwen3.py`（Qwen3 族），按模型族拆分以避免单文件过大（宪法 §8.4）。
+公共层实现在 `models/common/layers.py`（Qwen3.5/3.6 族）和 `layers_qwen3.py`（Qwen3 族），按模型族拆分以避免单文件过大（职责内聚）。
 
 ## TP LoRA 梯度同步
 

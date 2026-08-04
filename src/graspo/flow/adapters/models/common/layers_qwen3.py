@@ -11,8 +11,8 @@ from torch.nn import functional as F  # noqa: N812
 if TYPE_CHECKING:
     from graspo.flow.parallel.tensor_utils import SafetensorIndex
 
-from graspo.flow.lora.lora import LoRALinear
 from graspo.flow.lora.lora_helpers import _lora_target_enabled
+from graspo.flow.lora.lora_linear import LoRALinear
 from graspo.flow.parallel.tensor_utils import (
     _all_reduce_tp,
     _apply_rope,

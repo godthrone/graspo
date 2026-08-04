@@ -16,7 +16,7 @@ from graspo.flow.trainer.helpers import (
     safe_sample_metadata,
 )
 from graspo.ripple.buffer import Experience
-from graspo.ripple.monitoring.stats import _AttemptRecord, _QueuedSample
+from graspo.ripple.monitoring.stats import AttemptRecord, QueuedSample
 from graspo.ripple.monitoring.summary import (
     monitor_group,
     scalar_generation_timing,
@@ -92,24 +92,20 @@ class RolloutMixin:
         return self.runtime.parse_completion(completion, sample)
 
     def _completion_parser_name(self) -> str:
-        """获取 completion 解析器名称。"""
-        adapter = self.runtime._require_adapter()
-        parser_name = getattr(adapter, "completion_parser_name", None)
-        if parser_name:
-            return str(parser_name)
-        return adapter.__class__.__name__
+        """获取 completion 解析器名称（ABC 声明的类属性，无需探测）。"""
+        return str(self.runtime._require_adapter().completion_parser_name)
 
     # ── rollout 批次 ──────────────────────────────────────────────────────────
 
     def _rollout_queue_attempt(
-        self, active: list[_QueuedSample], *, epoch: int
-    ) -> list[_AttemptRecord]:
+        self, active: list[QueuedSample], *, epoch: int
+    ) -> list[AttemptRecord]:
         """对一组 active samples 执行一次 rollout 尝试。"""
         rollout_started_at = time.monotonic()
         generations = self._generate_sample_groups([state.sample for state in active])
         rollout_sec = time.monotonic() - rollout_started_at
         rollout_sec_per_prompt = rollout_sec / max(len(generations), 1)
-        records: list[_AttemptRecord] = []
+        records: list[AttemptRecord] = []
         for state, generation in zip(active, generations, strict=True):
             attempt_started_at = time.monotonic()
             reward_started_at = time.monotonic()
@@ -184,7 +180,7 @@ class RolloutMixin:
             }
 
             records.append(
-                _AttemptRecord(
+                AttemptRecord(
                     sample=state.sample,
                     generation=generation,
                     parsed_completions=parsed_completions,
@@ -253,7 +249,7 @@ class RolloutMixin:
 
     # ── 样本最终化 ────────────────────────────────────────────────────────────
 
-    def _finalize_sample(self, state: _QueuedSample, *, epoch: int) -> bool:
+    def _finalize_sample(self, state: QueuedSample, *, epoch: int) -> bool:
         """对已完成 rollout 的样本进行最终处理：决策、追加 replay buffer。"""
         if not state.attempts:
             raise RuntimeError("Cannot finalize queued sample without rollout attempts")
@@ -391,7 +387,7 @@ class RolloutMixin:
             )
         self.replay_buffer.append_many(items)
 
-    def _commit_sample_attempts(self, state: _QueuedSample, *, epoch: int) -> None:
+    def _commit_sample_attempts(self, state: QueuedSample, *, epoch: int) -> None:
         """将样本的所有 attempts 记录到监控和 batch 缓存中。"""
         for record in state.attempts:
             self.recent_groups.append(monitor_group(record.readable))

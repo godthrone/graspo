@@ -10,7 +10,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-from graspo.core.data import SFTTokenized, load_jsonl, sft_tokenize
 from graspo.core.schema import GraspoConfig
 from graspo.flow.logging import setup_logging
 from graspo.flow.runtime import (
@@ -19,6 +18,7 @@ from graspo.flow.runtime import (
     validate_graspoflow_runtime_config,
 )
 from graspo.flow.trainer.helpers import _backup_config, _set_random_seed, _timestamp
+from graspo.ripple.data import SFTTokenized, load_jsonl, sft_tokenize
 
 
 class SFTTrainer:

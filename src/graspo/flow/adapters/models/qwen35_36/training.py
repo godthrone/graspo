@@ -107,7 +107,7 @@ class _Qwen35TrainingMethods:
             self._sync_timing()
             backward_started_at = time.monotonic()
             loss.backward()
-            from graspo.flow.lora.lora import _sync_nonsharded_lora_grads
+            from graspo.flow.lora.lora_linear import _sync_nonsharded_lora_grads
             from graspo.flow.parallel.tensor_utils import _TENSOR_PARALLEL_GROUP
 
             if _TENSOR_PARALLEL_GROUP is not None:

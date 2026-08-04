@@ -11,20 +11,24 @@ requires-python = ">=3.11,<3.13"
 license = {text = "MIT"}
 authors = [{ name = "Godthrone" }]
 dependencies = [
-  "pydantic>=2.0",
-  "pyyaml>=6.0.0",
-  "safetensors>=0.4.0",
+  # torch/torchvision 精确锁定以匹配 Docker base 镜像（pytorch/pytorch digest）
+  # 预装的 CUDA 13.2 运行时；升级须同步 docker/Dockerfile 的 base digest。
   "torch==2.12.1",
   "torchvision==0.27.1",
-  "transformers>=5.9.0",
-  "pillow>=10.0.0",
+  # 其余依赖全部精确锁定：pyproject 是版本唯一声明处，uv.lock 与镜像一致。
+  "pydantic==2.13.4",
+  "pyyaml==6.0.3",
+  "safetensors==0.7.0",
+  "transformers==5.10.2",
+  "pillow==12.2.0",
+  "numpy==2.4.5",
 ]
 
 [project.optional-dependencies]
 dev = [
-  "pytest>=8.0.0",
-  "ruff>=0.6.0",
-  "mypy>=1.0",
+  "pytest==9.0.3",
+  "ruff==0.15.13",
+  "mypy==2.1.0",
 ]
 
 [project.scripts]
