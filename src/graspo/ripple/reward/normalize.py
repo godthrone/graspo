@@ -7,6 +7,20 @@ these functions don't depend on ``GraspoReward``'s state and are independently t
 import json
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict
+
+
+class TargetScore(BaseModel):
+    """单个 target 的评分结果（empty_target_score 与 GraspoReward 共用的数据结构）。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    target_index: int
+    target_id: str | None = None
+    content_score: float = 0.0
+    base_content_score: float = 0.0
+    all_right: bool = False
+
 
 def is_valid_json(value: str) -> bool:
     try:
@@ -48,19 +62,16 @@ def _normalize_target(value: Any, index: int) -> dict[str, Any]:
     return {"id": target_id, "output": normalized_output}
 
 
-def empty_target_score(target: dict[str, Any], index: int) -> dict[str, Any]:
+def empty_target_score(target: dict[str, Any], index: int) -> TargetScore:
     """Return a zeroed score entry for a single target.
 
     This is used as the initial state before scoring populates real values.
     It does not depend on ``GraspoReward`` state and is independently testable.
     """
-    return {
-        "target_index": index,
-        "target_id": target.get("id"),
-        "content_score": 0.0,
-        "base_content_score": 0.0,
-        "all_right": False,
-    }
+    return TargetScore(
+        target_index=index,
+        target_id=target.get("id"),
+    )
 
 
 def normalize_tool_calls(value: Any, *, path: str = "tool_calls") -> list[dict[str, Any]]:

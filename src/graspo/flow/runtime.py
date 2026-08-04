@@ -11,13 +11,34 @@ import importlib
 import sys
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict, cast
 
 from pydantic import BaseModel, ConfigDict
 
 from graspo.core.schema import GraspoConfig, Sample
 from graspo.ripple.buffer import Experience
 from graspo.ripple.parsing.completion import ParsedCompletion
+
+
+class TrainBatchMetrics(TypedDict, total=False):
+    """train_batch / train_batch_sft 返回的指标载荷（RL 与 SFT 共有的核心键）。"""
+
+    optimized: bool
+    skipped_nonfinite: int
+    loss_mean: float | None
+    grad_norm_mean: float | None
+    nonzero_grad_count: int
+    lora_norm_before: float
+    lora_norm_after: float
+    lora_norm_delta: float
+    train_batch_total_sec: float
+    micro_batch_forward_sec: float
+    backward_sec: float
+    optimizer_step_sec: float
+    micro_batch_count: int
+    current_lr: float | None
+    optimizer_steps: int
+    sft_batch_count: int
 
 _AVAILABLE_ADAPTERS = (
     "graspo.flow.adapters.models.qwen3.adapter:Qwen3Adapter",
@@ -138,7 +159,7 @@ class GraspoFlowRuntimeBase(ABC):
         *,
         policy_ratio_clip_eps: float,
         max_grad_norm: float,
-    ) -> dict[str, Any]: ...
+    ) -> TrainBatchMetrics: ...
 
     @abstractmethod
     def train_batch_sft(
@@ -146,7 +167,7 @@ class GraspoFlowRuntimeBase(ABC):
         sft_batches: list[Any],  # SFTTokenized
         *,
         max_grad_norm: float,
-    ) -> dict[str, Any]: ...
+    ) -> TrainBatchMetrics: ...
 
     @abstractmethod
     def save_checkpoint(
@@ -301,11 +322,14 @@ class GraspoFlowRuntime(GraspoFlowRuntimeBase):
         *,
         policy_ratio_clip_eps: float,
         max_grad_norm: float,
-    ) -> dict[str, Any]:
-        return self._require_adapter().train_batch(
-            experiences=experiences,
-            policy_ratio_clip_eps=policy_ratio_clip_eps,
-            max_grad_norm=max_grad_norm,
+    ) -> TrainBatchMetrics:
+        return cast(
+            TrainBatchMetrics,
+            self._require_adapter().train_batch(
+                experiences=experiences,
+                policy_ratio_clip_eps=policy_ratio_clip_eps,
+                max_grad_norm=max_grad_norm,
+            ),
         )
 
     def train_batch_sft(
@@ -313,10 +337,13 @@ class GraspoFlowRuntime(GraspoFlowRuntimeBase):
         sft_batches: list[Any],  # SFTTokenized
         *,
         max_grad_norm: float,
-    ) -> dict[str, Any]:
-        return self._require_adapter().train_batch_sft(
-            sft_batches,
-            max_grad_norm=max_grad_norm,
+    ) -> TrainBatchMetrics:
+        return cast(
+            TrainBatchMetrics,
+            self._require_adapter().train_batch_sft(
+                sft_batches,
+                max_grad_norm=max_grad_norm,
+            ),
         )
 
     def save_checkpoint(

@@ -95,7 +95,7 @@ def test_reward_selects_best_content_target():
     assert result.matched_target_index == 1
     assert result.matched_target_id == "target-1"
     assert result.target_scores is not None
-    assert result.target_scores[1]["content_score"] > result.target_scores[0]["content_score"]
+    assert result.target_scores[1].content_score > result.target_scores[0].content_score
 
 
 def test_reward_rejects_missing_marker_when_required():
@@ -190,7 +190,7 @@ def test_reward_parsed_tool_call_selects_best_numeric_target():
 
     assert result.matched_target_index == 1
     assert result.target_scores is not None
-    assert result.target_scores[1]["content_score"] > result.target_scores[0]["content_score"]
+    assert result.target_scores[1].content_score > result.target_scores[0].content_score
 
 
 def test_reward_parsed_multi_tool_calls_use_ordered_sequence_inside_target():

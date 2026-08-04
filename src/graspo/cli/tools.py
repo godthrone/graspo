@@ -151,7 +151,11 @@ def evaluate_samples(
                                 "parser_errors": parsed.parse_errors,
                                 "matched_target_index": result.matched_target_index,
                                 "matched_target_id": result.matched_target_id,
-                                "target_scores": result.target_scores,
+                                "target_scores": (
+                                    [score.model_dump() for score in result.target_scores]
+                                    if result.target_scores is not None
+                                    else None
+                                ),
                                 "completion": completion,
                                 "targets": sample.targets,
                                 "metadata": _safe_metadata(sample),

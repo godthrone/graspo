@@ -2,7 +2,7 @@
 
 import json
 import math
-from typing import Any, Literal
+from typing import Any, Literal, TypedDict
 
 from pydantic import BaseModel, ConfigDict
 
@@ -10,6 +10,7 @@ from graspo.core.schema import RewardConfig
 from graspo.ripple.parsing.completion import ParsedCompletion, raw_parsed_completion
 from graspo.ripple.reward.compare import dict_compare_score
 from graspo.ripple.reward.normalize import (
+    TargetScore,
     empty_target_score,
     is_valid_json,
     normalize_targets,
@@ -18,6 +19,17 @@ from graspo.ripple.reward.normalize import (
 ContentField = Literal["answer"]
 FieldItem = tuple[Literal["field"], ContentField]
 CheckItem = str | FieldItem | None
+
+
+class ExtractedFields(TypedDict, total=False):
+    """从 completion 提取的内容字段（score 与 score_parsed 两种载荷）。"""
+
+    answer: str
+    think: str
+    tool_calls: list[dict[str, Any]]
+    parser: str
+    parse_errors: list[str]
+    extra_text: str
 
 
 class RewardResult(BaseModel):
@@ -29,13 +41,13 @@ class RewardResult(BaseModel):
     content_score: float
     base_content_score: float
     all_right: bool
-    extracted: dict[str, Any]
+    extracted: ExtractedFields
     useless_text: str
     raw_score: float
     max_score: float
     matched_target_index: int | None = None
     matched_target_id: str | None = None
-    target_scores: list[dict[str, Any]] | None = None
+    target_scores: list[TargetScore] | None = None
 
 
 class GraspoReward:
@@ -84,10 +96,10 @@ class GraspoReward:
         else:
             extracted[content_type] = completion[mark_pos:]
 
-        target_scores: list[dict[str, Any]] = [
+        target_scores: list[TargetScore] = [
             empty_target_score(target, idx) for idx, target in enumerate(normalized_targets)
         ]
-        best: dict[str, Any] | None = None
+        best: TargetScore | None = None
         for key in check_targets:
             if key not in extracted:
                 continue
@@ -102,8 +114,8 @@ class GraspoReward:
             checked = json.loads(text)
             if not isinstance(checked, dict):
                 continue
-            for score in target_scores:
-                target = normalized_targets[int(score["target_index"])]
+            for idx, score in enumerate(target_scores):
+                target = normalized_targets[int(score.target_index)]
                 content = target["output"].get("content")
                 if not isinstance(content, dict):
                     continue
@@ -113,22 +125,23 @@ class GraspoReward:
                     check_list_order=self.config.check_list_order,
                     numeric_tolerance=self.config.numeric_tolerance,
                 )
-                score.update(
-                    {
+                updated = score.model_copy(
+                    update={
                         "content_score": result.dcs,
                         "base_content_score": result.base_dcs,
                         "all_right": result.all_right,
                     }
                 )
-                if best is None or result.dcs > float(best["content_score"]):
-                    best = score
+                target_scores[idx] = updated
+                if best is None or result.dcs > best.content_score:
+                    best = updated
             if best is not None:
-                content_score = float(best["content_score"])
-                base_content_score = float(best.get("base_content_score", 0.0))
+                content_score = best.content_score
+                base_content_score = best.base_content_score
                 if base_content_score >= 1.0:
                     # 动作类型全对 → 数值精度决定优劣
                     raw_score += content_score * self.config.content_reward_weight
-                    if bool(best["all_right"]):
+                    if best.all_right:
                         raw_score += self.config.content_reward_weight
                         all_right_count += 1
                 else:
@@ -148,16 +161,16 @@ class GraspoReward:
             content_score=content_score,
             base_content_score=base_content_score,
             all_right=all_right,
-            extracted={key: value for key, value in extracted.items()},
+            extracted={"answer": extracted["answer"]} if extracted else {},
             useless_text=useless_text,
             raw_score=raw_score,
             max_score=max_score,
             matched_target_index=(
-                int(best["target_index"]) if best is not None and content_score > 0 else None
+                int(best.target_index) if best is not None and content_score > 0 else None
             ),
             matched_target_id=(
-                str(best["target_id"])
-                if best is not None and best.get("target_id") is not None and content_score > 0
+                str(best.target_id)
+                if best is not None and best.target_id is not None and content_score > 0
                 else None
             ),
             target_scores=target_scores,
@@ -181,10 +194,10 @@ class GraspoReward:
         content_score = 0.0
         base_content_score = 0.0
         all_right = False
-        target_scores: list[dict[str, Any]] = [
+        target_scores: list[TargetScore] = [
             empty_target_score(target, idx) for idx, target in enumerate(normalized_targets)
         ]
-        best: dict[str, Any] | None = None
+        best: TargetScore | None = None
         if parsed.tool_calls and think_ok:
             max_tc = self._max_target_tool_call_count(normalized_targets)
             if len(parsed.tool_calls) > max_tc:
@@ -200,8 +213,8 @@ class GraspoReward:
                 and len(parsed.tool_calls) <= max_tc
             ):
                 checked = {"tool_calls": parsed.tool_calls}
-                for score in target_scores:
-                    target = normalized_targets[int(score["target_index"])]
+                for idx, score in enumerate(target_scores):
+                    target = normalized_targets[int(score.target_index)]
                     calls = target["output"].get("tool_calls")
                     if not isinstance(calls, list):
                         continue
@@ -211,21 +224,22 @@ class GraspoReward:
                         check_list_order=self.config.check_list_order,
                         numeric_tolerance=self.config.numeric_tolerance,
                     )
-                    score.update(
-                        {
+                    updated = score.model_copy(
+                        update={
                             "content_score": result.dcs,
                             "base_content_score": result.base_dcs,
                             "all_right": result.all_right and not parsed.parse_errors,
                         }
                     )
-                    if best is None or result.dcs > float(best["content_score"]):
-                        best = score
+                    target_scores[idx] = updated
+                    if best is None or result.dcs > best.content_score:
+                        best = updated
                 if best is not None:
-                    content_score = float(best["content_score"])
-                    base_content_score = float(best.get("base_content_score", 0.0))
+                    content_score = best.content_score
+                    base_content_score = best.base_content_score
                     if base_content_score >= 1.0:
                         raw_score += content_score * self.config.content_reward_weight
-                        all_right = bool(best["all_right"])
+                        all_right = best.all_right
                         if all_right:
                             raw_score += self.config.content_reward_weight
                     else:
@@ -249,11 +263,11 @@ class GraspoReward:
             raw_score=raw_score,
             max_score=max_score,
             matched_target_index=(
-                int(best["target_index"]) if best is not None and content_score > 0 else None
+                int(best.target_index) if best is not None and content_score > 0 else None
             ),
             matched_target_id=(
-                str(best["target_id"])
-                if best is not None and best.get("target_id") is not None and content_score > 0
+                str(best.target_id)
+                if best is not None and best.target_id is not None and content_score > 0
                 else None
             ),
             target_scores=target_scores,

@@ -247,7 +247,11 @@ def reward_detail(result: Any) -> dict[str, Any]:
         "extra_text": extracted.get("extra_text"),
         "matched_target_index": result.matched_target_index,
         "matched_target_id": result.matched_target_id,
-        "target_scores": result.target_scores,
+        "target_scores": (
+            [score.model_dump() for score in result.target_scores]
+            if result.target_scores is not None
+            else None
+        ),
         "useless_text_length": len(result.useless_text),
         "valid_extracted_json": valid_extracted_json,
     }
