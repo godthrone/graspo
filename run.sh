@@ -6,7 +6,7 @@
 #   bash run.sh my_config.yaml                # 训练（自动选空闲 GPU）
 #   bash run.sh my_config.yaml --smoke        # 冒烟：跑 1 步验证环境后停止
 #   bash run.sh my_config.yaml --gpus 4,5     # 指定 GPU
-#   bash run.sh my_config.yaml --model-dir /data/models   # 模型挂载源
+#   bash run.sh my_config.yaml --model-dir /path/to/models          # 模型挂载源
 #
 # 防呆设计:
 #   1. 自动选择空闲 GPU（nvidia-smi 检测显存占用为 0 的卡），无需手动数卡
@@ -15,7 +15,7 @@
 #   3. 固定 --ipc=host --shm-size=16g（NCCL 共享内存必需）
 #   4. 镜像 tag 自动取 git describe，不硬编码版本
 #   5. --smoke 走 CLI 参数（graspo launch --smoke），不修改用户 config 文件
-#   6. 参数全部走 CLI（--gpus/--model-dir），不使用自定义环境变量（配置驱动命令 §10.1）
+#   6. 参数全部走 CLI（--gpus/--model-dir），不使用自定义环境变量
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

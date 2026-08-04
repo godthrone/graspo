@@ -76,7 +76,7 @@ class _Qwen35TrainingMethods:
             )
             # 防呆：sequences 含图像 token 但 metadata 无 rows → 硬失败。
             # 修复前的断链正是静默走到 else 分支（图像占位符按纯文本嵌入），
-            # 训练 19.5 小时视觉 LoRA 从未收到梯度（previous_experiment 教训）。
+            # 训练 19.5 小时视觉 LoRA 从未收到梯度（历史教训）。
             assert_rl_training_has_multimodal(
                 batch.metadata,
                 batch.sequences,

@@ -170,7 +170,7 @@ def test_smoke_group_classification_trainable():
 
 
 def test_smoke_group_classification_reject_unparseable():
-    """An unparseable best completion is rejected (defense line, §2.3)."""
+    """An unparseable best completion is rejected (defense line)."""
     rewards = [0.0, 0.0, 0.3, 0.5]
     content_scores = [0.0, 0.0, 0.3, 0.5]
     decision = classify_group(

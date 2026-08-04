@@ -748,7 +748,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
         rows = _multimodal_rows_from_metadata(metadata, expected_rows=batch_size)
         if not rows:
             # 防线：metadata 声明了 rows 键但解析为空 → 断链。
-            # 静默返回 None 会丢失多模态（previous_experiment 教训），必须硬失败。
+            # 静默返回 None 会丢失多模态（历史教训），必须硬失败。
             if isinstance(metadata, dict) and MULTIMODAL_ROWS_KEY in metadata:
                 raise RuntimeError(
                     f"metadata contains {MULTIMODAL_ROWS_KEY!r} but resolved to empty rows; "

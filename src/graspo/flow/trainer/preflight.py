@@ -183,7 +183,7 @@ def _assert_visual_gradients_nonzero(
             raise RuntimeError(
                 "multimodal preflight failed: visual LoRA gradients are all zero "
                 "in fake 1-step forward. Vision tower is not receiving gradients — "
-                "the exact failure mode of previous_experiment. Refusing to start training."
+                "the exact failure mode of a known visual gradient bug. Refusing to start training."
             )
         _log.debug(
             "preflight fake-forward visual gradient signal: %d/%d params non-zero "

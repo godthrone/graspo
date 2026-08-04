@@ -172,7 +172,7 @@ def test_export_config_fields_default_and_validate(tmp_path):
 
 
 def test_export_cli_only_accepts_config():
-    """graspo export only accepts --config (Constitution 10.1)."""
+    """graspo export only accepts --config (config-driven CLI)."""
     parser = build_parser()
     args = parser.parse_args(["export", "--config", "samples/configs/config_example.yaml"])
     assert callable(args.func)

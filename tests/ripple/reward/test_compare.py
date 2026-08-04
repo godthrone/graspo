@@ -142,7 +142,7 @@ def test_dict_compare_numeric_tolerance_applies_to_list_element_containment():
     tolerance should be treated as matches — including at the list-element
     containment level.  Before the fix, ``element in target_value`` used
     Python ``==`` which ignores tolerance, capping content_score at 0.9167
-    for otherwise-perfect GRASPO training completions.
+    for otherwise-perfect training completions.
     """
     checked = {
         "tool_calls": [

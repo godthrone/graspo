@@ -334,7 +334,7 @@ class GraspoReward:
         )
 
 
-# ── 奖励实现注册表（§9.3）────────────────────────────────────────────────────
+# ── 奖励实现注册表 ────────────────────────────────────────────────────
 
 
 REWARD_REGISTRY: dict[str, type[GraspoReward]] = {"graspo": GraspoReward}

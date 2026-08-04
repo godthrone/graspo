@@ -142,7 +142,7 @@ def test_sample_media_default_is_empty():
     assert sample.media == []
 
 
-# ── 废弃格式拒绝（backend_config shim 已删除，§18.1 不留负债）───────────────
+# ── 废弃格式拒绝（backend_config shim 已删除，技术债务清理）───────────────
 
 
 def test_from_dict_rejects_deprecated_backend_config_format():
@@ -195,7 +195,7 @@ def _nested_get(mapping: dict, path: str) -> bool:
 
 
 def test_config_example_covers_all_schema_fields():
-    """模板即文档防呆（§7.3）：config_example.yaml 必须覆盖 schema 全部字段。
+    """模板即文档防呆：config_example.yaml 必须覆盖 schema 全部字段。
 
     新字段发布后若忘记同步模板，此测试直接失败——防第三次脱节。
     """
