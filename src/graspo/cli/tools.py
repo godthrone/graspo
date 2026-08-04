@@ -1,6 +1,6 @@
 """CLI 工具命令实现：validate-reward / evaluate-checkpoint / analyze-profile。
 
-工具命令不参与训练产物（配置驱动命令 §10.1 的"三选一"约束）：
+工具命令不参与训练产物（配置驱动命令的"三选一"约束）：
 - validate-reward：只 print 不落盘（输入定位 --data/--limit/--completions）
 - evaluate-checkpoint：接受 --config，评测输出写入 config 决定的
   ``<output_dir>/evaluate/``（禁止输出定位参数）
@@ -201,7 +201,7 @@ def run_evaluate(
     if limit and limit > 0:
         samples = samples[:limit]
 
-    # 评测输出位置由 config 决定（§10.1：禁止输出定位参数）
+    # 评测输出位置由 config 决定（禁止输出定位参数）
     output_dir = Path(config.training.output_dir) / "evaluate"
     runtime = GraspoFlowRuntime.from_config(config)
     started_at = time.monotonic()

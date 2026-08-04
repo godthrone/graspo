@@ -431,7 +431,7 @@ def _metric_float(metrics: dict[str, Any], preferred: str, fallback: str) -> flo
     if value is None:
         value = metrics.get(fallback)
         logging.getLogger("graspo.trainer").warning(
-            "metric %r not available, falling back to %r (transparent degradation per §3.2)",
+            "metric %r not available, falling back to %r (transparent degradation)",
             preferred,
             fallback,
         )

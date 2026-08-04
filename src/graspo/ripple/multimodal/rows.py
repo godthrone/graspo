@@ -3,7 +3,7 @@
 本模块是 ripple 算法层的纯函数集——零设施依赖，输入输出都是普通
 dict/list，可在单线程本地测试。职责边界见 ``__init__.py``。
 
-核心契约（防呆设计 §2.3）：
+核心契约（防呆设计）：
 - ``attach_rows`` 是 **唯一** 的写入方：多模态生成完成后必须调用它把
   rows 挂到 metadata 上，否则后续训练拿不到图像。
 - ``rows_from_metadata`` 是读取方：只读不写。读取不到时返回 ``[]``
@@ -16,7 +16,7 @@ import copy
 from pathlib import Path
 from typing import Any
 
-# metadata 中承载多模态行的键名。全项目唯一真相源（§1.4）：
+# metadata 中承载多模态行的键名。全项目唯一真相源：
 # 写入方只有 attach_rows，读取方有 rows_from_metadata / contract.py。
 MULTIMODAL_ROWS_KEY = "_multimodal_rows"
 
@@ -103,7 +103,7 @@ def attach_rows(metadata: dict[str, Any], rows: list[dict[str, Any]]) -> dict[st
         raise TypeError(f"metadata must be a dict, got {type(metadata).__name__}")
     if not isinstance(rows, list):
         raise TypeError(f"rows must be a list, got {type(rows).__name__}")
-    # 深拷贝：attach 后调用方修改 rows 不得污染已入库的 metadata（§1.4 单一真相源）
+    # 深拷贝：attach 后调用方修改 rows 不得污染已入库的 metadata（单一真相源）
     metadata[MULTIMODAL_ROWS_KEY] = [copy.deepcopy(row) for row in rows]
     return metadata
 

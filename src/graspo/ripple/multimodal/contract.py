@@ -1,7 +1,7 @@
 """多模态防呆契约：缺图即抛异常（防线，非退路）。
 
 边界校验：数据在跨边界时必须校验。多模态数据丢失是**静默
-吞功能**（§3.4 坏的退路）——丢了多模态训练就是纯浪费算力。本模块把
+吞功能**（坏的退路）——丢了多模态训练就是纯浪费算力。本模块把
 "丢图"从无声的 bug 变成启动/训练时的硬失败。
 
 两道防线，分别对应 RL 与 SFT 两条训练路径：
@@ -34,7 +34,7 @@ def contains_image_tokens(sequences: Any, image_token_id: int) -> bool:
     """
     if sequences is None:
         return False
-    # tensor 类：.item() 存在即视为张量标量接口（运行时能力检测，§2.2）
+    # tensor 类：.item() 存在即视为张量标量接口（运行时能力检测）
     if hasattr(sequences, "item") and hasattr(sequences, "__eq__"):
         try:
             eq = sequences == image_token_id

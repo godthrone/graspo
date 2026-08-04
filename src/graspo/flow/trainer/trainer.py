@@ -124,7 +124,7 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
 
         samples = load_jsonl(self.config.data.train_path)
         self.total_samples = len(samples)
-        # 多模态训练启动预检（防线 §2.3）：数据含图时验证视觉链路完整、
+        # 多模态训练启动预检（防线）：数据含图时验证视觉链路完整、
         # visual LoRA 可训练，失败即拒绝启动，避免 v13 式静默丢图空跑。
         self._preflight_multimodal(samples)
         output_dir = Path(self.config.training.output_dir)
@@ -202,7 +202,7 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
                     if self._sample_queue(sample_queue, epoch=epoch):
                         # max_steps 提前终止：先 flush replay buffer 再保存，
                         # 否则 _checkpoint_trainer_state 会因 buffer 非空而
-                        # 拒绝保存（防线 §2.3 生效，但提前终止路径漏了 flush）。
+                        # 拒绝保存（防线生效，但提前终止路径漏了 flush）。
                         if len(self.replay_buffer) > 0:
                             self._maybe_optimize(epoch=epoch, force=True)
                         self._save_checkpoint(output_dir / "final", epoch=epoch)
@@ -268,7 +268,7 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
     # ── 日志输出辅助 ──────────────────────────────────────────────────────────
 
     def _preflight_multimodal(self, samples: list[Any]) -> None:
-        """多模态训练启动预检（防线 §2.3）。
+        """多模态训练启动预检（防线）。
 
         数据含图时验证 encode → attach → resolve 链路完整、visual LoRA
         可训练（fake 1-step 前向梯度非零），失败即拒绝启动训练——

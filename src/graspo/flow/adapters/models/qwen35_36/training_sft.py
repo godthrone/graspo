@@ -85,7 +85,7 @@ class _Qwen35SFTTrainingMethods:
             self._sync_timing()
             forward_started_at = time.monotonic()
             multimodal_inputs = micro_batch.get("multimodal_inputs")
-            # 防呆（§2.3）：样本含媒体但 batch 无 multimodal_inputs → 硬失败。
+            # 防呆：样本含媒体但 batch 无 multimodal_inputs → 硬失败。
             # 与 RL 路径的 assert_rl_training_has_multimodal 对应，
             # 防止多模态样本静默走纯文本 forward（图像丢失）。
             assert_sft_batch_has_multimodal(

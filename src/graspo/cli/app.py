@@ -2,7 +2,7 @@
 
 配置驱动：解析 --config → 加载并校验配置 → 构建 torchrun 启动计划。
 工具命令（validate-reward / evaluate-checkpoint / analyze-profile）实现在
-``cli.tools``，按配置驱动命令 §10.1 约束：只 print 或输出由 config 决定。
+``cli.tools``，按配置驱动命令约束：只 print 或输出由 config 决定。
 """
 
 import argparse
@@ -230,7 +230,7 @@ def _validate_launch_paths(config: GraspoConfig) -> None:
     data_path = Path(config.data.train_path)
     if not data_path.is_file():
         raise SystemExit(f"data.train_path does not exist: {data_path}")
-    # output_dir 现在总是有默认值（§8.5），但需确保目录提前创建好
+    # output_dir 现在总是有默认值（配置备份约定），但需确保目录提前创建好
     Path(config.training.output_dir).mkdir(parents=True, exist_ok=True)
 
 

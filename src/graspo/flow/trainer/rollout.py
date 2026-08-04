@@ -288,7 +288,7 @@ class RolloutMixin:
         has_multimodal_rows = isinstance(generation.metadata, dict) and (
             "_multimodal_rows" in generation.metadata
         )
-        # 防呆（§2.3）：多模态模型生成序列含图像 token 但 metadata 无 rows →
+        # 防呆：多模态模型生成序列含图像 token 但 metadata 无 rows →
         # 硬失败。断链修复后此检查防止回归（视觉 LoRA 再次静默失训）。
         assert_rl_training_has_multimodal(
             generation.metadata,

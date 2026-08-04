@@ -206,10 +206,10 @@ class GraspoConfig(BaseModel):
     def from_dict(cls, data: dict[str, Any]) -> GraspoConfig:
         """从字典构建配置，pydantic ``model_validate`` 一次性校验所有字段。
 
-        **防呆（/§2.3）：** 不手动挑键——顶层任何未知键（拼写错误）
+        **防呆：** 不手动挑键——顶层任何未知键（拼写错误）
         由 ``extra="forbid"`` 直接拒绝，而不是静默忽略后用默认值训练。
         仅做两件显式处理：
-        1. 废弃格式迁移（§18.2）：``backend_config.graspoflow`` → 顶层 ``graspoflow``
+        1. 废弃格式迁移（迁移条款）：``backend_config.graspoflow`` → 顶层 ``graspoflow``
         2. None 段防御：显式 ``section: null`` 等价于缺省（合法），未知键仍被拒绝
         """
         data = dict(data or {})

@@ -8,7 +8,7 @@
   标准格式，保留在 ``backends/graspoflow/tool_parser.py``（通用层），
   本模块从中 import。
 
-防呆设计（v0.14 训练崩溃根因修复，§2.3 防线）：
+防呆设计（v0.14 训练崩溃根因修复，防线）：
 - 旧实现用正则 ``<tool_call>(.*?)</tool_call>`` 提取 body 后直接正则提取
   ``<function=`` 标签——双 ``<tool_call>`` 开标记（一个闭标记）的"作弊
   模板"会被静默吞掉多余开标记并解析成功，配合 required 参数缺失零惩罚，
