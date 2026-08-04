@@ -16,10 +16,10 @@ flowchart TB
         CLI["cli/app.py<br/>launch / export"]
     end
     subgraph L1 ["算法层 ripple/ · 纯计算"]
-        R["reward/ · parity · loss · buffer<br/>parsing/ · monitoring/ · multimodal/"]
+        R["reward/ · parity · loss · buffer<br/>data · parsing/ · monitoring/ · multimodal/"]
     end
     subgraph L2 ["通用件 core/"]
-        C["schema.py · chat_template.py"]
+        C["schema.py · chat_template.py · lora.py"]
     end
     subgraph L3 ["设施层 flow/"]
         T["trainer/"]

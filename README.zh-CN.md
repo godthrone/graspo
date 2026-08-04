@@ -147,12 +147,28 @@ uv run graspo launch --config my_sft.yaml
 SFT 完成后可以无缝切换到 RL：将 `train_method` 改为 `graspo`，
 将 `lora.adapter_path` 指向 SFT checkpoint 的 adapter 目录即可。
 
-### 验证数据
+### 工具命令
 
-验证样例数据和 reward：
+工具命令只接受输入定位参数，输出要么打印、要么写入 config 决定的位置——绝不覆盖配置值。
+
+**校验 reward 评分**（逐样本打印，不落盘）：
 
 ```bash
 uv run graspo validate-reward --data samples/data/sample.jsonl --limit 2
+```
+
+**评测 checkpoint**（生成 rollout groups 并评分，输出
+`summary.json` + `completions.jsonl` 到 `<config output_dir>/evaluate/`）：
+
+```bash
+uv run graspo evaluate-checkpoint --config my_config.yaml \
+    --data samples/data/sample.jsonl --checkpoint outputs/my_run/step_100
+```
+
+**汇总性能分析输出**（只打印）：
+
+```bash
+uv run graspo analyze-profile outputs/my_run
 ```
 
 ## 数据格式

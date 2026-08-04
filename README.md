@@ -170,12 +170,29 @@ uv run graspo launch --config my_sft.yaml
 After SFT, continue with RL by changing `train_method` to `graspo` and
 pointing `lora.adapter_path` to the SFT checkpoint.
 
-### Validate Data
+### Tool Commands
 
-Validate sample data and reward behavior:
+Tool commands accept input-locating flags only and either print results or
+write to config-decided locations — they never override config values.
+
+**Validate reward scoring** (prints per-sample scores, writes nothing):
 
 ```bash
 uv run graspo validate-reward --data samples/data/sample.jsonl --limit 2
+```
+
+**Evaluate a checkpoint** (generates rollout groups, scores rewards, writes
+`summary.json` + `completions.jsonl` to `<config output_dir>/evaluate/`):
+
+```bash
+uv run graspo evaluate-checkpoint --config my_config.yaml \
+    --data samples/data/sample.jsonl --checkpoint outputs/my_run/step_100
+```
+
+**Summarize profiling outputs** (prints only):
+
+```bash
+uv run graspo analyze-profile outputs/my_run
 ```
 
 ## Data Format

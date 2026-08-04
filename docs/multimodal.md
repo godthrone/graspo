@@ -14,7 +14,7 @@ flowchart TD
     ENC --> TENSORS["pixel_values / image_grid_thw / mm_token_type_ids"]
 ```
 
-**单一真相源**：多模态**行构建**只在 `ripple/multimodal/rows.py`（`attach_rows` 是唯一写入方）。历史上有两份实现（core/data.py 私有版与 rows.py 公开版并存），重构后已统一——flow 侧只消费 rows 的公开函数。
+**单一真相源**：多模态**行构建**只在 `ripple/multimodal/rows.py`（`attach_rows` 是唯一写入方）。历史上有两份实现（ripple/data.py 私有版与 rows.py 公开版并存），重构后已统一——flow 侧只消费 rows 的公开函数。
 
 ## 二、两条训练路径
 
@@ -39,7 +39,7 @@ flowchart LR
 1. **启动预检**（`flow/trainer/preflight.py`）：数据含图时验证 encode → attach → resolve
    链路完整、visual LoRA 可训练（fake 1-step 梯度非零）。**PP>1 + 多模态在启动即拒绝**
    （PP 多模态生成未实现，不跑到 generate 才炸）。
-2. **resolve 内部防线**（`flow/adapters/transformer.py`）：metadata 声明了 `_multimodal_rows`
+2. **resolve 内部防线**（`flow/adapters/transformer_adapter.py`）：metadata 声明了 `_multimodal_rows`
    键但解析为空 → RuntimeError。防止"新调用点忘接线"导致的静默 None。
 3. **forward 前契约**（`ripple/multimodal/contract.py`）：sequences 含图像 token 但
    metadata 无 rows → 硬失败（RL）；样本含 media 但 batch 无 multimodal_inputs → 硬失败（SFT）。
