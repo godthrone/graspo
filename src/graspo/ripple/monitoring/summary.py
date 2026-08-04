@@ -4,9 +4,12 @@ import logging
 from collections import deque
 from typing import Any
 
-from graspo.flow.trainer.helpers import tool_call_count_mismatch_count
 from graspo.ripple.parity import lower_median
-from graspo.ripple.parsing.classification import is_pure_tool_call_task, likely_truncated_json
+from graspo.ripple.parsing.classification import (
+    is_pure_tool_call_task,
+    likely_truncated_json,
+    tool_call_count_mismatch_count,
+)
 
 # ── 监控与摘要 ─────────────────────────────────────────────────────────────────
 
@@ -459,4 +462,4 @@ def training_health(
             reasons.append("no_group_reward_variance_window")
         if float(reward_window.get("content_all_zero_rate") or 0.0) >= 0.8:
             reasons.append("content_score_all_zero_window")
-    return {"ok": not reasons, "early_stop_recommended": bool(reasons), "reasons": reasons}
+    return {"ok": not reasons, "reasons": reasons}

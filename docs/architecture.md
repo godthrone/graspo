@@ -103,8 +103,8 @@ SFT 和 RL 共享同一套 JSONL 数据格式，但 target text 的生成方式�
 （模型 0.3%），被迫同时改写 XML 格式风格和内容知识。在 405 条小样本上，模型在
 新旧格式间摇摆，输出崩溃的 XML（如 `<<tool_call>`、`<parameter=distance</parameter>`）。
 
-**验证方法**：`debug_inference.py` 对 base model 推理一条纯文本 prompt，观察其
-原生 XML 输出格式，然后确保 `tool_calls_to_xml`（ripple/parsing/xml.py）产出的格式与之完全一致。
+**验证方法**：对 base model 推理一条纯文本 prompt，观察其原生 XML 输出格式，
+然后确保 `tool_calls_to_xml`（ripple/parsing/xml.py）产出的格式与之完全一致。
 
 **修复效果**：格式对齐后，step 1 loss 从 0.64 降至 0.28，模型不再需要为格式风格
 消耗 LoRA 容量，所有参数专注于学习内容（动作名、数值）。

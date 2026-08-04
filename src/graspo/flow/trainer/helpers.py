@@ -330,26 +330,5 @@ def experience_metadata_for_row(
 
 
 # ── tool-call 辅助 ─────────────────────────────────────────────────────────────
-
-
-def tool_call_count_mismatch_count(details: list[dict[str, Any]], targets: Any) -> int:
-    """统计 tool-call 数量与 targets 不匹配的 completion 数量。"""
-    target_counts = _target_tool_call_counts(targets)
-    return sum(
-        1
-        for detail in details
-        if detail.get("parsed_tool_calls") is not None
-        and len(detail.get("parsed_tool_calls") or []) not in target_counts
-    )
-
-
-def _target_tool_call_counts(targets: Any) -> set[int]:
-    counts: set[int] = set()
-    if not isinstance(targets, list):
-        return {1}
-    for target in targets:
-        output = target.get("output") if isinstance(target, dict) else None
-        calls = output.get("tool_calls") if isinstance(output, dict) else None
-        if isinstance(calls, list):
-            counts.add(len(calls))
-    return counts or {1}
+# tool_call_count_mismatch_count / _target_tool_call_counts 已迁入
+# ripple/parsing/classification.py（算法层，供 flow 与 ripple 共用）。

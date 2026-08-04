@@ -1,5 +1,6 @@
 """GraspoFlowTrainer 优化步骤的 mixin。"""
 
+import logging
 import time
 from pathlib import Path
 from typing import Any
@@ -78,6 +79,10 @@ class OptimizeMixin:
             checkpoint_sec = time.monotonic() - checkpoint_started_at
         reward_window = reward_window_summary(self.recent_groups)
         health = training_health(metrics, reward_batch, reward_window)
+        if not health["ok"]:
+            logging.getLogger("graspo.trainer").warning(
+                "training health degraded: %s", ", ".join(health["reasons"])
+            )
         optimize = compact_optimize_metrics(metrics)
         batch = compact_batch_summary(reward_batch)
         timing = compact_timing_summary(

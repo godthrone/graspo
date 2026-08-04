@@ -138,7 +138,6 @@ def test_only_readmes_are_tracked_markdown_docs():
         "docs/architecture.md",
         "docs/graspoflow.md",
         "docs/multimodal.md",
-        "docs/refactoring-plan-v2.md",
         "docs/training_methodology.md",
     }
 

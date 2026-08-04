@@ -45,3 +45,27 @@ def likely_truncated_json(text: str, detail: dict[str, Any] | None = None) -> bo
         stripped = text.rstrip()
         return not (stripped.endswith("```") or stripped.endswith("}"))
     return False
+
+
+def _target_tool_call_counts(targets: Any) -> set[int]:
+    """计算 targets 中允许的 tool-call 数量集合（空/非列表视为 1）。"""
+    counts: set[int] = set()
+    if not isinstance(targets, list):
+        return {1}
+    for target in targets:
+        output = target.get("output") if isinstance(target, dict) else None
+        calls = output.get("tool_calls") if isinstance(output, dict) else None
+        if isinstance(calls, list):
+            counts.add(len(calls))
+    return counts or {1}
+
+
+def tool_call_count_mismatch_count(details: list[dict[str, Any]], targets: Any) -> int:
+    """统计 tool-call 数量与 targets 不匹配的 completion 数量。"""
+    target_counts = _target_tool_call_counts(targets)
+    return sum(
+        1
+        for detail in details
+        if detail.get("parsed_tool_calls") is not None
+        and len(detail.get("parsed_tool_calls") or []) not in target_counts
+    )

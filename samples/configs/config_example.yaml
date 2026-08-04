@@ -53,7 +53,7 @@ reward:
   content_reward_weight: 100         # Weight for content correctness (numeric field match)
   anti_useless_str_reward_weight: 1  # Penalty weight for useless filler text
   anti_useless_str_half_reward_len: 100  # Half-penalty text length for anti-useless reward
-  numeric_tolerance: 10.0           # Relative numeric error tolerance for full marks (0.0-1.0)
+  numeric_tolerance: 0.2            # Relative numeric error tolerance for full marks (0.0-1.0)
 
 # ── Training hyperparameters ──────────────────────────────────────────────
 training:

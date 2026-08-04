@@ -39,8 +39,8 @@ LoRA（30M 参数，模型 0.3%）被迫同时改写格式和内容，在 405 �
 干扰——模型在新旧格式间摇摆，输出 `<<tool_call>`、`<parameter=distance</parameter>`
 等崩溃 XML。
 
-**验证方法**：用 `scripts/debug_inference.py` 对 base model 推理，观察原生 XML
-输出格式，确保 `_tool_calls_to_xml` 产出格式与之完全相同。格式对齐后 step 1 loss
+**验证方法**：对 base model 推理纯文本 prompt，观察原生 XML 输出格式，确保
+`_tool_calls_to_xml` 产出格式与之完全相同。格式对齐后 step 1 loss
 从 0.64 降至 0.28。
 
 ## 背景：GRPO 与结构化输出

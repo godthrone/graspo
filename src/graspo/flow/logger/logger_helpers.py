@@ -8,6 +8,7 @@ self-contained utility module for readable/raw payload construction.
 from typing import Any
 
 from graspo.ripple.parsing.classification import (
+    _target_tool_call_counts,
     is_pure_tool_call_task,
     likely_truncated_json,
     summarize_json_markers,
@@ -205,18 +206,6 @@ def _get_index(values: Any, index: int) -> Any:
     if isinstance(values, (list, tuple)) and index < len(values):
         return values[index]
     return None
-
-
-def _target_tool_call_counts(targets: Any) -> set[int]:
-    counts: set[int] = set()
-    if not isinstance(targets, list):
-        return {1}
-    for target in targets:
-        output = target.get("output") if isinstance(target, dict) else None
-        calls = output.get("tool_calls") if isinstance(output, dict) else None
-        if isinstance(calls, list):
-            counts.add(len(calls))
-    return counts or {1}
 
 
 def _to_jsonable(value: Any) -> Any:
