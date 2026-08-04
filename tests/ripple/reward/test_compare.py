@@ -1,3 +1,5 @@
+"""字典比较评分（graspo.ripple.reward.compare）的单元测试。"""
+
 import pytest
 
 from graspo.ripple.reward.compare import dict_compare_score

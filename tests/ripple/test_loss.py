@@ -1,8 +1,10 @@
+"""GRASPORippleLoss（PPO-clip）的单元测试。"""
+
 import pytest
 
 torch = pytest.importorskip("torch", exc_type=ImportError)
 
-from graspo.ripple.loss import GRASPOLoss  # noqa: E402
+from graspo.ripple.loss import GRASPORippleLoss  # noqa: E402
 
 
 def test_ppo_clip_loss_matches_original_formula():
@@ -17,7 +19,7 @@ def test_ppo_clip_loss_matches_original_formula():
     expected = -torch.min(surr1, surr2)
     expected = ((expected * action_mask).sum(dim=-1) / action_mask.sum(dim=-1)).mean()
 
-    actual = GRASPOLoss(policy_ratio_clip_eps=0.2)(
+    actual = GRASPORippleLoss(policy_ratio_clip_eps=0.2)(
         log_probs, old_log_probs, advantages, action_mask
     )
 

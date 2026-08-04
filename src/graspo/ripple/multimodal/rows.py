@@ -10,8 +10,6 @@ dict/list，可在单线程本地测试。职责边界见 ``__init__.py``。
   由调用方决定是告警还是报错（``contract.py`` 负责抛错）。
 """
 
-from __future__ import annotations
-
 import copy
 from pathlib import Path
 from typing import Any

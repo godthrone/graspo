@@ -1,3 +1,5 @@
+"""运维脚本 record_gpu_memory.py 的单元测试。"""
+
 import importlib.util
 from pathlib import Path
 

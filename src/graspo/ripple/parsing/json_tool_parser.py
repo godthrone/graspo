@@ -9,8 +9,6 @@
   开标记）绕过，XML 路径已改为规范化 + ElementTree 严格解析，见该模块。
 """
 
-from __future__ import annotations
-
 import json
 from typing import Any
 

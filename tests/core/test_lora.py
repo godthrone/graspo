@@ -1,3 +1,5 @@
+"""LoRA 目标模块解析（graspo.core.lora）的单元测试。"""
+
 import pytest
 
 from graspo.core.lora import resolve_lora_target_modules

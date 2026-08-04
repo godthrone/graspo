@@ -1,6 +1,6 @@
 """GRASPO 训练 loss 集合 —— 算法层（ripple），零设施依赖。
 
-- GRASPOLoss: PPO-clip loss（RL 训练）
+- GRASPORippleLoss: PPO-clip loss（RL 训练）
 - sft_cross_entropy_loss: 标准 SFT cross-entropy loss
 - masked_mean / sequence_log_probs*: log-prob 工具函数
 
@@ -47,7 +47,7 @@ def sequences_log_probs(
     )
 
 
-class GRASPOLoss(nn.Module):
+class GRASPORippleLoss(nn.Module):
     def __init__(self, policy_ratio_clip_eps: float = 0.2) -> None:
         super().__init__()
         self.policy_ratio_clip_eps = policy_ratio_clip_eps

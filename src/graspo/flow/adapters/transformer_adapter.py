@@ -116,9 +116,9 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
         """Build pipeline operators.  Subclass implements."""
 
     def _build_optimizer(self) -> None:
-        from graspo.ripple.loss import GRASPOLoss
+        from graspo.ripple.loss import GRASPORippleLoss
 
-        self.loss_fn = GRASPOLoss(self.config.training.policy_ratio_clip_eps)
+        self.loss_fn = GRASPORippleLoss(self.config.training.policy_ratio_clip_eps)
         trainable = [param for param in self.model.parameters() if param.requires_grad]
         self.optimizer = (
             torch.optim.AdamW(

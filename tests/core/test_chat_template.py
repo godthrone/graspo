@@ -1,3 +1,5 @@
+"""Chat template 渲染（graspo.core.chat_template）的单元测试。"""
+
 from graspo.core.chat_template import render_messages
 
 

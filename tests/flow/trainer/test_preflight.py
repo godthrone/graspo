@@ -5,8 +5,6 @@
 - run_multimodal_preflight 的纯文本短路路径（无 GPU 依赖部分）
 """
 
-from __future__ import annotations
-
 import pytest
 
 from graspo.flow.trainer.preflight import (

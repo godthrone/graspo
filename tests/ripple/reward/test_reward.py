@@ -1,3 +1,5 @@
+"""奖励计算与注册表（graspo.ripple.reward.reward）的单元测试。"""
+
 import pytest
 
 from graspo.ripple.parsing.completion import ParsedCompletion

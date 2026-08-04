@@ -1,3 +1,5 @@
+"""公式 A 核心算法（graspo.ripple.parity，需 torch）的单元测试。"""
+
 import pytest
 
 torch = pytest.importorskip("torch", exc_type=ImportError)

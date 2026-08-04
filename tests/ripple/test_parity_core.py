@@ -1,3 +1,5 @@
+"""公式 A 纯 CPU 算法（graspo.ripple.parity，零 torch）的单元测试。"""
+
 from graspo.ripple.parity import (
     GroupDecision,
     classify_group,

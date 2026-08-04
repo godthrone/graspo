@@ -6,8 +6,6 @@
 保持开发者工具定位。
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import signal

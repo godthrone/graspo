@@ -13,8 +13,6 @@ Two-path logic per completion:
 2. Format broken → token-by-token comparison with ground truth format
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 

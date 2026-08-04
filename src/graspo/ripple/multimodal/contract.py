@@ -13,12 +13,7 @@
 2. ``assert_sft_batch_has_multimodal``（SFT 路径）
    样本含 media 但 batch 中无 ``multimodal_inputs`` → RuntimeError。
    在 SFT collate 后、forward 前调用。
-
-本模块零设施依赖——image_token_id 是 int 配置值，sequences 可以是
-tensor 或普通序列（鸭子类型判断 允许的运行时类型判断）。
 """
-
-from __future__ import annotations
 
 from typing import Any
 

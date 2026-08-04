@@ -1,3 +1,5 @@
+"""CLI 解析与启动计划（graspo.cli.app）的单元测试。"""
+
 import json
 import subprocess
 from pathlib import Path
@@ -244,7 +246,6 @@ launch:
   master_addr: 127.0.0.1
   master_port: 29500
   python: python
-  env: {{}}
 """,
         encoding="utf-8",
     )

@@ -420,6 +420,7 @@ export:
 每个 run 写入 `training.output_dir`：
 
 - `logs/training.log`：rank-0 紧凑训练事件；
+- `logs/train.log`：备用训练日志路径（`analyze-profile` 的旧版 fallback）；
 - `logs/rollouts.readable.jsonl`：人类可读的 messages、completion、reward 和 debug 细节；
 - `logs/rollouts.raw.jsonl`：replay tensors、masks、old logprobs、advantages 和 reward metadata；
 - `logs/train_batches.readable.jsonl`：每个 optimize-trigger batch 一行；

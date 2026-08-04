@@ -13,8 +13,6 @@
 在训练 forward 时拦截（阶段 3 接线）。
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 

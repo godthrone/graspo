@@ -1,3 +1,5 @@
+"""后端选择器（graspo.flow.selector）的单元测试。"""
+
 import pytest
 
 from graspo.core.schema import GraspoConfig

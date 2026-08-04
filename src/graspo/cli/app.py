@@ -242,8 +242,6 @@ def _require_config_value(value: Any, name: str) -> None:
 
 def _build_launch_env(config: GraspoConfig) -> dict[str, str]:
     env = dict(os.environ)
-    for key, value in config.launch.env.items():
-        env[str(key)] = str(value)
     env.setdefault("TOKENIZERS_PARALLELISM", "false")
 
     src_dir = _project_src_dir()
