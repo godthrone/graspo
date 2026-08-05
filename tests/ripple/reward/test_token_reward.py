@@ -292,8 +292,8 @@ def _mixed(
 # ── Tests: compute_token_advantages (new format/content API) ────────────────────
 
 
-def test_format_tokens_fixed_plus_minus_one():
-    """Format tokens get +1.0 (clean) or -1.0 (broken), independent of group."""
+def test_format_tokens_clean_zero_broken_minus_one():
+    """Clean format tokens get 0.0 (no gradient), broken get -1.0."""
     rewards = [
         [1.0, 1.0, 1.0],  # clean
         [1.0, 1.0, 1.0],  # clean
@@ -311,10 +311,10 @@ def test_format_tokens_fixed_plus_minus_one():
         [None, None, None],
     ]
     advantages = compute_token_advantages(rewards, is_fmt, fk)
-    # Clean → +1.0
+    # Clean → 0.0 (format already correct, no gradient needed)
     for t in range(3):
-        assert advantages[0][t] == 1.0
-        assert advantages[1][t] == 1.0
+        assert advantages[0][t] == 0.0
+        assert advantages[1][t] == 0.0
     # Broken → -1.0
     for t in range(3):
         assert advantages[2][t] == -1.0
@@ -341,10 +341,10 @@ def test_content_tokens_field_level_z_score():
     ]
     advantages = compute_token_advantages(rewards, is_fmt, fk)
 
-    # Format tokens at position 0: clean +1.0, broken -1.0
-    assert advantages[0][0] == 1.0
+    # Format tokens at position 0: clean 0.0, broken -1.0
+    assert advantages[0][0] == 0.0
     assert advantages[1][0] == -1.0
-    assert advantages[2][0] == 1.0
+    assert advantages[2][0] == 0.0
 
     # Content tokens at position 1 (field "a.p"):
     # clean scores: [0.8, 0.0], mean=0.4, std=0.5657
@@ -376,7 +376,7 @@ def test_content_tokens_broken_completion_gets_zero():
 
 
 def test_all_clean_format_tokens_no_variance():
-    """All clean format tokens: all get +1.0 (harmless — no gradient difference)."""
+    """All clean format tokens: all get 0.0 (format correct, no gradient)."""
     rewards = [
         [1.0, 1.0, 1.0],
         [1.0, 1.0, 1.0],
@@ -393,10 +393,10 @@ def test_all_clean_format_tokens_no_variance():
         [None, None, None],
     ]
     advantages = compute_token_advantages(rewards, is_fmt, fk)
-    # All +1.0 → no variance → no gradient for format tokens (already learned).
+    # All 0.0 — format already correct, no gradient needed.
     for i in range(3):
         for t in range(3):
-            assert advantages[i][t] == 1.0
+            assert advantages[i][t] == 0.0
 
 
 def test_compute_token_rewards_returns_triple():

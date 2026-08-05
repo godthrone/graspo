@@ -82,9 +82,10 @@ def compute_ripple_advantages(
 ) -> Any:
     """GRASPO-Ripple: token-level advantage with format/content separation.
 
-    Format tokens receive fixed ±1.0.  Content tokens receive field-level
-    advantages (z-scored across clean completions per field, distributed
-    to the corresponding content tokens).
+    Format tokens for clean completions receive 0.0 (format already correct).
+    Broken completions receive -1.0 on format tokens.  Content tokens receive
+    field-level advantages (z-scored across clean completions per field,
+    distributed to the corresponding content tokens).
 
     The ragged advantages are aligned to the ``old_log_probs`` tensor shape.
 

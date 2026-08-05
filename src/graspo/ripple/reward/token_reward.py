@@ -1,16 +1,16 @@
 """GRASPO-Ripple: Token-level reward computation.
 
 Ripple replaces completion-level GRPO rewards with per-token reward vectors.
-Format tokens (tool-call XML markers) receive fixed ±1.0 advantages — clean
-completions get +1.0 and broken get -1.0 regardless of group composition.
-Content tokens receive field-level advantages: per-field scores are z-scored
-across clean completions and distributed to the corresponding tokens, so
-content quality is compared at the semantic field level rather than raw token
-position.
+Format tokens (tool-call XML markers) receive 0.0 for clean completions
+(format already correct — no gradient needed) and -1.0 for broken completions
+(format wrong — focus on format correction).  Content tokens receive
+field-level advantages: per-field scores are z-scored across clean completions
+and distributed to the corresponding tokens, so content quality is compared
+at the semantic field level rather than raw token position.
 
 Two-path logic per completion:
-1. Format correct (parsed successfully) → format tokens = 1.0, content tokens = field scores
-2. Format broken → token-by-token comparison with ground truth format
+1. Format correct (parsed successfully) → format tokens = 0.0, content tokens = field scores
+2. Format broken → format tokens = -1.0, content tokens = 0.0 (untrustworthy)
 """
 
 import logging
@@ -346,17 +346,20 @@ def compute_token_advantages(
     *,
     eps: float = 1e-8,
 ) -> list[list[float]]:
-    """Compute token-level advantages with format/content separation.
+    """Compute token-level advantages with format/content separation (v0.18.0).
 
-    **Format tokens** receive fixed advantages: clean completions get +1.0,
-    broken get -1.0.  This is independent of group composition — format
-    correctness is an absolute signal.
+    **Format tokens** for clean completions receive 0.0 — format is already
+    correct, no gradient needed.  Broken completions receive -1.0 on format
+    tokens to focus learning on format correction.
 
-    **Content tokens** receive field-level advantages: per-field scores are
-    z-scored across clean completions in the group, then distributed to all
-    tokens belonging to that field.  This compares content quality at the
-    semantic field level rather than raw token position, which avoids
-    misalignment when completions have different content lengths.
+    **Content tokens** for clean completions receive field-level advantages
+    (z-scored across clean completions per field).  Broken completions
+    receive 0.0 on content tokens — content is untrustworthy when format
+    is broken.
+
+    This design prevents format tokens from dominating total gradient signal
+    (previously ~15 format tokens × ±1.0 vs ~3 content tokens × ~0.3),
+    which caused the model to converge on format while ignoring content.
 
     Args:
         token_rewards: Ragged per-completion reward lists.
@@ -445,8 +448,9 @@ def compute_token_advantages(
             fk = field_keys[i][t] if t < len(field_keys[i]) else None
 
             if is_format_pos[t] and t < len(is_format_pos):
-                # Format token position: fixed ±1.0
-                advantages[i].append(1.0 if is_clean[i] else -1.0)
+                # Format token position: clean=0.0 (already correct, no gradient),
+                # broken=-1.0 (focus on format correction)
+                advantages[i].append(0.0 if is_clean[i] else -1.0)
             elif fk is not None and not is_fmt:
                 # Content token: look up field-level advantage
                 if is_clean[i] and fk in field_adv and i in field_adv[fk]:
