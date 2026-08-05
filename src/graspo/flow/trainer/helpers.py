@@ -69,8 +69,8 @@ def compute_ripple_advantages(
 
     Format tokens for clean completions receive 0.0 (format already correct).
     Broken completions receive -1.0 on format tokens.  Content tokens receive
-    field-level advantages (z-scored across clean completions per field,
-    distributed to the corresponding content tokens).
+    ``cs - mean(cs)`` — the raw difference from the group mean, without std
+    normalization (v0.19.0).
 
     The ragged advantages are aligned to the ``old_log_probs`` tensor shape.
 

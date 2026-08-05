@@ -346,20 +346,22 @@ def compute_token_advantages(
     *,
     eps: float = 1e-8,
 ) -> list[list[float]]:
-    """Compute token-level advantages with format/content separation (v0.18.0).
+    """Compute token-level advantages with format/content separation (v0.19.0).
 
     **Format tokens** for clean completions receive 0.0 — format is already
     correct, no gradient needed.  Broken completions receive -1.0 on format
     tokens to focus learning on format correction.
 
-    **Content tokens** for clean completions receive field-level advantages
-    (z-scored across clean completions per field).  Broken completions
-    receive 0.0 on content tokens — content is untrustworthy when format
-    is broken.
+    **Content tokens** for clean completions receive ``cs - mean(cs)`` — the
+    deviation from the group mean.  This is a simple, scale-honest signal:
+    each 0.01 of content_score difference produces exactly 0.01 of advantage,
+    without artificial amplification from std normalization.  Broken
+    completions receive 0.0 on content tokens (untrustworthy).
 
-    This design prevents format tokens from dominating total gradient signal
-    (previously ~15 format tokens × ±1.0 vs ~3 content tokens × ~0.3),
-    which caused the model to converge on format while ignoring content.
+    Prior to v0.19.0, content advantage was ``(cs - mean) / std`` (z-score),
+    which amplified small differences by up to 12× when within-group variance
+    was low.  The raw difference preserves the correct direction while keeping
+    per-token gradient magnitudes honest and comparable across groups.
 
     Args:
         token_rewards: Ragged per-completion reward lists.
@@ -412,21 +414,21 @@ def compute_token_advantages(
                 seen.add(fk)
                 field_scores_by_key.setdefault(fk, []).append((i, token_rewards[i][t]))
 
-    # Compute z-score per field across clean completions.
+    # Compute per-field raw difference across clean completions.
+    # cs - mean(cs): honest scale, correct direction, no artificial amplification.
     field_adv: dict[str, dict[int, float]] = {}  # field_key → {completion_idx: advantage}
     for fk, entries in field_scores_by_key.items():
         scores = [e[1] for e in entries]
         indices = [e[0] for e in entries]
         if len(scores) >= 2:
             mean = sum(scores) / len(scores)
-            variance = sum((s - mean) ** 2 for s in scores) / (len(scores) - 1)
-            std = variance**0.5
+        elif len(scores) == 1:
+            mean = scores[0]
         else:
-            mean = scores[0] if scores else 0.0
-            std = 0.0
+            mean = 0.0
         field_adv[fk] = {}
         for idx, s in zip(indices, scores):
-            field_adv[fk][idx] = (s - mean) / (std + eps) if std > 0 else 0.0
+            field_adv[fk][idx] = s - mean
 
     # --- Step 2: assign advantages per token ---
 

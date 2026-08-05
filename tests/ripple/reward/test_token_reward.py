@@ -320,8 +320,8 @@ def test_format_tokens_clean_zero_broken_minus_one():
         assert advantages[2][t] == -1.0
 
 
-def test_content_tokens_field_level_z_score():
-    """Content tokens get field-level advantage (z-score across clean only)."""
+def test_content_tokens_field_level_raw_diff():
+    """Content tokens get field-level advantage (cs - mean, raw difference)."""
     # 2 clean, 1 broken. Content tokens for field "a.p".
     rewards = [
         [1.0, 0.8, 0.0],  # clean, field scores for "a.p": 1.0, 0.8
@@ -347,11 +347,11 @@ def test_content_tokens_field_level_z_score():
     assert advantages[2][0] == 0.0
 
     # Content tokens at position 1 (field "a.p"):
-    # clean scores: [0.8, 0.0], mean=0.4, std=0.5657
-    # idx 0: (0.8-0.4)/0.5657 ≈ 0.707
-    # idx 2: (0.0-0.4)/0.5657 ≈ -0.707
-    assert advantages[0][1] > 0  # above mean
-    assert advantages[2][1] < 0  # below mean
+    # clean scores: [0.8, 0.0], mean=0.4
+    # idx 0: 0.8 - 0.4 = 0.4
+    # idx 2: 0.0 - 0.4 = -0.4
+    assert advantages[0][1] == 0.4
+    assert advantages[2][1] == -0.4
     # broken content token → 0
     assert advantages[1][1] == 0.0
 
