@@ -14,7 +14,7 @@ from graspo.ripple.monitoring.stats import (
     GraspoFlowEpochStats,
     GraspoFlowTrainStats,
 )
-from graspo.ripple.parity import group_advantages, lower_median
+from graspo.ripple.parity import lower_median
 
 # ── 时间戳 ────────────────────────────────────────────────────────────────────
 
@@ -54,21 +54,6 @@ def _backup_config(config: Any, output_dir: Path) -> None:
 
 
 # ── advantage 计算 ─────────────────────────────────────────────────────────────
-
-
-def expand_advantages_like(rewards: list[float], old_log_probs: Any) -> Any:
-    """将 group 级 advantage 扩展为与 old_log_probs 同 shape 的 tensor。
-
-    非 Ripple 路径（rollout 组合级 GRPO 时）仍在使用。
-    """
-    import torch
-
-    values = torch.tensor(
-        group_advantages(rewards),
-        dtype=old_log_probs.dtype,
-        device=old_log_probs.device,
-    ).unsqueeze(1)
-    return values.expand_as(old_log_probs)
 
 
 def compute_ripple_advantages(

@@ -6,7 +6,6 @@ from typing import Any
 
 from graspo.flow.trainer.helpers import (
     compute_ripple_advantages,
-    expand_advantages_like,
     experience_metadata_for_row,
     generated_token_counts,
     group_stats,
@@ -312,23 +311,32 @@ class RolloutMixin:
         replay_started_at = time.monotonic()
         # GRASPO-Ripple: token-level rewards and advantages
         tokenizer = self.runtime._require_adapter().tokenizer
-        if tokenizer is not None and record.parsed_completions:
-            token_rewards, is_format_masks, field_keys = compute_token_rewards_for_group(
-                generation=generation,
-                parsed_completions=record.parsed_completions,
-                targets=state.sample.targets,
-                tokenizer=tokenizer,
-                reward_config=self.reward.config,
+        if tokenizer is None:
+            raise RuntimeError(
+                "tokenizer is None — GRASPO requires a tokenizer for token-level"
+                " advantage computation.  Ensure the model adapter sets"
+                " self.tokenizer during initialization."
             )
-            advantages = compute_ripple_advantages(
-                token_rewards,
-                is_format_masks,
-                field_keys,
-                old_log_probs,
-                generation.prompt_len,
+        if not record.parsed_completions:
+            raise RuntimeError(
+                "parsed_completions is empty — GRASPO requires parsed completions"
+                " for token-level advantage computation.  This indicates a bug"
+                " in the parsing pipeline or rollout logic."
             )
-        else:
-            advantages = expand_advantages_like(rewards, old_log_probs)
+        token_rewards, is_format_masks, field_keys = compute_token_rewards_for_group(
+            generation=generation,
+            parsed_completions=record.parsed_completions,
+            targets=state.sample.targets,
+            tokenizer=tokenizer,
+            reward_config=self.reward.config,
+        )
+        advantages = compute_ripple_advantages(
+            token_rewards,
+            is_format_masks,
+            field_keys,
+            old_log_probs,
+            generation.prompt_len,
+        )
         self._append_experiences(generation, rewards, old_log_probs, advantages)
         timing["replay_append_sec"] = time.monotonic() - replay_started_at
         timing["attempt_total_sec"] = (
