@@ -213,6 +213,11 @@ def annotate_tool_call(
     # 3.2 参数循环：<parameter=NAME> value </parameter>
     param_idx = 0
     while True:
+        # 参数循环结束条件：下一个非空白不是 <parameter= （参数已全部处理完，
+        # 或模型直接跳到闭合标签）。此时不应触发多余参数分支（T01 回归点）。
+        first = _first_non_blank(text, pos, n)
+        if first >= n or not text.startswith(_PARAMETER_MARK, first):
+            break
         if param_idx >= len(param_order):
             # GT 参数已耗尽但模型仍输出 <parameter= → 多余参数块：
             # 期望此处是 </function>，首个不匹配字符 E（T07）
@@ -221,9 +226,6 @@ def annotate_tool_call(
                 return a.tags, a.fields
             break
         p_mark = f"{_PARAMETER_MARK}{param_order[param_idx]}>"
-        p_pos = text.find(_PARAMETER_MARK, pos)
-        if p_pos < 0:
-            break
         # 参数开标签逐字符比对
         ok, pos = a.match_expected(pos, p_mark)
         if not ok:
