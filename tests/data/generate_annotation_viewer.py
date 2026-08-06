@@ -238,7 +238,7 @@ document.getElementById('resetBtn').addEventListener('click', () => {
 
 def load_data():
     records = []
-    with open(DATA_FILE, "r", encoding="utf-8") as f:
+    with open(DATA_FILE, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -378,7 +378,7 @@ def build_html(records):
             f'<span class="legend-label">= {name} ({count})</span></div>'
         )
 
-    type_filter_buttons = ['<button class="filter-btn active" data-type="all">All ({})</button>'.format(total)]
+    type_filter_buttons = [f'<button class="filter-btn active" data-type="all">All ({total})</button>']
     for t, c in sorted(type_counts.items()):
         type_filter_buttons.append(f'<button class="filter-btn" data-type="{t}">{t} ({c})</button>')
 

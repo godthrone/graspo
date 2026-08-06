@@ -209,11 +209,21 @@ class GraspoConfig(BaseModel):
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> GraspoConfig:
-        """从 YAML 文件加载配置，加载时完成全部校验。"""
-        import yaml
+        """从 YAML 文件加载配置，加载时完成全部校验。
 
-        text = Path(path).read_text(encoding="utf-8")
-        return cls.from_dict(yaml.safe_load(text))
+        校验失败时输出人类可读的错误信息（哪个字段、期望什么、可用字段有哪些），
+        而不是原始 pydantic traceback。
+        """
+        import yaml
+        from pydantic import ValidationError
+
+        path = Path(path)
+        text = path.read_text(encoding="utf-8")
+        try:
+            return cls.from_dict(yaml.safe_load(text))
+        except ValidationError as exc:
+            _report_config_errors(exc, path, cls)
+            raise SystemExit(1)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> GraspoConfig:
@@ -265,6 +275,77 @@ class Sample(BaseModel):
 
 
 # ── 辅助函数 ────────────────────────────────────────────────────────────────
+
+
+def _report_config_errors(
+    exc: Any, config_path: Path, config_cls: Any
+) -> None:
+    """将 pydantic ValidationError 转成人类可读的错误信息。
+
+    不输出原始 traceback，而是按字段分组，列出每个问题字段、
+    期望的值、可用字段列表。
+    """
+    import sys
+
+    errors = exc.errors()
+    # 构建各段可用字段的映射：顶层 + 每个子段
+    config_section_fields: dict[str, list[str]] = {
+        section: sorted(
+            [
+                k
+                for k in config_cls.model_fields[section].annotation.model_fields  # type: ignore[union-attr]
+            ]
+            if section in config_cls.model_fields
+            else []
+        )
+        for section in (
+            "graspoflow",
+            "model",
+            "data",
+            "lora",
+            "export",
+            "launch",
+            "reward",
+            "training",
+        )
+    }
+    config_section_fields[""] = sorted(
+        k for k in config_cls.model_fields if k not in config_section_fields
+    )
+
+    lines: list[str] = []
+    lines.append(f"\n配置校验失败 ({config_path}):\n")
+    for error in errors:
+        loc = ".".join(str(p) for p in error["loc"])
+        msg = error["msg"]
+        err_type = error["type"]
+
+        if err_type == "extra_forbidden":
+            # 拼写错误或已删除的字段
+            lines.append(f"  {loc}: 未知字段，当前版本不支持此配置项")
+            # 尝试找到所属段，列出可用字段
+            section = str(error["loc"][0]) if error["loc"] else ""
+            if section in config_section_fields and config_section_fields[section]:
+                fields = ", ".join(config_section_fields[section])
+                lines.append(f"    {section} 段可用字段: {fields}")
+            elif "" in config_section_fields:
+                fields = ", ".join(config_section_fields[""])
+                lines.append(f"    顶层可用字段: {fields}")
+        elif err_type == "missing":
+            lines.append(f"  {loc}: 缺少必填字段")
+        elif err_type == "string_type":
+            lines.append(f"  {loc}: 期望字符串，实际收到 {error.get('input')}")
+        elif err_type == "int_type":
+            lines.append(f"  {loc}: 期望整数，实际收到 {error.get('input')}")
+        elif err_type == "bool_type":
+            lines.append(f"  {loc}: 期望布尔值，实际收到 {error.get('input')}")
+        elif err_type == "literal_error":
+            lines.append(f"  {loc}: 期望 {error.get('expected')}，实际收到 {error.get('input')}")
+        else:
+            lines.append(f"  {loc}: {msg}")
+
+    print("\n".join(lines), file=sys.stderr)
+
 
 _RUN_NAME_CACHE: dict[str, str] = {}
 """模块级缓存，确保同一秒内多次调用（如 torchrun 多 worker）得到相同的 run_name。"""

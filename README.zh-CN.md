@@ -37,7 +37,7 @@ Docker 是推荐的训练方式，锁定运行环境，避免宿主机依赖冲�
 # 1. 构建镜像（自动从 git tag 读取版本号）
 bash docker/build.sh
 
-# 2. 训练 — run.sh 自动选择空闲 GPU、设置 NCCL 安全参数、挂载配置目录
+# 2. 训练 — run.sh 自动选择空闲 GPU、从 YAML 配置推导挂载目录、设置 NCCL 安全参数
 bash run.sh my_config.yaml
 
 # 3. 先冒烟测试（推荐）：跑 1 步验证环境（模型加载、多模态链路、训练前向）
@@ -45,6 +45,9 @@ bash run.sh my_config.yaml --smoke
 
 # 4. 指定 GPU（例如 4 和 5）
 bash run.sh my_config.yaml --gpus 4,5
+
+# 5. 指定镜像版本（默认从 git describe 自动推导）
+bash run.sh my_config.yaml --image graspo:v0.17.0
 ```
 
 `run.sh` 是防呆设计：
@@ -53,7 +56,10 @@ bash run.sh my_config.yaml --gpus 4,5
 - **只传 `--gpus device=<ids>`**，绝不注入 `CUDA_VISIBLE_DEVICES`——
   两者混用会导致 NCCL 初始化死锁；
 - **固定 `--ipc=host --shm-size=16g`**（NCCL 共享内存必需）；
-- **镜像 tag 自动取 `git describe`**，不硬编码版本；
+- **挂载目录从 YAML 配置自动推导**——`model.model_path`、`data.train_path`、
+  `training.output_dir` 以及 config 文件所属目录全部自动挂载，无需手动指定
+  `--model-dir` 或 `-v` 参数；
+- **镜像 tag 默认取 `git describe`**，可通过 `--image` 覆盖；
 - **`--smoke` 走 CLI**（`graspo launch --smoke`）作为运行边界标志：训练跑完
   第 1 步即停止——语义等价于 `max_steps=1` 的 config，绝不修改你的 config 文件。
 
@@ -61,10 +67,9 @@ bash run.sh my_config.yaml --gpus 4,5
 
 ```bash
 docker run --gpus "device=0,1" --ipc=host --shm-size=16g \
-  -v /path/to/config/dir:/data/configs \
-  -v /path/to/your/model:/workspace/graspo/models \
+  -v /data:/data \
   graspo:<version> \
-  launch --config /data/configs/my_config.yaml
+  launch --config /data/outputs/my_config.yaml
 ```
 
 > **绝不要把 `--gpus device=` 与 `CUDA_VISIBLE_DEVICES` 混用** ——
@@ -256,6 +261,30 @@ GRASPO 当前提供一个内置结构化输出 reward，适合目标答案为 JS
 不应该获得连续数字分的 ID 或类别编码，应该在数据集中写成 JSON string。
 
 GRASPO 使用同一 rollout group 内的 reward 分布，而不是单条 completion 的绝对分数。有有效差异的 group 会进入训练；已经 perfect 的 group 可以跳过；没有 reward 方差或没有偏好差异的 group 会被丢弃或重试。`rollouts.readable.jsonl` 会记录 messages、completion、parsed tool calls、抽取字段、parser errors、reward 细节和 invalid reason，方便检查 reward 行为。
+
+## Token 级标注（v0.20.0）
+
+rollout 完成后，每条 completion 会被**逐字符标注**结构角色（`CharTag`），与打分解耦。标注模块（`src/graspo/ripple/annotation/`）是 token 级 advantage 的唯一输入：
+
+| 枚举 | 含义 | 下游 |
+|------|------|------|
+| `S` | 结构字符，与期望模板字符相等 | +1.0 |
+| `V` | 值字符（参数值 / JSON value） | 相似度 0~1 |
+| `T` | think 内容 | 0（不训练） |
+| `W` | 前导/尾随/夹缝文本 | 0（不训练） |
+| `E` | **首个**与期望模板不匹配的字符 | -1.0 |
+| `D` | E 之后所有字符 | 0（不训练） |
+
+设计原则（源于 v0.16-v0.19 四次连续训练崩溃，详见 `.local/v19-collapse-root-cause-analysis-20260806.md`）：
+
+- **字符级比对，tokenizer 无关**：期望 mark 序列（如 `<tool_call> <function=...> <parameter=...> ...`）与模型输出逐字符比对，首个不匹配字符标 E。token 标注经 offset_mapping 派生——任何 tokenizer 变体都不会误标正确前缀 token（如 `</parametr>` 与 `</parameter>` 共享 `</`、`param` 前缀 token）
+- **严格对齐截断**：E 之后全部 D（不训练）——错误前缀下的 token 无训练价值
+- **截断/结构不完整不标 E**：已有字符全部正确，硬标 E 只误标正确 token；不完整性信号交给 reward 层（`content_score=0` → 组级 RETRY/INVALID）
+- **值错误不触发 E**：内容相似度由下游打分，仅结构/类型错误触发 E
+- **tool call 参数无序集合匹配**：参数顺序颠倒不是错误（JSON 对象语义）；GT 参数缺失或多余参数是错误（期望缺失 `<parameter=NAME>` 与实际输出比对定位 E）
+- **与 reward 层语义一致**：只有语义错误标 E——缺字段/多余字段/拼错/类型错；语义正确不标（如参数顺序）
+
+35 条测试数据集（`tests/data/annotation_testset.jsonl`，tool call 20 + JSON 15）覆盖完美输出/值错误/前导文本/拼错/双开标记/多余字段/缺字段/顺序颠倒/截断/乱码/think 等场景，每条含期望标注，经独立 agent 核验。`tests/data/generate_annotation_viewer.py` 生成 HTML 逐字符着色视图供人工检查。
 
 ## 配置说明
 
@@ -468,7 +497,7 @@ bash run.sh samples/configs/config_example.yaml --smoke
 
 - `model.model_path must be set`：编辑 `samples/configs/config_example.yaml`，指向真实 base model。
 - `data.train_path does not exist`：将 `data.train_path` 指向 JSONL 文件。
-- **Docker 容器内找不到模型**：用 `-v /host/path:/workspace/graspo/models` 挂载模型目录。
+- **Docker 容器内找不到模型**：确认 `model.model_path` 在 YAML 中写的是宿主机上的绝对路径，`run.sh` 会自动挂载其父目录。如果路径不在常见位置，用 `bash run.sh --help` 检查挂载逻辑。
 - **Docker 提示 torchrun 找不到**：镜像已将 GRASPO 安装为 CLI 入口，直接运行 `graspo launch --config ...` 即可，PATH 已包含 torch 和 torchrun。
 - Native launch world size mismatch：让 `launch.nproc_per_node * launch.nnodes` 等于 `tp_size * pp_size`。
 - Rollout OOM：保持 `training.max_new_tokens=2048`；降低 rollout 并发或 KV cache 预留，而不是降低生产生成长度。

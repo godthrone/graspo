@@ -53,8 +53,8 @@ avoids host dependency conflicts.
 # 1. Build the image (reads version from git tag automatically)
 bash docker/build.sh
 
-# 2. Train — run.sh auto-picks free GPUs, sets NCCL-safe flags,
-#    and mounts your config directory
+# 2. Train — run.sh auto-picks free GPUs, mounts directories from YAML config,
+#    and sets NCCL-safe flags
 bash run.sh my_config.yaml
 
 # 3. Smoke test first (optional but recommended): run 1 step to verify
@@ -63,6 +63,9 @@ bash run.sh my_config.yaml --smoke
 
 # 4. Pin specific GPUs (e.g. 4 and 5)
 bash run.sh my_config.yaml --gpus 4,5
+
+# 5. Override image tag (default comes from git describe)
+bash run.sh my_config.yaml --image graspo:v0.17.0
 ```
 
 `run.sh` is defensive by design:
@@ -72,7 +75,11 @@ bash run.sh my_config.yaml --gpus 4,5
   `CUDA_VISIBLE_DEVICES`, which combined with Docker device binding
   deadlocks NCCL initialization;
 - **Always sets `--ipc=host --shm-size=16g`** (required for NCCL shared memory);
-- **Resolves the image tag from `git describe`** — never hardcodes a version;
+- **Mount directories are derived from your YAML config** — `model.model_path`,
+  `data.train_path`, `training.output_dir`, and the config file's own directory
+  are all mounted automatically. No manual `--model-dir` or `-v` flags needed;
+- **Resolves the image tag from `git describe`** — never hardcodes a version
+  (overridable with `--image`);
 - **`--smoke` goes through the CLI** (`graspo launch --smoke`) as a run-boundary
   flag: training stops after the first step — semantically equivalent to a
   `max_steps=1` config, and your config file is never modified.
@@ -81,10 +88,9 @@ Manual invocation (for reference, e.g. inside your own orchestration):
 
 ```bash
 docker run --gpus "device=0,1" --ipc=host --shm-size=16g \
-  -v /path/to/config/dir:/data/configs \
-  -v /path/to/your/model:/workspace/graspo/models \
+  -v /data:/data \
   graspo:<version> \
-  launch --config /data/configs/my_config.yaml
+  launch --config /data/outputs/my_config.yaml
 ```
 
 > **Never combine `--gpus device=` with `CUDA_VISIBLE_DEVICES`** — the
@@ -341,6 +347,53 @@ discarded or retried. The readable rollout log stores the completion, parsed
 tool calls, extracted fields, reward details, parser errors, and invalid reason
 so reward behavior can be inspected without rerunning generation.
 
+## Token-Level Annotation (v0.20.0)
+
+After rollout, every completion is annotated **character by character** with a
+structural role (`CharTag`), decoupled from scoring. The annotation module
+(`src/graspo/ripple/annotation/`) is the single input for token-level
+advantages:
+
+| Tag | Meaning | Downstream |
+|-----|---------|------------|
+| `S` | structure char, matches expected template | +1.0 |
+| `V` | value char (parameter value / JSON value) | similarity 0~1 |
+| `T` | think content | 0 (not trained) |
+| `W` | lead/trail/gap text | 0 (not trained) |
+| `E` | **first** mismatched char vs expected template | -1.0 |
+| `D` | all chars after `E` | 0 (not trained) |
+
+Design principles (motivated by four consecutive training collapses in
+v0.16-v0.19, see `.local/v19-collapse-root-cause-analysis-20260806.md`):
+
+- **Character-level alignment, tokenizer-agnostic**: the expected mark
+  sequence (e.g. `<tool_call> <function=...> <parameter=...> ...`) is compared
+  char-by-char against the model output; the first mismatched char becomes
+  `E`. Token labels are derived via `offset_mapping`, so any tokenizer variant
+  never mislabels a correct prefix token (e.g. `</parametr>` shares the `</`
+  and `param` prefix tokens with `</parameter>`).
+- **Strict-alignment truncation**: everything after `E` is `D` (not trained) —
+  tokens under a wrong prefix have no training value.
+- **Truncation/incomplete structure does not set `E`**: existing chars are all
+  correct; the incompleteness signal is left to the reward layer
+  (`content_score = 0` → group RETRY/INVALID).
+- **Value errors do not set `E`**: content similarity is scored downstream;
+  only structural/type errors set `E`.
+- **Tool-call parameters are matched as an unordered set** (JSON object
+  semantics): order swap is not an error; a missing GT parameter or an extra
+  parameter is (the expected missing `<parameter=NAME>` is compared against
+  the actual output to locate `E`).
+- **Consistent with the reward layer**: only semantic errors set `E` — missing
+  fields, extra fields, typos, type mismatches; semantically-correct output
+  (e.g. parameter order) does not.
+
+A 35-case test dataset (`tests/data/annotation_testset.jsonl`, 20 tool_call +
+15 JSON) covers perfect outputs, value errors, lead text, typos, duplicate
+tags, extra/missing fields, order swaps, truncation, gibberish, and think
+mode, with per-case expected annotations verified by independent agents.
+`tests/data/generate_annotation_viewer.py` renders an HTML color-coded view
+for manual inspection.
+
 ## Configuration
 
 All normal training configuration lives in YAML. `samples/configs/config_example.yaml` is the
@@ -466,7 +519,6 @@ is only a LoRA warm-start.
 - `nnodes`, `node_rank`, `master_addr`, `master_port`: distributed launch
   settings.
 - `python`: optional Python executable override.
-- `env`: extra environment variables for the launched training process.
 
 ## LoRA Targets
 
@@ -603,8 +655,9 @@ bash run.sh samples/configs/config_example.yaml --smoke
 - `model.model_path must be set`: edit `samples/configs/config_example.yaml` and point it at a
   real base model.
 - `data.train_path does not exist`: point `data.train_path` at a JSONL file.
-- **Docker: model not found in container**: mount your model directory with
-  `-v /host/path/to/model:/workspace/graspo/models`.
+- **Docker: model not found in container**: make sure `model.model_path` in your
+  YAML is an absolute host path — `run.sh` auto-mounts its parent directory.
+  If the path is outside the auto-detected mounts, check with `bash run.sh --help`.
 - **Docker: `torchrun` not found**: the Docker image installs GRASPO as a CLI
   entry point. Run `graspo launch --config ...` directly; the container's PATH
   includes the venv with torch and torchrun.

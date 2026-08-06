@@ -16,7 +16,7 @@ flowchart TB
         CLI["cli/app.py<br/>launch / export"]
     end
     subgraph L1 ["算法层 ripple/ · 纯计算"]
-        R["reward/ · parity · loss · buffer<br/>data · parsing/ · monitoring/ · multimodal/"]
+        R["reward/ · parity · loss · buffer<br/>data · parsing/ · monitoring/ · multimodal/<br/>annotation/"]
     end
     subgraph L2 ["通用件 core/"]
         C["schema.py · chat_template.py · lora.py"]
@@ -152,6 +152,40 @@ flowchart TD
     RLO --> BUF["ReplayBuffer / collate batch"] --> OPT["优化步骤"]
     OPT --> CKPT["checkpoint 保存"]
 ```
+
+## 标注模块（annotation/，v0.20.0）
+
+rollout 完成后对每条 completion 做**字符级结构标注**，作为 token 级 advantage 的唯一输入。
+
+### 设计哲学
+
+- **字符级标注** `List[CharTag]`（S/V/T/W/E/D），长度恒等于 `len(completion)`，只标角色**不打分**（打分由 advantage 层消费枚举后完成）
+- **逐字符比对**：期望 mark 序列与模型输出逐字符比对，首个不匹配字符标 E——不按 XML 元素整体标（Qwen tokenizer 中 `</parametr>` 与 `</parameter>` 共享 `</`/`param` 前缀 token，元素级标注会误标正确 token）。标注定义在字符级，token 由 offset_mapping 派生，天然 tokenizer 无关
+- **严格对齐截断**：E 之后全部 D（不训练）；值错误不触发 E（下游相似度打分），仅结构/类型错误触发 E
+- **与 reward 层语义一致**：只有语义错误标 E（缺字段/多余字段/拼错/类型错），语义正确不标（参数顺序颠倒）
+
+### CharTag 枚举
+
+| 枚举 | 含义 | 下游 |
+|------|------|------|
+| S | 结构字符，与期望模板字符相等 | +1.0 |
+| V | 值字符（参数值 / JSON value） | 相似度 0~1 |
+| T | think 内容 | 0（不训练） |
+| W | 前导/尾随/夹缝文本 | 0（不训练） |
+| E | 首个与期望不匹配字符 | -1.0 |
+| D | E 之后所有字符 | 0（不训练） |
+
+### 模块结构
+
+- `roles.py` — CharTag 枚举（StrEnum，含 trainable 属性）
+- `tool_call_labeler.py` — Qwen XML tool call 标注：期望 mark 序列逐字符比对、参数无序集合匹配 + 缺失检测、值类型校验
+- `json_labeler.py` — JSON 标注：围栏提取（可有可无）、状态机扫描、字段名拼错/多余检测、类型校验
+- `tokenize.py` — 字符标注 → token 标注（offset_mapping，E 优先合并语义）
+- `labeler.py` — `annotate()` 主入口，format_type 由 `Sample.expects_tool_calls` 传入（不猜测）
+
+### 测试数据集
+
+`tests/data/annotation_testset.jsonl`（35 条：tool call 20 + JSON 15）覆盖完美输出/值错误/前导文本/拼错/双开标记/多余字段/缺字段/顺序颠倒/截断/乱码/think 等场景，每条含期望标注与 error_pos，作为标注模块回归基准。`tests/data/generate_annotation_viewer.py` 生成 HTML 逐字符着色视图。
 
 ## 为什么用 ABC 模板方法（模板方法）
 

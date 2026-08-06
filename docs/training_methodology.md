@@ -230,3 +230,40 @@ retry:           rollout 失败后重试
 | 训练 | 全参数 | LoRA only，单卡 80G 可训 9B |
 | 数据 | 对话偏好 | JSONL targets（自动比较） |
 | 评估 | 外部 eval | 内置多维统计 + health 判断 |
+
+## token 级标注与 v0.20.0 演进（2026-08-06）
+
+### 背景：v16-v19 四次训练崩溃
+
+v16-v19 连续四次训练在 epoch 0 后期崩溃（invalid 从 0 飙到 494，reward 归零），根因链（详见 `.local/v19-collapse-root-cause-analysis-20260806.md`）：
+
+1. **format advantage 非对称**（v18/v19）：clean format=0.0、broken=-1.0 → 模型只有负反馈无正反馈，format 维度被"推开"而非"拉向"正确
+2. **cs-mean n=1 零梯度**（v19）：组内唯一 clean completion 时 `cs - mean = 0` → content 梯度消失
+3. **跨 completion union 污染**：`is_format_pos` 按绝对位置取并集，前导文本把兄弟 completion 的 content token 位置污染清零
+4. **replay buffer FIFO**：退化一旦开始自我加速
+
+### 新方案：字符级标注 + token 独立训练
+
+**核心哲学**：不做 FORMAT/CONTENT 分类（那是整体打分时代的产物），每个 token 只关注"在当前前缀条件下与 GT 模板的对齐状态"。标注模块（`ripple/annotation/`）产出逐字符 CharTag（S/V/T/W/E/D），token 级 advantage 由字符标注经 offset_mapping 派生——**标注定义在字符级，天然 tokenizer 无关**。
+
+**关键设计决策**：
+
+| 决策 | 理由 |
+|------|------|
+| 逐字符比对，首个不匹配字符标 E | Qwen tokenizer 中拼错标签与正确标签共享前缀 token（`</parametr>` 与 `</parameter>` 共享 `</`/`param`），元素级标注会误标正确 token |
+| E 之后全部 D（严格对齐截断） | 错误前缀下的后续 token 条件概率无训练价值 |
+| 截断/缺闭合不标 E | 已有字符全部正确，硬标 E 只误标正确 token；结构不完整信号交给 reward 层（content_score=0 → 组级 RETRY/INVALID） |
+| 值错误不触发 E | 内容相似度由下游打分，只有结构/类型错误触发 E |
+| tool call 参数无序匹配 | 参数是 JSON 对象语义，顺序无关（与 reward 层 dict 比较一致）；缺字段/多余字段/拼错仍标 E |
+| 值类型错标 E | GT 数字 vs 模型字符串 → 值首字符 E |
+
+**验证**：35 条测试数据集（tool call 20 + JSON 15）多轮 agent 独立核验，39 单元测试全绿。
+
+### 下一步（advantage 层接入）
+
+标注模块只产出 `(tag, field)` 角色；advantage 层将消费它：
+
+- S → +1.0（结构正确强化）
+- V → 与 GT 值相似度 0~1（`compare.py` 的 leaf_compare_score）
+- T / W / D → 0（不训练）
+- E → -1.0（错误点惩罚）
