@@ -223,14 +223,13 @@ NEW_CASES = [
 
 
 def main():
-    # 读取旧测试集
-    old_path = Path(__file__).resolve().parents[1] / "tests" / "data" / "annotation_testset.jsonl"
+    # 读取当前数据集(v1 旧版 35 条已于 2026-08-06 删除;v2 是唯一数据源,重建即刷新)
+    old_path = Path(__file__).resolve().parents[1] / "tests" / "data" / "annotation_testset_v2.jsonl"
     with open(old_path, encoding="utf-8") as f:
         old_cases = [json.loads(line) for line in f if line.strip()]
 
     # 保留旧用例
     kept = [c for c in old_cases if c["id"] in KEEP_IDS]
-    kept_ids = {c["id"] for c in kept}
     print(f"保留旧用例: {len(kept)} 条", file=sys.stderr)
     removed = [c for c in old_cases if c["id"] not in KEEP_IDS]
     print(f"删除旧用例: {[c['id'] for c in removed]}", file=sys.stderr)

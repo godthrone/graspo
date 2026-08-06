@@ -23,10 +23,10 @@ from graspo.ripple.annotation.advantages import (
 from graspo.ripple.annotation.labeler import AnnotationInput, annotate
 from graspo.ripple.annotation.roles import CharTag
 
-TESTSET = Path(__file__).resolve().parents[2] / "data" / "annotation_testset.jsonl"
+TESTSET = Path(__file__).resolve().parents[2] / "data" / "annotation_testset_v2.jsonl"
 
-NO_FENCE_CASES = {"J02"}
-THINK_CASES = {"T11"}
+NO_FENCE_CASES = {"J02", "J18", "J20", "J21", "J22"}
+THINK_CASES = {"T11", "T24", "T25"}
 
 ROBOT = (
     "<tool_call>\n<function=robot_atomic_control>\n<parameter=action_type>\n"
@@ -410,8 +410,8 @@ def test_testset_advantages(row: dict[str, str]) -> None:
         # max_len 截断:无末尾 EOS(结构不完整但非模型选择)
         assert -1.0 not in adv
         return
-    if has_error or cid in {"T14", "T09", "J14", "J13"}:
-        # 有错误定位(含末尾 EOS:缺闭合/乱码/半截)→ 至少一个 −1
+    if has_error or structure_incomplete(completion, format_type):
+        # 有错误定位或结构不完整(缺闭合/乱码/半截)→ 至少一个 −1(含末尾 EOS)
         assert adv.count(-1.0) >= 1
     else:
         # 完整且无错误定位:无 −1

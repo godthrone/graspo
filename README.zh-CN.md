@@ -284,7 +284,7 @@ rollout 完成后，每条 completion 会被**逐字符标注**结构角色（`C
 - **tool call 参数无序集合匹配**：参数顺序颠倒不是错误（JSON 对象语义）；GT 参数缺失或多余参数是错误（期望缺失 `<parameter=NAME>` 与实际输出比对定位 E）
 - **与 reward 层语义一致**：只有语义错误标 E——缺字段/多余字段/拼错/类型错；语义正确不标（如参数顺序）
 
-35 条测试数据集（`tests/data/annotation_testset.jsonl`，tool call 20 + JSON 15）覆盖完美输出/值错误/前导文本/拼错/双开标记/多余字段/缺字段/顺序颠倒/截断/乱码/think 等场景，每条含期望标注，经独立 agent 核验。`tests/data/generate_annotation_viewer.py` 生成 HTML 逐字符着色视图供人工检查。
+51 条测试数据集（`tests/data/annotation_testset_v2.jsonl`，tool call 30 + JSON 21）覆盖完美输出/值错误/前导文本/拼错/双开标记/多余字段/缺字段/顺序颠倒/截断/乱码/think/嵌套结构等场景，每条含期望标注，经独立 agent 核验。`tests/data/generate_annotation_viewer.py` 生成 HTML 逐字符着色视图供人工检查。
 
 ## 配置说明
 

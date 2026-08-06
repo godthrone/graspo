@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate an HTML visualization of annotation_testset.jsonl.
+"""Generate an HTML visualization of annotation_testset_v2.jsonl.
 
 Each character in the completion is color-coded by its annotation label:
   S (Structure)  = green   — 结构标记，训练
@@ -13,7 +13,7 @@ Each character in the completion is color-coded by its annotation label:
 import json
 from pathlib import Path
 
-DATA_FILE = Path(__file__).parent / "annotation_testset.jsonl"
+DATA_FILE = Path(__file__).parent / "annotation_testset_v2.jsonl"
 OUTPUT_FILE = Path(__file__).parent / "annotation_viewer.html"
 
 LABEL_COLORS = {
@@ -467,7 +467,9 @@ def load_data_from(path: Path) -> list[dict]:
                     "type": rec.get("type", ""),
                     "case": rec.get("case", ""),
                     "completion": rec.get("completion", ""),
+                    "ground_truth": rec.get("ground_truth", ""),
                     "annotation": rec.get("annotation", ""),
+                    "correct": rec.get("correct", "?"),
                     "error_pos": rec.get("error_pos", ""),
                     "notes": rec.get("notes", ""),
                 }

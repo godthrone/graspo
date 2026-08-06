@@ -387,10 +387,11 @@ v0.16-v0.19, see `.local/v19-collapse-root-cause-analysis-20260806.md`):
   fields, extra fields, typos, type mismatches; semantically-correct output
   (e.g. parameter order) does not.
 
-A 35-case test dataset (`tests/data/annotation_testset.jsonl`, 20 tool_call +
-15 JSON) covers perfect outputs, value errors, lead text, typos, duplicate
-tags, extra/missing fields, order swaps, truncation, gibberish, and think
-mode, with per-case expected annotations verified by independent agents.
+A 51-case test dataset (`tests/data/annotation_testset_v2.jsonl`, 30 tool_call +
+21 JSON) covers perfect outputs, value errors, lead text, typos, duplicate
+tags, extra/missing fields, order swaps, truncation, gibberish, think mode,
+nested structures, and truncation combinations, with per-case expected
+annotations verified by independent agents.
 `tests/data/generate_annotation_viewer.py` renders an HTML color-coded view
 for manual inspection.
 

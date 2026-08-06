@@ -14,12 +14,12 @@ import pytest
 
 from graspo.ripple.annotation.labeler import AnnotationInput, annotate
 
-TESTSET = Path(__file__).resolve().parents[2] / "data" / "annotation_testset.jsonl"
+TESTSET = Path(__file__).resolve().parents[2] / "data" / "annotation_testset_v2.jsonl"
 
 # J02 是无围栏 JSON 场景（check_json_markdown=False）
-NO_FENCE_CASES = {"J02"}
+NO_FENCE_CASES = {"J02", "J18", "J20", "J21", "J22"}
 # think 场景（check_think=True）
-THINK_CASES = {"T11"}
+THINK_CASES = {"T11", "T24", "T25"}
 
 
 def _load_testset() -> list[dict[str, str]]:
