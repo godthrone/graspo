@@ -211,27 +211,36 @@ def annotate_tool_call(
         return a.tags, a.fields
 
     # 3.2 参数循环：<parameter=NAME> value </parameter>
-    param_idx = 0
+    # 参数匹配为**无序集合**（tool call 参数顺序无关，T16 顺序颠倒不标 E）；
+    # 参数名不在 GT 集合 → 多余字段 E（T07）；GT 参数有缺失 → 缺失检测（T06）
+    param_set = set(param_order) if param_order else set()
+    seen_params: set[str] = set()
     while True:
         # 参数循环结束条件：下一个非空白不是 <parameter= （参数已全部处理完，
         # 或模型直接跳到闭合标签）。此时不应触发多余参数分支（T01 回归点）。
         first = _first_non_blank(text, pos, n)
         if first >= n or not text.startswith(_PARAMETER_MARK, first):
             break
-        if param_idx >= len(param_order):
-            # GT 参数已耗尽但模型仍输出 <parameter= → 多余参数块：
-            # 期望此处是 </function>，首个不匹配字符 E（T07）
+        # 读取参数名
+        name_start = first + len(_PARAMETER_MARK)
+        name_end = text.find(">", name_start)
+        if name_end < 0:
+            a.tags[first] = CharTag.ERROR
+            a.drop_from(first + 1)
+            return a.tags, a.fields
+        param_name = text[name_start:name_end]
+        if param_set and param_name not in param_set:
+            # 多余/未知参数块：期望 </function>，首个不匹配字符 E（T07）
             ok, pos = a.match_expected(pos, _FUNCTION_CLOSE)
             if not ok:
                 return a.tags, a.fields
             break
-        p_mark = f"{_PARAMETER_MARK}{param_order[param_idx]}>"
+        p_mark = f"{_PARAMETER_MARK}{param_name}>"
         # 参数开标签逐字符比对
         ok, pos = a.match_expected(pos, p_mark)
         if not ok:
             return a.tags, a.fields
-        param_name = param_order[param_idx]
-        param_idx += 1
+        seen_params.add(param_name)
 
         # value span：<parameter=NAME> 后跳过空白到值
         v_start = _first_non_blank(text, pos, n)
@@ -264,7 +273,16 @@ def annotate_tool_call(
         if not ok:
             return a.tags, a.fields
 
-    # 3.3 闭合：</function> </tool_call>
+    # 3.3 缺失检测：GT 参数未全部出现 → 期望此处是缺失参数 <parameter=NAME>，
+    # 与模型实际输出（通常是 </function>）逐字符比对 → 分叉点 E（T06）
+    missing = [p for p in param_order if p not in seen_params]
+    if missing:
+        p_mark = f"{_PARAMETER_MARK}{missing[0]}>"
+        ok, pos = a.match_expected(pos, p_mark)
+        if not ok:
+            return a.tags, a.fields
+
+    # 3.4 闭合：</function> </tool_call>
     ok, pos = a.match_expected(pos, _FUNCTION_CLOSE)
     if not ok:
         return a.tags, a.fields
