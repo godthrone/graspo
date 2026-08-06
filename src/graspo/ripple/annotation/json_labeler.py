@@ -187,8 +187,12 @@ def annotate_json(
                     return tags, fields
             end = _find_string_end(text, i)
             if end < 0:
-                tags[i] = CharTag.ERROR
-                _drop(tags, i + 1)
+                # 未闭合字符串（截断）：已有字符全正确 → 值内容标 V，无 E
+                # （结构不完整信号由 reward 层表达，避免误标正确 token）
+                _mark(tags, i, n, CharTag.VALUE)
+                if pending_key is not None:
+                    for j in range(i, n):
+                        fields[j] = pending_key
                 return tags, fields
             in_obj_key = bool(stack) and stack[-1] == "o" and not after_colon
             if in_obj_key:

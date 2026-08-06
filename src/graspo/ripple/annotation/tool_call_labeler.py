@@ -1,16 +1,20 @@
-"""tool call 标注：mark 定位 + 恒等式逐步推进（非正则）。
+"""tool call 标注：期望 mark 序列逐字符比对（非正则）。
 
 流程（对应方案 §6）：
 1. think 标签处理：``<think>`` 与 ``</think>`` 标记 → S，内容 → T
-2. 找开标签 ``<tool_call>``（由 chat template 决定，Qwen 家族统一为 ``<tool_call>``）
-3. 从开标签起，逐步定位下一个 mark（``<function=`` / ``<parameter=`` / 闭合标签），
-   两个 mark 之间的非空白文本做恒等式检查——不恒等即首个 E，其后全部 D
-4. 缺失 mark（结构不完整/截断）→ 最后一个结构字符标 E
+2. 构建期望 mark 序列（来自 targets + 模板常量）：
+   ``<tool_call> <function=NAME> { <parameter=NAME> </parameter> }* </function> </tool_call>``
+3. 逐 mark 与模型输出**逐字符比对**：
+   - 字符相等 → S（含结构标签后的换行，数据集约定 ``<tool_call>\\n`` 整体 S）
+   - 首个不相等字符 → E，其后全部 D（严格对齐截断）
+4. 结构不完整（截断/缺闭合）：已有字符全部正确 → 全 S，不标 E
+   （"结构不完整"信号由 reward 层表达，避免误标正确 token）
 
-标注语义（对齐方案 §7 严格对齐）：
-- 结构开始后必须严格对齐，结构之间插入废话直接失败
-- 首错点 E（下游 -1.0），其后所有字符 D（不训练）
-- 结构标签**及紧随其后的换行**标 S（数据集约定 ``<tool_call>\\n`` 整体 S）
+关键设计（v0.20.0 修订）：
+- **按字符比对，不按 XML 元素整体标 E**：拼错标签（``</parametr>``）时，
+  与正确标签共享的前缀字符（``</paramet``）标 S，仅首个不匹配字符（``r``）标 E
+- tokenizer 无关：标注定义在字符级，token 由 offset_mapping 派生，
+  任何 tokenizer 都不会把纯正确前缀字符标成 E
 """
 
 from typing import Any
@@ -44,6 +48,51 @@ def _first_non_blank(text: str, start: int, end: int) -> int:
     return min(end, len(text))
 
 
+def _target_fn_name(targets: list[dict[str, Any]]) -> str | None:
+    """从 targets 提取首个 tool call 的函数名。"""
+    for target in targets:
+        output = target.get("output") if isinstance(target, dict) else None
+        if not isinstance(output, dict):
+            continue
+        for tc in output.get("tool_calls") or []:
+            if isinstance(tc, dict) and isinstance(tc.get("name"), str):
+                return tc["name"]
+    return None
+
+
+def _target_param_order(
+    targets: list[dict[str, Any]], fn_name: str
+) -> list[str]:
+    """从 targets 提取指定函数名的参数顺序（GT 顺序）。"""
+    for target in targets:
+        output = target.get("output") if isinstance(target, dict) else None
+        if not isinstance(output, dict):
+            continue
+        for tc in output.get("tool_calls") or []:
+            if isinstance(tc, dict) and tc.get("name") == fn_name:
+                arguments = tc.get("arguments")
+                if isinstance(arguments, dict):
+                    return list(arguments.keys())
+    return []
+
+
+def _target_param_types(
+    targets: list[dict[str, Any]], fn_name: str
+) -> dict[str, Any]:
+    """从 targets 提取参数名 → GT 值（用于值类型校验）。"""
+    types: dict[str, Any] = {}
+    for target in targets:
+        output = target.get("output") if isinstance(target, dict) else None
+        if not isinstance(output, dict):
+            continue
+        for tc in output.get("tool_calls") or []:
+            if isinstance(tc, dict) and tc.get("name") == fn_name:
+                arguments = tc.get("arguments")
+                if isinstance(arguments, dict):
+                    types.update(arguments)
+    return types
+
+
 class _Annotator:
     """工具类：持有 tags/fields 并维护当前推进位置。"""
 
@@ -54,11 +103,7 @@ class _Annotator:
         self.fields: list[str | None] = [None] * self.n
 
     def mark(self, start: int, end: int, tag: CharTag, consume_newline: bool = True) -> int:
-        """标 [start, end) 为 tag；STRUCTURE 且 end 后紧跟换行时把换行一并标 S。
-
-        :param consume_newline: 是否吞并紧随的换行（think 闭合标记后为 False——
-            数据集约定 ``</think>`` 后的 ``\n`` 是 WASTE 夹缝，不是结构换行）
-        """
+        """标 [start, end) 为 tag；STRUCTURE 且 end 后紧跟换行时把换行一并标 S。"""
         e = min(end, self.n)
         for i in range(start, e):
             self.tags[i] = tag
@@ -76,50 +121,44 @@ class _Annotator:
         for i in range(start, self.n):
             self.tags[i] = CharTag.DROPPED
 
+    def match_expected(
+        self,
+        pos: int,
+        expected: str,
+        *,
+        consume_newline: bool = True,
+    ) -> tuple[bool, int]:
+        """从 pos 起（跳过空白）逐字符比对期望 mark。
 
-def _target_fn_names(targets: list[dict[str, Any]]) -> set[str]:
-    """从 targets 提取期望函数名集合。"""
-    names: set[str] = set()
-    for target in targets:
-        output = target.get("output") if isinstance(target, dict) else None
-        if not isinstance(output, dict):
-            continue
-        for tc in output.get("tool_calls") or []:
-            if isinstance(tc, dict) and isinstance(tc.get("name"), str):
-                names.add(tc["name"])
-    return names
-
-
-def _target_param_order(targets: list[dict[str, Any]], fn_name: str) -> list[str]:
-    """从 targets 提取指定函数名的参数顺序（GT 顺序）。"""
-    for target in targets:
-        output = target.get("output") if isinstance(target, dict) else None
-        if not isinstance(output, dict):
-            continue
-        for tc in output.get("tool_calls") or []:
-            if isinstance(tc, dict) and tc.get("name") == fn_name:
-                arguments = tc.get("arguments")
-                if isinstance(arguments, dict):
-                    return list(arguments.keys())
-    return []
-
-
-def _target_param_types(
-    targets: list[dict[str, Any]],
-    fn_name: str,
-) -> dict[str, Any]:
-    """从 targets 提取参数名 → GT 值（用于值类型校验）。"""
-    types: dict[str, Any] = {}
-    for target in targets:
-        output = target.get("output") if isinstance(target, dict) else None
-        if not isinstance(output, dict):
-            continue
-        for tc in output.get("tool_calls") or []:
-            if isinstance(tc, dict) and tc.get("name") == fn_name:
-                arguments = tc.get("arguments")
-                if isinstance(arguments, dict):
-                    types.update(arguments)
-    return types
+        :param pos: 当前推进位置
+        :param expected: 期望 mark 字符串（如 ``<function=robot_atomic_control>``）
+        :param consume_newline: 匹配成功后是否吞并紧随换行（think 闭合为 False）
+        :return: (matched, new_pos)。matched=False 时已标 E 并截断（或文本提前结束
+            结构不完整——此时不标 E，全 S，返回 (True, n) 终止语义由调用方处理）
+        """
+        first = _first_non_blank(self.text, pos, self.n)
+        # 逐字符比对
+        for i, ec in enumerate(expected):
+            idx = first + i
+            if idx >= self.n:
+                # 文本在 mark 中途结束：已有字符全正确 → 结构不完整，无 E
+                return True, self.n
+            if self.text[idx] != ec:
+                # 首个不匹配字符 → E，其后 D
+                self.tags[idx] = CharTag.ERROR
+                self.drop_from(idx + 1)
+                return False, idx
+            self.tags[idx] = CharTag.STRUCTURE
+        # 匹配成功：吞并紧随换行
+        end = first + len(expected)
+        if (
+            consume_newline
+            and end < self.n
+            and self.text[end] == "\n"
+        ):
+            self.tags[end] = CharTag.STRUCTURE
+            end += 1
+        return True, end
 
 
 def annotate_tool_call(
@@ -154,100 +193,57 @@ def annotate_tool_call(
     if open_pos < 0:
         # 无结构 → 全部 WASTE（纯乱码 / 前导文本）
         return a.tags, a.fields
-    pos = a.mark(open_pos, open_pos + _OPEN_TAG_LEN, CharTag.STRUCTURE)
+    a.mark(open_pos, open_pos + _OPEN_TAG_LEN, CharTag.STRUCTURE)
+    pos = open_pos + _OPEN_TAG_LEN
+    if pos < n and text[pos] == "\n":
+        a.tags[pos] = CharTag.STRUCTURE
+        pos += 1
 
-    # ---- 3. <function= ----
-    fn_pos = text.find(_FUNCTION_MARK, pos)
-    if fn_pos < 0:
-        # 结构不完整（开标签后无 function）→ 首个非空白字符 E
-        e = _first_non_blank(text, pos, n)
-        if e < n:
-            a.tags[e] = CharTag.ERROR
-            a.drop_from(e + 1)
-        return a.tags, a.fields
-    if not _blank(text, pos, fn_pos):
-        e = _first_non_blank(text, pos, fn_pos)
-        a.tags[e] = CharTag.ERROR
-        a.drop_from(e + 1)
-        return a.tags, a.fields
-    fn_close = text.find(">", fn_pos + len(_FUNCTION_MARK))
-    if fn_close < 0:
-        a.tags[fn_pos] = CharTag.ERROR
-        a.drop_from(fn_pos + 1)
-        return a.tags, a.fields
-    fn_name = text[fn_pos + len(_FUNCTION_MARK):fn_close]
-    fn_names = _target_fn_names(targets)
-    if fn_names and fn_name not in fn_names:
-        # 函数名不恒等 → 函数名首字符 E，其后 D（T13）
-        a.mark(fn_pos, fn_pos + len(_FUNCTION_MARK), CharTag.STRUCTURE)
-        a.tags[fn_pos + len(_FUNCTION_MARK)] = CharTag.ERROR
-        a.drop_from(fn_pos + len(_FUNCTION_MARK) + 1)
-        return a.tags, a.fields
-    pos = a.mark(fn_pos, fn_close + 1, CharTag.STRUCTURE)
+    fn_name = _target_fn_name(targets)
+    param_order = _target_param_order(targets, fn_name) if fn_name else []
+    param_types = _target_param_types(targets, fn_name) if fn_name else {}
 
-    # ---- 4. 参数循环：<parameter=NAME> value </parameter> ----
-    # GT 参数顺序校验（T16 参数顺序颠倒 → 期望参数迟到时 E）
-    param_order = _target_param_order(targets, fn_name)
-    order_index = 0  # GT 参数顺序中的当前位置
-    saw_order_mismatch = False  # 已出现"期望参数被跳过"（顺序颠倒）
+    # ---- 3. 期望 mark 序列逐字符比对 ----
+    # 3.1 <function=NAME>
+    fn_mark = f"{_FUNCTION_MARK}{fn_name}>" if fn_name else f"{_FUNCTION_MARK}?>"
+    ok, pos = a.match_expected(pos, fn_mark)
+    if not ok:
+        return a.tags, a.fields
 
+    # 3.2 参数循环：<parameter=NAME> value </parameter>
+    param_idx = 0
     while True:
+        if param_idx >= len(param_order):
+            # GT 参数已耗尽但模型仍输出 <parameter= → 多余参数块：
+            # 期望此处是 </function>，首个不匹配字符 E（T07）
+            ok, pos = a.match_expected(pos, _FUNCTION_CLOSE)
+            if not ok:
+                return a.tags, a.fields
+            break
+        p_mark = f"{_PARAMETER_MARK}{param_order[param_idx]}>"
         p_pos = text.find(_PARAMETER_MARK, pos)
         if p_pos < 0:
             break
-        if not _blank(text, pos, p_pos):
-            e = _first_non_blank(text, pos, p_pos)
-            a.tags[e] = CharTag.ERROR
-            a.drop_from(e + 1)
+        # 参数开标签逐字符比对
+        ok, pos = a.match_expected(pos, p_mark)
+        if not ok:
             return a.tags, a.fields
-        p_close = text.find(">", p_pos + len(_PARAMETER_MARK))
-        if p_close < 0:
-            a.tags[p_pos] = CharTag.ERROR
-            a.drop_from(p_pos + 1)
-            return a.tags, a.fields
-        param_name = text[p_pos + len(_PARAMETER_MARK):p_close]
-        if not param_name:
-            a.tags[p_pos] = CharTag.ERROR
-            a.drop_from(p_pos + 1)
-            return a.tags, a.fields
-        # 参数名校验：不在 GT 参数集合中 → E（T07 多余字段）
-        if param_order and param_name not in param_order:
-            a.tags[p_pos] = CharTag.ERROR
-            a.drop_from(p_pos + 1)
-            return a.tags, a.fields
-        # 顺序校验：期望参数被前面的参数跳过 → 期望参数迟到即 E（T16）
-        if param_order and order_index < len(param_order):
-            if param_name == param_order[order_index]:
-                if saw_order_mismatch:
-                    # 期望参数迟到（顺序颠倒）→ E
-                    a.tags[p_pos] = CharTag.ERROR
-                    a.drop_from(p_pos + 1)
-                    return a.tags, a.fields
-                order_index += 1
-            else:
-                # 当前参数不是期望的下一个 → 记录错序，但本身合法照常标注
-                saw_order_mismatch = True
-        pos = a.mark(p_pos, p_close + 1, CharTag.STRUCTURE)
+        param_name = param_order[param_idx]
+        param_idx += 1
+
         # value span：<parameter=NAME> 后跳过空白到值
         v_start = _first_non_blank(text, pos, n)
-        v_close = text.find(_PARAMETER_CLOSE, v_start)
-        if v_close < 0:
-            # 值未闭合（缺 </parameter> / 截断）→ 值首字符 E
-            if v_start < n:
-                a.tags[v_start] = CharTag.ERROR
-                a.drop_from(v_start + 1)
-            return a.tags, a.fields
-        # value 段（值本身；值后的空白归结构——数据集约定 V 后紧跟的 \n 是 S）
+        # 值段（值本身；值后的空白归结构——数据集约定 V 后紧跟的 \n 是 S）
         v_end = v_start
         while v_end < n and not text[v_end].isspace() and not text.startswith(
             _PARAMETER_CLOSE, v_end
         ):
             v_end += 1
-        # 先标值本身（值正确则 V，值类型错则 E）——值标注独立于后续闭合检查
         if v_end > v_start:
             # 值类型校验：GT 是数字但模型值不是 → E（T12）
-            gt_value = _target_param_types(targets, fn_name).get(param_name)
-            if isinstance(gt_value, (int, float)) and not isinstance(gt_value, bool):
+            if param_name is not None and isinstance(
+                param_types.get(param_name), (int, float)
+            ) and not isinstance(param_types.get(param_name), bool):
                 try:
                     float(text[v_start:v_end])
                 except ValueError:
@@ -255,54 +251,23 @@ def annotate_tool_call(
                     a.drop_from(v_start + 1)
                     return a.tags, a.fields
             pos = a.mark(v_start, v_end, CharTag.VALUE)
-            for i in range(v_start, v_end):
-                a.fields[i] = param_name
-        # 值尾（跳过空白）后必须立即是 </parameter>；拼错（</parametr>）→ E（T04）
+            if param_name is not None:
+                for i in range(v_start, v_end):
+                    a.fields[i] = param_name
+        # 值尾（跳过空白）后必须立即是 </parameter>（拼错 → E 于首个不匹配字符）
         tail = _first_non_blank(text, v_end, n)
-        # 值后的空白（\n）标 S（属于结构换行）
         for i in range(v_end, tail):
             a.tags[i] = CharTag.STRUCTURE
-        if not text.startswith(_PARAMETER_CLOSE, tail):
-            if tail < n:
-                a.tags[tail] = CharTag.ERROR
-                a.drop_from(tail + 1)
+        ok, pos = a.match_expected(tail, _PARAMETER_CLOSE)
+        if not ok:
             return a.tags, a.fields
-        v_close = tail
-        # </parameter>
-        pos = a.mark(v_close, v_close + len(_PARAMETER_CLOSE), CharTag.STRUCTURE)
 
-    # ---- 5. 闭合：</function> </tool_call> ----
-    fnc_pos = text.find(_FUNCTION_CLOSE, pos)
-    if fnc_pos < 0:
-        last = pos - 1
-        if last < n:
-            a.tags[last] = CharTag.ERROR
-            a.drop_from(last + 1)
+    # 3.3 闭合：</function> </tool_call>
+    ok, pos = a.match_expected(pos, _FUNCTION_CLOSE)
+    if not ok:
         return a.tags, a.fields
-    if not _blank(text, pos, fnc_pos):
-        e = _first_non_blank(text, pos, fnc_pos)
-        a.tags[e] = CharTag.ERROR
-        a.drop_from(e + 1)
+    ok, pos = a.match_expected(pos, _TOOL_CALL_CLOSE, consume_newline=False)
+    if not ok:
         return a.tags, a.fields
-    pos = a.mark(fnc_pos, fnc_pos + len(_FUNCTION_CLOSE), CharTag.STRUCTURE)
-
-    tcc_pos = text.find(_TOOL_CALL_CLOSE, pos)
-    if tcc_pos < 0:
-        # 缺 </tool_call>：若存在部分标签（</tool_call 截断）→ 其 '<' 处 E（T20）；
-        # 否则从最后一个闭合标签（</function>）起点 E（T14 结构不完整）
-        partial = text.find("<", pos)
-        if partial >= 0:
-            a.tags[partial] = CharTag.ERROR
-            a.drop_from(partial + 1)
-        else:
-            a.tags[fnc_pos] = CharTag.ERROR
-            a.drop_from(fnc_pos + 1)
-        return a.tags, a.fields
-    if not _blank(text, pos, tcc_pos):
-        e = _first_non_blank(text, pos, tcc_pos)
-        a.tags[e] = CharTag.ERROR
-        a.drop_from(e + 1)
-        return a.tags, a.fields
-    a.mark(tcc_pos, tcc_pos + len(_TOOL_CALL_CLOSE), CharTag.STRUCTURE, consume_newline=False)
     # 闭合后的尾随文本保持 WASTE（不截断）
     return a.tags, a.fields
