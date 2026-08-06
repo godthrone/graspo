@@ -1,0 +1,228 @@
+id,type,case,completion,ground_truth,annotation,correct,error_pos,notes
+T01,tool_call,完美输出,"<tool_call>
+<function=robot_atomic_control>
+<parameter=action_type>
+逆时针旋转
+</parameter>
+<parameter=angle_deg>
+40.0
+</parameter>
+</function>
+</tool_call>","robot_atomic_control(action_type=逆时针旋转, angle_deg=40.0)",SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSVVVVVSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSVVVVSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS,yes,,结构+值全部正确，无 E，无截断
+T02,tool_call,值错误,"<tool_call>
+<function=robot_atomic_control>
+<parameter=action_type>
+逆时针旋转
+</parameter>
+<parameter=angle_deg>
+15
+</parameter>
+</function>
+</tool_call>","robot_atomic_control(action_type=逆时针旋转, angle_deg=16.9)",SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSVVVVVSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSVVSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS,yes,,值错误只影响下游相似度打分，标注不截断
+T03,tool_call,前导文本,"逆时针旋转 40.0°
+
+<tool_call>
+<function=robot_atomic_control>
+<parameter=action_type>
+逆时针旋转
+</parameter>
+<parameter=angle_deg>
+40.0
+</parameter>
+</function>
+</tool_call>","robot_atomic_control(action_type=逆时针旋转, angle_deg=40.0)",WWWWWWWWWWWWWSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSVVVVVSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSVVVVSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS,yes,,前导文本 W 不训练不截断；结构照常
+T04,tool_call,拼错闭合标签,"<tool_call>
+<function=robot_atomic_control>
+<parameter=action_type>
+逆时针旋转
+</parametr>
+<parameter=angle_deg>
+15
+</parameter>
+</function>
+</tool_call>","robot_atomic_control(action_type=逆时针旋转, angle_deg=40.0)",SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSVVVVVSEDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD,yes,74,首个不恒等字符 E，其后全部 D；后面即使 angle_deg 正确也不训练
+T05,tool_call,双开标记(作弊模板),"<tool_call>
+<|3.514|>
+<tool_call>
+<function=robot_atomic_control>
+<parameter=action_type>
+逆时针旋转
+</parameter>
+<parameter=angle_deg>
+90
+</parameter>
+</function>
+</tool_call>","robot_atomic_control(action_type=逆时针旋转, angle_deg=90)",SSSSSSSSSSSSEDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD,yes,12,开标签后的非空白垃圾字符即首个 E（v14 作弊模板拦截）
+T06,tool_call,缺字段,"<tool_call>
+<function=robot_atomic_control>
+<parameter=action_type>
+逆时针旋转
+</parameter>
+</function>
+</tool_call>","robot_atomic_control(action_type=逆时针旋转, angle_deg=40.0)",SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSVVVVVSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS,yes,,字段缺失不标 E（模型没写，无从标错），下游少分
+T07,tool_call,多余字段,"<tool_call>
+<function=robot_atomic_control>
+<parameter=action_type>
+逆时针旋转
+</parameter>
+<parameter=angle_deg>
+40.0
+</parameter>
+<parameter=distance_cm>
+5
+</parameter>
+</function>
+</tool_call>","robot_atomic_control(action_type=逆时针旋转, angle_deg=40.0)",SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSVVVVVSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSVVVVSSSSSSSSSSSSSSEDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD,yes,127,多余字段首字符 E 其后 D（模板中无此 mark）
+T08,tool_call,结构内夹缝废话,"<tool_call>
+好的我来操作
+<function=robot_atomic_control>
+<parameter=action_type>
+逆时针旋转
+</parameter>
+</function>
+</tool_call>","robot_atomic_control(action_type=逆时针旋转, angle_deg=40.0)",SSSSSSSSSSSSEDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD,yes,12,开标签后必须紧跟 function mark，废话即 E（§7 严格对齐）
+T09,tool_call,纯乱码(v19真实),从图像5-11可以清晰地看到一个倒T型支架，$机器人眼位$与右边轨平行，沿着外轴导轮的轨迹前进了约0.15m,"robot_atomic_control(action_type=逆时针旋转, angle_deg=40.0)",WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW,yes,,无任何结构 mark → 全部 W，无 E（不触发截断）
+T10,tool_call,空输出,,"robot_atomic_control(action_type=逆时针旋转, angle_deg=40.0)",,yes,,空 completion → 空标注，组级判定该 completion 无效
+T11,tool_call,think+tool_call,"<think>让我先观察图像</think>
+
+<tool_call>
+<function=robot_atomic_control>
+<parameter=action_type>
+顺时针旋转
+</parameter>
+<parameter=angle_deg>
+30
+</parameter>
+</function>
+</tool_call>","robot_atomic_control(action_type=顺时针旋转, angle_deg=30)",SSSSSSSTTTTTTTSSSSSSSSWWSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSVVVVVSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSVVSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS,yes,,think 内容 T 不训练；标记 S 训练；结构照常
+T12,tool_call,值类型错,"<tool_call>
+<function=robot_atomic_control>
+<parameter=action_type>
+逆时针旋转
+</parameter>
+<parameter=angle_deg>
+abc
+</parameter>
+</function>
+</tool_call>","robot_atomic_control(action_type=逆时针旋转, angle_deg=40.0)",SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSVVVVVSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSEDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD,yes,109,值类型错（GT 数字 vs 输出字符串）→ 值首字符 E
+T13,tool_call,函数名拼错,"<tool_call>
+<function=robot_contol>
+<parameter=action_type>
+逆时针旋转
+</parameter>
+</function>
+</tool_call>","robot_atomic_control(action_type=逆时针旋转, angle_deg=40.0)",SSSSSSSSSSSSSSSSSSSSSSEDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD,yes,22,函数名与模板常量不恒等 → 首个错字符 E
+T14,tool_call,缺闭合标签,"<tool_call>
+<function=robot_atomic_control>
+<parameter=action_type>
+逆时针旋转
+</parameter>
+<parameter=angle_deg>
+40.0
+</parameter>
+</function>
+","robot_atomic_control(action_type=逆时针旋转, angle_deg=40.0)",SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSVVVVVSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSVVVVSSSSSSSSSSSSSSEDDDDDDDDDDD,yes,127,缺 </tool_call> 闭合：最后一个结构字符 E（结构不完整即错误）
+T15,tool_call,前导+值错误,"好的，根据图像判断目标在正前方
+
+<tool_call>
+<function=robot_atomic_control>
+<parameter=action_type>
+顺时针旋转
+</parameter>
+<parameter=angle_deg>
+15
+</parameter>
+</function>
+</tool_call>","robot_atomic_control(action_type=顺时针旋转, angle_deg=16.9)",WWWWWWWWWWWWWWWWWSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSVVVVVSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSVVSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS,yes,,前导 W + 值 V 正常标注，组合场景
+T16,tool_call,参数顺序颠倒,"<tool_call>
+<function=robot_atomic_control>
+<parameter=angle_deg>
+40.0
+</parameter>
+<parameter=action_type>
+逆时针旋转
+</parameter>
+</function>
+</tool_call>","robot_atomic_control(action_type=逆时针旋转, angle_deg=40.0)",SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSVVVVSSSSSSSSSSSSSSEDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD,yes,84,模板 mark 顺序为 action_type 先；第二个 parameter 与模板不匹配 → E
+T17,tool_call,尾随废话,"<tool_call>
+<function=robot_atomic_control>
+<parameter=action_type>
+逆时针旋转
+</parameter>
+<parameter=angle_deg>
+40.0
+</parameter>
+</function>
+</tool_call>
+好的完成了","robot_atomic_control(action_type=逆时针旋转, angle_deg=40.0)",SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSVVVVVSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSVVVVSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSWWWWWW,yes,,结构完整闭合后的尾随文本 W，不截断
+T18,tool_call,双值错误,"<tool_call>
+<function=robot_atomic_control>
+<parameter=action_type>
+逆时针旋转
+</parameter>
+<parameter=angle_deg>
+100
+</parameter>
+</function>
+</tool_call>","robot_atomic_control(action_type=顺时针旋转, angle_deg=16.9)",SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSVVVVVSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSVVVSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS,yes,,两个值都错只影响下游打分，标注不截断
+T19,tool_call,数值完全正确,"<tool_call>
+<function=robot_atomic_control>
+<parameter=action_type>
+顺时针旋转
+</parameter>
+<parameter=angle_deg>
+16.9
+</parameter>
+</function>
+</tool_call>","robot_atomic_control(action_type=顺时针旋转, angle_deg=16.9)",SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSVVVVVSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSVVVVSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS,yes,,满分输出：全 S/V
+T20,tool_call,截断输出,"<tool_call>
+<function=robot_atomic_control>
+<parameter=action_type>
+逆时针旋转
+</parameter>
+<parameter=angle_deg>
+40.0
+</parameter>
+</function>
+</tool_call","robot_atomic_control(action_type=逆时针旋转, angle_deg=40.0)",SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSVVVVVSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSVVVVSSSSSSSSSSSSSSSSSSSSSSSSSSEDDDDDDDDDD,yes,139,闭合标签被截断 → 未完整闭合处 E（与 T14 同类，待讨论严格性）
+J01,json,完美JSON带围栏,"```json
+{""故障号码"":[""1442201593053""],""IMSI"":[""460240401593053""],""APN"":[""CMIOTHFSTHJJ.AH""],""ServiceCode"":[]}
+```","{""故障号码"": [""1442201593053""], ""IMSI"": [""460240401593053""], ""APN"": [""CMIOTHFSTHJJ.AH""], ""ServiceCode"": []}",SSSSSSSSSSSSSSSSSVVVVVVVVVVVVVVVSSSSSSSSSSVVVVVVVVVVVVVVVVVSSSSSSSSSVVVVVVVVVVVVVVVVVSSSSSSSSSSSSSSSSSSSSSSS,yes,,围栏+标点+字段名 S，值 V；check_json_markdown=True
+J02,json,完美JSON无围栏,"{""故障号码"":[""1442201593053""],""IMSI"":[""460240401593053""],""APN"":[""CMIOTHFSTHJJ.AH""],""ServiceCode"":[]}","{""故障号码"": [""1442201593053""], ""IMSI"": [""460240401593053""], ""APN"": [""CMIOTHFSTHJJ.AH""], ""ServiceCode"": []}",SSSSSSSSSVVVVVVVVVVVVVVVSSSSSSSSSSVVVVVVVVVVVVVVVVVSSSSSSSSSVVVVVVVVVVVVVVVVVSSSSSSSSSSSSSSSSSSS,yes,,无围栏整段 JSON；check_json_markdown=False
+J03,json,值错误,"```json
+{""故障号码"":[""1442201593053""],""IMSI"":[""460240401000000""],""APN"":[""CMIOTHFSTHJJ.AH""],""ServiceCode"":[]}
+```","{""故障号码"": [""1442201593053""], ""IMSI"": [""460240401593053""], ""APN"": [""CMIOTHFSTHJJ.AH""], ""ServiceCode"": []}",SSSSSSSSSSSSSSSSSVVVVVVVVVVVVVVVSSSSSSSSSSVVVVVVVVVVVVVVVVVSSSSSSSSSVVVVVVVVVVVVVVVVVSSSSSSSSSSSSSSSSSSSSSSS,yes,,IMSI 值错 → V 正常标注不截断（下游相似度低分）
+J04,json,字段值为空数组,"```json
+{""故障号码"":[""1442201593053""],""ServiceCode"":[]}
+```","{""故障号码"": [""1442201593053""], ""ServiceCode"": [""A1""]}",SSSSSSSSSSSSSSSSSVVVVVVVVVVVVVVVSSSSSSSSSSSSSSSSSSSSSSS,yes,,字段存在但空数组 → V 正常标注（下游空值低分），无 E
+J05,json,语法错误缺逗号,"```json
+{""故障号码"":[""1442201593053""],""IMSI"":[""460240401593053""]""APN"":[""CMIOTHFSTHJJ.AH""]}
+```","{""故障号码"": [""1442201593053""], ""IMSI"": [""460240401593053""], ""APN"": [""CMIOTHFSTHJJ.AH""], ""ServiceCode"": []}",SSSSSSSSSSSSSSSSSVVVVVVVVVVVVVVVSSSSSSSSSSVVVVVVVVVVVVVVVVVSEDDDDDDDDDDDDDDDDDDDDDDDDDDDDD,yes,60,IMSI 数组后缺逗号 → 语法错误，首错字符 E 其后 D（可用 json.loads 失败辅助定位）
+J06,json,围栏缺失,"{""故障号码"":[""1442201593053""],""IMSI"":[""460240401593053""],""APN"":[""CMIOTHFSTHJJ.AH""],""ServiceCode"":[]}","{""故障号码"": [""1442201593053""], ""IMSI"": [""460240401593053""], ""APN"": [""CMIOTHFSTHJJ.AH""], ""ServiceCode"": []}",EDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD,yes,0,check_json_markdown=True 时无围栏 → 首个非空白字符 E（围栏缺失按结构失败，开放问题1默认严格）
+J07,json,数组顺序错,"```json
+{""故障号码"":[""B"",""A""]}
+```","{""故障号码"": [""A"", ""B""]}",SSSSSSSSSSSSSSSSSVVVSVVVSSSSSS,yes,,check_list_order=True 时顺序错位 → 下游逐元素对比低分；标注不截断（待讨论是否 E）
+J08,json,前导文本+JSON,"提取结果如下
+
+```json
+{""故障号码"":[""1442201593053""],""IMSI"":[""460240401593053""],""APN"":[""CMIOTHFSTHJJ.AH""],""ServiceCode"":[]}
+```","{""故障号码"": [""1442201593053""], ""IMSI"": [""460240401593053""], ""APN"": [""CMIOTHFSTHJJ.AH""], ""ServiceCode"": []}",WWWWWWWWSSSSSSSSSSSSSSSSSVVVVVVVVVVVVVVVSSSSSSSSSSVVVVVVVVVVVVVVVVVSSSSSSSSSVVVVVVVVVVVVVVVVVSSSSSSSSSSSSSSSSSSSSSSS,yes,,前导 W 不训练不截断
+J09,json,值类型错,"```json
+{""故障号码"":""1442201593053"",""数量"":""3""}
+```","{""故障号码"": ""1442201593053"", ""数量"": 3}",SSSSSSSSSSSSSSSSVVVVVVVVVVVVVVVSSSSSSEDDDDDDD,yes,37,"GT 数字 3 vs 输出字符串 ""3"" → 值首字符 E"
+J10,json,字段名拼错,"```json
+{""故障号吗"":[""1442201593053""]}
+```","{""故障号码"": [""1442201593053""], ""IMSI"": [""460240401593053""], ""APN"": [""CMIOTHFSTHJJ.AH""], ""ServiceCode"": []}",SSSSSSSSSSSSSEDDDDDDDDDDDDDDDDDDDDDDDD,yes,13,字段名与 GT key 不恒等 → 首错字符 E 其后 D
+J11,json,多余字段,"```json
+{""故障号码"":[""1442201593053""],""IMSI"":[""460240401593053""],""APN"":[""CMIOTHFSTHJJ.AH""],""ServiceCode"":[],""备注"":""无""}
+```","{""故障号码"": [""1442201593053""], ""IMSI"": [""460240401593053""], ""APN"": [""CMIOTHFSTHJJ.AH""], ""ServiceCode"": []}",SSSSSSSSSSSSSSSSSVVVVVVVVVVVVVVVSSSSSSSSSSVVVVVVVVVVVVVVVVVSSSSSSSSSVVVVVVVVVVVVVVVVVSSSSSSSSSSSSSSSSSSSEDDDDDDDDDDDD,yes,104,多余 key 首字符 E 其后 D（GT 无此字段）
+J12,json,完美JSON多值数组,"```json
+{""APN"":[""CMIOT"",""IMS""]}
+```","{""APN"": [""CMIOT"", ""IMS""]}",SSSSSSSSSSSSSSSSVVVVVVVSVVVVVSSSSSS,yes,,多元素数组逐元素 V
+J13,json,乱码,好的里面套外包的红黄蓝幼儿园小班用户喜欢吃楼制的这样银点湿化那迨馋缠保护呢其他夭命天小培米真香,"{""故障号码"": [""1442201593053""], ""IMSI"": [""460240401593053""], ""APN"": [""CMIOTHFSTHJJ.AH""], ""ServiceCode"": []}",WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW,yes,,无围栏无 JSON 结构 → 全 W
+J14,json,半截JSON,"```json
+{""故障号码"":[""1442201593053""],""IMSI"":[""4602404015930","{""故障号码"": [""1442201593053""], ""IMSI"": [""460240401593053""], ""APN"": [""CMIOTHFSTHJJ.AH""], ""ServiceCode"": []}",SSSSSSSSSSSSSSSSSVVVVVVVVVVVVVVVSSSSSSSSSSEDDDDDDDDDDDDD,yes,42,"截断 → json.loads 失败 → E 在 IMSI 值首字符 '""' 处（结构不完整）"
+J15,json,围栏后杂散文本,"```json
+{""故障号码"":[""1442201593053""],""IMSI"":[""460240401593053""],""APN"":[""CMIOTHFSTHJJ.AH""],""ServiceCode"":[]}
+```
+以上是提取结果","{""故障号码"": [""1442201593053""], ""IMSI"": [""460240401593053""], ""APN"": [""CMIOTHFSTHJJ.AH""], ""ServiceCode"": []}",SSSSSSSSSSSSSSSSSVVVVVVVVVVVVVVVSSSSSSSSSSVVVVVVVVVVVVVVVVVSSSSSSSSSVVVVVVVVVVVVVVVVVSSSSSSSSSSSSSSSSSSSSSSSWWWWWWWW,yes,,围栏闭合后的尾随文本 W 不截断

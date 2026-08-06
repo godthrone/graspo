@@ -56,9 +56,9 @@ experiment_data/
 *.tar
 
 # Prevent accidental recreation of old data/config directories at root
-data/
-configs/
-config_example.yaml
+/data/
+/configs/
+/config_example.yaml
 
 # Sample data and configs live in samples/ (tracked);
 # production data belongs outside the repository.
