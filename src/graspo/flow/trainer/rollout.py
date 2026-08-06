@@ -14,6 +14,8 @@ from graspo.flow.trainer.helpers import (
     reward_detail,
     safe_sample_metadata,
 )
+from graspo.ripple.annotation.advantages import compute_group_advantages
+from graspo.ripple.annotation.labeler import AnnotationInput, annotate
 from graspo.ripple.buffer import Experience
 from graspo.ripple.monitoring.stats import AttemptRecord, QueuedSample
 from graspo.ripple.monitoring.summary import (
@@ -22,7 +24,6 @@ from graspo.ripple.monitoring.summary import (
 )
 from graspo.ripple.multimodal.contract import assert_rl_training_has_multimodal
 from graspo.ripple.parity import classify_group, has_reward_variance
-from graspo.ripple.reward.token_reward import compute_token_rewards_for_group
 
 
 class RolloutMixin:
@@ -323,17 +324,38 @@ class RolloutMixin:
                 " for token-level advantage computation.  This indicates a bug"
                 " in the parsing pipeline or rollout logic."
             )
-        token_rewards, is_format_masks, field_keys = compute_token_rewards_for_group(
-            generation=generation,
-            parsed_completions=record.parsed_completions,
+        # 标注驱动链路(v0.20.0):字符级标注 → 末尾 EOS 惩罚 → token 级 advantage。
+        # 替换旧的 token_rewards/is_format_masks 链路(token_reward.py 已删除)。
+        format_type = "tool_call" if state.sample.expects_tool_calls else "json"
+        annotations = [
+            annotate(
+                AnnotationInput(
+                    completion_text=text,
+                    targets=state.sample.targets,
+                    tokenizer=tokenizer,
+                    format_type=format_type,
+                    check_json_markdown=bool(self.reward.config.check_json_markdown),
+                    check_think=bool(self.reward.config.check_think),
+                )
+            )
+            for text in generation.completions
+        ]
+        truncated_by_max = [
+            len(tokenizer(text, add_special_tokens=False).input_ids)
+            >= self.config.training.max_new_tokens
+            for text in generation.completions
+        ]
+        ragged_advantages = compute_group_advantages(
+            completions=generation.completions,
+            annotations=annotations,
             targets=state.sample.targets,
             tokenizer=tokenizer,
-            reward_config=self.reward.config,
+            format_type=format_type,
+            numeric_tolerance=float(self.reward.config.numeric_tolerance),
+            truncated_by_max=truncated_by_max,
         )
         advantages = compute_ripple_advantages(
-            token_rewards,
-            is_format_masks,
-            field_keys,
+            ragged_advantages,
             old_log_probs,
             generation.prompt_len,
         )

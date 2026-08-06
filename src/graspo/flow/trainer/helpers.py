@@ -57,50 +57,39 @@ def _backup_config(config: Any, output_dir: Path) -> None:
 
 
 def compute_ripple_advantages(
-    token_rewards: list[list[float]],
-    is_format_masks: list[list[bool]],
-    field_keys: list[list[str | None]],
+    ragged_advantages: list[list[float]],
     old_log_probs: Any,
     prompt_len: int,
-    *,
-    eps: float = 1e-8,
 ) -> Any:
-    """GRASPO-Ripple: token-level advantage with format/content separation.
+    """GRASPO-Ripple: align ragged per-token advantages to the log-prob tensor.
 
-    Format tokens for clean completions receive 0.0 (format already correct).
-    Broken completions receive -1.0 on format tokens.  Content tokens receive
-    ``cs - mean(cs)`` — the raw difference from the group mean, without std
-    normalization (v0.19.0).
+    Advantages come from the annotation-driven pipeline
+    (:func:`graspo.ripple.annotation.advantages.compute_group_advantages`):
+    ``S→+1.0 / V→raw−μ_f / T·W·D→0 / E→−1.0``, no group-level normalization
+    (v0.20.0).
 
-    The ragged advantages are aligned to the ``old_log_probs`` tensor shape.
+    The ragged advantages are aligned to the ``old_log_probs`` tensor shape:
+    prompt positions → 0, generated region → ragged advantages, trailing
+    padding → 0.
 
     Args:
-        token_rewards: Ragged per-completion reward lists.
-        is_format_masks: Parallel ragged list; True for format tokens.
-        field_keys: Parallel ragged list; field key for content tokens.
+        ragged_advantages: Per-completion advantage lists (generated region).
         old_log_probs: shape (B, seq_len-1) log-prob tensor.
         prompt_len: Prompt token count (used for alignment).
-        eps: Numerical stability constant.
 
     Returns:
         shape (B, seq_len-1) per-token advantage tensor.
     """
     import torch
 
-    from graspo.ripple.reward.token_reward import (
-        compute_token_advantages,
-    )
-
     batch_size = old_log_probs.shape[0]
     seq_len_m1 = old_log_probs.shape[1]
 
-    # Compute token-level advantages (ragged, matching token_rewards shape).
-    ragged_advantages = compute_token_advantages(
-        token_rewards,
-        is_format_masks,
-        field_keys,
-        eps=eps,
-    )
+    if len(ragged_advantages) != batch_size:
+        raise RuntimeError(
+            f"ragged_advantages batch size {len(ragged_advantages)} != "
+            f"old_log_probs batch size {batch_size}"
+        )
 
     # Align to old_log_probs shape: prompt positions → 0, generated region →
     # ragged advantages, trailing padding → 0.
