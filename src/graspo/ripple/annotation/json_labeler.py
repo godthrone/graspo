@@ -69,8 +69,28 @@ def _extract_gt(targets: list[dict[str, Any]]) -> dict[str, Any] | None:
     return None
 
 
+def _child_gt(ctx: dict[str, Any] | None, pending_key: str | None) -> dict[str, Any] | None:
+    """取嵌套子对象的 GT dict（沿 pending_key 下降一层）。
+
+    进入 ``{`` 时调用：GT 中 pending_key 的值是 dict → 返回它（内层 key 用该
+    子 dict 校验）；值是 list（数组元素为对象）→ 返回首个 dict 元素；
+    其余（GT 缺失 / 标量 / 非 dict）→ None（内层不校验，保持顶层缺失的
+    现有行为）。
+    """
+    if ctx is None or pending_key is None:
+        return None
+    val = ctx.get(pending_key)
+    if isinstance(val, dict):
+        return val
+    if isinstance(val, list):
+        for elem in val:
+            if isinstance(elem, dict):
+                return elem
+    return None
+
+
 def _check_key(key: str, gt: dict[str, Any] | None) -> tuple[str, str | None]:
-    """字段名校验。
+    """字段名校验（gt 为当前上下文子对象，支持嵌套）。
 
     :return: (verdict, gt_key)。verdict ∈ {"ok", "typo", "extra"}
     """
@@ -123,6 +143,7 @@ def annotate_json(
     # ---- 状态机扫描 JSON body ----
     i = pos
     stack: list[str] = []  # "o" | "a"
+    gt_ctx: list[dict[str, Any] | None] = [gt]  # 与 stack 平行的 GT 上下文栈
     after_colon = False
     pending_key: str | None = None
 
@@ -136,6 +157,12 @@ def annotate_json(
             continue
         if c == "{":
             tags[i] = CharTag.STRUCTURE
+            if stack:
+                # 嵌套对象：GT 上下文随 pending_key 下降一层（J16 嵌套 key 校验）
+                gt_ctx.append(_child_gt(gt_ctx[-1], pending_key))
+            else:
+                # 顶层对象：上下文就是 gt 本身
+                gt_ctx.append(gt_ctx[-1])
             stack.append("o")
             after_colon = False
             i += 1
@@ -153,6 +180,7 @@ def annotate_json(
                 return tags, fields
             tags[i] = CharTag.STRUCTURE
             stack.pop()
+            gt_ctx.pop()
             after_colon = False
             pending_key = None
             i += 1
@@ -197,7 +225,7 @@ def annotate_json(
             in_obj_key = bool(stack) and stack[-1] == "o" and not after_colon
             if in_obj_key:
                 key = text[i + 1:end]
-                verdict, gt_key = _check_key(key, gt)
+                verdict, gt_key = _check_key(key, gt_ctx[-1])
                 if verdict == "ok":
                     _mark(tags, i, end + 1, CharTag.STRUCTURE)
                     pending_key = key
@@ -216,12 +244,13 @@ def annotate_json(
             else:
                 in_array = bool(stack) and stack[-1] == "a"
                 # 类型校验：GT 数字 vs 模型字符串值（带引号）→ E
+                ctx = gt_ctx[-1]
                 if (
-                    gt is not None
+                    ctx is not None
                     and pending_key is not None
                     and not in_array
-                    and isinstance(gt.get(pending_key), (int, float))
-                    and not isinstance(gt.get(pending_key), bool)
+                    and isinstance(ctx.get(pending_key), (int, float))
+                    and not isinstance(ctx.get(pending_key), bool)
                 ):
                     tags[i] = CharTag.ERROR
                     _drop(tags, i + 1)

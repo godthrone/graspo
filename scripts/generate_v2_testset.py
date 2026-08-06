@@ -165,7 +165,7 @@ NEW_CASES = [
         "case": "参数标签残缺无>",
         "completion": "<tool_call>\n<function=robot_atomic_control>\n<parameter=action_type\n</function>\n</tool_call>",
         "ground_truth": "robot_atomic_control(action_type=逆时针旋转, angle_deg=40.0)",
-        "notes": "参数标签缺 >：name_end 找到的是后续 </function> 的 >，param_name 含换行 → 不在 GT 参数集 → 走多余参数分支 E（agent 核验修正）"
+        "notes": "参数标签缺 >：find(">") 限制当前行（8/7 修复），换行即未闭合 → name_end<0 → E 于 < 处截断"
     },
     # ── JSON P0 ──
     {
@@ -173,7 +173,7 @@ NEW_CASES = [
         "case": "嵌套对象",
         "completion": "```json\n{\"user\":{\"name\":\"Alice\",\"age\":30}}\n```",
         "ground_truth": "{\"user\": {\"name\": \"Alice\", \"age\": 30}}",
-        "notes": "嵌套对象：stack 深度 2+ 验证；已知 bug：内层 key 校验只查顶层 GT（E@17 非期望行为，待修复后更新）"
+        "notes": "嵌套对象：stack 深度 2+ 验证；gt_ctx 上下文栈随 pending_key 下降（8/7 修复内层 key 校验 bug）"
     },
     # ── JSON P1 ──
     {
@@ -202,7 +202,7 @@ NEW_CASES = [
         "case": "前导文本+JSON无围栏",
         "completion": "这是提取结果：\n{\"故障号码\":[\"1442201593053\"],\"IMSI\":[\"460240401593053\"]}",
         "ground_truth": "{\"故障号码\": [\"1442201593053\"], \"IMSI\": [\"460240401593053\"]}",
-        "notes": "无围栏+前导文本：check_json_markdown=False 时整段须为合法 JSON，前导文本首字符 E（设计行为，与方案 §5.2 一致）"
+        "notes": "无围栏+前导文本：check_json_markdown=False 时整段须为合法 JSON，前导文本首字符 E（设计行为，与方案 §5.2 一致；8/7 用户裁定严格执行）"
     },
     # ── JSON P2 ──
     {

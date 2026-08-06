@@ -221,9 +221,12 @@ def annotate_tool_call(
         first = _first_non_blank(text, pos, n)
         if first >= n or not text.startswith(_PARAMETER_MARK, first):
             break
-        # 读取参数名
+        # 读取参数名：> 限制在当前行（跨行 find 会把后续 </function> 的 > 误当
+        # 标签闭合，参数名含换行走错分支——T32 修复：标签未闭合按 name_end<0 处理）
         name_start = first + len(_PARAMETER_MARK)
-        name_end = text.find(">", name_start)
+        nl = text.find("\n", name_start)
+        gt_pos = text.find(">", name_start)
+        name_end = gt_pos if (gt_pos >= 0 and (nl < 0 or gt_pos < nl)) else -1
         if name_end < 0:
             a.tags[first] = CharTag.ERROR
             a.drop_from(first + 1)

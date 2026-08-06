@@ -53,6 +53,8 @@ select = ["E", "F", "I", "N", "W", "UP", "BLE"]
 [tool.ruff.lint.per-file-ignores]
 # HTML 生成脚本：拼接长行是固有风格，跳过行长与变量名检查
 "tests/data/generate_annotation_viewer.py" = ["E501", "E741"]
+# 数据集生成脚本：completion/annotation 数据行固有超长，跳过行长检查
+"scripts/generate_v2_testset.py" = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
