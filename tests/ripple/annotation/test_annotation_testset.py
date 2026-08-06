@@ -1,4 +1,4 @@
-"""标注模块测试：用 annotation_testset.csv 数据集驱动验证。
+"""标注模块测试：用 annotation_testset.jsonl 数据集驱动验证。
 
 数据集 35 条覆盖矩阵（tool call 20 + JSON 15），每条断言：
 - 标注与期望逐字符一致（S/V/T/W/E/D）
@@ -7,7 +7,6 @@
 - error_pos 等于首个 E 下标
 """
 
-import csv
 import json
 from pathlib import Path
 
@@ -15,7 +14,7 @@ import pytest
 
 from graspo.ripple.annotation.labeler import AnnotationInput, annotate
 
-TESTSET = Path(__file__).resolve().parents[2] / "data" / "annotation_testset.csv"
+TESTSET = Path(__file__).resolve().parents[2] / "data" / "annotation_testset.jsonl"
 
 # J02 是无围栏 JSON 场景（check_json_markdown=False）
 NO_FENCE_CASES = {"J02"}
@@ -25,7 +24,7 @@ THINK_CASES = {"T11"}
 
 def _load_testset() -> list[dict[str, str]]:
     with open(TESTSET, encoding="utf-8") as f:
-        return list(csv.DictReader(f))
+        return [json.loads(line) for line in f if line.strip()]
 
 
 def _make_targets(format_type: str, gt: str) -> list[dict]:

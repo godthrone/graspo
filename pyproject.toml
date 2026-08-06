@@ -74,3 +74,8 @@ module = [
     "graspo.flow.trainer.checkpoint",
 ]
 ignore_errors = true
+
+[dependency-groups]
+dev = [
+    "openpyxl>=3.1.5",
+]
