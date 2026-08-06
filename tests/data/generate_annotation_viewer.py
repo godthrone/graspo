@@ -424,12 +424,55 @@ const LABEL_NAMES = {json.dumps(LABEL_NAMES)};
 </html>"""
 
 
-def main():
-    records = load_data()
+def main() -> None:
+    """生成 viewer HTML。可选 --data 指定数据集文件（默认 v1），--out 指定输出。"""
+    import sys
+
+    data_file = DATA_FILE
+    out_file = OUTPUT_FILE
+    args = sys.argv[1:]
+    i = 0
+    while i < len(args):
+        if args[i] == "--data" and i + 1 < len(args):
+            data_file = Path(args[i + 1])
+            i += 2
+        elif args[i] == "--out" and i + 1 < len(args):
+            out_file = Path(args[i + 1])
+            i += 2
+        else:
+            print(f"unknown arg: {args[i]} (支持 --data <jsonl> --out <html>)")
+            return
+
+    records = load_data_from(data_file)
     html = build_html(records)
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+    with open(out_file, "w", encoding="utf-8") as f:
         f.write(html)
-    print(f"✅ Generated {OUTPUT_FILE} with {len(records)} records")
+    print(f"✅ Generated {out_file} with {len(records)} records")
+
+
+def load_data_from(path: Path) -> list[dict]:
+    """从指定 jsonl 加载记录（DATA_FILE 独立，支持多数据集 viewer）。"""
+    import json
+
+    records = []
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            rec = json.loads(line)
+            records.append(
+                {
+                    "id": rec.get("id", "?"),
+                    "type": rec.get("type", ""),
+                    "case": rec.get("case", ""),
+                    "completion": rec.get("completion", ""),
+                    "annotation": rec.get("annotation", ""),
+                    "error_pos": rec.get("error_pos", ""),
+                    "notes": rec.get("notes", ""),
+                }
+            )
+    return records
 
 
 if __name__ == "__main__":
