@@ -20,20 +20,33 @@
 from dataclasses import dataclass
 from typing import Any
 
+from graspo.ripple.parsing.qwen_tool_parser import (
+    FUNCTION_CLOSE,
+    FUNCTION_OPEN,
+    PARAMETER_CLOSE,
+    PARAMETER_OPEN,
+    THINK_CLOSE,
+    THINK_OPEN,
+    TOOL_CALL_CLOSE,
+    TOOL_CALL_OPEN,
+)
+
 from .roles import CharTag
 
-# Qwen 家族 tool call 开标签（chat template 决定；模型族注册表在此扩展）
-_OPEN_TAG = "<tool_call>"
+# 标签格式常量单一真相源（2026-08-07 方案 A）：从模型族 parser
+# （qwen_tool_parser）读取，避免标注器与解析器两套格式理解漂移；
+# 新模型族 = 新 parser 族 = 标注器自动获得其格式。
+_OPEN_TAG = TOOL_CALL_OPEN
 _OPEN_TAG_LEN = len(_OPEN_TAG)
 
-_THINK_OPEN = "<think>"
-_THINK_CLOSE = "</think>"
+_THINK_OPEN = THINK_OPEN
+_THINK_CLOSE = THINK_CLOSE
 
-_FUNCTION_MARK = "<function="
-_PARAMETER_MARK = "<parameter="
-_FUNCTION_CLOSE = "</function>"
-_PARAMETER_CLOSE = "</parameter>"
-_TOOL_CALL_CLOSE = "</tool_call>"
+_FUNCTION_MARK = FUNCTION_OPEN
+_PARAMETER_MARK = PARAMETER_OPEN
+_FUNCTION_CLOSE = FUNCTION_CLOSE
+_PARAMETER_CLOSE = PARAMETER_CLOSE
+_TOOL_CALL_CLOSE = TOOL_CALL_CLOSE
 
 
 def _blank(text: str, start: int, end: int) -> bool:

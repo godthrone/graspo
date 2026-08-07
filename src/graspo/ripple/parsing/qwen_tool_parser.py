@@ -32,14 +32,28 @@ from xml.etree import ElementTree as ET
 from graspo.ripple.parsing.completion import ParsedCompletion
 from graspo.ripple.parsing.json_tool_parser import try_parse_json_tool_call
 
-_THINK_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL)
-_TOOL_CALL_RE = re.compile(r"<tool_call>(.*?)</tool_call>", re.DOTALL)
-_FUNCTION_RE = re.compile(r"<function=([^>\n]+)>(.*?)</function>", re.DOTALL)
+# ── 标签格式常量（模型族格式知识的单一真相源，2026-08-07 方案 A）──
+# 标注模块（ripple/annotation/tool_call_labeler）引用同一组常量，
+# 避免两套格式理解漂移；新模型族 = 新 parser 族 = 标注器自动获得其格式。
+TOOL_CALL_OPEN = "<tool_call>"
+TOOL_CALL_CLOSE = "</tool_call>"
+FUNCTION_OPEN = "<function="  # 前缀：<function=NAME>
+FUNCTION_CLOSE = "</function>"
+PARAMETER_OPEN = "<parameter="  # 前缀：<parameter=NAME>
+PARAMETER_CLOSE = "</parameter>"
+THINK_OPEN = "<think>"
+THINK_CLOSE = "</think>"
+
+_THINK_RE = re.compile(f"{THINK_OPEN}(.*?){THINK_CLOSE}", re.DOTALL)
+_TOOL_CALL_RE = re.compile(f"{TOOL_CALL_OPEN}(.*?){TOOL_CALL_CLOSE}", re.DOTALL)
+_FUNCTION_RE = re.compile(
+    f"{FUNCTION_OPEN}([^>\\n]+)>(.*?){FUNCTION_CLOSE}", re.DOTALL
+)
 
 # Qwen 类 XML 语法：<function=NAME> / <parameter=NAME> 不是合法 XML 元素名
 # （元素名不允许 "="）。规范化前先匹配这种带 "=" 的语法。
-_FUNCTION_EQ_RE = re.compile(r"<function=([^>\s]+)>")
-_PARAMETER_EQ_RE = re.compile(r"<parameter=([^>\s]+)>")
+_FUNCTION_EQ_RE = re.compile(f"{FUNCTION_OPEN}([^>\\s]+)>")
+_PARAMETER_EQ_RE = re.compile(f"{PARAMETER_OPEN}([^>\\s]+)>")
 
 # 规范化后的合法 XML 结构：
 #   <function name="NAME"><parameter name="NAME">value</parameter></function>
