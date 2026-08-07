@@ -251,3 +251,100 @@ def print_attribution(attribution: dict[str, Any]) -> None:
                 f"{any_fn:>6.0f}% | {any_param:>6.0f}% | "
                 f"{all_fn:>8.0f}% | {all_param:>8.0f}%"
             )
+
+
+def analyze_epochs(run_dir: Path) -> dict[str, Any]:
+    """epoch 级聚合统计（从 events.jsonl 的 epoch_summary 事件）。
+
+    每个 epoch 结束时训练循环写一条 ``epoch_summary`` 事件，携带该 epoch 的
+    **全量累计统计**（samples/completions/decisions/reward/content）——这是
+    epoch 整体统计的权威来源（train_step 是单步口径，epoch_cumulative 只在
+    progress=1.0 时等于 epoch 全量，epoch_summary 显式固化这一点）。
+
+    输出 ``{available, epochs: [...], trends: {...}}``，epochs 按事件顺序排列。
+    """
+    events_path = run_dir / "logs" / "events.jsonl"
+    if not events_path.exists():
+        return {"available": False, "reason": f"missing {events_path}"}
+
+    epochs: list[dict[str, Any]] = []
+    for line in events_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except ValueError:
+            continue
+        if payload.get("event") != "epoch_summary":
+            continue
+        ec = payload.get("epoch_cumulative") or {}
+        d = ec.get("decisions") or {}
+        epochs.append(
+            {
+                "epoch": payload.get("epoch"),
+                "elapsed_sec": payload.get("elapsed_sec"),
+                "samples_seen": ec.get("samples_seen"),
+                "samples_total": ec.get("samples_total"),
+                "progress": ec.get("progress"),
+                "attempts": d.get("rollout_attempts") or {},
+                "terminal": d.get("terminal") or {},
+                "trainable": d.get("trainable") or {},
+                "reward_mean": ec.get("reward_mean"),
+                "content_mean": ec.get("content_mean"),
+                "base_content_mean": ec.get("base_content_mean"),
+                "best_reward": ec.get("best_reward"),
+            }
+        )
+
+    if not epochs:
+        return {"available": False, "reason": "no epoch_summary events in events.jsonl"}
+
+    def _trend(key: str) -> list[float | int | None]:
+        return [e.get(key) for e in epochs]
+
+    return {
+        "available": True,
+        "epochs": epochs,
+        "trends": {
+            "mc_ratio": [round((e.get("trainable") or {}).get("ratio") or 0.0, 4) for e in epochs],
+            "reward_mean": _trend("reward_mean"),
+            "content_mean": _trend("content_mean"),
+            "base_content_mean": _trend("base_content_mean"),
+            "invalid": [(e.get("terminal") or {}).get("invalid") for e in epochs],
+            "max_correct": [(e.get("trainable") or {}).get("max_correct") for e in epochs],
+            "not_correct": [(e.get("trainable") or {}).get("not_correct") for e in epochs],
+            "perfect_skip": [(e.get("terminal") or {}).get("perfect_skip") for e in epochs],
+        },
+    }
+
+
+def print_epochs(epochs: dict[str, Any]) -> None:
+    """以人类可读表格打印 epoch 聚合结果。"""
+    if not epochs.get("available"):
+        print(f"[epochs] unavailable: {epochs.get('reason')}")
+        return
+    print()
+    print("=== epoch 聚合（epoch_summary 事件）===")
+    hdr = (
+        "epoch | 样本 | retry% | perfect | invalid | no_gap | mc | nc "
+        "| mc_ratio | reward | content | 耗时"
+    )
+    print(hdr)
+    for e in epochs.get("epochs", []):
+        attempts = e.get("attempts") or {}
+        total = attempts.get("total") or 0
+        retry = attempts.get("retry") or 0
+        retry_pct = f"{retry / total * 100:.0f}%" if total else "-"
+        term = e.get("terminal") or {}
+        tr = e.get("trainable") or {}
+        elapsed = e.get("elapsed_sec")
+        elapsed_str = f"{elapsed / 3600:.1f}h" if elapsed else "-"
+        print(
+            f"{e.get('epoch'):>5} | {e.get('samples_seen'):>4} | {retry_pct:>6} | "
+            f"{term.get('perfect_skip', 0):>7} | {term.get('invalid', 0):>7} | "
+            f"{term.get('invalid_no_preference_gap', 0):>6} | "
+            f"{tr.get('max_correct', 0):>2} | {tr.get('not_correct', 0):>2} | "
+            f"{tr.get('ratio', 0):>8.3f} | {e.get('reward_mean', 0):>7.3f} | "
+            f"{e.get('content_mean', 0):>7.3f} | {elapsed_str:>5}"
+        )

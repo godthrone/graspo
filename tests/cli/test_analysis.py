@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from graspo.cli.analysis import analyze_attribution
+from graspo.cli.analysis import analyze_attribution, analyze_epochs
 
 
 def _tool_call_completion(name: str, params: dict[str, str]) -> str:
@@ -277,3 +277,146 @@ class TestRobustness:
         assert attr["terminal_groups"] == 1
         assert len(attr["step_trend"]) == 1
         assert attr["step_trend"][0]["groups"] == 1
+
+
+def _epoch_summary(
+    epoch: int,
+    *,
+    mc: int,
+    nc: int,
+    invalid: int,
+    perfect: int,
+    retry: int,
+    total: int,
+    reward: float,
+    content: float,
+    elapsed: int = 3600,
+) -> dict:
+    """构造一条 epoch_summary 事件（与训练侧写入结构一致）。"""
+    return {
+        "timestamp": "2026-08-07T00:00:00+00:00",
+        "event": "epoch_summary",
+        "epoch": epoch,
+        "elapsed_sec": elapsed,
+        "epoch_cumulative": {
+            "epoch": epoch,
+            "samples_seen": 322,
+            "samples_total": 322,
+            "progress": 1.0,
+            "attempt_groups": 322,
+            "completions": 2576,
+            "decisions": {
+                "rollout_attempts": {"total": total, "retry": retry, "terminal": 322},
+                "terminal": {
+                    "perfect_skip": perfect,
+                    "trainable": mc + nc,
+                    "invalid": invalid,
+                    "invalid_no_preference_gap": 5,
+                    "total": 322,
+                },
+                "trainable": {
+                    "max_correct": mc,
+                    "not_correct": nc,
+                    "total": mc + nc,
+                    "ratio": round(mc / (mc + nc), 4) if mc + nc else 0.0,
+                },
+            },
+            "reward_mean": reward,
+            "content_mean": content,
+            "base_content_mean": round(content + 0.1, 4),
+            "best_reward": 1.0047,
+        },
+        "run_cumulative": {"step": 22 + epoch * 23},
+        "run_id": "test",
+    }
+
+
+class TestAnalyzeEpochs:
+    def test_missing_events(self, run_dir: Path) -> None:
+        """events.jsonl 缺失 → available=False。"""
+        attr = analyze_epochs(run_dir)
+        assert attr["available"] is False
+
+    def test_no_epoch_summary(self, run_dir: Path) -> None:
+        """只有 train_step 无 epoch_summary → available=False。"""
+        path = run_dir / "logs" / "events.jsonl"
+        path.write_text(json.dumps({"event": "train_step", "step": 1}) + "\n", encoding="utf-8")
+        attr = analyze_epochs(run_dir)
+        assert attr["available"] is False
+        assert "no epoch_summary" in attr["reason"]
+
+    def test_epochs_order_and_content(self, run_dir: Path) -> None:
+        """多 epoch：顺序、字段、trends 正确。"""
+        path = run_dir / "logs" / "events.jsonl"
+        path.write_text(
+            "\n".join(
+                json.dumps(e, ensure_ascii=False)
+                for e in [
+                    _epoch_summary(
+                        0,
+                        mc=59,
+                        nc=118,
+                        invalid=127,
+                        perfect=13,
+                        retry=692,
+                        total=1014,
+                        reward=0.608,
+                        content=0.704,
+                    ),
+                    _epoch_summary(
+                        1,
+                        mc=42,
+                        nc=124,
+                        invalid=129,
+                        perfect=18,
+                        retry=735,
+                        total=1057,
+                        reward=0.619,
+                        content=0.679,
+                    ),
+                    _epoch_summary(
+                        2,
+                        mc=25,
+                        nc=127,
+                        invalid=115,
+                        perfect=16,
+                        retry=689,
+                        total=1011,
+                        reward=0.568,
+                        content=0.635,
+                    ),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        result = analyze_epochs(run_dir)
+        assert result["available"] is True
+        assert [e["epoch"] for e in result["epochs"]] == [0, 1, 2]
+        assert result["epochs"][0]["terminal"]["invalid"] == 127
+        assert result["epochs"][0]["trainable"]["max_correct"] == 59
+        assert result["epochs"][0]["samples_seen"] == 322
+        assert result["epochs"][0]["elapsed_sec"] == 3600
+        assert result["trends"]["mc_ratio"] == [0.3333, 0.253, 0.1645]
+        assert result["trends"]["content_mean"] == [0.704, 0.679, 0.635]
+        assert result["trends"]["invalid"] == [127, 129, 115]
+        assert result["trends"]["max_correct"] == [59, 42, 25]
+        assert result["trends"]["perfect_skip"] == [13, 18, 16]
+
+    def test_malformed_line_skipped(self, run_dir: Path) -> None:
+        """损坏行跳过，有效 epoch_summary 保留。"""
+        path = run_dir / "logs" / "events.jsonl"
+        path.write_text(
+            "not-json\n"
+            + json.dumps(
+                _epoch_summary(
+                    0, mc=1, nc=7, invalid=2, perfect=0, retry=10, total=20, reward=0.5, content=0.6
+                )
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        result = analyze_epochs(run_dir)
+        assert result["available"] is True
+        assert len(result["epochs"]) == 1
+        assert result["epochs"][0]["epoch"] == 0

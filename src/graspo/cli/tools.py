@@ -14,7 +14,12 @@ from pathlib import Path
 from statistics import mean
 from typing import Any
 
-from graspo.cli.analysis import analyze_attribution, print_attribution
+from graspo.cli.analysis import (
+    analyze_attribution,
+    analyze_epochs,
+    print_attribution,
+    print_epochs,
+)
 from graspo.core.schema import GraspoConfig, Sample
 from graspo.flow.runtime import GraspoFlowRuntime
 from graspo.ripple.data import load_jsonl
@@ -328,41 +333,52 @@ def summarize_run(run_dir: Path, *, skip_warmup_steps: int = 1) -> dict[str, Any
 def run_analyze(run_dirs: list[str], *, skip_warmup_steps: int = 1, as_json: bool = False) -> None:
     """analyze-profile 命令核心：汇总多个运行目录并打印。
 
-    除性能/最新步汇总外，对每个 run 目录额外做 rollout 归因分析
-    （not_correct 原因分类、工具/参数匹配趋势、决策×匹配交叉表），
-    并落盘一份结构化 JSON 到 ``<run_dir>/logs/analysis_attribution.json``。
-    归因逻辑与训练数据内容无关（见 ``analysis.analyze_attribution``）。
+    对每个 run 目录产出三份分析文件（logs/ 下）：
+    1. ``analysis_profile.json`` — 性能/timing/最新步汇总
+    2. ``analysis_attribution.json`` — rollout 归因（not_correct 分类/趋势/交叉表）
+    3. ``analysis_epochs.json`` — epoch 级聚合（epoch_summary 事件）
+
+    归因与 epoch 聚合均为与训练数据内容无关的结构级分析
+    （见 ``analysis.analyze_attribution`` / ``analysis.analyze_epochs``）。
     """
     summaries = [
         summarize_run(Path(path), skip_warmup_steps=skip_warmup_steps) for path in run_dirs
     ]
-    attributions = []
+    attributions: list[dict[str, Any]] = []
+    epochs_list: list[dict[str, Any]] = []
     for path in run_dirs:
-        attr = analyze_attribution(Path(path))
+        run_dir = Path(path)
+        attr = analyze_attribution(run_dir)
+        epochs = analyze_epochs(run_dir)
         attributions.append(attr)
-        _write_attribution(Path(path), attr)
+        epochs_list.append(epochs)
+        profile = summaries[len(attributions) - 1]
+        _write_json_file(run_dir / "logs" / "analysis_profile.json", profile)
+        _write_json_file(run_dir / "logs" / "analysis_attribution.json", attr)
+        _write_json_file(run_dir / "logs" / "analysis_epochs.json", epochs)
     if as_json:
         payload = [
-            {**summary, "attribution": attr}
-            for summary, attr in zip(summaries, attributions, strict=True)
+            {**summary, "attribution": attr, "epochs": epochs}
+            for summary, attr, epochs in zip(summaries, attributions, epochs_list, strict=True)
         ]
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
         print_table(summaries)
+        for epochs in epochs_list:
+            print_epochs(epochs)
         for attr in attributions:
             print_attribution(attr)
 
 
-def _write_attribution(run_dir: Path, attribution: dict[str, Any]) -> None:
-    """归因结果落盘到 run 目录 logs/ 下（analyze-profile 的产品文件）。"""
-    if not attribution.get("available"):
+def _write_json_file(path: Path, data: dict[str, Any]) -> None:
+    """结构化分析结果落盘（analyze-profile 的产品文件）。"""
+    if not data.get("available", True):  # 只跳过显式不可用的分析块
         return
-    out_path = run_dir / "logs" / "analysis_attribution.json"
-    out_path.write_text(
-        json.dumps(attribution, ensure_ascii=False, indent=2) + "\n",
+    path.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-    print(f"[attribution] written: {out_path}")
+    print(f"[analysis] written: {path}")
 
 
 def print_table(summaries: list[dict[str, Any]]) -> None:
