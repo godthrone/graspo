@@ -13,6 +13,25 @@ from graspo.ripple.parsing.classification import (
 
 # ── 监控与摘要 ─────────────────────────────────────────────────────────────────
 
+# 终结 attempt = 非 retry 的最终决策（trainable/invalid/perfect_skip 等）。
+# 质量均值（reward/content）一律只统计终结 attempt，retry 中间态单独成桶
+# （retry_* 计数）——与 mc/nc 的 sample 终结口径对齐（v20 口径混用教训）。
+_TERMINAL_DECISIONS = {
+    "trainable_max_correct",
+    "trainable_not_correct",
+    "invalid",
+    "invalid_no_preference_gap",
+    "perfect_skip",
+}
+
+
+def _is_terminal_decision(decision: Any) -> bool:
+    return str(decision) in _TERMINAL_DECISIONS
+
+
+def _mean(values: list[float]) -> float:
+    return sum(values) / len(values) if values else 0.0
+
 
 def monitor_group(payload: dict[str, Any]) -> dict[str, Any]:
     """从 group payload 生成监控用的摘要数据。"""
@@ -24,13 +43,11 @@ def monitor_group(payload: dict[str, Any]) -> dict[str, Any]:
     pure_tool_call = is_pure_tool_call_task(payload.get("targets"))
     return {
         "decision": payload.get("decision"),
-        "reward_mean": sum(rewards) / len(rewards) if rewards else 0.0,
+        "reward_mean": _mean(rewards),
         "reward_max": max(rewards) if rewards else 0.0,
         "reward_range": max(rewards) - min(rewards) if rewards else 0.0,
-        "content_mean": sum(content_scores) / len(content_scores) if content_scores else 0.0,
-        "base_content_mean": (
-            sum(base_content_scores) / len(base_content_scores) if base_content_scores else 0.0
-        ),
+        "content_mean": _mean(content_scores),
+        "base_content_mean": _mean(base_content_scores),
         "content_all_zero": bool(content_scores) and all(value == 0.0 for value in content_scores),
         "content_all_one": bool(content_scores) and all(value == 1.0 for value in content_scores),
         "missing_json_marker_count": (
@@ -83,15 +100,42 @@ def reward_window_summary(groups: deque[dict[str, Any]]) -> dict[str, Any]:
         decision = str(item.get("decision"))
         decision_counts[decision] = decision_counts.get(decision, 0) + 1
     count = len(items)
+    # 质量均值只统计终结 attempt（retry 中间态不进窗口均值）
+    terminal_items = [item for item in items if _is_terminal_decision(item.get("decision"))]
+    terminal_count = len(terminal_items)
     return {
         "count": count,
         "decision_counts": decision_counts,
-        "reward_mean_avg": sum(float(item["reward_mean"]) for item in items) / count,
-        "reward_max_avg": sum(float(item["reward_max"]) for item in items) / count,
-        "nonzero_range_rate": sum(float(item["reward_range"]) > 0.0 for item in items) / count,
-        "content_mean_avg": sum(float(item["content_mean"]) for item in items) / count,
-        "content_all_zero_rate": sum(bool(item["content_all_zero"]) for item in items) / count,
-        "content_all_one_rate": sum(bool(item["content_all_one"]) for item in items) / count,
+        "reward_mean_avg": (
+            sum(float(item["reward_mean"]) for item in terminal_items) / terminal_count
+            if terminal_count
+            else 0.0
+        ),
+        "reward_max_avg": (
+            sum(float(item["reward_max"]) for item in terminal_items) / terminal_count
+            if terminal_count
+            else 0.0
+        ),
+        "nonzero_range_rate": (
+            sum(float(item["reward_range"]) > 0.0 for item in terminal_items) / terminal_count
+            if terminal_count
+            else 0.0
+        ),
+        "content_mean_avg": (
+            sum(float(item["content_mean"]) for item in terminal_items) / terminal_count
+            if terminal_count
+            else 0.0
+        ),
+        "content_all_zero_rate": (
+            sum(bool(item["content_all_zero"]) for item in terminal_items) / terminal_count
+            if terminal_count
+            else 0.0
+        ),
+        "content_all_one_rate": (
+            sum(bool(item["content_all_one"]) for item in terminal_items) / terminal_count
+            if terminal_count
+            else 0.0
+        ),
         "missing_json_marker_count": sum(int(item["missing_json_marker_count"]) for item in items),
         "unclosed_json_fence_count": sum(int(item["unclosed_json_fence_count"]) for item in items),
         "invalid_extracted_json_count": sum(
@@ -115,11 +159,19 @@ def reward_batch_summary(
     rollout_group_size: int,
     optimize_prompt_batch_size: int,
 ) -> dict[str, Any]:
-    """从一批 rollout attempts 生成 batch 级别摘要。"""
+    """从一批 rollout attempts 生成 batch 级别摘要。
+
+    质量均值（reward/content/base_content、组内极差）只统计**终结 attempt**
+    （decision != retry）；retry 中间态只进 decision_counts / retry_* 计数。
+    JSON 诊断计数与决策计数保留全量（反映真实生成质量与 retry 压力）。
+    """
     decision_counts: dict[str, int] = {}
-    rewards: list[float] = []
+    rewards: list[float] = []  # 全量（含 retry）——observed_completion_count 用
     content_scores: list[float] = []
     base_content_scores: list[float] = []
+    terminal_rewards: list[float] = []  # 终结 attempt——质量均值用
+    terminal_content: list[float] = []
+    terminal_base_content: list[float] = []
     group_ranges: list[float] = []
     group_max_median_gaps: list[float] = []
     missing_json_marker_count = 0
@@ -128,19 +180,26 @@ def reward_batch_summary(
     likely_truncated_json_count = 0
     tool_call_parse_error_count = 0
     tool_call_count_mismatch = 0
+    terminal_attempt_count = 0
 
     for attempt in attempts:
         decision = str(attempt.get("decision"))
         decision_counts[decision] = decision_counts.get(decision, 0) + 1
+        terminal = _is_terminal_decision(decision)
         attempt_rewards = [float(value) for value in attempt.get("rewards", [])]
         attempt_content = [float(value) for value in attempt.get("content_scores", [])]
         attempt_base_content = [float(value) for value in attempt.get("base_content_scores", [])]
         rewards.extend(attempt_rewards)
         content_scores.extend(attempt_content)
         base_content_scores.extend(attempt_base_content)
-        if attempt_rewards:
-            group_ranges.append(max(attempt_rewards) - min(attempt_rewards))
-            group_max_median_gaps.append(max(attempt_rewards) - lower_median(attempt_rewards))
+        if terminal:
+            terminal_attempt_count += 1
+            terminal_rewards.extend(attempt_rewards)
+            terminal_content.extend(attempt_content)
+            terminal_base_content.extend(attempt_base_content)
+            if attempt_rewards:
+                group_ranges.append(max(attempt_rewards) - min(attempt_rewards))
+                group_max_median_gaps.append(max(attempt_rewards) - lower_median(attempt_rewards))
         completions = attempt.get("completions", [])
         details = attempt.get("reward_details", [])
         pure_tool_call = is_pure_tool_call_task(attempt.get("targets"))
@@ -165,17 +224,21 @@ def reward_batch_summary(
     trainable_group_count = decision_counts.get("trainable_max_correct", 0) + decision_counts.get(
         "trainable_not_correct", 0
     )
+    retry_group_count = decision_counts.get("retry", 0)
+    terminal_group_count = attempt_group_count - retry_group_count
     return {
         "unit": "batch_attempt",
         "rollout_group_size": int(rollout_group_size),
         "optimize_prompt_batch_size": int(optimize_prompt_batch_size),
         "attempt_group_count": attempt_group_count,
+        "terminal_group_count": terminal_group_count,
         "completion_count": attempt_group_count * int(rollout_group_size),
         "observed_completion_count": len(rewards),
         "trainable_group_count": trainable_group_count,
         "trainable_completion_count": trainable_group_count * int(rollout_group_size),
-        "retry_group_count": decision_counts.get("retry", 0),
-        "retry_completion_count": decision_counts.get("retry", 0) * int(rollout_group_size),
+        "retry_group_count": retry_group_count,
+        "retry_rate": retry_group_count / attempt_group_count if attempt_group_count else 0.0,
+        "retry_completion_count": retry_group_count * int(rollout_group_size),
         "perfect_skip_group_count": decision_counts.get("perfect_skip", 0),
         "perfect_skip_completion_count": decision_counts.get("perfect_skip", 0)
         * int(rollout_group_size),
@@ -189,10 +252,10 @@ def reward_batch_summary(
         )
         * int(rollout_group_size),
         "decision_counts": decision_counts,
-        "reward_min": min(rewards) if rewards else 0.0,
-        "reward_median": lower_median(rewards),
-        "reward_mean": sum(rewards) / len(rewards) if rewards else 0.0,
-        "reward_max": max(rewards) if rewards else 0.0,
+        "reward_min": min(terminal_rewards) if terminal_rewards else 0.0,
+        "reward_median": lower_median(terminal_rewards),
+        "reward_mean": _mean(terminal_rewards),
+        "reward_max": max(terminal_rewards) if terminal_rewards else 0.0,
         "reward_nonzero_range_group_count": sum(value > 0.0 for value in group_ranges),
         "reward_nonzero_range_rate": (
             sum(value > 0.0 for value in group_ranges) / len(group_ranges) if group_ranges else 0.0
@@ -202,19 +265,19 @@ def reward_batch_summary(
             if group_max_median_gaps
             else 0.0
         ),
-        "content_mean": sum(content_scores) / len(content_scores) if content_scores else 0.0,
-        "base_content_mean": (
-            sum(base_content_scores) / len(base_content_scores) if base_content_scores else 0.0
-        ),
+        "content_mean": _mean(terminal_content),
+        "base_content_mean": _mean(terminal_base_content),
         "content_all_zero_group_count": sum(
             bool(attempt.get("content_scores"))
             and all(float(value) == 0.0 for value in attempt.get("content_scores", []))
             for attempt in attempts
+            if _is_terminal_decision(attempt.get("decision"))
         ),
         "content_all_one_group_count": sum(
             bool(attempt.get("content_scores"))
             and all(float(value) == 1.0 for value in attempt.get("content_scores", []))
             for attempt in attempts
+            if _is_terminal_decision(attempt.get("decision"))
         ),
         "missing_json_marker_count": missing_json_marker_count,
         "unclosed_json_fence_count": unclosed_json_fence_count,
@@ -289,7 +352,7 @@ def compact_decisions(
         },
         "terminal": {
             "perfect_skip": int(perfect_skip),
-            "trainable": trainable_total,
+            "trainable": int(trainable_total),
             "invalid": int(invalid),
             "invalid_no_preference_gap": int(invalid_no_preference_gap),
             "total": terminal_total,
@@ -298,6 +361,9 @@ def compact_decisions(
             "max_correct": int(trainable_max_correct),
             "not_correct": int(trainable_not_correct),
             "total": trainable_total,
+            # 真实质量指标（v20 教训：mc 绝对值随 retry 积压虚涨，
+            # 占比才反映质量）；无 trainable 组时为 None
+            "ratio": (int(trainable_max_correct) / trainable_total) if trainable_total else None,
         },
     }
 
@@ -309,14 +375,23 @@ def compact_timing_summary(
     checkpoint_sec: float,
     metrics: dict[str, Any],
 ) -> dict[str, Any]:
-    """将各阶段耗时压缩为 summary。"""
-    rollout_sec = _sum_timing(attempt_timings, "rollout_sec")
+    """将各阶段耗时压缩为 summary。
+
+    单位显式化（v20 教训）：attempt 记录里 ``rollout_sec_per_prompt`` 是
+    per-prompt 分摊秒数（同一队列所有 attempt 共享 ``rollout_queue_sec`` 总耗时），
+    本函数求和输出 ``rollout_total_sec``（per-prompt 秒数之和的近似总耗时），
+    名字自证单位，避免被当墙钟总时长求和。
+    """
+    rollout_total_sec = _sum_timing(attempt_timings, "rollout_sec_per_prompt")
     reward_cpu_sec = _sum_timing(attempt_timings, "reward_cpu_sec")
     decision_sec = _sum_timing(attempt_timings, "decision_sec")
     old_logprob_sec = _sum_timing(attempt_timings, "old_logprob_sec")
     replay_append_sec = _sum_timing(attempt_timings, "replay_append_sec")
-    total = rollout_sec + reward_cpu_sec + decision_sec + old_logprob_sec + replay_append_sec
+    total = rollout_total_sec + reward_cpu_sec + decision_sec + old_logprob_sec + replay_append_sec
     total += float(optimize_sec) + float(checkpoint_sec)
+    rollout_queue_sec = max(
+        [float(item.get("rollout_queue_sec") or 0.0) for item in attempt_timings], default=0.0
+    )
     return {
         "attempt_count": len(attempt_timings),
         "rollout_prompt_queue_batch_size": max(
@@ -330,7 +405,8 @@ def compact_timing_summary(
         "rollout_prompt_queue_fallback_count": sum(
             bool(item.get("rollout_prompt_queue_fallback")) for item in attempt_timings
         ),
-        "rollout_sec": round(rollout_sec, 6),
+        "rollout_total_sec": round(rollout_total_sec, 6),
+        "rollout_queue_sec": round(rollout_queue_sec, 6),
         "reward_cpu_sec": round(reward_cpu_sec, 6),
         "decision_sec": round(decision_sec, 6),
         "old_logprob_sec": round(old_logprob_sec, 6),
@@ -455,6 +531,10 @@ def training_health(
             reasons.append("batch_reward_all_zero")
         if int(reward_batch.get("likely_truncated_json_count") or 0) > 0:
             reasons.append("batch_json_truncation_detected")
+        # retry 积压是比 reward 归零更早的退化信号（v16/v17 经验）：
+        # 过半 attempt 在重试说明生成质量恶化，直接告警而非等 reward 假信号
+        if float(reward_batch.get("retry_rate") or 0.0) >= 0.5:
+            reasons.append("batch_high_retry_rate")
     if int(reward_window.get("count") or 0) >= 10:
         if float(reward_window.get("reward_mean_avg") or 0.0) == 0.0:
             reasons.append("reward_all_zero_window")

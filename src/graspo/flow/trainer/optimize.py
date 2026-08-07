@@ -123,9 +123,12 @@ class OptimizeMixin:
                 "event": "train_step",
                 "backend": self.backend_name,
                 "step": self.global_step,
+                "epoch": epoch,
                 "elapsed_sec": round(time.monotonic() - self.started_at, 3),
-                "run": self._run_summary(),
-                "epoch": self._epoch_summary(),
+                # 口径自证（v20 教训）：run_cumulative 是 run 全程累计（永不清零），
+                # epoch_cumulative 是本 epoch 累计，batch 是本 step 单步。
+                "run_cumulative": self._run_summary(),
+                "epoch_cumulative": self._epoch_summary(),
                 "batch": batch,
                 "optimize": optimize,
                 "timing": timing,
@@ -138,17 +141,19 @@ class OptimizeMixin:
                     "timestamp": self._timestamp(),
                     "event": "checkpoint_saved",
                     "step": self.global_step,
-                    "path": str(checkpoint_dir),
+                    # §10.1：日志不含宿主机路径（config 备份为真相源），只留目录名
+                    "path": checkpoint_dir.name,
                     "checkpoint_save_sec": round(checkpoint_sec, 6),
                 }
             )
         return True
 
     def _run_summary(self) -> dict[str, Any]:
-        """生成全局运行摘要。"""
+        """生成全局运行摘要（run 全程累计口径）。"""
         from graspo.ripple.monitoring.summary import compact_decisions
 
         return {
+            "step": self.global_step,
             "attempt_groups": self.stats.total_groups,
             "completions": self.stats.total_groups * int(self.config.training.rollout_group_size),
             "decisions": compact_decisions(

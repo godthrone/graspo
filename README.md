@@ -598,18 +598,21 @@ and cannot replace `step_*` or `final` for full training resume.
 
 Each run writes to `training.output_dir`:
 
-- `logs/training.log`: compact rank-0 training events;
+- `logs/training.log`: human-readable rank-0 text log (INFO/DEBUG lines only —
+  structured JSON events go to `events.jsonl`);
+- `logs/events.jsonl`: structured event stream (`train_step`, `epoch_summary`,
+  `checkpoint_saved`, `group_decision`, ...) with `timestamp` + `run_id` keys;
 - `logs/train.log`: alternative training log path (legacy fallback for
   `analyze-profile`);
 - `logs/rollouts.readable.jsonl`: human-readable messages, completion, reward, and
-  debug details;
+  debug details (every attempt including retries);
 - `logs/rollouts.raw.jsonl`: replay tensors, masks, old logprobs, advantages, and
-  reward metadata;
+  reward metadata (terminal attempts only);
 - `logs/train_batches.readable.jsonl`: one row per optimize-trigger batch;
 - `logs/rank_metrics.rank_*.jsonl`: per-rank memory, timing, LoRA, and optimizer
   diagnostics;
-- `logs/error.log`: aggregated ERROR-level events (invalid groups, reward variance
-  failures, format-broken groups);
+- `logs/error.log`: aggregated ERROR-level text events (invalid groups, reward
+  variance failures, format-broken groups);
 - `logs/timing_events.jsonl`: timing diagnostics for each phase;
 - `epoch_*`: epoch-end recoverable checkpoints (when `save_checkpoint_every_epoch` is true);
 - `step_*`: periodic recoverable checkpoints (when `save_steps > 0`);

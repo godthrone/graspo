@@ -164,7 +164,10 @@ class RolloutMixin:
             if self._is_primary():
                 self.logger.write_readable(readable)
             timing = {
-                "rollout_sec": rollout_sec_per_prompt,
+                # 单位显式化：rollout_sec_per_prompt 是 per-prompt 分摊秒数
+                # （同一队列共享 rollout_queue_sec 总耗时），字段名自证单位
+                "rollout_sec_per_prompt": rollout_sec_per_prompt,
+                "rollout_queue_sec": rollout_sec,
                 "reward_cpu_sec": reward_cpu_sec,
                 "decision_sec": decision_sec,
                 "old_logprob_sec": 0.0,
@@ -235,7 +238,8 @@ class RolloutMixin:
             "reward_details": reward_details,
             "generated_tokens": generated_token_counts(generation),
             "decision": decision.decision.value,
-            "attempt_index": retry_count + 1,
+            # 1 基序号（= retry_count+1），与 0 基的 retry_count 语义自显不混淆
+            "attempt_number": retry_count + 1,
             "max_attempts": self.config.training.rollout_max_retries + 1,
             "retry_count": retry_count,
             "group_stats": group_stats(rewards),
@@ -245,7 +249,6 @@ class RolloutMixin:
         if decision.decision.value == "invalid_no_preference_gap":
             payload["invalid_reason"] = "no_preference_gap"
         return payload
-
 
     # ── 样本最终化 ────────────────────────────────────────────────────────────
 
@@ -361,13 +364,7 @@ class RolloutMixin:
         )
         self._append_experiences(generation, rewards, old_log_probs, advantages)
         timing["replay_append_sec"] = time.monotonic() - replay_started_at
-        timing["attempt_total_sec"] = (
-            float(timing.get("rollout_sec") or 0.0)
-            + float(timing.get("reward_cpu_sec") or 0.0)
-            + float(timing.get("decision_sec") or 0.0)
-            + float(timing.get("old_logprob_sec") or 0.0)
-            + float(timing.get("replay_append_sec") or 0.0)
-        )
+        # attempt_total_sec 保持实测墙钟值（初始化时已记录），不再用组件求和覆写
         self.stats.trainable += 1
         if decision.decision.value == "trainable_max_correct":
             self.stats.trainable_max_correct += 1
@@ -437,24 +434,32 @@ class RolloutMixin:
         return self._maybe_optimize(epoch=epoch) and boundary_reached
 
     def _record_epoch_attempt(self, payload: dict[str, Any]) -> None:
-        """将单次 attempt 的指标累加到当前 epoch 统计中。"""
+        """将单次 attempt 的指标累加到当前 epoch 统计中。
+
+        口径：attempt_groups/completion_count 与质量均值只统计**终结 attempt**
+        （decision != retry）——与 mc/nc 的 sample 终结口径对齐（v20 教训）；
+        retry 中间态只进 retries 计数。
+        """
         rewards = [float(value) for value in payload.get("rewards", [])]
         content_scores = [float(value) for value in payload.get("content_scores", [])]
         base_content_scores = [float(value) for value in payload.get("base_content_scores", [])]
         decision = str(payload.get("decision"))
-        self.current_epoch_stats.attempt_groups += 1
-        self.current_epoch_stats.completion_count += len(rewards)
-        if rewards:
-            self.current_epoch_stats.reward_mean_sum += sum(rewards) / len(rewards)
-            self.current_epoch_stats.best_reward = max(
-                self.current_epoch_stats.best_reward, max(rewards)
-            )
-        if content_scores:
-            self.current_epoch_stats.content_mean_sum += sum(content_scores) / len(content_scores)
-        if base_content_scores:
-            self.current_epoch_stats.base_content_mean_sum += sum(base_content_scores) / len(
-                base_content_scores
-            )
+        if decision != "retry":
+            self.current_epoch_stats.attempt_groups += 1
+            self.current_epoch_stats.completion_count += len(rewards)
+            if rewards:
+                self.current_epoch_stats.reward_mean_sum += sum(rewards) / len(rewards)
+                self.current_epoch_stats.best_reward = max(
+                    self.current_epoch_stats.best_reward, max(rewards)
+                )
+            if content_scores:
+                self.current_epoch_stats.content_mean_sum += sum(content_scores) / len(
+                    content_scores
+                )
+            if base_content_scores:
+                self.current_epoch_stats.base_content_mean_sum += sum(base_content_scores) / len(
+                    base_content_scores
+                )
         if decision == "retry":
             self.current_epoch_stats.retries += 1
         elif decision == "perfect_skip":
@@ -482,7 +487,7 @@ class RolloutMixin:
                     duration_sec=float(timing.get("attempt_total_sec") or 0.0),
                     epoch=epoch,
                     sample_index=self.sample_index,
-                    attempt_index=retry_count + 1,
+                    attempt_number=retry_count + 1,
                     retry_count=retry_count,
                     details=timing,
                 )
@@ -491,14 +496,15 @@ class RolloutMixin:
     # ── 错误日志汇聚 ────────────────────────────────────────────────────────────
 
     def _write_error_log(self, readable: dict[str, Any], reason: str) -> None:
-        """Write an ERROR-level event to the common error log.
+        """写 invalid group 错误。
 
-        Called when a group is classified as invalid or has no reward variance,
-        so errors are aggregated in ``logs/error.log`` for post-run inspection.
+        JSON 事件进 ``logs/events.jsonl``（结构化错误事件流），
+        error.log 只保留人类可读文本（§13.3 易读/原始分离）。
         """
-        self.logger.write_error(
+        self.logger.write_event(
             {
                 "event": "group_decision",
+                "level": "error",
                 "decision": "invalid",
                 "reason": reason,
                 "sample_index": self.sample_index,

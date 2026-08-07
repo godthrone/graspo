@@ -448,13 +448,14 @@ export:
 
 每个 run 写入 `training.output_dir`：
 
-- `logs/training.log`：rank-0 紧凑训练事件；
+- `logs/training.log`：人类可读的 rank-0 文本日志（仅 INFO/DEBUG 文本行——结构化 JSON 事件在 `events.jsonl`）；
+- `logs/events.jsonl`：结构化事件流（`train_step`、`epoch_summary`、`checkpoint_saved`、`group_decision` 等），带 `timestamp` + `run_id` 关联键；
 - `logs/train.log`：备用训练日志路径（`analyze-profile` 的旧版 fallback）；
-- `logs/rollouts.readable.jsonl`：人类可读的 messages、completion、reward 和 debug 细节；
-- `logs/rollouts.raw.jsonl`：replay tensors、masks、old logprobs、advantages 和 reward metadata；
+- `logs/rollouts.readable.jsonl`：人类可读的 messages、completion、reward 和 debug 细节（全部 attempt，含 retry）；
+- `logs/rollouts.raw.jsonl`：replay tensors、masks、old logprobs、advantages 和 reward metadata（仅终结 attempt）；
 - `logs/train_batches.readable.jsonl`：每个 optimize-trigger batch 一行；
 - `logs/rank_metrics.rank_*.jsonl`：每 rank 显存、耗时、LoRA 和 optimizer 诊断；
-- `logs/error.log`：ERROR 级别事件汇聚（无效 group、reward 方差失败、格式损坏 group）；
+- `logs/error.log`：ERROR 级别文本事件汇聚（无效 group、reward 方差失败、格式损坏 group）；
 - `logs/timing_events.jsonl`：各阶段 timing 诊断；
 - `epoch_*`：每个 epoch 结束时的可恢复 checkpoint（当 `save_checkpoint_every_epoch` 为 true 时）；
 - `step_*`：周期性可恢复 checkpoint（当 `save_steps > 0` 时）；

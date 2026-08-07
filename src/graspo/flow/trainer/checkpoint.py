@@ -54,9 +54,10 @@ class CheckpointMixin:
                 {
                     "timestamp": self._timestamp(),
                     "event": "checkpoint_exported",
-                    "checkpoint": str(checkpoint_dir),
+                    # §10.1：日志不含宿主机路径（config 备份为真相源），只留目录名
+                    "checkpoint": checkpoint_dir.name,
                     "format": str(export_format),
-                    "output": str(output_dir),
+                    "output": str(export_format),
                 }
             )
 
@@ -110,7 +111,8 @@ class CheckpointMixin:
         self._assert_resume_config_consistent(trainer_state)
         self._restore_trainer_state(trainer_state)
         self.resume_info = {
-            "checkpoint": str(checkpoint_dir),
+            # §10.1：日志不含宿主机路径（config 备份为真相源），只留目录名
+            "checkpoint": checkpoint_dir.name,
             "global_step": self.global_step,
             "epoch": self.current_epoch_stats.epoch,
             "samples_seen": self.current_epoch_stats.samples_seen,

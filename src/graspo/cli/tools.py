@@ -213,9 +213,7 @@ def run_evaluate(
         runtime.setup()
         if checkpoint:
             runtime.load_checkpoint(checkpoint)
-        summary = evaluate_samples(
-            runtime, config, samples, output_dir, checkpoint=checkpoint
-        )
+        summary = evaluate_samples(runtime, config, samples, output_dir, checkpoint=checkpoint)
     finally:
         runtime.close()
 
@@ -255,7 +253,8 @@ def _parse_completion(runtime: GraspoFlowRuntime, completion: str, sample: Sampl
 
 TIMING_KEYS = (
     "total_observed_sec",
-    "rollout_sec",
+    "rollout_total_sec",
+    "rollout_queue_sec",
     "prefill_sec",
     "decode_sec",
     "sampling_sec",
@@ -286,25 +285,24 @@ def summarize_run(run_dir: Path, *, skip_warmup_steps: int = 1) -> dict[str, Any
     latest_timing = latest.get("timing", {}) if latest else {}
     latest_reward = latest.get("batch", {}).get("reward_mean")
     if latest_reward is None:
-        latest_reward = latest.get("epoch", {}).get("reward_mean")
+        latest_reward = latest.get("epoch_cumulative", {}).get("reward_mean")
     latest_content = latest.get("batch", {}).get("content_mean")
     if latest_content is None:
-        latest_content = latest.get("epoch", {}).get("content_mean")
+        latest_content = latest.get("epoch_cumulative", {}).get("content_mean")
     total_sec = _mean_key(timing_rows, "total_observed_sec")
     decode_tokens = _sum_key(timing_rows, "decode_tokens")
-    rollout_sec = _sum_key(timing_rows, "rollout_sec")
+    rollout_sec = _sum_key(timing_rows, "rollout_total_sec")
     trainable_groups = _sum_latest_or_batch(
         train_steps, measured, ("batch", "decisions", "trainable", "total")
     )
+    run_cumulative = latest.get("run_cumulative", {})
     return {
         "run_dir": str(run_dir),
         "name": run_dir.name,
         "step_count": len(train_steps),
         "measured_step_count": len(measured),
-        "latest_step": latest.get("run", {}).get("step")
-        or latest.get("run", {}).get("optimized_steps"),
-        "latest_epoch": latest.get("epoch", {}).get("index")
-        or latest.get("epoch", {}).get("epoch"),
+        "latest_step": run_cumulative.get("step") or run_cumulative.get("optimized_steps"),
+        "latest_epoch": latest.get("epoch"),
         "latest_reward_mean": latest_reward,
         "latest_content_mean": latest_content,
         "latest_trainable_groups": decisions.get("trainable", {}).get("total"),
@@ -359,7 +357,7 @@ def print_table(summaries: list[dict[str, Any]]) -> None:
             f"{summary.get('measured_step_count')}/{summary.get('step_count')}",
             _fmt(summary.get("latest_reward_mean")),
             _fmt(timing.get("total_observed_sec")),
-            _fmt(timing.get("rollout_sec")),
+            _fmt(timing.get("rollout_total_sec")),
             _fmt(timing.get("optimize_sec")),
             _fmt(summary.get("decode_tokens_per_sec")),
             _fmt(summary.get("trainable_groups_per_hour")),
@@ -370,8 +368,15 @@ def print_table(summaries: list[dict[str, Any]]) -> None:
 
 
 def _read_train_steps(run_dir: Path) -> list[dict[str, Any]]:
+    """读取 train_step 事件：优先 events.jsonl（v0.21 结构化事件流），
+    其次 nohup.out / 旧 train.log（部署端兼容）。"""
     events: list[dict[str, Any]] = []
-    for path in (run_dir / "nohup.out", run_dir / "logs" / "train.log", run_dir / "train.log"):
+    paths = (
+        [run_dir / "logs" / "events.jsonl"]
+        if (run_dir / "logs" / "events.jsonl").exists()
+        else [run_dir / "nohup.out", run_dir / "logs" / "train.log", run_dir / "train.log"]
+    )
+    for path in paths:
         if not path.exists():
             continue
         for payload in _iter_json_lines(path):
@@ -379,7 +384,7 @@ def _read_train_steps(run_dir: Path) -> list[dict[str, Any]]:
                 events.append(payload)
     by_step: dict[Any, dict[str, Any]] = {}
     for event in events:
-        step = event.get("run", {}).get("step")
+        step = event.get("run_cumulative", {}).get("step")
         by_step[step if step is not None else len(by_step)] = event
     return list(by_step.values())
 

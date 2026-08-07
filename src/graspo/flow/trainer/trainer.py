@@ -109,8 +109,9 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
                 "dependency_boundary": (
                     "PyTorch distributed TP/PP only; no NeMo/vLLM/Ray/DeepSpeed/FSDP/DDP/Accelerate"
                 ),
-                "model_path": self.config.model.model_path,
-                "train_path": self.config.data.train_path,
+                # §10.1：日志不含宿主机路径（config.yaml 备份为唯一真相源），只留文件名
+                "model_path": Path(self.config.model.model_path).name,
+                "train_path": Path(self.config.data.train_path).name,
                 "completion_parser": self._completion_parser_name(),
                 "tp_size": self.config.graspoflow.tp_size,
             }
@@ -148,31 +149,9 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
                 "backend": self.backend_name,
                 "samples_total": self.total_samples,
                 "resume": self.resume_info,
-                "config": {
-                    "rollout_group_size": self.config.training.rollout_group_size,
-                    "rollout_queue_batch_size": self.config.training.rollout_queue_batch_size,
-                    "optimize_prompt_batch_size": self.config.training.optimize_prompt_batch_size,
-                    "optimize_iterations_per_step": 1,
-                    "replay_buffer_optimize_threshold": (
-                        self.config.training.replay_buffer_optimize_threshold
-                    ),
-                    "rollout_max_retries": self.config.training.rollout_max_retries,
-                    "max_epochs": self.config.training.max_epochs,
-                    "max_steps": self.config.training.max_steps,
-                    "max_new_tokens": self.config.training.max_new_tokens,
-                    "save_steps": self.config.training.save_steps,
-                    "activation_checkpointing_enabled": bool(
-                        self.config.model.gradient_checkpointing
-                    ),
-                    "lora_target_modules": list(
-                        self.config.lora.target_modules or [self.config.lora.target_preset]
-                    ),
-                    "forward_batch_size": self.config.graspoflow.forward_batch_size,
-                    "empty_cache_after_rollout_split": (
-                        self.config.graspoflow.empty_cache_after_rollout_split
-                    ),
-                    "synchronize_cuda_timing": self.config.graspoflow.synchronize_cuda_timing,
-                },
+                # §1.4 单一真相源：config 全量以落盘备份 config.yaml 为准（§8.5），
+                # 事件只引用文件名，不再内嵌人工子集（防子集漂移）
+                "config_backup": "config.yaml",
             }
         )
 
@@ -211,9 +190,10 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
                     {
                         "timestamp": _timestamp(),
                         "event": "epoch_summary",
+                        "epoch": self.current_epoch_stats.epoch,
                         "elapsed_sec": round(time.monotonic() - self.started_at, 3),
-                        "epoch": self._epoch_summary(),
-                        "run": self._run_summary(),
+                        "epoch_cumulative": self._epoch_summary(),
+                        "run_cumulative": self._run_summary(),
                     }
                 )
                 _log.info(
@@ -298,9 +278,14 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
         )
 
     def _print_json(self, payload: dict[str, Any]) -> None:
-        """主 rank 通过 logging 输出结构化 JSON 日志。"""
+        """主 rank 输出结构化 JSON 事件（§13.3 易读/原始分离）。
+
+        落盘到 ``logs/events.jsonl``（机器分析通道），同时打印到 stdout
+        （部署端 nohup.out 兼容）；training.log 只保留人类可读文本。
+        """
         if self._is_primary():
-            logging.getLogger("graspo.trainer").info(json.dumps(payload, ensure_ascii=False))
+            self.logger.write_event(payload)
+            print(json.dumps(payload, ensure_ascii=False), flush=True)
 
     def _is_primary(self) -> bool:
         """判断当前 rank 是否为主 rank（负责日志 I/O）。"""
@@ -318,7 +303,7 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
         epoch: int,
         details: dict[str, Any],
         sample_index: int | None = None,
-        attempt_index: int | None = None,
+        attempt_number: int | None = None,
         retry_count: int | None = None,
     ) -> dict[str, Any]:
         """构建 timing 事件记录。"""
@@ -330,7 +315,7 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
             "step": self.global_step,
             "epoch": epoch,
             "sample_index": sample_index,
-            "attempt_index": attempt_index,
+            "attempt_number": attempt_number,
             "retry_count": retry_count,
             "rank": self.runtime.rank,
             "tp_rank": self.runtime.tp_rank,

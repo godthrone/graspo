@@ -660,11 +660,14 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
             "event": "rank_memory",
             "timestamp": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
             "phase": phase,
+            # §10.1：日志不得含不可复现的运行环境元数据（GPU ID/local_rank 已移除）。
+            # rank/tp_rank/tp_size 是 config 决定的可复现执行拓扑；memory 快照
+            # 属机器负载诊断数据，显式标记为非产物。
+            "kind": "diagnostic",
+            "reproducible": False,
             "rank": self.rank,
-            "local_rank": self.local_rank,
             "tp_rank": self.tp_rank,
             "tp_size": self.tp_size,
-            "device": str(self.device),
             "memory": _cuda_memory_snapshot(self.device),
         }
         if extra:

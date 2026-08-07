@@ -33,7 +33,7 @@ def test_validate_reward_scores_explicit_completion_is_used():
         targets=[{"id": "ok", "output": {"content": {"status": "ok"}}}],
         metadata={},
     )
-    scores = validate_reward_scores([sample], completions=["```json\n{\"status\":\"ok\"}\n```"])
+    scores = validate_reward_scores([sample], completions=['```json\n{"status":"ok"}\n```'])
 
     assert scores[0]["all_right"] is True
 
@@ -41,9 +41,7 @@ def test_validate_reward_scores_explicit_completion_is_used():
 def test_validate_reward_scores_tool_call_task():
     sample = Sample(
         messages=[{"role": "user", "content": "call"}],
-        targets=[
-            {"id": "t", "output": {"tool_calls": [{"name": "move", "arguments": {"d": 1}}]}}
-        ],
+        targets=[{"id": "t", "output": {"tool_calls": [{"name": "move", "arguments": {"d": 1}}]}}],
         metadata={},
     )
     scores = validate_reward_scores([sample])
@@ -122,8 +120,9 @@ def test_summarize_run_reads_train_gpu_and_rank_metrics(tmp_path):
     (run_dir / "gpu_memory").mkdir()
     train_step = {
         "event": "train_step",
-        "run": {"step": 2},
-        "epoch": {"index": 1},
+        "epoch": 1,
+        "run_cumulative": {"step": 2},
+        "epoch_cumulative": {"reward_mean": 0.5, "content_mean": 0.9},
         "batch": {
             "reward_mean": 0.5,
             "content_mean": 0.9,
@@ -134,7 +133,7 @@ def test_summarize_run_reads_train_gpu_and_rank_metrics(tmp_path):
         },
         "timing": {
             "total_observed_sec": 100.0,
-            "rollout_sec": 40.0,
+            "rollout_total_sec": 40.0,
             "optimize_sec": 50.0,
             "decode_tokens": 200,
         },
