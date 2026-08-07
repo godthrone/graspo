@@ -209,12 +209,20 @@ uv run graspo evaluate-checkpoint --config my_config.yaml \
 uv run graspo analyze-profile outputs/my_run
 ```
 
-Besides perf/latest-step tables, `analyze-profile` (v0.21.1+) includes
-**rollout attribution**: not_correct cause classification
-(tool_mismatch / content_all_wrong / format_shortfall), tool-name/param-match
-trend per step, and a decision × match cross-table — all **independent of
-training-data semantics** (no field-name or numeric assumptions). It also
-writes `logs/analysis_attribution.json` for scripted consumption.
+Besides perf/latest-step tables, `analyze-profile` (v0.21.1+) writes three
+analysis files per run dir:
+1. `logs/analysis_profile.json` — perf/timing/latest-step summary
+2. `logs/analysis_attribution.json` — rollout attribution: not_correct cause
+   classification (tool_mismatch / content_all_wrong / format_shortfall),
+   tool-name/param-match trend per step, decision × match cross-table, and
+   per-epoch completion error-type distribution (multi_call detected by
+   counting `<tool_call>` tags — reward-layer "too many tool calls" is
+   invisible to parser re-parsing)
+3. `logs/analysis_epochs.json` — epoch-level aggregation from `epoch_summary`
+   events (terminal decisions, mc_ratio, reward/content trends)
+
+All analysis is **independent of training-data semantics** (no field-name or
+numeric assumptions), per user ruling.
 
 ## Data Format
 

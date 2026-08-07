@@ -181,11 +181,19 @@ uv run graspo evaluate-checkpoint --config my_config.yaml \
 uv run graspo analyze-profile outputs/my_run
 ```
 
-除性能/最新步汇总外，`analyze-profile` 内置 **rollout 归因**（v0.21.1+）：
-not_correct 组原因分类（tool_mismatch / content_all_wrong / format_shortfall）、
-工具名/参数匹配趋势（按 step）、决策 × 匹配交叉表——全部为**与训练数据
-内容无关**的结构级分析（不假设字段名/数值语义），并落盘
-`logs/analysis_attribution.json` 供脚本消费。
+除性能/最新步汇总外，`analyze-profile`（v0.21.1+）对每个 run 目录产出
+**三份分析文件**：
+1. `logs/analysis_profile.json` — 性能/timing/最新步汇总
+2. `logs/analysis_attribution.json` — rollout 归因：not_correct 组原因分类
+   （tool_mismatch / content_all_wrong / format_shortfall）、工具名/参数
+   匹配趋势（按 step）、决策 × 匹配交叉表、completion 格式错误类型分布
+   （按 epoch；multi_call 须数 `<tool_call>` 标签——reward 层的
+   "too many tool calls" 对 parser 重解析不可见）
+3. `logs/analysis_epochs.json` — epoch 级聚合（epoch_summary 事件：
+   终结决策、mc_ratio、reward/content 趋势）
+
+全部为**与训练数据内容无关**的结构级分析（不假设字段名/数值语义，
+用户裁定），供脚本消费。
 
 ## 数据格式
 
