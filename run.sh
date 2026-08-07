@@ -129,6 +129,18 @@ fi
 train_path="$(_yaml_value "train_path")"
 if [ -n "$train_path" ] && [ -d "$(dirname "$train_path")" ]; then
     _add_mount_dir "$(dirname "$train_path")"
+    # 数据集根（祖父目录）——仅在图像引用需要时挂载（挂载面积最小化）：
+    # ELAM 数据的 data/ 与 images/ 平级，图像相对引用 ../images/x.jpg 需要
+    # 数据集根可达（v0.21 smoke 实测发现）。读取训练数据首行 image 字段，
+    # 以 ../ 开头才挂祖父目录；否则父目录已覆盖（单层结构）。
+    _image_ref="$(
+        head -c 8192 "$train_path" 2>/dev/null \
+        | grep -o '"image"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 \
+        | sed 's/.*:[[:space:]]*"//; s/"$//'
+    )"
+    if [ -n "$_image_ref" ] && [ "${_image_ref#../}" != "$_image_ref" ]; then
+        _add_mount_dir "$(dirname "$(dirname "$train_path")")"
+    fi
 fi
 
 output_dir="$(_yaml_value "output_dir")"

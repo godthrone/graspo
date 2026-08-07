@@ -1,0 +1,35 @@
+# 增量构建：FROM 已有的本地 graspo 镜像，只 COPY 新代码（121 无外网时用）。
+# 用法：docker build --build-arg BASE_IMAGE=graspo:<旧版本> -f docker/Dockerfile.incremental -t graspo:<新版本> .
+# 注意：必须 --pull=false（本地镜像，不拉远端）；DOCKER_BUILDKIT=0 兼容旧构建器。
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+WORKDIR /workspace/graspo
+COPY src ./src
+COPY samples ./samples
+COPY docker ./docker
+COPY scripts ./scripts
+COPY tests ./tests
+COPY run.sh ./run.sh
+COPY pyproject.toml README.md README.zh-CN.md LICENSE uv.lock ./
+
+# 增量构建的固有坑：COPY 只覆盖同名文件，不删除基镜像里已被移除的旧文件。
+# 显式清理旧布局残留（ripple/flow 重构移除了 backends/ 与 core/ 算法文件），
+# 防止镜像内死代码。未来删除源码文件时须同步此清单（或改用全量构建）。
+RUN rm -rf src/graspo/backends \
+    && rm -f src/graspo/core/advantage.py \
+    && rm -f src/graspo/core/buffer.py \
+    && rm -f src/graspo/core/compare.py \
+    && rm -f src/graspo/core/completion.py \
+    && rm -f src/graspo/core/graspo_loss.py \
+    && rm -f src/graspo/core/graspo_parity.py \
+    && rm -f src/graspo/core/logging.py \
+    && rm -f src/graspo/core/reward.py \
+    && rm -f src/graspo/core/reward_helpers.py \
+    && rm -f src/graspo/core/sft_loss.py \
+    && rm -f src/graspo/core/token_reward.py
+
+# 重新 install -e（源码变更后 editable install 需要刷新）
+RUN uv pip install --system --break-system-packages --no-deps -e .
+
+CMD ["graspo", "--help"]
