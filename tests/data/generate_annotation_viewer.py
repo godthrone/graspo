@@ -10,6 +10,7 @@ Each character in the completion is color-coded by its annotation label:
   D (Discard)    = pink    — 错误之后丢弃，不训练
 """
 
+import html
 import json
 from pathlib import Path
 
@@ -348,6 +349,10 @@ def build_html(records):
         search_text = (
             r["id"] + " " + r["case"] + " " + r.get("notes", "") + " " + completion
         ).lower()
+        # HTML 属性/文本统一转义：completion 可能含 '"' '>' '&' 等
+        # （真实 rollout 里 tool_response 夹 JSON 内容，曾破坏 data-search-text
+        # 属性导致 card 结构错乱、折叠失效——2026-08-08 M01 实测）
+        esc = html.escape
 
         # Build error position display
         error_html = ""
@@ -355,21 +360,21 @@ def build_html(records):
             error_html = f'<span class="card-error">⚠ Error at pos {error_pos}</span>'
 
         cards_html.append(f"""
-<div class="card" data-type="{r["type"]}" data-search-text="{search_text}">
+<div class="card" data-type="{esc(r["type"])}" data-search-text="{esc(search_text)}">
     <div class="card-header">
-        <span class="card-id">{r["id"]}</span>
-        <span class="card-case">{r["case"]}</span>
-        <span class="card-type">{r["type"]}</span>
-        <span class="card-correct {correct_class}">{r.get("correct", "?")}</span>
+        <span class="card-id">{esc(r["id"])}</span>
+        <span class="card-case">{esc(r["case"])}</span>
+        <span class="card-type">{esc(r["type"])}</span>
+        <span class="card-correct {correct_class}">{esc(r.get("correct", "?"))}</span>
         {error_html}
         <span class="card-toggle">▼</span>
     </div>
     <div class="card-body">
-        <div class="card-notes">📝 {r.get("notes", "")}</div>
+        <div class="card-notes">📝 {esc(r.get("notes", ""))}</div>
         <div class="ruler">{ruler}</div>
         <div class="completion-block">{char_spans}</div>
         <div class="gt-label">Ground Truth:</div>
-        <div class="gt-block">{r.get("ground_truth", "")}</div>
+        <div class="gt-block">{esc(r.get("ground_truth", ""))}</div>
     </div>
 </div>""")
 

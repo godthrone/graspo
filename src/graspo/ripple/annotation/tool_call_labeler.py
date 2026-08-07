@@ -74,9 +74,7 @@ def _target_fn_name(targets: list[dict[str, Any]]) -> str | None:
     return None
 
 
-def _target_param_order(
-    targets: list[dict[str, Any]], fn_name: str
-) -> list[str]:
+def _target_param_order(targets: list[dict[str, Any]], fn_name: str) -> list[str]:
     """从 targets 提取指定函数名的参数顺序（GT 顺序）。"""
     for target in targets:
         output = target.get("output") if isinstance(target, dict) else None
@@ -90,9 +88,7 @@ def _target_param_order(
     return []
 
 
-def _target_param_types(
-    targets: list[dict[str, Any]], fn_name: str
-) -> dict[str, Any]:
+def _target_param_types(targets: list[dict[str, Any]], fn_name: str) -> dict[str, Any]:
     """从 targets 提取参数名 → GT 值（用于值类型校验）。"""
     types: dict[str, Any] = {}
     for target in targets:
@@ -121,12 +117,7 @@ class _Annotator:
         e = min(end, self.n)
         for i in range(start, e):
             self.tags[i] = tag
-        if (
-            consume_newline
-            and tag == CharTag.STRUCTURE
-            and e < self.n
-            and self.text[e] == "\n"
-        ):
+        if consume_newline and tag == CharTag.STRUCTURE and e < self.n and self.text[e] == "\n":
             self.tags[e] = tag
             return e + 1
         return e
@@ -165,11 +156,7 @@ class _Annotator:
             self.tags[idx] = CharTag.STRUCTURE
         # 匹配成功：吞并紧随换行
         end = first + len(expected)
-        if (
-            consume_newline
-            and end < self.n
-            and self.text[end] == "\n"
-        ):
+        if consume_newline and end < self.n and self.text[end] == "\n":
             self.tags[end] = CharTag.STRUCTURE
             end += 1
         return True, end
@@ -230,7 +217,9 @@ def annotate_tool_call(
                 a.mark(th_open, th_open + len(_THINK_OPEN), CharTag.STRUCTURE)
                 a.mark(th_open + len(_THINK_OPEN), th_close, CharTag.THINK)
                 pos = a.mark(
-                    th_close, th_close + len(_THINK_CLOSE), CharTag.STRUCTURE,
+                    th_close,
+                    th_close + len(_THINK_CLOSE),
+                    CharTag.STRUCTURE,
                     consume_newline=False,
                 )
 
@@ -277,8 +266,9 @@ def annotate_tool_call(
             a.mark(first, name_start, CharTag.STRUCTURE)  # <parameter= 前导
             nl_pos = text.find("\n", name_start)
             param_len = (nl_pos - name_start) if nl_pos >= 0 else (n - name_start)
-            a.mark(name_start, name_start + param_len, CharTag.STRUCTURE,
-                   consume_newline=False)  # 参数名（不吞并后随换行）
+            a.mark(
+                name_start, name_start + param_len, CharTag.STRUCTURE, consume_newline=False
+            )  # 参数名（不吞并后随换行）
             e_pos = name_start + param_len  # 参数名后第一个字符（应出现 > 处）
             if e_pos < n:
                 a.tags[e_pos] = CharTag.ERROR
@@ -288,7 +278,7 @@ def annotate_tool_call(
                 a.tags[first] = CharTag.ERROR
                 a.drop_from(first + 1)
             return a.tags, a.fields
-        param_name = text[name_start:chunk.name_end]
+        param_name = text[name_start : chunk.name_end]
         if param_set and param_name not in param_set:
             # 多余/未知参数块（v3.0 语义，2026-08-07 用户裁定）：
             # `<parameter=` 前导结构本身正确 → S；错误本体是参数名 →
@@ -315,8 +305,8 @@ def annotate_tool_call(
             v_start += 1
         # 值段（值本身 = 非空白连续段，遇标签形态 </parameter> 停止）
         v_end = v_start
-        while v_end < n and not text[v_end].isspace() and not text.startswith(
-            _PARAMETER_CLOSE, v_end
+        while (
+            v_end < n and not text[v_end].isspace() and not text.startswith(_PARAMETER_CLOSE, v_end)
         ):
             v_end += 1
         if v_end == v_start and v_start >= n:
@@ -333,9 +323,11 @@ def annotate_tool_call(
             return a.tags, a.fields
         if v_end > v_start:
             # 值类型校验：GT 是数字但模型值不是 → E（T12）
-            if param_name is not None and isinstance(
-                param_types.get(param_name), (int, float)
-            ) and not isinstance(param_types.get(param_name), bool):
+            if (
+                param_name is not None
+                and isinstance(param_types.get(param_name), (int, float))
+                and not isinstance(param_types.get(param_name), bool)
+            ):
                 try:
                     float(text[v_start:v_end])
                 except ValueError:
@@ -371,14 +363,14 @@ def annotate_tool_call(
     if not ok:
         return a.tags, a.fields
 
-    # 3.5 多余调用检测（v3.0：T33——"每轮只输出一个工具调用"约束违反）：
-    # 闭合后尾随非空白且以 <tool_call> 开头 → 第二个调用首字符 E，其后 D。
-    # （v20 毒药形态：完整首调用 + 尾部第二/三调用曾被标全 S/W 无 E 被正强化）
-    after_close = _first_non_blank(text, pos, n)
-    if after_close < n and text.startswith(_OPEN_TAG, after_close):
-        a.tags[after_close] = CharTag.ERROR
-        a.drop_from(after_close + 1)
-        return a.tags, a.fields
-
-    # 闭合后的尾随文本保持 WASTE（不截断；自然语言尾随 T17 语义不变）
+    # 3.5 闭合后多余内容检测（v5.0，用户裁定 2026-08-08——取代 v3.0 T33 紧邻检测）：
+    # "</tool_call>" 之后第一个字符（含换行符）直接 E，其后全 D——一刀切。
+    # 语义：工具调用之后没有思考/结构，只可能是乱码，要压制而不是放弃
+    # （v21 实测多调用 0.5%→9.8% 增长，根因是间隔杂散标签形态全部漏检）。
+    # 千问模板无 </tool_call> 后换行规定（实测 1312 条合法样本闭合后均空串）。
+    # 统一规则：换行标注跟随其后内容——后面是结构→S、后面是值→W（v3.2
+    # 值空白裁定）、后面是"结束后的多余"→E。
+    if pos < n:
+        a.tags[pos] = CharTag.ERROR
+        a.drop_from(pos + 1)
     return a.tags, a.fields

@@ -185,7 +185,7 @@ rollout 完成后对每条 completion 做**字符级结构标注**，作为 toke
 
 ### 测试数据集
 
-`tests/data/annotation_testset_v3.jsonl`（55 条：tool call 34 + JSON 21）覆盖完美输出/值错误/前导文本/拼错/双开标记/多余字段/缺字段/顺序颠倒/截断/乱码/think/嵌套结构等场景，每条含期望标注与 error_pos，作为标注模块回归基准。`tests/data/generate_annotation_viewer.py` 生成 HTML 逐字符着色视图。
+`tests/data/annotation_testset_v3.jsonl`（65 条：tool call 44 + JSON 21）覆盖完美输出/值错误/前导文本/拼错/双开标记/多余字段/缺字段/顺序颠倒/截断/乱码/think/嵌套结构/闭合后多余内容（v3.1 一刀切 E+D）等场景，每条含期望标注与 error_pos，作为标注模块回归基准。`tests/data/generate_annotation_viewer.py` 生成 HTML 逐字符着色视图。
 
 ## 为什么用 ABC 模板方法（模板方法）
 
