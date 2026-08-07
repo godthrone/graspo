@@ -4,7 +4,8 @@
 - validate-reward：只 print 不落盘（输入定位 --data/--limit/--completions）
 - evaluate-checkpoint：接受 --config，评测输出写入 config 决定的
   ``<output_dir>/evaluate/``（禁止输出定位参数）
-- analyze-profile：只 print 不落盘（输入定位 run_dirs）
+- analyze-profile：输入定位 run_dirs；除打印汇总外，将 rollout 归因
+  （与训练数据内容无关的结构级分析）写入 ``<run_dir>/logs/analysis_attribution.json``
 """
 
 import json
@@ -13,6 +14,7 @@ from pathlib import Path
 from statistics import mean
 from typing import Any
 
+from graspo.cli.analysis import analyze_attribution, print_attribution
 from graspo.core.schema import GraspoConfig, Sample
 from graspo.flow.runtime import GraspoFlowRuntime
 from graspo.ripple.data import load_jsonl
@@ -324,14 +326,43 @@ def summarize_run(run_dir: Path, *, skip_warmup_steps: int = 1) -> dict[str, Any
 
 
 def run_analyze(run_dirs: list[str], *, skip_warmup_steps: int = 1, as_json: bool = False) -> None:
-    """analyze-profile 命令核心：汇总多个运行目录并打印（不落盘）。"""
+    """analyze-profile 命令核心：汇总多个运行目录并打印。
+
+    除性能/最新步汇总外，对每个 run 目录额外做 rollout 归因分析
+    （not_correct 原因分类、工具/参数匹配趋势、决策×匹配交叉表），
+    并落盘一份结构化 JSON 到 ``<run_dir>/logs/analysis_attribution.json``。
+    归因逻辑与训练数据内容无关（见 ``analysis.analyze_attribution``）。
+    """
     summaries = [
         summarize_run(Path(path), skip_warmup_steps=skip_warmup_steps) for path in run_dirs
     ]
+    attributions = []
+    for path in run_dirs:
+        attr = analyze_attribution(Path(path))
+        attributions.append(attr)
+        _write_attribution(Path(path), attr)
     if as_json:
-        print(json.dumps(summaries, ensure_ascii=False, indent=2))
+        payload = [
+            {**summary, "attribution": attr}
+            for summary, attr in zip(summaries, attributions, strict=True)
+        ]
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
         print_table(summaries)
+        for attr in attributions:
+            print_attribution(attr)
+
+
+def _write_attribution(run_dir: Path, attribution: dict[str, Any]) -> None:
+    """归因结果落盘到 run 目录 logs/ 下（analyze-profile 的产品文件）。"""
+    if not attribution.get("available"):
+        return
+    out_path = run_dir / "logs" / "analysis_attribution.json"
+    out_path.write_text(
+        json.dumps(attribution, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    print(f"[attribution] written: {out_path}")
 
 
 def print_table(summaries: list[dict[str, Any]]) -> None:

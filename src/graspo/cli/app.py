@@ -302,9 +302,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     evaluate.add_argument("--config", "-c", required=True)
     evaluate.add_argument("--data", required=True, help="Evaluation JSONL path.")
-    evaluate.add_argument(
-        "--checkpoint", help="Recoverable native checkpoint directory to load."
-    )
+    evaluate.add_argument("--checkpoint", help="Recoverable native checkpoint directory to load.")
     evaluate.add_argument(
         "--limit", type=int, default=0, help="Optional number of samples to evaluate; 0 means all."
     )
@@ -312,11 +310,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     analyze = subparsers.add_parser(
         "analyze-profile",
-        help="Summarize profiling outputs from one or more run directories. Prints only.",
+        help="Summarize profiling + rollout attribution from one or more run directories. "
+        "Prints tables and writes logs/analysis_attribution.json per run.",
     )
-    analyze.add_argument(
-        "run_dirs", nargs="+", help="One or more GRASPO output directories."
-    )
+    analyze.add_argument("run_dirs", nargs="+", help="One or more GRASPO output directories.")
     analyze.add_argument(
         "--skip-warmup-steps",
         type=int,
