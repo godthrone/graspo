@@ -203,11 +203,18 @@ uv run graspo evaluate-checkpoint --config my_config.yaml \
     --data samples/data/sample.jsonl --checkpoint outputs/my_run/step_100
 ```
 
-**Summarize profiling outputs** (prints only):
+**Summarize profiling outputs**:
 
 ```bash
 uv run graspo analyze-profile outputs/my_run
 ```
+
+Besides perf/latest-step tables, `analyze-profile` (v0.21.1+) includes
+**rollout attribution**: not_correct cause classification
+(tool_mismatch / content_all_wrong / format_shortfall), tool-name/param-match
+trend per step, and a decision × match cross-table — all **independent of
+training-data semantics** (no field-name or numeric assumptions). It also
+writes `logs/analysis_attribution.json` for scripted consumption.
 
 ## Data Format
 

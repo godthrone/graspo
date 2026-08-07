@@ -175,11 +175,17 @@ uv run graspo evaluate-checkpoint --config my_config.yaml \
     --data samples/data/sample.jsonl --checkpoint outputs/my_run/step_100
 ```
 
-**汇总性能分析输出**（只打印）：
+**汇总性能分析输出**：
 
 ```bash
 uv run graspo analyze-profile outputs/my_run
 ```
+
+除性能/最新步汇总外，`analyze-profile` 内置 **rollout 归因**（v0.21.1+）：
+not_correct 组原因分类（tool_mismatch / content_all_wrong / format_shortfall）、
+工具名/参数匹配趋势（按 step）、决策 × 匹配交叉表——全部为**与训练数据
+内容无关**的结构级分析（不假设字段名/数值语义），并落盘
+`logs/analysis_attribution.json` 供脚本消费。
 
 ## 数据格式
 
