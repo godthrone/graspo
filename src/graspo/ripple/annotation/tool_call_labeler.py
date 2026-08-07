@@ -228,8 +228,23 @@ def annotate_tool_call(
         gt_pos = text.find(">", name_start)
         name_end = gt_pos if (gt_pos >= 0 and (nl < 0 or gt_pos < nl)) else -1
         if name_end < 0:
-            a.tags[first] = CharTag.ERROR
-            a.drop_from(first + 1)
+            # v3.1（2026-08-07 用户裁定）：残缺标签（缺 >）的 E 于"应出现 > 的
+            # 位置"——参数名后第一个字符（通常 \n 或行尾），而非标签首字符。
+            # 错误本质是"参数名之后应该出现 > 却没出现"；`<parameter=` 与
+            # 参数名本身是正确结构 → S。
+            a.mark(first, name_start, CharTag.STRUCTURE)  # <parameter= 前导
+            nl_pos = text.find("\n", name_start)
+            param_len = (nl_pos - name_start) if nl_pos >= 0 else (n - name_start)
+            a.mark(name_start, name_start + param_len, CharTag.STRUCTURE,
+                   consume_newline=False)  # 参数名（不吞并后随换行）
+            e_pos = name_start + param_len  # 参数名后第一个字符（应出现 > 处）
+            if e_pos < n:
+                a.tags[e_pos] = CharTag.ERROR
+                a.drop_from(e_pos + 1)
+            else:
+                # 参数名到文本末尾（无后续字符可标）→ 标签首字符兜底
+                a.tags[first] = CharTag.ERROR
+                a.drop_from(first + 1)
             return a.tags, a.fields
         param_name = text[name_start:name_end]
         if param_set and param_name not in param_set:
@@ -256,6 +271,17 @@ def annotate_tool_call(
             _PARAMETER_CLOSE, v_end
         ):
             v_end += 1
+        if v_end == v_start and v_start >= n:
+            # 标签后文本结束（无后续字符可标值）→ 结构不完整，不标 E
+            pass
+        elif v_end == v_start:
+            # v3.1（2026-08-07 用户裁定）：空参数值 = 格式错误。
+            # E 于值位置（标签后第一个字符，即"该有值却为空"处），E 后全 D——
+            # 后续即使正确（如 angle_deg=40.0）也不参与训练（基于格式错误
+            # 前缀 token 的训练无意义，坚持"E 后全 D"原则）。
+            a.tags[pos] = CharTag.ERROR
+            a.drop_from(pos + 1)
+            return a.tags, a.fields
         if v_end > v_start:
             # 值类型校验：GT 是数字但模型值不是 → E（T12）
             if param_name is not None and isinstance(

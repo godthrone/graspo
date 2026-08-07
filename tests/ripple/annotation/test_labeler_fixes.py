@@ -97,8 +97,9 @@ def _tc_targets() -> list[dict]:
     ]
 
 
-def test_param_tag_missing_gt_e_at_tag_start() -> None:
-    """参数标签缺 >：换行即未闭合 → E 于 `<` 处，其后全 D。"""
+def test_param_tag_missing_gt_e_at_gt_position() -> None:
+    """参数标签缺 >：换行即未闭合 → E 于"应出现 > 的位置"（参数名后首字符），
+    `<parameter=` 与参数名标 S（v3.1 用户裁定）。"""
     completion = (
         "<tool_call>\n<function=robot_atomic_control>\n"
         "<parameter=action_type\n</function>\n</tool_call>"
@@ -106,7 +107,8 @@ def test_param_tag_missing_gt_e_at_tag_start() -> None:
     ann = _annotate(completion, _tc_targets(), "tool_call")
     e_pos = ann.find("E")
     assert e_pos >= 0
-    assert completion[e_pos] == "<"  # E 在标签首字符（name_end<0 分支）
+    assert completion[e_pos] == "\n"  # E 在参数名后的换行（应出现 > 处）
+    assert all(c == "S" for c in ann[:e_pos])  # 标签与参数名是正确结构
     assert all(c == "D" for c in ann[e_pos + 1:])
 
 
@@ -124,7 +126,8 @@ def test_param_tag_normal_line_still_works() -> None:
 
 
 def test_param_tag_newline_inside_name_is_error() -> None:
-    """参数名内嵌换行（`<parameter=action\n_type>`）：行内 find 失败 → E。"""
+    """参数名内嵌换行（`<parameter=action\n_type>`）：行内 find 失败 →
+    E 于换行处（应出现 > 的位置，v3.1 语义）。"""
     completion = (
         "<tool_call>\n<function=robot_atomic_control>\n"
         "<parameter=action\n_type>\nx\n</parameter>\n"
@@ -133,4 +136,4 @@ def test_param_tag_newline_inside_name_is_error() -> None:
     ann = _annotate(completion, _tc_targets(), "tool_call")
     e_pos = ann.find("E")
     assert e_pos >= 0
-    assert completion[e_pos] == "<"
+    assert completion[e_pos] == "\n"  # action 名后换行（应为 >）
