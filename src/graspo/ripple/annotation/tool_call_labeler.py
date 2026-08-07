@@ -17,6 +17,7 @@
   任何 tokenizer 都不会把纯正确前缀字符标成 E
 """
 
+from dataclasses import dataclass
 from typing import Any
 
 from .roles import CharTag
@@ -161,6 +162,38 @@ class _Annotator:
         return True, end
 
 
+@dataclass(frozen=True)
+class _ParamChunk:
+    """参数循环中模型输出的下一个块（切块阶段的结果，lookahead）。
+
+    切块与核对分离（v3.2）：本类只描述"模型写了什么块"，不判断对错；
+    期望驱动的核对由 annotate_tool_call 的参数循环按块类型决策。
+    """
+
+    first: int  # 块起点（<parameter= 的 <，跳过空白后）
+    name_start: int  # 参数名起点（<parameter= 之后）
+    name_end: int  # 参数名终点；-1 = 残缺（当前行内无 >，标签未闭合）
+
+
+def _peek_param_chunk(text: str, pos: int, n: int) -> _ParamChunk | None:
+    """从 pos 跳过空白，向前看下一个块是否为参数标签块（切块阶段）。
+
+    规则（通用文本形态，无内容特判）：
+    - 下一个非空白以 ``<parameter=`` 开头 → 参数标签块；
+    - ``>`` 必须与 ``<parameter=`` 同行（跨行 find 会把后续 ``</function>`` 的
+      ``>`` 误当闭合——T32 修复）：当前行内无 ``>`` → 残缺块（name_end=-1）；
+    - 其他（闭合标签/文本/文本结束）→ None（参数循环结束或跳闭合）。
+    """
+    first = _first_non_blank(text, pos, n)
+    if first >= n or not text.startswith(_PARAMETER_MARK, first):
+        return None
+    name_start = first + len(_PARAMETER_MARK)
+    nl = text.find("\n", name_start)
+    gt_pos = text.find(">", name_start)
+    name_end = gt_pos if (gt_pos >= 0 and (nl < 0 or gt_pos < nl)) else -1
+    return _ParamChunk(first=first, name_start=name_start, name_end=name_end)
+
+
 def annotate_tool_call(
     text: str,
     targets: list[dict[str, Any]],
@@ -210,28 +243,24 @@ def annotate_tool_call(
     if not ok:
         return a.tags, a.fields
 
-    # 3.2 参数循环：<parameter=NAME> value </parameter>
+    # 3.2 参数循环：<parameter=NAME> value </parameter>（切块 → 核对，v3.2）
     # 参数匹配为**无序集合**（tool call 参数顺序无关，T16 顺序颠倒不标 E）；
     # 参数名不在 GT 集合 → 多余字段 E（T07）；GT 参数有缺失 → 缺失检测（T06）
     param_set = set(param_order) if param_order else set()
     seen_params: set[str] = set()
     while True:
-        # 参数循环结束条件：下一个非空白不是 <parameter= （参数已全部处理完，
-        # 或模型直接跳到闭合标签）。此时不应触发多余参数分支（T01 回归点）。
-        first = _first_non_blank(text, pos, n)
-        if first >= n or not text.startswith(_PARAMETER_MARK, first):
+        # ── 切块阶段：模型的下一个块是什么 ──
+        chunk = _peek_param_chunk(text, pos, n)
+        if chunk is None:
+            # 非参数标签块（闭合标签/文本/文本结束）→ 参数循环结束（T01 回归点）
             break
-        # 读取参数名：> 限制在当前行（跨行 find 会把后续 </function> 的 > 误当
-        # 标签闭合，参数名含换行走错分支——T32 修复：标签未闭合按 name_end<0 处理）
-        name_start = first + len(_PARAMETER_MARK)
-        nl = text.find("\n", name_start)
-        gt_pos = text.find(">", name_start)
-        name_end = gt_pos if (gt_pos >= 0 and (nl < 0 or gt_pos < nl)) else -1
-        if name_end < 0:
-            # v3.1（2026-08-07 用户裁定）：残缺标签（缺 >）的 E 于"应出现 > 的
-            # 位置"——参数名后第一个字符（通常 \n 或行尾），而非标签首字符。
-            # 错误本质是"参数名之后应该出现 > 却没出现"；`<parameter=` 与
-            # 参数名本身是正确结构 → S。
+        first = chunk.first
+        name_start = chunk.name_start
+
+        # ── 核对阶段 1：残缺标签（期望参数标签 vs 模型残缺标签）──
+        # v3.1 用户裁定：E 于"应出现 > 的位置"（参数名后首字符，通常 \n 或行尾），
+        # 而非标签首字符；`<parameter=` 与参数名本身是正确结构 → S。
+        if chunk.name_end < 0:
             a.mark(first, name_start, CharTag.STRUCTURE)  # <parameter= 前导
             nl_pos = text.find("\n", name_start)
             param_len = (nl_pos - name_start) if nl_pos >= 0 else (n - name_start)
@@ -246,7 +275,7 @@ def annotate_tool_call(
                 a.tags[first] = CharTag.ERROR
                 a.drop_from(first + 1)
             return a.tags, a.fields
-        param_name = text[name_start:name_end]
+        param_name = text[name_start:chunk.name_end]
         if param_set and param_name not in param_set:
             # 多余/未知参数块（v3.0 语义，2026-08-07 用户裁定）：
             # `<parameter=` 前导结构本身正确 → S；错误本体是参数名 →
@@ -257,15 +286,21 @@ def annotate_tool_call(
                 a.drop_from(name_start + 1)
             return a.tags, a.fields
         p_mark = f"{_PARAMETER_MARK}{param_name}>"
-        # 参数开标签逐字符比对
-        ok, pos = a.match_expected(pos, p_mark)
+        # 参数开标签逐字符比对（不吞并后随换行——值前空白是格式自由区）
+        ok, pos = a.match_expected(pos, p_mark, consume_newline=False)
         if not ok:
             return a.tags, a.fields
         seen_params.add(param_name)
 
-        # value span：<parameter=NAME> 后跳过空白到值
-        v_start = _first_non_blank(text, pos, n)
-        # 值段（值本身；值后的空白归结构——数据集约定 V 后紧跟的 \n 是 S）
+        # value span：<parameter=NAME> 后跳过空白到值。
+        # v3.2（2026-08-07 用户裁定）：值前后空白标 W（格式自由区，不训练）——
+        # 标 V 会污染字段值（value_spans/field_score 解析带空白），
+        # 标 S 会过度约束空白形态（空格/换行/无都是合法分隔）。
+        v_start = pos
+        while v_start < n and text[v_start].isspace():
+            a.tags[v_start] = CharTag.WASTE
+            v_start += 1
+        # 值段（值本身 = 非空白连续段，遇标签形态 </parameter> 停止）
         v_end = v_start
         while v_end < n and not text[v_end].isspace() and not text.startswith(
             _PARAMETER_CLOSE, v_end
@@ -276,11 +311,12 @@ def annotate_tool_call(
             pass
         elif v_end == v_start:
             # v3.1（2026-08-07 用户裁定）：空参数值 = 格式错误。
-            # E 于值位置（标签后第一个字符，即"该有值却为空"处），E 后全 D——
+            # E 于值位置（空白段最后一个字符，即"该有值却为空"处），E 后全 D——
             # 后续即使正确（如 angle_deg=40.0）也不参与训练（基于格式错误
             # 前缀 token 的训练无意义，坚持"E 后全 D"原则）。
-            a.tags[pos] = CharTag.ERROR
-            a.drop_from(pos + 1)
+            e_pos = v_start - 1 if v_start > pos else pos
+            a.tags[e_pos] = CharTag.ERROR
+            a.drop_from(e_pos + 1)
             return a.tags, a.fields
         if v_end > v_start:
             # 值类型校验：GT 是数字但模型值不是 → E（T12）
@@ -297,10 +333,10 @@ def annotate_tool_call(
             if param_name is not None:
                 for i in range(v_start, v_end):
                     a.fields[i] = param_name
-        # 值尾（跳过空白）后必须立即是 </parameter>（拼错 → E 于首个不匹配字符）
+        # 值尾（跳过空白）后必须立即是 </parameter>；值后空白标 W（v3.2）
         tail = _first_non_blank(text, v_end, n)
         for i in range(v_end, tail):
-            a.tags[i] = CharTag.STRUCTURE
+            a.tags[i] = CharTag.WASTE
         ok, pos = a.match_expected(tail, _PARAMETER_CLOSE)
         if not ok:
             return a.tags, a.fields
