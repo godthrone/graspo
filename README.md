@@ -84,6 +84,14 @@ bash run.sh my_config.yaml --image graspo:v0.17.0
   flag: training stops after the first step — semantically equivalent to a
   `max_steps=1` config, and your config file is never modified.
 
+> **`run.sh` is the only supported launch path for training.** Hand-written
+> `docker run` invocations are for diagnostics only — they have repeatedly
+> tripped on `--gpus` JSON syntax (Docker 29) and path resolution. When the
+> training data's image references are relative (`../images/...`, e.g. ELAM
+> datasets with `data/` and `images/` side by side), run.sh additionally
+> mounts the dataset root on demand — mount footprint stays minimal
+> (exact data/model/output dirs only).
+
 Manual invocation (for reference, e.g. inside your own orchestration):
 
 ```bash

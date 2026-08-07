@@ -63,6 +63,11 @@ bash run.sh my_config.yaml --image graspo:v0.17.0
 - **`--smoke` 走 CLI**（`graspo launch --smoke`）作为运行边界标志：训练跑完
   第 1 步即停止——语义等价于 `max_steps=1` 的 config，绝不修改你的 config 文件。
 
+> **`run.sh` 是训练启动的唯一受支持入口。** 手写 `docker run` 仅限诊断用途——
+> 曾多次踩 `--gpus` JSON 语法（Docker 29）与路径解析的坑。训练数据图像引用为
+> 相对路径（`../images/...`，如 ELAM 数据 data/ 与 images/ 平级）时，run.sh
+> 按需追加挂载数据集根——挂载面积保持最小（仅精确的数据/模型/输出目录）。
+
 手动调用（参考，例如自定义编排）：
 
 ```bash
