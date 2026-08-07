@@ -387,7 +387,7 @@ v0.16-v0.19, see `.local/v19-collapse-root-cause-analysis-20260806.md`):
   fields, extra fields, typos, type mismatches; semantically-correct output
   (e.g. parameter order) does not.
 
-A 51-case test dataset (`tests/data/annotation_testset_v2.jsonl`, 30 tool_call +
+A 55-case test dataset (`tests/data/annotation_testset_v3.jsonl`, 34 tool_call +
 21 JSON) covers perfect outputs, value errors, lead text, typos, duplicate
 tags, extra/missing fields, order swaps, truncation, gibberish, think mode,
 nested structures, and truncation combinations, with per-case expected

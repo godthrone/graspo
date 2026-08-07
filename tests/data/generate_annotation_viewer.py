@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate an HTML visualization of annotation_testset_v2.jsonl.
+"""Generate an HTML visualization of annotation_testset_v3.jsonl.
 
 Each character in the completion is color-coded by its annotation label:
   S (Structure)  = green   — 结构标记，训练
@@ -13,7 +13,7 @@ Each character in the completion is color-coded by its annotation label:
 import json
 from pathlib import Path
 
-DATA_FILE = Path(__file__).parent / "annotation_testset_v2.jsonl"
+DATA_FILE = Path(__file__).parent / "annotation_testset_v3.jsonl"
 OUTPUT_FILE = Path(__file__).parent / "annotation_viewer.html"
 
 LABEL_COLORS = {
@@ -272,7 +272,9 @@ def build_char_spans(completion, annotation):
 
         # Use a special class for spaces to keep them visible but not colorful
         space_class = "space-char" if char in (" ", "\t") else ""
-        spans.append(f'<span class="char {label} {space_class}" title="pos={i} label={LABEL_NAMES.get(label, label)}">{char_esc}</span>')
+        spans.append(
+            f'<span class="char {label} {space_class}" title="pos={i} label={LABEL_NAMES.get(label, label)}">{char_esc}</span>'
+        )
 
     # Handle trailing characters in completion beyond annotation length
     if len(completion) > len(annotation):
@@ -292,7 +294,9 @@ def build_char_spans(completion, annotation):
                 char_esc = "&nbsp;&nbsp;&nbsp;&nbsp;"
             else:
                 char_esc = char
-            spans.append(f'<span class="char ?" style="background:rgba(255,255,0,0.4)" title="pos={i} label=UNANNOTATED">{char_esc}</span>')
+            spans.append(
+                f'<span class="char ?" style="background:rgba(255,255,0,0.4)" title="pos={i} label=UNANNOTATED">{char_esc}</span>'
+            )
 
     return "".join(spans)
 
@@ -341,7 +345,9 @@ def build_html(records):
         ruler = build_ruler(completion)
         error_pos = r.get("error_pos", "")
         correct_class = "yes" if r.get("correct") == "yes" else "no"
-        search_text = (r["id"] + " " + r["case"] + " " + r.get("notes", "") + " " + completion).lower()
+        search_text = (
+            r["id"] + " " + r["case"] + " " + r.get("notes", "") + " " + completion
+        ).lower()
 
         # Build error position display
         error_html = ""
@@ -349,21 +355,21 @@ def build_html(records):
             error_html = f'<span class="card-error">⚠ Error at pos {error_pos}</span>'
 
         cards_html.append(f"""
-<div class="card" data-type="{r['type']}" data-search-text="{search_text}">
+<div class="card" data-type="{r["type"]}" data-search-text="{search_text}">
     <div class="card-header">
-        <span class="card-id">{r['id']}</span>
-        <span class="card-case">{r['case']}</span>
-        <span class="card-type">{r['type']}</span>
-        <span class="card-correct {correct_class}">{r.get('correct', '?')}</span>
+        <span class="card-id">{r["id"]}</span>
+        <span class="card-case">{r["case"]}</span>
+        <span class="card-type">{r["type"]}</span>
+        <span class="card-correct {correct_class}">{r.get("correct", "?")}</span>
         {error_html}
         <span class="card-toggle">▼</span>
     </div>
     <div class="card-body">
-        <div class="card-notes">📝 {r.get('notes', '')}</div>
+        <div class="card-notes">📝 {r.get("notes", "")}</div>
         <div class="ruler">{ruler}</div>
         <div class="completion-block">{char_spans}</div>
         <div class="gt-label">Ground Truth:</div>
-        <div class="gt-block">{r.get('ground_truth', '')}</div>
+        <div class="gt-block">{r.get("ground_truth", "")}</div>
     </div>
 </div>""")
 
@@ -378,7 +384,9 @@ def build_html(records):
             f'<span class="legend-label">= {name} ({count})</span></div>'
         )
 
-    type_filter_buttons = [f'<button class="filter-btn active" data-type="all">All ({total})</button>']
+    type_filter_buttons = [
+        f'<button class="filter-btn active" data-type="all">All ({total})</button>'
+    ]
     for t, c in sorted(type_counts.items()):
         type_filter_buttons.append(f'<button class="filter-btn" data-type="{t}">{t} ({c})</button>')
 
@@ -392,13 +400,13 @@ def build_html(records):
 </head>
 <body>
 <h1>🎨 Annotation Testset Viewer</h1>
-<p class="subtitle">{total} records &middot; {type_counts.get('tool_call', 0)} tool_call &middot; {type_counts.get('json', 0)} json</p>
+<p class="subtitle">{total} records &middot; {type_counts.get("tool_call", 0)} tool_call &middot; {type_counts.get("json", 0)} json</p>
 
 <div class="summary">
     <div class="stat"><div class="count">{total}</div><div class="label">Total</div></div>
-    <div class="stat"><div class="count">{case_correct.get('yes', 0)}</div><div class="label">Correct</div></div>
-    <div class="stat"><div class="count">{case_correct.get('no', 0)}</div><div class="label">Incorrect</div></div>
-    <div class="stat"><div class="count">{label_counts.get('E', 0)}</div><div class="label">Errors (E)</div></div>
+    <div class="stat"><div class="count">{case_correct.get("yes", 0)}</div><div class="label">Correct</div></div>
+    <div class="stat"><div class="count">{case_correct.get("no", 0)}</div><div class="label">Incorrect</div></div>
+    <div class="stat"><div class="count">{label_counts.get("E", 0)}</div><div class="label">Errors (E)</div></div>
 </div>
 
 <div class="legend">{"".join(legend_items)}</div>

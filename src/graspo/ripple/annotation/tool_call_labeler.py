@@ -233,11 +233,14 @@ def annotate_tool_call(
             return a.tags, a.fields
         param_name = text[name_start:name_end]
         if param_set and param_name not in param_set:
-            # 多余/未知参数块：期望 </function>，首个不匹配字符 E（T07）
-            ok, pos = a.match_expected(pos, _FUNCTION_CLOSE)
-            if not ok:
-                return a.tags, a.fields
-            break
+            # 多余/未知参数块（v3.0 语义，2026-08-07 用户裁定）：
+            # `<parameter=` 前导结构本身正确 → S；错误本体是参数名 →
+            # E 定位在参数名首字符（T07 修订：不再从 </function> 分叉点 p 开始）
+            a.mark(first, name_start, CharTag.STRUCTURE)
+            if name_start < n:
+                a.tags[name_start] = CharTag.ERROR
+                a.drop_from(name_start + 1)
+            return a.tags, a.fields
         p_mark = f"{_PARAMETER_MARK}{param_name}>"
         # 参数开标签逐字符比对
         ok, pos = a.match_expected(pos, p_mark)
@@ -292,5 +295,15 @@ def annotate_tool_call(
     ok, pos = a.match_expected(pos, _TOOL_CALL_CLOSE, consume_newline=False)
     if not ok:
         return a.tags, a.fields
-    # 闭合后的尾随文本保持 WASTE（不截断）
+
+    # 3.5 多余调用检测（v3.0：T33——"每轮只输出一个工具调用"约束违反）：
+    # 闭合后尾随非空白且以 <tool_call> 开头 → 第二个调用首字符 E，其后 D。
+    # （v20 毒药形态：完整首调用 + 尾部第二/三调用曾被标全 S/W 无 E 被正强化）
+    after_close = _first_non_blank(text, pos, n)
+    if after_close < n and text.startswith(_OPEN_TAG, after_close):
+        a.tags[after_close] = CharTag.ERROR
+        a.drop_from(after_close + 1)
+        return a.tags, a.fields
+
+    # 闭合后的尾随文本保持 WASTE（不截断；自然语言尾随 T17 语义不变）
     return a.tags, a.fields

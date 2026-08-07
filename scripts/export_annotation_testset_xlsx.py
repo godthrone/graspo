@@ -2,7 +2,7 @@
 
 用法：uv run --frozen python scripts/export_annotation_testset_xlsx.py
 
-输出：tests/data/annotation_testset_v2.xlsx
+输出：tests/data/annotation_testset_v3.xlsx
 - 每行一条用例：id / type / case / completion / ground_truth / annotation /
   correct / error_pos / notes
 - completion 与 annotation 保留换行（Excel 单元格内换行，需开启自动换行查看）
@@ -14,12 +14,19 @@ from pathlib import Path
 from openpyxl import Workbook
 from openpyxl.styles import Alignment
 
-TESTSET = Path(__file__).resolve().parents[1] / "tests" / "data" / "annotation_testset_v2.jsonl"
-OUT = Path(__file__).resolve().parents[1] / "tests" / "data" / "annotation_testset_v2.xlsx"
+TESTSET = Path(__file__).resolve().parents[1] / "tests" / "data" / "annotation_testset_v3.jsonl"
+OUT = Path(__file__).resolve().parents[1] / "tests" / "data" / "annotation_testset_v3.xlsx"
 
 FIELDS = [
-    "id", "type", "case", "completion", "ground_truth", "annotation",
-    "correct", "error_pos", "notes",
+    "id",
+    "type",
+    "case",
+    "completion",
+    "ground_truth",
+    "annotation",
+    "correct",
+    "error_pos",
+    "notes",
 ]
 
 

@@ -23,7 +23,7 @@ from graspo.ripple.annotation.advantages import (
 from graspo.ripple.annotation.labeler import AnnotationInput, annotate
 from graspo.ripple.annotation.roles import CharTag
 
-TESTSET = Path(__file__).resolve().parents[2] / "data" / "annotation_testset_v2.jsonl"
+TESTSET = Path(__file__).resolve().parents[2] / "data" / "annotation_testset_v3.jsonl"
 
 NO_FENCE_CASES = {"J02", "J18", "J20", "J21", "J22"}
 THINK_CASES = {"T11", "T24", "T25"}
@@ -175,8 +175,8 @@ def test_synthetic_group_mu_and_adv():
     """A 完美 / B 容差内 / C 值错+动作错 → μ_f 与 per-token adv 精确值。"""
     comps = [
         ROBOT.format("逆时针旋转", "16.9"),  # A:action 1.0, angle 1.0
-        ROBOT.format("逆时针旋转", "15"),    # B:action 1.0, angle 1.0(容差内)
-        ROBOT.format("顺时针旋转", "40"),    # C:action 0.0, angle ≈0.462
+        ROBOT.format("逆时针旋转", "15"),  # B:action 1.0, angle 1.0(容差内)
+        ROBOT.format("顺时针旋转", "40"),  # C:action 0.0, angle ≈0.462
     ]
     adv = _group_adv(comps, "tool_call", GT_ROBOT)
 
@@ -319,7 +319,7 @@ def test_structure_incomplete():
     assert not structure_incomplete("<tool_call>x</tool_call>", "tool_call")
     assert structure_incomplete('{"a": [1', "json")
     assert not structure_incomplete('{"a": [1]}', "json")
-    assert not structure_incomplete("```json\n{\"a\": 1}\n```", "json")
+    assert not structure_incomplete('```json\n{"a": 1}\n```', "json")
 
 
 def test_apply_tail_eos_conditions():
