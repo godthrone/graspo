@@ -20,7 +20,7 @@ def _tool_call_completion(name: str, params: dict[str, str]) -> str:
     body = f"<function={name}>\n"
     for key, value in params.items():
         body += f"<parameter={key}>\n{value}\n</parameter>\n"
-    return f"<tool_call>\n{body}</tool_call>"
+    return f"<tool_call>\n{body}</function>\n</tool_call>"
 
 
 def _record(
@@ -420,3 +420,90 @@ class TestAnalyzeEpochs:
         assert result["available"] is True
         assert len(result["epochs"]) == 1
         assert result["epochs"][0]["epoch"] == 0
+
+
+class TestErrorClassification:
+    """completion 格式错误类型分类（与数据内容无关）。"""
+
+    def test_ok_completion(self) -> None:
+        """合法单调用 → ok。"""
+        from graspo.cli.analysis import classify_completion_error
+
+        text = _tool_call_completion(
+            "extend_arm", {"action_type": "收缩手臂", "distance_cm": "6.1"}
+        )
+        assert classify_completion_error(text, None) == "ok"
+
+    def test_multi_call(self) -> None:
+        """多个 <tool_call> 标签 → multi_call（reward 层才报 too many tool calls）。"""
+        from graspo.cli.analysis import classify_completion_error
+
+        one = _tool_call_completion("extend_arm", {"action_type": "收缩手臂", "distance_cm": "6.1"})
+        two = one + "\n" + one
+        assert classify_completion_error(two, None) == "multi_call"
+
+    def test_no_tool_call(self) -> None:
+        """纯文本无工具调用 → no_tool_call。"""
+        from graspo.cli.analysis import classify_completion_error
+
+        assert classify_completion_error("好的，我来看看", None) == "no_tool_call"
+
+    def test_malformed_xml(self) -> None:
+        """内部结构坏（真实形态：think 残缺/嵌套参数）→ malformed_xml。"""
+        from graspo.cli.analysis import classify_completion_error
+
+        # 真实样本：<function=think</function> 残缺 + <!-- 注释
+        text = (
+            "<tool_call>\n<function=think</function>\n<!--\n\n</think>\n\n"
+            "<tool_call>\n<function=rotate_arm>\n</function>\n</tool_call>"
+        )
+        assert classify_completion_error(text, None) == "malformed_xml"
+
+    def test_missing_param(self) -> None:
+        """缺必填参数 → missing_param（需 tools schema）。"""
+        from graspo.cli.analysis import classify_completion_error
+
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "extend_arm",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "action_type": {"type": "string"},
+                            "distance_cm": {"type": "number"},
+                        },
+                        "required": ["action_type", "distance_cm"],
+                    },
+                },
+            }
+        ]
+        # 只有 action_type，缺必填 distance_cm
+        text = (
+            "<tool_call>\n<function=extend_arm>\n<parameter=action_type>\n"
+            "收缩手臂\n</parameter>\n</function>\n</tool_call>"
+        )
+        assert classify_completion_error(text, tools) == "missing_param"
+
+    def test_error_types_by_epoch(self, run_dir: Path) -> None:
+        """按 epoch 聚合错误类型计数正确。"""
+        ok = _tool_call_completion("extend_arm", {"action_type": "收缩手臂", "distance_cm": "6.1"})
+        bad = (  # 多调用（第二个 tool_call 残缺）
+            _tool_call_completion("extend_arm", {"action_type": "收缩手臂", "distance_cm": "6.1"})
+            + "\n<tool_call>\n<function=rotate_arm>\n</function>\n</tool_call>"
+        )
+        rec = {
+            "event": "graspo_group",
+            "sample_index": 0,
+            "step": 1,
+            "epoch": 1,
+            "decision": "trainable_not_correct",
+            "targets": [{"output": {"tool_calls": [{"name": "extend_arm", "arguments": {}}]}}],
+            "completions": [{"idx": i, "completion": ok if i < 6 else bad} for i in range(8)],
+        }
+        _write_readable(run_dir, [rec])
+        attr = analyze_attribution(run_dir)
+        errors = attr["error_types_by_epoch"]
+        assert errors["1"]["ok"] == 6
+        assert errors["1"]["other_parse"] == 2

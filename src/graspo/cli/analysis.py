@@ -1,14 +1,16 @@
 """analyze-profile 的 rollout 归因分析（通用，与训练数据内容无关）。
 
 读取 ``<run_dir>/logs/rollouts.readable.jsonl``，对每组 rollout 做
-**结构层面**的归因：工具名、参数匹配——不涉及任何具体字段语义
-（不假设字段名、不假设数值字段存在、不做数值误差统计）。
+**结构层面**的归因：工具名、参数匹配、格式错误类型——不涉及任何
+具体字段语义（不假设字段名、不假设数值字段存在、不做数值误差统计）。
 标签格式常量从 ``qwen_tool_parser`` 单一来源导入（方案 A）。
 
-输出三类：
+输出四类：
 1. not_correct 组原因分类（tool_mismatch / content_all_wrong / format_shortfall）
 2. 工具名/参数匹配正确率趋势（按 step）
 3. 决策 × 工具/参数匹配交叉表
+4. completion 格式错误类型分布（按 epoch；多调用检测在 reward 层，
+   parser 重解析看不到，须数标签——v21 实测多调用 41→244→380 增长）
 """
 
 import json
@@ -22,6 +24,7 @@ from graspo.ripple.parsing.qwen_tool_parser import (
     PARAMETER_CLOSE,
     TOOL_CALL_CLOSE,
     TOOL_CALL_OPEN,
+    parse_qwen_tool_completion,
 )
 
 # 宽容提取用的正则（只做存在性分析，不校验结构）
@@ -57,6 +60,51 @@ def _extract_tool_calls(text: str) -> list[dict[str, Any]]:
         if name and params:
             calls.append({"name": name, "arguments": params})
     return calls
+
+
+# ── 格式错误类型分类（与数据内容无关，仅格式层语义）─────────────────────────
+
+
+def classify_completion_error(text: str, tools: list[dict[str, Any]] | None) -> str:
+    """对单条 completion 做格式错误分类（'ok' 或错误类型名）。
+
+    分类规则（不涉及字段名/数值语义）：
+    - parser 严格解析失败 → 按错误消息细分（no_tool_call / malformed_xml /
+      missing_param / other_parse）
+    - 解析成功但 ``<tool_call>`` 标签数 > 1 → multi_call（reward 层的
+      "too many tool calls" 在 parser 层不可见，必须数标签）
+    """
+    parsed = parse_qwen_tool_completion(text, expect_tool_calls=True, tools=tools)
+    if parsed.parse_errors:
+        for err in parsed.parse_errors:
+            if "no tool call" in err:
+                return "no_tool_call"
+            if "malformed XML" in err:
+                return "malformed_xml"
+            if "missing required parameter" in err:
+                return "missing_param"
+        return "other_parse"
+    n_calls = text.count(TOOL_CALL_OPEN)
+    if n_calls > 1:
+        return "multi_call"
+    return "ok"
+
+
+_ERROR_TYPES = ("ok", "no_tool_call", "malformed_xml", "missing_param", "multi_call", "other_parse")
+
+
+def _classify_errors_by_epoch(
+    records: list[dict[str, Any]],
+) -> dict[str, dict[str, int]]:
+    """按 epoch 聚合 completion 格式错误类型计数。"""
+    by_epoch: defaultdict[Any, defaultdict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for rec in records:
+        tools = rec.get("tools")
+        epoch = rec.get("epoch")
+        for comp in rec.get("completions") or []:
+            text = (comp.get("completion") if isinstance(comp, dict) else str(comp)) or ""
+            by_epoch[epoch][classify_completion_error(text, tools)] += 1
+    return {str(epoch): dict(counts) for epoch, counts in sorted(by_epoch.items())}
 
 
 def _has_comparable_target(record: dict[str, Any]) -> bool:
@@ -206,6 +254,7 @@ def analyze_attribution(run_dir: Path) -> dict[str, Any]:
         "not_correct_causes": dict(nc_causes),
         "step_trend": step_rows,
         "decision_cross": cross_rows,
+        "error_types_by_epoch": _classify_errors_by_epoch(records),
     }
 
 
@@ -251,6 +300,18 @@ def print_attribution(attribution: dict[str, Any]) -> None:
                 f"{any_fn:>6.0f}% | {any_param:>6.0f}% | "
                 f"{all_fn:>8.0f}% | {all_param:>8.0f}%"
             )
+
+    errors = attribution.get("error_types_by_epoch") or {}
+    if errors:
+        print()
+        print("completion 格式错误类型（按 epoch）:")
+        cols = _ERROR_TYPES
+        print("epoch | " + " | ".join(f"{name:>12}" for name in cols))
+        for epoch, counts in errors.items():
+            total = sum(counts.values()) or 1
+            row = [counts.get(name, 0) for name in cols]
+            pct_row = [f"{n} ({n / total * 100:.1f}%)" for n in row]
+            print(f"{epoch:>5} | " + " | ".join(f"{cell:>12}" for cell in pct_row))
 
 
 def analyze_epochs(run_dir: Path) -> dict[str, Any]:
