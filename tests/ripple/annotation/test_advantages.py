@@ -20,8 +20,8 @@ from graspo.ripple.annotation.advantages import (
     structure_incomplete,
     value_spans,
 )
+from graspo.ripple.annotation.char_tag import CharTag
 from graspo.ripple.annotation.labeler import AnnotationInput, annotate
-from graspo.ripple.annotation.roles import CharTag
 
 TESTSET = Path(__file__).resolve().parents[2] / "data" / "annotation_testset_v3.jsonl"
 

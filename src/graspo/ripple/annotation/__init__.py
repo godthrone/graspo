@@ -7,7 +7,8 @@
 - 严格对齐截断：首个结构错误点标 E，其后所有字符标 D（不训练）
 """
 
+from graspo.ripple.annotation.char_tag import CharTag
+
 from .labeler import AnnotationInput, AnnotationResult, annotate
-from .roles import CharTag
 
 __all__ = ["CharTag", "AnnotationInput", "AnnotationResult", "annotate"]

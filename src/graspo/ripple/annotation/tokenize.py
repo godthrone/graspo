@@ -12,7 +12,7 @@
 from dataclasses import dataclass
 from typing import Any
 
-from .roles import CharTag
+from graspo.ripple.annotation.char_tag import CharTag
 
 
 @dataclass(frozen=True)

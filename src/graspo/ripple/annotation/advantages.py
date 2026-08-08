@@ -16,8 +16,8 @@
 
 from typing import Any
 
+from graspo.ripple.annotation.char_tag import CharTag
 from graspo.ripple.annotation.labeler import AnnotationResult
-from graspo.ripple.annotation.roles import CharTag
 from graspo.ripple.annotation.tokenize import char_to_token_labels
 from graspo.ripple.reward.compare import leaf_compare_score
 
@@ -123,9 +123,10 @@ def field_score(value_text: str, gt_val: object, numeric_tolerance: float) -> fl
     if isinstance(gt_val, list):
         for elem in gt_val:
             if isinstance(elem, (int, float)) and not isinstance(elem, bool):
-                if isinstance(v, float) and leaf_compare_score(
-                    v, elem, numeric_tolerance=numeric_tolerance
-                ) >= 1.0:
+                if (
+                    isinstance(v, float)
+                    and leaf_compare_score(v, elem, numeric_tolerance=numeric_tolerance) >= 1.0
+                ):
                     return 1.0
             elif v == elem:
                 return 1.0

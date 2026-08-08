@@ -6,7 +6,7 @@
 from dataclasses import dataclass
 from typing import Any
 
-from .roles import CharTag
+from graspo.ripple.annotation.char_tag import CharTag
 
 
 @dataclass(frozen=True)
@@ -32,7 +32,7 @@ class AnnotationResult:
 def annotate(inp: AnnotationInput) -> AnnotationResult:
     """对 completion 做逐字符标注。"""
     if inp.format_type == "tool_call":
-        from .tool_call_labeler import annotate_tool_call
+        from graspo.ripple.annotation.tool_call_labeler import annotate_tool_call
 
         tags, fields = annotate_tool_call(
             text=inp.completion_text,
@@ -40,7 +40,7 @@ def annotate(inp: AnnotationInput) -> AnnotationResult:
             check_think=inp.check_think,
         )
     elif inp.format_type == "json":
-        from .json_labeler import annotate_json
+        from graspo.ripple.annotation.json_labeler import annotate_json
 
         tags, fields = annotate_json(
             text=inp.completion_text,

@@ -20,7 +20,7 @@
 
 from typing import Any
 
-from .roles import CharTag
+from graspo.ripple.annotation.char_tag import CharTag
 
 _FENCE = "```json"
 _FENCE_CLOSE = "```"
@@ -224,7 +224,7 @@ def annotate_json(
                 return tags, fields
             in_obj_key = bool(stack) and stack[-1] == "o" and not after_colon
             if in_obj_key:
-                key = text[i + 1:end]
+                key = text[i + 1 : end]
                 verdict, gt_key = _check_key(key, gt_ctx[-1])
                 if verdict == "ok":
                     _mark(tags, i, end + 1, CharTag.STRUCTURE)

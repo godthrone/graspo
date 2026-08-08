@@ -8,8 +8,8 @@
   换行即未闭合 → name_end<0 → E 于 `<` 处截断。
 """
 
+from graspo.ripple.annotation.char_tag import CharTag
 from graspo.ripple.annotation.labeler import AnnotationInput, annotate
-from graspo.ripple.annotation.roles import CharTag
 
 
 def _annotate(completion: str, targets: list[dict], format_type: str) -> str:

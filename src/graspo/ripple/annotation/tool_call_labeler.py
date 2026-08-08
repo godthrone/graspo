@@ -20,6 +20,7 @@
 from dataclasses import dataclass
 from typing import Any
 
+from graspo.ripple.annotation.char_tag import CharTag
 from graspo.ripple.parsing.qwen_tool_parser import (
     FUNCTION_CLOSE,
     FUNCTION_OPEN,
@@ -30,8 +31,6 @@ from graspo.ripple.parsing.qwen_tool_parser import (
     TOOL_CALL_CLOSE,
     TOOL_CALL_OPEN,
 )
-
-from .roles import CharTag
 
 # 标签格式常量单一真相源（2026-08-07 方案 A）：从模型族 parser
 # （qwen_tool_parser）读取，避免标注器与解析器两套格式理解漂移；
