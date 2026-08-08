@@ -526,7 +526,44 @@ SFT 运行只产生其中一部分：`training.log`、`rank_metrics.*.jsonl`、`
 checkpoint、`final` 和 `config.yaml`。rollout 和 replay 日志仅 RL 模式产生，
 SFT 训练不写入。
 
-健康的 GRASPO 训练不只是”进程没挂”。需要观察 reward trend、组内 reward range、content-score validity、decision distribution、finite loss/grad、非零 LoRA gradients、LoRA tensor changes、replay-buffer progress、checkpoint writes 和 GPU/NCCL health。
+### 关键监控指标
+
+**组决策分类**（每 step）：
+- `perfect_skip`：已稳定答对，无需训练
+- `trainable`（max_correct / not_correct）：有训练价值
+- `invalid`：格式错误被丢弃
+- `invalid_no_preference_gap`：所有 completion 相同，无偏好信号
+- `retry`：rollout 失败后重试
+
+**Reward 趋势**：
+- `reward_mean` / `reward_median` 上升 → 训练有效
+- `reward_max_median_gap_mean` > 0 → 组内仍有偏好信号
+- `nonzero_range_rate` 接近 0 → 模型可能过拟合
+
+**Content Score**：
+- `content_all_zero_rate` ≥ 0.8 → 模型无法产生正确内容
+- `content_all_one_rate` 上升 → 模型趋于完美
+
+**Training Health**（自动检测）：
+- `nonfinite_loss_or_grad`：loss/grad 出现 inf/nan
+- `zero_lora_delta`：LoRA 权重无变化
+- `batch_reward_all_zero`：本 batch 所有 reward = 0
+- `batch_high_retry_rate`：retry 率过高
+- `reward_all_zero_window`：近期 10+ 步 reward 全部为 0
+- `content_score_all_zero_window`：近期 ≥80% 为内容零分
+
+### SFT → RL 两阶段训练
+
+对于复杂结构化输出任务，推荐的训练流程：
+
+1. **SFT 阶段**（10 epochs）：用 `train_method: sft` 教模型输出格式
+2. **导出**：`graspo export` 将 LoRA 合并到 base 模型
+3. **RL 阶段**（100 epochs）：用 `train_method: graspo` 优化输出质量
+
+SFT 和 RL 共享同一套 JSONL 数据格式。SFT target text 由 `build_sft_target_text`
+直接生成原始 XML，与模型推理输出字符级一致，不经过 `tokenizer.apply_chat_template`。
+原则：SFT 应该教模型**说什么**（what to say），不改变**怎么说**（how to say）——
+格式是预训练已经学会的能力，不应该被 LoRA 覆盖。
 
 ## 开发检查
 
