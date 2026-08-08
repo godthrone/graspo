@@ -130,7 +130,7 @@ train_path="$(_yaml_value "train_path")"
 if [ -n "$train_path" ] && [ -d "$(dirname "$train_path")" ]; then
     _add_mount_dir "$(dirname "$train_path")"
     # 数据集根（祖父目录）——仅在图像引用需要时挂载（挂载面积最小化）：
-    # ELAM 数据的 data/ 与 images/ 平级，图像相对引用 ../images/x.jpg 需要
+    # data/ 与 images/ 平级的数据集，图像相对引用 ../images/x.jpg 需要
     # 数据集根可达（v0.21 smoke 实测发现）。读取训练数据首行 image 字段，
     # 以 ../ 开头才挂祖父目录；否则父目录已覆盖（单层结构）。
     _image_ref="$(

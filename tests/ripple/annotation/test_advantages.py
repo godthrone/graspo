@@ -159,9 +159,9 @@ def test_field_score_string_exact():
 
 
 def test_field_score_json_array_existence():
-    gt = ["1442201593053", "1442201593054"]
-    assert field_score('"1442201593053"', gt, 0.2) == 1.0  # 去引号
-    assert field_score('"460240401000000"', gt, 0.2) == 0.0
+    gt = ["9999999000001", "9999999000002"]
+    assert field_score('"9999999000001"', gt, 0.2) == 1.0  # 去引号
+    assert field_score('"999999900000000"', gt, 0.2) == 0.0
 
 
 def test_field_score_missing_gt_zero():
@@ -288,9 +288,9 @@ def test_tail_eos_complete_no_penalty():
 
 def test_tail_eos_json_truncated():
     """半截 JSON:末尾 −1;完整 JSON:无。"""
-    truncated = '```json\n{"故障号码":["1442201593053"]'
-    complete = '```json\n{"故障号码":["1442201593053"]}\n```'
-    gt = '{"故障号码": ["1442201593053"]}'
+    truncated = '```json\n{"故障号码":["9999999000001"]'
+    complete = '```json\n{"故障号码":["9999999000001"]}\n```'
+    gt = '{"故障号码": ["9999999000001"]}'
     adv_tr = _group_adv([truncated], "json", gt, truncated=[False])[0]
     assert adv_tr[-1] == -1.0
     adv_ok = _group_adv([complete], "json", gt)[0]

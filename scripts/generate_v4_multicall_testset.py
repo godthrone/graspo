@@ -7,7 +7,7 @@
   "闭合后紧邻 <tool_call>" 形态（T33/T40），真实数据 94.5% 是
   "闭合后间隔杂散文本再出现 <tool_call>"——全部漏检（第二调用 W 无 E）。
 
-本脚本从 121 真实 rollout（rollouts.readable.jsonl）抽取各形态样本：
+本脚本从真实 rollout（rollouts.readable.jsonl）抽取各形态样本：
 - 杂散文本间隔形态：多条（tool_response/image/conclusion/summary/response/
   analysis/think/自由文本 等 100+ 种自造标签）
 - 其余错误形态各 2 条：紧邻双调用 / 截断第二调用 / 病态(顺序乱) /
@@ -197,7 +197,7 @@ OTHER_FORMS = ["adjacent", "truncated_second", "first_call_error"]
 
 GAP_NOTES = {
     "gap:tool_response": "间隔 <tool_response> 自造标签后第二调用（真实最大类，297 条）——第二调用首字符应 E？杂散标签如何处理待裁定",
-    "gap:image": "间隔 <image> 自造标签后第二调用（121 条）",
+    "gap:image": "间隔 <image> 自造标签后第二调用（样本统计）",
     "gap:conclusion": "间隔 <conclusion> 总结标签后第二调用（70 条）",
     "gap:summary": "间隔 <summary> 后第二调用（35 条）",
     "gap:response": "间隔 <response> 后第二调用（26 条）",

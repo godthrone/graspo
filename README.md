@@ -87,8 +87,8 @@ bash run.sh my_config.yaml --image graspo:v0.22.0
 > **`run.sh` is the only supported launch path for training.** Hand-written
 > `docker run` invocations are for diagnostics only — they have repeatedly
 > tripped on `--gpus` JSON syntax (Docker 29) and path resolution. When the
-> training data's image references are relative (`../images/...`, e.g. ELAM
-> datasets with `data/` and `images/` side by side), run.sh additionally
+> training data's image references are relative (`../images/...`, e.g. datasets
+> with `data/` and `images/` side by side), run.sh additionally
 > mounts the dataset root on demand — mount footprint stays minimal
 > (exact data/model/output dirs only).
 
@@ -237,7 +237,7 @@ working from the rollouts detail logs), per user ruling.
 
 ## CLI Reference
 
-All commands are config-driven (§10.1): input-locating flags only, outputs
+All commands are config-driven: input-locating flags only, outputs
 are either printed or written to config-decided locations.
 
 - `graspo launch --config <yaml> [--smoke]` — training entry. `run.sh` is the
@@ -264,7 +264,7 @@ Training data is JSONL. Each line is one prompt/context represented as chat
 messages, optional tool declarations, and one or more acceptable targets:
 
 ```jsonl
-{"messages":[{"role":"system","content":"You extract structured telecom ticket fields as fenced JSON."},{"role":"user","content":"Ticket: user 13800138000 cannot use apn cmnet."},{"role":"assistant","content":"I will identify the phone number and APN from the ticket."},{"role":"user","content":"Extract JSON with the APN and fault number."}],"targets":[{"id":"expected","output":{"content":{"APN":"cmnet","fault_number":"13800138000"}}}]}
+{"messages":[{"role":"system","content":"You extract structured support ticket fields as fenced JSON."},{"role":"user","content":"Ticket: user 99999000000 cannot use apn apn01."},{"role":"assistant","content":"I will identify the phone number and APN from the ticket."},{"role":"user","content":"Extract JSON with the APN and fault number."}],"targets":[{"id":"expected","output":{"content":{"APN":"apn01","fault_number":"99999000000"}}}]}
 ```
 
 Multimodal records use the same `messages` field and preserve message roles and
@@ -280,7 +280,7 @@ processor chat template at runtime; users should not pre-render model template
 strings in the dataset:
 
 ```jsonl
-{"messages":[{"role":"system","content":"Use tools when needed. Output only the tool call."},{"role":"user","content":"Query device OLT-17 status at 2026-06-08 10:30."}],"tools":[{"type":"function","function":{"name":"query_device_status","description":"Query network device panel status.","parameters":{"type":"object","properties":{"device_id":{"type":"string"},"panel_time":{"type":"string"}},"required":["device_id","panel_time"]}}}],"targets":[{"id":"expected","output":{"tool_calls":[{"name":"query_device_status","arguments":{"device_id":"OLT-17","panel_time":"2026-06-08T10:30:00+08:00"}}]}}]}
+{"messages":[{"role":"system","content":"Use tools when needed. Output only the tool call."},{"role":"user","content":"Query device DEV-01 status at 2026-06-08 10:30."}],"tools":[{"type":"function","function":{"name":"query_device_status","description":"Query network device panel status.","parameters":{"type":"object","properties":{"device_id":{"type":"string"},"panel_time":{"type":"string"}},"required":["device_id","panel_time"]}}}],"targets":[{"id":"expected","output":{"tool_calls":[{"name":"query_device_status","arguments":{"device_id":"DEV-01","panel_time":"2026-06-08T10:30:00+08:00"}}]}}]}
 ```
 
 See `samples/data/sample_tool_call.jsonl` for a runnable tool-call dataset row.
@@ -421,7 +421,7 @@ advantages:
 | `D` | all chars after `E` | 0 (not trained) |
 
 Design principles (motivated by four consecutive training collapses in
-v0.16-v0.19, see `.local/v19-collapse-root-cause-analysis-20260806.md`):
+v0.16-v0.19):
 
 - **Character-level alignment, tokenizer-agnostic**: the expected mark
   sequence (e.g. `<tool_call> <function=...> <parameter=...> ...`) is compared

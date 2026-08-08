@@ -45,12 +45,12 @@ def test_smoke_reward_on_sample_data():
     targets = [
         {
             "id": "expected",
-            "output": {"content": {"APN": "cmnet", "fault_number": "13800138000"}},
+            "output": {"content": {"APN": "apn01", "fault_number": "99999000000"}},
         }
     ]
 
     # A "correct" completion that should score well
-    good_completion = '```json\n{"APN":"cmnet","fault_number":"13800138000"}\n```'
+    good_completion = '```json\n{"APN":"apn01","fault_number":"99999000000"}\n```'
     result = reward_fn.score(good_completion, targets)
     assert result.reward >= 0.5, f"Good completion should score >= 0.5, got {result.reward}"
     assert result.all_right is True
@@ -69,12 +69,12 @@ def test_smoke_reward_poor_format_scores_lower():
     targets = [
         {
             "id": "expected",
-            "output": {"content": {"APN": "cmnet", "fault_number": "13800138000"}},
+            "output": {"content": {"APN": "apn01", "fault_number": "99999000000"}},
         }
     ]
 
-    good = '```json\n{"APN":"cmnet","fault_number":"13800138000"}\n```'
-    no_fence = '{"APN":"cmnet","fault_number":"13800138000"}'  # missing ```
+    good = '```json\n{"APN":"apn01","fault_number":"99999000000"}\n```'
+    no_fence = '{"APN":"apn01","fault_number":"99999000000"}'  # missing ```
 
     good_result = reward_fn.score(good, targets)
     no_fence_result = reward_fn.score(no_fence, targets)
@@ -91,15 +91,15 @@ def test_smoke_reward_anti_useless_penalty():
     targets = [
         {
             "id": "expected",
-            "output": {"content": {"APN": "cmnet", "fault_number": "13800138000"}},
+            "output": {"content": {"APN": "apn01", "fault_number": "99999000000"}},
         }
     ]
 
-    clean = '```json\n{"APN":"cmnet","fault_number":"13800138000"}\n```'
+    clean = '```json\n{"APN":"apn01","fault_number":"99999000000"}\n```'
     verbose = (
         "Let me think about this carefully...\n\n"
         "I believe the answer should be...\n\n"
-        '```json\n{"APN":"cmnet","fault_number":"13800138000"}\n```\n\n'
+        '```json\n{"APN":"apn01","fault_number":"99999000000"}\n```\n\n'
         "I hope this helps! Let me know if you need anything else."
     )
 
@@ -124,7 +124,7 @@ def test_smoke_reward_on_tool_call_sample():
     # A correct tool call
     good = (
         '<tool_call>{"name":"query_device_status",'
-        '"arguments":{"device_id":"OLT-17","panel_time":"2026-06-08T10:30:00+08:00"}}'
+        '"arguments":{"device_id":"DEV-01","panel_time":"2026-06-08T10:30:00+08:00"}}'
         "</tool_call>"
     )
     result = reward_fn.score_parsed(good, sample.targets, is_tool_call=True)

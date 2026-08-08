@@ -70,7 +70,7 @@ def test_load_tools_jsonl():
         {
             "name": "query_device_status",
             "arguments": {
-                "device_id": "OLT-17",
+                "device_id": "DEV-01",
                 "panel_time": "2026-06-08T10:30:00+08:00",
             },
         }

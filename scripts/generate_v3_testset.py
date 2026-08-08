@@ -1,6 +1,6 @@
 """生成 annotation_testset_v3.jsonl（v3.0，2026-08-07）。
 
-v2 → v3 变更（与 ELAM v14 数据工具拆分同步）：
+v2 → v3 变更（与 v14 数据工具拆分同步）：
 - T 系列全部换成 v14 双工具格式（rotate_arm / extend_arm，按 GT action_type 映射）；
   T30（get_weather 跨函数）保留原样
 - 标注语义更新（标注器 v3.0 修复，用户裁定）：

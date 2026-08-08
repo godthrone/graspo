@@ -135,7 +135,7 @@ class _Annotator:
         """从 pos 起（跳过空白）逐字符比对期望 mark。
 
         :param pos: 当前推进位置
-        :param expected: 期望 mark 字符串（如 ``<function=robot_atomic_control>``）
+        :param expected: 期望 mark 字符串（如 ``<function=example_tool>``）
         :param consume_newline: 匹配成功后是否吞并紧随换行（think 闭合为 False）
         :return: (matched, new_pos)。matched=False 时已标 E 并截断（或文本提前结束
             结构不完整——此时不标 E，全 S，返回 (True, n) 终止语义由调用方处理）

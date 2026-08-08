@@ -65,7 +65,7 @@ bash run.sh my_config.yaml --image graspo:v0.22.0
 
 > **`run.sh` 是训练启动的唯一受支持入口。** 手写 `docker run` 仅限诊断用途——
 > 曾多次踩 `--gpus` JSON 语法（Docker 29）与路径解析的坑。训练数据图像引用为
-> 相对路径（`../images/...`，如 ELAM 数据 data/ 与 images/ 平级）时，run.sh
+> 相对路径（`../images/...`，如 data/ 与 images/ 平级的数据集）时，run.sh
 > 按需追加挂载数据集根——挂载面积保持最小（仅精确的数据/模型/输出目录）。
 
 手动调用（参考，例如自定义编排）：
@@ -207,7 +207,7 @@ L3 语义/数值层诊断由 AI/人工基于 rollouts 详表离线统计，用�
 
 ## CLI 参考
 
-所有命令均为配置驱动（§10.1）：只接受输入定位参数，输出要么打印、
+所有命令均为配置驱动：只接受输入定位参数，输出要么打印、
 要么写入 config 决定的位置。
 
 - `graspo launch --config <yaml> [--smoke]` — 训练入口。生产环境唯一受支持
@@ -232,7 +232,7 @@ L3 语义/数值层诊断由 AI/人工基于 rollouts 详表离线统计，用�
 训练数据只支持 JSONL。每行是一条由 chat messages 表示的 prompt/context、可选工具声明，以及一个或多个可接受的 reward 目标：
 
 ```jsonl
-{"messages":[{"role":"system","content":"You extract structured telecom ticket fields as fenced JSON."},{"role":"user","content":"Ticket: user 13800138000 cannot use apn cmnet."},{"role":"assistant","content":"I will identify the phone number and APN from the ticket."},{"role":"user","content":"Extract JSON with the APN and fault number."}],"targets":[{"id":"expected","output":{"content":{"APN":"cmnet","fault_number":"13800138000"}}}]}
+{"messages":[{"role":"system","content":"You extract structured support ticket fields as fenced JSON."},{"role":"user","content":"Ticket: user 99999000000 cannot use apn apn01."},{"role":"assistant","content":"I will identify the phone number and APN from the ticket."},{"role":"user","content":"Extract JSON with the APN and fault number."}],"targets":[{"id":"expected","output":{"content":{"APN":"apn01","fault_number":"99999000000"}}}]}
 ```
 
 多模态数据也使用同一个 `messages` 字段，role 和 content 顺序会保真进入 tokenizer/processor：
@@ -244,7 +244,7 @@ L3 语义/数值层诊断由 AI/人工基于 rollouts 详表离线统计，用�
 工具调用数据可以在可选 `tools` 字段中提供模型原生工具声明。GRASPO 会在运行时把 `messages + tools` 交给 tokenizer 或 processor 的 chat template；用户不需要、也不应该在数据集中提前渲染模型模板字符串：
 
 ```jsonl
-{"messages":[{"role":"system","content":"Use tools when needed. Output only the tool call."},{"role":"user","content":"Query device OLT-17 status at 2026-06-08 10:30."}],"tools":[{"type":"function","function":{"name":"query_device_status","description":"Query network device panel status.","parameters":{"type":"object","properties":{"device_id":{"type":"string"},"panel_time":{"type":"string"}},"required":["device_id","panel_time"]}}}],"targets":[{"id":"expected","output":{"tool_calls":[{"name":"query_device_status","arguments":{"device_id":"OLT-17","panel_time":"2026-06-08T10:30:00+08:00"}}]}}]}
+{"messages":[{"role":"system","content":"Use tools when needed. Output only the tool call."},{"role":"user","content":"Query device DEV-01 status at 2026-06-08 10:30."}],"tools":[{"type":"function","function":{"name":"query_device_status","description":"Query network device panel status.","parameters":{"type":"object","properties":{"device_id":{"type":"string"},"panel_time":{"type":"string"}},"required":["device_id","panel_time"]}}}],"targets":[{"id":"expected","output":{"tool_calls":[{"name":"query_device_status","arguments":{"device_id":"DEV-01","panel_time":"2026-06-08T10:30:00+08:00"}}]}}]}
 ```
 
 可运行的工具调用数据样例见 `samples/data/sample_tool_call.jsonl`。
@@ -326,7 +326,7 @@ rollout 完成后，每条 completion 会被**逐字符标注**结构角色（`C
 | `E` | **首个**与期望模板不匹配的字符 | -1.0 |
 | `D` | E 之后所有字符 | 0（不训练） |
 
-设计原则（源于 v0.16-v0.19 四次连续训练崩溃，详见 `.local/v19-collapse-root-cause-analysis-20260806.md`）：
+设计原则（源于 v0.16-v0.19 四次连续训练崩溃）：
 
 - **字符级比对，tokenizer 无关**：期望 mark 序列（如 `<tool_call> <function=...> <parameter=...> ...`）与模型输出逐字符比对，首个不匹配字符标 E。token 标注经 offset_mapping 派生——任何 tokenizer 变体都不会误标正确前缀 token（如 `</parametr>` 与 `</parameter>` 共享 `</`、`param` 前缀 token）
 - **严格对齐截断**：E 之后全部 D（不训练）——错误前缀下的 token 无训练价值

@@ -236,7 +236,7 @@ retry:           rollout 失败后重试
 
 ### 背景：v16-v19 四次训练崩溃
 
-v16-v19 连续四次训练在 epoch 0 后期崩溃（invalid 从 0 飙到 494，reward 归零），根因链（详见 `.local/v19-collapse-root-cause-analysis-20260806.md`）：
+v16-v19 连续四次训练在 epoch 0 后期崩溃（invalid 从 0 飙到 494，reward 归零），根因链：
 
 1. **format advantage 非对称**（v18/v19）：clean format=0.0、broken=-1.0 → 模型只有负反馈无正反馈，format 维度被"推开"而非"拉向"正确
 2. **cs-mean n=1 零梯度**（v19）：组内唯一 clean completion 时 `cs - mean = 0` → content 梯度消失
@@ -274,4 +274,4 @@ v19 真实数据回放验证后随 v22 训练上线：
 - 结构不完整（截断/缺闭合/乱码）→ 末尾 EOS −1.0（max_new_tokens 硬截断除外）
 - `numeric_tolerance` 0.2（相对误差容差）
 
-方案细节与 35 条逐 token 演示见 `.local/token-reward-advantage-design-v0.20.md`。
+方案细节与 35 条逐 token 演示见内部设计文档 `token-reward-advantage-design-v0.20.md`。

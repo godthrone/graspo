@@ -1,4 +1,4 @@
-# 增量构建：FROM 已有的本地 graspo 镜像，只 COPY 新代码（121 无外网时用）。
+# 增量构建：FROM 已有的本地 graspo 镜像，只 COPY 新代码（无外网时用）。
 # 用法：docker build --build-arg BASE_IMAGE=graspo:<旧版本> -f docker/Dockerfile.incremental -t graspo:<新版本> .
 # 注意：必须 --pull=false（本地镜像，不拉远端）；DOCKER_BUILDKIT=0 兼容旧构建器。
 ARG BASE_IMAGE

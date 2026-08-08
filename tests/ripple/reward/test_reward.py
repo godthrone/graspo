@@ -23,8 +23,8 @@ def _tool_targets(*calls: list[dict]) -> list[dict]:
 def test_reward_perfect_json_fence():
     reward = GraspoReward(RewardConfig(check_json_markdown=True))
     result = reward.score(
-        '```json\n{"APN":"cmnet","fault_number":"138"}\n```',
-        _content_targets({"APN": "cmnet", "fault_number": "138"}),
+        '```json\n{"APN":"apn01","fault_number":"138"}\n```',
+        _content_targets({"APN": "apn01", "fault_number": "138"}),
     )
 
     assert result.all_right is True
@@ -40,7 +40,7 @@ def test_reward_partial_json_fence():
     reward = GraspoReward(RewardConfig(check_json_markdown=True))
     result = reward.score(
         '```json\n{"APN":"wrong","fault_number":"138"}\n```',
-        _content_targets({"APN": "cmnet", "fault_number": "138"}),
+        _content_targets({"APN": "apn01", "fault_number": "138"}),
     )
 
     assert result.all_right is False
@@ -102,7 +102,7 @@ def test_reward_selects_best_content_target():
 
 def test_reward_rejects_missing_marker_when_required():
     reward = GraspoReward(RewardConfig(check_json_markdown=True))
-    result = reward.score('{"APN":"cmnet"}', _content_targets({"APN": "cmnet"}))
+    result = reward.score('{"APN":"apn01"}', _content_targets({"APN": "apn01"}))
 
     assert result.all_right is False
     assert result.content_score == 0
@@ -114,8 +114,8 @@ def test_reward_penalizes_large_useless_text():
         RewardConfig(check_json_markdown=True, anti_useless_str_half_reward_len=10)
     )
     result = reward.score(
-        "x" * 30 + '```json\n{"APN":"cmnet"}\n```',
-        _content_targets({"APN": "cmnet"}),
+        "x" * 30 + '```json\n{"APN":"apn01"}\n```',
+        _content_targets({"APN": "apn01"}),
     )
 
     assert result.all_right is False
@@ -364,8 +364,8 @@ def test_reward_parsed_too_many_does_not_affect_content_score_target():
     """tc_count 惩罚不影响 content 评分路径（非 tool call 场景）。"""
     reward = GraspoReward(RewardConfig(check_json_markdown=True))
     result = reward.score(
-        '```json\n{"APN":"cmnet","fault_number":"138"}\n```',
-        _content_targets({"APN": "cmnet", "fault_number": "138"}),
+        '```json\n{"APN":"apn01","fault_number":"138"}\n```',
+        _content_targets({"APN": "apn01", "fault_number": "138"}),
     )
 
     assert result.all_right is True

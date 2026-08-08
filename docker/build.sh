@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build GRASPO Docker image. Run from repository root.
 #   IMAGE_NAME=graspo:test bash docker/build.sh
-#   PROXY=http://127.0.0.1:18080 bash docker/build.sh
+#   PROXY=http://proxy.example.com:8080 bash docker/build.sh
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
