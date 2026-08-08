@@ -10,7 +10,7 @@ GRASPO 是一个 GRPO 风格的 LoRA 强化学习训练器，面向结构化输�
 | **结构化输出专用 reward** | 递归 dict 比较，双分数（数值精度用于梯度，结构正确用于门控），多目标最优匹配 |
 | **组决策体系与防御纵深** | 六路分类（perfect_skip/trainable/invalid/retry/no_preference_gap）在训练边界拦截噪声，质量加权 advantage 防止收敛到"差组里最好" |
 | **RL+SFT 同构** | 同一套 JSONL 数据格式、同一套模型加载、同一套 checkpoint 格式。SFT 教格式，RL 优质量 |
-| **ripple/flow 分层** | 算法层（ripple）纯计算，零设施依赖，可 CPU 单测；设施层（flow）负责分布式执行 |
+| **ripple/flow 分层** | 算法层（ripple，涟漪）纯计算，命名来自 token 间信用分配的涟漪效应；设施层（flow，水流）负责分布式执行，命名来自数据在流水线中的持续流动 |
 | **单卡到 TP+PP** | 统一 GraspoFlow 后端，Flink 风格调度，`pp=1,tp=1` 单卡到 `pp=M,tp=N` 混合并行，同配置切换 |
 | **插件化模型适配** | ABC 模板方法 + 注册表，新增模型族只需定义子类并注册，零侵入现有代码 |
 | **多模态训练** | 图像+文本联合训练，三层防线防止静默丢图，SFT/RL 双路径编码对齐 |
