@@ -177,7 +177,7 @@ rollout 完成后对每条 completion 做**字符级结构标注**，作为 toke
 
 ### 模块结构
 
-- `roles.py` — CharTag 枚举（StrEnum，含 trainable 属性）
+- `char_tag.py` — CharTag 枚举（StrEnum，含 trainable 属性）
 - `tool_call_labeler.py` — Qwen XML tool call 标注：期望 mark 序列逐字符比对、参数无序集合匹配 + 缺失检测、值类型校验
 - `json_labeler.py` — JSON 标注：围栏提取（可有可无）、状态机扫描、字段名拼错/多余检测、类型校验
 - `tokenize.py` — 字符标注 → token 标注（offset_mapping，E 优先合并语义）

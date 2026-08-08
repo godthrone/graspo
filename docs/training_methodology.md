@@ -274,4 +274,4 @@ v19 真实数据回放验证后随 v22 训练上线：
 - 结构不完整（截断/缺闭合/乱码）→ 末尾 EOS −1.0（max_new_tokens 硬截断除外）
 - `numeric_tolerance` 0.2（相对误差容差）
 
-方案细节与 35 条逐 token 演示见内部设计文档 `token-reward-advantage-design-v0.20.md`。
+方案细节与 35 条逐 token 演示见设计文档 `token-reward-advantage-design-v0.20.md`。

@@ -1,3 +1,5 @@
+"""Qwen3 模型适配器 — 设施层，Qwen3 dense 模型的加载与构建。"""
+
 from graspo.flow.adapters.models.common.base import QwenFamilyBase
 from graspo.flow.adapters.models.common.model_builders import (
     build_native_qwen_model,
