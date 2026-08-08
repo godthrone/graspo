@@ -13,7 +13,7 @@ GRASPO 是一个 GRPO 风格的 LoRA 强化学习训练器，面向结构化输�
 ```mermaid
 flowchart TB
     subgraph L0 ["入口层 cli/"]
-        CLI["cli/app.py<br/>launch / export"]
+        CLI["cli/app.py<br/>launch / export / validate-reward / evaluate-checkpoint / analyze-profile"]
     end
     subgraph L1 ["算法层 ripple/ · 纯计算"]
         R["reward/ · parity · loss · buffer<br/>data · parsing/ · monitoring/ · multimodal/<br/>annotation/"]
@@ -24,7 +24,7 @@ flowchart TB
     subgraph L3 ["设施层 flow/"]
         T["trainer/"]
         A["adapters/<br/>models/common + qwen3 + qwen35_36"]
-        S["scheduling/ · parallel/ · lora/ · logger/<br/>runtime · memory · selector"]
+        S["scheduling/ · parallel/ · lora/<br/>runtime · memory · selector"]
     end
     CLI --> C
     CLI --> T

@@ -6,7 +6,7 @@
 #   bash run.sh my_config.yaml                # 训练（自动选空闲 GPU）
 #   bash run.sh my_config.yaml --smoke        # 冒烟：跑 1 步验证环境后停止
 #   bash run.sh my_config.yaml --gpus 4,5     # 指定 GPU
-#   bash run.sh my_config.yaml --image graspo:v0.19.0   # 指定镜像
+#   bash run.sh my_config.yaml --image graspo:v0.22.0   # 指定镜像
 #
 # 防呆设计:
 #   1. 自动选择空闲 GPU（nvidia-smi 检测显存占用为 0 的卡），无需手动数卡
@@ -168,7 +168,7 @@ fi
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
     echo "ERROR: 镜像 $IMAGE 不存在"
     echo "  构建: bash docker/build.sh"
-    echo "  或指定: bash run.sh $CONFIG --image graspo:v0.19.0"
+    echo "  或指定: bash run.sh $CONFIG --image graspo:v0.22.0"
     exit 1
 fi
 

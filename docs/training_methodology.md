@@ -40,7 +40,7 @@ LoRA（30M 参数，模型 0.3%）被迫同时改写格式和内容，在 405 �
 等崩溃 XML。
 
 **验证方法**：对 base model 推理纯文本 prompt，观察原生 XML 输出格式，确保
-`_tool_calls_to_xml` 产出格式与之完全相同。格式对齐后 step 1 loss
+`tool_calls_to_xml` 产出格式与之完全相同。格式对齐后 step 1 loss
 从 0.64 降至 0.28。
 
 ## 背景：GRPO 与结构化输出
@@ -76,7 +76,7 @@ flowchart TB
 
 - ````json ...  ```` fence 是否存在且闭合
 - `<think>...</think>` 标签（可选，通过 `check_think` 开关）
-- tool-call 结构（可选，通过 `check_tool_call` 开关）
+- tool-call 结构（由数据中 targets 是否含 tool_calls 自动开启）
 
 权重：`marker_reward_weight`（默认 10）。格式正确但内容错误的 completion 也会得到基础分。
 
@@ -226,7 +226,8 @@ retry:           rollout 失败后重试
 |------|----------|--------|
 | 奖励 | 外部 reward model / 单一分数 | 内置三层结构化 reward，可审计 |
 | 目标 | 通用文本生成 | 结构化输出（JSON、tool-call） |
-| 组过滤 | 简单丢弃 | 四级分类 + retry + perfect-skip |
+| 组过滤 | 简单丢弃 | 六种决策（perfect_skip / trainable_max_correct /
+  trainable_not_correct / invalid / invalid_no_preference_gap / retry） |
 | 训练 | 全参数 | LoRA only，单卡 80G 可训 9B |
 | 数据 | 对话偏好 | JSONL targets（自动比较） |
 | 评估 | 外部 eval | 内置多维统计 + health 判断 |
@@ -257,13 +258,20 @@ v16-v19 连续四次训练在 epoch 0 后期崩溃（invalid 从 0 飙到 494，
 | tool call 参数无序匹配 | 参数是 JSON 对象语义，顺序无关（与 reward 层 dict 比较一致）；缺字段/多余字段/拼错仍标 E |
 | 值类型错标 E | GT 数字 vs 模型字符串 → 值首字符 E |
 
-**验证**：35 条测试数据集（tool call 20 + JSON 15）多轮 agent 独立核验，39 单元测试全绿。
+**验证**：65 条测试数据集（`annotation_testset_v3.jsonl`，tool call 44 + JSON 21）
+经独立 agent 逐条核验，全量 593 测试 + ruff + mypy 全绿。
 
-### 下一步（advantage 层接入）
+### advantage 层已接入（v0.20.0 完成，2026-08-06 实现）
 
-标注模块只产出 `(tag, field)` 角色；advantage 层将消费它：
+标注 → advantage 链路（`ripple/annotation/advantages.py` 的
+`compute_group_advantages`）已接入训练（rollout.py 标注驱动链路），
+v19 真实数据回放验证后随 v22 训练上线：
 
-- S → +1.0（结构正确强化）
-- V → 与 GT 值相似度 0~1（`compare.py` 的 leaf_compare_score）
+- S → +1.0（结构正确强化，不加权——格式收敛后 ratio→1 自动退场）
+- V → 字段级相似度 − μ_f（per-field 组内均值；n=1 安全零）
 - T / W / D → 0（不训练）
 - E → -1.0（错误点惩罚）
+- 结构不完整（截断/缺闭合/乱码）→ 末尾 EOS −1.0（max_new_tokens 硬截断除外）
+- `numeric_tolerance` 0.2（相对误差容差）
+
+方案细节与 35 条逐 token 演示见 `.local/token-reward-advantage-design-v0.20.md`。

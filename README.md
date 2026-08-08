@@ -65,7 +65,7 @@ bash run.sh my_config.yaml --smoke
 bash run.sh my_config.yaml --gpus 4,5
 
 # 5. Override image tag (default comes from git describe)
-bash run.sh my_config.yaml --image graspo:v0.17.0
+bash run.sh my_config.yaml --image graspo:v0.22.0
 ```
 
 `run.sh` is defensive by design:
@@ -123,7 +123,7 @@ IMAGE_NAME=graspo:test bash docker/build.sh
 
 ### Local Install (development)
 
-Python 3.11 is required.
+Python 3.11 or 3.12 is required (`>=3.11,<3.13`).
 
 ```bash
 git clone https://github.com/godthrone/graspo.git
@@ -209,20 +209,54 @@ uv run graspo evaluate-checkpoint --config my_config.yaml \
 uv run graspo analyze-profile outputs/my_run
 ```
 
-Besides perf/latest-step tables, `analyze-profile` (v0.21.1+) writes three
-analysis files per run dir:
-1. `logs/analysis_profile.json` — perf/timing/latest-step summary
-2. `logs/analysis_attribution.json` — rollout attribution: not_correct cause
-   classification (tool_mismatch / content_all_wrong / format_shortfall),
-   tool-name/param-match trend per step, decision × match cross-table, and
-   per-epoch completion error-type distribution (multi_call detected by
-   counting `<tool_call>` tags — reward-layer "too many tool calls" is
-   invisible to parser re-parsing)
-3. `logs/analysis_epochs.json` — epoch-level aggregation from `epoch_summary`
-   events (terminal decisions, mc_ratio, reward/content trends)
+Besides the run summary, `analyze-profile` (v0.22+) writes six analysis
+files per run dir (the CLI prints only their paths — no tables on stdout):
+1. `logs/analysis_profile.json` — perf/timing/latest-step window summary
+2. `logs/analysis_steps.jsonl` — training progress per step: sample range
+   (samples_start/end within epoch), terminal decision counts
+   (perfect/invalid/no_gap/mc/nc), mc_ratio, reward/content/loss means,
+   retry_rate, alarm category counts, wall-clock seconds
+3. `logs/analysis_epochs.json` — same metric tuple at epoch granularity
+   (loss_mean and alarms aggregated from train_step events)
+4. `logs/analysis_errors.jsonl` — completion-level mutually-exclusive error
+   causes (L1 format: no_tool_call / malformed_xml / missing_param /
+   multi_call / other_parse; L2 match: tool_mismatch / param_name_mismatch /
+   param_value_mismatch; ok / other), at both step and epoch granularity,
+   with deduplicated sample references for traceback
+5. `logs/analysis_attribution.json` — group-level attribution: not_correct
+   cause classification (tool_mismatch / content_all_wrong /
+   format_shortfall), tool-name/param-match trend per step, decision × match
+   cross-table
+6. `logs/analysis_perf.jsonl` — performance from train_step timing blocks
+   (zero training intrusion): rollout / queue-wait% / prefill / decode /
+   throughput tok/s / optimize / retry-rate, at step and epoch granularity
 
 All analysis is **independent of training-data semantics** (no field-name or
-numeric assumptions), per user ruling.
+numeric assumptions — L3 semantic/numeric diagnosis is left to AI/humans
+working from the rollouts detail logs), per user ruling.
+
+## CLI Reference
+
+All commands are config-driven (§10.1): input-locating flags only, outputs
+are either printed or written to config-decided locations.
+
+- `graspo launch --config <yaml> [--smoke]` — training entry. `run.sh` is the
+  only supported launcher in production (auto GPU selection, `--ipc=host`,
+  mount inference); `--smoke` runs one step to verify the environment.
+- `graspo export --config <yaml>` — export a LoRA checkpoint
+  (`export.checkpoint_path` → `export.export_output` in `export_format`).
+- `graspo validate-reward --data <jsonl> [--limit N] [--completions <jsonl>]`
+  — score samples/reward-link check; prints per-sample scores, writes nothing.
+- `graspo evaluate-checkpoint --config <yaml> --data <jsonl>
+  [--checkpoint <dir>] [--limit N]` — generate rollout groups and score them;
+  writes `summary.json` + `completions.jsonl` to `<output_dir>/evaluate/`.
+- `graspo analyze-profile <run_dir>... [--skip-warmup-steps N]` — write six
+  analysis files (`analysis_profile.json` / `analysis_steps.jsonl` /
+  `analysis_epochs.json` / `analysis_errors.jsonl` /
+  `analysis_attribution.json` / `analysis_perf.jsonl`) into `<run_dir>/logs/`
+  and print only their paths.
+
+Run `graspo --help` for the full flag list.
 
 ## Data Format
 
@@ -410,7 +444,7 @@ v0.16-v0.19, see `.local/v19-collapse-root-cause-analysis-20260806.md`):
   fields, extra fields, typos, type mismatches; semantically-correct output
   (e.g. parameter order) does not.
 
-A 55-case test dataset (`tests/data/annotation_testset_v3.jsonl`, 34 tool_call +
+A 65-case test dataset (`tests/data/annotation_testset_v3.jsonl`, 44 tool_call +
 21 JSON) covers perfect outputs, value errors, lead text, typos, duplicate
 tags, extra/missing fields, order swaps, truncation, gibberish, think mode,
 nested structures, and truncation combinations, with per-case expected
@@ -475,22 +509,32 @@ training.
 - `content_reward_weight`: reward for structured content match.
 - `anti_useless_str_reward_weight`: bonus/penalty weight for extra text.
 - `anti_useless_str_half_reward_len`: length scale for extra-text penalty.
+- `numeric_tolerance`: relative numeric error tolerance for full marks
+  (default 0.2).
 
 ### `training`
 
-- `output_dir`: run output directory.
+- `output_dir`: run output directory; when empty, derived as
+  `outputs/<run_name>` from an auto-generated timestamp-based `run_name`.
+- `run_name`: optional run name (default auto-generated).
 - `seed`: random seed.
 - `max_epochs`: full dataset training epochs. Production default is
   `100`.
 - `max_steps`: optional step cap for smoke/debug runs. `-1` means no cap.
 - `rollout_group_size`: completions sampled per prompt.
+- `rollout_queue_batch_size`: prompts fetched from the rollout queue per step
+  (default 8); drives the replay buffer threshold together with
+  `rollout_group_size`.
 - `optimize_prompt_batch_size`: prompts scheduled together for one optimize
-  step; replay buffer threshold is `optimize_prompt_batch_size × rollout_group_size`.
+  step; replay buffer threshold is `rollout_queue_batch_size × rollout_group_size`.
 - `rollout_max_retries`: retry budget after the initial rollout attempt.
 - `learning_rate`, `weight_decay`, `max_grad_norm`: optimizer settings.
 - `policy_ratio_clip_eps`: clipped policy-ratio objective epsilon.
 - `max_new_tokens`: real training generation length. Keep
   `training.max_new_tokens=2048`.
+- `lr_scheduler`: `type` (`constant`/`cosine`/`linear`), `warmup_steps`,
+  `min_lr_ratio`. When `type` is not `constant`, `max_steps` must be set
+  to a positive value.
 - `temperature`, `top_p`: rollout sampling settings.
 - `save_steps`: native checkpoint interval. `-1` (default) disables per-step
   checkpoints, leaving only epoch checkpoints.
@@ -503,13 +547,15 @@ training.
 - `resume_from_checkpoint`: recoverable GRASPO native checkpoint directory.
 
 `training.replay_buffer_optimize_threshold` is derived as
-`optimize_prompt_batch_size * rollout_group_size` and must not be configured.
+`rollout_queue_batch_size * rollout_group_size` (default 8 × 8 = 64 completions) and must not be configured.
 `training.resume_from_checkpoint` and `lora.adapter_path` are mutually
 exclusive: resume restores native checkpoint state, while PEFT adapter loading
 is only a LoRA warm-start.
 
 ### `graspoflow`
 
+- `adapter`: model adapter path (default
+  `graspo.flow.adapters.models.qwen35_36.adapter:Qwen35Adapter`).
 - `tp_size`: TP size (default 2).
 - `pp_size`: PP size (default 1).
 - `placement_strategy`: placement policy such as `qwen3_tp` or

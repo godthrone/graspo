@@ -47,7 +47,7 @@ bash run.sh my_config.yaml --smoke
 bash run.sh my_config.yaml --gpus 4,5
 
 # 5. 指定镜像版本（默认从 git describe 自动推导）
-bash run.sh my_config.yaml --image graspo:v0.17.0
+bash run.sh my_config.yaml --image graspo:v0.22.0
 ```
 
 `run.sh` 是防呆设计：
@@ -98,7 +98,7 @@ IMAGE_NAME=graspo:test bash docker/build.sh
 
 ### 本地安装（开发用）
 
-推荐 Python 3.11。
+要求 Python 3.11 或 3.12（`>=3.11,<3.13`）。
 
 ```bash
 git clone https://github.com/godthrone/graspo.git
@@ -143,7 +143,7 @@ cp samples/configs/sft_example.yaml my_sft.yaml
 
 - `train_method: sft` — 切换到监督微调，而非 RL；
 - `forward_batch_size` 作为 micro-batch size；
-- `optimize_iterations_per_step` 作为梯度累积步数；
+- GRPO 优化每次训练步只执行一次 pass（无梯度累积迭代）；
 - `max_prompt_length` 是完整序列长度（prompt + response）；
 - `learning_rate` 通常比 RL 高（如 `5e-5` vs `5e-6`）；
 - `reward` 配置段在 SFT 中被忽略。
@@ -181,19 +181,51 @@ uv run graspo evaluate-checkpoint --config my_config.yaml \
 uv run graspo analyze-profile outputs/my_run
 ```
 
-除性能/最新步汇总外，`analyze-profile`（v0.21.1+）对每个 run 目录产出
-**三份分析文件**：
-1. `logs/analysis_profile.json` — 性能/timing/最新步汇总
-2. `logs/analysis_attribution.json` — rollout 归因：not_correct 组原因分类
+除运行汇总外，`analyze-profile`（v0.22+）对每个 run 目录产出
+**六份分析文件**（CLI 只打印文件路径，不打印数据表格）：
+1. `logs/analysis_profile.json` — 性能/timing/最新步窗口汇总
+2. `logs/analysis_steps.jsonl` — step 粒度训练进度：样本区间
+   （samples_start/end，同 epoch 内差分）、终结决策计数
+   （perfect/invalid/no_gap/mc/nc）、mc_ratio、reward/content/loss 均值、
+   retry_rate、告警分类计数、墙钟耗时
+3. `logs/analysis_epochs.json` — 同一度量元组的 epoch 粒度（loss_mean 与
+   alarms 由分析端从 train_step 事件聚合补齐）
+4. `logs/analysis_errors.jsonl` — completion 级互斥错误原因（L1 格式层：
+   no_tool_call / malformed_xml / missing_param / multi_call / other_parse；
+   L2 匹配层：tool_mismatch / param_name_mismatch / param_value_mismatch；
+   ok / other），step 与 epoch 双粒度，带去重样本引用可回溯
+5. `logs/analysis_attribution.json` — 组级归因：not_correct 组原因分类
    （tool_mismatch / content_all_wrong / format_shortfall）、工具名/参数
-   匹配趋势（按 step）、决策 × 匹配交叉表、completion 格式错误类型分布
-   （按 epoch；multi_call 须数 `<tool_call>` 标签——reward 层的
-   "too many tool calls" 对 parser 重解析不可见）
-3. `logs/analysis_epochs.json` — epoch 级聚合（epoch_summary 事件：
-   终结决策、mc_ratio、reward/content 趋势）
+   匹配趋势（按 step）、决策 × 匹配交叉表
+6. `logs/analysis_perf.jsonl` — 性能统计（只聚合 train_step timing 块，
+   零训练侵入）：rollout / 队列等待% / prefill / decode / 吞吐 tok/s /
+   optimize / retry 占比，step 与 epoch 双粒度
 
-全部为**与训练数据内容无关**的结构级分析（不假设字段名/数值语义，
-用户裁定），供脚本消费。
+全部为**与训练数据内容无关**的结构级分析（不假设字段名/数值语义——
+L3 语义/数值层诊断由 AI/人工基于 rollouts 详表离线统计，用户裁定），
+供脚本消费。
+
+## CLI 参考
+
+所有命令均为配置驱动（§10.1）：只接受输入定位参数，输出要么打印、
+要么写入 config 决定的位置。
+
+- `graspo launch --config <yaml> [--smoke]` — 训练入口。生产环境唯一受支持
+  的启动方式是 `run.sh`（自动选 GPU、`--ipc=host`、挂载推导）；
+  `--smoke` 跑 1 步验证环境。
+- `graspo export --config <yaml>` — 导出 LoRA checkpoint
+  （`export.checkpoint_path` → `export.export_output`，格式 `export_format`）。
+- `graspo validate-reward --data <jsonl> [--limit N] [--completions <jsonl>]`
+  — 校验 reward 评分链路；逐样本打印分数，不落盘。
+- `graspo evaluate-checkpoint --config <yaml> --data <jsonl>
+  [--checkpoint <dir>] [--limit N]` — 生成 rollout groups 并评分；
+  写入 `<output_dir>/evaluate/summary.json` + `completions.jsonl`。
+- `graspo analyze-profile <run_dir>... [--skip-warmup-steps N]` — 向
+  `<run_dir>/logs/` 写入六份分析文件（`analysis_profile.json` /
+  `analysis_steps.jsonl` / `analysis_epochs.json` / `analysis_errors.jsonl` /
+  `analysis_attribution.json` / `analysis_perf.jsonl`），只打印文件路径。
+
+完整参数列表见 `graspo --help`。
 
 ## 数据格式
 
@@ -303,7 +335,7 @@ rollout 完成后，每条 completion 会被**逐字符标注**结构角色（`C
 - **tool call 参数无序集合匹配**：参数顺序颠倒不是错误（JSON 对象语义）；GT 参数缺失或多余参数是错误（期望缺失 `<parameter=NAME>` 与实际输出比对定位 E）
 - **与 reward 层语义一致**：只有语义错误标 E——缺字段/多余字段/拼错/类型错；语义正确不标（如参数顺序）
 
-55 条测试数据集（`tests/data/annotation_testset_v3.jsonl`，tool call 34 + JSON 21）覆盖完美输出/值错误/前导文本/拼错/双开标记/多余字段/缺字段/顺序颠倒/截断/乱码/think/嵌套结构等场景，每条含期望标注，经独立 agent 核验。`tests/data/generate_annotation_viewer.py` 生成 HTML 逐字符着色视图供人工检查。
+65 条测试数据集（`tests/data/annotation_testset_v3.jsonl`，tool call 44 + JSON 21）覆盖完美输出/值错误/前导文本/拼错/双开标记/多余字段/缺字段/顺序颠倒/截断/乱码/think/嵌套结构等场景，每条含期望标注，经独立 agent 核验。`tests/data/generate_annotation_viewer.py` 生成 HTML 逐字符着色视图供人工检查。
 
 ## 配置说明
 
@@ -357,21 +389,27 @@ rollout 完成后，每条 completion 会被**逐字符标注**结构角色（`C
 - `content_reward_weight`：结构化内容匹配 reward 权重。
 - `anti_useless_str_reward_weight`：多余文本惩罚/奖励权重。
 - `anti_useless_str_half_reward_len`：多余文本惩罚长度尺度。
+- `numeric_tolerance`：数值相对误差容差（满分阈值，默认 0.2）。
 
 ### `training`
 
-- `output_dir`：run 输出目录。
+- `output_dir`：run 输出目录；为空时由自动生成的时间戳 `run_name`
+  推导为 `outputs/<run_name>`。
+- `run_name`：可选 run 名（默认自动生成）。
 - `seed`：随机种子。
 - `max_epochs`：完整数据集训练轮数；生产默认 `100`。
 - `max_steps`：短测/debug step 上限；`-1` 表示不限制。
 - `rollout_group_size`：每个 prompt attempt 采样多少条 completion。
+- `rollout_queue_batch_size`：每个 step 从 rollout queue 取多少 prompt（默认 8）；
+  与 `rollout_group_size` 共同决定 replay buffer threshold。
 - `optimize_prompt_batch_size`：每个 optimizer step 的 prompt 数量；
-  replay buffer threshold = `optimize_prompt_batch_size × rollout_group_size`。
-- GRPO 优化每次训练步只执行一次 pass（无梯度累积迭代）。
+  replay buffer threshold = `rollout_queue_batch_size × rollout_group_size`。
 - `rollout_max_retries`：初始 rollout 后的 retry 预算。
 - `learning_rate`、`weight_decay`、`max_grad_norm`：optimizer 设置。
 - `policy_ratio_clip_eps`：policy-ratio clipped objective epsilon。
 - `max_new_tokens`：真实训练生成长度；保持 `training.max_new_tokens=2048`。
+- `lr_scheduler`：`type`（`constant`/`cosine`/`linear`）、`warmup_steps`、
+  `min_lr_ratio`。`type` 非 `constant` 时 `max_steps` 必须为正数。
 - `temperature`、`top_p`：rollout sampling 设置。
 - `save_steps`：native checkpoint 间隔。`-1`（默认）禁用 step 级别 checkpoint，仅保留 epoch checkpoint。
 - `save_checkpoint_every_epoch`：每个 epoch 结束时保存可恢复 checkpoint（默认 `true`）。生产训练推荐保持开启。
@@ -379,10 +417,12 @@ rollout 完成后，每条 completion 会被**逐字符标注**结构角色（`C
 - `reject_unparseable_groups`：默认 true，当最好 completion 有 parse error 或 tool-call count mismatch 时，group 会被 retry 或丢弃，不参与训练。
 - `resume_from_checkpoint`：可恢复 GRASPO native checkpoint 目录。
 
-`training.replay_buffer_optimize_threshold` 由 `optimize_prompt_batch_size * rollout_group_size` 派生，不能手动配置。`training.resume_from_checkpoint` 和 `lora.adapter_path` 互斥：前者恢复 native checkpoint 状态，后者只是 PEFT/GRASPO-PEFT LoRA warm-start。
+`training.replay_buffer_optimize_threshold` 由 `rollout_queue_batch_size * rollout_group_size` 派生（默认 8 × 8 = 64 条 completion），不能手动配置。`training.resume_from_checkpoint` 和 `lora.adapter_path` 互斥：前者恢复 native checkpoint 状态，后者只是 PEFT/GRASPO-PEFT LoRA warm-start。
 
 ### `graspoflow`
 
+- `adapter`：模型适配器路径（默认
+  `graspo.flow.adapters.models.qwen35_36.adapter:Qwen35Adapter`）。
 - `tp_size`：TP size（默认 2）。
 - `pp_size`：PP size（默认 1）。
 - `placement_strategy`：placement 策略，例如 `qwen3_tp` 或 `qwen36_pp8_static`（默认 `auto`）。
@@ -409,7 +449,6 @@ rollout 完成后，每条 completion 会被**逐字符标注**结构角色（`C
 - `nproc_per_node`：当前节点 worker 数；为空时从 TP * PP / nodes 派生。
 - `nnodes`、`node_rank`、`master_addr`、`master_port`：distributed launch 设置。
 - `python`：可选 Python executable override。
-- `env`：传给训练进程的额外环境变量。
 
 ## LoRA Targets
 

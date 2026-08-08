@@ -27,13 +27,17 @@ Layer 0 是整个系统的基石，完全不知道模型、训练目标或层的
 
 **ComputeOperator** — 流水线中的一个计算阶段。绑定一个输入 buffer 和一个输出 buffer，封装 forward 和 backward 方法。算子不知道自己处理的是哪个模型层——它只从 buffer 取数据、计算、写回 buffer。
 
-**PipelineScheduler** — 抽象调度策略，接收 micro-batch 列表和流水线拓扑，产出有序执行计划。两种实现：
-- `GPipeScheduler`：所有 forward 先于 backward，简单但显存峰值高
-- `OneFOneBScheduler`：预热后交替执行 forward/backward，每个 micro-batch 被一个 forward 和一个 backward 覆盖，显存更均衡
+**PipelineScheduler** — 抽象调度策略，接收 micro-batch 列表和流水线拓扑，产出有序执行计划。注册表（`schedule.py`）四种实现：
+- `simple`（GPipeScheduler）：所有 forward 先于 backward，简单但显存峰值高
+- `one_f_one_b`（OneFOneBScheduler）：预热后交替执行 forward/backward，每个 micro-batch 被一个 forward 和一个 backward 覆盖，显存更均衡
+- `1f1b`：`one_f_one_b` 的别名
+- `async_1f1b`（AsyncOneFOneBScheduler）：异步 1F1B，实验性
 
 **PipelineGraph** — 流水线物理拓扑：依次连接的 `ComputeOperator` 节点 + 转发 `OpBuffer`。通过 `max_inflight_microbatches` 限制同时飞行的 batch 数，控制显存峰值。
 
-**Memory budget** — `MemoryBudget` 类根据激活值估算和 KV cache 估算计算单阶段可安全容纳的最大 micro-batch 数。`_kv_cache_batch_fits_budget` 比较 `max(kv_bytes, act_bytes × 1.5)` 与 GPU 空闲显存。
+**Memory budget** — `flow/memory.py` 的 `estimate_per_microbatch_activation_bytes` /
+`compute_max_inflight` 按激活值与 KV cache 估算单阶段可安全容纳的最大 in-flight
+micro-batch 数，由 `scheduling/optimize_pipeline.py` 消费。
 
 ### Layer 1：通用 Transformer 适配
 
@@ -56,7 +60,8 @@ Layer 0 是整个系统的基石，完全不知道模型、训练目标或层的
 - 管理模型 sharding 和 placement plan
 - 提供 `generate_group` / `train_batch` / `train_batch_sft` 等高层接口
 
-**GraspoFlowTrainer** — RL 训练循环主类。通过 mixin 组合：`RolloutMixin`（生成+打分）、`OptimizeMixin`（优化步骤）、`CheckpointMixin`（保存恢复）、`stats.py`（统计追踪）。训练主循环：
+**GraspoFlowTrainer** — RL 训练循环主类。通过 mixin 组合：`RolloutMixin`（生成+打分）、`OptimizeMixin`（优化步骤）、`CheckpointMixin`（保存恢复）、`stats.py`（统计追踪——实为
+`ripple/monitoring/stats.py` 的 `GraspoFlowTrainStats`）。训练主循环：
 1. 从 ReplayBuffer 或 DataLoader 获取 prompt batch
 2. Rollout：对每个 prompt 采样 `rollout_group_size` 个 completion
 3. 打分：`GraspoReward.score()` 计算每个 completion 的 reward
@@ -71,13 +76,13 @@ Layer 0 是整个系统的基石，完全不知道模型、训练目标或层的
 
 ### Layer 3：模型族
 
-每个模型族在 `models/` 下有独立目录，包含：
-- `adapter.py` — TransformerAdapter 子类，提供模型特定的初始化和配置
+每个模型族在 `models/` 下有独立目录（如 `qwen3/`、`qwen35_36/`），通常包含：
+- `adapter.py` — TransformerAdapter 子类（主类 + 模板方法骨架）
 - `model.py` — 模型定义（causal LM wrapper）
-- `layers.py` — re-export shim（从 `common/layers*.py` 导入）
-- `config.py` — 模型族特定的配置解析
 - `ops.py` — 模型特定的算子
-- `generation.py` / `logprobs.py` / `training.py` — 模型特定的方法
+
+公共层实现在 `models/common/`（`layers.py`/`layers_qwen3.py`、
+`native_qwen_config.py`），按模型族拆分以避免单文件过大（职责内聚）。
 
 公共层实现在 `models/common/layers.py`（Qwen3.5/3.6 族）和 `layers_qwen3.py`（Qwen3 族），按模型族拆分以避免单文件过大（职责内聚）。
 

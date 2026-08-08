@@ -49,6 +49,7 @@ training:
   output_dir: ""                      # Auto-generated outputs/sft_<timestamp>
   seed: 42
   max_epochs: 20                      # SFT typically needs fewer epochs than RL
+  max_steps: 1000                     # Required >0 when lr_scheduler.type != constant
   learning_rate: 5.0e-5               # SFT LR (higher than RL's 5e-6~5e-7)
   weight_decay: 0.01
   max_grad_norm: 1.0
