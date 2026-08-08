@@ -6,13 +6,14 @@ GRASPO 是一个 GRPO 风格的 LoRA 强化学习训练器，面向结构化输�
 
 | 特性 | 说明 |
 |------|------|
+| **字符级标注驱动 token 级 reward** | 逐字符比对结构模板，通过 offset_mapping 映射到 token——天然 tokenizer 无关。仅首个不匹配字符受罚，其后排除在训练之外 |
+| **结构化输出专用 reward** | 递归 dict 比较，双分数（数值精度用于梯度，结构正确用于门控），多目标最优匹配 |
+| **组决策体系与防御纵深** | 六路分类（perfect_skip/trainable/invalid/retry/no_preference_gap）在训练边界拦截噪声，质量加权 advantage 防止收敛到"差组里最好" |
 | **RL+SFT 同构** | 同一套 JSONL 数据格式、同一套模型加载、同一套 checkpoint 格式。SFT 教格式，RL 优质量 |
 | **ripple/flow 分层** | 算法层（ripple）纯计算，零设施依赖，可 CPU 单测；设施层（flow）负责分布式执行 |
+| **单卡到 TP+PP** | 统一 GraspoFlow 后端，Flink 风格调度，`pp=1,tp=1` 单卡到 `pp=M,tp=N` 混合并行，同配置切换 |
 | **插件化模型适配** | ABC 模板方法 + 注册表，新增模型族只需定义子类并注册，零侵入现有代码 |
 | **多模态训练** | 图像+文本联合训练，三层防线防止静默丢图，SFT/RL 双路径编码对齐 |
-| **Token 级标注与 reward** | 字符级结构标注（CharTag），token 级 advantage 派生，天然 tokenizer 无关 |
-| **组决策体系** | 六种 group 决策（perfect_skip/trainable/retry/invalid），自动过滤无训练价值样本 |
-| **单卡到 TP+PP** | 统一 GraspoFlow 后端，`pp=1,tp=1` 单卡到 `pp=M,tp=N` 混合并行，同配置切换 |
 
 ## 三层架构
 

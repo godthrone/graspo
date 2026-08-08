@@ -147,9 +147,8 @@ def test_only_readmes_are_tracked_markdown_docs():
         "README.md",
         "README.zh-CN.md",
         "docs/architecture.md",
-        "docs/graspoflow.md",
-        "docs/multimodal.md",
-        "docs/training_methodology.md",
+        "docs/flow.md",
+        "docs/ripple.md",
     }
 
 

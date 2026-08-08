@@ -2,23 +2,27 @@
 
 [English README](README.md)
 
-GRASPO 是一个面向结构化输出任务的 GRPO-style 强化学习训练器，适合 JSON 生成、信息抽取、分类、表单解析和工具调用参数生成等可以自动校验答案的场景。它面向基于 LoRA 的低成本训练：冻结 base model，只训练紧凑 LoRA adapter，用可审计的 reward 规则从真实生成文本里判断好坏。
+GRASPO 是一个面向结构化输出任务的 GRPO-style 强化学习训练器，适合 JSON 生成、
+信息抽取、工具调用等可以自动校验答案的场景。LoRA-only：单张 80 GB GPU 可训 9B
+级别模型。
 
-内置 reward 会检查必要输出标记，解析 fenced JSON 或 tool-call 内容，将结构化字段和 `targets` 对齐比较，再转成 GRASPO 需要的组内偏好信号。使用 LoRA/native memory-aware 路径时，GRASPO 的目标是支持单张 80 GB GPU 对 9B 级别模型做强化学习训练。
+**结构化输出 RL 的三层防御纵深，从 token 信号到组决策：**
 
-GRASPO 的训练主线是：
+- **字符级标注驱动 token 级 reward。** 对 completion 文本逐字符比对结构模板进行标注，
+  通过 offset_mapping 映射到 token——天然 tokenizer 无关。仅首个不匹配字符受罚，
+  其后所有字符排除在训练之外。
+- **结构化输出专用 reward。** 递归 dict 比较，双分数（数值精度用于梯度信号，结构正确
+  用于门控），多目标最优匹配，数值容差。
+- **组决策体系与防御纵深。** 六路分类（perfect_skip / trainable / invalid / retry /
+  no_preference_gap）在训练边界拦截噪声。质量加权 advantage 防止模型收敛到"差组里最好"。
 
-- 同一条 prompt/context 采样多条 completion，并在组内比较 reward；
-- 低质量 rollout group 自动 retry；
-- 已经稳定答对的 prompt 可以 perfect-skip，避免浪费 optimizer budget；
-- 格式损坏的 group 会被过滤：当最好 completion 有 parse error 或 tool-call count mismatch 时，group 会被 retry 或丢弃，不参与训练；
-- 没有 reward 方差或没有偏好差异的 group 会被过滤；
-- ReplayBuffer 保存 completion-level experience；
-- readable 日志保留真实 messages、completion、reward 和 debug 细节；
-- 生产训练只使用自研 GraspoFlow TP/PP LoRA 路径；
-- 只支持 LoRA 训练，不支持全参数训练。
+**面向生产的基础设施：**
 
-训练内部使用 native TP/PP LoRA modules。PEFT 只作为外部兼容格式，用于 warm-start 导入和离线导出。
+- SFT → RL 统一管道：同一数据格式、同一模型加载、同一 checkpoint 格式。
+- GraspoFlow 后端：Flink 风格调度，单卡、TP、PP、TP+PP 同配置切换。
+- 插件化模型适配器：ABC 契约，新模型族零侵入现有代码。
+- 多模态训练：三层契约防线防止静默丢图。
+- ReplayBuffer、可读 rollout 日志、内置 `analyze-profile` 分析工具。
 
 ## 快速开始
 

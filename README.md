@@ -2,36 +2,36 @@
 
 [中文说明](README.zh-CN.md)
 
-GRASPO is a GRPO-style reinforcement-learning trainer for language-model tasks
-whose answers can be checked structurally, such as JSON generation, information
-extraction, classification, form parsing, and tool-call argument generation.
-It is designed for low-cost LoRA-based structured-output training: keep the base
-model frozen, train only compact LoRA adapters, and use reward rules that can be
-audited from the generated text.
-The built-in reward checks required markers, parses fenced JSON or tool-call
-payloads, compares structured fields against `targets`, and turns the result
-into group-level preference signals for GRASPO.
+GRASPO is a GRPO-style reinforcement-learning trainer purpose-built for
+structured-output LLM tasks: JSON generation, information extraction, tool
+calling, and any task whose answers can be checked structurally.  LoRA-only:
+train 9B-class models on a single 80 GB GPU.
 
-GRASPO keeps the useful GRPO idea of comparing multiple completions for the same
-prompt, then adds production-oriented behavior for structured outputs:
+**Three layers of structured-output RL, from token signal to group decision:**
 
-- practical RL fine-tuning for 9B-class models on a single 80 GB GPU when using
-  the LoRA/native memory-aware path;
-- rollout retry when a group is too weak to train on;
-- perfect-answer skip so solved prompts do not consume optimizer budget;
-- format-broken group filtering: when the best completion has parse errors or
-  tool-call count mismatch, the group is retried or discarded instead of
-  training on broken output;
-- invalid and no-preference-gap filtering for groups with no useful reward
-  signal;
-- completion-level ReplayBuffer optimization;
-- readable reward/debug logs that preserve real model outputs for inspection;
-- self-owned GraspoFlow training with tensor parallel and pipeline placement;
-- LoRA-only training with frozen base weights.
+- **Token-level reward via character annotation.** Completion text is annotated
+  character-by-character against a structural template, then mapped to tokens
+  through offset_mapping — naturally tokenizer-agnostic.  Only the first
+  mismatched character is penalized; everything after it is excluded from training.
+- **Structured-output reward.**  Recursive dict comparison with dual scoring
+  (numeric accuracy for gradient signal, structural correctness for gating),
+  multi-target best-match selection, and numeric tolerance.
+- **Group decision with defense-in-depth.**  Six-way classification
+  (perfect_skip / trainable / invalid / retry / no_preference_gap) filters
+  noisy groups before they enter training.  Quality-weighted advantage
+  prevents the model from converging to "best in a bad group."
 
-The production training path uses native TP/PP LoRA modules. PEFT is treated as
-an external compatibility format for warm-start import and offline export. Full
-parameter training is not supported in v1.
+**Infrastructure designed for production:**
+
+- SFT → RL unified pipeline: same data format, same model loading, same
+  checkpoint format.
+- GraspoFlow backend: Flink-inspired scheduling unifies single-GPU, TP, PP,
+  and TP+PP in a single configuration switch.
+- Pluggable model adapters with ABC contracts: new model families require
+  zero changes to existing code.
+- Multimodal training with three-layer contract-based defense against silent
+  image dropout.
+- ReplayBuffer, readable rollout logs, and built-in `analyze-profile` tooling.
 
 ## Quick Start
 
