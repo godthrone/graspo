@@ -17,8 +17,9 @@ from typing import Any
 from graspo.cli.analysis import (
     analyze_attribution,
     analyze_epochs,
-    print_attribution,
-    print_epochs,
+    analyze_errors,
+    analyze_perf,
+    analyze_steps,
 )
 from graspo.core.schema import GraspoConfig, Sample
 from graspo.flow.runtime import GraspoFlowRuntime
@@ -330,44 +331,45 @@ def summarize_run(run_dir: Path, *, skip_warmup_steps: int = 1) -> dict[str, Any
     }
 
 
-def run_analyze(run_dirs: list[str], *, skip_warmup_steps: int = 1, as_json: bool = False) -> None:
-    """analyze-profile 命令核心：汇总多个运行目录并打印。
+def run_analyze(run_dirs: list[str], *, skip_warmup_steps: int = 1) -> None:
+    """analyze-profile 命令核心：汇总多个运行目录并落盘分析文件。
 
-    对每个 run 目录产出三份分析文件（logs/ 下）：
-    1. ``analysis_profile.json`` — 性能/timing/最新步汇总
-    2. ``analysis_attribution.json`` — rollout 归因（not_correct 分类/趋势/交叉表）
-    3. ``analysis_epochs.json`` — epoch 级聚合（epoch_summary 事件）
+    **CLI 只打印落盘位置，不打印具体数据**（用户裁定：表格明细进文件，
+    终端打印 2000+ 行无法阅读）。对每个 run 目录产出六份分析文件（logs/ 下）：
+
+    1. ``analysis_profile.json``  — 性能/timing/最新步窗口汇总（向后兼容）
+    2. ``analysis_steps.jsonl``   — 训练进度表 step 粒度（每行一个 train_step，
+       含样本区间/决策/质量/告警——JSONL 供分析端 tail/head 截取）
+    3. ``analysis_epochs.json``   — 训练进度表 epoch 粒度（loss_mean/alarms/
+       样本区间由分析端聚合补齐）
+    4. ``analysis_errors.jsonl``  — 错误原因表（completion 级互斥分类
+       L1+L2+other，step/epoch 双粒度，带样本引用）
+    5. ``analysis_perf.jsonl``    — 性能表（timing 块聚合，step/epoch 双粒度）
 
     归因与 epoch 聚合均为与训练数据内容无关的结构级分析
     （见 ``analysis.analyze_attribution`` / ``analysis.analyze_epochs``）。
     """
-    summaries = [
-        summarize_run(Path(path), skip_warmup_steps=skip_warmup_steps) for path in run_dirs
-    ]
-    attributions: list[dict[str, Any]] = []
-    epochs_list: list[dict[str, Any]] = []
     for path in run_dirs:
         run_dir = Path(path)
-        attr = analyze_attribution(run_dir)
-        epochs = analyze_epochs(run_dir)
-        attributions.append(attr)
-        epochs_list.append(epochs)
-        profile = summaries[len(attributions) - 1]
+        profile = summarize_run(run_dir, skip_warmup_steps=skip_warmup_steps)
         _write_json_file(run_dir / "logs" / "analysis_profile.json", profile)
-        _write_json_file(run_dir / "logs" / "analysis_attribution.json", attr)
-        _write_json_file(run_dir / "logs" / "analysis_epochs.json", epochs)
-    if as_json:
-        payload = [
-            {**summary, "attribution": attr, "epochs": epochs}
-            for summary, attr, epochs in zip(summaries, attributions, epochs_list, strict=True)
-        ]
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
-    else:
-        print_table(summaries)
-        for epochs in epochs_list:
-            print_epochs(epochs)
-        for attr in attributions:
-            print_attribution(attr)
+        _write_jsonl_file(
+            run_dir / "logs" / "analysis_steps.jsonl", analyze_steps(run_dir), "steps"
+        )
+        _write_json_file(run_dir / "logs" / "analysis_epochs.json", analyze_epochs(run_dir))
+        _write_json_file(
+            run_dir / "logs" / "analysis_attribution.json", analyze_attribution(run_dir)
+        )
+        _write_jsonl_file(
+            run_dir / "logs" / "analysis_errors.jsonl",
+            analyze_errors(run_dir),
+            ("by_step", "by_epoch"),
+        )
+        _write_jsonl_file(
+            run_dir / "logs" / "analysis_perf.jsonl",
+            analyze_perf(run_dir),
+            ("by_step", "by_epoch"),
+        )
 
 
 def _write_json_file(path: Path, data: dict[str, Any]) -> None:
@@ -381,37 +383,23 @@ def _write_json_file(path: Path, data: dict[str, Any]) -> None:
     print(f"[analysis] written: {path}")
 
 
-def print_table(summaries: list[dict[str, Any]]) -> None:
-    headers = [
-        "run",
-        "steps",
-        "reward",
-        "total_s",
-        "rollout_s",
-        "opt_s",
-        "decode_tok_s",
-        "groups_h",
-        "gpu_util",
-        "gpu_peak_gib",
-    ]
-    print(" | ".join(headers))
-    print(" | ".join("-" * len(item) for item in headers))
-    for summary in summaries:
-        timing = summary.get("timing_mean") or {}
-        gpu_util, gpu_peak_gib = _gpu_rollup(summary.get("gpu") or {})
-        values = [
-            summary.get("name"),
-            f"{summary.get('measured_step_count')}/{summary.get('step_count')}",
-            _fmt(summary.get("latest_reward_mean")),
-            _fmt(timing.get("total_observed_sec")),
-            _fmt(timing.get("rollout_total_sec")),
-            _fmt(timing.get("optimize_sec")),
-            _fmt(summary.get("decode_tokens_per_sec")),
-            _fmt(summary.get("trainable_groups_per_hour")),
-            _fmt(gpu_util),
-            _fmt(gpu_peak_gib),
-        ]
-        print(" | ".join(str(item) for item in values))
+def _write_jsonl_file(
+    path: Path,
+    data: dict[str, Any],
+    keys: str | tuple[str, ...],
+) -> None:
+    """流式落盘 JSONL 分析文件（step 粒度明细，行结构即 schema）。
+
+    把 ``data`` 中名为 keys 的一个或多个列表段逐行写入；不可用时不落盘。
+    """
+    if not data.get("available", True):
+        return
+    names = (keys,) if isinstance(keys, str) else keys
+    with path.open("w", encoding="utf-8") as fh:
+        for name in names:
+            for row in data.get(name, []):
+                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    print(f"[analysis] written: {path}")
 
 
 def _read_train_steps(run_dir: Path) -> list[dict[str, Any]]:

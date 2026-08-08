@@ -13,7 +13,13 @@ from pathlib import Path
 
 import pytest
 
-from graspo.cli.analysis import analyze_attribution, analyze_epochs
+from graspo.cli.analysis import (
+    analyze_attribution,
+    analyze_epochs,
+    analyze_errors,
+    analyze_perf,
+    analyze_steps,
+)
 
 
 def _tool_call_completion(name: str, params: dict[str, str]) -> str:
@@ -32,11 +38,13 @@ def _record(
     target_fn: str = "extend_arm",
     target_args: dict | None = None,
     attempt_number: int = 1,
+    epoch: int = 0,
 ) -> dict:
     return {
         "event": "graspo_group",
         "sample_index": sample_index,
         "step": step,
+        "epoch": epoch,
         "decision": decision,
         "attempt_number": attempt_number,
         "max_attempts": 6,
@@ -507,3 +515,370 @@ class TestErrorClassification:
         errors = attr["error_types_by_epoch"]
         assert errors["1"]["ok"] == 6
         assert errors["1"]["other_parse"] == 2
+
+
+# ── 四表重构：step 进度 / 错误原因 / 性能 ────────────────────────────────────
+
+
+def _write_events(run_dir: Path, events: list[dict]) -> None:
+    """写入 events.jsonl（train_step / epoch_summary 事件的测试构造）。"""
+    path = run_dir / "logs" / "events.jsonl"
+    with path.open("w", encoding="utf-8") as fh:
+        for ev in events:
+            fh.write(json.dumps(ev, ensure_ascii=False) + "\n")
+
+
+def _train_step(
+    step: int,
+    *,
+    epoch: int,
+    samples_seen: int,
+    ratio: float = 0.5,
+    mc: int = 4,
+    nc: int = 4,
+    invalid: int = 0,
+    retry: int = 0,
+    reward: float = 0.6,
+    content: float = 0.7,
+    loss: float = -0.5,
+    alarms: list[str] | None = None,
+    total_sec: float = 100.0,
+) -> dict:
+    """构造一条 train_step 事件（与训练侧写入结构一致）。"""
+    return {
+        "event": "train_step",
+        "step": step,
+        "epoch": epoch,
+        "run_cumulative": {"step": step},
+        "epoch_cumulative": {
+            "epoch": epoch,
+            "samples_seen": samples_seen,
+            "samples_total": 322,
+        },
+        "batch": {
+            "decisions": {
+                "rollout_attempts": {"total": retry + 8, "retry": retry, "terminal": 8},
+                "terminal": {
+                    "perfect_skip": 0,
+                    "trainable": mc + nc,
+                    "invalid": invalid,
+                    "invalid_no_preference_gap": 0,
+                    "total": 8,
+                },
+                "trainable": {
+                    "max_correct": mc,
+                    "not_correct": nc,
+                    "total": mc + nc,
+                    "ratio": ratio,
+                },
+            },
+            "reward": {"mean": reward},
+            "content": {"mean": content},
+        },
+        "optimize": {"loss_mean": loss},
+        "health": {"ok": not alarms, "reasons": alarms or []},
+        "timing": {
+            "total_observed_sec": total_sec,
+            "rollout_total_sec": 40.0,
+            "rollout_queue_sec": 30.0,
+            "prefill_sec": 10.0,
+            "decode_sec": 20.0,
+            "decode_tokens": 400,
+            "optimize_sec": 30.0,
+        },
+    }
+
+
+class TestAnalyzeSteps:
+    def test_sample_range_differential_within_epoch(self, run_dir: Path) -> None:
+        """同 epoch 内样本区间 = samples_seen 差分。"""
+        _write_events(
+            run_dir,
+            [
+                _train_step(1, epoch=0, samples_seen=8),
+                _train_step(2, epoch=0, samples_seen=16),
+            ],
+        )
+        res = analyze_steps(run_dir)
+        assert res["available"] is True
+        assert res["steps"][0]["samples_start"] == 0
+        assert res["steps"][0]["samples_end"] == 8
+        assert res["steps"][1]["samples_start"] == 8
+        assert res["steps"][1]["samples_end"] == 16
+
+    def test_sample_range_resets_at_epoch_boundary(self, run_dir: Path) -> None:
+        """epoch 切换时样本区间从 0 重新累计（步数≠进度，区间是锚点）。"""
+        _write_events(
+            run_dir,
+            [
+                _train_step(24, epoch=0, samples_seen=322),
+                _train_step(25, epoch=1, samples_seen=8),
+                _train_step(26, epoch=1, samples_seen=16),
+            ],
+        )
+        res = analyze_steps(run_dir)
+        assert res["steps"][0]["samples_start"] == 0
+        assert res["steps"][0]["samples_end"] == 322
+        assert res["steps"][1]["samples_start"] == 0
+        assert res["steps"][1]["samples_end"] == 8
+        assert res["steps"][2]["samples_start"] == 8
+
+    def test_metrics_and_alarms(self, run_dir: Path) -> None:
+        """决策计数/质量/告警分类计数正确透传。"""
+        _write_events(
+            run_dir,
+            [
+                _train_step(
+                    1,
+                    epoch=0,
+                    samples_seen=8,
+                    mc=1,
+                    nc=7,
+                    ratio=0.125,
+                    retry=6,
+                    invalid=1,
+                    reward=0.3,
+                    loss=-0.16,
+                    alarms=["batch_high_retry_rate", "batch_high_retry_rate"],
+                    total_sec=187.9,
+                )
+            ],
+        )
+        row = analyze_steps(run_dir)["steps"][0]
+        assert row["mc"] == 1 and row["nc"] == 7
+        assert row["mc_ratio"] == 0.125
+        assert row["invalid"] == 1
+        assert row["reward_mean"] == 0.3
+        assert row["loss_mean"] == -0.16
+        assert row["total_sec"] == 187.9
+        # retry_rate = retry/(retry+terminal_total) = 6/14
+        assert row["retry_rate"] == round(6 / 14, 4)
+        # 告警去重计数（同一原因出现两次记 2）
+        assert row["alarms"] == {"batch_high_retry_rate": 2}
+
+    def test_missing_events(self, run_dir: Path) -> None:
+        """events.jsonl 缺失 → available=False。"""
+        res = analyze_steps(run_dir)
+        assert res["available"] is False
+
+
+class TestAnalyzeErrors:
+    def test_l2_tool_mismatch(self, run_dir: Path) -> None:
+        """格式对但工具名错 → tool_mismatch（L2 细分，旧表给不出的信号）。"""
+        rec = _record(
+            sample_index=0,
+            step=1,
+            decision="trainable_not_correct",
+            completions=[
+                _tool_call_completion(
+                    "rotate_arm", {"action_type": "顺时针旋转", "angle_deg": "36.5"}
+                )
+                for _ in range(8)
+            ],
+            target_fn="extend_arm",
+            target_args={"action_type": "收缩手臂", "distance_cm": 6.1},
+        )
+        _write_readable(run_dir, [rec])
+        res = analyze_errors(run_dir)
+        assert res["available"] is True
+        assert res["by_step"][0]["category"] == "tool_mismatch"
+        assert res["by_step"][0]["count"] == 8
+        assert res["by_step"][0]["samples"] == [0]
+
+    def test_l2_param_name_mismatch(self, run_dir: Path) -> None:
+        """工具对但参数名集合不等 → param_name_mismatch（缺参数名）。"""
+        rec = _record(
+            sample_index=0,
+            step=1,
+            decision="trainable_not_correct",
+            completions=[
+                _tool_call_completion("extend_arm", {"action_type": "收缩手臂"}) for _ in range(8)
+            ],
+            target_fn="extend_arm",
+            target_args={"action_type": "收缩手臂", "distance_cm": 6.1},
+        )
+        _write_readable(run_dir, [rec])
+        res = analyze_errors(run_dir)
+        assert res["by_step"][0]["category"] == "param_name_mismatch"
+
+    def test_l2_param_value_mismatch(self, run_dir: Path) -> None:
+        """工具对、参数名对、值文本不等 → param_value_mismatch（字符串比较，不做数值误差）。"""
+        rec = _record(
+            sample_index=0,
+            step=1,
+            decision="trainable_not_correct",
+            completions=[
+                _tool_call_completion(
+                    "extend_arm", {"action_type": "收缩手臂", "distance_cm": "30.0"}
+                )
+                for _ in range(8)
+            ],
+            target_fn="extend_arm",
+            target_args={"action_type": "收缩手臂", "distance_cm": 6.1},
+        )
+        _write_readable(run_dir, [rec])
+        res = analyze_errors(run_dir)
+        assert res["by_step"][0]["category"] == "param_value_mismatch"
+
+    def test_l1_multi_call(self, run_dir: Path) -> None:
+        """双 tool_call → multi_call（L1，修复验证核心指标）。"""
+        rec = _record(
+            sample_index=0,
+            step=1,
+            decision="trainable_not_correct",
+            completions=[
+                _tool_call_completion("extend_arm", {"action_type": "收缩手臂"})
+                + _tool_call_completion("rotate_arm", {"angle_deg": "10"})
+                for _ in range(8)
+            ],
+            target_fn="extend_arm",
+            target_args={"action_type": "收缩手臂", "distance_cm": 6.1},
+        )
+        _write_readable(run_dir, [rec])
+        res = analyze_errors(run_dir)
+        assert res["by_step"][0]["category"] == "multi_call"
+
+    def test_ok_and_other(self, run_dir: Path) -> None:
+        """全对 → ok；无 targets 记录 → other。"""
+        ok = _tool_call_completion("extend_arm", {"action_type": "收缩手臂", "distance_cm": "6.1"})
+        recs = [
+            _record(
+                sample_index=0,
+                step=1,
+                decision="trainable_max_correct",
+                completions=[ok for _ in range(8)],
+                target_fn="extend_arm",
+                target_args={"action_type": "收缩手臂", "distance_cm": 6.1},
+            ),
+            {
+                "event": "graspo_group",
+                "sample_index": 1,
+                "step": 1,
+                "decision": "trainable_not_correct",
+                "targets": [],
+                "completions": [{"idx": 0, "completion": "plain text"}],
+            },
+        ]
+        _write_readable(run_dir, recs)
+        res = analyze_errors(run_dir)
+        cats = {r["category"]: r for r in res["by_step"]}
+        assert cats["ok"]["count"] == 8
+        assert cats["other"]["count"] == 1
+
+    def test_dual_granularity_and_terminal_only(self, run_dir: Path) -> None:
+        """step/epoch 双粒度；retry 中间态不统计（终态口径）。"""
+        recs = [
+            _record(
+                sample_index=0,
+                step=2,
+                decision="retry",
+                completions=[
+                    _tool_call_completion("rotate_arm", {"action_type": "顺时针旋转"})
+                    for _ in range(8)
+                ],
+                target_fn="extend_arm",
+                target_args={"action_type": "收缩手臂", "distance_cm": 6.1},
+                attempt_number=1,
+            ),
+            _record(
+                sample_index=0,
+                step=2,
+                decision="trainable_max_correct",
+                completions=[
+                    _tool_call_completion(
+                        "extend_arm", {"action_type": "收缩手臂", "distance_cm": "6.1"}
+                    )
+                    for _ in range(8)
+                ],
+                target_fn="extend_arm",
+                target_args={"action_type": "收缩手臂", "distance_cm": 6.1},
+                attempt_number=2,
+            ),
+        ]
+        _write_readable(run_dir, recs)
+        res = analyze_errors(run_dir)
+        step_cats = {r["category"]: r["count"] for r in res["by_step"]}
+        assert step_cats == {"ok": 8}  # retry 中间态被跳过
+        assert res["by_epoch"][0]["category"] == "ok"
+        assert res["by_epoch"][0]["count"] == 8
+
+
+class TestAnalyzePerf:
+    def test_step_rows_and_derived_metrics(self, run_dir: Path) -> None:
+        """step 行：queue_pct / throughput 从 timing 推导正确。"""
+        _write_events(
+            run_dir,
+            [
+                _train_step(1, epoch=0, samples_seen=8),
+                _train_step(2, epoch=0, samples_seen=16),
+            ],
+        )
+        res = analyze_perf(run_dir)
+        assert res["available"] is True
+        row = res["by_step"][0]
+        # queue_pct = 30/40 = 75%；throughput = 400/20 = 20 tok/s
+        assert row["queue_pct"] == 75.0
+        assert row["throughput_tok_s"] == 20.0
+        assert row["groups"] == 8
+        assert row["retry_rate"] == 0.0
+        assert row["total_sec"] == 100.0
+
+    def test_epoch_aggregation(self, run_dir: Path) -> None:
+        """epoch 聚合：耗时求和、比率重算（非均值）。"""
+        _write_events(
+            run_dir,
+            [
+                _train_step(1, epoch=0, samples_seen=8, retry=4, total_sec=100.0),
+                _train_step(2, epoch=0, samples_seen=16, retry=4, total_sec=100.0),
+            ],
+        )
+        res = analyze_perf(run_dir)
+        row = res["by_epoch"][0]
+        assert row["bucket"] == 0
+        assert row["total_sec"] == 200.0
+        assert row["rollout_sec"] == 80.0
+        # 聚合 queue_pct = (30+30)/(40+40) = 75%
+        assert row["queue_pct"] == 75.0
+        # 聚合 throughput = (400+400)/(20+20) = 20
+        assert row["throughput_tok_s"] == 20.0
+        # retry_rate = 8/(8+16) = 0.3333
+        assert row["retry_rate"] == round(8 / 24, 4)
+
+    def test_missing_events(self, run_dir: Path) -> None:
+        """events.jsonl 缺失 → available=False。"""
+        res = analyze_perf(run_dir)
+        assert res["available"] is False
+
+
+class TestAnalyzeEpochsExtended:
+    def test_loss_and_alarms_aggregated_from_train_steps(self, run_dir: Path) -> None:
+        """epoch 表补齐 loss_mean（聚合）与 alarms（分类计数）与样本区间。"""
+        _write_events(
+            run_dir,
+            [
+                _train_step(
+                    1, epoch=0, samples_seen=8, loss=-0.5, alarms=["batch_high_retry_rate"]
+                ),
+                _train_step(
+                    2, epoch=0, samples_seen=16, loss=-0.7, alarms=["batch_high_retry_rate"]
+                ),
+                _epoch_summary(
+                    0,
+                    mc=4,
+                    nc=4,
+                    invalid=2,
+                    perfect=0,
+                    retry=10,
+                    total=18,
+                    reward=0.6,
+                    content=0.7,
+                ),
+            ],
+        )
+        res = analyze_epochs(run_dir)
+        assert res["available"] is True
+        e = res["epochs"][0]
+        assert e["loss_mean"] == round(-1.2 / 2, 6)
+        assert e["alarms"] == {"batch_high_retry_rate": 2}
+        assert e["samples_start"] == 0
+        assert e["samples_end"] == 322

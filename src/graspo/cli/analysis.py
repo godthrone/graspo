@@ -258,60 +258,96 @@ def analyze_attribution(run_dir: Path) -> dict[str, Any]:
     }
 
 
-def print_attribution(attribution: dict[str, Any]) -> None:
-    """以人类可读表格打印归因结果。"""
-    if not attribution.get("available"):
-        print(f"[attribution] unavailable: {attribution.get('reason')}")
-        return
-    print()
-    print(f"=== rollout 归因（{attribution.get('terminal_groups')} 终态组）===")
-    causes = attribution.get("not_correct_causes") or {}
-    total = attribution.get("not_correct_groups") or 0
-    print(f"not_correct 组: {total}")
-    for name in ("tool_mismatch", "content_all_wrong", "format_shortfall"):
-        n = causes.get(name, 0)
-        pct = f"{n / total * 100:.0f}%" if total else "-"
-        print(f"  {name:<22} {n:>5} ({pct})")
+def _read_events(run_dir: Path, event_name: str) -> list[dict[str, Any]]:
+    """读取 events.jsonl 中指定事件类型的全部事件（分析端只读）。
 
-    trend = attribution.get("step_trend") or []
-    if trend:
-        print()
-        print("工具/参数匹配趋势（按 step）:")
-        print("step | 组数 | 工具对均值/8 | ≥1工具对 | ≥1参数对")
-        for row in trend[-12:]:  # 只看最近 12 步，早期噪声大
-            print(
-                f"{row['step']:>4} | {row['groups']:>4} | "
-                f"{row['fn_mean']:>9.2f} | {row['any_fn_ratio'] * 100:>6.0f}% | "
-                f"{row['any_param_ratio'] * 100:>6.0f}%"
-            )
+    损坏行跳过（与 analyze_attribution 的容错一致）；缺失文件返回空列表，
+    由调用方给出可用性原因。
+    """
+    events_path = run_dir / "logs" / "events.jsonl"
+    if not events_path.exists():
+        return []
+    events: list[dict[str, Any]] = []
+    for line in events_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except ValueError:
+            continue
+        if payload.get("event") == event_name:
+            events.append(payload)
+    return events
 
-    cross = attribution.get("decision_cross") or {}
-    if cross:
-        print()
-        print("决策 × 工具/参数匹配:")
-        print("decision | 组数 | ≥1工具对 | ≥1参数对 | 8条全对工具 | 8条全对参数")
-        for decision, row in cross.items():
-            any_fn = row["any_fn_ratio"] * 100 if row["any_fn_ratio"] is not None else 0
-            any_param = row["any_param_ratio"] * 100 if row["any_param_ratio"] is not None else 0
-            all_fn = row["all_fn_ratio"] * 100 if row["all_fn_ratio"] is not None else 0
-            all_param = row["all_param_ratio"] * 100 if row["all_param_ratio"] is not None else 0
-            print(
-                f"{decision:<24} | {row['groups']:>3} | "
-                f"{any_fn:>6.0f}% | {any_param:>6.0f}% | "
-                f"{all_fn:>8.0f}% | {all_param:>8.0f}%"
-            )
 
-    errors = attribution.get("error_types_by_epoch") or {}
-    if errors:
-        print()
-        print("completion 格式错误类型（按 epoch）:")
-        cols = _ERROR_TYPES
-        print("epoch | " + " | ".join(f"{name:>12}" for name in cols))
-        for epoch, counts in errors.items():
-            total = sum(counts.values()) or 1
-            row = [counts.get(name, 0) for name in cols]
-            pct_row = [f"{n} ({n / total * 100:.1f}%)" for n in row]
-            print(f"{epoch:>5} | " + " | ".join(f"{cell:>12}" for cell in pct_row))
+def analyze_steps(run_dir: Path) -> dict[str, Any]:
+    """step 粒度进度表（从 train_step 事件聚合）。
+
+    与 :func:`analyze_epochs` 共享**同一度量元组**（表头一致、粒度不同）。
+    每行一个 optimize 步（train_step 事件）。``samples_start/end`` 为同 epoch
+    内 samples_seen 差分（epoch 切换时从 0 重新累计）——train_step 是 optimize
+    次数、每步消费的样本数动态（v22 实测 1-6 组块/步），样本区间是定位
+    "现在跑到哪"的锚点，不能只看 step 号。
+
+    输出 ``{available, steps: [...]}``，steps 按事件顺序排列。
+    """
+    events = _read_events(run_dir, "train_step")
+    if not events:
+        return {"available": False, "reason": "no train_step events in events.jsonl"}
+
+    rows: list[dict[str, Any]] = []
+    prev_epoch: Any = None
+    prev_seen = 0
+    for ev in events:
+        epoch = ev.get("epoch")
+        ec = ev.get("epoch_cumulative") or {}
+        seen = int(ec.get("samples_seen") or 0)
+        if epoch != prev_epoch:
+            prev_seen = 0
+        samples_start, samples_end = prev_seen, seen
+        prev_seen, prev_epoch = seen, epoch
+
+        batch = ev.get("batch") or {}
+        decisions = batch.get("decisions") or {}
+        terminal = decisions.get("terminal") or {}
+        trainable = decisions.get("trainable") or {}
+        attempts = decisions.get("rollout_attempts") or {}
+        retry = int(attempts.get("retry") or 0)
+        terminal_total = int(terminal.get("total") or 0)
+        health = ev.get("health") or {}
+        timing = ev.get("timing") or {}
+        optimize = ev.get("optimize") or {}
+        alarms: dict[str, int] = {}
+        for reason in health.get("reasons") or []:
+            alarms[reason] = alarms.get(reason, 0) + 1
+
+        rows.append(
+            {
+                "step": ev.get("step")
+                if ev.get("step") is not None
+                else (ev.get("run_cumulative") or {}).get("step"),
+                "epoch": epoch,
+                "samples_start": samples_start,
+                "samples_end": samples_end,
+                "steps": 1,
+                "perfect": terminal.get("perfect_skip", 0),
+                "invalid": terminal.get("invalid", 0),
+                "no_gap": terminal.get("invalid_no_preference_gap", 0),
+                "mc": trainable.get("max_correct", 0),
+                "nc": trainable.get("not_correct", 0),
+                "mc_ratio": trainable.get("ratio"),
+                "reward_mean": batch.get("reward", {}).get("mean"),
+                "content_mean": batch.get("content", {}).get("mean"),
+                "loss_mean": optimize.get("loss_mean"),
+                "retry_rate": round(retry / (retry + terminal_total), 4)
+                if (retry + terminal_total) > 0
+                else 0.0,
+                "alarms": alarms,
+                "total_sec": timing.get("total_observed_sec"),
+            }
+        )
+    return {"available": True, "steps": rows}
 
 
 def analyze_epochs(run_dir: Path) -> dict[str, Any]:
@@ -361,6 +397,26 @@ def analyze_epochs(run_dir: Path) -> dict[str, Any]:
     if not epochs:
         return {"available": False, "reason": "no epoch_summary events in events.jsonl"}
 
+    # loss_mean 补齐：epoch_summary 无此字段，从同 epoch 的 train_step 聚合均值；
+    # alarms 分类计数：health.reasons 按 epoch 聚合
+    train_steps = _read_events(run_dir, "train_step")
+    loss_by_epoch: defaultdict[Any, list[float]] = defaultdict(list)
+    alarm_by_epoch: defaultdict[Any, defaultdict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for ev in train_steps:
+        ep = ev.get("epoch")
+        loss = (ev.get("optimize") or {}).get("loss_mean")
+        if loss is not None:
+            loss_by_epoch[ep].append(float(loss))
+        for reason in (ev.get("health") or {}).get("reasons") or []:
+            alarm_by_epoch[ep][reason] += 1
+    for e in epochs:
+        ep = e["epoch"]
+        losses = loss_by_epoch.get(ep)
+        e["loss_mean"] = round(sum(losses) / len(losses), 6) if losses else None
+        e["alarms"] = dict(alarm_by_epoch.get(ep, {}))
+        e["samples_start"] = 0
+        e["samples_end"] = e.get("samples_total")
+
     def _trend(key: str) -> list[float | int | None]:
         return [e.get(key) for e in epochs]
 
@@ -380,32 +436,268 @@ def analyze_epochs(run_dir: Path) -> dict[str, Any]:
     }
 
 
-def print_epochs(epochs: dict[str, Any]) -> None:
-    """以人类可读表格打印 epoch 聚合结果。"""
-    if not epochs.get("available"):
-        print(f"[epochs] unavailable: {epochs.get('reason')}")
-        return
-    print()
-    print("=== epoch 聚合（epoch_summary 事件）===")
-    hdr = (
-        "epoch | 样本 | retry% | perfect | invalid | no_gap | mc | nc "
-        "| mc_ratio | reward | content | 耗时"
+# ── 错误原因表（L1 格式层 + L2 匹配层 + other，completion 级互斥分类）─────────
+
+# 分类全集（互斥：每条 completion 恰好归一类）
+ERROR_CATEGORIES = (
+    "ok",
+    "no_tool_call",
+    "malformed_xml",
+    "missing_param",
+    "multi_call",
+    "other_parse",
+    "tool_mismatch",
+    "param_name_mismatch",
+    "param_value_mismatch",
+    "other",
+)
+
+
+def classify_completion(record: dict[str, Any], text: str) -> str:
+    """对单条 completion 做互斥分类（错误原因表的基本单元）。
+
+    - other（优先判定）：无 tool target 可比对（纯文本/JSON 任务——L1/L2
+      均以工具调用为期望，对它们无意义），或宽容提取为空
+    - L1 格式层：parse 严格失败按错误消息细分（no_tool_call / malformed_xml /
+      missing_param / other_parse）；parse 成功但 ``<tool_call>`` 标签数 > 1
+      归 multi_call
+    - L2 匹配层（parse 成功且单调用，宽容提取后与 target[0] 比对，仅名字/
+      字符串比较——通用性铁律，不做数值误差统计）：
+        tool_mismatch        工具名 != target 工具名
+        param_name_mismatch  工具对，参数名集合不等（缺/多余/拼错）
+        param_value_mismatch 工具对、参数名全对，但值文本 != target 值
+        ok                   工具对 + 参数名对 + 值全对
+    """
+    targets = record.get("targets") or []
+    if not targets:
+        return "other"
+    out = targets[0].get("output") or {}
+    calls = out.get("tool_calls") or []
+    if not calls or not calls[0].get("name"):
+        return "other"
+    parsed = parse_qwen_tool_completion(text, expect_tool_calls=True, tools=record.get("tools"))
+    if parsed.parse_errors:
+        for err in parsed.parse_errors:
+            if "no tool call" in err:
+                return "no_tool_call"
+            if "malformed XML" in err:
+                return "malformed_xml"
+            if "missing required parameter" in err:
+                return "missing_param"
+        return "other_parse"
+    if text.count(TOOL_CALL_OPEN) > 1:
+        return "multi_call"
+    t_fn = calls[0]["name"]
+    t_args = calls[0].get("arguments") or {}
+    extracted = _extract_tool_calls(text)
+    if not extracted:
+        return "other"
+    first = extracted[0]
+    if first["name"] != t_fn:
+        return "tool_mismatch"
+    if set(first["arguments"]) != set(t_args):
+        return "param_name_mismatch"
+    if all(field_score(first["arguments"][pname], gt, 0.0) >= 1.0 for pname, gt in t_args.items()):
+        return "ok"
+    return "param_value_mismatch"
+
+
+def _aggregate_errors(
+    records: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    """按 step 和 epoch 双粒度聚合 completion 错误分类。
+
+    只统计终态组（(sample_index, step) 取 attempt_number 最大），与归因口径
+    一致；retry 中间态不计。每类带去重 sample_index 列表（衔接 rollouts
+    详表的引用键，AI 从表上即可定位样本追查）。
+    """
+    terminal: dict[tuple[Any, Any], dict[str, Any]] = {}
+    for rec in records:
+        key = (rec.get("sample_index"), rec.get("step"))
+        cur = terminal.get(key)
+        if cur is None or rec.get("attempt_number", 0) >= cur.get("attempt_number", 0):
+            terminal[key] = rec
+
+    by_step: defaultdict[str, defaultdict[str, dict[str, Any]]] = defaultdict(
+        lambda: defaultdict(lambda: {"count": 0, "samples": []})
     )
-    print(hdr)
-    for e in epochs.get("epochs", []):
-        attempts = e.get("attempts") or {}
-        total = attempts.get("total") or 0
-        retry = attempts.get("retry") or 0
-        retry_pct = f"{retry / total * 100:.0f}%" if total else "-"
-        term = e.get("terminal") or {}
-        tr = e.get("trainable") or {}
-        elapsed = e.get("elapsed_sec")
-        elapsed_str = f"{elapsed / 3600:.1f}h" if elapsed else "-"
-        print(
-            f"{e.get('epoch'):>5} | {e.get('samples_seen'):>4} | {retry_pct:>6} | "
-            f"{term.get('perfect_skip', 0):>7} | {term.get('invalid', 0):>7} | "
-            f"{term.get('invalid_no_preference_gap', 0):>6} | "
-            f"{tr.get('max_correct', 0):>2} | {tr.get('not_correct', 0):>2} | "
-            f"{tr.get('ratio', 0):>8.3f} | {e.get('reward_mean', 0):>7.3f} | "
-            f"{e.get('content_mean', 0):>7.3f} | {elapsed_str:>5}"
+    by_epoch: defaultdict[str, defaultdict[str, dict[str, Any]]] = defaultdict(
+        lambda: defaultdict(lambda: {"count": 0, "samples": []})
+    )
+    for key, rec in terminal.items():
+        step, epoch = rec.get("step"), rec.get("epoch")
+        for comp in rec.get("completions") or []:
+            text = (comp.get("completion") if isinstance(comp, dict) else str(comp)) or ""
+            category = classify_completion(rec, text)
+            if step is not None:
+                cell = by_step[str(step)][category]
+                cell["count"] += 1
+                if rec.get("sample_index") not in cell["samples"]:
+                    cell["samples"].append(rec.get("sample_index"))
+            if epoch is not None:
+                cell = by_epoch[str(epoch)][category]
+                cell["count"] += 1
+                if rec.get("sample_index") not in cell["samples"]:
+                    cell["samples"].append(rec.get("sample_index"))
+
+    def _to_rows(
+        agg: defaultdict[str, defaultdict[str, dict[str, Any]]],
+        granularity: str,
+    ) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for bucket in sorted(agg, key=int):
+            for category in ERROR_CATEGORIES:
+                cell = agg[bucket].get(category)
+                if cell is None:
+                    continue
+                rows.append(
+                    {
+                        "granularity": granularity,
+                        "bucket": int(bucket),
+                        "category": category,
+                        "count": cell["count"],
+                        "samples": cell["samples"],
+                    }
+                )
+        return rows
+
+    return {
+        "by_step": _to_rows(by_step, "step"),
+        "by_epoch": _to_rows(by_epoch, "epoch"),
+    }
+
+
+def analyze_errors(run_dir: Path) -> dict[str, Any]:
+    """错误原因统计（completion 级互斥分类，step/epoch 双粒度）。
+
+    数据源 ``rollouts.readable.jsonl``；只统计终态组。L3（语义/数值层）
+    诊断不在系统级归因内——由 AI/人工基于 rollouts 详表离线统计
+    （用户裁定：真正的原因归类依赖训练数据语义，不可能系统级）。
+    """
+    readable_path = run_dir / "logs" / "rollouts.readable.jsonl"
+    if not readable_path.exists():
+        return {"available": False, "reason": f"missing {readable_path}"}
+    records: list[dict[str, Any]] = []
+    for line in readable_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            records.append(json.loads(line))
+        except ValueError:
+            continue
+    if not records:
+        return {"available": True, "records": 0, "by_step": [], "by_epoch": []}
+    agg = _aggregate_errors(records)
+    return {"available": True, "records": len(records), **agg}
+
+
+# ── 性能表（初级：只聚合 train_step timing 块，零训练侵入）───────────────────
+
+
+def _perf_row_from_step(ev: dict[str, Any]) -> dict[str, Any]:
+    """从单条 train_step 事件提取性能行（step 粒度）。"""
+    batch = ev.get("batch") or {}
+    decisions = batch.get("decisions") or {}
+    attempts = decisions.get("rollout_attempts") or {}
+    terminal = decisions.get("terminal") or {}
+    timing = ev.get("timing") or {}
+    retry = int(attempts.get("retry") or 0)
+    terminal_total = int(terminal.get("total") or 0)
+    rollout_sec = float(timing.get("rollout_total_sec") or 0.0)
+    queue_sec = float(timing.get("rollout_queue_sec") or 0.0)
+    decode_sec = float(timing.get("decode_sec") or 0.0)
+    decode_tokens = int(timing.get("decode_tokens") or 0)
+    return {
+        "step": ev.get("step")
+        if ev.get("step") is not None
+        else (ev.get("run_cumulative") or {}).get("step"),
+        "epoch": ev.get("epoch"),
+        "groups": terminal_total,
+        "total_sec": timing.get("total_observed_sec"),
+        "rollout_sec": round(rollout_sec, 3),
+        "queue_pct": round(queue_sec / rollout_sec * 100, 1) if rollout_sec > 0 else None,
+        "prefill_sec": timing.get("prefill_sec"),
+        "decode_sec": round(decode_sec, 3),
+        "throughput_tok_s": round(decode_tokens / decode_sec, 1) if decode_sec > 0 else None,
+        "optimize_sec": timing.get("optimize_sec"),
+        "retry_rate": round(retry / (retry + terminal_total), 4)
+        if (retry + terminal_total) > 0
+        else 0.0,
+    }
+
+
+def analyze_perf(run_dir: Path) -> dict[str, Any]:
+    """性能统计（step 粒度 + epoch 聚合，双粒度）。
+
+    只聚合 train_step 事件 timing 块已有字段——零训练侵入、不影响训练速度。
+    GPU 利用率/显存/温度不在本表（``scripts/record_gpu_memory.py`` 的领域，
+    高级性能分析走独立脚本）。
+    """
+    events = _read_events(run_dir, "train_step")
+    if not events:
+        return {"available": False, "reason": "no train_step events in events.jsonl"}
+
+    by_step = [_perf_row_from_step(ev) for ev in events]
+    for row in by_step:
+        row["granularity"] = "step"
+
+    # epoch 聚合：耗时字段求和，比率字段重算（不用均值——口径一致）
+    sums: defaultdict[Any, dict[str, float]] = defaultdict(
+        lambda: {
+            "groups": 0.0,
+            "total_sec": 0.0,
+            "rollout_sec": 0.0,
+            "queue_sec": 0.0,
+            "prefill_sec": 0.0,
+            "decode_sec": 0.0,
+            "decode_tokens": 0.0,
+            "optimize_sec": 0.0,
+            "retry": 0.0,
+            "terminal": 0.0,
+        }
+    )
+    for ev in events:
+        ep = ev.get("epoch")
+        timing = ev.get("timing") or {}
+        batch = ev.get("batch") or {}
+        decisions = batch.get("decisions") or {}
+        attempts = decisions.get("rollout_attempts") or {}
+        terminal = decisions.get("terminal") or {}
+        s = sums[ep]
+        s["groups"] += float(terminal.get("total") or 0)
+        s["total_sec"] += float(timing.get("total_observed_sec") or 0.0)
+        s["rollout_sec"] += float(timing.get("rollout_total_sec") or 0.0)
+        s["queue_sec"] += float(timing.get("rollout_queue_sec") or 0.0)
+        s["prefill_sec"] += float(timing.get("prefill_sec") or 0.0)
+        s["decode_sec"] += float(timing.get("decode_sec") or 0.0)
+        s["decode_tokens"] += float(timing.get("decode_tokens") or 0)
+        s["optimize_sec"] += float(timing.get("optimize_sec") or 0.0)
+        s["retry"] += float(attempts.get("retry") or 0)
+        s["terminal"] += float(terminal.get("total") or 0)
+
+    by_epoch: list[dict[str, Any]] = []
+    for ep in sorted(sums, key=int):
+        s = sums[ep]
+        by_epoch.append(
+            {
+                "granularity": "epoch",
+                "bucket": ep,
+                "groups": int(s["groups"]),
+                "total_sec": round(s["total_sec"], 3),
+                "rollout_sec": round(s["rollout_sec"], 3),
+                "queue_pct": round(s["queue_sec"] / s["rollout_sec"] * 100, 1)
+                if s["rollout_sec"] > 0
+                else None,
+                "prefill_sec": round(s["prefill_sec"], 3),
+                "decode_sec": round(s["decode_sec"], 3),
+                "throughput_tok_s": round(s["decode_tokens"] / s["decode_sec"], 1)
+                if s["decode_sec"] > 0
+                else None,
+                "optimize_sec": round(s["optimize_sec"], 3),
+                "retry_rate": round(s["retry"] / (s["retry"] + s["terminal"]), 4)
+                if (s["retry"] + s["terminal"]) > 0
+                else 0.0,
+            }
         )
+    return {"available": True, "by_step": by_step, "by_epoch": by_epoch}

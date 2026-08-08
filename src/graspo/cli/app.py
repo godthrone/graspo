@@ -99,14 +99,10 @@ def cmd_evaluate_checkpoint(args: argparse.Namespace) -> int:
 
 
 def cmd_analyze_profile(args: argparse.Namespace) -> int:
-    """汇总运行目录的性能指标，只 print 不落盘。"""
+    """汇总运行目录指标，落盘六份分析文件并打印文件路径（不打印数据）。"""
     from graspo.cli.tools import run_analyze
 
-    run_analyze(
-        args.run_dirs,
-        skip_warmup_steps=args.skip_warmup_steps,
-        as_json=args.json,
-    )
+    run_analyze(args.run_dirs, skip_warmup_steps=args.skip_warmup_steps)
     return 0
 
 
@@ -311,7 +307,8 @@ def build_parser() -> argparse.ArgumentParser:
     analyze = subparsers.add_parser(
         "analyze-profile",
         help="Summarize profiling + rollout attribution from one or more run directories. "
-        "Prints tables and writes logs/analysis_attribution.json per run.",
+        "Writes six analysis files (profile/steps/epochs/errors/attribution/perf) into "
+        "<run_dir>/logs/ and prints their paths.",
     )
     analyze.add_argument("run_dirs", nargs="+", help="One or more GRASPO output directories.")
     analyze.add_argument(
@@ -319,9 +316,6 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=1,
         help="Train steps skipped for mean timing.",
-    )
-    analyze.add_argument(
-        "--json", action="store_true", help="Emit JSON instead of a compact table."
     )
     analyze.set_defaults(func=cmd_analyze_profile)
 
