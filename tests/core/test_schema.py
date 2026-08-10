@@ -206,3 +206,48 @@ def test_config_example_covers_all_schema_fields():
     )
     missing = sorted(path for path in _field_paths(GraspoConfig) if not _nested_get(example, path))
     assert not missing, f"config_example.yaml missing schema fields: {missing}"
+
+
+# ── max_steps 移除 + lr_scheduler.decay_steps（v0.23.0）───────────────────────
+
+
+def test_removed_max_steps_rejected_with_clear_message():
+    """max_steps 已移除：配置中出现时给出明确迁移提示而非模糊 extra 报错。"""
+    with pytest.raises(ValidationError, match="max_steps has been removed"):
+        TrainingConfig(max_steps=-1)
+
+
+def test_scheduler_cosine_requires_decay_steps():
+    """非 constant 调度必须显式 decay_steps > 0（加载即校验，§7.2）。"""
+    with pytest.raises(ValidationError, match="decay_steps must be > 0"):
+        TrainingConfig(
+            max_epochs=10,
+            learning_rate=5e-7,
+            lr_scheduler={"type": "cosine", "min_lr_ratio": 0.2},
+        )
+
+
+def test_scheduler_constant_defaults_ok_without_decay_steps():
+    """constant 调度默认不需要 decay_steps（向后兼容默认配置）。"""
+    config = TrainingConfig(max_epochs=10, learning_rate=5e-6)
+    assert config.lr_scheduler.type == "constant"
+    assert config.lr_scheduler.decay_steps == 0
+
+
+def test_scheduler_cosine_with_decay_steps_ok():
+    """cosine + 显式 decay_steps 通过校验。"""
+    config = TrainingConfig(
+        max_epochs=10,
+        learning_rate=5e-7,
+        lr_scheduler={"type": "cosine", "decay_steps": 170, "min_lr_ratio": 0.2},
+    )
+    assert config.lr_scheduler.decay_steps == 170
+
+
+def test_scheduler_linear_requires_decay_steps():
+    """linear 调度同样要求 decay_steps > 0。"""
+    with pytest.raises(ValidationError, match="decay_steps must be > 0"):
+        TrainingConfig(
+            max_epochs=10,
+            lr_scheduler={"type": "linear", "decay_steps": 0},
+        )

@@ -62,7 +62,6 @@ training:
   run_name: ""                       # Run identifier (default: auto-generated as graspo_YYYYMMDD_HHMMSS)
   seed: 42                           # Random seed for reproducibility
   max_epochs: 100          # Max epochs (-1 for unlimited)
-  max_steps: -1                      # Max optimize steps (-1 for unlimited)
   rollout_group_size: 8              # Completions per prompt (core algorithm param)
   rollout_queue_batch_size: 8       # Prompts per rollout queue; replay threshold = G × queue
   optimize_prompt_batch_size: 8      # Prompts per optimize step (controls train forward peak memory)
@@ -76,6 +75,9 @@ training:
     type: constant                   # "constant" | "cosine" | "linear"
     warmup_steps: 0                  # Linear warmup steps (0=disabled)
     min_lr_ratio: 0.0                # Final LR = learning_rate * min_lr_ratio
+    # Decay span after warmup (optimizer steps); LR holds at min_lr after
+    # decay completes. Training length is controlled by max_epochs only.
+    decay_steps: 0                   # Required > 0 when type != "constant"
   max_grad_norm: 1.0                 # Gradient clipping threshold
   policy_ratio_clip_eps: 0.2         # PPO-style policy ratio clipping epsilon
   max_new_tokens: 2048               # Max tokens generated per completion

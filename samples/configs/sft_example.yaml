@@ -49,7 +49,6 @@ training:
   output_dir: ""                      # Auto-generated outputs/sft_<timestamp>
   seed: 42
   max_epochs: 20                      # SFT typically needs fewer epochs than RL
-  max_steps: 1000                     # Required >0 when lr_scheduler.type != constant
   learning_rate: 5.0e-5               # SFT LR (higher than RL's 5e-6~5e-7)
   weight_decay: 0.01
   max_grad_norm: 1.0
@@ -59,6 +58,7 @@ training:
     type: cosine                      # "constant", "cosine", or "linear"
     warmup_steps: 50                  # Linear warmup steps
     min_lr_ratio: 0.0                 # Final LR = learning_rate * min_lr_ratio
+    decay_steps: 1000                 # Decay span after warmup (optimizer steps); LR holds at min after
   save_steps: 100                     # Checkpoint every N steps (-1 to disable)
   save_checkpoint_every_epoch: true
 

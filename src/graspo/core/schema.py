@@ -55,13 +55,21 @@ class ModelConfig(BaseModel):
 
 
 class LRSchedulerConfig(BaseModel):
-    """学习率调度器配置。默认 ``type="constant"`` 保持 LR 不变，向后兼容。"""
+    """学习率调度器配置。默认 ``type="constant"`` 保持 LR 不变，向后兼容。
+
+    ``decay_steps`` 是纯调度参数：warmup 结束后的衰减跨度（optimizer-step
+    粒度），调度在此步数内从 ``learning_rate`` 衰减到
+    ``learning_rate × min_lr_ratio``，之后保持最低 LR 不变。训练长度只由
+    ``training.max_epochs`` 控制（§7.4 参数单职责——max_steps 已于 v0.23.0
+    移除：它曾同时承担提前终止与调度跨度两个角色，单位不一致互相矛盾）。
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     type: str = "constant"  # "constant" | "cosine" | "linear"
     warmup_steps: int = 0  # 线性 warmup 步数（仅 cosine / linear）
     min_lr_ratio: float = 0.0  # 最终 LR = learning_rate × min_lr_ratio
+    decay_steps: int = 0  # warmup 后的衰减跨度（optimizer-step）；type != constant 时必填
 
 
 class TrainingConfig(BaseModel):
@@ -72,8 +80,8 @@ class TrainingConfig(BaseModel):
     output_dir: str = ""
     run_name: str = ""
     seed: int = 42
+    # 训练长度唯一控制参数（v0.23.0 起：max_steps 已移除，见 LRSchedulerConfig）
     max_epochs: int = 100
-    max_steps: int = -1
     rollout_group_size: int = 8
     # 每次 rollout queue 的 prompt 数（默认 8）。与 optimize_prompt_batch_size
     # 解耦：队列决定采样吞吐与 replay 阈值（G × queue），optimize_prompt_batch_size
@@ -113,13 +121,28 @@ class TrainingConfig(BaseModel):
             self.run_name = str(Path(output_dir).name)
         return self
 
-    @model_validator(mode="after")
-    def _validate_max_steps_for_scheduler(self) -> TrainingConfig:
-        if self.lr_scheduler.type != "constant" and self.max_steps <= 0:
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_removed_max_steps(cls, data: Any) -> Any:
+        """防呆：max_steps 已于 v0.23.0 移除，给出明确迁移提示而非模糊报错。
+
+        训练长度只由 max_epochs 控制；学习率衰减跨度用 lr_scheduler.decay_steps。
+        """
+        if isinstance(data, dict) and "max_steps" in data:
             raise ValueError(
-                f"training.max_steps must be > 0 when "
+                "training.max_steps has been removed (v0.23.0): training length is "
+                "controlled by training.max_epochs only; configure the LR decay span "
+                "via lr_scheduler.decay_steps (in optimizer steps, warmup-exclusive)"
+            )
+        return data
+
+    @model_validator(mode="after")
+    def _validate_scheduler_decay_steps(self) -> TrainingConfig:
+        if self.lr_scheduler.type != "constant" and self.lr_scheduler.decay_steps <= 0:
+            raise ValueError(
+                f"lr_scheduler.decay_steps must be > 0 when "
                 f"lr_scheduler.type={self.lr_scheduler.type!r}, "
-                f"got {self.max_steps}"
+                f"got {self.lr_scheduler.decay_steps}"
             )
         return self
 

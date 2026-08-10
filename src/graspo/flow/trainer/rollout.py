@@ -425,12 +425,14 @@ class RolloutMixin:
             )
 
     def _finish_sample_and_maybe_optimize(self, *, epoch: int) -> bool:
-        """样本处理完成后的收尾：递增计数器，检查是否需要优化。"""
+        """样本处理完成后的收尾：递增计数器，检查是否需要优化。
+
+        训练长度只由 training.max_epochs 控制（v0.23.0 起 max_steps 已移除）；
+        提前终止仅剩 smoke 边界（--smoke 运行到首轮 optimize 后停止）。
+        """
         self.current_epoch_stats.samples_seen += 1
         self.sample_index += 1
-        boundary_reached = 0 < self.config.training.max_steps <= self.global_step or (
-            self._smoke_boundary and self.global_step >= 1
-        )
+        boundary_reached = self._smoke_boundary and self.global_step >= 1
         return self._maybe_optimize(epoch=epoch) and boundary_reached
 
     def _record_epoch_attempt(self, payload: dict[str, Any]) -> None:

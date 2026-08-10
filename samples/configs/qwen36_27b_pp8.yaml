@@ -37,7 +37,6 @@ training:
   output_dir: outputs/qwen36-27b-pp8
   seed: 42
   max_epochs: 100
-  max_steps: -1
   rollout_group_size: 8
   optimize_prompt_batch_size: 4
   # optimize_iterations_per_step removed — always 1 iteration per step.

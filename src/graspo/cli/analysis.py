@@ -631,8 +631,8 @@ def analyze_perf(run_dir: Path) -> dict[str, Any]:
     """性能统计（step 粒度 + epoch 聚合，双粒度）。
 
     只聚合 train_step 事件 timing 块已有字段——零训练侵入、不影响训练速度。
-    GPU 利用率/显存/温度不在本表（``scripts/record_gpu_memory.py`` 的领域，
-    高级性能分析走独立脚本）。
+    GPU 利用率/显存/温度不在本表（``graspo record-gpu-memory`` 的领域，
+    高级性能分析走独立命令）。
     """
     events = _read_events(run_dir, "train_step")
     if not events:

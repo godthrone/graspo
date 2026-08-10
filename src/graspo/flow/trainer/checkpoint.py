@@ -145,6 +145,10 @@ class CheckpointMixin:
                 "optimize_iterations_per_step": 1,
                 "rollout_max_retries": self.config.training.rollout_max_retries,
                 "max_new_tokens": self.config.training.max_new_tokens,
+                # 训练数值超参（软键）：resume 时不拒绝启动，由
+                # transformer_adapter 按配置覆盖并 WARNING 告知（§3.2）
+                "learning_rate": self.config.training.learning_rate,
+                "weight_decay": self.config.training.weight_decay,
             },
         }
 

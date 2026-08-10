@@ -131,9 +131,9 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
         output_dir = Path(self.config.training.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         self._resume_if_requested()
-        # 将当前配置备份到输出目录，确保可完整复现
-        if self.resume_info is None:
-            _backup_config(self.config, output_dir)
+        # 将当前配置备份到输出目录，确保可完整复现。resume 时也刷新——
+        # 否则输出目录内的 config.yaml 停留在旧配置，误导复现（§1.4 单一真相源）
+        _backup_config(self.config, output_dir)
         _log.info(
             "Run config: rollout_group_size=%d optimize_prompt_batch_size=%d "
             "max_epochs=%d max_new_tokens=%d",
@@ -179,7 +179,7 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
                 for start in range(0, len(pending_samples), queue_size):
                     sample_queue = pending_samples[start : start + queue_size]
                     if self._sample_queue(sample_queue, epoch=epoch):
-                        # max_steps 提前终止：先 flush replay buffer 再保存，
+                        # smoke 提前终止：先 flush replay buffer 再保存，
                         # 否则 _checkpoint_trainer_state 会因 buffer 非空而
                         # 拒绝保存（防线生效，但提前终止路径漏了 flush）。
                         if len(self.replay_buffer) > 0:

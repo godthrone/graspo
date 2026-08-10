@@ -1,23 +1,18 @@
-"""运维脚本 record_gpu_memory.py 的单元测试。"""
+"""graspo.cli.gpu_monitor 的单元测试（v0.23.0 从 tests/scripts/ 迁移）。
 
-import importlib.util
-from pathlib import Path
+record_gpu_memory 按宪法 §10.2 从 scripts/ 提升为 CLI 命令
+（graspo record-gpu-memory），测试随逻辑迁移。
+"""
 
-
-def _load_recorder_module():
-    path = Path("scripts/record_gpu_memory.py")
-    spec = importlib.util.spec_from_file_location("record_gpu_memory", path)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+from graspo.cli.gpu_monitor import (
+    parse_gpu_query,
+    parse_process_query,
+    summarize_samples,
+)
 
 
 def test_record_gpu_memory_parses_nvidia_smi_gpu_rows():
-    recorder = _load_recorder_module()
-
-    rows = recorder.parse_gpu_query("6, GPU-abc, 1024, 80896, 81920, 75, 42, 302.5\n")
+    rows = parse_gpu_query("6, GPU-abc, 1024, 80896, 81920, 75, 42, 302.5\n")
 
     assert rows == [
         {
@@ -34,8 +29,7 @@ def test_record_gpu_memory_parses_nvidia_smi_gpu_rows():
 
 
 def test_record_gpu_memory_filters_and_summarizes_samples():
-    recorder = _load_recorder_module()
-    process_rows = recorder.parse_process_query(
+    process_rows = parse_process_query(
         "GPU-abc, 1234, /usr/bin/python, 2048\nGPU-def, 4567, /usr/bin/other, 1024\n"
     )
     samples = [
@@ -44,7 +38,7 @@ def test_record_gpu_memory_filters_and_summarizes_samples():
         {"gpu_index": 7, "memory_used_mib": 200.0, "utilization_gpu_pct": 20.0},
     ]
 
-    summary = recorder.summarize_samples(samples, samples[-2:])
+    summary = summarize_samples(samples, samples[-2:])
 
     assert process_rows[0]["pid"] == 1234
     assert process_rows[0]["process_name"] == "/usr/bin/python"

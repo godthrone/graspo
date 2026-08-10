@@ -319,6 +319,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     analyze.set_defaults(func=cmd_analyze_profile)
 
+    from graspo.cli.gpu_monitor import build_gpu_monitor_parser
+
+    build_gpu_monitor_parser(subparsers)
+
     return parser
 
 

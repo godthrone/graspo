@@ -34,6 +34,50 @@ from graspo.flow.parallel.tensor_utils import (
 from graspo.flow.runtime import NativeGeneration
 from graspo.ripple.multimodal.rows import attach_rows
 
+logger = logging.getLogger("graspo.flow")
+
+
+def apply_config_optimizer_hyperparams(
+    optimizer: Any,
+    scheduler: Any,
+    *,
+    learning_rate: float,
+    weight_decay: float,
+) -> list[str]:
+    """配置优先：resume 恢复的 optimizer/scheduler 状态可能携带旧训练超参。
+
+    ``optimizer.load_state_dict`` 会把 checkpoint 里保存的 param_groups 整体
+    替换为旧值（含 lr/weight_decay），constant 调度器（None）下没有任何机制
+    再把它改回配置值——此前这是静默覆盖（配置改了不生效）。这里以配置为准
+    覆盖旧值并返回被覆盖项的描述列表，由调用方 WARNING 告知（§3.2 透明退路）。
+
+    scheduler（LambdaLR）的步进曲线锚定在 ``base_lrs`` 上，必须同步到配置值；
+    ``last_epoch`` 保留 checkpoint 进度，保证调度曲线连续性。
+    """
+    overridden: list[str] = []
+    if optimizer is not None:
+        for group in optimizer.param_groups:
+            group_lr = float(group.get("lr", 0.0))
+            if group_lr != learning_rate:
+                overridden.append(
+                    f"learning_rate: checkpoint={group_lr:g} config={learning_rate:g}"
+                )
+                group["lr"] = learning_rate
+            group_wd = float(group.get("weight_decay", 0.0))
+            if group_wd != weight_decay:
+                overridden.append(
+                    f"weight_decay: checkpoint={group_wd:g} config={weight_decay:g}"
+                )
+                group["weight_decay"] = weight_decay
+    if scheduler is not None and getattr(scheduler, "base_lrs", None):
+        for i, base_lr in enumerate(scheduler.base_lrs):
+            if float(base_lr) != learning_rate:
+                scheduler.base_lrs[i] = learning_rate
+        if getattr(scheduler, "_last_lr", None):
+            # 刷新缓存的最近 lr，避免下一次 step 前读到 checkpoint 旧值
+            scheduler._last_lr = [float(learning_rate)] * len(scheduler._last_lr)
+    return overridden
+
 
 class TransformerAdapter(BaseGraspoFlowAdapter):
     """Common adapter for all decoder-only transformer models.
@@ -143,28 +187,22 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
         warmup_steps = max(0, int(sched_cfg.warmup_steps))
         min_lr = base_lr * float(sched_cfg.min_lr_ratio)
 
-        max_steps = int(self.config.training.max_steps)
-        if max_steps <= 0:
+        # decay_steps 是纯调度参数（warmup 后的衰减跨度，optimizer-step 粒度）。
+        # 训练长度只由 training.max_epochs 控制（v0.23.0 起 max_steps 已移除）——
+        # 调度器不读任何训练长度配置；衰减完成后 lr 保持 min_lr（progress clamp）。
+        decay_steps = max(0, int(sched_cfg.decay_steps))
+        if decay_steps <= 0:
             raise ValueError(
-                "lr_scheduler.type 非 constant 时，training.max_steps 必须 > 0，"
-                "否则无法推算总 optimizer step 数"
+                f"lr_scheduler.type 非 constant 时，lr_scheduler.decay_steps "
+                f"必须 > 0，got {decay_steps}"
             )
-        total_steps = max_steps * int(self.config.training.rollout_group_size)
-
-        if total_steps <= warmup_steps:
-            raise ValueError(
-                f"lr_scheduler: 自动推算的总步数 ({total_steps})"
-                f" 必须大于 warmup_steps ({warmup_steps})"
-            )
-
-        decay_steps = total_steps - warmup_steps
 
         if sched_cfg.type == "cosine":
 
             def lr_lambda(step: int) -> float:
                 if step < warmup_steps:
                     return float(step) / max(1, warmup_steps)
-                progress = min(float(step - warmup_steps) / max(1, decay_steps), 1.0)
+                progress = min(float(step - warmup_steps) / decay_steps, 1.0)
                 cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
                 return (min_lr + (base_lr - min_lr) * cosine) / base_lr
 
@@ -173,7 +211,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
             def lr_lambda(step: int) -> float:
                 if step < warmup_steps:
                     return float(step) / max(1, warmup_steps)
-                progress = min(float(step - warmup_steps) / max(1, decay_steps), 1.0)
+                progress = min(float(step - warmup_steps) / decay_steps, 1.0)
                 return (min_lr + (base_lr - min_lr) * (1.0 - progress)) / base_lr
 
         else:
@@ -359,6 +397,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
                 encoding="utf-8",
             )
 
+
     def load_checkpoint(self, path: str | Path) -> dict[str, Any] | None:
         self._require_ready()
         if self.model is None:
@@ -408,6 +447,22 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
         scheduler_state = payload.get("scheduler_state_dict")
         if self.scheduler is not None and scheduler_state is not None:
             self.scheduler.load_state_dict(scheduler_state)
+        # 配置优先（§2.2 显式优于隐式）：checkpoint 可能携带旧训练超参
+        # （lr/weight_decay），load_state_dict 整体替换后静默生效——必须按
+        # 当前配置覆盖，并 WARNING 告知用户（§3.2 透明退路，防静默坏退路）。
+        overridden = apply_config_optimizer_hyperparams(
+            self.optimizer,
+            self.scheduler,
+            learning_rate=float(self.config.training.learning_rate),
+            weight_decay=float(self.config.training.weight_decay),
+        )
+        if overridden:
+            logger.warning(
+                "Checkpoint hyperparameters overridden by config (config takes precedence; "
+                "checkpoint=%s): %s",
+                checkpoint_dir.name,
+                "; ".join(overridden),
+            )
         torch.set_rng_state(payload["torch_rng_state"].detach().cpu())
         cuda_rng_state = payload.get("cuda_rng_state")
         if cuda_rng_state is not None and self.device.type == "cuda":
@@ -421,6 +476,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
                 "checkpoint_rank_file": str(rank_path),
                 "has_trainer_state": payload.get("trainer_state") is not None,
                 "train_batch_call_index": self._train_batch_call_index,
+                "overridden_hyperparams": overridden,
             },
         )
         return payload.get("trainer_state")

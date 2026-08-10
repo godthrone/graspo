@@ -105,3 +105,78 @@ def test_resume_config_snapshot_mismatch_raises():
         "max_new_tokens": 2048,
     }
     stub._assert_resume_config_consistent(consistent)  # 不抛错
+
+
+def test_resume_config_snapshot_lr_mismatch_not_rejected():
+    """防呆分级：lr 属于软键（可覆盖超参），不一致不拒绝启动。
+
+    硬键（结构/分布语义）不一致 → 拒绝（见上面测试）；软键（lr/weight_decay）
+    不一致 → 由 transformer_adapter 按配置覆盖并 WARNING 告知，此处不 raise。
+    """
+    from graspo.flow.trainer.checkpoint import CheckpointMixin
+
+    class _Stub(CheckpointMixin):
+        def __init__(self) -> None:
+            self.backend_name = "graspoflow"
+            self.config = _FakeConfig()
+
+    class _FakeConfig:
+        class Training:  # noqa: N801 测试桩（小写匹配 config.training）
+            rollout_group_size = 8
+            optimize_prompt_batch_size = 8
+            rollout_max_retries = 5
+            max_new_tokens = 2048
+            learning_rate = 5.0e-07
+            weight_decay = 0.01
+
+        training = Training()
+
+    stub = _Stub()
+    state = {
+        "format": "graspoflow-trainer-state",
+        "config_snapshot": {
+            "backend": "graspoflow",
+            "rollout_group_size": 8,
+            "optimize_prompt_batch_size": 8,
+            "optimize_iterations_per_step": 1,
+            "rollout_max_retries": 5,
+            "max_new_tokens": 2048,
+            # 软键：lr 与当前配置不一致，但不拒绝（配置优先 + WARNING）
+            "learning_rate": 5.0e-06,
+            "weight_decay": 0.01,
+        },
+    }
+    stub._assert_resume_config_consistent(state)  # 不抛错
+
+
+def test_checkpoint_trainer_state_snapshot_includes_lr_and_weight_decay():
+    """config_snapshot 保存训练数值超参（lr/weight_decay），供 resume 审计。"""
+    from graspo.flow.trainer.checkpoint import CheckpointMixin
+
+    class _Stub(CheckpointMixin):
+        def __init__(self) -> None:
+            self.backend_name = "graspoflow"
+            self.config = _FakeConfig()
+            self.global_step = 24
+            self.sample_index = 0
+            self.total_samples = 322
+            self.replay_buffer: list = []
+            self.stats = GraspoFlowTrainStats()
+            self.current_epoch_stats = GraspoFlowEpochStats()
+
+    class _FakeConfig:
+        class Training:  # noqa: N801 测试桩（小写匹配 config.training）
+            rollout_group_size = 8
+            optimize_prompt_batch_size = 8
+            rollout_max_retries = 5
+            max_new_tokens = 2048
+            learning_rate = 5.0e-07
+            weight_decay = 0.01
+
+        training = Training()
+
+    stub = _Stub()
+    snapshot = stub._checkpoint_trainer_state(epoch=2)["config_snapshot"]
+
+    assert snapshot["learning_rate"] == 5.0e-07
+    assert snapshot["weight_decay"] == 0.01
