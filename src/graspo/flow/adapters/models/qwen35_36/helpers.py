@@ -141,8 +141,25 @@ def collate_sft_multimodal_batch(
         )
         attention_mask[i, actual_prompt_len : actual_prompt_len + r_len] = True
 
-    # 5. 截断
+    # 5. 截断（防呆，宪法 §2）：多模态样本的视觉占位符被截断会破坏
+    #    placeholder 数 == image_grid_thw 特征数的对齐，forward 时抛出难懂的
+    #    RuntimeError（model.py 的 masked_scatter 检查）。这里提前显式报错，
+    #    并给出可操作的修复建议（调大 data.max_prompt_length）。
     if total_len > max_seq_length:
+        image_token_id = int(getattr(adapter.model.config, "image_token_id", -1))
+        if image_token_id >= 0:
+            cut = input_ids[:, max_seq_length:]
+            cut_placeholders = int((cut == image_token_id).sum().item())
+            if cut_placeholders > 0:
+                raise ValueError(
+                    "max_prompt_length 截断了视觉占位符："
+                    f"max_seq_length={max_seq_length}, input_ids 全长={total_len}, "
+                    f"被截断的视觉占位符={cut_placeholders} 个。"
+                    "多模态样本必须完整容纳视觉 token（占位符与视觉特征一一对应，"
+                    "截断会导致 forward 报 'Image features and image placeholder tokens "
+                    "do not match'）。请调大 data.max_prompt_length（建议 ≥ total_len，"
+                    "Qwen3.5 720P 双目图建议 8192）。"
+                )
         input_ids = input_ids[:, :max_seq_length]
         labels = labels[:, :max_seq_length]
         attention_mask = attention_mask[:, :max_seq_length]
