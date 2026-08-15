@@ -171,19 +171,19 @@ def _selected_token_log_probs_from_hidden(
     *,
     vocab_chunk_size: int = 32768,
 ) -> torch.Tensor:
-    selected = lm_head_weight.index_select(0, output_ids.reshape(-1)).view(
-        *output_ids.shape,
-        hidden_states.shape[-1],
+    """兼容转发：实现单一真相源在 ``ripple.loss.masked_token_log_probs_from_hidden``。
+
+    本函数保留旧签名（无 ignore_index——RL 的 output_ids 全为有效 token），
+    内部委托共享实现（宪法 §1.4 单一真相源，避免 RL/SFT 双实现分叉）。
+    """
+    from graspo.ripple.loss import masked_token_log_probs_from_hidden
+
+    return masked_token_log_probs_from_hidden(
+        hidden_states,
+        lm_head_weight,
+        output_ids,
+        vocab_chunk_size=vocab_chunk_size,
     )
-    selected_logits = (hidden_states * selected).sum(dim=-1)
-    logsumexp: torch.Tensor | None = None
-    for start in range(0, lm_head_weight.shape[0], vocab_chunk_size):
-        chunk = lm_head_weight[start : start + vocab_chunk_size]
-        logits = F.linear(hidden_states, chunk)
-        chunk_lse = torch.logsumexp(logits, dim=-1)
-        logsumexp = chunk_lse if logsumexp is None else torch.logaddexp(logsumexp, chunk_lse)
-    assert logsumexp is not None
-    return selected_logits - logsumexp
 
 
 def _mean_present(values: Iterable[Any]) -> float | None:

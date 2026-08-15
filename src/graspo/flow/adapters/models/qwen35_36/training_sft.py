@@ -19,16 +19,31 @@ from graspo.ripple.multimodal.contract import assert_sft_batch_has_multimodal
 
 class _Qwen35SFTTrainingMethods:
     def _compute_sft_loss(self, hidden_states: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-        """从 hidden states 计算 SFT cross-entropy loss（设施层不持有算法分派）。"""
-        from graspo.ripple.loss import sft_cross_entropy_loss
+        """从 hidden states 计算 SFT cross-entropy loss（设施层不持有算法分派）。
+
+        复用 RL 的共享实现 ``masked_token_log_probs_from_hidden``（宪法 §1.4 单一真相源）：
+        分块 logsumexp，不物化 (B,S,V) 全量 logits（v0.24.0 修复——此前 SFT 物化
+        全词表 logits 导致显存不随 TP 分摊、TP=4 仍 OOM）。
+        语义与 ``F.cross_entropy(ignore_index=-100, reduction="mean")`` 一致（全局均值）。
+        """
+        from graspo.ripple.loss import masked_mean, masked_token_log_probs_from_hidden
 
         norm = self.model.norm if hasattr(self.model, "norm") else None
         lm_head = self.model.lm_head if hasattr(self.model, "lm_head") else None
         if norm is None or lm_head is None:
             raise RuntimeError("SFT loss requires model.norm and model.lm_head")
         normalized = norm(hidden_states)
-        logits = torch.nn.functional.linear(normalized.float(), lm_head.weight.float())
-        return sft_cross_entropy_loss(logits, labels.to(hidden_states.device))
+        # 因果语言模型 shift：位置 t 的 hidden 预测位置 t+1 的 token
+        shift_hidden = normalized[:, :-1].contiguous()
+        shift_labels = labels[:, 1:].contiguous()
+        log_probs = masked_token_log_probs_from_hidden(
+            shift_hidden.float(),
+            lm_head.weight.float(),
+            shift_labels,
+            ignore_index=-100,
+        )
+        mask = shift_labels != -100
+        return -(log_probs * mask).sum() / mask.sum().clamp_min(1)
 
     """Mixin: SFT training/batch optimization methods for Qwen35Adapter."""
 
