@@ -269,24 +269,50 @@ def test_assistant_with_valid_tool_calls_is_accepted(tmp_path):
     path.write_text(
         '{"messages":['
         '{"role":"user","content":"pick up"},'
-        '{"role":"assistant","content":"extending","tool_calls":['
-        '{"name":"robot_atomic_control","arguments":{"action_type":"伸长手臂","distance_cm":12.5}}'
+        '{"role":"assistant","content":null,"tool_calls":['
+        '{"id":"call_0001","type":"function",'
+        '"function":{"name":"robot_atomic_control","arguments":{"action_type":"伸长手臂","distance_cm":12.5}}}'
         "]},"
+        '{"role":"tool","content":"OK","tool_call_id":"call_0001"},'
         '{"role":"user","content":"continue"}'
         '],"targets":[{"output":{"tool_calls":[{"name":"robot_atomic_control","arguments":{"action_type":"降低","distance_cm":5}}]}}]}\n',
         encoding="utf-8",
     )
 
     sample = load_jsonl(path)[0]
-    # Assistant message is preserved with tool_calls intact.
     asst = sample.messages[1]
     assert asst["role"] == "assistant"
+    assert asst["content"] is None
     assert asst["tool_calls"] == [
         {
-            "name": "robot_atomic_control",
-            "arguments": {"action_type": "伸长手臂", "distance_cm": 12.5},
+            "id": "call_0001",
+            "type": "function",
+            "function": {
+                "name": "robot_atomic_control",
+                "arguments": {"action_type": "伸长手臂", "distance_cm": 12.5},
+            },
         }
     ]
+    tool_msg = sample.messages[2]
+    assert tool_msg["role"] == "tool"
+    assert tool_msg["content"] == "OK"
+    assert tool_msg["tool_call_id"] == "call_0001"
+
+
+def test_assistant_with_tool_calls_content_not_null_is_rejected(tmp_path):
+    path = tmp_path / "content_not_null.jsonl"
+    path.write_text(
+        '{"messages":['
+        '{"role":"user","content":"q"},'
+        '{"role":"assistant","content":"thinking","tool_calls":['
+        '{"id":"c0","type":"function","function":{"name":"move","arguments":{}}}'
+        "]},"
+        '{"role":"user","content":"continue"}'
+        '],"targets":[{"output":{"tool_calls":[{"name":"move","arguments":{}}]}}]}\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="content is not null"):
+        load_jsonl(path)
 
 
 def test_assistant_with_raw_xml_in_content_is_rejected(tmp_path):
@@ -325,7 +351,7 @@ def test_assistant_tool_calls_non_list_is_rejected(tmp_path):
     path.write_text(
         '{"messages":['
         '{"role":"user","content":"q"},'
-        '{"role":"assistant","content":"ok","tool_calls":{"name":"x","arguments":{}}},'
+        '{"role":"assistant","content":null,"tool_calls":{"id":"x","type":"function","function":{"name":"x","arguments":{}}}},'
         '{"role":"user","content":"continue"}'
         '],"targets":[{"output":{"tool_calls":[{"name":"x","arguments":{}}]}}]}\n',
         encoding="utf-8",
@@ -340,7 +366,7 @@ def test_assistant_tool_calls_empty_list_is_rejected(tmp_path):
     path.write_text(
         '{"messages":['
         '{"role":"user","content":"q"},'
-        '{"role":"assistant","content":"ok","tool_calls":[]},'
+        '{"role":"assistant","content":null,"tool_calls":[]},'
         '{"role":"user","content":"continue"}'
         '],"targets":[{"output":{"tool_calls":[{"name":"x","arguments":{}}]}}]}\n',
         encoding="utf-8",
@@ -355,13 +381,13 @@ def test_assistant_tool_calls_missing_name_is_rejected(tmp_path):
     path.write_text(
         '{"messages":['
         '{"role":"user","content":"q"},'
-        '{"role":"assistant","content":"ok","tool_calls":[{"arguments":{}}]},'
+        '{"role":"assistant","content":null,"tool_calls":[{"id":"c0","type":"function","function":{"arguments":{}}}]},'
         '{"role":"user","content":"continue"}'
         '],"targets":[{"output":{"tool_calls":[{"name":"x","arguments":{}}]}}]}\n',
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match=r"\.name must be"):
+    with pytest.raises(ValueError, match=r"function\.name must be"):
         load_jsonl(path)
 
 
@@ -370,13 +396,13 @@ def test_assistant_tool_calls_missing_arguments_is_rejected(tmp_path):
     path.write_text(
         '{"messages":['
         '{"role":"user","content":"q"},'
-        '{"role":"assistant","content":"ok","tool_calls":[{"name":"move"}]},'
+        '{"role":"assistant","content":null,"tool_calls":[{"id":"c0","type":"function","function":{"name":"move"}}]},'
         '{"role":"user","content":"continue"}'
         '],"targets":[{"output":{"tool_calls":[{"name":"move","arguments":{}}]}}]}\n',
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match=r"\.arguments must be"):
+    with pytest.raises(ValueError, match=r"function\.arguments must be"):
         load_jsonl(path)
 
 
@@ -385,8 +411,8 @@ def test_assistant_tool_calls_arguments_with_raw_xml_is_rejected(tmp_path):
     path.write_text(
         '{"messages":['
         '{"role":"user","content":"q"},'
-        '{"role":"assistant","content":"ok","tool_calls":['
-        '{"name":"move","arguments":{"desc":"use <function=move>"}}'
+        '{"role":"assistant","content":null,"tool_calls":['
+        '{"id":"c0","type":"function","function":{"name":"move","arguments":{"desc":"use <function=move>"}}}'
         "]},"
         '{"role":"user","content":"continue"}'
         '],"targets":[{"output":{"tool_calls":[{"name":"move","arguments":{}}]}}]}\n',
@@ -432,3 +458,131 @@ def test_assistant_multimodal_content_with_xml_is_rejected(tmp_path):
 
     with pytest.raises(ValueError, match="raw tool-call text"):
         load_jsonl(path)
+
+
+# ---- tool role message validation ----
+
+
+def test_tool_message_without_tool_call_id_is_rejected(tmp_path):
+    path = tmp_path / "tool_no_id.jsonl"
+    path.write_text(
+        '{"messages":['
+        '{"role":"user","content":"q"},'
+        '{"role":"assistant","content":null,"tool_calls":['
+        '{"id":"c0","type":"function","function":{"name":"move","arguments":{}}}'
+        "]},"
+        '{"role":"tool","content":"OK"},'
+        '{"role":"user","content":"continue"}'
+        '],"targets":[{"output":{"tool_calls":[{"name":"move","arguments":{}}]}}]}\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="tool_call_id"):
+        load_jsonl(path)
+
+
+def test_tool_message_with_empty_tool_call_id_is_rejected(tmp_path):
+    path = tmp_path / "tool_empty_id.jsonl"
+    path.write_text(
+        '{"messages":['
+        '{"role":"user","content":"q"},'
+        '{"role":"assistant","content":null,"tool_calls":['
+        '{"id":"c0","type":"function","function":{"name":"move","arguments":{}}}'
+        "]},"
+        '{"role":"tool","content":"OK","tool_call_id":""},'
+        '{"role":"user","content":"continue"}'
+        '],"targets":[{"output":{"tool_calls":[{"name":"move","arguments":{}}]}}]}\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="tool_call_id"):
+        load_jsonl(path)
+
+
+# ---- OpenAI format strict validation ----
+
+
+def test_assistant_tool_calls_missing_id_is_rejected(tmp_path):
+    path = tmp_path / "no_id_tc.jsonl"
+    path.write_text(
+        '{"messages":['
+        '{"role":"user","content":"q"},'
+        '{"role":"assistant","content":null,"tool_calls":['
+        '{"type":"function","function":{"name":"move","arguments":{}}}'
+        "]},"
+        '{"role":"user","content":"continue"}'
+        '],"targets":[{"output":{"tool_calls":[{"name":"move","arguments":{}}]}}]}\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match=r"\.id must be"):
+        load_jsonl(path)
+
+
+def test_assistant_tool_calls_wrong_type_is_rejected(tmp_path):
+    path = tmp_path / "bad_type_tc.jsonl"
+    path.write_text(
+        '{"messages":['
+        '{"role":"user","content":"q"},'
+        '{"role":"assistant","content":null,"tool_calls":['
+        '{"id":"c0","type":"tool","function":{"name":"move","arguments":{}}}'
+        "]},"
+        '{"role":"user","content":"continue"}'
+        '],"targets":[{"output":{"tool_calls":[{"name":"move","arguments":{}}]}}]}\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="type must be"):
+        load_jsonl(path)
+
+
+def test_assistant_tool_calls_missing_function_wrapper_is_rejected(tmp_path):
+    path = tmp_path / "no_func_tc.jsonl"
+    path.write_text(
+        '{"messages":['
+        '{"role":"user","content":"q"},'
+        '{"role":"assistant","content":null,"tool_calls":['
+        '{"id":"c0","type":"function","name":"move","arguments":{}}'
+        "]},"
+        '{"role":"user","content":"continue"}'
+        '],"targets":[{"output":{"tool_calls":[{"name":"move","arguments":{}}]}}]}\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="function.*must be a JSON object"):
+        load_jsonl(path)
+
+
+# ---- V4 multi-step chain format ----
+
+
+def test_v4_multi_step_chain_is_accepted(tmp_path):
+    """Full V4 multi-step chain with history, tool role, and OpenAI format."""
+    path = tmp_path / "v4_chain.jsonl"
+    path.write_text(
+        '{"messages":['
+        '{"role":"system","content":[{"type":"text","text":"You are a robot."}]},'
+        '{"role":"user","content":['
+        '{"type":"image","image":"../images/step0_left.jpg"},'
+        '{"type":"image","image":"../images/step0_right.jpg"},'
+        '{"type":"text","text":"捡起铅笔"}'
+        "]},"
+        '{"role":"assistant","content":null,"tool_calls":['
+        '{"id":"call_0000","type":"function","function":{"name":"rotate_arm","arguments":{"action_type":"顺时针旋转"}}}'
+        "]},"
+        '{"role":"tool","content":"OK","tool_call_id":"call_0000"},'
+        '{"role":"user","content":['
+        '{"type":"image","image":"../images/step1_left.jpg"},'
+        '{"type":"image","image":"../images/step1_right.jpg"},'
+        '{"type":"text","text":"继续"}'
+        "]}"
+        '],"tools":['
+        '{"type":"function","function":{"name":"rotate_arm","description":"旋转手臂","parameters":{"type":"object","properties":{"action_type":{"type":"string","enum":["顺时针旋转","逆时针旋转"]}},"required":["action_type"]}}}'
+        '],"targets":[{"id":"primary","output":{"tool_calls":[{"name":"rotate_arm","arguments":{"action_type":"顺时针旋转"}}]}}],'
+        '"id":"v4_chain_err_0000_step01","source":"elam_v4"}\n',
+        encoding="utf-8",
+    )
+    sample = load_jsonl(path)[0]
+    assert sample.metadata["id"] == "v4_chain_err_0000_step01"
+    assert sample.metadata["source"] == "elam_v4"
+    assert len(sample.messages) == 5
+    assert sample.messages[2]["role"] == "assistant"
+    assert sample.messages[2]["content"] is None
+    assert sample.messages[3]["role"] == "tool"
+    assert sample.messages[3]["tool_call_id"] == "call_0000"
+    assert sample.expects_tool_calls is True

@@ -32,7 +32,7 @@ flowchart TB
 
 **ComputeOperator** — 流水线中的一个计算阶段。绑定输入/输出 buffer，封装 forward 和 backward。算子不知道自己处理的是哪个模型层。
 
-**PipelineScheduler** — 抽象调度策略。注册表内置四种实现：`simple`（GPipe，所有 forward 先于 backward）、`one_f_one_b`（1F1B，预热后交替执行）、`async_1f1b`（异步 1F1B，实验性）。用户通过配置选择，无需理解实现差异。
+**PipelineScheduler** — 抽象调度策略。注册表内置 1F1B 调度（预热后交替执行 forward/backward，梯度累积）。PP=1 时自动退化为 TP-only 梯度累积 loop。
 
 **PipelineGraph** — 流水线物理拓扑：依次连接的 operator 节点 + 转发 buffer。通过 `max_inflight_microbatches` 限制同时飞行的 batch 数，控制显存峰值。
 

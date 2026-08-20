@@ -67,7 +67,6 @@ graspoflow:
   raw_log_enabled: true
   readable_log_enabled: true
   synchronize_cuda_timing: false
-  pp_schedule: simple
   pp_max_inflight_microbatches: 0
 
 export:

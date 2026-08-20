@@ -33,7 +33,6 @@
 #   tp_size: 1
 #   pp_size: 8
 #   placement_strategy: qwen36_pp8_static
-#   pp_schedule: one_f_one_b
 #   pp_micro_batch_size: 1
 # launch:
 #   master_port: 29500
@@ -90,7 +89,6 @@ graspoflow:
   tp_size: 1
   pp_size: 8
   placement_strategy: qwen36_pp8_static
-  pp_schedule: one_f_one_b
   pp_micro_batch_size: 1
   forward_batch_size: 8
   use_kv_cache_for_rollout: true

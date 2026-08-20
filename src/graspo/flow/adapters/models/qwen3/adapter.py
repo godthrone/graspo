@@ -12,7 +12,6 @@ from torch.nn.utils.rnn import pad_sequence
 
 from graspo.core.lora import resolve_lora_target_modules
 from graspo.flow.adapters.models.common.model_builders import build_native_qwen_model
-from graspo.flow.adapters.models.qwen3.ops import build_qwen3_ops
 from graspo.flow.adapters.transformer_adapter import TransformerAdapter
 from graspo.flow.lora.lora_helpers import native_qwen_lora_available_targets
 from graspo.flow.lora.lora_io import load_peft_adapter_into_native_model
@@ -93,13 +92,6 @@ class Qwen3Adapter(TransformerAdapter):
                 self.config.lora.adapter_path,
                 base_model_path=str(model_path),
             )
-
-    def _build_ops(self) -> None:
-        self._ops = build_qwen3_ops(
-            model=self.model,
-            tp_state=self.tp_state,
-            tp_size=self.tp_size,
-        )
 
     # ── Generation (TP-only) ────────────────────────────────────────────────
 

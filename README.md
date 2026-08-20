@@ -571,7 +571,6 @@ is only a LoRA warm-start.
   controls.
 - `raw_log_enabled`, `readable_log_enabled`: rollout/replay log toggles.
 - `synchronize_cuda_timing`: synchronize CUDA events for timing diagnostics.
-- `pp_schedule`: pipeline schedule, `simple` (default) or `one_f_one_b`.
 - `pp_max_inflight_microbatches`: 1F1B inflight cap for experiments.
 
 ### `export`

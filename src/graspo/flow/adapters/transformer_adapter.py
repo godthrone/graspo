@@ -1,7 +1,7 @@
 """Layer 1 — TransformerAdapter: common adapter logic for all decoder-only transformers.
 
 Extracted from the original Qwen adapter.  Every model family subclasses this and
-only implements the model-specific parts (``_load_model``, ``_build_ops``,
+only implements the model-specific parts (``_load_model``,
 ``generate_groups``, ``generate_sample_groups``, ``train_batch``,
 ``sequence_log_probs``, ``parse_completion``).
 """
@@ -93,7 +93,6 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
 
     Subclasses must implement:
     - ``_load_model()``
-    - ``_build_ops()``
     - ``generate_groups()``
     - ``generate_sample_groups()``
     - ``train_batch()``
@@ -147,17 +146,12 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
         self._load_model(hf_config, model_path)
-        self._build_ops()
         self._build_optimizer()
         self._emit_setup_event()
 
     @abstractmethod
     def _load_model(self, hf_config: Any, model_path: Path) -> None:
         """Load the model.  Subclass implements."""
-
-    @abstractmethod
-    def _build_ops(self) -> None:
-        """Build pipeline operators.  Subclass implements."""
 
     def _build_optimizer(self) -> None:
         from graspo.ripple.loss import GRASPORippleLoss

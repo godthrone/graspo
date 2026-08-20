@@ -181,7 +181,6 @@ class GraspoFlowConfig(BaseModel):
     raw_log_enabled: bool = True
     readable_log_enabled: bool = True
     synchronize_cuda_timing: bool = False
-    pp_schedule: str = "simple"
     pp_max_inflight_microbatches: int = 0
 
 

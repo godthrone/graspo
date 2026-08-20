@@ -439,7 +439,6 @@ rollout 完成后，每条 completion 会被**逐字符标注**结构角色（`C
 - `empty_cache_after_rollout_split`、`empty_cache_before_train`：CUDA cache 控制。
 - `raw_log_enabled`、`readable_log_enabled`：rollout/replay 日志开关。
 - `synchronize_cuda_timing`：是否同步 CUDA timing。
-- `pp_schedule`：pipeline schedule，`simple`（默认）或 `one_f_one_b`。
 - `pp_max_inflight_microbatches`：1F1B inflight 上限。
 
 ### `export`

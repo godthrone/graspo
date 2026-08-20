@@ -96,18 +96,58 @@ def collate_sft_multimodal_batch(
         rows.append(row)
         target_texts.append(deferred.target_text)
 
-    # 2. 单次编码 prompt（复用 RL 路径，一次性产出 input_ids + pixel_values）
+    # 2. 逐个样本编码 prompt（复用 RL 路径，逐个产出 input_ids + pixel_values）
+    # 修复：不再一次性批量编码所有样本，避免 processor.apply_chat_template
+    # 在 4 张 720P 图（batch=2 双目）时 CPU 预处理阻塞 → NCCL 超时。
+    # 逐个编码后拼接 pixel_values/image_grid_thw，vision encoder forward 仍批量处理。
     # SFT 禁用 thinking：与 sft_tokenize_text 的 setdefault("enable_thinking", False) 一致
+    from torch.nn.utils.rnn import pad_sequence as _pad_sequence
+
     chat_template_kwargs = dict(adapter.config.model.chat_template_kwargs or {})
     chat_template_kwargs.setdefault("enable_thinking", False)
-    encoded = adapter._encode_multimodal_rows(
-        rows,
-        add_generation_prompt=True,
-        chat_template_kwargs=chat_template_kwargs,
-    )
-    prompt_ids = encoded["input_ids"].to(device)  # (batch, padded_prompt_len)
-    prompt_mask = encoded["attention_mask"].to(device)  # (batch, padded_prompt_len)
-    multimodal_inputs = adapter._multimodal_inputs_to_device(encoded)
+
+    all_prompt_ids: list[torch.Tensor] = []
+    all_prompt_masks: list[torch.Tensor] = []
+    all_multimodal: list[dict[str, torch.Tensor]] = []
+
+    for row in rows:
+        encoded = adapter._encode_multimodal_rows(
+            [row],
+            add_generation_prompt=True,
+            chat_template_kwargs=chat_template_kwargs,
+        )
+        all_prompt_ids.append(encoded["input_ids"].to(device))  # (1, L_i)
+        all_prompt_masks.append(encoded["attention_mask"].to(device))  # (1, L_i)
+        all_multimodal.append(adapter._multimodal_inputs_to_device(encoded))
+
+    # Pad prompt_ids / attention_mask 到统一长度后 stack
+    prompt_ids = _pad_sequence(
+        [ids.squeeze(0) for ids in all_prompt_ids],
+        batch_first=True,
+        padding_value=0,
+    )  # (batch, max_prompt_len)
+    prompt_mask = _pad_sequence(
+        [mask.squeeze(0) for mask in all_prompt_masks],
+        batch_first=True,
+        padding_value=0,
+    ).bool()  # (batch, max_prompt_len)
+    max_prompt_len = int(prompt_ids.shape[1])
+
+    # 拼接 multimodal inputs（pixel_values / image_grid_thw 沿 batch 维 cat）
+    multimodal_inputs: dict[str, torch.Tensor] = {}
+    for key in ("pixel_values", "pixel_values_videos", "image_grid_thw", "video_grid_thw"):
+        tensors = [m[key] for m in all_multimodal if key in m]
+        if tensors:
+            multimodal_inputs[key] = torch.cat(tensors, dim=0)
+    # mm_token_type_ids 与 input_ids 对齐，需 pad 到 max_prompt_len 后 stack
+    mm_token_tensors = [m["mm_token_type_ids"] for m in all_multimodal if "mm_token_type_ids" in m]
+    if mm_token_tensors:
+        padded_mm: list[torch.Tensor] = []
+        for t in mm_token_tensors:
+            if t.shape[1] < max_prompt_len:
+                t = torch.nn.functional.pad(t, (0, max_prompt_len - t.shape[1]), value=0)
+            padded_mm.append(t)
+        multimodal_inputs["mm_token_type_ids"] = torch.cat(padded_mm, dim=0)
 
     # 3. 编码 target text（纯文本，tokenizer 即可）
     eos_id = int(tokenizer.eos_token_id)

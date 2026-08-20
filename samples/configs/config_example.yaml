@@ -105,7 +105,6 @@ graspoflow:
   raw_log_enabled: true              # Write raw (full-detail) JSONL rollout logs
   readable_log_enabled: true         # Write readable (summary) JSONL rollout logs
   synchronize_cuda_timing: false     # Sync CUDA for precise timing (adds overhead)
-  pp_schedule: simple                # Pipeline schedule: "simple" or "1f1b"
   pp_max_inflight_microbatches: 0    # Max inflight microbatches (0=auto)
 
 # ── Model export ──────────────────────────────────────────────────────────

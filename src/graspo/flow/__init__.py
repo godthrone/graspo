@@ -5,7 +5,7 @@
 - core/    通用契约：配置模型、chat template
 - flow/    设施层：怎么跑起来、怎么上 GPU（本层）
 
-子模块按功能域组织：scheduling/（流水线调度）、parallel/（TP/PP 状态）、
+子模块按功能域组织：parallel/（TP/PP 状态）、
 lora/、logger/、adapters/（模型族）、trainer/（训练循环）。
 """
 

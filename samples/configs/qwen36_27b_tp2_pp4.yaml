@@ -57,7 +57,6 @@ graspoflow:
   use_kv_cache_for_rollout: true
   empty_cache_after_rollout_split: false
   raw_log_enabled: true
-  pp_schedule: one_f_one_b
   pp_max_inflight_microbatches: 0
 
 launch:
