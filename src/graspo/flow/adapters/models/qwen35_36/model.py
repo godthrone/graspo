@@ -3,11 +3,28 @@
 from __future__ import annotations
 
 import math
+import os
+import sys
 from typing import TYPE_CHECKING, Any
 
 import torch
 from torch import nn
 from torch.utils.checkpoint import checkpoint as activation_checkpoint
+
+
+def _log_cuda_mem(label: str) -> None:
+    """Log CUDA memory stats to stderr for rank 0 only."""
+    if os.environ.get("RANK", "0") == "0":
+        rank = os.environ.get("RANK", "0")
+        allocated = torch.cuda.memory_allocated() / 1024**3
+        reserved = torch.cuda.memory_reserved() / 1024**3
+        max_allocated = torch.cuda.max_memory_allocated() / 1024**3
+        print(
+            f"[MEM rank={rank}] {label}: allocated={allocated:.2f}GB "
+            f"reserved={reserved:.2f}GB max_allocated={max_allocated:.2f}GB",
+            file=sys.stderr,
+            flush=True,
+        )
 
 if TYPE_CHECKING:
     from graspo.flow.parallel.tensor_utils import SafetensorIndex
@@ -22,8 +39,10 @@ from graspo.flow.adapters.models.common.layers import (
 from graspo.flow.adapters.models.common.native_qwen_config import NativeQwenConfig
 from graspo.flow.parallel.placement import NativePlacementPlan
 from graspo.flow.parallel.tensor_utils import (
+    _all_gather_sp,
     _dtype_size,
     _position_ids,
+    _scatter_sp,
     _selected_token_log_probs_from_hidden,
 )
 
@@ -36,6 +55,7 @@ class Qwen35HybridTextModel(QwenFamilyBase):
         loader: SafetensorIndex,
         tp_rank: int,
         tp_size: int,
+        use_sp: bool = False,
         placement: NativePlacementPlan | None = None,
         lora_r: int,
         lora_alpha: int,
@@ -49,6 +69,7 @@ class Qwen35HybridTextModel(QwenFamilyBase):
         self.config = hf_config
         self.tp_rank = tp_rank
         self.tp_size = tp_size
+        self._use_sp = bool(use_sp)
         self.placement = placement
         self.device_ref = device
         self.gradient_checkpointing = bool(gradient_checkpointing)
@@ -90,6 +111,7 @@ class Qwen35HybridTextModel(QwenFamilyBase):
                 lora_alpha=lora_alpha,
                 lora_dropout=lora_dropout,
                 lora_targets=lora_targets,
+                gradient_checkpointing=gradient_checkpointing,
                 torch_dtype=torch_dtype,
                 device=device,
             )
@@ -107,6 +129,7 @@ class Qwen35HybridTextModel(QwenFamilyBase):
                     loader=loader,
                     tp_rank=tp_rank,
                     tp_size=tp_size,
+                    use_sp=self._use_sp,
                     lora_r=lora_r,
                     lora_alpha=lora_alpha,
                     lora_dropout=lora_dropout,
@@ -201,7 +224,24 @@ class Qwen35HybridTextModel(QwenFamilyBase):
         multimodal_inputs: dict[str, torch.Tensor] | None = None,
         use_cache: bool = False,
     ) -> torch.Tensor | tuple[torch.Tensor, tuple[Any, ...]]:
+        torch.cuda.reset_peak_memory_stats()
         hidden_states = self.embed_inputs(input_ids, multimodal_inputs=multimodal_inputs)
+        _log_cuda_mem("after_embedding")
+        # SP: embedding 输出完整序列 → scatter 分片给 decoder layers
+        # 注意：embedding 在各 rank 上相同，用 scatter（非 reduce_scatter）分片
+        _sp_orig_seq_len = hidden_states.shape[1]
+        if self._use_sp:
+            sp_size = self.tp_size
+            # Pad sequence to multiple of sp_size so all ranks get equal chunks
+            pad_to = ((_sp_orig_seq_len + sp_size - 1) // sp_size) * sp_size
+            if pad_to != _sp_orig_seq_len:
+                pad = torch.zeros(
+                    hidden_states.shape[0], pad_to - _sp_orig_seq_len, hidden_states.shape[2],
+                    dtype=hidden_states.dtype, device=hidden_states.device,
+                )
+                hidden_states = torch.cat([hidden_states, pad], dim=1)
+            hidden_states = _scatter_sp(hidden_states)
+            _log_cuda_mem("after_scatter")
         if attention_mask is None:
             past_len = _qwen35_cache_sequence_len(past_key_values[0]) if past_key_values else 0
             attention_mask = torch.ones(
@@ -209,12 +249,25 @@ class Qwen35HybridTextModel(QwenFamilyBase):
                 dtype=torch.bool,
                 device=input_ids.device,
             )
+        # SP: pad attention_mask to match padded sequence length (before position_ids)
+        if self._use_sp and pad_to != _sp_orig_seq_len:
+            pad_mask = torch.zeros(
+                attention_mask.shape[0], pad_to - _sp_orig_seq_len,
+                dtype=attention_mask.dtype, device=attention_mask.device,
+            )
+            attention_mask = torch.cat([attention_mask, pad_mask], dim=1)
+            # Also pad input_ids for position computation (embedding uses original)
+            pad_ids = torch.zeros(
+                (input_ids.shape[0], pad_to - _sp_orig_seq_len),
+                dtype=input_ids.dtype, device=input_ids.device,
+            )
+            input_ids = torch.cat([input_ids, pad_ids], dim=1)
         position_ids = self.compute_multimodal_position_ids(
             input_ids=input_ids,
             attention_mask=attention_mask,
             multimodal_inputs=multimodal_inputs,
             past_key_values=past_key_values,
-            query_len=int(input_ids.shape[1]),
+            query_len=pad_to if (self._use_sp and pad_to != _sp_orig_seq_len) else int(input_ids.shape[1]),
         )
         present_key_values: list[Any] = []
         for idx, layer in enumerate(self.layers):
@@ -240,9 +293,19 @@ class Qwen35HybridTextModel(QwenFamilyBase):
                 )
             else:
                 hidden_states = layer(hidden_states, position_ids, attention_mask)
+            if idx % 8 == 0:
+                _log_cuda_mem(f"after_layer_{idx}")
         if self.norm is None:
             raise RuntimeError("This Qwen3.5 stage does not own final norm")
+        # SP: decoder 输出 SP 分片 → all_gather 恢复完整序列供 norm/lm_head
+        if self._use_sp:
+            hidden_states = _all_gather_sp(hidden_states)
+            _log_cuda_mem("after_final_allgather")
+            # Truncate padding added before scatter
+            if hidden_states.shape[1] != _sp_orig_seq_len:
+                hidden_states = hidden_states[:, :_sp_orig_seq_len, :]
         hidden_states = self.norm(hidden_states)
+        _log_cuda_mem("after_final_norm")
         if use_cache:
             return hidden_states, tuple(present_key_values)
         return hidden_states

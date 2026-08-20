@@ -2,11 +2,28 @@
 
 from __future__ import annotations
 
+import os
+import sys
 from typing import TYPE_CHECKING, Any
 
 import torch
 from torch import nn
 from torch.nn import functional as F  # noqa: N812
+
+
+def _log_cuda_mem(label: str) -> None:
+    """Log CUDA memory stats to stderr for rank 0 only."""
+    if os.environ.get("RANK", "0") == "0":
+        rank = os.environ.get("RANK", "0")
+        allocated = torch.cuda.memory_allocated() / 1024**3
+        reserved = torch.cuda.memory_reserved() / 1024**3
+        max_allocated = torch.cuda.max_memory_allocated() / 1024**3
+        print(
+            f"[MEM rank={rank}] {label}: allocated={allocated:.2f}GB "
+            f"reserved={reserved:.2f}GB max_allocated={max_allocated:.2f}GB",
+            file=sys.stderr,
+            flush=True,
+        )
 
 if TYPE_CHECKING:
     from graspo.flow.parallel.tensor_utils import SafetensorIndex
@@ -15,12 +32,14 @@ from graspo.flow.adapters.models.common.layers_qwen3 import TensorParallelQwenML
 from graspo.flow.lora.lora_helpers import _lora_target_enabled
 from graspo.flow.lora.lora_linear import LoRALinear
 from graspo.flow.parallel.tensor_utils import (
+    _all_gather_sp,
     _all_reduce_tp,
     _apply_mask_to_padding_states,
     _apply_rope_partial,
     _causal_attention_mask,
     _head_row_indices,
     _left_pad_last_dim,
+    _reduce_scatter_sp,
     _rope_cache,
     _select_head_rows,
     _shard_tensor,
@@ -41,6 +60,7 @@ class TensorParallelQwen35DecoderLayer(nn.Module):
         loader: SafetensorIndex,
         tp_rank: int,
         tp_size: int,
+        use_sp: bool = False,
         lora_r: int,
         lora_alpha: int,
         lora_dropout: float,
@@ -51,6 +71,8 @@ class TensorParallelQwen35DecoderLayer(nn.Module):
         super().__init__()
         prefix = f"{key_prefix}.layers.{layer_idx}"
         self.layer_type = layer_type
+        # SP: 必须在使用 _use_sp 之前设置（attention/MLP 构造时需要）
+        self._use_sp = bool(use_sp) and tp_size > 1
         self.input_layernorm = Qwen35RMSNorm(
             hf_config.hidden_size, eps=hf_config.rms_norm_eps, device=device, dtype=torch_dtype
         )
@@ -72,6 +94,7 @@ class TensorParallelQwen35DecoderLayer(nn.Module):
                 loader=loader,
                 tp_rank=tp_rank,
                 tp_size=tp_size,
+                use_sp=self._use_sp,
                 lora_r=lora_r,
                 lora_alpha=lora_alpha,
                 lora_dropout=lora_dropout,
@@ -86,6 +109,7 @@ class TensorParallelQwen35DecoderLayer(nn.Module):
                 loader=loader,
                 tp_rank=tp_rank,
                 tp_size=tp_size,
+                use_sp=self._use_sp,
                 lora_r=lora_r,
                 lora_alpha=lora_alpha,
                 lora_dropout=lora_dropout,
@@ -101,6 +125,7 @@ class TensorParallelQwen35DecoderLayer(nn.Module):
             loader=loader,
             tp_rank=tp_rank,
             tp_size=tp_size,
+            use_sp=self._use_sp,
             lora_r=lora_r,
             lora_alpha=lora_alpha,
             lora_dropout=lora_dropout,
@@ -108,6 +133,7 @@ class TensorParallelQwen35DecoderLayer(nn.Module):
             torch_dtype=torch_dtype,
             device=device,
         )
+        # _use_sp 已在 __init__ 开头设置
 
     def forward(
         self,
@@ -118,6 +144,26 @@ class TensorParallelQwen35DecoderLayer(nn.Module):
         past_key_value: Any | None = None,
         use_cache: bool = False,
     ) -> torch.Tensor | tuple[torch.Tensor, Any]:
+        if self._use_sp and not use_cache:
+            return self._forward_sp(
+                hidden_states, position_ids, attention_mask,
+                past_key_value=past_key_value,
+            )
+        return self._forward_tp(
+            hidden_states, position_ids, attention_mask,
+            past_key_value=past_key_value, use_cache=use_cache,
+        )
+
+    def _forward_tp(
+        self,
+        hidden_states: torch.Tensor,
+        position_ids: torch.Tensor,
+        attention_mask: torch.Tensor | None,
+        *,
+        past_key_value: Any | None = None,
+        use_cache: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, Any]:
+        """TP-only forward（无 SP）：现有路径，不变。"""
         mixer_output = self.token_mixer(
             self.input_layernorm(hidden_states),
             position_ids=position_ids,
@@ -133,6 +179,49 @@ class TensorParallelQwen35DecoderLayer(nn.Module):
         if use_cache:
             return hidden_states, present
         return hidden_states
+
+    def _forward_sp(
+        self,
+        hidden_states: torch.Tensor,
+        position_ids: torch.Tensor,
+        attention_mask: torch.Tensor | None,
+        *,
+        past_key_value: Any | None = None,
+    ) -> torch.Tensor:
+        """SP forward：激活值沿序列维度分片 (B, S/tp, H/tp)。
+
+        - all_gather 恢复完整序列供 LayerNorm/Attention/MLP 使用
+        - reduce_scatter 替代 all_reduce，输出保持 SP 分片
+        - residual 在 SP 分片状态直接相加（零通信）
+        """
+        _log_cuda_mem("sp_layer_entry")
+        # ── Attention sub-layer ──
+        # all_gather → LayerNorm → Attention → reduce_scatter 输出
+        full = _all_gather_sp(hidden_states)  # (B, S/tp, H/tp) → (B, S, H/tp)
+        _log_cuda_mem("sp_after_ag")
+        mixer_output = self.token_mixer(
+            self.input_layernorm(full),
+            position_ids=position_ids,
+            attention_mask=attention_mask,
+            past_key_value=past_key_value,
+            use_cache=False,
+        )
+        assert isinstance(mixer_output, torch.Tensor)
+        _log_cuda_mem("sp_after_attn")
+        # mixer_output: (B, S/tp, H/tp) — reduce_scatter 已在 attention 内部完成
+        # residual: SP 分片 + SP 分片 = SP 分片（无需通信）
+        hidden_states = hidden_states + mixer_output
+        _log_cuda_mem("sp_after_rs")
+
+        # ── MLP sub-layer ──
+        full = _all_gather_sp(hidden_states)
+        _log_cuda_mem("sp_after_ag2")
+        mlp_output = self.mlp(self.post_attention_layernorm(full))
+        _log_cuda_mem("sp_after_mlp")
+        # mlp_output: (B, S/tp, H/tp) — reduce_scatter 已在 MLP 内部完成
+        result = hidden_states + mlp_output
+        _log_cuda_mem("sp_after_rs2")
+        return result
 
 
 def _checkpoint_qwen35_decoder_layer_forward(
@@ -153,6 +242,7 @@ class TensorParallelQwen35FullAttention(nn.Module):
         loader: SafetensorIndex,
         tp_rank: int,
         tp_size: int,
+        use_sp: bool = False,
         lora_r: int,
         lora_alpha: int,
         lora_dropout: float,
@@ -169,6 +259,7 @@ class TensorParallelQwen35FullAttention(nn.Module):
         if self.num_heads % tp_size != 0:
             raise ValueError("Qwen3.5 full-attention query heads must be divisible by TP size")
         self.local_heads = self.num_heads // tp_size
+        self._use_sp = bool(use_sp) and tp_size > 1
         self.num_key_value_groups = self.num_heads // self.num_kv_heads
         self.rope_theta = float(
             (getattr(hf_config, "rope_parameters", {}) or {}).get("rope_theta", 1000000.0)
@@ -351,7 +442,7 @@ class TensorParallelQwen35FullAttention(nn.Module):
             .view(batch, query_len, self.local_heads * self.head_dim)
         )
         output = self.o_proj(attn * torch.sigmoid(gate))
-        output = _all_reduce_tp(output)
+        output = _reduce_scatter_sp(output) if self._use_sp else _all_reduce_tp(output)
         if use_cache:
             return output, present
         return output
@@ -366,6 +457,7 @@ class TensorParallelQwen35LinearAttention(nn.Module):
         loader: SafetensorIndex,
         tp_rank: int,
         tp_size: int,
+        use_sp: bool = False,
         lora_r: int,
         lora_alpha: int,
         lora_dropout: float,
@@ -384,6 +476,7 @@ class TensorParallelQwen35LinearAttention(nn.Module):
             )
         self.local_k_heads = self.num_k_heads // tp_size
         self.local_v_heads = self.num_v_heads // tp_size
+        self._use_sp = bool(use_sp) and tp_size > 1
         self.local_key_dim = self.local_k_heads * self.head_k_dim
         self.local_value_dim = self.local_v_heads * self.head_v_dim
         self.conv_kernel_size = int(hf_config.linear_conv_kernel_dim)
@@ -627,7 +720,7 @@ class TensorParallelQwen35LinearAttention(nn.Module):
         z = z.reshape(-1, self.head_v_dim)
         core_attn_out = self.norm(core_attn_out, z).reshape(batch, seq_len, self.local_value_dim)
         output = self.out_proj(core_attn_out)
-        output = _all_reduce_tp(output)
+        output = _reduce_scatter_sp(output) if self._use_sp else _all_reduce_tp(output)
         if use_cache:
             assert next_conv_state is not None
             assert next_recurrent_state is not None

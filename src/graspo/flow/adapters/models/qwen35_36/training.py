@@ -1,10 +1,27 @@
-"""Qwen3.5/3.6 adapter — RL training methods (TP-only, PP simple, 1F1B)."""
+"""Qwen3.5/3.6 adapter — RL training methods (TP-only, PP 1F1B)."""
 
 import time
+import os
+import sys
 from typing import Any
 
 import torch
 import torch.distributed as dist
+
+
+def _log_cuda_mem(label: str) -> None:
+    """Log CUDA memory stats to stderr for rank 0 only."""
+    if os.environ.get("RANK", "0") == "0":
+        rank = os.environ.get("RANK", "0")
+        allocated = torch.cuda.memory_allocated() / 1024**3
+        reserved = torch.cuda.memory_reserved() / 1024**3
+        max_allocated = torch.cuda.max_memory_allocated() / 1024**3
+        print(
+            f"[MEM rank={rank}] {label}: allocated={allocated:.2f}GB "
+            f"reserved={reserved:.2f}GB max_allocated={max_allocated:.2f}GB",
+            file=sys.stderr,
+            flush=True,
+        )
 
 from graspo.flow.adapters.models.qwen35_36.model import Qwen35HybridTextModel
 from graspo.flow.parallel.tensor_utils import (
@@ -32,6 +49,12 @@ class _Qwen35TrainingMethods:
         max_grad_norm: float,
         **kwargs: Any,
     ) -> dict[str, Any]:
+        """RL 训练：对一批 ``Experience`` 执行 forward → GRPO loss → backward。
+
+        支持梯度累积：将 ``optimize_prompt_batch_size`` 个 experience 作为一个 micro-batch，
+        所有 micro-batch 的梯度累加后统一 ``optimizer.step()``。
+        有效 batch size = ``optimize_prompt_batch_size × num_micro_batches``。
+        """
         self._require_ready()
         assert self.model is not None
         assert self.optimizer is not None
@@ -64,10 +87,13 @@ class _Qwen35TrainingMethods:
         optimize_round = 0
         round_started_at = time.monotonic()
         indices = self._shared_training_indices(len(experiences), optimize_round=optimize_round)
+        # 梯度累积：zero_grad 只调一次，所有 micro-batch 的梯度累加后统一 step。
+        num_micro_batches = max(1, len(indices) // batch_size)
+        self.optimizer.zero_grad(set_to_none=True)
+        valid_micro_batches = 0
         for start in range(0, len(indices) - batch_size + 1, batch_size):
             batch_indices = indices[start : start + batch_size]
             batch = collate_experiences([experiences[idx] for idx in batch_indices], self.device)
-            self.optimizer.zero_grad(set_to_none=True)
             self._sync_timing()
             forward_started_at = time.monotonic()
             multimodal_inputs = self._multimodal_inputs_from_metadata(
@@ -104,32 +130,44 @@ class _Qwen35TrainingMethods:
             if not torch.isfinite(loss):
                 skipped_nonfinite += 1
                 continue
+            micro_batch_count += 1
+            valid_micro_batches += 1
+            loss_sum += float(loss.detach().cpu())
+            # 梯度累积：loss 除以 num_micro_batches 使累加梯度等价于大 batch
+            scaled_loss = loss / num_micro_batches
             self._sync_timing()
             backward_started_at = time.monotonic()
-            loss.backward()
+            _log_cuda_mem("before_backward")
+            scaled_loss.backward()
+            _log_cuda_mem("after_backward")
+            self._sync_timing()
+            backward_sec += time.monotonic() - backward_started_at
+
+        # 所有 micro-batch 的 backward 完成后，统一 sync / clip / step
+        if valid_micro_batches > 0:
             from graspo.flow.lora.lora_linear import _sync_nonsharded_lora_grads
             from graspo.flow.parallel.tensor_utils import _TENSOR_PARALLEL_GROUP
 
             if _TENSOR_PARALLEL_GROUP is not None:
                 _sync_nonsharded_lora_grads(self.model, _TENSOR_PARALLEL_GROUP)
-            self._sync_timing()
-            backward_sec += time.monotonic() - backward_started_at
             grad_norm = torch.nn.utils.clip_grad_norm_(
                 [param for param in self.model.parameters() if param.requires_grad],
                 max_grad_norm,
             )
+            grad_norm_sum = float(grad_norm.detach().float().cpu())
             self._sync_timing()
             optimizer_started_at = time.monotonic()
+            _log_cuda_mem("before_optimizer_step")
             self.optimizer.step()
+            _log_cuda_mem("after_optimizer_step")
             self._sync_timing()
-            optimizer_step_sec += time.monotonic() - optimizer_started_at
+            optimizer_step_sec = time.monotonic() - optimizer_started_at
             if self.scheduler is not None:
                 self.scheduler.step()
-            optimizer_steps += 1
-            micro_batch_count += 1
-            loss_sum += float(loss.detach().cpu())
-            grad_norm_sum += float(grad_norm.detach().float().cpu())
-            nonzero_grad_count += self.model.nonzero_lora_grad_count()
+            optimizer_steps = 1
+            nonzero_grad_count = self.model.nonzero_lora_grad_count()
+        else:
+            grad_norm_sum = 0.0
         round_secs.append(time.monotonic() - round_started_at)
         self._train_batch_call_index += 1
 
@@ -139,8 +177,8 @@ class _Qwen35TrainingMethods:
             "replay_buffer_trainable_completion_count": len(experiences),
             "optimizer_steps": optimizer_steps,
             "skipped_nonfinite": skipped_nonfinite,
-            "loss_mean": loss_sum / optimizer_steps if optimizer_steps else None,
-            "grad_norm_mean": grad_norm_sum / optimizer_steps if optimizer_steps else None,
+            "loss_mean": loss_sum / micro_batch_count if micro_batch_count else None,
+            "grad_norm_mean": grad_norm_sum,
             "nonzero_grad_count": nonzero_grad_count,
             "lora_norm_before": lora_norm_before,
             "lora_norm_after": lora_norm_after,
@@ -171,17 +209,14 @@ class _Qwen35TrainingMethods:
         policy_ratio_clip_eps: float,
         max_grad_norm: float,
     ) -> dict[str, Any]:
-        """PP training — delegates to 1F1B or simple schedule."""
+        """PP training — 1F1B 调度，梯度累积。
+
+        Flow 层统一架构：TP + PP(1F1B)。PP=1 时走 TP-only 路径（``train_batch``），
+        PP>1 时走 1F1B 流水线（本方法）。不存在其他 PP 调度策略。
+        """
         assert isinstance(self.model, Qwen35HybridTextModel)
         assert self.tp_state is not None
-        schedule = str(self.config.graspoflow.pp_schedule or "simple")
-        if schedule == "one_f_one_b":
-            return self._pipeline_train_batch_one_f_one_b(
-                experiences,
-                policy_ratio_clip_eps=policy_ratio_clip_eps,
-                max_grad_norm=max_grad_norm,
-            )
-        return self._pipeline_train_batch_simple(
+        return self._pipeline_train_batch_one_f_one_b(
             experiences,
             policy_ratio_clip_eps=policy_ratio_clip_eps,
             max_grad_norm=max_grad_norm,
@@ -246,162 +281,6 @@ class _Qwen35TrainingMethods:
         if timing is not None:
             timing["pipeline_forward_calls"] = int(timing.get("pipeline_forward_calls") or 0) + 1
         return output, stage_input
-
-    # ── PP simple schedule ───────────────────────────────────────────────────
-
-    def _pipeline_train_batch_simple(
-        self,
-        experiences: list[Experience],
-        *,
-        policy_ratio_clip_eps: float,
-        max_grad_norm: float,
-    ) -> dict[str, Any]:
-        self.loss_fn.policy_ratio_clip_eps = policy_ratio_clip_eps
-        self.model.train()
-        optimizer_steps = 0
-        skipped_nonfinite = 0
-        loss_sum = 0.0
-        grad_norm_sum = 0.0
-        nonzero_grad_count = 0
-        lora_norm_before = self.model.lora_parameter_norm()
-        batch_size = int(self.config.training.optimize_prompt_batch_size)
-        train_batch_started_at = time.monotonic()
-        micro_batch_forward_sec = 0.0
-        backward_sec = 0.0
-        optimizer_step_sec = 0.0
-        round_secs: list[float] = []
-        micro_batch_count = 0
-        stage_timing = _new_pipeline_stage_timing()
-        # Single pass — no repeated iterations.
-        optimize_round = 0
-        round_started_at = time.monotonic()
-        indices = self._shared_training_indices(len(experiences), optimize_round=optimize_round)
-        for start in range(0, len(indices) - batch_size + 1, batch_size):
-            batch_indices = indices[start : start + batch_size]
-            batch = collate_experiences([experiences[idx] for idx in batch_indices], self.device)
-            if self.optimizer is not None:
-                self.optimizer.zero_grad(set_to_none=True)
-            self._sync_timing()
-            forward_started_at = time.monotonic()
-            stage_output, stage_input = self._pipeline_forward_for_training(
-                batch.sequences,
-                batch.attention_mask,
-                metadata=batch.metadata,
-                timing=stage_timing,
-            )
-            self._sync_timing()
-            micro_batch_forward_sec += time.monotonic() - forward_started_at
-            loss: torch.Tensor | None = None
-            if self.pp_rank == self.pp_size - 1:
-                assert stage_output is not None
-                assert self.model.norm is not None and self.model.lm_head is not None
-                norm_started_at = time.monotonic()
-                hidden = self.model.norm(stage_output)
-                _add_pipeline_stage_timing(stage_timing, "pipeline_norm_sec", norm_started_at)
-                lm_head_started_at = time.monotonic()
-                log_probs = _selected_token_log_probs_from_hidden(
-                    hidden[:, :-1].float(),
-                    self.model.lm_head.weight.float(),
-                    batch.sequences[:, 1:],
-                )
-                _add_pipeline_stage_timing(stage_timing, "pipeline_lm_head_sec", lm_head_started_at)
-                loss_started_at = time.monotonic()
-                loss = self.loss_fn(
-                    log_probs,
-                    batch.old_log_probs,
-                    batch.advantages,
-                    batch.action_mask,
-                )
-                _add_pipeline_stage_timing(stage_timing, "pipeline_loss_sec", loss_started_at)
-                finite = bool(torch.isfinite(loss).detach().cpu())
-            else:
-                finite = True
-            finite_payload = [finite]
-            dist.broadcast_object_list(finite_payload, src=(self.pp_size - 1) * self.tp_size)
-            if not bool(finite_payload[0]):
-                skipped_nonfinite += 1
-                continue
-            self._sync_timing()
-            backward_started_at = time.monotonic()
-            if self.pp_rank == self.pp_size - 1:
-                assert loss is not None
-                loss.backward()
-                if stage_input is not None and stage_input.grad is not None:
-                    dist.send(
-                        stage_input.grad.contiguous(),
-                        dst=int(self.tp_state.prev_pp_rank),
-                    )
-                loss_value = float(loss.detach().cpu())
-            else:
-                assert stage_output is not None
-                grad_output = torch.empty_like(stage_output)
-                dist.recv(grad_output, src=int(self.tp_state.next_pp_rank))
-                stage_output.backward(grad_output)
-                if stage_input is not None and stage_input.grad is not None:
-                    dist.send(
-                        stage_input.grad.contiguous(),
-                        dst=int(self.tp_state.prev_pp_rank),
-                    )
-                loss_value = 0.0
-            self._sync_timing()
-            backward_sec += time.monotonic() - backward_started_at
-            trainable_params = [param for param in self.model.parameters() if param.requires_grad]
-            grad_norm = (
-                torch.nn.utils.clip_grad_norm_(trainable_params, max_grad_norm)
-                if trainable_params
-                else torch.tensor(0.0)
-            )
-            self._sync_timing()
-            optimizer_started_at = time.monotonic()
-            if self.optimizer is not None:
-                self.optimizer.step()
-            self._sync_timing()
-            optimizer_step_sec += time.monotonic() - optimizer_started_at
-            if self.scheduler is not None and self.optimizer is not None:
-                self.scheduler.step()
-            optimizer_steps += 1
-            micro_batch_count += 1
-            loss_payload = [loss_value]
-            dist.broadcast_object_list(loss_payload, src=(self.pp_size - 1) * self.tp_size)
-            loss_sum += float(loss_payload[0])
-            grad_norm_sum += float(grad_norm.detach().float().cpu())
-            nonzero_grad_count += self.model.nonzero_lora_grad_count()
-        round_secs.append(time.monotonic() - round_started_at)
-        self._train_batch_call_index += 1
-        lora_norm_after = self.model.lora_parameter_norm()
-        metrics = {
-            "optimized": optimizer_steps > 0,
-            "replay_buffer_trainable_completion_count": len(experiences),
-            "optimizer_steps": optimizer_steps,
-            "skipped_nonfinite": skipped_nonfinite,
-            "loss_mean": loss_sum / optimizer_steps if optimizer_steps else None,
-            "grad_norm_mean": grad_norm_sum / optimizer_steps if optimizer_steps else None,
-            "nonzero_grad_count": nonzero_grad_count,
-            "lora_norm_before": lora_norm_before,
-            "lora_norm_after": lora_norm_after,
-            "lora_norm_delta": lora_norm_after - lora_norm_before,
-            "activation_checkpointing_enabled": bool(
-                getattr(self.model, "gradient_checkpointing", False)
-            ),
-            "train_batch_total_sec": time.monotonic() - train_batch_started_at,
-            "optimize_round_sec": round_secs,
-            "optimize_round_sec_sum": sum(round_secs),
-            "micro_batch_forward_sec": micro_batch_forward_sec,
-            "backward_sec": backward_sec,
-            "optimizer_step_sec": optimizer_step_sec,
-            "micro_batch_count": micro_batch_count,
-            "pp_size": self.pp_size,
-            "pipeline_stage_rank": self.pp_rank,
-            "placement_strategy": (self.placement.strategy if self.placement is not None else None),
-            "pp_schedule": "simple",
-            "pp_max_inflight_microbatches": 1,
-            "pipeline_stage_timing": _round_pipeline_stage_timing(stage_timing),
-            "synchronize_cuda_timing": bool(self.config.graspoflow.synchronize_cuda_timing),
-            "current_lr": self._current_lr(),
-        }
-        metrics = self._aggregate_rank_metrics(metrics)
-        self._emit_rank_memory_event("pipeline_train_batch_after", {"metrics": metrics})
-        return metrics
 
     # ── PP 1F1B schedule ─────────────────────────────────────────────────────
 
@@ -487,7 +366,9 @@ class _Qwen35TrainingMethods:
             self._sync_timing()
             optimizer_started_at = time.monotonic()
             if self.optimizer is not None:
+                _log_cuda_mem("before_optimizer_step_pp")
                 self.optimizer.step()
+                _log_cuda_mem("after_optimizer_step_pp")
             self._sync_timing()
             _add_pipeline_stage_timing(
                 stage_timing, "pipeline_optimizer_step_sec", optimizer_started_at
@@ -635,7 +516,9 @@ class _Qwen35TrainingMethods:
                 loss = record["loss"]
                 if loss is not None:
                     autograd_started_at = time.monotonic()
+                    _log_cuda_mem("before_backward_pp")
                     loss.backward()
+                    _log_cuda_mem("after_backward_pp")
                     _add_pipeline_stage_timing(
                         timing, "pipeline_backward_autograd_sec", autograd_started_at
                     )

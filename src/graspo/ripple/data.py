@@ -73,15 +73,37 @@ def _validate_messages(value: Any) -> list[dict[str, Any]]:
             "messages must be prompt/context only; final assistant messages leak the target"
         )
     _validate_assistant_tool_calls(messages)
+    _validate_tool_messages(messages)
     return messages
 
 
+def _validate_tool_messages(messages: list[dict[str, Any]]) -> None:
+    """Validate ``tool`` role messages conform to OpenAI standard.
+
+    Each ``tool`` message must have a non-empty ``tool_call_id`` string.
+    """
+    for idx, message in enumerate(messages):
+        if str(message.get("role") or "").lower() != "tool":
+            continue
+        tool_call_id = message.get("tool_call_id")
+        if not isinstance(tool_call_id, str) or not tool_call_id.strip():
+            raise ValueError(
+                f"messages[{idx}] (tool) must have a non-empty 'tool_call_id' "
+                f"(OpenAI standard)"
+            )
+        content = message.get("content")
+        if not isinstance(content, str):
+            raise ValueError(
+                f"messages[{idx}] (tool) content must be a string, got {type(content).__name__}"
+            )
+
+
 def _validate_assistant_tool_calls(messages: list[dict[str, Any]]) -> None:
-    """Validate assistant messages use structured tool_calls, not raw text in content.
+    """Validate assistant messages use OpenAI-standard structured tool_calls.
 
     Raises ValueError if any assistant message embeds raw tool-call markers
     (``<tool_call>``, ``<function=``) in its content field, or if a
-    ``tool_calls`` field does not conform to canonical JSON format.
+    ``tool_calls`` field does not conform to OpenAI canonical JSON format.
     """
     for idx, message in enumerate(messages):
         if str(message.get("role") or "").lower() != "assistant":
@@ -105,23 +127,30 @@ def _validate_assistant_tool_calls(messages: list[dict[str, Any]]) -> None:
                 snippet = text.strip()[:200]
                 raise ValueError(
                     f"messages[{idx}] (assistant) has raw tool-call text in content. "
-                    f"Use structured 'tool_calls' field instead:\n"
-                    f'  {{"tool_calls": [{{"name": "...", "arguments": {{...}}}}]}}\n'
+                    f"Use OpenAI-standard structured 'tool_calls' field instead:\n"
+                    f'  {{"tool_calls": [{{"id": "call_0000", "type": "function",'
+                    f' "function": {{"name": "...", "arguments": {{...}}}}}}]}}\n'
                     f"  Found in content: {snippet!r}"
                 )
 
         # ---------- 2. validate tool_calls field format ----------
         tool_calls = message.get("tool_calls")
         if tool_calls is not None:
+            if content is not None:
+                raise ValueError(
+                    f"messages[{idx}] (assistant) has tool_calls but content is not null; "
+                    f"OpenAI standard requires content: null when tool_calls are present"
+                )
             _require_canonical_tool_calls(tool_calls, path=f"messages[{idx}].tool_calls")
 
 
 def _require_canonical_tool_calls(value: Any, *, path: str = "tool_calls") -> None:
-    """Validate *value* is a canonical tool-call list.  Raises ``ValueError``.
+    """Validate *value* is an OpenAI-standard tool-call list.  Raises ``ValueError``.
 
-    Canonical form::
+    Only the OpenAI canonical form is accepted::
 
-        [{"name": "<non-empty-str>", "arguments": {<dict>}}, ...]
+        [{"id": "<non-empty-str>", "type": "function",
+          "function": {"name": "<non-empty-str>", "arguments": {<dict>}}}, ...]
 
     ``arguments`` values must not contain raw tool-call markers
     (avoids XML smuggled inside JSON string values).
@@ -133,20 +162,42 @@ def _require_canonical_tool_calls(value: Any, *, path: str = "tool_calls") -> No
         if not isinstance(call, dict):
             raise ValueError(f"{path}[{idx}] must be a JSON object")
 
-        name = call.get("name")
-        if not isinstance(name, str) or not name.strip():
-            raise ValueError(f"{path}[{idx}].name must be a non-empty string")
+        # OpenAI standard: id + type + function wrapper
+        call_id = call.get("id")
+        if not isinstance(call_id, str) or not call_id.strip():
+            raise ValueError(
+                f"{path}[{idx}].id must be a non-empty string "
+                f"(OpenAI standard requires 'id' field)"
+            )
 
-        arguments = call.get("arguments")
+        call_type = call.get("type")
+        if call_type != "function":
+            raise ValueError(
+                f"{path}[{idx}].type must be 'function' "
+                f"(OpenAI standard), got {call_type!r}"
+            )
+
+        func = call.get("function")
+        if not isinstance(func, dict):
+            raise ValueError(
+                f"{path}[{idx}].function must be a JSON object "
+                f"(OpenAI standard requires 'function' wrapper)"
+            )
+
+        name = func.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f"{path}[{idx}].function.name must be a non-empty string")
+
+        arguments = func.get("arguments")
         if not isinstance(arguments, dict):
-            raise ValueError(f"{path}[{idx}].arguments must be a JSON object")
+            raise ValueError(f"{path}[{idx}].function.arguments must be a JSON object")
 
         # Reject raw tool-call markers smuggled inside argument values.
         for arg_key, arg_val in arguments.items():
             if isinstance(arg_val, str) and _TOOL_CALL_MARKER_RE.search(arg_val):
                 raise ValueError(
-                    f"{path}[{idx}].arguments.{arg_key} contains raw tool-call markers "
-                    f"in its string value; use structured JSON values instead: "
+                    f"{path}[{idx}].function.arguments.{arg_key} contains raw tool-call "
+                    f"markers in its string value; use structured JSON values instead: "
                     f"{arg_val!r}"
                 )
 

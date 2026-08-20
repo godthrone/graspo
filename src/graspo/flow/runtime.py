@@ -376,8 +376,10 @@ def validate_graspoflow_runtime_config(
     native = graspoflow_config or config.graspoflow
     if int(native.pp_size) < 1:
         raise ValueError("pp_size must be >= 1")
-    if bool(native.sequence_parallel):
-        raise ValueError("graspoflow requires sequence_parallel=false")
+    # SP: TP>1 时自动启用（激活值沿序列维度分片，零额外通信量）
+    # 显式 sequence_parallel: false 可强制禁用（调试用）
+    if bool(native.sequence_parallel) and int(native.tp_size) < 2:
+        raise ValueError("sequence_parallel requires tp_size >= 2")
     if int(native.tp_size) < 1:
         raise ValueError("tp_size must be >= 1")
     if int(native.pp_micro_batch_size) < 1:
@@ -386,15 +388,10 @@ def validate_graspoflow_runtime_config(
         raise ValueError(
             f"graspoflow.forward_batch_size must be >= 1, got {native.forward_batch_size}"
         )
-    schedule = str(native.pp_schedule or "simple")
-    if schedule not in {"simple", "one_f_one_b"}:
-        raise ValueError("graspoflow.pp_schedule must be simple or one_f_one_b")
     if config.training.resume_from_checkpoint and config.lora.adapter_path:
         raise ValueError("training.resume_from_checkpoint and lora.adapter_path cannot both be set")
     if int(native.pp_max_inflight_microbatches) < 0:
         raise ValueError("graspoflow.pp_max_inflight_microbatches must be >= 0")
-    if schedule == "one_f_one_b" and int(native.pp_size) <= 1:
-        raise ValueError("one_f_one_b pp_schedule requires pp_size>1")
 
 
 def assert_forbidden_runtime_modules_not_imported() -> None:

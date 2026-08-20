@@ -13,7 +13,6 @@ from graspo.core.lora import resolve_lora_target_modules
 from graspo.flow.adapters.models.common.model_builders import build_native_qwen_model
 from graspo.flow.adapters.models.qwen35_36.generation import _Qwen35GenerationMethods
 from graspo.flow.adapters.models.qwen35_36.logprobs import _Qwen35LogprobsMethods
-from graspo.flow.adapters.models.qwen35_36.ops import build_qwen35_ops
 from graspo.flow.adapters.models.qwen35_36.training import _Qwen35TrainingMethods
 from graspo.flow.adapters.models.qwen35_36.training_sft import _Qwen35SFTTrainingMethods
 from graspo.flow.adapters.transformer_adapter import TransformerAdapter
@@ -75,6 +74,7 @@ class Qwen35Adapter(  # type: ignore[misc]  # mixin 组合点的多基类签名�
             loader=loader,
             tp_rank=self.tp_rank,
             tp_size=self.tp_size,
+            use_sp=bool(self.config.graspoflow.sequence_parallel),
             placement=self.placement,
             lora_r=self.config.lora.r,
             lora_alpha=self.config.lora.alpha,
@@ -104,16 +104,13 @@ class Qwen35Adapter(  # type: ignore[misc]  # mixin 组合点的多基类签名�
                 base_model_path=str(model_path),
             )
 
-    def _build_ops(self) -> None:
-        self._ops = build_qwen35_ops(
-            model=self.model,
-            tp_state=self.tp_state,
-            tp_size=self.tp_size,
-        )
-
     def parse_completion(self, completion: str, sample: Any | None = None) -> ParsedCompletion:
         return parse_qwen_tool_completion(
             completion,
             expect_tool_calls=bool(getattr(sample, "expects_tool_calls", False)),
             tools=getattr(sample, "tools", None),
         )
+
+    def _build_ops(self) -> None:
+        """Build pipeline operators (RL training).  SFT path is a no-op."""
+        pass

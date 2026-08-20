@@ -164,6 +164,131 @@ def _all_reduce_tp(tensor: torch.Tensor) -> torch.Tensor:
     return tensor
 
 
+# ── Sequence Parallel communication primitives ────────────────────────────────
+# SP 复用 TP 进程组（sp_size == tp_size），沿序列维度分片/收集激活值。
+# all_reduce ≡ reduce_scatter + all_gather（数学等价），SP 零额外通信量。
+
+
+class _SequenceParallelReduceScatter(torch.autograd.Function):
+    """Forward: reduce-scatter(SUM) along sequence dim (dim=1).
+    Backward: all-gather along sequence dim.
+
+    Replaces ``_TensorParallelAllReduce`` when SP is enabled: instead of
+    all-reducing the full ``(B, S, H/tp)`` tensor, each rank keeps only its
+    sequence shard ``(B, S/tp, H/tp)``.
+    """
+
+    @staticmethod
+    def forward(  # type: ignore[override]
+        ctx: Any, tensor: torch.Tensor
+    ) -> torch.Tensor:
+        ctx.sp_size = _TENSOR_PARALLEL_SIZE
+        ctx.sp_group = _TENSOR_PARALLEL_GROUP
+        if ctx.sp_size <= 1 or ctx.sp_group is None:
+            return tensor.contiguous()
+        # tensor: (B, S, H/tp) → chunk along seq → reduce-scatter → (B, S/tp, H/tp)
+        chunks = list(tensor.contiguous().chunk(ctx.sp_size, dim=1))
+        output = torch.empty_like(chunks[0])
+        dist.reduce_scatter(output, chunks, op=dist.ReduceOp.SUM, group=ctx.sp_group)
+        return output
+
+    @staticmethod
+    def backward(ctx: Any, grad_output: torch.Tensor) -> tuple[torch.Tensor]:  # type: ignore[override]
+        if ctx.sp_size <= 1 or ctx.sp_group is None:
+            return (grad_output,)
+        # grad_output: (B, S/tp, H/tp) → all-gather → (B, S, H/tp)
+        gathered = [torch.empty_like(grad_output) for _ in range(ctx.sp_size)]
+        dist.all_gather(gathered, grad_output, group=ctx.sp_group)
+        return (torch.cat(gathered, dim=1),)
+
+
+class _SequenceParallelAllGather(torch.autograd.Function):
+    """Forward: all-gather along sequence dim (dim=1).
+    Backward: reduce-scatter(SUM) along sequence dim.
+
+    Inserted before LayerNorm in SP mode to reconstruct the full sequence
+    ``(B, S, H/tp)`` from the SP-sharded ``(B, S/tp, H/tp)``.
+    """
+
+    @staticmethod
+    def forward(  # type: ignore[override]
+        ctx: Any, tensor: torch.Tensor
+    ) -> torch.Tensor:
+        ctx.sp_size = _TENSOR_PARALLEL_SIZE
+        ctx.sp_group = _TENSOR_PARALLEL_GROUP
+        if ctx.sp_size <= 1 or ctx.sp_group is None:
+            return tensor.contiguous()
+        # tensor: (B, S/tp, H/tp) → all-gather → (B, S, H/tp)
+        gathered = [torch.empty_like(tensor) for _ in range(ctx.sp_size)]
+        dist.all_gather(gathered, tensor, group=ctx.sp_group)
+        return torch.cat(gathered, dim=1)
+
+    @staticmethod
+    def backward(ctx: Any, grad_output: torch.Tensor) -> tuple[torch.Tensor]:  # type: ignore[override]
+        if ctx.sp_size <= 1 or ctx.sp_group is None:
+            return (grad_output,)
+        # grad_output: (B, S, H/tp) → reduce-scatter → (B, S/tp, H/tp)
+        chunks = list(grad_output.chunk(ctx.sp_size, dim=1))
+        grad_input = torch.empty_like(chunks[0])
+        dist.reduce_scatter(grad_input, chunks, op=dist.ReduceOp.SUM, group=ctx.sp_group)
+        return (grad_input,)
+
+
+def _reduce_scatter_sp(tensor: torch.Tensor) -> torch.Tensor:
+    """Sequence-parallel reduce-scatter — replaces ``_all_reduce_tp`` in SP mode.
+
+    Shards the full-sequence activation ``(B, S, H/tp)`` into
+    ``(B, S/tp, H/tp)`` via reduce-scatter(SUM) across the TP group.
+
+    NOTE: Currently falls back to all_reduce + chunk because native
+    ``dist.reduce_scatter`` hangs on PCIe-only A800 topologies (121).
+    On NVLink-connected GPUs (228), the native reduce_scatter works.
+    The fallback has identical communication volume to all_reduce,
+    so there is no speed penalty vs TP-only, but activation memory
+    is still reduced by SP.
+    """
+    if dist.is_available() and dist.is_initialized() and _TENSOR_PARALLEL_SIZE > 1:
+        # Fallback: all_reduce + chunk.
+        # Native reduce_scatter via _SequenceParallelReduceScatter.apply()
+        # hangs on PCIe A800 due to NCCL watchdog timeout (c10::DistBackendError).
+        # TODO: re-enable native reduce_scatter when NCCL issue is resolved.
+        tensor = _TensorParallelAllReduce.apply(tensor)
+        rank = dist.get_rank(_TENSOR_PARALLEL_GROUP)
+        sp_size = _TENSOR_PARALLEL_SIZE
+        chunk_size = tensor.shape[1] // sp_size
+        return tensor[:, rank * chunk_size : (rank + 1) * chunk_size, :].contiguous()
+    return tensor
+
+
+def _scatter_sp(tensor: torch.Tensor) -> torch.Tensor:
+    """Sequence-parallel scatter — partitions the full sequence WITHOUT summing.
+
+    Used for the embedding output (identical on all ranks) and other
+    non-TP-sharded tensors that need to enter the SP pipeline.  Unlike
+    ``_reduce_scatter_sp``, this does NOT sum across ranks.
+
+    The caller is responsible for ensuring the sequence length is
+    divisible by ``sp_size`` (pad before calling if needed).
+    """
+    if dist.is_available() and dist.is_initialized() and _TENSOR_PARALLEL_SIZE > 1:
+        rank = dist.get_rank(_TENSOR_PARALLEL_GROUP)
+        sp_size = _TENSOR_PARALLEL_SIZE
+        chunk_size = tensor.shape[1] // sp_size
+        return tensor[:, rank * chunk_size : (rank + 1) * chunk_size, :].contiguous()
+    return tensor
+
+
+def _all_gather_sp(tensor: torch.Tensor) -> torch.Tensor:
+    """Sequence-parallel all-gather — reconstructs full sequence for LayerNorm.
+
+    Gathers the SP-sharded activation ``(B, S/tp, H/tp)`` into
+    ``(B, S, H/tp)`` via all-gather across the TP group.
+    """
+    if dist.is_available() and dist.is_initialized() and _TENSOR_PARALLEL_SIZE > 1:
+        return _SequenceParallelAllGather.apply(tensor)
+    return tensor
+
+
 def _selected_token_log_probs_from_hidden(
     hidden_states: torch.Tensor,
     lm_head_weight: torch.Tensor,

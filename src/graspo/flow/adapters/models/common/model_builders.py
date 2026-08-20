@@ -52,6 +52,7 @@ def build_native_qwen_model(
     loader: SafetensorIndex,
     tp_rank: int,
     tp_size: int,
+    use_sp: bool = False,
     placement: NativePlacementPlan | None = None,
     lora_r: int,
     lora_alpha: int,
@@ -70,6 +71,7 @@ def build_native_qwen_model(
             loader=loader,
             tp_rank=tp_rank,
             tp_size=tp_size,
+            use_sp=use_sp,
             placement=placement,
             lora_r=lora_r,
             lora_alpha=lora_alpha,
@@ -87,6 +89,7 @@ def build_native_qwen_model(
             loader=loader,
             tp_rank=tp_rank,
             tp_size=tp_size,
+            use_sp=use_sp,
             placement=placement,
             lora_r=lora_r,
             lora_alpha=lora_alpha,
@@ -107,6 +110,7 @@ def build_qwen35_visual_tower(
     lora_alpha: int,
     lora_dropout: float,
     lora_targets: set[str],
+    gradient_checkpointing: bool = False,
     torch_dtype: torch.dtype,
     device: torch.device,
 ) -> nn.Module:
@@ -161,4 +165,9 @@ def build_qwen35_visual_tower(
         device=device,
         torch_dtype=torch_dtype,
     )
+    if gradient_checkpointing:
+        # 视觉塔 27 层 ViT 默认不启用 checkpointing，每层激活值全部保留。
+        # 高分辨率/多图场景下视觉塔激活值可达 27 GB（实测），启用后降至 ~1 GB。
+        # HF PretrainedModel 标准接口，内部对每个 ViT layer 包 checkpoint。
+        visual.gradient_checkpointing_enable()
     return visual

@@ -15,6 +15,7 @@ from graspo.flow.lora.lora_helpers import _lora_target_enabled
 from graspo.flow.lora.lora_linear import LoRALinear
 from graspo.flow.parallel.tensor_utils import (
     _all_reduce_tp,
+    _reduce_scatter_sp,
     _apply_rope,
     _causal_attention_mask,
     _rope_cache,
@@ -143,6 +144,7 @@ class TensorParallelQwenAttention(nn.Module):
             raise ValueError("Qwen attention heads and kv heads must be divisible by TP size")
         self.local_heads = self.num_heads // tp_size
         self.local_kv_heads = self.num_kv_heads // tp_size
+        self._use_sp = tp_size > 1  # SP: TP>1 时自动启用
         self.hidden_size = int(hf_config.hidden_size)
         self.rope_theta = float(getattr(hf_config, "rope_theta", 1000000.0))
         self.q_proj = LoRALinear.from_hf(
@@ -261,7 +263,7 @@ class TensorParallelQwenAttention(nn.Module):
             .view(batch, query_len, self.local_heads * self.head_dim)
         )
         output = self.o_proj(attn)
-        output = _all_reduce_tp(output)
+        output = _reduce_scatter_sp(output) if self._use_sp else _all_reduce_tp(output)
         if use_cache:
             return output, present
         return output
@@ -276,6 +278,7 @@ class TensorParallelQwenMLP(nn.Module):
         loader: SafetensorIndex,
         tp_rank: int,
         tp_size: int,
+        use_sp: bool = False,
         lora_r: int,
         lora_alpha: int,
         lora_dropout: float,
@@ -284,6 +287,7 @@ class TensorParallelQwenMLP(nn.Module):
         device: torch.device,
     ) -> None:
         super().__init__()
+        self._use_sp = bool(use_sp) and tp_size > 1
         self.gate_proj = LoRALinear.from_hf(
             loader.get(f"{prefix}.gate_proj.weight"),
             bias=None,
@@ -332,7 +336,7 @@ class TensorParallelQwenMLP(nn.Module):
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         output = self.down_proj(F.silu(self.gate_proj(hidden_states)) * self.up_proj(hidden_states))
-        return _all_reduce_tp(output)
+        return _reduce_scatter_sp(output) if self._use_sp else _all_reduce_tp(output)
 
 
 class QwenRMSNorm(nn.Module):

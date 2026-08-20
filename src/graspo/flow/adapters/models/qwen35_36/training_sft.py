@@ -1,10 +1,27 @@
 """Qwen3.5/3.6 adapter — SFT training methods (TP-only, PP simple)."""
 
 import time
+import os
+import sys
 from typing import Any
 
 import torch
 import torch.distributed as dist
+
+
+def _log_cuda_mem(label: str) -> None:
+    """Log CUDA memory stats to stderr for rank 0 only."""
+    if os.environ.get("RANK", "0") == "0":
+        rank = os.environ.get("RANK", "0")
+        allocated = torch.cuda.memory_allocated() / 1024**3
+        reserved = torch.cuda.memory_reserved() / 1024**3
+        max_allocated = torch.cuda.max_memory_allocated() / 1024**3
+        print(
+            f"[MEM rank={rank}] {label}: allocated={allocated:.2f}GB "
+            f"reserved={reserved:.2f}GB max_allocated={max_allocated:.2f}GB",
+            file=sys.stderr,
+            flush=True,
+        )
 
 from graspo.flow.adapters.models.qwen35_36.helpers import collate_sft_batch
 from graspo.flow.adapters.models.qwen35_36.model import Qwen35HybridTextModel
@@ -57,6 +74,10 @@ class _Qwen35SFTTrainingMethods:
     ) -> dict[str, Any]:
         """SFT 训练：对一批 ``SFTTokenized`` 样本执行 forward → cross-entropy loss → backward。
 
+        支持梯度累积：当 ``forward_batch_size < len(sft_batches)`` 时，将外批拆分为多个
+        micro-batch 逐个 forward/backward，梯度在 micro-batch 间累加，最后统一
+        ``optimizer.step()``。有效 batch size = ``len(sft_batches)``。
+
         Args:
             sft_batches: ``sft_tokenize_text`` / ``sft_tokenize_multimodal`` 产出的
                 ``SFTTokenized`` 列表。
@@ -76,6 +97,10 @@ class _Qwen35SFTTrainingMethods:
             self._emit_rank_memory_event("train_before_empty_cache")
 
         forward_batch_size = max(1, int(self.config.graspoflow.forward_batch_size))
+        # 梯度累积：有效 batch = optimize_prompt_batch_size，micro-batch = forward_batch_size
+        # zero_grad 只调一次，所有 micro-batch 的梯度累加后统一 step。
+        num_micro_batches = max(1, (len(sft_batches) + forward_batch_size - 1) // forward_batch_size)
+        self.optimizer.zero_grad(set_to_none=True)
         optimizer_steps = 0
         skipped_nonfinite = 0
         loss_sum = 0.0
@@ -88,6 +113,7 @@ class _Qwen35SFTTrainingMethods:
         backward_sec = 0.0
         optimizer_step_sec = 0.0
         micro_batch_count = 0
+        valid_micro_batches = 0  # 实际贡献梯度的 micro-batch 数
         for start in range(0, len(sft_batches), forward_batch_size):
             batch_items = sft_batches[start : start + forward_batch_size]
             micro_batch = collate_sft_batch(
@@ -96,7 +122,6 @@ class _Qwen35SFTTrainingMethods:
                 adapter=self,
                 max_seq_length=int(self.config.data.max_prompt_length),
             )
-            self.optimizer.zero_grad(set_to_none=True)
             self._sync_timing()
             forward_started_at = time.monotonic()
             multimodal_inputs = micro_batch.get("multimodal_inputs")
@@ -128,32 +153,44 @@ class _Qwen35SFTTrainingMethods:
             if not torch.isfinite(loss):
                 skipped_nonfinite += 1
                 continue
+            micro_batch_count += 1
+            valid_micro_batches += 1
+            loss_sum += float(loss.detach().cpu())
+            # 梯度累积：loss 除以 num_micro_batches 使累加梯度等价于大 batch
+            scaled_loss = loss / num_micro_batches
             self._sync_timing()
             backward_started_at = time.monotonic()
-            loss.backward()
+            _log_cuda_mem("before_backward")
+            scaled_loss.backward()
+            _log_cuda_mem("after_backward")
+            self._sync_timing()
+            backward_sec += time.monotonic() - backward_started_at
+
+        # 所有 micro-batch 的 backward 完成后，统一 sync / clip / step
+        if valid_micro_batches > 0:
             from graspo.flow.lora.lora_linear import _sync_nonsharded_lora_grads
             from graspo.flow.parallel.tensor_utils import _TENSOR_PARALLEL_GROUP
 
             if _TENSOR_PARALLEL_GROUP is not None:
                 _sync_nonsharded_lora_grads(self.model, _TENSOR_PARALLEL_GROUP)
-            self._sync_timing()
-            backward_sec += time.monotonic() - backward_started_at
             grad_norm = torch.nn.utils.clip_grad_norm_(
                 [param for param in self.model.parameters() if param.requires_grad],
                 max_grad_norm,
             )
+            grad_norm_sum = float(grad_norm.detach().float().cpu())
             self._sync_timing()
             optimizer_started_at = time.monotonic()
+            _log_cuda_mem("before_optimizer_step")
             self.optimizer.step()
+            _log_cuda_mem("after_optimizer_step")
             self._sync_timing()
-            optimizer_step_sec += time.monotonic() - optimizer_started_at
+            optimizer_step_sec = time.monotonic() - optimizer_started_at
             if self.scheduler is not None:
                 self.scheduler.step()
-            optimizer_steps += 1
-            micro_batch_count += 1
-            loss_sum += float(loss.detach().cpu())
-            grad_norm_sum += float(grad_norm.detach().float().cpu())
-            nonzero_grad_count += self.model.nonzero_lora_grad_count()
+            optimizer_steps = 1
+            nonzero_grad_count = self.model.nonzero_lora_grad_count()
+        else:
+            grad_norm_sum = 0.0
         self._train_batch_call_index += 1
 
         lora_norm_after = self.model.lora_parameter_norm()
@@ -162,8 +199,8 @@ class _Qwen35SFTTrainingMethods:
             "sft_batch_count": len(sft_batches),
             "optimizer_steps": optimizer_steps,
             "skipped_nonfinite": skipped_nonfinite,
-            "loss_mean": loss_sum / optimizer_steps if optimizer_steps else None,
-            "grad_norm_mean": grad_norm_sum / optimizer_steps if optimizer_steps else None,
+            "loss_mean": loss_sum / micro_batch_count if micro_batch_count else None,
+            "grad_norm_mean": grad_norm_sum,
             "nonzero_grad_count": nonzero_grad_count,
             "lora_norm_before": lora_norm_before,
             "lora_norm_after": lora_norm_after,
@@ -181,7 +218,7 @@ class _Qwen35SFTTrainingMethods:
         self._emit_rank_memory_event("sft_train_batch_after", {"metrics": metrics})
         return metrics
 
-    # ── PP SFT training ──────────────────────────────────────────────────────
+    # ── PP SFT training (1F1B) ─────────────────────────────────────────────────
 
     def _pipeline_train_batch_sft(
         self,
@@ -189,7 +226,15 @@ class _Qwen35SFTTrainingMethods:
         *,
         max_grad_norm: float,
     ) -> dict[str, Any]:
-        """PP SFT 训练 — 复用 _pipeline_forward_for_sft，替换 loss 为 cross-entropy。"""
+        """PP SFT 训练 — 1F1B 调度，梯度累积。
+
+        将 ``sft_batches`` 按 ``forward_batch_size`` 拆分为 micro-batch，
+        通过 1F1B fill/steady/drain 三阶段流水线执行 forward/backward。
+        所有 micro-batch 的梯度累加后统一 ``optimizer.step()``。
+        有效 batch size = ``len(sft_batches)``。
+        """
+        assert isinstance(self.model, Qwen35HybridTextModel)
+        assert self.tp_state is not None
         self.model.train()
         optimizer_steps = 0
         skipped_nonfinite = 0
@@ -198,6 +243,7 @@ class _Qwen35SFTTrainingMethods:
         nonzero_grad_count = 0
         lora_norm_before = self.model.lora_parameter_norm()
         forward_batch_size = max(1, int(self.config.graspoflow.forward_batch_size))
+        full_batch_size = max(1, len(sft_batches))
         train_batch_started_at = time.monotonic()
         micro_batch_forward_sec = 0.0
         backward_sec = 0.0
@@ -205,84 +251,156 @@ class _Qwen35SFTTrainingMethods:
         round_secs: list[float] = []
         micro_batch_count = 0
         stage_timing = _new_pipeline_stage_timing()
+        fill_sec = 0.0
+        steady_sec = 0.0
+        drain_sec = 0.0
+
+        # 预 collate 所有 micro-batch（1F1B 需要提前知道所有 chunk）
+        chunk_batches: list[dict[str, Any]] = []
         for start in range(0, len(sft_batches), forward_batch_size):
             batch_items = sft_batches[start : start + forward_batch_size]
-            micro_batch = collate_sft_batch(
-                batch_items,
-                self.device,
-                adapter=self,
-                max_seq_length=int(self.config.data.max_prompt_length),
+            chunk_batches.append(
+                collate_sft_batch(
+                    batch_items,
+                    self.device,
+                    adapter=self,
+                    max_seq_length=int(self.config.data.max_prompt_length),
+                )
             )
-            if self.optimizer is not None:
-                self.optimizer.zero_grad(set_to_none=True)
+
+        chunk_count = len(chunk_batches)
+        if chunk_count == 0:
+            self._train_batch_call_index += 1
+            return self._aggregate_rank_metrics({"optimized": False, "optimizer_steps": 0})
+
+        warmup = min(self.pp_size - self.pp_rank - 1, chunk_count)
+        records: list[dict[str, Any] | None] = [None for _ in range(chunk_count)]
+        finite_flags = [True for _ in range(chunk_count)]
+        loss_values = [0.0 for _ in range(chunk_count)]
+
+        # 梯度累积：zero_grad 只调一次，所有 chunk 的梯度累加后统一 step
+        if self.optimizer is not None:
+            self.optimizer.zero_grad(set_to_none=True)
+
+        def forward_chunk(chunk_idx: int) -> None:
+            nonlocal micro_batch_forward_sec
+            mb = chunk_batches[chunk_idx]
             self._sync_timing()
-            forward_started_at = time.monotonic()
-            multimodal_inputs = micro_batch.get("multimodal_inputs")
+            t0 = time.monotonic()
             stage_output, stage_input = self._pipeline_forward_for_sft(
-                micro_batch["input_ids"],
-                micro_batch["attention_mask"],
-                multimodal_inputs=multimodal_inputs,
+                mb["input_ids"],
+                mb["attention_mask"],
+                multimodal_inputs=mb.get("multimodal_inputs"),
                 timing=stage_timing,
             )
             self._sync_timing()
-            micro_batch_forward_sec += time.monotonic() - forward_started_at
+            micro_batch_forward_sec += time.monotonic() - t0
             loss: torch.Tensor | None = None
+            finite = True
             loss_value = 0.0
             if self.pp_rank == self.pp_size - 1:
                 assert stage_output is not None
-                loss = self._compute_sft_loss(stage_output, micro_batch["labels"])
-                finite = bool(torch.isfinite(loss).detach().cpu())
-                loss_value = float(loss.detach().cpu())
-            else:
-                finite = True
-            finite_payload = [finite]
-            dist.broadcast_object_list(finite_payload, src=(self.pp_size - 1) * self.tp_size)
-            if not bool(finite_payload[0]):
-                skipped_nonfinite += 1
-                continue
+                chunk_loss = self._compute_sft_loss(stage_output, mb["labels"])
+                finite = bool(torch.isfinite(chunk_loss).detach().cpu())
+                # 梯度累积：loss 按 chunk_size / full_batch_size 加权
+                weight = float(mb["input_ids"].shape[0]) / full_batch_size
+                loss = chunk_loss * weight if finite else None
+                loss_value = float(chunk_loss.detach().cpu()) * weight if finite else 0.0
+            records[chunk_idx] = {
+                "stage_output": stage_output,
+                "stage_input": stage_input,
+                "loss": loss,
+            }
+            finite_flags[chunk_idx] = finite
+            loss_values[chunk_idx] = loss_value
+
+        def backward_chunk(chunk_idx: int) -> None:
+            nonlocal backward_sec
+            record = records[chunk_idx]
+            if record is None:
+                raise RuntimeError("1F1B attempted backward before forward")
             self._sync_timing()
-            backward_started_at = time.monotonic()
+            t0 = time.monotonic()
             if self.pp_rank == self.pp_size - 1:
-                assert loss is not None
-                loss.backward()
-                if stage_input is not None and stage_input.grad is not None:
-                    dist.send(
-                        stage_input.grad.contiguous(),
-                        dst=int(self.tp_state.prev_pp_rank),
+                stage_input = record["stage_input"]
+                loss = record["loss"]
+                if loss is not None:
+                    _log_cuda_mem("before_backward_pp")
+                    loss.backward()
+                    _log_cuda_mem("after_backward_pp")
+                if stage_input is not None:
+                    grad = (
+                        stage_input.grad
+                        if stage_input.grad is not None
+                        else torch.zeros_like(stage_input)
                     )
+                    dist.send(grad.contiguous(), dst=int(self.tp_state.prev_pp_rank or 0))
             else:
+                stage_output = record["stage_output"]
                 assert stage_output is not None
                 grad_output = torch.empty_like(stage_output)
-                dist.recv(grad_output, src=int(self.tp_state.next_pp_rank))
+                dist.recv(grad_output, src=int(self.tp_state.next_pp_rank or 0))
                 stage_output.backward(grad_output)
-                if stage_input is not None and stage_input.grad is not None:
-                    dist.send(
-                        stage_input.grad.contiguous(),
-                        dst=int(self.tp_state.prev_pp_rank),
+                stage_input = record["stage_input"]
+                if stage_input is not None:
+                    grad = (
+                        stage_input.grad
+                        if stage_input.grad is not None
+                        else torch.zeros_like(stage_input)
                     )
+                    dist.send(grad.contiguous(), dst=int(self.tp_state.prev_pp_rank or 0))
             self._sync_timing()
-            backward_sec += time.monotonic() - backward_started_at
-            trainable_params = [param for param in self.model.parameters() if param.requires_grad]
+            backward_sec += time.monotonic() - t0
+            records[chunk_idx] = None
+
+        # 1F1B 三阶段：fill → steady → drain
+        fill_started_at = time.monotonic()
+        for chunk_idx in range(warmup):
+            forward_chunk(chunk_idx)
+        fill_sec += time.monotonic() - fill_started_at
+
+        remaining = chunk_count - warmup
+        steady_started_at = time.monotonic()
+        for offset in range(remaining):
+            forward_chunk(offset + warmup)
+            backward_chunk(offset)
+        steady_sec += time.monotonic() - steady_started_at
+
+        drain_started_at = time.monotonic()
+        for chunk_idx in range(remaining, chunk_count):
+            backward_chunk(chunk_idx)
+        drain_sec += time.monotonic() - drain_started_at
+
+        all_finite = all(finite_flags)
+        finite_payload = [all_finite]
+        dist.broadcast_object_list(finite_payload, src=(self.pp_size - 1) * self.tp_size)
+
+        if bool(finite_payload[0]):
+            # 所有 chunk 梯度已累加，统一 clip + step
+            trainable_params = [p for p in self.model.parameters() if p.requires_grad]
             grad_norm = (
                 torch.nn.utils.clip_grad_norm_(trainable_params, max_grad_norm)
                 if trainable_params
                 else torch.tensor(0.0)
             )
+            grad_norm_sum = float(grad_norm.detach().float().cpu())
             self._sync_timing()
-            optimizer_started_at = time.monotonic()
+            t0 = time.monotonic()
             if self.optimizer is not None:
+                _log_cuda_mem("before_optimizer_step_pp")
                 self.optimizer.step()
+                _log_cuda_mem("after_optimizer_step_pp")
             self._sync_timing()
-            optimizer_step_sec += time.monotonic() - optimizer_started_at
+            optimizer_step_sec = time.monotonic() - t0
             if self.scheduler is not None and self.optimizer is not None:
                 self.scheduler.step()
-            optimizer_steps += 1
-            micro_batch_count += 1
-            loss_payload = [loss_value]
-            dist.broadcast_object_list(loss_payload, src=(self.pp_size - 1) * self.tp_size)
-            loss_sum += float(loss_payload[0])
-            grad_norm_sum += float(grad_norm.detach().float().cpu())
-            nonzero_grad_count += self.model.nonzero_lora_grad_count()
+            optimizer_steps = 1
+            nonzero_grad_count = self.model.nonzero_lora_grad_count()
+            loss_sum = sum(loss_values)
+            micro_batch_count = chunk_count
+        else:
+            skipped_nonfinite = chunk_count
+
         self._train_batch_call_index += 1
         lora_norm_after = self.model.lora_parameter_norm()
         metrics = {
@@ -290,8 +408,8 @@ class _Qwen35SFTTrainingMethods:
             "sft_batch_count": len(sft_batches),
             "optimizer_steps": optimizer_steps,
             "skipped_nonfinite": skipped_nonfinite,
-            "loss_mean": loss_sum / optimizer_steps if optimizer_steps else None,
-            "grad_norm_mean": grad_norm_sum / optimizer_steps if optimizer_steps else None,
+            "loss_mean": loss_sum / micro_batch_count if micro_batch_count else None,
+            "grad_norm_mean": grad_norm_sum,
             "nonzero_grad_count": nonzero_grad_count,
             "lora_norm_before": lora_norm_before,
             "lora_norm_after": lora_norm_after,
@@ -304,8 +422,11 @@ class _Qwen35SFTTrainingMethods:
             "optimizer_step_sec": optimizer_step_sec,
             "micro_batch_count": micro_batch_count,
             "pp_size": self.pp_size,
-            "pp_schedule": "simple",
+            "pp_schedule": "one_f_one_b",
             "pipeline_stage_timing": _round_pipeline_stage_timing(stage_timing),
+            "pipeline_fill_sec": fill_sec,
+            "pipeline_steady_sec": steady_sec,
+            "pipeline_drain_sec": drain_sec,
             "current_lr": self._current_lr(),
         }
         metrics = self._aggregate_rank_metrics(metrics)
