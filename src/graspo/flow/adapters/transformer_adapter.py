@@ -109,6 +109,8 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
         self.world_size = 1
         self.tp_size = int(config.graspoflow.tp_size)
         self.tp_rank = 0
+        self.dp_size = int(config.graspoflow.dp_size)
+        self.dp_rank = 0
         self.pp_size = int(config.graspoflow.pp_size)
         self.pp_rank = 0
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -260,12 +262,13 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
     # ── Distributed setup ───────────────────────────────────────────────────
 
     def _setup_distributed(self) -> None:
-        state = GraspoFlowState.initialize(self.tp_size, self.pp_size)
+        state = GraspoFlowState.initialize(self.tp_size, self.pp_size, self.dp_size)
         self.tp_state = state
         self.rank = state.rank
         self.local_rank = state.local_rank
         self.world_size = state.world_size
         self.tp_rank = state.tp_rank
+        self.dp_rank = state.dp_rank
         self.pp_rank = state.pp_rank
         self.device = state.device
         _set_tensor_parallel_group(state.tp_group, state.tp_size)
@@ -339,6 +342,8 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
             "rank": self.rank,
             "tp_rank": self.tp_rank,
             "tp_size": self.tp_size,
+            "dp_rank": self.dp_rank,
+            "dp_size": self.dp_size,
             "pp_rank": self.pp_rank,
             "pp_size": self.pp_size,
             "placement": placement_summary(self.placement) if self.placement is not None else None,
@@ -361,19 +366,22 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
             "trainer_state": trainer_state,
             "config": self.config.model_dump(),
         }
-        torch.save(
-            payload,
-            output / f"rank_{self.rank:05d}_tp_{self.tp_rank:02d}_pp_{self.pp_rank:02d}.pt",
-        )
+        # DP: 所有 DP rank 权重相同（梯度已同步），只 dp_rank=0 保存文件
+        if self.dp_rank == 0:
+            torch.save(
+                payload,
+                output / f"rank_{self.rank:05d}_tp_{self.tp_rank:02d}_pp_{self.pp_rank:02d}.pt",
+            )
         if dist.is_available() and dist.is_initialized():
             dist.barrier()
         self._emit_rank_memory_event("checkpoint_after", {"checkpoint_dir": str(output)})
-        if self.rank == 0:
+        if self.rank == 0 and self.dp_rank == 0:
             (output / "manifest.json").write_text(
                 json.dumps(
                     {
                         "format": "graspoflow-lora",
                         "tp_size": self.tp_size,
+                        "dp_size": self.dp_size,
                         "pp_size": self.pp_size,
                         "placement": (
                             placement_summary(self.placement)
@@ -397,22 +405,41 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
         if self.model is None:
             raise RuntimeError(f"{type(self).__name__} is not set up; call setup() first")
         checkpoint_dir = Path(path)
+        # DP: dp_rank=0 加载文件，其他 rank 从同组 dp_rank=0 接收广播
         rank_path = (
             checkpoint_dir / f"rank_{self.rank:05d}_tp_{self.tp_rank:02d}_pp_{self.pp_rank:02d}.pt"
         )
-        if not rank_path.exists():
-            raise FileNotFoundError(
-                "Missing current GRASPO checkpoint shard "
-                f"for rank={self.rank} tp_rank={self.tp_rank} pp_rank={self.pp_rank}: {rank_path}"
+        if self.dp_rank == 0:
+            if not rank_path.exists():
+                raise FileNotFoundError(
+                    "Missing current GRASPO checkpoint shard "
+                    f"for rank={self.rank} tp_rank={self.tp_rank} pp_rank={self.pp_rank}: {rank_path}"
+                )
+            try:
+                payload = torch.load(rank_path, map_location=self.device, weights_only=False)
+            except TypeError:
+                payload = torch.load(rank_path, map_location=self.device)
+        else:
+            payload = None
+        # DP: dp_rank=0 广播 payload 到同 DP group 的其他 rank
+        if self.dp_size > 1 and self.tp_state is not None and self.tp_state.dp_group is not None:
+            payload_list: list[Any] = [payload]
+            dist.broadcast_object_list(payload_list, src=0, group=self.tp_state.dp_group)
+            payload = payload_list[0]
+        if payload is None:
+            raise RuntimeError(
+                f"Failed to load checkpoint for rank={self.rank} "
+                f"dp_rank={self.dp_rank} tp_rank={self.tp_rank} pp_rank={self.pp_rank}"
             )
-        try:
-            payload = torch.load(rank_path, map_location=self.device, weights_only=False)
-        except TypeError:
-            payload = torch.load(rank_path, map_location=self.device)
         if int(payload.get("tp_size", self.tp_size)) != self.tp_size:
             raise ValueError(
                 f"Checkpoint TP size {payload.get('tp_size')} does not match runtime "
                 f"TP size {self.tp_size}"
+            )
+        if int(payload.get("dp_size", self.dp_size)) != self.dp_size:
+            raise ValueError(
+                f"Checkpoint DP size {payload.get('dp_size')} does not match runtime "
+                f"DP size {self.dp_size}"
             )
         if int(payload.get("pp_size", self.pp_size)) != self.pp_size:
             raise ValueError(
@@ -488,10 +515,16 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
         )
         if dist.is_available() and dist.is_initialized():
             payload: list[list[int] | None] = [None]
-            if self.rank == 0:
-                random.Random(seed).shuffle(indices)
+            # DP: 每个 DP rank 的 rank 0 独立 shuffle，在 DP group 内广播
+            dp_group = self.tp_state.dp_group if self.tp_state else None
+            is_dp_primary = self.rank == 0 or (dp_group is not None and self.tp_rank == 0 and self.pp_rank == 0 and self.dp_rank == 0)
+            if self.tp_rank == 0 and self.pp_rank == 0:
+                random.Random(seed + self.dp_rank).shuffle(indices)
                 payload[0] = indices
-            dist.broadcast_object_list(payload, src=0)
+            if dp_group is not None:
+                dist.broadcast_object_list(payload, src=0, group=dp_group)
+            else:
+                dist.broadcast_object_list(payload, src=0)
             shared = payload[0]
             if shared is None:
                 raise RuntimeError("Failed to broadcast shared GRASPO train-batch shuffle indices")

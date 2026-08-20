@@ -376,12 +376,14 @@ def validate_graspoflow_runtime_config(
     native = graspoflow_config or config.graspoflow
     if int(native.pp_size) < 1:
         raise ValueError("pp_size must be >= 1")
+    if int(native.tp_size) < 1:
+        raise ValueError("tp_size must be >= 1")
+    if int(native.dp_size) < 1:
+        raise ValueError("dp_size must be >= 1")
     # SP: TP>1 时自动启用（激活值沿序列维度分片，零额外通信量）
     # 显式 sequence_parallel: false 可强制禁用（调试用）
     if bool(native.sequence_parallel) and int(native.tp_size) < 2:
         raise ValueError("sequence_parallel requires tp_size >= 2")
-    if int(native.tp_size) < 1:
-        raise ValueError("tp_size must be >= 1")
     if int(native.pp_micro_batch_size) < 1:
         raise ValueError("graspoflow.pp_micro_batch_size must be >= 1")
     if int(native.forward_batch_size) < 1:

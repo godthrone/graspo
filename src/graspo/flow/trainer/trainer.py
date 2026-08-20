@@ -168,6 +168,9 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
                 if epoch != start_epoch or self.current_epoch_stats.samples_seen == 0:
                     self.current_epoch_stats = GraspoFlowEpochStats(epoch=epoch)
                 epoch_samples = list(samples)
+                # DP: 每个 DP rank 处理不同的数据分片
+                if self.adapter is not None and self.adapter.dp_size > 1:
+                    epoch_samples = epoch_samples[self.adapter.dp_rank :: self.adapter.dp_size]
                 random.Random(int(self.config.training.seed) + epoch).shuffle(epoch_samples)
                 resume_sample_offset = (
                     int(self.current_epoch_stats.samples_seen) if epoch == start_epoch else 0

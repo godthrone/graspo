@@ -11,9 +11,33 @@ GRASPO 是一个 GRPO 风格的 LoRA 强化学习训练器，面向结构化输�
 | **组决策体系与防御纵深** | 六路分类（perfect_skip/trainable/invalid/retry/no_preference_gap）在训练边界拦截噪声，质量加权 advantage 防止收敛到"差组里最好" |
 | **RL+SFT 同构** | 同一套 JSONL 数据格式、同一套模型加载、同一套 checkpoint 格式。SFT 教格式，RL 优质量 |
 | **ripple/flow 分层** | 算法层（ripple，涟漪）纯计算，命名来自 token 间信用分配的涟漪效应；设施层（flow，水流）负责分布式执行，命名来自数据在流水线中的持续流动 |
-| **单卡到 TP+PP** | 统一 GraspoFlow 后端，Flink 风格调度，`pp=1,tp=1` 单卡到 `pp=M,tp=N` 混合并行，同配置切换 |
+| **TP+DP+PP+SP+Checkpoint 五位一体** | 统一 GraspoFlow 后端，五维并行正交：TP 分片参数、DP 分片数据、PP 分片层、SP 分片序列、Checkpoint 节省显存。用户只需配置 `tp_size`、`dp_size`、`pp_size`，框架自动推导 world_size。多投入资源 = 跑更大模型 + 跑更快 |
 | **插件化模型适配** | ABC 模板方法 + 注册表，新增模型族只需定义子类并注册，零侵入现有代码 |
 | **多模态训练** | 图像+文本联合训练，三层防线防止静默丢图，SFT/RL 双路径编码对齐 |
+
+## 五维并行模型
+
+```mermaid
+flowchart TB
+    subgraph PARALLEL["五位一体并行"]
+        TP["TP（Tensor Parallel）<br/>分片模型参数 · 同数据"]
+        DP["DP（Data Parallel）<br/>分片训练数据 · 不同数据"]
+        PP["PP（Pipeline Parallel）<br/>分片模型层 · 流水线"]
+        SP["SP（Sequence Parallel）<br/>分片序列维度 · 省显存"]
+        CKPT["Gradient Checkpoint<br/>重计算换显存"]
+    end
+    TP --> DP --> PP --> SP --> CKPT
+```
+
+| 维度 | 配置 | 默认值 | 作用 | 通信 |
+|------|------|:----:|------|------|
+| **TP** | `tp_size` | 2 | 分片 attention heads / MLP 维度 | all_reduce(SUM) |
+| **DP** | `dp_size` | 1 | 不同数据分片独立训练 | all_reduce(AVG) |
+| **PP** | `pp_size` | 1 | 分片模型层到不同 stage | send/recv |
+| **SP** | `sequence_parallel` | false | TP 组内沿序列维度分片激活值 | reduce_scatter + all_gather |
+| **Checkpoint** | `gradient_checkpointing` | true | 前向不存中间激活，反向重计算 | 无 |
+
+**五维正交**：各维度独立配置、独立生效。`world_size = dp_size × tp_size × pp_size`。
 
 ## 三层架构
 
@@ -23,7 +47,7 @@ flowchart TB
         CLI["launch / export / validate-reward / evaluate-checkpoint / analyze-profile"]
     end
     subgraph L1["算法层 ripple/ · 纯计算"]
-        R["reward/ · parity · loss · buffer<br/>data · parsing/ · monitoring/ · multimodal/<br/>annotation/"]
+        R["reward/ · parity/ · loss · buffer<br/>data · parsing/ · monitoring/ · multimodal/<br/>annotation/"]
     end
     subgraph L2["通用件 core/"]
         C["schema.py · chat_template.py · lora.py"]
@@ -31,17 +55,17 @@ flowchart TB
     subgraph L3["设施层 flow/"]
         T["trainer/"]
         A["adapters/ · models/qwen3 + qwen35_36"]
-        S["scheduling/ · parallel/ · lora/ · runtime · memory"]
+        P["parallel/ · lora/ · runtime · memory"]
     end
     CLI --> C
     CLI --> T
     T --> R
     T --> A
-    A --> S
-    T --> S
+    A --> P
+    T --> P
 ```
 
-依赖方向：`cli → trainer → adapters → scheduling/parallel`；`flow → ripple/core` 单向。
+依赖方向：`cli → trainer → adapters → parallel`；`flow → ripple/core` 单向。
 
 ### 三层边界
 
@@ -49,13 +73,15 @@ flowchart TB
 |----|------|---------|
 | **ripple/** | 算法逻辑：奖励、advantage、loss、解析、标注、监控 | 纯 CPU，无 GPU/网络/文件 IO |
 | **core/** | 跨层契约：配置模型、chat template、LoRA 工具 | 同上 |
-| **flow/** | 执行载体：TP/PP 分布式、模型加载、checkpoint、训练循环 | 需 GPU（纯设施逻辑可在单 GPU 上测试） |
+| **flow/** | 执行载体：TP/DP/PP/SP 分布式、模型加载、checkpoint、训练循环 | 需 GPU（纯设施逻辑可在单 GPU 上测试） |
 
 **边界判断**：改这个文件会让训练结果变吗？会 → ripple。不会但和配置有关 → core。其余 → flow。
 
+**DP 的边界**：DP 完全在 flow/ 中实现。ripple 永远不知道 `dp_rank`、`dp_size`、`dp_group` 的存在——它只看到"一份数据"，flow 负责把不同数据分片喂给不同的 DP rank。
+
 详细设计见：
 - **[Ripple 算法层](ripple.md)** — 奖励、标注、advantage、group 决策、loss
-- **[Flow 设施层](flow.md)** — TP+PP 调度、模型适配、训练循环、LoRA 管理
+- **[Flow 设施层](flow.md)** — TP+DP+PP+SP 调度、模型适配、训练循环、LoRA 管理
 
 ## 数据流
 
@@ -78,12 +104,12 @@ flowchart LR
     SFT["SFT<br/>train_method: sft"] --> LOAD["SftTrainer 加载 JSONL"]
     LOAD --> TXT["纯文本路径"]
     LOAD --> MM["多模态路径<br/>MultimodalDeferred"]
-    TXT --> EPOCH["训练 10 epochs<br/>保存 LoRA"]
+    TXT --> EPOCH["训练 N epochs<br/>保存 LoRA"]
     MM --> EPOCH
     EPOCH --> EXPORT["graspo export<br/>合并 LoRA"]
     EXPORT --> RL["RL<br/>train_method: graspo"]
     RL --> RLN["GraspoFlowTrainer<br/>加载合并模型 + 新 LoRA"]
-    RLN --> RLL["100 epochs RL 长训"]
+    RLN --> RLL["M epochs RL 长训"]
 ```
 
 ### SFT 格式对齐（关键不变式）
@@ -116,6 +142,10 @@ Qwen3.5 在预训练中学会的 XML 工具调用格式是参数值位于独立�
 ### 单后端原则
 
 历史上存在过 `native_tp` 后端。v0.9 完成 GraspoFlow 迁移后立即删除旧代码——不保留"兼容模式"，不保留 `legacy/` 目录。代码库中只存在一套当前架构。
+
+### 五维并行正交
+
+TP、DP、PP、SP、Checkpoint 五个维度彼此独立——用户调整任何一个不影响其他维度的语义。DP 的 `dp_size` 是独立配置项，不自动推导（显式优于隐式，宪法 §2.2）。`world_size = dp_size × tp_size × pp_size` 由框架自动校验。
 
 ## 确定性保证
 

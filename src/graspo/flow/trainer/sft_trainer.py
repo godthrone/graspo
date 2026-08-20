@@ -62,6 +62,11 @@ class SFTTrainer:
         # 加载并 tokenize 数据（所有 rank 各自执行，因为 train_batch_sft 在所有 rank 上调用）
         samples = load_jsonl(self.config.data.train_path)
         self.total_samples = len(samples)
+        # DP: 每个 DP rank 处理不同的数据分片
+        adapter = self.runtime._adapter
+        if adapter is not None and adapter.dp_size > 1:
+            samples = samples[adapter.dp_rank :: adapter.dp_size]
+            self.total_samples = len(samples)
         _log.info("SFT: loaded %d samples from %s", self.total_samples, self.config.data.train_path)
 
         if self._is_primary():

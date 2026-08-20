@@ -241,3 +241,24 @@ def _sync_nonsharded_lora_grads(model: nn.Module, tp_group: Any) -> None:
         elif _shard == "in":
             if _mod.lora_b.grad is not None:
                 dist.all_reduce(_mod.lora_b.grad, op=dist.ReduceOp.SUM, group=tp_group)
+
+
+def _sync_dp_lora_grads(model: nn.Module, dp_group: Any) -> None:
+    """All-reduce (AVG) all LoRA gradients across DP replicas.
+
+    DP replicas process DIFFERENT data, so AVG is the correct reduction.
+    Unlike TP sync (which only syncs non-sharded LoRA matrices with SUM),
+    DP syncs ALL LoRA parameters because each DP rank computes a full
+    gradient on its own data shard.
+
+    Must be called BEFORE TP sync and BEFORE optimizer.step().
+    Sync order: DP(AVG) → TP(SUM) → clip_grad → optimizer.step()
+    """
+    if dp_group is None:
+        return
+    for _mod in model.modules():
+        if not isinstance(_mod, LoRALinear) or not _mod.lora_enabled:
+            continue
+        for param in (_mod.lora_a, _mod.lora_b):
+            if param is not None and param.grad is not None:
+                dist.all_reduce(param.grad, op=dist.ReduceOp.AVG, group=dp_group)

@@ -217,7 +217,7 @@ def _validate_launch_world(
 
 
 def _graspoflow_world_size(config: GraspoConfig) -> int:
-    return int(config.graspoflow.tp_size) * int(config.graspoflow.pp_size)
+    return int(config.graspoflow.dp_size) * int(config.graspoflow.tp_size) * int(config.graspoflow.pp_size)
 
 
 def _validate_launch_paths(config: GraspoConfig) -> None:

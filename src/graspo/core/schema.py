@@ -106,6 +106,9 @@ class TrainingConfig(BaseModel):
     reject_unparseable_groups: bool = True
     resume_from_checkpoint: str | None = None
     lr_scheduler: LRSchedulerConfig = LRSchedulerConfig()
+    # DP 学习率缩放策略：dp_size > 1 时按 linear scaling rule 调整 lr
+    # "linear" = lr × dp_size；"none" = 不缩放
+    lr_scaling: Literal["linear", "none"] = "linear"
 
     @model_validator(mode="after")
     def _validate_output_dir(self) -> TrainingConfig:
@@ -161,12 +164,20 @@ class DataConfig(BaseModel):
 
 
 class GraspoFlowConfig(BaseModel):
-    """GraspoFlow 分布式训练配置。"""
+    """GraspoFlow 分布式训练配置 — TP+DP+PP+SP+Checkpoint 五位一体。
+
+    world_size = dp_size × tp_size × pp_size，由框架自动校验。
+    各维度正交：调整任何一个不影响其他维度的语义。
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     tp_size: int = 2
+    dp_size: int = 1
     pp_size: int = 1
+    # 是否在 DP rank 间复制 LoRA 权重（默认 true）。true=各 rank 独立副本，
+    # 梯度 AVG all-reduce；false=权重分片，需额外通信。LoRA 参数量小，推荐 true。
+    dp_replicate_lora: bool = True
     # 模型适配器路径，默认使用 qwen35_36（兼容 Qwen3.5/3.6 系列）
     adapter: str = "graspo.flow.adapters.models.qwen35_36.adapter:Qwen35Adapter"
     placement_strategy: str = "auto"
@@ -182,6 +193,12 @@ class GraspoFlowConfig(BaseModel):
     readable_log_enabled: bool = True
     synchronize_cuda_timing: bool = False
     pp_max_inflight_microbatches: int = 0
+
+    @model_validator(mode="after")
+    def _validate_dp(self) -> GraspoFlowConfig:
+        if self.dp_size < 1:
+            raise ValueError(f"dp_size must be >= 1, got {self.dp_size}")
+        return self
 
 
 class ExportConfig(BaseModel):
@@ -200,7 +217,7 @@ class LaunchConfig(BaseModel):
 
     GPU 选择由用户通过 run.sh ``--gpus`` 控制（绝不使用 CUDA_VISIBLE_DEVICES，
     与 --gpus 混用会导致 NCCL 死锁），不在配置中指定。
-    ``nproc_per_node`` 默认从 ``tp_size × pp_size`` 自动推导。
+    ``nproc_per_node`` 默认从 ``dp_size × tp_size × pp_size`` 自动推导。
     """
 
     model_config = ConfigDict(extra="forbid")

@@ -14,8 +14,8 @@
 train_method: graspo
 
 # ── Backend selection ─────────────────────────────────────────────────────
-# Currently only "graspoflow" (unified TP+PP backend).  Single-GPU runs set
-# tp_size=1 and pp_size=1 below.
+# Currently only "graspoflow" (unified TP+DP+PP backend).  Single-GPU runs set
+# tp_size=1, dp_size=1, pp_size=1 below.
 backend: graspoflow
 
 # ── Base model ────────────────────────────────────────────────────────────
@@ -88,14 +88,18 @@ training:
   perfect_skip_reward_threshold: 1.0 # Skip group when median reward >= this value
   reject_unparseable_groups: true    # Defense line: reject groups with unparseable completions
   resume_from_checkpoint: null       # Path to checkpoint for resuming (null=fresh start)
+  lr_scaling: linear                # DP learning rate scaling: "linear" (lr × dp_size) or "none"
 
 # ── GraspoFlow distributed backend ────────────────────────────────────────
+# TP+DP+PP+SP+Checkpoint 五位一体：world_size = dp_size × tp_size × pp_size
 graspoflow:
   adapter: graspo.flow.adapters.models.qwen35_36.adapter:Qwen35Adapter  # Model adapter path (module:Class)
   tp_size: 2                         # Tensor-parallel size (1=single GPU)
+  dp_size: 1                         # Data-parallel replica count (1=no DP)
   pp_size: 1                         # Pipeline-parallel size (1=no pipeline)
+  dp_replicate_lora: true            # Replicate LoRA across DP ranks (true=independent copies)
   placement_strategy: qwen3_tp       # Layer placement strategy ("auto", "qwen3_tp", custom name)
-  sequence_parallel: false           # Enable sequence parallelism
+  sequence_parallel: false           # Enable sequence parallelism (requires tp_size >= 2)
   layer_ranges: []                  # Manual [start, end) ranges per stage; overrides placement_strategy
   pp_micro_batch_size: 1             # Micro-batch size per pipeline stage
   forward_batch_size: 8             # Rollout micro-batch size (GPU memory trade-off)
@@ -116,7 +120,7 @@ export:
 
 # ── Distributed launch ────────────────────────────────────────────────────
 launch:
-  nproc_per_node: null               # Processes per node (null=derive from tp_size × pp_size)
+  nproc_per_node: null               # Processes per node (null=derive from dp_size × tp_size × pp_size)
   nnodes: 1                          # Number of nodes
   node_rank: 0                       # Rank of this node (0-indexed)
   master_addr: 127.0.0.1             # Master node IP

@@ -1,4 +1,4 @@
-"""Qwen3.5/3.6 adapter — SFT training methods (TP-only, PP simple)."""
+"""Qwen3.5/3.6 adapter — SFT training methods (TP+DP+PP)."""
 
 import time
 import os
@@ -168,9 +168,13 @@ class _Qwen35SFTTrainingMethods:
 
         # 所有 micro-batch 的 backward 完成后，统一 sync / clip / step
         if valid_micro_batches > 0:
-            from graspo.flow.lora.lora_linear import _sync_nonsharded_lora_grads
+            from graspo.flow.lora.lora_linear import _sync_dp_lora_grads, _sync_nonsharded_lora_grads
             from graspo.flow.parallel.tensor_utils import _TENSOR_PARALLEL_GROUP
 
+            # DP gradient sync: AVG across DP replicas（不同数据）
+            if self.tp_state is not None and self.tp_state.dp_group is not None:
+                _sync_dp_lora_grads(self.model, self.tp_state.dp_group)
+            # TP gradient sync: SUM across TP ranks（同数据，部分梯度）
             if _TENSOR_PARALLEL_GROUP is not None:
                 _sync_nonsharded_lora_grads(self.model, _TENSOR_PARALLEL_GROUP)
             grad_norm = torch.nn.utils.clip_grad_norm_(

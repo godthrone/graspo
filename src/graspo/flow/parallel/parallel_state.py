@@ -1,4 +1,18 @@
-"""TP/PP 分布式状态容器：GraspoFlowState 数据类及进程组管理（设施层）。"""
+"""TP/DP/PP 分布式状态容器：GraspoFlowState 数据类及进程组管理（设施层）。
+
+rank 拓扑（3D: dp × tp × pp）::
+
+    rank = dp_rank × (tp_size × pp_size) + pp_rank × tp_size + tp_rank
+    dp_rank  = rank // (tp_size × pp_size)
+    tp_rank  = (rank // pp_size) % tp_size
+    pp_rank  = rank % pp_size
+    world_size = dp_size × tp_size × pp_size
+
+进程组:
+    - tp_group: 同 dp、同 pp 的所有 rank → all_reduce(SUM)
+    - dp_group: 同 tp、同 pp 的所有 rank → all_reduce(AVG)
+    - pp_group: 同 dp、同 tp 的所有 rank → send/recv
+"""
 
 from __future__ import annotations
 
@@ -16,21 +30,27 @@ class GraspoFlowState:
     world_size: int
     tp_size: int
     tp_rank: int
+    dp_size: int
+    dp_rank: int
     pp_size: int
     pp_rank: int
     tp_group: dist.ProcessGroup | None
+    dp_group: dist.ProcessGroup | None
     pp_group: dist.ProcessGroup | None
     prev_pp_rank: int | None
     next_pp_rank: int | None
     device: torch.device
 
     @classmethod
-    def initialize(cls, tp_size: int, pp_size: int = 1) -> GraspoFlowState:
+    def initialize(
+        cls, tp_size: int, pp_size: int = 1, dp_size: int = 1
+    ) -> GraspoFlowState:
         rank = int(os.environ.get("RANK", "0"))
         local_rank = int(os.environ.get("LOCAL_RANK", "0"))
         world_size = int(os.environ.get("WORLD_SIZE", "1"))
         tp_size = int(tp_size)
         pp_size = int(pp_size)
+        dp_size = int(dp_size)
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         if torch.cuda.is_available():
             device = torch.device(f"cuda:{local_rank}")
@@ -38,27 +58,52 @@ class GraspoFlowState:
         if world_size > 1 and not dist.is_initialized():
             backend = "nccl" if torch.cuda.is_available() else "gloo"
             dist.init_process_group(backend=backend)
-        expected_world_size = tp_size * pp_size
+        expected_world_size = dp_size * tp_size * pp_size
         if world_size != expected_world_size:
             raise RuntimeError(
-                "native placement requires WORLD_SIZE == tp_size * "
-                f"pp_size ({world_size} != {tp_size} * {pp_size})"
+                "native placement requires WORLD_SIZE == dp_size * tp_size * "
+                f"pp_size ({world_size} != {dp_size} * {tp_size} * {pp_size})"
             )
-        pp_rank = rank // tp_size
-        tp_rank = rank % tp_size
+        # 3D rank mapping: dp × tp × pp
+        pp_tp_size = tp_size * pp_size
+        dp_rank = rank // pp_tp_size
+        local_rank_in_dp = rank % pp_tp_size
+        pp_rank = local_rank_in_dp // tp_size
+        tp_rank = local_rank_in_dp % tp_size
+
         tp_group = None
+        dp_group = None
         pp_group = None
         if dist.is_available() and dist.is_initialized() and world_size > 1:
-            for stage_idx in range(pp_size):
-                ranks = list(range(stage_idx * tp_size, (stage_idx + 1) * tp_size))
-                group = dist.new_group(ranks=ranks)
-                if rank in ranks:
-                    tp_group = group
-            for shard_idx in range(tp_size):
-                ranks = [stage_idx * tp_size + shard_idx for stage_idx in range(pp_size)]
-                group = dist.new_group(ranks=ranks)
-                if rank in ranks:
-                    pp_group = group
+            # TP groups: ranks with same (dp_rank, pp_rank)
+            for dp_idx in range(dp_size):
+                for stage_idx in range(pp_size):
+                    base = dp_idx * pp_tp_size + stage_idx * tp_size
+                    ranks = list(range(base, base + tp_size))
+                    group = dist.new_group(ranks=ranks)
+                    if rank in ranks:
+                        tp_group = group
+            # PP groups: ranks with same (dp_rank, tp_rank)
+            for dp_idx in range(dp_size):
+                for shard_idx in range(tp_size):
+                    ranks = [
+                        dp_idx * pp_tp_size + stage_idx * tp_size + shard_idx
+                        for stage_idx in range(pp_size)
+                    ]
+                    group = dist.new_group(ranks=ranks)
+                    if rank in ranks:
+                        pp_group = group
+            # DP groups: ranks with same (tp_rank, pp_rank)
+            for pp_idx in range(pp_size):
+                for tp_idx in range(tp_size):
+                    ranks = [
+                        d * pp_tp_size + pp_idx * tp_size + tp_idx
+                        for d in range(dp_size)
+                    ]
+                    group = dist.new_group(ranks=ranks)
+                    if rank in ranks:
+                        dp_group = group
+
         prev_pp_rank = rank - tp_size if pp_rank > 0 else None
         next_pp_rank = rank + tp_size if pp_rank < pp_size - 1 else None
         return cls(
@@ -67,9 +112,12 @@ class GraspoFlowState:
             world_size=world_size,
             tp_size=tp_size,
             tp_rank=tp_rank,
+            dp_size=dp_size,
+            dp_rank=dp_rank,
             pp_size=pp_size,
             pp_rank=pp_rank,
             tp_group=tp_group,
+            dp_group=dp_group,
             pp_group=pp_group,
             prev_pp_rank=prev_pp_rank,
             next_pp_rank=next_pp_rank,
