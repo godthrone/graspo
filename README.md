@@ -25,8 +25,9 @@ train 9B-class models on a single 80 GB GPU.
 
 - SFT → RL unified pipeline: same data format, same model loading, same
   checkpoint format.
-- GraspoFlow backend: Flink-inspired scheduling unifies single-GPU, TP, PP,
-  and TP+PP in a single configuration switch.
+- GraspoFlow backend: five-dimensional parallelism (TP+DP+PP+SP+Checkpoint)
+  unifies single-GPU to multi-GPU in a single configuration switch.
+  ``world_size = dp_size × tp_size × pp_size``.
 - Pluggable model adapters with ABC contracts: new model families require
   zero changes to existing code.
 - Multimodal training with three-layer contract-based defense against silent

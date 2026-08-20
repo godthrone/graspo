@@ -19,7 +19,8 @@ GRASPO 是一个面向结构化输出任务的 GRPO-style 强化学习训练器�
 **面向生产的基础设施：**
 
 - SFT → RL 统一管道：同一数据格式、同一模型加载、同一 checkpoint 格式。
-- GraspoFlow 后端：Flink 风格调度，单卡、TP、PP、TP+PP 同配置切换。
+- GraspoFlow 后端：五位一体并行（TP+DP+PP+SP+Checkpoint），单卡到多卡同配置切换。
+  ``world_size = dp_size × tp_size × pp_size``。
 - 插件化模型适配器：ABC 契约，新模型族零侵入现有代码。
 - 多模态训练：三层契约防线防止静默丢图。
 - ReplayBuffer、可读 rollout 日志、内置 `analyze-profile` 分析工具。
