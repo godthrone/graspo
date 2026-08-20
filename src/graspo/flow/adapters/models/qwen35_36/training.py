@@ -51,9 +51,9 @@ class _Qwen35TrainingMethods:
     ) -> dict[str, Any]:
         """RL 训练：对一批 ``Experience`` 执行 forward → GRPO loss → backward。
 
-        支持梯度累积：将 ``optimize_prompt_batch_size`` 个 experience 作为一个 micro-batch，
+        支持梯度累积：每个 micro_batch 处理 ``micro_batch_size`` 个 experience，
         所有 micro-batch 的梯度累加后统一 ``optimizer.step()``。
-        有效 batch size = ``optimize_prompt_batch_size × num_micro_batches``。
+        有效 batch size = ``micro_batch_size × gradient_accumulation_micro_batches``。
         """
         self._require_ready()
         assert self.model is not None
@@ -76,7 +76,7 @@ class _Qwen35TrainingMethods:
         grad_norm_sum = 0.0
         nonzero_grad_count = 0
         lora_norm_before = self.model.lora_parameter_norm()
-        batch_size = int(self.config.training.optimize_prompt_batch_size)
+        batch_size = int(self.config.graspoflow.micro_batch_size)
         train_batch_started_at = time.monotonic()
         round_secs: list[float] = []
         micro_batch_forward_sec = 0.0
@@ -305,7 +305,7 @@ class _Qwen35TrainingMethods:
         grad_norm_sum = 0.0
         nonzero_grad_count = 0
         lora_norm_before = self.model.lora_parameter_norm()
-        batch_size = int(self.config.training.optimize_prompt_batch_size)
+        batch_size = int(self.config.graspoflow.micro_batch_size)
         pipeline_micro_batch_size = max(1, int(self.config.graspoflow.pp_micro_batch_size))
         train_batch_started_at = time.monotonic()
         micro_batch_forward_sec = 0.0

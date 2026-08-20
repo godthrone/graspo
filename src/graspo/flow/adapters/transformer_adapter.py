@@ -231,7 +231,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
                 "lora_target_signature": self.model.lora_target_signature(),
                 "rollout_kv_cache_supported": bool(getattr(self.model, "supports_kv_cache", True)),
                 "placement": placement_summary(self.placement) if self.placement else {},
-                "forward_batch_size": self.config.graspoflow.forward_batch_size,
+                "micro_batch_size": self.config.graspoflow.micro_batch_size,
                 "empty_cache_after_rollout_split": (
                     self.config.graspoflow.empty_cache_after_rollout_split
                 ),
@@ -540,11 +540,11 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
         max_new_tokens: int,
         use_kv_cache: bool,
     ) -> int:
-        # User controls this directly via forward_batch_size, clamped to available rows.
+        # User controls this directly via micro_batch_size, clamped to available rows.
         return max(
             1,
             min(
-                int(self.config.graspoflow.forward_batch_size),
+                int(self.config.graspoflow.micro_batch_size),
                 int(rollout_group_size),
             ),
         )

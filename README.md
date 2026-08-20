@@ -170,7 +170,7 @@ cp samples/configs/sft_example.yaml my_sft.yaml
 Key differences from RL:
 
 - `train_method: sft` — dispatches to supervised fine-tuning instead of RL;
-- `forward_batch_size` acts as micro-batch size;
+- `micro_batch_size` acts as micro-batch size;
 - GRPO optimization runs a single pass per training step (no gradient accumulation iterations).
 - `max_prompt_length` is the full sequence length (prompt + response);
 - `learning_rate` is typically higher than RL (e.g. `5e-5` vs `5e-6`);
@@ -526,7 +526,7 @@ training.
 - `rollout_queue_batch_size`: prompts fetched from the rollout queue per step
   (default 8); drives the replay buffer threshold together with
   `rollout_group_size`.
-- `optimize_prompt_batch_size`: prompts scheduled together for one optimize
+- `gradient_accumulation_micro_batches`: prompts scheduled together for one optimize
   step; replay buffer threshold is `rollout_queue_batch_size × rollout_group_size`.
 - `rollout_max_retries`: retry budget after the initial rollout attempt.
 - `learning_rate`, `weight_decay`, `max_grad_norm`: optimizer settings.
@@ -565,7 +565,7 @@ is only a LoRA warm-start.
   `[[0,9], [9,17], [17,25], [25,32]]`. Overrides `placement_strategy` when set.
 - `sequence_parallel`: must stay `false` in v1.
 - `pp_micro_batch_size`: PP micro-batch size (default 1).
-- `forward_batch_size`: rollout forward batch size (default 8). Replaces
+- `micro_batch_size`: rollout forward batch size (default 8). Replaces
   the old `gpu_memory_utilization`.
 - `use_kv_cache_for_rollout`: use KV cache only for rollout generation.
 - `empty_cache_after_rollout_split`, `empty_cache_before_train`: CUDA cache
@@ -779,8 +779,8 @@ bash run.sh samples/configs/config_example.yaml --smoke
   `lora.adapter_path` to the SFT checkpoint's adapter, and adjust
   `learning_rate` down (e.g. `1e-6`). The SFT LoRA adapter is directly
   compatible with GRASPO RL training.
-- **SFT OOM**: reduce `forward_batch_size` (micro-batch) or `max_prompt_length`;
-  increase `forward_batch_size` to keep the
+- **SFT OOM**: reduce `micro_batch_size` (micro-batch) or `max_prompt_length`;
+  increase `micro_batch_size` to keep the
   effective batch size.
 
 ## License

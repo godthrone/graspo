@@ -106,13 +106,18 @@ class SFTTrainer:
                 multimodal_count,
             )
 
-        optimize_prompt_batch_size = max(1, int(self.config.training.optimize_prompt_batch_size))
+        # 有效 batch = micro_batch_size × gradient_accumulation_micro_batches
+        # SFT 训练器按此大小创建批次，train_batch_sft 内部拆分为 micro-batch
+        mb = max(1, int(self.config.graspoflow.micro_batch_size))
+        ga = max(1, int(self.config.training.gradient_accumulation_micro_batches))
+        effective_batch_size = mb * ga
         max_grad_norm = float(self.config.training.max_grad_norm)
         save_steps = int(self.config.training.save_steps)
 
         _log.info(
-            "SFT config: batch_size=%d max_epochs=%d lr=%.1e max_seq_len=%d",
-            optimize_prompt_batch_size,
+            "SFT config: micro_batch_size=%d gradient_accumulation_micro_batches=%d "
+            "effective_batch=%d max_epochs=%d lr=%.1e max_seq_len=%d",
+            mb, ga, effective_batch_size,
             self.config.training.max_epochs,
             self.config.training.learning_rate,
             self.config.data.max_prompt_length,
@@ -122,8 +127,8 @@ class SFTTrainer:
             for epoch in range(self.config.training.max_epochs):
                 random.Random(int(self.config.training.seed) + epoch).shuffle(tokenized)
                 batches = [
-                    tokenized[start : start + optimize_prompt_batch_size]
-                    for start in range(0, len(tokenized), optimize_prompt_batch_size)
+                    tokenized[start : start + effective_batch_size]
+                    for start in range(0, len(tokenized), effective_batch_size)
                 ]
 
                 _log.info(

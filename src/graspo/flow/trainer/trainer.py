@@ -135,10 +135,11 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
         # 否则输出目录内的 config.yaml 停留在旧配置，误导复现（§1.4 单一真相源）
         _backup_config(self.config, output_dir)
         _log.info(
-            "Run config: rollout_group_size=%d optimize_prompt_batch_size=%d "
-            "max_epochs=%d max_new_tokens=%d",
+            "Run config: rollout_group_size=%d micro_batch_size=%d "
+            "gradient_accumulation_micro_batches=%d max_epochs=%d max_new_tokens=%d",
             self.config.training.rollout_group_size,
-            self.config.training.optimize_prompt_batch_size,
+            self.config.graspoflow.micro_batch_size,
+            self.config.training.gradient_accumulation_micro_batches,
             self.config.training.max_epochs,
             self.config.training.max_new_tokens,
         )

@@ -74,7 +74,7 @@ class _Qwen35SFTTrainingMethods:
     ) -> dict[str, Any]:
         """SFT 训练：对一批 ``SFTTokenized`` 样本执行 forward → cross-entropy loss → backward。
 
-        支持梯度累积：当 ``forward_batch_size < len(sft_batches)`` 时，将外批拆分为多个
+        支持梯度累积：当 ``micro_batch_size < len(sft_batches)`` 时，将外批拆分为多个
         micro-batch 逐个 forward/backward，梯度在 micro-batch 间累加，最后统一
         ``optimizer.step()``。有效 batch size = ``len(sft_batches)``。
 
@@ -96,10 +96,10 @@ class _Qwen35SFTTrainingMethods:
             torch.cuda.empty_cache()
             self._emit_rank_memory_event("train_before_empty_cache")
 
-        forward_batch_size = max(1, int(self.config.graspoflow.forward_batch_size))
-        # 梯度累积：有效 batch = optimize_prompt_batch_size，micro-batch = forward_batch_size
+        micro_batch_size = max(1, int(self.config.graspoflow.micro_batch_size))
+        # 梯度累积：有效 batch = gradient_accumulation_micro_batches，micro-batch = micro_batch_size
         # zero_grad 只调一次，所有 micro-batch 的梯度累加后统一 step。
-        num_micro_batches = max(1, (len(sft_batches) + forward_batch_size - 1) // forward_batch_size)
+        num_micro_batches = max(1, (len(sft_batches) + micro_batch_size - 1) // micro_batch_size)
         self.optimizer.zero_grad(set_to_none=True)
         optimizer_steps = 0
         skipped_nonfinite = 0
@@ -114,8 +114,8 @@ class _Qwen35SFTTrainingMethods:
         optimizer_step_sec = 0.0
         micro_batch_count = 0
         valid_micro_batches = 0  # 实际贡献梯度的 micro-batch 数
-        for start in range(0, len(sft_batches), forward_batch_size):
-            batch_items = sft_batches[start : start + forward_batch_size]
+        for start in range(0, len(sft_batches), micro_batch_size):
+            batch_items = sft_batches[start : start + micro_batch_size]
             micro_batch = collate_sft_batch(
                 batch_items,
                 self.device,
@@ -232,7 +232,7 @@ class _Qwen35SFTTrainingMethods:
     ) -> dict[str, Any]:
         """PP SFT 训练 — 1F1B 调度，梯度累积。
 
-        将 ``sft_batches`` 按 ``forward_batch_size`` 拆分为 micro-batch，
+        将 ``sft_batches`` 按 ``micro_batch_size`` 拆分为 micro-batch，
         通过 1F1B fill/steady/drain 三阶段流水线执行 forward/backward。
         所有 micro-batch 的梯度累加后统一 ``optimizer.step()``。
         有效 batch size = ``len(sft_batches)``。
@@ -246,7 +246,7 @@ class _Qwen35SFTTrainingMethods:
         grad_norm_sum = 0.0
         nonzero_grad_count = 0
         lora_norm_before = self.model.lora_parameter_norm()
-        forward_batch_size = max(1, int(self.config.graspoflow.forward_batch_size))
+        micro_batch_size = max(1, int(self.config.graspoflow.micro_batch_size))
         full_batch_size = max(1, len(sft_batches))
         train_batch_started_at = time.monotonic()
         micro_batch_forward_sec = 0.0
@@ -261,8 +261,8 @@ class _Qwen35SFTTrainingMethods:
 
         # 预 collate 所有 micro-batch（1F1B 需要提前知道所有 chunk）
         chunk_batches: list[dict[str, Any]] = []
-        for start in range(0, len(sft_batches), forward_batch_size):
-            batch_items = sft_batches[start : start + forward_batch_size]
+        for start in range(0, len(sft_batches), micro_batch_size):
+            batch_items = sft_batches[start : start + micro_batch_size]
             chunk_batches.append(
                 collate_sft_batch(
                     batch_items,

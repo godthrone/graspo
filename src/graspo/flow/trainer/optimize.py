@@ -52,14 +52,20 @@ class OptimizeMixin:
         reward_batch = reward_batch_summary(
             attempts,
             rollout_group_size=self.config.training.rollout_group_size,
-            optimize_prompt_batch_size=self.config.training.optimize_prompt_batch_size,
+            effective_batch_size=(
+                int(self.config.graspoflow.micro_batch_size)
+                * int(self.config.training.gradient_accumulation_micro_batches)
+            ),
         )
         metrics["replay_buffer_optimize_threshold"] = threshold
         metrics["replay_buffer_trainable_completion_count"] = usable
         metrics["replay_buffer_trainable_group_count"] = usable / max(
             int(self.config.training.rollout_group_size), 1
         )
-        metrics["optimize_prompt_batch_size"] = self.config.training.optimize_prompt_batch_size
+        metrics["effective_batch_size"] = (
+            int(self.config.graspoflow.micro_batch_size)
+            * int(self.config.training.gradient_accumulation_micro_batches)
+        )
         metrics["optimize_iterations_per_step"] = 1
         metrics["force_flush"] = bool(force)
         self.replay_buffer.clear()

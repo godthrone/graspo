@@ -157,7 +157,7 @@ def reward_batch_summary(
     attempts: list[dict[str, Any]],
     *,
     rollout_group_size: int,
-    optimize_prompt_batch_size: int,
+    effective_batch_size: int,
 ) -> dict[str, Any]:
     """从一批 rollout attempts 生成 batch 级别摘要。
 
@@ -229,7 +229,7 @@ def reward_batch_summary(
     return {
         "unit": "batch_attempt",
         "rollout_group_size": int(rollout_group_size),
-        "optimize_prompt_batch_size": int(optimize_prompt_batch_size),
+        "effective_batch_size": int(effective_batch_size),
         "attempt_group_count": attempt_group_count,
         "terminal_group_count": terminal_group_count,
         "completion_count": attempt_group_count * int(rollout_group_size),
@@ -490,7 +490,7 @@ def compact_optimize_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
         "replay_buffer_optimize_threshold": int(
             metrics.get("replay_buffer_optimize_threshold") or 0
         ),
-        "optimize_prompt_batch_size": int(metrics.get("optimize_prompt_batch_size") or 0),
+        "effective_batch_size": int(metrics.get("effective_batch_size") or 0),
         "optimize_iterations_per_step": int(metrics.get("optimize_iterations_per_step") or 0),
         "optimizer_steps_per_rank": optimizer_steps_per_rank,
         "global_optimizer_steps_sum": global_optimizer_steps,

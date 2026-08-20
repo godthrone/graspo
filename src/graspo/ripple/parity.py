@@ -192,9 +192,9 @@ def replay_buffer_optimize_threshold(
     """Replay 触发阈值 = 一次 rollout queue 的 prompt 数 × 每组 completion 数。
 
     语义：一个 rollout queue（rollout_queue_batch_size 个 prompt × G 条/组）恰好
-    触发一次 optimize——队列节奏与训练微批大小（optimize_prompt_batch_size）
-    解耦：队列可保持大吞吐（rollout 显存由 forward_batch_size 决定），训练
-    forward 微批可单独调小（显存由 optimize_prompt_batch_size 决定）。
+    触发一次 optimize——队列节奏与训练微批大小（gradient_accumulation_micro_batches）
+    解耦：队列可保持大吞吐（rollout 显存由 micro_batch_size 决定），训练
+    forward 微批可单独调小（显存由 micro_batch_size 决定）。
     """
     return int(rollout_queue_batch_size) * int(rollout_group_size)
 

@@ -386,9 +386,9 @@ def validate_graspoflow_runtime_config(
         raise ValueError("sequence_parallel requires tp_size >= 2")
     if int(native.pp_micro_batch_size) < 1:
         raise ValueError("graspoflow.pp_micro_batch_size must be >= 1")
-    if int(native.forward_batch_size) < 1:
+    if int(native.micro_batch_size) < 1:
         raise ValueError(
-            f"graspoflow.forward_batch_size must be >= 1, got {native.forward_batch_size}"
+            f"graspoflow.micro_batch_size must be >= 1, got {native.micro_batch_size}"
         )
     if config.training.resume_from_checkpoint and config.lora.adapter_path:
         raise ValueError("training.resume_from_checkpoint and lora.adapter_path cannot both be set")

@@ -71,7 +71,8 @@ class CheckpointMixin:
         current = {
             "backend": self.backend_name,
             "rollout_group_size": self.config.training.rollout_group_size,
-            "optimize_prompt_batch_size": self.config.training.optimize_prompt_batch_size,
+            "micro_batch_size": self.config.graspoflow.micro_batch_size,
+            "gradient_accumulation_micro_batches": self.config.training.gradient_accumulation_micro_batches,
             "optimize_iterations_per_step": 1,
             "rollout_max_retries": self.config.training.rollout_max_retries,
             "max_new_tokens": self.config.training.max_new_tokens,
@@ -141,7 +142,8 @@ class CheckpointMixin:
             "config_snapshot": {
                 "backend": self.backend_name,
                 "rollout_group_size": self.config.training.rollout_group_size,
-                "optimize_prompt_batch_size": self.config.training.optimize_prompt_batch_size,
+                "micro_batch_size": self.config.graspoflow.micro_batch_size,
+            "gradient_accumulation_micro_batches": self.config.training.gradient_accumulation_micro_batches,
                 "optimize_iterations_per_step": 1,
                 "rollout_max_retries": self.config.training.rollout_max_retries,
                 "max_new_tokens": self.config.training.max_new_tokens,

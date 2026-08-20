@@ -83,12 +83,15 @@ class TrainingConfig(BaseModel):
     # 训练长度唯一控制参数（v0.23.0 起：max_steps 已移除，见 LRSchedulerConfig）
     max_epochs: int = 100
     rollout_group_size: int = 8
-    # 每次 rollout queue 的 prompt 数（默认 8）。与 optimize_prompt_batch_size
-    # 解耦：队列决定采样吞吐与 replay 阈值（G × queue），optimize_prompt_batch_size
+    # 每次 rollout queue 的 prompt 数（默认 8）。与 micro_batch_size 解耦：
+    # 队列决定采样吞吐与 replay 阈值（G × queue），micro_batch_size
     # 决定训练 forward 每批序列数（显存峰值）。OOM 时单独调小后者即可，
     # 不需要牺牲吞吐。
     rollout_queue_batch_size: int = 8
-    optimize_prompt_batch_size: int = 8
+    # 梯度累积：攒几个 micro_batch 后做一次 optimizer step。
+    # 有效 batch/GPU = micro_batch_size × gradient_accumulation_micro_batches
+    # 全局有效 batch = 有效 batch/GPU × dp_size
+    gradient_accumulation_micro_batches: int = 4
     # optimize_iterations_per_step removed — always 1 iteration per step.
     # GRPO with repeated iterations on stale old_log_probs causes catastrophic
     # forgetting of shared tokens (e.g. tool-call formatting).
@@ -185,7 +188,10 @@ class GraspoFlowConfig(BaseModel):
     layer_ranges: list[list[int]] | None = None
     sequence_parallel: bool = False
     pp_micro_batch_size: int = 1
-    forward_batch_size: int = 8
+    # 每条数据管线一次 forward 的样本数。TP/PP 不改变数据分布，
+    # 一条管线跨越 tp_size × pp_size 个 GPU，只算 1 个 micro batch。
+    # DP 下每条管线独立处理自己的数据分片。
+    micro_batch_size: int = 1
     use_kv_cache_for_rollout: bool = True
     empty_cache_after_rollout_split: bool = False
     empty_cache_before_train: bool = False

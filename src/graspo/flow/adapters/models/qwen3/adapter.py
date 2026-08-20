@@ -384,7 +384,7 @@ class Qwen3Adapter(TransformerAdapter):
         grad_norm_sum = 0.0
         nonzero_grad_count = 0
         lora_norm_before = self.model.lora_parameter_norm()
-        batch_size = int(self.config.training.optimize_prompt_batch_size)
+        batch_size = int(self.config.graspoflow.micro_batch_size)
         train_batch_started_at = time.monotonic()
         round_secs: list[float] = []
         micro_batch_forward_sec = 0.0

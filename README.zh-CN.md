@@ -147,7 +147,7 @@ cp samples/configs/sft_example.yaml my_sft.yaml
 与 RL 的主要区别：
 
 - `train_method: sft` — 切换到监督微调，而非 RL；
-- `forward_batch_size` 作为 micro-batch size；
+- `micro_batch_size` 作为 micro-batch size；
 - GRPO 优化每次训练步只执行一次 pass（无梯度累积迭代）；
 - `max_prompt_length` 是完整序列长度（prompt + response）；
 - `learning_rate` 通常比 RL 高（如 `5e-5` vs `5e-6`）；
@@ -407,7 +407,7 @@ rollout 完成后，每条 completion 会被**逐字符标注**结构角色（`C
 - `rollout_group_size`：每个 prompt attempt 采样多少条 completion。
 - `rollout_queue_batch_size`：每个 step 从 rollout queue 取多少 prompt（默认 8）；
   与 `rollout_group_size` 共同决定 replay buffer threshold。
-- `optimize_prompt_batch_size`：每个 optimizer step 的 prompt 数量；
+- `gradient_accumulation_micro_batches`：每个 optimizer step 的 prompt 数量；
   replay buffer threshold = `rollout_queue_batch_size × rollout_group_size`。
 - `rollout_max_retries`：初始 rollout 后的 retry 预算。
 - `learning_rate`、`weight_decay`、`max_grad_norm`：optimizer 设置。
@@ -435,7 +435,7 @@ rollout 完成后，每条 completion 会被**逐字符标注**结构角色（`C
   `[[0,9], [9,17], [17,25], [25,32]]`。设置后覆盖 `placement_strategy`。
 - `sequence_parallel`：v1 必须保持 `false`。
 - `pp_micro_batch_size`：PP micro-batch size（默认 1）。
-- `forward_batch_size`：rollout forward batch size（默认 8），替代旧的 `gpu_memory_utilization`。
+- `micro_batch_size`：rollout forward batch size（默认 8），替代旧的 `gpu_memory_utilization`。
 - `use_kv_cache_for_rollout`：KV cache 只用于 rollout generation。
 - `empty_cache_after_rollout_split`、`empty_cache_before_train`：CUDA cache 控制。
 - `raw_log_enabled`、`readable_log_enabled`：rollout/replay 日志开关。
@@ -605,8 +605,8 @@ bash run.sh samples/configs/config_example.yaml --smoke
 - **SFT 转 RL**：SFT 训练完成后，将 `train_method` 改为 `graspo`，
   将 `lora.adapter_path` 指向 SFT checkpoint 的 adapter，
   降低 `learning_rate`（如 `1e-6`）。SFT LoRA adapter 可直接用于 GRASPO RL 训练。
-- **SFT OOM**：减小 `forward_batch_size`（micro-batch）或 `max_prompt_length`；
-  增大 `forward_batch_size` 以保持有效 batch size 不变。
+- **SFT OOM**：减小 `micro_batch_size`（micro-batch）或 `max_prompt_length`；
+  增大 `micro_batch_size` 以保持有效 batch size 不变。
 
 ## License
 

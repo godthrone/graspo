@@ -42,7 +42,7 @@ lora:
 graspoflow:
   tp_size: 4                          # Tensor-parallel size (1=single GPU)
   pp_size: 1                          # Pipeline-parallel size (1=no PP)
-  forward_batch_size: 4               # Micro-batch size per forward pass
+  micro_batch_size: 4                 # Samples per forward pass per data pipeline
 
 # ── Training hyperparameters ──────────────────────────────────────────────
 training:
@@ -52,7 +52,8 @@ training:
   learning_rate: 5.0e-5               # SFT LR (higher than RL's 5e-6~5e-7)
   weight_decay: 0.01
   max_grad_norm: 1.0
-  optimize_prompt_batch_size: 8       # Samples per optimizer step
+  gradient_accumulation_micro_batches: 4  # Micro-batches to accumulate before optimizer step
+  # 有效 batch/GPU = micro_batch_size × gradient_accumulation_micro_batches
   # optimize_iterations_per_step removed — always 1 iteration per step.
   lr_scheduler:
     type: cosine                      # "constant", "cosine", or "linear"
