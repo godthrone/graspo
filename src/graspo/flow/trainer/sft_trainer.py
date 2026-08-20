@@ -119,7 +119,9 @@ class SFTTrainer:
             "effective_batch=%d max_epochs=%d lr=%.1e max_seq_len=%d",
             mb, ga, effective_batch_size,
             self.config.training.max_epochs,
-            self.config.training.learning_rate,
+            self.config.training.effective_learning_rate(
+                dp_size=self.config.graspoflow.dp_size
+            ),
             self.config.data.max_prompt_length,
         )
 

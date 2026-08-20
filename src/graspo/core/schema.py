@@ -113,6 +113,16 @@ class TrainingConfig(BaseModel):
     # "linear" = lr × dp_size；"none" = 不缩放
     lr_scaling: Literal["linear", "none"] = "linear"
 
+    def effective_learning_rate(self, dp_size: int = 1) -> float:
+        """DP 缩放后的有效学习率。
+
+        linear scaling rule（§1.4 单一真相源）：有效 lr 由 learning_rate、
+        lr_scaling、dp_size 三者唯一确定，不分散到多个调用点各自计算。
+        """
+        if self.lr_scaling == "linear" and dp_size > 1:
+            return self.learning_rate * float(dp_size)
+        return self.learning_rate
+
     @model_validator(mode="after")
     def _validate_output_dir(self) -> TrainingConfig:
         """默认输出目录推导：outputs/<run_name>，run_name 自动生成。"""
