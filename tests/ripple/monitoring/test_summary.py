@@ -86,7 +86,7 @@ def test_batch_summary_terminal_means_exclude_retry():
             _group_payload("trainable_not_correct", [0.4, 0.3]),
         ],
         rollout_group_size=8,
-        optimize_prompt_batch_size=4,
+        effective_batch_size=4,
     )
     # 均值来自两个终结 attempt 的 completion 加权拉平（[1.0,0.9,0.8,0.4,0.3]），
     # retry 的 0.0 不入
@@ -155,7 +155,7 @@ def test_health_high_retry_rate_warns():
     batch = reward_batch_summary(
         [_group_payload("retry", [0.0] * 8)],
         rollout_group_size=8,
-        optimize_prompt_batch_size=4,
+        effective_batch_size=4,
     )
     health = training_health({"optimized": True}, batch, {"count": 0})
     assert "batch_high_retry_rate" in health["reasons"]

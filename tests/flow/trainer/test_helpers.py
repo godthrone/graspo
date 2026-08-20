@@ -74,7 +74,7 @@ def test_resume_config_snapshot_mismatch_raises():
     class _FakeConfig:
         class Training:  # noqa: N801 测试桩（小写匹配 config.training）
             rollout_group_size = 8
-            optimize_prompt_batch_size = 8
+            gradient_accumulation_micro_batches = 8
             rollout_max_retries = 5
             max_new_tokens = 2048
 
@@ -86,7 +86,7 @@ def test_resume_config_snapshot_mismatch_raises():
         "config_snapshot": {
             "backend": "graspoflow",
             "rollout_group_size": 4,  # 与当前 8 不一致
-            "optimize_prompt_batch_size": 8,
+            "gradient_accumulation_micro_batches": 8,
             "optimize_iterations_per_step": 1,
             "rollout_max_retries": 5,
             "max_new_tokens": 2048,
@@ -99,7 +99,7 @@ def test_resume_config_snapshot_mismatch_raises():
     consistent["config_snapshot"] = {
         "backend": "graspoflow",
         "rollout_group_size": 8,
-        "optimize_prompt_batch_size": 8,
+        "gradient_accumulation_micro_batches": 8,
         "optimize_iterations_per_step": 1,
         "rollout_max_retries": 5,
         "max_new_tokens": 2048,
@@ -123,7 +123,7 @@ def test_resume_config_snapshot_lr_mismatch_not_rejected():
     class _FakeConfig:
         class Training:  # noqa: N801 测试桩（小写匹配 config.training）
             rollout_group_size = 8
-            optimize_prompt_batch_size = 8
+            gradient_accumulation_micro_batches = 8
             rollout_max_retries = 5
             max_new_tokens = 2048
             learning_rate = 5.0e-07
@@ -137,7 +137,7 @@ def test_resume_config_snapshot_lr_mismatch_not_rejected():
         "config_snapshot": {
             "backend": "graspoflow",
             "rollout_group_size": 8,
-            "optimize_prompt_batch_size": 8,
+            "gradient_accumulation_micro_batches": 8,
             "optimize_iterations_per_step": 1,
             "rollout_max_retries": 5,
             "max_new_tokens": 2048,
@@ -167,7 +167,7 @@ def test_checkpoint_trainer_state_snapshot_includes_lr_and_weight_decay():
     class _FakeConfig:
         class Training:  # noqa: N801 测试桩（小写匹配 config.training）
             rollout_group_size = 8
-            optimize_prompt_batch_size = 8
+            gradient_accumulation_micro_batches = 8
             rollout_max_retries = 5
             max_new_tokens = 2048
             learning_rate = 5.0e-07
