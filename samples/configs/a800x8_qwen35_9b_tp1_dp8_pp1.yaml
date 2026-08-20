@@ -1,0 +1,81 @@
+# GRASPO SFT — 8×A800 Qwen3.5-9B TP=1 DP=8 PP=1（已验证）
+#
+# 硬件：8× NVIDIA A800 80GB，NVLink 互联
+# 模型：Qwen3.5-9B，多模态（视觉+语言），LoRA r=128
+# 数据：10877 条多模态 JSONL，max_prompt_length=8192
+# 实测：~3.3h/epoch，显存 ~32GB/卡，20 epoch ≈ 2.7 天
+#
+# 设计思路：9B 全量权重 ~18GB，单卡 80GB 轻松装下。
+# TP 分片权重是多余通信，DP 纯数据并行才是正解。
+# micro_batch_size=1 避免显存压力，ga=4 保证有效 batch=4。
+
+train_method: sft
+backend: graspoflow
+
+model:
+  model_path: models/Qwen3.5-9B
+  trust_remote_code: true
+  torch_dtype: bfloat16
+  gradient_checkpointing: true
+  chat_template_kwargs:
+    enable_thinking: false
+
+data:
+  train_path: data/train.jsonl
+  max_prompt_length: 8192
+
+lora:
+  r: 128
+  alpha: 256
+  dropout: 0.05
+  target_modules: [language_all_linear, vision_common]
+  bias: none
+  task_type: CAUSAL_LM
+
+graspoflow:
+  tp_size: 1                           # 9B 单卡装下，不分片
+  dp_size: 8                           # 8 路数据并行
+  pp_size: 1
+  dp_replicate_lora: true
+  micro_batch_size: 1                  # 每个微批 1 样本，显存友好
+  placement_strategy: qwen3_tp
+  sequence_parallel: false             # TP=1 无需 SP
+  use_kv_cache_for_rollout: false      # SFT 无 rollout
+
+training:
+  output_dir: ""                       # 空=自动生成
+  run_name: v4-sft-tp1-dp8
+  seed: 43
+  max_epochs: 20
+  rollout_group_size: 8
+  rollout_queue_batch_size: 8
+  gradient_accumulation_micro_batches: 4  # 有效 batch/GPU = 1×4 = 4
+  learning_rate: 1.0e-05
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  max_new_tokens: 128
+  temperature: 0.3
+  top_p: 0.8
+  save_checkpoint_every_epoch: true
+  perfect_skip_reward_threshold: 1.0
+  reject_unparseable_groups: true
+  lr_scheduler:
+    type: cosine
+    warmup_steps: 50
+    min_lr_ratio: 0.1
+    decay_steps: 13600
+  lr_scaling: linear                   # DP=8 时 lr 自动 ×8
+
+launch:
+  # nproc_per_node 自动推导 = dp_size × tp_size × pp_size = 8
+
+reward:
+  kind: graspo
+  check_think: false
+  check_json_markdown: true
+  check_list_order: false
+  marker_reward_weight: 10.0
+  content_reward_weight: 100.0
+  anti_useless_str_reward_weight: 1.0
+  anti_useless_str_half_reward_len: 100
+  numeric_tolerance: 0.2

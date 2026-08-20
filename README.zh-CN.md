@@ -114,7 +114,7 @@ uv sync --extra dev --python 3.11
 然后复制示例配置，编辑指向你的模型和数据，启动训练：
 
 ```bash
-cp samples/configs/config_example.yaml my_config.yaml
+cp samples/configs/sft_example.yaml my_config.yaml
 uv run graspo launch --config my_config.yaml
 ```
 
@@ -123,7 +123,7 @@ uv run graspo launch --config my_config.yaml
 复制并编辑根目录完整样例配置：
 
 ```bash
-cp samples/configs/config_example.yaml my_graspo.yaml
+cp samples/configs/sft_example.yaml my_graspo.yaml
 ```
 
 至少需要设置：
@@ -344,7 +344,7 @@ rollout 完成后，每条 completion 会被**逐字符标注**结构角色（`C
 
 ## 配置说明
 
-所有常规训练配置都在 YAML 内完成。`samples/configs/config_example.yaml` 是 RL 训练的完整公开样例，
+所有常规训练配置都在 YAML 内完成。`samples/configs/sft_example.yaml` 是 RL 训练的完整公开样例，
 `samples/configs/sft_example.yaml` 是 SFT 专用模板。
 
 ### `train_method`
@@ -358,7 +358,7 @@ rollout 完成后，每条 completion 会被**逐字符标注**结构角色（`C
 - `graspoflow`：**唯一后端。** 统一 TP+PP Flink 风格流式流水线框架。
   支持所有并行模式：单卡（`tp=1,pp=1`）、纯 TP（`tp=N,pp=1`）、
   纯 PP（`tp=1,pp=N`）、TP+PP 混合（`tp=M,pp=N`）。
-  参见 `samples/configs/graspoflow_example.yaml`。
+  参见 `samples/configs/a800x8_qwen35_9b_tp1_dp8_pp1.yaml`。
 
 ### `model`
 
@@ -486,7 +486,7 @@ GRASPO 中 Qwen3.6 复用 Qwen3.5-family hybrid text/vision native class，因�
 GRASPO native checkpoint 是可恢复训练 checkpoint。便携模型产物通过 `graspo export` 生成。在 YAML 配置中设置 `export.checkpoint_path`、`export.export_format` 和 `export.export_output`，然后运行：
 
 ```bash
-uv run graspo export --config samples/configs/config_example.yaml
+uv run graspo export --config samples/configs/sft_example.yaml
 ```
 
 最小导出配置示例：
@@ -590,12 +590,12 @@ docker run --rm graspo:<version>
 # 快速冒烟测试（需要挂载模型）：
 #   graspo launch --smoke 跑 1 步训练，验证模型加载、多模态链路、
 #   训练前向后停止。
-bash run.sh samples/configs/config_example.yaml --smoke
+bash run.sh samples/configs/sft_example.yaml --smoke
 ```
 
 ## 常见问题
 
-- `model.model_path must be set`：编辑 `samples/configs/config_example.yaml`，指向真实 base model。
+- `model.model_path must be set`：编辑 `samples/configs/sft_example.yaml`，指向真实 base model。
 - `data.train_path does not exist`：将 `data.train_path` 指向 JSONL 文件。
 - **Docker 容器内找不到模型**：确认 `model.model_path` 在 YAML 中写的是宿主机上的绝对路径，`run.sh` 会自动挂载其父目录。如果路径不在常见位置，用 `bash run.sh --help` 检查挂载逻辑。
 - **Docker 提示 torchrun 找不到**：镜像已将 GRASPO 安装为 CLI 入口，直接运行 `graspo launch --config ...` 即可，PATH 已包含 torch 和 torchrun。

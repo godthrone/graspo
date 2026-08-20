@@ -37,11 +37,10 @@ train 9B-class models on a single 80 GB GPU.
 ## Quick Start
 
 > **Sample files** live in `samples/`:
-> - `samples/configs/` — ready-to-copy YAML configs for different model/GPU setups;
+> - `samples/configs/sft_example.yaml` — 最保守单卡 SFT 配置（开箱即用）；
+> - `samples/configs/rl_example.yaml` — 最保守单卡 RL 配置；
+> - `samples/configs/a800x8_qwen35_9b_tp1_dp8_pp1.yaml` — 8×A800 多卡验证配置；
 > - `samples/data/` — small JSONL datasets for validation and smoke tests.
->
-> Production data and personal configs belong outside the repository — see
-> `data.train_path` and `training.output_dir` in your config.
 
 ### Docker (production path)
 
@@ -135,16 +134,16 @@ uv sync --extra dev --python 3.11
 Now copy a sample config and point it at your model and data, then launch:
 
 ```bash
-cp samples/configs/config_example.yaml my_config.yaml
+cp samples/configs/sft_example.yaml my_config.yaml
 uv run graspo launch --config my_config.yaml
 ```
 
 ### RL Training (GRASPO)
 
-Copy and edit the root sample config:
+Copy and edit the RL sample config:
 
 ```bash
-cp samples/configs/config_example.yaml my_graspo.yaml
+cp samples/configs/rl_example.yaml my_graspo.yaml
 ```
 
 Set at least these fields in `my_graspo.yaml`:
@@ -154,9 +153,8 @@ Set at least these fields in `my_graspo.yaml`:
 - `training.output_dir`: run output directory;
 - GPU selection is **not** in the config — use `run.sh` (auto-picks free
   GPUs) or `bash run.sh config.yaml --gpus 4,5` (see Docker section);
-- `graspoflow.tp_size` and
-  `graspoflow.pp_size`: native placement
-  world size.
+- `graspoflow.tp_size`, `graspoflow.dp_size`, and
+  `graspoflow.pp_size`: world size = tp × dp × pp.
 
 ### SFT Training
 
@@ -170,8 +168,8 @@ cp samples/configs/sft_example.yaml my_sft.yaml
 Key differences from RL:
 
 - `train_method: sft` — dispatches to supervised fine-tuning instead of RL;
-- `micro_batch_size` acts as micro-batch size;
-- GRPO optimization runs a single pass per training step (no gradient accumulation iterations).
+- `micro_batch_size` and `gradient_accumulation_micro_batches` control batch size;
+  effective batch/GPU = micro_batch_size × gradient_accumulation_micro_batches;
 - `max_prompt_length` is the full sequence length (prompt + response);
 - `learning_rate` is typically higher than RL (e.g. `5e-5` vs `5e-6`);
 - `reward` section is ignored by SFT.
@@ -455,9 +453,11 @@ for manual inspection.
 
 ## Configuration
 
-All normal training configuration lives in YAML. `samples/configs/config_example.yaml` is the
-complete public example for RL training. `samples/configs/sft_example.yaml` is the
-dedicated SFT template.
+All normal training configuration lives in YAML.
+
+- `samples/configs/sft_example.yaml` — 最保守单卡 SFT 模板；
+- `samples/configs/rl_example.yaml` — 最保守单卡 RL 模板；
+- `samples/configs/a800x8_qwen35_9b_tp1_dp8_pp1.yaml` — 8×A800 多卡验证配置。
 
 ### `train_method`
 
@@ -467,10 +467,10 @@ dedicated SFT template.
 
 ### `backend`
 
-- `graspoflow`: **The only backend.** Unified TP+PP Flink-style streaming pipeline.
-  Supports all parallel modes: single-GPU (`tp=1,pp=1`), pure TP (`tp=N,pp=1`),
-  pure PP (`tp=1,pp=N`), and TP+PP mixed (`tp=M,pp=N`).
-  See `samples/configs/graspoflow_example.yaml`.
+- `graspoflow`: **The only backend.** Unified TP+DP+PP+SP+Checkpoint
+  five-dimensional parallelism. world_size = tp_size × dp_size × pp_size.
+  Supports all parallel modes: single-GPU (`tp=1,dp=1,pp=1`), pure TP,
+  pure DP, and mixed modes.
 
 ### `model`
 
@@ -634,7 +634,7 @@ artifacts are produced with `graspo export`. Set `export.checkpoint_path`,
 `export.export_format`, and `export.export_output` in your YAML config, then run:
 
 ```bash
-uv run graspo export --config samples/configs/config_example.yaml
+uv run graspo export --config samples/configs/sft_example.yaml
 ```
 
 Example minimal export config:
@@ -755,12 +755,12 @@ docker run --rm graspo:<version>
 # Run quick smoke test (requires a mounted model):
 #   graspo launch --smoke runs 1 training step, verifies model load,
 #   multimodal pipeline, and training forward, then stops.
-bash run.sh samples/configs/config_example.yaml --smoke
+bash run.sh samples/configs/sft_example.yaml --smoke
 ```
 
 ## FAQ
 
-- `model.model_path must be set`: edit `samples/configs/config_example.yaml` and point it at a
+- `model.model_path must be set`: edit `samples/configs/sft_example.yaml` and point it at a
   real base model.
 - `data.train_path does not exist`: point `data.train_path` at a JSONL file.
 - **Docker: model not found in container**: make sure `model.model_path` in your

@@ -1,22 +1,20 @@
-# GRASPO SFT — 最保守单卡配置
+# GRASPO RL — 最保守单卡配置
 #
 # 适用：单 GPU（≥24GB 显存），9B 以下模型，纯文本或多模态。
-# 启动：uv run graspo launch --config samples/configs/sft_example.yaml
+# 启动：uv run graspo launch --config samples/configs/rl_example.yaml
 #
-# SFT 完成后转 RL：
-#   1. train_method 改为 graspo
-#   2. lora.adapter_path 指向 SFT checkpoint
-#   3. 调整 learning_rate 和 reward 设置
+# 从 SFT warm-start：
+#   lora.adapter_path: <sft_checkpoint_dir>
 
-train_method: sft
+train_method: graspo
 backend: graspoflow
 
 # ── 模型 ──────────────────────────────────────────────────────────────────
 model:
-  model_path: models/Qwen3.5-9B        # HuggingFace 模型目录
+  model_path: models/Qwen3.5-9B
   trust_remote_code: true
   torch_dtype: bfloat16
-  gradient_checkpointing: true         # 用计算换显存
+  gradient_checkpointing: true
   chat_template_kwargs:
     enable_thinking: false
 
@@ -30,41 +28,53 @@ lora:
   r: 16
   alpha: 32
   dropout: 0.05
-  adapter_path: null                   # null=从头训练
+  adapter_path: null                   # null=从头训练；或指向 SFT checkpoint
   target_preset: language_safe
 
 # ── 分布式（单卡最保守）──────────────────────────────────────────────────
 graspoflow:
-  tp_size: 1                           # 单卡
-  dp_size: 1                           # 单卡
-  pp_size: 1                           # 无流水线
-  micro_batch_size: 1                  # 每个微批 1 个样本
+  tp_size: 1
+  dp_size: 1
+  pp_size: 1
+  micro_batch_size: 1
 
 # ── 训练超参 ──────────────────────────────────────────────────────────────
 training:
-  output_dir: ""                       # 空=自动生成 outputs/sft_<timestamp>
+  output_dir: ""
   seed: 42
-  max_epochs: 20
-  learning_rate: 5.0e-5
+  max_epochs: 100
+  rollout_group_size: 8                # 每个 prompt 生成几条 completion
+  rollout_queue_batch_size: 8          # 每次 rollout 几个 prompt
+  gradient_accumulation_micro_batches: 4
+  rollout_max_retries: 5
+  learning_rate: 5.0e-6                # RL 推荐比 SFT 低一个数量级
   weight_decay: 0.01
   max_grad_norm: 1.0
-  gradient_accumulation_micro_batches: 4  # 攒 4 个微批做一次 optimizer step
-  # 有效 batch/GPU = micro_batch_size × gradient_accumulation_micro_batches = 4
+  policy_ratio_clip_eps: 0.2
+  max_new_tokens: 2048
+  temperature: 1.0
+  top_p: 1.0
+  save_steps: -1
+  save_checkpoint_every_epoch: true
+  perfect_skip_reward_threshold: 1.0
+  reject_unparseable_groups: true
   lr_scheduler:
     type: cosine
     warmup_steps: 50
-    min_lr_ratio: 0.0
+    min_lr_ratio: 0.1
     decay_steps: 1000
-  save_steps: 100
-  save_checkpoint_every_epoch: true
 
-# ── 启动（单卡，nproc_per_node 自动推导 = 1）────────────────────────────
+# ── 启动 ──────────────────────────────────────────────────────────────────
 launch:
 
-# ── Reward（SFT 忽略，为转 RL 预留）───────────────────────────────────────
+# ── Reward ────────────────────────────────────────────────────────────────
 reward:
+  kind: graspo
   check_think: false
   check_json_markdown: true
+  check_list_order: false
   marker_reward_weight: 10.0
   content_reward_weight: 100.0
+  anti_useless_str_reward_weight: 1.0
+  anti_useless_str_half_reward_len: 100
   numeric_tolerance: 0.2
