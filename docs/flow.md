@@ -39,7 +39,7 @@ flowchart TB
 |------|---------|---------|--------|------|
 | **TP** | 模型参数（attention heads / MLP dims） | all_reduce(SUM) | `tp_group` | `tp_size` |
 | **DP** | 训练数据 | all_reduce(AVG) | `dp_group` | `dp_size` |
-| **PP** | 模型层 | send/recv | `pp_group` | `pp_size` |
+| **PP** | 模型层 | 异步 P2P（isend/irecv）+ 背压 | `pp_group` | `pp_size` |
 | **SP** | 序列维度（激活值） | reduce_scatter + all_gather | `tp_group`（复用） | `sequence_parallel` |
 | **Checkpoint** | 中间激活值（重计算） | 无 | — | `gradient_checkpointing` |
 
@@ -99,11 +99,99 @@ DP rank 1: [GPU 2, GPU 3] ← TP group 1（SP 在此组内）
 
 ### PP 与 DP
 
-PP 1F1B 调度在每个 DP rank 内部独立运行。不同 DP rank 之间没有 PP 通信。
+PP 调度在每个 DP rank 内部独立运行。不同 DP rank 之间没有 PP 通信。
 
 ```
 DP rank 0: [GPU 0 (stage 0), GPU 1 (stage 1)] ← PP group 0
 DP rank 1: [GPU 2 (stage 0), GPU 3 (stage 1)] ← PP group 1
+```
+
+## PP 流水线架构（异步 P2P + 可插拔调度）
+
+PP 是 Flow 设施层中最复杂的分布式形态。设计遵循 **Flink 风格的"调度与计算分离"**：
+调度层决定"何时执行 forward/backward"，通信层决定"数据如何异步流动"，计算层只做模型前向/反向。
+
+### 三层职责
+
+```
+┌───────────────────────────────────────────┐
+│ 调度层 scheduling/（策略模式，可插拔）        │
+│   - OneFOneB（默认，1F1B）                  │
+│   - 未来：Interleaved / ZeroBubble          │
+└───────────────────┬───────────────────────┘
+                    │ 决定 forward/backward 的执行顺序
+┌───────────────────▼───────────────────────┐
+│ 通信层 pipeline_comm.py（PipelineComm）    │
+│   - 异步 isend/irecv                      │
+│   - CUDA stream 重叠通信与计算              │
+│   - 背压由调度层（pp_max_inflight）控制     │
+└───────────────────┬───────────────────────┘
+                    │ 决定数据如何在 stage 间流动
+┌───────────────────▼───────────────────────┐
+│ 计算层 adapter（forward/backward）         │
+│   - model.forward_stage                   │
+│   - loss / 梯度计算                        │
+└───────────────────────────────────────────┘
+```
+
+### 为什么用异步 P2P 而非阻塞 send/recv
+
+- **正确性**：阻塞式 `dist.send`/`dist.recv` 在 1F1B fill 阶段会产生时序死锁——上游 stage 的 fill 发送阻塞等待下游 stage 尚未到达的 receive。异步 `isend`/`irecv` 允许发送立即返回，接收在数据就绪后完成，**从机制上消除死锁**。
+- **性能**：异步通信让计算与通信重叠（CUDA stream），是低 pipeline bubble 的前提。没有异步通信，调度只能靠"等"，bubble 无法降低。
+
+### 背压（Backpressure）
+
+每个 stage 维护**有界 in-flight microbatch 计数**（`pp_max_inflight_microbatches`）。当在途 microbatch 超过上限时，发送方阻塞（背压），防止显存被未消费的中间激活撑爆。这是 Flink 背压思想在训练管道中的直接映射——`memory.py` 的显存预算就是"该允许多少 microbatch 在途"的换算。
+
+### 调度策略接口
+
+调度策略是**可插拔的**，满足宪法 §1.2（对扩展开放，对修改关闭）：
+
+```python
+class PipelineScheduler(ABC):
+    """PP 调度策略 — 决定 forward/backward 的执行顺序。
+
+    对调度层是"时序"关注点，对通信/计算层是"何时做什么"的驱动者。
+    新增调度（interleaved/ZeroBubble）只需实现本接口并注册，不改通信/计算层。
+    """
+    @abstractmethod
+    def run(self) -> None:
+        """执行一次 pipeline 调度（fill/steady/drain 或其它时序）。"""
+```
+
+- `OneFOneBScheduler`：标准 1F1B（fill → steady → drain），forward/backward 交错，低 bubble。
+- 未来策略（interleaved 1F1B / V-shape / ZeroBubble）：**在同一异步 P2P 通信层上实现**，无需重写通信或计算层。
+
+### 通信层接口 PipelineComm
+
+```python
+class PipelineComm:
+    """异步 P2P 通信管道（isend/irecv）+ 专用 CUDA stream 重叠。
+
+    唯一职责：跨 PP stage 的 tensor 传输。不关心调度策略。
+    背压由调度层用 ``pp_max_inflight_microbatches`` 控制（在途 microbatch 上限）。
+    """
+    def send(self, tensor: torch.Tensor, dst: int) -> Any:
+        """发起 isend（非阻塞），返回 work handle。调用方需 ``wait(handle)``。"""
+    def recv(self, tensor: torch.Tensor, src: int) -> Any:
+        """发起 irecv（非阻塞，写入 caller 提供的 tensor），返回 work handle。"""
+    def wait(self, work: Any) -> None:
+        """等待指定 send/recv work 完成（在读取/复用 tensor 前调用）。"""
+```
+
+### 模块结构
+
+```
+src/graspo/flow/parallel/
+├── __init__.py            # 对外开放 API
+├── parallel_state.py      # 3D rank 拓扑（dp × tp × pp）
+├── tensor_utils.py        # TP/SP/DP 原语
+├── pipeline_comm.py       # PipelineComm — 异步 P2P 通信 + CUDA stream 重叠（设施层）
+└── scheduling/            # 调度层（策略模式）
+    ├── __init__.py        # 重导出 PipelineScheduler + 工厂
+    ├── base.py            # PipelineScheduler ABC（契约）
+    ├── one_f_one_b.py     # OneFOneBScheduler（默认，1F1B）
+    └── factory.py         # 按配置构建调度策略（预留 interleaved 等）
 ```
 
 ### Checkpoint 与 DP
@@ -118,16 +206,24 @@ DP rank 1: [GPU 2 (stage 0), GPU 3 (stage 1)] ← PP group 1
 flowchart TB
     L3["Layer 3: 模型族<br/>models/qwen3/ · models/qwen35_36/ · models/common/<br/>架构特定实现"]
     L2["Layer 2: 训练编排<br/>trainer/ · runtime.py<br/>训练循环 · 分布式运行时"]
+    L2b["Layer 2.5: PP 调度<br/>parallel/scheduling/<br/>1F1B · interleaved · ZeroBubble"]
     L1["Layer 1: 通用适配<br/>adapters/ · parallel/<br/>模型族共享逻辑 · 进程组管理"]
-    L0["Layer 0: 并行原语<br/>parallel/ · lora/<br/>TP/DP/SP 通信 · LoRA 梯度同步"]
-    L3 --> L2 --> L1 --> L0
+    L0["Layer 0: 并行原语<br/>parallel/ · lora/<br/>异步 P2P · TP/DP/SP 通信 · LoRA 梯度同步"]
+    L3 --> L2 --> L2b --> L1 --> L0
 ```
 
 ### Layer 0：并行原语
 
 - **parallel_state.py**：`GraspoFlowState` 管理 tp/dp/pp 三个进程组和 3D rank 拓扑
 - **tensor_utils.py**：TP all-reduce、SP reduce_scatter/all_gather/scatter、DP all-reduce
+- **pipeline_comm.py**：`PipelineComm` — 异步 isend/irecv + CUDA stream 重叠（Flink 风格通信）
 - **lora_linear.py**：`_sync_nonsharded_lora_grads`（TP SUM）+ `_sync_dp_lora_grads`（DP AVG）
+
+### Layer 2.5：PP 调度
+
+- **scheduling/base.py**：`PipelineScheduler` ABC — 调度策略契约（时序关注点）
+- **scheduling/one_f_one_b.py**：`OneFOneBScheduler` — 标准 1F1B（fill/steady/drain）
+- **scheduling/factory.py**：按配置构建调度策略（预留 interleaved / ZeroBubble）
 
 ### Layer 1：通用适配
 
@@ -172,3 +268,17 @@ Rollout 生成阶段支持两种路径，通过 `model.supports_kv_cache` 属性
 ## 统一 TP+DP+PP+SP
 
 GraspoFlow 将五维并行统一在一个框架下：`dp=1,tp=1,pp=1`（单卡）到 `dp=D,tp=T,pp=P`（全并行）。用户只需在配置文件中设 `tp_size`、`dp_size`、`pp_size` 和 `sequence_parallel`，不需要理解后端差异。SP 在 TP>=2 时可选启用，自动复用 TP 进程组。Checkpoint 默认开启，用户无需配置。
+
+PP 的流水线架构（异步 P2P + 可插拔调度）对用户透明——调度策略和通信细节由框架管理，用户只配置 `pp_size`（以及可选的 `pp_max_inflight_microbatches` 背压上限）。
+
+## PP 设计决策记录
+
+- **不用 GPipe**：GPipe（全 forward → 全 backward）bubble 最高且不重叠 forward/backward。若用它作为基础，未来降低 bubble 必须重写调度——违背"未来优化建立在正确基础上"（宪法 §18.1 不留负债）。
+- **用 1F1B（OneFOneB）作为默认调度**：forward/backward 交错，bubble 适中，是 PP 训练的标准调度。它需要异步 P2P 才能正确工作（阻塞式 `send/recv` 会导致 fill 阶段死锁）。
+- **调度策略可插拔**：`OneFOneBScheduler` 只是调度层的第一个实现。未来 interleaved 1F1B / V-shape / ZeroBubble 在**同一异步 P2P 通信层**上作为新策略实现，无需改动通信或计算层。
+- **Flink 思想映射**：
+  - Operator → PP stage（若干层的计算单元）
+  - Edge → PipelineComm（异步 isend/irecv）
+  - Scheduler → PipelineScheduler（执行时序）
+  - Backpressure → `pp_max_inflight_microbatches`（有界 in-flight 队列）
+  - 与 Flink 的差异：PP 训练含 backward，反向梯度沿 stage 逆流，无法像纯 forward 流式那样近乎零 bubble。bubble 只能靠调度策略（1F1B/interleaved）降低，不能消除。

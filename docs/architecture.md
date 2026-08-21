@@ -59,11 +59,13 @@ flowchart TB
 |------|------|:----:|------|------|
 | **TP** | `tp_size` | 2 | 分片 attention heads / MLP 维度 | all_reduce(SUM) |
 | **DP** | `dp_size` | 1 | 不同数据分片独立训练 | all_reduce(AVG) |
-| **PP** | `pp_size` | 1 | 分片模型层到不同 stage | send/recv |
+| **PP** | `pp_size` | 1 | 分片模型层到不同 stage | 异步 P2P（isend/irecv）+ 背压 |
 | **SP** | `sequence_parallel` | false | TP 组内沿序列维度分片激活值 | reduce_scatter + all_gather |
 | **Checkpoint** | `gradient_checkpointing` | true | 前向不存中间激活，反向重计算 | 无 |
 
 **五维正交**：各维度独立配置、独立生效。`world_size = dp_size × tp_size × pp_size`。
+
+**PP 流水线架构**：PP 是 Flow 设施层中最复杂的形态，采用 **Flink 风格"调度与计算分离"**——调度策略（`parallel/scheduling/`，1F1B 默认、可插拔）决定 forward/backward 时序，异步 P2P 通信层（`parallel/pipeline_comm.py`，isend/irecv + CUDA stream 重叠）决定数据流动，二者与模型计算层解耦。未来 interleaved / ZeroBubble 作为新调度策略插上即可，无需重写通信或计算层。详见 [Flow 设施层](flow.md)。
 
 ## 三层架构
 
@@ -81,7 +83,7 @@ flowchart TB
     subgraph L3["设施层 flow/"]
         T["trainer/"]
         A["adapters/ · models/qwen3 + qwen35_36"]
-        P["parallel/ · lora/ · runtime · memory"]
+        P["parallel/ · pipeline_comm.py · scheduling/ · lora/ · runtime · memory"]
     end
     CLI --> C
     CLI --> T

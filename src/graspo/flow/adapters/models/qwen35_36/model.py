@@ -559,21 +559,75 @@ class Qwen35HybridTextModel(QwenFamilyBase):
         apply_lm_head: bool = False,
         multimodal_inputs: dict[str, torch.Tensor] | None = None,
         position_input_ids: torch.Tensor | None = None,
+        position_ids: torch.Tensor | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, tuple[Any, ...]]:
+        """PP stage forward（1F1B），支持 SP 与多模态。
+
+        SP 语义（与 :meth:`_forward_hidden` 一致）：
+        - 仅 stage 0（``hidden_states is None``，embedding stage）对输入做
+          ``_scatter_sp`` 分片；中间 stage 收到的已是分片后的 hidden states。
+        - 仅最终 stage（``apply_lm_head=True``）在 norm/lm_head 前做
+          ``_all_gather_sp`` 恢复完整序列。
+        - ``position_ids`` 若由调用方（stage 0）预先计算并跨 stage 传递，
+          则直接使用（多模态 3D M-RoPE 只能在拥有 visual tower 的 stage 0
+          正确计算）。
+        """
+        # ── 确定 SP 相关的原始/补齐序列长度（跨 stage 必须一致） ──
         if hidden_states is None:
             if input_ids is None or self.embed_tokens is None:
                 raise RuntimeError("Pipeline stage requires input_ids on the embedding stage")
             hidden_states = self.embed_inputs(input_ids, multimodal_inputs=multimodal_inputs)
-            query_len = int(input_ids.shape[1])
+            _sp_orig_seq_len = int(input_ids.shape[1])
+            if self._use_sp:
+                sp_size = self.tp_size
+                pad_to = ((_sp_orig_seq_len + sp_size - 1) // sp_size) * sp_size
+                if pad_to != _sp_orig_seq_len:
+                    pad = torch.zeros(
+                        hidden_states.shape[0], pad_to - _sp_orig_seq_len, hidden_states.shape[2],
+                        dtype=hidden_states.dtype, device=hidden_states.device,
+                    )
+                    hidden_states = torch.cat([hidden_states, pad], dim=1)
+                hidden_states = _scatter_sp(hidden_states)
+            else:
+                pad_to = _sp_orig_seq_len
+            query_len = pad_to
         else:
-            query_len = int(hidden_states.shape[1])
-        position_ids = self.compute_multimodal_position_ids(
-            input_ids=position_input_ids if position_input_ids is not None else input_ids,
-            attention_mask=attention_mask,
-            multimodal_inputs=multimodal_inputs,
-            past_key_values=past_key_values,
-            query_len=query_len,
-        )
+            # 中间/最终 stage：hidden 来自上一 stage 的 send（SP 时已是分片）
+            _sp_orig_seq_len = (
+                int(position_input_ids.shape[1])
+                if position_input_ids is not None
+                else int(hidden_states.shape[1])
+            )
+            if self._use_sp:
+                pad_to = ((_sp_orig_seq_len + self.tp_size - 1) // self.tp_size) * self.tp_size
+            else:
+                pad_to = _sp_orig_seq_len
+            # 中间 stage 收到的 hidden 在 SP 下已是分片，无需再次 scatter
+            query_len = pad_to
+
+        # ── SP：补齐 attention_mask / position_input_ids（跨 stage 一致） ──
+        if self._use_sp and pad_to != _sp_orig_seq_len:
+            pad_mask = torch.zeros(
+                attention_mask.shape[0], pad_to - _sp_orig_seq_len,
+                dtype=attention_mask.dtype, device=attention_mask.device,
+            )
+            attention_mask = torch.cat([attention_mask, pad_mask], dim=1)
+            if position_input_ids is not None:
+                pad_ids = torch.zeros(
+                    (position_input_ids.shape[0], pad_to - _sp_orig_seq_len),
+                    dtype=position_input_ids.dtype, device=position_input_ids.device,
+                )
+                position_input_ids = torch.cat([position_input_ids, pad_ids], dim=1)
+
+        # ── position_ids：优先使用 stage 0 传递的预计算结果 ──
+        if position_ids is None:
+            position_ids = self.compute_multimodal_position_ids(
+                input_ids=position_input_ids if position_input_ids is not None else input_ids,
+                attention_mask=attention_mask,
+                multimodal_inputs=multimodal_inputs,
+                past_key_values=past_key_values,
+                query_len=query_len,
+            )
         present_key_values: list[Any] = []
         for idx, layer in enumerate(self.layers):
             layer_past = past_key_values[idx] if past_key_values is not None else None
@@ -601,6 +655,11 @@ class Qwen35HybridTextModel(QwenFamilyBase):
         if apply_lm_head:
             if self.norm is None or self.lm_head is None:
                 raise RuntimeError("Pipeline final stage requires norm and lm_head")
+            # SP：decoder 输出 SP 分片 → all_gather 恢复完整序列供 norm/lm_head
+            if self._use_sp:
+                hidden_states = _all_gather_sp(hidden_states)
+                if hidden_states.shape[1] != _sp_orig_seq_len:
+                    hidden_states = hidden_states[:, :_sp_orig_seq_len, :]
             hidden_states = self.norm(hidden_states)
             hidden_states = self.lm_head(hidden_states)
         if use_cache:
