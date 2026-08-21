@@ -557,6 +557,7 @@ class Qwen35HybridTextModel(QwenFamilyBase):
         past_key_values: tuple[Any, ...] | None = None,
         use_cache: bool = False,
         apply_lm_head: bool = False,
+        all_gather_output: bool = False,
         multimodal_inputs: dict[str, torch.Tensor] | None = None,
         position_input_ids: torch.Tensor | None = None,
         position_ids: torch.Tensor | None = None,
@@ -566,8 +567,9 @@ class Qwen35HybridTextModel(QwenFamilyBase):
         SP 语义（与 :meth:`_forward_hidden` 一致）：
         - 仅 stage 0（``hidden_states is None``，embedding stage）对输入做
           ``_scatter_sp`` 分片；中间 stage 收到的已是分片后的 hidden states。
-        - 仅最终 stage（``apply_lm_head=True``）在 norm/lm_head 前做
-          ``_all_gather_sp`` 恢复完整序列。
+        - 最终 stage 需要完整序列输出：``apply_lm_head=True``（norm+lm_head）
+          或 ``all_gather_output=True``（仅 all_gather，供调用方做 loss）时，
+          在返回前做 ``_all_gather_sp`` 恢复完整序列。
         - ``position_ids`` 若由调用方（stage 0）预先计算并跨 stage 传递，
           则直接使用（多模态 3D M-RoPE 只能在拥有 visual tower 的 stage 0
           正确计算）。
@@ -662,6 +664,13 @@ class Qwen35HybridTextModel(QwenFamilyBase):
                     hidden_states = hidden_states[:, :_sp_orig_seq_len, :]
             hidden_states = self.norm(hidden_states)
             hidden_states = self.lm_head(hidden_states)
+        elif all_gather_output:
+            # SP：仅 all_gather 恢复完整序列（不做 norm/lm_head），供调用方做 loss。
+            # 仅最终 stage（pp_rank == pp_size - 1）使用，其 hidden 输入为 SP 分片。
+            if self._use_sp:
+                hidden_states = _all_gather_sp(hidden_states)
+                if hidden_states.shape[1] != _sp_orig_seq_len:
+                    hidden_states = hidden_states[:, :_sp_orig_seq_len, :]
         if use_cache:
             return hidden_states, tuple(present_key_values)
         return hidden_states

@@ -1,8 +1,8 @@
 """Qwen3.5/3.6 adapter — SFT training methods (TP+DP+PP)."""
 
-import time
 import os
 import sys
+import time
 from typing import Any
 
 import torch
@@ -25,6 +25,8 @@ def _log_cuda_mem(label: str) -> None:
 
 from graspo.flow.adapters.models.qwen35_36.helpers import collate_sft_batch
 from graspo.flow.adapters.models.qwen35_36.model import Qwen35HybridTextModel
+from graspo.flow.parallel.pipeline_comm import PipelineComm, wait_all
+from graspo.flow.parallel.scheduling import build_scheduler
 from graspo.flow.parallel.tensor_utils import (
     _add_pipeline_stage_timing,
     _new_pipeline_stage_timing,
@@ -43,7 +45,7 @@ class _Qwen35SFTTrainingMethods:
         全词表 logits 导致显存不随 TP 分摊、TP=4 仍 OOM）。
         语义与 ``F.cross_entropy(ignore_index=-100, reduction="mean")`` 一致（全局均值）。
         """
-        from graspo.ripple.loss import masked_mean, masked_token_log_probs_from_hidden
+        from graspo.ripple.loss import masked_token_log_probs_from_hidden
 
         norm = self.model.norm if hasattr(self.model, "norm") else None
         lm_head = self.model.lm_head if hasattr(self.model, "lm_head") else None
@@ -168,7 +170,10 @@ class _Qwen35SFTTrainingMethods:
 
         # 所有 micro-batch 的 backward 完成后，统一 sync / clip / step
         if valid_micro_batches > 0:
-            from graspo.flow.lora.lora_linear import _sync_dp_lora_grads, _sync_nonsharded_lora_grads
+            from graspo.flow.lora.lora_linear import (
+                _sync_dp_lora_grads,
+                _sync_nonsharded_lora_grads,
+            )
             from graspo.flow.parallel.tensor_utils import _TENSOR_PARALLEL_GROUP
 
             # DP gradient sync: AVG across DP replicas（不同数据）
@@ -277,7 +282,9 @@ class _Qwen35SFTTrainingMethods:
             self._train_batch_call_index += 1
             return self._aggregate_rank_metrics({"optimized": False, "optimizer_steps": 0})
 
-        warmup = min(self.pp_size - self.pp_rank - 1, chunk_count)
+        # 异步 P2P 通信管道（Flink 风格"调度与计算分离"）+ 可插拔调度策略
+        comm = PipelineComm(device=self.device, group=self.tp_state.pp_group)
+        send_works: list[Any] = []
         records: list[dict[str, Any] | None] = [None for _ in range(chunk_count)]
         finite_flags = [True for _ in range(chunk_count)]
         loss_values = [0.0 for _ in range(chunk_count)]
@@ -291,14 +298,17 @@ class _Qwen35SFTTrainingMethods:
             mb = chunk_batches[chunk_idx]
             self._sync_timing()
             t0 = time.monotonic()
-            stage_output, stage_input = self._pipeline_forward_for_sft(
+            stage_output, stage_input, send_work = self._pipeline_forward_for_sft(
                 mb["input_ids"],
                 mb["attention_mask"],
                 multimodal_inputs=mb.get("multimodal_inputs"),
                 timing=stage_timing,
+                comm=comm,
             )
             self._sync_timing()
             micro_batch_forward_sec += time.monotonic() - t0
+            if send_work is not None:
+                send_works.append(send_work)
             loss: torch.Tensor | None = None
             finite = True
             loss_value = 0.0
@@ -338,12 +348,15 @@ class _Qwen35SFTTrainingMethods:
                         if stage_input.grad is not None
                         else torch.zeros_like(stage_input)
                     )
-                    dist.send(grad.contiguous(), dst=int(self.tp_state.prev_pp_rank or 0))
+                    work = comm.send(grad.contiguous(), dst=int(self.tp_state.prev_pp_rank or 0))
+                    if work is not None:
+                        send_works.append(work)
             else:
                 stage_output = record["stage_output"]
                 assert stage_output is not None
                 grad_output = torch.empty_like(stage_output)
-                dist.recv(grad_output, src=int(self.tp_state.next_pp_rank or 0))
+                recv_work = comm.recv(grad_output, src=int(self.tp_state.next_pp_rank or 0))
+                comm.wait(recv_work)  # 阻塞直到梯度到达（上游异步 send，不会死锁）
                 stage_output.backward(grad_output)
                 stage_input = record["stage_input"]
                 if stage_input is not None:
@@ -352,28 +365,28 @@ class _Qwen35SFTTrainingMethods:
                         if stage_input.grad is not None
                         else torch.zeros_like(stage_input)
                     )
-                    dist.send(grad.contiguous(), dst=int(self.tp_state.prev_pp_rank or 0))
+                    work = comm.send(grad.contiguous(), dst=int(self.tp_state.prev_pp_rank or 0))
+                    if work is not None:
+                        send_works.append(work)
             self._sync_timing()
             backward_sec += time.monotonic() - t0
             records[chunk_idx] = None
 
-        # 1F1B 三阶段：fill → steady → drain
-        fill_started_at = time.monotonic()
-        for chunk_idx in range(warmup):
-            forward_chunk(chunk_idx)
-        fill_sec += time.monotonic() - fill_started_at
-
-        remaining = chunk_count - warmup
-        steady_started_at = time.monotonic()
-        for offset in range(remaining):
-            forward_chunk(offset + warmup)
-            backward_chunk(offset)
-        steady_sec += time.monotonic() - steady_started_at
-
-        drain_started_at = time.monotonic()
-        for chunk_idx in range(remaining, chunk_count):
-            backward_chunk(chunk_idx)
-        drain_sec += time.monotonic() - drain_started_at
+        # 可插拔调度策略：默认 1F1B（fill → steady → drain）
+        scheduler = build_scheduler(
+            None,
+            pp_rank=self.pp_rank,
+            pp_size=self.pp_size,
+            num_chunks=chunk_count,
+            forward=forward_chunk,
+            backward=backward_chunk,
+        )
+        sched_stats = scheduler.run()
+        fill_sec = float(sched_stats.get("pipeline_fill_sec", 0.0))
+        steady_sec = float(sched_stats.get("pipeline_steady_sec", 0.0))
+        drain_sec = float(sched_stats.get("pipeline_drain_sec", 0.0))
+        # 同步所有异步发送（数据已被下游消费），保证 buffer 生命周期安全
+        wait_all(send_works)
 
         all_finite = all(finite_flags)
         finite_payload = [all_finite]
@@ -444,9 +457,14 @@ class _Qwen35SFTTrainingMethods:
         *,
         multimodal_inputs: dict[str, torch.Tensor] | None = None,
         timing: dict[str, float | int] | None = None,
-    ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+        comm: PipelineComm | None = None,
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None, Any | None]:
         """PP forward pass for SFT — 与 _pipeline_forward_for_training 相同，
         仅替换 input 参数名以匹配 SFT 的 batch 格式。
+
+        使用异步 P2P 通信（``PipelineComm``）替代阻塞 ``dist.send/recv``，
+        消除 1F1B fill/steady 阶段的时序死锁。返回的 ``send_work`` 由调用方
+        收集，在管道结束时 ``wait_all`` 同步。
         """
         assert isinstance(self.model, Qwen35HybridTextModel)
         assert self.tp_state is not None
@@ -455,6 +473,15 @@ class _Qwen35SFTTrainingMethods:
         hidden_size = int(self.model.config.hidden_size)
         dtype = next(self.model.parameters()).dtype
         stage_input: torch.Tensor | None = None
+        send_work: Any | None = None
+        # SP：stage 0 的 forward_stage 会把 hidden scatter 成 (B, pad_to/tp, H)，
+        # 中间 stage 接收的也是该分片尺寸；否则为完整 (B, seq_len, H)。
+        if self.model._use_sp:
+            sp_size = self.model.tp_size
+            pad_to = ((seq_len + sp_size - 1) // sp_size) * sp_size
+            recv_seq = pad_to // sp_size
+        else:
+            recv_seq = seq_len
         if self.pp_rank == 0:
             compute_started_at = time.monotonic()
             output = self.model.forward_stage(
@@ -470,10 +497,12 @@ class _Qwen35SFTTrainingMethods:
             _add_pipeline_stage_timing(timing, "pipeline_stage_compute_sec", compute_started_at)
         else:
             stage_input = torch.empty(
-                (batch, seq_len, hidden_size), device=self.device, dtype=dtype
+                (batch, recv_seq, hidden_size), device=self.device, dtype=dtype
             )
             recv_started_at = time.monotonic()
-            dist.recv(stage_input, src=int(self.tp_state.prev_pp_rank))
+            assert comm is not None
+            recv_work = comm.recv(stage_input, src=int(self.tp_state.prev_pp_rank))
+            comm.wait(recv_work)  # 阻塞直到数据到达（上游用异步 send，不会死锁）
             _add_pipeline_stage_timing(timing, "pipeline_recv_sec", recv_started_at)
             stage_input.requires_grad_(True)
             compute_started_at = time.monotonic()
@@ -486,16 +515,18 @@ class _Qwen35SFTTrainingMethods:
                 multimodal_inputs=multimodal_inputs,
                 position_input_ids=input_ids,
                 apply_lm_head=False,
+                all_gather_output=(self.pp_rank == self.pp_size - 1),
             )
             _add_pipeline_stage_timing(timing, "pipeline_stage_compute_sec", compute_started_at)
         assert isinstance(output, torch.Tensor)
         if self.pp_rank < self.pp_size - 1:
             send_started_at = time.monotonic()
-            dist.send(output.detach().contiguous(), dst=int(self.tp_state.next_pp_rank))
+            assert comm is not None
+            send_work = comm.send(output.detach().contiguous(), dst=int(self.tp_state.next_pp_rank))
             _add_pipeline_stage_timing(timing, "pipeline_send_sec", send_started_at)
         if timing is not None:
             timing["pipeline_forward_calls"] = int(timing.get("pipeline_forward_calls") or 0) + 1
-        return output, stage_input
+        return output, stage_input, send_work
 
 
 # ── SFT batch collation ──────────────────────────────────────────────────────
