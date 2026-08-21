@@ -23,6 +23,24 @@ def _log_cuda_mem(label: str) -> None:
             flush=True,
         )
 
+
+def _pp_debug_log(output_dir: str, msg: str) -> None:
+    """PP 调试日志：打印到 stderr + 落盘到 ``<output_dir>/logs/pp_debug.log``。
+
+    用于排查 PP 流水线中各 rank/chunk 的张量形状不一致（如 send/recv 尺寸
+    不匹配）。落盘保证容器退出后日志仍可查看（宪法 §13.4 调试：简单即可靠）。
+    """
+    rank = os.environ.get("RANK", "0")
+    line = f"[pp-debug rank={rank}] {msg}"
+    print(line, file=sys.stderr, flush=True)
+    try:
+        log_dir = os.path.join(output_dir or ".", "logs")
+        os.makedirs(log_dir, exist_ok=True)
+        with open(os.path.join(log_dir, "pp_debug.log"), "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:  # noqa: BLE001 调试日志不因落盘失败而中断训练
+        pass
+
 from graspo.flow.adapters.models.qwen35_36.helpers import collate_sft_batch
 from graspo.flow.adapters.models.qwen35_36.model import Qwen35HybridTextModel
 from graspo.flow.parallel.pipeline_comm import PipelineComm, wait_all
@@ -487,6 +505,7 @@ class _Qwen35SFTTrainingMethods:
         seq_len = int(input_ids.shape[1])
         hidden_size = int(self.model.config.hidden_size)
         dtype = next(self.model.parameters()).dtype
+        _out = str(self.config.training.output_dir)
         stage_input: torch.Tensor | None = None
         send_work: Any | None = None
         # SP：stage 0 的 forward_stage 会把 hidden scatter 成 (B, pad_to/tp, H)，
@@ -497,6 +516,11 @@ class _Qwen35SFTTrainingMethods:
             recv_seq = pad_to // sp_size
         else:
             recv_seq = seq_len
+        _pp_debug_log(
+            _out,
+            f"fwd stage={self.pp_rank} tag={tag} pp_size={self.pp_size} "
+            f"input_seq={seq_len} recv_alloc_seq={recv_seq} batch={batch} hidden={hidden_size}",
+        )
         if self.pp_rank == 0:
             compute_started_at = time.monotonic()
             output = self.model.forward_stage(
@@ -537,6 +561,11 @@ class _Qwen35SFTTrainingMethods:
         if self.pp_rank < self.pp_size - 1:
             send_started_at = time.monotonic()
             assert comm is not None
+            _pp_debug_log(
+                _out,
+                f"send stage={self.pp_rank} tag={tag} tensor={tuple(output.shape)} "
+                f"send_seq={int(output.shape[1])} dst={self.tp_state.next_pp_rank}",
+            )
             send_work = comm.send(output.detach().contiguous(), dst=int(self.tp_state.next_pp_rank), tag=tag)
             _add_pipeline_stage_timing(timing, "pipeline_send_sec", send_started_at)
         if timing is not None:
