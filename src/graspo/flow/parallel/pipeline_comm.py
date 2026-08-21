@@ -48,10 +48,12 @@ class PipelineComm:
     ) -> None:
         self.device = device
         self._group = group
+        # NOTE(正确性优先): 使用默认 stream 发送/接收。专用 CUDA stream 提高
+        # 通信/计算重叠，但需与计算流显式 wait_stream 同步，否则 isend/irecv 的
+        # NCCL op 可能未及时投递，导致 GPipe 级联 send/recv 互相等待（实测
+        # PP=4 卡死）。先用默认 stream 保证正确性（宪法 §5 先正确后可优化；
+        # 重叠优化后续在保证同步的前提下恢复）。
         self._stream: torch.cuda.Stream | None = None
-        if device.type == "cuda":
-            # 专用通信 stream，与计算默认 stream 分离，实现 overlap。
-            self._stream = torch.cuda.Stream(device=device)
 
     def _torch_device(self) -> torch.device:
         if self.device.type == "cuda":
@@ -70,9 +72,6 @@ class PipelineComm:
         释放 buffer 或进入下一阶段）。
         """
         tensor = tensor.contiguous()
-        if self.device.type == "cuda" and self._stream is not None:
-            with torch.cuda.stream(self._stream):
-                return dist.isend(tensor, dst=dst, group=self._group, tag=tag)
         return dist.isend(tensor, dst=dst, group=self._group, tag=tag)
 
     def recv(self, tensor: torch.Tensor, src: int, *, tag: int = 0) -> Any:
@@ -81,9 +80,6 @@ class PipelineComm:
         调用方必须在读取 ``tensor`` 前调用返回 handle 的 ``wait()``。
         使用显式 ``tag``（见 :meth:`send`）。
         """
-        if self.device.type == "cuda" and self._stream is not None:
-            with torch.cuda.stream(self._stream):
-                return dist.irecv(tensor, src=src, group=self._group, tag=tag)
         return dist.irecv(tensor, src=src, group=self._group, tag=tag)
 
     def wait(self, work: Any) -> None:
