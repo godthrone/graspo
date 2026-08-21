@@ -304,6 +304,7 @@ class _Qwen35SFTTrainingMethods:
                 multimodal_inputs=mb.get("multimodal_inputs"),
                 timing=stage_timing,
                 comm=comm,
+                tag=chunk_idx,
             )
             self._sync_timing()
             micro_batch_forward_sec += time.monotonic() - t0
@@ -348,14 +349,20 @@ class _Qwen35SFTTrainingMethods:
                         if stage_input.grad is not None
                         else torch.zeros_like(stage_input)
                     )
-                    work = comm.send(grad.contiguous(), dst=int(self.tp_state.prev_pp_rank or 0))
+                    work = comm.send(
+                        grad.contiguous(),
+                        dst=int(self.tp_state.prev_pp_rank or 0),
+                        tag=chunk_count + chunk_idx,
+                    )
                     if work is not None:
                         send_works.append(work)
             else:
                 stage_output = record["stage_output"]
                 assert stage_output is not None
                 grad_output = torch.empty_like(stage_output)
-                recv_work = comm.recv(grad_output, src=int(self.tp_state.next_pp_rank or 0))
+                recv_work = comm.recv(
+                    grad_output, src=int(self.tp_state.next_pp_rank or 0), tag=chunk_count + chunk_idx
+                )
                 comm.wait(recv_work)  # 阻塞直到梯度到达（上游异步 send，不会死锁）
                 stage_output.backward(grad_output)
                 stage_input = record["stage_input"]
@@ -365,7 +372,11 @@ class _Qwen35SFTTrainingMethods:
                         if stage_input.grad is not None
                         else torch.zeros_like(stage_input)
                     )
-                    work = comm.send(grad.contiguous(), dst=int(self.tp_state.prev_pp_rank or 0))
+                    work = comm.send(
+                        grad.contiguous(),
+                        dst=int(self.tp_state.prev_pp_rank or 0),
+                        tag=chunk_count + chunk_idx,
+                    )
                     if work is not None:
                         send_works.append(work)
             self._sync_timing()
@@ -460,12 +471,14 @@ class _Qwen35SFTTrainingMethods:
         multimodal_inputs: dict[str, torch.Tensor] | None = None,
         timing: dict[str, float | int] | None = None,
         comm: PipelineComm | None = None,
+        tag: int = 0,
     ) -> tuple[torch.Tensor | None, torch.Tensor | None, Any | None]:
         """PP forward pass for SFT — 与 _pipeline_forward_for_training 相同，
         仅替换 input 参数名以匹配 SFT 的 batch 格式。
 
-        使用异步 P2P 通信（``PipelineComm``）替代阻塞 ``dist.send/recv``，
-        消除 1F1B fill/steady 阶段的时序死锁。返回的 ``send_work`` 由调用方
+        使用异步 P2P 通信（``PipelineComm``）替代阻塞 ``dist.send/recv``。
+        ``tag`` 为当前 microbatch 编号，用于显式匹配 send/recv（消除跨 stage
+        共享计数器错位导致的多 stage 死锁）。返回的 ``send_work`` 由调用方
         收集，在管道结束时 ``wait_all`` 同步。
         """
         assert isinstance(self.model, Qwen35HybridTextModel)
@@ -503,7 +516,7 @@ class _Qwen35SFTTrainingMethods:
             )
             recv_started_at = time.monotonic()
             assert comm is not None
-            recv_work = comm.recv(stage_input, src=int(self.tp_state.prev_pp_rank))
+            recv_work = comm.recv(stage_input, src=int(self.tp_state.prev_pp_rank), tag=tag)
             comm.wait(recv_work)  # 阻塞直到数据到达（上游用异步 send，不会死锁）
             _add_pipeline_stage_timing(timing, "pipeline_recv_sec", recv_started_at)
             stage_input.requires_grad_(True)
@@ -524,7 +537,7 @@ class _Qwen35SFTTrainingMethods:
         if self.pp_rank < self.pp_size - 1:
             send_started_at = time.monotonic()
             assert comm is not None
-            send_work = comm.send(output.detach().contiguous(), dst=int(self.tp_state.next_pp_rank))
+            send_work = comm.send(output.detach().contiguous(), dst=int(self.tp_state.next_pp_rank), tag=tag)
             _add_pipeline_stage_timing(timing, "pipeline_send_sec", send_started_at)
         if timing is not None:
             timing["pipeline_forward_calls"] = int(timing.get("pipeline_forward_calls") or 0) + 1

@@ -241,6 +241,7 @@ class _Qwen35TrainingMethods:
         metadata: Any | None = None,
         timing: dict[str, float | int] | None = None,
         comm: PipelineComm | None = None,
+        tag: int = 0,
     ) -> tuple[torch.Tensor | None, torch.Tensor | None, Any | None]:
         assert isinstance(self.model, Qwen35HybridTextModel)
         assert self.tp_state is not None
@@ -278,7 +279,7 @@ class _Qwen35TrainingMethods:
             )
             recv_started_at = time.monotonic()
             assert comm is not None
-            recv_work = comm.recv(stage_input, src=int(self.tp_state.prev_pp_rank))
+            recv_work = comm.recv(stage_input, src=int(self.tp_state.prev_pp_rank), tag=tag)
             comm.wait(recv_work)  # 阻塞直到数据到达（上游异步 send，不会死锁）
             _add_pipeline_stage_timing(timing, "pipeline_recv_sec", recv_started_at)
             stage_input.requires_grad_(True)
@@ -299,7 +300,7 @@ class _Qwen35TrainingMethods:
         if self.pp_rank < self.pp_size - 1:
             send_started_at = time.monotonic()
             assert comm is not None
-            send_work = comm.send(output.detach().contiguous(), dst=int(self.tp_state.next_pp_rank))
+            send_work = comm.send(output.detach().contiguous(), dst=int(self.tp_state.next_pp_rank), tag=tag)
             _add_pipeline_stage_timing(timing, "pipeline_send_sec", send_started_at)
         if timing is not None:
             timing["pipeline_forward_calls"] = int(timing.get("pipeline_forward_calls") or 0) + 1
@@ -495,6 +496,7 @@ class _Qwen35TrainingMethods:
                 metadata=batch.metadata,
                 timing=timing,
                 comm=comm,
+                tag=chunk_idx,
             )
             self._sync_timing()
             forward_sec += time.monotonic() - forward_started_at
@@ -565,7 +567,11 @@ class _Qwen35TrainingMethods:
                         else torch.zeros_like(stage_input)
                     )
                     grad_send_started_at = time.monotonic()
-                    work = comm.send(grad.contiguous(), dst=int(self.tp_state.prev_pp_rank or 0))
+                    work = comm.send(
+                        grad.contiguous(),
+                        dst=int(self.tp_state.prev_pp_rank or 0),
+                        tag=chunk_count + chunk_idx,
+                    )
                     if work is not None:
                         send_works.append(work)
                     _add_pipeline_stage_timing(
@@ -576,7 +582,9 @@ class _Qwen35TrainingMethods:
                 assert stage_output is not None
                 grad_output = torch.empty_like(stage_output)
                 grad_recv_started_at = time.monotonic()
-                recv_work = comm.recv(grad_output, src=int(self.tp_state.next_pp_rank or 0))
+                recv_work = comm.recv(
+                    grad_output, src=int(self.tp_state.next_pp_rank or 0), tag=chunk_count + chunk_idx
+                )
                 comm.wait(recv_work)  # 阻塞直到梯度到达（上游异步 send，不会死锁）
                 _add_pipeline_stage_timing(timing, "pipeline_grad_recv_sec", grad_recv_started_at)
                 autograd_started_at = time.monotonic()
@@ -592,7 +600,11 @@ class _Qwen35TrainingMethods:
                         else torch.zeros_like(stage_input)
                     )
                     grad_send_started_at = time.monotonic()
-                    work = comm.send(grad.contiguous(), dst=int(self.tp_state.prev_pp_rank or 0))
+                    work = comm.send(
+                        grad.contiguous(),
+                        dst=int(self.tp_state.prev_pp_rank or 0),
+                        tag=chunk_count + chunk_idx,
+                    )
                     if work is not None:
                         send_works.append(work)
                     _add_pipeline_stage_timing(

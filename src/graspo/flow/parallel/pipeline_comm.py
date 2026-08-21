@@ -58,8 +58,13 @@ class PipelineComm:
             return self.device
         return self.device  # cpu / meta 等
 
-    def send(self, tensor: torch.Tensor, dst: int) -> Any:
+    def send(self, tensor: torch.Tensor, dst: int, *, tag: int = 0) -> Any:
         """异步发送 tensor 到 ``dst``，返回 work handle。
+
+        使用显式 ``tag`` 匹配 P2P（而非默认共享计数器）。PP 流水线的中间 stage
+        会交错 recv/send（前向 recv-hidden 后 send-hidden），默认共享计数器会使
+        跨 stage 的 send/recv 序号错位，导致 NCCL 死锁（实测 PP>=3 超时）。
+        按 chunk 编号分配独立的 send/recv tag 可彻底解耦匹配与操作顺序。
 
         必须调用返回 handle 的 ``wait()`` 才能确保数据已发送完毕（用于干净
         释放 buffer 或进入下一阶段）。
@@ -67,18 +72,19 @@ class PipelineComm:
         tensor = tensor.contiguous()
         if self.device.type == "cuda" and self._stream is not None:
             with torch.cuda.stream(self._stream):
-                return dist.isend(tensor, dst=dst, group=self._group)
-        return dist.isend(tensor, dst=dst, group=self._group)
+                return dist.isend(tensor, dst=dst, group=self._group, tag=tag)
+        return dist.isend(tensor, dst=dst, group=self._group, tag=tag)
 
-    def recv(self, tensor: torch.Tensor, src: int) -> Any:
+    def recv(self, tensor: torch.Tensor, src: int, *, tag: int = 0) -> Any:
         """异步接收数据到 ``tensor``，返回 work handle。
 
         调用方必须在读取 ``tensor`` 前调用返回 handle 的 ``wait()``。
+        使用显式 ``tag``（见 :meth:`send`）。
         """
         if self.device.type == "cuda" and self._stream is not None:
             with torch.cuda.stream(self._stream):
-                return dist.irecv(tensor, src=src, group=self._group)
-        return dist.irecv(tensor, src=src, group=self._group)
+                return dist.irecv(tensor, src=src, group=self._group, tag=tag)
+        return dist.irecv(tensor, src=src, group=self._group, tag=tag)
 
     def wait(self, work: Any) -> None:
         """等待一个 send/recv work 完成。"""
