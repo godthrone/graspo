@@ -17,6 +17,32 @@ GRASPO 是一个 GRPO 风格的 LoRA 强化学习训练器，面向结构化输�
 
 ## 五维并行模型
 
+### 设计哲学：自适应并行
+
+GRASPO 的设计目标是**让分布式训练对用户透明**。用户只需要给出**资源**（几张 GPU）和**训练任务**（模型 + 数据 + 训练方法），除非资源低于任务的最低要求，否则 GRASPO 就能通过 TP+PP+SP+DP+Checkpoint 五位一体的参数组合，自动让训练任务以最高效率运行。
+
+```mermaid
+flowchart LR
+    USER["用户<br/>给出资源 + 任务"] --> GRASPO["GRASPO<br/>自动选择最优并行策略"]
+    GRASPO --> TP["TP 分片参数"]
+    GRASPO --> DP["DP 分片数据"]
+    GRASPO --> PP["PP 分片层"]
+    GRASPO --> SP["SP 分片序列"]
+    GRASPO --> CKPT["Checkpoint 省显存"]
+    TP & DP & PP & SP & CKPT --> TRAIN["高效训练"]
+```
+
+**核心价值**：在生产领域模型训练中，调试分布式训练框架通常占据大量开发时间。GRASPO 将这部分工作消除——用户不需要理解 NCCL 拓扑、不需要手动调 TP/DP/PP 配比、不需要处理 PCIe vs NVLink 的差异。这是 GRASPO 作为开源框架的核心竞争力。
+
+**当前状态**（2026-08-21 实测，4×A800，Qwen3.5-9B，多模态 SFT/RL）：
+
+| 并行维度 | 可用组合 | 不可用 |
+|---------|:--:|------|
+| TP+DP+SP+GC | 5/9 组合验证通过 | — |
+| 含 PP>1 | — | 4/9 组合（PP 多模态未实现） |
+
+详见 [并行测试矩阵](../.local/parallelism-test-matrix-20260821.md)。
+
 ```mermaid
 flowchart TB
     subgraph PARALLEL["五位一体并行"]

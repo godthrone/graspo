@@ -23,6 +23,11 @@ train 9B-class models on a single 80 GB GPU.
 
 **Infrastructure designed for production:**
 
+- **Adaptive parallelism.** Give GRASPO GPUs and a training task — it
+  automatically selects the optimal TP+DP+PP+SP+Checkpoint combination.
+  You don't need to understand NCCL topology, PCIe vs NVLink, or manually
+  tune parallelism ratios.  This is what makes GRASPO competitive for
+  production domain-model training: zero framework debugging overhead.
 - SFT → RL unified pipeline: same data format, same model loading, same
   checkpoint format.
 - GraspoFlow backend: five-dimensional parallelism (TP+DP+PP+SP+Checkpoint)

@@ -18,6 +18,10 @@ GRASPO 是一个面向结构化输出任务的 GRPO-style 强化学习训练器�
 
 **面向生产的基础设施：**
 
+- **自适应并行。** 给 GRASPO 几张 GPU 和一个训练任务，它自动选择最优的
+  TP+DP+PP+SP+Checkpoint 组合。你不需要理解 NCCL 拓扑、PCIe vs NVLink 差异，
+  也不需要手动调并行配比。消除分布式训练框架的调试开销，是 GRASPO 在
+  生产领域模型训练中的核心竞争力。
 - SFT → RL 统一管道：同一数据格式、同一模型加载、同一 checkpoint 格式。
 - GraspoFlow 后端：五位一体并行（TP+DP+PP+SP+Checkpoint），单卡到多卡同配置切换。
   ``world_size = dp_size × tp_size × pp_size``。
