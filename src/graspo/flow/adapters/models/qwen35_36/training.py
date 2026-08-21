@@ -640,7 +640,7 @@ class _Qwen35TrainingMethods:
 
         # 可插拔调度策略：默认 1F1B（fill → steady → drain）
         scheduler = build_scheduler(
-            None,
+            self.config.graspoflow.pp_scheduler,
             pp_rank=self.pp_rank,
             pp_size=self.pp_size,
             num_chunks=chunk_count,

@@ -209,6 +209,10 @@ class GraspoFlowConfig(BaseModel):
     readable_log_enabled: bool = True
     synchronize_cuda_timing: bool = False
     pp_max_inflight_microbatches: int = 0
+    # PP 调度策略：gpipe（全 forward 后全 backward，默认）或 one_f_one_b（1F1B）。
+    # 注：1F1B 的交错在无显式 P2P tag 时会导致 NCCL 共享计数器错位死锁；当前
+    # 已用显式 tag，两者均可运行，由用户按性能对比选择。
+    pp_scheduler: Literal["gpipe", "one_f_one_b", "1f1b"] = "gpipe"
 
     @model_validator(mode="after")
     def _validate_dp(self) -> GraspoFlowConfig:
