@@ -338,6 +338,9 @@ class _Qwen35TrainingMethods:
         drain_sec = 0.0
         max_chunks_per_optimizer_step = 0
         configured_inflight = int(self.config.graspoflow.pp_max_inflight_microbatches)
+        _pp_schedule = "gpipe"  # 实际调度策略名（由 scheduler 返回更新）
+        pipeline_forward_sec = 0.0
+        pipeline_backward_sec = 0.0
         # Single pass — no repeated iterations.
         optimize_round = 0
         round_started_at = time.monotonic()
@@ -372,6 +375,9 @@ class _Qwen35TrainingMethods:
             fill_sec += result["fill_sec"]
             steady_sec += result["steady_sec"]
             drain_sec += result["drain_sec"]
+            _pp_schedule = result.get("pp_schedule", "gpipe")
+            pipeline_forward_sec += float(result.get("pipeline_forward_sec", 0.0))
+            pipeline_backward_sec += float(result.get("pipeline_backward_sec", 0.0))
             micro_batch_count += len(chunk_batches)
             if not result["finite"]:
                 if self.optimizer is not None:
@@ -435,7 +441,7 @@ class _Qwen35TrainingMethods:
             "pp_size": self.pp_size,
             "pipeline_stage_rank": self.pp_rank,
             "placement_strategy": (self.placement.strategy if self.placement is not None else None),
-            "pp_schedule": "one_f_one_b",
+            "pp_schedule": _pp_schedule,
             "pipeline_pp_micro_batch_size": pipeline_micro_batch_size,
             "pipeline_chunks_per_optimizer_step": max_chunks_per_optimizer_step,
             "pp_max_inflight_microbatches": effective_inflight,
@@ -443,6 +449,8 @@ class _Qwen35TrainingMethods:
             "pipeline_fill_sec": fill_sec,
             "pipeline_steady_sec": steady_sec,
             "pipeline_drain_sec": drain_sec,
+            "pipeline_forward_sec": pipeline_forward_sec,
+            "pipeline_backward_sec": pipeline_backward_sec,
             "pipeline_backpressure_wait_sec": float(stage_timing.get("pipeline_recv_sec") or 0.0)
             + float(stage_timing.get("pipeline_send_sec") or 0.0)
             + float(stage_timing.get("pipeline_grad_recv_sec") or 0.0)
@@ -622,4 +630,7 @@ class _Qwen35TrainingMethods:
             "fill_sec": fill_sec,
             "steady_sec": steady_sec,
             "drain_sec": drain_sec,
+            "pp_schedule": sched_stats.get("pp_schedule", "gpipe"),
+            "pipeline_forward_sec": float(sched_stats.get("pipeline_forward_sec", 0.0)),
+            "pipeline_backward_sec": float(sched_stats.get("pipeline_backward_sec", 0.0)),
         }

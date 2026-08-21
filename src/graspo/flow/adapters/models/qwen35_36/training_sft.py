@@ -439,11 +439,13 @@ class _Qwen35SFTTrainingMethods:
             "optimizer_step_sec": optimizer_step_sec,
             "micro_batch_count": micro_batch_count,
             "pp_size": self.pp_size,
-            "pp_schedule": "one_f_one_b",
+            "pp_schedule": sched_stats.get("pp_schedule", "gpipe"),
             "pipeline_stage_timing": _round_pipeline_stage_timing(stage_timing),
             "pipeline_fill_sec": fill_sec,
             "pipeline_steady_sec": steady_sec,
             "pipeline_drain_sec": drain_sec,
+            "pipeline_forward_sec": float(sched_stats.get("pipeline_forward_sec", 0.0)),
+            "pipeline_backward_sec": float(sched_stats.get("pipeline_backward_sec", 0.0)),
             "current_lr": self._current_lr(),
         }
         metrics = self._aggregate_rank_metrics(metrics)
