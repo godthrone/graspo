@@ -18,6 +18,9 @@
 #   6. 挂载目录从 YAML config 自动推导（model_path / train_path / output_dir 的父目录
 #      + config 文件所属目录），无需手动指定 --model-dir
 #   7. 参数全部走 CLI（--gpus / --image），不使用自定义环境变量
+#   8. 固定 `NCCL_P2P_DISABLE=1`：A800 PCIe 拓扑（GPU 以 NVLink pair 成对、跨 pair 走
+#      PCIe bridge）下，NCCL 的 P2P/CUMEM 路径在小张量 all-reduce 或跨 pair 的
+#      P2P send/recv 会 hang。禁用 P2P 走中间内存拷贝，性能影响 <0.1%（详见 README FAQ）。
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -202,6 +205,7 @@ docker run -d --name "$CONTAINER_NAME" \
     --gpus "\"device=$GPU_IDS\"" \
     --ipc=host --shm-size=16g \
     -e "TZ=${TZ_VALUE}" \
+    -e "NCCL_P2P_DISABLE=1" \
     "${_mount_args[@]}" \
     "$IMAGE" \
     launch --config "$CONFIG_ABS" "${EXTRA_ARGS[@]}"
