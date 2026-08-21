@@ -606,7 +606,9 @@ bash run.sh samples/configs/sft_example.yaml --smoke
   将 `lora.adapter_path` 指向 SFT checkpoint 的 adapter，
   降低 `learning_rate`（如 `1e-6`）。SFT LoRA adapter 可直接用于 GRASPO RL 训练。
 - **SFT OOM**：减小 `micro_batch_size`（micro-batch）或 `max_prompt_length`；
-  增大 `micro_batch_size` 以保持有效 batch size 不变。
+  增大 `gradient_accumulation_micro_batches` 以保持有效 batch size 不变。
+- **A800 PCIe 拓扑 DP 训练 hang（NCCL all-reduce 超时）**：在 A800 PCIe 拓扑的机器上（GPU 以 NVLink pair 成对、pair 之间通过 PCIe bridge(PXB) 连接），NCCL 的 P2P/CUMEM 路径在小张量 all-reduce 时可能 hang。TP 训练不受影响（大张量走 Simple 协议，不经过 P2P 路径）。**修复**：容器启动时设置
+  `NCCL_P2P_DISABLE=1`（`docker run -e NCCL_P2P_DISABLE=1 ...`）。性能影响极小（<0.1% 训练总耗时）。
 
 ## License
 

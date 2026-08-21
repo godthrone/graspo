@@ -1,0 +1,61 @@
+# GRASPO SFT — 4×A800 Qwen3.5-9B TP=4 + Sequence Parallelism（已验证）
+#
+# 硬件：4× NVIDIA A800 80GB，PCIe 或 NVLink
+# 模型：Qwen3.5-9B，多模态（视觉+语言），LoRA r=128
+# 实测：smoke 通过，TP=4+SP 训练正常
+#
+# Sequence Parallelism (SP) 在 TP>1 时沿序列维度分片激活值，
+# 用 reduce_scatter + all_gather 替代 all_reduce，零额外通信量。
+# 可降低激活值显存占用，允许更大的 micro_batch_size。
+
+train_method: sft
+backend: graspoflow
+
+model:
+  model_path: models/Qwen3.5-9B
+  trust_remote_code: true
+  torch_dtype: bfloat16
+  gradient_checkpointing: true
+  chat_template_kwargs:
+    enable_thinking: false
+
+data:
+  train_path: data/train.jsonl
+  max_prompt_length: 8192
+
+lora:
+  r: 128
+  alpha: 256
+  dropout: 0.05
+  target_modules: [language_all_linear, vision_common]
+
+graspoflow:
+  tp_size: 4
+  dp_size: 1
+  pp_size: 1
+  micro_batch_size: 1
+  placement_strategy: qwen3_tp
+  sequence_parallel: true
+
+training:
+  output_dir: ""
+  run_name: tp4-sp-sft
+  seed: 43
+  max_epochs: 20
+  gradient_accumulation_micro_batches: 4
+  learning_rate: 1.0e-05
+  lr_scaling: linear
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  save_checkpoint_every_epoch: true
+  lr_scheduler:
+    type: cosine
+    warmup_steps: 50
+    min_lr_ratio: 0.1
+    decay_steps: 13600
+
+launch:
+
+reward:
+  kind: graspo
+  numeric_tolerance: 0.2

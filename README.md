@@ -780,8 +780,16 @@ bash run.sh samples/configs/sft_example.yaml --smoke
   `learning_rate` down (e.g. `1e-6`). The SFT LoRA adapter is directly
   compatible with GRASPO RL training.
 - **SFT OOM**: reduce `micro_batch_size` (micro-batch) or `max_prompt_length`;
-  increase `micro_batch_size` to keep the
+  increase `gradient_accumulation_micro_batches` to keep the
   effective batch size.
+- **A800 PCIe DP hang (NCCL all-reduce timeout)**: on A800 PCIe-topology
+  machines where GPUs are arranged in NVLink pairs connected by PCIe bridges
+  (PXB), NCCL's P2P/CUMEM path can hang on small-tensor all-reduce during
+  DP training.  TP training is unaffected because it uses large tensors and
+  bypasses the problematic P2P path.  **Fix**: set
+  `NCCL_P2P_DISABLE=1` in the container environment
+  (``docker run -e NCCL_P2P_DISABLE=1 ...``).  The performance impact is
+  negligible (<0.1% of total training time).
 
 ## License
 
