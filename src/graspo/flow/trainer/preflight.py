@@ -77,12 +77,23 @@ def run_multimodal_preflight(
         return
     adapter = runtime._require_adapter()  # noqa: SLF001 同包编排
     model = getattr(adapter, "model", None)
-    has_vision = model is not None and bool(getattr(model, "visual", None))
     if model is None:
         raise RuntimeError("preflight requires a loaded model")
+    # 视觉支持是模型级属性：以 config 的 image_token_id 判定（PP 下 visual 塔仅存在于
+    # stage 0，不能用 model.visual 逐 rank 判定，否则 stage>0 会误判为无视觉）。
+    has_vision = image_token_id is not None
     assert_data_vision_compatible(samples, model_supports_vision=has_vision, model_name=model_name)
     if not has_vision:
         return  # 模型无视觉塔（与数据不匹配已在 assert 中拦截）
+    if int(pp_size) > 1:
+        # PP>1：resolve / visual-LoRA 梯度重检查需整条流水线参与，无法在此独立执行；
+        # 与 SFT 路径一致（SFT 本就不跑此预检），跳过并记 WARNING（透明退路，不改变训练结果）。
+        _log.warning(
+            "multimodal visual-chain preflight (resolve + visual-LoRA gradient) skipped "
+            "under pp_size=%d; the visual chain is validated by the training forward itself",
+            int(pp_size),
+        )
+        return
 
     # 取第一个含图样本
     media_sample = next((s for s in samples if bool(getattr(s, "media", None))), None)
