@@ -230,6 +230,11 @@ def _sync_nonsharded_lora_grads(model: nn.Module, tp_group: Any) -> None:
 
     - shard_kind="rows" / shard="out": lora_a maps from full input → sum lora_a.grad
     - shard_kind="in":               lora_b maps to full output   → sum lora_b.grad
+
+    **Collective safety**: every rank must call the same number of all_reduce
+    operations on the same communicator.  When a rank has no gradient for a
+    parameter, it still participates by all-reducing a zero tensor of the same
+    shape.
     """
     for _mod in model.modules():
         if not isinstance(_mod, LoRALinear) or not _mod.lora_enabled or _mod.lora_a is None:
@@ -238,9 +243,15 @@ def _sync_nonsharded_lora_grads(model: nn.Module, tp_group: Any) -> None:
         if _shard in ("rows", "out"):
             if _mod.lora_a.grad is not None:
                 dist.all_reduce(_mod.lora_a.grad, op=dist.ReduceOp.SUM, group=tp_group)
+            else:
+                zero = torch.zeros_like(_mod.lora_a)
+                dist.all_reduce(zero, op=dist.ReduceOp.SUM, group=tp_group)
         elif _shard == "in":
             if _mod.lora_b.grad is not None:
                 dist.all_reduce(_mod.lora_b.grad, op=dist.ReduceOp.SUM, group=tp_group)
+            else:
+                zero = torch.zeros_like(_mod.lora_b)
+                dist.all_reduce(zero, op=dist.ReduceOp.SUM, group=tp_group)
 
 
 def _sync_dp_lora_grads(model: nn.Module, dp_group: Any) -> None:
@@ -253,6 +264,11 @@ def _sync_dp_lora_grads(model: nn.Module, dp_group: Any) -> None:
 
     Must be called BEFORE TP sync and BEFORE optimizer.step().
     Sync order: DP(AVG) → TP(SUM) → clip_grad → optimizer.step()
+
+    **Collective safety**: every rank must call the same number of all_reduce
+    operations on the same communicator.  When a rank has no gradient for a
+    parameter (e.g. visual-encoder LoRA on a text-only batch), it still
+    participates by all-reducing a zero tensor of the same shape.
     """
     if dp_group is None:
         return
@@ -260,5 +276,10 @@ def _sync_dp_lora_grads(model: nn.Module, dp_group: Any) -> None:
         if not isinstance(_mod, LoRALinear) or not _mod.lora_enabled:
             continue
         for param in (_mod.lora_a, _mod.lora_b):
-            if param is not None and param.grad is not None:
+            if param is None:
+                continue
+            if param.grad is not None:
                 dist.all_reduce(param.grad, op=dist.ReduceOp.AVG, group=dp_group)
+            else:
+                zero = torch.zeros_like(param)
+                dist.all_reduce(zero, op=dist.ReduceOp.AVG, group=dp_group)
