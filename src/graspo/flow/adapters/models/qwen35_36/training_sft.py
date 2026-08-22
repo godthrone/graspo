@@ -209,6 +209,15 @@ class _Qwen35SFTTrainingMethods:
         self._train_batch_call_index += 1
 
         lora_norm_after = self.model.lora_parameter_norm()
+        # DEBUG: trace crash point after optimizer step
+        import sys
+        print(
+            f"[TRACE rank={self.rank}] train_batch_sft: optimizer_steps={optimizer_steps} "
+            f"loss={loss_sum / max(micro_batch_count, 1):.6f} "
+            f"grad_norm={grad_norm_sum:.4f} "
+            f"skipped={skipped_nonfinite}",
+            file=sys.stderr, flush=True,
+        )
         metrics = {
             "optimized": optimizer_steps > 0,
             "sft_batch_count": len(sft_batches),
