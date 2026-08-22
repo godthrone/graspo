@@ -93,12 +93,6 @@ class _Qwen35SFTTrainingMethods:
                 max_grad_norm=max_grad_norm,
             )
         self.model.train()
-        # DEBUG: trace entry
-        import sys
-        print(
-            f"[TRACE rank={self.rank}] train_batch_sft: ENTER batch_size={len(sft_batches)}",
-            file=sys.stderr, flush=True,
-        )
         if bool(self.config.graspoflow.empty_cache_before_train) and self.device.type == "cuda":
             torch.cuda.empty_cache()
             self._emit_rank_memory_event("train_before_empty_cache")
@@ -123,12 +117,6 @@ class _Qwen35SFTTrainingMethods:
         valid_micro_batches = 0  # 实际贡献梯度的 micro-batch 数
         for start in range(0, len(sft_batches), micro_batch_size):
             batch_items = sft_batches[start : start + micro_batch_size]
-            # DEBUG: trace micro-batch start
-            import sys
-            print(
-                f"[TRACE rank={self.rank}] micro_batch start={start}/{len(sft_batches)}",
-                file=sys.stderr, flush=True,
-            )
             micro_batch = collate_sft_batch(
                 batch_items,
                 self.device,
@@ -198,15 +186,7 @@ class _Qwen35SFTTrainingMethods:
 
         # DP gradient sync: AVG across DP replicas（不同数据）
         if self.tp_state is not None and self.tp_state.dp_group is not None:
-            print(
-                f"[TRACE rank={self.rank}] before _sync_dp_lora_grads",
-                file=sys.stderr, flush=True,
-            )
             _sync_dp_lora_grads(self.model, self.tp_state.dp_group)
-            print(
-                f"[TRACE rank={self.rank}] after _sync_dp_lora_grads",
-                file=sys.stderr, flush=True,
-            )
         # TP gradient sync: SUM across TP ranks（同数据，部分梯度）
         if _TENSOR_PARALLEL_GROUP is not None and _TENSOR_PARALLEL_SIZE > 1:
             _sync_nonsharded_lora_grads(self.model, _TENSOR_PARALLEL_GROUP)
@@ -232,15 +212,6 @@ class _Qwen35SFTTrainingMethods:
         self._train_batch_call_index += 1
 
         lora_norm_after = self.model.lora_parameter_norm()
-        # DEBUG: trace crash point after optimizer step
-        import sys
-        print(
-            f"[TRACE rank={self.rank}] train_batch_sft: optimizer_steps={optimizer_steps} "
-            f"loss={loss_sum / max(micro_batch_count, 1):.6f} "
-            f"grad_norm={grad_norm_sum:.4f} "
-            f"skipped={skipped_nonfinite}",
-            file=sys.stderr, flush=True,
-        )
         metrics = {
             "optimized": optimizer_steps > 0,
             "sft_batch_count": len(sft_batches),
@@ -261,18 +232,7 @@ class _Qwen35SFTTrainingMethods:
             "micro_batch_count": micro_batch_count,
             "current_lr": self._current_lr(),
         }
-        # DEBUG: trace before all_gather
-        import sys
-        print(
-            f"[TRACE rank={self.rank}] train_batch_sft: before all_gather_object "
-            f"optimizer_steps={optimizer_steps}",
-            file=sys.stderr, flush=True,
-        )
         metrics = self._aggregate_rank_metrics(metrics)
-        print(
-            f"[TRACE rank={self.rank}] train_batch_sft: after all_gather_object",
-            file=sys.stderr, flush=True,
-        )
         self._emit_rank_memory_event("sft_train_batch_after", {"metrics": metrics})
         return metrics
 

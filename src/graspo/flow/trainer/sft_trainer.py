@@ -162,13 +162,6 @@ class SFTTrainer:
                         max_grad_norm=max_grad_norm,
                     )
                     self.global_step += 1
-                    # DEBUG: confirm train_batch_sft returned
-                    import sys
-                    print(
-                        f"[TRACE rank={self.runtime.rank}] sft_trainer: after train_batch_sft "
-                        f"global_step={self.global_step}",
-                        file=sys.stderr, flush=True,
-                    )
                     if smoke:
                         # 冒烟边界：1 个 batch 后停止（基础设施参数，不改配置）
                         _log.info("SFT smoke: stopping after step 1 (boundary reached)")
