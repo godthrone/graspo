@@ -781,7 +781,8 @@ class _Qwen35GenerationMethods:
                 input_ids=next_token.unsqueeze(1),
                 attention_mask=attention_mask,
                 past_key_values=present,
-                multimodal_inputs=multimodal_inputs,
+                # decode 不传视觉输入（与 TP 路径一致），避免每步重跑视觉编码
+                multimodal_inputs=None,
                 position_input_ids=None,
                 comm=comm,
                 tag=0,
