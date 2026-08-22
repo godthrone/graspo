@@ -44,6 +44,8 @@ class SFTTrainer:
         self.started_at = time.monotonic()
         self.global_step = 0
         self.total_samples = 0
+        self._resume_epoch = 0
+        self._resume_batch_idx = 0
 
     def train(self, *, smoke: bool = False) -> None:
         """SFT 训练主入口。
@@ -113,6 +115,7 @@ class SFTTrainer:
         effective_batch_size = mb * ga
         max_grad_norm = float(self.config.training.max_grad_norm)
         save_steps = int(self.config.training.save_steps)
+        save_period_min = int(self.config.training.save_checkpoint_time_period_minutes)
 
         _log.info(
             "SFT config: micro_batch_size=%d gradient_accumulation_micro_batches=%d "
@@ -125,8 +128,18 @@ class SFTTrainer:
             self.config.data.max_prompt_length,
         )
 
+        # Resume: 恢复 LoRA 权重、优化器、调度器、RNG、数据位置
+        self._resume_if_requested()
+
+        if save_period_min > 0:
+            _log.info(
+                "SFT: time-based checkpoint save enabled (every %d min)",
+                save_period_min,
+            )
+
         try:
-            for epoch in range(self.config.training.max_epochs):
+            _last_checkpoint_time = time.monotonic()
+            for epoch in range(self._resume_epoch, self.config.training.max_epochs):
                 random.Random(int(self.config.training.seed) + epoch).shuffle(tokenized)
                 batches = [
                     tokenized[start : start + effective_batch_size]
@@ -140,7 +153,9 @@ class SFTTrainer:
                     len(batches),
                 )
 
-                for batch_idx, batch in enumerate(batches):
+                start_batch = self._resume_batch_idx if epoch == self._resume_epoch else 0
+                for batch_idx in range(start_batch, len(batches)):
+                    batch = batches[batch_idx]
                     batch_started_at = time.monotonic()
                     metrics = self.runtime.train_batch_sft(
                         batch,
@@ -152,7 +167,7 @@ class SFTTrainer:
                         _log.info("SFT smoke: stopping after step 1 (boundary reached)")
                         self.runtime.save_checkpoint(
                             output_dir / "final",
-                            trainer_state={"step": self.global_step, "epoch": epoch},
+                            trainer_state=self._sft_trainer_state(epoch=epoch, batch_idx=batch_idx),
                         )
                         return
                     if self._is_primary():
@@ -183,20 +198,44 @@ class SFTTrainer:
                     if save_steps > 0 and self.global_step % save_steps == 0:
                         self.runtime.save_checkpoint(
                             output_dir / f"step_{self.global_step}",
-                            trainer_state={"step": self.global_step, "epoch": epoch},
+                            trainer_state=self._sft_trainer_state(epoch=epoch, batch_idx=batch_idx),
                         )
+                        _last_checkpoint_time = time.monotonic()
+
+                    # 墙钟时间周期保存：每隔 N 分钟在优化步之间保存完整 checkpoint
+                    if save_period_min > 0:
+                        elapsed_since_last = time.monotonic() - _last_checkpoint_time
+                        if elapsed_since_last >= save_period_min * 60:
+                            self.runtime.save_checkpoint(
+                                output_dir / f"time_{_timestamp()}",
+                                trainer_state=self._sft_trainer_state(
+                                    epoch=epoch, batch_idx=batch_idx
+                                ),
+                            )
+                            _last_checkpoint_time = time.monotonic()
+                            _log.info(
+                                "SFT: time-based checkpoint saved at epoch=%d batch=%d "
+                                "step=%d (period=%d min)",
+                                epoch, batch_idx, self.global_step, save_period_min,
+                            )
 
                 # epoch 结束 checkpoint
                 if self.config.training.save_checkpoint_every_epoch:
                     self.runtime.save_checkpoint(
                         output_dir / f"epoch_{epoch}",
-                        trainer_state={"step": self.global_step, "epoch": epoch},
+                        trainer_state=self._sft_trainer_state(
+                            epoch=epoch, batch_idx=len(batches) - 1
+                        ),
                     )
+                    _last_checkpoint_time = time.monotonic()
 
             # final checkpoint
             self.runtime.save_checkpoint(
                 output_dir / "final",
-                trainer_state={"step": self.global_step, "epoch": self.config.training.max_epochs},
+                trainer_state=self._sft_trainer_state(
+                    epoch=self.config.training.max_epochs - 1,
+                    batch_idx=0,
+                ),
             )
             _log.info(
                 "SFT complete: steps=%d elapsed=%.1fs",
@@ -205,6 +244,82 @@ class SFTTrainer:
             )
         finally:
             self.runtime.close()
+
+    def _sft_trainer_state(self, *, epoch: int, batch_idx: int) -> dict[str, Any]:
+        """构建 SFT trainer state 字典，用于 checkpoint 保存。
+
+        与 RL 的 ``_checkpoint_trainer_state`` 保持一致的 payload 结构：
+        ``format`` 标记区分 SFT/RL 格式，``global_step`` / ``epoch`` 为共有字段，
+        ``batch_idx`` 为 SFT 特有（epoch 内恢复位置）。
+        """
+        return {
+            "format": "graspoflow-sft-trainer-state",
+            "version": 1,
+            "global_step": self.global_step,
+            "epoch": epoch,
+            "batch_idx": batch_idx,
+            "total_samples": self.total_samples,
+        }
+
+    def _resume_if_requested(self) -> None:
+        """从配置指定的 checkpoint 恢复 SFT 训练状态。
+
+        恢复内容：
+        - LoRA 权重（适配器 ``load_checkpoint``）
+        - 优化器 / LR scheduler 状态
+        - RNG（各 DP rank 不同 seed 恢复）
+        - 数据位置：当前 epoch、batch_idx
+
+        兼容 v0.26.1 旧格式（``{"step": ..., "epoch": ...}``，无 ``format`` 标记）：
+        旧格式只能从 epoch 边界恢复（从 epoch+1 开始）。
+        """
+        checkpoint = self.config.training.resume_from_checkpoint
+        if not checkpoint:
+            return
+        checkpoint_dir = Path(checkpoint)
+        if not checkpoint_dir.exists():
+            raise FileNotFoundError(
+                f"training.resume_from_checkpoint does not exist: {checkpoint_dir}"
+            )
+        _log = logging.getLogger("graspo.sft_trainer")
+        trainer_state = self.runtime.load_checkpoint(checkpoint_dir)
+        if trainer_state is None:
+            raise RuntimeError(
+                "SFT checkpoint is missing trainer_state; resume requires a "
+                "recoverable checkpoint"
+            )
+        fmt = trainer_state.get("format")
+        if fmt is None:
+            # v0.26.1 旧格式：{"step": ..., "epoch": ...}，无 format 标记
+            _log.warning(
+                "Resuming from legacy SFT checkpoint (v0.26.1 format, no 'format' marker); "
+                "only epoch-boundary resume is supported — starting from epoch=%d. "
+                "Future checkpoints will use the new format automatically.",
+                int(trainer_state.get("epoch") or 0) + 1,
+            )
+            self.global_step = int(trainer_state.get("step") or 0)
+            saved_epoch = int(trainer_state.get("epoch") or 0)
+            self._resume_epoch = saved_epoch + 1
+            self._resume_batch_idx = 0
+        elif fmt == "graspoflow-sft-trainer-state":
+            self.global_step = int(trainer_state["global_step"])
+            self._resume_epoch = int(trainer_state["epoch"])
+            self._resume_batch_idx = int(trainer_state.get("batch_idx") or 0)
+            self.total_samples = int(
+                trainer_state.get("total_samples") or self.total_samples
+            )
+            _log.info(
+                "SFT resume: checkpoint=%s step=%d epoch=%d batch_idx=%d",
+                checkpoint_dir.name,
+                self.global_step,
+                self._resume_epoch,
+                self._resume_batch_idx,
+            )
+        else:
+            raise RuntimeError(
+                f"Unsupported SFT trainer_state format: {fmt!r}; "
+                f"expected 'graspoflow-sft-trainer-state' or legacy (no format marker)"
+            )
 
     def _is_primary(self) -> bool:
         return self.runtime.is_primary()

@@ -77,6 +77,7 @@ training:
   top_p: 1.0
   save_steps: -1                 # -1=禁用阶段性保存
   save_checkpoint_every_epoch: true
+  save_checkpoint_time_period_minutes: 0  # 0=关闭；>0=每 N 分钟墙钟保存 checkpoint
   perfect_skip_reward_threshold: 1.0
   reject_unparseable_groups: true
   resume_from_checkpoint: null

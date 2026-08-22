@@ -29,6 +29,7 @@ class OptimizeMixin:
     logger: Any
     global_step: int
     backend_name: str
+    _last_checkpoint_time: float  # wall-clock monotonic seconds for time-based save
 
     def _maybe_optimize(self, *, epoch: int, force: bool = False) -> bool:
         """当 replay buffer 达到阈值时触发优化步骤。"""
@@ -75,6 +76,7 @@ class OptimizeMixin:
         self.stats.optimized_steps += 1
         checkpoint_sec = 0.0
         checkpoint_dir = None
+        save_period_min = int(self.config.training.save_checkpoint_time_period_minutes)
         if (
             self.config.training.save_steps > 0
             and self.global_step % self.config.training.save_steps == 0
@@ -83,6 +85,22 @@ class OptimizeMixin:
             checkpoint_started_at = time.monotonic()
             self._save_checkpoint(checkpoint_dir, epoch=epoch)
             checkpoint_sec = time.monotonic() - checkpoint_started_at
+            self._last_checkpoint_time = time.monotonic()
+        elif save_period_min > 0:
+            elapsed = time.monotonic() - self._last_checkpoint_time
+            if elapsed >= save_period_min * 60:
+                checkpoint_dir = (
+                    Path(self.config.training.output_dir) / f"time_{self._timestamp()}"
+                )
+                checkpoint_started_at = time.monotonic()
+                self._save_checkpoint(checkpoint_dir, epoch=epoch)
+                checkpoint_sec = time.monotonic() - checkpoint_started_at
+                self._last_checkpoint_time = time.monotonic()
+                logging.getLogger("graspo.trainer").info(
+                    "RL: time-based checkpoint saved at epoch=%d step=%d "
+                    "(period=%d min, elapsed=%.1f min)",
+                    epoch, self.global_step, save_period_min, elapsed / 60.0,
+                )
         reward_window = reward_window_summary(self.recent_groups)
         health = training_health(metrics, reward_batch, reward_window)
         if not health["ok"]:

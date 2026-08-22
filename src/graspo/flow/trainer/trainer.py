@@ -70,6 +70,7 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
         self.pending_batch_attempts: list[dict[str, Any]] = []
         self.pending_batch_timings: list[dict[str, Any]] = []
         self.resume_info: dict[str, Any] | None = None
+        self._last_checkpoint_time = 0.0  # 墙钟时间周期保存用（monotonic 秒）
         gf = self.config.graspoflow
         self.logger = NativeRolloutLogger(
             self.config.training.output_dir,
@@ -140,6 +141,14 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
         output_dir = Path(self.config.training.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         self._resume_if_requested()
+        # 初始化墙钟时间周期 checkpoint 计时器
+        self._last_checkpoint_time = time.monotonic()
+        save_period_min = int(self.config.training.save_checkpoint_time_period_minutes)
+        if save_period_min > 0:
+            _log.info(
+                "RL: time-based checkpoint save enabled (every %d min)",
+                save_period_min,
+            )
         # 将当前配置备份到输出目录，确保可完整复现。resume 时也刷新——
         # 否则输出目录内的 config.yaml 停留在旧配置，误导复现（§1.4 单一真相源）
         _backup_config(self.config, output_dir)
@@ -220,9 +229,11 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
                     if len(self.replay_buffer) > 0:
                         self._maybe_optimize(epoch=epoch, force=True)
                     self._save_checkpoint(output_dir / f"epoch_{epoch}", epoch=epoch)
+                    self._last_checkpoint_time = time.monotonic()
             if len(self.replay_buffer) > 0:
                 self._maybe_optimize(epoch=self.config.training.max_epochs - 1, force=True)
             self._save_checkpoint(output_dir / "final", epoch=self.config.training.max_epochs - 1)
+            self._last_checkpoint_time = time.monotonic()
         finally:
             self.runtime.close()
 

@@ -105,6 +105,7 @@ class TrainingConfig(BaseModel):
     top_p: float = 1.0
     save_steps: int = -1
     save_checkpoint_every_epoch: bool = True
+    save_checkpoint_time_period_minutes: int = 0
     perfect_skip_reward_threshold: float = 1.0
     reject_unparseable_groups: bool = True
     resume_from_checkpoint: str | None = None
@@ -151,6 +152,15 @@ class TrainingConfig(BaseModel):
                 "via lr_scheduler.decay_steps (in optimizer steps, warmup-exclusive)"
             )
         return data
+
+    @model_validator(mode="after")
+    def _validate_save_checkpoint_time_period(self) -> TrainingConfig:
+        if self.save_checkpoint_time_period_minutes < 0:
+            raise ValueError(
+                f"training.save_checkpoint_time_period_minutes must be >= 0, "
+                f"got {self.save_checkpoint_time_period_minutes}"
+            )
+        return self
 
     @model_validator(mode="after")
     def _validate_scheduler_decay_steps(self) -> TrainingConfig:
