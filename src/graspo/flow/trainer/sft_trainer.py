@@ -224,7 +224,7 @@ class SFTTrainer:
                     self.runtime.save_checkpoint(
                         output_dir / f"epoch_{epoch}",
                         trainer_state=self._sft_trainer_state(
-                            epoch=epoch, batch_idx=len(batches) - 1
+                            epoch=epoch, batch_idx=len(batches) - 1, is_epoch_end=True,
                         ),
                     )
                     _last_checkpoint_time = time.monotonic()
@@ -235,6 +235,7 @@ class SFTTrainer:
                 trainer_state=self._sft_trainer_state(
                     epoch=self.config.training.max_epochs - 1,
                     batch_idx=0,
+                    is_epoch_end=True,
                 ),
             )
             _log.info(
@@ -245,12 +246,18 @@ class SFTTrainer:
         finally:
             self.runtime.close()
 
-    def _sft_trainer_state(self, *, epoch: int, batch_idx: int) -> dict[str, Any]:
+    def _sft_trainer_state(
+        self, *, epoch: int, batch_idx: int, is_epoch_end: bool = False,
+    ) -> dict[str, Any]:
         """构建 SFT trainer state 字典，用于 checkpoint 保存。
 
         与 RL 的 ``_checkpoint_trainer_state`` 保持一致的 payload 结构：
         ``format`` 标记区分 SFT/RL 格式，``global_step`` / ``epoch`` 为共有字段，
         ``batch_idx`` 为 SFT 特有（epoch 内恢复位置）。
+
+        ``is_epoch_end`` 标记 checkpoint 是否为 epoch 结束保存：
+        - ``True``：epoch 结束 checkpoint → resume 跳到下一 epoch batch=0
+        - ``False``：epoch 内 checkpoint（step/time）→ resume 从 batch_idx+1 续
         """
         return {
             "format": "graspoflow-sft-trainer-state",
@@ -259,6 +266,7 @@ class SFTTrainer:
             "epoch": epoch,
             "batch_idx": batch_idx,
             "total_samples": self.total_samples,
+            "is_epoch_end": is_epoch_end,
         }
 
     def _resume_if_requested(self) -> None:
@@ -303,15 +311,28 @@ class SFTTrainer:
             self._resume_batch_idx = 0
         elif fmt == "graspoflow-sft-trainer-state":
             self.global_step = int(trainer_state["global_step"])
-            self._resume_epoch = int(trainer_state["epoch"])
-            self._resume_batch_idx = int(trainer_state.get("batch_idx") or 0)
+            saved_epoch = int(trainer_state["epoch"])
+            saved_batch_idx = int(trainer_state.get("batch_idx") or 0)
+            is_epoch_end = bool(trainer_state.get("is_epoch_end") or False)
             self.total_samples = int(
                 trainer_state.get("total_samples") or self.total_samples
             )
+            if is_epoch_end:
+                # epoch 结束 checkpoint：该 epoch 已全部处理完，跳到下一 epoch
+                self._resume_epoch = saved_epoch + 1
+                self._resume_batch_idx = 0
+            else:
+                # epoch 内 checkpoint（step/time）：从 batch_idx+1 续，不重跑已保存的 batch
+                self._resume_epoch = saved_epoch
+                self._resume_batch_idx = saved_batch_idx + 1
             _log.info(
-                "SFT resume: checkpoint=%s step=%d epoch=%d batch_idx=%d",
+                "SFT resume: checkpoint=%s step=%d epoch=%d batch_idx=%d "
+                "is_epoch_end=%s → resume_epoch=%d resume_batch_idx=%d",
                 checkpoint_dir.name,
                 self.global_step,
+                saved_epoch,
+                saved_batch_idx,
+                is_epoch_end,
                 self._resume_epoch,
                 self._resume_batch_idx,
             )
