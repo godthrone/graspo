@@ -75,6 +75,7 @@ module = [
     "graspo.flow.adapters.models.qwen35_36.training_sft",
     "graspo.flow.adapters.models.qwen35_36.generation",
     "graspo.flow.adapters.models.qwen35_36.logprobs",
+    "graspo.flow.adapters.models.qwen35_36.pipeline_forward",
     "graspo.flow.trainer.rollout",
     "graspo.flow.trainer.optimize",
     "graspo.flow.trainer.checkpoint",

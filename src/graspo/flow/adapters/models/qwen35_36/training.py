@@ -8,6 +8,19 @@ from typing import Any
 import torch
 import torch.distributed as dist
 
+from graspo.flow.adapters.models.qwen35_36.model import Qwen35HybridTextModel
+from graspo.flow.parallel.pipeline_comm import PipelineComm, wait_all
+from graspo.flow.parallel.scheduling import build_scheduler
+from graspo.flow.parallel.tensor_utils import (
+    _add_pipeline_stage_timing,
+    _new_pipeline_stage_timing,
+    _round_pipeline_stage_timing,
+    _selected_token_log_probs_from_hidden,
+    collate_experiences,
+)
+from graspo.ripple.buffer import Experience
+from graspo.ripple.multimodal.contract import assert_rl_training_has_multimodal
+
 
 def _log_cuda_mem(label: str) -> None:
     """Log CUDA memory stats to stderr for rank 0 only."""
@@ -22,33 +35,6 @@ def _log_cuda_mem(label: str) -> None:
             file=sys.stderr,
             flush=True,
         )
-
-
-def _pp_debug_log(output_dir: str, msg: str) -> None:
-    """PP 调试日志：打印到 stderr + 落盘到 ``<output_dir>/logs/pp_debug.log``。"""
-    rank = os.environ.get("RANK", "0")
-    line = f"[pp-debug rank={rank}] {msg}"
-    print(line, file=sys.stderr, flush=True)
-    try:
-        log_dir = os.path.join(output_dir or ".", "logs")
-        os.makedirs(log_dir, exist_ok=True)
-        with open(os.path.join(log_dir, "pp_debug.log"), "a", encoding="utf-8") as f:
-            f.write(line + "\n")
-    except Exception:  # noqa: BLE001
-        pass
-
-from graspo.flow.adapters.models.qwen35_36.model import Qwen35HybridTextModel
-from graspo.flow.parallel.pipeline_comm import PipelineComm, wait_all
-from graspo.flow.parallel.scheduling import build_scheduler
-from graspo.flow.parallel.tensor_utils import (
-    _add_pipeline_stage_timing,
-    _new_pipeline_stage_timing,
-    _round_pipeline_stage_timing,
-    _selected_token_log_probs_from_hidden,
-    collate_experiences,
-)
-from graspo.ripple.buffer import Experience
-from graspo.ripple.multimodal.contract import assert_rl_training_has_multimodal
 
 
 class _Qwen35TrainingMethods:
@@ -257,77 +243,29 @@ class _Qwen35TrainingMethods:
         comm: PipelineComm | None = None,
         tag: int = 0,
     ) -> tuple[torch.Tensor | None, torch.Tensor | None, Any | None]:
+        """PP forward for RL training — delegates to the unified PP forward.
+
+        SP / async-P2P / position_ids / tag 语义由 :meth:`_pipeline_forward_hidden`
+        （pipeline_forward.py）集中维护，避免多套 PP forward 漂移。
+        """
         assert isinstance(self.model, Qwen35HybridTextModel)
         assert self.tp_state is not None
         batch = int(sequences.shape[0])
-        seq_len = int(sequences.shape[1])
-        hidden_size = int(self.model.config.hidden_size)
-        dtype = next(self.model.parameters()).dtype
-        stage_input: torch.Tensor | None = None
-        send_work: Any | None = None
-        # SP：stage 0 的 forward_stage 会把 hidden scatter 成 (B, pad_to/tp, H)，
-        # 中间 stage 接收的也是该分片尺寸；否则为完整 (B, seq_len, H)。
-        if self.model._use_sp:
-            sp_size = self.model.tp_size
-            pad_to = ((seq_len + sp_size - 1) // sp_size) * sp_size
-            recv_seq = pad_to // sp_size
-        else:
-            recv_seq = seq_len
-        _pp_debug_log(
-            str(self.config.training.output_dir),
-            f"fwd stage={self.pp_rank} tag={tag} pp_size={self.pp_size} "
-            f"input_seq={seq_len} recv_alloc_seq={recv_seq} batch={batch} hidden={hidden_size}",
-        )
         multimodal_inputs = self._multimodal_inputs_from_metadata(metadata, batch_size=batch)
-        if self.pp_rank == 0:
-            compute_started_at = time.monotonic()
-            output = self.model.forward_stage(
-                None,
-                sequences,
-                attention_mask,
-                past_key_values=None,
-                use_cache=False,
-                multimodal_inputs=multimodal_inputs,
-                position_input_ids=sequences,
-                apply_lm_head=False,
-            )
-            _add_pipeline_stage_timing(timing, "pipeline_stage_compute_sec", compute_started_at)
-        else:
-            stage_input = torch.empty(
-                (batch, recv_seq, hidden_size), device=self.device, dtype=dtype
-            )
-            recv_started_at = time.monotonic()
-            assert comm is not None
-            recv_work = comm.fwd_recv(stage_input, src=int(self.tp_state.prev_pp_rank), tag=tag)
-            comm.wait(recv_work)  # 阻塞直到数据到达（上游异步 send，不会死锁）
-            _add_pipeline_stage_timing(timing, "pipeline_recv_sec", recv_started_at)
-            stage_input.requires_grad_(True)
-            compute_started_at = time.monotonic()
-            output = self.model.forward_stage(
-                stage_input,
-                None,
-                attention_mask,
-                past_key_values=None,
-                use_cache=False,
-                multimodal_inputs=multimodal_inputs,
-                position_input_ids=sequences,
-                apply_lm_head=False,
-                all_gather_output=(self.pp_rank == self.pp_size - 1),
-            )
-            _add_pipeline_stage_timing(timing, "pipeline_stage_compute_sec", compute_started_at)
-        assert isinstance(output, torch.Tensor)
-        if self.pp_rank < self.pp_size - 1:
-            send_started_at = time.monotonic()
-            assert comm is not None
-            _pp_debug_log(
-                str(self.config.training.output_dir),
-                f"send stage={self.pp_rank} tag={tag} tensor={tuple(output.shape)} "
-                f"send_seq={int(output.shape[1])} dst={self.tp_state.next_pp_rank}",
-            )
-            send_work = comm.fwd_send(output.detach().contiguous(), dst=int(self.tp_state.next_pp_rank), tag=tag)
-            _add_pipeline_stage_timing(timing, "pipeline_send_sec", send_started_at)
-        if timing is not None:
-            timing["pipeline_forward_calls"] = int(timing.get("pipeline_forward_calls") or 0) + 1
+        output, _present, stage_input, send_work = self._pipeline_forward_hidden(
+            input_ids=sequences,
+            hidden_states=None,
+            attention_mask=attention_mask,
+            past_key_values=None,
+            use_cache=False,
+            multimodal_inputs=multimodal_inputs,
+            position_input_ids=sequences,
+            apply_lm_head=False,
+            timing=timing,
+            comm=comm,
+            tag=tag,
+            debug_label="fwd",
+        )
         return output, stage_input, send_work
 
     # ── PP 1F1B schedule ─────────────────────────────────────────────────────
@@ -613,7 +551,9 @@ class _Qwen35TrainingMethods:
                 grad_output = torch.empty_like(stage_output)
                 grad_recv_started_at = time.monotonic()
                 recv_work = comm.bwd_recv(
-                    grad_output, src=int(self.tp_state.next_pp_rank or 0), tag=chunk_count + chunk_idx
+                    grad_output,
+                    src=int(self.tp_state.next_pp_rank or 0),
+                    tag=chunk_count + chunk_idx,
                 )
                 comm.wait(recv_work)  # 阻塞直到梯度到达（上游异步 send，不会死锁）
                 _add_pipeline_stage_timing(timing, "pipeline_grad_recv_sec", grad_recv_started_at)

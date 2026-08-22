@@ -13,6 +13,7 @@ from graspo.core.lora import resolve_lora_target_modules
 from graspo.flow.adapters.models.common.model_builders import build_native_qwen_model
 from graspo.flow.adapters.models.qwen35_36.generation import _Qwen35GenerationMethods
 from graspo.flow.adapters.models.qwen35_36.logprobs import _Qwen35LogprobsMethods
+from graspo.flow.adapters.models.qwen35_36.pipeline_forward import _Qwen35PipelineForwardMethods
 from graspo.flow.adapters.models.qwen35_36.training import _Qwen35TrainingMethods
 from graspo.flow.adapters.models.qwen35_36.training_sft import _Qwen35SFTTrainingMethods
 from graspo.flow.adapters.transformer_adapter import TransformerAdapter
@@ -34,6 +35,7 @@ class Qwen35Adapter(  # type: ignore[misc]  # mixin 组合点的多基类签名�
     _Qwen35TrainingMethods,
     _Qwen35SFTTrainingMethods,
     _Qwen35LogprobsMethods,
+    _Qwen35PipelineForwardMethods,
     TransformerAdapter,
 ):
     """Qwen3.5/3.6 adapter for GraspoFlow.
