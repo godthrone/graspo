@@ -79,6 +79,15 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
 
     # ── 主训练循环 ────────────────────────────────────────────────────────────
 
+    @property
+    def adapter(self) -> Any:
+        """当前运行时已 setup 的模型适配器（DP 分片等逻辑访问）。
+
+        与 SFT 路径（``self.runtime._adapter``）一致；此属性让 mixin 无需各自
+        探测 runtime 的私有字段。
+        """
+        return self.runtime._require_adapter()
+
     def train(self, *, smoke: bool = False) -> None:
         """GRASPO 训练主入口。
 
