@@ -157,13 +157,16 @@ class _Qwen35TrainingMethods:
             _sync_dp_lora_grads,
             _sync_nonsharded_lora_grads,
         )
-        from graspo.flow.parallel.tensor_utils import _TENSOR_PARALLEL_GROUP
+        from graspo.flow.parallel.tensor_utils import (
+            _TENSOR_PARALLEL_GROUP,
+            _TENSOR_PARALLEL_SIZE,
+        )
 
         # DP gradient sync: AVG across DP replicas（不同数据）
         if self.tp_state is not None and self.tp_state.dp_group is not None:
             _sync_dp_lora_grads(self.model, self.tp_state.dp_group)
         # TP gradient sync: SUM across TP ranks（同数据，部分梯度）
-        if _TENSOR_PARALLEL_GROUP is not None:
+        if _TENSOR_PARALLEL_GROUP is not None and _TENSOR_PARALLEL_SIZE > 1:
             _sync_nonsharded_lora_grads(self.model, _TENSOR_PARALLEL_GROUP)
         if valid_micro_batches > 0:
             grad_norm = torch.nn.utils.clip_grad_norm_(
@@ -359,11 +362,14 @@ class _Qwen35TrainingMethods:
                 _sync_dp_lora_grads,
                 _sync_nonsharded_lora_grads,
             )
-            from graspo.flow.parallel.tensor_utils import _TENSOR_PARALLEL_GROUP
+            from graspo.flow.parallel.tensor_utils import (
+            _TENSOR_PARALLEL_GROUP,
+            _TENSOR_PARALLEL_SIZE,
+        )
 
             if self.tp_state is not None and self.tp_state.dp_group is not None:
                 _sync_dp_lora_grads(self.model, self.tp_state.dp_group)
-            if _TENSOR_PARALLEL_GROUP is not None:
+            if _TENSOR_PARALLEL_GROUP is not None and _TENSOR_PARALLEL_SIZE > 1:
                 _sync_nonsharded_lora_grads(self.model, _TENSOR_PARALLEL_GROUP)
             trainable_params = [param for param in self.model.parameters() if param.requires_grad]
             grad_clip_started_at = time.monotonic()

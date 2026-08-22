@@ -79,6 +79,41 @@ def apply_config_optimizer_hyperparams(
     return overridden
 
 
+def _normalize_optimizer_state_to_params(optimizer: Any) -> list[str]:
+    """Relocate/cast every optimizer state tensor onto its owning parameter's
+    device and dtype.
+
+    DP resume broadcasts rank-0's checkpoint via ``broadcast_object_list`` (see
+    ``load_checkpoint``).  Broadcasting preserves the *sender's* CUDA device index,
+    so receiving ranks hold optimizer state (``exp_avg`` / ``exp_avg_sq``) on ``cuda:0``
+    while their parameters live on ``cuda:{local_rank}``.  ``optimizer.load_state_dict``
+    does not relocate those tensors, and ``AdamW.step`` then fails with "Tensors of the
+    same index must be on the same device and the same dtype".  This helper moves every
+    state tensor to the parameter's device and casts it to the parameter's dtype
+    (``step`` stays float32, the optimizer convention).  Returns the list of tensor keys
+    normalized so callers can emit a transparent WARNING (§3.2 透明退路).
+    """
+    normalized: list[str] = []
+    if optimizer is None:
+        return normalized
+    for param, state in optimizer.state.items():
+        if not isinstance(state, dict):
+            continue
+        target_device = param.device
+        target_dtype = param.dtype
+        for key, value in list(state.items()):
+            if not isinstance(value, torch.Tensor):
+                continue
+            if value.device == target_device and value.dtype == target_dtype:
+                continue
+            if key == "step":
+                state[key] = value.to(device=target_device, dtype=torch.float32)
+            else:
+                state[key] = value.to(device=target_device, dtype=target_dtype)
+            normalized.append(str(key))
+    return normalized
+
+
 class TransformerAdapter(BaseGraspoFlowAdapter):
     """Common adapter for all decoder-only transformer models.
 
@@ -467,8 +502,22 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
         if missing_lora:
             raise RuntimeError(f"Missing LoRA tensors while loading checkpoint: {missing_lora}")
         optimizer_state = payload.get("optimizer_state_dict")
+        normalized_optimizer_state: list[str] = []
         if self.optimizer is not None and optimizer_state is not None:
             self.optimizer.load_state_dict(optimizer_state)
+            # 防呆：DP resume 经 broadcast_object_list 广播 rank0 的 checkpoint，
+            # 保持 sender 的 CUDA device index，接收 rank 的 optimizer state 停留在
+            # cuda:0 而参数在 cuda:local_rank，导致 optimizer.step 报 device/dtype
+            # 不一致。加载后统一迁回参数 device/dtype（§2.3 边界校验即防呆）。
+            normalized_optimizer_state = _normalize_optimizer_state_to_params(self.optimizer)
+            if normalized_optimizer_state:
+                logger.warning(
+                    "Normalized %d optimizer state tensor(s) to matching parameter "
+                    "device/dtype after checkpoint load (DP broadcast preserves sender "
+                    "device); checkpoint=%s",
+                    len(normalized_optimizer_state),
+                    checkpoint_dir.name,
+                )
         elif self.optimizer is not None and optimizer_state is None:
             raise RuntimeError("Checkpoint shard is missing optimizer state for a trainable rank")
         scheduler_state = payload.get("scheduler_state_dict")
