@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from graspo.flow.parallel.scheduling import GPipeScheduler, OneFOneBScheduler, build_scheduler
+from graspo.flow.parallel.scheduling import OneFOneBScheduler, build_scheduler
 
 
 class _Recorder:
@@ -79,21 +79,6 @@ def test_scheduler_one_f_one_b_pp3():
         assert len(backwards) == 5
 
 
-def test_scheduler_factory_default():
-    """工厂：默认构建 OneFOneB。"""
-    from graspo.flow.parallel.scheduling import build_scheduler
-
-    rec = _Recorder()
-    sched = build_scheduler(
-        None,
-        pp_rank=0, pp_size=2, num_chunks=2,
-        forward=rec.forward, backward=rec.backward,
-    )
-    assert isinstance(sched, OneFOneBScheduler)
-    sched.run()
-    assert len(rec.calls) == 4  # 2 forward + 2 backward
-
-
 def test_scheduler_factory_name():
     """工厂：按名构建 OneFOneB。"""
     from graspo.flow.parallel.scheduling import build_scheduler
@@ -123,34 +108,14 @@ def test_scheduler_factory_unknown_raises():
         pass
 
 
-def test_scheduler_gpipe_all_forward_before_backward():
-    """GPipe：所有 forward 先于所有 backward（P2P tag 对齐的关键）。"""
-    rec = _Recorder()
-    sched = GPipeScheduler(
-        pp_rank=0, pp_size=2, num_chunks=4,
-        forward=rec.forward, backward=rec.backward,
-    )
-    stats = sched.run()
-
-    forwards = [c for c in rec.calls if c[0] == "forward"]
-    backwards = [c for c in rec.calls if c[0] == "backward"]
-    assert [f[1] for f in forwards] == [0, 1, 2, 3], forwards
-    assert [b[1] for b in backwards] == [0, 1, 2, 3], backwards
-    # 所有 forward 调用的位置都早于所有 backward 调用（GPipe 结构）
-    last_fwd = max(i for i, c in enumerate(rec.calls) if c[0] == "forward")
-    first_bwd = min(i for i, c in enumerate(rec.calls) if c[0] == "backward")
-    assert last_fwd < first_bwd, rec.calls
-    assert stats["pp_schedule"] == "gpipe"
-
-
-def test_scheduler_factory_default_is_gpipe():
-    """工厂：默认构建 GPipe（1F1B 的 P2P tag 顺序不一致会死锁，GPipe 是默认）。"""
+def test_scheduler_factory_default_is_one_f_one_b():
+    """工厂：默认构建 1F1B（OneFOneB，PP 的唯一调度策略）。"""
     rec = _Recorder()
     sched = build_scheduler(
         None,
         pp_rank=0, pp_size=2, num_chunks=2,
         forward=rec.forward, backward=rec.backward,
     )
-    assert isinstance(sched, GPipeScheduler)
+    assert isinstance(sched, OneFOneBScheduler)
     sched.run()
     assert len(rec.calls) == 4  # 2 forward + 2 backward

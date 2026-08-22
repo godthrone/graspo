@@ -116,7 +116,7 @@ PP 是 Flow 设施层中最复杂的分布式形态。设计遵循 **Flink 风�
 ```
 ┌───────────────────────────────────────────┐
 │ 调度层 scheduling/（策略模式，可插拔）        │
-│   - OneFOneB（默认，1F1B）                  │
+│   - OneFOneB（1F1B，默认）                │
 │   - 未来：Interleaved / ZeroBubble          │
 └───────────────────┬───────────────────────┘
                     │ 决定 forward/backward 的执行顺序
@@ -159,7 +159,7 @@ class PipelineScheduler(ABC):
         """执行一次 pipeline 调度（fill/steady/drain 或其它时序）。"""
 ```
 
-- `OneFOneBScheduler`：标准 1F1B（fill → steady → drain），forward/backward 交错，低 bubble。
+- `OneFOneBScheduler`：标准 1F1B（fill → steady → drain），forward/backward 交错，低 bubble。**当前 PP 的唯一调度策略（默认）**。
 - 未来策略（interleaved 1F1B / V-shape / ZeroBubble）：**在同一异步 P2P 通信层上实现**，无需重写通信或计算层。
 
 ### 通信层接口 PipelineComm
@@ -190,7 +190,7 @@ src/graspo/flow/parallel/
 └── scheduling/            # 调度层（策略模式）
     ├── __init__.py        # 重导出 PipelineScheduler + 工厂
     ├── base.py            # PipelineScheduler ABC（契约）
-    ├── one_f_one_b.py     # OneFOneBScheduler（默认，1F1B）
+    ├── one_f_one_b.py     # OneFOneBScheduler（1F1B，默认）
     └── factory.py         # 按配置构建调度策略（预留 interleaved 等）
 ```
 
@@ -273,8 +273,8 @@ PP 的流水线架构（异步 P2P + 可插拔调度）对用户透明——调�
 
 ## PP 设计决策记录
 
-- **不用 GPipe**：GPipe（全 forward → 全 backward）bubble 最高且不重叠 forward/backward。若用它作为基础，未来降低 bubble 必须重写调度——违背"未来优化建立在正确基础上"（宪法 §18.1 不留负债）。
-- **用 1F1B（OneFOneB）作为默认调度**：forward/backward 交错，bubble 适中，是 PP 训练的标准调度。它需要异步 P2P 才能正确工作（阻塞式 `send/recv` 会导致 fill 阶段死锁）。
+- **1F1B 是唯一调度（默认）**：GPipe（全 forward → 全 backward）bubble 最高且不重叠 forward/backward，且在双向进程组 + 显式 tag + 背压机制下 1F1B 已实测可用且更快（PP=4 冒烟 38.50s < 45.94s）。按宪法 §18.1 旧 GPipe 已删除，代码库只保留当前架构。
+- **1F1B 依赖异步 P2P**：1F1B（forward/backward 交错）需异步 P2P 且要求 forward-hidden 与 backward-grad 走**独立通道**（否则同一 peer-pair 单 FIFO 双向消息交错会死锁）。当前实现已用双向进程组 + 显式 tag + 背压。
 - **调度策略可插拔**：`OneFOneBScheduler` 只是调度层的第一个实现。未来 interleaved 1F1B / V-shape / ZeroBubble 在**同一异步 P2P 通信层**上作为新策略实现，无需改动通信或计算层。
 - **Flink 思想映射**：
   - Operator → PP stage（若干层的计算单元）

@@ -298,7 +298,7 @@ class _Qwen35TrainingMethods:
             )
             recv_started_at = time.monotonic()
             assert comm is not None
-            recv_work = comm.recv(stage_input, src=int(self.tp_state.prev_pp_rank), tag=tag)
+            recv_work = comm.fwd_recv(stage_input, src=int(self.tp_state.prev_pp_rank), tag=tag)
             comm.wait(recv_work)  # 阻塞直到数据到达（上游异步 send，不会死锁）
             _add_pipeline_stage_timing(timing, "pipeline_recv_sec", recv_started_at)
             stage_input.requires_grad_(True)
@@ -324,7 +324,7 @@ class _Qwen35TrainingMethods:
                 f"send stage={self.pp_rank} tag={tag} tensor={tuple(output.shape)} "
                 f"send_seq={int(output.shape[1])} dst={self.tp_state.next_pp_rank}",
             )
-            send_work = comm.send(output.detach().contiguous(), dst=int(self.tp_state.next_pp_rank), tag=tag)
+            send_work = comm.fwd_send(output.detach().contiguous(), dst=int(self.tp_state.next_pp_rank), tag=tag)
             _add_pipeline_stage_timing(timing, "pipeline_send_sec", send_started_at)
         if timing is not None:
             timing["pipeline_forward_calls"] = int(timing.get("pipeline_forward_calls") or 0) + 1
@@ -363,7 +363,7 @@ class _Qwen35TrainingMethods:
         drain_sec = 0.0
         max_chunks_per_optimizer_step = 0
         configured_inflight = int(self.config.graspoflow.pp_max_inflight_microbatches)
-        _pp_schedule = "gpipe"  # 实际调度策略名（由 scheduler 返回更新）
+        _pp_schedule = "one_f_one_b"  # 实际调度策略名（由 scheduler 返回更新）
         pipeline_forward_sec = 0.0
         pipeline_backward_sec = 0.0
         # Single pass — no repeated iterations.
@@ -400,7 +400,7 @@ class _Qwen35TrainingMethods:
             fill_sec += result["fill_sec"]
             steady_sec += result["steady_sec"]
             drain_sec += result["drain_sec"]
-            _pp_schedule = result.get("pp_schedule", "gpipe")
+            _pp_schedule = result.get("pp_schedule", "one_f_one_b")
             pipeline_forward_sec += float(result.get("pipeline_forward_sec", 0.0))
             pipeline_backward_sec += float(result.get("pipeline_backward_sec", 0.0))
             micro_batch_count += len(chunk_batches)
@@ -496,9 +496,15 @@ class _Qwen35TrainingMethods:
         timing: dict[str, float | int],
         max_inflight: int,
     ) -> dict[str, Any]:
-        # max_inflight 目前由调度策略负责（背压），此处不强制——预留接口。
+        # max_inflight 用于 PipelineComm 背压（有界在途 send work），此处传参以复用。
         chunk_count = len(chunk_batches)
-        comm = PipelineComm(device=self.device, group=self.tp_state.pp_group)
+        comm = PipelineComm(
+            device=self.device,
+            fwd_group=self.tp_state.pp_group_fwd,
+            bwd_group=self.tp_state.pp_group_bwd,
+            max_inflight=int(self.config.graspoflow.pp_max_inflight_microbatches),
+            chunk_count=chunk_count,
+        )
         send_works: list[Any] = []
         records: list[dict[str, Any] | None] = [None for _ in range(chunk_count)]
         finite_flags = [True for _ in range(chunk_count)]
@@ -591,7 +597,7 @@ class _Qwen35TrainingMethods:
                         else torch.zeros_like(stage_input)
                     )
                     grad_send_started_at = time.monotonic()
-                    work = comm.send(
+                    work = comm.bwd_send(
                         grad.contiguous(),
                         dst=int(self.tp_state.prev_pp_rank or 0),
                         tag=chunk_count + chunk_idx,
@@ -606,7 +612,7 @@ class _Qwen35TrainingMethods:
                 assert stage_output is not None
                 grad_output = torch.empty_like(stage_output)
                 grad_recv_started_at = time.monotonic()
-                recv_work = comm.recv(
+                recv_work = comm.bwd_recv(
                     grad_output, src=int(self.tp_state.next_pp_rank or 0), tag=chunk_count + chunk_idx
                 )
                 comm.wait(recv_work)  # 阻塞直到梯度到达（上游异步 send，不会死锁）
@@ -624,7 +630,7 @@ class _Qwen35TrainingMethods:
                         else torch.zeros_like(stage_input)
                     )
                     grad_send_started_at = time.monotonic()
-                    work = comm.send(
+                    work = comm.bwd_send(
                         grad.contiguous(),
                         dst=int(self.tp_state.prev_pp_rank or 0),
                         tag=chunk_count + chunk_idx,
@@ -666,7 +672,7 @@ class _Qwen35TrainingMethods:
             "fill_sec": fill_sec,
             "steady_sec": steady_sec,
             "drain_sec": drain_sec,
-            "pp_schedule": sched_stats.get("pp_schedule", "gpipe"),
+            "pp_schedule": sched_stats.get("pp_schedule", "one_f_one_b"),
             "pipeline_forward_sec": float(sched_stats.get("pipeline_forward_sec", 0.0)),
             "pipeline_backward_sec": float(sched_stats.get("pipeline_backward_sec", 0.0)),
         }

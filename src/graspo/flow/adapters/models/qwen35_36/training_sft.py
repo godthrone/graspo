@@ -301,7 +301,13 @@ class _Qwen35SFTTrainingMethods:
             return self._aggregate_rank_metrics({"optimized": False, "optimizer_steps": 0})
 
         # 异步 P2P 通信管道（Flink 风格"调度与计算分离"）+ 可插拔调度策略
-        comm = PipelineComm(device=self.device, group=self.tp_state.pp_group)
+        comm = PipelineComm(
+            device=self.device,
+            fwd_group=self.tp_state.pp_group_fwd,
+            bwd_group=self.tp_state.pp_group_bwd,
+            max_inflight=int(self.config.graspoflow.pp_max_inflight_microbatches),
+            chunk_count=chunk_count,
+        )
         send_works: list[Any] = []
         records: list[dict[str, Any] | None] = [None for _ in range(chunk_count)]
         finite_flags = [True for _ in range(chunk_count)]
@@ -367,7 +373,7 @@ class _Qwen35SFTTrainingMethods:
                         if stage_input.grad is not None
                         else torch.zeros_like(stage_input)
                     )
-                    work = comm.send(
+                    work = comm.bwd_send(
                         grad.contiguous(),
                         dst=int(self.tp_state.prev_pp_rank or 0),
                         tag=chunk_count + chunk_idx,
@@ -378,7 +384,7 @@ class _Qwen35SFTTrainingMethods:
                 stage_output = record["stage_output"]
                 assert stage_output is not None
                 grad_output = torch.empty_like(stage_output)
-                recv_work = comm.recv(
+                recv_work = comm.bwd_recv(
                     grad_output, src=int(self.tp_state.next_pp_rank or 0), tag=chunk_count + chunk_idx
                 )
                 comm.wait(recv_work)  # 阻塞直到梯度到达（上游异步 send，不会死锁）
@@ -390,7 +396,7 @@ class _Qwen35SFTTrainingMethods:
                         if stage_input.grad is not None
                         else torch.zeros_like(stage_input)
                     )
-                    work = comm.send(
+                    work = comm.bwd_send(
                         grad.contiguous(),
                         dst=int(self.tp_state.prev_pp_rank or 0),
                         tag=chunk_count + chunk_idx,
@@ -468,7 +474,7 @@ class _Qwen35SFTTrainingMethods:
             "optimizer_step_sec": optimizer_step_sec,
             "micro_batch_count": micro_batch_count,
             "pp_size": self.pp_size,
-            "pp_schedule": sched_stats.get("pp_schedule", "gpipe"),
+            "pp_schedule": sched_stats.get("pp_schedule", "one_f_one_b"),
             "pipeline_stage_timing": _round_pipeline_stage_timing(stage_timing),
             "pipeline_fill_sec": fill_sec,
             "pipeline_steady_sec": steady_sec,
@@ -540,7 +546,7 @@ class _Qwen35SFTTrainingMethods:
             )
             recv_started_at = time.monotonic()
             assert comm is not None
-            recv_work = comm.recv(stage_input, src=int(self.tp_state.prev_pp_rank), tag=tag)
+            recv_work = comm.fwd_recv(stage_input, src=int(self.tp_state.prev_pp_rank), tag=tag)
             comm.wait(recv_work)  # 阻塞直到数据到达（上游用异步 send，不会死锁）
             _add_pipeline_stage_timing(timing, "pipeline_recv_sec", recv_started_at)
             stage_input.requires_grad_(True)
@@ -566,7 +572,7 @@ class _Qwen35SFTTrainingMethods:
                 f"send stage={self.pp_rank} tag={tag} tensor={tuple(output.shape)} "
                 f"send_seq={int(output.shape[1])} dst={self.tp_state.next_pp_rank}",
             )
-            send_work = comm.send(output.detach().contiguous(), dst=int(self.tp_state.next_pp_rank), tag=tag)
+            send_work = comm.fwd_send(output.detach().contiguous(), dst=int(self.tp_state.next_pp_rank), tag=tag)
             _add_pipeline_stage_timing(timing, "pipeline_send_sec", send_started_at)
         if timing is not None:
             timing["pipeline_forward_calls"] = int(timing.get("pipeline_forward_calls") or 0) + 1

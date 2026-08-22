@@ -572,12 +572,18 @@ is only a LoRA warm-start.
 - `pp_micro_batch_size`: PP micro-batch size (default 1).
 - `micro_batch_size`: rollout forward batch size (default 8). Replaces
   the old `gpu_memory_utilization`.
+- `pp_scheduler`: PP schedule strategy (`one_f_one_b`/`1f1b`, default).
+  `one_f_one_b` interleaves forward/backward for a smaller pipeline bubble; it relies on
+  the two-way process groups (`pp_group_fwd`/`pp_group_bwd`) so forward-hidden and
+  backward-grad do not share a single peer-pair FIFO. 1F1B is the only PP schedule (the
+  old bubble-heavy `gpipe` was removed).
+- `pp_max_inflight_microbatches`: bounded in-flight microbatch cap for PP backpressure.
+  Default `0` = auto (framework derives a bound); `>0` = explicit cap.
 - `use_kv_cache_for_rollout`: use KV cache only for rollout generation.
 - `empty_cache_after_rollout_split`, `empty_cache_before_train`: CUDA cache
   controls.
 - `raw_log_enabled`, `readable_log_enabled`: rollout/replay log toggles.
 - `synchronize_cuda_timing`: synchronize CUDA events for timing diagnostics.
-- `pp_max_inflight_microbatches`: 1F1B inflight cap for experiments.
 
 ### `export`
 

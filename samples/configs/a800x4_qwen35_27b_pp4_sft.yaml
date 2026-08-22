@@ -1,0 +1,67 @@
+# GRASPO SFT — 4×A800 Qwen3.5-27B PP=4（管线并行）
+#
+# 硬件：4× NVIDIA A800 80GB（GPU 0-3）
+# 模型：Qwen3.5-27B，多模态。27B bf16 权重约 54GB，单卡放不下，PP 分片到 4 卡有意义。
+# 实测（v0.27.6）：PP=4 smoke exit 0；1F1B 比 GPipe 快约 16%。
+#
+# PP=4 将模型层切到 4 个 stage（rank 0-3）。`pp_scheduler`：
+#   one_f_one_b（默认）：1F1B，forward/backward 交错，气泡更小（需双向 PP 进程组）
+# 注意：A800 PCIe 拓扑（跨 NVLink pair 走 PCIe）需 `NCCL_P2P_DISABLE=1`（run.sh 已内置）。
+# 4×A800 8 卡时 pp 可按 8 卡切到 8 个 stage；此处为 4 卡示例。
+
+train_method: sft
+backend: graspoflow
+
+model:
+  model_path: models/Qwen3.5-27B
+  trust_remote_code: true
+  torch_dtype: bfloat16
+  gradient_checkpointing: true
+  chat_template_kwargs:
+    enable_thinking: false
+
+data:
+  train_path: data/train.jsonl
+  max_prompt_length: 8192
+
+lora:
+  r: 128
+  alpha: 256
+  dropout: 0.05
+  target_modules: [language_all_linear, vision_common]
+
+graspoflow:
+  tp_size: 1
+  dp_size: 1
+  pp_size: 4
+  pp_micro_batch_size: 1
+  pp_scheduler: one_f_one_b      # 默认（PP 唯一调度）
+  pp_max_inflight_microbatches: 0   # 0=auto（框架推导），>0=显式背压窗口
+  micro_batch_size: 1
+  placement_strategy: auto
+  sequence_parallel: false
+  dp_replicate_lora: true
+
+training:
+  output_dir: ""
+  run_name: pp4-sft
+  seed: 43
+  max_epochs: 20
+  gradient_accumulation_micro_batches: 4
+  learning_rate: 5.0e-6
+  lr_scaling: linear
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  save_checkpoint_every_epoch: true
+  lr_scheduler:
+    type: cosine
+    warmup_steps: 50
+    min_lr_ratio: 0.1
+    decay_steps: 13600
+
+launch:
+  nproc_per_node: 4             # 从 dp×tp×pp 自动推导，此处显式示例
+
+reward:
+  kind: graspo
+  numeric_tolerance: 0.2

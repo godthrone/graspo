@@ -131,6 +131,15 @@ class _Qwen35LogprobsMethods:
         multimodal_inputs: dict[str, torch.Tensor] | None = None,
         timing: dict[str, float | int] | None = None,
     ) -> tuple[torch.Tensor | None, tuple[Any, ...] | None]:
+        # NOTE(债务/RL-PP 前置债): 本条路径与训练路径（training.py/training_sft.py 的
+        # _pipeline_forward_for_* 用 PipelineComm 双向通道 + 显式 tag + SP 分片）不一致：
+        #   - 用阻塞 dist.recv/dist.send 且无显式 tag（可能在 1F1B 交错下死锁）
+        #   - query_len = input_ids.shape[1]（完整序列长），SP 下上游发来的是分片，
+        #     形状对不上
+        #   - forward_stage 未传 apply_lm_head/all_gather_output，最终 stage 返回的是
+        #     SP 分片，后续对分片做 norm 不正确
+        # 该路径仅 RL（generation/logprobs），且多模态+PP>1 已被 preflight 拦截，当前
+        # 实际跑不到。待 RL-PP (Step 4) 对齐到 PipelineComm 双向通道/tag/SP 后再修。
         assert isinstance(self.model, Qwen35HybridTextModel)
         assert self.tp_state is not None
         batch = int(attention_mask.shape[0])

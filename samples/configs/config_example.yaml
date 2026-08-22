@@ -1,0 +1,116 @@
+# GRASPO 全字段配置模板（config_example.yaml）
+#
+# 本模板覆盖 GraspoConfig 的**全部**字段，含默认值与说明。复制后改几处即可用。
+# 注意：`extra="forbid"`，请勿添加未列出的字段；所有影响产物的参数必须在这里，
+# 不要用环境变量/CLI 覆盖（宪法 §7.1 / §10.1）。
+#
+# 启动：uv run graspo launch --config config_example.yaml
+
+# ── 训练方法 ────────────────────────────────────────────────────────────────
+train_method: graspo          # graspo=RL | sft=SFT
+backend: graspoflow           # 唯一后端（TP+DP+PP+SP+Checkpoint 五位一体）
+
+# ── 模型 ─────────────────────────────────────────────────────────────────────
+model:
+  model_path: models/Qwen3.5-9B
+  trust_remote_code: true
+  torch_dtype: bfloat16
+  attn_implementation: null      # null=默认；可选 "flash_attention_2" 等
+  gradient_checkpointing: true   # 用计算换显存（正交，不影响并行）
+  chat_template_kwargs:
+    enable_thinking: false
+
+# ── 数据 ─────────────────────────────────────────────────────────────────────
+data:
+  train_path: samples/data/sample.jsonl
+  max_prompt_length: 4096
+
+# ── LoRA ─────────────────────────────────────────────────────────────────────
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  adapter_path: null             # null=从头训练；否则指向已导出 LoRA
+  target_preset: language_safe
+  target_modules: null           # null=用 target_preset 推断
+  bias: none
+  task_type: CAUSAL_LM
+
+# ── 分布式（TP+DP+PP+SP 五位一体）─────────────────────────────────────────
+# world_size = dp_size × tp_size × pp_size
+graspoflow:
+  tp_size: 2
+  dp_size: 1
+  pp_size: 1
+  dp_replicate_lora: true         # DP rank 间复制 LoRA（默认），梯度 AVG
+  adapter: graspo.flow.adapters.models.qwen35_36.adapter:Qwen35Adapter
+  placement_strategy: auto        # auto | qwen36_pp8_lm_head_only_final | manual | qwen3_tp
+  layer_ranges: null              # 手动每层分布 [[start,end),...]；覆盖 placement_strategy
+  sequence_parallel: false        # TP>=2 时可选；沿序列维度分片激活
+  pp_micro_batch_size: 1          # PP 每个微批样本数
+  micro_batch_size: 1
+  use_kv_cache_for_rollout: true
+  empty_cache_after_rollout_split: false
+  empty_cache_before_train: false
+  raw_log_enabled: true
+  readable_log_enabled: true
+  synchronize_cuda_timing: false
+  pp_max_inflight_microbatches: 0   # PP 背压：0=auto（框架推导），>0=显式在途上限
+  pp_scheduler: one_f_one_b         # PP 唯一调度：1F1B（默认）| 1f1b
+
+# ── 训练超参 ────────────────────────────────────────────────────────────────
+training:
+  output_dir: ""                 # 空=自动生成 outputs/<run_name>_<timestamp>
+  run_name: ""
+  seed: 42
+  max_epochs: 20
+  rollout_group_size: 8
+  rollout_queue_batch_size: 8
+  gradient_accumulation_micro_batches: 4
+  rollout_max_retries: 5
+  learning_rate: 5.0e-6
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  policy_ratio_clip_eps: 0.2
+  max_new_tokens: 2048
+  temperature: 1.0
+  top_p: 1.0
+  save_steps: -1                 # -1=禁用阶段性保存
+  save_checkpoint_every_epoch: true
+  perfect_skip_reward_threshold: 1.0
+  reject_unparseable_groups: true
+  resume_from_checkpoint: null
+  lr_scheduler:
+    type: constant               # constant | cosine | linear
+    warmup_steps: 0
+    min_lr_ratio: 0.0
+    decay_steps: 0               # type!=constant 时必填 >0
+  lr_scaling: linear             # 梯度累积跨 DP 的 LR 缩放策略
+
+# ── 导出（graspo export 用）───────────────────────────────────────────────
+export:
+  checkpoint_path: ""
+  export_format: peft-adapter
+  export_output: ""
+  final_formats: []
+
+# ── 启动（单节点）───────────────────────────────────────────────────────────
+launch:
+  nproc_per_node: null           # 空=从 dp_size×tp_size×pp_size 自动推导
+  nnodes: 1
+  node_rank: 0
+  master_addr: 127.0.0.1
+  master_port: 29500
+  python: null
+
+# ── Reward（graspo/RL 用；SFT 忽略，为转 RL 预留）─────────────────────────
+reward:
+  kind: graspo
+  check_think: false
+  check_json_markdown: true
+  check_list_order: false
+  marker_reward_weight: 10.0
+  content_reward_weight: 100.0
+  anti_useless_str_reward_weight: 1.0
+  anti_useless_str_half_reward_len: 100
+  numeric_tolerance: 0.2

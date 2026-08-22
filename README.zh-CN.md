@@ -440,11 +440,12 @@ rollout 完成后，每条 completion 会被**逐字符标注**结构角色（`C
 - `sequence_parallel`：v1 必须保持 `false`。
 - `pp_micro_batch_size`：PP micro-batch size（默认 1）。
 - `micro_batch_size`：rollout forward batch size（默认 8），替代旧的 `gpu_memory_utilization`。
+- `pp_scheduler`：PP 调度策略（默认 `one_f_one_b`/`1f1b`）。`one_f_one_b` 交错 forward/backward，气泡更小，需要双向进程组（`pp_group_fwd`/`pp_group_bwd`），让 forward-hidden 与 backward-grad 不共用同一 peer-pair 单 FIFO。1F1B 是 PP 的唯一调度策略（旧的气泡最大的 `gpipe` 已删除）。
+- `pp_max_inflight_microbatches`：PP 背压的有界在途 microbatch 上限。默认 `0`=auto（框架推导），`>0`=显式上限。
 - `use_kv_cache_for_rollout`：KV cache 只用于 rollout generation。
 - `empty_cache_after_rollout_split`、`empty_cache_before_train`：CUDA cache 控制。
 - `raw_log_enabled`、`readable_log_enabled`：rollout/replay 日志开关。
 - `synchronize_cuda_timing`：是否同步 CUDA timing。
-- `pp_max_inflight_microbatches`：1F1B inflight 上限。
 
 ### `export`
 

@@ -65,7 +65,7 @@ flowchart TB
 
 **五维正交**：各维度独立配置、独立生效。`world_size = dp_size × tp_size × pp_size`。
 
-**PP 流水线架构**：PP 是 Flow 设施层中最复杂的形态，采用 **Flink 风格"调度与计算分离"**——调度策略（`parallel/scheduling/`，1F1B 默认、可插拔）决定 forward/backward 时序，异步 P2P 通信层（`parallel/pipeline_comm.py`，isend/irecv + CUDA stream 重叠）决定数据流动，二者与模型计算层解耦。未来 interleaved / ZeroBubble 作为新调度策略插上即可，无需重写通信或计算层。详见 [Flow 设施层](flow.md)。
+**PP 流水线架构**：PP 是 Flow 设施层中最复杂的形态，采用 **Flink 风格"调度与计算分离"**——调度策略（`parallel/scheduling/`，默认 1F1B（唯一调度））决定 forward/backward 时序，异步 P2P 通信层（`parallel/pipeline_comm.py`，双向进程组 + CUDA stream 重叠 + 有界背压）决定数据流动，二者与模型计算层解耦。未来 interleaved / ZeroBubble 作为新调度策略插上即可，无需重写通信或计算层。详见 [Flow 设施层](flow.md)。
 
 ## 三层架构
 
