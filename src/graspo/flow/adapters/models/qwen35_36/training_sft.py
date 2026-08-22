@@ -195,7 +195,15 @@ class _Qwen35SFTTrainingMethods:
 
         # DP gradient sync: AVG across DP replicas（不同数据）
         if self.tp_state is not None and self.tp_state.dp_group is not None:
+            print(
+                f"[TRACE rank={self.rank}] before _sync_dp_lora_grads",
+                file=sys.stderr, flush=True,
+            )
             _sync_dp_lora_grads(self.model, self.tp_state.dp_group)
+            print(
+                f"[TRACE rank={self.rank}] after _sync_dp_lora_grads",
+                file=sys.stderr, flush=True,
+            )
         # TP gradient sync: SUM across TP ranks（同数据，部分梯度）
         if _TENSOR_PARALLEL_GROUP is not None:
             _sync_nonsharded_lora_grads(self.model, _TENSOR_PARALLEL_GROUP)
