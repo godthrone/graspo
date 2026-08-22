@@ -68,9 +68,13 @@ class TestPreflightShortCircuit:
 
 
 class TestPpMultimodalGuard:
-    def test_media_data_with_pp_gt_1_raises(self) -> None:
-        """多模态 + PP>1 是未实现路径——启动即拒绝（不跑到 generate 才炸）。"""
-        with pytest.raises(RuntimeError, match="pp_size=2 is not supported"):
+    def test_media_data_with_pp_gt_1_passes_guard(self) -> None:
+        """PP>1 多模态生成已实现（R1）——预检不再拦截，继续走设施检查。
+
+        _FakeRuntime 无 adapter → 触发其固有断言（设施路径已到达），
+        而不是旧的"PP 未实现"防线错误。
+        """
+        with pytest.raises(AssertionError, match="should not be reached"):
             run_multimodal_preflight(
                 _FakeRuntime(),
                 [_Sample(media=[{"type": "image"}])],
