@@ -197,6 +197,11 @@ def _resolve_nproc_per_node(config: GraspoConfig, backend: str) -> int:
         nproc_per_node = expected_world // nnodes
     if nproc_per_node < 1:
         raise SystemExit("launch.nproc_per_node must be >= 1")
+    if nproc_per_node > 32:
+        raise SystemExit(
+            f"launch.nproc_per_node={nproc_per_node} exceeds sane maximum 32; "
+            "check your config or reduce dp_size/tp_size/pp_size"
+        )
     return nproc_per_node
 
 
@@ -211,7 +216,7 @@ def _validate_launch_world(
     if actual_world != expected_world:
         raise SystemExit(
             "graspoflow launch world size must match "
-            "tp_size × pp_size "
+            "dp_size × tp_size × pp_size "
             f"({actual_world} != {expected_world})"
         )
 

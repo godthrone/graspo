@@ -195,7 +195,7 @@ class GraspoFlowConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    tp_size: int = 2
+    tp_size: int = 1
     dp_size: int = 1
     pp_size: int = 1
     # 是否在 DP rank 间复制 LoRA 权重（默认 true）。true=各 rank 独立副本，

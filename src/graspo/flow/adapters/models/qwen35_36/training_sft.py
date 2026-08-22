@@ -168,19 +168,26 @@ class _Qwen35SFTTrainingMethods:
             backward_sec += time.monotonic() - backward_started_at
 
         # 所有 micro-batch 的 backward 完成后，统一 sync / clip / step
-        if valid_micro_batches > 0:
-            from graspo.flow.lora.lora_linear import (
-                _sync_dp_lora_grads,
-                _sync_nonsharded_lora_grads,
-            )
-            from graspo.flow.parallel.tensor_utils import _TENSOR_PARALLEL_GROUP
+        # 防呆：DP/TP 梯度同步必须所有 rank 参与（集体操作），即使本 rank
+        # 所有 micro-batch 都非有限（valid_micro_batches==0）也必须参加。
+        # 若本 rank 无有效梯度，先 zero-fill 再参与 all_reduce。
+        if valid_micro_batches == 0:
+            for param in self.model.parameters():
+                if param.requires_grad and param.grad is None:
+                    param.grad = torch.zeros_like(param)
+        from graspo.flow.lora.lora_linear import (
+            _sync_dp_lora_grads,
+            _sync_nonsharded_lora_grads,
+        )
+        from graspo.flow.parallel.tensor_utils import _TENSOR_PARALLEL_GROUP
 
-            # DP gradient sync: AVG across DP replicas（不同数据）
-            if self.tp_state is not None and self.tp_state.dp_group is not None:
-                _sync_dp_lora_grads(self.model, self.tp_state.dp_group)
-            # TP gradient sync: SUM across TP ranks（同数据，部分梯度）
-            if _TENSOR_PARALLEL_GROUP is not None:
-                _sync_nonsharded_lora_grads(self.model, _TENSOR_PARALLEL_GROUP)
+        # DP gradient sync: AVG across DP replicas（不同数据）
+        if self.tp_state is not None and self.tp_state.dp_group is not None:
+            _sync_dp_lora_grads(self.model, self.tp_state.dp_group)
+        # TP gradient sync: SUM across TP ranks（同数据，部分梯度）
+        if _TENSOR_PARALLEL_GROUP is not None:
+            _sync_nonsharded_lora_grads(self.model, _TENSOR_PARALLEL_GROUP)
+        if valid_micro_batches > 0:
             grad_norm = torch.nn.utils.clip_grad_norm_(
                 [param for param in self.model.parameters() if param.requires_grad],
                 max_grad_norm,
@@ -411,6 +418,17 @@ class _Qwen35SFTTrainingMethods:
         dist.broadcast_object_list(finite_payload, src=(self.pp_size - 1) * self.tp_size)
 
         if bool(finite_payload[0]):
+            # DP/TP gradient sync: 跨 rank 同步梯度后再 clip + step
+            from graspo.flow.lora.lora_linear import (
+                _sync_dp_lora_grads,
+                _sync_nonsharded_lora_grads,
+            )
+            from graspo.flow.parallel.tensor_utils import _TENSOR_PARALLEL_GROUP
+
+            if self.tp_state is not None and self.tp_state.dp_group is not None:
+                _sync_dp_lora_grads(self.model, self.tp_state.dp_group)
+            if _TENSOR_PARALLEL_GROUP is not None:
+                _sync_nonsharded_lora_grads(self.model, _TENSOR_PARALLEL_GROUP)
             # 所有 chunk 梯度已累加，统一 clip + step
             trainable_params = [p for p in self.model.parameters() if p.requires_grad]
             grad_norm = (
