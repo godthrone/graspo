@@ -630,16 +630,6 @@ class Qwen35HybridTextModel(QwenFamilyBase):
                 past_key_values=past_key_values,
                 query_len=query_len,
             )
-        # 诊断标记：仅在 generation（use_cache）时打印，定位 PP decode 卡点；定位后移除。
-        fs_dbg = bool(use_cache)
-        _r = os.environ.get("RANK", "0")
-        if fs_dbg:
-            torch.cuda.synchronize()
-            print(
-                f"[pp-fs rank={_r}] stage pos_ids_done use_cache={use_cache} "
-                f"query={query_len} layers={len(self.layers)}",
-                file=sys.stderr, flush=True,
-            )
         present_key_values: list[Any] = []
         for idx, layer in enumerate(self.layers):
             layer_past = past_key_values[idx] if past_key_values is not None else None
@@ -664,11 +654,6 @@ class Qwen35HybridTextModel(QwenFamilyBase):
                 )
             else:
                 hidden_states = layer(hidden_states, position_ids, attention_mask)
-            if fs_dbg:
-                torch.cuda.synchronize()
-                print(f"[pp-fs rank={_r}] layer {idx} done", file=sys.stderr, flush=True)
-        if fs_dbg:
-            print(f"[pp-fs rank={_r}] loop_done", file=sys.stderr, flush=True)
         if apply_lm_head:
             if self.norm is None or self.lm_head is None:
                 raise RuntimeError("Pipeline final stage requires norm and lm_head")
