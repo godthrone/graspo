@@ -93,6 +93,12 @@ class _Qwen35SFTTrainingMethods:
                 max_grad_norm=max_grad_norm,
             )
         self.model.train()
+        # DEBUG: trace entry
+        import sys
+        print(
+            f"[TRACE rank={self.rank}] train_batch_sft: ENTER batch_size={len(sft_batches)}",
+            file=sys.stderr, flush=True,
+        )
         if bool(self.config.graspoflow.empty_cache_before_train) and self.device.type == "cuda":
             torch.cuda.empty_cache()
             self._emit_rank_memory_event("train_before_empty_cache")
@@ -238,7 +244,18 @@ class _Qwen35SFTTrainingMethods:
             "micro_batch_count": micro_batch_count,
             "current_lr": self._current_lr(),
         }
+        # DEBUG: trace before all_gather
+        import sys
+        print(
+            f"[TRACE rank={self.rank}] train_batch_sft: before all_gather_object "
+            f"optimizer_steps={optimizer_steps}",
+            file=sys.stderr, flush=True,
+        )
         metrics = self._aggregate_rank_metrics(metrics)
+        print(
+            f"[TRACE rank={self.rank}] train_batch_sft: after all_gather_object",
+            file=sys.stderr, flush=True,
+        )
         self._emit_rank_memory_event("sft_train_batch_after", {"metrics": metrics})
         return metrics
 
