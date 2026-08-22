@@ -123,6 +123,12 @@ class _Qwen35SFTTrainingMethods:
         valid_micro_batches = 0  # 实际贡献梯度的 micro-batch 数
         for start in range(0, len(sft_batches), micro_batch_size):
             batch_items = sft_batches[start : start + micro_batch_size]
+            # DEBUG: trace micro-batch start
+            import sys
+            print(
+                f"[TRACE rank={self.rank}] micro_batch start={start}/{len(sft_batches)}",
+                file=sys.stderr, flush=True,
+            )
             micro_batch = collate_sft_batch(
                 batch_items,
                 self.device,
