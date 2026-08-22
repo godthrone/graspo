@@ -64,7 +64,12 @@ class GraspoFlowState:
             torch.cuda.set_device(device)
         if world_size > 1 and not dist.is_initialized():
             backend = "nccl" if torch.cuda.is_available() else "gloo"
-            dist.init_process_group(backend=backend)
+            if backend == "nccl":
+                # device_id=local_rank 让每个 rank 的 NCCL 通信组只绑定到其本地卡，
+                # 避免"每 rank 对全卡各建上下文"的浪费（内存/通信组开销）。
+                dist.init_process_group(backend=backend, device_id=local_rank)
+            else:
+                dist.init_process_group(backend=backend)
         expected_world_size = dp_size * tp_size * pp_size
         if world_size != expected_world_size:
             raise RuntimeError(
