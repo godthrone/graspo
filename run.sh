@@ -18,9 +18,9 @@
 #   6. 挂载目录从 YAML config 自动推导（model_path / train_path / output_dir 的父目录
 #      + config 文件所属目录），无需手动指定 --model-dir
 #   7. 参数全部走 CLI（--gpus / --image），不使用自定义环境变量
-#   8. 固定 `NCCL_P2P_DISABLE=1`：A800 PCIe 拓扑（GPU 以 NVLink pair 成对、跨 pair 走
-#      PCIe bridge）下，NCCL 的 P2P/CUMEM 路径在小张量 all-reduce 或跨 pair 的
-#      P2P send/recv 会 hang。禁用 P2P 走中间内存拷贝，性能影响 <0.1%（详见 README FAQ）。
+#   8. `NCCL_P2P_DISABLE` 按拓扑自动判定：A800 PCIe 拓扑（GPU 以 NVLink pair 成对、跨 pair 走
+#      PCIe bridge）下，NCCL 的 P2P/CUMEM 路径会 hang，需禁用 P2P 走中间内存拷贝；全 NVLink
+#      mesh（如 228 全 NV8）无需禁用，禁用反而引入非对称显存/效率损耗。详见 README FAQ。
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -188,6 +188,54 @@ else
 fi
 echo "容器时区: $TZ_VALUE"
 
+# ── 防呆 8: NCCL_P2P_DISABLE 按拓扑条件化 ──────────────────────────────────
+# 在 A800 PCIe 拓扑（GPU 以 NVLink pair 成对、跨 pair 走 PCIe bridge）下，
+# NCCL 的 P2P/CUMEM 路径在小张量 all-reduce 或跨 pair 的 P2P send/recv 会 hang，
+# 需禁用 P2P 走中间内存拷贝。但全 NVLink mesh（如 228 的 8×A800 全 NV8）无需禁用，
+# 禁用反而引入非对称显存/效率损耗（默认组缓冲集中到 device0、GPU0 先 OOM）。
+# 按选中 GPU 的拓扑自动判定：选中 GPU 间存在 PXB/PHB/SYS（跨 PCIe bridge / 跨
+# NUMA）路径 → 需禁用 P2P；全部为 NVLink（NV#）→ 保留 P2P（更快、显存对称）。
+_p2p_disable_required() {
+    local gpus="$1"
+    local topo row link i j gi gj
+    local -a garr
+    if ! command -v nvidia-smi >/dev/null 2>&1; then
+        echo "[run.sh] WARNING: nvidia-smi 不可用，回退为禁用 P2P（安全优先，避免 hang）"
+        return 0
+    fi
+    topo="$(nvidia-smi topo -m 2>/dev/null || true)"
+    if [ -z "$topo" ]; then
+        echo "[run.sh] WARNING: 无法读取 GPU 拓扑，回退为禁用 P2P（安全优先，避免 hang）"
+        return 0
+    fi
+    IFS=',' read -ra garr <<< "$gpus"
+    local n=${#garr[@]}
+    for ((i=0;i<n;i++)); do
+        gi="${garr[i]}"
+        for ((j=i+1;j<n;j++)); do
+            gj="${garr[j]}"
+            row="$(echo "$topo" | awk -v idx="GPU${gi}" '$1==idx {print; exit}')"
+            if [ -z "$row" ]; then
+                echo "[run.sh] WARNING: 找不到 GPU${gi} 拓扑行，回退为禁用 P2P"
+                return 0
+            fi
+            link="$(echo "$row" | awk -v col=$((gj+2)) '{print $col}')"
+            case "$link" in
+                *PXB*|*PHB*|*SYS*) return 0 ;;
+            esac
+        done
+    done
+    return 1
+}
+
+DOCKER_ENV_ARGS=(-e "TZ=${TZ_VALUE}")
+if _p2p_disable_required "$GPU_IDS"; then
+    DOCKER_ENV_ARGS+=(-e "NCCL_P2P_DISABLE=1")
+    echo "GPU 拓扑含跨 PCIe bridge/NUMA 路径，禁用 NCCL P2P（NCCL_P2P_DISABLE=1）"
+else
+    echo "GPU 拓扑全 NVLink，保留 NCCL P2P（不设 NCCL_P2P_DISABLE）"
+fi
+
 # ── 启动容器 ────────────────────────────────────────────────────────────────
 CONTAINER_NAME="graspo-$(basename "$CONFIG" .yaml)"
 EXTRA_ARGS=()
@@ -204,8 +252,7 @@ echo "  GPU:  $GPU_IDS"
 docker run -d --name "$CONTAINER_NAME" \
     --gpus "\"device=$GPU_IDS\"" \
     --ipc=host --shm-size=16g \
-    -e "TZ=${TZ_VALUE}" \
-    -e "NCCL_P2P_DISABLE=1" \
+    "${DOCKER_ENV_ARGS[@]}" \
     "${_mount_args[@]}" \
     "$IMAGE" \
     launch --config "$CONFIG_ABS" "${EXTRA_ARGS[@]}"
