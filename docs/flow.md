@@ -196,9 +196,13 @@ src/graspo/flow/parallel/
 
 ### Checkpoint 与 DP
 
-- **保存**：只 `dp_rank=0` 保存（所有 DP rank 权重相同，梯度已同步）
-- **加载**：`dp_rank=0` 加载文件 → broadcast 到同 DP group 的其他 rank
-- **RNG 状态**：每个 DP rank 的 RNG 状态不同（不同数据分片），resume 时需要各自恢复
+- **保存**：每个 DP rank 都写自己的 shard（权重梯度已同步；LoRA/optimizer/RNG/调度器
+  状态各 rank 独立保存）
+- **加载**：每个 DP rank 从共享文件系统读回自己的 shard（`map_location=self.device`），
+  不做 object-collective 广播——广播会保留 sender 的 CUDA device index 并让接收 rank
+  的 optimizer state 停在 cuda:0，造成显存不均与每 GPU 多进程
+- **RNG 状态**：每个 DP rank 的 RNG 状态不同（不同数据分片），resume 时各 rank 读回
+  自己的 shard 即可各自恢复
 
 ## 四层架构
 

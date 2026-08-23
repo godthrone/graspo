@@ -70,8 +70,22 @@ class GraspoFlowState:
             # 不均衡（GP0 多扛 ~2.7GB×N）。传 device_id=local_rank 让每个 rank 的
             # 默认组显式绑定到本卡。仅当 local_rank 在可见设备范围内才传（防
             # nproc_per_node > GPU 数时 device_id 越界、NCCL init 失败）。
-            if backend == "nccl" and local_rank < torch.cuda.device_count():
-                dist.init_process_group(backend=backend, device_id=torch.device(f"cuda:{local_rank}"))
+            if backend == "nccl":
+                if local_rank < torch.cuda.device_count():
+                    dist.init_process_group(
+                        backend=backend, device_id=torch.device(f"cuda:{local_rank}")
+                    )
+                else:
+                    # 防呆（§2.3 边界校验 / §3.4 不做静默坏退路）：请求的 rank 数超过
+                    # 可见 GPU 数时，绝不静默回退到不带 device_id 的初始化——那会让
+                    # NCCL 默认组缓冲集中到 cuda:0（显存不均）并让多个 rank 挤同一卡
+                    # （每 GPU 多进程）。这是配置/资源边界错误，应在边界拒绝而非带病运行。
+                    raise RuntimeError(
+                        f"local_rank={local_rank} exceeds visible GPU count "
+                        f"{torch.cuda.device_count()}; launcher requested more ranks "
+                        "than GPUs. Set launch.nproc_per_node (or dp_size*tp_size*pp_size) "
+                        "to the number of GPUs exposed via --gpus, then restart."
+                    )
             else:
                 dist.init_process_group(backend=backend)
         expected_world_size = dp_size * tp_size * pp_size

@@ -220,6 +220,17 @@ def _validate_launch_world(
             "dp_size × tp_size × pp_size "
             f"({actual_world} != {expected_world})"
         )
+    # 防呆（§2.3 边界校验即防呆）：单节点内每节点进程数不能超过可见 GPU 数，否则
+    # 多个 rank 挤同一卡并让 NCCL 默认组缓冲集中到 cuda:0——正是"每 GPU 多进程 +
+    # 显存不均"的配置缺口（工作日志 P1）。
+    import torch
+
+    n_gpus = int(torch.cuda.device_count())
+    if n_gpus >= 1 and nproc_per_node > n_gpus:
+        raise SystemExit(
+            f"launch.nproc_per_node={nproc_per_node} exceeds visible GPU count "
+            f"{n_gpus}; reduce dp_size*tp_size*pp_size or expose more GPUs via --gpus."
+        )
 
 
 def _graspoflow_world_size(config: GraspoConfig) -> int:

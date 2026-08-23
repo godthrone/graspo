@@ -238,6 +238,16 @@ fi
 
 # ── 启动容器 ────────────────────────────────────────────────────────────────
 CONTAINER_NAME="graspo-$(basename "$CONFIG" .yaml)"
+# 防呆（§2.4 操作防呆 / §2.5 运维边界）：同名容器若已存在（上次训练未清理），旧
+# worker 可能仍占用 GPU，重启会叠出"每 GPU 多进程 + 显存不均"。这里不自动删除，
+# 而是列出目标并明确提示，由用户确认后手动清理，避免误删。
+if docker ps -a --format '{{.Names}}' | grep -qx "$CONTAINER_NAME"; then
+    echo "错误：容器 $CONTAINER_NAME 已存在（可能是上次训练未清理）。"
+    echo "  旧训练进程可能仍占用 GPU，将导致多进程叠加与显存不均。"
+    echo "  请先确认该训练已停止，然后删除旧容器再重试："
+    echo "      docker rm -f $CONTAINER_NAME"
+    exit 1
+fi
 EXTRA_ARGS=()
 if [ "$SMOKE" = 1 ]; then
     EXTRA_ARGS+=(--smoke)

@@ -82,14 +82,15 @@ def apply_config_optimizer_hyperparams(
 
 def _normalize_optimizer_state_to_params(optimizer: Any) -> list[str]:
     """Relocate/cast every optimizer state tensor onto its owning parameter's
-    device and dtype.
+    device and dtype (defensive normalization).
 
-    DP resume broadcasts rank-0's checkpoint via ``broadcast_object_list`` (see
-    ``load_checkpoint``).  Broadcasting preserves the *sender's* CUDA device index,
-    so receiving ranks hold optimizer state (``exp_avg`` / ``exp_avg_sq``) on ``cuda:0``
-    while their parameters live on ``cuda:{local_rank}``.  ``optimizer.load_state_dict``
-    does not relocate those tensors, and ``AdamW.step`` then fails with "Tensors of the
-    same index must be on the same device and the same dtype".  This helper moves every
+    Each DP rank now loads its own checkpoint shard with ``map_location=self.device``,
+    so optimizer state should already live on the local device.  Keep this as a
+    boundary guard (§2.3): ``optimizer.load_state_dict`` relocation behavior has
+    changed across PyTorch versions (modern torch moves ``exp_avg`` / ``exp_avg_sq``
+    to the parameter device, but not always a non-fused ``step``), and any residual
+    device/dtype mismatch would make ``AdamW.step`` fail with "Tensors of the same
+    index must be on the same device and the same dtype".  This helper moves every
     state tensor to the parameter's device and casts it to the parameter's dtype
     (``step`` stays float32, the optimizer convention).  Returns the list of tensor keys
     normalized so callers can emit a transparent WARNING (§3.2 透明退路).
@@ -408,12 +409,15 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
             "trainer_state": trainer_state,
             "config": self.config.model_dump(),
         }
-        # DP: 所有 DP rank 权重相同（梯度已同步），只 dp_rank=0 保存文件
-        if self.dp_rank == 0:
-            torch.save(
-                payload,
-                output / f"rank_{self.rank:05d}_tp_{self.tp_rank:02d}_pp_{self.pp_rank:02d}.pt",
-            )
+        # DP: 每个 DP rank 都写自己的 shard（权重梯度已同步，LoRA/optimizer/RNG/调度器
+        # 状态各 rank 独立保存）。resume 时各 rank 从共享文件系统读回自己的 shard，
+        # 不再依赖 object-collective 广播——那会保留 sender 的 CUDA device index，
+        # 把整套 optimizer state 反序列化到 cuda:0，造成 GPU0 显存偏高 + 每 rank 在
+        # 非本卡上建 CUDA context（恰好是本 bug 的两个症状）。
+        torch.save(
+            payload,
+            output / f"rank_{self.rank:05d}_tp_{self.tp_rank:02d}_pp_{self.pp_rank:02d}.pt",
+        )
         if dist.is_available() and dist.is_initialized():
             dist.barrier()
         self._emit_rank_memory_event("checkpoint_after", {"checkpoint_dir": str(output)})
@@ -447,27 +451,23 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
         if self.model is None:
             raise RuntimeError(f"{type(self).__name__} is not set up; call setup() first")
         checkpoint_dir = Path(path)
-        # DP: dp_rank=0 加载文件，其他 rank 从同组 dp_rank=0 接收广播
+        # DP: 每个 DP rank 直接从共享文件系统读自己的 shard。每个 rank 保存时都把
+        # LoRA/optimizer/RNG/调度器状态放在自己的 device 上，load 用 map_location=
+        # self.device 即可正确恢复。之前用 broadcast_object_list 把 rank0 的 CUDA
+        # payload 广播到同组 rank，会保留 sender 的 device index，让所有接收 rank 的
+        # optimizer state 停留在 cuda:0——这正是“显存不均 + 每 GPU 多进程”的根因。
         rank_path = (
             checkpoint_dir / f"rank_{self.rank:05d}_tp_{self.tp_rank:02d}_pp_{self.pp_rank:02d}.pt"
         )
-        if self.dp_rank == 0:
-            if not rank_path.exists():
-                raise FileNotFoundError(
-                    "Missing current GRASPO checkpoint shard "
-                    f"for rank={self.rank} tp_rank={self.tp_rank} pp_rank={self.pp_rank}: {rank_path}"
-                )
-            try:
-                payload = torch.load(rank_path, map_location=self.device, weights_only=False)
-            except TypeError:
-                payload = torch.load(rank_path, map_location=self.device)
-        else:
-            payload = None
-        # DP: dp_rank=0 广播 payload 到同 DP group 的其他 rank
-        if self.dp_size > 1 and self.tp_state is not None and self.tp_state.dp_group is not None:
-            payload_list: list[Any] = [payload]
-            dist.broadcast_object_list(payload_list, src=0, group=self.tp_state.dp_group)
-            payload = payload_list[0]
+        if not rank_path.exists():
+            raise FileNotFoundError(
+                "Missing current GRASPO checkpoint shard "
+                f"for rank={self.rank} tp_rank={self.tp_rank} pp_rank={self.pp_rank}: {rank_path}"
+            )
+        try:
+            payload = torch.load(rank_path, map_location=self.device, weights_only=False)
+        except TypeError:
+            payload = torch.load(rank_path, map_location=self.device)
         if payload is None:
             raise RuntimeError(
                 f"Failed to load checkpoint for rank={self.rank} "
@@ -506,10 +506,9 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
         normalized_optimizer_state: list[str] = []
         if self.optimizer is not None and optimizer_state is not None:
             self.optimizer.load_state_dict(optimizer_state)
-            # 防呆：DP resume 经 broadcast_object_list 广播 rank0 的 checkpoint，
-            # 保持 sender 的 CUDA device index，接收 rank 的 optimizer state 停留在
-            # cuda:0 而参数在 cuda:local_rank，导致 optimizer.step 报 device/dtype
-            # 不一致。加载后统一迁回参数 device/dtype（§2.3 边界校验即防呆）。
+            # 防呆（§2.3 边界校验即防呆）：即便每个 rank 用 map_location=self.device
+            # 读自己的 shard，仍可能因 torch 版本差异或旧格式残留 device/dtype 不一致，
+            # 统一迁回参数 device/dtype，避免 optimizer.step 报 device/dtype 不一致。
             normalized_optimizer_state = _normalize_optimizer_state_to_params(self.optimizer)
             if normalized_optimizer_state:
                 logger.warning(
@@ -560,7 +559,18 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
                 "overridden_hyperparams": overridden,
             },
         )
-        return payload.get("trainer_state")
+        trainer_state = payload.get("trainer_state")
+        # 释放 checkpoint 载荷里的大对象引用：lora/optimizer/scheduler 状态已在
+        # load_state_dict 时拷贝到模型/优化器（这里是载荷里的原始 CUDA tensor，不再需要）。
+        # 随后 empty_cache 把缓存分配器保持的 reserved 高水位归还驱动，消除“resume
+        # 广播缓冲区未释放”导致的显存统计偏高。checkpoint 加载是一次性启动事件，
+        # 此处调用一次 empty_cache 成本可忽略（§3.1 同效退路）。
+        payload.pop("optimizer_state_dict", None)
+        payload.pop("lora_state_dict", None)
+        payload.pop("scheduler_state_dict", None)
+        if self.device.type == "cuda":
+            torch.cuda.empty_cache()
+        return trainer_state
 
     # ── Training helpers ────────────────────────────────────────────────────
 

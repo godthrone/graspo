@@ -372,6 +372,9 @@ def _load_native_payloads(
                 "or export from a newer final checkpoint"
             )
         payloads.append(payload)
+    # DP：每个 DP rank 现在都写了自己的 shard（权重相同）。导出/合并只需每个 tp/pp
+    # 的 dp_rank=0 分片；DP>0 的重复分片若进入合并逻辑会被误当成 TP 分片叠加。
+    payloads = [p for p in payloads if int(p.get("dp_rank", 0)) == 0]
     return payloads
 
 

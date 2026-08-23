@@ -1,8 +1,9 @@
-"""Tests for ``_normalize_optimizer_state_to_params`` — DP resume 的状态 device/dtype 归一。
+"""Tests for ``_normalize_optimizer_state_to_params`` — 状态 device/dtype 防御性归一。
 
-回归：DP>1 时 checkpoint 由 dp_rank=0 经 ``broadcast_object_list`` 广播，接收 rank
-拿到的是 sender device（cuda:0）上的 optimizer state；``optimizer.load_state_dict``
-不会把它们迁到本 rank device，``AdamW.step`` 随后抛
+每个 DP rank 现在 load 自己的 shard（map_location=self.device），optimizer state 应已在
+本地 device。保留该归一化作为边界守卫（§2.3）：不同 torch 版本的
+``optimizer.load_state_dict`` 搬迁行为不一致（现代 torch 会迁 exp_avg/exp_avg_sq，
+但非 fused 的 step 不一定），任何残留的 device/dtype 不一致都会让 ``AdamW.step`` 抛
 "Tensors of the same index must be on the same device and the same dtype"。
 修复：加载后把所有 state tensor 统一迁回参数所在 device/dtype（``step`` 保持 float32）。
 """
