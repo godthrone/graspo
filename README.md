@@ -799,8 +799,12 @@ bash run.sh samples/configs/sft_example.yaml --smoke
   DP training.  TP training is unaffected because it uses large tensors and
   bypasses the problematic P2P path.  **Fix**: set
   `NCCL_P2P_DISABLE=1` in the container environment
-  (``docker run -e NCCL_P2P_DISABLE=1 ...``).  The performance impact is
-  negligible (<0.1% of total training time).
+  (``docker run -e NCCL_P2P_DISABLE=1 ...``).  `run.sh` now does this
+  **automatically by topology**: if any selected GPU pair is linked via
+  PXB/PHB/SYS it disables P2P; on a full-NVLink mesh (all `NV#`) it keeps P2P
+  (faster and avoids the asymmetric-VRAM device-0 heap).  Manually override
+  with `-e NCCL_P2P_DISABLE=0/1` if needed.  The performance impact of
+  disabling P2P is negligible (<0.1% of total training time).
 
 ## License
 
