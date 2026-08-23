@@ -4,6 +4,12 @@
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
+# 代理仅构建时需要（运行时不需要，不写入 ENV）：离线节点（如 228）uv 需经
+# 宿主机代理访问 (127.0.0.1:19080) 才能完成 editable reinstall。构建时用
+# --network=host --build-arg HTTP_PROXY=... --build-arg HTTPS_PROXY=... 传入。
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+
 WORKDIR /workspace/graspo
 COPY src ./src
 COPY samples ./samples
@@ -29,7 +35,9 @@ RUN rm -rf src/graspo/backends \
     && rm -f src/graspo/core/sft_loss.py \
     && rm -f src/graspo/core/token_reward.py
 
-# 重新 install -e（源码变更后 editable install 需要刷新）
-RUN uv pip install --system --break-system-packages --no-deps -e .
+# 重新 install -e（源码变更后 editable install 需要刷新；离线节点经代理）
+RUN export http_proxy="${HTTP_PROXY:-}" https_proxy="${HTTPS_PROXY:-}" \
+    HTTP_PROXY="${HTTP_PROXY:-}" HTTPS_PROXY="${HTTPS_PROXY:-}" \
+    && uv pip install --system --break-system-packages --no-deps -e .
 
 CMD ["graspo", "--help"]
