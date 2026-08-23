@@ -7,7 +7,8 @@ GRASPO 是一个 GRPO 风格的 LoRA 强化学习训练器，面向结构化输�
 | 特性 | 说明 |
 |------|------|
 | **字符级标注驱动 token 级 reward** | 逐字符比对结构模板，通过 offset_mapping 映射到 token——天然 tokenizer 无关。仅首个不匹配字符受罚，其后排除在训练之外 |
-| **结构化输出专用 reward** | 递归 dict 比较，双分数（数值精度用于梯度，结构正确用于门控），多目标最优匹配 |
+| **结构化输出专用 reward + 可扩展** | 递归 dict 比较，双分数（数值精度用于梯度，结构正确用于门控），多目标最优匹配；reward 通过 `GraspoReward` 类按 value 打分 |
+| **标注与 reward 分层（核心创新）** | 字符级标注模块对每个字符/每个 token 赋 credit（S/V/T/W/E/D）；reward 只对 value 打分——单个 JSON value / tool-call 参数，或把整段 JSON 序列视作一个 value 赋分。**扩展 reward 无需改标注模块与 token 级梯度训练** |
 | **组决策体系与防御纵深** | 六路分类（perfect_skip/trainable/invalid/retry/no_preference_gap）在训练边界拦截噪声，质量加权 advantage 防止收敛到"差组里最好" |
 | **RL+SFT 同构** | 同一套 JSONL 数据格式、同一套模型加载、同一套 checkpoint 格式。SFT 教格式，RL 优质量 |
 | **ripple/flow 分层** | 算法层（ripple，涟漪）纯计算，命名来自 token 间信用分配的涟漪效应；设施层（flow，水流）负责分布式执行，命名来自数据在流水线中的持续流动 |

@@ -9,17 +9,23 @@ train 9B-class models on a single 80 GB GPU.
 
 **Three layers of structured-output RL, from token signal to group decision:**
 
-- **Token-level reward via character annotation.** Completion text is annotated
-  character-by-character against a structural template, then mapped to tokens
-  through offset_mapping — naturally tokenizer-agnostic.  Only the first
-  mismatched character is penalized; everything after it is excluded from training.
-- **Structured-output reward.**  Recursive dict comparison with dual scoring
-  (numeric accuracy for gradient signal, structural correctness for gating),
-  multi-target best-match selection, and numeric tolerance.
-- **Group decision with defense-in-depth.**  Six-way classification
+- **Token-level reward via character annotation (the core innovation).** Completion
+  text is annotated character-by-character against a structural template, then
+  mapped to tokens through offset_mapping — naturally tokenizer-agnostic. The
+  annotation module gives each character/token a credit role (S/V/T/W/E/D), so it
+  has strong format recognition. Only the first mismatched character is penalized;
+  everything after it is excluded from training.
+- **Structured-output reward, decoupled and extensible.** Reward scores a value (a
+  JSON field / tool-call argument) or the whole JSON sequence treated as one value,
+  via the `GraspoReward` class + `REWARD_REGISTRY`. Recursive dict comparison with
+  dual scoring (numeric accuracy for gradient signal, structural correctness for
+  gating), multi-target best-match, and numeric tolerance. To add more scoring
+  abilities you extend the reward module only — the annotation module and
+  token-level gradient training stay unchanged.
+- **Group decision with defense-in-depth.** Six-way classification
   (perfect_skip / trainable / invalid / retry / no_preference_gap) filters
-  noisy groups before they enter training.  Quality-weighted advantage
-  prevents the model from converging to "best in a bad group."
+  noisy groups before they enter training. Token-level advantage drives only the
+  trainable tokens, so the model is not pushed to be "best in a bad group."
 
 **Infrastructure designed for production:**
 

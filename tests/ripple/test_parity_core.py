@@ -3,7 +3,7 @@
 from graspo.ripple.parity import (
     GroupDecision,
     classify_group,
-    group_advantages,
+    has_reward_variance,
     is_invalid_group,
     is_uniform_partial_content,
     lower_median,
@@ -146,11 +146,28 @@ def test_perfect_priority_applies_before_max_correct_after_retry():
     assert max_correct.should_train
 
 
-def test_group_advantages_matches_original_sample_std_formula():
-    actual = group_advantages([0.0, 1.0])
+def test_has_reward_variance_true_when_values_differ():
+    assert has_reward_variance([0.0, 0.5, 1.0]) is True
 
-    assert round(actual[0], 6) == -0.707107
-    assert round(actual[1], 6) == 0.707107
+
+def test_has_reward_variance_false_when_all_same():
+    assert has_reward_variance([0.5, 0.5, 0.5]) is False
+
+
+def test_has_reward_variance_single_value():
+    assert has_reward_variance([1.0]) is False
+
+
+def test_has_reward_variance_empty():
+    assert has_reward_variance([]) is False
+
+
+def test_has_reward_variance_tiny_difference_below_eps():
+    assert has_reward_variance([0.5, 0.5 + 1e-14]) is False
+
+
+def test_has_reward_variance_tiny_difference_above_eps():
+    assert has_reward_variance([0.5, 0.5 + 1e-10]) is True
 
 
 def test_reject_unparseable_groups_retries_before_exhausted():

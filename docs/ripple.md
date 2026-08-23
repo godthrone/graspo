@@ -31,6 +31,14 @@ flowchart TD
 
 奖励是 ripple 的核心输出。每条 completion 得到一个结构化的奖励分数，由三个独立维度组成。奖励由 **`GraspoReward` 类**统一实现，并通过 `REWARD_REGISTRY` 注册/扩展——当前内置 `graspo` 一种，未来可注册新的 reward 类而无需改动调用端（算法层插件化）：
 
+### 标注与 reward 的分工（核心创新）
+
+GRASPO 的核心是把"**对格式的强识别能力**"和"**对 value 的自由定义 reward 能力**"分开：
+
+- 底层是 **`annotation/` 字符级标注模块**（核心创新）：对整条 completion 的**每个字符**打角色标注（`CharTag`：S/V/T/W/E/D），据此赋予**每个 token 级 advantage**。它天然 tokenizer 无关，对格式本身有极强的结构化判断能力（逐字符比对结构模板）。
+- reward 只是**给标注中的某个 value 赋一个分**：既可以是给某个字段（JSON 的 value / tool-call 参数）赋值打分，也可以是**把整段 JSON 序列视作一个 value 赋一个分**（因为 JSON 整体是一个 value）。这样保留了用户**自由定义 value reward** 的能力。
+- **扩展性**：未来要增加更多打分能力（某类字段的领域规则、质量评分等），**只需要改 reward 模块**，底层的标注模块与 token 级梯度训练**都不用动**。
+
 ### 结构性标记奖励
 
 检查 completion 是否包含预期的格式标记（JSON fence、thinking 标签、tool-call 结构）。格式正确但内容错误的 completion 也会得到基础分。

@@ -8,13 +8,18 @@ GRASPO 是一个面向结构化输出任务的 GRPO-style 强化学习训练器�
 
 **结构化输出 RL 的三层防御纵深，从 token 信号到组决策：**
 
-- **字符级标注驱动 token 级 reward。** 对 completion 文本逐字符比对结构模板进行标注，
-  通过 offset_mapping 映射到 token——天然 tokenizer 无关。仅首个不匹配字符受罚，
+- **字符级标注驱动 token 级 reward（核心创新）。** 对 completion 文本逐字符比对结构模板，
+  通过 offset_mapping 映射到 token——天然 tokenizer 无关。标注模块给每个字符/token 赋予
+  credit 角色（S/V/T/W/E/D），对格式本身有极强的结构化识别能力。仅首个不匹配字符受罚，
   其后所有字符排除在训练之外。
-- **结构化输出专用 reward。** 递归 dict 比较，双分数（数值精度用于梯度信号，结构正确
-  用于门控），多目标最优匹配，数值容差。
+- **结构化输出 reward，分离且可扩展。** reward 只对**某个 value 打分**（单个 JSON value /
+  tool-call 参数），或**把整段 JSON 序列视作一个 value 赋分**，通过 `GraspoReward` 类 +
+  `REWARD_REGISTRY` 注册实现。递归 dict 比较，双分数（数值精度用于梯度，结构正确用于门控），
+  多目标最优匹配，数值容差。要扩展更多打分能力，**只需改 reward 模块**——底层的标注模块与
+  token 级梯度训练都不用动。
 - **组决策体系与防御纵深。** 六路分类（perfect_skip / trainable / invalid / retry /
-  no_preference_gap）在训练边界拦截噪声。质量加权 advantage 防止模型收敛到"差组里最好"。
+  no_preference_gap）在训练边界拦截噪声。token 级 advantage 只驱动可训练 token，避免模型
+  收敛到"差组里最好"。
 
 **面向生产的基础设施：**
 

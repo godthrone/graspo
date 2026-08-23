@@ -1,4 +1,11 @@
-"""公式 A：质量加权 z-score advantage、组分类决策（GRASPO 算法核心）。"""
+"""组分类决策与 reward 工具函数（GRASPO 算法核心，纯 CPU、零 torch）。
+
+注意：历史上曾有"公式 A 质量加权 z-score advantage"（整个 completion 给一个
+标量 advantage），已被 v0.20.0 起的**字符级标注驱动的 token 级 advantage**
+（`ripple.annotation.advantages.compute_group_advantages`）取代——它只能给整条
+completion 一个标量推力，无法像 token 级那样在错误的 token 上给负梯度。该旧函数
+已移除，本模块只保留组分类决策与 reward 工具函数。
+"""
 
 from collections.abc import Sequence
 from enum import StrEnum
@@ -48,49 +55,6 @@ def lower_median(values: Sequence[float]) -> float:
     if not values:
         return 0.0
     return sorted(float(value) for value in values)[(len(values) - 1) // 2]
-
-
-def group_advantages(
-    rewards: Sequence[float],
-    eps: float = 1e-8,
-    quality_power: float = 2.0,
-) -> list[float]:
-    """质量加权 z-score：advantage_i = z_i × max(rewards)^quality_power。
-
-    相对于纯 z-score 的改进（公式 A，v0.14.x）：
-
-    1. **绝对质量进入梯度**。纯 z-score 中 ``[a, b×7]`` 组的最佳 advantage
-       恒等于 ``7/√8 = 2.4749``，与 a、b 无关——考 100 分（reward=1.0）
-       和考 43 分（reward=0.43）的组被授予完全相同的推力，模型学到
-       "做组内最好"而非"做绝对正确"，最终崩向 not_correct 盆地。
-       乘以 ``max^p`` 后，组的最佳推力随其最高 reward 单调缩放：
-       max=1.0 → 满推，max=0.43 → 0.43²≈0.185 弱推。
-
-    2. **reward 的 >1 额外奖励被保留**。reward 归一化设计下 1.0 =
-       "全部正确"，>1 部分（如 anti-useless bonus，最多到 ~1.0048）
-       是刻意留下的精细化激励。``max^p`` 不 clamp：全对+简洁的组
-       （max=1.0048）获得 1.0096 倍推力，比全对+啰嗦的组（max=1.0）
-       多约 1%——与 reward 设计语义自洽。无需 τ/clamp 的原因：
-       reward 恒为 ``raw_score/max_score``，天然有界 [0, ~1.0048]。
-
-    3. **低方差组放大被顺带压制**。rewards 挤在一起（std≈0.003）时
-       纯 z-score 的 advantage 可达 ±10~100，劫持整批梯度尺度；
-       这类组的 max 通常不高，``max^p`` 将其整体压回合理范围。
-
-    性质：quality 是组内共同乘数（正数），组内相对顺序与正负号不变，
-    零和性质保持（``Σz_i·g = g·Σz_i = 0``），loss 无组级偏置。
-    """
-    if not rewards:
-        return []
-    values = [float(reward) for reward in rewards]
-    mean = sum(values) / len(values)
-    if len(values) <= 1:
-        std = 0.0
-    else:
-        variance = sum((reward - mean) ** 2 for reward in values) / (len(values) - 1)
-        std = variance**0.5
-    quality = max(values) ** quality_power
-    return [((reward - mean) / (std + eps)) * quality for reward in values]
 
 
 def has_reward_variance(rewards: Sequence[float], eps: float = 1e-12) -> bool:
