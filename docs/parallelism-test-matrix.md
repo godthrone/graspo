@@ -52,14 +52,18 @@ bash run.sh samples/configs/<该组合>.yaml --gpus 0,1,2,3 --smoke   # 环境�
 bash run.sh samples/configs/<该组合>.yaml --gpus 0,1,2,3            # 短程记录指标
 ```
 
-每格需记录：首步 loss（与单卡基线对比）、`batch_sec`、逐卡峰值显存（`rank_metrics.rank_*.jsonl`）、是否 `final/` 落盘、是否无 hang/OOM。多卡组合还应额外验证数值等价性（见 §5 判据）。
+每格需记录：**同 epoch 下与单卡基线的 loss / reward / 测试分数**、`batch_sec`、逐卡峰值显存（`rank_metrics.rank_*.jsonl`）、是否 `final/` 落盘、是否无 hang/OOM。多卡组合还应做能力对齐（见 §5 判据）。
+
+### 测试分层
+- **pytest 单测/模块级**：模块正确性（算法、token 级梯度正确性、AST 边界、插件扩展、config、reward/数据契约），纯 CPU，无 GPU 开发机可跑。
+- **e2e（本矩阵，Docker 镜像跑）**：系统级能力——五位一体全组合、能力对齐、逐卡显存/负载、Docker 开箱。两层都过才证明框架扎实。
 
 ## 5. 通过判据（证明"可用"≠"能跑"）
 
 **单纯的 `exit 0` 只证明管道连接，不能证明正确性。** 每格必须满足：
 
 1. **单卡基线存在**：先跑 `dp=1,tp=1,pp=1,sp=off`（可用 `samples/configs/sft_example.yaml` / `rl_example.yaml`）作为参照。
-2. **数值等价**：同 seed + 同数据下，跨并行配置的首步 loss / per-token log-prob 相对单卡基线在容差内（bf16 单样本 ~1–2%），且 `_reduce_scatter_sp`/`_all_gather_sp` 往返能复原张量（TP≥2 时）。
+2. **能力对齐（与单卡基线）**：同 seed + 同数据、同一 epoch 下，跨并行配置的 **loss / reward / 测试分数（能力）** 与单卡基线对齐（在容差内）。由于随机性，**不要求权重或逐 token logit 逐位一致**——能力一致即可，权重有差异可接受。另：`_reduce_scatter_sp`/`_all_gather_sp` 往返能复原张量（TP≥2 时）。
 3. **逐卡显存/负载均衡**：`rank_metrics.rank_*.jsonl` 文件数 == `world_size`（**一进程/卡**）；每 rank 绑定不同 `device_id`；`max(peak_memory) − min(peak_memory) < 5% of mean`。
 4. **无 hang / OOM / NaN**：训练正常推进，`error.log` 为空或仅有预期告警。
 5. **可复现**：同 config + seed 两次运行、落盘 loss 可比（排除不可控随机性），并写出 `config.yaml` 快照。
@@ -78,10 +82,12 @@ bash run.sh samples/configs/<该组合>.yaml --gpus 0,1,2,3            # 短程�
 
 ## 7. 结果记录（随跑随更）
 
-| 日期 | #组合 | 模型 | 模式 | 结果 | 首步loss | batch_sec | 峰值显存/rank(GiB) | 备注 |
+| 日期 | #组合 | 模型 | 模式 | 结果 | loss / reward / 测试分数（vs 单卡基线） | batch_sec | 峰值显存/rank(GiB) | 备注 |
 |---|---|---|---|---|---|---|---|---|
-| 2026-08-23 | 1–9 | 9B | SFT | ✅ | — | — | ~40（DP=4 已实测） | 9/9 全过 |
-| 2026-08-23 | 1–9 | 27B | SFT | ✅ | — | — | — | 9/9 全过 |
-| 待测 | 1–9 | 9B / 27B | RL | — | — | — | — | 需补齐 RL 全模式实测（含 PP 复测） |
+| 2026-08-23 | 1–9 | 9B | SFT | ✅ | 待补 | — | ~40（DP=4 已实测） | 9/9 全过 |
+| 2026-08-23 | 1–9 | 27B | SFT | ✅ | 待补 | — | — | 9/9 全过 |
+| 待测 | 1–9 | 9B / 27B | RL | — | 待补 | — | — | 需补齐 RL 全模式实测（含 PP 复测） |
+
+> 记录方法：每格先跑单卡基线（`sft_example.yaml` / `rl_example.yaml`）得到该 epoch 的 loss/reward/测试分数，再跑相应并行组合，把**同一 epoch** 的三项指标填入"vs 单卡基线"列，用于能力对齐判定。测试分数可用 `graspo evaluate-checkpoint` 在 checkpoint 上评测得到。
 
 > 本文件为对外/长期权威版，不引用内部 run log（含内部节点/IP/路径的实测明细仅在内部维护，不入库）。
