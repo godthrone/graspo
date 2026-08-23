@@ -23,16 +23,21 @@ train 9B-class models on a single 80 GB GPU.
 
 **Infrastructure designed for production:**
 
-- **Adaptive parallelism.** Give GRASPO GPUs and a training task — it
-  automatically selects the optimal TP+DP+PP+SP+Checkpoint combination.
-  You don't need to understand NCCL topology, PCIe vs NVLink, or manually
-  tune parallelism ratios.  This is what makes GRASPO competitive for
-  production domain-model training: zero framework debugging overhead.
+- **User-specified parallelism, always a viable configuration.** You pick
+  `tp_size` / `dp_size` / `pp_size` (and optional `sequence_parallel` when
+  TP≥2). GRASPO never tells you "this won't run on your hardware" — as long
+  as the basic resource constraint is met, there is a performant
+  TP+DP+PP+SP+Checkpoint combination that runs your task. You don't need to
+  understand NCCL topology or PCIe vs NVLink, and each GPU runs exactly one
+  process, memory-balanced by design.
 - SFT → RL unified pipeline: same data format, same model loading, same
   checkpoint format.
-- GraspoFlow backend: five-dimensional parallelism (TP+DP+PP+SP+Checkpoint)
-  unifies single-GPU to multi-GPU in a single configuration switch.
-  ``world_size = dp_size × tp_size × pp_size``.
+- GraspoFlow backend: the design goal is five-in-one parallelism
+  (TP+DP+PP+SP+Checkpoint) usable across **SFT and RL**, at **9B and 27B**,
+  from a single GPU to many, behind one configuration switch.
+  ``world_size = dp_size × tp_size × pp_size``. The implementation plan
+  closes the remaining gaps (RL PP>1, SP native transport, full-coverage
+  testing) toward that goal.
 - Pluggable model adapters with ABC contracts: new model families require
   zero changes to existing code.
 - Multimodal training with three-layer contract-based defense against silent
@@ -264,8 +269,11 @@ Run `graspo --help` for the full flag list.
 
 ## Data Format
 
-Training data is JSONL. Each line is one prompt/context represented as chat
-messages, optional tool declarations, and one or more acceptable targets:
+Training data is JSONL and is **shared by SFT and RL** (one unified format).
+Each line is one prompt/context represented as OpenAI-compatible chat
+`messages` (plus optional `tools` in OpenAI function-calling format), and
+one or more acceptable reward `targets` — the GRASPO-specific field that
+carries the expected answer for structured-output eligibility:
 
 ```jsonl
 {"messages":[{"role":"system","content":"You extract structured support ticket fields as fenced JSON."},{"role":"user","content":"Ticket: user 99999000000 cannot use apn apn01."},{"role":"assistant","content":"I will identify the phone number and APN from the ticket."},{"role":"user","content":"Extract JSON with the APN and fault number."}],"targets":[{"id":"expected","output":{"content":{"APN":"apn01","fault_number":"99999000000"}}}]}
@@ -348,10 +356,12 @@ automatically.
 
 ## Reward Scoring
 
-GRASPO currently ships one built-in structured-output reward. It is rule-based,
-auditable, and designed for tasks where one or more acceptable targets contain
-a JSON object or canonical tool-call sequence. A completion is scored in four
-steps:
+GRASPO ships the reward machinery as an extensible **`GraspoReward` class**
+registered in `REWARD_REGISTRY` (currently one built-in `graspo` reward;
+new reward functions register as classes without touching the caller). The
+built-in reward is rule-based and auditable, designed for tasks where one or
+more acceptable targets contain a JSON object or canonical tool-call sequence.
+A completion is scored in four steps:
 
 1. Parse model-specific completion format. The model adapter converts raw
    output, including Qwen XML tool calls, into canonical parsed fields while
@@ -525,8 +535,9 @@ training.
 - `run_name`: optional run name (default auto-generated).
 - `seed`: random seed.
 - `max_epochs`: full dataset training epochs. Production default is
-  `100`.
-- `max_steps`: optional step cap for smoke/debug runs. `-1` means no cap.
+  `100`. Training length is controlled solely by `max_epochs` — the old
+  `max_steps` was removed in v0.23.0. For bounded/smoke runs use the
+  `--smoke` flag (runs one step) instead.
 - `rollout_group_size`: completions sampled per prompt.
 - `rollout_queue_batch_size`: prompts fetched from the rollout queue per step
   (default 8); drives the replay buffer threshold together with
@@ -539,8 +550,8 @@ training.
 - `max_new_tokens`: real training generation length. Keep
   `training.max_new_tokens=2048`.
 - `lr_scheduler`: `type` (`constant`/`cosine`/`linear`), `warmup_steps`,
-  `min_lr_ratio`. When `type` is not `constant`, `max_steps` must be set
-  to a positive value.
+  `min_lr_ratio`, `decay_steps`. When `type` is not `constant`, `decay_steps`
+  must be set to a positive value.
 - `temperature`, `top_p`: rollout sampling settings.
 - `save_steps`: native checkpoint interval. `-1` (default) disables per-step
   checkpoints, leaving only epoch checkpoints.
@@ -563,12 +574,19 @@ is only a LoRA warm-start.
 - `adapter`: model adapter path (default
   `graspo.flow.adapters.models.qwen35_36.adapter:Qwen35Adapter`).
 - `tp_size`: TP size (default 2).
+- `dp_size`: DP size (default 1). `world_size = dp_size × tp_size × pp_size`.
 - `pp_size`: PP size (default 1).
+- `dp_replicate_lora`: replicate LoRA across DP ranks (default `true`);
+  gradients are AVG all-reduced across `dp_group`.
+- `lr_scaling`: DP learning-rate scaling (`"linear"` = lr × dp_size, default;
+  `"none"` = no scaling).
 - `placement_strategy`: placement policy such as `qwen3_tp` or
   `qwen36_pp8_static` (default `auto`).
 - `layer_ranges`: manual per-stage layer distribution. Example for pp=4, 32 layers:
   `[[0,9], [9,17], [17,25], [25,32]]`. Overrides `placement_strategy` when set.
-- `sequence_parallel`: must stay `false` in v1.
+- `sequence_parallel`: optional; requires `tp_size >= 2`. Shards the sequence
+  dimension within a TP group (reduce_scatter + all_gather) to cut activation
+  memory.
 - `pp_micro_batch_size`: PP micro-batch size (default 1).
 - `micro_batch_size`: rollout forward batch size (default 8). Replaces
   the old `gpu_memory_utilization`.
@@ -595,8 +613,8 @@ is only a LoRA warm-start.
 
 - GPU selection is **not** configured here — it is handled by `run.sh`
   (`bash run.sh config.yaml --gpus 4,5`) or by Docker `--gpus` directly.
-- `nproc_per_node`: worker count per node. If omitted, it is
-  derived from TP * PP / nodes.
+- `nproc_per_node`: worker count per node. If omitted, it is derived from
+  `tp_size × dp_size × pp_size / nnodes`.
 - `nnodes`, `node_rank`, `master_addr`, `master_port`: distributed launch
   settings.
 - `python`: optional Python executable override.
@@ -623,20 +641,22 @@ resume with a different target configuration.
 
 Native model math belongs in the native model classes. RoPE/M-RoPE, position
 IDs, KV-cache continuation, visual feature injection, TP shard-local layer
-math, and LoRA target metadata should live on classes such as
-`Qwen3DenseModel`, `Qwen35HybridTextModel`, and their attention/layer modules.
+math, and LoRA target metadata should live on the supported hybrid text/vision
+family's native class (e.g. `Qwen35HybridTextModel`) and its attention/layer
+modules.
 
-`TransformerAdapter` and its model-family subclasses (e.g. `Qwen3Adapter`,
-`Qwen35Adapter`) are responsible for processor/tokenizer calls, batching,
+`TransformerAdapter` and its model-family subclasses (e.g. `Qwen35Adapter`)
+are responsible for processor/tokenizer calls, batching,
 rollout splitting, sampling, pipeline send/recv orchestration, checkpoint
 delegation, and logging. Runtime and placement modules own backend lifecycle,
 config validation, and TP/PP layout only; they should not implement
 model-family math.
 
-Qwen3.6 uses the Qwen3.5-family hybrid text/vision native class in GRASPO
-because its architecture is compatible with that family. If a future model uses
-a different `model_type`, such as `qwen3_vl` or `qwen3_omni`, add a dedicated
-native model class instead of introducing adapter-level special cases.
+The supported model family is the Qwen3.5/3.6 hybrid text/vision class;
+Qwen3.6 reuses the Qwen3.5-family native class in GRASPO because its
+architecture is compatible with that family. If a future model uses a
+different `model_type`, add a dedicated native model class instead of
+introducing adapter-level special cases.
 
 ## Export
 
@@ -781,7 +801,7 @@ bash run.sh samples/configs/sft_example.yaml --smoke
   entry point. Run `graspo launch --config ...` directly; the container's PATH
   includes the venv with torch and torchrun.
 - Native launch world size mismatch: make `launch.nproc_per_node * launch.nnodes`
-  equal `tp_size * pp_size`.
+  equal `tp_size × dp_size × pp_size`.
 - Rollout OOM: keep `training.max_new_tokens=2048`; reduce rollout concurrency
   or KV cache reservation instead of lowering production generation length.
 - Need PEFT compatibility: load PEFT/GRASPO-PEFT adapters through `lora.adapter_path`, and

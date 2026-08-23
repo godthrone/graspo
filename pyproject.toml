@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "graspo"
 dynamic = ["version"]
-description = "GRASPO (Group Relative Adaptive Structured Policy Optimization) — LoRA reinforcement learning with a self-owned native TP/PP backend."
+description = "GRASPO (Group Relative Advantage Structured Policy Optimization) — LoRA reinforcement learning with a self-owned native TP/DP/PP/SP backend."
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 license = {text = "MIT"}

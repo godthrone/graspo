@@ -17,13 +17,13 @@ GRASPO 是一个 GRPO 风格的 LoRA 强化学习训练器，面向结构化输�
 
 ## 五维并行模型
 
-### 设计哲学：自适应并行
+### 设计哲学：用户指定并行，框架保证可运行
 
-GRASPO 的设计目标是**让分布式训练对用户透明**。用户只需要给出**资源**（几张 GPU）和**训练任务**（模型 + 数据 + 训练方法），除非资源低于任务的最低要求，否则 GRASPO 就能通过 TP+PP+SP+DP+Checkpoint 五位一体的参数组合，自动让训练任务以最高效率运行。
+GRASPO 的设计目标是**分布式训练对用户透明且永远有解**。用户显式指定 `tp_size` / `dp_size` / `pp_size`（可选 `sequence_parallel`，TP≥2 时可用）；GRASPO 根据 `world_size = dp_size × tp_size × pp_size` 自动校验并搭建进程组。框架**从不告诉用户"这套设备跑不了这个任务"**——只要基本资源约束满足，就一定存在一组性能最优的 TP+DP+PP+SP+Checkpoint 组合能够运行该任务，用户无需理解 NCCL 拓扑、PCIe vs NVLink 差异，也不必逐卡调试。
 
 ```mermaid
 flowchart LR
-    USER["用户<br/>给出资源 + 任务"] --> GRASPO["GRASPO<br/>自动选择最优并行策略"]
+    USER["用户<br/>指定资源 + 任务 + 并行参数"] --> GRASPO["GRASPO<br/>校验并搭建可运行的并行组合"]
     GRASPO --> TP["TP 分片参数"]
     GRASPO --> DP["DP 分片数据"]
     GRASPO --> PP["PP 分片层"]
@@ -32,16 +32,16 @@ flowchart LR
     TP & DP & PP & SP & CKPT --> TRAIN["高效训练"]
 ```
 
-**核心价值**：在生产领域模型训练中，调试分布式训练框架通常占据大量开发时间。GRASPO 将这部分工作消除——用户不需要理解 NCCL 拓扑、不需要手动调 TP/DP/PP 配比、不需要处理 PCIe vs NVLink 的差异。这是 GRASPO 作为开源框架的核心竞争力。
+**核心价值**：在生产领域模型训练中，调试分布式训练框架通常占据大量开发时间。GRASPO 将这部分工作消除——用户只需要在合理范围内给出并行参数，框架保证该设备上存在一套可运行且负载均衡（每 GPU 一个进程、显存对称）的配置，而不需要处理多卡调试问题。这是 GRASPO 作为开源框架的核心竞争力。
 
-**当前状态**（2026-08-21 实测，4×A800，Qwen3.5-9B，多模态 SFT/RL）：
+**设计目标**：五位一体（TP+DP+PP+SP+Checkpoint）全组合可用，且**同时在 SFT 与 RL 两种模式下、在 9B 与 27B 上均可用**。这是 GRASPO 的核心能力。**证明该能力的充分必要条件**是跑通 `docs/parallelism-test-matrix.md` 中的全部组合（Python 生成：单机 4 卡下 TP+DP+PP+SP+GC × Qwen3.5-9B / Qwen3.8-27B 的所有排列组合表）——只有整张表全部实测通过，才证明五位一体架构成立。补齐各项的**实施计划在内部维护**（含内部节点/路径，不入库）。
 
-| 并行维度 | 可用组合 | 不可用 |
-|---------|:--:|------|
-| TP+DP+SP+GC | 5/9 组合验证通过 | — |
-| 含 PP>1 | — | 4/9 组合（PP 多模态未实现） |
+**实现计划中的补齐项**（当前状态 → 目标）：
+- **RL PP>1**：RL 含 PP 的生成路径**已有实现**，并曾在 Qwen3.6-27B 上以 8 卡 PP + 1F1B 成功训练验证（约 1–2 月前的 git 历史）。此前记录的"模型级 CUDA assert 阻塞"经复核为**误判**——矩阵中 RL 含 PP 各组合应重新实测，而非标为不可用。
+- **SP 原生通信**：当前 `reduce_scatter` 因 A800 PCIe 拓扑回退为 `all_reduce+chunk`（`tensor_utils.py` TODO）；按拓扑启用原生 `reduce_scatter`/`all_gather` 是可行的，列入实现计划。
+- **全组合实测覆盖**：SFT 9/9 已在 9B/27B 全过；需补齐 RL 全模式、逐卡显存/负载均衡断言、数值等价与单卡基线（即整张矩阵跑通）。
 
-详见 [并行测试矩阵](../.local/parallelism-test-matrix-20260821.md)。
+**负载均衡**：每个 GPU 上只运行一个训练进程，且进程组按 `device_id=local_rank` 绑定，避免默认通信组缓冲集中到 cuda:0 造成显存不均；PP 的 layer placement 采用 minimax 使各 stage 计算负载尽量均衡。逐卡显存对称是**设计目标**，实现与验证方式见实现计划与测试矩阵。
 
 ```mermaid
 flowchart TB
@@ -82,7 +82,7 @@ flowchart TB
     end
     subgraph L3["设施层 flow/"]
         T["trainer/"]
-        A["adapters/ · models/qwen3 + qwen35_36"]
+        A["adapters/ · models/qwen35_36"]
         P["parallel/ · pipeline_comm.py · scheduling/ · lora/ · runtime · memory"]
     end
     CLI --> C

@@ -29,7 +29,7 @@ flowchart TD
 
 ## 奖励体系
 
-奖励是 ripple 的核心输出。每条 completion 得到一个结构化的奖励分数，由三个独立维度组成：
+奖励是 ripple 的核心输出。每条 completion 得到一个结构化的奖励分数，由三个独立维度组成。奖励由 **`GraspoReward` 类**统一实现，并通过 `REWARD_REGISTRY` 注册/扩展——当前内置 `graspo` 一种，未来可注册新的 reward 类而无需改动调用端（算法层插件化）：
 
 ### 结构性标记奖励
 

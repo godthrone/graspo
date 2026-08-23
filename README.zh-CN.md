@@ -18,13 +18,16 @@ GRASPO 是一个面向结构化输出任务的 GRPO-style 强化学习训练器�
 
 **面向生产的基础设施：**
 
-- **自适应并行。** 给 GRASPO 几张 GPU 和一个训练任务，它自动选择最优的
-  TP+DP+PP+SP+Checkpoint 组合。你不需要理解 NCCL 拓扑、PCIe vs NVLink 差异，
-  也不需要手动调并行配比。消除分布式训练框架的调试开销，是 GRASPO 在
-  生产领域模型训练中的核心竞争力。
+- **用户指定并行，框架保证可运行。** 你显式指定 `tp_size` / `dp_size` /
+  `pp_size`（TP≥2 时可选用 `sequence_parallel`）。GRASPO 从不告诉你"这套设备
+  跑不了这个任务"——只要基本资源约束满足，就一定存在一组性能最优的
+  TP+DP+PP+SP+Checkpoint 组合能运行该任务。你不需要理解 NCCL 拓扑、PCIe vs
+  NVLink 差异；每张 GPU 只跑一个进程，且按设计保持显存对称（负载均衡）。
 - SFT → RL 统一管道：同一数据格式、同一模型加载、同一 checkpoint 格式。
-- GraspoFlow 后端：五位一体并行（TP+DP+PP+SP+Checkpoint），单卡到多卡同配置切换。
-  ``world_size = dp_size × tp_size × pp_size``。
+- GraspoFlow 后端：设计目标是五位一体（TP+DP+PP+SP+Checkpoint）
+  在 **SFT 与 RL**、**9B 与 27B** 上全部可用，单卡到多卡同配置切换。
+  ``world_size = dp_size × tp_size × pp_size``。实现计划补齐剩余缺口
+  （RL PP>1、SP 原生通信、全组合实测覆盖）以逼近该目标。
 - 插件化模型适配器：ABC 契约，新模型族零侵入现有代码。
 - 多模态训练：三层契约防线防止静默丢图。
 - ReplayBuffer、可读 rollout 日志、内置 `analyze-profile` 分析工具。
@@ -127,7 +130,7 @@ uv run graspo launch --config my_config.yaml
 复制并编辑根目录完整样例配置：
 
 ```bash
-cp samples/configs/sft_example.yaml my_graspo.yaml
+cp samples/configs/rl_example.yaml my_graspo.yaml
 ```
 
 至少需要设置：
@@ -238,7 +241,10 @@ L3 语义/数值层诊断由 AI/人工基于 rollouts 详表离线统计，用�
 
 ## 数据格式
 
-训练数据只支持 JSONL。每行是一条由 chat messages 表示的 prompt/context、可选工具声明，以及一个或多个可接受的 reward 目标：
+训练数据只支持 JSONL，且 **SFT 与 RL 共用同一套格式**。每行是一条由
+OpenAI 兼容的 chat `messages` 表示的 prompt/context、可选工具声明
+（`tools`，OpenAI function-calling 格式），以及一个或多个可接受的 reward
+目标（`targets`）——`targets` 是 GRASPO 特有的、承载期望答案（用于结构化输出判分）的字段：
 
 ```jsonl
 {"messages":[{"role":"system","content":"You extract structured support ticket fields as fenced JSON."},{"role":"user","content":"Ticket: user 99999000000 cannot use apn apn01."},{"role":"assistant","content":"I will identify the phone number and APN from the ticket."},{"role":"user","content":"Extract JSON with the APN and fault number."}],"targets":[{"id":"expected","output":{"content":{"APN":"apn01","fault_number":"99999000000"}}}]}
@@ -300,7 +306,9 @@ GRASPO 在启动时会校验数据，任何在 `content` 中嵌入裸工具调�
 
 ## Reward 计分方式
 
-GRASPO 当前提供一个内置结构化输出 reward，适合目标答案为 JSON object 或 canonical tool-call sequence 的任务，并支持多个可接受 target。每条 completion 的计分流程：
+GRASPO 通过可扩展的 **`GraspoReward` 类**提供 reward 机制，并注册于
+`REWARD_REGISTRY`（当前内置 `graspo` 一种；未来新增 reward 类注册即可，无需改动调用端）。
+内置 reward 适合目标答案为 JSON object 或 canonical tool-call sequence 的任务，并支持多个可接受 target。每条 completion 的计分流程：
 
 1. 解析模型私有输出格式：模型 adapter 把 raw completion 中的 Qwen XML tool call 等格式转成 canonical 结构，同时保留 raw text 和 `<think>...</think>`。Qwen XML tool-call 参数会根据工具 schema 中的 `integer`、`number`、`boolean` 类型先转成对应 JSON 类型，再进入 reward。
 2. 检查输出标记：根据 reward 配置，可要求 `<think>...</think>`；普通 answer 任务还可以要求 fenced JSON Markdown block。
@@ -348,7 +356,7 @@ rollout 完成后，每条 completion 会被**逐字符标注**结构角色（`C
 
 ## 配置说明
 
-所有常规训练配置都在 YAML 内完成。`samples/configs/sft_example.yaml` 是 RL 训练的完整公开样例，
+所有常规训练配置都在 YAML 内完成。`samples/configs/rl_example.yaml` 是 RL 训练的完整公开样例，
 `samples/configs/sft_example.yaml` 是 SFT 专用模板。
 
 ### `train_method`
@@ -359,10 +367,11 @@ rollout 完成后，每条 completion 会被**逐字符标注**结构角色（`C
 
 ### `backend`
 
-- `graspoflow`：**唯一后端。** 统一 TP+PP Flink 风格流式流水线框架。
-  支持所有并行模式：单卡（`tp=1,pp=1`）、纯 TP（`tp=N,pp=1`）、
-  纯 PP（`tp=1,pp=N`）、TP+PP 混合（`tp=M,pp=N`）。
-  参见 `samples/configs/a800x8_qwen35_9b_tp1_dp8_pp1.yaml`。
+- `graspoflow`：**唯一后端。** 统一 TP+DP+PP+SP+Checkpoint 五位一体
+  （TP 分片参数、DP 分片数据、PP 分片层、SP 分片序列、Checkpoint 省显存）。
+  `world_size = dp_size × tp_size × pp_size`。支持从单卡（`tp=1,dp=1,pp=1`）
+  到全并行（`tp=T,dp=D,pp=P`），同一个配置切换。参见
+  `samples/configs/a800x8_qwen35_9b_tp1_dp8_pp1.yaml`。
 
 ### `model`
 
@@ -406,8 +415,8 @@ rollout 完成后，每条 completion 会被**逐字符标注**结构角色（`C
   推导为 `outputs/<run_name>`。
 - `run_name`：可选 run 名（默认自动生成）。
 - `seed`：随机种子。
-- `max_epochs`：完整数据集训练轮数；生产默认 `100`。
-- `max_steps`：短测/debug step 上限；`-1` 表示不限制。
+- `max_epochs`：完整数据集训练轮数；生产默认 `100`。训练长度仅由 `max_epochs`
+  控制——旧的 `max_steps` 已在 v0.23.0 移除；短测用 `--smoke`（跑 1 步）。
 - `rollout_group_size`：每个 prompt attempt 采样多少条 completion。
 - `rollout_queue_batch_size`：每个 step 从 rollout queue 取多少 prompt（默认 8）；
   与 `rollout_group_size` 共同决定 replay buffer threshold。
@@ -418,7 +427,7 @@ rollout 完成后，每条 completion 会被**逐字符标注**结构角色（`C
 - `policy_ratio_clip_eps`：policy-ratio clipped objective epsilon。
 - `max_new_tokens`：真实训练生成长度；保持 `training.max_new_tokens=2048`。
 - `lr_scheduler`：`type`（`constant`/`cosine`/`linear`）、`warmup_steps`、
-  `min_lr_ratio`。`type` 非 `constant` 时 `max_steps` 必须为正数。
+  `min_lr_ratio`、`decay_steps`。`type` 非 `constant` 时 `decay_steps` 必须为正数。
 - `temperature`、`top_p`：rollout sampling 设置。
 - `save_steps`：native checkpoint 间隔。`-1`（默认）禁用 step 级别 checkpoint，仅保留 epoch checkpoint。
 - `save_checkpoint_every_epoch`：每个 epoch 结束时保存可恢复 checkpoint（默认 `true`）。生产训练推荐保持开启。
@@ -433,11 +442,14 @@ rollout 完成后，每条 completion 会被**逐字符标注**结构角色（`C
 - `adapter`：模型适配器路径（默认
   `graspo.flow.adapters.models.qwen35_36.adapter:Qwen35Adapter`）。
 - `tp_size`：TP size（默认 2）。
+- `dp_size`：DP size（默认 1）。`world_size = dp_size × tp_size × pp_size`。
 - `pp_size`：PP size（默认 1）。
+- `dp_replicate_lora`：DP rank 间复制 LoRA（默认 true）；梯度跨 `dp_group` 做 AVG all-reduce。
+- `lr_scaling`：DP 学习率缩放策略（`"linear"`=lr×dp_size，默认；`"none"`=不缩放）。
 - `placement_strategy`：placement 策略，例如 `qwen3_tp` 或 `qwen36_pp8_static`（默认 `auto`）。
 - `layer_ranges`：手动逐 stage 层数分配。例如 pp=4, 32 层：
   `[[0,9], [9,17], [17,25], [25,32]]`。设置后覆盖 `placement_strategy`。
-- `sequence_parallel`：v1 必须保持 `false`。
+- `sequence_parallel`：可选；需 `tp_size >= 2`。在 TP 组内沿序列维度分片激活值（reduce_scatter + all_gather）以省显存。
 - `pp_micro_batch_size`：PP micro-batch size（默认 1）。
 - `micro_batch_size`：rollout forward batch size（默认 8），替代旧的 `gpu_memory_utilization`。
 - `pp_scheduler`：PP 调度策略（默认 `one_f_one_b`/`1f1b`）。`one_f_one_b` 交错 forward/backward，气泡更小，需要双向进程组（`pp_group_fwd`/`pp_group_bwd`），让 forward-hidden 与 backward-grad 不共用同一 peer-pair 单 FIFO。1F1B 是 PP 的唯一调度策略（旧的气泡最大的 `gpipe` 已删除）。
@@ -455,7 +467,7 @@ rollout 完成后，每条 completion 会被**逐字符标注**结构角色（`C
 
 - GPU 选择**不在此配置**——由 `run.sh`（`bash run.sh config.yaml --gpus 4,5`）
   或 Docker `--gpus` 直接处理。
-- `nproc_per_node`：当前节点 worker 数；为空时从 TP * PP / nodes 派生。
+- `nproc_per_node`：当前节点 worker 数；为空时从 `tp_size × dp_size × pp_size / nnodes` 派生。
 - `nnodes`、`node_rank`、`master_addr`、`master_port`：distributed launch 设置。
 - `python`：可选 Python executable override。
 
@@ -474,17 +486,18 @@ Preset 取值：
 
 Native 模型数学必须落在 native model class 内。RoPE/M-RoPE、position
 IDs、KV-cache continuation、visual feature injection、TP shard-local layer
-math 和 LoRA target metadata，应由 `Qwen3DenseModel`、
-`Qwen35HybridTextModel` 及其 attention/layer modules 负责。
+math 和 LoRA target metadata，应由受支持的 hybrid text/vision 家族的
+native class（如 `Qwen35HybridTextModel`）及其 attention/layer modules 负责。
 
-`TransformerAdapter` 及其模型家族子类（如 `Qwen3Adapter`、`Qwen35Adapter`）只负责
+`TransformerAdapter` 及其模型家族子类（如 `Qwen35Adapter`）只负责
 processor/tokenizer 调用、batch/split、sampling、pipeline send/recv 编排、
 checkpoint delegation 和 logging。Runtime/placement 只负责 backend lifecycle、
 config validation 和 TP/PP layout，不实现模型 family 的数学逻辑。
 
-GRASPO 中 Qwen3.6 复用 Qwen3.5-family hybrid text/vision native class，因为
-它的结构与该 family 兼容。未来如果出现 `qwen3_vl`、`qwen3_omni` 等不同
-`model_type`，需要新增对应 native model class，不能在 adapter 层塞特判。
+GRASPO 受支持的模型家族是 **Qwen3.5 / Qwen3.6 hybrid text/vision** 这一类；
+Qwen3.6 复用 Qwen3.5-family hybrid text/vision native class，因为它的结构与
+该 family 兼容。未来如果出现不同 `model_type`，需要新增对应 native model
+class，不能在 adapter 层塞特判。
 
 ## 导出
 
@@ -604,7 +617,7 @@ bash run.sh samples/configs/sft_example.yaml --smoke
 - `data.train_path does not exist`：将 `data.train_path` 指向 JSONL 文件。
 - **Docker 容器内找不到模型**：确认 `model.model_path` 在 YAML 中写的是宿主机上的绝对路径，`run.sh` 会自动挂载其父目录。如果路径不在常见位置，用 `bash run.sh --help` 检查挂载逻辑。
 - **Docker 提示 torchrun 找不到**：镜像已将 GRASPO 安装为 CLI 入口，直接运行 `graspo launch --config ...` 即可，PATH 已包含 torch 和 torchrun。
-- Native launch world size mismatch：让 `launch.nproc_per_node * launch.nnodes` 等于 `tp_size * pp_size`。
+- Native launch world size mismatch：让 `launch.nproc_per_node * launch.nnodes` 等于 `tp_size × dp_size × pp_size`。
 - Rollout OOM：保持 `training.max_new_tokens=2048`；降低 rollout 并发或 KV cache 预留，而不是降低生产生成长度。
 - 需要 PEFT 兼容：通过 `lora.adapter_path` 加载 PEFT/GRASPO-PEFT adapter，通过 `graspo export --config <yaml>` 导出便携产物。
 - **SFT 转 RL**：SFT 训练完成后，将 `train_method` 改为 `graspo`，

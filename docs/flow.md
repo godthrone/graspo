@@ -21,7 +21,7 @@ flowchart TB
     end
     subgraph ADAPTER["flow/adapters/ — 模型适配"]
         TA["transformer_adapter.py<br/>tp_rank / dp_rank / pp_rank<br/>数据分片 / 梯度同步"]
-        MODEL["models/qwen35_36/<br/>training_sft.py · training.py<br/>training_sft.py · training.py"]
+        MODEL["models/qwen35_36/<br/>training_sft.py · training.py"]
     end
     subgraph TRAINER["flow/trainer/ — 训练编排"]
         TR["GraspoFlowTrainer / SftTrainer<br/>epoch 循环 · 数据分片"]
@@ -79,10 +79,13 @@ backward loop → DP all_reduce(AVG, dp_group) → TP all_reduce(SUM, tp_group)
 
 DP 各 rank 处理不同数据分片：
 
-```
-总数据: [0, 1, 2, 3, 4, 5, 6, 7, ...]
-         │         │         │         │
-    dp_rank=0  dp_rank=1  dp_rank=2  dp_rank=3
+```mermaid
+flowchart LR
+    D["总数据 [0,1,2,3,4,5,6,7,...]"]
+    D -->|"dp_rank=0"| R0["[0,4,...]"]
+    D -->|"dp_rank=1"| R1["[1,5,...]"]
+    D -->|"dp_rank=2"| R2["[2,6,...]"]
+    D -->|"dp_rank=3"| R3["[3,7,...]"]
 ```
 
 SFT：`samples[dp_rank :: dp_size]`，每个 DP rank 独立训练自己的数据分片。
@@ -113,25 +116,23 @@ PP 是 Flow 设施层中最复杂的分布式形态。设计遵循 **Flink 风�
 
 ### 三层职责
 
-```
-┌───────────────────────────────────────────┐
-│ 调度层 scheduling/（策略模式，可插拔）        │
-│   - OneFOneB（1F1B，默认）                │
-│   - 未来：Interleaved / ZeroBubble          │
-└───────────────────┬───────────────────────┘
-                    │ 决定 forward/backward 的执行顺序
-┌───────────────────▼───────────────────────┐
-│ 通信层 pipeline_comm.py（PipelineComm）    │
-│   - 异步 isend/irecv                      │
-│   - CUDA stream 重叠通信与计算              │
-│   - 背压由调度层（pp_max_inflight）控制     │
-└───────────────────┬───────────────────────┘
-                    │ 决定数据如何在 stage 间流动
-┌───────────────────▼───────────────────────┐
-│ 计算层 adapter（forward/backward）         │
-│   - model.forward_stage                   │
-│   - loss / 梯度计算                        │
-└───────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph SCHED["调度层 scheduling/（策略模式，可插拔）"]
+        S1["OneFOneB（1F1B，默认）"]
+        S2["未来：Interleaved / ZeroBubble"]
+    end
+    subgraph COMM["通信层 pipeline_comm.py（PipelineComm）"]
+        C1["异步 isend/irecv"]
+        C2["CUDA stream 重叠通信与计算"]
+        C3["背压由调度层（pp_max_inflight）控制"]
+    end
+    subgraph COMP["计算层 adapter（forward/backward）"]
+        X1["model.forward_stage"]
+        X2["loss / 梯度计算"]
+    end
+    SCHED -->|"决定 forward/backward 的执行顺序"| COMM
+    COMM -->|"决定数据如何在 stage 间流动"| COMP
 ```
 
 ### 为什么用异步 P2P 而非阻塞 send/recv
@@ -208,7 +209,7 @@ src/graspo/flow/parallel/
 
 ```mermaid
 flowchart TB
-    L3["Layer 3: 模型族<br/>models/qwen3/ · models/qwen35_36/ · models/common/<br/>架构特定实现"]
+    L3["Layer 3: 模型族<br/>models/qwen35_36/ · models/common/<br/>架构特定实现"]
     L2["Layer 2: 训练编排<br/>trainer/ · runtime.py<br/>训练循环 · 分布式运行时"]
     L2b["Layer 2.5: PP 调度<br/>parallel/scheduling/<br/>1F1B · interleaved · ZeroBubble"]
     L1["Layer 1: 通用适配<br/>adapters/ · parallel/<br/>模型族共享逻辑 · 进程组管理"]
@@ -242,7 +243,7 @@ flowchart TB
 
 ### Layer 3：模型族
 
-每个模型族在 `models/` 下有独立目录（如 `qwen3/`、`qwen35_36/`），包含 adapter（TransformerAdapter 子类）、model（causal LM wrapper）、training（TP/DP/PP 训练循环）。公共层在 `models/common/` 中按模型族拆分。
+每个模型族在 `models/` 下有独立目录（如 `qwen35_36/`），包含 adapter（TransformerAdapter 子类）、model（causal LM wrapper）、training（TP/DP/PP 训练循环）。公共层在 `models/common/` 中按模型族拆分。当前受支持的模型族为 Qwen3.5 / Qwen3.6 hybrid text/vision 家族。
 
 ## 插件化适配
 
@@ -267,13 +268,19 @@ Rollout 生成阶段支持两种路径，通过 `model.supports_kv_cache` 属性
 
 ## Placement 策略
 
-`NativePlacementPlan` 决定每层放到哪个 pipeline stage。默认策略：`qwen3_tp`（对 Qwen3 系列优化的均匀分布）、`auto`（基于层数的均匀划分）、手动（通过 `layer_ranges` 精确控制）。
+`NativePlacementPlan` 决定每层放到哪个 pipeline stage。默认策略：`qwen3_tp`（对 Qwen3.5/3.6 hybrid text/vision 家族优化的均匀分布）、`auto`（基于层数的均匀划分）、手动（通过 `layer_ranges` 精确控制）。
 
 ## 统一 TP+DP+PP+SP
 
 GraspoFlow 将五维并行统一在一个框架下：`dp=1,tp=1,pp=1`（单卡）到 `dp=D,tp=T,pp=P`（全并行）。用户只需在配置文件中设 `tp_size`、`dp_size`、`pp_size` 和 `sequence_parallel`，不需要理解后端差异。SP 在 TP>=2 时可选启用，自动复用 TP 进程组。Checkpoint 默认开启，用户无需配置。
 
 PP 的流水线架构（异步 P2P + 可插拔调度）对用户透明——调度策略和通信细节由框架管理，用户只配置 `pp_size`（以及可选的 `pp_max_inflight_microbatches` 背压上限）。
+
+## 负载均衡与单进程/卡
+
+- **每个 GPU 只运行一个训练进程**：`launch.nproc_per_node` 从 `dp_size × tp_size × pp_size` 推导，torchrun 按 world_size 启动等量 worker；`parallel_state` 以 `device_id=cuda:local_rank` 绑定默认通信组，避免 NCCL 默认组缓冲集中到 cuda:0 造成显存不均，并在 `local_rank ≥ 可见 GPU 数` 时直接报错（防多进程/卡）。
+- **PP 层放置尽力均衡**：`NativePlacementPlan` 用 minimax 让每个 stage 的加权计算负载最小（`placement.py`），DP 数据分片按 rank 均匀切分。
+- **逐卡显存对称是设计目标**：TP/PP/SP 下各 rank 的激活分片天然不同，故"逐卡显存基本一致"是**目标而非强不变量**；实现与验证方式（如 `rank_metrics` 每 rank 峰值显存断言）见实现计划与测试矩阵。228 上 DP=4 SFT 长训已实测逐卡显存基本一致（~160 MiB 内）。
 
 ## PP 设计决策记录
 
