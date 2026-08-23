@@ -64,7 +64,16 @@ class GraspoFlowState:
             torch.cuda.set_device(device)
         if world_size > 1 and not dist.is_initialized():
             backend = "nccl" if torch.cuda.is_available() else "gloo"
-            dist.init_process_group(backend=backend)
+            # 防呆（§2.3 边界校验即防呆）：init_process_group 不传 device_id 时，
+            # NCCL 世界通信组不会按 rank 绑定到各自卡；容器暴露全部 GPU 时会在每个
+            # 可见设备上建 CUDA/NCCL context，默认组缓冲集中到 cuda:0，造成卡间显存
+            # 不均衡（GP0 多扛 ~2.7GB×N）。传 device_id=local_rank 让每个 rank 的
+            # 默认组显式绑定到本卡。仅当 local_rank 在可见设备范围内才传（防
+            # nproc_per_node > GPU 数时 device_id 越界、NCCL init 失败）。
+            if backend == "nccl" and local_rank < torch.cuda.device_count():
+                dist.init_process_group(backend=backend, device_id=torch.device(f"cuda:{local_rank}"))
+            else:
+                dist.init_process_group(backend=backend)
         expected_world_size = dp_size * tp_size * pp_size
         if world_size != expected_world_size:
             raise RuntimeError(
