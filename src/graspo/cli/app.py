@@ -6,6 +6,7 @@
 """
 
 import argparse
+import datetime
 import json
 import os
 import subprocess
@@ -244,6 +245,9 @@ def _require_config_value(value: Any, name: str) -> None:
 def _build_launch_env(config: GraspoConfig) -> dict[str, str]:
     env = dict(os.environ)
     env.setdefault("TOKENIZERS_PARALLELISM", "false")
+    # 每次 launch（== 每次新容器/重启）生成一个共享 run_id，所有 rank 一致，
+    # 用于把本次运行的日志归入 logs/<run_id>/，避免重启混入旧日志（§log 分片）。
+    env["GRASPO_RUN_ID"] = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
 
     src_dir = _project_src_dir()
     if src_dir.is_dir():

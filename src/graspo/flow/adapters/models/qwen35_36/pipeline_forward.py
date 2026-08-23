@@ -17,20 +17,18 @@ from typing import Any
 import torch
 
 from graspo.flow.adapters.models.qwen35_36.model import Qwen35HybridTextModel
+from graspo.flow.logging import rotating_append, run_log_dir
 from graspo.flow.parallel.pipeline_comm import PipelineComm
 from graspo.flow.parallel.tensor_utils import _add_pipeline_stage_timing
 
 
 def _pp_debug_log(output_dir: str, msg: str) -> None:
-    """PP 调试日志：打印到 stderr + 落盘到 ``<output_dir>/logs/pp_debug.log``。"""
+    """PP 调试日志：打印到 stderr + 落盘到 ``{output_dir}/logs/<run_id>/pp_debug.log``。"""
     rank = os.environ.get("RANK", "0")
     line = f"[pp-debug rank={rank}] {msg}"
     print(line, file=sys.stderr, flush=True)
     try:
-        log_dir = os.path.join(output_dir or ".", "logs")
-        os.makedirs(log_dir, exist_ok=True)
-        with open(os.path.join(log_dir, "pp_debug.log"), "a", encoding="utf-8") as f:
-            f.write(line + "\n")
+        rotating_append(run_log_dir(output_dir) / "pp_debug.log", line + "\n")
     except Exception:  # noqa: BLE001
         pass
 

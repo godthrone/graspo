@@ -27,6 +27,21 @@ from graspo.ripple.parsing.qwen_tool_parser import (
     parse_qwen_tool_completion,
 )
 
+
+def latest_log_dir(run_dir: Path) -> Path:
+    """Most recent ``logs/<run_id>/`` subdir, falling back to ``logs`` (flat layout).
+
+    Since ``logs`` moved under a per-launch ``<run_id>`` folder, readers that
+    need "the current run's logs" should resolve the newest run folder.
+    """
+    logs = run_dir / "logs"
+    if not logs.exists():
+        return logs
+    subdirs = [d for d in logs.iterdir() if d.is_dir()]
+    if not subdirs:
+        return logs
+    return max(subdirs, key=lambda d: d.stat().st_mtime)
+
 # 宽容提取用的正则（只做存在性分析，不校验结构）
 _FUNCTION_RE = re.compile(r"<function=([^>\n]+)>")
 _PARAMETER_RE = re.compile(r"<parameter=([^>\s]+)>")
@@ -157,7 +172,7 @@ def _group_match(record: dict[str, Any]) -> tuple[int, int]:
 
 def analyze_attribution(run_dir: Path) -> dict[str, Any]:
     """对一次运行目录做 rollout 归因（只读不写）。"""
-    readable_path = run_dir / "logs" / "rollouts.readable.jsonl"
+    readable_path = latest_log_dir(run_dir) / "rollouts.readable.jsonl"
     if not readable_path.exists():
         return {"available": False, "reason": f"missing {readable_path}"}
 
@@ -264,7 +279,7 @@ def _read_events(run_dir: Path, event_name: str) -> list[dict[str, Any]]:
     损坏行跳过（与 analyze_attribution 的容错一致）；缺失文件返回空列表，
     由调用方给出可用性原因。
     """
-    events_path = run_dir / "logs" / "events.jsonl"
+    events_path = latest_log_dir(run_dir) / "events.jsonl"
     if not events_path.exists():
         return []
     events: list[dict[str, Any]] = []
@@ -360,7 +375,7 @@ def analyze_epochs(run_dir: Path) -> dict[str, Any]:
 
     输出 ``{available, epochs: [...], trends: {...}}``，epochs 按事件顺序排列。
     """
-    events_path = run_dir / "logs" / "events.jsonl"
+    events_path = latest_log_dir(run_dir) / "events.jsonl"
     if not events_path.exists():
         return {"available": False, "reason": f"missing {events_path}"}
 
@@ -574,7 +589,7 @@ def analyze_errors(run_dir: Path) -> dict[str, Any]:
     诊断不在系统级归因内——由 AI/人工基于 rollouts 详表离线统计
     （用户裁定：真正的原因归类依赖训练数据语义，不可能系统级）。
     """
-    readable_path = run_dir / "logs" / "rollouts.readable.jsonl"
+    readable_path = latest_log_dir(run_dir) / "rollouts.readable.jsonl"
     if not readable_path.exists():
         return {"available": False, "reason": f"missing {readable_path}"}
     records: list[dict[str, Any]] = []

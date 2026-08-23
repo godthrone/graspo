@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from graspo.flow.logging import append_jsonl_segment, run_log_dir
+
 
 def _timestamp() -> str:
     return datetime.datetime.now().astimezone().isoformat(timespec="seconds")
@@ -19,8 +21,7 @@ class NativeRolloutLogger:
         raw_enabled: bool = True,
     ) -> None:
         self.output_dir = Path(output_dir)
-        self.logs_dir = self.output_dir / "logs"
-        self.logs_dir.mkdir(parents=True, exist_ok=True)
+        self.logs_dir = run_log_dir(self.output_dir)
         self.readable_enabled = readable_enabled
         self.raw_enabled = raw_enabled
         # run_id = 输出目录名（config 派生，可复现）——跨文件关联键（§13.3）
@@ -63,8 +64,7 @@ class NativeRolloutLogger:
 
     @staticmethod
     def _append(path: Path, payload: dict[str, Any]) -> None:
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        append_jsonl_segment(path, payload)
 
 
 from graspo.flow.logger.logger_helpers import (  # noqa: E402, F401

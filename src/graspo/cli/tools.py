@@ -20,6 +20,7 @@ from graspo.cli.analysis import (
     analyze_errors,
     analyze_perf,
     analyze_steps,
+    latest_log_dir,
 )
 from graspo.core.schema import GraspoConfig, Sample
 from graspo.flow.runtime import GraspoFlowRuntime
@@ -406,9 +407,10 @@ def _read_train_steps(run_dir: Path) -> list[dict[str, Any]]:
     """读取 train_step 事件：优先 events.jsonl（v0.21 结构化事件流），
     其次 nohup.out / 旧 train.log（部署端兼容）。"""
     events: list[dict[str, Any]] = []
+    latest = latest_log_dir(run_dir)
     paths = (
-        [run_dir / "logs" / "events.jsonl"]
-        if (run_dir / "logs" / "events.jsonl").exists()
+        [latest / "events.jsonl"]
+        if (latest / "events.jsonl").exists()
         else [run_dir / "nohup.out", run_dir / "logs" / "train.log", run_dir / "train.log"]
     )
     for path in paths:
@@ -464,14 +466,21 @@ def _compact_gpu_summary(summary: dict[str, Any]) -> dict[str, Any]:
 
 def _read_rank_summary(run_dir: Path) -> dict[str, Any]:
     latest_by_rank: dict[int, dict[str, Any]] = {}
-    for path in sorted(run_dir.glob("rank_metrics.rank_*.jsonl")):
-        for payload in _iter_json_lines(path):
-            if payload.get("phase") != "pipeline_train_batch_after":
+    # 兼容三种布局：logs/<run_id>/（新）、logs/（旧 flat 子目录）、run_dir 根（测试/旧）。
+    trace_dirs = {latest_log_dir(run_dir), run_dir / "logs", run_dir}
+    seen: set[Path] = set()
+    for log_dir in trace_dirs:
+        for path in sorted(log_dir.glob("rank_metrics.rank_*.jsonl")):
+            if path in seen:
                 continue
-            metrics = payload.get("metrics") or {}
-            for item in metrics.get("rank_metrics") or [metrics]:
-                if "rank" in item:
-                    latest_by_rank[int(item["rank"])] = item
+            seen.add(path)
+            for payload in _iter_json_lines(path):
+                if payload.get("phase") != "pipeline_train_batch_after":
+                    continue
+                metrics = payload.get("metrics") or {}
+                for item in metrics.get("rank_metrics") or [metrics]:
+                    if "rank" in item:
+                        latest_by_rank[int(item["rank"])] = item
     per_rank = {}
     for rank, metrics in sorted(latest_by_rank.items()):
         stage_timing = metrics.get("pipeline_stage_timing") or {}
