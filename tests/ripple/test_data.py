@@ -586,3 +586,76 @@ def test_v4_multi_step_chain_is_accepted(tmp_path):
     assert sample.messages[3]["role"] == "tool"
     assert sample.messages[3]["tool_call_id"] == "call_0000"
     assert sample.expects_tool_calls is True
+
+
+# ── 数据契约边界情况（C7 验收）─────────────────────────────────────────────────
+
+
+def test_missing_messages_field_is_rejected(tmp_path):
+    """缺少 messages 字段的 JSONL 行被拒绝。"""
+    path = tmp_path / "no_messages.jsonl"
+    path.write_text(
+        '{"targets":[{"output":{"content":{"key":"value"}}}]}\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="messages"):
+        load_jsonl(path)
+
+
+def test_messages_not_a_list_is_rejected(tmp_path):
+    """messages 不是 list 时被拒绝。"""
+    path = tmp_path / "messages_not_list.jsonl"
+    path.write_text(
+        '{"messages":"not_a_list","targets":[{"output":{"content":{"key":"value"}}}]}\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="messages"):
+        load_jsonl(path)
+
+
+def test_empty_messages_list_is_rejected(tmp_path):
+    """messages 为空列表时被拒绝。"""
+    path = tmp_path / "empty_messages.jsonl"
+    path.write_text(
+        '{"messages":[],"targets":[{"output":{"content":{"key":"value"}}}]}\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="messages"):
+        load_jsonl(path)
+
+
+def test_message_missing_role_is_rejected(tmp_path):
+    """消息缺少 role 字段时被拒绝。"""
+    path = tmp_path / "no_role.jsonl"
+    path.write_text(
+        '{"messages":[{"content":"hello"}],"targets":[{"output":{"content":{"key":"value"}}}]}\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="role"):
+        load_jsonl(path)
+
+
+def test_message_missing_content_is_rejected(tmp_path):
+    """消息缺少 content 字段时被拒绝（非 tool_calls 场景）。"""
+    path = tmp_path / "no_content.jsonl"
+    path.write_text(
+        '{"messages":[{"role":"user"}],"targets":[{"output":{"content":{"key":"value"}}}]}\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="content"):
+        load_jsonl(path)
+
+
+def test_tool_calls_not_dict_is_rejected(tmp_path):
+    """tool_calls 数组中元素不是 dict 时被拒绝。"""
+    path = tmp_path / "tc_not_dict.jsonl"
+    path.write_text(
+        '{"messages":['
+        '{"role":"user","content":"q"},'
+        '{"role":"assistant","content":null,"tool_calls":["not_a_dict"]},'
+        '{"role":"user","content":"continue"}'
+        '],"targets":[{"output":{"tool_calls":[{"name":"move","arguments":{}}]}}]}\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError):
+        load_jsonl(path)

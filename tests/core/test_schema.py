@@ -251,3 +251,61 @@ def test_scheduler_linear_requires_decay_steps():
             max_epochs=10,
             lr_scheduler={"type": "linear", "decay_steps": 0},
         )
+
+
+# ── 所有示例配置加载验证（C7 验收）──────────────────────────────────────────
+
+
+def _all_example_configs() -> list[Path]:
+    """收集 samples/configs/ 下所有 YAML 配置。"""
+    configs_dir = Path("samples/configs")
+    if not configs_dir.is_dir():
+        return []
+    return sorted(configs_dir.glob("*.yaml"))
+
+
+@pytest.mark.parametrize("config_path", _all_example_configs())
+def test_all_example_configs_loadable(config_path: Path):
+    """所有 samples/configs/*.yaml 可被 GraspoConfig.from_dict() 加载。
+
+    验证目标（C7 验收）：配置模板与 schema 同步，不会因字段变更而脱节。
+    """
+    import yaml
+
+    data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    # 使用 from_dict 而非 model_validate，因为示例配置可能包含 None section
+    cfg = GraspoConfig.from_dict(data)
+    assert cfg.train_method in ("graspo", "sft")
+    assert cfg.training.seed >= 0  # seed 必须是非负整数
+
+
+# ── extra="forbid" 防呆回归（C7 验收）─────────────────────────────────────────
+
+
+def test_graspo_config_rejects_multiple_unknown_fields():
+    """多个未知字段同时出现时，ValidationError 列出所有错误。"""
+    with pytest.raises(ValidationError) as exc_info:
+        GraspoConfig.from_dict(
+            {
+                "training": {"bad_field_1": 1, "bad_field_2": "x"},
+                "model": {"unknown_model_param": 999},
+            }
+        )
+    # 至少报告第一个未知字段
+    assert "bad_field_1" in str(exc_info.value) or "unknown_model_param" in str(exc_info.value)
+
+
+def test_training_config_rejects_wrong_type():
+    """字段类型错误时 pydantic 给出明确错误（非静默转换）。"""
+    with pytest.raises(ValidationError):
+        TrainingConfig(learning_rate="not_a_float")
+
+
+def test_graspo_config_from_dict_none_sections_preserved():
+    """显式 None 的 section 使用默认值。"""
+    cfg = GraspoConfig.from_dict(
+        {"training": None, "model": None, "data": None, "lora": None}
+    )
+    assert cfg.training.seed == 42
+    assert cfg.training.max_epochs == 100  # TrainingConfig 默认值
+    assert cfg.model.model_path == ""
