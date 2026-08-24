@@ -1,0 +1,81 @@
+# GRASPO RL — 单卡 A800 Qwen3.5-9B 基线
+#
+# 硬件：1× NVIDIA A800 80GB
+# 模型：Qwen3.5-9B，纯文本工具调用 RL
+# 9B 全量权重 ~18GB，单卡 80GB 轻松装下。
+#
+# 启动：uv run graspo launch --config samples/configs/a800x1_qwen35_9b_rl.yaml
+
+train_method: graspo
+backend: graspoflow
+
+# ── 模型 ──────────────────────────────────────────────────────────────────
+model:
+  model_path: /data/zhangzy/models/Qwen3.5-9B
+  trust_remote_code: true
+  torch_dtype: bfloat16
+  gradient_checkpointing: true
+  chat_template_kwargs:
+    enable_thinking: false
+
+# ── 数据 ──────────────────────────────────────────────────────────────────
+data:
+  train_path: samples/data/sample_tool_call.jsonl
+  max_prompt_length: 4096
+
+# ── LoRA ──────────────────────────────────────────────────────────────────
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  adapter_path: null                   # null=从头训练；或指向 SFT checkpoint
+  target_preset: language_safe
+
+# ── 分布式（单卡）─────────────────────────────────────────────────────────
+graspoflow:
+  tp_size: 1
+  dp_size: 1
+  pp_size: 1
+  micro_batch_size: 1
+
+# ── 训练超参 ──────────────────────────────────────────────────────────────
+training:
+  output_dir: ""
+  run_name: tp1-rl-9b-baseline
+  seed: 42
+  max_epochs: 100
+  rollout_group_size: 8                # 每个 prompt 生成几条 completion
+  rollout_queue_batch_size: 8          # 每次 rollout 几个 prompt
+  gradient_accumulation_micro_batches: 4
+  rollout_max_retries: 5
+  learning_rate: 5.0e-6                # RL 推荐比 SFT 低一个数量级
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  policy_ratio_clip_eps: 0.2
+  max_new_tokens: 256
+  temperature: 1.0
+  top_p: 1.0
+  save_steps: -1
+  save_checkpoint_every_epoch: true
+  perfect_skip_reward_threshold: 2.0
+  reject_unparseable_groups: false
+  lr_scheduler:
+    type: cosine
+    warmup_steps: 50
+    min_lr_ratio: 0.1
+    decay_steps: 1000
+
+# ── 启动 ──────────────────────────────────────────────────────────────────
+launch:
+
+# ── Reward ────────────────────────────────────────────────────────────────
+reward:
+  kind: graspo
+  check_think: false
+  check_json_markdown: true
+  check_list_order: false
+  marker_reward_weight: 10.0
+  content_reward_weight: 100.0
+  anti_useless_str_reward_weight: 1.0
+  anti_useless_str_half_reward_len: 100
+  numeric_tolerance: 0.2

@@ -1,0 +1,84 @@
+# GRASPO RL — 4×A800 Qwen3.5-9B TP=2 + PP=2 + Sequence Parallelism
+#
+# 硬件：4× NVIDIA A800 80GB（GPU 0-3）
+# 模型：Qwen3.5-9B，纯文本（语言），LoRA r=16
+# RL 训练：GRASPO 强化学习，TP=2 张量并行 + PP=2 管线并行 + Sequence Parallelism
+#
+# 拓扑：4 卡时 TP=2 沿 attention head 分片 + PP=2 沿层切分 + SP 沿序列维度分片。
+#   SP 在 TP>1 时用 reduce_scatter + all_gather 替代 all_reduce，零额外通信量。
+#   注意 rank 布局：tp=2, pp=2, dp=1 → world=4，PP 组内 stage 通信在 rank0<->rank2、
+#   rank1<->rank3（跨 PCIe pair）。A800 需 `NCCL_P2P_DISABLE=1`（run.sh 已内置）。
+
+train_method: graspo
+backend: graspoflow
+
+model:
+  model_path: /data/zhangzy/models/Qwen3.5-9B
+  trust_remote_code: true
+  torch_dtype: bfloat16
+  gradient_checkpointing: true
+  chat_template_kwargs:
+    enable_thinking: false
+
+data:
+  train_path: samples/data/sample_tool_call.jsonl
+  max_prompt_length: 4096
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  adapter_path: null
+  target_preset: language_safe
+
+graspoflow:
+  tp_size: 2
+  dp_size: 1
+  pp_size: 2
+  pp_micro_batch_size: 1
+  pp_scheduler: one_f_one_b
+  pp_max_inflight_microbatches: 0
+  micro_batch_size: 1
+  placement_strategy: auto
+  sequence_parallel: true
+  dp_replicate_lora: true
+
+training:
+  output_dir: ""
+  run_name: tp2-pp2-sp-rl
+  seed: 42
+  max_epochs: 100
+  rollout_group_size: 8
+  rollout_queue_batch_size: 8
+  gradient_accumulation_micro_batches: 4
+  rollout_max_retries: 5
+  learning_rate: 5.0e-6
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  policy_ratio_clip_eps: 0.2
+  max_new_tokens: 256
+  temperature: 1.0
+  top_p: 1.0
+  save_steps: -1
+  save_checkpoint_every_epoch: true
+  perfect_skip_reward_threshold: 2.0
+  reject_unparseable_groups: false
+  lr_scheduler:
+    type: cosine
+    warmup_steps: 50
+    min_lr_ratio: 0.1
+    decay_steps: 1000
+
+launch:
+  nproc_per_node: 4
+
+reward:
+  kind: graspo
+  check_think: false
+  check_json_markdown: true
+  check_list_order: false
+  marker_reward_weight: 10.0
+  content_reward_weight: 100.0
+  anti_useless_str_reward_weight: 1.0
+  anti_useless_str_half_reward_len: 100
+  numeric_tolerance: 0.2

@@ -1,0 +1,78 @@
+# GRASPO RL — 4×A800 Qwen3.5-9B DP=2 TP=2 + Sequence Parallelism
+#
+# 硬件：4× NVIDIA A800 80GB，PCIe 或 NVLink
+# 模型：Qwen3.5-9B，纯文本（语言），LoRA r=16
+# RL 训练：GRASPO 强化学习，DP=2 数据并行 + TP=2 张量并行 + Sequence Parallelism
+#
+# DP=2 TP=2 SP=on：最复杂的非 PP 并行组合，同时涉及三种通信模式。
+# PCIe 拓扑需设置环境变量 NCCL_P2P_DISABLE=1。
+
+train_method: graspo
+backend: graspoflow
+
+model:
+  model_path: /data/zhangzy/models/Qwen3.5-9B
+  trust_remote_code: true
+  torch_dtype: bfloat16
+  gradient_checkpointing: true
+  chat_template_kwargs:
+    enable_thinking: false
+
+data:
+  train_path: samples/data/sample_tool_call.jsonl
+  max_prompt_length: 4096
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  adapter_path: null
+  target_preset: language_safe
+
+graspoflow:
+  tp_size: 2
+  dp_size: 2
+  pp_size: 1
+  dp_replicate_lora: true
+  micro_batch_size: 1
+  placement_strategy: qwen3_tp
+  sequence_parallel: true
+
+training:
+  output_dir: ""
+  run_name: dp2-tp2-sp-rl
+  seed: 42
+  max_epochs: 100
+  rollout_group_size: 8
+  rollout_queue_batch_size: 8
+  gradient_accumulation_micro_batches: 4
+  rollout_max_retries: 5
+  learning_rate: 5.0e-6
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  policy_ratio_clip_eps: 0.2
+  max_new_tokens: 256
+  temperature: 1.0
+  top_p: 1.0
+  save_steps: -1
+  save_checkpoint_every_epoch: true
+  perfect_skip_reward_threshold: 2.0
+  reject_unparseable_groups: false
+  lr_scheduler:
+    type: cosine
+    warmup_steps: 50
+    min_lr_ratio: 0.1
+    decay_steps: 1000
+
+launch:
+
+reward:
+  kind: graspo
+  check_think: false
+  check_json_markdown: true
+  check_list_order: false
+  marker_reward_weight: 10.0
+  content_reward_weight: 100.0
+  anti_useless_str_reward_weight: 1.0
+  anti_useless_str_half_reward_len: 100
+  numeric_tolerance: 0.2
