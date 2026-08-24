@@ -50,11 +50,6 @@ extend-exclude = ["*.jsonl"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "BLE"]
 
-[tool.ruff.lint.per-file-ignores]
-# HTML 生成脚本：拼接长行是固有风格，跳过行长与变量名检查
-"tests/data/generate_annotation_viewer.py" = ["E501", "E741"]
-
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

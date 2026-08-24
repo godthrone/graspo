@@ -12,11 +12,18 @@ from graspo.core.schema import TrainingConfig
 from graspo.flow.adapters.transformer_adapter import TransformerAdapter
 
 
+class _FakeGraspoFlowConfig:
+    """最小桩：只提供 _build_scheduler 依赖的 dp_size。"""
+
+    dp_size: int = 1
+
+
 class _FakeRootConfig:
     """包装 TrainingConfig 成 ``config.training`` 形态（_build_scheduler 的访问路径）。"""
 
     def __init__(self, training: TrainingConfig) -> None:
         self.training = training
+        self.graspoflow = _FakeGraspoFlowConfig()
 
 
 class _StubAdapter:

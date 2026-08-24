@@ -14,6 +14,12 @@ from graspo.ripple.monitoring.stats import (
 )
 
 
+class _FakeGraspoFlowConfig:
+    """最小桩：只提供 _assert_resume_config_consistent / _checkpoint_trainer_state 依赖的字段。"""
+
+    micro_batch_size: int = 1
+
+
 def test_train_stats_roundtrip_preserves_values():
     """train_stats_to_dict → train_stats_from_dict produces equivalent stats."""
     original = GraspoFlowTrainStats()
@@ -79,6 +85,7 @@ def test_resume_config_snapshot_mismatch_raises():
             max_new_tokens = 2048
 
         training = Training()
+        graspoflow = _FakeGraspoFlowConfig()
 
     stub = _Stub()
     mismatched = {
@@ -130,6 +137,7 @@ def test_resume_config_snapshot_lr_mismatch_not_rejected():
             weight_decay = 0.01
 
         training = Training()
+        graspoflow = _FakeGraspoFlowConfig()
 
     stub = _Stub()
     state = {
@@ -174,6 +182,7 @@ def test_checkpoint_trainer_state_snapshot_includes_lr_and_weight_decay():
             weight_decay = 0.01
 
         training = Training()
+        graspoflow = _FakeGraspoFlowConfig()
 
     stub = _Stub()
     snapshot = stub._checkpoint_trainer_state(epoch=2)["config_snapshot"]
