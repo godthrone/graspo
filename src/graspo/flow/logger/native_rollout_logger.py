@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from graspo.flow.logging import append_jsonl_segment, run_log_dir
+from graspo.flow.logging import append_jsonl_segment, get_run_id, run_log_dir
 
 
 def _timestamp() -> str:
@@ -24,8 +24,8 @@ class NativeRolloutLogger:
         self.logs_dir = run_log_dir(self.output_dir)
         self.readable_enabled = readable_enabled
         self.raw_enabled = raw_enabled
-        # run_id = 输出目录名（config 派生，可复现）——跨文件关联键（§13.3）
-        self.run_id = Path(output_dir).name
+        # run_id 统一来源：logging.get_run_id()（§1.4 单一真相源）
+        self.run_id = get_run_id()
         self.readable_path = self.logs_dir / "rollouts.readable.jsonl"
         self.raw_path = self.logs_dir / "rollouts.raw.jsonl"
         self.train_batches_readable_path = self.logs_dir / "train_batches.readable.jsonl"

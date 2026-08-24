@@ -6,7 +6,6 @@
 
 import json
 import logging
-import os
 import random
 import time
 from collections import deque
@@ -104,12 +103,6 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
         setup_logging(self.config.training.output_dir, rank=rank)
         _set_random_seed(int(self.config.training.seed), rank=rank)
         _log = logging.getLogger("graspo.trainer")
-        os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "")
-        conf = os.environ["PYTORCH_CUDA_ALLOC_CONF"]
-        if "expandable_segments:True" not in conf:
-            os.environ["PYTORCH_CUDA_ALLOC_CONF"] = (
-                conf + ("," if conf else "") + "expandable_segments:True"
-            )
         self._print_json(
             {
                 "timestamp": _timestamp(),

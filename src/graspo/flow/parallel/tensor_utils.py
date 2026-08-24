@@ -241,8 +241,8 @@ def _reduce_scatter_sp(tensor: torch.Tensor) -> torch.Tensor:
     ``(B, S/tp, H/tp)`` via reduce-scatter(SUM) across the TP group.
 
     NOTE: Currently falls back to all_reduce + chunk because native
-    ``dist.reduce_scatter`` hangs on PCIe-only A800 topologies (121).
-    On NVLink-connected GPUs (228), the native reduce_scatter works.
+    ``dist.reduce_scatter`` hangs on PCIe-only A800 topologies.
+    On NVLink-connected GPUs, the native reduce_scatter works.
     The fallback has identical communication volume to all_reduce,
     so there is no speed penalty vs TP-only, but activation memory
     is still reduced by SP.

@@ -20,7 +20,7 @@
 #   7. 参数全部走 CLI（--gpus / --image），不使用自定义环境变量
 #   8. `NCCL_P2P_DISABLE` 按拓扑自动判定：A800 PCIe 拓扑（GPU 以 NVLink pair 成对、跨 pair 走
 #      PCIe bridge）下，NCCL 的 P2P/CUMEM 路径会 hang，需禁用 P2P 走中间内存拷贝；全 NVLink
-#      mesh（如 228 全 NV8）无需禁用，禁用反而引入非对称显存/效率损耗。详见 README FAQ。
+#      mesh（全 NVLink 互联）无需禁用，禁用反而引入非对称显存/效率损耗。详见 README FAQ。
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -104,6 +104,8 @@ fi
 
 _yaml_value() {
     # 从 YAML 中提取 key: value 行的值（简单解析，适合顶层和第二层字段）
+    # TODO(P0): 当前为 grep 启发式，不支持嵌套映射/引号/多行值等边界情况。
+    # 未来可改用 python3 -c "import yaml; ..."（需确保宿主有 pyyaml）或引入 yq。
     grep -E "^\s*${1}:" "$CONFIG_ABS" 2>/dev/null | head -1 | sed 's/^[^:]*:\s*//' | xargs
 }
 
@@ -191,7 +193,7 @@ echo "容器时区: $TZ_VALUE"
 # ── 防呆 8: NCCL_P2P_DISABLE 按拓扑条件化 ──────────────────────────────────
 # 在 A800 PCIe 拓扑（GPU 以 NVLink pair 成对、跨 pair 走 PCIe bridge）下，
 # NCCL 的 P2P/CUMEM 路径在小张量 all-reduce 或跨 pair 的 P2P send/recv 会 hang，
-# 需禁用 P2P 走中间内存拷贝。但全 NVLink mesh（如 228 的 8×A800 全 NV8）无需禁用，
+# 需禁用 P2P 走中间内存拷贝。但全 NVLink mesh（所有 GPU 通过 NVLink 全互联）无需禁用，
 # 禁用反而引入非对称显存/效率损耗（默认组缓冲集中到 device0、GPU0 先 OOM）。
 # 按选中 GPU 的拓扑自动判定：选中 GPU 间存在 PXB/PHB/SYS（跨 PCIe bridge / 跨
 # NUMA）路径 → 需禁用 P2P；全部为 NVLink（NV#）→ 保留 P2P（更快、显存对称）。
@@ -228,7 +230,7 @@ _p2p_disable_required() {
     return 1
 }
 
-DOCKER_ENV_ARGS=(-e "TZ=${TZ_VALUE}")
+DOCKER_ENV_ARGS=(-e "TZ=${TZ_VALUE}" -e "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True")
 if _p2p_disable_required "$GPU_IDS"; then
     DOCKER_ENV_ARGS+=(-e "NCCL_P2P_DISABLE=1")
     echo "GPU 拓扑含跨 PCIe bridge/NUMA 路径，禁用 NCCL P2P（NCCL_P2P_DISABLE=1）"
@@ -260,7 +262,7 @@ echo "  配置: $CONFIG_ABS"
 echo "  GPU:  $GPU_IDS"
 
 docker run -d --name "$CONTAINER_NAME" \
-    --gpus "\"device=$GPU_IDS\"" \
+    --gpus "device=$GPU_IDS" \
     --ipc=host --shm-size=16g \
     "${DOCKER_ENV_ARGS[@]}" \
     "${_mount_args[@]}" \
