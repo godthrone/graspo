@@ -37,10 +37,11 @@
 |---|---|
 | 机器 | 单节点 4× NVIDIA A800 80GB PCIe（GPU 0-3） |
 | 模型 | `Qwen3.5-9B`（`/data/zhangzy/models/Qwen3.5-9B/`）、`Qwen3.8-27B`（`/data/zhangzy/vllm/Qwen3.8-27B/`） |
-| 数据 | 统一多模态数据集：228 v4 分层抽样 100 链（~242 行），`samples/data/tool_call_mm/train.jsonl` |
-| 运行 | `bash run_matrix.sh`（自动生成，位于项目根目录） |
+| 数据 | 统一多模态数据集：228 v4 分层抽样 2 链 × 8 类别 = 37 行、78 图，`samples/data/tool_call_mm/train.jsonl` |
+| 运行 | `bash tests/e2e/run_matrix.sh <output_dir>`（输出目录必填） |
 | 超时 | 1200s/格 |
 | 配置 | `samples/configs/matrix/*.yaml`（28 个，由 `tests/e2e/generate_matrix.py` 生成） |
+| 镜像 | `graspo:0.29.0` |
 
 > 多卡自动 `NCCL_P2P_DISABLE=1`（A800 PCIe 拓扑必需）。
 
@@ -50,17 +51,17 @@
 
 | # | W | TP | DP | PP | SP | 9B RL | 27B RL | 备注 |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|------|
-| 1 | 1 | 1 | 1 | 1 | off | — | — | baseline |
-| 2 | 2 | 1 | 1 | 2 | off | — | — | PP=2（可能性能差） |
-| 3 | 2 | 1 | 2 | 1 | off | — | — | DP=2 |
-| 4 | 2 | 2 | 1 | 1 | off | — | — | TP=2 |
-| 5 | 2 | 2 | 1 | 1 | on | — | — | TP=2+SP |
-| 6 | 4 | 1 | 1 | 4 | off | — | — | PP=4 |
-| 7 | 4 | 1 | 2 | 2 | off | — | — | DP=2+PP=2 |
-| 8 | 4 | 1 | 4 | 1 | off | — | — | DP=4 |
-| 9 | 4 | 2 | 1 | 2 | off | — | — | TP=2+PP=2 |
-| 10 | 4 | 2 | 1 | 2 | on | — | — | TP=2+PP=2+SP |
-| 11 | 4 | 2 | 2 | 1 | off | — | — | DP=2+TP=2 |
+| 1 | 1 | 1 | 1 | 1 | off | ✅ | — | baseline |
+| 2 | 2 | 1 | 1 | 2 | off | ❌ | — | PP=2，cross-PG deadlock |
+| 3 | 2 | 1 | 2 | 1 | off | ❌ | — | DP=2，cross-PG deadlock |
+| 4 | 2 | 2 | 1 | 1 | off | ❌ | — | TP=2，cross-PG deadlock |
+| 5 | 2 | 2 | 1 | 1 | on | ❌ | — | TP=2+SP，torch elastic error |
+| 6 | 4 | 1 | 1 | 4 | off | ❌ | — | PP=4，cross-PG deadlock |
+| 7 | 4 | 1 | 2 | 2 | off | ❌ | — | DP=2+PP=2，cross-PG deadlock |
+| 8 | 4 | 1 | 4 | 1 | off | ❌ | — | DP=4，cross-PG deadlock |
+| 9 | 4 | 2 | 1 | 2 | off | ❌ | — | TP=2+PP=2，cross-PG deadlock |
+| 10 | 4 | 2 | 1 | 2 | on | ⏰ | — | SP 变体，1200s 超时卡死 |
+| 11 | 4 | 2 | 2 | 1 | off | ▶ | — | DP=2+TP=2 |
 | 12 | 4 | 2 | 2 | 1 | on | — | — | DP=2+TP=2+SP |
 | 13 | 4 | 4 | 1 | 1 | off | — | — | TP=4 |
 | 14 | 4 | 4 | 1 | 1 | on | — | — | TP=4+SP |
@@ -71,11 +72,11 @@
 # 生成 configs 和 run 脚本（开发机）
 python3 tests/e2e/generate_matrix.py
 
-# 同步到 121 后运行
-bash run_matrix.sh
+# 同步到 121 后运行（输出目录必填）
+bash tests/e2e/run_matrix.sh /data/zhangzy/e2e-results
 ```
 
-每格自动记录：exit code、elapsed time、最后 5 行错误日志。
+每格在 `<output_dir>/<name>/` 下保存 `log.txt`（完整日志）和 `outputs/`（训练产物）。汇总摘要写入 `<output_dir>/summary.txt`。
 
 ## 5. 通过判据
 
@@ -89,13 +90,31 @@ bash run_matrix.sh
 
 | 日期 | # | 模型 | 结果 | 耗时(s) | loss | reward | 备注 |
 |------|---|------|------|---------|------|--------|------|
-| 待测 | 1-14 | 9B | — | — | — | — | |
-| 待测 | 1-14 | 27B | — | — | — | — | |
+| 08-25 | 1 | 9B | ✅ | ~900 | -0.19 | 0.44 | 单卡 baseline，唯一通过 |
+| 08-25 | 2-4,6-9 | 9B | ❌ | — | — | — | 多卡 SIGABRT（cross-PG deadlock） |
+| 08-25 | 5 | 9B | ❌ | — | — | — | SP 变体，torch elastic error |
+| 08-25 | 10 | 9B | ⏰ | 1200+ | — | — | SP 变体，训练卡死超时 |
+| 08-25 | 11-14 | 9B | — | — | — | — | 运行中/待测 |
+| 08-25 | 1-14 | 27B | — | — | — | — | 待测 |
 
 > 记录方法：每格先跑单卡 baseline（#1）得到该 epoch 的 loss/reward，再跑相应并行组合，填入同一 epoch 的指标用于能力对齐判定。
 
-## 7. 配置生成
+## 7. 已知问题
+
+### 7.1 多卡 cross-PG deadlock（#2-4, #6-9）
+
+**症状**：所有 2+ 卡配置（DP/TP/PP > 1）在训练中期 SIGABRT 崩溃，exit code -6。
+
+**根因**：跨进程组死锁。rank 0 和 rank 1 在不同 PG 上互相等待——一个在 PG 1 等 all-reduce，另一个在 PG 0 等 barrier。训练跑了 ~36,000 次 NCCL 操作后触发，非初始化问题。
+
+**排查结论**：
+- `NCCL_P2P_DISABLE=1` 已设置，不是 P2P hang
+- GPU 0↔1 是 NVLink（NV8），不是 PCIe 拓扑
+- 这是训练代码的条件分支发散导致的确定性 bug（工作日志中记录的 "DP=4 post-epoch hang"）
+- **P2 阶段修复范围**
+
+## 8. 配置生成
 
 所有 config 和 run 脚本由 `tests/e2e/generate_matrix.py` 自动生成，不手工维护。修改测试参数（超时、数据路径、模型路径等）只需改脚本中的常量，重新运行即可。
 
-生成的 config 位于 `samples/configs/matrix/`，run 脚本位于项目根目录 `run_matrix.sh`。
+生成的 config 位于 `samples/configs/matrix/`，run 脚本位于 `tests/e2e/run_matrix.sh`。
