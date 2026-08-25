@@ -51,20 +51,20 @@
 
 | # | W | TP | DP | PP | SP | 9B RL | 27B RL | 9B SFT | 27B SFT | 备注 |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|------|
-| 1 | 1 | 1 | 1 | 1 | off | ✅ | — | — | — | baseline |
-| 2 | 2 | 1 | 1 | 2 | off | ❌ | — | — | — | PP=2，cross-PG deadlock |
-| 3 | 2 | 1 | 2 | 1 | off | ❌ | — | — | — | DP=2，cross-PG deadlock |
-| 4 | 2 | 2 | 1 | 1 | off | ❌ | — | — | — | TP=2，cross-PG deadlock |
-| 5 | 2 | 2 | 1 | 1 | on | ❌ | — | — | — | TP=2+SP，torch elastic error |
-| 6 | 4 | 1 | 1 | 4 | off | ❌ | — | — | — | PP=4，cross-PG deadlock |
-| 7 | 4 | 1 | 2 | 2 | off | ❌ | — | — | — | DP=2+PP=2，cross-PG deadlock |
-| 8 | 4 | 1 | 4 | 1 | off | ❌ | — | — | — | DP=4，cross-PG deadlock |
-| 9 | 4 | 2 | 1 | 2 | off | ❌ | — | — | — | TP=2+PP=2，cross-PG deadlock |
-| 10 | 4 | 2 | 1 | 2 | on | ⏰ | — | — | — | SP 变体，1200s 超时卡死 |
-| 11 | 4 | 2 | 2 | 1 | off | ▶ | — | — | — | DP=2+TP=2 |
-| 12 | 4 | 2 | 2 | 1 | on | — | — | — | — | DP=2+TP=2+SP |
-| 13 | 4 | 4 | 1 | 1 | off | — | — | — | — | TP=4 |
-| 14 | 4 | 4 | 1 | 1 | on | — | — | — | — | TP=4+SP |
+| 1 | 1 | 1 | 1 | 1 | off | ✅ | ⏰ | ❌ | ✅ | RL: single-GPU OK; SFT 9B OOM / 27B OK |
+| 2 | 2 | 1 | 1 | 2 | off | ❌ | ❌ | ❌ | ❌ | RL: cross-PG deadlock; SFT: OOM/rc=1 |
+| 3 | 2 | 1 | 2 | 1 | off | ❌ | ❌ | ❌ | ❌ | RL: cross-PG deadlock; SFT: SIGABRT |
+| 4 | 2 | 2 | 1 | 1 | off | ❌ | ❌ | ✅ | ❌ | RL: deadlock; SFT 9B OK / 27B rc=1 |
+| 5 | 2 | 2 | 1 | 1 | on | ❌ | ❌ | ✅ | ❌ | RL: elastic error; SFT 9B OK / 27B rc=1 |
+| 6 | 4 | 1 | 1 | 4 | off | ❌ | ❌ | ✅ | ❌ | RL: deadlock; SFT 9B OK / 27B rc=1 |
+| 7 | 4 | 1 | 2 | 2 | off | ❌ | ❌ | ❌ | ❌ | RL: deadlock; SFT: rc=1 |
+| 8 | 4 | 1 | 4 | 1 | off | ❌ | ❌ | ❌ | ❌ | RL: deadlock; SFT: SIGABRT |
+| 9 | 4 | 2 | 1 | 2 | off | ❌ | ❌ | ✅ | ✅ | RL: deadlock; SFT: OK |
+| 10 | 4 | 2 | 1 | 2 | on | ⏰ | ⏰ | ✅ | ✅ | RL: timeout; SFT: OK |
+| 11 | 4 | 2 | 2 | 1 | off | ❌ | ❌ | ❌ | ❌ | RL: deadlock; SFT: SIGABRT |
+| 12 | 4 | 2 | 2 | 1 | on | ❌ | ❌ | ❌ | ❌ | RL: elastic; SFT: rc=1 |
+| 13 | 4 | 4 | 1 | 1 | off | ❌ | ❌ | ✅ | ✅ | RL: deadlock; SFT: OK |
+| 14 | 4 | 4 | 1 | 1 | on | ❌ | ❌ | ✅ | ✅ | RL: elastic; SFT: OK |
 
 ## 4. 运行方法
 
