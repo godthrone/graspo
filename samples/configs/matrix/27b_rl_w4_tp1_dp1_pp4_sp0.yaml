@@ -1,0 +1,64 @@
+# GRASPO e2e matrix [RL]: 27B w=4 TP=1 DP=1 PP=4 SP=off
+train_method: graspo
+backend: graspoflow
+model:
+  model_path: /data/zhangzy/vllm/Qwen3.8-27B
+  trust_remote_code: true
+  torch_dtype: bfloat16
+  gradient_checkpointing: true
+  chat_template_kwargs:
+    enable_thinking: false
+data:
+  train_path: samples/data/tool_call_mm/train.jsonl
+  max_prompt_length: 8192
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  adapter_path: null
+  target_preset: language_safe
+  target_modules:
+      - language_all_linear
+      - vision_common
+graspoflow:
+  tp_size: 1
+  dp_size: 1
+  pp_size: 4
+  micro_batch_size: 1
+  dp_replicate_lora: true
+training:
+  output_dir: /workspace/outputs
+  run_name: 27b_rl_w4_tp1_dp1_pp4_sp0
+  seed: 42
+  max_epochs: 1
+  gradient_accumulation_micro_batches: 1
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  save_steps: -1
+  save_checkpoint_every_epoch: false
+  lr_scheduler:
+    type: constant
+    warmup_steps: 0
+    min_lr_ratio: 0.0
+    decay_steps: 0
+  learning_rate: 5e-06
+  rollout_group_size: 2
+  rollout_queue_batch_size: 2
+  rollout_max_retries: 2
+  policy_ratio_clip_eps: 0.2
+  max_new_tokens: 64
+  temperature: 1.0
+  top_p: 1.0
+  perfect_skip_reward_threshold: 2.0
+  reject_unparseable_groups: false
+launch: null
+reward:
+  kind: graspo
+  check_think: false
+  check_json_markdown: true
+  check_list_order: false
+  marker_reward_weight: 10.0
+  content_reward_weight: 100.0
+  anti_useless_str_reward_weight: 1.0
+  anti_useless_str_half_reward_len: 100
+  numeric_tolerance: 0.2

@@ -4,8 +4,10 @@
 数学全排列：对所有 world_size ∈ {1, 2, 4}，枚举所有正整数三元组 (tp, dp, pp)
 满足 tp × dp × pp = world_size。SP ∈ {on, off} 仅在 tp ≥ 2 时两态。
 
+覆盖 RL (graspo) 和 SFT 两种训练方法。
+
 输出：
-  - samples/configs/matrix/*.yaml（28 个 config）
+  - samples/configs/matrix/*.yaml（56 个 config：28 RL + 28 SFT）
   - tests/e2e/run_matrix.sh（批量执行脚本）
 """
 
@@ -30,6 +32,7 @@ MODELS: dict[str, dict[str, str]] = {
     },
 }
 
+TRAIN_METHODS = ["rl", "sft"]
 WORLD_SIZES = [1, 2, 4]
 TRAIN_PATH = "samples/data/tool_call_mm/train.jsonl"
 TIMEOUT_SEC = 1200
@@ -48,8 +51,67 @@ def factor_triples(w: int) -> list[tuple[int, int, int]]:
     return result
 
 
+def _build_training_config(name: str, method: str) -> dict[str, Any]:
+    """Build the training section, which differs between RL and SFT."""
+    common = {
+        "output_dir": "/workspace/outputs",
+        "run_name": name,
+        "seed": 42,
+        "max_epochs": 1,
+        "gradient_accumulation_micro_batches": 1,
+        "weight_decay": 0.01,
+        "max_grad_norm": 1.0,
+        "save_steps": -1,
+        "save_checkpoint_every_epoch": False,
+        "lr_scheduler": {
+            "type": "constant",
+            "warmup_steps": 0,
+            "min_lr_ratio": 0.0,
+            "decay_steps": 0,
+        },
+    }
+
+    if method == "rl":
+        return {
+            **common,
+            "learning_rate": 5.0e-6,
+            "rollout_group_size": 2,
+            "rollout_queue_batch_size": 2,
+            "rollout_max_retries": 2,
+            "policy_ratio_clip_eps": 0.2,
+            "max_new_tokens": 64,
+            "temperature": 1.0,
+            "top_p": 1.0,
+            "perfect_skip_reward_threshold": 2.0,
+            "reject_unparseable_groups": False,
+        }
+    else:  # sft
+        return {
+            **common,
+            "learning_rate": 5.0e-5,
+        }
+
+
+def _build_reward_config(method: str) -> dict[str, Any] | None:
+    """RL needs reward config; SFT does not."""
+    if method == "rl":
+        return {
+            "kind": "graspo",
+            "check_think": False,
+            "check_json_markdown": True,
+            "check_list_order": False,
+            "marker_reward_weight": 10.0,
+            "content_reward_weight": 100.0,
+            "anti_useless_str_reward_weight": 1.0,
+            "anti_useless_str_half_reward_len": 100,
+            "numeric_tolerance": 0.2,
+        }
+    return None
+
+
 def generate_config(
     model_key: str,
+    method: str,
     tp: int,
     dp: int,
     pp: int,
@@ -59,14 +121,16 @@ def generate_config(
 ) -> None:
     """Generate a single e2e test config YAML."""
     model = MODELS[model_key]
-    name = f"{model_key.lower()}_w{world_size}_tp{tp}_dp{dp}_pp{pp}_sp{1 if sp else 0}"
+    name = f"{model_key.lower()}_{method}_w{world_size}_tp{tp}_dp{dp}_pp{pp}_sp{1 if sp else 0}"
 
     placement = "auto"
     if tp >= 2 and pp == 1:
         placement = "qwen3_tp"
 
+    train_method = "graspo" if method == "rl" else "sft"
+
     config: dict[str, Any] = {
-        "train_method": "graspo",
+        "train_method": train_method,
         "backend": "graspoflow",
         "model": {
             "model_path": model["model_path"],
@@ -77,7 +141,7 @@ def generate_config(
         },
         "data": {
             "train_path": TRAIN_PATH,
-            "max_prompt_length": 4096,
+            "max_prompt_length": 8192,
         },
         "lora": {
             "r": 16,
@@ -94,46 +158,13 @@ def generate_config(
             "micro_batch_size": 1,
             "dp_replicate_lora": True,
         },
-        "training": {
-            "output_dir": "/workspace/outputs",
-            "run_name": name,
-            "seed": 42,
-            "max_epochs": 1,
-            "rollout_group_size": 2,
-            "rollout_queue_batch_size": 2,
-            "gradient_accumulation_micro_batches": 1,
-            "rollout_max_retries": 2,
-            "learning_rate": 5.0e-6,
-            "weight_decay": 0.01,
-            "max_grad_norm": 1.0,
-            "policy_ratio_clip_eps": 0.2,
-            "max_new_tokens": 64,
-            "temperature": 1.0,
-            "top_p": 1.0,
-            "save_steps": -1,
-            "save_checkpoint_every_epoch": False,
-            "perfect_skip_reward_threshold": 2.0,
-            "reject_unparseable_groups": False,
-            "lr_scheduler": {
-                "type": "constant",
-                "warmup_steps": 0,
-                "min_lr_ratio": 0.0,
-                "decay_steps": 0,
-            },
-        },
+        "training": _build_training_config(name, method),
         "launch": None,
-        "reward": {
-            "kind": "graspo",
-            "check_think": False,
-            "check_json_markdown": True,
-            "check_list_order": False,
-            "marker_reward_weight": 10.0,
-            "content_reward_weight": 100.0,
-            "anti_useless_str_reward_weight": 1.0,
-            "anti_useless_str_half_reward_len": 100,
-            "numeric_tolerance": 0.2,
-        },
     }
+
+    reward = _build_reward_config(method)
+    if reward is not None:
+        config["reward"] = reward
 
     if placement != "auto":
         config["graspoflow"]["placement_strategy"] = placement
@@ -142,15 +173,15 @@ def generate_config(
 
     # Write YAML manually for clean formatting
     config_path.parent.mkdir(parents=True, exist_ok=True)
+    method_label = "RL" if method == "rl" else "SFT"
     with open(config_path, "w") as f:
-        f.write(f"# GRASPO e2e matrix: {model_key} w={world_size} TP={tp} DP={dp} PP={pp} SP={'on' if sp else 'off'}\n")
+        f.write(f"# GRASPO e2e matrix [{method_label}]: {model_key} w={world_size} TP={tp} DP={dp} PP={pp} SP={'on' if sp else 'off'}\n")
         _write_yaml(f, config, 0)
 
 
 def _write_yaml(f, obj, indent: int, key: str | None = None) -> None:
     """Write a Python object as clean YAML."""
     prefix = "  " * indent
-    prefix_key = ""
 
     if obj is None:
         if key is not None:
@@ -216,8 +247,6 @@ def generate_run_script(tests: list[dict]) -> None:
     """
     gpu_map = {1: "0", 2: "0,1", 4: "0,1,2,3"}
 
-    # The script is at tests/e2e/run_matrix.sh → PROJECT_ROOT is ../../
-    # SDIR = $PROJECT_ROOT/samples
     lines = [
         "#!/bin/bash",
         "# GRASPO e2e matrix runner — auto-generated by generate_matrix.py",
@@ -302,17 +331,22 @@ def generate_run_script(tests: list[dict]) -> None:
         "",
     ]
 
-    # Group tests by model
-    for model_key in ["9B", "27B"]:
-        model_tests = [t for t in tests if t["model"] == model_key]
+    # Group tests by method then model
+    for method, method_label in [("rl", "RL"), ("sft", "SFT")]:
+        method_tests = [t for t in tests if t["method"] == method]
         lines.append(f"echo '' | tee -a \"$SUMMARY\"")
-        lines.append(f"echo '=== {model_key} ({len(model_tests)} tests) ===' | tee -a \"$SUMMARY\"")
+        lines.append(f"echo '===== {method_label} ({len(method_tests)} tests) =====' | tee -a \"$SUMMARY\"")
 
-        for t in model_tests:
-            gpus = gpu_map[t["world_size"]]
-            lines.append(
-                f'run_one {t["name"]} "samples/configs/matrix/{t["name"]}.yaml" "{gpus}"'
-            )
+        for model_key in ["9B", "27B"]:
+            model_tests = [t for t in method_tests if t["model"] == model_key]
+            lines.append(f"echo '' | tee -a \"$SUMMARY\"")
+            lines.append(f"echo '--- {model_key} ({len(model_tests)} tests) ---' | tee -a \"$SUMMARY\"")
+
+            for t in model_tests:
+                gpus = gpu_map[t["world_size"]]
+                lines.append(
+                    f'run_one {t["name"]} "samples/configs/matrix/{t["name"]}.yaml" "{gpus}"'
+                )
 
     lines.extend([
         "",
@@ -334,28 +368,30 @@ def main() -> None:
 
     tests: list[dict] = []
 
-    for model_key in MODELS:
-        for w in WORLD_SIZES:
-            triples = factor_triples(w)
-            for tp, dp, pp in triples:
-                sp_options = [False, True] if tp >= 2 else [False]
-                for sp in sp_options:
-                    name = f"{model_key.lower()}_w{w}_tp{tp}_dp{dp}_pp{pp}_sp{1 if sp else 0}"
-                    config_name = f"{name}.yaml"
-                    config_path = CONFIG_DIR / config_name
+    for method in TRAIN_METHODS:
+        for model_key in MODELS:
+            for w in WORLD_SIZES:
+                triples = factor_triples(w)
+                for tp, dp, pp in triples:
+                    sp_options = [False, True] if tp >= 2 else [False]
+                    for sp in sp_options:
+                        name = f"{model_key.lower()}_{method}_w{w}_tp{tp}_dp{dp}_pp{pp}_sp{1 if sp else 0}"
+                        config_name = f"{name}.yaml"
+                        config_path = CONFIG_DIR / config_name
 
-                    generate_config(model_key, tp, dp, pp, sp, w, config_path)
+                        generate_config(model_key, method, tp, dp, pp, sp, w, config_path)
 
-                    tests.append({
-                        "name": name,
-                        "model": model_key,
-                        "world_size": w,
-                        "tp": tp,
-                        "dp": dp,
-                        "pp": pp,
-                        "sp": sp,
-                        "config": f"samples/configs/matrix/{config_name}",
-                    })
+                        tests.append({
+                            "name": name,
+                            "method": method,
+                            "model": model_key,
+                            "world_size": w,
+                            "tp": tp,
+                            "dp": dp,
+                            "pp": pp,
+                            "sp": sp,
+                            "config": f"samples/configs/matrix/{config_name}",
+                        })
 
     generate_run_script(tests)
 
@@ -364,19 +400,19 @@ def main() -> None:
     print(f"Run script → {SCRIPT_PATH}")
     print()
 
-    for w in WORLD_SIZES:
-        count = sum(1 for t in tests if t["world_size"] == w)
-        print(f"  w={w}: {count} tests")
+    for method in TRAIN_METHODS:
+        count = sum(1 for t in tests if t["method"] == method)
+        print(f"  {method.upper()}: {count} tests")
 
-    print(f"\n  Total: {len(tests)} tests (14 per model × 2 models)")
+    print(f"\n  Total: {len(tests)} tests (14 per model × 2 models × 2 methods)")
 
     # Print matrix table
     print("\nMatrix:")
-    print(f"{'Model':<4} {'W':<2} {'TP':<3} {'DP':<3} {'PP':<3} {'SP':<4} {'Name'}")
-    print("-" * 55)
+    print(f"{'Method':<6} {'Model':<4} {'W':<2} {'TP':<3} {'DP':<3} {'PP':<3} {'SP':<4} {'Name'}")
+    print("-" * 60)
     for t in tests:
         sp_str = "on" if t["sp"] else "off"
-        print(f"{t['model']:<4} {t['world_size']:<2} {t['tp']:<3} {t['dp']:<3} {t['pp']:<3} {sp_str:<4} {t['name']}")
+        print(f"{t['method']:<6} {t['model']:<4} {t['world_size']:<2} {t['tp']:<3} {t['dp']:<3} {t['pp']:<3} {sp_str:<4} {t['name']}")
 
 
 if __name__ == "__main__":
