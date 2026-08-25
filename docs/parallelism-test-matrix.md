@@ -29,7 +29,7 @@
 | 13 | 4 | 4 | 1 | 1 | off | TP=4 |
 | 14 | 4 | 4 | 1 | 1 | on | TP=4+SP |
 
-**14 组合 × 2 模型（9B/27B）= 28 格。**
+**14 组合 × 2 模型（9B/27B）× 2 方法（RL/SFT）= 56 格。**
 
 ## 2. 环境
 
@@ -40,31 +40,31 @@
 | 数据 | 统一多模态数据集：228 v4 分层抽样 2 链 × 8 类别 = 37 行、78 图，`samples/data/tool_call_mm/train.jsonl` |
 | 运行 | `bash tests/e2e/run_matrix.sh <output_dir>`（输出目录必填） |
 | 超时 | 1200s/格 |
-| 配置 | `samples/configs/matrix/*.yaml`（28 个，由 `tests/e2e/generate_matrix.py` 生成） |
+| 配置 | `samples/configs/matrix/*.yaml`（56 个，由 `tests/e2e/generate_matrix.py` 生成） |
 | 镜像 | `graspo:0.29.0` |
 
 > 多卡自动 `NCCL_P2P_DISABLE=1`（A800 PCIe 拓扑必需）。
 
-## 3. 完整矩阵（28 格）
+## 3. 完整矩阵（56 格）
 
 状态图例：✅ 通过 ｜ ⚠️ 超时/部分完成 ｜ ❌ 失败 ｜ — 未测
 
-| # | W | TP | DP | PP | SP | 9B RL | 27B RL | 备注 |
-|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|------|
-| 1 | 1 | 1 | 1 | 1 | off | ✅ | — | baseline |
-| 2 | 2 | 1 | 1 | 2 | off | ❌ | — | PP=2，cross-PG deadlock |
-| 3 | 2 | 1 | 2 | 1 | off | ❌ | — | DP=2，cross-PG deadlock |
-| 4 | 2 | 2 | 1 | 1 | off | ❌ | — | TP=2，cross-PG deadlock |
-| 5 | 2 | 2 | 1 | 1 | on | ❌ | — | TP=2+SP，torch elastic error |
-| 6 | 4 | 1 | 1 | 4 | off | ❌ | — | PP=4，cross-PG deadlock |
-| 7 | 4 | 1 | 2 | 2 | off | ❌ | — | DP=2+PP=2，cross-PG deadlock |
-| 8 | 4 | 1 | 4 | 1 | off | ❌ | — | DP=4，cross-PG deadlock |
-| 9 | 4 | 2 | 1 | 2 | off | ❌ | — | TP=2+PP=2，cross-PG deadlock |
-| 10 | 4 | 2 | 1 | 2 | on | ⏰ | — | SP 变体，1200s 超时卡死 |
-| 11 | 4 | 2 | 2 | 1 | off | ▶ | — | DP=2+TP=2 |
-| 12 | 4 | 2 | 2 | 1 | on | — | — | DP=2+TP=2+SP |
-| 13 | 4 | 4 | 1 | 1 | off | — | — | TP=4 |
-| 14 | 4 | 4 | 1 | 1 | on | — | — | TP=4+SP |
+| # | W | TP | DP | PP | SP | 9B RL | 27B RL | 9B SFT | 27B SFT | 备注 |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|------|
+| 1 | 1 | 1 | 1 | 1 | off | ✅ | — | — | — | baseline |
+| 2 | 2 | 1 | 1 | 2 | off | ❌ | — | — | — | PP=2，cross-PG deadlock |
+| 3 | 2 | 1 | 2 | 1 | off | ❌ | — | — | — | DP=2，cross-PG deadlock |
+| 4 | 2 | 2 | 1 | 1 | off | ❌ | — | — | — | TP=2，cross-PG deadlock |
+| 5 | 2 | 2 | 1 | 1 | on | ❌ | — | — | — | TP=2+SP，torch elastic error |
+| 6 | 4 | 1 | 1 | 4 | off | ❌ | — | — | — | PP=4，cross-PG deadlock |
+| 7 | 4 | 1 | 2 | 2 | off | ❌ | — | — | — | DP=2+PP=2，cross-PG deadlock |
+| 8 | 4 | 1 | 4 | 1 | off | ❌ | — | — | — | DP=4，cross-PG deadlock |
+| 9 | 4 | 2 | 1 | 2 | off | ❌ | — | — | — | TP=2+PP=2，cross-PG deadlock |
+| 10 | 4 | 2 | 1 | 2 | on | ⏰ | — | — | — | SP 变体，1200s 超时卡死 |
+| 11 | 4 | 2 | 2 | 1 | off | ▶ | — | — | — | DP=2+TP=2 |
+| 12 | 4 | 2 | 2 | 1 | on | — | — | — | — | DP=2+TP=2+SP |
+| 13 | 4 | 4 | 1 | 1 | off | — | — | — | — | TP=4 |
+| 14 | 4 | 4 | 1 | 1 | on | — | — | — | — | TP=4+SP |
 
 ## 4. 运行方法
 
