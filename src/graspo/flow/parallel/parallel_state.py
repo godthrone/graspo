@@ -19,7 +19,10 @@ rank 拓扑（3D: dp × tp × pp）::
 
 from __future__ import annotations
 
+import logging
 import os
+import shutil
+import subprocess
 from dataclasses import dataclass
 
 import torch
@@ -64,6 +67,11 @@ class GraspoFlowState:
             torch.cuda.set_device(device)
         if world_size > 1 and not dist.is_initialized():
             backend = "nccl" if torch.cuda.is_available() else "gloo"
+            # 防呆（§2.1 契约即防呆 / §2.3 边界校验即防呆）：PCIe 拓扑下强制
+            # NCCL_P2P_DISABLE=1，防止 NCCL 子通信组 hang（参照 run.sh 的
+            # _p2p_disable_required() 逻辑）。
+            if backend == "nccl" and os.environ.get("NCCL_P2P_DISABLE") != "1":
+                _ensure_nccl_p2p_disabled()
             # 防呆（§2.3 边界校验即防呆）：init_process_group 不传 device_id 时，
             # NCCL 世界通信组不会按 rank 绑定到各自卡；容器暴露全部 GPU 时会在每个
             # 可见设备上建 CUDA/NCCL context，默认组缓冲集中到 cuda:0，造成卡间显存
@@ -167,6 +175,100 @@ class GraspoFlowState:
             prev_pp_rank=prev_pp_rank,
             next_pp_rank=next_pp_rank,
             device=device,
+        )
+
+
+def _parse_gpu_topo(topo: str) -> dict[int, dict[int, str]]:
+    """解析 ``nvidia-smi topo -m`` 输出为 ``{gpu_i: {gpu_j: link}}``。
+
+    仅保留合法数据行（行标 ``GPU<i>`` 且对角线为 ``X``），自动排除表头行。
+    链接类型值（``NV#`` / ``PXB`` / ``PHB`` / ``SYS`` / ``X`` 等）按列位置存入。
+    """
+    matrix: dict[int, dict[int, str]] = {}
+    for line in topo.splitlines():
+        parts = line.split()
+        if len(parts) < 2 or not parts[0].startswith("GPU"):
+            continue
+        try:
+            gi = int(parts[0][3:])
+        except ValueError:
+            continue
+        # 表头行（如 ``GPU0  GPU1 ...``）的 $1 也以 GPU 开头，但它没有
+        # ``X`` 对角线；用 ``parts[gi + 1] == "X"`` 把表头与数据行区分开。
+        if gi + 1 >= len(parts) or parts[gi + 1] != "X":
+            continue
+        row: dict[int, str] = {}
+        for col, token in enumerate(parts[1:], start=0):
+            row[col] = token
+        matrix[gi] = row
+    return matrix
+
+
+def _p2p_disable_required() -> bool:
+    """返回当前可见 GPU 拓扑是否必须禁用 NCCL P2P（对齐 ``run.sh`` 判定语义）。
+
+    - 任意两 GPU 路径含 ``PXB`` / ``PHB`` / ``SYS``（跨 PCIe bridge / 跨 NUMA）→ True；
+    - 全 NVLink（``NV#``）→ False；
+    - ``nvidia-smi`` 不可用、拓扑解析失败或无 GPU 行 → True（安全优先，避免 hang）。
+    """
+    if shutil.which("nvidia-smi") is None:
+        logging.getLogger(__name__).warning(
+            "nvidia-smi 不可用，无法检测 GPU 拓扑；安全回退为禁用 NCCL P2P（避免 hang）"
+        )
+        return True
+    try:
+        topo = subprocess.run(
+            ["nvidia-smi", "topo", "-m"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        logging.getLogger(__name__).warning(
+            "无法读取 GPU 拓扑（nvidia-smi topo -m 失败）；安全回退为禁用 NCCL P2P（避免 hang）"
+        )
+        return True
+    matrix = _parse_gpu_topo(topo)
+    gpus = sorted(matrix)
+    if len(gpus) == 0:
+        # 输出为空或格式异常，解析不出任何 GPU 行 → 安全回退为禁用（避免 hang）
+        logging.getLogger(__name__).warning(
+            "无法从 nvidia-smi topo -m 输出解析出 GPU 拓扑行；安全回退为禁用 NCCL P2P（避免 hang）"
+        )
+        return True
+    if len(gpus) < 2:
+        return False
+    for gi in gpus:
+        for gj in gpus:
+            if gi >= gj:
+                continue
+            link = matrix[gi].get(gj, "")
+            if any(pattern in link for pattern in ("PXB", "PHB", "SYS")):
+                return True
+    return False
+
+
+def _ensure_nccl_p2p_disabled() -> None:
+    """PCIe 拓扑下强制 ``NCCL_P2P_DISABLE=1``，防止 NCCL 子通信组 hang（防呆 §2.1）。
+
+    必须在 ``dist.init_process_group`` 之前调用：NCCL 在初始化时读取该环境变量，
+    因此需在此之前设好。逻辑对齐 ``run.sh::_p2p_disable_required()``：
+
+    - 以 ``nvidia-smi topo -m`` 检测可见 GPU 拓扑，任意两 GPU 路径含
+      ``PXB`` / ``PHB`` / ``SYS``（跨 PCIe bridge / 跨 NUMA）→ 强制 ``=1``；
+    - ``nvidia-smi`` 不可用或拓扑解析失败 → 安全回退为禁用（避免 hang）；
+    - 全 NVLink（``NV#``）→ 不干预（保留 P2P，避免非对称显存 / 效率损耗）。
+
+    透明退路说明（§3.2）：禁用 P2P 不改变训练结果，仅引入 <0.1% 的效率损耗，
+    并以 WARNING 告知用户；它不是 §2.3 中"静默降级为更差结果"的坏退路。
+    """
+    if _p2p_disable_required():
+        os.environ["NCCL_P2P_DISABLE"] = "1"
+        logging.getLogger(__name__).warning(
+            "GPU 拓扑含跨 PCIe bridge/NUMA 路径（PXB/PHB/SYS），强制 "
+            "NCCL_P2P_DISABLE=1 以防 NCCL 子通信组 hang（参照 run.sh "
+            "_p2p_disable_required() 逻辑）"
         )
 
 

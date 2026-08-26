@@ -630,8 +630,11 @@ bash run.sh samples/configs/sft_example.yaml --smoke
   降低 `learning_rate`（如 `1e-6`）。SFT LoRA adapter 可直接用于 GRASPO RL 训练。
 - **SFT OOM**：减小 `micro_batch_size`（micro-batch）或 `max_prompt_length`；
   增大 `gradient_accumulation_micro_batches` 以保持有效 batch size 不变。
-- **A800 PCIe 拓扑 DP 训练 hang（NCCL all-reduce 超时）**：在 A800 PCIe 拓扑的机器上（GPU 以 NVLink pair 成对、pair 之间通过 PCIe bridge(PXB) 连接），NCCL 的 P2P/CUMEM 路径在小张量 all-reduce 时可能 hang。TP 训练不受影响（大张量走 Simple 协议，不经过 P2P 路径）。**修复**：容器启动时设置
-  `NCCL_P2P_DISABLE=1`（`docker run -e NCCL_P2P_DISABLE=1 ...`）。**`run.sh` 现已按拓扑自动判定**：选中 GPU 间存在 PXB/PHB/SYS 才禁用 P2P；全 NVLink mesh（全 `NV#`）保留 P2P（更快，且避免默认组缓冲集中到 device0 造成的非对称显存/GPU0 先 OOM）。如需可手动 `-e NCCL_P2P_DISABLE=0/1` 覆盖。禁用 P2P 的性能影响极小（<0.1% 训练总耗时）。
+- **A800 PCIe 拓扑 DP 训练 hang（NCCL all-reduce 超时）**：在 A800 PCIe 拓扑的机器上（GPU 以 NVLink pair 成对、pair 之间通过 PCIe bridge(PXB) 连接），NCCL 的 P2P/CUMEM 路径在小张量 all-reduce 时可能 hang。TP 训练不受影响（大张量走 Simple 协议，不经过 P2P 路径）。**修复**：`NCCL_P2P_DISABLE=1`。框架现在会**自动检测并设置，无需手动 `-e`**：
+  - `run.sh` 与容器内 Python 启动检查（`GraspoFlowState.initialize`）都会读取 `nvidia-smi topo -m`：选中 GPU 间存在 PXB/PHB/SYS 则设 `NCCL_P2P_DISABLE=1`；全 NVLink mesh（全 `NV#`）保留 P2P（更快，且避免默认组缓冲集中到 device0 造成的非对称显存/GPU0 先 OOM）。`nvidia-smi` 不可用或拓扑解析失败时安全回退为禁用 P2P（避免 hang）。
+  - 在 PCIe 拓扑上框架会**强制** `NCCL_P2P_DISABLE=1`，即使你传 `=0`（该值在此拓扑必然 hang）；`=1` 始终安全。
+  - 在全 NVLink mesh 上手动设 `=1` 仅是显存/性能取舍，不影响正确性。
+  - 禁用 P2P 的性能影响极小（<0.1% 训练总耗时）。
 
 ## License
 
