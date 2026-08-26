@@ -266,7 +266,12 @@ class _Qwen35GenerationMethods:
             )
             self._sync_timing()
             sampling_sec += time.monotonic() - sampling_started_at
-            next_token = _broadcast_and_pad_finished(next_token, finished, pad_token_id)
+            next_token = _broadcast_and_pad_finished(
+                next_token,
+                finished,
+                pad_token_id,
+                tp_group=self.tp_state.tp_group if self.tp_state is not None else None,
+            )
             sequences = torch.cat([sequences, next_token.unsqueeze(1)], dim=1)
             decode_tokens += 1
             finished |= next_token.eq(eos_token_id)
@@ -318,7 +323,12 @@ class _Qwen35GenerationMethods:
             next_token = _next_token_from_logits(logits, temperature=temperature, top_p=top_p)
             self._sync_timing()
             sampling_sec += time.monotonic() - sampling_started_at
-            next_token = _broadcast_and_pad_finished(next_token, finished, pad_token_id)
+            next_token = _broadcast_and_pad_finished(
+                next_token,
+                finished,
+                pad_token_id,
+                tp_group=self.tp_state.tp_group if self.tp_state is not None else None,
+            )
             sequences = torch.cat([sequences, next_token.unsqueeze(1)], dim=1)
             decode_tokens += 1
             finished |= next_token.eq(eos_token_id)
@@ -570,7 +580,12 @@ class _Qwen35GenerationMethods:
             )
             self._sync_timing()
             sampling_sec += time.monotonic() - sampling_started_at
-            next_token = _broadcast_and_pad_finished(next_token, finished, pad_token_id)
+            next_token = _broadcast_and_pad_finished(
+                next_token,
+                finished,
+                pad_token_id,
+                tp_group=self.tp_state.tp_group if self.tp_state is not None else None,
+            )
             sequences = torch.cat([sequences, next_token.unsqueeze(1)], dim=1)
             decode_tokens += 1
             finished |= next_token.eq(eos_token_id)
@@ -636,7 +651,12 @@ class _Qwen35GenerationMethods:
             next_token = _next_token_from_logits(logits, temperature=temperature, top_p=top_p)
             self._sync_timing()
             sampling_sec += time.monotonic() - sampling_started_at
-            next_token = _broadcast_and_pad_finished(next_token, finished, pad_token_id)
+            next_token = _broadcast_and_pad_finished(
+                next_token,
+                finished,
+                pad_token_id,
+                tp_group=self.tp_state.tp_group if self.tp_state is not None else None,
+            )
             sequences = torch.cat([sequences, next_token.unsqueeze(1)], dim=1)
             decode_tokens += 1
             finished |= next_token.eq(eos_token_id)
@@ -765,7 +785,12 @@ class _Qwen35GenerationMethods:
                 next_token = torch.zeros(batch, dtype=torch.long, device=self.device)
             # 末 stage 采样后广播到本 pp_group（不跨 DP，避免污染不同数据分片）
             dist.broadcast(next_token, src=src_rank, group=self.tp_state.pp_group)
-            next_token = _broadcast_and_pad_finished(next_token, finished, pad_token_id)
+            next_token = _broadcast_and_pad_finished(
+                next_token,
+                finished,
+                pad_token_id,
+                tp_group=self.tp_state.tp_group if self.tp_state is not None else None,
+            )
             sequences = torch.cat([sequences, next_token.unsqueeze(1)], dim=1)
             decode_tokens += 1
             finished = finished | next_token.eq(eos_tensor)
