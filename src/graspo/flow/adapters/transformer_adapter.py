@@ -584,21 +584,17 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
             + int(optimize_round)
         )
         if dist.is_available() and dist.is_initialized():
-            payload: list[list[int] | None] = [None]
-            # DP: 每个 DP rank 的 rank 0 独立 shuffle，在 DP group 内广播
-            dp_group = self.tp_state.dp_group if self.tp_state else None
-            is_dp_primary = self.rank == 0 or (dp_group is not None and self.tp_rank == 0 and self.pp_rank == 0 and self.dp_rank == 0)
-            if self.tp_rank == 0 and self.pp_rank == 0:
-                random.Random(seed + self.dp_rank).shuffle(indices)
-                payload[0] = indices
-            if dp_group is not None:
-                dist.broadcast_object_list(payload, src=0, group=dp_group)
-            else:
-                dist.broadcast_object_list(payload, src=0)
-            shared = payload[0]
-            if shared is None:
-                raise RuntimeError("Failed to broadcast shared GRASPO train-batch shuffle indices")
-            return list(shared)
+            # 本地确定性 shuffle：同一模型副本（同 dp_rank）的 TP/PP 各 rank 用相同
+            # seed 算出相同序列，天然保持一致；不再依赖单 rank 广播（原
+            # tp_rank==0 && pp_rank==0 条件在 tp_rank!=0 的 DP 组无人提供 shuffle
+            # 索引 → payload[0]=None → cross-PG deadlock）。
+            random.Random(seed + self.dp_rank).shuffle(indices)
+            # all_reduce(MIN) 同步 experience_count（防呆）：各 rank 本地样本数收敛
+            # 到全局最小，杜绝计数不一致导致的 cross-PG deadlock（同 SFT-2 的
+            # sft_trainer.py:168 集结算子模式）。
+            count_tensor = torch.tensor([len(indices)], dtype=torch.int, device=self.device)
+            dist.all_reduce(count_tensor, op=dist.ReduceOp.MIN)
+            return indices[: int(count_tensor.item())]
         random.Random(seed).shuffle(indices)
         return indices
 
