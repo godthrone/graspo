@@ -153,6 +153,19 @@ class SFTTrainer:
                 # exited its loop early.
                 if batches and len(batches[-1]) < effective_batch_size:
                     batches = batches[:-1]
+                # SFT-2 (additional): cross-DP-rank sync of min batch count.
+                # When effective_batch_size=1, every batch is "complete" (size=1)
+                # so the drop-last above never triggers.  But DP ranks can still
+                # get different numbers of samples, leading to different batch
+                # counts.  all_reduce(MIN) finds the globally smallest count and
+                # truncates every rank to it, eliminating the deadlock root cause.
+                if adapter.dp_size > 1:
+                    import torch.distributed as dist
+                    tp_state = adapter.tp_state
+                    if tp_state is not None and tp_state.dp_group is not None:
+                        n_batches = torch.tensor([len(batches)], device=tp_state.device)
+                        dist.all_reduce(n_batches, op=dist.ReduceOp.MIN, group=tp_state.dp_group)
+                        batches = batches[: int(n_batches.item())]
 
                 _log.info(
                     "SFT epoch %d/%d: %d batches",
