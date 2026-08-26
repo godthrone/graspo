@@ -58,11 +58,11 @@
 | 5 | 2 | 2 | 1 | 1 | on | ❌ | ❌ | ✅ | ❌ | RL: elastic error; SFT 9B OK / 27B rc=1 |
 | 6 | 4 | 1 | 1 | 4 | off | ❌ | ❌ | ✅ | ❌ | RL: deadlock; SFT 9B OK / 27B rc=1 |
 | 7 | 4 | 1 | 2 | 2 | off | ❌ | ❌ | ❌ | ❌ | RL: deadlock; SFT: rc=1 |
-| 8 | 4 | 1 | 4 | 1 | off | ❌ | ❌ | ✅ | ❌ | SFT-1 fix: 9B SFT DP=4 resolved |
+| 8 | 4 | 1 | 4 | 1 | off | ❌ | ❌ | ✅ | ✅ | SFT-1 fix: 9B SFT DP=4 ✅ / 27B SFT DP=4 ✅ |
 | 9 | 4 | 2 | 1 | 2 | off | ❌ | ❌ | ✅ | ✅ | RL: deadlock; SFT: OK |
 | 10 | 4 | 2 | 1 | 2 | on | ⏰ | ⏰ | ✅ | ✅ | RL: timeout; SFT: OK |
-| 11 | 4 | 2 | 2 | 1 | off | ❌ | ❌ | ✅ | ❌ | RL: deadlock; SFT 9B ✅ (SFT-1 fix) / 27B SIGABRT |
-| 12 | 4 | 2 | 2 | 1 | on | ❌ | ❌ | ❌ | ❌ | RL: elastic; SFT: rc=1 |
+| 11 | 4 | 2 | 2 | 1 | off | ❌ | ❌ | ✅ | ✅ | SFT-1 fix: 9B DP=2+TP=2 ✅ / 27B DP=2+TP=2 ✅ |
+| 12 | 4 | 2 | 2 | 1 | on | ❌ | ❌ | ✅ | ❌ | SFT fix: 9B DP=2+TP=2+SP=on ✅（SP 首测通过）/ 27B SFT 未测 |
 | 13 | 4 | 4 | 1 | 1 | off | ❌ | ❌ | ✅ | ✅ | RL: deadlock; SFT: OK |
 | 14 | 4 | 4 | 1 | 1 | on | ❌ | ❌ | ✅ | ✅ | RL: elastic; SFT: OK |
 
@@ -96,7 +96,10 @@ bash tests/e2e/run_matrix.sh /data/zhangzy/e2e-results
 | 08-25 | 10 | 9B | ⏰ | 1200+ | — | — | SP 变体，训练卡死超时 |
 | 08-25 | 12-14 | 9B | — | — | — | — | 待测 |
 | 08-26 | 11 | 9B | ✅ | — | — | — | SFT-1 fix: DP=2+TP=2 通过 |
+| 08-26 | 12 | 9B | ✅ | 162.5 | 0.0043 | — | SFT fix: DP=2+TP=2+SP=on 通过（SP 首测） |
 | 08-25 | 1-14 | 27B | — | — | — | — | 待测 |
+| 08-26 | 8 | 27B | ✅ | 246.0 | 0.0172 | — | SFT-1 fix: DP=4 通过 |
+| 08-26 | 11 | 27B | ✅ | 303.7 | 0.0129 | — | SFT-1 fix: DP=2+TP=2 通过 |
 
 > 记录方法：每格先跑单卡 baseline（#1）得到该 epoch 的 loss/reward，再跑相应并行组合，填入同一 epoch 的指标用于能力对齐判定。
 
