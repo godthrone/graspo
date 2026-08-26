@@ -58,10 +58,10 @@
 | 5 | 2 | 2 | 1 | 1 | on | ❌ | ❌ | ✅ | ❌ | RL: elastic error; SFT 9B OK / 27B rc=1 |
 | 6 | 4 | 1 | 1 | 4 | off | ❌ | ❌ | ✅ | ❌ | RL: deadlock; SFT 9B OK / 27B rc=1 |
 | 7 | 4 | 1 | 2 | 2 | off | ❌ | ❌ | ❌ | ❌ | RL: deadlock; SFT: rc=1 |
-| 8 | 4 | 1 | 4 | 1 | off | ❌ | ❌ | ❌ | ❌ | RL: deadlock; SFT: SIGABRT |
+| 8 | 4 | 1 | 4 | 1 | off | ❌ | ❌ | ✅ | ❌ | SFT-1 fix: 9B SFT DP=4 resolved |
 | 9 | 4 | 2 | 1 | 2 | off | ❌ | ❌ | ✅ | ✅ | RL: deadlock; SFT: OK |
 | 10 | 4 | 2 | 1 | 2 | on | ⏰ | ⏰ | ✅ | ✅ | RL: timeout; SFT: OK |
-| 11 | 4 | 2 | 2 | 1 | off | ❌ | ❌ | ❌ | ❌ | RL: deadlock; SFT: SIGABRT |
+| 11 | 4 | 2 | 2 | 1 | off | ❌ | ❌ | ✅ | ❌ | RL: deadlock; SFT 9B ✅ (SFT-1 fix) / 27B SIGABRT |
 | 12 | 4 | 2 | 2 | 1 | on | ❌ | ❌ | ❌ | ❌ | RL: elastic; SFT: rc=1 |
 | 13 | 4 | 4 | 1 | 1 | off | ❌ | ❌ | ✅ | ✅ | RL: deadlock; SFT: OK |
 | 14 | 4 | 4 | 1 | 1 | on | ❌ | ❌ | ✅ | ✅ | RL: elastic; SFT: OK |
@@ -94,7 +94,8 @@ bash tests/e2e/run_matrix.sh /data/zhangzy/e2e-results
 | 08-25 | 2-4,6-9 | 9B | ❌ | — | — | — | 多卡 SIGABRT（cross-PG deadlock） |
 | 08-25 | 5 | 9B | ❌ | — | — | — | SP 变体，torch elastic error |
 | 08-25 | 10 | 9B | ⏰ | 1200+ | — | — | SP 变体，训练卡死超时 |
-| 08-25 | 11-14 | 9B | — | — | — | — | 运行中/待测 |
+| 08-25 | 12-14 | 9B | — | — | — | — | 待测 |
+| 08-26 | 11 | 9B | ✅ | — | — | — | SFT-1 fix: DP=2+TP=2 通过 |
 | 08-25 | 1-14 | 27B | — | — | — | — | 待测 |
 
 > 记录方法：每格先跑单卡 baseline（#1）得到该 epoch 的 loss/reward，再跑相应并行组合，填入同一 epoch 的指标用于能力对齐判定。

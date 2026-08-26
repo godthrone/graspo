@@ -823,14 +823,21 @@ bash run.sh samples/configs/sft_example.yaml --smoke
   machines where GPUs are arranged in NVLink pairs connected by PCIe bridges
   (PXB), NCCL's P2P/CUMEM path can hang on small-tensor all-reduce during
   DP training.  TP training is unaffected because it uses large tensors and
-  bypasses the problematic P2P path.  **Fix**: set
-  `NCCL_P2P_DISABLE=1` in the container environment
-  (``docker run -e NCCL_P2P_DISABLE=1 ...``).  `run.sh` now does this
-  **automatically by topology**: if any selected GPU pair is linked via
-  PXB/PHB/SYS it disables P2P; on a full-NVLink mesh (all `NV#`) it keeps P2P
-  (faster and avoids the asymmetric-VRAM device-0 heap).  Manually override
-  with `-e NCCL_P2P_DISABLE=0/1` if needed.  The performance impact of
-  disabling P2P is negligible (<0.1% of total training time).
+  bypasses the problematic P2P path.  **Fix**: `NCCL_P2P_DISABLE=1`.  The
+  framework now **detects this automatically and sets it for you — no manual
+  `-e` needed**:
+  - `run.sh` and the in-container Python startup check
+    (`GraspoFlowState.initialize`) both inspect `nvidia-smi topo -m`: if any
+    selected GPU pair is linked via PXB/PHB/SYS they set `NCCL_P2P_DISABLE=1`;
+    on a full-NVLink mesh (all `NV#`) they keep P2P enabled (faster and avoids
+    the asymmetric-VRAM device-0 heap).  If `nvidia-smi` is unavailable or the
+    topology can't be parsed they safely fall back to disabling P2P.
+  - On a PCIe topology the framework **forces** `NCCL_P2P_DISABLE=1` even if you
+    pass `=0` (passing `=0` there would hang); `=1` is always safe.
+  - On a full-NVLink mesh, setting `=1` manually is only a VRAM/performance
+    tradeoff, not required for correctness.
+  The performance impact of disabling P2P is negligible (<0.1% of total
+  training time).
 
 ## License
 
