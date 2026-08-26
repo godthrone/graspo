@@ -575,6 +575,12 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
     # ── Training helpers ────────────────────────────────────────────────────
 
     def _shared_training_indices(self, experience_count: int, *, optimize_round: int) -> list[int]:
+        """Return shuffled training indices, deterministic per dp_rank.
+
+        All ranks within the same dp_rank (same model replica) compute the same
+        shuffle locally using the deterministic seed.  No cross-dp_rank
+        communication is needed — each dp_rank trains on its own data.
+        """
         import random
 
         indices = list(range(experience_count))
@@ -584,17 +590,9 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
             + int(optimize_round)
         )
         if dist.is_available() and dist.is_initialized():
-            # 本地确定性 shuffle：同一模型副本（同 dp_rank）的 TP/PP 各 rank 用相同
-            # seed 算出相同序列，天然保持一致；不再依赖单 rank 广播（原
-            # tp_rank==0 && pp_rank==0 条件在 tp_rank!=0 的 DP 组无人提供 shuffle
-            # 索引 → payload[0]=None → cross-PG deadlock）。
+            # 同一 dp_rank 内各 rank 用相同 seed 本地 shuffle，无需通信
             random.Random(seed + self.dp_rank).shuffle(indices)
-            # all_reduce(MIN) 同步 experience_count（防呆）：各 rank 本地样本数收敛
-            # 到全局最小，杜绝计数不一致导致的 cross-PG deadlock（同 SFT-2 的
-            # sft_trainer.py:168 集结算子模式）。
-            count_tensor = torch.tensor([len(indices)], dtype=torch.int, device=self.device)
-            dist.all_reduce(count_tensor, op=dist.ReduceOp.MIN, group=self.tp_state.dp_group)
-            return indices[: int(count_tensor.item())]
+            return indices
         random.Random(seed).shuffle(indices)
         return indices
 
