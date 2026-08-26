@@ -160,6 +160,7 @@ class SFTTrainer:
                 # counts.  all_reduce(MIN) finds the globally smallest count and
                 # truncates every rank to it, eliminating the deadlock root cause.
                 if adapter.dp_size > 1:
+                    import torch
                     import torch.distributed as dist
                     tp_state = adapter.tp_state
                     if tp_state is not None and tp_state.dp_group is not None:
