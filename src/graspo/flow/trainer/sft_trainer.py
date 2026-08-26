@@ -145,6 +145,14 @@ class SFTTrainer:
                     tokenized[start : start + effective_batch_size]
                     for start in range(0, len(tokenized), effective_batch_size)
                 ]
+                # SFT-2: drop last incomplete batch to prevent DP deadlock.
+                # When DP distributes samples unevenly across ranks, the last
+                # batch may differ in size.  Dropping it ensures every rank
+                # processes the same number of equally-sized batches so that
+                # collective ops (all-reduce) never deadlock on a rank that
+                # exited its loop early.
+                if batches and len(batches[-1]) < effective_batch_size:
+                    batches = batches[:-1]
 
                 _log.info(
                     "SFT epoch %d/%d: %d batches",
