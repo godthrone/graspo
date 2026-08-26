@@ -394,7 +394,10 @@ class _Qwen35TrainingMethods:
                 self.scheduler.step()
             optimizer_steps += 1
             loss_tensor = torch.tensor([float(result["loss_value"])], dtype=torch.float, device=self.device)
-            dist.all_reduce(loss_tensor, op=dist.ReduceOp.MIN)
+            # 只有末 PP stage 计算真实 loss（见 _pipeline_one_f_one_b_optimizer_step：
+            # 非末 stage 的 loss_value 恒为 0.0）。因此用 SUM 聚合，MIN 会把末 stage
+            # 的非零 loss 压成 0（因为非末 stage 贡献 0.0），导致 loss 恒为 0。
+            dist.all_reduce(loss_tensor, op=dist.ReduceOp.SUM)
             loss_sum += float(loss_tensor.item())
             grad_norm_sum += float(grad_norm.detach().float().cpu())
             nonzero_grad_count += self.model.nonzero_lora_grad_count()
