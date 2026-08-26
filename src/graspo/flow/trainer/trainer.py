@@ -12,6 +12,8 @@ from collections import deque
 from pathlib import Path
 from typing import Any
 
+import torch.distributed as dist
+
 from graspo.core.schema import GraspoConfig
 from graspo.flow.logger.native_rollout_logger import NativeRolloutLogger
 from graspo.flow.logging import setup_logging
@@ -197,8 +199,9 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
                         # smoke 提前终止：先 flush replay buffer 再保存，
                         # 否则 _checkpoint_trainer_state 会因 buffer 非空而
                         # 拒绝保存（防线生效，但提前终止路径漏了 flush）。
-                        if len(self.replay_buffer) > 0:
-                            self._maybe_optimize(epoch=epoch, force=True)
+                        # force 无条件调用：空的 dp_rank 也参与 WORLD 集结算子，
+                        # 避免其在 teardown barrier 上等待仍在训练的 dp_rank。
+                        self._maybe_optimize(epoch=epoch, force=True)
                         self._save_checkpoint(output_dir / "final", epoch=epoch)
                         return
                 self._print_json(
@@ -219,15 +222,19 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
                     self.current_epoch_stats.samples_seen,
                 )
                 if self.config.training.save_checkpoint_every_epoch:
-                    if len(self.replay_buffer) > 0:
-                        self._maybe_optimize(epoch=epoch, force=True)
+                    self._maybe_optimize(epoch=epoch, force=True)
                     self._save_checkpoint(output_dir / f"epoch_{epoch}", epoch=epoch)
                     self._last_checkpoint_time = time.monotonic()
-            if len(self.replay_buffer) > 0:
-                self._maybe_optimize(epoch=self.config.training.max_epochs - 1, force=True)
+            self._maybe_optimize(epoch=self.config.training.max_epochs - 1, force=True)
             self._save_checkpoint(output_dir / "final", epoch=self.config.training.max_epochs - 1)
             self._last_checkpoint_time = time.monotonic()
         finally:
+            # 防呆（§2.1）：所有 rank 进入 teardown 前先 WORLD 对齐。不同 dp_rank 的
+            # rollout 相互独立、跑速不同，最快/最慢 rank 会在 close()（destroy_parallel_state
+            # 内的 WORLD barrier）上等待对齐；在此再显式加一道 barrier，确保所有 rank 在
+            # 销毁进程组前统一收敛，避免某一 dp_rank 已在 teardown 而另一仍在训练集结算子。
+            if dist.is_available() and dist.is_initialized():
+                dist.barrier()
             self.runtime.close()
 
     # ── 样本队列调度 ──────────────────────────────────────────────────────────
