@@ -593,7 +593,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
             # 到全局最小，杜绝计数不一致导致的 cross-PG deadlock（同 SFT-2 的
             # sft_trainer.py:168 集结算子模式）。
             count_tensor = torch.tensor([len(indices)], dtype=torch.int, device=self.device)
-            dist.all_reduce(count_tensor, op=dist.ReduceOp.MIN)
+            dist.all_reduce(count_tensor, op=dist.ReduceOp.MIN, group=self.tp_state.dp_group)
             return indices[: int(count_tensor.item())]
         random.Random(seed).shuffle(indices)
         return indices
