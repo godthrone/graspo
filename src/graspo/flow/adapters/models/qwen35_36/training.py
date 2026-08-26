@@ -393,9 +393,9 @@ class _Qwen35TrainingMethods:
             if self.scheduler is not None and self.optimizer is not None:
                 self.scheduler.step()
             optimizer_steps += 1
-            loss_payload = [float(result["loss_value"])]
-            dist.broadcast_object_list(loss_payload, src=(self.pp_size - 1) * self.tp_size)
-            loss_sum += float(loss_payload[0])
+            loss_tensor = torch.tensor([float(result["loss_value"])], dtype=torch.float, device=self.device)
+            dist.all_reduce(loss_tensor, op=dist.ReduceOp.MIN)
+            loss_sum += float(loss_tensor.item())
             grad_norm_sum += float(grad_norm.detach().float().cpu())
             nonzero_grad_count += self.model.nonzero_lora_grad_count()
         round_secs.append(time.monotonic() - round_started_at)
@@ -625,11 +625,12 @@ class _Qwen35TrainingMethods:
         wait_all(send_works)
 
         all_finite = all(finite_flags)
-        finite_payload = [all_finite]
+        finite_tensor = torch.tensor([all_finite], dtype=torch.int, device=self.device)
         if dist.is_available() and dist.is_initialized():
-            dist.broadcast_object_list(finite_payload, src=(self.pp_size - 1) * self.tp_size)
+            dist.all_reduce(finite_tensor, op=dist.ReduceOp.MIN)
+        all_finite = bool(finite_tensor.item())
         return {
-            "finite": bool(finite_payload[0]),
+            "finite": all_finite,
             "loss_value": sum(loss_values),
             "forward_sec": forward_sec,
             "backward_sec": backward_sec,

@@ -51,9 +51,9 @@
 
 | # | W | TP | DP | PP | SP | 9B RL | 27B RL | 9B SFT | 27B SFT | 备注 |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|------|
-| 1 | 1 | 1 | 1 | 1 | off | ✅ | ⏰ | ❌ | ✅ | RL: single-GPU OK; SFT 9B OOM / 27B OK |
-| 2 | 2 | 1 | 1 | 2 | off | ❌ | ❌ | ❌ | ❌ | RL: cross-PG deadlock; SFT: OOM/rc=1 |
-| 3 | 2 | 1 | 2 | 1 | off | ❌ | ❌ | ❌ | ❌ | RL: cross-PG deadlock; SFT: SIGABRT |
+| 1 | 1 | 1 | 1 | 1 | off | ✅ | ⏰ | ✅ | ✅ | SFT-3 fix: 9B SFT OOM resolved |
+| 2 | 2 | 1 | 1 | 2 | off | ❌ | ❌ | ❌ | ❌ | RL: cross-PG deadlock; SFT: rc=1 |
+| 3 | 2 | 1 | 2 | 1 | off | ❌ | ❌ | ✅ | ❌ | SFT-2 fix: 9B SFT DP=2 resolved |
 | 4 | 2 | 2 | 1 | 1 | off | ❌ | ❌ | ✅ | ❌ | RL: deadlock; SFT 9B OK / 27B rc=1 |
 | 5 | 2 | 2 | 1 | 1 | on | ❌ | ❌ | ✅ | ❌ | RL: elastic error; SFT 9B OK / 27B rc=1 |
 | 6 | 4 | 1 | 1 | 4 | off | ❌ | ❌ | ✅ | ❌ | RL: deadlock; SFT 9B OK / 27B rc=1 |

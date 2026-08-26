@@ -417,10 +417,11 @@ class _Qwen35SFTTrainingMethods:
         wait_all(send_works)
 
         all_finite = all(finite_flags)
-        finite_payload = [all_finite]
-        dist.broadcast_object_list(finite_payload, src=(self.pp_size - 1) * self.tp_size)
+        finite_tensor = torch.tensor([all_finite], dtype=torch.int, device=self.device)
+        dist.all_reduce(finite_tensor, op=dist.ReduceOp.MIN)
+        all_finite = bool(finite_tensor.item())
 
-        if bool(finite_payload[0]):
+        if all_finite:
             # DP/TP gradient sync: 跨 rank 同步梯度后再 clip + step
             from graspo.flow.lora.lora_linear import (
                 _sync_dp_lora_grads,
