@@ -285,7 +285,12 @@ class Qwen3Adapter(TransformerAdapter):
             )
             self._sync_timing()
             sampling_sec += time.monotonic() - sampling_started_at
-            next_token = _broadcast_and_pad_finished(next_token, finished, pad_token_id)
+            next_token = _broadcast_and_pad_finished(
+                next_token,
+                finished,
+                pad_token_id,
+                tp_group=self.tp_state.tp_group if self.tp_state is not None else None,
+            )
             sequences = torch.cat([sequences, next_token.unsqueeze(1)], dim=1)
             decode_tokens += 1
             finished |= next_token.eq(eos_token_id)
@@ -338,7 +343,12 @@ class Qwen3Adapter(TransformerAdapter):
             next_token = _next_token_from_logits(logits, temperature=temperature, top_p=top_p)
             self._sync_timing()
             sampling_sec += time.monotonic() - sampling_started_at
-            next_token = _broadcast_and_pad_finished(next_token, finished, pad_token_id)
+            next_token = _broadcast_and_pad_finished(
+                next_token,
+                finished,
+                pad_token_id,
+                tp_group=self.tp_state.tp_group if self.tp_state is not None else None,
+            )
             sequences = torch.cat([sequences, next_token.unsqueeze(1)], dim=1)
             decode_tokens += 1
             finished |= next_token.eq(eos_token_id)

@@ -787,9 +787,14 @@ def _broadcast_and_pad_finished(
     next_token: torch.Tensor,
     finished: torch.Tensor,
     pad_token_id: int,
+    *,
+    tp_group: dist.ProcessGroup | None = None,
 ) -> torch.Tensor:
-    if dist.is_available() and dist.is_initialized():
-        dist.broadcast(next_token, src=0)
+    # 只在 TP 组内广播 next_token，禁止落到默认 WORLD 组：DP=2+TP=2 下不同 DP
+    # 组序列长度不同，WORLD 广播会让跨 DP 组 rank 发生 SeqNum 错位死锁
+    # （§1.1 模块边界 / §2 防呆）。tp_group 为空（如单卡/pp 路径）时不做广播。
+    if dist.is_available() and dist.is_initialized() and tp_group is not None:
+        dist.broadcast(next_token, src=0, group=tp_group)
     return torch.where(finished, torch.full_like(next_token, pad_token_id), next_token)
 
 
