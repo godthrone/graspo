@@ -55,8 +55,8 @@ class _Qwen35SFTTrainingMethods:
         shift_hidden = normalized[:, :-1].contiguous()
         shift_labels = labels[:, 1:].contiguous()
         log_probs = masked_token_log_probs_from_hidden(
-            shift_hidden.float(),
-            lm_head.weight,  # 保持原始 dtype（bf16），函数内部分块处理，按需转换
+            shift_hidden,  # 保持 bf16，函数内部分块处理，按需转换
+            lm_head.weight,
             shift_labels,
             ignore_index=-100,
         )
