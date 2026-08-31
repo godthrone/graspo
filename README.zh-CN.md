@@ -2,7 +2,7 @@
 
 [English README](README.md)
 
-GRASPO (Group Relative Advantage Structured Policy Optimization) — GRPO 风格的 LoRA RL，面向结构化 LLM 输出。基于字符标注的 token 级 reward，SFT→RL 统一流水线，ripple/flow 分层架构。LoRA-only：单张 80GB GPU 即可训练 9B 模型。GraspoFlow 以 Flink 风格调度统一 TP+DP+PP+SP 五维并行，包括用于节省激活内存的序列并行。组过滤、perfect-skip、多模态、工具调用 reward。
+GRASPO (Group Relative Advantage Structured Policy Optimization) — GRPO 风格的 LoRA RL，面向结构化 LLM 输出。基于字符标注的 token 级 reward，SFT→RL 统一流水线，ripple/flow 分层架构。LoRA-only：单张 80GB GPU 即可训练 9B 模型。GraspoFlow 以 Flink 风格调度统一 TP+DP+PP+SP+Checkpoint 五维并行，包括用于节省激活内存的序列并行。组过滤、perfect-skip、多模态、工具调用 reward。
 
 **结构化输出 RL 的三层防御纵深，从 token 信号到组决策：**
 

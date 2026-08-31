@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "graspo"
 dynamic = ["version"]
-description = "GRASPO (Group Relative Advantage Structured Policy Optimization) — GRPO-style LoRA RL for structured LLM outputs. Token-level reward via character annotation, SFT→RL unified pipeline, ripple/flow layered architecture. LoRA-only: 9B on a single 80GB GPU. GraspoFlow unifies TP+DP+PP+SP five-dimensional parallelism with Flink-style scheduling, including sequence parallel for activation memory savings. Group filtering, perfect-skip, multimodal, tool-call reward."
+description = "GRASPO (Group Relative Advantage Structured Policy Optimization) — GRPO-style LoRA RL for structured LLM outputs. Token-level reward via character annotation, SFT→RL unified pipeline, ripple/flow layered architecture. LoRA-only: 9B on a single 80GB GPU. GraspoFlow unifies TP+DP+PP+SP+Checkpoint five-dimensional parallelism with Flink-style scheduling, including sequence parallel for activation memory savings. Group filtering, perfect-skip, multimodal, tool-call reward."
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 license = {text = "MIT"}
