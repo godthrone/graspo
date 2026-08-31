@@ -15,7 +15,7 @@ class RewardConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    kind: Literal["graspo"] = "graspo"
+    kind: str = "graspo"
     check_think: bool = False
     check_json_markdown: bool = True
     check_list_order: bool = False
@@ -24,6 +24,18 @@ class RewardConfig(BaseModel):
     anti_useless_str_reward_weight: float = 1.0
     anti_useless_str_half_reward_len: int = 100
     numeric_tolerance: float = 0.2
+
+    @model_validator(mode="after")
+    def _validate_reward_kind(self) -> "RewardConfig":
+        """延迟导入 REWARD_REGISTRY 以避免循环依赖，校验 kind 是否已注册。"""
+        from graspo.ripple.reward.reward import REWARD_REGISTRY  # noqa: PLC0415
+
+        if self.kind not in REWARD_REGISTRY:
+            raise ValueError(
+                f"Unknown reward kind {self.kind!r}; "
+                f"available: {sorted(REWARD_REGISTRY)}"
+            )
+        return self
 
 
 class LoRAConfig(BaseModel):

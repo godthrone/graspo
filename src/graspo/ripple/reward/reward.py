@@ -336,17 +336,19 @@ class GraspoReward:
 
 # ── 奖励实现注册表 ────────────────────────────────────────────────────
 
+from graspo.core.discovery import _discover
 
-REWARD_REGISTRY: dict[str, type[GraspoReward]] = {"graspo": GraspoReward}
+REWARD_REGISTRY = _discover("graspo.rewards")
 
 
 def create_reward(config: RewardConfig) -> GraspoReward:
     """按配置的 reward.kind 实例化奖励实现；未知实现报错并列出可用选项。"""
-    reward_cls = REWARD_REGISTRY.get(config.kind)
-    if reward_cls is None:
+    loader = REWARD_REGISTRY.get(config.kind)
+    if loader is None:
         raise ValueError(
             f"unknown reward backend {config.kind!r}; available: {sorted(REWARD_REGISTRY)}"
         )
+    reward_cls = loader()
     return reward_cls(config)
 
 
