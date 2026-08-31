@@ -3,28 +3,12 @@
 from __future__ import annotations
 
 import math
-import os
-import sys
 from typing import TYPE_CHECKING, Any
 
 import torch
 from torch import nn
 from torch.utils.checkpoint import checkpoint as activation_checkpoint
 
-
-def _log_cuda_mem(label: str) -> None:
-    """Log CUDA memory stats to stderr for rank 0 only."""
-    if os.environ.get("RANK", "0") == "0":
-        rank = os.environ.get("RANK", "0")
-        allocated = torch.cuda.memory_allocated() / 1024**3
-        reserved = torch.cuda.memory_reserved() / 1024**3
-        max_allocated = torch.cuda.max_memory_allocated() / 1024**3
-        print(
-            f"[MEM rank={rank}] {label}: allocated={allocated:.2f}GB "
-            f"reserved={reserved:.2f}GB max_allocated={max_allocated:.2f}GB",
-            file=sys.stderr,
-            flush=True,
-        )
 
 if TYPE_CHECKING:
     from graspo.flow.parallel.tensor_utils import SafetensorIndex
@@ -34,6 +18,7 @@ from graspo.flow.adapters.models.common.layers import (
     Qwen35RMSNorm,
     TensorParallelQwen35DecoderLayer,
     _checkpoint_qwen35_decoder_layer_forward,
+    _log_cuda_mem,
     _qwen35_cache_sequence_len,
 )
 from graspo.flow.adapters.models.common.native_qwen_config import NativeQwenConfig

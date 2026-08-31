@@ -244,7 +244,8 @@ def _validate_launch_paths(config: GraspoConfig) -> None:
     if not data_path.is_file():
         raise SystemExit(f"data.train_path does not exist: {data_path}")
     # output_dir 现在总是有默认值（配置备份约定），但需确保目录提前创建好
-    Path(config.training.output_dir).mkdir(parents=True, exist_ok=True)
+    from graspo.flow.lora.lora_io import prepare_output_dir
+    prepare_output_dir(config.training.output_dir, overwrite=config.training.overwrite_output_dir)
 
 
 def _require_config_value(value: Any, name: str) -> None:

@@ -113,7 +113,7 @@ def export_peft_adapter_from_checkpoint(
         adapter_config["rank_pattern"] = rank_pattern
     if alpha_pattern:
         adapter_config["alpha_pattern"] = alpha_pattern
-    output = _prepare_output_dir(output_dir)
+    output = prepare_output_dir(output_dir)
     save_file(tensors, str(output / "adapter_model.safetensors"))
     (output / "adapter_config.json").write_text(
         json.dumps(adapter_config, ensure_ascii=False, indent=2) + "\n",
@@ -137,7 +137,7 @@ def export_merged_hf_from_checkpoint(
         raise ValueError("merged-hf output directory must not be inside the base model directory")
     payloads = _load_native_payloads(checkpoint_dir, require_metadata=True)
     deltas = _collect_weight_deltas(payloads)
-    output = _prepare_output_dir(output_dir)
+    output = prepare_output_dir(output_dir)
     _copy_hf_sidecar_files(base, output)
 
     index_path = base / "model.safetensors.index.json"
@@ -655,10 +655,17 @@ def _apply_deltas(
     return merged
 
 
-def _prepare_output_dir(output_dir: str | Path) -> Path:
+def prepare_output_dir(output_dir: str | Path, *, overwrite: bool = False) -> Path:
+    """准备输出目录。默认拒绝覆盖已有数据（§3.3 预授权退路）。"""
     output = Path(output_dir)
     if output.exists() and any(output.iterdir()):
-        raise FileExistsError(f"Output directory is not empty: {output}")
+        if not overwrite:
+            raise FileExistsError(
+                f"Output directory is not empty: {output}. "
+                "Set training.overwrite_output_dir: true in your config to overwrite."
+            )
+        import shutil
+        shutil.rmtree(output)
     output.mkdir(parents=True, exist_ok=True)
     return output
 
@@ -687,8 +694,7 @@ def _is_relative_to(path: Path, parent: Path) -> bool:
 
 def save_lora_adapter(model, tokenizer, output_dir: str | Path) -> None:
     """保存 LoRA adapter 和 tokenizer（兼容 DDP 包装和 HF 接口）。"""
-    path = Path(output_dir)
-    path.mkdir(parents=True, exist_ok=True)
+    path = prepare_output_dir(output_dir)
     unwrapped = model
     # DDP 包装检测：DistributedDataParallel 将模型放在 .module 属性中
     if hasattr(model, "module"):

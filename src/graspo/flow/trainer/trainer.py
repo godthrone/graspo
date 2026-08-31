@@ -133,8 +133,15 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
         # 多模态训练启动预检（防线）：数据含图时验证视觉链路完整、
         # visual LoRA 可训练，失败即拒绝启动，避免 v13 式静默丢图空跑。
         self._preflight_multimodal(samples)
-        output_dir = Path(self.config.training.output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
+        from graspo.flow.lora.lora_io import prepare_output_dir
+        output_dir = prepare_output_dir(
+            self.config.training.output_dir,
+            overwrite=(
+                self.config.training.overwrite_output_dir
+                if not self.config.training.resume_from_checkpoint
+                else False  # resume 时跳过 overwrite 检查（目录必须存在）
+            ),
+        )
         self._resume_if_requested()
         # 初始化墙钟时间周期 checkpoint 计时器
         self._last_checkpoint_time = time.monotonic()

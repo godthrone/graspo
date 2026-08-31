@@ -21,6 +21,19 @@ COPY pyproject.toml README.md README.zh-CN.md LICENSE uv.lock ./
 # 增量构建的固有坑：COPY 只覆盖同名文件，不删除基镜像里已被移除的旧文件。
 # 显式清理旧布局残留（ripple/flow 重构移除了 backends/ 与 core/ 算法文件），
 # 防止镜像内死代码。未来删除源码文件时须同步此清单（或改用全量构建）。
+# 删除清单：
+#   - src/graspo/backends/ (整个目录)
+#   - src/graspo/core/advantage.py
+#   - src/graspo/core/buffer.py
+#   - src/graspo/core/compare.py
+#   - src/graspo/core/completion.py
+#   - src/graspo/core/graspo_loss.py
+#   - src/graspo/core/graspo_parity.py
+#   - src/graspo/core/logging.py
+#   - src/graspo/core/reward.py
+#   - src/graspo/core/reward_helpers.py
+#   - src/graspo/core/sft_loss.py
+#   - src/graspo/core/token_reward.py
 RUN rm -rf src/graspo/backends \
     && rm -f src/graspo/core/advantage.py \
     && rm -f src/graspo/core/buffer.py \
