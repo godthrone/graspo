@@ -9,7 +9,7 @@ from torch import nn
 from torch.utils.checkpoint import checkpoint as activation_checkpoint
 
 if TYPE_CHECKING:
-    from graspo.flow.parallel.placement import NativePlacementPlan
+    from graspo.flow.parallel.placement_plan import NativePlacementPlan
     from graspo.flow.parallel.tensor_utils import SafetensorIndex
 
 from graspo.flow.adapters.models.common.base import QwenFamilyBase

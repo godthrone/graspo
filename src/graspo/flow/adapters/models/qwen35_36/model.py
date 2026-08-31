@@ -22,7 +22,7 @@ from graspo.flow.adapters.models.common.layers import (
     _qwen35_cache_sequence_len,
 )
 from graspo.flow.adapters.models.common.native_qwen_config import NativeQwenConfig
-from graspo.flow.parallel.placement import NativePlacementPlan
+from graspo.flow.parallel.placement_plan import NativePlacementPlan
 from graspo.flow.parallel.tensor_utils import (
     _all_gather_sp,
     _dtype_size,

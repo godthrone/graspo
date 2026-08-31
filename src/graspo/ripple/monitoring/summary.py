@@ -4,7 +4,7 @@ import logging
 from collections import deque
 from typing import Any
 
-from graspo.ripple.parity import lower_median
+from graspo.ripple.group_decision import lower_median
 from graspo.ripple.parsing.classification import (
     is_pure_tool_call_task,
     likely_truncated_json,

@@ -8,7 +8,7 @@ import torch.distributed as dist
 
 from graspo.flow.adapters.models.qwen35_36.model import Qwen35HybridTextModel
 from graspo.flow.parallel.pipeline_comm import PipelineComm, wait_all
-from graspo.flow.parallel.placement import (
+from graspo.flow.parallel.placement_plan import (
     placement_summary,
 )
 from graspo.flow.parallel.tensor_utils import (

@@ -136,7 +136,7 @@ def build_launch_plan(
         raise SystemExit(f"Config file does not exist: {config_path}")
     config = config or GraspoConfig.from_yaml(config_path)
 
-    from graspo.flow.selector import select_backend
+    from graspo.flow.backend_selection import select_backend
 
     selection = select_backend(config)
     launch = config.launch

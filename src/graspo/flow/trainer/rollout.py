@@ -20,7 +20,7 @@ from graspo.ripple.monitoring.summary import (
     scalar_generation_timing,
 )
 from graspo.ripple.multimodal.contract import assert_rl_training_has_multimodal
-from graspo.ripple.parity import classify_group, group_stats, has_reward_variance
+from graspo.ripple.group_decision import classify_group, group_stats, has_reward_variance
 from graspo.ripple.reward.reward import reward_detail
 
 

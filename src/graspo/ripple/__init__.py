@@ -13,6 +13,6 @@ GRASPO-Ripple token 级奖励算法（annotation/advantages.py，v0.20.0 标注�
 本层所有模块可在 CPU 上独立测试，不启动 GPU。
 """
 
-from graspo.ripple.parity import has_reward_variance
+from graspo.ripple.group_decision import has_reward_variance
 
 __all__ = ["has_reward_variance"]

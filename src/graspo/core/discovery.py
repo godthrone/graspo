@@ -26,7 +26,7 @@ _DEV_FALLBACKS: dict[str, dict[str, str]] = {
         "qwen35_36": "graspo.flow.adapters.models.qwen35_36.adapter:Qwen35Adapter",
     },
     "graspo.backends": {
-        "graspoflow": "graspo.flow.selector:create_graspoflow_trainer",
+        "graspoflow": "graspo.flow.backend_selection:create_graspoflow_trainer",
     },
 }
 

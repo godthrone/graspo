@@ -30,7 +30,7 @@ def main() -> None:
         runtime = GraspoFlowRuntime.from_config(config)
         SFTTrainer(config, runtime).train(smoke=args.smoke)
     else:
-        from graspo.flow.selector import create_trainer, select_backend
+        from graspo.flow.backend_selection import create_trainer, select_backend
 
         selection = select_backend(config)
         create_trainer(config, selection).train(smoke=args.smoke)
