@@ -128,12 +128,12 @@ _add_mount_dir "$(dirname "$CONFIG_ABS")"
 
 model_path="$(_yaml_value "model_path")"
 if [ -n "$model_path" ] && [ -d "$(dirname "$model_path")" ]; then
-    _add_mount_dir "$(dirname "$model_path")"
+    _add_mount_dir "$(realpath "$(dirname "$model_path")")"
 fi
 
 train_path="$(_yaml_value "train_path")"
 if [ -n "$train_path" ] && [ -d "$(dirname "$train_path")" ]; then
-    _add_mount_dir "$(dirname "$train_path")"
+    _add_mount_dir "$(realpath "$(dirname "$train_path")")"
     # 数据集根（祖父目录）——仅在图像引用需要时挂载（挂载面积最小化）：
     # data/ 与 images/ 平级的数据集，图像相对引用 ../images/x.jpg 需要
     # 数据集根可达（v0.21 smoke 实测发现）。读取训练数据首行 image 字段，
@@ -144,13 +144,13 @@ if [ -n "$train_path" ] && [ -d "$(dirname "$train_path")" ]; then
         | sed 's/.*:[[:space:]]*"//; s/"$//'
     )"
     if [ -n "$_image_ref" ] && [ "${_image_ref#../}" != "$_image_ref" ]; then
-        _add_mount_dir "$(dirname "$(dirname "$train_path")")"
+        _add_mount_dir "$(realpath "$(dirname "$(dirname "$train_path")")")"
     fi
 fi
 
 output_dir="$(_yaml_value "output_dir")"
 if [ -n "$output_dir" ] && [ -d "$(dirname "$output_dir")" ]; then
-    _add_mount_dir "$(dirname "$output_dir")"
+    _add_mount_dir "$(realpath "$(dirname "$output_dir")")"
 fi
 
 if [ ${#_mount_dirs[@]} -eq 0 ]; then
