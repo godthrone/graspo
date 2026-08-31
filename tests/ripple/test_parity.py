@@ -1,10 +1,10 @@
-"""公式 A 核心算法（graspo.ripple.parity，需 torch）的单元测试。"""
+"""公式 A 核心算法（graspo.ripple.group_decision，需 torch）的单元测试。"""
 
 import pytest
 
 torch = pytest.importorskip("torch", exc_type=ImportError)
 
-from graspo.ripple.parity import is_uniform_partial_content, lower_median  # noqa: E402
+from graspo.ripple.group_decision import is_uniform_partial_content, lower_median  # noqa: E402
 
 
 def test_lower_median_matches_torch_median_for_even_group():

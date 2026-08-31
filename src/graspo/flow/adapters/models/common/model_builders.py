@@ -21,7 +21,7 @@ from graspo.flow.adapters.models.common.native_qwen_config import NativeQwenConf
 from graspo.flow.lora.lora_linear import _replace_visual_lora_modules
 
 if TYPE_CHECKING:
-    from graspo.flow.parallel.placement import NativePlacementPlan
+    from graspo.flow.parallel.placement_plan import NativePlacementPlan
     from graspo.flow.parallel.tensor_utils import SafetensorIndex
 
 

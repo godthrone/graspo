@@ -19,7 +19,7 @@ from graspo.flow.adapters.models.qwen35_36.training_sft import _Qwen35SFTTrainin
 from graspo.flow.adapters.transformer_adapter import TransformerAdapter
 from graspo.flow.lora.lora_helpers import native_qwen_lora_available_targets
 from graspo.flow.lora.lora_io import load_peft_adapter_into_native_model
-from graspo.flow.parallel.placement import (
+from graspo.flow.parallel.placement_plan import (
     build_placement_plan,
 )
 from graspo.flow.parallel.tensor_utils import (

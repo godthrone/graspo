@@ -44,11 +44,11 @@ def _load_runtime_module() -> types.ModuleType:
         sys.modules["torch"] = _torch
         sys.modules["torch.distributed"] = types.ModuleType("torch.distributed")
 
-    # -- graspo.ripple.parity (missing on disk) ---------------------------
-    if "graspo.ripple.parity" not in sys.modules:
-        _parity = types.ModuleType("graspo.ripple.parity")
+    # -- graspo.ripple.group_decision (missing on disk) ---------------------------
+    if "graspo.ripple.group_decision" not in sys.modules:
+        _parity = types.ModuleType("graspo.ripple.group_decision")
         _parity.has_reward_variance = lambda *a: False  # noqa: ARG005
-        sys.modules["graspo.ripple.parity"] = _parity
+        sys.modules["graspo.ripple.group_decision"] = _parity
 
     # -- parent packages (need __path__ for sub-package resolution) --------
     for _name in [

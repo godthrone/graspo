@@ -2,7 +2,7 @@
 
 import pytest
 
-from graspo.flow.parallel.placement import (
+from graspo.flow.parallel.placement_plan import (
     NativePlacementPlan,
     _minimax_contiguous_ranges,
     _validate_manual_ranges,

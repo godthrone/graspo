@@ -1,6 +1,6 @@
-"""公式 A 纯 CPU 算法（graspo.ripple.parity，零 torch）的单元测试。"""
+"""公式 A 纯 CPU 算法（graspo.ripple.group_decision，零 torch）的单元测试。"""
 
-from graspo.ripple.parity import (
+from graspo.ripple.group_decision import (
     GroupDecision,
     classify_group,
     has_reward_variance,

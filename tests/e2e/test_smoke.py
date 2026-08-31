@@ -4,7 +4,7 @@ from pathlib import Path
 
 from graspo.core.schema import GraspoConfig
 from graspo.flow.data_io import load_jsonl
-from graspo.ripple.parity import (
+from graspo.ripple.group_decision import (
     GroupDecision,
     classify_group,
     replay_ready,
