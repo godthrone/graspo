@@ -2,10 +2,7 @@
 
 [中文说明](README.zh-CN.md)
 
-GRASPO is a GRPO-style reinforcement-learning trainer purpose-built for
-structured-output LLM tasks: JSON generation, information extraction, tool
-calling, and any task whose answers can be checked structurally.  LoRA-only:
-train 9B-class models on a single 80 GB GPU.
+GRASPO (Group Relative Advantage Structured Policy Optimization) — GRPO-style LoRA RL for structured LLM outputs. Token-level reward via ELAM character annotation, SFT→RL unified pipeline, ripple/flow layered architecture. LoRA-only: 9B on a single 80GB GPU. GraspoFlow unifies TP+DP+PP+SP five-dimensional parallelism with Flink-style scheduling, including sequence parallel for activation memory savings. Group filtering, perfect-skip, multimodal, tool-call reward.
 
 **Three layers of structured-output RL, from token signal to group decision:**
 
