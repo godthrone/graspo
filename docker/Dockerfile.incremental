@@ -48,7 +48,8 @@ RUN rm -rf src/graspo/backends \
     && rm -f src/graspo/core/token_reward.py
 
 # 重新 install -e（源码变更后 editable install 需要刷新；离线节点经代理）
-RUN export http_proxy="${HTTP_PROXY:-}" https_proxy="${HTTPS_PROXY:-}" \
+RUN --mount=type=cache,target=/root/.cache/uv \
+    export http_proxy="${HTTP_PROXY:-}" https_proxy="${HTTPS_PROXY:-}" \
     HTTP_PROXY="${HTTP_PROXY:-}" HTTPS_PROXY="${HTTPS_PROXY:-}" \
     && uv pip install --system --break-system-packages --no-deps -e .
 
