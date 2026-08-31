@@ -52,8 +52,11 @@ class SFTTrainer:
         """SFT 训练主入口。
         """
         validate_graspoflow_runtime_config(self.config)
-        output_dir = Path(self.config.training.output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
+        from graspo.flow.lora.lora_io import prepare_output_dir
+        output_dir = prepare_output_dir(
+            self.config.training.output_dir,
+            overwrite=self.config.training.overwrite_output_dir,
+        )
         (output_dir / "logs").mkdir(parents=True, exist_ok=True)
         self.runtime.validate()
         self.runtime.setup()

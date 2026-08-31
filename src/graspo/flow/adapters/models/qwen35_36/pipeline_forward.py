@@ -9,6 +9,7 @@ delegate here so the SP / tag / KV-cache / all-gather semantics can never
 silently diverge between callers.
 """
 
+import logging
 import os
 import sys
 import time
@@ -27,11 +28,16 @@ def _pp_debug_log(output_dir: str, msg: str) -> None:
     rank = os.environ.get("RANK", "0")
     line = f"[pp-debug rank={rank}] {msg}"
     print(line, file=sys.stderr, flush=True)
-    try:
+    try:  # noqa: BLE001 — 调试日志落盘失败不应中断训练主流程
         rotating_append(run_log_dir(output_dir) / "pp_debug.log", line + "\n")
-    # noqa: BLE001 — 调试日志落盘失败不应中断训练主流程
+    except OSError as exc:
+        logging.getLogger("graspo.pp_debug").warning(
+            "PP debug log write failed (rank=%s): %s", rank, exc
+        )
     except Exception:
-        pass
+        logging.getLogger("graspo.pp_debug").exception(
+            "PP debug log write failed with unexpected error (rank=%s)", rank
+        )
 
 
 class _Qwen35PipelineForwardMethods:

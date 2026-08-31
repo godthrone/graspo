@@ -79,6 +79,9 @@ class TrainingConfig(BaseModel):
 
     output_dir: str = ""
     run_name: str = ""
+    # 预授权退路（§3.3）：是否允许覆盖已有输出目录。默认 False（安全默认），
+    # 用户必须在配置中显式设置为 true 才能覆盖已有训练产出。
+    overwrite_output_dir: bool = False
     seed: int = 42
     # 训练长度唯一控制参数（v0.23.0 起：max_steps 已移除，见 LRSchedulerConfig）
     max_epochs: int = 100

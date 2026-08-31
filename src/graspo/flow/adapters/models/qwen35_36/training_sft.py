@@ -1,13 +1,12 @@
 """Qwen3.5/3.6 adapter — SFT training methods (TP+DP+PP)."""
 
-import os
-import sys
 import time
 from typing import Any
 
 import torch
 import torch.distributed as dist
 
+from graspo.flow.adapters.models.common.layers import _log_cuda_mem
 from graspo.flow.adapters.models.qwen35_36.helpers import collate_sft_batch
 from graspo.flow.adapters.models.qwen35_36.model import Qwen35HybridTextModel
 from graspo.flow.parallel.pipeline_comm import PipelineComm, wait_all
@@ -18,21 +17,6 @@ from graspo.flow.parallel.tensor_utils import (
 )
 from graspo.ripple.data import SFTTokenized
 from graspo.ripple.multimodal.contract import assert_sft_batch_has_multimodal
-
-
-def _log_cuda_mem(label: str) -> None:
-    """Log CUDA memory stats to stderr for rank 0 only."""
-    if os.environ.get("RANK", "0") == "0":
-        rank = os.environ.get("RANK", "0")
-        allocated = torch.cuda.memory_allocated() / 1024**3
-        reserved = torch.cuda.memory_reserved() / 1024**3
-        max_allocated = torch.cuda.max_memory_allocated() / 1024**3
-        print(
-            f"[MEM rank={rank}] {label}: allocated={allocated:.2f}GB "
-            f"reserved={reserved:.2f}GB max_allocated={max_allocated:.2f}GB",
-            file=sys.stderr,
-            flush=True,
-        )
 
 
 class _Qwen35SFTTrainingMethods:
@@ -62,6 +46,114 @@ class _Qwen35SFTTrainingMethods:
         )
         mask = shift_labels != -100
         return -(log_probs * mask).sum() / mask.sum().clamp_min(1)
+
+    def _sync_grads_and_step(
+        self,
+        *,
+        max_grad_norm: float,
+        valid_micro_batches: int,
+    ) -> tuple[float, int, int]:
+        """统一的梯度同步 + clip + optimizer.step。
+
+        防呆：DP/TP 梯度同步必须所有 rank 参与（集体操作），即使本 rank
+        所有 micro-batch 都非有限（valid_micro_batches==0）也必须参加。
+        若本 rank 无有效梯度，先 zero-fill 再参与 all_reduce。
+
+        Returns:
+            (grad_norm_sum, optimizer_steps, nonzero_grad_count)
+        """
+        from graspo.flow.lora.lora_linear import (
+            _sync_dp_lora_grads,
+            _sync_nonsharded_lora_grads,
+        )
+        from graspo.flow.parallel.tensor_utils import (
+            _TENSOR_PARALLEL_GROUP,
+            _TENSOR_PARALLEL_SIZE,
+        )
+
+        if valid_micro_batches == 0:
+            for param in self.model.parameters():
+                if param.requires_grad and param.grad is None:
+                    param.grad = torch.zeros_like(param)
+
+        # DP gradient sync: AVG across DP replicas（不同数据）
+        if self.tp_state is not None and self.tp_state.dp_group is not None:
+            _sync_dp_lora_grads(self.model, self.tp_state.dp_group)
+        # TP gradient sync: SUM across TP ranks（同数据，部分梯度）
+        if _TENSOR_PARALLEL_GROUP is not None and _TENSOR_PARALLEL_SIZE > 1:
+            _sync_nonsharded_lora_grads(self.model, _TENSOR_PARALLEL_GROUP)
+
+        if valid_micro_batches > 0:
+            trainable_params = [p for p in self.model.parameters() if p.requires_grad]
+            grad_norm = (
+                torch.nn.utils.clip_grad_norm_(trainable_params, max_grad_norm)
+                if trainable_params
+                else torch.tensor(0.0)
+            )
+            grad_norm_sum = float(grad_norm.detach().float().cpu())
+            self._sync_timing()
+            _log_cuda_mem("before_optimizer_step")
+            if self.optimizer is not None:
+                self.optimizer.step()
+            _log_cuda_mem("after_optimizer_step")
+            self._sync_timing()
+            if self.scheduler is not None:
+                self.scheduler.step()
+            optimizer_steps = 1
+            nonzero_grad_count = self.model.nonzero_lora_grad_count()
+        else:
+            grad_norm_sum = 0.0
+            optimizer_steps = 0
+            nonzero_grad_count = 0
+        return grad_norm_sum, optimizer_steps, nonzero_grad_count
+
+    def _build_sft_metrics(
+        self,
+        *,
+        sft_batch_count: int,
+        optimizer_steps: int,
+        skipped_nonfinite: int,
+        loss_sum: float,
+        micro_batch_count: int,
+        grad_norm_sum: float,
+        nonzero_grad_count: int,
+        lora_norm_before: float,
+        lora_norm_after: float,
+        train_batch_started_at: float,
+        micro_batch_forward_sec: float,
+        backward_sec: float,
+        optimizer_step_sec: float,
+        round_secs: list[float] | None = None,
+        **pipeline_extras,
+    ) -> dict[str, Any]:
+        """构建统一的 SFT 训练指标字典。
+
+        PP 路径通过 ``**pipeline_extras`` 注入 PP 特有字段（pp_size,
+        pp_schedule, pipeline_stage_timing 等）。
+        """
+        metrics = {
+            "optimized": optimizer_steps > 0,
+            "sft_batch_count": sft_batch_count,
+            "optimizer_steps": optimizer_steps,
+            "skipped_nonfinite": skipped_nonfinite,
+            "loss_mean": loss_sum / micro_batch_count if micro_batch_count else None,
+            "grad_norm_mean": grad_norm_sum,
+            "nonzero_grad_count": nonzero_grad_count,
+            "lora_norm_before": lora_norm_before,
+            "lora_norm_after": lora_norm_after,
+            "lora_norm_delta": lora_norm_after - lora_norm_before,
+            "train_batch_total_sec": time.monotonic() - train_batch_started_at,
+            "optimize_round_sec": round_secs or [],
+            "optimize_round_sec_sum": sum(round_secs) if round_secs else 0.0,
+            "micro_batch_forward_sec": micro_batch_forward_sec,
+            "backward_sec": backward_sec,
+            "optimizer_step_sec": optimizer_step_sec,
+            "micro_batch_count": micro_batch_count,
+            "current_lr": self._current_lr(),
+            **pipeline_extras,
+        }
+        metrics = self._aggregate_rank_metrics(metrics)
+        return metrics
 
     """Mixin: SFT training/batch optimization methods for Qwen35Adapter."""
 
@@ -168,71 +260,29 @@ class _Qwen35SFTTrainingMethods:
             backward_sec += time.monotonic() - backward_started_at
 
         # 所有 micro-batch 的 backward 完成后，统一 sync / clip / step
-        # 防呆：DP/TP 梯度同步必须所有 rank 参与（集体操作），即使本 rank
-        # 所有 micro-batch 都非有限（valid_micro_batches==0）也必须参加。
-        # 若本 rank 无有效梯度，先 zero-fill 再参与 all_reduce。
-        if valid_micro_batches == 0:
-            for param in self.model.parameters():
-                if param.requires_grad and param.grad is None:
-                    param.grad = torch.zeros_like(param)
-        from graspo.flow.lora.lora_linear import (
-            _sync_dp_lora_grads,
-            _sync_nonsharded_lora_grads,
+        grad_norm_sum, optimizer_steps, nonzero_grad_count = self._sync_grads_and_step(
+            max_grad_norm=max_grad_norm,
+            valid_micro_batches=valid_micro_batches,
         )
-        from graspo.flow.parallel.tensor_utils import (
-            _TENSOR_PARALLEL_GROUP,
-            _TENSOR_PARALLEL_SIZE,
-        )
-
-        # DP gradient sync: AVG across DP replicas（不同数据）
-        if self.tp_state is not None and self.tp_state.dp_group is not None:
-            _sync_dp_lora_grads(self.model, self.tp_state.dp_group)
-        # TP gradient sync: SUM across TP ranks（同数据，部分梯度）
-        if _TENSOR_PARALLEL_GROUP is not None and _TENSOR_PARALLEL_SIZE > 1:
-            _sync_nonsharded_lora_grads(self.model, _TENSOR_PARALLEL_GROUP)
-        if valid_micro_batches > 0:
-            grad_norm = torch.nn.utils.clip_grad_norm_(
-                [param for param in self.model.parameters() if param.requires_grad],
-                max_grad_norm,
-            )
-            grad_norm_sum = float(grad_norm.detach().float().cpu())
-            self._sync_timing()
-            optimizer_started_at = time.monotonic()
-            _log_cuda_mem("before_optimizer_step")
-            self.optimizer.step()
-            _log_cuda_mem("after_optimizer_step")
-            self._sync_timing()
-            optimizer_step_sec = time.monotonic() - optimizer_started_at
-            if self.scheduler is not None:
-                self.scheduler.step()
-            optimizer_steps = 1
-            nonzero_grad_count = self.model.nonzero_lora_grad_count()
-        else:
-            grad_norm_sum = 0.0
         self._train_batch_call_index += 1
 
         lora_norm_after = self.model.lora_parameter_norm()
-        metrics = {
-            "optimized": optimizer_steps > 0,
-            "sft_batch_count": len(sft_batches),
-            "optimizer_steps": optimizer_steps,
-            "skipped_nonfinite": skipped_nonfinite,
-            "loss_mean": loss_sum / micro_batch_count if micro_batch_count else None,
-            "grad_norm_mean": grad_norm_sum,
-            "nonzero_grad_count": nonzero_grad_count,
-            "lora_norm_before": lora_norm_before,
-            "lora_norm_after": lora_norm_after,
-            "lora_norm_delta": lora_norm_after - lora_norm_before,
-            "train_batch_total_sec": time.monotonic() - train_batch_started_at,
-            "optimize_round_sec": round_secs,
-            "optimize_round_sec_sum": sum(round_secs),
-            "micro_batch_forward_sec": micro_batch_forward_sec,
-            "backward_sec": backward_sec,
-            "optimizer_step_sec": optimizer_step_sec,
-            "micro_batch_count": micro_batch_count,
-            "current_lr": self._current_lr(),
-        }
-        metrics = self._aggregate_rank_metrics(metrics)
+        metrics = self._build_sft_metrics(
+            sft_batch_count=len(sft_batches),
+            optimizer_steps=optimizer_steps,
+            skipped_nonfinite=skipped_nonfinite,
+            loss_sum=loss_sum,
+            micro_batch_count=micro_batch_count,
+            grad_norm_sum=grad_norm_sum,
+            nonzero_grad_count=nonzero_grad_count,
+            lora_norm_before=lora_norm_before,
+            lora_norm_after=lora_norm_after,
+            train_batch_started_at=train_batch_started_at,
+            micro_batch_forward_sec=micro_batch_forward_sec,
+            backward_sec=backward_sec,
+            optimizer_step_sec=optimizer_step_sec,
+            round_secs=round_secs,
+        )
         self._emit_rank_memory_event("sft_train_batch_after", {"metrics": metrics})
         return metrics
 
@@ -422,40 +472,10 @@ class _Qwen35SFTTrainingMethods:
         all_finite = bool(finite_tensor.item())
 
         if all_finite:
-            # DP/TP gradient sync: 跨 rank 同步梯度后再 clip + step
-            from graspo.flow.lora.lora_linear import (
-                _sync_dp_lora_grads,
-                _sync_nonsharded_lora_grads,
+            grad_norm_sum, optimizer_steps, nonzero_grad_count = self._sync_grads_and_step(
+                max_grad_norm=max_grad_norm,
+                valid_micro_batches=chunk_count,
             )
-            from graspo.flow.parallel.tensor_utils import (
-            _TENSOR_PARALLEL_GROUP,
-            _TENSOR_PARALLEL_SIZE,
-        )
-
-            if self.tp_state is not None and self.tp_state.dp_group is not None:
-                _sync_dp_lora_grads(self.model, self.tp_state.dp_group)
-            if _TENSOR_PARALLEL_GROUP is not None and _TENSOR_PARALLEL_SIZE > 1:
-                _sync_nonsharded_lora_grads(self.model, _TENSOR_PARALLEL_GROUP)
-            # 所有 chunk 梯度已累加，统一 clip + step
-            trainable_params = [p for p in self.model.parameters() if p.requires_grad]
-            grad_norm = (
-                torch.nn.utils.clip_grad_norm_(trainable_params, max_grad_norm)
-                if trainable_params
-                else torch.tensor(0.0)
-            )
-            grad_norm_sum = float(grad_norm.detach().float().cpu())
-            self._sync_timing()
-            t0 = time.monotonic()
-            if self.optimizer is not None:
-                _log_cuda_mem("before_optimizer_step_pp")
-                self.optimizer.step()
-                _log_cuda_mem("after_optimizer_step_pp")
-            self._sync_timing()
-            optimizer_step_sec = time.monotonic() - t0
-            if self.scheduler is not None and self.optimizer is not None:
-                self.scheduler.step()
-            optimizer_steps = 1
-            nonzero_grad_count = self.model.nonzero_lora_grad_count()
             loss_sum = sum(loss_values)
             micro_batch_count = chunk_count
         else:
@@ -463,35 +483,30 @@ class _Qwen35SFTTrainingMethods:
 
         self._train_batch_call_index += 1
         lora_norm_after = self.model.lora_parameter_norm()
-        metrics = {
-            "optimized": optimizer_steps > 0,
-            "sft_batch_count": len(sft_batches),
-            "optimizer_steps": optimizer_steps,
-            "skipped_nonfinite": skipped_nonfinite,
-            "loss_mean": loss_sum / micro_batch_count if micro_batch_count else None,
-            "grad_norm_mean": grad_norm_sum,
-            "nonzero_grad_count": nonzero_grad_count,
-            "lora_norm_before": lora_norm_before,
-            "lora_norm_after": lora_norm_after,
-            "lora_norm_delta": lora_norm_after - lora_norm_before,
-            "train_batch_total_sec": time.monotonic() - train_batch_started_at,
-            "optimize_round_sec": round_secs,
-            "optimize_round_sec_sum": sum(round_secs),
-            "micro_batch_forward_sec": micro_batch_forward_sec,
-            "backward_sec": backward_sec,
-            "optimizer_step_sec": optimizer_step_sec,
-            "micro_batch_count": micro_batch_count,
-            "pp_size": self.pp_size,
-            "pp_schedule": sched_stats.get("pp_schedule", "one_f_one_b"),
-            "pipeline_stage_timing": _round_pipeline_stage_timing(stage_timing),
-            "pipeline_fill_sec": fill_sec,
-            "pipeline_steady_sec": steady_sec,
-            "pipeline_drain_sec": drain_sec,
-            "pipeline_forward_sec": float(sched_stats.get("pipeline_forward_sec", 0.0)),
-            "pipeline_backward_sec": float(sched_stats.get("pipeline_backward_sec", 0.0)),
-            "current_lr": self._current_lr(),
-        }
-        metrics = self._aggregate_rank_metrics(metrics)
+        metrics = self._build_sft_metrics(
+            sft_batch_count=len(sft_batches),
+            optimizer_steps=optimizer_steps,
+            skipped_nonfinite=skipped_nonfinite,
+            loss_sum=loss_sum,
+            micro_batch_count=micro_batch_count,
+            grad_norm_sum=grad_norm_sum,
+            nonzero_grad_count=nonzero_grad_count,
+            lora_norm_before=lora_norm_before,
+            lora_norm_after=lora_norm_after,
+            train_batch_started_at=train_batch_started_at,
+            micro_batch_forward_sec=micro_batch_forward_sec,
+            backward_sec=backward_sec,
+            optimizer_step_sec=optimizer_step_sec,
+            round_secs=round_secs,
+            pp_size=self.pp_size,
+            pp_schedule=sched_stats.get("pp_schedule", "one_f_one_b"),
+            pipeline_stage_timing=_round_pipeline_stage_timing(stage_timing),
+            pipeline_fill_sec=fill_sec,
+            pipeline_steady_sec=steady_sec,
+            pipeline_drain_sec=drain_sec,
+            pipeline_forward_sec=float(sched_stats.get("pipeline_forward_sec", 0.0)),
+            pipeline_backward_sec=float(sched_stats.get("pipeline_backward_sec", 0.0)),
+        )
         self._emit_rank_memory_event("pipeline_sft_train_batch_after", {"metrics": metrics})
         return metrics
 

@@ -160,8 +160,8 @@ cp samples/configs/sft_example.yaml my_sft.yaml
 与 RL 的主要区别：
 
 - `train_method: sft` — 切换到监督微调，而非 RL；
-- `micro_batch_size` 作为 micro-batch size；
-- GRPO 优化每次训练步只执行一次 pass（无梯度累积迭代）；
+- `micro_batch_size` 和 `gradient_accumulation_micro_batches` 控制 batch size；
+  effective batch/GPU = micro_batch_size × gradient_accumulation_micro_batches；
 - `max_prompt_length` 是完整序列长度（prompt + response）；
 - `learning_rate` 通常比 RL 高（如 `5e-5` vs `5e-6`）；
 - `reward` 配置段在 SFT 中被忽略。
@@ -362,8 +362,11 @@ rollout 完成后，每条 completion 会被**逐字符标注**结构角色（`C
 
 ## 配置说明
 
-所有常规训练配置都在 YAML 内完成。`samples/configs/rl_example.yaml` 是 RL 训练的完整公开样例，
-`samples/configs/sft_example.yaml` 是 SFT 专用模板。
+所有常规训练配置都在 YAML 内完成。
+
+- `samples/configs/sft_example.yaml` — 最保守单卡 SFT 模板；
+- `samples/configs/rl_example.yaml` — 最保守单卡 RL 模板；
+- `samples/configs/a800x8_qwen35_9b_tp1_dp8_pp1.yaml` — 8×A800 多卡验证配置。
 
 ### `train_method`
 
@@ -403,6 +406,8 @@ rollout 完成后，每条 completion 会被**逐字符标注**结构角色（`C
 - `target_modules`：显式 LoRA targets；设置后优先于 `target_preset`。
 - `bias`：PEFT-compatible bias 设置，通常为 `none`。
 - `task_type`：PEFT-compatible task type，通常为 `CAUSAL_LM`。
+
+GRASPO 目前仅支持 LoRA 训练，不支持全参数训练。
 
 ### `reward`
 

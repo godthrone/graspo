@@ -1,13 +1,12 @@
 """Qwen3.5/3.6 adapter — RL training methods (TP-only, PP 1F1B)."""
 
-import os
-import sys
 import time
 from typing import Any
 
 import torch
 import torch.distributed as dist
 
+from graspo.flow.adapters.models.common.layers import _log_cuda_mem
 from graspo.flow.adapters.models.qwen35_36.model import Qwen35HybridTextModel
 from graspo.flow.parallel.pipeline_comm import PipelineComm, wait_all
 from graspo.flow.parallel.scheduling import build_scheduler
@@ -20,21 +19,6 @@ from graspo.flow.parallel.tensor_utils import (
 )
 from graspo.ripple.buffer import Experience
 from graspo.ripple.multimodal.contract import assert_rl_training_has_multimodal
-
-
-def _log_cuda_mem(label: str) -> None:
-    """Log CUDA memory stats to stderr for rank 0 only."""
-    if os.environ.get("RANK", "0") == "0":
-        rank = os.environ.get("RANK", "0")
-        allocated = torch.cuda.memory_allocated() / 1024**3
-        reserved = torch.cuda.memory_reserved() / 1024**3
-        max_allocated = torch.cuda.max_memory_allocated() / 1024**3
-        print(
-            f"[MEM rank={rank}] {label}: allocated={allocated:.2f}GB "
-            f"reserved={reserved:.2f}GB max_allocated={max_allocated:.2f}GB",
-            file=sys.stderr,
-            flush=True,
-        )
 
 
 class _Qwen35TrainingMethods:
