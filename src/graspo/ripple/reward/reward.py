@@ -348,3 +348,35 @@ def create_reward(config: RewardConfig) -> GraspoReward:
             f"unknown reward backend {config.kind!r}; available: {sorted(REWARD_REGISTRY)}"
         )
     return reward_cls(config)
+
+
+def reward_detail(result: Any) -> dict[str, Any]:
+    """从 RewardResult 提取可读的评分详情。"""
+    extracted = dict(result.extracted)
+    valid_extracted_json = None
+    if "answer" in extracted:
+        try:
+            answer = extracted["answer"]
+            if isinstance(answer, str) and answer.strip():
+                json.loads(answer.strip())
+                valid_extracted_json = True
+        except (TypeError, ValueError):
+            valid_extracted_json = False
+    return {
+        "raw_score": float(result.raw_score),
+        "max_score": float(result.max_score),
+        "extracted": extracted,
+        "parsed_tool_calls": extracted.get("tool_calls"),
+        "parser": extracted.get("parser"),
+        "parse_errors": extracted.get("parse_errors"),
+        "extra_text": extracted.get("extra_text"),
+        "matched_target_index": result.matched_target_index,
+        "matched_target_id": result.matched_target_id,
+        "target_scores": (
+            [score.model_dump() for score in result.target_scores]
+            if result.target_scores is not None
+            else None
+        ),
+        "useless_text_length": len(result.useless_text),
+        "valid_extracted_json": valid_extracted_json,
+    }

@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from graspo.flow.checkpoint import save_native_checkpoint
-from graspo.flow.trainer.helpers import (
+from graspo.ripple.monitoring.stats import (
     epoch_stats_from_dict,
     epoch_stats_to_dict,
     train_stats_from_dict,

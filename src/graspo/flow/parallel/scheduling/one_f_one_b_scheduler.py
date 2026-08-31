@@ -21,7 +21,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from .base import PipelineScheduler
+from graspo.flow.parallel.scheduling.pipeline_scheduler import PipelineScheduler
 
 
 class OneFOneBScheduler(PipelineScheduler):

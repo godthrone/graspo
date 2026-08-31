@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from .base import PipelineScheduler
-from .one_f_one_b import OneFOneBScheduler
+from graspo.flow.parallel.scheduling.pipeline_scheduler import PipelineScheduler
+from graspo.flow.parallel.scheduling.one_f_one_b_scheduler import OneFOneBScheduler
 
 # 注册表：调度策略名称 → 构造器。（新增策略在此登记。）
 _SCHEDULERS: dict[str, type[PipelineScheduler]] = {

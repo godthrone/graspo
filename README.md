@@ -98,7 +98,7 @@ bash run.sh my_config.yaml --image graspo:v0.22.0
   (overridable with `--image`);
 - **`--smoke` goes through the CLI** (`graspo launch --smoke`) as a run-boundary
   flag: training stops after the first step — semantically equivalent to a
-  `max_steps=1` config, and your config file is never modified.
+  `max_epochs=1` config, and your config file is never modified.
 
 > **`run.sh` is the only supported launch path for training.** Hand-written
 > `docker run` invocations are for diagnostics only — they have repeatedly
@@ -128,8 +128,9 @@ docker run --gpus "device=0,1" --ipc=host --shm-size=16g \
 > huggingface-cli download Qwen/Qwen3.5-9B --local-dir /path/to/models/Qwen3.5-9B
 > ```
 
-For a smoke test, keep `training.max_new_tokens=2048` and reduce
-`training.max_steps`. Real GRASPO training keeps
+For a smoke test, keep `training.max_new_tokens=2048` and use the
+`--smoke` flag (runs one step) or reduce `training.max_epochs`.
+Real GRASPO training keeps
 `training.max_epochs=100` unless you intentionally run a bounded test.
 
 **Custom image name:**

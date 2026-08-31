@@ -31,7 +31,7 @@ from graspo.flow.trainer.helpers import (
 from graspo.flow.trainer.optimize import OptimizeMixin
 from graspo.flow.trainer.rollout import RolloutMixin
 from graspo.ripple.buffer import ReplayBuffer
-from graspo.ripple.data import load_jsonl
+from graspo.flow.data_io import load_jsonl
 from graspo.ripple.monitoring.stats import (
     GraspoFlowEpochStats,
     GraspoFlowTrainStats,

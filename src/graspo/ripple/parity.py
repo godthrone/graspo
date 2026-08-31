@@ -172,3 +172,19 @@ def replay_ready(
         rollout_queue_batch_size,
         rollout_group_size,
     )
+
+
+def group_stats(rewards: list[float]) -> dict[str, float | int]:
+    """计算一组 reward 的统计摘要。"""
+    if not rewards:
+        return {"count": 0, "min": 0.0, "median": 0.0, "max": 0.0, "mean": 0.0, "range": 0.0}
+    minimum = min(rewards)
+    maximum = max(rewards)
+    return {
+        "count": len(rewards),
+        "min": minimum,
+        "median": lower_median(rewards),
+        "max": maximum,
+        "mean": sum(rewards) / len(rewards),
+        "range": maximum - minimum,
+    }

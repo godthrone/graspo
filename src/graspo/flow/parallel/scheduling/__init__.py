@@ -4,9 +4,9 @@
 外部不感知内部是单文件还是目录（宪法 §8.3 类改目录）。
 """
 
-from .base import PipelineScheduler
-from .factory import build_scheduler
-from .one_f_one_b import OneFOneBScheduler
+from graspo.flow.parallel.scheduling.pipeline_scheduler import PipelineScheduler
+from graspo.flow.parallel.scheduling.factory import build_scheduler
+from graspo.flow.parallel.scheduling.one_f_one_b_scheduler import OneFOneBScheduler
 
 __all__ = [
     "PipelineScheduler",

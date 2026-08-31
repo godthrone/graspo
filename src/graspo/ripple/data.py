@@ -1,12 +1,12 @@
-"""训练数据校验、加载与编码：JSONL 读写、SFT tokenize、样本校验。
+"""训练数据校验与编码：SFT tokenize、样本校验。
 
 算法层（ripple）数据变换：Sample 构造依赖 targets 归一化（reward/normalize）、
 SFT target 文本构建（parsing/xml）、多模态路径解析（multimodal/rows）——
 因此本文件位于 ripple 层，只依赖 core 的 Sample 契约（单向依赖）。
+JSONL 文件 I/O 已迁入 flow/data_io.py（设施层）。
 """
 
 import copy
-import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -332,28 +332,6 @@ def _dedupe_media(media: list[dict[str, Any]]) -> list[dict[str, Any]]:
         seen.add(key)
         deduped.append(item)
     return deduped
-
-
-def load_jsonl(path: str | Path) -> list[Sample]:
-    samples: list[Sample] = []
-    with Path(path).open("r", encoding="utf-8") as handle:
-        for line_no, line in enumerate(handle, start=1):
-            if not line.strip():
-                continue
-            try:
-                record = json.loads(line)
-                samples.append(sample_from_record(record))
-            except Exception as exc:  # noqa: BLE001
-                raise ValueError(f"invalid JSONL record at {path}:{line_no}: {exc}") from exc
-    return samples
-
-
-def write_jsonl(samples: list[Sample], path: str | Path) -> None:
-    output = Path(path)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    with output.open("w", encoding="utf-8") as handle:
-        for sample in samples:
-            handle.write(sample.to_json() + "\n")
 
 
 @dataclass(frozen=True, slots=True)

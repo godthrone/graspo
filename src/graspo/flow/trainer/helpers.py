@@ -1,20 +1,15 @@
-"""GraspoFlowTrainer 纯函数工具。
+"""GraspoFlowTrainer 纯函数工具（设施层）。
 
-不依赖 self 状态，可独立测试（ 拆分后保留数据变换工具）。
+不依赖 self 状态，可独立测试。仅含设施层函数：时间戳、随机种子、配置备份、
+tensor 提取、元数据格式化。
+算法层函数（advantage 计算、统计序列化、group_stats、reward_detail）已迁入
+ripple/ 对应模块。
 """
 
-import json
 import logging
 import random
 from datetime import datetime
-from pathlib import Path
 from typing import Any
-
-from graspo.ripple.monitoring.stats import (
-    GraspoFlowEpochStats,
-    GraspoFlowTrainStats,
-)
-from graspo.ripple.parity import lower_median
 
 # ── 时间戳 ────────────────────────────────────────────────────────────────────
 
@@ -42,7 +37,7 @@ def _set_random_seed(seed: int, *, rank: int = 0) -> None:
 # ── 配置备份 ──────────────────────────────────────────────────────────────────
 
 
-def _backup_config(config: Any, output_dir: Path) -> None:
+def _backup_config(config: Any, output_dir: Any) -> None:
     """将当前配置写入输出目录，确保事后可完整复现。"""
     import yaml
 
@@ -53,183 +48,7 @@ def _backup_config(config: Any, output_dir: Path) -> None:
     )
 
 
-# ── advantage 计算 ─────────────────────────────────────────────────────────────
-
-
-def compute_ripple_advantages(
-    ragged_advantages: list[list[float]],
-    old_log_probs: Any,
-    prompt_len: int,
-) -> Any:
-    """GRASPO-Ripple: align ragged per-token advantages to the log-prob tensor.
-
-    Advantages come from the annotation-driven pipeline
-    (:func:`graspo.ripple.annotation.advantages.compute_group_advantages`):
-    ``S→+1.0 / V→raw−μ_f / T·W·D→0 / E→−1.0``, no group-level normalization
-    (v0.20.0).
-
-    The ragged advantages are aligned to the ``old_log_probs`` tensor shape:
-    prompt positions → 0, generated region → ragged advantages, trailing
-    padding → 0.
-
-    Args:
-        ragged_advantages: Per-completion advantage lists (generated region).
-        old_log_probs: shape (B, seq_len-1) log-prob tensor.
-        prompt_len: Prompt token count (used for alignment).
-
-    Returns:
-        shape (B, seq_len-1) per-token advantage tensor.
-    """
-    import torch
-
-    batch_size = old_log_probs.shape[0]
-    seq_len_m1 = old_log_probs.shape[1]
-
-    if len(ragged_advantages) != batch_size:
-        raise RuntimeError(
-            f"ragged_advantages batch size {len(ragged_advantages)} != "
-            f"old_log_probs batch size {batch_size}"
-        )
-
-    # Align to old_log_probs shape: prompt positions → 0, generated region →
-    # ragged advantages, trailing padding → 0.
-    advantages = torch.zeros(
-        batch_size,
-        seq_len_m1,
-        dtype=old_log_probs.dtype,
-        device=old_log_probs.device,
-    )
-    gen_start = prompt_len - 1  # first generated token index in old_log_probs
-    for i in range(batch_size):
-        adv = ragged_advantages[i]
-        for t in range(len(adv)):
-            pos = gen_start + t
-            if pos < seq_len_m1:
-                advantages[i, pos] = adv[t]
-
-    return advantages
-
-
-# ── 统计序列化/反序列化 ──────────────────────────────────────────────────────
-
-
-def train_stats_to_dict(stats: GraspoFlowTrainStats) -> dict[str, Any]:
-    return {
-        "total_groups": stats.total_groups,
-        "perfect_skipped": stats.perfect_skipped,
-        "retries": stats.retries,
-        "invalid": stats.invalid,
-        "invalid_no_preference_gap": stats.invalid_no_preference_gap,
-        "trainable": stats.trainable,
-        "trainable_max_correct": stats.trainable_max_correct,
-        "trainable_not_correct": stats.trainable_not_correct,
-        "optimized_steps": stats.optimized_steps,
-    }
-
-
-def epoch_stats_to_dict(stats: GraspoFlowEpochStats) -> dict[str, Any]:
-    return {
-        "epoch": stats.epoch,
-        "samples_seen": stats.samples_seen,
-        "attempt_groups": stats.attempt_groups,
-        "completion_count": stats.completion_count,
-        "perfect_skipped": stats.perfect_skipped,
-        "retries": stats.retries,
-        "invalid": stats.invalid,
-        "invalid_no_preference_gap": stats.invalid_no_preference_gap,
-        "trainable": stats.trainable,
-        "trainable_max_correct": stats.trainable_max_correct,
-        "trainable_not_correct": stats.trainable_not_correct,
-        "reward_mean_sum": stats.reward_mean_sum,
-        "content_mean_sum": stats.content_mean_sum,
-        "base_content_mean_sum": stats.base_content_mean_sum,
-        "best_reward": stats.best_reward,
-    }
-
-
-def train_stats_from_dict(raw: dict[str, Any]) -> GraspoFlowTrainStats:
-    return GraspoFlowTrainStats(
-        total_groups=int(raw.get("total_groups") or raw.get("attempt_groups") or 0),
-        perfect_skipped=int(raw.get("perfect_skipped") or 0),
-        retries=int(raw.get("retries") or 0),
-        invalid=int(raw.get("invalid") or 0),
-        invalid_no_preference_gap=int(raw.get("invalid_no_preference_gap") or 0),
-        trainable=int(raw.get("trainable") or 0),
-        trainable_max_correct=int(raw.get("trainable_max_correct") or 0),
-        trainable_not_correct=int(raw.get("trainable_not_correct") or 0),
-        optimized_steps=int(raw.get("optimized_steps") or 0),
-    )
-
-
-def epoch_stats_from_dict(raw: dict[str, Any]) -> GraspoFlowEpochStats:
-    return GraspoFlowEpochStats(
-        epoch=int(raw.get("epoch") or 0),
-        samples_seen=int(raw.get("samples_seen") or 0),
-        attempt_groups=int(raw.get("attempt_groups") or 0),
-        completion_count=int(raw.get("completion_count") or raw.get("completions") or 0),
-        perfect_skipped=int(raw.get("perfect_skipped") or 0),
-        retries=int(raw.get("retries") or 0),
-        invalid=int(raw.get("invalid") or 0),
-        invalid_no_preference_gap=int(raw.get("invalid_no_preference_gap") or 0),
-        trainable=int(raw.get("trainable") or 0),
-        trainable_max_correct=int(raw.get("trainable_max_correct") or 0),
-        trainable_not_correct=int(raw.get("trainable_not_correct") or 0),
-        reward_mean_sum=float(raw.get("reward_mean_sum") or 0.0),
-        content_mean_sum=float(raw.get("content_mean_sum") or 0.0),
-        base_content_mean_sum=float(raw.get("base_content_mean_sum") or 0.0),
-        best_reward=float(raw.get("best_reward") or 0.0),
-    )
-
-
-# ── reward 辅助 ────────────────────────────────────────────────────────────────
-
-
-def group_stats(rewards: list[float]) -> dict[str, float | int]:
-    """计算一组 reward 的统计摘要。"""
-    if not rewards:
-        return {"count": 0, "min": 0.0, "median": 0.0, "max": 0.0, "mean": 0.0, "range": 0.0}
-    minimum = min(rewards)
-    maximum = max(rewards)
-    return {
-        "count": len(rewards),
-        "min": minimum,
-        "median": lower_median(rewards),
-        "max": maximum,
-        "mean": sum(rewards) / len(rewards),
-        "range": maximum - minimum,
-    }
-
-
-def reward_detail(result: Any) -> dict[str, Any]:
-    """从 RewardResult 提取可读的评分详情。"""
-    extracted = dict(result.extracted)
-    valid_extracted_json = None
-    if "answer" in extracted:
-        try:
-            answer = extracted["answer"]
-            if isinstance(answer, str) and answer.strip():
-                json.loads(answer.strip())
-                valid_extracted_json = True
-        except (TypeError, ValueError):
-            valid_extracted_json = False
-    return {
-        "raw_score": float(result.raw_score),
-        "max_score": float(result.max_score),
-        "extracted": extracted,
-        "parsed_tool_calls": extracted.get("tool_calls"),
-        "parser": extracted.get("parser"),
-        "parse_errors": extracted.get("parse_errors"),
-        "extra_text": extracted.get("extra_text"),
-        "matched_target_index": result.matched_target_index,
-        "matched_target_id": result.matched_target_id,
-        "target_scores": (
-            [score.model_dump() for score in result.target_scores]
-            if result.target_scores is not None
-            else None
-        ),
-        "useless_text_length": len(result.useless_text),
-        "valid_extracted_json": valid_extracted_json,
-    }
+# ── 生成数据提取 ──────────────────────────────────────────────────────────────
 
 
 def generated_token_counts(generation: Any) -> list[int]:

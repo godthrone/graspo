@@ -239,3 +239,57 @@ def compute_group_advantages(
                 adv.append(0.0)
         advantages.append(adv)
     return advantages
+
+
+def compute_ripple_advantages(
+    ragged_advantages: list[list[float]],
+    old_log_probs: Any,
+    prompt_len: int,
+) -> Any:
+    """GRASPO-Ripple: align ragged per-token advantages to the log-prob tensor.
+
+    Advantages come from the annotation-driven pipeline
+    (:func:`graspo.ripple.annotation.advantages.compute_group_advantages`):
+    ``S→+1.0 / V→raw−μ_f / T·W·D→0 / E→−1.0``, no group-level normalization
+    (v0.20.0).
+
+    The ragged advantages are aligned to the ``old_log_probs`` tensor shape:
+    prompt positions → 0, generated region → ragged advantages, trailing
+    padding → 0.
+
+    Args:
+        ragged_advantages: Per-completion advantage lists (generated region).
+        old_log_probs: shape (B, seq_len-1) log-prob tensor.
+        prompt_len: Prompt token count (used for alignment).
+
+    Returns:
+        shape (B, seq_len-1) per-token advantage tensor.
+    """
+    import torch
+
+    batch_size = old_log_probs.shape[0]
+    seq_len_m1 = old_log_probs.shape[1]
+
+    if len(ragged_advantages) != batch_size:
+        raise RuntimeError(
+            f"ragged_advantages batch size {len(ragged_advantages)} != "
+            f"old_log_probs batch size {batch_size}"
+        )
+
+    # Align to old_log_probs shape: prompt positions → 0, generated region →
+    # ragged advantages, trailing padding → 0.
+    advantages = torch.zeros(
+        batch_size,
+        seq_len_m1,
+        dtype=old_log_probs.dtype,
+        device=old_log_probs.device,
+    )
+    gen_start = prompt_len - 1  # first generated token index in old_log_probs
+    for i in range(batch_size):
+        adv = ragged_advantages[i]
+        for t in range(len(adv)):
+            pos = gen_start + t
+            if pos < seq_len_m1:
+                advantages[i, pos] = adv[t]
+
+    return advantages
