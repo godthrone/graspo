@@ -2,7 +2,7 @@
 train_method: sft
 backend: graspoflow
 model:
-  model_path: /data/zhangzy/vllm/Qwen3.8-27B
+  model_path: /data/user/vllm/Qwen3.8-27B
   trust_remote_code: true
   torch_dtype: bfloat16
   gradient_checkpointing: true

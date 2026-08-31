@@ -8,7 +8,7 @@ set -u  # fail on undefined variables
 if [ $# -lt 1 ]; then
   echo "Usage: $0 <output_dir>"
   echo "  output_dir: directory to store per-test logs and outputs"
-  echo "  Example: $0 /data/zhangzy/e2e-results"
+  echo "  Example: $0 /data/user/e2e-results"
   exit 1
 fi
 
@@ -17,10 +17,10 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJ_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 IMG=graspo:0.29.0
-MDIR9=/data/zhangzy/models
-MDIR27=/data/zhangzy/vllm
+MDIR9=/data/user/models
+MDIR27=/data/user/vllm
 SDIR="$PROJ_DIR/samples"
-MOUNTS="-v $MDIR9:/data/zhangzy/models -v $MDIR27:/data/zhangzy/vllm -v $SDIR:/workspace/graspo/samples"
+MOUNTS="-v $MDIR9:/data/user/models -v $MDIR27:/data/user/vllm -v $SDIR:/workspace/graspo/samples"
 TIMEOUT=1200
 
 mkdir -p "$OUTDIR"

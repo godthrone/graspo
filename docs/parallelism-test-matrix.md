@@ -36,7 +36,7 @@
 | 项 | 值 |
 |---|---|
 | 机器 | 单节点 4× NVIDIA A800 80GB PCIe（GPU 0-3） |
-| 模型 | `Qwen3.5-9B`（`/data/zhangzy/models/Qwen3.5-9B/`）、`Qwen3.8-27B`（`/data/zhangzy/vllm/Qwen3.8-27B/`） |
+| 模型 | `Qwen3.5-9B`（`/data/user/models/Qwen3.5-9B/`）、`Qwen3.8-27B`（`/data/user/vllm/Qwen3.8-27B/`） |
 | 数据 | 统一多模态数据集：228 v4 分层抽样 2 链 × 8 类别 = 37 行、78 图，`samples/data/tool_call_mm/train.jsonl` |
 | 运行 | `bash tests/e2e/run_matrix.sh <output_dir>`（输出目录必填） |
 | 超时 | 1200s/格 |
@@ -73,7 +73,7 @@
 python3 tests/e2e/generate_matrix.py
 
 # 同步到 121 后运行（输出目录必填）
-bash tests/e2e/run_matrix.sh /data/zhangzy/e2e-results
+bash tests/e2e/run_matrix.sh /data/user/e2e-results
 ```
 
 每格在 `<output_dir>/<name>/` 下保存 `log.txt`（完整日志）和 `outputs/`（训练产物）。汇总摘要写入 `<output_dir>/summary.txt`。

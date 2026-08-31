@@ -2,7 +2,7 @@
 
 [中文说明](README.zh-CN.md)
 
-GRASPO (Group Relative Advantage Structured Policy Optimization) — GRPO-style LoRA RL for structured LLM outputs. Token-level reward via character annotation, SFT→RL unified pipeline, ripple/flow layered architecture. LoRA-only: 9B on a single 80GB GPU. GraspoFlow unifies TP+DP+PP+SP+Checkpoint five-dimensional parallelism with Flink-style scheduling, including sequence parallel for activation memory savings. Group filtering, perfect-skip, multimodal, tool-call reward.
+GRASPO (Group Relative Advantage Structured Policy Optimization) — GRPO-style RL and SFT for structured LLM outputs. Token-level reward via character annotation. 9B on a single 80GB GPU. GraspoFlow unifies TP+DP+PP+SP+Checkpoint five-dimensional parallelism. Group filtering, perfect-skip, multimodal, tool-call reward.
 
 **Three layers of structured-output RL, from token signal to group decision:**
 

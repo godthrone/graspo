@@ -23,11 +23,11 @@ SCRIPT_PATH = PROJECT_ROOT / "tests" / "e2e" / "run_matrix.sh"
 
 MODELS: dict[str, dict[str, str]] = {
     "9B": {
-        "model_path": "/data/zhangzy/models/Qwen3.5-9B",
+        "model_path": "/data/user/models/Qwen3.5-9B",
         "model_name": "Qwen3.5-9B",
     },
     "27B": {
-        "model_path": "/data/zhangzy/vllm/Qwen3.8-27B",
+        "model_path": "/data/user/vllm/Qwen3.8-27B",
         "model_name": "Qwen3.8-27B",
     },
 }
@@ -241,7 +241,7 @@ def generate_run_script(tests: list[dict]) -> None:
 
     Usage: bash run_matrix.sh <output_dir>
 
-    - output_dir: 必填，测试输出根目录（如 /data/zhangzy/e2e-results）
+    - output_dir: 必填，测试输出根目录（如 /data/user/e2e-results）
     - 每个测试在 <output_dir>/<test_name>/ 下独立保存日志和训练产物
     - 汇总摘要写入 <output_dir>/summary.txt
     """
@@ -258,7 +258,7 @@ def generate_run_script(tests: list[dict]) -> None:
         'if [ $# -lt 1 ]; then',
         '  echo "Usage: $0 <output_dir>"',
         '  echo "  output_dir: directory to store per-test logs and outputs"',
-        '  echo "  Example: $0 /data/zhangzy/e2e-results"',
+        '  echo "  Example: $0 /data/user/e2e-results"',
         "  exit 1",
         "fi",
         "",
@@ -267,10 +267,10 @@ def generate_run_script(tests: list[dict]) -> None:
         'PROJ_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"',
         "",
         f"IMG={DOCKER_IMAGE}",
-        f"MDIR9=/data/zhangzy/models",
-        f"MDIR27=/data/zhangzy/vllm",
+        f"MDIR9=/data/user/models",
+        f"MDIR27=/data/user/vllm",
         'SDIR="$PROJ_DIR/samples"',
-        'MOUNTS="-v $MDIR9:/data/zhangzy/models -v $MDIR27:/data/zhangzy/vllm -v $SDIR:/workspace/graspo/samples"',
+        'MOUNTS="-v $MDIR9:/data/user/models -v $MDIR27:/data/user/vllm -v $SDIR:/workspace/graspo/samples"',
         f"TIMEOUT={TIMEOUT_SEC}",
         "",
         'mkdir -p "$OUTDIR"',
