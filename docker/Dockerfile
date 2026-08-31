@@ -45,7 +45,8 @@ ARG HTTPS_PROXY
 ARG NO_PROXY
 ENV SETUPTOOLS_SCM_PRETEND_VERSION=${VERSION}
 
-RUN HTTP_PROXY="${HTTP_PROXY:-}" HTTPS_PROXY="${HTTPS_PROXY:-}" \
+RUN --mount=type=cache,target=/root/.cache/uv \
+    HTTP_PROXY="${HTTP_PROXY:-}" HTTPS_PROXY="${HTTPS_PROXY:-}" \
     http_proxy="${HTTP_PROXY:-}" https_proxy="${HTTPS_PROXY:-}" \
     uv sync --frozen --no-dev
 
