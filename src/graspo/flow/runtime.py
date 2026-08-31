@@ -40,10 +40,9 @@ class TrainBatchMetrics(TypedDict, total=False):
     optimizer_steps: int
     sft_batch_count: int
 
-_AVAILABLE_ADAPTERS = (
-    "graspo.flow.adapters.models.qwen3.adapter:Qwen3Adapter",
-    "graspo.flow.adapters.models.qwen35_36.adapter:Qwen35Adapter",
-)
+from graspo.core.discovery import _discover
+
+_AVAILABLE_ADAPTERS = tuple(_discover("graspo.adapters").keys())
 
 FORBIDDEN_RUNTIME_MODULES = (
     "megatron",

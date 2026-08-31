@@ -34,6 +34,16 @@ dev = [
 [project.scripts]
 graspo = "graspo.cli.app:main"
 
+[project.entry-points."graspo.rewards"]
+graspo = "graspo.ripple.reward.reward:GraspoReward"
+
+[project.entry-points."graspo.adapters"]
+qwen3 = "graspo.flow.adapters.models.qwen3.adapter:Qwen3Adapter"
+qwen35_36 = "graspo.flow.adapters.models.qwen35_36.adapter:Qwen35Adapter"
+
+[project.entry-points."graspo.backends"]
+graspoflow = "graspo.flow.selector:create_graspoflow_trainer"
+
 [tool.setuptools.package-dir]
 "" = "src"
 
