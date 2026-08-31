@@ -40,95 +40,93 @@ GRASPO 是一个面向结构化输出任务的 GRPO-style 强化学习训练器�
 ## 快速开始
 
 > **示例文件** 在 `samples/` 目录下：
-> - `samples/configs/` — 可直接复制的 YAML 配置文件，覆盖不同模型/GPU；
-> - `samples/data/` — 小型 JSONL 数据集，用于验证和冒烟测试。
->
-> 生产数据和私有配置应放在仓库之外——参见配置文件中的 `data.train_path` 和
-> `training.output_dir`。
+> - `samples/configs/sft_example.yaml` — 单卡 SFT 配置（开箱即用）；
+> - `samples/configs/rl_example.yaml` — 单卡 RL 配置；
+> - `samples/configs/a800x8_qwen35_9b_tp1_dp8_pp1.yaml` — 8×A800 多卡配置；
+> - `samples/data/json_output/train.jsonl` — 小型 JSONL 数据集，用于冒烟测试。
 
-### Docker（生产路径）
-
-Docker 是推荐的训练方式，锁定运行环境，避免宿主机依赖冲突。
+### 三步冒烟测试（Docker，推荐）
 
 ```bash
-# 1. 构建镜像（自动从 git tag 读取版本号）
+# 第一步：克隆仓库
+git clone https://github.com/godthrone/graspo.git
+cd graspo
+
+# 第二步：构建 Docker 镜像
 bash docker/build.sh
 
-# 2. 训练 — run.sh 自动选择空闲 GPU、从 YAML 配置推导挂载目录、设置 NCCL 安全参数
+# 第三步：运行冒烟测试（跑 1 步训练，验证模型加载 + 前向传播）
+bash run.sh samples/configs/sft_example.yaml --smoke
+```
+
+就这么简单。冒烟测试通过后，即可开始正式训练。
+
+> **没有 git tag？** 如果是 shallow clone（不带 tag），请显式指定版本号：
+> ```bash
+> VERSION=0.0.0 bash docker/build.sh
+> bash run.sh samples/configs/sft_example.yaml --smoke --image graspo:0.0.0
+> ```
+
+> **需要模型？** 默认配置指向 `models/Qwen3.5-9B`。下载方式：
+> ```bash
+> huggingface-cli download Qwen/Qwen3.5-9B --local-dir /path/to/models/Qwen3.5-9B
+> ```
+> 然后将 config 中的 `model.model_path` 改为宿主机的绝对路径。
+
+### 正式训练
+
+冒烟测试通过后，复制并编辑一份配置用于你的任务：
+
+```bash
+# SFT 训练
+cp samples/configs/sft_example.yaml my_config.yaml
+# 编辑：model.model_path、data.train_path、training.output_dir
 bash run.sh my_config.yaml
 
-# 3. 先冒烟测试（推荐）：跑 1 步验证环境（模型加载、多模态链路、训练前向）
-bash run.sh my_config.yaml --smoke
-
-# 4. 指定 GPU（例如 4 和 5）
-bash run.sh my_config.yaml --gpus 4,5
-
-# 5. 指定镜像版本（默认从 git describe 自动推导）
-bash run.sh my_config.yaml --image graspo:v0.22.0
+# RL 训练（GRASPO）
+cp samples/configs/rl_example.yaml my_graspo.yaml
+# 编辑：model.model_path、data.train_path、training.output_dir
+bash run.sh my_graspo.yaml
 ```
 
 `run.sh` 是防呆设计：
-
 - **自动选择空闲 GPU**（通过 `nvidia-smi` 检测），无需手动数卡；
-- **只传 `--gpus device=<ids>`**，绝不注入 `CUDA_VISIBLE_DEVICES`——
-  两者混用会导致 NCCL 初始化死锁；
-- **固定 `--ipc=host --shm-size=16g`**（NCCL 共享内存必需）；
-- **挂载目录从 YAML 配置自动推导**——`model.model_path`、`data.train_path`、
-  `training.output_dir` 以及 config 文件所属目录全部自动挂载，无需手动指定
-  `--model-dir` 或 `-v` 参数；
-- **镜像 tag 默认取 `git describe`**，可通过 `--image` 覆盖；
-- **`--smoke` 走 CLI**（`graspo launch --smoke`）作为运行边界标志：训练跑完
-  第 1 步即停止——语义等价于 `max_epochs=1` 的 config，绝不修改你的 config 文件。
+- **只传 `--gpus device=<ids>`**，绝不注入 `CUDA_VISIBLE_DEVICES`；
+- **固定 `--ipc=host --shm-size=16g`**（NCCL 必需）；
+- **挂载目录从 YAML 配置自动推导**；
+- **镜像 tag 默认取 `git describe`**（可通过 `--image` 覆盖）；
+- **`--smoke` 跑 1 步即停止**，不修改你的 config 文件。
 
 > **`run.sh` 是训练启动的唯一受支持入口。** 手写 `docker run` 仅限诊断用途——
-> 曾多次踩 `--gpus` JSON 语法（Docker 29）与路径解析的坑。训练数据图像引用为
-> 相对路径（`../images/...`，如 data/ 与 images/ 平级的数据集）时，run.sh
-> 按需追加挂载数据集根——挂载面积保持最小（仅精确的数据/模型/输出目录）。
-
-手动调用（参考，例如自定义编排）：
-
-```bash
-docker run --gpus "device=0,1" --ipc=host --shm-size=16g \
-  -v /data:/data \
-  graspo:<version> \
-  launch --config /data/outputs/my_config.yaml
-```
-
-> **绝不要把 `--gpus device=` 与 `CUDA_VISIBLE_DEVICES` 混用** ——
-> Docker 设备映射与环境变量的错配会导致 NCCL 死锁。GPU 选择由
-> `run.sh` 处理；分布式设置（nnodes、master_addr、端口）见 config 的
-> `launch` 段。
-
-> **没有模型？** 默认配置指向 `models/Qwen3.5-9B`。下载方式：
+> 曾多次踩 `--gpus` JSON 语法（Docker 29）与路径解析的坑。如果必须在 Docker 29+
+> 上手动调用 `docker run`，请用单引号包裹 GPU 列表：
 > ```bash
-> # 在宿主机上，启动容器前执行
-> huggingface-cli download Qwen/Qwen3.5-9B --local-dir /path/to/models/Qwen3.5-9B
+> docker run --gpus '"device=0,1"' --ipc=host --shm-size=16g \
+>   -v /data:/data \
+>   graspo:<version> \
+>   launch --config /data/outputs/my_config.yaml
 > ```
 
-短测时保持 `training.max_new_tokens=2048`，使用 `--smoke` 标志（跑 1 步）或降低 `training.max_epochs`。
-真实训练默认保持 `training.max_epochs=100`，除非你刻意做有限步数测试。
-
-**自定义镜像名：**
-```bash
-IMAGE_NAME=graspo:test bash docker/build.sh
-```
-
 ### 本地安装（开发用）
-
-要求 Python 3.11 或 3.12（`>=3.11,<3.13`）。
 
 ```bash
 git clone https://github.com/godthrone/graspo.git
 cd graspo
 uv sync --extra dev --python 3.11
-```
-
-然后复制示例配置，编辑指向你的模型和数据，启动训练：
-
-```bash
 cp samples/configs/sft_example.yaml my_config.yaml
 uv run graspo launch --config my_config.yaml
 ```
+
+### 自定义镜像名
+
+```bash
+IMAGE_NAME=graspo:test bash docker/build.sh
+```
+
+> **需要 HTTP 代理？** 传入标准代理环境变量：
+> ```bash
+> HTTP_PROXY=http://your-proxy:port HTTPS_PROXY=http://your-proxy:port bash docker/build.sh
+> ```
 
 ### RL 训练（GRASPO）
 
@@ -222,7 +220,6 @@ uv run graspo analyze-profile outputs/my_run
 全部为**与训练数据内容无关**的结构级分析（不假设字段名/数值语义——
 L3 语义/数值层诊断由 AI/人工基于 rollouts 详表离线统计，用户裁定），
 供脚本消费。
-
 ## CLI 参考
 
 所有命令均为配置驱动：只接受输入定位参数，输出要么打印、
