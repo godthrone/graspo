@@ -66,3 +66,4 @@ experiment_data/
 *.xls
 .dataset/
 .datasets/
+*.bak
