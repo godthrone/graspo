@@ -5,16 +5,13 @@ import time
 from typing import Any
 
 from graspo.flow.trainer.helpers import (
-    compute_ripple_advantages,
     experience_metadata_for_row,
     generated_token_counts,
-    group_stats,
     public_generation_metadata,
     raw_generation_payload,
-    reward_detail,
     safe_sample_metadata,
 )
-from graspo.ripple.annotation.advantages import compute_group_advantages
+from graspo.ripple.annotation.advantages import compute_group_advantages, compute_ripple_advantages
 from graspo.ripple.annotation.labeler import AnnotationInput, annotate
 from graspo.ripple.buffer import Experience
 from graspo.ripple.monitoring.stats import AttemptRecord, QueuedSample
@@ -23,7 +20,8 @@ from graspo.ripple.monitoring.summary import (
     scalar_generation_timing,
 )
 from graspo.ripple.multimodal.contract import assert_rl_training_has_multimodal
-from graspo.ripple.parity import classify_group, has_reward_variance
+from graspo.ripple.parity import classify_group, group_stats, has_reward_variance
+from graspo.ripple.reward.reward import reward_detail
 
 
 class RolloutMixin:

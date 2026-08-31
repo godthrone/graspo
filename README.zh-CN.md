@@ -78,7 +78,7 @@ bash run.sh my_config.yaml --image graspo:v0.22.0
   `--model-dir` 或 `-v` 参数；
 - **镜像 tag 默认取 `git describe`**，可通过 `--image` 覆盖；
 - **`--smoke` 走 CLI**（`graspo launch --smoke`）作为运行边界标志：训练跑完
-  第 1 步即停止——语义等价于 `max_steps=1` 的 config，绝不修改你的 config 文件。
+  第 1 步即停止——语义等价于 `max_epochs=1` 的 config，绝不修改你的 config 文件。
 
 > **`run.sh` 是训练启动的唯一受支持入口。** 手写 `docker run` 仅限诊断用途——
 > 曾多次踩 `--gpus` JSON 语法（Docker 29）与路径解析的坑。训练数据图像引用为
@@ -105,7 +105,7 @@ docker run --gpus "device=0,1" --ipc=host --shm-size=16g \
 > huggingface-cli download Qwen/Qwen3.5-9B --local-dir /path/to/models/Qwen3.5-9B
 > ```
 
-短测时保持 `training.max_new_tokens=2048`，只降低 `training.max_steps`。
+短测时保持 `training.max_new_tokens=2048`，使用 `--smoke` 标志（跑 1 步）或降低 `training.max_epochs`。
 真实训练默认保持 `training.max_epochs=100`，除非你刻意做有限步数测试。
 
 **自定义镜像名：**
@@ -145,7 +145,8 @@ cp samples/configs/rl_example.yaml my_graspo.yaml
 - `training.output_dir`：run 输出目录；
 - GPU 选择**不在配置中**——用 `run.sh`（自动选空闲 GPU）或
   `bash run.sh config.yaml --gpus 4,5`（见 Docker 章节）；
-- `graspoflow.tp_size` 和 `graspoflow.pp_size`：native TP/PP world size。
+- `graspoflow.tp_size`、`graspoflow.dp_size` 和
+  `graspoflow.pp_size`：world_size = tp_size × dp_size × pp_size。
 
 ### SFT 训练
 

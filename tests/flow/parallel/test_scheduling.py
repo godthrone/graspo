@@ -105,7 +105,7 @@ def test_scheduler_factory_unknown_raises():
         )
         raise AssertionError("expected ValueError for unknown scheduler")
     except ValueError:
-        pass
+        pass  # 预期行为：未知调度器名应抛出 ValueError
 
 
 def test_scheduler_factory_default_is_one_f_one_b():

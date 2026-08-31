@@ -18,7 +18,8 @@ from graspo.flow.runtime import (
     validate_graspoflow_runtime_config,
 )
 from graspo.flow.trainer.helpers import _backup_config, _set_random_seed, _timestamp
-from graspo.ripple.data import SFTTokenized, load_jsonl, sft_tokenize
+from graspo.flow.data_io import load_jsonl
+from graspo.ripple.data import SFTTokenized, sft_tokenize
 
 
 class SFTTrainer:

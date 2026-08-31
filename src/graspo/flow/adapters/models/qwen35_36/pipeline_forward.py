@@ -29,7 +29,8 @@ def _pp_debug_log(output_dir: str, msg: str) -> None:
     print(line, file=sys.stderr, flush=True)
     try:
         rotating_append(run_log_dir(output_dir) / "pp_debug.log", line + "\n")
-    except Exception:  # noqa: BLE001
+    # noqa: BLE001 — 调试日志落盘失败不应中断训练主流程
+    except Exception:
         pass
 
 

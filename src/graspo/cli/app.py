@@ -58,7 +58,7 @@ def cmd_export(args: argparse.Namespace) -> int:
 def cmd_validate_reward(args: argparse.Namespace) -> int:
     """校验 reward 评分链路：加载数据 → 评分 → 只 print，不落盘。"""
     from graspo.cli.tools import validate_reward_scores
-    from graspo.ripple.data import load_jsonl
+    from graspo.flow.data_io import load_jsonl
 
     samples = load_jsonl(args.data)
     if args.limit and args.limit > 0:
