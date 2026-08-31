@@ -53,107 +53,94 @@ train 9B-class models on a single 80 GB GPU.
 ## Quick Start
 
 > **Sample files** live in `samples/`:
-> - `samples/configs/sft_example.yaml` — 最保守单卡 SFT 配置（开箱即用）；
-> - `samples/configs/rl_example.yaml` — 最保守单卡 RL 配置；
-> - `samples/configs/a800x8_qwen35_9b_tp1_dp8_pp1.yaml` — 8×A800 多卡验证配置；
-> - `samples/data/` — small JSONL datasets for validation and smoke tests.
+> - `samples/configs/sft_example.yaml` — single-GPU SFT config (works out of the box);
+> - `samples/configs/rl_example.yaml` — single-GPU RL config;
+> - `samples/configs/a800x8_qwen35_9b_tp1_dp8_pp1.yaml` — 8×A800 multi-GPU config;
+> - `samples/data/json_output/train.jsonl` — small JSONL dataset for smoke tests.
 
-### Docker (production path)
-
-Docker is the primary training method. It locks the runtime environment and
-avoids host dependency conflicts.
-
-**Launch via `run.sh` (the single, defensive entry point):**
+### 3-Step Smoke Test (Docker, recommended)
 
 ```bash
-# 1. Build the image (reads version from git tag automatically)
+# Step 1: Clone
+git clone https://github.com/godthrone/graspo.git
+cd graspo
+
+# Step 2: Build the Docker image
 bash docker/build.sh
 
-# 2. Train — run.sh auto-picks free GPUs, mounts directories from YAML config,
-#    and sets NCCL-safe flags
+# Step 3: Run a smoke test (1 training step, verifies model load + forward pass)
+bash run.sh samples/configs/sft_example.yaml --smoke
+```
+
+That's it. After the smoke test passes, you're ready for real training.
+
+> **No git tags?** If you cloned without tags (shallow clone), pass the version explicitly:
+> ```bash
+> VERSION=0.0.0 bash docker/build.sh
+> bash run.sh samples/configs/sft_example.yaml --smoke --image graspo:0.0.0
+> ```
+
+> **Need a model?** The default config points to `models/Qwen3.5-9B`. Download it:
+> ```bash
+> huggingface-cli download Qwen/Qwen3.5-9B --local-dir /path/to/models/Qwen3.5-9B
+> ```
+> Then update `model.model_path` in your config to the absolute host path.
+
+### Real Training
+
+After the smoke test passes, copy and edit a config for your task:
+
+```bash
+# SFT training
+cp samples/configs/sft_example.yaml my_config.yaml
+# Edit: model.model_path, data.train_path, training.output_dir
 bash run.sh my_config.yaml
 
-# 3. Smoke test first (optional but recommended): run 1 step to verify
-#    the environment (model load, multimodal pipeline, training forward)
-bash run.sh my_config.yaml --smoke
-
-# 4. Pin specific GPUs (e.g. 4 and 5)
-bash run.sh my_config.yaml --gpus 4,5
-
-# 5. Override image tag (default comes from git describe)
-bash run.sh my_config.yaml --image graspo:v0.22.0
+# RL training (GRASPO)
+cp samples/configs/rl_example.yaml my_graspo.yaml
+# Edit: model.model_path, data.train_path, training.output_dir
+bash run.sh my_graspo.yaml
 ```
 
 `run.sh` is defensive by design:
-
 - **Auto-selects free GPUs** via `nvidia-smi` (no manual GPU counting);
-- **Only passes `--gpus device=<ids>`** — never injects
-  `CUDA_VISIBLE_DEVICES`, which combined with Docker device binding
-  deadlocks NCCL initialization;
-- **Always sets `--ipc=host --shm-size=16g`** (required for NCCL shared memory);
-- **Mount directories are derived from your YAML config** — `model.model_path`,
-  `data.train_path`, `training.output_dir`, and the config file's own directory
-  are all mounted automatically. No manual `--model-dir` or `-v` flags needed;
-- **Resolves the image tag from `git describe`** — never hardcodes a version
-  (overridable with `--image`);
-- **`--smoke` goes through the CLI** (`graspo launch --smoke`) as a run-boundary
-  flag: training stops after the first step — semantically equivalent to a
-  `max_epochs=1` config, and your config file is never modified.
+- **Only passes `--gpus device=<ids>`** — never injects `CUDA_VISIBLE_DEVICES`;
+- **Always sets `--ipc=host --shm-size=16g`** (required for NCCL);
+- **Mount directories are derived from your YAML config** automatically;
+- **Resolves the image tag from `git describe`** (overridable with `--image`);
+- **`--smoke` runs one step** without modifying your config file.
 
 > **`run.sh` is the only supported launch path for training.** Hand-written
 > `docker run` invocations are for diagnostics only — they have repeatedly
-> tripped on `--gpus` JSON syntax (Docker 29) and path resolution. When the
-> training data's image references are relative (`../images/...`, e.g. datasets
-> with `data/` and `images/` side by side), run.sh additionally
-> mounts the dataset root on demand — mount footprint stays minimal
-> (exact data/model/output dirs only).
-
-Manual invocation (for reference, e.g. inside your own orchestration):
-
-```bash
-docker run --gpus "device=0,1" --ipc=host --shm-size=16g \
-  -v /data:/data \
-  graspo:<version> \
-  launch --config /data/outputs/my_config.yaml
-```
-
-> **Never combine `--gpus device=` with `CUDA_VISIBLE_DEVICES`** — the
-> mismatch between Docker's device mapping and the env var deadlocks NCCL.
-> GPU selection is handled by `run.sh`; see `launch` in your config for
-> distributed settings (nnodes, master_addr, port).
-
-> **Need a model?** The default config points to `models/Qwen3.5-9B`. Download it with:
+> tripped on `--gpus` JSON syntax (Docker 29) and path resolution.
+> If you must use manual `docker run` on Docker 29+, wrap the GPU list:
 > ```bash
-> # On the host, before launching the container
-> huggingface-cli download Qwen/Qwen3.5-9B --local-dir /path/to/models/Qwen3.5-9B
+> docker run --gpus '"device=0,1"' --ipc=host --shm-size=16g \
+>   -v /data:/data \
+>   graspo:<version> \
+>   launch --config /data/outputs/my_config.yaml
 > ```
 
-For a smoke test, keep `training.max_new_tokens=2048` and use the
-`--smoke` flag (runs one step) or reduce `training.max_epochs`.
-Real GRASPO training keeps
-`training.max_epochs=100` unless you intentionally run a bounded test.
-
-**Custom image name:**
-```bash
-IMAGE_NAME=graspo:test bash docker/build.sh
-```
-
 ### Local Install (development)
-
-Python 3.11 or 3.12 is required (`>=3.11,<3.13`).
 
 ```bash
 git clone https://github.com/godthrone/graspo.git
 cd graspo
 uv sync --extra dev --python 3.11
-```
-
-Now copy a sample config and point it at your model and data, then launch:
-
-```bash
 cp samples/configs/sft_example.yaml my_config.yaml
 uv run graspo launch --config my_config.yaml
 ```
+
+### Custom Image Name
+
+```bash
+IMAGE_NAME=graspo:test bash docker/build.sh
+```
+
+> **HTTP proxy needed?** Pass the standard proxy environment variables:
+> ```bash
+> HTTP_PROXY=http://your-proxy:port HTTPS_PROXY=http://your-proxy:port bash docker/build.sh
+> ```
 
 ### RL Training (GRASPO)
 

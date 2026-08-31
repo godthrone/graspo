@@ -140,7 +140,7 @@ if [ -n "$train_path" ] && [ -d "$(dirname "$train_path")" ]; then
     # 以 ../ 开头才挂祖父目录；否则父目录已覆盖（单层结构）。
     _image_ref="$(
         head -c 8192 "$train_path" 2>/dev/null \
-        | grep -o '"image"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 \
+        | grep -o '"image"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 || true \
         | sed 's/.*:[[:space:]]*"//; s/"$//'
     )"
     if [ -n "$_image_ref" ] && [ "${_image_ref#../}" != "$_image_ref" ]; then
@@ -262,7 +262,7 @@ echo "  配置: $CONFIG_ABS"
 echo "  GPU:  $GPU_IDS"
 
 docker run -d --name "$CONTAINER_NAME" \
-    --gpus "device=$GPU_IDS" \
+    --gpus '"device='"$GPU_IDS"'"' \
     --ipc=host --shm-size=16g \
     "${DOCKER_ENV_ARGS[@]}" \
     "${_mount_args[@]}" \

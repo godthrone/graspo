@@ -22,7 +22,7 @@ model:
 
 # ── 数据 ──────────────────────────────────────────────────────────────────
 data:
-  train_path: samples/data/sample.jsonl
+  train_path: samples/data/json_output/train.jsonl
   max_prompt_length: 4096
 
 # ── LoRA ──────────────────────────────────────────────────────────────────
