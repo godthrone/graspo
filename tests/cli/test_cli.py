@@ -44,13 +44,13 @@ def test_config_example_loads():
 
     assert config.training.max_epochs == 100
     assert config.training.max_new_tokens == 2048
-    assert config.graspoflow.tp_size == 2
+    assert config.native.tp_size == 2
 
 
-def test_launch_plan_graspoflow_uses_torchrun(tmp_path):
+def test_launch_plan_native_uses_torchrun(tmp_path):
     config_path = _write_launch_config(
         tmp_path,
-        backend="graspoflow",
+        backend="native",
         nproc_per_node="null",
         tensor_parallel=2,
         pipeline_parallel=1,
@@ -58,7 +58,7 @@ def test_launch_plan_graspoflow_uses_torchrun(tmp_path):
 
     plan = build_launch_plan(config_path)
 
-    assert plan.backend == "graspoflow"
+    assert plan.backend == "native"
     assert plan.uses_torchrun
     assert plan.nproc_per_node == 2
     assert plan.command[:5] == [
@@ -71,10 +71,10 @@ def test_launch_plan_graspoflow_uses_torchrun(tmp_path):
     assert "graspo.cli.train_worker" in plan.command
 
 
-def test_launch_plan_graspoflow_world_size_one_uses_single_process(tmp_path):
+def test_launch_plan_native_world_size_one_uses_single_process(tmp_path):
     config_path = _write_launch_config(
         tmp_path,
-        backend="graspoflow",
+        backend="native",
         nproc_per_node="null",
         tensor_parallel=1,
         pipeline_parallel=1,
@@ -82,7 +82,7 @@ def test_launch_plan_graspoflow_world_size_one_uses_single_process(tmp_path):
 
     plan = build_launch_plan(config_path)
 
-    assert plan.backend == "graspoflow"
+    assert plan.backend == "native"
     assert not plan.uses_torchrun
     assert plan.nproc_per_node == 1
     assert plan.command[:3] == ["python", "-m", "graspo.cli.train_worker"]
@@ -91,7 +91,7 @@ def test_launch_plan_graspoflow_world_size_one_uses_single_process(tmp_path):
 def test_launch_plan_rejects_world_size_mismatch(tmp_path):
     config_path = _write_launch_config(
         tmp_path,
-        backend="graspoflow",
+        backend="native",
         nproc_per_node=1,
         tensor_parallel=2,
         pipeline_parallel=1,
@@ -104,7 +104,7 @@ def test_launch_plan_rejects_world_size_mismatch(tmp_path):
 def test_launch_plan_rejects_missing_paths(tmp_path):
     config_path = _write_launch_config(
         tmp_path,
-        backend="graspoflow",
+        backend="native",
         model_path="<MODEL_PATH>",
         tensor_parallel=1,
         pipeline_parallel=1,
@@ -181,22 +181,22 @@ def test_e2e_config_roundtrip(tmp_path):
     """Minimal e2e: write a complete config, load it, verify all sections."""
     config_path = _write_launch_config(
         tmp_path,
-        backend="graspoflow",
+        backend="native",
         tensor_parallel=2,
         pipeline_parallel=1,
     )
     config = GraspoConfig.from_yaml(config_path)
-    assert config.backend == "graspoflow"
+    assert config.backend == "native"
     assert config.training.seed == 42
     assert config.training.reject_unparseable_groups is True
-    assert config.graspoflow.tp_size == 2
+    assert config.native.tp_size == 2
     assert config.launch.nnodes == 1
 
 
 def _write_export_config(tmp_path: Path, *, export_format: str) -> Path:
     config_path = tmp_path / "export_config.yaml"
     config_path.write_text(
-        f"""backend: graspoflow
+        f"""backend: native
 model:
   model_path: models/test
 export:
@@ -235,7 +235,7 @@ data:
   train_path: {json.dumps(str(data_path))}
 training:
   output_dir: {json.dumps(str(output_dir))}
-graspoflow:
+native:
   tp_size: {tensor_parallel}
   pp_size: {pipeline_parallel}
 launch:
@@ -255,7 +255,7 @@ def test_launch_plan_smoke_appends_flag(tmp_path):
     """--smoke 时命令追加 --smoke，跑 1 步即停。"""
     config_path = _write_launch_config(
         tmp_path,
-        backend="graspoflow",
+        backend="native",
         nproc_per_node="null",
         tensor_parallel=2,
         pipeline_parallel=1,
@@ -271,7 +271,7 @@ def test_launch_plan_smoke_keeps_config_untouched(tmp_path):
     """--smoke 不修改 config 文件（learning_rate 保留原值）。"""
     config_path = _write_launch_config(
         tmp_path,
-        backend="graspoflow",
+        backend="native",
         nproc_per_node="null",
         tensor_parallel=1,
         pipeline_parallel=1,

@@ -30,6 +30,7 @@ dev = [
   "ruff==0.15.13",
   "mypy==2.1.0",
 ]
+msswift = ["ms-swift>=4.2,<5.0"]
 
 [project.scripts]
 graspo = "graspo.cli.app:main"
@@ -42,7 +43,8 @@ qwen3 = "graspo.flow.adapters.models.qwen3.adapter:Qwen3Adapter"
 qwen35_36 = "graspo.flow.adapters.models.qwen35_36.adapter:Qwen35Adapter"
 
 [project.entry-points."graspo.backends"]
-graspoflow = "graspo.flow.selector:create_graspoflow_trainer"
+native = "graspo.flow.backend_selection:create_native_trainer"
+msswift = "graspo.flow.msswift.trainer:create_msswift_trainer"
 
 [tool.setuptools.package-dir]
 "" = "src"

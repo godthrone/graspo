@@ -19,7 +19,7 @@ def test_smoke_config_load_from_yaml():
     config_path = Path("samples/configs/config_example.yaml")
     assert config_path.exists(), "samples/configs/config_example.yaml not found"
     cfg = GraspoConfig.from_yaml(config_path)
-    assert cfg.backend == "graspoflow"
+    assert cfg.backend == "native"
     assert cfg.training.seed == 42
     assert cfg.training.rollout_group_size == 8
 

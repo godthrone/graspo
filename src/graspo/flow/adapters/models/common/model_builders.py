@@ -41,7 +41,7 @@ def load_native_qwen_config(model_path: Path) -> NativeQwenConfig:
             text_config, family="qwen3_5_text", key_prefix="model.language_model"
         )
     raise ValueError(
-        f"graspoflow supports text-only qwen3 and qwen3_5_text models; "
+        f"native supports text-only qwen3 and qwen3_5_text models; "
         f"got model_type={model_type!r}"
     )
 

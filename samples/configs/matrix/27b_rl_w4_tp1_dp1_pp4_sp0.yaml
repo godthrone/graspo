@@ -1,6 +1,6 @@
 # GRASPO e2e matrix [RL]: 27B w=4 TP=1 DP=1 PP=4 SP=off
 train_method: graspo
-backend: graspoflow
+backend: native
 model:
   model_path: /data/user/vllm/Qwen3.8-27B
   trust_remote_code: true
@@ -20,7 +20,7 @@ lora:
   target_modules:
       - language_all_linear
       - vision_common
-graspoflow:
+native:
   tp_size: 1
   dp_size: 1
   pp_size: 4

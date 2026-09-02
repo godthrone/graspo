@@ -80,7 +80,7 @@ def test_adapter_loading_format_error():
     with pytest.raises(ValueError, match="module:Class"):
         path = "no_colon_here"
         if ":" not in path:
-            raise ValueError("graspoflow.adapter 必须使用 'module:Class' 格式")
+            raise ValueError("native.adapter 必须使用 'module:Class' 格式")
 
 
 def test_adapter_loading_module_not_found():

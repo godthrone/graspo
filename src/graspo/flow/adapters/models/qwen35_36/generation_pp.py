@@ -93,7 +93,7 @@ class _Qwen35GenerationPPMethods:
             device=self.device,
             fwd_group=self.tp_state.pp_group_fwd,
             bwd_group=self.tp_state.pp_group_bwd,
-            max_inflight=int(self.config.graspoflow.pp_max_inflight_microbatches),
+            max_inflight=int(self.config.native.pp_max_inflight_microbatches),
             chunk_count=1,
         )
         is_last = self.pp_rank == self.pp_size - 1

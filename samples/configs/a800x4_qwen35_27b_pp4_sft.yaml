@@ -10,7 +10,7 @@
 # 4×A800 8 卡时 pp 可按 8 卡切到 8 个 stage；此处为 4 卡示例。
 
 train_method: sft
-backend: graspoflow
+backend: native
 
 model:
   model_path: models/Qwen3.5-27B
@@ -30,7 +30,7 @@ lora:
   dropout: 0.05
   target_modules: [language_all_linear, vision_common]
 
-graspoflow:
+native:
   tp_size: 1
   dp_size: 1
   pp_size: 4

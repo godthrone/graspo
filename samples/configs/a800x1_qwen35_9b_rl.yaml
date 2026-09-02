@@ -7,7 +7,7 @@
 # 启动：uv run graspo launch --config samples/configs/a800x1_qwen35_9b_rl.yaml
 
 train_method: graspo
-backend: graspoflow
+backend: native
 
 # ── 模型 ──────────────────────────────────────────────────────────────────
 model:
@@ -32,7 +32,7 @@ lora:
   target_preset: language_safe
 
 # ── 分布式（单卡）─────────────────────────────────────────────────────────
-graspoflow:
+native:
   tp_size: 1
   dp_size: 1
   pp_size: 1

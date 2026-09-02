@@ -41,6 +41,7 @@ GRASPO (Group Relative Advantage Structured Policy Optimization) — GRPO 风格
 > - `samples/configs/sft_example.yaml` — 单卡 SFT 配置（开箱即用）；
 > - `samples/configs/rl_example.yaml` — 单卡 RL 配置；
 > - `samples/configs/a800x8_qwen35_9b_tp1_dp8_pp1.yaml` — 8×A800 多卡配置；
+> - `samples/configs/config_example_msswift.yaml` — ms-swift 后端配置（需 `pip install graspo[msswift]`）；
 > - `samples/data/json_output/train.jsonl` — 小型 JSONL 数据集，用于冒烟测试。
 
 ### 三步冒烟测试（Docker，推荐）
@@ -141,8 +142,8 @@ cp samples/configs/rl_example.yaml my_graspo.yaml
 - `training.output_dir`：run 输出目录；
 - GPU 选择**不在配置中**——用 `run.sh`（自动选空闲 GPU）或
   `bash run.sh config.yaml --gpus 4,5`（见 Docker 章节）；
-- `graspoflow.tp_size`、`graspoflow.dp_size` 和
-  `graspoflow.pp_size`：world_size = tp_size × dp_size × pp_size。
+- `native.tp_size`、`native.dp_size` 和
+  `native.pp_size`：world_size = tp_size × dp_size × pp_size。
 
 ### SFT 训练
 
@@ -371,11 +372,22 @@ rollout 完成后，每条 completion 会被**逐字符标注**结构角色（`C
 
 ### `backend`
 
-- `graspoflow`：**唯一后端。** 统一 TP+DP+PP+SP+Checkpoint 五位一体
+GRASPO 支持两种后端，通过 `config.backend` 切换：
+
+| 后端       | 配置值          | 说明 | 安装方式 |
+|-----------|----------------|------|---------|
+| **Native** | `native`（默认） | 自研 TP+DP+PP+SP+Checkpoint 五位一体并行。适合精细并行控制和单卡到多卡弹性伸缩。 | 内置 |
+| **MsSwift** | `msswift`      | 委托给 ms-swift 生态：vLLM rollout、DeepSpeed/Megatron、600+ 模型、150+ 数据集、量化、部署。 | `pip install graspo[msswift]` |
+
+- `native`：统一 TP+DP+PP+SP+Checkpoint 五位一体
   （TP 分片参数、DP 分片数据、PP 分片层、SP 分片序列、Checkpoint 省显存）。
   `world_size = dp_size × tp_size × pp_size`。支持从单卡（`tp=1,dp=1,pp=1`）
-  到全并行（`tp=T,dp=D,pp=P`），同一个配置切换。参见
-  `samples/configs/a800x8_qwen35_9b_tp1_dp8_pp1.yaml`。
+  到全并行（`tp=T,dp=D,pp=P`），同一个配置切换。`native` 配置段控制并行参数。
+  参见 `samples/configs/a800x8_qwen35_9b_tp1_dp8_pp1.yaml`。
+- `msswift`：利用 ms-swift 的工业级训练基础设施（vLLM rollout、DeepSpeed ZeRO、
+  FSDP），同时注入 Graspo 的 ripple 算法（字符级标注、token 级 advantage、
+  GRASPORippleLoss）。需要 `pip install graspo[msswift]`。
+  参见 `samples/configs/config_example_msswift.yaml`。
 
 ### `model`
 
@@ -443,7 +455,7 @@ GRASPO 目前仅支持 LoRA 训练，不支持全参数训练。
 
 `training.replay_buffer_optimize_threshold` 由 `rollout_queue_batch_size * rollout_group_size` 派生（默认 8 × 8 = 64 条 completion），不能手动配置。`training.resume_from_checkpoint` 和 `lora.adapter_path` 互斥：前者恢复 native checkpoint 状态，后者只是 PEFT/GRASPO-PEFT LoRA warm-start。
 
-### `graspoflow`
+### `native`
 
 - `adapter`：模型适配器路径（默认
   `graspo.flow.adapters.models.qwen35_36.adapter:Qwen35Adapter`）。
@@ -515,7 +527,7 @@ uv run graspo export --config samples/configs/sft_example.yaml
 
 最小导出配置示例：
 ```yaml
-backend: graspoflow
+backend: native
 model:
   model_path: models/Qwen3.5-9B
 export:

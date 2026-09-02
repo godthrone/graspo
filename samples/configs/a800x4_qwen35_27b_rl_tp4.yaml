@@ -5,7 +5,7 @@
 # P1b e2e 矩阵测试
 
 train_method: graspo
-backend: graspoflow
+backend: native
 
 model:
   model_path: /data/models/Qwen3.5-27B
@@ -26,7 +26,7 @@ lora:
   adapter_path: null
   target_preset: language_safe
 
-graspoflow:
+native:
   tp_size: 4
   dp_size: 1
   pp_size: 1

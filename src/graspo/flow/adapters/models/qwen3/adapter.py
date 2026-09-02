@@ -48,7 +48,7 @@ class Qwen3Adapter(TransformerAdapter):
             available=native_qwen_lora_available_targets(hf_config),
         )
         self.placement = build_placement_plan(
-            strategy=self.config.graspoflow.placement_strategy,
+            strategy=self.config.native.placement_strategy,
             model_family=hf_config.family,
             num_hidden_layers=int(hf_config.num_hidden_layers),
             tp_size=self.tp_size,
@@ -56,8 +56,8 @@ class Qwen3Adapter(TransformerAdapter):
             tp_rank=self.tp_rank,
             pp_rank=self.pp_rank,
             layer_types=list(getattr(hf_config, "layer_types", []) or []),
-            manual_ranges=[list(r) for r in self.config.graspoflow.layer_ranges]
-            if self.config.graspoflow.layer_ranges is not None
+            manual_ranges=[list(r) for r in self.config.native.layer_ranges]
+            if self.config.native.layer_ranges is not None
             else None,
         )
         self.model = build_native_qwen_model(
@@ -146,7 +146,7 @@ class Qwen3Adapter(TransformerAdapter):
             device=self.device,
         )
         prompt_len = int(prompt_input_ids.shape[1])
-        use_kv_cache = bool(self.config.graspoflow.use_kv_cache_for_rollout) and bool(
+        use_kv_cache = bool(self.config.native.use_kv_cache_for_rollout) and bool(
             getattr(self.model, "supports_kv_cache", True)
         )
         requested_prompt_queue_size = len(message_batches)
@@ -384,7 +384,7 @@ class Qwen3Adapter(TransformerAdapter):
             raise RuntimeError("model or optimizer not loaded; call setup() first")
         self.loss_fn.policy_ratio_clip_eps = policy_ratio_clip_eps
         self.model.train()
-        if bool(self.config.graspoflow.empty_cache_before_train) and self.device.type == "cuda":
+        if bool(self.config.native.empty_cache_before_train) and self.device.type == "cuda":
             torch.cuda.empty_cache()
             self._emit_rank_memory_event("train_before_empty_cache")
 
@@ -394,7 +394,7 @@ class Qwen3Adapter(TransformerAdapter):
         grad_norm_sum = 0.0
         nonzero_grad_count = 0
         lora_norm_before = self.model.lora_parameter_norm()
-        batch_size = int(self.config.graspoflow.micro_batch_size)
+        batch_size = int(self.config.native.micro_batch_size)
         train_batch_started_at = time.monotonic()
         round_secs: list[float] = []
         micro_batch_forward_sec = 0.0
@@ -474,7 +474,7 @@ class Qwen3Adapter(TransformerAdapter):
             "backward_sec": backward_sec,
             "optimizer_step_sec": optimizer_step_sec,
             "micro_batch_count": micro_batch_count,
-            "synchronize_cuda_timing": bool(self.config.graspoflow.synchronize_cuda_timing),
+            "synchronize_cuda_timing": bool(self.config.native.synchronize_cuda_timing),
             "current_lr": self._current_lr(),
         }
         metrics = self._aggregate_rank_metrics(metrics)

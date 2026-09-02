@@ -9,7 +9,7 @@
 #   rank1<->rank3（跨 PCIe pair）。A800 需 `NCCL_P2P_DISABLE=1`（run.sh 已内置）。
 
 train_method: graspo
-backend: graspoflow
+backend: native
 
 model:
   model_path: /data/user/models/Qwen3.5-9B
@@ -30,7 +30,7 @@ lora:
   adapter_path: null
   target_preset: language_safe
 
-graspoflow:
+native:
   tp_size: 2
   dp_size: 1
   pp_size: 2

@@ -7,7 +7,7 @@
 #   lora.adapter_path: <sft_checkpoint_dir>
 
 train_method: graspo
-backend: graspoflow
+backend: native
 
 # ── 模型 ──────────────────────────────────────────────────────────────────
 model:
@@ -32,7 +32,7 @@ lora:
   target_preset: language_safe
 
 # ── 分布式（单卡最保守）──────────────────────────────────────────────────
-graspoflow:
+native:
   tp_size: 1
   dp_size: 1
   pp_size: 1

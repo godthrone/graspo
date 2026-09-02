@@ -8,7 +8,7 @@
 
 # ── 训练方法 ────────────────────────────────────────────────────────────────
 train_method: graspo          # graspo=RL | sft=SFT
-backend: graspoflow           # 唯一后端（TP+DP+PP+SP+Checkpoint 五位一体）
+backend: native           # native 后端（TP+DP+PP+SP+Checkpoint 五位一体）；msswift 见 config_example_msswift.yaml
 
 # ── 模型 ─────────────────────────────────────────────────────────────────────
 model:
@@ -38,7 +38,7 @@ lora:
 
 # ── 分布式（TP+DP+PP+SP 五位一体）─────────────────────────────────────────
 # world_size = dp_size × tp_size × pp_size
-graspoflow:
+native:
   tp_size: 2
   dp_size: 1
   pp_size: 1

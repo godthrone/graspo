@@ -52,7 +52,7 @@ class _Qwen35TrainingMethods:
             )
         self.loss_fn.policy_ratio_clip_eps = policy_ratio_clip_eps
         self.model.train()
-        if bool(self.config.graspoflow.empty_cache_before_train) and self.device.type == "cuda":
+        if bool(self.config.native.empty_cache_before_train) and self.device.type == "cuda":
             torch.cuda.empty_cache()
             self._emit_rank_memory_event("train_before_empty_cache")
 
@@ -62,7 +62,7 @@ class _Qwen35TrainingMethods:
         grad_norm_sum = 0.0
         nonzero_grad_count = 0
         lora_norm_before = self.model.lora_parameter_norm()
-        batch_size = int(self.config.graspoflow.micro_batch_size)
+        batch_size = int(self.config.native.micro_batch_size)
         train_batch_started_at = time.monotonic()
         round_secs: list[float] = []
         micro_batch_forward_sec = 0.0
@@ -196,7 +196,7 @@ class _Qwen35TrainingMethods:
             "backward_sec": backward_sec,
             "optimizer_step_sec": optimizer_step_sec,
             "micro_batch_count": micro_batch_count,
-            "synchronize_cuda_timing": bool(self.config.graspoflow.synchronize_cuda_timing),
+            "synchronize_cuda_timing": bool(self.config.native.synchronize_cuda_timing),
             "current_lr": self._current_lr(),
         }
         metrics = self._aggregate_rank_metrics(metrics)
@@ -281,8 +281,8 @@ class _Qwen35TrainingMethods:
         grad_norm_sum = 0.0
         nonzero_grad_count = 0
         lora_norm_before = self.model.lora_parameter_norm()
-        batch_size = int(self.config.graspoflow.micro_batch_size)
-        pipeline_micro_batch_size = max(1, int(self.config.graspoflow.pp_micro_batch_size))
+        batch_size = int(self.config.native.micro_batch_size)
+        pipeline_micro_batch_size = max(1, int(self.config.native.pp_micro_batch_size))
         train_batch_started_at = time.monotonic()
         micro_batch_forward_sec = 0.0
         backward_sec = 0.0
@@ -294,7 +294,7 @@ class _Qwen35TrainingMethods:
         steady_sec = 0.0
         drain_sec = 0.0
         max_chunks_per_optimizer_step = 0
-        configured_inflight = int(self.config.graspoflow.pp_max_inflight_microbatches)
+        configured_inflight = int(self.config.native.pp_max_inflight_microbatches)
         _pp_schedule = "one_f_one_b"  # 实际调度策略名（由 scheduler 返回更新）
         pipeline_forward_sec = 0.0
         pipeline_backward_sec = 0.0
@@ -430,7 +430,7 @@ class _Qwen35TrainingMethods:
             + float(stage_timing.get("pipeline_grad_recv_sec") or 0.0)
             + float(stage_timing.get("pipeline_grad_send_sec") or 0.0),
             "pipeline_stage_timing": _round_pipeline_stage_timing(stage_timing),
-            "synchronize_cuda_timing": bool(self.config.graspoflow.synchronize_cuda_timing),
+            "synchronize_cuda_timing": bool(self.config.native.synchronize_cuda_timing),
             "current_lr": self._current_lr(),
         }
         metrics = self._aggregate_rank_metrics(metrics)
@@ -451,7 +451,7 @@ class _Qwen35TrainingMethods:
             device=self.device,
             fwd_group=self.tp_state.pp_group_fwd,
             bwd_group=self.tp_state.pp_group_bwd,
-            max_inflight=int(self.config.graspoflow.pp_max_inflight_microbatches),
+            max_inflight=int(self.config.native.pp_max_inflight_microbatches),
             chunk_count=chunk_count,
         )
         send_works: list[Any] = []
@@ -597,7 +597,7 @@ class _Qwen35TrainingMethods:
 
         # 可插拔调度策略：默认 1F1B（fill → steady → drain）
         scheduler = build_scheduler(
-            self.config.graspoflow.pp_scheduler,
+            self.config.native.pp_scheduler,
             pp_rank=self.pp_rank,
             pp_size=self.pp_size,
             num_chunks=chunk_count,

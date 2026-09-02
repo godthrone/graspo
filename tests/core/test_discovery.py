@@ -5,7 +5,7 @@
 2. 返回的 loader 可调用，调用后返回 GraspoReward 类
 3. _discover("graspo.adapters") 返回包含 "qwen3" 和 "qwen35_36" 键的 dict
 4. 获取 adapters 的 keys 不触发 torch 导入（验证 lazy-loading）
-5. _discover("graspo.backends") 返回包含 "graspoflow" 键的 dict
+5. _discover("graspo.backends") 返回包含 "native" 键的 dict
 6. _discover("graspo.unknown") 返回空 dict
 7. entry_points 优先于 fallback（mock importlib.metadata.entry_points）
 """
@@ -78,11 +78,11 @@ def test_discover_adapters_loader_returns_adapter_class():
 # ── 基本发现：backends ───────────────────────────────────────────────────────
 
 
-def test_discover_backends_has_graspoflow_key():
-    """_discover("graspo.backends") 返回包含 "graspoflow" 键的 dict。"""
+def test_discover_backends_has_native_key():
+    """_discover("graspo.backends") 返回包含 "native" 键的 dict。"""
     result = _discover("graspo.backends")
     assert isinstance(result, dict)
-    assert "graspoflow" in result
+    assert "native" in result
 
 
 def test_discover_backends_loader_returns_callable():
@@ -97,10 +97,10 @@ def test_discover_backends_loader_returns_callable():
     except (ImportError, ModuleNotFoundError):
         pytest.skip("graspo.flow not importable (torch mock detected)")
     result = _discover("graspo.backends")
-    loader = result["graspoflow"]
+    loader = result["native"]
     assert callable(loader)
     obj = loader()
-    assert callable(obj)  # create_graspoflow_trainer 是一个函数
+    assert callable(obj)  # create_native_trainer 是一个函数
 
 
 # ── 未知 group ────────────────────────────────────────────────────────────────

@@ -74,7 +74,7 @@ def test_resume_config_snapshot_mismatch_raises():
 
     class _Stub(CheckpointMixin):
         def __init__(self) -> None:
-            self.backend_name = "graspoflow"
+            self.backend_name = "native"
             self.config = _FakeConfig()
 
     class _FakeConfig:
@@ -85,13 +85,13 @@ def test_resume_config_snapshot_mismatch_raises():
             max_new_tokens = 2048
 
         training = Training()
-        graspoflow = _FakeGraspoFlowConfig()
+        native = _FakeGraspoFlowConfig()
 
     stub = _Stub()
     mismatched = {
-        "format": "graspoflow-trainer-state",
+        "format": "native-trainer-state",
         "config_snapshot": {
-            "backend": "graspoflow",
+            "backend": "native",
             "rollout_group_size": 4,  # 与当前 8 不一致
             "gradient_accumulation_micro_batches": 8,
             "optimize_iterations_per_step": 1,
@@ -104,7 +104,7 @@ def test_resume_config_snapshot_mismatch_raises():
 
     consistent = dict(mismatched)
     consistent["config_snapshot"] = {
-        "backend": "graspoflow",
+        "backend": "native",
         "rollout_group_size": 8,
         "gradient_accumulation_micro_batches": 8,
         "optimize_iterations_per_step": 1,
@@ -124,7 +124,7 @@ def test_resume_config_snapshot_lr_mismatch_not_rejected():
 
     class _Stub(CheckpointMixin):
         def __init__(self) -> None:
-            self.backend_name = "graspoflow"
+            self.backend_name = "native"
             self.config = _FakeConfig()
 
     class _FakeConfig:
@@ -137,13 +137,13 @@ def test_resume_config_snapshot_lr_mismatch_not_rejected():
             weight_decay = 0.01
 
         training = Training()
-        graspoflow = _FakeGraspoFlowConfig()
+        native = _FakeGraspoFlowConfig()
 
     stub = _Stub()
     state = {
-        "format": "graspoflow-trainer-state",
+        "format": "native-trainer-state",
         "config_snapshot": {
-            "backend": "graspoflow",
+            "backend": "native",
             "rollout_group_size": 8,
             "gradient_accumulation_micro_batches": 8,
             "optimize_iterations_per_step": 1,
@@ -163,7 +163,7 @@ def test_checkpoint_trainer_state_snapshot_includes_lr_and_weight_decay():
 
     class _Stub(CheckpointMixin):
         def __init__(self) -> None:
-            self.backend_name = "graspoflow"
+            self.backend_name = "native"
             self.config = _FakeConfig()
             self.global_step = 24
             self.sample_index = 0
@@ -182,7 +182,7 @@ def test_checkpoint_trainer_state_snapshot_includes_lr_and_weight_decay():
             weight_decay = 0.01
 
         training = Training()
-        graspoflow = _FakeGraspoFlowConfig()
+        native = _FakeGraspoFlowConfig()
 
     stub = _Stub()
     snapshot = stub._checkpoint_trainer_state(epoch=2)["config_snapshot"]

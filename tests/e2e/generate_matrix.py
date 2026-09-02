@@ -131,7 +131,7 @@ def generate_config(
 
     config: dict[str, Any] = {
         "train_method": train_method,
-        "backend": "graspoflow",
+        "backend": "native",
         "model": {
             "model_path": model["model_path"],
             "trust_remote_code": True,
@@ -151,7 +151,7 @@ def generate_config(
             "target_preset": "language_safe",
             "target_modules": ["language_all_linear", "vision_common"],
         },
-        "graspoflow": {
+        "native": {
             "tp_size": tp,
             "dp_size": dp,
             "pp_size": pp,
@@ -167,9 +167,9 @@ def generate_config(
         config["reward"] = reward
 
     if placement != "auto":
-        config["graspoflow"]["placement_strategy"] = placement
+        config["native"]["placement_strategy"] = placement
     if sp:
-        config["graspoflow"]["sequence_parallel"] = True
+        config["native"]["sequence_parallel"] = True
 
     # Write YAML manually for clean formatting
     config_path.parent.mkdir(parents=True, exist_ok=True)

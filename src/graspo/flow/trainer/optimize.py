@@ -86,7 +86,7 @@ class OptimizeMixin:
             attempts,
             rollout_group_size=self.config.training.rollout_group_size,
             effective_batch_size=(
-                int(self.config.graspoflow.micro_batch_size)
+                int(self.config.native.micro_batch_size)
                 * int(self.config.training.gradient_accumulation_micro_batches)
             ),
         )
@@ -96,7 +96,7 @@ class OptimizeMixin:
             int(self.config.training.rollout_group_size), 1
         )
         metrics["effective_batch_size"] = (
-            int(self.config.graspoflow.micro_batch_size)
+            int(self.config.native.micro_batch_size)
             * int(self.config.training.gradient_accumulation_micro_batches)
         )
         metrics["optimize_iterations_per_step"] = 1

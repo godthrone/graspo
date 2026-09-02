@@ -1,6 +1,6 @@
 """通用 tool call 解析的测试（CPU 零依赖）。
 
-Qwen XML 格式的测试在 ``tests/backends/graspoflow/models/common/
+Qwen XML 格式的测试在 ``tests/backends/native/models/common/
 test_qwen_tool_parser.py``（Qwen 家族共享层解析器）。
 """
 

@@ -15,7 +15,7 @@ from graspo.flow.logging import setup_logging
 from graspo.flow.runtime import (
     GraspoFlowRuntime,
     GraspoFlowRuntimeBase,
-    validate_graspoflow_runtime_config,
+    validate_native_runtime_config,
 )
 from graspo.flow.trainer.helpers import _backup_config, _set_random_seed, _timestamp
 from graspo.flow.data_io import load_jsonl
@@ -51,7 +51,7 @@ class SFTTrainer:
     def train(self, *, smoke: bool = False) -> None:
         """SFT 训练主入口。
         """
-        validate_graspoflow_runtime_config(self.config)
+        validate_native_runtime_config(self.config)
         from graspo.flow.lora.lora_io import prepare_output_dir
         output_dir = prepare_output_dir(
             self.config.training.output_dir,
@@ -114,7 +114,7 @@ class SFTTrainer:
 
         # 有效 batch = micro_batch_size × gradient_accumulation_micro_batches
         # SFT 训练器按此大小创建批次，train_batch_sft 内部拆分为 micro-batch
-        mb = max(1, int(self.config.graspoflow.micro_batch_size))
+        mb = max(1, int(self.config.native.micro_batch_size))
         ga = max(1, int(self.config.training.gradient_accumulation_micro_batches))
         effective_batch_size = mb * ga
         max_grad_norm = float(self.config.training.max_grad_norm)
@@ -127,7 +127,7 @@ class SFTTrainer:
             mb, ga, effective_batch_size,
             self.config.training.max_epochs,
             self.config.training.effective_learning_rate(
-                dp_size=self.config.graspoflow.dp_size
+                dp_size=self.config.native.dp_size
             ),
             self.config.data.max_prompt_length,
         )
@@ -286,7 +286,7 @@ class SFTTrainer:
         - ``False``：epoch 内 checkpoint（step/time）→ resume 从 batch_idx+1 续
         """
         return {
-            "format": "graspoflow-sft-trainer-state",
+            "format": "native-sft-trainer-state",
             "version": 1,
             "global_step": self.global_step,
             "epoch": epoch,
@@ -335,7 +335,7 @@ class SFTTrainer:
             saved_epoch = int(trainer_state.get("epoch") or 0)
             self._resume_epoch = saved_epoch + 1
             self._resume_batch_idx = 0
-        elif fmt == "graspoflow-sft-trainer-state":
+        elif fmt == "native-sft-trainer-state":
             self.global_step = int(trainer_state["global_step"])
             saved_epoch = int(trainer_state["epoch"])
             saved_batch_idx = int(trainer_state.get("batch_idx") or 0)
@@ -365,7 +365,7 @@ class SFTTrainer:
         else:
             raise RuntimeError(
                 f"Unsupported SFT trainer_state format: {fmt!r}; "
-                f"expected 'graspoflow-sft-trainer-state' or legacy (no format marker)"
+                f"expected 'native-sft-trainer-state' or legacy (no format marker)"
             )
 
     def _is_primary(self) -> bool:

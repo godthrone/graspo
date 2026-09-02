@@ -185,11 +185,11 @@ class _Qwen35SFTTrainingMethods:
                 max_grad_norm=max_grad_norm,
             )
         self.model.train()
-        if bool(self.config.graspoflow.empty_cache_before_train) and self.device.type == "cuda":
+        if bool(self.config.native.empty_cache_before_train) and self.device.type == "cuda":
             torch.cuda.empty_cache()
             self._emit_rank_memory_event("train_before_empty_cache")
 
-        micro_batch_size = max(1, int(self.config.graspoflow.micro_batch_size))
+        micro_batch_size = max(1, int(self.config.native.micro_batch_size))
         # 梯度累积：有效 batch = gradient_accumulation_micro_batches，micro-batch = micro_batch_size
         # zero_grad 只调一次，所有 micro-batch 的梯度累加后统一 step。
         num_micro_batches = max(1, (len(sft_batches) + micro_batch_size - 1) // micro_batch_size)
@@ -310,7 +310,7 @@ class _Qwen35SFTTrainingMethods:
         grad_norm_sum = 0.0
         nonzero_grad_count = 0
         lora_norm_before = self.model.lora_parameter_norm()
-        micro_batch_size = max(1, int(self.config.graspoflow.micro_batch_size))
+        micro_batch_size = max(1, int(self.config.native.micro_batch_size))
         full_batch_size = max(1, len(sft_batches))
         train_batch_started_at = time.monotonic()
         micro_batch_forward_sec = 0.0
@@ -346,7 +346,7 @@ class _Qwen35SFTTrainingMethods:
             device=self.device,
             fwd_group=self.tp_state.pp_group_fwd,
             bwd_group=self.tp_state.pp_group_bwd,
-            max_inflight=int(self.config.graspoflow.pp_max_inflight_microbatches),
+            max_inflight=int(self.config.native.pp_max_inflight_microbatches),
             chunk_count=chunk_count,
         )
         send_works: list[Any] = []
@@ -452,7 +452,7 @@ class _Qwen35SFTTrainingMethods:
 
         # 可插拔调度策略：默认 1F1B（fill → steady → drain）
         scheduler = build_scheduler(
-            self.config.graspoflow.pp_scheduler,
+            self.config.native.pp_scheduler,
             pp_rank=self.pp_rank,
             pp_size=self.pp_size,
             num_chunks=chunk_count,
