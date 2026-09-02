@@ -8,7 +8,7 @@
 # 每卡持有 1/4 的 head。适合 PCIe 拓扑（跨 pair 的 all-reduce 走 Simple 协议，正常）。
 
 train_method: graspo
-backend: graspoflow
+backend: native
 
 model:
   model_path: /data/user/models/Qwen3.5-9B
@@ -29,7 +29,7 @@ lora:
   adapter_path: null
   target_preset: language_safe
 
-graspoflow:
+native:
   tp_size: 4
   dp_size: 1
   pp_size: 1

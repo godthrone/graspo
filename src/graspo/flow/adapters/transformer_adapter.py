@@ -144,11 +144,11 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
         self.rank = 0
         self.local_rank = 0
         self.world_size = 1
-        self.tp_size = int(config.graspoflow.tp_size)
+        self.tp_size = int(config.native.tp_size)
         self.tp_rank = 0
-        self.dp_size = int(config.graspoflow.dp_size)
+        self.dp_size = int(config.native.dp_size)
         self.dp_rank = 0
-        self.pp_size = int(config.graspoflow.pp_size)
+        self.pp_size = int(config.native.pp_size)
         self.pp_rank = 0
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.tp_state: GraspoFlowState | None = None
@@ -201,7 +201,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
             torch.optim.AdamW(
                 trainable,
                 lr=self.config.training.effective_learning_rate(
-                    dp_size=self.config.graspoflow.dp_size
+                    dp_size=self.config.native.dp_size
                 ),
                 weight_decay=self.config.training.weight_decay,
             )
@@ -220,7 +220,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
 
         base_lr = float(
             self.config.training.effective_learning_rate(
-                dp_size=self.config.graspoflow.dp_size
+                dp_size=self.config.native.dp_size
             )
         )
         warmup_steps = max(0, int(sched_cfg.warmup_steps))
@@ -274,11 +274,11 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
                 "lora_target_signature": self.model.lora_target_signature(),
                 "rollout_kv_cache_supported": bool(getattr(self.model, "supports_kv_cache", True)),
                 "placement": placement_summary(self.placement) if self.placement else {},
-                "micro_batch_size": self.config.graspoflow.micro_batch_size,
+                "micro_batch_size": self.config.native.micro_batch_size,
                 "empty_cache_after_rollout_split": (
-                    self.config.graspoflow.empty_cache_after_rollout_split
+                    self.config.native.empty_cache_after_rollout_split
                 ),
-                "synchronize_cuda_timing": self.config.graspoflow.synchronize_cuda_timing,
+                "synchronize_cuda_timing": self.config.native.synchronize_cuda_timing,
             },
         )
         self._print_rank0(
@@ -381,7 +381,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
         output = Path(path)
         output.mkdir(parents=True, exist_ok=True)
         payload = {
-            "adapter": "graspoflow",
+            "adapter": "native",
             "rank": self.rank,
             "tp_rank": self.tp_rank,
             "tp_size": self.tp_size,
@@ -425,7 +425,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
             (output / "manifest.json").write_text(
                 json.dumps(
                     {
-                        "format": "graspoflow-lora",
+                        "format": "native-lora",
                         "tp_size": self.tp_size,
                         "dp_size": self.dp_size,
                         "pp_size": self.pp_size,
@@ -531,7 +531,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
             self.scheduler,
             learning_rate=float(
                 self.config.training.effective_learning_rate(
-                    dp_size=self.config.graspoflow.dp_size
+                    dp_size=self.config.native.dp_size
                 )
             ),
             weight_decay=float(self.config.training.weight_decay),
@@ -608,7 +608,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
         return max(
             1,
             min(
-                int(self.config.graspoflow.micro_batch_size),
+                int(self.config.native.micro_batch_size),
                 int(rollout_group_size),
             ),
         )
@@ -700,7 +700,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
             prompt_len=prompt_len,
             metadata={
                 **metadata,
-                "adapter": "graspoflow",
+                "adapter": "native",
                 "rollout_group_size": rollout_group_size,
                 "rollout_prompt_queue_batch_size": requested_prompt_queue_size,
                 "rollout_prompt_queue_effective_size": effective_prompt_queue_size,
@@ -783,7 +783,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
 
     def _sync_timing(self) -> None:
         if (
-            bool(self.config.graspoflow.synchronize_cuda_timing)
+            bool(self.config.native.synchronize_cuda_timing)
             and self.device.type == "cuda"
             and torch.cuda.is_available()
         ):
@@ -800,7 +800,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
             return float(self.optimizer.param_groups[0]["lr"])
         return float(
             self.config.training.effective_learning_rate(
-                dp_size=self.config.graspoflow.dp_size
+                dp_size=self.config.native.dp_size
             )
         )
 

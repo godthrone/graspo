@@ -9,7 +9,7 @@
 #  1F1B 为 PP 唯一调度，PP=4 同级 1F1B 冒烟 38.50s 已验证）。
 
 train_method: sft
-backend: graspoflow
+backend: native
 
 model:
   model_path: models/Qwen3.5-27B
@@ -29,7 +29,7 @@ lora:
   dropout: 0.05
   target_modules: [language_all_linear, vision_common]
 
-graspoflow:
+native:
   tp_size: 2
   dp_size: 1
   pp_size: 2

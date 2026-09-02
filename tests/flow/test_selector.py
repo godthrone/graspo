@@ -27,9 +27,9 @@ select_backend = _selector.select_backend
 SUPPORTED_BACKENDS = _selector.SUPPORTED_BACKENDS
 
 
-def test_supported_backends_contains_graspoflow():
-    """SUPPORTED_BACKENDS 包含 "graspoflow"。"""
-    assert "graspoflow" in SUPPORTED_BACKENDS
+def test_supported_backends_contains_native():
+    """SUPPORTED_BACKENDS 包含 "native"。"""
+    assert "native" in SUPPORTED_BACKENDS
 
 
 def test_supported_backends_is_set():
@@ -37,10 +37,10 @@ def test_supported_backends_is_set():
     assert isinstance(SUPPORTED_BACKENDS, set)
 
 
-def test_backend_selection_defaults_to_graspoflow():
+def test_backend_selection_defaults_to_native():
     selection = select_backend(GraspoConfig())
 
-    assert selection.name == "graspoflow"
+    assert selection.name == "native"
 
 
 @pytest.mark.parametrize("backend", ["auto", "hf-reference", "megatron-vllm", "native-tp"])

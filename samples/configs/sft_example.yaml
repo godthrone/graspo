@@ -9,7 +9,7 @@
 #   3. 调整 learning_rate 和 reward 设置
 
 train_method: sft
-backend: graspoflow
+backend: native
 
 # ── 模型 ──────────────────────────────────────────────────────────────────
 model:
@@ -34,7 +34,7 @@ lora:
   target_preset: language_safe
 
 # ── 分布式（单卡最保守）──────────────────────────────────────────────────
-graspoflow:
+native:
   tp_size: 1                           # 单卡
   dp_size: 1                           # 单卡
   pp_size: 1                           # 无流水线

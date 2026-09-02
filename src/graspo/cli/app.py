@@ -140,6 +140,11 @@ def build_launch_plan(
 
     selection = select_backend(config)
     launch = config.launch
+
+    # msswift 后端：委托给 ms-swift CLI
+    if selection.name == "msswift":
+        return _build_msswift_launch_plan(config_path, config, smoke=smoke)
+
     nnodes = int(launch.nnodes)
     if nnodes < 1:
         raise SystemExit("launch.nnodes must be >= 1")
@@ -183,16 +188,51 @@ def build_launch_plan(
     )
 
 
+def _build_msswift_launch_plan(
+    config_path: Path,
+    config: GraspoConfig,
+    *,
+    smoke: bool = False,
+) -> LaunchPlan:
+    """构建 ms-swift 后端的启动计划：委托给 ``swift rlhf`` CLI。"""
+    try:
+        import swift  # noqa: F401
+    except ImportError:
+        raise SystemExit(
+            "ms-swift is required for the msswift backend. "
+            "Install it with: pip install graspo[msswift]"
+        )
+
+    python = str(config.launch.python or sys.executable)
+    command = [
+        python, "-m", "swift", "rlhf",
+        "--rlhf_type", "graspo_grpo",
+        "--external_plugins", "graspo/flow/msswift/plugin.py",
+        "--config", str(config_path),
+    ]
+    if smoke:
+        command.append("--smoke")
+
+    return LaunchPlan(
+        command=command,
+        env=_build_launch_env(config),
+        backend="msswift",
+        uses_torchrun=False,
+        nproc_per_node=1,
+        nnodes=1,
+    )
+
+
 def _resolve_nproc_per_node(config: GraspoConfig, backend: str) -> int:
     launch = config.launch
     if launch.nproc_per_node is not None:
         nproc_per_node = int(launch.nproc_per_node)
     else:
-        expected_world = _graspoflow_world_size(config)
+        expected_world = _native_world_size(config)
         nnodes = int(launch.nnodes)
         if expected_world % nnodes != 0:
             raise SystemExit(
-                "graspoflow world size must divide evenly across launch.nnodes "
+                "native world size must divide evenly across launch.nnodes "
                 f"({expected_world} % {nnodes} != 0)"
             )
         nproc_per_node = expected_world // nnodes
@@ -213,10 +253,10 @@ def _validate_launch_world(
     nproc_per_node: int,
 ) -> None:
     actual_world = nnodes * nproc_per_node
-    expected_world = _graspoflow_world_size(config)
+    expected_world = _native_world_size(config)
     if actual_world != expected_world:
         raise SystemExit(
-            "graspoflow launch world size must match "
+            "native launch world size must match "
             "dp_size × tp_size × pp_size "
             f"({actual_world} != {expected_world})"
         )
@@ -233,8 +273,8 @@ def _validate_launch_world(
         )
 
 
-def _graspoflow_world_size(config: GraspoConfig) -> int:
-    return int(config.graspoflow.dp_size) * int(config.graspoflow.tp_size) * int(config.graspoflow.pp_size)
+def _native_world_size(config: GraspoConfig) -> int:
+    return int(config.native.dp_size) * int(config.native.tp_size) * int(config.native.pp_size)
 
 
 def _validate_launch_paths(config: GraspoConfig) -> None:

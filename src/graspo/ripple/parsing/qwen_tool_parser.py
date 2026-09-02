@@ -5,7 +5,7 @@
   这是 qwen3 / qwen3.5 / qwen3.6 家族共享的输出格式，其他模型族（如
   JSON 系模型）不依赖本模块。
 - 通用 JSON tool call 解析（``<tool_call>{...}</tool_call>``）属于跨模型
-  标准格式，保留在 ``backends/graspoflow/tool_parser.py``（通用层），
+  标准格式，保留在 ``backends/native/tool_parser.py``（通用层），
   本模块从中 import。
 
 防呆设计（v0.14 训练崩溃根因修复，防线）：

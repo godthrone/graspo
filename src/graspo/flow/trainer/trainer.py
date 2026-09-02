@@ -20,7 +20,7 @@ from graspo.flow.logging import setup_logging
 from graspo.flow.runtime import (
     GraspoFlowRuntime,
     GraspoFlowRuntimeBase,
-    validate_graspoflow_runtime_config,
+    validate_native_runtime_config,
 )
 from graspo.flow.trainer.checkpoint import CheckpointMixin
 from graspo.flow.trainer.helpers import (
@@ -61,7 +61,7 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
         self.replay_buffer = ReplayBuffer()
         self._smoke_boundary = False  # 冒烟运行边界：首轮 optimize 后停止（见 train(smoke=)）
         self.stats = GraspoFlowTrainStats()
-        self.backend_name = "graspoflow"
+        self.backend_name = "native"
         self.global_step = 0
         self.sample_index = 0
         self.total_samples = 0
@@ -72,7 +72,7 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
         self.pending_batch_timings: list[dict[str, Any]] = []
         self.resume_info: dict[str, Any] | None = None
         self._last_checkpoint_time = 0.0  # 墙钟时间周期保存用（monotonic 秒）
-        gf = self.config.graspoflow
+        gf = self.config.native
         self.logger = NativeRolloutLogger(
             self.config.training.output_dir,
             readable_enabled=gf.readable_log_enabled,
@@ -97,7 +97,7 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
             运行到首轮 optimize 后停止，**不修改任何配置值**。
         """
         self._smoke_boundary = bool(smoke)
-        validate_graspoflow_runtime_config(self.config)
+        validate_native_runtime_config(self.config)
         self.runtime.validate()
         self.runtime.setup()
         # 初始化标准 Python logging 通道
@@ -118,7 +118,7 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
                 "model_path": Path(self.config.model.model_path).name,
                 "train_path": Path(self.config.data.train_path).name,
                 "completion_parser": self._completion_parser_name(),
-                "tp_size": self.config.graspoflow.tp_size,
+                "tp_size": self.config.native.tp_size,
             }
         )
         _log.info(
@@ -158,7 +158,7 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
             "Run config: rollout_group_size=%d micro_batch_size=%d "
             "gradient_accumulation_micro_batches=%d max_epochs=%d max_new_tokens=%d",
             self.config.training.rollout_group_size,
-            self.config.graspoflow.micro_batch_size,
+            self.config.native.micro_batch_size,
             self.config.training.gradient_accumulation_micro_batches,
             self.config.training.max_epochs,
             self.config.training.max_new_tokens,
@@ -305,7 +305,7 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
             data_dir=str(Path(self.config.data.train_path).parent),
             image_token_id=image_token_id,
             model_name=str(self.config.model.model_path),
-            pp_size=int(self.config.graspoflow.pp_size),
+            pp_size=int(self.config.native.pp_size),
         )
 
     def _print_json(self, payload: dict[str, Any]) -> None:

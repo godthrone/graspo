@@ -88,7 +88,7 @@ class _Qwen35GenerationMethods:
             device=self.device,
         )
         prompt_len = int(prompt_input_ids.shape[1])
-        use_kv_cache = bool(self.config.graspoflow.use_kv_cache_for_rollout) and bool(
+        use_kv_cache = bool(self.config.native.use_kv_cache_for_rollout) and bool(
             getattr(self.model, "supports_kv_cache", True)
         )
         requested_prompt_queue_size = len(message_batches)
@@ -403,7 +403,7 @@ class _Qwen35GenerationMethods:
         )
         eos_token_id = int(self.tokenizer.eos_token_id)
         rollout_started_at = time.monotonic()
-        use_kv_cache = bool(self.config.graspoflow.use_kv_cache_for_rollout) and bool(
+        use_kv_cache = bool(self.config.native.use_kv_cache_for_rollout) and bool(
             getattr(self.model, "supports_kv_cache", True)
         )
         multimodal_inputs = self._multimodal_inputs_to_device(encoded)
@@ -534,7 +534,7 @@ class _Qwen35GenerationMethods:
                 del flat_sequences
                 del sequence_chunks
                 if self.device.type == "cuda" and bool(
-                    self.config.graspoflow.empty_cache_after_rollout_split
+                    self.config.native.empty_cache_after_rollout_split
                 ):
                     torch.cuda.empty_cache()
 
@@ -742,7 +742,7 @@ class _Qwen35GenerationMethods:
             device=self.device,
             fwd_group=self.tp_state.pp_group_fwd,
             bwd_group=self.tp_state.pp_group_bwd,
-            max_inflight=int(self.config.graspoflow.pp_max_inflight_microbatches),
+            max_inflight=int(self.config.native.pp_max_inflight_microbatches),
             chunk_count=1,
         )
         is_last = self.pp_rank == self.pp_size - 1

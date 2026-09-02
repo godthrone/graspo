@@ -23,7 +23,7 @@ class _FakeRootConfig:
 
     def __init__(self, training: TrainingConfig) -> None:
         self.training = training
-        self.graspoflow = _FakeGraspoFlowConfig()
+        self.native = _FakeGraspoFlowConfig()
 
 
 class _StubAdapter:

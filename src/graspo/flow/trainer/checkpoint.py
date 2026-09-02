@@ -71,7 +71,7 @@ class CheckpointMixin:
         current = {
             "backend": self.backend_name,
             "rollout_group_size": self.config.training.rollout_group_size,
-            "micro_batch_size": self.config.graspoflow.micro_batch_size,
+            "micro_batch_size": self.config.native.micro_batch_size,
             "gradient_accumulation_micro_batches": self.config.training.gradient_accumulation_micro_batches,
             "optimize_iterations_per_step": 1,
             "rollout_max_retries": self.config.training.rollout_max_retries,
@@ -104,7 +104,7 @@ class CheckpointMixin:
                 "GRASPO checkpoint is missing trainer_state; latest-only resume requires "
                 "a current recoverable checkpoint"
             )
-        if trainer_state.get("format") != "graspoflow-trainer-state":
+        if trainer_state.get("format") != "native-trainer-state":
             raise RuntimeError(
                 "Unsupported trainer_state format: "
                 f"{trainer_state.get('format')!r}; latest-only resume requires current GRASPO"
@@ -131,7 +131,7 @@ class CheckpointMixin:
         if len(self.replay_buffer) > 0:
             raise RuntimeError("Cannot save recoverable checkpoint while ReplayBuffer is non-empty")
         return {
-            "format": "graspoflow-trainer-state",
+            "format": "native-trainer-state",
             "version": 1,
             "global_step": self.global_step,
             "sample_index": self.sample_index,
@@ -142,7 +142,7 @@ class CheckpointMixin:
             "config_snapshot": {
                 "backend": self.backend_name,
                 "rollout_group_size": self.config.training.rollout_group_size,
-                "micro_batch_size": self.config.graspoflow.micro_batch_size,
+                "micro_batch_size": self.config.native.micro_batch_size,
             "gradient_accumulation_micro_batches": self.config.training.gradient_accumulation_micro_batches,
                 "optimize_iterations_per_step": 1,
                 "rollout_max_retries": self.config.training.rollout_max_retries,

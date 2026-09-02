@@ -59,7 +59,7 @@ class Qwen35Adapter(  # type: ignore[misc]  # mixin 组合点的多基类签名�
             available=native_qwen_lora_available_targets(hf_config),
         )
         self.placement = build_placement_plan(
-            strategy=self.config.graspoflow.placement_strategy,
+            strategy=self.config.native.placement_strategy,
             model_family=hf_config.family,
             num_hidden_layers=int(hf_config.num_hidden_layers),
             tp_size=self.tp_size,
@@ -67,8 +67,8 @@ class Qwen35Adapter(  # type: ignore[misc]  # mixin 组合点的多基类签名�
             tp_rank=self.tp_rank,
             pp_rank=self.pp_rank,
             layer_types=list(getattr(hf_config, "layer_types", []) or []),
-            manual_ranges=[list(r) for r in self.config.graspoflow.layer_ranges]
-            if self.config.graspoflow.layer_ranges is not None
+            manual_ranges=[list(r) for r in self.config.native.layer_ranges]
+            if self.config.native.layer_ranges is not None
             else None,
         )
         self.model = build_native_qwen_model(
@@ -76,7 +76,7 @@ class Qwen35Adapter(  # type: ignore[misc]  # mixin 组合点的多基类签名�
             loader=loader,
             tp_rank=self.tp_rank,
             tp_size=self.tp_size,
-            use_sp=bool(self.config.graspoflow.sequence_parallel),
+            use_sp=bool(self.config.native.sequence_parallel),
             placement=self.placement,
             lora_r=self.config.lora.r,
             lora_alpha=self.config.lora.alpha,

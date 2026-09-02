@@ -1,14 +1,18 @@
-# GRASPO 全字段配置模板（config_example.yaml）
+# GRASPO ms-swift 后端配置模板（config_example_msswift.yaml）
 #
-# 本模板覆盖 GraspoConfig 的**全部**字段，含默认值与说明。复制后改几处即可用。
+# 本模板覆盖使用 ms-swift 后端时的全部字段。复制后改几处即可用。
 # 注意：`extra="forbid"`，请勿添加未列出的字段；所有影响产物的参数必须在这里，
 # 不要用环境变量/CLI 覆盖（宪法 §7.1 / §10.1）。
 #
-# 启动：uv run graspo launch --config config_example.yaml
+# 启动：uv run graspo launch --config config_example_msswift.yaml
+#
+# ⚠️ ms-swift 后端需要额外安装：pip install graspo[msswift]
 
-# ── 训练方法 ────────────────────────────────────────────────────────────────
+# ── 训练方法与后端 ────────────────────────────────────────────────────────────
 train_method: graspo          # graspo=RL | sft=SFT
-backend: native           # native 后端（TP+DP+PP+SP+Checkpoint 五位一体）；msswift 见 config_example_msswift.yaml
+backend: msswift              # ms-swift 后端：委托给 ms-swift 生态（vLLM + DeepSpeed/FSDP）
+                              # 注意：msswift 后端不使用 native 配置段（无 tp_size/dp_size/pp_size）
+                              # 分布式并行由 ms-swift 的 DeepSpeed/Megatron/FSDP 配置控制
 
 # ── 模型 ─────────────────────────────────────────────────────────────────────
 model:
@@ -35,28 +39,6 @@ lora:
   target_modules: null           # null=用 target_preset 推断
   bias: none
   task_type: CAUSAL_LM
-
-# ── 分布式（TP+DP+PP+SP 五位一体）─────────────────────────────────────────
-# world_size = dp_size × tp_size × pp_size
-native:
-  tp_size: 2
-  dp_size: 1
-  pp_size: 1
-  dp_replicate_lora: true         # DP rank 间复制 LoRA（默认），梯度 AVG
-  adapter: graspo.flow.adapters.models.qwen35_36.adapter:Qwen35Adapter
-  placement_strategy: auto        # auto | qwen36_pp8_lm_head_only_final | manual | qwen3_tp
-  layer_ranges: null              # 手动每层分布 [[start,end),...]；覆盖 placement_strategy
-  sequence_parallel: false        # TP>=2 时可选；沿序列维度分片激活
-  pp_micro_batch_size: 1          # PP 每个微批样本数
-  micro_batch_size: 1
-  use_kv_cache_for_rollout: true
-  empty_cache_after_rollout_split: false
-  empty_cache_before_train: false
-  raw_log_enabled: true
-  readable_log_enabled: true
-  synchronize_cuda_timing: false
-  pp_max_inflight_microbatches: 0   # PP 背压：0=auto（框架推导），>0=显式在途上限
-  pp_scheduler: one_f_one_b         # PP 唯一调度：1F1B（默认）| 1f1b
 
 # ── 训练超参 ────────────────────────────────────────────────────────────────
 training:
@@ -115,3 +97,27 @@ reward:
   anti_useless_str_reward_weight: 1.0
   anti_useless_str_half_reward_len: 100
   numeric_tolerance: 0.2
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ms-swift 后端说明
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# 1. 安装 ms-swift 依赖：
+#    pip install graspo[msswift]
+#
+# 2. 与 native 后端的主要区别：
+#    - 无 native 配置段（不需要 tp_size/dp_size/pp_size）
+#    - 分布式并行由 ms-swift 的 DeepSpeed/Megatron/FSDP 自动管理
+#    - Rollout 使用 vLLM 引擎（300% 加速）
+#    - 支持 600+ 模型（vs native 的 Qwen3.5/3.6 系列）
+#    - 支持 7 种量化方法、11 种 LoRA 变体、150+ 内置数据集
+#    - 支持推理部署（swift deploy）+ 评测（EvalScope）
+#
+# 3. 两种后端共享：
+#    - ripple 算法层（字符级标注、token 级 advantage、GRASPORippleLoss）
+#    - 训练数据格式（JSONL：messages + targets + tools）
+#    - CLI 入口（graspo launch --config ...）
+#    - 配置校验（pydantic，extra="forbid"）
+#
+# 4. 切换回 native 后端：只需将 backend 改为 "native"，并添加 native 配置段。
+#    参见 samples/configs/config_example.yaml。

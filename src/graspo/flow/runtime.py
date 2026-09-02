@@ -1,7 +1,7 @@
 """Layer 2 — GraspoFlowRuntime: tensor-parallel runtime boundary.
 
 Delegates all work to a model-specific adapter.  The adapter class path is
-configured via ``graspoflow.adapter`` in the YAML config (default:
+configured via ``native.adapter`` in the YAML config (default:
 ``graspo.flow.adapters.models.qwen35_36.adapter:Qwen35Adapter``).
 """
 
@@ -191,7 +191,7 @@ class GraspoFlowRuntime(GraspoFlowRuntimeBase):
 
     def __init__(self, config: GraspoConfig) -> None:
         self.config = config
-        self.graspoflow_config = config.graspoflow
+        self.native_config = config.native
         self._adapter: Any | None = None
 
     @classmethod
@@ -213,16 +213,16 @@ class GraspoFlowRuntime(GraspoFlowRuntimeBase):
         return 0
 
     def validate(self) -> None:
-        validate_graspoflow_runtime_config(self.config, self.graspoflow_config)
+        validate_native_runtime_config(self.config, self.native_config)
         assert_forbidden_runtime_modules_not_imported()
 
     def setup(self) -> None:
         self.validate()
-        adapter_path = self.graspoflow_config.adapter
+        adapter_path = self.native_config.adapter
         module_name, sep, class_name = adapter_path.partition(":")
         if not sep:
             raise ValueError(
-                "graspoflow.adapter 必须使用 'module:Class' 格式；"
+                "native.adapter 必须使用 'module:Class' 格式；"
                 f"可用适配器：{', '.join(_AVAILABLE_ADAPTERS)}"
             )
         try:
@@ -369,10 +369,10 @@ class GraspoFlowRuntime(GraspoFlowRuntimeBase):
         return self._adapter
 
 
-def validate_graspoflow_runtime_config(
-    config: GraspoConfig, graspoflow_config: Any | None = None
+def validate_native_runtime_config(
+    config: GraspoConfig, native_config: Any | None = None
 ) -> None:
-    native = graspoflow_config or config.graspoflow
+    native = native_config or config.native
     if int(native.pp_size) < 1:
         raise ValueError("pp_size must be >= 1")
     if int(native.tp_size) < 1:
@@ -384,20 +384,20 @@ def validate_graspoflow_runtime_config(
     if bool(native.sequence_parallel) and int(native.tp_size) < 2:
         raise ValueError("sequence_parallel requires tp_size >= 2")
     if int(native.pp_micro_batch_size) < 1:
-        raise ValueError("graspoflow.pp_micro_batch_size must be >= 1")
+        raise ValueError("native.pp_micro_batch_size must be >= 1")
     if int(native.micro_batch_size) < 1:
         raise ValueError(
-            f"graspoflow.micro_batch_size must be >= 1, got {native.micro_batch_size}"
+            f"native.micro_batch_size must be >= 1, got {native.micro_batch_size}"
         )
     if config.training.resume_from_checkpoint and config.lora.adapter_path:
         raise ValueError("training.resume_from_checkpoint and lora.adapter_path cannot both be set")
     if int(native.pp_max_inflight_microbatches) < 0:
-        raise ValueError("graspoflow.pp_max_inflight_microbatches must be >= 0")
+        raise ValueError("native.pp_max_inflight_microbatches must be >= 0")
 
 
 def assert_forbidden_runtime_modules_not_imported() -> None:
     imported = [name for name in FORBIDDEN_RUNTIME_MODULES if name in sys.modules]
     if imported:
         raise RuntimeError(
-            "graspoflow runtime must not import forbidden frameworks: " + ", ".join(imported)
+            "native runtime must not import forbidden frameworks: " + ", ".join(imported)
         )

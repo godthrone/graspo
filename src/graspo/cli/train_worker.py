@@ -24,11 +24,20 @@ def main() -> None:
     config = GraspoConfig.from_yaml(args.config)
 
     if config.train_method == "sft":
-        from graspo.flow.runtime import GraspoFlowRuntime
+        from graspo.flow.backend_selection import select_backend
         from graspo.flow.trainer.sft_trainer import SFTTrainer
+        from graspo.flow.runtime import GraspoFlowRuntime
 
-        runtime = GraspoFlowRuntime.from_config(config)
-        SFTTrainer(config, runtime).train(smoke=args.smoke)
+        selection = select_backend(config)
+        if selection.name == "native":
+            runtime = GraspoFlowRuntime.from_config(config)
+            SFTTrainer(config, runtime).train(smoke=args.smoke)
+        else:
+            # msswift 后端 SFT：TODO 阶段2实现
+            raise NotImplementedError(
+                f"SFT training is not yet supported for backend '{selection.name}'. "
+                f"Use backend='native' for SFT."
+            )
     else:
         from graspo.flow.backend_selection import create_trainer, select_backend
 

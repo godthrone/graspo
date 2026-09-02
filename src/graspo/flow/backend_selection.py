@@ -20,22 +20,26 @@ class BackendSelection:
 
 
 def select_backend(config: GraspoConfig, requested: str | None = None) -> BackendSelection:
-    requested_backend = (requested or config.backend or "graspoflow").strip()
+    requested_backend = (requested or config.backend or "native").strip()
     if requested_backend not in SUPPORTED_BACKENDS:
         raise ValueError(
             f"Unsupported backend '{requested_backend}'. "
             f"GRASPO supports: {', '.join(sorted(SUPPORTED_BACKENDS))}"
         )
 
+    reasons = {
+        "native": "GRASPO native unified tensor/pipeline parallel training (TP/DP/PP/SP/GC)",
+        "msswift": "ms-swift infrastructure (Megatron/DeepSpeed/vLLM) with Graspo ripple algorithm",
+    }
     return BackendSelection(
-        name="graspoflow",
-        reason="GRASPO uses GraspoFlow unified tensor/pipeline parallel training",
+        name=requested_backend,
+        reason=reasons.get(requested_backend, f"Backend: {requested_backend}"),
         requested=requested_backend,
     )
 
 
-def create_graspoflow_trainer(config: GraspoConfig, selection: BackendSelection):
-    """graspoflow 后端的工厂函数（供 entry_points 自动发现）。"""
+def create_native_trainer(config: GraspoConfig, selection: BackendSelection):
+    """native 后端的工厂函数（供 entry_points 自动发现）。"""
     from graspo.flow import GraspoFlowTrainer
 
     return GraspoFlowTrainer(config, selection=selection)

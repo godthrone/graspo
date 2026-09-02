@@ -53,6 +53,7 @@ GRASPO (Group Relative Advantage Structured Policy Optimization) — GRPO-style 
 > - `samples/configs/sft_example.yaml` — single-GPU SFT config (works out of the box);
 > - `samples/configs/rl_example.yaml` — single-GPU RL config;
 > - `samples/configs/a800x8_qwen35_9b_tp1_dp8_pp1.yaml` — 8×A800 multi-GPU config;
+> - `samples/configs/config_example_msswift.yaml` — ms-swift backend config (requires `pip install graspo[msswift]`);
 > - `samples/data/json_output/train.jsonl` — small JSONL dataset for smoke tests.
 
 ### 3-Step Smoke Test (Docker, recommended)
@@ -154,8 +155,8 @@ Set at least these fields in `my_graspo.yaml`:
 - `training.output_dir`: run output directory;
 - GPU selection is **not** in the config — use `run.sh` (auto-picks free
   GPUs) or `bash run.sh config.yaml --gpus 4,5` (see Docker section);
-- `graspoflow.tp_size`, `graspoflow.dp_size`, and
-  `graspoflow.pp_size`: world size = tp × dp × pp.
+- `native.tp_size`, `native.dp_size`, and
+  `native.pp_size`: world size = tp × dp × pp.
 
 ### SFT Training
 
@@ -473,10 +474,21 @@ All normal training configuration lives in YAML.
 
 ### `backend`
 
-- `graspoflow`: **The only backend.** Unified TP+DP+PP+SP+Checkpoint
-  five-dimensional parallelism. world_size = tp_size × dp_size × pp_size.
-  Supports all parallel modes: single-GPU (`tp=1,dp=1,pp=1`), pure TP,
-  pure DP, and mixed modes.
+GRASPO supports two backends, switchable via `config.backend`:
+
+| Backend    | Config value | Description | Installation |
+|------------|-------------|-------------|-------------|
+| **Native** | `native` (default) | Self-developed TP+DP+PP+SP+Checkpoint five-dimensional parallelism. Best for fine-grained parallelism control and single-GPU to multi-GPU scaling. | Built-in |
+| **MsSwift** | `msswift` | Delegates to ms-swift ecosystem: vLLM rollout, DeepSpeed/Megatron, 600+ models, 150+ datasets, quantization, deployment. | `pip install graspo[msswift]` |
+
+- `native`: Unified TP+DP+PP+SP+Checkpoint five-dimensional parallelism.
+  world_size = tp_size × dp_size × pp_size. Supports all parallel modes:
+  single-GPU (`tp=1,dp=1,pp=1`), pure TP, pure DP, and mixed modes.
+  The `native` config section controls parallelism parameters.
+- `msswift`: Leverages ms-swift's production-grade training infrastructure
+  (vLLM rollout, DeepSpeed ZeRO, FSDP) while injecting Graspo's ripple
+  algorithm (character-level annotation, token-level advantage, GRASPORippleLoss).
+  Requires `pip install graspo[msswift]`. See `samples/configs/config_example_msswift.yaml`.
 
 ### `model`
 
@@ -560,7 +572,7 @@ training.
 exclusive: resume restores native checkpoint state, while PEFT adapter loading
 is only a LoRA warm-start.
 
-### `graspoflow`
+### `native`
 
 - `adapter`: model adapter path (default
   `graspo.flow.adapters.models.qwen35_36.adapter:Qwen35Adapter`).
@@ -661,7 +673,7 @@ uv run graspo export --config samples/configs/sft_example.yaml
 
 Example minimal export config:
 ```yaml
-backend: graspoflow
+backend: native
 model:
   model_path: models/Qwen3.5-9B
 export:

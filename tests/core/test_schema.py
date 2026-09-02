@@ -149,7 +149,7 @@ def test_from_dict_rejects_deprecated_backend_config_format():
     with pytest.raises(ValidationError):
         GraspoConfig.from_dict(
             {
-                "backend_config": {"graspoflow": {"tp_size": 4, "pp_size": 2}},
+                "backend_config": {"native": {"tp_size": 4, "pp_size": 2}},
             }
         )
 
@@ -163,14 +163,14 @@ def test_top_level_unknown_field_is_rejected_not_silently_dropped():
     with pytest.raises(ValidationError, match="train_methodd"):
         GraspoConfig.from_dict({"train_methodd": "sft"})
     with pytest.raises(ValidationError, match="backendd"):
-        GraspoConfig.from_dict({"backendd": "graspoflow"})
+        GraspoConfig.from_dict({"backendd": "native"})
 
 
 def test_top_level_none_section_treated_as_default():
     """显式 `section: null` 等价于缺省（合法），不触发拒绝。"""
     cfg = GraspoConfig.from_dict({"training": None, "model": None})
     assert cfg.training.seed == 42
-    assert cfg.graspoflow.tp_size == 2
+    assert cfg.native.tp_size == 2
 
 
 def _field_paths(model_type: type[BaseModel], prefix: str = "") -> set[str]:  # noqa: F821

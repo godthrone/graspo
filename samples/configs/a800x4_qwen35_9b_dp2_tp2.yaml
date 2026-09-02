@@ -9,7 +9,7 @@
 # PCIe 拓扑需设置环境变量 NCCL_P2P_DISABLE=1。
 
 train_method: sft
-backend: graspoflow
+backend: native
 
 model:
   model_path: models/Qwen3.5-9B
@@ -29,7 +29,7 @@ lora:
   dropout: 0.05
   target_modules: [language_all_linear, vision_common]
 
-graspoflow:
+native:
   tp_size: 2
   dp_size: 2
   pp_size: 1

@@ -282,8 +282,8 @@ class GraspoConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     train_method: Literal["graspo", "sft"] = "graspo"
-    backend: str = "graspoflow"
-    graspoflow: GraspoFlowConfig = GraspoFlowConfig()
+    backend: str = "native"
+    native: GraspoFlowConfig = GraspoFlowConfig()
     model: ModelConfig = ModelConfig()
     data: DataConfig = DataConfig()
     lora: LoRAConfig = LoRAConfig()
@@ -320,7 +320,7 @@ class GraspoConfig(BaseModel):
         （合法），未知键仍被拒绝。
         """
         data = dict(data or {})
-        data["graspoflow"] = dict(data.get("graspoflow") or {})
+        data["native"] = dict(data.get("native") or {})
         for section in ("model", "data", "lora", "export", "launch", "reward", "training"):
             if data.get(section) is None:
                 data[section] = {}
@@ -384,7 +384,7 @@ def _report_config_errors(
             else []
         )
         for section in (
-            "graspoflow",
+            "native",
             "model",
             "data",
             "lora",

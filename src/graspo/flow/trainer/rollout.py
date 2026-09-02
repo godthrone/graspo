@@ -58,7 +58,7 @@ class RolloutMixin:
         )
         if len(generations) != len(message_batches):
             raise RuntimeError(
-                f"graspoflow generate_groups returned {len(generations)} "
+                f"native generate_groups returned {len(generations)} "
                 f"groups for {len(message_batches)} prompts"
             )
         return generations
@@ -78,7 +78,7 @@ class RolloutMixin:
         )
         if len(generations) != len(samples):
             raise RuntimeError(
-                f"graspoflow generate_sample_groups returned {len(generations)} "
+                f"native generate_sample_groups returned {len(generations)} "
                 f"groups for {len(samples)} samples"
             )
         return generations
