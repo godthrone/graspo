@@ -380,6 +380,31 @@ GAP_ROWS = [
      "**本期要补**：在配置边界加校验——**`r <= 0` 直接报错（fail-closed）**，不得静默降级",
      "native 侧全部 LoRA 档（12 档 = 2 模型 × SFT / GRASPO × 1 / 2 / 4 卡，已证零可训练参数）；"
      "ms-swift 侧 `--lora_rank 0` 的行为未验证，暂不计入影响范围", "⛔ 未实现"),
+    ("G-14", "**Megatron 路径 HF→MCore 转换时 `mtp.*` 权重被静默忽略**——"
+     "一次上机实验的只读核实结果：`--to_mcore true` 转换后，`model.visual.*` **333 个**（视觉塔，"
+     "含全部 6 个 merger 键）**1:1 落盘**为 `visual.visual.*` 333 条；而 **`mtp.*` 15 个在产物中 0 条、"
+     "且无任何告警**（产物参数名计数输出 `809 333 0` = MCore 809 / 视觉 333 / **MTP 0**）。"
+     "**根因 = MTP 配置填充未接通（本仓库侧可复核的完整链条）**：ms-swift 4.5.3 的 "
+     "`swift/megatron/convert.py:45-50` 在 `convert_hf2mcore` 中构造 `MegatronArguments` 时只传 "
+     "`model` / `model_type` / `**current_convert_kwargs`（该字典见同文件 `:19-29`，9 个键、无 MTP 项）/ "
+     "`output_dir` / `torch_dtype`，**实参列表中没有 `mtp_num_layers`**（该文件内 `mtp` 命中数为 **0**）；"
+     "该字段在 `swift/megatron/arguments/megatron_args.py:676` 定义为 "
+     "`mtp_num_layers: Optional[int] = None` ⇒ 取默认 `None`；"
+     "`swift/megatron/model/utils.py:163-164`（及 `swift/megatron/init.py:262`）以 "
+     "`if mtp_num_layers:` 为分支条件 ⇒ **None 为假值、分支被跳过**，"
+     "`num_nextn_predict_layers` / `mtp_num_hidden_layers` 不被写回 ⇒ **未建 MTP 层**；"
+     "官方文档亦明示该值**不自动从 `config.json` 获取、须手动设置**"
+     "（`docs/source/Megatron-SWIFT/Command-line-parameters.md:239`）。"
+     "**外部桥接包 `mcore_bridge` 侧的对应细节**（该包配置默认 `mtp_num_layers = None`、参数解析无 MTP 项）"
+     "来自**一次上机实验的容器内只读核实**，**本仓库内无法复核**（该外部包未安装）；"
+     "桥接侧前缀 `hf_mtp_prefix='mtp.layers'` 与含 `mtp.fc` 的 `_convert_mtp_extra` **已就绪** "
+     "⇒ 缺口只在「配置填充」一环。"
+     "**本期要补**：① **接通 MTP 配置填充**（本仓库两模型的文本侧确含 MTP 层，见 §2.6）；"
+     "② **无论目标语义是否需要 MTP，静默忽略都必须改为报错或显式告警**——"
+     "按宪法 **§3.2 透明退路**：结果可能受影响的转换必须明确告知，不得静默吞掉。"
+     "本项与 §2.8 G-12 的权重键映射验证同源（G-12 的冒烟须覆盖 `mtp.*`）。",
+     "使用 Megatron 路径、会经过 HF→MCore 转换的目标档；"
+     "**对训练效果的影响尚未验证**（现有结论仅为「不需要 MTP 也能起来」，未做效果对比）", "⛔ 未实现"),
 ]
 
 # ------------------------------------------------------- §6 开放项（应为 0）
