@@ -59,6 +59,17 @@ def _normalize_target(value: Any, index: int) -> dict[str, Any]:
         raise ValueError(
             f"targets[{index}].output must contain content and/or non-empty tool_calls"
         )
+    # ``reasoning``（教师推理链，ARD ``targets[i].output.reasoning``）与 content
+    # 平级保留：它必须存在于 ``output`` **之内**，否则归一化会静默丢弃。
+    # 保留是 D4 共享基座契约的一部分（ARD 无 logprob 是特性，reasoning 不是）。
+    # 空串与缺失都归一为 None（宪法 §2.2：None 是唯一合法空值）。
+    reasoning = output.get("reasoning")
+    if reasoning is not None:
+        if not isinstance(reasoning, str):
+            raise ValueError(
+                f"targets[{index}].output.reasoning must be a string when provided"
+            )
+        normalized_output["reasoning"] = reasoning or None
     return {"id": target_id, "output": normalized_output}
 
 
