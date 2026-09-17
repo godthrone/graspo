@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any
 from unittest import mock
 
@@ -139,7 +140,7 @@ print("OK: torch not imported")
         [sys.executable, "-c", code],
         capture_output=True,
         text=True,
-        cwd="/mnt/c/Users/AI/Desktop/Gitlab/training/graspo",
+        cwd=str(Path(__file__).resolve().parents[2]),
         env={**__import__("os").environ, "PYTHONPATH": "src"},
     )
     assert proc.returncode == 0, f"Subprocess failed:\n{proc.stderr}"
