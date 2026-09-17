@@ -194,32 +194,79 @@ def _build_msswift_launch_plan(
     *,
     smoke: bool = False,
 ) -> LaunchPlan:
-    """构建 ms-swift 后端的启动计划：委托给 ``swift rlhf`` CLI。"""
-    try:
-        import swift  # noqa: F401
-    except ImportError:
-        raise SystemExit(
-            "ms-swift is required for the msswift backend. "
-            "Install it with: pip install graspo[msswift]"
-        )
+    """构建 ms-swift 后端的启动计划：**进程内 Python API 路线**（决策 D6）。
+
+    **为什么不再把 graspo YAML 交给 ms-swift CLI**（E1 遗留问题的闭合）：
+    ms-swift 的 ``swift sft|rlhf --config <yaml>`` 只认它自己的参数 YAML，不认识
+    graspo 的配置段；E1 的旧实现正是这么做的，因此那条链路从未真正跑通
+    （E1 报告 §5.4 第 2 条已如实记录）。按 D6，主路线是 ``import swift`` 作库：
+    训练在 ``graspo.cli.train_worker`` 进程内完成，配置→ms-swift 参数的映射由
+    ``flow/msswift/_config_mapping.py`` 负责（单一真相源），训练器由
+    ``flow/msswift/trainer.py``（RL）与 ``flow/msswift/sft_trainer.py``（SFT）提供。
+
+    因此本函数产出的命令与 native 后端**同形**（同一个 worker 入口），差别只在
+    并行层：native 用 ``dp×tp×pp`` 推导进程数，msswift 用 ``msswift.nproc_per_node``
+    （S1 数据并行，ms-swift 侧就是 torchrun 的进程数）。
+
+    Args:
+        config_path: graspo YAML 路径（作为 worker 的输入定位参数，§10.1）。
+        config: 已校验的 ``GraspoConfig``。
+        smoke: 冒烟边界，透传给 worker（不修改 config 文件）。
+
+    Returns:
+        ``LaunchPlan``；``uses_torchrun`` 表示是否需要 torchrun 拉起多进程。
+    """
+    from graspo.flow.msswift._config_mapping import launcher_env
 
     python = str(config.launch.python or sys.executable)
-    command = [
-        python, "-m", "swift", "rlhf",
-        "--rlhf_type", "graspo_grpo",
-        "--external_plugins", "graspo/flow/msswift/plugin.py",
-        "--config", str(config_path),
-    ]
+    nnodes = int(config.launch.nnodes)
+    if nnodes < 1:
+        raise SystemExit("launch.nnodes must be >= 1")
+
+    # 进程数真相源：msswift 段优先（与 ms-swift 的 NPROC_PER_NODE 对齐），
+    # 否则回落到 launch.nproc_per_node。两者都不给、也不是多节点时，单进程即可
+    # （GRPO/SFT 的单卡路径不需要分布式初始化）。
+    if config.msswift.nproc_per_node is not None:
+        nproc_per_node = int(config.msswift.nproc_per_node)
+    else:
+        nproc_per_node = int(config.launch.nproc_per_node or 1)
+    if nproc_per_node < 1:
+        raise SystemExit("msswift.nproc_per_node / launch.nproc_per_node must be >= 1")
+
+    _validate_launch_paths(config)
+
+    env = _build_launch_env(config)
+    # S1 数据并行：ms-swift 侧由 launcher 环境变量承载（T1 复验结论）。显式覆盖，
+    # 让用户只在 YAML 里配置一处（§1.4）。
+    env.update(launcher_env(config))
+    env.setdefault("NPROC_PER_NODE", str(nproc_per_node))
+
+    uses_torchrun = nnodes * nproc_per_node > 1
+    if uses_torchrun:
+        command = _torchrun_prefix(python) + [
+            f"--nnodes={nnodes}",
+            f"--node_rank={int(config.launch.node_rank)}",
+            f"--nproc_per_node={nproc_per_node}",
+            f"--master_addr={config.launch.master_addr}",
+            f"--master_port={int(config.launch.master_port)}",
+            "-m",
+            "graspo.cli.train_worker",
+            "--config",
+            str(config_path),
+        ]
+    else:
+        command = [python, "-m", "graspo.cli.train_worker", "--config", str(config_path)]
+
     if smoke:
         command.append("--smoke")
 
     return LaunchPlan(
         command=command,
-        env=_build_launch_env(config),
+        env=env,
         backend="msswift",
-        uses_torchrun=False,
-        nproc_per_node=1,
-        nnodes=1,
+        uses_torchrun=uses_torchrun,
+        nproc_per_node=nproc_per_node,
+        nnodes=nnodes,
     )
 
 

@@ -1,4 +1,17 @@
-"""训练 worker 进程入口：按 train_method 分派 SFT/RL 训练器（支持 --smoke 冒烟）。"""
+"""训练 worker 进程入口：按 train_method + backend 分派 SFT/RL 训练器（支持 --smoke）。
+
+**分派真相源**：``core.discovery.resolve_backend_builder``。
+SFT 与 RL 各有一张注册表（``graspo.sft_backends`` / ``graspo.backends``），都在
+``pyproject.toml`` 的 entry_points 里声明，开发模式下回退到 ``_DEV_FALLBACKS``。
+因此新增后端（含"未来第三个后端"）不需要改动本文件的任何现有分支
+（宪法 §1.2 对扩展开放、对修改关闭；决策 D5）。
+
+**形状契约**：SFT 注册表里的每个工厂都满足
+``factory(config, selection) -> 含 train(smoke: bool) 的训练器``。
+native 侧由 ``create_native_sft_trainer`` 提供，msswift 侧由
+``create_msswift_sft_trainer``（延迟构造器）提供。RL 侧沿用既有
+``create_trainer`` 契约（同样返回含 ``train(smoke)`` 的训练器）。
+"""
 
 import argparse
 
@@ -23,25 +36,19 @@ def main() -> None:
 
     config = GraspoConfig.from_yaml(args.config)
 
+    from graspo.flow.backend_selection import select_backend
+
+    selection = select_backend(config)
+
     if config.train_method == "sft":
-        from graspo.flow.backend_selection import select_backend
-        from graspo.flow.trainer.sft_trainer import SFTTrainer
-        from graspo.flow.runtime import GraspoFlowRuntime
+        from graspo.core.discovery import resolve_backend_builder
 
-        selection = select_backend(config)
-        if selection.name == "native":
-            runtime = GraspoFlowRuntime.from_config(config)
-            SFTTrainer(config, runtime).train(smoke=args.smoke)
-        else:
-            # msswift 后端 SFT：TODO 阶段2实现
-            raise NotImplementedError(
-                f"SFT training is not yet supported for backend '{selection.name}'. "
-                f"Use backend='native' for SFT."
-            )
+        # 注册表解析（SFT 专用），与 RL 分开——SFT 训练器形状不同于 RL 训练器。
+        builder = resolve_backend_builder(selection.name, train_method="sft")
+        builder(config, selection).train(smoke=args.smoke)
     else:
-        from graspo.flow.backend_selection import create_trainer, select_backend
+        from graspo.flow.backend_selection import create_trainer
 
-        selection = select_backend(config)
         create_trainer(config, selection).train(smoke=args.smoke)
 
 

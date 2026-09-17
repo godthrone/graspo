@@ -4,11 +4,19 @@
 
 **真实样例来源（只读）**：环境变量 ``GRASPO_ARD_SAMPLE_ROOT`` 指向的 ARD v3
 产出目录（默认占位值 ``~/.cache/graspo/ard-samples``，见下方 ``_ARD_ROOT``）。
-该目录须含若干 ``<run>/anchor_bank.jsonl``，本测试按 ``_CANDIDATES`` 中的
-data_source 逐档取用。
+该目录须含若干 ``<run>/anchor_bank.jsonl``，本测试按候选清单中的 data_source 逐档取用。
 
-样例目录可用环境变量 ``GRASPO_ARD_SAMPLE_ROOT`` 覆盖。缺失时 **skip + WARNING**
-（不是静默通过——宪法 §3.2 透明退路 + 方案 §9.2 通过判据）。
+要跑通本测试需两件事：
+
+1. ``GRASPO_ARD_SAMPLE_ROOT=<你的 ARD 产出根目录>``——该目录下每个 ``<run>/``
+   内含一个 ``anchor_bank.jsonl``；
+2. 若样例的运行目录名不在 ``_DEFAULT_CANDIDATES`` 里（例如按验证节点命名的运行目录），
+   用 ``GRASPO_ARD_SAMPLE_RUNS`` 显式声明候选，格式为逗号分隔的
+   ``data_source:run_dir``，例如
+   ``GRASPO_ARD_SAMPLE_RUNS="ard_multi:e2e-a-multi-40,ard_text:b3-cond2-text"``。
+   仓库内**不写死任何按节点命名的运行目录名**。
+
+两者任一缺失时 **skip + WARNING**（不是静默通过——宪法 §3.2 透明退路 + 方案 §9.2 通过判据）。
 """
 
 from __future__ import annotations
@@ -31,12 +39,48 @@ _ARD_ROOT = Path(
     )
 ).expanduser()
 
-#: 真实样例候选（名字 → 相对 anchor_bank.jsonl 的目录），按 data_source 覆盖。
-_CANDIDATES: tuple[tuple[str, str], ...] = (
-    ("ard_multi", "e2e-118-multi-40"),
+#: 默认真实样例候选（``(data_source, run_dir)``），按 data_source 覆盖。
+#: 默认值**只含不带主机编号的目录名**；按验证节点命名的运行目录（形如
+#: ``e2e-<node>-multi-*``）不得写进仓库，改由 ``GRASPO_ARD_SAMPLE_RUNS`` 声明。
+_DEFAULT_CANDIDATES: tuple[tuple[str, str], ...] = (
     ("ard_text", "b3-cond2-text"),
     ("ard_text", "b3-multi-image"),
     ("ard_text", "smoke-text-topup"),
+)
+
+#: 候选目录声明的环境变量名：逗号分隔的 ``data_source:run_dir``。
+_CANDIDATES_ENV = "GRASPO_ARD_SAMPLE_RUNS"
+
+
+def _parse_candidates(raw: str) -> tuple[tuple[str, str], ...]:
+    """解析 ``GRASPO_ARD_SAMPLE_RUNS``（逗号分隔的 ``data_source:run_dir``）。
+
+    空项忽略；任一项缺少 ``:`` 或任一侧为空即 ``ValueError``（边界校验，不静默吞）。
+    """
+    parsed: list[tuple[str, str]] = []
+    for item in raw.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        source, sep, run_dir = item.partition(":")
+        source, run_dir = source.strip(), run_dir.strip()
+        if not sep or not source or not run_dir:
+            raise ValueError(
+                f"{_CANDIDATES_ENV} entries must look like 'data_source:run_dir', got {item!r}"
+            )
+        parsed.append((source, run_dir))
+    if not parsed:
+        raise ValueError(
+            f"{_CANDIDATES_ENV} must declare at least one 'data_source:run_dir' entry"
+        )
+    return tuple(parsed)
+
+
+_ENV_CANDIDATES = os.environ.get(_CANDIDATES_ENV, "").strip()
+
+#: 实际候选清单：环境变量显式声明则用之，否则用不带主机编号的默认值。
+_CANDIDATES: tuple[tuple[str, str], ...] = (
+    _parse_candidates(_ENV_CANDIDATES) if _ENV_CANDIDATES else _DEFAULT_CANDIDATES
 )
 
 #: ARD 顶层字段，必须完整透传（方案 §9.2 判据 ④）。
@@ -78,7 +122,9 @@ def real_records() -> list[tuple[str, dict]]:
     if not _REAL_RECORDS:
         warnings.warn(
             f"ARD real sample root not found or empty: {_ARD_ROOT} — L2 contract test skipped. "
-            "Set GRASPO_ARD_SAMPLE_ROOT to the ARD outputs directory to run it.",
+            "Set GRASPO_ARD_SAMPLE_ROOT to the ARD outputs directory, and "
+            f"{_CANDIDATES_ENV} to the comma-separated 'data_source:run_dir' candidates "
+            "if the run directories are not in the built-in defaults.",
             UserWarning,
             stacklevel=1,
         )
