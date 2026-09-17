@@ -89,19 +89,13 @@
 >   **不要求同时实现三套**——按"哪套能把方法做得最好"来选。
 > - **优先依托 Megatron 引擎**：它对 TP / PP / **CP** / SP / 分布式优化器的支持最齐全，
 >   且**是唯一能覆盖 CP 的路径**（CP 是长上下文的关键手段，见 §2.5）。
->   **⚠️ 该优先级的成立前提与当前证据档（声明层与事实层必须分开看）**：
->   ① **注册层 ✔**——官方受支持模型表的 `Support Megatron` 列对 `Qwen3.5-9B` / `Qwen3.8-27B` **均为 ✔**；
->      注册表实现在**外部包 `mcore_bridge`**（ms-swift 经 `get_model_meta` 查询，返回 `None` 即报 not supported）。
->   ② **运行时 ⚠️ 未验证**——**从未在这两个模型上跑过 Megatron**；既有 Megatron 实测只跑过 `Qwen3-8B`
->      ⇒ 本策略对目标两模型一律标为 **`⚠️ 官方声明支持，运行时未验证`**。
->   ③ **多模态强制 `mcore-bridge`**（`megatron-bridge` 不支持多模态，会直接报错），且需额外依赖
->      （`transformers>=5.0.0.dev`、`qwen_vl_utils`、`decord`）。
->   ④ **官方对 dense 模型推荐 transformers 后端**（Megatron 的推荐对象是 MoE）；且官方**无**
->      「`qwen3_5` dense 9B/27B + Megatron」现成脚本（Megatron 侧 `qwen3_5` 现成脚本只有 2B/4B dense
->      与 35B-A3B **MoE**；9B 在官方脚本里只作 teacher 出现）。
->   ⑤ **线性注意力（GDN）的 CP 官方要求 `megatron-core` main 分支**，测试节点装的是 **release 版** ⇒ 待确认。
->   ⑥ **备选回退路径**：若 Megatron 走不通 ⇒ ms-swift **标准路径 + SP（Ulysses / Ring，同样沿序列维分片）
->      + ZeRO-3**；native 侧用 **SP + TP / PP**。
+>   **⚠️ 该优先级的成立前提（结论 + 指针；事实与证据不在此重复）**：
+>   该优先级对**目标两模型**目前只有**注册层证据**、**运行时从未端到端实测**
+>   ⇒ 本策略对目标两模型一律标为 **`⚠️ 官方声明支持，运行时未验证`**；
+>   其**注册层 / 运行时证据、多模态与 Megatron 的硬约束、官方对 dense 模型的口径、
+>   线性注意力（GDN）CP 的分支前提、备选回退路径**——**全部集中在 §2.8 G-11**，本节不重复展开
+>   （回退路径另见 §2.5）。**验证闸门**：接通前须先过 §2.8 G-12 的 1-iter 冒烟；
+>   **未过冒烟前不得按「已验证」使用**。
 > - **DeepSpeed / FSDP2 / device_map 作为补充**：仅在 Megatron 覆盖不到或成本过高时启用
 >   （例如全量训练需要 ZeRO-3 + offload；以及多模态不兼容时的回退）。
 > - **对外只有 `native` / `ms-swift` 两档后端**；**引擎 / 路径选择是 ms-swift 后端的内部实现策略，不暴露给用户做选择**。
@@ -140,6 +134,9 @@
 > **本表是配置文件设计的输入**：每一行对应配置文件里的一个（组）字段，**层级对应配置文件的段落划分**；
 > 具体的配置结构留待与用户讨论后确定（**本文档不发明配置文件格式，只写映射关系**）。
 > **每行都从"方法"视角写目标与当前状态**；框架（Megatron / DeepSpeed / FSDP2）只出现在"对应配置项"与说明里。
+> **字段名 vs 源码位置（本文档的文档边界）**：本表**只写字段名与标识**（它们是配置文件设计的输入，属结构）；
+> **字段 / 标识对应的源码位置（`文件:行号`）统一见文末附录 A**——行号属实现细节、且会随代码演进漂移，
+> **不在 §2.4 正文出现**（BADGE 宪法 §1.6）。
 
 #### **层 1 · 并行维度**（世界大小如何切分）
 
@@ -147,15 +144,15 @@
 
 | 项 | 作用 | native 目标 | native 当前 | ms-swift 目标 | ms-swift 当前 | 对应配置项 |
 |---|---|---|---|---|---|---|
-| **DP**（数据并行） | 把数据切到多卡；复制模型。native 为自研 all_reduce 实现（非 DDP） | **目标** | ✅ 已实现可跑 | **目标** | ✅ 已实现可跑 | `dp_size`（`schema.py:214`） |
-| **TP**（张量并行） | 把权重的 hidden / 头 / FFN 中间维切到多卡。native 须整除注意力头数且 `TP ≤ num_kv_heads` | **目标** | ✅ 已实现可跑 | **目标**（依托 Megatron 引擎） | ⚠️ 引擎字段存在，通路未接通 | `tp_size`（`:213`）｜Megatron `tensor_model_parallel_size`（`:277`） |
-| **PP**（流水线并行） | 把层切到多卡，多段流水。native 当前仅 `1F1B` 一种调度且多卡实测曾失败 | **目标** | ⚠️ 有入口未验证 | **目标**（依托 Megatron 引擎） | ⚠️ 引擎字段存在，通路未接通 | `pp_size`（`:215`）｜`pp_scheduler`（`:241`）｜`pp_micro_batch_size`（`:225`）｜`pp_max_inflight_microbatches`（`:236`）｜Megatron `pipeline_model_parallel_size`（`:280`） |
-| **SP**（序列并行） | **沿序列维**切激活，长上下文的关键手段之一。**注意：本仓库有【三套】SP 机制，源码注释原文警告「是两套机制，勿混用」**（`schema.py:287-288`）——native 布尔开关、ms-swift 标准路径整数度、Megatron 段布尔开关 | **目标** | ✅ 已实现可跑 | **目标** | ② `✅ 已实现可跑`（标准路径）｜③ `⚠️ 引擎字段存在，通路未接通`（Megatron，见 G-5） | ① native `sequence_parallel`（`schema.py:224`，布尔；与 TP 同进程组）｜② ms-swift 标准路径 `sequence_parallel_size`（`:344`，整数度；`sp_world_size = gcd(num_kv_heads, world_size)`）｜③ **Megatron 引擎 `sequence_parallel`（`:288`，布尔，仅当 TP>1 生效；源码注释 `:287` 原文：「与标准路径的 `msswift.sequence_parallel_size` 是两套机制，勿混用」）** |
-| **CP**（上下文并行） | **沿序列维**切分，长上下文的关键手段之一；**CP 只切序列、不切权重**；**唯一能覆盖 CP 的是 Megatron 引擎**（用户已定：native 不做 CP） | **不做**（用户已定，见 §2.7 N-7） | ⛔ 硬禁用 | **目标**（须依托 Megatron 引擎接通） | ⚠️ 引擎字段存在，通路未接通 | Megatron `context_parallel_size`（`:290`） |
-| **device_map**（层切分） | 按层把模型切到多卡。**它决定卡上放什么，属并行维度**（原列在层 2，与层 2「不改变卡分配」的定义冲突，已移入层 1）；**同时是 Z3 的互斥约束参与方** | **不做**（用户已定） | ⛔ 未实现 | ⛔ 本期不作为需求（按需补充） | ✅ 已实现可跑 | `device_map`（`:333`） |
-| **AutoTP**（自动张量并行） | 自动张量并行（上游仅全参）。**它是对 TP 的自动化，属并行维度**（原列在层 2，已移入层 1） | **不做**（用户已定） | ⛔ 未实现 | **待定**（全量入口打通后评估） | ⚠️ 引擎字段存在，通路未接通 | `deepspeed_autotp_size`（`:340`） |
+| **DP**（数据并行） | 把数据切到多卡；复制模型。native 为自研 all_reduce 实现（非 DDP） | **目标** | ✅ 已实现可跑 | **目标** | ✅ 已实现可跑 | `dp_size` |
+| **TP**（张量并行） | 把权重的 hidden / 头 / FFN 中间维切到多卡。native 须整除注意力头数且 `TP ≤ num_kv_heads` | **目标** | ✅ 已实现可跑 | **目标**（依托 Megatron 引擎） | ⚠️ 引擎字段存在，通路未接通 | `tp_size`｜Megatron `tensor_model_parallel_size` |
+| **PP**（流水线并行） | 把层切到多卡，多段流水。native 当前仅 `1F1B` 一种调度且多卡实测曾失败 | **目标** | ⚠️ 有入口未验证 | **目标**（依托 Megatron 引擎） | ⚠️ 引擎字段存在，通路未接通 | `pp_size`｜`pp_scheduler`｜`pp_micro_batch_size`｜`pp_max_inflight_microbatches`｜Megatron `pipeline_model_parallel_size` |
+| **SP**（序列并行） | **沿序列维**切激活，长上下文的关键手段之一。**注意：本仓库有【三套】SP 机制，源码注释原文警告「是两套机制，勿混用」**——native 布尔开关、ms-swift 标准路径整数度、Megatron 段布尔开关 | **目标** | ✅ 已实现可跑 | **目标** | ② `✅ 已实现可跑`（标准路径）｜③ `⚠️ 引擎字段存在，通路未接通`（Megatron，见 G-5） | ① native `sequence_parallel`（布尔；与 TP 同进程组）｜② ms-swift 标准路径 `sequence_parallel_size`（整数度；`sp_world_size = gcd(num_kv_heads, world_size)`）｜③ **Megatron 引擎 `sequence_parallel`（布尔，仅当 TP>1 生效；源码注释原文：「与标准路径的 `msswift.sequence_parallel_size` 是两套机制，勿混用」）** |
+| **CP**（上下文并行） | **沿序列维**切分，长上下文的关键手段之一；**CP 只切序列、不切权重**；**唯一能覆盖 CP 的是 Megatron 引擎**（用户已定：native 不做 CP） | **不做**（用户已定，见 §2.7 N-7） | ⛔ 硬禁用 | **目标**（须依托 Megatron 引擎接通） | ⚠️ 引擎字段存在，通路未接通 | Megatron `context_parallel_size` |
+| **device_map**（层切分） | 按层把模型切到多卡。**它决定卡上放什么，属并行维度**（原列在层 2，与层 2「不改变卡分配」的定义冲突，已移入层 1）；**同时是 Z3 的互斥约束参与方** | **不做**（用户已定） | ⛔ 未实现 | ⛔ 本期不作为需求（按需补充） | ✅ 已实现可跑 | `device_map` |
+| **AutoTP**（自动张量并行） | 自动张量并行（上游仅全参）。**它是对 TP 的自动化，属并行维度**（原列在层 2，已移入层 1） | **不做**（用户已定） | ⛔ 未实现 | **待定**（全量入口打通后评估） | ⚠️ 引擎字段存在，通路未接通 | `deepspeed_autotp_size` |
 
-**层内硬约束**：**native**：`TP × PP × DP = 卡数`（源码校验：`src/graspo/flow/parallel/state.py:99-103` `expected_world_size = dp_size * tp_size * pp_size`，不匹配即抛错；SP 不占卡，与 TP 同进程组，须 `TP ≥ 2`，见 `flow/runtime.py:384-385`）。**ms-swift**：SP 是独立轴，`sp_world_size = gcd(num_kv_heads, world_size)` 且须整除 `num_kv_heads`，`DP 度 = world_size / sp_world_size` —— 与 native 不是同一条恒等式。
+**层内硬约束**：**native**：`TP × PP × DP = 卡数`（源码校验：`expected_world_size = dp_size * tp_size * pp_size`，不匹配即抛错；SP 不占卡，与 TP 同进程组，须 `TP ≥ 2`）。源码位置见附录 A。**ms-swift**：SP 是独立轴，`sp_world_size = gcd(num_kv_heads, world_size)` 且须整除 `num_kv_heads`，`DP 度 = world_size / sp_world_size` —— 与 native 不是同一条恒等式。
 
 #### **层 2 · 分片策略**（权重 / 梯度 / 优化器状态如何摊）
 
@@ -163,10 +160,10 @@
 
 | 项 | 作用 | native 目标 | native 当前 | ms-swift 目标 | ms-swift 当前 | 对应配置项 |
 |---|---|---|---|---|---|---|
-| **优化器态 / 梯度分片**（ZeRO-1/2 等价物） | 把优化器态与梯度摊到各卡。**Megatron 侧的分布式优化器是其原生能力**；DeepSpeed ZeRO-1/2 为补充 | **不做**（用户已定） | ⛔ 架构硬禁用 | **目标**（优先 Megatron 分布式优化器；**前提见本层「Megatron 优先」说明——未过 §2.8 G-12 冒烟前为未验证态**） | ✅ 已实现可跑 | Megatron `use_distributed_optimizer`（`:269`）｜`deepspeed`（`:336`） |
-| **权重分片**（ZeRO-3 等价物） | 把权重也摊到各卡。**Megatron-FSDP 的分片阶段由 `data_parallel_sharding_strategy` 选择**（`no_shard` / `optim` / `optim_grads` / `optim_grads_params`） | **不做**（用户已定） | ⛔ 架构硬禁用 | **目标**（Megatron-FSDP / ZeRO-3） | ✅ 已实现可跑 | Megatron `use_megatron_fsdp`（`:271`）｜**`data_parallel_sharding_strategy`（`:272-274`，Megatron-FSDP 的 ZeRO 阶段选择器）**｜`strict_fsdp_dtensor_load`（`:275`）｜`deepspeed`（`:336`） |
-| **CPU offload** | 把优化器态 / 权重换出到 CPU 内存 | **不做**（用户已定） | ⛔ 架构硬禁用 | **目标**（ZeRO-3 offload 预设） | ✅ 已实现可跑 | `deepspeed` 预设（`:336`）｜`zero_hpz_partition_size`（`:338`，ZeRO++） |
-| **FSDP2** | 全分片数据并行（v2）。**补充路径**，Megatron 覆盖不到时启用 | **不做**（用户已定） | ⛔ 未实现 | ⛔ 本期不作为需求（按需补充） | ✅ 已实现可跑 | `fsdp`（`:342`） |
+| **优化器态 / 梯度分片**（ZeRO-1/2 等价物） | 把优化器态与梯度摊到各卡。**Megatron 侧的分布式优化器是其原生能力**；DeepSpeed ZeRO-1/2 为补充 | **不做**（用户已定） | ⛔ 架构硬禁用 | **目标**（优先 Megatron 分布式优化器；**前提见本层「Megatron 优先」说明——未过 §2.8 G-12 冒烟前为未验证态**） | ✅ 已实现可跑 | Megatron `use_distributed_optimizer`｜`deepspeed` |
+| **权重分片**（ZeRO-3 等价物） | 把权重也摊到各卡。**Megatron-FSDP 的分片阶段由 `data_parallel_sharding_strategy` 选择**（`no_shard` / `optim` / `optim_grads` / `optim_grads_params`） | **不做**（用户已定） | ⛔ 架构硬禁用 | **目标**（Megatron-FSDP / ZeRO-3） | ✅ 已实现可跑 | Megatron `use_megatron_fsdp`｜**`data_parallel_sharding_strategy`（Megatron-FSDP 的 ZeRO 阶段选择器）**｜`strict_fsdp_dtensor_load`｜`deepspeed` |
+| **CPU offload** | 把优化器态 / 权重换出到 CPU 内存 | **不做**（用户已定） | ⛔ 架构硬禁用 | **目标**（ZeRO-3 offload 预设） | ✅ 已实现可跑 | `deepspeed` 预设｜`zero_hpz_partition_size`（ZeRO++） |
+| **FSDP2** | 全分片数据并行（v2）。**补充路径**，Megatron 覆盖不到时启用 | **不做**（用户已定） | ⛔ 未实现 | ⛔ 本期不作为需求（按需补充） | ✅ 已实现可跑 | `fsdp` |
 
 **层内硬约束**：`deepspeed` ✗ `fsdp`、`deepspeed` ✗ `device_map`、`fsdp` ✗ `device_map`（三者互斥）；ZeRO++ 须同时给 `deepspeed`；`deepspeed_autotp_size` 仅全参可用。**Megatron 路径三条硬约束**（上游源码）：① **LoRA 必须 `bridge_backend=mcore-bridge`**（megatron-bridge 不支持 LoRA，非 full 时直接报错）；② `language_model_only=True` 时**禁用 `lora_llm`**（只能 `lora`）；③ `freeze_vit` 默认 True，且其冻结逻辑**仅 `tuner_type='full'` 生效**。
 
@@ -176,12 +173,12 @@
 
 | 项 | 作用 | native 目标 | native 当前 | ms-swift 目标 | ms-swift 当前 | 对应配置项 |
 |---|---|---|---|---|---|---|
-| **GC / 激活重算** | 用激活重算换显存。native 默认开启。**Megatron 引擎侧用 `recompute_granularity` / `recompute_method` / `recompute_num_layers`，而本仓库配置段【查无任何 `recompute_*` 字段】⇒ 字段缺失，待映射**（已计入 §2.8 G-7） | **目标** | ✅ 已实现可跑 | **目标（字段缺失，待映射）** | ⚠️ 字段缺失，待映射 | native `gradient_checkpointing`（`schema.py:65`）｜**Megatron `recompute_granularity` / `recompute_method` / `recompute_num_layers`（本仓库 `schema.py` 无对应字段 ⇒ 待新增映射）** |
-| **l2k**（`use_logits_to_keep`） | 只对少量 token 计算 `lm_head`，省 logits 及其梯度。**与 `SP>1` 的关系（两处引用，本表已按源码重写）**：① **默认推导**——`trainers/mixin.py:211-223` 的 `get_use_logits_to_keep(self.template.sequence_parallel_size == 1)` 使 `SP>1` 时**默认**取 False（显式设为 True 时该函数不 raise）；② **运行时硬拦**——一旦真启用 l2k 且 `SP>1`，`trainers/mixin.py:1261-1263` 的 `prepare_logits_to_keep()` 抛 `NotImplementedError`。**另：多模态模型在非 transformers_5 下 l2k 被强制置 False**（`mixin.py:215-216`） | **不做**（用户已定） | ⛔ 未实现 | **目标** | ✅ 已实现可跑 | `use_logits_to_keep`（`:356`） |
-| **FA2**（flash attention） | 更省显存的注意力实现；SP / packing 的硬前置。native 侧为可选实现，未在 native 上验证 | **不做**（用户已定） | ⚠️ 有入口未验证 | **目标** | ✅ 已实现可跑 | `attn_implementation`（`:64`，native）｜`attn_impl`（`:350`，ms-swift） |
-| **liger kernel** | 融合算子，降低中间激活 | **不做**（用户已定） | ⛔ 未实现 | **目标** | ✅ 已实现可跑 | `use_liger_kernel`（`:351`） |
+| **GC / 激活重算** | 用激活重算换显存。native 默认开启。**Megatron 引擎侧用 `recompute_granularity` / `recompute_method` / `recompute_num_layers`，而本仓库配置段【查无任何 `recompute_*` 字段】⇒ 字段缺失，待映射**（已计入 §2.8 G-7） | **目标** | ✅ 已实现可跑 | **目标（字段缺失，待映射）** | ⚠️ 字段缺失，待映射 | native `gradient_checkpointing`｜**Megatron `recompute_granularity` / `recompute_method` / `recompute_num_layers`（本仓库 `schema.py` 无对应字段 ⇒ 待新增映射）** |
+| **l2k**（`use_logits_to_keep`） | 只对少量 token 计算 `lm_head`，省 logits 及其梯度。**与 `SP>1` 的关系（两处引用，本表已按源码重写）**：① **默认推导**——`get_use_logits_to_keep(self.template.sequence_parallel_size == 1)` 使 `SP>1` 时**默认**取 False（显式设为 True 时该函数不 raise）；② **运行时硬拦**——一旦真启用 l2k 且 `SP>1`，`prepare_logits_to_keep()` 抛 `NotImplementedError`。**另：多模态模型在非 transformers_5 下 l2k 被强制置 False** | **不做**（用户已定） | ⛔ 未实现 | **目标** | ✅ 已实现可跑 | `use_logits_to_keep` |
+| **FA2**（flash attention） | 更省显存的注意力实现；SP / packing 的硬前置。native 侧为可选实现，未在 native 上验证 | **不做**（用户已定） | ⚠️ 有入口未验证 | **目标** | ✅ 已实现可跑 | `attn_implementation`（native）｜`attn_impl`（ms-swift） |
+| **liger kernel** | 融合算子，降低中间激活 | **不做**（用户已定） | ⛔ 未实现 | **目标** | ✅ 已实现可跑 | `use_liger_kernel` |
 
-**层内硬约束**：**l2k 与 `SP>1` 的关系（按源码重写，不是“上游硬互斥”）**：① **默认推导**——`trainers/mixin.py:211-223` 使 `SP>1` 时 l2k **默认**为 False（显式设 True 时该函数不 raise）；② **运行时硬拦**——真启用 l2k 且 `SP>1` 时，`trainers/mixin.py:1261-1263` 的 `prepare_logits_to_keep()` 抛 `NotImplementedError`；③ **多模态下 l2k 被强制关闭**（非 transformers_5，`mixin.py:215-216`）。另：`packing ⇒ padding_free ⇒ 强制 FA2`（见层 4）。
+**层内硬约束**：**l2k 与 `SP>1` 的关系（按源码重写，不是“上游硬互斥”）**：① **默认推导**——`get_use_logits_to_keep` 使 `SP>1` 时 l2k **默认**为 False（显式设 True 时该函数不 raise）；② **运行时硬拦**——真启用 l2k 且 `SP>1` 时，`prepare_logits_to_keep()` 抛 `NotImplementedError`；③ **多模态下 l2k 被强制关闭**（非 transformers_5）。另：`packing ⇒ padding_free ⇒ 强制 FA2`（见层 4）。源码位置见附录 A。
 
 #### **层 4 · 批次与序列组织**（一次算多少、样本怎么拼）
 
@@ -189,11 +186,11 @@
 
 | 项 | 作用 | native 目标 | native 当前 | ms-swift 目标 | ms-swift 当前 | 对应配置项 |
 |---|---|---|---|---|---|---|
-| **micro-batch size** | 单次前向的样本数 | **目标** | ✅ 已实现可跑 | **目标** | ✅ 已实现可跑 | `micro_batch_size`（`:229`，native）｜`per_device_train_batch_size`（`:369`，ms-swift） |
-| **梯度累积（GA）** | 多步累积再更新，放大有效 batch；与 micro-batch 共同决定有效 batch | **目标** | ✅ 已实现可跑 | **目标** | ✅ 已实现可跑 | `gradient_accumulation_micro_batches`（`:109`） |
-| **packing** | 把多条短样本拼进同一序列，减少 padding 浪费；开启后自动置 `padding_free`，进而强制 flash attention | **不做**（用户已定） | ⛔ 未实现 | **目标** | ✅ 已实现可跑 | `packing`（`:348`） |
-| **padding_free** | 免 padding 的变长批处理 | **不做**（用户已定） | ⛔ 未实现 | **目标** | ✅ 已实现可跑 | `padding_free`（`:349`） |
-| **序列长度上限与截断边界** | **控制上下文的入口**——决定一条样本最多算多少 token、超长如何截断；**它直接决定 §3 递增测试的可用长度范围**。native 侧在配置段**无显式长度上限字段**（由数据侧决定）；ms-swift 侧 `max_model_len` 即该入口 | **目标（字段待补）** | ⚠️ 字段缺失（配置段无显式上限字段） | **目标** | ✅ 已实现可跑 | ms-swift `max_model_len`（`schema.py:347`）｜**native：配置段无对应字段（长度由数据侧控制）⇒ 若需在配置层显式控制，须新增字段** |
+| **micro-batch size** | 单次前向的样本数 | **目标** | ✅ 已实现可跑 | **目标** | ✅ 已实现可跑 | `micro_batch_size`（native）｜`per_device_train_batch_size`（ms-swift） |
+| **梯度累积（GA）** | 多步累积再更新，放大有效 batch；与 micro-batch 共同决定有效 batch | **目标** | ✅ 已实现可跑 | **目标** | ✅ 已实现可跑 | `gradient_accumulation_micro_batches` |
+| **packing** | 把多条短样本拼进同一序列，减少 padding 浪费；开启后自动置 `padding_free`，进而强制 flash attention | **不做**（用户已定） | ⛔ 未实现 | **目标** | ✅ 已实现可跑 | `packing` |
+| **padding_free** | 免 padding 的变长批处理 | **不做**（用户已定） | ⛔ 未实现 | **目标** | ✅ 已实现可跑 | `padding_free` |
+| **序列长度上限与截断边界** | **控制上下文的入口**——决定一条样本最多算多少 token、超长如何截断；**它直接决定 §3 递增测试的可用长度范围**。native 侧在配置段**无显式长度上限字段**（由数据侧决定）；ms-swift 侧 `max_model_len` 即该入口 | **目标（字段待补）** | ⚠️ 字段缺失（配置段无显式上限字段） | **目标** | ✅ 已实现可跑 | ms-swift `max_model_len`｜**native：配置段无对应字段（长度由数据侧控制）⇒ 若需在配置层显式控制，须新增字段** |
 | **attention mask / 序列窗口** | 控制注意力可见范围（因果掩码、窗口、padding 掩码）；**本仓库两后端的配置段均未暴露该入口**（由框架按模型结构自动决定） | **无对应配置项** | — | **无对应配置项** | — | —（两后端均无配置项，记为无映射） |
 
 **层内硬约束**：`packing ⇒ padding_free ⇒ 强制 FA2`；`padding_free` 单独开时也要求 flash attention 系实现。
@@ -204,9 +201,9 @@
 
 | 项 | 作用 | native 目标 | native 当前 | ms-swift 目标 | ms-swift 当前 | 对应配置项 |
 |---|---|---|---|---|---|---|
-| **混合精度**（bf16） | 训练数值精度；本期口径为 bf16 | **目标** | ✅ 已实现可跑 | **目标** | ✅ 已实现可跑 | `torch_dtype`（`:63`） |
+| **混合精度**（bf16） | 训练数值精度；本期口径为 bf16 | **目标** | ✅ 已实现可跑 | **目标** | ✅ 已实现可跑 | `torch_dtype` |
 | **量化**（QLoRA / 4bit / FP8 / FP4） | 低比特权重与计算 | **不做**（§2.7 N-1） | — | **不做**（§2.7 N-1） | — | — |
-| **多机**（`nnodes > 1`） | 跨节点扩展 | **不做**（§2.7 N-3） | ⛔ 未实现 | **不做**（§2.7 N-3） | — | `nnodes`（`:328`） |
+| **多机**（`nnodes > 1`） | 跨节点扩展 | **不做**（§2.7 N-3） | ⛔ 未实现 | **不做**（§2.7 N-3） | — | `nnodes` |
 
 **层内硬约束**：量化需 Hopper 及以上硬件与 `transformer_engine`；本仓库两后端均未暴露量化配置。
 
@@ -272,6 +269,7 @@
 | G-10 | **RL 多卡稳定性**（native 侧 PP 多卡曾崩溃） | native 的 GRASPO 多卡档 | ⚠️ 有入口未验证 |
 | G-11 | **Megatron 引擎支持多模态 / VLM（注册层已核实、运行时未验证）**——**注册层证据**：官方受支持模型表 `Support Megatron` 列对 `Qwen3.5-9B` / `Qwen3.8-27B` **均为 ✔**；注册表实现在**外部包 `mcore_bridge`**（ms-swift 经 `get_model_meta` 查询，返回 `None` 即报 not supported）；官方示例 `examples/megatron/multimodal/` 下有 VLM 脚本；`megatron_args.py` 的 `_init_multimodal_full()`；`megatron_lm_utils.py` 的「Multimodal models will handle CP in input_embeds」。**运行时事实**：**从未在这两个模型上跑过 Megatron**（既有 Megatron 实测只跑过 `Qwen3-8B`）⇒ 标为 **`⚠️ 官方声明支持，运行时未验证`**。**硬约束**：多模态**强制 `mcore-bridge`**（`megatron-bridge` 不支持多模态，会直接报错），且需额外依赖（`transformers>=5.0.0.dev`、`qwen_vl_utils`、`decord`）。**口径提醒**：官方对 **dense 模型推荐 transformers 后端**（Megatron 的推荐对象是 MoE）；且官方**无**「`qwen3_5` dense 9B/27B + Megatron」现成脚本——Megatron 侧 `qwen3_5` 现成脚本只有 2B/4B dense 与 35B-A3B **MoE**，9B 在官方脚本里只作 teacher 出现。**待确认**：线性注意力（GDN）的 CP 官方要求 `megatron-core` **main 分支**，而测试节点装的是 **release 版**。**备选回退路径（若 Megatron 走不通）**：ms-swift **标准路径 + SP（Ulysses / Ring，同样沿序列维分片）+ ZeRO-3**；native 侧用 **SP + TP / PP**。 | 全部多模态目标档（与 G-5 叠加） | ⚠️ 官方声明支持，运行时未验证 |
 | G-12 | **`qwen3_5` 两模型在 Megatron 下的运行时可行性未实测**——注册层已核实（§2.8 G-11），但缺一次真机验证 ⇒ **须先做 1-iter 冒烟**：`train_iters=1` / `micro_batch_size=1`，让 `get_model_meta('qwen3_5')` 给出「非 None / 抛 not supported」的二值答案，并验证权重键映射（尤其 `model.visual.*` 与 `mtp.*`）。**冒烟通过前，Megatron 优先策略对目标两模型均为未验证态**；在它通过之前不宜并行投入 27B 的大规模实现 | 全部需要 TP / PP / CP / Megatron 的目标档 | ⚠️ 未实测（须先做 1-iter 冒烟） |
+| G-13 | **`lora.r` 无边界校验，LoRA 静默失效（fail-open 静默降级）**——`LoRAConfig`（`src/graspo/core/schema.py:41-53`）**没有 `r > 0` 校验**。**已证事实（源码）**：`src/graspo/flow/lora/lora_linear.py:123` 为 `lora_enabled = bool(lora_enabled and r > 0)` ⇒ `r <= 0` 时该层**不建立 LoRA**；同文件 `:132-134` 随即把 `lora_a` / `lora_b` **注册为 `None`**；而 `src/graspo/flow/adapters/models/qwen35_36/model.py:156`（Qwen3.5/3.8 侧）与 `src/graspo/flow/adapters/models/qwen3/model.py:100`（Qwen3-8B 侧）均为**无条件**的 `param.requires_grad = "lora_" in name` ⇒ **没有任何参数名含 `lora_`** ⇒ **native 侧零可训练参数**（训练空转或报错）；配置边界**不报错、静默失效**。**未验证（不作结论）**：ms-swift 侧 `--lora_rank 0` 的行为尚未验证。**本期要补**：在配置边界加校验——**`r <= 0` 直接报错（fail-closed）**，不得静默降级 | native 侧全部 LoRA 档（12 档 = 2 模型 × SFT / GRASPO × 1 / 2 / 4 卡，已证零可训练参数）；ms-swift 侧 `--lora_rank 0` 的行为未验证，暂不计入影响范围 | ⛔ 未实现 |
 
 ---
 
@@ -340,7 +338,7 @@
 | **A3** | checkpoint **可加载** | 落盘 ckpt 存在 **且能被子进程重新加载**（不是只看文件在） |
 | **A4** | 同 config 同 seed 两次一致 | 两次运行落盘产物 diff 为空（排除不可控随机性）；**对全部目标档位无条件适用**，每档跑 **2 次** |
 | **A5** | 每档有落盘产物 | log / metrics / checkpoint / config 快照，四件套 + §4.4 的**环境指纹与评测产物** |
-| **A6** | **数值健康** | 训练全程 `loss` 与 `grad_norm` **均为有限值（非 NaN / 非 Inf）**；且最终 `loss` 相比初始有下降趋势（不高于初始）。**阈值口径**：`loss`/`grad_norm` 出现任一 NaN 或 Inf 即 A6 不通过；梯度爆炸的量化上限暂按 `grad_norm ≤ 1e3` 判定，**该阈值待定**（不同模型/长度的合理量级不同，须由首轮实测标定后写死） |
+| **A6** | **数值健康** | 训练全程 `loss` 与 `grad_norm` **均为有限值（非 NaN / 非 Inf）**；且最终 `loss` 相比初始有下降趋势（不高于初始）。**阈值口径**：`loss`/`grad_norm` 出现任一 NaN 或 Inf 即 A6 不通过；梯度爆炸的量化上限暂按 `grad_norm ≤ 1e3` 判定，**该阈值待定**（不同模型/长度的合理量级不同）——**标定要求见本节末「三处待定阈值的标定要求」** |
 
 **A4 的作用域与容差（可操作判据）**：
 - **作用域**：A4 **只适用于"固定 config 的重复运行"**。在 §3.1 的递增流程中，**每个长度档一旦确定（通过或失败），该长度档再各跑 2 次**做一致性比对；**运行时不同 `max_length` 的两次运行不算 A4**。成本控制：长档（≥64K）可只对**最终确定的长度档**做双跑，中间长度档单跑（须在备注注明"中间档单跑"）。
@@ -348,7 +346,22 @@
   - **必须逐比特一致的产物**：`config` 快照、数据集使用记录、`exit code`、`optimizer step 数`、失败类型。
   - **允许容差的产物**：`loss` 曲线**逐点相对偏差 ≤ 1e-3**；最终权重统计量（LoRA 权重或全量权重的 L2 范数）**相对偏差 ≤ 1e-4**。
   - **允许的非确定性来源**（须在备注声明）：CUDA 非确定性 kernel、packing 的动态 shape、通信归约顺序、混合精度累加顺序。
-  - **最终容差阈值待定**：上列 `1e-3` / `1e-4` 为**初值**，须由首轮实测标定；标定前不得据此放宽 §4.3 的 L3 阻断判定。
+  - **最终容差阈值待定**：上列 `1e-3` / `1e-4` 为**初值**——**标定要求见本节末「三处待定阈值的标定要求」**。
+
+**三处待定阈值的标定要求（`1e-3` / `1e-4` / `grad_norm ≤ 1e3`）**
+
+> **为什么需要本条**：这三个数值目前是**未标定初值**，而 §4.3 的 **L3（回归层）阻断判定**依赖 A4 容差、
+> A6 的阈值判定依赖 `1e3`——**标定前这些判定无法执行**。本条写清**谁标定、何时标定、标定前如何处置**。
+> **数值本身不动**：`1e-3` / `1e-4` / `1e3` 原样保留为初值，本条的效力仅限于"标定前不得作为判定依据"。
+
+| 待定阈值 | 所属判据 | 谁标定 | 何时标定 | 标定前如何处置 |
+|:--:|---|---|---|---|
+| **`1e-3`**（`loss` 曲线逐点相对偏差上限） | A4 一致性容差 | **端到端实验的执行者**依据本档双跑实测偏差给出标定结论，**审查者复核** | **首轮实测（A4 双跑）完成后立即标定，并写死进本文件** | **未标定前不得依据该阈值执行 §4.3 的 L3 阻断判定**：该档 L3 结论记「阈值未标定」，**既不判通过、也不判阻断**（以双跑观测记录呈现，标定后回填判定），且**不得据此放宽任何判据** |
+| **`1e-4`**（最终权重统计量相对偏差上限） | A4 一致性容差 | 同上（端到端实验的执行者给出、审查者复核） | 同「`1e-3`」行 | 同「`1e-3`」行 |
+| **`1e3`**（`grad_norm` 梯度爆炸量化上限） | A6 数值健康 | 同上（端到端实验的执行者给出、审查者复核） | 同「`1e-3`」行 | **未标定前不得依据该阈值判 A6 通过或阻断**：该档 A6 只判"全程 `loss` / `grad_norm` 非 NaN / 非 Inf"（这一条不依赖未标定阈值），超过 `1e3` 的观测**只记录、不判阻断**，阈值结论记「阈值未标定」 |
+
+> **标定前的一致性口径**：三个初值**只作观测记录口径**，**不得作为阻断依据**——这正是「标定前 L3 阻断判定不可执行」的落地处置：L3 暂以"双跑观测记录"呈现，标定并写死后才按 §4.3 回填阻断判定。
+> **标定后的写法**：标定完成即在原处把初值替换为标定值并注明标定依据（模型 / 长度 / 实测偏差）；**本条在下一次标定前一直有效**。
 
 ### 4.2 「效果达标」判据（与「跑通」分层，两者都要过）
 
@@ -531,3 +544,63 @@ A4 的两次运行以**同一 config 快照 + 同一 seed** 执行，并**按 §
 | # | 待确认 | 选项 |
 |:--:|---|---|
 | — | **无**：前几轮的开放项（native SP / CPT·OPD 模式）已由用户拍板关闭 | — |
+
+---
+
+## 附录 A：字段与源码位置对照表
+
+> **本附录是 §2.4 的实现位置索引**，与正文分工如下：**正文只写"配置文件设计需要哪些字段"（结构）**，
+> 本附录**只写"该字段 / 标识在源码里的位置"（实现细节）**。
+> **为什么下沉到附录**：源码行号属实现细节，且会随代码演进漂移（BADGE 宪法 §1.6 文档边界）——
+> 正文引用行号必然过期，附录引用则可整体刷新。
+> **口径提醒**：本表行号**仅供实现时快速定位，不作为任何判据**；行号失效时以字段名为准。
+> 表中「§2.4 位置」列标明该条目在 §2.4 的出处，便于双向核对；同一字段在同一行多处出现时按处列出。
+
+| 字段 / 标识 | 文件:行号 | §2.4 位置 |
+|---|---|---|
+| `TP × PP × DP = 卡数`（world size 恒等式校验） | `src/graspo/flow/parallel/state.py:99-103` | 层 1 · 层内硬约束 |
+| SP 与 TP 同进程组（须 `TP ≥ 2`） | `flow/runtime.py:384-385` | 层 1 · 层内硬约束 |
+| `dp_size` | `schema.py:214` | 层 1 · DP 行 |
+| `tp_size` | `schema.py:213` | 层 1 · TP 行 |
+| Megatron `tensor_model_parallel_size` | `schema.py:277` | 层 1 · TP 行 |
+| `pp_size` | `schema.py:215` | 层 1 · PP 行 |
+| `pp_scheduler` | `schema.py:241` | 层 1 · PP 行 |
+| `pp_micro_batch_size` | `schema.py:225` | 层 1 · PP 行 |
+| `pp_max_inflight_microbatches` | `schema.py:236` | 层 1 · PP 行 |
+| Megatron `pipeline_model_parallel_size` | `schema.py:280` | 层 1 · PP 行 |
+| 三套 SP 机制注释告警（作用列） | `schema.py:287-288` | 层 1 · SP 行 |
+| native `sequence_parallel`（布尔） | `schema.py:224` | 层 1 · SP 行 |
+| ms-swift 标准路径 `sequence_parallel_size`（整数度） | `schema.py:344` | 层 1 · SP 行 |
+| Megatron 引擎 `sequence_parallel`（布尔） | `schema.py:288` | 层 1 · SP 行 |
+| 三套 SP 机制源码注释原文 | `schema.py:287` | 层 1 · SP 行 |
+| Megatron `context_parallel_size` | `schema.py:290` | 层 1 · CP 行 |
+| `device_map` | `schema.py:333` | 层 1 · device_map 行 |
+| `deepspeed_autotp_size` | `schema.py:340` | 层 1 · AutoTP 行 |
+| Megatron `use_distributed_optimizer` | `schema.py:269` | 层 2 · 优化器态 / 梯度分片行 |
+| `deepspeed` | `schema.py:336` | 层 2 · 优化器态 / 梯度分片行 |
+| Megatron `use_megatron_fsdp` | `schema.py:271` | 层 2 · 权重分片行 |
+| `data_parallel_sharding_strategy`（Megatron-FSDP 的 ZeRO 阶段选择器） | `schema.py:272-274` | 层 2 · 权重分片行 |
+| `strict_fsdp_dtensor_load` | `schema.py:275` | 层 2 · 权重分片行 |
+| `deepspeed` | `schema.py:336` | 层 2 · 权重分片行 |
+| `deepspeed`（预设） | `schema.py:336` | 层 2 · CPU offload 行 |
+| `zero_hpz_partition_size`（ZeRO++） | `schema.py:338` | 层 2 · CPU offload 行 |
+| `fsdp` | `schema.py:342` | 层 2 · FSDP2 行 |
+| l2k 默认推导 `get_use_logits_to_keep` | `trainers/mixin.py:211-223` | 层 3 · 层内硬约束 |
+| l2k 运行时硬拦 `prepare_logits_to_keep` | `trainers/mixin.py:1261-1263` | 层 3 · 层内硬约束 |
+| 多模态下 l2k 被强制关闭（非 transformers_5） | `trainers/mixin.py:215-216` | 层 3 · 层内硬约束 |
+| native `gradient_checkpointing` | `schema.py:65` | 层 3 · GC / 激活重算行 |
+| l2k 默认推导 `get_use_logits_to_keep` | `trainers/mixin.py:211-223` | 层 3 · l2k 行 |
+| l2k 运行时硬拦 `prepare_logits_to_keep` | `trainers/mixin.py:1261-1263` | 层 3 · l2k 行 |
+| 多模态下 l2k 被强制置 False | `trainers/mixin.py:215-216` | 层 3 · l2k 行 |
+| `use_logits_to_keep` | `schema.py:356` | 层 3 · l2k 行 |
+| `attn_implementation`（native） | `schema.py:64` | 层 3 · FA2 行 |
+| `attn_impl`（ms-swift） | `schema.py:350` | 层 3 · FA2 行 |
+| `use_liger_kernel` | `schema.py:351` | 层 3 · liger kernel 行 |
+| `micro_batch_size`（native） | `schema.py:229` | 层 4 · micro-batch size 行 |
+| `per_device_train_batch_size`（ms-swift） | `schema.py:369` | 层 4 · micro-batch size 行 |
+| `gradient_accumulation_micro_batches` | `schema.py:109` | 层 4 · 梯度累积（GA）行 |
+| `packing` | `schema.py:348` | 层 4 · packing 行 |
+| `padding_free` | `schema.py:349` | 层 4 · padding_free 行 |
+| ms-swift `max_model_len` | `schema.py:347` | 层 4 · 序列长度上限与截断边界行 |
+| `torch_dtype` | `schema.py:63` | 层 5 · 混合精度（bf16）行 |
+| `nnodes` | `schema.py:328` | 层 5 · 多机（`nnodes > 1`）行 |
