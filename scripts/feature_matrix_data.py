@@ -328,7 +328,7 @@ def report():
     excl = 2 * 2 * 3 + 2 * 3
     out = []
     out.append("=" * 72)
-    out.append("task-d2-write · v7 结构性计数（不含任何估算）")
+    out.append("功能矩阵结构性计数（不含任何估算）")
     out.append("=" * 72)
     out.append("目标档位总数 = {}".format(len(rows)))
     out.append("  计数式 = {}（SFT/GRASPO）+ {}（CPT/OPD，仅 ms-swift）− {}（27B × 全量）"
