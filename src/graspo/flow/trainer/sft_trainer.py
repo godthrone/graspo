@@ -374,3 +374,23 @@ class SFTTrainer:
     def _print_json(self, payload: dict[str, Any]) -> None:
         if self._is_primary():
             logging.getLogger("graspo.sft_trainer").info(json.dumps(payload, ensure_ascii=False))
+
+
+def create_native_sft_trainer(config: GraspoConfig, selection: Any = None) -> SFTTrainer:
+    """native 后端的 SFT 训练器工厂（供 ``graspo.sft_backends`` 注册表发现）。
+
+    调用契约：``factory(config, selection) -> 含 train(smoke=bool) 的训练器``。
+
+    Args:
+        config: GraspoConfig 实例。
+        selection: BackendSelection 实例（native SFT 不需要它做分派，
+            保留该参数以与其它后端工厂签名一致，保证注册表可统一调用）。
+
+    Returns:
+        ``SFTTrainer`` 实例；``train(smoke=...)`` 由 ``cli/train_worker.py`` 驱动。
+    """
+    if config.train_method != "sft":
+        raise ValueError(
+            f"create_native_sft_trainer requires train_method='sft', got {config.train_method!r}"
+        )
+    return SFTTrainer(config)
