@@ -17,11 +17,19 @@ build/
 
 # Local environments and editor state
 .env
+*.env
 .venv/
 .venv-*/
 venv/
+venvs/
 .idea/
 .vscode/
+
+# Config overrides (constitution §7.1 layered config; never versioned)
+config.override.toml
+my_config*.toml
+config.local.toml
+*.local.toml
 
 # AI assistant files (generated on demand, not versioned)
 CLAUDE.md
@@ -31,6 +39,8 @@ AGENTS.md
 # OS files
 .DS_Store
 Thumbs.db
+# Windows Mark-of-the-Web alternate data streams materialized as files
+*:Zone.Identifier
 
 # Local notes, credentials, runbooks, and ad hoc files
 .local/
