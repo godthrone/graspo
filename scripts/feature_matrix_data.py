@@ -30,6 +30,7 @@ TODO = "⛔ 未实现"
 FALLBACK = "⛔ 本期不作为需求（按需补充）"
 NO = "⛔ 不做（用户已定）"
 FIELD = "⚠️ 引擎字段存在，通路未接通"
+UPSTREAM_BLOCK = "⛔ 上游依赖阻断"
 
 # ------------------------------------------------------------------ §2.1 算法轴
 ALGO_ROWS = [
@@ -100,9 +101,16 @@ LAYERS = [
           "③ **Megatron 引擎 `sequence_parallel`（布尔，仅当 TP>1 生效；源码注释原文："
           "「与标准路径的 `msswift.sequence_parallel_size` 是两套机制，勿混用」）**"),
          ("**CP**（上下文并行）", "**沿序列维**切分，长上下文的关键手段之一；"
-          "**CP 只切序列、不切权重**；**唯一能覆盖 CP 的是 Megatron 引擎**（用户已定：native 不做 CP）",
+          "**CP 只切序列、不切权重**；**唯一能覆盖 CP 的是 Megatron 引擎**（用户已定：native 不做 CP）。"
+          "**⛔ 目标模型下 CP 不可用**（**源码级证据、非实测——本次未实测 CP=2**），两条依据："
+          "① `megatron-core 0.17.1` 内**不存在 GDN 的 CP 实现**（CP 只做了 Mamba、未做 GDN）；"
+          "② 下游 `mcore_bridge` 在**模型构建阶段**断言 `context_parallel_size == 1` ⇒ CP>1 直接失败。"
+          "**字段口径更正**：ms-swift 侧 `context_parallel_size` **暴露且可传**"
+          "（**本仓库可复核**：`swift/megatron/arguments/megatron_args.py:609`），**阻断点在下游外部包**"
+          "⇒ 不宜写成「通路未接通」。**完整证据、出处与不可复核性说明见 §2.8 G-11**。",
           "**不做**（用户已定，见 §2.7 N-7）", "⛔ 硬禁用",
-          "**目标**（须依托 Megatron 引擎接通）", FIELD, "Megatron `context_parallel_size`"),
+          "**目标**（依赖 Megatron 引擎；当前被上游阻断）", UPSTREAM_BLOCK,
+          "Megatron `context_parallel_size`"),
          ("**device_map**（层切分）", "按层把模型切到多卡。**它决定卡上放什么，属并行维度**（原列在层 2，"
           "与层 2「不改变卡分配」的定义冲突，已移入层 1）；**同时是 Z3 的互斥约束参与方**",
           "**不做**（用户已定）", "⛔ 未实现", FALLBACK, IMPLEMENTED, "`device_map`"),
@@ -295,6 +303,16 @@ MODEL_ROWS = [
      "**既有的 CP / TP / PP 实战经验来自 `Qwen3-8B`**（`model_type=qwen3`，非混合注意力、非多模态）",
      "⇒ **不能直接外推**到这两个模型：目标模型是「混合线性注意力（GDN）+ 视觉塔 + MTP」三合一，"
      "任一环节未打通都会翻转并行可行性结论（见 §2.8 G-11 / G-12）"),
+    ("**9B 实测经验**（一次上机冒烟）", "**9B 计算栈可通；训练未跑通**",
+     "**已走通**：dataloader → 模型构建（`qwen3_5` VLM + GDN 混合线性注意力）→ 前向 → 反向 → "
+     "**GDN 的 TileLang kernel 真编译执行** → 梯度计算。**卡点**："
+     "**optimizer 首次初始化 Adam 状态时 OOM**（`fused_adam._initialize_state`；"
+     "**该次运行观察到 PyTorch 已分配 73.48 GiB 时仍差 384 MiB**；"
+     "**此为失败点观测，不是该档位每卡显存需求或容量上限**）。"
+     "**该次配置**：单卡、全参、不改变并行划分、不切子集；"
+     "**LoRA / `TP≥2` / `PP≥2` 均未上机，27B 未上机**。"
+     "**限制**：该次数据为 3 行纯文本历史产物（评测集 ELAM V5 未就位）"
+     "⇒ **视觉塔真实前向路径未覆盖**（`freeze_vit=True`）。"),
     ("卡数", "**1 / 2 / 4**（8 卡 = 不做，见 §2.7 N-6）", "单节点 8 × A800-80G 机器上只使用 1/2/4 卡三档"),
     ("上下文长度", "**由实测得到，不作预设档位**", "从基准长度起递增加长直到失败（§3）"),
     ("测试数据量", "**SFT ≥ 100 条；RL ≥ 20 条**；每档至少 1 个完整 epoch 且 ≥ 5 个 optimizer step", "见 §3 测试方法"),
@@ -332,16 +350,19 @@ GAP_ROWS = [
      "**接通时须同时落实三条硬约束**：① LoRA 必须 `bridge_backend=mcore-bridge`；"
      "② `language_model_only=True` 禁用 `lora_llm`；③ `freeze_vit` 冻结逻辑仅对 `tuner_type='full'` 生效",
      "所有需要 TP / PP / CP 的档位（含全部长文目标档）", "⚠️ 引擎字段存在，通路未接通"),
-    ("G-6", "**CP（上下文并行，ms-swift）**——`context_parallel_size` 已有字段，须依托 Megatron 引擎接通；"
-     "**CP 是长上下文的关键手段**且只切序列、不切权重；已核实**多模态下 CP 由 `input_embeds` 承载**"
-     "（`megatron_lm_utils.py:869-870`）", "所有需要上下文分片的长文档位", "⚠️ 引擎字段存在，通路未接通"),
+    ("G-6", "**CP（上下文并行，ms-swift）**——`context_parallel_size` 已有字段，"
+     "**受上游外部包阻断**（`megatron-core 0.17.1` 无 GDN 的 CP 实现 + 下游 `mcore_bridge` 构建期断言 "
+     "`context_parallel_size == 1`；完整证据见 §2.8 G-11）；**CP 是长上下文的关键手段**且只切序列、"
+     "不切权重；已核实**多模态下 CP 由 `input_embeds` 承载**"
+     "（`megatron_lm_utils.py:869-870`）", "所有需要上下文分片的长文档位", UPSTREAM_BLOCK),
     ("G-7", "**Megatron 激活重算字段缺失**——Megatron 用 `recompute_granularity` / `recompute_method` / "
      "`recompute_num_layers` 控制激活重算，而本仓库 `schema.py` **查无任何 `recompute_*` 字段** ⇒ "
      "需新增映射；否则层 3 的 GC 在 Megatron 引擎下无配置入口",
      "所有经 Megatron 引擎的长文档位（GC 是本期的目标手段）", "⚠️ 字段缺失，待映射"),
     ("G-8", "**多模态（视觉）训练通路**——现有运行均为视觉 deferred 的纯文本路径；"
-     "Megatron 引擎侧的多模态支持**已核实存在**（见 §2.8 G-11 的证据），但本仓库的两模型通路仍待打通",
-     "全部目标档", "⚠️ 有入口未验证（视觉路径零证据）"),
+     "Megatron 引擎侧的多模态支持**已核实存在**（见 §2.8 G-11 的证据），但本仓库的两模型通路仍待打通；"
+     "**视觉路径零证据**",
+     "全部目标档", PARTIAL),
     ("G-9", "**SFT 后端注册表未登记进打包元数据**——生产环境走开发回退表", "ms-swift 的 SFT 档",
      "⚠️ 有入口未验证"),
     ("G-10", "**RL 多卡稳定性**（native 侧 PP 多卡曾崩溃）", "native 的 GRASPO 多卡档", "⚠️ 有入口未验证"),
@@ -350,23 +371,42 @@ GAP_ROWS = [
      "注册表实现在**外部包 `mcore_bridge`**（ms-swift 经 `get_model_meta` 查询，返回 `None` 即报 not supported）；"
      "官方示例 `examples/megatron/multimodal/` 下有 VLM 脚本；`megatron_args.py` 的 `_init_multimodal_full()`；"
      "`megatron_lm_utils.py` 的「Multimodal models will handle CP in input_embeds」。"
-     "**运行时事实**：**从未在这两个模型上跑过 Megatron**（既有 Megatron 实测只跑过 `Qwen3-8B`）"
-     "⇒ 标为 **`⚠️ 官方声明支持，运行时未验证`**。"
+     "**运行时事实**：**9B 已跑到首次 `optimizer.step()` 内部、在 Adam 状态初始化处 OOM"
+     "（该 step 未完成）**（一次上机实测，容器内只读核实）——"
+     "dataloader → 模型构建（`qwen3_5` VLM + GDN 混合线性注意力）→ 前向 → 反向 → "
+     "**GDN 的 TileLang kernel 真编译执行** → 梯度计算，**全部走通**；"
+     "**仅在 optimizer 首次初始化 Adam 状态时 OOM**（`fused_adam._initialize_state`；"
+     "**该次运行观察到 PyTorch 已分配 73.48 GiB 时仍差 384 MiB**；"
+     "**此为失败点观测，不是该档位每卡显存需求或容量上限**）。"
+     "**27B 未上机**；且该次数据为 3 行纯文本历史产物 ⇒ **视觉塔真实前向路径未覆盖**（`freeze_vit=True`）。"
+     "⇒ 对**目标两模型的 Megatron 多模态运行**仍标为 **`⚠️ 官方声明支持，运行时未验证`**。"
      "**硬约束**：多模态**强制 `mcore-bridge`**（`megatron-bridge` 不支持多模态，会直接报错），"
      "且需额外依赖（`transformers>=5.0.0.dev`、`qwen_vl_utils`、`decord`）。"
      "**口径提醒**：官方对 **dense 模型推荐 transformers 后端**（Megatron 的推荐对象是 MoE）；"
      "且官方**无**「`qwen3_5` dense 9B/27B + Megatron」现成脚本——Megatron 侧 `qwen3_5` 现成脚本只有 "
      "2B/4B dense 与 35B-A3B **MoE**，9B 在官方脚本里只作 teacher 出现。"
-     "**待确认**：线性注意力（GDN）的 CP 官方要求 `megatron-core` **main 分支**，而测试节点装的是 **release 版**。"
-     "**备选回退路径（若 Megatron 走不通）**：ms-swift **标准路径 + SP（Ulysses / Ring，同样沿序列维分片）+ ZeRO-3**；"
-     "native 侧用 **SP + TP / PP**。",
+     "**已确认不可用**：线性注意力（GDN）的 CP **对目标模型不可用**，且**阻断不止「分支版本」问题**——"
+     "① `megatron-core 0.17.1` 的 `core/ssm/gated_delta_net.py` 内**GDN 的 CP 实现不存在**"
+     "（仅 `# TODO: Implement GatedDeltaNetContextParallel`；该文件对 `context_parallel` / `cp_size` / "
+     "`cp_group` / `cp_rank` **零命中**；对照 Mamba 分支有完整 `MambaContextParallel`）；"
+     "② 下游 `mcore_bridge` 的 `Qwen3_5MoeGatedDeltaNet.__init__`（**宿主类为 MoE 变体类**）内断言 "
+     "`config.context_parallel_size == 1` ⇒ CP>1 在**模型构建阶段**即失败（**本次未实测 CP=2**）。"
+     "以上两条位于外部包内，**据一次上机实测的容器内只读核实，本仓库内无法复核**。"
+     "**字段口径更正**：ms-swift 侧 `context_parallel_size` **暴露且可传**"
+     "（**本仓库可复核**：`swift/megatron/arguments/megatron_args.py:609`），**阻断点在下游外部包**。"
+     "**回退路径（即本期实际路径）**见 §2.5。",
      "全部多模态目标档（与 G-5 叠加）", "⚠️ 官方声明支持，运行时未验证"),
-    ("G-12", "**`qwen3_5` 两模型在 Megatron 下的运行时可行性未实测**——"
-     "注册层已核实（§2.8 G-11），但缺一次真机验证 ⇒ **须先做 1-iter 冒烟**："
-     "`train_iters=1` / `micro_batch_size=1`，让 `get_model_meta('qwen3_5')` 给出「非 None / 抛 not supported」"
-     "的二值答案，并验证权重键映射（尤其 `model.visual.*` 与 `mtp.*`）。"
-     "**冒烟通过前，Megatron 优先策略对目标两模型均为未验证态**；在它通过之前不宜并行投入 27B 的大规模实现",
-     "全部需要 TP / PP / CP / Megatron 的目标档", "⚠️ 未实测（须先做 1-iter 冒烟）"),
+    ("G-12", "**`qwen3_5` 的 Megatron 运行时可行性：9B 已冒烟、27B 未上机、训练未跑通**——"
+     "**9B 冒烟已完成**（一次上机实测，容器内只读核实）：计算栈全通（dataloader → 模型构建 → 前向 → "
+     "反向 → **GDN 的 TileLang kernel 真编译执行** → 梯度计算，详见 §2.8 G-11）；"
+     "**结论是「该次配置下训练未跑通」**——**在单卡、全参、不改变并行划分、不切子集的前提下，"
+     "精度类可调项已用尽，仍 OOM 在 optimizer 首次初始化 Adam 状态处**"
+     "（**该次运行观察到 PyTorch 已分配 73.48 GiB 时仍差 384 MiB**；"
+     "**此为失败点观测，不是该档位每卡显存需求或容量上限**）。"
+     "**未试项**：**LoRA、`TP≥2` / `PP≥2` 等并行分片均未上机**；**27B 完全未上机**。"
+     "**该冒烟不构成「目标两模型 Megatron 可行」的结论**；在 27B 与分片路径验证完成前，"
+     "不宜并行投入 27B 的大规模实现",
+     "全部需要 TP / PP / CP / Megatron 的目标档", "⚠️ 有入口未验证"),
     ("G-13", "**`lora.r` 无边界校验，LoRA 静默失效（fail-open 静默降级）**——"
      "`LoRAConfig`（`src/graspo/core/schema.py:41-53`）**没有 `r > 0` 校验**。"
      "**已证事实（源码）**：`src/graspo/flow/lora/lora_linear.py:123` 为 "

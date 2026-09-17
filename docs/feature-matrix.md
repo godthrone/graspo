@@ -37,12 +37,17 @@
 | `⚠️ 官方声明支持，运行时未验证` | 官方（注册层）声明支持该能力，但本仓库**从未端到端实测** ⇒ 不得按"已验证"使用 |
 | `⛔ 未实现` | 实现缺失 ⇒ **本期要补齐的目标** |
 | `⛔ 架构硬禁用`（简写 `⛔ 硬禁用`） | 架构决定的硬性禁用 ⇒ native 侧不做的技术边界（**与 `⛔ 不做（用户已定）` 语义不同，故单列**） |
+| `⛔ 上游依赖阻断` | 本仓库已具备配置 / 接线能力，但被上游外部依赖阻断 ⇒ **需上游修复或换路径，本仓库无法自行解决** |
 | `⛔ 本期不作为需求（按需补充）` | 属**补充路径**，Megatron 覆盖不到或成本过高时才启用 |
 | `⛔ 不做（用户已定）` | 用户明确排除 ⇒ 进 §2.7 负面清单并附解除条件 |
 | `⚠️ 字段缺失，待映射` | 上游能力存在但本仓库配置段缺字段 ⇒ 须新增映射（§2.8） |
 | `⚠️ 字段缺失（配置段无显式上限字段）` | 本仓库配置段无该字段、且非上游字段映射问题 ⇒ 须新增字段 |
 | `⚠️ 未实测（须先做 1-iter 冒烟）` | 该路径从未真机验证 ⇒ 须先做 1-iter 冒烟；通过前一律按未验证态处理 |
 | `—` | 不适用 / 无该项（不在本期范围，或两后端均无配置入口；须在备注写明理由） |
+
+> **复合状态格的书写规则**：同一格需要同时承载**多条机制**各自的状态时，**必须逐条显式标注机制子项**
+> （机制编号 + 机制名，如 `②`…（标准路径）｜`③`…（Megatron）），且**每个子项的取值必须逐字取自本表**；
+> 不得把两个取值直接并列而不标注归属，也不得只用其中一条机制的取值代表整格。
 
 **② 实测状态**（记录层，§5 使用）——描述"实验跑出什么结果"：
 
@@ -90,12 +95,12 @@
 > - **优先依托 Megatron 引擎**：它对 TP / PP / **CP** / SP / 分布式优化器的支持最齐全，
 >   且**是唯一能覆盖 CP 的路径**（CP 是长上下文的关键手段，见 §2.5）。
 >   **⚠️ 该优先级的成立前提（结论 + 指针；事实与证据不在此重复）**：
->   该优先级对**目标两模型**目前只有**注册层证据**、**运行时从未端到端实测**
->   ⇒ 本策略对目标两模型一律标为 **`⚠️ 官方声明支持，运行时未验证`**；
+>   该优先级对**目标两模型**目前只有**注册层证据**；运行时**仅 9B 做过一次单卡冒烟、且训练未跑通**
+>   （**27B 未上机**）⇒ 本策略对目标两模型一律标为 **`⚠️ 官方声明支持，运行时未验证`**；
 >   其**注册层 / 运行时证据、多模态与 Megatron 的硬约束、官方对 dense 模型的口径、
->   线性注意力（GDN）CP 的分支前提、备选回退路径**——**全部集中在 §2.8 G-11**，本节不重复展开
->   （回退路径另见 §2.5）。**验证闸门**：接通前须先过 §2.8 G-12 的 1-iter 冒烟；
->   **未过冒烟前不得按「已验证」使用**。
+>   线性注意力（GDN）CP 的不可用证据**——**全部集中在 §2.8 G-11 / G-12**，本节不重复展开
+>   （回退路径见 §2.5）。**验证闸门**：**27B 与分片路径（LoRA / `TP≥2` / `PP≥2`）验证完成前**，
+>   不得按「已验证」使用。
 > - **DeepSpeed / FSDP2 / device_map 作为补充**：仅在 Megatron 覆盖不到或成本过高时启用
 >   （例如全量训练需要 ZeRO-3 + offload；以及多模态不兼容时的回退）。
 > - **对外只有 `native` / `ms-swift` 两档后端**；**引擎 / 路径选择是 ms-swift 后端的内部实现策略，不暴露给用户做选择**。
@@ -148,7 +153,7 @@
 | **TP**（张量并行） | 把权重的 hidden / 头 / FFN 中间维切到多卡。native 须整除注意力头数且 `TP ≤ num_kv_heads` | **目标** | ✅ 已实现可跑 | **目标**（依托 Megatron 引擎） | ⚠️ 引擎字段存在，通路未接通 | `tp_size`｜Megatron `tensor_model_parallel_size` |
 | **PP**（流水线并行） | 把层切到多卡，多段流水。native 当前仅 `1F1B` 一种调度且多卡实测曾失败 | **目标** | ⚠️ 有入口未验证 | **目标**（依托 Megatron 引擎） | ⚠️ 引擎字段存在，通路未接通 | `pp_size`｜`pp_scheduler`｜`pp_micro_batch_size`｜`pp_max_inflight_microbatches`｜Megatron `pipeline_model_parallel_size` |
 | **SP**（序列并行） | **沿序列维**切激活，长上下文的关键手段之一。**注意：本仓库有【三套】SP 机制，源码注释原文警告「是两套机制，勿混用」**——native 布尔开关、ms-swift 标准路径整数度、Megatron 段布尔开关 | **目标** | ✅ 已实现可跑 | **目标** | ② `✅ 已实现可跑`（标准路径）｜③ `⚠️ 引擎字段存在，通路未接通`（Megatron，见 G-5） | ① native `sequence_parallel`（布尔；与 TP 同进程组）｜② ms-swift 标准路径 `sequence_parallel_size`（整数度；`sp_world_size = gcd(num_kv_heads, world_size)`）｜③ **Megatron 引擎 `sequence_parallel`（布尔，仅当 TP>1 生效；源码注释原文：「与标准路径的 `msswift.sequence_parallel_size` 是两套机制，勿混用」）** |
-| **CP**（上下文并行） | **沿序列维**切分，长上下文的关键手段之一；**CP 只切序列、不切权重**；**唯一能覆盖 CP 的是 Megatron 引擎**（用户已定：native 不做 CP） | **不做**（用户已定，见 §2.7 N-7） | ⛔ 硬禁用 | **目标**（须依托 Megatron 引擎接通） | ⚠️ 引擎字段存在，通路未接通 | Megatron `context_parallel_size` |
+| **CP**（上下文并行） | **沿序列维**切分，长上下文的关键手段之一；**CP 只切序列、不切权重**；**唯一能覆盖 CP 的是 Megatron 引擎**（用户已定：native 不做 CP）。**⛔ 目标模型下 CP 不可用**（**源码级证据、非实测——本次未实测 CP=2**），两条依据：① `megatron-core 0.17.1` 内**不存在 GDN 的 CP 实现**（CP 只做了 Mamba、未做 GDN）；② 下游 `mcore_bridge` 在**模型构建阶段**断言 `context_parallel_size == 1` ⇒ CP>1 直接失败。**字段口径更正**：ms-swift 侧 `context_parallel_size` **暴露且可传**（**本仓库可复核**：`swift/megatron/arguments/megatron_args.py:609`），**阻断点在下游外部包**⇒ 不宜写成「通路未接通」。**完整证据、出处与不可复核性说明见 §2.8 G-11**。 | **不做**（用户已定，见 §2.7 N-7） | ⛔ 硬禁用 | **目标**（依赖 Megatron 引擎；当前被上游阻断） | ⛔ 上游依赖阻断 | Megatron `context_parallel_size` |
 | **device_map**（层切分） | 按层把模型切到多卡。**它决定卡上放什么，属并行维度**（原列在层 2，与层 2「不改变卡分配」的定义冲突，已移入层 1）；**同时是 Z3 的互斥约束参与方** | **不做**（用户已定） | ⛔ 未实现 | ⛔ 本期不作为需求（按需补充） | ✅ 已实现可跑 | `device_map` |
 | **AutoTP**（自动张量并行） | 自动张量并行（上游仅全参）。**它是对 TP 的自动化，属并行维度**（原列在层 2，已移入层 1） | **不做**（用户已定） | ⛔ 未实现 | **待定**（全量入口打通后评估） | ⚠️ 引擎字段存在，通路未接通 | `deepspeed_autotp_size` |
 
@@ -215,11 +220,20 @@
 > - **序列维分片** = 把一条长序列按 token 维切开、分摊到多卡。**只有 SP / CP 属于这一类**；
 >   **DP / TP / PP 都不切序列维**——加卡但不切序列，长序列的单卡占用不会下降。
 > - **native**：序列维分片手段 = **SP**（保留实现，与 TP 同进程组，须 `TP ≥ 2`，不额外占卡）。
-> - **ms-swift**：SP 已可用；**CP 是本期目标**，须依托其 Megatron 引擎接通（§2.8 G-5/G-6）。
+> - **ms-swift**：SP 已可用；**CP 是本期目标**，须依托其 Megatron 引擎；**当前受上游外部包阻断**（§2.8 G-5/G-6）。
 >   CP **只切序列、不切权重**。
->   **⚠️ 目标模型的 CP 前提尚未闭合**：线性注意力（GDN）的 CP 官方要求 `megatron-core` **main 分支**，
->   而测试节点装的是 **release 版** ⇒ 待确认（§2.8 G-11）。若 Megatron 走不通，
->   **回退路径 = ms-swift 标准路径的 SP（Ulysses / Ring，同样沿序列维分片）+ ZeRO-3**；native 侧 = **SP + TP / PP**。
+>   **⛔ 目标模型的 CP 已确认不可用**（**源码级证据、非实测**：`megatron-core 0.17.1` 内**不存在 GDN 的 CP 实现**，
+>   且下游 `mcore_bridge` 在**模型构建阶段**断言 `context_parallel_size == 1`；**本次未实测 CP=2**）。
+>   **完整证据、出处与不可复核性说明见 §2.8 G-11**，此处不重复展开。
+>   **另更正字段口径**：ms-swift 侧 `context_parallel_size` **是暴露且可传的**
+>   （`swift/megatron/arguments/megatron_args.py:609`，**本仓库可复核**），**阻断点在下游外部包**，
+>   故不宜写成"通路未接通"。另：ms-swift 的 Megatron 参数类中 `sequence_parallel_size` **直接取自**
+>   `context_parallel_size`（`swift/megatron/arguments/megatron_base_args.py:35`：
+>   `self.sequence_parallel_size = self.context_parallel_size`，**本仓库可复核**）
+>   ⇒ **Megatron 引擎路径下 SP 度由 CP 值决定**——目标模型的 CP 被上游限制为 1，
+>   **该路径的 SP 同样锁定为 1，不能作为序列维分片的回退**；
+>   **可用的序列维分片回退是 ms-swift 标准路径的 SP**（另一套机制，不受 CP 限制）。
+>   **回退路径（即本期实际路径）= ms-swift 标准路径的 SP（Ulysses / Ring，同样沿序列维分片）+ ZeRO-3**；native 侧 = **SP + TP / PP**。
 > - ⇒ 本节只规定"**必须靠什么机制**"；**每档实际能到多长由 §3 的方法实测**，不由本文件推断。
 
 ### 2.6 模型与硬件口径
@@ -232,6 +246,7 @@
 | **多模态（视觉）** | **所有训练都要支持多模态**（要训练多模态数据集） | **这是目标能力**，不是可选项；当前实现状态：现有运行均为「视觉 deferred」的纯文本路径 ⇒ 视觉通路要补（§2.8 G-8）。**Megatron 引擎侧的多模态支持注册层已核实存在（运行时未验证）**（§2.8 G-11）；接通时须落实三条硬约束（§2.4 层 2 层内硬约束）：LoRA 须用 `mcore-bridge`、`language_model_only` 禁 `lora_llm`、`freeze_vit` 仅对全参生效 |
 | 实物状态 | 两模型**已就位**（在测试节点上） | **分片数与总大小已核实**：9B = 4 分片 / `metadata.total_size` 19 306 216 416 B；27B = 18 分片 / `metadata.total_size` 55 562 855 904 B |
 | ⚠️ **结论性提醒** | **既有的 CP / TP / PP 实战经验来自 `Qwen3-8B`**（`model_type=qwen3`，非混合注意力、非多模态） | ⇒ **不能直接外推**到这两个模型：目标模型是「混合线性注意力（GDN）+ 视觉塔 + MTP」三合一，任一环节未打通都会翻转并行可行性结论（见 §2.8 G-11 / G-12） |
+| **9B 实测经验**（一次上机冒烟） | **9B 计算栈可通；训练未跑通** | **已走通**：dataloader → 模型构建（`qwen3_5` VLM + GDN 混合线性注意力）→ 前向 → 反向 → **GDN 的 TileLang kernel 真编译执行** → 梯度计算。**卡点**：**optimizer 首次初始化 Adam 状态时 OOM**（`fused_adam._initialize_state`；**该次运行观察到 PyTorch 已分配 73.48 GiB 时仍差 384 MiB**；**此为失败点观测，不是该档位每卡显存需求或容量上限**）。**该次配置**：单卡、全参、不改变并行划分、不切子集；**LoRA / `TP≥2` / `PP≥2` 均未上机，27B 未上机**。**限制**：该次数据为 3 行纯文本历史产物（评测集 ELAM V5 未就位）⇒ **视觉塔真实前向路径未覆盖**（`freeze_vit=True`）。 |
 | 卡数 | **1 / 2 / 4**（8 卡 = 不做，见 §2.7 N-6） | 单节点 8 × A800-80G 机器上只使用 1/2/4 卡三档 |
 | 上下文长度 | **由实测得到，不作预设档位** | 从基准长度起递增加长直到失败（§3） |
 | 测试数据量 | **SFT ≥ 100 条；RL ≥ 20 条**；每档至少 1 个完整 epoch 且 ≥ 5 个 optimizer step | 见 §3 测试方法 |
@@ -262,13 +277,13 @@
 | G-3 | **CPT 通道（ms-swift）**——配置层无法表达预训练；需新数据契约（纯文本 vs 结构化目标） | 全部 CPT 档（9 档） | ⛔ 未实现 |
 | G-4 | **OPD 实现（ms-swift）**——仅契约预留，零消费端 | 全部 OPD 档（9 档） | ⛔ 未实现 |
 | G-5 | **承载结构调整：接通 ms-swift 的 Megatron 引擎通路**——它是 TP / PP / **CP** / SP / 分布式优化器的承载载体；当前引擎字段齐全但不进启动参数，且缺 Megatron 专属超参映射表。**接通时须同时落实三条硬约束**：① LoRA 必须 `bridge_backend=mcore-bridge`；② `language_model_only=True` 禁用 `lora_llm`；③ `freeze_vit` 冻结逻辑仅对 `tuner_type='full'` 生效 | 所有需要 TP / PP / CP 的档位（含全部长文目标档） | ⚠️ 引擎字段存在，通路未接通 |
-| G-6 | **CP（上下文并行，ms-swift）**——`context_parallel_size` 已有字段，须依托 Megatron 引擎接通；**CP 是长上下文的关键手段**且只切序列、不切权重；已核实**多模态下 CP 由 `input_embeds` 承载**（`megatron_lm_utils.py:869-870`） | 所有需要上下文分片的长文档位 | ⚠️ 引擎字段存在，通路未接通 |
+| G-6 | **CP（上下文并行，ms-swift）**——`context_parallel_size` 已有字段，**受上游外部包阻断**（`megatron-core 0.17.1` 无 GDN 的 CP 实现 + 下游 `mcore_bridge` 构建期断言 `context_parallel_size == 1`；完整证据见 §2.8 G-11）；**CP 是长上下文的关键手段**且只切序列、不切权重；已核实**多模态下 CP 由 `input_embeds` 承载**（`megatron_lm_utils.py:869-870`） | 所有需要上下文分片的长文档位 | ⛔ 上游依赖阻断 |
 | G-7 | **Megatron 激活重算字段缺失**——Megatron 用 `recompute_granularity` / `recompute_method` / `recompute_num_layers` 控制激活重算，而本仓库 `schema.py` **查无任何 `recompute_*` 字段** ⇒ 需新增映射；否则层 3 的 GC 在 Megatron 引擎下无配置入口 | 所有经 Megatron 引擎的长文档位（GC 是本期的目标手段） | ⚠️ 字段缺失，待映射 |
-| G-8 | **多模态（视觉）训练通路**——现有运行均为视觉 deferred 的纯文本路径；Megatron 引擎侧的多模态支持**已核实存在**（见 §2.8 G-11 的证据），但本仓库的两模型通路仍待打通 | 全部目标档 | ⚠️ 有入口未验证（视觉路径零证据） |
+| G-8 | **多模态（视觉）训练通路**——现有运行均为视觉 deferred 的纯文本路径；Megatron 引擎侧的多模态支持**已核实存在**（见 §2.8 G-11 的证据），但本仓库的两模型通路仍待打通；**视觉路径零证据** | 全部目标档 | ⚠️ 有入口未验证 |
 | G-9 | **SFT 后端注册表未登记进打包元数据**——生产环境走开发回退表 | ms-swift 的 SFT 档 | ⚠️ 有入口未验证 |
 | G-10 | **RL 多卡稳定性**（native 侧 PP 多卡曾崩溃） | native 的 GRASPO 多卡档 | ⚠️ 有入口未验证 |
-| G-11 | **Megatron 引擎支持多模态 / VLM（注册层已核实、运行时未验证）**——**注册层证据**：官方受支持模型表 `Support Megatron` 列对 `Qwen3.5-9B` / `Qwen3.8-27B` **均为 ✔**；注册表实现在**外部包 `mcore_bridge`**（ms-swift 经 `get_model_meta` 查询，返回 `None` 即报 not supported）；官方示例 `examples/megatron/multimodal/` 下有 VLM 脚本；`megatron_args.py` 的 `_init_multimodal_full()`；`megatron_lm_utils.py` 的「Multimodal models will handle CP in input_embeds」。**运行时事实**：**从未在这两个模型上跑过 Megatron**（既有 Megatron 实测只跑过 `Qwen3-8B`）⇒ 标为 **`⚠️ 官方声明支持，运行时未验证`**。**硬约束**：多模态**强制 `mcore-bridge`**（`megatron-bridge` 不支持多模态，会直接报错），且需额外依赖（`transformers>=5.0.0.dev`、`qwen_vl_utils`、`decord`）。**口径提醒**：官方对 **dense 模型推荐 transformers 后端**（Megatron 的推荐对象是 MoE）；且官方**无**「`qwen3_5` dense 9B/27B + Megatron」现成脚本——Megatron 侧 `qwen3_5` 现成脚本只有 2B/4B dense 与 35B-A3B **MoE**，9B 在官方脚本里只作 teacher 出现。**待确认**：线性注意力（GDN）的 CP 官方要求 `megatron-core` **main 分支**，而测试节点装的是 **release 版**。**备选回退路径（若 Megatron 走不通）**：ms-swift **标准路径 + SP（Ulysses / Ring，同样沿序列维分片）+ ZeRO-3**；native 侧用 **SP + TP / PP**。 | 全部多模态目标档（与 G-5 叠加） | ⚠️ 官方声明支持，运行时未验证 |
-| G-12 | **`qwen3_5` 两模型在 Megatron 下的运行时可行性未实测**——注册层已核实（§2.8 G-11），但缺一次真机验证 ⇒ **须先做 1-iter 冒烟**：`train_iters=1` / `micro_batch_size=1`，让 `get_model_meta('qwen3_5')` 给出「非 None / 抛 not supported」的二值答案，并验证权重键映射（尤其 `model.visual.*` 与 `mtp.*`）。**冒烟通过前，Megatron 优先策略对目标两模型均为未验证态**；在它通过之前不宜并行投入 27B 的大规模实现 | 全部需要 TP / PP / CP / Megatron 的目标档 | ⚠️ 未实测（须先做 1-iter 冒烟） |
+| G-11 | **Megatron 引擎支持多模态 / VLM（注册层已核实、运行时未验证）**——**注册层证据**：官方受支持模型表 `Support Megatron` 列对 `Qwen3.5-9B` / `Qwen3.8-27B` **均为 ✔**；注册表实现在**外部包 `mcore_bridge`**（ms-swift 经 `get_model_meta` 查询，返回 `None` 即报 not supported）；官方示例 `examples/megatron/multimodal/` 下有 VLM 脚本；`megatron_args.py` 的 `_init_multimodal_full()`；`megatron_lm_utils.py` 的「Multimodal models will handle CP in input_embeds」。**运行时事实**：**9B 已跑到首次 `optimizer.step()` 内部、在 Adam 状态初始化处 OOM（该 step 未完成）**（一次上机实测，容器内只读核实）——dataloader → 模型构建（`qwen3_5` VLM + GDN 混合线性注意力）→ 前向 → 反向 → **GDN 的 TileLang kernel 真编译执行** → 梯度计算，**全部走通**；**仅在 optimizer 首次初始化 Adam 状态时 OOM**（`fused_adam._initialize_state`；**该次运行观察到 PyTorch 已分配 73.48 GiB 时仍差 384 MiB**；**此为失败点观测，不是该档位每卡显存需求或容量上限**）。**27B 未上机**；且该次数据为 3 行纯文本历史产物 ⇒ **视觉塔真实前向路径未覆盖**（`freeze_vit=True`）。⇒ 对**目标两模型的 Megatron 多模态运行**仍标为 **`⚠️ 官方声明支持，运行时未验证`**。**硬约束**：多模态**强制 `mcore-bridge`**（`megatron-bridge` 不支持多模态，会直接报错），且需额外依赖（`transformers>=5.0.0.dev`、`qwen_vl_utils`、`decord`）。**口径提醒**：官方对 **dense 模型推荐 transformers 后端**（Megatron 的推荐对象是 MoE）；且官方**无**「`qwen3_5` dense 9B/27B + Megatron」现成脚本——Megatron 侧 `qwen3_5` 现成脚本只有 2B/4B dense 与 35B-A3B **MoE**，9B 在官方脚本里只作 teacher 出现。**已确认不可用**：线性注意力（GDN）的 CP **对目标模型不可用**，且**阻断不止「分支版本」问题**——① `megatron-core 0.17.1` 的 `core/ssm/gated_delta_net.py` 内**GDN 的 CP 实现不存在**（仅 `# TODO: Implement GatedDeltaNetContextParallel`；该文件对 `context_parallel` / `cp_size` / `cp_group` / `cp_rank` **零命中**；对照 Mamba 分支有完整 `MambaContextParallel`）；② 下游 `mcore_bridge` 的 `Qwen3_5MoeGatedDeltaNet.__init__`（**宿主类为 MoE 变体类**）内断言 `config.context_parallel_size == 1` ⇒ CP>1 在**模型构建阶段**即失败（**本次未实测 CP=2**）。以上两条位于外部包内，**据一次上机实测的容器内只读核实，本仓库内无法复核**。**字段口径更正**：ms-swift 侧 `context_parallel_size` **暴露且可传**（**本仓库可复核**：`swift/megatron/arguments/megatron_args.py:609`），**阻断点在下游外部包**。**回退路径（即本期实际路径）**见 §2.5。 | 全部多模态目标档（与 G-5 叠加） | ⚠️ 官方声明支持，运行时未验证 |
+| G-12 | **`qwen3_5` 的 Megatron 运行时可行性：9B 已冒烟、27B 未上机、训练未跑通**——**9B 冒烟已完成**（一次上机实测，容器内只读核实）：计算栈全通（dataloader → 模型构建 → 前向 → 反向 → **GDN 的 TileLang kernel 真编译执行** → 梯度计算，详见 §2.8 G-11）；**结论是「该次配置下训练未跑通」**——**在单卡、全参、不改变并行划分、不切子集的前提下，精度类可调项已用尽，仍 OOM 在 optimizer 首次初始化 Adam 状态处**（**该次运行观察到 PyTorch 已分配 73.48 GiB 时仍差 384 MiB**；**此为失败点观测，不是该档位每卡显存需求或容量上限**）。**未试项**：**LoRA、`TP≥2` / `PP≥2` 等并行分片均未上机**；**27B 完全未上机**。**该冒烟不构成「目标两模型 Megatron 可行」的结论**；在 27B 与分片路径验证完成前，不宜并行投入 27B 的大规模实现 | 全部需要 TP / PP / CP / Megatron 的目标档 | ⚠️ 有入口未验证 |
 | G-13 | **`lora.r` 无边界校验，LoRA 静默失效（fail-open 静默降级）**——`LoRAConfig`（`src/graspo/core/schema.py:41-53`）**没有 `r > 0` 校验**。**已证事实（源码）**：`src/graspo/flow/lora/lora_linear.py:123` 为 `lora_enabled = bool(lora_enabled and r > 0)` ⇒ `r <= 0` 时该层**不建立 LoRA**；同文件 `:132-134` 随即把 `lora_a` / `lora_b` **注册为 `None`**；而 `src/graspo/flow/adapters/models/qwen35_36/model.py:156`（Qwen3.5/3.8 侧）与 `src/graspo/flow/adapters/models/qwen3/model.py:100`（Qwen3-8B 侧）均为**无条件**的 `param.requires_grad = "lora_" in name` ⇒ **没有任何参数名含 `lora_`** ⇒ **native 侧零可训练参数**（训练空转或报错）；配置边界**不报错、静默失效**。**未验证（不作结论）**：ms-swift 侧 `--lora_rank 0` 的行为尚未验证。**本期要补**：在配置边界加校验——**`r <= 0` 直接报错（fail-closed）**，不得静默降级 | native 侧全部 LoRA 档（12 档 = 2 模型 × SFT / GRASPO × 1 / 2 / 4 卡，已证零可训练参数）；ms-swift 侧 `--lora_rank 0` 的行为未验证，暂不计入影响范围 | ⛔ 未实现 |
 | G-14 | **Megatron 路径 HF→MCore 转换时 `mtp.*` 权重被静默忽略**——一次上机实验的只读核实结果：`--to_mcore true` 转换后，`model.visual.*` **333 个**（视觉塔，含全部 6 个 merger 键）**1:1 落盘**为 `visual.visual.*` 333 条；而 **`mtp.*` 15 个在产物中 0 条、且无任何告警**（产物参数名计数输出 `809 333 0` = MCore 809 / 视觉 333 / **MTP 0**）。**根因 = MTP 配置填充未接通（本仓库侧可复核的完整链条）**：ms-swift 4.5.3 的 `swift/megatron/convert.py:45-50` 在 `convert_hf2mcore` 中构造 `MegatronArguments` 时只传 `model` / `model_type` / `**current_convert_kwargs`（该字典见同文件 `:19-29`，9 个键、无 MTP 项）/ `output_dir` / `torch_dtype`，**实参列表中没有 `mtp_num_layers`**（该文件内 `mtp` 命中数为 **0**）；该字段在 `swift/megatron/arguments/megatron_args.py:676` 定义为 `mtp_num_layers: Optional[int] = None` ⇒ 取默认 `None`；`swift/megatron/model/utils.py:163-164`（及 `swift/megatron/init.py:262`）以 `if mtp_num_layers:` 为分支条件 ⇒ **None 为假值、分支被跳过**，`num_nextn_predict_layers` / `mtp_num_hidden_layers` 不被写回 ⇒ **未建 MTP 层**；官方文档亦明示该值**不自动从 `config.json` 获取、须手动设置**（`docs/source/Megatron-SWIFT/Command-line-parameters.md:239`）。**外部桥接包 `mcore_bridge` 侧的对应细节**（该包配置默认 `mtp_num_layers = None`、参数解析无 MTP 项）来自**一次上机实验的容器内只读核实**，**本仓库内无法复核**（该外部包未安装）；桥接侧前缀 `hf_mtp_prefix='mtp.layers'` 与含 `mtp.fc` 的 `_convert_mtp_extra` **已就绪** ⇒ 缺口只在「配置填充」一环。**本期要补**：① **接通 MTP 配置填充**（本仓库两模型的文本侧确含 MTP 层，见 §2.6）；② **无论目标语义是否需要 MTP，静默忽略都必须改为报错或显式告警**——按宪法 **§3.2 透明退路**：结果可能受影响的转换必须明确告知，不得静默吞掉。本项与 §2.8 G-12 的权重键映射验证同源（G-12 的冒烟须覆盖 `mtp.*`）。 | 使用 Megatron 路径、会经过 HF→MCore 转换的目标档；**对训练效果的影响尚未验证**（现有结论仅为「不需要 MTP 也能起来」，未做效果对比） | ⛔ 未实现 |
 
