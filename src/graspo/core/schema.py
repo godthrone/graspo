@@ -247,6 +247,132 @@ class GraspoFlowConfig(BaseModel):
         return self
 
 
+class MsSwiftMegatronConfig(BaseModel):
+    """Megatron-SWIFT 路径的分片参数（`ms-swift-implementation-plan.md` §8.2 MG1-MG11）。
+
+    字段名与 ms-swift ``MegatronArguments`` 的参数名**逐字一致**（去掉前导 ``--``），
+    因此"配置字段 → ms-swift 参数"的映射不需要猜测（宪法 §2.2 显式即防呆）。
+
+    验收深度（D8 A 档）：Megatron 路径**只做配置透传 + 启动冒烟**，不做长训验证。
+    本段只在用户显式提供时透传；未提供（``None``/缺省）的参数不进 ms-swift argv，
+    由 ms-swift 自己的默认值决定——不透传不代表"关闭"，语义上不等价于 0/False。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # MG1 数据并行 DP（DP 度由 总 GPU /（TP×PP×CP）自动推导）
+    global_batch_size: int | None = None
+    data_sharding: bool | None = None
+    data_parallel_random_init: bool | None = None
+    overlap_grad_reduce: bool | None = None
+    # MG2 分布式优化器（Megatron 默认即 ZeRO-1）
+    use_distributed_optimizer: bool | None = None
+    # MG3 Megatron-FSDP
+    use_megatron_fsdp: bool | None = None
+    data_parallel_sharding_strategy: (
+        Literal["no_shard", "optim", "optim_grads", "optim_grads_params"] | None
+    ) = None
+    strict_fsdp_dtensor_load: bool | None = None
+    # MG4 张量并行 TP
+    tensor_model_parallel_size: int | None = None
+    tp_comm_overlap: bool | None = None
+    # MG5 流水线并行 PP
+    pipeline_model_parallel_size: int | None = None
+    overlap_p2p_comm: bool | None = None
+    align_param_gather: bool | None = None
+    pipeline_model_parallel_layout: str | None = None
+    decoder_first_pipeline_num_layers: int | None = None
+    decoder_last_pipeline_num_layers: int | None = None
+    # MG6 序列并行 SP（**仅当 TP > 1 时生效**；布尔开关，与标准路径的
+    # `msswift.sequence_parallel_size` 是两套机制，勿混用）
+    sequence_parallel: bool | None = None
+    # MG7 上下文并行 CP（长上下文）
+    context_parallel_size: int | None = None
+    cp_comm_type: Literal["p2p", "all_gather", "a2a", "a2a+p2p"] | None = None
+    cp_partition_mode: str | None = None
+    sequence_packing_scheduler: Literal["dp_balanced", "default_dynamic_cp"] | None = None
+    # MG8 / MG9 专家并行 EP / 专家张量并行 ETP（MoE 模型）
+    expert_model_parallel_size: int | None = None
+    expert_tensor_parallel_size: int | None = None
+    # MG10 虚拟流水线 VPP
+    virtual_pipeline_model_parallel_size: int | None = None
+    microbatch_group_size_per_vp_stage: int | None = None
+    # MG11 低精度参数分片（FP8/FP4）
+    fp8_param_gather: bool | None = None
+    fp4_param_gather: bool | None = None
+
+
+class MsSwiftConfig(BaseModel):
+    """ms-swift 后端配置段（``backend: msswift`` 时生效）。
+
+    **段名与 ``backend`` 取值一致（``msswift``）**——同一后端只有一个名字
+    （一名一物，宪法 §2.2），避免 ``ms_swift`` / ``msswift`` 两个别名。
+
+    **单一真相源（§1.4）**：ms-swift 参数只在这一段配置，映射层
+    （``flow/msswift/_config_mapping.py``）只从这一段取值；graspo 既有的
+    ``model`` / ``data`` / ``lora`` / ``training`` 段继续是训练语义的唯一来源，
+    两者不重叠、不互相覆盖。
+
+    字段名与 ms-swift 官方参数名逐字对应（去前导 ``--``），覆盖
+    `ms-swift-implementation-plan.md` §8 矩阵的标准路径 7 项（S1-S7）与长文附项；
+    Megatron 路径 11 项（MG1-MG11）在同名嵌套段 ``megatron`` 下。
+
+    ``None`` = 未提供（不透传，交 ms-swift 默认值），语义与"显式 0/False"不同
+    （宪法 §2.2 None 语义）。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # ── S1 数据并行 DDP（launcher 层；ms-swift 侧是环境变量，非 CLI 参数）────
+    nproc_per_node: int | None = None
+    nnodes: int | None = None
+    node_rank: int | None = None
+    master_addr: str | None = None
+    master_port: int | None = None
+    # ── S2 device_map 模型并行（层切分）──────────────────────────────────
+    device_map: str | None = None
+    # ── S3 DeepSpeed ZeRO-0/1/2/3(+offload) ─────────────────────────────
+    # 取值 zero0|zero1|zero2|zero3|zero2_offload|zero3_offload，或自定义 ds 配置路径
+    deepspeed: str | None = None
+    # ── S4 ZeRO++（节点内权重分片 + 跨节点数据分片）──────────────────────
+    zero_hpz_partition_size: int | None = None
+    # ── S5 DeepSpeed AutoTP（张量并行；仅 zero0/1/2 + 仅全参）────────────
+    deepspeed_autotp_size: int | None = None
+    # ── S6 FSDP2（与 DeepSpeed 互斥）─────────────────────────────────────
+    fsdp: str | None = None
+    # ── S7 序列并行 SP（Ulysses + Ring-Attention 共用此参数；默认 1=关闭）──
+    sequence_parallel_size: int = 1
+    # ── 长文附项（与 SP/ZeRO3/FSDP2 组合使用）───────────────────────────
+    rope_scaling: str | None = None  # yarn | dynamic
+    max_model_len: int | None = None
+    packing: bool = False
+    padding_free: bool = False
+    attn_impl: str | None = None  # flash_attn | flash_attention_2 | ...
+    use_liger_kernel: bool = False
+    # ── 长文显存的关键开关（E2b §4.2 定位的瓶颈对策）────────────────────
+    # ms-swift 在 packing 下对**整条 packed 序列**算 logits；64K × 151k 词表 × bf16
+    # ≈ 19.8 GiB 单份，是 128K 在 8×80GB 上 OOM 的主因。打开它只对需要的位置算 logits。
+    # 与 `penalty_ignore_labels` / completion-only 训练语义相关，默认 False（不改变默认行为）。
+    use_logits_to_keep: bool = False
+    # ── Megatron 路径（仅透传 + 启动冒烟，D8 A 档）────────────────────────
+    megatron: MsSwiftMegatronConfig = MsSwiftMegatronConfig()
+    # ── 每个 rollout batch 上的优化轮次（ms-swift `--num_iterations`）──────
+    # graspo 的默认是 **1**（native 侧已删除 optimize_iterations_per_step：
+    # 在陈旧的 old_log_probs 上重复迭代会导致共享 token 的灾难性遗忘）。
+    # 这里保留可配是为了**验证 PPO ratio 修复**——只有 num_iterations > 1 时，
+    # 第二步的策略前向才会相对第一步的基线发生移动，ratio 才可能 ≠ 1。
+    num_iterations: int | None = None
+    # ── 每设备训练微批大小（ms-swift 侧 `--per_device_train_batch_size`）──
+    # 与 native 的 `native.micro_batch_size` 语义相同但**不能共用**：native 的网格由
+    # tp/dp/pp 决定，ms-swift 的网格由 DeepSpeed/FSDP/Megatron 决定，两者不是同一个量。
+    # None = 不透传（交 ms-swift/HF 默认值）。
+    per_device_train_batch_size: int | None = None
+    # ── RL 采样通道（G3：vLLM rollout 与 HF forward 的 logprob 差异是
+    #    PPO ratio ≠ 1 的真实来源，故 rollout 引擎必须可配、不可隐式）──────
+    use_vllm: bool | None = None
+    vllm_mode: Literal["colocate", "server"] | None = None
+
+
 class ExportConfig(BaseModel):
     """模型导出配置。通过 ``graspo export --config <yaml>`` 驱动。"""
 
@@ -284,6 +410,7 @@ class GraspoConfig(BaseModel):
     train_method: Literal["graspo", "sft"] = "graspo"
     backend: str = "native"
     native: GraspoFlowConfig = GraspoFlowConfig()
+    msswift: MsSwiftConfig = MsSwiftConfig()
     model: ModelConfig = ModelConfig()
     data: DataConfig = DataConfig()
     lora: LoRAConfig = LoRAConfig()
@@ -321,7 +448,16 @@ class GraspoConfig(BaseModel):
         """
         data = dict(data or {})
         data["native"] = dict(data.get("native") or {})
-        for section in ("model", "data", "lora", "export", "launch", "reward", "training"):
+        for section in (
+            "msswift",
+            "model",
+            "data",
+            "lora",
+            "export",
+            "launch",
+            "reward",
+            "training",
+        ):
             if data.get(section) is None:
                 data[section] = {}
         return cls.model_validate(data)
@@ -385,6 +521,7 @@ def _report_config_errors(
         )
         for section in (
             "native",
+            "msswift",
             "model",
             "data",
             "lora",
