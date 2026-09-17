@@ -37,7 +37,7 @@ WORLD_SIZES = [1, 2, 4]
 TRAIN_PATH = "samples/data/tool_call_mm/train.jsonl"
 TIMEOUT_SEC = 1200
 DOCKER_IMAGE = "graspo:0.29.0"
-GPU_DEVICES = "0,1,2,3"  # GPUs 0-3 on 121
+GPU_DEVICES = "0,1,2,3"  # GPUs 0-3 on the 4-GPU validation node
 
 
 def factor_triples(w: int) -> list[tuple[int, int, int]]:

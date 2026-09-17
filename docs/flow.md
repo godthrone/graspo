@@ -280,7 +280,7 @@ PP 的流水线架构（异步 P2P + 可插拔调度）对用户透明——调�
 
 - **每个 GPU 只运行一个训练进程**：`launch.nproc_per_node` 从 `dp_size × tp_size × pp_size` 推导，torchrun 按 world_size 启动等量 worker；`parallel_state` 以 `device_id=cuda:local_rank` 绑定默认通信组，避免 NCCL 默认组缓冲集中到 cuda:0 造成显存不均，并在 `local_rank ≥ 可见 GPU 数` 时直接报错（防多进程/卡）。
 - **PP 层放置尽力均衡**：`NativePlacementPlan` 用 minimax 让每个 stage 的加权计算负载最小（`placement.py`），DP 数据分片按 rank 均匀切分。
-- **逐卡显存对称是设计目标**：TP/PP/SP 下各 rank 的激活分片天然不同，故"逐卡显存基本一致"是**目标而非强不变量**；实现与验证方式（如 `rank_metrics` 每 rank 峰值显存断言）见实现计划与测试矩阵。228 上 DP=4 SFT 长训已实测逐卡显存基本一致（~160 MiB 内）。
+- **逐卡显存对称是设计目标**：TP/PP/SP 下各 rank 的激活分片天然不同，故"逐卡显存基本一致"是**目标而非强不变量**；实现与验证方式（如 `rank_metrics` 每 rank 峰值显存断言）见实现计划与测试矩阵。在 4 卡 A800 验证节点上，DP=4 SFT 长训已实测逐卡显存基本一致（~160 MiB 内）。
 
 ## PP 设计决策记录
 
