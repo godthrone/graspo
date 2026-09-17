@@ -84,6 +84,19 @@
 >   **不要求同时实现三套**——按"哪套能把方法做得最好"来选。
 > - **优先依托 Megatron 引擎**：它对 TP / PP / **CP** / SP / 分布式优化器的支持最齐全，
 >   且**是唯一能覆盖 CP 的路径**（CP 是长上下文的关键手段，见 §2.5）。
+>   **⚠️ 该优先级的成立前提与当前证据档（声明层与事实层必须分开看）**：
+>   ① **注册层 ✔**——官方受支持模型表的 `Support Megatron` 列对 `Qwen3.5-9B` / `Qwen3.8-27B` **均为 ✔**；
+>      注册表实现在**外部包 `mcore_bridge`**（ms-swift 经 `get_model_meta` 查询，返回 `None` 即报 not supported）。
+>   ② **运行时 ⚠️ 未验证**——**从未在这两个模型上跑过 Megatron**；既有 Megatron 实测只跑过 `Qwen3-8B`
+>      ⇒ 本策略对目标两模型一律标为 **`⚠️ 官方声明支持，运行时未验证`**。
+>   ③ **多模态强制 `mcore-bridge`**（`megatron-bridge` 不支持多模态，会直接报错），且需额外依赖
+>      （`transformers>=5.0.0.dev`、`qwen_vl_utils`、`decord`）。
+>   ④ **官方对 dense 模型推荐 transformers 后端**（Megatron 的推荐对象是 MoE）；且官方**无**
+>      「`qwen3_5` dense 9B/27B + Megatron」现成脚本（Megatron 侧 `qwen3_5` 现成脚本只有 2B/4B dense
+>      与 35B-A3B **MoE**；9B 在官方脚本里只作 teacher 出现）。
+>   ⑤ **线性注意力（GDN）的 CP 官方要求 `megatron-core` main 分支**，测试节点装的是 **release 版** ⇒ 待确认。
+>   ⑥ **备选回退路径**：若 Megatron 走不通 ⇒ ms-swift **标准路径 + SP（Ulysses / Ring，同样沿序列维分片）
+>      + ZeRO-3**；native 侧用 **SP + TP / PP**。
 > - **DeepSpeed / FSDP2 / device_map 作为补充**：仅在 Megatron 覆盖不到或成本过高时启用
 >   （例如全量训练需要 ZeRO-3 + offload；以及多模态不兼容时的回退）。
 > - **对外只有 `native` / `ms-swift` 两档后端**；**引擎 / 路径选择是 ms-swift 后端的内部实现策略，不暴露给用户做选择**。
@@ -123,7 +136,7 @@
 > 具体的配置结构留待与用户讨论后确定（**本文档不发明配置文件格式，只写映射关系**）。
 > **每行都从"方法"视角写目标与当前状态**；框架（Megatron / DeepSpeed / FSDP2）只出现在"对应配置项"与说明里。
 
-#### **L1 · 并行维度**（世界大小如何切分）
+#### **层 1 · 并行维度**（世界大小如何切分）
 
 **这一层解决什么问题**：决定「卡怎么分」：把数据、权重、层、序列切到多卡。**这一层决定世界大小的分解方式**，是其余各层的前提。
 
@@ -134,25 +147,25 @@
 | **PP**（流水线并行） | 把层切到多卡，多段流水。native 当前仅 `1F1B` 一种调度且多卡实测曾失败 | **目标** | ⚠️ 有入口未验证 | **目标**（依托 Megatron 引擎） | ⚠️ 引擎字段存在，通路未接通 | `pp_size`（`:215`）｜`pp_scheduler`（`:241`）｜`pp_micro_batch_size`（`:225`）｜`pp_max_inflight_microbatches`（`:236`）｜Megatron `pipeline_model_parallel_size`（`:280`） |
 | **SP**（序列并行） | **沿序列维**切激活，长上下文的关键手段之一。**注意：本仓库有【三套】SP 机制，源码注释原文警告「是两套机制，勿混用」**（`schema.py:287-288`）——native 布尔开关、ms-swift 标准路径整数度、Megatron 段布尔开关 | **目标** | ✅ 已实现可跑 | **目标** | ✅ 已实现可跑 | ① native `sequence_parallel`（`schema.py:224`，布尔；与 TP 同进程组）｜② ms-swift 标准路径 `sequence_parallel_size`（`:344`，整数度；`sp_world_size = gcd(num_kv_heads, world_size)`）｜③ **Megatron 引擎 `sequence_parallel`（`:288`，布尔，仅当 TP>1 生效；源码注释 `:287` 原文：「与标准路径的 `msswift.sequence_parallel_size` 是两套机制，勿混用」）** |
 | **CP**（上下文并行） | **沿序列维**切分，长上下文的关键手段之一；**CP 只切序列、不切权重**；**唯一能覆盖 CP 的是 Megatron 引擎**（用户已定：native 不做 CP） | **不做**（用户已定，见 §2.7 N-7） | ⛔ 硬禁用 | **目标**（须依托 Megatron 引擎接通） | ⚠️ 引擎字段存在，通路未接通 | Megatron `context_parallel_size`（`:290`） |
-| **device_map**（层切分） | 按层把模型切到多卡。**它决定卡上放什么，属并行维度**（原列在 L2，与 L2「不改变卡分配」的定义冲突，已移入 L1）；**同时是 Z3 的互斥约束参与方** | **不做**（用户已定） | ⛔ 未实现 | ⛔ 本期不作为需求（按需补充） | ✅ 已实现可跑 | `device_map`（`:333`） |
-| **AutoTP**（自动张量并行） | 自动张量并行（上游仅全参）。**它是对 TP 的自动化，属并行维度**（原列在 L2，已移入 L1） | **不做**（用户已定） | ⛔ 未实现 | **待定**（全量入口打通后评估） | ⚠️ 引擎字段存在，通路未接通 | `deepspeed_autotp_size`（`:340`） |
+| **device_map**（层切分） | 按层把模型切到多卡。**它决定卡上放什么，属并行维度**（原列在层 2，与层 2「不改变卡分配」的定义冲突，已移入层 1）；**同时是 Z3 的互斥约束参与方** | **不做**（用户已定） | ⛔ 未实现 | ⛔ 本期不作为需求（按需补充） | ✅ 已实现可跑 | `device_map`（`:333`） |
+| **AutoTP**（自动张量并行） | 自动张量并行（上游仅全参）。**它是对 TP 的自动化，属并行维度**（原列在层 2，已移入层 1） | **不做**（用户已定） | ⛔ 未实现 | **待定**（全量入口打通后评估） | ⚠️ 引擎字段存在，通路未接通 | `deepspeed_autotp_size`（`:340`） |
 
 **层内硬约束**：**native**：`TP × PP × DP = 卡数`（源码校验：`src/graspo/flow/parallel/state.py:99-103` `expected_world_size = dp_size * tp_size * pp_size`，不匹配即抛错；SP 不占卡，与 TP 同进程组，须 `TP ≥ 2`，见 `flow/runtime.py:384-385`）。**ms-swift**：SP 是独立轴，`sp_world_size = gcd(num_kv_heads, world_size)` 且须整除 `num_kv_heads`，`DP 度 = world_size / sp_world_size` —— 与 native 不是同一条恒等式。
 
-#### **L2 · 分片策略**（权重 / 梯度 / 优化器状态如何摊）
+#### **层 2 · 分片策略**（权重 / 梯度 / 优化器状态如何摊）
 
-**这一层解决什么问题**：在**同一世界大小内**把常驻状态再摊开：降低权重、梯度、优化器态的每卡常驻占用。**这不改变卡的分配方式**。**路线**：优先用 Megatron 引擎的分布式优化器与参数 / 梯度分片；DeepSpeed（ZeRO 预设 + CPU offload）与 FSDP2 / device_map 作为补充，仅在 Megatron 覆盖不到或成本过高时启用。
+**这一层解决什么问题**：在**同一世界大小内**把常驻状态再摊开：降低权重、梯度、优化器态的每卡常驻占用。**这不改变卡的分配方式**。**路线**：优先用 Megatron 引擎的分布式优化器与参数 / 梯度分片；DeepSpeed（ZeRO 预设 + CPU offload）与 FSDP2 / device_map 作为补充，仅在 Megatron 覆盖不到或成本过高时启用。**⚠️「Megatron 优先」的成立前提（声明层 ≠ 事实层）**：该优先级对**目标两模型**目前只有**注册层证据**（官方支持表标 ✔、注册表在外部包 `mcore_bridge`），**运行时从未实测**——既有 Megatron 实测全部跑在 `Qwen3-8B`（非混合注意力、非多模态）上。因此本层各项在 Megatron 引擎下的可达性，**须以 §2.8 G-12 的 1-iter 冒烟结果为准**；未过冒烟前不得按「已验证」使用。
 
 | 项 | 作用 | native 目标 | native 当前 | ms-swift 目标 | ms-swift 当前 | 对应配置项 |
 |---|---|---|---|---|---|---|
-| **优化器态 / 梯度分片**（ZeRO-1/2 等价物） | 把优化器态与梯度摊到各卡。**Megatron 侧的分布式优化器是其原生能力**；DeepSpeed ZeRO-1/2 为补充 | **不做**（用户已定） | ⛔ 架构硬禁用 | **目标**（优先 Megatron 分布式优化器） | ✅ 已实现可跑 | Megatron `use_distributed_optimizer`（`:269`）｜`deepspeed`（`:336`） |
+| **优化器态 / 梯度分片**（ZeRO-1/2 等价物） | 把优化器态与梯度摊到各卡。**Megatron 侧的分布式优化器是其原生能力**；DeepSpeed ZeRO-1/2 为补充 | **不做**（用户已定） | ⛔ 架构硬禁用 | **目标**（优先 Megatron 分布式优化器；**前提见本层「Megatron 优先」说明——未过 §2.8 G-12 冒烟前为未验证态**） | ✅ 已实现可跑 | Megatron `use_distributed_optimizer`（`:269`）｜`deepspeed`（`:336`） |
 | **权重分片**（ZeRO-3 等价物） | 把权重也摊到各卡。**Megatron-FSDP 的分片阶段由 `data_parallel_sharding_strategy` 选择**（`no_shard` / `optim` / `optim_grads` / `optim_grads_params`） | **不做**（用户已定） | ⛔ 架构硬禁用 | **目标**（Megatron-FSDP / ZeRO-3） | ✅ 已实现可跑 | Megatron `use_megatron_fsdp`（`:271`）｜**`data_parallel_sharding_strategy`（`:272-274`，Megatron-FSDP 的 ZeRO 阶段选择器）**｜`strict_fsdp_dtensor_load`（`:275`）｜`deepspeed`（`:336`） |
 | **CPU offload** | 把优化器态 / 权重换出到 CPU 内存 | **不做**（用户已定） | ⛔ 架构硬禁用 | **目标**（ZeRO-3 offload 预设） | ✅ 已实现可跑 | `deepspeed` 预设（`:336`）｜`zero_hpz_partition_size`（`:338`，ZeRO++） |
 | **FSDP2** | 全分片数据并行（v2）。**补充路径**，Megatron 覆盖不到时启用 | **不做**（用户已定） | ⛔ 未实现 | ⛔ 本期不作为需求（按需补充） | ✅ 已实现可跑 | `fsdp`（`:342`） |
 
 **层内硬约束**：`deepspeed` ✗ `fsdp`、`deepspeed` ✗ `device_map`、`fsdp` ✗ `device_map`（三者互斥）；ZeRO++ 须同时给 `deepspeed`；`deepspeed_autotp_size` 仅全参可用。**Megatron 路径三条硬约束**（上游源码）：① **LoRA 必须 `bridge_backend=mcore-bridge`**（megatron-bridge 不支持 LoRA，非 full 时直接报错）；② `language_model_only=True` 时**禁用 `lora_llm`**（只能 `lora`）；③ `freeze_vit` 默认 True，且其冻结逻辑**仅 `tuner_type='full'` 生效**。
 
-#### **L3 · 激活与 logits 削峰**（不改卡数分配，只降峰值）
+#### **层 3 · 激活与 logits 削峰**（不改卡数分配，只降峰值）
 
 **这一层解决什么问题**：**不改世界的切分方式**，只把训练过程中的峰值显存压低（激活重算、少算 logits、换更省显存的注意力实现）。
 
@@ -163,9 +176,9 @@
 | **FA2**（flash attention） | 更省显存的注意力实现；SP / packing 的硬前置。native 侧为可选实现，未在 native 上验证 | **不做**（用户已定） | ⚠️ 有入口未验证 | **目标** | ✅ 已实现可跑 | `attn_implementation`（`:64`，native）｜`attn_impl`（`:350`，ms-swift） |
 | **liger kernel** | 融合算子，降低中间激活 | **不做**（用户已定） | ⛔ 未实现 | **目标** | ✅ 已实现可跑 | `use_liger_kernel`（`:351`） |
 
-**层内硬约束**：**l2k 与 `SP>1` 的关系（按源码重写，不是“上游硬互斥”）**：① **默认推导**——`trainers/mixin.py:211-223` 使 `SP>1` 时 l2k **默认**为 False（显式设 True 时该函数不 raise）；② **运行时硬拦**——真启用 l2k 且 `SP>1` 时，`trainers/mixin.py:1261-1263` 的 `prepare_logits_to_keep()` 抛 `NotImplementedError`；③ **多模态下 l2k 被强制关闭**（非 transformers_5，`mixin.py:215-216`）。另：`packing ⇒ padding_free ⇒ 强制 FA2`（见 L4）。
+**层内硬约束**：**l2k 与 `SP>1` 的关系（按源码重写，不是“上游硬互斥”）**：① **默认推导**——`trainers/mixin.py:211-223` 使 `SP>1` 时 l2k **默认**为 False（显式设 True 时该函数不 raise）；② **运行时硬拦**——真启用 l2k 且 `SP>1` 时，`trainers/mixin.py:1261-1263` 的 `prepare_logits_to_keep()` 抛 `NotImplementedError`；③ **多模态下 l2k 被强制关闭**（非 transformers_5，`mixin.py:215-216`）。另：`packing ⇒ padding_free ⇒ 强制 FA2`（见层 4）。
 
-#### **L4 · 批次与序列组织**（一次算多少、样本怎么拼）
+#### **层 4 · 批次与序列组织**（一次算多少、样本怎么拼）
 
 **这一层解决什么问题**：决定「一次算多少」：micro-batch、梯度累积决定一次优化步的样本量；packing 决定一条序列里塞多少样本。**这一层直接影响吞吐与有效序列长度**。
 
@@ -180,7 +193,7 @@
 
 **层内硬约束**：`packing ⇒ padding_free ⇒ 强制 FA2`；`padding_free` 单独开时也要求 flash attention 系实现。
 
-#### **L5 · 精度与拓扑**
+#### **层 5 · 精度与拓扑**
 
 **这一层解决什么问题**：数值精度与跨机形态。**本期多数项已被用户排除**，列在此处是为了让配置设计者看到全貌。
 
@@ -192,7 +205,7 @@
 
 **层内硬约束**：量化需 Hopper 及以上硬件与 `transformer_engine`；本仓库两后端均未暴露量化配置。
 
-**层间关系（一句话）**：**L1 决定"卡怎么分" → L2 在同一世界大小内再摊常驻状态 → L3 不改分配只削峰 → L4 决定"一次算多少" → L5 管精度与跨机。**
+**层间关系（一句话）**：**层 1 决定"卡怎么分" → 层 2 在同一世界大小内再摊常驻状态 → 层 3 不改分配只削峰 → 层 4 决定"一次算多少" → 层 5 管精度与跨机。**
 
 ### 2.5 长上下文机制（**关键需求**）
 
@@ -202,14 +215,21 @@
 > - **native**：序列维分片手段 = **SP**（保留实现，与 TP 同进程组，须 `TP ≥ 2`，不额外占卡）。
 > - **ms-swift**：SP 已可用；**CP 是本期目标**，须依托其 Megatron 引擎接通（§2.8 G-5/G-6）。
 >   CP **只切序列、不切权重**。
+>   **⚠️ 目标模型的 CP 前提尚未闭合**：线性注意力（GDN）的 CP 官方要求 `megatron-core` **main 分支**，
+>   而测试节点装的是 **release 版** ⇒ 待确认（§2.8 G-11）。若 Megatron 走不通，
+>   **回退路径 = ms-swift 标准路径的 SP（Ulysses / Ring，同样沿序列维分片）+ ZeRO-3**；native 侧 = **SP + TP / PP**。
 > - ⇒ 本节只规定"**必须靠什么机制**"；**每档实际能到多长由 §3 的方法实测**，不由本文件推断。
 
 ### 2.6 模型与硬件口径
 
 | 项 | 取值 | 说明 |
 |---|---|---|
-| 模型 | `Qwen3.5-9B`、`Qwen3.8-27B` | 均为 dense、含视觉塔的 VLM |
-| **多模态（视觉）** | **所有训练都要支持多模态**（要训练多模态数据集） | **这是目标能力**，不是可选项；当前实现状态：现有运行均为「视觉 deferred」的纯文本路径 ⇒ 视觉通路要补（§2.8 G-8）。**Megatron 引擎侧的多模态支持已核实存在**（§2.8 G-11）；接通时须落实三条硬约束（§2.4 L2 层内硬约束）：LoRA 须用 `mcore-bridge`、`language_model_only` 禁 `lora_llm`、`freeze_vit` 仅对全参生效 |
+| 模型 | `Qwen3.5-9B`、`Qwen3.8-27B` | 两者均为 `model_type=qwen3_5`、`architectures=['Qwen3_5ForConditionalGeneration']` 的**原生多模态 VLM（vision + video）**；权重含**整座视觉塔**（333 个 `model.visual.*` 参数，两模型同数）。它们**非 MoE（属 dense）**，但**不是普通 dense Transformer**——文本侧为**混合线性注意力（GDN）+ MTP**（见下行） |
+| **架构**（混合线性注意力 GDN + MTP） | `text_config.layer_types` 在 `linear_attention` / `full_attention` 间**交替**（模式形如 `[L,L,L,F,…]`），`full_attention_interval=4`；含 `mamba_ssm_dtype`、`linear_conv_kernel_dim`、`linear_key/value_head_dim`、`attn_output_gate=True` 等线性注意力字段；`mtp_num_hidden_layers=1`（MTP / NextN 预测层） | **该架构即官方所称 GatedDeltaNet（GDN）混合线性注意力**。**含义**：它**不能按普通全注意力 Transformer 的显存 / 并行假设外推**——线性注意力层与全注意力层交替，且另有 MTP 层与视觉塔 |
+| **关键规格** | **9B** = 32 层 / hidden 4096 / 16 注意力头 / 4 KV 头 / `head_dim` 256 / 词表 248320 / FFN 12888；**27B** = 64 层 / hidden 5120 / 24 注意力头 / 4 KV 头 / `head_dim` 256 / 词表 248320 / FFN 17408 | 以上字段均在 `text_config` 内；两模型 `tie_word_embeddings=False`、`dtype=bfloat16`、`max_position_embeddings=262144` |
+| **多模态（视觉）** | **所有训练都要支持多模态**（要训练多模态数据集） | **这是目标能力**，不是可选项；当前实现状态：现有运行均为「视觉 deferred」的纯文本路径 ⇒ 视觉通路要补（§2.8 G-8）。**Megatron 引擎侧的多模态支持已核实存在**（§2.8 G-11）；接通时须落实三条硬约束（§2.4 层 2 层内硬约束）：LoRA 须用 `mcore-bridge`、`language_model_only` 禁 `lora_llm`、`freeze_vit` 仅对全参生效 |
+| 实物状态 | 两模型**已就位**（在测试节点上） | **分片数与总大小已核实**：9B = 4 分片 / `metadata.total_size` 19 306 216 416 B；27B = 18 分片 / `metadata.total_size` 55 562 855 904 B |
+| ⚠️ **结论性提醒** | **既有的 CP / TP / PP 实战经验来自 `Qwen3-8B`**（`model_type=qwen3`，非混合注意力、非多模态） | ⇒ **不能直接外推**到这两个模型：目标模型是「混合线性注意力（GDN）+ 视觉塔 + MTP」三合一，任一环节未打通都会翻转并行可行性结论（见 §2.8 G-11 / G-12） |
 | 卡数 | **1 / 2 / 4**（8 卡 = 不做，见 §2.7 N-6） | 单节点 8 × A800-80G 机器上只使用 1/2/4 卡三档 |
 | 上下文长度 | **由实测得到，不作预设档位** | 从基准长度起递增加长直到失败（§3） |
 | 测试数据量 | **SFT ≥ 100 条；RL ≥ 20 条**；每档至少 1 个完整 epoch 且 ≥ 5 个 optimizer step | 见 §3 测试方法 |
@@ -241,11 +261,12 @@
 | G-4 | **OPD 实现（ms-swift）**——仅契约预留，零消费端 | 全部 OPD 档（9 档） | ⛔ 未实现 |
 | G-5 | **承载结构调整：接通 ms-swift 的 Megatron 引擎通路**——它是 TP / PP / **CP** / SP / 分布式优化器的承载载体；当前引擎字段齐全但不进启动参数，且缺 Megatron 专属超参映射表。**接通时须同时落实三条硬约束**：① LoRA 必须 `bridge_backend=mcore-bridge`；② `language_model_only=True` 禁用 `lora_llm`；③ `freeze_vit` 冻结逻辑仅对 `tuner_type='full'` 生效 | 所有需要 TP / PP / CP 的档位（含全部长文目标档） | ⚠️ 引擎字段存在，通路未接通 |
 | G-6 | **CP（上下文并行，ms-swift）**——`context_parallel_size` 已有字段，须依托 Megatron 引擎接通；**CP 是长上下文的关键手段**且只切序列、不切权重；已核实**多模态下 CP 由 `input_embeds` 承载**（`megatron_lm_utils.py:869`） | 所有需要上下文分片的长文档位 | ⚠️ 引擎字段存在，通路未接通 |
-| G-7 | **Megatron 激活重算字段缺失**——Megatron 用 `recompute_granularity` / `recompute_method` / `recompute_num_layers` 控制激活重算，而本仓库 `schema.py` **查无任何 `recompute_*` 字段** ⇒ 需新增映射；否则 L3 的 GC 在 Megatron 引擎下无配置入口 | 所有经 Megatron 引擎的长文档位（GC 是本期的目标手段） | ⚠️ 字段缺失，待映射 |
+| G-7 | **Megatron 激活重算字段缺失**——Megatron 用 `recompute_granularity` / `recompute_method` / `recompute_num_layers` 控制激活重算，而本仓库 `schema.py` **查无任何 `recompute_*` 字段** ⇒ 需新增映射；否则层 3 的 GC 在 Megatron 引擎下无配置入口 | 所有经 Megatron 引擎的长文档位（GC 是本期的目标手段） | ⚠️ 字段缺失，待映射 |
 | G-8 | **多模态（视觉）训练通路**——现有运行均为视觉 deferred 的纯文本路径；Megatron 引擎侧的多模态支持**已核实存在**（见 §2.8 G-11 的证据），但本仓库的两模型通路仍待打通 | 全部目标档 | ⚠️ 有入口未验证（视觉路径零证据） |
 | G-9 | **SFT 后端注册表未登记进打包元数据**——生产环境走开发回退表 | ms-swift 的 SFT 档 | ⚠️ 有入口未验证 |
 | G-10 | **RL 多卡稳定性**（native 侧 PP 多卡曾崩溃） | native 的 GRASPO 多卡档 | ⚠️ 有入口未验证 |
-| G-11 | **已核实：Megatron 引擎支持多模态 / VLM**（证据：官方示例 `examples/megatron/multimodal/` 下的 `Qwen2.5-VL-7B` LoRA/全参脚本与 `Qwen3.5-35B-A3B` 的 `lora_llm` 脚本；`megatron_args.py:1133-1147` 的 `_init_multimodal_full()`；`megatron_lm_utils.py:869` 的 「Multimodal models will handle CP in input_embeds」）⇒ 原「支持情况未知」的风险**关闭**。**残余待核实项（保留）**：目标两模型（`Qwen3.5-9B` / `Qwen3.8-27B`）**是否已注册 / 可转换到 Megatron 的 model_meta 注册表，未逐模型核实** ⇒ 须逐模型核实一次 | 全部多模态目标档（与 G-5 叠加） | ❓ 支持已核实；**两模型注册情况待逐模型核实** |
+| G-11 | **Megatron 引擎支持多模态 / VLM（注册层已核实、运行时未验证）**——**注册层证据**：官方受支持模型表 `Support Megatron` 列对 `Qwen3.5-9B` / `Qwen3.8-27B` **均为 ✔**；注册表实现在**外部包 `mcore_bridge`**（ms-swift 经 `get_model_meta` 查询，返回 `None` 即报 not supported）；官方示例 `examples/megatron/multimodal/` 下有 VLM 脚本；`megatron_args.py` 的 `_init_multimodal_full()`；`megatron_lm_utils.py` 的「Multimodal models will handle CP in input_embeds」。**运行时事实**：**从未在这两个模型上跑过 Megatron**（既有 Megatron 实测只跑过 `Qwen3-8B`）⇒ 标为 **`⚠️ 官方声明支持，运行时未验证`**。**硬约束**：多模态**强制 `mcore-bridge`**（`megatron-bridge` 不支持多模态，会直接报错），且需额外依赖（`transformers>=5.0.0.dev`、`qwen_vl_utils`、`decord`）。**口径提醒**：官方对 **dense 模型推荐 transformers 后端**（Megatron 的推荐对象是 MoE）；且官方**无**「`qwen3_5` dense 9B/27B + Megatron」现成脚本——Megatron 侧 `qwen3_5` 现成脚本只有 2B/4B dense 与 35B-A3B **MoE**，9B 在官方脚本里只作 teacher 出现。**待确认**：线性注意力（GDN）的 CP 官方要求 `megatron-core` **main 分支**，而测试节点装的是 **release 版**。**备选回退路径（若 Megatron 走不通）**：ms-swift **标准路径 + SP（Ulysses / Ring，同样沿序列维分片）+ ZeRO-3**；native 侧用 **SP + TP / PP**。 | 全部多模态目标档（与 G-5 叠加） | ⚠️ 官方声明支持，运行时未验证 |
+| G-12 | **`qwen3_5` 两模型在 Megatron 下的运行时可行性未实测**——注册层已核实（§2.8 G-11），但缺一次真机验证 ⇒ **须先做 1-iter 冒烟**：`train_iters=1` / `micro_batch_size=1`，让 `get_model_meta('qwen3_5')` 给出「非 None / 抛 not supported」的二值答案，并验证权重键映射（尤其 `model.visual.*` 与 `mtp.*`）。**冒烟通过前，Megatron 优先策略对目标两模型均为未验证态**；在它通过之前不宜并行投入 27B 的大规模实现 | 全部需要 TP / PP / CP / Megatron 的目标档 | ⚠️ 未实测（须先做 1-iter 冒烟） |
 
 ---
 
@@ -332,11 +353,12 @@
 |---|---|---|
 | **SFT** | 测试集**综合准确率 ≥ 52.7%** | ⚠️ **该阈值是历史观测、非本期实测**，**基线配置 = `Qwen3.5-9B` + LoRA(r=128, α=256) + `TP1/DP4` 四卡 + mb1/GA4 + lr=8e-5/cosine + 3980 steps（10 epoch / 29.7 h）⇒ epoch9 = 52.7% / epoch5 = 45.7%**。**该基线与本矩阵各档【不同构】**（卡数与后端都不同）⇒ **不得当作同构判定**；本期各档须按 §3.4 自测 `acc`。阈值本身待用户拍板 |
 | **GRASPO（RL）** | **`Δ = acc_after − acc_before ≥ 20 个百分点`** | `acc` = 同一 vLLM 评测流程在 **ELAM V5 test 集**上的 `reward 正确率`；`acc_before` = 训练前同一基座，`acc_after` = 训练后 checkpoint（§3.4）。判定人 = 执行者产出评测 JSON、审查者复核 |
-| **CPT** | **本期只判「跑通（A1–A6）」，不判效果**；效果判据**待用户给定** | 标注为"不阻塞发布"（见 §4.5） |
-| **OPD** | 同上 | 同上 |
+| **CPT** | **本期只判「跑通（A1–A6）」，不判效果**；效果判据**待用户给定**。**用户已定：效果判据回头再议** | 标注为"不阻塞发布"（见 §4.5）；**维持「本期只判跑通、不阻塞发布」的现行处置** |
+| **OPD** | **同上**（**用户已定：效果判据回头再议**） | 同上 |
 
 > **CPT / OPD 不阻塞发布**：§4.5 的"效果达标"这一条**只对有判据的算法（SFT / GRASPO）求值**；
 > CPT / OPD 档位**须显式标注"效果判据未给定"**，但**不影响发布判定**。
+> **用户已定**：CPT / OPD 这俩**效果不好判定，回头再说** ⇒ 现行处置**维持不变**（只判跑通、不阻塞发布）。
 
 ### 4.3 验收深度 L0–L5（**与两套状态维度彻底分离**）
 
