@@ -26,7 +26,7 @@ CARDS = (1, 2, 4)
 
 IMPLEMENTED = "✅ 已实现可跑"
 PARTIAL = "⚠️ 有入口未验证"
-TODO = "⛔ 未实现（本期要补）"
+TODO = "⛔ 未实现"
 FALLBACK = "⛔ 本期不作为需求（按需补充）"
 NO = "⛔ 不做（用户已定）"
 FIELD = "⚠️ 引擎字段存在，通路未接通"
@@ -50,7 +50,7 @@ ALGO_ROWS = [
 # ------------------------------------------------------------------ §2.2 模式轴
 MODE_ROWS = [
     ("**LoRA**", "本期目标：两后端 × 两模型 × **四算法**（含 CPT / OPD）", IMPLEMENTED, IMPLEMENTED,
-     "两后端唯一当前可用的模式；`lora.r = 0` 会 fail-closed 报错，不会静默退化为全参"),
+     "两后端唯一当前可用的模式"),
     ("**全量（全参）**", "本期目标：**仅 9B**；两后端 × **四算法**（含 CPT / OPD）", TODO, TODO,
      "**27B × 全量 = 不做**（用户已定：卡数不够），见 §2.7 N-5，**对四算法一律适用**；"
      "native：基座权重硬冻结（按名白名单只放行 `lora_` 参数）且配置层无全参开关；"
@@ -93,7 +93,8 @@ LAYERS = [
          ("**SP**（序列并行）", "**沿序列维**切激活，长上下文的关键手段之一。"
           "**注意：本仓库有【三套】SP 机制，源码注释原文警告「是两套机制，勿混用」**"
           "（`schema.py:287-288`）——native 布尔开关、ms-swift 标准路径整数度、Megatron 段布尔开关",
-          "**目标**", IMPLEMENTED, "**目标**", IMPLEMENTED,
+          "**目标**", IMPLEMENTED, "**目标**",
+          "② `✅ 已实现可跑`（标准路径）｜③ `⚠️ 引擎字段存在，通路未接通`（Megatron，见 G-5）",
           "① native `sequence_parallel`（`schema.py:224`，布尔；与 TP 同进程组）｜"
           "② ms-swift 标准路径 `sequence_parallel_size`（`:344`，整数度；`sp_world_size = "
           "gcd(num_kv_heads, world_size)`）｜"
@@ -233,7 +234,7 @@ MODEL_ROWS = [
      "`max_position_embeddings=262144`"),
     ("**多模态（视觉）**", "**所有训练都要支持多模态**（要训练多模态数据集）", "**这是目标能力**，不是可选项；"
      "当前实现状态：现有运行均为「视觉 deferred」的纯文本路径 ⇒ 视觉通路要补（§2.8 G-8）。"
-     "**Megatron 引擎侧的多模态支持已核实存在**（§2.8 G-11）；接通时须落实三条硬约束（§2.4 层 2 层内硬约束）："
+     "**Megatron 引擎侧的多模态支持注册层已核实存在（运行时未验证）**（§2.8 G-11）；接通时须落实三条硬约束（§2.4 层 2 层内硬约束）："
      "LoRA 须用 `mcore-bridge`、`language_model_only` 禁 `lora_llm`、`freeze_vit` 仅对全参生效"),
     ("实物状态", "两模型**已就位**（在测试节点上）",
      "**分片数与总大小已核实**：9B = 4 分片 / `metadata.total_size` 19 306 216 416 B；"
@@ -281,7 +282,7 @@ GAP_ROWS = [
      "所有需要 TP / PP / CP 的档位（含全部长文目标档）", "⚠️ 引擎字段存在，通路未接通"),
     ("G-6", "**CP（上下文并行，ms-swift）**——`context_parallel_size` 已有字段，须依托 Megatron 引擎接通；"
      "**CP 是长上下文的关键手段**且只切序列、不切权重；已核实**多模态下 CP 由 `input_embeds` 承载**"
-     "（`megatron_lm_utils.py:869`）", "所有需要上下文分片的长文档位", "⚠️ 引擎字段存在，通路未接通"),
+     "（`megatron_lm_utils.py:869-870`）", "所有需要上下文分片的长文档位", "⚠️ 引擎字段存在，通路未接通"),
     ("G-7", "**Megatron 激活重算字段缺失**——Megatron 用 `recompute_granularity` / `recompute_method` / "
      "`recompute_num_layers` 控制激活重算，而本仓库 `schema.py` **查无任何 `recompute_*` 字段** ⇒ "
      "需新增映射；否则层 3 的 GC 在 Megatron 引擎下无配置入口",
