@@ -41,6 +41,7 @@ class Qwen3DenseModel(QwenFamilyBase):
         gradient_checkpointing: bool,
         torch_dtype: torch.dtype,
         device: torch.device,
+        full_param: bool = False,
     ) -> None:
         super().__init__()
         self.config = hf_config
@@ -48,6 +49,10 @@ class Qwen3DenseModel(QwenFamilyBase):
         self.tp_size = tp_size
         self.placement = placement
         self.device_ref = device
+        self.full_param = bool(full_param)
+        # 全参模式不建 LoRA 矩阵：r=0 ⇒ LoRALinear.lora_enabled=False，模块退化为
+        # 普通线性层（零额外参数），基座权重稍后统一放开 requires_grad。
+        lora_r = 0 if self.full_param else lora_r
         self.gradient_checkpointing = bool(gradient_checkpointing)
         self.supports_kv_cache = True
         self.lora_targets = set(lora_targets)
@@ -96,8 +101,16 @@ class Qwen3DenseModel(QwenFamilyBase):
         if lm_head is None:
             lm_head = loader.get(f"{self.key_prefix}.embed_tokens.weight")
         self.lm_head.weight.data.copy_(lm_head.to(device=device, dtype=torch_dtype))
-        for name, param in self.named_parameters():
-            param.requires_grad = "lora_" in name
+        # 参数冻结策略：两条路径平级共存（用户要求保留 native LoRA，不弃用）。
+        # - lora（默认）：只放开名字含 ``lora_`` 的适配器矩阵，基座权重冻结。
+        # - full（全参）：放开全部参数（宪法 §2.2 显式即防呆——用显式分支而不是
+        #   "不给 requires_grad 赋值"这类隐式行为）。
+        if self.full_param:
+            for param in self.parameters():
+                param.requires_grad = True
+        else:
+            for name, param in self.named_parameters():
+                param.requires_grad = "lora_" in name
 
     def forward(
         self,

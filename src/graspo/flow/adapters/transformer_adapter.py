@@ -196,7 +196,17 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
         from graspo.ripple.loss import GRASPORippleLoss
 
         self.loss_fn = GRASPORippleLoss(self.config.training.policy_ratio_clip_eps)
+        # 优化器收参路径对两种模式**是同一条**：一律只收 ``requires_grad`` 的参数。
+        # 区别在模型侧——lora 模式只有 ``lora_*`` 矩阵被放开，full 模式全部参数被放开
+        # （``flow/adapters/models/*/model.py``）。因此这里不需要按模式分支，只需把
+        # "全参却没收到参数"这种静默失败挡掉（宪法 §2.3 边界校验即防呆）。
         trainable = [param for param in self.model.parameters() if param.requires_grad]
+        if self.config.effective_tuner_type == "full" and not trainable:
+            raise RuntimeError(
+                "tuner_type=full but no parameter has requires_grad=True — the native "
+                "full-parameter entry did not take effect (optimizer would be None and "
+                "training would silently do nothing)."
+            )
         self.optimizer = (
             torch.optim.AdamW(
                 trainable,
@@ -380,8 +390,10 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
             raise RuntimeError(f"{type(self).__name__} is not set up; call setup() first")
         output = Path(path)
         output.mkdir(parents=True, exist_ok=True)
+        full_param = self.config.effective_tuner_type == "full"
         payload = {
             "adapter": "native",
+            "tuner_type": self.config.effective_tuner_type,
             "rank": self.rank,
             "tp_rank": self.tp_rank,
             "tp_size": self.tp_size,
@@ -393,6 +405,18 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
             "lora_target_signature": self.model.lora_target_signature(),
             "lora_tensor_metadata": self.model.lora_tensor_metadata(),
             "lora_state_dict": self.model.lora_state_dict(),
+            # 全参模式的训练状态不在 ``lora_state_dict`` 里（它只收 ``lora_`` 名字）。
+            # 不补这一项的话 save/load 会"静默成功但什么都没恢复"——详见 load_checkpoint
+            # 的同名分支。只存可训参数（optimizer 会改的就是这些）。
+            "full_param_state_dict": (
+                {
+                    name: param.detach().cpu()
+                    for name, param in self.model.named_parameters()
+                    if param.requires_grad
+                }
+                if full_param
+                else None
+            ),
             "optimizer_state_dict": (
                 self.optimizer.state_dict() if self.optimizer is not None else None
             ),
@@ -425,7 +449,8 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
             (output / "manifest.json").write_text(
                 json.dumps(
                     {
-                        "format": "native-lora",
+                        "format": "native-lora" if not full_param else "native-full-param",
+                        "tuner_type": self.config.effective_tuner_type,
                         "tp_size": self.tp_size,
                         "dp_size": self.dp_size,
                         "pp_size": self.pp_size,
@@ -436,7 +461,11 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
                         ),
                         "lora_target_signature": self.model.lora_target_signature(),
                         "world_size": self.world_size,
-                        "checkpoint_type": "recoverable_lora_training_state",
+                        "checkpoint_type": (
+                            "recoverable_lora_training_state"
+                            if not full_param
+                            else "recoverable_full_param_training_state"
+                        ),
                         "has_trainer_state": trainer_state is not None,
                     },
                     ensure_ascii=False,
@@ -488,20 +517,38 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
                 f"Checkpoint PP size {payload.get('pp_size')} does not match runtime "
                 f"PP size {self.pp_size}"
             )
-        checkpoint_signature = payload.get("lora_target_signature")
-        current_signature = self.model.lora_target_signature()
-        if checkpoint_signature is not None and checkpoint_signature != current_signature:
-            raise ValueError(
-                "Checkpoint LoRA target signature does not match runtime configuration: "
-                f"checkpoint={checkpoint_signature}, runtime={current_signature}"
+        if self.config.effective_tuner_type == "full":
+            # 全参模式：权重在 ``full_param_state_dict`` 里。**必须** fail-closed 地
+            # 校验它存在——旧格式（或误配）的 checkpoint 只有空的 lora_state_dict，
+            # 走下面的 LoRA 分支会"load 成功但一个权重都没恢复"，那是静默训错。
+            full_state = payload.get("full_param_state_dict")
+            if full_state is None:
+                raise RuntimeError(
+                    "Checkpoint shard has no full-parameter state dict while "
+                    "tuner_type=full: this shard was written by a LoRA run (or an "
+                    "incompatible version). Refusing to resume, because loading it "
+                    "would silently leave the base weights at initialization."
+                )
+            # strict=True：PP/TP 分片是按 rank 存的，本 rank 读自己的 shard，
+            # 键集合必须逐字匹配；不匹配就是布局变了，当场报错。
+            self.model.load_state_dict(full_state, strict=True)
+        else:
+            checkpoint_signature = payload.get("lora_target_signature")
+            current_signature = self.model.lora_target_signature()
+            if checkpoint_signature is not None and checkpoint_signature != current_signature:
+                raise ValueError(
+                    "Checkpoint LoRA target signature does not match runtime configuration: "
+                    f"checkpoint={checkpoint_signature}, runtime={current_signature}"
+                )
+            missing, unexpected = self.model.load_state_dict(
+                payload["lora_state_dict"], strict=False
             )
-        missing, unexpected = self.model.load_state_dict(payload["lora_state_dict"], strict=False)
-        unexpected_lora = [name for name in unexpected if "lora_" in name]
-        if unexpected_lora:
-            raise RuntimeError(f"Unexpected LoRA tensors in checkpoint: {unexpected_lora}")
-        missing_lora = [name for name in missing if "lora_" in name]
-        if missing_lora:
-            raise RuntimeError(f"Missing LoRA tensors while loading checkpoint: {missing_lora}")
+            unexpected_lora = [name for name in unexpected if "lora_" in name]
+            if unexpected_lora:
+                raise RuntimeError(f"Unexpected LoRA tensors in checkpoint: {unexpected_lora}")
+            missing_lora = [name for name in missing if "lora_" in name]
+            if missing_lora:
+                raise RuntimeError(f"Missing LoRA tensors while loading checkpoint: {missing_lora}")
         optimizer_state = payload.get("optimizer_state_dict")
         normalized_optimizer_state: list[str] = []
         if self.optimizer is not None and optimizer_state is not None:
@@ -650,8 +697,19 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
             ),
             "global_loss_mean": _mean_present(item.get("loss_mean") for item in ranks),
             "global_grad_norm_mean": _mean_present(item.get("grad_norm_mean") for item in ranks),
+            # lora 模式：LoRA 权重范数变化；full 模式：该键为 None（无 lora 参数 ⇒
+            # 指标不适用，_mean_present 会把 None 过滤掉，不会退化成 0）。
             "global_lora_norm_delta_mean": _mean_present(
                 item.get("lora_norm_delta") for item in ranks
+            ),
+            # full 模式的等价指标（全部可训参数的权重范数变化）；lora 模式下为 None。
+            "global_trainable_norm_delta_mean": _mean_present(
+                item.get("trainable_norm_delta") for item in ranks
+            ),
+            # 指标定义标识（lora: nonzero_lora_grads / full: grad_populated_trainable_params）。
+            "grad_count_metric": next(
+                (item.get("grad_count_metric") for item in ranks if item.get("grad_count_metric")),
+                None,
             ),
         }
 

@@ -61,6 +61,7 @@ def build_native_qwen_model(
     gradient_checkpointing: bool,
     torch_dtype: torch.dtype,
     device: torch.device,
+    full_param: bool = False,
 ) -> nn.Module:
     if hf_config.family == "qwen3":
         # 函数内延迟导入：common 层不依赖具体家族（防家族反向依赖）
@@ -80,6 +81,7 @@ def build_native_qwen_model(
             gradient_checkpointing=gradient_checkpointing,
             torch_dtype=torch_dtype,
             device=device,
+            full_param=full_param,
         )
     if hf_config.family == "qwen3_5_text":
         from graspo.flow.adapters.models.qwen35_36.model import Qwen35HybridTextModel
@@ -98,6 +100,7 @@ def build_native_qwen_model(
             gradient_checkpointing=gradient_checkpointing,
             torch_dtype=torch_dtype,
             device=device,
+            full_param=full_param,
         )
     raise ValueError(f"Unsupported native Qwen family: {hf_config.family}")
 
@@ -113,6 +116,7 @@ def build_qwen35_visual_tower(
     gradient_checkpointing: bool = False,
     torch_dtype: torch.dtype,
     device: torch.device,
+    full_param: bool = False,
 ) -> nn.Module:
     try:
         from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5VisionConfig
@@ -159,12 +163,19 @@ def build_qwen35_visual_tower(
     _replace_visual_lora_modules(
         visual,
         lora_targets=lora_targets,
-        lora_r=lora_r,
+        # 全参模式：不挂 LoRA 矩阵（r=0 ⇒ LoRALinear.lora_enabled=False，模块退化为
+        # 普通线性层），权重稍后统一放开 requires_grad。
+        lora_r=0 if full_param else lora_r,
         lora_alpha=lora_alpha,
         lora_dropout=lora_dropout,
         device=device,
         torch_dtype=torch_dtype,
     )
+    if full_param:
+        # 全参（全量）语义：视觉塔也参与训练。LoRALinear 构造时把基座 weight 固定为
+        # requires_grad=False，因此必须在替换之后再放开。
+        for param in visual.parameters():
+            param.requires_grad = True
     if gradient_checkpointing:
         # 视觉塔 27 层 ViT 默认不启用 checkpointing，每层激活值全部保留。
         # 高分辨率/多图场景下视觉塔激活值可达 27 GB（实测），启用后降至 ~1 GB。

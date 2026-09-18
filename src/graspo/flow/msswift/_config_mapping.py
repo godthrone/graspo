@@ -378,15 +378,40 @@ def graspo_to_ms_swift_argv(
         _extend(argv, "max_length", data.max_prompt_length)
         _extend(argv, "max_completion_length", training.max_new_tokens)
 
-    # ── LoRA（graspo lora 段 → ms-swift tuner 参数）──────────────────────
-    argv.extend(["--tuner_type", "lora"])
-    _extend(argv, "lora_rank", lora.r)
-    _extend(argv, "lora_alpha", lora.alpha)
-    _extend(argv, "lora_dropout", lora.dropout)
-    if lora.target_modules is not None:
-        _extend(argv, "target_modules", list(lora.target_modules))
-    if lora.adapter_path:
-        _extend(argv, "adapters", [str(lora.adapter_path)])
+    # ── 参数化模式（graspo tuner_type → ms-swift `--tuner_type`）──────────
+    # 唯一取值来源是 `GraspoConfig.effective_tuner_type`（None ⇒ lora，向后兼容）。
+    # ms-swift 4.5.3 的合法取值为 `{lora,full,lora_llm}`（实跑证据：
+    # task-megatron-smoke/evidence/88-train-v5-error.txt:14 的 CLI help），
+    # graspo 只映射 lora|full。
+    tuner_type = config.effective_tuner_type
+    argv.extend(["--tuner_type", tuner_type])
+    if tuner_type == "lora":
+        # LoRA 专属参数只在与 LoRA 同用时才产出：全参下发 lora_rank/alpha/dropout
+        # 是"看起来生效、实际被忽略"的假配置（宪法 §1.4 / §7.2）。
+        _extend(argv, "lora_rank", lora.r)
+        _extend(argv, "lora_alpha", lora.alpha)
+        _extend(argv, "lora_dropout", lora.dropout)
+        if lora.target_modules is not None:
+            _extend(argv, "target_modules", list(lora.target_modules))
+        if lora.adapter_path:
+            _extend(argv, "adapters", [str(lora.adapter_path)])
+    else:
+        # 全参：显式解冻 ViT 与 aligner，使 ms-swift 的"全参"与 native 侧一致
+        # （都训练全部权重，含视觉塔与 aligner；矩阵 §4 的定义就是"训练全部权重"）。
+        # 上游默认 freeze_vit/freeze_aligner=True（多模态 full 微调只训语言主干），
+        # 不显式传就会造成**两后端语义分叉**、破坏 54 档台账的同档可比性。
+        # 取值来源唯一：`msswift.freeze_vit` / `msswift.freeze_aligner`
+        # （None = 用模式默认值 false；显式 true/false 为用户覆盖）。
+        _extend(
+            argv,
+            "freeze_vit",
+            False if section.freeze_vit is None else bool(section.freeze_vit),
+        )
+        _extend(
+            argv,
+            "freeze_aligner",
+            False if section.freeze_aligner is None else bool(section.freeze_aligner),
+        )
 
     # ── 训练超参（graspo training 段）───────────────────────────────────
     _extend(argv, "output_dir", output_dir)
@@ -500,13 +525,14 @@ def validate_combinations(config: Any) -> None:
 
     # 缺陷 4：DeepSpeed AutoTP 只支持全参微调（官方限制），与 LoRA 组合会形状错误
     # `RuntimeError: mat1 and mat2 shapes cannot be multiplied (2762x4 and 8x2048)`
-    # graspo 在 msswift 后端**恒为 LoRA**（`graspo_to_ms_swift_argv` 写死 `--tuner_type lora`），
-    # 因此两者同时出现即为非法组合。
-    if section.deepspeed_autotp_size:
+    # 全参入口落地后，AutoTP 的唯一合法前置就是 `tuner_type: full`——因此拒绝条件
+    # 从"恒拒绝"收紧为"非全参时拒绝"（宪法 §2.3：非法组合仍然 fail-closed，
+    # 只是不再把合法组合一起挡掉）。
+    if section.deepspeed_autotp_size and config.effective_tuner_type != "full":
         raise ValueError(
             "msswift.deepspeed_autotp_size (S5 DeepSpeed AutoTP) only supports FULL "
             "fine-tuning upstream; combining it with LoRA produces "
             "`RuntimeError: mat1 and mat2 shapes cannot be multiplied` (measured "
             "2026-09-16, evidence: e2b matrix §6 defect 4). "
-            "Either drop deepspeed_autotp_size or use a full-parameter path."
+            "Set `tuner_type: full` in the config, or drop deepspeed_autotp_size."
         )

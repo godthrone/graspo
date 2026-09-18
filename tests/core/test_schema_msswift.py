@@ -32,6 +32,12 @@ _MAPPING_SOURCE = (
     / "_config_mapping.py"
 )
 
+#: ``msswift`` 段里**模式条件消费**的字段：只在 ``tuner_type: full`` 的分支里注入
+#: （D-16：解冻 ViT/aligner，使 ms-swift 的"全参"与 native 一致地训练全部权重）。
+#: 它们**不进** ``_MSSWIFT_SCALAR_PASSTHROUGH``——那是全模式透传清单，带进去会让
+#: LoRA 路径也产出 ``--freeze_vit`` / ``--freeze_aligner``，破坏上游行为逐字不变。
+_MSSWIFT_MODE_CONDITIONAL: tuple[str, ...] = ("freeze_vit", "freeze_aligner")
+
 
 def test_section_name_matches_backend_value():
     """单一真相源：段名 = backend 取值（不出现 ms_swift 别名）。"""
@@ -102,16 +108,34 @@ def test_backend_agnostic_defaults_do_not_change_native_config():
 def test_every_msswift_field_is_consumed_by_the_mapping():
     """声明即消费（§7.2 假配置防呆）：段里每个字段名都出现在映射层的显式清单中。
 
-    ``attn_impl`` 例外：它经 ``resolve_attn_impl()`` 显式解析（有优先级），
-    因此只在源码里出现、不在同名透传清单中——这里显式列出并单独断言。
+    两类例外，都是**显式登记 + 单独断言**，不是免检：
+
+    - ``attn_impl``：经 ``resolve_attn_impl()`` 显式解析（带优先级），只出现在源码
+      里，不在同名透传清单中。
+    - ``freeze_vit`` / ``freeze_aligner``（:data:`_MSSWIFT_MODE_CONDITIONAL`）：
+      **模式条件消费**——只在 ``full`` 分支里 ``_extend``，LoRA 分支必须逐字不变。
+      因此**绝不能**放进 ``_MSSWIFT_SCALAR_PASSTHROUGH``（那会让 LoRA 路径也产出这两个
+      flag，破坏上游行为不变），必须在 full 分支单独注入。行为侧由
+      ``tests/flow/msswift/test_full_param_mapping.py`` 全量覆盖；这里补一条源码级断言，
+      保证例外清单里的字段**在映射层真的被消费**（写下名字却没实现 = 假配置回归）。
     """
+    source = _MAPPING_SOURCE.read_text(encoding="utf-8")
+
     declared = set(MsSwiftConfig.model_fields) - {"megatron"}
     consumed = (
         set(_MSSWIFT_SCALAR_PASSTHROUGH)
         | set(_MSSWIFT_RLHF_ONLY)
+        | set(_MSSWIFT_MODE_CONDITIONAL)
         | {"attn_impl", "nproc_per_node", "nnodes", "node_rank", "master_addr", "master_port"}
     )
     assert declared <= consumed, f"declared but never mapped: {sorted(declared - consumed)}"
+
+    # 例外清单不是免检清单：每个模式条件字段都必须在映射源码里被当作 ms-swift 参数注入。
+    for name in _MSSWIFT_MODE_CONDITIONAL:
+        assert f'"{name}",' in source, (
+            f"{name} is listed in _MSSWIFT_MODE_CONDITIONAL but never _extend()ed "
+            "by the mapping — declared-but-unmapped (假配置回归)"
+        )
 
     declared_megatron = set(MsSwiftMegatronConfig.model_fields)
     assert declared_megatron <= set(_MEGATRON_PASSTHROUGH), (

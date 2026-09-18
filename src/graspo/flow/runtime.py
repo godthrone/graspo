@@ -21,16 +21,31 @@ from graspo.ripple.parsing.completion import ParsedCompletion
 
 
 class TrainBatchMetrics(TypedDict, total=False):
-    """train_batch / train_batch_sft 返回的指标载荷（RL 与 SFT 共有的核心键）。"""
+    """train_batch / train_batch_sft 返回的指标载荷（RL 与 SFT 共有的核心键）。
+
+    权重范数与梯度计数是**模式感知**的（``flow/progress_metrics.py``）：
+
+    - ``tuner_type == "lora"``：``lora_norm_*`` 有值、``trainable_norm_*`` 缺省/None；
+    - ``tuner_type == "full"``：``lora_norm_*`` 为 ``None``（该指标**不适用**——全参下
+      不存在 lora 参数，恒 0 会被误读成"权重没变"），改用等价的 ``trainable_norm_*``。
+    """
 
     optimized: bool
     skipped_nonfinite: int
     loss_mean: float | None
     grad_norm_mean: float | None
     nonzero_grad_count: int
-    lora_norm_before: float
-    lora_norm_after: float
-    lora_norm_delta: float
+    #: ``nonzero_grad_count`` 的**定义**：``nonzero_lora_grads``（lora）
+    #: 或 ``grad_populated_trainable_params``（full）。
+    grad_count_metric: str
+    tuner_type: str
+    norm_metric: str
+    lora_norm_before: float | None
+    lora_norm_after: float | None
+    lora_norm_delta: float | None
+    trainable_norm_before: float | None
+    trainable_norm_after: float | None
+    trainable_norm_delta: float | None
     train_batch_total_sec: float
     micro_batch_forward_sec: float
     backward_sec: float

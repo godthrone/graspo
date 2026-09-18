@@ -8,6 +8,8 @@ from typing import Any
 import torch
 from safetensors.torch import load_file, save_file
 
+from graspo.flow.checkpoint_semantics import require_lora_semantics
+
 
 def load_peft_adapter_into_native_model(
     model: torch.nn.Module,
@@ -72,6 +74,15 @@ def load_peft_adapter_into_native_model(
         raise ValueError("PEFT adapter contains unsupported LoRA target(s): " + ", ".join(extra))
 
 
+def _require_lora_semantics(payloads: list[dict[str, Any]], *, operation: str) -> None:
+    """全参 checkpoint 的导出防线（判据与消息在 ``flow/checkpoint_semantics.py``）。
+
+    这里只做转发，保持本模块的调用点可读；纯判定逻辑放在**无 torch 依赖**的
+    ``flow/checkpoint_semantics.py``，因此可以在没有 torch 的机器上单测。
+    """
+    require_lora_semantics(payloads, operation=operation)
+
+
 def export_peft_adapter_from_checkpoint(
     checkpoint_dir: str | Path,
     output_dir: str | Path,
@@ -79,6 +90,7 @@ def export_peft_adapter_from_checkpoint(
     base_model_path: str | Path | None = None,
 ) -> None:
     payloads = _load_native_payloads(checkpoint_dir, require_metadata=True)
+    _require_lora_semantics(payloads, operation="peft-adapter")
     config = _payload_config(payloads[0])
     lora_config = dict(config.get("lora", {}) or {})
     base_model = str(base_model_path or (config.get("model", {}) or {}).get("model_path") or "")
@@ -136,6 +148,7 @@ def export_merged_hf_from_checkpoint(
     if _is_relative_to(Path(output_dir).resolve(), base.resolve()):
         raise ValueError("merged-hf output directory must not be inside the base model directory")
     payloads = _load_native_payloads(checkpoint_dir, require_metadata=True)
+    _require_lora_semantics(payloads, operation="merged-hf")
     deltas = _collect_weight_deltas(payloads)
     output = prepare_output_dir(output_dir)
     _copy_hf_sidecar_files(base, output)

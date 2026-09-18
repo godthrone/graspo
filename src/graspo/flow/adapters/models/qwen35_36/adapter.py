@@ -71,6 +71,7 @@ class Qwen35Adapter(  # type: ignore[misc]  # mixin 组合点的多基类签名�
             if self.config.native.layer_ranges is not None
             else None,
         )
+        full_param = self.config.effective_tuner_type == "full"
         self.model = build_native_qwen_model(
             hf_config=hf_config,
             loader=loader,
@@ -85,20 +86,25 @@ class Qwen35Adapter(  # type: ignore[misc]  # mixin 组合点的多基类签名�
             gradient_checkpointing=bool(self.config.model.gradient_checkpointing),
             torch_dtype=torch_dtype,
             device=self.device,
+            full_param=full_param,
         )
         if self.model is None:
             raise RuntimeError("model not loaded; call setup() first")
-        missing_lora_targets = sorted(
-            target
-            for target in set(lora_targets.resolved) - set(self.model.enabled_lora_target_names())
-            if not (target.startswith("visual.") and getattr(self.model, "visual", None) is None)
-        )
-        if missing_lora_targets:
-            raise ValueError(
-                "Resolved LoRA target(s) are not implemented by this model yet: "
-                + ", ".join(missing_lora_targets)
+        if not full_param:
+            missing_lora_targets = sorted(
+                target
+                for target in set(lora_targets.resolved)
+                - set(self.model.enabled_lora_target_names())
+                if not (target.startswith("visual.") and getattr(self.model, "visual", None) is None)
             )
+            if missing_lora_targets:
+                raise ValueError(
+                    "Resolved LoRA target(s) are not implemented by this model yet: "
+                    + ", ".join(missing_lora_targets)
+                )
         self.model.train(False)
+        # 全参模式下 ``lora.adapter_path`` 已被配置层拒绝（``GraspoConfig`` 校验），
+        # 因此这里不需要第二道判断——单一真相源（宪法 §1.4）。
         if self.config.lora.adapter_path:
             load_peft_adapter_into_native_model(
                 self.model,
