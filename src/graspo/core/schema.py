@@ -417,6 +417,15 @@ class MsSwiftConfig(BaseModel):
     # None = 用上述模式默认值；显式 true/false = 用户覆盖（唯一真相源，只有这一处开关）。
     freeze_vit: bool | None = None
     freeze_aligner: bool | None = None
+    # ── 多模态图像像素预算（ms-swift `--max_pixels`，单位：像素总数）──────
+    # **F-3 实测新增（2026-09-18）**：不设上限时 ms-swift 对每张图按模型默认的
+    # `image_max_token_num`（Qwen3.5 为 16384）预算编码——ELAM V5 的 1280×720 双目图
+    # 两张即可顶到上限，单条样本编码长度直接超过 `max_length`，ms-swift 抛
+    # `MaxLengthError` 后重试耗尽，报出与真因无关的
+    # `ValueError: Failed to retrieve the dataset`（`dataset/utils.py:108`）。
+    # ⇒ 必须把它做成**配置项**（§1.4 单一真相源），不能靠环境变量 `MAX_PIXELS`。
+    # None = 不透传（交 ms-swift 默认值 = 不限制）。
+    max_pixels: int | None = None
     # ── 长文附项（与 SP/ZeRO3/FSDP2 组合使用）───────────────────────────
     rope_scaling: str | None = None  # yarn | dynamic
     max_model_len: int | None = None

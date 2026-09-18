@@ -9,6 +9,7 @@ from pydantic import BaseModel, ValidationError
 from graspo.core.schema import (
     GraspoConfig,
     GraspoFlowConfig,
+    MsSwiftConfig,
     Sample,
     TrainingConfig,
     _generate_run_name,
@@ -220,6 +221,48 @@ def test_config_example_covers_all_schema_fields():
     )
     missing = sorted(path for path in _field_paths(GraspoConfig) if not _nested_get(example, path))
     assert not missing, f"config_example.yaml missing schema fields: {missing}"
+
+
+def test_msswift_config_example_covers_all_msswift_fields():
+    """后端专属模板按**该后端的字段集合**要求，而不是按整个 GraspoConfig 要求。
+
+    为什么单列一条（裁定：方案 A）：`config_example_msswift.yaml` 是与
+    `config_example.yaml` **并列的第二个声明点**——同一件事写两处，就必须有测试
+    同时守着两处。主模板那条测试只检查 `config_example.yaml`，于是本轮出现了
+    "`max_pixels` / `freeze_vit` / `freeze_aligner` 只补了主模板、专属模板漏三个"
+    的分叉。
+
+    边界（刻意如此）：
+
+    - **只断言 `MsSwiftConfig` 的直属字段齐全**（`:attr:`msswift` 段的键）；
+    - **不要求**专属模板覆盖 `GraspoConfig` 的全量字段——那会把"后端专属模板"逼成
+      "全字段模板"，与"主力模板覆盖全集"的设计冲突；
+    - **不要求**嵌套模型（`msswift.megatron.*`）逐字段展开——既有的 `megatron: {}`
+      等价于全部用默认值，合法且够用（主模板那份逐字段 null 属文档式全集）。
+      但若模板里写了 `megatron.*` 键，必须是 schema 认识的键（防错别字，见下）。
+    """
+    import yaml
+
+    example = yaml.safe_load(
+        Path("samples/configs/config_example_msswift.yaml").read_text(encoding="utf-8")
+    )
+    msswift_section = example.get("msswift")
+    assert isinstance(msswift_section, dict), "config_example_msswift.yaml 缺少 msswift 段"
+
+    # ① 直属字段齐全（26 项，以 MsSwiftConfig 为单一真相源）
+    missing = sorted(set(MsSwiftConfig.model_fields) - set(msswift_section))
+    assert not missing, f"config_example_msswift.yaml msswift 段 missing fields: {missing}"
+
+    # ② 嵌套 megatron 段若写了键，必须是 schema 认识的键（防错别字导致的静默失效）
+    megatron = msswift_section.get("megatron")
+    if isinstance(megatron, dict) and megatron:
+        known = {
+            path.split(".", 1)[1]
+            for path in _field_paths(MsSwiftConfig)
+            if path.startswith("megatron.")
+        }
+        unknown = sorted(set(megatron) - known)
+        assert not unknown, f"config_example_msswift.yaml megatron 段含未知字段: {unknown}"
 
 
 # ── max_steps 移除 + lr_scheduler.decay_steps（v0.23.0）───────────────────────

@@ -138,6 +138,7 @@ _MSSWIFT_SCALAR_PASSTHROUGH: tuple[str, ...] = (
     # 长文附项
     "rope_scaling",
     "max_model_len",
+    "max_pixels",
     "packing",
     "padding_free",
     "use_liger_kernel",
