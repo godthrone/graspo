@@ -1,14 +1,14 @@
-# GRASPO RL — 4×A800 Qwen3.5-27B TP=4 + Sequence Parallelism
+# GRASPO RL — 4×A800 Qwen3.8-27B TP=4 + Sequence Parallelism
 #
 # 硬件：4× NVIDIA A800 80GB（GPU 0-3）
-# 模型：Qwen3.5-27B，LoRA r=16
+# 模型：Qwen3.8-27B，LoRA r=16
 # P1b e2e 矩阵测试
 
 train_method: graspo
 backend: native
 
 model:
-  model_path: /data/models/Qwen3.5-27B
+  model_path: /data/models/Qwen3.8-27B
   trust_remote_code: true
   torch_dtype: bfloat16
   gradient_checkpointing: true
