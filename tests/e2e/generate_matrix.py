@@ -1208,7 +1208,10 @@ IMAGE="${{GRASPO_IMAGE:-graspo-msswift:4.5.3}}"
 RUN_ROOT="${{RUN_ROOT:-$ROOT_DIR/.local/matrix54-runs}}"
 ELAM_HOST="${{{ELAM_HOST_ROOT_ENV}:-}}"
 MODELS_ROOT="${{{MODELS_HOST_ROOT_ENV}:-}}"
-MANIFEST="$ROOT_DIR/tests/e2e/matrix54_manifest.json"
+MANIFEST="${{GRASPO_RUNNER_MANIFEST:-$ROOT_DIR/tests/e2e/matrix54_manifest.json}}"
+# ↑ 清单路径可被 `GRASPO_RUNNER_MANIFEST` 覆盖：给"逐长度递增批"这类需要**单档清单**
+#   的场景用（rig 只换清单、不换 runner 逻辑）；默认路径与行为逐字不变。
+#   本行与 `run_matrix54.sh` 的同一行**逐字对应**（由 rig/verify_runner_parity.py 校验）。
 PYBIN="${{PYTHON:-python3}}"
 CONTAINER_PY="${{CONTAINER_PYTHON:-python}}"
 
