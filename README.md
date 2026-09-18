@@ -49,6 +49,13 @@ GRASPO (Group Relative Advantage Structured Policy Optimization) — GRPO-style 
 
 ## Quick Start
 
+> **Bilingual docs:** `README.md` and `README.zh-CN.md` are content mirrors
+> (§17.1): every section, config key, command block, and FAQ entry exists in
+> both. Run `python3 tools/readme_mirror_check.py` to verify — it compares
+> section structure and inline-code tokens on both sides and prints the
+> "only in EN / only in ZH" list. Known notation-only differences are
+> registered in that script with their reasons.
+
 > **Sample files** live in `samples/`:
 > - `samples/configs/sft_example.yaml` — single-GPU SFT config (works out of the box);
 > - `samples/configs/rl_example.yaml` — single-GPU RL config;
@@ -95,9 +102,9 @@ cp samples/configs/sft_example.yaml my_config.yaml
 bash run.sh my_config.yaml
 
 # RL training (GRASPO)
-cp samples/configs/rl_example.yaml my_graspo.yaml
+cp samples/configs/rl_example.yaml my_config.yaml
 # Edit: model.model_path, data.train_path, training.output_dir
-bash run.sh my_graspo.yaml
+bash run.sh my_config.yaml
 ```
 
 `run.sh` is defensive by design:
@@ -145,10 +152,10 @@ IMAGE_NAME=graspo:test bash docker/build.sh
 Copy and edit the RL sample config:
 
 ```bash
-cp samples/configs/rl_example.yaml my_graspo.yaml
+cp samples/configs/rl_example.yaml my_config.yaml
 ```
 
-Set at least these fields in `my_graspo.yaml`:
+Set at least these fields in `my_config.yaml`:
 
 - `model.model_path`: local Hugging Face model directory or model id;
 - `data.train_path`: JSONL training data;
@@ -182,7 +189,7 @@ Launch the same way:
 uv run graspo launch --config my_sft.yaml
 ```
 
-After SFT, continue with RL by changing `train_method` to `graspo` and
+After SFT, continue with RL by changing `train_method: graspo`, and
 pointing `lora.adapter_path` to the SFT checkpoint.
 
 ### Tool Commands
@@ -193,7 +200,7 @@ write to config-decided locations — they never override config values.
 **Validate reward scoring** (prints per-sample scores, writes nothing):
 
 ```bash
-uv run graspo validate-reward --data samples/data/sample.jsonl --limit 2
+uv run graspo validate-reward --data samples/data/json_output/train.jsonl --limit 2
 ```
 
 **Evaluate a checkpoint** (generates rollout groups, scores rewards, writes
@@ -201,7 +208,7 @@ uv run graspo validate-reward --data samples/data/sample.jsonl --limit 2
 
 ```bash
 uv run graspo evaluate-checkpoint --config my_config.yaml \
-    --data samples/data/sample.jsonl --checkpoint outputs/my_run/step_100
+    --data samples/data/json_output/train.jsonl --checkpoint outputs/my_run/step_100
 ```
 
 **Summarize profiling outputs**:
@@ -247,7 +254,7 @@ are either printed or written to config-decided locations.
 - `graspo export --config <yaml>` — export a LoRA checkpoint
   (`export.checkpoint_path` → `export.export_output` in `export_format`).
 - `graspo validate-reward --data <jsonl> [--limit N] [--completions <jsonl>]`
-  — score samples/reward-link check; prints per-sample scores, writes nothing.
+  — validate the reward scoring path; prints per-sample scores, writes nothing.
 - `graspo evaluate-checkpoint --config <yaml> --data <jsonl>
   [--checkpoint <dir>] [--limit N]` — generate rollout groups and score them;
   writes `summary.json` + `completions.jsonl` to `<output_dir>/evaluate/`.
@@ -287,7 +294,7 @@ strings in the dataset:
 {"messages":[{"role":"system","content":"Use tools when needed. Output only the tool call."},{"role":"user","content":"Query device DEV-01 status at 2026-06-08 10:30."}],"tools":[{"type":"function","function":{"name":"query_device_status","description":"Query network device panel status.","parameters":{"type":"object","properties":{"device_id":{"type":"string"},"panel_time":{"type":"string"}},"required":["device_id","panel_time"]}}}],"targets":[{"id":"expected","output":{"tool_calls":[{"name":"query_device_status","arguments":{"device_id":"DEV-01","panel_time":"2026-06-08T10:30:00+08:00"}}]}}]}
 ```
 
-See `samples/data/sample_tool_call.jsonl` for a runnable tool-call dataset row.
+See `samples/data/tool_call_mm/train.jsonl` for a runnable tool-call dataset row.
 
 Alternative targets are expressed as multiple `targets` entries. Ordered
 multi-step tool execution is expressed only inside `output.tool_calls`:
@@ -322,7 +329,7 @@ The final message must not have role `assistant`; `targets` are raw reward
 targets and must not be leaked into the input messages or converted to a
 model chat template. GRASPO only accepts JSONL records with `messages`, optional
 `tools`, and `targets`; plain `prompt`, JSON, Excel, legacy `ground_truth`, and
-top-level media fields are not supported.
+top-level `image/images/video/videos` media fields are not supported.
 
 ### Assistant messages with tool calls
 
@@ -379,11 +386,11 @@ A completion is scored in four steps:
    bonus, and the extra-text penalty/bonus are combined into `reward`,
    `content_score`, and `all_right`.
 
-   `dict_compare_score` returns a ``CompareResult`` that carries two parallel
-   scores: the full ``dcs`` (numeric leaf values included, for gradient signal)
-   and ``base_dcs`` (numeric leaves stripped from both sides, for ``all_right``
-   gating).  This means numeric fields like ``distance_cm`` or ``angle_deg``
-   still flow through ``content_score`` for training, but ``all_right`` only
+   `dict_compare_score` returns a `CompareResult` that carries two parallel
+   scores: the full `dcs` (numeric leaf values included, for gradient signal)
+   and `base_dcs` (numeric leaves stripped from both sides, for `all_right`
+   gating).  This means numeric fields like `distance_cm` or `angle_deg`
+   still flow through `content_score` for training, but `all_right` only
    requires non-numeric structure to match — an action-type-correct completion
    with a slightly-off distance is still considered "all right", so
    `perfect_skip` and `max_correct` group decisions are no longer blocked by
@@ -406,9 +413,10 @@ credit should be represented as JSON strings in the dataset.
 GRASPO uses the reward distribution inside each rollout group, not just one
 absolute score. Groups with useful differences become trainable; already-perfect
 groups can be skipped; groups with no reward variance or no preference gap are
-discarded or retried. The readable rollout log stores the completion, parsed
-tool calls, extracted fields, reward details, parser errors, and invalid reason
-so reward behavior can be inspected without rerunning generation.
+discarded or retried. The readable rollout log (`logs/rollouts.readable.jsonl`)
+stores the messages, completion, parsed tool calls, extracted fields, reward
+details, parser errors, and invalid reason so reward behavior can be inspected
+without rerunning generation.
 
 ## Token-Level Annotation (v0.20.0)
 
