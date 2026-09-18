@@ -64,8 +64,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     HTTP_PROXY="${HTTP_PROXY:-}" HTTPS_PROXY="${HTTPS_PROXY:-}" \
     http_proxy="${HTTP_PROXY:-}" https_proxy="${HTTPS_PROXY:-}" \
     pip install --no-cache-dir --index-url "${PIP_INDEX_URL}" \
-    transformers==5.12.1 pydantic==2.11.10 pyyaml==6.0.3 safetensors==0.7.0 \
-    pillow==12.2.0 numpy==2.4.5 ms-swift==4.5.3
+    transformers==5.12.1 pydantic==2.11.10 pyyaml==6.0.3 safetensors==0.8.0 \
+    pillow==11.3.0 numpy==1.26.4 ms-swift==4.5.3
 
 # CUDA 渠道断言（fail-closed）：release 段比较会剔除 `+cu130`，渠道单独断言。
 RUN python -c "import torch, sys; cuda=torch.version.cuda or ''; print('torch', torch.__version__, 'cuda', cuda); sys.exit('CUDA CHANNEL FAILED: '+cuda) if not cuda.startswith('13.0') else None"
