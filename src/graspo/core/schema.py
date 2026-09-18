@@ -459,6 +459,107 @@ class ExportConfig(BaseModel):
     final_formats: list[str] = []
 
 
+class EvalConfig(BaseModel):
+    """效果评测链路配置（``graspo eval``）。ELAM V5 + vLLM，温度锁 0。
+
+    **卡计划只能来自这里**：``gpus`` 必须显式给出（如 ``"0,1"``），取值限定在
+    ``{0,1,2,3,4,5}``、卡数 ≤ 4；未显式给出时评测链路**拒绝启动**
+    （fail-closed，见 ``eval.guard``）。不给默认值是有意的——目标 GPU 服务器上 GPU 6/7
+    被生产 vLLM 占死，任何"顺手用个默认卡"的设计都会炸生产。
+
+    ``temperature`` 字段**不存在**：温度在 ``eval.vllm_client`` 里锁成常量 0，
+    连配置都不提供覆盖入口（宪法 §2.2 显式即防呆——不留隐式通道）。
+
+    ``output_dir`` 必须位于 ``.local/`` 下（宪法 §16）：评测产物含宿主路径、
+    GPU 编号等环境信息，不得进入已跟踪文件。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    dataset_path: str = ""
+    train_dataset_path: str | None = None
+    #: 重叠分析只取训练集前 N 条（台账里的"train 前 100/20 条"）。
+    #: ``None`` = 全量。**切片长度会被记进产物**（``EvalTrainSubset``）——不同切片
+    #: 会给出不同的重叠集，不记下来事后无法解释两次评测的口径差异。
+    train_limit: int | None = None
+    dataset_split: str = "test"
+    base_model_path: str = ""
+    checkpoint_path: str | None = None
+    role: Literal["base", "after", "sft", "other"] = "after"
+    export_format: str | None = None
+    merged_output_dir: str | None = None
+    output_dir: str = ""
+    endpoint: str = "http://127.0.0.1:18889"
+    served_model_name: str = "graspo-eval"
+    #: 显式卡列表，如 ``"0,1"``。空 = 未指定 = 拒绝启动（fail-closed）。
+    gpus: str = ""
+    max_workers: int = 8
+    seed: int | None = 42
+    graspo_threshold_pp: float = 20.0
+    sft_threshold_percent: float = 50.0
+
+    @model_validator(mode="after")
+    def _validate_eval_contract(self) -> "EvalConfig":
+        """加载即校验：必填路径 + 卡计划合法性 + 产物目录在 .local/ 下。
+
+        本模型只由**评测入口**（``graspo eval --eval-config``）构造；训练配置里
+        的 ``eval:`` 段是可选的，缺省时 ``GraspoConfig.eval`` 为 ``None``，本模型
+        根本不会被构造，因此不触发任何校验（宪法 §2.2：None = 未提供）。
+        """
+        from graspo.eval.guard import GpuGuardError  # noqa: PLC0415
+
+        missing = [
+            name
+            for name in ("dataset_path", "base_model_path", "output_dir")
+            if not getattr(self, name)
+        ]
+        if missing:
+            raise ValueError(f"eval config missing required field(s): {', '.join(missing)}")
+        if self.role != "base" and not self.checkpoint_path:
+            raise ValueError(
+                f"eval.role={self.role!r} requires eval.checkpoint_path; "
+                "only role='base' may omit it"
+            )
+        # 卡计划：必须在加载时就校验，不能等到起容器时才发现写错了 6/7。
+        try:
+            from graspo.eval.guard import resolve_gpu_plan  # noqa: PLC0415
+
+            resolve_gpu_plan(self.gpus)
+        except GpuGuardError as exc:
+            raise ValueError(f"eval.gpus invalid: {exc}") from None
+        normalized = self.output_dir.replace("\\", "/")
+        if not (normalized.startswith(".local/") or "/.local/" in normalized):
+            raise ValueError(
+                f"eval.output_dir must live under .local/ (got {self.output_dir!r}); "
+                "eval artifacts contain host paths and GPU ids and must never be tracked"
+            )
+        return self
+
+    @classmethod
+    def from_yaml(cls, path: str | Path) -> "EvalConfig":
+        """从独立的评测配置 YAML 加载（``graspo eval --eval-config``）。
+
+        校验失败时输出人类可读的信息（哪个字段、期望什么），不抛原始 traceback。
+        顶层未知键由 ``extra="forbid"`` 拒绝——不静默忽略拼错的字段。
+        """
+        import yaml
+        from pydantic import ValidationError
+
+        config_path = Path(path)
+        text = config_path.read_text(encoding="utf-8")
+        data = yaml.safe_load(text) or {}
+        if not isinstance(data, dict):
+            raise SystemExit(f"{config_path}: top level must be a mapping")
+        # 允许两种写法：平铺的 eval 字段，或包在 `eval:` 段下（便于与训练配置共用文件）。
+        if "eval" in data and isinstance(data["eval"], dict):
+            data = dict(data["eval"])
+        try:
+            return cls.model_validate(data)
+        except ValidationError as exc:
+            _report_config_errors(exc, config_path, cls)
+            raise SystemExit(1)
+
+
 class LaunchConfig(BaseModel):
     """分布式启动配置。
 
@@ -490,6 +591,7 @@ class GraspoConfig(BaseModel):
     data: DataConfig = DataConfig()
     lora: LoRAConfig = LoRAConfig()
     export: ExportConfig = ExportConfig()
+    eval: EvalConfig | None = None
     launch: LaunchConfig = LaunchConfig()
     reward: RewardConfig = RewardConfig()
     training: TrainingConfig = Field(default_factory=TrainingConfig)
@@ -500,6 +602,17 @@ class GraspoConfig(BaseModel):
     # 消费点只读 ``effective_tuner_type``（归一后再用），不直接读原始字段，
     # 避免每个调用点各自判 None（宪法 §1.4 单一真相源）。
     tuner_type: TunerType | None = None
+
+    @field_validator("eval", mode="before")
+    @classmethod
+    def _eval_section_is_optional(cls, value: Any) -> Any:
+        """显式 ``eval: null`` 等价于"未提供该段"（与其它段 ``section: null`` 的约定一致）。
+
+        缺省（键不存在）时 pydantic 直接用默认值 ``None``，不会走到这里。
+        """
+        if value is None:
+            return None
+        return value
 
     @property
     def effective_tuner_type(self) -> TunerType:
@@ -551,6 +664,10 @@ class GraspoConfig(BaseModel):
         """
         data = dict(data or {})
         data["native"] = dict(data.get("native") or {})
+        # 注意：`eval` **不在**这个列表里。它与其它段语义不同——是一段"可选功能"，
+        # 缺省时必须是 None（未提供），不能归一成 {}（空段）。
+        # 归一成 {} 会构造一个字段全空的 EvalConfig，触发它的必填校验，
+        # 从而让**所有不含 eval: 的既有训练配置加载失败**（实测回归，已修）。
         for section in (
             "msswift",
             "model",
@@ -601,6 +718,25 @@ class Sample(BaseModel):
 # ── 辅助函数 ────────────────────────────────────────────────────────────────
 
 
+def _unwrap_optional_model(annotation: Any) -> Any:
+    """从 ``X | None`` 里取回 ``X``（用于错误信息里列字段名）。
+
+    非 Union 时原样返回。取不到 BaseModel 时返回一个字段为空的占位类，
+    保证错误报告路径**永远不会自己抛异常**——错误辅助函数崩掉会让用户
+    看不到真正的原因（宪法 §13.1：异常必须转成可读信息）。
+    """
+    for candidate in getattr(annotation, "__args__", ()) or ():
+        if isinstance(candidate, type) and hasattr(candidate, "model_fields"):
+            return candidate
+    if isinstance(annotation, type) and hasattr(annotation, "model_fields"):
+        return annotation
+
+    class _Unknown(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+    return _Unknown
+
+
 def _report_config_errors(
     exc: Any, config_path: Path, config_cls: Any
 ) -> None:
@@ -613,27 +749,27 @@ def _report_config_errors(
 
     errors = exc.errors()
     # 构建各段可用字段的映射：顶层 + 每个子段
-    config_section_fields: dict[str, list[str]] = {
-        section: sorted(
-            [
-                k
-                for k in config_cls.model_fields[section].annotation.model_fields  # type: ignore[union-attr]
-            ]
-            if section in config_cls.model_fields
-            else []
+    # 注意：段可能是 Optional（如 `eval: EvalConfig | None`），需先解包再读 model_fields，
+    # 否则 UnionType 上没有 model_fields，报错辅助函数自己会崩。
+    config_section_fields: dict[str, list[str]] = {}
+    for section in (
+        "native",
+        "msswift",
+        "model",
+        "data",
+        "lora",
+        "export",
+        "eval",
+        "launch",
+        "reward",
+        "training",
+    ):
+        if section not in config_cls.model_fields:
+            config_section_fields[section] = []
+            continue
+        config_section_fields[section] = sorted(
+            _unwrap_optional_model(config_cls.model_fields[section].annotation).model_fields
         )
-        for section in (
-            "native",
-            "msswift",
-            "model",
-            "data",
-            "lora",
-            "export",
-            "launch",
-            "reward",
-            "training",
-        )
-    }
     config_section_fields[""] = sorted(
         k for k in config_cls.model_fields if k not in config_section_fields
     )

@@ -1,0 +1,72 @@
+# 效果评测链路示例配置（ELAM V5 test 集 + vLLM，温度锁 0）
+#
+# 本文件是**完整的训练配置**（可直接被 GraspoConfig 加载），其中 `eval:` 段是可选
+# 的评测链路配置。两种用法都支持：
+#
+#   uv run graspo eval prepare --config samples/configs/eval_example.yaml
+#   uv run graspo eval export  --config samples/configs/eval_example.yaml
+#   uv run graspo eval run     --config samples/configs/eval_example.yaml
+#   uv run graspo eval delta   --config samples/configs/eval_example.yaml \
+#       --before <base>/eval_report.json --after <after>/eval_report.json
+#
+#   或把 `eval:` 段单独抽成一个 YAML（去掉 `eval:` 这一层缩进），用
+#   `--eval-config <file>` 指向它。两种写法等价：`EvalConfig.from_yaml`
+#   会先解包 `eval:` 段。
+#
+# 防呆设计（不要绕过）：
+#   * `temperature` **不是**配置字段——温度在代码里锁成常量 0。历史口径用 0.1 时，
+#     同一份权重复测出现过 ±1.6pp 抖动，与达标余量同阶。
+#   * `gpus` 必须显式写（如 "0,1"）：取值 ⊆ {0,1,2,3,4,5}、卡数 ≤ 4。
+#     留空会**拒绝启动**——目标 GPU 服务器上 GPU 6/7 被常驻生产 vLLM 占死，
+#     不存在安全默认值。机器清单见 `infra` skill / `.local/` 下的环境记录。
+#   * `output_dir` 必须在 `.local/` 下：产物含宿主路径与 GPU 编号，不入 git。
+#
+# 下面的路径是**占位符**：请替换为你机器上的真实路径。机器相关的本地覆写
+# 建议放在 `.local/` 下（gitignored，宪法 §16）。
+
+# ── 训练段（评测链路不读，但 GraspoConfig 要求存在）─────────────────────────
+train_method: graspo
+backend: native
+
+model:
+  model_path: /REPLACE_ME/models/Qwen3.5-9B
+
+data:
+  train_path: samples/data/json_output/train.jsonl
+
+training:
+  output_dir: .local/eval/runs/after-run-checkpoint-500
+
+# ── 评测段（可选；缺省时 `GraspoConfig.eval` 为 null，不触发评测链路校验）──
+eval:
+  # 数据集：v5-balanced 布局为 <root>/data/{train,test}.jsonl + <root>/images/
+  dataset_path: /REPLACE_ME/v5-balanced/data/test.jsonl
+  train_dataset_path: /REPLACE_ME/v5-balanced/data/train.jsonl   # 仅用于图像重叠分析
+  # 重叠分析只取训练集前 N 条（整份 train 有 6378 条时可用 100/20 做抽样）；
+  # null = 全量。**实际切片长度会记进产物**（train_subset.sample_count），
+  # 因为不同切片会给出不同的重叠集与剔除口径数值，不记下来事后无法解释差异。
+  train_limit: null
+  dataset_split: test
+
+  # GRASPO Δ 的基线锚点（用户已拍板：base 模型，不是 SFT 产物）
+  base_model_path: /REPLACE_ME/models/Qwen3.5-9B
+
+  # 训练产物。role: base 时置 null（评测 base 模型本身，不加载 checkpoint）。
+  checkpoint_path: /REPLACE_ME/outputs/run/checkpoint-500
+  role: after                  # base / after / sft / other
+  export_format: null          # null = 自动识别 base-model / graspo-native / peft-adapter
+  merged_output_dir: .local/eval/merged/run-checkpoint-500
+
+  # 产物落盘位置（必须在 .local/ 下）
+  output_dir: .local/eval/runs/after-run-checkpoint-500
+
+  # 服务
+  endpoint: http://127.0.0.1:18889
+  served_model_name: graspo-eval    # 必须与 eval_serve_vllm.sh 的 EVAL_SERVED_NAME 一致
+  gpus: "0,1"                       # 显式锁卡；留空 = 拒绝启动
+  max_workers: 8
+  seed: 42
+
+  # 判据阈值（口径见 docs/capability-matrix.md §8）
+  graspo_threshold_pp: 20.0         # GRASPO: Δ ≥ 20 个百分点（绝对百分点）
+  sft_threshold_percent: 50.0       # SFT: 综合准确率 ≥ 50%
