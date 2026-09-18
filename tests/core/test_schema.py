@@ -8,6 +8,7 @@ from pydantic import BaseModel, ValidationError
 
 from graspo.core.schema import (
     GraspoConfig,
+    GraspoFlowConfig,
     Sample,
     TrainingConfig,
     _generate_run_name,
@@ -86,7 +87,16 @@ def test_training_config_replay_buffer_threshold_is_derived():
     assert cfg.replay_buffer_optimize_threshold == 64
     cfg_small_queue = TrainingConfig(rollout_queue_batch_size=4, rollout_group_size=8)
     assert cfg_small_queue.replay_buffer_optimize_threshold == 32
-    assert cfg_small_queue.gradient_accumulation_micro_batches == 8
+    # 解耦的断言：改 rollout_queue_batch_size 不会顺手改训练微批——它保持**自己的默认值**。
+    # 这里曾硬编码 8（旧字段名 optimize_prompt_batch_size 的默认值）；42bfba4（v0.26.0）
+    # 把该字段重命名为 gradient_accumulation_micro_batches 并把默认值改为 4，
+    # 断言未同步，于是本用例从该提交起一直失败。断言改为对齐默认值本身，重命名/改默认
+    # 都不会再让它脱节。
+    assert (
+        cfg_small_queue.gradient_accumulation_micro_batches
+        == TrainingConfig().gradient_accumulation_micro_batches
+    )
+    assert cfg_small_queue.gradient_accumulation_micro_batches == 4
 
 
 # ── Sample ───────────────────────────────────────────────────────────────────
@@ -170,7 +180,11 @@ def test_top_level_none_section_treated_as_default():
     """显式 `section: null` 等价于缺省（合法），不触发拒绝。"""
     cfg = GraspoConfig.from_dict({"training": None, "model": None})
     assert cfg.training.seed == 42
-    assert cfg.native.tp_size == 2
+    # 这里曾硬编码 2（tp_size 的旧默认值）；c9c1907 把它改成 1
+    # （"P0: default caused 2x world_size"），断言未同步，于是本用例从该提交起一直失败。
+    # 断言改为对齐默认值本身：本条要证明的是"None 段落到默认值"，不是某个具体数值。
+    assert cfg.native.tp_size == GraspoFlowConfig().tp_size
+    assert cfg.native.tp_size == 1
 
 
 def _field_paths(model_type: type[BaseModel], prefix: str = "") -> set[str]:  # noqa: F821
