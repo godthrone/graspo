@@ -68,6 +68,27 @@ Stage = Literal["sft", "rlhf", "cpt", "opd"]
 #: 只有一处定义：告警文案、映射层、测试都引用它（§1.4 单一真相源）。
 DEFAULT_CPT_LOSS_SCALE = "all"
 
+#: OPD(GKD) 的 ``--lmbda`` 取值（**算法语义**，不是后端参数默认值）。
+#:
+#: ``lmbda`` 是 GKD 的**on-policy 概率**：每次取 batch 时，
+#: ``random.Random(seed + global_step).random() <= lmbda`` 走学生现场采样（STUDENT），
+#: 否则走**数据集里既有回答**（DATASET / off-policy）
+#: —— ms-swift 4.5.3 ``rlhf_trainers/gkd_trainer.py:293-298``（``_rollout_samples``）
+#: 与 ``:435-448``（``_get_random_num``）。
+#:
+#: graspo 的 OPD 数据是**纯提示词**（``dataset.py::build_opd_rows``——只有
+#: ``system``/``user``，没有 assistant 轮），因此 DATASET 分支按定义拿不到任何
+#: 监督 token：labels 全 ``-100`` ⇒ ``gkd_loss`` 的 ``N == 0`` ⇒
+#: ``gkd_loss.py:122 return s_logits.new_zeros(())`` 返回 **detached** 的零张量 ⇒
+#: 第 0 步 ``accelerator.backward(loss)`` 抛
+#: ``RuntimeError: element 0 of tensors does not require grad and does not have a grad_fn``。
+#:
+#: ⇒ 本通道必须**恒走 on-policy 分支**，即 λ = 1.0。上游默认 0.5
+#: （``arguments/rlhf_args.py:262``）在 seed=42 / step=0 时命中 DATASET
+#: （``random.Random(42).random() == 0.6394… > 0.5``），所以**不能靠默认值**——
+#: 必须显式透传。只有一处定义：映射层、校验层、契约测试都引用它（§1.4）。
+DEFAULT_OPD_LMBDA = 1.0
+
 
 def _flag(name: str, value: Any) -> list[str]:
     """把一个 graspo 配置值写成 ms-swift CLI 的参数片段。
@@ -513,7 +534,12 @@ def graspo_to_ms_swift_argv(
         _extend(argv, "teacher_deepspeed", distill.teacher_deepspeed)
         _extend(argv, "offload_teacher_model", distill.offload_teacher_model)
         _extend(argv, "gkd_logits_topk", distill.gkd_logits_topk)
-        _extend(argv, "lmbda", distill.lmbda)
+        # λ **必须显式写出**（见 ``DEFAULT_OPD_LMBDA``）：OPD 数据是纯提示词，
+        # 只有 on-policy 分支能拿到监督 token；上游默认 0.5 会在 seed=42/step=0
+        # 命中 DATASET 分支 → 零有效 token → detached loss。
+        # ``None`` ⇒ 算法语义默认值 1.0；显式值原样透传（合法性由
+        # :func:`validate_combinations` 在启动前 fail-closed 判定）。
+        _extend(argv, "lmbda", DEFAULT_OPD_LMBDA if distill.lmbda is None else distill.lmbda)
         _extend(argv, "sft_alpha", distill.sft_alpha)
         # `beta` 不在这里发明默认值：None ⇒ 不透传，交 ms-swift 自己的默认
         # （GKD 默认 0.5 = JSD；见 `rlhf_args.py` 的 `_set_beta`）。显式 0 = 前向 KL、
@@ -587,6 +613,31 @@ def validate_combinations(config: Any) -> None:
     """
     section = config.msswift
     megatron = section.megatron
+
+    # OPD(GKD) 的数据形态与 λ 必须自洽：graspo 的 OPD 行是**纯提示词**
+    # （``dataset.py::build_opd_rows``），GKD 的 off-policy（DATASET）分支按定义
+    # 消费数据集里**既有回答** ⇒ 零个监督 token ⇒ labels 全 -100 ⇒
+    # ``gkd_loss.py:122`` 返回 detached 的零张量 ⇒ 第 0 步 backward 抛
+    # ``RuntimeError: element 0 of tensors does not require grad and does not have a grad_fn``。
+    # 因此 λ < 1.0 在本通道**不可能成立**，在启动前 fail-closed（§2.3 边界校验），
+    # 而不是让用户在 GPU 上等一次必死的运行。
+    if getattr(config, "train_method", None) == "opd":
+        lmbda = getattr(config.distill, "lmbda", None)
+        if lmbda is not None and lmbda < DEFAULT_OPD_LMBDA:
+            raise ValueError(
+                f"distill.lmbda={lmbda} is invalid for train_method='opd': graspo's OPD "
+                "dataset rows are prompt-only (system/user, no assistant turn — see "
+                "flow/msswift/dataset.py::build_opd_rows), while ms-swift 4.5.3 GKD routes "
+                "a fraction 1-lmbda of steps to the off-policy DATASET branch, which "
+                "distills on the dataset's existing responses "
+                "(rlhf_trainers/gkd_trainer.py:293-298). With prompt-only rows that branch "
+                "has zero supervised tokens, so gkd_loss returns a detached zero "
+                "(rlhf_trainers/gkd_loss.py:121-122) and step 0 fails with "
+                "`RuntimeError: element 0 of tensors does not require grad and does not "
+                "have a grad_fn`. DROP the lmbda override (the OPD channel pins "
+                f"lmbda={DEFAULT_OPD_LMBDA}, i.e. always on-policy / student-generated "
+                "completions), or use a dataset that really contains responses."
+            )
 
     # 缺陷 3：fp8_param_gather 必须与 fp8 模式同开（megatron-core 0.17.1
     # `transformer_config.py:1160`：`ValueError: fp8_param must be used together with fp8 mode.`）
