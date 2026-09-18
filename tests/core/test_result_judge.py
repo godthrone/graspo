@@ -246,6 +246,50 @@ def test_data_problem_still_reachable_without_the_marker():
     assert classify_failure(evidence, judge_a6(evidence)) is FailureClass.DATA_PROBLEM
 
 
+# ── OPD(GKD) detached loss：接线/配置类，不得记成"未知" ──────────────────────
+
+
+def test_detached_loss_is_classified_as_config_error():
+    """T046 实测栈：第 0 步 backward 抛 detached loss ⇒ **配置非法**。
+
+    真因是接线/参数透传（OPD 少传 `--lmbda` ⇒ 上游默认 0.5 ⇒ GKD 分流到按"数据集
+    既有回答"算散度的 off-policy 分支 ⇒ 纯提示词行零监督 token），不是数据坏样本、
+    也不是上下文过长。修正前 ``_LOG_PATTERNS`` 对该文本 **0 命中** ⇒ 落
+    ``UNCLASSIFIED``——那是一个**假的"未知"**：我们有确定性文本却没有用它。
+    """
+    evidence = make_evidence(
+        exit_code=1,
+        log_text=(
+            "[rank0]: RuntimeError: element 0 of tensors does not require grad "
+            "and does not have a grad_fn\n"
+        ),
+    )
+
+    failure = classify_failure(evidence, judge_a6(evidence))
+
+    assert failure is FailureClass.CONFIG_INVALID
+    assert not counts_toward_max_context(failure)
+
+
+def test_detached_loss_tier_is_not_a_max_context_candidate():
+    """同一条失败在台账层：❌ 失败 + 不计入最大可行上下文（能力边界不变）。"""
+    evidence = make_evidence(
+        exit_code=1,
+        log_text=(
+            "RuntimeError: element 0 of tensors does not require grad and does not "
+            "have a grad_fn\n"
+        ),
+    )
+
+    judgement = judge_tier(evidence, context_length=65536)
+
+    assert not judgement.passed
+    assert not judgement.indeterminate  # 有实质证据，不是取证缺口
+    assert judgement.failure_class is FailureClass.CONFIG_INVALID
+    assert not judgement.counts_toward_max_context
+    assert "修复后重测" in judgement.note
+
+
 # ── 🔴-1：ledger_row 的 max_context 资格口径 ─────────────────────────────────
 
 

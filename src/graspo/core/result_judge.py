@@ -162,6 +162,16 @@ _LOG_PATTERNS: tuple[tuple[FailureClass, tuple[re.Pattern[str], ...]], ...] = (
                 r"pydantic.*ValidationError",
                 r"ValidationError",
                 r"must be (?:>=|<=|>|<|one of)",
+                # detached loss（T046 OPD(GKD) 冒烟实测，2026-09-19）：第 0 步
+                # `accelerator.backward(loss)` 抛这一句，真因是**接线/参数透传**
+                # （OPD 少传 `--lmbda` ⇒ 上游默认 0.5 ⇒ GKD 分流到"按数据集既有回答
+                # 算散度"的 off-policy 分支 ⇒ 纯提示词行零监督 token ⇒
+                # `gkd_loss` 返回 detached 零张量）。它是 torch 对该情形的**唯一、
+                # 确定性**文本，只可能来自反向传播前的配置/接线错误，不会与真 OOM /
+                # NaN / 数据坏样本混淆；归到「配置非法」才能把读者引向配置，而不是
+                # 数据或上下文长度（旧行为下 0 命中 ⇒ 归 UNCLASSIFIED，是**假的
+                # "未知"**）。能力边界不变：`MAX_CONTEXT_FAILURE_CLASSES={REAL_OOM}`。
+                r"does not require grad and does not have a grad_fn",
             )
         ),
     ),
