@@ -1,7 +1,7 @@
-# GRASPO SFT — 4×A800 Qwen3.5-27B PP=4（管线并行）
+# GRASPO SFT — 4×A800 Qwen3.8-27B PP=4（管线并行）
 #
 # 硬件：4× NVIDIA A800 80GB（GPU 0-3）
-# 模型：Qwen3.5-27B，多模态。27B bf16 权重约 54GB，单卡放不下，PP 分片到 4 卡有意义。
+# 模型：Qwen3.8-27B，多模态。27B bf16 权重约 54GB，单卡放不下，PP 分片到 4 卡有意义。
 # 实测（v0.27.6）：PP=4 smoke exit 0；1F1B 比 GPipe 快约 16%。
 #
 # PP=4 将模型层切到 4 个 stage（rank 0-3）。`pp_scheduler`：
@@ -13,7 +13,7 @@ train_method: sft
 backend: native
 
 model:
-  model_path: models/Qwen3.5-27B
+  model_path: models/Qwen3.8-27B
   trust_remote_code: true
   torch_dtype: bfloat16
   gradient_checkpointing: true

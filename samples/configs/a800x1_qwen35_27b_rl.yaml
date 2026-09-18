@@ -1,11 +1,11 @@
-# GRASPO RL — 单卡 A800 Qwen3.5-27B 基线
+# GRASPO RL — 单卡 A800 Qwen3.8-27B 基线
 #
 # 注意：27B 全量权重 ~54GB（bf16），单卡 80GB 加上 optimizer state 和
 # activations 可能 OOM。此配置仅用于基线对比，实际运行时可能需要开启
 # 更激进的 gradient checkpointing 或降低 micro_batch_size。
 #
 # 硬件：1× NVIDIA A800 80GB
-# 模型：Qwen3.5-27B，纯文本工具调用 RL
+# 模型：Qwen3.8-27B，纯文本工具调用 RL
 #
 # 启动：uv run graspo launch --config samples/configs/a800x1_qwen35_27b_rl.yaml
 
@@ -14,7 +14,7 @@ backend: native
 
 # ── 模型 ──────────────────────────────────────────────────────────────────
 model:
-  model_path: /data/models/Qwen3.5-27B
+  model_path: /data/models/Qwen3.8-27B
   trust_remote_code: true
   torch_dtype: bfloat16
   gradient_checkpointing: true
