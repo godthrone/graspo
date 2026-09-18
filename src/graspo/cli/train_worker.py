@@ -15,6 +15,7 @@ native 侧由 ``create_native_sft_trainer`` 提供，msswift 侧由
 
 import argparse
 
+from graspo.core.gpu_guard import require_gpu_lock_or_exit
 from graspo.core.schema import GraspoConfig
 
 
@@ -33,6 +34,11 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
+
+    # 锁卡守卫（fail-closed）：训练进程启动的第一件事。未显式锁卡 / 含生产卡
+    # GPU6,7 / 超过 4 卡，一律拒绝启动，绝不下探到模型加载才发现问题。
+    devices = require_gpu_lock_or_exit()
+    print(f"[train-worker] GPU lock OK: NVIDIA_VISIBLE_DEVICES={','.join(map(str, devices))}")
 
     config = GraspoConfig.from_yaml(args.config)
 
