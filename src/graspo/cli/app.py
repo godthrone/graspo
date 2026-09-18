@@ -436,6 +436,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     build_gpu_monitor_parser(subparsers)
 
+    from graspo.cli.eval_commands import build_eval_parser
+
+    build_eval_parser(subparsers)
+
     return parser
 
 

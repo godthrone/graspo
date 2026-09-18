@@ -185,3 +185,8 @@ reward:
   anti_useless_str_reward_weight: 1.0
   anti_useless_str_half_reward_len: 100
   numeric_tolerance: 0.2
+
+# ── 效果评测（`graspo eval` 用；**可选段**，null/缺省 = 不启用，与其它段同约定）──
+# 字段与卡计划约束见 samples/configs/eval_example.yaml；训练配置里留 null 即可。
+# 评测产物必须落在 .local/ 下（宪法 §16），且 gpus 必须显式给出（fail-closed）。
+eval: null
