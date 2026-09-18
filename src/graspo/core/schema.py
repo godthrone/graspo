@@ -7,7 +7,71 @@ import json
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+#: 训练参数化模式：``lora`` = 只训 LoRA 适配器；``full`` = 全参（全量）微调。
+#: 与 ms-swift 的 ``--tuner_type`` **同轴**（上游合法取值为
+#: ``lora|full|lora_llm``，graspo 只支持前两个）。native 与 msswift 两个后端
+#: 共用这一个开关——同一语义只有一个字段（宪法 §1.4 单一真相源）。
+TunerType = Literal["lora", "full"]
+
+
+def resolve_tuner_type(tuner_type: TunerType | None) -> TunerType:
+    """把"未指定"归一为默认值：``None`` ⇒ ``"lora"``。
+
+    v0.24 之前的全部配置都没有这个字段，语义等价于 LoRA，因此 None 必须落到
+    ``lora``（向后兼容）。**不使用** ``""`` / ``"none"`` 等哨兵值表达"未指定"
+    （宪法 §2.2 None 语义），检查一律用 ``is None``。
+    """
+    if tuner_type is None:
+        return "lora"
+    return tuner_type
+
+
+def validate_tuner_type_combination(
+    *,
+    tuner_type: TunerType | None,
+    backend: str,
+    lora_adapter_path: str | None,
+    native_tp_size: int,
+    native_dp_size: int,
+) -> None:
+    """全参模式的已知非法组合，**启动前** fail-closed 拒绝（宪法 §2.3 边界校验即防呆）。
+
+    只做纯逻辑判断，不 import torch / 不读文件——因此可在无 torch 的机器上单测
+    （由 :meth:`GraspoConfig._validate_tuner_type_combination` 调用）。
+
+    两条规则：
+
+    1. ``full`` 与 ``lora.adapter_path`` 互斥。``adapter_path`` 是"往冻结基座上挂
+       已训好的 LoRA"，全参模式的语义里没有可挂载的适配器；两者同时出现必然是配置
+       写错，必须当场报错而不是静默忽略其中一个。
+    2. ``native`` 后端的 ``full`` 目前**只支持 PP 分片**（``tp_size>1`` 或
+       ``dp_size>1`` 一律拒绝）。原因是既有梯度同步实现（``flow/lora/lora_linear.py``
+       的 ``_sync_dp_lora_grads`` / ``_sync_nonsharded_lora_grads``）**只覆盖 LoRA
+       参数**：全参下 DP 副本的基座梯度不会 all-reduce（静默训错），TP 各 rank 的
+       分片基座梯度同步语义也未经适配。让它们在"没同步"的状态下跑起来比拒绝更危险
+       ——宁可 fail-closed。全参的 TP 通道走 ms-swift + DeepSpeed AutoTP
+       （``msswift.deepspeed_autotp_size``），不经 native 的 ``tp_size``。
+    """
+    if resolve_tuner_type(tuner_type) != "full":
+        return
+    if lora_adapter_path is not None:
+        raise ValueError(
+            "tuner_type=full cannot be combined with lora.adapter_path: "
+            "adapter_path loads a pre-trained LoRA adapter onto a frozen base model, "
+            "which is the opposite of full-parameter fine-tuning. "
+            "Drop lora.adapter_path (or set tuner_type=lora)."
+        )
+    if backend == "native" and (int(native_tp_size) > 1 or int(native_dp_size) > 1):
+        raise ValueError(
+            "native backend tuner_type=full currently supports pipeline parallelism only: "
+            f"tp_size={int(native_tp_size)}, dp_size={int(native_dp_size)} are not supported "
+            "because the native gradient-sync helpers only cover LoRA parameters "
+            "(full-parameter DP/TP gradients would be silently unsynchronized). "
+            "Use pp_size>1 for native full-parameter training, or use the msswift backend "
+            "with msswift.deepspeed_autotp_size (DeepSpeed AutoTP) for tensor parallelism."
+        )
 
 
 class RewardConfig(BaseModel):
@@ -342,6 +406,17 @@ class MsSwiftConfig(BaseModel):
     fsdp: str | None = None
     # ── S7 序列并行 SP（Ulysses + Ring-Attention 共用此参数；默认 1=关闭）──
     sequence_parallel_size: int = 1
+    # ── 全参（`tuner_type: full`）的冻结开关（ms-swift `TunerArguments`）────
+    # ms-swift 对多模态模型的 full 微调**默认** `freeze_vit=True`、`freeze_aligner=True`
+    # （上游 4.5.3：`arguments/tuner_args.py:122-124` + `_init_multimodal_full`；
+    # Megatron 通道 `megatron/arguments/megatron_args.py:451` 同为 True），即
+    # "只训语言主干"。而 graspo 的「全量（全参）」承诺"训练全部权重"
+    # （`docs/capability-matrix.md` §4），native 侧也确实放开了全部参数。
+    # ⇒ 为消除**两后端语义分叉**，full 模式下这两个开关默认解析为 `false` 并显式
+    # 透传（LoRA 模式完全不透传——逐字保持原行为）。
+    # None = 用上述模式默认值；显式 true/false = 用户覆盖（唯一真相源，只有这一处开关）。
+    freeze_vit: bool | None = None
+    freeze_aligner: bool | None = None
     # ── 长文附项（与 SP/ZeRO3/FSDP2 组合使用）───────────────────────────
     rope_scaling: str | None = None  # yarn | dynamic
     max_model_len: int | None = None
@@ -418,6 +493,34 @@ class GraspoConfig(BaseModel):
     launch: LaunchConfig = LaunchConfig()
     reward: RewardConfig = RewardConfig()
     training: TrainingConfig = Field(default_factory=TrainingConfig)
+    # ── 训练参数化模式（native / msswift 两个后端的唯一开关）────────────────
+    # None = 未指定 ⇒ lora（向后兼容，v0.24 之前的所有配置都没有这个字段）。
+    # 取 full = 全参（全量）微调：native 侧放开全部基座参数的 requires_grad，
+    # msswift 侧映射为 `--tuner_type full`。
+    # 消费点只读 ``effective_tuner_type``（归一后再用），不直接读原始字段，
+    # 避免每个调用点各自判 None（宪法 §1.4 单一真相源）。
+    tuner_type: TunerType | None = None
+
+    @property
+    def effective_tuner_type(self) -> TunerType:
+        """归一后的训练模式：``None`` ⇒ ``"lora"``（见 :func:`resolve_tuner_type`）。"""
+        return resolve_tuner_type(self.tuner_type)
+
+    @model_validator(mode="after")
+    def _validate_tuner_type_combination(self) -> GraspoConfig:
+        """全参模式的已知非法组合在配置加载时就被拒绝（宪法 §2.3）。
+
+        纯逻辑委托给 :func:`validate_tuner_type_combination`，使该校验可在无 torch
+        的机器上单测。
+        """
+        validate_tuner_type_combination(
+            tuner_type=self.tuner_type,
+            backend=self.backend,
+            lora_adapter_path=self.lora.adapter_path,
+            native_tp_size=self.native.tp_size,
+            native_dp_size=self.native.dp_size,
+        )
+        return self
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> GraspoConfig:

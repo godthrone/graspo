@@ -15,6 +15,7 @@ from graspo.flow.parallel.tensor_utils import (
     _new_pipeline_stage_timing,
     _round_pipeline_stage_timing,
 )
+from graspo.flow.progress_metrics import grad_count_event, training_norm_event
 from graspo.ripple.data import SFTTokenized
 from graspo.ripple.multimodal.contract import assert_sft_batch_has_multimodal
 
@@ -100,7 +101,7 @@ class _Qwen35SFTTrainingMethods:
             if self.scheduler is not None:
                 self.scheduler.step()
             optimizer_steps = 1
-            nonzero_grad_count = self.model.nonzero_lora_grad_count()
+            nonzero_grad_count = self.model.training_progress_grad_count()
         else:
             grad_norm_sum = 0.0
             optimizer_steps = 0
@@ -117,8 +118,8 @@ class _Qwen35SFTTrainingMethods:
         micro_batch_count: int,
         grad_norm_sum: float,
         nonzero_grad_count: int,
-        lora_norm_before: float,
-        lora_norm_after: float,
+        norm_before: float,
+        norm_after: float,
         train_batch_started_at: float,
         micro_batch_forward_sec: float,
         backward_sec: float,
@@ -130,7 +131,12 @@ class _Qwen35SFTTrainingMethods:
 
         PP 路径通过 ``**pipeline_extras`` 注入 PP 特有字段（pp_size,
         pp_schedule, pipeline_stage_timing 等）。
+
+        权重范数与梯度计数是**模式感知**的（``flow/progress_metrics.py``）：
+        lora 模式键名/数值逐字不变；full 模式把结构性恒为 0 的 ``lora_norm_*``
+        显式置 ``None``（不适用），并给出等价的 ``trainable_norm_*``。
         """
+        tuner_type = self.config.effective_tuner_type
         metrics = {
             "optimized": optimizer_steps > 0,
             "sft_batch_count": sft_batch_count,
@@ -138,10 +144,8 @@ class _Qwen35SFTTrainingMethods:
             "skipped_nonfinite": skipped_nonfinite,
             "loss_mean": loss_sum / micro_batch_count if micro_batch_count else None,
             "grad_norm_mean": grad_norm_sum,
-            "nonzero_grad_count": nonzero_grad_count,
-            "lora_norm_before": lora_norm_before,
-            "lora_norm_after": lora_norm_after,
-            "lora_norm_delta": lora_norm_after - lora_norm_before,
+            **grad_count_event(tuner_type, count=nonzero_grad_count),
+            **training_norm_event(tuner_type, before=norm_before, after=norm_after),
             "train_batch_total_sec": time.monotonic() - train_batch_started_at,
             "optimize_round_sec": round_secs or [],
             "optimize_round_sec_sum": sum(round_secs) if round_secs else 0.0,
@@ -199,7 +203,7 @@ class _Qwen35SFTTrainingMethods:
         loss_sum = 0.0
         grad_norm_sum = 0.0
         nonzero_grad_count = 0
-        lora_norm_before = self.model.lora_parameter_norm()
+        norm_before = self.model.training_progress_norm()
         train_batch_started_at = time.monotonic()
         round_secs: list[float] = []
         micro_batch_forward_sec = 0.0
@@ -266,7 +270,7 @@ class _Qwen35SFTTrainingMethods:
         )
         self._train_batch_call_index += 1
 
-        lora_norm_after = self.model.lora_parameter_norm()
+        norm_after = self.model.training_progress_norm()
         metrics = self._build_sft_metrics(
             sft_batch_count=len(sft_batches),
             optimizer_steps=optimizer_steps,
@@ -275,8 +279,8 @@ class _Qwen35SFTTrainingMethods:
             micro_batch_count=micro_batch_count,
             grad_norm_sum=grad_norm_sum,
             nonzero_grad_count=nonzero_grad_count,
-            lora_norm_before=lora_norm_before,
-            lora_norm_after=lora_norm_after,
+            norm_before=norm_before,
+            norm_after=norm_after,
             train_batch_started_at=train_batch_started_at,
             micro_batch_forward_sec=micro_batch_forward_sec,
             backward_sec=backward_sec,
@@ -309,7 +313,7 @@ class _Qwen35SFTTrainingMethods:
         loss_sum = 0.0
         grad_norm_sum = 0.0
         nonzero_grad_count = 0
-        lora_norm_before = self.model.lora_parameter_norm()
+        norm_before = self.model.training_progress_norm()
         micro_batch_size = max(1, int(self.config.native.micro_batch_size))
         full_batch_size = max(1, len(sft_batches))
         train_batch_started_at = time.monotonic()
@@ -482,7 +486,7 @@ class _Qwen35SFTTrainingMethods:
             skipped_nonfinite = chunk_count
 
         self._train_batch_call_index += 1
-        lora_norm_after = self.model.lora_parameter_norm()
+        norm_after = self.model.training_progress_norm()
         metrics = self._build_sft_metrics(
             sft_batch_count=len(sft_batches),
             optimizer_steps=optimizer_steps,
@@ -491,8 +495,8 @@ class _Qwen35SFTTrainingMethods:
             micro_batch_count=micro_batch_count,
             grad_norm_sum=grad_norm_sum,
             nonzero_grad_count=nonzero_grad_count,
-            lora_norm_before=lora_norm_before,
-            lora_norm_after=lora_norm_after,
+            norm_before=norm_before,
+            norm_after=norm_after,
             train_batch_started_at=train_batch_started_at,
             micro_batch_forward_sec=micro_batch_forward_sec,
             backward_sec=backward_sec,

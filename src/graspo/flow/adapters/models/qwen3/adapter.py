@@ -26,6 +26,7 @@ from graspo.flow.parallel.tensor_utils import (
     _resolve_dtype,
     collate_experiences,
 )
+from graspo.flow.progress_metrics import grad_count_event, training_norm_event
 from graspo.flow.runtime import NativeGeneration
 from graspo.ripple.buffer import Experience
 from graspo.ripple.parsing.completion import ParsedCompletion
@@ -60,6 +61,7 @@ class Qwen3Adapter(TransformerAdapter):
             if self.config.native.layer_ranges is not None
             else None,
         )
+        full_param = self.config.effective_tuner_type == "full"
         self.model = build_native_qwen_model(
             hf_config=hf_config,
             loader=loader,
@@ -73,18 +75,21 @@ class Qwen3Adapter(TransformerAdapter):
             gradient_checkpointing=bool(self.config.model.gradient_checkpointing),
             torch_dtype=torch_dtype,
             device=self.device,
+            full_param=full_param,
         )
         if self.model is None:
             raise RuntimeError("model not loaded; call setup() first")
-        missing_lora_targets = sorted(
-            target
-            for target in set(lora_targets.resolved) - set(self.model.enabled_lora_target_names())
-        )
-        if missing_lora_targets:
-            raise ValueError(
-                "Resolved LoRA target(s) are not implemented by this model yet: "
-                + ", ".join(missing_lora_targets)
+        if not full_param:
+            missing_lora_targets = sorted(
+                target
+                for target in set(lora_targets.resolved)
+                - set(self.model.enabled_lora_target_names())
             )
+            if missing_lora_targets:
+                raise ValueError(
+                    "Resolved LoRA target(s) are not implemented by this model yet: "
+                    + ", ".join(missing_lora_targets)
+                )
         self.model.train(False)
         if self.config.lora.adapter_path:
             load_peft_adapter_into_native_model(
@@ -393,7 +398,7 @@ class Qwen3Adapter(TransformerAdapter):
         loss_sum = 0.0
         grad_norm_sum = 0.0
         nonzero_grad_count = 0
-        lora_norm_before = self.model.lora_parameter_norm()
+        norm_before = self.model.training_progress_norm()
         batch_size = int(self.config.native.micro_batch_size)
         train_batch_started_at = time.monotonic()
         round_secs: list[float] = []
@@ -448,11 +453,11 @@ class Qwen3Adapter(TransformerAdapter):
             micro_batch_count += 1
             loss_sum += float(loss.detach().cpu())
             grad_norm_sum += float(grad_norm.detach().float().cpu())
-            nonzero_grad_count += self.model.nonzero_lora_grad_count()
+            nonzero_grad_count += self.model.training_progress_grad_count()
         round_secs.append(time.monotonic() - round_started_at)
         self._train_batch_call_index += 1
 
-        lora_norm_after = self.model.lora_parameter_norm()
+        norm_after = self.model.training_progress_norm()
         metrics = {
             "optimized": optimizer_steps > 0,
             "replay_buffer_trainable_completion_count": len(experiences),
@@ -460,10 +465,12 @@ class Qwen3Adapter(TransformerAdapter):
             "skipped_nonfinite": skipped_nonfinite,
             "loss_mean": loss_sum / optimizer_steps if optimizer_steps else None,
             "grad_norm_mean": grad_norm_sum / optimizer_steps if optimizer_steps else None,
-            "nonzero_grad_count": nonzero_grad_count,
-            "lora_norm_before": lora_norm_before,
-            "lora_norm_after": lora_norm_after,
-            "lora_norm_delta": lora_norm_after - lora_norm_before,
+            **grad_count_event(
+                self.config.effective_tuner_type, count=nonzero_grad_count
+            ),
+            **training_norm_event(
+                self.config.effective_tuner_type, before=norm_before, after=norm_after
+            ),
             "activation_checkpointing_enabled": bool(
                 getattr(self.model, "gradient_checkpointing", False)
             ),

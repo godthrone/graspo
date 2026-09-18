@@ -17,6 +17,7 @@ from graspo.flow.parallel.tensor_utils import (
     _selected_token_log_probs_from_hidden,
     collate_experiences,
 )
+from graspo.flow.progress_metrics import grad_count_event, training_norm_event
 from graspo.ripple.buffer import Experience
 from graspo.ripple.multimodal.contract import assert_rl_training_has_multimodal
 
@@ -61,7 +62,7 @@ class _Qwen35TrainingMethods:
         loss_sum = 0.0
         grad_norm_sum = 0.0
         nonzero_grad_count = 0
-        lora_norm_before = self.model.lora_parameter_norm()
+        norm_before = self.model.training_progress_norm()
         batch_size = int(self.config.native.micro_batch_size)
         train_batch_started_at = time.monotonic()
         round_secs: list[float] = []
@@ -168,13 +169,13 @@ class _Qwen35TrainingMethods:
             if self.scheduler is not None:
                 self.scheduler.step()
             optimizer_steps = 1
-            nonzero_grad_count = self.model.nonzero_lora_grad_count()
+            nonzero_grad_count = self.model.training_progress_grad_count()
         else:
             grad_norm_sum = 0.0
         round_secs.append(time.monotonic() - round_started_at)
         self._train_batch_call_index += 1
 
-        lora_norm_after = self.model.lora_parameter_norm()
+        norm_after = self.model.training_progress_norm()
         metrics = {
             "optimized": optimizer_steps > 0,
             "replay_buffer_trainable_completion_count": len(experiences),
@@ -182,10 +183,12 @@ class _Qwen35TrainingMethods:
             "skipped_nonfinite": skipped_nonfinite,
             "loss_mean": loss_sum / micro_batch_count if micro_batch_count else None,
             "grad_norm_mean": grad_norm_sum,
-            "nonzero_grad_count": nonzero_grad_count,
-            "lora_norm_before": lora_norm_before,
-            "lora_norm_after": lora_norm_after,
-            "lora_norm_delta": lora_norm_after - lora_norm_before,
+            **grad_count_event(
+                self.config.effective_tuner_type, count=nonzero_grad_count
+            ),
+            **training_norm_event(
+                self.config.effective_tuner_type, before=norm_before, after=norm_after
+            ),
             "activation_checkpointing_enabled": bool(
                 getattr(self.model, "gradient_checkpointing", False)
             ),
@@ -280,7 +283,7 @@ class _Qwen35TrainingMethods:
         loss_sum = 0.0
         grad_norm_sum = 0.0
         nonzero_grad_count = 0
-        lora_norm_before = self.model.lora_parameter_norm()
+        norm_before = self.model.training_progress_norm()
         batch_size = int(self.config.native.micro_batch_size)
         pipeline_micro_batch_size = max(1, int(self.config.native.pp_micro_batch_size))
         train_batch_started_at = time.monotonic()
@@ -384,10 +387,10 @@ class _Qwen35TrainingMethods:
             dist.all_reduce(loss_tensor, op=dist.ReduceOp.SUM)
             loss_sum += float(loss_tensor.item())
             grad_norm_sum += float(grad_norm.detach().float().cpu())
-            nonzero_grad_count += self.model.nonzero_lora_grad_count()
+            nonzero_grad_count += self.model.training_progress_grad_count()
         round_secs.append(time.monotonic() - round_started_at)
         self._train_batch_call_index += 1
-        lora_norm_after = self.model.lora_parameter_norm()
+        norm_after = self.model.training_progress_norm()
         effective_inflight = max_chunks_per_optimizer_step
         if configured_inflight > 0:
             effective_inflight = min(effective_inflight, configured_inflight)
@@ -398,10 +401,12 @@ class _Qwen35TrainingMethods:
             "skipped_nonfinite": skipped_nonfinite,
             "loss_mean": loss_sum / optimizer_steps if optimizer_steps else None,
             "grad_norm_mean": grad_norm_sum / optimizer_steps if optimizer_steps else None,
-            "nonzero_grad_count": nonzero_grad_count,
-            "lora_norm_before": lora_norm_before,
-            "lora_norm_after": lora_norm_after,
-            "lora_norm_delta": lora_norm_after - lora_norm_before,
+            **grad_count_event(
+                self.config.effective_tuner_type, count=nonzero_grad_count
+            ),
+            **training_norm_event(
+                self.config.effective_tuner_type, before=norm_before, after=norm_after
+            ),
             "activation_checkpointing_enabled": bool(
                 getattr(self.model, "gradient_checkpointing", False)
             ),
