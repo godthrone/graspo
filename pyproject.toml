@@ -11,15 +11,23 @@ requires-python = ">=3.11,<3.13"
 license = {text = "MIT"}
 authors = [{ name = "Godthrone" }]
 dependencies = [
-  # torch/torchvision 精确锁定以匹配 Docker base 镜像（pytorch/pytorch digest）
-  # 预装的 CUDA 13.2 运行时；升级须同步 docker/Dockerfile 的 base digest。
-  "torch==2.12.1",
-  "torchvision==0.27.1",
+  # torch/transformers 精确锁定以匹配**实测在用的执行载体**（目标 GPU 服务器的镜像
+  # graspo-msswift:4.5.3，ms-swift 4.5.3 在其中跑通）——以镜像实测版本为准，
+  # 声明版本必须等于镜像内版本（门禁 scripts/check_env_versions.py）。
+  # 【实测确证】实测血统：torch 2.11.0+cu130、transformers 5.12.1、pydantic 2.11.10、
+  # python 3.12.13。两个镜像配方都用**公开 base** + 官方 cu130 轮子索引取到该血统
+  # （内网镜像信息属环境信息，只记录在 `.local/`，不入 tracked 文件，见 §15.1/§16）。
+  "torch==2.11.0",
+  # torchvision 与 torch 2.11.0 配对【待上机实测确认】：0.27.x 要求 torch 2.12.x，
+  # 改 torch 后必须同步下调；门禁会逐包比对，容器内一次确认。
+  "torchvision==0.26.0",
   # 其余依赖全部精确锁定：pyproject 是版本唯一声明处，uv.lock 与镜像一致。
-  "pydantic==2.13.4",
+  # pydantic 也以镜像实测为准（2.11.10）——门禁包集合自动派生自本文件全部
+  # `==` pin，不再手工列举（旧版门禁手工列表漏了 pydantic，见 §2 防呆）。
+  "pydantic==2.11.10",
   "pyyaml==6.0.3",
   "safetensors==0.7.0",
-  "transformers==5.10.2",
+  "transformers==5.12.1",
   "pillow==12.2.0",
   "numpy==2.4.5",
 ]
@@ -30,7 +38,13 @@ dev = [
   "ruff==0.15.13",
   "mypy==2.1.0",
 ]
-msswift = ["ms-swift>=4.2,<5.0"]
+# ms-swift 后端依赖。**必须精确锁定**（宪法 §6 环境可复现）：区间约束
+# `>=4.2,<5.0` 会让实测环境里的实际版本漂移。锁定值 = 实测在用的版本：
+# `swift.__version__ == 4.5.3`，且 ms-swift 自产 args.json 记录
+# "swift_version": "4.5.3"。ms-swift 在 `uv.lock` 中已随 msswift extra 解析；
+# 镜像配方另用 pip `ms-swift==4.5.3` 精确安装——两处声明由
+# `scripts/check_env_versions.py` 逐包比对，不得分叉。
+msswift = ["ms-swift==4.5.3"]
 
 [project.scripts]
 graspo = "graspo.cli.app:main"
