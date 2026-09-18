@@ -5,10 +5,21 @@
 翻译成「配置骨架 + 运行清单」，供后续 GPU 实验按档执行。生成物：
 
   - `samples/configs/matrix54/T###.yaml` —— 每档一个配置骨架
-  - `samples/configs/matrix54/T###.blocked.md` —— 当前不可表达档位的阻塞说明
+  - `samples/configs/matrix54/T###.blocked.md` —— 当前给不出配方档位的阻塞说明
   - `tests/e2e/matrix54_manifest.json` —— 运行清单（44+ 字段/档，含 GPU 集合、
-    验收门槛、可表达性状态），是结果收集器 `scripts/collect_results.py` 的输入
+    验收门槛、可表达性状态、**显存可行性三态**），是结果收集器 `scripts/collect_results.py` 的输入
   - `tests/e2e/run_matrix54.sh` —— 批量执行脚本骨架（自带锁卡守卫与可信采样）
+
+**两条正交的口径（不要混读）**：
+
+- **可表达性**（`ready` / `unverified` / `blocked`）答"**配置能不能被接受、能不能生成**"。
+  CPT / OPD 已于 2026-09-19（`WP-X3`）解除 `blocked`：`train_method` 枚举含 `cpt`/`opd`，
+  各有专用注册表与 ms-swift 映射（`swift pt` / GKD）。
+- **显存可行性**（`feasible` / `infeasible` / `unmeasured` / `blocked`）答"**能不能声称装得下**"。
+  `unmeasured` = 确定性算式通过、但存在**未测算**的额外显存消费者（目前仅 OPD 的教师，
+  P-25）⇒ **不得写成「可行」**，等上机冒烟回填。
+
+**★ 「可表达」≠「能跑通」≠「显存可行」**：三者都不互相蕴含。
 
 **口径（用户拍板，权威）**：只用 1/2/4 卡，每次最多 4 卡且仅取 GPU0-5；
 4 卡首选 {0,1,2,3}；上下文长度由递增加长法实测得出、不预设档位。
@@ -129,7 +140,84 @@ FULL_MODE_NOTE = (
     "因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。"
 )
 
-ALGORITHM_TO_TRAIN_METHOD = {"SFT": "sft", "GRASPO": "graspo"}
+# ── 显存可行性**三态**判定（进 manifest 的 `feasibility.verdict`，显式优于布尔二值）──
+# 为什么不是布尔：CPT/OPD 之前，"估算过预算"与"没得估"两件事被压进同一个 None；
+# OPD 引入了第三种情况——**确定性算式通过，但存在未测算的额外显存消费者（教师）**。
+# 混进 True 就是"为凑数放行"，混进 False 就是"把没测过的说成跑不了"。
+VERDICT_FEASIBLE = "feasible"      # 确定性算式 ≤ 预算，且无未测算的额外消费者
+VERDICT_INFEASIBLE = "infeasible"  # 确定性算式已超预算 ⇒ 拒绝生成
+VERDICT_UNMEASURED = "unmeasured"  # 算式通过，但有未测算的额外消费者 ⇒ 不得声称"可行"
+VERDICT_BLOCKED = "blocked"        # 当前给不出配方（能力未落地 / 无分片手段）
+
+ALGORITHM_TO_TRAIN_METHOD = {"CPT": "cpt", "SFT": "sft", "GRASPO": "graspo", "OPD": "opd"}
+
+#: ★ CPT / OPD 的**通道**已落地（`WP-X3`，2026-09-19）：`train_method` 枚举含 `cpt`/`opd`，
+#: 配置层对这两个算法**接受**、对 `cpt|opd + native` **fail-closed 拒绝**；路由表
+#: （`core/discovery._REGISTRY_BY_TRAIN_METHOD`）把它们分别落到 `graspo.cpt_backends` /
+#: `graspo.opd_backends`。⇒ 本生成器**不再**把这两类档判为 `blocked`。
+#: 依据：`docs/capability-matrix.md` §4（CPT · ms-swift = ⚠️ 未验证；OPD · ms-swift = ⚠️ 未验证；
+#: 两者 native 侧 = ⛔ 不支持）。
+CPT_OPD_UNBLOCKED_NOTE = (
+    "CPT/OPD 的**配置通道**已由 WP-X3 落地（train_method 枚举 + 专用注册表 + ms-swift "
+    "pretrain/GKD 映射）。因此本档**可表达**。注意两种口径不要混："
+    "**「可表达」= 配置能被接受、能生成、能启动**；**「跑通」= 真机跑出 A1–A6 证据**。"
+    "本档当前只到前者。"
+)
+
+#: CPT（继续预训练）走了 ms-swift 的 `swift pt` 通道（= `swift sft --use_chat_template false
+#: --loss_scale all`）。数据集形态是**纯文本续训行**，由
+#: `flow/msswift/dataset.py::build_cpt_rows` 从 ELAM V5 形态的样本摊平得到。
+CPT_NOTE = (
+    CPT_OPD_UNBLOCKED_NOTE + " 数据形态：ms-swift 官方预训练行（单条 assistant 纯文本 + 媒体块）。"
+    "**★ 语料口径（不得误读）**：本档用的是 **ELAM V5 形态**的指令数据摊平后的纯文本，"
+    "目的是**跑通通道**，**不是「CPT 语料已就绪」**——本期没有预训练语料，"
+    "语料问题按用户 2026-09-18 拍板登记为「回头再说」，本生成器不造语料。"
+)
+
+#: OPD（on-policy 蒸馏）走了 ms-swift 的 **GKD** 通道（`--rlhf_type gkd`），
+#: 教师是同一训练进程内的**独立冻结模型**（`--teacher_model`），学生现场采样、
+#: 教师现场打分（逐 token 稠密信号）。教师/学生对由用户 2026-09-18 拍板：
+#: 教师 = `Qwen3.8-27B`、学生 = `Qwen3.5-9B`。
+OPD_NOTE = (
+    CPT_OPD_UNBLOCKED_NOTE + " 算法路径：GKD（`--rlhf_type gkd`）+ 独立冻结教师。"
+    "**★ 教师侧显存未测算（P-25）**：教师模型在训练进程内**额外占一份显存**，"
+    "本生成器没有教师侧的实测数字 ⇒ 所有 OPD 档的可行性判定为"
+    f"**「待上机测量」（{VERDICT_UNMEASURED}）**，**不得**预先写成「可行」。"
+)
+
+#: OPD 教师模型在台账里的键（教师 = 27B，学生 = 台账的 `model`）。
+OPD_TEACHER_MODEL = "27B"
+
+#: ★ 水平发现（需指挥官/用户确认，**不得**由生成器私自消解）：
+#: 台账（= `docs/capability-matrix.md` §7，受保护文档）里 OPD 有 **27B 档**（`T052`–`T054`），
+#: 而 `model` 列在 graspo 里处处是"**被训练的学生**"（`model.model_path`）。
+#: 用户 2026-09-18 拍板的教师是常量 `Qwen3.8-27B` ⇒ `T052`–`T054` 的教师与学生**同名**，
+#: 落到 ms-swift **明确支持**的自蒸馏模式（LoRA：用 `disable_adapter()` 取教师 logits，
+#: 不额外加载模型；全量：加载一份冻结副本）。
+#: **这不是"教师没配"，也不是生成器发明的语义**，而是两条既有约束推出来的结果：
+#:   ① 台账的 27B OPD 档存在（本生成器**无权**改台账）；
+#:   ② 教师常量是 27B（用户拍板）。
+#: **待确认**：27B OPD 档的**学生**到底是 27B 还是 9B？若学生固定 9B，`T052`–`T054`
+#: 将与 `T046`–`T048` 的配置**完全重合**，档位失去区分度——那属于台账口径问题，
+#: 应走 A §7 / 跟踪文档的裁定，**不由生成器单方面改**。
+OPD_SELF_DISTILLATION_NOTE = (
+    "★ 教师与学生**同名**（均为 Qwen3.8-27B）⇒ 本档落到 ms-swift 的**自蒸馏**模式"
+    "（LoRA：`disable_adapter()` 取教师 logits；全量：冻结副本）。"
+    "成因是「台账的 27B OPD 档」×「用户拍板的教师常量 27B」，**待指挥官确认 27B OPD 档的学生口径**；"
+    "本生成器不私自消解该歧义（改台账属受保护文档的口径变更）。"
+)
+
+
+def opd_teacher_relation(tier: dict[str, Any]) -> str:
+    """OPD 档的教师/学生关系：``independent`` / ``self-distillation`` / ``not-applicable``。
+
+    单一真相源：配置头部注释、manifest、报告都引用本函数，不各判一次（§1.4）。
+    """
+    if str(tier["algorithm"]) != "OPD":
+        return "not-applicable"
+    student = MODELS[str(tier["model"])]["path"]
+    teacher = MODELS[OPD_TEACHER_MODEL]["path"]
+    return "self-distillation" if student == teacher else "independent"
 
 
 # ── 档位台账构造 ────────────────────────────────────────────────────────────
@@ -179,15 +267,20 @@ def build_ledger() -> list[dict[str, Any]]:
 def classify_expressibility(tier: dict[str, Any]) -> tuple[str, str | None]:
     """判定该档当前能否被配置模型表达，返回 (status, reason)。
 
-    - ``ready``：配置可表达，对应能力格当前为 ✅ / 常规路径（本期仍需实测）；
-    - ``unverified``：配置可表达，但对应能力格当前 ⚠️ 未验证；
+    - ``ready``：配置可表达，常规路径（LoRA）；
+    - ``unverified``：配置可表达，但对应能力格当前 ⚠️ 未验证（全量）；
     - ``blocked``：配置模型/映射当前**无法表达**；或虽可表达，但按当前口径
       估算给不出可靠配方（如 native 全参 1 卡，见 ``BLOCKED_REASONS`` 的
       诚实表述——那是**保守判定，不是已证的必然 OOM**）。
+
+    **CPT / OPD 已于 2026-09-19（`WP-X3`）解除 ``blocked``**：`train_method` 枚举
+    含 `cpt`/`opd`、各有专用注册表与 ms-swift 映射（pretrain / GKD）。
+    它们按**模式**落 ``ready``（LoRA）/ ``unverified``（全量），与 SFT/GRASPO 同口径。
+
+    **注意 ``可表达`` ≠ ``跑通``，也 ≠ ``显存可行``**：显存那一维由
+    :func:`feasibility_verdict` 的三态判定给（CPT/OPD 的通道可行性见 ``CPT_NOTE`` /
+    ``OPD_NOTE``；OPD 因教师侧未测算恒为 ``unmeasured``）。
     """
-    algorithm = str(tier["algorithm"])
-    if algorithm in {"CPT", "OPD"}:
-        return "blocked", BLOCKED_REASONS[algorithm.lower()]
     # native 全参只有 PP 分片这一种手段：1 卡 ⇒ 无分片（无 offload）⇒ 保守判 blocked。
     # 理由不写「必然 OOM」——见 BLOCKED_REASONS["native_full_1card"] 的诚实表述。
     if tier["mode"] == "全量" and tier["backend"] == "native" and int(tier["cards"]) == 1:
@@ -273,15 +366,11 @@ def _native_static_gib(params: float) -> float:
 #: 当前不可表达的原因（每条都指向能力矩阵里的 ⚠️ 格）。
 #: native 1 卡那条**不写「必然 OOM」**——算式依赖未经实测的 bf16 Adam 假设，
 #: 且余量只有约 10 GiB，只能如实说「判定不可靠、本轮不承诺」。
+#:
+#: ★ ``cpt`` / ``opd`` 两条已于 2026-09-19 删除（`WP-X3` 落地了配置通道）：
+#: 旧文案「`train_method` 的 Literal 只有 {'graspo','sft'}」**已是过期事实**，
+#: 保留它就会把已解决的问题永远钉在「不可表达」上。留痕见 ``CPT_NOTE`` / ``OPD_NOTE``。
 BLOCKED_REASONS: dict[str, str] = {
-    "cpt": (
-        "配置模型不支持 CPT：`train_method` 的 Literal 只有 {'graspo','sft'}，"
-        "ms-swift 映射也没有 pretrain 通道（capability-matrix §4「CPT · ms-swift」⚠️）。"
-    ),
-    "opd": (
-        "配置模型不支持 OPD：`train_method` 的 Literal 只有 {'graspo','sft'}，"
-        "没有 on-policy 蒸馏通道（capability-matrix §4「OPD · ms-swift」⚠️）。"
-    ),
     "native_full_1card": (
         "native 全参当前只支持 PP 分片、且无 offload ⇒ 1 卡无任何分片手段。"
         f"按 native 实际实现口径（k={NATIVE_OPTIMIZER_BYTES_PER_PARAM:g} B/param，"
@@ -369,24 +458,95 @@ def estimate_per_card_gib(tier: dict[str, Any]) -> tuple[float, str]:
     return estimate_config_per_card_gib(tier, build_config(tier))
 
 
-def feasibility(tier: dict[str, Any]) -> tuple[bool, str]:
-    """该档是否显存可行（保守估算 ≤ 单卡预算）。
+#: 教师权重常驻量（GiB，bf16 权重 2 B/param）——**只用来说明"不换出为什么不行"**，
+#: 不是教师侧显存需求（教师前向的工作集未测算，见 ``OPD_TEACHER_UNMEASURED_NOTE``）。
+def _teacher_weights_gib() -> float:
+    params = PARAMS_BILLION[OPD_TEACHER_MODEL] * 1.0e9
+    return params * _BF16 / (1024.0**3)
 
-    ``ok=False`` **不等于"已证的必然 OOM"**：算式含未实测假设（各后端优化器态精度），
-    故措辞为"估算超预算 ⇒ 判定不可靠"，而不是"必然 OOM"。
+
+OPD_TEACHER_UNMEASURED_NOTE = (
+    "★ **待上机测量（P-25）**：OPD 的教师模型（Qwen3.8-27B）在训练进程内**额外占一份显存**"
+    "（每个 rank 一份），本生成器**没有**教师侧的实测数字 ⇒ **不得**判定为「可行」。"
+    "配方已显式设 `distill.offload_teacher_model: true`（教师权重常驻 CPU、前向时换入），"
+    "但教师**前向时的 GPU 工作集**仍是未测算量 ⇒ 本档标 "
+    f"`{VERDICT_UNMEASURED}`，由**上机冒烟**（建议先跑 `T046`）回填实测后再改判定。"
+    "参考算式（教师**不**换出时）：27B bf16 权重 ≈ "
+    f"{_teacher_weights_gib():.1f} GiB/卡，与学生侧常驻相加在任何卡数下都超预算 ⇒ "
+    "「不换出」不构成可用配方（这是权重常驻的算术事实，不是实测结论）。"
+)
+
+
+def feasibility_verdict(tier: dict[str, Any]) -> tuple[str, str]:
+    """该档的显存可行性**三态判定**（单一真相源，§1.4），返回 (verdict, detail)。
+
+    判定顺序即语义（先确定性、后未测算）：
+
+    1. ``blocked``：该档当前给不出配方（能力未落地 / 无分片手段）——由
+       :func:`classify_expressibility` 决定，这里不做二次判断。
+    2. ``infeasible``：**确定性算式**（学生侧常驻 + 配方里显式给出的分片/offload）
+       已超单卡预算 ⇒ 生成期断言**拒绝生成**并报出算式。
+    3. ``unmeasured``：确定性算式通过，但存在**未测算的额外显存消费者**
+       （目前唯一来源：OPD 的教师）⇒ **不得写「可行」**，标「待上机测量」（P-25）。
+    4. ``feasible``：确定性算式通过，且无未测算的额外消费者。
+
+    **为什么第 3 步不能并进第 4 步**：把"没量过的教师"当成"不存在"，就是拿未实测的
+    假设去支撑一个「可行」结论（跟踪文档 `D-23`：推定值不得入账）。
+    **为什么不能并进第 2 步**：算式通过就说它"必然 OOM"，同样是把假设伪装成结论。
     """
+    status, _ = classify_expressibility(tier)
+    if status == "blocked":
+        return VERDICT_BLOCKED, "blocked：当前给不出可行配方（原因见 status_reason）"
+
     gib, basis = estimate_per_card_gib(tier)
-    ok = gib <= CARD_BUDGET_GIB
-    verdict = "可行" if ok else "估算超预算 ⇒ 判定不可靠（假设未实测）"
-    return ok, f"估算每卡 {gib:.1f} GiB（预算 {CARD_BUDGET_GIB:g} GiB）⇒ {verdict}：{basis}"
+    within_budget = gib <= CARD_BUDGET_GIB
+    verdict_text = "可行" if within_budget else "估算超预算 ⇒ 判定不可靠（假设未实测）"
+    detail = (
+        f"估算每卡 {gib:.1f} GiB（预算 {CARD_BUDGET_GIB:g} GiB）⇒ {verdict_text}：{basis}"
+    )
+    if not within_budget:
+        return VERDICT_INFEASIBLE, detail
+    if str(tier["algorithm"]) == "OPD":
+        # 先堵一个后门：`unmeasured` **不得**成为"任何 OPD 配置都放行"的借口。
+        # 教师**不换出**时，其 bf16 权重是每卡常驻的——这是权重常驻的**算术事实**
+        # （不是实测结论），与学生侧相加必然超预算 ⇒ 确定性判定为 infeasible。
+        distill = build_config(tier).get("distill") or {}
+        if distill.get("offload_teacher_model") is not True:
+            teacher_gib = _teacher_weights_gib()
+            return VERDICT_INFEASIBLE, (
+                "OPD 教师**未换出**（`distill.offload_teacher_model` 不是 true）："
+                f"教师 27B bf16 权重 ≈ {teacher_gib:.1f} GiB/卡是**常驻**的，"
+                f"与学生侧估算 {gib:.1f} GiB 相加 ≈ {gib + teacher_gib:.1f} GiB > "
+                f"预算 {CARD_BUDGET_GIB:g} GiB ⇒ 拒绝生成。"
+                "（依据是权重常驻的算术事实，不是上机实测；教师**换出后**的 GPU 工作集"
+                "仍是未测算量，见 OPD_TEACHER_UNMEASURED_NOTE。）"
+            )
+        # 学生侧确定性算式通过、教师已换出，但教师前向的 GPU 工作集未测算
+        # ⇒ 只能标"待上机测量"。
+        return VERDICT_UNMEASURED, f"{OPD_TEACHER_UNMEASURED_NOTE}；学生侧算式：{detail}"
+    return VERDICT_FEASIBLE, detail
+
+
+def feasibility(tier: dict[str, Any]) -> tuple[bool, str]:
+    """兼容视图：只有 ``feasible`` 才为 ``True``。
+
+    ★ **``False`` 不等于「必然 OOM」，也不等于「不可生成」**——它只表示
+    **「不得声称可行」**。"超预算"与"未测算"必须用 :func:`feasibility_verdict` 区分。
+    """
+    verdict, detail = feasibility_verdict(tier)
+    return verdict == VERDICT_FEASIBLE, detail
 
 
 def feasibility_for(tier: dict[str, Any]) -> tuple[bool | None, str]:
-    """给 blocked 档返回 ``None``（不估配方），其余走正常估算。"""
-    status, _ = classify_expressibility(tier)
-    if status == "blocked":
-        return None, "blocked：当前给不出可行配方（原因见 status_reason）"
-    return feasibility(tier)
+    """给 blocked / unmeasured 档返回 ``None``（**均表示"不得声称可行"**）。
+
+    两者用 ``feasibility_verdict`` 的字符串区分（``blocked`` vs ``unmeasured``），
+    manifest 里两者都带显式 ``verdict`` 字段——不靠 ``None`` 猜。
+    """
+    verdict, detail = feasibility_verdict(tier)
+    if verdict in (VERDICT_BLOCKED, VERDICT_UNMEASURED):
+        return None, detail
+    return verdict == VERDICT_FEASIBLE, detail
 
 
 def build_config(tier: dict[str, Any]) -> dict[str, Any]:
@@ -466,6 +626,23 @@ def build_config(tier: dict[str, Any]) -> dict[str, Any]:
 
     if algorithm == "GRASPO":
         config["reward"] = {"kind": "graspo"}
+    if algorithm == "CPT":
+        # CPT 的算法级配置是**后端中立**段（`core/schema.py::PretrainConfig`），
+        # 由 `_config_mapping` 的 `stage="cpt"` 分支映射成 `swift pt` 的两条等价参数。
+        # 这里**显式写出**（而不是靠 schema 默认值），因为"配置仍是产物的唯一描述"
+        # （§10.1）：读档位配置即可回答"这档是不是按 CPT 语义在跑"。
+        config["pretrain"] = {"loss_scale": "all", "use_chat_template": False}
+    if algorithm == "OPD":
+        # OPD 的教师/学生对是**后端中立**段（`core/schema.py::DistillConfig`）；
+        # 学生 = 上面的 `model.model_path`（不另设字段），教师显式给出（配置层强制非空）。
+        # `offload_teacher_model: true` 是**起始配方**：教师 27B 权重常驻 CPU，
+        # 否则其 bf16 权重（≈50.3 GiB/卡）与学生侧常驻相加在任何卡数下都超预算。
+        # ★ 这只是"起跑姿势"，不是"可行性结论"——教师前向的 GPU 工作集未测算，
+        #   全部 OPD 档的 verdict 恒为 UNMEASURED（见 OPD_TEACHER_UNMEASURED_NOTE）。
+        config["distill"] = {
+            "teacher_model_path": MODELS[OPD_TEACHER_MODEL]["path"],
+            "offload_teacher_model": True,
+        }
     return config
 
 
@@ -477,9 +654,52 @@ def _yaml_scalar(value: Any) -> str:
     return str(value)
 
 
+def opd_relation_header(tier: dict[str, Any]) -> str:
+    """OPD 档**一眼可辨**的教师/学生关系声明（**每档都有**，不只在自蒸馏档）。
+
+    ★ 为什么每档都要写：教师是**用户拍板的常量**（27B），学生随台账变；两者同名时
+    配置看起来像"教师路径写错了"。把关系写进**每一条** OPD 配置的头部，
+    读配置的人（或 AI）不必去翻 manifest 就知道**这不是笔误**。
+    """
+    relation = opd_teacher_relation(tier)
+    student = MODELS[str(tier["model"])]["name"]
+    teacher = MODELS[OPD_TEACHER_MODEL]["name"]
+    pointer = (
+        "逐档关系见 manifest 的 `feasibility_model.opd_teacher.relation_by_tier`"
+        "（逐档字段名 `opd_teacher_relation`）。"
+    )
+    if relation == "self-distillation":
+        return (
+            f"★ 教师/学生关系: **self-distillation** —— 本档**教师 = 学生**（均为 {teacher}），"
+            "**这不是笔误**：台账该档的 `model` 列 = **学生**（graspo 处处如此），"
+            f"而教师是用户拍板的**常量** {teacher}，两者同名即自蒸馏"
+            "（ms-swift 明确支持的合法跑法：LoRA 用 `disable_adapter()` 取教师 logits，"
+            "不额外加载模型）。" + pointer
+        )
+    return (
+        f"★ 教师/学生关系: **independent** —— 学生 {student} ≠ 教师 {teacher}"
+        "（用户拍板常量）。" + pointer
+    )
+
+
+def _algorithm_note(tier: dict[str, Any]) -> str | None:
+    """该档位的算法口径说明（写进档位配置头部；``None`` = 无额外口径需要声明）。
+
+    单一真相源：CPT / OPD 的说明各只有一份（``CPT_NOTE`` / ``OPD_NOTE``），
+    配置头部、报告都引用它，不各写一遍（§1.4）。OPD 额外带上**逐档**的教师/学生关系
+    （``opd_relation_header``）——自蒸馏与独立教师是**两种不同的跑法**，必须显式。
+    """
+    algorithm = str(tier["algorithm"])
+    note = {"CPT": CPT_NOTE, "OPD": OPD_NOTE}.get(algorithm)
+    if algorithm == "OPD" and note:
+        note = f"{note} {opd_relation_header(tier)}"
+    return note
+
+
 def render_config_yaml(tier: dict[str, Any], status: str, reason: str | None) -> str:
     """把配置 dict 渲染成带口径注释的 YAML 文本。"""
     tier_id = str(tier["tier_id"])
+    verdict, verdict_detail = feasibility_verdict(tier)
     header = [
         f"# {tier_id} | {tier['model']} | {tier['algorithm']} | {tier['mode']} | "
         f"{tier['backend']} | {tier['cards']}卡",
@@ -489,8 +709,12 @@ def render_config_yaml(tier: dict[str, Any], status: str, reason: str | None) ->
         f"{ELAM_HOST_ROOT_ENV} 注入，见 .local/）；子集由 run_matrix54.sh 生成，图像经 ../images 解析。",
         f"# ⚠️ 数据口径告警: {DATA_INTEGRITY_CAVEAT}",
         f"# 可表达性: {status}",
-        f"# 显存可行性: {feasibility(tier)[1]}",
+        # 显存可行性必须**带 verdict 标签**：`unmeasured` 与 `infeasible` 的文案完全不同，
+        # 只看一句人话会被读混（"不得声称可行" vs "估算超预算"）。
+        f"# 显存可行性: [{verdict}] {verdict_detail}",
     ]
+    if algorithm_note := _algorithm_note(tier):
+        header.append(f"# 算法口径: {algorithm_note}")
     if reason:
         header.append(f"# 注意: {reason}")
     lines: list[str] = list(header)
@@ -551,6 +775,10 @@ def build_manifest(tiers: list[dict[str, Any]]) -> dict[str, Any]:
         }
         if reason is not None:
             entry["status_reason"] = reason
+        if str(tier["algorithm"]) == "OPD":
+            # 教师/学生关系必须进 manifest：自蒸馏与独立教师是两种跑法，
+            # 事后只看 "teacher_model_path" 无法区分（T052–T054 两者同名）。
+            entry["opd_teacher_relation"] = opd_teacher_relation(tier)
         if status == "blocked":
             entry["config"] = None
             entry["blocked_doc"] = f"samples/configs/matrix54/{tier['tier_id']}.blocked.md"
@@ -563,15 +791,21 @@ def build_manifest(tiers: list[dict[str, Any]]) -> dict[str, Any]:
             "caveat": DATA_INTEGRITY_CAVEAT,
         }
         feasible, estimate = feasibility_for(tier)
+        verdict, _ = feasibility_verdict(tier)
         entry["feasibility"] = {
+            # ★ `verdict` 是显式三态（+blocked 共四值），`feasible` 只保留向后兼容语义：
+            #   feasible ⇒ True；infeasible ⇒ False；unmeasured / blocked ⇒ None（**不得声称可行**）。
+            #   不要用 `feasible is None` 区分 "未测算" 与 "不可表达" —— 读 `verdict`。
+            "verdict": verdict,
             "feasible": feasible,
+            "requires_measurement": verdict == VERDICT_UNMEASURED,
             "estimate": estimate,
             "recipe": (
                 {"native": build_config(tier).get("native")}
                 if tier["backend"] == "native"
                 else {"msswift": build_config(tier).get("msswift")}
             )
-            if status != "blocked"
+            if verdict != VERDICT_BLOCKED
             else None,
         }
         entry["acceptance"] = {
@@ -594,6 +828,9 @@ def build_manifest(tiers: list[dict[str, Any]]) -> dict[str, Any]:
             "by_backend": _count_by(entries, "backend"),
             "by_mode": _count_by(entries, "mode"),
             "by_status": _count_by(entries, "status"),
+            "by_feasibility_verdict": _count_by(
+                [entry["feasibility"] for entry in entries], "verdict"
+            ),
         },
         "runtime": {
             "image": "graspo-msswift:4.5.3",
@@ -653,10 +890,53 @@ def build_manifest(tiers: list[dict[str, Any]]) -> dict[str, Any]:
                 "ms-swift 全参 zero2+AutoTP4（4 卡）：权重 2/4 + (梯度+优化器) 10/4",
                 "native 全参：仅 PP 分片 ⇒ k/卡数（k=8，bf16 Adam 假设）；"
                 "1 卡无分片 ⇒ 估算超预算、判定不可靠（标 blocked，理由为诚实表述而非『必然 OOM』）",
+                "CPT：与学生侧同一套学生侧算式（算法不改变常驻口径）；全量档沿用 ms-swift 全参配方",
+                "OPD：学生侧算式同上；**教师侧不参与算式**——教师（27B）显存是本生成器"
+                "**未测算**的量 ⇒ 判定恒为 unmeasured（不得声称可行，P-25）",
             ],
+            "verdicts": {
+                "values": [
+                    VERDICT_FEASIBLE,
+                    VERDICT_INFEASIBLE,
+                    VERDICT_UNMEASURED,
+                    VERDICT_BLOCKED,
+                ],
+                "meaning": {
+                    VERDICT_FEASIBLE: "确定性算式 ≤ 预算且无未测算的额外消费者",
+                    VERDICT_INFEASIBLE: "确定性算式已超预算 ⇒ 拒绝生成",
+                    VERDICT_UNMEASURED: "算式通过但有未测算的额外消费者 ⇒ 不得声称可行，待上机测量",
+                    VERDICT_BLOCKED: "当前给不出配方（能力未落地 / 无分片手段）",
+                },
+                "note": (
+                    "`feasibility.feasible` 是向后兼容的布尔视图：True/False/None。"
+                    "`None` 同时覆盖 unmeasured 与 blocked —— **必须读 `verdict` 区分**，"
+                    "不得用 `feasible is None` 推断原因。"
+                ),
+            },
+            "opd_teacher": {
+                "teacher_model": MODELS[OPD_TEACHER_MODEL]["name"],
+                "teacher_model_path": MODELS[OPD_TEACHER_MODEL]["path"],
+                "student_model": "台账 `model` 列（用户拍板：教师 27B → 学生 9B）",
+                "teacher_weights_gib_bf16": round(_teacher_weights_gib(), 1),
+                "measured": False,
+                "unmeasured_note": OPD_TEACHER_UNMEASURED_NOTE,
+                "self_distillation_note": OPD_SELF_DISTILLATION_NOTE,
+                "relation_by_tier": {
+                    str(tier["tier_id"]): opd_teacher_relation(tier)
+                    for tier in tiers
+                    if str(tier["algorithm"]) == "OPD"
+                },
+                "open_question": (
+                    "★ 台账（受保护文档 §7）的 27B OPD 档（T052–T054）其 `model` 列 = 学生 ⇒ "
+                    "与教师常量同名 ⇒ 自蒸馏。**待确认**：27B OPD 档的学生是 27B 还是 9B？"
+                    "若固定 9B，则 T052–T054 与 T046–T048 配置完全重合、档位失去区分度 ⇒ "
+                    "属台账口径变更，须走 A §7 / 跟踪文档裁定，本生成器不私自改。"
+                ),
+            },
             "generation_gate": (
-                "assert_memory_feasible：可执行档估算超预算即拒绝生成"
-                "（不允许安静产出不可靠配置）"
+                "assert_memory_feasible：确定性算式超预算（infeasible）即拒绝生成"
+                "（不允许安静产出不可靠配置）；unmeasured 档**允许生成但不声称可行**"
+                "（未测算的量只能靠上机量出来），并在 stdout 打出待测清单"
             ),
         },
         "data": {
@@ -762,30 +1042,50 @@ def assert_expressibility(tiers: list[dict[str, Any]]) -> dict[str, int]:
 # ── 生成期显存可行性断言（§2.3 边界校验即防呆）──────────────────────────────
 
 
-def assert_memory_feasible(tiers: list[dict[str, Any]]) -> dict[str, tuple[bool, str]]:
-    """对每个**可执行**档做保守显存估算；任一档估算超预算即**拒绝生成**。
+def assert_memory_feasible(tiers: list[dict[str, Any]]) -> dict[str, tuple[str, str]]:
+    """对每个**可执行**档做保守显存估算；任一档确定性算式超预算即**拒绝生成**。
 
     这是本轮补齐的关键防线：配置能生成 ≠ 能跑。宁可在生成期失败并报出算式，
-    也不要在花掉 GPU 时间之后才发现不可靠。blocked 档不参与断言（已知给不出配方，
-    由 ``classify_expressibility`` 显式说明原因）。
+    也不要在花掉 GPU 时间之后才发现不可靠。
+
+    **三态口径（单一真相源 = :func:`feasibility_verdict`）**：
+
+    - ``infeasible`` ⇒ **拒绝生成**（报出算式）；
+    - ``unmeasured`` ⇒ **允许生成**，但**不声称可行**：把"待上机测量"打到 stdout，
+      由 manifest 的 ``feasibility.requires_measurement`` 承接（★ 允许生成是**刻意的**：
+      未测算的量只能靠上机量出来，"因为没量过所以不生成"会让它永远量不了）；
+    - ``feasible`` ⇒ 通过；
+    - ``blocked`` ⇒ 不参与断言（已知给不出配方，由 ``classify_expressibility`` 说明原因）。
+
+    Returns:
+        ``{tier_id: (verdict, detail)}``——第一项是**字符串三态**，不是布尔
+        （布尔会把 "未测算" 与 "超预算" 压成同一个 False，正是本轮要消除的歧义）。
     """
-    verdicts: dict[str, tuple[bool, str]] = {}
+    verdicts: dict[str, tuple[str, str]] = {}
     violations: list[str] = []
+    pending_measurement: list[str] = []
     for tier in tiers:
-        status, _ = classify_expressibility(tier)
-        if status == "blocked":
+        verdict, detail = feasibility_verdict(tier)
+        if verdict == VERDICT_BLOCKED:
             continue
-        # 校验**实际生成的配置**（不是"我们以为的配方"）。
-        gib, detail = estimate_config_per_card_gib(tier, build_config(tier))
-        ok = gib <= CARD_BUDGET_GIB
-        verdicts[str(tier["tier_id"])] = (ok, detail)
-        if not ok:
-            violations.append(f"{tier['tier_id']} ({tier['algorithm']}/{tier['mode']}/"
-                              f"{tier['backend']}/{tier['cards']}卡): {detail}")
+        verdicts[str(tier["tier_id"])] = (verdict, detail)
+        if verdict == VERDICT_INFEASIBLE:
+            violations.append(
+                f"{tier['tier_id']} ({tier['algorithm']}/{tier['mode']}/"
+                f"{tier['backend']}/{tier['cards']}卡): {detail}"
+            )
+        elif verdict == VERDICT_UNMEASURED:
+            pending_measurement.append(f"{tier['tier_id']} ({tier['algorithm']})")
     if violations:
         raise AssertionError(
-            "生成期显存可行性断言失败——拒绝生成估算超预算（判定不可靠）的配置：\n  - "
+            "生成期显存可行性断言失败——拒绝生成确定性算式已超预算的配置：\n  - "
             + "\n  - ".join(violations)
+        )
+    if pending_measurement:
+        print(
+            "⚠️  待上机测量（未测算的额外显存消费者：OPD 教师，见 P-25）"
+            f"——共 {len(pending_measurement)} 档，**不得**在此之前写成「可行」：\n  - "
+            + "\n  - ".join(pending_measurement)
         )
     return verdicts
 
@@ -795,7 +1095,8 @@ def feasibility_table(tiers: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for tier in tiers:
         status, reason = classify_expressibility(tier)
-        ok, detail = feasibility_for(tier)
+        verdict, detail = feasibility_verdict(tier)
+        ok, _ = feasibility_for(tier)
         config = build_config(tier) if status != "blocked" else {}
         recipe: dict[str, Any] = {}
         if status != "blocked":
@@ -803,6 +1104,9 @@ def feasibility_table(tiers: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 recipe = {"native": config.get("native")}
             else:
                 recipe = {"msswift": config.get("msswift")}
+            for section in ("pretrain", "distill"):
+                if section in config:
+                    recipe[section] = config[section]
         rows.append(
             {
                 "tier_id": tier["tier_id"],
@@ -811,6 +1115,7 @@ def feasibility_table(tiers: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "backend": tier["backend"],
                 "cards": tier["cards"],
                 "status": status,
+                "verdict": verdict,
                 "recipe": recipe,
                 "feasible": ok,
                 "estimate": detail,
@@ -875,11 +1180,13 @@ print(json.dumps({{
     "train_path": data.get("train_path") or "-",
     "model_path": tier.get("model_path") or "-",
     "model_env": tier.get("model_host_dir_env_var") or "-",
+    "verdict": (tier.get("feasibility") or {{}}).get("verdict") or "-",
 }}, ensure_ascii=False))
 PY
 ) || exit 5
 
-read -r GPUS CONFIG_STATUS NPROC SUBSET TRAINPATH MODEL_PATH MODEL_ENV < <("$PYBIN" - "$TIER_JSON" <<'PY'
+read -r GPUS CONFIG_STATUS NPROC SUBSET TRAINPATH MODEL_PATH MODEL_ENV VERDICT \\
+  < <("$PYBIN" - "$TIER_JSON" <<'PY'
 import json, sys
 data = json.loads(sys.argv[1])
 print(
@@ -890,6 +1197,7 @@ print(
     data["train_path"],
     data["model_path"],
     data["model_env"],
+    data["verdict"],
 )
 PY
 )
@@ -902,6 +1210,15 @@ TIER_STATUS="${{CONFIG_STATUS#*|}}"
 if [ "$CONFIG" = "-" ]; then
     echo "FATAL: $TIER 当前不可表达（blocked），见 samples/configs/matrix54/$TIER.blocked.md" >&2
     exit 2
+fi
+
+# 0a-bis) **待上机测量**档（OPD：教师侧显存未测算，P-25）：允许跑（跑就是为了量出来），
+# 但必须显式提示——并把"教师侧峰值显存"记进产物，否则这一档的可行性永远无据。
+# 判据：manifest 的 `feasibility.verdict == unmeasured`（不是"没配方"，两者语义不同）。
+if [ "$VERDICT" = "unmeasured" ]; then
+    echo "WARN(待上机测量): $TIER 的额外显存消费者（OPD 教师）**未测算** ——" >&2
+    echo "     本次跑的产物里必须单独记录**教师侧**与**学生侧**峰值显存，回填后才能写「可行」。" >&2
+    echo "     参考：教师 27B bf16 权重 ≈ 50.3 GiB/卡（不换出时）；本档配方已 offload_teacher_model=true。" >&2
 fi
 
 # 0b) 环境前置：数据根与模型根都必须显式给出（两者都是环境信息，见 .local/）。
@@ -1059,14 +1376,15 @@ def write_feasibility_table(tiers: list[dict[str, Any]]) -> Path:
     """把"每档配方 + 可行性自检结果"落成一份可读表格（工位证据）。"""
     rows = feasibility_table(tiers)
     lines = [
-        "| 档位 | 算法 | 模式 | 后端 | 卡数 | 状态 | 配方 | 可行性自检 |",
-        "|---|---|---|---|:--:|---|---|---|",
+        "| 档位 | 算法 | 模式 | 后端 | 卡数 | 状态 | 可行性判定 | 配方 | 可行性自检 |",
+        "|---|---|---|---|:--:|---|---|---|---|",
     ]
     for row in rows:
         recipe = json.dumps(row["recipe"], ensure_ascii=False) if row["recipe"] else "—"
         lines.append(
             f"| {row['tier_id']} | {row['algorithm']} | {row['mode']} | {row['backend']} "
-            f"| {row['cards']} | {row['status']} | {recipe} | {row['estimate']} |"
+            f"| {row['cards']} | {row['status']} | {row['verdict']} "
+            f"| {recipe} | {row['estimate']} |"
         )
     path = PROJECT_ROOT / ".local" / "matrix54_feasibility.md"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1083,6 +1401,7 @@ def print_summary(result: dict[str, Any]) -> None:
     print(f"  后端: {counts['by_backend']}")
     print(f"  模式: {counts['by_mode']}")
     print(f"  可表达性: {result['expressibility']}")
+    print(f"  显存可行性: {counts['by_feasibility_verdict']}")
     print(f"配置目录: {CONFIG_DIR}")
     print(f"运行清单: {MANIFEST_PATH}")
     print(f"执行骨架: {RUNNER_PATH}")
@@ -1121,9 +1440,17 @@ def main(argv: list[str] | None = None) -> int:
                     (f"{tier['tier_id']}.yaml", render_config_yaml(tier, status, reason))
                 )
         assert_no_legacy_terms(rendered)
+        verdict_counts: dict[str, int] = {}
+        for tier in tiers:
+            verdict, _ = feasibility_verdict(tier)
+            verdict_counts[verdict] = verdict_counts.get(verdict, 0) + 1
         print(
             f"dry-run OK: {len(tiers)} tiers, expressibility={expressibility}, "
-            "内存可行性断言通过（可执行档均有可行配方）"
+            f"feasibility_verdict={verdict_counts}"
+        )
+        print(
+            "说明：`infeasible` 档已被拒绝生成；`unmeasured` 档**允许生成但不声称可行**"
+            "（未测算的量只能靠上机量出来，见上方待测量清单）；`blocked` 档不产出配置。"
         )
         return 0
 

@@ -132,24 +132,92 @@ def test_readmes_document_single_yaml_entry_and_exports():
             assert item not in text
 
 
-def test_only_readmes_are_tracked_markdown_docs():
+#: tracked markdown 的**允许目录前缀白名单**（宪法 §19.2 / §15.1）。
+#:
+#: **为什么不枚举文件、也不断言个数**（2026-09-19 由指挥官裁定改成本质不脆的形式）：
+#: 旧版断言 ``tracked_markdown == {5 个具体文件名}``。那条断言**在 HEAD 上就是红的**
+#: ——实际有 21 个 tracked ``.md``（``docs/capability-matrix.md`` + 16 个
+#: ``samples/configs/matrix54/T###.blocked.md``），只是因为 ``tests/cli/`` 在无 torch
+#: 的机器上收集期就报错而没人看见。它同时犯两个错：
+#:   ① **枚举式**：每新增一个合法文档就要改一次测试（脆弱）；
+#:   ② **计数式**：把"有几个文档"当成不变量（文档数**不是**不变量，文档**位置**才是）。
+#:
+#: 现在断言的是**位置不变量**：``*.md`` 只允许出现在这几个目录前缀下。
+#: 新增合法文档时**无需改本测试**；把 markdown 写进不该写的地方（如 ``src/``、
+#: ``.local/`` 之外的临时目录、根目录随手放的笔记）才会失败。
+_ALLOWED_TRACKED_MD_PREFIXES: tuple[str, ...] = (
+    "README",  # 根目录双语 README（README.md / README.zh-CN.md）
+    "docs/",  # 项目级架构与基准文档
+    "samples/configs/matrix54/",  # 档位配置与其状态说明（T###.yaml / T###.blocked.md）
+)
+
+
+def _tracked_markdown_paths() -> list[str] | None:
+    """``git ls-files "*.md"`` 的归一化结果（``/`` 分隔、去空行）。
+
+    ``None`` = **本检出没有 ``.git``**（目标容器把仓库 bind-mount 成 ``/work``，不含 ``.git``）
+    ⇒ 这个"有没有把 markdown 提交进来"的检查**在该环境不适用**，由调用方 skip 并说明原因。
+    **不返回空列表**：空列表会被读成"一个 tracked md 都没有"——那是假陈述（§2.2 空值语义）。
+    """
+    repo_root = Path(__file__).resolve().parents[2]
+    if not (repo_root / ".git").exists():
+        return None
     result = subprocess.run(
         ["git", "ls-files", "*.md"],
         check=True,
         capture_output=True,
         text=True,
     )
-    tracked_markdown = {
+    return sorted(
         line.strip().replace("\\", "/") for line in result.stdout.splitlines() if line.strip()
-    }
+    )
 
-    assert tracked_markdown == {
-        "README.md",
-        "README.zh-CN.md",
-        "docs/architecture.md",
-        "docs/flow.md",
-        "docs/ripple.md",
-    }
+
+def test_only_whitelisted_locations_hold_tracked_markdown():
+    """tracked ``.md`` 只能出现在白名单目录前缀下（**位置**不变量，不是计数不变量）。
+
+    **失败信息必须可操作**（宪法 §2.3 边界校验即防呆）：直接列出违规文件，
+    而不是甩一句"数量不等于 N"——后者让排查者只能自己去数。
+    """
+    paths = _tracked_markdown_paths()
+    if paths is None:
+        pytest.skip(
+            "no .git in this checkout (the GPU container bind-mounts the repo without .git) "
+            "⇒ 'tracked markdown' is not decidable here; "
+            "this check runs on the dev machine, which has .git"
+        )
+
+    violations = [
+        path for path in paths if not path.startswith(_ALLOWED_TRACKED_MD_PREFIXES)
+    ]
+
+    assert not violations, (
+        "tracked markdown must live under one of the whitelisted prefixes "
+        f"{list(_ALLOWED_TRACKED_MD_PREFIXES)}; offending file(s):\n  - "
+        + "\n  - ".join(violations)
+        + "\n(合法文档放对了位置就无需改本测试；要新增一类位置，请在 "
+        "_ALLOWED_TRACKED_MD_PREFIXES 里显式加前缀并说明理由。)"
+    )
+
+
+def test_whitelist_actually_rejects_a_bad_location():
+    """★ 负向：把 markdown 放进白名单外的位置必须被判违规（防"白名单写成空断言"）。
+
+    同时锁住一条**既有的测试约定**：`tests/conftest.py` 的文档串写着"新增
+    `tests/README.md` 会被这条检查拦下"。改名/改判据后那条约定**必须仍然成立**，
+    否则 conftest 里的说明就成了过期事实（本用例把它变成可核断言）。
+    """
+    allowed = _ALLOWED_TRACKED_MD_PREFIXES
+    for bad in ("src/graspo/notes.md", "tests/README.md", "outputs/report.md", "notes.md"):
+        assert not bad.startswith(allowed), (
+            f"{bad} must still be reported as a violation (see tests/conftest.py guidance)"
+        )
+    # 白名单本身必须非空且都是"位置前缀"（不以 .md 结尾 —— 那是枚举，不是前缀）
+    assert allowed, "whitelist must not be empty"
+    for prefix in allowed:
+        assert not prefix.endswith(".md"), (
+            f"whitelist entry {prefix!r} looks like a file, not a directory prefix"
+        )
 
 
 def test_export_config_fields_default_and_validate(tmp_path):
