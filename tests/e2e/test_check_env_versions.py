@@ -151,6 +151,67 @@ def test_dockerfile_pin_parser_finds_all_pinned_packages():
     assert product_pins.get("pydantic") == "2.11.10"
 
 
+# ── F-5：门禁对**真镜像**必须通过（三项声明对齐实测值）────────────────────────
+
+#: `graspo-msswift:4.5.3` 的实测血统（来源：task-r2-onmachine §0.4，
+#: `python3 scripts/check_env_versions.py --from-container graspo-msswift:4.5.3`）。
+#: **这是实测快照，不是"希望值"**——若谁改了声明或换了镜像，这里就会失败，
+#: 逼他跑一次真门禁并更新快照。
+_MEASURED_MSSWIFT_45_3: dict[str, str] = {
+    "ms-swift": "4.5.3",
+    "numpy": "1.26.4",
+    "pillow": "11.3.0",
+    "pydantic": "2.11.10",
+    "pyyaml": "6.0.3",
+    "safetensors": "0.8.0",
+    "torch": "2.11.0+cu130",
+    "torchvision": "0.26.0+cu130",
+    "transformers": "5.12.1",
+}
+
+
+def test_gate_passes_against_measured_msswift_image_lineage():
+    """★F-5 回归：把真镜像实测值喂给门禁，**必须 rc=0**。
+
+    修前三项不一致（numpy 声明 2.4.5 / pillow 12.2.0 / safetensors 0.7.0）⇒ rc=1。
+    """
+    completed = _run(_MEASURED_MSSWIFT_45_3)
+
+    assert completed.returncode == 0, completed.stderr
+    assert "VERSION GATE OK" in completed.stdout
+
+
+def test_gate_still_fails_against_pre_fix_lineage():
+    """★不放松：门禁没有被"改成永远通过"——把三项调回**修前**声明仍必须 rc=1。"""
+    pre_fix = dict(_MEASURED_MSSWIFT_45_3)
+    pre_fix["numpy"] = "2.4.5"
+    pre_fix["pillow"] = "12.2.0"
+    pre_fix["safetensors"] = "0.7.0"
+
+    completed = _run(pre_fix)
+
+    assert completed.returncode == 1
+    for name in ("numpy", "pillow", "safetensors"):  # type: ignore[assignment]
+        assert name in completed.stderr
+
+
+def test_f5_three_declarations_equal_measured_image_values():
+    """声明值 == 实测值（逐项钉住，防止只改口径不改声明）。"""
+    declared = _gated()
+
+    for name in ("numpy", "pillow", "safetensors"):
+        assert declared[name] == check_env_versions.release_segment(
+            _MEASURED_MSSWIFT_45_3[name]
+        ), name
+
+
+def test_measured_snapshot_covers_every_gated_package():
+    """实测快照必须覆盖门禁集合——否则门禁会报"镜像内缺失"而掩盖真问题。"""
+    gated = _gated()
+
+    assert set(gated) == set(_MEASURED_MSSWIFT_45_3)
+
+
 def test_release_segment_normalizes_local_labels():
     assert check_env_versions.release_segment("2.11.0+cu130") == "2.11.0"
     assert check_env_versions.release_segment("5.12.1") == "5.12.1"

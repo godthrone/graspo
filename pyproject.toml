@@ -26,10 +26,16 @@ dependencies = [
   # `==` pin，不再手工列举（旧版门禁手工列表漏了 pydantic，见 §2 防呆）。
   "pydantic==2.11.10",
   "pyyaml==6.0.3",
-  "safetensors==0.7.0",
+  # ↓ 三项按**镜像实测值**对齐（F-5，实测口径见工位报告 §F-5）：
+  # 旧声明 safetensors 0.7.0 / pillow 12.2.0 / numpy 2.4.5 与真镜像不符，门禁 rc=1。
+  # pillow/numpy 是**被 ms-swift 4.5.3 的约束钉住**的传递依赖（镜像配方里
+  # `ms-swift==4.5.3` 排在 numpy 之后安装），所以声明值必须向实测值收敛，
+  # 而不是反过来。声明点同时改 docker/Dockerfile*，否则
+  # compare_declaration_sites 会报两个声明点分叉。
+  "safetensors==0.8.0",
   "transformers==5.12.1",
-  "pillow==12.2.0",
-  "numpy==2.4.5",
+  "pillow==11.3.0",
+  "numpy==1.26.4",
 ]
 
 [project.optional-dependencies]
