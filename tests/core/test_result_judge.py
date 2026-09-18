@@ -5,6 +5,8 @@
 """
 
 from graspo.core.result_judge import (
+    A4_FINAL_LOSS_TOLERANCE_ABS,
+    A4_MEASURED_BF16_FINAL_LOSS_DRIFT,
     MAX_CONTEXT_KIND_FEASIBLE,
     MAX_CONTEXT_KIND_OOM_BOUNDARY,
     FailureClass,
@@ -299,3 +301,61 @@ def test_ledger_row_non_oom_failure_writes_nothing():
 
         assert row["max_context"] is None, log_text
         assert row["max_context_kind"] is None, log_text
+
+
+# ── A4（2026-09-19 裁定：放宽容差 + 三条硬要求）──────────────────────────────
+#
+# 裁定要点：宪法 §6 明文把"GPU 内核选择等**无法控制的差异**"排除在复现破坏之外；
+# bf16 归约顺序正属此类（实测：同 config 同 seed 双跑，**首步 loss 逐位相同**，
+# 分歧自 step 5 起、step-100 终态累计 1.03e-3）。
+# 但"放宽阈值"本身会让 A4 变成空断言 ⇒ 必须同时具备：
+#   ① **零容差子检查**：首步（step 1）loss 必须逐位相同 —— 种子/初始化/数据顺序坏了它立刻抓住；
+#   ② 终态 loss 容差**由实测量级推导**（留明确余量），并在判据里写明依据；
+#   ③ 下面这些用例就是"守卫"：没有它们，不允许把 A4 判成通过。
+
+
+def test_a4_guards_step_one_loss_bit_exactly():
+    """★守卫①：首步 loss 逐位不同 ⇒ A4 必须不通过。
+
+    首步 loss 只取决于 种子 / 初始化 / 数据顺序 / 首批样本 —— 全是**可控**因素。
+    两端终态 loss 完全相同（0.6 == 0.6），只有首步差 1e-6：这正是"去掉种子"或
+    "打乱数据顺序"这类破坏的指纹。旧判据只比终态 loss，会把它放过去。
+    """
+    first = make_evidence(losses=(1.0, 0.8, 0.6), first_logged_step=1)
+    second = make_evidence(losses=(1.000001, 0.8, 0.6), first_logged_step=1)
+
+    result = judge_a4(first, second)
+
+    assert not result.passed
+    assert "首步" in result.detail
+
+
+def test_a4_accepts_measured_bf16_drift_but_rejects_gross_divergence():
+    """★守卫②：容差按实测推导（约 10× 余量），但仍必须挡住量级更大的分歧。"""
+    base = make_evidence(losses=(1.3, 0.5, 0.2), first_logged_step=1)
+    measured = make_evidence(
+        losses=(1.3, 0.5, 0.2 + A4_MEASURED_BF16_FINAL_LOSS_DRIFT), first_logged_step=1
+    )
+    gross = make_evidence(losses=(1.3, 0.5, 0.25), first_logged_step=1)
+
+    assert judge_a4(base, measured).passed, "实测 bf16 漂移量级必须被接受（§6 排除项）"
+    assert not judge_a4(base, gross).passed, "量级更大的分歧仍必须被拒绝（容差不是空断言）"
+
+
+def test_a4_tolerance_constant_is_derived_from_a_recorded_measurement():
+    """★防呆③：容差不得拍脑袋 —— 必须相对"记录在案的实测量级"留明确余量（两侧都锁）。
+
+    调小到实测漂移之下 ⇒ 失败（说明它是拍脑袋的）；
+    调大到 >100× ⇒ 也失败（说明它松到没有判别力）。
+    """
+    assert A4_MEASURED_BF16_FINAL_LOSS_DRIFT > 0
+    assert A4_FINAL_LOSS_TOLERANCE_ABS >= 5 * A4_MEASURED_BF16_FINAL_LOSS_DRIFT
+    assert A4_FINAL_LOSS_TOLERANCE_ABS <= 100 * A4_MEASURED_BF16_FINAL_LOSS_DRIFT
+
+
+def test_a4_declares_when_the_zero_tolerance_check_cannot_apply():
+    """诚实性：拿不到"首步"的步号时，零容差子检查必须**声明未适用**，不得假装做过。"""
+    result = judge_a4(make_evidence(), make_evidence())
+
+    assert result.passed
+    assert "未适用" in result.detail
