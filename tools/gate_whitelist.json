@@ -1,0 +1,121 @@
+{
+  "_comment": [
+    "§15.1 门禁误报白名单。每条必须写明理由（不得为过检而删除误报逻辑）。",
+    "结构：{ rule: 规则名或 '*' , path: 路径正则, content: 命中文本正则(可空), reason: 理由 }",
+    "新增条目必须同时说明：命中什么、为什么不是机密/PII/违规。",
+    "★ 纪律（本轮修复确立）：绝对不得整体排除 tools/ 或 tests/ ——那会给门禁开永久盲区，",
+    "并与「门禁应能扫自己」直接矛盾。所有条目都是 (规则, 路径, 内容) 三元组的具名豁免。",
+    "★ 本清单是在**完整扫描面**（含 tools/ 自身、且已暂存）上**重新推导**的：旧清单基于",
+    "不完整扫描面（tools/ 当时 untracked）得出，已作废重推；命中总数修前/修后见交付报告。"
+  ],
+  "whitelist": [
+    {
+      "rule": "*",
+      "path": "^tests/data/annotation_viewer\\.html$",
+      "content": "pos=228",
+      "reason": "该文件是 token 级标注查看器的 HTML 快照，数万字符单行内是逐字符 <span title='pos=N label=...'>。`pos=228` 是字符下标（第 228 个字符），不是内网 IP（228 只有一段，不构成四段点分地址，也不在私有网段）。已在 §15.1 检查 1 复核为误报，不构成机密。"
+    },
+    {
+      "rule": "private_ipv4",
+      "path": "^uv\\.lock$",
+      "content": "nvidia[_-]curand|^version = \\\"|files\\.pythonhosted\\.org|specifier|name = \\\"",
+      "reason": "`uv.lock` 中 nvidia-curand 的版本号形如 10.4.0.35 / 10.3.5.147，字面撞上 10.0.0.0/8 私有网段；同段 URL 里的 sha256 片段也可能被误判。二者均为 PyPI 发布的包版本与内容哈希，不是内网地址。本轮在完整扫描面下复跑确认：uv.lock 仅此形态命中，退出码 0。"
+    },
+    {
+      "rule": "*",
+      "path": "(^|/)pyproject\\.toml$|(^|/)Dockerfile(\\.msswift)?$|^scripts/check_env_versions\\.py$|^tests/|^src/",
+      "content": "graspo-msswift:4\\.5\\.3",
+      "reason": "`graspo-msswift:4.5.3` 是本地构建的 Docker 镜像 tag（已裁定不算机密）：它是 ms-swift 4.5.3 环境的公开等价配方名，仓库不含其私有来源信息，且 `docker/Dockerfile.msswift:5` 已声明其来源记录在别处。若未来放宽为「镜像 tag 一律告警」，此条目即为其白名单依据。"
+    },
+    {
+      "rule": "private_ipv4",
+      "path": "^pyproject\\.toml$|^Dockerfile(\\.msswift)?$|^scripts/check_env_versions\\.py$|(^|/)requirements[^/]*\\.txt$|^uv\\.lock$",
+      "content": ">=10\\.0\\.0|>= 10\\.0\\.0|~=10\\.0\\.0|==10\\.0\\.0|pillow|10\\.0\\.0",
+      "reason": "Python 包版本号 `10.0.0`（如 `pillow>=10.0.0`、uv.lock 的 `specifier = \">=10.0.0\"`）字面撞上 10.0.0.0/8 私网前缀。它是 PyPI 包版本约束，不是内网地址。本轮 private_ipv4 规则改为「四段完整地址」后，网段写法与包版本号仍会命中，故按路径+内容具名白名单化。"
+    },
+    {
+      "rule": "cn_mobile",
+      "path": "^<history:",
+      "content": "13800138000",
+      "reason": "运营商公开的示例号码（客服演示号），仓库历史中曾作为合成样例出现在 tests/e2e/test_smoke.py 与 README；已在提交 fbc8332「desensitize telecom-like data…」中清除出当前树（实测当前已跟踪文件零命中），仅存于不可回溯改写的 git 历史（§19.1）。不构成 PII，故仅对**历史命中**白名单化并保留理由；当前树若再出现该号码仍会阻断。"
+    },
+    {
+      "rule": "confidential_marker",
+      "path": "^tools/gate_content\\.py$",
+      "content": "^[\\s#\\\"']*(?:\\S.*)?(?:内部资料|仅限内部|禁止外传|请勿外传|禁止传播|内部机密|internal use only)",
+      "reason": "命中项是 `gate_content.py` 自身 `confidential_marker` **规则的检测词表定义**（脚本职责声明行与 re.compile 行）。这不是机密内容，而是门禁实现机密检测所必需的规则字面量——规则扫描器的固有自反性（规则必须写出它要抓的形态）。豁免精确到「定义行」，不是排除整个 tools/。"
+    },
+    {
+      "rule": "internal_resource_reference",
+      "path": "^tools/gate_content\\.py$",
+      "content": "internal \\(\\?:|jump \\?host|bastion host|company intranet",
+      "reason": "命中项是 `gate_content.py` 自身 `internal_resource_reference` 规则的检测词表定义（脚本职责声明行与 re.compile 行）。规则自指，不是内部资源引用。豁免精确到定义行，不是排除整个 tools/。"
+    },
+    {
+      "rule": "internal_domain",
+      "path": "^tools/gate_content\\.py$",
+      "content": "\\(intra\\|intranet\\|internal\\|corp\\|lan\\|localdomain\\)",
+      "reason": "命中项是 `gate_content.py` 自身 `internal_domain` 规则的 TLD 词表定义（规则字面量 `\\.(?:intra|intranet|internal|corp|lan|localdomain)\\b`）。规则自指：定义「什么形态算内网域名」的词表本身不是内网域名。豁免精确到定义行。"
+    },
+    {
+      "rule": "private_dataset_reference",
+      "path": "^tools/gate_content\\.py$",
+      "content": "^[\\s#\\\"']*(?:\\S.*)?(?:\\(\\?!\\[\\\\w/\\]\\)/data/|用户原始数据|真实用户数据|生产数据导出|/data/prod/)",
+      "reason": "命中项是 `gate_content.py` 自身 `private_dataset_reference` 规则的检测词表定义（脚本职责声明行与 re.compile 行）。规则自指，不是非公开数据集线索。豁免精确到定义行，不是排除整个 tools/。"
+    },
+    {
+      "rule": "private_ipv4",
+      "path": "^tools/gate_content\\.py$|^tools/gate_commit_identity\\.py$",
+      "content": "192\\.168|10\\.0\\.0\\.0|172\\.16\\.0\\.0|10\\.4\\.0\\.35|10\\.20\\.30\\.40|198\\.51\\.100|TEST-NET",
+      "reason": "命中项出现在 `gate_content.py`/`gate_commit_identity.py` 的 `private_ipv4` 规则**注释与规则字面量**里：注释用 RFC 1918 公开标准写法说明覆盖面与豁免边界，规则字面量只含 RFC 1918 的**前缀段**（`10`/`192.168`/`172.16-31`），不指向任何具体主机。命中文本全部是公开标准的网段/文档式示例地址，代码内无任何真实内网主机地址。"
+    },
+    {
+      "rule": "student_employee_id",
+      "path": "^tools/gate_pii\\.py$",
+      "content": "student_employee_id|student\\\\s\\*id|employee\\\\s\\*id|staff\\\\s\\*id|\\\\u5b66\\\\u53f7",
+      "reason": "命中项是 `gate_pii.py` 自身 `student_employee_id` 规则的 docstring、DESCRIPTION 与 re.compile 行（规则名字面量 + 英文别名 + `\\uXXXX` 转义词表）。规则自指，不是学号/工号数据。注：规则里的中文字面量已改用 `\\uXXXX` 转义承载（匹配能力不变，源码不再出现规则要抓的字面词）。"
+    },
+    {
+      "rule": "aws_access_key_id",
+      "path": "^tests/tools/test_gates\\.py$|^tools/gate_negative_demo\\.py$",
+      "content": "AKIAIOSFODNN7EXAMPLE",
+      "reason": "AWS 官方文档的规范化示例访问密钥 ID（公开文档值，非任何真实凭据）。夹具用它证明 gate_secrets 会真失败；豁免按 (规则, 两个夹具文件, 该合成串) 具名，不是排除整个 tests/tools/ 或 tools/gate_negative_demo.py。"
+    },
+    {
+      "rule": "hardcoded_credential",
+      "path": "^tests/tools/test_gates\\.py$|^tools/gate_negative_demo\\.py$",
+      "content": "AKIAIOSFODNN7EXAMPLE|Sup3rS3cretP4ssw0rd",
+      "reason": "合成口令与 AWS 官方文档示例值（`AKIAIOSFODNN7EXAMPLE` / `Sup3rS3cretP4ssw0rd!`），刻意用来证明硬编码凭据规则会真失败。非真实凭据。豁免按 (规则, 两个夹具文件, 该两个合成串) 具名。"
+    },
+    {
+      "rule": "private_key_block",
+      "path": "^tools/gate_negative_demo\\.py$",
+      "content": "BEGIN RSA PRIVATE KEY",
+      "reason": "合成 PEM 私钥块头（夹具用它证明私钥块规则会真失败），不含任何真实密钥材料。豁免仅覆盖该夹具文件的这一行。"
+    },
+    {
+      "rule": "personal_email",
+      "path": "^tests/tools/test_gates\\.py$|^tools/gate_negative_demo\\.py$",
+      "content": "dev@personal\\.example",
+      "reason": "合成个人邮箱，域名用 RFC 2606/6761 保留域 `personal.example`（永不解析、不属于任何人），夹具用它证明 PII 门禁会真失败。非真实个人身份。豁免按 (规则, 两个夹具文件, 该合成串) 具名。"
+    },
+    {
+      "rule": "cn_mobile",
+      "path": "^tests/tools/test_gates\\.py$|^tools/gate_negative_demo\\.py$",
+      "content": "13900000000",
+      "reason": "合成手机号（明显的占位号段，不指向任何真实号码），夹具用它证明手机号规则会真失败。豁免按 (规则, 两个夹具文件, 该合成串) 具名。"
+    },
+    {
+      "rule": "private_ipv4",
+      "path": "^tests/tools/test_gates\\.py$|^tools/gate_negative_demo\\.py$",
+      "content": "10\\.20\\.30\\.(?:40|99)",
+      "reason": "文档式示例私网地址（在 RFC 1918 的 10.0.0.0/8 段内选定，不指向任何真实内网资产），夹具用它证明私网 IP 规则会真失败。豁免按 (规则, 两个夹具文件, 该合成串) 具名。"
+    },
+    {
+      "rule": "*",
+      "path": "^tools/gate_whitelist\\.json$",
+      "content": "AKIAIOSFODNN7EXAMPLE|Sup3rS3cretP4ssw0rd|BEGIN RSA PRIVATE KEY|13900000000|10\\.20\\.30\\.40|13800138000|internal use only|bastion host|用户原始数据|10\\.4\\.0\\.35|10\\.0\\.0\\.0|192\\.168|172\\.16\\.0\\.0|/data/prod/",
+      "reason": "命中项是**本白名单文件自身的条目文本**（内容正则 + 理由里引用的合成夹具值、包版本号与公开标准网段写法）。白名单必须描述它豁免什么，故必然复现这些字面量——这是白名单机制的固有自指。这里豁免的是**本文件**（且仅限这些已逐条具名说明的合成值/公开标准写法），不是整个 tools/：任何**不在本清单内**的命中仍会阻断。"
+    }
+  ]
+}

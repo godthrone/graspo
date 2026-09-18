@@ -1,0 +1,76 @@
+# §15.1 提交前检查 — 本地 pre-commit 门禁
+#
+# 依据：BADGE 宪法 §15.1「这些检查应集成到 CI **或** pre-commit hook 中，由配套的
+# `tools/` 脚本自动执行，而非依赖人工记忆」。本仓库选择 **pre-commit 侧**：
+# 用户明确约束"可提交、禁止推送"，而 CI 需要推送才会运行 ⇒ pre-commit 侧是唯一
+# 在"不推送"前提下能真实生效的落地方式。
+#
+# 设计约束：
+# - 五个 hook 分别对应 §15.1 的五项检查，各自调 `tools/gate_*.py`。
+# - 脚本是纯标准库实现，`language: system` 直接用 `python3`，不引入新依赖、
+#   不为门禁单独建虚拟环境（本机 python3=3.13 不满足项目 requires-python，
+#   但门禁脚本不 import 项目代码，故不受影响）。
+# - hook 默认扫描「已跟踪文件 + 全部 git 历史」（§15.1 明定推送会公开三样东西）；
+#   如需加速可在命令行直接跑脚本并加 `--tracked-only`。
+# - 历史命中一律是 warning（§19.1 禁止回溯改写已推送历史），不会让 hook 失败；
+#   只有当前已跟踪内容里的违规才阻断提交。
+#
+# 用法：
+#   uvx pre-commit install            # 或 pipx/pip install pre-commit 后 pre-commit install
+#   pre-commit run --all-files        # 手动全量跑一遍
+#   pre-commit run gate_secrets       # 只跑某一个门禁
+#
+# 单独复跑（不依赖 pre-commit）：
+#   python3 tools/gate_secrets.py -o quiet        # 机密
+#   python3 tools/gate_filetypes.py -o quiet      # 文件类型
+#   python3 tools/gate_content.py -o quiet        # 内容（内网 IP/域名/路径）
+#   python3 tools/gate_pii.py -o quiet            # PII
+#   python3 tools/gate_commit_identity.py -o quiet # 提交元数据
+
+default_install_hook_types: [pre-commit]
+fail_fast: false
+
+repos:
+  - repo: local
+    hooks:
+      # §15.1 检查 1 — 机密扫描（密钥/密码/token/私钥）
+      - id: gate_secrets
+        name: "§15.1-1 机密扫描（密钥/密码/token/私钥）"
+        entry: python3 tools/gate_secrets.py -o text
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      # §15.1 检查 2 — 文件类型（.env/构建产物/缓存/IDE/AI 本地文件/凭据文件）
+      - id: gate_filetypes
+        name: "§15.1-2 文件类型（.env/产物/缓存/IDE/凭据文件）"
+        entry: python3 tools/gate_filetypes.py -o text
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      # §15.1 检查 3 — 内容（内网 IP/域名/路径、内部标识、非公开数据线索）
+      - id: gate_content
+        name: "§15.1-3 内容（内网 IP/域名/路径、内部资源引用）"
+        entry: python3 tools/gate_content.py -o text
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      # §15.1 检查 4 — PII（个人邮箱/手机号/证件号/银行卡/学号工号）
+      - id: gate_pii
+        name: "§15.1-4 PII（个人邮箱/手机号/证件号/银行卡）"
+        entry: python3 tools/gate_pii.py -o text
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      # §15.1 检查 5 — 提交元数据与提交信息隐私
+      # 注意：pre-commit 在改动被提交**之前**运行，此时 HEAD 尚未包含新提交，
+      # 本 hook 校验的是"仓库级生效身份 + 既有历史"，正是 §15.1-5 要求的入口。
+      - id: gate_commit_identity
+        name: "§15.1-5 提交元数据（作者/提交者邮箱 + 提交信息）"
+        entry: python3 tools/gate_commit_identity.py -o text
+        language: system
+        pass_filenames: false
+        always_run: true
