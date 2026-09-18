@@ -47,6 +47,10 @@ class SFTTrainer:
         self.total_samples = 0
         self._resume_epoch = 0
         self._resume_batch_idx = 0
+        #: 因非有限梯度而**跳过优化器步**的累计次数（见
+        #: ``adapters/models/qwen35_36/training_sft.py::_record_nonfinite_skip``）。
+        #: > 0 即证明本次 run 有步权重冻结 ⇒ 不得记为成功（宪法 §3.4）。
+        self.nonfinite_grad_skips = 0
 
     def train(self, *, smoke: bool = False) -> None:
         """SFT 训练主入口。
@@ -191,6 +195,7 @@ class SFTTrainer:
                     if smoke:
                         # 冒烟边界：1 个 batch 后停止（基础设施参数，不改配置）
                         _log.info("SFT smoke: stopping after step 1 (boundary reached)")
+                        self._assert_no_frozen_steps()
                         self.runtime.save_checkpoint(
                             output_dir / "final",
                             trainer_state=self._sft_trainer_state(epoch=epoch, batch_idx=batch_idx),
@@ -198,13 +203,28 @@ class SFTTrainer:
                         return
                     if self._is_primary():
                         batch_sec = time.monotonic() - batch_started_at
+                        # 口径自证（F-4 P0 修法⑤）：PP 下 `loss_mean` 是 **rank0 局部**
+                        # 值（结构性恒 0.0）、`grad_norm_mean` 是 rank0 局部有限值，
+                        # 全局 NaN 只在 rank_metrics 旁路里 ⇒ 只看 stdout 会以为一切正常。
+                        # 因此这里优先打**全局**口径，并同时给出每步 optimizer step
+                        # 数与被跳过次数——"权重有没有真动"必须能从 stdout 一眼看出。
+                        global_loss = metrics.get("global_loss_mean")
+                        global_grad = metrics.get("global_grad_norm_mean")
+                        global_steps = metrics.get("global_optimizer_steps_sum")
+                        skipped_total = int(metrics.get("skipped_nonfinite") or 0)
                         _log.info(
-                            "SFT step %d: loss=%.6f grad_norm=%.4f lr=%.2e batch_sec=%.2f",
+                            "SFT step %d: loss=%.6f grad_norm=%.4f lr=%.2e batch_sec=%.2f "
+                            "optimizer_steps=%s skipped_nonfinite=%d"
+                            "（loss/grad_norm=全局口径；rank0 局部 loss=%s grad_norm=%s）",
                             self.global_step,
-                            metrics.get("loss_mean") or 0.0,
-                            metrics.get("grad_norm_mean") or 0.0,
+                            float(global_loss) if global_loss is not None else float("nan"),
+                            float(global_grad) if global_grad is not None else float("nan"),
                             metrics.get("current_lr") or 0.0,
                             batch_sec,
+                            global_steps,
+                            skipped_total,
+                            metrics.get("loss_mean"),
+                            metrics.get("grad_norm_mean"),
                         )
                         self._print_json(
                             {
@@ -213,13 +233,27 @@ class SFTTrainer:
                                 "step": self.global_step,
                                 "epoch": epoch,
                                 "batch": batch_idx,
-                                "loss": metrics.get("loss_mean"),
-                                "grad_norm": metrics.get("grad_norm_mean"),
+                                # 全局口径（rank_metrics 的同一真相源，§1.4）
+                                "loss": global_loss,
+                                "grad_norm": global_grad,
+                                "loss_scope": "global",
+                                # 局部读数保留，便于与历史 stdout 对齐排查
+                                "local_loss": metrics.get("loss_mean"),
+                                "local_grad_norm": metrics.get("grad_norm_mean"),
+                                "optimizer_steps": metrics.get("global_optimizer_steps_sum"),
+                                "skipped_nonfinite": skipped_total,
                                 "lr": metrics.get("current_lr"),
                                 "batch_sec": round(batch_sec, 3),
                                 "elapsed_sec": round(time.monotonic() - self.started_at, 1),
                             }
                         )
+                        health = self._sft_health(metrics)
+                        if not health["ok"]:
+                            _log.warning(
+                                "SFT training health degraded (step %d): %s",
+                                self.global_step,
+                                ", ".join(health["reasons"]),
+                            )
 
                     if save_steps > 0 and self.global_step % save_steps == 0:
                         self.runtime.save_checkpoint(
@@ -255,7 +289,9 @@ class SFTTrainer:
                     )
                     _last_checkpoint_time = time.monotonic()
 
-            # final checkpoint
+            # final checkpoint（落盘前最后一道防线：权重冻结过就绝不写，见
+            # _assert_no_frozen_steps 的说明）
+            self._assert_no_frozen_steps()
             self.runtime.save_checkpoint(
                 output_dir / "final",
                 trainer_state=self._sft_trainer_state(
@@ -271,6 +307,21 @@ class SFTTrainer:
             )
         finally:
             self.runtime.close()
+
+    def _assert_no_frozen_steps(self) -> None:
+        """落盘前的最后一道防线：权重冻结过 ⇒ 绝不写 ``final``。
+
+        即使预授权（§3.3）允许"跳过并继续"，那份 checkpoint 也**不能**被当成
+        一次成功训练的产物落盘——否则产物齐全 + exit=0 会让判定层（与人类）
+        把坏 run 记成好 run。这正是 F-4 实测缺陷的最后一环。
+        """
+        if self.nonfinite_grad_skips <= 0:
+            return
+        raise RuntimeError(
+            f"SFT 拒绝落盘 final checkpoint：本次 run 有 {self.nonfinite_grad_skips} 次"
+            "因非有限梯度跳过的优化器步（权重已冻结）。该产物不得记为成功"
+            "（宪法 §3.4 fail-closed）。"
+        )
 
     def _sft_trainer_state(
         self, *, epoch: int, batch_idx: int, is_epoch_end: bool = False,
@@ -370,6 +421,21 @@ class SFTTrainer:
 
     def _is_primary(self) -> bool:
         return self.runtime.is_primary()
+
+    def _sft_health(self, metrics: dict[str, Any]) -> dict[str, Any]:
+        """SFT 侧的健康检查（复用 RL 侧的 :func:`training_health`，单一真相源）。
+
+        F-4 P0 修法②：**SFT 训练器此前从不调用 ``training_health``**——只有 RL 侧
+        （``flow/trainer/optimize.py``）调用，于是 ``nonfinite_loss_or_grad`` 这个
+        退化信号在 SFT 上从未被评估过。
+
+        SFT 没有 reward/advantage（那三项判据在 RL 侧），因此按契约传入空的
+        reward 字段：``training_health`` 只在 ``attempt_group_count > 0`` /
+        ``count >= 10`` 时才检查 reward，空字典天然跳过，不产生假信号。
+        """
+        from graspo.ripple.monitoring.summary import training_health
+
+        return training_health(metrics, {}, {})
 
     def _print_json(self, payload: dict[str, Any]) -> None:
         if self._is_primary():

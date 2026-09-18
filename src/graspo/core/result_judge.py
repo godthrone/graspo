@@ -24,6 +24,7 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Mapping, Sequence
+from typing import Any
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -39,6 +40,25 @@ REQUIRED_ARTIFACTS: tuple[str, ...] = (
 
 #: 正式记录门槛（capability-matrix §6）：≥1 epoch 且 ≥5 optimizer step。
 MIN_OPTIMIZER_STEPS = 5
+
+#: 「该字段没有可解释的数值」的 **NaN 哨兵**（``RunEvidence.losses`` 里用它表达
+#: ``loss: null`` / 字段缺失）。为什么用 NaN 而不是 None：判定链是
+#: ``tuple[float, ...]``，NaN 天然让 finite 检查 fail-closed，不需要把类型契约
+#: 改成 ``float | None``（§5 先正确后可优化）。
+#:
+#: ⚠️ **语义边界**：NaN 只能表示"读不到值"，**不得**用来表示"读到 NaN"——
+#: 后者是**数值异常**（一个关于训练数值的事实断言）。两者必须能分开：
+#: 见 :data:`MISSING_SENTINEL` 与 :func:`judge_a6` 的检查顺序。
+NAN_SENTINEL = float("nan")
+
+#: 「loss 字段无值」的哨兵。刻意**不是** float（类型是 str）：数值分析层会
+#: ``TypeError`` 大声失败，而不是把一个"没有读数"静默当成数值参与计算。
+#: 与 :data:`NAN_SENTINEL` 的分工：本哨兵只用于"明确知道某步没有 loss 读数"。
+MISSING_SENTINEL: Any = "MISSING"
+
+#: 训练器在首个非有限梯度处硬失败时打的标记（唯一真相源：
+#: ``flow/adapters/models/qwen35_36/training_sft.py``）。
+NONFINITE_GRAD_MARKER = "非有限梯度"
 
 
 class FailureClass(StrEnum):
@@ -62,7 +82,29 @@ class FailureClass(StrEnum):
 #: 只有这一类失败允许被解释为"上下文太长"。
 MAX_CONTEXT_FAILURE_CLASSES: frozenset[str] = frozenset({FailureClass.REAL_OOM})
 
+#: 日志文本 → 失败类型的匹配表。**顺序即优先级**（先命中先返回）。
+#:
+#: ★ **数值异常必须排在表头**（🟡-4，2026-09-18 复核修正）：`非有限梯度` 是
+#: 训练器在首个非有限梯度处**主动打出的硬失败标记**（唯一真相源：
+#: ``flow/adapters/models/qwen35_36/training_sft.py``），是关于训练数值的**事实
+#: 断言**；而 `FileNotFoundError` / `NotImplementedError` 是通用文本。两者同现在
+#: 同一份日志时，旧顺序（数值异常排第 5）会先命中数据/框架文本，把排查引向数据
+#: 而不是数值链路。数值异常与数据问题**都不计入最大可行上下文**，故本次修正只
+#: 改变"归类给谁看"，不改变能力边界（也不改变 `passed` 语义）。
 _LOG_PATTERNS: tuple[tuple[FailureClass, tuple[re.Pattern[str], ...]], ...] = (
+    (
+        FailureClass.NUMERIC_ANOMALY,
+        tuple(
+            re.compile(pattern, re.IGNORECASE)
+            for pattern in (
+                # F-4 P0 修法①：训练器在首个非有限梯度处硬失败时打的显式标记
+                # （``flow/adapters/models/qwen35_36/training_sft.py`` 的唯一真相源）。
+                r"非有限梯度",
+                r"non-?finite gradient",
+                r"nonfinite_loss_or_grad",
+            )
+        ),
+    ),
     (
         FailureClass.FRAMEWORK_UNIMPLEMENTED,
         tuple(
@@ -165,6 +207,21 @@ class RunEvidence:
     artifacts_present: Mapping[str, bool]
     losses: tuple[float, ...]
     grad_norms: tuple[float, ...]
+    # ── 「训练步真推进」的逐步证据（F-4 P0 修法③）─────────────────────────────
+    #: 每个训练步实际执行的 optimizer step 数（全局口径，来自 rank_metrics 旁路
+    #: 的 ``global_optimizer_steps_sum``）。PP>1 下 rank0 局部恒为 1、全局和各 rank
+    #: 的 ``trainable_norm_after`` 不受此字段影响，因此这是唯一能抓住
+    #: 「梯度被跳过、权重冻结」的逐步读数。缺失用 ``None``（§2.2）。
+    optimizer_steps_per_step: tuple[int, ...] | None = None
+    #: 被判定为非有限而**跳过优化器步**的累积次数（全局口径，来自
+    #: ``skipped_nonfinite``）。> 0 即证明本次运行发生过"权重冻结"的步。
+    nonfinite_skips: int | None = None
+    # ── 「读到了什么」与「什么都没读到」的分界（F-4 P0 修法④）───────────────
+    #: loss 序列里**真读到**非有限值（NaN/Inf）⇒ 数值异常（关于训练的**事实**）。
+    losses_nonfinite: bool | None = None
+    #: loss 字段**无值**（``loss: null`` / 缺失）⇒ 证据缺口，判"未分类"而非
+    #: "数值异常"。断言后者是假陈述（我们根本没读到数），会把排查引向数值问题。
+    losses_unavailable: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,10 +263,41 @@ def judge_a1(evidence: RunEvidence) -> CriterionResult:
 def judge_a2(evidence: RunEvidence) -> CriterionResult:
     """A2 训练步真推进 且 权重真变化（LoRA / 全参两套判据）。
 
+    - **非有限跳过**：``nonfinite_skips > 0`` 直接不通过。这是 F-4（2026-09-18）
+      实测缺陷的收口：一次 run 建了 final checkpoint、exit=0，但从第 3 步起
+      ``optimizer_steps=0``、权重逐位冻结，逐 rank ``grad_norm`` 却全是 finite
+      （26.25 / 1.03e7 / 0.0 / 0.0）。没有这条断言，判据层会把"坏 run"记成
+      "权重已变化"。
+    - **逐步断言**：``optimizer_steps_per_step`` 中任一步 ``<= 0`` 即不通过——
+      "每个训练步都必须真的推进了优化器"。
     - 步数：``optimizer_steps >= MIN_OPTIMIZER_STEPS``（§6 正式门槛）；
     - LoRA：至少一个 ``lora_b`` 权重非零（LoRA B 初始为 0，非零即证明被更新）；
     - 全参：终态权重与基座权重不同（由抽取层给出 ``weight_changed``）。
+
+    检查顺序（为什么"跳过"排在门槛之前）：门槛报"步数不够"会把一次**数值崩坏**
+    误读成"冒烟太短"，从而诱导重复跑而不是修缺陷。跳过是更硬的事实。
     """
+    if evidence.nonfinite_skips:
+        return CriterionResult(
+            "A2",
+            False,
+            f"训练未真推进：累计 {evidence.nonfinite_skips} 次因非有限梯度跳过"
+            "优化器步（权重冻结，§3.4 防线：不得记为成功）",
+        )
+    if evidence.optimizer_steps_per_step is not None:
+        stalled = [
+            index
+            for index, count in enumerate(evidence.optimizer_steps_per_step)
+            if count <= 0
+        ]
+        if stalled:
+            return CriterionResult(
+                "A2",
+                False,
+                f"训练未真推进：第 {', '.join(str(i + 1) for i in stalled[:5])} 步"
+                f"optimizer_steps=0（共 {len(evidence.optimizer_steps_per_step)} 步；"
+                "梯度被跳过 ⇒ 该步权重冻结）",
+            )
     if evidence.optimizer_steps is None:
         return CriterionResult("A2", False, "缺少 optimizer step 证据（fail-closed）")
     if evidence.optimizer_steps < MIN_OPTIMIZER_STEPS:
@@ -267,6 +355,12 @@ def judge_a4(first: RunEvidence, second: RunEvidence | None) -> CriterionResult:
         return CriterionResult("A4", False, "缺少 loss 序列证据（fail-closed）")
     first_loss = first.losses[-1]
     second_loss = second.losses[-1]
+    if not isinstance(first_loss, float) or not isinstance(second_loss, float):
+        # 末步 loss 无读数（MISSING 哨兵）⇒ 无法比较，fail-closed。
+        # （不让哨兵流进下面的算术：那是 TypeError，会把"判不通过"变成"崩溃"。）
+        return CriterionResult(
+            "A4", False, "末步 loss 无读数（loss 字段缺失），无法做双跑一致性比较（fail-closed）"
+        )
     tolerance = 1e-3 * max(1.0, abs(first_loss))
     if abs(first_loss - second_loss) > tolerance:
         return CriterionResult(
@@ -286,20 +380,50 @@ def judge_a5(evidence: RunEvidence) -> CriterionResult:
 
 
 def judge_a6(evidence: RunEvidence) -> CriterionResult:
-    """A6 数值健康：loss / grad_norm 全程 finite，最终 loss ≤ 初始 loss。"""
+    """A6 数值健康：loss / grad_norm 全程 finite，最终 loss ≤ 初始 loss。
+
+    **三种情形必须分清（F-4 §④.1-4 的核心）**：
+
+    1. **真读到 NaN/Inf** ⇒ 判**不通过**，明细为「出现 NaN/Inf」⇒ 分类 **数值异常**。
+       这是关于训练数值的**事实断言**（F-4 那个 run 的 step2 就是真 NaN）。
+    2. **loss 字段无值**（``loss: null`` / 缺失）⇒ 判**不通过**（fail-closed），
+       明细为 :data:`NUMERIC_INDETERMINATE_DETAIL` ⇒ 分类 **未分类（需人工判定）**。
+       我们**没有读数**，所以不得断言"数值异常"——那会把排查引向数值问题，而真因可能
+       是进程被杀、超时或环境问题。这**不是**"偶发地依赖 null 被解析成 NaN"。
+    3. 两者同时出现（F-4 实测正是如此）⇒ **真 NaN 优先**，分类数值异常。
+       已确证的数值崩坏不得被"某几步没有读数"降格。
+
+    三种情形一律**不通过、不计入最大可行上下文**（fail-closed 不变）。
+    """
     if not evidence.losses:
         return CriterionResult("A6", False, "缺少 loss 序列证据（fail-closed）")
     if not evidence.grad_norms:
         return CriterionResult("A6", False, "缺少 grad_norm 序列证据（fail-closed）")
 
-    bad_losses = [value for value in evidence.losses if not math.isfinite(value)]
-    bad_grads = [value for value in evidence.grad_norms if not math.isfinite(value)]
-    if bad_losses or bad_grads:
+    # ① 真读到非有限值。类型上必须是 float：MISSING_SENTINEL 是 str，会被这个
+    #    isinstance 挡住，不会污染"数值异常"这个事实断言。
+    real_nonfinite_losses = [
+        value
+        for value in evidence.losses
+        if isinstance(value, float) and not math.isfinite(value)
+    ]
+    real_nonfinite_grads = [
+        value
+        for value in evidence.grad_norms
+        if isinstance(value, float) and not math.isfinite(value)
+    ]
+    if evidence.losses_nonfinite or real_nonfinite_losses or real_nonfinite_grads:
         return CriterionResult(
             "A6",
             False,
-            f"出现 NaN/Inf：loss {len(bad_losses)} 个、grad_norm {len(bad_grads)} 个",
+            f"出现 NaN/Inf：loss {len(real_nonfinite_losses) or 1} 个、"
+            f"grad_norm {len(real_nonfinite_grads)} 个",
         )
+    # ② 只有"没有读数"（loss: null / 字段缺失 / 哨兵）⇒ 证据缺口，不是数值异常。
+    if evidence.losses_unavailable or any(
+        value is NAN_SENTINEL or value is MISSING_SENTINEL for value in evidence.losses
+    ):
+        return CriterionResult("A6", False, NUMERIC_INDETERMINATE_DETAIL)
     initial = evidence.losses[0]
     final = evidence.losses[-1]
     if final > initial:
@@ -316,8 +440,32 @@ def judge_a6(evidence: RunEvidence) -> CriterionResult:
 # ── 失败分类 ────────────────────────────────────────────────────────────────
 
 
+#: 数值不可判定（loss 字段无值可读）的明细前缀 —— 单一真相源。
+#: ``judge_a6`` 写它、``classify_failure`` 认它；两者不得各自拼字符串。
+NUMERIC_INDETERMINATE_DETAIL = (
+    "数值健康不可判定：loss 序列存在无法解释的取值（loss: null / 字段缺失）"
+    "——按 fail-closed 判不通过，不得默认通过"
+)
+
 #: A6 明细里出现这些字样 ⇒ 数值异常（唯一真相源，见 ``judge_a6``）。
+#: 注意：「不可判定」不在此列——它是 fail-closed 的**证据缺口**，不是数值异常；
+#: 真正的非有限梯度由训练器的显式标记走 ``_LOG_PATTERNS`` 分类。
 _NUMERIC_ANOMALY_DETAILS: tuple[str, ...] = ("NaN/Inf", "高于初始")
+
+
+def _is_nan_sentinel(value: float) -> bool:
+    """该值是"字段没有可解释的数值"的 **NaN 哨兵**（而非 loss 本身为 NaN）。
+
+    两者都是 NaN，但语义不同：前者是证据缺口，后者是数值异常。判定链上的优先级
+    也不同（见 ``classify_failure``），因此必须用同一个对象在两处识别，避免
+    `judge_a6` 与 `classify_failure` 对"同一条 NaN"作出不同解释。
+
+    **用 ``is`` 判对象身份**（``float("nan") is NAN_SENTINEL`` 为 False）：
+    数值 NaN 即便是"另一个 NaN 实例"也不会被误判成证据缺口——这正是修复本轮
+    回归的关键（提取层只允许用 :data:`NAN_SENTINEL` 表达"读不到值"，日志里真实
+    读取到的 NaN **不得**用同一个对象表达）。
+    """
+    return value is NAN_SENTINEL
 
 
 def numeric_anomaly(a6: CriterionResult) -> bool:
@@ -329,22 +477,93 @@ def numeric_anomaly(a6: CriterionResult) -> bool:
     return not a6.passed and any(mark in a6.detail for mark in _NUMERIC_ANOMALY_DETAILS)
 
 
+def numeric_indeterminate(a6: CriterionResult) -> bool:
+    """A6 是否因**证据缺口**（loss 字段无值）未通过 —— 与"数值异常"区分。
+
+    **可达性**：可达。提取层对 ``loss: null`` / 字段缺失写入
+    :data:`MISSING_SENTINEL`（类型是 str ⇒ 不参与"真读到 NaN"的判定），
+    ``judge_a6`` 因此进入"只有没有读数"分支，明细为
+    :data:`NUMERIC_INDETERMINATE_DETAIL`，本函数返回 ``True``
+    ⇒ 分类为 ``UNCLASSIFIED``（需人工判定）。
+
+    为什么必须可达：断言"数值异常"是关于训练数值的**事实陈述**；当我们**只是
+    没有读数**时，那个陈述是假的，还会把排查引向数值问题。
+    """
+    return not a6.passed and NUMERIC_INDETERMINATE_DETAIL in a6.detail
+
+
+def _mean_finite(values: Sequence[float | None]) -> float | None:
+    """逐 rank 序列求均值，**保留**非有限值（通信层/日志层共用的一致口径）。
+
+    为什么不用 ``sum(...)/len(...)`` 之外的任何"过滤"：过滤 NaN 会把
+    "一个 rank 崩了"洗成"健康"——F-4 实测的 step2 正是 r0/r1 有限、r2/r3 NaN，
+    一旦过滤，全局读数就变成有限值。``None``（该 rank 本步无读数）被跳过；
+    全为 ``None`` 时返回 ``None``（而非 0.0，§2.2）。
+    """
+    present = [float(value) for value in values if value is not None]
+    if not present:
+        return None
+    return sum(present) / len(present)
+
+
 def classify_failure(evidence: RunEvidence, a6: CriterionResult) -> FailureClass | None:
     """把一次未通过的运行归类。
 
     返回 ``None`` 表示"没有失败"（exit=0、无 NaN、非超时）。匹配不到则返回
     ``UNCLASSIFIED``（不计入最大可行上下文）。
 
-    **优先级（为什么数值异常排在日志模式之前）**：A6 的 NaN/Inf / loss 上升是
-    从证据序列直接算出的事实，而"日志里出现 `CUDA out of memory`"只是文本证据——
-    一次真 OOM 之后常伴随 NaN/数值崩溃，此时真正的结论是"数值异常"，
-    不能因此把该档上下文长度记进"最大可行上下文"（那会放宽"只有真 OOM 才计入"
-    这条硬要求并污染能力边界）。因此：超时 → **数值异常** → 其余日志模式。
+    **判定优先级序列（唯一真相源，改动此处必须同步更新本段说明与测试）**：
+
+    1. **超时**（``timed_out`` / ``exit_code == 124``）⇒ ``TIMEOUT``；
+    2. **数值异常**（A6 明细含 "NaN/Inf" 或 "高于初始"）⇒ ``NUMERIC_ANOMALY``；
+    3. **数值不可判定**（A6 明细含 :data:`NUMERIC_INDETERMINATE_DETAIL`，即
+       ``loss: null`` / 字段缺失 / 全程无读数）⇒ ``UNCLASSIFIED``（需人工判定）；
+    4. **显式非有限梯度标记**（训练器硬失败的 ``非有限梯度`` /
+       ``non-finite gradient`` / ``nonfinite_loss_or_grad``）⇒ ``NUMERIC_ANOMALY``；
+       这一步由 ``_LOG_PATTERNS`` **表头第一条**实现（2026-09-18 🟡-4 修正前的
+       旧序把它排在第 5 位，与本节描述不符，已修正）；
+    5. **其余日志模式**（框架未实现 / 配置非法 / 数据问题 / 通信硬件 / 真 OOM）——
+       即 ``_LOG_PATTERNS`` 中**数值异常之后的**条目，按表内顺序匹配；
+    6. 非零退出码且未匹配 ⇒ ``UNCLASSIFIED``。
+
+    **每一级的可达性与触发条件**（不允许存在"写着却永不触发"的分级）：
+
+    | # | 触发条件（可判定的事实） | 归类 | 可达 |
+    |---|---|---|:--:|
+    | 1 | ``timed_out`` 或 ``exit_code == 124`` | ``TIMEOUT`` | ✔ |
+    | 2 | loss/grad_norm 序列里**真读到** NaN/Inf，或最终 loss > 初始 | ``NUMERIC_ANOMALY`` | ✔ |
+    | 3 | loss 字段无值（``MISSING_SENTINEL``）且**无任何**真 NaN | ``UNCLASSIFIED`` | ✔ |
+    | 4 | 日志出现 ``非有限梯度`` 等硬失败标记 | ``NUMERIC_ANOMALY`` | ✔ |
+    | 5 | 日志匹配到 OOM / 未实现 / 配置 / 数据 / 通信模式（且不含第 4 步标记） | 对应类型 | ✔ |
+    | 6 | 非零退出、以上都不匹配 | ``UNCLASSIFIED`` | ✔ |
+
+    **为什么第 4 步必须排在其余日志模式之前**（🟡-4 修正的判据）：``非有限梯度``
+    是**本项目的训练器主动打出的**硬失败标记，出现即证明"训练在数值处硬停"——
+    这是关于训练数值的事实断言；而 ``FileNotFoundError`` / ``NotImplementedError``
+    是通用文本，可能来自同一份日志里与死因无关的旁路。旧序下两者同现会先命中
+    数据/框架文本，实测把 ``FileNotFoundError`` + ``非有限梯度`` 归成「数据问题」，
+    把排查引向数据而不是数值链路。两者的 ``counts_toward_max_context`` 都是
+    ``False``，故本修正不改变能力边界，只修正"归类给谁看"。
+
+    **为什么"数值异常"必须排在"日志里出现 OOM 字样"之前**：A6 的 NaN/Inf /
+    loss 上升是从证据序列直接算出的事实，而日志里的 `CUDA out of memory` 只是
+    文本证据——一次真 OOM 之后常伴随 NaN/数值崩溃，若按文本归类就会把该档上下文
+    记进"最大可行上下文"（放宽"只有真 OOM 才计入"的硬要求并污染能力边界）。
+    端到端用例见 ``tests/e2e/test_collect_results.py::
+    test_collector_numeric_anomaly_wins_over_oom_text``。
+
+    **为什么第 3 步与第 2 步分家**：``loss: null`` 是"字段没有值"的证据缺口，
+    既不是"run 数值崩坏"、也不是"上下文太长"。若与第 2 步合并，就会凭**没有读数**
+    断言"数值异常"（假陈述，且把排查引向数值问题）；若落到第 5 步，日志里恰好有
+    OOM 字样时又会被误记成真 OOM（污染能力边界）。两条路都错，故单列
+    ``UNCLASSIFIED``，且与第 2 步一样**不计入最大可行上下文**。
     """
     if evidence.timed_out or evidence.exit_code == 124:
         return FailureClass.TIMEOUT
     if numeric_anomaly(a6):
         return FailureClass.NUMERIC_ANOMALY
+    if numeric_indeterminate(a6):
+        return FailureClass.UNCLASSIFIED
     for failure_class, patterns in _LOG_PATTERNS:
         if any(pattern.search(evidence.log_text) for pattern in patterns):
             return failure_class
@@ -405,6 +624,14 @@ def judge_tier(
     )
 
 
+#: 台账 `max_context` 的**取值口径标记**——回答"这一列的数字从哪来"（§1.4）。
+#: 为什么必须有它：真 OOM 档写进该列的是**边界候选**（该 run 整体未通过），
+#: 通过档写进去的是**实测可行值**；两者都在同一列，不标口径就会被下游读成
+#: "这个长度跑得通"，从而把不可行的长度当成能力上限（§7.1 第 4 条）。
+MAX_CONTEXT_KIND_FEASIBLE = "实测通过"
+MAX_CONTEXT_KIND_OOM_BOUNDARY = "真 OOM 边界候选"
+
+
 def ledger_row(
     judgement: TierJudgement,
     *,
@@ -417,7 +644,37 @@ def ledger_row(
     peak_memory_gib: float | None,
     date: str,
 ) -> dict[str, object]:
-    """把判定落成 capability-matrix §7 台账的一行（可直接填表）。"""
+    """把判定落成 capability-matrix §7 台账的一行（可直接填表）。
+
+    **``max_context`` 的资格口径（🔴-1 修正，2026-09-18）**：该列的资格由
+    :func:`counts_toward_max_context` **或**整档通过共同决定，**不再**只由
+    ``judgement.passed`` 决定。
+
+    旧实现 ``max_context if judgement.passed else None`` 在**结构上不可能**满足硬
+    要求「只有真 OOM 才能写入最大可行上下文」：真 OOM 的 run 必然 ``exit != 0``
+    ⇒ A1 不过 ⇒ ``passed=False`` ⇒ 该列恒为 ``None``；而能写进该列的那类恰好
+    永远不是真 OOM。分类层 :func:`counts_toward_max_context` 一直返回 ``True``，
+    是落盘层把值丢掉了。
+
+    修正后该列有两种来源，用 ``max_context_kind`` 显式区分：
+
+    - :data:`MAX_CONTEXT_KIND_FEASIBLE`：整档通过，该长度**已被实测证明可行**；
+    - :data:`MAX_CONTEXT_KIND_OOM_BOUNDARY`：整档未通过但失败类型是真 OOM，
+      该长度是**边界候选**（run 在这里 OOM 了，说明上限低于它；仍须按 §7.1
+      第 4 条的"上一个通过长度 + 二分细化"确认，不得直接当成可行值）。
+
+    **不放松任何判定**：``passed`` 的语义与 A1–A6 都不动；非真 OOM 的失败
+    （数值异常 / 数据问题 / 框架未实现 / 配置非法 / 通信硬件 / 超时 / 未分类）
+    仍然一律 ``None``。
+    """
+    eligible = judgement.passed or judgement.counts_toward_max_context
+    recorded_context = max_context if eligible else None
+    if recorded_context is None:
+        context_kind: str | None = None
+    elif judgement.passed:
+        context_kind = MAX_CONTEXT_KIND_FEASIBLE
+    else:
+        context_kind = MAX_CONTEXT_KIND_OOM_BOUNDARY
     return {
         "tier_id": judgement.tier_id,
         "model": model,
@@ -425,7 +682,8 @@ def ledger_row(
         "mode": mode,
         "backend": backend,
         "cards": cards,
-        "max_context": max_context if judgement.passed else None,
+        "max_context": recorded_context,
+        "max_context_kind": context_kind,
         "peak_memory_gib": peak_memory_gib,
         "status": judgement.ledger_status,
         "failure_class": judgement.failure_class,

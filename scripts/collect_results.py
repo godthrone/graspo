@@ -25,11 +25,13 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import math
 import re
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, Sequence
 
 # ── 纯逻辑模块按文件路径加载，避免经 graspo/__init__ 拉入 torch/pydantic ──────
 _SRC = Path(__file__).resolve().parents[1] / "src"
@@ -60,6 +62,17 @@ _LOSS_ANY = re.compile(r"['\"]loss['\"]\s*:\s*([-\d.eE+naif]+)")
 _GRAD_ANY = re.compile(r"['\"]grad_norm['\"]\s*:\s*([-\d.eE+naif]+)")
 _GLOBAL_STEP = re.compile(r"['\"]?global_step['\"]?\s*[:=]\s*(\d+)")
 
+#: 显式数值语法：只承认十进制/科学计数法/NaN/Inf 字面量。
+#: 为什么不复用 ``_LOSS_ANY`` 的 ``[-\d.eE+naif]+``：那个字符类**包含 ``n``**，
+#: 于是 ``"loss": null`` 会匹配出 ``"n"``，再被 ``float()`` 抛错而变成 NaN。
+#: F-4（2026-09-18）实测的"偶然通过"正来自这条路径——一旦某天改成 ``0.0``，
+#: 判定器会把坏 run 记成"数值健康"。这里把语法收窄，null/缺失**一律显式识别**。
+_NUMERIC_LITERAL = re.compile(r"^-?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?$|^-?(?:nan|inf)$", re.IGNORECASE)
+
+#: 训练器在首个非有限梯度处硬失败时打的标记（唯一真相源：
+#: ``flow/adapters/models/qwen35_36/training_sft.py``）。
+_NONFINITE_GRAD_MARKER = re.compile(r"非有限梯度|non-?finite gradient")
+
 
 # ── 基础工具 ────────────────────────────────────────────────────────────────
 
@@ -78,11 +91,29 @@ def _read_json(path: Path) -> Any:
         return None
 
 
-def _to_float(raw: str) -> float:
+def _parse_numeric(raw: str | None) -> float | None:
+    """把文本/JSON 值解析成 float；``None`` / 缺失 / 非法字面量一律返回 ``None``。
+
+    **不要**把无法解析的值变成 NaN 或 0.0：那正是 F-4 实测的"坏 run 被记为成功"
+    的通道。调用方（``judge_a6`` / ``judge_a2``）把 ``None`` 当作 fail-closed 证据。
+    """
+    if raw is None:
+        return None
+    text = str(raw).strip().strip("'\"")
+    if not text or text.lower() in {"null", "none", "nil"}:
+        return None
+    if not _NUMERIC_LITERAL.match(text):
+        return None
     try:
-        return float(raw)
+        return float(text)
     except ValueError:
-        return float("nan")
+        return None
+
+
+def _match_numeric(match: re.Match[str] | None) -> float | None:
+    if match is None:
+        return None
+    return _parse_numeric(match.group(1))
 
 
 def find_output_dir(run_dir: Path, tier_id: str) -> Path | None:
@@ -104,15 +135,130 @@ def find_output_dir(run_dir: Path, tier_id: str) -> Path | None:
 # ── 证据抽取 ────────────────────────────────────────────────────────────────
 
 
-def extract_steps_and_series(output_dir: Path | None, log_text: str) -> tuple[int | None, float | None, list[float], list[float]]:
-    """抽取 optimizer step / epoch / loss 序列 / grad_norm 序列。
+@dataclass
+class SeriesEvidence:
+    """loss / grad_norm 序列 + 「训练步真推进」的逐步证据。
 
-    来源优先级：trainer_state.json（HF/ms-swift 结构化记录）→ 日志中的 dict 行。
+    ``source`` 显式标注读数口径，便于报告里区分"权威旁路"与"stdout 兜底"；
+    ``notes`` 记录本次抽取遇到的退化（null 字段、口径不可得），**不静默**。
     """
+
     steps: int | None = None
     epochs: float | None = None
-    losses: list[float] = []
-    grad_norms: list[float] = []
+    losses: list[float] = field(default_factory=list)
+    grad_norms: list[float] = field(default_factory=list)
+    #: 每步全局 optimizer step 数（rank_metrics 旁路 ``global_optimizer_steps_sum``）。
+    optimizer_steps_per_step: list[int] = field(default_factory=list)
+    #: 累计因非有限梯度跳过优化器步的次数（``skipped_nonfinite``，跨步求和）。
+    nonfinite_skips: int = 0
+    source: str = "none"
+    notes: list[str] = field(default_factory=list)
+    #: 是否出现过 ``loss: null`` / 字段缺失（A6 必须对此 fail-closed）。
+    loss_unavailable: bool = False
+    #: 是否**真读到**非有限 loss（NaN/Inf 字面量）。与 ``loss_unavailable`` 严格
+    #: 区分：前者是"数值异常"这个事实断言，后者只是"没有读数"。
+    loss_nonfinite: bool = False
+
+
+def _rank_metric_steps(output_dir: Path | None) -> list[dict[str, Any]]:
+    """从 rank_metrics 旁路读「每个训练步一行」的全局指标（PP trainer 的权威读数）。
+
+    ``_emit_rank_memory_event("pipeline_sft_train_batch_after", ...)`` 每步写一条
+    ``{"phase": ..., "metrics": {...}}``；``metrics`` 里带全局聚合口径
+    （``global_loss_mean`` / ``global_grad_norm_mean`` / ``global_optimizer_steps_sum``）
+    与逐 rank 明细 ``rank_metrics``。这解决了 F-4 的核心观测缺陷：
+    stdout 的 ``sft_step`` 打的是 **rank0 局部** loss（PP 下结构性恒 0.0）与
+    rank0 局部 grad_norm（有限），全局 NaN 只在旁路可见。
+    """
+    if output_dir is None:
+        return []
+    rows: list[dict[str, Any]] = []
+    for events in sorted(output_dir.rglob("rank_metrics.rank_*.jsonl")):
+        if events.name != "rank_metrics.rank_00000.jsonl":
+            continue  # rank0 的事件已含全体 rank 的聚合与明细，避免重复计数
+        try:
+            text = events.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            if payload.get("phase") != "pipeline_sft_train_batch_after":
+                continue
+            metrics = payload.get("metrics")
+            if isinstance(metrics, dict):
+                rows.append(metrics)
+    return rows
+
+
+def _cross_check_stdout(log_text: str, losses: Sequence[float | None]) -> list[str]:
+    """把旁路 loss 与 stdout 的 ``sft_step`` 行做交叉核对（口径自证，§1.4）。"""
+    stdout_losses = [_match_numeric(m) for m in _LOSS_DICT.finditer(log_text)]
+    if not stdout_losses:
+        stdout_losses = [_match_numeric(m) for m in _LOSS_ANY.finditer(log_text)]
+    if not stdout_losses:
+        return ["stdout 无 loss 读数（无法交叉核对）"]
+    paired = list(zip(stdout_losses, losses))
+    mismatched = [
+        index
+        for index, (left, right) in enumerate(paired)
+        if left is not None and right is not None and left != right
+    ]
+    if mismatched:
+        return [
+            f"stdout 与 rank_metrics 的 loss 口径不一致（步 {', '.join(str(i + 1) for i in mismatched[:5])}）："
+            "stdout 为 rank0 局部值，全局口径以 rank_metrics 为准"
+        ]
+    return []
+
+
+def extract_steps_and_series(output_dir: Path | None, log_text: str) -> SeriesEvidence:
+    """抽取 optimizer step / epoch / loss 序列 / grad_norm 序列 / 逐步推进证据。
+
+    来源优先级：
+      1. ``rank_metrics.rank_*.jsonl`` 旁路的**全局**逐步指标（PP 唯一可信口径）；
+      2. ``trainer_state.json``（HF/ms-swift 结构化记录）；
+      3. 日志中的 dict 行（stdout 兜底，口径为 rank0 局部，显式标注）。
+    """
+    result = SeriesEvidence()
+    metrics_rows = _rank_metric_steps(output_dir)
+    if metrics_rows:
+        result.source = "rank_metrics"
+        for row in metrics_rows:
+            loss = _parse_numeric(row.get("global_loss_mean"))
+            grad = _parse_numeric(row.get("global_grad_norm_mean"))
+            if row.get("global_loss_mean") is None:
+                result.loss_unavailable = True
+                # 全局 loss 旁路不可得 ⇒ 用 MISSING 哨兵表达"证据缺口"。
+                # **不得**用 NaN：那会让 A6 断言"数值异常"——而我们根本没读到数。
+                loss = _judge.MISSING_SENTINEL
+            if row.get("global_grad_norm_mean") is None:
+                grad = _judge.MISSING_SENTINEL
+            result.losses.append(loss if loss is not None else _judge.MISSING_SENTINEL)
+            result.grad_norms.append(grad if grad is not None else _judge.MISSING_SENTINEL)
+            step_total = row.get("global_optimizer_steps_sum")
+            if isinstance(step_total, int):
+                result.optimizer_steps_per_step.append(step_total)
+            skipped = row.get("skipped_nonfinite")
+            if isinstance(skipped, int):
+                result.nonfinite_skips += skipped
+        result.steps = len(result.losses)
+        result.notes.extend(_cross_check_stdout(log_text, result.losses))
+        # epoch 仍从 trainer_state 取（旁路不含 epoch）。
+        if output_dir is not None:
+            for state_path in output_dir.rglob("trainer_state.json"):
+                state = _read_json(state_path)
+                if isinstance(state, dict) and isinstance(state.get("epoch"), (int, float)):
+                    result.epochs = float(state["epoch"])
+                    break
+        return result
 
     if output_dir is not None:
         for state_path in output_dir.rglob("trainer_state.json"):
@@ -120,31 +266,95 @@ def extract_steps_and_series(output_dir: Path | None, log_text: str) -> tuple[in
             if not isinstance(state, dict):
                 continue
             if isinstance(state.get("global_step"), int):
-                steps = state["global_step"]
+                result.steps = state["global_step"]
             if isinstance(state.get("epoch"), (int, float)):
-                epochs = float(state["epoch"])
+                result.epochs = float(state["epoch"])
             for entry in state.get("log_history", []) or []:
                 if not isinstance(entry, dict):
                     continue
                 if isinstance(entry.get("loss"), (int, float)):
-                    losses.append(float(entry["loss"]))
+                    result.losses.append(float(entry["loss"]))
                 if isinstance(entry.get("grad_norm"), (int, float)):
-                    grad_norms.append(float(entry["grad_norm"]))
-            if losses:
+                    result.grad_norms.append(float(entry["grad_norm"]))
+            if result.losses:
                 break
+        if result.losses:
+            result.source = "trainer_state"
 
-    for match in _LOSS_DICT.finditer(log_text):
-        losses.append(_to_float(match.group(1)))
-        grad_norms.append(_to_float(match.group(2)))
-    if not losses:
-        losses.extend(_to_float(m.group(1)) for m in _LOSS_ANY.finditer(log_text))
-    if not grad_norms:
-        grad_norms.extend(_to_float(m.group(1)) for m in _GRAD_ANY.finditer(log_text))
-    if steps is None:
+    if not result.losses:
+        # stdout 兜底：显式识别 null / 缺失，绝不把"读不到"变成 NaN 或 0.0。
+        # ``_parse_numeric`` 对 null/缺失返回 None；无法解释的取值（语法不合法）也
+        # 返回 None，但语义不同——后者要显式记录"读到了但解释不了"，不得静默丢掉。
+        raw_pairs = [
+            (_parse_numeric(m.group(1)), _parse_numeric(m.group(2)))
+            for m in _LOSS_DICT.finditer(log_text)
+        ]
+        if not raw_pairs:
+            null_losses = len(re.findall(r"['\"]loss['\"]\s*:\s*(?:null|None)", log_text))
+            if null_losses:
+                result.loss_unavailable = True
+                result.notes.append(
+                    f"stdout 出现 {null_losses} 个 loss: null —— 显式识别为"
+                    "「数值不可得」，fail-closed 判不通过（不再沿用 null→NaN 的偶然路径）"
+                )
+                result.losses.extend([_judge.MISSING_SENTINEL] * null_losses)
+            else:
+                result.losses.extend(
+                    value
+                    for value in (_match_numeric(m) for m in _LOSS_ANY.finditer(log_text))
+                    if value is not None
+                )
+                result.notes.append("loss 序列来自 stdout 兜底（无 rank_metrics 旁路）")
+        else:
+            for loss, grad in raw_pairs:
+                result.losses.append(
+                    loss if loss is not None else _judge.MISSING_SENTINEL
+                )
+                result.grad_norms.append(
+                    grad if grad is not None else _judge.MISSING_SENTINEL
+                )
+            null_count = len(re.findall(r"['\"]loss['\"]\s*:\s*(?:null|None)", log_text))
+            if null_count:
+                result.loss_unavailable = True
+                result.notes.append(
+                    f"stdout 出现 {null_count} 个 loss: null —— 显式识别为"
+                    "「数值不可得」并以 MISSING 哨兵显式表示（不依赖 null→NaN 的偶然路径）"
+                )
+            result.notes.append("loss/grad_norm 序列来自 stdout 兜底（rank0 局部口径）")
+        if not result.grad_norms:
+            result.grad_norms.extend(
+                value
+                for value in (_match_numeric(m) for m in _GRAD_ANY.finditer(log_text))
+                if value is not None
+            )
+        if result.source == "none" and (result.losses or result.grad_norms):
+            result.source = "stdout"
+
+    if result.steps is None:
         matches = _GLOBAL_STEP.findall(log_text)
         if matches:
-            steps = int(matches[-1])
-    return steps, epochs, losses, grad_norms
+            result.steps = int(matches[-1])
+    if result.steps is None and result.losses:
+        result.steps = len(result.losses)
+    if _NONFINITE_GRAD_MARKER.search(log_text) and result.nonfinite_skips == 0:
+        # 硬失败标记本身就是"这一步没推进"的证据（默认 1 次，仅用于让 A2 不通过；
+        # 精确次数由 rank_metrics 的 skipped_nonfinite 给出）。
+        result.nonfinite_skips = max(1, result.nonfinite_skips)
+        result.notes.append("stdout 出现「非有限梯度」硬失败标记 ⇒ 训练未真推进")
+
+    # ── 三种情形的最终判定（必须在所有来源汇合之后做）────────────────────────
+    # ① 真读到非有限值：**类型上必须是 float** 才算"读到了数"。MISSING 哨兵是 str，
+    #    天然被排除 ⇒ 不会把"没有读数"升格成"数值异常"这个事实断言。
+    result.loss_nonfinite = any(
+        isinstance(value, float) and not math.isfinite(value) for value in result.losses
+    ) or any(
+        isinstance(value, float) and not math.isfinite(value) for value in result.grad_norms
+    )
+    # ② 有"读不到值"的步（MISSING 哨兵 = 明确知道该步没有读数）
+    result.loss_unavailable = result.loss_unavailable or any(
+        value is _judge.MISSING_SENTINEL for value in result.losses
+    )
+    return result
 
 
 def _require_torch() -> Any | None:
@@ -331,8 +541,8 @@ def extract_artifacts(run_dir: Path, output_dir: Path | None, log_text: str) -> 
     return artifacts
 
 
-def collect_run(run_dir: Path, tier_id: str, tuner_type: str) -> Any:
-    """把一个运行目录抽成 ``RunEvidence``。"""
+def collect_run(run_dir: Path, tier_id: str, tuner_type: str) -> tuple[Any, SeriesEvidence]:
+    """把一个运行目录抽成 ``RunEvidence`` + 读数口径自证（``SeriesEvidence``）。"""
     exit_code: int | None = None
     exit_path = run_dir / "exit_code"
     if exit_path.exists():
@@ -341,22 +551,31 @@ def collect_run(run_dir: Path, tier_id: str, tuner_type: str) -> Any:
             exit_code = int(raw)
     log_text = _read_text(run_dir / "stdout.log")
     output_dir = find_output_dir(run_dir, tier_id)
-    steps, epochs, losses, grad_norms = extract_steps_and_series(output_dir, log_text)
+    series = extract_steps_and_series(output_dir, log_text)
     timed_out = exit_code == 124 or bool(re.search(r"⏰|timeout: sending signal", log_text))
-    return _judge.RunEvidence(
+    evidence = _judge.RunEvidence(
         tier_id=tier_id,
         exit_code=exit_code,
         timed_out=timed_out,
         log_text=log_text,
         tuner_type=tuner_type,
-        optimizer_steps=steps,
-        epochs_completed=epochs,
+        optimizer_steps=series.steps,
+        epochs_completed=series.epochs,
         weight_changed=extract_weight_changed(output_dir, tuner_type),
         checkpoint_reloadable=extract_checkpoint_reloadable(output_dir),
         artifacts_present=extract_artifacts(run_dir, output_dir, log_text),
-        losses=tuple(losses),
-        grad_norms=tuple(grad_norms),
+        losses=tuple(series.losses),
+        grad_norms=tuple(series.grad_norms),
+        optimizer_steps_per_step=(
+            tuple(series.optimizer_steps_per_step)
+            if series.optimizer_steps_per_step
+            else None
+        ),
+        nonfinite_skips=series.nonfinite_skips,
+        losses_nonfinite=series.loss_nonfinite,
+        losses_unavailable=series.loss_unavailable,
     )
+    return evidence, series
 
 
 # ── 主流程 ──────────────────────────────────────────────────────────────────
@@ -398,15 +617,22 @@ def run(args: argparse.Namespace) -> int:
                     "note": f"运行目录不存在：{first_dir}",
                     "failure_class": None,
                     "max_context": None,
+                    "max_context_kind": None,
+                    "series_source": "none",
+                    "series_notes": [],
+                    "losses": [],
+                    "grad_norms": [],
+                    "optimizer_steps_per_step": [],
+                    "nonfinite_skips": None,
                 }
             )
             continue
-        first = collect_run(first_dir, tier_id, tuner_type)
+        first, first_series = collect_run(first_dir, tier_id, tuner_type)
         second = None
         if args.rerun_root:
             second_dir = Path(args.rerun_root) / tier_id
             if second_dir.is_dir():
-                second = collect_run(second_dir, tier_id, tuner_type)
+                second, _ = collect_run(second_dir, tier_id, tuner_type)
         judgement = _judge.judge_tier(first, second, context_length=args.context_length)
         row = _judge.ledger_row(
             judgement,
@@ -415,12 +641,23 @@ def run(args: argparse.Namespace) -> int:
             mode=str(tier.get("mode")),
             backend=str(tier.get("backend")),
             cards=int(tier.get("cards", 0)),
-            max_context=args.context_length if judgement.counts_toward_max_context else None,
+            # 🔴-1 修正：**不要**在这里按 counts_toward_max_context 预筛。资格判定
+            # 是 ledger_row 的唯一真相源（通过档 ⇒ 实测可行值；真 OOM ⇒ 边界候选），
+            # 采集层再筛一遍会把"通过档"的上下文也丢掉（旧实现的实际后果：
+            # max_context 恒为 None）。这里只把"这次实测的上下文长度"原样传下去。
+            max_context=args.context_length,
             peak_memory_gib=_read_peak_memory(first_dir),
             date=args.date,
         )
         row["criteria"] = {item.criterion: item.passed for item in judgement.criteria}
         row["criteria_detail"] = {item.criterion: item.detail for item in judgement.criteria}
+        # 读数口径自证（§1.4 单一真相源）：台账必须能回答"这个数字从哪来"。
+        row["series_source"] = first_series.source
+        row["series_notes"] = first_series.notes
+        row["losses"] = list(first.losses)
+        row["grad_norms"] = list(first.grad_norms)
+        row["optimizer_steps_per_step"] = list(first.optimizer_steps_per_step or ())
+        row["nonfinite_skips"] = first.nonfinite_skips
         records.append(row)
 
     jsonl = out_dir / "ledger.jsonl"
@@ -429,15 +666,21 @@ def run(args: argparse.Namespace) -> int:
             handle.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
 
     markdown = out_dir / "ledger.md"
+    # `max_context` 的口径必须随数字一起显示（🔴-1）：同样是 "8192"，"实测通过"
+    # 与"真 OOM 边界候选"的含义完全不同，只给数字会被下游读成"这个长度跑得通"。
     lines = [
-        "| 条件档 | 模型 | 算法 | 模式 | 后端 | 卡数 | 最大可行上下文 | 每卡峰值(GiB) | 状态 | 失败类型 | 备注 |",
-        "|---|---|---|---|:--:|---|---|---|---|---|---|",
+        "| 条件档 | 模型 | 算法 | 模式 | 后端 | 卡数 | 最大可行上下文 | 口径 | 每卡峰值(GiB) | 状态 | 失败类型 | 备注 |",
+        "|---|---|---|---|:--:|---|---|---|---|---|---|---|",
     ]
     for record in records:
+        context_cell = record.get("max_context") or "—"
+        if record.get("max_context_kind"):
+            context_cell = f"{context_cell}（{record['max_context_kind']}）"
         lines.append(
             f"| {record['tier_id']} | {record.get('model', '')} | {record.get('algorithm', '')} "
             f"| {record.get('mode', '')} | {record.get('backend', '')} | {record.get('cards', '')} "
-            f"| {record.get('max_context') or '—'} | {record.get('peak_memory_gib') or '—'} "
+            f"| {context_cell} | {record.get('max_context_kind') or '—'} "
+            f"| {record.get('peak_memory_gib') or '—'} "
             f"| {record['status']} | {record.get('failure_class') or '—'} | {record.get('note', '')} |"
         )
     markdown.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -456,7 +699,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--run-root", required=True, help="First-attempt run root.")
     parser.add_argument("--rerun-root", default=None, help="Second-attempt run root (for A4).")
     parser.add_argument("--out", required=True, help="Output directory for ledger.jsonl/.md")
-    parser.add_argument("--context-length", type=int, default=None, help="Tested context length.")
+    parser.add_argument(
+        "--context-length",
+        type=int,
+        default=None,
+        help=(
+            "Tested context length (the length THIS run was launched with). "
+            "Omitted ⇒ 台账不写 max_context（None，fail-closed：宁缺不猜；"
+            "通过档写 max_context_kind=实测通过，真 OOM 档写 =真 OOM 边界候选）。"
+        ),
+    )
     parser.add_argument("--date", default="", help="Ledger date (YYYY-MM-DD).")
     return parser
 
