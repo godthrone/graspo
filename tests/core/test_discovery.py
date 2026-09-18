@@ -121,9 +121,34 @@ def test_discover_adapters_keys_does_not_import_torch():
     """获取 adapters 的 keys 不触发 torch 导入（验证 lazy-loading）。
 
     使用子进程确保干净环境，避免当前进程已导入 torch 的干扰。
+
+    **子进程内必须先装"命名空间包垫片"**（与 ``tests/conftest.py`` 同一技法）：
+    ``import graspo.core.discovery`` 会执行 ``graspo/__init__.py`` 与
+    ``graspo/core/__init__.py``，二者都 ``from graspo.core.schema import ...``，
+    而 ``schema`` 在类定义期构造 ``RewardConfig()`` → 拉 ``graspo.ripple`` →
+    ``import torch``。那条链与"adapters 的 keys 是否 lazy"**无关**，却让本用例的
+    前置断言 ``torch not in sys.modules`` 永远无法成立。垫片把 ``graspo`` 与
+    ``graspo.core`` 注册为命名空间包（``__path__`` 指向真实目录、不执行其
+    ``__init__``），于是本用例测的正是它自称要测的属性：**枚举 adapters 的 keys
+    不会导入 adapter 模块（因而不会导入 torch）**。
+
+    被测属性不因此放松：垫片只绕过与本属性无关的包初始化副作用，适配器模块的真实
+    惰性仍在断言范围内。
     """
     code = """
 import sys
+import types
+from pathlib import Path
+
+# 命名空间包垫片：绕过 graspo/graspo.core 的 __init__（它们会拉 torch），
+# 与 tests/conftest.py 的 _install_pure_import_shim 同一技法。
+_src = Path("src").resolve()
+for _name, _rel in (("graspo", "graspo"), ("graspo.core", "graspo/core")):
+    _mod = types.ModuleType(_name)
+    _mod.__path__ = [str(_src / _rel)]
+    _mod.__package__ = _name
+    sys.modules[_name] = _mod
+
 from graspo.core.discovery import _discover
 
 assert "torch" not in sys.modules, "torch already imported before discovery"
