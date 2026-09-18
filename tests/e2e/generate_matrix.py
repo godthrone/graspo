@@ -1143,14 +1143,63 @@ def render_runner() -> str:
 #     个别档模型不在同一根下时，可用 `GRASPO_9B_HOST_DIR` / `GRASPO_27B_HOST_DIR` 单点覆盖。
 #     （上面两者都是环境信息，见 .local/ 本地配置；不写进 tracked 文件，宪法 §16）
 #
-# 数据: ELAM V5 数据根目录挂到 {ELAM_CONTAINER_ROOT}；
-#       每档按 §6 门槛取下限生成训练子集 {ELAM_SUBSET_DIR}/<T###>.jsonl（省资源，不整集跑）。
+# 数据（**挂载目的地由配置反推，不硬编码**）:
+#   每档按 §6 门槛取下限生成训练子集 -> 宿主 <RUN_ROOT>/<T###>/subsets/<T###>.jsonl，
+#   只读挂到**该档配置 data.train_path 的所在目录**；图像根只读挂到**由 train_path
+#   反推出来的同级 images 目录**。两者都从 manifest 的 data.train_path 用 dirname 推出来，
+#   而不是写死的常量（单一真相源，见脚本 1) 段）。
+#
+#   ⚠ 为什么不再用"整棵数据根 + 其下嵌套子集"（实测确证的运行链路缺陷，rc=125）：
+#     旧命令 `-v "$ELAM_HOST:{ELAM_CONTAINER_ROOT}:ro"` +
+#     `-v "$RUN_DIR/subsets:{ELAM_SUBSET_DIR}:ro"` 把子挂载点放在一个**只读**绑定挂载之下，
+#     dockerd 必须在只读文件系统上创建嵌套 mountpoint：
+#     `mkdirat .../subsets: read-only file system` ⇒ `docker run` 返回 **125，一档都起不来**。
+#     现方案让所有挂载目标**彼此互不嵌套**（子集目录与图像目录是兄弟，父目录留在容器
+#     可写层里），从结构上消除"在只读挂载下建 mountpoint"这一步。
+#     该不变量在启动前由 `assert_mount_targets_not_under_readonly` 断言（fail-closed，
+#     给出可操作报错，而不是让 docker 报一个语义模糊的 125）。
+#
 # 模型: 每档配置里的 `model.model_path` 都指向容器内 {MODELS_CONTAINER_ROOT}/<模型目录名>；
 #       runner 从 manifest 读出该路径并把它解析回宿主路径做存在性断言。
 # ⚠️ 数据口径告警: {DATA_INTEGRITY_CAVEAT}
 #
 # 红线：只用 GPU0-5、每次最多 4 卡、GPU6/7 永不触碰。本脚本不自动执行矩阵。
 set -uo pipefail
+
+# ── 挂载结构不变量（fail-closed，纯 argv 分析，不需要 docker）──────────────────
+# 唯一真相源：**任何挂载目标都不得位于另一个只读（ro）挂载目标之下**。
+# 原因（实测确证，rc=125）：父挂载只读时 dockerd 无法在其内部创建嵌套 mountpoint，
+# `mkdirat ...: read-only file system` ⇒ docker 返回 125，容器根本没起来。
+# 本函数把这条"运行链路缺陷"提前变成可操作报错；参数是 `宿主源|容器目标|模式` 三元组。
+#   - 目标规范化为无尾斜杠；
+#   - 只读父目标下的任何挂载都判违规（含相等的情况——同一目标挂两次也是错误）。
+# 允许测试单独 source 进来调用（见 GRASPO_RUNNER_LIB_ONLY）。
+assert_mount_targets_not_under_readonly() {{
+    local -a specs=("$@")
+    local i j src dst mode src2 dst2 mode2
+    for ((i = 0; i < ${{#specs[@]}}; i++)); do
+        IFS='|' read -r src dst mode <<< "${{specs[$i]}}"
+        for ((j = 0; j < ${{#specs[@]}}; j++)); do
+            [ "$i" -eq "$j" ] && continue
+            IFS='|' read -r src2 dst2 mode2 <<< "${{specs[$j]}}"
+            [ "$mode2" = "ro" ] || continue
+            case "${{dst}}/" in
+                "${{dst2}}/"*)
+                    echo "FATAL(runtime-link): 挂载目标 '$dst' 位于只读挂载 '$dst2' 之下 ——" >&2
+                    echo "  dockerd 无法在只读文件系统上创建嵌套 mountpoint，会以 rc=125 失败。" >&2
+                    echo "  修法：让挂载目标彼此互不嵌套（例如把子目录与它的父目录分开挂到同一层的兄弟位置）。" >&2
+                    return 6
+                    ;;
+            esac
+        done
+    done
+    return 0
+}}
+
+# 测试用的库模式：只定义上面的断言函数，不执行主流程（不读 manifest、不起容器）。
+if [ "${{GRASPO_RUNNER_LIB_ONLY:-0}}" = "1" ]; then
+    return 0 2>/dev/null || exit 0
+fi
 
 TIER="${{1:?usage: run_matrix54.sh <T###> [--dry-run]}}"
 MODE="${{2:-run}}"
@@ -1274,10 +1323,46 @@ if [ ! -d "$MODEL_HOST_DIR" ]; then
     exit 4
 fi
 
+# 1) **由配置自身反推挂载目的地**（单一真相源，不硬编码目的地）：
+#    相对媒体路径的锚点口径（native 与 ms-swift **共用同一条**）是"训练 JSONL 的父目录"
+#    （native: flow/trainer/sft_trainer.py 的 Path(train_path).parent；
+#      ms-swift: flow/msswift/dataset.py. 两处说的是同一件事，本脚本只认这一条）。
+#    ELAM V5 的样本把图像写作 `../images/<file>.jpg` ⇒ 容器内必须让
+#    `dirname(train_path)/../images` 可达。因此：
+#      TRAIN_PATH_DIR_CONTAINER = dirname(train_path)          ← 子集的宿主目录挂到这里
+#      IMAGE_DIR_CONTAINER      = dirname(dirname(train_path))/images  ← 图像根挂到这里
+#    布局若变（如 train_path 移到 <根>/data/v2/xxx.jsonl），这两处**自动跟随**，
+#    不需要改本脚本——这就是"不再断裂"的原因；另有容器内媒体预检兜底（见 4) 段）。
+TRAIN_PATH="$TRAINPATH"
+TRAIN_PATH_DIR_CONTAINER="$(dirname "$TRAIN_PATH")"
+IMAGE_DIR_CONTAINER="$(dirname "$TRAIN_PATH_DIR_CONTAINER")/images"
+if [ "$TRAIN_PATH" != "$TRAIN_PATH_DIR_CONTAINER/$TIER.jsonl" ]; then
+    echo "FATAL(runtime-link): 数据子集路径与配置不一致 ——" >&2
+    echo "  配置 data.train_path=$TRAIN_PATH，但本档生成的子集文件名是 $TIER.jsonl" >&2
+    echo "  （runner 只生成 <RUN_ROOT>/$TIER/subsets/$TIER.jsonl）。" >&2
+    echo "  ⚠ 这是**运行链路错误**：容器里打开的数据文件与实际产物不是同一个。" >&2
+    exit 3
+fi
+
+# 1b) **媒体锚点可达性（宿主侧，fail-closed）**：图像根缺失时立刻拒绝启动。
+#     若不拦，训练会以 FileNotFoundError / PIL.UnidentifiedImageError 退出，
+#     被 collect_results.py 的日志分类器记成「数据问题」，真因（运行链路缺图像根）被掩盖。
+#     ⚠ 不用符号链接兜底：符号链接在容器内指向宿主路径，必然断开（r3 实测踩过）。
+if [ ! -d "$ELAM_HOST/images" ]; then
+    echo "FATAL(runtime-link): 媒体锚点不可达 —— 宿主图像根不存在：$ELAM_HOST/images" >&2
+    echo "  锚点口径：相对媒体路径相对训练 JSONL 的父目录解析 ⇒ 容器内需要" >&2
+    echo "  <dirname(train_path)>/../images = $IMAGE_DIR_CONTAINER" >&2
+    echo "  宿主来源：$ELAM_HOST/images（环境变量 {ELAM_HOST_ROOT_ENV}）。" >&2
+    echo "  ⚠ 这是**运行链路错误**，不是数据问题；补齐图像根后再跑。" >&2
+    exit 3
+fi
+
 if [ "$MODE" = "--dry-run" ]; then
     echo "[dry-run] $TIER gpus=$GPUS nproc=$NPROC status=$TIER_STATUS image=$IMAGE"
     echo "[dry-run] config=$CONFIG train_subset=$SUBSET 条 -> $TRAINPATH"
     echo "[dry-run] models=$MODELS_ROOT:$MODEL_DIR_NAME -> {MODELS_CONTAINER_ROOT}（只读）"
+    echo "[dry-run] subsets=$RUN_ROOT/$TIER/subsets -> $TRAIN_PATH_DIR_CONTAINER（只读）"
+    echo "[dry-run] images=$ELAM_HOST/images -> $IMAGE_DIR_CONTAINER（只读；媒体锚点）"
     exit 0
 fi
 
@@ -1296,36 +1381,166 @@ if [ "$LINES" -lt "$SUBSET" ]; then
     exit 3
 fi
 
-# 4) 容器内入口：先做空闲断言（F-10）+ 起可信采样（只采实测可见卡），再 torchrun 训练。
+# 4) 容器内媒体预检脚本（写在运行目录里，经 /out 只读进容器；训练前先跑）。
+#    它是**断言**不是第二套解析器：只验证"训练器将要打开的绝对路径确实存在"。
+#    锚点口径与两个后端共用同一条：训练 JSONL 的父目录。
+cat > "$RUN_DIR/preflight_media.py" <<'PY'
+#!/usr/bin/env python3
+# 媒体锚点可达性前置断言（容器内，训练之前；只读、不改写任何路径）。
+#
+# 锚点口径（全项目单一真相源，native 与 ms-swift 共用同一条）：
+#     训练 JSONL 里的相对媒体路径，相对于该 JSONL 文件所在目录解析。
+# 本脚本验证"训练器将要打开的绝对路径在容器内确实存在"，因此布局漂移会在训练
+# 启动前以可操作报错 fail-closed；否则 ms-swift / native 会在数据准备阶段抛
+# FileNotFoundError / PIL.UnidentifiedImageError，被日志分类器记成「数据问题」，
+# 把运行链路缺口的真因掩盖掉。
+
+import json
+import os
+import sys
+
+MEDIA_KEYS = ("image", "path", "url", "video")
+MEDIA_TYPES = ("image", "image_url", "video", "video_url")
+MAX_EXAMPLES = 5
+
+
+def is_relative(value):
+    return not value.startswith(("http://", "https://", "/", "data:"))
+
+
+def iter_media_paths(raw):
+    # 产出该样本里的媒体路径（读的是训练侧同一个字段：messages[*].content[*]）。
+    messages = raw.get("messages")
+    if not isinstance(messages, list):
+        return
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            if str(block.get("type") or "").lower() not in MEDIA_TYPES:
+                continue
+            for key in MEDIA_KEYS:
+                value = block.get(key)
+                if isinstance(value, str):
+                    yield value
+
+
+def main():
+    train_path = sys.argv[1]
+    if not os.path.isabs(train_path):
+        train_path = os.path.join(os.getcwd(), train_path)
+    anchor = os.path.dirname(train_path)
+    checked = 0
+    blocks_found = 0
+    missing = []
+    shape_mismatch = 0
+    with open(train_path, "r", encoding="utf-8") as handle:
+        for line_no, line in enumerate(handle, start=1):
+            if not line.strip():
+                continue
+            try:
+                raw = json.loads(line)
+            except ValueError as exc:
+                print("[preflight] FATAL(runtime-link): %s:%d 不是合法 JSON: %s" % (train_path, line_no, exc))
+                return 3
+            if not isinstance(raw, dict):
+                continue
+            found_here = 0
+            for value in iter_media_paths(raw):
+                found_here += 1
+                if not is_relative(value):
+                    # 绝对路径 / http(s) / data: 不属本预检范围（训练侧同样跳过）。
+                    continue
+                checked += 1
+                resolved = os.path.join(anchor, value)
+                if not os.path.exists(resolved):
+                    if len(missing) < MAX_EXAMPLES:
+                        missing.append("%s:%d -> %s" % (train_path, line_no, resolved))
+            blocks_found += found_here
+            if found_here == 0 and '"image"' in line:
+                # 文本里出现 image 字段却按契约解析不到任何媒体块 ⇒ 形状变了。
+                # 不做静默放行：预检若"什么都没查"就等于没有防线。
+                shape_mismatch += 1
+    if missing:
+        print("[preflight] FATAL(runtime-link): 媒体锚点不可达 —— 相对媒体路径解析后不存在。")
+        print("[preflight]   锚点口径：相对路径相对训练 JSONL 的父目录解析；anchor=%s" % anchor)
+        print("[preflight]   共检查 %d 条相对媒体路径，缺失示例：" % checked)
+        for item in missing:
+            print("[preflight]     %s" % item)
+        print("[preflight]   这是运行链路错误（挂载/布局），不是数据问题。")
+        print("[preflight]   修法：确认图像根被挂到 dirname(dirname(train_path))/images。")
+        return 3
+    if shape_mismatch:
+        print("[preflight] FATAL(runtime-link): 预检解析器与数据形状不一致 ——")
+        print("[preflight]   %d 行含 'image' 字段，但按 messages[*].content[*] 契约解析不到任何媒体块。" % shape_mismatch)
+        print("[preflight]   不做静默放行（否则预检形同虚设）：请同步本脚本与数据契约。")
+        return 3
+    print("[preflight] media anchor OK: %d 条相对媒体路径在 %s 下全部可达" % (checked, anchor))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+PY
+
 PORT=$(( 29500 + RANDOM % 400 ))
 cat > "$RUN_DIR/entry.sh" <<ENTRY
 set -o pipefail
+"$CONTAINER_PY" /out/preflight_media.py "$TRAIN_PATH" || exit 3
 "$CONTAINER_PY" -m graspo record-gpu-memory --idle-only || exit 1
 "$CONTAINER_PY" -m graspo record-gpu-memory --output-dir /out/gpu --tag "$TIER" --interval-sec 2 &
 SAMPLER=\\$!
 torchrun --standalone --nproc_per_node="$NPROC" --master_port="$PORT" \\
   -m graspo.cli.train_worker --config "/workspace/graspo/$CONFIG" > /out/stdout.log 2>&1
 RC=\\$?
+# 产物放开读权限（**必须**）：容器内训练以 root 运行 ⇒ ms-swift/HF 默认落 root:0600，
+# 宿主侧的 collect_results.py（普通用户）**打不开** checkpoint 权重 ⇒ A2/A3 读不到证据
+# （228 实测踩过：A3 一度被记成"checkpoint 无法重新加载"，属方向性错误）。
+# 产物必须可被宿主侧的收集/复现链路读取（§6）；chmod 只改元数据、不碰内容。
+chmod -R a+rX /out 2>/dev/null || echo "WARN: chmod -R a+rX /out failed — 宿主侧可能读不到产物" >&2
 kill "\\$SAMPLER" 2>/dev/null || true
 wait "\\$SAMPLER" 2>/dev/null || true
 exit "\\$RC"
 ENTRY
 
+# 5) **挂载表（唯一真相源）**：三个数据/代码/模型来源 + 运行目录。
+#    目的地全部互不嵌套：子集目录与图像目录是兄弟，它们的父目录留在容器可写层里，
+#    因此不存在"在只读绑定挂载之下创建 mountpoint"这一步（旧方案 rc=125 的根因）。
+#    图像根的目的地由 train_path 反推（1) 段）——与锚点口径同源，布局变化自动跟随。
+MOUNT_SPECS=(
+    "$ROOT_DIR|/workspace/graspo|ro"
+    "$MODELS_ROOT|{MODELS_CONTAINER_ROOT}|ro"
+    "$ELAM_HOST/images|$IMAGE_DIR_CONTAINER|ro"
+    "$RUN_DIR/subsets|$TRAIN_PATH_DIR_CONTAINER|ro"
+    "$RUN_DIR|/out|rw"
+    "$RUN_DIR/entry.sh|/entry.sh|ro"
+)
+assert_mount_targets_not_under_readonly "${{MOUNT_SPECS[@]}}" || exit 6
+
 # 锁卡采用**单一路径**：宿主侧先由 gpu_lock_guard 断言，容器只认
 # NVIDIA_VISIBLE_DEVICES（与容器内 train_worker 的守卫同源）。
 # 不同时用 `--gpus`——两者可能互相覆盖，语义有歧义。
-docker run --rm --runtime=nvidia \\
-    -e NVIDIA_VISIBLE_DEVICES="$GPUS" \\
-    -e PYTHONPATH=/workspace/graspo/src \\
-    -e HF_HUB_OFFLINE=1 -e TOKENIZERS_PARALLELISM=false \\
-    -v "$ROOT_DIR:/workspace/graspo:ro" \\
-    -v "$MODELS_ROOT:{MODELS_CONTAINER_ROOT}:ro" \\
-    -v "$ELAM_HOST:{ELAM_CONTAINER_ROOT}:ro" \\
-    -v "$RUN_DIR/subsets:{ELAM_SUBSET_DIR}:ro" \\
-    -v "$RUN_DIR:/out" \\
-    -v "$RUN_DIR/entry.sh:/entry.sh:ro" \\
-    -w /workspace/graspo \\
-    "$IMAGE" bash /entry.sh
+DOCKER_ARGS=(
+    --rm --runtime=nvidia
+    -e "NVIDIA_VISIBLE_DEVICES=$GPUS"
+    -e PYTHONPATH=/workspace/graspo/src
+    -e HF_HUB_OFFLINE=1
+    -e TOKENIZERS_PARALLELISM=false
+)
+for SPEC in "${{MOUNT_SPECS[@]}}"; do
+    IFS='|' read -r SRC DST MODE <<< "$SPEC"
+    if [ "$MODE" = "ro" ]; then
+        DOCKER_ARGS+=(-v "$SRC:$DST:ro")
+    else
+        DOCKER_ARGS+=(-v "$SRC:$DST")
+    fi
+done
+docker run "${{DOCKER_ARGS[@]}}" -w /workspace/graspo "$IMAGE" bash /entry.sh
 echo "$?" > "$RUN_DIR/exit_code"
 exit "$(cat "$RUN_DIR/exit_code")"
 """

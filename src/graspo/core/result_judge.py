@@ -41,6 +41,30 @@ REQUIRED_ARTIFACTS: tuple[str, ...] = (
 #: 正式记录门槛（capability-matrix §6）：≥1 epoch 且 ≥5 optimizer step。
 MIN_OPTIMIZER_STEPS = 5
 
+#: ── A4（同 config 同 seed 双跑一致）的两个容差口径：**由实测推导，不拍脑袋** ──
+#:
+#: **实测依据（唯一真相源，禁止凭感觉改数）**：2026-09-19 T013
+#: （9B · SFT · LoRA · ms-swift · 1 卡 · 100 步 · seq 8192，镜像 graspo-msswift:4.5.3）
+#: 同 config 同 seed 双跑：
+#:
+#:   - **首步（step 1）loss 逐位相同**：``1.3092858791351318`` == ``1.3092858791351318``；
+#:   - 分歧自 step 5 起（``0.49435022`` vs ``0.50010920``），
+#:     **终态 logged loss 差 = 1.0302e-3**（``0.06767760515213013`` vs ``0.06870781779289245``）。
+#:
+#: 该量级的差异来自 **bf16 归约顺序 / GPU 内核选择**——宪法 §6 明文把"GPU 内核选择等
+#: **无法控制**的差异"排除在"复现破坏"之外，故 A4 的终态 loss 容差按此量级推导。
+#:
+#: **为什么首步是零容差、终态才给容差**：首步 loss 只取决于 种子 / 初始化 /
+#: 数据顺序 / 首批样本——全是**可控**因素，任何差异都是真缺陷的指纹；而终态 loss
+#: 已经累积了 100 步的不可控浮点漂移，用零容差会变成必然失败的空断言。
+#: 两条并列，**任何一条不满足都判 A4 不通过**。
+A4_MEASURED_BF16_FINAL_LOSS_DRIFT = 1.0302e-3
+#: 终态 loss 的绝对容差 = 实测量级 ×≈10 的余量。
+#: ⚠️ **余量必须随实测更新**：若今后实测漂移量级上升（更长序列 / 更大模型 / 更多步），
+#: 必须先重测、更新 :data:`A4_MEASURED_BF16_FINAL_LOSS_DRIFT` 并重新推导本常量，
+#: **不得**为了方便让测试变绿而放宽（``tests/core/test_result_judge.py`` 两侧都锁住）。
+A4_FINAL_LOSS_TOLERANCE_ABS = 1e-2
+
 #: 「该字段没有可解释的数值」的 **NaN 哨兵**（``RunEvidence.losses`` 里用它表达
 #: ``loss: null`` / 字段缺失）。为什么用 NaN 而不是 None：判定链是
 #: ``tuple[float, ...]``，NaN 天然让 finite 检查 fail-closed，不需要把类型契约
@@ -62,11 +86,18 @@ NONFINITE_GRAD_MARKER = "非有限梯度"
 
 
 class FailureClass(StrEnum):
-    """失败分类。前 7 个是规定的分类；``UNCLASSIFIED`` 是安全兜底。
+    """失败分类。前 7 个是规定的分类；``UNCLASSIFIED`` 与 ``EVIDENCE_GAP`` 是安全兜底。
 
     兜底存在的理由：把"分类不出来"硬塞进 7 类中的某一类，可能把框架 bug
-    误标成配置非法或数值异常，从而在修复前被当成结论。``UNCLASSIFIED``
+    误标成配置非法或数值异常，从而在修复前被当成结论。两个兜底都
     永远不计入最大可行上下文，必须人工判定。
+
+    ``EVIDENCE_GAP`` 与 ``UNCLASSIFIED`` 的分工（本轮新增，见 :func:`judge_tier`）：
+
+    - ``EVIDENCE_GAP``：**判据一条都没被证据否定**，只是证据读不到 ⇒ 台账状态是
+      "⚠ 不可判定（取证缺口）"。这不是训练的失败，而是**判定器/采集侧的缺口**；
+      把它记成「❌ 失败」等于把 collector 的缺陷记成训练失败（F-D 实测踩过）。
+    - ``UNCLASSIFIED``：确实有证据说明某条判据不成立，但归不进前 7 类。
     """
 
     REAL_OOM = "真 OOM"
@@ -76,6 +107,7 @@ class FailureClass(StrEnum):
     COMM_HARDWARE = "通信硬件"
     NUMERIC_ANOMALY = "数值异常"
     TIMEOUT = "超时"
+    EVIDENCE_GAP = "取证不足（不可判定）"
     UNCLASSIFIED = "未分类（需人工判定）"
 
 
@@ -184,11 +216,22 @@ _LOG_PATTERNS: tuple[tuple[FailureClass, tuple[re.Pattern[str], ...]], ...] = (
 
 @dataclass(frozen=True, slots=True)
 class CriterionResult:
-    """单条判据的结果。"""
+    """单条判据的结果。
+
+    ``evidence_missing`` 区分两种"不通过"（F-D 实测缺陷的收口）：
+
+    - ``False``（默认）：**证据证明判据不成立**（如 exit≠0、真读到 NaN、权重未变化）
+      ⇒ 这是关于这次训练的**事实断言**，台账记「❌ 失败」；
+    - ``True``：**证据读不到**（collector 定位不到产物 / 缺 checkpoint / 缺序列）
+      ⇒ 我们**没有**否定这次训练，台账记「⚠ 不可判定（取证缺口）」。
+
+    两者都 ``passed=False``（fail-closed 方向不变：读不到绝不当成通过）。
+    """
 
     criterion: str
     passed: bool
     detail: str
+    evidence_missing: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,6 +265,24 @@ class RunEvidence:
     #: loss 字段**无值**（``loss: null`` / 缺失）⇒ 证据缺口，判"未分类"而非
     #: "数值异常"。断言后者是假陈述（我们根本没读到数），会把排查引向数值问题。
     losses_unavailable: bool | None = None
+    #: 本次运行**计划**跑完的 optimizer step 数（ms-swift ``logging.jsonl`` 的
+    #: ``global_step/max_steps`` 分母；native 侧无此读数 ⇒ ``None``）。
+    #: A2 用它做"训练步真推进"的后端无关断言：实际步数必须达到计划步数。
+    steps_declared_total: int | None = None
+    #: collector 是否**定位到了产物根**。用于 A5：产物根找不到 ⇒ 判据是取证缺口；
+    #: 产物根找到了但四件套不齐 ⇒ 那是"产物没落盘"这个事实，判失败。
+    output_located: bool = True
+    #: ``losses[0]`` 对应的**训练步号**（来自 trainer_state/logging 的 ``log_history[*].step``；
+    #: rank_metrics 旁路的第一行即 step 1）。A4 的**零容差子检查**只在能确认
+    #: "两端都确实是首步"时生效（``== 1``）——拿不到就如实声明"未适用"，不假装做过。
+    first_logged_step: int | None = None
+
+
+#: 台账状态（唯一真相源）。三态而非两态的理由见 :class:`FailureClass` 的
+#: ``EVIDENCE_GAP`` 条目与 :func:`judge_tier`：取证缺口既不是通过，也不是训练失败。
+LEDGER_PASS = "✅ 通过"
+LEDGER_FAIL = "❌ 失败"
+LEDGER_INDETERMINATE = "⚠ 不可判定（取证缺口）"
 
 
 @dataclass(frozen=True, slots=True)
@@ -236,8 +297,18 @@ class TierJudgement:
     note: str
 
     @property
+    def indeterminate(self) -> bool:
+        """未通过是否**完全**由取证缺口造成（没有任何判据被证据否定）。"""
+        failing = [item for item in self.criteria if not item.passed]
+        return bool(failing) and all(item.evidence_missing for item in failing)
+
+    @property
     def ledger_status(self) -> str:
-        return "✅ 通过" if self.passed else "❌ 失败"
+        if self.passed:
+            return LEDGER_PASS
+        if self.indeterminate:
+            return LEDGER_INDETERMINATE
+        return LEDGER_FAIL
 
     def criterion(self, name: str) -> CriterionResult:
         for result in self.criteria:
@@ -254,7 +325,9 @@ def judge_a1(evidence: RunEvidence) -> CriterionResult:
     if evidence.timed_out:
         return CriterionResult("A1", False, "运行超时（timeout），非正常退出")
     if evidence.exit_code is None:
-        return CriterionResult("A1", False, "缺少 exit_code 证据（fail-closed）")
+        return CriterionResult(
+            "A1", False, "缺少 exit_code 证据（fail-closed）", evidence_missing=True
+        )
     if evidence.exit_code != 0:
         return CriterionResult("A1", False, f"exit={evidence.exit_code} != 0")
     return CriterionResult("A1", True, "exit=0")
@@ -270,6 +343,11 @@ def judge_a2(evidence: RunEvidence) -> CriterionResult:
       "权重已变化"。
     - **逐步断言**：``optimizer_steps_per_step`` 中任一步 ``<= 0`` 即不通过——
       "每个训练步都必须真的推进了优化器"。
+    - **计划步数断言**（ms-swift 侧的等价证据）：``steps_declared_total`` 可用时，
+      实际 ``optimizer_steps`` 必须**达到**计划步数。ms-swift 不产 ``rank_metrics``
+      逐步旁路（实测 ``series_source: none``），但它自己的 ``logging.jsonl`` 逐步记
+      ``global_step/max_steps``；实际步数 < 计划步数即证明有步没推进。**判据语义与
+      native 的逐步断言一致，不是为后端放松**（native 无此读数时该断言自然跳过）。
     - 步数：``optimizer_steps >= MIN_OPTIMIZER_STEPS``（§6 正式门槛）；
     - LoRA：至少一个 ``lora_b`` 权重非零（LoRA B 初始为 0，非零即证明被更新）；
     - 全参：终态权重与基座权重不同（由抽取层给出 ``weight_changed``）。
@@ -299,7 +377,20 @@ def judge_a2(evidence: RunEvidence) -> CriterionResult:
                 "梯度被跳过 ⇒ 该步权重冻结）",
             )
     if evidence.optimizer_steps is None:
-        return CriterionResult("A2", False, "缺少 optimizer step 证据（fail-closed）")
+        return CriterionResult(
+            "A2", False, "缺少 optimizer step 证据（fail-closed）", evidence_missing=True
+        )
+    if (
+        evidence.steps_declared_total is not None
+        and evidence.optimizer_steps < evidence.steps_declared_total
+    ):
+        return CriterionResult(
+            "A2",
+            False,
+            f"训练未真推进：计划 {evidence.steps_declared_total} 个 optimizer step，"
+            f"实际只推进了 {evidence.optimizer_steps} 个（训练器自报的 "
+            "global_step/max_steps 未跑到分母）",
+        )
     if evidence.optimizer_steps < MIN_OPTIMIZER_STEPS:
         return CriterionResult(
             "A2",
@@ -308,35 +399,63 @@ def judge_a2(evidence: RunEvidence) -> CriterionResult:
         )
     if evidence.weight_changed is None:
         return CriterionResult(
-            "A2", False, f"缺少权重变化证据（tuner_type={evidence.tuner_type}，fail-closed）"
+            "A2",
+            False,
+            f"缺少权重变化证据（tuner_type={evidence.tuner_type}，fail-closed）",
+            evidence_missing=True,
         )
     if not evidence.weight_changed:
         mode = "LoRA（lora_b 全零）" if evidence.tuner_type == "lora" else "全参（与基座一致）"
         return CriterionResult("A2", False, f"权重未变化：{mode}")
+    plan = (
+        f"，计划 {evidence.steps_declared_total}"
+        if evidence.steps_declared_total is not None
+        else ""
+    )
     return CriterionResult(
         "A2",
         True,
-        f"optimizer step={evidence.optimizer_steps}，权重已变化（tuner_type={evidence.tuner_type}）",
+        f"optimizer step={evidence.optimizer_steps}{plan}，权重已变化"
+        f"（tuner_type={evidence.tuner_type}）",
     )
 
 
 def judge_a3(evidence: RunEvidence) -> CriterionResult:
     """A3 checkpoint 可被重新加载。"""
     if evidence.checkpoint_reloadable is None:
-        return CriterionResult("A3", False, "缺少 checkpoint 重载证据（fail-closed）")
+        return CriterionResult(
+            "A3", False, "缺少 checkpoint 重载证据（fail-closed）", evidence_missing=True
+        )
     if not evidence.checkpoint_reloadable:
         return CriterionResult("A3", False, "checkpoint 无法重新加载")
     return CriterionResult("A3", True, "checkpoint 重载成功")
 
 
 def judge_a4(first: RunEvidence, second: RunEvidence | None) -> CriterionResult:
-    """A4 同 config 同 seed 双跑一致。
+    """A4 同 config 同 seed 双跑一致（**两条并列子检查**，见下）。
 
-    一致性口径（§10.1 复现定义）：两跑都成功、optimizer step 相同、最终 loss
-    在相对容差内相同、权重变化结论相同。缺第二跑证据 → 不通过（fail-closed）。
+    一致性口径（§10.1 复现定义 + §6 排除项）：
+
+    - 两跑都成功、``optimizer_steps`` 相同、``weight_changed`` 结论相同；
+    - **子检查①（零容差）**：**首步 loss 必须逐位相同**（``losses[0]`` 在两端
+      ``first_logged_step == 1`` 且 ``==`` 严格相等）。
+      首步 loss 只取决于 种子 / 初始化 / 数据顺序 / 首批样本——全是**可控**因素，
+      因此零容忍：这是"去掉种子""打乱数据顺序""换初始化"这类破坏的**即时指纹**。
+    - **子检查②（实测容差）**：终态 loss 之差 ≤ :data:`A4_FINAL_LOSS_TOLERANCE_ABS`
+      （= :data:`A4_MEASURED_BF16_FINAL_LOSS_DRIFT` 的约 10 倍）。
+      依据：宪法 §6 明文把"GPU 内核选择等**无法控制**的差异"排除在复现破坏之外；
+      bf16 归约顺序正属此类（2026-09-19 T013 实测：首步逐位相同、终态累计 1.0302e-3）。
+      **不得**把这个容差当成"放宽判据"——它由实测推导，且子检查①仍在零容忍地把守
+      可控差异；两者缺一不可（见 ``tests/core/test_result_judge.py`` 的四条守卫用例）。
+
+    **诚实性**：拿不到步号（``first_logged_step is None``）或多步累积后无法确认"首步"时，
+    子检查①**如实声明"未适用"**，不得假装做过（detail 里写明），此时①不参与判定，
+    但②照常生效。缺第二跑/loss 证据 → 不通过（fail-closed）。
     """
     if second is None:
-        return CriterionResult("A4", False, "缺少第二跑证据（fail-closed）")
+        return CriterionResult(
+            "A4", False, "缺少第二跑证据（fail-closed）", evidence_missing=True
+        )
     if first.exit_code != 0 or second.exit_code != 0:
         return CriterionResult(
             "A4", False, f"双跑未都成功（exit={first.exit_code}/{second.exit_code}）"
@@ -352,7 +471,37 @@ def judge_a4(first: RunEvidence, second: RunEvidence | None) -> CriterionResult:
             "A4", False, "权重变化结论不一致（一次变化一次未变化）"
         )
     if not first.losses or not second.losses:
-        return CriterionResult("A4", False, "缺少 loss 序列证据（fail-closed）")
+        return CriterionResult(
+            "A4", False, "缺少 loss 序列证据（fail-closed）", evidence_missing=True
+        )
+
+    # ── 子检查①（零容差）：首步 loss 逐位相同 ────────────────────────────────
+    first_step_checked = False
+    if first.first_logged_step == 1 and second.first_logged_step == 1:
+        first_initial = first.losses[0]
+        second_initial = second.losses[0]
+        if not isinstance(first_initial, float) or not isinstance(second_initial, float):
+            return CriterionResult(
+                "A4",
+                False,
+                "首步 loss 无读数（loss 字段缺失），零容差子检查无法进行（fail-closed）",
+            )
+        first_step_checked = True
+        if first_initial != second_initial:
+            return CriterionResult(
+                "A4",
+                False,
+                f"首步 loss 不一致（零容差子检查）：{first_initial!r} vs {second_initial!r} "
+                "—— 首步只取决于 种子/初始化/数据顺序/首批样本，全是**可控**因素 ⇒ "
+                "这是可复现性被破坏的指纹（§10.1），不是 §6 排除的 GPU 内核差异",
+            )
+    step_note = (
+        "首步 loss 逐位相同；"
+        if first_step_checked
+        else "首步零容差子检查未适用（拿不到步号或首步无读数）；"
+    )
+
+    # ── 子检查②（实测容差）：终态 loss ──────────────────────────────────────
     first_loss = first.losses[-1]
     second_loss = second.losses[-1]
     if not isinstance(first_loss, float) or not isinstance(second_loss, float):
@@ -361,21 +510,37 @@ def judge_a4(first: RunEvidence, second: RunEvidence | None) -> CriterionResult:
         return CriterionResult(
             "A4", False, "末步 loss 无读数（loss 字段缺失），无法做双跑一致性比较（fail-closed）"
         )
-    tolerance = 1e-3 * max(1.0, abs(first_loss))
-    if abs(first_loss - second_loss) > tolerance:
+    delta = abs(first_loss - second_loss)
+    if delta > A4_FINAL_LOSS_TOLERANCE_ABS:
         return CriterionResult(
             "A4",
             False,
-            f"最终 loss 不一致：{first_loss:.6g} vs {second_loss:.6g}（容差 {tolerance:.3g}）",
+            f"最终 loss 不一致：{first_loss:.6g} vs {second_loss:.6g}"
+            f"（差 {delta:.3g} > 容差 {A4_FINAL_LOSS_TOLERANCE_ABS:.3g}；"
+            f"该容差按实测 bf16 漂移 {A4_MEASURED_BF16_FINAL_LOSS_DRIFT:.3g} 推导）",
         )
-    return CriterionResult("A4", True, f"双跑一致（final loss {first_loss:.6g}）")
+    return CriterionResult(
+        "A4",
+        True,
+        f"双跑一致：{step_note}final loss {first_loss:.6g} vs {second_loss:.6g}"
+        f"（差 {delta:.3g} ≤ 容差 {A4_FINAL_LOSS_TOLERANCE_ABS:.3g}）",
+    )
 
 
 def judge_a5(evidence: RunEvidence) -> CriterionResult:
-    """A5 四件套产物落盘。"""
+    """A5 四件套产物落盘。
+
+    取证缺口的边界：**产物根都没定位到** ⇒ 判据是取证缺口（我们没找到该去哪里看，
+    这是 collector 的缺口）；产物根找到了但四件套不齐 ⇒ 那是"产物没落盘"这个事实，
+    判**失败**。两者都 ``passed=False``（fail-closed 不变）。
+    """
     missing = [name for name in REQUIRED_ARTIFACTS if not evidence.artifacts_present.get(name)]
     if missing:
-        return CriterionResult("A5", False, f"缺少产物：{', '.join(missing)}")
+        detail = f"缺少产物：{', '.join(missing)}"
+        if not evidence.output_located:
+            detail += "（且未定位到任何产物根 ⇒ 取证缺口，不得记为训练失败）"
+            return CriterionResult("A5", False, detail, evidence_missing=True)
+        return CriterionResult("A5", False, detail)
     return CriterionResult("A5", True, f"四件套齐全：{', '.join(REQUIRED_ARTIFACTS)}")
 
 
@@ -396,9 +561,13 @@ def judge_a6(evidence: RunEvidence) -> CriterionResult:
     三种情形一律**不通过、不计入最大可行上下文**（fail-closed 不变）。
     """
     if not evidence.losses:
-        return CriterionResult("A6", False, "缺少 loss 序列证据（fail-closed）")
+        return CriterionResult(
+            "A6", False, "缺少 loss 序列证据（fail-closed）", evidence_missing=True
+        )
     if not evidence.grad_norms:
-        return CriterionResult("A6", False, "缺少 grad_norm 序列证据（fail-closed）")
+        return CriterionResult(
+            "A6", False, "缺少 grad_norm 序列证据（fail-closed）", evidence_missing=True
+        )
 
     # ① 真读到非有限值。类型上必须是 float：MISSING_SENTINEL 是 str，会被这个
     #    isinstance 挡住，不会污染"数值异常"这个事实断言。
@@ -423,7 +592,7 @@ def judge_a6(evidence: RunEvidence) -> CriterionResult:
     if evidence.losses_unavailable or any(
         value is NAN_SENTINEL or value is MISSING_SENTINEL for value in evidence.losses
     ):
-        return CriterionResult("A6", False, NUMERIC_INDETERMINATE_DETAIL)
+        return CriterionResult("A6", False, NUMERIC_INDETERMINATE_DETAIL, evidence_missing=True)
     initial = evidence.losses[0]
     final = evidence.losses[-1]
     if final > initial:
@@ -599,20 +768,34 @@ def judge_tier(
     failure_class: FailureClass | None = None
     note = ""
     if not passed:
-        failure_class = classify_failure(first, a6)
-        if failure_class is None:
-            failure_class = FailureClass.UNCLASSIFIED
-        failed_names = ", ".join(result.criterion for result in criteria if not result.passed)
-        note = f"未过判据：{failed_names}；失败类型：{failure_class}"
-        if not counts_toward_max_context(failure_class):
-            note += "（不计入最大可行上下文，修复后重测）"
-        else:
-            note += (
-                f"（真 OOM：当前上下文 {context_length} 可作为该档最大可行上下文的候选，"
-                "需按递增加长法确认边界）"
-                if context_length is not None
-                else "（真 OOM）"
+        failing = [result for result in criteria if not result.passed]
+        failed_names = ", ".join(result.criterion for result in failing)
+        substantive = classify_failure(first, a6)
+        # 取证缺口 vs 真失败：全部不通过的判据都只因"读不到证据"、且日志里**没有任何**
+        # 实质性失败信号 ⇒ 这是采集侧的缺口，**不得记成训练失败**
+        # （F-D 实测：一次 exit=0、100 步、loss 正常下降的训练被记成「❌ 失败」，
+        #  只因为 collector 读不到 ms-swift 的产物布局）。
+        # 注意方向不变：`passed` 仍然 False（fail-closed，读不到绝不当成通过）。
+        # 也注意优先级不变：日志里的硬失败信号（OOM / 非有限梯度 / 数据问题…）
+        # 是**来自这次运行本身**的证据，优先级高于"采集侧读不到"。
+        if failing and all(result.evidence_missing for result in failing) and substantive is None:
+            failure_class = FailureClass.EVIDENCE_GAP
+            note = (
+                f"未过判据：{failed_names}；**取证不足/不可判定**（判定器读不到证据，"
+                "不是训练失败）；修复采集后复评"
             )
+        else:
+            failure_class = substantive if substantive is not None else FailureClass.UNCLASSIFIED
+            note = f"未过判据：{failed_names}；失败类型：{failure_class}"
+            if not counts_toward_max_context(failure_class):
+                note += "（不计入最大可行上下文，修复后重测）"
+            else:
+                note += (
+                    f"（真 OOM：当前上下文 {context_length} 可作为该档最大可行上下文的候选，"
+                    "需按递增加长法确认边界）"
+                    if context_length is not None
+                    else "（真 OOM）"
+                )
 
     return TierJudgement(
         tier_id=first.tier_id,

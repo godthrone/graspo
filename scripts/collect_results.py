@@ -26,7 +26,9 @@ import argparse
 import importlib.util
 import json
 import math
+import os
 import re
+import struct
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -116,8 +118,23 @@ def _match_numeric(match: re.Match[str] | None) -> float | None:
     return _parse_numeric(match.group(1))
 
 
-def find_output_dir(run_dir: Path, tier_id: str) -> Path | None:
-    """定位训练输出目录：优先约定路径，其次任何含 config.yaml 的子目录。"""
+def find_output_dirs(run_dir: Path, tier_id: str) -> list[Path]:
+    """定位本次运行的全部**产物根**（两种后端布局都查，与 backend 声明无关）。
+
+    为什么按"布局"而不是按"后端"分支：判据语义必须与后端无关，变的只是证据落点。
+    把两种布局都作为候选一起查，后端标签就不再参与取证——少一处"因后端不同而放松"的入口。
+
+    已知布局（各自显式、可验证）：
+
+    - **native**：输出目录含 ``config.yaml``（``_backup_config`` 的唯一落点）；
+    - **ms-swift**：run 目录含 ``logging.jsonl`` **且** 含 ``args.json``
+      （ms-swift 4.5.3 实测：``<output_dir>/<run_name>/v<N>-<时间戳>/`` 下同时有这两个文件）。
+      末行 ``logging.jsonl`` 是 HF ``trainer_state`` 的等价物（含 ``global_step`` /
+      ``log_history`` / ``epoch``），因此序列抽取可以复用同一条代码路径。
+
+    抽不到任何产物根时返回 ``[]``（调用方据此把缺失判成**取证缺口**，而不是训练失败）。
+    """
+    found: list[Path] = []
     candidates = [
         run_dir / "outputs" / tier_id,
         run_dir / "out" / tier_id,
@@ -126,10 +143,22 @@ def find_output_dir(run_dir: Path, tier_id: str) -> Path | None:
     ]
     for candidate in candidates:
         if candidate.is_dir() and (candidate / "config.yaml").exists():
-            return candidate
+            found.append(candidate)
     for child in sorted(run_dir.rglob("config.yaml")):
-        return child.parent
-    return None
+        if child.parent not in found:
+            found.append(child.parent)
+        break
+    for log_path in sorted(run_dir.rglob("logging.jsonl")):
+        swift_dir = log_path.parent
+        if (swift_dir / "args.json").exists() and swift_dir not in found:
+            found.append(swift_dir)
+    return found
+
+
+def find_output_dir(run_dir: Path, tier_id: str) -> Path | None:
+    """兼容入口：返回第一个产物根（新代码请用 :func:`find_output_dirs`）。"""
+    dirs = find_output_dirs(run_dir, tier_id)
+    return dirs[0] if dirs else None
 
 
 # ── 证据抽取 ────────────────────────────────────────────────────────────────
@@ -149,6 +178,15 @@ class SeriesEvidence:
     grad_norms: list[float] = field(default_factory=list)
     #: 每步全局 optimizer step 数（rank_metrics 旁路 ``global_optimizer_steps_sum``）。
     optimizer_steps_per_step: list[int] = field(default_factory=list)
+    #: **本次运行计划跑完的 optimizer step 数**（ms-swift ``logging.jsonl`` 的
+    #: ``global_step/max_steps`` 分母；native 侧无此读数 ⇒ ``None``）。
+    #: 用途：A2 的「训练步真推进」在 ms-swift 上的等价证据 —— 实际 step 数必须
+    #: 达到计划数，否则说明有步没推进（等价于 native 的逐步 optimizer_steps>0 断言）。
+    declared_total_steps: int | None = None
+    #: ``losses[0]`` 对应的**训练步号**（A4 的零容差首步子检查用它确认"确实是首步"）。
+    #: 来源：``log_history[*].step``；rank_metrics 旁路的第一行即 step 1；
+    #: stdout 兜底拿不到 ⇒ ``None``（此时 A4 如实声明该子检查"未适用"）。
+    first_logged_step: int | None = None
     #: 累计因非有限梯度跳过优化器步的次数（``skipped_nonfinite``，跨步求和）。
     nonfinite_skips: int = 0
     source: str = "none"
@@ -198,6 +236,105 @@ def _rank_metric_steps(output_dir: Path | None) -> list[dict[str, Any]]:
     return rows
 
 
+_GLOBAL_STEP_SLASH = re.compile(r"(\d+)\s*/\s*(\d+)")
+
+
+def _msswift_state_from_logging(swift_dir: Path) -> dict[str, Any] | None:
+    """把 ms-swift 的 ``logging.jsonl`` 归一成 **HF ``trainer_state`` 同形**的 dict。
+
+    为什么这样做（§1.4 单一真相源 + 判据语义不因后端而变）：ms-swift 4.5.3 实测的
+    ``logging.jsonl`` 末行就是 trainer_state 的等价物 —— 含 ``global_step``、
+    ``log_history``（逐步 ``loss`` / ``grad_norm`` / ``step``）、``epoch``、
+    ``model_parameter_info``、``last_model_checkpoint``。把**形状**归一之后，
+    A2/A4/A6 读的是同一段代码、同一套语义，只是数据来源不同（``source`` 字段自证）。
+
+    返回 ``None`` 表示该目录没有可用的 ``logging.jsonl``（不是"训练失败"）。
+    """
+    log_path = swift_dir / "logging.jsonl"
+    if not log_path.is_file():
+        return None
+    entries: list[dict[str, Any]] = []
+    for line in _read_text(log_path).splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            entries.append(payload)
+    if not entries:
+        return None
+
+    state: dict[str, Any] = {}
+    final = entries[-1]
+    if isinstance(final.get("global_step"), int):
+        state["global_step"] = final["global_step"]
+    if isinstance(final.get("epoch"), (int, float)):
+        state["epoch"] = float(final["epoch"])
+    history = final.get("log_history")
+    if not isinstance(history, list) or not history:
+        # 没有 log_history（例如被截断/旧版本）时，用逐行 loss/grad_norm 自建同形历史。
+        history = [
+            {"loss": entry.get("loss"), "grad_norm": entry.get("grad_norm")}
+            for entry in entries
+            if isinstance(entry.get("loss"), (int, float))
+            or isinstance(entry.get("grad_norm"), (int, float))
+        ]
+    state["log_history"] = history
+
+    # ``global_step/max_steps`` 是"计划跑多少步"的唯一读数（A2 的等价证据）。
+    for entry in reversed(entries):
+        raw = entry.get("global_step/max_steps")
+        if isinstance(raw, str):
+            match = _GLOBAL_STEP_SLASH.search(raw)
+            if match is not None:
+                if "global_step" not in state:
+                    state["global_step"] = int(match.group(1))
+                state["max_steps"] = int(match.group(2))
+                break
+    return state
+
+
+def _trainer_state_candidates(output_dirs: Sequence[Path]) -> list[tuple[str, dict[str, Any]]]:
+    """列出全部 trainer_state 等价物，``(source_name, state)``。
+
+    - ``trainer_state.json``：native 与 ms-swift（HF Trainer 在每个 checkpoint 里都写）
+      共用同一文件名与结构 ⇒ 一条读取路径覆盖两者；
+    - ``logging.jsonl``：ms-swift 的等价旁路（checkpoint 被清掉时仍可取证）。
+
+    ⚠ **必须收集全部再挑最优**：ms-swift 的 ``save_steps=1`` 会在每个 checkpoint 里
+    留一份 ``trainer_state.json``，取到的是 ``checkpoint-1`` 那份就只有 1 步历史 ——
+    那会把一次 100 步的 run 误判成"步数不够"。因此由 :func:`_best_trainer_state`
+    按 ``global_step`` 取最大者。
+    """
+    candidates: list[tuple[str, dict[str, Any]]] = []
+    for directory in output_dirs:
+        for state_path in sorted(directory.rglob("trainer_state.json")):
+            state = _read_json(state_path)
+            if isinstance(state, dict):
+                candidates.append(("trainer_state", state))
+    for directory in output_dirs:
+        state = _msswift_state_from_logging(directory)
+        if state is not None:
+            candidates.append(("msswift_logging", state))
+    return candidates
+
+
+def _best_trainer_state(candidates: Sequence[tuple[str, dict[str, Any]]]) -> tuple[str, dict[str, Any]] | None:
+    """挑 ``global_step`` 最大的那份（同值优先 ``trainer_state.json``）。"""
+    best: tuple[str, dict[str, Any]] | None = None
+    best_key: tuple[int, int] = (-1, -1)
+    for source, state in candidates:
+        step = state.get("global_step")
+        key = (step if isinstance(step, int) else -1, 1 if source == "trainer_state" else 0)
+        if key > best_key:
+            best_key = key
+            best = (source, state)
+    return best
+
+
 def _cross_check_stdout(log_text: str, losses: Sequence[float | None]) -> list[str]:
     """把旁路 loss 与 stdout 的 ``sft_step`` 行做交叉核对（口径自证，§1.4）。"""
     stdout_losses = [_match_numeric(m) for m in _LOSS_DICT.finditer(log_text)]
@@ -219,16 +356,23 @@ def _cross_check_stdout(log_text: str, losses: Sequence[float | None]) -> list[s
     return []
 
 
-def extract_steps_and_series(output_dir: Path | None, log_text: str) -> SeriesEvidence:
+def extract_steps_and_series(output_dirs: Sequence[Path], log_text: str) -> SeriesEvidence:
     """抽取 optimizer step / epoch / loss 序列 / grad_norm 序列 / 逐步推进证据。
 
-    来源优先级：
-      1. ``rank_metrics.rank_*.jsonl`` 旁路的**全局**逐步指标（PP 唯一可信口径）；
-      2. ``trainer_state.json``（HF/ms-swift 结构化记录）；
+    来源优先级（**与后端无关**，只与证据质量有关）：
+      1. ``rank_metrics.rank_*.jsonl`` 旁路的**全局**逐步指标（native PP 唯一可信口径）；
+      2. ``trainer_state.json``（native RL/SFT 与 ms-swift 每个 checkpoint 共用；
+         ms-swift 无 checkpoint 时由 ``logging.jsonl`` 归一同形，见
+         :func:`_msswift_state_from_logging`）——**按 ``global_step`` 取最大者**，
+         否则会取到 ``checkpoint-1`` 那份只有 1 步的历史；
       3. 日志中的 dict 行（stdout 兜底，口径为 rank0 局部，显式标注）。
     """
     result = SeriesEvidence()
-    metrics_rows = _rank_metric_steps(output_dir)
+    metrics_rows: list[dict[str, Any]] = []
+    for directory in output_dirs:
+        metrics_rows = _rank_metric_steps(directory)
+        if metrics_rows:
+            break
     if metrics_rows:
         result.source = "rank_metrics"
         for row in metrics_rows:
@@ -250,36 +394,50 @@ def extract_steps_and_series(output_dir: Path | None, log_text: str) -> SeriesEv
             if isinstance(skipped, int):
                 result.nonfinite_skips += skipped
         result.steps = len(result.losses)
+        # 旁路每步一行、首行即训练步 1 ⇒ 首步 loss 就是 losses[0]（A4 零容差子检查可用）。
+        result.first_logged_step = 1
         result.notes.extend(_cross_check_stdout(log_text, result.losses))
-        # epoch 仍从 trainer_state 取（旁路不含 epoch）。
-        if output_dir is not None:
-            for state_path in output_dir.rglob("trainer_state.json"):
-                state = _read_json(state_path)
-                if isinstance(state, dict) and isinstance(state.get("epoch"), (int, float)):
-                    result.epochs = float(state["epoch"])
-                    break
-        return result
-
-    if output_dir is not None:
-        for state_path in output_dir.rglob("trainer_state.json"):
-            state = _read_json(state_path)
-            if not isinstance(state, dict):
-                continue
-            if isinstance(state.get("global_step"), int):
-                result.steps = state["global_step"]
+        # epoch 与"计划步数"仍从 trainer_state 家族取（旁路不含这两项）。
+        best = _best_trainer_state(_trainer_state_candidates(output_dirs))
+        if best is not None:
+            state = best[1]
             if isinstance(state.get("epoch"), (int, float)):
                 result.epochs = float(state["epoch"])
-            for entry in state.get("log_history", []) or []:
-                if not isinstance(entry, dict):
-                    continue
-                if isinstance(entry.get("loss"), (int, float)):
-                    result.losses.append(float(entry["loss"]))
-                if isinstance(entry.get("grad_norm"), (int, float)):
-                    result.grad_norms.append(float(entry["grad_norm"]))
-            if result.losses:
-                break
+            if isinstance(state.get("max_steps"), int):
+                result.declared_total_steps = state["max_steps"]
+        return result
+
+    best = _best_trainer_state(_trainer_state_candidates(output_dirs))
+    if best is not None:
+        source, state = best
+        if isinstance(state.get("global_step"), int):
+            result.steps = state["global_step"]
+        if isinstance(state.get("epoch"), (int, float)):
+            result.epochs = float(state["epoch"])
+        if isinstance(state.get("max_steps"), int):
+            result.declared_total_steps = state["max_steps"]
+        loss_entries = [
+            entry
+            for entry in (state.get("log_history", []) or [])
+            if isinstance(entry, dict) and isinstance(entry.get("loss"), (int, float))
+        ]
+        if loss_entries and isinstance(loss_entries[0].get("step"), int):
+            # 只有**写出步号**时才认"首步"（拿不到就留 None ⇒ A4 声明该子检查未适用）。
+            result.first_logged_step = int(loss_entries[0]["step"])
+        for entry in state.get("log_history", []) or []:
+            if not isinstance(entry, dict):
+                continue
+            if isinstance(entry.get("loss"), (int, float)):
+                result.losses.append(float(entry["loss"]))
+            if isinstance(entry.get("grad_norm"), (int, float)):
+                result.grad_norms.append(float(entry["grad_norm"]))
         if result.losses:
-            result.source = "trainer_state"
+            result.source = source
+            if source == "msswift_logging":
+                result.notes.append(
+                    "loss/grad_norm 序列来自 ms-swift logging.jsonl（HF trainer_state 同形；"
+                    "该目录无 rank_metrics 旁路）"
+                )
 
     if not result.losses:
         # stdout 兜底：显式识别 null / 缺失，绝不把"读不到"变成 NaN 或 0.0。
@@ -381,21 +539,158 @@ def _any_nonzero(tensors: Any) -> bool | None:
     return False if found else None
 
 
-def extract_weight_changed(output_dir: Path | None, tuner_type: str) -> bool | None:
+#: checkpoint 目录名的**唯一真相源**：native 落 ``final/``，ms-swift（HF Trainer）
+#: 落 ``checkpoint-<step>/``。两种布局用同一套抽取逻辑（判据语义不因后端而变）。
+NATIVE_CHECKPOINT_DIRNAME = "final"
+SWIFT_CHECKPOINT_GLOB = "checkpoint-*"
+
+
+def find_checkpoint_dirs(output_dirs: Sequence[Path]) -> list[Path]:
+    """发现全部 checkpoint 目录，**按训练步号降序**（最新优先）。"""
+    found: list[Path] = []
+    for directory in output_dirs:
+        for path in directory.rglob(NATIVE_CHECKPOINT_DIRNAME):
+            if path.is_dir():
+                found.append(path)
+        for path in directory.rglob(SWIFT_CHECKPOINT_GLOB):
+            if path.is_dir():
+                found.append(path)
+    unique: list[Path] = []
+    for path in found:
+        if path not in unique:
+            unique.append(path)
+
+    def step_of(path: Path) -> int:
+        tail = path.name.rsplit("-", 1)[-1]
+        return int(tail) if tail.isdigit() else 10**9  # final = 终态，排最前
+
+    return sorted(unique, key=step_of, reverse=True)
+
+
+#: safetensors 头部长度上限（防呆：损坏/恶意文件不得让本脚本吃满内存）。
+_SAFETENSORS_HEADER_LIMIT = 100 * 1024 * 1024
+
+
+def _safetensors_index(path: Path) -> tuple[dict[str, tuple[int, int]], int] | None:
+    """**纯 stdlib** 解析 safetensors 头部，返回 ``({张量名: (起始, 结束)}, 数据区起点)``。
+
+    为什么不用 ``safetensors.safe_open``：collector 要在**没有 torch/safetensors 的宿主**
+    上跑（228 宿主实测两者都没有）。判据需要的是"权重有没有变化 / checkpoint 能不能读"，
+    而 safetensors 的格式是公开且极简的（8 字节小端头长 + JSON 头 + 原始数据），
+    因此这里直接读头部并校验每个张量的 ``data_offsets`` 落在文件范围内。
+    **语义与库版本一致**：库的 ``safe_open`` 也只是解析同一份头部。
+
+    返回 ``None`` 表示"不是可解析的 safetensors 文件"。
+    """
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as handle:
+            raw_len = handle.read(8)
+            if len(raw_len) != 8:
+                return None
+            (header_len,) = struct.unpack("<Q", raw_len)
+            if header_len <= 0 or header_len > _SAFETENSORS_HEADER_LIMIT:
+                return None
+            header = handle.read(header_len)
+            if len(header) != header_len:
+                return None
+    except OSError:
+        return None
+    try:
+        doc = json.loads(header.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(doc, dict):
+        return None
+    data_start = 8 + header_len
+    index: dict[str, tuple[int, int]] = {}
+    for name, spec in doc.items():
+        if name == "__metadata__":
+            continue
+        if not isinstance(spec, dict):
+            return None
+        offsets = spec.get("data_offsets")
+        if not isinstance(offsets, list) or len(offsets) != 2:
+            return None
+        begin, end = offsets
+        if not isinstance(begin, int) or not isinstance(end, int):
+            return None
+        if begin < 0 or end < begin or data_start + end > size:
+            return None
+        index[name] = (data_start + begin, data_start + end)
+    return index, data_start
+
+
+def _read_range(path: Path, begin: int, end: int) -> bytes | None:
+    try:
+        with path.open("rb") as handle:
+            handle.seek(begin)
+            return handle.read(end - begin)
+    except OSError:
+        return None
+
+
+def _file_readable(path: Path) -> bool:
+    """该文件对**当前进程**是否可读。
+
+    为什么必须显式区分"读不到"与"文件坏"（228 实测踩过）：容器内以 root 身份训练，
+    ms-swift/HF 落盘的 ``adapter_model.safetensors`` 是 ``root:0600``；宿主机上的
+    collector 以普通用户运行时**打不开**它。若把 ``PermissionError`` 当成
+    "checkpoint 无法重新加载"，就等于把"采集侧读不到"记成一次**训练失败**——
+    这正是本包要根治的方向性错误。因此：不可读 ⇒ 取证缺口（返回 ``None``）。
+    运行侧的正解是 runner 收尾时把产物放开读权限（见 ``run_matrix54.sh``）。
+    """
+    try:
+        with path.open("rb") as handle:
+            handle.read(1)
+        return True
+    except OSError:
+        return False
+
+
+def _safetensors_any_nonzero(path: Path, *, key_filter: str) -> bool | None:
+    """指定关键字张量里是否有非零值（LoRA ``lora_B`` 初值为 0 ⇒ 非零即被更新过）。
+
+    判据口径与 native 侧 ``_any_nonzero``（torch 张量 ``!= 0``）一致。实现按**字节**
+    判零：本项目权重是 bf16/fp16/fp32，+0.0 的编码是全零字节，初值就是 +0.0。
+    返回 ``None`` = 读不到 / 没有匹配张量（调用方按取证缺口处理，不得当成"未变化"）。
+    """
+    if not _file_readable(path):
+        return None
+    parsed = _safetensors_index(path)
+    if parsed is None:
+        return None
+    index, _ = parsed
+    keys = [key for key in index if key_filter in key.lower()]
+    if not keys:
+        return None
+    for key in keys:
+        begin, end = index[key]
+        chunk = _read_range(path, begin, end)
+        if chunk is None:
+            return None
+        if chunk.strip(b"\x00") != b"":
+            return True
+    return False
+
+
+def extract_weight_changed(
+    output_dirs: Sequence[Path], tuner_type: str, base_model_dir: Path | None = None
+) -> bool | None:
     """抽取"权重是否真变化"证据（LoRA 看 lora_b 非零；全参看与基座是否不同）。
 
-    抽取不到返回 ``None`` → A2 fail-closed 判不通过。
+    两种后端的**判据语义完全相同**，只是 checkpoint 目录名不同（``final`` /
+    ``checkpoint-<step>``），由 :func:`find_checkpoint_dirs` 统一发现。
+
+    抽取不到返回 ``None`` → A2 按**取证缺口**处理（不可判定，而不是判训练失败）。
     """
-    if output_dir is None:
-        return None
     torch = _require_torch()
-    finals = [p for p in output_dir.rglob("final") if p.is_dir()]
-    for final in finals:
+    for checkpoint in find_checkpoint_dirs(output_dirs):
         if tuner_type == "lora":
             # native：单个 rank pt 里的 lora_state_dict
-            for pt in sorted(final.glob("rank_*.pt")):
+            for pt in sorted(checkpoint.glob("rank_*.pt")):
                 if torch is None:
-                    return None
+                    break
                 try:
                     payload = torch.load(pt, map_location="cpu", weights_only=False)
                 except (RuntimeError, OSError, AttributeError):
@@ -412,127 +707,140 @@ def extract_weight_changed(output_dir: Path | None, tuner_type: str) -> bool | N
                     result = _any_nonzero(subset)
                     if result is not None:
                         return result
-            # msswift/peft：adapter_model.safetensors 里的 lora_B
-            for weights in sorted(final.glob("adapter_model.safetensors")):
+            # msswift / peft：adapter_model.safetensors 里的 lora_B
+            for weights in sorted(checkpoint.glob("adapter_model.safetensors")):
                 result = _safetensors_any_nonzero(weights, key_filter="lora_b")
                 if result is not None:
                     return result
             continue
         # 全参：终态权重与基座权重做抽样比较
-        result = _full_weights_differ(final)
+        result = _full_weights_differ(checkpoint, base_model_dir)
         if result is not None:
             return result
     return None
 
 
-def _safetensors_any_nonzero(path: Path, *, key_filter: str) -> bool | None:
-    """用 safetensors 检查指定关键字张量是否有非零值（避免整包载入显存）。"""
-    try:
-        from safetensors import safe_open  # noqa: PLC0415
-    except ImportError:
-        return None
-    try:
-        with safe_open(str(path), framework="pt") as handle:
-            keys = [key for key in handle.keys() if key_filter in key.lower()]
-            if not keys:
-                return None
-            for key in keys:
-                tensor = handle.get_tensor(key)
-                if hasattr(tensor, "any") and bool((tensor != 0).any()):
-                    return True
-            return False
-    except (OSError, RuntimeError, TypeError):
-        return None
+def _full_weights_differ(checkpoint_dir: Path, base_model_dir: Path | None) -> bool | None:
+    """全参：checkpoint 与基座模型权重抽样比较（不同 → 已更新）。
 
-
-def _full_weights_differ(final_dir: Path) -> bool | None:
-    """全参：终态 checkpoint 与基座模型权重抽样比较（不同 → 已更新）。"""
-    import os  # noqa: PLC0415
-
-    base = os.environ.get("GRASPO_BASE_MODEL_FOR_COMPARE")
-    if not base:
+    ``base_model_dir`` 未给出时回退到环境变量 ``GRASPO_BASE_MODEL_FOR_COMPARE``
+    （历史口径，保留兼容）。**判据语义不变**：共享键里任何一个张量字节不同即"已更新"。
+    """
+    if base_model_dir is None:
+        raw = os.environ.get("GRASPO_BASE_MODEL_FOR_COMPARE")
+        base_model_dir = Path(raw) if raw else None
+    if base_model_dir is None or not Path(base_model_dir).is_dir():
         return None
-    base_path = Path(base)
-    if not base_path.exists():
+    final_files = sorted(checkpoint_dir.glob("*.safetensors"))
+    base_files = sorted(Path(base_model_dir).glob("*.safetensors"))
+    if not final_files or not base_files:
         return None
-    try:
-        from safetensors import safe_open  # noqa: PLC0415
-
-        final_files = sorted(final_dir.glob("*.safetensors"))
-        base_files = sorted(base_path.glob("*.safetensors"))
-        if not final_files or not base_files:
+    # 不可读（权限/IO）⇒ 取证缺口，不得当成"权重没变化"。
+    if not (_file_readable(final_files[0]) and _file_readable(base_files[0])):
+        return None
+    final_parsed = _safetensors_index(final_files[0])
+    base_parsed = _safetensors_index(base_files[0])
+    if final_parsed is None or base_parsed is None:
+        return None
+    final_index, _ = final_parsed
+    base_index, _ = base_parsed
+    shared = [key for key in final_index if key in base_index][:8]
+    if not shared:
+        return None
+    for key in shared:
+        left = _read_range(final_files[0], *final_index[key])
+        right = _read_range(base_files[0], *base_index[key])
+        if left is None or right is None:
             return None
-        with safe_open(str(final_files[0]), framework="pt") as final_handle:
-            with safe_open(str(base_files[0]), framework="pt") as base_handle:
-                shared = [k for k in final_handle.keys() if k in set(base_handle.keys())][:8]
-                if not shared:
-                    return None
-                for key in shared:
-                    left = final_handle.get_tensor(key)
-                    right = base_handle.get_tensor(key)
-                    if left.shape != right.shape:
-                        return True
-                    if bool((left != right).any()):
-                        return True
-        return False
-    except (OSError, RuntimeError, TypeError):
-        return None
+        if len(left) != len(right):
+            return True
+        if left != right:
+            return True
+    return False
 
 
-def extract_checkpoint_reloadable(output_dir: Path | None) -> bool | None:
-    """A3 证据：checkpoint 能否被重新加载（结构化校验 + 反序列化）。"""
-    if output_dir is None:
-        return None
-    finals = [p for p in output_dir.rglob("final") if p.is_dir()]
-    if not finals:
+def extract_checkpoint_reloadable(output_dirs: Sequence[Path]) -> bool | None:
+    """A3 证据：checkpoint 能否被重新加载（结构化校验 + 反序列化）。
+
+    两种布局走同一条判据：
+      - native：``final/manifest.json`` + ``rank_*.pt``（需 torch 反序列化）；
+      - ms-swift / peft：``*.safetensors``（stdlib 解析头部 + 校验 data_offsets）。
+    判据语义不变（结构完整 + 可反序列化）；**没有**因为后端不同而放松。
+    """
+    checkpoints = find_checkpoint_dirs(output_dirs)
+    if not checkpoints:
         return None
     checked = False
-    for final in finals:
+    for checkpoint in checkpoints:
         # native：manifest.json + rank_*.pt 能否 torch.load
-        if (final / "manifest.json").exists():
+        if (checkpoint / "manifest.json").exists():
             torch = _require_torch()
-            rank_files = sorted(final.glob("rank_*.pt"))
+            rank_files = sorted(checkpoint.glob("rank_*.pt"))
             if not rank_files:
                 continue
             if torch is None:
+                continue
+            if not _file_readable(rank_files[0]):
+                # 权限/IO 不可读 ⇒ 取证缺口（继续找别的 checkpoint），不得判"重载失败"。
                 continue
             try:
                 torch.load(rank_files[0], map_location="cpu", weights_only=False)
                 return True
             except (RuntimeError, OSError, AttributeError):
                 return False
-        # peft / HF：safetensors 能否打开
-        for weights in sorted(final.glob("*.safetensors")):
-            try:
-                from safetensors import safe_open  # noqa: PLC0415
-
-                with safe_open(str(weights), framework="pt") as handle:
-                    list(handle.keys())
-                checked = True
-                return True
-            except ImportError:
-                return None
-            except (OSError, RuntimeError, TypeError):
+        # peft / HF（含 ms-swift 的 checkpoint-<step>）：safetensors 头部能否解析
+        for weights in sorted(checkpoint.glob("*.safetensors")):
+            if not _file_readable(weights):
+                continue  # 取证缺口：采集侧读不到，不是 checkpoint 坏
+            checked = True
+            parsed = _safetensors_index(weights)
+            if parsed is None:
+                return False  # 能读但头部不可解析 ⇒ 这才是"checkpoint 无法重新加载"
+            index, _ = parsed
+            if not index:
                 return False
+            return True
     return None if not checked else False
 
 
-def extract_artifacts(run_dir: Path, output_dir: Path | None, log_text: str) -> dict[str, bool]:
-    """A5 四件套产物：config_backup / training_log / checkpoint / metrics。"""
+def extract_artifacts(
+    run_dir: Path, output_dirs: Sequence[Path], log_text: str
+) -> dict[str, bool]:
+    """A5 四件套产物：config_backup / training_log / checkpoint / metrics。
+
+    **契约覆盖两种布局，判据语义一致**（同一件产物在两种后端下的等价落点）：
+
+    | 件 | native | ms-swift | 语义（判据不放松） |
+    |---|---|---|---|
+    | config_backup | ``config.yaml``（graspo 配置备份） | ``args.json``（ms-swift **已解析生效**的训练参数） | 本次运行的配置被落盘、事后可复现 |
+    | training_log | ``training.log`` / ``train.log`` | ``logging.jsonl``（逐步日志） | 逐步训练日志落盘 |
+    | checkpoint | ``final/`` | ``checkpoint-<step>/`` | 可恢复 checkpoint 落盘 |
+    | metrics | ``events.jsonl`` / ``rank_metrics.*.jsonl`` / ``trainer_state.json`` | ``logging.jsonl`` / ``events.out.tfevents.*`` | 运行指标（逐步 loss/grad_norm 等）落盘 |
+
+    容器 ``stdout.log`` 仍可作 training_log 的兜底（运行器一定产出它）。
+    """
     artifacts = {name: False for name in _judge.REQUIRED_ARTIFACTS}
-    if output_dir is not None:
-        artifacts["config_backup"] = (output_dir / "config.yaml").exists() or any(
-            output_dir.rglob("config.json")
-        )
-        artifacts["training_log"] = any(output_dir.rglob("training.log")) or any(
-            output_dir.rglob("train.log")
-        )
-        artifacts["checkpoint"] = any(p.is_dir() for p in output_dir.rglob("final")) or any(
-            output_dir.rglob("checkpoint-*")
-        )
-        artifacts["metrics"] = any(output_dir.rglob("events.jsonl")) or any(
-            output_dir.rglob("rank_metrics.rank_*.jsonl")
-        ) or any(output_dir.rglob("trainer_state.json"))
+    for directory in output_dirs:
+        if not artifacts["config_backup"]:
+            artifacts["config_backup"] = (directory / "config.yaml").exists() or (
+                directory / "args.json"
+            ).exists()
+        if not artifacts["training_log"]:
+            artifacts["training_log"] = (
+                any(directory.rglob("training.log"))
+                or any(directory.rglob("train.log"))
+                or (directory / "logging.jsonl").exists()
+            )
+        if not artifacts["metrics"]:
+            artifacts["metrics"] = (
+                any(directory.rglob("events.jsonl"))
+                or any(directory.rglob("rank_metrics.rank_*.jsonl"))
+                or any(directory.rglob("trainer_state.json"))
+                or (directory / "logging.jsonl").exists()
+                or any(directory.rglob("events.out.tfevents.*"))
+            )
+    # checkpoint 走统一的发现逻辑（唯一真相源），与 A2/A3 用的是同一份判据。
+    artifacts["checkpoint"] = bool(find_checkpoint_dirs(output_dirs))
     # 运行器级日志也算训练日志证据（容器 stdout 一定存在）
     if not artifacts["training_log"] and (run_dir / "stdout.log").exists():
         artifacts["training_log"] = True
@@ -541,7 +849,12 @@ def extract_artifacts(run_dir: Path, output_dir: Path | None, log_text: str) -> 
     return artifacts
 
 
-def collect_run(run_dir: Path, tier_id: str, tuner_type: str) -> tuple[Any, SeriesEvidence]:
+def collect_run(
+    run_dir: Path,
+    tier_id: str,
+    tuner_type: str,
+    base_model_dir: Path | None = None,
+) -> tuple[Any, SeriesEvidence]:
     """把一个运行目录抽成 ``RunEvidence`` + 读数口径自证（``SeriesEvidence``）。"""
     exit_code: int | None = None
     exit_path = run_dir / "exit_code"
@@ -550,8 +863,8 @@ def collect_run(run_dir: Path, tier_id: str, tuner_type: str) -> tuple[Any, Seri
         if raw.lstrip("-").isdigit():
             exit_code = int(raw)
     log_text = _read_text(run_dir / "stdout.log")
-    output_dir = find_output_dir(run_dir, tier_id)
-    series = extract_steps_and_series(output_dir, log_text)
+    output_dirs = find_output_dirs(run_dir, tier_id)
+    series = extract_steps_and_series(output_dirs, log_text)
     timed_out = exit_code == 124 or bool(re.search(r"⏰|timeout: sending signal", log_text))
     evidence = _judge.RunEvidence(
         tier_id=tier_id,
@@ -561,9 +874,9 @@ def collect_run(run_dir: Path, tier_id: str, tuner_type: str) -> tuple[Any, Seri
         tuner_type=tuner_type,
         optimizer_steps=series.steps,
         epochs_completed=series.epochs,
-        weight_changed=extract_weight_changed(output_dir, tuner_type),
-        checkpoint_reloadable=extract_checkpoint_reloadable(output_dir),
-        artifacts_present=extract_artifacts(run_dir, output_dir, log_text),
+        weight_changed=extract_weight_changed(output_dirs, tuner_type, base_model_dir),
+        checkpoint_reloadable=extract_checkpoint_reloadable(output_dirs),
+        artifacts_present=extract_artifacts(run_dir, output_dirs, log_text),
         losses=tuple(series.losses),
         grad_norms=tuple(series.grad_norms),
         optimizer_steps_per_step=(
@@ -574,6 +887,9 @@ def collect_run(run_dir: Path, tier_id: str, tuner_type: str) -> tuple[Any, Seri
         nonfinite_skips=series.nonfinite_skips,
         losses_nonfinite=series.loss_nonfinite,
         losses_unavailable=series.loss_unavailable,
+        steps_declared_total=series.declared_total_steps,
+        first_logged_step=series.first_logged_step,
+        output_located=bool(output_dirs),
     )
     return evidence, series
 
@@ -627,12 +943,16 @@ def run(args: argparse.Namespace) -> int:
                 }
             )
             continue
-        first, first_series = collect_run(first_dir, tier_id, tuner_type)
+        first, first_series = collect_run(
+            first_dir, tier_id, tuner_type, _base_model_dir(args, tier)
+        )
         second = None
         if args.rerun_root:
             second_dir = Path(args.rerun_root) / tier_id
             if second_dir.is_dir():
-                second, _ = collect_run(second_dir, tier_id, tuner_type)
+                second, _ = collect_run(
+                    second_dir, tier_id, tuner_type, _base_model_dir(args, tier)
+                )
         judgement = _judge.judge_tier(first, second, context_length=args.context_length)
         row = _judge.ledger_row(
             judgement,
@@ -658,6 +978,8 @@ def run(args: argparse.Namespace) -> int:
         row["grad_norms"] = list(first.grad_norms)
         row["optimizer_steps_per_step"] = list(first.optimizer_steps_per_step or ())
         row["nonfinite_skips"] = first.nonfinite_skips
+        row["steps_declared_total"] = first.steps_declared_total
+        row["first_logged_step"] = first.first_logged_step
         records.append(row)
 
     jsonl = out_dir / "ledger.jsonl"
@@ -685,12 +1007,35 @@ def run(args: argparse.Namespace) -> int:
         )
     markdown.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    passed = sum(1 for record in records if record["status"] == "✅ 通过")
-    failed = sum(1 for record in records if record["status"] == "❌ 失败")
-    untested = len(records) - passed - failed
-    print(f"ledger: {jsonl} ({len(records)} tiers: pass={passed} fail={failed} untested={untested})")
+    passed = sum(1 for record in records if record["status"] == _judge.LEDGER_PASS)
+    failed = sum(1 for record in records if record["status"] == _judge.LEDGER_FAIL)
+    indeterminate = sum(
+        1 for record in records if record["status"] == _judge.LEDGER_INDETERMINATE
+    )
+    untested = len(records) - passed - failed - indeterminate
+    print(
+        f"ledger: {jsonl} ({len(records)} tiers: pass={passed} fail={failed} "
+        f"indeterminate={indeterminate} untested={untested})"
+    )
     print(f"markdown: {markdown}")
     return 0
+
+
+def _base_model_dir(args: argparse.Namespace, tier: dict[str, Any]) -> Path | None:
+    """全参档 A2 的基座模型目录（用于"权重是否真的变了"）。
+
+    口径：``--base-model-root``（默认取环境变量 ``GRASPO_MODELS_HOST_ROOT``，
+    与 runner 的模型挂载根同源）+ 配置里 ``model_path`` 的目录名。
+    给不出时返回 ``None`` ⇒ A2 的权重证据按**取证缺口**处理（不可判定），不猜。
+    """
+    root = args.base_model_root or os.environ.get("GRASPO_MODELS_HOST_ROOT")
+    if not root:
+        return None
+    name = Path(str(tier.get("model_path") or "")).name
+    if not name:
+        return None
+    candidate = Path(root) / name
+    return candidate if candidate.is_dir() else None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -710,6 +1055,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--date", default="", help="Ledger date (YYYY-MM-DD).")
+    parser.add_argument(
+        "--base-model-root",
+        default=None,
+        help=(
+            "全参档 A2 的基座模型宿主根目录（默认取 GRASPO_MODELS_HOST_ROOT）。"
+            "collector 取 <root>/<model_path 的目录名> 与 checkpoint 权重抽样比较；"
+            "给不出时 A2 的权重证据按取证缺口处理（不可判定），不猜也不放松。"
+        ),
+    )
     return parser
 
 
