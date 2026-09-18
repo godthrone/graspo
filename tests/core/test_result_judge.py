@@ -5,6 +5,8 @@
 """
 
 from graspo.core.result_judge import (
+    MAX_CONTEXT_KIND_FEASIBLE,
+    MAX_CONTEXT_KIND_OOM_BOUNDARY,
     FailureClass,
     RunEvidence,
     classify_failure,
@@ -16,6 +18,7 @@ from graspo.core.result_judge import (
     judge_a5,
     judge_a6,
     judge_tier,
+    ledger_row,
 )
 
 
@@ -198,3 +201,101 @@ def test_judge_tier_non_oom_failure_is_not_context_candidate():
     assert not judgement.passed
     assert not judgement.counts_toward_max_context
     assert "修复后重测" in judgement.note
+
+
+# ── 🟡-4：显式非有限梯度标记必须前置（不得被数据/框架文本覆盖）──────────────
+
+
+def test_nonfinite_grad_marker_wins_over_data_text():
+    """`FileNotFoundError` + `非有限梯度` ⇒ 数值异常（不是数据问题）。
+
+    旧序下 `数据问题` 排在 `数值异常` 之前，实测把这一组合归成「数据问题」，把
+    排查引向数据而不是数值链路。两者都不计入最大可行上下文，故这是**归类方向**
+    问题，不是能力边界问题。
+    """
+    evidence = make_evidence(
+        exit_code=1,
+        log_text=(
+            "FileNotFoundError: dataset.jsonl\n"
+            "RuntimeError: 非有限梯度：SFT 训练硬失败（fail-closed，宪法 §3.4）。"
+        ),
+    )
+
+    failure = classify_failure(evidence, judge_a6(evidence))
+
+    assert failure is FailureClass.NUMERIC_ANOMALY
+    assert not counts_toward_max_context(failure)
+
+
+def test_nonfinite_grad_marker_wins_over_framework_text():
+    """`NotImplementedError` + `非有限梯度` ⇒ 同样是数值异常（标记优先）。"""
+    evidence = make_evidence(
+        exit_code=1,
+        log_text="NotImplementedError\nRuntimeError: 非有限梯度：SFT 训练硬失败。",
+    )
+
+    assert classify_failure(evidence, judge_a6(evidence)) is FailureClass.NUMERIC_ANOMALY
+
+
+def test_data_problem_still_reachable_without_the_marker():
+    """对照：同一份数据文本**没有**标记时仍是数据问题（修正没有把该级顶掉）。"""
+    evidence = make_evidence(exit_code=1, log_text="FileNotFoundError: dataset.jsonl")
+
+    assert classify_failure(evidence, judge_a6(evidence)) is FailureClass.DATA_PROBLEM
+
+
+# ── 🔴-1：ledger_row 的 max_context 资格口径 ─────────────────────────────────
+
+
+def _row(judgement, max_context: int | None) -> dict:
+    return ledger_row(
+        judgement,
+        model="9B",
+        algorithm="SFT",
+        mode="LoRA",
+        backend="native",
+        cards=1,
+        max_context=max_context,
+        peak_memory_gib=None,
+        date="2026-09-18",
+    )
+
+
+def test_ledger_row_passed_writes_feasible_context():
+    judgement = judge_tier(make_evidence(), make_evidence(), context_length=8192)
+
+    row = _row(judgement, 8192)
+
+    assert judgement.passed
+    assert row["max_context"] == 8192
+    assert row["max_context_kind"] == MAX_CONTEXT_KIND_FEASIBLE
+
+
+def test_ledger_row_real_oom_writes_boundary_candidate():
+    """真 OOM（exit≠0 ⇒ passed=False）必须**仍然**能写进台账（阻断点）。"""
+    oom = make_evidence(exit_code=1, log_text="CUDA out of memory. Tried to allocate 2 GiB")
+    judgement = judge_tier(oom, context_length=65536)
+
+    row = _row(judgement, 65536)
+
+    assert not judgement.passed  # 判定语义不变：坏 run 仍判失败
+    assert row["status"] == "❌ 失败"
+    assert row["max_context"] == 65536
+    assert row["max_context_kind"] == MAX_CONTEXT_KIND_OOM_BOUNDARY
+
+
+def test_ledger_row_non_oom_failure_writes_nothing():
+    """数值异常 / 数据问题 / 框架问题 / 超时 / 未分类 ⇒ 一律不写上下文。"""
+    for log_text in (
+        "FileNotFoundError: dataset.jsonl",
+        "NotImplementedError: l2k",
+        "NCCL error: unhandled cuda error",
+        "something odd happened",
+    ):
+        judgement = judge_tier(
+            make_evidence(exit_code=1, log_text=log_text), context_length=65536
+        )
+        row = _row(judgement, 65536)
+
+        assert row["max_context"] is None, log_text
+        assert row["max_context_kind"] is None, log_text

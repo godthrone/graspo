@@ -165,3 +165,49 @@ def test_collector_real_oom_without_numeric_anomaly_still_counts(tmp_path):
     # 台账 `max_context` 只在整档通过时填数（ledger_row 的口径）；这里锁住
     # "真 OOM 才允许成为候选"这一层：备注里必须出现真 OOM 的候选说明。
     assert "真 OOM" in record["note"]
+
+
+# ── 🔴-1：真 OOM 的最大可行上下文必须真的能落进台账（负向测试）──────────────
+#
+# 旧实现 `max_context if judgement.passed else None`（`result_judge.ledger_row`）
+# 在**结构上**不可能满足硬要求"只有真 OOM 才能写入最大可行上下文"：真 OOM 的
+# run 必然 exit≠0 ⇒ A1 不过 ⇒ passed=False ⇒ 该列恒为 None。下面两条用例必须
+# **能真失败**（旧代码下第一条会断言失败），且非真 OOM 的失败一律不得出现数字。
+
+
+def test_collector_real_oom_writes_oom_boundary_context(tmp_path):
+    """真 OOM 夹具（exit=1 + OOM 报文 + 数值健康）⇒ 台账里必须出现该档上下文。"""
+    _make_run(tmp_path / "runs")
+    run = tmp_path / "runs" / "T010"
+    (run / "exit_code").write_text("1\n", encoding="utf-8")
+    (run / "stdout.log").write_text(_OOM_STDOUT, encoding="utf-8")
+
+    record = _run_collector(tmp_path)
+
+    assert record["criteria"]["A1"] is False  # 真 OOM 必然 exit≠0
+    assert record["status"] == "❌ 失败"
+    assert record["failure_class"] == "真 OOM"
+    # 关键（阻断点）：该档实测上下文必须落盘，不得再是 null。
+    assert record["max_context"] == 8192
+    # 口径必须随数字一起落盘，否则下游会把"OOM 边界候选"读成"这个长度跑得通"。
+    assert record["max_context_kind"] == "真 OOM 边界候选"
+    assert "（真 OOM 边界候选）" in (tmp_path / "ledger" / "ledger.md").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_collector_non_oom_failures_never_write_max_context(tmp_path):
+    """非真 OOM 的失败（数据问题 / 框架未实现）⇒ 台账里**不得**出现该档上下文。"""
+    for marker in ("FileNotFoundError: dataset.jsonl", "NotImplementedError: l2k"):
+        case = tmp_path / marker.split(":")[0].strip().replace(" ", "_")
+        _make_run(case / "runs")
+        run = case / "runs" / "T010"
+        (run / "exit_code").write_text("1\n", encoding="utf-8")
+        (run / "stdout.log").write_text(f"RuntimeError: {marker}\n", encoding="utf-8")
+
+        record = _run_collector(case)
+
+        assert record["status"] == "❌ 失败"
+        assert record["failure_class"] != "真 OOM"
+        assert record["max_context"] is None
+        assert record["max_context_kind"] is None

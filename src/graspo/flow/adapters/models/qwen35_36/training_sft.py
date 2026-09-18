@@ -1,5 +1,7 @@
 """Qwen3.5/3.6 adapter — SFT training methods (TP+DP+PP)."""
 
+import logging
+import os
 import time
 from typing import Any
 
@@ -18,6 +20,28 @@ from graspo.flow.parallel.tensor_utils import (
 from graspo.flow.progress_metrics import grad_count_event, training_norm_event
 from graspo.ripple.data import SFTTokenized
 from graspo.ripple.multimodal.contract import assert_sft_batch_has_multimodal
+
+#: 预授权退路（宪法 §3.3）的**临时**开关名，默认关闭。
+#:
+#: 语义：非有限梯度**本来**必须让 run 硬失败（§3.4：这是防线，不是退路）。
+#: 只有当运维者显式声明"我知道这次 run 的后面几步权重是冻结的、我仍接受"时，
+#: 才允许"跳过并继续"。设置该变量即等于在部署前说"可以"——它是显式的、默认关闭的、
+#: 每次上机都要在启动命令里逐次写出来的（不得写进任何脚本默认值，避免变成隐形工作流）。
+#:
+#: TODO(F-4 后续工作包)：`core/schema.py` 正在被其它工作包改动，本工作包不得碰它。
+#: schema 侧落地后应迁移为配置字段（如 ``native.allow_nonfinite_grad_skip``），
+#: 本环境变量通道随之删除（§18.1 不留负债）。
+_ALLOW_NONFINITE_SKIP_ENV = "GRASPO_ALLOW_NONFINITE_GRAD_SKIP"
+
+
+def _nonfinite_skip_preauthorized() -> bool:
+    """是否被显式预授权"非有限梯度跳过并继续"（§3.3，默认关闭）。"""
+    return os.environ.get(_ALLOW_NONFINITE_SKIP_ENV, "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 class _Qwen35SFTTrainingMethods:
@@ -159,6 +183,67 @@ class _Qwen35SFTTrainingMethods:
         metrics = self._aggregate_rank_metrics(metrics)
         return metrics
 
+    def _trainable_grad_norm(self) -> float:
+        """本 rank 可训参数梯度的 L2 范数（诊断用；不含 clip，非有限值原样返回）。
+
+        为什么需要它：非有限梯度被检测到时 ``_sync_grads_and_step`` 不会被调用，
+        于是连"哪个 rank 的梯度是有限的"都没有读数（F-4 实测：stdout 只打了 rank0
+        的有限局部值，全局 NaN 只存在于 rank_metrics 旁路）。这个探针只读、无集合
+        通信，且**不做过滤**——NaN 必须原样透出，否则就重现了同一个观测缺陷。
+        """
+        total: torch.Tensor | None = None
+        for param in self.model.parameters():
+            if not param.requires_grad or param.grad is None:
+                continue
+            value = param.grad.detach().float().pow(2).sum()
+            total = value if total is None else total + value
+        if total is None:
+            return 0.0
+        return float(total.sqrt().cpu())
+
+    def _record_nonfinite_skip(
+        self,
+        *,
+        skipped: int,
+        optimizer_steps: int,
+        detail: str,
+        rank_grad_norms: list[float] | None = None,
+    ) -> None:
+        """非有限梯度的事后处置：审计 WARNING +（非预授权时）硬失败。
+
+        F-4（2026-09-18）实测的缺陷形态：SFT 路径既不告警也不中止，继续跑完全部
+        步、写 ``final`` checkpoint、``exit_code=0``，于是"权重自第 2 步起完全冻结"
+        的 run **看起来成功**。宪法 §3.4：边界校验拒绝非法数据是**防线**，不是退路
+        ——"继续跑完并落盘"不是同效退路（它改变了结果且没有告知）。
+
+        因此默认行为是 **raise**：进程非零退出、不写 final、判定层拿到显式标记。
+        只有显式预授权（§3.3，环境变量 :data:`_ALLOW_NONFINITE_SKIP_ENV`，默认关闭）
+        才允许"跳过并继续"，此时必须打出用户可读的声明，并把 ``skipped_nonfinite``
+        一路带到 rank_metrics 与判定层（A2 会因此判不通过）。
+        """
+        logger = logging.getLogger("graspo.sft_trainer")
+        self.nonfinite_grad_skips = int(getattr(self, "nonfinite_grad_skips", 0)) + skipped
+        ranks = (
+            f"逐 rank grad_norm={rank_grad_norms} " if rank_grad_norms is not None else ""
+        )
+        message = (
+            f"{ranks}{detail}；本步 optimizer_steps={optimizer_steps}。"
+        )
+        if _nonfinite_skip_preauthorized():
+            logger.warning(
+                "SFT 训练出现非有限梯度：%s【%s 已显式预授权（§3.3）：跳过并继续；"
+                "本 run 的后续步权重可能是冻结的，不得记为成功】",
+                message,
+                _ALLOW_NONFINITE_SKIP_ENV,
+            )
+            return
+        raise RuntimeError(
+            "非有限梯度：SFT 训练硬失败（fail-closed，宪法 §3.4）。"
+            f"SFT 训练出现非有限梯度：{message}"
+            "权重已冻结，不得继续训练、不得落盘 final checkpoint；"
+            f"若确需跳过，必须显式预授权（§3.3，默认关闭）：{_ALLOW_NONFINITE_SKIP_ENV}=1。"
+        )
+
     """Mixin: SFT training/batch optimization methods for Qwen35Adapter."""
 
     # ── TP-only SFT training ─────────────────────────────────────────────────
@@ -269,6 +354,12 @@ class _Qwen35SFTTrainingMethods:
             valid_micro_batches=valid_micro_batches,
         )
         self._train_batch_call_index += 1
+        if skipped_nonfinite > 0:
+            self._record_nonfinite_skip(
+                skipped=skipped_nonfinite,
+                optimizer_steps=optimizer_steps,
+                detail="train_batch_sft: 非有限 loss 的 micro-batch 已被跳过",
+            )
 
         norm_after = self.model.training_progress_norm()
         metrics = self._build_sft_metrics(
@@ -475,6 +566,19 @@ class _Qwen35SFTTrainingMethods:
         dist.all_reduce(finite_tensor, op=dist.ReduceOp.MIN)
         all_finite = bool(finite_tensor.item())
 
+        # 逐 rank 梯度范数：所有 rank 都算（含 nan），再做集合汇总，得到"全局"旁证。
+        # 只在需要审计时才计算（all_finite 为假，或预授权模式），避免正常路径开销。
+        rank_grad_norms: list[float] = []
+        if not all_finite or _nonfinite_skip_preauthorized():
+            local_grad_norm = self._trainable_grad_norm()
+            gathered_norms: list[float | None] = [None for _ in range(self.world_size)]
+            dist.all_gather_object(gathered_norms, local_grad_norm)
+            rank_grad_norms = [
+                float(value) if value is not None else float("nan")
+                for value in gathered_norms
+            ]
+            self.rank_grad_norms_last = rank_grad_norms
+
         if all_finite:
             grad_norm_sum, optimizer_steps, nonzero_grad_count = self._sync_grads_and_step(
                 max_grad_norm=max_grad_norm,
@@ -486,6 +590,23 @@ class _Qwen35SFTTrainingMethods:
             skipped_nonfinite = chunk_count
 
         self._train_batch_call_index += 1
+        if skipped_nonfinite > 0:
+            # ★ F-4 P0 修法①（宪法 §3.4：这是防线，不是退路）：首个非有限梯度
+            #   **不得**被静默跳过。此前路径继续跑完全部步、写 final checkpoint、
+            #   exit=0，于是"权重从第 2 步起完全冻结"的 run 看起来是成功的。
+            #   ⇒ 这里打审计 WARNING（列出逐 rank 读数），并在**没有**显式预授权
+            #   （§3.3，默认关闭）时直接硬失败——不写 final、exit≠0。
+            self._record_nonfinite_skip(
+                skipped=skipped_nonfinite,
+                optimizer_steps=optimizer_steps,
+                detail=(
+                    "pipeline SFT: 本步梯度含非有限值 ⇒ 已跳过 optimizer.step()"
+                    f"（逐 rank grad_norm={[float(value) for value in rank_grad_norms]}，"
+                    f"逐 chunk finite={finite_flags}）"
+                ),
+                rank_grad_norms=rank_grad_norms,
+            )
+
         norm_after = self.model.training_progress_norm()
         metrics = self._build_sft_metrics(
             sft_batch_count=len(sft_batches),
