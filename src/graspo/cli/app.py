@@ -110,7 +110,8 @@ def cmd_analyze_profile(args: argparse.Namespace) -> int:
 
 def cmd_launch(args: argparse.Namespace) -> int:
     # 锁卡守卫在构建启动计划之前执行（fail-closed）：未显式锁卡 / 含生产卡 6,7 /
-    # 超过 4 卡，一律拒绝，连子进程都不创建。
+    # 超过 4 卡，一律拒绝，连子进程都不创建。容器侧 runtime 的 `void` 哨兵按
+    # 实测可见卡判定（F-1，见 core/gpu_guard 模块 docstring）。
     devices = require_gpu_lock_or_exit()
     plan = build_launch_plan(args.config, smoke=bool(getattr(args, "smoke", False)))
     print(
