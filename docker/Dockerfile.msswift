@@ -1,0 +1,86 @@
+# GRASPO 实验镜像配方（ms-swift 路径）—— 公开 base + cu130 官方索引 + 精确 pin。
+#
+# 用途：给"本期 54 档实测"提供**可公开复现**的执行环境配方（与产品镜像同一套版本 pin，
+# 额外含 ms-swift 与 pytest）。**本期唯一获批执行环境是既有的实验镜像**
+# `graspo-msswift:4.5.3`；本配方是该环境的公开等价配方，其实际来源记录在
+# `.local/`（环境信息，不入 tracked 文件，宪法 §16）。
+#
+# ⚠️ 状态：**待上机验证**（不阻塞本期）。只读边界内无法确证 `download.pytorch.org`
+#    从构建机可达，也未起容器实测，故本配方尚未定稿。验证命令（单一路径锁卡）：
+#      python3 scripts/gpu_lock_guard.py --visible 0 || exit 1
+#      docker run --rm --runtime=nvidia -e NVIDIA_VISIBLE_DEVICES=0 <image> \
+#        python -c "import swift, torch; print(swift.__version__, torch.__version__, torch.version.cuda)"
+#
+# 构建（版本号唯一来源是 docker/build.sh，见 §1.4）：
+#   DOCKERFILE=docker/Dockerfile.msswift IMAGE_NAME=graspo-msswift:4.5.3 bash docker/build.sh
+#
+# 代理与 pip 源：**只构建时需要、运行时不需要** ⇒ 一律用 ARG，禁止写入 ENV（§7.1）。
+
+# 公开 base：pytorch/pytorch，digest 精确锁定。
+FROM pytorch/pytorch@sha256:91629be68c98490a987b243b176757e8549336b98296933448fe496427118569
+
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cu130
+ARG PIP_INDEX_URL=https://pypi.org/simple/
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+RUN export http_proxy="${HTTP_PROXY:-}" https_proxy="${HTTPS_PROXY:-}" \
+    HTTP_PROXY="${HTTP_PROXY:-}" HTTPS_PROXY="${HTTPS_PROXY:-}" \
+    && apt-get update -o Acquire::Retries=10 -o Acquire::http::Timeout=30 \
+    && apt-get install -y --no-install-recommends \
+    -o Acquire::Retries=10 -o Acquire::http::Timeout=30 \
+    git curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace/graspo
+
+# ── 运行时依赖：精确 pin（宪法 §6）────────────────────────────────────────────
+# 锁定值 = 实测血统；与 pyproject.toml 的声明由 scripts/check_env_versions.py
+# 自动派生包集合并逐包比对（§2 防呆）。
+COPY pyproject.toml uv.lock .python-version README.md LICENSE ./
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    HTTP_PROXY="${HTTP_PROXY:-}" HTTPS_PROXY="${HTTPS_PROXY:-}" \
+    http_proxy="${HTTP_PROXY:-}" https_proxy="${HTTPS_PROXY:-}" \
+    pip install --no-cache-dir --index-url "${TORCH_INDEX_URL}" \
+    torch==2.11.0 torchvision==0.26.0
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    HTTP_PROXY="${HTTP_PROXY:-}" HTTPS_PROXY="${HTTPS_PROXY:-}" \
+    http_proxy="${HTTP_PROXY:-}" https_proxy="${HTTPS_PROXY:-}" \
+    pip install --no-cache-dir --index-url "${PIP_INDEX_URL}" \
+    transformers==5.12.1 pydantic==2.11.10 pyyaml==6.0.3 safetensors==0.7.0 \
+    pillow==12.2.0 numpy==2.4.5 ms-swift==4.5.3 pytest==9.0.3
+
+# CUDA 渠道断言（fail-closed）。
+RUN python -c "import torch, sys; cuda=torch.version.cuda or ''; print('torch', torch.__version__, 'cuda', cuda); sys.exit('CUDA CHANNEL FAILED: '+cuda) if not cuda.startswith('13.0') else None"
+
+# ── 源码 + 项目安装 ──────────────────────────────────────────────────────────
+COPY src ./src
+COPY samples ./samples
+COPY scripts/check_env_versions.py ./scripts/check_env_versions.py
+COPY docker/Dockerfile.msswift ./docker/Dockerfile.msswift
+COPY docker/Dockerfile ./docker/Dockerfile
+
+ARG VERSION=0.0.0
+ENV SETUPTOOLS_SCM_PRETEND_VERSION=${VERSION}
+# 代码单向流动（§14.4）追溯锚点 + 实测版本记录。
+RUN mkdir -p /opt/graspo-image \
+    && printf '%s\n' "${VERSION}" > /opt/graspo-image/VERSION \
+    && python -c "import swift, torch, transformers, pydantic; print('ms-swift', swift.__version__); print('torch', torch.__version__); print('transformers', transformers.__version__); print('pydantic', pydantic.VERSION)" >> /opt/graspo-image/VERSION
+
+# ── 项目安装 + 构建期版本门禁（fail-closed）──────────────────────────────────
+# 门禁脚本按自身路径推导 PROJECT_ROOT=/workspace/graspo，能读到 pyproject 与两个 Dockerfile。
+RUN --mount=type=cache,target=/root/.cache/uv \
+    HTTP_PROXY="${HTTP_PROXY:-}" HTTPS_PROXY="${HTTPS_PROXY:-}" \
+    http_proxy="${HTTP_PROXY:-}" https_proxy="${HTTPS_PROXY:-}" \
+    pip install --no-cache-dir --index-url "${PIP_INDEX_URL}" uv \
+    && uv pip install --system --break-system-packages --no-deps -e . \
+    && python scripts/check_env_versions.py --local
+
+CMD ["bash"]
