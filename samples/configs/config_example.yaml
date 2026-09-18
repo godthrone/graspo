@@ -7,11 +7,36 @@
 # 启动：uv run graspo launch --config config_example.yaml
 
 # ── 训练方法 ────────────────────────────────────────────────────────────────
-train_method: graspo          # graspo=RL | sft=SFT
+# graspo=RL | sft=SFT | cpt=继续预训练 | opd=on-policy 蒸馏
+# cpt / opd **只有 ms-swift 后端实现**（能力矩阵 §4：两者在 native 侧为 ⛔ 不支持）；
+# 配置层对 `train_method: cpt|opd` + `backend: native` 直接拒绝（fail-closed）。
+train_method: graspo          # graspo | sft | cpt | opd
 backend: native           # native 后端（TP+DP+PP+SP+Checkpoint 五位一体）；msswift 见 config_example_msswift.yaml
 # 参数化模式（native / msswift 两后端共用；null 等价于 lora，向后兼容）：
 #   lora = 只训 LoRA 适配器；full = 全参（全量）微调，训练全部权重。
 tuner_type: lora
+
+# ── CPT（继续预训练）算法级配置 —— 后端中立，仅 `train_method: cpt` 时被消费 ────
+# 语义等价于 ms-swift 的 `swift pt`（= `swift sft --use_chat_template false --loss_scale all`）。
+# null = 用 CPT 语义默认值（loss_scale → "all"；use_chat_template → false）。
+pretrain:
+  loss_scale: null               # null=all（每个 token 都计损）
+  use_chat_template: null        # null=false（纯文本续训，不套对话模板）
+
+# ── OPD（on-policy 蒸馏）教师/学生配置 —— 后端中立，仅 `train_method: opd` 时被消费 ─
+# 学生 = 上面的 `model.model_path`（不另设字段）；教师必须**具体**给出（非空）：
+# `train_method: opd` 时 teacher_model_path 为空会被配置层拒绝（不留"教师待定"）。
+# 本期用户拍板（2026-09-18）：教师 = Qwen3.8-27B、学生 = Qwen3.5-9B。
+# 字段名与 ms-swift `TeacherModelArguments` / GKD 超参逐字对应。
+distill:
+  teacher_model_path: null       # 示例：/models/Qwen3.8-27B（opd 必填）
+  teacher_adapters: null         # null=不用教师 LoRA 适配器
+  teacher_deepspeed: null        # null=继承学生侧 deepspeed 配置
+  offload_teacher_model: null    # null=不换出；显式 true/false 为用户覆盖
+  gkd_logits_topk: null          # null=全词表散度；N=只取教师 top-N logits
+  lmbda: null                    # null=交 ms-swift 默认值
+  sft_alpha: null                # null=交 ms-swift 默认值（0=纯蒸馏 loss）
+  beta: null                     # null=交 ms-swift 默认值（GKD 默认 0.5=JSD）
 
 # ── 模型 ─────────────────────────────────────────────────────────────────────
 model:

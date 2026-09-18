@@ -1,4 +1,4 @@
-"""graspo / ARD JSONL → ms-swift 数据集（SFT 与 GRPO 两种形态）。
+"""graspo / ARD JSONL → ms-swift 数据集（SFT / GRPO / CPT / OPD 四种形态）。
 
 **职责边界**
 
@@ -16,6 +16,14 @@
 - GRPO：``{"messages": [system?, user], "targets": <JSON 字符串>}``。
   提示词交给 ms-swift 采样，``targets`` 作为额外列透传给奖励函数（ms-swift 会把
   数据集列原样喂给 reward，见 ``GRPO 奖励适配器`` ``reward.py``）。
+
+**另两种形态（CPT / OPD，ms-swift 独有能力，见能力矩阵 §4）**
+
+- CPT（继续预训练）：``{"messages": [{"role": "assistant", "content": <纯文本>}]}``
+  ——ms-swift 官方预训练数据格式（``docs/.../Custom-dataset.md`` §Pre-training）。
+- OPD（on-policy 蒸馏，走 GKD）：``{"messages": [system?, user]}``——纯提示词，
+  **不带** ``targets`` 奖励列；监督信号来自教师模型的现场 logits。与 GRPO 的差别
+  只有这一处，提示词适配逻辑复用同一次修复（§1.4）。
 
 **输入格式自适应**：ARD v3 记录的 ``targets[i].output.content`` 是 **str**，graspo 原生
 样本是 **dict**。本模块显式判别二者（``content`` 的类型），不做"猜字段"的隐式约定；
@@ -434,6 +442,106 @@ def build_grpo_rows(samples: list[Any], *, config: Any = None) -> list[dict[str,
     return rows
 
 
+def _flatten_blocks(messages: list[Any]) -> list[dict[str, Any]]:
+    """把样本的全部消息内容摊平成 ms-swift 的 content 块列表（顺序不变）。
+
+    文本块原样保留为 ``{"type": "text", "text": ...}``；媒体块（``image`` /
+    ``image_url`` / ``video`` / ``video_url`` / ``audio`` / ``audio_url``）**原样透传**——
+    ms-swift 的 ``StdTemplateInputs.remove_messages_media`` 会扫描**每条**消息的
+    content 列表、把它们抽成 ``images``/``videos``/``audios`` 数据集列，并在原位留下
+    ``<image>`` / ``<video>`` / ``<audio>`` 占位。因此"多模态通路可用"不需要我们
+    自己拼媒体列：把块放回 content 里交给上游即可（§1.2 不重复实现上游职责）。
+    """
+    blocks: list[dict[str, Any]] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            if content:
+                blocks.append({"type": "text", "text": content})
+        elif isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict):
+                    blocks.append(dict(block))
+                elif isinstance(block, str):
+                    blocks.append({"type": "text", "text": block})
+        # content 为 None（ELAM 的工具调用轮）或其它类型：由 tool_calls 分支处理
+        tool_calls = message.get("tool_calls")
+        if isinstance(tool_calls, list) and tool_calls:
+            rendered = _render_history([message], 1)
+            if rendered:
+                blocks.append({"type": "text", "text": rendered})
+    return blocks
+
+
+def build_cpt_rows(samples: list[Any], *, config: Any = None) -> list[dict[str, Any]]:
+    """graspo 样本 → ms-swift **CPT（预训练）** 行。
+
+    行形态取自 ms-swift 4.5.3 **官方预训练数据格式**
+    （``docs/.../Customization/Custom-dataset.md`` §Pre-training）：
+
+    .. code-block:: json
+
+        {"messages": [{"role": "assistant", "content": "Pre-trained text goes here"}]}
+
+    多模态样本额外把媒体块留在 content 里 ⇒ ms-swift 抽出 ``images`` / ``videos``
+    列（"所有训练都支持多模态"这一范围约束因此在 CPT 通道上同样成立）。
+
+    **★ 数据口径（不得误读）**：本函数把一条**指令形态的样本**（ELAM V5 / ARD 形态）
+    摊平成**一条纯文本续训行**，目的是让 CPT 通道**能跑通一步**（判据 A1–A6），
+    **不是**"CPT 语料已就绪"。真正的预训练语料是本期未决事项，见工作包 report §⑤
+    （用户 2026-09-18 拍板：CPT 只判跑通、语料问题"回头再说"，**不得为此造语料**）。
+
+    文本 = 全部消息内容（含 ``<image>`` 等占位）+ 首条 target 的答案文本。
+    答案文本用 :func:`graspo.ripple.parsing.xml.build_sft_target_text` 生成——
+    与 SFT 通道**同一个函数**（§1.4 单一真相源），不另写一套渲染。
+
+    Raises:
+        ValueError: 某条样本摊平后没有任何文本（拒绝产出空行去"训练"，§2.3）。
+    """
+    from graspo.ripple.parsing.xml import build_sft_target_text
+
+    extra_columns = _chat_template_column(config) if config is not None else {}
+    rows: list[dict[str, Any]] = []
+    for index, sample in enumerate(samples):
+        blocks = _flatten_blocks(sample.messages)
+        if sample.targets:
+            target_text = build_sft_target_text(sample.targets[0].get("output") or {})
+            if target_text.strip():
+                blocks.append({"type": "text", "text": target_text})
+        if not any(
+            block.get("type") == "text" and str(block.get("text") or "").strip()
+            for block in blocks
+        ):
+            raise ValueError(
+                f"samples[{index}] produced no plain text; refusing to write an empty "
+                "CPT row (an all-empty corpus would train on padding only)"
+            )
+        rows.append({MESSAGES_KEY: [{"role": "assistant", "content": blocks}], **extra_columns})
+    return rows
+
+
+def build_opd_rows(samples: list[Any], *, config: Any = None) -> list[dict[str, Any]]:
+    """graspo 样本 → ms-swift **OPD（on-policy 蒸馏）** 行 = **纯提示词**。
+
+    OPD 与 GRPO 同属"completion 由学生现场采样"的一类，因此数据集只喂提示词；
+    与 :func:`build_grpo_rows` 的唯一差别是**不带 ``targets`` 奖励列**——GKD 的
+    监督信号来自教师模型的现场 logits，不是 graspo 奖励函数。带一个没人消费的
+    ``targets`` 列等于制造"看起来生效、实际被忽略"的假配置（§1.4 / §7.2）。
+
+    提示词同样过 :func:`build_ms_swift_messages`——相对媒体路径、``content=null``
+    配对这两条 4.5.3 实测约束在此**复用同一次修复**（§1.4）。
+    """
+    extra_columns = _chat_template_column(config) if config is not None else {}
+    rows: list[dict[str, Any]] = []
+    for index, sample in enumerate(samples):
+        if not sample.messages:
+            raise ValueError(f"samples[{index}] has no messages; cannot build an OPD prompt")
+        rows.append({MESSAGES_KEY: build_ms_swift_messages(sample.messages), **extra_columns})
+    return rows
+
+
 def write_rows(path: str | Path, rows: list[dict[str, Any]]) -> int:
     """把行写成 JSONL；返回写入条数。"""
     path = Path(path)
@@ -458,7 +566,9 @@ def prepare_ms_swift_dataset(
 
     Args:
         config: ``GraspoConfig`` 实例（只用 ``data.train_path``）。
-        stage: ``"sft"`` 或 ``"rlhf"``——决定行形态。
+        stage: ``"sft"`` / ``"rlhf"`` / ``"cpt"`` / ``"opd"``——决定行形态
+            （CPT = 纯文本续训行；OPD = 纯提示词行；SFT = 提示词 + 目标答案；
+            RLHF = 提示词 + 奖励用 ``targets`` 列）。
         work_dir: 本次运行的隔离目录（数据集是运行产物，不写回源码树，§8.5）。
 
     Returns:
@@ -478,11 +588,18 @@ def prepare_ms_swift_dataset(
     logger.info(
         "msswift dataset: resolved %d relative media path(s) against %s", rewritten, source.parent
     )
-    rows = (
-        build_sft_rows(samples, config=config)
-        if stage == "sft"
-        else build_grpo_rows(samples, config=config)
-    )
+    builders = {
+        "sft": build_sft_rows,
+        "rlhf": build_grpo_rows,
+        "cpt": build_cpt_rows,
+        "opd": build_opd_rows,
+    }
+    builder = builders.get(stage)
+    if builder is None:
+        raise ValueError(
+            f"stage must be one of {sorted(builders)}, got {stage!r}"
+        )
+    rows = builder(samples, config=config)
     target = Path(work_dir) / f"ms_swift_{stage}.jsonl"
     write_rows(target, rows)
     return str(target)

@@ -52,8 +52,21 @@ from typing import Any, Literal
 
 from graspo.flow.msswift._rope_compat import suggested_rope_parameters
 
-#: 训练阶段：SFT 与 RL(GRPO) 的 ms-swift 参数集不同（如 max_completion_length 仅 RL 有）。
-Stage = Literal["sft", "rlhf"]
+#: 训练阶段：四种训练方法的 ms-swift 参数集不同。
+#: - ``sft``  → ``SftArguments`` / ``swift.pipelines.sft_main``
+#: - ``rlhf`` → ``RLHFArguments`` + ``--rlhf_type grpo`` / ``rlhf_main``（graspo RL）
+#: - ``cpt``  → ``PretrainArguments`` / ``swift.pipelines.pretrain_main``（= ``swift pt``）
+#: - ``opd``  → ``RLHFArguments`` + ``--rlhf_type gkd`` / ``rlhf_main``（on-policy 蒸馏）
+#: 取值来源：ms-swift 4.5.3 源码 + ``docs/source_en/Instruction/`` 的
+#: ``Pre-training-and-Fine-tuning.md``（`swift pt` = `swift sft --use_chat_template false
+#: --loss_scale all`）与 ``Distillation.md``（GKD = ``--rlhf_type gkd``）。
+Stage = Literal["sft", "rlhf", "cpt", "opd"]
+
+#: CPT 的损失覆盖范围默认值（**算法语义**，不是后端参数默认值）。
+#: CPT = "在纯文本上续训、每个 token 都算损失" ⇒ ``"all"``；与 ms-swift
+#: `swift pt` 的定义逐字一致（`docs/.../Pre-training-and-Fine-tuning.md`）。
+#: 只有一处定义：告警文案、映射层、测试都引用它（§1.4 单一真相源）。
+DEFAULT_CPT_LOSS_SCALE = "all"
 
 
 def _flag(name: str, value: Any) -> list[str]:
@@ -146,8 +159,17 @@ _MSSWIFT_SCALAR_PASSTHROUGH: tuple[str, ...] = (
     "per_device_train_batch_size",
 )
 
-#: 只在 RL(GRPO) 阶段合法的 ``msswift`` 字段（SFT 参数类里不存在，传了就是非法参数）。
+#: 只在 rollout 类阶段（RL 的 GRPO / OPD 的 GKD）合法的 ``msswift`` 字段。
+#: SFT / CPT 的参数类（``SftArguments`` / ``PretrainArguments``）里不存在这些字段，
+#: 传了就是非法参数（实测口径，见模块 docstring「不可映射清单」）。
 _MSSWIFT_RLHF_ONLY: tuple[str, ...] = ("use_vllm", "vllm_mode", "num_iterations")
+
+#: 上表中**只被 GRPO 消费**的字段：``num_iterations`` 是 ``GRPOConfig`` 的
+#: "每个样本的更新步数 𝜇"（ms-swift 4.5.3 ``rlhf_trainers/grpo_trainer.py:2118``），
+#: 由 GRPO 的 rollout 循环消费；``GKDConfig``（``rlhf_trainers/arguments.py:82``）
+#: 没有这个消费者。GKD 阶段的"每样本采样次数"语义不同，**不为它发明取值**——
+#: 该字段在 ``opd`` 阶段直接不透传（§2.2 None 语义 / §6.1 简单优先）。
+_MSSWIFT_GRPO_ONLY: tuple[str, ...] = ("num_iterations",)
 
 #: Megatron 段（§8.2 MG1-MG11）→ ms-swift ``MegatronArguments`` 参数名（同名）。
 #: 显式列出而不是遍历 dataclass：新增字段时必须显式加进来，不会被"顺手"透传。
@@ -258,8 +280,14 @@ def msswift_passthrough_argv(
         _extend(argv, name, value)
     _extend(argv, "attn_impl", resolve_attn_impl(config))
     _extend(argv, "rope_scaling", resolve_rope_scaling(config))
-    if stage == "rlhf":
+    if stage in ("rlhf", "opd"):
+        # OPD(GKD) 与 GRPO 同属"学生现场采样 completion"的一类，两者都在
+        # ms-swift 的 `rlhf_support_vllm_types` 里（4.5.3 `rlhf_args.py:13`），
+        # 因此共用同一组 rollout 专有字段——但 GRPO 独有的字段（`num_iterations`）
+        # 在 GKD 阶段不透传（`_MSSWIFT_GRPO_ONLY`）。
         for name in _MSSWIFT_RLHF_ONLY:
+            if stage != "rlhf" and name in _MSSWIFT_GRPO_ONLY:
+                continue
             value = getattr(section, name)
             if name == "num_iterations" and value is None:
                 # graspo 的默认优化轮次是 1（native 侧已删除 optimize_iterations_per_step）
@@ -336,7 +364,10 @@ def graspo_to_ms_swift_argv(
 
     Args:
         config: ``GraspoConfig`` 实例。
-        stage: ``"sft"`` 或 ``"rlhf"``（决定 ``max_completion_length`` 等 RL 专有参数）。
+        stage: ``"sft"`` / ``"rlhf"`` / ``"cpt"`` / ``"opd"``——决定该训练方法的
+            专有参数（``max_completion_length`` 仅 ``rlhf``/``opd``；
+            ``use_chat_template`` / ``loss_scale`` 仅 ``cpt``；
+            ``rlhf_type`` 的取值与教师参数仅 ``opd``）。
         dataset_path: 已转换好的 ms-swift 数据集文件（由设施层准备，本函数只引用）。
         output_dir: 本次运行的输出目录（graspo ``training.output_dir``；已由调用方
             按 ``training.run_name`` 做过隔离，本函数不再二次拼接）。
@@ -347,11 +378,15 @@ def graspo_to_ms_swift_argv(
         ``["--model", "/path", "--dataset", "/path", ...]``。
 
     Note:
-        映射只读 graspod 的 ``model`` / ``data`` / ``lora`` / ``training`` 段 +
-        ``msswift`` 段。任何一段里没有出现过的语义，本函数不会凭空发明。
+        映射只读 graspo 的 ``model`` / ``data`` / ``lora`` / ``training`` 段 +
+        ``msswift`` 段 + ``pretrain`` / ``distill`` 两个**后端中立**段
+        （CPT / OPD 的算法级配置，§1.4）。任何一段里没有出现过的语义，
+        本函数不会凭空发明。
     """
-    if stage not in ("sft", "rlhf"):
-        raise ValueError(f"stage must be 'sft' or 'rlhf', got {stage!r}")
+    if stage not in ("sft", "rlhf", "cpt", "opd"):
+        raise ValueError(
+            f"stage must be 'sft', 'rlhf', 'cpt' or 'opd', got {stage!r}"
+        )
 
     model = config.model
     data = config.data
@@ -370,12 +405,14 @@ def graspo_to_ms_swift_argv(
 
     # ── 数据 ─────────────────────────────────────────────────────────────
     _extend(argv, "dataset", dataset_path)
-    if stage == "sft":
+    if stage in ("sft", "cpt"):
         # 与 native SFT 同语义：整条序列（prompt+response）上限 = data.max_prompt_length
         # （`flow/trainer/sft_trainer.py:132` 的 max_seq_len 即此值）。
+        # CPT 同理——预训练是"整条纯文本续训"，没有独立的 completion 上限。
         _extend(argv, "max_length", data.max_prompt_length)
     else:
-        # RL：prompt 上限与 completion 上限是两个正交参数（§7.4 参数正交）。
+        # RL(GRPO) / OPD(GKD)：prompt 上限与 completion 上限是两个正交参数
+        # （§7.4 参数正交）。两者的 completion 都由学生现场采样产生。
         _extend(argv, "max_length", data.max_prompt_length)
         _extend(argv, "max_completion_length", training.max_new_tokens)
 
@@ -429,6 +466,21 @@ def graspo_to_ms_swift_argv(
     elif training.save_checkpoint_every_epoch:
         argv.extend(["--save_strategy", "epoch"])
 
+    if stage == "cpt":
+        # ── CPT（继续预训练）：`swift pt` 的两条专有参数 ─────────────────────
+        # ms-swift 的 `swift pt` **定义**就是 `swift sft --use_chat_template false
+        # --loss_scale all`（`docs/.../Pre-training-and-Fine-tuning.md`），
+        # `PretrainArguments(SftArguments)` 只加这两个字段（`pretrain_args.py:8-10`）。
+        # 取值来源唯一：`config.pretrain`（后端中立段，§1.4）——**不读 `msswift` 段**。
+        argv.extend(
+            [
+                "--use_chat_template",
+                "true" if config.pretrain.use_chat_template else "false",
+            ]
+        )
+        # None ⇒ CPT 语义默认值 "all"（每个 token 都计损）；显式值原样透传。
+        _extend(argv, "loss_scale", config.pretrain.loss_scale or DEFAULT_CPT_LOSS_SCALE)
+
     if stage == "rlhf":
         # RLHF 参数类的 `rlhf_type` 默认是 'dpo'（DPO 数据集需要 chosen/rejected），
         # 不显式指定就会拿 GRPO 的提示词数据去按 DPO 编码，报
@@ -445,6 +497,30 @@ def graspo_to_ms_swift_argv(
         argv.extend(["--beta", "0.0"])
         # GRPO 的数据集列（`targets`）要透传给奖励函数，必须保留未使用列。
         argv.extend(["--remove_unused_columns", "false"])
+
+    if stage == "opd":
+        # ── OPD（on-policy 蒸馏）：GKD 路径 ─────────────────────────────────
+        # ms-swift 4.5.3 提供两条蒸馏路径（`docs/.../Distillation.md` §3）：
+        #   Path A `--rlhf_type gkd`   = 教师散度**直接作为 loss**；
+        #   Path B `--rlhf_type grpo` + teacher = 教师 log-ratio 注入 GRPO advantage。
+        # graspo 选 **Path A（GKD）**：它是"教师散度即 loss"的最短通路，教师是
+        # 同一进程内的**独立冻结模型**，不需要额外的教师 logprob 数据契约。
+        # 取值来源唯一：`config.distill`（后端中立段，§1.4）——**不读 `msswift` 段**。
+        argv.extend(["--rlhf_type", "gkd"])
+        distill = config.distill
+        _extend(argv, "teacher_model", distill.teacher_model_path)
+        _extend(argv, "teacher_adapters", distill.teacher_adapters)
+        _extend(argv, "teacher_deepspeed", distill.teacher_deepspeed)
+        _extend(argv, "offload_teacher_model", distill.offload_teacher_model)
+        _extend(argv, "gkd_logits_topk", distill.gkd_logits_topk)
+        _extend(argv, "lmbda", distill.lmbda)
+        _extend(argv, "sft_alpha", distill.sft_alpha)
+        # `beta` 不在这里发明默认值：None ⇒ 不透传，交 ms-swift 自己的默认
+        # （GKD 默认 0.5 = JSD；见 `rlhf_args.py` 的 `_set_beta`）。显式 0 = 前向 KL、
+        # 显式 1 = 反向 KL，都原样透传（§2.2 None 语义）。
+        _extend(argv, "beta", distill.beta)
+        _extend(argv, "temperature", training.temperature)
+        _extend(argv, "top_p", training.top_p)
 
     # ── msswift 段透传（标准路径 + 长文）──────────────────────────────────
     # 注意：Megatron 参数**不在**这里——它们只对 Megatron 启动通道合法，

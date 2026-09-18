@@ -37,6 +37,28 @@ _DEV_FALLBACKS: dict[str, dict[str, str]] = {
         "native": "graspo.flow.trainer.sft_trainer:create_native_sft_trainer",
         "msswift": "graspo.flow.msswift.sft_trainer:create_msswift_sft_trainer",
     },
+    # CPT（继续预训练）注册表：形态与 SFT/RL 都不同——它走 ms-swift 的**预训练**
+    # 管线（`swift.pipelines.pretrain_main`，等价于 `swift pt`），数据集是纯文本行
+    # 而不是对话行。**只有 ms-swift 实现**（能力矩阵 §4：CPT · native = `⛔ 不支持`）。
+    "graspo.cpt_backends": {
+        "msswift": "graspo.flow.msswift.cpt_trainer:create_msswift_cpt_trainer",
+    },
+    # OPD（on-policy 蒸馏）注册表：走 ms-swift 的 GKD 路径
+    # （`--rlhf_type gkd` + 独立冻结教师 `--teacher_model`）。**只有 ms-swift 实现**
+    # （能力矩阵 §4：OPD · native = `⛔ 不支持`）。
+    "graspo.opd_backends": {
+        "msswift": "graspo.flow.msswift.opd_trainer:create_msswift_opd_trainer",
+    },
+}
+
+#: ``train_method`` → entry_point 组名（**路由的单一真相源**，宪法 §1.4）。
+#: 表驱动而不是 if/elif 链：新增训练方法 = 本表加一行 + 注册表加一个实现，
+#: 既有分支 0 行改动（§1.2 对扩展开放、对修改关闭）。
+_REGISTRY_BY_TRAIN_METHOD: dict[str, str] = {
+    "graspo": "graspo.backends",
+    "sft": "graspo.sft_backends",
+    "cpt": "graspo.cpt_backends",
+    "opd": "graspo.opd_backends",
 }
 
 
@@ -83,27 +105,40 @@ def _discover(group: str) -> dict[str, Callable[[], Any]]:
 
 
 def resolve_backend_builder(backend: str, *, train_method: str) -> Callable[[], Any]:
-    """按 ``(train_method, backend)`` 解析训练器工厂（单一真相源，§1.4 / D5）。
+    """按 ``(train_method, backend)`` 解析训练器工厂（**唯一的路由真相源**，§1.4 / D5）。
 
-    RL（``train_method="graspo"``）查 ``graspo.backends``；
-    SFT（``train_method="sft"``）查 ``graspo.sft_backends``。
-    两个注册表都走 entry_points 自动发现（开发模式回退 ``_DEV_FALLBACKS``）。
+    路由表是 :data:`_REGISTRY_BY_TRAIN_METHOD`——四种训练方法各查自己的注册表：
+
+    - ``graspo``（RL）→ ``graspo.backends``
+    - ``sft`` → ``graspo.sft_backends``
+    - ``cpt`` → ``graspo.cpt_backends``
+    - ``opd`` → ``graspo.opd_backends``
+
+    所有注册表都走 entry_points 自动发现（开发模式回退 ``_DEV_FALLBACKS``）。
+    **未知的 ``train_method`` 直接拒绝**，不再静默落到 RL 注册表——静默兜底会让
+    拼错的算法名拿着另一种算法去训练（宪法 §3.4 的"坏退路"）。
 
     调用方拿到的是 lazy loader —— ``resolve_backend_builder(...)()`` 才真正导入
     后端模块。因此本函数本身不触发 torch / ms-swift 导入（可在无 GPU 开发机单测）。
 
     Args:
         backend: 后端名，如 ``"native"`` / ``"msswift"``。
-        train_method: ``"graspo"``（RL）或 ``"sft"``。
+        train_method: ``"graspo"``（RL）/ ``"sft"`` / ``"cpt"`` / ``"opd"``。
 
     Returns:
         无参 callable，调用后返回该后端该训练方法的工厂函数（形如
         ``factory(config, selection)``）。
 
     Raises:
-        ValueError: 该 ``(train_method, backend)`` 组合未注册任何工厂。
+        ValueError: ``train_method`` 未知，或该 ``(train_method, backend)`` 组合
+            未注册任何工厂。
     """
-    group = "graspo.sft_backends" if train_method == "sft" else "graspo.backends"
+    group = _REGISTRY_BY_TRAIN_METHOD.get(train_method)
+    if group is None:
+        raise ValueError(
+            f"Unknown train_method {train_method!r}. "
+            f"Known train methods: {', '.join(sorted(_REGISTRY_BY_TRAIN_METHOD))}"
+        )
     registry = _discover(group)
     loader = registry.get(backend)
     if loader is None:

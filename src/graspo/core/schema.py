@@ -15,6 +15,81 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 #: 共用这一个开关——同一语义只有一个字段（宪法 §1.4 单一真相源）。
 TunerType = Literal["lora", "full"]
 
+#: 训练方法（算法）枚举 —— **全项目唯一真相源**（宪法 §1.4）。
+#: 与能力矩阵 `docs/capability-matrix.md` §4「算法」行一一对应：
+#: ``graspo`` = GRASPO(RL)、``sft`` = 监督微调、``cpt`` = 继续预训练、
+#: ``opd`` = on-policy 蒸馏。新增算法 = 此字面量加一个取值（§1.2 对扩展开放），
+#: 具体实现由 ``core/discovery.py`` 的注册表路由解析。
+TrainMethod = Literal["graspo", "sft", "cpt", "opd"]
+
+#: ``train_method`` → **支持它的后端**（单一真相源，宪法 §1.4）。
+#: 依据 `docs/capability-matrix.md` §4：CPT / OPD 在 **native 侧就是 `⛔ 不支持`**
+#: ⇒ 这里 fail-closed，而不是把它们静默路由到 SFT/RL 训练器（那等于拿着
+#: 另一种算法去训练，属宪法 §3.4 的"坏退路"）。
+TRAIN_METHOD_BACKENDS: dict[str, tuple[str, ...]] = {
+    "graspo": ("native", "msswift"),
+    "sft": ("native", "msswift"),
+    "cpt": ("msswift",),
+    "opd": ("msswift",),
+}
+
+#: 上表的**值**并集 = 本项目已知的后端名（用于区分"已知后端但该方法不支持"与
+#: "后端名根本不存在"——后者只由 `flow/backend_selection.select_backend` 判，§1.4）。
+KNOWN_BACKENDS: frozenset[str] = frozenset(
+    name for backends in TRAIN_METHOD_BACKENDS.values() for name in backends
+)
+
+
+def validate_train_method_combination(
+    *,
+    train_method: str,
+    backend: str,
+    distill_teacher_model_path: str | None,
+) -> None:
+    """``train_method`` × ``backend`` × 教师配置的**非法组合**在配置加载时即拒绝。
+
+    纯逻辑函数（零 IO、零重依赖），因此可在无 torch 的机器上独立单测
+    （宪法 §1.3 层次边界）——与 :func:`validate_tuner_type_combination` 同一手法。
+
+    **只拒绝"确定非法"的组合**，不为好看的完整性发明约束（§6.1 简单优先）：
+
+    - ``train_method`` 不在 :data:`TRAIN_METHOD_BACKENDS` 里 ⇒ 拒绝（防呆：拼错的算法名
+      不得静默退化成默认算法）。
+    - ``backend`` 是**本项目已知的后端之一**、但不在该方法的后端集合里 ⇒ 拒绝。
+      非已知后端名（如 ``"thirdparty"``）**不在这里判**——那是
+      ``flow/backend_selection.select_backend`` 的职责，避免两处各判一次（§1.4）。
+    - ``train_method == "opd"`` 必须有**具体**的教师模型路径：用户 2026-09-18 拍板
+      "教师 = ``Qwen3.8-27B``，学生 = ``Qwen3.5-9B``"，不再留"教师待定"。
+
+    Args:
+        train_method: ``GraspoConfig.train_method`` 的原始值。
+        backend: ``GraspoConfig.backend`` 的原始值。
+        distill_teacher_model_path: ``distill.teacher_model_path``（``None`` = 未提供）。
+
+    Raises:
+        ValueError: 命中上述任一非法组合。
+    """
+    supported = TRAIN_METHOD_BACKENDS.get(train_method)
+    if supported is None:
+        raise ValueError(
+            f"train_method must be one of {sorted(TRAIN_METHOD_BACKENDS)}, got {train_method!r}"
+        )
+    if backend in KNOWN_BACKENDS and backend not in supported:
+        # `KNOWN_BACKENDS` = `TRAIN_METHOD_BACKENDS` 的**值**并集（见上面的定义）。
+        raise ValueError(
+            f"train_method={train_method!r} is not supported on backend={backend!r}; "
+            f"supported backends for it: {', '.join(supported)}. "
+            "CPT and OPD are ms-swift-only capabilities "
+            "(docs/capability-matrix.md §4 lists them as unsupported on native)."
+        )
+    if train_method == "opd" and not (distill_teacher_model_path or "").strip():
+        raise ValueError(
+            "train_method='opd' requires a concrete teacher model: set "
+            "`distill.teacher_model_path` (the user-pinned teacher is Qwen3.8-27B, "
+            "student is Qwen3.5-9B). An empty value is rejected rather than treated as "
+            "'teacher to be decided'."
+        )
+
 
 def resolve_tuner_type(tuner_type: TunerType | None) -> TunerType:
     """把"未指定"归一为默认值：``None`` ⇒ ``"lora"``。
@@ -263,6 +338,67 @@ class DataConfig(BaseModel):
 
     train_path: str = ""
     max_prompt_length: int = 2048
+
+
+class PretrainConfig(BaseModel):
+    """CPT（继续预训练）的**算法级**配置 —— **后端中立**（宪法 §1.4 单一真相源）。
+
+    **为什么独立成段而不是塞进 ``msswift`` 段**：CPT 的语义（"在纯文本上做
+    next-token 续训、每个 token 都计损、不套对话模板"）是**算法层的**，不是某个
+    后端的私有参数。把它放在中立段，后端映射层只从这一处取值——两个后端不会
+    各写一份配置（哪怕本期只有 ms-swift 实现了 CPT，见
+    :data:`TRAIN_METHOD_BACKENDS`）。
+
+    字段一律 ``X | None = None``（宪法 §2.2）：``None`` = 未提供 ⇒ 用 **CPT 语义
+    默认值**（下面逐字段写明），显式值与 ``None`` 语义不同，检查一律用 ``is None``。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: 损失覆盖范围。CPT 语义 = "每个 token 都算损失" ⇒ ``None`` ⇒ ``"all"``。
+    #: （ms-swift 侧等价于 `swift pt` 的 ``--loss_scale all``。）
+    loss_scale: str | None = None
+    #: 是否套用对话模板。CPT 语义 = "在纯文本上续训" ⇒ ``None`` ⇒ ``False``。
+    #: （ms-swift 侧等价于 `swift pt` 的 ``--use_chat_template false``。）
+    use_chat_template: bool | None = None
+
+
+class DistillConfig(BaseModel):
+    """OPD（on-policy 蒸馏）的**教师 / 学生**配置 —— **后端中立**（宪法 §1.4）。
+
+    教师是**具体、可配置的模型路径**，不是"待定"：用户 2026-09-18 拍板
+    教师 = ``Qwen3.8-27B``、学生 = ``Qwen3.5-9B``；``train_method: opd`` 时
+    :func:`validate_train_method_combination` 强制 ``teacher_model_path`` 非空。
+
+    **学生**就是既有的 ``model.model_path``（GraspoConfig 顶层已有字段）——
+    不为它再发明第二个字段（同一语义只有一个字段，§1.4）。
+    教师 logprob 由教师模型**现场前向**算出（教师是同一训练进程里的独立冻结模型），
+    因此**没有**"教师 logprob 数据列"这种契约，见本包 report §④ 的缺口登记。
+
+    字段名与 ms-swift ``TeacherModelArguments`` / GKD 超参名**逐字对应**：这样
+    "配置字段 → 后端参数"的映射不需要猜名字（宪法 §2.2 显式即防呆）。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: 教师模型路径（`--teacher_model`）。``None`` = 未提供 ⇒ OPD 配置非法（见上）。
+    teacher_model_path: str | None = None
+    #: 教师 LoRA 适配器路径列表（`--teacher_adapters`）。``None`` = 未提供（不透传）。
+    teacher_adapters: list[str] | None = None
+    #: 教师模型的 DeepSpeed 配置（`--teacher_deepspeed`）。``None`` = 继承学生侧。
+    teacher_deepspeed: str | None = None
+    #: 教师前向之外把教师权重换出到 CPU（`--offload_teacher_model`）。
+    #: ``None`` = 未提供（交后端默认值 = 不换出），与显式 ``false`` 语义不同。
+    offload_teacher_model: bool | None = None
+    #: GKD 的 top-k logits 粒度（`--gkd_logits_topk`）。``None`` = 全词表。
+    gkd_logits_topk: int | None = None
+    #: GKD 的 lambda（`--lmbda`）。``None`` = 交后端默认值。
+    lmbda: float | None = None
+    #: GKD 与 SFT loss 的混合权重（`--sft_alpha`）。``None`` = 交后端默认值。
+    sft_alpha: float | None = None
+    #: 教师-学生散度插值系数（`--beta`：0=前向 KL，1=反向 KL，0.5=JSD）。
+    #: ``None`` = 交后端默认值（ms-swift GKD 默认 0.5），不在这里发明取值。
+    beta: float | None = None
 
 
 class GraspoFlowConfig(BaseModel):
@@ -592,7 +728,7 @@ class GraspoConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    train_method: Literal["graspo", "sft"] = "graspo"
+    train_method: TrainMethod = "graspo"
     backend: str = "native"
     native: GraspoFlowConfig = GraspoFlowConfig()
     msswift: MsSwiftConfig = MsSwiftConfig()
@@ -604,6 +740,11 @@ class GraspoConfig(BaseModel):
     launch: LaunchConfig = LaunchConfig()
     reward: RewardConfig = RewardConfig()
     training: TrainingConfig = Field(default_factory=TrainingConfig)
+    # ── CPT / OPD 的**算法级**配置（后端中立，§1.4）────────────────────────
+    # 两个段都只有 `train_method` 取到对应值时才被消费；缺省是**全默认空段**，
+    # 因此既有配置（不含这两个键）行为完全不变（向后兼容）。
+    pretrain: PretrainConfig = PretrainConfig()
+    distill: DistillConfig = DistillConfig()
     # ── 训练参数化模式（native / msswift 两个后端的唯一开关）────────────────
     # None = 未指定 ⇒ lora（向后兼容，v0.24 之前的所有配置都没有这个字段）。
     # 取 full = 全参（全量）微调：native 侧放开全部基座参数的 requires_grad，
@@ -641,6 +782,21 @@ class GraspoConfig(BaseModel):
             lora_adapter_path=self.lora.adapter_path,
             native_tp_size=self.native.tp_size,
             native_dp_size=self.native.dp_size,
+        )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_train_method_combination(self) -> GraspoConfig:
+        """``train_method`` × ``backend`` × 教师配置的非法组合在加载时即拒绝（§2.3）。
+
+        纯逻辑委托给 :func:`validate_train_method_combination`，使该校验可在无 torch
+        的机器上单测。**只加不改**：既有的 ``graspo`` / ``sft`` 组合全部落在合法集合内，
+        行为不变。
+        """
+        validate_train_method_combination(
+            train_method=self.train_method,
+            backend=self.backend,
+            distill_teacher_model_path=self.distill.teacher_model_path,
         )
         return self
 
@@ -686,6 +842,8 @@ class GraspoConfig(BaseModel):
             "launch",
             "reward",
             "training",
+            "pretrain",
+            "distill",
         ):
             if data.get(section) is None:
                 data[section] = {}
@@ -772,6 +930,8 @@ def _report_config_errors(
         "launch",
         "reward",
         "training",
+        "pretrain",
+        "distill",
     ):
         if section not in config_cls.model_fields:
             config_section_fields[section] = []
