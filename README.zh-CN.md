@@ -37,6 +37,11 @@ GRASPO (Group Relative Advantage Structured Policy Optimization) — GRPO 风格
 
 ## 快速开始
 
+> **双语文档**：`README.md` 与 `README.zh-CN.md` 内容镜像（§17.1）——每个章节、
+> 配置键、命令块与 FAQ 条目两侧都有。可用 `python3 tools/readme_mirror_check.py`
+> 核验：该脚本对比两侧章节结构与内联代码 token，并打印"仅见 EN / 仅见 ZH"清单。
+> 已登记的纯记号差异（不算内容缺失）写在该脚本里，附理由。
+
 > **示例文件** 在 `samples/` 目录下：
 > - `samples/configs/sft_example.yaml` — 单卡 SFT 配置（开箱即用）；
 > - `samples/configs/rl_example.yaml` — 单卡 RL 配置；
@@ -83,9 +88,9 @@ cp samples/configs/sft_example.yaml my_config.yaml
 bash run.sh my_config.yaml
 
 # RL 训练（GRASPO）
-cp samples/configs/rl_example.yaml my_graspo.yaml
+cp samples/configs/rl_example.yaml my_config.yaml
 # 编辑：model.model_path、data.train_path、training.output_dir
-bash run.sh my_graspo.yaml
+bash run.sh my_config.yaml
 ```
 
 `run.sh` 是防呆设计：
@@ -132,10 +137,10 @@ IMAGE_NAME=graspo:test bash docker/build.sh
 复制并编辑根目录完整样例配置：
 
 ```bash
-cp samples/configs/rl_example.yaml my_graspo.yaml
+cp samples/configs/rl_example.yaml my_config.yaml
 ```
 
-至少需要设置：
+至少需要在 `my_config.yaml` 中设置：
 
 - `model.model_path`：本地 Hugging Face 模型目录或模型 id；
 - `data.train_path`：JSONL 训练数据；
@@ -169,7 +174,7 @@ cp samples/configs/sft_example.yaml my_sft.yaml
 uv run graspo launch --config my_sft.yaml
 ```
 
-SFT 完成后可以无缝切换到 RL：将 `train_method` 改为 `graspo`，
+SFT 完成后可以无缝切换到 RL：将 `train_method: graspo`，
 将 `lora.adapter_path` 指向 SFT checkpoint 的 adapter 目录即可。
 
 ### 工具命令
@@ -179,7 +184,7 @@ SFT 完成后可以无缝切换到 RL：将 `train_method` 改为 `graspo`，
 **校验 reward 评分**（逐样本打印，不落盘）：
 
 ```bash
-uv run graspo validate-reward --data samples/data/sample.jsonl --limit 2
+uv run graspo validate-reward --data samples/data/json_output/train.jsonl --limit 2
 ```
 
 **评测 checkpoint**（生成 rollout groups 并评分，输出
@@ -187,7 +192,7 @@ uv run graspo validate-reward --data samples/data/sample.jsonl --limit 2
 
 ```bash
 uv run graspo evaluate-checkpoint --config my_config.yaml \
-    --data samples/data/sample.jsonl --checkpoint outputs/my_run/step_100
+    --data samples/data/json_output/train.jsonl --checkpoint outputs/my_run/step_100
 ```
 
 **汇总性能分析输出**：
@@ -233,7 +238,7 @@ L3 语义/数值层诊断由 AI/人工基于 rollouts 详表离线统计，用�
   — 校验 reward 评分链路；逐样本打印分数，不落盘。
 - `graspo evaluate-checkpoint --config <yaml> --data <jsonl>
   [--checkpoint <dir>] [--limit N]` — 生成 rollout groups 并评分；
-  写入 `<output_dir>/evaluate/summary.json` + `completions.jsonl`。
+  写入 `<output_dir>/evaluate/` 下的 `summary.json` + `completions.jsonl`。
 - `graspo analyze-profile <run_dir>... [--skip-warmup-steps N]` — 向
   `<run_dir>/logs/` 写入六份分析文件（`analysis_profile.json` /
   `analysis_steps.jsonl` / `analysis_epochs.json` / `analysis_errors.jsonl` /
@@ -264,7 +269,7 @@ OpenAI 兼容的 chat `messages` 表示的 prompt/context、可选工具声明
 {"messages":[{"role":"system","content":"Use tools when needed. Output only the tool call."},{"role":"user","content":"Query device DEV-01 status at 2026-06-08 10:30."}],"tools":[{"type":"function","function":{"name":"query_device_status","description":"Query network device panel status.","parameters":{"type":"object","properties":{"device_id":{"type":"string"},"panel_time":{"type":"string"}},"required":["device_id","panel_time"]}}}],"targets":[{"id":"expected","output":{"tool_calls":[{"name":"query_device_status","arguments":{"device_id":"DEV-01","panel_time":"2026-06-08T10:30:00+08:00"}}]}}]}
 ```
 
-可运行的工具调用数据样例见 `samples/data/sample_tool_call.jsonl`。
+可运行的工具调用数据样例见 `samples/data/tool_call_mm/train.jsonl`。
 
 多个合理答案写成多个 `targets`；顺序执行的多步工具调用只写在单个 target 的 `output.tool_calls` 里：
 
@@ -284,7 +289,7 @@ OpenAI 兼容的 chat `messages` 表示的 prompt/context、可选工具声明
 
 工具调用样本的 `targets[].output.tool_calls` 使用 canonical tool-call JSON：每一项都是 `{"name":"...","arguments":{...}}`，列表顺序就是执行顺序。多个可接受答案必须拆成多个 `targets`。Qwen XML 等模型私有输出格式由对应模型 adapter 在 reward 前解析成 canonical 结构，不能写入数据集。
 
-最后一条 message 不能是 `assistant`；`targets` 是原始 reward 目标，不能泄漏进输入，也不能转换成模型 chat template。GRASPO 只接受 `messages + 可选 tools + targets` 的 JSONL 记录，不支持纯文本 prompt 字段、JSON 文件、Excel 文件、旧 `ground_truth` 字段或 top-level `image/images/video/videos` 字段。
+最后一条 message 不能是 `assistant`；`targets` 是原始 reward 目标，不能泄漏进输入，也不能转换成模型 chat template。GRASPO 只接受 `messages + 可选 tools + targets` 的 JSONL 记录，不支持纯文本 `prompt` 字段、JSON 文件、Excel 文件、旧 `ground_truth` 字段或 top-level `image/images/video/videos` 字段。
 
 ### 含工具调用的 assistant 消息
 
@@ -330,7 +335,7 @@ GRASPO 通过可扩展的 **`GraspoReward` 类**提供 reward 机制，并注册
 
 不应该获得连续数字分的 ID 或类别编码，应该在数据集中写成 JSON string。
 
-GRASPO 使用同一 rollout group 内的 reward 分布，而不是单条 completion 的绝对分数。有有效差异的 group 会进入训练；已经 perfect 的 group 可以跳过；没有 reward 方差或没有偏好差异的 group 会被丢弃或重试。`rollouts.readable.jsonl` 会记录 messages、completion、parsed tool calls、抽取字段、parser errors、reward 细节和 invalid reason，方便检查 reward 行为。
+GRASPO 使用同一 rollout group 内的 reward 分布，而不是单条 completion 的绝对分数。有有效差异的 group 会进入训练；已经 perfect 的 group 可以跳过；没有 reward 方差或没有偏好差异的 group 会被丢弃或重试。`logs/rollouts.readable.jsonl` 会记录 messages、completion、parsed tool calls、抽取字段、parser errors、reward 细节和 invalid reason，方便检查 reward 行为。
 
 ## Token 级标注（v0.20.0）
 
@@ -347,9 +352,9 @@ rollout 完成后，每条 completion 会被**逐字符标注**结构角色（`C
 
 设计原则（源于 v0.16-v0.19 四次连续训练崩溃）：
 
-- **字符级比对，tokenizer 无关**：期望 mark 序列（如 `<tool_call> <function=...> <parameter=...> ...`）与模型输出逐字符比对，首个不匹配字符标 E。token 标注经 offset_mapping 派生——任何 tokenizer 变体都不会误标正确前缀 token（如 `</parametr>` 与 `</parameter>` 共享 `</`、`param` 前缀 token）
+- **字符级比对，tokenizer 无关**：期望 mark 序列（如 `<tool_call> <function=...> <parameter=...> ...`）与模型输出逐字符比对，首个不匹配字符标 E。token 标注经 `offset_mapping` 派生——任何 tokenizer 变体都不会误标正确前缀 token（如 `</parametr>` 与 `</parameter>` 共享 `</`、`param` 前缀 token）
 - **严格对齐截断**：E 之后全部 D（不训练）——错误前缀下的 token 无训练价值
-- **截断/结构不完整不标 E**：已有字符全部正确，硬标 E 只误标正确 token；不完整性信号交给 reward 层（`content_score=0` → 组级 RETRY/INVALID）
+- **截断/结构不完整不标 E**：已有字符全部正确，硬标 E 只误标正确 token；不完整性信号交给 reward 层（`content_score = 0` → 组级 RETRY/INVALID）
 - **值错误不触发 E**：内容相似度由下游打分，仅结构/类型错误触发 E
 - **tool call 参数无序集合匹配**：参数顺序颠倒不是错误（JSON 对象语义）；GT 参数缺失或多余参数是错误（期望缺失 `<parameter=NAME>` 与实际输出比对定位 E）
 - **与 reward 层语义一致**：只有语义错误标 E——缺字段/多余字段/拼错/类型错；语义正确不标（如参数顺序）
@@ -634,11 +639,11 @@ bash run.sh samples/configs/sft_example.yaml --smoke
 - `model.model_path must be set`：编辑 `samples/configs/sft_example.yaml`，指向真实 base model。
 - `data.train_path does not exist`：将 `data.train_path` 指向 JSONL 文件。
 - **Docker 容器内找不到模型**：确认 `model.model_path` 在 YAML 中写的是宿主机上的绝对路径，`run.sh` 会自动挂载其父目录。如果路径不在常见位置，用 `bash run.sh --help` 检查挂载逻辑。
-- **Docker 提示 torchrun 找不到**：镜像已将 GRASPO 安装为 CLI 入口，直接运行 `graspo launch --config ...` 即可，PATH 已包含 torch 和 torchrun。
+- **Docker 提示 `torchrun` 找不到**：镜像已将 GRASPO 安装为 CLI 入口，直接运行 `graspo launch --config ...` 即可，PATH 已包含 torch 和 torchrun。
 - Native launch world size mismatch：让 `launch.nproc_per_node * launch.nnodes` 等于 `tp_size × dp_size × pp_size`。
 - Rollout OOM：保持 `training.max_new_tokens=2048`；降低 rollout 并发或 KV cache 预留，而不是降低生产生成长度。
 - 需要 PEFT 兼容：通过 `lora.adapter_path` 加载 PEFT/GRASPO-PEFT adapter，通过 `graspo export --config <yaml>` 导出便携产物。
-- **SFT 转 RL**：SFT 训练完成后，将 `train_method` 改为 `graspo`，
+- **SFT 转 RL**：SFT 训练完成后，将 `train_method: graspo`，
   将 `lora.adapter_path` 指向 SFT checkpoint 的 adapter，
   降低 `learning_rate`（如 `1e-6`）。SFT LoRA adapter 可直接用于 GRASPO RL 训练。
 - **SFT OOM**：减小 `micro_batch_size`（micro-batch）或 `max_prompt_length`；
