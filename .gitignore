@@ -35,6 +35,8 @@ config.local.toml
 CLAUDE.md
 CLAUDE.zh-CN.md
 AGENTS.md
+work_log.md
+work_log_*.md
 
 # OS files
 .DS_Store
