@@ -858,7 +858,53 @@ MANIFEST="$ROOT_DIR/tests/e2e/matrix54_manifest.json"
 PYBIN="${{PYTHON:-python3}}"
 CONTAINER_PY="${{CONTAINER_PYTHON:-python}}"
 
-# 0) 环境前置：数据根与模型根都必须显式给出（两者都是环境信息，见 .local/）。
+# 0) 从运行清单取出该档的 GPU / 配置 / 卡数 / 子集大小 / 容器内模型路径。
+# 交接格式是**单行 JSON**：旧的"read 多个变量 < <(python …)"在 stdout 是管道时
+# 会受 Python 块缓冲影响，字段可能错位（潜在隐患，本轮改为显式 JSON 交接）。
+TIER_JSON=$("$PYBIN" - "$MANIFEST" "$TIER" <<'PY'
+import json, sys
+manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+tier = next(t for t in manifest["tiers"] if t["tier_id"] == sys.argv[2])
+data = tier.get("data") or {{}}
+print(json.dumps({{
+    "gpus": ",".join(str(g) for g in tier["gpus"]),
+    "config": tier.get("config"),
+    "status": tier["status"],
+    "cards": tier["cards"],
+    "subset_size": data.get("subset_size") or 0,
+    "train_path": data.get("train_path") or "-",
+    "model_path": tier.get("model_path") or "-",
+    "model_env": tier.get("model_host_dir_env_var") or "-",
+}}, ensure_ascii=False))
+PY
+) || exit 5
+
+read -r GPUS CONFIG_STATUS NPROC SUBSET TRAINPATH MODEL_PATH MODEL_ENV < <("$PYBIN" - "$TIER_JSON" <<'PY'
+import json, sys
+data = json.loads(sys.argv[1])
+print(
+    data["gpus"],
+    (data["config"] or "-") + "|" + data["status"],
+    data["cards"],
+    data["subset_size"],
+    data["train_path"],
+    data["model_path"],
+    data["model_env"],
+)
+PY
+)
+CONFIG="${{CONFIG_STATUS%%|*}}"
+TIER_STATUS="${{CONFIG_STATUS#*|}}"
+
+# 0a) **不可表达（blocked）档必须先于一切放行路径被拒**，包括 --dry-run。
+# 顺序即语义：dry-run 是"预检"入口，预检把 blocked 档报成 rc=0 会让批处理
+# 把不可跑的档当成可跑（历史缺陷 F-6）。因此这条检查排在 dry-run 分支**之前**。
+if [ "$CONFIG" = "-" ]; then
+    echo "FATAL: $TIER 当前不可表达（blocked），见 samples/configs/matrix54/$TIER.blocked.md" >&2
+    exit 2
+fi
+
+# 0b) 环境前置：数据根与模型根都必须显式给出（两者都是环境信息，见 .local/）。
 if [ -z "$ELAM_HOST" ]; then
     echo "FATAL(runtime-link): 数据未挂载 —— 请先 export {ELAM_HOST_ROOT_ENV}=<宿主 ELAM V5 数据根目录>" >&2
     exit 3
@@ -869,27 +915,27 @@ if [ -z "$MODELS_ROOT" ]; then
     exit 4
 fi
 
-# 1) 从运行清单取出该档的 GPU / 配置 / 卡数 / 子集大小 / 容器内模型路径
-read -r GPUS CONFIG STATUS NPROC SUBSET TRAINPATH CONFIG_PATH MODEL_ENV < <("$PYBIN" - "$MANIFEST" "$TIER" <<'PY'
-import json, sys
-manifest = json.load(open(sys.argv[1], encoding="utf-8"))
-tier = next(t for t in manifest["tiers"] if t["tier_id"] == sys.argv[2])
-data = tier.get("data") or {{}}
-config_path = tier.get("config") or "-"
-print(",".join(str(g) for g in tier["gpus"]), config_path, tier["status"],
-      tier["cards"], data.get("subset_size") or 0, data.get("train_path") or "-",
-      tier.get("model_path") or "-", tier.get("model_host_dir_env_var") or "-")
-PY
-)
-
-if [ "$CONFIG_PATH" = "-" ]; then
-    echo "FATAL: $TIER 当前不可表达（blocked），见 samples/configs/matrix54/$TIER.blocked.md"
-    exit 2
-fi
-CONFIG="$CONFIG_PATH"
-
 # 2) 宿主侧锁卡守卫（fail-closed；与容器内 train_worker 是同一实现）
 "$PYBIN" "$ROOT_DIR/scripts/gpu_lock_guard.py" --visible "$GPUS" || exit 1
+
+# 2a) 宿主侧**目标卡实测空闲断言**（F-10，fail-closed）：逐卡实测
+#     memory.used ≤64 MiB 且 utilization.gpu ≤5%；任一卡被占即拒绝启动。
+#     本轮实战里这道断言拦下过含被第三方占用的 GPU3 的 4 卡目标集。
+#     宁等不抢：不 kill 他人进程，改选实测空闲的卡或等它空下来。
+#     GRASPO_SKIP_IDLE_ASSERT=1 仅供无 GPU 的脚手架自检（如假 docker 的 dry-run 回归），
+#     真实上机**不得**设置——跳过即失去这道防线，属显式降级。
+if [ "${{GRASPO_SKIP_IDLE_ASSERT:-0}}" != "1" ]; then
+    "$PYBIN" "$ROOT_DIR/scripts/gpu_idle_assert.py" --visible "$GPUS" || exit 1
+else
+    # 透明退路（宪法 §3.2）：跳过防线必须留痕，不能只在日志里"没有输出"。
+    # 两处痕迹：① stderr 的显式 WARNING；② **环境指纹/产物** `skipped_guards.log`，
+    # 使"这次运行的 F-10 防线被关过"可事后审计。
+    echo "WARNING(透明退路 §3.2): GRASPO_SKIP_IDLE_ASSERT=1 ⇒ 本次运行**已跳过** F-10 目标卡空闲断言（GPU ${{GPUS}} 未做实测空闲校验）；真实上机不得设置本变量。" >&2
+    mkdir -p "$RUN_ROOT"
+    printf '%s skip_idle_assert=1 tier=%s gpus=%s image=%s\\n' \\
+        "$(date -Is 2>/dev/null || date)" "$TIER" "$GPUS" "$IMAGE" \\
+        >> "$RUN_ROOT/skipped_guards.log"
+fi
 
 # 2b) **模型挂载 fail-closed 前置断言**（与数据侧同一模式）。
 # 为什么必须在 docker run **之前**：模型不在获批镜像里，配置却指向容器内
@@ -897,22 +943,22 @@ CONFIG="$CONFIG_PATH"
 # 而 collect_results.py 的日志分类器会把 FileNotFoundError/No such file or directory
 # 归成「数据问题」且 counts_toward_max_context=False ⇒ 真因（运行链路缺模型）
 # 会被记成一次普通失败。这里先拒绝启动并把原因标成**运行链路错误**。
-MODEL_DIR_NAME="${{CONFIG_PATH#{MODELS_CONTAINER_ROOT}/}}"
-if [ "$CONFIG_PATH" != "{MODELS_CONTAINER_ROOT}/$MODEL_DIR_NAME" ] || [ -z "$MODEL_DIR_NAME" ]; then
-    echo "FATAL(runtime-link): 模型未挂载 —— 配置的 model_path 不在 {MODELS_CONTAINER_ROOT}/ 下：$CONFIG_PATH" >&2
+MODEL_DIR_NAME="${{MODEL_PATH#{MODELS_CONTAINER_ROOT}/}}"
+if [ "$MODEL_PATH" != "{MODELS_CONTAINER_ROOT}/$MODEL_DIR_NAME" ] || [ -z "$MODEL_DIR_NAME" ]; then
+    echo "FATAL(runtime-link): 模型未挂载 —— 配置的 model_path 不在 {MODELS_CONTAINER_ROOT}/ 下：$MODEL_PATH" >&2
     exit 4
 fi
 MODEL_HOST_DIR="${{!MODEL_ENV:-$MODELS_ROOT/$MODEL_DIR_NAME}}"
 if [ ! -d "$MODEL_HOST_DIR" ]; then
     echo "FATAL(runtime-link): 模型未挂载 —— 宿主模型目录不存在：$MODEL_HOST_DIR" >&2
-    echo "  期望目录名：$MODEL_DIR_NAME（容器内路径 $CONFIG_PATH；模型不在镜像里，必须挂载）" >&2
+    echo "  期望目录名：$MODEL_DIR_NAME（容器内路径 $MODEL_PATH；模型不在镜像里，必须挂载）" >&2
     echo "  模型根 {MODELS_HOST_ROOT_ENV}=$MODELS_ROOT；可用 $MODEL_ENV=<该档模型目录> 单点覆盖。" >&2
     echo "  ⚠ 这是**运行链路错误**，不是数据问题；修好挂载后再跑，不要记为数据问题。" >&2
     exit 4
 fi
 
 if [ "$MODE" = "--dry-run" ]; then
-    echo "[dry-run] $TIER gpus=$GPUS nproc=$NPROC status=$STATUS image=$IMAGE"
+    echo "[dry-run] $TIER gpus=$GPUS nproc=$NPROC status=$TIER_STATUS image=$IMAGE"
     echo "[dry-run] config=$CONFIG train_subset=$SUBSET 条 -> $TRAINPATH"
     echo "[dry-run] models=$MODELS_ROOT:$MODEL_DIR_NAME -> {MODELS_CONTAINER_ROOT}（只读）"
     exit 0
@@ -933,10 +979,11 @@ if [ "$LINES" -lt "$SUBSET" ]; then
     exit 3
 fi
 
-# 4) 容器内入口：先起可信采样（只采 NVIDIA_VISIBLE_DEVICES 内的卡），再 torchrun 训练。
+# 4) 容器内入口：先做空闲断言（F-10）+ 起可信采样（只采实测可见卡），再 torchrun 训练。
 PORT=$(( 29500 + RANDOM % 400 ))
 cat > "$RUN_DIR/entry.sh" <<ENTRY
 set -o pipefail
+"$CONTAINER_PY" -m graspo record-gpu-memory --idle-only || exit 1
 "$CONTAINER_PY" -m graspo record-gpu-memory --output-dir /out/gpu --tag "$TIER" --interval-sec 2 &
 SAMPLER=\\$!
 torchrun --standalone --nproc_per_node="$NPROC" --master_port="$PORT" \\
