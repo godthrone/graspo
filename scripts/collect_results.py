@@ -857,13 +857,38 @@ def extract_artifacts(
     return artifacts
 
 
+def extract_min_optimizer_steps(tier: dict[str, Any]) -> int | None:
+    """从清单的 ``tiers[*].acceptance.formal_gate.min_optimizer_steps`` 取 A2 门槛。
+
+    **单一真相源（§1.4）**：门槛的权威位置是清单，不是代码常量。本函数**只做取值**，
+    不做合法性裁决——非法值（``<=0``/非整数/类型错）由判定层
+    （``result_judge.resolve_min_optimizer_steps``）**fail-closed 判否**，
+    采集层不得把它静默换成缺省值（那正是缺陷①的老病根：把"配置说的"换成"代码写死的"）。
+
+    返回 ``None`` 只在两种情形：① 清单确实没给该键；② 清单结构缺失/形状不对。
+    两者都 ⇒ 判定器回落到缺省门槛 5（**不放宽**）。
+    """
+    acceptance = tier.get("acceptance")
+    if not isinstance(acceptance, dict):
+        return None
+    gate = acceptance.get("formal_gate")
+    if not isinstance(gate, dict) or "min_optimizer_steps" not in gate:
+        return None
+    return gate["min_optimizer_steps"]
+
+
 def collect_run(
     run_dir: Path,
     tier_id: str,
     tuner_type: str,
     base_model_dir: Path | None = None,
+    min_optimizer_steps: int | None = None,
 ) -> tuple[Any, SeriesEvidence]:
-    """把一个运行目录抽成 ``RunEvidence`` + 读数口径自证（``SeriesEvidence``）。"""
+    """把一个运行目录抽成 ``RunEvidence`` + 读数口径自证（``SeriesEvidence``）。
+
+    ``min_optimizer_steps`` 由调用方从清单读出（见 :func:`extract_min_optimizer_steps`），
+    缺省 ``None`` = "清单未提供" ⇒ 判定器用缺省门槛（**不放松**）。
+    """
     exit_code: int | None = None
     exit_path = run_dir / "exit_code"
     if exit_path.exists():
@@ -898,6 +923,7 @@ def collect_run(
         steps_declared_total=series.declared_total_steps,
         first_logged_step=series.first_logged_step,
         output_located=bool(output_dirs),
+        min_optimizer_steps=min_optimizer_steps,
     )
     return evidence, series
 
@@ -952,14 +978,16 @@ def run(args: argparse.Namespace) -> int:
             )
             continue
         first, first_series = collect_run(
-            first_dir, tier_id, tuner_type, _base_model_dir(args, tier)
+            first_dir, tier_id, tuner_type, _base_model_dir(args, tier),
+            min_optimizer_steps=extract_min_optimizer_steps(tier),
         )
         second = None
         if args.rerun_root:
             second_dir = Path(args.rerun_root) / tier_id
             if second_dir.is_dir():
                 second, _ = collect_run(
-                    second_dir, tier_id, tuner_type, _base_model_dir(args, tier)
+                    second_dir, tier_id, tuner_type, _base_model_dir(args, tier),
+                    min_optimizer_steps=extract_min_optimizer_steps(tier),
                 )
         judgement = _judge.judge_tier(first, second, context_length=args.context_length)
         row = _judge.ledger_row(
