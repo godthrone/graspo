@@ -7,11 +7,13 @@ as the domain-specific structured-JSONL extension.
 
 Log-file layout
 ---------------
-Each training launch (``graspo launch``) injects a unique ``GRASPO_RUN_ID``
-(time-based) into the worker env, so every rank shares one ``run_id``.  All logs
-for that launch are written under ``{output_dir}/logs/<run_id>/{name}``, giving
-a fresh, self-contained folder per restart (no more mixing old and new logs
-across restarts).  The python-logging files (``training.log`` /
+The log folder identity comes from **config**, not from the process environment
+(§7.1/§10.1).  ``cli/train_worker.main`` binds ``config.training.run_name`` via
+:func:`set_run_id`, and because every rank loads the same YAML, all ranks share
+one ``run_id``.  All logs for that launch are written under
+``{output_dir}/logs/<run_id>/{name}``, giving a fresh, self-contained folder per
+launch (no more mixing old and new logs across restarts).  The python-logging
+files (``training.log`` /
 ``error.log``) rotate at 10 MB via ``RotatingFileHandler`` (separate numbered
 files); the domain JSONL files rotate via :func:`append_jsonl_segment`.
 
@@ -30,6 +32,7 @@ import logging
 import logging.handlers
 import os
 import sys
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -41,19 +44,86 @@ _SETUP_DONE: set[str] = set()
 
 _run_id: str | None = None
 
+#: 旧环境变量名——**已废弃**（§7.1/§10.1，v0.25.0 起）。见 :func:`get_run_id`。
+_DEPRECATED_RUN_ID_ENV = "GRASPO_RUN_ID"
+
+
+def set_run_id(run_id: str) -> None:
+    """Bind this process's log identity to a **config-derived** value (§1.4).
+
+    Called once by the worker entry point (``cli/train_worker.main``) with
+    ``config.training.run_name`` — that field is the config's own, git-tracked
+    identifier for the run and is therefore identical on every rank (each rank
+    loads the same YAML).  Binding it here means the log location has exactly
+    one source: the config.
+
+    Raises:
+        ValueError: empty value (防呆 §2.3 —— 空身份会静默退回环境变量/时间戳，
+            让"配置不生效"表现得和成功一样).
+    """
+    global _run_id
+    text = str(run_id or "").strip()
+    if not text:
+        raise ValueError("set_run_id() 需要非空的 run id（不得为空字符串）")
+    _run_id = text
+
 
 def get_run_id() -> str:
     """Return the launch-scoped run id shared by all ranks in this process.
 
-    Prefers ``GRASPO_RUN_ID`` injected by ``graspo launch``; falls back to a
-    process-local timestamp for standalone/unit-test use.
+    **Resolution order (single authority, §1.4):**
+
+    1. :func:`set_run_id` — the config-derived value bound by the worker entry
+       point (``training.run_name``).  This is the normal path.
+    2. Deprecated ``GRASPO_RUN_ID`` environment variable — kept for one release
+       so an operator's existing launch command does not silently change the log
+       directory.  Using it emits a ``DeprecationWarning``; it will be **removed
+       in v0.26.0** (§18.1 不留负债).
+    3. Process-local timestamp — standalone/unit-test use (unchanged).
+
+    §10.1: the log folder is part of the run's on-disk output, so its identity
+    must come from config, not from the process environment.
     """
     global _run_id
-    if _run_id is None:
-        _run_id = os.environ.get("GRASPO_RUN_ID") or datetime.datetime.now().strftime(
-            "%Y%m%d-%H%M%S"
+    if _run_id is not None:
+        return _run_id
+    legacy = os.environ.get(_DEPRECATED_RUN_ID_ENV, "").strip()
+    if legacy:
+        warnings.warn(
+            f"{_DEPRECATED_RUN_ID_ENV} 已废弃（宪法 §7.1/§10.1：环境变量不得承载配置）："
+            "日志目录身份取自 config 的 training.run_name。该环境变量通道将在 v0.26.0 删除，"
+            "请移除它（§18.1）。",
+            DeprecationWarning,
+            stacklevel=2,
         )
+        _run_id = legacy
+        return _run_id
+    _run_id = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     return _run_id
+
+
+def run_log_id(run_name: str) -> str:
+    """Derive the **rank-consistent** log-folder id from a config run name (§1.4).
+
+    Why not use ``run_name`` verbatim: ``cli/train_worker.main`` runs once per rank,
+    and each rank loads the YAML in its own process.  ``schema.training.run_name``
+    keeps the auto-generated form ``graspo_<YYYYmmdd_HHMMSS>`` (mirroring the
+    pre-existing ``output_dir`` derivation), so the folder name must be the
+    **timestamp part**, which is identical on every rank because every rank reads
+    the same config file.  Using the raw ``run_name`` would also work for
+    consistency but would drop the ``YYYYMMDD-HHMMSS`` folder shape that existing
+    tooling greps for.
+
+    ``run_name`` is never empty at this point (``TrainingConfig._validate_output_dir``
+    derives it from ``output_dir`` when unset), so the last-resort fallback below is
+    unreachable in practice and only guards a hand-constructed config object.
+    """
+    text = str(run_name or "").strip()
+    if text.startswith("graspo_"):
+        stamp = text[len("graspo_"):]
+        if len(stamp) == 15 and stamp[8] == "_":
+            return f"{stamp[:8]}-{stamp[9:]}"
+    return text or datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
 
 
 def run_log_dir(output_dir: str | Path) -> Path:

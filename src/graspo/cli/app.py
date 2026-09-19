@@ -6,7 +6,6 @@
 """
 
 import argparse
-import datetime
 import json
 import os
 import subprocess
@@ -350,9 +349,9 @@ def _require_config_value(value: Any, name: str) -> None:
 def _build_launch_env(config: GraspoConfig) -> dict[str, str]:
     env = dict(os.environ)
     env.setdefault("TOKENIZERS_PARALLELISM", "false")
-    # 每次 launch（== 每次新容器/重启）生成一个共享 run_id，所有 rank 一致，
-    # 用于把本次运行的日志归入 logs/<run_id>/，避免重启混入旧日志（§log 分片）。
-    env["GRASPO_RUN_ID"] = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    # 日志目录身份**不再**由环境变量注入（§7.1/§10.1）：worker 从同一份 config 的
+    # `training.run_name` 解析（见 cli/train_worker.main → flow/logging.set_run_id），
+    # 每个 rank 读到同一个值。旧的 `GRASPO_RUN_ID` 注入已删除（§18.1 不留负债）。
 
     src_dir = _project_src_dir()
     if src_dir.is_dir():

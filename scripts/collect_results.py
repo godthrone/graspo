@@ -18,6 +18,10 @@
     python3 scripts/collect_results.py --manifest tests/e2e/matrix54_manifest.json \
         --run-root .local/matrix54-runs --out .local/matrix54-ledger
     # A4 双跑：--run-root attempt1 --rerun-root attempt2
+    # 全参档 A2 的权重证据（可选）：加 --base-model-root <宿主模型根目录>
+    #   —— 宿主路径**必须走 CLI 参数**（§10.1）；旧环境变量
+    #   GRASPO_MODELS_HOST_ROOT / GRASPO_BASE_MODEL_FOR_COMPARE 已删除（§7.1/§1.4）。
+    #   不给该参数时 A2 权重证据按"取证缺口"记不可判定，不猜也不放松。
 """
 
 from __future__ import annotations
@@ -26,7 +30,6 @@ import argparse
 import importlib.util
 import json
 import math
-import os
 import re
 import struct
 import sys
@@ -723,12 +726,17 @@ def extract_weight_changed(
 def _full_weights_differ(checkpoint_dir: Path, base_model_dir: Path | None) -> bool | None:
     """全参：checkpoint 与基座模型权重抽样比较（不同 → 已更新）。
 
-    ``base_model_dir`` 未给出时回退到环境变量 ``GRASPO_BASE_MODEL_FOR_COMPARE``
-    （历史口径，保留兼容）。**判据语义不变**：共享键里任何一个张量字节不同即"已更新"。
+    ``base_model_dir`` 是**唯一来源**（由调用方从 ``--base-model-root`` 解析后传入，
+    见 :func:`_base_model_dir`）。此处**不再**读进程环境：历史上 ``None`` 会回退到
+    环境变量 ``GRASPO_BASE_MODEL_FOR_COMPARE``，那是一条环境变量 fallback 链
+    （§1.4/§7.1 明令禁止的"双真相源"）——同一个"权重是否变化"的结论会因该变量
+    是否设置而不同，且变量不在 config 备份里、无法复现。
+
+    ``None`` 的语义**保持原样**：给不出基座目录 ⇒ 返回 ``None``，A2 的权重证据按
+    **取证缺口**处理（不可判定），不猜也不放松（§3 退路与防线之分）。
+
+    **判据语义不变**：共享键里任何一个张量字节不同即"已更新"。
     """
-    if base_model_dir is None:
-        raw = os.environ.get("GRASPO_BASE_MODEL_FOR_COMPARE")
-        base_model_dir = Path(raw) if raw else None
     if base_model_dir is None or not Path(base_model_dir).is_dir():
         return None
     final_files = sorted(checkpoint_dir.glob("*.safetensors"))
@@ -1024,11 +1032,21 @@ def run(args: argparse.Namespace) -> int:
 def _base_model_dir(args: argparse.Namespace, tier: dict[str, Any]) -> Path | None:
     """全参档 A2 的基座模型目录（用于"权重是否真的变了"）。
 
-    口径：``--base-model-root``（默认取环境变量 ``GRASPO_MODELS_HOST_ROOT``，
-    与 runner 的模型挂载根同源）+ 配置里 ``model_path`` 的目录名。
+    口径：``--base-model-root``（**唯一来源**）+ 配置里 ``model_path`` 的目录名。
     给不出时返回 ``None`` ⇒ A2 的权重证据按**取证缺口**处理（不可判定），不猜。
+
+    **双真相源已消除（§1.4/§7.1）**：旧写法是
+    ``args.base_model_root or os.environ.get("GRASPO_MODELS_HOST_ROOT")`` —— 一条
+    ``or`` 回退链：CLI 与进程环境**都能**决定"拿哪个目录对比权重"，两者同时给值时
+    环境变量被静默忽略（"改了没生效"），只给环境变量时又不进 config 备份、无法复现。
+    现在只有一个来源：CLI 的 ``--base-model-root``（宿主路径注入走 CLI 参数，§10.1；
+    与 ``run.sh --model-dir`` 同口径）。环境变量对结果**再无任何影响**。
+
+    **可核断言**（见 ``tests/e2e/test_collect_results.py``）：仅设置环境变量
+    ``GRASPO_MODELS_HOST_ROOT`` 而**不**传 ``--base-model-root`` 时，本函数必须返回
+    ``None``（证据判不可判定）——环境变量不再"恰好生效"。
     """
-    root = args.base_model_root or os.environ.get("GRASPO_MODELS_HOST_ROOT")
+    root = args.base_model_root
     if not root:
         return None
     name = Path(str(tier.get("model_path") or "")).name
@@ -1059,9 +1077,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--base-model-root",
         default=None,
         help=(
-            "全参档 A2 的基座模型宿主根目录（默认取 GRASPO_MODELS_HOST_ROOT）。"
+            "全参档 A2 的基座模型宿主根目录（**唯一来源**，不再读环境变量）。"
             "collector 取 <root>/<model_path 的目录名> 与 checkpoint 权重抽样比较；"
             "给不出时 A2 的权重证据按取证缺口处理（不可判定），不猜也不放松。"
+            "宿主路径注入一律走 CLI 参数（§10.1），与 run.sh --model-dir 同口径。"
         ),
     )
     return parser

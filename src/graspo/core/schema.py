@@ -383,6 +383,69 @@ class TrainingConfig(BaseModel):
         return int(self.rollout_queue_batch_size) * int(self.rollout_group_size)
 
 
+class GpuMonitorConfig(BaseModel):
+    """``graspo record-gpu-memory`` 的产物参数（§10.1 配置驱动命令）。
+
+    **为什么单独成段**：该命令是**运维监控**工具，产物是显存/利用率采样
+    （JSONL + 摘要 JSON），与训练产物无关，塞进 ``training``/``native`` 会让
+    "训练配置"这个边界说不清（§1.1）。它也不属于后端设计——不影响
+    ``native``/``msswift``/``flow``/``Ripple`` 任何代码路径。
+
+    **为什么这些字段必须在 config 里**（§10.1 推论 1/2 + 判断标准）：
+    ``output_dir`` 决定产物**位置**、``tag`` 写进每行记录与摘要的**内容**、
+    ``interval_sec`` 与 ``recent_limit`` 决定采样**条数**与摘要里保留多久历史
+    ——同一 config 若因 CLI 参数不同而落盘不同，config 与产物的对应关系就断了。
+    因此本段**没有**对应的 CLI 选项（CLI 参数与 config 字段零交集，§1.4）。
+
+    **不在这里的字段**：``--gpus``（运行环境参数：只影响在哪张卡采样）、
+    ``--duration-sec``（运行边界参数：冒烟/试跑，不产生完整产物）——二者按
+    §10.1 三原则留在 CLI。``--idle-only`` / ``--assert-idle`` 只 print 不落盘，
+    同样不受 config 约束。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    output_dir: str | None = None
+    """采样产物的落盘目录（`gpu_memory.jsonl` / `gpu_processes.jsonl` /
+    `gpu_memory_summary.json`）。``None`` = 未提供；此时命令 fail-closed 拒绝落盘。"""
+
+    tag: str | None = None
+    """写入每行记录与摘要的标签（如档号 `T016`）。``None`` = 未提供（等价空标签）。"""
+
+    interval_sec: float = 1.0
+    """采样间隔（秒）。决定产物里的样本条数。"""
+
+    recent_limit: int = 120
+    """摘要里保留的最近样本条数。"""
+
+    pid_filter: str | None = None
+    """进程名/PID 子串过滤（逗号分隔）；``None`` = 记录全部可见卡进程。"""
+
+    @field_validator("output_dir", "tag", "pid_filter", mode="before")
+    @classmethod
+    def _empty_string_is_none(cls, value: Any) -> Any:
+        """序列化边界：``""`` 是 ``None`` 的表示，加载时立即归一（§2.2 例外）。
+
+        TOML/YAML 没有 null 字面量，基础配置里用 ``""`` 表示"未提供"；必须在
+        **加载边界**归一为 ``None``，业务代码里不再出现"空串当空值"的歧义。
+        """
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @model_validator(mode="after")
+    def _validate_positive_numbers(self) -> "GpuMonitorConfig":
+        if self.interval_sec <= 0:
+            raise ValueError(
+                f"gpu_monitor.interval_sec must be > 0, got {self.interval_sec}"
+            )
+        if self.recent_limit < 0:
+            raise ValueError(
+                f"gpu_monitor.recent_limit must be >= 0, got {self.recent_limit}"
+            )
+        return self
+
+
 class DataConfig(BaseModel):
     """训练数据配置。"""
 
@@ -500,6 +563,18 @@ class GraspoFlowConfig(BaseModel):
     # `_Qwen35SFTTrainingMethods._build_optimizer`（单一真相源，§1.4）。
     # 非法组合由 `validate_native_offload_combination` 在加载时 fail-closed 拒绝。
     offload_optimizer_state: bool = False
+    # ── 非有限梯度：跳过并继续（§3.3 预授权退路；**默认关闭**）──────────────
+    # 语义（§3.4）：非有限梯度**本来**必须让 run 硬失败——那是防线，不是退路。
+    # 只有当运维者在**配置里**显式声明"我知道后续步权重可能是冻结的、我仍接受"
+    # 时，才允许"跳过并继续"。默认 False ⇒ 行为与基线逐位一致（硬失败 + 非零退出）。
+    #
+    # 为什么在 config 而不在环境变量（§7.1/§10.1）：它决定"本 run 是否继续产出
+    # checkpoint"——是**产物相关**的预授权开关，且按 §3.3 必须是"部署前决策"。
+    # 配置会被备份进输出目录（§8.5），自带留痕；环境变量随启动命令消失、无法复现。
+    # 消费点唯一：`flow/adapters/models/qwen35_36/training_sft.py` 的
+    # `_nonfinite_skip_preauthorized()`（单一真相源，§1.4）。旧环境变量
+    # `GRASPO_ALLOW_NONFINITE_GRAD_SKIP` 已按 §18.1 删除，不存在第二个来源。
+    allow_nonfinite_grad_skip: bool = False
     raw_log_enabled: bool = True
     readable_log_enabled: bool = True
     synchronize_cuda_timing: bool = False
@@ -808,6 +883,9 @@ class GraspoConfig(BaseModel):
     export: ExportConfig = ExportConfig()
     eval: EvalConfig | None = None
     launch: LaunchConfig = LaunchConfig()
+    # 运维监控命令（`graspo record-gpu-memory`）的产物参数（§10.1）。
+    # 缺省是**全空段**，不参与训练；既有配置（不含该键）行为完全不变。
+    gpu_monitor: GpuMonitorConfig = GpuMonitorConfig()
     reward: RewardConfig = RewardConfig()
     training: TrainingConfig = Field(default_factory=TrainingConfig)
     # ── CPT / OPD 的**算法级**配置（后端中立，§1.4）────────────────────────
@@ -1017,6 +1095,7 @@ def _report_config_errors(
         "training",
         "pretrain",
         "distill",
+        "gpu_monitor",
     ):
         if section not in config_cls.model_fields:
             config_section_fields[section] = []
