@@ -16,6 +16,7 @@
 import logging
 from typing import Any
 
+from graspo.core.lora import LORA_TARGET_PRESETS
 from graspo.ripple.multimodal.rows import (
     MULTIMODAL_ROWS_KEY,
     attach_rows,
@@ -23,6 +24,64 @@ from graspo.ripple.multimodal.rows import (
 )
 
 _log = logging.getLogger("graspo.preflight")
+
+
+def assert_lora_vision_targets_trainable(
+    *,
+    lora_target_modules: list[str] | None,
+    lora_target_preset: str | None,
+    image_token_id: int | None,
+    model_name: str,
+) -> None:
+    """纯逻辑校验：多模态训练时 LoRA 目标必须真的包含视觉塔（可单测，不触 GPU）。
+
+    **为什么需要它（实测 T028，2026-09-19）**：``lora.target_preset`` 默认
+    ``language_safe``（``core/lora.py`` 只含 ``language.*`` 模式），于是
+    ``build_qwen35_visual_tower`` 先把视觉塔全部参数 ``requires_grad=False``
+    再做 LoRA 替换时**没有任何 visual target 命中** ⇒ 视觉塔零可训参数。
+    原防线（``run_multimodal_preflight`` 第 3 步）能拦，但它要等模型加载完、
+    起好分布式之后才执行（T028 实测在加载后才炸）；本函数把同一判据提前到
+    **配置期**判定，不需要 GPU、不需要权重，报错直接给出该改哪个键。
+
+    判据与运行期防线**同源**：预设/精确名是否解析出视觉目标，用的就是
+    ``core/lora.py::LORA_TARGET_PRESETS`` 与 ``_match_lora_pattern``——不另立
+    一套"这里认得、那边不认得"的规则（宪法 §1.4）。
+
+    :param lora_target_modules: 显式目标名列表（``lora.target_modules``），
+        非 None 时优先于预设（与 ``resolve_lora_target_modules`` 同语义）
+    :param lora_target_preset: ``lora.target_preset``（None ⇒ 走默认预设）
+    :param image_token_id: 模型视觉占位 token id；None = 模型无视觉塔（不判）
+    :param model_name: 模型名（错误消息用）
+    :raises ValueError: 模型有视觉塔、且 LoRA 目标里没有一个视觉模块
+    """
+    if image_token_id is None:
+        return  # 模型没有视觉塔：是否可训视觉不适用
+    requested = tuple(lora_target_modules) if lora_target_modules else (lora_target_preset,)
+    patterns: list[str] = []
+    for item in requested:
+        preset = LORA_TARGET_PRESETS.get(str(item)) if item is not None else None
+        if preset is not None:
+            patterns.extend(preset)
+        elif item is not None:
+            patterns.append(str(item))
+    if not patterns:
+        patterns.extend(LORA_TARGET_PRESETS["language_safe"])  # 与 core/lora.py 默认一致
+    visual_patterns = [pattern for pattern in patterns if pattern.startswith("visual.")]
+    if visual_patterns:
+        return
+    suggestions = sorted(name for name in LORA_TARGET_PRESETS if name.startswith("vision"))
+    raise ValueError(
+        f"multimodal training with model {model_name!r} but the LoRA targets select no "
+        f"visual module: lora.target_modules={lora_target_modules!r}, "
+        f"lora.target_preset={lora_target_preset!r}, resolved patterns={patterns!r}. "
+        "The visual tower would be frozen (all its params are set requires_grad=False "
+        "before LoRA replacement), then the run dies at multimodal preflight with "
+        "`RuntimeError: multimodal preflight failed: no trainable visual parameters found`. "
+        "Refusing to start training. Fix: set lora.target_preset to one of "
+        f"{suggestions}, or set lora.target_modules to explicit visual.* module names. "
+        "A preset that only names language modules (e.g. 'language_safe' / "
+        "'language_all_linear', the default) can never make the visual tower trainable."
+    )
 
 
 def assert_data_vision_compatible(
