@@ -64,6 +64,7 @@ from graspo.eval.merged_export import (
     classify_checkpoint,
     existing_merged_output,
     merge_peft_checkpoint,
+    normalize_language_model_targets,
     prepare_output_directory,
     resolve_peft_adapter_dir,
 )
@@ -153,6 +154,7 @@ __all__ = [
     "load_eval_dataset",
     "load_report",
     "merge_peft_checkpoint",
+    "normalize_language_model_targets",
     "overlap_sample_indices",
     "overlap_stats",
     "parse_gpu_plan",

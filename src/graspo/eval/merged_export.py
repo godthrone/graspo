@@ -34,6 +34,7 @@ import shutil
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from typing import Any, Iterable
 
 #: merged-hf 产物必须有的文件（判断"导出成功"的判据，与 v3 脚本一致）。
 MERGED_REQUIRED_FILES = ("config.json",)
@@ -44,6 +45,80 @@ WEIGHT_FILE_CANDIDATES = (
     "model.safetensors.index.json",
     "pytorch_model.bin",
 )
+
+#: 多模态底座的"语言层命名空间"。
+#:
+#: Qwen3.5 是**多模态**底座：`Qwen3_5ForConditionalGeneration.model`（= `Qwen3_5Model`）
+#: 把语言塔挂成 `model.language_model = Qwen3_5TextModel(...)`，所以语言层真实全名是
+#: ``model.language_model.layers.{i}.self_attn.q_proj``。
+#: 而 `AutoModelForCausalLM` 命中的是**纯文本**类 `Qwen3_5ForCausalLM`
+#: （`self.model = Qwen3_5TextModel(...)`），语言层全名是
+#: ``model.layers.{i}.self_attn.q_proj`` —— **没有**这棵子树。
+#:
+#: ms-swift 在**多模态**路径上训练，因此它写进 `adapter_config.json` 的
+#: `target_modules` 带 `model.language_model.` 前缀。前缀本身没错；错的是
+#: 本模块用纯文本类去装它 ⇒ peft 的正则一条都匹配不上 ⇒ `ValueError`。
+#:
+#: 与 `graspo.flow.adapters.models.common.model_builders` 的 `key_prefix` 同值，
+#: 但那支模块 import torch（设施层），本模块必须保持"无 torch 也能 import"（§1.3），
+#: 所以这里独立声明一份常量，不做跨层 import。
+MULTIMODAL_LANGUAGE_MODEL_PREFIX = "model.language_model."
+
+#: 同一前缀在 **regex 形态** 下的转义写法。真实 ms-swift / peft 0.19.1 产物写的是
+#: 正则字符串（实测：`.local/.../task-r3-effect/evidence/light_evidence/T013/adapter_config.json`）：
+#: ``^(model\\.language_model(?=\\.).*\\....)$``。
+MULTIMODAL_LANGUAGE_MODEL_PREFIX_REGEX = r"model\.language_model"
+
+
+def normalize_language_model_targets(targets: str | Iterable[str]) -> str | list[str]:
+    """把"多模态语言层命名空间"的 target_modules 归一到纯文本模型的命名空间。
+
+    纯函数（不 import torch / peft），可在无 GPU 环境单测。
+
+    本模块只用 `AutoModelForCausalLM`（纯文本类 `Qwen3_5ForCausalLM`）加载底座，
+    它的语言层挂在 ``model.layers.{i}`` 下，**没有** ``model.language_model`` 子树。
+    所以 adapter 里带该前缀的目标必须剥掉前缀才能被 peft 的正则匹配上。
+
+    两种形态都要处理（**保持入参形态**，不改语义）：
+
+    * **regex 字符串**（真实 T013 产物形态）—— 只把前缀 ``model\\.language_model``
+      换成 ``model``，其余正则结构（`^`、`(?=\\.)`、`.*`、分支顺序）**一字不动**：
+      ``^(model\\.language_model(?=\\.).*\\.(X|Y))$`` → ``^(model(?=\\.).*\\.(X|Y))$``
+    * **列表 / 集合 / 裸字符串** —— 剥掉字面前缀 ``model.language_model.``。
+
+    不含该前缀的入参**原样返回**（既有可用路径不受影响）。
+
+    Args:
+        targets: `adapter_config.json` 里的 `target_modules`（regex 字符串或列表/集合）。
+
+    Returns:
+        与入参**同形态**的归一结果（str 进 str 出，list 进 list 出）。
+
+    Raises:
+        ExportError: 入参既非 str 也非 list/tuple/set —— 不做猜测式转换（§2.3）。
+    """
+    if isinstance(targets, str):
+        # 顺序很重要：先试 regex 转义形态（更具体），再试字面形态。
+        return targets.replace(
+            MULTIMODAL_LANGUAGE_MODEL_PREFIX_REGEX, "model"
+        ).replace(MULTIMODAL_LANGUAGE_MODEL_PREFIX, "model.")
+
+    if not isinstance(targets, (list, tuple, set, frozenset)):
+        raise ExportError(
+            f"unsupported target_modules type {type(targets).__name__}: {targets!r}; "
+            "expected str / list / set"
+        )
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in targets:
+        candidate = str(item)
+        if candidate.startswith(MULTIMODAL_LANGUAGE_MODEL_PREFIX):
+            candidate = "model." + candidate[len(MULTIMODAL_LANGUAGE_MODEL_PREFIX) :]
+        if candidate not in seen:
+            seen.add(candidate)
+            normalized.append(candidate)
+    return normalized
 
 
 class ExportError(RuntimeError):
@@ -170,6 +245,76 @@ def read_adapter_base(adapter_dir: str | Path) -> str | None:
     return str(base) if base else None
 
 
+def read_adapter_targets(adapter_dir: str | Path) -> str | list[str] | None:
+    """读 `adapter_config.json` 的 `target_modules`（**保持原形态**）。缺失返回 ``None``。
+
+    形态很重要：peft 对 **str** 走 ``re.fullmatch`` 正则匹配，对 **list** 走
+    ``key.endswith(f".{item}")`` 后缀匹配（实测 peft 0.18/0.19 均如此）。
+    混形态会静默改变匹配语义，所以这里原样透传。
+    """
+    config_path = Path(adapter_dir) / "adapter_config.json"
+    if not config_path.is_file():
+        return None
+    try:
+        payload = json.loads(config_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ExportError(f"{config_path} is not valid JSON: {exc}") from None
+    targets = payload.get("target_modules")
+    if targets is None:
+        return None
+    if isinstance(targets, str):
+        return targets
+    if isinstance(targets, (list, tuple, set, frozenset)):
+        return [str(item) for item in targets]
+    raise ExportError(
+        f"{config_path}: unsupported target_modules type {type(targets).__name__}; "
+        "expected str / list / set"
+    )
+
+
+def _resolve_injection_targets(adapter_dir: str | Path) -> tuple[Any, str | list[str] | None]:
+    """算出注入 peft 时应当使用的 `target_modules`（注入前归一命名空间）。
+
+    本模块用 `AutoModelForCausalLM`（纯文本类）加载底座，而 ms-swift 的多模态产物
+    写的是多模态命名空间（``model.language_model.*``）⇒ 必须归一，否则 peft 的
+    正则一条都匹配不上（见 :data:`MULTIMODAL_LANGUAGE_MODEL_PREFIX`）。
+
+    **不改语义**：归一只是把同一批投影层换个前缀，目标层集合与 adapter 记录的
+    完全对应；不归一（已经对得上）时**原样返回**，不动既有可用路径。
+
+    为什么必须走"显式构造 PeftConfig"而不是给 ``PeftModel.from_pretrained``
+    多传一个 ``target_modules=`` 关键字：peft 0.18 的
+    ``PeftConfig.from_pretrained`` 第 262 行是
+    ``kwargs = {**class_kwargs, **loaded_attributes}`` —— **adapter 文件里的值
+    覆盖调用方传的值**，所以关键字覆盖是无效的（实测确证：报错里出现的仍是
+    多模态前缀）。必须先把配置对象读出来、改掉 `target_modules`，再作为
+    ``config=`` 传进去。
+
+    Returns:
+        (配置, 预览用目标列表)。adapter 没有 `adapter_config.json` 时返回
+        ``(None, None)``，由调用方交回 peft 自行报错（保持原报错形态）。
+    """
+    config_path = Path(adapter_dir) / "adapter_config.json"
+    if not config_path.is_file():
+        return None, None
+
+    from peft import PeftConfig  # noqa: PLC0415  设施层延迟导入
+
+    peft_config = PeftConfig.from_pretrained(str(adapter_dir))
+    targets = read_adapter_targets(adapter_dir)
+    if targets is None:
+        return peft_config, None
+    original = targets if isinstance(targets, str) else list(targets)
+    normalized = normalize_language_model_targets(targets)
+    if normalized != original:
+        print(
+            f"[export] normalized target_modules for the text loader "
+            f"(dropped prefix {MULTIMODAL_LANGUAGE_MODEL_PREFIX!r}): {normalized}"
+        )
+        peft_config.target_modules = normalized
+    return peft_config, normalized
+
+
 def assert_base_matches(adapter_dir: str | Path, base_model_path: str | Path) -> None:
     """校验 adapter 记录的底座与调用方给出的底座一致。
 
@@ -286,7 +431,11 @@ def merge_peft_checkpoint(
         torch_dtype=dtype,
         device_map="cpu",
     )
-    merged = PeftModel.from_pretrained(base, str(adapter_path)).merge_and_unload()
+    merged = PeftModel.from_pretrained(
+        base,
+        str(adapter_path),
+        config=_resolve_injection_targets(adapter_path)[0],
+    ).merge_and_unload()
     merged.save_pretrained(str(destination), safe_serialization=True)
 
     tokenizer = AutoTokenizer.from_pretrained(

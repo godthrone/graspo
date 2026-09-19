@@ -331,3 +331,105 @@ def test_write_report_emits_contract_fields(tmp_path):
     # 重叠分析溯源：没做时必须可判别，而不是靠数值猜
     assert payload["summary"]["overlap_analysis_performed"] is False
     assert payload["train_subset"] is None
+
+
+# ── 产物落点必须显式、绝对、且落盘后必须真的在预期位置 ────────────────────────
+#
+# 历史事故（task-r3-effect §⑦-3）：`run_evaluation` 用 cwd 相对路径当输出路径，
+# 容器里 cwd 与挂载点不一致 ⇒ `eval_report.json` 写进了意料之外的目录，未挂载时
+# **静默丢失**（数字拿到了、产物没了、没有任何报错）。以下三个用例把这条堵死。
+
+
+def _minimal_report(tmp_path: Path):
+    from graspo.eval.schema import (
+        EvalCriteria,
+        EvalDataset,
+        EvalDecoding,
+        EvalEnvironmentPointer,
+        EvalReport,
+        EvalSummary,
+        utc_now_iso,
+    )
+
+    return EvalReport(
+        run_id="base-20260918-000000",
+        started_at=utc_now_iso(),
+        finished_at=utc_now_iso(),
+        elapsed_sec=1.0,
+        model=EvalModel(served_name="s", role="base", path="/models/base"),
+        dataset=EvalDataset(
+            path="data/test.jsonl",
+            split="test",
+            sha256="a" * 64,
+            sample_count_total=1,
+            sample_count_requested=1,
+        ),
+        decoding=EvalDecoding(temperature=0.0, top_p=0.9, max_tokens=128, enable_thinking=False),
+        criteria=EvalCriteria(version=ACCURACY_CRITERIA_VERSION, source="src"),
+        environment=EvalEnvironmentPointer(
+            visible_gpus=[0], gpu_count=1, fingerprint_path="/tmp/env.json"
+        ),
+        summary=EvalSummary(
+            sample_count_total=1,
+            sample_count_valid=1,
+            sample_count_error=0,
+            correct=1,
+            incorrect=0,
+            accuracy=1.0,
+            accuracy_percent=100.0,
+        ),
+        samples=[{"sample_index": 0, "all_right": True}],
+    )
+
+
+def test_run_evaluation_rejects_relative_output_dir_before_any_write(tmp_path, monkeypatch):
+    """相对 output_dir ⇒ 在任何落盘之前就拒绝（不依赖 cwd 的落点）。
+
+    这条堵的正是"产物静默丢失"：不拒绝的话，落点会随进程 cwd 漂移，
+    调用方还以为产物在配置写的位置。
+    """
+    monkeypatch.chdir(tmp_path)
+    dataset_path = _dataset_root(tmp_path)
+    dataset, _, _ = load_eval_dataset(dataset_path)
+    with pytest.raises(OrchestrationError, match="is not absolute"):
+        run_evaluation(
+            base_url="http://127.0.0.1:1",
+            model=EvalModel(served_name="s", role="base", path="/models/base"),
+            dataset=dataset,
+            output_dir=".local/eval/runs/relative",
+            gpus="0",
+        )
+    # 拒绝发生在 create 之前 ⇒ 相对 cwd 的位置不该被建出来
+    assert not (tmp_path / ".local").exists()
+
+
+def test_write_report_rejects_relative_output_dir(tmp_path, monkeypatch):
+    """`write_report` 同样 fail-closed —— 不只入口检查，产物写手也要守。"""
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(OrchestrationError, match="is not absolute"):
+        write_report(_minimal_report(tmp_path), ".local/eval/runs/relative")
+
+
+def test_write_report_lands_at_the_absolute_path_it_returns(tmp_path, monkeypatch):
+    """绝对路径 ⇒ 产物真的落在返回路径上，且内容非空（落点断言的反向验证）。"""
+    workdir = tmp_path / "elsewhere"
+    workdir.mkdir()
+    monkeypatch.chdir(workdir)  # cwd 故意与产物目录无关
+    out = tmp_path / ".local" / "eval" / "runs" / "abs"
+    path = write_report(_minimal_report(tmp_path), out)
+    assert path == out / EVAL_REPORT_FILENAME
+    assert path.is_file() and path.stat().st_size > 0
+    # cwd 下不该冒出任何产物
+    assert not (workdir / ".local").exists()
+
+
+def test_assert_file_persisted_rejects_missing_and_empty(tmp_path):
+    """落点断言本身必须能真失败：不存在 / 空文件都要报错，不得静默。"""
+    from graspo.eval.orchestrator import _assert_file_persisted
+
+    with pytest.raises(OrchestrationError, match="not present"):
+        _assert_file_persisted(tmp_path / "nope.json", what="eval_report.json")
+    empty = tmp_path / "empty.json"
+    empty.write_text("", encoding="utf-8")
+    with pytest.raises(OrchestrationError, match="is empty"):
+        _assert_file_persisted(empty, what="eval_report.json")

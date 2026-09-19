@@ -762,6 +762,10 @@ class EvalConfig(BaseModel):
 
     ``output_dir`` 必须位于 ``.local/`` 下（宪法 §16）：评测产物含宿主路径、
     GPU 编号等环境信息，不得进入已跟踪文件。
+
+    ``output_dir`` 与 ``merged_output_dir`` 必须写成**绝对路径**（fail-closed）：
+    相对路径的落点随进程 cwd 漂移，历史上出现过"产物静默丢失"——见
+    :meth:`_assert_artifacts_absolute`。
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -823,7 +827,37 @@ class EvalConfig(BaseModel):
                 f"eval.output_dir must live under .local/ (got {self.output_dir!r}); "
                 "eval artifacts contain host paths and GPU ids and must never be tracked"
             )
+        self._assert_artifacts_absolute()
         return self
+
+    def _assert_artifacts_absolute(self) -> None:
+        """产物路径必须**绝对** —— 相对路径会让落点随进程 cwd 漂移（fail-closed）。
+
+        为什么必须是防呆而不是文档约定：``run_evaluation`` 落盘用的是
+        ``Path(output_dir)``，相对路径按**进程 cwd** 解析。历史实测事故
+        （`task-r3-effect` §⑦-3）：容器里 cwd 与挂载点不一致时，产物写进了
+        **意料之外的目录**（未挂载时**静默丢失**——数字拿到了，`eval_report.json`
+        却不在宿主机上）。评测结果是要留证的产物，落点必须由配置**唯一确定**，
+        不能依赖 cwd。
+
+        ``merged_output_dir`` 同理（它是合并权重产物的落点）。
+
+        Raises:
+            ValueError: 任一产物路径为空/为相对路径。
+        """
+        for field_name in ("output_dir", "merged_output_dir"):
+            raw = getattr(self, field_name)
+            if raw is None or str(raw).strip() == "":
+                continue
+            candidate = Path(str(raw)).expanduser()
+            if not candidate.is_absolute():
+                raise ValueError(
+                    f"eval.{field_name}={raw!r} is not absolute; artifact paths must be "
+                    "absolute so that the output location does not depend on the process "
+                    "cwd (a cwd-relative path silently lands somewhere else, or is lost "
+                    'entirely when that location is not mounted). Use e.g. '
+                    f'"/abs/path/.local/eval/runs/<run>" instead.'
+                )
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "EvalConfig":
