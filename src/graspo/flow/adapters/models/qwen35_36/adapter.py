@@ -26,6 +26,7 @@ from graspo.flow.parallel.tensor_utils import (
     SafetensorIndex,
     _resolve_dtype,
 )
+from graspo.flow.trainer.preflight import assert_vision_tower_trainable
 from graspo.ripple.parsing.completion import ParsedCompletion
 from graspo.ripple.parsing.qwen_tool_parser import parse_qwen_tool_completion
 
@@ -90,18 +91,41 @@ class Qwen35Adapter(  # type: ignore[misc]  # mixin 组合点的多基类签名�
         )
         if self.model is None:
             raise RuntimeError("model not loaded; call setup() first")
+        resolved_lora_targets = set(lora_targets.resolved)
         if not full_param:
+            # 视觉塔防线（fail-closed）：原来的豁免把"本 rank 没有视觉塔"与
+            # "模型没有视觉"混为一谈，会在"声明了视觉、本 rank 又持有 embedding"
+            # 时静默放过视觉 target ⇒ 视觉塔无声退回语言-only。
+            # 现按唯一真相源判据区分三种情形（见 preflight.assert_vision_tower_trainable）：
+            # 模型无视觉 / 视觉塔在别的 PP stage ⇒ 放行；本 rank 应有塔却没有 ⇒ 报错。
+            # placement 为 None = 无 PP 切分 ⇒ 每个 rank 都持有 embedding 层；
+            # 缺省取 True（fail-closed：宁可报错也不静默放过视觉 target）。
+            owns_embeddings = (
+                bool(self.placement.include_embeddings) if self.placement is not None else True
+            )
+            # 非 embedding stage 上没有视觉塔，其 visual.* target 不适用，
+            # 不得混进"未实现 target"的报错里。
+            exempted_visual_targets = (
+                {t for t in resolved_lora_targets if str(t).startswith("visual.")}
+                if not owns_embeddings
+                else set()
+            )
             missing_lora_targets = sorted(
-                target
-                for target in set(lora_targets.resolved)
+                resolved_lora_targets
                 - set(self.model.enabled_lora_target_names())
-                if not (target.startswith("visual.") and getattr(self.model, "visual", None) is None)
+                - exempted_visual_targets
             )
             if missing_lora_targets:
                 raise ValueError(
                     "Resolved LoRA target(s) are not implemented by this model yet: "
                     + ", ".join(missing_lora_targets)
                 )
+            assert_vision_tower_trainable(
+                self.model,
+                self.model.config,
+                owns_embeddings=owns_embeddings,
+                model_name=str(model_path),
+            )
         self.model.train(False)
         # 全参模式下 ``lora.adapter_path`` 已被配置层拒绝（``GraspoConfig`` 校验），
         # 因此这里不需要第二道判断——单一真相源（宪法 §1.4）。

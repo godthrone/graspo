@@ -52,6 +52,58 @@ class SFTTrainer:
         #: > 0 即证明本次 run 有步权重冻结 ⇒ 不得记为成功（宪法 §3.4）。
         self.nonfinite_grad_skips = 0
 
+    def _preflight_multimodal(self) -> None:
+        """多模态视觉塔预检（纯逻辑，不触 GPU、不加载数据）。
+
+        接线理由：SFT 确实走多模态批次（``training_sft.py`` 用
+        ``deferred_multimodal`` 判定并调 ``assert_sft_batch_has_multimodal``），
+        但此前**没有**任何运行期预检——GRASPO 路径有 ``run_multimodal_preflight``，
+        SFT 没有 ⇒ "视觉塔冻死"（LoRA 目标不含视觉模块，视觉塔全部参数被
+        ``requires_grad=False``）会在整个 SFT 训练里静默发生。
+
+        这里复用 GRASPO **同一套纯逻辑判据**（``preflight`` 模块），不新造第二套：
+        - ``assert_lora_vision_targets_trainable``：配置期判定 LoRA 目标是否真的
+          包含视觉塔（报错直接点名该改哪个键）；
+        - ``assert_vision_tower_trainable``：加载后判定"声明了视觉 + 持有 embedding
+          的 rank 上视觉塔必须真的存在且注册了可训视觉 LoRA"。
+
+        **放行条件（不得误伤纯文本模型 / 语言-only 配置）**：
+        ``config.has_vision_config`` 为 False 时两条判据都直接返回——
+        纯文本模型与语言-only 配置零开销、零误伤。模型声明了视觉但 LoRA 目标
+        全是语言模块 ⇒ 报错（这正是"视觉塔冻死"）。
+
+        :raises ValueError: 模型有视觉塔但 LoRA 目标里没有一个视觉模块
+        :raises RuntimeError: 模型声明了视觉、本 rank 持有 embedding、却无视觉塔或无可用视觉 target
+        """
+        from graspo.flow.trainer.preflight import (
+            assert_lora_vision_targets_trainable,
+            assert_vision_tower_trainable,
+        )
+
+        adapter = self.runtime._adapter  # noqa: SLF001 训练器与 runtime 同包编排
+        if adapter is None:
+            raise RuntimeError("runtime adapter not loaded")
+        model = getattr(adapter, "model", None)
+        model_config = getattr(model, "config", None)
+        if model_config is None:
+            return  # 非原生 LoRA 模型（无 model.config）：本体不适用
+        if not bool(getattr(model_config, "has_vision_config", False)):
+            return  # 纯文本模型 / 语言-only 配置：不判（不得误伤）
+        assert_lora_vision_targets_trainable(
+            lora_target_modules=self.config.lora.target_modules,
+            lora_target_preset=self.config.lora.target_preset,
+            image_token_id=getattr(model_config, "image_token_id", None),
+            model_name=str(self.config.model.model_path),
+            # 模型声明了视觉 ⇒ 占位 token 缺失属配置不一致，fail-closed。
+            has_vision_config=True,
+        )
+        assert_vision_tower_trainable(
+            model,
+            model_config,
+            owns_embeddings=True,  # SFT 入口先于 PP 切分，本处只判"视觉塔必须可训"
+            model_name=str(self.config.model.model_path),
+        )
+
     def train(self, *, smoke: bool = False) -> None:
         """SFT 训练主入口。
         """
@@ -68,6 +120,12 @@ class SFTTrainer:
         setup_logging(self.config.training.output_dir, rank=rank)
         _set_random_seed(int(self.config.training.seed), rank=rank)
         _log = logging.getLogger("graspo.sft_trainer")
+
+        # 多模态预检（防线，纯逻辑、不触 GPU）：SFT 路径此前**没有**运行期预检，
+        # 而它确实走多模态批次（见 training_sft.py 的 assert_sft_batch_has_multimodal），
+        # 于是"视觉塔冻死"会在整个 SFT 里静默训练。这里复用 GRASPO 已有的同一套
+        # 纯逻辑判据（单一真相源 §1.4），不新造第二套。
+        self._preflight_multimodal()
 
         # 加载并 tokenize 数据（所有 rank 各自执行，因为 train_batch_sft 在所有 rank 上调用）
         samples = load_jsonl(self.config.data.train_path)

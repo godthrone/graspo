@@ -26,12 +26,83 @@ from graspo.ripple.multimodal.rows import (
 _log = logging.getLogger("graspo.preflight")
 
 
+class _ModelConfigView:
+    """模型配置的最小只读视图（鸭子类型），供纯逻辑预检跨后端复用。
+
+    只暴露预检用到的字段，避免把具体后端配置类型耦合进纯逻辑层。
+    """
+
+    def __init__(self, config: Any) -> None:
+        self.has_vision_config = bool(getattr(config, "has_vision_config", False))
+        self.image_token_id = getattr(config, "image_token_id", None)
+
+
+def assert_vision_tower_trainable(
+    model: Any,
+    config: Any,
+    *,
+    owns_embeddings: bool,
+    model_name: str,
+) -> None:
+    """纯逻辑防线：模型声明了视觉，本 rank 又持有 embedding 层，则视觉塔必须真的建出来。
+
+    这是缺陷②（``adapter.py`` 的 fail-open 豁免）的**唯一真相源判据**，
+    同时被 native adapter 的加载期校验与 SFT 训练入口复用（宪法 §1.4）。
+
+    **为什么需要它（真因）**：`resolve_lora_target_modules` 只在
+    ``native_qwen_lora_available_targets`` 暴露的 target 里解析，而该函数
+    **仅在 ``has_vision_config=True`` 时才暴露 ``visual.*``**（``lora_helpers.py:44``）
+    ⇒ ``resolved`` 里出现 ``visual.*`` **蕴含"模型声明了视觉"**。
+
+    而视觉塔属性（``model.py:96-111``）为 ``None`` 当且仅当
+    ``not include_embeddings or not has_vision_config``，其中
+    ``include_embeddings = (pp_rank == 0)``（``placement_plan.py:135``）。于是：
+
+    - **模型无视觉**（``has_vision_config=False``）：``visual.*`` 不可能出现在
+      ``resolved`` 里 ⇒ 本函数直接放行（**纯文本模型零开销、不误伤**）；
+    - **模型有视觉 + 本 rank 不是 embedding rank**（PP>1）：该 rank 上视觉塔
+      按设计不存在，工具层亦无法持有（不合法情形）⇒ 放行；
+    - **模型有视觉 + 本 rank 持有 embedding 层**：视觉塔**必须在**。缺失即
+      "视觉塔被静默跳过" ⇒ ``RuntimeError``，**fail-closed**。
+
+    :param model: 已构建的模型实例（只读其 ``visual`` 属性与 ``enabled_lora_target_names()``）
+    :param config: 模型配置（含 ``has_vision_config`` / ``image_token_id``）
+    :param owns_embeddings: 本 rank 是否持有 embedding 层（PP 的 stage 0）
+    :param model_name: 模型名（错误消息用）
+    :raises RuntimeError: 声明了视觉、持有 embedding、却不存在视觉塔或未注册任何可训视觉 LoRA
+    """
+    view = _ModelConfigView(config)
+    if not view.has_vision_config:
+        return  # 模型无视觉塔：视觉可训练性不适用（纯文本模型不得被误伤）
+    if not owns_embeddings:
+        return  # 视觉塔按 PP 设计只存在于 embedding stage；非该 stage 无塔属正常
+    if getattr(model, "visual", None) is None:
+        raise RuntimeError(
+            f"model {model_name!r} declares vision (has_vision_config=True) and this rank "
+            "owns the embedding stage, but the visual tower was not built. Refusing to "
+            "start: vision would be silently skipped on this rank."
+        )
+    enabled_target_names = getattr(model, "enabled_lora_target_names", None)
+    if enabled_target_names is None:
+        return  # 非原生 LoRA 模型（无该接口）：不适用
+    visual_enabled = [name for name in enabled_target_names() if str(name).startswith("visual.")]
+    if not visual_enabled:
+        raise RuntimeError(
+            f"model {model_name!r} declares vision and owns the embedding stage, but no "
+            "trainable visual LoRA target is registered (enabled visual targets: []). "
+            "Refusing to start: the visual tower would be frozen while the run trains. "
+            "Fix: set lora.target_preset to a vision preset (e.g. 'vision_common') or set "
+            "lora.target_modules to explicit visual.* module names."
+        )
+
+
 def assert_lora_vision_targets_trainable(
     *,
     lora_target_modules: list[str] | None,
     lora_target_preset: str | None,
     image_token_id: int | None,
     model_name: str,
+    has_vision_config: bool | None = None,
 ) -> None:
     """纯逻辑校验：多模态训练时 LoRA 目标必须真的包含视觉塔（可单测，不触 GPU）。
 
@@ -52,8 +123,21 @@ def assert_lora_vision_targets_trainable(
     :param lora_target_preset: ``lora.target_preset``（None ⇒ 走默认预设）
     :param image_token_id: 模型视觉占位 token id；None = 模型无视觉塔（不判）
     :param model_name: 模型名（错误消息用）
-    :raises ValueError: 模型有视觉塔、且 LoRA 目标里没有一个视觉模块
+    :param has_vision_config: 模型是否**声明**视觉塔（``config.has_vision_config``）。
+        默认 ``None`` = 未提供，此时保持既有语义（只按 ``image_token_id`` 判定，
+        缺省调用行为逐字不变）。显式传入 ``True`` 而 ``image_token_id`` 为 None，
+        是"模型有视觉塔但占位 token 缺失"的配置不一致 ⇒ **fail-closed 报错**
+        （此前的 fail-open 会让视觉塔被静默跳过、无声退回语言-only）。
+    :raises ValueError: 模型有视觉塔、且 LoRA 目标里没有一个视觉模块；
+        或声明了视觉塔却没有可用的视觉占位 token（配置不一致）
     """
+    if has_vision_config is True and image_token_id is None:
+        raise ValueError(
+            f"model {model_name!r} declares a vision tower (has_vision_config=True) but has no "
+            "usable image token id (config.image_token_id is missing/None). Vision inputs would "
+            "be silently dropped and training would fall back to language-only. Refusing to "
+            "start training."
+        )
     if image_token_id is None:
         return  # 模型没有视觉塔：是否可训视觉不适用
     requested = tuple(lora_target_modules) if lora_target_modules else (lora_target_preset,)
