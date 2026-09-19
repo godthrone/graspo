@@ -48,6 +48,16 @@ CONFIG_DIR = PROJECT_ROOT / "samples" / "configs" / "matrix54"
 MANIFEST_PATH = PROJECT_ROOT / "tests" / "e2e" / "matrix54_manifest.json"
 RUNNER_PATH = PROJECT_ROOT / "tests" / "e2e" / "run_matrix54.sh"
 
+#: `record-gpu-memory` 采样产物的容器内落点（**单一真相源**）。
+#: 容器内 /out 由 runner 绑定到宿主 <RUN_ROOT>/<T###>，因此 /out/gpu 就是
+#: `scripts/collect_results.py::_read_peak_memory` 读的 <RUN_ROOT>/<T###>/gpu/。
+#: 采集口径（宪法 §10.1：产物位置必须能被 config 描述）与取证链**逐字不变**。
+GPU_MONITOR_CONTAINER_DIR = "/out/gpu"
+
+#: 采样间隔（秒）。与 W3 之前 CLI 上的 `--interval-sec 2` **逐值相同**：间隔决定
+#: 产物里的样本条数 ⇒ 属"参与决定产物的参数"，按 §10.1 必须进 config、不得回 CLI。
+GPU_MONITOR_INTERVAL_SEC = 2.0
+
 # ── 台账口径常量（单一真相源，§1.4）────────────────────────────────────────
 CARDS: tuple[int, ...] = (1, 2, 4)
 EXPECTED_TOTAL = 54
@@ -726,6 +736,23 @@ def build_config(tier: dict[str, Any]) -> dict[str, Any]:
             "teacher_model_path": MODELS[OPD_TEACHER_MODEL]["path"],
             "offload_teacher_model": True,
         }
+    # ── 运维监控段（`graspo record-gpu-memory` 用；**与训练产物无关**）──────────
+    # 为什么写进档配置（而不是由 runner 现编一份）：`record-gpu-memory` 自 W3 起
+    # **配置驱动**（宪法 §10.1）——`output_dir` / `tag` / `interval_sec` 全部决定产物，
+    # CLI 上已无对应选项。而"这档的产物落在哪"本来就是**同一份档位配置**里的既有
+    # 事实（见上面的 `training.output_dir`）；把监控段也写进同一个文件，"这一档跑
+    # 什么、产物落在哪、采样打什么标签"就只有**一个**真相源（§1.4）。若改由 runner
+    # 现编一份，同一条事实就有两份文档，迟早漂移。
+    #
+    # ★ 落点用**公式**而不是常量：`<training.output_dir>/gpu` —— 与 runner 的
+    #   `<RUN_ROOT>/<T###>/gpu` 逐字对齐（容器内 /out 绑到 <RUN_ROOT>/<T###>），
+    #   也就是 collect_results.py::_read_peak_memory 读 gpu_memory_summary.json 的目录。
+    #   ★ 改这里会断取证链：改前先读 scripts/collect_results.py。
+    config["gpu_monitor"] = {
+        "output_dir": f"{config['training']['output_dir']}/gpu",
+        "tag": tier_id,
+        "interval_sec": GPU_MONITOR_INTERVAL_SEC,
+    }
     return config
 
 
@@ -1461,6 +1488,79 @@ if [ "$CONFIG" = "-" ]; then
     exit 2
 fi
 
+# 0a-ter) **显存采样链路的前置校验（宿主侧，fail-closed）** —— W3 连带失效的修复。
+#
+#    record-gpu-memory 自 W3 起是**配置驱动**命令（§10.1）：gpu_monitor 段的
+#    output_dir / tag / interval_sec 决定产物位置与内容，CLI 上已无
+#    --output-dir / --tag / --interval-sec。
+#    因此这里**不再自己拼参数**，只做三件事：
+#      ① 从档配置读出 gpu_monitor.output_dir / tag / interval_sec（单一真相源）；
+#      ② 用同一份档配置的 training.output_dir **交叉校验**产物落点；
+#      ③ 校不过就拒绝启动，绝不"先跑起来再说"。
+#    为什么必须从档配置读、而不是在这里另写一份：产物位置与档号标签已经写在
+#    **档配置自身**里；在这里再写一遍，同一条事实就有两份描述，迟早漂移（§1.4）。
+#
+#    容器内 /out 由下面的 -v "$RUN_DIR:/out" 绑定到宿主 <RUN_ROOT>/<T###>，
+#    因此档配置里的 /out/<T###>/gpu 就是宿主 <RUN_ROOT>/<T###>/gpu ——
+#    正是 collect_results.py::_read_peak_memory 读 gpu_memory_summary.json 的目录。
+#
+#    ★ 读法只用 grep/sed（**不引 PyYAML**）：本脚本在宿主上跑，宿主 python 不一定
+#      装了 PyYAML（它只在镜像里保证有）。档配置的 gpu_monitor 段由 generate_matrix.py
+#      生成，形状固定（段名行 + 每行两空格缩进的 KEY: VALUE），故按形状读；读不到即
+#      fail-closed —— 绝不"读不到就当默认值"。
+#
+#    ★ 三条不变量（改档配置生成逻辑或改本段之前，先读 scripts/collect_results.py）：
+#       a. tag == 档号：摘要里的 tag 与档号一致 ⇒ 读数可归属到档；
+#       b. 产物落点 == <宿主 RUN_ROOT>/<T###>/gpu/：取证链不断；
+#       c. interval_sec == {GPU_MONITOR_INTERVAL_SEC:g}：与旧 CLI 口径逐值相同（样本条数不变）。
+TIER_CONFIG_PATH="$ROOT_DIR/$CONFIG"
+# 取 gpu_monitor 段内某字段的标量值（不存在则输出空）。
+read_gpu_monitor_field() {{
+    sed -n '/^gpu_monitor:$/,/^[^ #]/p' "$TIER_CONFIG_PATH" | sed -n "s/^  $1:[[:space:]]*\\([^[:space:]#]*\\).*/\\1/p" | head -n 1
+}}
+# 取 training 段的 output_dir（用于交叉校验落点）。
+read_training_output_dir() {{
+    sed -n '/^training:$/,/^[^ #]/p' "$TIER_CONFIG_PATH" | sed -n 's/^  output_dir:[[:space:]]*\\([^[:space:]#]*\\).*/\\1/p' | head -n 1
+}}
+GPU_MONITOR_OUTPUT_DIR="$(read_gpu_monitor_field output_dir)"
+GPU_MONITOR_TAG="$(read_gpu_monitor_field tag)"
+GPU_MONITOR_INTERVAL_SEC="$(read_gpu_monitor_field interval_sec)"
+TRAINING_OUTPUT_DIR="$(read_training_output_dir)"
+
+monitor_problems=""
+if [ -z "$CONFIG" ] || [ ! -f "$TIER_CONFIG_PATH" ]; then
+    monitor_problems="${{monitor_problems}}档配置不可读：$TIER_CONFIG_PATH;"
+fi
+if [ -z "$GPU_MONITOR_OUTPUT_DIR" ]; then
+    monitor_problems="${{monitor_problems}}gpu_monitor.output_dir 为空;"
+fi
+if [ "$GPU_MONITOR_TAG" != "$TIER" ]; then
+    monitor_problems="${{monitor_problems}}gpu_monitor.tag='$GPU_MONITOR_TAG' 与档号 '$TIER' 不一致;"
+fi
+if [ -z "$GPU_MONITOR_INTERVAL_SEC" ]; then
+    monitor_problems="${{monitor_problems}}gpu_monitor.interval_sec 缺失;"
+fi
+if [ -z "$TRAINING_OUTPUT_DIR" ]; then
+    monitor_problems="${{monitor_problems}}training.output_dir 为空;"
+elif [ "$GPU_MONITOR_OUTPUT_DIR" != "$TRAINING_OUTPUT_DIR/gpu" ]; then
+    monitor_problems="${{monitor_problems}}gpu_monitor.output_dir='$GPU_MONITOR_OUTPUT_DIR' 不在本档产物目录 '$TRAINING_OUTPUT_DIR' 内;"
+fi
+case "$GPU_MONITOR_OUTPUT_DIR" in
+    /out/*) ;;
+    *) monitor_problems="${{monitor_problems}}gpu_monitor.output_dir='$GPU_MONITOR_OUTPUT_DIR' 不在容器内 /out/ 之下;" ;;
+esac
+if [ -n "$monitor_problems" ]; then
+    echo "FATAL(monitor-link): 档 $TIER 的显存采样链路前置校验未通过 ——" >&2
+    printf '%s\n' "$monitor_problems" | tr ';' '\n' | sed '/^$/d; s/^/  - /' >&2
+    echo "  修法：改 tests/e2e/generate_matrix.py::build_config 的 gpu_monitor 段并重新生成" >&2
+    echo "  档配置（手改档配置无效——该文件由生成器写出）。" >&2
+    exit 5
+fi
+# 宿主侧落点：把容器内 <output_dir> 映射回宿主（容器内 /out = 宿主 <RUN_ROOT>/<T###>）。
+RUN_GPU_DIR="$RUN_ROOT/$TIER${{GPU_MONITOR_OUTPUT_DIR#/out}}"
+echo "[monitor-link] OK: tier=$TIER tag=$GPU_MONITOR_TAG interval_sec=$GPU_MONITOR_INTERVAL_SEC"
+echo "[monitor-link]   容器内 $GPU_MONITOR_OUTPUT_DIR -> 宿主 $RUN_GPU_DIR"
+
 # 0a-bis) **待上机测量**档（OPD：教师侧显存未测算，P-25）：允许跑（跑就是为了量出来），
 # 但必须显式提示——并把"教师侧峰值显存"记进产物，否则这一档的可行性永远无据。
 # 判据：manifest 的 `feasibility.verdict == unmeasured`（不是"没配方"，两者语义不同）。
@@ -1693,7 +1793,15 @@ cat > "$RUN_DIR/entry.sh" <<ENTRY
 set -o pipefail
 "$CONTAINER_PY" /out/preflight_media.py "$TRAIN_PATH" || exit 3
 "$CONTAINER_PY" -m graspo record-gpu-memory --idle-only || exit 1
-"$CONTAINER_PY" -m graspo record-gpu-memory --output-dir /out/gpu --tag "\$TIER" --interval-sec 2 &
+# ★ 显存采样：**配置驱动**（宪法 §10.1；W3 起 CLI 上已无 --output-dir/--tag/--interval-sec，
+#   旧写法会 argparse 报错 rc=2）。本档配置（与训练用的是**同一份** YAML）自带
+#   gpu_monitor 段：output_dir=/out/gpu、tag=<档号>、interval_sec=2 —— 产物落点与档号
+#   标签仍由同一份档位配置描述，不在这里另写一份（§1.4 单一真相源）。
+#   ⚠ 写法约束（heredoc 展开语义，见 task-ckpt-retention-fix 报告）：外层 heredoc 分隔符
+#     不带引号 ⇒ 外层先展开一次、容器内再展开一次。CONFIG 是宿主 runner 的变量（容器内
+#     不存在），必须留给**外层**展开，故保持裸美元符；写成反斜杠转义会把字面量 CONFIG
+#     留给内层，容器内展开为空 ⇒ 命令 fail-closed（rc=2）。
+"$CONTAINER_PY" -m graspo record-gpu-memory --config "/workspace/graspo/$CONFIG" &
 SAMPLER=\\$!
 torchrun --standalone --nproc_per_node="$NPROC" --master_port="$PORT" \\
   -m graspo.cli.train_worker --config "/workspace/graspo/$CONFIG" > /out/stdout.log 2>&1
