@@ -1530,6 +1530,11 @@ assert_mount_targets_not_under_readonly "${{MOUNT_SPECS[@]}}" || exit 6
 # 不同时用 `--gpus`——两者可能互相覆盖，语义有歧义。
 DOCKER_ARGS=(
     --rm --runtime=nvidia
+    # 共享内存（**≥2 卡必需**）：torchrun 多 rank 按 fd 共享 CPU 张量，docker 默认
+    # /dev/shm 仅 64 MiB ⇒ 多卡启动即 `unable to allocate shared memory(shm)` /
+    # `Resource temporarily unavailable (11)`（228 实测：4 个 rank 同抛，Train: 0%）。
+    # 与 run.sh / tests/e2e/run_matrix.sh 的既有约定逐字一致（§1.4 单一真相源）。
+    --ipc=host --shm-size=16g
     -e "NVIDIA_VISIBLE_DEVICES=$GPUS"
     -e PYTHONPATH=/workspace/graspo/src
     -e HF_HUB_OFFLINE=1
