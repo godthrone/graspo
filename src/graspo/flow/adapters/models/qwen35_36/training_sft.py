@@ -44,6 +44,54 @@ def _nonfinite_skip_preauthorized() -> bool:
     }
 
 
+def _normalized_accumulation_weights(valid_token_counts: list[int]) -> list[float]:
+    """把"各分块有效 token 数"归一为梯度累积权重（纯 math，§1.3 计算层可单测）。
+
+    为什么必须是 token 数而不是样本数（F-13'，2026-09-19）：每个分块单独调
+    :meth:`_Qwen35SFTTrainingMethods._compute_sft_loss`，而那**已经**是该分块内部的
+    token 均值 ``m_i``。要让 C 个分块的加权和等于整批 token 均值
+    ``Σ_i S_i / Σ_i L_i``（``S_i`` = 分块内 log-prob 之和，``L_i`` = 有效 token 数），
+    唯一正确的累积权重是 **该分块有效 token 数占全批有效 token 数的比例**
+    （``w_i = L_i / Σ_j L_j``）：
+
+        ``Σ_i w_i · m_i = Σ_i (L_i / Σ_j L_j) · (S_i / L_i) = Σ_i S_i / Σ_j L_j``
+
+    用**样本数**占比（``n_i / Σ_j n_j``）只有在"每个分块的有效 token 数都相等"时才
+    恰好等价——micro-batch 里各样本 response 长度不同时并不成立，误差可达
+    ``max(L_i) / min(L_i)``（长 chunk 被系统性高估）。
+
+    权重和恒为 1.0（C 个分块各算一次），因此 C=1 时分块路径与整批路径**逐位等价**，
+    也不再依赖调用方传入的 ``full_batch_size``。
+
+    Args:
+        valid_token_counts: 每个分块的有效 label token 数（非负；0 表示该分块无监督 token）。
+
+    Returns:
+        与输入等长的权重表；全批有效 token 数为 0 时返回**全 0**（由调用方按明确的
+        边界行为处置——不得静默、不得除零）。
+
+    Raises:
+        ValueError: 任一计数为负（防呆：调用方统计口径写错时立即暴露）。
+    """
+    negatives = [count for count in valid_token_counts if count < 0]
+    if negatives:
+        raise ValueError(f"有效 token 数不得为负：{negatives}")
+    total = sum(valid_token_counts)
+    if total == 0:
+        return [0.0 for _ in valid_token_counts]
+    return [count / total for count in valid_token_counts]
+
+
+def _count_sft_valid_tokens(labels: torch.Tensor) -> int:
+    """micro-batch 的有效 label token 数（与 :meth:`_compute_sft_loss` 的分母同一口径）。
+
+    :meth:`_compute_sft_loss` 内部做因果 shift（``labels[:, 1:]``）并只统计
+    ``!= -100`` 的位置，这里必须用**同样的 shift 与同样的忽略值**统计，否则权重与
+    分母不同源（§1.4 单一真相源）。
+    """
+    return int((labels[:, 1:] != -100).sum().item())
+
+
 class _Qwen35SFTTrainingMethods:
     def _compute_sft_loss(self, hidden_states: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         """从 hidden states 计算 SFT cross-entropy loss（设施层不持有算法分派）。
@@ -51,7 +99,12 @@ class _Qwen35SFTTrainingMethods:
         复用 RL 的共享实现 ``masked_token_log_probs_from_hidden``（宪法 §1.4 单一真相源）：
         分块 logsumexp，不物化 (B,S,V) 全量 logits（v0.24.0 修复——此前 SFT 物化
         全词表 logits 导致显存不随 TP 分摊、TP=4 仍 OOM）。
-        语义与 ``F.cross_entropy(ignore_index=-100, reduction="mean")`` 一致（全局均值）。
+        语义与 ``F.cross_entropy(ignore_index=-100, reduction="mean")`` 一致（**本分块内**的
+        token 均值）。整批语义由调用方用**有效 token 数**做累积加权（见
+        :func:`_normalized_accumulation_weights` 与 F-13'）——**不得**用样本数加权，
+        否则多 micro-batch 且各 chunk 有效 token 数不等时与整批 token 均值不等价。
+        无有效 token 时返回 0（由 ``mask.sum().clamp_min(1)`` 防除零）；调用方须显式
+        处置该情形，不得让 0 权重块静默参与累积。
         """
         from graspo.ripple.loss import masked_token_log_probs_from_hidden
 
@@ -279,9 +332,8 @@ class _Qwen35SFTTrainingMethods:
             self._emit_rank_memory_event("train_before_empty_cache")
 
         micro_batch_size = max(1, int(self.config.native.micro_batch_size))
-        # 梯度累积：有效 batch = gradient_accumulation_micro_batches，micro-batch = micro_batch_size
-        # zero_grad 只调一次，所有 micro-batch 的梯度累加后统一 step。
-        num_micro_batches = max(1, (len(sft_batches) + micro_batch_size - 1) // micro_batch_size)
+        # gradient_accumulation_micro_batches 只决定拆几个 micro-batch；累积权重按
+        # **有效 token 数**归一（F-13'），不按 micro-batch 个数。
         self.optimizer.zero_grad(set_to_none=True)
         optimizer_steps = 0
         skipped_nonfinite = 0
@@ -296,7 +348,28 @@ class _Qwen35SFTTrainingMethods:
         optimizer_step_sec = 0.0
         micro_batch_count = 0
         valid_micro_batches = 0  # 实际贡献梯度的 micro-batch 数
-        for start in range(0, len(sft_batches), micro_batch_size):
+        # 先算**整批**的有效 token 分布，再据此归一累积权重（F-13'）。
+        # 为什么单独先跑一遍：`collate_sft_batch` 可能截断（多模态的 max_seq_length），
+        # 只有 collate 之后的 labels 才知道真实的有效 token 数；但**不能**把所有
+        # micro-batch 同时留在内存里（旧路径是逐个 collate、逐个释放，多留一份
+        # pixel_values/激活会实打实地抬高峰值显存）。因此第一遍只取计数、就地丢弃，
+        # 第二遍重新 collate 做真正的 forward/backward（同一函数、同一参数 ⇒ 结果相同）。
+        accumulation_weights = _normalized_accumulation_weights(
+            [
+                _count_sft_valid_tokens(
+                    collate_sft_batch(
+                        sft_batches[start : start + micro_batch_size],
+                        self.device,
+                        adapter=self,
+                        max_seq_length=int(self.config.data.max_prompt_length),
+                    )["labels"]
+                )
+                for start in range(0, len(sft_batches), micro_batch_size)
+            ]
+        )
+        for start, accumulation_weight in zip(
+            range(0, len(sft_batches), micro_batch_size), accumulation_weights, strict=True
+        ):
             batch_items = sft_batches[start : start + micro_batch_size]
             micro_batch = collate_sft_batch(
                 batch_items,
@@ -338,8 +411,11 @@ class _Qwen35SFTTrainingMethods:
             micro_batch_count += 1
             valid_micro_batches += 1
             loss_sum += float(loss.detach().cpu())
-            # 梯度累积：loss 除以 num_micro_batches 使累加梯度等价于大 batch
-            scaled_loss = loss / num_micro_batches
+            # 梯度累积：按该 micro-batch 的有效 token 占比加权，使累加梯度与
+            # "整批 token 均值"逐位等价（F-13'；此前是 / num_micro_batches，在各
+            # micro-batch 有效 token 数不等时不等价）。weight=0（该块无监督 token）
+            # ⇒ 梯度贡献为 0，backward 仍执行但无梯度，等价于该块不参与全局均值。
+            scaled_loss = loss * accumulation_weight
             self._sync_timing()
             backward_started_at = time.monotonic()
             _log_cuda_mem("before_backward")
@@ -406,7 +482,6 @@ class _Qwen35SFTTrainingMethods:
         nonzero_grad_count = 0
         norm_before = self.model.training_progress_norm()
         micro_batch_size = max(1, int(self.config.native.micro_batch_size))
-        full_batch_size = max(1, len(sft_batches))
         train_batch_started_at = time.monotonic()
         micro_batch_forward_sec = 0.0
         backward_sec = 0.0
@@ -435,6 +510,25 @@ class _Qwen35SFTTrainingMethods:
         if chunk_count == 0:
             self._train_batch_call_index += 1
             return self._aggregate_rank_metrics({"optimized": False, "optimizer_steps": 0})
+
+        # F-13'：每个 chunk 的 ``_compute_sft_loss`` 已是**该 chunk 内的 token 均值**，
+        # 累积权重必须按**有效 token 数**归一（此前按样本数 mb["input_ids"].shape[0]
+        # /full_batch_size，在 chunk_count>1 且各 chunk 有效 token 数不等时与整批 token
+        # 均值不等价；micro_batch_size=1 时恰好退化为 1/chunk_count，仍不等价）。
+        # 非末 stage 也各算一次，保证各 PP rank 的有效 token 总数一致（数据相同）；
+        # 真正参与 loss/backward 的只有末 stage。
+        valid_token_counts = [
+            _count_sft_valid_tokens(micro_batch["labels"]) for micro_batch in chunk_batches
+        ]
+        accumulation_weights = _normalized_accumulation_weights(valid_token_counts)
+        # 边界（防呆，§2.3）：整批无有效监督 token ⇒ 无 loss 可算。不得除零、不得静默
+        # 产出 0 梯度却继续推进 optimizer（那会把"这一步没学到任何东西"伪装成成功）。
+        if sum(valid_token_counts) == 0:
+            raise RuntimeError(
+                "SFT·PP 本批无任何有效 label token（labels[:, 1:] 全为 -100）："
+                "整批 token 均值无定义，拒绝以 0 loss 静默推进 optimizer。"
+                "请检查数据 tokenization / max_prompt_length 是否把 response 全部截掉。"
+            )
 
         # 异步 P2P 通信管道（Flink 风格"调度与计算分离"）+ 可插拔调度策略
         comm = PipelineComm(
@@ -477,8 +571,10 @@ class _Qwen35SFTTrainingMethods:
                 assert stage_output is not None
                 chunk_loss = self._compute_sft_loss(stage_output, mb["labels"])
                 finite = bool(torch.isfinite(chunk_loss).detach().cpu())
-                # 梯度累积：loss 按 chunk_size / full_batch_size 加权
-                weight = float(mb["input_ids"].shape[0]) / full_batch_size
+                # 梯度累积（F-13'）：该 chunk 的有效 token 数占全批有效 token 数的比例，
+                # 使 Σ_i w_i ·（第 i chunk 的 token 均值）= 整批 token 均值。权重与
+                # loss_value 用同一系数，保证报告口径与反传口径一致。
+                weight = accumulation_weights[chunk_idx]
                 loss = chunk_loss * weight if finite else None
                 loss_value = float(chunk_loss.detach().cpu()) * weight if finite else 0.0
             records[chunk_idx] = {

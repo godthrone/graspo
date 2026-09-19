@@ -513,6 +513,13 @@ class _Qwen35TrainingMethods:
                 )
                 _add_pipeline_stage_timing(timing, "pipeline_loss_sec", loss_started_at)
                 finite = bool(torch.isfinite(chunk_loss).detach().cpu())
+                # 累积权重按**样本数**占比：与 RL loss 自身的口径一致，故正确。
+                # ``GRASPORippleLoss`` 是"batch 内逐样本 token 均值再取未加权平均"
+                # （``masked_mean(..., dim=-1).mean()``），即每个样本权重恒为 1/N，
+                # 与 chunk 内样本数无关 ⇒ 逐 chunk 权重 n_i/N 恰好合成同一口径
+                # （Σ_i (L_i·mean_i)·n_i/N == mean over all samples）。
+                # ⚠️ 不要照抄 SFT·PP 的"按有效 token 数加权"（F-13'）——那里的
+                # chunk_loss 是**该 chunk 的 token 均值**，两者口径不同不可互换。
                 weight = float(batch.sequences.shape[0]) / max(1, int(full_batch_size))
                 loss = chunk_loss * weight if finite else None
                 loss_value = float(chunk_loss.detach().cpu()) * weight if finite else 0.0
