@@ -149,6 +149,58 @@ def validate_tuner_type_combination(
         )
 
 
+#: native 侧 offload 的接线只落在 qwen35_36 适配器的 mixin 上
+#: （``_Qwen35SFTTrainingMethods._build_optimizer``，WP-X2）。这是**接线范围
+#: 的事实**，不是设计取舍：别的 model family 要开启，得先有同样的接线。
+#: 用模块前缀而不是"逐字等于默认值"，是为了让同模块内的子类/别名路径也能通过。
+_NATIVE_OFFLOAD_ADAPTER_MODULE = "graspo.flow.adapters.models.qwen35_36."
+
+
+def validate_native_offload_combination(
+    *,
+    offload_optimizer_state: bool,
+    backend: str,
+    native_adapter: str,
+) -> None:
+    """native 优化器态 offload 的已知非法组合，**启动前** fail-closed 拒绝（§2.3）。
+
+    只做纯逻辑判断，不 import torch / 不读文件——因此可在无 torch 的机器上单测
+    （由 :meth:`GraspoConfig._validate_native_offload_combination` 调用）。
+
+    **只看显式开启**：``offload_optimizer_state`` 为假时直接返回 ⇒ 既有配置
+    （全部不含该键）行为逐位不变。
+
+    两条规则，都是"假配置"而不是"难用"：
+
+    1. 与 ``backend != "native"`` 互斥。开关在 ``native.*`` 命名空间下，
+       只有 native 后端消费它；跑 msswift 时打开它不会有任何作用。按 §7.2
+       "声明了却无人消费的字段是假配置"，宁可当场报错，也不要让用户以为
+       省了显存、实际跑到一半才 OOM。
+    2. 与 ``native.adapter`` 指向非 qwen35_36 适配器互斥。offload 的接线落在
+       qwen35_36 的 mixin 上（见 ``_NATIVE_OFFLOAD_ADAPTER_MODULE``）；换别的
+       model family 时开启它同样是假配置，必须报错而不是静默不生效。
+    """
+    if not offload_optimizer_state:
+        return
+    if backend != "native":
+        raise ValueError(
+            "native.offload_optimizer_state=true cannot be combined with "
+            f"backend={backend!r}: the native optimizer-state offload is only wired "
+            "into the native backend, so enabling it while running msswift would "
+            "silently do nothing (a declared-but-unconsumed field is a fake config, "
+            "§7.2). Set native.offload_optimizer_state=false, or use "
+            "msswift.deepspeed=zero2_offload (the msswift-side equivalent)."
+        )
+    if not str(native_adapter).startswith(_NATIVE_OFFLOAD_ADAPTER_MODULE):
+        raise ValueError(
+            "native.offload_optimizer_state=true cannot be combined with "
+            f"native.adapter={native_adapter!r}: the offload is only wired into the "
+            f"{_NATIVE_OFFLOAD_ADAPTER_MODULE} adapters "
+            "(Qwen3.5/3.6 mixin _build_optimizer). Enabling it for another model "
+            "family would silently keep the optimizer state on the GPU."
+        )
+
+
 class RewardConfig(BaseModel):
     """奖励评分配置，所有字段在加载时校验，拒绝未知字段。"""
 
@@ -430,6 +482,24 @@ class GraspoFlowConfig(BaseModel):
     use_kv_cache_for_rollout: bool = True
     empty_cache_after_rollout_split: bool = False
     empty_cache_before_train: bool = False
+    # ── 优化器态 CPU offload（WP-X2；**默认关闭**，开启前需显式预授权）────────
+    # 背景（实测，不是算式）：native 全参 1 卡档 `T016`（9B·SFT·全参）在
+    # `optimizer.step()` 处 ①真 OOM —— PyTorch 已分配 78.23 GiB / 卡容量
+    # 79.25 GiB。显存墙在**优化器态**：参数(bf16) 17.6 + 梯度(bf16) 17.6 =
+    # 35.1 GiB（正是实测的 `after_backward=35.14GB`），`step()` 再建两份
+    # AdamW 一阶/二阶矩（`zeros_like(param)` ⇒ bf16，4 B/参数 ≈35.1 GiB）。
+    # ⇒ 省显存只能在优化器态上做，不是在激活上做。
+    #
+    # 语义：取 true 时，native 侧把 AdamW 的一阶/二阶矩**常驻 CPU**，每步把
+    # 梯度 D2H、更新完的参数 H2D（与 ms-swift 侧 `zero2_offload` 同口径）。
+    # 这是宪法 §3.3 的**预授权退路**：数值轨迹可能因 CPU 侧运算的舍入差异而
+    # 轻微变化，且**必然变慢**——"变慢"不构成失败，但必须由用户在部署前显式
+    # 声明接受，故默认关闭。默认值下行为与基线逐位一致。
+    #
+    # 消费点只有一处：`flow/adapters/models/qwen35_36/training_sft.py` 的
+    # `_Qwen35SFTTrainingMethods._build_optimizer`（单一真相源，§1.4）。
+    # 非法组合由 `validate_native_offload_combination` 在加载时 fail-closed 拒绝。
+    offload_optimizer_state: bool = False
     raw_log_enabled: bool = True
     readable_log_enabled: bool = True
     synchronize_cuda_timing: bool = False
@@ -782,6 +852,21 @@ class GraspoConfig(BaseModel):
             lora_adapter_path=self.lora.adapter_path,
             native_tp_size=self.native.tp_size,
             native_dp_size=self.native.dp_size,
+        )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_native_offload_combination(self) -> GraspoConfig:
+        """native 优化器态 offload 的非法组合在加载时即拒绝（§2.3）。
+
+        纯逻辑委托给 :func:`validate_native_offload_combination`，使该校验可在
+        无 torch 的机器上单测。**只加不改**：``native.offload_optimizer_state``
+        默认 false，既有配置不含该键 ⇒ 行为逐位不变。
+        """
+        validate_native_offload_combination(
+            offload_optimizer_state=bool(self.native.offload_optimizer_state),
+            backend=self.backend,
+            native_adapter=self.native.adapter,
         )
         return self
 

@@ -80,6 +80,13 @@ native:
   use_kv_cache_for_rollout: true
   empty_cache_after_rollout_split: false
   empty_cache_before_train: false
+  # 优化器态 CPU offload（WP-X2，**默认关闭**）。true = AdamW 一阶/二阶矩常驻 CPU，
+  # 每步把梯度 D2H、更新后的参数 H2D（与 msswift 侧 zero2_offload 同口径）。
+  # 用途：native 全参 1 卡档（T016）实测在 optimizer.step() 处 ①真 OOM，墙在优化器态；
+  # 这是宪法 §3.3 预授权退路——必然变慢、且 CPU 侧运算会带来微小数值漂移，
+  # 必须由用户在部署前显式声明接受，故默认 false。开启需 ≈8 B/参数 的 CPU 常驻内存。
+  # 非法组合（backend 非 native / adapter 非 qwen35_36）在配置加载时即被拒绝。
+  offload_optimizer_state: false
   raw_log_enabled: true
   readable_log_enabled: true
   synchronize_cuda_timing: false

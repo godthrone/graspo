@@ -93,6 +93,32 @@ def _count_sft_valid_tokens(labels: torch.Tensor) -> int:
 
 
 class _Qwen35SFTTrainingMethods:
+    def _build_optimizer(self) -> None:
+        """``_build_optimizer`` 扩展点：接线 native 优化器态 CPU offload（WP-X2）。
+
+        **默认关闭**（``native.offload_optimizer_state=false``）⇒ 直接走基类实现，
+        行为与基线逐位一致；只有显式开启时才把基类建好的 AdamW 换成 CPU-offload
+        变体（宪法 §3.3 预授权退路）。基类的收参逻辑、``tuner_type=full`` 却收不到
+        参数的 fail-closed、以及超参装配**一字未改**——这里只换"状态放在哪"。
+
+        替换后必须**重建调度器**：基类是在建完优化器之后立刻建的 ``LambdaLR``，
+        它持有的是那个已被丢弃的旧优化器；不重建的话 ``scheduler.step()`` 会去更新
+        一个没人用的对象，学习率静默不变（§1.4 单一真相源）。
+        """
+        super()._build_optimizer()
+        if not bool(self.config.native.offload_optimizer_state):
+            return
+        if self.optimizer is None:
+            # 无可训参数时基类已经按 ``tuner_type`` 决定是报错还是返回 None；
+            # 这里不重复判据，只保证不去 wrap 一个 None。
+            return
+        from graspo.flow.adapters.models.qwen35_36.optim_offload import (
+            build_cpu_offloaded_adamw,
+        )
+
+        self.optimizer = build_cpu_offloaded_adamw(self.optimizer)
+        self.scheduler = self._build_scheduler()
+
     def _compute_sft_loss(self, hidden_states: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         """从 hidden states 计算 SFT cross-entropy loss（设施层不持有算法分派）。
 
