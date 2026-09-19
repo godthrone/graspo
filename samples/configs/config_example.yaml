@@ -87,6 +87,13 @@ native:
   # 必须由用户在部署前显式声明接受，故默认 false。开启需 ≈8 B/参数 的 CPU 常驻内存。
   # 非法组合（backend 非 native / adapter 非 qwen35_36）在配置加载时即被拒绝。
   offload_optimizer_state: false
+  # 非有限梯度"跳过并继续"的预授权（§3.3 预授权退路，**默认关闭**）。
+  # 语义：非有限梯度本来必须让 run 硬失败（§3.4 防线）——继续跑完并写 final
+  # checkpoint 会改变结果且不告知用户。只有在这里显式写 true，才允许"跳过并继续"；
+  # 此时日志打 WARNING，且该 run 不得记为成功（判定层会看到 skipped_nonfinite）。
+  # 旧环境变量 GRASPO_ALLOW_NONFINITE_GRAD_SKIP 已删除（§7.1/§18.1）：它是产物相关
+  # 的预授权开关，必须随 config 备份（§8.5）才能复现"为什么这次允许继续"。
+  allow_nonfinite_grad_skip: false
   raw_log_enabled: true
   readable_log_enabled: true
   synchronize_cuda_timing: false
@@ -224,6 +231,20 @@ reward:
   anti_useless_str_reward_weight: 1.0
   anti_useless_str_half_reward_len: 100
   numeric_tolerance: 0.2
+
+# ── GPU 运维监控（`graspo record-gpu-memory` 用；**与训练产物无关**）──────────
+# 该命令采样 nvidia-smi 的显存/利用率/进程，落盘
+#   <output_dir>/gpu_memory.jsonl、gpu_processes.jsonl、gpu_memory_summary.json
+# 产物位置与内容**全部由本段决定**（§10.1：禁止 --output-dir 这类输出定位参数，
+# CLI 只有 --config / --gpus / --duration-sec / --assert-idle / --idle-only）。
+# 用法：uv run graspo record-gpu-memory --config config_example.yaml --gpus 0
+# 只想看是否空闲（不落盘）时用 --idle-only，它不需要本段。
+gpu_monitor:
+  output_dir: ""                 # 落盘目录；空 = 未提供 ⇒ 命令 fail-closed 拒绝落盘
+  tag: ""                        # 写入每行记录与摘要的标签（如档号 T016）
+  interval_sec: 1.0              # 采样间隔（秒）；决定产物里的样本条数
+  recent_limit: 120              # 摘要里保留的最近样本条数
+  pid_filter: ""                 # 进程名/PID 子串过滤（逗号分隔）；空 = 记录全部
 
 # ── 效果评测（`graspo eval` 用；**可选段**，null/缺省 = 不启用，与其它段同约定）──
 # 字段与卡计划约束见 samples/configs/eval_example.yaml；训练配置里留 null 即可。

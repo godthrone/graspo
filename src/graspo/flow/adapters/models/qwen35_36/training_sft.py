@@ -1,7 +1,6 @@
 """Qwen3.5/3.6 adapter — SFT training methods (TP+DP+PP)."""
 
 import logging
-import os
 import time
 from typing import Any
 
@@ -21,27 +20,26 @@ from graspo.flow.progress_metrics import grad_count_event, training_norm_event
 from graspo.ripple.data import SFTTokenized
 from graspo.ripple.multimodal.contract import assert_sft_batch_has_multimodal
 
-#: 预授权退路（宪法 §3.3）的**临时**开关名，默认关闭。
+#: 旧的预授权开关名——**已删除**（§18.1 不留负债，v0.25.0 起）。
 #:
-#: 语义：非有限梯度**本来**必须让 run 硬失败（§3.4：这是防线，不是退路）。
-#: 只有当运维者显式声明"我知道这次 run 的后面几步权重是冻结的、我仍接受"时，
-#: 才允许"跳过并继续"。设置该变量即等于在部署前说"可以"——它是显式的、默认关闭的、
-#: 每次上机都要在启动命令里逐次写出来的（不得写进任何脚本默认值，避免变成隐形工作流）。
+#: 历史：非有限梯度"跳过并继续"曾是**环境变量** ``GRASPO_ALLOW_NONFINITE_GRAD_SKIP``
+#: 通道。它违反 §7.1（环境变量不得承载配置）与 §10.1（决定产物的参数必须在 config
+#: 里、且 config 备份必须能复现本 run），并且与 §3.3"部署前显式声明"不符——环境变量
+#: 随启动命令消失，无从留痕。现已迁移为配置字段
+#: ``native.allow_nonfinite_grad_skip``（默认 false，行为与基线逐位一致）。
 #:
-#: TODO(F-4 后续工作包)：`core/schema.py` 正在被其它工作包改动，本工作包不得碰它。
-#: schema 侧落地后应迁移为配置字段（如 ``native.allow_nonfinite_grad_skip``），
-#: 本环境变量通道随之删除（§18.1 不留负债）。
-_ALLOW_NONFINITE_SKIP_ENV = "GRASPO_ALLOW_NONFINITE_GRAD_SKIP"
+#: 本常量只为让"旧通道确实已断开"可被测试断言（防呆 §2.3：删掉的入口要能被验证
+#: 删掉了）。**生产代码不得再读它。**
+_REMOVED_NONFINITE_SKIP_ENV = "GRASPO_ALLOW_NONFINITE_GRAD_SKIP"
 
 
-def _nonfinite_skip_preauthorized() -> bool:
-    """是否被显式预授权"非有限梯度跳过并继续"（§3.3，默认关闭）。"""
-    return os.environ.get(_ALLOW_NONFINITE_SKIP_ENV, "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+def _nonfinite_skip_preauthorized(allow_nonfinite_grad_skip: bool) -> bool:
+    """是否被显式预授权"非有限梯度跳过并继续"（§3.3，默认关闭）。
+
+    唯一真相源是配置字段 ``native.allow_nonfinite_grad_skip``（§1.4/§7.1），由调用点
+    从 ``self.config`` 显式传入——本函数**不读进程环境**（防呆 §2.2：依赖显式）。
+    """
+    return bool(allow_nonfinite_grad_skip)
 
 
 def _normalized_accumulation_weights(valid_token_counts: list[int]) -> list[float]:
@@ -296,7 +294,7 @@ class _Qwen35SFTTrainingMethods:
         ——"继续跑完并落盘"不是同效退路（它改变了结果且没有告知）。
 
         因此默认行为是 **raise**：进程非零退出、不写 final、判定层拿到显式标记。
-        只有显式预授权（§3.3，环境变量 :data:`_ALLOW_NONFINITE_SKIP_ENV`，默认关闭）
+        只有显式预授权（§3.3，配置字段 ``native.allow_nonfinite_grad_skip``，默认关闭）
         才允许"跳过并继续"，此时必须打出用户可读的声明，并把 ``skipped_nonfinite``
         一路带到 rank_metrics 与判定层（A2 会因此判不通过）。
         """
@@ -308,19 +306,20 @@ class _Qwen35SFTTrainingMethods:
         message = (
             f"{ranks}{detail}；本步 optimizer_steps={optimizer_steps}。"
         )
-        if _nonfinite_skip_preauthorized():
+        if _nonfinite_skip_preauthorized(self.config.native.allow_nonfinite_grad_skip):
             logger.warning(
-                "SFT 训练出现非有限梯度：%s【%s 已显式预授权（§3.3）：跳过并继续；"
+                "SFT 训练出现非有限梯度：%s【native.allow_nonfinite_grad_skip=true "
+                "已显式预授权（§3.3）：跳过并继续；"
                 "本 run 的后续步权重可能是冻结的，不得记为成功】",
                 message,
-                _ALLOW_NONFINITE_SKIP_ENV,
             )
             return
         raise RuntimeError(
             "非有限梯度：SFT 训练硬失败（fail-closed，宪法 §3.4）。"
             f"SFT 训练出现非有限梯度：{message}"
             "权重已冻结，不得继续训练、不得落盘 final checkpoint；"
-            f"若确需跳过，必须显式预授权（§3.3，默认关闭）：{_ALLOW_NONFINITE_SKIP_ENV}=1。"
+            "若确需跳过，必须显式预授权（§3.3，默认关闭）："
+            "在 config 里设 native.allow_nonfinite_grad_skip=true。"
         )
 
     """Mixin: SFT training/batch optimization methods for Qwen35Adapter."""
@@ -691,7 +690,9 @@ class _Qwen35SFTTrainingMethods:
         # 逐 rank 梯度范数：所有 rank 都算（含 nan），再做集合汇总，得到"全局"旁证。
         # 只在需要审计时才计算（all_finite 为假，或预授权模式），避免正常路径开销。
         rank_grad_norms: list[float] = []
-        if not all_finite or _nonfinite_skip_preauthorized():
+        if not all_finite or _nonfinite_skip_preauthorized(
+            self.config.native.allow_nonfinite_grad_skip
+        ):
             local_grad_norm = self._trainable_grad_norm()
             gathered_norms: list[float | None] = [None for _ in range(self.world_size)]
             dist.all_gather_object(gathered_norms, local_grad_norm)

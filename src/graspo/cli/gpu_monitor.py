@@ -9,6 +9,17 @@ v0.23.0 起从 ``scripts/record_gpu_memory.py`` 提升为 CLI 命令
 进程占用，追加写入 JSONL，结束时输出摘要 JSON。纯诊断工具，不参与
 训练产物。
 
+**配置驱动（v0.25.0，宪法 §10.1）：** 本命令的落盘输出（产物位置与内容）
+全部由 ``--config`` 的 ``gpu_monitor`` 段决定——``output_dir`` / ``tag`` /
+``interval_sec`` / ``recent_limit`` / ``pid_filter`` 五个字段。
+旧版把它们做成 CLI 参数（``--output-dir`` / ``--tag`` / ``--interval-sec`` /
+``--pid-filter`` / ``--recent-limit``），其中 ``--output-dir`` 是**输出定位
+参数**（§10.1 明令禁止），``--tag`` 直接写进每行记录内容——同一 config 会
+因 CLI 参数不同而产出不同，config 与产物的对应关系被打破。现已删除这些
+参数（§18.1 不留负债）：新写法只有 ``--config``（输入定位）+ ``--gpus``
+（运行环境）+ ``--duration-sec``（运行边界）+ ``--assert-idle``/``--idle-only``
+（只 print 不落盘）。
+
 **可信采样（防呆，§2）——历史事故的修复：**
 
 历史采样用不带 ``-i`` 的 ``nvidia-smi --query-gpu``，峰值混入生产
@@ -557,8 +568,8 @@ def record_gpu_memory(
     gpus: str | None,
     interval_sec: float,
     output_dir: str,
-    tag: str,
-    pid_filter: str,
+    tag: str | None,
+    pid_filter: str | None,
     duration_sec: float | None,
     recent_limit: int,
     inventory_probe: Callable[[], GpuInventory] | None = None,
@@ -567,7 +578,14 @@ def record_gpu_memory(
 
     ``gpus=None`` 表示"全部可见卡"；显式取值必须是可见集的子集。容器内 runtime
     哨兵场景走实测可见卡通道（F-2），``inventory_probe`` 是它的注入点。
+
+    ``output_dir`` / ``tag`` / ``interval_sec`` / ``recent_limit`` / ``pid_filter``
+    全部来自 **config**（``gpu_monitor`` 段，§10.1），本函数不再有对应的 CLI 参数。
+    ``tag=None`` 与 ``pid_filter=None`` 表示"未提供"，落盘时写空串（保持 JSONL
+    字段形状不变——读方按字符串处理，不引入 null）。
     """
+    tag = tag or ""
+    pid_filter = pid_filter or ""
     gpu_indices = resolve_sample_gpus(gpus, inventory_probe=inventory_probe)
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -633,17 +651,34 @@ def record_gpu_memory(
 
 
 def build_gpu_monitor_parser(subparsers: Any) -> None:
-    """注册 ``record-gpu-memory`` 子命令（由 cli.app.build_parser 调用）。"""
+    """注册 ``record-gpu-memory`` 子命令（由 cli.app.build_parser 调用）。
+
+    **配置驱动（宪法 §10.1）**：本命令落盘 `gpu_memory.jsonl` /
+    `gpu_processes.jsonl` / `gpu_memory_summary.json` —— 一切落盘输出都由
+    ``--config`` 里的 ``gpu_monitor`` 段决定。因此**没有** ``--output-dir`` /
+    ``--tag`` / ``--interval-sec`` / ``--pid-filter`` / ``--recent-limit`` 这些
+    参与决定产物的参数（推论 1/2：CLI 参数与 config 字段零交集）。
+
+    留下的 CLI 参数按 §10.1 三原则归类：
+
+    * ``--config``：输入定位参数（唯一明确列出的参数名）；
+    * ``--gpus``：运行环境参数（在哪张卡采样，不影响落盘位置/内容）；
+    * ``--duration-sec``：运行边界参数（冒烟试跑，不产生完整产物）；
+    * ``--assert-idle`` / ``--idle-only``：运行边界参数，只 print 不落盘
+      （``--idle-only`` 不需要 ``--config``）。
+    """
     gpu = subparsers.add_parser(
         "record-gpu-memory",
         help="Record nvidia-smi GPU memory/utilization to JSONL (visible GPUs only).",
     )
     gpu.add_argument(
-        "--output-dir",
+        "--config",
+        "-c",
         default=None,
         help=(
-            "Directory for gpu_memory.jsonl and summary. Required unless --idle-only "
-            "(which writes nothing)."
+            "YAML config carrying the `gpu_monitor` section: output_dir, tag, "
+            "interval_sec, recent_limit, pid_filter. Required unless --idle-only "
+            "(which writes nothing and prints only)."
         ),
     )
     gpu.add_argument(
@@ -655,22 +690,7 @@ def build_gpu_monitor_parser(subparsers: Any) -> None:
         ),
     )
     gpu.add_argument(
-        "--interval-sec", type=float, default=1.0, help="Sampling interval in seconds."
-    )
-    gpu.add_argument("--tag", default="", help="Optional run tag written into each row.")
-    gpu.add_argument(
-        "--pid-filter",
-        default="",
-        help=(
-            "Comma-separated substrings matched against process_name or pid. "
-            "Empty records all GPU processes."
-        ),
-    )
-    gpu.add_argument(
         "--duration-sec", type=float, default=None, help="Optional duration for smoke/dry runs."
-    )
-    gpu.add_argument(
-        "--recent-limit", type=int, default=120, help="Recent GPU rows copied into summary."
     )
     gpu.add_argument(
         "--assert-idle",
@@ -700,20 +720,34 @@ def cmd_record_gpu_memory(args: argparse.Namespace) -> int:
             assert_visible_gpus_idle()
         if getattr(args, "idle_only", False):
             return 0
-        if not args.output_dir:
+        if not args.config:
             print(
-                "record-gpu-memory: --output-dir is required（除非用 --idle-only）",
+                "record-gpu-memory: --config is required（除非用 --idle-only，"
+                "它只 print 不落盘）",
+                file=sys.stderr,
+            )
+            return 2
+        # 延迟导入，与 cli.tools 同口径；同时避免本模块在"只做空闲断言"时
+        # 也要拉起配置栈（§6.1 简单优先）。
+        from graspo.core.schema import GraspoConfig
+
+        config = GraspoConfig.from_yaml(args.config)
+        monitor = config.gpu_monitor
+        if not monitor.output_dir:
+            print(
+                "record-gpu-memory: config 缺少 gpu_monitor.output_dir"
+                "（落盘位置必须由 config 决定，§10.1；若只想看数请用 --idle-only）",
                 file=sys.stderr,
             )
             return 2
         return record_gpu_memory(
             gpus=args.gpus,
-            interval_sec=args.interval_sec,
-            output_dir=args.output_dir,
-            tag=args.tag,
-            pid_filter=args.pid_filter,
+            interval_sec=monitor.interval_sec,
+            output_dir=monitor.output_dir,
+            tag=monitor.tag,
+            pid_filter=monitor.pid_filter,
             duration_sec=args.duration_sec,
-            recent_limit=args.recent_limit,
+            recent_limit=monitor.recent_limit,
         )
     except GpuLockError as exc:
         print(str(exc), file=sys.stderr)
