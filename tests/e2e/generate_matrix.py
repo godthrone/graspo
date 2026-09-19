@@ -90,10 +90,59 @@ def models_host_dir_env(model: str) -> str:
     return f"GRASPO_{model.upper()}_HOST_DIR"
 
 
-MODELS: dict[str, dict[str, str]] = {
-    size: {"name": dirname, "path": f"{MODELS_CONTAINER_ROOT}/{dirname}"}
+MODELS: dict[str, dict[str, Any]] = {
+    size: {
+        "name": dirname,
+        "path": f"{MODELS_CONTAINER_ROOT}/{dirname}",
+        # ★ 视觉塔能力（本矩阵两个基座的**事实**，供 `lora_target_preset` 做条件选择）。
+        #   Qwen3.5-9B / Qwen3.8-27B 都是多模态基座：native 侧
+        #   `native_qwen_lora_available_targets` 会给出 `visual.*` 可用目标，
+        #   运行期预检也按 `image_token_id` 判定"模型有视觉塔"。
+        #   写成**显式字段**（不从模型名 `Qwen3.5` 猜）：将来换纯文本基座时改这一处。
+        "vision": True,
+    }
     for size, dirname in _MODEL_DIR_NAMES.items()
 }
+
+
+def has_vision(size: str) -> bool:
+    """该档基座是否具备视觉塔（纯数据，不猜模型名）。"""
+    return bool(MODELS[str(size)].get("vision"))
+
+
+def data_has_media(algorithm: str) -> bool:
+    """该算法的训练子集是否含媒体（图像）。
+
+    ELAM V5 的 train/test 全部含图（jsonl 里写 `"image": "../images/…"`），矩阵子集按
+    算法取前 N 条，因此**每个算法**的子集都含图——这里显式声明该事实。
+    将来若引入纯文本子集，改这一处即可。
+    """
+    return bool(DATA_HAS_MEDIA_BY_ALGORITHM.get(str(algorithm), False))
+
+
+def lora_target_preset(tier: dict[str, Any]) -> str:
+    """LoRA 档的 ``lora.target_preset``：**条件选择**，不无条件写死。
+
+    判据：**模型有视觉塔 且 该档数据含图** ⇒ ``vision_common``；否则 ``language_safe``。
+
+    - ``vision_common``（`core/lora.py`）含 merger + blocks 的视觉模式 ⇒ native 侧
+      `_replace_visual_lora_modules` 真把视觉塔换成可训 LoRA，运行期预检的第 3 步
+      （"visual LoRA 参数必须已注册且 requires_grad"）才能通过。
+      【实测证据】T028 修复前失败态：`language_safe` ⇒ 0 个可训视觉参数 ⇒
+      `RuntimeError: multimodal preflight failed: no trainable visual parameters found`；
+      换 `vision_common` ⇒ **同一段代码**产出 28 个可训视觉参数
+      （见 `tests/flow/lora/test_visual_lora_trainable.py`）。
+    - **"只训语言塔"仍是合法组合**：模型无视觉塔、或数据是纯文本时条件不成立，
+      仍下发 ``language_safe``——不得无条件改成视觉预设。
+
+    注：``lora.target_preset`` 是 **native 侧模块名预设**；ms-swift 后端用
+    regex/``all-linear`` 的 ``target_modules``，配置映射会在启动时记一条"该字段在
+    msswift 后端不生效"的 WARNING（``native_only_fields``）。是否 native 不影响本判据
+    ——判据只表达"这档该不该训视觉塔"这一事实，两个后端各有自己的表达方式。
+    """
+    if has_vision(str(tier["model"])) and data_has_media(str(tier["algorithm"])):
+        return "vision_common"
+    return "language_safe"
 
 # ── 训练数据：ELAM V5（只读确认过结构，非占位符）────────────────────────────
 # 【实测确证】结构（数据根目录下）：
@@ -119,6 +168,17 @@ ELAM_IMAGE_COUNT = 15954
 #: 每档训练子集大小：按 §6 门槛取下限即可（用户已定"尽量省资源"，不整集跑）。
 #: SFT ≥100 条、RL ≥20 条（GRASPO 属 RL）。
 SUBSET_SIZE_BY_ALGORITHM: dict[str, int] = {"CPT": 100, "SFT": 100, "GRASPO": 20, "OPD": 20}
+
+#: 每个算法的子集**是否含媒体（图像）**。ELAM V5 的 train.jsonl 每行都带
+#: `"image": "../images/…"`，子集是按算法取前 N 条 ⇒ 四个算法的子集都含图。
+#: 显式声明（而不是"因为名字里有 ELAM 所以当然有图"）：`lora_target_preset` 靠它
+#: 决定要不要把视觉塔纳入可训目标，判据必须是可读的（宪法 §2.2 显式即防呆）。
+DATA_HAS_MEDIA_BY_ALGORITHM: dict[str, bool] = {
+    "CPT": True,
+    "SFT": True,
+    "GRASPO": True,
+    "OPD": True,
+}
 
 #: ⚠️ 已知数据问题，**必须显式标注、不得静默忽略**（评测口径由评测链路负责，
 #: 本工程只负责不掩盖）：train/test 样本 id 不重叠，但图像去重存在交集。
@@ -681,11 +741,13 @@ def build_config(tier: dict[str, Any]) -> dict[str, Any]:
 
     if tier["mode"] == "LoRA":
         # LoRA 参数档位：r=8/alpha=16 与既有 ms-swift 冒烟口径一致（可再调）。
+        # ★ `target_preset` 是**条件选择**：模型有视觉塔 且 该档数据含图 ⇒ 视觉预设，
+        #   否则语言预设（详见 `lora_target_preset` 的 docstring 与其实测证据）。
         config["lora"] = {
             "r": 8,
             "alpha": 16,
             "dropout": 0.0,
-            "target_preset": "language_safe",
+            "target_preset": lora_target_preset(tier),
         }
     # 全参档位不写 lora 段：`tuner_type: full` 与 lora.adapter_path 互斥，
     # 配置校验会在加载时拒绝两者并存（schema.validate_tuner_type_combination）。
@@ -1806,6 +1868,11 @@ SAMPLER=\\$!
 torchrun --standalone --nproc_per_node="$NPROC" --master_port="$PORT" \\
   -m graspo.cli.train_worker --config "/workspace/graspo/$CONFIG" > /out/stdout.log 2>&1
 RC=\\$?
+# ★ 可注入的 worker 退出码探针（默认 0 ⇒ 不参与判定，行为与不设时逐字相同）：
+#   只在容器内注入 GRASPO_FAKE_WORKER_RC 时生效，供"exit_code 不得假报 0"的负向用例
+#   在**假容器**下真跑整条 entry.sh（不需要 GPU/docker）。默认值 0 表示"不覆盖 torchrun
+#   的真实退出码"——§2 显式即防呆：不设即无副作用，且不会把真实 rc 悄悄改掉。
+if [ -n "\\${{GRASPO_FAKE_WORKER_RC:-}}" ]; then RC="\\$GRASPO_FAKE_WORKER_RC"; fi
 # 产物放开读权限（**必须**）：容器内训练以 root 运行 ⇒ ms-swift/HF 默认落 root:0600，
 # 宿主侧的 collect_results.py（普通用户）**打不开** checkpoint 权重 ⇒ A2/A3 读不到证据
 # （228 实测踩过：A3 一度被记成"checkpoint 无法重新加载"，属方向性错误）。
@@ -1886,25 +1953,38 @@ if [ -d "\\$OUTPUT_ROOT" ]; then
         echo "[ckpt-retention]   这是**运行链路错误**，不是训练失败：请检查 save_steps 是否大于实际优化步数。" >&2
         printf '%s\\n' "\\$CKPT_STATE" > /out/ckpt_retention.state
         # 训练失败（RC≠0）时保留原 rc，绝不掩盖训练失败；训练成功却无 ckpt 才是链路错误。
-        if [ "\\$RC" = "0" ]; then exit 4; fi
+        if [ "\\$RC" = "0" ]; then RC=4; fi
     fi
 else
     # ★ 目录不存在**不得静默跳过**（保留策略悄悄失效 ⇒ 磁盘迟早爆）。
     #   分两种情形：
     #     · 训练本身失败（RC≠0）：目录本就不会存在 ⇒ 记 state=none 并**保留原 rc**，
     #       不掩盖训练失败（这是唯一合法情形）。
-    #     · 训练成功（RC=0）却无产物目录 ⇒ **产物通道/档号定位坏了** ⇒ FATAL + exit 4。
+    #     · 训练成功（RC=0）却无产物目录 ⇒ **产物通道/档号定位坏了** ⇒ FATAL + RC=4。
     CKPT_STATE="none"
     echo "[ckpt-retention] FATAL: 训练产物目录不存在（output_root=\\$OUTPUT_ROOT，RC=\\$RC）——" >&2
     echo "[ckpt-retention]   保留策略无法执行。若 RC≠0 则是训练失败（按原 rc 返回，不掩盖）；" >&2
     echo "[ckpt-retention]   若 RC=0 则说明**产物目录没落出来或档号定位错误**（TIER=\\${{TIER:-<未设置>}}），" >&2
     echo "[ckpt-retention]   这是运行链路错误，不是训练失败。" >&2
     printf '%s\\n' "\\$CKPT_STATE" > /out/ckpt_retention.state
-    if [ "\\$RC" = "0" ]; then exit 4; fi
+    if [ "\\$RC" = "0" ]; then RC=4; fi
 fi
 printf '%s\\n' "\\$CKPT_STATE" > /out/ckpt_retention.state
 # ★ 轻量证据（stdout.log / logging.jsonl / args.json / trainer_state.json / gpu 读数）
 #   **一律不删**——"删权重不删证据"（宪法 §16 + 验收锚点必须是产物证据）。
+# ══ 收口：把容器的退出码**逐字**交还给 torchrun 的退出码（原缺陷的修复点）══
+#   原实现捕获了 `RC=\\$?`（= torchrun 退出码）却**从未 exit "\\$RC"**；本脚本最后一条
+#   命令是上面的 `printf`（成功 ⇒ 0），于是**容器退 0**：worker 真失败（rc=1/137/124）
+#   也被宿主记成 exit_code=0（228 实测：T028/T031 stdout 里 `exitcode: 1`，宿主记 0）。
+#   判据由"最后一条命令是否成功"变成"torchrun 真的成功了吗"（§2.3 边界校验不靠巧合）。
+#   ★ 优先级明确且互不掩盖（三段各自只写自己的失败语义，收口处统一表达）：
+#       1) 训练失败（RC≠0，可能是 OOM=137 / 超时=124 / 预检 rc=1/3）⇒ **原样交还**，
+#          绝不被保留策略的 4 覆盖（保住真因，§3.1 退路不改变结果）；
+#       2) 训练成功而保留策略失败（上面两处 RC=0 分支 ⇒ RC=4）⇒ 交还 4
+#          （"没产物/档号错"是运行链路错误，不得静默成功）；
+#       3) 两者都成功 ⇒ 0。
+#   块自身不再 exit：由这里单点收口（避免两处 exit 语义分叉，§1.4）。
+exit "\\$RC"
 
 ENTRY
 
