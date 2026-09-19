@@ -1709,6 +1709,8 @@ chmod -R a+rX /out 2>/dev/null || echo "WARN: chmod -R a+rX /out failed — 宿�
 # ★ 写法约束（防呆）：本块**只使用内层 shell 自己的变量**（\\$1/\\$@/函数内局部量），
 #   不读写外层 runner 的任何变量，也不内联任何函数调用。这样"外层展开"与"内层展开"
 #   在语义上重合，不会因为外层 set -u 误判内层变量（228/本机都踩过这个坑）。
+#   ★ 唯一的例外是档号 \\$TIER：它由**外层 `docker run -e "TIER=$TIER"` 显式注入**容器，
+#     不是"恰好未定义⇒空串"的巧合（那种隐性依赖是脆弱设计，§2 显式即防呆）。
 retain_single_checkpoint() {{
     local output_root="\\${{1:-}}"
     local -a all=() ckpts=()
@@ -1771,10 +1773,26 @@ if [ -d "\\$OUTPUT_ROOT" ]; then
         CKPT_STATE="ok"
     else
         CKPT_STATE="missing"
-        echo "[ckpt-retention] WARN: 保留动作未完成（见上方 FATAL/WARN）——产物仍保留，由宿主侧核查" >&2
+        echo "[ckpt-retention] FATAL: 保留动作未完成（见上方 FATAL/WARN）——" >&2
+        echo "[ckpt-retention]   训练产物目录存在但**无一份可留的 checkpoint**；A3 无证据可判。" >&2
+        echo "[ckpt-retention]   这是**运行链路错误**，不是训练失败：请检查 save_steps 是否大于实际优化步数。" >&2
+        printf '%s\\n' "\\$CKPT_STATE" > /out/ckpt_retention.state
+        # 训练失败（RC≠0）时保留原 rc，绝不掩盖训练失败；训练成功却无 ckpt 才是链路错误。
+        if [ "\\$RC" = "0" ]; then exit 4; fi
     fi
 else
-    echo "[ckpt-retention] 训练未产出 \\$OUTPUT_ROOT（训练本身可能已失败）——按原 rc 返回，不掩盖失败" >&2
+    # ★ 目录不存在**不得静默跳过**（保留策略悄悄失效 ⇒ 磁盘迟早爆）。
+    #   分两种情形：
+    #     · 训练本身失败（RC≠0）：目录本就不会存在 ⇒ 记 state=none 并**保留原 rc**，
+    #       不掩盖训练失败（这是唯一合法情形）。
+    #     · 训练成功（RC=0）却无产物目录 ⇒ **产物通道/档号定位坏了** ⇒ FATAL + exit 4。
+    CKPT_STATE="none"
+    echo "[ckpt-retention] FATAL: 训练产物目录不存在（output_root=\\$OUTPUT_ROOT，RC=\\$RC）——" >&2
+    echo "[ckpt-retention]   保留策略无法执行。若 RC≠0 则是训练失败（按原 rc 返回，不掩盖）；" >&2
+    echo "[ckpt-retention]   若 RC=0 则说明**产物目录没落出来或档号定位错误**（TIER=\\${{TIER:-<未设置>}}），" >&2
+    echo "[ckpt-retention]   这是运行链路错误，不是训练失败。" >&2
+    printf '%s\\n' "\\$CKPT_STATE" > /out/ckpt_retention.state
+    if [ "\\$RC" = "0" ]; then exit 4; fi
 fi
 printf '%s\\n' "\\$CKPT_STATE" > /out/ckpt_retention.state
 # ★ 轻量证据（stdout.log / logging.jsonl / args.json / trainer_state.json / gpu 读数）
@@ -1807,6 +1825,10 @@ DOCKER_ARGS=(
     # 与 run.sh / tests/e2e/run_matrix.sh 的既有约定逐字一致（§1.4 单一真相源）。
     --ipc=host --shm-size=16g
     -e "NVIDIA_VISIBLE_DEVICES=$GPUS"
+    # 档号**显式**进容器：容器内入口脚本（entry.sh）的 ckpt 保留块要按档号定位
+    # `<RUN_ROOT>/<T###>`（= 容器内 `/out/<T###>`）。不靠"内层恰好未定义⇒空串"这种
+    # 隐性巧合——那是脆弱设计（§2 显式即防呆）。与上面 NVIDIA_VISIBLE_DEVICES 同范式。
+    -e "TIER=$TIER"
     -e PYTHONPATH=/workspace/graspo/src
     -e HF_HUB_OFFLINE=1
     -e TOKENIZERS_PARALLELISM=false
