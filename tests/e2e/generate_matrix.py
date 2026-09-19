@@ -148,6 +148,10 @@ VERDICT_FEASIBLE = "feasible"      # 确定性算式 ≤ 预算，且无未测�
 VERDICT_INFEASIBLE = "infeasible"  # 确定性算式已超预算 ⇒ 拒绝生成
 VERDICT_UNMEASURED = "unmeasured"  # 算式通过，但有未测算的额外消费者 ⇒ 不得声称"可行"
 VERDICT_BLOCKED = "blocked"        # 当前给不出配方（能力未落地 / 无分片手段）
+#: ★ 合法终态（用户授权）：该档"确实不适用"——**不存在用户想要的那种配置**，不是"还没做"。
+#: 与 `blocked` 的区别：`blocked` = 现在给不出配方、能力落地后可能给得出；
+#: `not_applicable` = **给不出也不该给**（用户已拍板的口径下不存在该档的合法形态）。
+VERDICT_NOT_APPLICABLE = "not_applicable"
 
 ALGORITHM_TO_TRAIN_METHOD = {"CPT": "cpt", "SFT": "sft", "GRASPO": "graspo", "OPD": "opd"}
 
@@ -188,32 +192,53 @@ OPD_NOTE = (
 #: OPD 教师模型在台账里的键（教师 = 27B，学生 = 台账的 `model`）。
 OPD_TEACHER_MODEL = "27B"
 
-#: ★ 水平发现（需指挥官/用户确认，**不得**由生成器私自消解）：
-#: 台账（= `docs/capability-matrix.md` §7，受保护文档）里 OPD 有 **27B 档**（`T052`–`T054`），
-#: 而 `model` 列在 graspo 里处处是"**被训练的学生**"（`model.model_path`）。
-#: 用户 2026-09-18 拍板的教师是常量 `Qwen3.8-27B` ⇒ `T052`–`T054` 的教师与学生**同名**，
-#: 落到 ms-swift **明确支持**的自蒸馏模式（LoRA：用 `disable_adapter()` 取教师 logits，
-#: 不额外加载模型；全量：加载一份冻结副本）。
-#: **这不是"教师没配"，也不是生成器发明的语义**，而是两条既有约束推出来的结果：
-#:   ① 台账的 27B OPD 档存在（本生成器**无权**改台账）；
-#:   ② 教师常量是 27B（用户拍板）。
-#: **待确认**：27B OPD 档的**学生**到底是 27B 还是 9B？若学生固定 9B，`T052`–`T054`
-#: 将与 `T046`–`T048` 的配置**完全重合**，档位失去区分度——那属于台账口径问题，
-#: 应走 A §7 / 跟踪文档的裁定，**不由生成器单方面改**。
-OPD_SELF_DISTILLATION_NOTE = (
-    "★ 教师与学生**同名**（均为 Qwen3.8-27B）⇒ 本档落到 ms-swift 的**自蒸馏**模式"
-    "（LoRA：`disable_adapter()` 取教师 logits；全量：冻结副本）。"
-    "成因是「台账的 27B OPD 档」×「用户拍板的教师常量 27B」，**待指挥官确认 27B OPD 档的学生口径**；"
-    "本生成器不私自消解该歧义（改台账属受保护文档的口径变更）。"
+#: ★ OPD 的**学生固定为 9B**（用户拍板，2026-09-19）：
+#: 用户的原话是"OPD 要的是**教师 27B → 学生 9B**（省显存，价值高）"⇒ OPD 这一条通道的
+#: **学生恒为 9B**，教师恒为 27B 常量。台账 §7 的 `model` 列在 graspo 里处处是
+#: "**被训练的学生**"（`model.model_path`）⇒ 台账里那三行 **27B OPD 档**（`T052`–`T054`）
+#: 若按现行口径读作"学生 = 27B"，就需要 **27B 学生 + 27B 教师**：教师权重**实测 50.10 GiB**
+#: （上机 probe，bf16），再加 27B 学生权重（≈52 GiB）
+#: ⇒ **权重常驻就 ≈100 GiB**，与用户"省显存"的意图**正好相反**。
+#: ⇒ **不存在用户想要的那种配置** ⇒ 这三档判 **`not_applicable`（确实不适用）**，
+#: 理由见 :data:`OPD_NOT_APPLICABLE_NOTE`。这是用户授权的**合法终态**
+#: （目标验收口径明文："「失败」与「确实不适用」是合法产出"），**不是 blocked（还没做）**。
+OPD_STUDENT_MODEL = "9B"
+
+OPD_NOT_APPLICABLE_NOTE = (
+    "★ 确实不适用（not_applicable）：用户拍板 **OPD 教师 = 27B 常量、学生 = 9B**（省显存，价值高）"
+    "⇒ OPD 通道的学生**固定 9B**。台账该档的 `model` 列在 graspo 里是**被训练的学生**，"
+    "按现行口径读作 27B 学生 ⇒ 需要 **27B 学生 + 27B 教师**：教师 bf16 权重**实测 50.10 GiB**"
+    "（上机 probe），再加 27B 学生权重（≈52 GiB）⇒ **权重常驻 ≈100 GiB**，"
+    "与用户「省显存」的意图正好相反。**因此用户想要的那种配置不存在** ⇒ 本档不适用。"
+    "★ 这是**合法终态**（验收口径明文：「失败」与「确实不适用」都是合法产出），"
+    "**不是「blocked（当前给不出配方、将来可能给得出）」**，也不是「跑失败了」。"
 )
 
 
-def opd_teacher_relation(tier: dict[str, Any]) -> str:
+def opd_not_applicable(tier: dict[str, Any]) -> tuple[bool, str | None]:
+    """该档是否属于"**确实不适用**"（用户已拍板的口径下不存在合法配置）。
+
+    单一真相源（§1.4）：配置头部、manifest 的 ``applicability``、可行性与可表达性判定
+    都从这里取值，不各判一次。
+    """
+    if str(tier["algorithm"]) != "OPD" or str(tier["model"]) != "27B":
+        return False, None
+    return True, OPD_NOT_APPLICABLE_NOTE
+
+
+def opd_teacher_relation(tier: dict[str, Any]) -> str | None:
     """OPD 档的教师/学生关系：``independent`` / ``self-distillation`` / ``not-applicable``。
+
+    - 非 OPD 档 ⇒ ``None``（"关系"这个概念对它们不适用，不编造一个值）；
+    - OPD 但不适用档 ⇒ ``not-applicable``（拒绝按"自蒸馏"渲染）；
+    - 其余 OPD ⇒ 比较学生与教师路径：同名 ``self-distillation``，否则 ``independent``。
 
     单一真相源：配置头部注释、manifest、报告都引用本函数，不各判一次（§1.4）。
     """
     if str(tier["algorithm"]) != "OPD":
+        return None
+    not_applicable, _ = opd_not_applicable(tier)
+    if not_applicable:
         return "not-applicable"
     student = MODELS[str(tier["model"])]["path"]
     teacher = MODELS[OPD_TEACHER_MODEL]["path"]
@@ -272,6 +297,9 @@ def classify_expressibility(tier: dict[str, Any]) -> tuple[str, str | None]:
     - ``blocked``：配置模型/映射当前**无法表达**；或虽可表达，但按当前口径
       估算给不出可靠配方（如 native 全参 1 卡，见 ``BLOCKED_REASONS`` 的
       诚实表述——那是**保守判定，不是已证的必然 OOM**）。
+    - ``not_applicable``：**确实不适用**——用户已拍板的口径下**不存在**该档的合法配置
+      （现有唯一来源：台账的 27B OPD 档 `T052`–`T054`，见 :func:`opd_not_applicable`）。
+      这是**合法终态**，不是 ``blocked``（"还没做"），也不产出可跑配置。
 
     **CPT / OPD 已于 2026-09-19（`WP-X3`）解除 ``blocked``**：`train_method` 枚举
     含 `cpt`/`opd`、各有专用注册表与 ms-swift 映射（pretrain / GKD）。
@@ -279,8 +307,13 @@ def classify_expressibility(tier: dict[str, Any]) -> tuple[str, str | None]:
 
     **注意 ``可表达`` ≠ ``跑通``，也 ≠ ``显存可行``**：显存那一维由
     :func:`feasibility_verdict` 的三态判定给（CPT/OPD 的通道可行性见 ``CPT_NOTE`` /
-    ``OPD_NOTE``；OPD 因教师侧未测算恒为 ``unmeasured``）。
+    ``OPD_NOTE``；OPD 因教师侧未测算恒为 ``unmeasured``，但 ``not_applicable`` 档
+    连"待测量"都不成立——它们不适用）。
     """
+    # ★ 先判"确实不适用"：一个**不存在合法形态**的档，不该走后面任何一条"能跑/待测"的路径。
+    not_applicable, na_reason = opd_not_applicable(tier)
+    if not_applicable:
+        return "not_applicable", na_reason
     # native 全参只有 PP 分片这一种手段：1 卡 ⇒ 无分片（无 offload）⇒ 保守判 blocked。
     # 理由不写「必然 OOM」——见 BLOCKED_REASONS["native_full_1card"] 的诚实表述。
     if tier["mode"] == "全量" and tier["backend"] == "native" and int(tier["cards"]) == 1:
@@ -305,6 +338,42 @@ def subset_path(tier_id: str) -> str:
 def subset_size(algorithm: str) -> int:
     """该档训练子集大小（§6 门槛下限；省资源不整集跑）。"""
     return SUBSET_SIZE_BY_ALGORITHM[algorithm]
+
+
+# ── ckpt 保留策略（2026-09-19，用户已授权；单一真相源）────────────────────────
+
+
+def expected_optimizer_steps(tier: dict[str, Any]) -> int:
+    """该档的期望全局优化步数（= 子集条数 ÷ 卡数，向下取整）。
+
+    依据（**实测口径，不是猜测**）：矩阵档每卡 micro batch = 1、
+    ``gradient_accumulation_micro_batches`` = 1 ⇒ 每卡每步 1 个样本、全局步数 = 每卡步数。
+    上机实测对得上：``T013``（1 卡/100 条）= 100 步、``T014``（2 卡/100 条）= 50 步、
+    ``T015``（4 卡/100 条）= 25 步（``task-r3-retest2`` 的 ``Train: N%|k/k`` 与
+    ``last_model_checkpoint: checkpoint-<k>``）。
+
+    **取向下取整**（不是向上）：它保证 ``save_steps ≤ 实际步数`` ⇒ **至少落一份 ckpt**。
+    若取向上而实际步数不足（数据末端被 drop 的情形），就会一份都不落 ⇒ A3 无证据可判。
+    """
+    cards = max(1, int(tier["cards"]))
+    return max(1, subset_size(str(tier["algorithm"])) // cards)
+
+
+def checkpoint_save_steps(tier: dict[str, Any]) -> int:
+    """该档的 ``training.save_steps``：**总步数**（⇒ 每档只落一份 ckpt）。
+
+    ★ 为什么是"总步数"而不是 0/负数：``save_steps <= 0`` 在映射层会落到
+    ``save_strategy: epoch`` 分支（``msswift/_config_mapping.py``），那是**另一种落盘形态**，
+    不是"不落盘"。要"每档只落一份"，正确做法是让保存间隔等于总步数。
+
+    ★ **A3 判据不受影响**：A3 = "checkpoint 能否被重新加载"，判据实现
+    （``scripts/collect_results.py`` 的 ``find_checkpoint_dirs()`` /
+    ``extract_checkpoint_reloadable()``）只要求**存在至少一份** ``checkpoint-<step>/``
+    （ms-swift/LoRA 结构完整 + ``adapter_model.safetensors`` 可反序列化）
+    ——**没有**"必须有多少份"的要求。所以"留一份"完全满足 A3；
+    而"每步一份"浪费的是磁盘，不是判据。
+    """
+    return expected_optimizer_steps(tier)
 
 
 # ── 显存可行性模型（生成期断言，§2.3 边界校验即防呆）────────────────────────
@@ -482,18 +551,26 @@ def feasibility_verdict(tier: dict[str, Any]) -> tuple[str, str]:
 
     判定顺序即语义（先确定性、后未测算）：
 
-    1. ``blocked``：该档当前给不出配方（能力未落地 / 无分片手段）——由
+    1. ``not_applicable``：该档**确实不适用**（用户拍板口径下不存在合法配置）——
+       不参与任何"可行性"判断（对不存在的东西问"装不装得下"没有意义）。
+    2. ``blocked``：该档当前给不出配方（能力未落地 / 无分片手段）——由
        :func:`classify_expressibility` 决定，这里不做二次判断。
-    2. ``infeasible``：**确定性算式**（学生侧常驻 + 配方里显式给出的分片/offload）
+    3. ``infeasible``：**确定性算式**（学生侧常驻 + 配方里显式给出的分片/offload）
        已超单卡预算 ⇒ 生成期断言**拒绝生成**并报出算式。
-    3. ``unmeasured``：确定性算式通过，但存在**未测算的额外显存消费者**
+    4. ``unmeasured``：确定性算式通过，但存在**未测算的额外显存消费者**
        （目前唯一来源：OPD 的教师）⇒ **不得写「可行」**，标「待上机测量」（P-25）。
-    4. ``feasible``：确定性算式通过，且无未测算的额外消费者。
+    5. ``feasible``：确定性算式通过，且无未测算的额外消费者。
 
     **为什么第 3 步不能并进第 4 步**：把"没量过的教师"当成"不存在"，就是拿未实测的
     假设去支撑一个「可行」结论（跟踪文档 `D-23`：推定值不得入账）。
     **为什么不能并进第 2 步**：算式通过就说它"必然 OOM"，同样是把假设伪装成结论。
     """
+    # ★ "确实不适用"最先判：它既不是 infeasible（没说它放不下），也不是 unmeasured
+    #   （它连"待上机测量"都不成立——没有该测量的配置）。
+    not_applicable, na_reason = opd_not_applicable(tier)
+    if not_applicable:
+        return VERDICT_NOT_APPLICABLE, na_reason or ""
+
     status, _ = classify_expressibility(tier)
     if status == "blocked":
         return VERDICT_BLOCKED, "blocked：当前给不出可行配方（原因见 status_reason）"
@@ -538,13 +615,13 @@ def feasibility(tier: dict[str, Any]) -> tuple[bool, str]:
 
 
 def feasibility_for(tier: dict[str, Any]) -> tuple[bool | None, str]:
-    """给 blocked / unmeasured 档返回 ``None``（**均表示"不得声称可行"**）。
+    """给 blocked / unmeasured / not_applicable 档返回 ``None``（**均不得声称可行**）。
 
-    两者用 ``feasibility_verdict`` 的字符串区分（``blocked`` vs ``unmeasured``），
-    manifest 里两者都带显式 ``verdict`` 字段——不靠 ``None`` 猜。
+    三者用 ``feasibility_verdict`` 的字符串区分（``blocked`` / ``unmeasured`` /
+    ``not_applicable``），manifest 里三者都带显式 ``verdict`` 字段——不靠 ``None`` 猜。
     """
     verdict, detail = feasibility_verdict(tier)
-    if verdict in (VERDICT_BLOCKED, VERDICT_UNMEASURED):
+    if verdict in (VERDICT_BLOCKED, VERDICT_UNMEASURED, VERDICT_NOT_APPLICABLE):
         return None, detail
     return verdict == VERDICT_FEASIBLE, detail
 
@@ -581,8 +658,14 @@ def build_config(tier: dict[str, Any]) -> dict[str, Any]:
             "max_epochs": 1,
             "learning_rate": _learning_rate(algorithm),
             "gradient_accumulation_micro_batches": 1,
+            # epoch 末 checkpoint 关掉：全参档**不受** `save_steps` 控制的落盘（native trainer
+            # 的 final、ms-swift 的 epoch 末）也要挡一道；容器内另有兜底保留步骤。
             "save_checkpoint_every_epoch": False,
-            "save_steps": 1,
+            # ★ ckpt 保留策略（2026-09-19，用户已授权）：`save_steps` = 该档**总优化步数**
+            #   ⇒ 每档只落一份 ckpt。原值 `1` ⇒ 每 step 一份 ⇒ 单档 100 份、≈25 GB/档
+            #   （228 实测，磁盘 96%）。口径与 A3 论证见 `checkpoint_save_steps()`。
+            #   **不能**设 0/负：那会落到 `save_strategy: epoch`（另一种落盘形态）。
+            "save_steps": checkpoint_save_steps(tier),
         },
     }
 
@@ -676,6 +759,14 @@ def opd_relation_header(tier: dict[str, Any]) -> str:
             "（ms-swift 明确支持的合法跑法：LoRA 用 `disable_adapter()` 取教师 logits，"
             "不额外加载模型）。" + pointer
         )
+    if relation == "not-applicable":
+        # 防御性分支：`not_applicable` 档**不产出 YAML**（由 classify_expressibility 拦在
+        # 渲染之前）。留这个分支是为了"即使被误渲染，也绝不写成自蒸馏/独立教师"——
+        # 那种输出会让人以为这档有配方。
+        return (
+            f"★ 教师/学生关系: **not-applicable** —— 本档（{student} 学生 × {teacher} 教师常量）"
+            "**确实不适用**（见 OPD_NOT_APPLICABLE_NOTE）；本档不应产出可跑配置。" + pointer
+        )
     return (
         f"★ 教师/学生关系: **independent** —— 学生 {student} ≠ 教师 {teacher}"
         "（用户拍板常量）。" + pointer
@@ -745,6 +836,26 @@ def render_blocked_stub(tier: dict[str, Any], reason: str) -> str:
     )
 
 
+def render_not_applicable_stub(tier: dict[str, Any], reason: str) -> str:
+    """**确实不适用**档位的说明（不产出一个"看似能跑"的错误配置）。
+
+    ★ 与 :func:`render_blocked_stub` 的区别**必须写在纸面上**：`blocked` 是
+    "现在给不出配方、能力落地后可再生成"；`not_applicable` 是
+    "**用户已拍板的口径下不存在该档的合法形态**"——它**不是**待办，不会被
+    "能力落地"解除。把两者写成同一段文字，就会有人把它当成待办去排期。
+    """
+    return (
+        f"# {tier['tier_id']} 确实不适用（not_applicable）—— 合法终态，不产出可跑配置\n\n"
+        f"档位: {tier['model']} | {tier['algorithm']} | {tier['mode']} | "
+        f"{tier['backend']} | {tier['cards']}卡\n\n"
+        f"不适用的理由: {reason}\n\n"
+        "定性: **确实不适用**（用户已拍板的口径下不存在该档的合法配置）——\n"
+        "      **不是** `blocked`（尚未给出配方、将来可能做得了），**不是** `❌ 失败`（跑过没通过）。\n"
+        "      「失败」与「确实不适用」都是验收口径明文允许的**合法产出**。\n"
+        "处置: 无需排期、无需上机；台账侧按 `⛔ 不适用` 登记，理由引用本节。\n"
+    )
+
+
 # ── 运行清单 ────────────────────────────────────────────────────────────────
 
 
@@ -775,13 +886,27 @@ def build_manifest(tiers: list[dict[str, Any]]) -> dict[str, Any]:
         }
         if reason is not None:
             entry["status_reason"] = reason
+        # ★ 适用性（2026-09-19，指挥官裁定 A）：与"可表达性"正交的一维。
+        #   `applicable: false` = **确实不适用**（用户拍板口径下不存在合法配置），
+        #   是**合法终态**；只有 `true` 的档才谈"能不能跑 / 装不装得下"。
+        applicable = status != "not_applicable"
+        entry["applicable"] = applicable
+        if not applicable:
+            entry["applicability_reason"] = reason
         if str(tier["algorithm"]) == "OPD":
-            # 教师/学生关系必须进 manifest：自蒸馏与独立教师是两种跑法，
-            # 事后只看 "teacher_model_path" 无法区分（T052–T054 两者同名）。
+            # 教师/学生关系必须进 manifest：独立教师与自蒸馏是两种跑法，
+            # 事后只看 "teacher_model_path" 无法区分（同名的档）。
+            # ★ `T052`–`T054` 现为 `not-applicable`（不再按自蒸馏渲染）。
             entry["opd_teacher_relation"] = opd_teacher_relation(tier)
-        if status == "blocked":
+        if status in ("blocked", "not_applicable"):
             entry["config"] = None
-            entry["blocked_doc"] = f"samples/configs/matrix54/{tier['tier_id']}.blocked.md"
+            # 不适用档不产出"可跑配置"，也不产出 blocked 的"能力落地后再生成"说明——
+            # 后者会被读成"这档将来能跑"。理由进 `applicability_reason`。
+            entry["blocked_doc"] = (
+                f"samples/configs/matrix54/{tier['tier_id']}.blocked.md"
+                if status == "blocked"
+                else None
+            )
         else:
             entry["config"] = f"samples/configs/matrix54/{tier['tier_id']}.yaml"
         entry["data"] = {
@@ -790,12 +915,15 @@ def build_manifest(tiers: list[dict[str, Any]]) -> dict[str, Any]:
             "full_train_jsonl": ELAM_TRAIN_JSONL,
             "caveat": DATA_INTEGRITY_CAVEAT,
         }
+        # 期望总优化步数 = `training.save_steps`（ckpt 保留策略，见 runtime.checkpoint_retention）
+        entry["expected_optimizer_steps"] = expected_optimizer_steps(tier)
+        entry["checkpoint_save_steps"] = checkpoint_save_steps(tier)
         feasible, estimate = feasibility_for(tier)
         verdict, _ = feasibility_verdict(tier)
         entry["feasibility"] = {
-            # ★ `verdict` 是显式三态（+blocked 共四值），`feasible` 只保留向后兼容语义：
-            #   feasible ⇒ True；infeasible ⇒ False；unmeasured / blocked ⇒ None（**不得声称可行**）。
-            #   不要用 `feasible is None` 区分 "未测算" 与 "不可表达" —— 读 `verdict`。
+            # ★ `verdict` 是显式四态（+infeasible 共五值），`feasible` 只保留向后兼容语义：
+            #   feasible ⇒ True；infeasible ⇒ False；unmeasured / blocked / not_applicable
+            #   ⇒ None（**不得声称可行**）。不要用 `feasible is None` 区分原因 —— 读 `verdict`。
             "verdict": verdict,
             "feasible": feasible,
             "requires_measurement": verdict == VERDICT_UNMEASURED,
@@ -805,7 +933,7 @@ def build_manifest(tiers: list[dict[str, Any]]) -> dict[str, Any]:
                 if tier["backend"] == "native"
                 else {"msswift": build_config(tier).get("msswift")}
             )
-            if verdict != VERDICT_BLOCKED
+            if verdict not in (VERDICT_BLOCKED, VERDICT_NOT_APPLICABLE)
             else None,
         }
         entry["acceptance"] = {
@@ -828,6 +956,13 @@ def build_manifest(tiers: list[dict[str, Any]]) -> dict[str, Any]:
             "by_backend": _count_by(entries, "backend"),
             "by_mode": _count_by(entries, "mode"),
             "by_status": _count_by(entries, "status"),
+            "by_applicability": _count_by(
+                [
+                    {"applicable": "applicable" if e["applicable"] else "not_applicable"}
+                    for e in entries
+                ],
+                "applicable",
+            ),
             "by_feasibility_verdict": _count_by(
                 [entry["feasibility"] for entry in entries], "verdict"
             ),
@@ -836,6 +971,37 @@ def build_manifest(tiers: list[dict[str, Any]]) -> dict[str, Any]:
             "image": "graspo-msswift:4.5.3",
             "timeout_sec": TIMEOUT_SEC,
             "initial_max_prompt_length": INITIAL_MAX_PROMPT_LENGTH,
+            # ── ckpt 保留策略（2026-09-19，用户已授权；主机侧 rig 照此执行，不另立口径）──
+            # 原本 `save_steps: 1` ⇒ 每 step 一份 ⇒ ≈25 GB/档（228 实测，磁盘 96%）。
+            # 现策略：每档只留**一份** ckpt（A3 判据只需一份可重载的 ckpt）。
+            "checkpoint_retention": {
+                "policy": "keep-latest-single-checkpoint",
+                "keep_per_tier": 1,
+                "how": (
+                    "① 配置侧：`training.save_steps` = 该档总优化步数（见每档 "
+                    "`checkpoint_save_steps`），=「每档只落一份」；"
+                    "② runner 侧：容器内落盘后立即逐项目具名删除旧 ckpt（`[ckpt-retention]` "
+                    "日志行），并断言至少还剩一份（否则报运行链路错误，不静默通过）。"
+                ),
+                "keep": [
+                    "最新一份 `checkpoint-<step>/`（A2 权重变化证据 + A3 重载证据）",
+                    "轻量证据一律保留：`stdout.log`、`logging.jsonl`、`args.json`、"
+                    "`trainer_state.json`、`gpu/` 读数、`subsets/`、`exit_code`、"
+                    "`ckpt_retention.state`",
+                ],
+                "delete": [
+                    "同一档内除最新一份以外的 `checkpoint-*/`（逐项具名，不用通配符展开做操作数）",
+                ],
+                "a3_unaffected": (
+                    "A3 = checkpoint 能否重载；`scripts/collect_results.py` 的 "
+                    "`find_checkpoint_dirs()` 只要求**存在 ≥1 份**可解析的 `checkpoint-<step>/`，"
+                    "没有份数要求 ⇒ 留一份即满足 A3。"
+                ),
+                "blocked_by_env": (
+                    "checkpoint 由容器内 root 落盘，宿主普通用户删不掉（228 实测：`sudo` 需密码）"
+                    "⇒ 删除只能发生在容器内，故实现落在 runner 的 entry.sh。"
+                ),
+            },
         },
         "models": {
             "container_root": MODELS_CONTAINER_ROOT,
@@ -906,37 +1072,56 @@ def build_manifest(tiers: list[dict[str, Any]]) -> dict[str, Any]:
                     VERDICT_INFEASIBLE: "确定性算式已超预算 ⇒ 拒绝生成",
                     VERDICT_UNMEASURED: "算式通过但有未测算的额外消费者 ⇒ 不得声称可行，待上机测量",
                     VERDICT_BLOCKED: "当前给不出配方（能力未落地 / 无分片手段）",
+                    VERDICT_NOT_APPLICABLE: (
+                        "确实不适用——用户拍板口径下不存在该档的合法配置 ⇒ 合法终态，"
+                        "不产出可跑配置、不参与可行性判断"
+                    ),
                 },
                 "note": (
                     "`feasibility.feasible` 是向后兼容的布尔视图：True/False/None。"
-                    "`None` 同时覆盖 unmeasured 与 blocked —— **必须读 `verdict` 区分**，"
-                    "不得用 `feasible is None` 推断原因。"
+                    "`None` 同时覆盖 unmeasured / blocked / not_applicable —— "
+                    "**必须读 `verdict` 区分**，不得用 `feasible is None` 推断原因。"
                 ),
             },
             "opd_teacher": {
                 "teacher_model": MODELS[OPD_TEACHER_MODEL]["name"],
                 "teacher_model_path": MODELS[OPD_TEACHER_MODEL]["path"],
-                "student_model": "台账 `model` 列（用户拍板：教师 27B → 学生 9B）",
+                "student_model": (
+                    f"OPD 学生**固定 {OPD_STUDENT_MODEL}**（用户拍板：省显存，价值高）；"
+                    "教师 = 27B 常量。台账 `model` 列在 graspo 里 = 被训练的学生。"
+                ),
                 "teacher_weights_gib_bf16": round(_teacher_weights_gib(), 1),
+                "teacher_weights_gib_bf16_measured": 50.1,
+                "teacher_weights_measurement": (
+                    "上机 probe 实测（PyTorch allocator `max_memory_allocated`，bf16，"
+                    "26.896 B 参数）⇒ 50.10 GiB；出处 task-cpt-opd / task-r3-retest2 报告。"
+                ),
                 "measured": False,
                 "unmeasured_note": OPD_TEACHER_UNMEASURED_NOTE,
-                "self_distillation_note": OPD_SELF_DISTILLATION_NOTE,
+                "not_applicable_note": OPD_NOT_APPLICABLE_NOTE,
+                "not_applicable_tiers": [
+                    str(tier["tier_id"]) for tier in tiers if opd_not_applicable(tier)[0]
+                ],
                 "relation_by_tier": {
                     str(tier["tier_id"]): opd_teacher_relation(tier)
                     for tier in tiers
                     if str(tier["algorithm"]) == "OPD"
                 },
-                "open_question": (
-                    "★ 台账（受保护文档 §7）的 27B OPD 档（T052–T054）其 `model` 列 = 学生 ⇒ "
-                    "与教师常量同名 ⇒ 自蒸馏。**待确认**：27B OPD 档的学生是 27B 还是 9B？"
-                    "若固定 9B，则 T052–T054 与 T046–T048 配置完全重合、档位失去区分度 ⇒ "
-                    "属台账口径变更，须走 A §7 / 跟踪文档裁定，本生成器不私自改。"
+                "decision": (
+                    "★ 已由指挥官裁定并落地（2026-09-19）：`T052`–`T054`（台账的 27B OPD 档）"
+                    "由原口径 A（27B→27B 自蒸馏）改判为 **`not_applicable`（确实不适用）**。"
+                    "理由：用户拍板 **OPD 教师 = 27B 常量、学生 = 9B**（省显存）⇒ OPD 学生固定 9B；"
+                    "27B 行若作为学生则需 27B 学生 + 27B 教师，教师权重实测 50.10 GiB、"
+                    "加 27B 学生权重 ≈100 GiB 权重常驻，与用户意图相反 ⇒ **确实不适用**。"
+                    "`T046`–`T051`（9B OPD）保持 **independent（独立教师）**关系不变。"
+                    "这是**合法终态**（验收口径明文：「失败」与「确实不适用」都是合法产出）。"
                 ),
             },
             "generation_gate": (
                 "assert_memory_feasible：确定性算式超预算（infeasible）即拒绝生成"
                 "（不允许安静产出不可靠配置）；unmeasured 档**允许生成但不声称可行**"
-                "（未测算的量只能靠上机量出来），并在 stdout 打出待测清单"
+                "（未测算的量只能靠上机量出来），并在 stdout 打出待测清单；"
+                "`not_applicable` 档**不产出可跑配置**（确实不适用、无待测量）"
             ),
         },
         "data": {
@@ -1030,8 +1215,18 @@ def assert_no_legacy_terms(rendered: list[tuple[str, str]]) -> None:
 
 
 def assert_expressibility(tiers: list[dict[str, Any]]) -> dict[str, int]:
-    """统计可表达性，并断言各状态之和等于总数。"""
-    counts: dict[str, int] = {"ready": 0, "unverified": 0, "blocked": 0}
+    """统计可表达性，并断言各状态之和等于总数。
+
+    ★ 四态（2026-09-19 起）：`not_applicable` 是**确实不适用**的合法终态
+    （现有唯一来源 `T052`–`T054`）——它与 `blocked` 分开计数，否则
+    "还没做"与"不该做"会被压成同一个数（§1.4 单一真相源要求可回答"为什么"）。
+    """
+    counts: dict[str, int] = {
+        "ready": 0,
+        "unverified": 0,
+        "blocked": 0,
+        "not_applicable": 0,
+    }
     for tier in tiers:
         status, _ = classify_expressibility(tier)
         counts[status] += 1
@@ -1048,25 +1243,27 @@ def assert_memory_feasible(tiers: list[dict[str, Any]]) -> dict[str, tuple[str, 
     这是本轮补齐的关键防线：配置能生成 ≠ 能跑。宁可在生成期失败并报出算式，
     也不要在花掉 GPU 时间之后才发现不可靠。
 
-    **三态口径（单一真相源 = :func:`feasibility_verdict`）**：
+    **四态口径（单一真相源 = :func:`feasibility_verdict`）**：
 
     - ``infeasible`` ⇒ **拒绝生成**（报出算式）；
     - ``unmeasured`` ⇒ **允许生成**，但**不声称可行**：把"待上机测量"打到 stdout，
       由 manifest 的 ``feasibility.requires_measurement`` 承接（★ 允许生成是**刻意的**：
       未测算的量只能靠上机量出来，"因为没量过所以不生成"会让它永远量不了）；
     - ``feasible`` ⇒ 通过；
-    - ``blocked`` ⇒ 不参与断言（已知给不出配方，由 ``classify_expressibility`` 说明原因）。
+    - ``blocked`` ⇒ 不参与断言（已知给不出配方，由 ``classify_expressibility`` 说明原因）；
+    - ``not_applicable`` ⇒ **不参与断言**（确实不适用：既不是"放不下"也不是"待测量"，
+      由 ``classify_expressibility`` / manifest 的 ``applicability`` 说明原因）。
 
     Returns:
-        ``{tier_id: (verdict, detail)}``——第一项是**字符串三态**，不是布尔
-        （布尔会把 "未测算" 与 "超预算" 压成同一个 False，正是本轮要消除的歧义）。
+        ``{tier_id: (verdict, detail)}``——第一项是**字符串四态**，不是布尔
+        （布尔会把 "未测算" / "超预算" / "不适用" 压成同一个 False）。
     """
     verdicts: dict[str, tuple[str, str]] = {}
     violations: list[str] = []
     pending_measurement: list[str] = []
     for tier in tiers:
         verdict, detail = feasibility_verdict(tier)
-        if verdict == VERDICT_BLOCKED:
+        if verdict in (VERDICT_BLOCKED, VERDICT_NOT_APPLICABLE):
             continue
         verdicts[str(tier["tier_id"])] = (verdict, detail)
         if verdict == VERDICT_INFEASIBLE:
@@ -1496,7 +1693,7 @@ cat > "$RUN_DIR/entry.sh" <<ENTRY
 set -o pipefail
 "$CONTAINER_PY" /out/preflight_media.py "$TRAIN_PATH" || exit 3
 "$CONTAINER_PY" -m graspo record-gpu-memory --idle-only || exit 1
-"$CONTAINER_PY" -m graspo record-gpu-memory --output-dir /out/gpu --tag "$TIER" --interval-sec 2 &
+"$CONTAINER_PY" -m graspo record-gpu-memory --output-dir /out/gpu --tag "\$TIER" --interval-sec 2 &
 SAMPLER=\\$!
 torchrun --standalone --nproc_per_node="$NPROC" --master_port="$PORT" \\
   -m graspo.cli.train_worker --config "/workspace/graspo/$CONFIG" > /out/stdout.log 2>&1
@@ -1506,9 +1703,83 @@ RC=\\$?
 # （228 实测踩过：A3 一度被记成"checkpoint 无法重新加载"，属方向性错误）。
 # 产物必须可被宿主侧的收集/复现链路读取（§6）；chmod 只改元数据、不碰内容。
 chmod -R a+rX /out 2>/dev/null || echo "WARN: chmod -R a+rX /out failed — 宿主侧可能读不到产物" >&2
-kill "\\$SAMPLER" 2>/dev/null || true
-wait "\\$SAMPLER" 2>/dev/null || true
-exit "\\$RC"
+# ── ckpt 保留策略（落盘后立即执行，§2.4 具名清理；**通配符只用于 find 的 -name 匹配，不作为删除操作数**）──
+# 为什么在容器内做：checkpoint 由**容器内 root** 落盘，宿主普通用户删不掉
+# （228 实测：sudo 需要密码，非交互不可用）。容器内是 root ⇒ 只有这里删得掉。
+# ★ 写法约束（防呆）：本块**只使用内层 shell 自己的变量**（\\$1/\\$@/函数内局部量），
+#   不读写外层 runner 的任何变量，也不内联任何函数调用。这样"外层展开"与"内层展开"
+#   在语义上重合，不会因为外层 set -u 误判内层变量（228/本机都踩过这个坑）。
+retain_single_checkpoint() {{
+    local output_root="\\${{1:-}}"
+    local -a all=() ckpts=()
+    local path step newest_path="" newest_step="" deleted=0 keep_count=0
+
+    if [ ! -d "\\$output_root" ]; then
+        return 0
+    fi
+    mapfile -t all < <(find "\\$output_root" -type d -name 'checkpoint-*' -print 2>/dev/null)
+    if [ "\\${{#all[@]}}" -eq 0 ]; then
+        echo "[ckpt-retention] FATAL: 未找到任何 checkpoint-* 目录（output_root=\\$output_root）——" >&2
+        echo "[ckpt-retention]   A3（checkpoint 重载）将无证据可判。这是**运行链路错误**，" >&2
+        echo "[ckpt-retention]   不是训练失败：请检查 save_steps 是否大于实际优化步数。" >&2
+        return 4
+    fi
+    for path in "\\${{all[@]}}"; do
+        if [ -f "\\$path/trainer_state.json" ]; then
+            ckpts+=("\\$path")
+        else
+            echo "[ckpt-retention] WARN: 跳过（缺 trainer_state.json）\\$path" >&2
+        fi
+    done
+    if [ "\\${{#ckpts[@]}}" -eq 0 ]; then
+        ckpts=("\\${{all[@]}}")
+    fi
+    # 只留**最新一份**：按 checkpoint-<step> 的步数取最大
+    #（同一 run 内步数唯一且单调递增；末步的目录名即最大步数）
+    for path in "\\${{ckpts[@]}}"; do
+        step="\\${{path##*-}}"
+        case "\\$step" in
+            ''|*[!0-9]*) continue ;;
+        esac
+        if [ -z "\\$newest_path" ] || [ "\\$step" -gt "\\$newest_step" ]; then
+            newest_path="\\$path"; newest_step="\\$step"
+        fi
+    done
+    if [ -z "\\$newest_path" ]; then
+        echo "[ckpt-retention] WARN: ckpt 目录名不含步数，跳过保留动作（不猜、不删）" >&2
+        return 0
+    fi
+    for path in "\\${{ckpts[@]}}"; do
+        if [ "\\$path" = "\\$newest_path" ]; then
+            keep_count=\\$((keep_count + 1))
+            echo "[ckpt-retention] KEEP   \\$path"
+            continue
+        fi
+        echo "[ckpt-retention] DELETE \\$path（中间段 ckpt；A3 只需最新一份）"
+        if ! rm -rf -- "\\$path"; then
+            echo "[ckpt-retention] WARN: rm 失败 \\$path" >&2
+        fi
+        deleted=\\$((deleted + 1))
+    done
+    echo "[ckpt-retention] 保留 ckpt 数=\\$keep_count 删除数=\\$deleted"
+    return 0
+}}
+OUTPUT_ROOT="/out/\\$TIER"
+CKPT_STATE="none"
+if [ -d "\\$OUTPUT_ROOT" ]; then
+    if retain_single_checkpoint "\\$OUTPUT_ROOT"; then
+        CKPT_STATE="ok"
+    else
+        CKPT_STATE="missing"
+        echo "[ckpt-retention] WARN: 保留动作未完成（见上方 FATAL/WARN）——产物仍保留，由宿主侧核查" >&2
+    fi
+else
+    echo "[ckpt-retention] 训练未产出 \\$OUTPUT_ROOT（训练本身可能已失败）——按原 rc 返回，不掩盖失败" >&2
+fi
+printf '%s\\n' "\\$CKPT_STATE" > /out/ckpt_retention.state
+# ★ 轻量证据（stdout.log / logging.jsonl / args.json / trainer_state.json / gpu 读数）
+#   **一律不删**——"删权重不删证据"（宪法 §16 + 验收锚点必须是产物证据）。
+
 ENTRY
 
 # 5) **挂载表（唯一真相源）**：三个数据/代码/模型来源 + 运行目录。
@@ -1557,6 +1828,33 @@ exit "$(cat "$RUN_DIR/exit_code")"
 # ── 主流程 ──────────────────────────────────────────────────────────────────
 
 
+def render_all_tiers(tiers: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    """按可表达性把每档渲染成"要落盘的文件"（文件名, 内容）。
+
+    单一真相源（§1.4）：`--dry-run` 自检与正式生成**走同一条渲染路径**——否则
+    "自检通过、生成出来的东西不一样"，自检就是假自检（这正是本轮把两处重复循环
+    抽成一个函数的原因）。
+
+    - ``blocked`` ⇒ ``T###.blocked.md``（能力落地后可再生成，配 `.blocked` 说明）；
+    - ``not_applicable`` ⇒ ``T###.not_applicable.md``（**确实不适用**的合法终态；
+      **不产出任何可跑配置**，理由必须可读）；
+    - 其余 ⇒ ``T###.yaml``。
+    """
+    rendered: list[tuple[str, str]] = []
+    for tier in tiers:
+        status, reason = classify_expressibility(tier)
+        tier_id = str(tier["tier_id"])
+        if status == "blocked":
+            rendered.append((f"{tier_id}.blocked.md", render_blocked_stub(tier, reason or "")))
+        elif status == "not_applicable":
+            rendered.append(
+                (f"{tier_id}.not_applicable.md", render_not_applicable_stub(tier, reason or ""))
+            )
+        else:
+            rendered.append((f"{tier_id}.yaml", render_config_yaml(tier, status, reason)))
+    return rendered
+
+
 def generate(expected_total: int) -> dict[str, Any]:
     tiers = build_ledger()
     assert_ledger(tiers, expected_total)
@@ -1564,17 +1862,7 @@ def generate(expected_total: int) -> dict[str, Any]:
     # 生成期显存可行性断言：任一可执行档估算超预算 ⇒ 拒绝生成并报算式。
     assert_memory_feasible(tiers)
 
-    rendered: list[tuple[str, str]] = []
-    for tier in tiers:
-        status, reason = classify_expressibility(tier)
-        if status == "blocked":
-            rendered.append(
-                (f"{tier['tier_id']}.blocked.md", render_blocked_stub(tier, reason or ""))
-            )
-        else:
-            rendered.append(
-                (f"{tier['tier_id']}.yaml", render_config_yaml(tier, status, reason))
-            )
+    rendered = render_all_tiers(tiers)
     assert_no_legacy_terms(rendered)
 
     manifest = build_manifest(tiers)
@@ -1651,17 +1939,7 @@ def main(argv: list[str] | None = None) -> int:
         expressibility = assert_expressibility(tiers)
         # 生成期显存可行性断言也必须在 dry-run 里跑（自检不含它就是假自检）。
         assert_memory_feasible(tiers)
-        rendered = []
-        for tier in tiers:
-            status, reason = classify_expressibility(tier)
-            if status == "blocked":
-                rendered.append(
-                    (f"{tier['tier_id']}.blocked.md", render_blocked_stub(tier, reason or ""))
-                )
-            else:
-                rendered.append(
-                    (f"{tier['tier_id']}.yaml", render_config_yaml(tier, status, reason))
-                )
+        rendered = render_all_tiers(tiers)
         assert_no_legacy_terms(rendered)
         verdict_counts: dict[str, int] = {}
         for tier in tiers:
@@ -1673,7 +1951,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(
             "说明：`infeasible` 档已被拒绝生成；`unmeasured` 档**允许生成但不声称可行**"
-            "（未测算的量只能靠上机量出来，见上方待测量清单）；`blocked` 档不产出配置。"
+            "（未测算的量只能靠上机量出来，见上方待测量清单）；`blocked` 档不产出配置；"
+            "`not_applicable` 档**确实不适用**（合法终态）——既不产出配置，也不参与可行性判断。"
         )
         return 0
 
