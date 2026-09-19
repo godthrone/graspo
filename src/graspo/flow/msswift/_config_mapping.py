@@ -48,6 +48,7 @@ ms-swift 的参数类依赖它自己的 ``parse_args`` 做别名/默认值/嵌�
 from __future__ import annotations
 
 import json
+import math
 from typing import Any, Literal
 
 from graspo.flow.msswift._rope_compat import suggested_rope_parameters
@@ -507,10 +508,44 @@ def graspo_to_ms_swift_argv(
         # 不显式指定就会拿 GRPO 的提示词数据去按 DPO 编码，报
         # `ValueError: inputs.rejected is None`。graspo 的 RL 就是 GRPO，显式写死。
         argv.extend(["--rlhf_type", "grpo"])
-        _extend(argv, "num_generations", training.rollout_group_size)
+        num_generations = int(training.rollout_group_size)
+        _extend(argv, "num_generations", num_generations)
         _extend(argv, "temperature", training.temperature)
         _extend(argv, "top_p", training.top_p)
-        argv.extend(["--steps_per_generation", "1"])
+        # ★ rollout 采样批次必须与 G（`num_generations`）自洽，否则 ms-swift 在
+        # **参数解析期**直接拒绝整次运行（实测 T031，2026-09-19）：
+        #   `ValueError: generation_batch_size (1) must be evenly divisible by
+        #    num_generations (8). Valid values: [].`
+        # 上游约束（ms-swift 4.5.3 `swift/rlhf_trainers/args_mixin.py:203-232`
+        # ``_init_generation_batch_params``）：
+        #   generation_batch_size = per_device_train_batch_size * world_size * steps_per_generation
+        #   且 `generation_batch_size % num_generations == 0`。
+        # 原实现硬写 `--steps_per_generation 1`（= 上游默认），graspo 又不透传
+        # `--per_device_train_batch_size` 时上游默认 1 ⇒ gbs=1 ⇒ 1 % 8 ≠ 0 ⇒ 必死。
+        # 这里把 gbs 派生到"至少覆盖一个完整 GRPO 组"：
+        #   gbs = global_batch_size(per_device × world_size) × steps_per_generation，
+        #   steps_per_generation = 覆盖 num_generations 个 sample 所需的最少微批数
+        #                        = max(1, ceil(num_generations / global_batch_size))。
+        # 选 `steps_per_generation` 而非抬高 `per_device_train_batch_size` 的理由：
+        # 二者都能让 gbs % num_generations == 0，但前者只增加"每个 rollout 批次内做几次
+        # 优化步"，不动显存（后者把每 step 的样本数抬到 8 倍，直接撞显存）。G 必须是
+        # 一个完整组，故 gbs ≥ num_generations 不能退让。
+        # 显式同时下发 gbs 与 steps_per_generation：上游要求两者同时提供时满足
+        # `gbs == global_batch_size * steps_per_generation`，只给一个会让"哪个是真相源"
+        # 分叉（宪法 §1.4），两个都写死才是单一路径。
+        # world_size 取**权威来源** `msswift.nproc_per_node × nnodes`（= torchrun 实际进程数，
+        # 生成器对每档写的就是 `cards`）；argv 每个进程一份，但 global_batch_size 是
+        # **全局**量，必须按进程数算——否则多卡档会在 ms-swift 侧撞
+        # `gbs (<n> ) must equal per_device_train_batch_size * world_size * steps_per_generation`。
+        per_device_batch = max(1, int(section.per_device_train_batch_size or 1))
+        world_size = max(1, int(section.nproc_per_node or 1)) * max(1, int(section.nnodes or 1))
+        global_batch_size = per_device_batch * world_size
+        steps_per_generation = max(
+            1, math.ceil(num_generations / global_batch_size)
+        )  # 覆盖一个完整 GRPO 组所需的最少 rollout 微批
+        generation_batch_size = global_batch_size * steps_per_generation
+        _extend(argv, "generation_batch_size", generation_batch_size)
+        _extend(argv, "steps_per_generation", steps_per_generation)
         # KL 惩罚系数固定为 0：graspo 的 GRPO 目标是纯 PPO-clip
         # （`ripple/loss.py::GRASPORippleLoss` 没有 KL 项），而 ms-swift 的 GRPO
         # 默认会在 beta≠0 时引入参考模型 KL。固定 0 才能保证两个后端**同语义**；
@@ -591,6 +626,63 @@ def native_only_field_notes() -> dict[str, str]:
     return dict(_NATIVE_ONLY_FIELDS)
 
 
+def validate_rl_batch_divisibility(config: Any) -> None:
+    """启动前判定 GRPO rollout 批次能否与 ``num_generations`` 相容（防线，§2.3）。
+
+    **为什么需要它**：ms-swift 的 ``generation_batch_size`` 与
+    ``num_generations`` 不相容时，只在**参数解析期**抛
+    ``ValueError: generation_batch_size (1) must be evenly divisible by
+    num_generations (8)``（实测 T031，2026-09-19）。该约束与卡数/显存无关，却要等
+    到起进程之后才报；本函数把它变成启动前一句话能读懂的报错，并给出可行建议。
+
+    判据与上游逐条对齐（ms-swift 4.5.3 ``swift/rlhf_trainers/args_mixin.py:203-232``
+    ``RolloutTrainerArgumentsMixin._init_generation_batch_params``）：
+
+    - ``num_generations`` 取 graspo 的 ``training.rollout_group_size``（由
+      :func:`graspo_to_ms_swift_argv` 下发为 ``--num_generations``）；
+    - ``global_batch_size = per_device_train_batch_size × world_size``，
+      ``world_size = nproc_per_node × nnodes``（launcher 每进程一份同一 argv）；
+    - 本函数**只判** :func:`graspo_to_ms_swift_argv` 实际下发的
+      ``(generation_batch_size, steps_per_generation)`` 对；用户显式覆盖
+      ``msswift.per_device_train_batch_size`` 时同时校验其与
+      ``gradient_accumulation_steps`` 的自洽（上游同一分支的
+      ``generation_batch_size % global_batch_size`` 检查）。
+
+    Args:
+        config: ``GraspoConfig`` 实例。
+
+    Raises:
+        ValueError: 命中"加了卡也修不好"的批次-组不相容。
+    """
+    if getattr(config, "train_method", None) != "graspo":
+        return
+    num_generations = int(config.training.rollout_group_size)
+    if num_generations <= 1:
+        return  # 上游只在 num_generations > 1 时检查
+    section = config.msswift
+    per_device_batch = max(1, int(section.per_device_train_batch_size or 1))
+    world_size = max(1, int(section.nproc_per_node or 1)) * max(1, int(section.nnodes or 1))
+    global_batch_size = per_device_batch * world_size
+    steps_per_generation = max(1, math.ceil(num_generations / global_batch_size))
+    generation_batch_size = global_batch_size * steps_per_generation
+    if generation_batch_size % num_generations == 0:
+        return
+    valid = [n for n in range(1, generation_batch_size + 1) if generation_batch_size % n == 0]
+    raise ValueError(
+        "graspo→ms-swift GRPO batch/group mismatch (fail-closed before any GPU work): "
+        f"training.rollout_group_size={num_generations} (→ --num_generations) cannot divide "
+        f"the rollout batch generation_batch_size={generation_batch_size} "
+        f"(= msswift.per_device_train_batch_size {per_device_batch} × world_size "
+        f"{world_size} × steps_per_generation {steps_per_generation}). ms-swift 4.5.3 "
+        "rejects this at argument-parsing time with `ValueError: generation_batch_size "
+        "(...) must be evenly divisible by num_generations (...)`, independent of GPU "
+        "count/memory — adding cards cannot fix it. Fix by choosing a rollout_group_size "
+        f"from {valid}, or by configuring msswift.per_device_train_batch_size / "
+        "msswift.nproc_per_node so that per_device × world_size is a divisor of "
+        "rollout_group_size."
+    )
+
+
 # ── 组合约束的前置校验（防御性报错，**不是能力修复**）────────────────────────
 #
 # E2b 缺陷清单 3/4/5 的三条组合约束都是**上游**（megatron-core / DeepSpeed / ms-swift）
@@ -613,6 +705,10 @@ def validate_combinations(config: Any) -> None:
     """
     section = config.msswift
     megatron = section.megatron
+
+    # GRPO rollout 批次与 G（``num_generations``）的相容性：上游只在参数解析期报，
+    # 且与卡数/显存无关（实测 T031，2026-09-19）——提前到启动前 fail-closed。
+    validate_rl_batch_divisibility(config)
 
     # OPD(GKD) 的数据形态与 λ 必须自洽：graspo 的 OPD 行是**纯提示词**
     # （``dataset.py::build_opd_rows``），GKD 的 off-policy（DATASET）分支按定义
