@@ -45,7 +45,9 @@ def _eval_yaml(tmp_path: Path, **overrides: str) -> Path:
     fields = {
         "dataset_path": str(data_dir / "test.jsonl"),
         "base_model_path": str(tmp_path / "models" / "base"),
-        "output_dir": ".local/eval/runs/cli-test",
+        # 产物路径必须绝对（fail-closed）：相对路径的落点会随进程 cwd 漂移。
+        # 目录放 tmp_path 下，幂等；只要求"绝对 + 含 /.local/"。
+        "output_dir": str(tmp_path / ".local" / "eval" / "runs" / "cli-test"),
         "role": "base",
         "gpus": "0,1",
         "served_model_name": "graspo-eval",

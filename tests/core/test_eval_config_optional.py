@@ -181,7 +181,8 @@ def _eval_section(**overrides: str) -> str:
     fields = {
         "dataset_path": "/data/test.jsonl",
         "base_model_path": "/models/base",
-        "output_dir": ".local/eval/runs/x",
+        # 产物路径必须绝对（fail-closed，修法见 task-eval-defects 工位 report）。
+        "output_dir": "/abs/repo/.local/eval/runs/x",
         "gpus": '"0,1"',
         # role=base 时不需要 checkpoint_path；这是"不涉及训练产物"的最简合法段。
         "role": "base",
@@ -231,7 +232,7 @@ def test_explicit_eval_section_is_validated(tmp_path):
     assert config.eval is not None
     assert config.eval.gpus == "0,1"
     assert config.eval.role == "base"
-    assert config.eval.output_dir == ".local/eval/runs/x"
+    assert config.eval.output_dir == "/abs/repo/.local/eval/runs/x"
 
 
 def test_explicit_eval_section_missing_fields_is_rejected(tmp_path):
@@ -275,7 +276,7 @@ def test_eval_config_standalone_from_yaml_unwraps_eval_section(tmp_path):
     flat.write_text(
         """dataset_path: /data/test.jsonl
 base_model_path: /models/base
-output_dir: .local/eval/runs/x
+output_dir: /abs/repo/.local/eval/runs/x
 gpus: "0"
 role: base
 """,

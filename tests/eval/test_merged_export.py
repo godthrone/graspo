@@ -165,3 +165,118 @@ def test_merge_refuses_base_mismatch_before_importing_heavy_deps(tmp_path):
     adapter = _peft_adapter(tmp_path / "adapter", base="/models/Qwen3.5-9B")
     with pytest.raises(ExportError, match="adapter base mismatch"):
         merge_peft_checkpoint(adapter, "/models/Other-9B", tmp_path / "out")
+
+
+# ── 多模态语言层命名空间的归一（Qwen3.5 多模态 adapter 的合并前置）─────────────
+#
+# 真实 T013 产物的 `target_modules` 是 peft 0.19.1 写的**正则字符串**，每个分支都带
+# `model.language_model` 前缀（ms-swift 在多模态 `Qwen3_5ForConditionalGeneration`
+# 上训练，这个前缀是对的）。而本模块用 `AutoModelForCausalLM`（纯文本类）加载底座，
+# 语言层在 `model.layers.{i}` 下 ⇒ 不归一就一条都匹配不上（ValueError）。
+#
+# 逐字取自 `.local/.../task-r3-effect/evidence/light_evidence/T013/adapter_config.json`。
+
+_T013_REGEX = (
+    r"^(model\.language_model(?=\.).*\.(v_proj|in_proj_a|in_proj_qkv|up_proj|in_proj_z|"
+    r"in_proj_b|o_proj|gate_proj|down_proj|q_proj|out_proj|k_proj))$"
+)
+
+
+def test_normalize_regex_string_drops_only_the_namespace_prefix():
+    """正则形态：str 进 str 出，且除前缀外一字不动（`^`、`(?=\\.)`、`.*`、分支顺序）。"""
+    from graspo.eval.merged_export import normalize_language_model_targets
+
+    normalized = normalize_language_model_targets(_T013_REGEX)
+    assert isinstance(normalized, str)
+    assert normalized == _T013_REGEX.replace(r"model\.language_model", "model")
+    assert normalized.startswith("^(model(?=\\.)")
+    # 分支与顺序原样保留
+    assert "in_proj_qkv" in normalized and "gate_proj" in normalized
+    assert normalized.endswith(r"\.(v_proj|in_proj_a|in_proj_qkv|up_proj|in_proj_z|in_proj_b|o_proj|gate_proj|down_proj|q_proj|out_proj|k_proj))$")
+
+
+def test_normalize_regex_matches_text_namespace_and_not_vision():
+    """归一后的正则必须匹配纯文本语言层，且不再把视觉塔拉进来。"""
+    import re
+
+    from graspo.eval.merged_export import normalize_language_model_targets
+
+    normalized = normalize_language_model_targets(_T013_REGEX)
+    assert isinstance(normalized, str)
+    assert re.fullmatch(normalized, "model.layers.3.self_attn.q_proj")
+    assert re.fullmatch(normalized, "model.layers.0.mlp.gate_proj")
+    # 视觉塔不在 T013 的目标集合里，归一后也不该出现
+    assert not re.fullmatch(normalized, "model.visual.blocks.0.attn.qkv")
+
+
+def test_normalize_list_strips_literal_prefix_and_preserves_order():
+    """list 形态：剥掉字面前缀，顺序保留、去重。"""
+    from graspo.eval.merged_export import normalize_language_model_targets
+
+    result = normalize_language_model_targets(
+        [
+            "model.language_model.layers.*.self_attn.q_proj",
+            "model.language_model.layers.*.mlp.gate_proj",
+            "model.language_model.layers.*.self_attn.q_proj",  # 重复
+            "q_proj",  # 本就没有前缀
+        ]
+    )
+    assert result == [
+        "model.layers.*.self_attn.q_proj",
+        "model.layers.*.mlp.gate_proj",
+        "q_proj",
+    ]
+
+
+def test_normalize_is_identity_for_non_multimodal_targets():
+    """既有可用路径必须不受影响：不带前缀的入参**原样**返回。"""
+    from graspo.eval.merged_export import normalize_language_model_targets
+
+    plain_regex = _T013_REGEX.replace(r"model\.language_model", "model")
+    assert normalize_language_model_targets(plain_regex) == plain_regex
+    assert normalize_language_model_targets(["q_proj", "v_proj"]) == ["q_proj", "v_proj"]
+    assert normalize_language_model_targets([]) == []
+
+
+def test_normalize_rejects_unsupported_type():
+    """不做猜测式转换（§2.3）：非 str / 非序列一律拒绝。"""
+    from graspo.eval.merged_export import normalize_language_model_targets
+
+    with pytest.raises(ExportError, match="unsupported target_modules type"):
+        normalize_language_model_targets(123)  # type: ignore[arg-type]
+
+
+def test_read_adapter_targets_keeps_shape(tmp_path):
+    """str 进 str 出 / list 进 list 出 —— 形态决定 peft 的匹配算法，不能悄悄统一。"""
+    from graspo.eval.merged_export import read_adapter_targets
+
+    regex_dir = tmp_path / "regex"
+    _write(regex_dir / "adapter_config.json", json.dumps({"target_modules": _T013_REGEX}))
+    assert read_adapter_targets(regex_dir) == _T013_REGEX
+
+    list_dir = tmp_path / "list"
+    _write(list_dir / "adapter_config.json", json.dumps({"target_modules": ["q_proj", "v_proj"]}))
+    assert read_adapter_targets(list_dir) == ["q_proj", "v_proj"]
+
+    absent = tmp_path / "absent"
+    _write(absent / "adapter_config.json", json.dumps({"r": 8}))
+    assert read_adapter_targets(absent) is None
+
+
+def test_resolve_injection_targets_normalizes_multimodal_adapter(tmp_path):
+    """端到端（无 torch）：多模态正则进 → PeftConfig.target_modules 已是纯文本命名空间。
+
+    本用例只在 peft 安装时执行——它验证的正是"文件名里的值会覆盖调用方 kwargs"
+    那个坑的绕行方式（显式构造 PeftConfig 再改字段）。
+    """
+    peft = pytest.importorskip("peft")
+    assert peft  # 仅用于显式表达依赖
+
+    from graspo.eval.merged_export import _resolve_injection_targets
+
+    adapter = tmp_path / "adapter"
+    _write(adapter / "adapter_config.json", json.dumps({"peft_type": "LORA", "target_modules": _T013_REGEX}))
+    config, targets = _resolve_injection_targets(adapter)
+    assert config is not None
+    assert targets == _T013_REGEX.replace(r"model\.language_model", "model")
+    assert config.target_modules == targets

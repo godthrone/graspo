@@ -270,6 +270,59 @@ def resolve_eval_target(
     return model, str(classification.path)
 
 
+def _assert_file_persisted(path: Path, *, what: str) -> None:
+    """断言产物**真的**落在预期位置且非空；否则显式报错，绝不静默（宪法 §2.3/§13.1）。
+
+    为什么需要这条：``write_text`` 成功**不等于**产物在预期位置。历史实测事故
+    （`task-r3-effect` §⑦-3）：`run_evaluation` 用 cwd 相对路径当输出路径，
+    容器 cwd 与挂载点不一致时产物写进了意料之外的目录——数字拿到了，
+    `eval_report.json` 却不在宿主机上，**没有任何报错**。评测结果的落点是留证的
+    前提，落错位置必须比"没落盘"更早、更响亮地暴露。
+
+    Args:
+        path: 期望已经存在的产物文件。
+        what: 用于报错文案的产物名（如 ``eval_report.json``）。
+
+    Raises:
+        OrchestrationError: 文件不存在，或存在但为空。
+    """
+    if not path.is_file():
+        raise OrchestrationError(
+            f"{what} was reported as written but is not present at {path} — the artifact "
+            "did not land where the config promised. Refusing to report success "
+            "(silent loss of evaluation artifacts is exactly what this guard prevents)."
+        )
+    if path.stat().st_size == 0:
+        raise OrchestrationError(f"{what} at {path} is empty — refusing to report success")
+
+
+def _resolve_artifact_dir(output_dir: str | Path) -> Path:
+    """把产物目录解析成**绝对路径**；相对路径一律拒绝（fail-closed）。
+
+    Args:
+        output_dir: 配置给出的产物目录。
+
+    Returns:
+        绝对路径（尚未创建）。
+
+    Raises:
+        OrchestrationError: 路径为空或为相对路径。
+    """
+    if output_dir is None or str(output_dir).strip() == "":
+        raise OrchestrationError(
+            "output_dir is required for run_evaluation; artifacts must have a configured home"
+        )
+    candidate = Path(str(output_dir)).expanduser()
+    if not candidate.is_absolute():
+        raise OrchestrationError(
+            f"output_dir={str(output_dir)!r} is not absolute; refusing to resolve it against "
+            f"the process cwd ({Path.cwd()}) — a cwd-relative artifact path silently lands "
+            "somewhere else (or is lost when that location is not mounted). "
+            "Make the path absolute in the eval config."
+        )
+    return candidate
+
+
 def run_evaluation(
     *,
     base_url: str,
@@ -322,7 +375,7 @@ def run_evaluation(
             "(otherwise the excluded-accuracy number cannot be explained later)"
         )
     plan: GpuPlan = resolve_gpu_plan(gpus)
-    destination = Path(output_dir)
+    destination = _resolve_artifact_dir(output_dir)
     destination.mkdir(parents=True, exist_ok=True)
 
     run_id = make_run_id(model.role)
@@ -357,6 +410,7 @@ def run_evaluation(
         json.dumps(fingerprint_payload, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+    _assert_file_persisted(fingerprint_path, what=ENVIRONMENT_FILENAME)
 
     report = EvalReport(
         run_id=run_id,
@@ -396,13 +450,19 @@ def run_evaluation(
 
 
 def write_report(report: EvalReport, output_dir: str | Path) -> Path:
-    """把报告落盘为 ``<output_dir>/eval_report.json``，返回路径。"""
-    destination = Path(output_dir) / EVAL_REPORT_FILENAME
+    """把报告落盘为 ``<output_dir>/eval_report.json``，返回路径。
+
+    产物落点必须**绝对**且落盘后必须**真的存在**——否则显式报错（宪法 §2.3）。
+    见 :func:`_assert_file_persisted` 里登记的历史静默丢失事故。
+    """
+    resolved = _resolve_artifact_dir(output_dir)
+    destination = resolved / EVAL_REPORT_FILENAME
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(
         json.dumps(report.model_dump(), ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+    _assert_file_persisted(destination, what=EVAL_REPORT_FILENAME)
     return destination
 
 

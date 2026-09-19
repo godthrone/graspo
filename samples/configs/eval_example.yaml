@@ -20,6 +20,9 @@
 #     留空会**拒绝启动**——目标 GPU 服务器上 GPU 6/7 被常驻生产 vLLM 占死，
 #     不存在安全默认值。机器清单见 `infra` skill / `.local/` 下的环境记录。
 #   * `output_dir` 必须在 `.local/` 下：产物含宿主路径与 GPU 编号，不入 git。
+#   * `output_dir` / `merged_output_dir` 必须是**绝对路径**（相对路径会被拒绝）：
+#     相对路径的落点随进程 cwd 漂移。历史事故：容器里 cwd 与挂载点不一致时
+#     `eval_report.json` 写到了意料之外的目录（未挂载时静默丢失）。
 #
 # 下面的路径是**占位符**：请替换为你机器上的真实路径。机器相关的本地覆写
 # 建议放在 `.local/` 下（gitignored，宪法 §16）。
@@ -55,10 +58,10 @@ eval:
   checkpoint_path: /REPLACE_ME/outputs/run/checkpoint-500
   role: after                  # base / after / sft / other
   export_format: null          # null = 自动识别 base-model / graspo-native / peft-adapter
-  merged_output_dir: .local/eval/merged/run-checkpoint-500
+  merged_output_dir: /REPLACE_ME/.local/eval/merged/run-checkpoint-500
 
-  # 产物落盘位置（必须在 .local/ 下）
-  output_dir: .local/eval/runs/after-run-checkpoint-500
+  # 产物落盘位置（必须在 .local/ 下，且必须写绝对路径）
+  output_dir: /REPLACE_ME/.local/eval/runs/after-run-checkpoint-500
 
   # 服务
   endpoint: http://127.0.0.1:18889
