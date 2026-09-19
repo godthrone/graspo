@@ -39,7 +39,21 @@ REQUIRED_ARTIFACTS: tuple[str, ...] = (
 )
 
 #: 正式记录门槛（capability-matrix §6）：≥1 epoch 且 ≥5 optimizer step。
+#:
+#: ★ 这是**缺省值**（清单未给门槛时用它），**不是**唯一真相源。权威值在
+#: 清单 ``tiers[*].acceptance.formal_gate.min_optimizer_steps``——由采集层读出后
+#: 经 :attr:`RunEvidence.min_optimizer_steps` 传入（§1.4 单一真相源）。
+#: 曾经本模块把这个常量**硬编码**在 :func:`judge_a2` 里 ⇒ 已批准并登记在清单里的
+#: 档位偏离（合成档 ``min_optimizer_steps: 1``）对判定器不可见 ⇒ **假否定**
+#: （2026-09-19 task-r3-bulk §⑦-6 实测：合成 4k/8k/16k 的 A2 被判否）。
+#: 改法只把"门槛从哪来"变成可配置，**缺省值不动**（= 不放松任何现有档位）。
 MIN_OPTIMIZER_STEPS = 5
+
+#: 门槛的**缺省值哨兵**：``RunEvidence.min_optimizer_steps is None`` =
+#: "清单没给门槛" ⇒ 回落到 :data:`MIN_OPTIMIZER_STEPS`。
+#: 为什么用 ``None`` 而不是 0/-1（§2.2）：0 与负数在"最少步数"这个语义里**没有合法
+#: 解释**，拿它们当"未提供"会把非法输入静默变成合法缺省 ⇒ 判定器必须把它们
+#: **判否**（fail-closed），而不是回落到 5。两者语义必须能分开。
 
 #: ── A4（同 config 同 seed 双跑一致）的两个容差口径：**由实测推导，不拍脑袋** ──
 #:
@@ -286,6 +300,12 @@ class RunEvidence:
     #: rank_metrics 旁路的第一行即 step 1）。A4 的**零容差子检查**只在能确认
     #: "两端都确实是首步"时生效（``== 1``）——拿不到就如实声明"未适用"，不假装做过。
     first_logged_step: int | None = None
+    #: A2 的**正式门槛**（最少 optimizer step），来自清单
+    #: ``tiers[*].acceptance.formal_gate.min_optimizer_steps``（§1.4 单一真相源）。
+    #: ``None`` = 清单未给 ⇒ 回落到 :data:`MIN_OPTIMIZER_STEPS`（**不放宽缺省**）。
+    #: ``<= 0`` 是**非法门槛**（"最少步数"没有 0/负数的合法解释，§2.2）⇒ A2 判否
+    #: （fail-closed），**绝不**静默回落到 5——静默回落会把"清单被改坏"伪装成正常。
+    min_optimizer_steps: int | None = None
 
 
 #: 台账状态（唯一真相源）。三态而非两态的理由见 :class:`FailureClass` 的
@@ -305,6 +325,10 @@ class TierJudgement:
     failure_class: FailureClass | None
     counts_toward_max_context: bool
     note: str
+    #: 本次 A2 实际使用的**正式门槛**（清单值或缺省值；门槛非法时为 ``None``）。
+    #: 落台账用（§1.4）：让"这一档按几判的"可审计——合成档与正式档的门槛不同，
+    #: 台账不写清就会被下游误读成"同一把尺子"。
+    a2_step_threshold: int | None = None
 
     @property
     def indeterminate(self) -> bool:
@@ -343,6 +367,41 @@ def judge_a1(evidence: RunEvidence) -> CriterionResult:
     return CriterionResult("A1", True, "exit=0")
 
 
+def resolve_min_optimizer_steps(raw: int | None) -> tuple[int | None, str | None]:
+    """由清单值解析 A2 的正式门槛：``(门槛, 拒绝原因)``。
+
+    纯函数、零设施依赖——判定链的每一层都能复用它，口径只有这一处（§1.4）。
+
+    三种输入，三种**互不混淆**的产出（§2.2 空值语义 + §2.3 边界校验即防呆）：
+
+    ===========================  ======================  ==========================
+    清单 ``min_optimizer_steps``  产出                    语义
+    ===========================  ======================  ==========================
+    ``None``（未提供）            ``(5, None)``           回落到缺省值（**不放宽**）
+    ``>= 1`` 的整数               ``(n, None)``           按清单判（唯一真相源）
+    ``<= 0`` / 非整数             ``(None, 原因)``        **非法门槛** ⇒ A2 判否
+    ===========================  ======================  ==========================
+
+    为什么 ``<= 0`` 必须判否而不是回落到 5：把 0/负数静默当"未提供"，等于用一个
+    **非法配置**去换一个**宽松结论**的前置条件；"最少步数 ≥ 0"在逻辑上也永远为真
+    ⇒ 那才是真正的放松判据。真实数字与缺省值必须可区分。
+    """
+    if raw is None:
+        return MIN_OPTIMIZER_STEPS, None
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        return None, (
+            f"清单里的门槛 min_optimizer_steps={raw!r} 不是整数"
+            "（fail-closed：不猜执法意图）"
+        )
+    if raw <= 0:
+        return None, (
+            f"清单里的门槛 min_optimizer_steps={raw} 非法（必须 ≥ 1；"
+            "「最少步数」没有 0/负数的合法解释）⇒ fail-closed 判否，"
+            "**不**静默回落到缺省值"
+        )
+    return raw, None
+
+
 def judge_a2(evidence: RunEvidence) -> CriterionResult:
     """A2 训练步真推进 且 权重真变化（LoRA / 全参两套判据）。
 
@@ -358,7 +417,10 @@ def judge_a2(evidence: RunEvidence) -> CriterionResult:
       逐步旁路（实测 ``series_source: none``），但它自己的 ``logging.jsonl`` 逐步记
       ``global_step/max_steps``；实际步数 < 计划步数即证明有步没推进。**判据语义与
       native 的逐步断言一致，不是为后端放松**（native 无此读数时该断言自然跳过）。
-    - 步数：``optimizer_steps >= MIN_OPTIMIZER_STEPS``（§6 正式门槛）；
+    - 步数：``optimizer_steps >= 门槛``，门槛来自清单
+      ``acceptance.formal_gate.min_optimizer_steps``（§1.4 单一真相源；清单未给 ⇒
+      回落到 :data:`MIN_OPTIMIZER_STEPS`；清单给了非法值（``<=0``/非整数）⇒ fail-closed
+      判否，见 :func:`resolve_min_optimizer_steps`）；
     - LoRA：至少一个 ``lora_b`` 权重非零（LoRA B 初始为 0，非零即证明被更新）；
     - 全参：终态权重与基座权重不同（由抽取层给出 ``weight_changed``）。
 
@@ -401,11 +463,23 @@ def judge_a2(evidence: RunEvidence) -> CriterionResult:
             f"实际只推进了 {evidence.optimizer_steps} 个（训练器自报的 "
             "global_step/max_steps 未跑到分母）",
         )
-    if evidence.optimizer_steps < MIN_OPTIMIZER_STEPS:
+    # ★ 门槛来自**清单**（``acceptance.formal_gate.min_optimizer_steps``，§1.4）。
+    #   检查顺序：计划步数断言（更硬的事实：训练器自报的 global_step/max_steps
+    #   没跑到分母）先于门槛，与"跳过先于门槛"同一理由。
+    threshold, rejected = resolve_min_optimizer_steps(evidence.min_optimizer_steps)
+    if rejected is not None:
+        return CriterionResult("A2", False, rejected)
+    assert threshold is not None  # rejected is None ⇒ threshold 必非 None
+    if evidence.optimizer_steps < threshold:
+        source = (
+            "清单"
+            if evidence.min_optimizer_steps is not None
+            else "缺省（清单未给门槛）"
+        )
         return CriterionResult(
             "A2",
             False,
-            f"optimizer step={evidence.optimizer_steps} < 门槛 {MIN_OPTIMIZER_STEPS}",
+            f"optimizer step={evidence.optimizer_steps} < 门槛 {threshold}（{source}）",
         )
     if evidence.weight_changed is None:
         return CriterionResult(
@@ -425,8 +499,8 @@ def judge_a2(evidence: RunEvidence) -> CriterionResult:
     return CriterionResult(
         "A2",
         True,
-        f"optimizer step={evidence.optimizer_steps}{plan}，权重已变化"
-        f"（tuner_type={evidence.tuner_type}）",
+        f"optimizer step={evidence.optimizer_steps}{plan} ≥ 门槛 {threshold}，"
+        f"权重已变化（tuner_type={evidence.tuner_type}）",
     )
 
 
@@ -814,6 +888,7 @@ def judge_tier(
         failure_class=failure_class,
         counts_toward_max_context=counts_toward_max_context(failure_class),
         note=note,
+        a2_step_threshold=resolve_min_optimizer_steps(first.min_optimizer_steps)[0],
     )
 
 
@@ -881,6 +956,9 @@ def ledger_row(
         "status": judgement.ledger_status,
         "failure_class": judgement.failure_class,
         "note": judgement.note,
+        # 读数口径自证（§1.4）：台账必须能回答"A2 用的门槛是多少"。只加字段，
+        # 不改任何判定与既有字段的语义（`None` = 本次未解析出合法门槛）。
+        "min_optimizer_steps": judgement.a2_step_threshold,
         "date": date,
     }
 
