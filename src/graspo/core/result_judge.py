@@ -30,6 +30,78 @@ from typing import Any
 
 # ── 常量 ────────────────────────────────────────────────────────────────────
 
+#: ── rank_metrics 旁路的 phase 名注册表（**全仓唯一真相源**，§1.4） ──────────
+#:
+#: 背景（2026-09-20 实测伪否）：采集层曾把"哪条 phase 承载逐步权威指标"写死成
+#: **一个**字面量 ``pipeline_sft_train_batch_after``。训练侧却有**两条** SFT 路径，
+#: 各自 emit 不同的 phase：pipeline（pp_size>1）emit 带 pipeline 前缀的那个，
+#: 普通/单卡路径 emit 不带的那个。于是 T010（9B·SFT·LoRA·native·**1 卡**，
+#: 100/100 步、exit=0、loss/grad_norm 全程 finite）的 100 条逐步指标被**整批静默丢弃**，
+#: 判成"A2 缺少 optimizer step 证据 / A6 缺少 loss 序列证据"——采集侧伪否。
+#:
+#: 为什么注册表放在**纯计算层**（本模块，零设施依赖）：采集脚本
+#: ``scripts/collect_results.py`` 已经按文件路径加载本模块（它不能走
+#: ``import graspo``，那会拉入 torch/pydantic）。把 phase 名单放在这里，训练侧与
+#: 采集侧才能共享同一份定义，而**不必**在采集侧再抄一遍字面量。
+#:
+#: 每个名字的**出处行号**（本仓库当前 HEAD；改动 emit 处时必须同步本表）：
+#:
+#: .. code-block:: text
+#:
+#:     ── 训练指标（payload 带 ``metrics``，是本注册表存在的理由）──────────────
+#:     src/graspo/flow/adapters/models/qwen35_36/training_sft.py:753   SFT  · PP 路径（pp_size>1）
+#:     src/graspo/flow/adapters/models/qwen35_36/training_sft.py:478   SFT  · 普通路径（pp_size==1，
+#:                                                                    含全部单卡/DP/TP 档）
+#:     src/graspo/flow/adapters/models/qwen35_36/training.py:440       RL/GRASPO · PP 路径
+#:     src/graspo/flow/adapters/models/qwen35_36/training.py:204       RL/GRASPO · 普通路径
+#:     src/graspo/flow/adapters/models/qwen3/adapter.py:486            qwen3 后端 · 普通路径
+#:
+#:     ── 诊断事件（**不**带 metrics，不进注册表，登记以免被误加）──────────────
+#:     src/graspo/flow/adapters/transformer_adapter.py:271             setup_after
+#:     src/graspo/flow/adapters/transformer_adapter.py:441             checkpoint_after
+#:     src/graspo/flow/adapters/transformer_adapter.py:591             checkpoint_loaded
+#:     src/graspo/flow/adapters/models/qwen35_36/training_sft.py:353   train_before_empty_cache
+#:     src/graspo/flow/adapters/models/qwen35_36/training.py:58        train_before_empty_cache
+#:     src/graspo/flow/adapters/models/qwen3/adapter.py:394            train_before_empty_cache
+#:     src/graspo/flow/adapters/models/qwen35_36/logprobs.py:57        logprob_after
+#:     src/graspo/flow/adapters/models/qwen35_36/logprobs.py:125       pipeline_logprob_after
+#:     src/graspo/flow/adapters/models/qwen3/adapter.py:508            logprob_after
+#:
+#: ★ 加新路径时改的**只有本表**；采集侧不得再出现任何 phase 字面量（§2.2 显式即防呆）。
+
+#: 承载**逐步权威指标**的 phase 名（payload 含 ``metrics``：全局聚合 + 逐 rank 明细）。
+#: 采集侧用它决定"哪些 rank_metrics 行是 loss/grad_norm/optimizer_steps 的证据源"。
+#: 判断依据是**语义**（"这一步训练的权威读数"），不是后端标签，也不是卡数——
+#: 判据语义因此与后端/并行度无关（与 :func:`find_output_dirs` 同一原则）。
+STEP_METRICS_PHASES: frozenset[str] = frozenset(
+    {
+        "pipeline_sft_train_batch_after",
+        "sft_train_batch_after",
+        "pipeline_train_batch_after",
+        "train_batch_after",
+    }
+)
+
+#: **PP 专属**训练指标 phase 名。用于只读 PP 结构性字段（``pipeline_stage_timing`` /
+#: ``placement_strategy`` 等）的展示层：这些键在非 PP 档里结构性不存在，所以这里的
+#: 过滤是**语义正确**的，不是"漏认一个名字"。
+#: 使用方：``src/graspo/cli/tools.py:_read_rank_summary``。
+PIPELINE_TRAIN_METRICS_PHASE: str = "pipeline_train_batch_after"
+
+#: 已知的**诊断类** phase 名（``_emit_rank_memory_event`` 的其余取值）：payload 只带
+#: 显存快照或结构信息，**不带** ``metrics``。登记在此供自检/文档用——若某天诊断事件
+#: 开始携带 metrics，采集侧会把它计入"含 metrics 的未登记 phase"并显式暴露（不静默）。
+DIAGNOSTIC_PHASES: frozenset[str] = frozenset(
+    {
+        "setup_after",
+        "checkpoint_after",
+        "checkpoint_loaded",
+        "train_before_empty_cache",
+        "logprob_after",
+        "pipeline_logprob_after",
+    }
+)
+
 #: A5 四件套产物：配置备份 / 训练日志 / 可恢复 checkpoint / 运行指标。
 REQUIRED_ARTIFACTS: tuple[str, ...] = (
     "config_backup",

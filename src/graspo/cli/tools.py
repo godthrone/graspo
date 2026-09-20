@@ -22,6 +22,7 @@ from graspo.cli.analysis import (
     analyze_steps,
     latest_log_dir,
 )
+from graspo.core.result_judge import PIPELINE_TRAIN_METRICS_PHASE
 from graspo.core.schema import GraspoConfig, Sample
 from graspo.flow.data_io import load_jsonl
 from graspo.flow.runtime import GraspoFlowRuntime
@@ -481,10 +482,15 @@ def _read_rank_summary(run_dir: Path) -> dict[str, Any]:
                 continue
             seen.add(path)
             for payload in _iter_json_lines(path):
-                if payload.get("phase") != "pipeline_train_batch_after":
+                # PP 专属：``pipeline_stage_timing`` 等结构性字段只在 PP 路径存在，
+                # 所以这里只认 PP 那个 phase 名是**语义正确**的（不是"漏认"）。
+                # 唯一真相源 = result_judge.PIPELINE_TRAIN_METRICS_PHASE（§1.4）。
+                if payload.get("phase") != PIPELINE_TRAIN_METRICS_PHASE:
                     continue
                 metrics = payload.get("metrics") or {}
-                for item in metrics.get("rank_metrics") or [metrics]:
+                # 只收**确实带 rank 的逐 rank 明细**；``metrics`` 本身没有 rank 字段，
+                # 旧的 ``or [metrics]`` 兜底只会塞进一条 rank 字段全 None 的空条目。
+                for item in metrics.get("rank_metrics") or []:
                     if "rank" in item:
                         latest_by_rank[int(item["rank"])] = item
     per_rank = {}

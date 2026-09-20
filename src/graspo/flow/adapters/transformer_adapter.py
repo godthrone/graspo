@@ -666,11 +666,37 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
     def _aggregate_rank_metrics(self, metrics: dict[str, Any]) -> dict[str, Any]:
         local = {"rank": self.rank, "tp_rank": self.tp_rank, **metrics}
         if not (dist.is_available() and dist.is_initialized()):
+            # ★ 单进程 / 单卡（world_size==1）：**也必须产出 global_* 键**。
+            #
+            # 为什么（2026-09-20 实测缺陷）：``parallel/state.py`` 只在
+            # ``world_size > 1`` 时 ``init_process_group``，所以单卡档走的就是这个
+            # 分支。旧实现只回 ``rank_metrics``、**一个 global_* 键都不给**，于是：
+            #   ① ``flow/trainer/sft_trainer.py`` 读 ``metrics["global_loss_mean"]``
+            #      拿到 None ⇒ stdout 逐步写 ``loss: null grad_norm: null`` +
+            #      ``loss_scope: "global"`` —— 一个自称"全局口径"的逐行 null，
+            #      被 collector 如实识别为「数值不可得」⇒ A6 fail-closed 判否；
+            #   ② 采集层读 ``global_loss_mean`` / ``global_grad_norm_mean`` /
+            #      ``global_optimizer_steps_sum`` 全部取不到 ⇒ 即便 phase 名已认，
+            #      单卡档的 A2/A6 依然是取证缺口。
+            # 两者都是**伪否**：数据本来就在本地 metrics 里，只是键名随分支而变。
+            #
+            # 单卡下"局部 == 全局"在数学上平凡成立（ranks 只有 1 个，
+            # ``_mean_present`` 退化为该值本身；sum 退化为该值），所以补键**不是**
+            # 放松任何断言，只是把"键名取决于分支"这个隐式契约（§2.2）改成
+            # "键名与分支无关"的显式契约（§1.4 单一真相源：全局读数的形状只有一份）。
+            # PP 路径（dist 已初始化）的输出逐字不变。
             return {
                 **metrics,
                 "rank": self.rank,
                 "tp_rank": self.tp_rank,
                 "rank_metrics": [local],
+                "global_optimizer_steps_sum": int(local.get("optimizer_steps") or 0),
+                "global_nonzero_grad_count_sum": int(local.get("nonzero_grad_count") or 0),
+                "global_loss_mean": local.get("loss_mean"),
+                "global_grad_norm_mean": local.get("grad_norm_mean"),
+                "global_lora_norm_delta_mean": local.get("lora_norm_delta"),
+                "global_trainable_norm_delta_mean": local.get("trainable_norm_delta"),
+                "grad_count_metric": local.get("grad_count_metric"),
             }
         gathered: list[dict[str, Any] | None] = [None for _ in range(self.world_size)]
         dist.all_gather_object(gathered, local)
