@@ -30,9 +30,7 @@ import datetime
 import json
 import logging
 import logging.handlers
-import os
 import sys
-import warnings
 from pathlib import Path
 from typing import Any
 
@@ -43,9 +41,6 @@ _SETUP_DONE: set[str] = set()
 """Track which run-log directories already have file handlers attached."""
 
 _run_id: str | None = None
-
-#: 旧环境变量名——**已废弃**（§7.1/§10.1，v0.25.0 起）。见 :func:`get_run_id`。
-_DEPRECATED_RUN_ID_ENV = "GRASPO_RUN_ID"
 
 
 def set_run_id(run_id: str) -> None:
@@ -75,28 +70,16 @@ def get_run_id() -> str:
 
     1. :func:`set_run_id` — the config-derived value bound by the worker entry
        point (``training.run_name``).  This is the normal path.
-    2. Deprecated ``GRASPO_RUN_ID`` environment variable — kept for one release
-       so an operator's existing launch command does not silently change the log
-       directory.  Using it emits a ``DeprecationWarning``; it will be **removed
-       in v0.26.0** (§18.1 不留负债).
-    3. Process-local timestamp — standalone/unit-test use (unchanged).
+    2. Process-local timestamp — standalone/unit-test use.
 
     §10.1: the log folder is part of the run's on-disk output, so its identity
-    must come from config, not from the process environment.
+    must come from config, not from the process environment.  The transitional
+    ``GRASPO_RUN_ID`` environment variable that used to be honoured here was
+    removed outright — a second source for an artifact path is a dual source of
+    truth (§1.4), and the deprecation window it was kept for has closed (§18.1).
     """
     global _run_id
     if _run_id is not None:
-        return _run_id
-    legacy = os.environ.get(_DEPRECATED_RUN_ID_ENV, "").strip()
-    if legacy:
-        warnings.warn(
-            f"{_DEPRECATED_RUN_ID_ENV} 已废弃（宪法 §7.1/§10.1：环境变量不得承载配置）："
-            "日志目录身份取自 config 的 training.run_name。该环境变量通道将在 v0.26.0 删除，"
-            "请移除它（§18.1）。",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        _run_id = legacy
         return _run_id
     _run_id = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     return _run_id
