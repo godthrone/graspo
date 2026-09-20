@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -177,9 +176,8 @@ def main(argv: list[str]) -> int:
         for line in r["stdout"].splitlines():
             if "违规" in line or line.strip().startswith("- ["):
                 print(f"   报告：{line.strip()}")
-        print(
-            f"   退出码：{r['exit_code']}（期望非 0）  命中规则：{'是' if r['reported_rule'] else '否'}"
-        )
+        rule_hit = "是" if r["reported_rule"] else "否"
+        print(f"   退出码：{r['exit_code']}（期望非 0）  命中规则：{rule_hit}")
         print()
     print("汇总：" + ("全部用例都产生真实失败 ✅" if ok else "存在未被拦截的用例 ❌"))
     return 0 if ok else 1
