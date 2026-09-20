@@ -319,3 +319,182 @@ def test_ledger_row_never_lets_host_value_reach_the_peak_column(tmp_path: Path) 
     assert row["peak_memory_gib"] is None
     assert row["peak_memory_note"] == _JUDGE.PEAK_MEMORY_UNAVAILABLE
     assert row[_JUDGE.HOST_SAMPLE_PEAK_FIELD] == 21.4755859375
+
+
+# ── 4. ms-swift 自报 `memory(GiB)`：reserved 口径，另存且不得进峰值列 ────────
+#
+# 定性结论（本包 2026-09-21 源码核证，见 `.local/refs/ms-swift-4.5.3/git-v4.5.3`）：
+# ms-swift 的 `logs['memory(GiB)']` 取的是 `max_memory_reserved`，**不是**
+# `max_memory_allocated`（`swift/trainers/patcher.py:27` → `swift/utils/torch_utils.py:416`；
+# `swift/megatron/callbacks/print.py:64` 同）。reserved ≥ allocated ⇒ 两个量，
+# **不得**互填。本节的锁是"另存 + 带口径标签 + 绝不流入 `peak_memory_gib`"。
+
+
+def _write_msswift_logging(run: Path, values: list[float]) -> None:
+    """ms-swift 布局：`<run>/logging.jsonl`，键逐字为 `memory(GiB)`。"""
+    run.mkdir(parents=True, exist_ok=True)
+    (run / "logging.jsonl").write_text(
+        "".join(
+            json.dumps({"loss": 0.5, "memory(GiB)": value, "train_speed(s/it)": 1.0}) + "\n"
+            for value in values
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_msswift_caliber_is_reserved_and_distinct_from_the_peak_column() -> None:
+    """口径标识必须是 reserved（不是 allocator），且与 §9.1 的列口径**不同名**。
+
+    这条锁防的是"看着都是 PyTorch allocator 就顺手当同一口径接上"——上游用的是
+    `max_memory_reserved`，`reserved >= allocated`，混填会让 §7 那一列不可回答。
+    """
+    assert _JUDGE.MSSWIFT_RESERVED_CALIBER == "msswift_rank0_max_reserved"
+    assert _JUDGE.MSSWIFT_RESERVED_CALIBER != _JUDGE.PEAK_MEMORY_CALIBER
+    assert "reserved" in _JUDGE.MSSWIFT_RESERVED_CALIBER
+    # 说明文案必须自带源码依据（可核到文件:行），否则下游无法复核口径。
+    assert "max_memory_reserved" in _JUDGE.MSSWIFT_RESERVED_NOTE
+    assert "patcher.py" in _JUDGE.MSSWIFT_RESERVED_NOTE
+    assert "allocated" in _JUDGE.MSSWIFT_RESERVED_NOTE
+    # 字段名与口径标签字段名都必须是独立字段（不许复用 peak_memory_*）。
+    assert _JUDGE.MSSWIFT_RESERVED_PEAK_FIELD == "msswift_reserved_peak_gib"
+    assert _JUDGE.MSSWIFT_RESERVED_PEAK_FIELD != _JUDGE.PEAK_MEMORY_CALIBER
+    assert _JUDGE.MSSWIFT_RESERVED_CALIBER_FIELD != _JUDGE.MSSWIFT_RESERVED_PEAK_FIELD
+
+
+def test_read_msswift_reserved_peak_from_logging_jsonl(tmp_path: Path) -> None:
+    """解析成功：`logging.jsonl` 的 `memory(GiB)`，逐行取**最大**（= 该 run 峰值）。
+
+    实测对照（`task-j1-batch-msswift/evidence`）：T031 = 24.45、T032 = 23.05、
+    T033 = 23.06 GiB；宿主采样峰值分别为 25.96 / 24.47 / 24.48 GiB。
+    """
+    run = tmp_path / "T031"
+    _write_msswift_logging(run, [23.57, 23.57, 24.45])
+    assert _COLLECTOR_MOD._read_msswift_reserved_peak_memory(run) == 24.45
+
+
+def test_read_msswift_reserved_peak_takes_max_across_nested_logging_jsonl(tmp_path: Path) -> None:
+    """多卡/多段：ms-swift 每个日志事件只打一个数（对本进程全部卡取 max），
+
+    故"每卡峰值" = 所有行取最大；嵌套层（`outputs/.../logging.jsonl`）也要能扫到。
+    """
+    run = tmp_path / "T033"
+    _write_msswift_logging(run / "outputs" / "T033", [20.0])
+    _write_msswift_logging(run / "rerun", [23.06])
+    assert _COLLECTOR_MOD._read_msswift_reserved_peak_memory(run) == 23.06
+
+
+def test_read_msswift_reserved_peak_falls_back_to_stdout_dict_repr(tmp_path: Path) -> None:
+    """stdout 回退：tqdm 把 dict repr 打进 stdout（实测档 `T044` 只有 stdout）。
+
+    逐字样本：`... 'memory(GiB)': '56.15', ...`
+    """
+    run = tmp_path / "T044"
+    run.mkdir(parents=True)
+    (run / "stdout.log").write_text(
+        "Train:  10%|#         | 1/10 [00:10<01:30, 1.00s/it]"
+        "{'loss': 0.5, 'memory(GiB)': '56.14', 'train_speed(s/it)': 1.0}\n"
+        "{'loss': 0.4, 'memory(GiB)': '56.15', 'train_speed(s/it)': 1.0}\n",
+        encoding="utf-8",
+    )
+    assert _COLLECTOR_MOD._read_msswift_reserved_peak_memory(run) == 56.15
+
+
+def test_read_msswift_reserved_peak_returns_none_and_never_falls_back(tmp_path: Path) -> None:
+    """**负向锁**：无 `memory(GiB)` ⇒ None；宿主摘要在场也**绝不**回退（§9.1 禁混口径）。
+
+    并且：native 档（有 rank_metrics、无 `memory(GiB)`）必须**不**被本函数"顺手指"到
+    ——它只认 ms-swift 的那一个键，不看 rank_metrics。
+    """
+    run = tmp_path / "T031"
+    run.mkdir(parents=True)
+    _write_host_summary(run, peak_mib=26579.0)
+    assert _COLLECTOR_MOD._read_msswift_reserved_peak_memory(run) is None
+    assert _COLLECTOR_MOD._read_host_sample_peak_memory(run) is not None
+
+    native = tmp_path / "T010"
+    native.mkdir(parents=True)
+    _write_rank_metrics(native, "T010", [_rank_memory_line("sft_train_batch_after", 20852.23)])
+    assert _COLLECTOR_MOD._read_msswift_reserved_peak_memory(native) is None
+    assert _COLLECTOR_MOD._read_peak_memory(native) == 20852.23 / 1024.0
+
+
+def test_read_msswift_reserved_peak_none_on_broken_jsonl_and_unparsable_stdout(tmp_path: Path) -> None:
+    """显式标注的前置条件：坏行 / 非数值 ⇒ None（不猜、不取 0）。"""
+    run = tmp_path / "T031"
+    run.mkdir(parents=True)
+    (run / "logging.jsonl").write_text(
+        '{"memory(GiB)": "not-a-number"}\n{"memory(GiB)": nu\n', encoding="utf-8"
+    )
+    (run / "stdout.log").write_text("{'memory(GiB)': 'n/a'}\n", encoding="utf-8")
+    assert _COLLECTOR_MOD._read_msswift_reserved_peak_memory(run) is None
+
+
+def test_ledger_keeps_msswift_reserved_out_of_the_peak_column(tmp_path: Path) -> None:
+    """**核心负向锁**：ms-swift 自报值落独立字段，`peak_memory_gib` 依旧 None + 标注。"""
+    swift_root = tmp_path / "swift"
+    _write_msswift_logging(swift_root / "T031", [23.57, 24.45])
+    _write_host_summary(swift_root / "T031", peak_mib=26579.0, gap_mib=2388.0)
+
+    row = _run_collector(tmp_path / "s", swift_root, _MANIFEST_MSSWIFT)
+    # §7 峰值列：结构性不可得 ⇒ None + 原因（**不**被 24.45 填上）
+    assert row["peak_memory_gib"] is None
+    assert row["peak_memory_note"] == _JUDGE.PEAK_MEMORY_UNAVAILABLE
+    assert row["peak_memory_caliber"] == _EXPECTED_CALIBER
+    # ms-swift 自报值：独立字段 + 配对口径标签 + 理由（数字与口径同时可见）
+    assert row[_JUDGE.MSSWIFT_RESERVED_PEAK_FIELD] == 24.45
+    assert row[_JUDGE.MSSWIFT_RESERVED_CALIBER_FIELD] == _JUDGE.MSSWIFT_RESERVED_CALIBER
+    assert row[_JUDGE.MSSWIFT_RESERVED_NOTE_FIELD] == _JUDGE.MSSWIFT_RESERVED_NOTE
+    assert row["host_sample_peak_gib"] == 26579.0 / 1024.0
+    # md 里：独立列头带口径标签，值可见，且 §7 那格仍是"不可得 + 原因"
+    assert _JUDGE.MSSWIFT_RESERVED_CALIBER in row["_ledger_md"]
+    assert "24.45" in row["_ledger_md"]
+    assert _JUDGE.PEAK_MEMORY_UNAVAILABLE in row["_ledger_md"]
+
+
+def test_ledger_row_annotates_msswift_reserved_unavailable(tmp_path: Path) -> None:
+    """未取得 ⇒ 显式写原因，**不是**空字符串、更不是宿主值。"""
+    judgement = _JUDGE.TierJudgement(
+        tier_id="T031",
+        criteria=(
+            _JUDGE.CriterionResult(
+                criterion="A6", passed=True, detail="数值健康", evidence_missing=False
+            ),
+        ),
+        passed=False,
+        failure_class=None,
+        counts_toward_max_context=False,
+        note="",
+    )
+    row = _JUDGE.ledger_row(
+        judgement,
+        model="9B",
+        algorithm="SFT",
+        mode="LoRA",
+        backend="ms-swift",
+        cards=1,
+        max_context=None,
+        peak_memory_gib=None,
+        date="2026-09-20",
+        host_sample_peak_gib=25.9560546875,
+        msswift_reserved_peak_gib=None,
+    )
+    assert row[_JUDGE.MSSWIFT_RESERVED_PEAK_FIELD] is None
+    assert row[_JUDGE.MSSWIFT_RESERVED_NOTE_FIELD] == _JUDGE.MSSWIFT_RESERVED_UNAVAILABLE
+    assert row[_JUDGE.MSSWIFT_RESERVED_CALIBER_FIELD] == _JUDGE.MSSWIFT_RESERVED_CALIBER
+    assert row["peak_memory_gib"] is None
+
+    # 传了自报值也一样：只落独立字段，峰值列一个字都不动。
+    row2 = _JUDGE.ledger_row(
+        judgement,
+        model="9B",
+        algorithm="SFT",
+        mode="LoRA",
+        backend="ms-swift",
+        cards=1,
+        max_context=None,
+        peak_memory_gib=None,
+        date="2026-09-20",
+        msswift_reserved_peak_gib=56.15,
+    )
+    assert row2["peak_memory_gib"] is None
+    assert row2[_JUDGE.MSSWIFT_RESERVED_PEAK_FIELD] == 56.15

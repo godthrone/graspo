@@ -105,6 +105,16 @@ def _read_json(path: Path) -> Any:
 #: 训练侧 `transformer_adapter._emit_rank_memory_event` 写的正是这一份。
 _PEAK_MEMORY_RANK_FILE = "rank_metrics.rank_00000.jsonl"
 
+#: ms-swift 自报显存峰值的**机器可读落点**与键名（见
+#: :func:`_read_msswift_reserved_peak_memory` 的口径说明）。
+#: 键名来自上游源码逐字：``swift/trainers/patcher.py:29`` ``logs['memory(GiB)']``。
+_MSSWIFT_LOGGING_JSONL = "logging.jsonl"
+_MSSWIFT_MEMORY_KEY = "memory(GiB)"
+
+#: stdout 回退用的取值正则（tqdm 打的 dict repr：``'memory(GiB)': '24.45'``）。
+#: **只**认这一个键，不认裸 ``memory``——后者只在 train_msg 出现且语义相同但无口径自证。
+_MSSWIFT_STDOUT_MEMORY_RE = re.compile(r"memory\(GiB\)['\"]?\s*:\s*['\"]?(-?\d+(?:\.\d+)?)")
+
 
 def _iter_jsonl_objects(path: Path) -> Iterator[dict[str, Any]]:
     """逐行读 JSONL，**只**产出顶层是 dict 的记录；坏行/非 dict 行静默跳过。
@@ -1439,6 +1449,65 @@ def _read_peak_memory(run_dir: Path) -> float | None:
     return max(peaks) / 1024.0
 
 
+def _read_msswift_reserved_peak_memory(run_dir: Path) -> float | None:
+    """读 **ms-swift 自报**的 ``memory(GiB)``（GiB）——**reserved 口径，不是 §7 的口径**。
+
+    **为什么单列一个函数**（本包①的定性结论，2026-09-21）：ms-swift 会打印
+    ``logs['memory(GiB)']``，但它取的是 ``max_memory_reserved``：
+      - ``.local/refs/ms-swift-4.5.3/git-v4.5.3/swift/trainers/patcher.py:27``
+        ``state.max_memory = max(getattr(state, 'max_memory', 0), get_max_reserved_memory())``
+        （`:29` 落 ``logs['memory(GiB)']``）
+      - ``swift/utils/torch_utils.py:413-419``
+        ``[get_torch_device().max_memory_reserved(device=device) ...]`` → ``max(...)/1024**3``
+      - ``swift/megatron/callbacks/print.py:64``
+        ``reduce_max_stat_across_model_parallel_group(torch.cuda.max_memory_reserved() / 1024**3)``
+    三处**均无** ``max_memory_allocated()`` ⇒ 它与 §9.1 声明的 rank0 ``max_allocated``
+    （``.local/本期工程跟踪.md:420``）是**两个量**（reserved ≥ allocated）⇒
+    **不得**用它填 ``peak_memory_gib``。结果只经
+    ``result_judge.MSSWIFT_RESERVED_PEAK_FIELD`` 另存（同一防呆模式见
+    :func:`_read_host_sample_peak_memory`）。
+
+    **取数来源（按稳定性排序，前者命中即不再看后者）**：
+
+    1. ``logging.jsonl``（ms-swift 自己用 ``append_to_jsonl`` 写的**机器可读**产物：
+       ``swift/trainers/patcher.py:55``〔`ProgressCallbackNew`〕与 ``:98``
+       〔`PrinterCallbackNew`〕）：逐行 ``json.loads``，取键 ``"memory(GiB)"``。
+       主键名正则（若将来要在文本层匹配）：``memory\\(GiB\\)`` —— 括号需转义。
+    2. ``stdout.log`` 回退：``swift/trainers/patcher.py:101`` 的
+       ``print(logs, flush=True)``（tqdm 另有 ``write(str(logs))``）把 ``logs`` 的
+       **dict repr** 打进 stdout，形如 ``{'loss': ..., 'memory(GiB)': '24.45', ...}``，
+       因此用 ``memory\\(GiB\\)['\"]?\\s*:\\s*['\"]?(-?\\d+(?:\\.\\d+)?)`` 取值。
+       为什么需要这条回退：实测档 ``T044`` **没有** ``logging.jsonl``，只留 stdout。
+
+    **多卡怎么取"每卡峰值"**：ms-swift 每个日志事件**只打一行、一个数**——
+    ``get_max_reserved_memory`` 已对**本进程可见的全部卡取 max**，即"最忙那张卡"。
+    它不是逐卡多行输出 ⇒ 本函数的算法是：**把所有行的该值取最大**（``state.max_memory``
+    本身也是单调累积 max，逐行取 max 与取末行等价），得到"该 run 的单卡峰值"。
+
+    **不可得一律返回 ``None``**（不产 ``logging.jsonl`` / 无该键 / 解析失败），
+    **绝不**回退 ``gpu_memory_summary.json``（宿主口径，#9.1 禁止混口径），
+    **也绝不**用 native 的 ``rank_metrics`` 值兜底（那是另一个 run 的读数）。
+    """
+    peaks: list[float] = []
+    for path in sorted(run_dir.rglob(_MSSWIFT_LOGGING_JSONL)):
+        for payload in _iter_jsonl_objects(path):
+            raw = payload.get(_MSSWIFT_MEMORY_KEY)
+            value = _parse_numeric(raw)
+            if value is not None:
+                peaks.append(value)
+    if peaks:
+        return max(peaks)
+
+    for path in sorted(run_dir.rglob("stdout.log")):
+        for match in _MSSWIFT_STDOUT_MEMORY_RE.finditer(_read_text(path)):
+            value = _parse_numeric(match.group(1))
+            if value is not None:
+                peaks.append(value)
+    if not peaks:
+        return None
+    return max(peaks)
+
+
 def _read_host_sample_peak_memory(run_dir: Path) -> float | None:
     """读**宿主 `nvidia-smi` 采样**峰值（GiB）——**不是** §7 峰值列的口径。
 
@@ -1511,6 +1580,11 @@ def run(args: argparse.Namespace) -> int:
                     "peak_memory_note": _judge.PEAK_MEMORY_UNAVAILABLE,
                     _judge.HOST_SAMPLE_PEAK_FIELD: None,
                     _judge.HOST_SAMPLE_GAP_FIELD: None,
+                    # 同上：ms-swift 自报 reserved 口径也要"没跑过 ⇒ 不可得 + 原因"，
+                    # 不留一个缺失字段让下游分不清"没查"与"没值"。
+                    _judge.MSSWIFT_RESERVED_PEAK_FIELD: None,
+                    _judge.MSSWIFT_RESERVED_CALIBER_FIELD: _judge.MSSWIFT_RESERVED_CALIBER,
+                    _judge.MSSWIFT_RESERVED_NOTE_FIELD: _judge.MSSWIFT_RESERVED_UNAVAILABLE,
                     "series_source": "none",
                     "series_notes": [],
                     "losses": [],
@@ -1557,6 +1631,9 @@ def run(args: argparse.Namespace) -> int:
             # 宿主采样峰值**另存**（§9.1：它是取证链锚点，不进 §7 峰值列）。
             host_sample_peak_gib=_read_host_sample_peak_memory(first_dir),
             host_sample_peak_gap_mib=_read_host_sample_gap_mib(first_dir),
+            # ms-swift 自报的 **reserved** 峰值：**另存 + 带口径标签**，不进 §7 峰值列
+            # （见 `_read_msswift_reserved_peak_memory` 的源码依据）。
+            msswift_reserved_peak_gib=_read_msswift_reserved_peak_memory(first_dir),
         )
         row["criteria"] = {item.criterion: item.passed for item in judgement.criteria}
         row["criteria_detail"] = {item.criterion: item.detail for item in judgement.criteria}
@@ -1587,8 +1664,9 @@ def run(args: argparse.Namespace) -> int:
     lines = [
         "| 条件档 | 模型 | 算法 | 模式 | 后端 | 卡数 | 最大可行上下文 | 口径 "
         f"| 每卡峰值(GiB)【{_judge.PEAK_MEMORY_CALIBER}】 | 宿主采样峰值(GiB) "
-        "| 宿主采样缺口(MiB) | 状态 | 失败类型 | 备注 |",
-        "|---|---|---|---|:--:|---|---|---|---|---|---|---|---|---|",
+        f"| 宿主采样缺口(MiB) | ms-swift自报(GiB)【{_judge.MSSWIFT_RESERVED_CALIBER}】 "
+        "| 状态 | 失败类型 | 备注 |",
+        "|---|---|---|---|:--:|---|---|---|---|---|---|---|---|---|---|",
     ]
     for record in records:
         context_cell = record.get("max_context") or "—"
@@ -1604,11 +1682,15 @@ def run(args: argparse.Namespace) -> int:
         gap_cell = record.get(_judge.HOST_SAMPLE_GAP_FIELD)
         if gap_cell is None:
             gap_cell = "—"
+        # ms-swift 自报值**自带口径标签**地印在独立一列；无值印原因（不是光秃秃的 `—`）。
+        msswift_cell = record.get(_judge.MSSWIFT_RESERVED_PEAK_FIELD)
+        if msswift_cell is None:
+            msswift_cell = record.get(_judge.MSSWIFT_RESERVED_NOTE_FIELD) or "—"
         lines.append(
             f"| {record['tier_id']} | {record.get('model', '')} | {record.get('algorithm', '')} "
             f"| {record.get('mode', '')} | {record.get('backend', '')} | {record.get('cards', '')} "
             f"| {context_cell} | {record.get('max_context_kind') or '—'} "
-            f"| {peak_cell} | {host_cell} | {gap_cell} "
+            f"| {peak_cell} | {host_cell} | {gap_cell} | {msswift_cell} "
             f"| {record['status']} | {record.get('failure_class') or '—'} "
             f"| {record.get('note', '')} |"
         )
