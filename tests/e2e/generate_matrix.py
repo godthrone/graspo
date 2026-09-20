@@ -31,12 +31,23 @@
 
 用法：
     python3 tests/e2e/generate_matrix.py --dry-run --assert-count 54   # 只自检不落盘
-    python3 tests/e2e/generate_matrix.py                              # 生成全部产物
+    python3 tests/e2e/generate_matrix.py                              # 生成全部产物（默认取 mini 数据集）
+    python3 tests/e2e/generate_matrix.py --train-source full          # 切回源数据 data/train.jsonl
+
+**训练子集的取数来源（本生成器是唯一真相源）**：默认取 **mini 数据集**
+（`<ELAM_HOST>/mini-dataset/mini-short-mm-train.jsonl`，100 行、sha256 记入 manifest 的
+`data.mini_dataset`）——它只用于「矩阵跑通」阶段压时间/压成本。**效果评测必须用全量 test 集
+（`data/test.jsonl`，702 行），不得用 mini 集的跑通结果替代效果结论。**
+⚠ **不要为了"顺手修正"去改 `data.train_path`**：该字段只约束**生成位置**，不约束**读取源**；
+每档的 `<Tier>.jsonl` 仍生成到原 `$RUN_DIR/subsets/`，runner 的断言
+`TRAIN_PATH == dirname(TRAIN_PATH)/<Tier>.jsonl` 与图像根反推
+`dirname(dirname(train_path))/images` 都依赖它 —— 改配置反而会打断这条链。
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import shutil
 import sys
@@ -165,6 +176,23 @@ ELAM_SUBSET_DIR = f"{ELAM_CONTAINER_ROOT}/subsets"
 ELAM_TRAIN_COUNT = 6378
 ELAM_TEST_COUNT = 702
 ELAM_IMAGE_COUNT = 15954
+
+# ── mini 数据集：「矩阵跑通」阶段的取数来源（**默认**），与源数据物理隔离 ──────────
+# 用户硬约束（数据防呆）：不同用途的数据**物理隔离**、靠**命名与路径**防误用；
+# mini 文件名自带 `mini-short-mm-` 前缀、落独立目录 `mini-dataset/`，
+# **不得改回 `train.jsonl`**（否则与源数据同名混放，防呆失效）。
+# 落点口径与源数据一致：**相对于宿主数据根**（`$ELAM_HOST`，运行时由
+# `GRASPO_ELAM_HOST_ROOT` 注入），因此这里只写相对位置，不写任何宿主绝对路径（§15.1/§16）。
+ELAM_MINI_JSONL_RELATIVE = "mini-dataset/mini-short-mm-train.jsonl"
+#: 取数来源的**运行时覆盖点**（runner 读它）。`full` 侧复用既有的 `ELAM_HOST` 口径，
+#: 不另造第二套真相源；mini 侧因落点不在容器根下，需要一个显式路径变量（§2.2 显式即防呆）。
+ELAM_MINI_JSONL_ENV = "GRASPO_ELAM_MINI_JSONL"
+#: 生成期读取**开发机本地镜像**算 sha256/行数（与 228 上那份同源、已核 sha256 一致）：
+#: manifest 里的摘要必须**实测算出**，不得硬编码（硬编码的摘要等于没有摘要）。
+#: 注意本地 staging 目录比 228 落点多一层 `mini/`（见 `.local/mini-dataset/mini/upload-228.md`）。
+LOCAL_MINI_JSONL = (
+    PROJECT_ROOT / ".local" / "mini-dataset" / "mini" / "mini-short-mm-train.jsonl"
+)
 
 #: 每档训练子集大小：按 §6 门槛取下限即可（用户已定"尽量省资源"，不整集跑）。
 #: SFT ≥100 条、RL ≥20 条（GRASPO 属 RL）。
@@ -422,6 +450,99 @@ def subset_path(tier_id: str) -> str:
 def subset_size(algorithm: str) -> int:
     """该档训练子集大小（§6 门槛下限；省资源不整集跑）。"""
     return SUBSET_SIZE_BY_ALGORITHM[algorithm]
+
+
+# ── 训练子集的取数来源（mini 默认 / full 可切回）──────────────────────────────
+#: 合法取值：`mini`（默认，跑通用） / `full`（源数据 `data/train.jsonl`，对照与回退用）。
+TRAIN_SOURCE_MINI = "mini"
+TRAIN_SOURCE_FULL = "full"
+TRAIN_SOURCES: tuple[str, ...] = (TRAIN_SOURCE_MINI, TRAIN_SOURCE_FULL)
+
+#: 跑通阶段**必须**说明的一句话：mini 不是效果口径。
+MINI_PURPOSE_NOTE = (
+    "mini 数据集只用于「矩阵跑通」（压时间/压成本），**效果评测必须用全量 test 集**"
+    f"（{ELAM_TEST_JSONL}，{ELAM_TEST_COUNT} 行）；mini 的跑通结果**不得**当作效果结论。"
+)
+
+
+def resolve_train_source(train_source: str | None = None) -> str:
+    """把 `None`（未显式给出）解析为默认来源 `mini`。
+
+    默认行为必须**可被一句话说清**：不传参 ⇒ 生成「读 mini 数据集」的 runner。
+    显式切回源数据：`--train-source full`（或对 runner 直接
+    `export {ELAM_MINI_JSONL_ENV}=$ELAM_HOST/data/train.jsonl`，见 `render_runner` 注释）。
+    """
+    if train_source is None:
+        return TRAIN_SOURCE_MINI
+    if train_source not in TRAIN_SOURCES:
+        raise ValueError(
+            f"未知的 train_source={train_source!r}；只接受 {TRAIN_SOURCES}（默认 {TRAIN_SOURCE_MINI}）"
+        )
+    return train_source
+
+
+def local_mini_jsonl_digest() -> tuple[str, int]:
+    """实测算出开发机本地 mini 镜像的 `(sha256, 行数)`。
+
+    **fail-closed**：拿不到摘要就拒绝生成——manifest 里记一份编造的摘要比不记更糟
+    （§2.3 边界校验、§2.2 显式即防呆）。mini 与 228 上那份同源（已核 sha256 一致）。
+    """
+    if not LOCAL_MINI_JSONL.is_file():
+        raise FileNotFoundError(
+            f"mini 数据集本地镜像不存在：{LOCAL_MINI_JSONL}（生成期需要它算 sha256/行数）；"
+            f"先跑 scripts/build_mini_elam_subset.py，或用 --train-source full 切回源数据"
+        )
+    digest = hashlib.sha256()
+    lines = 0
+    with LOCAL_MINI_JSONL.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+            lines += chunk.count(b"\n")
+    return digest.hexdigest(), lines
+
+
+def assert_mini_dataset_is_big_enough(line_count: int) -> None:
+    """mini 必须装得下**最大**档位子集，否则跑通会在 `subset too small` 处假失败。"""
+    largest = max(SUBSET_SIZE_BY_ALGORITHM.values())
+    if line_count < largest:
+        raise ValueError(
+            f"mini 数据集只有 {line_count} 行 < 最大档位子集 {largest} 行 ⇒ "
+            f"runner 会在 `FATAL: subset too small` 处失败（假失败，与被测能力无关）"
+        )
+
+
+def mini_dataset_manifest_fields(train_source: str) -> dict[str, Any]:
+    """manifest `data` 段的**新增**字段：本档取数来源 + mini 摘要/行数。
+
+    ⚠ 既有字段（`train_jsonl` / `test_jsonl` / `subset_dir` / `counts` …）与每档
+    `data.train_path`(**生成位置**, 不是读取源) / `full_train_jsonl` **逐字不变**。
+    """
+    digest, lines = local_mini_jsonl_digest()
+    assert_mini_dataset_is_big_enough(lines)
+    return {
+        "train_source": train_source,
+        "train_source_env_var": ELAM_MINI_JSONL_ENV,
+        "mini_dataset": {
+            # ⚠ 键名不得含 "host"：`test_manifest_has_no_host_identity_and_declares_model_mount`
+            #   只放行 `*_env_var` / `*_default` / `*_note` 三种含 host 的键名（那是不变量，
+            #   不为本包放宽）。这里是"相对数据根的位置"，值本身不含任何宿主信息。
+            "relative_path_under_data_root": ELAM_MINI_JSONL_RELATIVE,
+            "jsonl_sha256": digest,
+            "line_count": lines,
+            "purpose": MINI_PURPOSE_NOTE,
+            "isolation": (
+                "文件名带 `mini-short-mm-` 前缀且落独立目录 `mini-dataset/`，与源数据 "
+                "`data/train.jsonl` **物理隔离**（用户硬约束：靠命名与路径防误用；"
+                "源数据只读；禁止混放同名文件）"
+            ),
+        },
+        "train_path_not_the_source_note": (
+            "每档 `data.train_path` 只约束**生成位置**（<RUN_ROOT>/<Tier>/subsets/<Tier>.jsonl），"
+            "**不约束读取源**；runner 的 `TRAIN_PATH == dirname(TRAIN_PATH)/<Tier>.jsonl` 断言与"
+            "图像根反推 `dirname(dirname(train_path))/images` 都依赖它 ⇒ **不要改配置来换数据源**，"
+            "换源只切本段 `train_source`"
+        ),
+    }
 
 
 def _repeats_dataset_by_rollout_group(tier: dict[str, Any]) -> bool:
@@ -1023,8 +1144,15 @@ def render_not_applicable_stub(tier: dict[str, Any], reason: str) -> str:
 # ── 运行清单 ────────────────────────────────────────────────────────────────
 
 
-def build_manifest(tiers: list[dict[str, Any]]) -> dict[str, Any]:
-    """构造运行清单（结果收集器的输入）。"""
+def build_manifest(
+    tiers: list[dict[str, Any]], train_source: str | None = None
+) -> dict[str, Any]:
+    """构造运行清单（结果收集器的输入）。
+
+    `train_source` 决定 runner 的**训练子集读取源**（默认 `mini`，见 `resolve_train_source`）；
+    它**不**改变任何既有字段与每档 `data.train_path`（生成位置）。
+    """
+    resolved_train_source = resolve_train_source(train_source)
     entries = []
     for tier in tiers:
         status, reason = classify_expressibility(tier)
@@ -1313,6 +1441,10 @@ def build_manifest(tiers: list[dict[str, Any]]) -> dict[str, Any]:
             "subset_size_by_algorithm": dict(SUBSET_SIZE_BY_ALGORITHM),
             "subset_rationale": "按 §6 门槛取下限（SFT ≥100 / RL ≥20），不整集跑（省资源）",
             "integrity_caveat": DATA_INTEGRITY_CAVEAT,
+            # ↓↓↓ 新增（本包）：本档「训练子集**取数来源**」= mini 数据集 + 实测算出的摘要/行数。
+            #     既有字段（含每档 `data.train_path` / `full_train_jsonl`）**一个都没动**。
+            #     读取源与 `data.train_path` 是两件事：后者只约束**生成位置**。
+            **mini_dataset_manifest_fields(resolved_train_source),
         },
         "tiers": entries,
     }
@@ -1497,8 +1629,13 @@ def feasibility_table(tiers: list[dict[str, Any]]) -> list[dict[str, Any]]:
 # ── 运行脚本骨架 ────────────────────────────────────────────────────────────
 
 
-def render_runner() -> str:
-    """生成批量执行脚本骨架（锁卡守卫 + 可信采样 + 数据子集 + 逐档记录）。"""
+def render_runner(train_source: str | None = None) -> str:
+    """生成批量执行脚本骨架（锁卡守卫 + 可信采样 + 数据子集 + 逐档记录）。
+
+    `train_source` 只决定**训练子集读哪份 JSONL**（默认 `mini`），
+    不影响 `data.train_path`、挂载目的地与任何断言。
+    """
+    resolve_train_source(train_source)
     return f"""#!/bin/bash
 # GRASPO 54 档批量执行骨架 —— 由 tests/e2e/generate_matrix.py 生成（手改无效）。
 #
@@ -1531,6 +1668,19 @@ def render_runner() -> str:
 # 模型: 每档配置里的 `model.model_path` 都指向容器内 {MODELS_CONTAINER_ROOT}/<模型目录名>；
 #       runner 从 manifest 读出该路径并把它解析回宿主路径做存在性断言。
 # ⚠️ 数据口径告警: {DATA_INTEGRITY_CAVEAT}
+#
+# 数据**读取源**（与上面"挂载目的地"是两件事，别混读）:
+#   默认读 **mini 数据集**：`$ELAM_HOST/{ELAM_MINI_JSONL_RELATIVE}`
+#   （文件名带 `mini-short-mm-` 前缀、落独立目录 `mini-dataset/`，与源数据
+#    `data/train.jsonl` **物理隔离**——用户硬约束：靠命名与路径防误用，源数据只读，
+#   禁止混放同名文件）。它**只用于「矩阵跑通」**（压时间/压成本）：
+#   效果评测必须用**全量 test 集** {ELAM_TEST_JSONL}（{ELAM_TEST_COUNT} 行），
+#   mini 的跑通结果不得当效果结论。
+#   · 切回源数据（对照/回退）：`export {ELAM_MINI_JSONL_ENV}=$ELAM_HOST/data/train.jsonl`
+#   · ⚠ **不要改 `data.train_path` 来换数据源**：该字段只约束**生成位置**
+#     （<RUN_ROOT>/<Tier>/subsets/<Tier>.jsonl）。下面 1) 段的两条断言
+#     （`TRAIN_PATH == dirname(TRAIN_PATH)/<Tier>.jsonl` 与图像根反推
+#     `dirname(dirname(train_path))/images`）依赖它；改动它会直接打断整条链。
 #
 # 红线：只用 GPU0-5、每次最多 4 卡、GPU6/7 永不触碰。本脚本不自动执行矩阵。
 set -uo pipefail
@@ -1576,6 +1726,7 @@ ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 IMAGE="${{GRASPO_IMAGE:-graspo-msswift:4.5.3}}"
 RUN_ROOT="${{RUN_ROOT:-$ROOT_DIR/.local/matrix54-runs}}"
 ELAM_HOST="${{{ELAM_HOST_ROOT_ENV}:-}}"
+ELAM_MINI_PATH="${{{ELAM_MINI_JSONL_ENV}:-$ELAM_HOST/{ELAM_MINI_JSONL_RELATIVE}}}"
 MODELS_ROOT="${{{MODELS_HOST_ROOT_ENV}:-}}"
 MANIFEST="${{GRASPO_RUNNER_MANIFEST:-$ROOT_DIR/tests/e2e/matrix54_manifest.json}}"
 # ↑ 清单路径可被 `GRASPO_RUNNER_MANIFEST` 覆盖：给"逐长度递增批"这类需要**单档清单**
@@ -1815,11 +1966,15 @@ RUN_DIR="$RUN_ROOT/$TIER"
 mkdir -p "$RUN_DIR/subsets"
 
 # 3) 生成训练子集：只取门槛下限（SFT ≥100 / RL ≥20），不整集跑。
-if [ ! -f "$ELAM_HOST/data/train.jsonl" ]; then
-    echo "FATAL: ELAM V5 train.jsonl not found: $ELAM_HOST/data/train.jsonl" >&2
+# 3a) **读取源**（← 与 `data.train_path` 无关）：默认 mini 数据集（跑通用），
+#     可用 `{ELAM_MINI_JSONL_ENV}` 覆盖；切回源数据见文件头「数据」段注释。
+if [ ! -f "$ELAM_MINI_PATH" ]; then
+    echo "FATAL: 训练子集读取源不存在：$ELAM_MINI_PATH" >&2
+    echo "  默认取 mini 数据集 $ELAM_HOST/{ELAM_MINI_JSONL_RELATIVE}（只用于跑通）；" >&2
+    echo "  要改回源数据：export {ELAM_MINI_JSONL_ENV}=$ELAM_HOST/data/train.jsonl" >&2
     exit 3
 fi
-head -n "$SUBSET" "$ELAM_HOST/data/train.jsonl" > "$RUN_DIR/subsets/$TIER.jsonl"
+head -n "$SUBSET" "$ELAM_MINI_PATH" > "$RUN_DIR/subsets/$TIER.jsonl"
 LINES=$(wc -l < "$RUN_DIR/subsets/$TIER.jsonl")
 if [ "$LINES" -lt "$SUBSET" ]; then
     echo "FATAL: subset too small: $LINES < $SUBSET" >&2
@@ -2235,7 +2390,8 @@ def render_all_tiers(tiers: list[dict[str, Any]]) -> list[tuple[str, str]]:
     return rendered
 
 
-def generate(expected_total: int) -> dict[str, Any]:
+def generate(expected_total: int, train_source: str | None = None) -> dict[str, Any]:
+    resolved_train_source = resolve_train_source(train_source)
     tiers = build_ledger()
     assert_ledger(tiers, expected_total)
     expressibility = assert_expressibility(tiers)
@@ -2245,9 +2401,9 @@ def generate(expected_total: int) -> dict[str, Any]:
     rendered = render_all_tiers(tiers)
     assert_no_legacy_terms(rendered)
 
-    manifest = build_manifest(tiers)
+    manifest = build_manifest(tiers, resolved_train_source)
     manifest_text = json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
-    runner_text = render_runner()
+    runner_text = render_runner(resolved_train_source)
     assert_no_legacy_terms([("manifest", manifest_text), ("runner", runner_text)])
 
     if CONFIG_DIR.exists():
@@ -2293,9 +2449,25 @@ def print_summary(result: dict[str, Any]) -> None:
     print(f"  模式: {counts['by_mode']}")
     print(f"  可表达性: {result['expressibility']}")
     print(f"  显存可行性: {counts['by_feasibility_verdict']}")
+    # 【必须打印】读取源必须对操作者可见：默认行为要能"一句话说清"（否则换源是隐式的）。
+    print_data_source(manifest["data"])
     print(f"配置目录: {CONFIG_DIR}")
     print(f"运行清单: {MANIFEST_PATH}")
     print(f"执行骨架: {RUNNER_PATH}")
+
+
+def print_data_source(data: dict[str, Any], *, dry_run: bool = False) -> None:
+    """打出「本次生成的 runner 从哪份 JSONL 取训练子集」——默认值必须显式可见。"""
+    mini = data["mini_dataset"]
+    prefix = "[dry-run] " if dry_run else ""
+    print(
+        f"{prefix}训练子集读取源: {data['train_source']} "
+        f"（覆盖点 {data['train_source_env_var']}；"
+        f"默认 = <{ELAM_HOST_ROOT_ENV}>/{mini['relative_path_under_data_root']}，"
+        f"sha256={mini['jsonl_sha256']}，{mini['line_count']} 行）"
+    )
+    if data["train_source"] != TRAIN_SOURCE_MINI:
+        print(f"{prefix}⚠ 非默认来源：效果口径请确认（{MINI_PURPOSE_NOTE}）")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2311,7 +2483,17 @@ def main(argv: list[str] | None = None) -> int:
         default=EXPECTED_TOTAL,
         help="Expected tier count asserted by --dry-run (default: 54).",
     )
+    parser.add_argument(
+        "--train-source",
+        choices=TRAIN_SOURCES,
+        default=None,
+        help=(
+            "训练子集的读取源：mini（默认；矩阵跑通用）| full（源数据 <ELAM_HOST>/data/train.jsonl，"
+            "对照与回退用）。不影响任何档位配置与 data.train_path。"
+        ),
+    )
     args = parser.parse_args(argv)
+    train_source = resolve_train_source(args.train_source)
 
     if args.dry_run:
         tiers = build_ledger()
@@ -2329,6 +2511,8 @@ def main(argv: list[str] | None = None) -> int:
             f"dry-run OK: {len(tiers)} tiers, expressibility={expressibility}, "
             f"feasibility_verdict={verdict_counts}"
         )
+        # dry-run 也打读取源与摘要：默认行为必须可见（真生成前先看清）。
+        print_data_source(build_manifest(tiers, train_source)["data"], dry_run=True)
         print(
             "说明：`infeasible` 档已被拒绝生成；`unmeasured` 档**允许生成但不声称可行**"
             "（未测算的量只能靠上机量出来，见上方待测量清单）；`blocked` 档不产出配置；"
@@ -2336,7 +2520,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
-    result = generate(args.assert_count)
+    result = generate(args.assert_count, train_source)
     print_summary(result)
     return 0
 
