@@ -14,6 +14,7 @@
    读不到**绝不**记通过，也**绝不**记失败。
 """
 
+import importlib.util
 import json
 import os
 import struct
@@ -21,7 +22,28 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 _COLLECTOR = Path(__file__).resolve().parents[2] / "scripts" / "collect_results.py"
+_RESULT_JUDGE = Path(__file__).resolve().parents[2] / "src" / "graspo" / "core" / "result_judge.py"
+_JUDGE_MODULE_NAME = "_ae1_result_judge"
+
+
+def _load_judge():
+    """按文件路径加载判据模块（**不能**经 ``graspo/__init__``：那条链会拉 torch）。
+
+    与 ``tests/core/test_result_judge.py`` 里的加载方式同源（§1.4：同一份判定器，
+    测试不得各读一份影子实现）。
+    """
+    existing = sys.modules.get(_JUDGE_MODULE_NAME)
+    if existing is not None:
+        return existing
+    spec = importlib.util.spec_from_file_location(_JUDGE_MODULE_NAME, _RESULT_JUDGE)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[_JUDGE_MODULE_NAME] = module
+    spec.loader.exec_module(module)
+    return module
 
 _MANIFEST = {
     "schema_version": 1,
@@ -131,7 +153,11 @@ def _sitecustomize_env(tmp_path: Path, source: str) -> dict[str, str]:
 
 
 def _run_collector(
-    tmp_path: Path, *extra: str, manifest: dict | None = None, env: dict[str, str] | None = None
+    tmp_path: Path,
+    *extra: str,
+    manifest: dict | None = None,
+    env: dict[str, str] | None = None,
+    expected_rc: int = 0,
 ) -> dict:
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(json.dumps(manifest or _MANIFEST), encoding="utf-8")
@@ -157,7 +183,7 @@ def _run_collector(
         check=False,
         env=env,
     )
-    assert completed.returncode == 0, completed.stderr
+    assert completed.returncode == expected_rc, completed.stderr
     records = [
         json.loads(line)
         for line in (out / "ledger.jsonl").read_text(encoding="utf-8").splitlines()
@@ -194,13 +220,29 @@ def test_collector_reports_untested_when_run_dir_missing(tmp_path):
 
 
 def test_collector_pairs_rerun_for_a4(tmp_path):
-    _make_run(tmp_path / "runs")
-    _make_run(tmp_path / "reruns")
+    """双跑 + **两棵不同目录树** ⇒ A4 具备可判性（即使 A2/A3 因缺权重证据未通过）。
 
-    record = _run_collector(tmp_path, "--rerun-root", str(tmp_path / "reruns"))
+    ★ 2026-09-21 更新（A4 独立通道落地后）：这个合成 fixture 的**两跑权重文件逐位
+    相同**（都写同一份 ``lora_b``）**且**末步 loss 也逐位相同 ⇒ 这正是新判据里
+    "末步 loss 是无鉴别力的死通道"的**冲突形态**，按锁三判「不可判定」而不是通过。
+    这不是回归：**真实的**两次训练在 GPU 内核残余下权重不可能逐位相同（AD1 §6.2 实测
+    两跑 ckpt sha 不同）。要看到 A4 ✅，须让两跑权重指纹不同——见
+    ``test_collector_msswift_layout_makes_a1_to_a6_decidable``。
+    """
+    # 用 ms-swift 布局（权重文件是可定位的 checkpoint-6/adapter_model.safetensors），
+    # 两跑写**逐位相同**的 lora_b ⇒ 独立通道有证据，且证据是"两跑权重相同"。
+    _write_msswift_run(tmp_path / "runs")
+    _write_msswift_run(tmp_path / "reruns")
 
-    # 双跑的步数与 loss 序列一致 → A4 通过（即使 A2/A3 因缺权重证据未通过）。
-    assert record["criteria"]["A4"] is True
+    record = _run_collector(
+        tmp_path, "--rerun-root", str(tmp_path / "reruns"), manifest=_MSSWIFT_MANIFEST
+    )
+
+    assert record["criteria"]["A4"] is False
+    assert record["failure_class"] == "取证不足（不可判定）"
+    detail = record["criteria_detail"]["A4"]
+    assert "双通道冲突" in detail
+    assert "不可判定" in detail
 
 
 # ── A6 首末 loss 走向：记录项必须进台账（2026-09-20 裁定）────────────────────
@@ -468,8 +510,11 @@ def test_collector_msswift_layout_makes_a1_to_a6_decidable(tmp_path):
     这条用例在旧 collector 下必须失败（旧实现读不到产物根：无 config.yaml、
     无 rank_metrics、checkpoint 叫 checkpoint-6 不叫 final ⇒ A2/A3/A5/A6 fail-closed）。
     """
-    _write_msswift_run(tmp_path / "runs")
-    _write_msswift_run(tmp_path / "reruns")
+    # ★ 两跑写**不同**的 lora_b 字节 ⇒ 末步权重指纹不同。这是"真双跑"的最小真实形状：
+    # 真实训练在 §6 排除的 GPU 内核残余下权重必然分叉（AD1 §6.2 实测两跑 ckpt sha 不同）。
+    # 若两跑权重逐位相同（合成 fixture 的默认行为）⇒ 新判据判「双通道冲突/不可判定」。
+    _write_msswift_run(tmp_path / "runs", lora_b=struct.pack("<4f", 0.1, -0.2, 0.3, 0.0))
+    _write_msswift_run(tmp_path / "reruns", lora_b=struct.pack("<4f", 0.1, -0.2, 0.3, 1e-6))
 
     record = _run_collector(
         tmp_path,
@@ -477,6 +522,12 @@ def test_collector_msswift_layout_makes_a1_to_a6_decidable(tmp_path):
         str(tmp_path / "reruns"),
         manifest=_MSSWIFT_MANIFEST,
     )
+
+    # A4 独立通道（五要素第 5 条）：两跑指纹必须落进台账（§1.4 单一真相源，键名在判据层）。
+    assert record["final_ckpt_sha256_first"] != record["final_ckpt_sha256_second"]
+    assert record["final_ckpt_sha256_agree"] is False
+    # 自比防呆两列：台账必须自证"两跑来自两棵不同目录树"。
+    assert record["run_root"] != record["rerun_root"]
 
     assert record["criteria"] == {
         "A1": True,
@@ -583,9 +634,22 @@ def test_collector_native_layout_still_works_after_msswift_support(tmp_path):
 _A4_BASE_LOSSES = (1.3, 0.9, 0.6, 0.4, 0.3, 0.2)
 
 
-def _a4_pair(tmp_path: Path, second_losses: tuple[float, ...]) -> dict:
+def _a4_pair(tmp_path: Path, second_losses: tuple[float, ...], *, same_ckpt: bool = False) -> dict:
+    """造一对 ms-swift 双跑。
+
+    ``same_ckpt=True`` ⇒ 两跑写**逐位相同**的权重文件（用于专门测"双通道冲突"）；
+    默认两跑权重指纹不同，模拟真实双跑（GPU 内核残余下权重必然分叉，AD1 §6.2）。
+    """
     _write_msswift_run(tmp_path / "runs", losses=_A4_BASE_LOSSES)
-    _write_msswift_run(tmp_path / "reruns", losses=second_losses)
+    _write_msswift_run(
+        tmp_path / "reruns",
+        losses=second_losses,
+        lora_b=(
+            struct.pack("<4f", 0.1, -0.2, 0.3, 1e-6)
+            if not same_ckpt
+            else None
+        ),
+    )
     return _run_collector(
         tmp_path, "--rerun-root", str(tmp_path / "reruns"), manifest=_MSSWIFT_MANIFEST
     )
@@ -907,3 +971,122 @@ def test_collector_native_stale_torch_probe_is_not_trusted(tmp_path):
     assert "sha256 不符" in record["criteria_detail"]["A3"], record["criteria_detail"]["A3"]
     markdown = (tmp_path / "ledger" / "ledger.md").read_text(encoding="utf-8")
     assert markdown
+
+
+# ── A4 自比结构性防呆 + 分档容差端到端守卫（2026-09-21 裁定）──────────────────
+#
+# AD1 §2.3 登记的边界校验缺口：collector 可以把同一棵目录树同时当 --run-root 与
+# --rerun-root，此时判据层没有任何断言 ⇒ 台账里会出一堆"差 0"的假 A4 ✅。
+# 下面三条锁死这个缺口被补上后的行为（边界校验 = 拒绝，不是退路，§2.3/§3.4）。
+
+
+def test_collector_rejects_self_comparison_same_directory_for_both_roots(tmp_path):
+    """★自比断言**能真失败**：同目录同传 ⇒ 显式报错退出，**不得**静默跑出差 0 的 A4。
+
+    三种"同一实体目录"的伪装都必须被 `resolve()` 识破：
+    同字面量、相对路径（`./runs`）、软链。
+    """
+    _write_msswift_run(tmp_path / "runs", lora_b=struct.pack("<4f", 0.1, -0.2, 0.3, 0.0))
+    same = str(tmp_path / "runs")
+
+    for alias in (same, str(tmp_path / "runs" / "."), str(Path(same).resolve())):
+        manifest_path = tmp_path / "m.json"
+        manifest_path.write_text(json.dumps(_MSSWIFT_MANIFEST), encoding="utf-8")
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(_COLLECTOR),
+                "--manifest", str(manifest_path),
+                "--run-root", same,
+                "--rerun-root", alias,
+                "--out", str(tmp_path / "ledger_self"),
+                "--context-length", "8192",
+                "--date", "2026-09-21",
+            ],
+            capture_output=True, text=True, check=False,
+        )
+        assert completed.returncode == 2, completed.stdout
+        assert "自比" in completed.stderr
+        assert not (tmp_path / "ledger_self" / "ledger.jsonl").exists(), (
+            "自比必须在写台账**之前**被拒绝（否则会留下差 0 的假 A4 台账）"
+        )
+
+    # 软链别名同样必须识破。
+    link = tmp_path / "runs_link"
+    link.symlink_to(tmp_path / "runs")
+    failed = subprocess.run(
+        [
+            sys.executable,
+            str(_COLLECTOR),
+            "--manifest", str(tmp_path / "m.json"),
+            "--run-root", same,
+            "--rerun-root", str(link),
+            "--out", str(tmp_path / "ledger_link"),
+            "--context-length", "8192",
+            "--date", "2026-09-21",
+        ],
+        capture_output=True, text=True, check=False,
+    )
+    assert failed.returncode == 2, failed.stdout
+    assert "自比" in failed.stderr
+
+
+def test_collector_ledger_records_both_roots_so_double_run_is_self_evident(tmp_path):
+    """防呆两列：台账必须落 `run_root` / `rerun_root`，且两者解析后不同。"""
+    _write_msswift_run(tmp_path / "runs", lora_b=struct.pack("<4f", 0.1, -0.2, 0.3, 0.0))
+    _write_msswift_run(tmp_path / "reruns", lora_b=struct.pack("<4f", 0.1, -0.2, 0.3, 1e-6))
+
+    record = _run_collector(
+        tmp_path, "--rerun-root", str(tmp_path / "reruns"), manifest=_MSSWIFT_MANIFEST
+    )
+
+    assert Path(record["run_root"]).resolve() != Path(record["rerun_root"]).resolve()
+    assert Path(record["run_root"]).resolve() == (tmp_path / "runs").resolve()
+
+
+def test_collector_a4_rejects_the_inflated_tolerance_variant_end_to_end(tmp_path):
+    """★ADR 负向对照（端到端）：一个"容差被放大到 0.34"的变体会被现有测试拦住。
+
+    做法：直接对判据层的**同一把尺子**（`validate_tier_tolerance`）喂 0.34 ——
+    它就是 AD1 锁二点名的危险值（能放过真 bug 0.0935）。端到端层面再加一条：
+    真 bug 量级的分歧（T032 的 0.0935）在**任何**档族下都必须判否。
+    """
+    judge = _load_judge()
+
+    with pytest.raises(ValueError):
+        judge.validate_tier_tolerance(0.34, min_true_bug_signature=judge.A4_MIN_TRUE_BUG_SIGNATURE)
+
+    # T032 实测对（−0.0217 vs +0.0718，差 0.0935）走完整 collector 链路必须判否。
+    _write_msswift_run(tmp_path / "runs", losses=(1.0, 0.8, -0.021734893321990967))
+    _write_msswift_run(
+        tmp_path / "reruns",
+        losses=(1.0, 0.8, 0.07180161476135254),
+        lora_b=struct.pack("<4f", 0.1, -0.2, 0.3, 1e-6),
+    )
+    record = _run_collector(
+        tmp_path, "--rerun-root", str(tmp_path / "reruns"), manifest=_MSSWIFT_MANIFEST
+    )
+    assert record["criteria"]["A4"] is False, record["criteria_detail"]["A4"]
+
+
+def test_collector_requires_dual_channel_for_identical_losses_without_fingerprints(tmp_path):
+    """★矩阵采集口径（锁三，子检查④形态②）：两跑 loss 逐位相同 + 独立通道**无证据**
+    ⇒ 判「不可判定」，**不得**静默退化成单通道 ✅（AD1 §④ 的 7 条退化通过就靠这条拦住）。
+
+    造一个 native 布局（`_make_run` **不产**可定位的 checkpoint ⇒ 指纹取不到），
+    双跑 loss 序列逐位相同。
+    """
+    _make_run(tmp_path / "runs")
+    _make_run(tmp_path / "reruns")
+
+    record = _run_collector(tmp_path, "--rerun-root", str(tmp_path / "reruns"))
+
+    assert record["final_ckpt_sha256_first"] is None
+    assert record["final_ckpt_sha256_second"] is None
+    assert record["final_ckpt_sha256_agree"] is None, "取不到 ≠ 不一致（三态）"
+    assert record["a4_require_dual_channel"] is True
+    assert record["criteria"]["A4"] is False
+    assert record["failure_class"] == "取证不足（不可判定）"
+    detail = record["criteria_detail"]["A4"]
+    assert "双通道未一致" in detail
+    assert "不可判定" in detail

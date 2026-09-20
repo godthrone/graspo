@@ -459,6 +459,23 @@ ALGORITHM_TO_TRAIN_METHOD = {"CPT": "cpt", "SFT": "sft", "GRASPO": "graspo", "OP
 #: schema 默认值一改，测试立刻判红。
 ROLLOUT_GROUP_SIZE = 8
 
+#: ★ native GRASPO 侧的 **rollout 队列批大小** ``rollout_queue_batch_size``。
+#: **单一真相源 = ``src/graspo/core/schema.py`` 的同名默认值**（矩阵档位配置**不覆盖**
+#: 它 ⇒ 运行时用的就是这个默认值）。与 :data:`ROLLOUT_GROUP_SIZE` 同理，生成器必须
+#: 保持 stdlib-only，只能写常量；防漂移由 ``tests/e2e/test_generate_matrix.py`` 的
+#: **源码文本级 parity 测试**兜住（schema 默认值一改即判红）。
+NATIVE_ROLLOUT_QUEUE_BATCH_SIZE = 8
+
+#: ★ **replay buffer 阈值**（native GRASPO 每个 optimizer step 的触发条件）。
+#: **不是新造的口径**：它与 ``src/graspo/core/schema.py`` 的
+#: ``replay_buffer_optimize_threshold`` 属性**同式同值**——该属性返回
+#: ``rollout_queue_batch_size × rollout_group_size``（``schema.py:389-390``），
+#: 消费点是 ``flow/trainer/optimize.py`` 的 ``len(replay_buffer) >= threshold``。
+#: 生成器不导入 schema（见上）⇒ 就地按同一算式展开；parity 由源码文本级测试兜住。
+NATIVE_REPLAY_BUFFER_OPTIMIZE_THRESHOLD = (
+    NATIVE_ROLLOUT_QUEUE_BATCH_SIZE * ROLLOUT_GROUP_SIZE
+)
+
 #: ★ CPT / OPD 的**通道**已落地（`WP-X3`，2026-09-19）：`train_method` 枚举含 `cpt`/`opd`，
 #: 配置层对这两个算法**接受**、对 `cpt|opd + native` **fail-closed 拒绝**；路由表
 #: （`core/discovery._REGISTRY_BY_TRAIN_METHOD`）把它们分别落到 `graspo.cpt_backends` /
@@ -802,6 +819,204 @@ def _repeats_dataset_by_rollout_group(tier: dict[str, Any]) -> bool:
     )
 
 
+def _is_native_graspo(tier: dict[str, Any]) -> bool:
+    """该档是否走 **native 训练器的 GRASPO** 路径。
+
+    判据含 **backend**（不只是算法），依据与 :func:`_repeats_dataset_by_rollout_group`
+    同源：``flow/trainer/trainer.py`` 是 native 侧唯一的 GRASPO 训练器，它**不重复数据集**，
+    而是按 ``rollout_queue_batch_size × rollout_group_size`` 归组、**阈值触发才出一步**
+    （见 :func:`native_graspo_steps_per_epoch`）。ms-swift 侧走的是另一条路径
+    （``RepeatSampler`` 重复数据集），**不得**共用本判据。
+    """
+    return (
+        str(tier["backend"]) == "native"
+        and ALGORITHM_TO_TRAIN_METHOD[str(tier["algorithm"])] == "graspo"
+    )
+
+
+# ── 步数口径：**两个量，各自只有一处真相源**（AF1 §⑥ 方案 S1，2026-09-21）──
+#
+# 为什么必须分开：这两个量服务**两件不同的事**，混成一个字段就必然有一件事是错的。
+#
+#   · 「计划步数」:func:`expected_optimizer_steps` —— 给 **ckpt 保留策略**用
+#     （``training.save_steps`` ⇒ 每档只落一份 ckpt）。它回答"我打算隔多少步存一次",
+#     **不回答**"这一档最多能跑出几步"。
+#   · 「可产出步数上限」:func:`expected_optimizer_steps_reachable` —— 给**门槛判定**
+#     与**披露**用。它必须按该档**训练器的真实步进语义**算，否则会把"结构上跑不出
+#     这么多步"误报成"这档训练失败"。
+#
+# 实测依据（AF1 诊断，`task-af1-step-gate/report.md`）：9 档 ``GRASPO × native``
+# 用旧的朴素均分（``subset_size ÷ cards``）声明步数，而 native 的真实步进由
+# **replay 阈值（``queue×group``）+ 每 epoch 一次的 force flush** 决定 ⇒
+# ``T028/T029/T030`` 声明 20/10/5，实际上限只有 3/2/1/epoch。真机锚点：``T030``
+# 自然跑完 ``exit_code=0``、``optimizer_steps=1``、``epoch_summary`` 为
+# ``samples_seen=5 / completions=40 / optimized_steps=0``（40 < 64 ⇒ 阈值 0 次触发，
+# 唯一一步来自 epoch 末 force flush）。
+# 其余 45 档两条口径**逐档一致**（AF1 已核 + 本包机核，见工位报告 §④）。
+
+
+#: 矩阵档位的 ``training.max_epochs``（**唯一真相源**；:func:`build_config` 与
+#: :func:`expected_optimizer_steps_reachable` 都读它，口径不可能分叉）。
+#: 为什么是 1：矩阵跑通阶段按"每档只跑一个 epoch"定预算（AF1 §④：本问题在
+#: ``max_epochs=1`` 下才有那 9 档的不自洽；AF1 方案 S5 若要改 epoch 数须用户拍板）。
+MATRIX_MAX_EPOCHS = 1
+
+
+def native_graspo_steps_per_epoch(tier: dict[str, Any]) -> int:
+    """``GRASPO × native`` 档**每 epoch 可产出的 optimizer 步数上限**。
+
+    公式（AF1 §② 推导，逐条都有代码依据）::
+
+        每 rank prompt 数 P = floor(subset_size / cards)        # DP 分片
+        阈值触发步数        = floor(P / rollout_queue_batch_size)
+        epoch 末 force flush = +1                               # 每 epoch 恰好一次
+        ⇒ 每 epoch 上限 = floor(P / Q) + 1
+
+    代码依据（**函数名/字段名为锚，行号会漂移**）：
+
+      · DP 分片：``flow/trainer/trainer.py`` 的
+        ``epoch_samples = epoch_samples[adapter.dp_rank :: adapter.dp_size]``；
+      · 每条 prompt 追加 ``G`` 条 experience、且非 trainable 的 prompt **不进** buffer：
+        ``flow/trainer/rollout.py`` 的 ``_append_experiences`` / 三条 early-return；
+      · 阈值 = ``rollout_queue_batch_size × rollout_group_size``：
+        ``schema.py`` 的 ``replay_buffer_optimize_threshold``，消费在
+        ``flow/trainer/optimize.py`` 的 ``len(replay_buffer) >= threshold``
+        ⇒ 触发 ``floor(P×G / (Q×G)) = floor(P/Q)`` 次；
+      · epoch 末无条件 force：``flow/trainer/trainer.py`` 的
+        ``self._maybe_optimize(epoch=..., force=True)``；``optimize.py`` 的
+        ``local_wants_train = (force and len(replay_buffer) > 0) or ...``
+        ⇒ **只要 buffer 非空就恰好 +1 步**（与 buffer 里剩多少条无关）。
+
+    ★ **这是上限，不是保证**：若某些 prompt 被判 ``retry``/``invalid``/``perfect_skip``
+    （不进 buffer），实际步数可能**更低**（AF1 §⑧-2）。门槛判定必须按"上限"比，
+    否则会把"上限之下"的正常 run 判成异常。
+    """
+    cards = max(1, int(tier["cards"]))
+    prompts_per_rank = subset_size(str(tier["algorithm"])) // cards
+    return prompts_per_rank // NATIVE_ROLLOUT_QUEUE_BATCH_SIZE + 1
+
+
+def expected_optimizer_steps_per_epoch(tier: dict[str, Any]) -> int:
+    """该档**每 epoch** 可产出的 optimizer 步数上限（三条路径**显式分派**，不搞一刀切）。
+
+    ====================  =========================================  ==============
+    路径                  每 epoch 上限                               真机校准
+    ====================  =========================================  ==============
+    SFT / CPT / OPD      ``floor(subset_size / cards)``              T010/11/12
+    GRASPO × ms-swift    ``floor(subset_size × G / cards)``          T031/32/33
+    GRASPO × native      ``native_graspo_steps_per_epoch``（阈值+flush）T028/T030
+    ====================  =========================================  ==============
+
+    前两条与 :func:`expected_optimizer_steps` **同式同值**（下面的实现**真的调用**
+    同一段计算，不是抄一遍公式 ⇒ §1.4 单一真相源）；只有 native GRASPO 走第三条
+    专用公式。``expected_optimizer_steps`` 对 native GRASPO 的取值由本函数**反推**
+    （见该函数 docstring），因此两处**不可能各自漂移**。
+    """
+    if _is_native_graspo(tier):
+        return max(1, native_graspo_steps_per_epoch(tier))
+    return expected_optimizer_steps(tier)
+
+
+def expected_optimizer_steps_reachable(tier: dict[str, Any]) -> int:
+    """该档**整个 run 可产出的 optimizer 步数上限** = 每 epoch 上限 × ``max_epochs``。
+
+    ``max_epochs`` 由 :data:`MATRIX_MAX_EPOCHS` **唯一决定**（所有档统一，见
+    :func:`build_config` 的 ``training.max_epochs``）——**这里不另造第二个 epoch 真相源**。
+
+    这个量是**门槛判定**的输入（``acceptance.formal_gate.expected_optimizer_steps_reachable``
+    ⇒ ``result_judge.RunEvidence.expected_optimizer_steps_reachable``）：
+    当 ``reachable < min_optimizer_steps`` 时，"步数少于门槛"这件事**结构上必然发生**，
+    判据必须把它与"真的没训练"分开（见 ``result_judge`` 的
+    :data:`~graspo.core.result_judge.STEP_GATE_NOT_APPLICABLE_MARKER`）。
+    """
+    return expected_optimizer_steps_per_epoch(tier) * MATRIX_MAX_EPOCHS
+
+
+# ── 生成期对照（**fail-closed**，§2.3 边界校验即防呆）──────────────────────
+
+
+def step_gate_applicability(
+    tier: dict[str, Any], *, min_optimizer_steps: int
+) -> tuple[str, str]:
+    """该档的 **step 门槛是否适用** ⇒ ``(标记, 理由)``，写进 manifest 的
+    ``acceptance.formal_gate.step_gate_applicability``。
+
+    三值（**显式**，§2.2 显式即防呆；不用布尔是因为"未知"与"不适用"必须可区分）：
+
+    ==============================  ========================================
+    标记                             含义
+    ==============================  ========================================
+    ``applicable``                   ``reachable >= min_optimizer_steps``
+                                     ⇒ 门槛**照常判**（现有判据一字不改）
+    ``not_applicable_structural``    ``reachable < min_optimizer_steps`` 且
+                                     ``reachable >= 1`` ⇒ 该档**无论跑多久都达不到
+                                     门槛**，判据返回"⚠ 口径不可测"（**不是** ❌ 失败，
+                                     也**不是** ✅ 通过）
+    ``review_required``              ``reachable < 1``：**生成器不会产出这种档**
+                                     （见 :func:`assert_step_gate_is_satisfiable`），
+                                     出现即说明生成期防线被绕过 ⇒ 判据 fail-closed
+    ==============================  ========================================
+
+    ★ 这个字段**只标记事实，不放宽任何要求**：门槛值 ``min_optimizer_steps`` 一个都不动，
+    ``reachable >= 门槛`` 的档仍然按原判据一字不改地判。
+    """
+    reachable = expected_optimizer_steps_reachable(tier)
+    if reachable < 1:
+        return STEP_GATE_REVIEW_REQUIRED, f"可产出步数上限={reachable} < 1（非法，生成期防线被绕过）"
+    if reachable < min_optimizer_steps:
+        note = (
+            f"该档可产出步数上限={reachable} < 门槛 {min_optimizer_steps}"
+            f"（{'结构上不可能达标' if MATRIX_MAX_EPOCHS == 1 else '在 max_epochs=' + str(MATRIX_MAX_EPOCHS) + ' 下达不到'}）"
+            "⇒ 步数门槛对本题不适用，判「⚠ 口径不可测」而不是「❌ 失败」"
+        )
+        return STEP_GATE_NOT_APPLICABLE_STRUCTURAL, note
+    return STEP_GATE_APPLICABLE, (
+        f"可产出步数上限={reachable} ≥ 门槛 {min_optimizer_steps} ⇒ 门槛照常判"
+        + (
+            ""
+            if reachable >= min_optimizer_steps * 2
+            else f"（余量不足：上限 {reachable} 仅比门槛高 {reachable - min_optimizer_steps} 步）"
+        )
+    )
+
+
+#: step 门槛适用性的三值（唯一真相源；判定侧按**同一字符串**识别，见
+#: ``result_judge.STEP_GATE_NOT_APPLICABLE_MARKER``）。
+STEP_GATE_APPLICABLE = "applicable"
+STEP_GATE_NOT_APPLICABLE_STRUCTURAL = "not_applicable_structural"
+STEP_GATE_REVIEW_REQUIRED = "review_required"
+
+#: **正式记录门槛的 optimizer step 下限**（``docs/capability-matrix.md`` §6「正式记录门槛」：
+#: 每档 ≥1 完整 epoch 且 ≥5 optimizer step）。
+#: ★ **AF1/指挥官裁定：这个值一个都不动**（2026-09-21）。它不是"按档折算"的软门槛——
+#: 它要拦的是"压根没训练"这个实质问题；结构上跑不到它的档走**显式的第三态**
+#: （``step_gate_applicability == not_applicable_structural``），**不是**把门槛降下来。
+#: 判定侧的缺省值真相源是 ``result_judge.MIN_OPTIMIZER_STEPS``（同值 5）；本常量只保证
+#: 生成器写进 manifest 的值与"门槛行"一致（防"文档说 5、清单写 1"这类分裂）。
+FORMAL_GATE_MIN_OPTIMIZER_STEPS = 5
+
+
+def assert_step_gate_is_recorded(tier: dict[str, Any], *, min_optimizer_steps: int) -> None:
+    """**生成期 fail-closed 断言**（§2.3）：结构上不可能达标的档**必须**被显式标记。
+
+    它挡的是这个具体事故：一份"静默"的 manifest 把 ``T030``（4 卡 native GRASPO，
+    上限 1 步）与 ``T010``（SFT 1 卡，上限 100 步）在门槛面前**写成同一回事** ⇒
+    下一批跑完，T030 被 A2 判 ❌，读者读成"4 卡 native GRASPO 能力不行"。
+    （AF1 诊断的正是这个"即将发生的误判"。）
+
+    为什么要有它而不是"靠人记得看报告"：防呆设计的原则是**让人根本没法犯错**——
+    生成器如果产出一份"上限 < 门槛、却标 applicable"的 manifest，必须**当场炸**，
+    而不是等一批 GPU 跑完再被台账误读（§2.3 边界校验即防呆）。
+    """
+    marker, note = step_gate_applicability(tier, min_optimizer_steps=min_optimizer_steps)
+    if marker == STEP_GATE_REVIEW_REQUIRED:
+        raise ValueError(
+            f"档 {tier['tier_id']}：可产出步数上限 "
+            f"{expected_optimizer_steps_reachable(tier)} < 1 —— 生成器不得产出这种档"
+            f"（{note}）"
+        )
+
+
 # ── ckpt 保留策略（2026-09-19，用户已授权；单一真相源）────────────────────────
 
 
@@ -843,7 +1058,27 @@ def expected_optimizer_steps(tier: dict[str, Any]) -> int:
 
     **取向下取整**（不是向上）：它保证 ``save_steps ≤ 实际步数`` ⇒ **至少落一份 ckpt**。
     若取向上而实际步数不足（数据末端被 drop 的情形），就会一份都不落 ⇒ A3 无证据可判。
+
+    ★ **2026-09-21：本函数不再"直接算 native GRASPO"**（AF1 §⑥ 方案 S1）。
+    本函数只回答"**计划**隔多少步存一次 ckpt"，**不回答**"这一档最多能跑几步"——
+    后者的真相源是 :func:`expected_optimizer_steps_reachable`。两条路径的**区别只在
+    native GRASPO**（其余 45 档**逐档同值**，本包机核证明见工位报告 §④）：
+
+    · 非 native GRASPO：``expected_optimizer_steps_per_epoch`` 直接取
+      ``floor(subset_size(×G) / cards)``，本函数的旧算式**逐字保留**；
+    · native GRASPO：真实每 epoch 步数由 **replay 阈值 + epoch 末 force flush** 决定
+      ⇒ 每 epoch 上限 ``= floor(floor(subset/cards)/Q) + 1``（AF1 推导，真机锚点 ``T030``
+      = 1 步）。该上限 ``M`` 是训练器的调度常数，**与卡数无关** ⇒ 反推回"计划总步数"的
+      唯一自洽值是 ``M × max_epochs``（即把 `save_steps` 定在**最后一步**这个原设计意图上，
+      而不是旧算式的朴素均分——旧值**偏大**：`T028` 声明 20 而真实每 epoch 只有 3 步）
+      ⇒ **ckpt 保留策略因此变正确**：旧值让 `save_steps` 永不触发、只落 `final/`；
+      新值等于真实总步数 ⇒ 恰好最后一步落一份（与 `checkpoint_save_steps` 的设计意图一致）。
+
+    ⇒ **"计划步数"的语义不变**（= 给 `save_steps` 用的总步数、向下取整、每档只落一份），
+    变的只是 native GRASPO 那 9 档的**取值来源**：从"朴素均分"改成"按训练器真实调度"。
     """
+    if _is_native_graspo(tier):
+        return expected_optimizer_steps_reachable(tier)
     cards = max(1, int(tier["cards"]))
     samples = subset_size(str(tier["algorithm"]))
     if _repeats_dataset_by_rollout_group(tier):
@@ -1151,7 +1386,9 @@ def build_config(tier: dict[str, Any]) -> dict[str, Any]:
             "run_name": tier_id,
             "overwrite_output_dir": True,
             "seed": 42,
-            "max_epochs": 1,
+            # ★ 唯一真相源 = `MATRIX_MAX_EPOCHS`：`expected_optimizer_steps_reachable`
+            #   按同一个常量算"可产出步数上限" ⇒ 两处口径不可能分叉（§1.4）。
+            "max_epochs": MATRIX_MAX_EPOCHS,
             "learning_rate": _learning_rate(algorithm),
             "gradient_accumulation_micro_batches": 1,
             # epoch 末 checkpoint 关掉：全参档**不受** `save_steps` 控制的落盘（native trainer
@@ -1491,6 +1728,12 @@ def build_manifest(
         # 期望总优化步数 = `training.save_steps`（ckpt 保留策略，见 runtime.checkpoint_retention）
         entry["expected_optimizer_steps"] = expected_optimizer_steps(tier)
         entry["checkpoint_save_steps"] = checkpoint_save_steps(tier)
+        # ★ 步数口径的**第二个量**（AF1 §⑥ 方案 S1；`expected_optimizer_steps` 保留原义
+        #   给 ckpt `save_steps` 用，**不覆盖**）：每 epoch 上限 + 整个 run 的上限。
+        #   公式只在 `native_graspo_steps_per_epoch` / `expected_optimizer_steps_per_epoch`
+        #   一处定义，这里只是把结果落盘（§1.4 单一真相源）。
+        entry["expected_optimizer_steps_per_epoch"] = expected_optimizer_steps_per_epoch(tier)
+        entry["expected_optimizer_steps_reachable"] = expected_optimizer_steps_reachable(tier)
         feasible, estimate = feasibility_for(tier)
         verdict, _ = feasibility_verdict(tier)
         entry["feasibility"] = {
@@ -1512,8 +1755,24 @@ def build_manifest(
         entry["acceptance"] = {
             "formal_gate": {
                 "min_epochs": 1,
-                "min_optimizer_steps": 5,
+                "min_optimizer_steps": FORMAL_GATE_MIN_OPTIMIZER_STEPS,
                 "min_train_samples": 20 if tier["algorithm"] in {"GRASPO", "OPD"} else 100,
+                # ★ **生成期显式标记**（AF1 §⑥ 方案 S4，§2.2 显式即防呆）：该档的 step
+                #   门槛**是否适用**。让"结构上不可能达标"的档**无法静默进正式台账**——
+                #   否则下一批跑完，T030 会被 A2 判 ❌，而读者会读成"能力不行"。
+                #   ★ 它**不放宽任何要求**：门槛值 min_optimizer_steps 一个字都没动；
+                #     标记为 applicable 的档照原判据判（见 step_gate_applicability）。
+                "step_gate_applicability": step_gate_applicability(
+                    tier, min_optimizer_steps=FORMAL_GATE_MIN_OPTIMIZER_STEPS
+                )[0],
+                "step_gate_basis": (
+                    f"expected_optimizer_steps_reachable={expected_optimizer_steps_reachable(tier)}"
+                    f"；per_epoch={expected_optimizer_steps_per_epoch(tier)}"
+                    f"；max_epochs={MATRIX_MAX_EPOCHS}；"
+                    + step_gate_applicability(
+                        tier, min_optimizer_steps=FORMAL_GATE_MIN_OPTIMIZER_STEPS
+                    )[1]
+                ),
             },
             "criteria": ["A1", "A2", "A3", "A4", "A5", "A6"],
         }
@@ -1731,8 +1990,97 @@ def build_manifest(
     # 覆盖记录**只在给定覆盖时出现**：不设覆盖 ⇒ 本节缺失 ⇒ 清单与旧版逐字节相同。
     if gpu_assignment is not None:
         manifest["gpu_assignment"] = gpu_assignment
+    # ★ **生成期 fail-closed + 显式登记**（§2.3 边界校验即防呆 / §2.2 显式即防呆）：
+    #   ① 逐档复核"写进清单的标记"与"公式重算的标记"一致（防手改/防漂移）；
+    #   ② 把"结构上达不到门槛"的档**集中列出来**（含公式代入值）⇒ 读清单的人
+    #      不可能漏看"这是上限所致，不是能力不足"。
+    #   ★ **必须排在 `tiers` 之前**：`build_manifest` 的返回字面量里 `tiers` 是最后一个键，
+    #     而 `tests/e2e/test_generate_matrix.py::test_default_manifest_has_no_gpu_assignment_section`
+    #     把"`tiers` 是最后一个键"当成"没有顺手加尾部字段"的机器判据（防呆装置，不改）。
+    manifest["step_gate_audit"] = _step_gate_audit(entries)
     manifest["tiers"] = entries
     return manifest
+
+
+def _step_gate_audit(entries: list[dict[str, Any]]) -> dict[str, Any]:
+    """逐档复核 step 门槛标记 + 登记"结构上达不到门槛"的档（生成期 fail-closed）。
+
+    为什么要有它：AF1 诊断的核心风险是"9 档 native GRASPO 的步数低于门槛这件事，
+    会被台账读者读成'这档能力不行'"。要让这种误读**不可能发生**，光在判据里加第三态
+    还不够——**清单本身**必须把这个事实写在明面上（§2.2 显式即防呆：不靠读者去推）。
+    """
+    limited: list[dict[str, Any]] = []
+    for entry in entries:
+        gate = entry.get("acceptance", {}).get("formal_gate", {})
+        marker = gate.get("step_gate_applicability")
+        reachable = entry.get("expected_optimizer_steps_reachable")
+        threshold = gate.get("min_optimizer_steps")
+        # ① 标记与公式必须一致（否则说明清单被手改过 ⇒ 当场炸，不静默出清单）
+        if marker == STEP_GATE_APPLICABLE and (
+            not isinstance(reachable, int) or not isinstance(threshold, int)
+        ):
+            raise ValueError(
+                f"档 {entry['tier_id']}：step 门槛标记={marker}，但 reachable/threshold "
+                f"不是整数（{reachable!r}/{threshold!r}）⇒ 清单自相矛盾"
+            )
+        if isinstance(reachable, int) and isinstance(threshold, int):
+            expected_marker = (
+                STEP_GATE_NOT_APPLICABLE_STRUCTURAL
+                if reachable < threshold
+                else STEP_GATE_APPLICABLE
+            )
+            if marker != expected_marker:
+                raise ValueError(
+                    f"档 {entry['tier_id']}：step 门槛标记={marker} 与公式重算的 "
+                    f"{expected_marker} 不一致（reachable={reachable}，threshold={threshold}）"
+                    "⇒ 生成期 fail-closed"
+                )
+            if expected_marker == STEP_GATE_NOT_APPLICABLE_STRUCTURAL:
+                limited.append(
+                    {
+                        "tier_id": entry["tier_id"],
+                        "algorithm": entry["algorithm"],
+                        "backend": entry["backend"],
+                        "cards": entry["cards"],
+                        "subset_size": entry["data"]["subset_size"],
+                        "per_epoch": entry["expected_optimizer_steps_per_epoch"],
+                        "max_epochs": MATRIX_MAX_EPOCHS,
+                        "reachable": reachable,
+                        "min_optimizer_steps": threshold,
+                        "derivation": (
+                            f"每 epoch 上限 = floor(floor({entry['data']['subset_size']}/"
+                            f"{entry['cards']})/{NATIVE_ROLLOUT_QUEUE_BATCH_SIZE}) + 1 = "
+                            f"{entry['expected_optimizer_steps_per_epoch']}；"
+                            f"× max_epochs({MATRIX_MAX_EPOCHS}) = {reachable}"
+                            f"  < 门槛 {threshold}"
+                        ),
+                        # 「结构上不可能」与「多跑 epoch 可达」是**两类**，必须分开标（AF1 要点 2）
+                        "kind": (
+                            "structural_impossible"
+                            if entry["expected_optimizer_steps_per_epoch"] < threshold
+                            and entry["algorithm"] == "GRASPO"
+                            and entry["backend"] == "native"
+                            and entry["data"]["subset_size"] // entry["cards"]
+                            < NATIVE_ROLLOUT_QUEUE_BATCH_SIZE
+                            else "needs_more_epochs"
+                        ),
+                    }
+                )
+    return {
+        "threshold": FORMAL_GATE_MIN_OPTIMIZER_STEPS,
+        "threshold_source": "docs/capability-matrix.md §6「正式记录门槛」（AF1/指挥官裁定：不放宽）",
+        "rule": (
+            "reachable >= threshold ⇒ 门槛照常判；reachable < threshold ⇒ 判「⚠ 口径不可测」"
+            "（不是 ❌ 失败，也不是 ✅ 通过）"
+        ),
+        "structural_limited_tiers": limited,
+        "structural_limited_note": (
+            "这些档的 step 门槛**不是能力失败**，是『子集取数 × 训练器步进语义』算出来的"
+            "上限所致。其中 kind=structural_impossible 的档**把 epoch 调大也达不到门槛**"
+            "（阈值 queue×group 在 4 卡下永不可触发）；kind=needs_more_epochs 的档"
+            "在 max_epochs 提高后可达（属目标/预算层，须用户拍板，本生成器不擅自改）。"
+        ),
+    }
 
 
 def _count_by(entries: list[dict[str, Any]], field: str) -> dict[str, int]:
