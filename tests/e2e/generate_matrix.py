@@ -112,6 +112,29 @@ GPU_MONITOR_CONTAINER_DIR = "/out/gpu"
 #: 产物里的样本条数 ⇒ 属"参与决定产物的参数"，按 §10.1 必须进 config、不得回 CLI。
 GPU_MONITOR_INTERVAL_SEC = 2.0
 
+#: 容器内 HOME / 缓存根（**单一真相源**，§1.4）。
+#:
+#: ★ 为什么需要它：`docker run --user <宿主 uid>:<gid>` 让容器进程**不是 root**，而镜像里
+#:   root 的 HOME（`/root`）对这个 uid **不可写** ⇒ 任何写 `~/.cache` 的库都 PermissionError
+#:   （HF datasets/transformers 缓存、deepspeed 的 torch 扩展构建、triton/inductor 编译缓存
+#:   全在这个口径下）。因此把 HOME 显式指到一个**人人可写**的容器内目录（`/tmp` 是 1777；
+#:   容器 `--rm` ⇒ 退出即消失，不留任何宿主残渣）。
+#: ★ 为什么不指到 `/out`：`/out` 是**产物目录**，宿主侧的运维/清理动作按"产物"看待它
+#:   （U5「跑完即删」）——在产物树里混一个不属于产物的 HOME，等于给清理动作留暗坑。
+#: ★ 唯一字面量在本常量；两个使用点（DOCKER_ARGS 的 `-e HOME=` 与 entry.sh 的 `mkdir -p`）
+#:   都由本常量生成，测试断言它在生成物里**只作为该常量出现一次**（单源防漂移）。
+CONTAINER_HOME_DIR = "/tmp/graspo-runner-home"
+
+#: 容器内 `USER` / `LOGNAME` 的**中性**取值（**单一真相源**，§1.4）。
+#:
+#: ★ 为什么必须显式给：以宿主的裸 uid 运行时，镜像的 `/etc/passwd` 里**没有这个 uid**，
+#:   则 `pwd.getpwuid(os.getuid())` 抛 KeyError；`getpass.getuser()`（很多库启动时打环境
+#:   横幅都会调：ms-swift / deepspeed / wandb / pip 都有）先看 `LOGNAME`/`USER` 环境变量，
+#:   两者都没有才落到 `pwd` ⇒ 不显式给就可能**在训练开始前**炸掉。
+#: ★ 为什么用中性常量而不是宿主账号名：宿主账号名属环境信息（宪法 §15.1/§16），注入容器后
+#:   会随 stdout/logging 产物落到共享机上；中性值与宿主身份解耦。
+CONTAINER_USER_NAME = "graspo"
+
 #: 容器内 torch 探测证据的**文件名**与 **schema 标识**（**单一真相源**，§1.4）。
 #:
 #: ★★★ 这是一条**跨模块契约**：``scripts/collect_results.py`` 的
@@ -2065,6 +2088,8 @@ def render_runner(train_source: str | None = None) -> str:
 #   - 每档：宿主侧锁卡守卫 → **模型挂载前置断言** → 生成训练子集 → docker run
 #           （单一路径锁卡，只认 NVIDIA_VISIBLE_DEVICES）→ 容器内可信采样 + torchrun 训练
 #   - 产物落 <RUN_ROOT>/<T###>/：exit_code, stdout.log, gpu/, subsets/, <T###>/（训练输出）
+#     产物**属主 = 宿主跑批用户**（容器以 `--user <宿主 uid>:<gid>` 运行）⇒ 跑完后宿主侧
+#     可直接 `rm`，不需要任何提权（PG-13 / U5「跑完即删」）。生效用户在 --dry-run 里可见。
 #   - **必须先导出宿主数据根目录**：export {ELAM_HOST_ROOT_ENV}=<宿主 ELAM V5 数据根目录>
 #   - **必须先导出宿主模型根目录**：export {MODELS_HOST_ROOT_ENV}=<宿主模型根目录>
 #     该目录只读挂载到容器内 {MODELS_CONTAINER_ROOT}（模型**不在镜像里，必须挂**）。
@@ -2156,6 +2181,47 @@ MANIFEST="${{GRASPO_RUNNER_MANIFEST:-$ROOT_DIR/tests/e2e/matrix54_manifest.json}
 #   本行与 `run_matrix54.sh` 的同一行**逐字对应**（由 rig/verify_runner_parity.py 校验）。
 PYBIN="${{PYTHON:-python3}}"
 CONTAINER_PY="${{CONTAINER_PYTHON:-python}}"
+
+# ── 产物属主：容器以**宿主跑批用户**运行（唯一真相源，§1.4）──────────────────────
+# 缺陷（PG-13 / U5「产物跑完了测好了就删」执行不了）：镜像**没有 USER 指令** ⇒ 容器默认
+# uid 0 运行 ⇒ 容器写出的产物一律 root:root，而宿主跑批账号对 root 文件**无 unlink 权限**
+# ⇒ `rm` 报 Permission denied、`rmdir` 失败、228 上 `sudo -n` 要密码（228 实测：
+# task-f2-resync-verify §⑨ 共 20 项 / 49,133,569 B ≈ 47 MiB 删不掉；task-e4-reclaim 旧树
+# 522.7 MB 同因整树残留）。共享机上残留只增不减，而 228 磁盘已被顶到 100% 两次。
+# ★ 修法是**防呆**（§2），不是"事后提权去删"（那治标不治本，且需 root 权限）：
+#   让产物**从一开始**就归宿主跑批用户 —— 容器进程以宿主 uid:gid 运行。
+# ★ 单一真相源（§1.4）：uid/gid 只在这里解析**一次**，DOCKER_ARGS 只引用 $RUN_UID/$RUN_GID；
+#   容器内 HOME/缓存的落点、`USER`/`LOGNAME` 的中性值都是模块级常量
+#   （generate_matrix.py::CONTAINER_HOME_DIR / CONTAINER_USER_NAME），不在本脚本里另写字面量。
+# ★ 显式即防呆（§2.2）：dry-run 与真跑都打印生效用户；取不到合法 uid/gid ⇒ **fail-closed**
+#   （exit 7），绝不静默回落成 root —— 静默回落 = 复现本条要根治的缺陷。
+# ★ 回退（透明退路 §3.2，需显式声明且留痕）：GRASPO_RUN_AS_ROOT=1 ⇒ 仍以 root 运行，
+#   但 stderr 打印 WARNING 并写 $RUN_ROOT/skipped_guards.log（可事后审计）。真实上机不得设置。
+RUN_UID="${{GRASPO_RUN_UID:-$(id -u)}}"
+RUN_GID="${{GRASPO_RUN_GID:-$(id -g)}}"
+case "$RUN_UID" in ''|*[!0-9]*) RUN_UID="" ;; esac
+case "$RUN_GID" in ''|*[!0-9]*) RUN_GID="" ;; esac
+if [ -z "$RUN_UID" ] || [ -z "$RUN_GID" ]; then
+    echo "FATAL(runtime-link): 无法确定宿主 uid/gid，拒绝启动 ——" >&2
+    echo "  GRASPO_RUN_UID='${{GRASPO_RUN_UID:-}}' GRASPO_RUN_GID='${{GRASPO_RUN_GID:-}}'（须为非负整数）" >&2
+    echo "  为什么 fail-closed：没有正确的 uid/gid 就只能以 root 跑容器，产物会属 root:root、" >&2
+    echo "  宿主账号事后删不掉（PG-13 / U5「跑完即删」执行不了）——这正是不允许静默回落的原因。" >&2
+    echo "  修法：确保 id -u / id -g 可用，或用 GRASPO_RUN_UID/GRASPO_RUN_GID 显式指定。" >&2
+    exit 7
+fi
+if [ "${{GRASPO_RUN_AS_ROOT:-0}}" = "1" ]; then
+    RUN_USER_ARGS=(--user "0:0")
+    RUN_USER_DESC="0:0(root)"
+    echo "WARNING(透明退路 §3.2): GRASPO_RUN_AS_ROOT=1 ⇒ 本次容器以 **root** 运行，产物将属 root:root，" >&2
+    echo "  宿主普通用户事后**删不掉**（U5「跑完即删」执行不了、共享机残留不可回收）。真实上机不得设置本变量。" >&2
+    mkdir -p "$RUN_ROOT"
+    printf '%s run_as_root=1 tier=%s image=%s uid=%s gid=%s\\n' \\
+        "$(date -Is 2>/dev/null || date)" "$TIER" "$IMAGE" "$RUN_UID" "$RUN_GID" \\
+        >> "$RUN_ROOT/skipped_guards.log"
+else
+    RUN_USER_ARGS=(--user "$RUN_UID:$RUN_GID")
+    RUN_USER_DESC="$RUN_UID:$RUN_GID"
+fi
 
 # 0) 从运行清单取出该档的 GPU / 配置 / 卡数 / 子集大小 / 容器内模型路径。
 # 交接格式是**单行 JSON**：旧的"read 多个变量 < <(python …)"在 stdout 是管道时
@@ -2390,6 +2456,9 @@ fi
 
 if [ "$MODE" = "--dry-run" ]; then
     echo "[dry-run] $TIER gpus=$GPUS nproc=$NPROC status=$TIER_STATUS image=$IMAGE"
+    # ★ 生效用户必须**在 dry-run 里就可见**（§2.2 显式即防呆）：产物属主是"跑完即删"
+    #   （PG-13 / U5）能否执行的前提，而它由下面 docker run 的 --user 决定 ⇒ 预检就得能看见。
+    echo "[dry-run] user=$RUN_USER_DESC home={CONTAINER_HOME_DIR}（容器进程以该 uid:gid 运行 ⇒ 产物属主 = 宿主跑批用户）"
     echo "[dry-run] config=$CONFIG train_subset=$SUBSET 条 -> $TRAINPATH"
     echo "[dry-run] models=$MODELS_ROOT:$MODEL_DIR_NAME -> {MODELS_CONTAINER_ROOT}（只读）"
     echo "[dry-run] subsets=$RUN_ROOT/$TIER/subsets -> $TRAIN_PATH_DIR_CONTAINER（只读）"
@@ -2546,6 +2615,12 @@ set -o pipefail
 #     展开、留给容器内展开），注释里同样不得出现裸美元符/裸反引号（见下方哨兵测试）。
 GPU_EVIDENCE_DIR="{GPU_MONITOR_CONTAINER_DIR}"
 mkdir -p "\\$GPU_EVIDENCE_DIR"
+# ★ 容器内 HOME / 缓存根必须先建好（与 DOCKER_ARGS 的 -e HOME= 同源，字面量来自
+#   tests/e2e/generate_matrix.py::CONTAINER_HOME_DIR）。为什么：容器进程以**宿主 uid** 运行
+#   （见 runner 的「产物属主」段），镜像里 root 的 HOME 对该 uid 不可写；HF datasets /
+#   transformers 缓存、deepspeed 扩展构建、triton/inductor 编译缓存都落到 HOME 下的 .cache
+#   ⇒ HOME 不可写会在**训练开始前**炸掉。这里是显式创建，不依赖任何库"自己会建"的隐性假设。
+mkdir -p "{CONTAINER_HOME_DIR}"
 "$CONTAINER_PY" /out/preflight_media.py "$TRAIN_PATH" || exit 3
 "$CONTAINER_PY" -m graspo record-gpu-memory --idle-only || exit 1
 # ★ 显存采样：**配置驱动**（宪法 §10.1；W3 起 CLI 上已无 --output-dir/--tag/--interval-sec，
@@ -2568,14 +2643,21 @@ RC=\\$?
 #   在**假容器**下真跑整条 entry.sh（不需要 GPU/docker）。默认值 0 表示"不覆盖 torchrun
 #   的真实退出码"——§2 显式即防呆：不设即无副作用，且不会把真实 rc 悄悄改掉。
 if [ -n "\\${{GRASPO_FAKE_WORKER_RC:-}}" ]; then RC="\\$GRASPO_FAKE_WORKER_RC"; fi
-# 产物放开读权限（**必须**）：容器内训练以 root 运行 ⇒ ms-swift/HF 默认落 root:0600，
-# 宿主侧的 collect_results.py（普通用户）**打不开** checkpoint 权重 ⇒ A2/A3 读不到证据
+# 产物放开读权限（**保留**；改用宿主 uid 运行后它从"补丁"降级为"兜底"）：
+# 历史缺陷：容器以 root 运行 ⇒ ms-swift/HF 默认落 root:0600 ⇒ 宿主侧的
+# collect_results.py（普通用户）**打不开** checkpoint 权重 ⇒ A2/A3 读不到证据
 # （228 实测踩过：A3 一度被记成"checkpoint 无法重新加载"，属方向性错误）。
+# 现在容器以**宿主 uid:gid** 运行（见 runner 的「产物属主」段）⇒ 产物属主已经正确、
+# 读权限也天然成立；本行留着覆盖两类残余情形：① 运行前目录里已有的**他人/root 旧产物**
+# （对它们 chmod 会 EPERM，故只把 stderr 丢弃、不因它们报错）；② umask 偏严的环境。
 # 产物必须可被宿主侧的收集/复现链路读取（§6）；chmod 只改元数据、不碰内容。
 chmod -R a+rX /out 2>/dev/null || echo "WARN: chmod -R a+rX /out failed — 宿主侧可能读不到产物" >&2
 # ── ckpt 保留策略（落盘后立即执行，§2.4 具名清理；**通配符只用于 find 的 -name 匹配，不作为删除操作数**）──
-# 为什么在容器内做：checkpoint 由**容器内 root** 落盘，宿主普通用户删不掉
-# （228 实测：sudo 需要密码，非交互不可用）。容器内是 root ⇒ 只有这里删得掉。
+# 为什么在容器内做：保留动作必须在**权重刚落盘、还没被宿主侧收集**的窗口内完成，
+# 且要与训练进程用**同一套** find/mtime 视角（§1.4）。容器以宿主 uid 运行后，
+# 宿主侧其实也删得掉中间段 ckpt；但放在这里仍是"落盘后立即收缩"的唯一窗口。
+# （历史背景：原实现依赖"容器内是 root ⇒ 只有这里删得掉"——宿主普通用户对 root:root
+#   文件无 unlink 权限，228 实测 sudo 需密码。该依赖已随 --user 修复消除，逻辑不变。）
 # ★ 写法约束（防呆）：本块**只使用内层 shell 自己的变量**（\\$1/\\$@/函数内局部量），
 #   不读写外层 runner 的任何变量，也不内联任何函数调用。这样"外层展开"与"内层展开"
 #   在语义上重合，不会因为外层 set -u 误判内层变量（228/本机都踩过这个坑）。
@@ -2815,6 +2897,11 @@ assert_mount_targets_not_under_readonly "${{MOUNT_SPECS[@]}}" || exit 6
 # 不同时用 `--gpus`——两者可能互相覆盖，语义有歧义。
 DOCKER_ARGS=(
     --rm --runtime=nvidia
+    # ★ 产物属主（PG-13 / U5「跑完即删」）：容器以**宿主跑批用户**运行 ⇒ 容器写出的
+    #   产物属主 = 宿主用户 ⇒ 事后宿主侧直接 `rm` 得掉，不需要任何提权。
+    #   值只在上面「产物属主」段解析一次（$RUN_UID/$RUN_GID），这里只引用，不重算。
+    #   ⚠ 顺序无关，但必须落在 image 之前（是 docker run 的选项，不是容器命令的一部分）。
+    "${{RUN_USER_ARGS[@]}}"
     # 共享内存（**≥2 卡必需**）：torchrun 多 rank 按 fd 共享 CPU 张量，docker 默认
     # /dev/shm 仅 64 MiB ⇒ 多卡启动即 `unable to allocate shared memory(shm)` /
     # `Resource temporarily unavailable (11)`（228 实测：4 个 rank 同抛，Train: 0%）。
@@ -2828,6 +2915,19 @@ DOCKER_ARGS=(
     -e PYTHONPATH=/workspace/graspo/src
     -e HF_HUB_OFFLINE=1
     -e TOKENIZERS_PARALLELISM=false
+    # ★ HOME / 缓存根（见 generate_matrix.py::CONTAINER_HOME_DIR 的单一真相源）：
+    #   非 root 进程写不了镜像里 root 的 /root ⇒ 必须显式给一个可写的 HOME，
+    #   否则 HF datasets / deepspeed 扩展 / triton 编译缓存在训练开始前就 PermissionError。
+    -e "HOME={CONTAINER_HOME_DIR}"
+    -e "XDG_CACHE_HOME={CONTAINER_HOME_DIR}/.cache"
+    -e "TORCHINDUCTOR_CACHE_DIR={CONTAINER_HOME_DIR}/.torchinductor"
+    -e "TRITON_CACHE_DIR={CONTAINER_HOME_DIR}/.triton"
+    # ★ USER/LOGNAME（见 generate_matrix.py::CONTAINER_USER_NAME 的单一真相源）：
+    #   镜像 /etc/passwd 里没有宿主的这个 uid ⇒ `getpass.getuser()` 落到 pwd.getpwuid 会
+    #   KeyError（ms-swift/deepspeed/wandb 启动横幅都调它）。给中性值兜住，同时避免把
+    #   宿主账号名注入容器产物（§15.1/§16：账号名属环境信息）。
+    -e "USER={CONTAINER_USER_NAME}"
+    -e "LOGNAME={CONTAINER_USER_NAME}"
 )
 for SPEC in "${{MOUNT_SPECS[@]}}"; do
     IFS='|' read -r SRC DST MODE <<< "$SPEC"
