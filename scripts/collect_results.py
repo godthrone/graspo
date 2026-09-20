@@ -857,12 +857,27 @@ def extract_weight_changed(
       基座目录 ⇒ 取证缺口（``None``）——**不放松**，也不拿 LoRA 的 Δ 指标冒充。
 
     抽取不到返回 ``value is None`` → A2 按**取证缺口**处理（不可判定，而不是判训练失败）。
+
+    ★ 兜底路径的失败**必须记账后继续**（指挥官裁定 (b)，2026-09-21；见下）：旧实现
+      **裸捕获** ``torch.load`` 异常并 ``continue``——失败原因被静默吞掉，台账上只剩
+      "checkpoint 与 run 逐步指标里都没有权重变化证据"，读的人无法区分
+      "文件坏了" / "torch 版本不兼容" / "压根没有这个文件"（§2.2 显式即防呆）。
+      为什么**不能**把"载不进 ckpt"记成 ``WeightEvidence(False, ...)``：那等于断言
+      "权重未变化"，即"训练没生效"——**最坏的假失败**（环境/兼容性问题被记成训练失败，
+      方向性错误）。兜底路径的**唯一**职责是补证据，不是制造结论。
     """
     torch = _require_torch()
+    #: 兜底路径的**失败台账**：逐条累积原因，最终并入 detail（**绝不静默丢弃**）。
+    #: 只在"真的尝试过兜底且失败"时才有内容——它解释的是"为什么没拿到兜底证据"。
+    fallback_notes: list[str] = []
     if tuner_type == "lora":
         metrics_evidence = extract_lora_norm_delta(output_dirs)
         if metrics_evidence.value is not None:
             return metrics_evidence
+        # 正式判据（lora_norm_delta）已不可得 ⇒ 把原因记进台账，继续走兜底路径。
+        fallback_notes.append(f"A2 正式判据 lora_norm_delta 不可得（{metrics_evidence.detail}）")
+    if torch is None:
+        fallback_notes.append("宿主无 torch ⇒ checkpoint 兜底路径（rank_*.pt 反序列化）不可用")
 
     for checkpoint in find_checkpoint_dirs(output_dirs):
         if tuner_type == "lora":
@@ -872,9 +887,15 @@ def extract_weight_changed(
                     break
                 try:
                     payload = torch.load(pt, map_location="cpu", weights_only=False)
-                except (RuntimeError, OSError, AttributeError):
+                except (RuntimeError, OSError, AttributeError) as exc:
+                    # ★ 记账后继续（裁定 (b)）：**不**把"载不进"当成"权重未变化"。
+                    # 异常类型与消息原样入台账（§2.2）；继续找别的 checkpoint / 兜底源。
+                    fallback_notes.append(
+                        f"兜底路径 torch.load({pt.name}) 失败：{type(exc).__name__}: {exc}"
+                    )
                     continue
                 if not isinstance(payload, dict):
+                    fallback_notes.append(f"兜底路径 {pt.name} 反序列化结果不是 dict，跳过")
                     continue
                 lora_state = payload.get("lora_state_dict")
                 if isinstance(lora_state, dict):
@@ -916,7 +937,13 @@ def extract_weight_changed(
                 None,
                 "全参判据需要 --base-model-root 做基座权重比对，本次未提供合法目录",
             )
-    return WeightEvidence(None, None, "checkpoint 与 run 逐步指标里都没有权重变化证据")
+    # ★ fail-closed **保持不变**：所有证据源都不可得 ⇒ 仍是取证缺口（``value is None``）。
+    # 兜底路径的失败原因在此并入 detail（记账不吞掉，§2.2 显式即防呆）——台账从此能区分
+    # "没有探测文件" / "文件坏了" / "torch 版本不兼容"，而不是一句笼统的"都没有证据"。
+    detail = "checkpoint 与 run 逐步指标里都没有权重变化证据"
+    if fallback_notes:
+        detail = detail + "；兜底路径台账：" + "；".join(fallback_notes)
+    return WeightEvidence(None, None, detail)
 
 
 def _full_weights_differ(checkpoint_dir: Path, base_model_dir: Path | None) -> bool | None:

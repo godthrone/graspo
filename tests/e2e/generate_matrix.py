@@ -112,6 +112,44 @@ GPU_MONITOR_CONTAINER_DIR = "/out/gpu"
 #: 产物里的样本条数 ⇒ 属"参与决定产物的参数"，按 §10.1 必须进 config、不得回 CLI。
 GPU_MONITOR_INTERVAL_SEC = 2.0
 
+#: 容器内 torch 探测证据的**文件名**与 **schema 标识**（**单一真相源**，§1.4）。
+#:
+#: ★★★ 这是一条**跨模块契约**：``scripts/collect_results.py`` 的
+#:   ``TORCH_PROBE_FILENAME`` / ``TORCH_PROBE_SCHEMA`` 是这条契约的**消费端**，
+#:   本处是**生产端**。两边必须逐字一致——**改一处必须同步另一处**；不一致的后果是
+#:   探测证据被判"schema 不匹配 ⇒ 不采信"，A3 退回弱证据路径（环境性伪否复发）。
+#:   防漂移由 ``tests/e2e/test_generate_matrix.py`` 的
+#:   ``test_torch_probe_contract_matches_collector`` 断言（直接 import collector 的常量比对）。
+#:
+#: 为什么生成器不直接 import collector 的常量：generator 全程 stdlib-only（见文件头），
+#: 而 collector 的导入链会拉起 graspo 包；生成期多一个重依赖入口不划算。改用"同一字面量
+#: + 生成期/测试期双向断言"的防呆方式（§2.1 契约即防呆）。
+TORCH_PROBE_FILENAME = "torch_probe.json"
+TORCH_PROBE_SCHEMA = "graspo.torch_probe.v1"
+
+#: 探测证据在**容器内**的落点（= 宿主 ``<RUN_ROOT>/<T###>/torch_probe.json``）。
+#: 为什么是 RUN_DIR 直下而不是训练输出目录里：与 ``GPU_MONITOR_CONTAINER_DIR`` 同因——
+#: ``training.output_dir``（= ``/out/<T###>``）会被训练侧 ``overwrite_output_dir`` 的
+#: ``shutil.rmtree`` 清理，而 ``collect_results.read_torch_probe`` 读的正是
+#: ``<run_dir>/torch_probe.json``（run_dir = 宿主 ``<RUN_ROOT>/<T###>``）⇒ 同源于运行目录。
+TORCH_PROBE_CONTAINER_PATH = "/out/torch_probe.json"
+
+#: 探测脚本在**容器内**的落点。它由 runner 生成到 ``$RUN_DIR/torch_probe.py``，
+#: 而 ``$RUN_DIR`` 已整体绑定到容器 ``/out`` ⇒ 无需新增挂载项（不存在"在只读挂载下
+#: 建 mountpoint"的问题，§10.1 挂载表不因此变化）。
+TORCH_PROBE_SCRIPT_CONTAINER_PATH = "/out/torch_probe.py"
+
+#: 被探测权重的**相对 run_dir 定位秩**（**唯一**定义处；契约 §6.1 硬约束 3）。
+#: 逐项尝试、取第一个有 ``rank_*.pt`` 的目录，``relpath`` 一律由**运行期实测的目录**
+#: 相对 run_dir 推出（POSIX），不写死字面量：
+#:   1) ``<T###>/final`` —— native 权威布局（容器 ``/out/<T###>/final`` = 宿主
+#:      ``<RUN_ROOT>/<T###>/<T###>/final``；真机核对见 task-j2-torch-probe 报告 §③）；
+#:   2) ``final`` —— 兼容"已经位于 run_dir 直下"的布局；
+#:   3) ``find -maxdepth 3 -name final`` —— 兜底发现（先按 posixpath 排序取第一个有 rank_*.pt 的）。
+#: 探测脚本会把**实际选中**的目录与 relpath 打进 stdout（§2.2 显式即防呆），
+#: 因此第一档上机就能当场核对布局假设，不靠猜。
+TORCH_PROBE_RUN_DIR = "/out"
+
 # ── 台账口径常量（单一真相源，§1.4）────────────────────────────────────────
 CARDS: tuple[int, ...] = (1, 2, 4)
 EXPECTED_TOTAL = 54
@@ -1777,6 +1815,236 @@ def feasibility_table(tiers: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return rows
 
 
+# ── 容器内 torch 探测脚本（A3 转正路径的**生产端**）────────────────────────────
+#
+# 背景（环境性伪否，本段要根治的）：宿主 228 **没有 torch** ⇒ collector 对 native 档
+# 只能拿到弱证据（``structural_only:zip_crc``），A3「checkpoint 可重载」判**取证缺口**
+# ⇒ 18 个 native 档拿不到完整结论。但**跑训练的镜像自带 torch**（``graspo-msswift:4.5.3``，
+# 实测 torch 2.11.0+cu130）⇒ 证据明明可得，只是没人把它落盘。
+#
+# 本段把探测结果落成 ``<run_dir>/torch_probe.json``，契约（schema / 字段 / sha256 防陈旧
+# 算法 / 拒采信行为 / 判定映射）见 ``scripts/collect_results.py::read_torch_probe``；
+# **判定逻辑只在 collector 里**（§1.4 单一真相源），本脚本只负责"在**有 torch 的地方**
+# 取证据并落盘"，不承担判定。
+#
+# ★ 为什么是**独立脚本 + 运行期实测布局**而不是把路径写死：
+#   ``checked[].relpath`` 必须是**相对 run_dir 的 POSIX 路径**。容器内 ``training.output_dir
+#   = /out/<T###>`` ⇒ native 权重在 ``/out/<T###>/final/``，即宿主
+#   ``<RUN_ROOT>/<T###>/<T###>/final/``（嵌套两层档号）。这个"从 run_dir 到权重"的相对
+#   路径写错就会被 collector **拒采信**（文件不存在 ⇒ 整体退回弱证据）。因此脚本按
+#   :data:`TORCH_PROBE_DIR_CANDIDATES` 的秩**实测**目录，relpath 由实测结果推出，
+#   并把选中项打进 stdout（§2.2 显式即防呆）——第一档上机即可当场核对布局假设。
+#
+# ★ 失败不得影响训练结论（§3.4 退路与防线之分）：
+#   本脚本**任何**失败路径都以 ``exit 0`` 结束，且**不写**探测文件 ⇒ collector 退回
+#   弱证据路径（A3 仍是取证缺口，绝不放行）。探测失败**不是**训练失败，绝不改
+#   ``exit_code`` 的训练语义（既有优先级：训练失败 137/124 > 保留失败 4 > 成功 0）。
+PROBE_HEADER = '''#!/usr/bin/env python3
+"""容器内 torch 重载探测（A3「checkpoint 可重载」的证据生产端）。
+
+由 tests/e2e/generate_matrix.py::render_probe_script 生成到 $RUN_DIR/torch_probe.py
+（容器内 /out/torch_probe.py）——**手改无效**，改生成器后重生成。
+
+职责边界（§1.1 一事一责）：只做一件事——在**有 torch 的容器里**对 native 终态权重
+做一次真实 torch.load 探测，把结果落成 <run_dir>/torch_probe.json。
+**不做判定**：判定逻辑只在 scripts/collect_results.py::read_torch_probe（§1.4）。
+
+契约（与 collector 同一条契约，改一处必须同步另一处）：
+    {"schema": "<schema>", "torch": "<version>", "all_ok": true,
+     "checked": [{"relpath": "<relpath>", "ok": true, "sha256": "<64 hex>", "tensors": 882}]}
+
+三条硬约束（写错 ⇒ 证据被拒采信）：
+    1) **写完权重再算 hash**：本脚本在训练结束、保留策略执行完之后才跑；
+    2) **算完 hash 后不得再改动该文件**：本脚本只读不写权重，且它是收口前最后一个
+       接触产物的步骤；
+    3) relpath 一律**相对 run_dir 的 POSIX 路径**（不用绝对路径、不加 ./ 前缀）。
+
+任何失败（无 torch / 找不到权重 / 读写异常）⇒ 打印原因、**不写探测文件**、exit 0。
+"""
+'''
+
+PROBE_BODY = '''
+
+import argparse
+import hashlib
+import json
+import os
+import posixpath
+import sys
+
+PROBE_SCHEMA = "{schema}"
+PROBE_FILENAME = "{filename}"
+
+
+def _print(*parts: object) -> None:
+    print("[torch-probe]", *parts, flush=True)
+
+
+def _sha256_and_size(path: str) -> tuple[str, int]:
+    digest = hashlib.sha256()
+    total = 0
+    with open(path, "rb") as handle:
+        while True:
+            chunk = handle.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+            total += len(chunk)
+    return digest.hexdigest(), total
+
+
+def _json_safe(value: object) -> object:
+    if isinstance(value, dict):
+        return {{str(key): _json_safe(item) for key, item in value.items()}}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return repr(value)
+
+
+def _flatten_state_dict(loaded: object) -> tuple[dict[str, object], str]:
+    """把 torch.load 的返回值归一成「张量名 -> 张量」的扁平视图（只用于**计数与审计**）。"""
+    if not isinstance(loaded, dict):
+        return {{}}, "returned:" + type(loaded).__name__
+    state = loaded.get("state_dict")
+    if isinstance(state, dict):
+        return state, "state_dict"
+    lora = loaded.get("lora_state_dict")
+    if isinstance(lora, dict):
+        return lora, "lora_state_dict"
+    tensors = {{key: value for key, value in loaded.items() if hasattr(value, "shape")}}
+    if tensors:
+        return tensors, "top_level_tensors"
+    return {{}}, "top_level_other"
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="torch probe for A3 evidence")
+    parser.add_argument("--run-dir", required=True)
+    parser.add_argument("--tier", required=True)
+    parser.add_argument("--max-files", type=int, default=4)
+    args = parser.parse_args(argv)
+
+    run_dir = os.path.abspath(args.run_dir)
+    probe_path = os.path.join(run_dir, PROBE_FILENAME)
+    try:
+        import torch
+    except Exception as exc:
+        _print("SKIP: 容器内没有可用的 torch（" + type(exc).__name__ + ": " + str(exc) + "）")
+        _print("  契约要求：不写探测文件 ⇒ collector 退回弱证据路径（A3 不因探测失败而假通过）")
+        return 0
+    torch_version = str(getattr(torch, "__version__", "unknown"))
+
+    candidates = [
+        os.path.join(run_dir, args.tier, "final"),
+        os.path.join(run_dir, "final"),
+    ]
+    for current, dirnames, _ in os.walk(run_dir):
+        dirnames.sort()
+        for name in list(dirnames):
+            if name == "final":
+                candidates.append(os.path.join(current, name))
+    unique: list[str] = []
+    for candidate in candidates:
+        if candidate not in unique:
+            unique.append(candidate)
+    checked_dir: str | None = None
+    rank_files: list[str] = []
+    for candidate in unique:
+        if not os.path.isdir(candidate):
+            continue
+        found = sorted(
+            os.path.join(candidate, name)
+            for name in os.listdir(candidate)
+            if name.startswith("rank_") and name.endswith(".pt")
+        )
+        if found:
+            checked_dir = candidate
+            rank_files = found
+            break
+    if checked_dir is None:
+        _print("SKIP: 在 run_dir=" + run_dir + " 下找不到任何含 rank_*.pt 的 final/ 目录")
+        _print("  候选目录：" + repr(unique))
+        _print("  契约要求：不写探测文件 ⇒ A3 退回取证缺口（绝不放行）")
+        return 0
+
+    checked: list[dict[str, object]] = []
+    all_ok = True
+    for path in rank_files[: max(0, args.max_files)]:
+        relpath = posixpath.join(*os.path.relpath(path, run_dir).split(os.sep))
+        entry: dict[str, object] = {{"relpath": relpath, "ok": False, "sha256": None, "tensors": None}}
+        digest: str | None = None
+        size = 0
+        try:
+            digest, size = _sha256_and_size(path)
+        except OSError as exc:
+            entry["error"] = type(exc).__name__ + ": " + str(exc)
+        else:
+            entry["sha256"] = digest
+            try:
+                loaded = torch.load(path, map_location="cpu", weights_only=False)
+            except Exception as exc:
+                entry["ok"] = False
+                entry["error"] = "torch.load: " + type(exc).__name__ + ": " + str(exc)
+            else:
+                state, kind = _flatten_state_dict(loaded)
+                entry["ok"] = True
+                entry["tensors"] = len(state)
+                entry["state_dict_kind"] = kind
+        if not entry["ok"]:
+            all_ok = False
+        checked.append(entry)
+        _print("FILE relpath=" + relpath + " bytes=" + str(size) + " sha256=" + str(digest)
+               + " ok=" + str(entry["ok"]) + " tensors=" + str(entry.get("tensors"))
+               + (" error=" + str(entry.get("error")) if entry.get("error") else ""))
+
+    if not checked:
+        _print("SKIP: max-files 为 0 ⇒ 无可探测文件；不写探测文件")
+        return 0
+
+    payload = {{
+        "schema": PROBE_SCHEMA,
+        "torch": torch_version,
+        "all_ok": bool(all_ok),
+        "checked": checked,
+        "selected_dir": os.path.relpath(checked_dir, run_dir),
+        "checked_rank_files": len(rank_files),
+        "probed_rank_files": len(checked),
+        "state_dict_audit": [_json_safe(entry) for entry in checked],
+    }}
+    try:
+        with open(probe_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
+            handle.write("\\n")
+    except OSError as exc:
+        _print("ERROR: 写 " + probe_path + " 失败：" + type(exc).__name__ + ": " + str(exc))
+        _print("  契约要求：证据未落盘 ⇒ A3 退回取证缺口（绝不放行）")
+        return 0
+    _print("WROTE " + probe_path + " schema=" + PROBE_SCHEMA + " torch=" + torch_version
+           + " all_ok=" + str(all_ok) + " checked=" + str(len(checked))
+           + " selected_dir=" + str(payload["selected_dir"]))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+'''
+
+
+def render_probe_script() -> str:
+    """渲染容器内 torch 探测脚本（**唯一**生成入口，§1.4）。
+
+    为什么用"常量拼接"而不是 f-string：生成物是 **Python 源码**，密集使用 ``{}``
+    （字典/集合解析）⇒ 放进 f-string 必须逐个转义，可读性与可维护性都差（§2.2）。
+    契约字面量（schema / 文件名）从上面的单一真相源常量注入，其余照抄。
+    """
+    return PROBE_HEADER + PROBE_BODY.format(
+        schema=TORCH_PROBE_SCHEMA,
+        filename=TORCH_PROBE_FILENAME,
+    )
+
+
 # ── 运行脚本骨架 ────────────────────────────────────────────────────────────
 
 
@@ -1787,6 +2055,9 @@ def render_runner(train_source: str | None = None) -> str:
     不影响 `data.train_path`、挂载目的地与任何断言。
     """
     resolve_train_source(train_source)
+    # 容器内 torch 探测脚本（A3 转正路径的生产端）：在本函数内渲染一次，避免"渲染两次
+    # 得到两份不同内容"的双真相源风险（§1.4）。契约字面量来自模块级常量。
+    probe_script = render_probe_script()
     return f"""#!/bin/bash
 # GRASPO 54 档批量执行骨架 —— 由 tests/e2e/generate_matrix.py 生成（手改无效）。
 #
@@ -2253,6 +2524,14 @@ if __name__ == "__main__":
 PY
 
 PORT=$(( 29500 + RANDOM % 400 ))
+# ★ 容器内 torch 重载探测脚本（A3 转正路径的**生产端**）：与 entry.sh 同源产出到
+#   $RUN_DIR/torch_probe.py（$RUN_DIR 已整体绑定到容器 /out ⇒ 容器内即
+#   {TORCH_PROBE_SCRIPT_CONTAINER_PATH}，**无需新增挂载项**）。内容由
+#   tests/e2e/generate_matrix.py::render_probe_script 渲染（契约字面量取自
+#   TORCH_PROBE_SCHEMA / TORCH_PROBE_FILENAME 单一真相源）。
+cat > "$RUN_DIR/torch_probe.py" <<'TORCH_PROBE_PY'
+{probe_script}
+TORCH_PROBE_PY
 cat > "$RUN_DIR/entry.sh" <<ENTRY
 set -o pipefail
 # ★ 显存取证目录（容器内**唯一**落点，§1.4）：与档配置 gpu_monitor.output_dir、runner 的
@@ -2428,6 +2707,27 @@ else
     if [ "\\$RC" = "0" ]; then RC=4; fi
 fi
 printf '%s\\n' "\\$CKPT_STATE" > /out/ckpt_retention.state
+# ══ A3 转正：容器内 torch 重载探测落盘（**收口前最后一个接触权重的步骤**）══
+#   背景（本段要根治的环境性伪否）：宿主 228 **没有 torch** ⇒ collector 对 native 档
+#   只能拿弱证据（structural_only:zip_crc），A3「checkpoint 可重载」判取证缺口。
+#   但训练镜像自带 torch（graspo-msswift:4.5.3 实测 torch 2.11.0+cu130）⇒ 证据可得。
+#   ★ 为什么**必须**插在 ckpt 保留块**之后**、收口之前（顺序是判据的一部分）：
+#     ① 保留块会 rm -rf 中间段 checkpoint（checkpoint-*）。若探测先算 sha256、保留块
+#        后删文件，则 collector 复查时 relpath 指向的文件已消失 / 集合已变 ⇒ **整体拒采信**
+#        （契约 §6.1 硬约束 1：写完权重再算 hash；硬约束 2：算完 hash 后不得再改动文件）。
+#     ② native 档保留块**只读不删**（识别到非空 final/ 即 KEEP 并 return 0）⇒ 在它之后
+#        算 hash 与"写完权重再算 hash"等价，且此后本脚本只读权重、只写探测文件本身。
+#     ③ 探测**必须**在 exit 收口之前：它是最后一次机会读 /out（容器退出 = 权重不可再读）。
+#   ★ 为什么排在 gpu 采样器收尾**之前**也无妨：两者互不接触权重（采样器只写 gpu/ 摘要），
+#     顺序对探测证据无影响；此处紧跟保留块可让"最后一次写产物"与"算 hash"相邻。
+#   ★ 失败**不得**影响训练结论（§3.4 退路与防线之分）：探测脚本任何失败路径都 exit 0，
+#     且失败时**不写**探测文件 ⇒ collector 退回弱证据路径（A3 仍是取证缺口，绝不放行）。
+#     || true 是显式兜底（脚本不存在 / 解释器缺失时也不得改 RC）；RC 只由训练/保留决定。
+#   ★ 探测脚本由生成器**同源产出**到 \\$RUN_DIR/torch_probe.py（\\$RUN_DIR 已绑定到
+#     容器 /out）⇒ 不新增挂载项；契约字面量（schema / 文件名）取自
+#     generate_matrix.py::TORCH_PROBE_SCHEMA / TORCH_PROBE_FILENAME（唯一真相源 §1.4）。
+"\\$CONTAINER_PY" {TORCH_PROBE_SCRIPT_CONTAINER_PATH} \\\\
+    --run-dir {TORCH_PROBE_RUN_DIR} --tier "\\$TIER" || true
 # ★ 轻量证据（stdout.log / logging.jsonl / args.json / trainer_state.json / gpu 读数）
 #   **一律不删**——"删权重不删证据"（宪法 §16 + 验收锚点必须是产物证据）。
 # ══ 收口前必须做：**先让容器内采样器把摘要落盘，再退出**（2026-09-19 缺陷修复）══
