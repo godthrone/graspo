@@ -118,10 +118,7 @@ class MsSwiftOpdTrainer:
             native_only_fields,
             validate_combinations,
         )
-        from graspo.flow.msswift._rollout_seed import (
-            assert_rollout_seed_applied,
-            rollout_seed_deterministic,
-        )
+        from graspo.flow.msswift._rollout_seed import rollout_seeding
         from graspo.flow.msswift._rope_compat import rope_parameters_compatible
         from graspo.flow.msswift.dataset import prepare_ms_swift_dataset
 
@@ -168,16 +165,19 @@ class MsSwiftOpdTrainer:
         # torch RNG** 取随机数且不接 ``RequestConfig.seed``；ms-swift 只在 trainer
         # ``__init__`` 播一次种（``grpo_trainer.py:143``），rollout 前不重播 ⇒ 同 config
         # 同 seed 的两跑首步监督信号可以不同（T046 的 A4 就是被这个打掉的）。
-        # 这里在**每次 rollout 生成之前**把全局 RNG 钉到 ``training.seed``——只钉
-        # 随机性起点，不动温度/top_p/top_k/lmbda/采样分布，也不强制 greedy。
+        # 这里在**每次 rollout 生成之前**把全局 RNG 钉到一个**由
+        # ``(training.seed, rank, 调用序号)`` 唯一确定**的派生值——只钉随机性起点，
+        # 不动温度/top_p/top_k/lmbda/采样分布，也不强制 greedy。
+        # 注意**不是**钉到 ``training.seed`` 的字面值：那会让各 rank 播同一个值、
+        # 相邻两次调用复用同一条流（真机事故，见 ``_rollout_seed.py`` 文件头）。
+        # ``rollout_seeding`` 是**唯一的播种接线入口**（§1.4）：本通道不再自己拼
+        # "装包装 + 退出校验"的组合逻辑，GRPO 通道（``trainer.run_graspo_rlhf``）
+        # 用的是同一个入口 —— 播种口径只有一份实现（``_rollout_seed.py``）。
         with (
             rope_parameters_compatible(self.config.msswift.rope_scaling),
-            rollout_seed_deterministic(self.config) as seed_ledger,
+            rollout_seeding(self.config),
         ):
             rlhf_main(argv)
-        # fail-closed：装了补丁却一次都没触发 ⇒ 这次运行的可复现性并未被保证，
-        # 不能当成功交付（§2.3）。
-        assert_rollout_seed_applied(seed_ledger)
 
 
 def create_msswift_opd_trainer(config: Any, selection: Any = None) -> MsSwiftOpdTrainer:

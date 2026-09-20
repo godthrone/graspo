@@ -637,12 +637,38 @@ def run_graspo_rlhf(argv: list[str], *, graspo_config: Any) -> Any:
     ``SwiftPipeline._parse_args`` 才是正确入口，传列表给它即可。
 
     ``graspo_config`` 同时决定 **RoPE 键名适配**是否启用（``rope_scaling`` 非 None 时
-    才在模型加载边界装补丁，见 ``_rope_compat.rope_parameters_compatible``）。
+    才在模型加载边界装补丁，见 ``_rope_compat.rope_parameters_compatible``）
+    以及 **on-policy rollout 播种**是否启用（见下）。
+
+    **rollout 播种（可复现性措施，不改变算法语义）**
+
+    ``train_method=graspo`` 在 ``use_vllm=false`` 下现场采样走 ms-swift 的
+    ``TransformersEngine``，它从**全局 torch RNG** 取随机数、不接
+    ``RequestConfig.seed``；而 ms-swift 只在 trainer ``__init__`` 播一次种
+    （``rlhf_trainers/grpo_trainer.py:143`` 的 ``set_seed(..., device_specific=True)``
+    ⇒ 有效种子 = ``seed + rank``），rollout 前不重播 ⇒ 多卡时同 config 同 seed 的
+    两跑生成内容可以不同（T033 4 卡真机定案：``mean_length`` 37.5 vs 39.0）。
+
+    这里用 ``_rollout_seed.rollout_seeding`` —— 与 OPD 通道**同一个**入口（§1.4）
+    —— 把整次训练包起来，使每次 rollout 生成之前全局 RNG 都从一个**由
+    (``training.seed``, 进程 rank, 该进程内第几次推理调用) 唯一确定**的值起步：
+
+    - **确定性** ⇒ 同 config/seed/卡位双跑逐位相同；
+    - **rank 区分**（种子里带 ``RANK_STRIDE * rank``）⇒ 复现上游
+      ``device_specific=True`` 的意图，跨 rank 不再生成重复补全，**GRPO 组内方差
+      不被压掉**（上一版播同一个字面值，把 4 卡的补全压成同一长度、advantage 全零）；
+    - **调用序号区分** ⇒ 相邻两次 rollout 不复用同一条随机流。
+
+    只钉随机性起点，不动温度/top_p/top_k/采样分布，也不强制 greedy。
     """
+    from graspo.flow.msswift._rollout_seed import rollout_seeding
     from graspo.flow.msswift._rope_compat import rope_parameters_compatible
 
     pipeline_cls = _graspo_rlhf_pipeline_class()
-    with rope_parameters_compatible(graspo_config.msswift.rope_scaling):
+    with (
+        rope_parameters_compatible(graspo_config.msswift.rope_scaling),
+        rollout_seeding(graspo_config),
+    ):
         return pipeline_cls(argv, graspo_config=graspo_config).main()
 
 
