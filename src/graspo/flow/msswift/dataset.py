@@ -76,7 +76,7 @@ from pathlib import Path
 from typing import Any
 
 from graspo.flow.msswift._config_mapping import Stage
-from graspo.flow.msswift.reward import GRASPO_TARGETS_COLUMN
+from graspo.flow.msswift.reward import GRASPO_TARGETS_COLUMN, GRASPO_TOOLS_COLUMN
 
 logger = logging.getLogger(__name__)
 
@@ -436,6 +436,15 @@ def build_grpo_rows(samples: list[Any], *, config: Any = None) -> list[dict[str,
             {
                 MESSAGES_KEY: build_ms_swift_messages(sample.messages),
                 GRASPO_TARGETS_COLUMN: json.dumps(sample.targets, ensure_ascii=False),
+                # 工具调用样本必须带上 ``tools`` schema：奖励适配器在 tool-call
+                # 路径上把它交给严格 XML 解析器做 required 参数校验（native 侧
+                # 走 ``Sample.tools``，同源）。没有工具的样本不带该列，奖励
+                # 适配器按 ``None`` 透明降级。
+                **(
+                    {GRASPO_TOOLS_COLUMN: json.dumps(sample.tools, ensure_ascii=False)}
+                    if getattr(sample, "tools", None)
+                    else {}
+                ),
                 **extra_columns,
             }
         )

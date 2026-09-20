@@ -72,8 +72,31 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
         self.pending_batch_timings: list[dict[str, Any]] = []
         self.resume_info: dict[str, Any] | None = None
         self._last_checkpoint_time = 0.0  # 墙钟时间周期保存用（monotonic 秒）
+        self.logger = self._build_rollout_logger()
+
+    def _build_rollout_logger(self) -> NativeRolloutLogger:
+        """构造 rollout 领域日志器（副作用：在 ``{out}/logs/<run_id>/`` 建目录）。
+
+        **为什么必须是可重建的**（阻断 B 的真因，2026-09-20）：
+
+        ``NativeRolloutLogger.__init__`` 会 ``mkdir`` 出 ``{out}/logs/<run_id>/``。
+        ``train()`` 里 ``prepare_output_dir(out, overwrite=True)`` 在
+        ``overwrite_output_dir: true`` 时执行 ``shutil.rmtree(out)``——**把刚建好的
+        ``logs`` 子树一并删掉**，于是随后 ``run_start`` 事件写
+        ``{out}/logs/<run_id>/events.jsonl`` 时 ``open(..., "a")`` 抛
+        ``FileNotFoundError``（T028 实测：0 个 optimizer step，``exit_code=1``）。
+
+        修法（阻断 B 选项 a）：**顺序对齐**——``train()`` 把
+        ``prepare_output_dir`` 提到日志目录创建**之前**（见 ``train()`` 里的
+        "顺序对齐"注释），并在它之后用本方法重建日志器。这样：
+        - ``overwrite_output_dir: true``（清掉上次产物）语义**不变**：``rmtree``
+          仍然删掉整棵输出目录（含上次的 ``logs``），只是本轮的 ``logs`` 在
+          ``rmtree`` 之后才建，因此本轮日志正常落盘；
+        - ``overwrite_output_dir: false`` 语义**不变**：非空目录仍抛
+          ``FileExistsError``（fail-closed），本轮 ``logs`` 只会在空目录上建。
+        """
         gf = self.config.native
-        self.logger = NativeRolloutLogger(
+        return NativeRolloutLogger(
             self.config.training.output_dir,
             readable_enabled=gf.readable_log_enabled,
             raw_enabled=gf.raw_log_enabled,
@@ -100,6 +123,34 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
         validate_native_runtime_config(self.config)
         self.runtime.validate()
         self.runtime.setup()
+        # ── 输出目录身份先定下来（阻断 B 修复：顺序对齐）────────────────────
+        #
+        # ``__init__`` 构造 ``NativeRolloutLogger`` 时会 ``mkdir`` 出
+        # ``{out}/logs/<run_id>/``。旧顺序把它放在 ``prepare_output_dir`` **之前**，
+        # 于是 ``overwrite_output_dir: true`` 时 ``prepare_output_dir`` 的
+        # ``shutil.rmtree(out)`` 会连本轮刚建好的 ``logs`` 子树一起删掉 ⇒ 随后
+        # 所有写 ``logs/<run_id>/events.jsonl`` 的事件（``run_start``、``train_step``）
+        # 全部 ``FileNotFoundError``（T028 实测：0 个 optimizer step，``exit_code=1``）。
+        #
+        # 现在把"清掉上次产物 / 建出空输出目录"提到**任何日志目录创建之前**：
+        # - ``overwrite_output_dir: true``：语义不变——仍然清掉上次的全部产物
+        #   （含上次的 ``logs``），只是本轮的 ``logs`` 在清完之后才建；
+        # - ``overwrite_output_dir: false``：非空目录仍抛 ``FileExistsError``
+        #   （fail-closed 防线，行为逐字不变）；
+        # - ``resume_from_checkpoint`` 时仍按原逻辑跳过 overwrite（目录必须存在）。
+        from graspo.flow.lora.lora_io import prepare_output_dir
+        output_dir = prepare_output_dir(
+            self.config.training.output_dir,
+            overwrite=(
+                self.config.training.overwrite_output_dir
+                if not self.config.training.resume_from_checkpoint
+                else False  # resume 时跳过 overwrite 检查（目录必须存在）
+            ),
+        )
+        # 输出目录此刻为空且稳定 ⇒ 日志目录（``__init__`` 里建的已被 rmtree 掉，
+        # 且这是新一次 launch）可以安全地建在同一棵树里。目录名仍是
+        # ``{out}/logs/<run_id>/``，**布局不变**。
+        self.logger = self._build_rollout_logger()
         # 初始化标准 Python logging 通道
         rank = self.runtime.rank
         setup_logging(self.config.training.output_dir, rank=rank)
@@ -133,15 +184,9 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
         # 多模态训练启动预检（防线）：数据含图时验证视觉链路完整、
         # visual LoRA 可训练，失败即拒绝启动，避免 v13 式静默丢图空跑。
         self._preflight_multimodal(samples)
-        from graspo.flow.lora.lora_io import prepare_output_dir
-        output_dir = prepare_output_dir(
-            self.config.training.output_dir,
-            overwrite=(
-                self.config.training.overwrite_output_dir
-                if not self.config.training.resume_from_checkpoint
-                else False  # resume 时跳过 overwrite 检查（目录必须存在）
-            ),
-        )
+        # ``output_dir`` 已在 ``train()`` 开头准备完毕（见该处的"顺序对齐"注释）：
+        # 这里不再第二次调用 ``prepare_output_dir``——第二次调用时输出目录里已有
+        # 本轮 ``logs/``，非空 ⇒ 会走进 rmtree 分支，正是阻断 B 的成因。
         self._resume_if_requested()
         # 初始化墙钟时间周期 checkpoint 计时器
         self._last_checkpoint_time = time.monotonic()
