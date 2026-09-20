@@ -2944,8 +2944,28 @@ printf '%s\\n' "\\$CKPT_STATE" > /out/ckpt_retention.state
 #   ★ 探测脚本由生成器**同源产出**到 \\$RUN_DIR/torch_probe.py（\\$RUN_DIR 已绑定到
 #     容器 /out）⇒ 不新增挂载项；契约字面量（schema / 文件名）取自
 #     generate_matrix.py::TORCH_PROBE_SCHEMA / TORCH_PROBE_FILENAME（唯一真相源 §1.4）。
-"\\$CONTAINER_PY" {TORCH_PROBE_SCRIPT_CONTAINER_PATH} \\\\
-    --run-dir {TORCH_PROBE_RUN_DIR} --tier "\\$TIER" || true
+#   ★★ 写法约束（**2026-09-21 真机缺陷修复**；与上方 795/796/807 三处兄弟调用**逐字同款**）：
+#     裸美元符 CONTAINER_PY（外层展开、烤定成字面量 "python" 落到 entry.sh），
+#     **不得**转义成反斜杠美元符。原因：CONTAINER_PY 的唯一真相源在**宿主侧**
+#     （本脚本第 100 行 = generate_matrix.py::CONTAINER_PY 段），它**不经** docker run 的 -e
+#     注入容器 ⇒ 一旦转义，展开推迟到容器内、变量未定义 ⇒ 空串 ⇒
+#     该行退化成「空命令名 + /out/torch_probe.py 参数」（228 实测 行 229: : 未找到命令）
+#     ⇒ 被行尾 || true 静默吞掉 ⇒ torch_probe.json **全部从未产出**、stdout [torch-probe] 命中 0。
+#     （仅 \\$TIER 这类**由 docker run -e 显式注入**的容器内变量才该转义——见下方收口段。
+#     本段是 heredoc 正文：注释里同样不得出现裸反引号/裸美元符，否则外层会真的执行它们。）
+#   ★★ 兜底必须留**显式痕迹**（2026-09-21 防呆改进）：|| true 只负责"不改 RC"，
+#     它**不能**也不该阻止我们看见失败——本次真机缺陷正是被它静默吞掉的。
+#     故兜底分支追加一条 SKIPPED 到 stderr（随**容器 stdout/stderr** 直达跑批终端/批日志，
+#     人在台账外能看见）。⚠ 落点提醒：runner 的 docker run **未重定向**，<run>/stdout.log
+#     是容器内 torchrun 那一行的重定向（本行不在其中）⇒ 找痕迹请到跑批终端/批日志里找。
+#     且 echo 自身返回 0 ⇒ RC 仍只由训练/保留决定（fail-closed 语义一点没削弱：探测没跑成
+#     ⇒ 不写 torch_probe.json ⇒ collector 依旧退回弱证据、A3 依旧是取证缺口，绝不放行）。
+#     不写 EVIDENCE_GAP_torch_probe 文件：collector 没有读它的路径 ⇒ 那是个没人消费的死标记
+#     （§18.1 不留负债）；且一个"看起来像证据"的旁路文件容易被误当成已取证（§2.3）。
+"$CONTAINER_PY" {TORCH_PROBE_SCRIPT_CONTAINER_PATH} \\\\
+    --run-dir {TORCH_PROBE_RUN_DIR} --tier "\\$TIER" \\\\
+    || echo "[torch-probe] SKIPPED: 探测未执行成功（解释器/脚本缺失，或探测自身失败）——" \\
+            "不写 torch_probe.json ⇒ A3 退回弱证据路径（取证缺口），绝不放行；RC 不受影响" >&2
 # ★ 轻量证据（stdout.log / logging.jsonl / args.json / trainer_state.json / gpu 读数）
 #   **一律不删**——"删权重不删证据"（宪法 §16 + 验收锚点必须是产物证据）。
 # ══ 收口前必须做：**先让容器内采样器把摘要落盘，再退出**（2026-09-19 缺陷修复）══
