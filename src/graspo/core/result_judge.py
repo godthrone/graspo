@@ -145,6 +145,52 @@ HOST_SAMPLE_PEAK_FIELD: str = "host_sample_peak_gib"
 #: 缺口 > 0 即说明该次采样期间卡上的占用有非本档成分，副读数须打折看。
 HOST_SAMPLE_GAP_FIELD: str = "host_sample_peak_gap_mib"
 
+#: **ms-swift 后端自报的显存峰值口径标识** —— `max_memory_reserved`，**不是** allocator 口径。
+#:
+#: 源码依据（`.local/refs/ms-swift-4.5.3/git-v4.5.3`，`HEAD=faed594`，`tag v4.5.3`）：
+#:   `swift/trainers/patcher.py:27`   `state.max_memory = max(..., get_max_reserved_memory())`
+#:   `swift/trainers/patcher.py:29`   `logs['memory(GiB)'] = round(state.max_memory, 2)`
+#:   `swift/utils/torch_utils.py:413-419`
+#:       `mems = [get_torch_device().max_memory_reserved(device=device) for device in devices]`
+#:       `return max(mems) / 1024**3`
+#:   `swift/megatron/callbacks/print.py:64`
+#:       `memory = reduce_max_stat_across_model_parallel_group(torch.cuda.max_memory_reserved() / 1024**3)`
+#:       `logs['memory(GiB)'] = round(memory, 2)`
+#:
+#: 三处**没有一处**调用 `max_memory_allocated()` ⇒ ms-swift 的 `memory(GiB)` 是
+#: **reserved（缓存分配器已向 CUDA 申请并持有的高水位）**，与 §9.1 声明的
+#: `rank0 max_allocated`（`.local/本期工程跟踪.md:420`）是**两个量**：
+#: reserved ≥ allocated 恒成立（reserved 含 caching allocator 的空闲缓存块）。
+#: 语言侧对照：ms-swift 自己在 `swift/rlhf_trainers/utils.py:423/424` 把
+#: `memory_allocated()` / `memory_reserved()` 分别命名 —— 两个词在上游就是两个量。
+#:
+#: ⇒ **不得把它读进 :data:`PEAK_MEMORY_CALIBER` 那一列**（那会混口径，#9.1 明文禁止）。
+#: 是否把它升格为 §7 的一个合法口径，属**口径定义变更**，须改 `.local/本期工程跟踪.md`
+#: §9.1 的口径行 —— 本模块**只提供带口径标签的原值**，由指挥官裁定。
+MSSWIFT_RESERVED_CALIBER: str = "msswift_rank0_max_reserved"
+
+#: ms-swift 自报 reserved 峰值在台账里的**独立字段名**：**另存，不进 §7 峰值列**。
+#: 它与 :data:`HOST_SAMPLE_PEAK_FIELD` 是同一种设计——把"另一个口径的实测值"显式留在
+#: 台账里，让"这一格是什么口径"可回答（§1.4 / §2.2），而不是拿它去填 allocator 列。
+MSSWIFT_RESERVED_PEAK_FIELD: str = "msswift_reserved_peak_gib"
+
+#: 与上面那个值**成对落库**的口径标签字段名 —— 让下游"看到数字就同时看到口径"，
+#: 不必回查本模块或源码（§2.2 显式即防呆）。
+MSSWIFT_RESERVED_CALIBER_FIELD: str = "msswift_reserved_peak_caliber"
+
+#: 与上面那个值**成对落库**的说明字段名（有值 = 口径理由；无值 = 未取得原因）。
+MSSWIFT_RESERVED_NOTE_FIELD: str = "msswift_reserved_peak_note"
+
+#: ms-swift 自报峰值**未取得**时的显式标注（**不得**用宿主采样或 native 值兜底）。
+MSSWIFT_RESERVED_UNAVAILABLE: str = "未取得（ms-swift 未打印 memory(GiB)）"
+
+#: ms-swift 自报值**为什么不能直接进 §7 峰值列**的一句话理由（随字段一起落台账，
+#: 让下游不必读源码就知道该列与 allocator 列不可互换）。
+MSSWIFT_RESERVED_NOTE: str = (
+    "口径=max_memory_reserved（swift/trainers/patcher.py:27 → swift/utils/torch_utils.py:416）；"
+    "≥max_allocated，与 §7 声明的 rank0 max_allocated 不是同一个量，故不进峰值列"
+)
+
 #: A5 四件套产物：配置备份 / 训练日志 / 可恢复 checkpoint / 运行指标。
 REQUIRED_ARTIFACTS: tuple[str, ...] = (
     "config_backup",
@@ -1138,6 +1184,7 @@ def ledger_row(
     date: str,
     host_sample_peak_gib: float | None = None,
     host_sample_peak_gap_mib: float | None = None,
+    msswift_reserved_peak_gib: float | None = None,
 ) -> dict[str, object]:
     """把判定落成 capability-matrix §7 台账的一行（可直接填表）。
 
@@ -1147,6 +1194,13 @@ def ledger_row(
     ``host_sample_peak_gib`` 另存（:data:`HOST_SAMPLE_PEAK_FIELD`）。
     ``peak_memory_gib is None`` ⇒ 台账同时落 :data:`PEAK_MEMORY_UNAVAILABLE` 标注，
     让"allocator 口径不可得"与"没跑过"在下游可区分（§2.2 显式即防呆）。
+
+    **``msswift_reserved_peak_gib``（新增，2026-09-21）**：ms-swift 后端自报的
+    `memory(GiB)`（= `max_memory_reserved`，见 :data:`MSSWIFT_RESERVED_CALIBER`）。
+    它与 `peak_memory_gib` **是两个不同的量**（reserved ≥ allocated），因此**只**经
+    :data:`MSSWIFT_RESERVED_PEAK_FIELD` 另存，并配对落口径标签与理由；
+    `peak_memory_gib` 一概不用它。`None` ⇒ 落
+    :data:`MSSWIFT_RESERVED_UNAVAILABLE` 原因文案。
 
     **``max_context`` 的资格口径（🔴-1 修正，2026-09-18）**：该列的资格由
     :func:`counts_toward_max_context` **或**整档通过共同决定，**不再**只由
@@ -1196,6 +1250,15 @@ def ledger_row(
         # 同一次宿主采样的缺口：> 0 = 该卡峰值含**非本档**成分（共享机他人作业），
         # 副读数必须打折看。**只加字段**，不进 §7 峰值列。
         HOST_SAMPLE_GAP_FIELD: host_sample_peak_gap_mib,
+        # ms-swift 后端自报的 **reserved** 峰值：**另存 + 带口径标签**（§1.4 / §2.2）。
+        # 它不是 §9.1 的 allocator 口径（见 :data:`MSSWIFT_RESERVED_CALIBER` 的源码依据），
+        # 因此**只**落本字段，`peak_memory_gib` 一概不用它。`None` ⇒ 显式标注原因，
+        # 绝不静默、绝不用宿主采样补 —— 与 `PEAK_MEMORY_UNAVAILABLE` 同一防呆模式。
+        MSSWIFT_RESERVED_PEAK_FIELD: msswift_reserved_peak_gib,
+        MSSWIFT_RESERVED_CALIBER_FIELD: MSSWIFT_RESERVED_CALIBER,
+        MSSWIFT_RESERVED_NOTE_FIELD: (
+            MSSWIFT_RESERVED_NOTE if msswift_reserved_peak_gib is not None else MSSWIFT_RESERVED_UNAVAILABLE
+        ),
         "status": judgement.ledger_status,
         "failure_class": judgement.failure_class,
         "note": judgement.note,
