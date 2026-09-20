@@ -138,11 +138,13 @@ def mask_email(value: str) -> str:
     local, _, domain = value.partition("@")
     keep_local = local[:2]
     head, _, tail = domain.rpartition(".")
-    keep_domain = (head[:2] if head else domain[:2])
+    keep_domain = head[:2] if head else domain[:2]
     return f"{keep_local}***@{keep_domain}***" + (f".{tail}" if tail else "")
 
 
-def is_allowed_identity(email: str, extra_emails: frozenset[str], extra_domains: tuple[str, ...]) -> bool:
+def is_allowed_identity(
+    email: str, extra_emails: frozenset[str], extra_domains: tuple[str, ...]
+) -> bool:
     """判定完整地址是否属于"项目允许的公开身份"。
 
     `extra_emails` / `extra_domains` 来自本地 git config（真实域名不入代码）。
@@ -276,9 +278,12 @@ def _impl(args) -> gc.ScanResult:
         result.notes.append("--tracked-only：跳过提交历史元数据扫描。")
         return result
 
-    raw = gc._git(
-        ["log", "--all", "--format=%H%x1f%an <%ae>%x1f%cn <%ce>%x1e"], cwd=root, check=False
-    ) or ""
+    raw = (
+        gc._git(
+            ["log", "--all", "--format=%H%x1f%an <%ae>%x1f%cn <%ce>%x1e"], cwd=root, check=False
+        )
+        or ""
+    )
     seen_identities: dict[str, int] = {}
     history_bad: dict[str, str] = {}
     for record in raw.split("\x1e"):
@@ -321,9 +326,7 @@ def _impl(args) -> gc.ScanResult:
     # ── ③ 提交信息正文（§15.1「提交信息同样纳入扫描」）───────────────────────
     # 同一句式会在几百个提交里重复出现，报告按 (规则, 行文) 聚合，每类只列
     # 前 3 条实例并给出总数——否则 text 输出会被大量同义告警淹没。
-    messages = _git_lines(
-        root, ["log", "--all", "--format=%H%n%B%x1e", "--no-merges"]
-    )
+    messages = _git_lines(root, ["log", "--all", "--format=%H%n%B%x1e", "--no-merges"])
     aggregated: dict[tuple[str, str], list[str]] = {}
     commit_sha = ""
     for chunk in messages:

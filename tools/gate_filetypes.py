@@ -49,7 +49,9 @@ PATH_RULES: list[tuple[str, re.Pattern[str], str]] = [
     ),
     (
         "ide_or_cache_dir",
-        re.compile(r"(^|/)(\.idea|\.vscode|__pycache__|\.pytest_cache|\.mypy_cache|\.ruff_cache|\.tox|node_modules|site-packages)(/|$)"),
+        re.compile(
+            r"(^|/)(\.idea|\.vscode|__pycache__|\.pytest_cache|\.mypy_cache|\.ruff_cache|\.tox|node_modules|site-packages)(/|$)"
+        ),
         "IDE 配置 / 缓存 / 虚拟环境目录不得入库（§15.1 检查 2、§19.2）",
     ),
     (
@@ -69,7 +71,9 @@ PATH_RULES: list[tuple[str, re.Pattern[str], str]] = [
     ),
     (
         "ai_assistant_file",
-        re.compile(r"(^|/)(CLAUDE|AGENTS|GEMINI|QWEN|COPILOT|CURSOR)(\.[A-Za-z0-9-]+)*\.(md|mdc|rules)$"),
+        re.compile(
+            r"(^|/)(CLAUDE|AGENTS|GEMINI|QWEN|COPILOT|CURSOR)(\.[A-Za-z0-9-]+)*\.(md|mdc|rules)$"
+        ),
         "AI 助手本地指令/草稿文件必须 gitignore（§15.1 检查 2、§17.3、§19.2）",
     ),
     (
@@ -79,7 +83,9 @@ PATH_RULES: list[tuple[str, re.Pattern[str], str]] = [
     ),
     (
         "key_material",
-        re.compile(r"(^|/)(id_rsa|id_dsa|id_ecdsa|id_ed25519)$|\.(pem|key|p12|pfx|jks|keystore|ppk)$"),
+        re.compile(
+            r"(^|/)(id_rsa|id_dsa|id_ecdsa|id_ed25519)$|\.(pem|key|p12|pfx|jks|keystore|ppk)$"
+        ),
         "私钥/证书材料不得入库（§15.1 检查 1+2）",
     ),
     (

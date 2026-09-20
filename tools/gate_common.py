@@ -133,7 +133,9 @@ class Whitelist:
         ]
         return cls(entries)
 
-    def suppressed_reason(self, rule: str, path: str, snippet: str, line_text: str = "") -> str | None:
+    def suppressed_reason(
+        self, rule: str, path: str, snippet: str, line_text: str = ""
+    ) -> str | None:
         for entry in self.entries:
             if entry.matches(rule, path, snippet, line_text):
                 return entry.reason
@@ -276,7 +278,10 @@ def versions_range(root: Path, rev_range: str) -> Iterator[tuple[str, str]]:
     """
     out = _git(["diff", "--name-only", rev_range], cwd=root, check=False)
     if out is None:
-        out = _git(["diff-tree", "-r", "--root", "--name-only", rev_range], cwd=root, check=False) or ""
+        out = (
+            _git(["diff-tree", "-r", "--root", "--name-only", rev_range], cwd=root, check=False)
+            or ""
+        )
     for path in [p for p in out.splitlines() if p]:
         text = read_worktree_text(root, path)
         if text is not None:

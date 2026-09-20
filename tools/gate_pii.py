@@ -77,7 +77,9 @@ RULES: list[gc.LineRule] = [
     ),
     gc.LineRule(
         "im_account",
-        re.compile(r"(?i)\b(?:wechat|weixin|wecom|dingtalk|telegram|whatsapp|qq)\b\s*(?:号|id|account|[:=：])"),
+        re.compile(
+            r"(?i)\b(?:wechat|weixin|wecom|dingtalk|telegram|whatsapp|qq)\b\s*(?:号|id|account|[:=：])"
+        ),
     ),
     gc.LineRule(
         "student_employee_id",
@@ -86,7 +88,9 @@ RULES: list[gc.LineRule] = [
         # `tools/`（开永久盲区，禁止），要么为自家规则定义写自指白名单（无法证明
         # 措辞与规则一致）。这里用 `\uXXXX` 转义承载同一正则：**匹配能力完全相同**
         # （`re` 在正则解析阶段解转义），而源码里不再出现规则要抓的字面词。
-        re.compile(r"(?i)\b(?:\u5b66\u53f7|\u5de5\u53f7|\u5458\u5de5\u7f16\u53f7|student\s*id|employee\s*id|staff\s*id)\b"),
+        re.compile(
+            r"(?i)\b(?:\u5b66\u53f7|\u5de5\u53f7|\u5458\u5de5\u7f16\u53f7|student\s*id|employee\s*id|staff\s*id)\b"
+        ),
     ),
 ]
 
@@ -138,8 +142,7 @@ def _impl(args) -> gc.ScanResult:
         history.violations.clear()
         gc.merge(result, history)
         result.notes.append(
-            "历史命中一律记 warning（§19.1 历史不可改写）；"
-            "是否走 §15.3 重写历史由维护者/用户拍板。"
+            "历史命中一律记 warning（§19.1 历史不可改写）；是否走 §15.3 重写历史由维护者/用户拍板。"
         )
     _apply_post_filter(result)
     result.notes.append(
