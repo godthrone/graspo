@@ -109,11 +109,17 @@ DIAGNOSTIC_PHASES: frozenset[str] = frozenset(
 #: 读取口径」表中 `实测每卡峰值显存(GiB)` 那一行的**原文**——**可核定位**：
 #: `.local/本期工程跟踪.md:420`（表头 `★ §7 各列的读取口径` 在 `:415`）：
 #:
-#:     单一口径：容器内 PyTorch allocator 的 rank0 `max_allocated`。
-#:     其它口径（OOM 报文的**进程占用**、宿主 `nvidia-smi` 采样）**不得混入同一列**。
+#:     **二分口径（按 A §7 的「后端」列即可推导，不必逐格加标签）**：
+#:     `native` 档 = 容器内 PyTorch allocator 的 rank0 `max_allocated`；
+#:     `ms-swift` 档 = 该进程的 `max_memory_reserved`（同进程全部可见卡取 max）。
+#:     ★ 同一后端内部口径完全一致；跨后端差异显式登记在台账
+#:     `peak_memory_caliber` 字段且可由「后端」列单值推导（§1.4 / §2.2）。
+#:     ★ `ms-swift` 档是**保守上界**（`reserved >= allocated`）。
+#:     **其它口径一律不得混入本列**（OOM 报文的进程占用、宿主 `nvidia-smi` 采样）；**不可得时留空并显式标注，绝不静默回落**。
 #:
-#: 本常量 = 那份声明在**可执行代码里的唯一落点**；改口径 = 改这一处 + 同步
-#: `docs/capability-matrix.md` §7 峰值列脚注（两处之外不得再出现第三份口径定义）。
+#: 本常量 = 上述声明的 native 支路在**可执行代码里的唯一落点**；后端→口径的**唯一映射**
+#: 见 :data:`PEAK_MEMORY_CALIBER_BY_BACKEND`（改口径 = 改那一处 + 同步
+#: `docs/capability-matrix.md` §7 峰值列脚注；两处之外不得再出现第三份口径定义）。
 #:
 #: 训练侧落点（allocator 值怎么来的）：
 #:   `src/graspo/flow/parallel/tensor_utils.py:_cuda_memory_snapshot`
@@ -164,14 +170,18 @@ HOST_SAMPLE_GAP_FIELD: str = "host_sample_peak_gap_mib"
 #: 语言侧对照：ms-swift 自己在 `swift/rlhf_trainers/utils.py:423/424` 把
 #: `memory_allocated()` / `memory_reserved()` 分别命名 —— 两个词在上游就是两个量。
 #:
-#: ⇒ **不得把它读进 :data:`PEAK_MEMORY_CALIBER` 那一列**（那会混口径，#9.1 明文禁止）。
-#: 是否把它升格为 §7 的一个合法口径，属**口径定义变更**，须改 `.local/本期工程跟踪.md`
-#: §9.1 的口径行 —— 本模块**只提供带口径标签的原值**，由指挥官裁定。
+#: ⇒ **它只在 ms-swift 档上是 §7 峰值列的合法口径**（2026-09-21 指挥官裁定「方案 A：
+#: 二分口径」）：ms-swift 后端结构性不产 `rank_metrics` 旁路 ⇒ `max_allocated` 不可得；
+#: 若坚持单一口径，54 档里 36 个 ms-swift 档**永久填不出值**，§7 便无法回答用户的
+#: "我的硬件够不够"。§9.1 已改为**二分口径**：同一**后端**内部口径一致，跨后端差异
+#: **显式登记**（台账 `peak_memory_caliber`）且**可由「后端」列单值推导**（§1.4 / §2.2）。
+#: ★ 它是**保守上界**：`reserved >= allocated` 恒成立 ⇒ 拿它判断"够不够"不会被低估。
+#: 唯一映射（后端 → 口径）见 :data:`PEAK_MEMORY_CALIBER_BY_BACKEND`。
 MSSWIFT_RESERVED_CALIBER: str = "msswift_rank0_max_reserved"
 
-#: ms-swift 自报 reserved 峰值在台账里的**独立字段名**：**另存，不进 §7 峰值列**。
-#: 它与 :data:`HOST_SAMPLE_PEAK_FIELD` 是同一种设计——把"另一个口径的实测值"显式留在
-#: 台账里，让"这一格是什么口径"可回答（§1.4 / §2.2），而不是拿它去填 allocator 列。
+#: ms-swift 自报 reserved 峰值在台账里的**独立字段名**：保留为该后端自报值的**原始读数**
+#: （与 §7 峰值列同值但自带来源标签）。它与 :data:`HOST_SAMPLE_PEAK_FIELD` 是同一种设计
+#: ——把"另一个来源的实测值"显式留在台账里，让"这一格是什么口径"可回答（§1.4 / §2.2）。
 MSSWIFT_RESERVED_PEAK_FIELD: str = "msswift_reserved_peak_gib"
 
 #: 与上面那个值**成对落库**的口径标签字段名 —— 让下游"看到数字就同时看到口径"，
@@ -184,12 +194,55 @@ MSSWIFT_RESERVED_NOTE_FIELD: str = "msswift_reserved_peak_note"
 #: ms-swift 自报峰值**未取得**时的显式标注（**不得**用宿主采样或 native 值兜底）。
 MSSWIFT_RESERVED_UNAVAILABLE: str = "未取得（ms-swift 未打印 memory(GiB)）"
 
-#: ms-swift 自报值**为什么不能直接进 §7 峰值列**的一句话理由（随字段一起落台账，
-#: 让下游不必读源码就知道该列与 allocator 列不可互换）。
+#: ms-swift 自报值**为什么是保守上界、以及它在二分口径下的地位**的一句话理由（随字段
+#: 一起落台账，让下游不必读源码就知道该数与本档 §7 峰值列同源）。
 MSSWIFT_RESERVED_NOTE: str = (
     "口径=max_memory_reserved（swift/trainers/patcher.py:27 → swift/utils/torch_utils.py:416）；"
-    "≥max_allocated，与 §7 声明的 rank0 max_allocated 不是同一个量，故不进峰值列"
+    "§9.1 二分口径下它即 ms-swift 档的 §7 峰值口径；reserved>=allocated ⇒ 保守上界（不会被低估）"
 )
+
+#: ── ★ 后端 → §7 峰值列口径 的**唯一映射**（§1.4 单一真相源） ──────────────────
+#:
+#: 为什么必须只有一处：口径是**后端的函数**——`native` 经
+#: `transformer_adapter._emit_rank_memory_event` 落 rank0 旁路（allocator 可得），
+#: `ms-swift` 结构性不产该旁路、只有自报的 `memory(GiB)`（reserved）。
+#: 若采集层与落盘层各写一份"哪个后端用哪个口径"，两者漂移时**没有任何测试能发现**
+#: ——那正是"这一格是什么口径"变得不可回答的通道（§2.2 显式即防呆）。
+#: 取值来源与依据见 `.local/本期工程跟踪.md:420`（§9.1 的该列口径行）。
+PEAK_MEMORY_CALIBER_BY_BACKEND: dict[str, str] = {
+    "native": PEAK_MEMORY_CALIBER,
+    "ms-swift": MSSWIFT_RESERVED_CALIBER,
+}
+
+#: **后端未登记**时的显式"无口径"标签——**不猜、不默认取某一支**（§2.2）。
+#: 为什么不用 `None`：台账 `jsonl` 里 `null` 与"字段缺失"不可分辨，且下游 `md` 渲染
+#: 需要一个可显示的字面量；给一个**自证为"未登记"**的字符串比留空更难被误读。
+PEAK_MEMORY_CALIBER_UNKNOWN: str = "unknown_backend_no_caliber"
+
+#: 口径 → **不可得**时的显式标注（§2.2）。沿用既有 `PEAK_MEMORY_UNAVAILABLE` 风格：
+#: "没拿到值"必须与"没跑过"在下游可区分，且**绝不**回落到另一种口径或宿主值。
+PEAK_MEMORY_UNAVAILABLE_BY_CALIBER: dict[str, str] = {
+    PEAK_MEMORY_CALIBER: PEAK_MEMORY_UNAVAILABLE,
+    MSSWIFT_RESERVED_CALIBER: MSSWIFT_RESERVED_UNAVAILABLE,
+}
+
+#: 后端未登记 ⇒ 无口径可谈 ⇒ 单独的不可得标注（原因与两种已登记口径都不同）。
+PEAK_MEMORY_UNAVAILABLE_UNKNOWN: str = "未取得（后端未登记峰值口径）"
+
+
+def peak_memory_caliber_for_backend(backend: str) -> str:
+    """按后端给出该档 §7 峰值列的口径标签（读取 :data:`PEAK_MEMORY_CALIBER_BY_BACKEND` 的唯一入口）。
+
+    **唯一真相源（§1.4）**：本函数是"这个后端用哪个口径"的**唯一**判定点——采集层的
+    取数分支与落盘层的 `peak_memory_caliber` 字段**都**从这里取值，因此两者不可能漂移。
+    未登记的后端返回 :data:`PEAK_MEMORY_CALIBER_UNKNOWN`（显式，绝不默认取某一支）。
+    """
+    return PEAK_MEMORY_CALIBER_BY_BACKEND.get(backend, PEAK_MEMORY_CALIBER_UNKNOWN)
+
+
+def peak_memory_unavailable_note(caliber: str) -> str:
+    """给定口径标签，返回其**不可得**时该落的显式标注（§2.2，绝不静默回落）。"""
+    return PEAK_MEMORY_UNAVAILABLE_BY_CALIBER.get(caliber, PEAK_MEMORY_UNAVAILABLE_UNKNOWN)
 
 #: A5 四件套产物：配置备份 / 训练日志 / 可恢复 checkpoint / 运行指标。
 REQUIRED_ARTIFACTS: tuple[str, ...] = (
@@ -1185,22 +1238,37 @@ def ledger_row(
     host_sample_peak_gib: float | None = None,
     host_sample_peak_gap_mib: float | None = None,
     msswift_reserved_peak_gib: float | None = None,
+    peak_memory_caliber: str | None = None,
 ) -> dict[str, object]:
     """把判定落成 capability-matrix §7 台账的一行（可直接填表）。
 
-    **``peak_memory_gib`` 的口径（§9.1，见 :data:`PEAK_MEMORY_CALIBER`）**：
-    唯一合法值 = **容器内 PyTorch allocator 的 rank0 `max_allocated`**（GiB）。
+    **``peak_memory_gib`` 的口径（§9.1 二分口径，2026-09-21 指挥官裁定「方案 A」）**：
+    **按本档 ``backend`` 决定**，映射的唯一真相源是
+    :data:`PEAK_MEMORY_CALIBER_BY_BACKEND`（读取入口
+    :func:`peak_memory_caliber_for_backend`）：
+
+    - ``native`` ⇒ :data:`PEAK_MEMORY_CALIBER`（容器内 PyTorch allocator 的 rank0
+      ``max_allocated``）；
+    - ``ms-swift`` ⇒ :data:`MSSWIFT_RESERVED_CALIBER`（该进程的 ``max_memory_reserved``，
+      **保守上界**：``reserved >= allocated``）；
+    - 未登记的后端 ⇒ :data:`PEAK_MEMORY_CALIBER_UNKNOWN`（显式，绝不默认取某一支）。
+
     宿主 `nvidia-smi` 采样峰值**不得**经本参数进入该列——它只能走
     ``host_sample_peak_gib`` 另存（:data:`HOST_SAMPLE_PEAK_FIELD`）。
-    ``peak_memory_gib is None`` ⇒ 台账同时落 :data:`PEAK_MEMORY_UNAVAILABLE` 标注，
-    让"allocator 口径不可得"与"没跑过"在下游可区分（§2.2 显式即防呆）。
+    ``peak_memory_gib is None`` ⇒ 台账按**该档口径**落对应的显式标注
+    （:func:`peak_memory_unavailable_note`），让"该口径不可得"与"没跑过"在下游可区分，
+    且**绝不静默回落**到另一种口径或宿主值（§2.2 显式即防呆）。
 
-    **``msswift_reserved_peak_gib``（新增，2026-09-21）**：ms-swift 后端自报的
-    `memory(GiB)`（= `max_memory_reserved`，见 :data:`MSSWIFT_RESERVED_CALIBER`）。
-    它与 `peak_memory_gib` **是两个不同的量**（reserved ≥ allocated），因此**只**经
-    :data:`MSSWIFT_RESERVED_PEAK_FIELD` 另存，并配对落口径标签与理由；
-    `peak_memory_gib` 一概不用它。`None` ⇒ 落
-    :data:`MSSWIFT_RESERVED_UNAVAILABLE` 原因文案。
+    **``peak_memory_caliber``（可选）**：调用方（采集层取数函数）核算出的口径标签。
+    默认 ``None`` ⇒ 由 ``backend`` 就地推导。给值时**必须**与推导值相同——否则说明
+    取数与落盘对"哪个后端用哪个口径"理解不一致，本函数**当场拒绝**而不是把错标签落盘。
+
+    **``msswift_reserved_peak_gib``**：ms-swift 后端自报的
+    `memory(GiB)`（= `max_memory_reserved`，见 :data:`MSSWIFT_RESERVED_CALIBER`）的
+    **原始读数**，经 :data:`MSSWIFT_RESERVED_PEAK_FIELD` 另存并配对落口径标签与理由。
+    ★ 在二分口径下它与 ms-swift 档的 ``peak_memory_gib`` **同值同源**（不是第二个真相源：
+    一个是"本档 §7 峰值列的值"，一个是"上游自报字段的原值 + 来源标签"）。
+    非 ms-swift 档上它恒为 ``None``（不适用）。
 
     **``max_context`` 的资格口径（🔴-1 修正，2026-09-18）**：该列的资格由
     :func:`counts_toward_max_context` **或**整档通过共同决定，**不再**只由
@@ -1231,6 +1299,16 @@ def ledger_row(
         context_kind = MAX_CONTEXT_KIND_FEASIBLE
     else:
         context_kind = MAX_CONTEXT_KIND_OOM_BOUNDARY
+    # 本档峰值列的**口径由 backend 唯一决定**（§1.4）：采集层核算的标签若与本处推导
+    # 不一致，说明两边对"哪个后端用哪个口径"理解不同 —— 当场拒绝，不把错标签落盘。
+    derived_caliber = peak_memory_caliber_for_backend(backend)
+    if peak_memory_caliber is not None and peak_memory_caliber != derived_caliber:
+        raise ValueError(
+            "峰值口径不一致：采集层给 "
+            f"{peak_memory_caliber!r}，而后端 {backend!r} 的唯一映射是 {derived_caliber!r}"
+            "（§1.4 单一真相源：PEAK_MEMORY_CALIBER_BY_BACKEND）"
+        )
+    caliber = derived_caliber
     return {
         "tier_id": judgement.tier_id,
         "model": model,
@@ -1243,17 +1321,17 @@ def ledger_row(
         "peak_memory_gib": peak_memory_gib,
         # 峰值列的**口径自证 + 空值原因 + 宿主副读数**（§1.4 单一真相源 / §2.2 显式即防呆）：
         # 台账必须能回答"这一格是什么口径、从哪个字段来""不可得时为什么空""卡实际用了多少"。
-        # **只加字段**：`peak_memory_gib` 的语义（§9.1 的 allocator 口径）与任何判定都不动。
-        "peak_memory_caliber": PEAK_MEMORY_CALIBER,
-        "peak_memory_note": "" if peak_memory_gib is not None else PEAK_MEMORY_UNAVAILABLE,
+        # **只加字段**：`peak_memory_gib` 的值域与任何判定都不动；变的只是"按后端二分"。
+        "peak_memory_caliber": caliber,
+        "peak_memory_note": "" if peak_memory_gib is not None else peak_memory_unavailable_note(caliber),
         HOST_SAMPLE_PEAK_FIELD: host_sample_peak_gib,
         # 同一次宿主采样的缺口：> 0 = 该卡峰值含**非本档**成分（共享机他人作业），
-        # 副读数必须打折看。**只加字段**，不进 §7 峰值列。
+        # 副读数必须打折看。**只加字段**，不进 §7 峰值列（二分口径下仍然禁止）。
         HOST_SAMPLE_GAP_FIELD: host_sample_peak_gap_mib,
-        # ms-swift 后端自报的 **reserved** 峰值：**另存 + 带口径标签**（§1.4 / §2.2）。
-        # 它不是 §9.1 的 allocator 口径（见 :data:`MSSWIFT_RESERVED_CALIBER` 的源码依据），
-        # 因此**只**落本字段，`peak_memory_gib` 一概不用它。`None` ⇒ 显式标注原因，
-        # 绝不静默、绝不用宿主采样补 —— 与 `PEAK_MEMORY_UNAVAILABLE` 同一防呆模式。
+        # ms-swift 后端自报的 **reserved** 峰值的**原始读数**：另存 + 带口径标签（§1.4 / §2.2）。
+        # 二分口径下（2026-09-21 裁定）它同时就是 ms-swift 档 §7 峰值列的取数来源；
+        # 本字段保留为"上游自报字段的原值 + 来源标签"，非 ms-swift 档恒为 None。
+        # `None` ⇒ 显式标注原因，绝不静默、绝不用宿主采样补 —— 与 `PEAK_MEMORY_UNAVAILABLE` 同一防呆模式。
         MSSWIFT_RESERVED_PEAK_FIELD: msswift_reserved_peak_gib,
         MSSWIFT_RESERVED_CALIBER_FIELD: MSSWIFT_RESERVED_CALIBER,
         MSSWIFT_RESERVED_NOTE_FIELD: (
