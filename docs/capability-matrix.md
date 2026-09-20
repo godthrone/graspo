@@ -98,7 +98,7 @@
 | 量化 | 低比特权重与计算 | ⛔ 不支持 | ⛔ 不支持 |
 | 多机 | 跨节点扩展 | ⛔ 不支持 | ⛔ 不支持 |
 
-> **第 4 节的可用性 ≠ 第 7 节的实测通过**：第 4 节答"能力入口是否存在"，其中 `✅ 可用` 里的"有跑通记录"指**既有历史 / 冒烟级记录**（含未达台账门槛者，且可能来自旧模型），**不等于第 7 节的台账判据**；第 7 节答"本期模型 + 本期配置下是否跑通"——**本轮台账 54 档 0 通过**。
+> **第 4 节的可用性 ≠ 第 7 节的实测通过**：第 4 节答"能力入口是否存在"，其中 `✅ 可用` 里的"有跑通记录"指**既有历史 / 冒烟级记录**（含未达台账门槛者，且可能来自旧模型），**不等于第 7 节的台账判据**；第 7 节答"本期模型 + 本期配置下是否跑通"——**本期台账 54 档中已通过 9 档**：（`T001`/`T002`/`T003`/`T009`/`T013`/`T014`/`T025`/`T027`/`T046`，均 ms-swift 档、A1–A6 全过）；其余为 **`❌ 失败 10` / `⛔ 不适用 3` / `— 未测 32`**（**逐档状态与计数以第 7 节为准**）。
 
 ## 5. 参数组合规则（什么能一起开）
 
@@ -184,6 +184,33 @@
 > **新增列口径（三段式，唯一真相源）**：每个单元格依次写清 ①**可行性 / 手段**（业界同档能不能跑；不能则靠什么手段跑起来：`offload` / `ZeRO-2/3` 分片 / `FSDP2` / 多机 / 分置 rollout）②**每卡显存量级**（GiB 数值或量级；**只拿到「总量」时一律显式标注「总量」**，不得把总量写成每卡值）③**出处**（每格至少 1 个 `【Sn】` 编号，指向下方清单）。**本列为业界公开资料的量级参照（官方文档 / 官方 README / 官方教程 / 论文），不是本仓库实测值**，与本行其余列的实测口径**不可混同**；**「未查到公开实测」≠「业界不支持」**。★ **本列不改变本表结构**：不参与 §6 档位构成与 §8 达标线、不引入新的状态取值、不改变 §7 逐行实数（`实测状态` 仍是第 10 栏）。
 > **`T016` / `T034` 的配方已改**：两档（9B · 全量 · native · 1 卡）**不再等 native 全参 offload，改用 fp16 + LoRA**；故其「业界情况」**按 LoRA 口径重写**（上表已生效）。
 > **出处清单（编号 → 完整 URL）**：`【S1】` https://swift.readthedocs.io/zh-cn/latest/BestPractices/Qwen3-Best-Practice.html ｜ `【S2】` https://swift.readthedocs.io/zh-cn/latest/BestPractices/Qwen3-VL-Best-Practice.html ｜ `【S3】` https://swift.readthedocs.io/zh-cn/latest/Instruction/Distillation.html ｜ `【S4】` https://swift.readthedocs.io/zh-cn/latest/BestPractices/GRPO.html ｜ `【S5】` https://swift.readthedocs.io/zh-cn/latest/Instruction/Pre-training-and-Fine-tuning.html ｜ `【S6】` https://github.com/modelscope/ms-swift ｜ `【S7】` https://github.com/hiyouga/LLaMA-Factory#hardware-requirement（README `### Hardware Requirement`，原文标注 `*estimated*`）｜ `【S8】` https://qwen.readthedocs.io/zh-cn/latest/training/ms_swift.html ｜ `【S9】` https://www.deepspeed.ai/tutorials/zero-offload/ ｜ `【S10】` arXiv:1910.02054（ZeRO: Memory Optimizations Toward Training Trillion Parameter Models, SC'20）｜ `【S11】` arXiv:2106.09685（LoRA: Low-Rank Adaptation of Large Language Models, ICLR'22）｜ `【S12】` arXiv:2402.03300（DeepSeekMath）｜ `【S13】` https://github.com/unslothai/unsloth ＋ https://unsloth.ai/docs/get-started/reinforcement-learning-rl-guide ｜ `【S14】` https://github.com/huggingface/trl ｜ `【S15】` https://github.com/huggingface/peft
+
+> **脚注（用户判定规则：「待修复的 bug」与「硬件限制无解」必须一眼可分）**
+>
+> **判定规则（本节唯一口径，用户拍板）**：某一档只要**业界在同等硬件上用主流框架能跑、而我方跑不通**，**一律判为「待修复的 bug」、必须修复**；**只有业界在同等硬件上同样跑不通（有出处可查）才可判「硬件限制无解」**。以下逐项写明本节 `❌ 失败` 各档的归属；**`实测状态` 列仍是封闭四态，不得据此新增取值**（本段只是性质标注，不改行结构、不改任何既有单元格）。
+>
+> - **判为「待修复的 bug」（业界同档可行，我方未过）**：
+>   - `T015`（9B·SFT·LoRA·ms-swift·4 卡）、`T008`（27B·CPT·LoRA·ms-swift·2 卡）、`T026`（27B·SFT·LoRA·ms-swift·2 卡）、`T047`（9B·OPD·LoRA·ms-swift·2 卡）、`T048`（9B·OPD·LoRA·ms-swift·4 卡）：**同一配置、同一种子的两次运行结果对不上（可复现性判据未过），而同一族更少卡的配置能通过 ⇒ 属实现缺陷，不是硬件不够**。
+>   - `T007`（27B·CPT·LoRA·ms-swift·1 卡）：**首步逐位相同、后续累积发散（终态差 0.0948），即运行期非确定性内核 ⇒ 属实现缺陷**。
+>   - `T016`（9B·SFT·全量·native·1 卡）：**我方 1 卡全参真 OOM**（`optimizer.step()` 处，峰值 78.27 GiB）；但**业界同档（LoRA 口径）单卡 80G 可跑 ⇒ 属我方配方/路径缺陷**（本方已登记改用 `fp16 + LoRA`）。
+>   - `T017`/`T018`（9B·SFT·全量·native·2/4 卡）：**训练数值发散（梯度范数爆到 3.98e7、后续被判定为非有限值，优化器步实际未生效）⇒ 属训练步实现缺陷**，与显存无关。
+>   - `T043`（27B·GRASPO·LoRA·ms-swift·1 卡）：**根因（ms-swift 奖励适配器缺陷）已由 `70013d7` 修复，本档判定待重做**——须**在同一份 manifest、同一卡位下重做 A1–A6 配对判定**后方可改判；本节状态列按 fail-closed 暂保持 `❌ 失败`。
+> - **非 bug 类失败（不适用上述规则）**：`⛔ 不适用` 三档（`T052`–`T054`）是**已确认的口径判定**（27B 作学生需 ≈100 GiB 权重），不是跑失败。
+>
+> **`实测每卡峰值显存(GiB)` 列的口径、出处与时效（本列受 §7 结构约束，口径的权威落点为工程跟踪文档 §9.1）**：
+> - **口径（唯一）**：**容器内 PyTorch allocator 的 rank0 `max_allocated`**（即 `torch.cuda.max_memory_allocated()` 的峰值换算为 GiB）。**其它口径一律不得混入本列**——特别是 OOM 报文里的**进程占用**（含非 PyTorch 的缓存/其它进程）与宿主 `nvidia-smi` 采样值。
+> - **出处（文件与字段）**：容器内采样摘要 `gpu/gpu_memory_summary.json`；本表的自动取数实现见 `scripts/collect_results.py`（`_read_peak_memory`：取各卡 `per_gpu[*].memory_used_mib_peak` 的**最大值** ÷ 1024 得 GiB）。
+> - **时效（链条状态）**：该采样链路的落点自回归点 `51dcd11`（2026-09-19）起被训练侧的 `overwrite_output_dir` 删除，**摘要一度从未真正产出**；**该链路已于 2026-09-20 修复并真机验证**（`T031`/`T032` 两次跑峰值逐位相同）。⇒ **本表现有 5 个读数（`T013` 43.87 / `T016` 78.27 / `T017` 48.09 / `T018` 31.98 / `T046` 76.89）均产生于该链路修复之前，逐项标注「待重测」**；**数值一律未经改写，只加标注**。
+> - **读数级注（标注只落在本脚注，上表单元格仍为原值、不改行结构、不新增列）**：`T013` 43.87 =「待重测」；`T016` 78.27 =「待重测」；`T017` 48.09 =「待重测」；`T018` 31.98 =「待重测」；`T046` 76.89 =「待重测」。
+>
+> **训练集口径披露（`mini` 子集；本节的「跑通」结论不得外推真实数据）**：
+> - **矩阵跑通阶段所用训练集 = `mini` 子集**：`<ELAM_HOST>/mini-dataset/mini-short-mm-train.jsonl`，取源集中**最短的 100 条多模态样本**（排序 = 图像张数 ↑ → 文本字符数 ↑ → id），每条实测 **2380 token**（100/100 完全一致）。**不是全量数据、不是随机抽样**。
+> - **它能回答**：该配置**能否跑起来**（A1–A6 跑通判据）。
+> - **它不能回答**：**真实数据下的最大上下文、显存占用、OOM 边界**——mini 系统性压低序列长度与显存压力，**本节「跑通」不得外推为"真实数据也能这样跑"**。
+> - **效果评测必须用全量 test 集**（用户拍板口径，见第 8 节）；`mini` 的跑通结果**不得当作效果结论**。
+> - **对本表列语义的影响**：**「最大可行上下文（实测）」列若将来由 mini 子集测得，只代表 mini 长度下的可行值，不代表真实数据的可行上下文上限**；**「实测每卡峰值显存(GiB)」列同理**（真实数据下会更高）。**现状清点**：表内现有 5 个显存读数与 `T013` 的 `16105` 上下文读数**均产生于 mini 取数接入之前，不来自 mini 子集**（`T013` 的 `16105` 另由**合成长序列**测得，口径见上方既有脚注）；其余上下文/显存格为 `— 未测`。
+>
+> **A6 判据披露**：本表 `✅ 通过` = **A1–A6 全部通过**；其中 **A6 只判数值健康（是否出现 NaN / Inf 等非有限值）**，**不要求"末点 loss 低于起点"**——loss 走向只作为 `loss_trend` 记录（`increased` / `decreased`），**不作阻断**。⇒ 一个全程数值有限但 loss 上升的档，仍可能判 `✅ 通过`。
 
 **结构性计数**：目标档位总数 **54**（CPT 9 ｜ SFT 18 ｜ GRASPO 18 ｜ OPD 9）；通过 **9** ｜ 失败 **10** ｜ 不适用 **3** ｜ 未测 **32**（合计 54）——★ 本行「未测 32」与工程跟踪文档 §3.0 的分类计数**不同名不同物、不可互抄**。
 
