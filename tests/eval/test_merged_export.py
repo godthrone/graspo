@@ -167,12 +167,15 @@ def test_merge_refuses_base_mismatch_before_importing_heavy_deps(tmp_path):
         merge_peft_checkpoint(adapter, "/models/Other-9B", tmp_path / "out")
 
 
-# ── 多模态语言层命名空间的归一（Qwen3.5 多模态 adapter 的合并前置）─────────────
+# ── 多模态语言层命名空间的归一（**仅纯文本加载器路径**）─────────────────────────
 #
 # 真实 T013 产物的 `target_modules` 是 peft 0.19.1 写的**正则字符串**，每个分支都带
 # `model.language_model` 前缀（ms-swift 在多模态 `Qwen3_5ForConditionalGeneration`
-# 上训练，这个前缀是对的）。而本模块用 `AutoModelForCausalLM`（纯文本类）加载底座，
-# 语言层在 `model.layers.{i}` 下 ⇒ 不归一就一条都匹配不上（ValueError）。
+# 上训练，这个前缀是对的）。
+#
+# ★ 缺陷 D 之后的语义：归一化**只在纯文本加载器**（语言层在 `model.layers.{i}`）下成立。
+# 多模态加载器（语言层在 `model.language_model.{i}`）下目标名本来就对，归一化反而会
+# **放宽**正则（见 `test_normalize_regex_broadens_...`）⇒ 多模态路径禁止调用它。
 #
 # 逐字取自 `.local/.../task-r3-effect/evidence/light_evidence/T013/adapter_config.json`。
 
@@ -280,3 +283,266 @@ def test_resolve_injection_targets_normalizes_multimodal_adapter(tmp_path):
     assert config is not None
     assert targets == _T013_REGEX.replace(r"model\.language_model", "model")
     assert config.target_modules == targets
+
+
+# ── 缺陷 D：加载器类别必须按底座实际配置判定 ────────────────────────────────
+#
+# 事故形态：固定用 `AutoModelForCausalLM`（纯文本类）加载多模态底座 ⇒ 权重"能载入"
+# （视觉塔被静默忽略），`save_pretrained` 落出的 config.json 变成
+# `architectures=['Qwen3_5ForCausalLM'] / model_type=qwen3_5_text / 无 vision_config`
+# ⇒ 产物在、退出码 0、**视觉塔已丢**，vLLM 拒绝，或被吞掉异常后在错模型上刷出假准确率。
+#
+# 下面这组用例是**负向（能真失败）**的：把加载器类别改回固定纯文本类，它们会红。
+
+#: 真实多模态底座 config 的**最小**形态（字段名/取值取自 Qwen3.5 系列：有 vision_config）。
+_MULTIMODAL_BASE_CONFIG = {
+    "architectures": ["Qwen3_5ForConditionalGeneration"],
+    "model_type": "qwen3_5",
+    "has_vision_config": True,
+    "vision_config": {"depth": 27, "hidden_size": 1152},
+    "image_token_id": 151655,
+    "text_config": {"model_type": "qwen3_5_text"},
+}
+
+#: 纯文本底座 config 的最小形态（无任何视觉标记）。
+_TEXT_BASE_CONFIG = {
+    "architectures": ["Qwen3_5ForCausalLM"],
+    "model_type": "qwen3_5_text",
+    "text_config": {"model_type": "qwen3_5_text"},
+}
+
+
+def _base_with_config(root: Path, config: dict[str, object]) -> Path:
+    _write(root / "config.json", json.dumps(config))
+    (root / "model.safetensors").write_bytes(b"\x00\x00")
+    return root
+
+
+def test_detect_multimodal_base_reads_vision_markers(tmp_path):
+    """多模态底座必须被认出来，并给出命中判据（判据是回显也是证据，§2.2）。"""
+    from graspo.eval.merged_export import detect_multimodal_base
+
+    shape = detect_multimodal_base(_base_with_config(tmp_path / "mm", _MULTIMODAL_BASE_CONFIG))
+    assert shape.multimodal is True
+    assert any("vision_config" in item for item in shape.evidence)
+    assert any("ConditionalGeneration" in item for item in shape.evidence)
+
+
+def test_detect_multimodal_base_classifies_text_base_as_text(tmp_path):
+    """纯文本底座不得被误判成多模态（否则会去要一个不存在的视觉塔）。"""
+    from graspo.eval.merged_export import detect_multimodal_base
+
+    shape = detect_multimodal_base(_base_with_config(tmp_path / "txt", _TEXT_BASE_CONFIG))
+    assert shape.multimodal is False
+    assert shape.evidence
+
+
+def test_detect_multimodal_base_refuses_a_base_without_config(tmp_path):
+    """没有 config.json 就判不了类别 ⇒ fail-closed，不许"猜一个类"（§2.3）。"""
+    from graspo.eval.merged_export import detect_multimodal_base
+
+    (tmp_path / "bare").mkdir()
+    with pytest.raises(ExportError, match="cannot determine the loader class"):
+        detect_multimodal_base(tmp_path / "bare")
+
+
+def test_has_vision_config_flag_wins_even_when_false(tmp_path):
+    """`has_vision_config=False` 是**显式声明无视觉**，不是"未提供"（§2.2 空值语义）。"""
+    from graspo.eval.merged_export import is_multimodal_base_config
+
+    multimodal, evidence = is_multimodal_base_config({"has_vision_config": False})
+    assert multimodal is False
+    assert evidence == ()
+
+
+def test_image_token_id_zero_is_still_a_marker(tmp_path):
+    """`image_token_id = 0` 是合法 id，不能用 `if value` 判空（§2.2）。"""
+    from graspo.eval.merged_export import is_multimodal_base_config
+
+    multimodal, _ = is_multimodal_base_config({"image_token_id": 0})
+    assert multimodal is True
+
+
+class _FakeAutoClass:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def from_pretrained(self, *_args, **_kwargs):  # pragma: no cover - 仅作属性存在性占位
+        raise AssertionError("not called in these tests")
+
+
+def _fake_transformers(**names):
+    class _NS:
+        __version__ = "5.12.1-fake"
+
+    ns = _NS()
+    for name in names:
+        setattr(ns, name, _FakeAutoClass(name))
+    return ns
+
+
+def test_resolve_auto_model_class_uses_multimodal_class_for_multimodal_base():
+    """★ 负向用例核心：多模态底座**必须**选多模态 auto 类，**不得**是纯文本类。"""
+    from graspo.eval.merged_export import _resolve_auto_model_class
+
+    ns = _fake_transformers(
+        AutoModelForImageTextToText=_FakeAutoClass("AutoModelForImageTextToText"),
+        AutoModel=_FakeAutoClass("AutoModel"),
+        AutoModelForCausalLM=_FakeAutoClass("AutoModelForCausalLM"),
+    )
+    name, cls = _resolve_auto_model_class(ns, multimodal=True)
+    assert name == "AutoModelForImageTextToText"
+    assert name != "AutoModelForCausalLM"
+    assert cls is ns.AutoModelForImageTextToText
+
+
+def test_resolve_auto_model_class_uses_text_class_for_text_base():
+    """纯文本底座仍走既有 `AutoModelForCausalLM`（既有可用路径不受影响）。"""
+    from graspo.eval.merged_export import _resolve_auto_model_class
+
+    ns = _fake_transformers(
+        AutoModelForImageTextToText=_FakeAutoClass("AutoModelForImageTextToText"),
+        AutoModelForCausalLM=_FakeAutoClass("AutoModelForCausalLM"),
+    )
+    name, _ = _resolve_auto_model_class(ns, multimodal=False)
+    assert name == "AutoModelForCausalLM"
+
+
+def test_resolve_auto_model_class_falls_back_to_automodel_only_for_multimodal():
+    """老版 transformers 没有 ImageTextToText 时，多模态回落到 `AutoModel`（仍是按
+    `config.architectures` 解析的通用类），**绝不**回落到纯文本类。"""
+    from graspo.eval.merged_export import _resolve_auto_model_class
+
+    ns = _fake_transformers(
+        AutoModel=_FakeAutoClass("AutoModel"),
+        AutoModelForCausalLM=_FakeAutoClass("AutoModelForCausalLM"),
+    )
+    name, _ = _resolve_auto_model_class(ns, multimodal=True)
+    assert name == "AutoModel"
+
+
+def test_resolve_auto_model_class_fails_closed_when_no_multimodal_class_exists():
+    """一个多模态候选都没有 ⇒ 必须报错停止，**不得**回落成纯文本类（那正是缺陷 D）。"""
+    from graspo.eval.merged_export import _resolve_auto_model_class
+
+    ns = _fake_transformers(AutoModelForCausalLM=_FakeAutoClass("AutoModelForCausalLM"))
+    with pytest.raises(ExportError, match="refusing to fall back to a text-only loader"):
+        _resolve_auto_model_class(ns, multimodal=True)
+
+
+class _FakeBase:
+    """模拟 "loaded model" 的结构：只有挂载层级，不加载任何权重。"""
+
+    def __init__(self, *, language_model: bool) -> None:
+        inner = type("_Inner", (), {})()
+        if language_model:
+            inner.language_model = object()
+        self.model = inner
+
+
+def test_assert_loader_class_matches_base_accepts_multimodal_shape(tmp_path):
+    """多模态底座 + 有 `model.language_model` 子树的模型 ⇒ 通过。"""
+    from graspo.eval.merged_export import BaseModelShape, _assert_loader_class_matches_base
+
+    shape = BaseModelShape(tmp_path, True, ("vision_config present",))
+    _assert_loader_class_matches_base(_FakeBase(language_model=True), shape)
+
+
+def test_assert_loader_class_matches_base_rejects_text_model_on_multimodal_base(tmp_path):
+    """★ 负向用例核心：多模态底座被纯文本类装进来（无 language_model 子树）⇒
+    必须当场拒绝，而不是落出一份丢掉视觉塔的产物。"""
+    from graspo.eval.merged_export import BaseModelShape, _assert_loader_class_matches_base
+
+    shape = BaseModelShape(tmp_path, True, ("vision_config present",))
+    with pytest.raises(ExportError, match="vision tower would be dropped"):
+        _assert_loader_class_matches_base(_FakeBase(language_model=False), shape)
+
+
+def test_assert_loader_class_matches_base_rejects_multimodal_model_on_text_base(tmp_path):
+    """反向也要防：纯文本底座装出了带 language_model 的模型 ⇒ 类别选错了。"""
+    from graspo.eval.merged_export import BaseModelShape, _assert_loader_class_matches_base
+
+    shape = BaseModelShape(tmp_path, False, ("no vision marker",))
+    with pytest.raises(ExportError, match="chosen for the wrong shape"):
+        _assert_loader_class_matches_base(_FakeBase(language_model=True), shape)
+
+
+def test_normalize_regex_broadens_and_would_also_match_the_multimodal_namespace():
+    """★ 复核硬证据：归一化**不是改名，是放宽**。
+
+    归一后 `^(model(?=\\.).*\\.(...))$` 对**多模态**全名 `model.language_model.layers.3.
+    self_attn.q_proj` 依旧 fullmatch（`(model(?=\\.).*` 贪婪吃掉了 `.language_model`）——
+    它只是一个**超集**。这就是"归一化只在纯文本加载器下成立"的机制原因：纯文本基座里
+    根本不存在 `model.language_model.*` 这些名字，超集才"恰好"选对层。
+    """
+    import re
+
+    from graspo.eval.merged_export import normalize_language_model_targets
+
+    normalized = normalize_language_model_targets(_T013_REGEX)
+    assert isinstance(normalized, str)
+    # 超集证据：多模态全名仍然被匹配（误伤面）
+    assert re.fullmatch(normalized, "model.language_model.layers.3.self_attn.q_proj")
+    # 原正则对多模态全名也匹配（ms-swift 写的就是对的）
+    assert re.fullmatch(_T013_REGEX, "model.language_model.layers.3.self_attn.q_proj")
+    # 原正则对纯文本全名不匹配（这才是当初出 ValueError 的原因）
+    assert not re.fullmatch(_T013_REGEX, "model.layers.3.self_attn.q_proj")
+
+
+def test_normalize_regex_is_a_superset_over_model_prefixed_modules():
+    """放宽的量化：归一后凡是 `model.<任意非空段>....<x>_proj` 都可能命中，
+    所以它**不能**用在多模态加载器上（视觉塔下同名投影层会被误伤）。"""
+    import re
+
+    from graspo.eval.merged_export import normalize_language_model_targets
+
+    normalized = normalize_language_model_targets(_T013_REGEX)
+    assert isinstance(normalized, str)
+    # 一个**不属于**原始目标集合的模块名：归一后被误纳（视觉塔下的投影层）
+    injected = "model.visual.blocks.0.mlp.down_proj"
+    assert not re.fullmatch(_T013_REGEX, injected)
+    assert re.fullmatch(normalized, injected)
+
+
+def test_resolve_injection_targets_preserves_targets_for_multimodal_loader(tmp_path):
+    """★ 多模态加载器下 `target_modules` **原样保留**（不归一、不改写）。"""
+    pytest.importorskip("peft")
+
+    from graspo.eval.merged_export import _resolve_injection_targets
+
+    adapter = tmp_path / "adapter"
+    _write(
+        adapter / "adapter_config.json",
+        json.dumps({"peft_type": "LORA", "target_modules": _T013_REGEX}),
+    )
+    config, targets = _resolve_injection_targets(adapter, multimodal=True)
+    assert config is not None
+    assert targets == _T013_REGEX
+    assert config.target_modules == _T013_REGEX
+
+
+def test_resolve_injection_targets_refuses_plain_text_targets_on_multimodal_base(tmp_path):
+    """多模态底座 + 不含 `model.language_model` 的目标名 ⇒ fail-closed，不硬凑。"""
+    pytest.importorskip("peft")
+
+    from graspo.eval.merged_export import _resolve_injection_targets
+
+    adapter = tmp_path / "adapter"
+    _write(
+        adapter / "adapter_config.json",
+        json.dumps({"peft_type": "LORA", "target_modules": ["q_proj", "v_proj"]}),
+    )
+    with pytest.raises(ExportError, match="do not\\s+reference"):
+        _resolve_injection_targets(adapter, multimodal=True)
+
+
+def test_merge_detects_shape_before_importing_heavy_deps(tmp_path):
+    """加载器类别判定发生在 import torch **之前**：底座 config 缺失时，报的是
+    "判不了类别"而不是 ModuleNotFoundError（顺序契约，与既有两条前置校验一致）。"""
+    from graspo.eval.merged_export import merge_peft_checkpoint
+
+    adapter = _peft_adapter(tmp_path / "adapter", base="/models/Qwen3.5-9B")
+    bare_base = tmp_path / "Qwen3.5-9B"
+    bare_base.mkdir()
+    with pytest.raises(ExportError, match="cannot determine the loader class"):
+        merge_peft_checkpoint(adapter, bare_base, tmp_path / "out")
