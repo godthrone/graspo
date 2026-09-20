@@ -35,7 +35,7 @@ import re
 import struct
 import sys
 import zipfile
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
@@ -99,6 +99,30 @@ def _read_json(path: Path) -> Any:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
+
+
+#: rank0 逐 rank 指标旁路的**固定文件名**（rank 编码在文件名里，见 §9.1 的 "rank0"）。
+#: 训练侧 `transformer_adapter._emit_rank_memory_event` 写的正是这一份。
+_PEAK_MEMORY_RANK_FILE = "rank_metrics.rank_00000.jsonl"
+
+
+def _iter_jsonl_objects(path: Path) -> Iterator[dict[str, Any]]:
+    """逐行读 JSONL，**只**产出顶层是 dict 的记录；坏行/非 dict 行静默跳过。
+
+    为什么单独抽出来（§2.2 显式即防呆）：rank_metrics 是**只追加**的旁路，
+    半截写入的行在真实 run 里出现过；取数函数必须能容忍坏行而**不**把它读成
+    "没有这个字段"从而落到别的口径上去。
+    """
+    for line in _read_text(path).splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            yield payload
 
 
 def _parse_numeric(raw: str | None) -> float | None:
@@ -1374,7 +1398,58 @@ def collect_run(
 
 
 def _read_peak_memory(run_dir: Path) -> float | None:
-    """从可信采样摘要读每卡峰值显存（GiB）；缺失返回 None。"""
+    """读 capability-matrix §7「实测每卡峰值显存(GiB)」列 —— **allocator 口径**（GiB）。
+
+    口径的**权威定义**：`.local/本期工程跟踪.md` §9.1「★ §7 各列的读取口径」表的
+    `实测每卡峰值显存(GiB)` 行（**可核定位**：该文件 `:420`，表头在 `:415`）——
+    「**单一口径：容器内 PyTorch allocator 的 rank0 `max_allocated`**；其它口径
+    （OOM 报文的进程占用、宿主 `nvidia-smi` 采样）**不得混入同一列**」。
+    代码侧的唯一真相源是
+    ``graspo.core.result_judge.PEAK_MEMORY_CALIBER``（本函数只实现取数）。
+
+    落点：rank0 的逐 rank 指标旁路 ``metrics/rank_metrics.rank_00000.jsonl``——训练侧
+    ``transformer_adapter._emit_rank_memory_event`` 每写完一次显存快照就追加一行
+    ``{"event": "rank_memory", "memory": {..., "max_allocated_mib": ...}}``，
+    值由 ``tensor_utils._cuda_memory_snapshot`` 的
+    ``torch.cuda.max_memory_allocated(device)`` 换算得到。
+
+    取数：该文件内**所有** ``rank_memory`` 行的 ``memory.max_allocated_mib`` 取最大
+    （allocator 的 max 是累计峰值，逐 phase 取最大值即该 run 峰值，无需按 phase 白名单
+    筛选——白名单会随训练侧新增 phase 而漏值）。
+
+    **不可得一律返回 ``None``，绝不回退宿主口径**（§9.1 明文禁止混口径；回退正是本函数
+    旧实现的缺陷）。不产 ``rank_metrics`` 的后端（如 ms-swift）结构性拿不到该值 ⇒
+    台账由 ``result_judge.PEAK_MEMORY_UNAVAILABLE`` 显式标注，而不是拿宿主采样补坑。
+    """
+    peaks: list[float] = []
+    for events in sorted(run_dir.rglob(_PEAK_MEMORY_RANK_FILE)):
+        for payload in _iter_jsonl_objects(events):
+            memory = payload.get("memory")
+            if not isinstance(memory, dict):
+                continue
+            value = memory.get("max_allocated_mib")
+            if value is None:
+                continue
+            try:
+                peaks.append(float(value))
+            except (TypeError, ValueError):
+                continue
+    if not peaks:
+        return None
+    return max(peaks) / 1024.0
+
+
+def _read_host_sample_peak_memory(run_dir: Path) -> float | None:
+    """读**宿主 `nvidia-smi` 采样**峰值（GiB）——**不是** §7 峰值列的口径。
+
+    来源：``gpu/gpu_memory_summary.json`` 各卡 ``per_gpu[*].memory_used_mib_peak``
+    的最大值 ÷ 1024。它是**取证链锚点**，回答"这张卡实际用了多少"（含非 PyTorch 的
+    缓存/其它进程），因此与 allocator 口径**必然有可观测差异**。
+
+    §9.1 明文：宿主采样**不得混入 §7 峰值列** ⇒ 本函数的结果只能经
+    ``result_judge.HOST_SAMPLE_PEAK_FIELD``（``host_sample_peak_gib``）另存台账，
+    下游不得用它填 ``peak_memory_gib``。
+    """
     summary = _read_json(run_dir / "gpu" / "gpu_memory_summary.json")
     if not isinstance(summary, dict):
         return None
@@ -1386,6 +1461,25 @@ def _read_peak_memory(run_dir: Path) -> float | None:
     if not peaks:
         return None
     return max(peaks) / 1024.0
+
+
+def _read_host_sample_gap_mib(run_dir: Path) -> float | None:
+    """读宿主采样的**采样缺口**（MiB）——"峰值被他人作业污染"的显式证据。
+
+    来源：``gpu/gpu_memory_summary.json`` 的 ``max_peak_memory_gap_mib``。缺口 > 0
+    说明采样窗口内该卡的占用含**非本档**成分（228 是共享机）：此时宿主峰值偏高，
+    真值应取其"平段"而非峰值。**与宿主峰值同源、同一份摘要**，不由本函数另算口径。
+    """
+    summary = _read_json(run_dir / "gpu" / "gpu_memory_summary.json")
+    if not isinstance(summary, dict):
+        return None
+    gap = summary.get("max_peak_memory_gap_mib")
+    if gap is None:
+        return None
+    try:
+        return float(gap)
+    except (TypeError, ValueError):
+        return None
 
 
 def run(args: argparse.Namespace) -> int:
@@ -1410,6 +1504,13 @@ def run(args: argparse.Namespace) -> int:
                     "failure_class": None,
                     "max_context": None,
                     "max_context_kind": None,
+                    # 峰值列同样要口径自证（§9.1 / §2.2）：没跑过 ⇒ allocator 口径不可得，
+                    # 但**不得**让下游把这格读成"可以用宿主采样补上"。
+                    "peak_memory_gib": None,
+                    "peak_memory_caliber": _judge.PEAK_MEMORY_CALIBER,
+                    "peak_memory_note": _judge.PEAK_MEMORY_UNAVAILABLE,
+                    _judge.HOST_SAMPLE_PEAK_FIELD: None,
+                    _judge.HOST_SAMPLE_GAP_FIELD: None,
                     "series_source": "none",
                     "series_notes": [],
                     "losses": [],
@@ -1453,6 +1554,9 @@ def run(args: argparse.Namespace) -> int:
             max_context=args.context_length,
             peak_memory_gib=_read_peak_memory(first_dir),
             date=args.date,
+            # 宿主采样峰值**另存**（§9.1：它是取证链锚点，不进 §7 峰值列）。
+            host_sample_peak_gib=_read_host_sample_peak_memory(first_dir),
+            host_sample_peak_gap_mib=_read_host_sample_gap_mib(first_dir),
         )
         row["criteria"] = {item.criterion: item.passed for item in judgement.criteria}
         row["criteria_detail"] = {item.criterion: item.detail for item in judgement.criteria}
@@ -1478,20 +1582,33 @@ def run(args: argparse.Namespace) -> int:
     markdown = out_dir / "ledger.md"
     # `max_context` 的口径必须随数字一起显示（🔴-1）：同样是 "8192"，"实测通过"
     # 与"真 OOM 边界候选"的含义完全不同，只给数字会被下游读成"这个长度跑得通"。
+    # 峰值列同理（§9.1 / §2.2）：列头写死口径，空值写**原因**而不是一个光秃秃的 `—`，
+    # 宿主副读数**单独一列**——三者分开才让"这一格是什么口径"可回答。
     lines = [
         "| 条件档 | 模型 | 算法 | 模式 | 后端 | 卡数 | 最大可行上下文 | 口径 "
-        "| 每卡峰值(GiB) | 状态 | 失败类型 | 备注 |",
-        "|---|---|---|---|:--:|---|---|---|---|---|---|---|",
+        f"| 每卡峰值(GiB)【{_judge.PEAK_MEMORY_CALIBER}】 | 宿主采样峰值(GiB) "
+        "| 宿主采样缺口(MiB) | 状态 | 失败类型 | 备注 |",
+        "|---|---|---|---|:--:|---|---|---|---|---|---|---|---|---|",
     ]
     for record in records:
         context_cell = record.get("max_context") or "—"
         if record.get("max_context_kind"):
             context_cell = f"{context_cell}（{record['max_context_kind']}）"
+        peak_cell = record.get("peak_memory_gib")
+        if peak_cell is None:
+            # 显式标注"不可得"及其原因，**不**回退宿主口径（§9.1 禁止混口径）。
+            peak_cell = record.get("peak_memory_note") or "—"
+        host_cell = record.get(_judge.HOST_SAMPLE_PEAK_FIELD)
+        if host_cell is None:
+            host_cell = "—"
+        gap_cell = record.get(_judge.HOST_SAMPLE_GAP_FIELD)
+        if gap_cell is None:
+            gap_cell = "—"
         lines.append(
             f"| {record['tier_id']} | {record.get('model', '')} | {record.get('algorithm', '')} "
             f"| {record.get('mode', '')} | {record.get('backend', '')} | {record.get('cards', '')} "
             f"| {context_cell} | {record.get('max_context_kind') or '—'} "
-            f"| {record.get('peak_memory_gib') or '—'} "
+            f"| {peak_cell} | {host_cell} | {gap_cell} "
             f"| {record['status']} | {record.get('failure_class') or '—'} "
             f"| {record.get('note', '')} |"
         )

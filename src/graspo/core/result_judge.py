@@ -103,6 +103,48 @@ DIAGNOSTIC_PHASES: frozenset[str] = frozenset(
     }
 )
 
+#: ── 「实测每卡峰值显存(GiB)」列的**取数口径**（**全仓唯一真相源**，§1.4） ────────
+#:
+#: 权威定义不在本仓库的代码里，而在 `.local/本期工程跟踪.md` **§9.1**「★ §7 各列的
+#: 读取口径」表中 `实测每卡峰值显存(GiB)` 那一行的**原文**——**可核定位**：
+#: `.local/本期工程跟踪.md:420`（表头 `★ §7 各列的读取口径` 在 `:415`）：
+#:
+#:     单一口径：容器内 PyTorch allocator 的 rank0 `max_allocated`。
+#:     其它口径（OOM 报文的**进程占用**、宿主 `nvidia-smi` 采样）**不得混入同一列**。
+#:
+#: 本常量 = 那份声明在**可执行代码里的唯一落点**；改口径 = 改这一处 + 同步
+#: `docs/capability-matrix.md` §7 峰值列脚注（两处之外不得再出现第三份口径定义）。
+#:
+#: 训练侧落点（allocator 值怎么来的）：
+#:   `src/graspo/flow/parallel/tensor_utils.py:_cuda_memory_snapshot`
+#:     → `max_allocated_mib = torch.cuda.max_memory_allocated(device) / 1024**2`
+#:   `src/graspo/flow/adapters/transformer_adapter.py:_emit_rank_memory_event`
+#:     → 追加一行 `{"event": "rank_memory", "memory": {...}}` 到 rank0 的
+#:       `metrics/rank_metrics.rank_00000.jsonl`。
+#: 采集侧落点（值怎么被取走）：`scripts/collect_results.py:_read_peak_memory`。
+PEAK_MEMORY_CALIBER: str = "rank0_max_allocated"
+
+#: allocator 口径**不可得**时，台账峰值列必须带上的**显式标注**（§2.2 显式即防呆）。
+#: 为什么必须有：宿主采样摘要 `gpu/gpu_memory_summary.json` 在不产 `rank_metrics` 的
+#: 后端（如 ms-swift）上**仍然存在**；若 `None` 被下游读成"没跑过"，就会诱发
+#: "拿宿主采样把这一格补上"的静默混口径——那正是本字段要防住的缺陷（§9.1 明文禁止）。
+PEAK_MEMORY_UNAVAILABLE: str = "未取得（allocator 口径不可得）"
+
+#: 宿主 `nvidia-smi` 采样峰值在台账里的**独立字段名**：**另存，不进 §7 峰值列**
+#: （§9.1 口径分离的机器可核形式）。它回答的是"这张卡实际用了多少" + 取证链锚点。
+#: ★ 为什么它是**必需的诊断项而不是可选装饰**：228 是**共享机**，`task-j1-batch-msswift`
+#: 实测 `T033/run2` 的 GPU2 = 27451 MiB 而 `max_peak_memory_gap_mib = 2388`（采样缺口）
+#: ⇒ 真值应 ≈ 25063 MiB——**他人作业的显存被算到了本档头上**。宿主口径因此不仅
+#: "口径不同"，在共享机上会**系统性高估**本档占用；用户拿 §7 那列判断"我的硬件够不够"
+#: 会被带偏。allocator 口径按进程统计，天然不被同租户污染——这是口径分离的**正确性**
+#: 理由，不只是形式理由。
+HOST_SAMPLE_PEAK_FIELD: str = "host_sample_peak_gib"
+
+#: 同一次宿主采样的**采样缺口**（MiB）：`gpu_memory_summary.json.max_peak_memory_gap_mib`。
+#: 它把"这张卡的峰值可能被他人作业污染"这件事**显式**留在台账里（§2.2）——
+#: 缺口 > 0 即说明该次采样期间卡上的占用有非本档成分，副读数须打折看。
+HOST_SAMPLE_GAP_FIELD: str = "host_sample_peak_gap_mib"
+
 #: A5 四件套产物：配置备份 / 训练日志 / 可恢复 checkpoint / 运行指标。
 REQUIRED_ARTIFACTS: tuple[str, ...] = (
     "config_backup",
@@ -1094,8 +1136,17 @@ def ledger_row(
     max_context: int | None,
     peak_memory_gib: float | None,
     date: str,
+    host_sample_peak_gib: float | None = None,
+    host_sample_peak_gap_mib: float | None = None,
 ) -> dict[str, object]:
     """把判定落成 capability-matrix §7 台账的一行（可直接填表）。
+
+    **``peak_memory_gib`` 的口径（§9.1，见 :data:`PEAK_MEMORY_CALIBER`）**：
+    唯一合法值 = **容器内 PyTorch allocator 的 rank0 `max_allocated`**（GiB）。
+    宿主 `nvidia-smi` 采样峰值**不得**经本参数进入该列——它只能走
+    ``host_sample_peak_gib`` 另存（:data:`HOST_SAMPLE_PEAK_FIELD`）。
+    ``peak_memory_gib is None`` ⇒ 台账同时落 :data:`PEAK_MEMORY_UNAVAILABLE` 标注，
+    让"allocator 口径不可得"与"没跑过"在下游可区分（§2.2 显式即防呆）。
 
     **``max_context`` 的资格口径（🔴-1 修正，2026-09-18）**：该列的资格由
     :func:`counts_toward_max_context` **或**整档通过共同决定，**不再**只由
@@ -1136,6 +1187,15 @@ def ledger_row(
         "max_context": recorded_context,
         "max_context_kind": context_kind,
         "peak_memory_gib": peak_memory_gib,
+        # 峰值列的**口径自证 + 空值原因 + 宿主副读数**（§1.4 单一真相源 / §2.2 显式即防呆）：
+        # 台账必须能回答"这一格是什么口径、从哪个字段来""不可得时为什么空""卡实际用了多少"。
+        # **只加字段**：`peak_memory_gib` 的语义（§9.1 的 allocator 口径）与任何判定都不动。
+        "peak_memory_caliber": PEAK_MEMORY_CALIBER,
+        "peak_memory_note": "" if peak_memory_gib is not None else PEAK_MEMORY_UNAVAILABLE,
+        HOST_SAMPLE_PEAK_FIELD: host_sample_peak_gib,
+        # 同一次宿主采样的缺口：> 0 = 该卡峰值含**非本档**成分（共享机他人作业），
+        # 副读数必须打折看。**只加字段**，不进 §7 峰值列。
+        HOST_SAMPLE_GAP_FIELD: host_sample_peak_gap_mib,
         "status": judgement.ledger_status,
         "failure_class": judgement.failure_class,
         "note": judgement.note,
