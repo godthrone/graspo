@@ -25,7 +25,6 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import sys
 from pathlib import Path
 
 TOKEN_RE = re.compile(r"`([^`\n]+)`")
@@ -141,8 +140,8 @@ def main(argv: list[str] | None = None) -> int:
         # 语言特定例外扣除
         only_en = [t for t in only_en if not _exempt(t, "EN")]
         only_zh = [t for t in only_zh if not _exempt(t, "ZH")]
-        lines_en = len([l for l in en_body if l.strip()])
-        lines_zh = len([l for l in zh_body if l.strip()])
+        lines_en = len([line for line in en_body if line.strip()])
+        lines_zh = len([line for line in zh_body if line.strip()])
         report.append(
             {
                 "index": idx,

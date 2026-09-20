@@ -21,9 +21,9 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, Iterator, Sequence
 
 # ── 退出码语义（§10.1 / CLI 契约）────────────────────────────────────────────
 EXIT_CLEAN = 0  # 扫描通过
@@ -118,7 +118,7 @@ class Whitelist:
         self.entries = list(entries)
 
     @classmethod
-    def load(cls, path: Path | None) -> "Whitelist":
+    def load(cls, path: Path | None) -> Whitelist:
         if path is None or not path.exists():
             return cls()
         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -159,8 +159,7 @@ def _git(args: Sequence[str], cwd: Path, check: bool = True) -> str | None:
     proc = subprocess.run(
         ["git", *args],
         cwd=str(cwd),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
     )
     if proc.returncode != 0:
         if check:
