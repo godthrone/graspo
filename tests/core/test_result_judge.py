@@ -4,9 +4,19 @@
 且不计入。
 """
 
+import pytest
+
 from graspo.core.result_judge import (
+    A4_CALIBRATION_MIN_N,
     A4_FINAL_LOSS_TOLERANCE_ABS,
+    A4_LEGACY_GLOBAL_TOLERANCE_ABS,
     A4_MEASURED_BF16_FINAL_LOSS_DRIFT,
+    A4_MIN_TRUE_BUG_SIGNATURE,
+    A4_OUTCOME_CALIBRATED,
+    A4_OUTCOME_INSUFFICIENT_N,
+    A4_TIER_CALIBRATIONS,
+    A4_TOLERANCE_HARD_UPPER_BOUND,
+    A4_WORST_PAIR_SAFETY_FACTOR,
     A6_LOSS_TREND_BLOCKS,
     A6_LOSS_TREND_FIELD,
     MAX_CONTEXT_KIND_FEASIBLE,
@@ -25,6 +35,13 @@ from graspo.core.result_judge import (
     judge_a6,
     judge_tier,
     ledger_row,
+    _is_sign_flip,
+    build_tier_calibration,
+    calibrated_tolerance,
+    degenerate_final_check_reason,
+    find_tier_calibration,
+    validate_tier_tolerance,
+    worst_pair,
 )
 
 
@@ -476,21 +493,84 @@ def test_a4_accepts_measured_bf16_drift_but_rejects_gross_divergence():
     measured = make_evidence(
         losses=(1.3, 0.5, 0.2 + A4_MEASURED_BF16_FINAL_LOSS_DRIFT), first_logged_step=1
     )
-    gross = make_evidence(losses=(1.3, 0.5, 0.25), first_logged_step=1)
+    # ★ 2026-09-21：终态容差改成**分档**标定后，本用例的"gross"不能再写死 0.05
+    #（native/1 卡/SFT 档族容差 4.675e-2，0.05 只略越界，不足以表达"量级更大的分歧"）。
+    # 改为"明显超过该档族容差"（2×），让本用例继续只测它要测的东西：容差不是空断言。
+    tier_tol = find_tier_calibration("native", 1, "SFT").tol
+    gross = make_evidence(losses=(1.3, 0.5, 0.2 + 2 * tier_tol), first_logged_step=1)
 
     assert judge_a4(base, measured).passed, "实测 bf16 漂移量级必须被接受（§6 排除项）"
     assert not judge_a4(base, gross).passed, "量级更大的分歧仍必须被拒绝（容差不是空断言）"
 
 
-def test_a4_tolerance_constant_is_derived_from_a_recorded_measurement():
-    """★防呆③：容差不得拍脑袋 —— 必须相对"记录在案的实测量级"留明确余量（两侧都锁）。
+def test_a4_tolerance_is_derived_per_tier_from_recorded_measurements():
+    """★防呆③（**锁二**，2026-09-21 逐字改写）：容差不得拍脑袋，也不得"常量×固定倍数"。
 
-    调小到实测漂移之下 ⇒ 失败（说明它是拍脑袋的）；
-    调大到 >100× ⇒ 也失败（说明它松到没有判别力）。
+    **改前**（旧断言，已被 AD1 §6.3 锁二判为失效）::
+
+        assert A4_MEASURED_BF16_FINAL_LOSS_DRIFT > 0
+        assert A4_FINAL_LOSS_TOLERANCE_ABS >= 5 * A4_MEASURED_BF16_FINAL_LOSS_DRIFT
+        assert A4_FINAL_LOSS_TOLERANCE_ABS <= 100 * A4_MEASURED_BF16_FINAL_LOSS_DRIFT
+
+    它失效的原因：这是一个"全局常量 × 固定倍数"的区间断言，**默认"更大的容差 = 合法的"**，
+    因此把常量乘到 ~330×（= 0.34）它照样放行——而 0.34 能放过真 bug 0.0935。
+    改后的断言不再检查"倍率区间"，而是检查**每一条档族标定的出处与隔离带**：
+
+    ① 每条已定档的容差都 ≤ 最小真 bug 签名的一半（锁一，真 bug 半量封顶）；
+    ② 每条都 ≥ 实测基线下界（不能低于实测漂移）；
+    ③ 每条都必须带**出处**（provenance 非空）——凭空取数过不了；
+    ④ 容差必须是"最坏对 × 安全倍数"推出的量级（不是某个常量的固定倍数）。
     """
     assert A4_MEASURED_BF16_FINAL_LOSS_DRIFT > 0
-    assert A4_FINAL_LOSS_TOLERANCE_ABS >= 5 * A4_MEASURED_BF16_FINAL_LOSS_DRIFT
-    assert A4_FINAL_LOSS_TOLERANCE_ABS <= 100 * A4_MEASURED_BF16_FINAL_LOSS_DRIFT
+    assert A4_TOLERANCE_HARD_UPPER_BOUND == A4_MIN_TRUE_BUG_SIGNATURE / 2.0
+    assert A4_TIER_CALIBRATIONS, "标定表不得为空（否则 A4 全部 fail-closed）"
+    for calibration in A4_TIER_CALIBRATIONS:
+        assert calibration.provenance.strip(), f"{calibration} 缺出处 ⇒ 凭空取数"
+        assert calibration.tol >= A4_MEASURED_BF16_FINAL_LOSS_DRIFT
+        assert calibration.tol <= A4_MIN_TRUE_BUG_SIGNATURE / 2.0
+        if calibration.outcome == A4_OUTCOME_CALIBRATED:
+            assert calibration.n >= A4_CALIBRATION_MIN_N
+            # 容差 == min(1.5 × 最坏对, 硬上界)：要么正好是"最坏对 ×1.5"，
+            # 要么是被硬上界封顶（此时 1.5×最坏对 > 上界，仍是"实测推出来的"）。
+            scaled = A4_WORST_PAIR_SAFETY_FACTOR * calibration.worst_pair
+            assert calibration.tol == pytest.approx(
+                min(scaled, A4_TOLERANCE_HARD_UPPER_BOUND), rel=1e-9, abs=1e-12
+            ), (
+                f"{calibration.backend}/{calibration.cards}/{calibration.algorithm} "
+                f"容差 {calibration.tol} 既不等于 1.5×最坏对 {scaled} 也不等于硬上界"
+                " ⇒ 这个数没有从实测推出来"
+            )
+    # 被废止的历史全局容差只作为兼容别名存在，**不得**再被当作判据取数入口。
+    assert A4_FINAL_LOSS_TOLERANCE_ABS == A4_LEGACY_GLOBAL_TOLERANCE_ABS
+    assert find_tier_calibration("native", 1, "SFT").tol != A4_LEGACY_GLOBAL_TOLERANCE_ABS
+
+
+def test_a4_first_step_zero_tolerance_subcheck_is_untouched():
+    """★★ **首步零容差子检查一个字都不能改**（AD1 §⑤：区分真 bug 与内核残余的唯一尺子）。
+
+    本用例锁住它的**行为契约**（不是实现细节）：27 条证据里被它拦下的真 bug 差值
+    全部 ≤ 3.3e-3（T015 8.31e-4 / T033 1.54e-3 / T047 1.58e-3 / T048 2.05e-3 /
+    T046 2.31e-3 / T026 3.24e-3 / GRPO 播种缺陷 3.3e-3）——**全部小于任何终态容差**，
+    所以只要这条子检查被削弱，这些真 bug 会集体漏网。
+    """
+    # ① 首位差 1e-6（**远小于**任何档族容差）⇒ 必须判否，且消息里点名"首步"。
+    first = make_evidence(losses=(1.0, 0.8, 0.6), first_logged_step=1)
+    second = make_evidence(losses=(1.000001, 0.8, 0.6), first_logged_step=1)
+    result = judge_a4(first, second)
+    assert not result.passed
+    assert "首步 loss 不一致（零容差子检查）" in result.detail
+    # ② 逐位相同 ⇒ 通过，且台账明写"首步 loss 逐位相同"。
+    ok = judge_a4(first, make_evidence(losses=(1.0, 0.8, 0.6), first_logged_step=1))
+    assert ok.passed
+    assert "首步 loss 逐位相同" in ok.detail
+    # ③ 拿不到步号 ⇒ 如实声明"未适用"，**不得**假装比过。
+    no_step = judge_a4(make_evidence(), make_evidence())
+    assert no_step.passed
+    assert "未适用" in no_step.detail
+    # ④ 首步无读数（MISSING 哨兵）⇒ fail-closed。
+    missing_first = make_evidence(losses=(MISSING_SENTINEL, 0.8, 0.6), first_logged_step=1)
+    assert not judge_a4(missing_first, first).passed
+    assert "零容差子检查无法进行" in judge_a4(missing_first, first).detail
 
 
 def test_a4_declares_when_the_zero_tolerance_check_cannot_apply():
@@ -499,3 +579,154 @@ def test_a4_declares_when_the_zero_tolerance_check_cannot_apply():
 
     assert result.passed
     assert "未适用" in result.detail
+
+
+# ── A4 分档标定 + 三道防放行锁（2026-09-21 裁定，依据 task-ad1-a4-validity）──────
+#
+# 本组用例锁住"换标定方法、不是放宽"这件事本身：
+#   · 每条档族容差都有出处、都在隔离带内（锁一）；
+#   · "常量 × 固定倍数"的重推路径被移除，且一个 0.34 的危险变体会被拦住（锁二）；
+#   · 双通道冲突判「不可判定」（锁三）；
+#   · 自比（同一目录同传）在 collector 边界上被拒绝（独立用例在 e2e）。
+# 同时覆盖 AD1 §④ 的"退化通过"标注。
+
+
+def test_a4_calibration_table_covers_the_required_tiers_with_provenance():
+    """五要素第 1 条：**按 backend × cards × algorithm 分档**，每条带出处。"""
+    native1 = find_tier_calibration("native", 1, "SFT")
+    swift1 = find_tier_calibration("ms-swift", 1, "SFT")
+    grpo1 = find_tier_calibration("ms-swift", 1, "GRPO")
+    assert native1 is not None and swift1 is not None and grpo1 is not None
+    # 取值出处（AD1 §6.1/§7.2 与 §3）：T013 单档常量的 10× 全局化**已废止**。
+    assert native1.tol == A4_TOLERANCE_HARD_UPPER_BOUND  # 1.5×0.0344 被锁一封顶
+    assert native1.worst_pair == 0.034423828125
+    assert native1.n == 5
+    assert swift1.tol == 6.72e-3
+    assert grpo1.outcome == A4_OUTCOME_INSUFFICIENT_N
+    for calibration in A4_TIER_CALIBRATIONS:
+        assert calibration.provenance.strip()
+        assert calibration.worst_pair >= 0.0
+
+
+def test_a4_no_tier_tolerance_exceeds_half_the_smallest_true_bug_signature():
+    """**锁一（硬上界）**：任何档族容差 ×2 必须仍 < 最小真 bug 签名 9.35e-2（T032）。"""
+    assert A4_MIN_TRUE_BUG_SIGNATURE == 9.35e-2
+    assert A4_TOLERANCE_HARD_UPPER_BOUND <= A4_MIN_TRUE_BUG_SIGNATURE / 2.0
+    for calibration in A4_TIER_CALIBRATIONS:
+        assert calibration.tol * 2 <= A4_MIN_TRUE_BUG_SIGNATURE + 1e-12
+        assert calibration.tol <= A4_TOLERANCE_HARD_UPPER_BOUND
+
+
+def test_a4_tier_resolution_is_exact_then_narrowing_fallback_never_unknown_default():
+    """档族取数：精确命中优先；缺字段只**降维回落**；连最泛化档族都没有 ⇒ None。"""
+    assert find_tier_calibration("native", 1, "SFT") is not None
+    # 精确未命中、且没有任何字段可回落 ⇒ None（判定器据此 fail-closed）。
+    assert find_tier_calibration("native", 1, "CPT") is None
+    assert find_tier_calibration("totally-unknown", 1, "SFT") is None
+
+
+def test_a4_inflated_tolerance_variant_is_rejected_by_the_boundary_check():
+    """★★ **锁二负向对照**：把容差放大到能放过 T032（0.0935）的变体必须被拦住。
+
+    构造一个 0.34 的档族容差 —— 它 > 0.0935，意味着真 bug T032 会被判"通过"。
+    这正是 AD1 §6.3 锁二点名的危险值（旧单测的 [5×,100×] 区间会**自动批准**它）。
+    本用例证明：**现有测试**（与模块导入时的全表校验走同一个函数）会拦住它。
+    """
+    for dangerous in (0.34, A4_MIN_TRUE_BUG_SIGNATURE, 1.0):
+        with pytest.raises(ValueError):
+            validate_tier_tolerance(dangerous, min_true_bug_signature=A4_MIN_TRUE_BUG_SIGNATURE)
+    # 危险值一旦进了标定表，`calibrated_tolerance` 也不会放行（它内部走同一把尺子）。
+    with pytest.raises(ValueError):
+        validate_tier_tolerance(
+            A4_TOLERANCE_HARD_UPPER_BOUND * 1.0000001,
+            min_true_bug_signature=A4_MIN_TRUE_BUG_SIGNATURE,
+        )
+    # 正向对照：恰好等于硬上界是合法的。
+    validate_tier_tolerance(
+        A4_TOLERANCE_HARD_UPPER_BOUND, min_true_bug_signature=A4_MIN_TRUE_BUG_SIGNATURE
+    )
+
+
+def test_a4_calibration_n_below_five_never_uses_the_low_estimate():
+    """五要素第 2 条：**n<5 不得用低估值定档** ⇒ 落到基线下界 + 显式「证据不足」。"""
+    readings = [0.0, 0.0044]  # n=2（AD1 §7.2：这一对低估 7.8×）
+    tol, outcome = calibrated_tolerance(readings)
+    assert outcome == A4_OUTCOME_INSUFFICIENT_N
+    assert tol == A4_MEASURED_BF16_FINAL_LOSS_DRIFT
+    calibration = build_tier_calibration(
+        readings, backend="native", cards=1, algorithm="SFT", provenance="test"
+    )
+    assert "证据不足" in calibration.note
+    assert calibration.n == 2
+    # n≥5 才允许按最坏对 ×1.5 定档。
+    tol5, outcome5 = calibrated_tolerance([0.0, 0.001, 0.002, 0.003, 0.02])
+    assert outcome5 == A4_OUTCOME_CALIBRATED
+    assert tol5 == 1.5 * 0.02
+
+
+def test_a4_sign_flip_check_catches_the_t032_shape():
+    """五要素第 4 条：真 bug `T032`（−0.0217 → +0.0718）是**符号翻转**。"""
+    # T032 实测值：差值 0.0935 同时越过任何档族容差 ⇒ 先被子检查②拦下。
+    t032_first = make_evidence(losses=(-0.021734893321990967,), grad_norms=(1.0,))
+    t032_second = make_evidence(losses=(0.07180161476135254,), grad_norms=(1.0,))
+    assert not judge_a4(t032_first, t032_second).passed
+    # 但"符号翻转"这条守卫**独立**成立——把容差放宽到 0.06（落在"量级检查已放过（>0.04675）、而两端幅度却≥容差"的窗口里，
+    # 即"量级检查已经放过它"的尺度）时，它必须单独把 T032 拦下：
+    assert _is_sign_flip(-0.021734893321990967, 0.07180161476135254, tolerance=0.06)
+    # 边界诚实性：容差放大到 0.5（比 T032 两端幅度都大一个量级）时，本闸**不**开火——
+    # 这是刻意的取舍：那个尺度下"−0.02 → +0.07"与内核噪声在纯数值上不可分，
+    # 判据只能记为"不可判定/证据不足"，不能凭空断言是 bug（§2.2）。
+    assert not _is_sign_flip(-0.021734893321990967, 0.07180161476135254, tolerance=0.5)
+    assert not _is_sign_flip(0.000289464, 0.000526679, tolerance=0.5)  # 同号
+    assert not _is_sign_flip(-1e-12, 1e-12, tolerance=0.5)  # 零附近抖动，不误报
+    # 反向：**同号但幅度大**不报（这是内核漂移的正常形状，不是翻转）。
+    assert not _is_sign_flip(0.2, 0.21, tolerance=0.5)
+    # 均值远大于容差 ⇒ 报（第二种翻转形状）。
+    assert _is_sign_flip(0.001, -0.002, tolerance=1e-6)
+
+
+def test_a4_dual_channel_conflict_is_indeterminate_never_pass():
+    """**锁三（双通道一致）**：权重指纹与 loss 通道冲突 ⇒ 判「不可判定」。"""
+    same_hash = "a" * 64
+    first = make_evidence(losses=(1.0, 0.8, 0.6), grad_norms=(1.0, 0.9, 0.8),
+                          final_ckpt_sha256=same_hash)
+    second = make_evidence(losses=(1.0, 0.8, 0.6), grad_norms=(1.0, 0.9, 0.8),
+                           final_ckpt_sha256=same_hash)
+    result = judge_a4(first, second)
+    assert not result.passed
+    assert result.evidence_missing is True, "冲突是「不可判定」，不是「训练失败」"
+    assert "双通道冲突" in result.detail
+    assert "不可判定" in result.detail
+    # 权重不同（真实双跑的预期现象，AD1 §6.2）**不**构成冲突 ⇒ 照常判通过。
+    second_diff = make_evidence(losses=(1.0, 0.8, 0.6), grad_norms=(1.0, 0.9, 0.8),
+                                final_ckpt_sha256="b" * 64)
+    assert judge_a4(first, second_diff).passed
+    # 任一端没有指纹 ⇒ 单通道，不制造假的"冲突"，也不假装两通道都验过。
+    assert judge_a4(first, make_evidence(losses=(1.0, 0.8, 0.6))).passed
+
+
+def test_a4_unknown_tier_fails_closed_without_a_default_tolerance():
+    """五要素第 1 条：取不到档族标定 ⇒ **不下发默认容差**，fail-closed。"""
+    unknown_first = make_evidence(losses=(1.0, 0.8, 0.6), backend="native", cards=1,
+                                  algorithm="CPT")
+    unknown_second = make_evidence(losses=(1.0, 0.8, 0.6), backend="native", cards=1,
+                                   algorithm="CPT")
+    result = judge_a4(unknown_first, unknown_second)
+    assert not result.passed
+    assert result.evidence_missing is True
+    assert "缺少该档族的终态容差标定" in result.detail
+
+
+def test_a4_degenerate_final_check_is_annotated_not_silently_passed():
+    """AD1 §④ 的 7 条「退化通过」：必须**显式标注**"零鉴别力"，且不直接改判失败。"""
+    assert degenerate_final_check_reason([0.5], [1.0]) is not None      # 单步
+    assert degenerate_final_check_reason([1.0, 0.0], [1.0, 0.0]) is not None  # 无信号末步
+    assert degenerate_final_check_reason([1.0, 0.5], [1.0, 0.9]) is None
+    # T031 形状：两跑末步都是 GRPO 无信号 0 ⇒ ✅ 但台账必须写"未提供鉴别力"。
+    first = make_evidence(losses=(1.0, 0.0), grad_norms=(1.0, 0.0), first_logged_step=1)
+    second = make_evidence(losses=(1.0, 0.0), grad_norms=(1.0, 0.0), first_logged_step=1)
+    result = judge_a4(first, second)
+    assert result.passed, "退化档是「证据不足」，不是「不通过」——不得改判失败"
+    assert "退化" in result.detail
+    assert "未提供鉴别力" in result.detail
+    assert "证据不足" in result.detail

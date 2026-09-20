@@ -698,6 +698,73 @@ def find_checkpoint_dirs(output_dirs: Sequence[Path]) -> list[Path]:
     return sorted(unique, key=step_of, reverse=True)
 
 
+#: 权重文件的**候选名**（唯一真相源）：native 的 ``pytorch_model.bin`` / HF shard /
+#: ms-swift(peft) 的 ``adapter_model.safetensors``。用同一名表覆盖两种布局，
+#: 避免"文件名取决于后端分支"的隐式契约（§2.2）。
+FINAL_CKPT_WEIGHT_FILENAMES: tuple[str, ...] = (
+    "adapter_model.safetensors",
+    "model.safetensors",
+    "pytorch_model.bin",
+    "model.bin",
+)
+
+
+def extract_final_ckpt_sha256(
+    output_dirs: Sequence[Path], optimizer_steps: int | None
+) -> tuple[str | None, str, str | None]:
+    """A4 的**独立通道**证据：末步 checkpoint 的权重文件内容 sha256。
+
+    返回 ``(sha256 | None, 人读明细, 来源标识 | None)``（三件一起返回，调用方不可能
+    只拿到指纹而不知道它取自哪个文件——§2.2 显式即防呆）。
+
+    **"末步"的权威定义只有一个**（§1.4）：与 ``optimizer_steps`` 同名的那个 checkpoint
+    （``final`` / ``checkpoint-<step>``）。取不到同名的就回落到
+    :func:`find_checkpoint_dirs` 的"最新优先"排序结果（该函数已把 ``final`` 排最前），
+    并在明细里**如实写明**这是回落，不假装它就是末步。
+
+    ★ 为什么需要这条通道：loss 是**标量**，两跑 loss 相同（尤其都是 0）时它不提供
+    任何鉴别力；权重文件指纹是**高维**的，能把"loss 相同但权重已分叉"这种危险组合
+    暴露出来（AD1 §6.3 方案要素 5）。
+    """
+    wanted = f"checkpoint-{optimizer_steps}" if optimizer_steps is not None else None
+    candidates: list[Path] = []
+    if wanted is not None:
+        for directory in output_dirs:
+            candidates.extend(
+                path for path in directory.rglob(wanted) if path.is_dir()
+            )
+    fallback_used = False
+    if not candidates:
+        fallback_used = True
+        candidates = find_checkpoint_dirs(output_dirs)
+    if not candidates:
+        return None, "没有任何 checkpoint 目录 ⇒ 独立通道无证据", None
+
+    checkpoint = candidates[0]
+    for name in FINAL_CKPT_WEIGHT_FILENAMES:
+        weights = checkpoint / name
+        if weights.is_file():
+            digest = _sha256(weights)
+            if digest is None:
+                return None, f"{weights} 读不到内容（sha256 失败）", None
+            source = f"file_sha256:{weights}"
+            note = (
+                f"末步 checkpoint {checkpoint.name} 的 {name}（sha256={digest[:12]}…）"
+                if not fallback_used
+                else f"**回落**到最新 checkpoint {checkpoint.name}（不是与 "
+                f"optimizer_steps={optimizer_steps} 同名的那个）的 {name}"
+                f"（sha256={digest[:12]}…）"
+            )
+            return digest, note, source
+    names = ", ".join(FINAL_CKPT_WEIGHT_FILENAMES)
+    return (
+        None,
+        f"末步 checkpoint {checkpoint.name} 下没有已知权重文件（找过：{names}）"
+        " ⇒ 独立通道无证据",
+        None,
+    )
+
+
 #: safetensors 头部长度上限（防呆：损坏/恶意文件不得让本脚本吃满内存）。
 _SAFETENSORS_HEADER_LIMIT = 100 * 1024 * 1024
 
@@ -1348,17 +1415,54 @@ def extract_min_optimizer_steps(tier: dict[str, Any]) -> int | None:
     return gate["min_optimizer_steps"]
 
 
+def extract_expected_optimizer_steps(tier: dict[str, Any]) -> tuple[int | None, int | None]:
+    """从清单取该档的**步数上限**：``(每 epoch 上限, 整个 run 上限)``。
+
+    **单一真相源（§1.4）**：两个上限的权威位置是清单
+    ``tiers[*].expected_optimizer_steps_per_epoch`` / ``..._reachable``
+    （由 ``tests/e2e/generate_matrix.py`` 的 ``expected_optimizer_steps_per_epoch`` /
+    ``expected_optimizer_steps_reachable`` **一处**算出——见 AF1 §⑥ 方案 S1/S2）。
+
+    与 :func:`extract_min_optimizer_steps` 同理，本函数**只做取值**，不做合法性裁决：
+    非整数 / ``< 1`` 的值由判定层
+    （``result_judge.resolve_step_gate_applicability``）**视为"没有结构性证据"**
+    ⇒ 门槛照常硬判（fail-closed），采集层**不得**把它静默换成某个猜出来的上限。
+
+    返回 ``None`` 表示"清单没给 / 形状不对" ⇒ 判定层退回原样硬判。老清单（本字段引入前
+    生成）与新清单在**行为上等价**：都不开第三态 ⇒ **不放宽任何既有档位**。
+    """
+    per_epoch = tier.get("expected_optimizer_steps_per_epoch")
+    reachable = tier.get("expected_optimizer_steps_reachable")
+    return (
+        per_epoch if isinstance(per_epoch, int) and not isinstance(per_epoch, bool) else None,
+        reachable if isinstance(reachable, int) and not isinstance(reachable, bool) else None,
+    )
+
+
 def collect_run(
     run_dir: Path,
     tier_id: str,
     tuner_type: str,
     base_model_dir: Path | None = None,
     min_optimizer_steps: int | None = None,
+    backend: str | None = None,
+    cards: int | None = None,
+    algorithm: str | None = None,
+    expected_optimizer_steps_per_epoch: int | None = None,
+    expected_optimizer_steps_reachable: int | None = None,
 ) -> tuple[Any, SeriesEvidence]:
     """把一个运行目录抽成 ``RunEvidence`` + 读数口径自证（``SeriesEvidence``）。
 
     ``min_optimizer_steps`` 由调用方从清单读出（见 :func:`extract_min_optimizer_steps`），
     缺省 ``None`` = "清单未提供" ⇒ 判定器用缺省门槛（**不放松**）。
+
+    ``expected_optimizer_steps_per_epoch`` / ``expected_optimizer_steps_reachable``
+    同样由调用方从清单读出（见 :func:`extract_expected_optimizer_steps`），缺省 ``None``
+    = "清单未提供" ⇒ 判定器**不开第三态**、门槛照常硬判（fail-closed，**不放宽**）。
+
+    ``backend`` / ``cards`` / ``algorithm`` 是 **A4 分档标定**的档族坐标（§1.4）：
+    容差由档族唯一决定，因此档族必须随证据一起走。缺省 ``None`` = 调用方没给 ⇒
+    判定器按**只降维**的回落序取档族；连最泛化档族都没有 ⇒ A4 fail-closed。
     """
     exit_code: int | None = None
     exit_path = run_dir / "exit_code"
@@ -1372,6 +1476,11 @@ def collect_run(
     timed_out = exit_code == 124 or bool(re.search(r"⏰|timeout: sending signal", log_text))
     weight_evidence = extract_weight_changed(output_dirs, tuner_type, base_model_dir)
     reload_evidence = extract_checkpoint_reloadable(output_dirs, run_dir=run_dir)
+    # A4 独立通道（五要素第 5 条）：末步权重文件指纹。取不到就是 None（如实标注），
+    # 由判定器决定"单通道"如何表述——采集层**不**替它判通过。
+    ckpt_sha256, ckpt_sha256_detail, ckpt_sha256_source = extract_final_ckpt_sha256(
+        output_dirs, series.steps
+    )
     evidence = _judge.RunEvidence(
         tier_id=tier_id,
         exit_code=exit_code,
@@ -1395,11 +1504,20 @@ def collect_run(
         first_logged_step=series.first_logged_step,
         output_located=bool(output_dirs),
         min_optimizer_steps=min_optimizer_steps,
+        expected_optimizer_steps_per_epoch=expected_optimizer_steps_per_epoch,
+        expected_optimizer_steps_reachable=expected_optimizer_steps_reachable,
         # 读数口径自证（§1.4）：台账必须能回答"这条权重/重载证据是哪种等级、来自哪里"。
         weight_evidence_source=weight_evidence.source,
         weight_evidence_detail=weight_evidence.detail,
         reload_evidence_source=reload_evidence.source,
         reload_evidence_detail=reload_evidence.detail,
+        # A4 档族坐标 + 独立通道（§1.4：容差属于档族这个事实，事实的权威来源是清单）。
+        backend=backend,
+        cards=cards,
+        algorithm=algorithm,
+        final_ckpt_sha256=ckpt_sha256,
+        final_ckpt_sha256_detail=ckpt_sha256_detail,
+        final_ckpt_sha256_source=ckpt_sha256_source,
     )
     return evidence, series
 
@@ -1605,6 +1723,24 @@ def run(args: argparse.Namespace) -> int:
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # ── 自比结构性防呆（AD1 §2.2 边界校验缺口 / 本包 ②）─────────────────────
+    # 全库唯一能产生"自比"的路径就是调用方把**同一棵目录树**同时喂给 --run-root 与
+    # --rerun-root（AD1 §2.3：判据层没有这条断言 ⇒ 台账里会出现一堆"差 0"的假 A4）。
+    # ★ 必须 `resolve()` 后比较：软链/相对路径/尾斜杠都是"同一实体目录"的伪装。
+    # 方向不变：这是**边界校验**（拒绝非法请求），不是退路（§2.3/§3.4）——
+    # 相同 ⇒ 显式报错退出，绝不静默跑出一堆差 0 的 A4 结论。
+    run_root_resolved = Path(args.run_root).resolve()
+    rerun_root_resolved = Path(args.rerun_root).resolve() if args.rerun_root else None
+    if rerun_root_resolved is not None and rerun_root_resolved == run_root_resolved:
+        print(
+            "FATAL: --run-root 与 --rerun-root 解析后指向同一实体目录"
+            f"（{run_root_resolved}）⇒ 这是**自比**，A4 结论无意义。"
+            "请给两个不同的运行根（批次驱动必须让两跑落两棵目录树，见 "
+            "`tests/e2e/run_matrix54.sh` 的 RUN_ROOT 用法）。",
+            file=sys.stderr,
+        )
+        return 2
+
     records: list[dict[str, Any]] = []
     for tier in manifest.get("tiers", []):
         tier_id = str(tier["tier_id"])
@@ -1612,6 +1748,11 @@ def run(args: argparse.Namespace) -> int:
         # 本档 §7 峰值列的口径**由后端唯一决定**（§1.4 单一真相源）。
         # ★ 必须在"没跑过"分支也用它：否则下游会把该格读成"可以用宿主采样补上"。
         backend = str(tier.get("backend"))
+        # A4 档族坐标（五要素第 1 条）：容差由 backend × cards × algorithm 唯一决定，
+        # 因此这三个值必须从清单（唯一真相源）透传到证据里，而不是让判定器自己猜。
+        algorithm = str(tier.get("algorithm")) if tier.get("algorithm") is not None else None
+        cards_raw = tier.get("cards")
+        cards = int(cards_raw) if isinstance(cards_raw, int) else None
         tier_caliber = _judge.peak_memory_caliber_for_backend(backend)
         tier_caliber_note = _judge.peak_memory_unavailable_note(tier_caliber)
         first_dir = Path(args.run_root) / tier_id
@@ -1652,6 +1793,13 @@ def run(args: argparse.Namespace) -> int:
             tuner_type,
             _base_model_dir(args, tier),
             min_optimizer_steps=extract_min_optimizer_steps(tier),
+            backend=backend,
+            cards=cards,
+            algorithm=algorithm,
+            # ★ 步数上限（AF1 §⑥ 方案 S1/S2）：清单读出的"结构可达性"证据，
+            #   判定器据此把"口径不可测"与"训练失败"分开（**不放宽**门槛）。
+            expected_optimizer_steps_per_epoch=extract_expected_optimizer_steps(tier)[0],
+            expected_optimizer_steps_reachable=extract_expected_optimizer_steps(tier)[1],
         )
         second = None
         if args.rerun_root:
@@ -1663,8 +1811,25 @@ def run(args: argparse.Namespace) -> int:
                     tuner_type,
                     _base_model_dir(args, tier),
                     min_optimizer_steps=extract_min_optimizer_steps(tier),
+                    backend=backend,
+                    cards=cards,
+                    algorithm=algorithm,
+                    expected_optimizer_steps_per_epoch=(
+                        extract_expected_optimizer_steps(tier)[0]
+                    ),
+                    expected_optimizer_steps_reachable=(
+                        extract_expected_optimizer_steps(tier)[1]
+                    ),
                 )
-        judgement = _judge.judge_tier(first, second, context_length=args.context_length)
+        # ★ 能力矩阵采集**必须**启用 A4 双通道强制口径（本包 ②/锁三）：否则
+        # "两跑 loss 逐位相同（死通道）+ 独立通道取不到证据"会静默退化成 ✅ 通过，
+        # AD1 §④ 的 7 条退化通过就漏过去了。
+        judgement = _judge.judge_tier(
+            first,
+            second,
+            context_length=args.context_length,
+            require_dual_channel=True,
+        )
         # §7 峰值列：**按后端选口径取数，值与口径成对拿到**（§9.1 二分口径 / §1.4）。
         peak_gib, peak_caliber = _read_peak_memory(first_dir, backend)
         row = _judge.ledger_row(
@@ -1705,6 +1870,23 @@ def run(args: argparse.Namespace) -> int:
         row["ignored_phase_records"] = dict(first_series.ignored_phase_records)
         row["steps_declared_total"] = first.steps_declared_total
         row["first_logged_step"] = first.first_logged_step
+        # ── 自比防呆的两列（本包 ② / AD1 §2.3）──────────────────────────────
+        # 台账必须**自证**"这两跑确实来自两棵目录树"。旧台账不含这两列 ⇒ 事后无法仅凭
+        # 台账区分"真双跑"与"自比跑出一堆差 0"（AD1 §2.4 实测：键集合里没有它们）。
+        row["run_root"] = str(run_root_resolved)
+        row["rerun_root"] = str(rerun_root_resolved) if rerun_root_resolved else None
+        # A4 档族坐标（五要素第 1 条）：让"这一档按哪个容差判的"在台账里可审计，
+        # 与 min_optimizer_steps 同理（§1.4 单一真相源）。
+        row["backend"] = backend
+        row["cards"] = cards
+        row["algorithm"] = algorithm
+        # A4 独立通道（五要素第 5 条）：两跑末步权重指纹。经 `_judge.a4_ckpt_sha_fields`
+        # 落盘 ⇒ **键名只有一处定义**，台账写一次、下游读同一名字（§1.4）。
+        row.update(
+            _judge.a4_ckpt_sha_fields(first.final_ckpt_sha256, second and second.final_ckpt_sha256)
+        )
+        row["final_ckpt_sha256_detail"] = first.final_ckpt_sha256_detail
+        row["final_ckpt_sha256_source"] = first.final_ckpt_sha256_source
         records.append(row)
 
     jsonl = out_dir / "ledger.jsonl"
