@@ -1884,7 +1884,7 @@ chmod -R a+rX /out 2>/dev/null || echo "WARN: chmod -R a+rX /out failed — 宿�
 # ★ 写法约束（防呆）：本块**只使用内层 shell 自己的变量**（\\$1/\\$@/函数内局部量），
 #   不读写外层 runner 的任何变量，也不内联任何函数调用。这样"外层展开"与"内层展开"
 #   在语义上重合，不会因为外层 set -u 误判内层变量（228/本机都踩过这个坑）。
-#   ★ 唯一的例外是档号 \\$TIER：它由**外层 `docker run -e "TIER=$TIER"` 显式注入**容器，
+#   ★ 唯一的例外是档号 \\$TIER：它由**外层 docker run -e "\\$TIER" 显式注入**容器，
 #     不是"恰好未定义⇒空串"的巧合（那种隐性依赖是脆弱设计，§2 显式即防呆）。
 retain_single_checkpoint() {{
     local output_root="\\${{1:-}}"
@@ -1911,15 +1911,36 @@ retain_single_checkpoint() {{
     if [ "\\${{#ckpts[@]}}" -eq 0 ]; then
         ckpts=("\\${{all[@]}}")
     fi
-    # 只留**最新一份**：按 checkpoint-<step> 的步数取最大
-    #（同一 run 内步数唯一且单调递增；末步的目录名即最大步数）
+    # 只留**最新一份**（每档一份：manifest runtime.checkpoint_retention.keep_per_tier）。
+    # ★ 2026-09-20 修复"跨 run 误删**本轮最新**"：原判据**只比步数**
+    #   （[ "\\$step" -gt "\\$newest_step" ]，**严格大于**）。同一档**第二次跑**时，
+    #   上一轮 v0-*/checkpoint-160 与本轮 v1-*/checkpoint-160 步数相同 ⇒
+    #   keeper 完全由 find 的 readdir 顺序决定（ext4 dir_index / overlayfs / tmpfs 各不相同）；
+    #   顺序不利时**本轮最新**被当"中间段"删除（228 实测 T043 run2：v1-*/checkpoint-160
+    #   消失、last-checkpoint 断链 ⇒ 本轮的 A2/A3 证据丢失，而 ckpt_retention.state 仍报 ok）。
+    #   本机复现与负向用例见工位 task-retention-xrun/evidence/。
+    #   现判据 = **三元全序**，与 find 的输出顺序**无关**（同一份产物在任何文件系统上结论一致）：
+    #     ① mtime 大者胜 —— "最近被写入"的那份 = **本轮**训练最后落盘的那份
+    #        （同一 run 内步数单调递增 ⇒ 与"步数最大"同解；跨 run 时它正确表达"本轮优先"）；
+    #     ② mtime 平手 ⇒ 步数大者胜；③ 仍平手 ⇒ 路径字典序大者胜（v1-* > v0-*）。
+    # ⚠ 本块是**不加引号的 heredoc 正文**（外层 set -uo pipefail）⇒ 本段的注释里
+    #   不得出现裸反引号（外层会当命令替换真的执行）或裸美元符（外层会当变量展开）；
+    #   哨兵测试见 test_run_matrix54_runner.py 的 retention 段哨兵。
     for path in "\\${{ckpts[@]}}"; do
         step="\\${{path##*-}}"
         case "\\$step" in
             ''|*[!0-9]*) continue ;;
         esac
-        if [ -z "\\$newest_path" ] || [ "\\$step" -gt "\\$newest_step" ]; then
+        if [ -z "\\$newest_path" ]; then
             newest_path="\\$path"; newest_step="\\$step"
+        elif [ "\\$path" -nt "\\$newest_path" ]; then
+            newest_path="\\$path"; newest_step="\\$step"
+        elif [ ! "\\$newest_path" -nt "\\$path" ]; then
+            if [ "\\$step" -gt "\\$newest_step" ]; then
+                newest_path="\\$path"; newest_step="\\$step"
+            elif [ "\\$step" -eq "\\$newest_step" ] && [ "\\$path" \\> "\\$newest_path" ]; then
+                newest_path="\\$path"; newest_step="\\$step"
+            fi
         fi
     done
     if [ -z "\\$newest_path" ]; then
