@@ -18,7 +18,7 @@ import torch
 import torch.distributed as dist
 
 from graspo.flow.adapters.base_graspo_flow_adapter import BaseGraspoFlowAdapter
-from graspo.flow.logging import append_jsonl_segment, run_log_dir
+from graspo.flow.logging import append_jsonl_segment, rank_metrics_filename, run_log_dir
 from graspo.flow.parallel.placement_plan import (
     NativePlacementPlan,
     placement_summary,
@@ -896,7 +896,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
         }
         if extra:
             payload.update(extra)
-        path = run_log_dir(output_dir) / f"rank_metrics.rank_{self.rank:05d}.jsonl"
+        path = run_log_dir(output_dir) / rank_metrics_filename(self.rank)
         append_jsonl_segment(path, _jsonable(payload))
 
     def _encode_multimodal_rows(

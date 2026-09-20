@@ -138,6 +138,25 @@ class MsSwiftSftTrainer:
                 "--logging_steps",
                 "1",
             ]
+        # 每 rank 首步探针（只读旁路；默认关 ⇒ 不注册回调、不追加任何参数）。
+        # 为什么走 ms-swift 的官方扩展点（`--callbacks` + `callbacks_map`）而不是
+        # 改 ms-swift 源码：见 first_step_probe 模块 docstring（§1.2 对扩展开放）。
+        if probe_first_step_enabled():
+            from graspo.flow.logging import rank_metrics_filename
+            from graspo.flow.msswift.first_step_probe import (
+                PROBE_CALLBACK_NAME,
+                install_probe_callback,
+            )
+
+            install_probe_callback()
+            # 只在没有同名参数时追加，避免与用户/冒烟参数冲突（§2.3 边界校验）。
+            if "--callbacks" not in extra_argv:
+                extra_argv += ["--callbacks", PROBE_CALLBACK_NAME]
+            logger.info(
+                "graspo: per-rank first-step probe enabled (callback=%s, file=%s)",
+                PROBE_CALLBACK_NAME,
+                rank_metrics_filename(0),
+            )
         argv = graspo_to_ms_swift_argv(
             self.config,
             stage="sft",
@@ -152,6 +171,17 @@ class MsSwiftSftTrainer:
         # 未配置 ``rope_scaling`` 时该上下文不装任何补丁。
         with rope_parameters_compatible(self.config.msswift.rope_scaling):
             sft_main(argv)
+
+
+def probe_first_step_enabled() -> bool:
+    """首步探针是否启用——**唯一判据** = 进程内绑定的确定性开关（§1.4）。
+
+    绑定者是 ``cli/train_worker.main``（从 ``graspo launch --determinism-probe-first-step``
+    经 ``--determinism-spec`` 传来的声明）。未绑定 ⇒ 全关 ⇒ 不注册回调、不追加参数。
+    """
+    from graspo.core.determinism import active_switch
+
+    return bool(active_switch().probe_first_step)
 
 
 def _warn_native_only_fields(config: Any) -> None:

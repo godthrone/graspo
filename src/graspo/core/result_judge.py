@@ -100,6 +100,12 @@ DIAGNOSTIC_PHASES: frozenset[str] = frozenset(
         "train_before_empty_cache",
         "logprob_after",
         "pipeline_logprob_after",
+        # 每 rank 首步探针（只读旁路：首步 local loss + 首批 input_ids sha256）。
+        # 唯一真相源是 ``graspo/flow/msswift/first_step_probe.py::PROBE_PHASE``；
+        # 这里只能写字面量——采集侧按文件路径加载本模块（不能 import graspo），
+        # 因此两个字面量由 ``tests/core/test_determinism.py`` 的同步测试守住。
+        # 本行 payload **不带** ``metrics`` ⇒ 采集侧不会误当逐步指标（§2.2 显式）。
+        "first_step_probe",
     }
 )
 

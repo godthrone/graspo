@@ -116,6 +116,18 @@ def run_log_dir(output_dir: str | Path) -> Path:
     return directory
 
 
+def rank_metrics_filename(rank: int) -> str:
+    """Return the per-rank ``rank_metrics`` side-channel filename (**single source**).
+
+    Read by the collector (``scripts/collect_results.py`` globs
+    ``rank_metrics.rank_*.jsonl``) and written by the training side.  Keeping the
+    format in one place means a new writer (e.g. the per-rank first-step probe)
+    cannot invent a second spelling the collector would silently miss
+    (§1.4 single source of truth / §2.2 explicit).
+    """
+    return f"rank_metrics.rank_{int(rank):05d}.jsonl"
+
+
 def rotating_append(path: Path, line: str) -> Path:
     """Append ``line``, rotating to a new numbered file past ``MAX_LOG_BYTES``.
 
