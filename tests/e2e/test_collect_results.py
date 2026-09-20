@@ -154,6 +154,76 @@ def test_collector_pairs_rerun_for_a4(tmp_path):
     assert record["criteria"]["A4"] is True
 
 
+# ── A6 首末 loss 走向：记录项必须进台账（2026-09-20 裁定）────────────────────
+#
+# 裁定把「最终 loss 不高于初始」从阻断降为**记录项**。这两条端到端用例锁死
+# 降级后的两个方向：① 末点高于起点不再使 A6 判否，但走向必须在台账里**可见**
+# （§2.2 显式即防呆，禁止静默丢弃）；② NaN/Inf 仍然判否，不得被"降级"带走。
+
+
+def _make_increased_loss_run(root: Path, tier_id: str = "T010") -> None:
+    """合成一次"末点高于起点、但全程 finite"的运行（T010 的真机形状的最小化）。"""
+    _make_run(root, tier_id)
+    run = root / tier_id
+    (run / "stdout.log").write_text(
+        "{'loss': 0.0250, 'grad_norm': 4.15}\n{'loss': 0.0603, 'grad_norm': 3.02}\n",
+        encoding="utf-8",
+    )
+    state = {
+        "global_step": 6,
+        "epoch": 1.0,
+        # 末点 0.0603 高于起点 0.0250，但逐步波动区间 0.0042–0.4043 ⇒ 健康。
+        "log_history": [
+            {"loss": 0.0250, "grad_norm": 4.15},
+            {"loss": 0.4043, "grad_norm": 9.0},
+            {"loss": 0.0603, "grad_norm": 3.02},
+        ],
+    }
+    (run / "outputs" / tier_id / "trainer_state.json").write_text(
+        json.dumps(state), encoding="utf-8"
+    )
+
+
+def test_collector_records_increased_a6_loss_trend_without_blocking(tmp_path):
+    """★裁定正向：末点高于起点 ⇒ A6 通过，且 ``loss_trend=increased`` 进台账。"""
+    _make_increased_loss_run(tmp_path / "runs")
+
+    record = _run_collector(tmp_path)
+
+    assert record["criteria"]["A6"] is True, record["criteria_detail"]["A6"]
+    assert record["loss_trend"] == "increased", "走向必须进台账字段，不得静默丢弃"
+    detail = record["criteria_detail"]["A6"]
+    assert "loss_trend=increased" in detail, detail
+    assert "不阻断" in detail, "台账明细必须写明'按裁定不作阻断'，供人一眼看到"
+    assert record["losses"][0] == 0.0250 and record["losses"][-1] == 0.0603
+    assert "数值异常" not in record["note"], record["note"]
+
+
+def test_collector_still_fails_a6_on_nan_after_the_trend_demotion(tmp_path):
+    """★裁定反向：降级**没有**放松数值健康 —— 真 NaN 时 A6 仍然判否、仍记数值异常。"""
+    _make_run(tmp_path / "runs")
+    run = tmp_path / "runs" / "T010"
+    (run / "stdout.log").write_text(
+        "{'loss': 0.5, 'grad_norm': 1.0}\n{'loss': nan, 'grad_norm': 1.0}\n",
+        encoding="utf-8",
+    )
+    state = {
+        "global_step": 6,
+        "epoch": 1.0,
+        "log_history": [{"loss": 0.5, "grad_norm": 1.0}, {"loss": float("nan"), "grad_norm": 1.0}],
+    }
+    (run / "outputs" / "T010" / "trainer_state.json").write_text(
+        json.dumps(state), encoding="utf-8"
+    )
+
+    record = _run_collector(tmp_path)
+
+    assert record["criteria"]["A6"] is False, record["criteria_detail"]["A6"]
+    assert "NaN/Inf" in record["criteria_detail"]["A6"]
+    assert record["failure_class"] == "数值异常"
+    assert record["loss_trend"] is None, "NaN 档无从比较走向 ⇒ 台账字段为 None（§2.2）"
+
+
 # ── 🟡-11：数值异常判据必须前置于"日志里出现 OOM 字样" ──────────────────────
 #
 # 硬要求是"只有**真 OOM** 才计入最大可行上下文"。若一次运行的日志里恰好出现
