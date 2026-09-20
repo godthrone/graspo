@@ -405,6 +405,13 @@ INITIAL_MAX_PROMPT_LENGTH = 8192
 TIMEOUT_SEC = 7200
 
 #: 已作废口径——生成物中出现任何一条即自检失败（防"把框架 bug 固化成能力上限"）。
+#:
+#: ★ `allocator 主口径` / `主口径摘要`（2026-09-21 追加）：`gpu_memory_summary.json`
+#: 是**宿主侧 nvidia-smi 采样旁路摘要**（喂 `host_sample_peak_gib`），既**不是**
+#: 容器内 allocator（那是 `rank_metrics` 的 `memory.max_allocated_mib`），也**不是**
+#: §7「实测每卡峰值显存」列的口径（该列为后端二分口径，唯一映射见
+#: `src/graspo/core/result_judge.py::PEAK_MEMORY_CALIBER_BY_BACKEND`）。
+#: 旧措辞把两个量混成一个，会持续误导读者（§1.4 单一真相源 / §2.2 显式即防呆）。
 FORBIDDEN_PATTERNS: tuple[str, ...] = (
     "2卡96K",
     "FSDP2 权重分片",
@@ -412,6 +419,8 @@ FORBIDDEN_PATTERNS: tuple[str, ...] = (
     "graspo:0.29.0",
     "WORLD_SIZES",
     "DOCKER_IMAGE",
+    "allocator 主口径",
+    "主口径摘要",
 )
 
 #: 全参档位的可表达性说明：配置字段已存在（`tuner_type: full`），但能力本身
@@ -2976,15 +2985,24 @@ wait_for_gpu_summary() {{
         done
         wait "\\$pid" 2>/dev/null || true
     fi
-    # ★ 主口径取证缺口断言（缺失 ⇒ 显式登记，不静默）
+    # ★ 宿主采样旁路取证缺口断言（缺失 ⇒ 显式登记，不静默）
+    #   本文件是**宿主侧 nvidia-smi 采样摘要**，只喂台账**旁路字段**
+    #   host_sample_peak_gib（+ host_sample_peak_gap_mib 诊断列）——
+    #   **不是** §7「实测每卡峰值显存」列的口径，也**不是**容器内 allocator
+    #   （那是另一个量：native 档取 rank_metrics 的 memory.max_allocated_mib，
+    #   由 transformer_adapter._emit_rank_memory_event 落盘）。§7 峰值列自
+    #   2026-09-21 起为**后端二分口径**，唯一映射见
+    #   src/graspo/core/result_judge.py 的 PEAK_MEMORY_CALIBER_BY_BACKEND
+    #   （native 档 = rank0 max_allocated；ms-swift 档 = 自报 max_memory_reserved）。
+    #   ★ 旁路缺失仍必须登记：它连诊断列一起缺，不得静默当作已取证（§2.2 / §2.3）。
     if [ -f "\\$GPU_EVIDENCE_DIR/gpu_memory_summary.json" ]; then
         printf '%s\\n' "present" > "\\$GPU_EVIDENCE_DIR/gpu_summary.state"
     else
         printf '%s\\n' \\\\
-            "MISSING: \\$GPU_EVIDENCE_DIR/gpu_memory_summary.json（容器内 allocator 主口径摘要缺失）" \\\\
+            "MISSING: \\$GPU_EVIDENCE_DIR/gpu_memory_summary.json（宿主采样旁路摘要缺失；不是容器内 allocator，也不是 §7 峰值列口径——该列口径见 result_judge.PEAK_MEMORY_CALIBER_BY_BACKEND）" \\\\
             > "\\$GPU_EVIDENCE_DIR/EVIDENCE_GAP_gpu_memory_summary"
         printf '%s\\n' "missing" > "\\$GPU_EVIDENCE_DIR/gpu_summary.state"
-        echo "[gpu-summary] EVIDENCE-GAP: 主口径摘要缺失 —— 已写" \\\\
+        echo "[gpu-summary] EVIDENCE-GAP: 宿主采样旁路摘要缺失（旁路字段 host_sample_peak_gib；不是 §7 峰值列口径——该列口径见 result_judge.PEAK_MEMORY_CALIBER_BY_BACKEND）—— 已写" \\\\
              "\\$GPU_EVIDENCE_DIR/EVIDENCE_GAP_gpu_memory_summary（**不得**当成已取证）" >&2
     fi
     return 0
