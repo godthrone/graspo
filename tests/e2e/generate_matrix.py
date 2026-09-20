@@ -225,6 +225,18 @@ VERDICT_NOT_APPLICABLE = "not_applicable"
 
 ALGORITHM_TO_TRAIN_METHOD = {"CPT": "cpt", "SFT": "sft", "GRASPO": "graspo", "OPD": "opd"}
 
+#: ★ RLHF（GRASPO/GRPO）会把训练子集**重复**这么多次再进训练循环：ms-swift 的
+#: ``RepeatSampler(mini_repeat_count=num_generations)``，而
+#: ``num_generations = training.rollout_group_size``（``msswift/_config_mapping.py`` 的
+#: ``stage == "rlhf"`` 分支）。
+#: **单一真相源 = ``src/graspo/core/schema.py`` 的 ``rollout_group_size`` 默认值**；
+#: 矩阵档位配置**不覆盖**该字段 ⇒ 运行时用的就是这个默认值。
+#: 这里只能写常量（生成器不导入 ``graspo.core.schema``：那条 import 会拉起
+#: pydantic + ripple→torch 的重依赖，生成器必须保持 stdlib-only）。
+#: 防漂移由 ``tests/e2e/test_generate_matrix.py`` 的**源码文本级 parity 测试**兜住：
+#: schema 默认值一改，测试立刻判红。
+ROLLOUT_GROUP_SIZE = 8
+
 #: ★ CPT / OPD 的**通道**已落地（`WP-X3`，2026-09-19）：`train_method` 枚举含 `cpt`/`opd`，
 #: 配置层对这两个算法**接受**、对 `cpt|opd + native` **fail-closed 拒绝**；路由表
 #: （`core/discovery._REGISTRY_BY_TRAIN_METHOD`）把它们分别落到 `graspo.cpt_backends` /
@@ -410,11 +422,61 @@ def subset_size(algorithm: str) -> int:
     return SUBSET_SIZE_BY_ALGORITHM[algorithm]
 
 
+def _repeats_dataset_by_rollout_group(tier: dict[str, Any]) -> bool:
+    """该档是否走 ms-swift 的 **RLHF/GRPO** 路径（= 唯一会把数据集按 G 重复的路径）。
+
+    **逐路径核实，不做一刀切**（2026-09-20，真机证据见下）：
+      · **ms-swift**：``flow/msswift/_config_mapping.py`` 只有 ``stage == "rlhf"`` 分支
+        下发 ``--num_generations`` / ``--generation_batch_size`` / ``--steps_per_generation``，
+        该 stage 只被 ``msswift/trainer.py``（GRASPO 训练器）使用
+        （``sft_trainer`` / ``cpt_trainer`` / ``opd_trainer`` 各传 ``"sft"`` / ``"cpt"`` / ``"opd"``）
+        ⇒ 判据 = ``train_method == "graspo"`` **且 backend 走 ms-swift**。
+      · **native 的 GRASPO 档不重复**：``flow/trainer/trainer.py`` 按
+        ``rollout_queue_batch_size × rollout_group_size`` 归组，**每个 optimizer step
+        消费固定条数 prompt**；真机 ``T028``（native/9B/1卡）的 ``events.jsonl`` 逐字：
+        ``samples_seen`` 8 → 16、``samples_total`` 20、``optimizer_steps_per_rank`` 1
+        ⇒ 一个 epoch 只有约 3 步。**给 native 档乘 G 会高 8 倍**，故必须排除。
+      · **SFT / CPT / OPD(GKD) 不重复**：各 stage 分支都不下发 ``--num_generations``；
+        真机逐档相符（``T025``/``T026``/``T027`` = 100/50/25，``T047``/``T048`` = 10/5）。
+    """
+    return (
+        str(tier["backend"]) == "ms-swift"
+        and ALGORITHM_TO_TRAIN_METHOD[str(tier["algorithm"])] == "graspo"
+    )
+
+
 # ── ckpt 保留策略（2026-09-19，用户已授权；单一真相源）────────────────────────
 
 
 def expected_optimizer_steps(tier: dict[str, Any]) -> int:
-    """该档的期望全局优化步数（= 子集条数 ÷ 卡数，向下取整）。
+    """该档的期望全局优化步数（= **实际参与优化的样本数** ÷ 卡数，向下取整）。
+
+    ★ **RLHF（GRASPO/GRPO）档的总样本数 = 子集 × ``rollout_group_size``**：
+    ms-swift 的 ``RepeatSampler(mini_repeat_count=G)`` 会把每条 prompt **重复 G 次**
+    再进训练循环（``G`` = ``training.rollout_group_size``，默认
+    :data:`ROLLOUT_GROUP_SIZE`；矩阵档位配置**不覆盖**它）。
+    **2026-09-20 修复**：本函数原先漏掉这一乘数 ⇒ GRASPO 档的"计划步数"低 ``G`` 倍
+    （``T031``/``T043`` 声明 20，真机 ``global_step/max_steps`` 跑到 **160/160** = 20 × 8）。
+
+    **哪些档要乘**（**不搞一刀切**，逐路径核实）：只有走 ms-swift
+    ``stage == "rlhf"`` 的档才重复数据集——见
+    :func:`_repeats_dataset_by_rollout_group`（判据含 **backend**）。
+    **不乘**的三类都有真机证据：
+      · SFT / CPT / OPD(GKD)：``T025``(1卡)=100、``T026``(2卡)=50、``T027``(4卡)=25、
+        ``T047``(2卡)=10、``T048``(4卡)=5；
+      · **native 的 GRASPO 档**（``T028``–``T030`` / ``T034``–``T036`` / ``T040``–``T042``，
+        共 9 档）：native 训练器按 ``rollout_queue_batch_size × rollout_group_size`` 归组、
+        **每个 optimizer step 消费固定条数 prompt**（``T028`` 的 ``events.jsonl`` 逐字：
+        ``samples_seen`` 8 → 16、``samples_total`` 20、``optimizer_steps_per_rank`` 1
+        ⇒ 一个 epoch 约 3 步）⇒ 给它们乘 G 会**高 8 倍**。
+        （★ native 档的声明值因此仍偏大：它不读 ``save_steps``、只落 ``final/`` ⇒
+        该项对 native 是**纯信息字段**；是否另修见工位报告"额外发现"。）
+
+    **实测校准（ms-swift GRASPO，1 卡）**：``T031``/``T043`` 真机跑到 160/160，且保留块日志
+    显示真落了 8 份 ckpt（``checkpoint-{20,40,…,160}``）⇒ 修之前 ``save_steps``=20
+    **每个 run 落 8 份**，与"每档只落一份"的设计相悖，靠容器内保留块删掉 7 份。
+    （**2/4 卡 ms-swift GRASPO 档无真机实测**——站内不存在这类 run；80 / 40 是按
+    ``总样本 ÷ 卡数`` 摊分的**推断**，见工位报告"未核实"登记。）
 
     依据（**实测口径，不是猜测**）：矩阵档每卡 micro batch = 1、
     ``gradient_accumulation_micro_batches`` = 1 ⇒ 每卡每步 1 个样本、全局步数 = 每卡步数。
@@ -426,11 +488,20 @@ def expected_optimizer_steps(tier: dict[str, Any]) -> int:
     若取向上而实际步数不足（数据末端被 drop 的情形），就会一份都不落 ⇒ A3 无证据可判。
     """
     cards = max(1, int(tier["cards"]))
-    return max(1, subset_size(str(tier["algorithm"])) // cards)
+    samples = subset_size(str(tier["algorithm"]))
+    if _repeats_dataset_by_rollout_group(tier):
+        samples *= ROLLOUT_GROUP_SIZE
+    return max(1, samples // cards)
 
 
 def checkpoint_save_steps(tier: dict[str, Any]) -> int:
     """该档的 ``training.save_steps``：**总步数**（⇒ 每档只落一份 ckpt）。
+
+    ★ 这里的"总步数"取自 :func:`expected_optimizer_steps` ⇒ **对 RLHF（GRASPO）档也已
+    含 `rollout_group_size` 乘数**（2026-09-20 修复）。修之前 GRASPO 档拿到的
+    `save_steps` 只有真总步数的 1/8 ⇒ 每个 run 真落 **8 份** ckpt（`T031`/`T043` 实测
+    `checkpoint-{20..160}`），"每档只落一份"实际上全靠容器内保留块删掉 7 份。
+    修后 `save_steps` = 真总步数 ⇒ 保存恰好发生在最后一步（1 卡 GRASPO = 160）。
 
     ★ 为什么是"总步数"而不是 0/负数：``save_steps <= 0`` 在映射层会落到
     ``save_strategy: epoch`` 分支（``msswift/_config_mapping.py``），那是**另一种落盘形态**，
@@ -1067,8 +1138,14 @@ def build_manifest(tiers: list[dict[str, Any]]) -> dict[str, Any]:
                 "policy": "keep-latest-single-checkpoint",
                 "keep_per_tier": 1,
                 "how": (
-                    "① 配置侧：`training.save_steps` = 该档总优化步数（见每档 "
+                    "① 配置侧：`training.save_steps` = 该档**总优化步数**（见每档 "
                     "`checkpoint_save_steps`），=「每档只落一份」；"
+                    "★ 总步数=「实际参与优化的样本数 ÷ 卡数」，而 **RLHF（GRASPO/GRPO）档的"
+                    "样本数 = 子集 × `training.rollout_group_size`**（ms-swift 的 "
+                    "`RepeatSampler(mini_repeat_count=G)` 会按 G 重复数据集；矩阵档不覆盖该字段，"
+                    "取 schema 默认值 8）⇒ `T031`/`T043` 真机 `global_step/max_steps` = 160/160。"
+                    "**此项 2026-09-20 修复**：修前 GRASPO 档的 `save_steps` 低了 8 倍、每个 run "
+                    "真落 8 份 ckpt，只剩一份实际全靠②；"
                     "② runner 侧：容器内落盘后立即逐项目具名删除旧 ckpt（`[ckpt-retention]` "
                     "日志行），并断言至少还剩一份（否则报运行链路错误，不静默通过）。"
                 ),
