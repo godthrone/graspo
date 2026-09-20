@@ -1966,13 +1966,34 @@ chmod -R a+rX /out 2>/dev/null || echo "WARN: chmod -R a+rX /out failed — 宿�
 retain_single_checkpoint() {{
     local output_root="\\${{1:-}}"
     local -a all=() ckpts=()
-    local path step newest_path="" newest_step="" deleted=0 keep_count=0
+    local path step candidate="" newest_path="" newest_step="" deleted=0 keep_count=0
 
     if [ ! -d "\\$output_root" ]; then
         return 0
     fi
     mapfile -t all < <(find "\\$output_root" -type d -name 'checkpoint-*' -print 2>/dev/null)
     if [ "\\${{#all[@]}}" -eq 0 ]; then
+        # ★ native 后端的产物形态**不是** checkpoint-*，而是终态目录 final/。
+        #   权威定义（§1.4 单一真相源，不在这里另立一套；注意本段是 heredoc 正文，
+        #   照防呆约束**不写裸反引号/裸美元符**）：
+        #     · scripts/collect_results.py 的 NATIVE_CHECKPOINT_DIRNAME = "final"
+        #       （find_checkpoint_dirs 对 native 就用 rglob("final") 找）；
+        #     · src/graspo/flow/trainer/trainer.py 的 _save_checkpoint(output_dir / "final")。
+        #   native 只落**一份**终态 ⇒ **没有"中间段"要删除**，但它**确实有产物** ⇒
+        #   不得记 missing（那是"假失败"：训练成功却 rc=4，会污染台账，
+        #   见 2026-09-20 复核 N2）。
+        #   ★ 只承认**含至少一个文件**的 final/：空目录 = 产物根本没落盘 ⇒
+        #     仍然走下面的 missing 硬失败（三态语义**不放松**）。
+        local -a finals=() final_files=()
+        mapfile -t finals < <(find "\\$output_root" -maxdepth 2 -type d -name 'final' -print 2>/dev/null)
+        for candidate in "\\${{finals[@]}}"; do
+            mapfile -t final_files < <(find "\\$candidate" -type f -print -quit 2>/dev/null)
+            if [ "\\${{#final_files[@]}}" -gt 0 ]; then
+                echo "[ckpt-retention] KEEP   \\$candidate（native 终态产物；本档无 checkpoint-* 中间段可清理）"
+                echo "[ckpt-retention] 保留 ckpt 数=1 删除数=0"
+                return 0
+            fi
+        done
         echo "[ckpt-retention] FATAL: 未找到任何 checkpoint-* 目录（output_root=\\$output_root）——" >&2
         echo "[ckpt-retention]   A3（checkpoint 重载）将无证据可判。这是**运行链路错误**，" >&2
         echo "[ckpt-retention]   不是训练失败：请检查 save_steps 是否大于实际优化步数。" >&2
