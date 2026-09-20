@@ -2381,7 +2381,11 @@ fi
 #    容器内 /out 由下面的 -v "$RUN_DIR:/out" 绑定到宿主 <RUN_ROOT>/<T###>
 #    （RUN_DIR = <RUN_ROOT>/<T###>），因此容器内 {GPU_MONITOR_CONTAINER_DIR}
 #    就是宿主 <RUN_ROOT>/<T###>/gpu/ ——
-#    正是 collect_results.py::_read_peak_memory 读 gpu_memory_summary.json 的目录。
+#    正是**宿主采样摘要** gpu_memory_summary.json 的落点，由
+#    collect_results.py::_read_host_sample_peak_memory 读入 `host_sample_peak_gib` 旁路。
+#    ★ 它**不是** §7「实测每卡峰值显存」列的口径（该列现为**二分口径**：native 档读
+#      rank0 allocator `max_allocated`、ms-swift 档读 `max_memory_reserved`，见 §9.1）；
+#      宿主采样在共享机上会被同租户作业污染，一律不得混入该列。
 #
 #    ★ 读法只用 grep/sed（**不引 PyYAML**）：本脚本在宿主上跑，宿主 python 不一定
 #      装了 PyYAML（它只在镜像里保证有）。档配置的 gpu_monitor 段由 generate_matrix.py
@@ -2934,9 +2938,10 @@ printf '%s\\n' "\\$CKPT_STATE" > /out/ckpt_retention.state
 #   缺陷：原实现把采样器丢在后台（SAMPLER=\\$!）后跑 torchrun，训练结束**直接 exit**。
 #   容器一退出，后台进程**收不到 SIGTERM**（直接随容器消失）⇒ record_gpu_memory 的
 #   finally 块（**摘要的唯一落盘点**，含 memory_used_mib_peak）**从不执行** ⇒
-#   主口径（PyTorch allocator 摘要）**取证缺口**：228 实测全批
-#   <run>/gpu/gpu_memory_summary.json 缺失，collect_results._read_peak_memory 只能拿到
-#   None（task-r3-bulk §⑦-7）。
+#   宿主采样摘要（读入 host_sample_peak_gib 旁路——**不是** §7 峰值列的口径，该列自
+#   2026-09-21 起为二分口径、见 §9.1）**取证缺口**：228 实测全批
+#   <run>/gpu/gpu_memory_summary.json 缺失 ⇒ collect_results._read_host_sample_peak_memory
+#   拿到 None、该旁路缺值（task-r3-bulk §⑦-7）。
 #   修法：**显式** SIGTERM + **有界等待**（只等本次 run 的采样器，零 kill 他人进程）：
 #     · SIGTERM ⇒ 触发 record_gpu_memory 的 finally ⇒ 摘要落盘；
 #     · 有界（≤30 s）⇒ 采样器卡死也不得拖住容器退出（§3.1 同效退路：只改代价不改结果）；
