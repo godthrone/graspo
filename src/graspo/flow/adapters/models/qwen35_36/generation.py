@@ -8,6 +8,7 @@ import torch
 import torch.distributed as dist
 from torch.nn.utils.rnn import pad_sequence
 
+from graspo.core.schema import Sample
 from graspo.flow.adapters.models.qwen35_36.model import Qwen35HybridTextModel
 from graspo.flow.adapters.multimodal_tensors import (
     _compute_multimodal_offset_tables,
@@ -32,8 +33,8 @@ class _Qwen35GenerationMethods:
     def generate_groups(
         self,
         *,
-        message_batches=None,
-        tool_batches=None,
+        message_batches: list[list[dict[str, Any]]] | None = None,
+        tool_batches: list[list[dict[str, Any]] | None] | None = None,
         rollout_group_size: int,
         max_new_tokens: int,
         max_prompt_length: int,
@@ -184,7 +185,7 @@ class _Qwen35GenerationMethods:
     def generate_sample_groups(
         self,
         *,
-        samples=None,
+        samples: list[Sample] | None = None,
         rollout_group_size: int,
         max_new_tokens: int,
         max_prompt_length: int | None = None,
@@ -199,6 +200,8 @@ class _Qwen35GenerationMethods:
         的扩展参数，保持接口兼容；当前实现不使用额外的 kwargs。
         """
         self._require_ready()
+        if samples is None:
+            raise ValueError("generate_sample_groups requires a samples list")
         if any(
             any(str(item.get("type") or "") == "video" for item in sample.media)
             for sample in samples

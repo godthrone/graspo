@@ -103,8 +103,8 @@ class Qwen3Adapter(TransformerAdapter):
     def generate_groups(
         self,
         *,
-        message_batches=None,
-        tool_batches=None,
+        message_batches: list[list[dict[str, Any]]] | None = None,
+        tool_batches: list[list[dict[str, Any]] | None] | None = None,
         rollout_group_size: int,
         max_new_tokens: int,
         max_prompt_length: int | None = None,
