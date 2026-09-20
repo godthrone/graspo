@@ -226,6 +226,10 @@ def test_single_chunk_weight_is_one_and_matches_global_token_mean():
     """单 chunk（chunk_count=1）：权重必须为 1.0，与整批 token 均值逐位等价。"""
     methods = _build_methods()()
     chunks = [_make_chunk(label_lengths=[3, 1], hidden_values=[0.0, 1.0])]
+    # ★ 必须先刷新读数：`_weights_from_last_counts()` 读的是模块级 `_LAST_VALID_TOKEN_COUNTS`
+    # 全局（上一次用例留下的值），不调用 `_counts()` 就会断言在陈旧数据上（修正前本行缺失
+    # ⇒ 套件内读到 [1,1,5] 的权重 1/7，单独跑读到空表）。
+    assert _counts(chunks) == [4]
     assert _weights_from_last_counts() == [1.0]
 
     losses = _chunk_losses(methods, chunks)
