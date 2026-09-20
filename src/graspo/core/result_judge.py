@@ -418,6 +418,23 @@ class RunEvidence:
     #: ``<= 0`` 是**非法门槛**（"最少步数"没有 0/负数的合法解释，§2.2）⇒ A2 判否
     #: （fail-closed），**绝不**静默回落到 5——静默回落会把"清单被改坏"伪装成正常。
     min_optimizer_steps: int | None = None
+    # ── 证据来源自证（§1.4 单一真相源 / §2.2 显式即防呆）─────────────────────
+    #: A2「权重真变化」这条证据**来自哪里、是哪种等级**（如
+    #: ``run_metrics:lora_norm_delta`` / ``checkpoint:torch_load(lora_b)``）。
+    #: 为什么必须有它：同一份 run 产物在**有 torch 的宿主**与**无 torch 的宿主**上
+    #: 证据落点不同（228 实测无 torch）。没有这一列，"采集机缺 torch 造成的取证缺口"
+    #: 与"训练真失败"在台账上长得一模一样 —— T010 真机就是这样被记成 ❌ 失败的。
+    #: ``None`` = 没有取到任何权重证据（与 ``weight_changed is None`` 同源）。
+    weight_evidence_source: str | None = None
+    #: A2 权重证据的**人读明细**（读到了什么 / 为什么没读到）。
+    weight_evidence_detail: str = ""
+    #: A3「checkpoint 可重载」这条证据的**等级与来源**（如
+    #: ``container_torch_probe`` / ``host_torch_load`` / ``structural_only:zip_crc``）。
+    #: 弱证据等级（``structural_only``）**不改变** ``checkpoint_reloadable`` 的值
+    #: （仍是缺口 ⇒ A3 判否），只让"为什么明明是缺口"在台账里可解释、不被误读成训练失败。
+    reload_evidence_source: str | None = None
+    #: A3 重载证据的人读明细。
+    reload_evidence_detail: str = ""
 
 
 #: 台账状态（唯一真相源）。三态而非两态的理由见 :class:`FailureClass` 的
@@ -441,6 +458,10 @@ class TierJudgement:
     #: 落台账用（§1.4）：让"这一档按几判的"可审计——合成档与正式档的门槛不同，
     #: 台账不写清就会被下游误读成"同一把尺子"。
     a2_step_threshold: int | None = None
+    #: A2/A3 的**证据来源自证**，从 :class:`RunEvidence` 原样透传到台账（§1.4）。
+    #: 只加字段、不改任何判据语义：``None`` = 本次没取到该条证据的来源标识。
+    weight_evidence_source: str | None = None
+    reload_evidence_source: str | None = None
 
     @property
     def indeterminate(self) -> bool:
@@ -587,15 +608,18 @@ def judge_a2(evidence: RunEvidence) -> CriterionResult:
             f"optimizer step={evidence.optimizer_steps} < 门槛 {threshold}（{source}）",
         )
     if evidence.weight_changed is None:
+        suffix = f"：{evidence.weight_evidence_detail}" if evidence.weight_evidence_detail else ""
         return CriterionResult(
             "A2",
             False,
-            f"缺少权重变化证据（tuner_type={evidence.tuner_type}，fail-closed）",
+            f"缺少权重变化证据（tuner_type={evidence.tuner_type}，fail-closed）{suffix}",
             evidence_missing=True,
         )
     if not evidence.weight_changed:
         mode = "LoRA（lora_b 全零）" if evidence.tuner_type == "lora" else "全参（与基座一致）"
-        return CriterionResult("A2", False, f"权重未变化：{mode}")
+        return CriterionResult(
+            "A2", False, f"权重未变化：{mode}（来源：{evidence.weight_evidence_source}）"
+        )
     plan = (
         f"，计划 {evidence.steps_declared_total}"
         if evidence.steps_declared_total is not None
@@ -605,19 +629,35 @@ def judge_a2(evidence: RunEvidence) -> CriterionResult:
         "A2",
         True,
         f"optimizer step={evidence.optimizer_steps}{plan} ≥ 门槛 {threshold}，"
-        f"权重已变化（tuner_type={evidence.tuner_type}）",
+        f"权重已变化（tuner_type={evidence.tuner_type}，"
+        f"来源：{evidence.weight_evidence_source}；{evidence.weight_evidence_detail}）",
     )
 
 
 def judge_a3(evidence: RunEvidence) -> CriterionResult:
-    """A3 checkpoint 可被重新加载。"""
+    """A3 checkpoint 可被重新加载。
+
+    **证据等级显式化**（§2.2）：明细里必须能看出这条结论来自哪种证据
+    （``container_torch_probe`` / ``host_torch_load`` / ``structural_only:zip_crc``）。
+    为什么要这样：同一个"缺证据"在台账上可能是**采集机环境**造成的（宿主无 torch），
+    也可能是**训练真的没落盘**。不标来源，两者在台账里长得一样，228 上的 T010 就因此
+    被记成 ❌ 失败。注意方向不变：**弱证据不升格为通过**，``checkpoint_reloadable is
+    None`` 仍然是 fail-closed 判否。
+    """
     if evidence.checkpoint_reloadable is None:
+        suffix = f"：{evidence.reload_evidence_detail}" if evidence.reload_evidence_detail else ""
         return CriterionResult(
-            "A3", False, "缺少 checkpoint 重载证据（fail-closed）", evidence_missing=True
+            "A3", False, f"缺少 checkpoint 重载证据（fail-closed）{suffix}", evidence_missing=True
         )
+    source = ""
+    if evidence.reload_evidence_source:
+        source = f"（来源：{evidence.reload_evidence_source}）"
     if not evidence.checkpoint_reloadable:
-        return CriterionResult("A3", False, "checkpoint 无法重新加载")
-    return CriterionResult("A3", True, "checkpoint 重载成功")
+        detail = f"：{evidence.reload_evidence_detail}" if evidence.reload_evidence_detail else ""
+        return CriterionResult("A3", False, f"checkpoint 无法重新加载{source}{detail}")
+    return CriterionResult(
+        "A3", True, f"checkpoint 重载成功{source}：{evidence.reload_evidence_detail}"
+    )
 
 
 def judge_a4(first: RunEvidence, second: RunEvidence | None) -> CriterionResult:
@@ -1030,6 +1070,8 @@ def judge_tier(
         counts_toward_max_context=counts_toward_max_context(failure_class),
         note=note,
         a2_step_threshold=resolve_min_optimizer_steps(first.min_optimizer_steps)[0],
+        weight_evidence_source=first.weight_evidence_source,
+        reload_evidence_source=first.reload_evidence_source,
     )
 
 
@@ -1100,6 +1142,12 @@ def ledger_row(
         # 读数口径自证（§1.4）：台账必须能回答"A2 用的门槛是多少"。只加字段，
         # 不改任何判定与既有字段的语义（`None` = 本次未解析出合法门槛）。
         "min_optimizer_steps": judgement.a2_step_threshold,
+        # 证据来源自证（§1.4 单一真相源 / §2.2 显式即防呆）：台账必须能回答"A2 的权重
+        # 变化证据是哪种等级、从哪来""A3 的重载证据是哪种等级"。**只加字段**，不改任何
+        # 判定与既有字段的语义。为什么必须有：宿主无 torch 造成的取证缺口与训练真失败
+        # 在旧台账上无法区分（T010 真机被记成 ❌ 失败，实为采集机环境性伪否）。
+        "weight_evidence_source": judgement.weight_evidence_source,
+        "reload_evidence_source": judgement.reload_evidence_source,
         # A6 首末 loss 走向的**记录项**（2026-09-20 裁定降级，见 A6_LOSS_TREND_BLOCKS）。
         # 只加字段、不改 passed 语义：`None` = 本次 A6 没产出走向记录（NaN/Inf 或取证缺口）。
         # 与 A6 明细文本同源（a6_loss_trend 从明细取），不是第二个真相源。

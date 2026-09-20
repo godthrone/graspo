@@ -27,12 +27,14 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import math
 import re
 import struct
 import sys
+import zipfile
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -558,6 +560,67 @@ def _require_torch() -> Any | None:
         return None
 
 
+# ── 证据来源与等级（**唯一真相源**，§1.4 单一真相源 / §2.2 显式即防呆）────────
+#
+# 为什么必须有这一层：A2/A3 的**判据**只有一份（§8.1），但同一判据在不同环境里
+# 能拿到的**证据来源**不同（宿主无 torch / 镜像内有 torch）。旧实现把"证据来源不可得"
+# 静默折叠成"取值 None"，台账上只剩一句"缺少证据" —— 于是**环境性伪否**（采集机缺
+# torch）与**训练真失败**在台账里长得一模一样，228 上 T010 真机踩过。
+# 下面这些常量是"这条证据是哪种等级、来自哪里"的**唯一**命名处；抽取层给出标识、
+# 判定层把它写进明细、台账把它落成独立列（collect_results.run 组装）。
+#
+# 等级语义（**不得混用**）：
+#   - 强证据：真正做了"判据原文要求的那件事"（反序列化 / 权重比对）；
+#   - 弱证据：只证明了**更弱的事实**（文件完整、归档结构自洽）。弱证据**不足以放行**，
+#     只能在台账里把"取证缺口"的成因说清楚，并**显式**标注自己的等级。
+
+#: A2「权重真变化」的证据来源标识（LoRA 档）。
+WEIGHT_SOURCE_RUN_METRICS = "run_metrics:lora_norm_delta"
+WEIGHT_SOURCE_NATIVE_LORA_TORCH = "checkpoint:torch_load(lora_b)"
+WEIGHT_SOURCE_ADAPTER_SAFETENSORS = "checkpoint:safetensors_bytes(lora_b)"
+#: A2「权重真变化」的证据来源标识（全参档）。
+WEIGHT_SOURCE_BASE_COMPARE = "checkpoint:base_weights_bytes_compare"
+
+#: A3「checkpoint 可重载」的证据等级标识。
+#: 强：容器内（镜像自带 torch）跑一次真实的 ``torch.load`` 探测。
+RELOAD_SOURCE_CONTAINER_PROBE = "container_torch_probe"
+#: 强：宿主自带 torch 时直接反序列化。
+RELOAD_SOURCE_HOST_TORCH = "host_torch_load"
+#: 强：ms-swift / peft 的 safetensors 走 stdlib 头部 + data_offsets 校验（既有路径）。
+RELOAD_SOURCE_SAFETENSORS_HEADER = "safetensors_header_stdlib"
+#: **弱**：宿主无 torch 时对 torch 归档做 stdlib 结构 / CRC 校验。
+#: 只证明"文件完整、归档结构自洽"，**不证明 torch 能反序列化** ⇒ 不得据此放行 A3。
+RELOAD_SOURCE_STRUCTURAL_ONLY = "structural_only:zip_crc"
+
+
+@dataclass(frozen=True)
+class WeightEvidence:
+    """A2「权重真变化」的抽取结果：**判据值 + 来源 + 人读明细**。
+
+    ``value`` 的三态与 :class:`ReloadEvidence` 一致（``None`` = 取证缺口）。
+    ``source`` 为 ``None`` 恒等价于 ``value is None``（没有证据就没有来源）——这条
+    不变式由构造处保证，判定层据此断言台账不会出现"有来源却没证据"的怪状态。
+    """
+
+    value: bool | None
+    source: str | None = None
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class ReloadEvidence:
+    """A3「checkpoint 可重载」的抽取结果：**判据值 + 证据等级 + 人读明细**。
+
+    ``value is None`` 表示**取证缺口**（不可判定，fail-closed 方向不变）。
+    此时 ``source`` 可以是弱证据等级（``structural_only:zip_crc``），用来在台账里
+    回答"明明读到文件了，为什么还判缺口"——**弱证据绝不升格为通过**。
+    """
+
+    value: bool | None
+    source: str | None = None
+    detail: str = ""
+
+
 def _any_nonzero(tensors: Any) -> bool | None:
     torch = _require_torch()
     if torch is None:
@@ -708,17 +771,99 @@ def _safetensors_any_nonzero(path: Path, *, key_filter: str) -> bool | None:
     return False
 
 
+def extract_lora_norm_delta(output_dirs: Sequence[Path]) -> WeightEvidence:
+    """A2-LoRA 的**正式判据**（§8.1 原文：「LoRA ⇒ ``lora_norm_delta ≠ 0``」）。
+
+    为什么这条路径是必须的（本包要根治的环境性伪否）：``lora_norm_delta`` 由训练侧
+    ``flow/progress_metrics.py`` 的 ``lora_norm_delta_event`` **每个训练步**算出并落进
+    ``rank_metrics.rank_*.jsonl`` 的 ``metrics`` 里（键 ``lora_norm_delta``，同时有全局
+    聚合口径 ``global_lora_norm_delta_mean``）。它是**纯 JSON**：不需要 torch，不需要
+    safetensors，甚至不需要 checkpoint 还在——而 §8.1 把它定义为 LoRA 档的正式判据。
+
+    旧实现的缺口（T010 真机实测）：只翻 checkpoint 文件（native 是 ``rank_*.pt``，
+    需要 ``torch.load``），宿主无 torch ⇒ 直接返回 ``None`` ⇒ A2 判"缺少权重变化证据
+    (fail-closed)"。这是**判据实现与判据语义不一致**：证据本来就在运行目录里躺着，
+    却因为"采集机没有 torch"被判成训练失败。注意 §8.1 的 A2 判据**不含**任何
+    "必须有基座模型"的要求——``base_model_root`` 只服务全参档（见
+    :func:`extract_weight_changed` 的全参分支）。
+
+    三态语义（**不放松**）：
+
+    - 读到 finite 且非零的 Δ ⇒ ``True``（权重确实被更新过）；
+    - 读到 finite 的 Δ 但**全部恰好为 0** ⇒ ``False``（权重未变化：这正是 §8.1
+      用 ``≠ 0`` 要抓的事实，属**实质失败**，不是缺口）；
+    - 只读到非有限 Δ、或压根没有 Δ 读数 ⇒ ``None``（不猜、不放行，按取证缺口处理）。
+    """
+    finite_values: list[float] = []
+    first_nonzero: tuple[int, float] | None = None
+    nonfinite = 0
+    for directory in output_dirs:
+        rows, _ = _rank_metric_steps(directory)
+        for row in rows:
+            raw = row.get("lora_norm_delta")
+            if raw is None:
+                # 全局聚合口径：单卡下与 lora_norm_delta 同值（ranks 只有 1 个），
+                # 显式回落避免"键名取决于分支"的隐式契约（§2.2）。
+                raw = row.get("global_lora_norm_delta_mean")
+            # 全参档该键为 None（"指标不适用"），``is None`` 比对而非 ``not raw``（§2.2）。
+            if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+                continue
+            value = float(raw)
+            if not math.isfinite(value):
+                nonfinite += 1
+                continue
+            finite_values.append(value)
+            if value != 0.0 and first_nonzero is None:
+                first_nonzero = (len(finite_values), value)
+    total = len(finite_values) + nonfinite
+    if total == 0:
+        return WeightEvidence(None, None, "run 逐步指标里没有 lora_norm_delta 读数")
+    if first_nonzero is not None:
+        index, value = first_nonzero
+        return WeightEvidence(
+            True,
+            WEIGHT_SOURCE_RUN_METRICS,
+            f"第 {index} 步 lora_norm_delta={value:.6g} ≠ 0（共 {total} 步读数）",
+        )
+    if finite_values:
+        return WeightEvidence(
+            False,
+            WEIGHT_SOURCE_RUN_METRICS,
+            f"{len(finite_values)} 步 lora_norm_delta 全部恰好为 0 ⇒ 权重未被更新",
+        )
+    return WeightEvidence(
+        None,
+        None,
+        f"{nonfinite} 步 lora_norm_delta 全部非有限（§8.1 要求变化量 finite）⇒ 不作变化断言",
+    )
+
+
 def extract_weight_changed(
     output_dirs: Sequence[Path], tuner_type: str, base_model_dir: Path | None = None
-) -> bool | None:
-    """抽取"权重是否真变化"证据（LoRA 看 lora_b 非零；全参看与基座是否不同）。
+) -> WeightEvidence:
+    """抽取"权重是否真变化"证据，返回**判据值 + 来源 + 明细**（§2.2 显式即防呆）。
 
-    两种后端的**判据语义完全相同**，只是 checkpoint 目录名不同（``final`` /
-    ``checkpoint-<step>``），由 :func:`find_checkpoint_dirs` 统一发现。
+    两种后端的**判据语义完全相同**（§8.1），变的只是证据落点与可用性：
 
-    抽取不到返回 ``None`` → A2 按**取证缺口**处理（不可判定，而不是判训练失败）。
+    - **LoRA**（§8.1：``lora_norm_delta ≠ 0``）：**先**读 run 自产的逐步指标
+      （:func:`extract_lora_norm_delta`，纯 stdlib、**与宿主有没有 torch 无关**，
+      §6 环境可复现：同一份 run 产物在任何采集机上结论一致）；拿不到才回落到
+      checkpoint 里的 ``lora_b`` 字节/torch 校验（:func:`_any_nonzero` /
+      :func:`_safetensors_any_nonzero`）作为**等价兜底**。**不需要**
+      ``base_model_dir``——旧实现把它当成"没给就没有权重证据"的因素之一，是判据
+      实现与 §8.1 语义不一致的具体表现。
+    - **全参**（§8.1：可训练参数 ≈ 全参 **且** 基座某层权重 L2 delta ≠ 0）：**必须**
+      有 ``base_model_dir`` 才能与基座比对（:func:`_full_weights_differ`）。给不出
+      基座目录 ⇒ 取证缺口（``None``）——**不放松**，也不拿 LoRA 的 Δ 指标冒充。
+
+    抽取不到返回 ``value is None`` → A2 按**取证缺口**处理（不可判定，而不是判训练失败）。
     """
     torch = _require_torch()
+    if tuner_type == "lora":
+        metrics_evidence = extract_lora_norm_delta(output_dirs)
+        if metrics_evidence.value is not None:
+            return metrics_evidence
+
     for checkpoint in find_checkpoint_dirs(output_dirs):
         if tuner_type == "lora":
             # native：单个 rank pt 里的 lora_state_dict
@@ -740,18 +885,38 @@ def extract_weight_changed(
                     }
                     result = _any_nonzero(subset)
                     if result is not None:
-                        return result
+                        return WeightEvidence(
+                            result,
+                            WEIGHT_SOURCE_NATIVE_LORA_TORCH,
+                            f"{pt.name} 的 lora_b 张量{'存在非零值' if result else '全部为零'}",
+                        )
             # msswift / peft：adapter_model.safetensors 里的 lora_B
             for weights in sorted(checkpoint.glob("adapter_model.safetensors")):
                 result = _safetensors_any_nonzero(weights, key_filter="lora_b")
                 if result is not None:
-                    return result
+                    return WeightEvidence(
+                        result,
+                        WEIGHT_SOURCE_ADAPTER_SAFETENSORS,
+                        f"{weights.name} 的 lora_b 张量{'存在非零值' if result else '全部为零'}",
+                    )
             continue
         # 全参：终态权重与基座权重做抽样比较
         result = _full_weights_differ(checkpoint, base_model_dir)
         if result is not None:
-            return result
-    return None
+            return WeightEvidence(
+                result,
+                WEIGHT_SOURCE_BASE_COMPARE,
+                f"{checkpoint.name} 与基座 {Path(base_model_dir).name} 的共享权重"
+                f"{'不同' if result else '逐字节相同'}",
+            )
+    if tuner_type != "lora":
+        if base_model_dir is None or not Path(base_model_dir).is_dir():
+            return WeightEvidence(
+                None,
+                None,
+                "全参判据需要 --base-model-root 做基座权重比对，本次未提供合法目录",
+            )
+    return WeightEvidence(None, None, "checkpoint 与 run 逐步指标里都没有权重变化证据")
 
 
 def _full_weights_differ(checkpoint_dir: Path, base_model_dir: Path | None) -> bool | None:
@@ -798,35 +963,227 @@ def _full_weights_differ(checkpoint_dir: Path, base_model_dir: Path | None) -> b
     return False
 
 
-def extract_checkpoint_reloadable(output_dirs: Sequence[Path]) -> bool | None:
+#: 容器内 torch 探测证据的**文件名**与 **schema 标识**（唯一真相源）。
+#:
+#: 为什么是"证据文件"而不是"改 runner 来跑校验"：判据的**判定逻辑**必须集中在本
+#: 收集器里（§1.4 单一真相源），runner 只负责"在**有 torch 的地方**把探测结果落盘"，
+#: 不承担判定。契约全文（供 runner 侧工作包实现）见工位 ``report.md §⑦``。
+TORCH_PROBE_FILENAME = "torch_probe.json"
+TORCH_PROBE_SCHEMA = "graspo.torch_probe.v1"
+
+
+def _sha256(path: Path) -> str | None:
+    """文件内容的 sha256（十六进制小写）；读不到返回 ``None``。"""
+    try:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return None
+
+
+def _torch_zip_intact(path: Path) -> str | None:
+    """**纯 stdlib** 校验 torch(>=1.6) 归档：能否当 zip 打开 + 成员 CRC 是否自洽。
+
+    返回 ``None`` = 结构完整；返回字符串 = 损坏原因。
+
+    ★ **这是弱证据**：torch 的 ``.pt`` 是 zip 容器（``<prefix>/data.pkl`` +
+    ``<prefix>/data/N`` 原始张量）。能当 zip 打开且 CRC 自洽，只证明"文件完整、
+    归档结构自洽"，**不证明 torch 能反序列化出张量**（pickle 层可能引用了不存在的
+    类、storage 元数据可能不自洽）。因此调用方**不得**据此放行 A3——它的用途是
+    把"取证缺口"里的两种情况分开：①文件真的坏了（⇒ **实质失败**，方向与
+    ms-swift 的 safetensors 分支一致）；②文件好但没 torch 验不了（⇒ 取证缺口）。
+    """
+    try:
+        with zipfile.ZipFile(path) as archive:
+            names = archive.namelist()
+            if not any(name.endswith("data.pkl") for name in names):
+                return "归档里没有 data.pkl（不是 torch>=1.6 归档）"
+            broken = archive.testzip()
+            if broken is not None:
+                return f"成员 CRC 校验失败：{broken}"
+    except (zipfile.BadZipFile, OSError, ValueError) as exc:
+        return f"不是可解析的 zip 归档（{type(exc).__name__}）"
+    return None
+
+
+def read_torch_probe(run_dir: Path | None) -> ReloadEvidence | None:
+    """读**容器内**的 torch 探测证据 ``<run_dir>/torch_probe.json``（§2.1 契约即防呆）。
+
+    为什么需要它（本包要根治的环境性伪否，A3 侧）：native 的 ``rank_*.pt`` 是
+    torch 私有归档，"能不能被重新加载"只有 torch 自己说了算。宿主 228 实测无 torch，
+    但**运行这次训练的镜像里有**（``graspo-msswift:4.5.3``）⇒ 证据明明可得。
+
+    契约（runner 侧接口，本包不改 runner；见 ``report.md §⑦``）::
+
+        {"schema": "graspo.torch_probe.v1",
+         "torch": "2.11.0+cu130",
+         "all_ok": true,
+         "checked": [{"relpath": "final/rank_00000_tp_00_pp_00.pt",
+                      "ok": true, "sha256": "<64 hex>", "tensors": 882}]}
+
+    校验规则（任一条不满足 ⇒ **不采信**，按"没有证据文件"处理，绝不放行）：
+
+    1. ``schema`` 必须逐字等于 :data:`TORCH_PROBE_SCHEMA`（防呆：schema 变了说明
+       语义变了，旧文件不得被新代码当成同一份证据）；
+    2. ``all_ok`` 必须是 ``bool``；
+    3. ``checked`` 非空，且每项的 ``relpath`` 相对 ``run_dir`` 解析后**必须真实存在**；
+    4. ★ 每项的 ``sha256`` 必须等于该文件**当前**内容的 sha256。这条是**防陈旧证据**
+       的防呆装置：同一档第二次跑会覆盖 ``final/`` 下的权重，若沿用上一次的探测结论，
+       就等于用旧 run 的证据给新 run 作证（228 实测过跨 run ckpt 错配）。
+
+    返回 ``None`` = **没有**探测证据文件（正常退路：宿主自带的 torch 路径）。返回
+    ``value is None`` 的 :class:`ReloadEvidence` = 文件在但**不可采信**（原因写进
+    ``detail``，台账可见，不静默丢弃）。
+    """
+    if run_dir is None:
+        return None
+    probe_path = Path(run_dir) / TORCH_PROBE_FILENAME
+    if not probe_path.is_file():
+        return None
+    payload = _read_json(probe_path)
+    if not isinstance(payload, dict):
+        return ReloadEvidence(None, None, f"{TORCH_PROBE_FILENAME} 不是合法 JSON 对象 ⇒ 不采信")
+    name = TORCH_PROBE_FILENAME
+    schema = payload.get("schema")
+    if schema != TORCH_PROBE_SCHEMA:
+        return ReloadEvidence(
+            None, None, f"{name} 的 schema={schema!r} ≠ {TORCH_PROBE_SCHEMA} ⇒ 不采信"
+        )
+    checked = payload.get("checked")
+    if not isinstance(checked, list) or not checked:
+        return ReloadEvidence(None, None, f"{name} 的 checked 为空 ⇒ 不采信")
+    all_ok = payload.get("all_ok")
+    if not isinstance(all_ok, bool):
+        return ReloadEvidence(None, None, f"{name} 的 all_ok 不是布尔 ⇒ 不采信")
+    verified = 0
+    for item in checked:
+        if not isinstance(item, dict):
+            return ReloadEvidence(None, None, f"{name} 的 checked 项不是对象 ⇒ 不采信")
+        relpath = item.get("relpath")
+        digest = item.get("sha256")
+        if not isinstance(relpath, str) or not isinstance(digest, str):
+            return ReloadEvidence(None, None, f"{name} 的 checked 项缺 relpath/sha256 ⇒ 不采信")
+        target = Path(run_dir) / relpath
+        if not target.is_file():
+            return ReloadEvidence(None, None, f"{name} 指向的文件不存在：{relpath} ⇒ 不采信")
+        actual = _sha256(target)
+        if actual is None:
+            return ReloadEvidence(None, None, f"探测证据指向的文件读不到：{relpath} ⇒ 不采信")
+        if actual != digest.lower():
+            return ReloadEvidence(
+                None,
+                None,
+                "探测证据与磁盘内容不一致（sha256 不符，疑似上一次 run 的证据）："
+                f"{relpath} ⇒ 不采信",
+            )
+        verified += 1
+    torch_version = payload.get("torch")
+    if all_ok:
+        return ReloadEvidence(
+            True,
+            RELOAD_SOURCE_CONTAINER_PROBE,
+            f"容器内 torch.load 探测通过（{verified} 个文件，torch={torch_version}）",
+        )
+    return ReloadEvidence(
+        False,
+        RELOAD_SOURCE_CONTAINER_PROBE,
+        f"容器内 torch.load 探测失败（{verified} 个文件已核对 sha256，torch={torch_version}）",
+    )
+
+
+def extract_checkpoint_reloadable(
+    output_dirs: Sequence[Path], *, run_dir: Path | None = None
+) -> ReloadEvidence:
     """A3 证据：checkpoint 能否被重新加载（结构化校验 + 反序列化）。
 
     两种布局走同一条判据：
-      - native：``final/manifest.json`` + ``rank_*.pt``（需 torch 反序列化）；
+
+      - native：``final/manifest.json`` + ``rank_*.pt``；
       - ms-swift / peft：``*.safetensors``（stdlib 解析头部 + 校验 data_offsets）。
-    判据语义不变（结构完整 + 可反序列化）；**没有**因为后端不同而放松。
+
+    判据语义不变（结构完整 + 可反序列化）；**没有**因为后端不同而放松。native 侧的
+    证据按**强度降序**取，每一档都在返回值里显式标注来源（§2.2）：
+
+    1. **容器探测证据**（:func:`read_torch_probe`，强）：镜像内有 torch ⇒ 虽然宿主
+       228 无 torch，证据仍然可得。这是本包要根治的"明明能取到却不取"。
+    2. **宿主 torch 反序列化**（强）：宿主自带 torch 时直接 ``torch.load``。
+    3. **stdlib 归档结构 / CRC**（**弱**）：宿主无 torch 时的降级检查。它**不放行**
+       A3（结构完整 ≠ 可反序列化），但能把"文件真的坏了"判成**实质失败**，并把
+       "文件好但验不了"的取证缺口在台账里说清楚。
     """
+    probe = read_torch_probe(run_dir)
+    if probe is not None and probe.value is not None:
+        return probe
+    probe_note = probe.detail if probe is not None else ""
+
     checkpoints = find_checkpoint_dirs(output_dirs)
     if not checkpoints:
-        return None
+        return ReloadEvidence(None, None, "没有发现任何 checkpoint 目录")
     checked = False
+    structural_note: str | None = None
     for checkpoint in checkpoints:
-        # native：manifest.json + rank_*.pt 能否 torch.load
+        # native：manifest.json + rank_*.pt 能否被 torch 反序列化
         if (checkpoint / "manifest.json").exists():
             torch = _require_torch()
             rank_files = sorted(checkpoint.glob("rank_*.pt"))
             if not rank_files:
                 continue
-            if torch is None:
-                continue
             if not _file_readable(rank_files[0]):
                 # 权限/IO 不可读 ⇒ 取证缺口（继续找别的 checkpoint），不得判"重载失败"。
                 continue
+            if torch is None:
+                # 宿主无 torch ⇒ 不直接放弃：先做**弱**的 stdlib 校验，把两种情况分开。
+                broken = _torch_zip_intact(rank_files[0])
+                if broken is not None:
+                    return ReloadEvidence(
+                        False,
+                        RELOAD_SOURCE_STRUCTURAL_ONLY,
+                        f"{rank_files[0].name} 归档结构已损坏：{broken}",
+                    )
+                # 探测证据被拒的原因**必须**跟着一起落台账（§2.2 显式即防呆）：旧写法
+                # 只在"最终 return"处拼接 ``probe_note``，而这里一旦置上
+                # ``structural_note`` 就会走那条提前 return ⇒ 拒绝原因被静默丢弃，
+                # 台账上只剩"宿主无 torch"，读的人无法区分"没有探测文件"与"探测文件
+                # 不可采信"（本包要修的正是这种不可区分）。
+                structural_note = (
+                    f"宿主无 torch，无法反序列化 native rank_*.pt；"
+                    f"{rank_files[0].name} 归档结构/CRC 完整（弱证据 "
+                    f"{RELOAD_SOURCE_STRUCTURAL_ONLY}，仅证明文件完整、**不**证明可反序列化）"
+                )
+                if probe_note:
+                    structural_note = f"{probe_note}；{structural_note}"
+                continue
             try:
                 torch.load(rank_files[0], map_location="cpu", weights_only=False)
-                return True
-            except (RuntimeError, OSError, AttributeError):
-                return False
+            except Exception as exc:  # noqa: BLE001 — 反序列化异常族无法穷举，见下
+                # 为什么捕获**全部** Exception 而不再枚举具体类型（**真 bug 修复**）：
+                # ``torch.load`` 对损坏的 checkpoint 抛的是 ``pickle.UnpicklingError``
+                # （真机实测：``_pickle.UnpicklingError: could not find MARK``），
+                # 旧实现只捕 ``RuntimeError / OSError / AttributeError`` ⇒ 异常一路冒到
+                # 顶层，采集器 **rc≠0 崩掉**，而不是把这一档记成结论。
+                # 反序列化失败在不同 torch 版本 / 不同损坏形态下会落到
+                # ``UnpicklingError``、``EOFError``、``ValueError``、``KeyError``、
+                # ``zipfile.BadZipFile``、``RuntimeError``、``MemoryError`` 等**互不派生**
+                # 的类型上（``pickle.UnpicklingError`` 直接派生自 ``Exception``），枚举法
+                # 必然漏；漏掉一个就是把"文件坏了"升级成"采集器崩溃"（§2.3 边界校验）。
+                # 这里**不吞**异常、也**不**降级成 ``None``：返回值恒为 ``False``
+                # ⇒ A3 判"checkpoint 无法重新加载"（**实质失败**，方向同 ms-swift 的
+                # safetensors 分支），异常类型与消息原样写进 detail（§2.2 显式即防呆）。
+                # ``KeyboardInterrupt`` / ``SystemExit`` 派生自 ``BaseException``，不受影响。
+                return ReloadEvidence(
+                    False,
+                    RELOAD_SOURCE_HOST_TORCH,
+                    f"宿主 torch.load({rank_files[0].name}) 反序列化失败（checkpoint 损坏）："
+                    f"{type(exc).__name__}: {exc}",
+                )
+            return ReloadEvidence(
+                True,
+                RELOAD_SOURCE_HOST_TORCH,
+                f"宿主 torch.load({rank_files[0].name}) 反序列化成功",
+            )
         # peft / HF（含 ms-swift 的 checkpoint-<step>）：safetensors 头部能否解析
         for weights in sorted(checkpoint.glob("*.safetensors")):
             if not _file_readable(weights):
@@ -834,12 +1191,32 @@ def extract_checkpoint_reloadable(output_dirs: Sequence[Path]) -> bool | None:
             checked = True
             parsed = _safetensors_index(weights)
             if parsed is None:
-                return False  # 能读但头部不可解析 ⇒ 这才是"checkpoint 无法重新加载"
+                # 能读但头部不可解析 ⇒ 这才是"checkpoint 无法重新加载"
+                return ReloadEvidence(
+                    False,
+                    RELOAD_SOURCE_SAFETENSORS_HEADER,
+                    f"{weights.name} 能被读取但头部不可解析",
+                )
             index, _ = parsed
             if not index:
-                return False
-            return True
-    return None if not checked else False
+                return ReloadEvidence(
+                    False, RELOAD_SOURCE_SAFETENSORS_HEADER, f"{weights.name} 头部里没有任何张量"
+                )
+            return ReloadEvidence(
+                True,
+                RELOAD_SOURCE_SAFETENSORS_HEADER,
+                f"{weights.name} 头部与 data_offsets 校验通过（{len(index)} 个张量）",
+            )
+    if structural_note is not None:
+        return ReloadEvidence(None, RELOAD_SOURCE_STRUCTURAL_ONLY, structural_note)
+    if checked:
+        return ReloadEvidence(
+            False, RELOAD_SOURCE_SAFETENSORS_HEADER, "可读的 safetensors 里没有可解析的"
+        )
+    detail = "没有可读的 checkpoint（不可读或不存在）"
+    if probe_note:
+        detail = f"{detail}；{probe_note}"
+    return ReloadEvidence(None, None, detail)
 
 
 def extract_artifacts(run_dir: Path, output_dirs: Sequence[Path], log_text: str) -> dict[str, bool]:
@@ -932,6 +1309,8 @@ def collect_run(
     output_dirs = find_output_dirs(run_dir, tier_id)
     series = extract_steps_and_series(output_dirs, log_text)
     timed_out = exit_code == 124 or bool(re.search(r"⏰|timeout: sending signal", log_text))
+    weight_evidence = extract_weight_changed(output_dirs, tuner_type, base_model_dir)
+    reload_evidence = extract_checkpoint_reloadable(output_dirs, run_dir=run_dir)
     evidence = _judge.RunEvidence(
         tier_id=tier_id,
         exit_code=exit_code,
@@ -940,8 +1319,8 @@ def collect_run(
         tuner_type=tuner_type,
         optimizer_steps=series.steps,
         epochs_completed=series.epochs,
-        weight_changed=extract_weight_changed(output_dirs, tuner_type, base_model_dir),
-        checkpoint_reloadable=extract_checkpoint_reloadable(output_dirs),
+        weight_changed=weight_evidence.value,
+        checkpoint_reloadable=reload_evidence.value,
         artifacts_present=extract_artifacts(run_dir, output_dirs, log_text),
         losses=tuple(series.losses),
         grad_norms=tuple(series.grad_norms),
@@ -955,6 +1334,11 @@ def collect_run(
         first_logged_step=series.first_logged_step,
         output_located=bool(output_dirs),
         min_optimizer_steps=min_optimizer_steps,
+        # 读数口径自证（§1.4）：台账必须能回答"这条权重/重载证据是哪种等级、来自哪里"。
+        weight_evidence_source=weight_evidence.source,
+        weight_evidence_detail=weight_evidence.detail,
+        reload_evidence_source=reload_evidence.source,
+        reload_evidence_detail=reload_evidence.detail,
     )
     return evidence, series
 

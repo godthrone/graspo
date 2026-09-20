@@ -15,6 +15,7 @@
 """
 
 import json
+import os
 import struct
 import subprocess
 import sys
@@ -84,7 +85,54 @@ def _make_run(root: Path, tier_id: str = "T010") -> None:
     (out / "trainer_state.json").write_text(json.dumps(_TRAINER_STATE), encoding="utf-8")
 
 
-def _run_collector(tmp_path: Path, *extra: str, manifest: dict | None = None) -> dict:
+_FAKE_TORCH_BLOCKER = """
+import sys
+
+
+class _NoTorch:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "torch" or fullname.startswith("torch."):
+            raise ImportError(f"tests: torch 被显式屏蔽（模拟宿主无 torch）：{fullname}")
+        return None
+
+
+sys.meta_path.insert(0, _NoTorch())
+"""
+
+#: 模拟"宿主**有** torch、但 checkpoint 文件坏了"：``torch.load`` 抛
+#: ``pickle.UnpicklingError``（真机实测形态：``could not find MARK``）。它走的是
+#: ``_require_torch`` 成功后的反序列化分支，专门覆盖"反序列化异常必须被显式捕获"。
+_FAKE_TORCH_BROKEN_BLOCKER = (
+    "import _pickle, sys, types\n"
+    "torch = types.ModuleType('torch')\n"
+    "def _load(*a, **k):\n"
+    "    raise _pickle.UnpicklingError('could not find MARK')\n"
+    "torch.load = _load\n"
+    "sys.modules['torch'] = torch\n"
+)
+
+
+def _sitecustomize_env(tmp_path: Path, source: str) -> dict[str, str]:
+    """构造一个显式声明 torch 可用性的子进程环境（**不靠环境碰运气**）。
+
+    为什么必须这样：采集器是 ``subprocess`` 跑的独立进程，``monkeypatch`` 管不到它；
+    同一个用例在"宿主有 torch"（开发机 ``.local/uv-venv`` 实测 torch 2.11）与"宿主无
+    torch"（228 采集机）上会走到**不同的证据来源**，断言只能保住一边。这里用
+    ``PYTHONPATH`` + ``sitecustomize`` 在子进程**启动时**决定 torch 能不能 import ——
+    测试自己声明它要模拟的宿主环境。
+    """
+    blocker_dir = tmp_path / "faketorch"
+    blocker_dir.mkdir(exist_ok=True)
+    (blocker_dir / "sitecustomize.py").write_text(source, encoding="utf-8")
+    env = dict(os.environ)
+    previous = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = f"{blocker_dir}{os.pathsep}{previous}" if previous else str(blocker_dir)
+    return env
+
+
+def _run_collector(
+    tmp_path: Path, *extra: str, manifest: dict | None = None, env: dict[str, str] | None = None
+) -> dict:
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(json.dumps(manifest or _MANIFEST), encoding="utf-8")
     out = tmp_path / "ledger"
@@ -107,6 +155,7 @@ def _run_collector(tmp_path: Path, *extra: str, manifest: dict | None = None) ->
         capture_output=True,
         text=True,
         check=False,
+        env=env,
     )
     assert completed.returncode == 0, completed.stderr
     records = [
@@ -571,3 +620,290 @@ def test_collector_a4_still_rejects_gross_divergence(tmp_path):
 
     assert record["criteria"]["A4"] is False
     assert record["status"] == "❌ 失败"
+
+
+# ── H1：A2/A3 的"环境性伪否"收口 ────────────────────────────────────────────
+#
+# 背景（T010 真机实测）：9B·SFT·LoRA·native·1 卡 训练完全成功（100/100 步、exit=0、
+# ckpt 可重载已由容器内 torch.load 独立验证），但 228 宿主**没有 torch** ⇒ 采集器
+# 拿不到 `rank_*.pt` 的反序列化结果 ⇒ A2/A3 双双被判 fail-closed「缺少证据」，
+# 台账上与"训练真失败"长得一模一样。要根治的是「**明明能取到却不取**」：
+#   · A2-LoRA 的正式判据（§8.1）是 `lora_norm_delta ≠ 0`，它由训练侧每步写进
+#     `rank_metrics.rank_*.jsonl`——**纯 JSON，不需要 torch**；
+#   · A3 的真证据在**镜像内**（镜像自带 torch），可由容器探测落盘后交采集器判定。
+# 下面 6 条覆盖：就地取到证据（A2）、容器证据契约（A3）、以及**不放松**的负向
+# （Δ 全零 = 实质失败；归档损坏 = 实质失败；陈旧证据 = 不采信）。
+
+#: 6 个训练步，满足 A2 的缺省门槛 5（清单未给门槛时回落到 MIN_OPTIMIZER_STEPS）。
+_LORA_DELTAS_OK = [0.0, 1.62e-4, 1.7e-4, 2.0e-4, 3.0e-4, 3.71e-4]
+
+
+def _valid_torch_archive() -> bytes:
+    """构造一个**结构合法**的极简 torch 归档（真 zip + ``data.pkl`` + 一个 storage）。
+
+    用途：让"宿主无 torch"的用例停在**取证缺口**（弱证据 structural_only），而不是
+    停在"归档损坏"那个实质失败上——两者必须是不同的结论，这正是本包的修复点。
+    """
+    import io
+    import zipfile as _zipfile
+
+    buffer = io.BytesIO()
+    with _zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("rank_00000_tp_00_pp_00/data.pkl", b"\x80\x04N.")
+        archive.writestr("rank_00000_tp_00_pp_00/data/0", b"\x00" * 16)
+    return buffer.getvalue()
+
+
+def _make_native_lora_run(
+    root: Path, tier_id: str = "T010", *, deltas: list[float], rank_bytes: bytes | None = None
+) -> Path:
+    """重建 native 布局的运行目录：config.yaml + final/ + rank_metrics 旁路逐步指标。
+
+    ``deltas`` 每项写成一个训练步的 ``metrics.lora_norm_delta``（与训练侧
+    ``progress_metrics.lora_norm_delta_event`` 的落盘形状一致）。
+    ``rank_bytes`` 非 None 时用它覆盖默认的"结构合法"归档（造坏档用）。
+    """
+    run = root / tier_id
+    run.mkdir(parents=True)
+    (run / "exit_code").write_text("0\n", encoding="utf-8")
+    (run / "stdout.log").write_text(_STDOUT, encoding="utf-8")
+    # 与真机 T010 证据归档**逐字同构**的 native 布局：``config.yaml`` 在 run 根
+    # ⇒ collector 的 find_output_dirs 把 run 根认作产物根，find_checkpoint_dirs
+    # 在其下 rglob("final")、rglob("rank_metrics.rank_*.jsonl") 都能找到。
+    (run / "config.yaml").write_text("train_method: sft\n", encoding="utf-8")
+    (run / "final").mkdir(parents=True)
+    (run / "final" / "manifest.json").write_text('{"format": "native-lora"}\n', encoding="utf-8")
+    (run / "final" / "rank_00000_tp_00_pp_00.pt").write_bytes(_valid_torch_archive())
+    metrics = run / "metrics"
+    metrics.mkdir()
+    lines = [
+        json.dumps(
+            {
+                "event": "rank_metrics",
+                "phase": "sft_train_batch_after",
+                "kind": "diagnostic",
+                "metrics": {
+                    "optimizer_steps": 1,
+                    # A2 的逐步断言读全局口径（单卡下与局部同值），与真机落盘形状一致。
+                    "global_optimizer_steps_sum": 1,
+                    "skipped_nonfinite": 0,
+                    "loss_mean": 1.0 - index * 0.01,
+                    "grad_norm_mean": 1.0,
+                    # A6 读全局口径；与真机落盘形状一致（缺这两键会记成"数值不可得"）。
+                    "global_loss_mean": 1.0 - index * 0.01,
+                    "global_grad_norm_mean": 1.0,
+                    "tuner_type": "lora",
+                    "lora_norm_delta": delta,
+                },
+            }
+        )
+        for index, delta in enumerate(deltas)
+    ]
+    (metrics / "rank_metrics.rank_00000.jsonl").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8"
+    )
+
+    if rank_bytes is not None:
+        # 覆盖默认的"结构合法"归档：`_make_native_lora_run` 默认造合法归档，需要坏档的
+        # 用例在这里换成任意字节。放在**最后**覆盖，避免下游用例再自己覆盖时漏掉同步。
+        (run / "final" / "rank_00000_tp_00_pp_00.pt").write_bytes(rank_bytes)
+    return run
+
+
+def test_collector_native_lora_a2_uses_run_metrics_without_torch(tmp_path):
+    """★H1 正向：宿主无 torch 也能判 A2 —— 证据取自 run 自产的 ``lora_norm_delta``。
+
+    这是本工作包的核心修复：旧实现在 `torch is None` 时就放弃翻 checkpoint，于是
+    "证据本来就在运行目录里"被判成"缺少权重变化证据"。修复后来源必须**显式**落在
+    台账里（§2.2），否则下游仍分不清"采集机环境"与"训练失败"。
+
+    ``env`` 显式屏蔽 torch：这条用例的语义就是"**宿主无 torch**"，不能靠开发机碰巧
+    装没装 torch 来决定走哪条证据路径（否则同一用例在 228 与开发机上结论不同）。
+    """
+    _make_native_lora_run(tmp_path / "runs", deltas=_LORA_DELTAS_OK)
+
+    record = _run_collector(tmp_path, env=_sitecustomize_env(tmp_path, _FAKE_TORCH_BLOCKER))
+
+    assert record["criteria"]["A2"] is True, record["criteria_detail"]["A2"]
+    assert record["weight_evidence_source"] == "run_metrics:lora_norm_delta"
+    assert "lora_norm_delta=0.000162" in record["criteria_detail"]["A2"]
+
+
+def test_collector_native_lora_all_zero_delta_is_substantive_failure(tmp_path):
+    """★H1 负向（不放松）：每步 Δ 都恰好为 0 ⇒ 权重确实没被更新 ⇒ **实质失败**。
+
+    这条守住"取证缺口 ≠ 失败"的另一侧：读到的是"零变化"这个**事实**，不是"读不到"。
+    不得因为它是就地证据就放宽成通过，也不得记成取证缺口（那会诱导重跑而不是修缺陷）。
+    """
+    _make_native_lora_run(tmp_path / "runs", deltas=[0.0] * 6)
+
+    record = _run_collector(tmp_path, env=_sitecustomize_env(tmp_path, _FAKE_TORCH_BLOCKER))
+
+    assert record["criteria"]["A2"] is False
+    assert "权重未变化" in record["criteria_detail"]["A2"]
+    assert record["status"] == "❌ 失败"
+    assert record["failure_class"] != "取证不足（不可判定）"
+
+
+def test_collector_native_without_torch_reports_structural_only_not_pass(tmp_path):
+    """★H1 负向（**弱证据不放行**）：宿主无 torch 且无容器探测 ⇒ A3 仍是缺口，但成因显式。
+
+    这条是本包与"放松判据"的分界线：stdlib 归档/CRC 校验只证明"文件完整"，**不**证明
+    "torch 能反序列化" ⇒ 不得据此判 A3 通过。它唯一的作用是把"文件好但验不了"与
+    "文件坏了"分开，并在台账上标明证据等级（`structural_only:zip_crc`）。
+
+    ``env`` 显式屏蔽 torch：这条用例的语义是"宿主无 torch"（228 采集机的实测环境）。
+    修前它靠"开发机恰好没装 torch"才成立，而开发机 ``.local/uv-venv`` 实测有 torch
+    2.11 ⇒ 证据来源变成 ``host_torch_load``，断言只能靠环境碰运气（本包要修的
+    "测试不封闭"）。现在由测试自己声明宿主环境。
+    """
+    _make_native_lora_run(tmp_path / "runs", deltas=_LORA_DELTAS_OK)
+    env = _sitecustomize_env(tmp_path, _FAKE_TORCH_BLOCKER)
+    # 自证：屏蔽真的生效（否则这条用例会悄悄退回 host_torch_load 路径而"看起来通过"）。
+    probe = subprocess.run(
+        [sys.executable, "-c", "import torch"], capture_output=True, text=True, check=False, env=env
+    )
+    assert probe.returncode != 0, "假宿主仍有 torch，用例前提不成立"
+
+    record = _run_collector(tmp_path, env=env)
+
+    assert record["criteria"]["A3"] is False
+    assert record["reload_evidence_source"] == "structural_only:zip_crc"
+    assert "structural_only" in record["criteria_detail"]["A3"]
+    assert record["status"] == "⚠ 不可判定（取证缺口）"
+    assert record["failure_class"] == "取证不足（不可判定）"
+
+
+def test_collector_native_broken_rank_archive_is_substantive_failure(tmp_path):
+    """★H1 负向（**加强** fail-closed）：宿主无 torch 时，坏归档必须判"无法重新加载"。
+
+    旧实现把"没 torch"与"文件坏"一起折叠成取证缺口。修复后无 torch 也能做 stdlib
+    归档/CRC 校验 ⇒ 文件真坏就是**实质失败**（与 ms-swift 的 safetensors 分支同方向）。
+    """
+    run = _make_native_lora_run(tmp_path / "runs", deltas=_LORA_DELTAS_OK)
+    (run / "final" / "rank_00000_tp_00_pp_00.pt").write_bytes(b"definitely not a zip archive")
+
+    record = _run_collector(tmp_path, env=_sitecustomize_env(tmp_path, _FAKE_TORCH_BLOCKER))
+
+    assert record["criteria"]["A3"] is False
+    assert "无法重新加载" in record["criteria_detail"]["A3"]
+    assert record["reload_evidence_source"] == "structural_only:zip_crc"
+    assert record["status"] == "❌ 失败"
+
+
+def test_collector_native_rank_torch_load_crash_is_caught(tmp_path):
+    """★H2 负向（**真 bug 回归锁**）：反序列化异常不得让采集器崩掉。
+
+    这是本包唯一一条"跑旧代码必挂"的用例，**反证过了**：把三处改动 ``git stash``
+    掉、只留下这条测试跑 HEAD 版 collector，得到
+
+        _pickle.UnpicklingError: could not find MARK
+        E   assert 1 == 0   (returncode != 0)
+
+    ——异常从 ``torch.load`` 冒到顶层，采集器 rc≠0 崩掉，**这一档连同整个台账都产不出来**。
+    旧实现只捕 ``RuntimeError / OSError / AttributeError``，而 ``pickle.UnpicklingError``
+    直接派生自 ``Exception``，与这三者**互不派生** ⇒ 必然漏。
+
+    为什么必须走"宿主有 torch"这条分支：``torch.load`` 的调用点在
+    ``_require_torch()`` 之后。**宿主无 torch 时该分支根本不可达**（会先走 stdlib
+    归档/CRC 那条弱证据路径），所以只有显式注入一个"有 torch"的宿主才能复现。
+    真机触发条件（228 采集机有 torch 2.x）：ckpt 损坏 + 这一档的 ``lora_norm_delta``
+    读不到（指标缺文件 / 全非有限），于是 A2 回落到 checkpoint 兜底路径。
+
+    修复后必须：① 采集器 rc=0 且台账照常产出；② 损坏事实**不被吞掉**——A3 判
+    **实质失败**（``checkpoint_reloadable=False``，来源 ``host_torch_load``），异常类型
+    与消息写进明细（§2.2 显式即防呆）。**不得**降级成 ``None``（那是把"坏文件"伪装成
+    "没证据"，是放行风险）。
+
+    宿主 torch 由 ``_FAKE_TORCH_BROKEN_BLOCKER`` 显式注入：一个只让 ``torch.load``
+    抛 ``UnpicklingError("could not find MARK")`` 的假 torch，与真机实测形态逐字一致。
+    """
+    run = _make_native_lora_run(
+        tmp_path / "runs",
+        # 逐位全 0 ⇒ 逐步指标这条路上 A2 **拿不到**"权重已变化"，迫使它回落到
+        # checkpoint 兜底路径（也就是真正会踩到 torch.load 的那条路）。
+        deltas=[0.0] * 6,
+        # 宿主机认为这是个可读文件，但反序列化必炸（假 torch 的 load 恒抛）。
+        rank_bytes=b"corrupted-but-readable",
+    )
+    # final/ 必须存在且带 manifest.json，才会进 native 反序列化分支。
+    assert (run / "final" / "manifest.json").is_file()
+
+    record = _run_collector(tmp_path, env=_sitecustomize_env(tmp_path, _FAKE_TORCH_BROKEN_BLOCKER))
+
+    # ① 采集器不崩：_run_collector 内部已断言 returncode == 0，且台账有且仅有一条记录。
+    # ② 损坏事实不被吞掉：A3 是在反序列化那一步炸的 ⇒ 判实质失败、来源 host_torch_load。
+    assert record["criteria"]["A3"] is False
+    assert "无法重新加载" in record["criteria_detail"]["A3"]
+    assert record["reload_evidence_source"] == "host_torch_load"
+    # 异常类型与消息必须可见，而不是被吞成一句"缺证据"。
+    assert "UnpicklingError" in record["criteria_detail"]["A3"], record["criteria_detail"]["A3"]
+    assert "could not find MARK" in record["criteria_detail"]["A3"]
+    assert record["status"] == "❌ 失败"
+
+
+def test_collector_native_container_probe_grades_a3_without_host_torch(tmp_path):
+    """★H1 正向：宿主无 torch 时，**容器内** torch 探测证据足以判 A3 通过。
+
+    契约见 ``scripts/collect_results.py`` 的 ``read_torch_probe``：探测文件必须带
+    schema 标识与**当前文件内容的 sha256**。这条同时验证"证据等级可审计"。
+    """
+    import hashlib
+
+    run = _make_native_lora_run(tmp_path / "runs", deltas=_LORA_DELTAS_OK)
+    rank = run / "final" / "rank_00000_tp_00_pp_00.pt"
+    digest = hashlib.sha256(rank.read_bytes()).hexdigest()
+    (run / "torch_probe.json").write_text(
+        json.dumps(
+            {
+                "schema": "graspo.torch_probe.v1",
+                "torch": "2.11.0+cu130",
+                "all_ok": True,
+                "checked": [
+                    {"relpath": "final/rank_00000_tp_00_pp_00.pt", "ok": True, "sha256": digest}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    record = _run_collector(tmp_path)
+
+    assert record["criteria"]["A3"] is True, record["criteria_detail"]["A3"]
+    assert record["reload_evidence_source"] == "container_torch_probe"
+
+
+def test_collector_native_stale_torch_probe_is_not_trusted(tmp_path):
+    """★H1 负向（防陈旧证据）：探测文件的 sha256 与磁盘不符 ⇒ **不采信**，退回取证缺口。
+
+    为什么必须有这条：同一档第二次跑会覆盖 ``final/`` 下的权重；若沿用上一次的探测
+    结论，就是用旧 run 的证据给新 run 作证（真实风险，不是假想）。
+
+    ``env`` 显式屏蔽 torch：探测证据被拒后要退回 ``structural_only:zip_crc``
+    （"文件好但验不了"），这只有在"宿主无 torch"的前提下才成立——不能靠环境碰运气。
+    """
+    run = _make_native_lora_run(tmp_path / "runs", deltas=_LORA_DELTAS_OK)
+    (run / "torch_probe.json").write_text(
+        json.dumps(
+            {
+                "schema": "graspo.torch_probe.v1",
+                "torch": "2.11.0+cu130",
+                "all_ok": True,
+                "checked": [
+                    {"relpath": "final/rank_00000_tp_00_pp_00.pt", "ok": True, "sha256": "0" * 64}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    record = _run_collector(tmp_path, env=_sitecustomize_env(tmp_path, _FAKE_TORCH_BLOCKER))
+
+    assert record["criteria"]["A3"] is False
+    assert record["reload_evidence_source"] == "structural_only:zip_crc"
+    assert record["status"] == "⚠ 不可判定（取证缺口）"
+    assert record["failure_class"] == "取证不足（不可判定）"
+    # 探测文件被拒的原因必须出现在台账明细里（不静默丢弃）。
+    assert "sha256 不符" in record["criteria_detail"]["A3"], record["criteria_detail"]["A3"]
+    markdown = (tmp_path / "ledger" / "ledger.md").read_text(encoding="utf-8")
+    assert markdown
