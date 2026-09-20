@@ -267,6 +267,10 @@ def test_mapping_is_pure_attribute_access_and_imports_nothing_heavy(monkeypatch)
             return None
 
     stub = SimpleNamespace(
+        # 配置级字段（`GraspoConfig.effective_tuner_type` 是 schema 上的真实 property，
+        # 由 `9bc1cf1` 引入）：映射层的 `--tuner_type` 唯一取值来源。哑桩必须显式给出，
+        # 否则映射层读不到它——这不是"映射层要求太重"，而是配置契约的一部分。
+        effective_tuner_type="lora",
         model=SimpleNamespace(
             model_path="m",
             trust_remote_code=True,
@@ -302,6 +306,7 @@ def test_mapping_is_pure_attribute_access_and_imports_nothing_heavy(monkeypatch)
             sequence_parallel_size=2,
             rope_scaling=None,
             max_model_len=None,
+            max_pixels=None,
             packing=False,
             padding_free=False,
             use_liger_kernel=False,

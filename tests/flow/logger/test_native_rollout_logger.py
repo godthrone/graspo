@@ -2,8 +2,23 @@
 
 import json
 
+import pytest
+
+import graspo.flow.logging as graspo_logging
 from graspo.flow.logger.native_rollout_logger import NativeRolloutLogger
 from graspo.flow.logging import run_log_dir
+
+
+@pytest.fixture
+def _reset_run_id(monkeypatch: pytest.MonkeyPatch):
+    """每个用 run_id 的用例都从"干净进程"开始，避免模块级缓存串味。
+
+    与 ``tests/compliance/test_oss_config_boundaries.py`` 的同名 fixture 同一做法
+    （§1.4 单一真相源：run_id 只在 ``graspo.flow.logging`` 里缓存一份）。
+    """
+    monkeypatch.setattr(graspo_logging, "_run_id", None)
+    yield
+    monkeypatch.setattr(graspo_logging, "_run_id", None)
 
 
 def test_write_event_writes_events_jsonl(tmp_path):
@@ -21,8 +36,14 @@ def test_write_event_writes_events_jsonl(tmp_path):
     assert rows[0]["step"] == 1
 
 
-def test_all_event_files_get_timestamp_and_run_id(tmp_path):
-    """各事件文件统一注入 timestamp + run_id 关联键（§13.3 跨文件对齐时间线）。"""
+def test_all_event_files_get_timestamp_and_run_id(tmp_path, _reset_run_id):
+    """各事件文件统一注入 timestamp + run_id 关联键（§13.3 跨文件对齐时间线）。
+
+    ``run_id`` 的唯一真相源是 config（``set_run_id`` ← ``training.run_name``，§1.4）；
+    这里绑定后，logger 必须把这**同一个**值注入全部事件文件——而不是沿用
+    "输出目录名"（那个口径在 ``d6e2aa8`` 已随 ``GRASPO_RUN_ID`` 一起删除，§18.1）。
+    """
+    graspo_logging.set_run_id("my_run")
     logger = NativeRolloutLogger(tmp_path / "my_run")
     logger.write_event({"event": "run_start"})
     logger.write_readable({"event": "graspo_group", "step": 1, "decision": "retry"})
