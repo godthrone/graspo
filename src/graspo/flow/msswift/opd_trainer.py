@@ -14,7 +14,8 @@
 ``TrainerFactory`` 解析成 ``swift.rlhf_trainers.GKDTrainer``（ms-swift 4.5.3
 ``swift/trainers/trainer_factory.py:27/44``）。**没有子进程、没有 shell。**
 
-**为什么走 GKD 而不是 OPD-RL**（判据：ms-swift 4.5.3 ``docs/source_en/Instruction/Distillation.md`` §3）
+**为什么走 GKD 而不是 OPD-RL**
+（判据：ms-swift 4.5.3 ``docs/source_en/Instruction/Distillation.md`` §3）
 
 ms-swift 提供两条在线蒸馏路径：
 

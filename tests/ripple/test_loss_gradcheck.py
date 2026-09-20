@@ -20,7 +20,6 @@ from graspo.ripple.loss import (  # noqa: E402
     masked_token_log_probs_from_hidden,
 )
 
-
 # ── GRASPORippleLoss.forward gradcheck ────────────────────────────────────────
 
 

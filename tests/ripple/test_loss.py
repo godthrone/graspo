@@ -4,7 +4,7 @@ import pytest
 
 torch = pytest.importorskip("torch", exc_type=ImportError)
 
-from torch.nn import functional as F  # noqa: E402
+from torch.nn import functional  # noqa: E402
 
 from graspo.ripple.loss import (  # noqa: E402
     GRASPORippleLoss,
@@ -44,9 +44,11 @@ def _random_case(batch, seq, hidden_dim, vocab, seed=0):
 
 def _full_log_probs_reference(hidden, lm_head, labels, ignore_index=-100):
     """完整 logits 的参考实现（对拍基准）：log_softmax 后 gather。"""
-    logits = F.linear(hidden.float(), lm_head.float())
+    logits = functional.linear(hidden.float(), lm_head.float())
     log_probs = (
-        F.log_softmax(logits, dim=-1).gather(-1, labels.clamp(min=0).unsqueeze(-1)).squeeze(-1)
+        functional.log_softmax(logits, dim=-1)
+        .gather(-1, labels.clamp(min=0).unsqueeze(-1))
+        .squeeze(-1)
     )
     return log_probs.masked_fill(labels == ignore_index, 0.0)
 
@@ -65,7 +67,7 @@ def test_masked_token_log_probs_without_ignore_matches_full():
     hidden, lm_head, labels = _random_case(batch=2, seq=8, hidden_dim=32, vocab=70000)
     valid_ids = labels.clamp(min=0)
     expected = (
-        F.log_softmax(F.linear(hidden.float(), lm_head.float()), -1)
+        functional.log_softmax(functional.linear(hidden.float(), lm_head.float()), -1)
         .gather(-1, valid_ids.unsqueeze(-1))
         .squeeze(-1)
     )
@@ -74,7 +76,7 @@ def test_masked_token_log_probs_without_ignore_matches_full():
 
 
 def test_sft_loss_equals_cross_entropy_reference():
-    """SFT loss（共享实现 + 全局均值）与 F.cross_entropy(ignore_index) 参考语义一致。"""
+    """SFT loss（共享实现 + 全局均值）与 functional.cross_entropy(ignore_index) 参考语义一致。"""
     hidden, lm_head, labels = _random_case(batch=2, seq=8, hidden_dim=32, vocab=70000)
     shift_hidden = hidden[:, :-1]
     shift_labels = labels[:, 1:]
@@ -85,8 +87,8 @@ def test_sft_loss_equals_cross_entropy_reference():
     mask = shift_labels != -100
     actual = -(log_probs * mask).sum() / mask.sum().clamp_min(1)
 
-    logits = F.linear(shift_hidden.float(), lm_head.float())
-    expected = F.cross_entropy(
+    logits = functional.linear(shift_hidden.float(), lm_head.float())
+    expected = functional.cross_entropy(
         logits.reshape(-1, logits.size(-1)),
         shift_labels.reshape(-1),
         ignore_index=-100,

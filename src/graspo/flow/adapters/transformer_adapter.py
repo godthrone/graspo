@@ -19,11 +19,11 @@ import torch.distributed as dist
 
 from graspo.flow.adapters.base_graspo_flow_adapter import BaseGraspoFlowAdapter
 from graspo.flow.logging import append_jsonl_segment, run_log_dir
-from graspo.flow.parallel.state import GraspoFlowState, destroy_parallel_state
 from graspo.flow.parallel.placement_plan import (
     NativePlacementPlan,
     placement_summary,
 )
+from graspo.flow.parallel.state import GraspoFlowState, destroy_parallel_state
 from graspo.flow.parallel.tensor_utils import (
     _cuda_memory_snapshot,
     _jsonable,

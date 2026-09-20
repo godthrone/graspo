@@ -19,7 +19,6 @@ torch = pytest.importorskip("torch", exc_type=ImportError)
 
 from graspo.ripple.loss import GRASPORippleLoss  # noqa: E402
 
-
 # ── 工具函数 ─────────────────────────────────────────────────────────────────
 
 

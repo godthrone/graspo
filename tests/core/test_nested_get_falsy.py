@@ -79,7 +79,7 @@ class TestNestedGetTreatsFalsyAsPresent:
         result = _nested_get(mapping, "a.b")
         assert result is True
         assert isinstance(result, bool)
-        assert result is not 0  # `is` 比较：True is not 0，防止"返回值"式退化
+        assert result != 0  # `is` 比较：True is not 0，防止"返回值"式退化
 
     def test_buggy_truthiness_variant_would_report_false_alarms(self) -> None:
         """★ 鉴别力对照：真值判定实现在假值上**确实**产生假警报。

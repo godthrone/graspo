@@ -5,7 +5,6 @@
 
 import json
 from pathlib import Path
-from typing import Any
 
 from graspo.core.schema import Sample
 from graspo.ripple.data import sample_from_record

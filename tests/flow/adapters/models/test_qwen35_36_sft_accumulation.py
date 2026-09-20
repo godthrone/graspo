@@ -226,7 +226,6 @@ def test_single_chunk_weight_is_one_and_matches_global_token_mean():
     """单 chunk（chunk_count=1）：权重必须为 1.0，与整批 token 均值逐位等价。"""
     methods = _build_methods()()
     chunks = [_make_chunk(label_lengths=[3, 1], hidden_values=[0.0, 1.0])]
-    counts = _counts(chunks)
     assert _weights_from_last_counts() == [1.0]
 
     losses = _chunk_losses(methods, chunks)

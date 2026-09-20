@@ -347,7 +347,8 @@ def build_ledger() -> list[dict[str, Any]]:
     tiers += _block("CPT", "ms-swift", "9B", "LoRA")
     tiers += _block("CPT", "ms-swift", "9B", "全量")
     tiers += _block("CPT", "ms-swift", "27B", "LoRA")
-    # SFT 18 = 9B(LoRA native, LoRA ms-swift, 全量 native, 全量 ms-swift) + 27B(LoRA native, LoRA ms-swift)
+    # SFT 18 = 9B(LoRA native, LoRA ms-swift, 全量 native, 全量 ms-swift)
+    #          + 27B(LoRA native, LoRA ms-swift)
     tiers += _block("SFT", "native", "9B", "LoRA")
     tiers += _block("SFT", "ms-swift", "9B", "LoRA")
     tiers += _block("SFT", "native", "9B", "全量")
@@ -430,7 +431,8 @@ def _repeats_dataset_by_rollout_group(tier: dict[str, Any]) -> bool:
       · **ms-swift**：``flow/msswift/_config_mapping.py`` 只有 ``stage == "rlhf"`` 分支
         下发 ``--num_generations`` / ``--generation_batch_size`` / ``--steps_per_generation``，
         该 stage 只被 ``msswift/trainer.py``（GRASPO 训练器）使用
-        （``sft_trainer`` / ``cpt_trainer`` / ``opd_trainer`` 各传 ``"sft"`` / ``"cpt"`` / ``"opd"``）
+        （``sft_trainer`` / ``cpt_trainer`` / ``opd_trainer`` 各传
+        ``"sft"`` / ``"cpt"`` / ``"opd"``）
         ⇒ 判据 = ``train_method == "graspo"`` **且 backend 走 ms-swift**。
       · **native 的 GRASPO 档不重复**：``flow/trainer/trainer.py`` 按
         ``rollout_queue_batch_size × rollout_group_size`` 归组，**每个 optimizer step
@@ -626,7 +628,8 @@ def estimate_config_per_card_gib(tier: dict[str, Any], config: dict[str, Any]) -
         pp_size = int(config.get("native", {}).get("pp_size", 1) or 1)
         bytes_per_param = NATIVE_OPTIMIZER_BYTES_PER_PARAM / pp_size
         basis = (
-            f"native 全参 PP 分片（k={NATIVE_OPTIMIZER_BYTES_PER_PARAM:g} B/param，bf16 Adam 假设）："
+            f"native 全参 PP 分片（k={NATIVE_OPTIMIZER_BYTES_PER_PARAM:g} B/param，"
+            f"bf16 Adam 假设）："
             f"({_BF16:g}+{_GRAD:g}+{_ADAM_BF16:g})/{pp_size} B/param"
             + ("" if pp_size > 1 else "（无分片）")
         )
@@ -654,7 +657,8 @@ def estimate_config_per_card_gib(tier: dict[str, Any], config: dict[str, Any]) -
             sharded = _GRAD + _ADAM_FP32
             basis = (
                 f"ms-swift 全参**未配 deepspeed/offload**：权重 {_BF16:g} + 梯度 {_GRAD:g}"
-                f" + 优化器 {_ADAM_FP32:g} = {MSSWIFT_OPTIMIZER_BYTES_PER_PARAM:g} B/param 全量压单卡"
+                f" + 优化器 {_ADAM_FP32:g} = "
+                f"{MSSWIFT_OPTIMIZER_BYTES_PER_PARAM:g} B/param 全量压单卡"
             )
         bytes_per_param = weight + sharded
 
@@ -952,9 +956,11 @@ def render_config_yaml(tier: dict[str, Any], status: str, reason: str | None) ->
         f"# {tier_id} | {tier['model']} | {tier['algorithm']} | {tier['mode']} | "
         f"{tier['backend']} | {tier['cards']}卡",
         "# 生成器: tests/e2e/generate_matrix.py（手改无效，请改生成器）",
-        "# 口径: 只用 1/2/4 卡；GPU 集合取自 {0,1,2,3}；上下文长度由递增加长法实测得出，不预设档位。",
+        "# 口径: 只用 1/2/4 卡；GPU 集合取自 {0,1,2,3}；上下文长度"
+        "由递增加长法实测得出，不预设档位。",
         f"# 数据: ELAM V5 训练子集前 {subset_size(str(tier['algorithm']))} 条（宿主数据根目录经 "
-        f"{ELAM_HOST_ROOT_ENV} 注入，见 .local/）；子集由 run_matrix54.sh 生成，图像经 ../images 解析。",
+        f"{ELAM_HOST_ROOT_ENV} 注入，见 .local/）；子集由 run_matrix54.sh 生成，"
+        f"图像经 ../images 解析。",
         f"# ⚠️ 数据口径告警: {DATA_INTEGRITY_CAVEAT}",
         f"# 可表达性: {status}",
         # 显存可行性必须**带 verdict 标签**：`unmeasured` 与 `infeasible` 的文案完全不同，
@@ -1007,7 +1013,8 @@ def render_not_applicable_stub(tier: dict[str, Any], reason: str) -> str:
         f"{tier['backend']} | {tier['cards']}卡\n\n"
         f"不适用的理由: {reason}\n\n"
         "定性: **确实不适用**（用户已拍板的口径下不存在该档的合法配置）——\n"
-        "      **不是** `blocked`（尚未给出配方、将来可能做得了），**不是** `❌ 失败`（跑过没通过）。\n"
+        "      **不是** `blocked`（尚未给出配方、将来可能做得了），"
+        "**不是** `❌ 失败`（跑过没通过）。\n"
         "      「失败」与「确实不适用」都是验收口径明文允许的**合法产出**。\n"
         "处置: 无需排期、无需上机；台账侧按 `⛔ 不适用` 登记，理由引用本节。\n"
     )
@@ -1290,7 +1297,9 @@ def build_manifest(tiers: list[dict[str, Any]]) -> dict[str, Any]:
         "data": {
             "source": "ELAM V5 balanced（与开发机副本 md5 一致）",
             "host_root_env_var": ELAM_HOST_ROOT_ENV,
-            "host_root_note": "宿主数据根目录属环境信息（§16），由运行时环境变量注入，不入 tracked 文件",
+            "host_root_note": (
+                "宿主数据根目录属环境信息（§16），由运行时环境变量注入，不入 tracked 文件"
+            ),
             "container_root": ELAM_CONTAINER_ROOT,
             "train_jsonl": ELAM_TRAIN_JSONL,
             "test_jsonl": ELAM_TEST_JSONL,
@@ -2193,7 +2202,7 @@ done
 docker run "${{DOCKER_ARGS[@]}}" -w /workspace/graspo "$IMAGE" bash /entry.sh
 echo "$?" > "$RUN_DIR/exit_code"
 exit "$(cat "$RUN_DIR/exit_code")"
-"""
+"""  # noqa: E501  模板内含 bash 续行/长行：逐行硬换行会改写生成的 shell 语义，改由 test_run_matrix54_runner.py 的 65 个用例把关
 
 
 # ── 主流程 ──────────────────────────────────────────────────────────────────

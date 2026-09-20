@@ -217,7 +217,7 @@ class RewardConfig(BaseModel):
     numeric_tolerance: float = 0.2
 
     @model_validator(mode="after")
-    def _validate_reward_kind(self) -> "RewardConfig":
+    def _validate_reward_kind(self) -> RewardConfig:
         """延迟导入 REWARD_REGISTRY 以避免循环依赖，校验 kind 是否已注册。"""
         from graspo.ripple.reward.reward import REWARD_REGISTRY  # noqa: PLC0415
 
@@ -441,7 +441,7 @@ class GpuMonitorConfig(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _validate_positive_numbers(self) -> "GpuMonitorConfig":
+    def _validate_positive_numbers(self) -> GpuMonitorConfig:
         if self.interval_sec <= 0:
             raise ValueError(f"gpu_monitor.interval_sec must be > 0, got {self.interval_sec}")
         if self.recent_limit < 0:
@@ -796,7 +796,7 @@ class EvalConfig(BaseModel):
     sft_threshold_percent: float = 50.0
 
     @model_validator(mode="after")
-    def _validate_eval_contract(self) -> "EvalConfig":
+    def _validate_eval_contract(self) -> EvalConfig:
         """加载即校验：必填路径 + 卡计划合法性 + 产物目录在 .local/ 下。
 
         本模型只由**评测入口**（``graspo eval --eval-config``）构造；训练配置里
@@ -863,7 +863,7 @@ class EvalConfig(BaseModel):
                 )
 
     @classmethod
-    def from_yaml(cls, path: str | Path) -> "EvalConfig":
+    def from_yaml(cls, path: str | Path) -> EvalConfig:
         """从独立的评测配置 YAML 加载（``graspo eval --eval-config``）。
 
         校验失败时输出人类可读的信息（哪个字段、期望什么），不抛原始 traceback。

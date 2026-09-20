@@ -412,7 +412,8 @@ def test_assistant_tool_calls_arguments_with_raw_xml_is_rejected(tmp_path):
         '{"messages":['
         '{"role":"user","content":"q"},'
         '{"role":"assistant","content":null,"tool_calls":['
-        '{"id":"c0","type":"function","function":{"name":"move","arguments":{"desc":"use <function=move>"}}}'
+        '{"id":"c0","type":"function","function":{"name":"move",'
+        '"arguments":{"desc":"use <function=move>"}}}'
         "]},"
         '{"role":"user","content":"continue"}'
         '],"targets":[{"output":{"tool_calls":[{"name":"move","arguments":{}}]}}]}\n',

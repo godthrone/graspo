@@ -94,21 +94,24 @@ def _flags(argv: list[str]) -> list[str]:
 def test_every_mapped_flag_is_a_valid_ms_swift_argument(stage, config_data):
     from graspo.flow.msswift._config_mapping import graspo_to_ms_swift_argv
 
+    # 两个 stage 分支必须落到同一个局部名（后续断言只写一次）。
+    # 上游类名是 CamelCase，别名只能取小写 ⇒ 逐条豁免 N813：别名是**局部变量**，
+    # 不是公开导出（改动导入别名会改变两个分支的可读性，且无收益）。
     if stage == "sft":
-        from swift.arguments import SftArguments as args_cls
+        from swift.arguments import SftArguments as _args_cls  # noqa: N813
     else:
-        from swift.arguments import RLHFArguments as args_cls
+        from swift.arguments import RLHFArguments as _args_cls  # noqa: N813
 
     config = GraspoConfig.model_validate(config_data)
     argv = graspo_to_ms_swift_argv(
         config, stage=stage, dataset_path="/tmp/ds.jsonl", output_dir="/tmp/out"
     )
 
-    valid = _argument_fields(args_cls)
+    valid = _argument_fields(_args_cls)
     unknown = sorted(flag for flag in _flags(argv) if flag not in valid)
 
     assert not unknown, (
-        f"stage={stage}: ms-swift {args_cls.__name__} does not accept {unknown} — "
+        f"stage={stage}: ms-swift {_args_cls.__name__} does not accept {unknown} — "
         "these flags would make ms-swift's parse_args reject the whole run."
     )
 
@@ -127,8 +130,6 @@ def test_megatron_passthrough_is_valid_for_the_megatron_channel(args_path, args_
     的字段——混进标准通道会让 ms-swift 直接拒绝整次运行。因此 Megatron 参数由
     ``megatron_passthrough_argv`` 单独产出，并且只在 Megatron 通道使用。
     """
-    import importlib
-
     from graspo.flow.msswift._config_mapping import (
         graspo_to_ms_swift_argv,
         megatron_passthrough_argv,
@@ -258,14 +259,14 @@ def test_multi_value_flags_are_parsed_by_ms_swift_as_multiple_values():
 
     # ms-swift 的 parse_args 会校验 --model 路径存在（本测试要过一次真实解析）。
     # 模型目录不在本机时 skip（不静默通过）。
-    _QWEN = "/models/Qwen3-8B"
-    if not Path(_QWEN).is_dir():
-        pytest.skip(f"{_QWEN} is not available in this environment")
+    _qwen_path = "/models/Qwen3-8B"
+    if not Path(_qwen_path).is_dir():
+        pytest.skip(f"{_qwen_path} is not available in this environment")
 
     config = GraspoConfig.model_validate(
         {
             "backend": "msswift",
-            "model": {"model_path": _QWEN},
+            "model": {"model_path": _qwen_path},
             "data": {"train_path": "/tmp/ds.jsonl", "max_prompt_length": 4096},
             "lora": {"target_modules": ["q_proj", "v_proj", "all-linear"]},
             "training": {"output_dir": "/tmp/out"},
@@ -298,13 +299,13 @@ def test_multi_value_parsing_matches_the_three_observed_forms():
     from swift.arguments import SftArguments
     from swift.utils import parse_args
 
-    _QWEN = "/models/Qwen3-8B"
-    if not Path(_QWEN).is_dir():
-        pytest.skip(f"{_QWEN} is not available in this environment")
+    _qwen_path = "/models/Qwen3-8B"
+    if not Path(_qwen_path).is_dir():
+        pytest.skip(f"{_qwen_path} is not available in this environment")
 
     base = [
         "--model",
-        _QWEN,
+        _qwen_path,
         "--dataset",
         "/tmp/ds.jsonl",
         "--output_dir",

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from graspo.core.schema import GraspoConfig
+from graspo.flow.data_io import load_jsonl
 from graspo.flow.logging import setup_logging
 from graspo.flow.runtime import (
     GraspoFlowRuntime,
@@ -18,7 +19,6 @@ from graspo.flow.runtime import (
     validate_native_runtime_config,
 )
 from graspo.flow.trainer.helpers import _backup_config, _set_random_seed, _timestamp
-from graspo.flow.data_io import load_jsonl
 from graspo.ripple.data import SFTTokenized, sft_tokenize
 
 

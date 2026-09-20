@@ -54,10 +54,11 @@ from __future__ import annotations
 
 import json
 import shutil
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 #: merged-hf 产物必须有的文件（判断"导出成功"的判据，与 v3 脚本一致）。
 MERGED_REQUIRED_FILES = ("config.json",)
@@ -106,7 +107,8 @@ WEIGHT_FILE_CANDIDATES = (
 MULTIMODAL_LANGUAGE_MODEL_PREFIX = "model.language_model."
 
 #: 同一前缀在 **regex 形态** 下的转义写法。真实 ms-swift / peft 0.19.1 产物写的是
-#: 正则字符串（实测：`.local/.../task-r3-effect/evidence/light_evidence/T013/adapter_config.json`）：
+#: 正则字符串（实测：
+#: ``.local/.../task-r3-effect/evidence/light_evidence/T013/adapter_config.json``）：
 #: ``^(model\\.language_model(?=\\.).*\\....)$``。
 MULTIMODAL_LANGUAGE_MODEL_PREFIX_REGEX = r"model\.language_model"
 
@@ -666,8 +668,8 @@ def merge_peft_checkpoint(
     shape = detect_multimodal_base(base_model_path)
 
     import torch  # noqa: PLC0415  设施层延迟导入：保证模块可在无 torch 环境被导入解析
-    from peft import PeftModel  # noqa: PLC0415
     import transformers  # noqa: PLC0415
+    from peft import PeftModel  # noqa: PLC0415
     from transformers import AutoProcessor, AutoTokenizer  # noqa: PLC0415
 
     destination = prepare_output_directory(output_dir, overwrite=allow_overwrite)

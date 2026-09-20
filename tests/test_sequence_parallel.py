@@ -1,7 +1,6 @@
 """Sequence Parallel 通信原语单元测试 — CPU 上验证 autograd 正确性。"""
 
 import torch
-import torch.distributed as dist
 
 from graspo.flow.parallel.tensor_utils import (
     _all_gather_sp,

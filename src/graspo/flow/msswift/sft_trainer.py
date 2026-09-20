@@ -109,8 +109,6 @@ class MsSwiftSftTrainer:
 
         from graspo.flow.msswift._config_mapping import (
             graspo_to_ms_swift_argv,
-            native_only_field_notes,
-            native_only_fields,
             validate_combinations,
         )
         from graspo.flow.msswift._rope_compat import rope_parameters_compatible

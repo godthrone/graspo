@@ -274,7 +274,8 @@ def build_char_spans(completion, annotation):
         # Use a special class for spaces to keep them visible but not colorful
         space_class = "space-char" if char in (" ", "\t") else ""
         spans.append(
-            f'<span class="char {label} {space_class}" title="pos={i} label={LABEL_NAMES.get(label, label)}">{char_esc}</span>'
+            f'<span class="char {label} {space_class}" '
+            f'title="pos={i} label={LABEL_NAMES.get(label, label)}">{char_esc}</span>'
         )
 
     # Handle trailing characters in completion beyond annotation length
@@ -296,7 +297,8 @@ def build_char_spans(completion, annotation):
             else:
                 char_esc = char
             spans.append(
-                f'<span class="char ?" style="background:rgba(255,255,0,0.4)" title="pos={i} label=UNANNOTATED">{char_esc}</span>'
+                f'<span class="char ?" style="background:rgba(255,255,0,0.4)" '
+                f'title="pos={i} label=UNANNOTATED">{char_esc}</span>'
             )
 
     return "".join(spans)
@@ -336,7 +338,7 @@ def build_html(records):
         case_correct[r.get("correct", "?")] = case_correct.get(r.get("correct", "?"), 0) + 1
         all_labels.extend(list(r.get("annotation", "")))
 
-    label_counts = {l: all_labels.count(l) for l in LABEL_COLORS}
+    label_counts = {label: all_labels.count(label) for label in LABEL_COLORS}
 
     cards_html = []
     for r in records:
@@ -384,7 +386,8 @@ def build_html(records):
         name = LABEL_NAMES[label]
         count = label_counts.get(label, 0)
         legend_items.append(
-            f'<div class="legend-item"><span class="legend-swatch" style="background:{color}"></span>'
+            f'<div class="legend-item"><span class="legend-swatch" style="background:{color}"'
+            f"></span>"
             f'<span style="color:{color};font-weight:bold">{label}</span>'
             f'<span class="legend-label">= {name} ({count})</span></div>'
         )
@@ -395,6 +398,15 @@ def build_html(records):
     for t, c in sorted(type_counts.items()):
         type_filter_buttons.append(f'<button class="filter-btn" data-type="{t}">{t} ({c})</button>')
 
+    stat_rows = "\n    ".join(
+        f'<div class="stat"><div class="count">{value}</div><div class="label">{label}</div></div>'
+        for label, value in (
+            ("Total", total),
+            ("Correct", case_correct.get("yes", 0)),
+            ("Incorrect", case_correct.get("no", 0)),
+            ("Errors (E)", label_counts.get("E", 0)),
+        )
+    )
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -405,13 +417,11 @@ def build_html(records):
 </head>
 <body>
 <h1>🎨 Annotation Testset Viewer</h1>
-<p class="subtitle">{total} records &middot; {type_counts.get("tool_call", 0)} tool_call &middot; {type_counts.get("json", 0)} json</p>
+<p class="subtitle">{total} records &middot; {type_counts.get("tool_call", 0)} tool_call &middot;\
+ {type_counts.get("json", 0)} json</p>
 
 <div class="summary">
-    <div class="stat"><div class="count">{total}</div><div class="label">Total</div></div>
-    <div class="stat"><div class="count">{case_correct.get("yes", 0)}</div><div class="label">Correct</div></div>
-    <div class="stat"><div class="count">{case_correct.get("no", 0)}</div><div class="label">Incorrect</div></div>
-    <div class="stat"><div class="count">{label_counts.get("E", 0)}</div><div class="label">Errors (E)</div></div>
+    {stat_rows}
 </div>
 
 <div class="legend">{"".join(legend_items)}</div>
