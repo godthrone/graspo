@@ -309,6 +309,14 @@ class TrainingConfig(BaseModel):
     max_new_tokens: int = 2048
     temperature: float = 1.0
     top_p: float = 1.0
+    # §2.2 空值语义例外（已注明理由）：`-1` 不是"缺省/无效"哨兵，而是本领域
+    # 沿用已久的**取值语义**——"每 N 个优化步存一次 ckpt"，`<= 0` 表示不做阶段性
+    # 保存（消费点统一写作 `save_steps > 0` 判据，见 flow/trainer/optimize.py 与
+    # flow/msswift/_config_mapping.py）。该语义是**已公开的用户侧配置契约**：
+    # `samples/configs/` 下 20+ 份样例与 tests/e2e 的 54 档生成器都以
+    # `save_steps: -1` 表达"关闭阶段性保存"，`config_example.yaml` 亦如此注释。
+    # 换成 `None` 会同时改契约与那些样例，属另一个范围更大的变更，故此处按
+    # §2.2 的例外条款保留取值并说明理由。
     save_steps: int = -1
     save_checkpoint_every_epoch: bool = True
     save_checkpoint_time_period_minutes: int = 0
