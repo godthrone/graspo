@@ -69,6 +69,10 @@ msswift = "graspo.flow.msswift.trainer:create_msswift_trainer"
 [tool.setuptools.package-dir]
 "" = "src"
 
+[tool.setuptools.package-data]
+# PEP 561（§12.1-5）：`py.typed` 必须随 wheel 分发，否则安装后标记失效。
+graspo = ["py.typed"]
+
 [tool.setuptools_scm]
 # Version from git tags. v0.10.2 → "0.10.2", dirty tree → "0.10.3.dev0+d20250714"
 # Docker builds set SETUPTOOLS_SCM_PRETEND_VERSION to avoid shallow-clone issues.
