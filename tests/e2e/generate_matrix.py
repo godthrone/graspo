@@ -121,9 +121,70 @@ GPU_MONITOR_INTERVAL_SEC = 2.0
 #:   容器 `--rm` ⇒ 退出即消失，不留任何宿主残渣）。
 #: ★ 为什么不指到 `/out`：`/out` 是**产物目录**，宿主侧的运维/清理动作按"产物"看待它
 #:   （U5「跑完即删」）——在产物树里混一个不属于产物的 HOME，等于给清理动作留暗坑。
-#: ★ 唯一字面量在本常量；两个使用点（DOCKER_ARGS 的 `-e HOME=` 与 entry.sh 的 `mkdir -p`）
-#:   都由本常量生成，测试断言它在生成物里**只作为该常量出现一次**（单源防漂移）。
+#: ★ 唯一字面量在本常量；所有使用点（DOCKER_ARGS 的 `-e`、entry.sh 的预检、dry-run 打印）
+#:   都由 `CONTAINER_CACHE_ROOTS` 生成，测试断言它在生成物里只作为该常量出现一次（单源防漂移）。
 CONTAINER_HOME_DIR = "/tmp/graspo-runner-home"
+
+#: 容器内**可写缓存/状态根**的清单（**单一真相源**，§1.4）。
+#:
+#: 每项 = `(环境变量名, 相对 CONTAINER_HOME_DIR 的子路径)`；`"."` 表示 HOME 本身。
+#:
+#: ★ 为什么必须有一张表：容器以 `--user <宿主 uid>:<gid>` 运行后，镜像里任何"写死到
+#:   root 可写路径"的缓存根都会在非 root 下变成 `PermissionError`，而训练在**数据集装载
+#:   阶段**就会写它们。`043c776` 补了 `HOME`/`XDG_CACHE_HOME`/`TORCHINDUCTOR_CACHE_DIR`/
+#:   `TRITON_CACHE_DIR`，**漏了 `MODELSCOPE_CACHE`**（228 实测确证）：镜像 ENV 把它写死成
+#:   `/mnt/workspace/.cache/modelscope/hub`，而 `/mnt` 在镜像里是 `root:root 0755`
+#:   （FHS 标准目录；`docker/Dockerfile*` 里**没有**任何 `mkdir /mnt/workspace`）⇒ 非 root
+#:   建不出 `/mnt/workspace`。ms-swift 的 `swift/dataset/loader.py:57` 正是拿
+#:   `modelscope.hub.utils.utils.get_cache_dir()`（读 `MODELSCOPE_CACHE`）拼出 `datasets` 的
+#:   `cache_dir` ⇒ `datasets/builder.py` 的 `os.makedirs` 抛 `PermissionError: '/mnt/workspace'`，
+#:   rank0 exit 1、其余 rank 被 SIGTERM；宿主侧只看到 `[ckpt-retention] FATAL: 未找到任何
+#:   checkpoint-*`（因为训练**一步都没跑**）。
+#: ★ 为什么用表而不是散落的 `-e` 行：清单**只有一处**，三个使用点全部由它生成 ——
+#:   ① `docker run` 的 `-e` 注入；② `entry.sh` 的可写性预检；③ dry-run 与真跑的显式打印。
+#:   散落的写法正是本条回归的成因（补了三个、漏了第四个），表把"再漏一个"变成不可能。
+#: ★ 为什么全部挂在 `CONTAINER_HOME_DIR` 之下：`043c776` 已把 HOME 建在 `/tmp` 下的一个
+#:   可写根（`/tmp` 是 1777，容器 `--rm` ⇒ 退出即消失；字面量只允许出现在那个常量里——
+#:   测试断言它在生成器里只出现一次）。缓存根**沿用同一个根**，不另造第二个可写根（§1.4）；
+#:   也**不放进 `/out`**（那是产物树，U5「跑完即删」会撞上非产物目录）。
+#: ★ 为什么只列这五个（不列 `HF_HOME`/`TORCH_HOME`/`TRANSFORMERS_CACHE` 等）：镜像**没有**
+#:   声明它们 ⇒ 它们的默认值本来就是 `~/.cache/...`，在 HOME 已指向可写根后天然可写；
+#:   显式列出来只是重复一遍 HOME 的效果（本包不扩范围）。镜像里**声明过**的路径型变量只有
+#:   两个：本表的 `MODELSCOPE_CACHE` 与 `NVM_DIR=/root/.nvm`（后者是 node/nvm 的，训练不用，
+#:   故不入表——判据见 report §②）。
+CONTAINER_CACHE_ROOTS: tuple[tuple[str, str], ...] = (
+    ("HOME", "."),
+    ("XDG_CACHE_HOME", ".cache"),
+    # ★ 本次修的正主：镜像 ENV 把它指向 root-only 的 `/mnt/workspace/...`。
+    #   显式覆盖到 HOME 之下后，modelscope/ms-swift 的一切落盘（`get_cache_dir()` 的所有
+    #   调用点：`datasets` 缓存、`datasets/map_cache`、packing `tmp`、跨进程 `lockers`、
+    #   权重 `offload_cache`、hub `files`/`_github`）都落在可写根内。
+    ("MODELSCOPE_CACHE", ".cache/modelscope/hub"),
+    ("TORCHINDUCTOR_CACHE_DIR", ".torchinductor"),
+    ("TRITON_CACHE_DIR", ".triton"),
+)
+
+
+def container_cache_root_pairs() -> list[tuple[str, str]]:
+    """把 :data:`CONTAINER_CACHE_ROOTS` 解析成 `(变量名, 容器内绝对路径)`。
+
+    **唯一**解析点（§1.4）：`docker run` 的 `-e`、`entry.sh` 的预检清单、dry-run 的打印
+    三处都只消费本函数的输出，任何一处都不再自己拼路径。
+    """
+    return [
+        (name, CONTAINER_HOME_DIR if sub == "." else f"{CONTAINER_HOME_DIR}/{sub}")
+        for name, sub in CONTAINER_CACHE_ROOTS
+    ]
+
+
+def render_cache_roots_array() -> str:
+    """把清单渲染成 shell 数组正文（`"VAR=/path"` 逐行，不含 `NAME=(` / `)` 两行）。
+
+    生成物里出现两份（runner 与 entry.sh）——它们**同源**，不是两份真相：
+    两者都由本函数产出，测试断言二者逐字节相同。
+    """
+    return "\n".join(f'    "{name}={path}"' for name, path in container_cache_root_pairs())
+
 
 #: 容器内 `USER` / `LOGNAME` 的**中性**取值（**单一真相源**，§1.4）。
 #:
@@ -2081,6 +2142,9 @@ def render_runner(train_source: str | None = None) -> str:
     # 容器内 torch 探测脚本（A3 转正路径的生产端）：在本函数内渲染一次，避免"渲染两次
     # 得到两份不同内容"的双真相源风险（§1.4）。契约字面量来自模块级常量。
     probe_script = render_probe_script()
+    # 容器内**可写缓存/状态根**清单的 shell 数组正文：由 CONTAINER_CACHE_ROOTS 渲染，
+    # runner 与 entry.sh 两处同源复用（避免 f-string 里再拼路径 / 再写字面量）。
+    cache_roots_array = render_cache_roots_array()
     return f"""#!/bin/bash
 # GRASPO 54 档批量执行骨架 —— 由 tests/e2e/generate_matrix.py 生成（手改无效）。
 #
@@ -2222,6 +2286,34 @@ else
     RUN_USER_ARGS=(--user "$RUN_UID:$RUN_GID")
     RUN_USER_DESC="$RUN_UID:$RUN_GID"
 fi
+
+# ── 容器内**可写缓存/状态根**（**单一真相源**，§1.4）────────────────────────────
+# 缺陷（228 实测确证，本包修的回归）：`043c776` 把容器改成以宿主 uid 运行，但只补了
+# HOME/XDG_CACHE_HOME/TORCHINDUCTOR_CACHE_DIR/TRITON_CACHE_DIR，**漏了 MODELSCOPE_CACHE**。
+# 镜像 ENV 把它写死成 `/mnt/workspace/.cache/modelscope/hub`，而 `/mnt` 在镜像里是
+# `root:root 0755`（FHS 标准目录；docker/Dockerfile* 里没有任何 mkdir /mnt/workspace）
+# ⇒ 非 root 建不出 `/mnt/workspace`。ms-swift 的 `swift/dataset/loader.py:57` 拿
+# `modelscope...get_cache_dir()`（读 MODELSCOPE_CACHE）当 `datasets` 的 cache_dir
+# ⇒ `datasets/builder.py` 的 os.makedirs 抛 `PermissionError: '/mnt/workspace'`：
+# 训练**在数据集装载阶段**就死，宿主侧只看到 `[ckpt-retention] FATAL: 未找到任何 checkpoint-*`
+# （因为训练一步都没跑）。临时绕过是手工派生镜像 `..-p1cachefix`（mkdir + chmod 1777），
+# 那要求每台机器各自维护一个派生镜像——本段把它换成**干净镜像开箱可用**的正规修法。
+#
+# ★ 清单的**唯一真相源**在生成器（tests/e2e/generate_matrix.py::CONTAINER_CACHE_ROOTS）；
+#   下面三处全部由它派生，本脚本不写任何路径字面量：
+#     ① 本数组 → `docker run` 的 `-e` 注入（见下方 DOCKER_ARGS 段）；
+#     ② entry.sh 的可写性预检（同源渲染，测试断言两份数组逐字节相同）；
+#     ③ print_cache_roots：真跑与 `--dry-run` 都能看见**实际注入**了哪些根（§2.2 显式即防呆）。
+# ★ 为什么缓存根全挂在 HOME 之下：`043c776` 已把 HOME 建到 /tmp（1777、容器 --rm 即消失）；
+#   沿用同一个可写根，不另造第二个（§1.4），也不放进 /out（产物树，见 U5「跑完即删」）。
+CONTAINER_CACHE_ROOTS=(
+{cache_roots_array}
+)
+# ★ 显式即防呆（§2.2）：缓存根落到哪，决定 PermissionError 会不会在训练开始前出现 ——
+#   不能只在出错后才知道。真跑与 dry-run 都调用本函数打印实际清单。
+print_cache_roots() {{
+    printf '[cache-roots] %s\\n' "${{CONTAINER_CACHE_ROOTS[@]}}"
+}}
 
 # 0) 从运行清单取出该档的 GPU / 配置 / 卡数 / 子集大小 / 容器内模型路径。
 # 交接格式是**单行 JSON**：旧的"read 多个变量 < <(python …)"在 stdout 是管道时
@@ -2459,6 +2551,11 @@ if [ "$MODE" = "--dry-run" ]; then
     # ★ 生效用户必须**在 dry-run 里就可见**（§2.2 显式即防呆）：产物属主是"跑完即删"
     #   （PG-13 / U5）能否执行的前提，而它由下面 docker run 的 --user 决定 ⇒ 预检就得能看见。
     echo "[dry-run] user=$RUN_USER_DESC home={CONTAINER_HOME_DIR}（容器进程以该 uid:gid 运行 ⇒ 产物属主 = 宿主跑批用户）"
+    # ★ 缓存根清单**必须在 dry-run 里就可见**（§2.2 显式即防呆）：镜像里写死到 root 可写
+    #   路径的缓存根（MODELSCOPE_CACHE=/mnt/workspace/...）正是"训练在数据集装载阶段就死"
+    #   的根因 ⇒ 预检就得能看见它被指到了哪里，而不是等 rank0 PermissionError 再回头查。
+    echo "[dry-run] cache-roots（将逐个以 -e 注入容器；清单唯一真相源见 generate_matrix.py::CONTAINER_CACHE_ROOTS）:"
+    print_cache_roots
     echo "[dry-run] config=$CONFIG train_subset=$SUBSET 条 -> $TRAINPATH"
     echo "[dry-run] models=$MODELS_ROOT:$MODEL_DIR_NAME -> {MODELS_CONTAINER_ROOT}（只读）"
     echo "[dry-run] subsets=$RUN_ROOT/$TIER/subsets -> $TRAIN_PATH_DIR_CONTAINER（只读）"
@@ -2615,12 +2712,31 @@ set -o pipefail
 #     展开、留给容器内展开），注释里同样不得出现裸美元符/裸反引号（见下方哨兵测试）。
 GPU_EVIDENCE_DIR="{GPU_MONITOR_CONTAINER_DIR}"
 mkdir -p "\\$GPU_EVIDENCE_DIR"
-# ★ 容器内 HOME / 缓存根必须先建好（与 DOCKER_ARGS 的 -e HOME= 同源，字面量来自
-#   tests/e2e/generate_matrix.py::CONTAINER_HOME_DIR）。为什么：容器进程以**宿主 uid** 运行
-#   （见 runner 的「产物属主」段），镜像里 root 的 HOME 对该 uid 不可写；HF datasets /
-#   transformers 缓存、deepspeed 扩展构建、triton/inductor 编译缓存都落到 HOME 下的 .cache
-#   ⇒ HOME 不可写会在**训练开始前**炸掉。这里是显式创建，不依赖任何库"自己会建"的隐性假设。
-mkdir -p "{CONTAINER_HOME_DIR}"
+# ★ 容器内**可写缓存/状态根**：先逐个建好，再逐个**预检可写性**（§2.3 边界校验即防呆）。
+#   清单与本文件顶部的 CONTAINER_CACHE_ROOTS 段**同源**（两者都由生成器的
+#   tests/e2e/generate_matrix.py::CONTAINER_CACHE_ROOTS 渲染，测试断言逐字节相同）。
+#   为什么必须显式建：容器进程以**宿主 uid** 运行（见 runner 的「产物属主」段），
+#   镜像里 root 的 HOME 与镜像 ENV 的 MODELSCOPE_CACHE（=/mnt/workspace/.cache/modelscope/hub，
+#   而 /mnt 是 root:root 0755）对这个 uid 都**不可写** ⇒ HF datasets / modelscope 数据集缓存 /
+#   triton·inductor 编译缓存在**训练开始前**就 PermissionError（228 实测：rank0 exit 1，
+#   宿主侧只看到"未找到任何 checkpoint-*"，因为训练一步都没跑）。
+#   ★ 预检的判据（本包要的"具体是哪个路径不可写"）：训练之前就把**变量名 + 路径**指名道姓
+#     地报出来（FATAL(cache-root)），而不是让 dataloader 在深处抛一个不含变量名的
+#     PermissionError；随后 fail-closed（exit 8），绝不静默放行到训练。
+CONTAINER_CACHE_ROOTS=(
+{cache_roots_array}
+)
+for CACHE_KV in "\\${{CONTAINER_CACHE_ROOTS[@]}}"; do
+    CACHE_DIR="\\${{CACHE_KV#*=}}"
+    if ! mkdir -p "\\$CACHE_DIR" 2>/dev/null || [ ! -w "\\$CACHE_DIR" ]; then
+        echo "FATAL(cache-root): 容器内缓存根不可写: \\$CACHE_KV" >&2
+        echo "  容器进程的 --user = $RUN_USER_DESC；HOME=\\$HOME" >&2
+        echo "  为什么 fail-closed：缓存根不可写 ⇒ 数据集/编译缓存落盘时 PermissionError，" >&2
+        echo "  那是「训练还没开始」的假失败（产物里只会看到「未找到任何 checkpoint-*」）。" >&2
+        echo "  修法：该变量须由 runner 的 CONTAINER_CACHE_ROOTS 指向宿主用户可写的目录。" >&2
+        exit 8
+    fi
+done
 "$CONTAINER_PY" /out/preflight_media.py "$TRAIN_PATH" || exit 3
 "$CONTAINER_PY" -m graspo record-gpu-memory --idle-only || exit 1
 # ★ 显存采样：**配置驱动**（宪法 §10.1；W3 起 CLI 上已无 --output-dir/--tag/--interval-sec，
@@ -2915,20 +3031,24 @@ DOCKER_ARGS=(
     -e PYTHONPATH=/workspace/graspo/src
     -e HF_HUB_OFFLINE=1
     -e TOKENIZERS_PARALLELISM=false
-    # ★ HOME / 缓存根（见 generate_matrix.py::CONTAINER_HOME_DIR 的单一真相源）：
-    #   非 root 进程写不了镜像里 root 的 /root ⇒ 必须显式给一个可写的 HOME，
-    #   否则 HF datasets / deepspeed 扩展 / triton 编译缓存在训练开始前就 PermissionError。
-    -e "HOME={CONTAINER_HOME_DIR}"
-    -e "XDG_CACHE_HOME={CONTAINER_HOME_DIR}/.cache"
-    -e "TORCHINDUCTOR_CACHE_DIR={CONTAINER_HOME_DIR}/.torchinductor"
-    -e "TRITON_CACHE_DIR={CONTAINER_HOME_DIR}/.triton"
-    # ★ USER/LOGNAME（见 generate_matrix.py::CONTAINER_USER_NAME 的单一真相源）：
+    # ★ 容器内**可写缓存/状态根**（清单见上面的 CONTAINER_CACHE_ROOTS 段，§1.4 单一真相源）：
+    #   非 root 进程既写不了镜像里 root 的 /root，也写不了镜像 ENV 写死的
+    #   MODELSCOPE_CACHE=/mnt/workspace/...（`/mnt` 是 root:root 0755）⇒ 必须逐个显式指到
+    #   可写根，否则 modelscope 数据集缓存 / HF 缓存 / triton·inductor 编译缓存在
+    #   **训练开始前**就 PermissionError（228 实测：rank0 exit 1，训练一步没跑）。
+    #   ★ 逐项由数组展开，本处**不写任何路径字面量** —— 根治"补了三个、漏了第四个"的漂移。
+    #   ★ USER/LOGNAME（见 generate_matrix.py::CONTAINER_USER_NAME 的单一真相源）：
     #   镜像 /etc/passwd 里没有宿主的这个 uid ⇒ `getpass.getuser()` 落到 pwd.getpwuid 会
     #   KeyError（ms-swift/deepspeed/wandb 启动横幅都调它）。给中性值兜住，同时避免把
     #   宿主账号名注入容器产物（§15.1/§16：账号名属环境信息）。
     -e "USER={CONTAINER_USER_NAME}"
     -e "LOGNAME={CONTAINER_USER_NAME}"
 )
+# ★ 可写缓存/状态根逐个 `-e` 注入（清单与上面 CONTAINER_CACHE_ROOTS 同源，§1.4）：
+#   展开成 `-e VAR=/path`，docker run 处不再出现任何缓存根字面量。
+for CACHE_KV in "${{CONTAINER_CACHE_ROOTS[@]}}"; do
+    DOCKER_ARGS+=(-e "$CACHE_KV")
+done
 for SPEC in "${{MOUNT_SPECS[@]}}"; do
     IFS='|' read -r SRC DST MODE <<< "$SPEC"
     if [ "$MODE" = "ro" ]; then
@@ -2937,6 +3057,9 @@ for SPEC in "${{MOUNT_SPECS[@]}}"; do
         DOCKER_ARGS+=(-v "$SRC:$DST")
     fi
 done
+# ★ 显式打印**实际注入**的缓存根清单（§2.2）：与 dry-run 用的是同一个函数、同一份清单，
+#   保证"预检看见的"和"真跑注入的"不可能不一致。
+print_cache_roots
 docker run "${{DOCKER_ARGS[@]}}" -w /workspace/graspo "$IMAGE" bash /entry.sh
 echo "$?" > "$RUN_DIR/exit_code"
 exit "$(cat "$RUN_DIR/exit_code")"
