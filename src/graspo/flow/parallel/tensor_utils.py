@@ -793,8 +793,16 @@ def _broadcast_and_pad_finished(
     # 只在 TP 组内广播 next_token，禁止落到默认 WORLD 组：DP=2+TP=2 下不同 DP
     # 组序列长度不同，WORLD 广播会让跨 DP 组 rank 发生 SeqNum 错位死锁
     # （§1.1 模块边界 / §2 防呆）。tp_group 为空（如单卡/pp 路径）时不做广播。
+    #
+    # 两个边界（228 实测 `T030` DP=4/TP=1 复现）：
+    # - **TP=1 时根本没有可广播的对端**：tp_group 只含本 rank 一个成员，广播是恒等
+    #   操作，直接跳过（省一次集合调用）；
+    # - **src 必须用组内 rank0 的全局 rank**，不能写死 `src=0`：DP>1 时每个 DP 副本
+    #   各有自己的 TP 组，只有 global rank 0 所在的那个组包含 0 ⇒ 其余副本会抛
+    #   ``ValueError: Global rank 0 is not part of group``（T030 rank2 逐字堆栈）。
     if dist.is_available() and dist.is_initialized() and tp_group is not None:
-        dist.broadcast(next_token, src=0, group=tp_group)
+        if dist.get_world_size(tp_group) > 1:
+            dist.broadcast(next_token, src=dist.get_global_rank(tp_group, 0), group=tp_group)
     return torch.where(finished, torch.full_like(next_token, pad_token_id), next_token)
 
 

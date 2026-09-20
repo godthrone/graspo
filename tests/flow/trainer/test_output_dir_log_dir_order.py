@@ -114,24 +114,31 @@ def test_overwrite_false_on_empty_dir_creates_and_logs(tmp_path: Path):
 
 
 def test_trainer_prepares_output_dir_before_building_logger():
-    """``train()`` 里 ``prepare_output_dir`` 必须出现在 ``_build_rollout_logger`` 之前。"""
+    """``train()`` 里的输出目录准备必须出现在 ``_build_rollout_logger`` 之前。
+
+    唯一入口自 task-ac1 起是 ``helpers.prepare_output_dir_once``（多 rank 安全：
+    只 rank0 清目录、其余 rank 等广播），它内部调用 ``lora_io.prepare_output_dir``。
+    """
     source = _train_source()
     body = source[source.index("    def train(self, *, smoke: bool = False)") :]
     end = body.index("\n    def ", 10)
     train_body = body[:end]
-    prepare_pos = train_body.index("prepare_output_dir(")
+    prepare_pos = train_body.index("prepare_output_dir_once(")
     logger_pos = train_body.index("_build_rollout_logger()")
     assert prepare_pos < logger_pos, (
-        "train() 里日志器重建出现在 prepare_output_dir 之前 ⇒ 阻断 B 复发"
+        "train() 里日志器重建出现在输出目录准备之前 ⇒ 阻断 B 复发"
     )
 
 
 def test_trainer_does_not_call_prepare_output_dir_twice():
-    """``prepare_output_dir`` 在 ``train()`` 里只能出现一次（第二次会删掉本轮 logs）。"""
+    """``train()`` 里只能有一次输出目录准备（第二次会删掉本轮 logs）。"""
     source = _train_source()
     body = source[source.index("    def train(self, *, smoke: bool = False)") :]
     end = body.index("\n    def ", 10)
     train_body = body[:end]
-    assert len(re.findall(r"prepare_output_dir\(", train_body)) == 1, (
-        "train() 里出现了多次 prepare_output_dir 调用 —— 第二次会 rmtree 掉本轮 logs"
+    assert len(re.findall(r"prepare_output_dir_once\(", train_body)) == 1, (
+        "train() 里出现了多次输出目录准备 —— 第二次会 rmtree 掉本轮 logs"
+    )
+    assert "prepare_output_dir(" not in train_body, (
+        "train() 里绕过唯一入口直接调 prepare_output_dir ⇒ 多 rank 并发 rmtree 竞态复发（RC-3）"
     )
