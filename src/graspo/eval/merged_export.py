@@ -146,9 +146,9 @@ def normalize_language_model_targets(targets: str | Iterable[str]) -> str | list
     """
     if isinstance(targets, str):
         # 顺序很重要：先试 regex 转义形态（更具体），再试字面形态。
-        return targets.replace(
-            MULTIMODAL_LANGUAGE_MODEL_PREFIX_REGEX, "model"
-        ).replace(MULTIMODAL_LANGUAGE_MODEL_PREFIX, "model.")
+        return targets.replace(MULTIMODAL_LANGUAGE_MODEL_PREFIX_REGEX, "model").replace(
+            MULTIMODAL_LANGUAGE_MODEL_PREFIX, "model."
+        )
 
     if not isinstance(targets, (list, tuple, set, frozenset)):
         raise ExportError(
@@ -205,9 +205,7 @@ def read_base_config(base_model_path: str | Path) -> dict[str, Any]:
     except json.JSONDecodeError as exc:
         raise ExportError(f"{config_path} is not valid JSON: {exc}") from None
     if not isinstance(payload, dict):
-        raise ExportError(
-            f"{config_path}: expected a JSON object, got {type(payload).__name__}"
-        )
+        raise ExportError(f"{config_path}: expected a JSON object, got {type(payload).__name__}")
     return payload
 
 
@@ -282,11 +280,7 @@ def _resolve_auto_model_class(transformers_module: Any, *, multimodal: bool) -> 
         ExportError: 候选类在当前 transformers 里一个都不存在（不猜、不回落，
             fail-closed —— 回落成纯文本类正是缺陷 D）。
     """
-    candidates = (
-        MULTIMODAL_AUTO_MODEL_CLASS_NAMES
-        if multimodal
-        else (TEXT_AUTO_MODEL_CLASS_NAME,)
-    )
+    candidates = MULTIMODAL_AUTO_MODEL_CLASS_NAMES if multimodal else (TEXT_AUTO_MODEL_CLASS_NAME,)
     for name in candidates:
         cls = getattr(transformers_module, name, None)
         if cls is not None:
@@ -482,8 +476,7 @@ def targets_use_language_model_namespace(targets: str | Iterable[str] | None) ->
         return False
     items = [targets] if isinstance(targets, str) else [str(item) for item in targets]
     return any(
-        MULTIMODAL_LANGUAGE_MODEL_PREFIX_REGEX in item
-        or MULTIMODAL_LANGUAGE_MODEL_PREFIX in item
+        MULTIMODAL_LANGUAGE_MODEL_PREFIX_REGEX in item or MULTIMODAL_LANGUAGE_MODEL_PREFIX in item
         for item in items
     )
 

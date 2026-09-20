@@ -262,18 +262,14 @@ def test_unset_tuner_type_and_lora_produce_identical_argv():
 
 def test_autotp_is_allowed_with_full_param():
     """全参入口落地后，AutoTP 的合法前置（全参）成立，启动前校验必须放行。"""
-    _validate_combinations(
-        _config(tuner_type="full", deepspeed="zero2", deepspeed_autotp_size=2)
-    )
+    _validate_combinations(_config(tuner_type="full", deepspeed="zero2", deepspeed_autotp_size=2))
 
 
 @pytest.mark.parametrize("raw", [None, "lora"])
 def test_autotp_is_still_rejected_without_full_param(raw):
     """非全参时 AutoTP 仍是非法组合（上游只支持全参），fail-closed 不放宽。"""
     with pytest.raises(ValueError, match="deepspeed_autotp_size"):
-        _validate_combinations(
-            _config(tuner_type=raw, deepspeed="zero2", deepspeed_autotp_size=2)
-        )
+        _validate_combinations(_config(tuner_type=raw, deepspeed="zero2", deepspeed_autotp_size=2))
 
 
 def test_validate_combinations_accepts_default_config():

@@ -144,6 +144,7 @@ def lora_target_preset(tier: dict[str, Any]) -> str:
         return "vision_common"
     return "language_safe"
 
+
 # ── 训练数据：ELAM V5（只读确认过结构，非占位符）────────────────────────────
 # 【实测确证】结构（数据根目录下）：
 #   data/train.jsonl    （6378 行）
@@ -214,10 +215,10 @@ FULL_MODE_NOTE = (
 # 为什么不是布尔：CPT/OPD 之前，"估算过预算"与"没得估"两件事被压进同一个 None；
 # OPD 引入了第三种情况——**确定性算式通过，但存在未测算的额外显存消费者（教师）**。
 # 混进 True 就是"为凑数放行"，混进 False 就是"把没测过的说成跑不了"。
-VERDICT_FEASIBLE = "feasible"      # 确定性算式 ≤ 预算，且无未测算的额外消费者
+VERDICT_FEASIBLE = "feasible"  # 确定性算式 ≤ 预算，且无未测算的额外消费者
 VERDICT_INFEASIBLE = "infeasible"  # 确定性算式已超预算 ⇒ 拒绝生成
 VERDICT_UNMEASURED = "unmeasured"  # 算式通过，但有未测算的额外消费者 ⇒ 不得声称"可行"
-VERDICT_BLOCKED = "blocked"        # 当前给不出配方（能力未落地 / 无分片手段）
+VERDICT_BLOCKED = "blocked"  # 当前给不出配方（能力未落地 / 无分片手段）
 #: ★ 合法终态（用户授权）：该档"确实不适用"——**不存在用户想要的那种配置**，不是"还没做"。
 #: 与 `blocked` 的区别：`blocked` = 现在给不出配方、能力落地后可能给得出；
 #: `not_applicable` = **给不出也不该给**（用户已拍板的口径下不存在该档的合法形态）。
@@ -607,9 +608,7 @@ def ms_swift_full_recipe(cards: int) -> dict[str, Any]:
     return {"deepspeed": "zero2", "deepspeed_autotp_size": 4}
 
 
-def estimate_config_per_card_gib(
-    tier: dict[str, Any], config: dict[str, Any]
-) -> tuple[float, str]:
+def estimate_config_per_card_gib(tier: dict[str, Any], config: dict[str, Any]) -> tuple[float, str]:
     """按**实际生成的配置**估算每卡显存需求，返回 (GiB, 算式依据)。
 
     校验的是"我们真正要产出的配置"而不是"我们以为的配方"——否则生成器漏配
@@ -719,9 +718,7 @@ def feasibility_verdict(tier: dict[str, Any]) -> tuple[str, str]:
     gib, basis = estimate_per_card_gib(tier)
     within_budget = gib <= CARD_BUDGET_GIB
     verdict_text = "可行" if within_budget else "估算超预算 ⇒ 判定不可靠（假设未实测）"
-    detail = (
-        f"估算每卡 {gib:.1f} GiB（预算 {CARD_BUDGET_GIB:g} GiB）⇒ {verdict_text}：{basis}"
-    )
+    detail = f"估算每卡 {gib:.1f} GiB（预算 {CARD_BUDGET_GIB:g} GiB）⇒ {verdict_text}：{basis}"
     if not within_budget:
         return VERDICT_INFEASIBLE, detail
     if str(tier["algorithm"]) == "OPD":

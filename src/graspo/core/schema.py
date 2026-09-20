@@ -223,8 +223,7 @@ class RewardConfig(BaseModel):
 
         if self.kind not in REWARD_REGISTRY:
             raise ValueError(
-                f"Unknown reward kind {self.kind!r}; "
-                f"available: {sorted(REWARD_REGISTRY)}"
+                f"Unknown reward kind {self.kind!r}; available: {sorted(REWARD_REGISTRY)}"
             )
         return self
 
@@ -444,13 +443,9 @@ class GpuMonitorConfig(BaseModel):
     @model_validator(mode="after")
     def _validate_positive_numbers(self) -> "GpuMonitorConfig":
         if self.interval_sec <= 0:
-            raise ValueError(
-                f"gpu_monitor.interval_sec must be > 0, got {self.interval_sec}"
-            )
+            raise ValueError(f"gpu_monitor.interval_sec must be > 0, got {self.interval_sec}")
         if self.recent_limit < 0:
-            raise ValueError(
-                f"gpu_monitor.recent_limit must be >= 0, got {self.recent_limit}"
-            )
+            raise ValueError(f"gpu_monitor.recent_limit must be >= 0, got {self.recent_limit}")
         return self
 
 
@@ -863,7 +858,7 @@ class EvalConfig(BaseModel):
                     f"eval.{field_name}={raw!r} is not absolute; artifact paths must be "
                     "absolute so that the output location does not depend on the process "
                     "cwd (a cwd-relative path silently lands somewhere else, or is lost "
-                    'entirely when that location is not mounted). Use e.g. '
+                    "entirely when that location is not mounted). Use e.g. "
                     f'"/abs/path/.local/eval/runs/<run>" instead.'
                 )
 
@@ -1109,9 +1104,7 @@ def _unwrap_optional_model(annotation: Any) -> Any:
     return _Unknown
 
 
-def _report_config_errors(
-    exc: Any, config_path: Path, config_cls: Any
-) -> None:
+def _report_config_errors(exc: Any, config_path: Path, config_cls: Any) -> None:
     """将 pydantic ValidationError 转成人类可读的错误信息。
 
     不输出原始 traceback，而是按字段分组，列出每个问题字段、

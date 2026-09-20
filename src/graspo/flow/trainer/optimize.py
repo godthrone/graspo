@@ -69,9 +69,7 @@ class OptimizeMixin:
             usable = 0
             data: list[Any] = []
         else:
-            usable = (
-                len(self.replay_buffer) if force else min(threshold, len(self.replay_buffer))
-            )
+            usable = len(self.replay_buffer) if force else min(threshold, len(self.replay_buffer))
             data = self.replay_buffer.take(usable)
         optimize_started_at = time.monotonic()
         metrics = self.runtime.train_batch(
@@ -95,9 +93,8 @@ class OptimizeMixin:
         metrics["replay_buffer_trainable_group_count"] = usable / max(
             int(self.config.training.rollout_group_size), 1
         )
-        metrics["effective_batch_size"] = (
-            int(self.config.native.micro_batch_size)
-            * int(self.config.training.gradient_accumulation_micro_batches)
+        metrics["effective_batch_size"] = int(self.config.native.micro_batch_size) * int(
+            self.config.training.gradient_accumulation_micro_batches
         )
         metrics["optimize_iterations_per_step"] = 1
         metrics["force_flush"] = bool(force)
@@ -121,9 +118,7 @@ class OptimizeMixin:
         elif save_period_min > 0:
             elapsed = time.monotonic() - self._last_checkpoint_time
             if elapsed >= save_period_min * 60:
-                checkpoint_dir = (
-                    Path(self.config.training.output_dir) / f"time_{self._timestamp()}"
-                )
+                checkpoint_dir = Path(self.config.training.output_dir) / f"time_{self._timestamp()}"
                 checkpoint_started_at = time.monotonic()
                 self._save_checkpoint(checkpoint_dir, epoch=epoch)
                 checkpoint_sec = time.monotonic() - checkpoint_started_at
@@ -131,7 +126,10 @@ class OptimizeMixin:
                 logging.getLogger("graspo.trainer").info(
                     "RL: time-based checkpoint saved at epoch=%d step=%d "
                     "(period=%d min, elapsed=%.1f min)",
-                    epoch, self.global_step, save_period_min, elapsed / 60.0,
+                    epoch,
+                    self.global_step,
+                    save_period_min,
+                    elapsed / 60.0,
                 )
         reward_window = reward_window_summary(self.recent_groups)
         health = training_health(metrics, reward_batch, reward_window)

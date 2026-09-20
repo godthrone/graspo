@@ -130,8 +130,7 @@ def test_flow_imports_ripple_is_documented():
     )
     # 上限宽松：允许增长但不允许爆炸（>100 则需检查）
     assert len(flow_ripple) <= 100, (
-        f"flow→ripple imports grew to {len(flow_ripple)} (>100); "
-        "check for unintended coupling"
+        f"flow→ripple imports grew to {len(flow_ripple)} (>100); check for unintended coupling"
     )
 
 
@@ -148,8 +147,7 @@ def test_ripple_does_not_import_flow():
             violations.append(f"  {edge.source}:{edge.lineno} imports {edge.target}")
 
     assert not violations, (
-        f"ripple/ must not import flow/ ({len(violations)} violations):\n"
-        + "\n".join(violations)
+        f"ripple/ must not import flow/ ({len(violations)} violations):\n" + "\n".join(violations)
     )
 
 
@@ -226,9 +224,8 @@ def test_no_circular_imports_detected():
             if tgt in graph and src in graph[tgt] and src < tgt:
                 cycles.append(f"  {src} ↔ {tgt}")
 
-    assert not cycles, (
-        f"cross-layer circular imports detected ({len(cycles)}):\n"
-        + "\n".join(cycles)
+    assert not cycles, f"cross-layer circular imports detected ({len(cycles)}):\n" + "\n".join(
+        cycles
     )
 
 

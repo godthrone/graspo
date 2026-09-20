@@ -299,9 +299,7 @@ def test_sft_multi_turn_history_is_rendered_not_dropped():
     """历史不静默丢弃：工具调用与工具返回以文本形式进入末轮 user。"""
     row = build_sft_rows([_elam_multi_turn()])[0]
     user_content = row["messages"][1]["content"]
-    text = "".join(
-        block["text"] for block in user_content if block.get("type") == "text"
-    )
+    text = "".join(block["text"] for block in user_content if block.get("type") == "text")
     assert "extend_arm" in text, "历史里的工具调用必须可见"
     assert "伸长手臂" in text, "工具调用参数必须可见"
     assert "OK" in text, "工具返回必须可见"

@@ -106,11 +106,16 @@ class _FakeAdapter:
     def __init__(self, prompt_len: int, n_placeholders: int) -> None:
         self._prompt_len = prompt_len
         self._n_placeholders = n_placeholders
-        self.model = type("M", (), {"config": type("C", (), {"image_token_id": self.IMAGE_TOKEN_ID})})()
+        self.model = type(
+            "M", (), {"config": type("C", (), {"image_token_id": self.IMAGE_TOKEN_ID})}
+        )()
         self.tokenizer = type(
             "T",
             (),
-            {"eos_token_id": 151645, "encode": lambda self, text, add_special_tokens=False: [10, 11]},
+            {
+                "eos_token_id": 151645,
+                "encode": lambda self, text, add_special_tokens=False: [10, 11],
+            },
         )()
         self.config = type("CFG", (), {"model": type("MC", (), {"chat_template_kwargs": None})})()
 
@@ -134,7 +139,15 @@ def _deferred_item(target_text: str = "<tool_call>ok</tool_call>") -> SFTTokeniz
     return SFTTokenized(
         metadata={},
         deferred_multimodal=type(
-            "D", (), {"prompt_messages": [{"role": "user", "content": [{"type": "image", "image": "/tmp/x.jpg"}]}], "tools": None, "target_text": target_text}
+            "D",
+            (),
+            {
+                "prompt_messages": [
+                    {"role": "user", "content": [{"type": "image", "image": "/tmp/x.jpg"}]}
+                ],
+                "tools": None,
+                "target_text": target_text,
+            },
         )(),
     )
 
@@ -144,13 +157,17 @@ def test_collate_sft_multimodal_raises_when_placeholders_truncated():
     adapter = _FakeAdapter(prompt_len=100, n_placeholders=80)
     item = _deferred_item()
     with pytest.raises(ValueError, match="max_prompt_length 截断了视觉占位符"):
-        collate_sft_multimodal_batch([item], torch.device("cpu"), adapter=adapter, max_seq_length=60)
+        collate_sft_multimodal_batch(
+            [item], torch.device("cpu"), adapter=adapter, max_seq_length=60
+        )
 
 
 def test_collate_sft_multimodal_ok_when_within_limit():
     """占位符完整保留时不报错。"""
     adapter = _FakeAdapter(prompt_len=100, n_placeholders=80)
     item = _deferred_item()
-    batch = collate_sft_multimodal_batch([item], torch.device("cpu"), adapter=adapter, max_seq_length=120)
+    batch = collate_sft_multimodal_batch(
+        [item], torch.device("cpu"), adapter=adapter, max_seq_length=120
+    )
     assert "input_ids" in batch
     assert "multimodal_inputs" in batch

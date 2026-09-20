@@ -92,10 +92,8 @@ def test_train_worker_dispatches_through_the_single_router(monkeypatch, train_me
 
 def test_train_worker_has_no_algorithm_branch():
     """★ 源码级守护：worker 里不得再出现按 ``train_method`` 的算法分支。"""
-    source = (_REPO_ROOT / "src" / "graspo" / "cli" / "train_worker.py").read_text(
-        encoding="utf-8"
-    )
-    assert 'resolve_backend_builder(selection.name, train_method=config.train_method)' in source
+    source = (_REPO_ROOT / "src" / "graspo" / "cli" / "train_worker.py").read_text(encoding="utf-8")
+    assert "resolve_backend_builder(selection.name, train_method=config.train_method)" in source
     # 旧分支形态（"非 sft 即 RL"）：出现即说明路由被复制回了调用方
     assert 'config.train_method == "sft"' not in source
     assert "create_trainer(" not in source
@@ -107,8 +105,8 @@ def test_msswift_rl_factory_does_not_route():
     路由只有一处（``core.discovery``）；后端实现按"哪个后端怎么跑"负责，
     不按"该走哪张注册表"负责（宪法 §1.1 模块边界 / §1.4 单一真相源）。
     """
-    source = (
-        _REPO_ROOT / "src" / "graspo" / "flow" / "msswift" / "trainer.py"
-    ).read_text(encoding="utf-8")
+    source = (_REPO_ROOT / "src" / "graspo" / "flow" / "msswift" / "trainer.py").read_text(
+        encoding="utf-8"
+    )
     assert "resolve_backend_builder" not in source
     assert "_REGISTRY_BY_TRAIN_METHOD" not in source

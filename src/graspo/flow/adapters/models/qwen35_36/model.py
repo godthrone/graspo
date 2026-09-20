@@ -235,8 +235,11 @@ class Qwen35HybridTextModel(QwenFamilyBase):
             pad_to = ((_sp_orig_seq_len + sp_size - 1) // sp_size) * sp_size
             if pad_to != _sp_orig_seq_len:
                 pad = torch.zeros(
-                    hidden_states.shape[0], pad_to - _sp_orig_seq_len, hidden_states.shape[2],
-                    dtype=hidden_states.dtype, device=hidden_states.device,
+                    hidden_states.shape[0],
+                    pad_to - _sp_orig_seq_len,
+                    hidden_states.shape[2],
+                    dtype=hidden_states.dtype,
+                    device=hidden_states.device,
                 )
                 hidden_states = torch.cat([hidden_states, pad], dim=1)
             hidden_states = _scatter_sp(hidden_states)
@@ -251,14 +254,17 @@ class Qwen35HybridTextModel(QwenFamilyBase):
         # SP: pad attention_mask to match padded sequence length (before position_ids)
         if self._use_sp and pad_to != _sp_orig_seq_len:
             pad_mask = torch.zeros(
-                attention_mask.shape[0], pad_to - _sp_orig_seq_len,
-                dtype=attention_mask.dtype, device=attention_mask.device,
+                attention_mask.shape[0],
+                pad_to - _sp_orig_seq_len,
+                dtype=attention_mask.dtype,
+                device=attention_mask.device,
             )
             attention_mask = torch.cat([attention_mask, pad_mask], dim=1)
             # Also pad input_ids for position computation (embedding uses original)
             pad_ids = torch.zeros(
                 (input_ids.shape[0], pad_to - _sp_orig_seq_len),
-                dtype=input_ids.dtype, device=input_ids.device,
+                dtype=input_ids.dtype,
+                device=input_ids.device,
             )
             input_ids = torch.cat([input_ids, pad_ids], dim=1)
         position_ids = self.compute_multimodal_position_ids(
@@ -266,7 +272,9 @@ class Qwen35HybridTextModel(QwenFamilyBase):
             attention_mask=attention_mask,
             multimodal_inputs=multimodal_inputs,
             past_key_values=past_key_values,
-            query_len=pad_to if (self._use_sp and pad_to != _sp_orig_seq_len) else int(input_ids.shape[1]),
+            query_len=pad_to
+            if (self._use_sp and pad_to != _sp_orig_seq_len)
+            else int(input_ids.shape[1]),
         )
         present_key_values: list[Any] = []
         for idx, layer in enumerate(self.layers):
@@ -584,8 +592,11 @@ class Qwen35HybridTextModel(QwenFamilyBase):
                 pad_to = ((_sp_orig_seq_len + sp_size - 1) // sp_size) * sp_size
                 if pad_to != _sp_orig_seq_len:
                     pad = torch.zeros(
-                        hidden_states.shape[0], pad_to - _sp_orig_seq_len, hidden_states.shape[2],
-                        dtype=hidden_states.dtype, device=hidden_states.device,
+                        hidden_states.shape[0],
+                        pad_to - _sp_orig_seq_len,
+                        hidden_states.shape[2],
+                        dtype=hidden_states.dtype,
+                        device=hidden_states.device,
                     )
                     hidden_states = torch.cat([hidden_states, pad], dim=1)
                 hidden_states = _scatter_sp(hidden_states)
@@ -609,14 +620,17 @@ class Qwen35HybridTextModel(QwenFamilyBase):
         # ── SP：补齐 attention_mask / position_input_ids（跨 stage 一致） ──
         if self._use_sp and pad_to != _sp_orig_seq_len:
             pad_mask = torch.zeros(
-                attention_mask.shape[0], pad_to - _sp_orig_seq_len,
-                dtype=attention_mask.dtype, device=attention_mask.device,
+                attention_mask.shape[0],
+                pad_to - _sp_orig_seq_len,
+                dtype=attention_mask.dtype,
+                device=attention_mask.device,
             )
             attention_mask = torch.cat([attention_mask, pad_mask], dim=1)
             if position_input_ids is not None:
                 pad_ids = torch.zeros(
                     (position_input_ids.shape[0], pad_to - _sp_orig_seq_len),
-                    dtype=position_input_ids.dtype, device=position_input_ids.device,
+                    dtype=position_input_ids.dtype,
+                    device=position_input_ids.device,
                 )
                 position_input_ids = torch.cat([position_input_ids, pad_ids], dim=1)
 

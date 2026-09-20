@@ -37,9 +37,7 @@ def register() -> None:
         ) from exc
 
     # 点分路径（ms-swift 的 get_cls 用 rsplit('.', 1) 切分模块与类名）
-    TrainerFactory.TRAINER_MAPPING["grpo"] = (
-        "graspo.flow.msswift.trainer.GraspoMsSwiftGRPOTrainer"
-    )
+    TrainerFactory.TRAINER_MAPPING["grpo"] = "graspo.flow.msswift.trainer.GraspoMsSwiftGRPOTrainer"
 
 
 if __name__ == "__main__":  # pragma: no cover - 供 --external_plugins 直接加载

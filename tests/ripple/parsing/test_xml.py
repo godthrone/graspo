@@ -10,16 +10,16 @@ from graspo.ripple.parsing.xml import build_sft_target_text, tool_calls_to_xml
     [
         (
             [{"name": "robot_atomic_control", "arguments": {"action": "左转", "distance_cm": 5}}],
-            '<tool_call>\n<function=robot_atomic_control>\n<parameter=action>\n左转\n</parameter>\n'
-            '<parameter=distance_cm>\n5\n</parameter>\n</function>\n</tool_call>',
+            "<tool_call>\n<function=robot_atomic_control>\n<parameter=action>\n左转\n</parameter>\n"
+            "<parameter=distance_cm>\n5\n</parameter>\n</function>\n</tool_call>",
         ),
         (
             [
                 {"name": "move", "arguments": {"action": "left"}},
                 {"name": "inspect", "arguments": {"object": "panel"}},
             ],
-            '<tool_call>\n<function=move>\n<parameter=action>\nleft\n</parameter>\n</function>\n'
-            '</tool_call>\n<tool_call>\n<function=inspect>\n<parameter=object>\npanel\n</parameter>\n'
+            "<tool_call>\n<function=move>\n<parameter=action>\nleft\n</parameter>\n</function>\n"
+            "</tool_call>\n<tool_call>\n<function=inspect>\n<parameter=object>\npanel\n</parameter>\n"
             "</function>\n</tool_call>",
         ),
     ],

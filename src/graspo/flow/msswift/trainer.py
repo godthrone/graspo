@@ -324,7 +324,9 @@ class GraspoMsSwiftGRPOTrainer(_MsSwiftGRPOTrainerBase):  # type: ignore[misc,va
             group_targets = list(targets[0])
             format_types = {_format_type(sample) for sample in group}
             if len(format_types) > 1:
-                self._warn_injection(f"mixed format_type within group {keys}: {sorted(format_types)}")
+                self._warn_injection(
+                    f"mixed format_type within group {keys}: {sorted(format_types)}"
+                )
                 continue
             annotations = [self._graspo_annotations[key] for key in keys]
             try:
@@ -338,11 +340,15 @@ class GraspoMsSwiftGRPOTrainer(_MsSwiftGRPOTrainerBase):  # type: ignore[misc,va
                     truncated_by_max=[bool(sample.is_truncated) for sample in group],
                 )
             except Exception as exc:  # noqa: BLE001 - 降级必须带可读原因（§13.1）
-                self._warn_injection(f"token advantage computation failed for group {keys}: {exc!r}")
+                self._warn_injection(
+                    f"token advantage computation failed for group {keys}: {exc!r}"
+                )
                 continue
 
             group_rewards = [rewards.get(key, 0.0) for key in keys]
-            content_scores = [1.0 if _is_structurally_annotated(ann) else 0.0 for ann in annotations]
+            content_scores = [
+                1.0 if _is_structurally_annotated(ann) else 0.0 for ann in annotations
+            ]
             best = max(range(len(keys)), key=lambda index: group_rewards[index])
             decision = self._graspo.classify_group(
                 group_rewards,
@@ -676,7 +682,9 @@ class MsSwiftRlTrainer:
         register_graspo_reward()
         notes = native_only_field_notes()
         for field in native_only_fields(self.config):
-            logger.warning("graspo: %s is not mapped by the msswift backend — %s", field, notes[field])
+            logger.warning(
+                "graspo: %s is not mapped by the msswift backend — %s", field, notes[field]
+            )
 
         output_dir = Path(str(self.config.training.output_dir))
         work_dir = output_dir / "msswift"
@@ -690,11 +698,16 @@ class MsSwiftRlTrainer:
         if smoke:
             # 冒烟要拿到 checkpoint 落盘证据，因此显式规定"每 1 步保存一次"。
             extra_argv += [
-                "--save_strategy", "steps",
-                "--save_steps", "1",
-                "--save_total_limit", "1",
-                "--logging_steps", "1",
-                "--log_completions", "true",
+                "--save_strategy",
+                "steps",
+                "--save_steps",
+                "1",
+                "--save_total_limit",
+                "1",
+                "--logging_steps",
+                "1",
+                "--log_completions",
+                "true",
             ]
         argv = graspo_to_ms_swift_argv(
             self.config,
@@ -782,7 +795,9 @@ def _group_rewards(
             weights = torch.as_tensor(weights, dtype=rewards_per_func.dtype)
         weighted = (rewards_per_func * weights.unsqueeze(0)).nansum(dim=1).tolist()
     except Exception:  # noqa: BLE001 - 奖励表形态异常时不让分类污染训练（§13.1 有痕降级）
-        logger.warning("graspo: could not reduce rewards_per_func to per-sample rewards", exc_info=True)
+        logger.warning(
+            "graspo: could not reduce rewards_per_func to per-sample rewards", exc_info=True
+        )
         return {}
     ordered = _global_sample_order(samples)
     if len(ordered) != len(weighted):

@@ -45,7 +45,9 @@ def _random_case(batch, seq, hidden_dim, vocab, seed=0):
 def _full_log_probs_reference(hidden, lm_head, labels, ignore_index=-100):
     """完整 logits 的参考实现（对拍基准）：log_softmax 后 gather。"""
     logits = F.linear(hidden.float(), lm_head.float())
-    log_probs = F.log_softmax(logits, dim=-1).gather(-1, labels.clamp(min=0).unsqueeze(-1)).squeeze(-1)
+    log_probs = (
+        F.log_softmax(logits, dim=-1).gather(-1, labels.clamp(min=0).unsqueeze(-1)).squeeze(-1)
+    )
     return log_probs.masked_fill(labels == ignore_index, 0.0)
 
 
@@ -62,9 +64,11 @@ def test_masked_token_log_probs_without_ignore_matches_full():
     """RL 场景：token_ids 无 -100（全有效）时结果与完整 logits 一致。"""
     hidden, lm_head, labels = _random_case(batch=2, seq=8, hidden_dim=32, vocab=70000)
     valid_ids = labels.clamp(min=0)
-    expected = F.log_softmax(F.linear(hidden.float(), lm_head.float()), -1).gather(
-        -1, valid_ids.unsqueeze(-1)
-    ).squeeze(-1)
+    expected = (
+        F.log_softmax(F.linear(hidden.float(), lm_head.float()), -1)
+        .gather(-1, valid_ids.unsqueeze(-1))
+        .squeeze(-1)
+    )
     actual = masked_token_log_probs_from_hidden(hidden, lm_head, valid_ids, ignore_index=-100)
     assert torch.allclose(actual, expected, atol=1e-4)
 

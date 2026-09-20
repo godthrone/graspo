@@ -109,7 +109,7 @@ def test_param_tag_missing_gt_e_at_gt_position() -> None:
     assert e_pos >= 0
     assert completion[e_pos] == "\n"  # E 在参数名后的换行（应出现 > 处）
     assert all(c == "S" for c in ann[:e_pos])  # 标签与参数名是正确结构
-    assert all(c == "D" for c in ann[e_pos + 1:])
+    assert all(c == "D" for c in ann[e_pos + 1 :])
 
 
 def test_param_tag_normal_line_still_works() -> None:

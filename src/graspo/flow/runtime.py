@@ -55,6 +55,7 @@ class TrainBatchMetrics(TypedDict, total=False):
     optimizer_steps: int
     sft_batch_count: int
 
+
 from graspo.core.discovery import _discover
 
 _AVAILABLE_ADAPTERS = tuple(_discover("graspo.adapters").keys())
@@ -384,9 +385,7 @@ class GraspoFlowRuntime(GraspoFlowRuntimeBase):
         return self._adapter
 
 
-def validate_native_runtime_config(
-    config: GraspoConfig, native_config: Any | None = None
-) -> None:
+def validate_native_runtime_config(config: GraspoConfig, native_config: Any | None = None) -> None:
     native = native_config or config.native
     if int(native.pp_size) < 1:
         raise ValueError("pp_size must be >= 1")
@@ -401,9 +400,7 @@ def validate_native_runtime_config(
     if int(native.pp_micro_batch_size) < 1:
         raise ValueError("native.pp_micro_batch_size must be >= 1")
     if int(native.micro_batch_size) < 1:
-        raise ValueError(
-            f"native.micro_batch_size must be >= 1, got {native.micro_batch_size}"
-        )
+        raise ValueError(f"native.micro_batch_size must be >= 1, got {native.micro_batch_size}")
     if config.training.resume_from_checkpoint and config.lora.adapter_path:
         raise ValueError("training.resume_from_checkpoint and lora.adapter_path cannot both be set")
     if int(native.pp_max_inflight_microbatches) < 0:

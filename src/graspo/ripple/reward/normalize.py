@@ -66,9 +66,7 @@ def _normalize_target(value: Any, index: int) -> dict[str, Any]:
     reasoning = output.get("reasoning")
     if reasoning is not None:
         if not isinstance(reasoning, str):
-            raise ValueError(
-                f"targets[{index}].output.reasoning must be a string when provided"
-            )
+            raise ValueError(f"targets[{index}].output.reasoning must be a string when provided")
         normalized_output["reasoning"] = reasoning or None
     return {"id": target_id, "output": normalized_output}
 

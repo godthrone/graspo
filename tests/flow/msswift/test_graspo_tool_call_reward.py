@@ -35,14 +35,10 @@ TOOL_CALL_TARGETS = [
 
 # 跨模型标准 JSON tool call 形态（ms-swift 采样出的模型输出）
 CORRECT_COMPLETION = (
-    "<tool_call>\n"
-    '{"name": "extend_arm", "arguments": {"action_type": "伸长手臂"}}\n'
-    "</tool_call>"
+    '<tool_call>\n{"name": "extend_arm", "arguments": {"action_type": "伸长手臂"}}\n</tool_call>'
 )
 WRONG_COMPLETION = (
-    "<tool_call>\n"
-    '{"name": "rotate_arm", "arguments": {"action_type": "顺时针旋转"}}\n'
-    "</tool_call>"
+    '<tool_call>\n{"name": "rotate_arm", "arguments": {"action_type": "顺时针旋转"}}\n</tool_call>'
 )
 PROSE_COMPLETION = "我需要把手臂伸长一点。"
 
@@ -73,8 +69,7 @@ def test_group_reward_variance_is_nonzero() -> None:
     group = [CORRECT_COMPLETION] * 4 + [PROSE_COMPLETION] * 4
     scores = _score(group)
     assert has_reward_variance(scores), (
-        f"组内 reward 无方差：{scores} ⇒ classify_group 必然判 RETRY/INVALID，"
-        "整组零 advantage"
+        f"组内 reward 无方差：{scores} ⇒ classify_group 必然判 RETRY/INVALID，整组零 advantage"
     )
 
 
@@ -93,8 +88,10 @@ def test_correct_groups_are_classified_as_trainable() -> None:
     group = [CORRECT_COMPLETION] * 4 + [PROSE_COMPLETION] * 4
     scores = _score(group)
     # content_scores 口径与 msswift trainer 一致：有结构标注 = 1.0
-    content_scores = [1.0 if "<tool_call>" in text else 0.0 for text in
-                      [CORRECT_COMPLETION] * 4 + [PROSE_COMPLETION] * 4]
+    content_scores = [
+        1.0 if "<tool_call>" in text else 0.0
+        for text in [CORRECT_COMPLETION] * 4 + [PROSE_COMPLETION] * 4
+    ]
     decision = classify_group(
         scores,
         content_scores,

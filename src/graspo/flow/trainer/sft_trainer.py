@@ -105,10 +105,10 @@ class SFTTrainer:
         )
 
     def train(self, *, smoke: bool = False) -> None:
-        """SFT 训练主入口。
-        """
+        """SFT 训练主入口。"""
         validate_native_runtime_config(self.config)
         from graspo.flow.lora.lora_io import prepare_output_dir
+
         output_dir = prepare_output_dir(
             self.config.training.output_dir,
             overwrite=self.config.training.overwrite_output_dir,
@@ -186,11 +186,11 @@ class SFTTrainer:
         _log.info(
             "SFT config: micro_batch_size=%d gradient_accumulation_micro_batches=%d "
             "effective_batch=%d max_epochs=%d lr=%.1e max_seq_len=%d",
-            mb, ga, effective_batch_size,
+            mb,
+            ga,
+            effective_batch_size,
             self.config.training.max_epochs,
-            self.config.training.effective_learning_rate(
-                dp_size=self.config.native.dp_size
-            ),
+            self.config.training.effective_learning_rate(dp_size=self.config.native.dp_size),
             self.config.data.max_prompt_length,
         )
 
@@ -228,6 +228,7 @@ class SFTTrainer:
                 if adapter.dp_size > 1:
                     import torch
                     import torch.distributed as dist
+
                     tp_state = adapter.tp_state
                     if tp_state is not None and tp_state.dp_group is not None:
                         n_batches = torch.tensor([len(batches)], device=tp_state.device)
@@ -334,7 +335,10 @@ class SFTTrainer:
                             _log.info(
                                 "SFT: time-based checkpoint saved at epoch=%d batch=%d "
                                 "step=%d (period=%d min)",
-                                epoch, batch_idx, self.global_step, save_period_min,
+                                epoch,
+                                batch_idx,
+                                self.global_step,
+                                save_period_min,
                             )
 
                 # epoch 结束 checkpoint
@@ -342,7 +346,9 @@ class SFTTrainer:
                     self.runtime.save_checkpoint(
                         output_dir / f"epoch_{epoch}",
                         trainer_state=self._sft_trainer_state(
-                            epoch=epoch, batch_idx=len(batches) - 1, is_epoch_end=True,
+                            epoch=epoch,
+                            batch_idx=len(batches) - 1,
+                            is_epoch_end=True,
                         ),
                     )
                     _last_checkpoint_time = time.monotonic()
@@ -382,7 +388,11 @@ class SFTTrainer:
         )
 
     def _sft_trainer_state(
-        self, *, epoch: int, batch_idx: int, is_epoch_end: bool = False,
+        self,
+        *,
+        epoch: int,
+        batch_idx: int,
+        is_epoch_end: bool = False,
     ) -> dict[str, Any]:
         """构建 SFT trainer state 字典，用于 checkpoint 保存。
 
@@ -428,8 +438,7 @@ class SFTTrainer:
         trainer_state = self.runtime.load_checkpoint(checkpoint_dir)
         if trainer_state is None:
             raise RuntimeError(
-                "SFT checkpoint is missing trainer_state; resume requires a "
-                "recoverable checkpoint"
+                "SFT checkpoint is missing trainer_state; resume requires a recoverable checkpoint"
             )
         fmt = trainer_state.get("format")
         if fmt is None:
@@ -449,9 +458,7 @@ class SFTTrainer:
             saved_epoch = int(trainer_state["epoch"])
             saved_batch_idx = int(trainer_state.get("batch_idx") or 0)
             is_epoch_end = bool(trainer_state.get("is_epoch_end") or False)
-            self.total_samples = int(
-                trainer_state.get("total_samples") or self.total_samples
-            )
+            self.total_samples = int(trainer_state.get("total_samples") or self.total_samples)
             if is_epoch_end:
                 # epoch 结束 checkpoint：该 epoch 已全部处理完，跳到下一 epoch
                 self._resume_epoch = saved_epoch + 1

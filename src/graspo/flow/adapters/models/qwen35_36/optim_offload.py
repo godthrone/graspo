@@ -131,9 +131,7 @@ class CpuOffloadedAdamW(torch.optim.AdamW):
                 "(AdamW is not defined for integer/bool tensors)."
             )
         use_pin = bool(pin_memory) and torch.cuda.is_available()
-        mirrors = [
-            torch.empty_like(param, device="cpu", pin_memory=use_pin) for param in params
-        ]
+        mirrors = [torch.empty_like(param, device="cpu", pin_memory=use_pin) for param in params]
         with torch.no_grad():
             for mirror, param in zip(mirrors, params):
                 mirror.copy_(param.detach())
@@ -214,9 +212,7 @@ class CpuOffloadedAdamW(torch.optim.AdamW):
         if not self._mirrors_aligned:
             self._align_mirrors_with_gpu_params()
         device = self._gpu_params[0].device
-        for mirror, buffer, gpu_param in zip(
-            self._mirrors, self._grad_buffers, self._gpu_params
-        ):
+        for mirror, buffer, gpu_param in zip(self._mirrors, self._grad_buffers, self._gpu_params):
             grad = gpu_param.grad
             if grad is None:
                 mirror.grad = None

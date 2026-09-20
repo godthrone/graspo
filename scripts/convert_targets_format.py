@@ -41,10 +41,12 @@ def convert_targets(targets: list) -> list:
     for t in targets:
         if is_json_string_target(t):
             parsed = json.loads(t)
-            converted.append({
-                "id": "expected",
-                "output": {"content": parsed},
-            })
+            converted.append(
+                {
+                    "id": "expected",
+                    "output": {"content": parsed},
+                }
+            )
         elif isinstance(t, dict):
             converted.append(t)
         else:

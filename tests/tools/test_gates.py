@@ -240,9 +240,9 @@ def test_consumer_mail_domain_is_classified_personal() -> None:
     assert gci.classify_identity("noreply@github.com", frozenset(), ()) is None
     assert gci.classify_identity("1+bot@users.noreply.github.com", frozenset(), ()) is None
     assert gci.classify_identity("dev@team.project", frozenset(), ("team.project",)) is None
-    assert (
-        gci.classify_identity("dev@team.project", frozenset(), ()) == "unexpected_identity"
-    ), "未本地声明的域名不得被放行（失败方向必须是收紧）"
+    assert gci.classify_identity("dev@team.project", frozenset(), ()) == "unexpected_identity", (
+        "未本地声明的域名不得被放行（失败方向必须是收紧）"
+    )
     # 脱敏：回显不得出现完整地址
     masked = gci.mask_email("dev@personal.example")
     assert "dev@personal.example" not in masked
@@ -262,6 +262,7 @@ def test_output_modes(tmp_path: Path) -> None:
 # 这三条用例是本轮修复的核心断言。没有它们，"新文件不被扫"这个缺口会静默复发，
 # 而缺口复发时门禁依然"全绿"——那正是 W1 交付时假绿的成因。
 
+
 def test_staged_new_file_with_pii_is_blocked(tmp_path: Path) -> None:
     """★ 构造一个"只暂存、未提交"的新文件（含假 PII）⇒ 门禁必须非 0 退出。
 
@@ -276,9 +277,7 @@ def test_staged_new_file_with_pii_is_blocked(tmp_path: Path) -> None:
     _git(repo, "add", "--", injected)  # ← 只暂存，**不 commit**
     assert (repo / injected).exists()
     proc = run_gate("pii", repo, "--tracked-only")
-    assert proc.returncode == 1, (
-        "暂存后未提交的新文件未被扫到（扫描面缺口复发）：\n" + proc.stdout
-    )
+    assert proc.returncode == 1, "暂存后未提交的新文件未被扫到（扫描面缺口复发）：\n" + proc.stdout
     assert injected in proc.stdout
     assert "personal_email" in proc.stdout
 

@@ -115,6 +115,7 @@ def test_none_optimizer_and_scheduler_safe():
 
 def test_scheduler_without_base_lrs_attribute_safe():
     """无 base_lrs 属性的调度器（非 LambdaLR）→ 跳过，不报错。"""
+
     class _PlainScheduler:  # noqa: N801 测试桩
         pass
 

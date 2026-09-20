@@ -187,9 +187,7 @@ def test_only_whitelisted_locations_hold_tracked_markdown():
             "this check runs on the dev machine, which has .git"
         )
 
-    violations = [
-        path for path in paths if not path.startswith(_ALLOWED_TRACKED_MD_PREFIXES)
-    ]
+    violations = [path for path in paths if not path.startswith(_ALLOWED_TRACKED_MD_PREFIXES)]
 
     assert not violations, (
         "tracked markdown must live under one of the whitelisted prefixes "

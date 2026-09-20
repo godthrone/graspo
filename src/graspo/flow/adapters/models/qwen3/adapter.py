@@ -465,9 +465,7 @@ class Qwen3Adapter(TransformerAdapter):
             "skipped_nonfinite": skipped_nonfinite,
             "loss_mean": loss_sum / optimizer_steps if optimizer_steps else None,
             "grad_norm_mean": grad_norm_sum / optimizer_steps if optimizer_steps else None,
-            **grad_count_event(
-                self.config.effective_tuner_type, count=nonzero_grad_count
-            ),
+            **grad_count_event(self.config.effective_tuner_type, count=nonzero_grad_count),
             **training_norm_event(
                 self.config.effective_tuner_type, before=norm_before, after=norm_after
             ),

@@ -99,7 +99,9 @@ def test_ppo_loss_gradcheck_partial_mask():
     assert log_probs.grad is not None
     # 被 mask 的 token 梯度应为 0（mask=False 的位置）
     masked_positions = ~action_mask
-    assert torch.allclose(log_probs.grad[masked_positions], torch.zeros_like(log_probs.grad[masked_positions]))
+    assert torch.allclose(
+        log_probs.grad[masked_positions], torch.zeros_like(log_probs.grad[masked_positions])
+    )
     # 未 mask 的 token 梯度非零（有 nonzero advantage）
     assert (log_probs.grad[action_mask] != 0.0).any()
 

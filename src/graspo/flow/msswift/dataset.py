@@ -520,8 +520,7 @@ def build_cpt_rows(samples: list[Any], *, config: Any = None) -> list[dict[str, 
             if target_text.strip():
                 blocks.append({"type": "text", "text": target_text})
         if not any(
-            block.get("type") == "text" and str(block.get("text") or "").strip()
-            for block in blocks
+            block.get("type") == "text" and str(block.get("text") or "").strip() for block in blocks
         ):
             raise ValueError(
                 f"samples[{index}] produced no plain text; refusing to write an empty "
@@ -605,9 +604,7 @@ def prepare_ms_swift_dataset(
     }
     builder = builders.get(stage)
     if builder is None:
-        raise ValueError(
-            f"stage must be one of {sorted(builders)}, got {stage!r}"
-        )
+        raise ValueError(f"stage must be one of {sorted(builders)}, got {stage!r}")
     rows = builder(samples, config=config)
     target = Path(work_dir) / f"ms_swift_{stage}.jsonl"
     write_rows(target, rows)

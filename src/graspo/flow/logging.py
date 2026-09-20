@@ -103,7 +103,7 @@ def run_log_id(run_name: str) -> str:
     """
     text = str(run_name or "").strip()
     if text.startswith("graspo_"):
-        stamp = text[len("graspo_"):]
+        stamp = text[len("graspo_") :]
         if len(stamp) == 15 and stamp[8] == "_":
             return f"{stamp[:8]}-{stamp[9:]}"
     return text or datetime.datetime.now().strftime("%Y%m%d-%H%M%S")

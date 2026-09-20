@@ -72,7 +72,15 @@ def _make_engine_stub(record: list[list[int]] | None = None) -> type:
     class TransformersEngine:  # noqa: N801 - 名称必须与上游一致（被包装的判据）
         _graspo_test_record: list[list[int]] = [] if record is None else record
 
-        def infer(self, infer_requests, request_config=None, metrics=None, *, use_tqdm=None, adapter_request=None):
+        def infer(
+            self,
+            infer_requests,
+            request_config=None,
+            metrics=None,
+            *,
+            use_tqdm=None,
+            adapter_request=None,
+        ):
             probs = torch.ones(_VOCAB, dtype=torch.float32) / _VOCAB
             tokens = torch.multinomial(probs, _STEP_TOKENS, replacement=True).tolist()
             type(self)._graspo_test_record.append(tokens)
