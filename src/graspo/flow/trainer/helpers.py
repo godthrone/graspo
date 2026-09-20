@@ -8,6 +8,7 @@ ripple/ 对应模块。
 
 import logging
 import random
+from pathlib import Path
 from datetime import datetime
 from typing import Any
 
@@ -141,3 +142,80 @@ def raw_generation_payload(generation: Any) -> dict[str, Any]:
         "action_mask": generation.action_mask,
         "prompt_len": generation.prompt_len,
     }
+
+
+# ── 输出目录准备（多 rank 安全，唯一入口）─────────────────────────────────────
+
+#: 广播失败信息的定长字节数（够放 prepare_output_dir 的完整可操作报错）。
+_ERROR_MESSAGE_BYTES = 4096
+
+
+def prepare_output_dir_once(
+    output_dir: Any,
+    *,
+    overwrite: bool,
+    is_primary: bool,
+) -> Any:
+    """准备输出目录：**只有 primary rank 清目录，其余 rank 等它做完**（§1.4 唯一入口）。
+
+    缺陷（228 实测 `T030` run2）：每个 rank 在 ``train()`` 开头各自调用
+    ``prepare_output_dir(overwrite=True)`` ⇒ 4 个 rank **并发** ``shutil.rmtree``
+    同一个目录，rank3 在 ``shutil._rmtree_safe_fd`` 里 ``os.lstat`` 到已被别的
+    rank 删掉的目录 ⇒ ``FileNotFoundError: PosixPath('/out/T030')``。
+
+    修法（**不是**"各 rank 各删一次"，那只是把竞态窗口缩窄）：
+    - 只由 primary rank（``is_primary``，即全局 rank 0）执行破坏性清目录（§2.4）；
+    - 其余 rank 在 ``dist.broadcast`` 上等待它完成——广播本身就是"清目录已完成"
+      的同步点，因此没有任何 rank 会在 ``rmtree`` 窗口内建目录（阻断 B 的老问题
+      也不会以多 rank 形态复发）；
+    - 单卡或进程组未初始化时退化为直接调用 ``prepare_output_dir``，行为与旧实现
+      逐字相同；
+    - primary 的失败（含 ``overwrite=False`` 且目录非空）连同**原始报错文本**
+      一起广播，全体 rank 抛同类异常 ⇒ fail-closed，且非主 rank **不会**在集合点
+      上干等到 NCCL 看门狗超时（§2.3 边界校验即防呆）。
+
+    语义不变：``overwrite=True`` 仍然清掉上次的全部产物；``overwrite=False`` 且
+    目录非空仍然 ``FileExistsError``（预授权退路 §3.3）。
+    """
+    from graspo.flow.lora.lora_io import prepare_output_dir
+
+    import torch
+    import torch.distributed as dist
+
+    distributed = dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1
+    if not distributed:
+        return prepare_output_dir(output_dir, overwrite=overwrite)
+
+    device = (
+        torch.device("cuda", torch.cuda.current_device())
+        if torch.cuda.is_available()
+        else torch.device("cpu")
+    )
+    # 0=成功；1=目录非空且未授权覆盖（FileExistsError）；2=其他异常
+    status = torch.zeros(1, dtype=torch.int32, device=device)
+    message = torch.zeros(_ERROR_MESSAGE_BYTES, dtype=torch.uint8, device=device)
+    if is_primary:
+        try:
+            prepare_output_dir(output_dir, overwrite=overwrite)
+        except FileExistsError as exc:
+            status.fill_(1)
+            payload = str(exc).encode("utf-8")[:_ERROR_MESSAGE_BYTES]
+            message[: len(payload)] = torch.frombuffer(bytearray(payload), dtype=torch.uint8).to(
+                device
+            )
+        except Exception as exc:  # noqa: BLE001 —— 必须把失败带给所有 rank，避免其干等
+            status.fill_(2)
+            payload = f"{type(exc).__name__}: {exc}".encode("utf-8")[:_ERROR_MESSAGE_BYTES]
+            message[: len(payload)] = torch.frombuffer(bytearray(payload), dtype=torch.uint8).to(
+                device
+            )
+    dist.broadcast(status, src=0)
+    dist.broadcast(message, src=0)
+    code = int(status.item())
+    if code == 1:
+        raise FileExistsError(bytes(message.tolist()).decode("utf-8", "replace").rstrip("\x00"))
+    if code == 2:
+        raise RuntimeError(
+            "rank0 准备输出目录失败：" + bytes(message.tolist()).decode("utf-8", "replace").rstrip("\x00")
+        )
+    return Path(output_dir)

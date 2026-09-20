@@ -2,6 +2,10 @@
 
 从 training_sft.py 拆出（mixin 豁免面收窄）：SFT batch collation 系列函数。
 依赖通过参数注入（adapter、device），无模块级状态。
+
+另承载**rollout/生成边界**的两条共用口径（单一真相源 §1.4）：
+``resolve_stop_token_ids``（停止 token）与 ``rollout_chat_template_kwargs``
+（chat 模板参数，默认关闭 thinking）。
 """
 
 from typing import Any
@@ -9,6 +13,102 @@ from typing import Any
 import torch
 
 from graspo.ripple.data import SFTTokenized
+
+#: 停止 token 的**唯一来源**：chat 回合结束符。
+#: Qwen3 系列 chat 模板以 ``<|im_end|>`` 收尾；某些模型它的 id 与
+#: ``tokenizer.eos_token_id`` 不同（那时只比较后者会「停不下来」）。
+CHAT_TURN_END_TOKEN = "<|im_end|>"
+
+
+def resolve_stop_token_ids(tokenizer: Any) -> list[int]:
+    """解析本次生成必须停下的 token id 列表（**单一真相源**）。
+
+    判据（为什么既不停不下来、也不停得太早）：
+
+    - 取 ``tokenizer.eos_token_id``（可能是单个 int，也可能是 list——HF 允许
+      多结束符，如 ``[151643, 151645]``），两种形态都接受；
+    - 再补上 chat 模板的回合结束符 ``<|im_end|>``，**但必须是词表里的真 token**
+      （用 ``convert_ids_to_tokens`` 反向核对，避免 tokenizer 把它映射到
+      unk/0 而误停）；
+    - 二者相同时去重（本矩阵的 Qwen3.5-9B 实测：``eos_token='<|im_end|>'`` ⇒
+      248046 == 248046，故行为与旧实现逐字相同）；
+    - **不**把 ``pad_token``（本模型是 ``<|endoftext|>``=248044）当结束符：把它
+      当结束符会在左 padding 行上立刻「停」（停得太早），pad 与 eos 的语义必须
+      分开（见 generation.py 的 ``pad_token_id`` 解析）；
+    - 解析不出任何 id ⇒ fail-closed 报错（§2.3），绝不静默退化成「永不停止」。
+    """
+    raw = getattr(tokenizer, "eos_token_id", None)
+    ids: list[int] = []
+    if isinstance(raw, (list, tuple)):
+        ids.extend(int(value) for value in raw if value is not None)
+    elif raw is not None:
+        ids.append(int(raw))
+    candidate = tokenizer.convert_tokens_to_ids(CHAT_TURN_END_TOKEN)
+    if (
+        isinstance(candidate, int)
+        and candidate >= 0
+        and tokenizer.convert_ids_to_tokens(candidate) == CHAT_TURN_END_TOKEN
+        and candidate not in ids
+    ):
+        ids.append(candidate)
+    if not ids:
+        raise ValueError(
+            "无法解析停止 token：tokenizer.eos_token_id 为空且词表中没有 "
+            f"{CHAT_TURN_END_TOKEN}；请检查模型目录的 tokenizer_config.json。"
+        )
+    return ids
+
+
+def stop_ids_tensor(tokenizer: Any, device: torch.device | str) -> torch.Tensor:
+    """把 :func:`resolve_stop_token_ids` 的结果固化为 1-D 张量（decode 热路径只比一次）。"""
+    return torch.tensor(resolve_stop_token_ids(tokenizer), dtype=torch.long, device=device)
+
+
+def apply_stop_mask(
+    finished: torch.Tensor,
+    next_token: torch.Tensor,
+    stop_token_ids: int | list[int] | torch.Tensor,
+) -> torch.Tensor:
+    """把「本轮采样是否命中任一停止 token」并入 ``finished``（**唯一的判据实现**）。
+
+    单 id（int）与多 id（list / 1-D 张量）两种形态都支持；返回新的 ``finished``，
+    不原地改写，避免调用点各自写一份比较逻辑（§1.4 单一真相源）。
+    """
+    if isinstance(stop_token_ids, torch.Tensor):
+        if stop_token_ids.ndim == 0:
+            return finished | next_token.eq(stop_token_ids)
+        return finished | (next_token.unsqueeze(1) == stop_token_ids.reshape(1, -1)).any(dim=1)
+    if isinstance(stop_token_ids, (list, tuple)):
+        comparator = torch.tensor(
+            [int(value) for value in stop_token_ids],
+            dtype=next_token.dtype,
+            device=next_token.device,
+        )
+        return finished | (next_token.unsqueeze(1) == comparator.reshape(1, -1)).any(dim=1)
+    return finished | next_token.eq(int(stop_token_ids))
+
+
+def rollout_chat_template_kwargs(
+    chat_template_kwargs: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """rollout / SFT 共用的 chat 模板参数（**单一真相源**）。
+
+    默认 ``enable_thinking=False``：Qwen3.5 的 chat 模板在 assistant 回合默认渲染
+    ``'<|im_start|>assistant\\n thinking\\n'`` ⇒ 模型先产出一大段 CoT，在
+    ``training.max_new_tokens`` 上限处被生生切断，``<|im_end|>`` 永不出现：
+    decode「停不下来」、每条 completion 都被截断、解析失败 ⇒ rollout 空转。
+    （228 实测 T028：11,544 次 forward / 674 s 未走完一个 rollout queue；
+    E1 复现：32-token 上限下 completion 全部撞上限、全部判 retry。）
+
+    SFT 侧早已如此（``collate_sft_multimodal_batch`` 与 ``sft_tokenize_text``
+    都 ``setdefault("enable_thinking", False)``），rollout 侧此前漏了这一步
+    ⇒ 两侧口径不一致。本函数把这条口径收敛到一处。
+
+    配置显式给出 ``enable_thinking`` 时以配置为准（透明退路 §3.2，不静默覆盖用户值）。
+    """
+    kwargs = dict(chat_template_kwargs or {})
+    kwargs.setdefault("enable_thinking", False)
+    return kwargs
 
 
 def collate_sft_batch(
@@ -100,11 +200,10 @@ def collate_sft_multimodal_batch(
     # 修复：不再一次性批量编码所有样本，避免 processor.apply_chat_template
     # 在 4 张 720P 图（batch=2 双目）时 CPU 预处理阻塞 → NCCL 超时。
     # 逐个编码后拼接 pixel_values/image_grid_thw，vision encoder forward 仍批量处理。
-    # SFT 禁用 thinking：与 sft_tokenize_text 的 setdefault("enable_thinking", False) 一致
+    # SFT 禁用 thinking：与 rollout 共用同一条口径（rollout_chat_template_kwargs，§1.4 单一真相源）
     from torch.nn.utils.rnn import pad_sequence as _pad_sequence
 
-    chat_template_kwargs = dict(adapter.config.model.chat_template_kwargs or {})
-    chat_template_kwargs.setdefault("enable_thinking", False)
+    chat_template_kwargs = rollout_chat_template_kwargs(adapter.config.model.chat_template_kwargs)
 
     all_prompt_ids: list[torch.Tensor] = []
     all_prompt_masks: list[torch.Tensor] = []

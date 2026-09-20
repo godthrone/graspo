@@ -138,15 +138,16 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
         # - ``overwrite_output_dir: false``：非空目录仍抛 ``FileExistsError``
         #   （fail-closed 防线，行为逐字不变）；
         # - ``resume_from_checkpoint`` 时仍按原逻辑跳过 overwrite（目录必须存在）。
-        from graspo.flow.lora.lora_io import prepare_output_dir
+        from graspo.flow.trainer.helpers import prepare_output_dir_once
 
-        output_dir = prepare_output_dir(
+        output_dir = prepare_output_dir_once(
             self.config.training.output_dir,
             overwrite=(
                 self.config.training.overwrite_output_dir
                 if not self.config.training.resume_from_checkpoint
                 else False  # resume 时跳过 overwrite 检查（目录必须存在）
             ),
+            is_primary=self._is_primary(),
         )
         # 输出目录此刻为空且稳定 ⇒ 日志目录（``__init__`` 里建的已被 rmtree 掉，
         # 且这是新一次 launch）可以安全地建在同一棵树里。目录名仍是

@@ -9,6 +9,11 @@ import torch.distributed as dist
 from torch.nn.utils.rnn import pad_sequence
 
 from graspo.core.schema import Sample
+from graspo.flow.adapters.models.qwen35_36.helpers import (
+    apply_stop_mask,
+    rollout_chat_template_kwargs,
+    stop_ids_tensor,
+)
 from graspo.flow.adapters.models.qwen35_36.model import Qwen35HybridTextModel
 from graspo.flow.adapters.multimodal_tensors import (
     _compute_multimodal_offset_tables,
@@ -52,6 +57,8 @@ class _Qwen35GenerationMethods:
         assert self.model is not None
         assert self.tokenizer is not None
         tool_batches = _normalize_tool_batches(tool_batches, len(message_batches))
+        # chat 模板参数唯一归一（默认关闭 thinking，§1.4/§2.2）
+        chat_template_kwargs = rollout_chat_template_kwargs(chat_template_kwargs)
         if self._is_pipeline_parallel():
             return self._pipeline_generate_groups(
                 message_batches=message_batches,
@@ -79,9 +86,12 @@ class _Qwen35GenerationMethods:
         )
         tokenize_sec = time.monotonic() - tokenize_started_at
         rollout_started_at = time.monotonic()
-        eos_token_id = int(self.tokenizer.eos_token_id)
+        # 停止 token 的唯一来源；pad 与 eos 语义显式分开（§2.2）
+        stop_token_ids = stop_ids_tensor(self.tokenizer, self.device)
         pad_token_id = int(
-            self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else eos_token_id
+            self.tokenizer.pad_token_id
+            if self.tokenizer.pad_token_id is not None
+            else stop_token_ids[0].item()
         )
         prompt_input_ids, prompt_lens = _left_pad_token_rows(
             encoded["input_ids"],
@@ -131,7 +141,7 @@ class _Qwen35GenerationMethods:
                         sequences, chunk_timing = self._generate_group_with_kv_cache(
                             sequences=sequences,
                             finished=finished,
-                            eos_token_id=eos_token_id,
+                            stop_token_ids=stop_token_ids,
                             pad_token_id=pad_token_id,
                             max_new_tokens=max_new_tokens,
                             temperature=temperature,
@@ -141,7 +151,7 @@ class _Qwen35GenerationMethods:
                         sequences, chunk_timing = self._generate_group_full_forward(
                             sequences=sequences,
                             finished=finished,
-                            eos_token_id=eos_token_id,
+                            stop_token_ids=stop_token_ids,
                             pad_token_id=pad_token_id,
                             max_new_tokens=max_new_tokens,
                             temperature=temperature,
@@ -213,6 +223,8 @@ class _Qwen35GenerationMethods:
             raise ValueError(
                 "generate_sample_groups expects every sample to contain image/video media"
             )
+        # chat 模板参数唯一归一（默认关闭 thinking，§1.4/§2.2）
+        chat_template_kwargs = rollout_chat_template_kwargs(chat_template_kwargs)
         if self._is_pipeline_parallel():
             return self._pipeline_generate_multimodal_groups(
                 samples=samples,
@@ -240,7 +252,7 @@ class _Qwen35GenerationMethods:
         *,
         sequences: torch.Tensor,
         finished: torch.Tensor,
-        eos_token_id: int,
+        stop_token_ids: torch.Tensor,
         pad_token_id: int,
         max_new_tokens: int,
         temperature: float,
@@ -277,7 +289,7 @@ class _Qwen35GenerationMethods:
             )
             sequences = torch.cat([sequences, next_token.unsqueeze(1)], dim=1)
             decode_tokens += 1
-            finished |= next_token.eq(eos_token_id)
+            finished = apply_stop_mask(finished, next_token, stop_token_ids)
             self._sync_timing()
             stop_check_started_at = time.monotonic()
             all_finished = bool(finished.all())
@@ -306,7 +318,7 @@ class _Qwen35GenerationMethods:
         *,
         sequences: torch.Tensor,
         finished: torch.Tensor,
-        eos_token_id: int,
+        stop_token_ids: torch.Tensor,
         pad_token_id: int,
         max_new_tokens: int,
         temperature: float,
@@ -334,7 +346,7 @@ class _Qwen35GenerationMethods:
             )
             sequences = torch.cat([sequences, next_token.unsqueeze(1)], dim=1)
             decode_tokens += 1
-            finished |= next_token.eq(eos_token_id)
+            finished = apply_stop_mask(finished, next_token, stop_token_ids)
             self._sync_timing()
             stop_check_started_at = time.monotonic()
             all_finished = bool(finished.all())
@@ -399,12 +411,13 @@ class _Qwen35GenerationMethods:
         attention_mask = encoded["attention_mask"].to(self.device).bool()
         prompt_len = int(input_ids.shape[1])
         prompt_lens = [int(mask.sum().item()) for mask in attention_mask]
+        # 停止 token 的唯一来源；pad 与 eos 语义显式分开（§2.2）
+        stop_token_ids = stop_ids_tensor(self.tokenizer, self.device)
         pad_token_id = int(
             self.tokenizer.pad_token_id
             if self.tokenizer.pad_token_id is not None
-            else self.tokenizer.eos_token_id
+            else stop_token_ids[0].item()
         )
-        eos_token_id = int(self.tokenizer.eos_token_id)
         rollout_started_at = time.monotonic()
         use_kv_cache = bool(self.config.native.use_kv_cache_for_rollout) and bool(
             getattr(self.model, "supports_kv_cache", True)
@@ -480,7 +493,7 @@ class _Qwen35GenerationMethods:
                             attention_mask=current_attention_mask,
                             multimodal_inputs=current_mm_inputs,
                             finished=finished,
-                            eos_token_id=eos_token_id,
+                            stop_token_ids=stop_token_ids,
                             pad_token_id=pad_token_id,
                             max_new_tokens=max_new_tokens,
                             temperature=temperature,
@@ -491,7 +504,7 @@ class _Qwen35GenerationMethods:
                             sequences=current_input_ids,
                             multimodal_inputs=current_mm_inputs,
                             finished=finished,
-                            eos_token_id=eos_token_id,
+                            stop_token_ids=stop_token_ids,
                             pad_token_id=pad_token_id,
                             max_new_tokens=max_new_tokens,
                             temperature=temperature,
@@ -550,7 +563,7 @@ class _Qwen35GenerationMethods:
         attention_mask: torch.Tensor,
         multimodal_inputs: dict[str, torch.Tensor],
         finished: torch.Tensor,
-        eos_token_id: int,
+        stop_token_ids: torch.Tensor,
         pad_token_id: int,
         max_new_tokens: int,
         temperature: float,
@@ -591,7 +604,7 @@ class _Qwen35GenerationMethods:
             )
             sequences = torch.cat([sequences, next_token.unsqueeze(1)], dim=1)
             decode_tokens += 1
-            finished |= next_token.eq(eos_token_id)
+            finished = apply_stop_mask(finished, next_token, stop_token_ids)
             self._sync_timing()
             stop_check_started_at = time.monotonic()
             all_finished = bool(finished.all())
@@ -622,7 +635,7 @@ class _Qwen35GenerationMethods:
         sequences: torch.Tensor,
         multimodal_inputs: dict[str, torch.Tensor],
         finished: torch.Tensor,
-        eos_token_id: int,
+        stop_token_ids: torch.Tensor,
         pad_token_id: int,
         max_new_tokens: int,
         temperature: float,
@@ -662,7 +675,7 @@ class _Qwen35GenerationMethods:
             )
             sequences = torch.cat([sequences, next_token.unsqueeze(1)], dim=1)
             decode_tokens += 1
-            finished |= next_token.eq(eos_token_id)
+            finished = apply_stop_mask(finished, next_token, stop_token_ids)
             self._sync_timing()
             stop_check_started_at = time.monotonic()
             all_finished = bool(finished.all())
@@ -730,7 +743,7 @@ class _Qwen35GenerationMethods:
         attention_mask: torch.Tensor,
         multimodal_inputs: dict[str, torch.Tensor] | None,
         finished: torch.Tensor,
-        eos_token_id: int,
+        stop_token_ids: torch.Tensor,
         pad_token_id: int,
         max_new_tokens: int,
         temperature: float,
@@ -773,7 +786,6 @@ class _Qwen35GenerationMethods:
         decode_tokens = 0
         sampling_sec = 0.0
         stop_check_sec = 0.0
-        eos_tensor = torch.full((batch,), eos_token_id, dtype=torch.long, device=self.device)
         for _ in range(max_new_tokens):
             self._sync_timing()
             if is_last:
@@ -796,7 +808,7 @@ class _Qwen35GenerationMethods:
             )
             sequences = torch.cat([sequences, next_token.unsqueeze(1)], dim=1)
             decode_tokens += 1
-            finished = finished | next_token.eq(eos_tensor)
+            finished = apply_stop_mask(finished, next_token, stop_token_ids)
             self._sync_timing()
             stop_check_started_at = time.monotonic()
             all_finished = bool(finished.all().detach().cpu())
@@ -853,12 +865,13 @@ class _Qwen35GenerationMethods:
         encoded = self.tokenizer(
             prompt_texts, truncation=True, max_length=max_prompt_length, padding=False
         )
+        # 停止 token 的唯一来源；pad 与 eos 语义显式分开（§2.2）
+        stop_token_ids = stop_ids_tensor(self.tokenizer, self.device)
         pad_token_id = int(
             self.tokenizer.pad_token_id
             if self.tokenizer.pad_token_id is not None
-            else self.tokenizer.eos_token_id
+            else stop_token_ids[0].item()
         )
-        eos_token_id = int(self.tokenizer.eos_token_id)
         prompt_input_ids, _prompt_lens = _left_pad_token_rows(
             encoded["input_ids"], pad_token_id=pad_token_id, device=self.device
         )
@@ -877,7 +890,7 @@ class _Qwen35GenerationMethods:
                     attention_mask=attention_mask,
                     multimodal_inputs=None,
                     finished=finished,
-                    eos_token_id=eos_token_id,
+                    stop_token_ids=stop_token_ids,
                     pad_token_id=pad_token_id,
                     max_new_tokens=max_new_tokens,
                     temperature=temperature,
@@ -952,12 +965,13 @@ class _Qwen35GenerationMethods:
         attention_mask = encoded["attention_mask"].to(self.device).bool()
         prompt_len = int(input_ids.shape[1])
         prompt_lens = [int(mask.sum().item()) for mask in attention_mask]
+        # 停止 token 的唯一来源；pad 与 eos 语义显式分开（§2.2）
+        stop_token_ids = stop_ids_tensor(self.tokenizer, self.device)
         pad_token_id = int(
             self.tokenizer.pad_token_id
             if self.tokenizer.pad_token_id is not None
-            else self.tokenizer.eos_token_id
+            else stop_token_ids[0].item()
         )
-        eos_token_id = int(self.tokenizer.eos_token_id)
         multimodal_inputs = self._multimodal_inputs_to_device(encoded)
         image_offsets, patch_offsets, video_offsets, video_patch_offsets = (
             _compute_multimodal_offset_tables(
@@ -1009,7 +1023,7 @@ class _Qwen35GenerationMethods:
                     attention_mask=chunk_attention_mask,
                     multimodal_inputs=mm_slice,
                     finished=finished,
-                    eos_token_id=eos_token_id,
+                    stop_token_ids=stop_token_ids,
                     pad_token_id=pad_token_id,
                     max_new_tokens=max_new_tokens,
                     temperature=temperature,

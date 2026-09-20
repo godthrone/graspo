@@ -107,15 +107,20 @@ class SFTTrainer:
     def train(self, *, smoke: bool = False) -> None:
         """SFT 训练主入口。"""
         validate_native_runtime_config(self.config)
-        from graspo.flow.lora.lora_io import prepare_output_dir
-
-        output_dir = prepare_output_dir(
-            self.config.training.output_dir,
-            overwrite=self.config.training.overwrite_output_dir,
-        )
-        (output_dir / "logs").mkdir(parents=True, exist_ok=True)
         self.runtime.validate()
         self.runtime.setup()
+        # 输出目录准备必须在 **runtime.setup() 之后**：只有进程组就绪，才能做到
+        # "只 primary rank 清目录 + 其余 rank 等待"（§1.4 单一入口，修 T030 run2 的
+        # 多 rank 并发 rmtree 竞态）。语义不变：overwrite=False 且目录非空仍
+        # fail-closed；只是这条拒绝现在发生在模型装载之后（§⑪ 已登记）。
+        from graspo.flow.trainer.helpers import prepare_output_dir_once
+
+        output_dir = prepare_output_dir_once(
+            self.config.training.output_dir,
+            overwrite=self.config.training.overwrite_output_dir,
+            is_primary=self._is_primary(),
+        )
+        (output_dir / "logs").mkdir(parents=True, exist_ok=True)
         rank = self.runtime.rank
         setup_logging(self.config.training.output_dir, rank=rank)
         _set_random_seed(int(self.config.training.seed), rank=rank)
