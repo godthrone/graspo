@@ -202,21 +202,34 @@ class SeriesEvidence:
     #: 是否**真读到**非有限 loss（NaN/Inf 字面量）。与 ``loss_unavailable`` 严格
     #: 区分：前者是"数值异常"这个事实断言，后者只是"没有读数"。
     loss_nonfinite: bool = False
+    #: ``{未登记的 phase 名: 条数}``——payload 含 ``metrics`` 却没进
+    #: ``result_judge.STEP_METRICS_PHASES`` 的记录数（§2.2：**不静默丢弃**）。
+    #: 空 dict = "没有含指标却被忽略的记录"（这个结论本身也要显式落地）。
+    ignored_phase_records: dict[str, int] = field(default_factory=dict)
 
 
-def _rank_metric_steps(output_dir: Path | None) -> list[dict[str, Any]]:
-    """从 rank_metrics 旁路读「每个训练步一行」的全局指标（PP trainer 的权威读数）。
+def _rank_metric_steps(output_dir: Path | None) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """从 rank_metrics 旁路读「每个训练步一行」的逐步权威指标。
 
-    ``_emit_rank_memory_event("pipeline_sft_train_batch_after", ...)`` 每步写一条
-    ``{"phase": ..., "metrics": {...}}``；``metrics`` 里带全局聚合口径
-    （``global_loss_mean`` / ``global_grad_norm_mean`` / ``global_optimizer_steps_sum``）
-    与逐 rank 明细 ``rank_metrics``。这解决了 F-4 的核心观测缺陷：
-    stdout 的 ``sft_step`` 打的是 **rank0 局部** loss（PP 下结构性恒 0.0）与
-    rank0 局部 grad_norm（有限），全局 NaN 只在旁路可见。
+    哪些 phase 承载这些指标，**不在本文件判断**——唯一真相源是
+    ``graspo.core.result_judge.STEP_METRICS_PHASES``（同模块里逐条注明了每个名字
+    对应的代码路径与出处行号）。训练侧有**两条** SFT 路径：pipeline（``pp_size>1``）
+    emit ``pipeline_sft_train_batch_after``，普通/单卡路径 emit ``sft_train_batch_after``；
+    只认前者会把全部单卡/DP/TP 档的逐步指标整批丢掉（T010 实测伪否，2026-09-20）。
+
+    ``metrics`` 里带全局聚合口径（``global_loss_mean`` / ``global_grad_norm_mean`` /
+    ``global_optimizer_steps_sum``）与逐 rank 明细 ``rank_metrics``。这解决了 F-4 的
+    核心观测缺陷：stdout 的 ``sft_step`` 打的是 **rank0 局部** loss（PP 下结构性恒 0.0）
+    与 rank0 局部 grad_norm（有限），全局 NaN 只在旁路可见。
+
+    返回值第二项是**显式暴露**（§2.2 显式即防呆）：``{未登记的 phase 名: 条数}``，
+    只统计 payload **含 metrics** 的记录。静默丢弃正是 T010 伪否的成因，所以这里
+    宁可多报一个名字，也不让"含指标却没被读"这件事无声无息。
     """
     if output_dir is None:
-        return []
+        return [], {}
     rows: list[dict[str, Any]] = []
+    ignored_with_metrics: dict[str, int] = {}
     for events in sorted(output_dir.rglob("rank_metrics.rank_*.jsonl")):
         if events.name != "rank_metrics.rank_00000.jsonl":
             continue  # rank0 的事件已含全体 rank 的聚合与明细，避免重复计数
@@ -234,12 +247,18 @@ def _rank_metric_steps(output_dir: Path | None) -> list[dict[str, Any]]:
                 continue
             if not isinstance(payload, dict):
                 continue
-            if payload.get("phase") != "pipeline_sft_train_batch_after":
-                continue
             metrics = payload.get("metrics")
-            if isinstance(metrics, dict):
-                rows.append(metrics)
-    return rows
+            if not isinstance(metrics, dict):
+                # 纯诊断事件（显存快照等）：登记在 _judge.DIAGNOSTIC_PHASES，无指标可丢。
+                continue
+            phase = payload.get("phase")
+            if phase not in _judge.STEP_METRICS_PHASES:
+                # 含 metrics 却不在注册表里 ⇒ **显式计数**，绝不静默丢弃。
+                key = str(phase) if phase is not None else "<missing>"
+                ignored_with_metrics[key] = ignored_with_metrics.get(key, 0) + 1
+                continue
+            rows.append(metrics)
+    return rows, ignored_with_metrics
 
 
 _GLOBAL_STEP_SLASH = re.compile(r"(\d+)\s*/\s*(\d+)")
@@ -378,10 +397,22 @@ def extract_steps_and_series(output_dirs: Sequence[Path], log_text: str) -> Seri
     """
     result = SeriesEvidence()
     metrics_rows: list[dict[str, Any]] = []
+    ignored_phases: dict[str, int] = {}
     for directory in output_dirs:
-        metrics_rows = _rank_metric_steps(directory)
+        metrics_rows, ignored_phases = _rank_metric_steps(directory)
         if metrics_rows:
             break
+    if ignored_phases:
+        # 防呆（§2.2 显式即防呆）：含 metrics 却不在 STEP_METRICS_PHASES 里的 phase
+        # 记录**必须显式暴露**。T010 伪否（2026-09-20）正是"静默丢弃"造成的：
+        # 100 条含 loss/grad_norm 的记录被整批跳过，台账上却看不到任何痕迹。
+        result.ignored_phase_records = dict(sorted(ignored_phases.items()))
+        total_ignored = sum(ignored_phases.values())
+        detail = "、".join(f"{name}×{count}" for name, count in sorted(ignored_phases.items()))
+        result.notes.append(
+            f"忽略了 {total_ignored} 条含 metrics 的未登记 phase 记录（{detail}）"
+            "——请核对 result_judge.STEP_METRICS_PHASES：训练侧可能新增了路径"
+        )
     if metrics_rows:
         result.source = "rank_metrics"
         for row in metrics_rows:
@@ -974,6 +1005,7 @@ def run(args: argparse.Namespace) -> int:
                     "grad_norms": [],
                     "optimizer_steps_per_step": [],
                     "nonfinite_skips": None,
+                    "ignored_phase_records": {},
                 }
             )
             continue
@@ -1020,6 +1052,9 @@ def run(args: argparse.Namespace) -> int:
         row["grad_norms"] = list(first.grad_norms)
         row["optimizer_steps_per_step"] = list(first.optimizer_steps_per_step or ())
         row["nonfinite_skips"] = first.nonfinite_skips
+        # 防呆（§2.2）：含 metrics 却被忽略的 phase 记录必须在台账里可见——
+        # "0 条"也要显式落一个空 dict，便于下游区分"没丢"与"没查"。
+        row["ignored_phase_records"] = dict(first_series.ignored_phase_records)
         row["steps_declared_total"] = first.steps_declared_total
         row["first_logged_step"] = first.first_logged_step
         records.append(row)
