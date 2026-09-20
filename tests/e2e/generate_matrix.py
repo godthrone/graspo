@@ -33,6 +33,15 @@
     python3 tests/e2e/generate_matrix.py --dry-run --assert-count 54   # 只自检不落盘
     python3 tests/e2e/generate_matrix.py                              # 生成全部产物（默认取 mini 数据集）
     python3 tests/e2e/generate_matrix.py --train-source full          # 切回源数据 data/train.jsonl
+    python3 tests/e2e/generate_matrix.py --gpu-override 'T001=4;T010=4,5'   # 卡集合覆盖（逐档映射）
+    python3 tests/e2e/generate_matrix.py --gpu-override 'T001=4' \
+        --manifest-out .local/matrix54_manifest.gpu-alt.json          # 生成变体清单，不动 canonical
+
+**卡集合覆盖点（唯一一处）**：默认 `GPU_SETS` 把 10 个 1 卡档全压在 GPU0 ⇒ 只能串行。
+`--gpu-override` 给出「档 → 卡集合」显式映射（无通配符），**只改用哪几张卡、不改卡数**
+（不符即 fail-closed）；卡号 ⊆ GPU0–5，GPU6/7（生产 vLLM）出现即拒绝；跨 NUMA 只提示。
+不传该参数 ⇒ manifest/runner 与旧版**逐字节相同**。运行期换卡集合用既有
+`GRASPO_RUNNER_MANIFEST` 指向另一份清单（runner 零改动、档位 YAML 零改动）。
 
 **训练子集的取数来源（本生成器是唯一真相源）**：默认取 **mini 数据集**
 （`<ELAM_HOST>/mini-dataset/mini-short-mm-train.jsonl`，100 行、sha256 记入 manifest 的
@@ -51,8 +60,24 @@ import hashlib
 import json
 import shutil
 import sys
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
+
+#: 卡集合校验/覆盖的唯一实现（§1.4 单一真相源）：生成期与运行期共用同一个模块，
+#: 不在生成器里另写一套判据。本模块**只依赖 stdlib**，不破坏生成器的 stdlib-only 约束。
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from gpu_assignment import (  # noqa: E402  （必须在 sys.path 就位之后导入）
+    GPU_ALLOWED,
+    GPU_FORBIDDEN_PRODUCTION,
+    MAX_CARDS_PER_JOB,
+    GpuAssignmentError,
+    check_gpus,
+    describe_default_sets,
+    format_assignment_line,
+    gpu_assignment_fingerprint,
+    parse_override,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_DIR = PROJECT_ROOT / "samples" / "configs" / "matrix54"
@@ -96,7 +121,22 @@ EXPECTED_BY_BACKEND = {"ms-swift": 36, "native": 18}
 EXPECTED_BY_MODE = {"LoRA": 36, "全量": 18}
 
 #: 4 卡首选 {0,1,2,3}（唯一全部位于 NUMA0）；GPU6/7 为生产卡，永不出现。
+#  —— 这是**默认值**：不设覆盖时逐字生效（向后兼容）。
 GPU_SETS: dict[int, tuple[int, ...]] = {1: (0,), 2: (0, 1), 4: (0, 1, 2, 3)}
+
+#: ★ 卡集合**覆盖点**（本工程唯一一处；判据/解析在 `tests/e2e/gpu_assignment.py`）。
+#:
+#: 动机：默认把 10 个 1 卡档全压在 GPU0 ⇒ 只能串行，且 GPU0 被他人占用即整批开不了工。
+#: 用法（生成期，逐档显式映射、无通配符）：
+#:     python3 tests/e2e/generate_matrix.py --gpu-override 'T001=4;T010=4,5'
+#: 未在覆盖值里出现的档 ⇒ 沿用 `GPU_SETS`（并在 stdout 显式打印来源）。
+#: 覆盖只改**用哪几张**，**不改卡数**（不符即 fail-closed，见 `gpu_assignment.check_gpus`）。
+#: 运行期换卡集合：用既有环境变量 `GRASPO_RUNNER_MANIFEST` 指向另一份清单
+#: （runner 只从清单读卡集合 ⇒ 不改 runner、不改档位 YAML；实际用哪几张卡由守卫写进运行产物）。
+#: A4「同档两跑必须同卡位」：卡集合只由清单给出，两次运行引用同一份清单即可；
+#: `gpu_assignment_fingerprint` 给出映射指纹，生成时打印、可用
+#: `python3 tests/e2e/gpu_assignment.py check --manifest <清单> --expect-fingerprint <指纹>` 复核。
+GPU_OVERRIDE_CLI_FLAG = "--gpu-override"
 
 # ── 模型权重：运行链路的一环，必须显式挂载（不能只写容器内路径就了事）──────
 # **宿主机上的模型根目录属于环境信息**（§15.1/§16），不写进 tracked 文件：
@@ -385,8 +425,46 @@ def _block(algorithm: str, backend: str, model: str, mode: str) -> list[dict[str
     ]
 
 
-def build_ledger() -> list[dict[str, Any]]:
-    """按 §7 台账的逐行顺序生成 54 档（T001 → T054）。"""
+def apply_gpu_override(
+    tiers: list[dict[str, Any]],
+    override: Mapping[str, Sequence[int]] | None = None,
+) -> list[str]:
+    """把「档 → 卡集合」覆盖值应用到每档 ``gpus``，返回被覆盖的档号（升序）。
+
+    **fail-closed**（§2.3）：未知档号、卡数不符、含 GPU6/7、越界、重复、空集合
+    一律抛 :class:`GpuAssignmentError` —— 拒绝生成，不产出"将就"的清单。
+    **未覆盖的档同样过守卫**（默认值也必须合法），因此这条判据对全部 54 档生效。
+    覆盖只改 ``gpus``，**不碰** ``cards`` 与任何其它字段。
+    """
+    override = override or {}
+    known = {tier["tier_id"] for tier in tiers}
+    unknown = sorted(set(override) - known)
+    if unknown:
+        raise GpuAssignmentError(
+            f"{GPU_OVERRIDE_CLI_FLAG} 含未知档号 {unknown}；合法档号见台账（T001–T054），"
+            f"写错的档号不会被静默忽略"
+        )
+    overridden: list[str] = []
+    for tier in tiers:
+        tier_id = str(tier["tier_id"])
+        cards = int(tier["cards"])
+        if tier_id in override:
+            check_gpus(tier_id, override[tier_id], cards)  # 先校验，再落值
+            tier["gpus"] = [int(gpu) for gpu in override[tier_id]]
+            overridden.append(tier_id)
+        else:
+            check_gpus(tier_id, tier["gpus"], cards)
+    return sorted(overridden)
+
+
+def build_ledger(
+    gpu_override: Mapping[str, Sequence[int]] | None = None,
+) -> list[dict[str, Any]]:
+    """按 §7 台账的逐行顺序生成 54 档（T001 → T054）。
+
+    `gpu_override`（档 → 卡集合）**只改每档用哪几张卡**；不给时行为与旧版逐字相同
+    （``GPU_SETS``），并同样过 `gpu_assignment.check_gpus` 范围守卫。
+    """
     tiers: list[dict[str, Any]] = []
 
     # CPT 9 = 9B(LoRA,全量)×3卡 + 27B(LoRA)×3卡
@@ -416,6 +494,8 @@ def build_ledger() -> list[dict[str, Any]]:
     for index, tier in enumerate(tiers, start=1):
         tier["tier_id"] = f"T{index:03d}"
         tier["gpus"] = list(GPU_SETS[tier["cards"]])
+    # 覆盖点（唯一一处）：不覆盖时只做范围守卫（默认值也必须合法）；覆盖时改成映射里的卡。
+    apply_gpu_override(tiers, gpu_override)
     return tiers
 
 
@@ -1172,13 +1252,48 @@ def render_not_applicable_stub(tier: dict[str, Any], reason: str) -> str:
 # ── 运行清单 ────────────────────────────────────────────────────────────────
 
 
+def gpu_assignment_record(spec: str, tiers: list[dict[str, Any]]) -> dict[str, Any]:
+    """本档卡集合的**覆盖记录**（只在给定覆盖时写进 manifest，默认清单逐字节不变）。
+
+    只记录 ``tiers[].gpus`` 装不下的信息（**不复制**逐档卡集合，避免第二真相源）：
+    覆盖值本身、来源、边界常量、映射指纹与 A4 口径。
+    """
+    pairs = [(str(tier["tier_id"]), tier["gpus"]) for tier in tiers]
+    return {
+        "source": "override",
+        "override_spec": spec,
+        "override_cli_flag": GPU_OVERRIDE_CLI_FLAG,
+        "default_by_cards": {str(cards): list(gpus) for cards, gpus in sorted(GPU_SETS.items())},
+        "allowed_gpus": list(GPU_ALLOWED),
+        "forbidden_production_gpus": list(GPU_FORBIDDEN_PRODUCTION),
+        "max_cards_per_job": MAX_CARDS_PER_JOB,
+        "numa_nodes": {"0": [0, 1, 2, 3], "1": [4, 5, 6, 7]},
+        "fingerprint_sha256": gpu_assignment_fingerprint(pairs),
+        "fingerprint_note": (
+            "档 → 卡集合映射（tiers[].gpus）的 sha256。A4「同档两跑必须同卡位」："
+            "两次运行必须引用同一份清单；复核命令 "
+            "`python3 tests/e2e/gpu_assignment.py check --manifest <清单> "
+            "--expect-fingerprint <指纹>`，指纹不一致即两跑不可比。"
+        ),
+        "runtime_override_note": (
+            "运行期换卡集合：`GRASPO_RUNNER_MANIFEST=<另一份清单>`（既有覆盖点）。"
+            "runner 只从清单读 tiers[].gpus ⇒ 不改 runner、不改档位 YAML；"
+            "本次实际用哪几张卡由守卫写进运行产物（`[gpu-guard] OK: "
+            "NVIDIA_VISIBLE_DEVICES=…`）。"
+        ),
+    }
+
+
 def build_manifest(
-    tiers: list[dict[str, Any]], train_source: str | None = None
+    tiers: list[dict[str, Any]],
+    train_source: str | None = None,
+    gpu_assignment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """构造运行清单（结果收集器的输入）。
 
     `train_source` 决定 runner 的**训练子集读取源**（默认 `mini`，见 `resolve_train_source`）；
     它**不**改变任何既有字段与每档 `data.train_path`（生成位置）。
+    `gpu_assignment`（覆盖记录）为 ``None`` 时**不新增任何字段** —— 默认清单逐字节不变。
     """
     resolved_train_source = resolve_train_source(train_source)
     entries = []
@@ -1266,7 +1381,7 @@ def build_manifest(
         }
         entries.append(entry)
 
-    return {
+    manifest: dict[str, Any] = {
         "schema_version": 1,
         "source": "docs/capability-matrix.md §6/§7",
         "counts": {
@@ -1474,8 +1589,12 @@ def build_manifest(
             #     读取源与 `data.train_path` 是两件事：后者只约束**生成位置**。
             **mini_dataset_manifest_fields(resolved_train_source),
         },
-        "tiers": entries,
     }
+    # 覆盖记录**只在给定覆盖时出现**：不设覆盖 ⇒ 本节缺失 ⇒ 清单与旧版逐字节相同。
+    if gpu_assignment is not None:
+        manifest["gpu_assignment"] = gpu_assignment
+    manifest["tiers"] = entries
+    return manifest
 
 
 def _count_by(entries: list[dict[str, Any]], field: str) -> dict[str, int]:
@@ -1530,11 +1649,15 @@ def assert_ledger(tiers: list[dict[str, Any]], expected_total: int) -> None:
         )
         assert actual == expected, f"{tier_id}: expected {expected}, got {actual}"
 
-    # GPU 集合永远 ⊆ {0,1,2,3} ⊆ 允许集合，且 ≤ 4 卡。
+    # GPU 集合守卫（**加强版**，逐档跑 `gpu_assignment.check_gpus` 这一条实现）：
+    # 卡数必须等于该档 cards；卡号 ⊆ {0..5}；不得含 GPU6/7（生产 vLLM）；≤ 4 卡；去重；非空。
+    # 旧版写死 `max(gpus) <= 3`，与本次新增的覆盖点（允许把档挪到 GPU4/5 避让共享机他人占用）
+    # 冲突，因此改为**显式允许集合** {0..5} —— 6/7 与越界卡仍然 fail-closed（未削弱边界）。
     for tier in tiers:
         gpus = tier["gpus"]
-        assert len(gpus) == tier["cards"], f"{tier['tier_id']}: gpu/card mismatch"
-        assert max(gpus) <= 3 and len(gpus) <= 4, f"{tier['tier_id']}: unsafe gpus {gpus}"
+        check_gpus(str(tier["tier_id"]), gpus, int(tier["cards"]))
+    assert GPU_FORBIDDEN_PRODUCTION == (6, 7) and MAX_CARDS_PER_JOB == 4
+    assert GPU_ALLOWED == (0, 1, 2, 3, 4, 5)
 
 
 def assert_no_legacy_terms(rendered: list[tuple[str, str]]) -> None:
@@ -2450,9 +2573,22 @@ def render_all_tiers(tiers: list[dict[str, Any]]) -> list[tuple[str, str]]:
     return rendered
 
 
-def generate(expected_total: int, train_source: str | None = None) -> dict[str, Any]:
+def generate(
+    expected_total: int,
+    train_source: str | None = None,
+    gpu_override: Mapping[str, Sequence[int]] | None = None,
+    gpu_override_spec: str | None = None,
+    manifest_out: Path | None = None,
+) -> dict[str, Any]:
+    """生成全部产物。
+
+    `gpu_override`（档 → 卡集合）覆盖**只改每档 ``gpus``**，不改 ``cards``、
+    不改档位 YAML、不改 runner（runner 只从清单读卡集合）。
+    `manifest_out` 指定清单落点（默认 `tests/e2e/matrix54_manifest.json`）——给
+    "不覆盖 canonical 清单、生成一份变体清单再让 `GRASPO_RUNNER_MANIFEST` 指过去"用。
+    """
     resolved_train_source = resolve_train_source(train_source)
-    tiers = build_ledger()
+    tiers = build_ledger(gpu_override)
     assert_ledger(tiers, expected_total)
     expressibility = assert_expressibility(tiers)
     # 生成期显存可行性断言：任一可执行档估算超预算 ⇒ 拒绝生成并报算式。
@@ -2461,7 +2597,8 @@ def generate(expected_total: int, train_source: str | None = None) -> dict[str, 
     rendered = render_all_tiers(tiers)
     assert_no_legacy_terms(rendered)
 
-    manifest = build_manifest(tiers, resolved_train_source)
+    record = gpu_assignment_record(gpu_override_spec, tiers) if gpu_override else None
+    manifest = build_manifest(tiers, resolved_train_source, gpu_assignment=record)
     manifest_text = json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
     runner_text = render_runner(resolved_train_source)
     assert_no_legacy_terms([("manifest", manifest_text), ("runner", runner_text)])
@@ -2471,12 +2608,20 @@ def generate(expected_total: int, train_source: str | None = None) -> dict[str, 
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     for name, text in rendered:
         (CONFIG_DIR / name).write_text(text, encoding="utf-8")
-    MANIFEST_PATH.write_text(manifest_text, encoding="utf-8")
+    manifest_path = MANIFEST_PATH if manifest_out is None else Path(manifest_out)
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(manifest_text, encoding="utf-8")
     RUNNER_PATH.write_text(runner_text, encoding="utf-8")
     RUNNER_PATH.chmod(0o755)
     write_feasibility_table(tiers)
 
-    return {"tiers": tiers, "manifest": manifest, "expressibility": expressibility}
+    return {
+        "tiers": tiers,
+        "manifest": manifest,
+        "expressibility": expressibility,
+        "manifest_path": manifest_path,
+        "gpu_override": dict(gpu_override or {}),
+    }
 
 
 def write_feasibility_table(tiers: list[dict[str, Any]]) -> Path:
@@ -2511,9 +2656,59 @@ def print_summary(result: dict[str, Any]) -> None:
     print(f"  显存可行性: {counts['by_feasibility_verdict']}")
     # 【必须打印】读取源必须对操作者可见：默认行为要能"一句话说清"（否则换源是隐式的）。
     print_data_source(manifest["data"])
+    print_gpu_assignment(result["tiers"], result.get("gpu_override") or {})
     print(f"配置目录: {CONFIG_DIR}")
-    print(f"运行清单: {MANIFEST_PATH}")
+    print(f"运行清单: {result.get('manifest_path', MANIFEST_PATH)}")
     print(f"执行骨架: {RUNNER_PATH}")
+
+
+def print_gpu_assignment(
+    tiers: list[dict[str, Any]],
+    override: Mapping[str, Sequence[int]],
+    *,
+    dry_run: bool = False,
+) -> None:
+    """打出生效卡集合与**来源**（默认 / 覆盖）——默认行为必须显式可见、覆盖必须可审计。
+
+    逐档打印被覆盖的档（本档用哪几张卡 + 卡数 + NUMA 提示）；未覆盖的档按卡数汇总。
+    末尾打印映射指纹（A4「同档两跑同卡位」的可核证据）。
+    """
+    prefix = "[dry-run] " if dry_run else ""
+    overridden = {str(tier_id): tuple(gpus) for tier_id, gpus in override.items()}
+    if overridden:
+        rendered_spec = ";".join(
+            f"{tier_id}={','.join(str(gpu) for gpu in gpus)}"
+            for tier_id, gpus in sorted(overridden.items())
+        )
+        source_label = f"覆盖（{GPU_OVERRIDE_CLI_FLAG}='{rendered_spec}'）"
+    else:
+        source_label = "默认（GPU_SETS；未给 --gpu-override）"
+    print(f"{prefix}卡集合来源: {source_label}")
+    print(f"{prefix}卡集合默认（按卡数）: {describe_default_sets(GPU_SETS)}")
+    if overridden:
+        by_id = {str(tier["tier_id"]): tier for tier in tiers}
+        for tier_id in sorted(overridden):
+            tier = by_id[tier_id]
+            line = format_assignment_line(
+                tier_id, tier["gpus"], int(tier["cards"]), "override"
+            )
+            print(f"{prefix}  {line}")
+        print(
+            f"{prefix}  其余 {len(tiers) - len(overridden)} 档沿用上面的按卡数默认集合"
+            f"（逐档值见清单 tiers[].gpus）"
+        )
+    fingerprint = gpu_assignment_fingerprint(
+        (str(tier["tier_id"]), tier["gpus"]) for tier in tiers
+    )
+    print(
+        f"{prefix}卡集合指纹(sha256): {fingerprint}；复核命令 "
+        f"`python3 tests/e2e/gpu_assignment.py check --manifest <清单> "
+        f"--expect-fingerprint {fingerprint}`"
+    )
+    print(
+        f"{prefix}运行期卡集合来源: runner 只从清单读 tiers[].gpus；换卡集合用 "
+        f"GRASPO_RUNNER_MANIFEST 指向另一份清单（实际用哪几张卡由守卫写进运行产物）"
+    )
 
 
 def print_data_source(data: dict[str, Any], *, dry_run: bool = False) -> None:
@@ -2530,7 +2725,7 @@ def print_data_source(data: dict[str, Any], *, dry_run: bool = False) -> None:
         print(f"{prefix}⚠ 非默认来源：效果口径请确认（{MINI_PURPOSE_NOTE}）")
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="GRASPO 54-tier matrix generator.")
     parser.add_argument(
         "--dry-run",
@@ -2552,11 +2747,34 @@ def main(argv: list[str] | None = None) -> int:
             "对照与回退用）。不影响任何档位配置与 data.train_path。"
         ),
     )
-    args = parser.parse_args(argv)
+    parser.add_argument(
+        GPU_OVERRIDE_CLI_FLAG,
+        default=None,
+        help=(
+            "卡集合覆盖值（**唯一覆盖点**，逐档显式映射、无通配符）："
+            "'T001=4;T010=4,5'。只改每档用哪几张卡，**不改卡数**（不符即拒绝生成）；"
+            "卡号必须 ⊆{0..5}（GPU6/7 是生产 vLLM，出现即拒绝）。"
+            "未出现的档沿用默认 GPU_SETS。不传 ⇒ 产物与旧版逐字节相同。"
+        ),
+    )
+    parser.add_argument(
+        "--manifest-out",
+        default=None,
+        help=(
+            "清单落点（默认 tests/e2e/matrix54_manifest.json）。给『生成变体清单、"
+            "不动 canonical 清单』用：随后 GRASPO_RUNNER_MANIFEST=<该清单> 即可按新卡集合跑批。"
+        ),
+    )
+    return parser
+
+
+def run(args: argparse.Namespace) -> int:
+    """执行已解析的命令行（覆盖值在这里统一解析一次，dry-run 与真生成共用）。"""
     train_source = resolve_train_source(args.train_source)
+    gpu_override = parse_override(args.gpu_override) if args.gpu_override is not None else None
 
     if args.dry_run:
-        tiers = build_ledger()
+        tiers = build_ledger(gpu_override)
         assert_ledger(tiers, args.assert_count)
         expressibility = assert_expressibility(tiers)
         # 生成期显存可行性断言也必须在 dry-run 里跑（自检不含它就是假自检）。
@@ -2573,6 +2791,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         # dry-run 也打读取源与摘要：默认行为必须可见（真生成前先看清）。
         print_data_source(build_manifest(tiers, train_source)["data"], dry_run=True)
+        print_gpu_assignment(tiers, gpu_override or {}, dry_run=True)
         print(
             "说明：`infeasible` 档已被拒绝生成；`unmeasured` 档**允许生成但不声称可行**"
             "（未测算的量只能靠上机量出来，见上方待测量清单）；`blocked` 档不产出配置；"
@@ -2580,9 +2799,26 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
-    result = generate(args.assert_count, train_source)
+    result = generate(
+        args.assert_count,
+        train_source,
+        gpu_override=gpu_override,
+        gpu_override_spec=args.gpu_override,
+        manifest_out=Path(args.manifest_out) if args.manifest_out else None,
+    )
     print_summary(result)
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI 入口：卡集合违规给出**可操作报错**并 fail-closed（不落任何产物）。"""
+    args = build_arg_parser().parse_args(argv)
+    try:
+        return run(args)
+    except GpuAssignmentError as exc:
+        print(f"FATAL(gpu-assignment): {exc}", file=sys.stderr)
+        print("  用法: --gpu-override 'T001=4;T002=4,5'（逐档映射，无通配符）", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":
