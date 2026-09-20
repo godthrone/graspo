@@ -67,7 +67,9 @@ def test_cosine_decays_to_min_lr_then_holds():
     """cosine：decay_steps 步内衰减到 min_lr，之后保持（progress clamp）。"""
     scheduler, optimizer = _make_scheduler(
         learning_rate=5e-7,
-        type="cosine", decay_steps=170, min_lr_ratio=0.2,
+        type="cosine",
+        decay_steps=170,
+        min_lr_ratio=0.2,
     )
     base, min_lr = 5e-7, 1e-7
 
@@ -88,7 +90,10 @@ def test_cosine_warmup_then_decay():
     """warmup 阶段线性爬升，之后才开始衰减。"""
     scheduler, optimizer = _make_scheduler(
         learning_rate=5e-7,
-        type="cosine", warmup_steps=10, decay_steps=100, min_lr_ratio=0.0,
+        type="cosine",
+        warmup_steps=10,
+        decay_steps=100,
+        min_lr_ratio=0.0,
     )
     # warmup 中段：接近 base_lr（线性 50%）
     mid_warmup = _lr_after_steps(scheduler, optimizer, 5)
@@ -102,7 +107,9 @@ def test_linear_decays_to_min_lr():
     """linear：decay_steps 后到达 min_lr 并保持。"""
     scheduler, optimizer = _make_scheduler(
         learning_rate=5e-7,
-        type="linear", decay_steps=100, min_lr_ratio=0.2,
+        type="linear",
+        decay_steps=100,
+        min_lr_ratio=0.2,
     )
     end = _lr_after_steps(scheduler, optimizer, 100)
     assert end == pytest.approx(1e-7, rel=1e-6)
@@ -112,6 +119,7 @@ def test_linear_decays_to_min_lr():
 
 def test_scheduler_does_not_read_max_epochs():
     """调度跨度与训练长度（max_epochs）完全解耦：不同 max_epochs 同曲线。"""
+
     def _decay_curve(max_epochs: int) -> float:
         training = TrainingConfig(
             max_epochs=max_epochs,

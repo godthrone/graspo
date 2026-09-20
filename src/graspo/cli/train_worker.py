@@ -49,9 +49,7 @@ def main() -> None:
     # 此时按**容器内实测可见卡**断言（`nvidia-smi -L`），"不得超 4 卡/不得为空"
     # 仍然成立。旧版把 `void` 当非法 ⇒ 目标 GPU 服务器上所有训练入口必然拒绝启动。
     devices = require_gpu_lock_or_exit()
-    print(
-        f"[train-worker] GPU lock OK: NVIDIA_VISIBLE_DEVICES={','.join(map(str, devices))}"
-    )
+    print(f"[train-worker] GPU lock OK: NVIDIA_VISIBLE_DEVICES={','.join(map(str, devices))}")
 
     config = GraspoConfig.from_yaml(args.config)
 

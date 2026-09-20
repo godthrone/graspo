@@ -96,9 +96,7 @@ class GraspoFlowCausalLMBase(nn.Module):
         1.017e9 参数，一次性 fp32 副本 ≈ 4 GiB，而 native 单卡全参正处在显存边界上
         （见 `task-i2-fullparam/report.md` §3），指标不能把训练推过界。
         """
-        return _chunked_parameter_norm(
-            param for param in self.parameters() if param.requires_grad
-        )
+        return _chunked_parameter_norm(param for param in self.parameters() if param.requires_grad)
 
     def training_progress_norm(self) -> float:
         """本 rank 的训练进度权重范数（**模式感知的唯一入口**）。
@@ -120,9 +118,7 @@ class GraspoFlowCausalLMBase(nn.Module):
         同尺寸临时张量（1.017e9 参数的参数会产生 ~2 GiB bf16 峰值）。
         """
         return sum(
-            1
-            for param in self.parameters()
-            if param.requires_grad and param.grad is not None
+            1 for param in self.parameters() if param.requires_grad and param.grad is not None
         )
 
     def training_progress_grad_count(self) -> int:

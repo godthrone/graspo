@@ -158,7 +158,10 @@ def ard_target_to_graspo(target: Any, *, path: str = "targets[i]") -> dict[str, 
     target_id = target.get("id")
     if target_id is not None and not isinstance(target_id, str):
         raise ArdContractError(f"{path}.id must be a string when provided")
-    return {"id": target_id, "output": ard_output_to_graspo(target["output"], path=f"{path}.output")}
+    return {
+        "id": target_id,
+        "output": ard_output_to_graspo(target["output"], path=f"{path}.output"),
+    }
 
 
 def graspo_target_to_ard(target: Any, *, path: str = "targets[i]") -> dict[str, Any]:
@@ -167,7 +170,10 @@ def graspo_target_to_ard(target: Any, *, path: str = "targets[i]") -> dict[str, 
         raise ArdContractError(f"{path} must be a JSON object, got {type(target).__name__}")
     if "output" not in target:
         raise ArdContractError(f"{path} must contain 'output'")
-    return {"id": target.get("id"), "output": graspo_output_to_ard(target["output"], path=f"{path}.output")}
+    return {
+        "id": target.get("id"),
+        "output": graspo_output_to_ard(target["output"], path=f"{path}.output"),
+    }
 
 
 # ── 方向 2：graspo → ARD（记录级）───────────────────────────────────────────
@@ -192,9 +198,7 @@ def graspo_sample_to_ard(sample: Any) -> dict[str, Any]:
     elif isinstance(sample, dict):
         record = copy.deepcopy(sample)
     else:
-        raise ArdContractError(
-            f"sample must be a Sample or dict, got {type(sample).__name__}"
-        )
+        raise ArdContractError(f"sample must be a Sample or dict, got {type(sample).__name__}")
 
     if not isinstance(record.get("messages"), list) or not record["messages"]:
         raise ArdContractError("sample must contain a non-empty 'messages' list")
@@ -206,7 +210,9 @@ def graspo_sample_to_ard(sample: Any) -> dict[str, Any]:
     if not isinstance(metadata, dict):
         raise ArdContractError("sample.metadata must be a JSON object when provided")
 
-    ard_record: dict[str, Any] = {key: copy.deepcopy(metadata[key]) for key in ARD_TOP_LEVEL_FIELDS if key in metadata}
+    ard_record: dict[str, Any] = {
+        key: copy.deepcopy(metadata[key]) for key in ARD_TOP_LEVEL_FIELDS if key in metadata
+    }
     ard_record["messages"] = copy.deepcopy(record["messages"])
     ard_record["targets"] = [
         graspo_target_to_ard(target, path=f"targets[{idx}]") for idx, target in enumerate(targets)
@@ -258,7 +264,9 @@ def validate_ard_messages(messages: Any) -> list[dict[str, Any]]:
             raise ArdContractError(f"messages[{idx}] must be a JSON object")
         role = message.get("role")
         if not isinstance(role, str) or not role.strip():
-            raise ArdContractError(f"messages[{idx}].role is required and must be a non-empty string")
+            raise ArdContractError(
+                f"messages[{idx}].role is required and must be a non-empty string"
+            )
         if "content" not in message and role != "tool":
             # ``tool`` 消息用 ``tool_call_id`` 定位（OpenAI 标准允许 content 缺省）。
             raise ArdContractError(f"messages[{idx}].content is required")

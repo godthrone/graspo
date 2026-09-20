@@ -195,7 +195,9 @@ def test_normalize_regex_string_drops_only_the_namespace_prefix():
     assert normalized.startswith("^(model(?=\\.)")
     # 分支与顺序原样保留
     assert "in_proj_qkv" in normalized and "gate_proj" in normalized
-    assert normalized.endswith(r"\.(v_proj|in_proj_a|in_proj_qkv|up_proj|in_proj_z|in_proj_b|o_proj|gate_proj|down_proj|q_proj|out_proj|k_proj))$")
+    assert normalized.endswith(
+        r"\.(v_proj|in_proj_a|in_proj_qkv|up_proj|in_proj_z|in_proj_b|o_proj|gate_proj|down_proj|q_proj|out_proj|k_proj))$"
+    )
 
 
 def test_normalize_regex_matches_text_namespace_and_not_vision():
@@ -278,7 +280,10 @@ def test_resolve_injection_targets_normalizes_multimodal_adapter(tmp_path):
     from graspo.eval.merged_export import _resolve_injection_targets
 
     adapter = tmp_path / "adapter"
-    _write(adapter / "adapter_config.json", json.dumps({"peft_type": "LORA", "target_modules": _T013_REGEX}))
+    _write(
+        adapter / "adapter_config.json",
+        json.dumps({"peft_type": "LORA", "target_modules": _T013_REGEX}),
+    )
     config, targets = _resolve_injection_targets(adapter)
     assert config is not None
     assert targets == _T013_REGEX.replace(r"model\.language_model", "model")

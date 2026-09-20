@@ -139,6 +139,7 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
         #   （fail-closed 防线，行为逐字不变）；
         # - ``resume_from_checkpoint`` 时仍按原逻辑跳过 overwrite（目录必须存在）。
         from graspo.flow.lora.lora_io import prepare_output_dir
+
         output_dir = prepare_output_dir(
             self.config.training.output_dir,
             overwrite=(

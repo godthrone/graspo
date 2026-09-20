@@ -183,9 +183,7 @@ class _Qwen35TrainingMethods:
             "skipped_nonfinite": skipped_nonfinite,
             "loss_mean": loss_sum / micro_batch_count if micro_batch_count else None,
             "grad_norm_mean": grad_norm_sum,
-            **grad_count_event(
-                self.config.effective_tuner_type, count=nonzero_grad_count
-            ),
+            **grad_count_event(self.config.effective_tuner_type, count=nonzero_grad_count),
             **training_norm_event(
                 self.config.effective_tuner_type, before=norm_before, after=norm_after
             ),
@@ -350,9 +348,9 @@ class _Qwen35TrainingMethods:
                 _sync_nonsharded_lora_grads,
             )
             from graspo.flow.parallel.tensor_utils import (
-            _TENSOR_PARALLEL_GROUP,
-            _TENSOR_PARALLEL_SIZE,
-        )
+                _TENSOR_PARALLEL_GROUP,
+                _TENSOR_PARALLEL_SIZE,
+            )
 
             if self.tp_state is not None and self.tp_state.dp_group is not None:
                 _sync_dp_lora_grads(self.model, self.tp_state.dp_group)
@@ -380,7 +378,9 @@ class _Qwen35TrainingMethods:
             if self.scheduler is not None and self.optimizer is not None:
                 self.scheduler.step()
             optimizer_steps += 1
-            loss_tensor = torch.tensor([float(result["loss_value"])], dtype=torch.float, device=self.device)
+            loss_tensor = torch.tensor(
+                [float(result["loss_value"])], dtype=torch.float, device=self.device
+            )
             # 只有末 PP stage 计算真实 loss（见 _pipeline_one_f_one_b_optimizer_step：
             # 非末 stage 的 loss_value 恒为 0.0）。因此用 SUM 聚合，MIN 会把末 stage
             # 的非零 loss 压成 0（因为非末 stage 贡献 0.0），导致 loss 恒为 0。
@@ -401,9 +401,7 @@ class _Qwen35TrainingMethods:
             "skipped_nonfinite": skipped_nonfinite,
             "loss_mean": loss_sum / optimizer_steps if optimizer_steps else None,
             "grad_norm_mean": grad_norm_sum / optimizer_steps if optimizer_steps else None,
-            **grad_count_event(
-                self.config.effective_tuner_type, count=nonzero_grad_count
-            ),
+            **grad_count_event(self.config.effective_tuner_type, count=nonzero_grad_count),
             **training_norm_event(
                 self.config.effective_tuner_type, before=norm_before, after=norm_after
             ),

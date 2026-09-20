@@ -25,6 +25,7 @@ def _log_cuda_mem(label: str) -> None:
             flush=True,
         )
 
+
 if TYPE_CHECKING:
     from graspo.flow.parallel.tensor_utils import SafetensorIndex
 
@@ -146,12 +147,17 @@ class TensorParallelQwen35DecoderLayer(nn.Module):
     ) -> torch.Tensor | tuple[torch.Tensor, Any]:
         if self._use_sp and not use_cache:
             return self._forward_sp(
-                hidden_states, position_ids, attention_mask,
+                hidden_states,
+                position_ids,
+                attention_mask,
                 past_key_value=past_key_value,
             )
         return self._forward_tp(
-            hidden_states, position_ids, attention_mask,
-            past_key_value=past_key_value, use_cache=use_cache,
+            hidden_states,
+            position_ids,
+            attention_mask,
+            past_key_value=past_key_value,
+            use_cache=use_cache,
         )
 
     def _forward_tp(

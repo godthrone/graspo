@@ -57,18 +57,14 @@ def test_unknown_field_in_msswift_section_is_rejected():
 
 def test_unknown_field_in_megatron_section_is_rejected():
     with pytest.raises(ValidationError) as excinfo:
-        GraspoConfig.model_validate(
-            {"msswift": {"megatron": {"tensor_parallel_size": 2}}}
-        )
+        GraspoConfig.model_validate({"msswift": {"megatron": {"tensor_parallel_size": 2}}})
 
     assert "tensor_parallel_size" in str(excinfo.value)
 
 
 def test_megatron_is_a_nested_typed_model_not_a_dict():
     """§9.1：嵌套结构用 pydantic 模型，不做 dict 套 dict。"""
-    config = GraspoConfig.model_validate(
-        {"msswift": {"megatron": {"context_parallel_size": 2}}}
-    )
+    config = GraspoConfig.model_validate({"msswift": {"megatron": {"context_parallel_size": 2}}})
 
     assert isinstance(config.msswift, MsSwiftConfig)
     assert isinstance(config.msswift.megatron, MsSwiftMegatronConfig)

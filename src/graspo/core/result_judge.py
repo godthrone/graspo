@@ -390,8 +390,7 @@ def resolve_min_optimizer_steps(raw: int | None) -> tuple[int | None, str | None
         return MIN_OPTIMIZER_STEPS, None
     if isinstance(raw, bool) or not isinstance(raw, int):
         return None, (
-            f"清单里的门槛 min_optimizer_steps={raw!r} 不是整数"
-            "（fail-closed：不猜执法意图）"
+            f"清单里的门槛 min_optimizer_steps={raw!r} 不是整数（fail-closed：不猜执法意图）"
         )
     if raw <= 0:
         return None, (
@@ -436,9 +435,7 @@ def judge_a2(evidence: RunEvidence) -> CriterionResult:
         )
     if evidence.optimizer_steps_per_step is not None:
         stalled = [
-            index
-            for index, count in enumerate(evidence.optimizer_steps_per_step)
-            if count <= 0
+            index for index, count in enumerate(evidence.optimizer_steps_per_step) if count <= 0
         ]
         if stalled:
             return CriterionResult(
@@ -471,11 +468,7 @@ def judge_a2(evidence: RunEvidence) -> CriterionResult:
         return CriterionResult("A2", False, rejected)
     assert threshold is not None  # rejected is None ⇒ threshold 必非 None
     if evidence.optimizer_steps < threshold:
-        source = (
-            "清单"
-            if evidence.min_optimizer_steps is not None
-            else "缺省（清单未给门槛）"
-        )
+        source = "清单" if evidence.min_optimizer_steps is not None else "缺省（清单未给门槛）"
         return CriterionResult(
             "A2",
             False,
@@ -537,9 +530,7 @@ def judge_a4(first: RunEvidence, second: RunEvidence | None) -> CriterionResult:
     但②照常生效。缺第二跑/loss 证据 → 不通过（fail-closed）。
     """
     if second is None:
-        return CriterionResult(
-            "A4", False, "缺少第二跑证据（fail-closed）", evidence_missing=True
-        )
+        return CriterionResult("A4", False, "缺少第二跑证据（fail-closed）", evidence_missing=True)
     if first.exit_code != 0 or second.exit_code != 0:
         return CriterionResult(
             "A4", False, f"双跑未都成功（exit={first.exit_code}/{second.exit_code}）"
@@ -551,9 +542,7 @@ def judge_a4(first: RunEvidence, second: RunEvidence | None) -> CriterionResult:
             f"optimizer step 不一致：{first.optimizer_steps} vs {second.optimizer_steps}",
         )
     if first.weight_changed != second.weight_changed:
-        return CriterionResult(
-            "A4", False, "权重变化结论不一致（一次变化一次未变化）"
-        )
+        return CriterionResult("A4", False, "权重变化结论不一致（一次变化一次未变化）")
     if not first.losses or not second.losses:
         return CriterionResult(
             "A4", False, "缺少 loss 序列证据（fail-closed）", evidence_missing=True
@@ -656,9 +645,7 @@ def judge_a6(evidence: RunEvidence) -> CriterionResult:
     # ① 真读到非有限值。类型上必须是 float：MISSING_SENTINEL 是 str，会被这个
     #    isinstance 挡住，不会污染"数值异常"这个事实断言。
     real_nonfinite_losses = [
-        value
-        for value in evidence.losses
-        if isinstance(value, float) and not math.isfinite(value)
+        value for value in evidence.losses if isinstance(value, float) and not math.isfinite(value)
     ]
     real_nonfinite_grads = [
         value
@@ -680,9 +667,7 @@ def judge_a6(evidence: RunEvidence) -> CriterionResult:
     initial = evidence.losses[0]
     final = evidence.losses[-1]
     if final > initial:
-        return CriterionResult(
-            "A6", False, f"最终 loss {final:.6g} 高于初始 loss {initial:.6g}"
-        )
+        return CriterionResult("A6", False, f"最终 loss {final:.6g} 高于初始 loss {initial:.6g}")
     return CriterionResult(
         "A6",
         True,

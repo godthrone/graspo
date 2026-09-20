@@ -871,9 +871,7 @@ class _Qwen35GenerationMethods:
                 chunk_ids = prompt_input_ids[start:stop]
                 flat_ids = chunk_ids.repeat_interleave(rollout_group_size, dim=0)
                 attention_mask = flat_ids.ne(pad_token_id)
-                finished = torch.zeros(
-                    flat_ids.shape[0], dtype=torch.bool, device=self.device
-                )
+                finished = torch.zeros(flat_ids.shape[0], dtype=torch.bool, device=self.device)
                 seq, _timing = self._pipeline_generate_batch(
                     sequences=flat_ids,
                     attention_mask=attention_mask,
@@ -970,13 +968,19 @@ class _Qwen35GenerationMethods:
             )
         )
 
-        prompt_chunk_size = max(1, min(N, self._shared_rollout_prompt_chunk_size(
-            prompt_len=max(prompt_len, max_prompt_length),
-            requested_prompt_count=N,
-            rollout_group_size=G,
-            max_new_tokens=max_new_tokens,
-            use_kv_cache=True,
-        )))
+        prompt_chunk_size = max(
+            1,
+            min(
+                N,
+                self._shared_rollout_prompt_chunk_size(
+                    prompt_len=max(prompt_len, max_prompt_length),
+                    requested_prompt_count=N,
+                    rollout_group_size=G,
+                    max_new_tokens=max_new_tokens,
+                    use_kv_cache=True,
+                ),
+            ),
+        )
 
         all_generations: list[NativeGeneration] = []
         with torch.no_grad():

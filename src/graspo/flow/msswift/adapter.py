@@ -192,9 +192,7 @@ class MsSwiftToGraspoAdapter:
             response = record.pop("response")
             if not isinstance(response, str) or not response.strip():
                 raise ArdContractError("sample.response must be a non-empty string")
-            record["targets"] = [
-                {"id": None, "output": {"content": {"text": response}}}
-            ]
+            record["targets"] = [{"id": None, "output": {"content": {"text": response}}}]
 
         if "targets" not in record:
             raise ArdContractError("sample must contain 'targets' (or a top-level 'response')")

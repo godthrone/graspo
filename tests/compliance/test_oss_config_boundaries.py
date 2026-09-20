@@ -204,9 +204,7 @@ def test_removed_nonfinite_env_channel_has_no_reader() -> None:
 
     用 AST 而不是子串匹配，避免把注释/文档字符串里的"历史说明"误当成读取点。
     """
-    source = (
-        _REPO_ROOT / "src/graspo/flow/adapters/models/qwen35_36/training_sft.py"
-    )
+    source = _REPO_ROOT / "src/graspo/flow/adapters/models/qwen35_36/training_sft.py"
     tree = ast.parse(source.read_text(encoding="utf-8"))
     readers = [
         node
@@ -269,9 +267,7 @@ def test_collect_results_cli_wins_when_env_var_also_set(
     monkeypatch.setenv("GRASPO_MODELS_HOST_ROOT", str(env_root))
 
     tier = {"model_path": "/models/Qwen3.5-9B"}
-    resolved = collect._base_model_dir(
-        argparse.Namespace(base_model_root=str(cli_root)), tier
-    )
+    resolved = collect._base_model_dir(argparse.Namespace(base_model_root=str(cli_root)), tier)
     assert resolved == cli_root / "Qwen3.5-9B"
     assert resolved != env_root / "Qwen3.5-9B"
 

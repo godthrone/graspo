@@ -200,9 +200,9 @@ def test_f5_three_declarations_equal_measured_image_values():
     declared = _gated()
 
     for name in ("numpy", "pillow", "safetensors"):
-        assert declared[name] == check_env_versions.release_segment(
-            _MEASURED_MSSWIFT_45_3[name]
-        ), name
+        assert declared[name] == check_env_versions.release_segment(_MEASURED_MSSWIFT_45_3[name]), (
+            name
+        )
 
 
 def test_measured_snapshot_covers_every_gated_package():

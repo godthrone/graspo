@@ -360,9 +360,7 @@ def test_training_config_rejects_wrong_type():
 
 def test_graspo_config_from_dict_none_sections_preserved():
     """显式 None 的 section 使用默认值。"""
-    cfg = GraspoConfig.from_dict(
-        {"training": None, "model": None, "data": None, "lora": None}
-    )
+    cfg = GraspoConfig.from_dict({"training": None, "model": None, "data": None, "lora": None})
     assert cfg.training.seed == 42
     assert cfg.training.max_epochs == 100  # TrainingConfig 默认值
     assert cfg.model.model_path == ""

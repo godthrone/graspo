@@ -91,7 +91,10 @@ def test_rlhf_stage_maps_rollout_group_size_to_num_generations():
 def test_invalid_stage_is_rejected():
     with pytest.raises(ValueError, match="stage must be"):
         graspo_to_ms_swift_argv(
-            _config(), stage="grpo", dataset_path="x", output_dir="y"  # type: ignore[arg-type]
+            _config(),
+            stage="grpo",
+            dataset_path="x",
+            output_dir="y",  # type: ignore[arg-type]
         )
 
 
@@ -265,34 +268,55 @@ def test_mapping_is_pure_attribute_access_and_imports_nothing_heavy(monkeypatch)
 
     stub = SimpleNamespace(
         model=SimpleNamespace(
-            model_path="m", trust_remote_code=True, torch_dtype="bfloat16",
-            chat_template_kwargs={}, gradient_checkpointing=True, attn_implementation=None,
+            model_path="m",
+            trust_remote_code=True,
+            torch_dtype="bfloat16",
+            chat_template_kwargs={},
+            gradient_checkpointing=True,
+            attn_implementation=None,
         ),
         data=SimpleNamespace(train_path="d", max_prompt_length=1024),
-        lora=SimpleNamespace(
-            r=8, alpha=16, dropout=0.0, target_modules=None, adapter_path=None
-        ),
+        lora=SimpleNamespace(r=8, alpha=16, dropout=0.0, target_modules=None, adapter_path=None),
         training=SimpleNamespace(
-            output_dir="", run_name="r", seed=1, max_epochs=1, learning_rate=1e-5,
-            weight_decay=0.0, max_grad_norm=1.0, gradient_accumulation_micro_batches=1,
-            save_steps=-1, save_checkpoint_every_epoch=False, max_new_tokens=64,
-            rollout_group_size=2, temperature=1.0, top_p=1.0,
+            output_dir="",
+            run_name="r",
+            seed=1,
+            max_epochs=1,
+            learning_rate=1e-5,
+            weight_decay=0.0,
+            max_grad_norm=1.0,
+            gradient_accumulation_micro_batches=1,
+            save_steps=-1,
+            save_checkpoint_every_epoch=False,
+            max_new_tokens=64,
+            rollout_group_size=2,
+            temperature=1.0,
+            top_p=1.0,
         ),
         msswift=SimpleNamespace(
-            device_map=None, deepspeed=None, zero_hpz_partition_size=None,
-            deepspeed_autotp_size=None, fsdp=None, sequence_parallel_size=2,
-            rope_scaling=None, max_model_len=None, packing=False, padding_free=False,
-            use_liger_kernel=False, use_logits_to_keep=False, use_vllm=None,
-            vllm_mode=None, attn_impl=None,
-            per_device_train_batch_size=None, megatron=_AbsentConfig(),
+            device_map=None,
+            deepspeed=None,
+            zero_hpz_partition_size=None,
+            deepspeed_autotp_size=None,
+            fsdp=None,
+            sequence_parallel_size=2,
+            rope_scaling=None,
+            max_model_len=None,
+            packing=False,
+            padding_free=False,
+            use_liger_kernel=False,
+            use_logits_to_keep=False,
+            use_vllm=None,
+            vllm_mode=None,
+            attn_impl=None,
+            per_device_train_batch_size=None,
+            megatron=_AbsentConfig(),
         ),
     )
     for name in ("torch", "swift"):
         monkeypatch.delitem(sys.modules, name, raising=False)
 
-    argv = graspo_to_ms_swift_argv(
-        stub, stage="sft", dataset_path="ds", output_dir="out"
-    )
+    argv = graspo_to_ms_swift_argv(stub, stage="sft", dataset_path="ds", output_dir="out")
 
     assert _value_of(argv, "--sequence_parallel_size") == "2"
     assert "torch" not in sys.modules

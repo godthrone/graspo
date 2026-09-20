@@ -92,7 +92,6 @@ def test_parse_device_list_rejects_runtime_marker_because_it_wants_host_indices(
     assert "托管哨兵" in _reason(exc)
 
 
-
 def test_rejects_six_cards_with_reserved_first():
     """含 6/7 的错误优先于卡数错误——先报生产卡。"""
     with pytest.raises(GpuLockError) as exc:
@@ -237,14 +236,15 @@ def test_require_gpu_lock_or_exit_uses_injected_probe_only_for_void():
         calls.append("probe")
         return GpuInventory(source="nvidia-smi -L", count=1, indices=(0,))
 
-    assert require_gpu_lock_or_exit(
-        {"NVIDIA_VISIBLE_DEVICES": "void"}, inventory_probe=probe
-    ) == (0,)
+    assert require_gpu_lock_or_exit({"NVIDIA_VISIBLE_DEVICES": "void"}, inventory_probe=probe) == (
+        0,
+    )
     assert calls == ["probe"]
 
-    assert require_gpu_lock_or_exit(
-        {"NVIDIA_VISIBLE_DEVICES": "2,3"}, inventory_probe=probe
-    ) == (2, 3)
+    assert require_gpu_lock_or_exit({"NVIDIA_VISIBLE_DEVICES": "2,3"}, inventory_probe=probe) == (
+        2,
+        3,
+    )
     assert calls == ["probe"], "显式卡号路径不得触发实测探测"
 
 

@@ -144,6 +144,7 @@ def test_gradient_respects_ppo_clip_lower_bound():
     # min(0.135335, 0.8) = 0.135335 (unclamped side wins)
     # loss = -0.135335, grad = d(-ratio*adv)/dlog_prob = -ratio*adv = -0.135335
     import math
+
     expected = -math.exp(-2.0)
     assert grad.item() == pytest.approx(expected, abs=1e-6)
 

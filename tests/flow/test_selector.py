@@ -16,7 +16,8 @@ _selector_path = (
     Path(__file__).resolve().parents[2] / "src" / "graspo" / "flow" / "backend_selection.py"
 )
 _spec = importlib.util.spec_from_file_location(
-    "graspo.flow.backend_selection", _selector_path,
+    "graspo.flow.backend_selection",
+    _selector_path,
     submodule_search_locations=[],
 )
 _selector = importlib.util.module_from_spec(_spec)

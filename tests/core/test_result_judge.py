@@ -276,8 +276,7 @@ def test_detached_loss_tier_is_not_a_max_context_candidate():
     evidence = make_evidence(
         exit_code=1,
         log_text=(
-            "RuntimeError: element 0 of tensors does not require grad and does not "
-            "have a grad_fn\n"
+            "RuntimeError: element 0 of tensors does not require grad and does not have a grad_fn\n"
         ),
     )
 
@@ -338,9 +337,7 @@ def test_ledger_row_non_oom_failure_writes_nothing():
         "NCCL error: unhandled cuda error",
         "something odd happened",
     ):
-        judgement = judge_tier(
-            make_evidence(exit_code=1, log_text=log_text), context_length=65536
-        )
+        judgement = judge_tier(make_evidence(exit_code=1, log_text=log_text), context_length=65536)
         row = _row(judgement, 65536)
 
         assert row["max_context"] is None, log_text

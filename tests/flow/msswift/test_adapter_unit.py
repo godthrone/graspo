@@ -143,12 +143,49 @@ def test_reasoning_rejects_non_string():
         ("target 缺 output", lambda r: {**r, "targets": [{"id": "primary"}]}),
         ("output 非 dict", lambda r: {**r, "targets": [{"id": "p", "output": "text"}]}),
         ("output 缺 content", lambda r: {**r, "targets": [{"id": "p", "output": {}}]}),
-        ("output 有未识别键", lambda r: {**r, "targets": [{"id": "p", "output": {"content": "x", "junk": 1}}]}),
+        (
+            "output 有未识别键",
+            lambda r: {**r, "targets": [{"id": "p", "output": {"content": "x", "junk": 1}}]},
+        ),
         ("target id 非 str", lambda r: {**r, "targets": [{"id": 7, "output": {"content": "x"}}]}),
-        ("末条是 assistant", lambda r: {**r, "messages": [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}]}),
-        ("首条不是 user", lambda r: {**r, "messages": [{"role": "assistant", "content": "a"}, {"role": "user", "content": "q"}]}),
-        ("角色不交替", lambda r: {**r, "messages": [{"role": "user", "content": "q1"}, {"role": "user", "content": "q2"}]}),
-        ("system 不在 index 0", lambda r: {**r, "messages": [{"role": "user", "content": "q1"}, {"role": "system", "content": "s"}, {"role": "user", "content": "q2"}]}),
+        (
+            "末条是 assistant",
+            lambda r: {
+                **r,
+                "messages": [
+                    {"role": "user", "content": "q"},
+                    {"role": "assistant", "content": "a"},
+                ],
+            },
+        ),
+        (
+            "首条不是 user",
+            lambda r: {
+                **r,
+                "messages": [
+                    {"role": "assistant", "content": "a"},
+                    {"role": "user", "content": "q"},
+                ],
+            },
+        ),
+        (
+            "角色不交替",
+            lambda r: {
+                **r,
+                "messages": [{"role": "user", "content": "q1"}, {"role": "user", "content": "q2"}],
+            },
+        ),
+        (
+            "system 不在 index 0",
+            lambda r: {
+                **r,
+                "messages": [
+                    {"role": "user", "content": "q1"},
+                    {"role": "system", "content": "s"},
+                    {"role": "user", "content": "q2"},
+                ],
+            },
+        ),
         ("message 缺 content", lambda r: {**r, "messages": [{"role": "user"}]}),
         ("message role 为空", lambda r: {**r, "messages": [{"role": "", "content": "q"}]}),
     ],
@@ -239,7 +276,14 @@ def test_full_round_trip_is_lossless():
 
     assert back["targets"] == original["targets"]
     assert back["messages"] == original["messages"]
-    for key in ("id", "source", "data_source", "schema_version", "input_generator_model", "teacher_id"):
+    for key in (
+        "id",
+        "source",
+        "data_source",
+        "schema_version",
+        "input_generator_model",
+        "teacher_id",
+    ):
         assert back[key] == original[key], key
 
 

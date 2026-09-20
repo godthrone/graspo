@@ -25,6 +25,7 @@ import pytest
 # Helper: load graspo.flow.runtime directly
 # ---------------------------------------------------------------------------
 
+
 def _load_runtime_module() -> types.ModuleType:
     """Load ``graspo.flow.runtime``, bypassing the broken package init chain.
 

@@ -139,11 +139,16 @@ class MsSwiftOpdTrainer:
         if smoke:
             # 与 RL 通道同一约定：冒烟 = 1 个优化轮次 + 每步保存，拿到两样产物证据。
             extra_argv = [
-                "--max_steps", "1",
-                "--save_strategy", "steps",
-                "--save_steps", "1",
-                "--save_total_limit", "1",
-                "--logging_steps", "1",
+                "--max_steps",
+                "1",
+                "--save_strategy",
+                "steps",
+                "--save_steps",
+                "1",
+                "--save_total_limit",
+                "1",
+                "--logging_steps",
+                "1",
             ]
         argv = graspo_to_ms_swift_argv(
             self.config,

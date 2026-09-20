@@ -147,16 +147,33 @@ def test_megatron_passthrough_is_valid_for_the_megatron_channel(args_path, args_
 
     # §8.2 的 11 行在本配置下都有取值 → 必须全部出现
     expected = {
-        "global_batch_size", "data_sharding", "data_parallel_random_init", "overlap_grad_reduce",
-        "use_distributed_optimizer", "use_megatron_fsdp", "data_parallel_sharding_strategy",
-        "strict_fsdp_dtensor_load", "tensor_model_parallel_size", "tp_comm_overlap",
-        "pipeline_model_parallel_size", "overlap_p2p_comm", "align_param_gather",
-        "pipeline_model_parallel_layout", "decoder_first_pipeline_num_layers",
-        "decoder_last_pipeline_num_layers", "sequence_parallel", "context_parallel_size",
-        "cp_comm_type", "cp_partition_mode", "sequence_packing_scheduler",
-        "expert_model_parallel_size", "expert_tensor_parallel_size",
-        "virtual_pipeline_model_parallel_size", "microbatch_group_size_per_vp_stage",
-        "fp8_param_gather", "fp4_param_gather",
+        "global_batch_size",
+        "data_sharding",
+        "data_parallel_random_init",
+        "overlap_grad_reduce",
+        "use_distributed_optimizer",
+        "use_megatron_fsdp",
+        "data_parallel_sharding_strategy",
+        "strict_fsdp_dtensor_load",
+        "tensor_model_parallel_size",
+        "tp_comm_overlap",
+        "pipeline_model_parallel_size",
+        "overlap_p2p_comm",
+        "align_param_gather",
+        "pipeline_model_parallel_layout",
+        "decoder_first_pipeline_num_layers",
+        "decoder_last_pipeline_num_layers",
+        "sequence_parallel",
+        "context_parallel_size",
+        "cp_comm_type",
+        "cp_partition_mode",
+        "sequence_packing_scheduler",
+        "expert_model_parallel_size",
+        "expert_tensor_parallel_size",
+        "virtual_pipeline_model_parallel_size",
+        "microbatch_group_size_per_vp_stage",
+        "fp8_param_gather",
+        "fp4_param_gather",
     }
     assert expected <= set(_flags(megatron_argv))
     assert not (expected & set(_flags(standard_argv)))
@@ -174,12 +191,15 @@ def test_deepspeed_flags_are_rejected_by_the_megatron_channel():
     """
     from graspo.flow.msswift._config_mapping import megatron_passthrough_argv
 
-    megatron_argv = megatron_passthrough_argv(
-        GraspoConfig.model_validate(_ALL_SHARDING_CONFIG)
-    )
+    megatron_argv = megatron_passthrough_argv(GraspoConfig.model_validate(_ALL_SHARDING_CONFIG))
 
-    for flag in ("--deepspeed", "--zero_hpz_partition_size", "--deepspeed_autotp_size",
-                 "--fsdp", "--sequence_parallel_size"):
+    for flag in (
+        "--deepspeed",
+        "--zero_hpz_partition_size",
+        "--deepspeed_autotp_size",
+        "--fsdp",
+        "--sequence_parallel_size",
+    ):
         assert flag not in megatron_argv
 
 
@@ -283,9 +303,12 @@ def test_multi_value_parsing_matches_the_three_observed_forms():
         pytest.skip(f"{_QWEN} is not available in this environment")
 
     base = [
-        "--model", _QWEN,
-        "--dataset", "/tmp/ds.jsonl",
-        "--output_dir", "/tmp/out",
+        "--model",
+        _QWEN,
+        "--dataset",
+        "/tmp/ds.jsonl",
+        "--output_dir",
+        "/tmp/out",
     ]
     space, _ = parse_args(SftArguments, base + ["--target_modules", "q_proj", "v_proj"])
     jsonish, _ = parse_args(SftArguments, base + ["--target_modules", '["q_proj","v_proj"]'])

@@ -678,6 +678,7 @@ def prepare_output_dir(output_dir: str | Path, *, overwrite: bool = False) -> Pa
                 "Set training.overwrite_output_dir: true in your config to overwrite."
             )
         import shutil
+
         shutil.rmtree(output)
     output.mkdir(parents=True, exist_ok=True)
     return output
@@ -705,9 +706,7 @@ def _is_relative_to(path: Path, parent: Path) -> bool:
         return False
 
 
-def save_lora_adapter(
-    model: torch.nn.Module, tokenizer: Any, output_dir: str | Path
-) -> None:
+def save_lora_adapter(model: torch.nn.Module, tokenizer: Any, output_dir: str | Path) -> None:
     """保存 LoRA adapter 和 tokenizer（兼容 DDP 包装和 HF 接口）。"""
     path = prepare_output_dir(output_dir)
     unwrapped = model

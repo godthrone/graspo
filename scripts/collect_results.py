@@ -72,7 +72,9 @@ _GLOBAL_STEP = re.compile(r"['\"]?global_step['\"]?\s*[:=]\s*(\d+)")
 #: 于是 ``"loss": null`` 会匹配出 ``"n"``，再被 ``float()`` 抛错而变成 NaN。
 #: F-4（2026-09-18）实测的"偶然通过"正来自这条路径——一旦某天改成 ``0.0``，
 #: 判定器会把坏 run 记成"数值健康"。这里把语法收窄，null/缺失**一律显式识别**。
-_NUMERIC_LITERAL = re.compile(r"^-?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?$|^-?(?:nan|inf)$", re.IGNORECASE)
+_NUMERIC_LITERAL = re.compile(
+    r"^-?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?$|^-?(?:nan|inf)$", re.IGNORECASE
+)
 
 #: 训练器在首个非有限梯度处硬失败时打的标记（唯一真相源：
 #: ``flow/adapters/models/qwen35_36/training_sft.py``）。
@@ -325,7 +327,9 @@ def _trainer_state_candidates(output_dirs: Sequence[Path]) -> list[tuple[str, di
     return candidates
 
 
-def _best_trainer_state(candidates: Sequence[tuple[str, dict[str, Any]]]) -> tuple[str, dict[str, Any]] | None:
+def _best_trainer_state(
+    candidates: Sequence[tuple[str, dict[str, Any]]],
+) -> tuple[str, dict[str, Any]] | None:
     """挑 ``global_step`` 最大的那份（同值优先 ``trainer_state.json``）。"""
     best: tuple[str, dict[str, Any]] | None = None
     best_key: tuple[int, int] = (-1, -1)
@@ -468,12 +472,8 @@ def extract_steps_and_series(output_dirs: Sequence[Path], log_text: str) -> Seri
                 result.notes.append("loss 序列来自 stdout 兜底（无 rank_metrics 旁路）")
         else:
             for loss, grad in raw_pairs:
-                result.losses.append(
-                    loss if loss is not None else _judge.MISSING_SENTINEL
-                )
-                result.grad_norms.append(
-                    grad if grad is not None else _judge.MISSING_SENTINEL
-                )
+                result.losses.append(loss if loss is not None else _judge.MISSING_SENTINEL)
+                result.grad_norms.append(grad if grad is not None else _judge.MISSING_SENTINEL)
             null_count = len(re.findall(r"['\"]loss['\"]\s*:\s*(?:null|None)", log_text))
             if null_count:
                 result.loss_unavailable = True
@@ -508,9 +508,7 @@ def extract_steps_and_series(output_dirs: Sequence[Path], log_text: str) -> Seri
     #    天然被排除 ⇒ 不会把"没有读数"升格成"数值异常"这个事实断言。
     result.loss_nonfinite = any(
         isinstance(value, float) and not math.isfinite(value) for value in result.losses
-    ) or any(
-        isinstance(value, float) and not math.isfinite(value) for value in result.grad_norms
-    )
+    ) or any(isinstance(value, float) and not math.isfinite(value) for value in result.grad_norms)
     # ② 有"读不到值"的步（MISSING 哨兵 = 明确知道该步没有读数）
     result.loss_unavailable = result.loss_unavailable or any(
         value is _judge.MISSING_SENTINEL for value in result.losses
@@ -811,9 +809,7 @@ def extract_checkpoint_reloadable(output_dirs: Sequence[Path]) -> bool | None:
     return None if not checked else False
 
 
-def extract_artifacts(
-    run_dir: Path, output_dirs: Sequence[Path], log_text: str
-) -> dict[str, bool]:
+def extract_artifacts(run_dir: Path, output_dirs: Sequence[Path], log_text: str) -> dict[str, bool]:
     """A5 四件套产物：config_backup / training_log / checkpoint / metrics。
 
     **契约覆盖两种布局，判据语义一致**（同一件产物在两种后端下的等价落点）：
@@ -913,9 +909,7 @@ def collect_run(
         losses=tuple(series.losses),
         grad_norms=tuple(series.grad_norms),
         optimizer_steps_per_step=(
-            tuple(series.optimizer_steps_per_step)
-            if series.optimizer_steps_per_step
-            else None
+            tuple(series.optimizer_steps_per_step) if series.optimizer_steps_per_step else None
         ),
         nonfinite_skips=series.nonfinite_skips,
         losses_nonfinite=series.loss_nonfinite,
@@ -978,7 +972,10 @@ def run(args: argparse.Namespace) -> int:
             )
             continue
         first, first_series = collect_run(
-            first_dir, tier_id, tuner_type, _base_model_dir(args, tier),
+            first_dir,
+            tier_id,
+            tuner_type,
+            _base_model_dir(args, tier),
             min_optimizer_steps=extract_min_optimizer_steps(tier),
         )
         second = None
@@ -986,7 +983,10 @@ def run(args: argparse.Namespace) -> int:
             second_dir = Path(args.rerun_root) / tier_id
             if second_dir.is_dir():
                 second, _ = collect_run(
-                    second_dir, tier_id, tuner_type, _base_model_dir(args, tier),
+                    second_dir,
+                    tier_id,
+                    tuner_type,
+                    _base_model_dir(args, tier),
                     min_optimizer_steps=extract_min_optimizer_steps(tier),
                 )
         judgement = _judge.judge_tier(first, second, context_length=args.context_length)
@@ -1045,9 +1045,7 @@ def run(args: argparse.Namespace) -> int:
 
     passed = sum(1 for record in records if record["status"] == _judge.LEDGER_PASS)
     failed = sum(1 for record in records if record["status"] == _judge.LEDGER_FAIL)
-    indeterminate = sum(
-        1 for record in records if record["status"] == _judge.LEDGER_INDETERMINATE
-    )
+    indeterminate = sum(1 for record in records if record["status"] == _judge.LEDGER_INDETERMINATE)
     untested = len(records) - passed - failed - indeterminate
     print(
         f"ledger: {jsonl} ({len(records)} tiers: pass={passed} fail={failed} "

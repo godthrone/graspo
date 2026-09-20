@@ -263,12 +263,9 @@ def parse_idle_query(text: str) -> list[tuple[int, float, float]]:
         memory_used = _idle_value(fields, 1, "memory.used", header=header)
         utilization = _idle_value(fields, 2, "utilization.gpu", header=header)
         if index is None or memory_used is None or utilization is None:
-            raise RuntimeError(
-                f"无法解析 nvidia-smi 空闲查询行（字段数 {len(fields)}）：{line!r}"
-            )
+            raise RuntimeError(f"无法解析 nvidia-smi 空闲查询行（字段数 {len(fields)}）：{line!r}")
         rows.append((int(index), memory_used, utilization))
     return rows
-
 
 
 def parse_process_query(text: str) -> list[dict[str, Any]]:
@@ -557,10 +554,7 @@ def resolve_sample_gpus(
 
     if inventory_probe is None:
         inventory_probe = probe_gpu_inventory
-    return [
-        str(device)
-        for device in select_sample_targets_for_inventory(gpus, inventory_probe())
-    ]
+    return [str(device) for device in select_sample_targets_for_inventory(gpus, inventory_probe())]
 
 
 def record_gpu_memory(
@@ -722,8 +716,7 @@ def cmd_record_gpu_memory(args: argparse.Namespace) -> int:
             return 0
         if not args.config:
             print(
-                "record-gpu-memory: --config is required（除非用 --idle-only，"
-                "它只 print 不落盘）",
+                "record-gpu-memory: --config is required（除非用 --idle-only，它只 print 不落盘）",
                 file=sys.stderr,
             )
             return 2

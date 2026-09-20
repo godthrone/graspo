@@ -95,9 +95,12 @@ def test_disabled_offload_is_never_restricted():
     _validate(offload_optimizer_state=False, backend="msswift")
     _validate(offload_optimizer_state=False, native_adapter="some.other.Adapter")
     # 关闭状态下连"全参 + msswift + 别的适配器"也不得被这条新规则拦。
-    assert _validate_config(
-        {"backend": "msswift", "native": {"offload_optimizer_state": False}}
-    ).native.offload_optimizer_state is False
+    assert (
+        _validate_config(
+            {"backend": "msswift", "native": {"offload_optimizer_state": False}}
+        ).native.offload_optimizer_state
+        is False
+    )
 
 
 def test_existing_configs_without_the_key_are_untouched():
@@ -155,9 +158,7 @@ def test_offload_with_msswift_backend_is_rejected():
     with pytest.raises(ValueError, match="only wired into the native backend"):
         _validate(offload_optimizer_state=True, backend="msswift")
     with pytest.raises(ValidationError, match="only wired into the native backend"):
-        _validate_config(
-            {"backend": "msswift", "native": {"offload_optimizer_state": True}}
-        )
+        _validate_config({"backend": "msswift", "native": {"offload_optimizer_state": True}})
 
 
 def test_offload_with_non_qwen35_adapter_is_rejected():
@@ -209,9 +210,7 @@ def _class_defs(path: Path) -> dict[str, ast.ClassDef]:
 
 def _defined_methods(node: ast.ClassDef) -> set[str]:
     return {
-        item.name
-        for item in node.body
-        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+        item.name for item in node.body if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
 
 
@@ -231,9 +230,7 @@ def test_only_the_sft_mixin_defines_the_optimizer_hook():
     否则覆盖会被更靠前的 mixin 抢走，offload 静默失效。
     """
     adapter_classes = _class_defs(_ADAPTER_PY)
-    bases = [
-        ast.unparse(base).split(".")[-1] for base in adapter_classes["Qwen35Adapter"].bases
-    ]
+    bases = [ast.unparse(base).split(".")[-1] for base in adapter_classes["Qwen35Adapter"].bases]
     mixins = [name for name in bases if name != "TransformerAdapter"]
 
     definers: dict[str, set[str]] = {}
@@ -261,4 +258,3 @@ def test_sft_mixin_hook_delegates_to_super():
     )
     source = ast.unparse(hook)
     assert "super()._build_optimizer()" in source
-

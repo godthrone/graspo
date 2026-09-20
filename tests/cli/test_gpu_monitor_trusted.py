@@ -371,9 +371,7 @@ def test_idle_only_cli_rejects_occupied_card(monkeypatch):
     import graspo.cli.gpu_monitor as monitor
 
     monkeypatch.setenv("NVIDIA_VISIBLE_DEVICES", "0")
-    monkeypatch.setattr(
-        monitor, "query_idle_rows", lambda *_a, **_k: [(0, 6029.0, 0.0)]
-    )
+    monkeypatch.setattr(monitor, "query_idle_rows", lambda *_a, **_k: [(0, 6029.0, 0.0)])
 
     assert monitor.cmd_record_gpu_memory(_idle_only_args()) != 0
 

@@ -29,8 +29,11 @@ def test_scheduler_one_f_one_b_pp2_rank0():
     """pp=2, pp_rank=0：fill 1 个 forward，steady 交错，drain 收尾。"""
     rec = _Recorder()
     sched = OneFOneBScheduler(
-        pp_rank=0, pp_size=2, num_chunks=4,
-        forward=rec.forward, backward=rec.backward,
+        pp_rank=0,
+        pp_size=2,
+        num_chunks=4,
+        forward=rec.forward,
+        backward=rec.backward,
     )
     stats = sched.run()
 
@@ -48,8 +51,11 @@ def test_scheduler_one_f_one_b_pp2_rank1():
     """pp=2, pp_rank=1（末 stage）：fill 0 个 forward，steady 全量交错。"""
     rec = _Recorder()
     sched = OneFOneBScheduler(
-        pp_rank=1, pp_size=2, num_chunks=4,
-        forward=rec.forward, backward=rec.backward,
+        pp_rank=1,
+        pp_size=2,
+        num_chunks=4,
+        forward=rec.forward,
+        backward=rec.backward,
     )
     sched.run()
 
@@ -66,8 +72,11 @@ def test_scheduler_one_f_one_b_pp3():
     for rank in range(3):
         rec = _Recorder()
         sched = OneFOneBScheduler(
-            pp_rank=rank, pp_size=3, num_chunks=5,
-            forward=rec.forward, backward=rec.backward,
+            pp_rank=rank,
+            pp_size=3,
+            num_chunks=5,
+            forward=rec.forward,
+            backward=rec.backward,
         )
         sched.run()
         forwards = [c for c in rec.calls if c[0] == "forward"]
@@ -86,8 +95,11 @@ def test_scheduler_factory_name():
     rec = _Recorder()
     sched = build_scheduler(
         "1f1b",
-        pp_rank=0, pp_size=2, num_chunks=1,
-        forward=rec.forward, backward=rec.backward,
+        pp_rank=0,
+        pp_size=2,
+        num_chunks=1,
+        forward=rec.forward,
+        backward=rec.backward,
     )
     assert isinstance(sched, OneFOneBScheduler)
 
@@ -100,8 +112,11 @@ def test_scheduler_factory_unknown_raises():
     try:
         build_scheduler(
             "zero_bubble",
-            pp_rank=0, pp_size=2, num_chunks=1,
-            forward=rec.forward, backward=rec.backward,
+            pp_rank=0,
+            pp_size=2,
+            num_chunks=1,
+            forward=rec.forward,
+            backward=rec.backward,
         )
         raise AssertionError("expected ValueError for unknown scheduler")
     except ValueError:
@@ -113,8 +128,11 @@ def test_scheduler_factory_default_is_one_f_one_b():
     rec = _Recorder()
     sched = build_scheduler(
         None,
-        pp_rank=0, pp_size=2, num_chunks=2,
-        forward=rec.forward, backward=rec.backward,
+        pp_rank=0,
+        pp_size=2,
+        num_chunks=2,
+        forward=rec.forward,
+        backward=rec.backward,
     )
     assert isinstance(sched, OneFOneBScheduler)
     sched.run()

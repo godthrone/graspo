@@ -70,9 +70,7 @@ def _parse_candidates(raw: str) -> tuple[tuple[str, str], ...]:
             )
         parsed.append((source, run_dir))
     if not parsed:
-        raise ValueError(
-            f"{_CANDIDATES_ENV} must declare at least one 'data_source:run_dir' entry"
-        )
+        raise ValueError(f"{_CANDIDATES_ENV} must declare at least one 'data_source:run_dir' entry")
     return tuple(parsed)
 
 
@@ -246,7 +244,9 @@ def test_content_normalisation_is_lossless(real_records):
         converted = GraspoToMsSwiftAdapter().convert_sample(record)
         back = MsSwiftToGraspoAdapter().convert_sample(converted)
 
-        assert back["targets"][0]["output"]["content"] == record["targets"][0]["output"]["content"], label
+        assert (
+            back["targets"][0]["output"]["content"] == record["targets"][0]["output"]["content"]
+        ), label
 
 
 def test_reasoning_is_not_lost(real_records):

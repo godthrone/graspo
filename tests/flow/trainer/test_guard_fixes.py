@@ -173,9 +173,7 @@ class TestVisionTokenConsistency:
 
 class _FakeSFTConfig:
     def __init__(self, *, target_preset: str | None, target_modules: list[str] | None) -> None:
-        self.lora = SimpleNamespace(
-            target_modules=target_modules, target_preset=target_preset
-        )
+        self.lora = SimpleNamespace(target_modules=target_modules, target_preset=target_preset)
         self.model = SimpleNamespace(model_path="/models/Qwen3.5-9B")
 
 

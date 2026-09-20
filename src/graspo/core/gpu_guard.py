@@ -76,9 +76,9 @@ RUNTIME_MANAGED = "<runtime-managed>"
 
 _USAGE_HINT = (
     "正确用法（显式指定 ≤4 张、且仅取自 {0,1,2,3,4,5} 的卡）：\n"
-    '    NVIDIA_VISIBLE_DEVICES=0,1,2,3 <训练/测试命令>\n'
+    "    NVIDIA_VISIBLE_DEVICES=0,1,2,3 <训练/测试命令>\n"
     "    run.sh <config.yaml> --gpus 0,1,2,3\n"
-    '    docker run --gpus \'"device=0,1,2,3"\' ...\n'
+    "    docker run --gpus '\"device=0,1,2,3\"' ...\n"
     "  4 卡首选 {0,1,2,3}（唯一全部位于 NUMA0）；GPU6/7 为生产卡，永不使用。"
 )
 

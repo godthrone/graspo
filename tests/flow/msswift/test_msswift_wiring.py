@@ -127,9 +127,9 @@ def test_sft_dataset_output_lives_under_the_run_output_dir(tmp_path, stub_ms_swi
 
     _sft_trainer(config).train(smoke=True)
 
-    dataset_path = Path(stub_ms_swift["sft_main"][0][
-        stub_ms_swift["sft_main"][0].index("--dataset") + 1
-    ])
+    dataset_path = Path(
+        stub_ms_swift["sft_main"][0][stub_ms_swift["sft_main"][0].index("--dataset") + 1]
+    )
     assert str(dataset_path).startswith(str(tmp_path / "out"))
 
 
@@ -189,9 +189,11 @@ def test_rl_path_uses_ms_swift_python_api_not_cli(tmp_path, monkeypatch):
     stub_train_module.rlhf = stub_rlhf_module
 
     monkeypatch.setitem(sys.modules, "swift", types.ModuleType("swift"))
-    monkeypatch.setitem(sys.modules, "swift.trainers", SimpleNamespace(
-        TrainerFactory=SimpleNamespace(TRAINER_MAPPING={"grpo": "unused"})
-    ))
+    monkeypatch.setitem(
+        sys.modules,
+        "swift.trainers",
+        SimpleNamespace(TrainerFactory=SimpleNamespace(TRAINER_MAPPING={"grpo": "unused"})),
+    )
     monkeypatch.setitem(sys.modules, "swift.pipelines", types.ModuleType("swift.pipelines"))
     monkeypatch.setitem(sys.modules, "swift.pipelines.train", stub_train_module)
     monkeypatch.setitem(sys.modules, "swift.pipelines.train.rlhf", stub_rlhf_module)
@@ -302,12 +304,19 @@ def test_completion_text_is_captured_before_messages_are_tokenized():
 
     no_cache = SimpleNamespace(_graspo_completion_text={}, _resolve_tokenizer=lambda: _Tok())
     assert GraspoMsSwiftGRPOTrainer._completion_text(no_cache, sample) == "decoded:[11, 22, 33]"
-    assert _decode_completion(
-        SimpleNamespace(messages=[{"role": "assistant", "content": {"token_ids": [7, 8]}}]), _Tok()
-    ) == "decoded:[7, 8]"
-    assert _decode_completion(
-        SimpleNamespace(messages=[{"role": "assistant", "content": "plain"}]), None
-    ) == "plain"
+    assert (
+        _decode_completion(
+            SimpleNamespace(messages=[{"role": "assistant", "content": {"token_ids": [7, 8]}}]),
+            _Tok(),
+        )
+        == "decoded:[7, 8]"
+    )
+    assert (
+        _decode_completion(
+            SimpleNamespace(messages=[{"role": "assistant", "content": "plain"}]), None
+        )
+        == "plain"
+    )
 
 
 def test_graspo_loss_uses_current_logprobs_so_ratio_can_differ():
@@ -458,7 +467,9 @@ def test_parseable_trainable_group_produces_nonzero_token_advantages():
     stub._compute(stub, samples, rewards)
 
     assert set(stub._graspo_token_advantages) == {"r1", "r2"}, "可训练的组必须注入 advantage"
-    flat = [abs(value) for per_token in stub._graspo_token_advantages.values() for value in per_token]
+    flat = [
+        abs(value) for per_token in stub._graspo_token_advantages.values() for value in per_token
+    ]
     assert flat and any(value != 0.0 for value in flat), "必须存在非零 token 级 advantage"
     _, _, _, decision = stub._graspo_group_decisions[0]
     assert decision.should_train is True

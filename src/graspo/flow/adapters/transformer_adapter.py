@@ -66,9 +66,7 @@ def apply_config_optimizer_hyperparams(
                 group["lr"] = learning_rate
             group_wd = float(group.get("weight_decay", 0.0))
             if group_wd != weight_decay:
-                overridden.append(
-                    f"weight_decay: checkpoint={group_wd:g} config={weight_decay:g}"
-                )
+                overridden.append(f"weight_decay: checkpoint={group_wd:g} config={weight_decay:g}")
                 group["weight_decay"] = weight_decay
     if scheduler is not None and getattr(scheduler, "base_lrs", None):
         for i, base_lr in enumerate(scheduler.base_lrs):
@@ -210,9 +208,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
         self.optimizer = (
             torch.optim.AdamW(
                 trainable,
-                lr=self.config.training.effective_learning_rate(
-                    dp_size=self.config.native.dp_size
-                ),
+                lr=self.config.training.effective_learning_rate(dp_size=self.config.native.dp_size),
                 weight_decay=self.config.training.weight_decay,
             )
             if trainable
@@ -229,9 +225,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
             return None
 
         base_lr = float(
-            self.config.training.effective_learning_rate(
-                dp_size=self.config.native.dp_size
-            )
+            self.config.training.effective_learning_rate(dp_size=self.config.native.dp_size)
         )
         warmup_steps = max(0, int(sched_cfg.warmup_steps))
         min_lr = base_lr * float(sched_cfg.min_lr_ratio)
@@ -474,7 +468,6 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
                 encoding="utf-8",
             )
 
-
     def load_checkpoint(self, path: str | Path) -> dict[str, Any] | None:
         self._require_ready()
         if self.model is None:
@@ -577,9 +570,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
             self.optimizer,
             self.scheduler,
             learning_rate=float(
-                self.config.training.effective_learning_rate(
-                    dp_size=self.config.native.dp_size
-                )
+                self.config.training.effective_learning_rate(dp_size=self.config.native.dp_size)
             ),
             weight_decay=float(self.config.training.weight_decay),
         )
@@ -857,9 +848,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
         if self.optimizer is not None:
             return float(self.optimizer.param_groups[0]["lr"])
         return float(
-            self.config.training.effective_learning_rate(
-                dp_size=self.config.native.dp_size
-            )
+            self.config.training.effective_learning_rate(dp_size=self.config.native.dp_size)
         )
 
     def _emit_rank_memory_event(self, phase: str, extra: dict[str, Any] | None = None) -> None:

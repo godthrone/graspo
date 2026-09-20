@@ -52,9 +52,7 @@ class GraspoFlowState:
     device: torch.device
 
     @classmethod
-    def initialize(
-        cls, tp_size: int, pp_size: int = 1, dp_size: int = 1
-    ) -> GraspoFlowState:
+    def initialize(cls, tp_size: int, pp_size: int = 1, dp_size: int = 1) -> GraspoFlowState:
         rank = int(os.environ.get("RANK", "0"))
         local_rank = int(os.environ.get("LOCAL_RANK", "0"))
         world_size = int(os.environ.get("WORLD_SIZE", "1"))
@@ -147,10 +145,7 @@ class GraspoFlowState:
             # DP groups: ranks with same (tp_rank, pp_rank)
             for pp_idx in range(pp_size):
                 for tp_idx in range(tp_size):
-                    ranks = [
-                        d * pp_tp_size + pp_idx * tp_size + tp_idx
-                        for d in range(dp_size)
-                    ]
+                    ranks = [d * pp_tp_size + pp_idx * tp_size + tp_idx for d in range(dp_size)]
                     group = dist.new_group(ranks=ranks)
                     if rank in ranks:
                         dp_group = group

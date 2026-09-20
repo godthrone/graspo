@@ -88,8 +88,7 @@ def _validate_tool_messages(messages: list[dict[str, Any]]) -> None:
         tool_call_id = message.get("tool_call_id")
         if not isinstance(tool_call_id, str) or not tool_call_id.strip():
             raise ValueError(
-                f"messages[{idx}] (tool) must have a non-empty 'tool_call_id' "
-                f"(OpenAI standard)"
+                f"messages[{idx}] (tool) must have a non-empty 'tool_call_id' (OpenAI standard)"
             )
         content = message.get("content")
         if not isinstance(content, str):
@@ -166,15 +165,13 @@ def _require_canonical_tool_calls(value: Any, *, path: str = "tool_calls") -> No
         call_id = call.get("id")
         if not isinstance(call_id, str) or not call_id.strip():
             raise ValueError(
-                f"{path}[{idx}].id must be a non-empty string "
-                f"(OpenAI standard requires 'id' field)"
+                f"{path}[{idx}].id must be a non-empty string (OpenAI standard requires 'id' field)"
             )
 
         call_type = call.get("type")
         if call_type != "function":
             raise ValueError(
-                f"{path}[{idx}].type must be 'function' "
-                f"(OpenAI standard), got {call_type!r}"
+                f"{path}[{idx}].type must be 'function' (OpenAI standard), got {call_type!r}"
             )
 
         func = call.get("function")

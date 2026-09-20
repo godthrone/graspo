@@ -292,9 +292,7 @@ def test_cpt_argv_carries_pretrain_parameters(tmp_path: Path):
 
 def test_cpt_argv_honours_explicit_pretrain_overrides(tmp_path: Path):
     """显式值与 None 语义不同（§2.2）：给了就照给。"""
-    config = _cfg(
-        tmp_path, pretrain={"loss_scale": "last_round", "use_chat_template": True}
-    )
+    config = _cfg(tmp_path, pretrain={"loss_scale": "last_round", "use_chat_template": True})
     argv = _argv(config, "cpt")
     assert _value_of(argv, "--loss_scale") == "last_round"
     assert _value_of(argv, "--use_chat_template") == "true"

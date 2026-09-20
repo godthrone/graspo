@@ -42,6 +42,7 @@ def latest_log_dir(run_dir: Path) -> Path:
         return logs
     return max(subdirs, key=lambda d: d.stat().st_mtime)
 
+
 # 宽容提取用的正则（只做存在性分析，不校验结构）
 _FUNCTION_RE = re.compile(r"<function=([^>\n]+)>")
 _PARAMETER_RE = re.compile(r"<parameter=([^>\s]+)>")

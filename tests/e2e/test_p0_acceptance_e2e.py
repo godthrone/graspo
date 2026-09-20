@@ -72,9 +72,7 @@ def _materialize_run(
     (run / "stdout.log").write_text(
         (_FIXTURES / "f4probe-stdout.log").read_text(encoding="utf-8"), encoding="utf-8"
     )
-    metrics_text = (_FIXTURES / "f4probe-rank_metrics.rank_00000.jsonl").read_text(
-        encoding="utf-8"
-    )
+    metrics_text = (_FIXTURES / "f4probe-rank_metrics.rank_00000.jsonl").read_text(encoding="utf-8")
     if rewrite_null_losses:
         # ★ 注入缺陷：把 `"global_loss_mean": null` 改写成 `0.0`（人类可读行早就是这个
         #   口径）。旧判定器会因此判"数值健康"通过——本测试证明现在**不会**。
@@ -183,11 +181,11 @@ def test_missing_loss_is_explicit_not_nan_by_accident(tmp_path):
     (out / "final").mkdir()
     (run / "exit_code").write_text("0\n", encoding="utf-8")
     (run / "stdout.log").write_text(
-        '\n'.join(
+        "\n".join(
             [
-                'SFT step 1: loss=0.0209 grad_norm=26.2500',
+                "SFT step 1: loss=0.0209 grad_norm=26.2500",
                 '{"event": "sft_step", "step": 1, "loss": 0.0209, "grad_norm": 26.25}',
-                'SFT step 3: loss=0.0 grad_norm=0.0',
+                "SFT step 3: loss=0.0 grad_norm=0.0",
                 '{"event": "sft_step", "step": 3, "loss": null, "grad_norm": 0.0}',
             ]
         )

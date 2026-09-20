@@ -239,9 +239,7 @@ def test_truncated_by_max_no_tail_eos():
     """max_len 硬截断：不标末尾 EOS（被外力切断，不算"没写完"）。"""
     incomplete = "<tool_call>\n<function=robot_atomic_control>\n<parameter=action_type>\n逆时针旋转"
 
-    adv = _compute_advantages(
-        [incomplete], _PERFECT_TARGETS, truncated_by_max=[True]
-    )
+    adv = _compute_advantages([incomplete], _PERFECT_TARGETS, truncated_by_max=[True])
 
     assert len(adv) == 1
     # 末尾不应有 E token（被截断保护）
@@ -278,12 +276,7 @@ def test_invalid_format_type_raises():
 def test_think_tokens_have_zero_advantage():
     """THINK token 的 advantage 为 0。"""
     # 构造带 think 的 completion
-    think_completion = (
-        "thinking\n"
-        "Let me analyze the request.\n"
-        "response\n"
-        + _PERFECT_TOOL_CALL
-    )
+    think_completion = "thinking\nLet me analyze the request.\nresponse\n" + _PERFECT_TOOL_CALL
 
     adv = _compute_advantages([think_completion], _PERFECT_TARGETS)
 

@@ -46,9 +46,7 @@ THINK_CLOSE = "</think>"
 
 _THINK_RE = re.compile(f"{THINK_OPEN}(.*?){THINK_CLOSE}", re.DOTALL)
 _TOOL_CALL_RE = re.compile(f"{TOOL_CALL_OPEN}(.*?){TOOL_CALL_CLOSE}", re.DOTALL)
-_FUNCTION_RE = re.compile(
-    f"{FUNCTION_OPEN}([^>\\n]+)>(.*?){FUNCTION_CLOSE}", re.DOTALL
-)
+_FUNCTION_RE = re.compile(f"{FUNCTION_OPEN}([^>\\n]+)>(.*?){FUNCTION_CLOSE}", re.DOTALL)
 
 # Qwen 类 XML 语法：<function=NAME> / <parameter=NAME> 不是合法 XML 元素名
 # （元素名不允许 "="）。规范化前先匹配这种带 "=" 的语法。

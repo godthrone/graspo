@@ -134,9 +134,7 @@ _LAST_VALID_TOKEN_COUNTS: list[int] = []
 def _counts(chunks) -> list[int]:
     """统计并记录各 chunk 的有效 token 数（同时也刷新 `_LAST_VALID_TOKEN_COUNTS`）。"""
     global _LAST_VALID_TOKEN_COUNTS
-    _LAST_VALID_TOKEN_COUNTS = [
-        _count_sft_valid_tokens(labels) for _, labels in chunks
-    ]
+    _LAST_VALID_TOKEN_COUNTS = [_count_sft_valid_tokens(labels) for _, labels in chunks]
     return list(_LAST_VALID_TOKEN_COUNTS)
 
 
@@ -146,10 +144,7 @@ def _weights_from_last_counts() -> list[float]:
 
 
 def _weighted_sum(losses, weights) -> float:
-    return sum(
-        float(loss.detach()) * weight
-        for loss, weight in zip(losses, weights, strict=True)
-    )
+    return sum(float(loss.detach()) * weight for loss, weight in zip(losses, weights, strict=True))
 
 
 # 负向用例的固定构造：短 chunk 的 token 均值明显低于长 chunk。

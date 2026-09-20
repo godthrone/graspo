@@ -223,6 +223,7 @@ def test_entry_points_take_priority_over_fallback():
 
 def test_entry_points_empty_falls_back_to_dev():
     """entry_points 返回空时，回退到 _DEV_FALLBACKS。"""
+
     # 构造一个空 entry_points 对象
     class EmptyEntryPoints:
         def select(self, *, group: str) -> list[Any]:

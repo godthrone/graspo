@@ -108,9 +108,13 @@ class PipelineComm:
         """边界校验（§2.3）：tag 区间须与方向一致，否则提前报错而非 NCCL 静默挂起。"""
         if self._chunk_count <= 0:
             return
-        lo, hi = (0, self._chunk_count) if direction == "fwd" else (
-            self._chunk_count,
-            2 * self._chunk_count,
+        lo, hi = (
+            (0, self._chunk_count)
+            if direction == "fwd"
+            else (
+                self._chunk_count,
+                2 * self._chunk_count,
+            )
         )
         if not (lo <= tag < hi):
             raise RuntimeError(
@@ -118,9 +122,7 @@ class PipelineComm:
                 f"expected [{lo}, {hi}) for chunk_count={self._chunk_count}"
             )
 
-    def _post_send(
-        self, tensor: torch.Tensor, dst: int, *, tag: int, direction: str
-    ) -> Any:
+    def _post_send(self, tensor: torch.Tensor, dst: int, *, tag: int, direction: str) -> Any:
         self._validate_tag(direction, tag)
         tensor = tensor.contiguous()
         group = self._fwd_group if direction == "fwd" else self._bwd_group
@@ -137,9 +139,7 @@ class PipelineComm:
         self._release_slot(direction, work)
         return work
 
-    def _post_recv(
-        self, tensor: torch.Tensor, src: int, *, tag: int, direction: str
-    ) -> Any:
+    def _post_recv(self, tensor: torch.Tensor, src: int, *, tag: int, direction: str) -> Any:
         self._validate_tag(direction, tag)
         group = self._fwd_group if direction == "fwd" else self._bwd_group
         comm_stream = self._fwd_stream if direction == "fwd" else self._bwd_stream

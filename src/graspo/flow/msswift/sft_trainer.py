@@ -91,7 +91,9 @@ class MsSwiftSftTrainer:
         self.selection = selection
 
     def __repr__(self) -> str:  # pragma: no cover - 调试辅助
-        return f"<MsSwiftSftTrainer config.train_method={getattr(self.config, 'train_method', '?')!r}>"
+        return (
+            f"<MsSwiftSftTrainer config.train_method={getattr(self.config, 'train_method', '?')!r}>"
+        )
 
     def train(self, *, smoke: bool = False) -> None:
         """运行 ms-swift SFT 训练（Python API，进程内）。
@@ -127,11 +129,16 @@ class MsSwiftSftTrainer:
             # 冒烟要拿到 optimizer step 与 checkpoint 两样产物证据，因此显式规定
             # "只跑 1 步、每步保存一次"——这是运行边界参数，不改训练语义（§10.1）。
             extra_argv = [
-                "--max_steps", "1",
-                "--save_strategy", "steps",
-                "--save_steps", "1",
-                "--save_total_limit", "1",
-                "--logging_steps", "1",
+                "--max_steps",
+                "1",
+                "--save_strategy",
+                "steps",
+                "--save_steps",
+                "1",
+                "--save_total_limit",
+                "1",
+                "--logging_steps",
+                "1",
             ]
         argv = graspo_to_ms_swift_argv(
             self.config,

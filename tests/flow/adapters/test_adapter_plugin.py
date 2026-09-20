@@ -18,11 +18,11 @@ from types import ModuleType
 import pytest
 
 # 直接加载 runtime.py 绕过 flow/__init__.py 的 torch 导入链
-_RUNTIME_PATH = (
-    Path(__file__).resolve().parents[3] / "src" / "graspo" / "flow" / "runtime.py"
-)
+_RUNTIME_PATH = Path(__file__).resolve().parents[3] / "src" / "graspo" / "flow" / "runtime.py"
 _spec = importlib.util.spec_from_file_location(
-    "graspo.flow.runtime", _RUNTIME_PATH, submodule_search_locations=[],
+    "graspo.flow.runtime",
+    _RUNTIME_PATH,
+    submodule_search_locations=[],
 )
 _runtime = importlib.util.module_from_spec(_spec)
 sys.modules["graspo.flow.runtime"] = _runtime
@@ -56,9 +56,7 @@ def test_available_adapters_is_non_empty():
 def test_available_adapters_are_short_names():
     """_AVAILABLE_ADAPTERS 包含短名称（非完整 module:Class 路径）。"""
     for name in _AVAILABLE_ADAPTERS:
-        assert ":" not in name, (
-            f"_AVAILABLE_ADAPTERS should contain short names, got {name!r}"
-        )
+        assert ":" not in name, f"_AVAILABLE_ADAPTERS should contain short names, got {name!r}"
 
 
 # ── 适配器加载机制测试 ────────────────────────────────────────────────────────

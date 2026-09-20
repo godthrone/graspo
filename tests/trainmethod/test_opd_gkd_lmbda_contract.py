@@ -78,9 +78,7 @@ def _opd_config(**distill: object) -> GraspoConfig:
 
 
 def _argv(config: GraspoConfig) -> list[str]:
-    return graspo_to_ms_swift_argv(
-        config, stage="opd", dataset_path="d.jsonl", output_dir="o"
-    )
+    return graspo_to_ms_swift_argv(config, stage="opd", dataset_path="d.jsonl", output_dir="o")
 
 
 def _value_of(argv: list[str], flag: str) -> str | None:

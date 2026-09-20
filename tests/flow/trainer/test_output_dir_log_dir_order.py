@@ -24,7 +24,9 @@ from graspo.flow.logger.native_rollout_logger import NativeRolloutLogger
 from graspo.flow.logging import run_log_dir
 from graspo.flow.lora.lora_io import prepare_output_dir
 
-_TRAINER = Path(__file__).resolve().parents[3] / "src" / "graspo" / "flow" / "trainer" / "trainer.py"
+_TRAINER = (
+    Path(__file__).resolve().parents[3] / "src" / "graspo" / "flow" / "trainer" / "trainer.py"
+)
 
 
 def _train_source() -> str:
@@ -44,9 +46,7 @@ def test_old_order_loses_log_dir_and_events_write_fails(tmp_path: Path):
 
     prepare_output_dir(out, overwrite=True)  # ← rmtree 整棵 out（含 logs）
 
-    assert not logs_dir.exists(), (
-        "前置：prepare_output_dir(overwrite=True) 确实把 logs 子树删掉了"
-    )
+    assert not logs_dir.exists(), "前置：prepare_output_dir(overwrite=True) 确实把 logs 子树删掉了"
     with pytest.raises(FileNotFoundError) as excinfo:
         logger.write_event({"event": "run_start"})
     # 与 T028 真机报错同型（同一路径形态：{out}/logs/<run_id>/events.jsonl）

@@ -406,9 +406,7 @@ def graspo_to_ms_swift_argv(
         本函数不会凭空发明。
     """
     if stage not in ("sft", "rlhf", "cpt", "opd"):
-        raise ValueError(
-            f"stage must be 'sft', 'rlhf', 'cpt' or 'opd', got {stage!r}"
-        )
+        raise ValueError(f"stage must be 'sft', 'rlhf', 'cpt' or 'opd', got {stage!r}")
 
     model = config.model
     data = config.data

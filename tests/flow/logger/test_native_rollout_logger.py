@@ -12,7 +12,9 @@ def test_write_event_writes_events_jsonl(tmp_path):
     logger.write_event({"event": "train_step", "step": 1})
     rows = [
         json.loads(line)
-        for line in (run_log_dir(tmp_path) / "events.jsonl").read_text(encoding="utf-8").splitlines()
+        for line in (run_log_dir(tmp_path) / "events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
     ]
     assert len(rows) == 1
     assert rows[0]["event"] == "train_step"

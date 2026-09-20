@@ -300,12 +300,8 @@ class _Qwen35SFTTrainingMethods:
         """
         logger = logging.getLogger("graspo.sft_trainer")
         self.nonfinite_grad_skips = int(getattr(self, "nonfinite_grad_skips", 0)) + skipped
-        ranks = (
-            f"逐 rank grad_norm={rank_grad_norms} " if rank_grad_norms is not None else ""
-        )
-        message = (
-            f"{ranks}{detail}；本步 optimizer_steps={optimizer_steps}。"
-        )
+        ranks = f"逐 rank grad_norm={rank_grad_norms} " if rank_grad_norms is not None else ""
+        message = f"{ranks}{detail}；本步 optimizer_steps={optimizer_steps}。"
         if _nonfinite_skip_preauthorized(self.config.native.allow_nonfinite_grad_skip):
             logger.warning(
                 "SFT 训练出现非有限梯度：%s【native.allow_nonfinite_grad_skip=true "
@@ -697,8 +693,7 @@ class _Qwen35SFTTrainingMethods:
             gathered_norms: list[float | None] = [None for _ in range(self.world_size)]
             dist.all_gather_object(gathered_norms, local_grad_norm)
             rank_grad_norms = [
-                float(value) if value is not None else float("nan")
-                for value in gathered_norms
+                float(value) if value is not None else float("nan") for value in gathered_norms
             ]
             self.rank_grad_norms_last = rank_grad_norms
 

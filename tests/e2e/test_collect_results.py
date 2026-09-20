@@ -221,9 +221,7 @@ def test_collector_real_oom_writes_oom_boundary_context(tmp_path):
     assert record["max_context"] == 8192
     # 口径必须随数字一起落盘，否则下游会把"OOM 边界候选"读成"这个长度跑得通"。
     assert record["max_context_kind"] == "真 OOM 边界候选"
-    assert "（真 OOM 边界候选）" in (tmp_path / "ledger" / "ledger.md").read_text(
-        encoding="utf-8"
-    )
+    assert "（真 OOM 边界候选）" in (tmp_path / "ledger" / "ledger.md").read_text(encoding="utf-8")
 
 
 def test_collector_non_oom_failures_never_write_max_context(tmp_path):
