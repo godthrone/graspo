@@ -47,7 +47,7 @@ EXCLUDED_FROM_GATE: dict[str, str] = {
     "pytest": "dev extra：开发工具，不属于镜像运行时依赖",
     "ruff": "dev extra：开发工具，不属于镜像运行时依赖",
     "mypy": "dev extra：开发工具，不属于镜像运行时依赖",
-    "openpyxl": "dependency-groups dev：本机表格工具，不属于镜像运行时依赖",
+    "openpyxl": "dev extra：本机表格工具，不属于镜像运行时依赖",
 }
 
 #: 容器内取版本的探针脚本（多行，避免 -c 中的引号地狱）。
