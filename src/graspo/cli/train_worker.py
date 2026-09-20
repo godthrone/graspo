@@ -59,7 +59,7 @@ def main() -> None:
 
     # 日志目录身份来自 config（§7.1/§10.1）：`training.run_name` 是 config 自带的
     # 运行标识，每个 rank 读同一份 YAML ⇒ 天然一致，不再需要环境变量在进程间
-    # 传递（旧的 GRASPO_RUN_ID 通道已废弃，见 flow/logging.get_run_id）。
+    # 传递（旧的 GRASPO_RUN_ID 通道已删除，见 flow/logging.get_run_id）。
     # `run_log_id` 只做一次格式归一（`graspo_<时间戳>` → `<YYYYMMDD-HHMMSS>`），
     # 不引入第二个来源——它保证各 rank 得到**同一个**目录名，而不是各按自己的
     # 时钟生成（那会把同一 launch 的日志拆进多个目录）。

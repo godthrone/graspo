@@ -5,7 +5,8 @@
 1. **§10.1 输出定位参数**：``graspo record-gpu-memory`` 的产物参数
    （``output_dir`` / ``tag`` / ``interval_sec`` / ``recent_limit`` / ``pid_filter``）
    只在 config 里；CLI 不得再有对应选项（推论 2：CLI 与 config 零交集）。
-2. **§7.1 环境变量不得承载配置**：``GRASPO_RUN_ID``（旧兼容通道）与
+2. **§7.1 环境变量不得承载配置**：``GRASPO_RUN_ID``
+   （已**整体删除**的通道，非"保留兼容"）与
    ``GRASPO_MODELS_HOST_ROOT`` / ``GRASPO_BASE_MODEL_FOR_COMPARE``
    （已删除通道）**都不得**影响产物位置或判据结论。
 3. **§1.4 单一真相源**：``collect_results`` 的基座模型根只有一个来源
@@ -142,14 +143,32 @@ def test_run_id_env_var_cannot_move_log_dir(
     assert graspo_logging.run_log_dir(tmp_path) == tmp_path / "logs" / "20260101-000000"
 
 
-def test_run_id_env_var_still_works_but_warns(
+def test_run_id_env_var_is_removed_not_deprecated(
     monkeypatch: pytest.MonkeyPatch, _reset_run_id: None
 ) -> None:
-    """向后兼容：未绑定时旧环境变量仍可用，但必须发 DeprecationWarning 并写明移除版本。"""
+    """★★负向：``GRASPO_RUN_ID`` 通道已**整体删除**，不再有任何兼容期（§7.1/§18.1）。
+
+    它曾以"保留一个版本 + DeprecationWarning"过渡，并声明在 v0.26.0 删除；
+    当前 tag 已到 v0.28.x ⇒ 过渡期已过，必须是不生效的死通道：即便设了它，
+    未绑定时也只能拿到进程内时间戳，拿不到那个值。
+    """
     monkeypatch.setenv("GRASPO_RUN_ID", "LEGACY-20250828-170000")
-    with pytest.warns(DeprecationWarning) as record:
-        assert graspo_logging.get_run_id() == "LEGACY-20250828-170000"
-    assert any("v0.26.0" in str(item.message) for item in record)
+    assert graspo_logging.get_run_id() != "LEGACY-20250828-170000"
+
+
+def test_removed_run_id_env_channel_has_no_reader() -> None:
+    """★★负向：``GRASPO_RUN_ID`` 在真实代码里没有任何读取点（AST 判定）。
+
+    用 AST 而不是子串匹配，避免把注释/文档字符串里的"历史说明"误当成读取点。
+    """
+    source = _REPO_ROOT / "src/graspo/flow/logging.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    readers = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute) and node.attr in {"environ", "getenv"}
+    ]
+    assert readers == [], "flow/logging.py 不得再读进程环境（§7.1/§1.4）"
 
 
 def test_set_run_id_rejects_empty_value(_reset_run_id: None) -> None:
@@ -302,12 +321,12 @@ def test_collect_results_full_weights_differ_ignores_env_var(
 # ── 总闸：自定义 GRASPO_* 环境变量的读取点被逐个点名 ────────────────────────
 
 
-def test_custom_graspo_env_var_reads_are_limited_to_deprecated_run_id() -> None:
-    """★★总闸：运行时代码里只剩**一处**自定义 ``GRASPO_*`` 环境变量读取。
+def test_custom_graspo_env_var_reads_are_absent() -> None:
+    """★★总闸：运行时代码里**不存在任何**自定义 ``GRASPO_*`` 环境变量读取点。
 
-    唯一允许的残留是 ``flow/logging.py`` 的已废弃兼容通道：它读取时必发
-    DeprecationWarning，并承诺 v0.26.0 删除（§18.1）。此测试把"例外只有这一处"
-    变成可核事实——新增任何读取点都会在这里变红。
+    过渡期已结束——``flow/logging.py`` 那处唯一的例外（曾发 DeprecationWarning
+    并承诺 v0.26.0 删除）现已删除 ⇒ 允许清单为空。此测试把"零例外"变成可核
+    事实——新增任何读取点都会在这里变红（§7.1/§1.4/§18.1）。
 
     标准基础设施变量（``NVIDIA_VISIBLE_DEVICES`` / ``CUDA_VISIBLE_DEVICES`` /
     ``NCCL_*`` …）不属自定义通道，§7.1 明确允许，故排除在点名之外。
@@ -343,8 +362,6 @@ def test_custom_graspo_env_var_reads_are_limited_to_deprecated_run_id() -> None:
                 continue
             offenders.append(f"{relative} -> {label}")
 
-    # 只允许 logging.py 的那一处（以"文件 -> 常量名"为判据，不硬编码行号）。
-    assert offenders == ["src/graspo/flow/logging.py -> _DEPRECATED_RUN_ID_ENV"], (
-        "自定义 GRASPO_* 环境变量读取点超出预期："
-        f"{offenders}；只允许 logging.py 的已废弃兼容通道"
+    assert offenders == [], (
+        f"仍有自定义 GRASPO_* 环境变量读取点：{offenders}；§7.1 只允许标准基础设施变量"
     )
