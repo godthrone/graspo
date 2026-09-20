@@ -59,10 +59,28 @@ CONFIG_DIR = PROJECT_ROOT / "samples" / "configs" / "matrix54"
 MANIFEST_PATH = PROJECT_ROOT / "tests" / "e2e" / "matrix54_manifest.json"
 RUNNER_PATH = PROJECT_ROOT / "tests" / "e2e" / "run_matrix54.sh"
 
-#: `record-gpu-memory` 采样产物的容器内落点（**单一真相源**）。
-#: 容器内 /out 由 runner 绑定到宿主 <RUN_ROOT>/<T###>，因此 /out/gpu 就是
-#: `scripts/collect_results.py::_read_peak_memory` 读的 <RUN_ROOT>/<T###>/gpu/。
+#: `record-gpu-memory` 采样产物的容器内落点（**单一真相源**，§1.4）。
+#: 容器内 /out 由 runner 绑定到宿主 <RUN_ROOT>/<T###>（挂载表 `"$RUN_DIR|/out|rw"`），
+#: 因此 /out/gpu 就是 `scripts/collect_results.py::_read_peak_memory` 读的
+#: <RUN_ROOT>/<T###>/gpu/。
 #: 采集口径（宪法 §10.1：产物位置必须能被 config 描述）与取证链**逐字不变**。
+#:
+#: ★ 本常量是"显存摘要落在哪"的**唯一字面量**。四个使用点必须与它一致，任何漂移都是
+#:   取证链断裂（机核见 `tests/e2e/test_run_matrix54_runner.py` 的
+#:   `test_gpu_evidence_dir_is_one_anchor_across_producer_runner_and_collector`）：
+#:     1) 生成物档配置 `gpu_monitor.output_dir`（build_config 直接引用本常量）；
+#:     2) runner 的前置校验（把档配置读到的值与本常量比对，fail-closed）；
+#:     3) 容器内 entry.sh 的 `GPU_EVIDENCE_DIR` + 收口段断言/缺口登记（生成期注入）；
+#:     4) `scripts/collect_results.py::_read_peak_memory` 读的 `<run_dir>/gpu/`。
+#:
+#: ★ 为什么必须是 `/out/gpu`（RUN_DIR 直下）而**不能**是 `<training.output_dir>/gpu`：
+#:   矩阵档一律 `overwrite_output_dir: true`，训练进程启动时对**非空**的
+#:   `<training.output_dir>` 执行 `shutil.rmtree(out)`
+#:   （`src/graspo/flow/lora/lora_io.py::prepare_output_dir`）。采样器先于 torchrun
+#:   启动，若落点在该子树内，则采样器刚建好的目录会被整棵删掉，首个 `append_jsonl`
+#:   即 ENOENT——228 真机实测首错签名：`gpu_monitor.py:621 ... '/out/T010/gpu/gpu_memory.jsonl'`
+#:   （2026-09-20，task-e6-nan-verdict 真跑日志）。落点放在 RUN_DIR 直下即与训练
+#:   输出目录**解耦**，不依赖"谁先谁后"（§2 防呆）。
 GPU_MONITOR_CONTAINER_DIR = "/out/gpu"
 
 #: 采样间隔（秒）。与 W3 之前 CLI 上的 `--interval-sec 2` **逐值相同**：间隔决定
@@ -999,12 +1017,22 @@ def build_config(tier: dict[str, Any]) -> dict[str, Any]:
     # 什么、产物落在哪、采样打什么标签"就只有**一个**真相源（§1.4）。若改由 runner
     # 现编一份，同一条事实就有两份文档，迟早漂移。
     #
-    # ★ 落点用**公式**而不是常量：`<training.output_dir>/gpu` —— 与 runner 的
-    #   `<RUN_ROOT>/<T###>/gpu` 逐字对齐（容器内 /out 绑到 <RUN_ROOT>/<T###>），
-    #   也就是 collect_results.py::_read_peak_memory 读 gpu_memory_summary.json 的目录。
-    #   ★ 改这里会断取证链：改前先读 scripts/collect_results.py。
+    # ★ 落点**必须**由 `GPU_MONITOR_CONTAINER_DIR` 唯一决定（= 容器内 `/out/gpu`
+    #   = 宿主 `<RUN_ROOT>/<T###>/gpu/`），**不能**用 `<training.output_dir>/gpu`：
+    #
+    #   2026-09-20 真机确证的缺陷（228 T010，两次真跑同一签名）：矩阵档一律
+    #   `overwrite_output_dir: true`，训练进程启动时
+    #   `lora_io.py::prepare_output_dir(out, overwrite=True)` 对**非空**的
+    #   `<training.output_dir>`（= `/out/T010`）执行 `shutil.rmtree(out)`；而采样器
+    #   先于 torchrun 起、刚在 `/out/T010/gpu` 建好目录并 touch 了 jsonl ⇒ 整棵被删
+    #   ⇒ 采样器首个 `append_jsonl` 即 ENOENT（首错签名 `gpu_monitor.py:621` +
+    #   `'/out/T010/gpu/gpu_memory.jsonl'`），摘要与"取证缺口登记"一并消失。
+    #   ⇒ 把落点与训练输出目录**解耦**（落在 RUN_DIR 直下），而不是靠"谁先谁后"的运气。
+    #   同时这条路径正是 runner 断言、缺口登记与 `collect_results._read_peak_memory`
+    #   一直在读的那条 —— 修完生产端与消费端重新同源。
+    #   ★ 改这里会断取证链：改前先读 scripts/collect_results.py::_read_peak_memory。
     config["gpu_monitor"] = {
-        "output_dir": f"{config['training']['output_dir']}/gpu",
+        "output_dir": GPU_MONITOR_CONTAINER_DIR,
         "tag": tier_id,
         "interval_sec": GPU_MONITOR_INTERVAL_SEC,
     }
@@ -1791,13 +1819,16 @@ fi
 #    --output-dir / --tag / --interval-sec。
 #    因此这里**不再自己拼参数**，只做三件事：
 #      ① 从档配置读出 gpu_monitor.output_dir / tag / interval_sec（单一真相源）；
-#      ② 用同一份档配置的 training.output_dir **交叉校验**产物落点；
+#      ② 把它与取证链锚点 {GPU_MONITOR_CONTAINER_DIR}（生成期注入，见 generate_matrix.py::
+#         GPU_MONITOR_CONTAINER_DIR）比对，并**反向**断言它**不落在** training.output_dir 之内
+#         —— 落在里面就会被训练侧的 overwrite（shutil.rmtree 整棵目录）删掉（228 实测）；
 #      ③ 校不过就拒绝启动，绝不"先跑起来再说"。
 #    为什么必须从档配置读、而不是在这里另写一份：产物位置与档号标签已经写在
 #    **档配置自身**里；在这里再写一遍，同一条事实就有两份描述，迟早漂移（§1.4）。
 #
-#    容器内 /out 由下面的 -v "$RUN_DIR:/out" 绑定到宿主 <RUN_ROOT>/<T###>，
-#    因此档配置里的 /out/<T###>/gpu 就是宿主 <RUN_ROOT>/<T###>/gpu ——
+#    容器内 /out 由下面的 -v "$RUN_DIR:/out" 绑定到宿主 <RUN_ROOT>/<T###>
+#    （RUN_DIR = <RUN_ROOT>/<T###>），因此容器内 {GPU_MONITOR_CONTAINER_DIR}
+#    就是宿主 <RUN_ROOT>/<T###>/gpu/ ——
 #    正是 collect_results.py::_read_peak_memory 读 gpu_memory_summary.json 的目录。
 #
 #    ★ 读法只用 grep/sed（**不引 PyYAML**）：本脚本在宿主上跑，宿主 python 不一定
@@ -1807,7 +1838,8 @@ fi
 #
 #    ★ 三条不变量（改档配置生成逻辑或改本段之前，先读 scripts/collect_results.py）：
 #       a. tag == 档号：摘要里的 tag 与档号一致 ⇒ 读数可归属到档；
-#       b. 产物落点 == <宿主 RUN_ROOT>/<T###>/gpu/：取证链不断；
+#       b. 产物落点 == {GPU_MONITOR_CONTAINER_DIR} == 宿主 <RUN_ROOT>/<T###>/gpu/，
+#          且**不在** <training.output_dir> 之内：取证链不断、训练清洗不伤证据；
 #       c. interval_sec == {GPU_MONITOR_INTERVAL_SEC:g}：与旧 CLI 口径逐值相同（样本条数不变）。
 TIER_CONFIG_PATH="$ROOT_DIR/$CONFIG"
 # 取 gpu_monitor 段内某字段的标量值（不存在则输出空）。
@@ -1838,9 +1870,18 @@ if [ -z "$GPU_MONITOR_INTERVAL_SEC" ]; then
 fi
 if [ -z "$TRAINING_OUTPUT_DIR" ]; then
     monitor_problems="${{monitor_problems}}training.output_dir 为空;"
-elif [ "$GPU_MONITOR_OUTPUT_DIR" != "$TRAINING_OUTPUT_DIR/gpu" ]; then
-    monitor_problems="${{monitor_problems}}gpu_monitor.output_dir='$GPU_MONITOR_OUTPUT_DIR' 不在本档产物目录 '$TRAINING_OUTPUT_DIR' 内;"
+elif [ "$GPU_MONITOR_OUTPUT_DIR" != "{GPU_MONITOR_CONTAINER_DIR}" ]; then
+    monitor_problems="${{monitor_problems}}gpu_monitor.output_dir='$GPU_MONITOR_OUTPUT_DIR' 与取证链锚点 {GPU_MONITOR_CONTAINER_DIR} 不一致;"
 fi
+# ★ 反向不变量（2026-09-20 真机确证的缺陷，228 两次真跑同一签名）：落点**不得**落在
+#   training.output_dir 之内 —— 训练侧 `overwrite_output_dir: true` 会对非空的该目录
+#   执行 `shutil.rmtree`，把采样器刚建好的 gpu/ 连 jsonl 一起删掉（首错
+#   `gpu_monitor.py:621 append_jsonl ... '/out/T010/gpu/gpu_memory.jsonl'`）。
+#   这是**防线**（§2.3）：违法即 fail-closed，不给"跑起来再说"的机会。
+case "$GPU_MONITOR_OUTPUT_DIR" in
+    "$TRAINING_OUTPUT_DIR"/*)
+        monitor_problems="${{monitor_problems}}gpu_monitor.output_dir='$GPU_MONITOR_OUTPUT_DIR' 落在训练输出目录 '$TRAINING_OUTPUT_DIR' 之内 —— 训练侧 overwrite（shutil.rmtree 整棵目录）会删掉采样产物;" ;;
+esac
 case "$GPU_MONITOR_OUTPUT_DIR" in
     /out/*) ;;
     *) monitor_problems="${{monitor_problems}}gpu_monitor.output_dir='$GPU_MONITOR_OUTPUT_DIR' 不在容器内 /out/ 之下;" ;;
@@ -2091,11 +2132,25 @@ PY
 PORT=$(( 29500 + RANDOM % 400 ))
 cat > "$RUN_DIR/entry.sh" <<ENTRY
 set -o pipefail
+# ★ 显存取证目录（容器内**唯一**落点，§1.4）：与档配置 gpu_monitor.output_dir、runner 的
+#   前置校验、collect_results 读的 <run_dir>/gpu/ 同源 —— 唯一字面量在
+#   tests/e2e/generate_matrix.py::GPU_MONITOR_CONTAINER_DIR，生成期注入下面这一行。
+#   ★ 为什么必须先建出来：收口段的三处写盘点（gpu_summary.state ×2、
+#     EVIDENCE_GAP_gpu_memory_summary）都在这个目录下；目录不存在时那些登记会 ENOENT，
+#     "取证缺口"连痕迹都留不下（228 实测 entry.sh 行 197/200：没有那个文件或目录）。
+#   ★ 为什么落点在 RUN_DIR 直下而不在训练输出目录里：训练侧 overwrite_output_dir 会
+#     shutil.rmtree 整棵 training.output_dir（228 实测把采样器刚建好的 gpu/ 删掉）。
+#   ⚠ 写法约束：本段是**不加引号的 heredoc 正文** ⇒ 引用内层变量一律写 \\$VAR（外层不
+#     展开、留给容器内展开），注释里同样不得出现裸美元符/裸反引号（见下方哨兵测试）。
+GPU_EVIDENCE_DIR="{GPU_MONITOR_CONTAINER_DIR}"
+mkdir -p "\\$GPU_EVIDENCE_DIR"
 "$CONTAINER_PY" /out/preflight_media.py "$TRAIN_PATH" || exit 3
 "$CONTAINER_PY" -m graspo record-gpu-memory --idle-only || exit 1
 # ★ 显存采样：**配置驱动**（宪法 §10.1；W3 起 CLI 上已无 --output-dir/--tag/--interval-sec，
 #   旧写法会 argparse 报错 rc=2）。本档配置（与训练用的是**同一份** YAML）自带
-#   gpu_monitor 段：output_dir=/out/gpu、tag=<档号>、interval_sec=2 —— 产物落点与档号
+#   gpu_monitor 段：output_dir=/out/gpu（= 上文 GPU_EVIDENCE_DIR = 取证链锚点
+#   GPU_MONITOR_CONTAINER_DIR；**不在** training.output_dir 之内，故训练侧 overwrite
+#   的 rmtree 删不到它）、tag=<档号>、interval_sec=2 —— 产物落点与档号
 #   标签仍由同一份档位配置描述，不在这里另写一份（§1.4 单一真相源）。
 #   ⚠ 写法约束（heredoc 展开语义，见 task-ckpt-retention-fix 报告）：外层 heredoc 分隔符
 #     不带引号 ⇒ 外层先展开一次、容器内再展开一次。CONFIG 是宿主 runner 的变量（容器内
@@ -2264,9 +2319,14 @@ printf '%s\\n' "\\$CKPT_STATE" > /out/ckpt_retention.state
 #   修法：**显式** SIGTERM + **有界等待**（只等本次 run 的采样器，零 kill 他人进程）：
 #     · SIGTERM ⇒ 触发 record_gpu_memory 的 finally ⇒ 摘要落盘；
 #     · 有界（≤30 s）⇒ 采样器卡死也不得拖住容器退出（§3.1 同效退路：只改代价不改结果）；
-#     · 过后断言 /out/gpu/gpu_memory_summary.json **确实存在**，否则写
-#       /out/gpu/EVIDENCE_GAP_gpu_memory_summary **显式登记取证缺口**（§2.3 边界校验：
+#     · 过后断言 \\$GPU_EVIDENCE_DIR/gpu_memory_summary.json **确实存在**，否则写
+#       \\$GPU_EVIDENCE_DIR/EVIDENCE_GAP_gpu_memory_summary **显式登记取证缺口**（§2.3 边界校验：
 #       读不到不得静默当作已取证）；★ 断言**不动 RC**，绝不掩盖训练结果。
+#   ★ 取证目录**不再写死字面量**（2026-09-20 第二真相源清理）：全部引用文件头定义的
+#     \\$GPU_EVIDENCE_DIR（= 档配置 gpu_monitor.output_dir = 生成期注入的
+#     GPU_MONITOR_CONTAINER_DIR）。旧写法把取证目录路径写死 7 处，与档配置分叉：
+#     断言按旧路径永远找不到摘要、且缺口登记自身因目录不存在而 ENOENT
+#     （228 实测 entry.sh 行 197/200），属 §1.4 双真相源缺陷。
 wait_for_gpu_summary() {{
     local pid="\\${{1:-}}" waited=0
     if [ -z "\\$pid" ]; then
@@ -2284,15 +2344,15 @@ wait_for_gpu_summary() {{
         wait "\\$pid" 2>/dev/null || true
     fi
     # ★ 主口径取证缺口断言（缺失 ⇒ 显式登记，不静默）
-    if [ -f /out/gpu/gpu_memory_summary.json ]; then
-        printf '%s\\n' "present" > /out/gpu/gpu_summary.state
+    if [ -f "\\$GPU_EVIDENCE_DIR/gpu_memory_summary.json" ]; then
+        printf '%s\\n' "present" > "\\$GPU_EVIDENCE_DIR/gpu_summary.state"
     else
         printf '%s\\n' \\\\
-            "MISSING: /out/gpu/gpu_memory_summary.json（容器内 allocator 主口径摘要缺失）" \\\\
-            > /out/gpu/EVIDENCE_GAP_gpu_memory_summary
-        printf '%s\\n' "missing" > /out/gpu/gpu_summary.state
+            "MISSING: \\$GPU_EVIDENCE_DIR/gpu_memory_summary.json（容器内 allocator 主口径摘要缺失）" \\\\
+            > "\\$GPU_EVIDENCE_DIR/EVIDENCE_GAP_gpu_memory_summary"
+        printf '%s\\n' "missing" > "\\$GPU_EVIDENCE_DIR/gpu_summary.state"
         echo "[gpu-summary] EVIDENCE-GAP: 主口径摘要缺失 —— 已写" \\\\
-             "/out/gpu/EVIDENCE_GAP_gpu_memory_summary（**不得**当成已取证）" >&2
+             "\\$GPU_EVIDENCE_DIR/EVIDENCE_GAP_gpu_memory_summary（**不得**当成已取证）" >&2
     fi
     return 0
 }}
