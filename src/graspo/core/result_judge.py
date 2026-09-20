@@ -14,7 +14,8 @@ loss / grad_norm 序列、双跑对照）判成六条验收判据 A1–A6 的通
 - **A3** checkpoint 可被重新加载；
 - **A4** 同 config 同 seed 双跑一致；
 - **A5** 四件套产物落盘；
-- **A6** 数值健康（loss 与 grad_norm 全程 finite、最终 loss 不高于初始；NaN/Inf 即不通过）。
+- **A6** 数值健康（loss 与 grad_norm 全程 finite，NaN/Inf 即不通过；loss 首末走向
+  只作**记录项** ``loss_trend``，不作阻断——见 :data:`A6_LOSS_TREND_BLOCKS`）。
 
 证据缺失一律判**不通过**（fail-closed）——不能因为"读不到"就默认通过。
 """
@@ -169,6 +170,45 @@ MISSING_SENTINEL: Any = "MISSING"
 #: 训练器在首个非有限梯度处硬失败时打的标记（唯一真相源：
 #: ``flow/adapters/models/qwen35_36/training_sft.py``）。
 NONFINITE_GRAD_MARKER = "非有限梯度"
+
+#: A6 的「最终 loss 不高于初始 loss」子检查的**记录字段名**：appears verbatim in
+#: :func:`judge_a6` 的明细文本，供人眼一眼看到、并由采集层
+#: （``scripts/collect_results.py`` 的 ledger 组装处与 :func:`ledger_row`）原样带进台账。
+#: 唯一真相源——不得在任何地方另拼这个字面量（§1.4/§2.2）。
+A6_LOSS_TREND_FIELD = "loss_trend"
+
+#: ── ★ 裁定：A6 的「最终 loss ≤ 初始 loss」子检查**降为记录项**，不作阻断 ──────────
+#:
+#: **裁定人/时间**：指挥官裁定（2026-09-20），依据真机实测。
+#:
+#: **为什么降级**（统计意义 + 误判实例）：
+#: 首末两点比较在整个 loss 序列的波动区间里**没有统计意义**。T010
+#: （9B·SFT·LoRA·native·1 卡）跑了 100/100 步、``exit_code=0``、ckpt 可重载、
+#: 每一步 loss/grad_norm 全程 finite、``skipped_nonfinite=0``，但 ``losses[0]=0.0250``
+#: → ``losses[-1]=0.0603``，而**同一 run 的逐步波动区间是 0.0042–0.4043**。
+#: 于是这条子检查把一次**完全健康**的训练判成「数值异常」（T010 实测伪否）。
+#:
+#: **代码内旁证**：``scripts/collect_results.py`` 的注释把"末点高于起点"
+#: 记作**窄噪声区间**（``min 0.00418 / max 0.404``）——同一语义在代码里当噪声、
+#: 在判据里却当阻断，是双口径（违反 §1.4）。
+#:
+#: **语义依据**：A6 的 docstring 自称「**数值健康**」判据；"loss 是否真下降"是
+#: **效果**信号，应由**准确率**类指标回答（能力矩阵 §8：SFT ≥50% / GRASPO Δ≥20pp），
+#: 不该由单点 loss 比较承担。
+#:
+#: **为什么保留为记录项而不是删除**（§2.2 显式即防呆）：降级 ≠ 静默丢弃。
+#: "这档末点高于起点"仍要**显式可见**（进入 A6 明细文本与台账 ``loss_trend``），
+#: 只是不再使 A6 判否。
+#:
+#: **不回退的部分**（红线，见 ``tests/core/test_result_judge.py`` 的守卫用例）：
+#: ① 真读到非有限 ``loss``/``grad_norm`` ⇒ A6 仍然不通过；
+#: ② 读不到读数（``NAN_SENTINEL``/``MISSING_SENTINEL``）⇒ 仍然 fail-closed。
+#: 本条只放开"首末两点的走向"，**没有**放松任何数值健康事实断言。
+#:
+#: **如何回退**：把本常量改成 ``True`` 即恢复旧行为（阻断 + 分类数值异常）；
+#: 若整条子检查都要下线，删掉 :func:`judge_a6` 里读它的那一个 if 块即可，
+#: 其余（记录字段、台账字段、测试）都可保留——它们对两种取值都成立。
+A6_LOSS_TREND_BLOCKS = False
 
 
 class FailureClass(StrEnum):
@@ -690,7 +730,7 @@ def judge_a5(evidence: RunEvidence) -> CriterionResult:
 
 
 def judge_a6(evidence: RunEvidence) -> CriterionResult:
-    """A6 数值健康：loss / grad_norm 全程 finite，最终 loss ≤ 初始 loss。
+    """A6 数值健康：loss / grad_norm 全程 finite（NaN/Inf 即不通过）。
 
     **三种情形必须分清（F-4 §④.1-4 的核心）**：
 
@@ -703,7 +743,13 @@ def judge_a6(evidence: RunEvidence) -> CriterionResult:
     3. 两者同时出现（F-4 实测正是如此）⇒ **真 NaN 优先**，分类数值异常。
        已确证的数值崩坏不得被"某几步没有读数"降格。
 
-    三种情形一律**不通过、不计入最大可行上下文**（fail-closed 不变）。
+    情形 1 与 2 一律**不通过、不计入最大可行上下文**（fail-closed 不变）。
+
+    **「最终 loss 不高于初始 loss」自 2026-09-20 起降为记录项**（见
+    :data:`A6_LOSS_TREND_BLOCKS` 的完整裁定依据）：首末两点的走向**不再**使 A6 判否，
+    但仍以 ``loss_trend=decreased|increased`` 写进明细文本（§2.2 显式即可见），
+    由采集层带进台账。判据自称「数值健康」，而"loss 是否真下降"属**效果**信号，
+    应由准确率类指标（能力矩阵 §8）回答。
     """
     if not evidence.losses:
         return CriterionResult(
@@ -736,15 +782,23 @@ def judge_a6(evidence: RunEvidence) -> CriterionResult:
         value is NAN_SENTINEL or value is MISSING_SENTINEL for value in evidence.losses
     ):
         return CriterionResult("A6", False, NUMERIC_INDETERMINATE_DETAIL, evidence_missing=True)
+
+    # ③ 数值健康（全程 finite）⇒ 首末走向只**记录**，不阻断（见 A6_LOSS_TREND_BLOCKS）。
+    #    顺序刻意排在 ①② 之后：真实的数值崩坏/证据缺口不得被"走向正常"盖过。
     initial = evidence.losses[0]
     final = evidence.losses[-1]
-    if final > initial:
-        return CriterionResult("A6", False, f"最终 loss {final:.6g} 高于初始 loss {initial:.6g}")
-    return CriterionResult(
-        "A6",
-        True,
-        f"数值健康：loss {initial:.6g} → {final:.6g}，{len(evidence.losses)} 个样本全程 finite",
+    assert isinstance(initial, float) and isinstance(final, float)  # 哨兵已在 ② 排除
+    trend = "increased" if final > initial else "decreased"
+    trend_note = (
+        f"{A6_LOSS_TREND_FIELD}={trend}（初始 {initial:.6g} → 最终 {final:.6g}"
+        f"，{len(evidence.losses)} 个样本全程 finite"
     )
+    if trend == "increased":
+        trend_note += "；★ 首末走向为记录项，不阻断 A6（2026-09-20 裁定，见 A6_LOSS_TREND_BLOCKS）"
+    trend_note += "）"
+    if trend == "increased" and A6_LOSS_TREND_BLOCKS:
+        return CriterionResult("A6", False, f"最终 loss 高于初始 loss：{trend_note}")
+    return CriterionResult("A6", True, f"数值健康：{trend_note}")
 
 
 # ── 失败分类 ────────────────────────────────────────────────────────────────
@@ -760,7 +814,10 @@ NUMERIC_INDETERMINATE_DETAIL = (
 #: A6 明细里出现这些字样 ⇒ 数值异常（唯一真相源，见 ``judge_a6``）。
 #: 注意：「不可判定」不在此列——它是 fail-closed 的**证据缺口**，不是数值异常；
 #: 真正的非有限梯度由训练器的显式标记走 ``_LOG_PATTERNS`` 分类。
-_NUMERIC_ANOMALY_DETAILS: tuple[str, ...] = ("NaN/Inf", "高于初始")
+#: **2026-09-20 起不再包含「高于初始」**：首末 loss 走向已降为记录项
+#: （:data:`A6_LOSS_TREND_BLOCKS`），``judge_a6`` 不会再产出那个字样，
+#: 留着它就是一条永不可达的分支（违 §2.2/§18.1）。真数值崩坏由 "NaN/Inf" 覆盖。
+_NUMERIC_ANOMALY_DETAILS: tuple[str, ...] = ("NaN/Inf",)
 
 
 def _is_nan_sentinel(value: float) -> bool:
@@ -779,10 +836,14 @@ def _is_nan_sentinel(value: float) -> bool:
 
 
 def numeric_anomaly(a6: CriterionResult) -> bool:
-    """A6 是否因**数值异常**未通过（NaN/Inf，或最终 loss 高于初始）。
+    """A6 是否因**数值异常**未通过（真读到 NaN/Inf）。
 
     单独抽成函数是为了给 ``classify_failure`` 一个显式、可测的**优先级判据**：
     数值健康是比"日志里出现 OOM 字样"更硬的事实（见该函数的排序说明）。
+
+    **2026-09-20 变更**：不再把"最终 loss 高于初始"算作数值异常——该子检查已降为
+    记录项（:data:`A6_LOSS_TREND_BLOCKS`）。判据的取值面因此变窄，但"真读到非有限值
+    ⇒ 数值异常"这条**不变**。
     """
     return not a6.passed and any(mark in a6.detail for mark in _NUMERIC_ANOMALY_DETAILS)
 
@@ -800,6 +861,29 @@ def numeric_indeterminate(a6: CriterionResult) -> bool:
     没有读数**时，那个陈述是假的，还会把排查引向数值问题。
     """
     return not a6.passed and NUMERIC_INDETERMINATE_DETAIL in a6.detail
+
+
+def a6_loss_trend(a6: CriterionResult) -> str | None:
+    """从 A6 明细文本里取出 ``loss_trend`` 的记录值（``"decreased"`` / ``"increased"``）。
+
+    存在的理由（§1.4 单一真相源）：A6 明细文本是 ``loss_trend`` 的**唯一权威来源**，
+    台账字段只是它的一个视图。与其让采集层另起一套"首末比较"（那就是第二个真相源，
+    且迟早与判定器漂移），不如从已经写好、已经判过的文本里原样取出。
+
+    取不到 ⇒ 返回 ``None``（§2.2）。可达情形且都有意义：
+
+    - A6 未通过且是 NaN/Inf 或证据缺口 ⇒ 明细里没有走向记录（当时无从比较）；
+    - 用到本函数的是采集层，**不是**判定路径——它不参与任何 passed 计算。
+    """
+    marker = f"{A6_LOSS_TREND_FIELD}="
+    start = a6.detail.find(marker)
+    if start < 0:
+        return None
+    rest = a6.detail[start + len(marker) :]
+    for known in ("increased", "decreased"):
+        if rest.startswith(known):
+            return known
+    return None
 
 
 def _mean_finite(values: Sequence[float | None]) -> float | None:
@@ -825,7 +909,7 @@ def classify_failure(evidence: RunEvidence, a6: CriterionResult) -> FailureClass
     **判定优先级序列（唯一真相源，改动此处必须同步更新本段说明与测试）**：
 
     1. **超时**（``timed_out`` / ``exit_code == 124``）⇒ ``TIMEOUT``；
-    2. **数值异常**（A6 明细含 "NaN/Inf" 或 "高于初始"）⇒ ``NUMERIC_ANOMALY``；
+    2. **数值异常**（A6 明细含 "NaN/Inf"）⇒ ``NUMERIC_ANOMALY``；
     3. **数值不可判定**（A6 明细含 :data:`NUMERIC_INDETERMINATE_DETAIL`，即
        ``loss: null`` / 字段缺失 / 全程无读数）⇒ ``UNCLASSIFIED``（需人工判定）；
     4. **显式非有限梯度标记**（训练器硬失败的 ``非有限梯度`` /
@@ -841,7 +925,7 @@ def classify_failure(evidence: RunEvidence, a6: CriterionResult) -> FailureClass
     | # | 触发条件（可判定的事实） | 归类 | 可达 |
     |---|---|---|:--:|
     | 1 | ``timed_out`` 或 ``exit_code == 124`` | ``TIMEOUT`` | ✔ |
-    | 2 | loss/grad_norm 序列里**真读到** NaN/Inf，或最终 loss > 初始 | ``NUMERIC_ANOMALY`` | ✔ |
+    | 2 | loss/grad_norm 序列里**真读到** NaN/Inf | ``NUMERIC_ANOMALY`` | ✔ |
     | 3 | loss 字段无值（``MISSING_SENTINEL``）且**无任何**真 NaN | ``UNCLASSIFIED`` | ✔ |
     | 4 | 日志出现 ``非有限梯度`` 等硬失败标记 | ``NUMERIC_ANOMALY`` | ✔ |
     | 5 | 日志匹配到 OOM / 未实现 / 配置 / 数据 / 通信模式（且不含第 4 步标记） | 对应类型 | ✔ |
@@ -1016,6 +1100,10 @@ def ledger_row(
         # 读数口径自证（§1.4）：台账必须能回答"A2 用的门槛是多少"。只加字段，
         # 不改任何判定与既有字段的语义（`None` = 本次未解析出合法门槛）。
         "min_optimizer_steps": judgement.a2_step_threshold,
+        # A6 首末 loss 走向的**记录项**（2026-09-20 裁定降级，见 A6_LOSS_TREND_BLOCKS）。
+        # 只加字段、不改 passed 语义：`None` = 本次 A6 没产出走向记录（NaN/Inf 或取证缺口）。
+        # 与 A6 明细文本同源（a6_loss_trend 从明细取），不是第二个真相源。
+        A6_LOSS_TREND_FIELD: a6_loss_trend(judgement.criterion("A6")),
         "date": date,
     }
 
