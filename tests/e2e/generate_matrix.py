@@ -907,10 +907,11 @@ def expected_optimizer_steps_per_epoch(tier: dict[str, Any]) -> int:
     GRASPO × native      ``native_graspo_steps_per_epoch``（阈值+flush）T028/T030
     ====================  =========================================  ==============
 
-    前两条与 :func:`expected_optimizer_steps` **同式同值**（下面的实现**真的调用**
+    前两条与 :func:`_planned_save_steps` **同式同值**（下面的实现**真的调用**
     同一段计算，不是抄一遍公式 ⇒ §1.4 单一真相源）；只有 native GRASPO 走第三条
-    专用公式。``expected_optimizer_steps`` 对 native GRASPO 的取值由本函数**反推**
-    （见该函数 docstring），因此两处**不可能各自漂移**。
+    专用公式。**本函数与 :func:`expected_optimizer_steps`（计划值）是两个量**：
+    它们在 45 档上逐档相等，在 native GRASPO 那 9 档上**刻意不等**（计划值偏大，
+    见 :func:`checkpoint_save_steps`）——`save_steps` 走计划值，门槛判定走本函数。
     """
     if _is_native_graspo(tier):
         return max(1, native_graspo_steps_per_epoch(tier))
@@ -1020,8 +1021,10 @@ def assert_step_gate_is_recorded(tier: dict[str, Any], *, min_optimizer_steps: i
 # ── ckpt 保留策略（2026-09-19，用户已授权；单一真相源）────────────────────────
 
 
-def expected_optimizer_steps(tier: dict[str, Any]) -> int:
-    """该档的期望全局优化步数（= **实际参与优化的样本数** ÷ 卡数，向下取整）。
+def _planned_save_steps(tier: dict[str, Any]) -> int:
+    """该档的**计划保存间隔**（= 计划总优化步数，朴素均分口径）——**唯一定义处**。
+
+    ``= max(1, 实际参与优化的样本数 ÷ 卡数)``，**向下取整**。
 
     ★ **RLHF（GRASPO/GRPO）档的总样本数 = 子集 × ``rollout_group_size``**：
     ms-swift 的 ``RepeatSampler(mini_repeat_count=G)`` 会把每条 prompt **重复 G 次**
@@ -1059,26 +1062,16 @@ def expected_optimizer_steps(tier: dict[str, Any]) -> int:
     **取向下取整**（不是向上）：它保证 ``save_steps ≤ 实际步数`` ⇒ **至少落一份 ckpt**。
     若取向上而实际步数不足（数据末端被 drop 的情形），就会一份都不落 ⇒ A3 无证据可判。
 
-    ★ **2026-09-21：本函数不再"直接算 native GRASPO"**（AF1 §⑥ 方案 S1）。
-    本函数只回答"**计划**隔多少步存一次 ckpt"，**不回答**"这一档最多能跑几步"——
-    后者的真相源是 :func:`expected_optimizer_steps_reachable`。两条路径的**区别只在
-    native GRASPO**（其余 45 档**逐档同值**，本包机核证明见工位报告 §④）：
+    ★ **本函数是"计划值"，不是"可达上限"**：它按朴素均分算出"打算隔多少步存一次"，
+    **不回答**"这一档最多能跑出几步"——后者的真相源是
+    :func:`expected_optimizer_steps_reachable`。两者**只在 native GRASPO 那 9 档上不等**，
+    且那是**刻意**的（见 :func:`checkpoint_save_steps` 的 docstring：native 的中间段落在
+    ``step_<N>``，保留块只清 ``checkpoint-*`` ⇒ 计划值偏大反而**正是**"每档只留一份"）。
 
-    · 非 native GRASPO：``expected_optimizer_steps_per_epoch`` 直接取
-      ``floor(subset_size(×G) / cards)``，本函数的旧算式**逐字保留**；
-    · native GRASPO：真实每 epoch 步数由 **replay 阈值 + epoch 末 force flush** 决定
-      ⇒ 每 epoch 上限 ``= floor(floor(subset/cards)/Q) + 1``（AF1 推导，真机锚点 ``T030``
-      = 1 步）。该上限 ``M`` 是训练器的调度常数，**与卡数无关** ⇒ 反推回"计划总步数"的
-      唯一自洽值是 ``M × max_epochs``（即把 `save_steps` 定在**最后一步**这个原设计意图上，
-      而不是旧算式的朴素均分——旧值**偏大**：`T028` 声明 20 而真实每 epoch 只有 3 步）
-      ⇒ **ckpt 保留策略因此变正确**：旧值让 `save_steps` 永不触发、只落 `final/`；
-      新值等于真实总步数 ⇒ 恰好最后一步落一份（与 `checkpoint_save_steps` 的设计意图一致）。
-
-    ⇒ **"计划步数"的语义不变**（= 给 `save_steps` 用的总步数、向下取整、每档只落一份），
-    变的只是 native GRASPO 那 9 档的**取值来源**：从"朴素均分"改成"按训练器真实调度"。
+    ★ **单一真相源（§1.4）**：本函数是"样本数 ÷ 卡数（×G）"这条朴素算式的**唯一定义处**；
+    :func:`expected_optimizer_steps` 与 :func:`expected_optimizer_steps_per_epoch`
+    的非 native 分支都**调用本函数**，不另抄一遍公式。
     """
-    if _is_native_graspo(tier):
-        return expected_optimizer_steps_reachable(tier)
     cards = max(1, int(tier["cards"]))
     samples = subset_size(str(tier["algorithm"]))
     if _repeats_dataset_by_rollout_group(tier):
@@ -1086,14 +1079,59 @@ def expected_optimizer_steps(tier: dict[str, Any]) -> int:
     return max(1, samples // cards)
 
 
-def checkpoint_save_steps(tier: dict[str, Any]) -> int:
-    """该档的 ``training.save_steps``：**总步数**（⇒ 每档只落一份 ckpt）。
+def expected_optimizer_steps(tier: dict[str, Any]) -> int:
+    """该档的**计划步数**（清单字段 ``tiers[*].expected_optimizer_steps``）。
 
-    ★ 这里的"总步数"取自 :func:`expected_optimizer_steps` ⇒ **对 RLHF（GRASPO）档也已
-    含 `rollout_group_size` 乘数**（2026-09-20 修复）。修之前 GRASPO 档拿到的
-    `save_steps` 只有真总步数的 1/8 ⇒ 每个 run 真落 **8 份** ckpt（`T031`/`T043` 实测
-    `checkpoint-{20..160}`），"每档只落一份"实际上全靠容器内保留块删掉 7 份。
-    修后 `save_steps` = 真总步数 ⇒ 保存恰好发生在最后一步（1 卡 GRASPO = 160）。
+    = :func:`_planned_save_steps`（朴素均分，向下取整）。它是**历史字段**，与 ckpt 保留策略
+    的配置侧同源；**没有任何判据消费它**——门槛判定读的是
+    :func:`expected_optimizer_steps_reachable` / :func:`expected_optimizer_steps_per_epoch`
+    （经 ``scripts/collect_results.py`` 的 ``extract_expected_optimizer_steps``）。
+
+    ★ **两个量，各只有一个真相源**（AF1 §⑥ 方案 S1）：
+
+    ============================  ====================================  ==================
+    量                             含义                                  消费者
+    ============================  ====================================  ==================
+    ``expected_optimizer_steps``   计划步数（朴素均分，可偏大）           仅清单披露
+    ``..._per_epoch``              每 epoch 可产出步数上限（真实调度）    门槛口径 / 披露
+    ``..._reachable``              整个 run 可产出步数上限                A2 第三态
+    ============================  ====================================  ==================
+
+    ★ **对 native GRASPO 的 9 档，本函数刻意保留朴素均分的偏大值**（``T028``=20、``T030``=5，
+    而可达上限只有 3 / 1）：native 的中间段落在 ``step_<N>``（``optimize.py``），容器内保留块
+    只清 ``checkpoint-*``、对 native 只承认 ``final/``（``generate_matrix.py`` 的
+    ``retain_single_checkpoint``）⇒ ``save_steps`` 偏大 ⇒ **不触发中间段** ⇒ 恰好只留
+    ``final/`` 一份。反之把计划值压到可达上限会真落 ``step_<N>`` + ``final/`` = **2 份重 ckpt**
+    （``T034/T035/T036`` 是全参 9B，代价最大）——那是缺陷，不是修复。
+    （2026-09-21 指挥官裁定：回退 ``5c6bde0`` 把计划值改成可达上限的那一改；依据
+    ``task-ah1-savesteps-lock`` §③/§⑤-5.2：保留策略**显式承认** ``final/``，旧值无害。）
+    """
+    return _planned_save_steps(tier)
+
+
+def checkpoint_save_steps(tier: dict[str, Any]) -> int:
+    """该档的 ``training.save_steps``：**计划保存间隔**（⇒ 每档只落一份 ckpt）。
+
+    ★ **2026-09-21 解耦**（指挥官裁定，`task-ah1-savesteps-lock` §⑤-5.2）：本函数**不再**
+    ``return expected_optimizer_steps(tier)``，而是**直接**走朴素均分口径
+    :func:`_planned_save_steps`。理由：``expected_optimizer_steps`` 一族带有
+    ``_is_native_graspo`` 的**A2 侧分派**（native 按 replay 阈值 + force flush 算真实调度），
+    而"保存间隔"是**保留策略侧**的独立问题；两者绑在一起时，任何一次对 A2 口径的修正都会
+    顺手改掉 ``save_steps``——``5c6bde0`` 就是这么把 8 档 ``save_steps`` 从 20/10/5
+    改成 3/2/1 的。解耦后**保存间隔只由计划口径决定，永不随 A2 分派漂移**。
+
+    ★ 这里的"计划步数"含 `rollout_group_size` 乘数（2026-09-20 修复，见
+    :func:`_planned_save_steps`）：修之前 GRASPO 档拿到的 `save_steps` 只有真总步数的 1/8
+    ⇒ 每个 run 真落 **8 份** ckpt（`T031`/`T043` 实测 `checkpoint-{20..160}`），"每档只落一份"
+    实际上全靠容器内保留块删掉 7 份。修后 ms-swift GRASPO 的 `save_steps` = 真总步数
+    ⇒ 保存恰好发生在最后一步（1 卡 GRASPO = 160）。
+
+    ★ **native GRASPO 那 9 档是刻意的例外**：它们的计划值（``T028``=20、``T030``=5）**大于**
+    可达上限（3 / 1）⇒ ``save_steps`` **永不触发** ⇒ native 不落中间段、只落终态 ``final/``。
+    这正是保留策略要的形态：容器内保留块**只清 ``checkpoint-*``**，而 native 的中间段叫
+    ``step_<N>``（``flow/trainer/optimize.py``）——一旦计划值压到可达上限，每档会真落
+    ``step_<N>`` + ``final/`` = **2 份重 ckpt**，与 ``keep_per_tier = 1`` 冲突，且
+    ``T034/T035/T036`` 是全参 9B，代价最大。⇒ 计划值偏大**不是缺陷**（旧值无害）。
 
     ★ 为什么是"总步数"而不是 0/负数：``save_steps <= 0`` 在映射层会落到
     ``save_strategy: epoch`` 分支（``msswift/_config_mapping.py``），那是**另一种落盘形态**，
@@ -1101,12 +1139,14 @@ def checkpoint_save_steps(tier: dict[str, Any]) -> int:
 
     ★ **A3 判据不受影响**：A3 = "checkpoint 能否被重新加载"，判据实现
     （``scripts/collect_results.py`` 的 ``find_checkpoint_dirs()`` /
-    ``extract_checkpoint_reloadable()``）只要求**存在至少一份** ``checkpoint-<step>/``
-    （ms-swift/LoRA 结构完整 + ``adapter_model.safetensors`` 可反序列化）
-    ——**没有**"必须有多少份"的要求。所以"留一份"完全满足 A3；
+    ``extract_checkpoint_reloadable()``）只要求**存在至少一份**可重载 ckpt；native 的那一份是
+    ``final/``（``NATIVE_CHECKPOINT_DIRNAME = "final"``，``rglob("final")``），
+    保留块也**显式承认**非空 ``final/``（``KEEP …（native 终态产物）`` + ``保留 ckpt 数=1``；
+    真机锚点 ``task-e1-smoke-t010`` 的 ``KEEP /out/T010/final`` + ``ckpt_retention.state=ok``）
+    ——**没有**"必须有多少份"的要求。所以"只落 ``final/``"完全满足 A3/A3 保留策略；
     而"每步一份"浪费的是磁盘，不是判据。
     """
-    return expected_optimizer_steps(tier)
+    return _planned_save_steps(tier)
 
 
 # ── 显存可行性模型（生成期断言，§2.3 边界校验即防呆）────────────────────────
@@ -1394,9 +1434,13 @@ def build_config(tier: dict[str, Any]) -> dict[str, Any]:
             # epoch 末 checkpoint 关掉：全参档**不受** `save_steps` 控制的落盘（native trainer
             # 的 final、ms-swift 的 epoch 末）也要挡一道；容器内另有兜底保留步骤。
             "save_checkpoint_every_epoch": False,
-            # ★ ckpt 保留策略（2026-09-19，用户已授权）：`save_steps` = 该档**总优化步数**
+            # ★ ckpt 保留策略（2026-09-19，用户已授权）：`save_steps` = 该档**计划总步数**
             #   ⇒ 每档只落一份 ckpt。原值 `1` ⇒ 每 step 一份 ⇒ 单档 100 份、≈25 GB/档
             #   （228 实测，磁盘 96%）。口径与 A3 论证见 `checkpoint_save_steps()`。
+            #   ★ native GRASPO 那 9 档的计划值**大于**可达上限（20/10/5 vs 3/2/1）⇒
+            #   `save_steps` 不触发 ⇒ 只落终态 `final/`（保留策略显式承认它）。这是刻意的：
+            #   native 中间段叫 `step_<N>`、保留块只清 `checkpoint-*`，压到可达上限反而会
+            #   每档多留一份重 ckpt（与 `keep_per_tier=1` 冲突）。详见该函数 docstring。
             #   **不能**设 0/负：那会落到 `save_strategy: epoch`（另一种落盘形态）。
             "save_steps": checkpoint_save_steps(tier),
         },
@@ -1810,14 +1854,18 @@ def build_manifest(
                 "policy": "keep-latest-single-checkpoint",
                 "keep_per_tier": 1,
                 "how": (
-                    "① 配置侧：`training.save_steps` = 该档**总优化步数**（见每档 "
+                    "① 配置侧：`training.save_steps` = 该档**计划总步数**（见每档 "
                     "`checkpoint_save_steps`），=「每档只落一份」；"
-                    "★ 总步数=「实际参与优化的样本数 ÷ 卡数」，而 **RLHF（GRASPO/GRPO）档的"
+                    "★ 计划步数=「实际参与优化的样本数 ÷ 卡数」，而 **RLHF（GRASPO/GRPO）档的"
                     "样本数 = 子集 × `training.rollout_group_size`**（ms-swift 的 "
                     "`RepeatSampler(mini_repeat_count=G)` 会按 G 重复数据集；矩阵档不覆盖该字段，"
                     "取 schema 默认值 8）⇒ `T031`/`T043` 真机 `global_step/max_steps` = 160/160。"
                     "**此项 2026-09-20 修复**：修前 GRASPO 档的 `save_steps` 低了 8 倍、每个 run "
                     "真落 8 份 ckpt，只剩一份实际全靠②；"
+                    "★ **native GRASPO 的例外**：其计划值（20/10/5）**大于**可达上限（3/2/1）"
+                    "⇒ `save_steps` 不触发 ⇒ 只落终态 `final/`，由②的 native 分支显式承认"
+                    "（`KEEP …（native 终态产物）`）。这是刻意的：native 中间段叫 `step_<N>`、"
+                    "②的清理范围只有 `checkpoint-*`，把计划值压到可达上限反而每档多留一份重 ckpt；"
                     "② runner 侧：容器内落盘后立即逐项目具名删除旧 ckpt（`[ckpt-retention]` "
                     "日志行），并断言至少还剩一份（否则报运行链路错误，不静默通过）。"
                 ),
