@@ -1407,15 +1407,52 @@ def collect_run(
 # ── 主流程 ──────────────────────────────────────────────────────────────────
 
 
-def _read_peak_memory(run_dir: Path) -> float | None:
-    """读 capability-matrix §7「实测每卡峰值显存(GiB)」列 —— **allocator 口径**（GiB）。
+def _read_peak_memory(run_dir: Path, backend: str = "native") -> tuple[float | None, str]:
+    """读 capability-matrix §7「实测每卡峰值显存(GiB)」列 —— **二分口径，按后端**。
+
+    **返回 ``(值, 口径标签)``**：值与口径**成对返回**，调用方不可能只拿到数字而不知道
+    它是什么口径（§2.2 显式即防呆）。
 
     口径的**权威定义**：`.local/本期工程跟踪.md` §9.1「★ §7 各列的读取口径」表的
     `实测每卡峰值显存(GiB)` 行（**可核定位**：该文件 `:420`，表头在 `:415`）——
-    「**单一口径：容器内 PyTorch allocator 的 rank0 `max_allocated`**；其它口径
-    （OOM 报文的进程占用、宿主 `nvidia-smi` 采样）**不得混入同一列**」。
-    代码侧的唯一真相源是
-    ``graspo.core.result_judge.PEAK_MEMORY_CALIBER``（本函数只实现取数）。
+    「**二分口径（按 A §7 的「后端」列即可推导，不必逐格加标签）：`native` 档 =
+    容器内 PyTorch allocator 的 rank0 `max_allocated`；`ms-swift` 档 = 该进程的
+    `max_memory_reserved`（同进程全部可见卡取 max）**」。
+
+    后端 → 口径的**唯一映射**在
+    ``graspo.core.result_judge.PEAK_MEMORY_CALIBER_BY_BACKEND``（本函数只按它分派，
+    不自己写第二份判断）：
+
+    - ``native`` ⇒ :data:`result_judge.PEAK_MEMORY_CALIBER` ⇒ 走
+      `_read_allocator_peak_memory`（rank0 `rank_metrics` 的 `max_allocated_mib` 取最大）；
+    - ``ms-swift`` ⇒ :data:`result_judge.MSSWIFT_RESERVED_CALIBER` ⇒ 走
+      `_read_msswift_reserved_peak_memory`（自报 `memory(GiB)` = `max_memory_reserved`，
+      **保守上界**：`reserved >= allocated`）；
+    - **未登记的后端** ⇒ 口径标签 :data:`result_judge.PEAK_MEMORY_CALIBER_UNKNOWN`
+      （显式"无口径"，**不猜、不默认取某一支**），值恒为 ``None``。
+
+    **不可得一律返回 ``(None, 该档口径标签)``，绝不回退宿主口径、也绝不回退另一种口径**
+    （§9.1 明文禁止混口径；宿主采样在共享机上会被同租户作业污染）。不产 `rank_metrics`
+    的 ms-swift 后端曾因此结构性拿不到值——二分口径正是为消除该缺口而裁定（2026-09-21），
+    但它**仍然不放宽**"不可得 ⇒ 显式标注"这条底线：台账由
+    ``result_judge.peak_memory_unavailable_note`` 显式标注，而不是拿宿主采样补坑。
+
+    ``backend`` 默认 ``"native"``：仅为兼容本函数的历史单参调用（历史语义即 allocator
+    口径）；**生产路径 ``run()`` 一律显式传入该档 A §7 的「后端」列值**。
+    """
+    caliber = _judge.peak_memory_caliber_for_backend(backend)
+    if caliber == _judge.PEAK_MEMORY_CALIBER:
+        return _read_allocator_peak_memory(run_dir), caliber
+    if caliber == _judge.MSSWIFT_RESERVED_CALIBER:
+        return _read_msswift_reserved_peak_memory(run_dir), caliber
+    # 未登记的后端：无口径可谈 ⇒ 显式返回"无口径"，值不可得。**不得**猜一个口径出来。
+    return None, caliber
+
+
+def _read_allocator_peak_memory(run_dir: Path) -> float | None:
+    """**native 支路**：读 rank0 的 PyTorch allocator 峰值 ``max_allocated``（GiB）。
+
+    （二分口径下本条只服务 `native` 档；分派见 :func:`_read_peak_memory`。）
 
     落点：rank0 的逐 rank 指标旁路 ``metrics/rank_metrics.rank_00000.jsonl``——训练侧
     ``transformer_adapter._emit_rank_memory_event`` 每写完一次显存快照就追加一行
@@ -1429,7 +1466,7 @@ def _read_peak_memory(run_dir: Path) -> float | None:
 
     **不可得一律返回 ``None``，绝不回退宿主口径**（§9.1 明文禁止混口径；回退正是本函数
     旧实现的缺陷）。不产 ``rank_metrics`` 的后端（如 ms-swift）结构性拿不到该值 ⇒
-    台账由 ``result_judge.PEAK_MEMORY_UNAVAILABLE`` 显式标注，而不是拿宿主采样补坑。
+    该档改走自己的二分口径支路（见 :func:`_read_peak_memory`）。
     """
     peaks: list[float] = []
     for events in sorted(run_dir.rglob(_PEAK_MEMORY_RANK_FILE)):
@@ -1450,10 +1487,11 @@ def _read_peak_memory(run_dir: Path) -> float | None:
 
 
 def _read_msswift_reserved_peak_memory(run_dir: Path) -> float | None:
-    """读 **ms-swift 自报**的 ``memory(GiB)``（GiB）——**reserved 口径，不是 §7 的口径**。
+    """**ms-swift 支路**：读该后端自报的 ``memory(GiB)``（GiB）——**reserved 口径**。
 
-    **为什么单列一个函数**（本包①的定性结论，2026-09-21）：ms-swift 会打印
-    ``logs['memory(GiB)']``，但它取的是 ``max_memory_reserved``：
+    **口径地位（2026-09-21 指挥官裁定「方案 A：二分口径」）**：它**就是** ms-swift 档在
+    §7「实测每卡峰值显存(GiB)」列的合法取数来源（分派见 :func:`_read_peak_memory`）。
+    ms-swift 会打印 ``logs['memory(GiB)']``，取的是 ``max_memory_reserved``：
       - ``.local/refs/ms-swift-4.5.3/git-v4.5.3/swift/trainers/patcher.py:27``
         ``state.max_memory = max(getattr(state, 'max_memory', 0), get_max_reserved_memory())``
         （`:29` 落 ``logs['memory(GiB)']``）
@@ -1461,11 +1499,18 @@ def _read_msswift_reserved_peak_memory(run_dir: Path) -> float | None:
         ``[get_torch_device().max_memory_reserved(device=device) ...]`` → ``max(...)/1024**3``
       - ``swift/megatron/callbacks/print.py:64``
         ``reduce_max_stat_across_model_parallel_group(torch.cuda.max_memory_reserved() / 1024**3)``
-    三处**均无** ``max_memory_allocated()`` ⇒ 它与 §9.1 声明的 rank0 ``max_allocated``
-    （``.local/本期工程跟踪.md:420``）是**两个量**（reserved ≥ allocated）⇒
-    **不得**用它填 ``peak_memory_gib``。结果只经
-    ``result_judge.MSSWIFT_RESERVED_PEAK_FIELD`` 另存（同一防呆模式见
-    :func:`_read_host_sample_peak_memory`）。
+    三处**均无** ``max_memory_allocated()`` ⇒ ms-swift 后端结构性产不出 rank0
+    ``max_allocated``（也不产 `rank_metrics` 旁路）⇒ 旧的"单一口径"会让 36 个 ms-swift 档
+    永久填不出值。二分口径（§9.1 `.local/本期工程跟踪.md:420`）据此把本值定为
+    ms-swift 档该列的合法值。
+
+    ★ **它是保守上界**：``reserved >= allocated`` 恒成立（reserved 含 caching allocator
+    的空闲缓存块）⇒ 用户拿它判断"我的硬件够不够"**不会被低估**。这一点必须与数字一起
+    出现在文档里（§9.1 与 §7 脚注均已写明）。
+
+    除 §7 峰值列外，本值仍经 ``result_judge.MSSWIFT_RESERVED_PEAK_FIELD`` 另存为
+    "上游自报字段的原值 + 来源标签"（同一防呆模式见
+    :func:`_read_host_sample_peak_memory`；后者**不是**本列口径，仍严格另存）。
 
     **取数来源（按稳定性排序，前者命中即不再看后者）**：
 
@@ -1484,9 +1529,10 @@ def _read_msswift_reserved_peak_memory(run_dir: Path) -> float | None:
     它不是逐卡多行输出 ⇒ 本函数的算法是：**把所有行的该值取最大**（``state.max_memory``
     本身也是单调累积 max，逐行取 max 与取末行等价），得到"该 run 的单卡峰值"。
 
-    **不可得一律返回 ``None``**（不产 ``logging.jsonl`` / 无该键 / 解析失败），
-    **绝不**回退 ``gpu_memory_summary.json``（宿主口径，#9.1 禁止混口径），
-    **也绝不**用 native 的 ``rank_metrics`` 值兜底（那是另一个 run 的读数）。
+    **不可得一律返回 ``None``**（不产 ``logging.jsonl`` / 无该键 / 解析失败）⇒ 台账按
+    本档口径落 ``result_judge.MSSWIFT_RESERVED_UNAVAILABLE`` 显式标注，
+    **绝不**回退 ``gpu_memory_summary.json``（宿主口径，#9.1 仍禁止混入本列），
+    **也绝不**用 native 的 ``rank_metrics`` 值兜底（那是另一个 run 的读数、另一种口径）。
     """
     peaks: list[float] = []
     for path in sorted(run_dir.rglob(_MSSWIFT_LOGGING_JSONL)):
@@ -1563,6 +1609,11 @@ def run(args: argparse.Namespace) -> int:
     for tier in manifest.get("tiers", []):
         tier_id = str(tier["tier_id"])
         tuner_type = "full" if tier.get("mode") == "全量" else "lora"
+        # 本档 §7 峰值列的口径**由后端唯一决定**（§1.4 单一真相源）。
+        # ★ 必须在"没跑过"分支也用它：否则下游会把该格读成"可以用宿主采样补上"。
+        backend = str(tier.get("backend"))
+        tier_caliber = _judge.peak_memory_caliber_for_backend(backend)
+        tier_caliber_note = _judge.peak_memory_unavailable_note(tier_caliber)
         first_dir = Path(args.run_root) / tier_id
         if not first_dir.is_dir():
             records.append(
@@ -1573,11 +1624,11 @@ def run(args: argparse.Namespace) -> int:
                     "failure_class": None,
                     "max_context": None,
                     "max_context_kind": None,
-                    # 峰值列同样要口径自证（§9.1 / §2.2）：没跑过 ⇒ allocator 口径不可得，
+                    # 峰值列同样要口径自证（§9.1 / §2.2）：没跑过 ⇒ 该档口径不可得，
                     # 但**不得**让下游把这格读成"可以用宿主采样补上"。
                     "peak_memory_gib": None,
-                    "peak_memory_caliber": _judge.PEAK_MEMORY_CALIBER,
-                    "peak_memory_note": _judge.PEAK_MEMORY_UNAVAILABLE,
+                    "peak_memory_caliber": tier_caliber,
+                    "peak_memory_note": tier_caliber_note,
                     _judge.HOST_SAMPLE_PEAK_FIELD: None,
                     _judge.HOST_SAMPLE_GAP_FIELD: None,
                     # 同上：ms-swift 自报 reserved 口径也要"没跑过 ⇒ 不可得 + 原因"，
@@ -1614,25 +1665,30 @@ def run(args: argparse.Namespace) -> int:
                     min_optimizer_steps=extract_min_optimizer_steps(tier),
                 )
         judgement = _judge.judge_tier(first, second, context_length=args.context_length)
+        # §7 峰值列：**按后端选口径取数，值与口径成对拿到**（§9.1 二分口径 / §1.4）。
+        peak_gib, peak_caliber = _read_peak_memory(first_dir, backend)
         row = _judge.ledger_row(
             judgement,
             model=str(tier.get("model")),
             algorithm=str(tier.get("algorithm")),
             mode=str(tier.get("mode")),
-            backend=str(tier.get("backend")),
+            backend=backend,
             cards=int(tier.get("cards", 0)),
             # 🔴-1 修正：**不要**在这里按 counts_toward_max_context 预筛。资格判定
             # 是 ledger_row 的唯一真相源（通过档 ⇒ 实测可行值；真 OOM ⇒ 边界候选），
             # 采集层再筛一遍会把"通过档"的上下文也丢掉（旧实现的实际后果：
             # max_context 恒为 None）。这里只把"这次实测的上下文长度"原样传下去。
             max_context=args.context_length,
-            peak_memory_gib=_read_peak_memory(first_dir),
+            peak_memory_gib=peak_gib,
+            # 口径标签随值一起落盘，且 `ledger_row` 会与 backend 的推导值核对（不一致即拒）。
+            peak_memory_caliber=peak_caliber,
             date=args.date,
-            # 宿主采样峰值**另存**（§9.1：它是取证链锚点，不进 §7 峰值列）。
+            # 宿主采样峰值**另存**（§9.1：它是取证链锚点，二分口径下**仍**不进 §7 峰值列）。
             host_sample_peak_gib=_read_host_sample_peak_memory(first_dir),
             host_sample_peak_gap_mib=_read_host_sample_gap_mib(first_dir),
-            # ms-swift 自报的 **reserved** 峰值：**另存 + 带口径标签**，不进 §7 峰值列
-            # （见 `_read_msswift_reserved_peak_memory` 的源码依据）。
+            # ms-swift 自报的 reserved 峰值的**原始读数**：另存 + 带口径标签
+            # （见 `_read_msswift_reserved_peak_memory` 的源码依据）；二分口径下它同时
+            # 就是 ms-swift 档 §7 峰值列的取数来源，故此处复用同一个取数函数。
             msswift_reserved_peak_gib=_read_msswift_reserved_peak_memory(first_dir),
         )
         row["criteria"] = {item.criterion: item.passed for item in judgement.criteria}
@@ -1659,11 +1715,13 @@ def run(args: argparse.Namespace) -> int:
     markdown = out_dir / "ledger.md"
     # `max_context` 的口径必须随数字一起显示（🔴-1）：同样是 "8192"，"实测通过"
     # 与"真 OOM 边界候选"的含义完全不同，只给数字会被下游读成"这个长度跑得通"。
-    # 峰值列同理（§9.1 / §2.2）：列头写死口径，空值写**原因**而不是一个光秃秃的 `—`，
-    # 宿主副读数**单独一列**——三者分开才让"这一格是什么口径"可回答。
+    # 峰值列同理（§9.1 二分口径 / §2.2）：列头写死**按后端二分**的口径规则，空值写**原因**
+    # 而不是一个光秃秃的 `—`，宿主副读数**单独一列**——三者分开才让"这一格是什么口径"
+    # 可回答。逐格不再加标签：口径可由同表「后端」列**单值推导**（§9.1 的明文依据）。
     lines = [
         "| 条件档 | 模型 | 算法 | 模式 | 后端 | 卡数 | 最大可行上下文 | 口径 "
-        f"| 每卡峰值(GiB)【{_judge.PEAK_MEMORY_CALIBER}】 | 宿主采样峰值(GiB) "
+        f"| 每卡峰值(GiB)【native={_judge.PEAK_MEMORY_CALIBER} / "
+        f"ms-swift={_judge.MSSWIFT_RESERVED_CALIBER}（保守上界）】 | 宿主采样峰值(GiB) "
         f"| 宿主采样缺口(MiB) | ms-swift自报(GiB)【{_judge.MSSWIFT_RESERVED_CALIBER}】 "
         "| 状态 | 失败类型 | 备注 |",
         "|---|---|---|---|:--:|---|---|---|---|---|---|---|---|---|---|",
