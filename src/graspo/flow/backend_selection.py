@@ -2,9 +2,13 @@
 
 import json
 from dataclasses import asdict, dataclass
+from typing import TYPE_CHECKING, Any
 
 from graspo.core.discovery import _discover
 from graspo.core.schema import GraspoConfig
+
+if TYPE_CHECKING:
+    from graspo.flow.trainer import GraspoFlowTrainer
 
 SUPPORTED_BACKENDS = set(_discover("graspo.backends").keys())
 
@@ -38,14 +42,17 @@ def select_backend(config: GraspoConfig, requested: str | None = None) -> Backen
     )
 
 
-def create_native_trainer(config: GraspoConfig, selection: BackendSelection):
+def create_native_trainer(
+    config: GraspoConfig, selection: BackendSelection
+) -> GraspoFlowTrainer:
     """native 后端的工厂函数（供 entry_points 自动发现）。"""
     from graspo.flow import GraspoFlowTrainer
 
     return GraspoFlowTrainer(config, selection=selection)
 
 
-def create_trainer(config: GraspoConfig, selection: BackendSelection):
+def create_trainer(config: GraspoConfig, selection: BackendSelection) -> Any:
+    """按 ``selection.name`` 从 entry_points 发现并调用后端工厂（返回类型由各工厂决定）。"""
     backends = _discover("graspo.backends")
     loader = backends.get(selection.name)
     if loader is None:
