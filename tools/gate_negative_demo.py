@@ -163,7 +163,11 @@ def main(argv: list[str]) -> int:
     results = [run_case(case) for case in CASES]
     ok = all(r["expected_nonzero"] and r["reported_rule"] for r in results)
     if "-o" in argv and argv[argv.index("-o") + 1] == "json":
-        print(json.dumps({"all_failed_as_expected": ok, "results": results}, ensure_ascii=False, indent=2))
+        print(
+            json.dumps(
+                {"all_failed_as_expected": ok, "results": results}, ensure_ascii=False, indent=2
+            )
+        )
         return 0 if ok else 1
     print("W1 门禁负向验证实测（每个用例：注入 → 期望非 0 退出 + 报出违规位置）\n")
     for r in results:
@@ -173,7 +177,9 @@ def main(argv: list[str]) -> int:
         for line in r["stdout"].splitlines():
             if "违规" in line or line.strip().startswith("- ["):
                 print(f"   报告：{line.strip()}")
-        print(f"   退出码：{r['exit_code']}（期望非 0）  命中规则：{'是' if r['reported_rule'] else '否'}")
+        print(
+            f"   退出码：{r['exit_code']}（期望非 0）  命中规则：{'是' if r['reported_rule'] else '否'}"
+        )
         print()
     print("汇总：" + ("全部用例都产生真实失败 ✅" if ok else "存在未被拦截的用例 ❌"))
     return 0 if ok else 1

@@ -53,15 +53,15 @@ LANGUAGE_SPECIFIC: list[dict] = [
         "token": "tp=T,dp=D,pp=P",
         "side": "ZH",
         "reason": "中文侧用 `tp=T,dp=D,pp=P` 这种紧凑写法表达并行度组合，"
-                  "英文侧在同一位置写作展开式 `tp_size × dp_size × pp_size`。"
-                  "两侧语义完全相同，只是记号不同——不是内容缺失。",
+        "英文侧在同一位置写作展开式 `tp_size × dp_size × pp_size`。"
+        "两侧语义完全相同，只是记号不同——不是内容缺失。",
     },
     {
         "token": "final/",
         "side": "EN",
         "reason": "英文侧一条列表项以 `final/` 结尾（写成 `final/`），"
-                  "中文侧同一项写作 `final`（不带尾斜杠）。指向同一个产物，"
-                  "为路径写法差异，不是内容缺失。",
+        "中文侧同一项写作 `final`（不带尾斜杠）。指向同一个产物，"
+        "为路径写法差异，不是内容缺失。",
     },
 ]
 
@@ -131,9 +131,7 @@ def main(argv: list[str] | None = None) -> int:
 
     report: list[dict] = []
     for idx, (en_title, en_line, en_body) in enumerate(en_secs):
-        zh_title, zh_line, zh_body = (
-            zh_secs[idx] if idx < len(zh_secs) else ("<缺失>", 0, [])
-        )
+        zh_title, zh_line, zh_body = zh_secs[idx] if idx < len(zh_secs) else ("<缺失>", 0, [])
         tok_en = tokens_of(en_body, drop_fences=True)
         tok_zh = tokens_of(zh_body, drop_fences=True)
         code_en = code_blocks(en_body)
