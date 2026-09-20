@@ -250,11 +250,17 @@ def _safe_metadata(sample: Sample) -> dict[str, Any]:
     return metadata
 
 
-def _parse_completion(runtime: GraspoFlowRuntime, completion: str, sample: Sample):
-    parse_completion = getattr(runtime, "parse_completion", None)
-    if callable(parse_completion):
-        return parse_completion(completion, sample)
-    return raw_parsed_completion(completion)
+def _parse_completion(
+    runtime: GraspoFlowRuntime, completion: str, sample: Sample
+) -> ParsedCompletion:
+    """委托给 runtime 的 parse_completion（§2.2 显式：不探测自家接口）。
+
+    ``GraspoFlowRuntime.parse_completion`` 是 ABC 上的抽象方法，任何具体 runtime
+    都实现了它；旧写法用 ``getattr(runtime, "parse_completion", None)`` 探测并在
+    缺失时**静默退回**通用 raw 解析器——那既是 §2.2 禁止的自家接口探测，也是一条
+    §3.4 意义上的"坏退路"（悄悄换了判分用的解析器）。改为直接调用，缺失即报错。
+    """
+    return runtime.parse_completion(completion, sample)
 
 
 # ── analyze-profile ──────────────────────────────────────────────────────────
