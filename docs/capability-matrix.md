@@ -199,7 +199,7 @@
 >
 > **`实测每卡峰值显存(GiB)` 列的口径、出处与时效（本列受 §7 结构约束，口径的权威落点为工程跟踪文档 §9.1）**：
 > - **口径（唯一）**：**容器内 PyTorch allocator 的 rank0 `max_allocated`**（即 `torch.cuda.max_memory_allocated()` 的峰值换算为 GiB）。**其它口径一律不得混入本列**——特别是 OOM 报文里的**进程占用**（含非 PyTorch 的缓存/其它进程）与宿主 `nvidia-smi` 采样值。
-> - **出处（文件与字段）**：容器内采样摘要 `gpu/gpu_memory_summary.json`；本表的自动取数实现见 `scripts/collect_results.py`（`_read_peak_memory`：取各卡 `per_gpu[*].memory_used_mib_peak` 的**最大值** ÷ 1024 得 GiB）。
+> - **出处（文件与字段）**：**容器内 PyTorch 侧逐 rank 指标旁路** `metrics/rank_metrics.rank_00000.jsonl`（rank0）的 `memory.max_allocated_mib`——由 `torch.cuda.max_memory_allocated()` 经 `src/graspo/flow/parallel/tensor_utils.py` 的 `_cuda_memory_snapshot` 产出、`transformer_adapter.py` 的 `_emit_rank_memory_event` 落盘；本表的自动取数实现见 `scripts/collect_results.py`（`_read_peak_memory`：取该文件全部 `rank_memory` 行 `memory.max_allocated_mib` 的**最大值** ÷ 1024 得 GiB）。**宿主 `nvidia-smi` 采样摘要 `gpu/gpu_memory_summary.json` 不是本列出处**——它只作取证链锚点，另存为台账独立字段 `host_sample_peak_gib`（并附采样缺口 `host_sample_peak_gap_mib`；缺口 > 0 表示该卡峰值混入了**非本档**成分——228 是共享机，他人作业会被计入）。**allocator 口径不可得时**（`rank_metrics` 旁路结构性缺失，例如 ms-swift 后端不产该文件）该列**留空并显式标注「未取得（allocator 口径不可得）」**，**不得**改用宿主采样值回填。
 > - **时效（链条状态）**：该采样链路的落点自回归点 `51dcd11`（2026-09-19）起被训练侧的 `overwrite_output_dir` 删除，**摘要一度从未真正产出**；**该链路已于 2026-09-20 修复并真机验证**（`T031`/`T032` 两次跑峰值逐位相同）。⇒ **本表现有 5 个读数（`T013` 43.87 / `T016` 78.27 / `T017` 48.09 / `T018` 31.98 / `T046` 76.89）均产生于该链路修复之前，逐项标注「待重测」**；**数值一律未经改写，只加标注**。
 > - **读数级注（标注只落在本脚注，上表单元格仍为原值、不改行结构、不新增列）**：`T013` 43.87 =「待重测」；`T016` 78.27 =「待重测」；`T017` 48.09 =「待重测」；`T018` 31.98 =「待重测」；`T046` 76.89 =「待重测」。
 >
