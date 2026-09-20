@@ -52,7 +52,8 @@ from __future__ import annotations
 import contextlib
 import inspect
 import logging
-from typing import Any, Iterator
+from collections.abc import Iterator
+from typing import Any
 
 logger = logging.getLogger(__name__)
 

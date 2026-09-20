@@ -27,10 +27,13 @@
 
 | 方法 | 注入内容 |
 |---|---|
-| ``_score_completions`` | 父类 ms-swift 奖励打分之后，追加 graspo **字符级结构标注**（S/V/T/W/E/D） |
-| ``_compute_advantages`` | 父类标量 advantage 之后，按 rollout group 计算 graspo **token 级 advantage** |
+| ``_score_completions`` | 父类 ms-swift 奖励打分之后，追加 graspo
+**字符级结构标注**（S/V/T/W/E/D） |
+| ``_compute_advantages`` | 父类标量 advantage 之后，按 rollout group 计算 graspo
+**token 级 advantage** |
 | ``_postprocess_batch`` | 用 graspo per-token advantage **覆盖** ``grpo_batch.advantages`` |
-| ``_compute_loss_and_metrics`` | 用 ``GraspoAlgorithmCore.compute_loss`` 替换内置 loss，**修复 ratio 恒 1** |
+| ``_compute_loss_and_metrics`` | 用 ``GraspoAlgorithmCore.compute_loss`` 替换内置 loss，
+**修复 ratio 恒 1** |
 
 **ratio 恒 1 是什么 bug（必须说清楚，否则"修好了"无从验证）**
 
@@ -50,8 +53,9 @@ import contextlib
 import logging
 import os
 from collections import OrderedDict
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from graspo.flow.msswift._config_mapping import graspo_to_ms_swift_argv, launcher_env
 from graspo.flow.msswift.dataset import prepare_ms_swift_dataset
@@ -181,8 +185,6 @@ class GraspoMsSwiftGRPOTrainer(_MsSwiftGRPOTrainerBase):  # type: ignore[misc,va
         **与父类的唯一区别**：``log_probs`` 取**当前策略前向**（而非旧策略的副本），
         因此 ``ratio = exp(logp_cur − logp_old)`` 不再恒等于 1。
         """
-        import torch  # 局部导入：本模块在无 torch 环境下仍可被导入以给出精确错误
-
         per_token_logps, _entropies = self._get_per_token_logps_and_entropies(
             model, model_inputs, grpo_batch, compute_entropy=False
         )

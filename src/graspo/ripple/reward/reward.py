@@ -336,7 +336,8 @@ class GraspoReward:
 
 # ── 奖励实现注册表 ────────────────────────────────────────────────────
 
-from graspo.core.discovery import _discover
+# 延迟导入：reward 模块由 discovery 的注册表指向，置顶会形成循环导入。
+from graspo.core.discovery import _discover  # noqa: E402
 
 REWARD_REGISTRY = _discover("graspo.rewards")
 

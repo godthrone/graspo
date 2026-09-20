@@ -28,7 +28,7 @@ from pydantic import ValidationError
 
 from graspo.cli.app import _build_launch_env
 from graspo.cli.gpu_monitor import build_gpu_monitor_parser
-from graspo.core.schema import GraspoConfig, GpuMonitorConfig
+from graspo.core.schema import GpuMonitorConfig, GraspoConfig
 from graspo.flow import logging as graspo_logging
 from graspo.flow.adapters.models.qwen35_36.training_sft import (
     _REMOVED_NONFINITE_SKIP_ENV,

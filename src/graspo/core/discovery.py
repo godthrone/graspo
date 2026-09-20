@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import importlib
 import importlib.metadata
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 # ── 开发模式回退注册表 ─────────────────────────────────────────────────
 # 当包未通过 pip install 安装时（entry_points 不可用），从此表加载。

@@ -14,8 +14,6 @@
 
 import math
 
-import pytest
-
 from graspo.core.result_judge import (
     FailureClass,
     RunEvidence,

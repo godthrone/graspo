@@ -59,7 +59,9 @@ _guard: Any = _load_guard_module()
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Fail-closed GPU lock guard: reject unset/all/out-of-range/>4-card device sets.",
+        description=(
+            "Fail-closed GPU lock guard: reject unset/all/out-of-range/>4-card device sets."
+        ),
     )
     parser.add_argument(
         "--visible",

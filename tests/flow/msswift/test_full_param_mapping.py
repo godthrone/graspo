@@ -8,10 +8,12 @@
 - **AutoTP 归位**：``msswift.deepspeed_autotp_size`` 只在全参下放行，非全参仍 fail-closed。
 
 上游取值依据（【实测确证】，不是猜的）：
-- ms-swift 4.5.3 源码（`.local/refs/ms-swift-4.5.3/`）`src/swift/arguments/base_args/base_args.py:29-31`
+- ms-swift 4.5.3 源码（`.local/refs/ms-swift-4.5.3/`）
+  `src/swift/arguments/base_args/base_args.py:29-31`
   的 `get_supported_tuners()` 含 `'full'`；Megatron 路径 `megatron_args.py:449`
   直接写 `tuner_type: Literal['lora', 'full', 'lora_llm'] = 'full'`。
-- 目标 GPU 服务器实跑证据（记录见 `.local/` 下 `task-megatron-smoke/evidence/`）：`88-train-v5-error.txt:14`（CLI usage 行
+- 目标 GPU 服务器实跑证据（记录见 `.local/` 下 `task-megatron-smoke/evidence/`）：
+  `88-train-v5-error.txt:14`（CLI usage 行
   `[--tuner_type {lora,full,lora_llm}]`）与 `81-train-v3-status.txt`（真实运行的
   `MegatronSftArguments(..., tuner_type='full', ...)` 参数 dump）。
 
@@ -76,10 +78,11 @@ if importlib.util.find_spec("torch") is None:  # pragma: no cover - 取决于运
     graspo_to_ms_swift_argv = _mapping_module.graspo_to_ms_swift_argv
     validate_combinations = _mapping_module.validate_combinations
 else:  # pragma: no cover - 有 torch 的正常环境
-    from graspo.flow.msswift._config_mapping import (
-        graspo_to_ms_swift_argv,
-        validate_combinations,
-    )
+    # 运行期按模块属性取，不在此处绑定名字（§2.2 显式；本机无 torch ⇒ 该分支不执行）
+    _mapping_module = sys.modules["graspo.flow.msswift._config_mapping"]
+
+graspo_to_ms_swift_argv = _mapping_module.graspo_to_ms_swift_argv
+validate_combinations = _mapping_module.validate_combinations
 
 import contextlib  # noqa: E402
 

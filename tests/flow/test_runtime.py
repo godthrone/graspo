@@ -18,9 +18,6 @@ import inspect
 import sys
 import types
 
-import pytest
-
-
 # ---------------------------------------------------------------------------
 # Helper: load graspo.flow.runtime directly
 # ---------------------------------------------------------------------------
@@ -32,10 +29,10 @@ def _load_runtime_module() -> types.ModuleType:
     Returns the loaded module object.  Cached in ``sys.modules`` so repeated
     calls return the same instance.
     """
-    _RUNTIME_KEY = "graspo.flow.runtime"
+    _runtime_key = "graspo.flow.runtime"
 
-    if _RUNTIME_KEY in sys.modules:
-        return sys.modules[_RUNTIME_KEY]
+    if _runtime_key in sys.modules:
+        return sys.modules[_runtime_key]
 
     # -- torch (not available in this env) ---------------------------------
     if "torch" not in sys.modules:
@@ -95,11 +92,11 @@ def _load_runtime_module() -> types.ModuleType:
 
     # -- load the real runtime.py ------------------------------------------
     _spec = importlib.util.spec_from_file_location(
-        _RUNTIME_KEY,
+        _runtime_key,
         "src/graspo/flow/runtime.py",
     )
     _module = importlib.util.module_from_spec(_spec)
-    sys.modules[_RUNTIME_KEY] = _module
+    sys.modules[_runtime_key] = _module
     _spec.loader.exec_module(_module)
     return _module
 

@@ -10,25 +10,6 @@ import torch
 from torch import nn
 from torch.nn import functional as F  # noqa: N812
 
-
-def _log_cuda_mem(label: str) -> None:
-    """Log CUDA memory stats to stderr for rank 0 only."""
-    if os.environ.get("RANK", "0") == "0":
-        rank = os.environ.get("RANK", "0")
-        allocated = torch.cuda.memory_allocated() / 1024**3
-        reserved = torch.cuda.memory_reserved() / 1024**3
-        max_allocated = torch.cuda.max_memory_allocated() / 1024**3
-        print(
-            f"[MEM rank={rank}] {label}: allocated={allocated:.2f}GB "
-            f"reserved={reserved:.2f}GB max_allocated={max_allocated:.2f}GB",
-            file=sys.stderr,
-            flush=True,
-        )
-
-
-if TYPE_CHECKING:
-    from graspo.flow.parallel.tensor_utils import SafetensorIndex
-
 from graspo.flow.adapters.models.common.layers_qwen3 import TensorParallelQwenMLP
 from graspo.flow.lora.lora_helpers import _lora_target_enabled
 from graspo.flow.lora.lora_linear import LoRALinear
@@ -48,6 +29,25 @@ from graspo.flow.parallel.tensor_utils import (
     _torch_chunk_gated_delta_rule,
     _torch_recurrent_gated_delta_rule,
 )
+
+
+def _log_cuda_mem(label: str) -> None:
+    """Log CUDA memory stats to stderr for rank 0 only."""
+    if os.environ.get("RANK", "0") == "0":
+        rank = os.environ.get("RANK", "0")
+        allocated = torch.cuda.memory_allocated() / 1024**3
+        reserved = torch.cuda.memory_reserved() / 1024**3
+        max_allocated = torch.cuda.max_memory_allocated() / 1024**3
+        print(
+            f"[MEM rank={rank}] {label}: allocated={allocated:.2f}GB "
+            f"reserved={reserved:.2f}GB max_allocated={max_allocated:.2f}GB",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
+if TYPE_CHECKING:
+    from graspo.flow.parallel.tensor_utils import SafetensorIndex
 
 
 class TensorParallelQwen35DecoderLayer(nn.Module):

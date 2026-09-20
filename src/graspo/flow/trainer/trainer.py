@@ -15,6 +15,7 @@ from typing import Any
 import torch.distributed as dist
 
 from graspo.core.schema import GraspoConfig
+from graspo.flow.data_io import load_jsonl
 from graspo.flow.logger.native_rollout_logger import NativeRolloutLogger
 from graspo.flow.logging import setup_logging
 from graspo.flow.runtime import (
@@ -31,7 +32,6 @@ from graspo.flow.trainer.helpers import (
 from graspo.flow.trainer.optimize import OptimizeMixin
 from graspo.flow.trainer.rollout import RolloutMixin
 from graspo.ripple.buffer import ReplayBuffer
-from graspo.flow.data_io import load_jsonl
 from graspo.ripple.monitoring.stats import (
     GraspoFlowEpochStats,
     GraspoFlowTrainStats,

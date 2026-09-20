@@ -56,7 +56,7 @@ class TrainBatchMetrics(TypedDict, total=False):
     sft_batch_count: int
 
 
-from graspo.core.discovery import _discover
+from graspo.core.discovery import _discover  # noqa: E402
 
 _AVAILABLE_ADAPTERS = tuple(_discover("graspo.adapters").keys())
 

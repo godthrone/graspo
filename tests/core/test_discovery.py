@@ -22,7 +22,6 @@ import pytest
 
 from graspo.core.discovery import _discover
 
-
 # ── 基本发现：rewards ────────────────────────────────────────────────────────
 
 

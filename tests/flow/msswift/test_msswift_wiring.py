@@ -17,7 +17,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import sys
 import types
@@ -323,8 +322,8 @@ def test_graspo_loss_uses_current_logprobs_so_ratio_can_differ():
     """算法核层面：ratio 由 ``(log_probs - old_log_probs)`` 决定，不再被调用方锁死为 1。"""
     torch = pytest.importorskip("torch")
 
-    from graspo.ripple.algorithm import GraspoAlgorithmCore
     from graspo.core.schema import RewardConfig
+    from graspo.ripple.algorithm import GraspoAlgorithmCore
 
     core = GraspoAlgorithmCore(reward_config=RewardConfig(), policy_ratio_clip_eps=0.2)
     mask = torch.ones(1, 4)
@@ -361,7 +360,6 @@ def _decision_stub(config=None, *, num_generations=2):
     import torch
 
     from graspo.flow.msswift import trainer as trainer_module
-    from graspo.flow.msswift.trainer import GraspoMsSwiftGRPOTrainer
     from graspo.ripple.algorithm import GraspoAlgorithmCore
 
     _config = config or GraspoConfig.model_validate({"backend": "msswift"})
@@ -430,7 +428,6 @@ def test_unparseable_group_is_skipped_instead_of_silently_zero_advantages():
     看不出"是数据不可解析"还是"链路坏了"。注入 ``classify_group`` 后，
     这种组必须落成 ``decision=invalid``（或 retry），并进 ``skipped_groups``。
     """
-    from graspo.flow.msswift.trainer import GraspoMsSwiftGRPOTrainer
 
     stub, torch = _decision_stub()
     completions = ["这是一段散文，没有 JSON 围栏。", "另一段散文。"]
@@ -452,7 +449,6 @@ def test_unparseable_group_is_skipped_instead_of_silently_zero_advantages():
 
 def test_parseable_trainable_group_produces_nonzero_token_advantages():
     """可解析且组内有差异的组：必须产出**非零** token 级 advantage 并被判定可训练。"""
-    from graspo.flow.msswift.trainer import GraspoMsSwiftGRPOTrainer
 
     stub, torch = _decision_stub()
     good = '```json\n{"answer": "4"}\n```'

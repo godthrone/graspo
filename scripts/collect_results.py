@@ -33,10 +33,11 @@ import math
 import re
 import struct
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Sequence
+from typing import Any
 
 # ── 纯逻辑模块按文件路径加载，避免经 graspo/__init__ 拉入 torch/pydantic ──────
 _SRC = Path(__file__).resolve().parents[1] / "src"
@@ -357,7 +358,8 @@ def _cross_check_stdout(log_text: str, losses: Sequence[float | None]) -> list[s
     ]
     if mismatched:
         return [
-            f"stdout 与 rank_metrics 的 loss 口径不一致（步 {', '.join(str(i + 1) for i in mismatched[:5])}）："
+            f"stdout 与 rank_metrics 的 loss 口径不一致（步 "
+            f"{', '.join(str(i + 1) for i in mismatched[:5])}）："
             "stdout 为 rank0 局部值，全局口径以 rank_metrics 为准"
         ]
     return []
@@ -816,10 +818,14 @@ def extract_artifacts(run_dir: Path, output_dirs: Sequence[Path], log_text: str)
 
     | 件 | native | ms-swift | 语义（判据不放松） |
     |---|---|---|---|
-    | config_backup | ``config.yaml``（graspo 配置备份） | ``args.json``（ms-swift **已解析生效**的训练参数） | 本次运行的配置被落盘、事后可复现 |
-    | training_log | ``training.log`` / ``train.log`` | ``logging.jsonl``（逐步日志） | 逐步训练日志落盘 |
+    | config_backup | ``config.yaml``（graspo 配置备份）
+    | ``args.json``（ms-swift **已解析生效**的训练参数） | 本次运行的配置被落盘、事后可复现 |
+    | training_log | ``training.log`` / ``train.log``
+    | ``logging.jsonl``（逐步日志） | 逐步训练日志落盘 |
     | checkpoint | ``final/`` | ``checkpoint-<step>/`` | 可恢复 checkpoint 落盘 |
-    | metrics | ``events.jsonl`` / ``rank_metrics.*.jsonl`` / ``trainer_state.json`` | ``logging.jsonl`` / ``events.out.tfevents.*`` | 运行指标（逐步 loss/grad_norm 等）落盘 |
+    | metrics | ``events.jsonl`` / ``rank_metrics.*.jsonl`` / ``trainer_state.json``
+    | ``logging.jsonl`` / ``events.out.tfevents.*``
+    | 运行指标（逐步 loss/grad_norm 等）落盘 |
 
     容器 ``stdout.log`` 仍可作 training_log 的兜底（运行器一定产出它）。
     """
@@ -1027,7 +1033,8 @@ def run(args: argparse.Namespace) -> int:
     # `max_context` 的口径必须随数字一起显示（🔴-1）：同样是 "8192"，"实测通过"
     # 与"真 OOM 边界候选"的含义完全不同，只给数字会被下游读成"这个长度跑得通"。
     lines = [
-        "| 条件档 | 模型 | 算法 | 模式 | 后端 | 卡数 | 最大可行上下文 | 口径 | 每卡峰值(GiB) | 状态 | 失败类型 | 备注 |",
+        "| 条件档 | 模型 | 算法 | 模式 | 后端 | 卡数 | 最大可行上下文 | 口径 "
+        "| 每卡峰值(GiB) | 状态 | 失败类型 | 备注 |",
         "|---|---|---|---|:--:|---|---|---|---|---|---|---|",
     ]
     for record in records:
@@ -1039,7 +1046,8 @@ def run(args: argparse.Namespace) -> int:
             f"| {record.get('mode', '')} | {record.get('backend', '')} | {record.get('cards', '')} "
             f"| {context_cell} | {record.get('max_context_kind') or '—'} "
             f"| {record.get('peak_memory_gib') or '—'} "
-            f"| {record['status']} | {record.get('failure_class') or '—'} | {record.get('note', '')} |"
+            f"| {record['status']} | {record.get('failure_class') or '—'} "
+            f"| {record.get('note', '')} |"
         )
     markdown.write_text("\n".join(lines) + "\n", encoding="utf-8")
 

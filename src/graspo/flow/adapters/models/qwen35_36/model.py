@@ -9,7 +9,6 @@ import torch
 from torch import nn
 from torch.utils.checkpoint import checkpoint as activation_checkpoint
 
-
 if TYPE_CHECKING:
     from graspo.flow.parallel.tensor_utils import SafetensorIndex
 

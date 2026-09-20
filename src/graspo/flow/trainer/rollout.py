@@ -14,13 +14,13 @@ from graspo.flow.trainer.helpers import (
 from graspo.ripple.annotation.advantages import compute_group_advantages, compute_ripple_advantages
 from graspo.ripple.annotation.labeler import AnnotationInput, annotate
 from graspo.ripple.buffer import Experience
+from graspo.ripple.group_decision import classify_group, group_stats, has_reward_variance
 from graspo.ripple.monitoring.stats import AttemptRecord, QueuedSample
 from graspo.ripple.monitoring.summary import (
     monitor_group,
     scalar_generation_timing,
 )
 from graspo.ripple.multimodal.contract import assert_rl_training_has_multimodal
-from graspo.ripple.group_decision import classify_group, group_stats, has_reward_variance
 from graspo.ripple.reward.reward import reward_detail
 
 

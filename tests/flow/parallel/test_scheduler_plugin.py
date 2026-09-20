@@ -7,8 +7,8 @@
 """
 
 import pytest
-
 from graspo.flow.parallel.scheduling.base import PipelineScheduler
+
 from graspo.flow.parallel.scheduling.factory import _SCHEDULERS, build_scheduler
 
 

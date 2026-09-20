@@ -15,7 +15,6 @@
 import pytest
 
 from graspo.ripple.annotation.advantages import compute_group_advantages
-from graspo.ripple.annotation.char_tag import CharTag
 from graspo.ripple.annotation.labeler import AnnotationInput, annotate
 
 # ── FakeTokenizer（与 test_advantages.py 相同模式）───────────────────────────
@@ -120,7 +119,6 @@ def test_perfect_completion_n1_safety_zero():
     adv = _compute_advantages([_PERFECT_TOOL_CALL], _PERFECT_TARGETS)
 
     # 所有 V token 的 advantage 应为 0（n=1 → μ_f = raw → adv = 0）
-    v_advantages = [a for a in adv[0] if a != 1.0 and a != 0.0 and a != -1.0]
     # 在 n=1 情况下，V token advantage 应该为 0
     non_s_adv = [a for a in adv[0] if a != 1.0]
     for a in non_s_adv:
