@@ -7,8 +7,8 @@
 """
 
 import pytest
-from graspo.flow.parallel.scheduling.base import PipelineScheduler
 
+from graspo.flow.parallel.scheduling import PipelineScheduler
 from graspo.flow.parallel.scheduling.factory import _SCHEDULERS, build_scheduler
 
 
@@ -95,7 +95,7 @@ def test_mock_scheduler_does_not_affect_builtin():
     sched = build_scheduler(
         "one_f_one_b", pp_rank=0, pp_size=2, num_chunks=2, forward=forward, backward=backward
     )
-    from graspo.flow.parallel.scheduling.one_f_one_b import OneFOneBScheduler
+    from graspo.flow.parallel.scheduling import OneFOneBScheduler
 
     assert isinstance(sched, OneFOneBScheduler)
     stats = sched.run()

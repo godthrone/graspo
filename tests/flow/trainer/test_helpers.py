@@ -2,15 +2,13 @@
 
 import pytest
 
-from graspo.flow.trainer.helpers import (
+from graspo.ripple.monitoring.stats import (
+    GraspoFlowEpochStats,
+    GraspoFlowTrainStats,
     epoch_stats_from_dict,
     epoch_stats_to_dict,
     train_stats_from_dict,
     train_stats_to_dict,
-)
-from graspo.ripple.monitoring.stats import (
-    GraspoFlowEpochStats,
-    GraspoFlowTrainStats,
 )
 
 
