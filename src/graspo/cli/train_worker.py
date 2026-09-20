@@ -32,6 +32,15 @@ def main() -> None:
     )
     parser.add_argument("--config", "-c", required=True)
     parser.add_argument(
+        "--determinism-spec",
+        default="",
+        help=(
+            "Internal (graspo launch --determinism) JSON declaration of the determinism "
+            "switches to pin in this process. Empty = all off (default): nothing is "
+            "injected, nothing is printed, no artifact is written."
+        ),
+    )
+    parser.add_argument(
         "--smoke",
         action="store_true",
         help=(
@@ -63,6 +72,42 @@ def main() -> None:
     # 时钟生成（那会把同一 launch 的日志拆进多个目录）。
     # 必须在任何 run_log_dir/setup_logging 之前绑定（单一真相源，§1.4）。
     set_run_id(run_log_id(config.training.run_name))
+
+    # 确定性钉定开关的**进程内 torch API 半场**（环境变量半场在
+    # `cli/app.py::_build_launch_env`——那半场必须早于 `import torch`，只能由父进程
+    # 注入）。开关的**结构化声明**来自 `graspo launch --determinism` 经
+    # `--determinism-spec` 传来；这里把它绑定为进程内唯一真相源（§1.4），
+    # 训练层只查 `core.determinism.active_switch()`，不各自解析。
+    # 默认（空 spec）时：`apply_torch_determinism` 返回空列表、
+    # `format_determinism_banner` 返回空列表、`determinism_artifact` 返回 None
+    # ⇒ 既不调用 torch、也不多打一行、不写任何文件（默认关零变化）。
+    # 位置刻意在锁卡守卫与 set_run_id **之后**、训练器构造 **之前**：守卫的
+    # 先执行属性与日志身份都不被这条改动影响。
+    from graspo.core.determinism import (
+        DeterminismSwitch,
+        apply_torch_determinism,
+        bind_active_switch,
+        determinism_artifact,
+        format_determinism_banner,
+    )
+
+    try:
+        determinism = bind_active_switch(DeterminismSwitch.from_spec(args.determinism_spec))
+    except ValueError as exc:
+        # §2.3 边界校验即防呆：内部通道的非法声明必须 fail-closed，不得静默当"关"。
+        raise SystemExit(f"--determinism-spec 非法：{exc}") from exc
+    for line in format_determinism_banner(determinism):
+        print(line)
+    for statement in apply_torch_determinism(determinism):
+        print(f"[train-worker] determinism applied: {statement}")
+    # 记录进产物（§2.2）：与打印共用同一份渲染，事后核对不靠回忆。
+    determinism_record = determinism_artifact(determinism)
+    if determinism_record is not None:
+        from graspo.flow.logging import append_jsonl_segment, run_log_dir
+
+        artifact_path = run_log_dir(config.training.output_dir) / "determinism.jsonl"
+        append_jsonl_segment(artifact_path, determinism_record)
+        print(f"[train-worker] determinism artifact: {artifact_path}")
 
     from graspo.flow.backend_selection import select_backend
 

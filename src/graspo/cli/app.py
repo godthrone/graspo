@@ -10,7 +10,7 @@ import json
 import os
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +26,13 @@ class LaunchPlan:
     uses_torchrun: bool
     nproc_per_node: int
     nnodes: int
+    #: 本计划**将要注入**的确定性环境变量（默认关 ⇒ 空 dict）。它是开关→env
+    #: 渲染的**增量**（不掺入 os.environ 里既有的同名变量），因此 dry-run 打印出来
+    #: 的就是"这个开关带来了什么"，而不是"机器上碰巧有什么"（§2.2 显式）。
+    determinism_env: dict[str, str] = field(default_factory=dict)
+    #: 传给 worker 的 ``--determinism-spec``（默认关 ⇒ 空串且**不追加**该参数，
+    #: 保证默认关时命令行逐字不变）。
+    determinism_spec: str = ""
 
 
 def cmd_export(args: argparse.Namespace) -> int:
@@ -112,7 +119,11 @@ def cmd_launch(args: argparse.Namespace) -> int:
     # 超过 4 卡，一律拒绝，连子进程都不创建。容器侧 runtime 的 `void` 哨兵按
     # 实测可见卡判定（F-1，见 core/gpu_guard 模块 docstring）。
     devices = require_gpu_lock_or_exit()
-    plan = build_launch_plan(args.config, smoke=bool(getattr(args, "smoke", False)))
+    plan = build_launch_plan(
+        args.config,
+        smoke=bool(getattr(args, "smoke", False)),
+        determinism=_switch_from_args(args),
+    )
     print(
         json.dumps(
             {
@@ -121,6 +132,8 @@ def cmd_launch(args: argparse.Namespace) -> int:
                 "nnodes": plan.nnodes,
                 "nproc_per_node": plan.nproc_per_node,
                 "gpu_lock": list(devices),
+                "determinism_env": plan.determinism_env,
+                "determinism_spec": plan.determinism_spec,
                 "command": plan.command,
             },
             ensure_ascii=False,
@@ -135,6 +148,7 @@ def build_launch_plan(
     config: GraspoConfig | None = None,
     *,
     smoke: bool = False,
+    determinism: Any = None,
 ) -> LaunchPlan:
     config_path = Path(config_path)
     if not config_path.is_file():
@@ -148,7 +162,9 @@ def build_launch_plan(
 
     # msswift 后端：委托给 ms-swift CLI
     if selection.name == "msswift":
-        return _build_msswift_launch_plan(config_path, config, smoke=smoke)
+        return _build_msswift_launch_plan(
+            config_path, config, smoke=smoke, determinism=determinism
+        )
 
     nnodes = int(launch.nnodes)
     if nnodes < 1:
@@ -158,7 +174,7 @@ def build_launch_plan(
     _validate_launch_paths(config)
     _validate_launch_world(config, selection.name, nnodes, nproc_per_node)
 
-    env = _build_launch_env(config)
+    env = _build_launch_env(config, determinism)
     python = str(launch.python or sys.executable)
     train_command = [python, "-m", "graspo.cli.train_worker", "--config", str(config_path)]
 
@@ -182,6 +198,7 @@ def build_launch_plan(
         # 冒烟模式：跑 1 步即停，验证环境链路（模型加载、多模态、训练 forward）。
         # 通过追加 --smoke 传给 worker，不修改用户 config 文件。
         command.append("--smoke")
+    _append_determinism_spec(command, determinism)
 
     return LaunchPlan(
         command=command,
@@ -190,6 +207,8 @@ def build_launch_plan(
         uses_torchrun=uses_torchrun,
         nproc_per_node=nproc_per_node,
         nnodes=nnodes,
+        determinism_env=_determinism_env_delta(determinism),
+        determinism_spec=_determinism_spec(determinism),
     )
 
 
@@ -198,6 +217,7 @@ def _build_msswift_launch_plan(
     config: GraspoConfig,
     *,
     smoke: bool = False,
+    determinism: Any = None,
 ) -> LaunchPlan:
     """构建 ms-swift 后端的启动计划：**进程内 Python API 路线**（决策 D6）。
 
@@ -240,7 +260,7 @@ def _build_msswift_launch_plan(
 
     _validate_launch_paths(config)
 
-    env = _build_launch_env(config)
+    env = _build_launch_env(config, determinism)
     # S1 数据并行：ms-swift 侧由 launcher 环境变量承载（T1 复验结论）。显式覆盖，
     # 让用户只在 YAML 里配置一处（§1.4）。
     env.update(launcher_env(config))
@@ -264,6 +284,7 @@ def _build_msswift_launch_plan(
 
     if smoke:
         command.append("--smoke")
+    _append_determinism_spec(command, determinism)
 
     return LaunchPlan(
         command=command,
@@ -272,6 +293,8 @@ def _build_msswift_launch_plan(
         uses_torchrun=uses_torchrun,
         nproc_per_node=nproc_per_node,
         nnodes=nnodes,
+        determinism_env=_determinism_env_delta(determinism),
+        determinism_spec=_determinism_spec(determinism),
     )
 
 
@@ -347,12 +370,78 @@ def _require_config_value(value: Any, name: str) -> None:
         raise SystemExit(f"{name} must be set in the YAML config")
 
 
-def _build_launch_env(config: GraspoConfig) -> dict[str, str]:
+def _switch_from_args(args: argparse.Namespace) -> Any:
+    """把 ``graspo launch`` 的确定性命令行开关组装成 :class:`DeterminismSwitch`。
+
+    这是**唯一的 flag → 开关映射点**（§1.4）：CLI 参数名与开关字段名的对应关系
+    只在这里出现一次，测试按同一张映射逐项验证（不留"加了 flag 没接线"的字段）。
+    不传任何 flag ⇒ 全关的 :class:`DeterminismSwitch` ⇒ 行为逐字不变。
+    """
+    from graspo.core.determinism import DeterminismSwitch
+
+    def flag(name: str) -> bool:
+        return bool(getattr(args, name, False))
+
+    return DeterminismSwitch(
+        enabled=flag("determinism"),
+        warn_only=not flag("determinism_strict"),
+        cudnn=not flag("determinism_no_cudnn"),
+        cublas_workspace_config=not flag("determinism_no_cublas_workspace"),
+        nccl_algo=not flag("determinism_no_nccl_algo"),
+        nccl_proto=not flag("determinism_no_nccl_proto"),
+        nccl_deterministic=flag("determinism_nccl_deterministic"),
+        torch_deterministic_algorithms=not flag("determinism_no_torch_algorithms"),
+        probe_first_step=flag("determinism_probe_first_step"),
+    )
+
+
+def _determinism_env_delta(switch: Any) -> dict[str, str]:
+    """本计划将注入的确定性环境变量增量（唯一渲染点的薄包装，供 dry-run 打印）。"""
+    from graspo.core.determinism import determinism_env_delta
+
+    return determinism_env_delta(switch)
+
+
+def _determinism_spec(switch: Any) -> str:
+    """本计划将传给 worker 的 ``--determinism-spec``（唯一渲染点）。"""
+    from graspo.core.determinism import DeterminismSwitch
+
+    if switch is None:
+        return ""
+    return switch.to_spec()
+
+
+def _append_determinism_spec(command: list[str], switch: Any) -> None:
+    """把 ``--determinism-spec`` 追加到 worker 命令（**仅在非空时**）。
+
+    默认关时**一个字符都不追加** ⇒ 命令行与打开本功能之前逐字相同（机核见
+    ``tests/cli/test_determinism_launch.py::test_default_off_command_is_unchanged``）。
+    为什么走命令行而不是环境变量：worker 需要的是"哪几个开关"这份**结构化声明**，
+    用环境变量承载会变成字符串拼装（§2.2 反过来要求显式）。
+    """
+    spec = _determinism_spec(switch)
+    if spec:
+        command.extend(["--determinism-spec", spec])
+
+
+def _build_launch_env(config: GraspoConfig, determinism: Any = None) -> dict[str, str]:
     env = dict(os.environ)
     env.setdefault("TOKENIZERS_PARALLELISM", "false")
     # 日志目录身份**不再**由环境变量注入（§7.1/§10.1）：worker 从同一份 config 的
     # `training.run_name` 解析（见 cli/train_worker.main → flow/logging.set_run_id），
     # 每个 rank 读到同一个值。旧的 `GRASPO_RUN_ID` 注入已删除（§18.1 不留负债）。
+
+    # 确定性钉定开关的**环境变量**半场（另一半在 train_worker.main 的 torch API 调用）。
+    # 为什么必须在这里注入：`CUBLAS_WORKSPACE_CONFIG` 必须在 **import torch 之前**
+    # 进入进程环境，进程内设置不可靠；而本函数是 native / msswift 两条路线、
+    # 单卡 / torchrun 两种拉起的**唯一公共咽喉**（§1.4 单一真相源）。
+    # 默认关 ⇒ `determinism_env_delta` 返回 `{}`，且 `format_determinism_banner`
+    # 返回空列表（一行都不打）⇒ 行为逐字不变。
+    from graspo.core.determinism import determinism_env_delta, format_determinism_banner
+
+    for line in format_determinism_banner(determinism):
+        print(line)
+    env.update(determinism_env_delta(determinism))
 
     src_dir = _project_src_dir()
     if src_dir.is_dir():
@@ -381,6 +470,59 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Smoke mode: run 1 training step then stop. Verifies model loading, "
         "multimodal pipeline, and training forward without a long run.",
+    )
+    # ── 确定性钉定开关（默认全关；定义与渲染的唯一真相源 = core/determinism.py）──
+    # 为什么不进 YAML：见 core/determinism.py 模块 docstring 的两条硬理由
+    # （配置模板全字段覆盖守卫 + 它是与 --smoke 同性质的运行边界参数）。
+    launch.add_argument(
+        "--determinism",
+        action="store_true",
+        help="Pin the controllable determinism switches (CUBLAS_WORKSPACE_CONFIG, "
+        "cudnn, torch.use_deterministic_algorithms, NCCL_ALGO/PROTO). Off by default; "
+        "may raise the memory peak and slow training down.",
+    )
+    launch.add_argument(
+        "--determinism-strict",
+        action="store_true",
+        help="Use torch.use_deterministic_algorithms(True) without warn_only "
+        "(raises instead of warning on ops with no deterministic implementation).",
+    )
+    launch.add_argument(
+        "--determinism-no-cublas-workspace",
+        action="store_true",
+        help="Do not pin CUBLAS_WORKSPACE_CONFIG=:4096:8 (avoids its memory-peak cost).",
+    )
+    launch.add_argument(
+        "--determinism-no-cudnn",
+        action="store_true",
+        help="Do not pin cudnn.deterministic/benchmark.",
+    )
+    launch.add_argument(
+        "--determinism-no-torch-algorithms",
+        action="store_true",
+        help="Do not call torch.use_deterministic_algorithms.",
+    )
+    launch.add_argument(
+        "--determinism-no-nccl-algo",
+        action="store_true",
+        help="Do not pin NCCL_ALGO=Ring.",
+    )
+    launch.add_argument(
+        "--determinism-no-nccl-proto",
+        action="store_true",
+        help="Do not pin NCCL_PROTO=Simple.",
+    )
+    launch.add_argument(
+        "--determinism-nccl-deterministic",
+        action="store_true",
+        help="Also pin NCCL_DETERMINISTIC=1 (version dependent; support is probed and "
+        "reported explicitly, never assumed).",
+    )
+    launch.add_argument(
+        "--determinism-probe-first-step",
+        action="store_true",
+        help="Enable the read-only per-rank first-step probe (local loss + "
+        "input_ids sha256) into rank_metrics.rank_XXXXX.jsonl.",
     )
     launch.set_defaults(func=cmd_launch)
 
