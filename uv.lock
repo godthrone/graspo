@@ -724,6 +724,7 @@ dependencies = [
 [package.optional-dependencies]
 dev = [
     { name = "mypy" },
+    { name = "openpyxl" },
     { name = "pytest" },
     { name = "ruff" },
 ]
@@ -731,16 +732,12 @@ msswift = [
     { name = "ms-swift" },
 ]
 
-[package.dev-dependencies]
-dev = [
-    { name = "openpyxl" },
-]
-
 [package.metadata]
 requires-dist = [
     { name = "ms-swift", marker = "extra == 'msswift'", specifier = "==4.5.3" },
     { name = "mypy", marker = "extra == 'dev'", specifier = "==2.1.0" },
     { name = "numpy", specifier = "==1.26.4" },
+    { name = "openpyxl", marker = "extra == 'dev'", specifier = ">=3.1.5" },
     { name = "pillow", specifier = "==11.3.0" },
     { name = "pydantic", specifier = "==2.11.10" },
     { name = "pytest", marker = "extra == 'dev'", specifier = "==9.0.3" },
@@ -752,9 +749,6 @@ requires-dist = [
     { name = "transformers", specifier = "==5.12.1" },
 ]
 provides-extras = ["dev", "msswift"]
-
-[package.metadata.requires-dev]
-dev = [{ name = "openpyxl", specifier = ">=3.1.5" }]
 
 [[package]]
 name = "grpcio"

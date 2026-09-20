@@ -39,10 +39,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# 开发依赖的**唯一**声明点（§1.4 单一真相源 / §14.2「不存在其他依赖声明」）。
+# 安装方式：`uv sync --extra dev`（README 的 Development 段即此用法）。
 dev = [
   "pytest==9.0.3",
   "ruff==0.15.13",
   "mypy==2.1.0",
+  # 表格工具：`scripts/check_env_versions.py` 读环境清单 xlsx 用；
+  # 只在开发机用，不属于镜像运行时依赖。
+  "openpyxl>=3.1.5",
 ]
 # ms-swift 后端依赖。**必须精确锁定**（宪法 §6 环境可复现）：区间约束
 # `>=4.2,<5.0` 会让实测环境里的实际版本漂移。锁定值 = 实测在用的版本：
@@ -111,8 +116,3 @@ module = [
     "graspo.flow.trainer.checkpoint",
 ]
 ignore_errors = true
-
-[dependency-groups]
-dev = [
-    "openpyxl>=3.1.5",
-]
