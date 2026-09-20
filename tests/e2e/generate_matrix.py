@@ -1994,17 +1994,19 @@ printf '%s\\n' "\\$CKPT_STATE" > /out/ckpt_retention.state
 # ★ 轻量证据（stdout.log / logging.jsonl / args.json / trainer_state.json / gpu 读数）
 #   **一律不删**——"删权重不删证据"（宪法 §16 + 验收锚点必须是产物证据）。
 # ══ 收口前必须做：**先让容器内采样器把摘要落盘，再退出**（2026-09-19 缺陷修复）══
-#   缺陷：原实现把采样器丢在后台（`SAMPLER=\\$!`）后跑 torchrun，训练结束**直接 exit**。
-#   容器一退出，后台进程**收不到 SIGTERM**（直接随容器消失）⇒ `record_gpu_memory` 的
-#   `finally` 块（**摘要的唯一落盘点**，含 `memory_used_mib_peak`）**从不执行** ⇒
+#   ⚠ 本段同样位于**不加引号的 heredoc 正文**：注释里不得写裸反引号（外层会当命令替换
+#     真的执行）或裸美元符（外层会当变量展开）；要写字面量请用 \\$ 转义。见下方哨兵测试。
+#   缺陷：原实现把采样器丢在后台（SAMPLER=\\$!）后跑 torchrun，训练结束**直接 exit**。
+#   容器一退出，后台进程**收不到 SIGTERM**（直接随容器消失）⇒ record_gpu_memory 的
+#   finally 块（**摘要的唯一落盘点**，含 memory_used_mib_peak）**从不执行** ⇒
 #   主口径（PyTorch allocator 摘要）**取证缺口**：228 实测全批
-#   `<run>/gpu/gpu_memory_summary.json` 缺失，`collect_results._read_peak_memory` 只能拿到
+#   <run>/gpu/gpu_memory_summary.json 缺失，collect_results._read_peak_memory 只能拿到
 #   None（task-r3-bulk §⑦-7）。
 #   修法：**显式** SIGTERM + **有界等待**（只等本次 run 的采样器，零 kill 他人进程）：
-#     · SIGTERM ⇒ 触发 `record_gpu_memory` 的 finally ⇒ 摘要落盘；
+#     · SIGTERM ⇒ 触发 record_gpu_memory 的 finally ⇒ 摘要落盘；
 #     · 有界（≤30 s）⇒ 采样器卡死也不得拖住容器退出（§3.1 同效退路：只改代价不改结果）；
-#     · 过后断言 `/out/gpu/gpu_memory_summary.json` **确实存在**，否则写
-#       `/out/gpu/EVIDENCE_GAP_gpu_memory_summary` **显式登记取证缺口**（§2.3 边界校验：
+#     · 过后断言 /out/gpu/gpu_memory_summary.json **确实存在**，否则写
+#       /out/gpu/EVIDENCE_GAP_gpu_memory_summary **显式登记取证缺口**（§2.3 边界校验：
 #       读不到不得静默当作已取证）；★ 断言**不动 RC**，绝不掩盖训练结果。
 wait_for_gpu_summary() {{
     local pid="\\${{1:-}}" waited=0
@@ -2037,9 +2039,9 @@ wait_for_gpu_summary() {{
 }}
 wait_for_gpu_summary "\\$SAMPLER"
 # ══ 收口：把容器的退出码**逐字**交还给 torchrun 的退出码（原缺陷的修复点）══
-#   原实现捕获了 `RC=\\$?`（= torchrun 退出码）却**从未 exit "\\$RC"**；本脚本最后一条
-#   命令是上面的 `printf`（成功 ⇒ 0），于是**容器退 0**：worker 真失败（rc=1/137/124）
-#   也被宿主记成 exit_code=0（228 实测：T028/T031 stdout 里 `exitcode: 1`，宿主记 0）。
+#   原实现捕获了 RC=\\$?（= torchrun 退出码）却**从未 exit "\\$RC"**；本脚本最后一条
+#   命令是上面的 printf（成功 ⇒ 0），于是**容器退 0**：worker 真失败（rc=1/137/124）
+#   也被宿主记成 exit_code=0（228 实测：T028/T031 stdout 里 exitcode: 1，宿主记 0）。
 #   判据由"最后一条命令是否成功"变成"torchrun 真的成功了吗"（§2.3 边界校验不靠巧合）。
 #   ★ 优先级明确且互不掩盖（三段各自只写自己的失败语义，收口处统一表达）：
 #       1) 训练失败（RC≠0，可能是 OOM=137 / 超时=124 / 预检 rc=1/3）⇒ **原样交还**，
