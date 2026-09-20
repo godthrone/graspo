@@ -86,8 +86,9 @@ RUNNER_PATH = PROJECT_ROOT / "tests" / "e2e" / "run_matrix54.sh"
 
 #: `record-gpu-memory` 采样产物的容器内落点（**单一真相源**，§1.4）。
 #: 容器内 /out 由 runner 绑定到宿主 <RUN_ROOT>/<T###>（挂载表 `"$RUN_DIR|/out|rw"`），
-#: 因此 /out/gpu 就是 `scripts/collect_results.py::_read_peak_memory` 读的
-#: <RUN_ROOT>/<T###>/gpu/。
+#: 因此 /out/gpu 就是宿主采样摘要 `gpu_memory_summary.json` 的落点，由
+#: `scripts/collect_results.py::_read_host_sample_peak_memory` 读入 `host_sample_peak_gib`
+#: 旁路 —— **不是** §7 峰值列的口径（该列为后端二分口径，见使用点 4）。
 #: 采集口径（宪法 §10.1：产物位置必须能被 config 描述）与取证链**逐字不变**。
 #:
 #: ★ 本常量是"显存摘要落在哪"的**唯一字面量**。四个使用点必须与它一致，任何漂移都是
@@ -96,7 +97,10 @@ RUNNER_PATH = PROJECT_ROOT / "tests" / "e2e" / "run_matrix54.sh"
 #:     1) 生成物档配置 `gpu_monitor.output_dir`（build_config 直接引用本常量）；
 #:     2) runner 的前置校验（把档配置读到的值与本常量比对，fail-closed）；
 #:     3) 容器内 entry.sh 的 `GPU_EVIDENCE_DIR` + 收口段断言/缺口登记（生成期注入）；
-#:     4) `scripts/collect_results.py::_read_peak_memory` 读的 `<run_dir>/gpu/`。
+#:     4) `scripts/collect_results.py::_read_host_sample_peak_memory` 读的 `<run_dir>/gpu/`：
+#:        宿主采样摘要读入 `host_sample_peak_gib` 旁路，**不是** §7 峰值列的口径——该列为
+#:        **后端二分口径**：native 档读 `rank_metrics` 的 rank0 `max_allocated_mib`；
+#:        ms-swift 档读其自报 `memory(GiB)`（`max_memory_reserved`）。
 #:
 #: ★ 为什么必须是 `/out/gpu`（RUN_DIR 直下）而**不能**是 `<training.output_dir>/gpu`：
 #:   矩阵档一律 `overwrite_output_dir: true`，训练进程启动时对**非空**的
@@ -1230,8 +1234,11 @@ def build_config(tier: dict[str, Any]) -> dict[str, Any]:
     #   ⇒ 采样器首个 `append_jsonl` 即 ENOENT（首错签名 `gpu_monitor.py:621` +
     #   `'/out/T010/gpu/gpu_memory.jsonl'`），摘要与"取证缺口登记"一并消失。
     #   ⇒ 把落点与训练输出目录**解耦**（落在 RUN_DIR 直下），而不是靠"谁先谁后"的运气。
-    #   同时这条路径正是 runner 断言、缺口登记与 `collect_results._read_peak_memory`
-    #   一直在读的那条 —— 修完生产端与消费端重新同源。
+    #   同时这条路径正是 runner 断言、缺口登记与 `collect_results._read_host_sample_peak_memory`
+    #   一直在读的那条：宿主采样摘要读入 `host_sample_peak_gib` 旁路，**不是** §7 峰值列的
+    #   口径（该列为**后端二分口径**：native 档读 `rank_metrics` 的 rank0 `max_allocated_mib`；
+    #   ms-swift 档读其自报 `memory(GiB)`，即 `max_memory_reserved`）—— 修完生产端与消费端
+    #   重新同源。
     #   ★ 改这里会断取证链：改前先读 scripts/collect_results.py::_read_peak_memory。
     config["gpu_monitor"] = {
         "output_dir": GPU_MONITOR_CONTAINER_DIR,
