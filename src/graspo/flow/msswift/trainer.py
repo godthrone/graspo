@@ -737,6 +737,17 @@ class MsSwiftRlTrainer:
                 "--log_completions",
                 "true",
             ]
+        # 每 rank 首步探针（只读旁路；默认关 ⇒ 不注册回调、不追加任何参数）。
+        # 与 SFT 通道**同一个接线点**（`first_step_probe.probe_active_extra_argv`，§1.4）：
+        # 探针实现与字段在 ms-swift 的 `--callbacks` + `callbacks_map` 扩展点上复用，
+        # 本通道不另造一份（§1.2 对扩展开放、§14.4 不 fork 第三方）。
+        # ★ 为什么 GRPO 需要它：本档的首步 loss 是**跨 rank 均值**
+        #   （`swift/trainers/mixin.py` 的 `nested_gather(tr_loss).mean()`），
+        #   只有 per-rank 的 `input_ids_sha256` + `local_loss` 旁路才能把
+        #   "输入侧不同" 与 "同输入不同结果（数值侧）" 分开（判读规则见探针模块 docstring）。
+        from graspo.flow.msswift.first_step_probe import probe_active_extra_argv
+
+        extra_argv += probe_active_extra_argv()
         argv = graspo_to_ms_swift_argv(
             self.config,
             stage="rlhf",
