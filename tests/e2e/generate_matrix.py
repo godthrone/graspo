@@ -58,6 +58,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import sys
 from collections.abc import Mapping, Sequence
@@ -271,6 +272,24 @@ GPU_OVERRIDE_CLI_FLAG = "--gpu-override"
 # 由 runner 的 fail-closed 前置断言守住（缺失即拒绝启动，不会掉到"数据问题"分类）。
 MODELS_HOST_ROOT_ENV = "GRASPO_MODELS_HOST_ROOT"
 MODELS_CONTAINER_ROOT = "/models"
+
+#: ── 确定性开关的**环境变量守卫**透传（§2.2 显式即防呆 / §7.1 有限例外）──────────
+#:
+#: **为什么是环境变量而不是新 CLI flag**：矩阵 runner 每次跑一档（`bash run_matrix54.sh T033`），
+#: 确定性是**实验/诊断边界**（与 `--smoke` 同性质，见 `core/determinism.py` 模块 docstring），
+#: 不是"这一档是什么"（那在档位 YAML 里）。用既有的环境变量范式接进来，runner 的
+#: 命令行签名（§10.2 制度化判据）与档位配置都零改动。
+#:
+#: **默认关的机核**：不设本变量 ⇒ 生成物（`run_matrix54.sh` / `matrix54_manifest.json` /
+#: `samples/configs/`）**逐字节不变**——守卫的判定发生在**容器内运行时**
+#: （entry.sh 的 `[ -n "${GRASPO_DETERMINISM:-}" ]`），生成期不引入任何分支。
+#:
+#: **取值**：`graspo.cli.train_worker --determinism-spec` 的 JSON 串，唯一渲染点是
+#: `core/determinism.py::DeterminismSwitch.to_spec()`（例如
+#: `--determinism --determinism-probe-first-step` 渲染出的那个串）。取值由**调用方**
+#: 用 `python -c "from graspo.core.determinism import ...; print(sw.to_spec())"` 取得，
+#: runner 与生成器都不自己拼这份 JSON（§1.4 单一真相源）。
+DETERMINISM_ENV = "GRASPO_DETERMINISM"
 
 #: 容器内目录名（= 宿主侧相对模型根的目录名）；显示名是用户给定的专名，不含内网信息。
 _MODEL_DIR_NAMES: dict[str, str] = {"9B": "Qwen3.5-9B", "27B": "Qwen3.8-27B"}
@@ -2972,6 +2991,14 @@ if [ "$MODE" = "--dry-run" ]; then
     #   的根因 ⇒ 预检就得能看见它被指到了哪里，而不是等 rank0 PermissionError 再回头查。
     echo "[dry-run] cache-roots（将逐个以 -e 注入容器；清单唯一真相源见 generate_matrix.py::CONTAINER_CACHE_ROOTS）:"
     print_cache_roots
+    # ★ 确定性开关**必须在 dry-run 里就可见**（§2.2 显式即防呆）：它是本档"怎么跑"的一部分，
+    #   而"默认关"与"设了但没生效"在产物里长得一模一样 ⇒ 预检就得能看见它到底生不生效。
+    echo "[dry-run] determinism（守卫变量 {DETERMINISM_ENV}，默认关；唯一真相源见 generate_matrix.py::DETERMINISM_ENV）:"
+    if [ -n "${{{DETERMINISM_ENV}:-}}" ]; then
+        echo "[dry-run]   {DETERMINISM_ENV} 已设置 ⇒ 容器内将透传 --determinism-spec（原值逐字）：${{{DETERMINISM_ENV}}}"
+    else
+        echo "[dry-run]   {DETERMINISM_ENV} 未设置 ⇒ 不透传 --determinism-spec（默认关，行为与不引入本开关时相同）"
+    fi
     echo "[dry-run] config=$CONFIG train_subset=$SUBSET 条 -> $TRAINPATH"
     echo "[dry-run] models=$MODELS_ROOT:$MODEL_DIR_NAME -> {MODELS_CONTAINER_ROOT}（只读）"
     echo "[dry-run] subsets=$RUN_ROOT/$TIER/subsets -> $TRAIN_PATH_DIR_CONTAINER（只读）"
@@ -3167,8 +3194,27 @@ done
 #     留给内层，容器内展开为空 ⇒ 命令 fail-closed（rc=2）。
 "$CONTAINER_PY" -m graspo record-gpu-memory --config "/workspace/graspo/$CONFIG" &
 SAMPLER=\\$!
+# ★ 确定性开关的**环境变量守卫**透传（§2.2 显式即防呆；默认关 ⇒ 命令逐字不变）。
+#   判据在**容器内运行时**（不是生成期）：宿主设了 {DETERMINISM_ENV} 才追加
+#   --determinism-spec。不设 ⇒ 这一行的展开结果与不引入本段时**逐字相同**，
+#   且 train_worker 侧的默认（空 spec）本来就是全关（DeterminismSwitch.from_spec("")）。
+#   ★ 取值是 core/determinism.py::DeterminismSwitch.to_spec() 渲染的 JSON 串
+#     （唯一渲染点）；本脚本不自己拼这份 JSON，也不认识任何确定性字段名（§1.4）。
+#   ★ 显式打印生效的开关：只打印**变量名 + 一字不差的原值**，不解析、不转述——
+#     "实际传进去的是什么"与"打印出来的是什么"因此不可能分叉。
+#   ⚠ 写法约束：本段在容器内展开，一律写 \\$VAR（外层不展开）。
+DETERMINISM_ARGS=()
+if [ -n "\\${{{DETERMINISM_ENV}:-}}" ]; then
+    DETERMINISM_ARGS+=(--determinism-spec "\\${{{DETERMINISM_ENV}}}")
+    echo "[determinism] {DETERMINISM_ENV} 已设置 ⇒ 将透传 --determinism-spec（原值逐字如下）：" >&2
+    echo "[determinism]   {DETERMINISM_ENV}=\\${{{DETERMINISM_ENV}}}" >&2
+    echo "[determinism] 未设置 ⇒ 不追加任何参数（默认关）。副作用与支持性结论由 train_worker 打印。" >&2
+else
+    echo "[determinism] {DETERMINISM_ENV} 未设置 ⇒ 不追加 --determinism-spec（默认关，行为与不引入本开关时相同）" >&2
+fi
 torchrun --standalone --nproc_per_node="$NPROC" --master_port="$PORT" \\
-  -m graspo.cli.train_worker --config "/workspace/graspo/$CONFIG" > /out/stdout.log 2>&1
+  -m graspo.cli.train_worker --config "/workspace/graspo/$CONFIG" \\
+  "\\${{DETERMINISM_ARGS[@]}}" > /out/stdout.log 2>&1
 RC=\\$?
 # ★ 可注入的 worker 退出码探针（默认 0 ⇒ 不参与判定，行为与不设时逐字相同）：
 #   只在容器内注入 GRASPO_FAKE_WORKER_RC 时生效，供"exit_code 不得假报 0"的负向用例
@@ -3489,6 +3535,11 @@ DOCKER_ARGS=(
     #   宿主账号名注入容器产物（§15.1/§16：账号名属环境信息）。
     -e "USER={CONTAINER_USER_NAME}"
     -e "LOGNAME={CONTAINER_USER_NAME}"
+    # ★ 确定性开关的环境变量守卫透传（清单见 generate_matrix.py 的 DETERMINISM_ENV 段）：
+    #   裸 -e NAME（不带 =值）⇒ docker 只在**宿主确实设了**该变量时才注入，未设则
+    #   容器内为未设置、entry.sh 的守卫走"默认关"分支。这样"宿主没设"与"容器没收到"
+    #   不可能分叉（§2.2）；也**不必**在生成期读宿主环境（生成物因此与宿主环境无关）。
+    -e {DETERMINISM_ENV}
 )
 # ★ 可写缓存/状态根逐个 `-e` 注入（清单与上面 CONTAINER_CACHE_ROOTS 同源，§1.4）：
 #   展开成 `-e VAR=/path`，docker run 处不再出现任何缓存根字面量。
@@ -3694,6 +3745,27 @@ def print_data_source(data: dict[str, Any], *, dry_run: bool = False) -> None:
         print(f"{prefix}⚠ 非默认来源：效果口径请确认（{MINI_PURPOSE_NOTE}）")
 
 
+def print_determinism_passthrough(*, dry_run: bool = False) -> None:
+    """打出「确定性开关守卫变量当前是否生效」——默认关必须显式可见（§2.2）。
+
+    取值**逐字**打印宿主环境里的原值，不解析、不转述：生成器不认识任何确定性字段名
+    （渲染唯一真相源 = ``core/determinism.py::DeterminismSwitch.to_spec()``），
+    "实际会被透传的是什么"与"打印出来的是什么"因此不可能分叉（§1.4）。
+    """
+    prefix = "[dry-run] " if dry_run else ""
+    value = os.environ.get(DETERMINISM_ENV, "")
+    if value:
+        print(
+            f"{prefix}确定性开关（{DETERMINISM_ENV}）已设置 ⇒ 容器内将透传 "
+            f"--determinism-spec，原值逐字：{value}"
+        )
+    else:
+        print(
+            f"{prefix}确定性开关（{DETERMINISM_ENV}）未设置 ⇒ 不透传 --determinism-spec"
+            f"（默认关，行为与不引入本开关时相同）"
+        )
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="GRASPO 54-tier matrix generator.")
     parser.add_argument(
@@ -3761,6 +3833,9 @@ def run(args: argparse.Namespace) -> int:
         # dry-run 也打读取源与摘要：默认行为必须可见（真生成前先看清）。
         print_data_source(build_manifest(tiers, train_source)["data"], dry_run=True)
         print_gpu_assignment(tiers, gpu_override or {}, dry_run=True)
+        # 确定性守卫的**当前是否生效**也必须在 dry-run 里可见（§2.2）：
+        # "默认关"与"设了但没生效"在产物里长得一模一样 ⇒ 预检是唯一的区分窗口。
+        print_determinism_passthrough(dry_run=True)
         print(
             "说明：`infeasible` 档已被拒绝生成；`unmeasured` 档**允许生成但不声称可行**"
             "（未测算的量只能靠上机量出来，见上方待测量清单）；`blocked` 档不产出配置；"

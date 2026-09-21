@@ -141,22 +141,14 @@ class MsSwiftSftTrainer:
         # 每 rank 首步探针（只读旁路；默认关 ⇒ 不注册回调、不追加任何参数）。
         # 为什么走 ms-swift 的官方扩展点（`--callbacks` + `callbacks_map`）而不是
         # 改 ms-swift 源码：见 first_step_probe 模块 docstring（§1.2 对扩展开放）。
-        if probe_first_step_enabled():
-            from graspo.flow.logging import rank_metrics_filename
-            from graspo.flow.msswift.first_step_probe import (
-                PROBE_CALLBACK_NAME,
-                install_probe_callback,
-            )
+        # 接线点唯一（`first_step_probe.probe_active_extra_argv`，§1.4）：SFT / GRPO / OPD
+        # 三条通道共用同一份"注册回调 + 拼 `--callbacks`"的实现，不各写一遍。
+        from graspo.flow.msswift.first_step_probe import probe_active_extra_argv
 
-            install_probe_callback()
-            # 只在没有同名参数时追加，避免与用户/冒烟参数冲突（§2.3 边界校验）。
-            if "--callbacks" not in extra_argv:
-                extra_argv += ["--callbacks", PROBE_CALLBACK_NAME]
-            logger.info(
-                "graspo: per-rank first-step probe enabled (callback=%s, file=%s)",
-                PROBE_CALLBACK_NAME,
-                rank_metrics_filename(0),
-            )
+        probe_argv = probe_active_extra_argv()
+        # 只在没有同名参数时追加，避免与用户/冒烟参数冲突（§2.3 边界校验）。
+        if "--callbacks" not in extra_argv:
+            extra_argv += probe_argv
         argv = graspo_to_ms_swift_argv(
             self.config,
             stage="sft",

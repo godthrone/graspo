@@ -263,6 +263,40 @@ def _reseed_before_rollout(seed: int) -> None:
     torch.manual_seed(seed)
 
 
+def _first_step_probe_active() -> bool:
+    """首步探针是否开启（判据**只有一处**：进程内绑定的 ``DeterminismSwitch``，§1.4）。
+
+    默认关 ⇒ 生成侧一次 import / 一次计算都不做（零行为变化、零开销）。
+    """
+    try:
+        from graspo.core.determinism import active_switch
+    except ImportError:  # pragma: no cover - core 恒可用
+        return False
+    return bool(active_switch().probe_first_step)
+
+
+def _capture_first_step_probe_generation_inputs(
+    *, rank: int, call_index: int, call_seed: int, args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> None:
+    """只读旁路：把本 rank **首次** rollout 的生成输入指纹交给首步探针（不落盘、不通信）。
+
+    为什么在生成侧抓：``input_ids_sha256``（训练 micro-batch = prompt+completion）只能
+    说明"整批输入变没变"，**分不出**是"prompt 变了（输入侧）"还是"prompt 没变、补全变了
+    （采样/数值侧）"。补上"生成输入"的 sha 并列，E1 才能二选一：
+    生成输入 sha 相同 + 训练 ``input_ids`` sha 不同 ⇒ 采样/数值侧。
+
+    探针关闭（默认）⇒ **直接返回**，不 import 探针模块、不触摸请求对象。
+    """
+    if not _first_step_probe_active():
+        return
+    from graspo.flow.msswift.first_step_probe import capture_generation_inputs
+
+    infer_requests = args[0] if args else kwargs.get("infer_requests")
+    capture_generation_inputs(
+        rank=rank, call_index=call_index, call_seed=call_seed, infer_requests=infer_requests
+    )
+
+
 @contextlib.contextmanager
 def rollout_seed_deterministic(config: Any) -> Iterator[Any]:
     """在 ms-swift 的 rollout 生成边界上**作用域内**钉定全局 RNG。
@@ -358,6 +392,9 @@ def rollout_seed_deterministic(config: Any) -> Iterator[Any]:
         ledger["reseed_count"] += 1
         ledger["call_seeds"].append(call_seed)
         _reseed_before_rollout(call_seed)
+        _capture_first_step_probe_generation_inputs(
+            rank=rank, call_index=call_index, call_seed=call_seed, args=args, kwargs=kwargs
+        )
         return original(self, *args, **kwargs)
 
     # 保留描述符语义：``infer`` 是普通实例方法（非 classmethod/staticmethod），

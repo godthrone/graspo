@@ -148,6 +148,12 @@ class MsSwiftOpdTrainer:
                 "--logging_steps",
                 "1",
             ]
+        # 每 rank 首步探针（只读旁路；默认关 ⇒ 不注册回调、不追加任何参数）。
+        # 与 SFT / GRPO 通道**同一个接线点**（`first_step_probe.probe_active_extra_argv`，
+        # §1.4）：探针实现与字段复用，本通道不另造一份（§1.2 对扩展开放）。
+        from graspo.flow.msswift.first_step_probe import probe_active_extra_argv
+
+        extra_argv += probe_active_extra_argv()
         argv = graspo_to_ms_swift_argv(
             self.config,
             stage="opd",
