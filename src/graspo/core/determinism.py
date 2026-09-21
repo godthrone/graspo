@@ -30,12 +30,37 @@ worker 侧 :func:`bind_active_switch` 把这一份声明绑定为**进程内唯�
 （与 ``flow/logging.set_run_id`` 的既有范式一致），训练层只查
 :func:`active_switch`，不各自解析。
 
+**两半场：环境变量型 + 进程内 torch API 型（两张表，不许混）**
+
+开关按**生效时机**分两半场，各有自己的表与渲染点：
+
+- **环境变量半场**：表 = :data:`DETERMINISM_ENV_KNOBS`，渲染点 =
+  :func:`determinism_env_delta`，落点 = :func:`apply_env_determinism`
+  （worker 进程内）或 ``cli/app.py::_build_launch_env``（父进程）；
+  时机 = **必须早于该进程 import torch / 初始化 NCCL**。
+- **进程内 torch API 半场**：表 = :data:`DETERMINISM_TORCH_KNOBS`，渲染点 =
+  :func:`torch_determinism_steps`，落点 = :func:`apply_torch_determinism`；
+  时机 = 该进程 import torch 之后、训练器构造之前。
+
+两半场的**回读核实**（"声明 vs 生效"）统一走 :func:`verify_env_determinism` /
+:func:`verify_torch_determinism`，由 ``train_worker`` 打印并落盘。
+
+**为什么环境变量半场需要一个"进程内"落点（本包实测确证）**：`graspo launch`
+路线由父进程 ``_build_launch_env`` 注入环境；而矩阵 runner 路线（``entry.sh``
+把 ``GRASPO_DETERMINISM`` 原值当 ``--determinism-spec`` 交给 ``train_worker``）
+**没有父进程注入这一步** —— 改前环境变量半场在那条路线上**一条都没生效**
+（只在 stdout 与 ``determinism.jsonl`` 里被"声明"过）。声明与生效分叉正是
+§2.2 要禁止的静默失效。:func:`apply_env_determinism` 把同一份渲染结果落到
+worker 自己的进程环境，取值仍只在表里定义一次（§1.4）。
+
 **默认关**
 
 不传任何 ``--determinism*`` ⇒ :class:`DeterminismSwitch` 全关 ⇒
 :func:`determinism_env_delta` 返回**空 dict**、:func:`apply_torch_determinism`
-返回**空列表**、横幅**空列表**、产物记录 ``None`` ⇒ 与打开本功能之前逐字相同
-（机核见 ``tests/cli/test_determinism_launch.py``）。
+返回**空列表**、:func:`apply_env_determinism` 返回**空 dict 且不碰 os.environ**、
+横幅**空列表**、产物记录 ``None`` ⇒ 与打开本功能之前逐字相同
+（机核见 ``tests/cli/test_determinism_launch.py`` 与
+``tests/core/test_determinism.py``）。
 
 **显式即防呆（§2.2）**
 
@@ -74,8 +99,32 @@ class DeterminismEnvKnob:
     support_probe: bool = False
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class DeterminismTorchKnob:
+    """一个**进程内 torch API** 型确定性开关（表项 = 定义，渲染点 = :func:`torch_determinism_steps`）。
+
+    与环境变量型开关分表的原因见模块 docstring 的"两半场"：两者生效时机不同，
+    混在一张表里会诱使调用方用同一条路径处理它们。
+
+    Attributes:
+        field: :class:`DeterminismSwitch` 里的字段名（只做**开/关**，取值由
+            :attr:`pinned_value` 决定）。新字段一律带 ``pin_`` 前缀：把
+            ``torch.backends.cudnn.allow_tf32`` 这类**名字就是取值**的属性
+            直接当字段名，会让 ``allow_tf32=True`` 被读成"打开 TF32"——
+            名字与语义反向是防呆事故（§2.2 显式即防呆）。既有 ``cudnn`` 字段
+            沿用原名（CLI 契约 ``--determinism-no-cudnn`` 不变）。
+        target: 相对 ``torch`` 模块的**点分属性路径**（全仓只此一处写它）。
+        pinned_value: 该属性被钉定的**唯一取值**（全仓只此一处写它）。
+        side_effect: 显式记录的副作用；生效时必须打印（§2.2）。
+    """
+
+    field: str
+    target: str
+    pinned_value: bool
+    side_effect: str
+
+
 #: ── 环境变量型开关清单（**唯一真相源**，§1.4）───────────────────────────────
-#:
 #: 渲染点只有 :func:`determinism_env_delta` 一处（"表 + 唯一渲染点"范式，
 #: 与 ``tests/e2e/generate_matrix.py::CONTAINER_CACHE_ROOTS`` 同构）。
 #: 新增开关 = 本表加一行 + :class:`DeterminismSwitch` 加一个同名字段
@@ -110,9 +159,66 @@ DETERMINISM_ENV_KNOBS: tuple[DeterminismEnvKnob, ...] = (
         default_value="1",
         side_effect=(
             "NCCL 自带的确定性归约（版本相关：较新 NCCL 才有）；"
-            "缺失时 NCCL **只 warn** ⇒ 静默失效，必须看支持性探测结论"
+            "缺失时 NCCL **只 warn** ⇒ 静默失效，必须看支持性探测结论 + 运行时日志"
         ),
         support_probe=True,
+    ),
+)
+
+
+#: ── 进程内 torch API 型开关清单（**唯一真相源**，§1.4）───────────────────────
+#:
+#: 与环境变量型表**分开**：本表的项是**进程内 torch 属性**，不是环境变量
+#: （见模块 docstring 的"两半场"）。渲染点只有 :func:`torch_determinism_steps`
+#: 一处，落点只有 :func:`apply_torch_determinism` 一处，回读核实只有
+#: :func:`verify_torch_determinism` 一处。
+#: 新增开关 = 本表加一行 + :class:`DeterminismSwitch` 加一个同名字段
+#: （两边由 ``tests/core/test_determinism.py`` 的同步测试守住，不靠人记）。
+DETERMINISM_TORCH_KNOBS: tuple[DeterminismTorchKnob, ...] = (
+    DeterminismTorchKnob(
+        field="cudnn",
+        target="backends.cudnn.deterministic",
+        pinned_value=True,
+        side_effect=(
+            "关闭 cuDNN 自动算法选择：同输入同配置下卷积结果逐位可复现，代价是可能更慢"
+        ),
+    ),
+    DeterminismTorchKnob(
+        field="cudnn",
+        target="backends.cudnn.benchmark",
+        pinned_value=False,
+        side_effect=(
+            "禁用 cuDNN 自动调优（benchmark）：不再为选算法跑前期基准，"
+            "但常态步时可能变慢（与上一条同属 ``cudnn`` 字段，一起开、一起关）"
+        ),
+    ),
+    DeterminismTorchKnob(
+        field="pin_bf16_reduced_precision_reduction",
+        target="backends.cuda.matmul.allow_bf16_reduced_precision_reduction",
+        pinned_value=False,
+        side_effect=(
+            "bf16 matmul 不再用降精度归约（经典非确定源）：**可能变慢**；"
+            "★ torch.use_deterministic_algorithms(True, warn_only=True) **不会**替你关掉它"
+            "（容器实测 before==after）⇒ 必须由本开关显式关"
+        ),
+    ),
+    DeterminismTorchKnob(
+        field="pin_fp16_reduced_precision_reduction",
+        target="backends.cuda.matmul.allow_fp16_reduced_precision_reduction",
+        pinned_value=False,
+        side_effect=(
+            "fp16 matmul 不再用降精度归约：**可能变慢**；"
+            "★ 同样不被 warn_only 模式覆盖（容器实测 before==after）"
+        ),
+    ),
+    DeterminismTorchKnob(
+        field="pin_cudnn_tf32",
+        target="backends.cudnn.allow_tf32",
+        pinned_value=False,
+        side_effect=(
+            "cuDNN 卷积不再走 TF32：精度更高、**可能变慢 / 显存口径有别**；"
+            "★ 容器实测默认为 True，且 warn_only 模式不改变它 ⇒ 必须由本开关显式关"
+        ),
     ),
 )
 
@@ -140,9 +246,19 @@ class DeterminismSwitch:
     #: ``NCCL_ALGO`` / ``NCCL_PROTO``。
     nccl_algo: bool = True
     nccl_proto: bool = True
-    #: ``NCCL_DETERMINISTIC``：**版本相关**（较新 NCCL 才有），默认 **False**——
-    #: 不假定本机 NCCL 支持；打开后由静态探测显式报告"是否真的被识别"。
-    nccl_deterministic: bool = False
+    #: ``NCCL_DETERMINISTIC``：**已纳入总开关**（默认 ``True``）——总开关打开即钉定。
+    #: 版本相关（较新 NCCL 才有），因此打开后会由静态探测显式报告"是否真的被识别"，
+    #: 并要求在 run 日志里做运行时核实；探测 ``accepted=None`` **绝不当已接受**（§2.2）。
+    nccl_deterministic: bool = True
+    #: ── 以下三项是**进程内 torch API**（不是环境变量），由
+    #: :data:`DETERMINISM_TORCH_KNOBS` 定义、:func:`apply_torch_determinism` 落点。
+    #: ★ ``torch.use_deterministic_algorithms(True, warn_only=True)`` 实测**不**改变
+    #: 它们的默认值（容器实测 before==after）⇒ 不显式关掉就是"可控而未控"。
+    #: 字段名带 ``pin_`` 前缀：``True`` = "把它钉到 :data:`DETERMINISM_TORCH_KNOBS`
+    #: 里的 ``pinned_value``（``False``）"，而不是"允许它"（见 dataclass docstring）。
+    pin_bf16_reduced_precision_reduction: bool = True
+    pin_fp16_reduced_precision_reduction: bool = True
+    pin_cudnn_tf32: bool = True
     #: 每 rank 首步探针（只读旁路）。独立于 ``enabled``（见类 docstring）。
     probe_first_step: bool = False
 
@@ -235,40 +351,171 @@ def determinism_env_delta(switch: DeterminismSwitch) -> dict[str, str]:
     return {knob.env_var: knob.default_value for knob in enabled_env_knobs(switch)}
 
 
+def apply_env_determinism(switch: DeterminismSwitch) -> dict[str, str]:
+    """在**当前进程**把环境变量型开关写进 ``os.environ``，返回实际写入的增量。
+
+    为什么需要它（本包实测确证的缺口）：``graspo launch`` 路线由父进程
+    ``cli/app.py::_build_launch_env`` 注入环境；而矩阵 runner 路线
+    （``entry.sh`` 直接把 ``--determinism-spec`` 交给 ``train_worker``）
+    **没有父进程注入这一步** ⇒ 环境变量半场在那条路线上**一条都没生效**
+    （只被打印、被记录，NCCL/cuBLAS 拿到的仍是默认值）。这是"声明与生效分叉"，
+    比"没开关"更危险。
+
+    单一真相源不变：取值仍只来自 :func:`determinism_env_delta`。本函数**只在
+    未启用时零动作**（不写 ``os.environ``、不打印），因此默认关逐字无变化。
+
+    ⚠ 调用时机：必须在**同进程** import torch / 初始化 NCCL **之前**
+    （``CUBLAS_WORKSPACE_CONFIG`` 要在首次 cuBLAS 使用前进环境；
+    ``NCCL_*`` 要在 ``init_process_group`` 前进环境）。
+    """
+    delta = determinism_env_delta(switch)
+    for name, value in delta.items():
+        os.environ[name] = value
+    return dict(delta)
+
+
+def verify_env_determinism(switch: DeterminismSwitch) -> list[str]:
+    """回读 ``os.environ``，返回与钉定值的**偏差**清单（``[]`` = 全部落到位）。
+
+    "我请求了钉定"与"它真的在环境里"必须能被机核（§2.2）——本函数就是那条断言。
+    未启用 ⇒ 请求集为空 ⇒ 返回 ``[]``（不把"没要求"误报成"没生效"）。
+    """
+    mismatches: list[str] = []
+    for name, value in determinism_env_delta(switch).items():
+        actual = os.environ.get(name)
+        if actual != value:
+            mismatches.append(
+                f"{name}: 请求 {value!r}，环境里实际是 {actual!r}"
+                f"（{'未设置' if actual is None else '取值不同'}）"
+            )
+    return mismatches
+
+
+def enabled_torch_knobs(switch: DeterminismSwitch) -> tuple[DeterminismTorchKnob, ...]:
+    """``switch`` 里**已打开**的进程内 torch 开关（顺序 = 表的顺序，稳定可断言）。"""
+    if switch is None or not switch.enabled:
+        return ()
+    return tuple(knob for knob in DETERMINISM_TORCH_KNOBS if getattr(switch, knob.field, False))
+
+
+def torch_knob_statement(knob: DeterminismTorchKnob) -> str:
+    """把表项渲染成一条人类可读语句（打印、产物、断言共用同一处，§1.4）。"""
+    return f"torch.{knob.target}={knob.pinned_value}"
+
+
 def torch_determinism_steps(switch: DeterminismSwitch) -> list[str]:
     """返回**已启用**的进程内 torch API 开关的人类可读清单（纯函数，不导入 torch）。
 
     同一份清单既用于打印、也用于测试断言，避免"设了什么"与"说设了什么"两处实现。
+    ``torch.use_deterministic_algorithms`` 的取值依赖 ``switch.warn_only``（非常量），
+    因此单独渲染；其余**常量取值**的项一律由 :data:`DETERMINISM_TORCH_KNOBS` 渲染。
     """
     if switch is None or not switch.enabled:
         return []
     steps: list[str] = []
     if switch.torch_deterministic_algorithms:
         steps.append(f"torch.use_deterministic_algorithms(True, warn_only={switch.warn_only})")
-    if switch.cudnn:
-        steps.append("torch.backends.cudnn.deterministic=True")
-        steps.append("torch.backends.cudnn.benchmark=False")
+    steps.extend(torch_knob_statement(knob) for knob in enabled_torch_knobs(switch))
     return steps
 
 
-def apply_torch_determinism(switch: DeterminismSwitch) -> list[str]:
+def _resolve_torch_attribute(torch_module: Any, dotted: str) -> Any:
+    """按点分路径从 ``torch`` 模块取属性；路径上任一段不存在 ⇒ ``AttributeError``。
+
+    不做任何静默回退：取不到就是取不到，由调用方显式报告（§2.2）。
+    """
+    target = torch_module
+    for part in dotted.split("."):
+        target = getattr(target, part)
+    return target
+
+
+def _assign_torch_attribute(torch_module: Any, dotted: str, value: Any) -> None:
+    """把点分路径末段的属性设为 ``value``（父对象按路径解析）。"""
+    parent_path, _, name = dotted.rpartition(".")
+    parent = _resolve_torch_attribute(torch_module, parent_path) if parent_path else torch_module
+    setattr(parent, name, value)
+
+
+def apply_torch_determinism(switch: DeterminismSwitch, *, torch_module: Any = None) -> list[str]:
     """在**当前进程**内套用确定性开关，返回已生效的语句清单（空 = 未启用）。
 
     必须在 ``import torch`` 之后、训练器构造之前调用。``CUBLAS_WORKSPACE_CONFIG``
-    是**环境变量**型开关（必须早于 ``import torch``），由
-    ``cli/app.py::_build_launch_env`` 在启动子进程时注入——两者分工见模块 docstring。
+    等**环境变量**型开关由 :func:`apply_env_determinism`（worker 进程内）或
+    ``cli/app.py::_build_launch_env``（父进程）负责——两者分工见模块 docstring。
+
+    ``torch_module`` 只为测试注入替身；``None`` ⇒ 真导入 torch（延迟导入：本模块
+    在无 torch 的环境里仍可导入与单测，§1.3）。
     """
     steps = torch_determinism_steps(switch)
     if not steps:
         return []
-    import torch  # 延迟导入：本模块在无 torch 的环境里仍可导入与单测（§1.3）
+    if torch_module is None:
+        import torch  # noqa: PLC0415 - 延迟导入，见 docstring
+
+        torch_module = torch
 
     if switch.torch_deterministic_algorithms:
-        torch.use_deterministic_algorithms(True, warn_only=switch.warn_only)
-    if switch.cudnn:
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
+        torch_module.use_deterministic_algorithms(True, warn_only=switch.warn_only)
+    for knob in enabled_torch_knobs(switch):
+        _assign_torch_attribute(torch_module, knob.target, knob.pinned_value)
     return steps
+
+
+def verify_torch_determinism(switch: DeterminismSwitch, *, torch_module: Any = None) -> list[str]:
+    """回读 torch 后端开关，返回与钉定值的**偏差**清单（``[]`` = 全部落到位）。
+
+    这是"开关开着但这些项没生效"的**负向对照判据**：只要请求了钉定而读数不等于
+    钉定值（或属性干脆不存在），这里必须出现一条 —— 测试据此拦住回归，
+    运行产物据此证明"声明 = 生效"。
+
+    取不到 torch（未安装）⇒ 返回一条显式的"未能核实"，**不**当成功（§2.2）。
+    """
+    knobs = enabled_torch_knobs(switch)
+    if not knobs:
+        return []
+    if torch_module is None:
+        try:
+            import torch  # noqa: PLC0415 - 延迟导入
+
+            torch_module = torch
+        except ImportError:
+            return [f"未能核实 {len(knobs)} 个 torch 后端项：本进程装不了 torch"]
+    mismatches: list[str] = []
+    for knob in knobs:
+        try:
+            actual = _resolve_torch_attribute(torch_module, knob.target)
+        except AttributeError as exc:
+            mismatches.append(f"{torch_knob_statement(knob)}：读不到该属性（{exc}）")
+            continue
+        if actual != knob.pinned_value:
+            mismatches.append(
+                f"{torch_knob_statement(knob)}：回读实际为 {actual!r}"
+                "（★ 开关开着但没生效）"
+            )
+    return mismatches
+
+
+def format_determinism_verify_report(switch: DeterminismSwitch) -> list[str]:
+    """把"声明 vs 生效"的回读结论渲染成显式文本（无偏差也打一行确认）。
+
+    没有偏差时也要打一行：否则"没能核实"与"全都到位"在日志里长得一样
+    （§2.2 显式即防呆）。未启用 ⇒ 返回 ``[]``（默认关零变化）。
+    """
+    if switch is None or not switch.enabled:
+        return []
+    env_mismatches = verify_env_determinism(switch)
+    torch_mismatches = verify_torch_determinism(switch)
+    lines = [
+        "[determinism] 生效核实（回读 os.environ 与 torch 后端项）："
+        f"环境变量 {len(determinism_env_delta(switch))} 项 / "
+        f"torch 后端 {len(enabled_torch_knobs(switch))} 项，"
+        f"偏差 {len(env_mismatches) + len(torch_mismatches)} 条"
+    ]
+    for mismatch in env_mismatches + torch_mismatches:
+        lines.append(f"[determinism]   ★ 未生效：{mismatch}")
+    return lines
+
 
 
 def format_determinism_banner(switch: DeterminismSwitch) -> list[str]:
@@ -285,8 +532,17 @@ def format_determinism_banner(switch: DeterminismSwitch) -> list[str]:
             f"[determinism]   env {knob.env_var}={knob.default_value}"
             f" —— 副作用：{knob.side_effect}"
         )
+    # ★ 副作用必须随开关一起出现（§2.2）：新增的 torch 后端项有**性能/显存**影响，
+    #   这些字句不能只写在文档里（本表新增项的 side_effect 逐条打印）。
+    torch_side_effects = {
+        torch_knob_statement(knob): knob.side_effect for knob in enabled_torch_knobs(switch)
+    }
     for statement in torch_determinism_steps(switch):
-        lines.append(f"[determinism]   torch {statement}")
+        side_effect = torch_side_effects.get(statement)
+        if side_effect is None:
+            lines.append(f"[determinism]   torch {statement}")
+        else:
+            lines.append(f"[determinism]   torch {statement} —— 副作用：{side_effect}")
     lines.extend(format_nccl_support_report(delta))
     return lines
 
@@ -495,10 +751,22 @@ def determinism_artifact(switch: DeterminismSwitch) -> dict[str, Any] | None:
 
     与打印共用同一份渲染（:func:`determinism_env_delta` / :func:`torch_determinism_steps`），
     因此"打印了什么"和"记了什么"不可能分叉（§1.4）。
+
+    ``nccl_support`` 只探测 :data:`DETERMINISM_ENV_KNOBS` 里 ``support_probe=True``
+    的项（= 真正的 NCCL 变量）。改前它拿**全部**环境变量去 libnccl 里找字面量，
+    于是 ``CUBLAS_WORKSPACE_CONFIG`` 必然报 ``accepted:false`` —— 一个**看起来像
+    "NCCL 不认这个变量"**的假结论（它本来就不是 NCCL 变量）。这属于"记录产生
+    误读"，按 §2.2 显式即防呆修掉；横幅侧本来就是这么筛的（两边现在同源）。
+
+    本函数**不** import torch（无 torch 机器上仍可构造产物记录，§1.3）：
+    torch 后端项的**回读核实**在 :func:`determinism_verify_artifact`。
     """
     if switch is None or not (switch.enabled or switch.probe_first_step):
         return None
     delta = determinism_env_delta(switch)
+    probe_vars = [
+        knob.env_var for knob in enabled_env_knobs(switch) if knob.support_probe
+    ]
     return {
         "event": "determinism",
         "kind": "diagnostic",
@@ -506,12 +774,51 @@ def determinism_artifact(switch: DeterminismSwitch) -> dict[str, Any] | None:
         "probe_first_step": bool(switch.probe_first_step),
         "spec": switch.to_spec(),
         "env": dict(sorted(delta.items())),
+        "env_verify": verify_env_determinism(switch),
         "torch": torch_determinism_steps(switch),
         "side_effects": {
             knob.env_var: knob.side_effect for knob in enabled_env_knobs(switch)
         },
+        "torch_side_effects": {
+            torch_knob_statement(knob): knob.side_effect for knob in enabled_torch_knobs(switch)
+        },
         "nccl_support": [
-            dataclasses.asdict(support) for support in probe_nccl_variable_support(delta.keys())
+            dataclasses.asdict(support) for support in probe_nccl_variable_support(probe_vars)
         ],
         "nccl_version": nccl_version(),
     }
+
+
+def determinism_verify_artifact(switch: DeterminismSwitch) -> dict[str, Any] | None:
+    """生成**"声明 vs 生效"回读**的记录（未启用 ⇒ ``None``）。
+
+    与 :func:`determinism_artifact` 分开的原因：本函数要回读 torch 后端项，
+    因此需要 torch（:func:`determinism_artifact` 保持无 torch 可构造）。worker 在
+    :func:`apply_env_determinism` / :func:`apply_torch_determinism` **之后**把它作为
+    ``determinism.jsonl`` 的**第二行**落盘——于是产物里同时有"请求了什么"与
+    "回读到了什么"，两者分叉时看得见（§2.2）。
+    """
+    if switch is None or not switch.enabled:
+        return None
+    env_mismatches = verify_env_determinism(switch)
+    torch_mismatches = verify_torch_determinism(switch)
+    return {
+        "event": "determinism_verify",
+        "kind": "diagnostic",
+        "env_requested": dict(sorted(determinism_env_delta(switch).items())),
+        "torch_requested": torch_determinism_steps(switch),
+        "torch_readback": {
+            torch_knob_statement(knob): _readback(knob) for knob in enabled_torch_knobs(switch)
+        },
+        "mismatches": env_mismatches + torch_mismatches,
+    }
+
+
+def _readback(knob: DeterminismTorchKnob) -> Any:
+    """读取一个 torch 表项的当前值（读不到 ⇒ ``None`` + 在 mismatches 里显式出现）。"""
+    try:
+        import torch  # noqa: PLC0415 - 延迟导入
+
+        return _resolve_torch_attribute(torch, knob.target)
+    except Exception:  # noqa: BLE001 - 读不到就是"未确认"，由 mismatches 显式报告
+        return None
