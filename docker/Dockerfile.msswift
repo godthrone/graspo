@@ -88,4 +88,104 @@ RUN \
     && uv pip install --system --break-system-packages --no-deps -e . \
     && python scripts/check_env_versions.py --local
 
+# ── 运行时依赖补遗（不在 pyproject pin 内，但 ms-swift / 矩阵档位需要）─────────────
+# 背景：`ms-swift==4.5.3` 自身**不声明**下列包（其 89 条 requires_dist 里没有
+# qwen/decord/av/librosa/soundfile 任何一条）——旧镜像是手工补装的，本配方此前漏了，
+# 导致 VL 档训练启动即崩（`PackageNotFoundError: Package metadata was not found for qwen_vl_utils`）。
+# 只增不改：本段新增在既有 pip 层之后，不动前面任何一行 ⇒ 前 14 步层缓存全部命中。
+# 分层安装：每层独立 RUN，便于某层失败时前面的层仍可复用。
+#
+# 第 1 层：多模态 / 音视频 / 图像运行时（36 个 VL 档必需）。
+#   torchaudio 走 cu130 官方索引，与既有 torch 同源同版本。
+#   numba/llvmlite/msgpack/… 是 librosa 的传递依赖，同时显式 pin 以固定版本、避免解析漂移。
+RUN \
+    HTTP_PROXY="${HTTP_PROXY:-}" HTTPS_PROXY="${HTTPS_PROXY:-}" \
+    http_proxy="${HTTP_PROXY:-}" https_proxy="${HTTPS_PROXY:-}" \
+    pip install --break-system-packages --no-cache-dir --index-url "${PIP_INDEX_URL}" \
+    "qwen-vl-utils==0.0.14" "qwen-omni-utils==0.0.9" "decord==0.6.0" "av==17.1.0" \
+    "librosa==0.11.0" "soundfile==0.13.1" "timm==1.0.27" "opencv-python==4.11.0.86" \
+    "diffusers==0.38.0" \
+    "numba==0.65.0" "llvmlite==0.47.0" "scikit-learn==1.9.0" "pooch==1.9.0" "soxr==1.1.0" \
+    "lazy_loader==0.5" "audioread==3.1.0" "msgpack==1.2.1" "platformdirs==4.10.0" \
+    "narwhals==2.22.1" "threadpoolctl==3.6.0" \
+    && pip install --break-system-packages --no-cache-dir \
+    --index-url https://download.pytorch.org/whl/cu130 "torchaudio==2.11.0"
+
+# 第 2 层：24 个 zero2 / zero2_offload 档需要 deepspeed。
+RUN \
+    HTTP_PROXY="${HTTP_PROXY:-}" HTTPS_PROXY="${HTTPS_PROXY:-}" \
+    http_proxy="${HTTP_PROXY:-}" https_proxy="${HTTPS_PROXY:-}" \
+    pip install --break-system-packages --no-cache-dir --index-url "${PIP_INDEX_URL}" \
+    "deepspeed==0.18.9"
+
+# 第 3 层：RL 档（GRASPO/OPD）需要 vllm + ray。
+RUN \
+    HTTP_PROXY="${HTTP_PROXY:-}" HTTPS_PROXY="${HTTPS_PROXY:-}" \
+    http_proxy="${HTTP_PROXY:-}" https_proxy="${HTTPS_PROXY:-}" \
+    pip install --break-system-packages --no-cache-dir --index-url "${PIP_INDEX_URL}" \
+    "vllm==0.23.0" "ray==2.55.1"
+
+# 第 4 层：内核 / 并行后端（独立成层，便于失败时单独回退）。
+RUN \
+    HTTP_PROXY="${HTTP_PROXY:-}" HTTPS_PROXY="${HTTPS_PROXY:-}" \
+    http_proxy="${HTTP_PROXY:-}" https_proxy="${HTTPS_PROXY:-}" \
+    pip install --break-system-packages --no-cache-dir --index-url "${PIP_INDEX_URL}" \
+    "liger_kernel==0.8.0" "flash-linear-attention==0.5.1" \
+    "megatron-core==0.17.1" "mcore_bridge==1.5.2"
+
+# 构建期存活性验证（fail-closed）：只 import 不需要 GPU 的模块；
+# deepspeed/vllm/ray 等需要 CUDA 初始化，仅断言发行版元数据存在。
+# 末尾重跑版本门禁，证明补遗未破坏既有 pin。
+RUN python - <<'PY'
+import importlib.metadata as md
+import importlib.util as iu
+import traceback
+
+# 需要 GPU 或重初始化，构建期不 import
+metadata_only = [
+    "qwen-vl-utils", "qwen-omni-utils", "decord", "av", "librosa", "soundfile",
+    "timm", "opencv-python", "diffusers", "torchaudio", "deepspeed", "vllm", "ray",
+    "liger-kernel", "flash-linear-attention", "megatron-core", "mcore-bridge",
+]
+importable = [
+    ("qwen_vl_utils", "qwen-vl-utils"),
+    ("qwen_omni_utils", "qwen-omni-utils"),
+    ("decord", "decord"),
+    ("av", "av"),
+    ("librosa", "librosa"),
+    ("soundfile", "soundfile"),
+    ("torchaudio", "torchaudio"),
+    ("timm", "timm"),
+    ("cv2", "opencv-python"),
+    ("diffusers", "diffusers"),
+]
+
+problems = []
+for dist in metadata_only:
+    try:
+        print("OK  dist  %-26s %s" % (dist, md.version(dist)))
+    except Exception as exc:
+        problems.append("metadata %s: %r" % (dist, exc))
+        print("FAIL dist  %-26s %r" % (dist, exc))
+
+for mod, dist in importable:
+    if iu.find_spec(mod) is None:
+        problems.append("import %s (dist %s): module not found" % (mod, dist))
+        print("FAIL import %-18s (dist %s)" % (mod, dist))
+        continue
+    try:
+        __import__(mod)
+        print("OK  import %-18s (dist %s)" % (mod, dist))
+    except Exception as exc:
+        problems.append("import %s (dist %s): %r" % (mod, dist, exc))
+        print("FAIL import %-18s (dist %s): %r" % (mod, dist, exc))
+        traceback.print_exc()
+
+if problems:
+    raise SystemExit("MM DEP CHECK FAILED:\n  " + "\n  ".join(problems))
+print("MM DEPS OK (all runtime deps present)")
+PY
+
+RUN python scripts/check_env_versions.py --local
+
 CMD ["bash"]
