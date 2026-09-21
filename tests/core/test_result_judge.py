@@ -608,6 +608,32 @@ def test_a4_calibration_table_covers_the_required_tiers_with_provenance():
         assert calibration.worst_pair >= 0.0
 
 
+def test_a4_msswift_2card_grpo_is_calibrated_and_opd_must_stay_fail_closed():
+    """2026-09-21 入表：`ms-swift/2卡/GRPO` 由 AO1 的 n=5 独立跑标定。
+
+    锁住三件事：
+    ─ ① 取值 = `min(1.5 × 最坏对 0.004013907909393311, 硬上界)`（**未被封顶**）；
+    ─ ② 出处非空 + 隔离带 ≥ AE1 要求的 2.0×（实际 15.53×）；
+    ─ ③ **`ms-swift/2卡/OPD` 不得复用 GRPO 的读数**（算法不同、机制不同）
+      ⇒ 必须仍为 `None`（judge_a4 据此 fail-closed）。
+    """
+    grpo = find_tier_calibration("ms-swift", 2, "GRPO")
+    assert grpo is not None
+    assert grpo.tol == 6.020861864089967e-3
+    assert grpo.worst_pair == 0.004013907909393311
+    assert grpo.n == A4_CALIBRATION_MIN_N
+    assert grpo.outcome == A4_OUTCOME_CALIBRATED
+    assert grpo.provenance.strip()
+    # 本档未被硬上界封顶：tol 恰好 == 1.5 × 最坏对。
+    assert grpo.tol == A4_WORST_PAIR_SAFETY_FACTOR * grpo.worst_pair
+    assert grpo.tol < A4_TOLERANCE_HARD_UPPER_BOUND
+    # 隔离带（≥ 2.0× 是 AE1 的硬要求；本档实际 15.53×）。
+    assert A4_MIN_TRUE_BUG_SIGNATURE / grpo.tol >= 2.0
+    assert A4_MIN_TRUE_BUG_SIGNATURE / grpo.tol == pytest.approx(15.53, rel=1e-3)
+    # ★ OPD 必须仍 fail-closed：不得让算法不同的档族复用同一个读数池。
+    assert find_tier_calibration("ms-swift", 2, "OPD") is None
+
+
 def test_a4_no_tier_tolerance_exceeds_half_the_smallest_true_bug_signature():
     """**锁一（硬上界）**：任何档族容差 ×2 必须仍 < 最小真 bug 签名 9.35e-2（T032）。"""
     assert A4_MIN_TRUE_BUG_SIGNATURE == 9.35e-2
