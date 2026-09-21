@@ -44,16 +44,21 @@ WORKDIR /workspace/graspo
 # 自动派生包集合并逐包比对（§2 防呆）。
 COPY pyproject.toml uv.lock .python-version README.md LICENSE ./
 
-RUN --mount=type=cache,target=/root/.cache/pip \
+# 不用 BuildKit 缓存挂载：构建机没有 buildx 组件，`RUN --mount=type=cache` 会直接
+# 报 "the --mount option requires BuildKit" 而中断。那三处只是 pip 缓存加速，去掉
+# 不改变产物内容（`--no-cache-dir` 本来就不落 pip 缓存）。
+# `--break-system-packages`：base 是 Ubuntu 24.04 系统 Python（PEP 668
+# `/usr/lib/python3.12/EXTERNALLY-MANAGED`），不加会被 pip 拒绝安装。
+RUN \
     HTTP_PROXY="${HTTP_PROXY:-}" HTTPS_PROXY="${HTTPS_PROXY:-}" \
     http_proxy="${HTTP_PROXY:-}" https_proxy="${HTTPS_PROXY:-}" \
-    pip install --no-cache-dir --index-url "${TORCH_INDEX_URL}" \
+    pip install --break-system-packages --no-cache-dir --index-url "${TORCH_INDEX_URL}" \
     torch==2.11.0 torchvision==0.26.0
 
-RUN --mount=type=cache,target=/root/.cache/pip \
+RUN \
     HTTP_PROXY="${HTTP_PROXY:-}" HTTPS_PROXY="${HTTPS_PROXY:-}" \
     http_proxy="${HTTP_PROXY:-}" https_proxy="${HTTPS_PROXY:-}" \
-    pip install --no-cache-dir --index-url "${PIP_INDEX_URL}" \
+    pip install --break-system-packages --no-cache-dir --index-url "${PIP_INDEX_URL}" \
     transformers==5.12.1 pydantic==2.11.10 pyyaml==6.0.3 safetensors==0.8.0 \
     pillow==11.3.0 numpy==1.26.4 ms-swift==4.5.3 pytest==9.0.3
 
@@ -76,10 +81,10 @@ RUN mkdir -p /opt/graspo-image \
 
 # ── 项目安装 + 构建期版本门禁（fail-closed）──────────────────────────────────
 # 门禁脚本按自身路径推导 PROJECT_ROOT=/workspace/graspo，能读到 pyproject 与两个 Dockerfile。
-RUN --mount=type=cache,target=/root/.cache/uv \
+RUN \
     HTTP_PROXY="${HTTP_PROXY:-}" HTTPS_PROXY="${HTTPS_PROXY:-}" \
     http_proxy="${HTTP_PROXY:-}" https_proxy="${HTTPS_PROXY:-}" \
-    pip install --no-cache-dir --index-url "${PIP_INDEX_URL}" uv \
+    pip install --break-system-packages --no-cache-dir --index-url "${PIP_INDEX_URL}" uv \
     && uv pip install --system --break-system-packages --no-deps -e . \
     && python scripts/check_env_versions.py --local
 
