@@ -168,6 +168,63 @@ RUN \
     "liger_kernel==0.8.0" "flash-linear-attention==0.5.1" \
     "megatron-core==0.17.1" "mcore_bridge==1.5.2"
 
+# ── 第 5 层：系统共享库（apt）—— 修真实崩溃根因 ────────────────────────────────
+# 真实报错链（跑批执行者抓到的完整调用栈，r6 镜像上 T014 ~20s rc=1）：
+#   swift qwen.py:1676 → transformers Qwen3_5ForConditionalGeneration
+#     → transformers/models/qwen3_5/modeling_qwen3_5.py:73 → from fla.ops.gated_delta_rule import …
+#     → fla/ops/common/backends/tilelang/__init__.py:30 → import tilelang
+#     → tilelang/3rdparty/tvm/python/tvm/base.py:45 → ctypes.CDLL("libz3.so")
+#     ⇒ OSError: libz3.so: cannot open shared object file
+# 影响面 = **全部 49 档**（transformers 的 Qwen3_5 建模自己 `import fla`，native 与 ms-swift 同等受害）。
+# 关键点：**`pip install z3-solver` 无效** —— 它的 `libz3.so` 落在 site-packages 内，
+#   动态加载器按 `ctypes.CDLL("libz3.so")` 找不到，除非注入 `LD_LIBRARY_PATH`；
+#   而 runner 是生成物、不接受额外 env/挂载 ⇒ **必须在镜像里装系统库**。
+# 旧镜像 `graspo-msswift:4.5.3` 的做法就是 apt 装 `libz3-4` + `libz3-dev`
+#   （`/usr/lib/x86_64-linux-gnu/libz3.so -> libz3.so.4`，实测 dpkg 为 4.8.12-1）。
+# 本层同时对齐旧镜像的其它共享库：libsm6 / libice6 / libsndfile1 / libmlx5-1。
+# apt 走 228 默认源（实测 archive.ubuntu.com 可达 200）；代理按既有 ARG 传入。
+# 注意：本层虽在第 4 层之后，但 apt 层会使其后所有层重算 —— 这是必要的，因为
+#   libz3.so 必须在**最终镜像**里存在；前面的 pip 层（25/26/27/30）不受影响，仍命中缓存。
+RUN export http_proxy="${HTTP_PROXY:-}" https_proxy="${HTTPS_PROXY:-}" \
+    HTTP_PROXY="${HTTP_PROXY:-}" HTTPS_PROXY="${HTTPS_PROXY:-}" \
+    && apt-get update -o Acquire::Retries=10 -o Acquire::http::Timeout=30 \
+    && apt-get install -y --no-install-recommends \
+    -o Acquire::Retries=10 -o Acquire::http::Timeout=30 \
+    libz3-4 libz3-dev libsm6 libice6 libsndfile1 libmlx5-1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# 第 5 层断言（fail-closed）：用**真实报错链**验证，而不是只 import z3。
+#   `tilelang → tvm → ctypes.CDLL("libz3.so")` 这条链必须能跑通；
+#   同时验证 ldconfig 能看到 libz3/libSM/libICE/libsndfile/libmlx5。
+RUN python -c "import tilelang, fla; from transformers import Qwen3_5ForConditionalGeneration; print('DEPS_OK')"
+RUN bash -c 'ldconfig -p | grep -E "libz3|libSM|libICE|libsndfile|libmlx5" || (echo "SHARED LIBS MISSING" && exit 1)'
+
+# ── 第 6 层：补齐"已声明但缺装"的 Python 直接依赖（关掉 pip check 缺口）────────
+# 背景：第 3 层用 `--no-deps` 复刻旧镜像组合，代价是凡被 vllm/ray/内核后端声明、
+#       而此前各层没装的**直接依赖**都缺位；`pip check` 因此报 33 条。
+# 本层把这些一次性补齐（版本对齐旧镜像 `graspo-msswift:4.5.3`），仍用 `--no-deps`
+#       以免引入新的解析漂移（这些包与现网 pin 在旧镜像中共存已验证）。
+RUN \
+    HTTP_PROXY="${HTTP_PROXY:-}" HTTPS_PROXY="${HTTPS_PROXY:-}" \
+    http_proxy="${HTTP_PROXY:-}" https_proxy="${HTTPS_PROXY:-}" \
+    pip install --break-system-packages --no-cache-dir --no-deps \
+    --index-url "${PIP_INDEX_URL}" \
+    "z3-solver==4.15.4.0" \
+    "nvidia-ml-py==13.595.45" "pyelftools==0.33" "tabulate==0.10.0" \
+    "astor==0.8.1" "supervisor==4.3.0" "interegular==0.3.3" \
+    "loguru==0.7.3" "distro==1.9.0" "docstring_parser==0.18.0" \
+    "pydantic-settings==2.14.2" "python-dotenv==1.2.2" "PyJWT==2.13.0" \
+    "httpx-sse==0.4.3" "python-multipart==0.0.32" "sse-starlette==3.4.5" \
+    "ml_dtypes==0.5.4" "opentelemetry-semantic-conventions==0.64b0" \
+    "opentelemetry-proto==1.43.0" "opentelemetry-exporter-otlp-proto-common==1.43.0" \
+    "opentelemetry-exporter-otlp-proto-grpc==1.43.0" \
+    "opentelemetry-exporter-otlp-proto-http==1.43.0" \
+    "googleapis-common-protos==1.75.0" \
+    "cuda-tile==1.3.0" "nvidia-cutlass-dsl-libs-base==4.5.2" \
+    "torch_c_dlpack_ext==0.1.5" "tokenspeed-triton==3.7.10.post20260531"
+
+RUN python -c "import z3, docstring_parser, distro, loguru, pydantic_settings, dotenv, jwt, multipart, sse_starlette, ml_dtypes; print('GAP DEPS OK')"
+
 # 构建期存活性验证（fail-closed）：只 import 不需要 GPU 的模块；
 # deepspeed/vllm/ray 等需要 CUDA 初始化，仅断言发行版元数据存在。
 # 末尾重跑版本门禁，证明补遗未破坏既有 pin。
@@ -181,6 +238,15 @@ metadata_only = [
     "qwen-vl-utils", "qwen-omni-utils", "decord", "av", "librosa", "soundfile",
     "timm", "opencv-python", "diffusers", "torchaudio", "deepspeed",
     "liger-kernel", "flash-linear-attention", "megatron-core", "mcore-bridge",
+    # 第 5/6 层补齐的"已声明但缺装"依赖（无顶层模块或构建期不宜 import 的）
+    "cuda-tile", "nvidia-cutlass-dsl-libs-base", "torch-c-dlpack-ext",
+    "tokenspeed-triton", "opentelemetry-semantic-conventions",
+    "opentelemetry-proto", "opentelemetry-exporter-otlp-proto-common",
+    "opentelemetry-exporter-otlp-proto-grpc", "opentelemetry-exporter-otlp-proto-http",
+    "googleapis-common-protos",
+    "nvidia-ml-py", "pyelftools", "tabulate", "astor", "supervisor", "interegular",
+    # 第 5 层 apt 系统库对应的 Python 侧依赖（tilelang/tvm 链）
+    "tilelang", "flash-linear-attention", "z3-solver",
 ]
 importable = [
     ("qwen_vl_utils", "qwen-vl-utils"),
@@ -196,7 +262,26 @@ importable = [
     # 探针已验证 vllm / ray 可在本镜像（无 GPU 上下文）import 成功
     ("vllm", "vllm"),
     ("ray", "ray"),
+    # 真实崩溃链：tilelang → tvm → ctypes.CDLL("libz3.so")；以及 Qwen3_5 建模自己 import fla
+    ("tilelang", "tilelang"),
+    ("fla", "flash-linear-attention"),
+    ("z3", "z3-solver"),
+    # 第 6 层补齐的缺口
+    ("docstring_parser", "docstring-parser"),
+    ("distro", "distro"),
+    ("loguru", "loguru"),
+    ("pydantic_settings", "pydantic-settings"),
+    ("dotenv", "python-dotenv"),
+    ("jwt", "PyJWT"),
+    ("multipart", "python-multipart"),
+    ("sse_starlette", "sse-starlette"),
+    ("ml_dtypes", "ml-dtypes"),
 ]
+
+# 真实链条断言：transformers 的 Qwen3_5 建模 → fla → tilelang → tvm → libz3.so
+Qwen3_5_IMPORT = "from transformers import Qwen3_5ForConditionalGeneration"
+REQUIRED_SO = ("libz3.so", "libz3.so.4", "libSM.so.6", "libICE.so.6",
+               "libsndfile.so.1", "libmlx5.so.1")
 
 # 版本守卫：`--no-deps` 装 vllm 的前提是它**不能**改动这两个包。
 EXPECTED_PREFIX = {"transformers": "5.12.1", "huggingface-hub": "1."}
@@ -233,9 +318,38 @@ for dist, prefix in EXPECTED_PREFIX.items():
     else:
         print("OK  guard %-18s %s" % (dist, got))
 
+# 共享库守卫：ldconfig 必须能看到 T014 崩溃链所需的那几个 .so
+try:
+    import ctypes.util as cu
+    ldout = __import__("subprocess").run(["ldconfig", "-p"], capture_output=True, text=True).stdout
+    for so in REQUIRED_SO:
+        if so in ldout:
+            print("OK  lib     %s" % so)
+        else:
+            problems.append("shared lib missing: %s" % so)
+            print("FAIL lib     %s (not in ldconfig -p)" % so)
+except Exception as exc:
+    problems.append("ldconfig check failed: %r" % (exc,))
+    print("FAIL lib check %r" % (exc,))
+
+# 真实崩溃链守卫（子进程跑，避免 import 副作用污染本进程）：
+#   transformers Qwen3_5 建模 → fla → tilelang → tvm → ctypes.CDLL("libz3.so")
+try:
+    r = __import__("subprocess").run(
+        ["python", "-c", "import tilelang, fla; " + Qwen3_5_IMPORT + "; print('DEPS_OK')"],
+        capture_output=True, text=True, timeout=600)
+    if r.returncode == 0 and "DEPS_OK" in r.stdout:
+        print("OK  chain   tilelang+fla+Qwen3_5ForConditionalGeneration -> DEPS_OK")
+    else:
+        problems.append("real chain failed rc=%s: %s" % (r.returncode, (r.stderr or "")[-500:]))
+        print("FAIL chain   rc=%s stderr_tail=%s" % (r.returncode, (r.stderr or "")[-300:]))
+except Exception as exc:
+    problems.append("real chain check failed: %r" % (exc,))
+    print("FAIL chain   %r" % (exc,))
+
 if problems:
     raise SystemExit("MM DEP CHECK FAILED:\n  " + "\n  ".join(problems))
-print("MM DEPS OK (all runtime deps present; transformers/hf-hub pins intact)")
+print("MM DEPS OK (all runtime deps present; libz3 chain OK; transformers/hf-hub pins intact)")
 PY
 
 RUN python scripts/check_env_versions.py --local
