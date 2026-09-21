@@ -389,7 +389,14 @@ def _switch_from_args(args: argparse.Namespace) -> Any:
         cublas_workspace_config=not flag("determinism_no_cublas_workspace"),
         nccl_algo=not flag("determinism_no_nccl_algo"),
         nccl_proto=not flag("determinism_no_nccl_proto"),
-        nccl_deterministic=flag("determinism_nccl_deterministic"),
+        nccl_deterministic=not flag("determinism_no_nccl_deterministic"),
+        pin_bf16_reduced_precision_reduction=not flag(
+            "determinism_no_bf16_reduced_precision_reduction"
+        ),
+        pin_fp16_reduced_precision_reduction=not flag(
+            "determinism_no_fp16_reduced_precision_reduction"
+        ),
+        pin_cudnn_tf32=not flag("determinism_no_cudnn_tf32"),
         torch_deterministic_algorithms=not flag("determinism_no_torch_algorithms"),
         probe_first_step=flag("determinism_probe_first_step"),
     )
@@ -478,8 +485,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--determinism",
         action="store_true",
         help="Pin the controllable determinism switches (CUBLAS_WORKSPACE_CONFIG, "
-        "cudnn, torch.use_deterministic_algorithms, NCCL_ALGO/PROTO). Off by default; "
-        "may raise the memory peak and slow training down.",
+        "cudnn.deterministic/benchmark, torch.use_deterministic_algorithms, "
+        "NCCL_ALGO/PROTO/DETERMINISTIC, bf16/fp16 reduced-precision reduction, "
+        "cudnn.allow_tf32). Off by default; may raise the memory peak and slow "
+        "training down.",
     )
     launch.add_argument(
         "--determinism-strict",
@@ -513,10 +522,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="Do not pin NCCL_PROTO=Simple.",
     )
     launch.add_argument(
-        "--determinism-nccl-deterministic",
+        "--determinism-no-nccl-deterministic",
         action="store_true",
-        help="Also pin NCCL_DETERMINISTIC=1 (version dependent; support is probed and "
-        "reported explicitly, never assumed).",
+        help="Do not pin NCCL_DETERMINISTIC=1. It is now part of the master switch "
+        "(version dependent; its acceptance is probed statically and must be verified "
+        "in the run log, never assumed).",
+    )
+    launch.add_argument(
+        "--determinism-no-bf16-reduced-precision-reduction",
+        action="store_true",
+        help="Do not pin torch.backends.cuda.matmul."
+        "allow_bf16_reduced_precision_reduction=False (may be faster, less reproducible).",
+    )
+    launch.add_argument(
+        "--determinism-no-fp16-reduced-precision-reduction",
+        action="store_true",
+        help="Do not pin torch.backends.cuda.matmul."
+        "allow_fp16_reduced_precision_reduction=False (may be faster, less reproducible).",
+    )
+    launch.add_argument(
+        "--determinism-no-cudnn-tf32",
+        action="store_true",
+        help="Do not pin torch.backends.cudnn.allow_tf32=False (may be faster, "
+        "lower precision).",
     )
     launch.add_argument(
         "--determinism-probe-first-step",

@@ -36,7 +36,10 @@ _DETERMINISM_FLAGS = (
     "--determinism-no-torch-algorithms",
     "--determinism-no-nccl-algo",
     "--determinism-no-nccl-proto",
-    "--determinism-nccl-deterministic",
+    "--determinism-no-nccl-deterministic",
+    "--determinism-no-bf16-reduced-precision-reduction",
+    "--determinism-no-fp16-reduced-precision-reduction",
+    "--determinism-no-cudnn-tf32",
     "--determinism-probe-first-step",
 )
 
@@ -146,8 +149,13 @@ def test_master_flag_enables_the_expected_defaults():
     assert switch.warn_only is True
     assert switch.nccl_algo is True
     assert switch.nccl_proto is True
-    # 版本相关项**默认不打开**（不假定本机 NCCL 支持）。
-    assert switch.nccl_deterministic is False
+    # ★ 本包改动：版本相关的 NCCL_DETERMINISTIC 已**纳入总开关**（默认随总开关打开）；
+    #   它的接受性仍由静态探测 + 运行时日志显式报告，从不假定。
+    assert switch.nccl_deterministic is True
+    # ★ 本包新增的三项进程内 torch 后端开关，同样默认随总开关打开。
+    assert switch.pin_bf16_reduced_precision_reduction is True
+    assert switch.pin_fp16_reduced_precision_reduction is True
+    assert switch.pin_cudnn_tf32 is True
     assert switch.probe_first_step is False
 
 
@@ -160,7 +168,18 @@ def test_master_flag_enables_the_expected_defaults():
         ("--determinism-no-torch-algorithms", "torch_deterministic_algorithms", False),
         ("--determinism-no-nccl-algo", "nccl_algo", False),
         ("--determinism-no-nccl-proto", "nccl_proto", False),
-        ("--determinism-nccl-deterministic", "nccl_deterministic", True),
+        ("--determinism-no-nccl-deterministic", "nccl_deterministic", False),
+        (
+            "--determinism-no-bf16-reduced-precision-reduction",
+            "pin_bf16_reduced_precision_reduction",
+            False,
+        ),
+        (
+            "--determinism-no-fp16-reduced-precision-reduction",
+            "pin_fp16_reduced_precision_reduction",
+            False,
+        ),
+        ("--determinism-no-cudnn-tf32", "pin_cudnn_tf32", False),
         ("--determinism-probe-first-step", "probe_first_step", True),
     ),
 )
@@ -185,9 +204,7 @@ def test_enabled_injects_all_knobs_into_launch_env(tmp_path, monkeypatch, capsys
     from graspo.core.schema import GraspoConfig
 
     config = GraspoConfig.from_yaml(_write_config(tmp_path))
-    switch = app._switch_from_args(
-        _parse_launch_flags("--determinism", "--determinism-nccl-deterministic")
-    )
+    switch = app._switch_from_args(_parse_launch_flags("--determinism"))
 
     env = _build_launch_env(config, switch)
     out = capsys.readouterr().out
@@ -215,6 +232,7 @@ def test_enabled_plan_renders_env_and_spec_for_dry_run(tmp_path, monkeypatch):
         "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
         "NCCL_ALGO": "Ring",
         "NCCL_PROTO": "Simple",
+        "NCCL_DETERMINISTIC": "1",
     }
     assert plan.env["CUBLAS_WORKSPACE_CONFIG"] == ":4096:8"
     # spec 传给了 worker，且能被 worker 侧无歧义还原。
@@ -226,15 +244,73 @@ def test_enabled_plan_renders_env_and_spec_for_dry_run(tmp_path, monkeypatch):
     )
 
 
-def test_nccl_deterministic_stays_off_by_default_when_enabled(tmp_path, monkeypatch):
-    """总开关打开但没传 ``--determinism-nccl-deterministic`` ⇒ 不注入该版本相关变量。"""
+def test_nccl_deterministic_follows_the_master_switch(tmp_path, monkeypatch):
+    """★ 本包改动：NCCL_DETERMINISTIC 由"默认关"改成**纳入总开关**。
+
+    开：总开关一开就注入（无需额外 flag）；关：``--determinism-no-nccl-deterministic``
+    显式关闭 ⇒ 不注入（保留"可控项可单独退"的能力，不退化成"只能全开"）。
+    """
     _clean_knob_vars(monkeypatch)
+    from graspo.core.schema import GraspoConfig
+
+    config = GraspoConfig.from_yaml(_write_config(tmp_path))
+    on = app._switch_from_args(_parse_launch_flags("--determinism"))
+    assert _build_launch_env(config, on)["NCCL_DETERMINISTIC"] == "1"
+
+    off = app._switch_from_args(
+        _parse_launch_flags("--determinism", "--determinism-no-nccl-deterministic")
+    )
+    assert off.nccl_deterministic is False
+    assert "NCCL_DETERMINISTIC" not in _build_launch_env(config, off)
+
+
+def test_new_torch_backend_knobs_follow_the_master_switch(tmp_path, monkeypatch):
+    """★ 本包新增的三项 torch 后端开关：默认随总开关生效、可逐项关闭、被显式打印。
+
+    它们**不是环境变量** ⇒ 断言必须落在"torch 语句清单 + 横幅"上，而不是 ``env``
+    （写进 ``env`` 就等于污染了环境变量表的语义，这本身就是回归）。
+    """
+    _clean_knob_vars(monkeypatch)
+    from graspo.core.determinism import torch_determinism_steps
     from graspo.core.schema import GraspoConfig
 
     config = GraspoConfig.from_yaml(_write_config(tmp_path))
     switch = app._switch_from_args(_parse_launch_flags("--determinism"))
     env = _build_launch_env(config, switch)
-    assert "NCCL_DETERMINISTIC" not in env
+
+    steps = torch_determinism_steps(switch)
+    assert "torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction=False" in steps
+    assert "torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction=False" in steps
+    assert "torch.backends.cudnn.allow_tf32=False" in steps
+    # 不污染环境变量表：这三项不得出现在 env 里。
+    assert not any("allow_" in name for name in env)
+
+    # dry-run JSON 里也必须看得见（"dry-run 也要可见"）。
+    plan = build_launch_plan(_write_config(tmp_path), determinism=switch)
+    restored = DeterminismSwitch.from_spec(plan.determinism_spec)
+    assert (
+        "torch.backends.cudnn.allow_tf32=False"
+        in torch_determinism_steps(restored)
+    )
+
+    off = app._switch_from_args(
+        _parse_launch_flags(
+            "--determinism",
+            "--determinism-no-bf16-reduced-precision-reduction",
+            "--determinism-no-fp16-reduced-precision-reduction",
+            "--determinism-no-cudnn-tf32",
+        )
+    )
+    off_steps = torch_determinism_steps(off)
+    assert not any("reduced_precision_reduction" in item for item in off_steps)
+    assert not any("cudnn.allow_tf32" in item for item in off_steps)
+    # 环境变量半场不受 torch 细项影响（两半场独立）：关掉新增三项后，清单里只剩
+    # use_deterministic_algorithms 与既有 cudnn 两项。
+    assert off_steps == [
+        "torch.use_deterministic_algorithms(True, warn_only=True)",
+        "torch.backends.cudnn.deterministic=True",
+        "torch.backends.cudnn.benchmark=False",
+    ]
 
 
 def test_probe_can_be_enabled_without_any_pinning(tmp_path, monkeypatch):
@@ -273,7 +349,10 @@ def test_cmd_launch_json_reports_determinism_env_and_spec(tmp_path, monkeypatch,
 
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
-    assert payload["determinism_env"] == {"CUBLAS_WORKSPACE_CONFIG": ":4096:8"}
+    assert payload["determinism_env"] == {
+        "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
+        "NCCL_DETERMINISTIC": "1",
+    }
     assert DeterminismSwitch.from_spec(payload["determinism_spec"]).enabled is True
 
 
@@ -282,9 +361,9 @@ _KNOB_OFF_FLAG = {
     "cublas_workspace_config": "--determinism-no-cublas-workspace",
     "nccl_algo": "--determinism-no-nccl-algo",
     "nccl_proto": "--determinism-no-nccl-proto",
-}
-_KNOB_ON_FLAG = {
-    "nccl_deterministic": "--determinism-nccl-deterministic",
+    # ★ 本包之后：**每一个**环境变量型开关都是"默认开、可单独关"，
+    #   不再有"默认关、需要额外 flag 才开"的项（那正是"可控而未控"的形态）。
+    "nccl_deterministic": "--determinism-no-nccl-deterministic",
 }
 
 
@@ -299,8 +378,6 @@ def test_every_knob_is_reachable_end_to_end(tmp_path, monkeypatch, knob):
 
     config = GraspoConfig.from_yaml(_write_config(tmp_path))
     flags = ["--determinism"]
-    if knob.field in _KNOB_ON_FLAG:
-        flags.append(_KNOB_ON_FLAG[knob.field])
     for other in DETERMINISM_ENV_KNOBS:
         if other.field == knob.field:
             continue
