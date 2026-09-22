@@ -7,7 +7,7 @@ from typing import Any
 import torch
 from torch.nn.utils.rnn import pad_sequence
 
-from graspo.core.schema import Sample
+from graspo.core.schema import PP_ROLLOUT_PREFILL_LAST_ONLY, Sample
 from graspo.flow.adapters.models.qwen35_36.helpers import (
     apply_stop_mask,
     rollout_chat_template_kwargs,
@@ -715,8 +715,15 @@ class _Qwen35GenerationMethods:
         comm: PipelineComm,
         tag: int,
         step: int = 0,
+        lm_head_row_indices: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor | None, tuple[Any, ...] | None]:
-        """一次 PP 生成 forward（KV cache）：末 stage 返回 logits，其余 stage 返回 None。"""
+        """一次 PP 生成 forward（KV cache）：末 stage 返回 logits，其余 stage 返回 None。
+
+        ``lm_head_row_indices``（b1，缺陷 P6）：prefill 时传入每行**需要 logits 的那个
+        位置**（本仓的调用方只取"最后一个真实 token"），末 stage 便只在这些位置上做
+        ``norm+lm_head``（返回 ``(B, 1, vocab)``），不再物化整条序列的 logits。
+        ``None`` ⇒ 逐字旧行为（全序列 logits）。
+        """
         output, present, _stage_input, send_work = self._pipeline_forward_hidden(
             input_ids=input_ids,
             hidden_states=None,
@@ -726,6 +733,7 @@ class _Qwen35GenerationMethods:
             multimodal_inputs=multimodal_inputs,
             position_input_ids=position_input_ids,
             apply_lm_head=(self.pp_rank == self.pp_size - 1),
+            lm_head_row_indices=lm_head_row_indices,
             timing=None,
             comm=comm,
             tag=tag,
@@ -785,14 +793,28 @@ class _Qwen35GenerationMethods:
             bwd_group=self.tp_state.pp_group_bwd,
             max_inflight=int(self.config.native.pp_max_inflight_microbatches),
             chunk_count=1,
-            # a1：有界等待。取值来自 native.pp_p2p_timeout_sec（单一真相源）；
+            # a1：有界等待。取值来自 native.pp_rollout_p2p_timeout_sec（单一真相源）；
             # 0 ⇒ None ⇒ 与修复前逐字一致（不设超时）。
-            wait_timeout_s=int(self.config.native.pp_p2p_timeout_sec),
+            wait_timeout_s=int(self.config.native.pp_rollout_p2p_timeout_sec),
         )
-        pp_timeout_s = int(self.config.native.pp_p2p_timeout_sec)
+        pp_timeout_s = int(self.config.native.pp_rollout_p2p_timeout_sec)
         is_last = self.pp_rank == self.pp_size - 1
         src_rank = int(self._pp_generation_last_stage_rank())
         # prefill：position_input_ids = 完整 prompt，使每个 stage 各自计算并保存 rope_deltas
+        #
+        # b1（缺陷 P6）：**只请求需要的那一个位置的 logits**。本函数后续只用
+        # "最后一个真实 token"的 logits（`actual_lens = attention_mask.sum(-1) - 1`，
+        # 左填充下恒等于 `seq_len - 1`；decode 步用 `logits[:, -1, :]`）。
+        # 旧实现让末 stage 对**整条序列**做 norm+lm_head ⇒ T035 形状
+        # `(64, 2382) × vocab 248320` 要 60–93 GiB，80GB 卡物理不可能（实测它正是
+        # P6 挂死的根因：rank1 OOM 死 / 卡在分配器，rank0 在下一个会合点上无界等待）。
+        # 位置索引由**调用方**给出（与旧 `actual_lens` 同一算式），末 stage 在
+        # SP all-gather 之后按行取该位置 ⇒ 语义逐位不变。
+        assert PP_ROLLOUT_PREFILL_LAST_ONLY, (
+            "PP_ROLLOUT_PREFILL_LAST_ONLY 被关闭，但本路径只实现了'末位 logits'；"
+            "整条序列 logits 在 T035 形状下物理不可能（缺陷 P6 根因）"
+        )
+        prefill_row_indices = attention_mask.sum(dim=1) - 1
         prefill_started_at = time.monotonic()
         logits, present = self._pipeline_generation_forward(
             input_ids=sequences,
@@ -803,14 +825,22 @@ class _Qwen35GenerationMethods:
             comm=comm,
             tag=0,
             step=0,
+            lm_head_row_indices=prefill_row_indices,
         )
-        self._pp_generation_probe("prefill_done", step=0, stage=self.pp_rank, batch=batch)
+        self._pp_generation_probe(
+            "prefill_done",
+            step=0,
+            stage=self.pp_rank,
+            batch=batch,
+            logits_positions=int(1 if is_last else 0),
+        )
         prefill_sec = time.monotonic() - prefill_started_at
         if is_last:
             assert logits is not None
-            actual_lens = attention_mask.sum(dim=1) - 1
-            batch_idx = torch.arange(batch, device=self.device)
-            step_logits = logits[batch_idx, actual_lens]
+            # 旧：`logits[batch_idx, attention_mask.sum(1) - 1]`（全序列 logits）。
+            # 新：末 stage 已按 `prefill_row_indices` 取过行 ⇒ 第 0 个位置就是它。
+            # 两者取到的是**同一批数值**（norm/lm_head 逐位置独立），见 b1 的等价性测试。
+            step_logits = logits[:, 0, :]
         else:
             step_logits = None
         decode_started_at = time.monotonic()
@@ -874,6 +904,8 @@ class _Qwen35GenerationMethods:
                 comm=comm,
                 tag=0,
                 step=step + 1,
+                # decode 的序列长度是 1 ⇒ 位置索引无意义；保持全量（= 逐字旧行为）。
+                lm_head_row_indices=None,
             )
             if is_last:
                 assert logits is not None

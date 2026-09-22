@@ -91,6 +91,7 @@ class _Qwen35PipelineForwardMethods:
         position_ids: torch.Tensor | None = None,
         position_input_ids: torch.Tensor | None = None,
         apply_lm_head: bool = False,
+        lm_head_row_indices: torch.Tensor | None = None,
         timing: dict[str, float | int] | None = None,
         comm: PipelineComm | None = None,
         tag: int = 0,
@@ -161,6 +162,7 @@ class _Qwen35PipelineForwardMethods:
                 ),
                 apply_lm_head=apply_lm_head,
                 all_gather_output=False,
+                lm_head_row_indices=lm_head_row_indices,
             )
             _add_pipeline_stage_timing(timing, "pipeline_stage_compute_sec", compute_started_at)
         else:
@@ -202,6 +204,7 @@ class _Qwen35PipelineForwardMethods:
                 position_input_ids=position_input_ids,
                 apply_lm_head=apply_lm_head,
                 all_gather_output=(self.pp_rank == self.pp_size - 1),
+                lm_head_row_indices=lm_head_row_indices,
             )
             _add_pipeline_stage_timing(timing, "pipeline_stage_compute_sec", compute_started_at)
 

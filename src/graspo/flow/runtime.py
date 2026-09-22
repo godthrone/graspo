@@ -8,6 +8,7 @@ configured via ``native.adapter`` in the YAML config (default:
 from __future__ import annotations
 
 import importlib
+import logging
 import sys
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -15,7 +16,12 @@ from typing import Any, TypedDict, cast
 
 from pydantic import BaseModel, ConfigDict
 
-from graspo.core.schema import ROLLOUT_TRAIN_METHODS, GraspoConfig, Sample
+from graspo.core.schema import (
+    PP_ROLLOUT_PREFILL_LAST_ONLY,
+    ROLLOUT_TRAIN_METHODS,
+    GraspoConfig,
+    Sample,
+)
 from graspo.ripple.buffer import Experience
 from graspo.ripple.parsing.completion import ParsedCompletion
 
@@ -405,9 +411,9 @@ def validate_native_runtime_config(config: GraspoConfig, native_config: Any | No
         raise ValueError("training.resume_from_checkpoint and lora.adapter_path cannot both be set")
     if int(native.pp_max_inflight_microbatches) < 0:
         raise ValueError("native.pp_max_inflight_microbatches must be >= 0")
-    if int(native.pp_p2p_timeout_sec) < 0:
+    if int(native.pp_rollout_p2p_timeout_sec) < 0:
         raise ValueError(
-            "native.pp_p2p_timeout_sec must be >= 0 (0 disables the bounded PP "
+            "native.pp_rollout_p2p_timeout_sec must be >= 0 (0 disables the bounded PP "
             "rendezvous wait, which restores the pre-P6 unbounded hang)"
         )
     if int(native.pp_rollout_no_progress_sec) <= 0:
@@ -415,7 +421,10 @@ def validate_native_runtime_config(config: GraspoConfig, native_config: Any | No
             "native.pp_rollout_no_progress_sec must be >= 1 (the PP rollout "
             "no-progress watchdog is what bounds stalls the NCCL watchdog cannot see)"
         )
+    if float(native.pp_rollout_logits_budget_gib) < 0:
+        raise ValueError("native.pp_rollout_logits_budget_gib must be >= 0 (0 = auto)")
     _validate_native_pp_rollout_gate(config, native)
+    _validate_pp_rollout_logits_budget(config, native)
 
 
 def _validate_native_pp_rollout_gate(config: GraspoConfig, native: Any) -> None:
@@ -448,9 +457,157 @@ def _validate_native_pp_rollout_gate(config: GraspoConfig, native: Any) -> None:
         "prefill, with no NCCL watchdog timeout (invisible to NCCL), i.e. an unbounded "
         "hang. To proceed you must opt in explicitly: set "
         "native.allow_unverified_pp_rollout=true (and expect a bounded failure thanks "
-        "to native.pp_p2p_timeout_sec / native.pp_rollout_no_progress_sec), or run "
+        "to native.pp_rollout_p2p_timeout_sec / native.pp_rollout_no_progress_sec), or run "
         f"pp_size=1, or use the msswift backend."
     )
+
+
+#: ``model.torch_dtype`` → 每元素字节数。只覆盖本仓配置会出现的取值；
+#: **未知取值 ⇒ 显式 WARNING 后跳过闸门**（宁可少一道围栏，不可猜错字节数）。
+_DTYPE_BYTES: dict[str, int] = {
+    "bfloat16": 2,
+    "bf16": 2,
+    "float16": 2,
+    "fp16": 2,
+    "half": 2,
+    "float32": 4,
+    "fp32": 4,
+    "float": 4,
+    "float64": 8,
+    "fp64": 8,
+    "double": 8,
+}
+
+_logger = logging.getLogger(__name__)
+
+
+def estimate_pp_rollout_logits_bytes(
+    *, batch: int, positions: int, vocab_size: int, dtype_bytes: int
+) -> int:
+    """末 stage 在 rollout prefill 要物化的 logits 字节数（b3，**纯计算**、可单测）。
+
+    ``positions`` 由 ``core.schema.PP_ROLLOUT_PREFILL_LAST_ONLY`` 决定：
+    ``True`` ⇒ 1（b1 之后的实际行为），``False`` ⇒ ``data.max_prompt_length``
+    （整条序列）。**同一个常量同时驱动行为与估算** ⇒ 不可能漂移。
+    """
+    for name, value in (
+        ("batch", batch),
+        ("positions", positions),
+        ("vocab_size", vocab_size),
+        ("dtype_bytes", dtype_bytes),
+    ):
+        if int(value) < 1:
+            raise ValueError(
+                f"estimate_pp_rollout_logits_bytes: {name} must be >= 1, got {value!r}"
+            )
+    return int(batch) * int(positions) * int(vocab_size) * int(dtype_bytes)
+
+
+def read_model_vocab_size(model_path: str | Path) -> int | None:
+    """从模型目录的 ``config.json`` 读词表大小；读不到返回 ``None``（不猜）。"""
+    path = Path(model_path) / "config.json"
+    try:
+        import json
+
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    candidates = [payload.get("vocab_size")]
+    text_config = payload.get("text_config")
+    if isinstance(text_config, dict):
+        candidates.append(text_config.get("vocab_size"))
+    for candidate in candidates:
+        if isinstance(candidate, int) and candidate > 0:
+            return int(candidate)
+    return None
+
+
+def resolve_pp_rollout_logits_budget_bytes(native: Any) -> int | None:
+    """显式预算（GiB）或 auto（最小可见 GPU 总显存 × 50%）；无法估算 ⇒ ``None`` + WARNING。"""
+    configured = float(native.pp_rollout_logits_budget_gib)
+    if configured > 0:
+        return int(configured * (1024**3))
+    try:
+        import torch
+    except ImportError as exc:  # pragma: no cover — 本机无 torch 的环境
+        _logger.warning(
+            "PP rollout logits 预算闸门跳过：无 torch（%s）；显式设置 "
+            "native.pp_rollout_logits_budget_gib 可恢复该围栏",
+            exc,
+        )
+        return None
+    try:
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA 不可用")
+        totals = [
+            int(torch.cuda.get_device_properties(index).total_memory)
+            for index in range(int(torch.cuda.device_count()))
+        ]
+        if not totals:
+            raise RuntimeError("没有可见 GPU")
+    except (RuntimeError, ValueError, OSError, AssertionError) as exc:
+        _logger.warning(
+            "PP rollout logits 预算闸门跳过：无法查询 GPU 显存（%s）；显式设置 "
+            "native.pp_rollout_logits_budget_gib 可恢复该围栏",
+            exc,
+        )
+        return None
+    # 单张 logits 张量占到半张卡已经远超任何正常 run 的合理瞬态占用。
+    return int(min(totals) * 0.5)
+
+
+def _validate_pp_rollout_logits_budget(config: GraspoConfig, native: Any) -> None:
+    """PP rollout prefill 的末 stage logits 显存预算闸门（b3，§2.3 启动期 fail-closed）。
+
+    形状口径（与代码行为共用常量，§1.4）：
+
+    * ``batch = training.rollout_queue_batch_size × training.rollout_group_size``
+      —— 与 ``ReplayBuffer`` 口径同一个乘积（trainer 每批 rollout 的样本数 × G）；
+    * ``positions = 1``（``PP_ROLLOUT_PREFILL_LAST_ONLY``）否则 ``data.max_prompt_length``；
+    * ``vocab`` 取自 ``{model.model_path}/config.json``（Qwen3.5-VL 嵌在 ``text_config`` 下）。
+
+    **为什么要有它**（实测事故）：末 stage 曾对整条序列做 ``norm+lm_head`` ⇒
+    T035 形状 `(64, 8192) × 248320 × 2B ≈ 232 GiB`（即便按实测 prompt 2382 也有 ~75 GiB），
+    80GB 卡物理不可能 ⇒ OOM 死（被 WORLD barrier 掩盖成 600s）或卡在分配器路径
+    ⇒ 对端无界挂死。b1 修好后它是**回归围栏**：把这条估算关回去就当场被拒。
+    """
+    if int(native.pp_size) <= 1:
+        return
+    if str(config.train_method) not in ROLLOUT_TRAIN_METHODS:
+        return
+    vocab_size = read_model_vocab_size(config.model.model_path)
+    dtype_bytes = _DTYPE_BYTES.get(str(config.model.torch_dtype).strip().lower())
+    if vocab_size is None or dtype_bytes is None:
+        _logger.warning(
+            "PP rollout logits 预算闸门跳过：无法从 %s/config.json 读 vocab_size（或 "
+            "torch_dtype=%r 未知）；这是**显式**跳过，不是静默放行",
+            config.model.model_path,
+            config.model.torch_dtype,
+        )
+        return
+    batch = int(config.training.rollout_queue_batch_size) * int(config.training.rollout_group_size)
+    positions = 1 if PP_ROLLOUT_PREFILL_LAST_ONLY else int(config.data.max_prompt_length)
+    estimate = estimate_pp_rollout_logits_bytes(
+        batch=batch, positions=positions, vocab_size=vocab_size, dtype_bytes=dtype_bytes
+    )
+    budget = resolve_pp_rollout_logits_budget_bytes(native)
+    if budget is None:
+        return
+    if estimate > budget:
+        raise RuntimeError(
+            "native PP rollout prefill would materialize "
+            f"~{estimate / 1024**3:.1f} GiB of last-stage logits "
+            f"(batch={batch} × positions={positions} × vocab={vocab_size} × "
+            f"{dtype_bytes}B), above the budget {budget / 1024**3:.1f} GiB "
+            f"(native.pp_rollout_logits_budget_gib="
+            f"{float(native.pp_rollout_logits_budget_gib):g}, 0=auto). "
+            "position count comes from core.schema.PP_ROLLOUT_PREFILL_LAST_ONLY="
+            f"{PP_ROLLOUT_PREFILL_LAST_ONLY}. Reduce training.rollout_queue_batch_size / "
+            "training.rollout_group_size / data.max_prompt_length, or raise the budget "
+            "explicitly if this estimate is wrong for your setup."
+        )
 
 
 def assert_forbidden_runtime_modules_not_imported() -> None:

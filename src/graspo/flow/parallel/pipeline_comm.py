@@ -26,6 +26,18 @@ GPipe 各方向"一整段递增"所以能对齐。拆成独立进程组 → 各�
 不受影响；配置了超时后，超时会抛具名 :class:`PipelineP2PTimeoutError`，把
 "永久挂死"变成"有界失败 + 明确报错"。
 
+**★ 作用域限制（2026-09-22 指挥官裁定 3，务必遵守）**：有界等待**只准用于
+PP rollout / 生成路径**（唯一消费点 ``generation.py``，键
+``native.pp_rollout_p2p_timeout_sec``）。**禁止**用于 1F1B 训练热路径
+（``training.py`` / ``training_sft.py`` / ``logprobs.py`` 的 ``wait_all``）：
+torch 的 ``Work.wait(timeout)`` 在**设了 timeout 时会阻塞 CPU 线程**（官方文档原文
+"if timeout is set, it will block the CPU thread…"），放到热路径上就是每步末尾多一次
+CPU 同步、损失跨 step 重叠——用健康路径上永不触发的超时换热路径性能（§18 留债）。
+训练路径的有界性由 **NCCL 自己的 watchdog** 提供（它的等待对象是"已入队 work"；
+而 P6 的无界形态是 NCCL 看不见的流/事件依赖 + 尚未入队的会合，只出现在 rollout 的
+紧会合序列里）。该作用域由 ``tests/flow/parallel/test_pp_bounded_wait_scope.py``
+的接线守卫钉住。
+
 **为什么单靠超时不够（必须配合会合点看门狗）**：若阻塞发生在 CUDA 流/事件依赖
 （``cudaStreamWaitEvent``）或"下一次会合尚未入队"的 host 侧等待上，本层根本没有
 在飞 work 可等 ⇒ 超时也无从触发。这一支由
@@ -44,7 +56,7 @@ GPipe 各方向"一整段递增"所以能对齐。拆成独立进程组 → 各�
         fwd_group=tp_state.pp_group_fwd,
         bwd_group=tp_state.pp_group_bwd,
         max_inflight=config.pp_max_inflight_microbatches,
-        wait_timeout_s=native.pp_p2p_timeout_sec,   # 0/None ⇒ 不设超时（旧行为）
+        wait_timeout_s=native.pp_rollout_p2p_timeout_sec,   # 0/None ⇒ 不设超时（旧行为）
     )
     recv = comm.fwd_recv(tensor, src=prev_rank, tag=chunk_idx)
     comm.wait(recv, label="prefill.recv")   # 计算流等待 recv 完成后再读 tensor
@@ -105,7 +117,7 @@ def pp_rendezvous_timeout(seconds: float | None) -> timedelta | None:
     """``秒 → timedelta`` 的**唯一转换点**（§1.4 单一真相源）。
 
     ``None`` / ``<= 0`` ⇒ ``None`` = **不设超时**（与修复前逐字一致：``work.wait()``
-    不带参）。取值来源是 ``native.pp_p2p_timeout_sec``；本模块内不出现第二个
+    不带参）。取值来源是 ``native.pp_rollout_p2p_timeout_sec``；本模块内不出现第二个
     默认阈值字面量。
     """
     if seconds is None:
@@ -440,7 +452,7 @@ def wait_all(works: list[Any]) -> None:
     """等待一组 work 全部完成。
 
     兼容旧调用（模块级、无 ``PipelineComm`` 上下文 ⇒ 无超时语义）。**新代码应优先
-    走** :meth:`PipelineComm.wait_all`，才能拿到 ``native.pp_p2p_timeout_sec`` 的
+    走** :meth:`PipelineComm.wait_all`，才能拿到 ``native.pp_rollout_p2p_timeout_sec`` 的
     有界语义（§1.4：有界性是设施层的单一契约）。
     """
     for work in works:
