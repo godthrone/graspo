@@ -10,7 +10,7 @@ import torch.distributed as dist
 from graspo.flow.adapters.models.common.layers import _log_cuda_mem
 from graspo.flow.adapters.models.qwen35_36.helpers import collate_sft_batch
 from graspo.flow.adapters.models.qwen35_36.model import Qwen35HybridTextModel
-from graspo.flow.parallel.pipeline_comm import PipelineComm
+from graspo.flow.parallel.pipeline_comm import PipelineComm, wait_all
 from graspo.flow.parallel.scheduling import build_scheduler
 from graspo.flow.parallel.tensor_utils import (
     _new_pipeline_stage_timing,
@@ -558,8 +558,6 @@ class _Qwen35SFTTrainingMethods:
             bwd_group=self.tp_state.pp_group_bwd,
             max_inflight=int(self.config.native.pp_max_inflight_microbatches),
             chunk_count=chunk_count,
-            # a1：有界等待（取值唯一来源 native.pp_p2p_timeout_sec；0 ⇒ 旧行为）。
-            wait_timeout_s=int(self.config.native.pp_p2p_timeout_sec),
         )
         send_works: list[Any] = []
         records: list[dict[str, Any] | None] = [None for _ in range(chunk_count)]
@@ -678,7 +676,7 @@ class _Qwen35SFTTrainingMethods:
         steady_sec = float(sched_stats.get("pipeline_steady_sec", 0.0))
         drain_sec = float(sched_stats.get("pipeline_drain_sec", 0.0))
         # 同步所有异步发送（数据已被下游消费），保证 buffer 生命周期安全
-        comm.wait_all(send_works, label="pp_training_sft.1f1b.sends")
+        wait_all(send_works)
 
         all_finite = all(finite_flags)
         finite_tensor = torch.tensor([all_finite], dtype=torch.int, device=self.device)
