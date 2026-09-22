@@ -332,8 +332,9 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
         可训练（fake 1-step 前向梯度非零），失败即拒绝启动训练——
         避免 v13 式的静默丢图空跑 19.5 小时。纯文本数据直接跳过。
 
-        **两道防线，前一道不碰 GPU**：先按配置判定"LoRA 目标是否真的包含视觉塔"
-        （``assert_lora_vision_targets_trainable``，纯逻辑，报错直接点名该改哪个键），
+        **两道防线，前一道不碰 GPU**：先按配置判定"视觉塔是否有可训载体"
+        （``assert_lora_vision_targets_trainable``，纯逻辑，报错直接点名该改哪个键；
+        判据按 ``tuner_type`` 分派——全参下不存在 LoRA 矩阵，该判据不适用），
         再走需要真机的前向预检。
         """
         from graspo.flow.trainer.preflight import (
@@ -353,11 +354,14 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
             )
         # 配置期防线（§2.3）：视觉模型 + 语言-only 的 LoRA 目标 = 视觉塔永远冻结，
         # 运行期预检也会拦，但那时模型已加载完。这里提前到不触 GPU 的判定。
+        # ★ 判据按 ``tuner_type`` 分派（全参下不存在 LoRA 矩阵 ⇒ 该判据不适用，
+        #   同一风险点由下方 run_multimodal_preflight 的可训视觉参数/梯度判据覆盖）。
         assert_lora_vision_targets_trainable(
             lora_target_modules=self.config.lora.target_modules,
             lora_target_preset=self.config.lora.target_preset,
             image_token_id=image_token_id,
             model_name=str(self.config.model.model_path),
+            tuner_type=self.config.effective_tuner_type,
         )
         run_multimodal_preflight(
             self.runtime,

@@ -58,22 +58,37 @@ class SFTTrainer:
         接线理由：SFT 确实走多模态批次（``training_sft.py`` 用
         ``deferred_multimodal`` 判定并调 ``assert_sft_batch_has_multimodal``），
         但此前**没有**任何运行期预检——GRASPO 路径有 ``run_multimodal_preflight``，
-        SFT 没有 ⇒ "视觉塔冻死"（LoRA 目标不含视觉模块，视觉塔全部参数被
-        ``requires_grad=False``）会在整个 SFT 训练里静默发生。
+        SFT 没有 ⇒ "视觉塔冻死"（视觉塔全部参数 ``requires_grad=False`` 却照训）
+        会在整个 SFT 训练里静默发生。
 
         这里复用 GRASPO **同一套纯逻辑判据**（``preflight`` 模块），不新造第二套：
-        - ``assert_lora_vision_targets_trainable``：配置期判定 LoRA 目标是否真的
-          包含视觉塔（报错直接点名该改哪个键）；
-        - ``assert_vision_tower_trainable``：加载后判定"声明了视觉 + 持有 embedding
-          的 rank 上视觉塔必须真的存在且注册了可训视觉 LoRA"。
+        - ``assert_lora_vision_targets_trainable``：配置期判定视觉塔是否有可训载体
+          （报错直接点名该改哪个键）；
+        - ``assert_vision_tower_trainable``：加载后判定"声明了视觉 + **本 rank 持有
+          embedding 层**的 rank 上视觉塔必须真的存在且可训"。
+
+        **两条判据都按 ``tuner_type`` 分派（宪法 §2.3）**：
+        - ``lora``：可训载体 = LoRA 矩阵 ⇒ 要求 ``visual.*`` target 命中；
+        - ``full``：不构造 LoRA 矩阵（``lora_r=0``），可训载体 = 视觉塔参数自身
+          （``build_qwen35_visual_tower`` 在全参下统一解开 ``requires_grad``）⇒
+          要求塔内至少一个 ``requires_grad=True`` 的参数。
+        全参档按生成器设计不写 ``lora`` 段（``target_preset`` 只是 schema 默认值
+        ``core/schema.py:240``），所以旧判据在全参下必然误报（T017/T018 实测）。
+
+        **``owns_embeddings`` 必须按本 rank 的 PP 位置派生**：SFT **并非**"先于 PP
+        切分"（``train()`` 先 ``runtime.setup()`` 装载 PP 分片模型，再调本方法），
+        因此 pp_rank≥1 的 rank 上 ``model.visual is None`` 属设计正常
+        （``placement_plan.py:135`` + ``model.py:108``）——写死 ``True`` 会把设计正常
+        判成故障（T017/T018 的 rank1..N-1）。
 
         **放行条件（不得误伤纯文本模型 / 语言-only 配置）**：
         ``config.has_vision_config`` 为 False 时两条判据都直接返回——
-        纯文本模型与语言-only 配置零开销、零误伤。模型声明了视觉但 LoRA 目标
-        全是语言模块 ⇒ 报错（这正是"视觉塔冻死"）。
+        纯文本模型与语言-only 配置零开销、零误伤。
 
-        :raises ValueError: 模型有视觉塔但 LoRA 目标里没有一个视觉模块
-        :raises RuntimeError: 模型声明了视觉、本 rank 持有 embedding、却无视觉塔或无可用视觉 target
+        :raises ValueError: 模型有视觉塔但（LoRA 模式下）目标里没有一个视觉模块，
+            或声明了视觉塔却没有可用的视觉占位 token
+        :raises RuntimeError: 模型声明了视觉、本 rank 持有 embedding、却无视觉塔或
+            该塔在本次模式下不可训
         """
         from graspo.flow.trainer.preflight import (
             assert_lora_vision_targets_trainable,
@@ -89,6 +104,7 @@ class SFTTrainer:
             return  # 非原生 LoRA 模型（无 model.config）：本体不适用
         if not bool(getattr(model_config, "has_vision_config", False)):
             return  # 纯文本模型 / 语言-only 配置：不判（不得误伤）
+        tuner_type = self.config.effective_tuner_type
         assert_lora_vision_targets_trainable(
             lora_target_modules=self.config.lora.target_modules,
             lora_target_preset=self.config.lora.target_preset,
@@ -96,12 +112,18 @@ class SFTTrainer:
             model_name=str(self.config.model.model_path),
             # 模型声明了视觉 ⇒ 占位 token 缺失属配置不一致，fail-closed。
             has_vision_config=True,
+            tuner_type=tuner_type,
         )
         assert_vision_tower_trainable(
             model,
             model_config,
-            owns_embeddings=True,  # SFT 入口先于 PP 切分，本处只判"视觉塔必须可训"
+            # 视觉塔按 PP 设计只存在于 embedding stage（pp_rank==0，见
+            # placement_plan.py:135）；写死 True 会在 pp_rank≥1 上误判。
+            # 直读 pp_rank（native TransformerAdapter 的固有属性，setup 后为真实值）：
+            # 不设缺省——适配器没有该属性属于契约不符，应显式报错而不是默默按 0 处理。
+            owns_embeddings=int(adapter.pp_rank) == 0,
             model_name=str(self.config.model.model_path),
+            tuner_type=tuner_type,
         )
 
     def train(self, *, smoke: bool = False) -> None:

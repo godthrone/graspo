@@ -19,6 +19,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from graspo.core.schema import TunerType, resolve_tuner_type
 from graspo.flow.trainer.preflight import (
     assert_lora_vision_targets_trainable,
     assert_vision_tower_trainable,
@@ -26,10 +27,29 @@ from graspo.flow.trainer.preflight import (
 from graspo.flow.trainer.sft_trainer import SFTTrainer
 
 
+class _FakeParam:
+    """最小参数鸭子类型：只暴露 ``requires_grad``（本文件不引入 torch，保持零框架依赖）。"""
+
+    def __init__(self, *, requires_grad: bool) -> None:
+        self.requires_grad = requires_grad
+
+
+class _FakeVisualTower:
+    """最小视觉塔鸭子类型：只暴露 ``parameters()``（全参分支用它判"塔是否可训"）。"""
+
+    def __init__(self, *requires_grad_flags: bool) -> None:
+        self._params = [_FakeParam(requires_grad=flag) for flag in requires_grad_flags]
+
+    def parameters(self) -> list[_FakeParam]:
+        return list(self._params)
+
+
 class _FakeVisionModel:
     """最小原生多模态模型鸭子类型：只有 ``visual`` 与 ``enabled_lora_target_names``。
 
-    ``visual=None`` 模拟"本 rank 上视觉塔没建出来"（缺陷②的静默降级形态）。
+    ``visual=None`` 模拟"本 rank 上视觉塔没建出来"（缺陷②的静默降级形态）；
+    ``visual_trainable`` 提供时用 ``_FakeVisualTower`` 模拟**全参**模式下的
+    "可训载体是参数自身"（``build_qwen35_visual_tower`` 的 ``full_param`` 分支）。
     """
 
     def __init__(
@@ -37,8 +57,16 @@ class _FakeVisionModel:
         *,
         has_visual_tower: bool,
         enabled_visual_targets: tuple[str, ...] = ("visual.merger.linear_fc1",),
+        visual_trainable: tuple[bool, ...] | None = None,
     ) -> None:
-        self.visual = object() if has_visual_tower else None
+        if not has_visual_tower:
+            self.visual = None
+        elif visual_trainable is None:
+            # LoRA 用例：可训载体是 LoRA 矩阵，判据不读 visual.parameters()
+            self.visual = object()
+        else:
+            # 全参用例：可训载体是参数自身的 requires_grad
+            self.visual = _FakeVisualTower(*visual_trainable)
         self.config = SimpleNamespace(
             has_vision_config=True,
             image_token_id=151655,
@@ -123,6 +151,100 @@ class TestVisionTowerTrainable:
             model, model.config, owns_embeddings=True, model_name="Qwen3.5-9B"
         )
 
+    # ── 全参（tuner_type="full"）分派：修 T017/T018 的"全参被判成 LoRA"──────────
+
+    def test_b10_full_mode_unfrozen_tower_passes_without_any_lora_target(self) -> None:
+        """★ 正向（修复前必失败）：全参下无任何 enabled LoRA target，但塔可训 ⇒ 放行。
+
+        ``enabled_visual_targets=()`` 是刻意的：证明全参分支**不看** LoRA 目标
+        （全参不构造 LoRA 矩阵，该判据结构性恒空）。
+        """
+        model = _FakeVisionModel(
+            has_visual_tower=True, enabled_visual_targets=(), visual_trainable=(True, True)
+        )
+        assert_vision_tower_trainable(
+            model,
+            model.config,
+            owns_embeddings=True,
+            model_name="Qwen3.5-9B",
+            tuner_type="full",
+        )
+
+    def test_b11_full_mode_frozen_tower_raises(self) -> None:
+        """★ 负向（防呆不倒退）：全参下塔存在但参数全冻结 ⇒ 照旧 fail-closed。"""
+        model = _FakeVisionModel(has_visual_tower=True, visual_trainable=(False, False))
+        with pytest.raises(RuntimeError, match="no trainable parameter under tuner_type='full'"):
+            assert_vision_tower_trainable(
+                model,
+                model.config,
+                owns_embeddings=True,
+                model_name="Qwen3.5-9B",
+                tuner_type="full",
+            )
+
+    def test_b12_full_mode_empty_tower_raises(self) -> None:
+        """★ 负向：全参下"塔内零参数"也算不可训（穷举式，不留 fail-open 缺口）。"""
+        model = _FakeVisionModel(has_visual_tower=True, visual_trainable=())
+        with pytest.raises(RuntimeError, match="no trainable parameter under tuner_type='full'"):
+            assert_vision_tower_trainable(
+                model,
+                model.config,
+                owns_embeddings=True,
+                model_name="Qwen3.5-9B",
+                tuner_type="full",
+            )
+
+    def test_b13_full_mode_non_embedding_pp_stage_is_not_harmed(self) -> None:
+        """★ 回归 B2（PP>1）：全参 + pp_rank≥1（本 rank 无塔）⇒ 放行，不得误判。
+
+        SFT 入口此前写死 ``owns_embeddings=True``，pp_size>1 时 rank≥1 上
+        ``model.visual is None`` 会被判成"视觉塔没建出来"（T017/T018 的 rank1..N-1）。
+        """
+        model = _FakeVisionModel(has_visual_tower=False)
+        assert_vision_tower_trainable(
+            model,
+            model.config,
+            owns_embeddings=False,
+            model_name="Qwen3.5-9B",
+            tuner_type="full",
+        )
+
+    def test_b14_default_tuner_type_is_lora_semantics(self) -> None:
+        """★ 契约（§2.1）：``tuner_type=None`` 必须与 ``"lora"`` 行为逐字相同。
+
+        既有无参调用者（含 adapter 加载期接线）不得因为本次改动发生任何语义漂移。
+        """
+        kwargs = {
+            "lora_target_modules": None,
+            "lora_target_preset": "language_safe",
+            "image_token_id": 151655,
+            "model_name": "Qwen3.5-9B",
+            "has_vision_config": True,
+        }
+        with pytest.raises(ValueError) as default_exc:
+            assert_lora_vision_targets_trainable(**kwargs)
+        with pytest.raises(ValueError) as explicit_exc:
+            assert_lora_vision_targets_trainable(**kwargs, tuner_type="lora")
+        assert str(default_exc.value) == str(explicit_exc.value)
+        assert "select no visual module" in str(default_exc.value)
+
+        model = _FakeVisionModel(has_visual_tower=True, enabled_visual_targets=())
+        with pytest.raises(RuntimeError) as default_model_exc:
+            assert_vision_tower_trainable(
+                model, model.config, owns_embeddings=True, model_name="Qwen3.5-9B"
+            )
+        with pytest.raises(RuntimeError) as explicit_model_exc:
+            assert_vision_tower_trainable(
+                model,
+                model.config,
+                owns_embeddings=True,
+                model_name="Qwen3.5-9B",
+                tuner_type="lora",
+            )
+        assert "no trainable visual LoRA target" in str(default_model_exc.value)
+        assert str(default_model_exc.value) == str(explicit_model_exc.value)
+        assert resolve_tuner_type(None) == "lora"
+
 
 class TestVisionTokenConsistency:
     """`assert_lora_vision_targets_trainable` 的 fail-open 收紧（默认行为不变）。"""
@@ -167,14 +289,67 @@ class TestVisionTokenConsistency:
             has_vision_config=True,
         )
 
+    # ── 全参（tuner_type="full"）分派：修 T017/T018/T035/T036 的误拦 ──────────
+
+    def test_b15_full_mode_skips_lora_target_judgement(self) -> None:
+        """★ 正向（修复前必失败，正是 T017 的失败态）：全参 + 语言-only 预设 ⇒ 放行。
+
+        全参档按生成器设计**不写** ``lora`` 段（``generate_matrix.py``），
+        ``target_preset='language_safe'`` 只是 ``core/schema.py`` 的默认值——
+        它不产生任何 LoRA 矩阵，判"LoRA 目标未覆盖视觉塔"无对象可判。
+        """
+        assert_lora_vision_targets_trainable(
+            lora_target_modules=None,
+            lora_target_preset="language_safe",
+            image_token_id=151655,
+            model_name="Qwen3.5-9B",
+            has_vision_config=True,
+            tuner_type="full",
+        )
+
+    def test_b16_full_mode_keeps_vision_token_consistency_check(self) -> None:
+        """★ 与模式无关的配置不一致校验**不得**被模式分支跳过，仍 fail-closed。"""
+        with pytest.raises(ValueError, match="no usable image token id"):
+            assert_lora_vision_targets_trainable(
+                lora_target_modules=None,
+                lora_target_preset="language_safe",
+                image_token_id=None,
+                model_name="Qwen3.5-9B",
+                has_vision_config=True,
+                tuner_type="full",
+            )
+
+    def test_b17_full_mode_text_only_model_still_released(self) -> None:
+        """纯文本模型在两种模式下都零开销放行（不得误伤）。"""
+        for tuner_type in (None, "lora", "full"):
+            assert_lora_vision_targets_trainable(
+                lora_target_modules=None,
+                lora_target_preset="language_safe",
+                image_token_id=None,
+                model_name="Qwen3-8B",
+                tuner_type=tuner_type,
+            )
+
 
 # ── 缺陷③：native SFT 的运行期预检接线 ───────────────────────────────────────
 
 
 class _FakeSFTConfig:
-    def __init__(self, *, target_preset: str | None, target_modules: list[str] | None) -> None:
+    def __init__(
+        self,
+        *,
+        target_preset: str | None,
+        target_modules: list[str] | None,
+        tuner_type: TunerType | None = None,
+    ) -> None:
         self.lora = SimpleNamespace(target_modules=target_modules, target_preset=target_preset)
         self.model = SimpleNamespace(model_path="/models/Qwen3.5-9B")
+        self.tuner_type = tuner_type
+
+    @property
+    def effective_tuner_type(self) -> TunerType:
+        """与 ``GraspoConfig.effective_tuner_type`` 同源（复用同一归一函数，不另立规则）。"""
+        return resolve_tuner_type(self.tuner_type)
 
 
 class _FakeRuntime:
@@ -183,14 +358,24 @@ class _FakeRuntime:
 
 
 class _FakeAdapter:
-    def __init__(self, model: object) -> None:
+    def __init__(self, model: object, *, pp_rank: int = 0) -> None:
         self.model = model
+        #: native TransformerAdapter 的固有属性（``setup()`` 后为真实 PP rank）
+        self.pp_rank = pp_rank
 
 
-def _make_sft_trainer(*, model: object, target_preset: str | None) -> SFTTrainer:
+def _make_sft_trainer(
+    *,
+    model: object,
+    target_preset: str | None,
+    tuner_type: TunerType | None = None,
+    pp_rank: int = 0,
+) -> SFTTrainer:
     trainer = SFTTrainer.__new__(SFTTrainer)  # 绕过 __init__（避免构造 runtime）
-    trainer.config = _FakeSFTConfig(target_preset=target_preset, target_modules=None)
-    trainer.runtime = _FakeRuntime(_FakeAdapter(model))
+    trainer.config = _FakeSFTConfig(
+        target_preset=target_preset, target_modules=None, tuner_type=tuner_type
+    )
+    trainer.runtime = _FakeRuntime(_FakeAdapter(model, pp_rank=pp_rank))
     return trainer
 
 
@@ -261,3 +446,48 @@ class TestSFTPreflightWiring:
         trainer.runtime = _FakeRuntime(None)
         with pytest.raises(RuntimeError, match="adapter not loaded"):
             trainer._preflight_multimodal()
+
+    # ── 全参 + PP>1 接线回归（T017/T018 的两个真实阻断点）──────────────────────
+
+    def test_c10_full_mode_embedding_rank_unfrozen_tower_passes(self) -> None:
+        """★ 正向（修复前必失败，T017 rank0 的失败态）：全参 + 无 lora 段 ⇒ 放行。"""
+        model = _FakeVisionModel(
+            has_visual_tower=True, enabled_visual_targets=(), visual_trainable=(True,)
+        )
+        trainer = _make_sft_trainer(
+            model=model, target_preset="language_safe", tuner_type="full", pp_rank=0
+        )
+        trainer._preflight_multimodal()  # 不抛异常
+
+    def test_c11_full_mode_non_embedding_pp_stage_passes(self) -> None:
+        """★ 正向（B2 回归，T017 rank1 的**下一处**阻断）：pp_rank≥1 本 rank 无塔 ⇒ 放行。
+
+        若只跳过配置期那条判据而不修 ``owns_embeddings``，这里会抛
+        ``RuntimeError: visual tower was not built`` —— 首错只是换了个位置。
+        """
+        model = _FakeVisionModel(has_visual_tower=False)
+        trainer = _make_sft_trainer(
+            model=model, target_preset="language_safe", tuner_type="full", pp_rank=1
+        )
+        trainer._preflight_multimodal()  # 不抛异常
+
+    def test_c12_full_mode_embedding_rank_frozen_tower_raises(self) -> None:
+        """★ 负向（防呆不倒退）：全参 + embedding rank + 塔被冻结 ⇒ 启动即拦。"""
+        model = _FakeVisionModel(
+            has_visual_tower=True, enabled_visual_targets=(), visual_trainable=(False,)
+        )
+        trainer = _make_sft_trainer(
+            model=model, target_preset="language_safe", tuner_type="full", pp_rank=0
+        )
+        with pytest.raises(RuntimeError, match="no trainable parameter under tuner_type='full'"):
+            trainer._preflight_multimodal()
+
+    def test_c13_lora_mode_unchanged_by_tuner_type_plumbing(self) -> None:
+        """契约（§2.1）：显式 ``tuner_type="lora"`` 与缺省逐字同行为（既有负向照旧）。"""
+        for tuner_type in (None, "lora"):
+            model = _FakeVisionModel(has_visual_tower=True, enabled_visual_targets=())
+            trainer = _make_sft_trainer(
+                model=model, target_preset="language_safe", tuner_type=tuner_type
+            )
+            with pytest.raises(ValueError, match="select no visual module"):
+                trainer._preflight_multimodal()

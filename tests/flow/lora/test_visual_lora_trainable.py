@@ -28,7 +28,7 @@ from torch import nn
 
 from graspo.core.lora import LORA_TARGET_PRESETS, resolve_lora_target_modules
 from graspo.flow.lora.lora_helpers import native_qwen_lora_available_targets
-from graspo.flow.lora.lora_linear import _replace_visual_lora_modules
+from graspo.flow.lora.lora_linear import LoRALinear, _replace_visual_lora_modules
 from graspo.flow.trainer.preflight import assert_lora_vision_targets_trainable
 
 _VISION_DEPTH = 3
@@ -144,6 +144,43 @@ class TestMechanismAttribution:
             for pattern in LORA_TARGET_PRESETS[name]
         )
 
+    def test_full_param_shape_has_no_lora_matrix_at_all(self) -> None:
+        """★ 全参（``lora_r=0``）的机制事实：LoRA 矩阵**根本不存在**，可训载体是参数自身。
+
+        这是 B3 的实证：``build_native_qwen_model`` 在全参下传 ``lora_r=0`` ⇒
+        ``LoRALinear.lora_enabled=False``、``lora_a/lora_b=None``（``lora_linear.py:123-133``）
+        ⇒ ``enabled_lora_target_names()`` 结构性恒空，用"LoRA 目标覆盖视觉塔"判全参必误报。
+        随后 ``build_qwen35_visual_tower`` 的 ``full_param`` 分支（``model_builders.py:173-177``）
+        把塔内参数统一放开——此时"可训视觉参数"判据仍然非空（防线强度不倒退）。
+        """
+        visual = _FakeVisionTower()
+        for param in visual.parameters():
+            param.requires_grad = False
+        _replace_visual_lora_modules(
+            visual,
+            lora_targets={"visual.merger.linear_fc1"},
+            lora_r=0,  # ← 全参模式的形状（model.py:63）
+            lora_alpha=16,
+            lora_dropout=0.0,
+            device=torch.device("cpu"),
+            torch_dtype=torch.float32,
+        )
+        root = nn.Module()
+        root.visual = visual
+
+        replaced = visual.merger.linear_fc1
+        assert isinstance(replaced, LoRALinear)
+        assert replaced.lora_enabled is False, "r=0 时不得启用 LoRA"
+        assert replaced.lora_a is None and replaced.lora_b is None
+        assert [n for n, _ in root.named_parameters() if "lora_" in n] == [], (
+            "全参模式不得存在任何 lora_* 参数 ⇒ LoRA 目标判据无对象可判"
+        )
+        assert _trainable_visual_params(root) == []  # 全参替换后、放开 requires_grad 前
+
+        for param in visual.parameters():  # build_qwen35_visual_tower 的 full_param 分支
+            param.requires_grad = True
+        assert _trainable_visual_params(root), "全参放开后视觉塔必须可训（防线不倒退）"
+
 
 class TestConfigTimeGuard:
     """配置期 fail-closed：报错点名该改的键，且不误伤合法组合。"""
@@ -203,6 +240,33 @@ class TestConfigTimeGuard:
             image_token_id=self.IMAGE_TOKEN_ID,
             model_name="Qwen3.5-9B",
         )
+
+    def test_full_mode_language_preset_is_not_judged(self) -> None:
+        """★ 全参（``tuner_type="full"``）下"LoRA 目标未覆盖视觉塔"不适用 ⇒ 放行。
+
+        这是 T017/T018/T035/T036 的失败态回归：全参档不写 ``lora`` 段，
+        ``target_preset`` 只是 schema 默认值（``core/schema.py``），
+        在 LoRA 模式下必报错、在全参模式下必须放行。
+        """
+        assert_lora_vision_targets_trainable(
+            lora_target_modules=None,
+            lora_target_preset="language_safe",
+            image_token_id=self.IMAGE_TOKEN_ID,
+            model_name="Qwen3.5-9B",
+            tuner_type="full",
+        )
+
+    def test_full_mode_still_rejects_missing_vision_token(self) -> None:
+        """模式分支不得吞掉与模式无关的配置不一致校验（仍 fail-closed）。"""
+        with pytest.raises(ValueError, match="no usable image token id"):
+            assert_lora_vision_targets_trainable(
+                lora_target_modules=None,
+                lora_target_preset="vision_common",
+                image_token_id=None,
+                model_name="Qwen3.5-9B",
+                has_vision_config=True,
+                tuner_type="full",
+            )
 
     def test_explicit_visual_modules_pass(self) -> None:
         assert_lora_vision_targets_trainable(
