@@ -19,6 +19,7 @@ import torch
 
 from graspo.flow.adapters.models.qwen35_36.model import Qwen35HybridTextModel
 from graspo.flow.logging import rotating_append, run_log_dir
+from graspo.flow.parallel import rendezvous_watchdog
 from graspo.flow.parallel.pipeline_comm import PipelineComm
 from graspo.flow.parallel.tensor_utils import _add_pipeline_stage_timing
 
@@ -38,6 +39,22 @@ def _pp_debug_log(output_dir: str, msg: str) -> None:
         logging.getLogger("graspo.pp_debug").exception(
             "PP debug log write failed with unexpected error (rank=%s)", rank
         )
+
+
+def _pp_probe(output_dir: str, label: str, **fields: Any) -> None:
+    """会合点探针（a3，缺陷 P6）：打一行带标签的调试日志 + 一次看门狗心跳。
+
+    **零行为改动**：只走既有的 ``_pp_debug_log`` 落盘通路（stderr +
+    ``pp_debug.log``）并更新 ``rendezvous_watchdog`` 的心跳；不改变任何控制流、
+    不碰张量、不新增集合通信。
+
+    为什么需要：2026-09-22 实测的挂死形态是"``pp_debug.log`` 只有 3 行、
+    两卡 util 0%、>18 min 无任何 watchdog 超时"——即**没有任何一行日志能指向
+    卡在哪个会合点**。逐会合点打点后，一次有界运行就能把卡点定位到唯一一行。
+    """
+    detail = " ".join(f"{key}={value}" for key, value in fields.items())
+    _pp_debug_log(output_dir, f"probe={label}" + (f" {detail}" if detail else ""))
+    rendezvous_watchdog.beat(label)
 
 
 class _Qwen35PipelineForwardMethods:
@@ -107,6 +124,18 @@ class _Qwen35PipelineForwardMethods:
             f"hidden={hidden_size} use_cache={use_cache}",
         )
 
+        _pp_probe(
+            str(self.config.training.output_dir),
+            "fwd_enter",
+            stage=self.pp_rank,
+            tag=tag,
+            input_seq=seq_len,
+            recv_alloc_seq=recv_seq,
+            batch=batch,
+            use_cache=use_cache,
+            label=debug_label,
+        )
+
         stage_input: torch.Tensor | None = None
         send_work: Any | None = None
         if self.pp_rank == 0:
@@ -132,8 +161,23 @@ class _Qwen35PipelineForwardMethods:
             )
             recv_started_at = time.monotonic()
             assert comm is not None
+            _pp_probe(
+                str(self.config.training.output_dir),
+                "recv_enqueue",
+                stage=self.pp_rank,
+                tag=tag,
+                src=self.tp_state.prev_pp_rank,
+                shape=tuple(stage_input.shape),
+            )
             recv_work = comm.fwd_recv(stage_input, src=int(self.tp_state.prev_pp_rank), tag=tag)
-            comm.wait(recv_work)  # 阻塞直到数据到达（上游异步 send，不会死锁）
+            comm.wait(recv_work, label=f"{debug_label}.recv")  # 阻塞直到数据到达
+            _pp_probe(
+                str(self.config.training.output_dir),
+                "recv_ready",
+                stage=self.pp_rank,
+                tag=tag,
+                src=self.tp_state.prev_pp_rank,
+            )
             _add_pipeline_stage_timing(timing, "pipeline_recv_sec", recv_started_at)
             if not use_cache:
                 # 仅训练路径需要梯度回流；生成（no_grad）与此无关。
@@ -167,6 +211,14 @@ class _Qwen35PipelineForwardMethods:
             )
             send_work = comm.fwd_send(
                 output.detach().contiguous(), dst=int(self.tp_state.next_pp_rank), tag=tag
+            )
+            _pp_probe(
+                str(self.config.training.output_dir),
+                "send_enqueue",
+                stage=self.pp_rank,
+                tag=tag,
+                dst=self.tp_state.next_pp_rank,
+                shape=tuple(output.shape),
             )
             _add_pipeline_stage_timing(timing, "pipeline_send_sec", send_started_at)
         if timing is not None:

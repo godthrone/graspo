@@ -120,6 +120,9 @@ class TestSchemaTemplateCoverageStillHolds:
             Path("samples/configs/config_example.yaml").read_text(encoding="utf-8")
         )
         paths = sorted(module._field_paths(GraspoConfig))
-        assert len(paths) == 167, f"schema 字段路径数变了（{len(paths)}），请复核本断言"
+        # 170 = 167（上一版）+ 3（缺陷 P6 的 PP 有界等待/看门狗/未验证闸门：
+        # native.pp_p2p_timeout_sec、native.pp_rollout_no_progress_sec、
+        # native.allow_unverified_pp_rollout）。除计数外判据不放松：仍要求模板全覆盖。
+        assert len(paths) == 170, f"schema 字段路径数变了（{len(paths)}），请复核本断言"
         missing = [path for path in paths if not module._nested_get(example, path)]
         assert missing == [], f"config_example.yaml 缺 schema 字段: {missing}"

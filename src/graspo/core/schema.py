@@ -582,6 +582,36 @@ class GraspoFlowConfig(BaseModel):
     readable_log_enabled: bool = True
     synchronize_cuda_timing: bool = False
     pp_max_inflight_microbatches: int = 0
+    # ── PP 会合点有界等待（缺陷 P6 的 a1；**默认 600s = NCCL 自身默认量级**）──
+    # 语义：PP 的 send/recv 与 pp_group token 广播的等待上限（秒）。
+    # **0 = 关闭有界等待**（退化为修复前的无界等待，逐字旧行为）。
+    # 为什么要有默认值而不是默认关闭：P6 的实测形态是"永久挂死且 NCCL watchdog
+    # 看不见"，无界等待本身就是缺陷的一部分。600s 与 NCCL 集合超时同量级 ⇒
+    # 健康运行下永不触发（实测首个 prefill 的 P2P 等待是毫秒级），只在真挂死时
+    # 把"无限"变成"有界失败"。
+    # 唯一转换点：`flow/parallel/pipeline_comm.pp_rendezvous_timeout`（§1.4）。
+    pp_p2p_timeout_sec: int = 600
+    # ── PP rollout 无进展看门狗（缺陷 P6 的 a4）────────────────────────────
+    # 语义：PP rollout 期间连续多少秒**没有任何会合点进展** ⇒ 判定停滞：
+    # 转储全线程栈后 fail-closed（非零退出，见 rendezvous_watchdog 的退出码）。
+    # 为什么必须有它（而不是只靠 pp_p2p_timeout_sec）：若卡点在 CUDA 流/事件依赖
+    # 或"下一次会合尚未入队"的 host 侧等待上，通信层根本没有在飞 work 可超时 ⇒
+    # 只能由通信层之外的看门狗提供有界性。
+    # 为什么是 300s：远大于任何真实会合间隔（实测 prefill 约 15s），又远小于
+    # runner 的 7200s 档位超时，保证"无界挂死白耗卡"不再发生。
+    pp_rollout_no_progress_sec: int = 300
+    # ── 未端到端验证的 native PP rollout：显式预授权（**默认关闭**，缺陷 P6 c1）─
+    # 事实：能力矩阵 54 档里 `native + pp_size>1 + 有 rollout` **只有 T035/T036**，
+    # 且**从未有一档通过**；`generation_pp.py` 是未接线死代码、真 NCCL 的 PP
+    # rollout 覆盖为 0 ⇒ 该组合是"未验证组合"，不是"已验证但有 bug 的组合"。
+    # 语义：默认 false ⇒ 启动期 fail-closed 拒绝该组合（`flow/runtime.
+    # validate_native_runtime_config`），错误信息直接指向 P6 的证据与开关名。
+    # 为什么不用 SKIP/静默跳过（§3.4 坏退路）：那会让档位"看起来通过"，把
+    # 能力缺口藏起来；正确做法是**显式拒绝 + 显式预授权**。
+    # 为什么与 tuner_type 无关：缺陷在 PP rollout 的通信/会合路径
+    # （`pipeline_forward` + `PipelineComm` + `_pipeline_generate_batch`）上，
+    # 与 lora/full 无关；矩阵只跑了 full，不代表 lora 就安全（§2.3 宁紧勿松）。
+    allow_unverified_pp_rollout: bool = False
     # PP 调度策略（默认 1F1B）。旧 GPipe（全 forward 后全 backward，bubble 最高、
     # 不重叠 forward/backward）已按宪法 §18.1 删除。1F1B 依赖双向进程组
     # （pp_group_fwd/pp_group_bwd）+ 显式 tag + 背压，早期单 peer-pair FIFO
