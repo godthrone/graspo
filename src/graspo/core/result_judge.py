@@ -1825,11 +1825,29 @@ def judge_a2(evidence: RunEvidence) -> CriterionResult:
     #     0 步）——那些断言是"关于这次训练的事实"，优先级高于"这道题可不可能考"。
     not_applicable, gate_reason = resolve_step_gate_applicability(evidence, threshold)
     if not_applicable:
+        # ★ **口径变更（2026-09-22 指挥官裁定）**：`min_optimizer_steps`（默认 5）是**我们
+        #   自己外挂的质量门槛**，属"效果/充分性"判断；用户的判据是"**能顺利跑完一个
+        #   epoch**"且明确"**不看效果**" ⇒ 把"跑完了的档"记成「口径不可测」正是过度严格。
+        #   ⇒ 门槛**退出闸门角色、只保留标注**；改以"**该档 config 的计划步数**"为准。
+        #   （`A2` 其它断言——权重确实更新、逐步推进、非有限跳过——**照旧不放宽**。）
+        planned = evidence.expected_optimizer_steps_per_epoch
+        if planned is None:
+            planned = evidence.expected_optimizer_steps_reachable
+        steps = evidence.optimizer_steps
+        annotation = (
+            f"（标注：本档每 epoch 计划步数仅 **{planned}**，属**本期最小配置**；"
+            f"原挂门槛 {threshold} 与可达上限 "
+            f"{evidence.expected_optimizer_steps_reachable} 两个数字原样保留作对照 —— "
+            "该门槛已**退出闸门角色**，不再据此判否）"
+        )
+        if isinstance(planned, int) and planned > 0 and steps is not None and steps >= planned:
+            return CriterionResult(
+                "A2", True,
+                f"跑满**该档计划步数**：optimizer step={steps} ≥ 计划 {planned}{annotation}",
+            )
         return CriterionResult(
-            "A2",
-            False,
-            f"{STEP_GATE_NOT_APPLICABLE_MARKER}：{gate_reason}",
-            not_applicable=True,
+            "A2", False,
+            f"**未跑满该档计划步数**：optimizer step={steps} < 计划 {planned}{annotation}",
         )
     if evidence.optimizer_steps < threshold:
         source = "清单" if evidence.min_optimizer_steps is not None else "缺省（清单未给门槛）"
@@ -2563,6 +2581,16 @@ def usability_step_criterion(evidence: RunEvidence) -> tuple[bool, bool, str]:
         return False, False, "读不到 optimizer step 数（取证缺口，fail-closed）"
     not_applicable, why = resolve_step_gate_applicability(evidence, threshold)
     if not_applicable:
+        planned = evidence.expected_optimizer_steps_per_epoch
+        if planned is None:
+            planned = evidence.expected_optimizer_steps_reachable
+        if isinstance(planned, int) and planned > 0 and steps >= planned:
+            return (
+                True,
+                False,
+                f"跑满该档计划步数 {steps} ≥ {planned}"
+                f"（外挂门槛 {threshold} 已退出闸门角色、仅作标注）",
+            )
         return False, True, f"{STEP_GATE_NOT_APPLICABLE_MARKER}：{why}"
     if steps >= threshold:
         return True, False, f"optimizer step={steps} ≥ 门槛 {threshold}"
