@@ -251,6 +251,60 @@ class SeriesEvidence:
     ignored_phase_records: dict[str, int] = field(default_factory=dict)
 
 
+def extract_skipped_nonfinite_all_ranks(
+    output_dir: Path | None,
+) -> tuple[int | None, dict[str, int], str]:
+    """**跨全部 rank** 抽取"因非有限梯度跳过优化器步"的次数（P0-1 修复）。
+
+    为什么必须遍历全部 rank（2026-09-22 复核实测的**能产出错误 ✅** 的洞）：
+    ``skipped_nonfinite`` 是**逐 rank 局部**读数，而 ``_rank_metric_steps`` 只读
+    ``rank_metrics.rank_00000.jsonl`` ⇒ **rank1 单独跳过、rank0 没跳时读到 0 ⇒ A7 假通过**，
+    一次"权重/LR 已分叉"的运行会被记成「✅ 训练可用」。
+    矩阵命中：`T029`(dp2)/`T030`(dp4)/`T041`(dp2)/`T042`(dp4)（native graspo，pp=1）。
+
+    口径（**取 MAX 不取 rank0**）：
+      · 优先读全局键 ``global_skipped_nonfinite_sum``（新落盘，若有）；
+      · 否则读该 rank 的局部 ``skipped_nonfinite``；
+      · 对**全部** rank 文件取 **MAX**——任一路径发生过跳过就是发生过（逐 rank 之和会
+        重复计数，MAX 是"最坏 rank"的保守读数，且不会漏报）。
+    返回 ``(max_count | None, {rank: count}, 人读明细)``；一个读数都没有 ⇒ ``None``（不猜）。
+    """
+    if output_dir is None:
+        return None, {}, "无可读产物根"
+    per_rank: dict[str, int] = {}
+    for events in sorted(output_dir.rglob("rank_metrics.rank_*.jsonl")):
+        rank_key = events.name
+        best: int | None = None
+        try:
+            text = events.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            if not line.strip():
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            metrics = payload.get("metrics") if isinstance(payload, dict) else None
+            if not isinstance(metrics, dict):
+                continue
+            for key in ("global_skipped_nonfinite_sum", "skipped_nonfinite"):
+                value = metrics.get(key)
+                if isinstance(value, int) and not isinstance(value, bool):
+                    best = value if best is None else max(best, value)
+        if best is not None:
+            per_rank[rank_key] = best
+    if not per_rank:
+        return None, {}, "没有任何 rank 文件带跳过计数读数"
+    worst = max(per_rank.values())
+    spread = sorted(set(per_rank.values()))
+    detail = "；".join(f"{name}={value}" for name, value in sorted(per_rank.items()))
+    if len(per_rank) > 1 and len(spread) > 1:
+        detail += " ⇒ **⚠ 各 rank 不一致（存在 rank 间跳过数不等 ⇒ 权重/LR 可能已分叉）**"
+    return worst, per_rank, detail
+
+
 def _rank_metric_steps(output_dir: Path | None) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """从 rank_metrics 旁路读「每个训练步一行」的逐步权威指标。
 
@@ -441,9 +495,11 @@ def extract_steps_and_series(output_dirs: Sequence[Path], log_text: str) -> Seri
     result = SeriesEvidence()
     metrics_rows: list[dict[str, Any]] = []
     ignored_phases: dict[str, int] = {}
+    rank_metrics_dir: Path | None = None
     for directory in output_dirs:
         metrics_rows, ignored_phases = _rank_metric_steps(directory)
         if metrics_rows:
+            rank_metrics_dir = directory
             break
     if ignored_phases:
         # 防呆（§2.2 显式即防呆）：含 metrics 却不在 STEP_METRICS_PHASES 里的 phase
@@ -473,11 +529,8 @@ def extract_steps_and_series(output_dirs: Sequence[Path], log_text: str) -> Seri
             step_total = row.get("global_optimizer_steps_sum")
             if isinstance(step_total, int):
                 result.optimizer_steps_per_step.append(step_total)
-            skipped = row.get("skipped_nonfinite")
-            if isinstance(skipped, int):
-                # native 的**精确**计数（逐 step 落盘）。
-                result.nonfinite_skips = int(result.nonfinite_skips or 0) + skipped
-                result.nonfinite_skips_source = "run_metrics:skipped_nonfinite"
+            # ★ 跳过计数**不在此处逐行累加**（那只看得到 rank0）——见函数末尾的
+            #   `extract_skipped_nonfinite_all_ranks`（P0-1 修复：跨全部 rank 取 MAX）。
         result.steps = len(result.losses)
         # 旁路每步一行、首行即训练步 1 ⇒ 首步 loss 就是 losses[0]（A4 零容差子检查可用）。
         result.first_logged_step = 1
@@ -583,6 +636,15 @@ def extract_steps_and_series(output_dirs: Sequence[Path], log_text: str) -> Seri
     #   但从 ms-swift 的 patch 可推：跳过时它返回的 `grad_norm` **就是 NaN**，且该读数会进
     #   逐步序列 ⇒ 用"**逐步 grad_norm 是否为 NaN**"推断跳过次数（**下界**：它不判 Inf 的
     #   那种跳过不会留下 NaN 读数）。**推断不出（无 grad_norm 读数）⇒ 保持 None**。
+    # ── ★ P0-1（2026-09-22 复核）：跳过计数**必须跨全部 rank**取 MAX ─────────────
+    #   `skipped_nonfinite` 是逐 rank 局部读数；只读 rank0 ⇒ rank1 单独跳过时读到 0
+    #   ⇒ A7 假通过（一次"权重/LR 已分叉"的运行会被记成 ✅ 可用）。
+    if result.source == "rank_metrics":
+        worst, per_rank, detail = extract_skipped_nonfinite_all_ranks(rank_metrics_dir)
+        if worst is not None:
+            result.nonfinite_skips = worst
+            result.nonfinite_skips_source = "run_metrics:all_ranks_max"
+            result.notes.append(f"nonfinite 跳过（跨全部 rank 取 MAX）：{detail}")
     if result.source != "rank_metrics" and not result.nonfinite_skips_source:
         # ★ 只数**数值型**读数：`MISSING_SENTINEL`（str）与空槽**不算读数**
         #   ——否则"一个读数都没有"会被误推断成"全部有限 ⇒ 0 次跳过"（假通过）。
@@ -594,13 +656,28 @@ def extract_steps_and_series(output_dirs: Sequence[Path], log_text: str) -> Seri
             value for value in result.grad_norms
             if isinstance(value, float) and not math.isfinite(value)
         ]
-        if real or nonfinite:
+        # ★ C 收紧（2026-09-22 复核）：**必须自证"每一步都有 grad_norm 读数"**。
+        #   否则 `logging_steps > 1` 且 NaN 只出现在**非 logging 步**时，会得到
+        #   "全部 finite ⇒ 0 次跳过" —— **仍是自动通过**（假阴性）。
+        #   自证条件：读数条数 ≥ 计划步数（`declared_total_steps`，拿不到就不算自证）。
+        declared = result.declared_total_steps
+        readings = len(real) + len(nonfinite)
+        self_proven = isinstance(declared, int) and declared > 0 and readings >= declared
+        if self_proven and (real or nonfinite):
             result.nonfinite_skips = len(nonfinite)
             result.nonfinite_skips_source = (
                 "log_inference:nan_grad_norm_count"
                 if nonfinite
                 else "log_inference:all_finite_grad_norm"
             )
+        elif real or nonfinite:
+            result.notes.append(
+                f"grad_norm 读数 {readings} 条 < 计划步数 {declared}（无法自证每步都有读数）"
+                "⇒ 跳过计数按**口径不可测**处理（不推断、不放行）"
+            )
+        # ② Inf 也计入 nonfinite：ms-swift 只判 isnan，而 torch 在 total_norm=inf 时
+        #    clip_coef=0 ⇒ `inf*0=nan` 的梯度**照常进 step**（可能污染参数）；
+        #    这里用 `math.isfinite` 同时覆盖 NaN 与 ±Inf。
         # 既无 finite 也无 nonfinite 的**数值**读数 ⇒ 保持 None（口径不可测，绝不放行）
     if _NONFINITE_GRAD_MARKER.search(log_text) and not result.nonfinite_skips:
         # 硬失败标记本身就是"这一步没推进"的证据（默认 1 次，仅用于让 A2 不通过；
@@ -1747,6 +1824,22 @@ def collect_run(
         output_identity: str | None = f"{stat.st_dev}:{stat.st_ino}"
     except OSError:
         output_identity = None
+    # ── ★ P0-1（2026-09-22 复核，最高优先）：跳过计数**必须跨全部 rank**取 MAX ──────
+    #   为什么放在这里而不是序列抽取里：`skipped_nonfinite` 是**逐 rank 局部**读数，
+    #   而 `_rank_metric_steps` 只读 `rank_metrics.rank_00000.jsonl` ⇒ rank1 单独跳过、
+    #   rank0 没跳时读到 0 ⇒ **A7 假通过**（一次权重/LR 已分叉的运行会被记成 ✅ 可用）。
+    #   这里直接对**产物根**遍历全部 `rank_metrics.rank_*.jsonl` 取 MAX，与序列来源无关。
+    _skip_count, _skip_per_rank, _skip_detail = extract_skipped_nonfinite_all_ranks(
+        output_dirs[0] if output_dirs else run_dir
+    )
+    if _skip_count is not None:
+        nonfinite_skips_value: int | None = _skip_count
+        nonfinite_skips_source_value = "run_metrics:all_ranks_max"
+        if len(set(_skip_per_rank.values())) > 1:
+            nonfinite_skips_source_value = "run_metrics:all_ranks_max（ranks 不一致）"
+    else:
+        nonfinite_skips_value = series.nonfinite_skips
+        nonfinite_skips_source_value = series.nonfinite_skips_source
     evidence = _judge.RunEvidence(
         tier_id=tier_id,
         exit_code=exit_code,
@@ -1763,8 +1856,8 @@ def collect_run(
         optimizer_steps_per_step=(
             tuple(series.optimizer_steps_per_step) if series.optimizer_steps_per_step else None
         ),
-        nonfinite_skips=series.nonfinite_skips,
-        nonfinite_skips_source=series.nonfinite_skips_source,
+        nonfinite_skips=nonfinite_skips_value,
+        nonfinite_skips_source=nonfinite_skips_source_value,
         losses_nonfinite=series.loss_nonfinite,
         losses_unavailable=series.loss_unavailable,
         steps_declared_total=series.declared_total_steps,
