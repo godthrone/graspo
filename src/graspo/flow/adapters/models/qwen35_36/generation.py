@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Any
 
 import torch
-import torch.distributed as dist
 from torch.nn.utils.rnn import pad_sequence
 
 from graspo.core.schema import Sample
@@ -20,7 +19,8 @@ from graspo.flow.adapters.multimodal_tensors import (
     _normalize_tool_batches,
     _slice_multimodal_inputs_offset,
 )
-from graspo.flow.parallel.pipeline_comm import PipelineComm, wait_all
+from graspo.flow.parallel import rendezvous_watchdog
+from graspo.flow.parallel.pipeline_comm import PipelineComm, bounded_broadcast
 from graspo.flow.parallel.tensor_utils import (
     _broadcast_and_pad_finished,
     _left_pad_token_rows,
@@ -714,6 +714,7 @@ class _Qwen35GenerationMethods:
         position_input_ids: torch.Tensor | None,
         comm: PipelineComm,
         tag: int,
+        step: int = 0,
     ) -> tuple[torch.Tensor | None, tuple[Any, ...] | None]:
         """一次 PP 生成 forward（KV cache）：末 stage 返回 logits，其余 stage 返回 None。"""
         output, present, _stage_input, send_work = self._pipeline_forward_hidden(
@@ -731,10 +732,34 @@ class _Qwen35GenerationMethods:
             debug_label="gen",
         )
         if send_work is not None:
-            wait_all([send_work])
+            self._pp_generation_probe("send_wait_enter", step=step, tag=tag, stage=self.pp_rank)
+            comm.wait_all([send_work], label=f"pp_rollout.gen.send.step={step}")
+            self._pp_generation_probe("send_wait_done", step=step, tag=tag, stage=self.pp_rank)
         if self.pp_rank == self.pp_size - 1:
             return output, present
         return None, present
+
+    def _pp_generation_probe(self, label: str, **fields: Any) -> None:
+        """PP rollout 会合点探针（a3）：复用 ``pipeline_forward._pp_probe`` 的落盘通路。
+
+        **零行为改动**：只写 ``pp_debug.log`` + 更新看门狗心跳。
+        """
+        from graspo.flow.adapters.models.qwen35_36.pipeline_forward import _pp_probe
+
+        _pp_probe(str(self.config.training.output_dir), label, **fields)
+
+    def _arm_pp_rollout_watchdog(self) -> None:
+        """配置并启动 PP rollout 会合点看门狗（a4）。
+
+        阈值取自 ``native.pp_rollout_no_progress_sec``（单一真相源）；落盘路径与
+        ``pp_debug.log`` 同一个 ``logs/<run_id>/`` 目录。看门狗只在 PP rollout
+        期间 armed（训练期不 arm，避免把正常的长计算误判为停滞）。
+        """
+        rendezvous_watchdog.configure_for_run(
+            output_dir=str(self.config.training.output_dir),
+            no_progress_sec=int(self.config.native.pp_rollout_no_progress_sec),
+        )
+        rendezvous_watchdog.arm(label="pp_rollout.start")
 
     def _pipeline_generate_batch(
         self,
@@ -760,7 +785,11 @@ class _Qwen35GenerationMethods:
             bwd_group=self.tp_state.pp_group_bwd,
             max_inflight=int(self.config.native.pp_max_inflight_microbatches),
             chunk_count=1,
+            # a1：有界等待。取值来自 native.pp_p2p_timeout_sec（单一真相源）；
+            # 0 ⇒ None ⇒ 与修复前逐字一致（不设超时）。
+            wait_timeout_s=int(self.config.native.pp_p2p_timeout_sec),
         )
+        pp_timeout_s = int(self.config.native.pp_p2p_timeout_sec)
         is_last = self.pp_rank == self.pp_size - 1
         src_rank = int(self._pp_generation_last_stage_rank())
         # prefill：position_input_ids = 完整 prompt，使每个 stage 各自计算并保存 rope_deltas
@@ -773,7 +802,9 @@ class _Qwen35GenerationMethods:
             position_input_ids=sequences,
             comm=comm,
             tag=0,
+            step=0,
         )
+        self._pp_generation_probe("prefill_done", step=0, stage=self.pp_rank, batch=batch)
         prefill_sec = time.monotonic() - prefill_started_at
         if is_last:
             assert logits is not None
@@ -786,8 +817,9 @@ class _Qwen35GenerationMethods:
         decode_tokens = 0
         sampling_sec = 0.0
         stop_check_sec = 0.0
-        for _ in range(max_new_tokens):
+        for step in range(max_new_tokens):
             self._sync_timing()
+            self._pp_generation_probe("decode_step_enter", step=step + 1, stage=self.pp_rank)
             if is_last:
                 sampling_started_at = time.monotonic()
                 assert step_logits is not None
@@ -799,7 +831,19 @@ class _Qwen35GenerationMethods:
             else:
                 next_token = torch.zeros(batch, dtype=torch.long, device=self.device)
             # 末 stage 采样后广播到本 pp_group（不跨 DP，避免污染不同数据分片）
-            dist.broadcast(next_token, src=src_rank, group=self.tp_state.pp_group)
+            # a2：有界集合（首个 decode step 是本进程**第一次**使用 pp_group，
+            # 实测挂死即在 C1 这一带；同步 dist.broadcast 没有 API 级超时）。
+            self._pp_generation_probe(
+                "bcast_enter", step=step + 1, stage=self.pp_rank, src=src_rank
+            )
+            bounded_broadcast(
+                next_token,
+                src=src_rank,
+                group=self.tp_state.pp_group,
+                timeout_s=pp_timeout_s,
+                label=f"pp_rollout.token_broadcast.step={step + 1}",
+            )
+            self._pp_generation_probe("bcast_done", step=step + 1, stage=self.pp_rank, src=src_rank)
             next_token = _broadcast_and_pad_finished(
                 next_token,
                 finished,
@@ -817,6 +861,9 @@ class _Qwen35GenerationMethods:
             if all_finished:
                 break
             attention_mask = sequences.ne(pad_token_id)
+            self._pp_generation_probe(
+                "decode_fwd_enter", step=step + 1, stage=self.pp_rank, seq_len=1
+            )
             logits, present = self._pipeline_generation_forward(
                 input_ids=next_token.unsqueeze(1),
                 attention_mask=attention_mask,
@@ -826,6 +873,7 @@ class _Qwen35GenerationMethods:
                 position_input_ids=None,
                 comm=comm,
                 tag=0,
+                step=step + 1,
             )
             if is_last:
                 assert logits is not None
@@ -878,44 +926,53 @@ class _Qwen35GenerationMethods:
         prompt_len = int(prompt_input_ids.shape[1])
         N = len(message_batches)  # noqa: N806
         all_generations: list[NativeGeneration] = []
-        with torch.no_grad():
-            for start in range(0, N, rollout_group_size):
-                stop = min(start + rollout_group_size, N)
-                chunk_ids = prompt_input_ids[start:stop]
-                flat_ids = chunk_ids.repeat_interleave(rollout_group_size, dim=0)
-                attention_mask = flat_ids.ne(pad_token_id)
-                finished = torch.zeros(flat_ids.shape[0], dtype=torch.bool, device=self.device)
-                seq, _timing = self._pipeline_generate_batch(
-                    sequences=flat_ids,
-                    attention_mask=attention_mask,
-                    multimodal_inputs=None,
-                    finished=finished,
-                    stop_token_ids=stop_token_ids,
-                    pad_token_id=pad_token_id,
-                    max_new_tokens=max_new_tokens,
-                    temperature=temperature,
-                    top_p=top_p,
-                )
-                per_prompt_seq = seq.view(chunk_ids.shape[0], rollout_group_size, -1)
-                for local_idx in range(chunk_ids.shape[0]):
-                    all_generations.append(
-                        self._generation_from_sequences(
-                            sequences=per_prompt_seq[local_idx],
-                            prompt_len=prompt_len,
-                            prompt_lens=[int(chunk_ids[local_idx].ne(pad_token_id).sum().item())],
-                            pad_token_id=pad_token_id,
-                            rollout_group_size=rollout_group_size,
-                            requested_prompt_queue_size=N,
-                            effective_prompt_queue_size=chunk_ids.shape[0],
-                            use_kv_cache=True,
-                            generation_micro_batch_size=flat_ids.shape[0],
-                            split_count=1,
-                            tokenize_sec=0.0,
-                            chunk_timings=[],
-                            timing_divisor=chunk_ids.shape[0],
-                            rollout_started_at=time.monotonic(),
-                        )
+        self._arm_pp_rollout_watchdog()
+        try:
+            with torch.no_grad():
+                for start in range(0, N, rollout_group_size):
+                    stop = min(start + rollout_group_size, N)
+                    chunk_ids = prompt_input_ids[start:stop]
+                    flat_ids = chunk_ids.repeat_interleave(rollout_group_size, dim=0)
+                    attention_mask = flat_ids.ne(pad_token_id)
+                    finished = torch.zeros(flat_ids.shape[0], dtype=torch.bool, device=self.device)
+                    seq, _timing = self._pipeline_generate_batch(
+                        sequences=flat_ids,
+                        attention_mask=attention_mask,
+                        multimodal_inputs=None,
+                        finished=finished,
+                        stop_token_ids=stop_token_ids,
+                        pad_token_id=pad_token_id,
+                        max_new_tokens=max_new_tokens,
+                        temperature=temperature,
+                        top_p=top_p,
                     )
+                    self._pp_generation_probe(
+                        "chunk_done", chunk_start=start, prompts=int(chunk_ids.shape[0])
+                    )
+                    per_prompt_seq = seq.view(chunk_ids.shape[0], rollout_group_size, -1)
+                    for local_idx in range(chunk_ids.shape[0]):
+                        all_generations.append(
+                            self._generation_from_sequences(
+                                sequences=per_prompt_seq[local_idx],
+                                prompt_len=prompt_len,
+                                prompt_lens=[
+                                    int(chunk_ids[local_idx].ne(pad_token_id).sum().item())
+                                ],
+                                pad_token_id=pad_token_id,
+                                rollout_group_size=rollout_group_size,
+                                requested_prompt_queue_size=N,
+                                effective_prompt_queue_size=chunk_ids.shape[0],
+                                use_kv_cache=True,
+                                generation_micro_batch_size=flat_ids.shape[0],
+                                split_count=1,
+                                tokenize_sec=0.0,
+                                chunk_timings=[],
+                                timing_divisor=chunk_ids.shape[0],
+                                rollout_started_at=time.monotonic(),
+                            )
+                        )
+        finally:
+            rendezvous_watchdog.disarm()
         return all_generations
 
     def _pipeline_generate_multimodal_groups(
@@ -997,61 +1054,70 @@ class _Qwen35GenerationMethods:
         )
 
         all_generations: list[NativeGeneration] = []
-        with torch.no_grad():
-            for prompt_start in range(0, N, prompt_chunk_size):
-                prompt_stop = min(prompt_start + prompt_chunk_size, N)
-                chunk_prompt_count = prompt_stop - prompt_start
-                row_start = prompt_start * G
-                row_stop = prompt_stop * G
-                chunk_input_ids = input_ids[row_start:row_stop]
-                chunk_attention_mask = attention_mask[row_start:row_stop]
-                flat_B = int(chunk_input_ids.shape[0])  # noqa: N806
-                chunk_prompt_lens = prompt_lens[row_start:row_stop]
+        self._arm_pp_rollout_watchdog()
+        try:
+            with torch.no_grad():
+                for prompt_start in range(0, N, prompt_chunk_size):
+                    prompt_stop = min(prompt_start + prompt_chunk_size, N)
+                    chunk_prompt_count = prompt_stop - prompt_start
+                    row_start = prompt_start * G
+                    row_stop = prompt_stop * G
+                    chunk_input_ids = input_ids[row_start:row_stop]
+                    chunk_attention_mask = attention_mask[row_start:row_stop]
+                    flat_B = int(chunk_input_ids.shape[0])  # noqa: N806
+                    chunk_prompt_lens = prompt_lens[row_start:row_stop]
 
-                mm_slice = _slice_multimodal_inputs_offset(
-                    multimodal_inputs,
-                    row_start,
-                    row_stop,
-                    image_offsets=image_offsets,
-                    patch_offsets=patch_offsets,
-                    video_offsets=video_offsets,
-                    video_patch_offsets=video_patch_offsets,
-                )
-                finished = torch.zeros(flat_B, dtype=torch.bool, device=self.device)
-                flat_sequences, _chunk_timing = self._pipeline_generate_batch(
-                    sequences=chunk_input_ids,
-                    attention_mask=chunk_attention_mask,
-                    multimodal_inputs=mm_slice,
-                    finished=finished,
-                    stop_token_ids=stop_token_ids,
-                    pad_token_id=pad_token_id,
-                    max_new_tokens=max_new_tokens,
-                    temperature=temperature,
-                    top_p=top_p,
-                )
-                for local_prompt_idx in range(chunk_prompt_count):
-                    row_start_inner = local_prompt_idx * G
-                    row_stop_inner = row_start_inner + G
-                    prompt_sequences = flat_sequences[row_start_inner:row_stop_inner].clone()
-                    all_generations.append(
-                        self._generation_from_sequences(
-                            sequences=prompt_sequences,
-                            prompt_len=prompt_len,
-                            prompt_lens=chunk_prompt_lens[row_start_inner : row_start_inner + 1],
-                            pad_token_id=pad_token_id,
-                            rollout_group_size=G,
-                            requested_prompt_queue_size=N,
-                            effective_prompt_queue_size=prompt_chunk_size,
-                            use_kv_cache=True,
-                            generation_micro_batch_size=flat_B,
-                            split_count=1,
-                            tokenize_sec=tokenize_sec / max(N, 1),
-                            chunk_timings=[],
-                            timing_divisor=chunk_prompt_count,
-                            rollout_started_at=time.monotonic(),
-                            multimodal_rows=rows[row_start_inner:row_stop_inner],
-                        )
+                    mm_slice = _slice_multimodal_inputs_offset(
+                        multimodal_inputs,
+                        row_start,
+                        row_stop,
+                        image_offsets=image_offsets,
+                        patch_offsets=patch_offsets,
+                        video_offsets=video_offsets,
+                        video_patch_offsets=video_patch_offsets,
                     )
+                    finished = torch.zeros(flat_B, dtype=torch.bool, device=self.device)
+                    flat_sequences, _chunk_timing = self._pipeline_generate_batch(
+                        sequences=chunk_input_ids,
+                        attention_mask=chunk_attention_mask,
+                        multimodal_inputs=mm_slice,
+                        finished=finished,
+                        stop_token_ids=stop_token_ids,
+                        pad_token_id=pad_token_id,
+                        max_new_tokens=max_new_tokens,
+                        temperature=temperature,
+                        top_p=top_p,
+                    )
+                    self._pp_generation_probe(
+                        "chunk_done", chunk_start=prompt_start, prompts=chunk_prompt_count
+                    )
+                    for local_prompt_idx in range(chunk_prompt_count):
+                        row_start_inner = local_prompt_idx * G
+                        row_stop_inner = row_start_inner + G
+                        prompt_sequences = flat_sequences[row_start_inner:row_stop_inner].clone()
+                        all_generations.append(
+                            self._generation_from_sequences(
+                                sequences=prompt_sequences,
+                                prompt_len=prompt_len,
+                                prompt_lens=chunk_prompt_lens[
+                                    row_start_inner : row_start_inner + 1
+                                ],
+                                pad_token_id=pad_token_id,
+                                rollout_group_size=G,
+                                requested_prompt_queue_size=N,
+                                effective_prompt_queue_size=prompt_chunk_size,
+                                use_kv_cache=True,
+                                generation_micro_batch_size=flat_B,
+                                split_count=1,
+                                tokenize_sec=tokenize_sec / max(N, 1),
+                                chunk_timings=[],
+                                timing_divisor=chunk_prompt_count,
+                                rollout_started_at=time.monotonic(),
+                                multimodal_rows=rows[row_start_inner:row_stop_inner],
+                            )
+                        )
+        finally:
+            rendezvous_watchdog.disarm()
         return all_generations
 
     # ── Training ────────────────────────────────────────────────────────────

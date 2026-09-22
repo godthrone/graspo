@@ -94,6 +94,11 @@ select = ["E", "F", "I", "N", "W", "UP", "BLE"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+# 需要真 CUDA 设备的用例（默认自动 skipif；标记只为便于 `-m gpu` / `-m "not gpu"` 筛选）。
+# 首次登记于缺陷 P6 的 PP 会合 e2e（tests/flow/parallel/test_pp_rendezvous_e2e.py）。
+markers = [
+    "gpu: 需要真 CUDA 设备（无卡环境自动 skip；`-m gpu` 只跑这些）",
+]
 
 [tool.mypy]
 python_version = "3.11"

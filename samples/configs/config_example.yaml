@@ -99,6 +99,19 @@ native:
   synchronize_cuda_timing: false
   pp_max_inflight_microbatches: 0   # PP 背压：0=auto（框架推导），>0=显式在途上限
   pp_scheduler: one_f_one_b         # PP 唯一调度：1F1B（默认）| 1f1b
+  # ── PP 会合点有界等待（缺陷 P6）────────────────────────────────────────────
+  # native PP 的 send/recv 与 pp_group token 广播的等待上限（秒）。
+  # 0 = 关闭（退化为修复前的无界等待）；600 = 与 NCCL 集合超时同量级，健康运行
+  # 下永不触发，只在真挂死时把"无限"变成"具名有界失败"。
+  pp_p2p_timeout_sec: 600
+  # PP rollout 无进展看门狗（秒）：连续该秒数没有任何会合点进展 ⇒ 转储全线程栈后
+  # fail-closed。它是 CUDA 流/事件依赖这类"NCCL watchdog 看不见"的挂死的唯一有界手段。
+  pp_rollout_no_progress_sec: 300
+  # ── 未端到端验证的 native PP rollout：显式预授权（默认关闭）─────────────────
+  # native + pp_size>1 + rollout 的档位从未有一档端到端通过（矩阵里只有 T035/T036
+  # 命中，均未过）⇒ 默认启动期拒绝。显式置 true 表示"我知道它未验证、仍要跑"，
+  # 此时依赖上面的超时/看门狗保证失败有界且可定位。
+  allow_unverified_pp_rollout: false
 
 # ── ms-swift 后端参数（仅 backend: msswift 时生效；native 后端忽略）────────────
 #
