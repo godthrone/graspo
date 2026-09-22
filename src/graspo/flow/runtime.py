@@ -15,7 +15,7 @@ from typing import Any, TypedDict, cast
 
 from pydantic import BaseModel, ConfigDict
 
-from graspo.core.schema import GraspoConfig, Sample
+from graspo.core.schema import ROLLOUT_TRAIN_METHODS, GraspoConfig, Sample
 from graspo.ripple.buffer import Experience
 from graspo.ripple.parsing.completion import ParsedCompletion
 
@@ -405,6 +405,52 @@ def validate_native_runtime_config(config: GraspoConfig, native_config: Any | No
         raise ValueError("training.resume_from_checkpoint and lora.adapter_path cannot both be set")
     if int(native.pp_max_inflight_microbatches) < 0:
         raise ValueError("native.pp_max_inflight_microbatches must be >= 0")
+    if int(native.pp_p2p_timeout_sec) < 0:
+        raise ValueError(
+            "native.pp_p2p_timeout_sec must be >= 0 (0 disables the bounded PP "
+            "rendezvous wait, which restores the pre-P6 unbounded hang)"
+        )
+    if int(native.pp_rollout_no_progress_sec) <= 0:
+        raise ValueError(
+            "native.pp_rollout_no_progress_sec must be >= 1 (the PP rollout "
+            "no-progress watchdog is what bounds stalls the NCCL watchdog cannot see)"
+        )
+    _validate_native_pp_rollout_gate(config, native)
+
+
+def _validate_native_pp_rollout_gate(config: GraspoConfig, native: Any) -> None:
+    """未验证组合 ``native + pp_size>1 + rollout`` 的**启动期**显式闸门（P6 c1）。
+
+    为什么放在这里而不是配置加载（pydantic）：闸门要求的是"**启动期**拒绝"，
+    且它只在 native 运行链路上有意义（``GraspoConfig`` 的加载期契约被既有 46 档
+    与多个测试依赖，不动它 = 不改既有契约面，§2.3 收紧而非放宽）。
+
+    为什么默认拒绝而不是"先跑着看"：该组合**从未有一档端到端通过**
+    （矩阵 54 档里只有 T035/T036 命中，T036 从未跑、T035 两次实测分别被
+    600s 超时掩盖与无界挂死）；默认放行等于把"能力缺口"伪装成"偶发 bug"。
+
+    为什么不用环境变量/SKIP：那正是 §3.4 说的坏退路（让档位看起来通过）。
+    这里是**显式配置预授权**：开关名、默认值、消费点各只有一处（§1.4）。
+    """
+    if not (native_pp_size := int(native.pp_size)) > 1:
+        return
+    if str(config.train_method) not in ROLLOUT_TRAIN_METHODS:
+        return
+    if bool(native.allow_unverified_pp_rollout):
+        return
+    raise RuntimeError(
+        "native PP rollout is not end-to-end verified and is refused by default: "
+        f"train_method={config.train_method!r} + native + pp_size={native_pp_size} "
+        "runs a rollout through pipeline-parallel generation, which has never passed "
+        "an end-to-end run (all 54 matrix tiers: only T035/T036 hit this combination, "
+        "neither passed; the only current coverage is a CPU-mock unit test). "
+        "Observed failure mode (defect P6, 2026-09-22): the run hangs after the first "
+        "prefill, with no NCCL watchdog timeout (invisible to NCCL), i.e. an unbounded "
+        "hang. To proceed you must opt in explicitly: set "
+        "native.allow_unverified_pp_rollout=true (and expect a bounded failure thanks "
+        "to native.pp_p2p_timeout_sec / native.pp_rollout_no_progress_sec), or run "
+        f"pp_size=1, or use the msswift backend."
+    )
 
 
 def assert_forbidden_runtime_modules_not_imported() -> None:
