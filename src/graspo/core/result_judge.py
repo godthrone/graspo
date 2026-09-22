@@ -2492,12 +2492,17 @@ def usability_step_criterion(evidence: RunEvidence) -> tuple[bool, bool, str]:
     threshold, _reject = resolve_min_optimizer_steps(evidence.min_optimizer_steps)
     if threshold is None:
         return False, False, f"缺省门槛不可解析（min_optimizer_steps={evidence.min_optimizer_steps}）"
-    not_applicable, why = resolve_step_gate_applicability(evidence, threshold)
+    # ★ 顺序与 :func:`judge_a2` **逐条一致**（§1.4 单一真相源）：
+    #   **先判"读不到步数"这个取证缺口**，再谈"门槛结构上不可测"。
+    #   反过来的话，`optimizer_steps=None` + `reachable < 门槛` 会被错判成
+    #   「口径不可测（结构性）」，而事实是**这次没取到读数**——两者修法完全不同
+    #   （前者修采集，后者要改档位定义）。这条区分有既有用例守卫。
     steps = evidence.optimizer_steps
-    if not_applicable:
-        return False, True, f"{STEP_GATE_NOT_APPLICABLE_MARKER}：{why}"
     if steps is None:
         return False, False, "读不到 optimizer step 数（取证缺口，fail-closed）"
+    not_applicable, why = resolve_step_gate_applicability(evidence, threshold)
+    if not_applicable:
+        return False, True, f"{STEP_GATE_NOT_APPLICABLE_MARKER}：{why}"
     if steps >= threshold:
         return True, False, f"optimizer step={steps} ≥ 门槛 {threshold}"
     return False, False, f"optimizer step={steps} < 门槛 {threshold}（未跑满预定步数/epoch）"
@@ -2574,7 +2579,8 @@ def judge_tier(
             failure_class = FailureClass.GATE_NOT_APPLICABLE
             note = (
                 f"⚠ 口径不可测：{steps_detail}——该档用本 config 无论跑多久都达不到门槛"
-                f" ⇒ 能力**未被本次取数证伪**，门槛值一个字未放宽。｜{diagnostics_note}"
+                " ⇒ **不是训练失败**：能力**未被本次取数证伪**，门槛值一个字未放宽。"
+                f"｜{diagnostics_note}"
             )
         elif primary_evidence_gap and substantive is None:
             failure_class = FailureClass.EVIDENCE_GAP

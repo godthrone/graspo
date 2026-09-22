@@ -144,7 +144,7 @@ def test_null_run_still_fails_after_null_is_rewritten_to_zero():
     assert judge_a6(zero_filled).passed
     # 但整条判定链仍拦住它（A2 新断言是唯一拦住它的那条）。
     judgement = judge_tier(zero_filled, zero_filled, context_length=8192)
-    assert judgement.ledger_status == "❌ 失败"
+    assert judgement.ledger_status == "❌ 不可用"
 
 
 def test_injected_defect_zero_filled_null_would_pass_old_judgement():

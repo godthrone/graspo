@@ -368,10 +368,11 @@ def test_gate_not_applicable_never_masks_a_real_failure():
     < 门槛（口径不可测）。第三态**只**说"步数这条测不了"，**不替 A1 说话**。
     简化 `ledger_status` 时漏掉这个守卫，会把真失败误标成「⚠ 口径不可测」。
     """
+    # 构造要点：**步数读数存在但 < 门槛**（⇒ 结构性不可测）+ **A1 真崩**。
+    # 注意 `optimizer_steps=None` 是**取证缺口**（已被另一条用例守卫），不能用来构造第三态。
     crashed_with_unreachable_steps = make_evidence(
-        exit_code=1, optimizer_steps=None, losses=(), grad_norms=(),
-        artifacts_present={}, expected_optimizer_steps_reachable=2,
-        min_optimizer_steps=5,
+        exit_code=1, optimizer_steps=2, losses=(1.0, 1.0), grad_norms=(1.0, 1.0),
+        expected_optimizer_steps_reachable=2, min_optimizer_steps=5,
     )
     judgement = judge_tier(crashed_with_unreachable_steps)
     assert judgement.step_gate_not_applicable is True
