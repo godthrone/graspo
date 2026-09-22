@@ -116,6 +116,41 @@ def _normalize_optimizer_state_to_params(optimizer: Any) -> list[str]:
 
 
 #: `global_grad_norm_mean` 的**口径标签**（随值落盘，防止误读；2026-09-22 裁定）。
+#: `global_grad_norm_l2` 的**分模式口径**（2026-09-22 离线重算执行者指出 + 指挥官裁定）：
+#: 同一个 `sqrt(Σ‖g_r‖²)` 在**分片**与**DP 复制**下语义**不同**，必须如实标注，不许 over-claim。
+GRAD_NORM_L2_CALIBER_SHARDED = (
+    "per_rank_l2_composition（= sqrt(Σ‖g_r‖²)；PP/TP 各 rank 持**不同分片** ⇒ 等于拼接后的"
+    "**全模型梯度范数**）"
+)
+GRAD_NORM_L2_CALIBER_DP = (
+    "per_rank_l2_composition（= sqrt(Σ‖g_r‖²)；**DP 下各 rank 持同一份参数、梯度经 all-reduce 平均**"
+    " ⇒ 该式是 ‖mean(g_r)‖ 的**上界**，**不等于**全模型梯度范数，也**不等于**更新步长；"
+    "对照见 global_grad_norm_dp_mean）"
+)
+GRAD_NORM_L2_CALIBER_SINGLE = "single_rank（单卡/单进程 ⇒ 就是**全模型梯度范数**）"
+GRAD_NORM_L2_CALIBER_UNDETERMINED = (
+    "per_rank_l2_composition（**并行布局未判定**：既有分片又有复制，或字段缺失 ⇒ "
+    "**不声明**它等于全模型范数）"
+)
+
+
+def grad_norm_l2_caliber(dp_size: int, tp_size: int, pp_size: int) -> str:
+    """按并行布局给出 `global_grad_norm_l2` 的**如实口径**（不猜：判不了就说判不了）。
+
+    - 纯 DP 复制（dp>1、tp=pp=1）⇒ 各 rank 同一份参数、梯度被平均 ⇒ L2 合成是**上界**；
+    - 有分片（tp>1 或 pp>1）⇒ 各 rank 持不同参数 ⇒ L2 合成 = 拼接后的全模型范数；
+    - 单卡（全 1）⇒ 平凡等于全模型范数；
+    - 混合（dp>1 且 tp/pp>1）⇒ 两者叠加，无简单等式 ⇒ 标注"未判定"，**不 over-claim**。
+    """
+    if dp_size <= 1 and tp_size <= 1 and pp_size <= 1:
+        return GRAD_NORM_L2_CALIBER_SINGLE
+    if tp_size == 1 and pp_size == 1 and dp_size > 1:
+        return GRAD_NORM_L2_CALIBER_DP
+    if dp_size == 1 and (tp_size > 1 or pp_size > 1):
+        return GRAD_NORM_L2_CALIBER_SHARDED
+    return GRAD_NORM_L2_CALIBER_UNDETERMINED
+
+
 GRAD_NORM_MEAN_CALIBER = (
     "per_rank_mean（= 各 rank 梯度 L2 范数的算术平均；"
     "**≠ 全模型梯度范数**（PP/TP 各 rank 只持部分参数，正确口径见 global_grad_norm_l2）、"
@@ -768,6 +803,9 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
                 "global_nonzero_grad_count_sum": int(local.get("nonzero_grad_count") or 0),
                 "global_loss_mean": local.get("loss_mean"),
                 "global_grad_norm_mean": local.get("grad_norm_mean"),
+                "global_grad_norm_l2": local.get("grad_norm_mean"),
+                "global_grad_norm_l2_caliber": GRAD_NORM_L2_CALIBER_SINGLE,
+                "global_grad_norm_dp_mean": local.get("grad_norm_mean"),
                 "global_lora_norm_delta_mean": local.get("lora_norm_delta"),
                 "global_trainable_norm_delta_mean": local.get("trainable_norm_delta"),
                 "grad_count_metric": local.get("grad_count_metric"),
@@ -805,6 +843,14 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
                 item.get("grad_norm_mean") for item in ranks
             ),
             "global_grad_norm_caliber": GRAD_NORM_MEAN_CALIBER,
+            # ★ 分模式口径（同一个 sqrt(Σ‖g_r‖²) 在 DP 与 PP/TP 下语义不同）
+            "global_grad_norm_l2_caliber": grad_norm_l2_caliber(
+                self.dp_size, self.tp_size, self.pp_size
+            ),
+            # DP 下的对照值：逐 rank 范数的算术平均（读者可自己看出与 L2 合成差多少）
+            "global_grad_norm_dp_mean": _mean_present(
+                item.get("grad_norm_mean") for item in ranks
+            ),
             # lora 模式：LoRA 权重范数变化；full 模式：该键为 None（无 lora 参数 ⇒
             # 指标不适用，_mean_present 会把 None 过滤掉，不会退化成 0）。
             "global_lora_norm_delta_mean": _mean_present(
