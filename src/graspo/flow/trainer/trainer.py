@@ -40,6 +40,11 @@ from graspo.ripple.monitoring.stats import (
 from graspo.ripple.monitoring.summary import round_timing_details
 from graspo.ripple.reward.reward import create_reward
 
+#: 默认进程组（WORLD）在 PyTorch/NCCL 日志里的名字，**仅用于诊断输出**。
+#: 不通过私有 API（``distributed_c10d._get_default_group()``）取名——那会把日志耦合到
+#: PyTorch 内部实现；这是与 NCCL 日志逐字一致的公开叫法（``PG ID 0 PG GUID 0(default_pg)``）。
+_DEFAULT_PG_NAME = "default_pg"
+
 
 class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
     """GRASPO 训练循环，由 GraspoFlow 分布式运行时驱动。
@@ -292,7 +297,7 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
             # ``c10::DistBackendError`` + SIGABRT（首错取证链断裂）。
             # 详见 :meth:`_abort_distributed` 与 :meth:`_teardown_after_train_loop`。
             aborted = True
-            self._abort_distributed()
+            self._abort_distributed(aborted=aborted)
             raise
         finally:
             # 正常退出（含 ``return``，如 smoke 边界）：保留原语义，先对齐再 teardown。
@@ -311,8 +316,8 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
             dist.barrier()
         self.runtime.close()
 
-    def _abort_distributed(self) -> None:
-        """训练循环**异常退出**路径的收口：非阻塞销毁进程组，绝不掩盖首个异常。
+    def _abort_distributed(self, *, aborted: bool) -> None:
+        """训练循环**异常退出**路径的收口：先记 WARNING，再非阻塞销毁进程组。
 
         **为什么不走 ``self.runtime.close()``**：它内部的 ``destroy_parallel_state``
         会再做一次 WORLD barrier（``state.py:273``）——在"一侧 stage 已失败、另一侧
@@ -321,10 +326,31 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
         对端阻塞中的集合会立刻失败，两端一起快速退出，首个异常的完整 Python 栈得以
         打印，torchrun 随即回收其余 rank。
 
+        **abort 前必须留下一条 WARNING（可观测性，2026-09-22 裁定 1）**：这条日志是
+        "本 rank 是否进入了异常退出路径"的**直接判据**。实测教训（T035，GPU0/1 单档）：
+        当时没有这条日志，只能靠"rank1 的 3 个 NCCL 通信组是否仍存活"**间接反推**它
+        从未进入本方法——错误可见性本身就是可靠性的一部分。
+
+        :param aborted: ``train()`` 的退出标志（调用点恒为 ``True``）；显式传入使日志
+            自带该标志，便于事后按日志重建判定链。
         :raises: 不抛出——清理失败只记 WARNING（异常路径的二次失败绝不能替换首错）。
         """
         if not (dist.is_available() and dist.is_initialized()):
             return
+        try:
+            # ``self.runtime`` 是鸭子类型（单测用 fake）；诊断取数失败绝不能替换首错，
+            # 故此处显式兜住取数异常并退化为 "?"（§2.2：不用 hasattr 探测业务接口）。
+            rank: object = self.runtime.rank
+        except Exception:  # noqa: BLE001 —— 诊断取数失败不得掩盖正在传播的首错
+            rank = "?"
+        logging.getLogger("graspo.trainer").warning(
+            "exception-path teardown: aborted=%s rank=%s group=%s(WORLD); aborting the "
+            "default process group WITHOUT a rendezvous (no WORLD barrier on the failure "
+            "path) — the first error is re-raised as-is",
+            bool(aborted),
+            rank,
+            _DEFAULT_PG_NAME,
+        )
         try:
             dist.destroy_process_group()
         except Exception as exc:  # noqa: BLE001 —— 见 docstring：不得替换正在传播的首错
