@@ -5,8 +5,9 @@
 
 1. 数据含图但模型不支持视觉 → 报错（数据/模型不匹配）
 2. encode → attach → resolve 契约链路必须完整（resolve 非 None）
-3. visual LoRA 参数必须已注册（vision_common target 生效）
-4. fake 1-step 前向必须让 visual LoRA 产生非零梯度
+3. 视觉塔必须有可训参数（载体按模式分派：LoRA ⇒ ``visual.*`` target 命中，
+   全参 ⇒ 塔内至少一个 ``requires_grad=True`` 的参数）
+4. fake 1-step 前向必须让视觉参数产生非零梯度
 
 预检只验证**消费侧**链路与视觉可训练性；**生成侧**断链
 （generation metadata 未 attach rows）由 ``ripple/multimodal/contract``
@@ -17,6 +18,7 @@ import logging
 from typing import Any
 
 from graspo.core.lora import LORA_TARGET_PRESETS
+from graspo.core.schema import TunerType, resolve_tuner_type
 from graspo.ripple.multimodal.rows import (
     MULTIMODAL_ROWS_KEY,
     attach_rows,
@@ -43,8 +45,9 @@ def assert_vision_tower_trainable(
     *,
     owns_embeddings: bool,
     model_name: str,
+    tuner_type: TunerType | None = None,
 ) -> None:
-    """纯逻辑防线：模型声明了视觉，本 rank 又持有 embedding 层，则视觉塔必须真的建出来。
+    """纯逻辑防线：模型声明了视觉，本 rank 又持有 embedding 层，则视觉塔必须真的建出来**且可训**。
 
     这是缺陷②（``adapter.py`` 的 fail-open 豁免）的**唯一真相源判据**，
     同时被 native adapter 的加载期校验与 SFT 训练入口复用（宪法 §1.4）。
@@ -65,11 +68,31 @@ def assert_vision_tower_trainable(
     - **模型有视觉 + 本 rank 持有 embedding 层**：视觉塔**必须在**。缺失即
       "视觉塔被静默跳过" ⇒ ``RuntimeError``，**fail-closed**。
 
-    :param model: 已构建的模型实例（只读其 ``visual`` 属性与 ``enabled_lora_target_names()``）
+    **"可训"判据按训练模式分派（宪法 §2.3，两种模式各自 fail-closed）**：
+    视觉塔"存在"是模型结构事实，与模式无关，故上面的判据不分支；但"可训"
+    的**载体**不同：
+
+    - ``tuner_type="lora"``（含缺省 ``None`` ⇒ ``lora``，见
+      :func:`graspo.core.schema.resolve_tuner_type`）：可训载体是 LoRA 矩阵 ⇒
+      判据 = 注册了 ``visual.*`` 的 enabled LoRA target（**逐字保持原语义**）；
+    - ``tuner_type="full"``：不构造任何 LoRA 矩阵（``model.py`` 传
+      ``lora_r=0`` ⇒ ``LoRALinear.lora_enabled=False``，
+      ``lora_linear.py:123``），``enabled_lora_target_names()`` **结构性恒空** ⇒
+      沿用 LoRA 判据必然误报。全参的可训载体是**参数自身**（
+      ``model_builders.py:173-177`` 在全参下统一解开视觉塔 ``requires_grad``）
+      ⇒ 判据 = 视觉塔至少有**一个** ``requires_grad=True`` 的参数。
+      这不是放松校验，而是把"视觉塔必须真的在训练"这一**同一风险点**换成与
+      该模式等价的判据（穷举式：塔内零个可训参数 = 视觉塔被冻结，照旧 fail-closed）。
+
+    :param model: 已构建的模型实例（只读 ``visual`` 属性、``visual.parameters()``
+        与 ``enabled_lora_target_names()``）
     :param config: 模型配置（含 ``has_vision_config`` / ``image_token_id``）
     :param owns_embeddings: 本 rank 是否持有 embedding 层（PP 的 stage 0）
     :param model_name: 模型名（错误消息用）
-    :raises RuntimeError: 声明了视觉、持有 embedding、却不存在视觉塔或未注册任何可训视觉 LoRA
+    :param tuner_type: ``config.effective_tuner_type``。缺省 ``None`` ⇒ ``lora``
+        （缺省调用行为逐字不变）。
+    :raises RuntimeError: 声明了视觉、持有 embedding、却不存在视觉塔；或视觉塔
+        在该模式下没有任何可训参数（LoRA 目标未覆盖视觉塔 / 全参下塔被冻结）
     """
     view = _ModelConfigView(config)
     if not view.has_vision_config:
@@ -82,6 +105,23 @@ def assert_vision_tower_trainable(
             "owns the embedding stage, but the visual tower was not built. Refusing to "
             "start: vision would be silently skipped on this rank."
         )
+    if resolve_tuner_type(tuner_type) != "lora":
+        # 全参：可训载体是参数自身，不是 LoRA 矩阵（见 docstring 的"按模式分派"段）。
+        # 视觉塔存在但零可训参数 = 该塔在本 run 里被冻结 ⇒ 与 LoRA 侧同一风险，
+        # fail-closed 拦下（防呆强度不倒退）。
+        tunable_visual_params = [
+            param for param in model.visual.parameters() if bool(param.requires_grad)
+        ]
+        if not tunable_visual_params:
+            raise RuntimeError(
+                f"model {model_name!r} declares vision and owns the embedding stage, but the "
+                "visual tower has no trainable parameter under tuner_type='full' (all of its "
+                "params have requires_grad=False). Refusing to start: the visual tower would "
+                "be frozen while the run trains. Fix: the full-parameter entry must unfreeze "
+                "the visual tower (see build_qwen35_visual_tower) instead of relying on LoRA "
+                "targets, which do not exist in full mode."
+            )
+        return
     enabled_target_names = getattr(model, "enabled_lora_target_names", None)
     if enabled_target_names is None:
         return  # 非原生 LoRA 模型（无该接口）：不适用
@@ -103,8 +143,9 @@ def assert_lora_vision_targets_trainable(
     image_token_id: int | None,
     model_name: str,
     has_vision_config: bool | None = None,
+    tuner_type: TunerType | None = None,
 ) -> None:
-    """纯逻辑校验：多模态训练时 LoRA 目标必须真的包含视觉塔（可单测，不触 GPU）。
+    """纯逻辑校验：**LoRA 模式下**多模态训练时 LoRA 目标必须真的包含视觉塔（可单测，不触 GPU）。
 
     **为什么需要它（实测 T028，2026-09-19）**：``lora.target_preset`` 默认
     ``language_safe``（``core/lora.py`` 只含 ``language.*`` 模式），于是
@@ -118,6 +159,21 @@ def assert_lora_vision_targets_trainable(
     ``core/lora.py::LORA_TARGET_PRESETS`` 与 ``_match_lora_pattern``——不另立
     一套"这里认得、那边不认得"的规则（宪法 §1.4）。
 
+    **适用范围按训练模式收窄（宪法 §2.3，修 2026-09-22 的 T017/T018/T035/T036）**：
+    本判据的前提是"视觉塔的可训载体 = LoRA 矩阵"。``tuner_type="full"`` 下
+    ``build_native_qwen_model`` 传 ``lora_r=0`` ⇒ 不构造 LoRA 矩阵
+    （``lora_linear.py:123`` ``lora_enabled = lora_enabled and r > 0``），视觉塔是
+    由 ``model_builders.py:173-177`` **直接解开 ``requires_grad``** 的：
+    "LoRA 目标是否覆盖视觉塔"在全参下**无对象可判**，照判必误报（全参档
+    按生成器设计不写 ``lora`` 段，``target_preset`` 只是 schema 默认值
+    ``core/schema.py:240``）。因此非 ``lora`` 模式在此直接返回——**这不是放松，
+    是同一风险点换判据**：全参的等价判据在
+    :func:`assert_vision_tower_trainable`（``tuner_type="full"`` 分支：
+    塔内至少一个 ``requires_grad=True`` 的参数）；GRASPO 路径另有
+    :func:`run_multimodal_preflight` 的"可训视觉参数存在 + fake 前向梯度非零"
+    运行期防线兜底。**"声明了视觉塔却没有可用视觉占位 token"这条与模式无关的
+    配置不一致校验保留在最前面**，不被模式分支跳过。
+
     :param lora_target_modules: 显式目标名列表（``lora.target_modules``），
         非 None 时优先于预设（与 ``resolve_lora_target_modules`` 同语义）
     :param lora_target_preset: ``lora.target_preset``（None ⇒ 走默认预设）
@@ -128,8 +184,11 @@ def assert_lora_vision_targets_trainable(
         缺省调用行为逐字不变）。显式传入 ``True`` 而 ``image_token_id`` 为 None，
         是"模型有视觉塔但占位 token 缺失"的配置不一致 ⇒ **fail-closed 报错**
         （此前的 fail-open 会让视觉塔被静默跳过、无声退回语言-only）。
-    :raises ValueError: 模型有视觉塔、且 LoRA 目标里没有一个视觉模块；
-        或声明了视觉塔却没有可用的视觉占位 token（配置不一致）
+    :param tuner_type: ``config.effective_tuner_type``。缺省 ``None`` ⇒ ``lora``
+        （``resolve_tuner_type`` 归一，缺省调用行为逐字不变）；非 ``lora`` ⇒
+        本判据不适用，直接返回。
+    :raises ValueError: 模型有视觉塔、且 **LoRA 模式**下 LoRA 目标里没有一个视觉
+        模块；或声明了视觉塔却没有可用的视觉占位 token（配置不一致）
     """
     if has_vision_config is True and image_token_id is None:
         raise ValueError(
@@ -140,6 +199,11 @@ def assert_lora_vision_targets_trainable(
         )
     if image_token_id is None:
         return  # 模型没有视觉塔：是否可训视觉不适用
+    if resolve_tuner_type(tuner_type) != "lora":
+        # 全参模式：不构造 LoRA 矩阵 ⇒ "LoRA 目标覆盖视觉塔"无对象可判。
+        # 同一风险点的覆盖者见 docstring（assert_vision_tower_trainable 的 full 分支
+        # + run_multimodal_preflight 的运行期梯度防线）。
+        return
     requested = tuple(lora_target_modules) if lora_target_modules else (lora_target_preset,)
     patterns: list[str] = []
     for item in requested:
