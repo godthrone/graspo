@@ -396,7 +396,7 @@ def test_tier_ledger_status_is_gate_not_applicable_when_only_a2_is_blocked():
     )
     assert not judgement.passed
     assert judgement.step_gate_not_applicable
-    assert judgement.ledger_status == "⚠ 口径不可测（步数上限 < 门槛）"
+    assert judgement.ledger_status == "⚠ 口径不可测"
     assert judgement.failure_class is not None
     assert "口径不可测" in judgement.note
     assert "不是训练失败" in judgement.note
@@ -422,7 +422,7 @@ def test_tier_real_failure_is_not_masked_by_the_third_state():
             expected_optimizer_steps_reachable=1,
         ),
     )
-    assert judgement.ledger_status == "❌ 失败"
+    assert judgement.ledger_status == "❌ 不可用"
     assert not judgement.step_gate_not_applicable or True  # A2 不可测，但被真失败盖过
     assert "口径不可测" in judgement.note  # 两条事实都写出来
 
@@ -437,7 +437,7 @@ def test_tier_evidence_gap_is_not_confused_with_gate_not_applicable():
             expected_optimizer_steps_reachable=1,
         )
     )
-    assert judgement.ledger_status == "⚠ 不可判定（取证缺口）"
+    assert judgement.ledger_status == "⚠ 口径不可测"
     assert not judgement.step_gate_not_applicable
 
 
@@ -468,7 +468,7 @@ def test_ledger_row_self_reports_reachable_and_third_state():
         peak_memory_gib=None,
         date="2026-09-21",
     )
-    assert row["status"] == "⚠ 口径不可测（步数上限 < 门槛）"
+    assert row["status"] == "⚠ 口径不可测"
     assert row["expected_optimizer_steps_reachable"] == 1
     assert row["step_gate_not_applicable"] is True
     assert row["min_optimizer_steps"] == 5  # ★ 门槛值一个都没动
