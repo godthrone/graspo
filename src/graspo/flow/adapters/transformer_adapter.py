@@ -6,6 +6,7 @@ only implements the model-specific parts (``_load_model``,
 ``sequence_log_probs``, ``parse_completion``).
 """
 
+import math
 import datetime
 import json
 import logging
@@ -112,6 +113,34 @@ def _normalize_optimizer_state_to_params(optimizer: Any) -> list[str]:
                 state[key] = value.to(device=target_device, dtype=target_dtype)
             normalized.append(str(key))
     return normalized
+
+
+#: `global_grad_norm_mean` 的**口径标签**（随值落盘，防止误读；2026-09-22 裁定）。
+GRAD_NORM_MEAN_CALIBER = (
+    "per_rank_mean（= 各 rank 梯度 L2 范数的算术平均；"
+    "**≠ 全模型梯度范数**（PP/TP 各 rank 只持部分参数，正确口径见 global_grad_norm_l2）、"
+    "**≠ 用于更新的步长**（更新走裁剪后梯度，见 max_grad_norm））"
+)
+
+
+def _l2_norm_of_rank_norms(values) -> float | None:
+    """各 rank 范数的 **L2 合成**：``sqrt(Σ‖g_r‖²)``——分片参数下的正确全局范数。
+
+    为什么不是平均：PP/TP 下每个 rank 只持有部分参数的梯度，梯度向量在**参数维度**上
+    相互正交地拼成全局向量 ⇒ 全局范数是各段范数的平方和开方，**不是**算术平均。
+    只对 finite 且非 None 的读数求和；一个都没有 ⇒ 返回 ``None``（不猜，§2.2）。
+    """
+    total = 0.0
+    seen = False
+    for value in values:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        number = float(value)
+        if number != number or number in (float("inf"), float("-inf")):
+            continue
+        total += number * number
+        seen = True
+    return math.sqrt(total) if seen else None
 
 
 class TransformerAdapter(BaseGraspoFlowAdapter):
@@ -663,8 +692,53 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
         # Encode all queued samples together (no more auto-chunking).
         return max(1, int(requested_prompt_count))
 
+    @staticmethod
+    def _loss_bearing_ranks(ranks: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str]:
+        """只保留**真正产出 loss 的 rank**（PP 下即末 stage）；返回 ``(ranks, 口径标签)``。
+
+        为什么必须这么做（P1 侦察 + 指挥官裁定，2026-09-22）：
+        非末 PP stage 不计算 loss，其 ``loss_mean`` 是**结构性 0**；旧实现把它算进分母，
+        导致 **SFT·PP 下 ``global_loss_mean`` 被系统性减半**（实测 T017 step1：
+        真实 0.020874 → 报告 0.010437）。
+
+        两级判据（**精度优先，回落必标注**）：
+
+        1. 所有 rank 都带 ``pp_rank`` ⇒ 取 ``pp_rank == pp_size - 1``（**精确**）；
+        2. 缺 ``pp_rank``（历史落盘）但 ``pp_size > 1`` ⇒ 取 ``loss_mean != 0`` 的 rank
+           （结构性 0 的启发式），口径标签标 ``non_zero_loss_stage_fallback``——**如实标注**，
+           不假装精确；
+        3. 其余（单卡 / 拿不到 pp 信息）⇒ 全部 rank，标签 ``all_ranks``。
+
+        单卡下三种路径等价（ranks 只有 1 个），行为不变。
+        """
+        if not ranks:
+            return ranks, "all_ranks"
+        pp_sizes = {item.get("pp_size") for item in ranks}
+        if len(pp_sizes) == 1 and next(iter(pp_sizes)) is not None:
+            pp_size = int(next(iter(pp_sizes)))
+        else:
+            pp_size = 0
+        if pp_size > 1 and all(item.get("pp_rank") is not None for item in ranks):
+            return [
+                item for item in ranks if int(item.get("pp_rank") or 0) == pp_size - 1
+            ] or ranks, "last_pp_stage_only"
+        if pp_size > 1:
+            non_zero = [
+                item for item in ranks if float(item.get("loss_mean") or 0.0) != 0.0
+            ]
+            if non_zero:
+                return non_zero, "non_zero_loss_stage_fallback"
+        return ranks, "all_ranks"
     def _aggregate_rank_metrics(self, metrics: dict[str, Any]) -> dict[str, Any]:
-        local = {"rank": self.rank, "tp_rank": self.tp_rank, **metrics}
+        # ★ 带上 `pp_rank`（`_aggregate_rank_metrics` 精确聚合 loss 的前提）：它由本类
+        #   自身持有，**无需改训练代码**。历史落盘没有该键 ⇒ 聚合退回启发式并标注口径。
+        local = {
+            "rank": self.rank,
+            "tp_rank": self.tp_rank,
+            "pp_rank": self.pp_rank,
+            "pp_size": self.pp_size,
+            **metrics,
+        }
         if not (dist.is_available() and dist.is_initialized()):
             # ★ 单进程 / 单卡（world_size==1）：**也必须产出 global_* 键**。
             #
@@ -701,6 +775,7 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
         gathered: list[dict[str, Any] | None] = [None for _ in range(self.world_size)]
         dist.all_gather_object(gathered, local)
         ranks = [item for item in gathered if item is not None]
+        loss_ranks, loss_caliber = self._loss_bearing_ranks(ranks)
         return {
             **metrics,
             "rank": self.rank,
@@ -712,8 +787,24 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
             "global_nonzero_grad_count_sum": sum(
                 int(item.get("nonzero_grad_count") or 0) for item in ranks
             ),
-            "global_loss_mean": _mean_present(item.get("loss_mean") for item in ranks),
-            "global_grad_norm_mean": _mean_present(item.get("grad_norm_mean") for item in ranks),
+            # ★ 口径修正（2026-09-22）：loss 只在**真正产出 loss 的 stage** 上聚合；
+            #   旧实现把非末 PP stage 的结构性 0 计入分母 ⇒ 系统性减半。
+            "global_loss_mean": _mean_present(
+                item.get("loss_mean") for item in loss_ranks
+            ),
+            "global_loss_caliber": loss_caliber,
+            "global_loss_rank_count": len(loss_ranks),
+            # ★ `global_grad_norm_mean` = **逐 rank 梯度范数的算术平均**（保留原名/原值以兼容
+            #   既有消费方与历史可比性）。**它不是全模型梯度范数**（PP/TP 各 rank 只持部分
+            #   参数；正确口径是 sqrt(Σ‖g_r‖²)），**也不是用于更新的量**（更新走裁剪后梯度）。
+            #   口径标签随值一起落盘 ⇒ 读者不会把"49 → 4.18e9"误读成"梯度爆炸"。
+            "global_grad_norm_mean": _mean_present(
+                item.get("grad_norm_mean") for item in ranks
+            ),
+            "global_grad_norm_l2": _l2_norm_of_rank_norms(
+                item.get("grad_norm_mean") for item in ranks
+            ),
+            "global_grad_norm_caliber": GRAD_NORM_MEAN_CALIBER,
             # lora 模式：LoRA 权重范数变化；full 模式：该键为 None（无 lora 参数 ⇒
             # 指标不适用，_mean_present 会把 None 过滤掉，不会退化成 0）。
             "global_lora_norm_delta_mean": _mean_present(
