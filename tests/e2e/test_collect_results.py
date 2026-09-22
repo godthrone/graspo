@@ -225,7 +225,30 @@ def test_a7_native_exact_count_fails_the_tier(tmp_path):
     assert record["criteria"]["A7"] is False, record["criteria_detail"]
     # 逐 step 计数会被**跨步求和**（fixture 6 行 × 每行 2 次 = 12）⇒ 断言 > 0 + 来源自证
     assert record["nonfinite_skips"] and record["nonfinite_skips"] > 0
-    assert record["nonfinite_skips_source"] == "run_metrics:skipped_nonfinite"
+    # P0-1：跳过计数**跨全部 rank 取 MAX**（不再只信 rank0）⇒ 来源标识随之改为 all_ranks_max
+    assert record["nonfinite_skips_source"] == "run_metrics:all_ranks_max"
+    assert record["status"] == "❌ 不可用"
+
+
+def test_a7_rank1_only_skip_is_not_a_false_pass(tmp_path):
+    """★P0-1 判别力实证：**rank0 跳过=0、rank1 单独跳过=1** ⇒ 不许假通过。
+
+    修前行为（可复现的**假通过**）：采集只读 `rank_metrics.rank_00000.jsonl`
+    ⇒ 读到 0 ⇒ `A7` 通过 ⇒ 一次"rank1 权重/LR 已分叉"的运行被记成 **✅ 训练可用**。
+    修后：跨**全部** rank 取 MAX ⇒ 1 ⇒ `A7` 不通过。
+    （矩阵命中：T029/T030/T041/T042 —— native graspo `dp>1`。）
+    """
+    _make_native_full_run(
+        tmp_path / "runs", deltas=_FULL_DELTAS_OK,
+        skipped_nonfinite=0,            # rank0：全 0（**这正是修前唯一被读到的**）
+        rank1_skipped_nonfinite=1,      # rank1：单独跳过 1 次
+    )
+    record = _run_collector(
+        tmp_path, manifest=_full_manifest(), env=_sitecustomize_env(tmp_path, _FAKE_TORCH_BLOCKER)
+    )
+    assert record["nonfinite_skips"] == 1, record.get("nonfinite_skips_source")
+    assert record["nonfinite_skips_source"].startswith("run_metrics:all_ranks_max")
+    assert record["criteria"]["A7"] is False, record["criteria_detail"]
     assert record["status"] == "❌ 不可用"
 
 
@@ -239,6 +262,20 @@ def test_a7_msswift_infers_skips_from_nan_grad_norm(tmp_path):
     assert record["nonfinite_skips_source"] == "log_inference:nan_grad_norm_count"
     assert record["criteria"]["A7"] is False
     assert record["status"] == "❌ 不可用"
+
+
+def test_a7_cannot_self_prove_every_step_logged_is_indeterminate(tmp_path):
+    """★C 收紧：`logging_steps > 1` 时读数条数 < 计划步数 ⇒ **无法自证每步都有读数**
+    ⇒ 跳过计数按**口径不可测**处理（不推断、不放行）。
+
+    为什么（复核指出的漏洞）：NaN 只出现在**非 logging 步**时，逐步序列看起来"全 finite"
+    ⇒ 旧推断会得出"0 次跳过" ⇒ **仍是自动通过**（假阴性）。
+    """
+    _write_msswift_run(tmp_path / "runs", declared=20)   # 6 条读数 < 20 计划步
+    record = _run_collector(tmp_path, manifest=_MSSWIFT_MANIFEST)
+    assert record["nonfinite_skips"] is None, record.get("nonfinite_skips_source")
+    assert record["criteria"]["A7"] is False
+    assert "口径不可测" in record["criteria_detail"]["A7"]
 
 
 def test_a7_unavailable_count_is_indeterminate_never_pass(tmp_path):
@@ -1234,6 +1271,7 @@ def _make_native_full_run(
     *,
     deltas: list[float],
     skipped_nonfinite: int = 0,
+    rank1_skipped_nonfinite: int | None = None,   # 只给 rank1 写（P0-1 判别力用）
     first_shard_bytes: bytes | None = None,
     drop_shards: bool = False,
 ) -> Path:
@@ -1288,6 +1326,30 @@ def _make_native_full_run(
     (metrics / "rank_metrics.rank_00000.jsonl").write_text(
         "\n".join(lines) + "\n", encoding="utf-8"
     )
+    if rank1_skipped_nonfinite is not None:
+        # rank1 的旁路文件：**它才是"单独跳过"的载体**（rank0 全 0）。
+        rank1_lines = []
+        for index, delta in enumerate(deltas):
+            rank1_lines.append(
+                json.dumps(
+                    {
+                        "event": "rank_metrics",
+                        "phase": "sft_train_batch_after",
+                        "kind": "diagnostic",
+                        "metrics": {
+                            "optimizer_steps": 1,
+                            "global_optimizer_steps_sum": 1,
+                            "skipped_nonfinite": rank1_skipped_nonfinite,
+                            "loss_mean": 1.0 - index * 0.01,
+                            "grad_norm_mean": 1.0,
+                            "tuner_type": "full",
+                        },
+                    }
+                )
+            )
+        (metrics / "rank_metrics.rank_00001.jsonl").write_text(
+            "\n".join(rank1_lines) + "\n", encoding="utf-8"
+        )
     return run
 
 
