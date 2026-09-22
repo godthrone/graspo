@@ -39,6 +39,14 @@ KNOWN_BACKENDS: frozenset[str] = frozenset(
     name for backends in TRAIN_METHOD_BACKENDS.values() for name in backends
 )
 
+#: 会走 **rollout（自回归生成）** 的 ``train_method``（单一真相源，宪法 §1.4）。
+#: 事实依据：``TRAIN_METHOD_BACKENDS`` 里 native 侧只有 ``graspo`` 与 ``sft``，
+#: 其中 ``sft`` 没有 rollout（监督微调不采样）；``cpt`` / ``opd`` 在 native 侧
+#: 本就被拒绝。所以"native 上有 rollout" ⟺ ``train_method == "graspo"``。
+#: 消费点：``flow/runtime.validate_native_runtime_config`` 的
+#: "未验证的 native PP rollout" 闸门（缺陷 P6）。
+ROLLOUT_TRAIN_METHODS: frozenset[str] = frozenset({"graspo"})
+
 
 def validate_train_method_combination(
     *,
