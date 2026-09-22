@@ -225,29 +225,24 @@ RUN \
 
 RUN python -c "import z3, docstring_parser, distro, loguru, pydantic_settings, dotenv, jwt, multipart, sse_starlette, ml_dtypes; print('GAP DEPS OK')"
 
-# 构建期存活性验证（fail-closed）：只 import 不需要 GPU 的模块；
-# deepspeed/vllm/ray 等需要 CUDA 初始化，仅断言发行版元数据存在。
+# 构建期存活性验证（fail-closed）——**双向诚实门禁**：
+#   A) claimed-usable：凡本镜像**声称已装/可用**的包，构建期必须**真的 import 成功**；
+#   B) installed-but-known-unusable：装了但**已知不可用**的包，必须**断言 import 失败**，
+#      并写成"能力自述"（`/opt/graspo-image/VERSION` 的 `<x> UNAVAILABLE (...)` 行）。
+#   为什么必须双向：旧写法把 megatron-core / mcore-bridge 放进 `metadata_only`（只查发行版
+#   元数据），于是"装了但完全不可用"的后端**静默通过门禁**——`megatron sft --help` 启动即崩
+#   `ModuleNotFoundError: No module named 'transformer_engine'`
+#   （`mcore_bridge/__init__.py:8` → `patcher.py:285` → `patcher.py:31`，裸 import 无 try）。
+#   单向门禁只能防"没装"，防不住"装了但跑不了"。双向之后：将来若有人装了 transformer_engine
+#   让它变可用 ⇒ 构建会**因断言失败而报警**，迫使我们更新"能力自述"，不会再出现假绿（§2.4）。
 # 末尾重跑版本门禁，证明补遗未破坏既有 pin。
 RUN python - <<'PY'
 import importlib.metadata as md
 import importlib.util as iu
 import traceback
 
-# 需要 GPU 或重初始化，构建期不 import
-metadata_only = [
-    "qwen-vl-utils", "qwen-omni-utils", "decord", "av", "librosa", "soundfile",
-    "timm", "opencv-python", "diffusers", "torchaudio", "deepspeed",
-    "liger-kernel", "flash-linear-attention", "megatron-core", "mcore-bridge",
-    # 第 5/6 层补齐的"已声明但缺装"依赖（无顶层模块或构建期不宜 import 的）
-    "cuda-tile", "nvidia-cutlass-dsl-libs-base", "torch-c-dlpack-ext",
-    "tokenspeed-triton", "opentelemetry-semantic-conventions",
-    "opentelemetry-proto", "opentelemetry-exporter-otlp-proto-common",
-    "opentelemetry-exporter-otlp-proto-grpc", "opentelemetry-exporter-otlp-proto-http",
-    "googleapis-common-protos",
-    "nvidia-ml-py", "pyelftools", "tabulate", "astor", "supervisor", "interegular",
-    # 第 5 层 apt 系统库对应的 Python 侧依赖（tilelang/tvm 链）
-    "tilelang", "flash-linear-attention", "z3-solver",
-]
+# ── A) claimed-usable：必须**真 import 成功**
+# （原 `metadata_only` 中除 megatron 系以外的每一条都经实测确认可 import，见报告扫描表）
 importable = [
     ("qwen_vl_utils", "qwen-vl-utils"),
     ("qwen_omni_utils", "qwen-omni-utils"),
@@ -259,13 +254,30 @@ importable = [
     ("timm", "timm"),
     ("cv2", "opencv-python"),
     ("diffusers", "diffusers"),
-    # 探针已验证 vllm / ray 可在本镜像（无 GPU 上下文）import 成功
+    ("deepspeed", "deepspeed"),
+    ("liger_kernel", "liger-kernel"),
+    ("fla", "flash-linear-attention"),
+    ("tilelang", "tilelang"),
+    ("z3", "z3-solver"),
     ("vllm", "vllm"),
     ("ray", "ray"),
-    # 真实崩溃链：tilelang → tvm → ctypes.CDLL("libz3.so")；以及 Qwen3_5 建模自己 import fla
-    ("tilelang", "tilelang"),
-    ("fla", "flash-linear-attention"),
-    ("z3", "z3-solver"),
+    # 第 5/6 层补齐的直接依赖（原先只查元数据；实测均可 import）
+    ("cuda", "cuda-tile"),
+    ("cutlass", "nvidia-cutlass-dsl-libs-base"),
+    ("torch_c_dlpack_ext", "torch-c-dlpack-ext"),
+    ("triton", "tokenspeed-triton"),
+    ("opentelemetry.semconv", "opentelemetry-semantic-conventions"),
+    ("opentelemetry.proto", "opentelemetry-proto"),
+    ("opentelemetry.exporter.otlp.proto.common", "opentelemetry-exporter-otlp-proto-common"),
+    ("opentelemetry.exporter.otlp.proto.grpc", "opentelemetry-exporter-otlp-proto-grpc"),
+    ("opentelemetry.exporter.otlp.proto.http", "opentelemetry-exporter-otlp-proto-http"),
+    ("google.protobuf", "googleapis-common-protos"),
+    ("pynvml", "nvidia-ml-py"),
+    ("elftools", "pyelftools"),
+    ("tabulate", "tabulate"),
+    ("astor", "astor"),
+    ("supervisor", "supervisor"),
+    ("interegular", "interegular"),
     # 第 6 层补齐的缺口
     ("docstring_parser", "docstring-parser"),
     ("distro", "distro"),
@@ -278,6 +290,17 @@ importable = [
     ("ml_dtypes", "ml-dtypes"),
 ]
 
+# ── B) installed-but-known-unusable：**必须 import 失败**（反向 fail-closed）
+# 每条 = (标签, 真实 import 语句, 期望失败子串, VERSION 能力自述行)
+KNOWN_UNUSABLE = [
+    (
+        "megatron-backend",
+        "from swift.megatron.arguments import MegatronSftArguments",
+        "transformer_engine",
+        "megatron_backend UNAVAILABLE (missing transformer_engine)",
+    ),
+]
+
 # 真实链条断言：transformers 的 Qwen3_5 建模 → fla → tilelang → tvm → libz3.so
 Qwen3_5_IMPORT = "from transformers import Qwen3_5ForConditionalGeneration"
 REQUIRED_SO = ("libz3.so", "libz3.so.4", "libSM.so.6", "libICE.so.6",
@@ -287,28 +310,48 @@ REQUIRED_SO = ("libz3.so", "libz3.so.4", "libSM.so.6", "libICE.so.6",
 EXPECTED_PREFIX = {"transformers": "5.12.1", "huggingface-hub": "1."}
 
 problems = []
-for dist in metadata_only:
-    try:
-        print("OK  dist  %-26s %s" % (dist, md.version(dist)))
-    except Exception as exc:
-        problems.append("metadata %s: %r" % (dist, exc))
-        print("FAIL dist  %-26s %r" % (dist, exc))
 
 for mod, dist in importable:
     if iu.find_spec(mod) is None:
         problems.append("import %s (dist %s): module not found" % (mod, dist))
-        print("FAIL import %-18s (dist %s)" % (mod, dist))
+        print("FAIL import %-46s (dist %s)" % (mod, dist))
         continue
     try:
         __import__(mod)
-        print("OK  import %-18s (dist %s)" % (mod, dist))
+        print("OK  import %-46s (dist %s)" % (mod, dist))
     except Exception as exc:
         problems.append("import %s (dist %s): %r" % (mod, dist, exc))
-        print("FAIL import %-18s (dist %s): %r" % (mod, dist, exc))
+        print("FAIL import %-46s (dist %s): %r" % (mod, dist, exc))
         traceback.print_exc()
 
+# 反向断言：已知不可用的后端必须**确实**不可用，失败原因还必须是我们期望的那个
+capability_lines = []
+for label, stmt, expect_substr, cap in KNOWN_UNUSABLE:
+    r = __import__("subprocess").run(
+        ["python", "-c", stmt + "; print('UNEXPECTED_IMPORT_OK')"],
+        capture_output=True, text=True, timeout=600)
+    blob = (r.stdout or "") + (r.stderr or "")
+    if r.returncode == 0 and "UNEXPECTED_IMPORT_OK" in (r.stdout or ""):
+        problems.append(
+            "known-unusable %s IMPORTED SUCCESSFULLY — 能力自述已过期："
+            "请把该后端移入 claimed-usable 并更新 /opt/graspo-image/VERSION 的 '%s'" % (label, cap))
+        print("FAIL unusable %-22s IMPORT_OK（必须失败却成功了）" % label)
+    elif expect_substr not in blob:
+        problems.append("known-unusable %s failed for the WRONG reason (want %r): %s"
+                        % (label, expect_substr, blob[-300:]))
+        print("FAIL unusable %-22s 失败原因不符（期望含 %r）" % (label, expect_substr))
+    else:
+        capability_lines.append(cap)
+        print("OK  unusable %-22s 确实 import 失败（含 %r）⇒ 记为不可用" % (label, expect_substr))
+
 if problems:
-    raise SystemExit("MM DEP CHECK FAILED:\n  " + "\n  ".join(problems))
+    raise SystemExit("DISHONEST GATE FAILED:\n  " + "\n  ".join(problems))
+
+# 能力自述（machine-readable）：让镜像自己说清"哪些后端不可用、为什么"
+with open("/opt/graspo-image/VERSION", "a") as fh:
+    for line in capability_lines:
+        fh.write(line + "\n")
+print("CAPABILITY SELF-DESCRIPTION written:", capability_lines)
 
 for dist, prefix in EXPECTED_PREFIX.items():
     got = md.version(dist)
@@ -348,8 +391,10 @@ except Exception as exc:
     print("FAIL chain   %r" % (exc,))
 
 if problems:
-    raise SystemExit("MM DEP CHECK FAILED:\n  " + "\n  ".join(problems))
-print("MM DEPS OK (all runtime deps present; libz3 chain OK; transformers/hf-hub pins intact)")
+    raise SystemExit("HONEST GATE FAILED:\n  " + "\n  ".join(problems))
+print("HONEST GATE OK (every claimed-usable dep really imports; known-unusable backends "
+      "verified failing and recorded in /opt/graspo-image/VERSION; libz3 chain OK; "
+      "transformers/hf-hub pins intact)")
 PY
 
 RUN python scripts/check_env_versions.py --local
