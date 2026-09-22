@@ -1150,8 +1150,26 @@ class FailureClass(StrEnum):
     #: 而``通信硬件``会把人引向换卡/查线。
     #: 取值与跑批装置（``rig/matrix_batch_driver.py``）**逐字一致**（同一口径两个消费者）。
     NCCL_COLLECTIVE_TIMEOUT = "nccl_collective_timeout（集合通信超时 ⇒ PP/DP 各 rank 步调不一致）"
+    #: ★ 新增（2026-09-22 指挥官裁定）：**PP 流水线 P2P 通信超时**，退出码 **86**。
+    #: 类名逐字取自裁定（跨工具口径一致）。判据**优先按退出码**——因为 torchrun/弹性启动
+    #: 会把异常文本前缀化（如 `[rank1]:` / `ChildFailedError` 包裹），文本不可靠。
+    PIPELINE_P2P_TIMEOUT = "pipeline_p2p_timeout"
+    #: ★ 新增（2026-09-22 指挥官裁定）：**PP rollout 墙钟上限到点**，退出码 **21**。
+    #: 与 `TIMEOUT`（124，OS/runner 层整体超时）分开：这是 **rollout 自身的预算闸**，
+    #: 指向"这一档的 rollout 太慢/无界"，修法在 PP rollout 而不是调度层。
+    PP_ROLLOUT_WALL_CLOCK_CAP = "pp_rollout_wall_clock_cap"
     UNCLASSIFIED = "未分类（需人工判定）"
 
+
+#: **退出码 → 失败类别**（唯一真相源；2026-09-22 指挥官裁定"**优先按退出码分类**"）。
+#:
+#: 为什么优先于文本匹配：这些退出码是**进程交还的事实**，而异常文本可能被 torchrun /
+#: 弹性启动前缀化（`[rank1]:`、`ChildFailedError` 包裹）⇒ 文本匹配会漏判或错判。
+#: 只登记**有明确语义**的码；未登记的码继续走原有文本/兜底路径（**不放宽**）。
+EXIT_CODE_FAILURE_CLASSES: dict[int, FailureClass] = {
+    86: FailureClass.PIPELINE_P2P_TIMEOUT,
+    21: FailureClass.PP_ROLLOUT_WALL_CLOCK_CAP,
+}
 
 #: 只有这一类失败允许被解释为"上下文太长"。
 MAX_CONTEXT_FAILURE_CLASSES: frozenset[str] = frozenset({FailureClass.REAL_OOM})
@@ -1228,6 +1246,28 @@ _LOG_PATTERNS: tuple[tuple[FailureClass, tuple[re.Pattern[str], ...]], ...] = (
                 r"dataset .* not found",
                 r"empty (?:dataset|sample)",
                 r"KeyError.*(?:targets|messages|media)",
+            )
+        ),
+    ),
+    (
+        FailureClass.PIPELINE_P2P_TIMEOUT,
+        tuple(
+            re.compile(pattern, re.IGNORECASE)
+            for pattern in (
+                # 退出码 86 的**文本兜底**：若退出码被外层归一化（如 torchrun 交还 1），
+                # 仍能从异常名认出该缺陷。放在 NCCL 之前（更具体者先匹配）。
+                r"PipelineP2PTimeoutError",
+                r"pipeline p2p timeout",
+            )
+        ),
+    ),
+    (
+        FailureClass.PP_ROLLOUT_WALL_CLOCK_CAP,
+        tuple(
+            re.compile(pattern, re.IGNORECASE)
+            for pattern in (
+                r"rollout wall.?clock cap",
+                r"rollout 墙钟上限",
             )
         ),
     ),
@@ -2316,6 +2356,10 @@ def classify_failure(evidence: RunEvidence, a6: CriterionResult) -> FailureClass
 
     **判定优先级序列（唯一真相源，改动此处必须同步更新本段说明与测试）**：
 
+    0. **退出码映射**（:data:`EXIT_CODE_FAILURE_CLASSES`，2026-09-22 新增）：
+       ``86`` ⇒ ``pipeline_p2p_timeout``、``21`` ⇒ ``pp_rollout_wall_clock_cap``。
+       排在文本匹配**之前**——异常文本常被 torchrun 前缀化，退出码才是可信事实。
+       （它与第 1 步的 ``124`` 不冲突：不同的码表达不同的事。）
     1. **超时**（``timed_out`` / ``exit_code == 124``）⇒ ``TIMEOUT``；
     2. **数值异常**（A6 明细含 "NaN/Inf"）⇒ ``NUMERIC_ANOMALY``；
     3. **数值不可判定**（A6 明细含 :data:`NUMERIC_INDETERMINATE_DETAIL`，即
@@ -2333,6 +2377,7 @@ def classify_failure(evidence: RunEvidence, a6: CriterionResult) -> FailureClass
 
     | # | 触发条件（可判定的事实） | 归类 | 可达 |
     |---|---|---|:--:|
+    | 0 | ``exit_code`` ∈ ``{86, 21}`` | ``pipeline_p2p_timeout`` / ``pp_rollout_wall_clock_cap`` | ✔ |
     | 1 | ``timed_out`` 或 ``exit_code == 124`` | ``TIMEOUT`` | ✔ |
     | 2 | loss/grad_norm 序列里**真读到** NaN/Inf | ``NUMERIC_ANOMALY`` | ✔ |
     | 3 | loss 字段无值（``MISSING_SENTINEL``）且**无任何**真 NaN | ``UNCLASSIFIED`` | ✔ |
@@ -2363,6 +2408,11 @@ def classify_failure(evidence: RunEvidence, a6: CriterionResult) -> FailureClass
     """
     if evidence.timed_out or evidence.exit_code == 124:
         return FailureClass.TIMEOUT
+    # ★ 退出码优先（2026-09-22 裁定）：86 = PP P2P 超时、21 = PP rollout 墙钟上限。
+    #   排在文本匹配**之前**，因为异常文本常被 torchrun 前缀化而匹配不到。
+    by_exit = EXIT_CODE_FAILURE_CLASSES.get(evidence.exit_code) if evidence.exit_code else None
+    if by_exit is not None:
+        return by_exit
     if numeric_anomaly(a6):
         return FailureClass.NUMERIC_ANOMALY
     if numeric_indeterminate(a6):

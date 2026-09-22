@@ -1040,6 +1040,56 @@ def test_classify_failure_recognises_nccl_collective_timeout():
     assert classify_failure(generic, judge_a6(generic)) is FailureClass.COMM_HARDWARE
 
 
+def test_classify_failure_prefers_exit_code_for_pipeline_p2p_timeout():
+    """★裁定：退出码 **86** ⇒ ``pipeline_p2p_timeout``，且**优先于文本**。
+
+    为什么必须优先：torchrun/弹性启动会把异常文本前缀化并包成
+    ``ChildFailedError``，文本里可能根本找不到 ``PipelineP2PTimeoutError``
+    ⇒ 只按文本会漏判。退出码是进程交还的**事实**。
+    """
+    evidence = make_evidence(
+        exit_code=86, losses=(1.0,), grad_norms=(1.0,),
+        log_text="[rank1]: torch.distributed.elastic.multiprocessing.errors.ChildFailedError:\n",
+    )
+    a6 = judge_a6(evidence)
+    assert a6.passed
+    assert classify_failure(evidence, a6) is FailureClass.PIPELINE_P2P_TIMEOUT
+    assert FailureClass.PIPELINE_P2P_TIMEOUT == "pipeline_p2p_timeout"
+
+
+def test_classify_failure_prefers_exit_code_for_pp_rollout_wall_clock_cap():
+    """★裁定：退出码 **21** ⇒ ``pp_rollout_wall_clock_cap``（与 124 的整体超时区分）。"""
+    evidence = make_evidence(
+        exit_code=21, losses=(1.0,), grad_norms=(1.0,), log_text="(无异常文本)\n",
+    )
+    a6 = judge_a6(evidence)
+    assert classify_failure(evidence, a6) is FailureClass.PP_ROLLOUT_WALL_CLOCK_CAP
+    assert FailureClass.PP_ROLLOUT_WALL_CLOCK_CAP == "pp_rollout_wall_clock_cap"
+    # 与既有的 124 不冲突：124 仍是 TIMEOUT。
+    assert classify_failure(
+        make_evidence(exit_code=124, losses=(1.0,), grad_norms=(1.0,), log_text=""), a6
+    ) is FailureClass.TIMEOUT
+
+
+def test_classify_failure_text_fallback_when_exit_code_is_normalised():
+    """退出码被外层归一成 1 时，仍能从**异常名**认出（文本兜底，不退化成"未分类"）。"""
+    p2p = make_evidence(
+        exit_code=1, losses=(1.0,), grad_norms=(1.0,),
+        log_text="PipelineP2PTimeoutError: p2p wait exceeded budget\n",
+    )
+    assert classify_failure(p2p, judge_a6(p2p)) is FailureClass.PIPELINE_P2P_TIMEOUT
+
+
+def test_new_exit_code_classes_never_count_toward_max_context():
+    """两个新类**都不计入最大可行上下文**（只有真 OOM 计入）。"""
+    for failure_class in (
+        FailureClass.PIPELINE_P2P_TIMEOUT,
+        FailureClass.PP_ROLLOUT_WALL_CLOCK_CAP,
+    ):
+        assert not counts_toward_max_context(failure_class)
+    assert counts_toward_max_context(FailureClass.REAL_OOM)
+
+
 def test_a4_unknown_tier_fails_closed_without_a_default_tolerance():
     """五要素第 1 条：取不到档族标定 ⇒ **不下发默认容差**，fail-closed。"""
     unknown_first = make_evidence(losses=(1.0, 0.8, 0.6), backend="native", cards=1,
