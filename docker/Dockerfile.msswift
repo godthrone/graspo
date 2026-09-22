@@ -354,4 +354,76 @@ PY
 
 RUN python scripts/check_env_versions.py --local
 
+# ── 第 7 层：CUDA 工具链对齐 torch 的编译版本（13.0）[P0 修复]───────────────────
+# 根因：本配方的 base（见上 `FROM`）自带 CUDA Toolkit **13.2.78**，而本配方从
+#   cu130 索引装的 `torch==2.11.0+cu130` 编译期 CUDA 是 **13.0** ⇒ 系统 nvcc(13.2)
+#   ≠ `torch.version.cuda`(13.0)。DeepSpeed 的 `assert_no_cuda_mismatch()`
+#   (`deepspeed/ops/op_builder/builder.py:85-110`) 对 CUDA 13 **没有容忍条目**
+#   （`cuda_minor_mismatch_ok` 只列 10/11/12），于是
+#     `zero2_offload` → `offload_optimizer.device=cpu` → `DeepSpeedCPUAdam`
+#     → `CPUAdamBuilder().load()` → `jit_load` → `get_cuda_compile_flag`
+#   ⇒ 在**训练第 0 步之前** fail-closed（8 档：T004/T005/T019/T020/T037/T038/T049/T050）。
+# 对齐目标 = 旧实测镜像：`torch 2.11.0+cu130` ↔ `nvcc 13.0.88`。
+# **不改 torch、不改任何 pin、不改任何档位定义（`zero2_offload` 原样保留）。**
+# 追加在文件末尾 ⇒ 前面所有层缓存保持命中。
+# 版本按 §6 精确 pin（与旧镜像逐项一致，不做"最新 13.0"式漂移）；
+# apt 走既有 ARG 代理模式（§7.1：代理不入 ENV）。
+ARG CUDA13_NVCC=13.0.88-1
+ARG CUDA13_CUDART=13.0.96-1
+ARG CUDA13_COMPILER=13.0.3-1
+ARG CUDA13_CURAND=10.4.0.35-1
+RUN export http_proxy="${HTTP_PROXY:-}" https_proxy="${HTTPS_PROXY:-}" \
+    HTTP_PROXY="${HTTP_PROXY:-}" HTTPS_PROXY="${HTTPS_PROXY:-}" \
+    && apt-get update -o Acquire::Retries=10 -o Acquire::http::Timeout=30 \
+    && apt-get install -y --no-install-recommends \
+    -o Acquire::Retries=10 -o Acquire::http::Timeout=30 \
+    cuda-nvcc-13-0="${CUDA13_NVCC}" \
+    cuda-cudart-13-0="${CUDA13_CUDART}" \
+    cuda-cudart-dev-13-0="${CUDA13_CUDART}" \
+    cuda-compiler-13-0="${CUDA13_COMPILER}" \
+    cuda-minimal-build-13-0="${CUDA13_COMPILER}" \
+    libcurand-dev-13-0="${CUDA13_CURAND}" \
+    libcurand-13-0="${CUDA13_CURAND}" \
+    && rm -rf /var/lib/apt/lists
+
+# 显式指向 13.0：`/usr/local/cuda` 是 alternatives 链接（当前 → cuda-13.2；
+# 优先级 132 > 130，装 13-0 后**不会**自动切换）⇒ 必须覆盖 CUDA_HOME。
+# DeepSpeed 的 installed_cuda_version() 正是读 `torch.utils.cpp_extension.CUDA_HOME`
+# (builder.py:47-59)，所以这一项即可解 blocker。
+# 注：`LD_LIBRARY_PATH` 有意不动（减小爆炸半径；编译与检查都走 CUDA_HOME 显式路径）。
+ENV CUDA_HOME=/usr/local/cuda-13.0
+ENV PATH=/usr/local/cuda-13.0/bin:${PATH}
+
+# fail-closed 断言（把这个缺口钉死，防止再次漂移）：
+#   ① 工具链必须是 13.0，并且 `$CUDA_HOME` 下的那个 nvcc —— 与 DeepSpeed 取的是同一个；
+#   ② 全组件版本必须与上面的 pin 逐项一致（防止 apt 解析出别的 patch）；
+#   ③ `torch.version.cuda` 的 主.次 必须等于新工具链的 主.次（这正是原缺陷）。
+RUN set -eux; \
+    v="$("${CUDA_HOME}/bin/nvcc" --version | sed -n 's/.*release \([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' | head -1)"; \
+    echo "system cuda toolkit = ${v}"; \
+    [ "${v}" = "13.0" ] || { echo "TOOLKIT-CHANNEL FAILED: ${v}"; exit 1; }; \
+    for spec in "cuda-nvcc-13-0=${CUDA13_NVCC}" "cuda-cudart-13-0=${CUDA13_CUDART}" \
+                "cuda-cudart-dev-13-0=${CUDA13_CUDART}" "cuda-compiler-13-0=${CUDA13_COMPILER}" \
+                "cuda-minimal-build-13-0=${CUDA13_COMPILER}" "libcurand-dev-13-0=${CUDA13_CURAND}" \
+                "libcurand-13-0=${CUDA13_CURAND}"; do \
+      want="${spec#*=}"; pkg="${spec%%=*}"; got="$(dpkg-query -W -f='${Version}' "${pkg}")"; \
+      echo "pin ${pkg}: want=${want} got=${got}"; \
+      [ "${got}" = "${want}" ] || { echo "PIN FAILED: ${pkg} want=${want} got=${got}"; exit 1; }; \
+    done; \
+    python -c "import torch, sys; c=torch.version.cuda or ''; t='.'.join(c.split('.')[:2]); print('torch', torch.__version__, 'compiled cuda', c); sys.exit('TORCH-CUDA FAILED: '+c) if t != '13.0' else None"
+
+# ④ 真实 JIT 探针：**实际编译并加载一次 cpu_adam** —— 这正是 8 档失败的路径，
+#    必须在构建期暴露，而不是留到跑矩阵时才炸（§2.3 防呆）。
+RUN set -eux; \
+    echo "CUDA_HOME=${CUDA_HOME}"; \
+    python -c "from deepspeed.ops.op_builder import CPUAdamBuilder; m = CPUAdamBuilder().load(); print('CPUADAM OK', m)"; \
+    python -c "from deepspeed.git_version_info import installed_ops; print('installed_ops cpu_adam =', installed_ops.get('cpu_adam'))"
+
+# 把新增工具链写进版本锚点（与既有 :78-80 的做法一致，§6 环境可复现）。
+RUN set -eux; \
+    { printf 'cuda_toolkit %s\n' "$("${CUDA_HOME}/bin/nvcc" --version | sed -n 's/.*release \([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' | head -1)"; \
+      printf 'cuda_nvcc %s\n' "$(dpkg-query -W -f='${Version}' cuda-nvcc-13-0)"; \
+      printf 'cuda_home %s\n' "${CUDA_HOME}"; } >> /opt/graspo-image/VERSION; \
+    cat /opt/graspo-image/VERSION
+
 CMD ["bash"]
