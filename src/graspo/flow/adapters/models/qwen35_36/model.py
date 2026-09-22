@@ -25,6 +25,7 @@ from graspo.flow.parallel.placement_plan import NativePlacementPlan
 from graspo.flow.parallel.tensor_utils import (
     _all_gather_sp,
     _dtype_size,
+    _gather_sequence_positions,
     _position_ids,
     _scatter_sp,
     _selected_token_log_probs_from_hidden,
@@ -564,6 +565,7 @@ class Qwen35HybridTextModel(QwenFamilyBase):
         use_cache: bool = False,
         apply_lm_head: bool = False,
         all_gather_output: bool = False,
+        lm_head_row_indices: torch.Tensor | None = None,
         multimodal_inputs: dict[str, torch.Tensor] | None = None,
         position_input_ids: torch.Tensor | None = None,
         position_ids: torch.Tensor | None = None,
@@ -579,6 +581,10 @@ class Qwen35HybridTextModel(QwenFamilyBase):
         - ``position_ids`` 若由调用方（stage 0）预先计算并跨 stage 传递，
           则直接使用（多模态 3D M-RoPE 只能在拥有 visual tower 的 stage 0
           正确计算）。
+        - ``lm_head_row_indices``：仅 ``apply_lm_head=True`` 时生效。传入 ``(B,)``
+          的行索引后，只在**这些位置**上做 ``norm+lm_head``（返回 ``(B, 1, vocab)``），
+          避免物化整条序列的 logits（b1，缺陷 P6）。语义与"全序列算完再按同一索引
+          取行"**逐位相同**（norm/lm_head 逐位置独立）；索引在 SP all-gather 之后使用。
         """
         # ── 确定 SP 相关的原始/补齐序列长度（跨 stage 必须一致） ──
         if hidden_states is None:
@@ -674,6 +680,12 @@ class Qwen35HybridTextModel(QwenFamilyBase):
                 hidden_states = _all_gather_sp(hidden_states)
                 if hidden_states.shape[1] != _sp_orig_seq_len:
                     hidden_states = hidden_states[:, :_sp_orig_seq_len, :]
+            if lm_head_row_indices is not None:
+                # b1（缺陷 P6）：只在需要的位置上做 norm+lm_head。
+                # norm/lm_head 逐位置独立 ⇒ 与"全序列算完再取同一行"**逐位相同**，
+                # 但不会物化 (B, S, vocab)（T035 形状下 60–93 GiB，物理不可能）。
+                # 必须放在 SP all-gather **之后**：分片下"某个位置"的归属取决于 rank。
+                hidden_states = _gather_sequence_positions(hidden_states, lm_head_row_indices)
             hidden_states = self.norm(hidden_states)
             hidden_states = self.lm_head(hidden_states)
         elif all_gather_output:

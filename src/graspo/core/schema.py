@@ -47,6 +47,22 @@ KNOWN_BACKENDS: frozenset[str] = frozenset(
 #: "未验证的 native PP rollout" 闸门（缺陷 P6）。
 ROLLOUT_TRAIN_METHODS: frozenset[str] = frozenset({"graspo"})
 
+#: PP rollout 的 **prefill** 是否只在**末位**上做 ``norm + lm_head``（b1，缺陷 P6）。
+#:
+#: **这是同一件事的单一真相源**：PP 生成路径按它决定"要物化几个位置的 logits"，
+#: 而启动期的显存预算闸门（``flow/runtime._validate_pp_rollout_logits_budget``）
+#: 按它估算字节数。两者共用同一个常量，因此**不可能漂移**：把本常量关回 ``False``
+#: 的那一刻，估算自动回到 ``data.max_prompt_length`` 量级 ⇒ T035 形状会被启动期拒绝，
+#: 而不是跑 15 分钟后 OOM。
+#:
+#: 为什么是 True（实测根因，2026-09-22）：末 stage 曾对**整条序列**算 logits
+#: ⇒ `(64, 2052) × vocab 248320` = 60–93 GiB，80GB 卡物理不可能；而调用方
+#: （``generation.py``）本来就只取末位 ⇒ 全序列 logits 是**纯浪费**。
+#: 为什么语义不变：``norm``（按最后一维做统计）与 ``lm_head``（逐 token 线性）
+#: 都是**逐位置独立**的算子 ⇒ "先取行再算"与"先算再取行"在同样的输入值上
+#: **逐位相同**（见 ``tests/flow/adapters/models/test_lm_head_last_only.py``）。
+PP_ROLLOUT_PREFILL_LAST_ONLY: bool = True
+
 
 def validate_train_method_combination(
     *,
@@ -590,24 +606,43 @@ class GraspoFlowConfig(BaseModel):
     readable_log_enabled: bool = True
     synchronize_cuda_timing: bool = False
     pp_max_inflight_microbatches: int = 0
-    # ── PP 会合点有界等待（缺陷 P6 的 a1；**默认 600s = NCCL 自身默认量级**）──
-    # 语义：PP 的 send/recv 与 pp_group token 广播的等待上限（秒）。
+    # ── PP rollout 会合点有界等待（缺陷 P6 的 a1；**默认 600s = NCCL 默认量级**）──
+    # 语义：**PP rollout / 生成路径**上 send/recv 与 pp_group token 广播的等待上限（秒）。
     # **0 = 关闭有界等待**（退化为修复前的无界等待，逐字旧行为）。
-    # 为什么要有默认值而不是默认关闭：P6 的实测形态是"永久挂死且 NCCL watchdog
-    # 看不见"，无界等待本身就是缺陷的一部分。600s 与 NCCL 集合超时同量级 ⇒
-    # 健康运行下永不触发（实测首个 prefill 的 P2P 等待是毫秒级），只在真挂死时
-    # 把"无限"变成"有界失败"。
+    #
+    # ★ 作用域（2026-09-22 指挥官裁定 3；改名前叫 `pp_p2p_timeout_sec`）：
+    #   **只给 rollout / 生成路径**，**不得**用于 1F1B 训练热路径。原因：
+    #   torch 的 `Work.wait(timeout)` 在**设了 timeout 时会阻塞 CPU 线程**
+    #   （官方文档原文 "if timeout is set, it will block the CPU thread until the
+    #   NCCL work is completed or timed out"；不设 timeout 时只是"让当前流挂完成事件"）
+    #   ⇒ 放到 1F1B 的 `wait_all(send_works)` 上就是**每步末尾多一次 CPU 同步、
+    #   损失跨 step 重叠**：用一个健康路径上永不触发的超时换热路径性能，属 §18 留债。
+    #   训练路径的**有界性另有来源**：它的等待对象是"已入队的 NCCL work"，
+    #   由 **NCCL 自己的 600s watchdog** 计时；而 P6 的无界形态恰恰是 NCCL 看不见的
+    #   "流/事件依赖 + 尚未入队的会合"，只出现在 rollout 的紧会合序列里。
+    #   由 `tests/flow/parallel/test_pp_bounded_wait_scope.py` 的接线守卫钉住。
     # 唯一转换点：`flow/parallel/pipeline_comm.pp_rendezvous_timeout`（§1.4）。
-    pp_p2p_timeout_sec: int = 600
+    pp_rollout_p2p_timeout_sec: int = 600
     # ── PP rollout 无进展看门狗（缺陷 P6 的 a4）────────────────────────────
     # 语义：PP rollout 期间连续多少秒**没有任何会合点进展** ⇒ 判定停滞：
     # 转储全线程栈后 fail-closed（非零退出，见 rendezvous_watchdog 的退出码）。
-    # 为什么必须有它（而不是只靠 pp_p2p_timeout_sec）：若卡点在 CUDA 流/事件依赖
+    # 为什么必须有它（而不是只靠 pp_rollout_p2p_timeout_sec）：若卡点在 CUDA 流/事件依赖
     # 或"下一次会合尚未入队"的 host 侧等待上，通信层根本没有在飞 work 可超时 ⇒
     # 只能由通信层之外的看门狗提供有界性。
     # 为什么是 300s：远大于任何真实会合间隔（实测 prefill 约 15s），又远小于
     # runner 的 7200s 档位超时，保证"无界挂死白耗卡"不再发生。
     pp_rollout_no_progress_sec: int = 300
+    # ── PP rollout 末 stage logits 的显存预算闸门（缺陷 P6 的 b3）──────────
+    # 语义（GiB）：启动期按**形状**预估"末 stage 在 rollout prefill 要物化的 logits
+    # 字节数"，超预算 ⇒ **启动即拒**（`flow/runtime._validate_pp_rollout_logits_budget`）。
+    # **0 = auto**：取"最小可见 GPU 总显存 × 50%"（查不到 GPU 时显式 WARNING 后跳过）。
+    # 为什么需要（实测事故，2026-09-22 r3）：末 stage 曾对**整条序列**做 `norm+lm_head`
+    # ⇒ `(batch=64, seq=2052) × vocab=248320` 的 logits 要 **60–93 GiB**，80GB 卡上
+    # 物理不可能；表现是 OOM 直接死（被 WORLD barrier 掩盖成 600s 超时）或卡在
+    # 分配器/驱动路径 ⇒ 对端无界挂死。b1 修掉后本闸门是**回归围栏**：
+    # 若哪天有人把 `PP_ROLLOUT_PREFILL_LAST_ONLY` 关回去（或调用方又要全序列 logits），
+    # T035 形状在启动期就会被拒，而不是跑 15 分钟后才炸。
+    pp_rollout_logits_budget_gib: float = 0.0
     # ── 未端到端验证的 native PP rollout：显式预授权（**默认关闭**，缺陷 P6 c1）─
     # 事实：能力矩阵 54 档里 `native + pp_size>1 + 有 rollout` **只有 T035/T036**，
     # 且**从未有一档通过**；`generation_pp.py` 是未接线死代码、真 NCCL 的 PP

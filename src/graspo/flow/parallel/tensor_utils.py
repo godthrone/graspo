@@ -771,6 +771,44 @@ def _torch_recurrent_gated_delta_rule(
     return core_attn_out.transpose(1, 2).contiguous().to(initial_dtype), last_recurrent_state
 
 
+def _gather_sequence_positions(
+    hidden_states: torch.Tensor, row_indices: torch.Tensor
+) -> torch.Tensor:
+    """按行取**一个**序列位置：``(B, S, H)`` + ``(B,)`` ⇒ ``(B, 1, H)``（b1，缺陷 P6）。
+
+    **语义保证（"逐位一致"）**：``norm``（沿最后一维做统计）与 ``lm_head``（逐 token
+    线性）都是**逐位置独立**的算子 ⇒ "先取行再算" 与 "全序列算完再按同一索引取行"
+    在同样的输入值上**逐位相同**。这一点由
+    ``tests/flow/adapters/models/test_lm_head_last_only.py`` 用真实 norm/lm_head 钉住。
+
+    **为什么必须存在**：末 stage 在 rollout prefill 上对**整条序列**做 lm_head 会物化
+    ``(B, S, vocab)`` 的 logits —— T035 形状下 `(64, 2052) × 248320` = 60–93 GiB，
+    80GB 卡**物理不可能**（2026-09-22 实测：`torch.OutOfMemoryError: Tried to allocate
+    60.74 GiB @ model.py lm_head`）。而调用方本来就只取末位 ⇒ 全序列 logits 是纯浪费。
+
+    边界校验（§2.3）：形状不符/索引越界**当场报错**，不静默算错。
+    """
+    if hidden_states.ndim != 3:
+        raise ValueError(
+            f"_gather_sequence_positions expects (B, S, H), got shape {tuple(hidden_states.shape)}"
+        )
+    batch, seq_len, _hidden = hidden_states.shape
+    if row_indices.ndim != 1 or int(row_indices.shape[0]) != int(batch):
+        raise ValueError(
+            f"_gather_sequence_positions expects row_indices with shape ({batch},), "
+            f"got {tuple(row_indices.shape)}"
+        )
+    lo = int(row_indices.min().item())
+    hi = int(row_indices.max().item())
+    if lo < 0 or hi >= int(seq_len):
+        raise ValueError(
+            f"_gather_sequence_positions row_indices out of range [0, {int(seq_len)}): "
+            f"min={lo} max={hi}"
+        )
+    rows = torch.arange(int(batch), device=hidden_states.device)
+    return hidden_states[rows, row_indices].unsqueeze(1)
+
+
 def _next_token_from_logits(
     logits: torch.Tensor,
     *,

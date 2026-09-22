@@ -13,7 +13,7 @@
 另钉住两件事：
 * 闸门在**启动期**而不是配置加载期 ⇒ ``GraspoConfig.model_validate`` 对 T035 形状
   仍然成功（既有 46 档与多个测试依赖配置加载契约，§2.3 收紧但不改既有契约面）；
-* 数值边界：``pp_p2p_timeout_sec >= 0``、``pp_rollout_no_progress_sec >= 1``。
+* 数值边界：``pp_rollout_p2p_timeout_sec >= 0``、``pp_rollout_no_progress_sec >= 1``。
 """
 
 from __future__ import annotations
@@ -114,7 +114,7 @@ def test_existing_shapes_are_untouched(shape: dict[str, Any]) -> None:
 
 def test_defaults_are_documented_and_bounded() -> None:
     cfg = _config(_T028_SHAPED)
-    assert cfg.native.pp_p2p_timeout_sec == 600
+    assert cfg.native.pp_rollout_p2p_timeout_sec == 600
     assert cfg.native.pp_rollout_no_progress_sec == 300
     assert cfg.native.allow_unverified_pp_rollout is False
 
@@ -122,7 +122,7 @@ def test_defaults_are_documented_and_bounded() -> None:
 @pytest.mark.parametrize(
     ("key", "value", "match"),
     [
-        ("pp_p2p_timeout_sec", -1, "pp_p2p_timeout_sec"),
+        ("pp_rollout_p2p_timeout_sec", -1, "pp_rollout_p2p_timeout_sec"),
         ("pp_rollout_no_progress_sec", 0, "pp_rollout_no_progress_sec"),
     ],
 )
@@ -133,6 +133,6 @@ def test_numeric_bounds_are_fail_closed(key: str, value: int, match: str) -> Non
 
 
 def test_zero_timeout_means_disabled_but_is_not_a_boundary_error() -> None:
-    """``pp_p2p_timeout_sec: 0`` 是**合法**的（= 关闭有界等待，退化为旧行为）。"""
-    data = {**_T028_SHAPED, "native": {**_T028_SHAPED["native"], "pp_p2p_timeout_sec": 0}}
+    """``pp_rollout_p2p_timeout_sec: 0`` 是**合法**的（= 关闭有界等待，退化为旧行为）。"""
+    data = {**_T028_SHAPED, "native": {**_T028_SHAPED["native"], "pp_rollout_p2p_timeout_sec": 0}}
     validate_native_runtime_config(_config(data))
