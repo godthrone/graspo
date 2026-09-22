@@ -204,8 +204,13 @@
 > **数值健康（A6 + A7）**：
 > - A6：全程无 NaN/Inf（读到即判 ❌ 不可用）；并记录 grad_norm 的**量级指纹**（max / 中位数 / 相差几个数量级），达到 10 个数量级时标 ⚠，但**不单独据此判否**——实测 T017（native 全参）grad_norm≈8e8 而 loss 正常下降，单看量级会误伤。
 > - A7（训练真推进）：**因非有限梯度跳过优化器步的次数必须为 0**（`skipped_nonfinite > 0` ⇒ ❌ 不可用）。理由：用户要的是「**顺利**跑完一个 epoch」；跳过 33 次 nonfinite 步不叫顺利（T035 实测：机制阻塞修好后仍有 1 次跳过 + grad_norm 7.8e13）⇒ 虽「跑完」但**不可用**。
-> **全局指标口径（2026-09-22 修正）**：
-> - `global_grad_norm_mean` = 各 rank 梯度 L2 范数的**算术平均**。PP/TP 各 rank 只持有部分参数 ⇒ 它 **≠ 全模型梯度范数**；它也 **≠ 用于更新的步长**（更新走裁剪后梯度，`max_grad_norm` 默认 1.0）。正确口径见 `global_grad_norm_l2 = sqrt(Σ‖g_r‖²)`。逐 rank 原始值在 `rank_metrics.rank_*.jsonl`。⚠ 不要把该列的量级增长读成「梯度爆炸」。
+> **global_grad_norm 口径（2026-09-22 修正 + 分模式如实标注）**：
+> - `global_grad_norm_mean` = 各 rank 梯度 L2 范数的**算术平均**（逐 rank 局部读数）。它 **≠ 全模型梯度范数**，也 **≠ 用于更新的步长**（更新走裁剪后梯度）。⚠ 不要把该列的量级增长读成「梯度爆炸」。逐 rank 原始值在 `rank_metrics.rank_*.jsonl`。
+> - `global_grad_norm_l2 = sqrt(Σ_r ‖g_r‖²)`，其语义**取决于并行布局**（随值落盘在 `global_grad_norm_l2_caliber`）：
+>   - 单卡 ⇒ 就是全模型梯度范数；
+>   - PP/TP 分片 ⇒ 各 rank 持不同分片 ⇒ 等于拼接后的全模型梯度范数；
+>   - **DP 复制** ⇒ 各 rank 持同一份参数、梯度经 all-reduce 平均 ⇒ 该式是 `‖mean(g_r)‖` 的**上界**，**不等于**全模型范数（对照值 `global_grad_norm_dp_mean`）；
+>   - DP 与分片混合 ⇒ **未判定**，不声明任何等式。
 > - `global_loss_mean` = 只在**真正产出 loss 的 stage** 上聚合（PP 下即末 stage）；非末 stage 不计算 loss，其 `loss_mean` 是结构性 0，**不得**进入分母。口径随值落盘：`global_loss_caliber` / `global_loss_rank_count`。
 > A4（同配置双跑一致性，含首步零容差、终态容差、档族标定、运行独立性）已降级为诊断字段：
 > 仍计算、仍记录，但不参与 ✅/❌——它衡量「可复现性/效果」，不是「能不能训练」。
