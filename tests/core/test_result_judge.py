@@ -950,6 +950,96 @@ def test_a4_dual_channel_conflict_is_indeterminate_never_pass():
     assert judge_a4(first, make_evidence(losses=(1.0, 0.8, 0.6))).passed
 
 
+def test_a4_bit_identical_two_independent_runs_is_perfect_reproducibility():
+    """★裁定 2（正向）：两通道逐位相同 **且**已确认为两次独立运行 ⇒ 判**通过**。
+
+    旧实现对这种形态一律判「双通道冲突/不可判定」——那会**误伤真·完美可复现**：
+    若某配置真的逐位确定，A4 会永远报"不可判定"，是方向性错误。
+    独立性证据 3 项：运行根不同 / 产物根 ``st_dev:st_ino`` 不同 / 首条记录时间戳不同。
+    """
+    same_hash = "c" * 64
+    first = make_evidence(
+        losses=(1.0, 0.8, 0.6), grad_norms=(1.0, 0.9, 0.8),
+        final_ckpt_sha256=same_hash,
+        run_root="/exp/r1/T010", output_identity="8:1001",
+        first_metric_timestamp="2026-09-22T05:39:48+00:00",
+    )
+    second = make_evidence(
+        losses=(1.0, 0.8, 0.6), grad_norms=(1.0, 0.9, 0.8),
+        final_ckpt_sha256=same_hash,
+        run_root="/exp/r2/T010", output_identity="8:2002",
+        first_metric_timestamp="2026-09-22T05:57:54+00:00",
+    )
+    result = judge_a4(first, second)
+    assert result.passed, result.detail
+    assert "完美可复现" in result.detail
+    assert "两次真实独立运行" in result.detail
+    # 备注必须自证"没动容差/门槛"（§2.2 显式即防呆）。
+    assert "未改任何容差/门槛" in result.detail
+
+
+def test_a4_bit_identical_copied_artifacts_stay_indeterminate():
+    """★裁定 2（负向·堵"拷贝造伪独立"）：位置证据拿满但**时间戳相同** ⇒ 仍判不可判定。
+
+    把同一份产物拷到另一个路径：``run_root`` 与 inode 都会变（位置级证据 2 项），
+    但产物里**记录的时间戳不会变** ⇒ 内容级证据一票否决独立性 ⇒ fail-closed 保持。
+    这条是"不许把自我比较陷阱放行"的守卫。
+    """
+    same_hash = "d" * 64
+    first = make_evidence(
+        losses=(1.0, 0.8, 0.6), grad_norms=(1.0, 0.9, 0.8),
+        final_ckpt_sha256=same_hash,
+        run_root="/exp/r1/T010", output_identity="8:1001",
+        first_metric_timestamp="2026-09-22T05:39:48+00:00",
+    )
+    second = make_evidence(
+        losses=(1.0, 0.8, 0.6), grad_norms=(1.0, 0.9, 0.8),
+        final_ckpt_sha256=same_hash,
+        run_root="/exp/copy-of-r1/T010", output_identity="8:9999",
+        first_metric_timestamp="2026-09-22T05:39:48+00:00",   # 同一时间戳 ⇒ 拷贝指纹
+    )
+    result = judge_a4(first, second)
+    assert not result.passed
+    assert result.evidence_missing is True, "冲突/不可证明是「不可判定」，不是「训练失败」"
+    assert "无法证明是两次独立运行" in result.detail
+    assert "同一份产物的两次比对" in result.detail
+
+
+def test_classify_failure_recognises_nccl_collective_timeout():
+    """★裁定 3：集合通信超时必须被归类为 ``nccl_collective_timeout``（不再"未分类"）。
+
+    真实形态（T035 实测 stdout 原文）：``Watchdog caught collective operation timeout``
+    + ``terminate called after throwing an instance of 'c10::DistBackendError'``。
+    既有 ``COMM_HARDWARE`` 的签名（``watchdog timeout`` / ``NCCL error|WARN|timeout``）
+    **匹配不到**它 ⇒ 修前落 ``UNCLASSIFIED``。
+    取值必须与跑批装置 ``rig/matrix_batch_driver.py`` 的口径**逐字一致**（同一口径两消费者）。
+    """
+    evidence = make_evidence(
+        exit_code=1,
+        losses=(1.0, 0.8),
+        grad_norms=(1.0, 0.9),
+        log_text=(
+            "[rank1]:[E922 06:10:39.470785264 ProcessGroupNCCL.cpp:689] [Rank 1] Watchdog "
+            "caught collective operation timeout: WorkNCCL(SeqNum=3, OpType=ALLREDUCE, "
+            "NumelIn=1, NumelOut=1, Timeout(ms)=600000) ran for 600043 milliseconds before "
+            "timing out.\n"
+            "terminate called after throwing an instance of 'c10::DistBackendError'\n"
+        ),
+    )
+    a6 = judge_a6(evidence)
+    assert a6.passed, a6.detail          # 数值本身健康 ⇒ 分类只由日志模式决定
+    assert classify_failure(evidence, a6) is FailureClass.NCCL_COLLECTIVE_TIMEOUT
+    assert FailureClass.NCCL_COLLECTIVE_TIMEOUT == (
+        "nccl_collective_timeout（集合通信超时 ⇒ PP/DP 各 rank 步调不一致）"
+    )
+    # 反向守卫：既有的 `通信硬件` 签名仍须可用（未被新条目顶掉）。
+    generic = make_evidence(
+        exit_code=1, losses=(1.0,), grad_norms=(1.0,),
+        log_text="NCCL WARN some socket error\n",
+    )
+    assert classify_failure(generic, judge_a6(generic)) is FailureClass.COMM_HARDWARE
+
+
 def test_a4_unknown_tier_fails_closed_without_a_default_tolerance():
     """五要素第 1 条：取不到档族标定 ⇒ **不下发默认容差**，fail-closed。"""
     unknown_first = make_evidence(losses=(1.0, 0.8, 0.6), backend="native", cards=1,
