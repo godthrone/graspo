@@ -7,7 +7,7 @@ import torch
 import torch.distributed as dist
 
 from graspo.flow.adapters.models.qwen35_36.model import Qwen35HybridTextModel
-from graspo.flow.parallel.pipeline_comm import PipelineComm
+from graspo.flow.parallel.pipeline_comm import PipelineComm, wait_all
 from graspo.flow.parallel.placement_plan import (
     placement_summary,
 )
@@ -84,8 +84,6 @@ class _Qwen35LogprobsMethods:
                 bwd_group=self.tp_state.pp_group_bwd,
                 max_inflight=int(self.config.native.pp_max_inflight_microbatches),
                 chunk_count=1,
-                # a1：有界等待（取值唯一来源 native.pp_p2p_timeout_sec）。
-                wait_timeout_s=int(self.config.native.pp_p2p_timeout_sec),
             )
             hidden, _present, _stage_input, send_work = self._pipeline_forward_hidden(
                 input_ids=sequences,
@@ -102,7 +100,7 @@ class _Qwen35LogprobsMethods:
                 debug_label="logprob",
             )
             if send_work is not None:
-                comm.wait_all([send_work], label="pp_logprobs.send")
+                wait_all([send_work])
             if self.pp_rank == self.pp_size - 1:
                 assert hidden is not None
                 assert self.model.norm is not None and self.model.lm_head is not None
