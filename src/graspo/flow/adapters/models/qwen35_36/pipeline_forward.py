@@ -41,7 +41,7 @@ def _pp_debug_log(output_dir: str, msg: str) -> None:
         )
 
 
-def _pp_probe(output_dir: str, label: str, **fields: Any) -> None:
+def _pp_probe(output_dir: str, label: str, /, **fields: Any) -> None:
     """会合点探针（a3，缺陷 P6）：打一行带标签的调试日志 + 一次看门狗心跳。
 
     **零行为改动**：只走既有的 ``_pp_debug_log`` 落盘通路（stderr +
@@ -51,6 +51,14 @@ def _pp_probe(output_dir: str, label: str, **fields: Any) -> None:
     为什么需要：2026-09-22 实测的挂死形态是"``pp_debug.log`` 只有 3 行、
     两卡 util 0%、>18 min 无任何 watchdog 超时"——即**没有任何一行日志能指向
     卡在哪个会合点**。逐会合点打点后，一次有界运行就能把卡点定位到唯一一行。
+
+    ``output_dir`` / ``label`` 是**仅限位置参数**（``/``）：这样 ``**fields`` 里
+    出现同名键（包括 ``label=``）也不可能与形参冲突。这不是洁癖——本函数第一版
+    就是普通签名，然后 ``_pipeline_forward_hidden`` 传了 ``label=debug_label``
+    当场 ``TypeError: _pp_probe() got multiple values for argument 'label'``，
+    被 228 的有界冒烟在 20 秒内抓到（探针把 PP 路径打挂，比不探针还糟）。
+    位置参数限定的语义由 ``tests/flow/parallel/test_pp_rendezvous_probes.py``
+    的签名守卫钉住。
     """
     detail = " ".join(f"{key}={value}" for key, value in fields.items())
     _pp_debug_log(output_dir, f"probe={label}" + (f" {detail}" if detail else ""))
@@ -133,7 +141,7 @@ class _Qwen35PipelineForwardMethods:
             recv_alloc_seq=recv_seq,
             batch=batch,
             use_cache=use_cache,
-            label=debug_label,
+            phase=debug_label,
         )
 
         stage_input: torch.Tensor | None = None

@@ -59,6 +59,54 @@ def test_probe_returns_none_and_touches_no_tensor() -> None:
     assert list(signature.parameters) == ["output_dir", "label", "fields"]
 
 
+def test_probe_leading_params_are_positional_only() -> None:
+    """**回归守卫**（真机事故，2026-09-22 08:43 在 228 上被有界冒烟 20 秒抓到）：
+
+    ``_pp_probe`` 第一版是普通签名，``_pipeline_forward_hidden`` 传了
+    ``label=debug_label`` ⇒ ``TypeError: got multiple values for argument 'label'``，
+    **探针把 PP 路径打挂**。加 ``/`` 后 ``**fields`` 里出现同名键也不可能冲突。
+    """
+    parameters = list(inspect.signature(pipeline_forward._pp_probe).parameters.values())  # noqa: SLF001
+    assert parameters[0].kind is inspect.Parameter.POSITIONAL_ONLY
+    assert parameters[1].kind is inspect.Parameter.POSITIONAL_ONLY
+
+
+def test_probe_tolerates_a_field_named_label(tmp_path, monkeypatch) -> None:
+    """``label=`` 作为**字段**必须合法（位置参数限定后不会与形参撞名）。"""
+    fake = _RecordingWatchdog()
+    monkeypatch.setattr(pipeline_forward, "rendezvous_watchdog", fake, raising=False)
+    pipeline_forward._pp_probe(str(tmp_path), "fwd_enter", label="gen", stage=0)  # noqa: SLF001
+    log = tmp_path / "logs" / get_run_id() / "pp_debug.log"
+    text = log.read_text(encoding="utf-8")
+    assert "probe=fwd_enter" in text
+    assert "label=gen" in text
+
+
+def _probe_call_keywords(module: object, function_name: str) -> list[str]:
+    """返回该模块里 ``function_name(...)`` 所有调用点用到的关键字名（AST 级）。"""
+    import ast
+
+    tree = ast.parse(inspect.getsource(module))
+    names: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            func = node.func
+            called = getattr(func, "id", None) or getattr(func, "attr", None)
+            if called == function_name:
+                names.extend(keyword.arg or "" for keyword in node.keywords)
+    return names
+
+
+@pytest.mark.parametrize("function_name", ["_pp_probe", "_pp_generation_probe"])
+def test_no_probe_call_site_passes_label_as_a_keyword(function_name: str) -> None:
+    """接线守卫：会合点标签必须按位置传，**不得**写成 ``label=``（真机事故的根因）。"""
+    for module in (pipeline_forward, generation):
+        assert "label" not in _probe_call_keywords(module, function_name), (
+            f"{module.__name__} 里有 {function_name}(..., label=...) 调用点；"
+            "标签必须按位置传（否则与形参同名冲突）"
+        )
+
+
 @pytest.mark.parametrize(
     "label",
     ["fwd_enter", "recv_enqueue", "recv_ready", "send_enqueue"],
