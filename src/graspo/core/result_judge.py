@@ -335,6 +335,18 @@ A4_MEASURED_BF16_FINAL_LOSS_DRIFT = 1.0302e-3
 #: ⚠️ **本表不是"把 1e-2 放大"**：它是把"单档 1e-2"换成"逐档族实测最坏对 ×1.5、再被
 #: 真 bug 半量封顶"。T010 档族的取值 4.675e-2 是**被封顶**得到的
 #: （1.5×0.0344=5.16e-2 > 4.675e-2），不是 1e-2 的任何倍数。
+#:
+#: - **档族键 = backend × cards × algorithm × model × mode**（2026-09-22 指挥官 J2/P1 裁定）：
+#:   三维键粗于 workload——本批实测同族 ms-swift/1/CPT 的 9B 档差 `8.7e-3`、27B 档差 `4.14e-2`
+#:   （**4.7×**），ms-swift/2/CPT 9B `2.5e-3` vs 27B `4.35e-2`（**17.5×**）⇒ 单一容差被迫取
+#:   大者、贴近硬上界、把 9B 的隔离带吃光（§18 债）。`model`/`mode` 为 ``None`` 的行是
+#:   **通配行**（见 :attr:`A4TierCalibration.model`），2026-09-22 之前的历史行属**已登记债**。
+#: - **算法名归一**：清单写 ``GRASPO``、本表写 ``GRPO``（同一机制），由
+#:   :func:`normalize_a4_algorithm` 做**显式精确**映射（J5 裁定；不改生成器，避免清单指纹失效）。
+#:
+#: ★ **n=5 不是统计意义上的容差上界**：分布无关的单侧 95% 覆盖 / 90% 置信区间需
+#: n = ln(0.10)/ln(0.95) ≈ 45 个样本；`A4_WORST_PAIR_SAFETY_FACTOR = 1.5` 是**工程安全余量**
+#: （人工判断常数），不是从分布推出的分位数。口径说明见 `docs/a4-tolerance-calibration.md`。
 
 #: 全库硬上界（锁一）：AD1 点名的最小真 bug 签名 / 2。任何档族容差都不得越过它。
 A4_TOLERANCE_HARD_UPPER_BOUND = 4.675e-2
@@ -403,6 +415,33 @@ class A4TierCalibration:
     outcome: str
     #: **出处**：逐字写出读数池与数值来源（AD1 报告行号 / 工位文件）。不得为空。
     provenance: str
+    #: ── 档族键的第四、第五维：**model × mode**（2026-09-22 指挥官 J2/P1 裁定）──
+    #:
+    #: 为什么必须扩维（§1.4 / §18）：`backend × cards × algorithm` 粗于 workload——
+    #: 本批实测同族 ms-swift/1/CPT 的 9B 档差 8.7e-3、27B 档差 4.14e-2（**4.7×**），
+    #: ms-swift/2/CPT 9B 2.5e-3 vs 27B 4.35e-2（**17.5×**）。单一容差被迫取大者、
+    #: 贴近硬上界 ⇒ 9B 档的隔离带被 27B 吃光。
+    #:
+    #: ``None`` = **通配**（该行覆盖全部 model/mode）。通配只用于两类行：
+    #: ① 2026-09-22 之前的历史行（当时键只有三维，属**已登记债**，`note` 必须写明）；
+    #: ② 经"上包络"标定、确有证据覆盖全部 model/mode 的行。
+    #: 通配行**不构成放宽通道**：其 ``tol`` 照样要过 :func:`validate_tier_tolerance`。
+    model: str | None = None
+    #: 模式（``LoRA`` / ``全量``）。语义与 :attr:`model` 相同（``None`` = 通配）。
+    mode: str | None = None
+    #: ── 标定元数据（§1.4 可追溯：每个容差必须能指回数据来源与样本量）──
+    #:
+    #: 代表档号（该读数池实际跑的 tier，如 ``"T032"``）。``calibrated`` 行**不得为空**。
+    representative_tier: str = ""
+    #: 读数池的卡集合（AO1 立下的「同一卡集合 mandatory」纪律）。空元组 = 历史行未登记。
+    card_set: tuple[int, ...] = ()
+    #: 本容差**实际覆盖**的 model/mode 范围（人读；``model``/``mode`` 为 ``None`` 时必须写明
+    #: 实测的是哪一个）。``calibrated`` 行**不得为空**。
+    model_scope: str = ""
+    #: 采样日期/时段（人读）。``calibrated`` 行**不得为空**。
+    sampled_at: str = ""
+    #: 小样本稳定性核对结论（留一/半分；``calibrated`` 行**不得为空**，历史行写"未做留一"）。
+    split_check: str = ""
     #: 退化/证据不足的人读说明（``calibrated`` 时为 ``""``）。
     note: str = ""
 
@@ -410,6 +449,27 @@ class A4TierCalibration:
 A4_OUTCOME_CALIBRATED = "calibrated"
 A4_OUTCOME_INSUFFICIENT_N = "insufficient_n"
 A4_OUTCOME_DEGENERATE = "degenerate"
+
+#: ── 算法名的**显式等价**映射（2026-09-22 指挥官 J5 裁定）────────────────────────
+#:
+#: 清单侧把 RL 档写作 ``GRASPO``（唯一真相源是生成器
+#: ``tests/e2e/generate_matrix.py`` 的 ``_block("GRASPO", …)``），而 A4 标定表把
+#: 同一条 RL 机制的实测读数记作 ``GRPO``（GRASPO = GRPO trainer + graspo reward，
+#: 见 ``scripts/collect_results.py`` 由清单逐字透传 algorithm、**不做归一**）。
+#:
+#: 为什么用**显式映射**而不是改生成器：改生成器会连带 rmtree+重写
+#: ``samples/configs/matrix54/`` 与 ``run_matrix54.sh`` ⇒ 228 上已跑批次的清单指纹
+#: 全部失效（``task-matrix-driver/run-plan.md`` §⑨ 记录）。改判定器只动取数入口，
+#: **不放宽任何判据**——映射只声明一条已文档化的等价。
+#:
+#: ★ 边界（§2.2 显式即防呆）：只做**精确串**映射，不做大小写归一、不做前缀匹配、
+#: 不做 guess。未登记的算法串一律原样比较 ⇒ 未命中即 fail-closed。
+_A4_ALGORITHM_EQUIVALENTS: Mapping[str, str] = {"GRASPO": "GRPO"}
+
+
+def normalize_a4_algorithm(algorithm: str) -> str:
+    """把算法名归一到标定表使用的规范串（唯一入口，见 :data:`_A4_ALGORITHM_EQUIVALENTS`）。"""
+    return _A4_ALGORITHM_EQUIVALENTS.get(algorithm, algorithm)
 
 #: 档族标定表（唯一真相源）。**取值出处逐条可追**（§1.4）。
 #: 为什么 T010 的 note 写"封顶"：1.5 × 0.034423828125 = 5.1636e-2 **越过**硬上界
@@ -431,9 +491,21 @@ A4_TIER_CALIBRATIONS: tuple[A4TierCalibration, ...] = (
             "最坏对 0.034423828125 = AA1-A2 vs AA1-B1。"
             "出处：task-ad1-a4-validity/report.md §6.1（:190-198）、§7.2（:261）"
         ),
+        # ★ P1 迁移遗留（2026-09-22）：本行是**宽键行**（model/mode 未分维）。
+        #   实测只在 T010（9B/LoRA）；同族 27B 档 T022 是**借用**本容差——T022 实测差
+        #   4.30e-2 ≤ 4.675e-2 ⇒ 通过，故保留宽键以避免 fail-closed 回归。
+        #   重新标定时应拆成精确行（§18 已登记债）。
+        model=None,
+        mode=None,
+        representative_tier="T010",
+        card_set=(),
+        model_scope="9B/LoRA（实测 T010）；宽键行覆盖全部 model/mode",
+        sampled_at="2026-09-19/20（AA1 + w1）",
+        split_check="半分：sealed n=3 最坏对 2.56e-2 < 全池 3.44e-2（AD1 §7.2；未做留一）",
         note=(
             "1.5 × 0.034423828125 = 5.1636e-2 越过硬上界 4.675e-2 ⇒ **按锁一封顶**；"
-            "隔离带 = 9.35e-2 / 4.675e-2 = 2.00×"
+            "隔离带 = 9.35e-2 / 4.675e-2 = 2.00×。"
+            "★ 宽键行（P1 遗留）：实测仅 9B/LoRA，27B/LoRA 属借用，重新标定时拆精确行"
         ),
     ),
     A4TierCalibration(
@@ -451,25 +523,47 @@ A4_TIER_CALIBRATIONS: tuple[A4TierCalibration, ...] = (
             "r3-retest2 T013 行，:98-105）×5 对；AD1 §6.3（:218-221）"
         ),
         note="1.5 × 4.48e-3 = 6.72e-3；隔离带 = 9.35e-2 / 6.72e-3 = 13.9×",
+        # ★ P1 迁移遗留：宽键行；实测仅 T013（9B/LoRA），27B 档 T025 属借用
+        #   （T025 实测差 4.85e-3 ≤ 6.72e-3 ⇒ 通过）。
+        model=None,
+        mode=None,
+        representative_tier="T013",
+        card_set=(),
+        model_scope="9B/LoRA（实测 T013）；宽键行覆盖全部 model/mode",
+        sampled_at="2026-09-20/21（r3-bulk / r3-lenramp / r3-retest2）",
+        split_check="未做留一（历史行）；AD1 §3 的 6 对逐对读数见 provenance",
     ),
     A4TierCalibration(
         backend="ms-swift",
         cards=1,
         algorithm="GRPO",
-        tol=1.38e-2,
-        worst_pair=9.2e-3,
-        n=4,
-        outcome=A4_OUTCOME_INSUFFICIENT_N,
+        tol=A4_MEASURED_BF16_FINAL_LOSS_DRIFT,
+        worst_pair=0.0,
+        n=6,
+        outcome=A4_OUTCOME_DEGENERATE,
         provenance=(
-            "T031/T033 · ms-swift · GRPO · 1 卡 读数池 **n=4**（j1 run1/run2 T033 对、"
-            "p1 T033 对、p2 T033 对、j1 T031 两跑均为无信号 0）⇒ 有效对 3、最坏对 9.2e-3"
-            "（T033 首步差 1.54e-3 与终态差 2.2e-4/2.37e-4 中取最大者）"
-            "出处：task-ad1-a4-validity/report.md §3（:88-94）"
+            "★ 2026-09-22 **清洗后重 derive**（指挥官第 1 批工作包 J3 裁定）："
+            "**剔除全部 4 卡 T033 读数**——原出处写 `T031/T033`，把 4 卡档的读数并进 1 卡族，"
+            "违反 AO1 立下的「同一卡集合（mandatory）」纪律（跨卡集把方差抬高 ≈2.74×）。"
+            "清洗后池 = **仅 1 卡 T031 的 6 个终态读数**（j1 run1/run2、p1 run1/run2、"
+            "p2 run1/run2，AD1 §3 :88-94 逐批标注「0 vs 0（差 0）」）⇒ **6/6 全部 = 0.0**"
+            "（GRPO 无信号步：末步 loss=0 / grad_norm=0 / group skipped）"
+            "⇒ 最坏对 = 0.0 ⇒ 终态通道**零鉴别力**，按 AD1 §④ 标 `degenerate`；"
+            "容差取基线下界（只下调不上调）。"
+            "★ 旧值留证（已作废）：tol=1.38e-2、worst_pair=9.2e-3、n=4、"
+            "outcome=insufficient_n——该值由 4 卡 T033 读数主导，对 1 卡族是跨卡集污染。"
+            "注：6 个读数来自 j1/p1/p2 三批，各批卡集未在台账登记（card_set 空）；"
+            "因池内恒为 0，卡集不影响 worst_pair（恒 0）。"
         ),
+        representative_tier="T031",
+        card_set=(),
+        model_scope="9B/LoRA（实测 T031）；宽键行覆盖全部 model/mode",
+        sampled_at="2026-09-20（j1 / p1 / p2 三批）",
+        split_check="未做留一；退化池（6/6 = 0）估计量恒为 0，无需稳定性核对",
         note=(
-            "**n=4 < 5 ⇒ 证据不足**：1.5 × 9.2e-3 = 1.38e-2 > 1e-2 历史值，"
-            "但**低于**任何已观测真 bug 签名；取值只下调不上调，且台账必须标注证据不足"
-            "（见 judge_a4 detail 的「证据不足」后缀）"
+            "**退化（degenerate）**：池内 6/6 终态 loss = 0 ⇒ 终态子检查零鉴别力；"
+            "容差取基线下界 1.0302e-3（只下调不上调）。"
+            "★ 本行**不得**再引用任何 4 卡读数（2026-09-22 清洗）"
         ),
     ),
     A4TierCalibration(
@@ -531,6 +625,19 @@ A4_TIER_CALIBRATIONS: tuple[A4TierCalibration, ...] = (
             "隔离带 = 9.35e-2 / 6.020861864089967e-3 = 15.53×。"
             "★ **不得**被同 backend×cards 的 **OPD** 档复用：算法不同、机制不同"
             "（AO1 §⑩-2）；OPD 档仍为 `None` ⇒ fail-closed，需独立补 n≥5 后另行定档。"
+            "★ P1 遗留：本行是宽键行（model/mode 未分维），实测仅 9B/LoRA（T032）；"
+            "27B 档 T044 属借用（T044 实测差 8.11e-5 ⇒ 通过），重新标定时拆精确行"
+        ),
+        # ★ P1 迁移遗留：宽键行；读数池只有 T032（9B/LoRA）。
+        model=None,
+        mode=None,
+        representative_tier="T032",
+        card_set=(4, 5),
+        model_scope="9B/LoRA（实测 T032）；宽键行覆盖全部 model/mode",
+        sampled_at="228 时钟 2026-09-21 01:25–02:25",
+        split_check=(
+            "n=5 全池；第 2 高对 0.003147673607、中位数 0.002245885133743285"
+            "（AO1 §③；未做留一）"
         ),
     ),
 )
@@ -570,10 +677,70 @@ def validate_tier_tolerance(tol: float, *, min_true_bug_signature: float) -> Non
         )
 
 
+#: 入表元数据的**必填项**（仅对 ``calibrated`` 行强制；见
+#: :func:`validate_tier_calibration_entry`）。
+#: 为什么这几项：§1.4 要求"每个容差能指回数据来源与样本量"——单靠 `provenance` 一段散文
+#: 无法机核，把可机核的部分拆成字段才能在下游自动核对。
+A4_CALIBRATION_REQUIRED_METADATA: tuple[str, ...] = (
+    "representative_tier",
+    "model_scope",
+    "sampled_at",
+    "split_check",
+)
+
+
+def validate_tier_calibration_entry(calibration: A4TierCalibration) -> None:
+    """**入表**校验（§2.1 契约即防呆 / §2.3 边界校验）：一条标定记录必须自证。
+
+    两类界：
+    - **所有行**：``provenance`` 非空（题目：取值必须能追到实测读数）；
+    - **``calibrated`` 行**：``n >= A4_CALIBRATION_MIN_N``、``worst_pair > 0``、
+      :data:`A4_CALIBRATION_REQUIRED_METADATA` 全非空。
+
+    为什么 ``worst_pair > 0`` 必须卡：``worst_pair == 0`` 表示池内读数逐位相同
+    （退化池）⇒ 终态通道**零鉴别力**，此时 `1.5 × 0 = 0` 会低于基线下界、把正常的
+    §6 内核漂移判成失败。这种池**不得**标 ``calibrated``，应标 ``degenerate`` +
+    基线下界（见 :func:`calibrated_tolerance`）。
+
+    ``insufficient_n`` / ``degenerate`` 行**不要求**元数据（它们本就没有可用读数池）；
+    但仍要求 ``provenance`` 说明"为什么没有"。
+    """
+    if not calibration.provenance.strip():
+        raise ValueError(
+            f"A4 标定行 {calibration.backend}/{calibration.cards}/{calibration.algorithm} "
+            f"(model={calibration.model!r}, mode={calibration.mode!r}) 的 provenance 为空："
+            "§1.4 要求每个容差能指回读数池与数值来源。"
+        )
+    if calibration.outcome != A4_OUTCOME_CALIBRATED:
+        return
+    if calibration.n < A4_CALIBRATION_MIN_N:
+        raise ValueError(
+            f"A4 标定行 ... 标 `calibrated` 但 n={calibration.n} < {A4_CALIBRATION_MIN_N}："
+            "n<5 的最坏对严重低估（AD1 §7.2 实测 7.8×）⇒ 只能标 insufficient_n。"
+        )
+    if not calibration.worst_pair > 0.0:
+        raise ValueError(
+            "A4 标定行标 `calibrated` 但 worst_pair="
+            f"{calibration.worst_pair!r}（非正）：池内读数逐位相同 ⇒ 终态通道零鉴别力，"
+            "应标 degenerate + 基线下界，不得标 calibrated。"
+        )
+    missing = [
+        name
+        for name in A4_CALIBRATION_REQUIRED_METADATA
+        if not str(getattr(calibration, name)).strip()
+    ]
+    if missing:
+        raise ValueError(
+            f"A4 标定行 ... 标 `calibrated` 但元数据为空：{missing}。"
+            "§1.4：每个容差必须能指回代表档 / 覆盖面 / 采样时间 / 小样本核对。"
+        )
+
+
 #: 导入时**立即**校验全表（§2.3 边界校验在边界上）：标定表被改坏 ⇒ 启动即失败，
 #: 而不是等到某一档跑完才发现判据失去隔离带。
 for _calibration in A4_TIER_CALIBRATIONS:
     validate_tier_tolerance(_calibration.tol, min_true_bug_signature=A4_MIN_TRUE_BUG_SIGNATURE)
+    validate_tier_calibration_entry(_calibration)
 del _calibration
 
 #: 硬上界必须正好是"最小真 bug 签名的一半"（锁一的定义本身，逐字锁死）。
@@ -590,7 +757,8 @@ for _calibration in A4_TIER_CALIBRATIONS:
             _calibration.tol * 2
             < A4_MIN_TRUE_BUG_SIGNATURE + 1e-12 * max(1.0, A4_MIN_TRUE_BUG_SIGNATURE)
         ), (
-            f"档族 {_calibration.backend}/{_calibration.cards}/{_calibration.algorithm} "
+            f"档族 {_calibration.backend}/{_calibration.cards}/{_calibration.algorithm}"
+            f"（model={_calibration.model!r}, mode={_calibration.mode!r}）"
             f"容差 {_calibration.tol!r} ×2 不小于最小真 bug 签名 "
             f"{A4_MIN_TRUE_BUG_SIGNATURE!r}（隔离带消失）"
         )
@@ -617,20 +785,35 @@ def calibrated_tolerance(
 ) -> tuple[float, str]:
     """由读数池推导容差，返回 ``(tol, outcome)``。
 
-    **统计量 = n≥5 最坏对 × 1.5，再被硬上界封顶**（五要素第 2 条 + 锁一）。
+    **统计量 = n≥5 最坏对 × 1.5，再被硬上界封顶、再被实测基线下界兜底**（五要素第 2 条 + 锁一）。
 
-    ``n < min_n`` ⇒ 返回 ``(A4_MEASURED_BF16_FINAL_LOSS_DRIFT, A4_OUTCOME_INSUFFICIENT_N)``
-    ——**绝不允许**用 n=2 的低估去定档（AD1 §7.2：n=2 = 0.0044 vs 全池 0.0344，低估 7.8×）。
-    此时返回值是**基线下界**（只下调不上调），调用方必须在台账里标注"证据不足"。
+    三个分支：
+
+    - ``n < min_n`` ⇒ ``(A4_MEASURED_BF16_FINAL_LOSS_DRIFT, A4_OUTCOME_INSUFFICIENT_N)``
+      ——**绝不允许**用 n=2 的低估去定档（AD1 §7.2：n=2 = 0.0044 vs 全池 0.0344，低估 7.8×）。
+    - ``n >= min_n`` 但 **``worst_pair == 0``（池内逐位相同）** ⇒
+      ``(A4_MEASURED_BF16_FINAL_LOSS_DRIFT, A4_OUTCOME_DEGENERATE)``。
+      为什么不能返回 0：``1.5 × 0 = 0`` 低于基线下界，会把正常的内核漂移判成失败；
+      退化池的终态通道**零鉴别力**（AD1 §④），只能取下界并显式标退化。
+    - 否则 ⇒ ``max(min(1.5 × worst_pair, 硬上界), 基线下界)``，``calibrated``。
+      ★ 为什么要 `max(..., 基线下界)` 而不是抛错：若某族实测漂移**小于**基线下界
+      （如 ms-swift/2/SFT 9B 实测差 ~1.9e-4 ⇒ 1.5× = 2.8e-4 < 1.0302e-3），
+      说明"这一族比已知最小内核漂移还稳"——此时正确的容差是**下界**（下界锁的
+      本意就是"不得用没被测到过的更小量当容差"），而不是让模块导入炸掉。
+      `validate_tier_tolerance` 只负责**拒绝**表里手写越界的值，不负责给合法读数池判死。
 
     ★ 注意：本函数**不做** `常量 × 固定倍数` 的推算——倍数只作用在"逐档族实测最坏对"上。
     """
     if len(readings) < min_n:
         return A4_MEASURED_BF16_FINAL_LOSS_DRIFT, A4_OUTCOME_INSUFFICIENT_N
-    tol = A4_WORST_PAIR_SAFETY_FACTOR * worst_pair(readings)
+    measured = worst_pair(readings)
+    if measured <= 0.0:
+        return A4_MEASURED_BF16_FINAL_LOSS_DRIFT, A4_OUTCOME_DEGENERATE
+    tol = A4_WORST_PAIR_SAFETY_FACTOR * measured
     capped = min(tol, min_true_bug_signature / 2.0)
-    validate_tier_tolerance(capped, min_true_bug_signature=min_true_bug_signature)
-    return capped, A4_OUTCOME_CALIBRATED
+    floored = max(capped, A4_MEASURED_BF16_FINAL_LOSS_DRIFT)
+    validate_tier_tolerance(floored, min_true_bug_signature=min_true_bug_signature)
+    return floored, A4_OUTCOME_CALIBRATED
 
 
 def _is_sign_flip(first_loss: float, second_loss: float, tolerance: float) -> bool:
@@ -713,16 +896,83 @@ def degenerate_final_check_reason(losses: Sequence[float], grad_norms: Sequence[
     return None
 
 
-def _resolve_backend_cards_algorithm(
-    backend: str | None, cards: int | None, algorithm: str | None
-) -> tuple[str, int, str] | None:
-    """把"缺失的档族字段"用**只降维**的回落序补全（§2.2 显式即防呆）。
+def _model_mode_specificity_order(
+    model: str | None, mode: str | None
+) -> tuple[tuple[str | None, str | None], ...]:
+    """给出 ``(model, mode)`` 的匹配候选，**从最具体到最泛化**（§2.2 显式即防呆）。
+
+    ``None`` = 该维**未知**（调用方没给）或该行**通配**（见 :attr:`A4TierCalibration.model`）。
+    规则：
+
+    - 某一维**未知**时，**不得**匹配该维的精确行（例如 mode 未知就不得用 ``LoRA`` 行）；
+      只允许该维通配的行 —— 这是 fail-closed，不是放宽。
+    - 顺序 = 五元组精确 → 单维通配 → 全通配；先命中先返回。
+    """
+    order: list[tuple[str | None, str | None]] = [(model, mode)]
+    if model is not None:
+        order.append((model, None))
+    if mode is not None:
+        order.append((None, mode))
+    order.append((None, None))
+    seen: set[tuple[str | None, str | None]] = set()
+    unique: list[tuple[str | None, str | None]] = []
+    for item in order:
+        if item not in seen:
+            seen.add(item)
+            unique.append(item)
+    return tuple(unique)
+
+
+def find_tier_calibration(
+    backend: str,
+    cards: int,
+    algorithm: str,
+    model: str | None = None,
+    mode: str | None = None,
+) -> A4TierCalibration | None:
+    """按 ``backend × cards × algorithm × model × mode`` 取标定记录（五要素第 1 条 + J2/P1）。
+
+    取数规则（**只降维、不抬容差**）：
+
+    1. **五元组精确命中**优先；
+    2. 未命中 ⇒ 回落 ``model``/``mode`` 维的**通配行**（``A4TierCalibration.model is None``），
+       顺序见 :func:`_model_mode_specificity_order`；
+    3. 仍未命中 ⇒ ``None``（调用方 fail-closed）。
+       ★ **不返回任何全局默认容差**——"废止把单档 1.0302e-3 全局化"正是本包的核心要求。
+
+    算法名先经 :func:`normalize_a4_algorithm` 归一（``GRASPO`` → ``GRPO``，J5 裁定）。
+    通配行不构成放宽通道：其 ``tol`` 照样过 :func:`validate_tier_tolerance` 与
+    :func:`validate_tier_calibration_entry`（模块导入时全表校验）。
+    """
+    normalized = normalize_a4_algorithm(algorithm)
+    for candidate_model, candidate_mode in _model_mode_specificity_order(model, mode):
+        for calibration in A4_TIER_CALIBRATIONS:
+            if (
+                calibration.backend == backend
+                and calibration.cards == cards
+                and calibration.algorithm == normalized
+                and calibration.model == candidate_model
+                and calibration.mode == candidate_mode
+            ):
+                return calibration
+    return None
+
+
+def _resolve_tier_calibration(
+    backend: str | None,
+    cards: int | None,
+    algorithm: str | None,
+    model: str | None = None,
+    mode: str | None = None,
+) -> A4TierCalibration | None:
+    """把"缺失的档族字段"用**只降维**的回落序补全，直接返回标定记录（§2.2 显式即防呆）。
 
     判定器拿不到后端/卡数/算法时（如纯逻辑测试只造了 ``RunEvidence``），必须回落到
     **更泛化**的档族——回落序是**显式注册表**（:data:`_A4_BACKEND_FALLBACK_ORDER` 等），
     不是 ``try/except`` 里猜。回落**只降维、不抬容差**：目标档族的容差照样要过
-    :func:`validate_tier_tolerance`，因此"回落"不构成放宽通道。
+    :func:`validate_tier_tolerance` / :func:`validate_tier_calibration_entry`。
 
+    ``model``/``mode`` 为 ``None`` 时**只**允许命中通配行（见 :func:`find_tier_calibration`）。
     返回 ``None`` = 连最泛化的档族都没有 ⇒ 调用方 fail-closed。
     """
     backends = (backend,) if backend else _A4_BACKEND_FALLBACK_ORDER
@@ -731,31 +981,11 @@ def _resolve_backend_cards_algorithm(
     for candidate_backend in backends:
         for candidate_cards in cards_seq:
             for candidate_algorithm in algorithms:
-                for calibration in A4_TIER_CALIBRATIONS:
-                    if (
-                        calibration.backend == candidate_backend
-                        and calibration.cards == candidate_cards
-                        and calibration.algorithm == candidate_algorithm
-                    ):
-                        return (candidate_backend, candidate_cards, candidate_algorithm)
-    return None
-
-
-def find_tier_calibration(
-    backend: str, cards: int, algorithm: str
-) -> A4TierCalibration | None:
-    """**精确**按 ``backend × cards × algorithm`` 取标定记录（五要素第 1 条）。
-
-    精确命中 ⇒ 返回该记录（含容差与出处）；未命中 ⇒ ``None``（调用方 fail-closed）。
-    ★ **不返回任何全局默认容差**——"废止把单档 1.0302e-3 全局化"正是本包的核心要求。
-    """
-    for calibration in A4_TIER_CALIBRATIONS:
-        if (
-            calibration.backend == backend
-            and calibration.cards == cards
-            and calibration.algorithm == algorithm
-        ):
-            return calibration
+                hit = find_tier_calibration(
+                    candidate_backend, candidate_cards, candidate_algorithm, model, mode
+                )
+                if hit is not None:
+                    return hit
     return None
 
 
@@ -766,13 +996,22 @@ def build_tier_calibration(
     cards: int,
     algorithm: str,
     provenance: str,
+    model: str | None = None,
+    mode: str | None = None,
+    representative_tier: str = "",
+    card_set: tuple[int, ...] = (),
+    model_scope: str = "",
+    sampled_at: str = "",
+    split_check: str = "",
 ) -> A4TierCalibration:
-    """由实测读数池**造一条**档族标定记录（定档入口，含 n<5 的 fail-closed 分支）。
+    """由实测读数池**造一条**档族标定记录（定档入口，含 n<5 / 退化两条 fail-closed 分支）。
 
     ★ 这是唯一允许"产生容差"的入口：任何新档族必须先有读数池与出处，才能定档。
     没有读数（``readings`` 为空）⇒ 走 ``insufficient_n`` 分支，容差落到基线下界。
+    池内读数逐位相同（``worst_pair == 0``）⇒ 走 ``degenerate`` 分支，容差同样落下界。
     """
     tol, outcome = calibrated_tolerance(readings)
+    measured = worst_pair(readings)
     note = ""
     if outcome == A4_OUTCOME_INSUFFICIENT_N:
         note = (
@@ -780,17 +1019,38 @@ def build_tier_calibration(
             f"（AD1 §7.2：n=2 低估 7.8×）⇒ 不下档，容差取基线下界 "
             f"{A4_MEASURED_BF16_FINAL_LOSS_DRIFT:g}（只下调不上调）"
         )
-    return A4TierCalibration(
+    elif outcome == A4_OUTCOME_DEGENERATE:
+        note = (
+            f"**退化（degenerate）**：n={len(readings)} 但池内读数逐位相同"
+            f"（worst_pair=0）⇒ 终态子检查零鉴别力，不下档，容差取基线下界 "
+            f"{A4_MEASURED_BF16_FINAL_LOSS_DRIFT:g}（只下调不上调）"
+        )
+    elif A4_WORST_PAIR_SAFETY_FACTOR * measured < A4_MEASURED_BF16_FINAL_LOSS_DRIFT:
+        note = (
+            f"**下界锁生效**：1.5 × 最坏对 {measured:.6g} = "
+            f"{A4_WORST_PAIR_SAFETY_FACTOR * measured:.6g} 低于实测基线下界 "
+            f"{A4_MEASURED_BF16_FINAL_LOSS_DRIFT:g} ⇒ 容差取下界（只上调到已知最小内核漂移）"
+        )
+    calibration = A4TierCalibration(
         backend=backend,
         cards=cards,
-        algorithm=algorithm,
+        algorithm=normalize_a4_algorithm(algorithm),
         tol=tol,
         worst_pair=worst_pair(readings),
         n=len(readings),
         outcome=outcome,
         provenance=provenance,
+        model=model,
+        mode=mode,
+        representative_tier=representative_tier,
+        card_set=card_set,
+        model_scope=model_scope,
+        sampled_at=sampled_at,
+        split_check=split_check,
         note=note,
     )
+    validate_tier_calibration_entry(calibration)
+    return calibration
 
 
 #: 「该字段没有可解释的数值」的 **NaN 哨兵**（``RunEvidence.losses`` 里用它表达
@@ -1116,7 +1376,8 @@ class RunEvidence:
     reload_evidence_source: str | None = None
     #: A3 重载证据的人读明细。
     reload_evidence_detail: str = ""
-    # ── A4 分档标定所需要的档族坐标（五要素第 1 条：backend × cards × algorithm）──
+    # ── A4 分档标定所需要的档族坐标（五要素第 1 条 + J2/P1）──
+    # 键 = backend × cards × algorithm × model × mode。
     #: 训练后端（``native`` / ``ms-swift``）。``None`` = 这条证据不知道后端。
     #: ★ 为什么档族坐标随**证据**走、而不是当参数传（§1.4 单一真相源）：容差属于
     #: "这一档是什么硬件/栈/算法"这个事实，事实的权威来源是清单；把它从清单一路
@@ -1125,7 +1386,16 @@ class RunEvidence:
     #: 卡数（清单 ``cards``）。``None`` = 未知。
     cards: int | None = None
     #: 算法（清单 ``algorithm``，如 ``SFT`` / ``GRPO``）。``None`` = 未知。
+    #: ★ 判定器**不假设**调用方已归一：取数时会经
+    #: :func:`normalize_a4_algorithm` 把 ``GRASPO`` 映射到 ``GRPO``（J5 裁定）。
     algorithm: str | None = None
+    #: 档族键的第四、第五维（J2/P1 裁定，2026-09-22）：``model``（如 ``9B``/``27B``）
+    #: 与 ``mode``（``LoRA``/``全量``）。``None`` = 未知 ⇒ 只允许命中**通配行**
+    #: （fail-closed；不得用某个精确 model 的行去充数）。
+    #: 为什么必须随证据走：同族 9B 与 27B 的实测漂移差 4.7×–17.5×，用一条容差覆盖两者
+    #: 会把 9B 的隔离带吃光（见 :attr:`A4TierCalibration.model`）。
+    model: str | None = None
+    mode: str | None = None
     # ── A4 独立通道（五要素第 5 条 + 锁三）：权重层指纹 ──────────────────────
     #: **末步** checkpoint 的权重文件内容 sha256（十六进制小写）。末步 = 与
     #: ``optimizer_steps`` 同名的那一个（``checkpoint-<step>`` / ``final``），
@@ -1566,7 +1836,10 @@ def judge_a4(
       因此零容忍：这是"去掉种子""打乱数据顺序""换初始化"这类破坏的**即时指纹**。
       **实现见 :func:`_a4_first_step_zero_tolerance_check`（本轮一字未改）。**
     - **子检查②（分档实测容差）**：终态 loss 之差 ≤ **该档族**的标定容差
-      ``backend × cards × algorithm`` —— 见 :data:`A4_TIER_CALIBRATIONS`。
+      ``backend × cards × algorithm × model × mode`` —— 见 :data:`A4_TIER_CALIBRATIONS`
+      （J2/P1 扩维，2026-09-22：同族 9B 与 27B 实测漂移差 4.7×–17.5×，三维键会把
+      9B 的隔离带吃光）。算法名先经 :func:`normalize_a4_algorithm` 归一
+      （``GRASPO`` → ``GRPO``，J5 裁定）；``model``/``mode`` 未知时只允许命中通配行。
       依据：宪法 §6 明文把"GPU 内核选择等**无法控制**的差异"排除在复现破坏之外；
       容差**按档族**由 n≥5 实测最坏对 ×1.5 推出、并被"最小真 bug 签名 / 2"封顶
       （2026-09-21 裁定，依据 ``task-ad1-a4-validity``；**废止** T013 单档常量的
@@ -1627,8 +1900,9 @@ def judge_a4(
     )
 
     # ── 子检查②（分档实测容差）：先取档族，再比终态 loss ─────────────────────
-    resolved = _resolve_backend_cards_algorithm(first.backend, first.cards, first.algorithm)
-    calibration = find_tier_calibration(*resolved) if resolved is not None else None
+    calibration = _resolve_tier_calibration(
+        first.backend, first.cards, first.algorithm, first.model, first.mode
+    )
     if calibration is None:
         # 取不到档族标定 ⇒ fail-closed（**绝不下发"全局默认容差"**，那正是本包要废止的东西）。
         return CriterionResult(
@@ -1636,6 +1910,7 @@ def judge_a4(
             False,
             "缺少该档族的终态容差标定（fail-closed）："
             f"backend={first.backend!r} cards={first.cards!r} algorithm={first.algorithm!r} "
+            f"model={first.model!r} mode={first.mode!r} "
             "在 A4_TIER_CALIBRATIONS 里没有对应档族 ⇒ 不下发默认容差、不判通过",
             evidence_missing=True,
         )
@@ -1659,7 +1934,8 @@ def judge_a4(
             False,
             f"最终 loss 不一致：{first_loss:.6g} vs {second_loss:.6g}"
             f"（差 {delta:.3g} > 档族容差 {tolerance:.3g}；"
-            f"档族 {calibration.backend}/{calibration.cards} 卡/{calibration.algorithm}，"
+            f"档族 {calibration.backend}/{calibration.cards} 卡/{calibration.algorithm}"
+            f"·{calibration.model or '*'}/{calibration.mode or '*'}，"
             f"标定 n={calibration.n}，最坏对 {calibration.worst_pair:.3g}）{evidence_note}",
         )
 
@@ -1727,7 +2003,8 @@ def judge_a4(
         True,
         f"双跑一致：{step_note}final loss {first_loss:.6g} vs {second_loss:.6g}"
         f"（差 {delta:.3g} ≤ 档族容差 {tolerance:.3g}；"
-        f"档族 {calibration.backend}/{calibration.cards} 卡/{calibration.algorithm}，"
+        f"档族 {calibration.backend}/{calibration.cards} 卡/{calibration.algorithm}"
+        f"·{calibration.model or '*'}/{calibration.mode or '*'}，"
         f"标定 n={calibration.n}，最坏对 {calibration.worst_pair:.3g}）{evidence_note}",
     )
 
