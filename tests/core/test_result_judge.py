@@ -8,11 +8,13 @@ import pytest
 
 from graspo.core.result_judge import (
     A4_CALIBRATION_MIN_N,
+    A4_CALIBRATION_REQUIRED_METADATA,
     A4_FINAL_LOSS_TOLERANCE_ABS,
     A4_LEGACY_GLOBAL_TOLERANCE_ABS,
     A4_MEASURED_BF16_FINAL_LOSS_DRIFT,
     A4_MIN_TRUE_BUG_SIGNATURE,
     A4_OUTCOME_CALIBRATED,
+    A4_OUTCOME_DEGENERATE,
     A4_OUTCOME_INSUFFICIENT_N,
     A4_TIER_CALIBRATIONS,
     A4_TOLERANCE_HARD_UPPER_BOUND,
@@ -22,11 +24,20 @@ from graspo.core.result_judge import (
     MAX_CONTEXT_KIND_FEASIBLE,
     MAX_CONTEXT_KIND_OOM_BOUNDARY,
     MISSING_SENTINEL,
+    A4TierCalibration,
     FailureClass,
     RunEvidence,
+    _a4_first_step_was_checked,
+    _a4_first_step_zero_tolerance_check,
+    _is_sign_flip,
+    _model_mode_specificity_order,
     a6_loss_trend,
+    build_tier_calibration,
+    calibrated_tolerance,
     classify_failure,
     counts_toward_max_context,
+    degenerate_final_check_reason,
+    find_tier_calibration,
     judge_a1,
     judge_a2,
     judge_a3,
@@ -35,11 +46,8 @@ from graspo.core.result_judge import (
     judge_a6,
     judge_tier,
     ledger_row,
-    _is_sign_flip,
-    build_tier_calibration,
-    calibrated_tolerance,
-    degenerate_final_check_reason,
-    find_tier_calibration,
+    normalize_a4_algorithm,
+    validate_tier_calibration_entry,
     validate_tier_tolerance,
     worst_pair,
 )
@@ -592,7 +600,7 @@ def test_a4_declares_when_the_zero_tolerance_check_cannot_apply():
 
 
 def test_a4_calibration_table_covers_the_required_tiers_with_provenance():
-    """五要素第 1 条：**按 backend × cards × algorithm 分档**，每条带出处。"""
+    """五要素第 1 条：**按 backend × cards × algorithm（× model × mode）分档**，每条带出处。"""
     native1 = find_tier_calibration("native", 1, "SFT")
     swift1 = find_tier_calibration("ms-swift", 1, "SFT")
     grpo1 = find_tier_calibration("ms-swift", 1, "GRPO")
@@ -602,10 +610,221 @@ def test_a4_calibration_table_covers_the_required_tiers_with_provenance():
     assert native1.worst_pair == 0.034423828125
     assert native1.n == 5
     assert swift1.tol == 6.72e-3
-    assert grpo1.outcome == A4_OUTCOME_INSUFFICIENT_N
+    # 2026-09-22 J3 清洗后：1 卡 GRPO 行只剩 T031（6 个全 0 读数）⇒ 退化，不再是 n=4。
+    assert grpo1.outcome == A4_OUTCOME_DEGENERATE
+    assert grpo1.n == 6
+    assert grpo1.worst_pair == 0.0
+    assert grpo1.tol == A4_MEASURED_BF16_FINAL_LOSS_DRIFT
     for calibration in A4_TIER_CALIBRATIONS:
         assert calibration.provenance.strip()
         assert calibration.worst_pair >= 0.0
+        # 元数据完整性（§1.4）：calibrated 行必须能指回代表档/覆盖面/时间/小样本核对。
+        if calibration.outcome == A4_OUTCOME_CALIBRATED:
+            for field in A4_CALIBRATION_REQUIRED_METADATA:
+                assert str(getattr(calibration, field)).strip(), (calibration.algorithm, field)
+
+
+def test_a4_msswift_1card_grpo_row_is_cleaned_of_four_card_readings():
+    """J3（2026-09-22）：1 卡 GRPO 行**不得**再引用 4 卡 T033 的读数。
+
+    旧行出处写 ``T031/T033``、worst_pair 9.2e-3（由 4 卡读数主导）⇒ 跨卡集污染，
+    违反 AO1 的「同一卡集合（mandatory）」纪律。清洗后：只剩 1 卡 T031 的 6 个全 0
+    读数 ⇒ outcome=degenerate、tol=基线下界；旧值必须留证在 note/provenance 里。
+    """
+    row = find_tier_calibration("ms-swift", 1, "GRPO")
+    assert row is not None
+    assert row.outcome == A4_OUTCOME_DEGENERATE
+    assert row.n == 6
+    assert row.worst_pair == 0.0
+    assert row.tol == A4_MEASURED_BF16_FINAL_LOSS_DRIFT
+    # 清洗证据：不得再出现"把 T033 当 1 卡读数"的表述。
+    assert "T031/T033 ·" not in row.provenance
+    assert "剔除全部 4 卡 T033" in row.provenance
+    # 旧值留证（可审计性，§1.4）。
+    assert "1.38e-2" in row.provenance
+    assert "9.2e-3" in row.provenance
+
+
+def test_a4_algorithm_alias_graspo_resolves_to_the_grpo_rows():
+    """J5（2026-09-22）：清单写 ``GRASPO``、标定表写 ``GRPO`` ⇒ 显式别名必须命中。
+
+    ★ 4 卡 GRASPO 仍必须 fail-closed：别名只让 1/2 卡的两条 GRPO 行可达，
+    4 卡族在表里**没有**对应行。
+    """
+    assert normalize_a4_algorithm("GRASPO") == "GRPO"
+    assert normalize_a4_algorithm("GRPO") == "GRPO"
+    assert normalize_a4_algorithm("SFT") == "SFT"
+    # 未知算法原样返回（精确匹配 ⇒ 不命中 ⇒ fail-closed；不做 fuzzy）。
+    assert normalize_a4_algorithm("graspo") == "graspo"
+    assert find_tier_calibration("ms-swift", 1, "GRASPO") is find_tier_calibration(
+        "ms-swift", 1, "GRPO"
+    )
+    assert find_tier_calibration("ms-swift", 2, "GRASPO") is find_tier_calibration(
+        "ms-swift", 2, "GRPO"
+    )
+    # ★ 4 卡 GRASPO 必须仍为 None（别名救不了它，需要独立标定）。
+    assert find_tier_calibration("ms-swift", 4, "GRASPO") is None
+    assert find_tier_calibration("native", 4, "GRASPO") is None
+
+
+def test_a4_five_tuple_key_exact_wins_over_wildcard_unknown_model_fails_closed():
+    """J2/P1：五元组键**精确优先**、通配只降维、维度未知时 fail-closed。"""
+    # 现有历史行是通配行（model/mode 均 None）⇒ 带任意 model/mode 都命中它。
+    wildcard = find_tier_calibration("native", 1, "SFT", "9B", "LoRA")
+    assert wildcard is not None and wildcard.model is None and wildcard.mode is None
+    assert find_tier_calibration("native", 1, "SFT", "27B", "inexistent-mode") is wildcard
+    # 候选顺序：最具体 → 最泛化，且**已知维度不得匹配未知维度的精确行**。
+    assert _model_mode_specificity_order("9B", "LoRA") == (
+        ("9B", "LoRA"),
+        ("9B", None),
+        (None, "LoRA"),
+        (None, None),
+    )
+    assert _model_mode_specificity_order(None, None) == ((None, None),)
+    assert _model_mode_specificity_order("9B", None) == (("9B", None), (None, None))
+    assert _model_mode_specificity_order(None, "LoRA") == ((None, "LoRA"), (None, None))
+    # 精确行必须赢过通配行（用一条内存里的临时表验证匹配逻辑）。
+    exact = A4TierCalibration(
+        backend="ms-swift",
+        cards=1,
+        algorithm="CPT",
+        tol=A4_MEASURED_BF16_FINAL_LOSS_DRIFT,
+        worst_pair=0.002,
+        n=5,
+        outcome=A4_OUTCOME_CALIBRATED,
+        provenance="test",
+        model="9B",
+        mode="LoRA",
+        representative_tier="T001",
+        model_scope="9B/LoRA",
+        sampled_at="test",
+        split_check="test",
+    )
+    validate_tier_calibration_entry(exact)  # 元数据齐全 ⇒ 通过
+    # 未命中任何行 ⇒ None（调用方据此 fail-closed）。
+    assert find_tier_calibration("native", 1, "CPT") is None
+    assert find_tier_calibration("ms-swift", 4, "SFT") is None
+
+
+def test_a4_entry_validation_rejects_incomplete_or_impossible_rows():
+    """§2.3：入表校验必须在边界上拒绝"证据不足却标 calibrated"的行。"""
+    base = dict(
+        backend="native",
+        cards=1,
+        algorithm="CPT",
+        tol=2e-3,
+        worst_pair=1e-3,
+        n=A4_CALIBRATION_MIN_N,
+        outcome=A4_OUTCOME_CALIBRATED,
+        provenance="test",
+        model="9B",
+        mode="LoRA",
+        representative_tier="T001",
+        model_scope="9B/LoRA",
+        sampled_at="test",
+        split_check="test",
+    )
+    validate_tier_calibration_entry(A4TierCalibration(**base))  # 正例
+    # provenance 为空 ⇒ 拒（所有行）。
+    for outcome in (A4_OUTCOME_CALIBRATED, A4_OUTCOME_INSUFFICIENT_N, A4_OUTCOME_DEGENERATE):
+        with pytest.raises(ValueError):
+            validate_tier_calibration_entry(
+                A4TierCalibration(**{**base, "provenance": "  ", "outcome": outcome})
+            )
+    # n < min_n 却标 calibrated ⇒ 拒。
+    with pytest.raises(ValueError):
+        validate_tier_calibration_entry(
+            A4TierCalibration(**{**base, "n": A4_CALIBRATION_MIN_N - 1})
+        )
+    # worst_pair == 0 却标 calibrated ⇒ 拒（退化池必须标 degenerate）。
+    with pytest.raises(ValueError):
+        validate_tier_calibration_entry(A4TierCalibration(**{**base, "worst_pair": 0.0}))
+    # 元数据缺失 ⇒ 拒（逐项）。
+    for field in A4_CALIBRATION_REQUIRED_METADATA:
+        with pytest.raises(ValueError):
+            validate_tier_calibration_entry(A4TierCalibration(**{**base, field: ""}))
+    # 非 calibrated 行不要求元数据（它们本就没有可用读数池）。
+    validate_tier_calibration_entry(
+        A4TierCalibration(
+            **{**base, "outcome": A4_OUTCOME_INSUFFICIENT_N, "n": 0, "worst_pair": 0.0,
+               "representative_tier": "", "model_scope": "", "sampled_at": "", "split_check": ""}
+        )
+    )
+
+
+def test_a4_calibrated_tolerance_floors_at_base_and_handles_degenerate_pool():
+    """§2.3 边界：退化池（全同）与"比下界还稳"的池都必须返回可用容差，不得抛错或给 0。"""
+    # 退化池：n≥5 但读数逐位相同 ⇒ degenerate + 基线下界（绝不给 0）。
+    tol, outcome = calibrated_tolerance([0.0] * 6)
+    assert outcome == A4_OUTCOME_DEGENERATE
+    assert tol == A4_MEASURED_BF16_FINAL_LOSS_DRIFT
+    # 比基线下界还稳的池 ⇒ 容差**上调**到下界（下界锁的本意），仍标 calibrated。
+    readings = [0.0, 0.0001, 0.0002, 0.0001, 0.0002]
+    assert A4_WORST_PAIR_SAFETY_FACTOR * worst_pair(readings) < A4_MEASURED_BF16_FINAL_LOSS_DRIFT
+    tol_small, outcome_small = calibrated_tolerance(readings)
+    assert outcome_small == A4_OUTCOME_CALIBRATED
+    assert tol_small == A4_MEASURED_BF16_FINAL_LOSS_DRIFT
+    calibration = build_tier_calibration(
+        readings, backend="ms-swift", cards=2, algorithm="SFT", provenance="test",
+        model="9B", mode="LoRA", representative_tier="T014", model_scope="9B/LoRA",
+        sampled_at="test", split_check="test",
+    )
+    assert "下界锁生效" in calibration.note
+
+
+def test_a4_first_step_zero_tolerance_guard_is_unchanged_and_runs_first():
+    """★★ **红线回归守卫**：首步零容差子检查一字未改，且**先于**终态容差生效。
+
+    锁住五件事（2026-09-22 指挥官硬约束 ②）：
+    ─ ① 首步逐位相同 ⇒ 不判否（返回 None）；
+    ─ ② 首步任一不同 ⇒ 判否，并给"可复现性被破坏"的原文指纹；
+    ─ ③ 首步无读数（MISSING 哨兵）⇒ fail-closed；
+    ─ ④ 拿不到步号 ⇒ **不适用**（不得假装比过）；
+    ─ ⑤ 与终态容差**无关**：即使某档族已有可用容差、且终态差极小，
+      首步不一致仍必须判 ❌（T033 形状：首步差 0.0316、终态差 5.1e-4）。
+    """
+    equal_first = make_evidence(losses=(1.0, 0.5), grad_norms=(1.0, 1.0), first_logged_step=1)
+    other_equal_first = make_evidence(
+        losses=(1.0, 0.9), grad_norms=(1.0, 1.0), first_logged_step=1
+    )
+    assert _a4_first_step_zero_tolerance_check(equal_first, other_equal_first) is None
+    assert _a4_first_step_was_checked(equal_first, other_equal_first) is True
+
+    different_first = make_evidence(
+        losses=(1.0316, 0.2), grad_norms=(1.0, 1.0), first_logged_step=1
+    )
+    verdict = _a4_first_step_zero_tolerance_check(equal_first, different_first)
+    assert verdict is not None and verdict.passed is False
+    assert "首步 loss 不一致（零容差子检查）" in verdict.detail
+    assert "可控" in verdict.detail
+
+    missing_first = make_evidence(
+        losses=(MISSING_SENTINEL, 0.5), grad_norms=(1.0, 1.0), first_logged_step=1
+    )
+    missing_verdict = _a4_first_step_zero_tolerance_check(equal_first, missing_first)
+    assert missing_verdict is not None and missing_verdict.passed is False
+    # 注意：该分支**既有实现**不置 evidence_missing（本轮红线：一字不改）——
+    # 守卫只锁"判否 + 原文"，不替它改语义。
+    assert "首步 loss 无读数" in missing_verdict.detail
+
+    no_step = make_evidence(losses=(1.0, 0.5), grad_norms=(1.0, 1.0), first_logged_step=None)
+    assert _a4_first_step_zero_tolerance_check(no_step, other_equal_first) is None
+    assert _a4_first_step_was_checked(no_step, other_equal_first) is False
+
+    # ★ ⑤：T033 形状 —— 终态差极小、首步不一致 ⇒ 仍 ❌（终态容差不参与）。
+    t033_like_a = make_evidence(
+        losses=(0.20522165298461914, 0.17088532), grad_norms=(1.0, 1.0),
+        first_logged_step=1, backend="ms-swift", cards=4, algorithm="GRASPO",
+        model="9B", mode="LoRA",
+    )
+    t033_like_b = make_evidence(
+        losses=(0.1736421287059784, 0.17037117), grad_norms=(1.0, 1.0),
+        first_logged_step=1, backend="ms-swift", cards=4, algorithm="GRASPO",
+        model="9B", mode="LoRA",
+    )
+    result = judge_a4(t033_like_a, t033_like_b)
+    assert result.passed is False
+    assert "首步 loss 不一致（零容差子检查）" in result.detail
 
 
 def test_a4_msswift_2card_grpo_is_calibrated_and_opd_must_stay_fail_closed():

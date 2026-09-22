@@ -1448,6 +1448,8 @@ def collect_run(
     backend: str | None = None,
     cards: int | None = None,
     algorithm: str | None = None,
+    model: str | None = None,
+    mode: str | None = None,
     expected_optimizer_steps_per_epoch: int | None = None,
     expected_optimizer_steps_reachable: int | None = None,
 ) -> tuple[Any, SeriesEvidence]:
@@ -1460,9 +1462,11 @@ def collect_run(
     同样由调用方从清单读出（见 :func:`extract_expected_optimizer_steps`），缺省 ``None``
     = "清单未提供" ⇒ 判定器**不开第三态**、门槛照常硬判（fail-closed，**不放宽**）。
 
-    ``backend`` / ``cards`` / ``algorithm`` 是 **A4 分档标定**的档族坐标（§1.4）：
-    容差由档族唯一决定，因此档族必须随证据一起走。缺省 ``None`` = 调用方没给 ⇒
-    判定器按**只降维**的回落序取档族；连最泛化档族都没有 ⇒ A4 fail-closed。
+    ``backend`` / ``cards`` / ``algorithm`` / ``model`` / ``mode`` 是 **A4 分档标定**的
+    档族坐标（§1.4；J2/P1 扩到五维）：容差由档族唯一决定，因此档族必须随证据一起走。
+    缺省 ``None`` = 调用方没给 ⇒ 判定器按**只降维**的回落序取档族；连最泛化档族都没有
+    ⇒ A4 fail-closed。**算法名不做归一**（透传原值，由判定器的 ``normalize_a4_algorithm``
+    统一映射 ``GRASPO``→``GRPO``——单一真相源）。
     """
     exit_code: int | None = None
     exit_path = run_dir / "exit_code"
@@ -1515,6 +1519,8 @@ def collect_run(
         backend=backend,
         cards=cards,
         algorithm=algorithm,
+        model=model,
+        mode=mode,
         final_ckpt_sha256=ckpt_sha256,
         final_ckpt_sha256_detail=ckpt_sha256_detail,
         final_ckpt_sha256_source=ckpt_sha256_source,
@@ -1748,9 +1754,13 @@ def run(args: argparse.Namespace) -> int:
         # 本档 §7 峰值列的口径**由后端唯一决定**（§1.4 单一真相源）。
         # ★ 必须在"没跑过"分支也用它：否则下游会把该格读成"可以用宿主采样补上"。
         backend = str(tier.get("backend"))
-        # A4 档族坐标（五要素第 1 条）：容差由 backend × cards × algorithm 唯一决定，
-        # 因此这三个值必须从清单（唯一真相源）透传到证据里，而不是让判定器自己猜。
+        # A4 档族坐标（五要素第 1 条 + J2/P1 扩到五维）：容差由
+        # backend × cards × algorithm × model × mode 唯一决定，因此这五个值必须从清单
+        # （唯一真相源）透传到证据里，而不是让判定器自己猜。算法名原样透传，
+        # 归一（GRASPO→GRPO）只在判定器的 `normalize_a4_algorithm` 一处做。
         algorithm = str(tier.get("algorithm")) if tier.get("algorithm") is not None else None
+        model = str(tier.get("model")) if tier.get("model") is not None else None
+        mode = str(tier.get("mode")) if tier.get("mode") is not None else None
         cards_raw = tier.get("cards")
         cards = int(cards_raw) if isinstance(cards_raw, int) else None
         tier_caliber = _judge.peak_memory_caliber_for_backend(backend)
@@ -1796,6 +1806,8 @@ def run(args: argparse.Namespace) -> int:
             backend=backend,
             cards=cards,
             algorithm=algorithm,
+            model=model,
+            mode=mode,
             # ★ 步数上限（AF1 §⑥ 方案 S1/S2）：清单读出的"结构可达性"证据，
             #   判定器据此把"口径不可测"与"训练失败"分开（**不放宽**门槛）。
             expected_optimizer_steps_per_epoch=extract_expected_optimizer_steps(tier)[0],
@@ -1814,6 +1826,8 @@ def run(args: argparse.Namespace) -> int:
                     backend=backend,
                     cards=cards,
                     algorithm=algorithm,
+                    model=model,
+                    mode=mode,
                     expected_optimizer_steps_per_epoch=(
                         extract_expected_optimizer_steps(tier)[0]
                     ),
@@ -1875,11 +1889,13 @@ def run(args: argparse.Namespace) -> int:
         # 台账区分"真双跑"与"自比跑出一堆差 0"（AD1 §2.4 实测：键集合里没有它们）。
         row["run_root"] = str(run_root_resolved)
         row["rerun_root"] = str(rerun_root_resolved) if rerun_root_resolved else None
-        # A4 档族坐标（五要素第 1 条）：让"这一档按哪个容差判的"在台账里可审计，
+        # A4 档族坐标（五要素第 1 条 + J2/P1 五维）：让"这一档按哪个容差判的"在台账里可审计，
         # 与 min_optimizer_steps 同理（§1.4 单一真相源）。
         row["backend"] = backend
         row["cards"] = cards
         row["algorithm"] = algorithm
+        row["model"] = model
+        row["mode"] = mode
         # A4 独立通道（五要素第 5 条）：两跑末步权重指纹。经 `_judge.a4_ckpt_sha_fields`
         # 落盘 ⇒ **键名只有一处定义**，台账写一次、下游读同一名字（§1.4）。
         row.update(
