@@ -223,6 +223,7 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
             }
         )
 
+        aborted = False
         try:
             start_epoch = int(self.current_epoch_stats.epoch)
             if (
@@ -282,14 +283,56 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
             self._maybe_optimize(epoch=self.config.training.max_epochs - 1, force=True)
             self._save_checkpoint(output_dir / "final", epoch=self.config.training.max_epochs - 1)
             self._last_checkpoint_time = time.monotonic()
+        except BaseException:
+            # 异常退出路径：**不做任何集合对齐**，直接 abort 本 rank 的进程组后把首个
+            # 异常原样抛出。为什么必须如此（2026-09-22 T035 实测，pp_size=2）：native PP
+            # 下某一 stage 抛错时，另一 stage 通常正阻塞在 PP P2P / pp_group 集合上——
+            # 退出路径上的 WORLD barrier 永远等不到对端，只能等满 600s
+            # ``nccl_collective_timeout``，把**首个异常**掩盖成
+            # ``c10::DistBackendError`` + SIGABRT（首错取证链断裂）。
+            # 详见 :meth:`_abort_distributed` 与 :meth:`_teardown_after_train_loop`。
+            aborted = True
+            self._abort_distributed()
+            raise
         finally:
-            # 防呆（§2.1）：所有 rank 进入 teardown 前先 WORLD 对齐。不同 dp_rank 的
-            # rollout 相互独立、跑速不同，最快/最慢 rank 会在 close()（destroy_parallel_state
-            # 内的 WORLD barrier）上等待对齐；在此再显式加一道 barrier，确保所有 rank 在
-            # 销毁进程组前统一收敛，避免某一 dp_rank 已在 teardown 而另一仍在训练集结算子。
-            if dist.is_available() and dist.is_initialized():
-                dist.barrier()
-            self.runtime.close()
+            # 正常退出（含 ``return``，如 smoke 边界）：保留原语义，先对齐再 teardown。
+            if not aborted:
+                self._teardown_after_train_loop()
+
+    def _teardown_after_train_loop(self) -> None:
+        """训练循环**正常退出**路径的收口：先 WORLD 对齐，再销毁进程组。
+
+        防呆（§2.1）原语义，逐字保留：不同 dp_rank 的 rollout 相互独立、跑速不同，
+        最快/最慢 rank 需在销毁进程组前收敛——``self.runtime.close()`` 内部的
+        ``destroy_parallel_state``（``flow/parallel/state.py``）本身也带一道 WORLD
+        barrier，两者同源同义（因此本方法在 pp_size==1 与既有 46 档上的行为不变）。
+        """
+        if dist.is_available() and dist.is_initialized():
+            dist.barrier()
+        self.runtime.close()
+
+    def _abort_distributed(self) -> None:
+        """训练循环**异常退出**路径的收口：非阻塞销毁进程组，绝不掩盖首个异常。
+
+        **为什么不走 ``self.runtime.close()``**：它内部的 ``destroy_parallel_state``
+        会再做一次 WORLD barrier（``state.py:273``）——在"一侧 stage 已失败、另一侧
+        stage 仍阻塞在 pipeline 集合里"时同样等不到对端，会把首错再一次掩盖成 600s
+        NCCL 超时。异常路径只做 NCCL abort 语义的 ``destroy_process_group()``：
+        对端阻塞中的集合会立刻失败，两端一起快速退出，首个异常的完整 Python 栈得以
+        打印，torchrun 随即回收其余 rank。
+
+        :raises: 不抛出——清理失败只记 WARNING（异常路径的二次失败绝不能替换首错）。
+        """
+        if not (dist.is_available() and dist.is_initialized()):
+            return
+        try:
+            dist.destroy_process_group()
+        except Exception as exc:  # noqa: BLE001 —— 见 docstring：不得替换正在传播的首错
+            logging.getLogger("graspo.trainer").warning(
+                "exception-path teardown: destroy_process_group() failed and was ignored "
+                "so the original error is preserved: %s",
+                exc,
+            )
 
     # ── 样本队列调度 ──────────────────────────────────────────────────────────
 
