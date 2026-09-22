@@ -203,9 +203,9 @@ def test_collector_extracts_evidence_and_fails_closed_without_weight_evidence(tm
     assert record["criteria"]["A1"] is True
     assert record["criteria"]["A2"] is False
     # ★ 取证缺口 ≠ 失败：没有任何判据被证据否定 ⇒ 判"不可判定"，不得记训练失败。
-    assert record["status"] == "⚠ 不可判定（取证缺口）"
+    assert record["status"] == "⚠ 口径不可测"
     assert record["failure_class"] == "取证不足（不可判定）"
-    assert record["status"] != "✅ 通过"
+    assert record["status"] != "✅ 可用"
     assert record["max_context"] is None
     assert (tmp_path / "ledger" / "ledger.md").exists()
 
@@ -379,7 +379,7 @@ def test_collector_real_oom_writes_oom_boundary_context(tmp_path):
     record = _run_collector(tmp_path)
 
     assert record["criteria"]["A1"] is False  # 真 OOM 必然 exit≠0
-    assert record["status"] == "❌ 失败"
+    assert record["status"] == "❌ 不可用"
     assert record["failure_class"] == "真 OOM"
     # 关键（阻断点）：该档实测上下文必须落盘，不得再是 null。
     assert record["max_context"] == 8192
@@ -399,7 +399,7 @@ def test_collector_non_oom_failures_never_write_max_context(tmp_path):
 
         record = _run_collector(case)
 
-        assert record["status"] == "❌ 失败"
+        assert record["status"] == "❌ 不可用"
         assert record["failure_class"] != "真 OOM"
         assert record["max_context"] is None
         assert record["max_context_kind"] is None
@@ -540,7 +540,7 @@ def test_collector_msswift_layout_makes_a1_to_a6_decidable(tmp_path):
         "A5": True,
         "A6": True,
     }, record["criteria_detail"]
-    assert record["status"] == "✅ 通过"
+    assert record["status"] == "✅ 可用"
     assert record["failure_class"] is None
     # 读数口径必须自证（§1.4）：序列来自 ms-swift logging.jsonl，而不是 stdout 兜底。
     assert record["series_source"] == "msswift_logging"
@@ -569,8 +569,8 @@ def test_collector_msswift_without_evidence_is_indeterminate_never_pass(tmp_path
 
     record = _run_collector(tmp_path, manifest=_MSSWIFT_MANIFEST)
 
-    assert record["status"] == "⚠ 不可判定（取证缺口）"
-    assert record["status"] != "✅ 通过"
+    assert record["status"] == "⚠ 口径不可测"
+    assert record["status"] != "✅ 可用"
     assert record["failure_class"] == "取证不足（不可判定）"
     assert record["max_context"] is None
 
@@ -586,7 +586,7 @@ def test_collector_msswift_zero_lora_weights_is_a_substantive_failure(tmp_path):
     record = _run_collector(tmp_path, manifest=_MSSWIFT_MANIFEST)
 
     assert record["criteria"]["A2"] is False
-    assert record["status"] == "❌ 失败"
+    assert record["status"] == "❌ 不可用"
     assert record["failure_class"] != "取证不足（不可判定）"
     assert "权重未变化" in record["criteria_detail"]["A2"]
 
@@ -603,7 +603,7 @@ def test_collector_msswift_unfinished_steps_is_a_substantive_failure(tmp_path):
     record = _run_collector(tmp_path, manifest=_MSSWIFT_MANIFEST)
 
     assert record["criteria"]["A2"] is False
-    assert record["status"] == "❌ 失败"
+    assert record["status"] == "❌ 不可用"
     assert "计划 6" in record["criteria_detail"]["A2"]
 
 
@@ -614,7 +614,7 @@ def test_collector_corrupt_checkpoint_is_a_substantive_failure(tmp_path):
     record = _run_collector(tmp_path, manifest=_MSSWIFT_MANIFEST)
 
     assert record["criteria"]["A3"] is False
-    assert record["status"] == "❌ 失败"
+    assert record["status"] == "❌ 不可用"
     assert record["failure_class"] != "取证不足（不可判定）"
 
 
@@ -667,9 +667,14 @@ def test_collector_a4_rejects_controllable_nondeterminism_at_the_first_step(tmp_
     """
     record = _a4_pair(tmp_path, (1.300001, 0.9, 0.6, 0.4, 0.3, 0.2))
 
+    # ★ 2026-09-22 用户口径变更：**A4 降级为诊断字段，不再参与 ✅/❌**。
+    #   用户原话："判定标准应该是能顺利跑完一个 epoch……看的不是效果，是训练可用"。
+    #   本 fixture 的两次跑都跑完了预定步数 ⇒ 按新口径就是 **✅ 可用**；
+    #   但 A4 的结论**仍必须被计算并记录**（降级 ≠ 删除），且要出现在诊断备注里。
     assert record["criteria"]["A4"] is False, record["criteria_detail"]["A4"]
     assert "首步" in record["criteria_detail"]["A4"]
-    assert record["status"] == "❌ 失败"
+    assert record["status"] == "✅ 可用", record["note"]
+    assert "诊断" in record["note"] and "A4" in record["note"]
 
 
 def test_collector_a4_accepts_measured_bf16_drift(tmp_path):
@@ -685,8 +690,9 @@ def test_collector_a4_still_rejects_gross_divergence(tmp_path):
     """★A4 负向：量级更大的分歧（终态 0.2 vs 0.25）仍必须被拒绝 ⇒ 容差不是空断言。"""
     record = _a4_pair(tmp_path, (1.3, 0.9, 0.6, 0.4, 0.3, 0.25))
 
+    # ★ 同上：A4 已降级为诊断 ⇒ 跑完就是 ✅ 可用；A4 的"量级更大的分歧"仍被如实记录。
     assert record["criteria"]["A4"] is False
-    assert record["status"] == "❌ 失败"
+    assert record["status"] == "✅ 可用", record["note"]
 
 
 # ── H1：A2/A3 的"环境性伪否"收口 ────────────────────────────────────────────
@@ -808,7 +814,7 @@ def test_collector_native_lora_all_zero_delta_is_substantive_failure(tmp_path):
 
     assert record["criteria"]["A2"] is False
     assert "权重未变化" in record["criteria_detail"]["A2"]
-    assert record["status"] == "❌ 失败"
+    assert record["status"] == "❌ 不可用"
     assert record["failure_class"] != "取证不足（不可判定）"
 
 
@@ -837,7 +843,7 @@ def test_collector_native_without_torch_reports_structural_only_not_pass(tmp_pat
     assert record["criteria"]["A3"] is False
     assert record["reload_evidence_source"] == "structural_only:zip_crc"
     assert "structural_only" in record["criteria_detail"]["A3"]
-    assert record["status"] == "⚠ 不可判定（取证缺口）"
+    assert record["status"] == "⚠ 口径不可测"
     assert record["failure_class"] == "取证不足（不可判定）"
 
 
@@ -855,7 +861,7 @@ def test_collector_native_broken_rank_archive_is_substantive_failure(tmp_path):
     assert record["criteria"]["A3"] is False
     assert "无法重新加载" in record["criteria_detail"]["A3"]
     assert record["reload_evidence_source"] == "structural_only:zip_crc"
-    assert record["status"] == "❌ 失败"
+    assert record["status"] == "❌ 不可用"
 
 
 def test_collector_native_rank_torch_load_crash_is_caught(tmp_path):
@@ -906,7 +912,7 @@ def test_collector_native_rank_torch_load_crash_is_caught(tmp_path):
     # 异常类型与消息必须可见，而不是被吞成一句"缺证据"。
     assert "UnpicklingError" in record["criteria_detail"]["A3"], record["criteria_detail"]["A3"]
     assert "could not find MARK" in record["criteria_detail"]["A3"]
-    assert record["status"] == "❌ 失败"
+    assert record["status"] == "❌ 不可用"
 
 
 def test_collector_native_container_probe_grades_a3_without_host_torch(tmp_path):
@@ -968,7 +974,7 @@ def test_collector_native_stale_torch_probe_is_not_trusted(tmp_path):
 
     assert record["criteria"]["A3"] is False
     assert record["reload_evidence_source"] == "structural_only:zip_crc"
-    assert record["status"] == "⚠ 不可判定（取证缺口）"
+    assert record["status"] == "⚠ 口径不可测"
     assert record["failure_class"] == "取证不足（不可判定）"
     # 探测文件被拒的原因必须出现在台账明细里（不静默丢弃）。
     assert "sha256 不符" in record["criteria_detail"]["A3"], record["criteria_detail"]["A3"]
@@ -1210,7 +1216,7 @@ def test_collector_native_full_all_zero_trainable_delta_is_substantive_failure(t
         "权重未变化：全参（run 自产的可训练参数 L2 变化指标全零）"
         "（来源：run_metrics:trainable_norm_delta）"
     )
-    assert record["status"] == "❌ 失败"
+    assert record["status"] == "❌ 不可用"
 
 
 def test_collector_native_full_pp_shard_set_is_a_content_fingerprint(tmp_path):

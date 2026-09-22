@@ -1482,9 +1482,28 @@ class RunEvidence:
 
 #: 台账状态（唯一真相源）。三态而非两态的理由见 :class:`FailureClass` 的
 #: ``EVIDENCE_GAP`` 条目与 :func:`judge_tier`：取证缺口既不是通过，也不是训练失败。
-LEDGER_PASS = "✅ 通过"
-LEDGER_FAIL = "❌ 失败"
-LEDGER_INDETERMINATE = "⚠ 不可判定（取证缺口）"
+#: ★ **主判据**（决定 ✅/❌，2026-09-22 用户口径 = "能不能拿来训练"）：
+#: `A1`=进程正常退出、`A2`=跑满预定步数/epoch 且权重确实被更新、
+#: `A3`=checkpoint 可重载、`A5`=训练产物齐全、`A6`=数值健康（无 NaN/Inf）。
+PRIMARY_CRITERIA: tuple[str, ...] = ("A1", "A2", "A3", "A5", "A6")
+
+#: ★ **诊断判据**（**保留计算与记录，但不参与 ✅/❌**，2026-09-22 用户纠正）：
+#: `A4`=同配置双跑一致性（含首步零容差 / 终态容差 / 档族标定 / 运行独立性四个子检查）。
+#: 为什么只降级 A4：用户原话"你的判定标准应该是**能顺利跑完一个 epoch**……我们现在看的
+#: **不是效果，是训练可用**"——双跑一致性是**可复现性**信号，不是"能不能训练"。
+#: 它仍是有价值的诊断数据（例如"这个族在硬件上的正常漂移有多大"）。
+DIAGNOSTIC_CRITERIA: tuple[str, ...] = ("A4",)
+
+
+#: ★ **2026-09-22 用户纠正口径后的状态词**（唯一的两个结论态）：
+#: 用户原话："你的判定标准应该是**能顺利跑完一个 epoch**……我们现在看的**不是效果，是训练可用**。"
+#: ⇒ `✅ 可用` = 能拿来训练（跑完预定步数/epoch + 正常退出 + 产物齐全 + 数值健康）；
+#:    `❌ 不可用` = 跑不完（崩 / 挂死 / 环境缺陷 / 数值崩坏）。
+LEDGER_PASS = "✅ 可用"
+LEDGER_FAIL = "❌ 不可用"
+#: `⚠ 口径不可测` **只在真正"跑不完或跑不了"时使用**（结构性步数上限 < 门槛、缺配方、
+#: 取证缺口导致主判据无法判定）——**不再用于"A4 没标定"**（A4 已降级为诊断字段）。
+LEDGER_INDETERMINATE = "⚠ 口径不可测"
 #: ★ **第四态**（AF1/指挥官裁定，2026-09-21）：该档的 step 门槛**结构上不可测**——
 #: 不是通过、不是训练失败、也不是取证缺口。
 #: 为什么必须与 :data:`LEDGER_FAIL` 分开：AF1 诊断的 9 档 native GRASPO 里，
@@ -1492,7 +1511,7 @@ LEDGER_INDETERMINATE = "⚠ 不可判定（取证缺口）"
 #: ``queue×group`` 在 4 卡下永不可触发）；把它们的"步数 < 门槛"记成「❌ 失败」，
 #: 读者会读成"这档能力不行"，而事实是"**这档压根没被真正测过**"。
 #: 方向不变：它**不是** ✅，也**不放宽**门槛（``min_optimizer_steps`` 一个字没动）。
-LEDGER_GATE_NOT_APPLICABLE = "⚠ 口径不可测（步数上限 < 门槛）"
+LEDGER_GATE_NOT_APPLICABLE = "⚠ 口径不可测"   # 与 LEDGER_INDETERMINATE 同字：都是"测不了"，理由写在 note
 
 
 @dataclass(frozen=True, slots=True)
@@ -1525,6 +1544,18 @@ class TierJudgement:
     #: 本次 A4 是否启用**双通道强制口径**（见 :func:`judge_tier`）。落台账用（§1.4）：
     #: 同一档在两种口径下可能得到不同结论，台账不写清就会被下游误读成"同一把尺子"。
     a4_require_dual_channel: bool = False
+    #: ★ **主判据**（决定 ✅/❌，2026-09-22 用户口径 = 训练可用性）；见 :data:`PRIMARY_CRITERIA`。
+    primary_criteria: tuple[str, ...] = PRIMARY_CRITERIA
+    #: ★ **诊断判据**（仍计算/仍记录，**不参与判定**）；见 :data:`DIAGNOSTIC_CRITERIA`。
+    diagnostic_criteria: tuple[str, ...] = DIAGNOSTIC_CRITERIA
+    #: **主判据**是否只因"读不到证据"而未满足（决定是否落「⚠ 口径不可测（取证缺口）」）。
+    #: 只看主判据：A4 的取证缺口**不再**制造第三态。
+    primary_evidence_gap: bool = False
+    #: ★ **除 A2 以外的主判据是否全部通过**——第三态（步数口径不可测）的**唯一**放行条件。
+    #: 为什么必须有它（2026-09-22 实测回归）：简化 `ledger_status` 时若只看
+    #: ``step_gate_not_applicable``，T035/T036（A1 exit=1 **真失败** + A2 口径不可测）
+    #: 会被误标成「⚠ 口径不可测」——**第三态掩盖真失败**。真失败优先。
+    primary_others_ok: bool = False
 
     @property
     def indeterminate(self) -> bool:
@@ -1533,13 +1564,10 @@ class TierJudgement:
         ★ 第三态（结构上不可测）**不算**取证缺口：它是"这档测不了这件事"，
         不是"这次没取到证据"。两者在台账上必须分开（AF1/指挥官裁定）。
         """
-        failing = [
-            item for item in self.criteria if not item.passed and not item.not_applicable
-        ]
-        # ★ `bool(failing) and` 这一半**不能省**：第三态把 A2 移出 `failing` 后，
-        #   若只剩"没有阻断项"这一种可能，空列表上的 `all()` 会返回 True ⇒
-        #   把「口径不可测」误判成「取证缺口」（本包实测过这个 bug）。
-        return bool(failing) and all(item.evidence_missing for item in failing)
+        # ★ 2026-09-22 口径变更：只看**主判据**的取证缺口。
+        #   旧实现遍历全部六条判据 ⇒ A4 未标定/无指纹会把档拖成"取证缺口"，
+        #   而 A4 已降级为诊断，**不得**再参与状态判定。
+        return self.primary_evidence_gap
 
 
     @property
@@ -1551,10 +1579,9 @@ class TierJudgement:
         # ★ A2 门槛结构上不可测：**仅在"除它以外全部通过"时**落第四态。
         #   为什么要求"其余全过"：第三态只说"步数这条判据测不了"，**不替其他判据说话**
         #   —— 若 A1/A3/A4/A6 有真失败，仍是「❌ 失败」（真失败绝不被第三态掩掉）。
-        blocking = [
-            item for item in self.criteria if not item.passed and not item.not_applicable
-        ]
-        if self.step_gate_not_applicable and not blocking:
+        # ★ 第三态只在"**除 A2 以外的主判据全部通过**"时成立（守卫由 judge_tier 计算）。
+        #   少了这个守卫，T035/T036 那种"真失败 + A2 口径不可测"会被误判为口径不可测。
+        if self.step_gate_not_applicable and self.primary_others_ok:
             return LEDGER_GATE_NOT_APPLICABLE
         return LEDGER_FAIL
 
@@ -2433,6 +2460,31 @@ def counts_toward_max_context(failure_class: FailureClass | None) -> bool:
 # ── 总判定 ──────────────────────────────────────────────────────────────────
 
 
+def usability_step_criterion(evidence: RunEvidence) -> tuple[bool, bool, str]:
+    """**主判据之一**：这次运行是否"跑满了预定步数/epoch"。
+
+    返回 ``(跑满, 结构性不可测, 人读说明)``。判据来源与 :func:`judge_a2` **逐字共用**
+    同一对纯函数（:func:`resolve_min_optimizer_steps` / :func:`resolve_step_gate_applicability`），
+    不另立门槛口径（§1.4 单一真相源）。
+
+    与 :func:`judge_a2` 的**唯一差别**：本函数**不看**"权重是否变化"这条附属断言
+    （那属效果/取证，不是"能不能跑完"）；`optimizer_steps is None`（读不到步数）⇒
+    不是"跑满"，由调用方按**取证缺口**处理。
+    """
+    threshold, _reject = resolve_min_optimizer_steps(evidence.min_optimizer_steps)
+    if threshold is None:
+        return False, False, f"缺省门槛不可解析（min_optimizer_steps={evidence.min_optimizer_steps}）"
+    not_applicable, why = resolve_step_gate_applicability(evidence, threshold)
+    steps = evidence.optimizer_steps
+    if not_applicable:
+        return False, True, f"{STEP_GATE_NOT_APPLICABLE_MARKER}：{why}"
+    if steps is None:
+        return False, False, "读不到 optimizer step 数（取证缺口，fail-closed）"
+    if steps >= threshold:
+        return True, False, f"optimizer step={steps} ≥ 门槛 {threshold}"
+    return False, False, f"optimizer step={steps} < 门槛 {threshold}（未跑满预定步数/epoch）"
+
+
 def judge_tier(
     first: RunEvidence,
     second: RunEvidence | None = None,
@@ -2454,60 +2506,85 @@ def judge_tier(
     a5 = judge_a5(first)
     a6 = judge_a6(first)
     criteria = (a1, a2, a3, a4, a5, a6)
-    passed = all(result.passed for result in criteria)
-    # ★ **第三态**（AF1/指挥官裁定，2026-09-21）：A2 的 step 门槛结构上不可测时，
-    #   它不是"训练失败"。识别方式 = 判据自己的 `not_applicable` 标记（唯一真相源
-    #   在 `judge_a2` / `resolve_step_gate_applicability`，本函数不重算）。
-    step_gate_not_applicable = a2.not_applicable
+
+    # ══ 新口径（2026-09-22 用户纠正；本函数的判定轴）══════════════════════════
+    #   用户原话："你的判定标准应该是**能顺利跑完一个 epoch**……我们现在看的
+    #   **不是效果，是训练可用**。"
+    #   ⇒ 主判据 = **训练可用性**：A1（正常退出）+ steps（跑满预定步数/epoch）
+    #     + A5（产物齐全）+ A6（数值健康）。
+    #   ⇒ A3 / A4 **整体降级为诊断**：仍计算、仍记录（证据不删），但**不参与 ✅/❌**。
+    _steps_passed, step_gate_not_applicable, steps_detail = usability_step_criterion(first)
+    primary_status: dict[str, bool] = {
+        "A1": a1.passed,
+        "A2": a2.passed,
+        "A3": a3.passed,
+        "A5": a5.passed,
+        "A6": a6.passed,
+    }
+    passed = all(primary_status.values())
+    diagnostics_note = (
+        "【诊断字段·不参与判定】"
+        f"A4 双跑一致性 = {a4.passed}（{a4.detail[:240]}）"
+    )
 
     failure_class: FailureClass | None = None
     note = ""
-    if not passed:
-        failing = [result for result in criteria if not result.passed and not result.not_applicable]
-        failed_names = ", ".join(result.criterion for result in failing)
+    primary_evidence_gap = False
+    #: 「除 A2 以外的主判据是否全过」——**通过分支里当然全过**（含 A2）⇒ 默认 True。
+    others_ok = True
+    if passed:
+        note = (
+            "✅ 可用（主判据 = 训练可用性）："
+            f"{steps_detail}；进程正常退出；权重已更新；checkpoint 可重载；产物齐全；数值健康。"
+            f"｜{diagnostics_note}"
+        )
+    else:
+        failing_primary = [name for name, ok in primary_status.items() if not ok]
+        others_ok = all(ok for name, ok in primary_status.items() if name != "A2")
+        # 每条失败的主判据**是否只是"读不到证据"**
+        primary_gap_flags = {
+            "A1": bool(a1.evidence_missing),
+            "A2": bool(a2.evidence_missing),
+            "A3": bool(a3.evidence_missing),
+            "A5": bool(a5.evidence_missing),
+            "A6": bool(a6.evidence_missing),
+        }
+        primary_evidence_gap = all(primary_gap_flags[name] for name in failing_primary)
         substantive = classify_failure(first, a6)
-        # 取证缺口 vs 真失败：全部不通过的判据都只因"读不到证据"、且日志里**没有任何**
-        # 实质性失败信号 ⇒ 这是采集侧的缺口，**不得记成训练失败**
-        # （F-D 实测：一次 exit=0、100 步、loss 正常下降的训练被记成「❌ 失败」，
-        #  只因为 collector 读不到 ms-swift 的产物布局）。
-        # 注意方向不变：`passed` 仍然 False（fail-closed，读不到绝不当成通过）。
-        # 也注意优先级不变：日志里的硬失败信号（OOM / 非有限梯度 / 数据问题…）
-        # 是**来自这次运行本身**的证据，优先级高于"采集侧读不到"。
-        if failing and all(result.evidence_missing for result in failing) and substantive is None:
-            failure_class = FailureClass.EVIDENCE_GAP
-            note = (
-                f"未过判据：{failed_names}；**取证不足/不可判定**（判定器读不到证据，"
-                "不是训练失败）；修复采集后复评"
-            )
-        elif not failing and step_gate_not_applicable:
-            # ★ **第四态**：除 A2 的"口径不可测"以外全部通过 ⇒ 这是**取数口径**问题，
-            #   不是能力问题。**绝不**让读者把它读成「❌ 失败」（AF1 §⑦ 的核心风险）。
-            #   注意仍 `passed=False`：门槛没有被满足这个事实照写。
+        if step_gate_not_applicable and others_ok:
+            # 结构性不可测（口径层，不是能力层）：仅当其余主判据都过时落此态。
             failure_class = FailureClass.GATE_NOT_APPLICABLE
             note = (
-                f"{STEP_GATE_NOT_APPLICABLE_MARKER}：A2 的 step 门槛对该档结构上不适用"
-                f"（{a2.detail}）；**不是训练失败、也不是通过**——"
-                "该档能力**未被本次取数证伪**，门槛值本身未放宽；"
-                "要真正测这条门槛须先调档位定义（子集取数 / epoch 数 / 队列阈值），属目标层决策"
+                f"⚠ 口径不可测：{steps_detail}——该档用本 config 无论跑多久都达不到门槛"
+                f" ⇒ 能力**未被本次取数证伪**，门槛值一个字未放宽。｜{diagnostics_note}"
+            )
+        elif primary_evidence_gap and substantive is None:
+            failure_class = FailureClass.EVIDENCE_GAP
+            note = (
+                f"⚠ 口径不可测（取证缺口）：主判据读不到证据（{', '.join(failing_primary)}）"
+                " ⇒ 既不算可用、也不算不可用（fail-closed）。"
+                "（注：A3/A4 已降级为诊断，**不**再制造此态。）"
+                f"｜{diagnostics_note}"
             )
         else:
             failure_class = substantive if substantive is not None else FailureClass.UNCLASSIFIED
-            note = f"未过判据：{failed_names}；失败类型：{failure_class}"
+            note = (
+                f"❌ 不可用：未满足主判据 {', '.join(failing_primary)}；"
+                f"失败类型：{failure_class}；{steps_detail}"
+            )
             if not counts_toward_max_context(failure_class):
                 note += "（不计入最大可行上下文，修复后重测）"
-            else:
+            elif context_length is not None:
                 note += (
                     f"（真 OOM：当前上下文 {context_length} 可作为该档最大可行上下文的候选，"
                     "需按递增加长法确认边界）"
-                    if context_length is not None
-                    else "（真 OOM）"
                 )
-            if step_gate_not_applicable:
-                # A2 不可测 **且** 另有真失败 ⇒ 必须两条都写出来，不得让第三态掩盖真失败。
-                note += (
-                    f"；另注：A2 的 step 门槛对该档结构上不适用"
-                    f"（{STEP_GATE_NOT_APPLICABLE_MARKER}），本条失败与步数口径无关"
-                )
+            else:
+                note += "（真 OOM）"
+            if a6.passed is False and "NaN/Inf" in a6.detail:
+                # 数值崩坏 ⇒ ❌ 不可用（用户保留"数值健康"为主判据的理由见 §2.2 说明）
+                note += "；★ 数值崩坏（NaN/Inf）⇒ 产出不可用，属硬性不可用"
+            note += f"｜{diagnostics_note}"
 
     return TierJudgement(
         tier_id=first.tier_id,
@@ -2522,6 +2599,8 @@ def judge_tier(
         a4_require_dual_channel=require_dual_channel,
         # 第三态自证（§1.4）：台账必须能回答"A2 的步数门槛为什么没判失败"。
         step_gate_not_applicable=step_gate_not_applicable,
+        primary_evidence_gap=primary_evidence_gap,
+        primary_others_ok=others_ok,
         expected_optimizer_steps_reachable=first.expected_optimizer_steps_reachable,
     )
 

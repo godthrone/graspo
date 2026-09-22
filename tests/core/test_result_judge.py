@@ -1,6 +1,6 @@
 """A1–A6 判定与失败分类的单元测试（纯逻辑，不触 GPU、不读文件）。
 
-重点覆盖硬要求：只有"真 OOM"计入最大可行上下文，其余失败一律 ❌ 失败
+重点覆盖硬要求：只有"真 OOM"计入最大可行上下文，其余失败一律 ❌ 不可用
 且不计入。
 """
 
@@ -304,9 +304,89 @@ def test_judge_tier_passes_when_all_criteria_pass():
     judgement = judge_tier(make_evidence(), make_evidence())
 
     assert judgement.passed
-    assert judgement.ledger_status == "✅ 通过"
+    assert judgement.ledger_status == "✅ 可用"
     assert judgement.failure_class is None
     assert not judgement.counts_toward_max_context
+
+
+# ── ★ 用户口径（2026-09-22）：主判据 = **训练可用性**（能否跑完一个 epoch）──────
+# 用户原话："你的判定标准应该是**能顺利跑完一个 epoch**……我们现在看的**不是效果，
+# 是训练可用**。" ⇒ A4（双跑一致性）**整体降级为诊断字段**，不参与 ✅/❌。
+
+def test_usability_passes_when_epoch_completed_even_if_a4_disagrees():
+    """★契约①：跑完一个 epoch（100 步）+ exit 0 + 产物齐 + 数值健康 ⇒ **✅ 可用**，
+    **即使 A4（双跑一致性）不一致**。A4 的结论必须仍被计算并写进备注（降级≠删除）。"""
+    common = dict(tier_id="T017", exit_code=0, optimizer_steps=100,
+                  grad_norms=(1.0, 1.0, 1.0))
+    first = make_evidence(losses=(1.0, 0.5, 0.2), final_ckpt_sha256="a" * 64, **common)
+    second = make_evidence(losses=(1.0, 0.5, 9.9), final_ckpt_sha256="b" * 64, **common)
+
+    judgement = judge_tier(first, second)
+
+    assert judgement.passed, judgement.note
+    assert judgement.ledger_status == "✅ 可用"
+    assert "诊断" in judgement.note and "A4" in judgement.note
+    # 降级 ≠ 删除：A4 仍被计算且记录它自己的结论（此例为不一致）。
+    assert judgement.criterion("A4").passed is False
+    assert judgement.failure_class is None
+
+
+def test_usability_fails_when_epoch_not_completed():
+    """★契约②：**没跑完** ⇒ ❌ 不可用。两种形态都锁：步数不足、进程被强杀。"""
+    short = make_evidence(exit_code=0, optimizer_steps=2)
+    judgement = judge_tier(short)
+    assert not judgement.passed
+    assert judgement.ledger_status == "❌ 不可用"
+    assert "A2" in judgement.note
+
+    killed = make_evidence(exit_code=137, optimizer_steps=100)
+    killed_judgement = judge_tier(killed)
+    assert not killed_judgement.passed
+    assert killed_judgement.ledger_status == "❌ 不可用"
+
+
+def test_usability_fails_on_nan_inf():
+    """★契约③：**出现 NaN/Inf ⇒ ❌ 不可用**（用户把"数值健康"保留进主判据）。
+
+    理由（我的判断）：NaN/Inf 意味着这一步之后**参数已被污染**，即便进程还能继续跑，
+    产出的 checkpoint 也不是"能拿来训练"的东西 ⇒ 属**硬性不可用**，而不是"效果差"。
+    """
+    nan_run = make_evidence(
+        exit_code=0, optimizer_steps=100,
+        losses=(1.0, float("nan")), grad_norms=(1.0, 1.0), losses_nonfinite=True,
+    )
+    judgement = judge_tier(nan_run)
+    assert not judgement.passed
+    assert judgement.ledger_status == "❌ 不可用"
+    assert "NaN" in judgement.note or "数值" in judgement.note
+
+
+def test_gate_not_applicable_never_masks_a_real_failure():
+    """★守卫（2026-09-22 实测回归）：**A2 口径不可测 + 另有真失败 ⇒ 仍判 ❌ 不可用**。
+
+    真例：T035/T036（native GRASPO PP）——`A1 exit=1`（真崩），同时该档可达步数上限
+    < 门槛（口径不可测）。第三态**只**说"步数这条测不了"，**不替 A1 说话**。
+    简化 `ledger_status` 时漏掉这个守卫，会把真失败误标成「⚠ 口径不可测」。
+    """
+    crashed_with_unreachable_steps = make_evidence(
+        exit_code=1, optimizer_steps=None, losses=(), grad_norms=(),
+        artifacts_present={}, expected_optimizer_steps_reachable=2,
+        min_optimizer_steps=5,
+    )
+    judgement = judge_tier(crashed_with_unreachable_steps)
+    assert judgement.step_gate_not_applicable is True
+    assert judgement.ledger_status == "❌ 不可用", judgement.note
+    assert not judgement.passed
+
+
+def test_missing_a4_evidence_no_longer_makes_tier_indeterminate():
+    """★契约①的推论：**A4 取证缺口不再制造「⚠ 口径不可测」**（它已降级为诊断）。"""
+    single = make_evidence(exit_code=0, optimizer_steps=100)   # 无指纹、无第二跑
+    judgement = judge_tier(single, None)
+    assert judgement.passed, judgement.note
+    assert judgement.ledger_status == "✅ 可用"
+    # 诊断字段仍如实记录"没取到证据"
+    assert judgement.criterion("A4").passed is False
 
 
 def test_judge_tier_marks_oom_as_context_candidate():
@@ -314,7 +394,7 @@ def test_judge_tier_marks_oom_as_context_candidate():
     judgement = judge_tier(oom, context_length=65536)
 
     assert not judgement.passed
-    assert judgement.ledger_status == "❌ 失败"
+    assert judgement.ledger_status == "❌ 不可用"
     assert judgement.failure_class is FailureClass.REAL_OOM
     assert judgement.counts_toward_max_context
     assert "65536" in judgement.note
@@ -396,7 +476,7 @@ def test_detached_loss_is_classified_as_config_error():
 
 
 def test_detached_loss_tier_is_not_a_max_context_candidate():
-    """同一条失败在台账层：❌ 失败 + 不计入最大可行上下文（能力边界不变）。"""
+    """同一条失败在台账层：❌ 不可用 + 不计入最大可行上下文（能力边界不变）。"""
     evidence = make_evidence(
         exit_code=1,
         log_text=(
@@ -448,7 +528,7 @@ def test_ledger_row_real_oom_writes_boundary_candidate():
     row = _row(judgement, 65536)
 
     assert not judgement.passed  # 判定语义不变：坏 run 仍判失败
-    assert row["status"] == "❌ 失败"
+    assert row["status"] == "❌ 不可用"
     assert row["max_context"] == 65536
     assert row["max_context_kind"] == MAX_CONTEXT_KIND_OOM_BOUNDARY
 
