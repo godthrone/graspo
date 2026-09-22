@@ -253,10 +253,13 @@ def test_zero_steps_still_fails_even_when_reachable_is_one():
     assert "门槛 5" in result.detail
 
 
-def test_steps_equal_to_reachable_gets_the_not_applicable_third_state():
-    """★ ②：实测 == 该档上限（上限 = 1 < 门槛 5）⇒ 第三态，**不是 ✅、不是 ❌**。
+def test_steps_equal_to_planned_steps_passes_after_the_gate_role_change():
+    """★2026-09-22 口径变更：**跑满该档计划步数**（即使 < 外挂门槛 5）⇒ `A2` 通过。
 
-    这条对应真机 `T030`：自然跑完 `exit_code=0`、`optimizer_steps=1`。
+    原判据把这类档记「⚠ 口径不可测（步数上限 < 门槛）」。指挥官的裁定：`min_optimizer_steps`
+    （默认 5）是**我们自己外挂的质量门槛**，属"效果/充分性"判断；用户判据是"**能顺利跑完一个
+    epoch**"且明确"**不看效果**" ⇒ 把**跑完了的档**记成"口径不可测"正是过度严格。
+    ⇒ 门槛**退出闸门角色、只保留标注**（`T028/T029/T030/T040/T041/T042` 六档按此改判 ✅）。
     """
     result = judge_a2(
         make_evidence(
@@ -266,12 +269,12 @@ def test_steps_equal_to_reachable_gets_the_not_applicable_third_state():
             expected_optimizer_steps_reachable=1,
         )
     )
-    assert not result.passed, "第三态**不是** ✅ —— 步数门槛没有被满足这个事实照写"
-    assert result.not_applicable, result.detail
-    assert not result.evidence_missing
-    assert "⚠ 口径不可测" in result.detail
-    assert "可产出步数上限=1" in result.detail
+    assert result.passed, result.detail
+    assert not result.not_applicable
+    # 标注必须保留：计划步数、外挂门槛、可达上限三个数字都要在（对照用，不删证据）
+    assert "计划步数" in result.detail
     assert "门槛 5" in result.detail
+    assert "退出闸门角色" in result.detail
 
 
 def test_steps_well_below_reachable_still_fails():
@@ -391,13 +394,11 @@ def test_tier_ledger_status_is_gate_not_applicable_when_only_a2_is_blocked():
             expected_optimizer_steps_reachable=1,
         ),
     )
-    assert not judgement.passed
-    assert judgement.step_gate_not_applicable
-    assert judgement.ledger_status == "⚠ 口径不可测"
-    assert judgement.failure_class is not None
-    assert "口径不可测" in judgement.note
-    assert "不是训练失败" in judgement.note
-    # 不得计入最大可行上下文（与取证缺口同类）
+    # ★ 2026-09-22 口径变更：门槛退出闸门角色 ⇒ 跑满**该档计划步数**的档是 ✅ 可用
+    assert judgement.passed, judgement.note
+    assert not judgement.step_gate_not_applicable
+    assert judgement.ledger_status == "✅ 可用", judgement.note
+    assert judgement.failure_class is None
     assert judgement.counts_toward_max_context is False
 
 
@@ -420,8 +421,11 @@ def test_tier_real_failure_is_not_masked_by_the_third_state():
         ),
     )
     assert judgement.ledger_status == "❌ 不可用"
-    assert not judgement.step_gate_not_applicable or True  # A2 不可测，但被真失败盖过
-    assert "口径不可测" in judgement.note  # 两条事实都写出来
+    # ★ 2026-09-22 口径变更后的**存活意图**：**真失败（A1 exit=1）绝不被"步数门槛"话题盖过**
+    #   —— 新口径下 A2 已按"该档计划步数"判过（1 ≥ 1 ⇒ A2 通过），
+    #   整档之所以 ❌ 纯粹因为 A1 真失败。备注必须点名 A1。
+    assert "A1" in judgement.note
+    assert "❌ 不可用" in judgement.note
 
 
 def test_tier_evidence_gap_is_not_confused_with_gate_not_applicable():
@@ -465,10 +469,14 @@ def test_ledger_row_self_reports_reachable_and_third_state():
         peak_memory_gib=None,
         date="2026-09-21",
     )
-    assert row["status"] == "⚠ 口径不可测"
+    assert row["status"] == "✅ 可用"
     assert row["expected_optimizer_steps_reachable"] == 1
-    assert row["step_gate_not_applicable"] is True
-    assert row["min_optimizer_steps"] == 5  # ★ 门槛值一个都没动
+    # ★ 2026-09-22 口径变更：门槛**退出闸门角色**（跑满计划步数 ⇒ ✅ 可用），
+    #   但**台账必须保留全部对照数字**（§1.4 "这一档按几判的"可审计，证据不删）。
+    assert row["status"] == "✅ 可用", row
+    assert row["step_gate_not_applicable"] is False
+    assert row["min_optimizer_steps"] == 5              # 原挂门槛仍在（对照）
+    assert row["expected_optimizer_steps_reachable"] == 1  # 可达上限仍在（对照）
 
 
 # ── ⑧ ★ **负向对照**：把门槛降到 1 ⇒ 现有测试必须把它抓住 ─────────────────────
@@ -516,13 +524,23 @@ def test_negative_control_third_state_is_not_a_blanket_pass():
     )
     assert not zero.passed
     assert not zero.not_applicable
-    # 且"第三态"的判据文本里**不含** ✅
+    # ★ 2026-09-22 口径变更后的**存活意图**：门槛退出闸门角色后，"跑满计划步数就通过"——
+    #   所以负向对照改成**"未跑满计划步数"仍不得通过**（否则就成了"所有档都过"）。
+    assert not judge_a2(
+        make_evidence(
+            optimizer_steps=0,
+            min_optimizer_steps=5,
+            expected_optimizer_steps_per_epoch=2,
+            expected_optimizer_steps_reachable=2,
+        )
+    ).passed
     na = judge_a2(
         make_evidence(
-            optimizer_steps=1,
+            optimizer_steps=2,
             min_optimizer_steps=5,
-            expected_optimizer_steps_per_epoch=1,
-            expected_optimizer_steps_reachable=1,
+            expected_optimizer_steps_per_epoch=2,
+            expected_optimizer_steps_reachable=2,
         )
     )
-    assert not na.passed
+    # 正好跑满计划步数 ⇒ **通过**（新口径）；这与上一段"0 步不过"共同保证"不是所有档都过"
+    assert na.passed, na.detail

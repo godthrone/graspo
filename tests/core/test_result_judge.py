@@ -379,9 +379,11 @@ def test_gate_not_applicable_never_masks_a_real_failure():
         expected_optimizer_steps_reachable=2, min_optimizer_steps=5,
     )
     judgement = judge_tier(crashed_with_unreachable_steps)
-    assert judgement.step_gate_not_applicable is True
+    # ★ 2026-09-22 口径变更后：该档**跑满了自己的计划步数**（2 ≥ 2）⇒ A2 通过；
+    #   整档仍 ❌ 纯粹因为 **A1 真崩** ⇒ "真失败不被掩盖"这条性质照旧成立（且更强）。
     assert judgement.ledger_status == "❌ 不可用", judgement.note
     assert not judgement.passed
+    assert judgement.criterion("A1").passed is False
 
 
 def test_a7_t017_style_large_grad_norm_but_healthy_is_not_falsely_rejected():
