@@ -312,7 +312,7 @@ RUN set -eux; \
     cat /opt/graspo-image/VERSION
 
 # ── 双向诚实门禁的脚本随镜像带入构建上下文（COPY 在最后一层，前面层缓存不受影响）──
-COPY gate_script.py /tmp/gate_script.py
+COPY docker/gate_script.py /tmp/gate_script.py
 
 # ── 双向诚实门禁（fail-closed）：替换掉原先只查元数据的 `metadata_only` 机制 ──────────
 # A) claimed-usable：凡镜像**声称可用**的包，构建期必须**真的 import 成功**；
