@@ -1142,6 +1142,14 @@ class FailureClass(StrEnum):
     #: （属目标/预算层）。两者在台账上的动作完全不同，混在一起会把用户引向错误的修法。
     #: 与 ``EVIDENCE_GAP`` 一样**不计入**最大可行上下文（见 :data:`MAX_CONTEXT_FAILURE_CLASSES`）。
     GATE_NOT_APPLICABLE = "口径不可测（步数上限 < 门槛）"
+    #: ★ 新增（2026-09-22 裁定 3，T035 实测）：**集合通信超时**导致的进程组崩溃。
+    #: 为什么单列而不并进 ``COMM_HARDWARE``：``COMM_HARDWARE`` 的既有签名
+    #: （``watchdog timeout`` / ``NCCL error|WARN|timeout``）**匹配不到**真实形态
+    #: ``Watchdog caught collective operation timeout`` + ``DistBackendError``
+    #: ⇒ T035 被迫落 ``UNCLASSIFIED``。单列还能自证"各 rank 步调不一致"这一**修法方向**，
+    #: 而``通信硬件``会把人引向换卡/查线。
+    #: 取值与跑批装置（``rig/matrix_batch_driver.py``）**逐字一致**（同一口径两个消费者）。
+    NCCL_COLLECTIVE_TIMEOUT = "nccl_collective_timeout（集合通信超时 ⇒ PP/DP 各 rank 步调不一致）"
     UNCLASSIFIED = "未分类（需人工判定）"
 
 
@@ -1220,6 +1228,19 @@ _LOG_PATTERNS: tuple[tuple[FailureClass, tuple[re.Pattern[str], ...]], ...] = (
                 r"dataset .* not found",
                 r"empty (?:dataset|sample)",
                 r"KeyError.*(?:targets|messages|media)",
+            )
+        ),
+    ),
+    (
+        FailureClass.NCCL_COLLECTIVE_TIMEOUT,
+        tuple(
+            re.compile(pattern, re.IGNORECASE)
+            for pattern in (
+                # 真实形态（T035 实测原文）：进程组 watchdog 报集合算子超时，
+                # 随后 `terminate called after throwing an instance of 'c10::DistBackendError'`。
+                r"Watchdog caught collective operation timeout",
+                r"Process group watchdog thread terminated",
+                r"DistBackendError",
             )
         ),
     ),
@@ -1407,6 +1428,16 @@ class RunEvidence:
     final_ckpt_sha256_detail: str = ""
     #: 该指纹的**来源标识**（如 ``file_sha256:<relpath>``）。
     final_ckpt_sha256_source: str | None = None
+    # ── A4 形态①的"独立性"输入（2026-09-22 裁定 2）─────────────────────────
+    #: 该 run 的**运行根**（绝对路径）。两跑不同 ⇒ 一条独立证据。
+    run_root: str | None = None
+    #: 该 run **产物根**的文件系统身份 ``"st_dev:st_ino"``。两跑不同 ⇒ 一条独立证据，
+    #: 且能直接识破"两个路径指向同一实体目录"（符号链接/重复挂载）。
+    output_identity: str | None = None
+    #: 该 run **首条带 timestamp 的逐步记录**（ISO8601）。它是**内容级**证据：
+    #: 把同一份产物拷到另一个路径再比一次，时间戳不会变 ⇒ 这条**不会**给独立性加分，
+    #: 从而堵住"拷贝造伪独立"的洞。取不到 ⇒ ``None``（不猜）。
+    first_metric_timestamp: str | None = None
 
 
 #: 台账状态（唯一真相源）。三态而非两态的理由见 :class:`FailureClass` 的
@@ -1730,7 +1761,16 @@ def judge_a2(evidence: RunEvidence) -> CriterionResult:
             evidence_missing=True,
         )
     if not evidence.weight_changed:
-        mode = "LoRA（lora_b 全零）" if evidence.tuner_type == "lora" else "全参（与基座一致）"
+        # ★ 文案必须与**实际证据来源**一致（§2.2 显式即防呆；判定方向不变，仍是"未变化"）。
+        # 2026-09-22：全参新增"就地 `trainable_norm_delta`"证据源后，旧文案一律写
+        # "全参（与基座一致）"——可那条路径**根本没和基座比过**。把来源写错会把排查
+        # 引向"基座比对"，而真因是"run 指标全零"。
+        if evidence.tuner_type == "lora":
+            mode = "LoRA（lora_b 全零）"
+        elif str(evidence.weight_evidence_source or "").startswith("run_metrics:"):
+            mode = "全参（run 自产的可训练参数 L2 变化指标全零）"
+        else:
+            mode = "全参（与基座权重逐字节一致）"
         return CriterionResult(
             "A2", False, f"权重未变化：{mode}（来源：{evidence.weight_evidence_source}）"
         )
@@ -1817,6 +1857,57 @@ def _a4_first_step_was_checked(first: RunEvidence, second: RunEvidence) -> bool:
     被写进台账（§2.2 显式即防呆：不能让台账说一句没验证过的话）。
     """
     return first.first_logged_step == 1 and second.first_logged_step == 1
+
+
+#: A4 形态①判定"确是两次独立运行"所需的**最少独立证据数**（2026-09-22 裁定 2）。
+#: 为什么至少 2：单凭"路径不同"可能只是同一实体目录的两个入口；
+#: 必须再有第二个**互不依赖**的身份维度交叉确认。
+A4_MIN_INDEPENDENCE_SIGNALS = 2
+
+
+def _a4_independence_signals(first: RunEvidence, second: RunEvidence) -> tuple[int, str]:
+    """统计"两跑是两次**独立**运行"的独立证据条数（裁定 2 的实现）。
+
+    三个互不依赖的维度（任一条单独都不足以定论）：
+
+    1. **运行根不同**（``run_root`` 两端非空且不等）；
+    2. **产物根的文件系统身份不同**（``output_identity`` 两端非空且不等，``st_dev:st_ino``）
+       —— 这条能直接识破"两个路径指向同一实体目录"；
+    3. **首条逐步记录的时间戳不同** —— **内容级**证据；拷贝产物不会改变它。
+
+    **额外硬约束（堵拷贝造伪独立）**：若两端都有时间戳却**相同** ⇒ 直接判"不独立"
+    （返回 ``0``），哪怕前两条都满足 —— 因为那正是"同一份产物被复制了一份"的指纹。
+
+    取不到证据就**少记一条**（不猜、不默认独立）：这正是"缺元数据 ⇒ 继续 fail-closed"。
+    返回 ``(条数, 人读明细)``。
+    """
+    signals: list[str] = []
+    if first.run_root and second.run_root and first.run_root != second.run_root:
+        signals.append(f"运行根不同（{first.run_root} ≠ {second.run_root}）")
+    if (
+        first.output_identity
+        and second.output_identity
+        and first.output_identity != second.output_identity
+    ):
+        signals.append(
+            f"产物根文件系统身份不同（{first.output_identity} ≠ {second.output_identity}）"
+        )
+    stamps_present = bool(first.first_metric_timestamp and second.first_metric_timestamp)
+    if stamps_present and first.first_metric_timestamp == second.first_metric_timestamp:
+        return 0, (
+            f"时间戳相同（{first.first_metric_timestamp}）⇒ 判为**同一份产物的两次比对**"
+            "（拷贝造伪独立）⇒ 不给独立性加分"
+        )
+    if stamps_present:
+        signals.append(
+            f"首条逐步记录时间戳不同（{first.first_metric_timestamp} ≠ {second.first_metric_timestamp}）"
+        )
+    detail = (
+        "；".join(signals)
+        if signals
+        else "未能取得任何独立身份证据（元数据缺失，或两跑指向同一实体目录）"
+    )
+    return len(signals), detail
 
 
 def judge_a4(
@@ -1959,13 +2050,33 @@ def judge_a4(
     hashes_identical = hashes_present and sha_first == sha_second
     # 形态①：指纹有证据且逐位相同 + loss 逐位相同 ⇒ loss 是死通道。
     if hashes_identical and delta == 0.0:
+        # ★ 2026-09-22 裁定 2：两通道逐位相同有两种**性质相反**的成因，必须先分开——
+        #   ① 同一份产物比了两次（自我比较陷阱）⇒ 真·无鉴别力 ⇒ 继续 fail-closed；
+        #   ② 两次**真实独立**运行且逐位相同 ⇒ 这是**最强的复现证据**（确定性复现），
+        #      旧实现会永远报"不可判定"，等于把完美可复现判成不可判定（方向性错误）。
+        #   分开的判据 = 运行级独立身份证据（≥2 项，见 _a4_independence_signals）。
+        signals, independence_detail = _a4_independence_signals(first, second)
+        if signals >= A4_MIN_INDEPENDENCE_SIGNALS:
+            return CriterionResult(
+                "A4",
+                True,
+                "**完美可复现**（判通过）：两跑末步 checkpoint 逐位相同"
+                f"（sha256={sha_first[:12]}…）且末步 loss 逐位相同（{first_loss:.6g}，差 0）——"
+                "该形态本是「死通道」的样子，但已用**运行级独立身份证据**确认它们是"
+                f"**两次真实独立运行**（{signals} 项 ≥ {A4_MIN_INDEPENDENCE_SIGNALS}："
+                f"{independence_detail}）⇒ 逐位相同只能解释为**确定性复现**。"
+                "（备注：本判定未改任何容差/门槛；两通道均逐位相同属最强复现证据。）",
+            )
         return CriterionResult(
             "A4",
             False,
             "双通道冲突（判「不可判定」，既不判通过也不判失败）："
             f"两跑末步 checkpoint 逐位相同（sha256={sha_first[:12]}…）"
             f"且末步 loss 逐位相同（{first_loss:.6g}，差 0）⇒ 末步 loss 是无鉴别力的"
-            f"死通道（无信号步/单步），双通道未一致。{A4_DUAL_CHANNEL_CONFLICT_LEDGER}",
+            "死通道（无信号步/单步）；且**无法证明是两次独立运行**"
+            f"（独立身份证据仅 {signals} 项 < {A4_MIN_INDEPENDENCE_SIGNALS}："
+            f"{independence_detail}）⇒ 保持 fail-closed。"
+            f"{A4_DUAL_CHANNEL_CONFLICT_LEDGER}",
             evidence_missing=True,
         )
     # 形态②（矩阵采集口径）：两跑 loss 逐位相同 ⇒ loss 通道**已证明**无鉴别力；
@@ -2213,8 +2324,9 @@ def classify_failure(evidence: RunEvidence, a6: CriterionResult) -> FailureClass
        ``non-finite gradient`` / ``nonfinite_loss_or_grad``）⇒ ``NUMERIC_ANOMALY``；
        这一步由 ``_LOG_PATTERNS`` **表头第一条**实现（2026-09-18 🟡-4 修正前的
        旧序把它排在第 5 位，与本节描述不符，已修正）；
-    5. **其余日志模式**（框架未实现 / 配置非法 / 数据问题 / 通信硬件 / 真 OOM）——
-       即 ``_LOG_PATTERNS`` 中**数值异常之后的**条目，按表内顺序匹配；
+    5. **其余日志模式**（框架未实现 / 配置非法 / 数据问题 / **集合通信超时** / 通信硬件 / 真 OOM）——
+       即 ``_LOG_PATTERNS`` 中**数值异常之后的**条目，按表内顺序匹配
+       （``NCCL_COLLECTIVE_TIMEOUT`` 排在 ``COMM_HARDWARE`` **之前**：前者签名更具体）；
     6. 非零退出码且未匹配 ⇒ ``UNCLASSIFIED``。
 
     **每一级的可达性与触发条件**（不允许存在"写着却永不触发"的分级）：
@@ -2225,7 +2337,7 @@ def classify_failure(evidence: RunEvidence, a6: CriterionResult) -> FailureClass
     | 2 | loss/grad_norm 序列里**真读到** NaN/Inf | ``NUMERIC_ANOMALY`` | ✔ |
     | 3 | loss 字段无值（``MISSING_SENTINEL``）且**无任何**真 NaN | ``UNCLASSIFIED`` | ✔ |
     | 4 | 日志出现 ``非有限梯度`` 等硬失败标记 | ``NUMERIC_ANOMALY`` | ✔ |
-    | 5 | 日志匹配到 OOM / 未实现 / 配置 / 数据 / 通信模式（且不含第 4 步标记） | 对应类型 | ✔ |
+    | 5 | 日志匹配到 OOM / 未实现 / 配置 / 数据 / **集合通信超时** / 通信模式（且不含第 4 步标记） | 对应类型 | ✔ |
     | 6 | 非零退出、以上都不匹配 | ``UNCLASSIFIED`` | ✔ |
 
     **为什么第 4 步必须排在其余日志模式之前**（🟡-4 修正的判据）：``非有限梯度``

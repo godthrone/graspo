@@ -222,12 +222,15 @@ def test_collector_reports_untested_when_run_dir_missing(tmp_path):
 def test_collector_pairs_rerun_for_a4(tmp_path):
     """双跑 + **两棵不同目录树** ⇒ A4 具备可判性（即使 A2/A3 因缺权重证据未通过）。
 
-    ★ 2026-09-21 更新（A4 独立通道落地后）：这个合成 fixture 的**两跑权重文件逐位
-    相同**（都写同一份 ``lora_b``）**且**末步 loss 也逐位相同 ⇒ 这正是新判据里
-    "末步 loss 是无鉴别力的死通道"的**冲突形态**，按锁三判「不可判定」而不是通过。
-    这不是回归：**真实的**两次训练在 GPU 内核残余下权重不可能逐位相同（AD1 §6.2 实测
-    两跑 ckpt sha 不同）。要看到 A4 ✅，须让两跑权重指纹不同——见
-    ``test_collector_msswift_layout_makes_a1_to_a6_decidable``。
+    ★ 2026-09-22 更新（裁定 2）：本 fixture 的**两跑权重文件逐位相同**（都写同一份
+    ``lora_b``）**且**末步 loss 也逐位相同。旧实现在这种形态下一律判「双通道冲突/
+    不可判定」——裁定 2 指出那会**误伤真·完美可复现**。现在的判据是：
+    两通道逐位相同时，**先看能不能证明这是两次独立运行**（运行根 / 产物根
+    ``st_dev:st_ino`` / 首条记录时间戳，≥2 项独立证据）；能证明 ⇒ 判 **✅ 通过**
+    （完美可复现），不能证明（缺元数据/指向同一实体）⇒ 继续 fail-closed。
+
+    本 fixture 是**两个独立目录树**（``runs/`` 与 ``reruns/``，inode 不同）⇒ 独立性成立
+    ⇒ 逐位相同只能解释为确定性复现 ⇒ **A4 通过**。
     """
     # 用 ms-swift 布局（权重文件是可定位的 checkpoint-6/adapter_model.safetensors），
     # 两跑写**逐位相同**的 lora_b ⇒ 独立通道有证据，且证据是"两跑权重相同"。
@@ -238,11 +241,11 @@ def test_collector_pairs_rerun_for_a4(tmp_path):
         tmp_path, "--rerun-root", str(tmp_path / "reruns"), manifest=_MSSWIFT_MANIFEST
     )
 
-    assert record["criteria"]["A4"] is False
-    assert record["failure_class"] == "取证不足（不可判定）"
-    detail = record["criteria_detail"]["A4"]
-    assert "双通道冲突" in detail
-    assert "不可判定" in detail
+    assert record["criteria"]["A4"] is True, record["criteria_detail"]["A4"]
+    assert "完美可复现" in record["criteria_detail"]["A4"]
+    # 独立性证据必须落台账（读者可复核"凭什么说这是两次独立运行"）。
+    assert record["a4_independence_signals"] >= 2, record["a4_independence_detail"]
+    assert "运行根不同" in record["a4_independence_detail"]
 
 
 # ── A6 首末 loss 走向：记录项必须进台账（2026-09-20 裁定）────────────────────
@@ -1090,3 +1093,260 @@ def test_collector_requires_dual_channel_for_identical_losses_without_fingerprin
     detail = record["criteria_detail"]["A4"]
     assert "双通道未一致" in detail
     assert "不可判定" in detail
+
+# ── ② 取证路径：native **全参 PP**（T017 真机实测形状）──────────────────────────
+#
+# 背景（T017 真机实测，2026-09-22）：9B·SFT·**全参**·native·pp=2 两跑各 100 步、
+# ``exit_code=0``、权重每步都在变，但 A2/A4 双双被判「取证缺口」：
+#   · A2：全参分支只认「checkpoint vs 基座」的 safetensors 比对，而 native 全参落的是
+#     ``rank_*_tp_*_pp_*.pt``；宿主又无 torch ⇒ 读不了。
+#     **但证据其实在 run 逐步指标里**（``trainable_norm_delta``，纯 JSON，
+#     与 LoRA 的 ``lora_norm_delta`` 同源同强度）。
+#   · A4：独立通道只找 ``adapter_model.safetensors`` 等**单文件**名，认不出 PP 分片集合。
+# 下面 4 条锁死：能取到（正向）＋ 取不到仍 fail-closed（负向）＋ 指纹必须**真读权重字节**。
+
+#: 合法的全参逐步 Δ（首步 0 是构造使然；后续非零 ⇒ 权重被更新过）
+_FULL_DELTAS_OK = [0.0, 3.34e-5, 5.0e-4, 1.2e-3, 2.0e-3, 3.82e-3]
+
+
+def _full_manifest(tier_id: str = "T017") -> dict:
+    """把默认 T010 清单改成 **mode=全量**（``tuner_type`` 由 ``mode`` 决定，见 collector）。"""
+    manifest = json.loads(json.dumps(_MANIFEST))
+    manifest["tiers"][0].update({"tier_id": tier_id, "mode": "全量", "cards": 2, "gpus": [4, 5]})
+    return manifest
+
+
+def _make_native_full_run(
+    root: Path,
+    tier_id: str = "T017",
+    *,
+    deltas: list[float],
+    first_shard_bytes: bytes | None = None,
+    drop_shards: bool = False,
+) -> Path:
+    """重建 **native 全参 PP** 的运行目录（与真机 T017 证据归档同构）。
+
+    - ``final/rank_00000_tp_00_pp_00.pt`` + ``rank_00001_tp_00_pp_01.pt`` + ``manifest.json``；
+      ``manifest.json`` **只写元数据**（真机实测：它不含任何内容哈希，且三处/两跑逐字节相同
+      —— 所以"拿 manifest 当指纹"是静默降级，本 fixture 刻意保留这一点）。
+    - ``rank_metrics.rank_00000.jsonl`` 每步带 ``trainable_norm_delta`` 与全局口径。
+    """
+    run = root / tier_id
+    run.mkdir(parents=True)
+    (run / "exit_code").write_text("0\n", encoding="utf-8")
+    (run / "stdout.log").write_text(_STDOUT, encoding="utf-8")
+    (run / "config.yaml").write_text("train_method: sft\n", encoding="utf-8")
+    final = run / "final"
+    final.mkdir(parents=True)
+    (final / "manifest.json").write_text(
+        '{"format": "native-full-param", "pp_size": 2, "tuner_type": "full"}\n',
+        encoding="utf-8",
+    )
+    if not drop_shards:
+        payload = first_shard_bytes if first_shard_bytes is not None else b"PP-SHARD-A" * 8
+        (final / "rank_00000_tp_00_pp_00.pt").write_bytes(payload)
+        (final / "rank_00001_tp_00_pp_01.pt").write_bytes(b"PP-SHARD-B" * 8)
+    metrics = run / "metrics"
+    metrics.mkdir()
+    lines = []
+    for index, delta in enumerate(deltas):
+        lines.append(
+            json.dumps(
+                {
+                    "event": "rank_metrics",
+                    "phase": "sft_train_batch_after",
+                    "kind": "diagnostic",
+                    "metrics": {
+                        "optimizer_steps": 1,
+                        "global_optimizer_steps_sum": 2,
+                        "skipped_nonfinite": 0,
+                        "loss_mean": 0.0,          # 非末段 rank 的局部 loss 恒 0（真机形状）
+                        "grad_norm_mean": 1.0,
+                        "global_loss_mean": 1.0 - index * 0.01,
+                        "global_grad_norm_mean": 1.0,
+                        "tuner_type": "full",
+                        "norm_metric": "trainable_parameter_l2_norm",
+                        "trainable_norm_delta": delta,
+                        "global_trainable_norm_delta_mean": delta,
+                    },
+                }
+            )
+        )
+    (metrics / "rank_metrics.rank_00000.jsonl").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8"
+    )
+    return run
+
+
+def test_collector_native_full_a2_uses_trainable_norm_delta_without_torch(tmp_path):
+    """★正向：宿主无 torch 也能判全参 A2 —— 证据取自 run 自产的 ``trainable_norm_delta``。
+
+    它与 LoRA 的 ``lora_norm_delta`` 出自**同一个** ``training_norm_event()``，
+    只是按 tuner_type 取模式感知的键名 ⇒ 证据**同类同强度**，不是代用指标。
+    来源必须显式落在台账里（§2.2），否则读者分不清"环境缺 torch"与"训练没生效"。
+    """
+    _make_native_full_run(tmp_path / "runs", deltas=_FULL_DELTAS_OK)
+
+    record = _run_collector(
+        tmp_path, manifest=_full_manifest(), env=_sitecustomize_env(tmp_path, _FAKE_TORCH_BLOCKER)
+    )
+
+    assert record["criteria"]["A2"] is True, record["criteria_detail"]["A2"]
+    assert record["weight_evidence_source"] == "run_metrics:trainable_norm_delta"
+    assert "trainable_norm_delta=" in record["criteria_detail"]["A2"]
+
+
+def test_collector_native_full_all_zero_trainable_delta_is_substantive_failure(tmp_path):
+    """★负向（不放松）：每步 Δ 都恰好 0 ⇒ 权重确实没被更新 ⇒ **实质失败**，不是缺口。"""
+    _make_native_full_run(tmp_path / "runs", deltas=[0.0] * 6)
+
+    record = _run_collector(
+        tmp_path, manifest=_full_manifest(), env=_sitecustomize_env(tmp_path, _FAKE_TORCH_BLOCKER)
+    )
+
+    assert record["criteria"]["A2"] is False
+    # 文案必须点明**实际来源**（就地指标），不得写成"与基座一致"——那条路径没比过基座。
+    assert record["criteria_detail"]["A2"] == (
+        "权重未变化：全参（run 自产的可训练参数 L2 变化指标全零）"
+        "（来源：run_metrics:trainable_norm_delta）"
+    )
+    assert record["status"] == "❌ 失败"
+
+
+def test_collector_native_full_pp_shard_set_is_a_content_fingerprint(tmp_path):
+    """★正向（A4 独立通道）：PP 分片集合必须被认成**内容指纹**，且覆盖到分片字节。
+
+    两跑只差``第一个分片的一个字节``⇒ 两个指纹必须不同。若实现退化成
+    "用 manifest / 文件名 / 大小当指纹"，这条会失败（真机实测 manifest 两跑逐字节相同）。
+    """
+    _make_native_full_run(tmp_path / "runs", deltas=_FULL_DELTAS_OK)
+    _make_native_full_run(
+        tmp_path / "reruns", deltas=_FULL_DELTAS_OK, first_shard_bytes=b"PP-SHARD-X" * 8
+    )
+
+    record = _run_collector(
+        tmp_path,
+        "--rerun-root",
+        str(tmp_path / "reruns"),
+        manifest=_full_manifest(),
+        env=_sitecustomize_env(tmp_path, _FAKE_TORCH_BLOCKER),
+    )
+
+    first = record["final_ckpt_sha256_first"]
+    second = record["final_ckpt_sha256_second"]
+    assert first and second, record["final_ckpt_sha256_detail"]
+    assert record["final_ckpt_sha256_source"].startswith("pp_shard_set_sha256:")
+    assert first != second, "分片字节不同却得到同一指纹 ⇒ 指纹没覆盖权重内容（静默降级）"
+    assert "PP 分片集合" in record["final_ckpt_sha256_detail"]
+    assert "2 片" in record["final_ckpt_sha256_detail"]
+
+
+def test_collector_native_full_pp_shard_missing_is_fail_closed(tmp_path):
+    """★负向（fail-closed 不变）：只有 ``manifest.json``、没有分片 ⇒ **不得**有指纹。
+
+    这条守住"不许悄悄降级"：``manifest.json`` 是元数据，拿它当指纹会让两跑永远"一致"。
+    读不到就继续按取证缺口处理（A4 不通过且标 evidence_missing）。
+    """
+    _make_native_full_run(tmp_path / "runs", deltas=_FULL_DELTAS_OK, drop_shards=True)
+    _make_native_full_run(tmp_path / "reruns", deltas=_FULL_DELTAS_OK, drop_shards=True)
+
+    record = _run_collector(
+        tmp_path,
+        "--rerun-root",
+        str(tmp_path / "reruns"),
+        manifest=_full_manifest(),
+        env=_sitecustomize_env(tmp_path, _FAKE_TORCH_BLOCKER),
+    )
+
+    assert record["final_ckpt_sha256_first"] is None
+    assert record["final_ckpt_sha256_source"] is None
+    assert "未匹配 native 全参 PP 分片" in record["final_ckpt_sha256_detail"]
+    assert record["criteria"]["A4"] is False
+
+# ── ② b：ms-swift 全参的 **HF 分片 safetensors**（T005/T020 真机形状）───────────
+# 真机实测（2026-09-22，`graspo:v0.28.11-cu130fix` 跑通 T005/T020 后）：
+#   `<ckpt>/model-0000{1..4}-of-00004.safetensors`（合计 ~17.8 GiB，= 模型权重）
+#   `<ckpt>/model.safetensors.index.json`（权威分片清单）
+#   `<ckpt>/global_step50/`（**123 GiB** 的 DeepSpeed ZeRO 优化器状态）
+# 旧实现只认单文件名 ⇒ A4 指纹恒为 None（补第二跑也判不了）。下面锁死三件事：
+#   ① 分片集合被认成指纹；② 指纹**只看权重**（⇒ 回收优化器状态不影响 A4 可复算性）；
+#   ③ 改动任一分片字节 ⇒ 指纹必须变。
+
+def _write_hf_sharded_checkpoint(
+    run: Path, tier_id: str, *, shards: dict[str, bytes], optimizer_bytes: bytes = b""
+) -> None:
+    ckpt = run / "final"
+    ckpt.mkdir(parents=True, exist_ok=True)
+    for name, payload in shards.items():
+        (ckpt / name).write_bytes(payload)
+    (ckpt / "model.safetensors.index.json").write_text(
+        json.dumps({"metadata": {"total_size": 1}, "weight_map": {
+            f"layer.{i}.weight": name for i, name in enumerate(sorted(shards))
+        }}),
+        encoding="utf-8",
+    )
+    if optimizer_bytes:
+        opt = ckpt / "global_step50"
+        opt.mkdir(parents=True, exist_ok=True)
+        (opt / "zero_pp_rank_0_mp_rank_00_optim_states.pt").write_bytes(optimizer_bytes)
+
+
+def test_collector_hf_sharded_weights_are_fingerprinted_and_ignore_optimizer_state(tmp_path):
+    """★正向：HF 分片 safetensors 被认成**内容指纹**；且指纹**不随优化器状态变化**。"""
+    _make_native_full_run(tmp_path / "runs", deltas=_FULL_DELTAS_OK)
+    # 把 fixture 的 checkpoint 换成 HF 分片形态
+    ckpt = tmp_path / "runs" / "T017" / "final"
+    for stale in ckpt.glob("rank_*.pt"):
+        stale.unlink()
+    shards = {
+        "model-00001-of-00002.safetensors": b"WEIGHTS-A" * 16,
+        "model-00002-of-00002.safetensors": b"WEIGHTS-B" * 16,
+    }
+    _write_hf_sharded_checkpoint(
+        tmp_path / "runs" / "T017", "T017", shards=shards, optimizer_bytes=b"OPT-A" * 32
+    )
+    _make_native_full_run(tmp_path / "reruns", deltas=_FULL_DELTAS_OK)
+    rerun_ckpt = tmp_path / "reruns" / "T017" / "final"
+    for stale in rerun_ckpt.glob("rank_*.pt"):
+        stale.unlink()
+    _write_hf_sharded_checkpoint(
+        tmp_path / "reruns" / "T017", "T017", shards=shards,
+        optimizer_bytes=b"OPT-DIFFERENT" * 32,      # ← 优化器状态**不同**
+    )
+
+    record = _run_collector(
+        tmp_path, "--rerun-root", str(tmp_path / "reruns"), manifest=_full_manifest(),
+        env=_sitecustomize_env(tmp_path, _FAKE_TORCH_BLOCKER),
+    )
+
+    first, second = record["final_ckpt_sha256_first"], record["final_ckpt_sha256_second"]
+    assert first and second, record["final_ckpt_sha256_detail"]
+    assert record["final_ckpt_sha256_source"].startswith("hf_shard_set_sha256:")
+    assert "2 片" in record["final_ckpt_sha256_detail"]
+    # ② 权重相同、优化器状态不同 ⇒ 指纹**必须相同**（⇒ 回收优化器状态不破坏 A4 可复算性）
+    assert first == second, "指纹被优化器状态污染 ⇒ 回收优化器状态会让 A4 不可复算"
+
+
+def test_collector_hf_sharded_fingerprint_tracks_weight_bytes(tmp_path):
+    """★负向守卫：任一**权**分片改一个字节 ⇒ 指纹必须变（守住"覆盖权重字节"）。"""
+    _make_native_full_run(tmp_path / "runs", deltas=_FULL_DELTAS_OK)
+    base_ckpt = tmp_path / "runs" / "T017" / "final"
+    for stale in base_ckpt.glob("rank_*.pt"):
+        stale.unlink()
+    _write_hf_sharded_checkpoint(
+        tmp_path / "runs" / "T017", "T017",
+        shards={"model-00001-of-00002.safetensors": b"WEIGHTS-A" * 16,
+                "model-00002-of-00002.safetensors": b"WEIGHTS-B" * 16},
+    )
+    first = _run_collector(
+        tmp_path, manifest=_full_manifest(),
+        env=_sitecustomize_env(tmp_path, _FAKE_TORCH_BLOCKER),
+    )["final_ckpt_sha256_first"]
+
+    (base_ckpt / "model-00002-of-00002.safetensors").write_bytes(b"WEIGHTS-X" * 16)
+    second = _run_collector(
+        tmp_path, manifest=_full_manifest(),
+        env=_sitecustomize_env(tmp_path, _FAKE_TORCH_BLOCKER),
+    )["final_ckpt_sha256_first"]
+
+    assert first and second and first != second, "改了权分片字节却指纹不变 ⇒ 指纹没覆盖权重"

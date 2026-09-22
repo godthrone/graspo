@@ -615,6 +615,14 @@ WEIGHT_SOURCE_ADAPTER_SAFETENSORS = "checkpoint:safetensors_bytes(lora_b)"
 #: A2「权重真变化」的证据来源标识（全参档）。
 WEIGHT_SOURCE_BASE_COMPARE = "checkpoint:base_weights_bytes_compare"
 
+#: 全参（native / ms-swift 通用）：run 自产的**可训练参数 L2 范数变化**指标。
+#: 与 ``WEIGHT_SOURCE_RUN_METRICS``（LoRA 的 ``lora_norm_delta``）**同源同强度**：
+#: 两者都由 ``flow/progress_metrics.py::training_norm_event()`` 在**同一步的前后**对
+#: **真实参数张量**求 L2 范数再相减（``after - before``，见 ``progress_metrics.py:52``），
+#: 键名模式感知（full ⇒ ``trainable_norm_*``，lora ⇒ ``lora_norm_*``）。纯 JSON、
+#: 与宿主有没有 torch 无关（§6 环境可复现）。
+WEIGHT_SOURCE_TRAINABLE_NORM_METRIC = "run_metrics:trainable_norm_delta"
+
 #: A3「checkpoint 可重载」的证据等级标识。
 #: 强：容器内（镜像自带 torch）跑一次真实的 ``torch.load`` 探测。
 RELOAD_SOURCE_CONTAINER_PROBE = "container_torch_probe"
@@ -708,6 +716,69 @@ FINAL_CKPT_WEIGHT_FILENAMES: tuple[str, ...] = (
     "model.bin",
 )
 
+#: native **全参 PP 分片**的权重文件模式（2026-09-22 T017 实测布局）：
+#: ``<checkpoint>/rank_00000_tp_00_pp_00.pt`` + ``rank_00001_tp_00_pp_01.pt`` + ``manifest.json``。
+#:
+#: ⚠ ``manifest.json`` **只是分片布局元数据、不含任何内容哈希**——实测它在
+#: ``step_50`` / ``step_100`` / ``final`` 三处**逐字节相同**，两跑之间也**逐字节相同**
+#: ⇒ **绝不可**拿它（或"文件名+大小"）充当权重指纹：那会让两跑永远"指纹一致"，
+#: 是**静默降级**。指纹必须覆盖分片里的**每一个权重字节**（见 extract_final_ckpt_sha256）。
+PP_SHARD_GLOB = "rank_*_tp_*_pp_*.pt"
+
+
+def _hf_safetensors_shards(checkpoint: Path) -> list[Path]:
+    """HF 分片 safetensors 的**分片清单**（按名排序）；非分片布局返回空表。
+
+    权威来源 = ``model.safetensors.index.json`` 的 ``weight_map``（§1.4 单一真相源，
+    不靠"文件名看起来像分片"来猜）；仅有分片文件而缺 index 时才回落 glob，并在明细里显式说明。
+    """
+    names: list[str] = []
+    index_file = checkpoint / "model.safetensors.index.json"
+    if index_file.is_file():
+        try:
+            payload = json.loads(index_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            payload = None
+        if isinstance(payload, dict):
+            weight_map = payload.get("weight_map")
+            if isinstance(weight_map, dict):
+                names = sorted({str(v) for v in weight_map.values()})
+    if not names:
+        names = sorted(path.name for path in checkpoint.glob("model-*-of-*.safetensors"))
+    return [checkpoint / name for name in names if (checkpoint / name).is_file()]
+
+
+def _shard_set_fingerprint(
+    shards: Sequence[Path],
+    checkpoint: Path,
+    prefix: str,
+    label: str,
+    how: str,
+    source_prefix: str,
+) -> tuple[str | None, str, str | None]:
+    """**多文件权重指纹**：逐片 sha256 → 规范化清单再取 sha256（覆盖全部权重字节）。
+
+    证据强度：与单文件 sha256 **同强度**（读的是每个分片的真实字节），
+    **不是**"文件名/大小/manifest"那种弱指纹。读不到任一分片 ⇒ 取证缺口（``None``），
+    **不得**退化成弱指纹（§2.3 fail-closed）。
+    """
+    digests: list[tuple[str, str, int]] = []
+    for shard in shards:
+        digest = _sha256(shard)
+        if digest is None:
+            return None, f"{shard} 读不到内容（sha256 失败）", None
+        digests.append((shard.name, digest, shard.stat().st_size))
+    combined = hashlib.sha256(
+        "".join(f"{digest}  {name}\n" for name, digest, _ in digests).encode("utf-8")
+    ).hexdigest()
+    total_bytes = sum(size for _, _, size in digests)
+    return (
+        combined,
+        f"{prefix} 的 **{label}**（{len(digests)} 片 / {total_bytes / 2**30:.1f} GiB，{how}）"
+        f"组合 sha256={combined[:12]}…（逐片 sha256 的规范化清单再取 sha256 ⇒ 覆盖全部权重字节）",
+        f"{source_prefix}:{checkpoint}",
+    )
+
 
 def extract_final_ckpt_sha256(
     output_dirs: Sequence[Path], optimizer_steps: int | None
@@ -725,6 +796,11 @@ def extract_final_ckpt_sha256(
     ★ 为什么需要这条通道：loss 是**标量**，两跑 loss 相同（尤其都是 0）时它不提供
     任何鉴别力；权重文件指纹是**高维**的，能把"loss 相同但权重已分叉"这种危险组合
     暴露出来（AD1 §6.3 方案要素 5）。
+
+    **两种形态都支持**（2026-09-22 补第二种）：① 单文件（peft ``adapter_model.safetensors`` /
+    HF ``model.safetensors`` / native ``pytorch_model.bin``）；② **native 全参 PP 分片**
+    （``rank_*_tp_*_pp_*.pt`` 多文件，见 :data:`PP_SHARD_GLOB`）——多文件时指纹是
+    "逐片 sha256 的规范化清单再取 sha256"，覆盖全部权重字节，强度与①等价。
     """
     wanted = f"checkpoint-{optimizer_steps}" if optimizer_steps is not None else None
     candidates: list[Path] = []
@@ -756,10 +832,41 @@ def extract_final_ckpt_sha256(
                 f"（sha256={digest[:12]}…）"
             )
             return digest, note, source
+    # ── native 全参 PP 分片布局（多文件形态）────────────────────────────
+    # 指纹 = **对"逐分片 sha256 + 分片名"的规范化清单再取一次 sha256**。
+    # 强度论证（不许悄悄降级）：它覆盖了每个分片的**全部权重字节**，
+    # 与单文件 sha256 是**同一强度的内容指纹**；不是"文件名/大小/manifest"这种弱指纹。
+    # 代价：要读完全部分片（T017 实测 final/ 共 56.5 GB，宿主 sha256 ≈ 975 MB/s ⇒ ~1 min/跑）。
+    prefix = (
+        f"末步 checkpoint {checkpoint.name}"
+        if not fallback_used
+        else f"**回落**到最新 checkpoint {checkpoint.name}（不是与 "
+        f"optimizer_steps={optimizer_steps} 同名的那个）"
+    )
+    shards = sorted(path for path in checkpoint.glob(PP_SHARD_GLOB) if path.is_file())
+    if shards:
+        return _shard_set_fingerprint(
+            shards, checkpoint, prefix, "native 全参 PP 分片集合", f"`{PP_SHARD_GLOB}`",
+            "pp_shard_set_sha256",
+        )
+
+    # ── HF **分片 safetensors**（ms-swift 全参布局；2026-09-22 T005/T020 实测）─────
+    # 实测形态：`<ckpt>/model-00001-of-00004.safetensors` … `model-00004-of-00004.safetensors`
+    # + `model.safetensors.index.json`（+ 123 GiB 的 DeepSpeed `global_step<N>/` 优化器状态）。
+    # 旧实现只认单文件名 ⇒ 命中不了分片 ⇒ A4 指纹恒为 None（**即使补了第二跑也判不了**）。
+    # 权威清单是 index.json 的 `weight_map`（§1.4 单一真相源）；缺 index 时才回落 glob。
+    hf_shards = _hf_safetensors_shards(checkpoint)
+    if hf_shards:
+        return _shard_set_fingerprint(
+            hf_shards, checkpoint, prefix, "HF 分片 safetensors 权重集合",
+            "`model-*-of-*.safetensors`（清单取自 model.safetensors.index.json）",
+            "hf_shard_set_sha256",
+        )
     names = ", ".join(FINAL_CKPT_WEIGHT_FILENAMES)
     return (
         None,
-        f"末步 checkpoint {checkpoint.name} 下没有已知权重文件（找过：{names}）"
+        f"末步 checkpoint {checkpoint.name} 下没有已知权重文件（找过：{names}；"
+        f"也未匹配 native 全参 PP 分片 `{PP_SHARD_GLOB}`）"
         " ⇒ 独立通道无证据",
         None,
     )
@@ -939,6 +1046,75 @@ def extract_lora_norm_delta(output_dirs: Sequence[Path]) -> WeightEvidence:
     )
 
 
+def extract_trainable_norm_delta(output_dirs: Sequence[Path]) -> WeightEvidence:
+    """A2-**全参**的就地判据：run 自产的 ``trainable_norm_delta``（可训练参数 L2 变化）。
+
+    为什么这条路径是必须的（本包要根治的第二条环境性伪否，T017 真机实测）：
+    T017（9B·SFT·**全参**·native·pp=2）两跑各 100 步、``exit_code=0``、权重确实每步都在变
+    （``global_trainable_norm_delta_mean`` 100/100 步非零），但 A2 仍被判
+    「缺少权重变化证据」——因为全参分支只认 ``checkpoint`` 与**基座**的 safetensors 比对，
+    而 native 全参落的是 ``rank_*_tp_*_pp_*.pt``（torch.save 归档），宿主又无 torch。
+    **证据本来就在运行目录里躺着**（纯 JSON），却因"采集机没有 torch"被判成取证缺口。
+
+    ★ 证据强度（**不许悄悄降级**，与 §8.1 已接受的 LoRA 正式判据逐条对齐）：
+      · 同源：与 ``lora_norm_delta`` 出自**同一个** ``training_norm_event()`` 单一真相源，
+        只是按 tuner_type 取模式感知的键名（源码头显式写明"lora 模式键名与数值语义逐字不变"）；
+      · 同强度：都是"同一步前后、对**真实参数张量**求 L2 范数再相减"，不是梯度/代理指标；
+      · 自证口径：随行带 ``norm_metric=trainable_parameter_l2_norm`` 与
+        ``grad_count_metric=grad_populated_trainable_params``；
+      · **边界（如实写）**：它证明"可训练参数的**整体 L2 范数**发生变化"，
+        **不**逐一证明每层都变；也**不**替代 A4 的独立通道（那需要权重指纹）。
+
+    三态语义（**与 LoRA 路径逐条一致，不放松**）：
+
+    - finite 且非零 ⇒ ``True``（权重确实被更新过）；
+    - finite 但**全部恰好为 0** ⇒ ``False``（权重未变化 = **实质失败**，不是缺口）；
+    - 只有非有限值、或压根没有读数 ⇒ ``None``（不猜、不放行，按取证缺口处理）。
+    """
+    finite_values: list[float] = []
+    first_nonzero: tuple[int, float] | None = None
+    nonfinite = 0
+    for directory in output_dirs:
+        rows, _ = _rank_metric_steps(directory)
+        for row in rows:
+            raw = row.get("trainable_norm_delta")
+            if raw is None:
+                # 全局聚合口径：单卡下与 trainable_norm_delta 同值（ranks 只有 1 个）。
+                # 显式回落，避免"键名取决于分支"的隐式契约（§2.2）。
+                raw = row.get("global_trainable_norm_delta_mean")
+            # LoRA 档该键为 None（"指标不适用"）⇒ ``is None`` 比对而非 ``not raw``（§2.2）。
+            if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+                continue
+            value = float(raw)
+            if not math.isfinite(value):
+                nonfinite += 1
+                continue
+            finite_values.append(value)
+            if value != 0.0 and first_nonzero is None:
+                first_nonzero = (len(finite_values), value)
+    total = len(finite_values) + nonfinite
+    if total == 0:
+        return WeightEvidence(None, None, "run 逐步指标里没有 trainable_norm_delta 读数")
+    if first_nonzero is not None:
+        index, value = first_nonzero
+        return WeightEvidence(
+            True,
+            WEIGHT_SOURCE_TRAINABLE_NORM_METRIC,
+            f"第 {index} 步 trainable_norm_delta={value:.6g} ≠ 0（共 {total} 步读数）",
+        )
+    if finite_values:
+        return WeightEvidence(
+            False,
+            WEIGHT_SOURCE_TRAINABLE_NORM_METRIC,
+            f"{len(finite_values)} 步 trainable_norm_delta 全部恰好为 0 ⇒ 可训练参数未被更新",
+        )
+    return WeightEvidence(
+        None,
+        None,
+        f"{nonfinite} 步 trainable_norm_delta 全部非有限（§8.1 要求变化量 finite）⇒ 不作变化断言",
+    )
+
+
 def extract_weight_changed(
     output_dirs: Sequence[Path], tuner_type: str, base_model_dir: Path | None = None
 ) -> WeightEvidence:
@@ -953,9 +1129,12 @@ def extract_weight_changed(
       :func:`_safetensors_any_nonzero`）作为**等价兜底**。**不需要**
       ``base_model_dir``——旧实现把它当成"没给就没有权重证据"的因素之一，是判据
       实现与 §8.1 语义不一致的具体表现。
-    - **全参**（§8.1：可训练参数 ≈ 全参 **且** 基座某层权重 L2 delta ≠ 0）：**必须**
-      有 ``base_model_dir`` 才能与基座比对（:func:`_full_weights_differ`）。给不出
-      基座目录 ⇒ 取证缺口（``None``）——**不放松**，也不拿 LoRA 的 Δ 指标冒充。
+    - **全参**（§8.1：可训练参数 ≈ 全参 **且** 基座某层权重 L2 delta ≠ 0）：
+      **先**读 run 自产的 ``trainable_norm_delta``（:func:`extract_trainable_norm_delta`，
+      与 LoRA 的 ``lora_norm_delta`` **同源同强度**、纯 stdlib、不需要 torch/基座）；
+      拿不到才回落到"终态权重 vs 基座权重"的 safetensors 字节比对
+      （:func:`_full_weights_differ`，需要 ``base_model_dir`` + safetensors 形态）。
+      两条都拿不到 ⇒ 取证缺口（``None``）——**不放松**，也不拿 LoRA 的 Δ 指标冒充。
 
     抽取不到返回 ``value is None`` → A2 按**取证缺口**处理（不可判定，而不是判训练失败）。
 
@@ -977,6 +1156,15 @@ def extract_weight_changed(
             return metrics_evidence
         # 正式判据（lora_norm_delta）已不可得 ⇒ 把原因记进台账，继续走兜底路径。
         fallback_notes.append(f"A2 正式判据 lora_norm_delta 不可得（{metrics_evidence.detail}）")
+    else:
+        # ★ 全参的**就地正式判据**（与 LoRA 同源同强度，2026-09-22 补）：先读 run 自产的
+        #   `trainable_norm_delta`；拿得到就**不需要** torch、也不需要基座目录。
+        full_metrics_evidence = extract_trainable_norm_delta(output_dirs)
+        if full_metrics_evidence.value is not None:
+            return full_metrics_evidence
+        fallback_notes.append(
+            f"A2 全参就地判据 trainable_norm_delta 不可得（{full_metrics_evidence.detail}）"
+        )
     if torch is None:
         fallback_notes.append("宿主无 torch ⇒ checkpoint 兜底路径（rank_*.pt 反序列化）不可用")
 
@@ -1439,6 +1627,35 @@ def extract_expected_optimizer_steps(tier: dict[str, Any]) -> tuple[int | None, 
     )
 
 
+def extract_run_first_timestamp(run_dir: Path) -> str | None:
+    """该 run **首条带 ``timestamp`` 的记录**（ISO8601）——A4 判定"两次独立运行"的
+    **内容级**身份证据（2026-09-22 裁定 2）。
+
+    为什么必须有一条**内容级**证据：``run_root`` 与目录 inode 都只是"位置"，
+    把同一份产物**拷到另一个路径**就能同时满足 ⇒ 会被误判成"两次独立运行"。
+    而产物里记录的时间戳是训练当时写下的，拷贝不会改变它 ⇒ 拷贝场景下两端相同，
+    判据层据此**拒绝**给独立性加分（见 ``_judge._a4_independence_signals``）。
+
+    取不到 ⇒ ``None``（**不猜**；判据层会因此少一条证据，可能继续 fail-closed）。
+    """
+    for events in sorted(run_dir.rglob("rank_metrics.rank_*.jsonl")):
+        try:
+            text = events.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            if not line.strip():
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            stamp = payload.get("timestamp") if isinstance(payload, dict) else None
+            if isinstance(stamp, str) and stamp:
+                return stamp
+    return None
+
+
 def collect_run(
     run_dir: Path,
     tier_id: str,
@@ -1485,6 +1702,14 @@ def collect_run(
     ckpt_sha256, ckpt_sha256_detail, ckpt_sha256_source = extract_final_ckpt_sha256(
         output_dirs, series.steps
     )
+    # ── A4 形态①的"独立性"输入（2026-09-22 裁定 2）────────────────────────
+    # 位置级两条（运行根 / 产物根文件系统身份）+ 内容级一条（首条记录时间戳）。
+    identity_target = output_dirs[0] if output_dirs else run_dir
+    try:
+        stat = identity_target.stat()
+        output_identity: str | None = f"{stat.st_dev}:{stat.st_ino}"
+    except OSError:
+        output_identity = None
     evidence = _judge.RunEvidence(
         tier_id=tier_id,
         exit_code=exit_code,
@@ -1510,6 +1735,9 @@ def collect_run(
         min_optimizer_steps=min_optimizer_steps,
         expected_optimizer_steps_per_epoch=expected_optimizer_steps_per_epoch,
         expected_optimizer_steps_reachable=expected_optimizer_steps_reachable,
+        run_root=str(run_dir.resolve()),
+        output_identity=output_identity,
+        first_metric_timestamp=extract_run_first_timestamp(run_dir),
         # 读数口径自证（§1.4）：台账必须能回答"这条权重/重载证据是哪种等级、来自哪里"。
         weight_evidence_source=weight_evidence.source,
         weight_evidence_detail=weight_evidence.detail,
@@ -1903,6 +2131,11 @@ def run(args: argparse.Namespace) -> int:
         )
         row["final_ckpt_sha256_detail"] = first.final_ckpt_sha256_detail
         row["final_ckpt_sha256_source"] = first.final_ckpt_sha256_source
+        # A4 形态①的独立性台账（裁定 2）：把"凭什么判两次独立运行"落盘，读者可复核。
+        if second is not None:
+            _signals, _independence_detail = _judge._a4_independence_signals(first, second)
+            row["a4_independence_signals"] = _signals
+            row["a4_independence_detail"] = _independence_detail
         records.append(row)
 
     jsonl = out_dir / "ledger.jsonl"
