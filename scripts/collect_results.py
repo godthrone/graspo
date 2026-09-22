@@ -1995,11 +1995,37 @@ def run(args: argparse.Namespace) -> int:
         tier_caliber_note = _judge.peak_memory_unavailable_note(tier_caliber)
         first_dir = Path(args.run_root) / tier_id
         if not first_dir.is_dir():
+            # ── ★ 六态口径（2026-09-22 指挥官裁定）────────────────────────────
+            # 旧实现把三种"没跑"一律写成 `— 未测` ⇒ 丢掉用户明确关心过的区分
+            # （"口径不可测是什么意思？无配方不适用呢？"）。三段必须分开：
+            #   · `<T>.blocked.md`         ⇒ ⛔ 无配方（当前无配方、**将来可能做得了**）
+            #   · `<T>.not_applicable.md`  ⇒ ⛔ 不适用（**逻辑上不适用**）
+            #   · 其余（清单 ready 但未跑） ⇒ — 未测（尚未纳入跑批）
+            # 出处写进 `status_provenance`（§2.2 显式即防呆：读者能查到依据文件）。
+            _cfg_dir = (
+                Path(getattr(args, "repo_root", None) or Path.cwd())
+                / "samples" / "configs" / "matrix54"
+            )
+            _blocked_md = _cfg_dir / f"{tier_id}.blocked.md"
+            _na_md = _cfg_dir / f"{tier_id}.not_applicable.md"
+            if _blocked_md.is_file():
+                _status = _judge.LEDGER_NO_RECIPE
+                _provenance = str(_blocked_md.resolve())
+                _why = "当前无配方（blocked，将来可能做得了）"
+            elif _na_md.is_file():
+                _status = _judge.LEDGER_NOT_APPLICABLE
+                _provenance = str(_na_md.resolve())
+                _why = "逻辑上不适用（not_applicable）"
+            else:
+                _status = _judge.LEDGER_UNTESTED
+                _provenance = None
+                _why = "尚未纳入跑批"
             records.append(
                 {
                     "tier_id": tier_id,
-                    "status": "— 未测",
-                    "note": f"运行目录不存在：{first_dir}",
+                    "status": _status,
+                    "status_provenance": _provenance,
+                    "note": f"运行目录不存在：{first_dir}（{_why}）",
                     "failure_class": None,
                     "max_context": None,
                     "max_context_kind": None,
@@ -2138,6 +2164,13 @@ def run(args: argparse.Namespace) -> int:
             row["a4_independence_detail"] = _independence_detail
         records.append(row)
 
+    # ★ 六态白名单断言（§2.2 显式即防呆）：产出里出现第 7 种状态词即 fail-closed。
+    _allowed = set(_judge.LEDGER_STATUS_PHRASES)
+    _bad = sorted({str(r.get("status")) for r in records} - _allowed)
+    if _bad:
+        print(f"FATAL: 台账出现白名单外的状态词：{_bad}（白名单见 LEDGER_STATUS_PHRASES）", file=sys.stderr)
+        return 5
+
     jsonl = out_dir / "ledger.jsonl"
     with jsonl.open("w", encoding="utf-8") as handle:
         for record in records:
@@ -2229,6 +2262,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--manifest", required=True, help="matrix54_manifest.json")
     parser.add_argument("--run-root", required=True, help="First-attempt run root.")
     parser.add_argument("--rerun-root", default=None, help="Second-attempt run root (for A4).")
+    parser.add_argument("--repo-root", default=None,
+                        help="仓库根（用于定位 samples/configs/matrix54/*.blocked.md / "
+                             "*.not_applicable.md）；缺省 = 当前工作目录")
     parser.add_argument("--out", required=True, help="Output directory for ledger.jsonl/.md")
     parser.add_argument(
         "--context-length",

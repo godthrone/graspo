@@ -210,6 +210,51 @@ def test_collector_extracts_evidence_and_fails_closed_without_weight_evidence(tm
     assert (tmp_path / "ledger" / "ledger.md").exists()
 
 
+def test_collector_distinguishes_blocked_not_applicable_and_untested(tmp_path):
+    """★六态口径（2026-09-22 指挥官裁定）：三种"没跑"**不得**塌成一个词，且出处可查。
+
+    · `samples/configs/matrix54/<T>.blocked.md`        ⇒ `⛔ 无配方`（**将来可能做得了**）
+    · `samples/configs/matrix54/<T>.not_applicable.md` ⇒ `⛔ 不适用`（**逻辑上不适用**）
+    · 都没有                                           ⇒ `— 未测`（尚未纳入跑批）
+    用户专门问过这几个词的区别；塌成一个词是信息量倒退。
+    """
+    manifest = json.loads(json.dumps(_MANIFEST))
+    manifest["tiers"] = [
+        dict(manifest["tiers"][0], tier_id=tid) for tid in ("T001", "T002", "T003")
+    ]
+    cfg = tmp_path / "samples" / "configs" / "matrix54"
+    cfg.mkdir(parents=True)
+    (cfg / "T001.blocked.md").write_text("# blocked 依据\n", encoding="utf-8")
+    (cfg / "T002.not_applicable.md").write_text("# not_applicable 依据\n", encoding="utf-8")
+
+    # 三档的运行目录都不存在 ⇒ 全走 not-run 分支
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    out = tmp_path / "ledger"
+    completed = subprocess.run(
+        [sys.executable, str(_COLLECTOR), "--manifest", str(manifest_path),
+         "--run-root", str(tmp_path / "runs"), "--out", str(out),
+         "--repo-root", str(tmp_path), "--date", "2026-09-22"],
+        capture_output=True, text=True, check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    rows = {
+        json.loads(line)["tier_id"]: json.loads(line)
+        for line in (out / "ledger.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    }
+    assert rows["T001"]["status"] == "⛔ 无配方", rows["T001"]
+    assert rows["T002"]["status"] == "⛔ 不适用", rows["T002"]
+    assert rows["T003"]["status"] == "— 未测", rows["T003"]
+    # 出处可查（§2.2）：读者能从台账找到依据文件
+    assert rows["T001"]["status_provenance"].endswith("T001.blocked.md")
+    assert rows["T002"]["status_provenance"].endswith("T002.not_applicable.md")
+    assert rows["T003"]["status_provenance"] is None
+    # 六态白名单：产出里不得出现第 7 种词
+    allowed = {"✅ 可用", "❌ 不可用", "⚠ 口径不可测", "⛔ 无配方", "⛔ 不适用", "— 未测"}
+    assert {r["status"] for r in rows.values()} <= allowed
+
+
 def test_collector_reports_untested_when_run_dir_missing(tmp_path):
     (tmp_path / "runs").mkdir()
 

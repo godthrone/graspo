@@ -1512,6 +1512,24 @@ LEDGER_INDETERMINATE = "⚠ 口径不可测"
 #: 读者会读成"这档能力不行"，而事实是"**这档压根没被真正测过**"。
 #: 方向不变：它**不是** ✅，也**不放宽**门槛（``min_optimizer_steps`` 一个字没动）。
 LEDGER_GATE_NOT_APPLICABLE = "⚠ 口径不可测"   # 与 LEDGER_INDETERMINATE 同字：都是"测不了"，理由写在 note
+#: ★ **当前无配方、将来可能做得了**（blocked）——**不得**与"逻辑上不适用"或"还没跑"混同
+#: （2026-09-22 指挥官裁定：用户专门问过这几个词的区别，塌成一个词是信息量倒退）。
+#: 判据来源必须可查：`samples/configs/matrix54/<T>.blocked.md`。
+LEDGER_NO_RECIPE = "⛔ 无配方"
+#: ★ **逻辑上不适用**（not_applicable）。判据来源：`samples/configs/matrix54/<T>.not_applicable.md`。
+LEDGER_NOT_APPLICABLE = "⛔ 不适用"
+#: **尚未纳入跑批**。
+LEDGER_UNTESTED = "— 未测"
+
+#: ★ **状态词全集（6 个，唯一真相源）**：任何产出都不得出现第 7 种白名单外的词。
+LEDGER_STATUS_PHRASES: tuple[str, ...] = (
+    LEDGER_PASS,
+    LEDGER_FAIL,
+    LEDGER_INDETERMINATE,
+    LEDGER_NO_RECIPE,
+    LEDGER_NOT_APPLICABLE,
+    LEDGER_UNTESTED,
+)
 
 
 @dataclass(frozen=True, slots=True)
