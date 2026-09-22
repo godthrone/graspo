@@ -38,6 +38,7 @@ from graspo.core.result_judge import (
     MIN_OPTIMIZER_STEPS,
     RunEvidence,
     judge_a2,
+    judge_a7,
     judge_tier,
     ledger_row,
     resolve_min_optimizer_steps,
@@ -76,6 +77,7 @@ def make_evidence(**overrides) -> RunEvidence:
         },
         losses=(1.0,),
         grad_norms=(1.0,),
+            nonfinite_skips=0,   # A7（训练真推进）默认值，与真实 collector 一致
     )
     base.update(overrides)
     return RunEvidence(**base)
@@ -340,14 +342,9 @@ def test_illegal_reachable_does_not_open_the_third_state():
 
 def test_substantive_assertions_precede_the_third_state():
     """★ 实质断言**先于**第三态：非有限跳过 / 逐步未推进 ⇒ 仍判 ❌，不被"口径不可测"吞掉。"""
-    skipped = judge_a2(
-        make_evidence(
-            optimizer_steps=1,
-            min_optimizer_steps=5,
-            nonfinite_skips=3,
-            expected_optimizer_steps_reachable=1,
-        )
-    )
+    # ★ 2026-09-22：`nonfinite_skips` 断言已提升为独立主判据 A7 ⇒ 这里改判 A7
+    #   （"实质断言先于第三态"的**性质不变**：跳过是更硬的事实，不被口径不可测吞掉）。
+    skipped = judge_a7(make_evidence(nonfinite_skips=3))
     assert not skipped.passed and not skipped.not_applicable
     assert "非有限梯度" in skipped.detail
 

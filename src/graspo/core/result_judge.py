@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import math
 import re
+import statistics
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -1484,8 +1485,9 @@ class RunEvidence:
 #: ``EVIDENCE_GAP`` 条目与 :func:`judge_tier`：取证缺口既不是通过，也不是训练失败。
 #: ★ **主判据**（决定 ✅/❌，2026-09-22 用户口径 = "能不能拿来训练"）：
 #: `A1`=进程正常退出、`A2`=跑满预定步数/epoch 且权重确实被更新、
-#: `A3`=checkpoint 可重载、`A5`=训练产物齐全、`A6`=数值健康（无 NaN/Inf）。
-PRIMARY_CRITERIA: tuple[str, ...] = ("A1", "A2", "A3", "A5", "A6")
+#: `A3`=checkpoint 可重载、`A5`=训练产物齐全、`A6`=数值健康（无 NaN/Inf）、
+#: **`A7`=训练真推进（没有任何一步因非有限梯度被跳过）**。
+PRIMARY_CRITERIA: tuple[str, ...] = ("A1", "A2", "A3", "A5", "A6", "A7")
 
 #: ★ **诊断判据**（**保留计算与记录，但不参与 ✅/❌**，2026-09-22 用户纠正）：
 #: `A4`=同配置双跑一致性（含首步零容差 / 终态容差 / 档族标定 / 运行独立性四个子检查）。
@@ -1760,13 +1762,8 @@ def judge_a2(evidence: RunEvidence) -> CriterionResult:
     检查顺序（为什么"跳过"排在门槛之前）：门槛报"步数不够"会把一次**数值崩坏**
     误读成"冒烟太短"，从而诱导重复跑而不是修缺陷。跳过是更硬的事实。
     """
-    if evidence.nonfinite_skips:
-        return CriterionResult(
-            "A2",
-            False,
-            f"训练未真推进：累计 {evidence.nonfinite_skips} 次因非有限梯度跳过"
-            "优化器步（权重冻结，§3.4 防线：不得记为成功）",
-        )
+    # ★ 2026-09-22：`nonfinite_skips > 0` 这条断言**已提升为独立主判据 A7**
+    #   （见 :func:`judge_a7`）——同一结论不再写两处（§1.4 单一真相源）。
     if evidence.optimizer_steps_per_step is not None:
         stalled = [
             index for index, count in enumerate(evidence.optimizer_steps_per_step) if count <= 0
@@ -1871,6 +1868,38 @@ def judge_a2(evidence: RunEvidence) -> CriterionResult:
         f"权重已变化（tuner_type={evidence.tuner_type}，"
         f"来源：{evidence.weight_evidence_source}；{evidence.weight_evidence_detail}）",
     )
+
+
+def judge_a7(evidence: RunEvidence) -> CriterionResult:
+    """**A7 训练真推进**：没有任何一步因**非有限梯度**被跳过优化器步。
+
+    为什么单列成一条主判据（2026-09-22 指挥官批准的两级收紧之①）：
+    这条断言原本**埋在 A2 的明细里**（`judge_a2` 的第一条分支），虽然确实阻断了，
+    但**读者容易忽略**——真实教训：T035（ms-swift 全参 GRASPO）机制层面的无界挂死/OOM
+    被 P6 修好后，"跑完了"很容易被读成"可用"，而它**跳过了 33 次 nonfinite 步**
+    （修复后仍有 1 次）+ `grad_norm 7.8e13`。用户要的是"**顺利**跑完一个 epoch"，
+    跳过 33 次非有限步不叫顺利。
+
+    三态（与其它判据一致，**不放宽**）：
+
+    - 读到 ``nonfinite_skips > 0`` ⇒ **不通过**（这是关于本次运行的**事实**）；
+    - 读到 ``nonfinite_skips == 0`` ⇒ 通过；
+    - **读数缺失（``None``）** ⇒ 不通过且标 ``evidence_missing``（fail-closed；
+      由 :func:`judge_tier` 归成「⚠ 口径不可测（取证缺口）」而不是训练失败）。
+    """
+    skips = evidence.nonfinite_skips
+    if skips is None:
+        return CriterionResult(
+            "A7", False, "缺少 nonfinite 跳过计数（fail-closed）", evidence_missing=True
+        )
+    if skips:
+        return CriterionResult(
+            "A7",
+            False,
+            f"训练未真推进：累计 **{skips} 次**因非有限梯度跳过优化器步"
+            "（权重冻结；即使进程正常退出，也不满足「**顺利**跑完一个 epoch」）",
+        )
+    return CriterionResult("A7", True, "nonfinite 跳过次数 = 0（训练真推进）")
 
 
 def judge_a3(evidence: RunEvidence) -> CriterionResult:
@@ -2291,7 +2320,28 @@ def judge_a6(evidence: RunEvidence) -> CriterionResult:
     trend_note += "）"
     if trend == "increased" and A6_LOSS_TREND_BLOCKS:
         return CriterionResult("A6", False, f"最终 loss 高于初始 loss：{trend_note}")
-    return CriterionResult("A6", True, f"数值健康：{trend_note}")
+    # ── ★ grad_norm **量级指纹**（诊断项，**不单独判否**；2026-09-22 收紧之②）──────
+    # 为什么只做诊断：单看量级会**误伤**——T017（native 全参）grad_norm≈8e8、loss 却从
+    # 2.6 降到 0.009 且全程 finite；而 T035（ms-swift 全参）7.8e13 **且**跳过了 nonfinite 步
+    # 才是真问题。区分这两者靠的是"**是否伴随**跳过/非有限"，而不是量级本身。
+    grad_note = ""
+    finite_grads = [
+        value
+        for value in evidence.grad_norms
+        if isinstance(value, float) and math.isfinite(value) and value > 0.0
+    ]
+    if finite_grads:
+        grad_max = max(finite_grads)
+        grad_median = statistics.median(finite_grads)
+        if grad_median > 0.0:
+            orders = math.log10(grad_max / grad_median)
+            grad_note = (
+                f"；grad_norm 量级指纹：max={grad_max:.3g} / 中位数={grad_median:.3g}"
+                f"（相差 {orders:.1f} 个数量级）"
+            )
+            if orders >= 10:
+                grad_note += " ⇒ **⚠ 量级尖峰（诊断项，不单独判否；需结合是否有 nonfinite 跳过判定）**"
+    return CriterionResult("A6", True, f"数值健康：{trend_note}{grad_note}")
 
 
 # ── 失败分类 ────────────────────────────────────────────────────────────────
@@ -2528,7 +2578,8 @@ def judge_tier(
     a4 = judge_a4(first, second, require_dual_channel=require_dual_channel)
     a5 = judge_a5(first)
     a6 = judge_a6(first)
-    criteria = (a1, a2, a3, a4, a5, a6)
+    a7 = judge_a7(first)
+    criteria = (a1, a2, a3, a4, a5, a6, a7)
 
     # ══ 新口径（2026-09-22 用户纠正；本函数的判定轴）══════════════════════════
     #   用户原话："你的判定标准应该是**能顺利跑完一个 epoch**……我们现在看的
@@ -2543,6 +2594,7 @@ def judge_tier(
         "A3": a3.passed,
         "A5": a5.passed,
         "A6": a6.passed,
+        "A7": a7.passed,
     }
     passed = all(primary_status.values())
     diagnostics_note = (
@@ -2558,7 +2610,8 @@ def judge_tier(
     if passed:
         note = (
             "✅ 可用（主判据 = 训练可用性）："
-            f"{steps_detail}；进程正常退出；权重已更新；checkpoint 可重载；产物齐全；数值健康。"
+            f"{steps_detail}；进程正常退出；权重已更新；checkpoint 可重载；产物齐全；"
+            "数值健康；训练真推进（无 nonfinite 跳过）。"
             f"｜{diagnostics_note}"
         )
     else:
@@ -2571,6 +2624,7 @@ def judge_tier(
             "A3": bool(a3.evidence_missing),
             "A5": bool(a5.evidence_missing),
             "A6": bool(a6.evidence_missing),
+            "A7": bool(a7.evidence_missing),
         }
         primary_evidence_gap = all(primary_gap_flags[name] for name in failing_primary)
         substantive = classify_failure(first, a6)

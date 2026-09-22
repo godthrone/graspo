@@ -72,6 +72,10 @@ def make_evidence(**overrides) -> RunEvidence:
         },
         losses=(1.0, 0.8, 0.6),
         grad_norms=(1.0, 0.9, 0.8),
+        # ★ A7（训练真推进）的默认值：**真实 collector 恒给整数**（`series.nonfinite_skips`
+        #   初值 0），所以 fixture 也必须给 ⇒ 否则 A7 会按取证缺口 fail-closed（这是对的，
+        #   但会让"合成档"看起来像缺证据）。
+        nonfinite_skips=0,
     )
     base.update(overrides)
     return RunEvidence(**base)
@@ -378,6 +382,47 @@ def test_gate_not_applicable_never_masks_a_real_failure():
     assert judgement.step_gate_not_applicable is True
     assert judgement.ledger_status == "❌ 不可用", judgement.note
     assert not judgement.passed
+
+
+def test_a7_t017_style_large_grad_norm_but_healthy_is_not_falsely_rejected():
+    """★对照①（T017 式）：`grad_norm` 量级**巨大**但**无 nonfinite 跳过**、loss 健康 ⇒ **不误伤**。
+
+    真例：T017（native 全参 2 卡）`grad_norm` 从 49 升到 4.18e9，loss 却从 2.6 降到 0.009、
+    全程 finite ⇒ 按主判据就是 **✅ 可用**。**判据必须能区分**这种"大 norm 但健康"与
+    T035 式"大 norm + 跳过非有限步"——这正是"量级只做诊断、不单独判否"的理由。
+    """
+    healthy = make_evidence(
+        optimizer_steps=100,
+        nonfinite_skips=0,
+        losses=(2.6, 1.3, 0.009),
+        # 人造 12 个数量级的尖峰（比 T017 实测的 8 个还极端）⇒ 仍不得判否
+        grad_norms=(1.0, 1e-2, 1e12),
+    )
+    judgement = judge_tier(healthy, healthy)
+    assert judgement.passed, judgement.note
+    assert judgement.ledger_status == "✅ 可用"
+    # 量级必须被**记录**为诊断（≥10 个数量级 ⇒ 标 ⚠ 但不判否）
+    assert "量级指纹" in judgement.criterion("A6").detail
+    assert "⚠" in judgement.criterion("A6").detail
+
+
+def test_a7_t035_style_nonfinite_skips_is_not_usable():
+    """★对照②（T035 式）：跑完了一个 epoch 但**跳过 nonfinite 步** ⇒ **❌ 不可用**（A7）。
+
+    真例：T035（ms-swift 全参）机制阻塞修好后跑完，但 `skipped_nonfinite=1`（修前 33）
+    + `grad_norm 7.8e13`。用户要的是"**顺利**跑完一个 epoch" ⇒ 不算可用。
+    """
+    unhealthy = make_evidence(
+        optimizer_steps=20,
+        nonfinite_skips=1,
+        losses=(1.0, 0.5, 0.2),
+        grad_norms=(1.0, 7.8e13),
+    )
+    judgement = judge_tier(unhealthy, unhealthy)
+    assert not judgement.passed
+    assert judgement.ledger_status == "❌ 不可用"
+    assert "非有限" in judgement.criterion("A7").detail
+    assert "A7" in judgement.note
 
 
 def test_missing_a4_evidence_no_longer_makes_tier_indeterminate():

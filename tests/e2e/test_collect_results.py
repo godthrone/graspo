@@ -584,6 +584,8 @@ def test_collector_msswift_layout_makes_a1_to_a6_decidable(tmp_path):
         "A4": True,
         "A5": True,
         "A6": True,
+        # ★ A7（训练真推进，2026-09-22 收紧）：nonfinite 跳过 = 0 ⇒ 通过。
+        "A7": True,
     }, record["criteria_detail"]
     assert record["status"] == "✅ 可用"
     assert record["failure_class"] is None
