@@ -62,17 +62,20 @@ class _FakeDist:
 
 
 class _FakeRuntime:
-    def __init__(self) -> None:
+    def __init__(self, *, rank: int | None = 0) -> None:
         self.close_calls = 0
+        #: 真实 ``GraspoFlowRuntime`` 有 ``.rank``；``None`` 用来模拟"取数失败"的退化路径
+        if rank is not None:
+            self.rank = rank
 
     def close(self) -> None:
         self.close_calls += 1
 
 
-def _make_trainer() -> tuple[GraspoFlowTrainer, _FakeRuntime]:
+def _make_trainer(*, rank: int | None = 0) -> tuple[GraspoFlowTrainer, _FakeRuntime]:
     """只造出退出路径需要的两个协作者（绕过 ``__init__``：不建 runtime、不碰 GPU）。"""
     trainer = GraspoFlowTrainer.__new__(GraspoFlowTrainer)
-    runtime = _FakeRuntime()
+    runtime = _FakeRuntime(rank=rank)
     trainer.runtime = runtime  # type: ignore[assignment]
     return trainer, runtime
 
@@ -122,7 +125,7 @@ class TestExceptionalExitNeverRendezvous:
         """★ 核心回归：异常路径**绝不**碰 barrier（碰了就是重新引入 600s 掩盖）。"""
         fake = fake_dist()
         trainer, runtime = _make_trainer()
-        trainer._abort_distributed()
+        trainer._abort_distributed(aborted=True)
         assert "barrier" not in fake.calls
         assert fake.calls == ["destroy_process_group"]
         # 也**不得**走 runtime.close()：其内部 destroy_parallel_state 仍带 WORLD barrier。
@@ -131,7 +134,7 @@ class TestExceptionalExitNeverRendezvous:
     def test_abort_is_non_blocking_when_not_initialized(self, fake_dist) -> None:
         fake = fake_dist(initialized=False)
         trainer, _ = _make_trainer()
-        trainer._abort_distributed()
+        trainer._abort_distributed(aborted=True)
         assert fake.calls == []
 
     def test_abort_never_masks_the_original_error(self, fake_dist, caplog) -> None:
@@ -139,11 +142,54 @@ class TestExceptionalExitNeverRendezvous:
         fake = fake_dist(destroy_raises=True)
         trainer, _ = _make_trainer()
         with caplog.at_level(logging.WARNING, logger="graspo.trainer"):
-            trainer._abort_distributed()  # 不得抛出
+            trainer._abort_distributed(aborted=True)  # 不得抛出
         assert fake.calls == ["destroy_process_group"]
         assert any("original error is preserved" in record.message for record in caplog.records), (
             caplog.text
         )
+
+    # ── 可观测性（2026-09-22 裁定 1：abort 前必须留一条含标志/rank/pg 的 WARNING）──
+
+    def test_abort_logs_flag_rank_and_group_before_aborting(
+        self, fake_dist, caplog, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """★ 可观测性契约：WARNING 必须**先于** abort 发出，且自带 aborted/rank/group 三个字段。
+
+        为什么必须有（实测教训，T035 @ GPU0/1）：当时没有这条日志，只能靠"rank1 的 3 个
+        NCCL 通信组是否仍存活"**间接反推**它从未进入异常退出路径。有了它，"是否进入异常
+        路径"变成日志上的**直接判据**。
+        """
+        fake = fake_dist()
+        trainer, _ = _make_trainer(rank=3)
+        seen_before_destroy: list[int] = []
+        original = fake.destroy_process_group
+
+        def _spy(*args: object, **kwargs: object) -> None:
+            # 记录"调用 abort 那一刻，已发出的含 aborted=True 的 WARNING 条数"
+            seen_before_destroy.append(
+                sum(1 for r in caplog.records if "aborted=True" in r.message)
+            )
+            original(*args, **kwargs)
+
+        monkeypatch.setattr(fake, "destroy_process_group", _spy)
+        with caplog.at_level(logging.WARNING, logger="graspo.trainer"):
+            trainer._abort_distributed(aborted=True)
+
+        assert seen_before_destroy == [1], "WARNING 必须先于 destroy_process_group() 发出"
+        assert fake.calls == ["destroy_process_group"]
+        warn = " ".join(r.message for r in caplog.records)
+        assert "aborted=True" in warn
+        assert "rank=3" in warn
+        assert f"group={trainer_module._DEFAULT_PG_NAME}(WORLD)" in warn
+
+    def test_abort_log_degrades_when_rank_is_unavailable(self, fake_dist, caplog) -> None:
+        """诊断取数失败不得抛出/不得掩盖首错：无 ``runtime.rank`` 时退化为 ``rank=?``。"""
+        fake = fake_dist()
+        trainer, _ = _make_trainer(rank=None)  # _FakeRuntime 故意不带 rank 属性
+        with caplog.at_level(logging.WARNING, logger="graspo.trainer"):
+            trainer._abort_distributed(aborted=True)
+        assert fake.calls == ["destroy_process_group"]
+        assert any("rank=?" in r.message for r in caplog.records), caplog.text
 
 
 # ── 接线契约：train() 必须把两条出口分派到上述两个方法 ──────────────────────
@@ -153,7 +199,7 @@ class TestTrainExitWiring:
     def test_train_dispatches_exception_exit_to_abort(self) -> None:
         src = inspect.getsource(GraspoFlowTrainer.train)
         assert "except BaseException" in src, "异常退出必须被显式捕获以走非阻塞 abort"
-        assert "self._abort_distributed()" in src
+        assert "self._abort_distributed(aborted=aborted)" in src
         assert "raise" in src, "捕获后必须原样抛出首个异常（不得吞掉）"
 
     def test_train_keeps_rendezvous_on_normal_exit(self) -> None:
