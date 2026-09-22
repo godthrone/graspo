@@ -210,6 +210,51 @@ def test_collector_extracts_evidence_and_fails_closed_without_weight_evidence(tm
     assert (tmp_path / "ledger" / "ledger.md").exists()
 
 
+# ── ★ A7 取证公平性（2026-09-22 指挥官裁定，C）──────────────────────────────
+# ms-swift **不上报**跳过计数（swift/trainers/mixin.py 的 patch 只 `p.grad=None`，无日志无计数）
+# ⇒ 旧行为会让 A7 对它**自动通过**，而 native 却严格判 ⇒ **同一判据对不同后端不等价**。
+# 现在：native 取精确计数；ms-swift 从"逐步 grad_norm 是否为 NaN"**推断**；
+# 推断不出 ⇒ **口径不可测（绝不放行）**。
+
+def test_a7_native_exact_count_fails_the_tier(tmp_path):
+    """① native 有精确计数：`skipped_nonfinite > 0` ⇒ A7 不过 ⇒ ❌ 不可用。"""
+    _make_native_full_run(tmp_path / "runs", deltas=_FULL_DELTAS_OK, skipped_nonfinite=2)
+    record = _run_collector(
+        tmp_path, manifest=_full_manifest(), env=_sitecustomize_env(tmp_path, _FAKE_TORCH_BLOCKER)
+    )
+    assert record["criteria"]["A7"] is False, record["criteria_detail"]
+    # 逐 step 计数会被**跨步求和**（fixture 6 行 × 每行 2 次 = 12）⇒ 断言 > 0 + 来源自证
+    assert record["nonfinite_skips"] and record["nonfinite_skips"] > 0
+    assert record["nonfinite_skips_source"] == "run_metrics:skipped_nonfinite"
+    assert record["status"] == "❌ 不可用"
+
+
+def test_a7_msswift_infers_skips_from_nan_grad_norm(tmp_path):
+    """② ms-swift 推断成功：逐步 `grad_norm` 出现 1 个 NaN ⇒ 推断跳过 1 次 ⇒ A7 不过。"""
+    _write_msswift_run(
+        tmp_path / "runs", grad_norms=(1.0, 0.9, float("nan"), 0.7, 0.6, 0.5)
+    )
+    record = _run_collector(tmp_path, manifest=_MSSWIFT_MANIFEST)
+    assert record["nonfinite_skips"] == 1, record.get("nonfinite_skips_source")
+    assert record["nonfinite_skips_source"] == "log_inference:nan_grad_norm_count"
+    assert record["criteria"]["A7"] is False
+    assert record["status"] == "❌ 不可用"
+
+
+def test_a7_unavailable_count_is_indeterminate_never_pass(tmp_path):
+    """③ 取不到 ⇒ **口径不可测**（`⚠ 口径不可测`），**绝不自动通过**。
+
+    构造：ms-swift 档**没有任何 grad_norm 读数**（逐步序列为空）⇒ 推断不出
+    ⇒ `nonfinite_skips is None` ⇒ A7 以"口径不可测"判否（而不是通过）。
+    """
+    _write_msswift_run(tmp_path / "runs", grad_norms=())
+    record = _run_collector(tmp_path, manifest=_MSSWIFT_MANIFEST)
+    assert record["nonfinite_skips"] is None, record.get("nonfinite_skips_source")
+    assert record["criteria"]["A7"] is False, record["criteria_detail"]
+    assert "口径不可测" in record["criteria_detail"]["A7"]
+    assert record["status"] == "⚠ 口径不可测", record["note"]
+
+
 def test_collector_distinguishes_blocked_not_applicable_and_untested(tmp_path):
     """★六态口径（2026-09-22 指挥官裁定）：三种"没跑"**不得**塌成一个词，且出处可查。
 
@@ -489,6 +534,7 @@ def _write_msswift_run(
     steps: int = 6,
     declared: int = 6,
     losses: tuple[float, ...] = (1.3, 0.9, 0.6, 0.4, 0.3, 0.2),
+    grad_norms: tuple[float, ...] | None = None,   # None ⇒ 用默认 1/index；可注入 NaN
     lora_b: bytes | None = None,
     checkpoint: bool = True,
     args_json: bool = True,
@@ -510,12 +556,25 @@ def _write_msswift_run(
         entries.append(
             {
                 "loss": loss,
-                "grad_norm": 1.0 / index,
+                # `grad_norms=None` ⇒ 默认 1/index；`grad_norms=()` ⇒ **真的没有读数**（None）
+                "grad_norm": (
+                    1.0 / index
+                    if grad_norms is None
+                    else (grad_norms[index - 1] if grad_norms else None)
+                ),
                 "global_step/max_steps": f"{index}/{declared}",
             }
         )
     history = [
-        {"loss": loss, "grad_norm": 1.0 / index, "step": index}
+        {
+            "loss": loss,
+            "grad_norm": (
+                1.0 / index
+                if grad_norms is None
+                else (grad_norms[index - 1] if grad_norms else None)
+            ),
+            "step": index,
+        }
         for index, loss in enumerate(losses, start=1)
     ]
     entries.append({"train_runtime": 10.0, "train_loss": losses[-1]})
@@ -1174,6 +1233,7 @@ def _make_native_full_run(
     tier_id: str = "T017",
     *,
     deltas: list[float],
+    skipped_nonfinite: int = 0,
     first_shard_bytes: bytes | None = None,
     drop_shards: bool = False,
 ) -> Path:
@@ -1212,7 +1272,7 @@ def _make_native_full_run(
                     "metrics": {
                         "optimizer_steps": 1,
                         "global_optimizer_steps_sum": 2,
-                        "skipped_nonfinite": 0,
+                        "skipped_nonfinite": skipped_nonfinite,
                         "loss_mean": 0.0,          # 非末段 rank 的局部 loss 恒 0（真机形状）
                         "grad_norm_mean": 1.0,
                         "global_loss_mean": 1.0 - index * 0.01,

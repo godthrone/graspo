@@ -1380,7 +1380,12 @@ class RunEvidence:
     optimizer_steps_per_step: tuple[int, ...] | None = None
     #: 被判定为非有限而**跳过优化器步**的累积次数（全局口径，来自
     #: ``skipped_nonfinite``）。> 0 即证明本次运行发生过"权重冻结"的步。
+    #: **三态**（A7 用）：``int`` = 有读数；``None`` = **该后端不上报且推断不出**
+    #: ⇒ A7 记「口径不可测」，**绝不自动通过**（2026-09-22 指挥官裁定）。
     nonfinite_skips: int | None = None
+    #: 该计数的**来源自证**（§2.2）：native 精确计数 / ms-swift 从 NaN grad_norm 推断 /
+    #: 空 = 不可得。
+    nonfinite_skips_source: str = ""
     # ── 「读到了什么」与「什么都没读到」的分界（F-4 P0 修法④）───────────────
     #: loss 序列里**真读到**非有限值（NaN/Inf）⇒ 数值异常（关于训练的**事实**）。
     losses_nonfinite: bool | None = None
@@ -1875,7 +1880,7 @@ def judge_a7(evidence: RunEvidence) -> CriterionResult:
 
     为什么单列成一条主判据（2026-09-22 指挥官批准的两级收紧之①）：
     这条断言原本**埋在 A2 的明细里**（`judge_a2` 的第一条分支），虽然确实阻断了，
-    但**读者容易忽略**——真实教训：T035（ms-swift 全参 GRASPO）机制层面的无界挂死/OOM
+    但**读者容易忽略**——真实教训：T035（**native** 全参 GRASPO —— 勘误：曾被误记为 ms-swift；见 `T035-verify.yaml` 的 `backend: native`）机制层面的无界挂死/OOM
     被 P6 修好后，"跑完了"很容易被读成"可用"，而它**跳过了 33 次 nonfinite 步**
     （修复后仍有 1 次）+ `grad_norm 7.8e13`。用户要的是"**顺利**跑完一个 epoch"，
     跳过 33 次非有限步不叫顺利。
@@ -1890,7 +1895,12 @@ def judge_a7(evidence: RunEvidence) -> CriterionResult:
     skips = evidence.nonfinite_skips
     if skips is None:
         return CriterionResult(
-            "A7", False, "缺少 nonfinite 跳过计数（fail-closed）", evidence_missing=True
+            "A7",
+            False,
+            "**A7 口径不可测**：该后端不上报跳过计数，且无法从逐步读数推断"
+            "（fail-closed —— **绝不放行**；同一判据对不同后端必须等价，"
+            "见 collector 的 `nonfinite_skips_source`）",
+            evidence_missing=True,
         )
     if skips:
         return CriterionResult(
@@ -1899,7 +1909,8 @@ def judge_a7(evidence: RunEvidence) -> CriterionResult:
             f"训练未真推进：累计 **{skips} 次**因非有限梯度跳过优化器步"
             "（权重冻结；即使进程正常退出，也不满足「**顺利**跑完一个 epoch」）",
         )
-    return CriterionResult("A7", True, "nonfinite 跳过次数 = 0（训练真推进）")
+    source = evidence.nonfinite_skips_source or "（未标注来源）"
+    return CriterionResult("A7", True, f"nonfinite 跳过次数 = 0（训练真推进；来源：{source}）")
 
 
 def judge_a3(evidence: RunEvidence) -> CriterionResult:
@@ -2322,7 +2333,7 @@ def judge_a6(evidence: RunEvidence) -> CriterionResult:
         return CriterionResult("A6", False, f"最终 loss 高于初始 loss：{trend_note}")
     # ── ★ grad_norm **量级指纹**（诊断项，**不单独判否**；2026-09-22 收紧之②）──────
     # 为什么只做诊断：单看量级会**误伤**——T017（native 全参）grad_norm≈8e8、loss 却从
-    # 2.6 降到 0.009 且全程 finite；而 T035（ms-swift 全参）7.8e13 **且**跳过了 nonfinite 步
+    # 2.6 降到 0.009 且全程 finite；而 T035（**native** 全参，勘误同上）7.8e13 **且**跳过了 nonfinite 步
     # 才是真问题。区分这两者靠的是"**是否伴随**跳过/非有限"，而不是量级本身。
     grad_note = ""
     finite_grads = [

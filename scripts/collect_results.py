@@ -229,8 +229,15 @@ class SeriesEvidence:
     #: 来源：``log_history[*].step``；rank_metrics 旁路的第一行即 step 1；
     #: stdout 兜底拿不到 ⇒ ``None``（此时 A4 如实声明该子检查"未适用"）。
     first_logged_step: int | None = None
-    #: 累计因非有限梯度跳过优化器步的次数（``skipped_nonfinite``，跨步求和）。
-    nonfinite_skips: int = 0
+    #: 累计因非有限梯度跳过优化器步的次数。**三态**（2026-09-22 指挥官裁定）：
+    #: ``int`` = 有读数（native 精确计数 / ms-swift 从 NaN grad_norm **推断**）；
+    #: ``None`` = **该后端不上报且推断不出** ⇒ A7 必须记「口径不可测」而**绝不自动通过**
+    #: （同一判据对不同后端必须等价）。
+    nonfinite_skips: int | None = None
+    #: 该计数的**来源自证**（§2.2）：`run_metrics:skipped_nonfinite`（native 精确）/
+    #: `log_inference:nan_grad_norm_count` / `log_inference:all_finite_grad_norm` /
+    #: ``""``（不可得）。
+    nonfinite_skips_source: str = ""
     source: str = "none"
     notes: list[str] = field(default_factory=list)
     #: 是否出现过 ``loss: null`` / 字段缺失（A6 必须对此 fail-closed）。
@@ -468,7 +475,9 @@ def extract_steps_and_series(output_dirs: Sequence[Path], log_text: str) -> Seri
                 result.optimizer_steps_per_step.append(step_total)
             skipped = row.get("skipped_nonfinite")
             if isinstance(skipped, int):
-                result.nonfinite_skips += skipped
+                # native 的**精确**计数（逐 step 落盘）。
+                result.nonfinite_skips = int(result.nonfinite_skips or 0) + skipped
+                result.nonfinite_skips_source = "run_metrics:skipped_nonfinite"
         result.steps = len(result.losses)
         # 旁路每步一行、首行即训练步 1 ⇒ 首步 loss 就是 losses[0]（A4 零容差子检查可用）。
         result.first_logged_step = 1
@@ -566,10 +575,38 @@ def extract_steps_and_series(output_dirs: Sequence[Path], log_text: str) -> Seri
             result.steps = int(matches[-1])
     if result.steps is None and result.losses:
         result.steps = len(result.losses)
-    if _NONFINITE_GRAD_MARKER.search(log_text) and result.nonfinite_skips == 0:
+    # ── ★ A7 取证公平性（2026-09-22 指挥官裁定，C）───────────────────────────
+    #   ms-swift **不上报**跳过计数：实测 `swift/trainers/mixin.py` 的 patch 是
+    #   `if grad_norm.isnan(): p.grad = None` —— **不打任何日志、也不计数**
+    #   （且只判 `isnan()` 不判 `inf`）。旧行为 ⇒ `nonfinite_skips` 缺省 0 ⇒ A7 **自动通过**
+    #   ⇒ native 严格判、ms-swift 宽松 ⇒ **同一判据对不同后端不等价**。
+    #   但从 ms-swift 的 patch 可推：跳过时它返回的 `grad_norm` **就是 NaN**，且该读数会进
+    #   逐步序列 ⇒ 用"**逐步 grad_norm 是否为 NaN**"推断跳过次数（**下界**：它不判 Inf 的
+    #   那种跳过不会留下 NaN 读数）。**推断不出（无 grad_norm 读数）⇒ 保持 None**。
+    if result.source != "rank_metrics" and not result.nonfinite_skips_source:
+        # ★ 只数**数值型**读数：`MISSING_SENTINEL`（str）与空槽**不算读数**
+        #   ——否则"一个读数都没有"会被误推断成"全部有限 ⇒ 0 次跳过"（假通过）。
+        real = [
+            value for value in result.grad_norms
+            if isinstance(value, float) and math.isfinite(value)
+        ]
+        nonfinite = [
+            value for value in result.grad_norms
+            if isinstance(value, float) and not math.isfinite(value)
+        ]
+        if real or nonfinite:
+            result.nonfinite_skips = len(nonfinite)
+            result.nonfinite_skips_source = (
+                "log_inference:nan_grad_norm_count"
+                if nonfinite
+                else "log_inference:all_finite_grad_norm"
+            )
+        # 既无 finite 也无 nonfinite 的**数值**读数 ⇒ 保持 None（口径不可测，绝不放行）
+    if _NONFINITE_GRAD_MARKER.search(log_text) and not result.nonfinite_skips:
         # 硬失败标记本身就是"这一步没推进"的证据（默认 1 次，仅用于让 A2 不通过；
         # 精确次数由 rank_metrics 的 skipped_nonfinite 给出）。
-        result.nonfinite_skips = max(1, result.nonfinite_skips)
+        result.nonfinite_skips = max(1, int(result.nonfinite_skips or 0))
+        result.nonfinite_skips_source = "log_marker:nonfinite_grad_hard_fail"
         result.notes.append("stdout 出现「非有限梯度」硬失败标记 ⇒ 训练未真推进")
 
     # ── 三种情形的最终判定（必须在所有来源汇合之后做）────────────────────────
@@ -1727,6 +1764,7 @@ def collect_run(
             tuple(series.optimizer_steps_per_step) if series.optimizer_steps_per_step else None
         ),
         nonfinite_skips=series.nonfinite_skips,
+        nonfinite_skips_source=series.nonfinite_skips_source,
         losses_nonfinite=series.loss_nonfinite,
         losses_unavailable=series.loss_unavailable,
         steps_declared_total=series.declared_total_steps,
@@ -2133,6 +2171,7 @@ def run(args: argparse.Namespace) -> int:
         row["grad_norms"] = list(first.grad_norms)
         row["optimizer_steps_per_step"] = list(first.optimizer_steps_per_step or ())
         row["nonfinite_skips"] = first.nonfinite_skips
+        row["nonfinite_skips_source"] = first.nonfinite_skips_source
         # 防呆（§2.2）：含 metrics 却被忽略的 phase 记录必须在台账里可见——
         # "0 条"也要显式落一个空 dict，便于下游区分"没丢"与"没查"。
         row["ignored_phase_records"] = dict(first_series.ignored_phase_records)
