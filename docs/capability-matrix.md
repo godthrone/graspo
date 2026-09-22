@@ -20,11 +20,12 @@
 |---|---|
 | `✅ 可用` | 能拿来训练：进程正常退出 + 跑满预定步数/epoch + 权重确实被更新 + checkpoint 可重载 + 产物齐全 + 数值健康（无 NaN/Inf） |
 | `❌ 不可用` | 跑不完：崩、挂死、环境缺陷、数值崩坏（NaN/Inf），或主判据被证据否定 |
-| `⛔ 不适用` | 该参数组合无配方 / 逻辑不存在 |
+| `⚠ 口径不可测` | 只在真正「跑不完或跑不了」时使用：结构性步数上限 < 门槛、主判据取证缺口 |
+| `⛔ 无配方` | 当前无配方、将来可能做得了（blocked）——依据 `samples/configs/matrix54/T016.blocked.md`、`T034.blocked.md` |
+| `⛔ 不适用` | 逻辑上不适用（not_applicable）——依据 `samples/configs/matrix54/T052.not_applicable.md` |
 | `— 未测` | 尚未纳入跑批 |
-| `⚠ 口径不可测` | 仅在真正「跑不完或跑不了」时使用：结构性步数上限 < 门槛、缺配方、主判据取证缺口 |
 
-**`⚠ 口径不可测` 不再用于「A4 没标定」——A4 是诊断，不是门槛。** **原则：「官方声明支持」≠「已验证」**，未验证项不得按已验证使用。
+**`⛔ 无配方` 与 `⛔ 不适用` 不是一回事**：前者 = 当前无配方、**暂时做不了但可解锁**；后者 = **该配置逻辑上不存在**。**`⚠ 口径不可测` 不再用于「A4 没标定」——A4 是诊断，不是门槛。** **原则：「官方声明支持」≠「已验证」**，未验证项不得按已验证使用。
 
 | 术语 | 一句话 |
 |---|---|
@@ -112,7 +113,7 @@
 | 量化 | 低比特权重与计算 | ⛔ 不支持 | ⛔ 不支持 |
 | 多机 | 跨节点扩展 | ⛔ 不支持 | ⛔ 不支持 |
 
-> **第 4 节的可用性 ≠ 第 7 节的实测通过**：第 4 节答"能力入口是否存在"，其中 `✅ 可用` 里的"有跑通记录"指**既有历史 / 冒烟级记录**（含未达台账门槛者，且可能来自旧模型），**不等于第 7 节的台账判据**；第 7 节答"本期模型 + 本期配置下是否跑通"——**本期台账 54 档状态与计数直通新口径 ledger `runs/recompute-newcaliber-20260922-v2/ledger.jsonl`（单一真相源，本表不自定口径）**（因**实测数据集与本次不同、方法有变、代码有变**，本节曾于上一轮重置为**全新未测**，现已按新口径 ledger 回填完毕）；**`✅ 可用 27` / `❌ 不可用 16` / `⚠ 口径不可测 6` / `⛔ 不适用 0` / `— 未测 5`**（**逐档状态与计数以第 7 节为准**）。
+> **第 4 节的可用性 ≠ 第 7 节的实测通过**：第 4 节答"能力入口是否存在"，其中 `✅ 可用` 里的"有跑通记录"指**既有历史 / 冒烟级记录**（含未达台账门槛者，且可能来自旧模型），**不等于第 7 节的台账判据**；第 7 节答"本期模型 + 本期配置下是否跑通"——**本期台账 54 档状态与计数直通新口径 ledger `runs/recompute-newcaliber-20260922-v3/ledger.jsonl`（单一真相源，本表不自定口径）**（因**实测数据集与本次不同、方法有变、代码有变**，本节曾于上一轮重置为**全新未测**，现已按新口径 ledger 回填完毕）；**`✅ 可用 27` / `❌ 不可用 16` / `⚠ 口径不可测 6` / `⛔ 无配方 2` / `⛔ 不适用 3` / `— 未测 0`**（**逐档状态与计数以第 7 节为准**）。
 
 ## 5. 参数组合规则（什么能一起开）
 
@@ -154,7 +155,7 @@
 | T013 | 9B | SFT | LoRA | ms-swift | 1 | — 未测 | 31.02 GiB | ✅ 可用 | 2026-09-22 | ms-swift 官方 8B(非9B) LoRA 22GB/单卡 A10【S1】;我方 16105 长序列实测 43.87GiB 更高。 |
 | T014 | 9B | SFT | LoRA | ms-swift | 2 | — 未测 | 28.53 GiB | ✅ 可用 | 2026-09-22 | 同上;长序列业界靠 SP/FA2 降每卡显存【S5】,无 2 卡专档。 |
 | T015 | 9B | SFT | LoRA | ms-swift | 4 | — 未测 | 28.54 GiB | ✅ 可用 | 2026-09-22 | 同上;折 9B LoRA≈18GB 总量,与卡数无关【S7】。 |
-| T016 | 9B | SFT | 全量 | native | 1 | — 未测 | — 未测 | — 未测 | — | 原为全量档(单卡须 ZeRO-Offload【S9】);本轮改用 fp16+LoRA ⇒ 业界 8B(非9B) LoRA 单卡 22GB【S1】、折 9B LoRA≈18GB 总量【S7】,单卡 80G 可行。 |
+| T016 | 9B | SFT | 全量 | native | 1 | — 未测 | — 未测 | ⛔ 无配方 | — | 原为全量档(单卡须 ZeRO-Offload【S9】);本轮改用 fp16+LoRA ⇒ 业界 8B(非9B) LoRA 单卡 22GB【S1】、折 9B LoRA≈18GB 总量【S7】,单卡 80G 可行。 |
 | T017 | 9B | SFT | 全量 | native | 2 | — 未测 | — 未测 | ❌ 不可用 | 2026-09-22 | ≈81GB/卡>80G(折算)【S7】;业界须 ZeRO-3 分片或 offload【S9】。 |
 | T018 | 9B | SFT | 全量 | native | 4 | — 未测 | — 未测 | ❌ 不可用 | 2026-09-22 | ≈40GB/卡+激活(折算)【S7】;ZeRO-2 分片为业界常规,4 卡可行【S10】。 |
 | T019 | 9B | SFT | 全量 | ms-swift | 1 | — 未测 | — 未测 | ❌ 不可用 | 2026-09-22 | ms-swift 支持 ZeRO-2/3+offload【S5】;单卡须 ZeRO-3+offload(官方 30B-A3B 全量 ZeRO3 仍 OOM)【S1】。 |
@@ -172,7 +173,7 @@
 | T031 | 9B | GRASPO | LoRA | ms-swift | 1 | — 未测 | 24.45 GiB | ✅ 可用 | 2026-09-22 | ms-swift GRPO colocate 下须按官方释放 vLLM/训练显存【S4】;LoRA 单卡业界可行【S1】。 |
 | T032 | 9B | GRASPO | LoRA | ms-swift | 2 | — 未测 | 23.05 GiB | ✅ 可用 | 2026-09-22 | 同上;无 2 卡专档;vLLM TP 摊 rollout 显存【S4】。 |
 | T033 | 9B | GRASPO | LoRA | ms-swift | 4 | — 未测 | 23.06 GiB | ✅ 可用 | 2026-09-22 | 同上;4 卡可分置训练与 rollout【S4】。 |
-| T034 | 9B | GRASPO | 全量 | native | 1 | — 未测 | — 未测 | — 未测 | — | 原为最重组合(全量+rollout,须 ZeRO-3+offload、常需多机【S9】);本轮改用 fp16+LoRA ⇒ 9B LoRA≈18GB 总量【S7】+rollout,业界 GRPO 的 LoRA 单卡可行(Unsloth 8B GRPO 总占用 54.33GB【S13】),仍须按官方释放 vLLM/训练显存【S4】。 |
+| T034 | 9B | GRASPO | 全量 | native | 1 | — 未测 | — 未测 | ⛔ 无配方 | — | 原为最重组合(全量+rollout,须 ZeRO-3+offload、常需多机【S9】);本轮改用 fp16+LoRA ⇒ 9B LoRA≈18GB 总量【S7】+rollout,业界 GRPO 的 LoRA 单卡可行(Unsloth 8B GRPO 总占用 54.33GB【S13】),仍须按官方释放 vLLM/训练显存【S4】。 |
 | T035 | 9B | GRASPO | 全量 | native | 2 | — 未测 | — 未测 | ❌ 不可用 | 2026-09-22 | 同上;2 卡≈81GB/卡>80G(折算)【S7】,须 ZeRO-3+offload【S9】。 |
 | T036 | 9B | GRASPO | 全量 | native | 4 | — 未测 | — 未测 | ❌ 不可用 | 2026-09-22 | 同上;4 卡 ZeRO-2 可容训练段,rollout 另计【S4/S10】。 |
 | T037 | 9B | GRASPO | 全量 | ms-swift | 1 | — 未测 | — 未测 | ❌ 不可用 | 2026-09-22 | ms-swift 全量 RL 需 ZeRO-3/offload,官方 GRPO 有释放训练显存开关【S4】;9B 全量≈162GB【S7】。 |
@@ -190,13 +191,13 @@
 | T049 | 9B | OPD | 全量 | ms-swift | 1 | — 未测 | — 未测 | ❌ 不可用 | 2026-09-22 | 全量 OPD:官方 OPD-RL 全词表 KL 易 OOM【S3】;须 ZeRO-3/offload+top-K,9B 全量≈162GB【S3/S7】。 |
 | T050 | 9B | OPD | 全量 | ms-swift | 2 | — 未测 | — 未测 | ❌ 不可用 | 2026-09-22 | 同上;2 卡≈81GB/卡>80G(折算)【S7】,须 ZeRO-3+offload【S3】。 |
 | T051 | 9B | OPD | 全量 | ms-swift | 4 | — 未测 | — 未测 | ❌ 不可用 | 2026-09-22 | 同上;4 卡 ZeRO-2 可容训练段【S3/S10】。 |
-| T052 | 27B | OPD | LoRA | ms-swift | 1 | — 未测 | — 未测 | — 未测 | — | 我方不适用;业界同能力为 OPD-RL,官方无稠密 27B 档,最近 30B-A3B MoE【S1/S3】。 |
-| T053 | 27B | OPD | LoRA | ms-swift | 2 | — 未测 | — 未测 | — 未测 | — | 同 T052;业界须 ZeRO-2/offload 分片,单卡 27B 折≈54GB 总量【S7/S3】。 |
-| T054 | 27B | OPD | LoRA | ms-swift | 4 | — 未测 | — 未测 | — 未测 | — | 同 T052;4 卡余量较足,仍受全词表 KL 显存约束,建议 top-K【S3】。 |
+| T052 | 27B | OPD | LoRA | ms-swift | 1 | — 未测 | — 未测 | ⛔ 不适用 | — | 我方不适用;业界同能力为 OPD-RL,官方无稠密 27B 档,最近 30B-A3B MoE【S1/S3】。 |
+| T053 | 27B | OPD | LoRA | ms-swift | 2 | — 未测 | — 未测 | ⛔ 不适用 | — | 同 T052;业界须 ZeRO-2/offload 分片,单卡 27B 折≈54GB 总量【S7/S3】。 |
+| T054 | 27B | OPD | LoRA | ms-swift | 4 | — 未测 | — 未测 | ⛔ 不适用 | — | 同 T052;4 卡余量较足,仍受全词表 KL 显存约束,建议 top-K【S3】。 |
 
 > **出处清单（编号 → 完整 URL）**：`【S1】` https://swift.readthedocs.io/zh-cn/latest/BestPractices/Qwen3-Best-Practice.html ｜ `【S2】` https://swift.readthedocs.io/zh-cn/latest/BestPractices/Qwen3-VL-Best-Practice.html ｜ `【S3】` https://swift.readthedocs.io/zh-cn/latest/Instruction/Distillation.html ｜ `【S4】` https://swift.readthedocs.io/zh-cn/latest/BestPractices/GRPO.html ｜ `【S5】` https://swift.readthedocs.io/zh-cn/latest/Instruction/Pre-training-and-Fine-tuning.html ｜ `【S6】` https://github.com/modelscope/ms-swift ｜ `【S7】` https://github.com/hiyouga/LLaMA-Factory#hardware-requirement（README `### Hardware Requirement`，原文标注 `*estimated*`）｜ `【S8】` https://qwen.readthedocs.io/zh-cn/latest/training/ms_swift.html ｜ `【S9】` https://www.deepspeed.ai/tutorials/zero-offload/ ｜ `【S10】` arXiv:1910.02054（ZeRO: Memory Optimizations Toward Training Trillion Parameter Models, SC'20）｜ `【S11】` arXiv:2106.09685（LoRA: Low-Rank Adaptation of Large Language Models, ICLR'22）｜ `【S12】` arXiv:2402.03300（DeepSeekMath）｜ `【S13】` https://github.com/unslothai/unsloth ＋ https://unsloth.ai/docs/get-started/reinforcement-learning-rl-guide ｜ `【S14】` https://github.com/huggingface/trl ｜ `【S15】` https://github.com/huggingface/peft
 
-**结构性计数**：目标档位总数 **54**（CPT 9 ｜ SFT 18 ｜ GRASPO 18 ｜ OPD 9）；`✅ 可用 27` ｜ `❌ 不可用 16` ｜ `⚠ 口径不可测 6` ｜ `⛔ 不适用 0` ｜ `— 未测 5`——等式 `27 + 16 + 6 + 0 + 5 = 54` 成立。
+**结构性计数**：目标档位总数 **54**（CPT 9 ｜ SFT 18 ｜ GRASPO 18 ｜ OPD 9）；`✅ 可用 27` ｜ `❌ 不可用 16` ｜ `⚠ 口径不可测 6` ｜ `⛔ 无配方 2` ｜ `⛔ 不适用 3` ｜ `— 未测 0`——等式 `27 + 16 + 6 + 2 + 3 + 0 = 54` 成立。
 > 判据口径（2026-09-22 起）：
 > 主判据 = 训练可用性（能否顺利跑完一个 epoch）——
 > A1 正常退出 / A2 跑满预定步数·epoch 且权重确实更新 / A3 checkpoint 可重载 / A5 产物齐全 / A6 数值健康。
@@ -204,6 +205,7 @@
 > 仍计算、仍记录，但不参与 ✅/❌——它衡量「可复现性/效果」，不是「能不能训练」。
 > 另注：本矩阵 checkpoint 为验证口径（只含模型权重、不含优化器状态）⇒ 不可用于断点续训。
 > 双跑一致性诊断（A4，**诊断字段·不参与判定**）：一致 8 档 ｜ 不一致 41 档 ｜ 未跑或无诊断 5 档。
+> `⛔ 无配方`（当前无配方、可解锁）依据 `samples/configs/matrix54/T016.blocked.md`、`T034.blocked.md`；`⛔ 不适用`（逻辑上不存在）依据 `samples/configs/matrix54/T052.not_applicable.md`。
 > 「最大可行上下文」列本轮**未做 ramp，一律 `— 未测`**。
 
 ## 8. 达标线与发布条件
