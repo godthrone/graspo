@@ -20,6 +20,7 @@ from graspo.core.result_judge import (
     classify_failure,
     judge_a2,
     judge_a6,
+    judge_a7,
     judge_tier,
 )
 
@@ -60,9 +61,10 @@ def test_a2_fails_when_a_step_skipped_the_optimizer():
       - 有 ``skipped_nonfinite`` 证据时走"累计跳过"分支；
       - 只有逐 step 证据时走"某步 optimizer_steps=0"分支。
     """
-    with_skips = judge_a2(make_evidence())
+    # 有 `skipped_nonfinite` 证据 ⇒ 走 **A7**（独立主判据，2026-09-22 提升）
+    with_skips = judge_a7(make_evidence())
     assert not with_skips.passed
-    assert "跳过优化器步" in with_skips.detail
+    assert "非有限" in with_skips.detail
 
     steps_only = judge_a2(
         make_evidence(
@@ -78,15 +80,13 @@ def test_a2_fails_when_a_step_skipped_the_optimizer():
 
 def test_a2_fails_on_nonfinite_skips_even_with_enough_steps():
     """即使步数已达门槛、权重"看起来变了"，有过跳过也必须不通过。"""
-    result = judge_a2(
-        make_evidence(
-            optimizer_steps=9,
-            optimizer_steps_per_step=(4, 4, 4, 4, 4, 4, 4, 4, 4),
-            nonfinite_skips=1,
-        )
-    )
+    # ★ 2026-09-22 收紧：`nonfinite_skips > 0` 已从 A2 的明细**提升为独立主判据 A7**
+    #   （可见性：埋在 A2 里容易被读者忽略，T035 就是"跑完了但跳过了 nonfinite 步"）。
+    result = judge_a7(make_evidence(nonfinite_skips=1))
     assert not result.passed
     assert "非有限" in result.detail
+    # 反面：0 次 ⇒ A7 通过（不误伤）
+    assert judge_a7(make_evidence(nonfinite_skips=0)).passed
 
 
 def test_a2_passes_on_healthy_run():
