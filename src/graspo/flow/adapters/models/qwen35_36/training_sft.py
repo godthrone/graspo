@@ -9,9 +9,14 @@ import torch.distributed as dist
 
 from graspo.flow.adapters.models.common.grad_probe import (
     FAIL_CLOSED_PHASE,
+    PP_EXCHANGE_BWD_RECEIVED,
+    PP_EXCHANGE_BWD_SENT,
+    PP_EXCHANGE_FWD_RECEIVED,
+    PP_EXCHANGE_FWD_SENT,
     PP_NUMERIC_PROBE_PHASE,
     grad_fail_reason_text,
     grad_gate_verdict,
+    pp_exchange_readings,
     reduced_grad_flags,
     step_index_one_based,
 )
@@ -571,6 +576,25 @@ class _Qwen35SFTTrainingMethods:
         records: list[dict[str, Any] | None] = [None for _ in range(chunk_count)]
         finite_flags = [True for _ in range(chunk_count)]
         loss_values = [0.0 for _ in range(chunk_count)]
+        # ── 机制探针 #1（2026-09-23 裁定）：PP **交换张量**的只读读数 ────────────────
+        # 为什么必须**在交换点就地取数**：`stage_input`/`grad_output` 在 backward 结束后即被
+        # 释放（`records[chunk_idx] = None`），**事后取不到**。
+        # 成本与纪律：每 chunk ≤4 个张量 × (isfinite + max|·|) 两次本地归约；**不改张量、
+        # 不改数值、无任何集合通信**；读数**只进诊断行**（首步探针 / 失败步）⇒ 健康步
+        # 不新增行、不新增键（见 tests/flow/trainer/test_grad_fail_closed.py 的钉子）。
+        exchange_readings: list[dict[str, Any]] = []
+        exchange_cap = 16
+
+        def record_exchange(direction: str, tensor: Any, chunk_idx: int) -> None:
+            """记录一个跨界交换张量的读数（None 跳过；总条数有上限）。"""
+            if tensor is None or len(exchange_readings) >= exchange_cap:
+                return
+            exchange_readings.extend(
+                pp_exchange_readings(
+                    [(direction, f"chunk{chunk_idx}", tensor)],
+                    max_items=exchange_cap - len(exchange_readings),
+                )
+            )
 
         # 梯度累积：zero_grad 只调一次，所有 chunk 的梯度累加后统一 step
         if self.optimizer is not None:
@@ -606,6 +630,10 @@ class _Qwen35SFTTrainingMethods:
                 weight = accumulation_weights[chunk_idx]
                 loss = chunk_loss * weight if finite else None
                 loss_value = float(chunk_loss.detach().cpu()) * weight if finite else 0.0
+            # 机制探针 #1：本 chunk 的**前向交换**两端（收到 / 发出）
+            record_exchange(PP_EXCHANGE_FWD_RECEIVED, stage_input, chunk_idx)
+            if self.pp_rank != self.pp_size - 1:
+                record_exchange(PP_EXCHANGE_FWD_SENT, stage_output, chunk_idx)
             records[chunk_idx] = {
                 "stage_output": stage_output,
                 "stage_input": stage_input,
@@ -634,6 +662,8 @@ class _Qwen35SFTTrainingMethods:
                         if stage_input.grad is not None
                         else torch.zeros_like(stage_input)
                     )
+                    # 机制探针 #1：**发出**（去上游）时的梯度状态 —— 裁定"本地生成"的钥匙
+                    record_exchange(PP_EXCHANGE_BWD_SENT, grad, chunk_idx)
                     work = comm.bwd_send(
                         grad.contiguous(),
                         dst=int(self.tp_state.prev_pp_rank or 0),
@@ -651,6 +681,8 @@ class _Qwen35SFTTrainingMethods:
                     tag=chunk_count + chunk_idx,
                 )
                 comm.wait(recv_work)  # 阻塞直到梯度到达（上游异步 send，不会死锁）
+                # 机制探针 #1：**收到时**（尚未参与 backward）的梯度状态 —— 裁定"边界携带"的钥匙
+                record_exchange(PP_EXCHANGE_BWD_RECEIVED, grad_output, chunk_idx)
                 stage_output.backward(grad_output)
                 stage_input = record["stage_input"]
                 if stage_input is not None:
@@ -659,6 +691,8 @@ class _Qwen35SFTTrainingMethods:
                         if stage_input.grad is not None
                         else torch.zeros_like(stage_input)
                     )
+                    # 机制探针 #1：**发出**（去上游）时的梯度状态 —— 裁定"本地生成"的钥匙
+                    record_exchange(PP_EXCHANGE_BWD_SENT, grad, chunk_idx)
                     work = comm.bwd_send(
                         grad.contiguous(),
                         dst=int(self.tp_state.prev_pp_rank or 0),
@@ -773,6 +807,7 @@ class _Qwen35SFTTrainingMethods:
                         "optimizer_stepped": bool(step_ok),
                         "fail_reason": grad_fail_reason,
                         "rank_grad_norms": [float(value) for value in rank_grad_norms],
+                        "pp_exchange": exchange_readings,
                         **local_grad_detail,
                     }
                 },
@@ -803,6 +838,7 @@ class _Qwen35SFTTrainingMethods:
                 "grad_unpopulated_any": bool(grad_unpopulated_any),
                 "rank_grad_norms": [float(value) for value in rank_grad_norms],
                 "rank_grad_reports": rank_grad_reports,
+                "pp_exchange": exchange_readings,
                 **local_grad_detail,
             }
             self._emit_rank_memory_event(FAIL_CLOSED_PHASE, {"metrics": fail_closed_metrics})

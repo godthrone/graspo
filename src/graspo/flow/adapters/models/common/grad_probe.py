@@ -60,6 +60,19 @@ PP_NUMERIC_PROBE_PHASE = "pp_numeric_probe"
 #: 采集侧会按既有规则把它列入 ``ignored_phase_records`` 并写明 phase 名（显式暴露，不静默）。
 FAIL_CLOSED_PHASE = "fail_closed"
 
+#: PP **交换张量**的方向标签（唯一真相源；写进读数行，供"边界携带 vs 本地生成"的裁决）。
+#: 语义（对任意一个 stage）：
+#:   · ``fwd_received_hidden``：本 stage 从**上游**收到的 hidden（= 局部 layer 0 的输入）；
+#:   · ``fwd_sent_hidden``：本 stage 发给**下游**的 hidden（末 stage 不发 ⇒ 不记录）；
+#:   · ``bwd_received_grad``：本 stage 从**下游**收到的梯度（末 stage 无 ⇒ 不记录）；
+#:   · ``bwd_sent_grad``：本 stage 发给**上游**的梯度（= 局部 layer 0 的输入梯度）。
+#: 判读：把 ``bwd_received_grad`` 与 ``bwd_sent_grad`` 的 ``isfinite`` 一比即可裁定
+#: "**收到时已坏**"(边界携带) 还是 "**本地生成**"（收到有限、发出非有限）。
+PP_EXCHANGE_FWD_RECEIVED = "fwd_received_hidden"
+PP_EXCHANGE_FWD_SENT = "fwd_sent_hidden"
+PP_EXCHANGE_BWD_RECEIVED = "bwd_received_grad"
+PP_EXCHANGE_BWD_SENT = "bwd_sent_grad"
+
 
 #: 层号正则：命中 ``layers.<i>.``（取**本 stage 的局部**层号；PP 下每个 rank 的层号从 0 起）。
 _LAYER_IN_NAME = re.compile(r"(?:^|\.)layers\.(\d+)\.")
@@ -79,6 +92,111 @@ def _param_kind(name: str) -> str:
         return name
     marker = f"layers.{index}."
     return name.split(marker, 1)[1] if marker in name else name
+
+
+def _first_nonfinite_flat_index(tensor: torch.Tensor) -> int | None:
+    """**首个**非有限元素在扁平视图里的下标（分块定位；只在该张量确含非有限时才调用）。"""
+    flat = tensor.detach().reshape(-1)
+    step = max(1, int(GRAD_FINITE_CHUNK_ELEMENTS))
+    for start in range(0, int(flat.numel()), step):
+        chunk = flat[start : start + step]
+        bad = ~torch.isfinite(chunk)
+        if bool(bad.any()):
+            local = int(torch.nonzero(bad, as_tuple=False)[0].item())
+            return start + local
+    return None
+
+
+def exchange_tensor_report(name: str, tensor: Any, *, direction: str) -> dict[str, Any]:
+    """PP **交换张量**的只读读数（**纯本地、无任何集合通信**，不改张量）。
+
+    为什么需要它（机制探针 #1，2026-09-23 裁定）：#4 的直方图只能看到**参数梯度**，
+    看不到**跨界交换的那个张量本身** ⇒ 无法区分"收到时已坏（边界携带）"与"本地生成"。
+    本函数给出裁定所需的最小字段：方向、形状、dtype、``isfinite``、``max|·|``（NaN 原样透出）、
+    以及首个非有限元素的下标（只在非有限时才计算，成本有界）。
+
+    :param name: 张量名（调用点给的稳定标识，如 ``stage_input`` / ``grad_output``）
+    :param tensor: 待测张量（``None`` 由 :func:`pp_exchange_readings` 过滤）
+    :param direction: :data:`PP_EXCHANGE_FWD_RECEIVED` 等方向标签之一
+    """
+    shape = [int(dim) for dim in getattr(tensor, "shape", ()) or ()]
+    finite = tensor_is_finite(tensor)
+    return {
+        "direction": str(direction),
+        "name": str(name),
+        "shape": shape,
+        "numel": int(_tensor_numel(tensor)),
+        "dtype": str(getattr(tensor, "dtype", "?")),
+        "isfinite": bool(finite),
+        "max_abs": _tensor_abs_max(tensor),
+        "first_nonfinite_index": None if finite else _first_nonfinite_flat_index(tensor),
+    }
+
+
+def pp_exchange_readings(
+    items: Iterable[tuple[str, str, Any]],
+    *,
+    max_items: int = 16,
+) -> list[dict[str, Any]]:
+    """``(direction, name, tensor)`` 列表 → 读数列表（``None`` 张量跳过；条数有上限）。
+
+    **零集合通信**：只做本地归约；调用方把它塞进既有的诊断行（首步探针 / 失败步），
+    健康步**不新增任何行、不新增任何键**。
+    """
+    out: list[dict[str, Any]] = []
+    for direction, name, tensor in items:
+        if tensor is None:
+            continue
+        if len(out) >= int(max_items):
+            break
+        out.append(exchange_tensor_report(name, tensor, direction=direction))
+    return out
+
+
+def _tensor_numel(tensor: Any) -> int:
+    """元素数（真 torch 走 ``numel()``；不可知 ⇒ shape 乘积；再不行 0）。"""
+    numel = getattr(tensor, "numel", None)
+    if callable(numel):
+        try:
+            return int(numel())
+        except Exception:  # noqa: BLE001 —— 诊断取数失败 ⇒ 记 0，绝不因"判不了"而 fail
+            return 0
+    total = 1
+    try:
+        for dim in getattr(tensor, "shape", ()) or ():
+            total *= int(dim)
+    except Exception:  # noqa: BLE001 —— 同上：判不了记 0
+        return 0
+    return total
+
+
+def _dirty_block_side(dirty: dict[int, int], all_layers: set[int]) -> str | None:
+    """脏块在**本 stage 层区间**里的位置（★口径：按**层号**，**不是观测到的时序**）。
+
+    读数语义（§2.2 显式即防呆：把口径写进字段值，避免下游当成"时序"）：
+      · ``None``：无脏层；
+      · ``all_layers_dirty``：本 stage 所有层都脏；
+      · ``adjacent_to_first_local_layer``：脏块含**最小层号**（离上游边界最近那层）但不含最大层号；
+      · ``adjacent_to_last_local_layer``：对称的另一端（离下游/loss 侧最近）；
+      · ``spans_both_ends``：两端都脏（中间层可能干净）；
+      · ``middle``：脏块在层区间内部（两端都干净）。
+    为什么用"位置"而非"时序"：真正的时序要靠 autograd hook 才能观测，而**会给被测对象
+    加钩子（观察者效应）**——本探针刻意不这么做（§3.4 不倒退）。
+    """
+    if not dirty:
+        return None
+    if all_layers and set(dirty) >= set(all_layers):
+        return "all_layers_dirty"
+    low, high = min(dirty), max(dirty)
+    first_dirty = bool(all_layers) and low == min(all_layers)
+    last_dirty = bool(all_layers) and high == max(all_layers)
+    if first_dirty and last_dirty:
+        return "spans_both_ends"
+    if first_dirty:
+        return "adjacent_to_first_local_layer"
+    if last_dirty:
+        return "adjacent_to_last_local_layer"
+    return "middle"
 
 
 def tensor_is_finite(
@@ -208,6 +326,15 @@ def grad_finiteness_report(
         "local_layer_span": ([min(local_layers), max(local_layers)] if local_layers else None),
         "nonfinite_at_first_local_layer": bool(local_layers and min(local_layers) in layer_counts),
         "nonfinite_at_last_local_layer": bool(local_layers and max(local_layers) in layer_counts),
+        # ── #2（2026-09-23）：**顺序/方向**信号 ───────────────────────────────────
+        # ``nonfinite_layers_descending``：脏层按**层号降序**列出 —— 口径是"**层号的逆序**"，
+        #   它对中段 stage 恰好等于 autograd 处理这些层的**自然顺序**（自末层向首层），
+        #   但**不是观测到的时序**（观测时序需 autograd hook，会引入观察者效应 ⇒ 刻意不做）。
+        # ``dirty_block_side``：脏块相对本 stage 层区间的位置（见 _dirty_block_side 的口径表）。
+        #   与 #1 的交换张量读数合用：收到有限 + 发出非有限 ⇒ 本地生成；再按"脏块靠哪端"
+        #   判断传播方向（靠首层=朝上游边界扩散 / 靠末层=朝下游扩散）。
+        "nonfinite_layers_descending": sorted(layer_counts, reverse=True),
+        "dirty_block_side": _dirty_block_side(layer_counts, local_layers),
     }
 
 
