@@ -1457,6 +1457,10 @@ class RunEvidence:
     #: 弱证据等级（``structural_only``）**不改变** ``checkpoint_reloadable`` 的值
     #: （仍是缺口 ⇒ A3 判否），只让"为什么明明是缺口"在台账里可解释、不被误读成训练失败。
     reload_evidence_source: str | None = None
+    #: ★ **A3 证据来源的机器可核取值域**（2026-09-23 裁定）：
+    #: `native_probe` / `hf_shard_probe`（**内容级**，可支撑 A3=True）/
+    #: `safetensors_header` / `skipped` / `missing`（**弱/缺，一律不得支撑 A3=True**）。
+    a3_source: str = ""
     #: A3 重载证据的人读明细。
     reload_evidence_detail: str = ""
     # ── A4 分档标定所需要的档族坐标（五要素第 1 条 + J2/P1）──
@@ -1573,6 +1577,8 @@ class TierJudgement:
     #: 只加字段、不改任何判据语义：``None`` = 本次没取到该条证据的来源标识。
     weight_evidence_source: str | None = None
     reload_evidence_source: str | None = None
+    #: ★ A3 证据来源的机器可核取值域（随台账落盘；§1.4：让"为什么 A3 不可判定"可机核）。
+    a3_source: str = ""
     #: ★ **A2 的 step 门槛是否结构上不可测**（AF1/指挥官裁定，2026-09-21）。
     #: ``True`` ⇒ 该档的"步数 < 门槛"**不是**训练失败，而是取数口径所限 ⇒
     #: :attr:`ledger_status` 落 :data:`LEDGER_GATE_NOT_APPLICABLE`（**不是** ❌、**不是** ✅）。
@@ -1967,6 +1973,22 @@ def judge_a3(evidence: RunEvidence) -> CriterionResult:
         suffix = f"：{evidence.reload_evidence_detail}" if evidence.reload_evidence_detail else ""
         return CriterionResult(
             "A3", False, f"缺少 checkpoint 重载证据（fail-closed）{suffix}", evidence_missing=True
+        )
+    # ★ **硬守卫（假绿最后一环，2026-09-23 裁定）**：**弱/缺证据一律不得支撑 A3=True**，
+    #   即使上游把它抽成了 True 也要在此拦下 ⇒ 落「不可判定」（`evidence_missing`），
+    #   **不是 True（假绿）、也不是 False（会被误读成训练失败）**。
+    #   注意**方向与范围**：只拦"**弱证据却说通过**"（`checkpoint_reloadable is True`）
+    #   —— **`False`（头部不可解析/归档损坏 = 真损坏）必须原样保留为实质失败**，
+    #   否则会把"文件真坏了"误记成"测不出来"，那是另一种失真（既有用例守卫）。
+    if evidence.checkpoint_reloadable and evidence.a3_source in (
+        "safetensors_header", "skipped", "missing",
+    ):
+        return CriterionResult(
+            "A3", False,
+            f"A3 证据等级不足（a3_source=`{evidence.a3_source or 'missing'}`）："
+            "**仅头部级/SKIP/缺失证据，不构成内容级重载证据** ⇒ 落「不可判定」，绝不放行；"
+            "需 `native_probe`（container_torch_probe）或 `hf_shard_probe`（HF 分片内容级审计）",
+            evidence_missing=True,
         )
     source = ""
     if evidence.reload_evidence_source:
@@ -2762,6 +2784,7 @@ def judge_tier(
         a2_step_threshold=resolve_min_optimizer_steps(first.min_optimizer_steps)[0],
         weight_evidence_source=first.weight_evidence_source,
         reload_evidence_source=first.reload_evidence_source,
+        a3_source=first.a3_source,
         a4_require_dual_channel=require_dual_channel,
         # 第三态自证（§1.4）：台账必须能回答"A2 的步数门槛为什么没判失败"。
         step_gate_not_applicable=step_gate_not_applicable,
@@ -2939,6 +2962,7 @@ def ledger_row(
         # 在旧台账上无法区分（T010 真机被记成 ❌ 失败，实为采集机环境性伪否）。
         "weight_evidence_source": judgement.weight_evidence_source,
         "reload_evidence_source": judgement.reload_evidence_source,
+        "a3_source": judgement.a3_source,
         # A4 的双通道强制口径自证（§1.4）：台账必须能回答"这一档的 A4 是按哪套口径判的"。
         # 同一对 loss 读数在两种口径下可能一个 ✅ 一个 ⚠ 不可判定，不写清就是第二个真相源。
         "a4_require_dual_channel": judgement.a4_require_dual_channel,

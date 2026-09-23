@@ -766,6 +766,30 @@ class WeightEvidence:
     detail: str = ""
 
 
+#: ★ `a3_source` 取值域（2026-09-23 指挥官裁定；**让判据自己守住，不靠人记**）：
+#: `native_probe` / `hf_shard_probe` = **内容级**（可支撑 A3=True）；
+#: `safetensors_header` / `skipped` / `missing` = **弱/缺**（一律不得支撑 A3=True）。
+A3_SOURCE_CONTENT_LEVEL = ("native_probe", "hf_shard_probe")
+A3_SOURCE_WEAK = ("safetensors_header", "skipped", "missing")
+
+
+def a3_source_of(source: str | None) -> str:
+    """把 ``ReloadEvidence.source``（人读来源串）归一到机器可核的 `a3_source` 取值域。
+
+    **不猜**：判不出内容级/弱证据时归 `missing`（缺证据），绝不归成内容级。
+    """
+    s = (source or "").lower()
+    if "hf_shard" in s or "hf_shard_probe" in s:
+        return "hf_shard_probe"
+    if "torch_probe" in s or "torch_load" in s:
+        return "native_probe"
+    if "safetensors_header" in s:
+        return "safetensors_header"
+    if "skip" in s or "undecidable" in s or "unverifiable" in s or "structural_only" in s:
+        return "skipped"
+    return "missing"
+
+
 @dataclass(frozen=True)
 class ReloadEvidence:
     """A3「checkpoint 可重载」的抽取结果：**判据值 + 证据等级 + 人读明细**。
@@ -1635,10 +1659,18 @@ def extract_checkpoint_reloadable(
                 return ReloadEvidence(
                     False, RELOAD_SOURCE_SAFETENSORS_HEADER, f"{weights.name} 头部里没有任何张量"
                 )
+            # ★★ **假绿最后一环（2026-09-23 指挥官裁定）**：**头部级证据一律不得支撑 A3=True**。
+            #   旧行为在这里返回 `True` ⇒ 台账把"只读了 safetensors 头部"记成"重载成功"，
+            #   而真正的容器内探针在 ms-swift 档是 `SKIP` ⇒ **"没验"被当成"验过"**。
+            #   ⇒ 现在落 **`None`（不可判定）**：既不是 True（假绿），也不是 False
+            #   （False 会被读成"训练失败"，那是另一种失真）。方向仍是 fail-closed。
             return ReloadEvidence(
-                True,
+                None,
                 RELOAD_SOURCE_SAFETENSORS_HEADER,
-                f"{weights.name} 头部与 data_offsets 校验通过（{len(index)} 个张量）",
+                f"{weights.name} 头部与 data_offsets 校验通过（{len(index)} 个张量）"
+                " ⇒ **仅头部级证据，不足以支撑 A3**（不验张量内容/数量/有限性/整层全零/截断）"
+                " ⇒ 落「不可判定」，**绝不放行**；需内容级证据（native `container_torch_probe`"
+                " 或 HF 分片内容级审计）",
             )
     if structural_note is not None:
         return ReloadEvidence(None, RELOAD_SOURCE_STRUCTURAL_ONLY, structural_note)
@@ -1892,6 +1924,7 @@ def collect_run(
         weight_evidence_source=weight_evidence.source,
         weight_evidence_detail=weight_evidence.detail,
         reload_evidence_source=reload_evidence.source,
+        a3_source=a3_source_of(reload_evidence.source),
         reload_evidence_detail=reload_evidence.detail,
         # A4 档族坐标 + 独立通道（§1.4：容差属于档族这个事实，事实的权威来源是清单）。
         backend=backend,
@@ -2295,6 +2328,7 @@ def run(args: argparse.Namespace) -> int:
         row["optimizer_steps_per_step"] = list(first.optimizer_steps_per_step or ())
         row["nonfinite_skips"] = first.nonfinite_skips
         row["nonfinite_skips_source"] = first.nonfinite_skips_source
+        row["a3_source"] = first.a3_source
         # 防呆（§2.2）：含 metrics 却被忽略的 phase 记录必须在台账里可见——
         # "0 条"也要显式落一个空 dict，便于下游区分"没丢"与"没查"。
         row["ignored_phase_records"] = dict(first_series.ignored_phase_records)
