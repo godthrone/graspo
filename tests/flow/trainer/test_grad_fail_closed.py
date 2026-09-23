@@ -46,6 +46,7 @@ from graspo.flow.adapters.models.common.grad_probe import (  # noqa: E402
     grad_finiteness_report,
     grad_gate_verdict,
     reduced_grad_flags,
+    step_index_one_based,
     tensor_is_finite,
 )
 
@@ -393,6 +394,62 @@ class TestPhaseRegistryAndSingleSource:
         assert f'"{FAIL_CLOSED_PHASE}"' not in source
         assert "PP_NUMERIC_PROBE_PHASE" in source
         assert "FAIL_CLOSED_PHASE" in source
+
+
+# ── 6) P16：批序号口径统一（1-based）+ 首步零新增集合通信（裁定 5(B)）──────────
+
+
+class TestStepIndexConvention:
+    """★ P16（2026-09-23 裁定）：rank_metrics 行的 `step` 统一为 **1-based**。
+
+    口径与 `global_step` 一致（故用 1-based）。
+
+    背景：最初 `pp_numeric_probe` 硬编码 `step=0`、`fail_closed` 在 SFT 侧 1-based / RL 侧 0-based
+    ⇒ 下游按 `step` 对行会错位。只读核查确认**无消费方**读该键做对行/join/去重，故统一到 1-based。
+    """
+
+    @pytest.mark.parametrize(("call_index", "expected"), [(0, 1), (1, 2), (2, 3), (99, 100)])
+    def test_conversion_is_one_based(self, call_index: int, expected: int) -> None:
+        assert step_index_one_based(call_index) == expected
+
+    @pytest.mark.parametrize("module_path", _TRAINING_MODULES, ids=lambda p: p.name)
+    def test_training_modules_route_step_through_the_helper(self, module_path: Path) -> None:
+        """落盘必须经 `step_index_one_based(...)`，且不得留 0-based 字面量（`"step": 0`）。"""
+        source = module_path.read_text(encoding="utf-8")
+        assert "step_index_one_based(" in source
+        assert '"step": 0,' not in source, "不得再出现硬编码 0-based 的 step 字面量"
+        assert '"step": self._train_batch_call_index,' not in source, (
+            "不得直接落 0-based 的 _train_batch_call_index（必须经 step_index_one_based）"
+        )
+
+
+class TestFirstStepProbeAddsNoCollective:
+    """★ 裁定 5(B)：健康首步**不得**因 R3 探针而新增集合通信（观察者效应）。
+
+    被测对象不得被观测动作扰动：NaN 缺陷的候选机制之一正是 PP 边界的流/时序纪律，
+    在首步插一次集合通信可能正好扰动要观测的对象。代价：健康首步探针行 `rank_grad_norms=[]`。
+    """
+
+    def test_first_batch_not_in_the_gather_condition(self) -> None:
+        source = (_REPO / "src/graspo/flow/adapters/models/qwen35_36/training_sft.py").read_text(
+            encoding="utf-8"
+        )
+        assert "is_first_train_batch" in source, "首步探针本身仍必须在（只增行）"
+        # 审计 gather 的条件里**不得**再出现首步（否则健康首步会多出 2 次 all_gather_object）
+        gather_cond_start = source.index("rank_grad_norms: list[float] = []")
+        gather_cond_end = source.index("local_grad_norm = self._trainable_grad_norm()")
+        condition = source[gather_cond_start:gather_cond_end]
+        assert "is_first_train_batch" not in condition, (
+            "健康首步不得并入审计 gather 条件（裁定 5(B)）"
+        )
+        assert "not step_ok" in condition, "本步要拦时仍必须 gather（失败路径的诊断表）"
+
+    def test_fail_closed_path_still_gathers(self) -> None:
+        """失败路径的逐 rank 诊断表必须保留（与首步解耦）。"""
+        source = (_REPO / "src/graspo/flow/adapters/models/qwen35_36/training_sft.py").read_text(
+            encoding="utf-8"
+        )
+        assert "rank_grad_reports = [item for item in gathered_reports" in source
 
 
 def _load_collector():
