@@ -573,7 +573,20 @@ def probe_extra_argv(enabled: bool) -> list[str]:
         PROBE_CALLBACK_NAME,
         rank_metrics_filename(0),
     )
-    return ["--callbacks", PROBE_CALLBACK_NAME]
+    # ★ **逐步日志密度**（2026-09-23 指挥官裁定的落地，路线 b = 运行期覆盖）：
+    #   为什么放在这里：A7（训练真推进）需要"**覆盖每一步**的读数"才能自证"没有跳过
+    #   优化器步"；而 ms-swift/transformers 的默认 `logging_steps=5` 只落 1/5 的步
+    #   ⇒ 非 logging 步上发生的跳过**在日志里不可见**（A7 只能记「口径不可测」）。
+    #   为什么这样落地最省（证据链）：①`logging_steps` 在项目自身的配置/生成器里
+    #   **根本不存在**（全仓 grep 只命中 collector 注释与 transformers 库）；
+    #   ②`_config_mapping.graspo_to_ms_swift_argv(..., extra_argv=...)` 是**文档写明的
+    #   唯一覆盖入口**（"追加在末尾，可覆盖前面的同名参数"）；
+    #   ③四条 ms-swift 通道**已在此处接线**（`extra_argv += probe_active_extra_argv()`）；
+    #   ④门是 **CLI/env**（`--determinism --determinism-probe-first-step`，
+    #   经 `GRASPO_DETERMINISM` → `--determinism-spec`）⇒ **不动任何生成物**
+    #   （`samples/configs/matrix54/*.yaml` 是生成物，手改违规、228 禁跑生成器）。
+    #   **探针关闭 ⇒ 本函数返回 `[]` ⇒ 逐字零行为变化**（默认关，既有跑次不受影响）。
+    return ["--callbacks", PROBE_CALLBACK_NAME, "--logging_steps", "1"]
 
 
 def probe_active_extra_argv() -> list[str]:
