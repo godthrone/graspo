@@ -452,6 +452,88 @@ class TestFirstStepProbeAddsNoCollective:
         assert "rank_grad_reports = [item for item in gathered_reports" in source
 
 
+# ── 7) 机制探针 #4：按层/按种类的直方图 + 首/末局部层命中（纯本地，无集合通信）──
+
+
+class TestMechanismHistogram:
+    """★ 方案 #4（2026-09-23 裁定）：在"PP 边界先坏"与"某层先坏"之间裁决所需的字段。
+
+    判读约定（与 `grad_probe` 里的字段注释逐字对应）：
+    · PP 下每个 rank 的**局部层号从 0 起** ⇒ "0 层"就是离上游 P2P 边界最近的那层；
+    · `nonfinite_at_first_local_layer` 先亮 ⇒ 支持"边界先坏"；
+    · 非有限集中在**特定 kind**（如 `token_mixer.*`）且不随离边界远近分布 ⇒ 支持"某层自身数值问题"；
+    · `nonfinite_nonlayer_names`（lm_head/norm/embed）先坏 ⇒ 指向 loss 侧通道。
+    """
+
+    def _bag(self, specs: dict[str, str]) -> _ParamBag:
+        """specs: 参数名 → 'ok' | 'nan'。"""
+
+        def grad(kind: str):
+            if kind == "nan":
+                value = torch.ones(4)
+                value[0] = float("nan")
+                return value
+            return torch.ones(4)
+
+        return _ParamBag({name: (torch.zeros(4), grad(kind)) for name, kind in specs.items()})
+
+    def test_histogram_locates_first_and_last_local_layer(self) -> None:
+        bag = self._bag(
+            {
+                "layers.0.token_mixer.conv1d_weight": "nan",
+                "layers.1.mlp.up_proj.weight": "ok",
+                "layers.2.token_mixer.conv1d_weight": "nan",
+                "layers.3.mlp.down_proj.weight": "ok",
+            }
+        )
+        report = grad_finiteness_report(bag.named_parameters())
+        assert report["nonfinite_by_layer"] == {"0": 1, "2": 1}
+        assert report["nonfinite_by_kind"] == {"token_mixer.conv1d_weight": 2}
+        assert report["nonfinite_local_layer_span"] == [0, 2]
+        assert report["local_layer_span"] == [0, 3]
+        assert report["nonfinite_at_first_local_layer"] is True
+        assert report["nonfinite_at_last_local_layer"] is False
+
+    def test_last_layer_only_sets_the_last_flag(self) -> None:
+        bag = self._bag(
+            {"layers.0.mlp.up_proj.weight": "ok", "layers.5.mlp.down_proj.weight": "nan"}
+        )
+        report = grad_finiteness_report(bag.named_parameters())
+        assert report["nonfinite_by_layer"] == {"5": 1}
+        assert report["nonfinite_at_first_local_layer"] is False
+        assert report["nonfinite_at_last_local_layer"] is True
+
+    def test_nonlayer_tensors_are_reported_separately(self) -> None:
+        """非层参数（末 stage 的 lm_head/norm ⇒ loss 侧通道）必须单独列出，不能混进层直方图。"""
+        bag = self._bag({"layers.0.mlp.up_proj.weight": "ok", "lm_head.weight": "nan"})
+        report = grad_finiteness_report(bag.named_parameters())
+        assert report["nonfinite_by_layer"] == {}
+        assert report["nonfinite_nonlayer_names"] == ["lm_head.weight"]
+        assert report["nonfinite_at_first_local_layer"] is False
+        assert report["nonfinite_at_last_local_layer"] is False
+        assert report["local_layer_span"] == [0, 0]
+
+    def test_healthy_step_has_empty_histogram_but_keeps_the_layer_span(self) -> None:
+        bag = self._bag({"layers.0.a.weight": "ok", "layers.7.b.weight": "ok"})
+        report = grad_finiteness_report(bag.named_parameters())
+        assert report["nonfinite_by_layer"] == {}
+        assert report["nonfinite_by_kind"] == {}
+        assert report["nonfinite_local_layer_span"] is None
+        assert report["local_layer_span"] == [0, 7]
+        assert report["nonfinite_at_first_local_layer"] is False
+
+    def test_name_cap_is_enlarged_for_the_mechanism_probe(self) -> None:
+        """★ 机制探针需要一个比 5 大得多的名单上限（pp=4 实测 75/134 个张量非有限）。"""
+        from graspo.flow.adapters.models.common import grad_probe
+
+        assert grad_probe.MAX_NONFINITE_GRAD_NAMES >= 64
+
+        bag = self._bag({f"layers.{i}.w.weight": "nan" for i in range(20)})
+        report = grad_finiteness_report(bag.named_parameters())
+        assert len(report["first_nonfinite_grad_names"]) == 20  # 不再被 5 截断
+        assert report["nonfinite_by_layer"] == {str(i): 1 for i in range(20)}
+
+
 def _load_collector():
     spec = importlib.util.spec_from_file_location("_r1_collector", _COLLECTOR)
     assert spec is not None and spec.loader is not None

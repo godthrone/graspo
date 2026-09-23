@@ -24,6 +24,7 @@ native · 4 卡 ``pp=4``）给出的后果：
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Iterable
 from typing import Any
 
@@ -34,8 +35,11 @@ import torch.distributed as dist
 #: **同源同值**（8<<20 ⇒ fp32 临时 32 MiB）——同一类"分块归约保护显存"的取值，避免第二套口径。
 GRAD_FINITE_CHUNK_ELEMENTS = 8 << 20
 
-#: 诊断行里最多列出几个非有限梯度的张量名（够定位即可；不让诊断本身变大）。
-MAX_NONFINITE_GRAD_NAMES = 5
+#: 诊断行里最多列出几个非有限梯度的张量名。
+#: ★ 2026-09-23（机制探针 #4 裁定）：由 5 提到 **64** —— 裁决"PP 边界先坏 vs 某层先坏"需要
+#: 看到**成片的**非有限张量（实测 pp=4 时某一 rank 75/134 个张量非有限），5 个样本看不到形状。
+#: 成本可控：该名单只进 **诊断步**（首步探针 / 失败步）的 rank_metrics 行，不进逐步序列。
+MAX_NONFINITE_GRAD_NAMES = 64
 
 #: 判据原因码（写进诊断行；人读映射见 :func:`grad_fail_reason_text`）。
 GRAD_FAIL_GRAD_NONFINITE = "grad_nonfinite"
@@ -55,6 +59,26 @@ PP_NUMERIC_PROBE_PHASE = "pp_numeric_probe"
 #: raise 早于 metrics 构造）。它**不进** ``STEP_METRICS_PHASES``（不是成功步的逐步指标），
 #: 采集侧会按既有规则把它列入 ``ignored_phase_records`` 并写明 phase 名（显式暴露，不静默）。
 FAIL_CLOSED_PHASE = "fail_closed"
+
+
+#: 层号正则：命中 ``layers.<i>.``（取**本 stage 的局部**层号；PP 下每个 rank 的层号从 0 起）。
+_LAYER_IN_NAME = re.compile(r"(?:^|\.)layers\.(\d+)\.")
+
+
+def _layer_index_from_key(name: str) -> int | None:
+    """从参数名取局部层号；**非层参数**（``embed_tokens``/``lm_head``/``norm``）⇒ ``None``。"""
+    match = _LAYER_IN_NAME.search(name)
+    return int(match.group(1)) if match else None
+
+
+def _param_kind(name: str) -> str:
+    """参数的"种类"标签：剥掉 ``layers.<i>.`` 前缀（如 ``mlp.down_proj.weight``）；
+    非层参数保留完整名（如 ``lm_head.weight``）——直方图按它聚合。"""
+    index = _layer_index_from_key(name)
+    if index is None:
+        return name
+    marker = f"layers.{index}."
+    return name.split(marker, 1)[1] if marker in name else name
 
 
 def tensor_is_finite(
@@ -117,10 +141,18 @@ def grad_finiteness_report(
     max_abs = 0.0
     max_abs_name: str | None = None
     grad_dtype: str | None = None
+    # ── 机制探针 #4（2026-09-23）：按层 / 按种类的**纯本地**直方图（无任何集合通信）──
+    layer_counts: dict[int, int] = {}
+    kind_counts: dict[str, int] = {}
+    nonlayer_nonfinite: list[str] = []
+    local_layers: set[int] = set()
     for name, param in named_parameters:
         if not bool(getattr(param, "requires_grad", False)):
             continue
         trainable += 1
+        index = _layer_index_from_key(str(name))
+        if index is not None:
+            local_layers.add(index)
         grad = getattr(param, "grad", None)
         if grad is None:
             continue
@@ -129,6 +161,13 @@ def grad_finiteness_report(
             grad_dtype = str(grad.dtype)
         if not tensor_is_finite(grad):
             nonfinite_count += 1
+            if index is None:
+                if len(nonlayer_nonfinite) < 16:
+                    nonlayer_nonfinite.append(str(name))
+            else:
+                layer_counts[index] = layer_counts.get(index, 0) + 1
+            kind = _param_kind(str(name))
+            kind_counts[kind] = kind_counts.get(kind, 0) + 1
             if len(nonfinite_names) < int(max_nonfinite_names):
                 nonfinite_names.append({"name": str(name), "max_abs": _tensor_abs_max(grad)})
         if with_max_abs:
@@ -149,6 +188,26 @@ def grad_finiteness_report(
         "grad_max_abs": max_abs if with_max_abs else None,
         "grad_argmax_tensor_name": max_abs_name,
         "grad_dtype": grad_dtype,
+        # ── 机制探针 #4：直方图 + 首/末局部层命中标记 ─────────────────────────────
+        # 判读约定（写进字段名，避免下游猜）：
+        #  · ``nonfinite_by_layer``：本 stage **局部层号** → 该层非有限张量个数；
+        #    PP 下每个 rank 的层号从 0 起 ⇒ "0 层"就是**离上游边界最近**的那层（其输入梯度
+        #    正是从 P2P 收到的 stage_input.grad）。
+        #  · ``nonfinite_at_first_local_layer``：非有限是否已覆盖**最靠近上游边界**的层；
+        #    ``…_at_last_local_layer``：是否覆盖**最靠近下游/loss 侧**的层。
+        #    ⇒ (i) 边界先坏 预测前者先亮（尤其非末 stage）；(ii) 某层自身数值问题 预测
+        #    非有限集中在**特定 kind**、且不随"离边界远近"分布。
+        #  · ``nonfinite_nonlayer_names``：embed_tokens / lm_head / norm 这类**没有层号**的参数
+        #    （末 stage 的 lm_head/norm 是 loss 侧通道）——它们若先坏，指向 loss 侧而非边界。
+        "nonfinite_by_layer": {str(key): layer_counts[key] for key in sorted(layer_counts)},
+        "nonfinite_by_kind": {key: kind_counts[key] for key in sorted(kind_counts)},
+        "nonfinite_nonlayer_names": nonlayer_nonfinite,
+        "nonfinite_local_layer_span": (
+            [min(layer_counts), max(layer_counts)] if layer_counts else None
+        ),
+        "local_layer_span": ([min(local_layers), max(local_layers)] if local_layers else None),
+        "nonfinite_at_first_local_layer": bool(local_layers and min(local_layers) in layer_counts),
+        "nonfinite_at_last_local_layer": bool(local_layers and max(local_layers) in layer_counts),
     }
 
 
