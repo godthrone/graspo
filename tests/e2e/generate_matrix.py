@@ -2747,7 +2747,12 @@ def _audit_state_dict(
     layer_check_skipped: str | None = None
     if not expected_layers:
         layer_check_skipped = placement_skip_reason or "无 per-rank 层区间"
-    missing = [index for index in expected_layers if index not in layer_found]
+    # ★ A 修 v2（2026-09-23，真 fixture 实测暴露）：pp>1 时 placement 记的是**全局**层号
+    # （实测 rank1 = 9..17、rank2 = 18..26、rank3 = 27..31），而 ``full_param_state_dict`` 的键
+    # 用**本 rank 的局部**层号（每个 rank 都从 ``layers.0.`` 起）⇒ 直接用全局层号比对必然假失败。
+    # 归一：覆盖检查按"**该 rank 应有的层数**"做 —— found_local 必须恰好覆盖 ``0..N-1``。
+    expected_local = list(range(len(expected_layers)))
+    missing = [index for index in expected_local if index not in layer_found]
     if expected_layers and missing:
         reasons.append("missing_layers:" + ",".join(str(index) for index in missing[:8]))
     extra = [
@@ -2764,9 +2769,11 @@ def _audit_state_dict(
         "zero_layers": layer_all_zero,
         "layers_found": sorted(layer_found),
         "layers_expected": sorted(expected_layers),
+        # 归一后的**局部**口径（0..N-1）：覆盖检查实际用的就是这个
+        "layers_expected_local": expected_local,
         # ★ A 修：层覆盖**没查**时必须可见（不许静默变弱）
         "layer_check_skipped": layer_check_skipped,
-        "missing_layers": missing[:16],
+        "missing_layers": missing[:16],  # 局部层号口径
         "extra_layers": extra[:16],
         "tuner_type": tuner_type or None,
         "kind_check": kind_check,
