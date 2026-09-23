@@ -107,7 +107,55 @@ def _first_nonfinite_flat_index(tensor: torch.Tensor) -> int | None:
     return None
 
 
-def exchange_tensor_report(name: str, tensor: Any, *, direction: str) -> dict[str, Any]:
+def tensor_digest(
+    tensor: Any,
+    *,
+    with_sha256: bool = False,
+    sample: int = 4,
+) -> dict[str, Any]:
+    """张量**内容摘要**（只读、纯本地、**无集合通信**）——供"发端 vs 收端是否逐 bit 一致"的离线对照。
+
+    为什么不用"额外发一次已知张量"（#1c 的另一种做法）：发端与收端**各自本地**对**同一逻辑张量**
+    算同一套摘要，分析者再对照两 rank 的行 ⇒ **零新增通信**即可判定保真性（§6.1 简单优先）。
+    摘要组成：``digest_sum``（**分块 fp32 累加**，NaN 支配）+ ``digest_head``/``digest_tail``
+    （首尾各 ``sample`` 个元素原值）+ 可选 ``digest_sha256``（**raw bytes 逐 bit 级证据**，
+    需拷回宿主，故只在**首个 batch**那一次开）。
+
+    :param with_sha256: 是否额外算 raw bytes 的 sha256（逐 bit 证据；开销 = 一次 D2H + 哈希）
+    :param sample: 首尾各采样多少元素（默认 4，足够便宜且可读）
+    """
+    flat = tensor.detach().reshape(-1)
+    total = int(flat.numel())
+    step = max(1, int(GRAD_FINITE_CHUNK_ELEMENTS))
+    checksum = 0.0
+    for start in range(0, total, step):
+        checksum += float(flat[start : start + step].float().sum().cpu())
+    head = [float(value) for value in flat[:sample].float().cpu()] if total else []
+    tail = [float(value) for value in flat[max(0, total - sample) :].float().cpu()] if total else []
+    digest: dict[str, Any] = {
+        "digest_sum": checksum,
+        "digest_head": head,
+        "digest_tail": tail,
+    }
+    if with_sha256:
+        try:
+            import hashlib
+
+            digest["digest_sha256"] = hashlib.sha256(
+                flat.contiguous().cpu().numpy().tobytes()
+            ).hexdigest()
+        except Exception:  # noqa: BLE001 —— 取不到摘要 ⇒ None（不得把"算不出"当"不一致"）
+            digest["digest_sha256"] = None
+    return digest
+
+
+def exchange_tensor_report(
+    name: str,
+    tensor: Any,
+    *,
+    direction: str,
+    with_sha256: bool = False,
+) -> dict[str, Any]:
     """PP **交换张量**的只读读数（**纯本地、无任何集合通信**，不改张量）。
 
     为什么需要它（机制探针 #1，2026-09-23 裁定）：#4 的直方图只能看到**参数梯度**，
@@ -130,6 +178,8 @@ def exchange_tensor_report(name: str, tensor: Any, *, direction: str) -> dict[st
         "isfinite": bool(finite),
         "max_abs": _tensor_abs_max(tensor),
         "first_nonfinite_index": None if finite else _first_nonfinite_flat_index(tensor),
+        # #1c：内容摘要（发/收两端各自本地算同一套 ⇒ 分析者离线逐 bit 对照）
+        **tensor_digest(tensor, with_sha256=with_sha256),
     }
 
 
@@ -137,6 +187,7 @@ def pp_exchange_readings(
     items: Iterable[tuple[str, str, Any]],
     *,
     max_items: int = 16,
+    with_sha256: bool = False,
 ) -> list[dict[str, Any]]:
     """``(direction, name, tensor)`` 列表 → 读数列表（``None`` 张量跳过；条数有上限）。
 
@@ -149,7 +200,9 @@ def pp_exchange_readings(
             continue
         if len(out) >= int(max_items):
             break
-        out.append(exchange_tensor_report(name, tensor, direction=direction))
+        out.append(
+            exchange_tensor_report(name, tensor, direction=direction, with_sha256=with_sha256)
+        )
     return out
 
 

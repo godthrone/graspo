@@ -619,6 +619,78 @@ class TestExchangeTensorReport:
                 assert forbidden not in source, (func.__name__, forbidden)
 
 
+# ── 9) 方案 #1c/#1b：交换张量"内容摘要"（发/收逐 bit 对照）+ 发送后复读 ─────────────
+
+
+class TestTensorDigest:
+    """★ #1c（2026-09-23 裁定）：发端与收端**各自本地**算同一套摘要 ⇒ 分析者离线对照，
+    零新增通信即可判定"通信是否保真"。"""
+
+    def test_identical_content_yields_identical_digest(self) -> None:
+        from graspo.flow.adapters.models.common.grad_probe import tensor_digest
+
+        a = torch.arange(64, dtype=torch.float32).reshape(8, 8)
+        b = a.clone()
+        assert tensor_digest(a, with_sha256=True) == tensor_digest(b, with_sha256=True)
+
+    def test_single_element_change_is_detected_bitwise(self) -> None:
+        from graspo.flow.adapters.models.common.grad_probe import tensor_digest
+
+        a = torch.arange(64, dtype=torch.float32)
+        b = a.clone()
+        b[7] = b[7] + 1e-3
+        da, db = tensor_digest(a, with_sha256=True), tensor_digest(b, with_sha256=True)
+        assert da["digest_sha256"] != db["digest_sha256"], "逐 bit 级差异必须被 sha256 抓到"
+        assert da["digest_sum"] != db["digest_sum"]
+        assert da["digest_head"] == db["digest_head"]  # 头一致、只有第 8 个元素变
+
+    def test_tail_and_head_are_sampled(self) -> None:
+        from graspo.flow.adapters.models.common.grad_probe import tensor_digest
+
+        digest = tensor_digest(torch.arange(10, dtype=torch.float32), sample=3)
+        assert digest["digest_head"] == [0.0, 1.0, 2.0]
+        assert digest["digest_tail"] == [7.0, 8.0, 9.0]
+
+    def test_sha256_is_opt_in(self) -> None:
+        from graspo.flow.adapters.models.common.grad_probe import tensor_digest
+
+        assert "digest_sha256" not in tensor_digest(torch.ones(4))
+        assert tensor_digest(torch.ones(4), with_sha256=True)["digest_sha256"] is not None
+
+    def test_nan_dominates_the_checksum(self) -> None:
+        from graspo.flow.adapters.models.common.grad_probe import tensor_digest
+
+        tensor = torch.ones(8)
+        tensor[3] = float("nan")
+        assert tensor_digest(tensor)["digest_sum"] != tensor_digest(tensor)["digest_sum"]
+
+    def test_digest_is_read_only(self) -> None:
+        from graspo.flow.adapters.models.common.grad_probe import tensor_digest
+
+        tensor = torch.arange(8, dtype=torch.float32)
+        before = tensor.clone()
+        tensor_digest(tensor, with_sha256=True)
+        assert torch.equal(before, tensor)
+
+    def test_reading_carries_the_digest_fields(self) -> None:
+        from graspo.flow.adapters.models.common.grad_probe import pp_exchange_readings
+
+        reads = pp_exchange_readings([("d", "x", torch.ones(4))], with_sha256=True)
+        for key in ("digest_sum", "digest_head", "digest_tail", "digest_sha256"):
+            assert key in reads[0], key
+
+    def test_digest_helper_never_calls_distributed_collectives(self) -> None:
+        """裁定约束：**零集合通信**（除保真测试自身）——摘要在两端各自本地算，不需要任何通信。"""
+        import inspect
+
+        from graspo.flow.adapters.models.common import grad_probe
+
+        source = inspect.getsource(grad_probe.tensor_digest)
+        assert "dist." not in source
+        for forbidden in ("all_reduce", "all_gather", "broadcast", "barrier", "isend", "irecv"):
+            assert forbidden not in source, forbidden
+
+
 class TestDirtyBlockSide:
     """★ 方案 #2：脏块位置 / 层号逆序（口径：**层号**，不是观测时序；见 grad_probe 注释）。"""
 
@@ -707,6 +779,32 @@ class TestExchangeProbeWiringIsPpOnlyAndDiagnosticOnly:
         assert '"pp_exchange"' in probe_block[:800]
         fail_block = text[text.index("fail_closed_metrics = {") :]
         assert '"pp_exchange"' in fail_block[:1400]
+
+    def test_post_wait_recheck_is_wired_only_for_sent_tensors(self) -> None:
+        """★ #1b：发送侧 3 处（fwd_sent 1 + bwd_sent 2）要求"发送完成后复读"，接收侧不复读。"""
+        text = self._source()
+        assert text.count("recheck=True") == 3, text.count("recheck=True")
+        for line in text.splitlines():
+            if "recheck=True" in line:
+                assert "PP_EXCHANGE_FWD_SENT" in line or "PP_EXCHANGE_BWD_SENT" in line, line
+        # 复读必须发生在 wait_all(send_works) **之后**
+        wait_index = text.index("wait_all(send_works)")
+        loop_index = text.index("for direction, name, tensor in pending_recheck:")
+        assert wait_index < loop_index
+
+    def test_post_wait_readings_land_in_the_two_diagnostic_rows(self) -> None:
+        text = self._source()
+        assert text.count('"pp_exchange_post_wait"') == 2, text.count('"pp_exchange_post_wait"')
+
+    def test_bitwise_digest_is_gated_to_the_first_batch(self) -> None:
+        """逐 bit sha256 开销大 ⇒ 只在首个 batch 开（其余步只有廉价摘要）。"""
+        text = self._source()
+        assert "probe_sha256 = int(self._train_batch_call_index) == 0" in text
+        assert "with_sha256=probe_sha256" in text
+
+    def test_retention_caveat_is_documented(self) -> None:
+        """复读要保留引用 ⇒ 对"释放后被复用"这一支**保守**；此口径必须写在源码里（§2.2）。"""
+        assert "保守" in self._source()
 
     def test_no_collectives_or_tensor_mutation_in_the_recording_helper(self) -> None:
         text = self._source()
