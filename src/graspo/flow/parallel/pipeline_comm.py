@@ -170,6 +170,15 @@ class PipelineComm:
         self._wait_timeout_s: float | None = (
             self._wait_timeout.total_seconds() if self._wait_timeout is not None else None
         )
+
+        #: 诊断取样钩子（**默认 None ⇒ 零行为变化、零额外开销**）。
+        #: 非 None 时，在**真 send/recv 张量**处（`_post_send` 的 contiguous 之后 /
+        #: `_RecvHandle.wait()` 完成之后）回调 ``hook(direction, tensor)``。
+        self.diag_hook: Any = None
+        #: 诊断专用**一次性设备同步**：置 True 后，每步第一次取样前做一次
+        #: ``torch.cuda.synchronize()``（把所有流排空 ⇒ 读写不再竞争）。
+        self.diag_sync_once: bool = False
+        self._diag_synced: bool = False
         # 每方向的在途 send work（用于背压：超过窗口则等待最旧 work）。
         self._inflight: dict[str, deque[Any]] = {"fwd": deque(), "bwd": deque()}
         # 在途 work 的描述信息（方向/对端/形状），用于超时报错给出可定位的上下文。
@@ -229,6 +238,8 @@ class PipelineComm:
     def _post_send(self, tensor: torch.Tensor, dst: int, *, tag: int, direction: str) -> Any:
         self._validate_tag(direction, tag)
         tensor = tensor.contiguous()
+        # #1a：真发送 buffer（contiguous 之后的那个）——立刻取样，避免"事后读已复用引用"
+        self.diag_sample(f"{direction}_send", tensor)
         group = self._fwd_group if direction == "fwd" else self._bwd_group
         comm_stream = self._fwd_stream if direction == "fwd" else self._bwd_stream
         if comm_stream is not None:
@@ -264,9 +275,9 @@ class PipelineComm:
                 work = dist.irecv(tensor, src=src, group=group, tag=tag)
                 ev.record(comm_stream)
             # 先返回一个"待同步"句柄；wait() 会让当前计算流等待该事件。
-            return _RecvHandle(work, comm_stream, ev, self, info=info)
+            return _RecvHandle(work, comm_stream, ev, self, info=info, tensor=tensor)
         work = dist.irecv(tensor, src=src, group=group, tag=tag)
-        return _RecvHandle(work, None, None, self, info=info)
+        return _RecvHandle(work, None, None, self, info=info, tensor=tensor)
 
     def fwd_send(self, tensor: torch.Tensor, dst: int, *, tag: int = 0) -> Any:
         """异步发送 hidden 到下游 stage（forward 通道）。返回 work handle，需 wait()。"""
@@ -283,6 +294,27 @@ class PipelineComm:
     def bwd_recv(self, tensor: torch.Tensor, src: int, *, tag: int = 0) -> _RecvHandle:
         """异步接收 grad（backward 通道）。返回 ``_RecvHandle``，调用 ``wait()`` 后读 tensor。"""
         return self._post_recv(tensor, src, tag=tag, direction="bwd")
+
+    def diag_sample(self, direction: str, tensor: torch.Tensor | None) -> None:
+        """**诊断专用**：在真 send/recv 张量上就地取样（可选一次性设备同步）。
+
+        **默认关**：``diag_hook is None`` ⇒ 立即返回，零行为变化、零额外开销。
+        为什么放在这里（#1a，2026-09-23 裁定）：此前在训练层"事后读一个可能已被复用的引用"
+        ⇒ 与通讯流上的异步写竞争（实测出现"三个不同张量同 max/sum/head 而 tail 不同"的
+        不可能读数）。现在取数点落在**真 buffer 处**：send 在 ``contiguous()`` 之后、
+        ``isend`` 之前；recv 在 ``wait()`` 完成之后（该 wait 已让计算流等通信流事件）。
+        再叠加**一次性**``torch.cuda.synchronize()`` ⇒ 读数不再与任何在途写竞争。
+        """
+        if self.diag_hook is None or tensor is None:
+            return
+        if self.diag_sync_once and not self._diag_synced and torch.cuda.is_available():
+            torch.cuda.synchronize()  # 一次性：排空所有流（含 NCCL 通信流）⇒ 读写不竞争
+            self._diag_synced = True
+        self.diag_hook(direction, tensor)
+
+    def diag_begin_step(self) -> None:
+        """诊断步开始时调一次：让"一次性同步"在**本步**首个取样点重新生效（每步至多一次）。"""
+        self._diag_synced = False
 
     def wait(self, work: Any, *, label: str = "") -> None:
         """等待一个 send/recv work 完成。
@@ -371,7 +403,7 @@ class _RecvHandle:
     超时抛 :class:`PipelineP2PTimeoutError`。
     """
 
-    __slots__ = ("_work", "_stream", "_ev", "_comm", "_info")
+    __slots__ = ("_work", "_stream", "_ev", "_comm", "_info", "_tensor")
 
     def __init__(
         self,
@@ -381,12 +413,15 @@ class _RecvHandle:
         comm: PipelineComm,
         *,
         info: dict[str, Any] | None = None,
+        tensor: torch.Tensor | None = None,
     ) -> None:
         self._work = work
         self._stream = stream
         self._ev = ev
         self._comm = comm
         self._info = dict(info or {})
+        #: 诊断专用：本次 recv 写入的那个 buffer（`wait()` 完成后才安全读）
+        self._tensor = tensor
 
     def wait(self, timeout: timedelta | None = None, *, label: str = "") -> None:
         if timeout is not None:
@@ -409,6 +444,8 @@ class _RecvHandle:
             self._comm._forget(self._work)  # noqa: SLF001 — 同一模块内的私有协作
             if completed is False:
                 raise PipelineP2PTimeoutError(**context, timeout_s=timeout_s)
+            # #1a：recv 完成（数据就绪）后，在**这个 buffer** 上就地取样
+            self._comm.diag_sample(str(self._info.get("direction") or "recv"), self._tensor)
             return
         if self._stream is not None and self._ev is not None:
             # 计算流等待 recv 完成事件，再读 tensor（事件 = 数据就绪）
@@ -416,6 +453,8 @@ class _RecvHandle:
         else:
             self._work.wait()
         self._comm._forget(self._work)  # noqa: SLF001 — 同一模块内的私有协作
+        # #1a：recv 完成（数据就绪）后，在**这个 buffer** 上就地取样
+        self._comm.diag_sample(str(self._info.get("direction") or "recv"), self._tensor)
 
 
 #: 超时异常消息里会出现的**特征短语**（torch/NCCL 的原文措辞，唯一真相源）。

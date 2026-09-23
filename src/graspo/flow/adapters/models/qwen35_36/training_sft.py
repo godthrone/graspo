@@ -103,6 +103,16 @@ def _count_sft_valid_tokens(labels: torch.Tensor) -> int:
     return int((labels[:, 1:] != -100).sum().item())
 
 
+
+#: comm 侧诊断标签 → 读数方向（#1a）。**唯一真相源**：PipelineComm 的 `diag_sample` 用左列，
+#: 本模块的钩子把它映射成语义方向（写进 rank_metrics 的 `pp_exchange`）。
+_COMM_DIAG_LABEL_TO_DIRECTION = {
+    "fwd_send": PP_EXCHANGE_FWD_SENT,
+    "fwd_recv": PP_EXCHANGE_FWD_RECEIVED,
+    "bwd_send": PP_EXCHANGE_BWD_SENT,
+    "bwd_recv": PP_EXCHANGE_BWD_RECEIVED,
+}
+
 class _Qwen35SFTTrainingMethods:
     def _build_optimizer(self) -> None:
         """``_build_optimizer`` 扩展点：接线 native 优化器态 CPU offload（WP-X2）。
@@ -593,17 +603,18 @@ class _Qwen35SFTTrainingMethods:
         # #1c：逐 bit 级证据（raw bytes sha256）开销大 ⇒ **只在首个 batch**那一次开
         probe_sha256 = int(self._train_batch_call_index) == 0
 
-        def record_exchange(
-            direction: str,
-            tensor: Any,
-            chunk_idx: int,
-            *,
-            recheck: bool = False,
-        ) -> None:
-            """记录交换张量读数（None 跳过；条数有上限；`recheck` ⇒ 发送后再读一次）。"""
-            if tensor is None or len(exchange_readings) >= exchange_cap:
+        # #1a（2026-09-23 裁定）：取数点移进 PipelineComm 的**真 send/recv 张量**处
+        # （send 在 contiguous 之后、isend 之前；recv 在 wait 完成之后），并由 comm 在
+        # 每个诊断步的**首个**取样点做**一次性** `torch.cuda.synchronize()`
+        # （`diag_sync_once`）⇒ 读与写不再竞争。
+        chunk_ref = {"idx": 0}
+
+        def _on_comm_sample(comm_label: str, tensor: Any) -> None:
+            """comm 诊断钩子：把真交换张量的标签映射成方向并落读数（None/未知 ⇒ 跳过）。"""
+            direction = _COMM_DIAG_LABEL_TO_DIRECTION.get(str(comm_label))
+            if direction is None or tensor is None or len(exchange_readings) >= exchange_cap:
                 return
-            name = f"chunk{chunk_idx}"
+            name = f"chunk{chunk_ref['idx']}"
             exchange_readings.extend(
                 pp_exchange_readings(
                     [(direction, name, tensor)],
@@ -611,8 +622,13 @@ class _Qwen35SFTTrainingMethods:
                     with_sha256=probe_sha256,
                 )
             )
-            if recheck and len(pending_recheck) < exchange_cap:
-                pending_recheck.append((direction, name, tensor))
+            if direction in (PP_EXCHANGE_FWD_SENT, PP_EXCHANGE_BWD_SENT):
+                if len(pending_recheck) < exchange_cap:
+                    pending_recheck.append((direction, name, tensor))
+
+        comm.diag_hook = _on_comm_sample
+        comm.diag_sync_once = True  # 每步首个取样点做一次设备同步（见 diag_begin_step）
+        comm.diag_begin_step()  # 本步重新武装"一次性同步"（每步至多一次）
 
         # 梯度累积：zero_grad 只调一次，所有 chunk 的梯度累加后统一 step
         if self.optimizer is not None:
@@ -648,10 +664,7 @@ class _Qwen35SFTTrainingMethods:
                 weight = accumulation_weights[chunk_idx]
                 loss = chunk_loss * weight if finite else None
                 loss_value = float(chunk_loss.detach().cpu()) * weight if finite else 0.0
-            # 机制探针 #1：本 chunk 的**前向交换**两端（收到 / 发出）
-            record_exchange(PP_EXCHANGE_FWD_RECEIVED, stage_input, chunk_idx)
-            if self.pp_rank != self.pp_size - 1:
-                record_exchange(PP_EXCHANGE_FWD_SENT, stage_output, chunk_idx, recheck=True)
+            chunk_ref["idx"] = chunk_idx  # comm 钩子按当前 chunk 标名（#1a）
             records[chunk_idx] = {
                 "stage_output": stage_output,
                 "stage_input": stage_input,
@@ -680,8 +693,6 @@ class _Qwen35SFTTrainingMethods:
                         if stage_input.grad is not None
                         else torch.zeros_like(stage_input)
                     )
-                    # 机制探针 #1：**发出**（去上游）时的梯度状态 —— 裁定"本地生成"的钥匙
-                    record_exchange(PP_EXCHANGE_BWD_SENT, grad, chunk_idx, recheck=True)
                     work = comm.bwd_send(
                         grad.contiguous(),
                         dst=int(self.tp_state.prev_pp_rank or 0),
@@ -699,8 +710,7 @@ class _Qwen35SFTTrainingMethods:
                     tag=chunk_count + chunk_idx,
                 )
                 comm.wait(recv_work)  # 阻塞直到梯度到达（上游异步 send，不会死锁）
-                # 机制探针 #1：**收到时**（尚未参与 backward）的梯度状态 —— 裁定"边界携带"的钥匙
-                record_exchange(PP_EXCHANGE_BWD_RECEIVED, grad_output, chunk_idx)
+                chunk_ref["idx"] = chunk_idx  # （recv 侧取样由 comm 钩子在 wait 完成后做）
                 stage_output.backward(grad_output)
                 stage_input = record["stage_input"]
                 if stage_input is not None:
@@ -709,8 +719,6 @@ class _Qwen35SFTTrainingMethods:
                         if stage_input.grad is not None
                         else torch.zeros_like(stage_input)
                     )
-                    # 机制探针 #1：**发出**（去上游）时的梯度状态 —— 裁定"本地生成"的钥匙
-                    record_exchange(PP_EXCHANGE_BWD_SENT, grad, chunk_idx, recheck=True)
                     work = comm.bwd_send(
                         grad.contiguous(),
                         dst=int(self.tp_state.prev_pp_rank or 0),
