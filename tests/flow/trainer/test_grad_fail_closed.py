@@ -691,6 +691,120 @@ class TestTensorDigest:
             assert forbidden not in source, forbidden
 
 
+# ── 10) #1a：PipelineComm 真 send/recv 处取样 + 诊断专用一次性同步（默认关）──────────────
+
+
+class TestPipelineCommDiagHook:
+    """★ #1a：取数点在**真 buffer** 处，且**默认关**（hook=None ⇒ 零行为变化）。"""
+
+    def _comm(self):
+        from graspo.flow.parallel.pipeline_comm import PipelineComm
+
+        return PipelineComm.__new__(PipelineComm)  # 不建进程组：只测诊断钩子逻辑
+
+    def test_default_off_does_nothing(self) -> None:
+        comm = self._comm()
+        comm.diag_hook = None
+        comm.diag_sync_once = True
+        comm._diag_synced = False
+        comm.diag_sample("fwd_send", torch.ones(2))  # 不得抛、不得做任何事
+        assert comm._diag_synced is False
+
+    def test_hook_receives_the_real_tensor(self) -> None:
+        comm = self._comm()
+        seen: list[tuple[str, object]] = []
+        comm.diag_hook = lambda direction, tensor: seen.append((direction, tensor))
+        comm.diag_sync_once = False
+        tensor = torch.arange(4, dtype=torch.float32)
+        comm.diag_sample("bwd_send", tensor)
+        assert len(seen) == 1
+        assert seen[0][0] == "bwd_send"
+        assert seen[0][1] is tensor, "必须是同一个真张量对象（不是拷贝）"
+
+    def test_none_tensor_is_skipped(self) -> None:
+        comm = self._comm()
+        calls: list[str] = []
+        comm.diag_hook = lambda direction, tensor: calls.append(direction)
+        comm.diag_sync_once = False
+        comm.diag_sample("fwd_recv", None)
+        assert calls == []
+
+    def test_sync_once_per_step_and_rearmed_by_diag_begin_step(self, monkeypatch) -> None:
+        """★ 诊断专用**一次性**同步：本步首个取样同步一次；`diag_begin_step()` 后重新武装。"""
+        import graspo.flow.parallel.pipeline_comm as pc
+
+        comm = self._comm()
+        comm.diag_hook = lambda direction, tensor: None
+        comm.diag_sync_once = True
+        comm.diag_begin_step()
+        syncs: list[int] = []
+        monkeypatch.setattr(pc.torch.cuda, "is_available", lambda: True)
+        monkeypatch.setattr(pc.torch.cuda, "synchronize", lambda: syncs.append(1))
+        comm.diag_sample("fwd_send", torch.ones(2))
+        comm.diag_sample("fwd_recv", torch.ones(2))
+        comm.diag_sample("bwd_send", torch.ones(2))
+        assert len(syncs) == 1, "同一诊断步内至多同步一次"
+        comm.diag_begin_step()
+        comm.diag_sample("fwd_send", torch.ones(2))
+        assert len(syncs) == 2, "新的一步要重新武装"
+
+    def test_recv_handle_carries_the_buffer_and_samples_after_wait(self) -> None:
+        """recv 侧：句柄带上真 buffer，`wait()` 完成后才取样（数据就绪）。"""
+        from graspo.flow.parallel.pipeline_comm import _RecvHandle
+
+        class _FakeWork:
+            def wait(self, timeout=None):  # noqa: ANN001, ANN204
+                return True
+
+        class _FakeComm:
+            def __init__(self) -> None:
+                self.sampled: list[tuple[str, object]] = []
+
+            def diag_sample(self, direction, tensor):  # noqa: ANN001, ANN202
+                self.sampled.append((direction, tensor))
+
+            def _forget(self, work):  # noqa: ANN001, ANN202
+                return None
+
+        comm = _FakeComm()
+        tensor = torch.ones(3)
+        handle = _RecvHandle(
+            _FakeWork(), None, None, comm, info={"direction": "bwd_recv"}, tensor=tensor
+        )
+        assert handle._tensor is tensor
+        handle.wait()
+        assert comm.sampled == [("bwd_recv", tensor)]
+
+
+class TestSamplingSitesAreTheRealBuffers:
+    """★ 源码钉子：取样点必须在 `contiguous()` 之后 / recv 完成之后（不是训练层的事后引用）。"""
+
+    _COMM = _REPO / "src" / "graspo" / "flow" / "parallel" / "pipeline_comm.py"
+
+    def _source(self) -> str:
+        return self._COMM.read_text(encoding="utf-8")
+
+    def test_send_samples_the_contiguous_buffer_before_isend(self) -> None:
+        text = self._source()
+        contiguous = text.index("tensor = tensor.contiguous()")
+        sample = text.index('self.diag_sample(f"{direction}_send", tensor)')
+        isend = text.index("work = dist.isend(tensor")
+        assert contiguous < sample < isend, "必须在 contiguous 之后、isend 之前取样"
+
+    def test_recv_samples_after_wait(self) -> None:
+        text = self._source()
+        assert text.count('self._comm.diag_sample(str(self._info.get("direction") or "recv")') == 2
+        # 两处都必须在 wait 之后
+        first = text.index("torch.cuda.current_stream().wait_event(self._ev)")
+        second = text.index("self._work.wait()", first)
+        assert first < text.index("diag_sample", first)
+        assert second < text.index("diag_sample", second)
+
+    def test_handle_carries_tensor_field(self) -> None:
+        text = self._source()
+        assert '"_tensor"' in text.split("__slots__")[1][:200]
+
+
 class TestDirtyBlockSide:
     """★ 方案 #2：脏块位置 / 层号逆序（口径：**层号**，不是观测时序；见 grad_probe 注释）。"""
 
@@ -765,9 +879,12 @@ class TestExchangeProbeWiringIsPpOnlyAndDiagnosticOnly:
         start = text.index("def _pipeline_train_batch_sft(")
         end = text.index("def _pipeline_forward_for_sft(")
         pp_body = text[start:end]
-        # 1 处定义 + 5 处调用（fwd 收到/发出、bwd 收到、bwd 发出 ×2）
-        assert pp_body.count("def record_exchange(") == 1
-        assert pp_body.count("record_exchange(") == 6, pp_body.count("record_exchange(")
+        # #1a 后的接线：PP 方法内装 comm 钩子 + 每步重新武装一次性同步；训练层不再自己取样
+        assert pp_body.count("comm.diag_hook = _on_comm_sample") == 1
+        assert pp_body.count("comm.diag_sync_once = True") == 1
+        assert pp_body.count("comm.diag_begin_step()") == 1
+        assert "def _on_comm_sample(" in pp_body
+        assert pp_body.count("record_exchange(") == 0
         non_pp_start = text.index("def train_batch_sft(")
         non_pp_body = text[non_pp_start:start]
         assert "record_exchange(" not in non_pp_body, "非 PP 路径不得接线"
@@ -783,10 +900,11 @@ class TestExchangeProbeWiringIsPpOnlyAndDiagnosticOnly:
     def test_post_wait_recheck_is_wired_only_for_sent_tensors(self) -> None:
         """★ #1b：发送侧 3 处（fwd_sent 1 + bwd_sent 2）要求"发送完成后复读"，接收侧不复读。"""
         text = self._source()
-        assert text.count("recheck=True") == 3, text.count("recheck=True")
-        for line in text.splitlines():
-            if "recheck=True" in line:
-                assert "PP_EXCHANGE_FWD_SENT" in line or "PP_EXCHANGE_BWD_SENT" in line, line
+        # 只有两个"发送"方向会登记复读
+        assert "if direction in (PP_EXCHANGE_FWD_SENT, PP_EXCHANGE_BWD_SENT):" in text, (
+            "复读登记必须只覆盖发送方向"
+        )
+        assert text.count("pending_recheck.append(") == 1
         # 复读必须发生在 wait_all(send_works) **之后**
         wait_index = text.index("wait_all(send_works)")
         loop_index = text.index("for direction, name, tensor in pending_recheck:")
@@ -808,7 +926,7 @@ class TestExchangeProbeWiringIsPpOnlyAndDiagnosticOnly:
 
     def test_no_collectives_or_tensor_mutation_in_the_recording_helper(self) -> None:
         text = self._source()
-        start = text.index("def record_exchange(")
+        start = text.index("def _on_comm_sample(")
         end = text.index("# 梯度累积：zero_grad 只调一次")  # helper 之后紧接着的就是训练逻辑
         helper = text[start:end]
         for forbidden in ("all_reduce", "all_gather", ".backward(", ".copy_(", "zero_grad"):
