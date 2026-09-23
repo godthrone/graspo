@@ -801,6 +801,12 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
                 "rank_metrics": [local],
                 "global_optimizer_steps_sum": int(local.get("optimizer_steps") or 0),
                 "global_nonzero_grad_count_sum": int(local.get("nonzero_grad_count") or 0),
+                # ★ 生产端补齐（2026-09-23）：采集层早已消费该键
+                #   （``scripts/collect_results.py::extract_skipped_nonfinite_all_ranks``
+                #   注释写"新落盘，若有"），但 ``src/`` 全仓此前**没有生产者** ⇒ 逐 rank
+                #   跳过只能靠 rank0 单点，rank≠0 单独跳过时会 A7 假通过。
+                #   单卡下"局部 == 全局"平凡成立，故与 ``skipped_nonfinite`` 同值。
+                "global_skipped_nonfinite_sum": int(local.get("skipped_nonfinite") or 0),
                 "global_loss_mean": local.get("loss_mean"),
                 "global_grad_norm_mean": local.get("grad_norm_mean"),
                 "global_grad_norm_l2": local.get("grad_norm_mean"),
@@ -824,6 +830,14 @@ class TransformerAdapter(BaseGraspoFlowAdapter):
             ),
             "global_nonzero_grad_count_sum": sum(
                 int(item.get("nonzero_grad_count") or 0) for item in ranks
+            ),
+            # ★ 生产端补齐（2026-09-23）：采集层 ``extract_skipped_nonfinite_all_ranks``
+            #   优先读本键（注释写"新落盘，若有"），但此前 ``src/`` 无生产者 ⇒ 只有逐 rank
+            #   局部值可读、且要靠遍历全部 rank 文件才不漏报。口径 = **逐 rank 求和**
+            #   （与逐 rank ``skipped_nonfinite`` 一致：任一 rank 跳过多少就累加多少；
+            #   采集侧仍按"MAX over ranks"取最坏 rank，两者互补、不冲突）。
+            "global_skipped_nonfinite_sum": sum(
+                int(item.get("skipped_nonfinite") or 0) for item in ranks
             ),
             # ★ 口径修正（2026-09-22）：loss 只在**真正产出 loss 的 stage** 上聚合；
             #   旧实现把非末 PP stage 的结构性 0 计入分母 ⇒ 系统性减半。
