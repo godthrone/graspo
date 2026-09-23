@@ -93,6 +93,11 @@ PIPELINE_TRAIN_METRICS_PHASE: str = "pipeline_train_batch_after"
 #: 已知的**诊断类** phase 名（``_emit_rank_memory_event`` 的其余取值）：payload 只带
 #: 显存快照或结构信息，**不带** ``metrics``。登记在此供自检/文档用——若某天诊断事件
 #: 开始携带 metrics，采集侧会把它计入"含 metrics 的未登记 phase"并显式暴露（不静默）。
+#: **例外（显式登记）**：``fail_closed`` 有意携带 ``metrics``——失败步必须留下一行可被
+#: A7/取证链读到的读数（``skipped_nonfinite`` 等），否则"触发失败的那一步"永远没有读数
+#: （T018 实测缺口：raise 早于 metrics 构造 ⇒ 崩溃步零行）。该行**不进** ``STEP_METRICS_PHASES``
+#: （它不是成功步的逐步指标），因此采集侧会按既有规则把它计入 ``ignored_phase_records``
+#: 并写明 phase 名——这正是"显式暴露而非静默"的期望行为。
 DIAGNOSTIC_PHASES: frozenset[str] = frozenset(
     {
         "setup_after",
@@ -107,6 +112,13 @@ DIAGNOSTIC_PHASES: frozenset[str] = frozenset(
         # 因此两个字面量由 ``tests/core/test_determinism.py`` 的同步测试守住。
         # 本行 payload **不带** ``metrics`` ⇒ 采集侧不会误当逐步指标（§2.2 显式）。
         "first_step_probe",
+        # native PP 首步逐 rank 数值探针（R3，2026-09-23）：只读梯度/loss 读数，
+        # **不带** ``metrics``（见上条同理）。唯一真相源是
+        # ``graspo/flow/adapters/models/common/grad_probe.py`` 的调用点常量；
+        # 同步由 ``tests/flow/trainer/test_grad_fail_closed.py`` 守住。
+        "pp_numeric_probe",
+        # 失败步诊断行（R1，2026-09-23）：**先落盘、再 raise**，见上方例外说明。
+        "fail_closed",
     }
 )
 
@@ -2677,6 +2689,32 @@ def judge_tier(
         }
         primary_evidence_gap = all(primary_gap_flags[name] for name in failing_primary)
         substantive = classify_failure(first, a6)
+        # ★ **一致性修复 v2**（2026-09-23；v1 方向错了，见下）：
+        #   症状：T031/T038/T043/T044/T045（+T032）**同一条记录三个说法**——
+        #     `status=⚠ 口径不可测` 但 note 前缀 `❌ 不可用`、failure_class 记"通信硬件"。
+        #   **v1 的错**：我把状态词改成跟着 `substantive` 走 ⇒ 这 5 档变成 `❌ 不可用`，
+        #     而那个"通信硬件"**恰恰是不可靠标签**（指挥官复核：6 档里 5 档实为 `⚠-A7`）。
+        #   真根因：`classify_failure` 从**日志文本**里抓信号，而这些档 **`A1` 通过
+        #     （`exit_code=0`、步数精确跑满）** ⇒ 日志里的"通信/NCCL"文本很可能是
+        #     **无关输出**（例如被引用/被回显的字符串），**不能**当作这次运行的失败证据。
+        #   修法：**只有"这次运行本身没正常退出"（A1 未过）时，日志文本里的硬失败信号才可信**；
+        #     A1 已过 ⇒ 该信号降级为**诊断记录**，不参与状态与 failure_class。
+        log_signal = substantive
+        # ★ **只对"已证实不可靠"的那一类**这么做（指挥官复核：`通信硬件` 标签 6 档里
+        #   5 档实为 `⚠-A7`）——**不**推广到 OOM 等：真正的 OOM 有独立证据路径
+        #   （A6 数值异常 / 独立日志断言），且 OOM 与"A1 正常退出"通常互斥，
+        #   幸存的 OOM 用例必须继续照判（有既有用例守卫）。
+        if substantive is FailureClass.COMM_HARDWARE and a1.passed:
+            substantive = None
+            note_log_signal = (
+                f"（诊断：日志文本里出现过 `{log_signal}` 类字样，但本次 **A1 正常退出**，"
+                "该字样**不作为失败证据**——它更可能是无关输出；"
+                "这正是 `failure_class=通信硬件` 不可靠的来源）"
+            )
+        else:
+            note_log_signal = ""
+        # 真失败（本次运行自身的硬信号）优先于"采集侧读不到"
+        primary_evidence_gap = primary_evidence_gap and substantive is None
         if step_gate_not_applicable and others_ok:
             # 结构性不可测（口径层，不是能力层）：仅当其余主判据都过时落此态。
             failure_class = FailureClass.GATE_NOT_APPLICABLE
@@ -2691,6 +2729,7 @@ def judge_tier(
                 f"⚠ 口径不可测（取证缺口）：主判据读不到证据（{', '.join(failing_primary)}）"
                 " ⇒ 既不算可用、也不算不可用（fail-closed）。"
                 "（注：A3/A4 已降级为诊断，**不**再制造此态。）"
+                f"{note_log_signal}"
                 f"｜{diagnostics_note}"
             )
         else:

@@ -2173,6 +2173,17 @@ def run(args: argparse.Namespace) -> int:
             records.append(
                 {
                     "tier_id": tier_id,
+                    # ★ 身份字段必须**根上补齐**（2026-09-22 覆盖度分析：`T016/T034/T052–T054`
+                    #   这 5 行只有 22 个字段、缺身份键 ⇒ 下游只能做 fallback 回填，
+                    #   容易与 manifest 漂移。这里从**清单**（唯一真相源）直接落盘。
+                    "model": model,
+                    "algorithm": algorithm,
+                    "mode": mode,
+                    "backend": backend,
+                    "cards": cards,
+                    # 未跑的档没有判据结论 ⇒ 显式给空表（而不是缺键），
+                    # 让"缺字段"与"判据为空"在结构上可区分。
+                    "criteria": {},
                     "status": _status,
                     "status_provenance": _provenance,
                     "note": f"运行目录不存在：{first_dir}（{_why}）",
