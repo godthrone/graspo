@@ -583,18 +583,36 @@ class _Qwen35SFTTrainingMethods:
         # 不改数值、无任何集合通信**；读数**只进诊断行**（首步探针 / 失败步）⇒ 健康步
         # 不新增行、不新增键（见 tests/flow/trainer/test_grad_fail_closed.py 的钉子）。
         exchange_readings: list[dict[str, Any]] = []
+        # #1b（2026-09-23 裁定）：**发送完成后**再读一次同一 buffer，用于分离
+        # "我们的读数时刻不对（仪器问题甲）" 与 "通信真不保真（乙）"。
+        # ⚠ 保守性（必须登记）：复读要**保留张量引用** ⇒ 会阻止 allocator 复用该内存，
+        #   因此本测试对"释放后被复用"这一支是**保守**的（只可能少报、不会多报）。
+        pending_recheck: list[tuple[str, str, Any]] = []
+        post_wait_readings: list[dict[str, Any]] = []
         exchange_cap = 16
+        # #1c：逐 bit 级证据（raw bytes sha256）开销大 ⇒ **只在首个 batch**那一次开
+        probe_sha256 = int(self._train_batch_call_index) == 0
 
-        def record_exchange(direction: str, tensor: Any, chunk_idx: int) -> None:
-            """记录一个跨界交换张量的读数（None 跳过；总条数有上限）。"""
+        def record_exchange(
+            direction: str,
+            tensor: Any,
+            chunk_idx: int,
+            *,
+            recheck: bool = False,
+        ) -> None:
+            """记录交换张量读数（None 跳过；条数有上限；`recheck` ⇒ 发送后再读一次）。"""
             if tensor is None or len(exchange_readings) >= exchange_cap:
                 return
+            name = f"chunk{chunk_idx}"
             exchange_readings.extend(
                 pp_exchange_readings(
-                    [(direction, f"chunk{chunk_idx}", tensor)],
+                    [(direction, name, tensor)],
                     max_items=exchange_cap - len(exchange_readings),
+                    with_sha256=probe_sha256,
                 )
             )
+            if recheck and len(pending_recheck) < exchange_cap:
+                pending_recheck.append((direction, name, tensor))
 
         # 梯度累积：zero_grad 只调一次，所有 chunk 的梯度累加后统一 step
         if self.optimizer is not None:
@@ -633,7 +651,7 @@ class _Qwen35SFTTrainingMethods:
             # 机制探针 #1：本 chunk 的**前向交换**两端（收到 / 发出）
             record_exchange(PP_EXCHANGE_FWD_RECEIVED, stage_input, chunk_idx)
             if self.pp_rank != self.pp_size - 1:
-                record_exchange(PP_EXCHANGE_FWD_SENT, stage_output, chunk_idx)
+                record_exchange(PP_EXCHANGE_FWD_SENT, stage_output, chunk_idx, recheck=True)
             records[chunk_idx] = {
                 "stage_output": stage_output,
                 "stage_input": stage_input,
@@ -663,7 +681,7 @@ class _Qwen35SFTTrainingMethods:
                         else torch.zeros_like(stage_input)
                     )
                     # 机制探针 #1：**发出**（去上游）时的梯度状态 —— 裁定"本地生成"的钥匙
-                    record_exchange(PP_EXCHANGE_BWD_SENT, grad, chunk_idx)
+                    record_exchange(PP_EXCHANGE_BWD_SENT, grad, chunk_idx, recheck=True)
                     work = comm.bwd_send(
                         grad.contiguous(),
                         dst=int(self.tp_state.prev_pp_rank or 0),
@@ -692,7 +710,7 @@ class _Qwen35SFTTrainingMethods:
                         else torch.zeros_like(stage_input)
                     )
                     # 机制探针 #1：**发出**（去上游）时的梯度状态 —— 裁定"本地生成"的钥匙
-                    record_exchange(PP_EXCHANGE_BWD_SENT, grad, chunk_idx)
+                    record_exchange(PP_EXCHANGE_BWD_SENT, grad, chunk_idx, recheck=True)
                     work = comm.bwd_send(
                         grad.contiguous(),
                         dst=int(self.tp_state.prev_pp_rank or 0),
@@ -719,6 +737,15 @@ class _Qwen35SFTTrainingMethods:
         drain_sec = float(sched_stats.get("pipeline_drain_sec", 0.0))
         # 同步所有异步发送（数据已被下游消费），保证 buffer 生命周期安全
         wait_all(send_works)
+        # ── #1b：发送完成后复读同一 buffer（仅发送侧张量；见 pending_recheck 的保守性说明）──
+        for direction, name, tensor in pending_recheck:
+            post_wait_readings.extend(
+                pp_exchange_readings(
+                    [(direction, name, tensor)],
+                    max_items=exchange_cap,
+                    with_sha256=probe_sha256,
+                )
+            )
 
         all_finite = all(finite_flags)
         finite_tensor = torch.tensor([all_finite], dtype=torch.int, device=self.device)
@@ -808,6 +835,7 @@ class _Qwen35SFTTrainingMethods:
                         "fail_reason": grad_fail_reason,
                         "rank_grad_norms": [float(value) for value in rank_grad_norms],
                         "pp_exchange": exchange_readings,
+                        "pp_exchange_post_wait": post_wait_readings,
                         **local_grad_detail,
                     }
                 },
@@ -839,6 +867,7 @@ class _Qwen35SFTTrainingMethods:
                 "rank_grad_norms": [float(value) for value in rank_grad_norms],
                 "rank_grad_reports": rank_grad_reports,
                 "pp_exchange": exchange_readings,
+                "pp_exchange_post_wait": post_wait_readings,
                 **local_grad_detail,
             }
             self._emit_rank_memory_event(FAIL_CLOSED_PHASE, {"metrics": fail_closed_metrics})
