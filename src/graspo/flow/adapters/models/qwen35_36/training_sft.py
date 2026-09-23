@@ -7,6 +7,13 @@ from typing import Any
 import torch
 import torch.distributed as dist
 
+from graspo.flow.adapters.models.common.grad_probe import (
+    FAIL_CLOSED_PHASE,
+    PP_NUMERIC_PROBE_PHASE,
+    grad_fail_reason_text,
+    grad_gate_verdict,
+    reduced_grad_flags,
+)
 from graspo.flow.adapters.models.common.layers import _log_cuda_mem
 from graspo.flow.adapters.models.qwen35_36.helpers import collate_sft_batch
 from graspo.flow.adapters.models.qwen35_36.model import Qwen35HybridTextModel
@@ -683,11 +690,41 @@ class _Qwen35SFTTrainingMethods:
         dist.all_reduce(finite_tensor, op=dist.ReduceOp.MIN)
         all_finite = bool(finite_tensor.item())
 
-        # 逐 rank 梯度范数：所有 rank 都算（含 nan），再做集合汇总，得到"全局"旁证。
-        # 只在需要审计时才计算（all_finite 为假，或预授权模式），避免正常路径开销。
+        # ── R1（2026-09-23）：梯度有限性 / 填充度判据 ─────────────────────────────
+        # 为什么必须在这里：上面的 ``all_finite`` 只反映**末 stage 的 loss 是否有限**
+        # （``finite`` 仅在 ``pp_rank == pp_size-1`` 上赋值，其余 rank 恒 True），
+        # 而 T018 逐 rank 实测 rank2 在 step3 已有 ``grad_norm_mean=nan`` 却
+        # ``optimizer_steps=1``/``skipped_nonfinite=0`` ⇒ NaN 梯度被照常写进权重。
+        # 判据是纯函数（``models/common/grad_probe.py::grad_gate_verdict``），可零 GPU 单测。
+        local_grad = self.model.gradient_finiteness_report()
+        grad_nonfinite_any, grad_unpopulated_any = reduced_grad_flags(
+            local_report=local_grad, distributed=dist, device=self.device
+        )
+        grad_failed, grad_fail_reason = grad_gate_verdict(
+            loss_all_finite=all_finite,
+            grad_nonfinite_any=grad_nonfinite_any,
+            grad_unpopulated_any=grad_unpopulated_any,
+        )
+        step_ok = not grad_failed
+        is_first_train_batch = self._train_batch_call_index == 0
+        # 诊断步（首步 / 本步要拦）才做第二遍 `max|·|` 归约：让落盘行带上
+        # ``grad_max_abs`` 与 argmax 张量名（"范数是否被单个元素支配"的区分钥匙）。
+        # 条件由 WORLD 归约后的标志决定 ⇒ 各 rank 一致，不会造成集合错配。
+        want_detail = (not step_ok) or is_first_train_batch
+        local_grad_detail = (
+            self.model.gradient_finiteness_report(with_max_abs=True) if want_detail else local_grad
+        )
+
+        # 逐 rank 梯度范数/探针：所有 rank 都算（含 nan），再做集合汇总，得到"全局"旁证。
+        # 只在需要审计时才计算（本步要拦 / 首步探针 / 预授权模式），避免正常路径开销。
+        # 注意：条件 ``not step_ok`` 由 WORLD 归约后的标志决定 ⇒ 各 rank **一致**，
+        # 因此这里的集合通信不会错配（§2.1 契约）。
         rank_grad_norms: list[float] = []
-        if not all_finite or _nonfinite_skip_preauthorized(
-            self.config.native.allow_nonfinite_grad_skip
+        rank_grad_reports: list[dict[str, Any]] = []
+        if (
+            not step_ok
+            or is_first_train_batch
+            or _nonfinite_skip_preauthorized(self.config.native.allow_nonfinite_grad_skip)
         ):
             local_grad_norm = self._trainable_grad_norm()
             gathered_norms: list[float | None] = [None for _ in range(self.world_size)]
@@ -696,8 +733,12 @@ class _Qwen35SFTTrainingMethods:
                 float(value) if value is not None else float("nan") for value in gathered_norms
             ]
             self.rank_grad_norms_last = rank_grad_norms
+            # 逐 rank 探针表（诊断行用）：表很小（计数 + 前 N 个张量名 + max|g|）。
+            gathered_reports: list[dict[str, Any] | None] = [None for _ in range(self.world_size)]
+            dist.all_gather_object(gathered_reports, local_grad_detail)
+            rank_grad_reports = [item for item in gathered_reports if isinstance(item, dict)]
 
-        if all_finite:
+        if step_ok:
             grad_norm_sum, optimizer_steps, nonzero_grad_count = self._sync_grads_and_step(
                 max_grad_norm=max_grad_norm,
                 valid_micro_batches=chunk_count,
@@ -708,19 +749,74 @@ class _Qwen35SFTTrainingMethods:
             skipped_nonfinite = chunk_count
 
         self._train_batch_call_index += 1
+        if is_first_train_batch:
+            # R3（2026-09-23）：首步逐 rank 数值探针——**只增行、不新增集合通信、
+            # 不参与判据**。明细（``grad_max_abs`` / argmax 张量名）由本 rank 另算一次
+            # （只发生在首步/诊断步），用于回答"范数是否被单个元素支配"。
+            self._emit_rank_memory_event(
+                PP_NUMERIC_PROBE_PHASE,
+                {
+                    PP_NUMERIC_PROBE_PHASE: {
+                        "step": 0,
+                        "pp_rank": self.pp_rank,
+                        "pp_size": self.pp_size,
+                        "loss_all_finite": all_finite,
+                        "finite_flags": [bool(flag) for flag in finite_flags],
+                        "loss_values": [float(value) for value in loss_values],
+                        "optimizer_stepped": bool(step_ok),
+                        "fail_reason": grad_fail_reason,
+                        "rank_grad_norms": [float(value) for value in rank_grad_norms],
+                        **local_grad_detail,
+                    }
+                },
+            )
         if skipped_nonfinite > 0:
             # ★ F-4 P0 修法①（宪法 §3.4：这是防线，不是退路）：首个非有限梯度
             #   **不得**被静默跳过。此前路径继续跑完全部步、写 final checkpoint、
             #   exit=0，于是"权重从第 2 步起完全冻结"的 run 看起来是成功的。
             #   ⇒ 这里打审计 WARNING（列出逐 rank 读数），并在**没有**显式预授权
             #   （§3.3，默认关闭）时直接硬失败——不写 final、exit≠0。
+            # ★ R1（2026-09-23）：**先落盘诊断行、再 raise**。此前 raise 早于
+            #   ``_build_sft_metrics`` ⇒ 触发失败的那一步**没有任何 rank_metrics 行**
+            #   （T018 实测：4 步有读数、崩溃的第 5 步零行 ⇒ 取证只能靠推理）。
+            fail_closed_metrics = {
+                "step": self._train_batch_call_index,
+                "phase_kind": FAIL_CLOSED_PHASE,
+                "fail_reason": grad_fail_reason,
+                "fail_reason_text": grad_fail_reason_text(grad_fail_reason),
+                "optimizer_steps": 0,  # 本步未 step（步进被本判据拦下）
+                "optimizer_stepped": False,
+                "skipped_nonfinite": int(skipped_nonfinite),
+                "loss_all_finite": bool(all_finite),
+                "finite_flags": [bool(flag) for flag in finite_flags],
+                "loss_values": [float(value) for value in loss_values],
+                "pp_rank": self.pp_rank,
+                "pp_size": self.pp_size,
+                "grad_nonfinite_any": bool(grad_nonfinite_any),
+                "grad_unpopulated_any": bool(grad_unpopulated_any),
+                "rank_grad_norms": [float(value) for value in rank_grad_norms],
+                "rank_grad_reports": rank_grad_reports,
+                **local_grad_detail,
+            }
+            self._emit_rank_memory_event(FAIL_CLOSED_PHASE, {"metrics": fail_closed_metrics})
+            nonfinite_names = (
+                ", ".join(
+                    f"{item['name']}(max|g|={item['max_abs']:.6g})"
+                    for item in local_grad_detail["first_nonfinite_grad_names"]
+                )
+                or "无（本 rank 梯度全有限）"
+            )
             self._record_nonfinite_skip(
                 skipped=skipped_nonfinite,
                 optimizer_steps=optimizer_steps,
                 detail=(
-                    "pipeline SFT: 本步梯度含非有限值 ⇒ 已跳过 optimizer.step()"
+                    f"pipeline SFT: 本步判据={grad_fail_reason}"
+                    f"（{grad_fail_reason_text(grad_fail_reason)}）⇒ 已跳过 optimizer.step()"
                     f"（逐 rank grad_norm={[float(value) for value in rank_grad_norms]}，"
-                    f"逐 chunk finite={finite_flags}）"
+                    f"逐 chunk finite={finite_flags}，"
+                    f"本 rank grad_populated_count={local_grad_detail['grad_populated_count']}"
+                    f"/{local_grad_detail['trainable_tensor_count']}，"
+                    f"非有限梯度张量={nonfinite_names}）"
                 ),
                 rank_grad_norms=rank_grad_norms,
             )
