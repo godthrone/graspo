@@ -676,15 +676,26 @@ def test_collector_msswift_layout_makes_a1_to_a6_decidable(tmp_path):
     assert record["criteria"] == {
         "A1": True,
         "A2": True,
-        "A3": True,
+                # ★ 2026-09-23 假绿收口：仅 `safetensors_header_stdlib`（头部级）**不得**支撑 A3
+        "A3": False,
+        #   并落机器可核来源（本 fixture 只有 safetensors 头部 ⇒ safetensors_header）
+        #   ⇒ 该档因证据等级不足落「不可判定」（fail-closed，不是 True 也不是 False 的缩放）
+
         "A4": True,
         "A5": True,
         "A6": True,
         # ★ A7（训练真推进，2026-09-22 收紧）：nonfinite 跳过 = 0 ⇒ 通过。
         "A7": True,
     }, record["criteria_detail"]
-    assert record["status"] == "✅ 可用"
-    assert record["failure_class"] is None
+    # ★ 2026-09-23 假绿收口（消费端硬判据）：本 fixture 的 A3 只有 `safetensors_header_stdlib`
+    #   （**头部级**）⇒ **不得支撑 A3=True** ⇒ 该档落「**不可判定**」：既不是 ✅（假绿），
+    #   也不是 ❌（那会把"测不出来"误记成"训练失败"）。方向仍是 fail-closed。
+    assert record["a3_source"] == "safetensors_header", record.get("a3_source")
+    assert record["criteria"]["A3"] is False, record["criteria_detail"]
+    assert record["status"] == "⚠ 口径不可测", record["note"]
+    assert "A3" in record["note"] or "不可判定" in record["note"]
+    # A3 证据等级不足 ⇒ 落"取证缺口"分类（不是训练失败）
+    assert record["failure_class"] == "取证不足（不可判定）", record["failure_class"]
     # 读数口径必须自证（§1.4）：序列来自 ms-swift logging.jsonl，而不是 stdout 兜底。
     assert record["series_source"] == "msswift_logging"
     assert record["steps_declared_total"] == 6
@@ -698,7 +709,9 @@ def test_collector_msswift_a5_artifacts_are_recognised_in_swift_layout(tmp_path)
     record = _run_collector(tmp_path, manifest=_MSSWIFT_MANIFEST)
 
     assert record["criteria"]["A5"] is True
-    assert record["criteria"]["A3"] is True
+    # ★ 假绿收口：A5 齐全**不能**顺带把 A3 抬起来 —— 头部级证据 ⇒ 不得为 True
+    assert record["a3_source"] == "safetensors_header", record.get("a3_source")
+    assert record["criteria"]["A3"] is False, record["criteria_detail"]["A3"]
     assert "checkpoint" in record["criteria_detail"]["A5"]
 
 
@@ -816,7 +829,13 @@ def test_collector_a4_rejects_controllable_nondeterminism_at_the_first_step(tmp_
     #   但 A4 的结论**仍必须被计算并记录**（降级 ≠ 删除），且要出现在诊断备注里。
     assert record["criteria"]["A4"] is False, record["criteria_detail"]["A4"]
     assert "首步" in record["criteria_detail"]["A4"]
-    assert record["status"] == "✅ 可用", record["note"]
+    # ★ 2026-09-23 假绿收口（消费端硬判据）：本 fixture 的 A3 只有 `safetensors_header_stdlib`
+    #   （**头部级**）⇒ **不得支撑 A3=True** ⇒ 该档落「**不可判定**」：既不是 ✅（假绿），
+    #   也不是 ❌（那会把"测不出来"误记成"训练失败"）。方向仍是 fail-closed。
+    assert record["a3_source"] == "safetensors_header", record.get("a3_source")
+    assert record["criteria"]["A3"] is False, record["criteria_detail"]
+    assert record["status"] == "⚠ 口径不可测", record["note"]
+    assert "A3" in record["note"] or "不可判定" in record["note"]
     assert "诊断" in record["note"] and "A4" in record["note"]
 
 
@@ -835,7 +854,13 @@ def test_collector_a4_still_rejects_gross_divergence(tmp_path):
 
     # ★ 同上：A4 已降级为诊断 ⇒ 跑完就是 ✅ 可用；A4 的"量级更大的分歧"仍被如实记录。
     assert record["criteria"]["A4"] is False
-    assert record["status"] == "✅ 可用", record["note"]
+    # ★ 2026-09-23 假绿收口（消费端硬判据）：本 fixture 的 A3 只有 `safetensors_header_stdlib`
+    #   （**头部级**）⇒ **不得支撑 A3=True** ⇒ 该档落「**不可判定**」：既不是 ✅（假绿），
+    #   也不是 ❌（那会把"测不出来"误记成"训练失败"）。方向仍是 fail-closed。
+    assert record["a3_source"] == "safetensors_header", record.get("a3_source")
+    assert record["criteria"]["A3"] is False, record["criteria_detail"]
+    assert record["status"] == "⚠ 口径不可测", record["note"]
+    assert "A3" in record["note"] or "不可判定" in record["note"]
 
 
 # ── H1：A2/A3 的"环境性伪否"收口 ────────────────────────────────────────────
