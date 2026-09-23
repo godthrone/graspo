@@ -12,6 +12,7 @@ from graspo.flow.adapters.models.common.grad_probe import (
     grad_fail_reason_text,
     grad_gate_verdict,
     reduced_grad_flags,
+    step_index_one_based,
 )
 from graspo.flow.adapters.models.common.layers import _log_cuda_mem
 from graspo.flow.adapters.models.qwen35_36.model import Qwen35HybridTextModel
@@ -380,7 +381,7 @@ class _Qwen35TrainingMethods:
                         PP_NUMERIC_PROBE_PHASE,
                         {
                             PP_NUMERIC_PROBE_PHASE: {
-                                "step": 0,
+                                "step": step_index_one_based(self._train_batch_call_index),
                                 "pp_rank": self.pp_rank,
                                 "pp_size": self.pp_size,
                                 "loss_all_finite": True,
@@ -394,7 +395,7 @@ class _Qwen35TrainingMethods:
                     FAIL_CLOSED_PHASE,
                     {
                         "metrics": {
-                            "step": self._train_batch_call_index,
+                            "step": step_index_one_based(self._train_batch_call_index),
                             "phase_kind": FAIL_CLOSED_PHASE,
                             "fail_reason": grad_fail_reason,
                             "fail_reason_text": grad_fail_reason_text(grad_fail_reason),
@@ -416,7 +417,7 @@ class _Qwen35TrainingMethods:
                     PP_NUMERIC_PROBE_PHASE,
                     {
                         PP_NUMERIC_PROBE_PHASE: {
-                            "step": 0,
+                            "step": step_index_one_based(self._train_batch_call_index),
                             "pp_rank": self.pp_rank,
                             "pp_size": self.pp_size,
                             "loss_all_finite": True,

@@ -227,3 +227,24 @@ def grad_fail_reason_text(reason: str) -> str:
     if reason == GRAD_FAIL_LOSS_NONFINITE:
         return "末 stage 的 loss 含非有限值（既有判据；非梯度判据）"
     return f"未知失败原因码：{reason!r}"
+
+
+def step_index_one_based(call_index: int) -> int:
+    """训练批序号落盘的**统一口径**：``1-based``（与 ``global_step`` 一致）。
+
+    **背景（P16，2026-09-23）**：本包最初两处落盘各不相同 —— ``pp_numeric_probe`` 行硬编码
+    ``step=0``；``fail_closed`` 行在 SFT 侧是 1-based（``_train_batch_call_index`` 自增**之后**写）
+    而在 RL 侧是 0-based（自增在函数**末尾**）。下游若按 ``step`` 横向对行会错位 —— 正是本项目
+    反复踩的"同一概念两套口径"。
+
+    **处置**：先**只读核查全部消费方**（``scripts/collect_results.py`` /
+    ``src/graspo/cli/tools.py`` / ``src/graspo/core/result_judge.py``）——**没有任何消费方读
+    rank_metrics 行的 ``step`` 做对行/join/去重**（collector 的 ``first_logged_step`` 读 ms-swift
+    ``trainer_state.log_history[*].step``；cli 读 ``run_cumulative.step``；逐步指标行本身
+    **不含** ``step`` 键）⇒ 按裁定**统一到 1-based**，
+    收敛到本函数一处（§1.4 单一真相源），并由测试钉住（含"训练模块不得再出现 0-based 字面量"）。
+
+    :param call_index: 0-based 的调用序号（``GraspoFlowTrainer._train_batch_call_index``）
+    :returns: 1-based 的批序号（与 ``global_step`` 同口径）
+    """
+    return int(call_index) + 1

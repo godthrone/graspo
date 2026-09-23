@@ -13,6 +13,7 @@ from graspo.flow.adapters.models.common.grad_probe import (
     grad_fail_reason_text,
     grad_gate_verdict,
     reduced_grad_flags,
+    step_index_one_based,
 )
 from graspo.flow.adapters.models.common.layers import _log_cuda_mem
 from graspo.flow.adapters.models.qwen35_36.helpers import collate_sft_batch
@@ -706,7 +707,10 @@ class _Qwen35SFTTrainingMethods:
             grad_unpopulated_any=grad_unpopulated_any,
         )
         step_ok = not grad_failed
-        is_first_train_batch = self._train_batch_call_index == 0
+        # 0-based 批序号（自增前的值）；落盘一律经 ``step_index_one_based``
+        # 转 1-based —— P16 统一口径（2026-09-23 裁定）
+        batch_index_0based = int(self._train_batch_call_index)
+        is_first_train_batch = batch_index_0based == 0
         # 诊断步（首步 / 本步要拦）才做第二遍 `max|·|` 归约：让落盘行带上
         # ``grad_max_abs`` 与 argmax 张量名（"范数是否被单个元素支配"的区分钥匙）。
         # 条件由 WORLD 归约后的标志决定 ⇒ 各 rank 一致，不会造成集合错配。
@@ -716,15 +720,18 @@ class _Qwen35SFTTrainingMethods:
         )
 
         # 逐 rank 梯度范数/探针：所有 rank 都算（含 nan），再做集合汇总，得到"全局"旁证。
-        # 只在需要审计时才计算（本步要拦 / 首步探针 / 预授权模式），避免正常路径开销。
+        # 只在需要审计时才计算（本步要拦 / 预授权模式），避免正常路径开销。
+        # ★ 2026-09-23 裁定 5(B)：**首步不再并入本条件**。理由：本装置的目的是"把错误暴露出来"，
+        #   不该反过来给训练路径加集合通信——**被测对象不得被观测动作扰动**；而 NaN 缺陷的候选
+        #   机制之一正是 PP 边界的流/时序纪律（`record_stream` 零命中），在首步插一次集合通信
+        #   可能正好扰动要观测的对象。代价：健康首步的 `pp_numeric_probe` 行 `rank_grad_norms=[]`
+        #   （其余字段不变——`grad_max_abs`/填充计数等由本地探针给出，不经集合通信）。
         # 注意：条件 ``not step_ok`` 由 WORLD 归约后的标志决定 ⇒ 各 rank **一致**，
         # 因此这里的集合通信不会错配（§2.1 契约）。
         rank_grad_norms: list[float] = []
         rank_grad_reports: list[dict[str, Any]] = []
-        if (
-            not step_ok
-            or is_first_train_batch
-            or _nonfinite_skip_preauthorized(self.config.native.allow_nonfinite_grad_skip)
+        if not step_ok or _nonfinite_skip_preauthorized(
+            self.config.native.allow_nonfinite_grad_skip
         ):
             local_grad_norm = self._trainable_grad_norm()
             gathered_norms: list[float | None] = [None for _ in range(self.world_size)]
@@ -757,7 +764,7 @@ class _Qwen35SFTTrainingMethods:
                 PP_NUMERIC_PROBE_PHASE,
                 {
                     PP_NUMERIC_PROBE_PHASE: {
-                        "step": 0,
+                        "step": step_index_one_based(batch_index_0based),
                         "pp_rank": self.pp_rank,
                         "pp_size": self.pp_size,
                         "loss_all_finite": all_finite,
@@ -780,7 +787,7 @@ class _Qwen35SFTTrainingMethods:
             #   ``_build_sft_metrics`` ⇒ 触发失败的那一步**没有任何 rank_metrics 行**
             #   （T018 实测：4 步有读数、崩溃的第 5 步零行 ⇒ 取证只能靠推理）。
             fail_closed_metrics = {
-                "step": self._train_batch_call_index,
+                "step": step_index_one_based(batch_index_0based),
                 "phase_kind": FAIL_CLOSED_PHASE,
                 "fail_reason": grad_fail_reason,
                 "fail_reason_text": grad_fail_reason_text(grad_fail_reason),
