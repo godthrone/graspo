@@ -192,7 +192,7 @@
 | T015 | 9B | SFT | LoRA | ms-swift | 4 | — 未测 | 28.54 GiB | ⚠ 口径不可测 | 2026-09-22 | 同上;折 9B LoRA≈18GB 总量,与卡数无关【S7】。 |
 | T016 | 9B | SFT | 全量 | native | 1 | — 未测 | — 未测 | ⛔ 无配方 | — | 9B 全参≈162GB(=18B/参数)【S16/S7】>80GB;单卡无分片/无 offload 业界同样装不下;业界标准走 ZeRO-Offload(单卡可训至13B【S17】)/ZeRO-3;我方 offload 已实测 1卡50步通过(峰值38.2GiB)。 |
 | T017 | 9B | SFT | 全量 | native | 2 | — 未测 | 48.09 GiB | ✅ 可用 | 2026-09-22 | pp=2 全参已跑通【我方实测】;历史 grad_norm 跨8个数量级属实现层数值缺陷,同模型 1卡offload 50步零NaN对照成立,非硬件。 |
-| T018 | 9B | SFT | 全量 | native | 4 | — 未测 | 31.98 GiB | ❌ 不可用 | 2026-09-22 | 9B 全参≈162GB,4卡 ZeRO-2/3 或 FSDP 业界可行【S16/S18/S24】;本档失败为 native PP 数值缺陷(rank2 第3步梯度 NaN),判据错配已修,非硬件。 |
+| T018 | 9B | SFT | 全量 | native | 4 | — 未测 | 31.98 GiB | ❌ 不可用 | 2026-09-22 | 9B 全参≈162GB,4卡 ZeRO-2/3 或 FSDP 业界可行【S16/S18/S24】;本档失败为 native PP 数值缺陷(rank2 第3步梯度 NaN),判据错配已修;PP 边界 vs bf16 优化器态尚未分离(未定论),非硬件。 |
 | T019 | 9B | SFT | 全量 | ms-swift | 1 | — 未测 | 36.58 GiB | ⚠ 口径不可测 | 2026-09-22 | 同上:9B 全参≈162GB>80GB,单卡无 offload 业界不可行【S16/S7】;业界用 ZeRO-Offload/ZeRO-3【S17/S18】;ms-swift zero2_offload 同族已实测通过。 |
 | T020 | 9B | SFT | 全量 | ms-swift | 2 | — 未测 | 36.57 GiB | ⚠ 口径不可测 | 2026-09-22 | ≈81GB/卡>80G(折算)【S7】;ZeRO-3 分片后可行【S5】。 |
 | T021 | 9B | SFT | 全量 | ms-swift | 4 | — 未测 | — 未测 | ❌ 不可用 | 2026-09-22 | 同 T006:9B 全参≈162GB,4卡 ZeRO-2/3 业界可行【S16/S18/S24】;本档 shape_mismatch 系 AutoTP4 视觉塔错切,上游 #8285 已由 DS≥0.19.6 修复【S20/S22】,非硬件。 |
@@ -209,8 +209,8 @@
 | T032 | 9B | GRASPO | LoRA | ms-swift | 2 | — 未测 | 23.05 GiB | ⚠ 口径不可测 | 2026-09-22 | 同上;无 2 卡专档;vLLM TP 摊 rollout 显存【S4】。 |
 | T033 | 9B | GRASPO | LoRA | ms-swift | 4 | — 未测 | 23.06 GiB | ⚠ 口径不可测 | 2026-09-22 | 同上;4 卡可分置训练与 rollout【S4】。 |
 | T034 | 9B | GRASPO | 全量 | native | 1 | — 未测 | — 未测 | ⛔ 无配方 | — | 9B 全参+rollout 单卡:无 offload≈162GB>80GB 不可行,业界须 ZeRO-3/offload【S16/S17/S18】;native 全参 offload 已实现并实测 1卡50步通过。 |
-| T035 | 9B | GRASPO | 全量 | native | 2 | — 未测 | — 未测 | ❌ 不可用 | 2026-09-22 | 9B 全参 ZeRO-2/3 分片后 2卡显存可行【S16/S18】;本档 exit=137 系 native PP rollout 未证实的无界 hang(自仓已 fail-closed 拦),非硬件。 |
-| T036 | 9B | GRASPO | 全量 | native | 4 | — 未测 | — 未测 | ❌ 不可用 | 2026-09-22 | 9B 全参 4卡 ZeRO-2/3 业界可行【S16/S18/S24】;本档被自仓启动门禁按设计拒绝(native PP rollout 从未跑通),非硬件。 |
+| T035 | 9B | GRASPO | 全量 | native | 2 | — 未测 | — 未测 | ❌ 不可用 | 2026-09-22 | 9B 全参 ZeRO-2/3 分片后 2卡显存可行【S16/S18】;本档 exit=137 系 native PP rollout 未证实的无界 hang(自仓已 fail-closed 拦);PP 边界 vs bf16 优化器态尚未分离(未定论),非硬件。 |
+| T036 | 9B | GRASPO | 全量 | native | 4 | — 未测 | — 未测 | ❌ 不可用 | 2026-09-22 | 9B 全参 4卡 ZeRO-2/3 业界可行【S16/S18/S24】;本档被自仓启动门禁按设计拒绝(native PP rollout 从未跑通);PP 边界 vs bf16 优化器态尚未分离(未定论),非硬件。 |
 | T037 | 9B | GRASPO | 全量 | ms-swift | 1 | — 未测 | 37.83 GiB | ❌ 不可用 | 2026-09-22 | 显存非瓶颈(实测每卡37.83GiB);失败系上游 ms-swift selective_log_softmax off-by-one(同上游未决 #6035,[2382,1] vs [2381,248320])【S25/S27】,非硬件。 |
 | T038 | 9B | GRASPO | 全量 | ms-swift | 2 | — 未测 | 34.89 GiB | ⚠ 口径不可测 | 2026-09-22 | 同上;2 卡≈81GB/卡>80G(折算)【S7】,须 ZeRO-3+offload【S4】。 |
 | T039 | 9B | GRASPO | 全量 | ms-swift | 4 | — 未测 | — 未测 | ❌ 不可用 | 2026-09-22 | 9B 全参≈162GB,4卡 ZeRO-2/3 业界可行【S16/S18】;本档 TP 组数据不一致,上游契约要求自定义 DataLoader 保证 TP 组内一致【S21/S23】,ms-swift RL 侧缺 TP-aware 采样,DS 升级不解决。 |
