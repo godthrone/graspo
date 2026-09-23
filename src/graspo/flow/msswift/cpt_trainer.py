@@ -139,6 +139,20 @@ class MsSwiftCptTrainer:
                 "--logging_steps",
                 "1",
             ]
+        # ★ 探针接线（2026-09-23 补齐）：SFT / GRPO / OPD 三条通道**早已**在此处
+        #   `extra_argv += probe_active_extra_argv()`，**唯独 CPT 通道漏了**——实测后果：
+        #   在 CPT 档（如 T001）开探针时，`--callbacks` 与 `--logging_steps 1` **都不会注入**
+        #   ⇒ 探针不注册（无 `rank_metrics` 旁路）、逐步日志密度仍是默认每 5 步
+        #   （冒烟裸读数：`logging.jsonl` 23 行、步标记 `1,5,10,15,…`、`stdout` 里
+        #   `logging_steps=5`）⇒ A7 仍取不到"覆盖每一步"的证据。
+        #   这里与 :mod:`~graspo.flow.msswift.sft_trainer` **同一接线点、同一守卫**
+        #   （§1.4 单一真相源：判据只有 `first_step_probe` 一处）。
+        from graspo.flow.msswift.first_step_probe import probe_active_extra_argv
+
+        probe_argv = probe_active_extra_argv()
+        # 只在没有同名参数时追加，避免与冒烟参数冲突（§2.3 边界校验）。
+        if "--callbacks" not in extra_argv:
+            extra_argv += probe_argv
         argv = graspo_to_ms_swift_argv(
             self.config,
             stage="cpt",
