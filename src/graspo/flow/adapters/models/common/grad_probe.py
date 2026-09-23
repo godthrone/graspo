@@ -138,14 +138,22 @@ def tensor_digest(
         "digest_tail": tail,
     }
     if with_sha256:
-        try:
-            import hashlib
+        import hashlib
 
-            digest["digest_sha256"] = hashlib.sha256(
-                flat.contiguous().cpu().numpy().tobytes()
-            ).hexdigest()
-        except Exception:  # noqa: BLE001 —— 取不到摘要 ⇒ None（不得把"算不出"当"不一致"）
-            digest["digest_sha256"] = None
+        digest["digest_sha256"] = None
+        digest["digest_sha256_error"] = None
+        try:
+            host = flat.detach().cpu().contiguous()
+            # ★ B 修（2026-09-23）：bf16/fp16 没有 numpy dtype（实测 `.numpy()` 直接抛
+            # `TypeError: Got unsupported ScalarType BFloat16` ⇒ 摘要静默变 None）。
+            # 16 位浮点按 **uint16 逐位**取字节（保真且可比），其余走 numpy。
+            if host.dtype in (torch.bfloat16, torch.float16):
+                payload = host.view(torch.uint16).numpy().tobytes()
+            else:
+                payload = host.numpy().tobytes()
+            digest["digest_sha256"] = hashlib.sha256(payload).hexdigest()
+        except Exception as exc:  # noqa: BLE001 —— 取不到 ⇒ 记**原因**（不许静默 None）
+            digest["digest_sha256_error"] = f"{type(exc).__name__}: {exc}"
     return digest
 
 

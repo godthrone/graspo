@@ -651,6 +651,21 @@ class TestTensorDigest:
         assert digest["digest_head"] == [0.0, 1.0, 2.0]
         assert digest["digest_tail"] == [7.0, 8.0, 9.0]
 
+    def test_sha256_works_for_bfloat16(self) -> None:
+        """★ B 修：bf16 没有 numpy dtype（`.numpy()` 会抛）⇒ 必须走 uint16 逐位字节化，
+        且失败要留 `digest_sha256_error`（不许静默 None）。"""
+        from graspo.flow.adapters.models.common.grad_probe import tensor_digest
+
+        a = torch.arange(8, dtype=torch.bfloat16)
+        da = tensor_digest(a, with_sha256=True)
+        assert da["digest_sha256"], da
+        assert len(str(da["digest_sha256"])) == 64
+        assert da.get("digest_sha256_error") is None
+        b = a.clone()
+        assert tensor_digest(b, with_sha256=True)["digest_sha256"] == da["digest_sha256"]
+        b[0] = b[0] + 1
+        assert tensor_digest(b, with_sha256=True)["digest_sha256"] != da["digest_sha256"]
+
     def test_sha256_is_opt_in(self) -> None:
         from graspo.flow.adapters.models.common.grad_probe import tensor_digest
 
