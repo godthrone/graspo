@@ -534,6 +534,190 @@ class TestMechanismHistogram:
         assert report["nonfinite_by_layer"] == {str(i): 1 for i in range(20)}
 
 
+# ── 8) 机制探针 #1/#2：PP 交换张量读数 + 方向信号（纯本地，零集合通信）──────────────
+
+
+class TestExchangeTensorReport:
+    """★ 方案 #1（2026-09-23 裁定）：裁定"边界携带 vs 本地生成"所需的最小读数。"""
+
+    def test_healthy_tensor_fields(self) -> None:
+        from graspo.flow.adapters.models.common.grad_probe import (
+            PP_EXCHANGE_BWD_RECEIVED,
+            exchange_tensor_report,
+        )
+
+        tensor = torch.ones(2, 3)
+        report = exchange_tensor_report("grad_output", tensor, direction=PP_EXCHANGE_BWD_RECEIVED)
+        assert report["direction"] == PP_EXCHANGE_BWD_RECEIVED
+        assert report["name"] == "grad_output"
+        assert report["shape"] == [2, 3]
+        assert report["numel"] == 6
+        assert report["isfinite"] is True
+        assert report["max_abs"] == 1.0
+        assert report["first_nonfinite_index"] is None
+        assert "float32" in report["dtype"]
+
+    def test_nan_tensor_reports_nan_max_and_first_index(self) -> None:
+        from graspo.flow.adapters.models.common.grad_probe import exchange_tensor_report
+
+        tensor = torch.ones(2, 3)
+        tensor.view(-1)[4] = float("nan")
+        report = exchange_tensor_report("stage_input", tensor, direction="bwd_sent_grad")
+        assert report["isfinite"] is False
+        assert report["max_abs"] != report["max_abs"]  # NaN 原样透出
+        assert report["first_nonfinite_index"] == 4
+
+    def test_inf_is_not_finite_but_max_abs_is_inf(self) -> None:
+        from graspo.flow.adapters.models.common.grad_probe import exchange_tensor_report
+
+        tensor = torch.zeros(4)
+        tensor[1] = float("inf")
+        report = exchange_tensor_report("x", tensor, direction="fwd_sent_hidden")
+        assert report["isfinite"] is False
+        assert report["max_abs"] == float("inf")
+        assert report["first_nonfinite_index"] == 1
+
+    def test_probe_does_not_modify_the_tensor(self) -> None:
+        from graspo.flow.adapters.models.common.grad_probe import exchange_tensor_report
+
+        tensor = torch.ones(2, 3)
+        tensor.view(-1)[0] = float("nan")
+        before = tensor.clone()
+        exchange_tensor_report("x", tensor, direction="fwd_received_hidden")
+        assert torch.allclose(before, tensor, equal_nan=True)
+
+    def test_none_tensors_are_skipped_and_cap_applies(self) -> None:
+        from graspo.flow.adapters.models.common.grad_probe import pp_exchange_readings
+
+        items = [("d", "none", None), ("d", "a", torch.ones(1)), ("d", "b", torch.ones(1))]
+        readings = pp_exchange_readings(items)
+        assert [r["name"] for r in readings] == ["a", "b"]
+        capped = pp_exchange_readings(
+            [("d", f"t{i}", torch.ones(1)) for i in range(10)], max_items=3
+        )
+        assert [r["name"] for r in capped] == ["t0", "t1", "t2"]
+
+    def test_readings_are_json_safe(self) -> None:
+        """读数要能直接进 rank_metrics（jsonl）——不得含 tensor 对象。"""
+        import json
+
+        from graspo.flow.adapters.models.common.grad_probe import pp_exchange_readings
+
+        readings = pp_exchange_readings([("d", "x", torch.ones(2, 2))])
+        assert json.loads(json.dumps(readings))[0]["shape"] == [2, 2]
+
+    def test_probe_helpers_never_call_distributed_collectives(self) -> None:
+        """★ 硬约束（裁定要求）：**绝不新增集合通信** —— 两个函数源码里不得出现 `dist.`。"""
+        import inspect
+
+        from graspo.flow.adapters.models.common import grad_probe
+
+        for func in (grad_probe.exchange_tensor_report, grad_probe.pp_exchange_readings):
+            source = inspect.getsource(func)
+            assert "dist." not in source, func.__name__
+            for forbidden in ("all_reduce", "all_gather", "broadcast", "barrier"):
+                assert forbidden not in source, (func.__name__, forbidden)
+
+
+class TestDirtyBlockSide:
+    """★ 方案 #2：脏块位置 / 层号逆序（口径：**层号**，不是观测时序；见 grad_probe 注释）。"""
+
+    def _bag(self, specs: dict[str, str]) -> _ParamBag:
+        def grad(kind: str):
+            value = torch.ones(4)
+            if kind == "nan":
+                value[0] = float("nan")
+            return value
+
+        return _ParamBag({name: (torch.zeros(4), grad(kind)) for name, kind in specs.items()})
+
+    def test_adjacent_to_first_local_layer(self) -> None:
+        bag = self._bag({"layers.0.a.weight": "nan", "layers.1.a.weight": "ok"})
+        report = grad_finiteness_report(bag.named_parameters())
+        assert report["dirty_block_side"] == "adjacent_to_first_local_layer"
+        assert report["nonfinite_layers_descending"] == [0]
+
+    def test_adjacent_to_last_local_layer(self) -> None:
+        bag = self._bag(
+            {"layers.0.a.weight": "ok", "layers.1.a.weight": "ok", "layers.2.a.weight": "nan"}
+        )
+        report = grad_finiteness_report(bag.named_parameters())
+        assert report["dirty_block_side"] == "adjacent_to_last_local_layer"
+        assert report["nonfinite_layers_descending"] == [2]
+
+    def test_spans_both_ends_and_middle(self) -> None:
+        both = self._bag(
+            {
+                "layers.0.a.weight": "nan",
+                "layers.1.a.weight": "ok",
+                "layers.2.a.weight": "nan",
+            }
+        )
+        assert (
+            grad_finiteness_report(both.named_parameters())["dirty_block_side"] == "spans_both_ends"
+        )
+        middle = self._bag(
+            {
+                "layers.0.a.weight": "ok",
+                "layers.1.a.weight": "nan",
+                "layers.2.a.weight": "ok",
+            }
+        )
+        assert grad_finiteness_report(middle.named_parameters())["dirty_block_side"] == "middle"
+
+    def test_all_layers_dirty_and_none(self) -> None:
+        all_dirty = self._bag({"layers.0.a.weight": "nan", "layers.1.a.weight": "nan"})
+        assert (
+            grad_finiteness_report(all_dirty.named_parameters())["dirty_block_side"]
+            == "all_layers_dirty"
+        )
+        clean = self._bag({"layers.0.a.weight": "ok"})
+        report = grad_finiteness_report(clean.named_parameters())
+        assert report["dirty_block_side"] is None
+        assert report["nonfinite_layers_descending"] == []
+
+
+class TestExchangeProbeWiringIsPpOnlyAndDiagnosticOnly:
+    """★ 接线钉子（裁定要求："只接在 PP 路径 + 诊断步、零行为变化"）。用**源码断言**实现
+    （不 import 训练 mixin，避免拉起 transformers）。"""
+
+    _TRAINING_SFT = (
+        _REPO / "src" / "graspo" / "flow" / "adapters" / "models" / "qwen35_36" / "training_sft.py"
+    )
+
+    def _source(self) -> str:
+        return self._TRAINING_SFT.read_text(encoding="utf-8")
+
+    def test_recording_happens_only_inside_the_pp_method(self) -> None:
+        text = self._source()
+        start = text.index("def _pipeline_train_batch_sft(")
+        end = text.index("def _pipeline_forward_for_sft(")
+        pp_body = text[start:end]
+        # 1 处定义 + 5 处调用（fwd 收到/发出、bwd 收到、bwd 发出 ×2）
+        assert pp_body.count("def record_exchange(") == 1
+        assert pp_body.count("record_exchange(") == 6, pp_body.count("record_exchange(")
+        non_pp_start = text.index("def train_batch_sft(")
+        non_pp_body = text[non_pp_start:start]
+        assert "record_exchange(" not in non_pp_body, "非 PP 路径不得接线"
+
+    def test_readings_land_only_in_the_two_diagnostic_rows(self) -> None:
+        text = self._source()
+        assert text.count('"pp_exchange"') == 2, text.count('"pp_exchange"')
+        probe_block = text[text.index("PP_NUMERIC_PROBE_PHASE: {") :]
+        assert '"pp_exchange"' in probe_block[:800]
+        fail_block = text[text.index("fail_closed_metrics = {") :]
+        assert '"pp_exchange"' in fail_block[:1400]
+
+    def test_no_collectives_or_tensor_mutation_in_the_recording_helper(self) -> None:
+        text = self._source()
+        start = text.index("def record_exchange(")
+        end = text.index("# 梯度累积：zero_grad 只调一次")  # helper 之后紧接着的就是训练逻辑
+        helper = text[start:end]
+        for forbidden in ("all_reduce", "all_gather", ".backward(", ".copy_(", "zero_grad"):
+            assert forbidden not in helper, forbidden
+        assert "pp_exchange_readings(" in helper
+
+
 def _load_collector():
     spec = importlib.util.spec_from_file_location("_r1_collector", _COLLECTOR)
     assert spec is not None and spec.loader is not None
