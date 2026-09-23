@@ -695,10 +695,21 @@ def classify_expressibility(tier: dict[str, Any]) -> tuple[str, str | None]:
     not_applicable, na_reason = opd_not_applicable(tier)
     if not_applicable:
         return "not_applicable", na_reason
-    # native 全参只有 PP 分片这一种手段：1 卡 ⇒ 无分片（无 offload）⇒ 保守判 blocked。
-    # 理由不写「必然 OOM」——见 BLOCKED_REASONS["native_full_1card"] 的诚实表述。
-    if tier["mode"] == "全量" and tier["backend"] == "native" and int(tier["cards"]) == 1:
-        return "blocked", BLOCKED_REASONS["native_full_1card"]
+    # ★ native 全参 1 卡（T016/T034）**已于 2026-09-23 解除 blocked**：native 侧已实现
+    #   全参优化器态 CPU offload（`native.offload_optimizer_state`，实现见
+    #   `src/graspo/flow/adapters/models/qwen35_36/optim_offload.py::CpuOffloadedAdamW`），
+    #   其 1 卡 pp=1 配方**已真机实测通过**：`rig/pp1-offload-T017PA.yaml` 相对 T017
+    #   只改 3 处（`pp_size 2→1`、`offload_optimizer_state false→true`、路径/tag），
+    #   读数 = `exit=0`、**50/50 步**、`skipped_nonfinite=0`、grad_norm 8–12 有限、
+    #   **宿主峰值 38.18 GiB**（无 offload 的对照 T017P1 是 79.24 GiB OOM，
+    #   失败点在 `optimizer.step()` 的 Adam `_foreach_sqrt` ⇒ 瓶颈是优化器态）。
+    #   ⇒ 业界对照裁定（`industry-adjudication/report.md`）：1 卡全参**无 offload 业界
+    #   同样不可能**（18 B/参数 ≈162 GB ≫ 80 GB），**而 offload 正是业界标准解**
+    #   （DeepSpeed ZeRO-Offload 官方：单卡可训至 13B）。⇒ 本档转 `unverified`
+    #   （与其它全量档同口径：配方给得出、能力未验证），不再 `blocked`。
+    #   ⚠ 口径裁定（指挥官 2026-09-23）：offload **不改变该档"参数组合"的语义**
+    #   （模型 × 算法 × 模式 × 卡数）——它是**实现级显存策略**（与 ZeRO 阶段同类），
+    #   且是业界标准答案 ⇒ 解除"无配方"成立。
     if tier["mode"] == "全量":
         return "unverified", FULL_MODE_NOTE
     return "ready", None
@@ -1220,42 +1231,96 @@ MSSWIFT_ACCOUNTING_ASSUMPTION = (
 
 
 def _native_static_gib(params: float) -> float:
-    """native 全参 1 卡（PP=1，无分片）的常驻显存估算（GiB）。"""
+    """native 全参 1 卡（PP=1，**不做 offload**）的常驻显存估算（GiB）。
+
+    ★ 只用于 ``NATIVE_FULL_1CARD_OFFLOAD_NOTE`` 的**对照算术**（解释"为什么需要
+    offload"）。**2026-09-23 起 T016/T034 已不再走这条路**——它们改用
+    ``native.offload_optimizer_state: true``，优化器态搬到宿主内存（算式见
+    :func:`estimate_config_per_card_gib` 的 native 分支）。
+    """
     return params * NATIVE_OPTIMIZER_BYTES_PER_PARAM / (1024.0**3)
 
 
-#: 当前不可表达的原因（每条都指向能力矩阵里的 ⚠️ 格）。
-#: native 1 卡那条**不写「必然 OOM」**——算式依赖未经实测的 bf16 Adam 假设，
-#: 且余量只有约 10 GiB，只能如实说「判定不可靠、本轮不承诺」。
+#: ★ **历史留痕 + 口径说明**（2026-09-23）：native 全参 1 卡（``T016``/``T034``）曾因
+#: "native 只支持 PP 分片、且无 offload ⇒ 1 卡无任何分片手段"而被保守判 ``blocked``。
+#: **该判定已解除**：native 侧实现了全参优化器态 CPU offload，且 1 卡 pp=1 配方**已真机
+#: 实测通过**（``rig/pp1-offload-T017PA.yaml``：``exit=0``、50/50 步、``skipped_nonfinite=0``、
+#: 宿主峰值 **38.18 GiB**；无 offload 对照 **79.24 GiB OOM**，失败点在 ``optimizer.step()``
+#: 的 Adam ``_foreach_sqrt``）。
 #:
-#: ★ ``cpt`` / ``opd`` 两条已于 2026-09-19 删除（`WP-X3` 落地了配置通道）：
-#: 旧文案「`train_method` 的 Literal 只有 {'graspo','sft'}」**已是过期事实**，
-#: 保留它就会把已解决的问题永远钉在「不可表达」上。留痕见 ``CPT_NOTE`` / ``OPD_NOTE``。
-BLOCKED_REASONS: dict[str, str] = {
-    "native_full_1card": (
-        "native 全参当前只支持 PP 分片、且无 offload ⇒ 1 卡无任何分片手段。"
-        f"按 native 实际实现口径（k={NATIVE_OPTIMIZER_BYTES_PER_PARAM:g} B/param，"
-        "bf16 Adam 假设）9B 常驻 ≈"
-        f"{_native_static_gib(PARAMS_BILLION['9B'] * 1.0e9):.1f} GiB，"
-        f"加激活/其他预算 {ACTIVATION_ALLOWANCE_GIB:g} GiB ⇒ ≈"
-        f"{_native_static_gib(PARAMS_BILLION['9B'] * 1.0e9) + ACTIVATION_ALLOWANCE_GIB:.1f} GiB"
-        f" > 预算 {CARD_BUDGET_GIB:g} GiB，余量仅约 10 GiB。"
-        "**该结论依赖 bf16 Adam 假设、未经上机实测，判定不可靠 ⇒ 本轮不承诺**；"
-        "若工程上改为 fp32 矩估计则算式级必爆。"
-        "需 native 侧实现全参 offload、改用 ≥2 卡走 PP、或先用 1 卡边界取证档实测后再定。"
-    ),
-}
+#: 为什么"offload 不算改档位定义"（指挥官 2026-09-23 裁定）：它**不改变该档的参数组合
+#: 语义**（模型 × 算法 × 模式 × 卡数），属**实现级显存策略**，与"用 ZeRO 的哪个阶段"同类；
+#: 且是**业界标准答案**——业界对照裁定：1 卡全参无 offload 业界同样不可能
+#: （18 B/参数 ≈162 GB ≫ 80 GB），而 DeepSpeed ZeRO-Offload 官方明确"单卡可训至 13B 参数"。
+#:
+#: 下面这段**旧 blocked 文案**保留为留痕（§18 不留债：判定为什么变，读得到）。
+NATIVE_FULL_1CARD_OFFLOAD_NOTE: str = (
+    "native 全参 1 卡**在无 offload 时**无任何分片手段 ⇒ 不可行（这一点业界同样成立）："
+    f"按 native 无-offload 口径（k={NATIVE_OPTIMIZER_BYTES_PER_PARAM:g} B/param，"
+    "bf16 Adam 假设）9B 常驻 ≈"
+    f"{_native_static_gib(PARAMS_BILLION['9B'] * 1.0e9):.1f} GiB，"
+    f"加激活/其他预算 {ACTIVATION_ALLOWANCE_GIB:g} GiB ⇒ ≈"
+    f"{_native_static_gib(PARAMS_BILLION['9B'] * 1.0e9) + ACTIVATION_ALLOWANCE_GIB:.1f} GiB"
+    f" > 预算 {CARD_BUDGET_GIB:g} GiB；**已上机实测证实**（T017P1：79.24 GiB 卡占满、"
+    "OOM 于 `optimizer.step()` 的 Adam `_foreach_sqrt`）。"
+    "⇒ **修法是 offload**（业界标准解，我方已实现并实测）："
+    "`native.offload_optimizer_state: true` ⇒ 优化器态与 Adam 更新搬到宿主 CPU，"
+    "GPU 侧只留 bf16 权重 + 激活 ⇒ 实测峰值 38.18 GiB。"
+)
+
+
+def _legacy_blocked_reasons() -> dict[str, str]:
+    """**已废弃**的 ``blocked`` 文案表（保留为留痕，不再被任何判定消费）。
+
+    2026-09-23：``native_full_1card`` 是这张表**唯一**的条目；解除 blocked 后表变空。
+    保留函数形态是为了让"曾经存在过这张表、它当时说了什么"在代码里读得到（§18），
+    同时避免留下一个永远不被引用的模块级常量（那会看起来像"还有 blocked 档"）。
+    """
+    return {
+        "native_full_1card": NATIVE_FULL_1CARD_OFFLOAD_NOTE,
+    }
+
+
+#: ★ 解除 blocked 后的**可达性口径**（唯一真相源）：native 全参 1 卡走 offload 配方后
+#: 仍属"配方给得出、能力未验证"⇒ 与其它全量档**同落 ``unverified``**（不是 ``ready``）。
+#: 为什么不是 ``ready``：``ready`` 的口径是"配置能被接受、能生成、能启动"**且**该通道
+#: 已跑通；native 全参 1 卡只在 **pp=1 + offload 的取证档**（T017PA）上跑通，**本档
+#: （T016 SFT / T034 GRASPO）尚未上机** ⇒ 按既有口径落 ``unverified``（§2.2 显式）。
+NATIVE_FULL_1CARD_EXPRESSIBILITY = "unverified"
 
 
 def ms_swift_full_recipe(cards: int) -> dict[str, Any]:
     """ms-swift 全参的可行配方（≤4 卡；依据全量入口工作包的方案）。
 
     - 1 / 2 卡 → ``zero2_offload``（优化器态换出到 CPU，否则单卡常驻超预算）
-    - 4 卡 → ``zero2`` + ``deepspeed_autotp_size: 4``（ZeRO-2 + AutoTP 权重分片）
+    - 4 卡 → ``zero2``（**纯 DP4**，不叠 AutoTP）
+
+    ★ 4 卡**不再**叠 ``deepspeed_autotp_size``（2026-09-23 裁定，路线 a）。三条理由：
+
+    1. **AutoTP 的预设路径对 Qwen3.5 视觉塔错切**（上游 DeepSpeed 缺陷，我方 pin
+       0.18.9）：``tp_plan_converter.py:14`` 只认 ``{colwise,rowwise}`` ⇒ Qwen3.5 的 HF
+       ``tp_plan``（含 ``replicated_with_grad_allreduce``）被整份拒绝 ⇒ 回落
+       ``auto_tp.py`` 预设路径；其行并行名单（``:297-330``）不含视觉塔的 ``attn.proj``、
+       融合 qkv 名单（``fusedqkv_utils.py:15``）不含裸 ``qkv`` ⇒ 视觉塔被错切。
+       实测：``RuntimeError: mat1 and mat2 shapes cannot be multiplied (7040x288 and
+       1152x288)``（T006/T021，**qkv 那处是静默错算**，比报错更危险）。
+    2. **rl 档另有独立缺陷**：ms-swift 的 RL/GKD 训练器缺 ``DataLoaderMixin`` ⇒ AutoTP 下
+       TP 组内 4 rank 拿不同 micro-batch ⇒ 撞 DeepSpeed 守护断言
+       （``Data inconsistency within the TP group``，T039/T051）。**该缺陷与 DeepSpeed
+       版本无关**，升 DS 不修它。
+    3. **AutoTP4 在 9B 上是业界不会用的配置**：``tp=4 ⇒ dp=1`` ⇒ ZeRO-2 **没有数据并行维
+       可分片**，优化器态仍全量常驻每卡 ⇒ 显存与纯 DP4 **逐项相同**（≈42.3 GiB 模型态/卡）。
+       即"去掉 AutoTP"**不额外花显存**，只去掉两条错误路径。
+       另：AutoTP4 还会与我们的 per-rank rollout 播种语义冲突（tp 组内 4 rank 必须逐位一致，
+       而播种按全局 rank 派生）⇒ 属**静默数值错误**。
+
+    显存账（与 ``estimate_config_per_card_gib`` 同源）：权重 ``_BF16`` 不切 +
+    梯度/优化器态按 ``cards`` 摊 ⇒ 9.41B × (2 + (2+8)/4) ≈ 42.3 GiB + 激活预算
+    ⇒ ≈54 GiB < 78 GiB 预算（**未实测**，跑次须量 ``gpu_memory.jsonl`` 峰值）。
     """
     if cards <= 2:
         return {"deepspeed": "zero2_offload"}
-    return {"deepspeed": "zero2", "deepspeed_autotp_size": 4}
+    return {"deepspeed": "zero2"}
 
 
 def estimate_config_per_card_gib(tier: dict[str, Any], config: dict[str, Any]) -> tuple[float, str]:
@@ -1273,14 +1338,33 @@ def estimate_config_per_card_gib(tier: dict[str, Any], config: dict[str, Any]) -
         bytes_per_param = _BF16
         basis = f"LoRA：基座冻结 ⇒ 权重 {_BF16:g} B/param"
     elif backend == "native":
-        pp_size = int(config.get("native", {}).get("pp_size", 1) or 1)
-        bytes_per_param = NATIVE_OPTIMIZER_BYTES_PER_PARAM / pp_size
-        basis = (
-            f"native 全参 PP 分片（k={NATIVE_OPTIMIZER_BYTES_PER_PARAM:g} B/param，"
-            f"bf16 Adam 假设）："
-            f"({_BF16:g}+{_GRAD:g}+{_ADAM_BF16:g})/{pp_size} B/param"
-            + ("" if pp_size > 1 else "（无分片）")
-        )
+        native = config.get("native", {}) or {}
+        pp_size = int(native.get("pp_size", 1) or 1)
+        # ★ native 全参 1 卡（T016/T034）：优化器态 offload 到宿主 CPU（2026-09-23）。
+        #   算式必须跟着配方走（§1.4 单一真相源）——否则"配方改了、估算还按旧口径"
+        #   就是失实的边界校验（这正是本函数 docstring 要防的坑）。
+        #   offload 后 GPU 侧只留 **权重(PP 摊) + 梯度(PP 摊)**，优化器态不占卡；
+        #   用与 ms-swift `zero2_offload` 分支**同一个假设**（`_GRAD` 全量、优化器态 0），
+        #   再把 PP 分片显式写进算式。
+        offload = bool(native.get("offload_optimizer_state"))
+        if offload:
+            bytes_per_param = (_BF16 + _GRAD) / pp_size
+            basis = (
+                f"native 全参 1 卡 + **优化器态 CPU offload**"
+                f"（`native.offload_optimizer_state: true`）："
+                f"(权重 {_BF16:g} + 梯度 {_GRAD:g})/{pp_size:g} B/param"
+                f"，优化器态在宿主内存（GPU 侧 0 B/param）"
+                "。实测对照：`rig/pp1-offload-T017PA.yaml`（pp=1 + offload）"
+                "宿主峰值 **38.18 GiB**；无 offload 对照 **79.24 GiB OOM**"
+            )
+        else:
+            bytes_per_param = NATIVE_OPTIMIZER_BYTES_PER_PARAM / pp_size
+            basis = (
+                f"native 全参 PP 分片（k={NATIVE_OPTIMIZER_BYTES_PER_PARAM:g} B/param，"
+                f"bf16 Adam 假设）："
+                f"({_BF16:g}+{_GRAD:g}+{_ADAM_BF16:g})/{pp_size} B/param"
+                + ("" if pp_size > 1 else "（无分片）")
+            )
     else:
         msswift = config.get("msswift", {})
         deepspeed = msswift.get("deepspeed")
@@ -1295,8 +1379,15 @@ def estimate_config_per_card_gib(tier: dict[str, Any], config: dict[str, Any]) -
         elif deepspeed in {"zero2", "zero3", "zero2_offload", "zero3_offload"}:
             weight = _BF16 / autotp
             sharded = (_GRAD + _ADAM_FP32) / cards
+            # ★ 文案必须跟着配方走：`autotp == 1` 意味着**没开 AutoTP**（2026-09-23 起 4 卡
+            #   档就是这种形态）⇒ 不能再写成 "zero2+AutoTP1"（那会让人以为还在用 AutoTP，
+            #   而"不再用 AutoTP"正是本次改动的全部要点）。权重/分摊算式两分支相同。
+            if autotp > 1:
+                impl = f"{deepspeed}+AutoTP{autotp:g}"
+            else:
+                impl = f"{deepspeed}（纯 DP{cards}，**未开 AutoTP**）"
             basis = (
-                f"ms-swift 全参 {deepspeed}+AutoTP{autotp:g}：权重 {weight:g}"
+                f"ms-swift 全参 {impl}：权重 {weight:g}"
                 f" + (梯度+优化器) {_GRAD + _ADAM_FP32:g}/{cards} B/param"
             )
         else:
@@ -1485,6 +1576,24 @@ def build_config(tier: dict[str, Any]) -> dict[str, Any]:
                 "tp_size": 1,
                 "dp_size": 1,
                 "pp_size": cards,
+                "micro_batch_size": 1,
+            }
+        elif tier["mode"] == "全量":
+            # ★ native 全参 **1 卡**（T016/T034，2026-09-23 解除 blocked）：无 PP 可分片
+            #   ⇒ 唯一手段是**优化器态 CPU offload**——这正是业界标准解
+            #   （DeepSpeed ZeRO-Offload：单卡可训至 13B）。配方**已真机实测通过**，
+            #   证据是 1 卡取证档 `rig/pp1-offload-T017PA.yaml`（相对 T017 只改 3 处：
+            #   `pp_size 2→1`、`offload_optimizer_state false→true`、路径/tag）；
+            #   读数 `exit=0` / 50/50 步 / `skipped_nonfinite=0` / 宿主峰值 38.18 GiB，
+            #   无 offload 的对照（T017P1）是 79.24 GiB OOM（崩在 Adam `_foreach_sqrt`）。
+            #   ⇒ 这里把这个已验证配方**产品化**（不是发明新配方）。
+            #   ⚠ 不写 lora 段（全参档），且 `offload_optimizer_state` 与 TP/DP/PP 的
+            #   组合约束由 `core/schema.py::_validate_offload_optimizer_state` 兜底。
+            config["native"] = {
+                "tp_size": 1,
+                "dp_size": 1,
+                "pp_size": 1,
+                "offload_optimizer_state": True,
                 "micro_batch_size": 1,
             }
         else:
