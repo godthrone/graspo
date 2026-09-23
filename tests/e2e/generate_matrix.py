@@ -59,6 +59,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import sys
 from collections.abc import Mapping, Sequence
@@ -84,6 +85,20 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_DIR = PROJECT_ROOT / "samples" / "configs" / "matrix54"
 MANIFEST_PATH = PROJECT_ROOT / "tests" / "e2e" / "matrix54_manifest.json"
 RUNNER_PATH = PROJECT_ROOT / "tests" / "e2e" / "run_matrix54.sh"
+
+#: 生成器**认识**的配置目录产物名（正则）：只有匹配它的条目才允许被生成器删除。
+#: ★ 判据是"名字形态"而不是"本轮要写的名字集合"：上一轮留下、本轮不再产出的**陈旧生成物**
+#: （例如某档从 blocked 变成 yaml）也必须能清掉，否则会与新产物共存（双真相源）。
+CONFIG_ARTIFACT_RE = re.compile(r"\AT\d{3}\.(?:yaml|blocked\.md|not_applicable\.md)\Z")
+
+#: 配置目录里**不是本生成器产物、但必须原样保留**的白名单（文档线的证据文件）。
+#: 生成器对它们**只读不动**：既不删除，也不据此报错。★ 白名单本身是判据的一部分——
+#: 去掉它，这两个文件就落进"非生成物 ⇒ 报错退出"的分支（判别力测试见 test_generate_matrix）。
+CONFIG_DIR_PRESERVED = frozenset({"industry-cells.json", "industry-cells.baseline.json"})
+
+
+class ConfigDirForeignEntryError(RuntimeError):
+    """配置目录里出现生成器不认识、也不在白名单里的条目（fail-closed，一个都不删）。"""
 
 #: `record-gpu-memory` 采样产物的容器内落点（**单一真相源**，§1.4）。
 #: 容器内 /out 由 runner 绑定到宿主 <RUN_ROOT>/<T###>（挂载表 `"$RUN_DIR|/out|rw"`），
@@ -2460,22 +2475,40 @@ def feasibility_table(tiers: list[dict[str, Any]]) -> list[dict[str, Any]]:
 #   并把选中项打进 stdout（§2.2 显式即防呆）——第一档上机即可当场核对布局假设。
 #
 # ★ 失败不得影响训练结论（§3.4 退路与防线之分）：
-#   本脚本**任何**失败路径都以 ``exit 0`` 结束，且**不写**探测文件 ⇒ collector 退回
-#   弱证据路径（A3 仍是取证缺口，绝不放行）。探测失败**不是**训练失败，绝不改
-#   ``exit_code`` 的训练语义（既有优先级：训练失败 137/124 > 保留失败 4 > 成功 0）。
+#   本脚本**任何**路径都以 ``exit 0`` 结束（探测失败**不是**训练失败，绝不改
+#   ``exit_code`` 的训练语义：既有优先级训练失败 137/124 > 保留失败 4 > 成功 0）。
+#   ★ P21 起"失败/没验成"**必须显式落盘**为**不可判定**载荷（``all_ok=false`` +
+#   ``undecidable=true`` + ``layout_status`` + 具名 ``reasons``），而不是"什么都不写"
+#   ——旧行为（不写 ⇒ 上层退回读 safetensors 头部的弱证据 ⇒ A3 假绿）正是本包要根治的。
 PROBE_HEADER = '''#!/usr/bin/env python3
-"""容器内 torch 重载探测（A3「checkpoint 可重载」的证据生产端）。
+"""容器内权重重载探测（A3「checkpoint 可重载」的证据生产端）。
 
 由 tests/e2e/generate_matrix.py::render_probe_script 生成到 $RUN_DIR/torch_probe.py
 （容器内 /out/torch_probe.py）——**手改无效**，改生成器后重生成。
 
-职责边界（§1.1 一事一责）：只做一件事——在**有 torch 的容器里**对 native 终态权重
-做一次真实 torch.load 探测，把结果落成 <run_dir>/torch_probe.json。
+职责边界（§1.1 一事一责）：只做一件事——在**有 torch 的容器里**对权重落盘做一次
+**内容级**探测，把结果落成 <run_dir>/torch_probe.json。
 **不做判定**：判定逻辑只在 scripts/collect_results.py::read_torch_probe（§1.4）。
+
+支持的权重布局（P21 起布局感知，P21 前只认第一种 ⇒ ms-swift 档全部 SKIP）：
+    1) native：``<dir>/rank_*.pt``（torch.load + 状态字典审计，语义与旧版逐字一致）；
+    2) ms-swift 全参：``model.safetensors.index.json`` 的 ``weight_map`` + 分片
+       ``model-0000N-of-0000M.safetensors``（逐张量读取做内容级校验）；
+    3) ms-swift LoRA / 未分片权重：``model.safetensors`` / ``adapter_model.safetensors``。
+
+内容级校验（与 native **同强度**）：张量数 > 0、有限性（无 NaN/Inf）、整层全零、
+``weight_map`` 与分片实际 key 集合双向相等、层完整性（对照权重同目录 config.json 的
+层数/层号连续性）、``total_elements`` 与 index ``metadata.total_parameters`` 对账。
 
 契约（与 collector 同一条契约，改一处必须同步另一处）：
     {"schema": "<schema>", "torch": "<version>", "all_ok": true,
+     "undecidable": false, "layout": "native_rank_pt|hf_shards|hf_single",
+     "layout_status": "verified|skipped_layout_unknown|unverifiable_tooling",
      "checked": [{"relpath": "<relpath>", "ok": true, "sha256": "<64 hex>", "tensors": 882}]}
+
+★ 「没验」绝不得读成「通过」：布局认不出来（``skipped_layout_unknown``）或工具缺失
+（``unverifiable_tooling``）时，本脚本写 ``all_ok=false`` + ``undecidable=true`` +
+具名 ``reasons``，**不写探测文件来冒充通过**（旧行为是整个文件都不写，上层因此退回弱证据）。
 
 三条硬约束（写错 ⇒ 证据被拒采信）：
     1) **写完权重再算 hash**：本脚本在训练结束、保留策略执行完之后才跑；
@@ -2483,7 +2516,7 @@ PROBE_HEADER = '''#!/usr/bin/env python3
        接触产物的步骤；
     3) relpath 一律**相对 run_dir 的 POSIX 路径**（不用绝对路径、不加 ./ 前缀）。
 
-任何失败（无 torch / 找不到权重 / 读写异常）⇒ 打印原因、**不写探测文件**、exit 0。
+任何失败（无 torch / 找不到权重 / 读写异常）⇒ 打印原因、按**不可判定**落盘、exit 0。
 """
 '''
 
@@ -2702,25 +2735,104 @@ def _audit_state_dict(state: dict, manifest: dict, kind: str) -> dict:
     }}
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="torch probe for A3 evidence")
-    parser.add_argument("--run-dir", required=True)
-    parser.add_argument("--tier", required=True)
-    parser.add_argument("--max-files", type=int, default=4)
-    args = parser.parse_args(argv)
+{probe_tail}
 
-    run_dir = os.path.abspath(args.run_dir)
-    probe_path = os.path.join(run_dir, PROBE_FILENAME)
+
+if __name__ == "__main__":
+    sys.exit(main())
+'''
+
+
+#: P21 布局感知探测的**函数体与入口**（literal 常量：这一段不进 ``.format`` 模板，
+#: 因此花括号无需转义——见 :func:`render_probe_script`）。
+PROBE_LAYOUT_AWARE_BODY = r'''
+# ── P21：布局感知（内容级）＋"不可判定"显式落盘 ────────────────────────────────
+#
+# 缺陷（228 实测，本段要根治）：旧探针只认 native 的 ``final/rank_*.pt``；ms-swift 的
+# HF 分片（``model.safetensors.index.json`` + ``model-0000N-of-0000M.safetensors``）与
+# LoRA 的 ``adapter_model.safetensors`` 都进不了探测 ⇒ 打印 SKIP、**不写探测文件**
+# ⇒ 上层退回"读 safetensors 头部"的**头部级**弱证据并把 A3 读成 True
+# （28 个 ms-swift 档 A3=True 而 reload_evidence_source=safetensors_header_stdlib）
+# ——「没验」被读成「验过」（假绿）。
+#
+# 本段只改**生产者**（判定逻辑仍只在 scripts/collect_results.py，§1.4）：
+#   ① 布局感知：native 之外，支持 HF 分片（按 ``weight_map``）与单文件权重（LoRA）；
+#   ② **内容级**（与 native 同强度）：逐张量读取 ⇒ 张量数>0 / 有限性 / 整层全零 /
+#      ``weight_map`` 与文件实际 key 集合双向相等 / 层完整性（对照权重同目录
+#      ``config.json`` 的层数）/ ``total_elements`` 与分片摘要；
+#   ③ **不可判定必须显式落盘**：任何"没验成"的路径都写
+#      ``layout_status=skipped_layout_unknown|unverifiable_tooling`` + ``undecidable=true``
+#      + 具名 ``reasons``，绝不留下"没有文件 ⇒ 上层自行退回弱证据"的灰区（本包最重要一条）。
+
+#: HF 权重索引文件名（分片布局的唯一入口）。
+_HF_INDEX_FILENAME = "model.safetensors.index.json"
+#: 未分片的单文件权重（含 LoRA 适配器）；按此顺序探测。
+_HF_SINGLE_FILENAMES = ("model.safetensors", "adapter_model.safetensors")
+#: 权重同目录里的模型配置（层数的来源）与 LoRA 适配器自述。
+_HF_CONFIG_FILENAME = "config.json"
+_HF_ADAPTER_CONFIG_FILENAME = "adapter_config.json"
+
+#: 布局名（写进 payload 的 ``layout``）。
+_LAYOUT_NATIVE = "native_rank_pt"
+_LAYOUT_HF_SHARDS = "hf_shards"
+_LAYOUT_HF_SINGLE = "hf_single"
+_LAYOUT_UNKNOWN = "unknown"
+#: 布局状态（写进 payload 的 ``layout_status``）：
+#: ``verified`` = 真的做了内容级校验；另两个都是**不可判定**（不是失败，也绝不等于通过）。
+_LAYOUT_STATUS_VERIFIED = "verified"
+_LAYOUT_STATUS_SKIPPED = "skipped_layout_unknown"
+_LAYOUT_STATUS_TOOLING = "unverifiable_tooling"
+
+
+def _read_json_file(path):
+    """读 JSON；读不到/不是对象 ⇒ ``None``（不猜、不抛）。"""
     try:
-        import torch
-    except Exception as exc:
-        _print("SKIP: 容器内没有可用的 torch（" + type(exc).__name__ + ": " + str(exc) + "）")
-        _print("  契约要求：不写探测文件 ⇒ collector 退回弱证据路径（A3 不因探测失败而假通过）")
-        return 0
-    torch_version = str(getattr(torch, "__version__", "unknown"))
+        with open(path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except Exception:
+        return None
 
+
+def _config_layer_count(directory):
+    """从权重同目录的模型配置取层数（含 ``text_config`` / ``llm_config`` 嵌套）。
+
+    取不到 ⇒ ``None``（**判不了不据此 fail**，§2.3）：只把"能确证是缺陷"的形态判 fail。
+    """
+    data = _read_json_file(os.path.join(directory, _HF_CONFIG_FILENAME))
+    if not isinstance(data, dict):
+        return None
+    nodes = [data]
+    for key in ("text_config", "llm_config", "vision_config"):
+        node = data.get(key)
+        if isinstance(node, dict):
+            nodes.append(node)
+    for node in nodes:
+        for key in ("num_hidden_layers", "num_layers", "n_layers", "encoder_layers"):
+            value = node.get(key)
+            if isinstance(value, int) and value > 0:
+                return value
+    return None
+
+
+def _adapter_layer_count(directory):
+    """LoRA 适配器自述里的层数（通常没有 ⇒ ``None``；有则用它，没有则只看层号连续性）。"""
+    data = _read_json_file(os.path.join(directory, _HF_ADAPTER_CONFIG_FILENAME))
+    if not isinstance(data, dict):
+        return None
+    for key in ("num_hidden_layers", "num_layers", "n_layers"):
+        value = data.get(key)
+        if isinstance(value, int) and value > 0:
+            return value
+    return None
+
+
+def _native_candidates(run_dir, tier):
+    """native 布局的候选目录（**与旧实现逐字同序**：档号 final → run_dir/final → walk 发现）。
+
+    顺序是判据的一部分（"第一个含 rank_*.pt 的目录"），改动会改变既有档位的 selected_dir。
+    """
     candidates = [
-        os.path.join(run_dir, args.tier, "final"),
+        os.path.join(run_dir, tier, "final"),
         os.path.join(run_dir, "final"),
     ]
     for current, dirnames, _ in os.walk(run_dir):
@@ -2728,13 +2840,16 @@ def main(argv: list[str] | None = None) -> int:
         for name in list(dirnames):
             if name == "final":
                 candidates.append(os.path.join(current, name))
-    unique: list[str] = []
+    unique = []
     for candidate in candidates:
         if candidate not in unique:
             unique.append(candidate)
-    checked_dir: str | None = None
-    rank_files: list[str] = []
-    for candidate in unique:
+    return unique
+
+
+def _pick_native_dir(candidates):
+    """第一个含 ``rank_*.pt`` 的候选目录（找不到 ⇒ ``(None, [])``）。"""
+    for candidate in candidates:
         if not os.path.isdir(candidate):
             continue
         found = sorted(
@@ -2743,21 +2858,284 @@ def main(argv: list[str] | None = None) -> int:
             if name.startswith("rank_") and name.endswith(".pt")
         )
         if found:
-            checked_dir = candidate
-            rank_files = found
-            break
-    if checked_dir is None:
-        _print("SKIP: 在 run_dir=" + run_dir + " 下找不到任何含 rank_*.pt 的 final/ 目录")
-        _print("  候选目录：" + repr(unique))
-        _print("  契约要求：不写探测文件 ⇒ A3 退回取证缺口（绝不放行）")
-        return 0
+            return candidate, found
+    return None, []
 
-    checked: list[dict[str, object]] = []
-    all_ok = True
-    for path in rank_files[: max(0, args.max_files)]:
+
+def _hf_layout_in_dir(directory):
+    """探测一个目录的 HF 权重布局；纯文件系统，不需要 torch。
+
+    返回 ``(weight_map, shard_names, metadata, kind)``：
+      - ``hf_shards``：``model.safetensors.index.json`` 的 ``weight_map`` 定义了张量→分片；
+      - ``hf_single``：单个 ``model.safetensors`` / ``adapter_model.safetensors``（LoRA 常见）。
+    都不匹配 ⇒ ``None``。
+    """
+    index = _read_json_file(os.path.join(directory, _HF_INDEX_FILENAME))
+    if isinstance(index, dict):
+        weight_map = index.get("weight_map")
+        if isinstance(weight_map, dict) and weight_map:
+            normalized = {str(key): str(value) for key, value in weight_map.items()}
+            shard_names = []
+            for name in normalized.values():
+                if name not in shard_names:
+                    shard_names.append(name)
+            metadata = index.get("metadata") if isinstance(index.get("metadata"), dict) else {}
+            return normalized, shard_names, metadata, _LAYOUT_HF_SHARDS
+    for name in _HF_SINGLE_FILENAMES:
+        if os.path.isfile(os.path.join(directory, name)):
+            return {}, [name], {}, _LAYOUT_HF_SINGLE
+    return None
+
+
+def _detect_hf_dir(run_dir):
+    """在 run_dir 下找 HF 权重落点；同类里取**最近被写入**的那个。
+
+    "最近被写入"与保留块"每档只留最新一份"的判据同源（mtime 大者胜；平手取路径大者），
+    避免探针去验一份已被保留块判为中间段的旧 ckpt。
+    """
+    found = []
+    for current, dirnames, _ in os.walk(run_dir):
+        dirnames.sort()
+        layout = _hf_layout_in_dir(current)
+        if layout is None:
+            continue
+        try:
+            mtime = os.path.getmtime(current)
+        except OSError:
+            mtime = 0.0
+        found.append((mtime, current, layout))
+    if not found:
+        return None
+    _, directory, layout = max(found, key=lambda item: (item[0], item[1]))
+    return (directory,) + layout
+
+
+def _tensor_layer_index(name):
+    return _layer_index_from_key(str(name))
+
+
+def _audit_hf_layout(run_dir, directory, weight_map, shard_names, metadata, kind):
+    """HF 权重的**内容级**审计（与 native ``_audit_state_dict`` 同强度）。
+
+    返回 ``(audit, checked_entries, setup_reason)``：
+      - ``audit``：聚合摘要（张量数 / 有限性 / 整层全零 / 层覆盖 / total_elements）；
+      - ``checked_entries``：逐分片条目（relpath + sha256 + ok + tensors）——供消费端做
+        **防陈旧**核对（与 native 的 ``checked`` 同一契约）；
+      - ``setup_reason``：非 ``None`` ⇒ 环境不满足（无 torch/safetensors）⇒ **不可判定**，
+        **不是**内容失败。内容失败走 ``audit.audit_ok=False``。
+    """
+    try:
+        from safetensors import safe_open
+    except Exception as exc:  # noqa: BLE001  （环境缺失：不可判定，不判失败）
+        return {}, [], "safetensors_unavailable:" + type(exc).__name__ + ": " + str(exc)
+
+    reasons = []
+    entries = []
+    tensors = 0
+    total_elements = 0
+    nonfinite = []
+    all_zero = []
+    layer_found = set()
+    layer_total = {}
+    layer_zero = {}
+    keys_actual = set()
+    keys_index = set(weight_map) if weight_map else set()
+    shards_ok = 0
+    config_layers = _config_layer_count(directory)
+    if config_layers is None and kind == _LAYOUT_HF_SINGLE:
+        config_layers = _adapter_layer_count(directory)
+
+    for name in shard_names:
+        path = os.path.join(directory, name)
         relpath = posixpath.join(*os.path.relpath(path, run_dir).split(os.sep))
-        entry: dict[str, object] = {{"relpath": relpath, "ok": False, "sha256": None, "tensors": None}}
-        digest: str | None = None
+        entry = {
+            "relpath": relpath,
+            "ok": False,
+            "sha256": None,
+            "tensors": None,
+            "shard": name,
+        }
+        shard_reasons = []
+        if not os.path.isfile(path):
+            entry["error"] = "shard_missing: 权重分片不存在：" + name
+            reasons.append("shard_missing:" + name)
+            entries.append(entry)
+            continue
+        digest = None
+        size = 0
+        try:
+            digest, size = _sha256_and_size(path)
+        except OSError as exc:
+            entry["error"] = "read_error: " + type(exc).__name__ + ": " + str(exc)
+            reasons.append("shard_unreadable:" + name)
+            entries.append(entry)
+            continue
+        entry["sha256"] = digest
+        entry["bytes"] = size
+        try:
+            with safe_open(path, framework="pt", device="cpu") as handle:
+                file_keys = list(handle.keys())
+                entry["tensors"] = len(file_keys)
+                keys_actual.update(file_keys)
+                if weight_map:
+                    expected_here = {key for key, value in weight_map.items() if value == name}
+                    unexpected = sorted(set(file_keys) - expected_here)
+                    missing_here = sorted(expected_here - set(file_keys))
+                    if unexpected or missing_here:
+                        example = (missing_here or unexpected)[0]
+                        shard_reasons.append(
+                            "weight_map_mismatch:" + name
+                            + " 缺 " + str(len(missing_here)) + " 多 " + str(len(unexpected))
+                            + " 例:" + example
+                        )
+                for key in file_keys:
+                    value = handle.get_tensor(key)
+                    try:
+                        total_elements += _tensor_numel(value)
+                        tensors += 1
+                        if _tensor_is_finite(value) is False:
+                            nonfinite.append(str(key))
+                        zero = _tensor_all_zero(value)
+                        if zero is True:
+                            all_zero.append(str(key))
+                        index = _tensor_layer_index(key)
+                        if index is not None:
+                            layer_found.add(index)
+                            layer_total[index] = layer_total.get(index, 0) + 1
+                            if zero is True:
+                                layer_zero[index] = layer_zero.get(index, 0) + 1
+                    finally:
+                        del value
+        except Exception as exc:  # noqa: BLE001  （文件在但读不动 ⇒ 真失败，不是不可判定）
+            entry["error"] = "safetensors_load: " + type(exc).__name__ + ": " + str(exc)
+            reasons.append("shard_unreadable:" + name + "(" + type(exc).__name__ + ")")
+            entries.append(entry)
+            continue
+        if shard_reasons:
+            entry["error"] = "; ".join(shard_reasons)
+            reasons.extend(shard_reasons)
+        else:
+            entry["ok"] = True
+            shards_ok += 1
+        entries.append(entry)
+
+    if weight_map and keys_actual and keys_index != keys_actual:
+        only_index = sorted(keys_index - keys_actual)
+        only_shards = sorted(keys_actual - keys_index)
+        example = (only_index or only_shards)[0]
+        reasons.append(
+            "key_set_mismatch:index 与分片实际张量集合不一致（只在 index "
+            + str(len(only_index)) + " 个、只在分片 " + str(len(only_shards)) + " 个"
+            + " 例:" + example + "）"
+        )
+    if tensors <= 0:
+        reasons.append("no_tensors:探针没有校验到任何张量（空权重 ⇒ 不得当成通过）")
+    if nonfinite:
+        reasons.append("nonfinite:" + ",".join(sorted(nonfinite)[:5]))
+    if tensors > 0 and len(all_zero) == tensors:
+        reasons.append("all_tensors_zero:全部 " + str(tensors) + " 个张量都是全零")
+    layer_all_zero = sorted(
+        index
+        for index, count in layer_zero.items()
+        if count > 0 and count == layer_total.get(index, 0)
+    )
+    if layer_all_zero:
+        reasons.append("zero_layers:" + ",".join(str(index) for index in layer_all_zero[:8]))
+
+    expected_layers = []
+    if isinstance(config_layers, int) and config_layers > 0:
+        expected_layers = list(range(config_layers))
+    missing = [index for index in expected_layers if index not in layer_found]
+    if expected_layers and missing:
+        reasons.append("missing_layers:" + ",".join(str(index) for index in missing[:8]))
+    extra = [
+        index for index in sorted(layer_found) if expected_layers and index not in expected_layers
+    ]
+    if not expected_layers and layer_found:
+        span = range(min(layer_found), max(layer_found) + 1)
+        gaps = [index for index in span if index not in layer_found]
+        if gaps:
+            reasons.append("layer_gap:层号不连续，缺 " + ",".join(str(index) for index in gaps[:8]))
+
+    metadata_total = metadata.get("total_parameters") if isinstance(metadata, dict) else None
+    if isinstance(metadata_total, int) and metadata_total > 0 and total_elements != metadata_total:
+        reasons.append(
+            "total_parameters_mismatch:index 声明 " + str(metadata_total)
+            + " 个元素，实际读到 " + str(total_elements)
+        )
+
+    audit = {
+        "audit_ok": not reasons,
+        "audit_reasons": reasons,
+        "layout": kind,
+        "tensor_count": tensors,
+        "total_elements": total_elements,
+        "nonfinite_tensors": sorted(nonfinite)[:5],
+        "nonfinite_count": len(nonfinite),
+        "all_zero_tensors": sorted(all_zero)[:5],
+        "all_zero_count": len(all_zero),
+        "zero_layers": layer_all_zero,
+        "layers_found": sorted(layer_found),
+        "layers_expected": sorted(expected_layers),
+        "missing_layers": missing[:16],
+        "extra_layers": extra[:16],
+        "layer_table": {str(index): layer_total[index] for index in sorted(layer_total)},
+        "shards_total": len(shard_names),
+        "shards_ok": shards_ok,
+        "key_count_index": len(keys_index) if keys_index else None,
+        "key_count_actual": len(keys_actual),
+        "weight_map_total_parameters": metadata_total if isinstance(metadata_total, int) else None,
+        "config_layers": config_layers if isinstance(config_layers, int) else None,
+    }
+    return audit, entries, None
+
+
+def _unverifiable_payload(torch_version, reason, layout, candidates, scanned):
+    """构造"不可判定"载荷：``all_ok=false`` + ``undecidable=true`` + 具名原因。
+
+    ★ 这张载荷**不是**"通过"，也**不是**"内容失败"：它是"本次没验成"的显式表达。
+    """
+    return {
+        "schema": PROBE_SCHEMA,
+        "torch": torch_version,
+        "all_ok": False,
+        "undecidable": True,
+        "layout": layout,
+        "layout_status": reason.split(":", 1)[0],
+        "reasons": [reason],
+        "checked": [],
+        "selected_dir": None,
+        "checked_rank_files": 0,
+        "probed_rank_files": 0,
+        "state_dict_audit": [],
+        "candidate_dirs": candidates,
+        "scanned_dirs": scanned,
+    }
+
+
+def _write_payload(probe_path, payload):
+    """落盘探测载荷；写失败 ⇒ 打印原因并 exit 0（不改变训练/保留语义）。"""
+    try:
+        with open(probe_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
+            handle.write("\n")
+    except OSError as exc:
+        _print("ERROR: 写 " + probe_path + " 失败：" + type(exc).__name__ + ": " + str(exc))
+        _print("  契约要求：证据未落盘 ⇒ A3 退回取证缺口（绝不放行）")
+        return False
+    return True
+
+
+def _run_native(
+    run_dir, probe_path, torch, torch_version, checked_dir, rank_files, max_files, candidates
+):
+    """native 路径：逐 ``rank_*.pt`` 做 torch.load + ``_audit_state_dict``（语义与旧版一致）。"""
+    checked = []
+    all_ok = True
+    for path in rank_files[: max(0, max_files)]:
+        relpath = posixpath.join(*os.path.relpath(path, run_dir).split(os.sep))
+        entry = {"relpath": relpath, "ok": False, "sha256": None, "tensors": None}
+        digest = None
         size = 0
         try:
             digest, size = _sha256_and_size(path)
@@ -2767,7 +3145,7 @@ def main(argv: list[str] | None = None) -> int:
             entry["sha256"] = digest
             try:
                 loaded = torch.load(path, map_location="cpu", weights_only=False)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 entry["ok"] = False
                 entry["error"] = "torch.load: " + type(exc).__name__ + ": " + str(exc)
             else:
@@ -2787,35 +3165,171 @@ def main(argv: list[str] | None = None) -> int:
                + (" error=" + str(entry.get("error")) if entry.get("error") else ""))
 
     if not checked:
-        _print("SKIP: max-files 为 0 ⇒ 无可探测文件；不写探测文件")
-        return 0
+        _print("SKIP: max-files 为 0 ⇒ 无可探测文件；按不可判定落盘（不得读成通过）")
+        payload = _unverifiable_payload(
+            torch_version, _LAYOUT_STATUS_TOOLING + ":max_files_zero", _LAYOUT_NATIVE,
+            candidates, [],
+        )
+        return all_ok, checked, payload
 
-    payload = {{
+    payload = {
         "schema": PROBE_SCHEMA,
         "torch": torch_version,
         "all_ok": bool(all_ok),
+        "undecidable": False,
+        "layout": _LAYOUT_NATIVE,
+        "layout_status": _LAYOUT_STATUS_VERIFIED,
+        "reasons": [],
         "checked": checked,
         "selected_dir": os.path.relpath(checked_dir, run_dir),
         "checked_rank_files": len(rank_files),
         "probed_rank_files": len(checked),
         "state_dict_audit": [_json_safe(entry) for entry in checked],
-    }}
+    }
+    return all_ok, checked, payload
+
+
+def _run_hf(run_dir, probe_path, torch_version, hf):
+    """HF 路径：按 ``weight_map`` 加载分片、做内容级审计（不可判定/失败都要显式落盘）。"""
+    directory, weight_map, shard_names, metadata, kind = hf
+    audit, checked, setup_reason = _audit_hf_layout(
+        run_dir, directory, weight_map, shard_names, metadata, kind
+    )
+    if setup_reason is not None:
+        _print("SKIP: HF 权重需要内容级校验，但运行环境缺工具：" + setup_reason)
+        _print("  按不可判定落盘（layout_status=" + _LAYOUT_STATUS_TOOLING + "），绝不得读成通过")
+        payload = _unverifiable_payload(torch_version, _LAYOUT_STATUS_TOOLING + ":" + setup_reason,
+                                        kind, [], [directory])
+        return payload
+    all_ok = bool(audit.get("audit_ok")) and bool(checked)
+    payload = {
+        "schema": PROBE_SCHEMA,
+        "torch": torch_version,
+        "all_ok": all_ok,
+        "undecidable": False,
+        "layout": kind,
+        "layout_status": _LAYOUT_STATUS_VERIFIED,
+        "reasons": list(audit.get("audit_reasons") or []),
+        "checked": checked,
+        "selected_dir": os.path.relpath(directory, run_dir),
+        "checked_rank_files": len(shard_names),
+        "probed_rank_files": len(checked),
+        "state_dict_audit": [_json_safe(entry) for entry in checked],
+        "hf_audit": _json_safe(audit),
+    }
+    _print("HF layout=" + kind + " dir=" + os.path.relpath(directory, run_dir)
+           + " shards=" + str(len(shard_names)) + " tensors=" + str(audit.get("tensor_count"))
+           + " total_elements=" + str(audit.get("total_elements"))
+           + " all_ok=" + str(all_ok)
+           + (" reasons=" + "; ".join(payload["reasons"]) if payload["reasons"] else ""))
+    return payload
+
+
+def _arg_run_dir(argv):
+    """从命令行参数里取 ``--run-dir``（**兜底路径专用**：解析器本身可能就失败）。"""
+    raw = list(sys.argv[1:] if argv is None else argv)
+    for index, item in enumerate(raw):
+        if item == "--run-dir" and index + 1 < len(raw):
+            return raw[index + 1]
+        if item.startswith("--run-dir="):
+            return item.split("=", 1)[1]
+    return None
+
+
+def main(argv: list[str] | None = None) -> int:
+    """入口：**任何**未预期异常都不得改变训练/保留语义（exit 0 + 不可判定落盘）。"""
     try:
-        with open(probe_path, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
-            handle.write("\\n")
-    except OSError as exc:
-        _print("ERROR: 写 " + probe_path + " 失败：" + type(exc).__name__ + ": " + str(exc))
-        _print("  契约要求：证据未落盘 ⇒ A3 退回取证缺口（绝不放行）")
+        return _probe_main(argv)
+    except SystemExit:
+        raise
+    except BaseException as exc:  # noqa: BLE001  （探测自身的 bug 也只能是"不可判定"）
+        _print("ERROR: 探测未预期失败：" + type(exc).__name__ + ": " + str(exc))
+        run_dir = _arg_run_dir(argv)
+        if run_dir:
+            payload = _unverifiable_payload(
+                "unknown", _LAYOUT_STATUS_TOOLING + ":probe_exception:" + type(exc).__name__,
+                _LAYOUT_UNKNOWN, [], [],
+            )
+            _write_payload(os.path.join(os.path.abspath(run_dir), PROBE_FILENAME), payload)
+        return 0
+
+
+def _probe_main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="torch probe for A3 evidence")
+    parser.add_argument("--run-dir", required=True)
+    parser.add_argument("--tier", required=True)
+    parser.add_argument("--max-files", type=int, default=4)
+    args = parser.parse_args(argv)
+
+    run_dir = os.path.abspath(args.run_dir)
+    probe_path = os.path.join(run_dir, PROBE_FILENAME)
+
+    torch_version = "unknown"
+    torch = None
+    try:
+        import torch as _torch
+    except Exception:
+        pass
+    else:
+        torch = _torch
+        torch_version = str(getattr(_torch, "__version__", "unknown"))
+
+    candidates = _native_candidates(run_dir, args.tier)
+    checked_dir, rank_files = _pick_native_dir(candidates)
+
+    # ★ 布局先判定、工具后要求：布局判不出来属于"不可判定"（不需要 torch 就能给出具名原因），
+    #   而"布局在、工具缺"是另一类不可判定（unverifiable_tooling）。两者都显式落盘。
+    if checked_dir is not None:
+        if torch is None:
+            _print("SKIP: 找到 native 权重（" + checked_dir + "）但容器内没有可用的 torch")
+            _print(
+                "  按不可判定落盘（layout_status="
+                + _LAYOUT_STATUS_TOOLING + "），绝不得读成通过"
+            )
+            payload = _unverifiable_payload(
+                torch_version, _LAYOUT_STATUS_TOOLING + ":no_torch", _LAYOUT_NATIVE,
+                candidates, [checked_dir],
+            )
+        else:
+            _, _, payload = _run_native(
+                run_dir, probe_path, torch, torch_version, checked_dir, rank_files,
+                args.max_files, candidates,
+            )
+    else:
+        hf = _detect_hf_dir(run_dir)
+        if hf is not None:
+            if torch is None:
+                _print("SKIP: 找到 HF 权重（" + hf[0] + "）但容器内没有可用的 torch")
+                payload = _unverifiable_payload(
+                    torch_version, _LAYOUT_STATUS_TOOLING + ":no_torch", hf[4], [], [hf[0]],
+                )
+            else:
+                payload = _run_hf(run_dir, probe_path, torch_version, hf)
+        else:
+            scanned = []
+            for current, dirnames, _ in os.walk(run_dir):
+                dirnames.sort()
+                scanned.append(os.path.relpath(current, run_dir))
+            _print("SKIP: 在 run_dir=" + run_dir + " 下找不到任何可识别的权重布局")
+            _print("  候选目录：" + repr(candidates))
+            _print("  已识别布局：native final/rank_*.pt、HF model.safetensors.index.json、"
+                   "model.safetensors、adapter_model.safetensors")
+            _print("  ★ 按不可判定落盘（layout_status=" + _LAYOUT_STATUS_SKIPPED + "）："
+                   "「没验」绝不得读成「通过」")
+            payload = _unverifiable_payload(
+                torch_version, _LAYOUT_STATUS_SKIPPED + ":no_recognized_weight_layout",
+                _LAYOUT_UNKNOWN, candidates, scanned,
+            )
+
+    if not _write_payload(probe_path, payload):
         return 0
     _print("WROTE " + probe_path + " schema=" + PROBE_SCHEMA + " torch=" + torch_version
-           + " all_ok=" + str(all_ok) + " checked=" + str(len(checked))
-           + " selected_dir=" + str(payload["selected_dir"]))
+           + " all_ok=" + str(payload.get("all_ok"))
+           + " layout=" + str(payload.get("layout"))
+           + " layout_status=" + str(payload.get("layout_status"))
+           + " checked=" + str(len(payload.get("checked") or []))
+           + " selected_dir=" + str(payload.get("selected_dir")))
     return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
 '''
 
 
@@ -2825,10 +3339,15 @@ def render_probe_script() -> str:
     为什么用"常量拼接"而不是 f-string：生成物是 **Python 源码**，密集使用 ``{}``
     （字典/集合解析）⇒ 放进 f-string 必须逐个转义，可读性与可维护性都差（§2.2）。
     契约字面量（schema / 文件名）从上面的单一真相源常量注入，其余照抄。
+
+    ★ P21 起 `main` 与布局感知（HF 分片/单文件、不可判定落盘）那一段放在
+    :data:`PROBE_LAYOUT_AWARE_BODY`（**literal 常量**，不进 ``.format`` 模板 ⇒ 花括号
+    无需转义），经 ``{probe_tail}`` 字段注入；模板里只剩沿用旧写法的纯函数。
     """
     return PROBE_HEADER + PROBE_BODY.format(
         schema=TORCH_PROBE_SCHEMA,
         filename=TORCH_PROBE_FILENAME,
+        probe_tail=PROBE_LAYOUT_AWARE_BODY,
     )
 
 
@@ -3521,6 +4040,11 @@ retain_single_checkpoint() {{
     if [ ! -d "\\$output_root" ]; then
         return 0
     fi
+    # ★ 递归覆盖（P19 复核，2026-09-23）：find 默认**递归** ⇒ ms-swift 的
+    #   /out/<档号>/<档号>/v0-<时间戳>/checkpoint-N（比 output_root 多一层）**本来就被扫到**。
+    #   真机证据：runs/a7-rerun/r1/T050 正是该布局，state=ok（KEEP checkpoint-10）；
+    #   而所有 state=missing 的跑次实测 ckpt=0（训练 rc=1、一步没跑完）
+    #   ⇒ "找不到"的根因是**没有产物**，不是 glob 太浅。本行保持递归不动。
     mapfile -t all < <(find "\\$output_root" -type d -name 'checkpoint-*' -print 2>/dev/null)
     if [ "\\${{#all[@]}}" -eq 0 ]; then
         # ★ native 后端的产物形态**不是** checkpoint-*，而是终态目录 final/。
@@ -3545,8 +4069,12 @@ retain_single_checkpoint() {{
             fi
         done
         echo "[ckpt-retention] FATAL: 未找到任何 checkpoint-* 目录（output_root=\\$output_root）——" >&2
+        echo "[ckpt-retention]   ★ 实际扫过的目录树（深度<=6；上面这条 find 是**递归**的，下列路径全部扫过）：" >&2
+        find "\\$output_root" -maxdepth 6 -type d -print 2>/dev/null | sort | sed 's/^/    /' >&2
         echo "[ckpt-retention]   A3（checkpoint 重载）将无证据可判。这是**运行链路错误**，" >&2
         echo "[ckpt-retention]   不是训练失败：请检查 save_steps 是否大于实际优化步数。" >&2
+        echo "[ckpt-retention]   （native 认非空 final/；ms-swift 认任意深度的 checkpoint-*，" >&2
+        echo "[ckpt-retention]     含 /out/<档号>/<档号>/v0-<时间戳>/checkpoint-N 这一多一层布局）" >&2
         return 4
     fi
     for path in "\\${{all[@]}}"; do
@@ -3865,6 +4393,51 @@ def render_all_tiers(tiers: list[dict[str, Any]]) -> list[tuple[str, str]]:
     return rendered
 
 
+def clean_config_dir(config_dir: Path) -> tuple[list[str], list[str]]:
+    """删除生成器**已知的生成物**；保留白名单；遇到其它条目 **fail-closed 报错**。
+
+    缺陷（P21 追加之二，本包修）：旧实现 ``shutil.rmtree(CONFIG_DIR)`` 清空整个目录，
+    把文档线的 ``industry-cells.json`` / ``industry-cells.baseline.json``（**不是本生成器
+    产物**）一起删掉——每跑一次生成器就删一次，只靠人肉 ``git checkout --`` 兜底。
+
+    两条硬约束（§2.4 防呆）：
+      1) **先全量校验、再逐个删除**：若边删边发现非生成物，会留下"半删"状态。
+         失败必须发生在**任何删除之前**（本函数先扫一遍、发现非生成物立刻抛异常）。
+      2) 只删**自己认识的**（``CONFIG_ARTIFACT_RE`` 命中的 T###.yaml / .blocked.md /
+         .not_applicable.md）与白名单之外的任何条目**一律不删、直接报错**。
+
+    返回 ``(deleted_names, preserved_names)``。
+    """
+    if not config_dir.exists():
+        return [], []
+    entries = sorted(config_dir.iterdir())
+    foreign = [
+        entry.name
+        for entry in entries
+        if entry.name not in CONFIG_DIR_PRESERVED and not CONFIG_ARTIFACT_RE.match(entry.name)
+    ]
+    if foreign:
+        raise ConfigDirForeignEntryError(
+            f"配置目录 {config_dir} 里出现非生成物：{', '.join(foreign)}；"
+            f"生成器只允许删除自己的生成物（T###.yaml / T###.blocked.md / "
+            f"T###.not_applicable.md），白名单原样保留 {sorted(CONFIG_DIR_PRESERVED)}。"
+            "请人工确认后移走这些文件（本生成器既不删、也不覆盖它们）——"
+            "绝不能为了跑通而清空目录（旧实现正是这么把文档证据文件删掉的）。"
+        )
+    deleted: list[str] = []
+    preserved: list[str] = []
+    for entry in entries:
+        if entry.name in CONFIG_DIR_PRESERVED:
+            preserved.append(entry.name)
+            continue
+        if entry.is_dir() and not entry.is_symlink():
+            shutil.rmtree(entry)
+        else:
+            entry.unlink()
+        deleted.append(entry.name)
+    return deleted, preserved
+
+
 def generate(
     expected_total: int,
     train_source: str | None = None,
@@ -3895,8 +4468,9 @@ def generate(
     runner_text = render_runner(resolved_train_source)
     assert_no_legacy_terms([("manifest", manifest_text), ("runner", runner_text)])
 
-    if CONFIG_DIR.exists():
-        shutil.rmtree(CONFIG_DIR)
+    # ★ P21：**禁止 rmtree 整目录**。只删自己认识的生成物；白名单原样保留；
+    #   遇到非生成物 ⇒ 抛 ConfigDirForeignEntryError（在任何删除之前）。
+    deleted, preserved = clean_config_dir(CONFIG_DIR)
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     for name, text in rendered:
         (CONFIG_DIR / name).write_text(text, encoding="utf-8")
@@ -3913,6 +4487,7 @@ def generate(
         "expressibility": expressibility,
         "manifest_path": manifest_path,
         "gpu_override": dict(gpu_override or {}),
+        "config_cleanup": {"deleted": deleted, "preserved": preserved},
     }
 
 
@@ -3950,6 +4525,13 @@ def print_summary(result: dict[str, Any]) -> None:
     print_data_source(manifest["data"])
     print_gpu_assignment(result["tiers"], result.get("gpu_override") or {})
     print(f"配置目录: {CONFIG_DIR}")
+    cleanup = result.get("config_cleanup") or {}
+    if cleanup:
+        # ★ P21：清理半径必须可见（"删了哪些 / 保留了哪些"不能靠猜）。
+        print(
+            f"配置目录清理: 删除生成物 {len(cleanup.get('deleted', []))} 个；"
+            f"保留白名单 {cleanup.get('preserved', [])}（非生成物，绝不删除）"
+        )
     print(f"运行清单: {result.get('manifest_path', MANIFEST_PATH)}")
     print(f"执行骨架: {RUNNER_PATH}")
 
@@ -4135,6 +4717,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"FATAL(gpu-assignment): {exc}", file=sys.stderr)
         print("  用法: --gpu-override 'T001=4;T002=4,5'（逐档映射，无通配符）", file=sys.stderr)
         return 2
+    except ConfigDirForeignEntryError as exc:
+        # fail-closed：非生成物 ⇒ 一个文件都不删、不写（§2.4 防呆）。
+        print(f"FATAL(config-dir): {exc}", file=sys.stderr)
+        return 3
 
 
 if __name__ == "__main__":
