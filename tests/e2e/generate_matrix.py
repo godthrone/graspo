@@ -62,6 +62,7 @@ import os
 import re
 import shutil
 import sys
+import tempfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -99,6 +100,7 @@ CONFIG_DIR_PRESERVED = frozenset({"industry-cells.json", "industry-cells.baselin
 
 class ConfigDirForeignEntryError(RuntimeError):
     """配置目录里出现生成器不认识、也不在白名单里的条目（fail-closed，一个都不删）。"""
+
 
 #: `record-gpu-memory` 采样产物的容器内落点（**单一真相源**，§1.4）。
 #: 容器内 /out 由 runner 绑定到宿主 <RUN_ROOT>/<T###>（挂载表 `"$RUN_DIR|/out|rw"`），
@@ -408,9 +410,7 @@ ELAM_MINI_JSONL_ENV = "GRASPO_ELAM_MINI_JSONL"
 #: 生成期读取**开发机本地镜像**算 sha256/行数（与 228 上那份同源、已核 sha256 一致）：
 #: manifest 里的摘要必须**实测算出**，不得硬编码（硬编码的摘要等于没有摘要）。
 #: 注意本地 staging 目录比 228 落点多一层 `mini/`（见 `.local/mini-dataset/mini/upload-228.md`）。
-LOCAL_MINI_JSONL = (
-    PROJECT_ROOT / ".local" / "mini-dataset" / "mini" / "mini-short-mm-train.jsonl"
-)
+LOCAL_MINI_JSONL = PROJECT_ROOT / ".local" / "mini-dataset" / "mini" / "mini-short-mm-train.jsonl"
 
 #: 每档训练子集大小：按 §6 门槛取下限即可（用户已定"尽量省资源"，不整集跑）。
 #: SFT ≥100 条、RL ≥20 条（GRASPO 属 RL）。
@@ -506,9 +506,7 @@ NATIVE_ROLLOUT_QUEUE_BATCH_SIZE = 8
 #: ``rollout_queue_batch_size × rollout_group_size``（``schema.py:389-390``），
 #: 消费点是 ``flow/trainer/optimize.py`` 的 ``len(replay_buffer) >= threshold``。
 #: 生成器不导入 schema（见上）⇒ 就地按同一算式展开；parity 由源码文本级测试兜住。
-NATIVE_REPLAY_BUFFER_OPTIMIZE_THRESHOLD = (
-    NATIVE_ROLLOUT_QUEUE_BATCH_SIZE * ROLLOUT_GROUP_SIZE
-)
+NATIVE_REPLAY_BUFFER_OPTIMIZE_THRESHOLD = NATIVE_ROLLOUT_QUEUE_BATCH_SIZE * ROLLOUT_GROUP_SIZE
 
 #: ★ CPT / OPD 的**通道**已落地（`WP-X3`，2026-09-19）：`train_method` 枚举含 `cpt`/`opd`，
 #: 配置层对这两个算法**接受**、对 `cpt|opd + native` **fail-closed 拒绝**；路由表
@@ -981,9 +979,7 @@ def expected_optimizer_steps_reachable(tier: dict[str, Any]) -> int:
 # ── 生成期对照（**fail-closed**，§2.3 边界校验即防呆）──────────────────────
 
 
-def step_gate_applicability(
-    tier: dict[str, Any], *, min_optimizer_steps: int
-) -> tuple[str, str]:
+def step_gate_applicability(tier: dict[str, Any], *, min_optimizer_steps: int) -> tuple[str, str]:
     """该档的 **step 门槛是否适用** ⇒ ``(标记, 理由)``，写进 manifest 的
     ``acceptance.formal_gate.step_gate_applicability``。
 
@@ -1008,7 +1004,10 @@ def step_gate_applicability(
     """
     reachable = expected_optimizer_steps_reachable(tier)
     if reachable < 1:
-        return STEP_GATE_REVIEW_REQUIRED, f"可产出步数上限={reachable} < 1（非法，生成期防线被绕过）"
+        return (
+            STEP_GATE_REVIEW_REQUIRED,
+            f"可产出步数上限={reachable} < 1（非法，生成期防线被绕过）",
+        )
     if reachable < min_optimizer_steps:
         note = (
             f"该档可产出步数上限={reachable} < 门槛 {min_optimizer_steps}"
@@ -2654,7 +2653,41 @@ def _load_sibling_manifest(path: str) -> dict:
     return data if isinstance(data, dict) else {{}}
 
 
-def _audit_state_dict(state: dict, manifest: dict, kind: str) -> dict:
+def _resolve_rank_placement(loaded: object, manifest: dict) -> tuple[dict, str | None]:
+    """解析**本 rank 自己的**层区间来源（A 修，2026-09-23）。
+
+    优先级（§2.3：能查就必须查，查不了要**显式标记**）：
+      ① ckpt **payload 自带的** ``placement``（每个 rank 各写自己的 ⇒ pp>1 也精确）；
+      ② 同目录 ``manifest.json`` 的 ``placement``（**仅当它是单 rank 布局**：
+         ``pp_size``/``world_size`` ≤ 1）；
+      ③ 否则 ⇒ 返回 ``skipped`` 原因，**显式**跳过层覆盖检查（绝不静默变弱）。
+    """
+    if isinstance(loaded, dict):
+        own = loaded.get("placement")
+        if isinstance(own, dict) and (own.get("local_layer_indices") or []):
+            return own, None
+    placement = manifest.get("placement") if isinstance(manifest.get("placement"), dict) else {{}}
+    sizes = [
+        manifest.get("pp_size"),
+        manifest.get("world_size"),
+        manifest.get("tp_size"),
+        manifest.get("dp_size"),
+    ]
+    single_rank = all(value in (None, 1) for value in sizes)
+    if placement and single_rank:
+        return placement, None
+    if placement:
+        return {{}}, "pp>1 且无 per-rank 层区间（sibling manifest 只描述其中一个 rank）"
+    return {{}}, "无 placement 信息（payload 与 manifest 都没有）"
+
+
+def _audit_state_dict(
+    state: dict,
+    manifest: dict,
+    kind: str,
+    placement: dict | None = None,
+    placement_skip_reason: str | None = None,
+) -> dict:
     """★ 完整性审计（P17 修复核心）：**空/缺层/非有限/整层全零/自述不一致** 都判不通过。
 
     设计边界（§2.3，避免"过度严格"把健康 ckpt 判死）：**只对能确证是缺陷的形态判 fail**；
@@ -2698,7 +2731,7 @@ def _audit_state_dict(state: dict, manifest: dict, kind: str) -> dict:
         reasons.append("zero_layers:" + ",".join(str(index) for index in layer_all_zero[:8]))
 
     tuner_type = str(manifest.get("tuner_type") or "")
-    placement = manifest.get("placement") if isinstance(manifest.get("placement"), dict) else {{}}
+    placement = placement if isinstance(placement, dict) else {{}}
     expected_layers = [
         int(index)
         for index in (placement.get("local_layer_indices") or [])
@@ -2711,6 +2744,9 @@ def _audit_state_dict(state: dict, manifest: dict, kind: str) -> dict:
             + "（全参权重应落在 " + "/".join(_FULL_PARAM_KINDS) + " 上）"
         )
         reasons.append("tuner_type_mismatch:" + kind_check)
+    layer_check_skipped: str | None = None
+    if not expected_layers:
+        layer_check_skipped = placement_skip_reason or "无 per-rank 层区间"
     missing = [index for index in expected_layers if index not in layer_found]
     if expected_layers and missing:
         reasons.append("missing_layers:" + ",".join(str(index) for index in missing[:8]))
@@ -2728,6 +2764,8 @@ def _audit_state_dict(state: dict, manifest: dict, kind: str) -> dict:
         "zero_layers": layer_all_zero,
         "layers_found": sorted(layer_found),
         "layers_expected": sorted(expected_layers),
+        # ★ A 修：层覆盖**没查**时必须可见（不许静默变弱）
+        "layer_check_skipped": layer_check_skipped,
         "missing_layers": missing[:16],
         "extra_layers": extra[:16],
         "tuner_type": tuner_type or None,
@@ -3150,7 +3188,11 @@ def _run_native(
                 entry["error"] = "torch.load: " + type(exc).__name__ + ": " + str(exc)
             else:
                 state, kind = _flatten_state_dict(loaded)
-                audit = _audit_state_dict(state, _load_sibling_manifest(path), kind)
+                sibling = _load_sibling_manifest(path)
+                rank_placement, skip_reason = _resolve_rank_placement(loaded, sibling)
+                audit = _audit_state_dict(
+                    state, sibling, kind, rank_placement, skip_reason
+                )
                 entry["state_dict_kind"] = kind
                 entry["tensors"] = len(state)
                 entry.update(audit)
@@ -3453,9 +3495,36 @@ if [ "${{GRASPO_RUNNER_LIB_ONLY:-0}}" = "1" ]; then
     return 0 2>/dev/null || exit 0
 fi
 
+# ══ 执行期自免疫：启动时把**自己**快照到私有副本再 exec（P19/P21 根因修复）══════
+# 缺陷（228 实测，n≥2 且跨后端 T050/T016）：bash 执行脚本是**按字节偏移顺序读**的；
+# 脚本在运行中被**就地重写**（生成器的 write_text，或同步时的 cp）⇒ bash 从陈旧偏移
+# 读到**混排内容** ⇒ `line N: 0: command not found` + `syntax error near unexpected token
+# "fi"` ⇒ **bash 自己退 2**；此时 runner 还没走到 `echo $? > exit_code`（它在 docker run
+# 之后）⇒ 驱动看到 rc=2 + 无 exit_code（P20 把它误标成"预检失败（容器未起）"），而
+# `docker run` 的子进程成孤儿、继续把训练跑完（所以训练侧完整 + ckpt/probe 证据都在）。
+# 修法（机制层，不靠纪律）：启动时把 `$0` 快照到 /tmp 私有副本并 `exec` 它 —— 之后
+# 无论原文件被谁就地改写，本进程读的都是**私有副本的快照**，永远读不到混排内容。
+# ★ 位置：必须在本库模式守卫**之后**（测试 `source` 进来时不得被 exec 掉）。
+# ★ 快照失败不阻断主流程（打 WARN 继续用原文件）：这是加固，不是新的 fail-closed 条件。
+# ★ 快照必须**语法完整**才允许 exec（`bash -n`）：启动瞬间的 cp 本身也可能撞上并发写入，
+#   校验不过就退回原文件（宁可慢一点，也不要拿一份撕裂的副本去跑）。
+# ★ 原始路径经 GRASPO_RUNNER_ORIGINAL 传给副本：副本自己的 `$0` 在 /tmp，不能再用它推
+#   ROOT_DIR（否则仓库根会算成 /）。
+if [ "${{GRASPO_RUNNER_SNAPSHOT:-0}}" != "1" ]; then
+    _GRASPO_SNAP="$(mktemp "${{TMPDIR:-/tmp}}/graspo-runner-XXXXXX.sh" 2>/dev/null || true)"
+    if [ -n "$_GRASPO_SNAP" ] && cp "$0" "$_GRASPO_SNAP" 2>/dev/null \\
+        && chmod +x "$_GRASPO_SNAP" 2>/dev/null \\
+        && bash -n "$_GRASPO_SNAP" 2>/dev/null; then
+        GRASPO_RUNNER_SNAPSHOT=1 GRASPO_RUNNER_ORIGINAL="$0" exec bash "$_GRASPO_SNAP" "$@"
+    fi
+    echo "WARN(runner-snapshot): 无法建立可用的自身快照 ⇒ 继续用原文件执行（运行中被就地改写仍有 rc=2 风险）" >&2
+else
+    trap 'rm -f "$0" 2>/dev/null || true' EXIT
+fi
+
 TIER="${{1:?usage: run_matrix54.sh <T###> [--dry-run]}}"
 MODE="${{2:-run}}"
-ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${{GRASPO_RUNNER_ORIGINAL:-$0}}")/../.." && pwd)"
 IMAGE="${{GRASPO_IMAGE:-graspo-msswift:4.5.3}}"
 RUN_ROOT="${{RUN_ROOT:-$ROOT_DIR/.local/matrix54-runs}}"
 ELAM_HOST="${{{ELAM_HOST_ROOT_ENV}:-}}"
@@ -4393,6 +4462,33 @@ def render_all_tiers(tiers: list[dict[str, Any]]) -> list[tuple[str, str]]:
     return rendered
 
 
+def _atomic_write_text(path: Path, text: str, *, mode: int | None = None) -> None:
+    """原子落盘：同目录临时文件 + ``os.replace``（P19/P21 根因修复）。
+
+    ★ 为什么不能就地 ``write_text``（228 实测，n≥2 跨后端）：``tests/e2e/run_matrix54.sh``
+    是**正在被 bash 执行**的脚本，而 bash 按**字节偏移顺序读**它。就地 truncate+write 会让
+    执行中的 bash 从陈旧偏移读到**混排内容** ⇒ `line N: 0: command not found` +
+    `syntax error near unexpected token "fi"` ⇒ **bash 自己退 2**，且它还没写 `exit_code`
+    ⇒ 驱动记 rc=2/container_started=False（P20 误标"预检失败"），而容器（docker run 的
+    子进程）成孤儿继续跑完训练。``os.replace`` 换的是 **inode**：已在读旧文件的进程继续
+    读完旧 inode，绝不会读到混排内容；新启动的进程读新 inode（完整）。
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if mode is not None:
+            os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
 def clean_config_dir(config_dir: Path) -> tuple[list[str], list[str]]:
     """删除生成器**已知的生成物**；保留白名单；遇到其它条目 **fail-closed 报错**。
 
@@ -4472,13 +4568,14 @@ def generate(
     #   遇到非生成物 ⇒ 抛 ConfigDirForeignEntryError（在任何删除之前）。
     deleted, preserved = clean_config_dir(CONFIG_DIR)
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    # ★ 全部原子落盘（P19/P21）：runner **正被 bash 执行**、manifest/config 也正被读取，
+    #   就地 write_text 会让并发读者读到混排内容（228 实测：runner 就地重写 ⇒ rc=2 且无
+    #   exit_code；容器成孤儿把训练跑完）。os.replace 换 inode ⇒ 旧读者读完旧内容。
     for name, text in rendered:
-        (CONFIG_DIR / name).write_text(text, encoding="utf-8")
+        _atomic_write_text(CONFIG_DIR / name, text)
     manifest_path = MANIFEST_PATH if manifest_out is None else Path(manifest_out)
-    manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    manifest_path.write_text(manifest_text, encoding="utf-8")
-    RUNNER_PATH.write_text(runner_text, encoding="utf-8")
-    RUNNER_PATH.chmod(0o755)
+    _atomic_write_text(manifest_path, manifest_text)
+    _atomic_write_text(RUNNER_PATH, runner_text, mode=0o755)
     write_feasibility_table(tiers)
 
     return {
@@ -4563,17 +4660,13 @@ def print_gpu_assignment(
         by_id = {str(tier["tier_id"]): tier for tier in tiers}
         for tier_id in sorted(overridden):
             tier = by_id[tier_id]
-            line = format_assignment_line(
-                tier_id, tier["gpus"], int(tier["cards"]), "override"
-            )
+            line = format_assignment_line(tier_id, tier["gpus"], int(tier["cards"]), "override")
             print(f"{prefix}  {line}")
         print(
             f"{prefix}  其余 {len(tiers) - len(overridden)} 档沿用上面的按卡数默认集合"
             f"（逐档值见清单 tiers[].gpus）"
         )
-    fingerprint = gpu_assignment_fingerprint(
-        (str(tier["tier_id"]), tier["gpus"]) for tier in tiers
-    )
+    fingerprint = gpu_assignment_fingerprint((str(tier["tier_id"]), tier["gpus"]) for tier in tiers)
     print(
         f"{prefix}卡集合指纹(sha256): {fingerprint}；复核命令 "
         f"`python3 tests/e2e/gpu_assignment.py check --manifest <清单> "
