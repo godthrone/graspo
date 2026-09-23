@@ -24,6 +24,7 @@ native · 4 卡 ``pp=4``）给出的后果：
 from __future__ import annotations
 
 import math
+import os
 import re
 from collections.abc import Iterable
 from typing import Any
@@ -76,6 +77,37 @@ PP_EXCHANGE_BWD_SENT = "bwd_sent_grad"
 
 #: 层号正则：命中 ``layers.<i>.``（取**本 stage 的局部**层号；PP 下每个 rank 的层号从 0 起）。
 _LAYER_IN_NAME = re.compile(r"(?:^|\.)layers\.(\d+)\.")
+
+
+#: ── 诊断变体开关（控制变量复现实验用；2026-09-23 指挥官批准"运行根标记文件"方案）────────
+#: 语义（**默认关**：无标记文件 ⇒ 现有行为，零影响）：
+#:   · 运行根下存在 ``diag_hook_off`` ⇒ **(i)** 不装交换张量钩子（= #1a 之前不取样）；
+#:   · 运行根下存在 ``diag_no_sync``  ⇒ **(ii)** 装钩子但**不做**一次性设备同步；
+#:   · 两者都不存在                 ⇒ **(iii)** 装钩子 + 一次性同步（**现有默认行为**）。
+#: 为什么用"运行根标记文件"：runner 的 ``-e`` 列表固定（无通用透传），配置/生成器本轮被占用 ⇒
+#: 这是唯一不碰生成器/配置、又能逐 run 选变体的通道。
+#: **纪律**：本函数**只在每个 run 开始时读一次**（绝不每步重读——那会引入新的 I/O/时序噪声，
+#: 而那正是要测的东西）；**不引入任何集合通信或同步**；读不到/读失败一律回落到默认 ``sync``。
+DIAG_VARIANT_SYNC = "sync"
+DIAG_VARIANT_NO_SYNC = "no_sync"
+DIAG_VARIANT_HOOK_OFF = "hook_off"
+DIAG_HOOK_OFF_MARKER = "diag_hook_off"
+DIAG_NO_SYNC_MARKER = "diag_no_sync"
+
+
+def read_diag_variant(base_dir: str | os.PathLike[str] | None) -> str:
+    """读**运行根**下的诊断变体标记（只读一次；默认 ``sync``）。见模块常量注释。"""
+    if not base_dir:
+        return DIAG_VARIANT_SYNC
+    try:
+        root = os.fspath(base_dir)
+        if os.path.exists(os.path.join(root, DIAG_HOOK_OFF_MARKER)):
+            return DIAG_VARIANT_HOOK_OFF
+        if os.path.exists(os.path.join(root, DIAG_NO_SYNC_MARKER)):
+            return DIAG_VARIANT_NO_SYNC
+    except Exception:  # noqa: BLE001 —— 诊断开关读失败 ⇒ 回落默认（绝不因诊断影响训练）
+        return DIAG_VARIANT_SYNC
+    return DIAG_VARIANT_SYNC
 
 
 def _layer_index_from_key(name: str) -> int | None:

@@ -1,6 +1,7 @@
 """Qwen3.5/3.6 adapter — SFT training methods (TP+DP+PP)."""
 
 import logging
+import os
 import time
 from typing import Any
 
@@ -8,6 +9,8 @@ import torch
 import torch.distributed as dist
 
 from graspo.flow.adapters.models.common.grad_probe import (
+    DIAG_VARIANT_HOOK_OFF,
+    DIAG_VARIANT_NO_SYNC,
     FAIL_CLOSED_PHASE,
     PP_EXCHANGE_BWD_RECEIVED,
     PP_EXCHANGE_BWD_SENT,
@@ -17,6 +20,7 @@ from graspo.flow.adapters.models.common.grad_probe import (
     grad_fail_reason_text,
     grad_gate_verdict,
     pp_exchange_readings,
+    read_diag_variant,
     reduced_grad_flags,
     step_index_one_based,
 )
@@ -626,8 +630,12 @@ class _Qwen35SFTTrainingMethods:
                 if len(pending_recheck) < exchange_cap:
                     pending_recheck.append((direction, name, tensor))
 
-        comm.diag_hook = _on_comm_sample
-        comm.diag_sync_once = True  # 每步首个取样点做一次设备同步（见 diag_begin_step）
+        # 诊断变体开关（**每个 run 只读一次**；默认 sync ⇒ 现有行为）——控制变量复现实验用。
+        # 「运行根」= output_dir 的父目录（容器内 /out）。
+        diag_variant = read_diag_variant(os.path.dirname(str(self.config.training.output_dir)))
+        if diag_variant != DIAG_VARIANT_HOOK_OFF:
+            comm.diag_hook = _on_comm_sample
+            comm.diag_sync_once = diag_variant != DIAG_VARIANT_NO_SYNC
         comm.diag_begin_step()  # 本步重新武装"一次性同步"（每步至多一次）
 
         # 梯度累积：zero_grad 只调一次，所有 chunk 的梯度累加后统一 step
@@ -844,6 +852,7 @@ class _Qwen35SFTTrainingMethods:
                         "rank_grad_norms": [float(value) for value in rank_grad_norms],
                         "pp_exchange": exchange_readings,
                         "pp_exchange_post_wait": post_wait_readings,
+                        "pp_exchange_variant": diag_variant,
                         **local_grad_detail,
                     }
                 },
@@ -876,6 +885,7 @@ class _Qwen35SFTTrainingMethods:
                 "rank_grad_reports": rank_grad_reports,
                 "pp_exchange": exchange_readings,
                 "pp_exchange_post_wait": post_wait_readings,
+                "pp_exchange_variant": diag_variant,
                 **local_grad_detail,
             }
             self._emit_rank_memory_event(FAIL_CLOSED_PHASE, {"metrics": fail_closed_metrics})

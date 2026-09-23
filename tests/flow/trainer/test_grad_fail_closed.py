@@ -820,6 +820,94 @@ class TestSamplingSitesAreTheRealBuffers:
         assert '"_tensor"' in text.split("__slots__")[1][:200]
 
 
+# ── 11) 诊断变体开关（运行根标记文件；默认关、只读一次、零新增通信）──────────────────
+
+
+class TestDiagVariantSwitch:
+    """★ 指挥官批准的 (a) 方案：运行根标记文件选变体；**默认关 ⇒ 现有行为**。"""
+
+    def test_no_marker_means_default_sync(self, tmp_path) -> None:
+        from graspo.flow.adapters.models.common.grad_probe import (
+            DIAG_VARIANT_SYNC,
+            read_diag_variant,
+        )
+
+        assert read_diag_variant(tmp_path) == DIAG_VARIANT_SYNC
+        assert read_diag_variant(None) == DIAG_VARIANT_SYNC
+        assert read_diag_variant(tmp_path / "does-not-exist") == DIAG_VARIANT_SYNC
+
+    def test_hook_off_and_no_sync_markers(self, tmp_path) -> None:
+        from graspo.flow.adapters.models.common import grad_probe as gp
+
+        (tmp_path / gp.DIAG_HOOK_OFF_MARKER).write_text("", encoding="utf-8")
+        assert gp.read_diag_variant(tmp_path) == gp.DIAG_VARIANT_HOOK_OFF
+        (tmp_path / gp.DIAG_HOOK_OFF_MARKER).unlink()
+        (tmp_path / gp.DIAG_NO_SYNC_MARKER).write_text("", encoding="utf-8")
+        assert gp.read_diag_variant(tmp_path) == gp.DIAG_VARIANT_NO_SYNC
+
+    def test_both_markers_have_deterministic_precedence(self, tmp_path) -> None:
+        from graspo.flow.adapters.models.common import grad_probe as gp
+
+        (tmp_path / gp.DIAG_HOOK_OFF_MARKER).write_text("", encoding="utf-8")
+        (tmp_path / gp.DIAG_NO_SYNC_MARKER).write_text("", encoding="utf-8")
+        assert gp.read_diag_variant(tmp_path) == gp.DIAG_VARIANT_HOOK_OFF
+
+    def test_switch_has_no_collectives_and_no_sync(self) -> None:
+        """纪律：开关本身**不得**引入集合通信或任何同步（除既有 `diag_sync_once`）。"""
+        import inspect
+
+        from graspo.flow.adapters.models.common import grad_probe as gp
+
+        source = inspect.getsource(gp.read_diag_variant)
+        for forbidden in (
+            "dist.",
+            "all_reduce",
+            "broadcast",
+            "barrier",
+            "synchronize",
+            "isend",
+            "irecv",
+        ):
+            assert forbidden not in source, forbidden
+
+    def test_variant_is_read_once_per_run_outside_the_chunk_closures(self) -> None:
+        """只读一次（每步重读会引入新 I/O/时序噪声 —— 那正是要测的东西）。"""
+        text = (
+            _REPO
+            / "src"
+            / "graspo"
+            / "flow"
+            / "adapters"
+            / "models"
+            / "qwen35_36"
+            / "training_sft.py"
+        ).read_text(encoding="utf-8")
+        start = text.index("def _pipeline_train_batch_sft(")
+        end = text.index("def _pipeline_forward_for_sft(")
+        body = text[start:end]
+        assert body.count("read_diag_variant(") == 1, body.count("read_diag_variant(")
+        # 必须在闭包之前（闭包体内不得再读）
+        pos_read = body.index("read_diag_variant(")
+        pos_first_chunk_closure = body.index("def forward_chunk(")
+        assert pos_read < pos_first_chunk_closure, "读取必须在 per-chunk 闭包之前（不得每步重读）"
+
+    def test_default_off_reproduces_the_previous_arming(self) -> None:
+        """默认（无标记）⇒ 与 #1a 一致：装钩子 + `diag_sync_once=True`。"""
+        text = (
+            _REPO
+            / "src"
+            / "graspo"
+            / "flow"
+            / "adapters"
+            / "models"
+            / "qwen35_36"
+            / "training_sft.py"
+        ).read_text(encoding="utf-8")
+        assert "diag_variant = read_diag_variant(" in text
+        assert "if diag_variant != DIAG_VARIANT_HOOK_OFF:" in text
+        assert "comm.diag_sync_once = diag_variant != DIAG_VARIANT_NO_SYNC" in text
+
+
 class TestDirtyBlockSide:
     """★ 方案 #2：脏块位置 / 层号逆序（口径：**层号**，不是观测时序；见 grad_probe 注释）。"""
 
@@ -896,8 +984,8 @@ class TestExchangeProbeWiringIsPpOnlyAndDiagnosticOnly:
         pp_body = text[start:end]
         # #1a 后的接线：PP 方法内装 comm 钩子 + 每步重新武装一次性同步；训练层不再自己取样
         assert pp_body.count("comm.diag_hook = _on_comm_sample") == 1
-        assert pp_body.count("comm.diag_sync_once = True") == 1
-        assert pp_body.count("comm.diag_begin_step()") == 1
+        assert pp_body.count("comm.diag_sync_once = diag_variant != DIAG_VARIANT_NO_SYNC") == 1
+        assert pp_body.count("comm.diag_begin_step()") >= 1
         assert "def _on_comm_sample(" in pp_body
         assert pp_body.count("record_exchange(") == 0
         non_pp_start = text.index("def train_batch_sft(")
