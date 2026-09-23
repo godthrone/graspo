@@ -1386,6 +1386,10 @@ class RunEvidence:
     #: 该计数的**来源自证**（§2.2）：native 精确计数 / ms-swift 从 NaN grad_norm 推断 /
     #: 空 = 不可得。
     nonfinite_skips_source: str = ""
+    #: ★ **A7 三分类之 (A)**（2026-09-22 指挥官裁定）：该 run 走的路径**遇到非有限会中止**
+    #: ⇒ "**跑完且 rc=0**"本身就是"没发生非有限跳过"的**正面证据**。
+    #: 值 = **该档实测 stdout 证明其确实走这条路径** + `文件:行` 锚点（**逐档核，不按后端整批推定**）。
+    nonfinite_fail_closed_guarantee: str = ""
     # ── 「读到了什么」与「什么都没读到」的分界（F-4 P0 修法④）───────────────
     #: loss 序列里**真读到**非有限值（NaN/Inf）⇒ 数值异常（关于训练的**事实**）。
     losses_nonfinite: bool | None = None
@@ -1910,6 +1914,12 @@ def judge_a7(evidence: RunEvidence) -> CriterionResult:
     - **读数缺失（``None``）** ⇒ 不通过且标 ``evidence_missing``（fail-closed；
       由 :func:`judge_tier` 归成「⚠ 口径不可测（取证缺口）」而不是训练失败）。
     """
+    if evidence.nonfinite_fail_closed_guarantee:
+        return CriterionResult(
+            "A7", True,
+            "由 **fail-closed 机制保证**（跑完且 rc=0 ⇒ 未发生非有限跳过）："
+            f"{evidence.nonfinite_fail_closed_guarantee}",
+        )
     skips = evidence.nonfinite_skips
     if skips is None:
         return CriterionResult(

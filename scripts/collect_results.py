@@ -81,6 +81,9 @@ _NUMERIC_LITERAL = re.compile(
 
 #: 训练器在首个非有限梯度处硬失败时打的标记（唯一真相源：
 #: ``flow/adapters/models/qwen35_36/training_sft.py``）。
+#: native SFT 路径的实现痕迹（用于逐档判定 A7 的 fail-closed 保证）。
+_NATIVE_SFT_PATH_MARKER = re.compile(r"train_batch_sft|_pipeline_train_batch_sft|sft_trainer\.py")
+
 _NONFINITE_GRAD_MARKER = re.compile(r"非有限梯度|non-?finite gradient")
 
 
@@ -1840,6 +1843,21 @@ def collect_run(
     else:
         nonfinite_skips_value = series.nonfinite_skips
         nonfinite_skips_source_value = series.nonfinite_skips_source
+    # ── ★ A7 三分类之 (A)（2026-09-22 指挥官裁定）：**逐档**核对该档是否走 fail-closed 路径 ──
+    #   判据 = **该档自己的 stdout 里出现 native SFT 路径的实现痕迹**（`train_batch_sft` /
+    #   `sft_trainer.py`）**且 rc=0** —— 不是按后端/档族整批推定。
+    #   锚点（代码事实）：`sft_trainer.py:402-415 _assert_no_frozen_steps` 在落盘前**必然 raise**；
+    #   `training_sft.py:313 _record_nonfinite_skip` 默认**硬失败**（非预授权时）。
+    #   ⇒ 走这条路径还能 rc=0 跑完，就**正面证明**没有非有限跳过。
+    fail_closed_guarantee = ""
+    if exit_code == 0 and _NATIVE_SFT_PATH_MARKER.search(log_text or ""):
+        evidence_c = (
+            "src/graspo/flow/trainer/sft_trainer.py:402-415 (_assert_no_frozen_steps："
+            "有跳过则落盘前必然 raise) + "
+            "src/graspo/flow/adapters/models/qwen35_36/training_sft.py:313 "
+            "(_record_nonfinite_skip：默认硬失败)"
+        )
+        fail_closed_guarantee = f"该档 stdout 实证走 native SFT 路径；锚点 {evidence_c}"
     evidence = _judge.RunEvidence(
         tier_id=tier_id,
         exit_code=exit_code,
@@ -1858,6 +1876,7 @@ def collect_run(
         ),
         nonfinite_skips=nonfinite_skips_value,
         nonfinite_skips_source=nonfinite_skips_source_value,
+        nonfinite_fail_closed_guarantee=fail_closed_guarantee,
         losses_nonfinite=series.loss_nonfinite,
         losses_unavailable=series.loss_unavailable,
         steps_declared_total=series.declared_total_steps,
