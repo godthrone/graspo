@@ -6,6 +6,13 @@ from typing import Any
 import torch
 import torch.distributed as dist
 
+from graspo.flow.adapters.models.common.grad_probe import (
+    FAIL_CLOSED_PHASE,
+    PP_NUMERIC_PROBE_PHASE,
+    grad_fail_reason_text,
+    grad_gate_verdict,
+    reduced_grad_flags,
+)
 from graspo.flow.adapters.models.common.layers import _log_cuda_mem
 from graspo.flow.adapters.models.qwen35_36.model import Qwen35HybridTextModel
 from graspo.flow.parallel.pipeline_comm import PipelineComm, wait_all
@@ -302,6 +309,8 @@ class _Qwen35TrainingMethods:
         # Single pass — no repeated iterations.
         optimize_round = 0
         round_started_at = time.monotonic()
+        #: R3（2026-09-23）：首步逐 rank 数值探针**只落一行**的幂等标记（每个 rank 各自判）。
+        probe_emitted = False
         indices = self._shared_training_indices(len(experiences), optimize_round=optimize_round)
         for start in range(0, len(indices) - batch_size + 1, batch_size):
             batch_indices = indices[start : start + batch_size]
@@ -342,6 +351,80 @@ class _Qwen35TrainingMethods:
                     self.optimizer.zero_grad(set_to_none=True)
                 skipped_nonfinite += 1
                 continue
+            # ── R1（2026-09-23）：梯度有限性 / 填充度判据 ─────────────────────────
+            # ``result["finite"]`` 只反映末 stage 的 loss 是否有限；梯度是否有限此前
+            # 完全不判 ⇒ NaN 梯度会被下面的 ``optimizer.step()`` 写进权重（T018 实测：
+            # rank2 在 loss 仍有限时梯度已 NaN，照常 step）。判据是纯函数，见
+            # ``models/common/grad_probe.py::grad_gate_verdict``。
+            local_grad = self.model.gradient_finiteness_report()
+            grad_nonfinite_any, grad_unpopulated_any = reduced_grad_flags(
+                local_report=local_grad, distributed=dist, device=self.device
+            )
+            grad_failed, grad_fail_reason = grad_gate_verdict(
+                loss_all_finite=True,  # 已过上面的 loss 门
+                grad_nonfinite_any=grad_nonfinite_any,
+                grad_unpopulated_any=grad_unpopulated_any,
+            )
+            if grad_failed:
+                # 与上面 loss 门同构：zero_grad + 计数跳过（**不做 optimizer.step()**）。
+                # 本包的边界：RL 的"硬失败"仍由既有判定层（A7/A2 读 skipped_nonfinite）
+                # 负责，这里不新增 raise（不改变 RL 的失败语义；见实施报告"范围与边界"）。
+                if self.optimizer is not None:
+                    self.optimizer.zero_grad(set_to_none=True)
+                skipped_nonfinite += 1
+                # 诊断明细只算一次（失败步才做第二遍 max|·| 归约）
+                grad_detail = self.model.gradient_finiteness_report(with_max_abs=True)
+                if self._train_batch_call_index == 0 and not probe_emitted:
+                    probe_emitted = True
+                    self._emit_rank_memory_event(
+                        PP_NUMERIC_PROBE_PHASE,
+                        {
+                            PP_NUMERIC_PROBE_PHASE: {
+                                "step": 0,
+                                "pp_rank": self.pp_rank,
+                                "pp_size": self.pp_size,
+                                "loss_all_finite": True,
+                                "optimizer_stepped": False,
+                                "fail_reason": grad_fail_reason,
+                                **grad_detail,
+                            }
+                        },
+                    )
+                self._emit_rank_memory_event(
+                    FAIL_CLOSED_PHASE,
+                    {
+                        "metrics": {
+                            "step": self._train_batch_call_index,
+                            "phase_kind": FAIL_CLOSED_PHASE,
+                            "fail_reason": grad_fail_reason,
+                            "fail_reason_text": grad_fail_reason_text(grad_fail_reason),
+                            "optimizer_steps": 0,
+                            "optimizer_stepped": False,
+                            "skipped_nonfinite": int(skipped_nonfinite),
+                            "loss_all_finite": True,
+                            "pp_rank": self.pp_rank,
+                            "pp_size": self.pp_size,
+                            **grad_detail,
+                        }
+                    },
+                )
+                continue
+            if self._train_batch_call_index == 0 and not probe_emitted:
+                # R3（2026-09-23）：首步逐 rank 数值探针（只增行、不参与判据）。
+                probe_emitted = True
+                self._emit_rank_memory_event(
+                    PP_NUMERIC_PROBE_PHASE,
+                    {
+                        PP_NUMERIC_PROBE_PHASE: {
+                            "step": 0,
+                            "pp_rank": self.pp_rank,
+                            "pp_size": self.pp_size,
+                            "loss_all_finite": True,
+                            "optimizer_stepped": True,
+                            **self.model.gradient_finiteness_report(with_max_abs=True),
+                        }
+                    },
+                )
             # DP/TP gradient sync: 跨 rank 同步梯度后再 clip + step
             from graspo.flow.lora.lora_linear import (
                 _sync_dp_lora_grads,

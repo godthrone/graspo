@@ -128,6 +128,27 @@ class GraspoFlowCausalLMBase(nn.Module):
             return self.grad_populated_count()
         return self.nonzero_lora_grad_count()
 
+    def gradient_finiteness_report(self, *, with_max_abs: bool = False) -> dict[str, Any]:
+        """本 rank 梯度的**有限性 + 填充度**只读探针（§2.3 边界校验即防呆）。
+
+        模型自己持有参数，所以探针落在本类（与 :meth:`grad_populated_count` 同处）；
+        具体归约分块与判据语义在纯逻辑模块
+        :mod:`graspo.flow.adapters.models.common.grad_probe`——**不在这里另立一套**（§1.4）。
+
+        **为什么需要它**：native PP 的 fail-closed 判据此前只看末 stage 的 loss 是否有限，
+        完全不看梯度；T018 实测 rank2 在 step3 已有 NaN 梯度却照常 ``optimizer.step()``
+        （把 NaN 写进权重），直到 step5 loss 变 NaN 才崩。本探针让"梯度非有限"可判定。
+
+        :param with_max_abs: 是否额外算全局 ``grad_max_abs`` / argmax 张量名（诊断步才需要；
+            每步都算要多一遍 ``max|·|`` 归约）。
+        :returns: 只读报告 dict（键名即落盘字段名），见 ``grad_probe.grad_finiteness_report``。
+        """
+        from graspo.flow.adapters.models.common.grad_probe import (  # noqa: PLC0415 避免包初始化环
+            grad_finiteness_report,
+        )
+
+        return grad_finiteness_report(self.named_parameters(), with_max_abs=with_max_abs)
+
     def enabled_lora_target_names(self) -> tuple[str, ...]:
         names: set[str] = set()
         for _, module in self.named_modules():
