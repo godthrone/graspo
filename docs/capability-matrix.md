@@ -180,7 +180,7 @@
 | T003 | 9B | CPT | LoRA | ms-swift | 4 | — 未测 | 26.68 GiB | ⚠ 口径不可测 | 2026-09-22 | 同上;LLaMA-Factory 折 9B LoRA≈18GB 总量,与卡数无关【S7】。 |
 | T004 | 9B | CPT | 全量 | ms-swift | 1 | — 未测 | 36.52 GiB | ⚠ 口径不可测 | 2026-09-22 | 单卡不可行:9B 全量 bf16≈162GB 总量(18x 折算)【S7】;需 ZeRO-3+offload【S5/S9】。 |
 | T005 | 9B | CPT | 全量 | ms-swift | 2 | — 未测 | 36.52 GiB | ⚠ 口径不可测 | 2026-09-22 | ≈162/2≈81GB/卡>80G(折算)【S7】;业界须 ZeRO-3 分片+offload【S5/S9】。 |
-| T006 | 9B | CPT | 全量 | ms-swift | 4 | — 未测 | — 未测 | ❌ 不可用 | 2026-09-22 | ≈162/4≈40GB/卡+激活(折算)【S7】;ZeRO-2 分片即可,业界常规【S10】。 |
+| T006 | 9B | CPT | 全量 | ms-swift | 4 | — 未测 | — 未测 | ❌ 不可用 | 2026-09-22 | 9B 全参≈162GB(=18B/参数)【S16/S7】,4卡 ZeRO-2/3 或 FSDP 即可容,业界常规【S18/S24】;本档失败系 AutoTP4 配置(非4卡),业界不用该配置,上游已在 DS≥0.19.6 修视觉塔错切【S19/S20/S22】。 |
 | T007 | 27B | CPT | LoRA | ms-swift | 1 | — 未测 | 60.62 GiB | ⚠ 口径不可测 | 2026-09-22 | 官方最近档为 30B-A3B(MoE,非稠密 27B)【S1】;折 27B LoRA≈54GB 总量【S7】,单卡临界。 |
 | T008 | 27B | CPT | LoRA | ms-swift | 2 | — 未测 | 60.95 GiB | ⚠ 口径不可测 | 2026-09-22 | 同上;30B-A3B 全量 ZeRO2 用 16×60GiB、ZeRO3 在 16×80GiB OOM;无 27B 稠密档【S1】。 |
 | T009 | 27B | CPT | LoRA | ms-swift | 4 | — 未测 | 60.95 GiB | ⚠ 口径不可测 | 2026-09-22 | 同 2 卡;官方 30B-A3B(MoE) LoRA 档为 4×60GiB【S1】,稠密 27B 量级相近。 |
@@ -190,12 +190,12 @@
 | T013 | 9B | SFT | LoRA | ms-swift | 1 | — 未测 | 31.02 GiB | ⚠ 口径不可测 | 2026-09-22 | ms-swift 官方 8B(非9B) LoRA 22GB/单卡 A10【S1】;我方 16105 长序列实测 43.87GiB 更高。 |
 | T014 | 9B | SFT | LoRA | ms-swift | 2 | — 未测 | 28.53 GiB | ⚠ 口径不可测 | 2026-09-22 | 同上;长序列业界靠 SP/FA2 降每卡显存【S5】,无 2 卡专档。 |
 | T015 | 9B | SFT | LoRA | ms-swift | 4 | — 未测 | 28.54 GiB | ⚠ 口径不可测 | 2026-09-22 | 同上;折 9B LoRA≈18GB 总量,与卡数无关【S7】。 |
-| T016 | 9B | SFT | 全量 | native | 1 | — 未测 | — 未测 | ⛔ 无配方 | — | 原为全量档(单卡须 ZeRO-Offload【S9】);本轮改用 fp16+LoRA ⇒ 业界 8B(非9B) LoRA 单卡 22GB【S1】、折 9B LoRA≈18GB 总量【S7】,单卡 80G 可行。 |
-| T017 | 9B | SFT | 全量 | native | 2 | — 未测 | 48.09 GiB | ✅ 可用 | 2026-09-22 | ≈81GB/卡>80G(折算)【S7】;业界须 ZeRO-3 分片或 offload【S9】。 |
-| T018 | 9B | SFT | 全量 | native | 4 | — 未测 | 31.98 GiB | ❌ 不可用 | 2026-09-22 | ≈40GB/卡+激活(折算)【S7】;ZeRO-2 分片为业界常规,4 卡可行【S10】。 |
-| T019 | 9B | SFT | 全量 | ms-swift | 1 | — 未测 | 36.58 GiB | ⚠ 口径不可测 | 2026-09-22 | ms-swift 支持 ZeRO-2/3+offload【S5】;单卡须 ZeRO-3+offload(官方 30B-A3B 全量 ZeRO3 仍 OOM)【S1】。 |
+| T016 | 9B | SFT | 全量 | native | 1 | — 未测 | — 未测 | ⛔ 无配方 | — | 9B 全参≈162GB(=18B/参数)【S16/S7】>80GB;单卡无分片/无 offload 业界同样装不下;业界标准走 ZeRO-Offload(单卡可训至13B【S17】)/ZeRO-3;我方 offload 已实测 1卡50步通过(峰值38.2GiB)。 |
+| T017 | 9B | SFT | 全量 | native | 2 | — 未测 | 48.09 GiB | ✅ 可用 | 2026-09-22 | pp=2 全参已跑通【我方实测】;历史 grad_norm 跨8个数量级属实现层数值缺陷,同模型 1卡offload 50步零NaN对照成立,非硬件。 |
+| T018 | 9B | SFT | 全量 | native | 4 | — 未测 | 31.98 GiB | ❌ 不可用 | 2026-09-22 | 9B 全参≈162GB,4卡 ZeRO-2/3 或 FSDP 业界可行【S16/S18/S24】;本档失败为 native PP 数值缺陷(rank2 第3步梯度 NaN),判据错配已修,非硬件。 |
+| T019 | 9B | SFT | 全量 | ms-swift | 1 | — 未测 | 36.58 GiB | ⚠ 口径不可测 | 2026-09-22 | 同上:9B 全参≈162GB>80GB,单卡无 offload 业界不可行【S16/S7】;业界用 ZeRO-Offload/ZeRO-3【S17/S18】;ms-swift zero2_offload 同族已实测通过。 |
 | T020 | 9B | SFT | 全量 | ms-swift | 2 | — 未测 | 36.57 GiB | ⚠ 口径不可测 | 2026-09-22 | ≈81GB/卡>80G(折算)【S7】;ZeRO-3 分片后可行【S5】。 |
-| T021 | 9B | SFT | 全量 | ms-swift | 4 | — 未测 | — 未测 | ❌ 不可用 | 2026-09-22 | ≈40GB/卡+激活(折算)【S7】;ZeRO-2 可,官方对比中 ZeRO-2 档为 16×60GiB【S1】。 |
+| T021 | 9B | SFT | 全量 | ms-swift | 4 | — 未测 | — 未测 | ❌ 不可用 | 2026-09-22 | 同 T006:9B 全参≈162GB,4卡 ZeRO-2/3 业界可行【S16/S18/S24】;本档 shape_mismatch 系 AutoTP4 视觉塔错切,上游 #8285 已由 DS≥0.19.6 修复【S20/S22】,非硬件。 |
 | T022 | 27B | SFT | LoRA | native | 1 | — 未测 | 55.44 GiB | ✅ 可用 | 2026-09-22 | 折 27B LoRA≈54GB 总量【S7】,单卡临界(需 GC/FA2);官方无稠密 27B 档,最近 30B-A3B MoE【S1】。 |
 | T023 | 27B | SFT | LoRA | native | 2 | — 未测 | 55.44 GiB | ✅ 可用 | 2026-09-22 | 同 1 卡;2 卡 DDP 不降每卡显存,FSDP2/ZeRO 分片可降【S14/S15】。 |
 | T024 | 27B | SFT | LoRA | native | 4 | — 未测 | 55.44 GiB | ✅ 可用 | 2026-09-22 | 同上;官方 30B-A3B(MoE) LoRA 参考 4×60GiB【S1】,非稠密 27B。 |
@@ -208,14 +208,14 @@
 | T031 | 9B | GRASPO | LoRA | ms-swift | 1 | — 未测 | 24.45 GiB | ⚠ 口径不可测 | 2026-09-22 | ms-swift GRPO colocate 下须按官方释放 vLLM/训练显存【S4】;LoRA 单卡业界可行【S1】。 |
 | T032 | 9B | GRASPO | LoRA | ms-swift | 2 | — 未测 | 23.05 GiB | ⚠ 口径不可测 | 2026-09-22 | 同上;无 2 卡专档;vLLM TP 摊 rollout 显存【S4】。 |
 | T033 | 9B | GRASPO | LoRA | ms-swift | 4 | — 未测 | 23.06 GiB | ⚠ 口径不可测 | 2026-09-22 | 同上;4 卡可分置训练与 rollout【S4】。 |
-| T034 | 9B | GRASPO | 全量 | native | 1 | — 未测 | — 未测 | ⛔ 无配方 | — | 原为最重组合(全量+rollout,须 ZeRO-3+offload、常需多机【S9】);本轮改用 fp16+LoRA ⇒ 9B LoRA≈18GB 总量【S7】+rollout,业界 GRPO 的 LoRA 单卡可行(Unsloth 8B GRPO 总占用 54.33GB【S13】),仍须按官方释放 vLLM/训练显存【S4】。 |
-| T035 | 9B | GRASPO | 全量 | native | 2 | — 未测 | — 未测 | ❌ 不可用 | 2026-09-22 | 同上;2 卡≈81GB/卡>80G(折算)【S7】,须 ZeRO-3+offload【S9】。 |
-| T036 | 9B | GRASPO | 全量 | native | 4 | — 未测 | — 未测 | ❌ 不可用 | 2026-09-22 | 同上;4 卡 ZeRO-2 可容训练段,rollout 另计【S4/S10】。 |
-| T037 | 9B | GRASPO | 全量 | ms-swift | 1 | — 未测 | 37.83 GiB | ❌ 不可用 | 2026-09-22 | ms-swift 全量 RL 需 ZeRO-3/offload,官方 GRPO 有释放训练显存开关【S4】;9B 全量≈162GB【S7】。 |
+| T034 | 9B | GRASPO | 全量 | native | 1 | — 未测 | — 未测 | ⛔ 无配方 | — | 9B 全参+rollout 单卡:无 offload≈162GB>80GB 不可行,业界须 ZeRO-3/offload【S16/S17/S18】;native 全参 offload 已实现并实测 1卡50步通过。 |
+| T035 | 9B | GRASPO | 全量 | native | 2 | — 未测 | — 未测 | ❌ 不可用 | 2026-09-22 | 9B 全参 ZeRO-2/3 分片后 2卡显存可行【S16/S18】;本档 exit=137 系 native PP rollout 未证实的无界 hang(自仓已 fail-closed 拦),非硬件。 |
+| T036 | 9B | GRASPO | 全量 | native | 4 | — 未测 | — 未测 | ❌ 不可用 | 2026-09-22 | 9B 全参 4卡 ZeRO-2/3 业界可行【S16/S18/S24】;本档被自仓启动门禁按设计拒绝(native PP rollout 从未跑通),非硬件。 |
+| T037 | 9B | GRASPO | 全量 | ms-swift | 1 | — 未测 | 37.83 GiB | ❌ 不可用 | 2026-09-22 | 显存非瓶颈(实测每卡37.83GiB);失败系上游 ms-swift selective_log_softmax off-by-one(同上游未决 #6035,[2382,1] vs [2381,248320])【S25/S27】,非硬件。 |
 | T038 | 9B | GRASPO | 全量 | ms-swift | 2 | — 未测 | 34.89 GiB | ⚠ 口径不可测 | 2026-09-22 | 同上;2 卡≈81GB/卡>80G(折算)【S7】,须 ZeRO-3+offload【S4】。 |
-| T039 | 9B | GRASPO | 全量 | ms-swift | 4 | — 未测 | — 未测 | ❌ 不可用 | 2026-09-22 | 同上;4 卡 ZeRO-2 可容训练段【S4/S10】。 |
-| T040 | 27B | GRASPO | LoRA | native | 1 | — 未测 | 61.80 GiB | ⚠ 口径不可测 | 2026-09-22 | 折 27B LoRA≈54GB 总量【S7】,叠加 rollout 后单卡业界需 offload/l2k;无稠密 27B 档【S1】。 |
-| T041 | 27B | GRASPO | LoRA | native | 2 | — 未测 | 61.73 GiB | ⚠ 口径不可测 | 2026-09-22 | 同上;2 卡分片后可行【S9】。 |
+| T039 | 9B | GRASPO | 全量 | ms-swift | 4 | — 未测 | — 未测 | ❌ 不可用 | 2026-09-22 | 9B 全参≈162GB,4卡 ZeRO-2/3 业界可行【S16/S18】;本档 TP 组数据不一致,上游契约要求自定义 DataLoader 保证 TP 组内一致【S21/S23】,ms-swift RL 侧缺 TP-aware 采样,DS 升级不解决。 |
+| T040 | 27B | GRASPO | LoRA | native | 1 | — 未测 | 61.80 GiB | ⚠ 口径不可测 | 2026-09-22 | 显存非瓶颈(实测61.80GiB);失败系 rollout 有效样本不足(20组仅14有效/重试率高),业界用 DAPO 动态采样重采直至 batch 填满有效样本【S28】,非硬件。 |
+| T041 | 27B | GRASPO | LoRA | native | 2 | — 未测 | 61.73 GiB | ⚠ 口径不可测 | 2026-09-22 | 同 T040:显存非瓶颈(61.73GiB);有效样本不足+计划步数<门槛口径冲突,业界标准为动态采样重采【S28】,非硬件。 |
 | T042 | 27B | GRASPO | LoRA | native | 4 | — 未测 | 61.72 GiB | ✅ 可用 | 2026-09-22 | 同上;4 卡余量充足【S10】。 |
 | T043 | 27B | GRASPO | LoRA | ms-swift | 1 | — 未测 | 60.75 GiB | ⚠ 口径不可测 | 2026-09-22 | ms-swift 无稠密 27B GRPO 档,最近为 30B-A3B MoE【S1】;需 ZeRO-2+l2k 并释放训练显存【S4】。 |
 | T044 | 27B | GRASPO | LoRA | ms-swift | 2 | — 未测 | 56.15 GiB | ⚠ 口径不可测 | 2026-09-22 | 同上;2 卡 ZeRO-2 可分片【S4】。 |
@@ -225,7 +225,7 @@
 | T048 | 9B | OPD | LoRA | ms-swift | 4 | — 未测 | 75.09 GiB | ⚠ 口径不可测 | 2026-09-22 | 同上;4 卡余量足,top-K 仍推荐【S3】。 |
 | T049 | 9B | OPD | 全量 | ms-swift | 1 | — 未测 | 76.65 GiB | ⚠ 口径不可测 | 2026-09-22 | 全量 OPD:官方 OPD-RL 全词表 KL 易 OOM【S3】;须 ZeRO-3/offload+top-K,9B 全量≈162GB【S3/S7】。 |
 | T050 | 9B | OPD | 全量 | ms-swift | 2 | — 未测 | 74.20 GiB | ⚠ 口径不可测 | 2026-09-22 | 同上;2 卡≈81GB/卡>80G(折算)【S7】,须 ZeRO-3+offload【S3】。 |
-| T051 | 9B | OPD | 全量 | ms-swift | 4 | — 未测 | — 未测 | ❌ 不可用 | 2026-09-22 | 同上;4 卡 ZeRO-2 可容训练段【S3/S10】。 |
+| T051 | 9B | OPD | 全量 | ms-swift | 4 | — 未测 | — 未测 | ❌ 不可用 | 2026-09-22 | 同 T039:4卡 ZeRO-2/3 显存可行【S16/S18】;失败为 AutoTP4 下 RL 采样未按 TP 组对齐(上游 ms-swift 侧),非硬件【S21/S23】。 |
 | T052 | 27B | OPD | LoRA | ms-swift | 1 | — 未测 | — 未测 | ⛔ 不适用 | — | 我方不适用;业界同能力为 OPD-RL,官方无稠密 27B 档,最近 30B-A3B MoE【S1/S3】。 |
 | T053 | 27B | OPD | LoRA | ms-swift | 2 | — 未测 | — 未测 | ⛔ 不适用 | — | 同 T052;业界须 ZeRO-2/offload 分片,单卡 27B 折≈54GB 总量【S7/S3】。 |
 | T054 | 27B | OPD | LoRA | ms-swift | 4 | — 未测 | — 未测 | ⛔ 不适用 | — | 同 T052;4 卡余量较足,仍受全词表 KL 显存约束,建议 top-K【S3】。 |
@@ -253,7 +253,7 @@
 > 另注：本矩阵 checkpoint 为验证口径（只含模型权重、不含优化器状态）⇒ 不可用于断点续训。
 > 双跑一致性诊断（A4，**诊断字段·不参与判定**）：一致 0 档 ｜ 不一致 49 档 ｜ 未跑或无诊断 5 档。
 > `⛔ 无配方`（当前无配方、可解锁）依据 `samples/configs/matrix54/T016.blocked.md`、`T034.blocked.md`；`⛔ 不适用`（逻辑上不存在）依据 `samples/configs/matrix54/T052.not_applicable.md`。
-> 第 11 列「业界情况调研（含出处）」为**受控可变列**（2026-09-23 用户授权）：单元格内容以**仓库内证据文件** `samples/configs/matrix54/industry-cells.json` 为单一真相源（每条结论带 `refs` 引用号 + `sources` URL / arXiv 出处），未列入该文件的档保持原样；每个非空单元格须含出处标记（`【S…】` / URL / `出处：`），统一占位措辞为 `待调研`，单元格 ≤ 200 字；更新前内容留档于同名 `.baseline.json`。
+> 第 11 列「业界情况调研（含出处）」为**受控可变列**（2026-09-23 用户授权）：单元格内容以**仓库内证据文件** `samples/configs/matrix54/industry-cells.json` 为单一真相源（每条结论带 `refs` 引用号 + `sources` URL / arXiv 出处；`【S…】` → URL 映射见该文件 `ref_urls`，故下方出处清单不再逐一抄录 **S16 及以后**），未列入该文件的档保持原样；每个非空单元格须含出处标记（`【S…】` / `【我方实测】` / URL / `出处：`），统一占位措辞为 `待调研`，单元格 ≤ 200 字；更新前内容留档于同名 `.baseline.json`。
 > 「最大可行上下文」列本轮**未做 ramp，一律 `— 未测`**。
 > **`⚠ 口径不可测` 有两类（本轮 30 档）**：
 > - **`⚠-A7`（证据不足，28 档，全部 ms-swift）**：`A1–A6` 全过，只有 **A7（训练真推进）取不到证据**（ms-swift 逐步日志每 5 步才有一行 `grad_norm`，**没有**能证明「某步是否真的更新了权重」的字段）⇒ **测不出来，不是跑不通**。
