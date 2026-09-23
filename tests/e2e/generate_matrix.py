@@ -2385,6 +2385,7 @@ import hashlib
 import json
 import os
 import posixpath
+import re
 import sys
 
 PROBE_SCHEMA = "{schema}"
@@ -2418,20 +2419,178 @@ def _json_safe(value: object) -> object:
     return repr(value)
 
 
+#: 权重承载键的候选顺序（**第一个非空才算命中**；见 _flatten_state_dict 的 P17 说明）。
+_WEIGHT_KEYS = ("state_dict", "full_param_state_dict", "lora_state_dict")
+
+#: 全参档的权重只能落在这些键里；落在 ``lora_state_dict`` 上 ⇒ 与 manifest 的
+#: ``tuner_type=full`` 自相矛盾 ⇒ fail-closed（P17 的另一半：键选对 + 与自述一致）。
+_FULL_PARAM_KINDS = ("state_dict", "full_param_state_dict")
+
+#: 从张量名里取层号（``...layers.12.xxx``）；取不到 ⇒ None（不计入层覆盖检查）。
+_LAYER_KEY_RE = re.compile(r"(?:^|\\.)layers\\.(\\d+)\\.")
+
+
+def _tensor_numel(value: object) -> int:
+    """张量元素数（真 torch 走 ``numel()``；假 torch/不可知 ⇒ 退回 shape 乘积，再不行 0）。"""
+    numel = getattr(value, "numel", None)
+    if callable(numel):
+        try:
+            return int(numel())
+        except Exception:
+            return 0
+    shape = getattr(value, "shape", None)
+    if shape is None:
+        return 0
+    total = 1
+    try:
+        for dim in shape:
+            total *= int(dim)
+    except Exception:
+        return 0
+    return total
+
+
+def _tensor_all_zero(value: object) -> object:
+    """是否**全零**；判不了（假 torch/无 abs）⇒ ``None``（**不得**把"判不了"当"有问题"）。"""
+    try:
+        return bool(float(value.abs().max()) == 0.0)
+    except Exception:
+        return None
+
+
+def _tensor_is_finite(value: object) -> object:
+    """是否**全有限**；判不了 ⇒ ``None``。"""
+    try:
+        import torch as _torch
+
+        check = getattr(_torch, "isfinite", None)
+        if check is None:
+            return None
+        return bool(check(value).all())
+    except Exception:
+        return None
+
+
+def _layer_index_from_key(key: str) -> object:
+    """从张量名取层号（``layers.<i>.``）；取不到 ⇒ ``None``。"""
+    match = _LAYER_KEY_RE.search(key)
+    return int(match.group(1)) if match else None
+
+
 def _flatten_state_dict(loaded: object) -> tuple[dict[str, object], str]:
-    """把 torch.load 的返回值归一成「张量名 -> 张量」的扁平视图（只用于**计数与审计**）。"""
+    """把 torch.load 的返回值归一成「张量名 -> 张量」的扁平视图（只用于**计数与审计**）。
+
+    ★ P17（2026-09-23）：**空字典不算命中**。旧实现按 ``state_dict → lora_state_dict`` 取
+    "第一个 dict"，而 native 的 full-param ckpt **同时**写**空的** ``lora_state_dict``
+    （只收 ``lora_`` 名字）与真权重 ``full_param_state_dict`` ⇒ 旧实现命中空字典就返回，
+    实测 ``state_dict_kind=lora_state_dict``、``tensors=0`` 却 ``ok=True``
+    （**A3 虚假通过**，无法发现 ckpt 损坏/截断）。现在按候选顺序取**第一个非空** dict。
+    """
     if not isinstance(loaded, dict):
         return {{}}, "returned:" + type(loaded).__name__
-    state = loaded.get("state_dict")
-    if isinstance(state, dict):
-        return state, "state_dict"
-    lora = loaded.get("lora_state_dict")
-    if isinstance(lora, dict):
-        return lora, "lora_state_dict"
+    for key in _WEIGHT_KEYS:
+        value = loaded.get(key)
+        if isinstance(value, dict) and value:
+            return value, key
     tensors = {{key: value for key, value in loaded.items() if hasattr(value, "shape")}}
     if tensors:
         return tensors, "top_level_tensors"
+    empty = [key for key in _WEIGHT_KEYS if isinstance(loaded.get(key), dict)]
+    if empty:
+        return {{}}, "empty_state_dicts:" + ",".join(empty)
     return {{}}, "top_level_other"
+
+
+def _load_sibling_manifest(path: str) -> dict:
+    """读权重同目录的 ``manifest.json``（ckpt 结构自述）；读不到/非 dict ⇒ 空 dict。"""
+    try:
+        manifest_path = os.path.join(os.path.dirname(path), "manifest.json")
+        with open(manifest_path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except Exception:
+        return {{}}
+    return data if isinstance(data, dict) else {{}}
+
+
+def _audit_state_dict(state: dict, manifest: dict, kind: str) -> dict:
+    """★ 完整性审计（P17 修复核心）：**空/缺层/非有限/整层全零/自述不一致** 都判不通过。
+
+    设计边界（§2.3，避免"过度严格"把健康 ckpt 判死）：**只对能确证是缺陷的形态判 fail**；
+    判不了的维度（假 torch、无 manifest、张量不可读）一律记 ``None``/跳过，**不**据此 fail。
+    """
+    reasons: list[str] = []
+    tensors = len(state)
+    total_elements = 0
+    nonfinite: list[str] = []
+    all_zero: list[str] = []
+    layer_found: set = set()
+    layer_total: dict = {{}}
+    layer_zero: dict = {{}}
+    for name, value in state.items():
+        total_elements += _tensor_numel(value)
+        if _tensor_is_finite(value) is False:
+            nonfinite.append(str(name))
+        zero = _tensor_all_zero(value)
+        if zero is True:
+            all_zero.append(str(name))
+        index = _layer_index_from_key(str(name))
+        if index is None:
+            continue
+        layer_found.add(index)
+        layer_total[index] = layer_total.get(index, 0) + 1
+        if zero is True:
+            layer_zero[index] = layer_zero.get(index, 0) + 1
+    layer_all_zero = sorted(
+        index
+        for index, count in layer_zero.items()
+        if count > 0 and count == layer_total.get(index, 0)
+    )
+
+    if tensors <= 0:
+        reasons.append("no_tensors:探针没有校验到任何张量（空 state dict ⇒ 旧实现会虚假通过）")
+    if nonfinite:
+        reasons.append("nonfinite:" + ",".join(sorted(nonfinite)[:5]))
+    if tensors > 0 and len(all_zero) == tensors:
+        reasons.append("all_tensors_zero:全部 " + str(tensors) + " 个张量都是全零")
+    if layer_all_zero:
+        reasons.append("zero_layers:" + ",".join(str(index) for index in layer_all_zero[:8]))
+
+    tuner_type = str(manifest.get("tuner_type") or "")
+    placement = manifest.get("placement") if isinstance(manifest.get("placement"), dict) else {{}}
+    expected_layers = [
+        int(index)
+        for index in (placement.get("local_layer_indices") or [])
+        if isinstance(index, int)
+    ]
+    kind_check = None
+    if tuner_type == "full" and kind not in _FULL_PARAM_KINDS:
+        kind_check = (
+            "manifest.tuner_type=full 但权重承载键是 " + str(kind)
+            + "（全参权重应落在 " + "/".join(_FULL_PARAM_KINDS) + " 上）"
+        )
+        reasons.append("tuner_type_mismatch:" + kind_check)
+    missing = [index for index in expected_layers if index not in layer_found]
+    if expected_layers and missing:
+        reasons.append("missing_layers:" + ",".join(str(index) for index in missing[:8]))
+    extra = [
+        index for index in sorted(layer_found) if expected_layers and index not in expected_layers
+    ]
+    return {{
+        "audit_ok": not reasons,
+        "audit_reasons": reasons,
+        "total_elements": total_elements,
+        "nonfinite_tensors": sorted(nonfinite)[:5],
+        "nonfinite_count": len(nonfinite),
+        "all_zero_tensors": sorted(all_zero)[:5],
+        "all_zero_count": len(all_zero),
+        "zero_layers": layer_all_zero,
+        "layers_found": sorted(layer_found),
+        "layers_expected": sorted(expected_layers),
+        "missing_layers": missing[:16],
+        "extra_layers": extra[:16],
+        "tuner_type": tuner_type or None,
+        "kind_check": kind_check,
+    }}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2504,9 +2663,13 @@ def main(argv: list[str] | None = None) -> int:
                 entry["error"] = "torch.load: " + type(exc).__name__ + ": " + str(exc)
             else:
                 state, kind = _flatten_state_dict(loaded)
-                entry["ok"] = True
-                entry["tensors"] = len(state)
+                audit = _audit_state_dict(state, _load_sibling_manifest(path), kind)
                 entry["state_dict_kind"] = kind
+                entry["tensors"] = len(state)
+                entry.update(audit)
+                entry["ok"] = bool(audit["audit_ok"]) and len(state) > 0
+                if not entry["ok"]:
+                    entry["error"] = "audit: " + "; ".join(audit["audit_reasons"])
         if not entry["ok"]:
             all_ok = False
         checked.append(entry)
