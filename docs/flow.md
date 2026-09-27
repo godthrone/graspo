@@ -88,7 +88,7 @@ Flow 不是单一执行载体：同一套配置与算法核（`ripple`）可以�
    `clip_grad_norm_` 的 DeepSpeed 分支（`accelerate/accelerator.py:2982-2986`）为
    `return self.deepspeed_engine_wrapped.get_global_grad_norm()`（return 在 `:2985`）；
    FSDP 分支 `:2971-2981`，默认路径 `:3006-3007` 才走 `torch.nn.utils.clip_grad_norm_`。
-2. DeepSpeed 在 `optimizer.step()` **之后**才给 `_global_grad_norm` 赋值；ZeRO 溢出分支提前返回、不计算范数 ⇒ 在 `step()` **之前**取读数的调用方可能拿到**上一步的陈旧值**。上游有同类反馈：ms-swift issue #3930。
+2. DeepSpeed 在 `optimizer.step()` **之后**才给 `_global_grad_norm` 赋值；ZeRO 溢出分支提前返回、不计算范数 ⇒ 在 `step()` **之前**取读数的调用方可能拿到**上一步的陈旧值**。上游有同类反馈：ms-swift issue #3930（⚠ **上游引用，本仓无法复核**，见 §12 B 档）。
 3. 本仓把 `grad_norm` 当验收证据（A6 判据"loss 与 grad_norm 全程 finite"），范数一旦陈旧/缺失，验收判据与能力矩阵判据就失去鉴别力——这是**防线失效**，不是性能取舍。
 
 > **证据归属与版本**：第 1 条的 accelerate 行号来自**与目标 228 镜像逐字节一致**的下游副本
@@ -483,6 +483,37 @@ PP 的流水线架构（异步 P2P + 可插拔调度）对用户透明——调�
   - Scheduler → PipelineScheduler（执行时序）
   - Backpressure → `PipelineComm.max_inflight`（有界在途 send work，上限来自 `pp_max_inflight_microbatches`）
   - 与 Flink 的差异：PP 训练含 backward，反向梯度沿 stage 逆流，无法像纯 forward 流式那样近乎零 bubble。bubble 只能靠调度策略（1F1B/interleaved）降低，不能消除。
+
+---
+
+## 12. 不可核实项（明确标注，不猜）
+
+### 本工位的核实能力边界
+
+本工位**无外网**，且**当前环境未安装 `accelerate` / `deepspeed` / `ms-swift`**：能核实的只有**文件系统上已有的副本**与**本仓源码**。据此把"不能一手核实"的引用与缺口分三档，理由如下：
+
+| 档 | 含义 | 是否列入"不可核实" |
+|----|------|--------------------|
+| **A. 本地可核（已核）** | 工作区内有源码副本可复读，或可在本地文件系统上直接验证（含"验证某路径确实不存在"） | 否（已核；见本档说明与 §2） |
+| **B. 经工作区报告转述 / 需联网** | 工作区报告记录了一手取证过程与链接，但本工位无法复读被引源码、也无法联网 | 部分：内容可信度依赖该报告，本工位不能独立复核 |
+| **C. 无任何本地证据** | 无副本、无报告、无实测产物 | 是 |
+
+### A 档：本地可核（2 项，结论均为"不存在"，非"不可核实"）
+
+1. **任务书指定的 `rig/**` 不存在**：仓库根下没有 `rig/` 目录；本工位全部判据改从 `src/graspo/**`、`tests/flow/**`、`scripts/**`、`pyproject.toml` 取得。
+2. **`docs/capability-matrix.md` 不存在**：`core/schema.py:19` 引用该文件，但 `docs/` 下只有 `capability-matrix.html`；`.md` 版仅存于 `.local/`（备份 / 内部口径），未纳入文档树。
+
+（另有**一项已复核的引用**按 §2 处理、不计入上表：`accelerate/accelerator.py:2982-2986` —— 复核副本的 sha256 / 1.14.0 / 4359 行见 §2「证据归属与版本」。）
+
+### B 档：经报告转述 / 需联网（2 项）
+
+1. **ms-swift issue #3930**：正文 §2 引用它作为"DeepSpeed 侧 grad_norm 陈旧"的同类反馈，但本工位无外网、打不开 issue 页面，其内容依赖 `task-msswift-naninf-study/report.md` 的转述——**不是本仓可复核的事实**。
+2. **accelerate 行号的版本漂移风险**：`accelerate` 不在本仓 `pyproject.toml` 依赖内，本仓也不 pin 其版本；行号虽经同源副本复核（上表），仍可能随上游发版漂移。
+
+### C 档：无任何本地证据（2 项）
+
+1. **ms-swift FSDP2 / Megatron 通道的端到端可用性**：配置字段与参数透传已接线（`core/schema.py:763, 671-723, 799`），但主映射 `include_megatron=False`（`flow/msswift/_config_mapping.py:587`）、仓库内无 Megatron 启动通道调用；**能否真在 Qwen3.5-9B / 27B 上跑通属未核实事项，需实跑验证**（不构成任何"可用"承诺）。深层分析见 `docs/architecture.md` §3.4。
+2. **native 全参 TP/DP 是否 / 何时实现**：可核实的只是**当前行为**——配置期 fail-closed 拒绝（`core/schema.py:148-173`，见 §7.3）；**未来的实现与排期无任何本地证据**，本文不把它写成承诺。
 
 ---
 
