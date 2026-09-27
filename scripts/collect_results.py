@@ -447,6 +447,71 @@ def _trainer_state_candidates(output_dirs: Sequence[Path]) -> list[tuple[str, di
     return candidates
 
 
+#: ms-swift 补丁（镜像 `graspo:v0.28.11-cu130fix-v2-nfc1` 起）新增的两个日志键。
+#: · `nonfinite_grad_step_count`：累计「clip 阶段 total_norm 非有限（**NaN 或 Inf**）」的步数，
+#:   跨**全部 rank** 求和（补丁内 `dist.all_reduce(SUM)`）。
+#: · `nonfinite_grad_step_count_coverage`：`1` = 计数可信（非 DeepSpeed，且读的是**本步** clip
+#:   阶段的 total_norm）；`0` = **不可信/未覆盖**（DeepSpeed 下 `accelerate` 直接返回
+#:   `engine.get_global_grad_norm()`，而它在 `optimizer.step()` **之后**才赋值、ZeRO overflow 步
+#:   还会提前 return 不计算 ⇒ 陈旧值或缺步）。
+#:
+#: ⚠ **铁律（不得放宽）**：`coverage` 缺失或 `!= 1` ⇒ **A7 记「口径不可测」（None）**，
+#: **绝不把 count=0 读作「0 次跳过」**。DS 档因此一律不可判。
+MS_SWIFT_NONFINITE_KEYS = ("nonfinite_grad_step_count", "nonfinite_grad_step_count_coverage")
+
+_MS_SWIFT_NONFINITE_STDOUT_RE = re.compile(
+    r"'nonfinite_grad_step_count'\s*:\s*(\d+)[^}]*?"
+    r"'nonfinite_grad_step_count_coverage'\s*:\s*(\d+)"
+)
+
+
+def extract_ms_swift_nonfinite_count(
+    output_dirs: Sequence[Path],
+    log_text: str = "",
+) -> tuple[int | None, int | None, str]:
+    """读 ms-swift 补丁的累计非有限计数，返回 ``(count, coverage, source)``。
+
+    优先 `trainer_state.json`（取 `global_step` 最大的那份；计数是**累计量**，故取该份里
+    **最后一个含键条目**，并以 MAX 兜底）；回退 `stdout.log` 的打印行（同一对键）。
+    键不存在 ⇒ ``(None, None, "")``，调用方据此保持「口径不可测」。
+    """
+    best: tuple[int, int, int] | None = None  # (global_step, count, coverage)
+    for directory in output_dirs:
+        for state_path in sorted(directory.rglob("trainer_state.json")):
+            state = _read_json(state_path)
+            if not isinstance(state, dict):
+                continue
+            history = state.get("log_history")
+            if not isinstance(history, list):
+                continue
+            step = state.get("global_step")
+            step = int(step) if isinstance(step, int) else -1
+            count: int | None = None
+            coverage: int | None = None
+            for entry in history:
+                if not isinstance(entry, dict):
+                    continue
+                value = entry.get(MS_SWIFT_NONFINITE_KEYS[0])
+                cov = entry.get(MS_SWIFT_NONFINITE_KEYS[1])
+                if isinstance(value, int):
+                    count = value if count is None else max(count, value)
+                if isinstance(cov, int):
+                    coverage = cov
+            if count is None:
+                continue
+            cov_out = coverage if coverage is not None else -1
+            if best is None or step > best[0]:
+                best = (step, count, cov_out)
+    if best is not None:
+        return best[1], best[2], f"trainer_state.json(global_step={best[0]})"
+    if log_text:
+        pairs = [(int(a), int(b)) for a, b in _MS_SWIFT_NONFINITE_STDOUT_RE.findall(log_text)]
+        if pairs:
+            count, coverage = max(pairs, key=lambda item: item[0])
+            return count, coverage, "stdout.log:ms_swift_counter_line"
+    return None, None, ""
+
+
 def _best_trainer_state(
     candidates: Sequence[tuple[str, dict[str, Any]]],
 ) -> tuple[str, dict[str, Any]] | None:
@@ -642,7 +707,22 @@ def extract_steps_and_series(output_dirs: Sequence[Path], log_text: str) -> Seri
     # ── ★ P0-1（2026-09-22 复核）：跳过计数**必须跨全部 rank**取 MAX ─────────────
     #   `skipped_nonfinite` 是逐 rank 局部读数；只读 rank0 ⇒ rank1 单独跳过时读到 0
     #   ⇒ A7 假通过（一次"权重/LR 已分叉"的运行会被记成 ✅ 可用）。
-    if result.source == "rank_metrics":
+    # ★ 2026-09-27（新镜像轮 r4）：ms-swift 补丁自带计数是**最高优先级来源**。
+    #   coverage=1 ⇒ 直接采用（真计数）；coverage=0/缺失 ⇒ 保持 None（口径不可测）。
+    nf_count, nf_cov, nf_src = extract_ms_swift_nonfinite_count(output_dirs, log_text)
+    if nf_cov == 1 and isinstance(nf_count, int):
+        result.nonfinite_skips = int(nf_count)
+        result.nonfinite_skips_source = f"ms_swift_counter:{nf_src}"
+        result.notes.append(
+            f"ms-swift 自带非有限梯度计数 = {nf_count}（coverage=1：非 DeepSpeed，本步 clip 的 total_norm；跨全部 rank 求和）"
+        )
+    elif nf_count is not None or nf_cov == 0:
+        result.notes.append(
+            "ms-swift 计数存在但 coverage=0/缺失（DeepSpeed：accelerate 返回的是 "
+            "engine.get_global_grad_norm()，step 之后才赋值、ZeRO overflow 步不计算）"
+            "⇒ A7 记**口径不可测**（绝不读作 0 次跳过）"
+        )
+    if result.source == "rank_metrics" and not result.nonfinite_skips_source:
         worst, per_rank, detail = extract_skipped_nonfinite_all_ranks(rank_metrics_dir)
         if worst is not None:
             result.nonfinite_skips = worst
