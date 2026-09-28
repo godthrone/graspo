@@ -49,12 +49,15 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
 # ── 安全边界常量（单一真相源，§1.4）────────────────────────────────────────
-#: ``NVIDIA_VISIBLE_DEVICES`` 允许出现的最大**宿主**卡号（0–5 可用，6/7 为生产卡）。
-ALLOWED_MAX_INDEX = 5
+#: 变体1（用户 2026-09-24 批准 A）：允许的宿主卡号**显式白名单**。
+#: 取代原来的「仅上限」判据（原值 5、判据 device > max）；语义见 assert_gpu_lock。
+ALLOWED_INDICES: tuple[int, ...] = (4, 5, 6, 7)
+#: 兼容既有签名的上界（= max(ALLOWED_INDICES)）；真正的判据是上面的白名单。
+ALLOWED_MAX_INDEX = max(ALLOWED_INDICES)
 #: 单次运行最多使用几张卡（用户拍板：每次最多 4 卡）。
 MAX_CARDS = 4
-#: 生产卡——被常驻 vLLM 占死，严禁触碰。
-RESERVED_INDICES: tuple[int, ...] = (6, 7)
+#: 变体1 下不再有「生产卡」（用户批准占用 6/7；生产 vLLM 已 Exited）。仅保留常量名以兼容引用。
+RESERVED_INDICES: tuple[int, ...] = ()
 #: 4 卡首选集合——唯一全部位于 NUMA0。
 PREFERRED_FOUR: tuple[int, ...] = (0, 1, 2, 3)
 
@@ -75,11 +78,11 @@ _RUNTIME_MANAGED_MARKERS: frozenset[str] = frozenset({"void", "none"})
 RUNTIME_MANAGED = "<runtime-managed>"
 
 _USAGE_HINT = (
-    "正确用法（显式指定 ≤4 张、且仅取自 {0,1,2,3,4,5} 的卡）：\n"
-    "    NVIDIA_VISIBLE_DEVICES=0,1,2,3 <训练/测试命令>\n"
-    "    run.sh <config.yaml> --gpus 0,1,2,3\n"
-    "    docker run --gpus '\"device=0,1,2,3\"' ...\n"
-    "  4 卡首选 {0,1,2,3}（唯一全部位于 NUMA0）；GPU6/7 为生产卡，永不使用。"
+    "正确用法（显式指定 ≤4 张、且仅取自 {4,5,6,7} 的卡）：\n"
+    "    NVIDIA_VISIBLE_DEVICES=4,5,6,7 <训练/测试命令>\n"
+    "    run.sh <config.yaml> --gpus 4,5,6,7\n"
+    "    docker run --gpus '\"device=4,5,6,7\"' ...\n"
+    "  本期允许集合 {4,5,6,7}（用户 2026-09-24 批准 A）；GPU0–3 留给其他工作负载。"
 )
 
 
@@ -189,12 +192,22 @@ def assert_gpu_lock(
     """
     devices = parse_device_list(raw)
 
+    # ★ 变体1（用户 2026-09-24 批准 A）：**显式白名单**取代「仅上限」判据——
+    #   判据由 `device > allowed_max_index` 改为 `device not in ALLOWED_INDICES`。
+    #   仅当调用方沿用默认上界时启用（显式传入更小上界的调用方仍按原语义收窄，不放松、
+    #   也不被本白名单误伤——例如其他工具/测试显式使用 GPU0–3 的场景）。
+    if allowed_max_index == ALLOWED_MAX_INDEX:
+        outside = sorted(device for device in devices if device not in ALLOWED_INDICES)
+        if outside:
+            raise _reject(
+                f"设备列表 {devices} 含白名单外的卡 {outside}（允许集合 {ALLOWED_INDICES}）",
+                "本期只允许使用 GPU4–7（用户 2026-09-24 批准 A）；GPU0–3 留给其他工作负载，GPU8 起不存在。",
+            )
     reserved = sorted(device for device in devices if device > allowed_max_index)
     if reserved:
         raise _reject(
-            f"设备列表 {devices} 含生产卡 {reserved}（允许上限 {allowed_max_index}）",
-            f"GPU{allowed_max_index + 1} 起为生产卡（当前 GPU6/7 被常驻 vLLM 占死），"
-            "在其中做测试会打断生产任务，且结果混入他人负载。",
+            f"设备列表 {devices} 含上界外卡 {reserved}（允许集合 {ALLOWED_INDICES}，上界 {allowed_max_index}）",
+            "超出允许集合的卡一律拒绝（fail-closed）。",
         )
     if len(devices) > max_cards:
         raise _reject(
@@ -541,7 +554,7 @@ def format_verdict(devices: Sequence[int], *, source: str = _ENV_KEY) -> str:
     """生成通过守卫后的可读确认行（供 CLI / 日志复用）。"""
     return (
         f"[gpu-guard] OK: {source}={','.join(str(d) for d in devices)} "
-        f"（{len(devices)} 卡，全部 ⊆ 0..{ALLOWED_MAX_INDEX}，≤{MAX_CARDS} 卡上限）"
+        f"（{len(devices)} 卡，全部 ∈ {ALLOWED_INDICES}，≤{MAX_CARDS} 卡上限）"
     )
 
 

@@ -54,6 +54,7 @@ import argparse
 import importlib.util
 import json
 import sys
+import unicodedata
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -204,6 +205,53 @@ def _py_str(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+def _py_str_wrapped(value: str, indent: str, width: int = 96) -> str:
+    """把长文本渲染成**隐式拼接的多行字面量**（每行 ≤ width），供 ruff E501 友好入表。
+
+    为什么需要它：`provenance` 逐字写全读数+公式+卡集后会到 800+ 字符；单行字面量会让
+    lint 报 E501，而现有标定表全部用隐式拼接。这里按字符切块（文本里不含反斜杠/引号，
+    由 :func:`_py_str` 保证转义），拼出的**字符串值逐字相同**。
+    """
+    literal = _py_str(value)  # 含首尾引号
+    if _text_width(literal) + len(indent) <= width:
+        return literal
+    inner = literal[1:-1]
+    budget = max(20, width - len(indent) - 2)
+    chunks: list[str] = []
+    start = 0
+    while start < len(inner):
+        # ★ ruff 的 E501 按**显示宽度**计（CJK 字 = 2 列）⇒ 预算必须按显示宽度累加，
+        #   否则一段中文 provenance 会在 lint 里"超长"（本仓既有注释行同理）。
+        used = 0
+        end = start
+        while end < len(inner) and used + _display_width(inner[end]) <= budget:
+            used += _display_width(inner[end])
+            end += 1
+        if end == start:  # 单字符就超预算（病态输入）⇒ 至少取一个，保证推进
+            end = start + 1
+        # 不在转义序列中间切（避免把 `\"` 拆成两半）。
+        backslashes = 0
+        probe = end - 1
+        while probe >= start and inner[probe] == "\\":
+            backslashes += 1
+            probe -= 1
+        if backslashes % 2 == 1 and end < len(inner):
+            end += 1
+        chunks.append(inner[start:end])
+        start = end
+    return "\n".join(f'{indent}"{chunk}"' for chunk in chunks)
+
+
+def _display_width(char: str) -> int:
+    """单字符显示宽度：CJK 全角 = 2，其余 = 1（与 ruff E501 的计宽口径一致）。"""
+    return 2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
+
+
+def _text_width(text: str) -> int:
+    """整串显示宽度 = 逐字符 :func:`_display_width` 之和。"""
+    return sum(_display_width(char) for char in text)
+
+
 def render_entry(calibration: Any) -> str:
     """把一个标定记录渲染成**可直接粘贴进 `A4_TIER_CALIBRATIONS`** 的元组原文。"""
     lines = [
@@ -216,7 +264,7 @@ def render_entry(calibration: Any) -> str:
         f"        n={calibration.n},",
         f"        outcome={_py_str(calibration.outcome)},",
         "        provenance=(",
-        f"            {_py_str(calibration.provenance)}",
+        _py_str_wrapped(calibration.provenance, "            "),
         "        ),",
         f"        model={_py_str(calibration.model) if calibration.model else 'None'},",
         f"        mode={_py_str(calibration.mode) if calibration.mode else 'None'},",
@@ -224,10 +272,21 @@ def render_entry(calibration: Any) -> str:
         f"        card_set={tuple(calibration.card_set)!r},",
         f"        model_scope={_py_str(calibration.model_scope)},",
         f"        sampled_at={_py_str(calibration.sampled_at)},",
-        f"        split_check={_py_str(calibration.split_check)},",
     ]
-    if calibration.note:
-        lines.append(f"        note={_py_str(calibration.note)},")
+    # ★ 长字段一律用**隐式拼接**渲染（ruff E501 按显示宽度计，CJK = 2 列）。
+    for field, value in (
+        ("split_check", calibration.split_check),
+        ("note", calibration.note),
+    ):
+        if not value:
+            continue
+        wrapped = _py_str_wrapped(value, "            ")
+        if "\n" in wrapped:
+            lines.append(f"        {field}=(")
+            lines.append(wrapped)
+            lines.append("        ),")
+        else:
+            lines.append(f"        {field}={wrapped},")
     lines.append("    ),")
     return "\n".join(lines)
 
