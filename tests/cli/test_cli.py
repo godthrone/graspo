@@ -170,22 +170,47 @@ def test_readmes_document_single_yaml_entry_and_exports():
 #: 现在断言的是**位置不变量**：``*.md`` 只允许出现在这几个目录前缀下。
 #: 新增合法文档时**无需改本测试**；把 markdown 写进不该写的地方（如 ``src/``、
 #: ``.local/`` 之外的临时目录、根目录随手放的笔记）才会失败。
+#:
+#: **两类前缀的语义**（见 `_is_allowed_markdown_path`）：
+#:   * **以 ``/`` 结尾** = 目录前缀（该目录及其子目录）；
+#:   * **不以 ``/`` 结尾** = **仓库根专有前缀**（只匹配仓库根下的文件）。
+#: 后者让"根目录例外"（如事故类 ``INCIDENT-*``）**无法被借用到子目录**
+#: （``src/INCIDENT-fake.md`` 仍判违规）。
 _ALLOWED_TRACKED_MD_PREFIXES: tuple[str, ...] = (
     "README",  # 根目录双语 README（README.md / README.zh-CN.md）
     "docs/",  # 项目级架构与基准文档
     # ★ 2026-09-28 同步（按下方"新增一类位置请在白名单里显式加前缀并说明理由"的约定）：
-    #   以下三类位置**已经有** tracked ``.md``（``git ls-files "*.md"`` 实测），
-    #   旧白名单没跟上 ⇒ 本用例长期红。它们属"**证据 / 操作件 / 配置**"的合法位置，
+    #   以下位置**已经有** tracked ``.md``（``git ls-files "*.md"`` 实测），旧白名单
+    #   没跟上 ⇒ 本用例曾长期红。它们属"**证据 / 操作件 / 配置**"的合法位置，
     #   而该裁定与理由**只登记在一处**（§1.4 单一真相源）：
-    #     `_tools/CHECKER-DEFECTS-REPORT.md` §「缺陷 3 · §16」（内含 `rig/` 等命中的
-    #     逐件复核表 + 指挥官 2026-09-28 的登记例外裁定），并在
-    #     `_tools/KNOWN-DEVIATIONS.md` 的「与其它登记的关系」里指回该处。
+    #     `_tools/CHECKER-DEFECTS-REPORT.md` §「缺陷 3 · §16」——内含 `rig/` 等命中的
+    #     **逐件复核表**、**〈复核表·补：根目录「事故/认领/核验」类 .md〉**（含前缀判据
+    #     与反例），并在 `_tools/KNOWN-DEVIATIONS.md` 的「与其它登记的关系」里指回该处。
     #   **本测试不另立第二份例外清单**——要改判据，先改那份登记。
     "samples/configs/",  # 档位配置与其状态说明（T###.yaml / T###.not_applicable.md；
     #   覆盖 matrix54 / matrix54-v2 / matrix54-v2-runasrun 多代矩阵，故取目录级前缀）
     "_tools/",  # 证据与登记册类交付物（RB 记录、POSTMORTEM、台账、DELIVERY-EVIDENCE 等）
     "rig/",  # 运行 rig 的计划与锁文件（ramp_plan / run-plan / TREE-SYNC-LOCK 等）
+    "INCIDENT-",  # ★根目录专有：事故记录（如 INCIDENT-20260928-container-prune.md = E-14 正本）
+    "CLAIM-",  # ★根目录专有：事故认领 / 影响面清单（与事故记录成对阅读）
+    "VERIFY-",  # ★根目录专有：核验问答记录（与被核验事故同处）
 )
+
+
+def _is_allowed_markdown_path(path: str) -> bool:
+    """``path``（仓库相对、``/`` 分隔）是否落在白名单内。
+
+    ``/`` 结尾的前缀 = 目录前缀；**不以 ``/`` 结尾的前缀 = 仓库根专有前缀**
+    （只匹配仓库根下的文件）。后者把根目录例外**限制在仓库根**：
+    ``src/INCIDENT-fake.md`` 不因前缀 ``INCIDENT-`` 而被放行。
+    """
+    for prefix in _ALLOWED_TRACKED_MD_PREFIXES:
+        if prefix.endswith("/"):
+            if path.startswith(prefix):
+                return True
+        elif "/" not in path and path.startswith(prefix):
+            return True
+    return False
 
 
 def _tracked_markdown_paths() -> list[str] | None:
@@ -223,7 +248,7 @@ def test_only_whitelisted_locations_hold_tracked_markdown():
             "this check runs on the dev machine, which has .git"
         )
 
-    violations = [path for path in paths if not path.startswith(_ALLOWED_TRACKED_MD_PREFIXES)]
+    violations = [path for path in paths if not _is_allowed_markdown_path(path)]
 
     assert not violations, (
         "tracked markdown must live under one of the whitelisted prefixes "
@@ -252,6 +277,31 @@ def test_whitelist_actually_rejects_a_bad_location():
         assert not prefix.endswith(".md"), (
             f"whitelist entry {prefix!r} looks like a file, not a directory prefix"
         )
+
+
+def test_root_level_incident_prefixes_are_prefixed_not_a_free_pass():
+    """★ 根目录事故类例外是**限前缀 + 仅限仓库根**，不是"根目录任意 `.md`"。
+
+    登记（单一真相源）：`_tools/CHECKER-DEFECTS-REPORT.md`
+    §缺陷 3「复核表 · 补：根目录「事故 / 认领 / 核验」类 `.md`」。
+    """
+    for good in (
+        "INCIDENT-20260928-container-prune.md",
+        "CLAIM-20260928-affected-containers.md",
+        "VERIFY-20260928-chairman-questions.md",
+    ):
+        assert _is_allowed_markdown_path(good), good
+
+    # ① 根目录**任意** .md 仍必须违规（前缀之外一律不放行）
+    for bad in ("notes.md", "MY_NOTE_2026.md", "PLAN.md"):
+        assert not _is_allowed_markdown_path(bad), bad
+    # ② 前缀**不锚定到子目录**：子目录里的同名开头文件仍必须违规
+    for bad in ("src/INCIDENT-fake.md", "tests/VERIFY-x.md", "outputs/CLAIM-x.md"):
+        assert not _is_allowed_markdown_path(bad), bad
+    # ③ 三个前缀必须在白名单里显式列出（不是靠"根目录全放行"实现）
+    allowed = _ALLOWED_TRACKED_MD_PREFIXES
+    for prefix in ("INCIDENT-", "CLAIM-", "VERIFY-"):
+        assert prefix in allowed, prefix
 
 
 def test_export_config_fields_default_and_validate(tmp_path):
