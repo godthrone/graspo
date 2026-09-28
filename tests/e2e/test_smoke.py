@@ -1,5 +1,6 @@
 """End-to-end smoke test —  (CPU-only pipeline validation)."""
 
+import json
 from pathlib import Path
 
 from graspo.core.schema import GraspoConfig
@@ -9,6 +10,7 @@ from graspo.ripple.group_decision import (
     classify_group,
     replay_ready,
 )
+from graspo.ripple.parsing.qwen_tool_parser import parse_qwen_tool_completion
 from graspo.ripple.reward.reward import GraspoReward, RewardConfig
 
 # ── Full pipeline: YAML config → data → reward → decision ───────────────────
@@ -25,8 +27,13 @@ def test_smoke_config_load_from_yaml():
 
 
 def test_smoke_data_load():
-    """Sample JSONL loads into valid Sample objects."""
-    samples = load_jsonl(Path("samples/data/sample.jsonl"))
+    """Sample JSONL loads into valid Sample objects（现役冒烟数据集）。
+
+    ★ 2026-09-28 夹具迁移：``samples/data/sample.jsonl`` 已在 c448696 被有意删除；
+    README 指明的替代是 ``samples/data/json_output/train.jsonl``。本用例的断言本就是
+    通用的（不依赖具体正文），故只换路径。
+    """
+    samples = load_jsonl(Path("samples/data/json_output/train.jsonl"))
     assert len(samples) >= 1
     for sample in samples:
         assert sample.messages
@@ -112,22 +119,29 @@ def test_smoke_reward_anti_useless_penalty():
 
 
 def test_smoke_reward_on_tool_call_sample():
-    """Reward works on tool-call data."""
+    """Reward works on tool-call data（用现役工具调用样例）。
+
+    ★ 2026-09-28 夹具迁移：``samples/data/sample_tool_call.jsonl`` 已在 c448696 被
+    有意删除，现役样例是 ``samples/data/tool_call_mm/train.jsonl``。原用例把被删文件的
+    正文（``query_device_status`` + 固定参数）写死成"正确回答"，迁移后必然不匹配。
+    这里改为**从样例自身的 target 生成正确回答**——既证明奖励链路与真实样例一致，
+    也不会随样例内容漂移而失效。
+    """
     config = RewardConfig(check_json_markdown=False)
     reward_fn = GraspoReward(config)
 
-    samples = load_jsonl(Path("samples/data/sample_tool_call.jsonl"))
+    samples = load_jsonl(Path("samples/data/tool_call_mm/train.jsonl"))
     assert len(samples) >= 1
     sample = samples[0]
     assert sample.expects_tool_calls
 
-    # A correct tool call
-    good = (
-        '<tool_call>{"name":"query_device_status",'
-        '"arguments":{"device_id":"DEV-01","panel_time":"2026-06-08T10:30:00+08:00"}}'
-        "</tool_call>"
-    )
-    result = reward_fn.score_parsed(good, sample.targets, is_tool_call=True)
+    expected_call = sample.targets[0]["output"]["tool_calls"][0]
+    good = f"<tool_call>{json.dumps(expected_call, ensure_ascii=False)}</tool_call>"
+    # 必须过**真解析器**再评分：`score_parsed` 只看 `parsed.tool_calls`，喂裸字符串
+    # 会得到空 tool_calls ⇒ `all_right` 恒 False，那样的断言是空断言。
+    parsed = parse_qwen_tool_completion(good, expect_tool_calls=True)
+    result = reward_fn.score_parsed(parsed, sample.targets, is_tool_call=True)
+    assert result.all_right is True, f"照样例 target 作答必须判对，实际：{result}"
     assert result.reward >= 0, f"Tool call reward should be non-negative, got {result.reward}"
 
 

@@ -7,8 +7,8 @@
 - scheduling/: PP 调度策略（PipelineScheduler / OneFOneB，可插拔）
 """
 
-from .pipeline_comm import PipelineComm, wait_all
-from .scheduling import OneFOneBScheduler, PipelineScheduler, build_scheduler
+from graspo.flow.parallel.pipeline_comm import PipelineComm, wait_all
+from graspo.flow.parallel.scheduling import OneFOneBScheduler, PipelineScheduler, build_scheduler
 
 __all__ = [
     "PipelineComm",

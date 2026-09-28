@@ -93,8 +93,8 @@ def _dump_all_threads(path: Path | None, banner: str) -> None:
         if handle is not None:
             try:
                 handle.close()
-            except OSError:
-                pass
+            except OSError as exc:
+                print(f"[pp-watchdog] dump file close failed: {exc}", file=sys.stderr, flush=True)
 
 
 class RendezvousWatchdog:

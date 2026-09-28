@@ -308,6 +308,18 @@ MODELS_CONTAINER_ROOT = "/models"
 #: runner 与生成器都不自己拼这份 JSON（§1.4 单一真相源）。
 DETERMINISM_ENV = "GRASPO_DETERMINISM"
 
+#: ★ RB-5：显存分配器开关的**裸 `-e` 透传**变量名（唯一真相源，§1.4）。
+#:
+#: 与 :data:`DETERMINISM_ENV` **完全同范式**：`docker run ... -e NAME`（不带 `=值`）
+#: ⇒ docker 只在宿主确实设了该变量时才注入；宿主未设 ⇒ 容器内**不出现**该变量 ⇒
+#: 对回合零行为变化。用途：探针用
+#: `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` 缓解 FSDP2 FULL_STATE_DICT
+#: 落盘期的显存尖峰（B1 实测 80911 MiB > 70 GiB 判据）。
+#: 为什么必须是"裸"：写成 `-e NAME=xxx` 会给全部 12 档强行开分配器开关 ⇒ 那是口径
+#: 变更，超出本次授权；裸透传把"是否启用"留在宿主侧显式决定。
+#: 授权：指挥官 2026-09-27「批准 A」。
+ALLOC_CONF_ENV = "PYTORCH_CUDA_ALLOC_CONF"
+
 #: 容器内目录名（= 宿主侧相对模型根的目录名）；显示名是用户给定的专名，不含内网信息。
 _MODEL_DIR_NAMES: dict[str, str] = {"9B": "Qwen3.5-9B", "27B": "Qwen3.8-27B"}
 
@@ -3314,14 +3326,14 @@ def _probe_main(argv: list[str] | None = None) -> int:
     probe_path = os.path.join(run_dir, PROBE_FILENAME)
 
     torch_version = "unknown"
-    torch = None
     try:
         import torch as _torch
-    except Exception:
-        pass
-    else:
+
         torch = _torch
         torch_version = str(getattr(_torch, "__version__", "unknown"))
+    except Exception:
+        # torch 不可用 ⇒ 显式置 None（调用方据此走「无 torch」分支）
+        torch = None
 
     candidates = _native_candidates(run_dir, args.tier)
     checked_dir, rank_files = _pick_native_dir(candidates)
@@ -3865,6 +3877,13 @@ if [ "$MODE" = "--dry-run" ]; then
         echo "[dry-run]   {DETERMINISM_ENV} 已设置 ⇒ 容器内将透传 --determinism-spec（原值逐字）：${{{DETERMINISM_ENV}}}"
     else
         echo "[dry-run]   {DETERMINISM_ENV} 未设置 ⇒ 不透传 --determinism-spec（默认关，行为与不引入本开关时相同）"
+    fi
+    # ★ RB-5：显存分配器开关同样必须"看得见"（同 §2.2 显式即防呆）。
+    echo "[dry-run] allocator（裸 -e 透传变量 {ALLOC_CONF_ENV}，默认无）:"
+    if [ -n "${{{ALLOC_CONF_ENV}:-}}" ]; then
+        echo "[dry-run]   {ALLOC_CONF_ENV} 已设置 ⇒ 将注入容器（原值逐字）：${{{ALLOC_CONF_ENV}}}"
+    else
+        echo "[dry-run]   {ALLOC_CONF_ENV} 未设置 ⇒ 容器内不出现该变量（默认无行为变化）"
     fi
     echo "[dry-run] config=$CONFIG train_subset=$SUBSET 条 -> $TRAINPATH"
     echo "[dry-run] models=$MODELS_ROOT:$MODEL_DIR_NAME -> {MODELS_CONTAINER_ROOT}（只读）"
@@ -4416,6 +4435,15 @@ DOCKER_ARGS=(
     #   容器内为未设置、entry.sh 的守卫走"默认关"分支。这样"宿主没设"与"容器没收到"
     #   不可能分叉（§2.2）；也**不必**在生成期读宿主环境（生成物因此与宿主环境无关）。
     -e {DETERMINISM_ENV}
+    # ★ RB-5（授权：指挥官 2026-09-27「批准 A」）显存分配器开关的**裸 -e 透传**，
+    #   与上面 {DETERMINISM_ENV} **完全同范式**：
+    #     裸 `-e NAME`（不带 =值）⇒ docker 只在**宿主确实设了**该变量时才注入；
+    #     宿主未设 ⇒ 容器内**不出现**该变量 ⇒ 对回合（12 档 ×3）**零行为变化**。
+    #   用途：探针用 `{ALLOC_CONF_ENV}=expandable_segments:True` 缓解
+    #   FSDP2 FULL_STATE_DICT **落盘期**的显存尖峰（B1 实测 80911 MiB > 70 GiB 判据）。
+    #   为什么必须是"裸"：写成 `-e {ALLOC_CONF_ENV}=xxx` 会给**全部 12 档**强行开
+    #   分配器开关 ⇒ 那是口径变更，超出本次授权；裸透传把"是否启用"留在宿主侧显式决定。
+    -e {ALLOC_CONF_ENV}
 )
 # ★ 可写缓存/状态根逐个 `-e` 注入（清单与上面 CONTAINER_CACHE_ROOTS 同源，§1.4）：
 #   展开成 `-e VAR=/path`，docker run 处不再出现任何缓存根字面量。

@@ -9,6 +9,6 @@
 
 from graspo.ripple.annotation.char_tag import CharTag
 
-from .labeler import AnnotationInput, AnnotationResult, annotate
+from graspo.ripple.annotation.labeler import AnnotationInput, AnnotationResult, annotate
 
 __all__ = ["CharTag", "AnnotationInput", "AnnotationResult", "annotate"]

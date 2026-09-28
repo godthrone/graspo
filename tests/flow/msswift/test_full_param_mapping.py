@@ -51,8 +51,8 @@ _SRC = Path(__file__).resolve().parents[3] / "src"
 def _load_module(dotted_name: str, relative_path: str):
     """按文件路径加载模块（不执行父包 ``__init__``，也**不登记** ``sys.modules``）。
 
-    登记真实模块名会让**其它**测试文件的 ``from graspo.flow.msswift._config_mapping
-    import ...`` 意外成功（实测会多收集 4 个文件并失败），因此这里保持零全局状态；
+    登记真实模块名会让**其它**测试文件的 ``from graspo.flow.msswift._config_mapping import ...``
+    意外成功（实测会多收集 4 个文件并失败），因此这里保持零全局状态；
     确实需要临时登记的场景由调用方显式 try/finally 处理。
     """
     spec = importlib.util.spec_from_file_location(dotted_name, _SRC / relative_path)

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import base64
+import time
 
 import pytest
 
@@ -14,7 +15,10 @@ from graspo.eval.vllm_client import (
     EVAL_MAX_TOKENS,
     EVAL_TEMPERATURE,
     EVAL_TOP_P,
+    ClientConfig,
     TemperatureLockError,
+    VllmEvalClient,
+    VllmEvalError,
     assert_request_body_locked,
     build_messages,
     build_request_body,
@@ -279,3 +283,42 @@ def test_artifact_schema_version_and_run_id_shape():
     run_id = make_run_id("base")
     assert run_id.startswith("base-")
     assert len(run_id.split("-")) == 3
+
+
+# ── 就绪轮询的**总等待预算**（2026-09-28 挂死修复）────────────────────────────
+
+
+def test_wait_until_ready_is_bounded_by_the_total_deadline(monkeypatch):
+    """★ 判别力实证：预算用尽即返回，**不会**跑满 60 轮 × （3 重试 × 120s 超时）。
+
+    缺陷背景（本机实测）：旧实现只按 ``attempts`` 收口，而每次探测的 ``_post`` 自带
+    ``max_retries × timeout_sec`` 的重试上界 ⇒ 真实上界 ≈ 6 小时，与 docstring 宣称的
+    "最多等 10 分钟"不符。实测后果：没有真 vLLM 服务时整套单测在 40% 处**挂死**。
+    本用例让 ``_post`` 永远抛错、预算设为 0.05s，断言它很快返回且探测次数远小于 60。
+    """
+    client = VllmEvalClient(ClientConfig(base_url="http://127.0.0.1:1", served_model_name="s"))
+    probe_calls: list[int] = []
+
+    def _always_fail(body: dict) -> dict:
+        probe_calls.append(1)
+        raise VllmEvalError("connection refused (mocked)")
+
+    monkeypatch.setattr(client, "_post", _always_fail)
+    started = time.monotonic()
+    with pytest.raises(VllmEvalError, match="budget"):
+        client.wait_until_ready(interval_sec=1.0, deadline_sec=0.05)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 5.0, f"预算 0.05s 却等了 {elapsed:.2f}s —— 上限没生效"
+    assert len(probe_calls) < 60, f"探测了 {len(probe_calls)} 次 —— 次数没按预算收口"
+
+
+def test_wait_until_ready_returns_as_soon_as_the_service_answers(monkeypatch):
+    """反向：服务就绪即返回，不许被预算拖住（预算不是"至少等这么久"）。"""
+    client = VllmEvalClient(ClientConfig(base_url="http://127.0.0.1:1", served_model_name="s"))
+    monkeypatch.setattr(client, "_post", lambda body: {"choices": [{"message": {"content": "hi"}}]})
+
+    started = time.monotonic()
+    client.wait_until_ready(interval_sec=1.0, deadline_sec=600.0)
+
+    assert time.monotonic() - started < 5.0

@@ -2,6 +2,8 @@
 
 [English README](README.md)
 
+## 简介
+
 GRASPO (Group Relative Advantage Structured Policy Optimization) — GRPO 风格的 RL 与 SFT，面向结构化 LLM 输出。基于字符标注的 token 级 reward。单张 80GB GPU 即可训练 9B 模型。GraspoFlow 统一 TP+DP+PP+SP+Checkpoint 五维并行。组过滤、perfect-skip、多模态、工具调用 reward。
 
 **结构化输出 RL 的三层防御纵深，从 token 信号到组决策：**

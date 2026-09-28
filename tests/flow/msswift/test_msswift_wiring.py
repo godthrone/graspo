@@ -172,6 +172,9 @@ def test_rl_path_uses_ms_swift_python_api_not_cli(tmp_path, monkeypatch):
     """G3 链路：RL 门面走 ``SwiftRLHF``（Python API）而不是 ``swift rlhf`` CLI。"""
     recorded: dict[str, object] = {}
 
+    class _StubTrainerBase:
+        """替身 GRPOTrainer 基类：只为让"ms-swift 存在"这条探针为真（不做真训练）。"""
+
     class _StubPipeline:
         def __init__(self, args=None, **kwargs):
             recorded["args"] = args
@@ -201,6 +204,12 @@ def test_rl_path_uses_ms_swift_python_api_not_cli(tmp_path, monkeypatch):
     import graspo.flow.msswift.trainer as trainer_module
 
     monkeypatch.setattr(trainer_module, "_PIPELINE_CLASS_CACHE", {})
+    # ★ 本机（无 ms-swift）下模块导入时 `_MsSwiftGRPOTrainerBase` 落成 ``object``，
+    #   `_require_ms_swift()` 据此 fail-closed —— 那是**生产语义正确**的行为。
+    #   而本用例的意图是"**用替身模块模拟 ms-swift 存在**"，因此必须把这条可用性
+    #   探针一并声明为"已具备"：替身模块再完整也改不了"导入期已缓存"的那个事实。
+    #   （此前本机红的根因即此：stub 了 sys.modules，却没 stub 守卫的判据。）
+    monkeypatch.setattr(trainer_module, "_MsSwiftGRPOTrainerBase", _StubTrainerBase)
 
     from graspo.flow.msswift.trainer import MsSwiftRlTrainer
 

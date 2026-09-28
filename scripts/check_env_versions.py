@@ -58,7 +58,7 @@ for p in %r:
     try:
         out[p] = m.version(p)
     except m.PackageNotFoundError:
-        pass
+        continue    # 该包未安装 ⇒ 显式跳过（不改变 out 的既有口径）
 print(json.dumps(out))
 """
 
@@ -73,9 +73,14 @@ def _normalize_name(name: str) -> str:
 
 
 def _pin_from_requirement(item: object) -> tuple[str, str] | None:
-    """从 `name==x.y.z` / `name[extra]==x.y.z` 形式的依赖项解析 (name, version)。"""
+    """从 `name==x.y.z` / `name[extra]==x.y.z` 形式的依赖项解析 (name, version)。
+
+    版本段**排除 shell 引号**（`'` / `"`）：Dockerfile 里 pin 常写在 `sh -c '…'` 内，
+    闭合引号可能落在版本号前后（见 `parse_dockerfile_pins()`）；合法 PEP 440 版本
+    不含引号，排除它是严格化而非放松。
+    """
     text = str(item).strip()
-    match = re.match(r"^([A-Za-z0-9_.\-]+(?:\[[^\]]*\])?)\s*==\s*([^\s;#]+)", text)
+    match = re.match(r"^([A-Za-z0-9_.\-]+(?:\[[^\]]*\])?)\s*==\s*([^\s;#\"']+)", text)
     if match is None:
         return None
     return _normalize_name(match.group(1)), match.group(2).strip()
@@ -106,7 +111,14 @@ def gated_packages(pyproject: Path = PYPROJECT) -> dict[str, str]:
 
 
 def parse_dockerfile_pins(dockerfile: Path) -> dict[str, str]:
-    """自动解析 Dockerfile 中 `pip install ... name==version` 的全部 pin。"""
+    """自动解析 Dockerfile 中 `pip install ... name==version` 的全部 pin。
+
+    ★ 自适应 shell 引号：pin 常写在 `sh -eu -c '…'` / `sh -c "…"` 内，按空白切出的
+    token 可能被引号包裹或尾随引号（`torchvision==0.26.0'`、`"ms-swift==4.5.3"`、
+    `pillow==11.3.0;'`）——**一律剥掉引号**再解析，避免合法 shell 引号把门禁打破
+    （否则误报"声明不一致"，且 Dockerfile 内的 `RUN check_env_versions.py --local` 会让
+    镜像构建直接失败）。负例回归见 `tests/e2e/test_check_env_versions.py`。
+    """
     if not dockerfile.is_file():
         return {}
     text = dockerfile.read_text(encoding="utf-8").replace("\\\n", " ")
@@ -115,7 +127,7 @@ def parse_dockerfile_pins(dockerfile: Path) -> dict[str, str]:
         if "pip install" not in line and "uv pip install" not in line:
             continue
         for token in line.split():
-            parsed = _pin_from_requirement(token)
+            parsed = _pin_from_requirement(token.strip("'\""))
             if parsed is not None:
                 pins[parsed[0]] = parsed[1]
     return pins

@@ -17,14 +17,22 @@ def _tool_target(*calls: dict, target_id: str = "expected") -> list[dict]:
 
 
 def test_load_standard_jsonl():
-    samples = load_jsonl(Path("samples/data/sample.jsonl"))
+    """标准（content 型）样例数据可加载。
+
+    ★ 2026-09-28 夹具迁移：原路径 ``samples/data/sample.jsonl`` 已在 c448696
+    （"e2e matrix v3"）被**有意删除**，取而代之的冒烟数据集是
+    ``samples/data/json_output/train.jsonl``（README 明确称其为
+    "small JSONL dataset for smoke tests"）。断言随之从 ``tool_calls`` 改为
+    ``content``——该文件的 target 就是 content 型。
+    """
+    samples = load_jsonl(Path("samples/data/json_output/train.jsonl"))
 
     assert len(samples) >= 1
     assert samples[0].messages
     assert isinstance(samples[0].targets, list)
     assert len(samples[0].targets) >= 1
     assert samples[0].targets[0]["id"] is not None
-    assert "tool_calls" in samples[0].targets[0]["output"]
+    assert "content" in samples[0].targets[0]["output"]
 
 
 def test_write_and_load_roundtrip(tmp_path):
@@ -63,18 +71,23 @@ def test_load_messages_jsonl(tmp_path):
 
 
 def test_load_tools_jsonl():
-    sample = load_jsonl(Path("samples/data/sample_tool_call.jsonl"))[0]
+    """工具调用样例数据可加载，且 target 是**结构合法**的工具调用。
+
+    ★ 2026-09-28 夹具迁移：原路径 ``samples/data/sample_tool_call.jsonl`` 已在
+    c448696 被有意删除；现役工具调用样例是 ``samples/data/tool_call_mm/train.jsonl``
+    （README：「See ``samples/data/tool_call_mm/train.jsonl`` for a runnable
+    tool-call dataset row」）。原断言把**被删文件的正文**（``query_device_status``
+    及其参数）抄成了期望值——那既随夹具漂移，也无法表达"加载器正确"这件事。
+    这里改为断言结构不变量：样例内容归 ``samples/data/`` 维护，不在此重复声明。
+    """
+    sample = load_jsonl(Path("samples/data/tool_call_mm/train.jsonl"))[0]
 
     assert sample.expects_tool_calls is True
-    assert sample.targets == _tool_target(
-        {
-            "name": "query_device_status",
-            "arguments": {
-                "device_id": "DEV-01",
-                "panel_time": "2026-06-08T10:30:00+08:00",
-            },
-        }
-    )
+    assert sample.targets, "工具调用样例必须给出至少一个 target"
+    calls = sample.targets[0]["output"]["tool_calls"]
+    assert isinstance(calls, list) and calls, "tool_calls 必须是非空列表"
+    assert isinstance(calls[0]["name"], str) and calls[0]["name"]
+    assert isinstance(calls[0]["arguments"], dict) and calls[0]["arguments"]
     assert "tools" not in sample.metadata
 
 

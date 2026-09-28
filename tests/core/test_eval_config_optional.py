@@ -26,6 +26,20 @@ from types import ModuleType
 
 import pytest
 
+#: 部署事实（**显式声明**，不依赖 `core.gpu_guard` 里曾经写死的元组）：本模块夹具
+#: 用 GPU0–1，并把 6/7 声明为保留（生产）卡。2026-09-28 裁定：允许/保留集合是
+#: 部署事实，从配置注入，见 gpu_guard 模块头。
+_DEPLOYMENT_FACT = {
+    "GRASPO_ALLOWED_GPU_INDICES": "0,1,2,3,4,5",
+    "GRASPO_RESERVED_GPU_INDICES": "6,7",
+}
+
+
+@pytest.fixture(autouse=True)
+def _inject_deployment_fact(monkeypatch):
+    for key, value in _DEPLOYMENT_FACT.items():
+        monkeypatch.setenv(key, value)
+
 
 def _ensure_namespace(name: str, source_dir: Path) -> None:
     """确保 ``name`` 是一个**指向真实源码目录**的包命名空间；已存在则不动。

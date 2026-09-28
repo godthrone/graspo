@@ -16,6 +16,19 @@ import pytest
 
 from graspo.cli.app import build_parser
 
+#: 本模块夹具用 gpus "0,1"，并把 6/7 声明为保留（生产）卡——显式声明部署事实，
+#: 不依赖 `core.gpu_guard` 里曾经写死的元组（2026-09-28 裁定，见 gpu_guard 模块头）。
+_DEPLOYMENT_FACT = {
+    "GRASPO_ALLOWED_GPU_INDICES": "0,1,2,3,4,5",
+    "GRASPO_RESERVED_GPU_INDICES": "6,7",
+}
+
+
+@pytest.fixture(autouse=True)
+def _inject_deployment_fact(monkeypatch):
+    for key, value in _DEPLOYMENT_FACT.items():
+        monkeypatch.setenv(key, value)
+
 
 def _eval_yaml(tmp_path: Path, **overrides: str) -> Path:
     """写一份可直接用于 `eval prepare` 的配置（base 角色，无需 checkpoint）。"""

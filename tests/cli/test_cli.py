@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 from graspo.cli.app import build_launch_plan, build_parser
 from graspo.core.schema import GraspoConfig
@@ -40,9 +41,21 @@ def test_cli_removed_commands_are_not_public(command):
 
 
 def test_config_example_loads():
-    config = GraspoConfig.from_yaml("samples/configs/config_example.yaml")
+    """样例配置可加载，且其中声明的训练超参被**原样带进来**。
 
-    assert config.training.max_epochs == 100
+    ★ 2026-09-28 定位到的真因：本断言原写死 ``max_epochs == 100``（= schema 的
+    **默认值**），而 ``samples/configs/config_example.yaml`` 自 29a3db0 起显式声明
+    ``max_epochs: 20`` ⇒ 断言过期、该用例长期红（只是被本文件的另外两条失败掩盖）。
+    样例配置归 ``samples/configs/`` 维护（**本包不改它**，见任务书范围），因此这里不再
+    把某个具体数字抄第二遍（§1.4 单一真相源），改为断言"加载器把样例里声明的值带过来"
+    ——字段若被 schema 丢掉/改名，默认值与声明值不等就会在这里暴露。
+    """
+    example_path = Path("samples/configs/config_example.yaml")
+    config = GraspoConfig.from_yaml(example_path)
+    declared = yaml.safe_load(example_path.read_text(encoding="utf-8"))
+
+    assert config.training.max_epochs == declared["training"]["max_epochs"]
+    assert config.training.max_epochs > 0
     assert config.training.max_new_tokens == 2048
     assert config.native.tp_size == 2
 
@@ -115,9 +128,19 @@ def test_launch_plan_rejects_missing_paths(tmp_path):
 
 
 def test_readmes_document_single_yaml_entry_and_exports():
+    """README 必须文档化"单 YAML 入口 + 导出开关"。
+
+    ★ 2026-09-28：原期望里写死了 ``samples/configs/config_example.yaml``。README 已被
+    重写（现指向 ``sft_example.yaml`` / ``rl_example.yaml`` / ``a800x8_...yaml`` /
+    ``config_example_msswift.yaml``），该文件名不再出现在 README ⇒ 本用例红。
+    README 归**别的单写者**（见任务书范围），因此这里不去规定它该点名哪一份，
+    改为断言**不变量**："每份 README 至少点名一个 ``samples/configs/`` 下的**已存在**
+    配置文件"——既保住原意（README 必须给出可用的单 YAML 入口），又不再随改名失效。
+    """
+    shipped = {f"samples/configs/{path.name}" for path in Path("samples/configs").glob("*.yaml")}
+    assert shipped, "samples/configs/ 下应有可点名的配置文件"
     expected = [
         "uv run graspo launch --config",
-        "samples/configs/config_example.yaml",
         "lora.target_modules",
         "peft-adapter",
         "merged-hf",
@@ -126,10 +149,12 @@ def test_readmes_document_single_yaml_entry_and_exports():
     for path in (Path("README.md"), Path("README.zh-CN.md")):
         text = path.read_text(encoding="utf-8")
         for item in expected:
-            assert item in text
+            assert item in text, f"{path} 缺少 {item!r}"
+        named = sorted(entry for entry in shipped if entry in text)
+        assert named, f"{path} 必须至少点名一份存在的样例配置（候选：{sorted(shipped)}）"
         forbidden = ["hf-reference", "prepare-data", "train --config", "prompt-only"]
         for item in forbidden:
-            assert item not in text
+            assert item not in text, f"{path} 不应再出现 {item!r}"
 
 
 #: tracked markdown 的**允许目录前缀白名单**（宪法 §19.2 / §15.1）。
@@ -148,7 +173,18 @@ def test_readmes_document_single_yaml_entry_and_exports():
 _ALLOWED_TRACKED_MD_PREFIXES: tuple[str, ...] = (
     "README",  # 根目录双语 README（README.md / README.zh-CN.md）
     "docs/",  # 项目级架构与基准文档
-    "samples/configs/matrix54/",  # 档位配置与其状态说明（T###.yaml / T###.blocked.md）
+    # ★ 2026-09-28 同步（按下方"新增一类位置请在白名单里显式加前缀并说明理由"的约定）：
+    #   以下三类位置**已经有** tracked ``.md``（``git ls-files "*.md"`` 实测），
+    #   旧白名单没跟上 ⇒ 本用例长期红。它们属"**证据 / 操作件 / 配置**"的合法位置，
+    #   而该裁定与理由**只登记在一处**（§1.4 单一真相源）：
+    #     `_tools/CHECKER-DEFECTS-REPORT.md` §「缺陷 3 · §16」（内含 `rig/` 等命中的
+    #     逐件复核表 + 指挥官 2026-09-28 的登记例外裁定），并在
+    #     `_tools/KNOWN-DEVIATIONS.md` 的「与其它登记的关系」里指回该处。
+    #   **本测试不另立第二份例外清单**——要改判据，先改那份登记。
+    "samples/configs/",  # 档位配置与其状态说明（T###.yaml / T###.not_applicable.md；
+    #   覆盖 matrix54 / matrix54-v2 / matrix54-v2-runasrun 多代矩阵，故取目录级前缀）
+    "_tools/",  # 证据与登记册类交付物（RB 记录、POSTMORTEM、台账、DELIVERY-EVIDENCE 等）
+    "rig/",  # 运行 rig 的计划与锁文件（ramp_plan / run-plan / TREE-SYNC-LOCK 等）
 )
 
 

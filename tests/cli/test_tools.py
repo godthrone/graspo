@@ -10,6 +10,7 @@ from pathlib import Path
 
 from graspo.cli.tools import evaluate_samples, summarize_run, validate_reward_scores
 from graspo.core.schema import GraspoConfig, Sample
+from graspo.ripple.parsing.completion import ParsedCompletion, raw_parsed_completion
 
 # ── validate-reward ──────────────────────────────────────────────────────────
 
@@ -59,11 +60,22 @@ class _Generation:
 
 
 class _EvalRuntime:
+    """评测运行时假件。
+
+    ★ 必须实现 ``parse_completion``：``cli.tools._parse_completion`` 已按 §2.2 改为
+    **直接调用**（不再 ``getattr`` 探测 + 静默退回 raw 解析器）。本假件用
+    :func:`raw_parsed_completion` 复现当年那条退路的解析结果——它是**显式声明**的
+    假件行为，而不是生产代码的隐式回退。
+    """
+
     def __init__(self, completions: list[str]) -> None:
         self.completions = completions
 
     def is_primary(self) -> bool:
         return True
+
+    def parse_completion(self, completion: str, sample: Sample) -> ParsedCompletion:
+        return raw_parsed_completion(completion)
 
     def generate_sample_groups(self, **kwargs):
         assert len(kwargs["samples"]) == 1
