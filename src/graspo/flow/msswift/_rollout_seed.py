@@ -208,7 +208,8 @@ def resolve_rollout_rank() -> tuple[int, str]:
         if dist.is_available() and dist.is_initialized():
             return int(dist.get_rank()), "torch.distributed"
     except ImportError:  # pragma: no cover - torch 总在 ms-swift 路径上
-        pass
+        # 无 torch ⇒ 显式落入单进程兜底（来源说明与下方逐字一致，口径不变）
+        return 0, "single-process"
     return 0, "single-process"
 
 
@@ -386,6 +387,13 @@ def rollout_seed_deterministic(config: Any) -> Iterator[Any]:
     ledger["required"] = True
 
     def _graspo_infer(self: Any, *args: Any, **kwargs: Any) -> Any:
+        """包装后的 ``infer``：每次调用前按调用序号重播种子，再转交原方法。
+
+        Args:
+            self: ms-swift 推理引擎实例（原方法绑定对象）。
+            *args: 原样转交原 ``infer``。
+            **kwargs: 原样转交原 ``infer``（并作为首步探针的输入留证）。
+        """
         # 先取"这是第几次调用"，再自增 —— 于是第一次是 0。
         call_index = ledger["reseed_count"]
         call_seed = derive_rollout_seed(base_seed=base_seed, rank=rank, call_index=call_index)

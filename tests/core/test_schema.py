@@ -322,13 +322,17 @@ def _all_example_configs() -> list[Path]:
 
 
 @pytest.mark.parametrize("config_path", _all_example_configs())
-def test_all_example_configs_loadable(config_path: Path):
+def test_all_example_configs_loadable(config_path: Path, monkeypatch):
     """所有 samples/configs/*.yaml 可被 GraspoConfig.from_dict() 加载。
 
     验证目标（C7 验收）：配置模板与 schema 同步，不会因字段变更而脱节。
+
+    部署事实从配置注入（2026-09-28 裁定，见 ``core.gpu_guard`` 模块头）：样例里的
+    ``eval.gpus`` 用 GPU0–1，因此本用例显式声明"允许 0–5"。
     """
     import yaml
 
+    monkeypatch.setenv("GRASPO_ALLOWED_GPU_INDICES", "0,1,2,3,4,5")
     data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     # 使用 from_dict 而非 model_validate，因为示例配置可能包含 None section
     cfg = GraspoConfig.from_dict(data)

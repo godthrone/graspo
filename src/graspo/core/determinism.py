@@ -581,12 +581,16 @@ def candidate_nccl_library_paths() -> list[Path]:
             roots.append(Path(entry))
     for base in list(site.getsitepackages()) + [site.getusersitepackages()]:
         roots.append(Path(base) / "nvidia" / "nccl" / "lib")
-    try:  # torch 自带 lib（可选：无 torch 时静默跳过，不改变探测语义）
+    torch_lib = None
+    try:  # torch 自带 lib（可选：无 torch 时跳过该候选；探测语义不变 —— 只返回存在的文件）
         import torch  # noqa: PLC0415
 
-        roots.append(Path(torch.__file__).resolve().parent / "lib")
+        torch_lib = Path(torch.__file__).resolve().parent / "lib"
     except ImportError:
-        pass
+        # 无 torch ⇒ 显式记为「该候选不存在」（不静默吞掉，也不影响其余候选）
+        torch_lib = None
+    if torch_lib is not None:
+        roots.append(torch_lib)
     roots.extend(
         [
             Path("/usr/lib/x86_64-linux-gnu"),

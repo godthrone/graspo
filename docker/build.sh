@@ -4,6 +4,7 @@
 #   VERSION=v0.23.0 bash docker/build.sh        # 无 git tag 的环境必须显式传 VERSION
 #   IMAGE_NAME=graspo:test bash docker/build.sh
 #   HTTP_PROXY=http://proxy.example.com:8080 bash docker/build.sh
+#   （代理按 §14.3 取值规则转成 BuildKit secret 传入，**不**走 --build-arg）
 #   bash docker/build.sh --print-version        # 只打印推导出的版本并退出
 #
 # **版本号唯一来源（宪法 §1.4）**：本脚本的 `derive_version()` 是构建链路里
@@ -58,13 +59,23 @@ HTTP_PROXY="${HTTP_PROXY:-}"
 HTTPS_PROXY="${HTTPS_PROXY:-}"
 NO_PROXY="${NO_PROXY:-}"
 
+# 代理只走 BuildKit secret（宪法 §14.3 取值规则）：class A / 公开仓库用 `--build-arg`
+# 传代理会把取值留在 `docker history --no-trunc` 里 ⇒ 一律 `--secret id=<name>,env=<VAR>`。
+# 宿主未设置（空值）⇒ 不传该 secret；Dockerfile 侧 `required=false` ⇒ 缺失即直连公网。
+SECRET_ARGS=()
+for pair in "http_proxy:HTTP_PROXY" "https_proxy:HTTPS_PROXY" "no_proxy:NO_PROXY"; do
+    id="${pair%%:*}"
+    var="${pair##*:}"
+    if [ -n "${!var:-}" ]; then
+        SECRET_ARGS+=(--secret "id=${id},env=${var}")
+    fi
+done
+
 echo "Building ${IMAGE_NAME} from ${ROOT_DIR} (version=${VERSION}, dockerfile=${DOCKERFILE})"
 docker build \
   --network=host \
   --build-arg VERSION="${VERSION}" \
-  --build-arg HTTP_PROXY="${HTTP_PROXY}" \
-  --build-arg HTTPS_PROXY="${HTTPS_PROXY}" \
-  --build-arg NO_PROXY="${NO_PROXY}" \
+  ${SECRET_ARGS[@]+"${SECRET_ARGS[@]}"} \
   -t "${IMAGE_NAME}" \
   -f "${DOCKERFILE}" \
   "${ROOT_DIR}"

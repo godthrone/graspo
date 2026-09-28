@@ -99,6 +99,14 @@ class GraspoMsSwiftGRPOTrainer(_MsSwiftGRPOTrainerBase):  # type: ignore[misc,va
     """
 
     def __init__(self, *args: Any, graspo_config: Any = None, **kwargs: Any) -> None:
+        """按注入的 graspo 配置装配 ``GRPOTrainer`` 包装（§2.2 显式即防呆）。
+
+        Args:
+            *args: 原样交给 ``GRPOTrainer``。
+            graspo_config: ``GraspoConfig`` 实例（必填，由 pipeline 注入）。
+            **kwargs: 原样交给 ``GRPOTrainer``（model / ref_model / args / template /
+                train_dataset / reward_funcs / …）。
+        """
         _require_ms_swift()
         if graspo_config is None:
             raise ValueError(

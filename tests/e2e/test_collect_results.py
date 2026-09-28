@@ -235,7 +235,10 @@ def test_a7_rank1_only_skip_is_not_a_false_pass(tmp_path):
 
     修前行为（可复现的**假通过**）：采集只读 `rank_metrics.rank_00000.jsonl`
     ⇒ 读到 0 ⇒ `A7` 通过 ⇒ 一次"rank1 权重/LR 已分叉"的运行被记成 **✅ 训练可用**。
-    修后：跨**全部** rank 取 MAX ⇒ 1 ⇒ `A7` 不通过。
+    修后：两层聚合 —— 同一步/同一 rank 内**逐步求和**（=`skipped_nonfinite` 是该步的
+    局部读数；口径见 `_tools/COVERAGE-SEMANTICS.md` §2.4「逐步侧 Σ = ledger 侧 Σ」），
+    再对**全部 rank** 取 **MAX**（同一跳过事件在各 rank 的局部读数里各出现一次，
+    逐 rank 求和会重复计数）⇒ 本场景 0 vs 1 ⇒ **1** ⇒ `A7` 不通过。
     （矩阵命中：T029/T030/T041/T042 —— native graspo `dp>1`。）
     """
     _make_native_full_run(
@@ -1364,7 +1367,13 @@ def _make_native_full_run(
                         "metrics": {
                             "optimizer_steps": 1,
                             "global_optimizer_steps_sum": 1,
-                            "skipped_nonfinite": rank1_skipped_nonfinite,
+                            # ★ 2026-09-28：`skipped_nonfinite` 是**逐步**读数——口径见
+                            #   `_tools/COVERAGE-SEMANTICS.md` §2.3 的注入实验（一步 nan
+                            #   ⇒ **该步** `skipped_nonfinite=1`）。本 fixture 要表达的是
+                            #   "rank1 **单独跳过 1 次**"，故只在**第一步**写该值、其余步
+                            #   写 0：若每步都写 1，按冻结口径的逐步求和就变成"跳过 6 次"，
+                            #   与用例要表达的判别力场景不符。
+                            "skipped_nonfinite": rank1_skipped_nonfinite if index == 0 else 0,
                             "loss_mean": 1.0 - index * 0.01,
                             "grad_norm_mean": 1.0,
                             "tuner_type": "full",

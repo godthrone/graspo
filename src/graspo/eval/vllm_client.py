@@ -55,6 +55,13 @@ EVAL_TOP_P = 0.9
 EVAL_MAX_TOKENS = 128
 EVAL_ENABLE_THINKING = False
 
+#: ``wait_until_ready`` 的**总等待预算**默认值（秒）：10 分钟，与 v3 一致。
+#: 为什么需要它：单次探测自带 ``max_retries`` × ``timeout_sec`` 的重试上界，
+#: 只按次数收口会让真实上界膨胀到小时级（2026-09-28 实测：无服务时单测挂死）。
+_READY_DEFAULT_DEADLINE_SEC = 600.0
+#: 轮询间隔的下限（秒）——只为防止 ``interval_sec=0`` 导致除零/忙等。
+_MIN_POLL_INTERVAL_SEC = 0.001
+
 #: 请求体里任何与温度相关的键名（大小写不敏感）都必须在禁区名单内。
 #: 扫描是**递归**的（见 :func:`assert_request_body_locked`）——只看顶层会被
 #: ``extra_body.temperature`` 这类嵌套结构绕过。
@@ -291,13 +298,35 @@ class VllmEvalClient:
         if not self._endpoint.endswith("/chat/completions"):
             self._endpoint = f"{self._endpoint}/v1/chat/completions"
 
-    def wait_until_ready(self, *, attempts: int | None = None, interval_sec: float = 10.0) -> None:
-        """轮询直到服务可用。默认最多等 10 分钟（60 次 × 10s，与 v3 一致）。
+    def wait_until_ready(
+        self,
+        *,
+        attempts: int | None = None,
+        interval_sec: float = 10.0,
+        deadline_sec: float | None = None,
+    ) -> None:
+        """轮询直到服务可用；**总等待时间有硬上限**，默认 10 分钟（与 v3 一致）。
 
-        Raises:
-            VllmEvalError: 超时。
+        ★ 为什么必须有 :paramref:`deadline_sec`（2026-09-28 实测缺陷）：旧实现只在
+        ``attempts`` 上收口，而**每次探测** ``_post`` 自己还会做 ``max_retries`` 次
+        重试、每次最长 ``timeout_sec``（默认 120s）⇒ 真实上界 = 60 × 3 × 120s ≈ 6 小时，
+        与 docstring 宣称的"最多等 10 分钟"完全不符。实测后果：单测
+        ``tests/eval/test_orchestrator.py`` 在"本机没有真 vLLM 服务"时直接**挂死整套
+        测试**（40% 处卡住）。现在多一道由 :func:`time.monotonic` 计的**总预算**：
+        预算用尽即停，不再无限等；单次在途探测最多再超出一个探测周期（重试上界）。
+
+        :param attempts: 最多探测次数（``None`` = 按 :paramref:`deadline_sec` /
+            :paramref:`interval_sec` 推导，默认预算 600s ÷ 10s = 60 次）。
+        :param interval_sec: 两次探测之间的间隔（秒）。
+        :param deadline_sec: **总等待预算**（秒，``None`` = 600s）。
+        :raises VllmEvalError: 预算内服务始终不可用。
         """
-        limit = attempts if attempts is not None else 60
+        budget = _READY_DEFAULT_DEADLINE_SEC if deadline_sec is None else deadline_sec
+        limit = (
+            attempts
+            if attempts is not None
+            else max(1, int(budget // max(interval_sec, _MIN_POLL_INTERVAL_SEC)))
+        )
         probe = {
             "model": self._config.served_model_name,
             "messages": [{"role": "user", "content": "hi"}],
@@ -305,6 +334,7 @@ class VllmEvalClient:
             "temperature": EVAL_TEMPERATURE,
         }
         assert_request_body_locked(probe)
+        started = time.monotonic()
         last_error = ""
         for attempt in range(1, limit + 1):
             try:
@@ -314,10 +344,16 @@ class VllmEvalClient:
                 last_error = f"response without choices: {payload!r}"
             except VllmEvalError as exc:
                 last_error = str(exc)
-            if attempt < limit:
-                time.sleep(interval_sec)
+            if attempt >= limit:
+                break
+            remaining = budget - (time.monotonic() - started)
+            if remaining <= 0:
+                last_error = f"{last_error}；总等待预算 {budget:.0f}s 已用尽"
+                break
+            time.sleep(min(interval_sec, remaining))
         raise VllmEvalError(
-            f"vLLM not ready after {limit} attempts ({last_error}); endpoint={self._endpoint}"
+            f"vLLM not ready after {attempt} attempts / {budget:.0f}s budget"
+            f" ({last_error}); endpoint={self._endpoint}"
         )
 
     def evaluate_samples(self, samples: list[EvalSample]) -> list[SampleRecord]:

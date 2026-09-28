@@ -10,17 +10,18 @@
 **为什么规则不在这里重写**
 
 项目里已有 ``src/graspo/core/gpu_guard.py``（另一个工作包产出），它定义了
-允许集合 ``{0,1,2,3,4,5}``（``ALLOWED_MAX_INDEX=5``）、上限 4 卡
-（``MAX_CARDS=4``）、生产卡 ``(6, 7)``（``RESERVED_INDICES``）以及全部拒绝
-文案。评测链路如果自己再写一份，就会出现两份会漂移的边界定义——这正是
-宪法 §1.4 禁止的双真相源。因此本模块**只透传 + 适配**，不重新定义规则。
+默认允许集合 ``{4,5,6,7}``（部署事实，可用 ``GRASPO_ALLOWED_GPU_INDICES`` 覆盖）、
+上限 4 卡（``MAX_CARDS=4``）、默认保留集合 ``()``
+（可用 ``GRASPO_RESERVED_GPU_INDICES`` 覆盖）以及全部拒绝文案。评测链路如果自己
+再写一份，就会出现两份会漂移的边界定义——这正是宪法 §1.4 禁止的双真相源。
+因此本模块**只透传 + 适配**，不重新定义规则。
 
 **fail-closed 的体现**
 
 ``GpuPlan`` 只能由 :func:`resolve_gpu_plan` 产生，而它转手就调
-``core.gpu_guard.assert_gpu_lock``：未显式给卡、含 6/7、卡数 >4 一律抛错。
-**没有默认值分支**——目标 GPU 服务器上 GPU 6/7 被常驻生产 vLLM 占死，任何
-"顺手挑张空闲卡"的启发式都可能炸生产。历史教训：ELAM ``v3_eval_pipeline_v2.sh`` 把
+``core.gpu_guard.assert_gpu_lock``：未显式给卡、越出生效的允许集合、落在生效的
+保留集合里、卡数 >4 一律抛错。**没有默认值分支**——任何"顺手挑张空闲卡"的启发式
+都可能踩上别人（或生产）正在用的卡。历史教训：ELAM ``v3_eval_pipeline_v2.sh`` 把
 ``EXPORT_GPU=6`` / ``VLLM_GPU=7`` 硬编码进脚本，那份做法严禁照抄。
 
 **采样为什么必须带 ``-i``（宪法 §2.4 操作防呆）**
@@ -41,19 +42,32 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from graspo.core.gpu_guard import (
-    ALLOWED_MAX_INDEX,
+    DEFAULT_ALLOWED_INDICES,
+    DEFAULT_RESERVED_INDICES,
     MAX_CARDS,
-    RESERVED_INDICES,
     GpuLockError,
     assert_gpu_lock,
+    resolve_allowed_indices,
+    resolve_reserved_indices,
 )
 
-#: 评测链路承认的允许集合与上限——**直接取自 core.gpu_guard**，不另立一份。
-ALLOWED_GPU_INDICES: frozenset[int] = frozenset(range(ALLOWED_MAX_INDEX + 1))
+#: 评测链路承认的**默认**允许集合与上限——**直接取自 core.gpu_guard 的默认值**，
+#: 不另立一份。运行时生效值可能被配置覆盖，见 :func:`resolve_allowed_gpu_indices`。
+ALLOWED_GPU_INDICES: frozenset[int] = frozenset(DEFAULT_ALLOWED_INDICES)
 MAX_GPU_COUNT: int = MAX_CARDS
 
-#: 生产卡（透传，便于调用方/报告引用；规则源头仍是 core.gpu_guard）。
-RESERVED_GPU_INDICES: tuple[int, ...] = RESERVED_INDICES
+#: **默认**保留卡（透传，便于调用方/报告引用；规则源头仍是 core.gpu_guard）。
+RESERVED_GPU_INDICES: tuple[int, ...] = DEFAULT_RESERVED_INDICES
+
+
+def resolve_allowed_gpu_indices() -> frozenset[int]:
+    """生效的允许集合（配置优先，回落默认值）——规则源头在 ``core.gpu_guard``。"""
+    return frozenset(resolve_allowed_indices())
+
+
+def resolve_reserved_gpu_indices() -> tuple[int, ...]:
+    """生效的保留卡集合（配置优先，回落默认值）——规则源头在 ``core.gpu_guard``。"""
+    return resolve_reserved_indices()
 
 
 class GpuGuardError(RuntimeError):

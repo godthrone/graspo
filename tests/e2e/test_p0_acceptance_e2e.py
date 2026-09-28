@@ -116,7 +116,12 @@ def test_f4_nan_run_still_fails_open_loop(tmp_path):
     _materialize_run(tmp_path / "runs")
     record = _run_collector(tmp_path, collector)
 
-    assert record["status"] == "❌ 失败"
+    # ★ 口径（冻结，2026-09-22 用户纠正）：结论态只有「✅ 可用 / ❌ 不可用」两个，
+    #   不可用 = 跑不完（崩 / 挂死 / 环境缺陷 / 数值崩坏）。依据
+    #   `src/graspo/core/result_judge.py` 的 `LEDGER_FAIL = "❌ 不可用"`：
+    #   那里显式记着「把状态词改成跟着 substantive 走 ⇒ 变成 `❌ 不可用`」是**正确的**，
+    #   早前读成「❌ 失败」才是错的。故按冻结口径改测试期望值，实现不动。
+    assert record["status"] == "❌ 不可用"
     # step2 的全局 grad_norm 是真 NaN ⇒ 分类为数值异常（不得被当"真 OOM"，
     # 也不得因为 step3/4 的 null 而变成"未分类"——数值异常优先）。
     assert record["failure_class"] == "数值异常"
@@ -139,7 +144,8 @@ def test_f4_nan_run_still_fails_after_null_rewritten_to_zero(tmp_path):
     _materialize_run(tmp_path / "runs", rewrite_null_losses=True)
     record = _run_collector(tmp_path, collector)
 
-    assert record["status"] == "❌ 失败"
+    # 冻结口径见上一条用例的说明（`result_judge.LEDGER_FAIL`）。
+    assert record["status"] == "❌ 不可用"
     assert record["criteria"]["A2"] is False
     assert record["max_context"] is None
 
@@ -150,8 +156,10 @@ def test_series_comes_from_rank_metrics_not_stdout(tmp_path):
     _materialize_run(tmp_path / "runs")
     run = tmp_path / "runs" / "T018"
     output_dir = collector.find_output_dir(run, "T018")
+    # `extract_steps_and_series` 的契约是 **Sequence[Path]**（内部按多候选目录逐个试，
+    # 取第一个含 rank_metrics 的目录）——传单个 Path 会 TypeError。测试按契约传列表。
     series = collector.extract_steps_and_series(
-        output_dir, (run / "stdout.log").read_text(encoding="utf-8")
+        [output_dir], (run / "stdout.log").read_text(encoding="utf-8")
     )
 
     assert series.source == "rank_metrics"
@@ -160,7 +168,13 @@ def test_series_comes_from_rank_metrics_not_stdout(tmp_path):
     # 第 2 步全局 grad_norm 为 NaN ⇒ 必须原样保留，不得被过滤成有限值
     assert series.grad_norms[1] != series.grad_norms[1]  # NaN
     assert series.optimizer_steps_per_step == [4, 4, 0, 0]
-    assert series.nonfinite_skips == 2
+    # ★ 2026-09-28：`skipped_nonfinite` 是**逐 rank 局部**读数，P0-1（c08841a）已把该计数
+    #   从 `SeriesEvidence` **移到 run 级**（`extract_skipped_nonfinite_all_ranks`，跨全部
+    #   rank），以避免"只读 rank0 ⇒ rank1 单独跳过时 A7 假通过"。所以**序列层不再给计数**
+    #   （None = 该口径不归这一层，不是"0 次"），run 级的正确值见
+    #   `test_f4_nan_run_still_fails_open_loop` 的 `record["nonfinite_skips"] == 2`
+    #   （= 逐步求和，与 `_tools/COVERAGE-SEMANTICS.md` §2.4 的"逐步侧 Σ = ledger 侧 Σ"一致）。
+    assert series.nonfinite_skips is None
     # 口径不一致必须被显式记录（rank0 局部 loss=0.0 vs 全局 loss=0.0052）
     assert any("口径不一致" in note for note in series.notes)
 
@@ -192,7 +206,7 @@ def test_missing_loss_is_explicit_not_nan_by_accident(tmp_path):
         + "\n",
         encoding="utf-8",
     )
-    series = collector.extract_steps_and_series(out, (run / "stdout.log").read_text())
+    series = collector.extract_steps_and_series([out], (run / "stdout.log").read_text())
 
     assert series.loss_unavailable is True
     assert any("loss: null" in note for note in series.notes)
@@ -205,7 +219,7 @@ def test_missing_loss_is_explicit_not_nan_by_accident(tmp_path):
 def test_only_null_run_is_unclassified_not_numeric_anomaly(tmp_path):
     """★ 指挥官改判后的必测项：**全程只有 null、没有任何真 NaN** 的 run。
 
-    断言：分类为 ``未分类（需人工判定）``（不是"数值异常"），且仍 ❌ 失败、
+    断言：分类为 ``未分类（需人工判定）``（不是"数值异常"），且仍 ❌ 不可用、
     仍不计入最大可行上下文（fail-closed）。
     """
     collector = _load_collector()
@@ -236,12 +250,12 @@ def test_only_null_run_is_unclassified_not_numeric_anomaly(tmp_path):
         "\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8"
     )
 
-    series = collector.extract_steps_and_series(out, (run / "stdout.log").read_text())
+    series = collector.extract_steps_and_series([out], (run / "stdout.log").read_text())
     assert series.loss_unavailable is True
     assert series.loss_nonfinite is False
 
     record = _run_collector(tmp_path, collector)
-    assert record["status"] == "❌ 失败"
+    assert record["status"] == "❌ 不可用"
     assert record["failure_class"] == "未分类（需人工判定）"
     assert record["failure_class"] != "数值异常"
     assert record["max_context"] is None  # 不计入最大可行上下文

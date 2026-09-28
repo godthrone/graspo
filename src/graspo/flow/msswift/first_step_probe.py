@@ -513,6 +513,14 @@ def install_probe_callback() -> Any:
             self._global_recorded = False
 
         def on_train_begin(self, _args: Any, state: Any, control: Any, **kwargs: Any) -> None:
+            """训练开始时把首步记录器装到 trainer 上（§2.2）。
+
+            Args:
+                _args: TrainerCallback 约定参数，本回调不使用。
+                state: TrainerState；只读 ``epoch``。
+                control: TrainerControl；本回调不修改。
+                **kwargs: 回调框架透传的额外参数，本回调不使用。
+            """
             output_dir = getattr(self.args, "output_dir", None)
             if output_dir is None:
                 return

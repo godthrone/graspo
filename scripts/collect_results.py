@@ -265,19 +265,28 @@ def extract_skipped_nonfinite_all_ranks(
     一次"权重/LR 已分叉"的运行会被记成「✅ 训练可用」。
     矩阵命中：`T029`(dp2)/`T030`(dp4)/`T041`(dp2)/`T042`(dp4)（native graspo，pp=1）。
 
-    口径（**取 MAX 不取 rank0**）：
-      · 优先读全局键 ``global_skipped_nonfinite_sum``（新落盘，若有）；
-      · 否则读该 rank 的局部 ``skipped_nonfinite``；
-      · 对**全部** rank 文件取 **MAX**——任一路径发生过跳过就是发生过（逐 rank 之和会
-        重复计数，MAX 是"最坏 rank"的保守读数，且不会漏报）。
-    返回 ``(max_count | None, {rank: count}, 人读明细)``；一个读数都没有 ⇒ ``None``（不猜）。
+    口径（**两层聚合，方向不同**）：
+      · **同一步/同一行内**：优先读全局键 ``global_skipped_nonfinite_sum``（新落盘，
+        若有），否则读该 rank 的局部 ``skipped_nonfinite``；
+      · **同一 rank 的逐步行之间**：**逐行求和**——``skipped_nonfinite`` 是**该步**的
+        局部读数，跨步求和 = "这次运行一共跳过多少次"。★这正是冻结口径要求的：
+        `_tools/COVERAGE-SEMANTICS.md` §2.4「**双端对账成立：逐步侧 Σ = ledger 侧 Σ**」
+        与 §3.3「作为与 ledger 双端对账的一端（两侧 Σ 必须相等）」——只有求和才能对账。
+        （该册里的实测盘 Σ 恰好全为 0，MAX 与 SUM 同值，故那里的数字本身判不出这一条；
+        判别力由 `tests/e2e/test_collect_results.py` 的 native fixture 给出：
+        「逐 step 计数会被**跨步求和**（fixture 6 行 × 每行 2 次 = 12）」——同一条注释
+        就是本函数的期望语义。**2026-09-28 修正**：本函数此前对逐步行也取 MAX，
+        于是六行 ×2 只报 2、F-4 样例报 1 而非 2 ⇒ 与上述口径冲突，属实现缺陷。）
+      · **rank 文件之间**：取 **MAX**——同一次跳过事件会在每个 rank 的局部读数里各出现一次，
+        逐 rank 求和会**重复计数**；MAX 是"最坏 rank"的保守读数，且不会漏报。
+    返回 ``(worst_count | None, {rank: count}, 人读明细)``；一个读数都没有 ⇒ ``None``（不猜）。
     """
     if output_dir is None:
         return None, {}, "无可读产物根"
     per_rank: dict[str, int] = {}
     for events in sorted(output_dir.rglob("rank_metrics.rank_*.jsonl")):
         rank_key = events.name
-        best: int | None = None
+        total: int | None = None
         try:
             text = events.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -292,12 +301,17 @@ def extract_skipped_nonfinite_all_ranks(
             metrics = payload.get("metrics") if isinstance(payload, dict) else None
             if not isinstance(metrics, dict):
                 continue
+            # 本行取值：两个键都在时取大者（与 P0-1 原实现一致，不改行内选择）。
+            row_value: int | None = None
             for key in ("global_skipped_nonfinite_sum", "skipped_nonfinite"):
                 value = metrics.get(key)
                 if isinstance(value, int) and not isinstance(value, bool):
-                    best = value if best is None else max(best, value)
-        if best is not None:
-            per_rank[rank_key] = best
+                    row_value = value if row_value is None else max(row_value, value)
+            if row_value is not None:
+                # ★ 逐步行之间**求和**（跨步计数 = 总数）；见 docstring 的冻结口径依据。
+                total = row_value if total is None else total + row_value
+        if total is not None:
+            per_rank[rank_key] = total
     if not per_rank:
         return None, {}, "没有任何 rank 文件带跳过计数读数"
     worst = max(per_rank.values())

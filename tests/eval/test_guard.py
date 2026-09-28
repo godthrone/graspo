@@ -1,7 +1,11 @@
 """``graspo.eval.guard`` 的单测：评测链路的锁卡防呆必须 fail-closed。
 
-这些测试是**安全回归**：任何一条挂掉都意味着"评测链路可能踩上生产卡 GPU6/7"
-或"显存采样可能混入生产读数"。
+这些测试是**安全回归**：任何一条挂掉都意味着"评测链路可能踩上保留卡 GPU6/7"
+或"显存采样可能混入保留卡读数"。
+
+**★ 2026-09-28：允许/保留集合是部署事实，从配置注入。** 本模块夹具使用 GPU0–5，
+并把 6/7 声明为保留（生产）卡——这正是本模块要守的那台机器的部署事实。测试不再
+假设 `core.gpu_guard` 里有写死的元组。
 """
 
 from __future__ import annotations
@@ -17,18 +21,39 @@ from graspo.eval.guard import (
     GpuGuardError,
     GpuPlan,
     repo_relative,
+    resolve_allowed_gpu_indices,
     resolve_gpu_plan,
+    resolve_reserved_gpu_indices,
     sample_device_memory_mib,
 )
 
+#: 本模块声明的部署事实（与 `tests/core/test_gpu_guard.py` 的 POLICY 同源）。
+_DEPLOYMENT_FACT = {
+    "GRASPO_ALLOWED_GPU_INDICES": "0,1,2,3,4,5",
+    "GRASPO_RESERVED_GPU_INDICES": "6,7",
+}
+
+
+@pytest.fixture(autouse=True)
+def _inject_deployment_fact(monkeypatch):
+    """每个用例都在**显式声明**的部署事实下运行（不再依赖写死的 `(4,5,6,7)`）。"""
+    for key, value in _DEPLOYMENT_FACT.items():
+        monkeypatch.setenv(key, value)
+
 
 def test_allowed_set_and_limit_come_from_core_guard():
-    """边界常量必须与 core.gpu_guard 一致（单一真相源，不得各自定义）。"""
-    from graspo.core.gpu_guard import ALLOWED_MAX_INDEX, MAX_CARDS
+    """边界常量必须与 core.gpu_guard 的**默认值**一致（单一真相源，不得各自定义）。"""
+    from graspo.core.gpu_guard import DEFAULT_ALLOWED_INDICES, DEFAULT_RESERVED_INDICES, MAX_CARDS
 
-    assert ALLOWED_GPU_INDICES == frozenset(range(ALLOWED_MAX_INDEX + 1))
+    assert ALLOWED_GPU_INDICES == frozenset(DEFAULT_ALLOWED_INDICES)
     assert MAX_GPU_COUNT == MAX_CARDS
-    assert 6 in RESERVED_GPU_INDICES and 7 in RESERVED_GPU_INDICES
+    assert RESERVED_GPU_INDICES == DEFAULT_RESERVED_INDICES
+
+
+def test_effective_sets_follow_the_injected_config():
+    """生效集合来自配置（不是写死元组）：注入 0–5 + 保留 6/7 即按其判定。"""
+    assert resolve_allowed_gpu_indices() == frozenset(range(6))
+    assert resolve_reserved_gpu_indices() == (6, 7)
 
 
 @pytest.mark.parametrize("raw", [None, "", "   "])

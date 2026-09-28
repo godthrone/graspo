@@ -27,11 +27,26 @@ from graspo.cli.gpu_monitor import (
 )
 from graspo.core.gpu_guard import GpuInventory, GpuLockError
 
+#: 部署事实（**显式声明**，不依赖 `core.gpu_guard` 里曾经写死的元组）：本模块夹具
+#: 用 GPU0–3，并把 6/7 声明为保留（生产）卡。2026-09-28 裁定：允许/保留集合来自
+#: 配置，见 gpu_guard 模块头。
+_DEPLOYMENT_FACT = {
+    "GRASPO_ALLOWED_GPU_INDICES": "0,1,2,3",
+    "GRASPO_RESERVED_GPU_INDICES": "6,7",
+}
+
 #: 机上 8 卡（含生产卡 6/7）的 nvidia-smi 输出：index,uuid,used,free,total,util,temp,power
 _EIGHT_CARD_OUTPUT = "".join(
     f"{idx}, GPU-{idx:03d}, {100 * idx}, {81920 - 100 * idx}, 81920, {idx * 5}, 40, 100.0\n"
     for idx in range(8)
 )
+
+
+@pytest.fixture(autouse=True)
+def _inject_deployment_fact(monkeypatch):
+    """每个用例都在**显式声明**的部署事实下运行（不再依赖写死的 `(4,5,6,7)`）。"""
+    for key, value in _DEPLOYMENT_FACT.items():
+        monkeypatch.setenv(key, value)
 
 
 class _NoisyRunner:

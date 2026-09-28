@@ -2,6 +2,17 @@
 
 编排里真正需要 GPU/网络的部分（发请求、合并权重）本轮不上机，因此这里测的是
 **判定与产物**这两块：要服务哪个目录、报告里必须有哪些字段。
+
+★ **2026-09-28（挂死修复）**：本模块的用例**默认不触任何真 vLLM 服务**——真服务
+相关路径由 :func:`_block_real_vllm_service` 这个 autouse fixture **默认 mock 掉**。
+起因是一次实测挂死：``test_run_evaluation_refuses_production_cards_before_any_request``
+原先靠"6/7 = 保留卡 ⇒ 守卫在发请求前就拒绝"通过；而保留集合改为**可配置**（默认
+``()``）后 ``gpus="6,7"`` 不再被拒，于是它一路走到 ``wait_until_ready`` 去轮询
+``http://127.0.0.1:1``，单次探测 120s × 3 重试 × 60 轮 ⇒ 整套测试在 40% 处挂死。
+两条修法同时落地：①该用例显式注入"6/7 是保留卡"的部署事实（见
+``_inject_deployment_fact``）；②``VllmEvalClient.wait_until_ready`` 加**总预算**
+（见 ``src/graspo/eval/vllm_client.py``），并在此处默认 mock，使"意外走到网络"也只会
+得到确定性的快速失败。真服务用例需**显式**覆盖这两条，禁止默默依赖真服务。
 """
 
 from __future__ import annotations
@@ -23,6 +34,28 @@ from graspo.eval.orchestrator import (
     write_report,
 )
 from graspo.eval.schema import EvalModel, EvalSummary
+from graspo.eval.vllm_client import VllmEvalClient, VllmEvalError
+
+
+@pytest.fixture(autouse=True)
+def _inject_deployment_fact(monkeypatch):
+    """显式声明的部署事实（不再依赖写死元组，见 ``core.gpu_guard`` 模块头）：
+    允许 0–5、**6/7 为保留（生产）卡**——后者正是本模块两条守卫用例的前提。"""
+    monkeypatch.setenv("GRASPO_ALLOWED_GPU_INDICES", "0,1,2,3,4,5")
+    monkeypatch.setenv("GRASPO_RESERVED_GPU_INDICES", "6,7")
+
+
+@pytest.fixture(autouse=True)
+def _block_real_vllm_service(monkeypatch):
+    """默认 mock：任何真发请求的路径都快速失败，**绝不挂死**（见模块 docstring）。"""
+
+    def _refuse(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        raise VllmEvalError(
+            "mocked: 本模块的单测不触真 vLLM 服务（真服务用例须显式覆盖本 fixture）"
+        )
+
+    monkeypatch.setattr(VllmEvalClient, "wait_until_ready", _refuse)
+    monkeypatch.setattr(VllmEvalClient, "evaluate_samples", _refuse)
 
 
 def _write(path: Path, payload: str) -> None:

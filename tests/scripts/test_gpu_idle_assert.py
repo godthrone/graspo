@@ -49,6 +49,9 @@ def _run(
     env = {
         **os.environ,
         "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+        # 部署事实显式注入子进程（2026-09-28 裁定，见 core.gpu_guard 模块头）：
+        # 本模块夹具用 GPU0–1；允许集合不再由共享代码写死。
+        "GRASPO_ALLOWED_GPU_INDICES": "0,1,2,3",
         **env_extra,
     }
     env.pop("NVIDIA_VISIBLE_DEVICES", None)

@@ -1,3 +1,7 @@
+"""§12.4 文件头职责声明：对给定目录逐个文件算 sha256，汇总「文件数 + 总指纹」用于对照实验机。
+
+边界：只读、只算指纹、只打印；不写任何文件、不改目录内容、不做判定。
+"""
 import hashlib,pathlib,sys
 d=pathlib.Path(sys.argv[1])
 entries=[]

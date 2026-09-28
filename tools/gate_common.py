@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import io
 import json
 import os
@@ -342,10 +343,9 @@ def iter_history_blobs(root: Path, max_bytes: int = 4 * 1024 * 1024) -> Iterator
             proc.stdout.read(1)  # 尾随换行
             yield path, data
     finally:
-        try:
+        # stdin 可能已被子进程自行关闭 ⇒ 显式声明该 OSError 被有意忽略（收尾继续）
+        with contextlib.suppress(OSError):
             proc.stdin.close()
-        except OSError:
-            pass
         proc.stdout.close()
         proc.wait()
 
