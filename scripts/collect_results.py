@@ -11,12 +11,12 @@
 **硬要求**：只有"真 OOM"才计入最大可行上下文；其余失败记为 ❌ 失败 + 失败类型，
 修复后重测。抽取不到的判据证据一律判不通过（fail-closed），不默认通过。
 
-运行根目录约定（由 ``tests/e2e/run_matrix54.sh`` 产出）：
+运行根目录约定（由跑批脚本产出）：
     <run_root>/<T###>/exit_code, stdout.log, gpu/, <训练输出目录>
 
 用法：
-    python3 scripts/collect_results.py --manifest tests/e2e/matrix54_manifest.json \
-        --run-root .local/matrix54-runs --out .local/matrix54-ledger
+    python3 scripts/collect_results.py --manifest <清单.json> \
+        --run-root .local/matrix-runs --out .local/matrix-ledger
     # A4 双跑：--run-root attempt1 --rerun-root attempt2
     # 全参档 A2 的权重证据（可选）：加 --base-model-root <宿主模型根目录>
     #   —— 宿主路径**必须走 CLI 参数**（§10.1）；旧环境变量
@@ -270,8 +270,8 @@ def extract_skipped_nonfinite_all_ranks(
         若有），否则读该 rank 的局部 ``skipped_nonfinite``；
       · **同一 rank 的逐步行之间**：**逐行求和**——``skipped_nonfinite`` 是**该步**的
         局部读数，跨步求和 = "这次运行一共跳过多少次"。★这正是冻结口径要求的：
-        `_tools/COVERAGE-SEMANTICS.md` §2.4「**双端对账成立：逐步侧 Σ = ledger 侧 Σ**」
-        与 §3.3「作为与 ledger 双端对账的一端（两侧 Σ 必须相等）」——只有求和才能对账。
+        冻结口径明文要求「**双端对账成立：逐步侧 Σ = ledger 侧 Σ**」
+        （即作为与 ledger 双端对账的一端，两侧 Σ 必须相等）——只有求和才能对账。
         （该册里的实测盘 Σ 恰好全为 0，MAX 与 SUM 同值，故那里的数字本身判不出这一条；
         判别力由 `tests/e2e/test_collect_results.py` 的 native fixture 给出：
         「逐 step 计数会被**跨步求和**（fixture 6 行 × 每行 2 次 = 12）」——同一条注释
@@ -1178,7 +1178,7 @@ def _file_readable(path: Path) -> bool:
     collector 以普通用户运行时**打不开**它。若把 ``PermissionError`` 当成
     "checkpoint 无法重新加载"，就等于把"采集侧读不到"记成一次**训练失败**——
     这正是本包要根治的方向性错误。因此：不可读 ⇒ 取证缺口（返回 ``None``）。
-    运行侧的正解是 runner 收尾时把产物放开读权限（见 ``run_matrix54.sh``）。
+    运行侧的正解是 runner 收尾时把产物放开读权限（跑批脚本负责）。
     """
     try:
         with path.open("rb") as handle:
@@ -1851,8 +1851,7 @@ def extract_expected_optimizer_steps(tier: dict[str, Any]) -> tuple[int | None, 
 
     **单一真相源（§1.4）**：两个上限的权威位置是清单
     ``tiers[*].expected_optimizer_steps_per_epoch`` / ``..._reachable``
-    （由 ``tests/e2e/generate_matrix.py`` 的 ``expected_optimizer_steps_per_epoch`` /
-    ``expected_optimizer_steps_reachable`` **一处**算出——见 AF1 §⑥ 方案 S1/S2）。
+    （由清单生成侧**一处**算出——见 AF1 §⑥ 方案 S1/S2）。
 
     与 :func:`extract_min_optimizer_steps` 同理，本函数**只做取值**，不做合法性裁决：
     非整数 / ``< 1`` 的值由判定层
@@ -2037,7 +2036,7 @@ def collect_run(
 
 
 def _read_peak_memory(run_dir: Path, backend: str = "native") -> tuple[float | None, str]:
-    """读 capability-matrix §7「实测每卡峰值显存(GiB)」列 —— **二分口径，按后端**。
+    """读台账的「实测每卡峰值显存(GiB)」列 —— **二分口径，按后端**。
 
     **返回 ``(值, 口径标签)``**：值与口径**成对返回**，调用方不可能只拿到数字而不知道
     它是什么口径（§2.2 显式即防呆）。
@@ -2246,8 +2245,8 @@ def run(args: argparse.Namespace) -> int:
         print(
             "FATAL: --run-root 与 --rerun-root 解析后指向同一实体目录"
             f"（{run_root_resolved}）⇒ 这是**自比**，A4 结论无意义。"
-            "请给两个不同的运行根（批次驱动必须让两跑落两棵目录树，见 "
-            "`tests/e2e/run_matrix54.sh` 的 RUN_ROOT 用法）。",
+            "请给两个不同的运行根（批次驱动必须让两跑落两棵目录树，"
+            "见跑批脚本的 RUN_ROOT 用法）。",
             file=sys.stderr,
         )
         return 2
@@ -2279,10 +2278,8 @@ def run(args: argparse.Namespace) -> int:
             #   · `<T>.not_applicable.md`  ⇒ ⛔ 不适用（**逻辑上不适用**）
             #   · 其余（清单 ready 但未跑） ⇒ — 未测（尚未纳入跑批）
             # 出处写进 `status_provenance`（§2.2 显式即防呆：读者能查到依据文件）。
-            _cfg_dir = (
-                Path(getattr(args, "repo_root", None) or Path.cwd())
-                / "samples" / "configs" / "matrix54"
-            )
+            # 档位状态说明件所在目录：**必传 CLI 参数**（该目录已按宪法 §16.1 移出仓库）。
+            _cfg_dir = Path(getattr(args, "tier_status_dir", "") or "")
             _blocked_md = _cfg_dir / f"{tier_id}.blocked.md"
             _na_md = _cfg_dir / f"{tier_id}.not_applicable.md"
             if _blocked_md.is_file():
@@ -2549,12 +2546,12 @@ def _base_model_dir(args: argparse.Namespace, tier: dict[str, Any]) -> Path | No
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Collect A1–A6 verdicts into ledger records.")
-    parser.add_argument("--manifest", required=True, help="matrix54_manifest.json")
+    parser.add_argument("--manifest", required=True, help="档位清单 JSON（路径由调用方给出）")
     parser.add_argument("--run-root", required=True, help="First-attempt run root.")
     parser.add_argument("--rerun-root", default=None, help="Second-attempt run root (for A4).")
-    parser.add_argument("--repo-root", default=None,
-                        help="仓库根（用于定位 samples/configs/matrix54/*.blocked.md / "
-                             "*.not_applicable.md）；缺省 = 当前工作目录")
+    parser.add_argument("--tier-status-dir", default=None,
+                        help="档位状态说明件目录（用于定位 <T>.blocked.md / "
+                             "<T>.not_applicable.md）；缺省 = 不写 status_provenance")
     parser.add_argument("--out", required=True, help="Output directory for ledger.jsonl/.md")
     parser.add_argument(
         "--context-length",

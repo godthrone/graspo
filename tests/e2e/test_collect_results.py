@@ -236,7 +236,7 @@ def test_a7_rank1_only_skip_is_not_a_false_pass(tmp_path):
     修前行为（可复现的**假通过**）：采集只读 `rank_metrics.rank_00000.jsonl`
     ⇒ 读到 0 ⇒ `A7` 通过 ⇒ 一次"rank1 权重/LR 已分叉"的运行被记成 **✅ 训练可用**。
     修后：两层聚合 —— 同一步/同一 rank 内**逐步求和**（=`skipped_nonfinite` 是该步的
-    局部读数；口径见 `_tools/COVERAGE-SEMANTICS.md` §2.4「逐步侧 Σ = ledger 侧 Σ」），
+    局部读数；冻结口径明文要求「逐步侧 Σ = ledger 侧 Σ」），
     再对**全部 rank** 取 **MAX**（同一跳过事件在各 rank 的局部读数里各出现一次，
     逐 rank 求和会重复计数）⇒ 本场景 0 vs 1 ⇒ **1** ⇒ `A7` 不通过。
     （矩阵命中：T029/T030/T041/T042 —— native graspo `dp>1`。）
@@ -298,8 +298,8 @@ def test_a7_unavailable_count_is_indeterminate_never_pass(tmp_path):
 def test_collector_distinguishes_blocked_not_applicable_and_untested(tmp_path):
     """★六态口径（2026-09-22 指挥官裁定）：三种"没跑"**不得**塌成一个词，且出处可查。
 
-    · `samples/configs/matrix54/<T>.blocked.md`        ⇒ `⛔ 无配方`（**将来可能做得了**）
-    · `samples/configs/matrix54/<T>.not_applicable.md` ⇒ `⛔ 不适用`（**逻辑上不适用**）
+    · 档位状态目录里的 `<T>.blocked.md`        ⇒ `⛔ 无配方`（**将来可能做得了**）
+    · 档位状态目录里的 `<T>.not_applicable.md` ⇒ `⛔ 不适用`（**逻辑上不适用**）
     · 都没有                                           ⇒ `— 未测`（尚未纳入跑批）
     用户专门问过这几个词的区别；塌成一个词是信息量倒退。
     """
@@ -307,7 +307,7 @@ def test_collector_distinguishes_blocked_not_applicable_and_untested(tmp_path):
     manifest["tiers"] = [
         dict(manifest["tiers"][0], tier_id=tid) for tid in ("T001", "T002", "T003")
     ]
-    cfg = tmp_path / "samples" / "configs" / "matrix54"
+    cfg = tmp_path / "tier-status"
     cfg.mkdir(parents=True)
     (cfg / "T001.blocked.md").write_text("# blocked 依据\n", encoding="utf-8")
     (cfg / "T002.not_applicable.md").write_text("# not_applicable 依据\n", encoding="utf-8")
@@ -319,7 +319,7 @@ def test_collector_distinguishes_blocked_not_applicable_and_untested(tmp_path):
     completed = subprocess.run(
         [sys.executable, str(_COLLECTOR), "--manifest", str(manifest_path),
          "--run-root", str(tmp_path / "runs"), "--out", str(out),
-         "--repo-root", str(tmp_path), "--date", "2026-09-22"],
+         "--tier-status-dir", str(cfg), "--date", "2026-09-22"],
         capture_output=True, text=True, check=False,
     )
     assert completed.returncode == 0, completed.stderr
@@ -1368,7 +1368,7 @@ def _make_native_full_run(
                             "optimizer_steps": 1,
                             "global_optimizer_steps_sum": 1,
                             # ★ 2026-09-28：`skipped_nonfinite` 是**逐步**读数——口径见
-                            #   `_tools/COVERAGE-SEMANTICS.md` §2.3 的注入实验（一步 nan
+                            #   冻结口径的注入实验（一步 nan
                             #   ⇒ **该步** `skipped_nonfinite=1`）。本 fixture 要表达的是
                             #   "rank1 **单独跳过 1 次**"，故只在**第一步**写该值、其余步
                             #   写 0：若每步都写 1，按冻结口径的逐步求和就变成"跳过 6 次"，

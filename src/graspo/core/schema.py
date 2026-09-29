@@ -19,16 +19,14 @@ from graspo.core.gpu_guard import GpuGuardError, resolve_gpu_plan
 TunerType = Literal["lora", "full"]
 
 #: 训练方法（算法）枚举 —— **全项目唯一真相源**（宪法 §1.4）。
-#: 与能力矩阵 `docs/capability-matrix.html` §6（能力测试表）的「算法」行一一对应：
+#: 与逐档实测台账的「算法」行一一对应：
 #: ``graspo`` = GRASPO(RL)、``sft`` = 监督微调、``cpt`` = 继续预训练、
 #: ``opd`` = on-policy 蒸馏。新增算法 = 此字面量加一个取值（§1.2 对扩展开放），
 #: 具体实现由 ``core/discovery.py`` 的注册表路由解析。
-#: （2026-09-29 修正引用：旧引用指向 `docs/capability-matrix.md`，该文件已由用户
-#: 2026-09-23 拍板删除，能力矩阵现为 `docs/capability-matrix.html` 单文件。）
 TrainMethod = Literal["graspo", "sft", "cpt", "opd"]
 
 #: ``train_method`` → **支持它的后端**（单一真相源，宪法 §1.4）。
-#: 依据 `docs/capability-matrix.html` §6（能力测试表）：CPT / OPD 在 **native 侧就是
+#: 依据逐档实测台账：CPT / OPD 在 **native 侧就是
 #: `⛔ 不支持`** ⇒ 这里 fail-closed，而不是把它们静默路由到 SFT/RL 训练器（那等于拿着
 #: 另一种算法去训练，属宪法 §3.4 的"坏退路"）。
 TRAIN_METHOD_BACKENDS: dict[str, tuple[str, ...]] = {
@@ -109,7 +107,7 @@ def validate_train_method_combination(
             f"train_method={train_method!r} is not supported on backend={backend!r}; "
             f"supported backends for it: {', '.join(supported)}. "
             "CPT and OPD are ms-swift-only capabilities "
-            "(docs/capability-matrix.html §6 lists them as unsupported on native)."
+            "(they are unsupported on the native backend)."
         )
     if train_method == "opd" and not (distill_teacher_model_path or "").strip():
         raise ValueError(
@@ -778,7 +776,7 @@ class MsSwiftConfig(BaseModel):
     # （上游 4.5.3：`arguments/tuner_args.py:122-124` + `_init_multimodal_full`；
     # Megatron 通道 `megatron/arguments/megatron_args.py:451` 同为 True），即
     # "只训语言主干"。而 graspo 的「全量（全参）」承诺"训练全部权重"
-    # （`docs/capability-matrix.html` §6 能力测试表），native 侧也确实放开了全部参数。
+    # （逐档实测台账），native 侧也确实放开了全部参数。
     # ⇒ 为消除**两后端语义分叉**，full 模式下这两个开关默认解析为 `false` 并显式
     # 透传（LoRA 模式完全不透传——逐字保持原行为）。
     # None = 用上述模式默认值；显式 true/false = 用户覆盖（唯一真相源，只有这一处开关）。

@@ -30,7 +30,7 @@
     python3 -m pytest \
       tests/core/test_gpu_guard.py tests/core/test_result_judge.py \
       tests/cli/test_gpu_monitor_trusted.py tests/cli/test_gpu_monitor.py \
-      tests/e2e/test_generate_matrix.py tests/e2e/test_collect_results.py \
+      tests/e2e/test_collect_results.py \
       tests/e2e/test_check_env_versions.py \
       -q -p no:cacheprovider
 

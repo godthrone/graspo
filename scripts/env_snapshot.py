@@ -4,7 +4,7 @@
 采集维度（HTML §4 执行解读第 6 条：环境不保证 100% 冻结，跑批前后各采一次）：
 
 * ``git``：分支 / ``rev-parse HEAD`` / 工作区是否干净（``status --porcelain``）
-* ``config``：配置目录（默认 ``samples/configs/matrix54-v2/``）**总指纹**——
+* ``config``：配置目录（**必传**，见 ``--config-dir``）**总指纹**——
   逐文件 sha256 排序后聚合，任何一格配置改动都会改变指纹
 * ``image``：训练镜像 ID / RepoDigests / 创建时间 / 大小（``docker image inspect``）
 * ``gpu``：``nvidia-smi`` 摘要（型号 / UUID / 总显存 / 已用 / 利用率 / 驱动版本）
@@ -41,7 +41,6 @@ from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_CONFIG_DIR = REPO_ROOT / "samples" / "configs" / "matrix54-v2"
 
 #: 冻结维度（变 ⇒ 本轮档不可比）。
 FROZEN_KEYS = [
@@ -299,8 +298,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="跑前 / 跑后；决定默认文件名")
     parser.add_argument("--image", default=os.environ.get("GRASPO_IMAGE"),
                         help="训练镜像 tag（默认取 $GRASPO_IMAGE）")
-    parser.add_argument("--config-dir", type=Path, default=DEFAULT_CONFIG_DIR,
-                        help=f"配置目录（默认 {DEFAULT_CONFIG_DIR}）")
+    parser.add_argument("--config-dir", type=Path, required=True,
+                        help="配置目录（必传；R13 起无默认值——历史默认目录已按 §16.1 移出仓库）")
     parser.add_argument("--diff", nargs=2, type=Path, metavar=("BEFORE", "AFTER"),
                         help="不采集，只对两份快照相减并打印变化项")
     args = parser.parse_args(argv)

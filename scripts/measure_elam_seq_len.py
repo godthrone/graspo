@@ -16,8 +16,7 @@
 2. **本项目当前的真实口径是"不限制像素" ⇒ 图像会被上采样、token 数偏高。**
    `src/graspo/core/schema.py:712` 的 `max_pixels: int | None = None` 语义是
    **不透传**（注释逐字："None = 不透传（交 ms-swift 默认值 = 不限制）"），
-   且 `samples/configs/matrix54/` 下 **49 份档位 YAML 无一设置 `max_pixels`**
-   （其余 5 档为 `*.blocked.md` / `*.not_applicable.md`，无 YAML）。
+   且档位 YAML 无一设置 `max_pixels`。
    ⇒ 实测 1280×720 被 `smart_resize` 放大到 **2560×1408**、grid `[1,44,80]`、
    **880 token/图**——这是当前的**真实训练口径**，不是理论值。
 3. **文字/模板/工具定义的分量也不可忽略**：同一 mini 集的实测分解为

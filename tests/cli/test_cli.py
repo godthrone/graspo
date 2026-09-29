@@ -160,9 +160,8 @@ def test_readmes_document_single_yaml_entry_and_exports():
 #: tracked markdown 的**允许目录前缀白名单**（宪法 §19.2 / §15.1）。
 #:
 #: **为什么不枚举文件、也不断言个数**（2026-09-19 由指挥官裁定改成本质不脆的形式）：
-#: 旧版断言 ``tracked_markdown == {5 个具体文件名}``。那条断言**在 HEAD 上就是红的**
-#: ——实际有 21 个 tracked ``.md``（``docs/capability-matrix.md`` + 16 个
-#: ``samples/configs/matrix54/T###.blocked.md``），只是因为 ``tests/cli/`` 在无 torch
+#: 旧版断言 ``tracked_markdown == {5 个具体文件名}``。那条断言**在当时的 HEAD 上就是红的**
+#: ——实际的 tracked ``.md`` 比它多得多，只是因为 ``tests/cli/`` 在无 torch
 #: 的机器上收集期就报错而没人看见。它同时犯两个错：
 #:   ① **枚举式**：每新增一个合法文档就要改一次测试（脆弱）；
 #:   ② **计数式**：把"有几个文档"当成不变量（文档数**不是**不变量，文档**位置**才是）。
@@ -174,35 +173,24 @@ def test_readmes_document_single_yaml_entry_and_exports():
 #: **两类前缀的语义**（见 `_is_allowed_markdown_path`）：
 #:   * **以 ``/`` 结尾** = 目录前缀（该目录及其子目录）；
 #:   * **不以 ``/`` 结尾** = **仓库根专有前缀**（只匹配仓库根下的文件）。
-#: 后者让"根目录例外"（如事故类 ``INCIDENT-*``）**无法被借用到子目录**
-#: （``src/INCIDENT-fake.md`` 仍判违规）。
+#: 后者让"仓库根例外"**无法被借用到子目录**（子目录下的同名开头文件仍判违规）。
 _ALLOWED_TRACKED_MD_PREFIXES: tuple[str, ...] = (
     "README",  # 根目录双语 README（README.md / README.zh-CN.md）
-    "docs/",  # 项目级架构与基准文档
-    # ★ 2026-09-28 同步（按下方"新增一类位置请在白名单里显式加前缀并说明理由"的约定）：
-    #   以下位置**已经有** tracked ``.md``（``git ls-files "*.md"`` 实测），旧白名单
-    #   没跟上 ⇒ 本用例曾长期红。它们属"**证据 / 操作件 / 配置**"的合法位置，
-    #   而该裁定与理由**只登记在一处**（§1.4 单一真相源）：
-    #     `_tools/CHECKER-DEFECTS-REPORT.md` §「缺陷 3 · §16」——内含 `rig/` 等命中的
-    #     **逐件复核表**、**〈复核表·补：根目录「事故/认领/核验」类 .md〉**（含前缀判据
-    #     与反例），并在 `_tools/KNOWN-DEVIATIONS.md` 的「与其它登记的关系」里指回该处。
-    #   **本测试不另立第二份例外清单**——要改判据，先改那份登记。
-    "samples/configs/",  # 档位配置与其状态说明（T###.yaml / T###.not_applicable.md；
-    #   覆盖 matrix54 / matrix54-v2 / matrix54-v2-runasrun 多代矩阵，故取目录级前缀）
-    "_tools/",  # 证据与登记册类交付物（RB 记录、POSTMORTEM、台账、DELIVERY-EVIDENCE 等）
-    "rig/",  # 运行 rig 的计划与锁文件（ramp_plan / run-plan / TREE-SYNC-LOCK 等）
-    "INCIDENT-",  # ★根目录专有：事故记录（如 INCIDENT-20260928-container-prune.md = E-14 正本）
-    "CLAIM-",  # ★根目录专有：事故认领 / 影响面清单（与事故记录成对阅读）
-    "VERIFY-",  # ★根目录专有：核验问答记录（与被核验事故同处）
+    "docs/",  # 项目级架构文档（architecture / flow / ripple）
+    "samples/configs/",  # 样例配置目录说明（samples/configs/README.md）
 )
+#: ★ 2026-09-30（R13）：本白名单**只保留「训练框架 + 样例」的文档位置**。
+#: 旧白名单里的证据/登记册/运行装置/根目录事故记录四类位置，其**文件本身**已按宪法 §16.1
+#: 移出仓库（迁往 ``.local/repo-moved-out/``）⇒ 对应前缀同步删除（死配置不留）。
+#: 要新增一类位置，请在此显式加前缀并说明理由（单一真相源就是本元组）。
 
 
 def _is_allowed_markdown_path(path: str) -> bool:
     """``path``（仓库相对、``/`` 分隔）是否落在白名单内。
 
     ``/`` 结尾的前缀 = 目录前缀；**不以 ``/`` 结尾的前缀 = 仓库根专有前缀**
-    （只匹配仓库根下的文件）。后者把根目录例外**限制在仓库根**：
-    ``src/INCIDENT-fake.md`` 不因前缀 ``INCIDENT-`` 而被放行。
+    （只匹配仓库根下的文件）。后者把仓库根例外**限制在仓库根**：
+    子目录下的同名开头文件不因该前缀而被放行。
     """
     for prefix in _ALLOWED_TRACKED_MD_PREFIXES:
         if prefix.endswith("/"):
@@ -277,31 +265,6 @@ def test_whitelist_actually_rejects_a_bad_location():
         assert not prefix.endswith(".md"), (
             f"whitelist entry {prefix!r} looks like a file, not a directory prefix"
         )
-
-
-def test_root_level_incident_prefixes_are_prefixed_not_a_free_pass():
-    """★ 根目录事故类例外是**限前缀 + 仅限仓库根**，不是"根目录任意 `.md`"。
-
-    登记（单一真相源）：`_tools/CHECKER-DEFECTS-REPORT.md`
-    §缺陷 3「复核表 · 补：根目录「事故 / 认领 / 核验」类 `.md`」。
-    """
-    for good in (
-        "INCIDENT-20260928-container-prune.md",
-        "CLAIM-20260928-affected-containers.md",
-        "VERIFY-20260928-chairman-questions.md",
-    ):
-        assert _is_allowed_markdown_path(good), good
-
-    # ① 根目录**任意** .md 仍必须违规（前缀之外一律不放行）
-    for bad in ("notes.md", "MY_NOTE_2026.md", "PLAN.md"):
-        assert not _is_allowed_markdown_path(bad), bad
-    # ② 前缀**不锚定到子目录**：子目录里的同名开头文件仍必须违规
-    for bad in ("src/INCIDENT-fake.md", "tests/VERIFY-x.md", "outputs/CLAIM-x.md"):
-        assert not _is_allowed_markdown_path(bad), bad
-    # ③ 三个前缀必须在白名单里显式列出（不是靠"根目录全放行"实现）
-    allowed = _ALLOWED_TRACKED_MD_PREFIXES
-    for prefix in ("INCIDENT-", "CLAIM-", "VERIFY-"):
-        assert prefix in allowed, prefix
 
 
 def test_export_config_fields_default_and_validate(tmp_path):

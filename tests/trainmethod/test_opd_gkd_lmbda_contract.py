@@ -53,7 +53,7 @@ TEACHER = "/models/Qwen3.8-27B"
 #: 我们**不传** ``--lmbda`` 时实际生效的就是它——这正是缺陷的入口。
 UPSTREAM_DEFAULT_LMBDA = 0.5
 
-#: T046 冒烟配方里学生采样的随机种子（``task-r3-lenramp/rig/configs/T046-smoke1.yaml``）。
+#: T046 冒烟配方里学生采样的随机种子（该配方留存于 ``.local/`` 工位）。
 SMOKE_SEED = 42
 
 #: 上游 4.5.3 参考源码根（``.local/refs/`` 是 gitignored 的本地参考；

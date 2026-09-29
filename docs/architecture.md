@@ -1,9 +1,8 @@
 # GRASPO 架构设计
 
-> **文档状态**：2026-09-27 重构式更新（对齐分支 `docs/capability-matrix-industry-column`）。
+> **文档状态**：2026-09-27 重构式更新。
 > 本文是**架构层**文档：只描述"有哪些部件、边界在哪、依赖朝哪走、哪些是硬约束"。
-> 算法细节见 [ripple.md](ripple.md)，设施层细节见 [flow.md](flow.md)，逐档能力结论见
-> [capability-matrix.html](capability-matrix.html)。
+> 算法细节见 [ripple.md](ripple.md)，设施层细节见 [flow.md](flow.md)。
 >
 > **阅读约定**：每处事实性断言都带 `文件:行号`。**路径基准**：`core/` `ripple/` `flow/` `cli/` `eval/` 开头的相对路径
 > 一律相对 `src/graspo/`（如 `core/schema.py:23` = `src/graspo/core/schema.py:23`）；其余路径相对仓库根
@@ -144,10 +143,8 @@ SFT 不采样，CPT/OPD 在 native 侧本就被拒。该常量被 native 的 PP 
 3. **本仓侧同类事实（可核）**：能力矩阵台账记录了 ms-swift 后端**不上报**"跨全部 rank
    非有限跳过数"——**上游包路径** `swift/trainers/mixin.py:744-779` 在梯度 NaN 时置 `grad=None` 仍照常
    `step`、只判 `isnan` 不判 `isinf`、且无计数；`:1078-1081` 在 `grad_norm` 为 None 时
-   `根本不写该键`（引文见 §6 表体 `docs/capability-matrix.html:229` 起）。后果直接写在矩阵里：**判据③
-   读数缺失的档位落"未完成测试"**。该口径已于 **2026-09-28 收口**：三轮基线全部收敛为确定状态，
-   **`class="g-result st-pending"` 行数 = 0**（核验：§6 表体 `docs/capability-matrix.html:229-284`；
-   该文件 §2 的四态口径见 `:99` 附近）。
+   `根本不写该键`。⇒ **该键在 ms-swift 后端不可用作验收证据**（判据③读数缺失）。该口径已于
+   **2026-09-28 收口**（以逐步 instrumentation 补齐）。
 4. **本仓把 `grad_norm` 当验收证据**：A6 的判据是"loss 与 grad_norm 全程 finite，
    NaN/Inf 即不通过"（`core/result_judge.py:17-18`）；native 侧还为 `grad_norm` 定义了
    **口径标签**并把标签随值落盘，专门防止误读（`flow/adapters/transformer_adapter.py:118-157`）。
@@ -162,8 +159,6 @@ SFT 不采样，CPT/OPD 在 native 侧本就被拒。该常量被 native 的 PP 
 | msswift | `msswift.deepspeed_autotp_size`（S5 AutoTP） | `core/schema.py:761` → `flow/msswift/_config_mapping.py:170`；仅全参，`flow/msswift/_config_mapping.py:749-760` |
 | msswift 蒸馏 | `distill.teacher_deepspeed` | `core/schema.py:531` → `--teacher_deepspeed`，`flow/msswift/_config_mapping.py:567` |
 | native | **显式禁止导入 DS/FSDP/Megatron/vLLM/Ray 等** | `flow/runtime.py:69-78`（`FORBIDDEN_RUNTIME_MODULES`），运行时断言 `:613-618`，声明见 `:208-212` |
-| 能力矩阵全参配方 | `{"deepspeed": "zero2_offload"}` / `{"deepspeed": "zero2"}` | `tests/e2e/generate_matrix.py:1332-1337`；估算/文案 `:1384-1412` |
-| 矩阵清单（**冻结基线**） | ms-swift 全参档在**冻结清单**里仍写 DS | `tests/e2e/matrix54_manifest.json` 与 `tests/e2e/matrix54_manifest_v2.json`：`deepspeed` 各 12 处、`fsdp` 各 0 处。**注意**：2026-09-28 起这 12 档的**实际跑次已改用 FSDP2**（取数配置目录 `samples/configs/matrix54-v2-runasrun/`；口径见 `docs/capability-matrix-comparability.md` §4） |
 
 > **迁移边界（如实声明）**：本条款是**架构约束**，本文档**不**声称上述代码已被改造。
 > 遗留字段与矩阵配方属"待迁移项"；`msswift.deepspeed*` 字段目前仍是合法配置项
@@ -174,7 +169,7 @@ SFT 不采样，CPT/OPD 在 native 侧本就被拒。该常量被 native 的 PP 
 | 优先级 | 路径 | 代码现状 | 证据 |
 |:---:|------|---------|------|
 | **1** | **native 后端** | **已实现**：LoRA 支持 TP/DP/PP/SP（`core/schema.py:555-566`）；全参**仅 PP** | 五维配置 `core/schema.py:546-668`；全参限制 `:148-173`（`tp_size>1` 或 `dp_size>1` 被拒）；native 无 DS 依赖 `flow/runtime.py:69-78` |
-| **2** | **ms-swift FSDP / FSDP2** | **已接线，且已有端到端实测证据**（2026-09-28 起）：12 档全参档实际以 FSDP2 跑满 3 个跑次 | 字段 `core/schema.py:763`（注释：与 DeepSpeed 互斥）→ `--fsdp` 透传 `flow/msswift/_config_mapping.py:171`；契约测试锁名 `tests/flow/msswift/test_config_mapping.py:121,183`；**实跑**取数配置目录 `samples/configs/matrix54-v2-runasrun/`，跑次与结论见 `docs/capability-matrix.html` 结果列，口径见 `docs/capability-matrix-comparability.md` §4（冻结清单 `tests/e2e/matrix54_manifest_v2.json` 仍为 `fsdp` 0 处，属历史基线） |
+| **2** | **ms-swift FSDP / FSDP2** | **已接线**（端到端实测证据留存于 `.local/`，不随仓库发布） | 字段 `core/schema.py:763`（注释：与 DeepSpeed 互斥）→ `--fsdp` 透传 `flow/msswift/_config_mapping.py:171`；契约测试锁名 `tests/flow/msswift/test_config_mapping.py:121,183` |
 | **3** | **ms-swift Megatron / Megatron-FSDP** | **半成品（更靠前一步）**：MG1–MG11 配置透传函数已就绪，**启动通道未接线、超参映射表未完成** | 字段 `core/schema.py:671-723`（含 `use_megatron_fsdp` `:692`）；透传 `flow/msswift/_config_mapping.py:196-345`；主映射显式 `include_megatron=False`（`:587`）；仓库内**无** `graspo_to_ms_swift_megatron_argv` 定义、**无** `swift.megatron.*_main` 调用（仅注释提及，`:326-327`）；超参词汇差异与"待后续实现"见 `:333-340` |
 | **4** | **native 扩展**（全参 TP/DP 梯度同步） | **待实现**：当前 fail-closed 拒绝 | `core/schema.py:165-173`（原因：native 梯度同步实现只覆盖 LoRA 参数，`flow/lora/lora_linear.py` 的 `_sync_dp_lora_grads` / `_sync_nonsharded_lora_grads`，见 `core/schema.py:148-154`） |
 | 附 | native 优化器态 CPU offload（部分替代 ZeRO-2/3 offload 的省显存作用） | **已实现但默认关闭**，且只接线 qwen35_36 | 字段 `core/schema.py:575-592`；非法组合校验 `:183-225`；消费点 `flow/adapters/models/qwen35_36/training_sft.py` 的 `_build_optimizer`（接线事实见 `core/schema.py:589-591`） |
@@ -182,9 +177,8 @@ SFT 不采样，CPT/OPD 在 native 侧本就被拒。该常量被 native 的 PP 
 ⚠ **无法核实（仅限 Megatron 通道）**：Megatron / Megatron-FSDP 的**端到端可用性**（能否在
 Qwen3.5-9B/27B 上真实训完、显存与数值是否达标）。本仓只有配置映射与契约测试，
 **没有该通道的实跑产物**，第 3 项因此只能标"半成品"。
-**FSDP2 通道已于 2026-09-28 取得端到端证据**：12 档全参档以 FSDP2 跑满 3 个跑次并按四态口径回填
-`docs/capability-matrix.html`（"配置列仍显示冻结 DS 配方"的说明与可比性口径见
-`docs/capability-matrix-comparability.md` §4）。**逐档读数以矩阵为准，本文档不复述。**
+**FSDP2 通道已于 2026-09-28 取得端到端证据**（跑次台账已按宪法 §16.1 移出仓库，见 `.local/repo-moved-out/`）。
+**逐档实测读数不在本文档复述。**
 
 ## 4. native 后端：GraspoFlow 五位一体
 
@@ -282,8 +276,7 @@ native 运行期对这些模块的导入断言在 `validate()` 里执行（`flow
 - **事实**：每个 GPU 一个训练进程、进程组按 `device_id=local_rank` 绑定
   （`flow/parallel/state.py:1-8` 的 rank 拓扑 `rank = dp_rank × (tp×pp) + pp_rank × tp + tp_rank`）；
   PP layer placement 采用 minimax / 手动区间（`flow/parallel/placement_plan.py:1-3`）。
-- **⚠ 设计目标（未在本文件核实）**：逐卡显存对称、负载均衡的**实测结论**不在架构文档，
-  应以能力矩阵逐档实测为准（`docs/capability-matrix.html` §6）。
+- **⚠ 设计目标（未在本文件核实）**：逐卡显存对称、负载均衡的**实测结论**不在架构文档。
 
 ## 5. msswift 后端：委托 ms-swift
 
@@ -337,9 +330,8 @@ msswift 段字段清单见 `core/schema.py:745-814`。
   `flow/msswift/cpt_trainer.py:52-70`）。
 - **Megatron 启动通道未接线**（§3.3 第 3 项）——`megatron` 段只在显式调用透传函数时产出
   参数向量，且**不属于**标准通道 argv（`flow/msswift/_config_mapping.py:585-587`）。
-- ms-swift 后端**不上报**跨 rank 非有限跳过计数 ⇒ 原取数通道下矩阵判据③不可测
-  （`docs/capability-matrix.html:229` 起）。这是 §3 硬约束的直接动因之一；
-  **该缺口已于 2026-09-28 以逐步 instrumentation 收口**（矩阵现状：无"未完成测试"档位）。
+- ms-swift 后端**不上报**跨 rank 非有限跳过计数 ⇒ 原取数通道下判据③不可测。
+  这是 §3 硬约束的直接动因之一；**该缺口已于 2026-09-28 以逐步 instrumentation 收口**。
 
 ## 6. 分层与依赖边界
 
@@ -530,13 +522,11 @@ native + 全参只有 PP 一维可用（§4.1）。
 **核心能力主张（设计目标）**：五位一体（TP+DP+PP+SP+Checkpoint）在 **SFT 与 RL** 两种
 模式下、**9B 与 27B** 上全组合可用。⚠ 这是**设计目标**，不是本文件核实的事实。
 
-**证明该主张的充要条件**：跑通能力矩阵的**全部承诺格**。矩阵是
-`docs/capability-matrix.html`（54 档，T001–T054），采用**四态**口径：
-通过 / 失败 / 条件不合逻辑 / 未完成测试（`docs/capability-matrix.html` §2，
-`:99` 附近；§6 表体 `:229` 起）。
+**证明该主张的充要条件**：跑通全部承诺档位的端到端实测。该实测为**逐档四态**口径
+（通过 / 失败 / 条件不合逻辑 / 未完成测试），其台账**已按宪法 §16.1 移出仓库**
+（见 `.local/repo-moved-out/`），本文档不复述读数。
 
-- **事实**：矩阵已有实跑结论落表（每个档位带 `status` 与三次跑次列，见 `:229-284`），
-  **不是**"全部未测"。旧文档"矩阵 54 格目前全部未测"已过时。
+- **事实**：该实测**已有落表结论**，**不是**"全部未测"（旧文档"54 格全部未测"已过时）。
 - **事实**：该充要条件**当前尚未满足**——存在"失败"与"条件不合逻辑"档位
   （截至 2026-09-28 收口，无"未完成测试"档位；`:229-284`）。
   逐档结论以矩阵产物为准，**本文档不复述逐档读数**（避免第二真相源，BADGE 宪法 §1.4）。
