@@ -49,6 +49,7 @@ from graspo.eval.dataset import (
     load_dataset,
     overlap_sample_indices,
 )
+from graspo.eval.error import OrchestrationError
 from graspo.eval.evaluate import summarize
 from graspo.eval.guard import GpuPlan, resolve_gpu_plan
 from graspo.eval.merged_export import (
@@ -84,10 +85,6 @@ EVAL_REPORT_FILENAME = "eval_report.json"
 
 #: 环境指纹文件名（与报告同目录）。
 ENVIRONMENT_FILENAME = "environment.json"
-
-
-class OrchestrationError(RuntimeError):
-    """编排失败。调用方应终止并把这条信息原样报给上级。"""
 
 
 def load_eval_dataset(

@@ -59,6 +59,16 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+# `scripts/` 不是包（无 `__init__.py`），但本脚本既要能"直接执行"，
+# 又要能被 `importlib.util.spec_from_file_location` 按路径加载
+# （见 tests/core/test_a4_calibrate.py）。自插脚本目录是同时满足两种
+# 加载方式的唯一稳妥写法（§2.2 显式依赖，不靠运行目录碰运气）。
+_HERE = Path(__file__).resolve().parent
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))
+
+from errors import CalibrationInputError  # noqa: E402  （须在 sys.path 注入之后）
+
 # ── 纯逻辑模块按文件路径加载，避免经 graspo/__init__ 拉入 torch/pydantic ──────
 _SRC = Path(__file__).resolve().parents[1] / "src"
 
@@ -96,10 +106,6 @@ REQUIRED_POOL_FIELDS: tuple[str, ...] = (
     "run_roots",
     "readings",
 )
-
-
-class CalibrationInputError(ValueError):
-    """池规格非法（缺字段 / 违反 M1 / 独立性与卡集纪律）。"""
 
 
 def check_independence(pool_roots: list[str], judged_roots: list[str]) -> None:

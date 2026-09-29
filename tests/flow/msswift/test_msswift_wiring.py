@@ -332,7 +332,7 @@ def test_graspo_loss_uses_current_logprobs_so_ratio_can_differ():
     torch = pytest.importorskip("torch")
 
     from graspo.core.schema import RewardConfig
-    from graspo.ripple.algorithm import GraspoAlgorithmCore
+    from graspo.ripple.algorithm_core import GraspoAlgorithmCore
 
     core = GraspoAlgorithmCore(reward_config=RewardConfig(), policy_ratio_clip_eps=0.2)
     mask = torch.ones(1, 4)
@@ -369,7 +369,7 @@ def _decision_stub(config=None, *, num_generations=2):
     import torch
 
     from graspo.flow.msswift import trainer as trainer_module
-    from graspo.ripple.algorithm import GraspoAlgorithmCore
+    from graspo.ripple.algorithm_core import GraspoAlgorithmCore
 
     _config = config or GraspoConfig.model_validate({"backend": "msswift"})
     # 与 trainer 里同一处装配方式（trainer 在 __init__ 内延迟导入该核）

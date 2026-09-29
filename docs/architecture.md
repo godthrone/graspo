@@ -33,9 +33,9 @@ GRASPO（Group Relative Advantage Structured Policy Optimization）是一个**�
 
 | 能力 | 载体 | 证据 |
 |------|------|------|
-| 字符级标注驱动 token 级 reward | `ripple/annotation/`、`ripple/reward/` | `ripple/algorithm.py:1-31` |
+| 字符级标注驱动 token 级 reward | `ripple/annotation/`、`ripple/reward/` | `ripple/algorithm_core.py:1-31` |
 | 组决策（六态：`perfect_skip` / `retry` / `invalid` / `invalid_no_preference_gap` / `trainable_max_correct` / `trainable_not_correct`） | `ripple/group_decision.py` | `:16-22`、`classify_group` `:80-150` |
-| PPO-clip loss / 后端无关算法核 | `ripple/loss.py`、`ripple/algorithm.py` | `ripple/algorithm.py:32-49` |
+| PPO-clip loss / 后端无关算法核 | `ripple/loss.py`、`ripple/algorithm_core.py` | `ripple/algorithm_core.py:32-49` |
 | native 五维并行（TP/DP/PP/SP+GC） | `flow/parallel/`、`flow/adapters/` | `flow/__init__.py`、`flow/runtime.py:208-212` |
 | ms-swift 四通道（SFT/GRPO/CPT/GKD） | `flow/msswift/` | `flow/msswift/_config_mapping.py:64` |
 | 模型族插件（entry points） | `flow/adapters/models/{qwen3,qwen35_36,common}/` | `pyproject.toml:66-68` |
@@ -144,9 +144,10 @@ SFT 不采样，CPT/OPD 在 native 侧本就被拒。该常量被 native 的 PP 
 3. **本仓侧同类事实（可核）**：能力矩阵台账记录了 ms-swift 后端**不上报**"跨全部 rank
    非有限跳过数"——**上游包路径** `swift/trainers/mixin.py:744-779` 在梯度 NaN 时置 `grad=None` 仍照常
    `step`、只判 `isnan` 不判 `isinf`、且无计数；`:1078-1081` 在 `grad_norm` 为 None 时
-   `根本不写该键`（引文见 `docs/capability-matrix.html:229`）。后果直接写在矩阵里：**判据③
-   读数缺失 ⇒ 32/54 档落"未完成测试"**（计数见 §6 表体 `docs/capability-matrix.html:229-282`，其中
-   `class="g-result st-pending"` 共 32 行；该文件 §2 的四态口径见 `:99` 附近）。
+   `根本不写该键`（引文见 §6 表体 `docs/capability-matrix.html:229` 起）。后果直接写在矩阵里：**判据③
+   读数缺失的档位落"未完成测试"**。该口径已于 **2026-09-28 收口**：三轮基线全部收敛为确定状态，
+   **`class="g-result st-pending"` 行数 = 0**（核验：§6 表体 `docs/capability-matrix.html:229-284`；
+   该文件 §2 的四态口径见 `:99` 附近）。
 4. **本仓把 `grad_norm` 当验收证据**：A6 的判据是"loss 与 grad_norm 全程 finite，
    NaN/Inf 即不通过"（`core/result_judge.py:17-18`）；native 侧还为 `grad_norm` 定义了
    **口径标签**并把标签随值落盘，专门防止误读（`flow/adapters/transformer_adapter.py:118-157`）。
@@ -162,7 +163,7 @@ SFT 不采样，CPT/OPD 在 native 侧本就被拒。该常量被 native 的 PP 
 | msswift 蒸馏 | `distill.teacher_deepspeed` | `core/schema.py:531` → `--teacher_deepspeed`，`flow/msswift/_config_mapping.py:567` |
 | native | **显式禁止导入 DS/FSDP/Megatron/vLLM/Ray 等** | `flow/runtime.py:69-78`（`FORBIDDEN_RUNTIME_MODULES`），运行时断言 `:613-618`，声明见 `:208-212` |
 | 能力矩阵全参配方 | `{"deepspeed": "zero2_offload"}` / `{"deepspeed": "zero2"}` | `tests/e2e/generate_matrix.py:1332-1337`；估算/文案 `:1384-1412` |
-| 矩阵清单 | ms-swift 全参档实际下发 DS | `tests/e2e/matrix54_manifest.json` 与 `tests/e2e/matrix54_manifest_v2.json`：`deepspeed` 各 12 处、`fsdp` 各 0 处 |
+| 矩阵清单（**冻结基线**） | ms-swift 全参档在**冻结清单**里仍写 DS | `tests/e2e/matrix54_manifest.json` 与 `tests/e2e/matrix54_manifest_v2.json`：`deepspeed` 各 12 处、`fsdp` 各 0 处。**注意**：2026-09-28 起这 12 档的**实际跑次已改用 FSDP2**（取数配置目录 `samples/configs/matrix54-v2-runasrun/`；口径见 `docs/capability-matrix-comparability.md` §4） |
 
 > **迁移边界（如实声明）**：本条款是**架构约束**，本文档**不**声称上述代码已被改造。
 > 遗留字段与矩阵配方属"待迁移项"；`msswift.deepspeed*` 字段目前仍是合法配置项
@@ -173,14 +174,17 @@ SFT 不采样，CPT/OPD 在 native 侧本就被拒。该常量被 native 的 PP 
 | 优先级 | 路径 | 代码现状 | 证据 |
 |:---:|------|---------|------|
 | **1** | **native 后端** | **已实现**：LoRA 支持 TP/DP/PP/SP（`core/schema.py:555-566`）；全参**仅 PP** | 五维配置 `core/schema.py:546-668`；全参限制 `:148-173`（`tp_size>1` 或 `dp_size>1` 被拒）；native 无 DS 依赖 `flow/runtime.py:69-78` |
-| **2** | **ms-swift FSDP / FSDP2** | **半成品**：配置字段与参数透传已接线；**未见端到端实测证据** | 字段 `core/schema.py:763`（注释：与 DeepSpeed 互斥）→ `--fsdp` 透传 `flow/msswift/_config_mapping.py:171`；契约测试锁名 `tests/flow/msswift/test_config_mapping.py:121,183`；矩阵清单 0 档使用（`tests/e2e/matrix54_manifest_v2.json`：`fsdp` 0 处） |
+| **2** | **ms-swift FSDP / FSDP2** | **已接线，且已有端到端实测证据**（2026-09-28 起）：12 档全参档实际以 FSDP2 跑满 3 个跑次 | 字段 `core/schema.py:763`（注释：与 DeepSpeed 互斥）→ `--fsdp` 透传 `flow/msswift/_config_mapping.py:171`；契约测试锁名 `tests/flow/msswift/test_config_mapping.py:121,183`；**实跑**取数配置目录 `samples/configs/matrix54-v2-runasrun/`，跑次与结论见 `docs/capability-matrix.html` 结果列，口径见 `docs/capability-matrix-comparability.md` §4（冻结清单 `tests/e2e/matrix54_manifest_v2.json` 仍为 `fsdp` 0 处，属历史基线） |
 | **3** | **ms-swift Megatron / Megatron-FSDP** | **半成品（更靠前一步）**：MG1–MG11 配置透传函数已就绪，**启动通道未接线、超参映射表未完成** | 字段 `core/schema.py:671-723`（含 `use_megatron_fsdp` `:692`）；透传 `flow/msswift/_config_mapping.py:196-345`；主映射显式 `include_megatron=False`（`:587`）；仓库内**无** `graspo_to_ms_swift_megatron_argv` 定义、**无** `swift.megatron.*_main` 调用（仅注释提及，`:326-327`）；超参词汇差异与"待后续实现"见 `:333-340` |
 | **4** | **native 扩展**（全参 TP/DP 梯度同步） | **待实现**：当前 fail-closed 拒绝 | `core/schema.py:165-173`（原因：native 梯度同步实现只覆盖 LoRA 参数，`flow/lora/lora_linear.py` 的 `_sync_dp_lora_grads` / `_sync_nonsharded_lora_grads`，见 `core/schema.py:148-154`） |
 | 附 | native 优化器态 CPU offload（部分替代 ZeRO-2/3 offload 的省显存作用） | **已实现但默认关闭**，且只接线 qwen35_36 | 字段 `core/schema.py:575-592`；非法组合校验 `:183-225`；消费点 `flow/adapters/models/qwen35_36/training_sft.py` 的 `_build_optimizer`（接线事实见 `core/schema.py:589-591`） |
 
-⚠ **无法核实**：FSDP2 与 Megatron 通道的**端到端可用性**（能否在 Qwen3.5-9B/27B 上
-真实训完、显存与数值是否达标）。本仓只有配置映射与契约测试，没有这两种通道的实跑产物；
-第 2/3 项因此只能标"半成品"。
+⚠ **无法核实（仅限 Megatron 通道）**：Megatron / Megatron-FSDP 的**端到端可用性**（能否在
+Qwen3.5-9B/27B 上真实训完、显存与数值是否达标）。本仓只有配置映射与契约测试，
+**没有该通道的实跑产物**，第 3 项因此只能标"半成品"。
+**FSDP2 通道已于 2026-09-28 取得端到端证据**：12 档全参档以 FSDP2 跑满 3 个跑次并按四态口径回填
+`docs/capability-matrix.html`（"配置列仍显示冻结 DS 配方"的说明与可比性口径见
+`docs/capability-matrix-comparability.md` §4）。**逐档读数以矩阵为准，本文档不复述。**
 
 ## 4. native 后端：GraspoFlow 五位一体
 
@@ -311,8 +315,8 @@ ms-swift CLI**（`flow/msswift/trainer.py:10-14`）。launch 侧产出的命令�
 是 on-policy 蒸馏的最短通路，且不需要教师 logprob 数据契约（`flow/msswift/opd_trainer.py:22-38`）。
 
 **算法核同源**：msswift 的 RL 不重新实现算法，直接装配 native 同款的
-`ripple.algorithm.GraspoAlgorithmCore`（`flow/msswift/trainer.py:108-120`；
-`ripple/algorithm.py:1-8` 明确"不依赖 graspo.flow 的任何模块"）。msswift 侧的 RL 修复了
+`ripple.algorithm_core.GraspoAlgorithmCore`（`flow/msswift/trainer.py:108-120`；
+`ripple/algorithm_core.py:1-8` 明确"不依赖 graspo.flow 的任何模块"）。msswift 侧的 RL 修复了
 "ratio 恒 1"缺陷（当前策略前向 vs 基线，`flow/msswift/trainer.py:44-57`）。
 
 ### 5.3 配置映射：唯一映射点，纯计算
@@ -333,8 +337,9 @@ msswift 段字段清单见 `core/schema.py:745-814`。
   `flow/msswift/cpt_trainer.py:52-70`）。
 - **Megatron 启动通道未接线**（§3.3 第 3 项）——`megatron` 段只在显式调用透传函数时产出
   参数向量，且**不属于**标准通道 argv（`flow/msswift/_config_mapping.py:585-587`）。
-- ms-swift 后端**不上报**跨 rank 非有限跳过计数 ⇒ 矩阵判据③不可测
-  （`docs/capability-matrix.html:229`）。这是 §3 硬约束的直接动因之一。
+- ms-swift 后端**不上报**跨 rank 非有限跳过计数 ⇒ 原取数通道下矩阵判据③不可测
+  （`docs/capability-matrix.html:229` 起）。这是 §3 硬约束的直接动因之一；
+  **该缺口已于 2026-09-28 以逐步 instrumentation 收口**（矩阵现状：无"未完成测试"档位）。
 
 ## 6. 分层与依赖边界
 
@@ -373,7 +378,7 @@ src/graspo/
 | `flow → ripple` 是**合法方向**，基线 ~41 条导入（防静默增长） | `:110-133` |
 
 补充（导入清单核实，非 AST 测试）：`ripple/` 的实际外部导入只有 `graspo.core.*`
-（`ripple/algorithm.py:15`、`ripple/data.py:17`、`ripple/reward/reward.py:9`、`ripple/monitoring/stats.py:6`）；
+（`ripple/algorithm_core.py:15`、`ripple/data.py:17`、`ripple/reward/reward.py:9`、`ripple/monitoring/stats.py:6`）；
 `eval/` 只依赖 `graspo.core.gpu_guard`（`eval/guard.py:43`）与本包内模块，不依赖 `flow/`。
 
 ### 6.3 各层职责与判据
@@ -422,7 +427,7 @@ flowchart TD
 四种方法共享：同一份 JSONL 数据契约（`ripple/data.py`）、同一套配置入口
 （`core/schema.py:981-1012`）、同一套模型适配器注册表（`pyproject.toml:66-68`）、
 同一套 CLI 启动链（`cli/train_worker.py:130-141`）。native 与 msswift 两个后端在算法侧
-**共用同一个算法核**（`ripple/algorithm.py`；msswift 侧装配见 `flow/msswift/trainer.py:108-120`）。
+**共用同一个算法核**（`ripple/algorithm_core.py`；msswift 侧装配见 `flow/msswift/trainer.py:108-120`）。
 
 差异：SFT 消费已 tokenize 的样本、RL 消费 rollout group，因此 SFT 有**独立注册表**
 （`core/discovery.py:33-36` 的注释）；CPT 走**纯文本续训**数据集形态
@@ -530,9 +535,10 @@ native + 全参只有 PP 一维可用（§4.1）。
 通过 / 失败 / 条件不合逻辑 / 未完成测试（`docs/capability-matrix.html` §2，
 `:99` 附近；§6 表体 `:229` 起）。
 
-- **事实**：矩阵已有实跑结论落表（每个档位带 `status` 与三次跑次列，见 `:229-282`），
+- **事实**：矩阵已有实跑结论落表（每个档位带 `status` 与三次跑次列，见 `:229-284`），
   **不是**"全部未测"。旧文档"矩阵 54 格目前全部未测"已过时。
-- **事实**：该充要条件**当前尚未满足**——存在"失败""未完成测试"档位（`:229-282`）。
+- **事实**：该充要条件**当前尚未满足**——存在"失败"与"条件不合逻辑"档位
+  （截至 2026-09-28 收口，无"未完成测试"档位；`:229-284`）。
   逐档结论以矩阵产物为准，**本文档不复述逐档读数**（避免第二真相源，BADGE 宪法 §1.4）。
 - ⚠ **无法核实**：任何"某后端在某档可用"的结论都不在本文档给；请读矩阵。
 
@@ -545,5 +551,5 @@ native + 全参只有 PP 一维可用（§4.1）。
 - RL 的 native PP rollout 未端到端验证（闸门默认拒绝，§4.3）；
 - SP 原生 `reduce_scatter` 回退态（§4.4）；
 - native 全参的 TP/DP 梯度同步未实现（§3.3 第 4 项）；
-- msswift FSDP/Megatron 通道未端到端验证（§3.3 第 2/3 项）；
+- msswift **Megatron** 通道未端到端验证（§3.3 第 3 项；FSDP2 已取得端到端证据，见 §3.3）；
 - DeepSpeed 迁移未完成（§3.2）。
