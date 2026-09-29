@@ -14,7 +14,7 @@ backend: native
 
 # ── 模型 ──────────────────────────────────────────────────────────────────
 model:
-  model_path: /data/models/Qwen3.8-27B
+  model_path: models/Qwen3.8-27B
   trust_remote_code: true
   torch_dtype: bfloat16
   gradient_checkpointing: true

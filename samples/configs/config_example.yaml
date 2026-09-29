@@ -31,7 +31,7 @@ pretrain:
 distill:
   teacher_model_path: null       # 示例：/models/Qwen3.8-27B（opd 必填）
   teacher_adapters: null         # null=不用教师 LoRA 适配器
-  teacher_deepspeed: null        # null=继承学生侧 deepspeed 配置
+  teacher_deepspeed: null        # null=继承学生侧配置；DeepSpeed 已废除（2026-09-27），勿新配
   offload_teacher_model: null    # null=不换出；显式 true/false 为用户覆盖
   gkd_logits_topk: null          # null=全词表散度；N=只取教师 top-N logits
   lmbda: null                    # null=交 ms-swift 默认值

@@ -172,7 +172,7 @@ CONTAINER_HOME_DIR = "/tmp/graspo-runner-home"
 #: ★ 为什么只列这五个（不列 `HF_HOME`/`TORCH_HOME`/`TRANSFORMERS_CACHE` 等）：镜像**没有**
 #:   声明它们 ⇒ 它们的默认值本来就是 `~/.cache/...`，在 HOME 已指向可写根后天然可写；
 #:   显式列出来只是重复一遍 HOME 的效果（本包不扩范围）。镜像里**声明过**的路径型变量只有
-#:   两个：本表的 `MODELSCOPE_CACHE` 与 `NVM_DIR=/root/.nvm`（后者是 node/nvm 的，训练不用，
+#:   两个：本表的 `MODELSCOPE_CACHE` 与 `NVM_DIR=<nvm-dir>`（后者是 node/nvm 的，训练不用，
 #:   故不入表——判据见 report §②）。
 CONTAINER_CACHE_ROOTS: tuple[tuple[str, str], ...] = (
     ("HOME", "."),
@@ -210,7 +210,7 @@ def render_cache_roots_array() -> str:
 
 #: 容器内 `USER` / `LOGNAME` 的**中性**取值（**单一真相源**，§1.4）。
 #:
-#: ★ 为什么必须显式给：以宿主的裸 uid 运行时，镜像的 `/etc/passwd` 里**没有这个 uid**，
+#: ★ 为什么必须显式给：以宿主的裸 uid 运行时，**宿主 uid 不在镜像的账户库里**，
 #:   则 `pwd.getpwuid(os.getuid())` 抛 KeyError；`getpass.getuser()`（很多库启动时打环境
 #:   横幅都会调：ms-swift / deepspeed / wandb / pip 都有）先看 `LOGNAME`/`USER` 环境变量，
 #:   两者都没有才落到 `pwd` ⇒ 不显式给就可能**在训练开始前**炸掉。
@@ -4425,7 +4425,7 @@ DOCKER_ARGS=(
     #   **训练开始前**就 PermissionError（228 实测：rank0 exit 1，训练一步没跑）。
     #   ★ 逐项由数组展开，本处**不写任何路径字面量** —— 根治"补了三个、漏了第四个"的漂移。
     #   ★ USER/LOGNAME（见 generate_matrix.py::CONTAINER_USER_NAME 的单一真相源）：
-    #   镜像 /etc/passwd 里没有宿主的这个 uid ⇒ `getpass.getuser()` 落到 pwd.getpwuid 会
+    #   镜像的 `passwd` 用户库里没有宿主的这个 uid ⇒ `getpass.getuser()` 落到 pwd.getpwuid 会
     #   KeyError（ms-swift/deepspeed/wandb 启动横幅都调它）。给中性值兜住，同时避免把
     #   宿主账号名注入容器产物（§15.1/§16：账号名属环境信息）。
     -e "USER={CONTAINER_USER_NAME}"

@@ -10,9 +10,11 @@
 
 # ── 训练方法与后端 ────────────────────────────────────────────────────────────
 train_method: graspo          # graspo=RL | sft=SFT
-backend: msswift              # ms-swift 后端：委托给 ms-swift 生态（vLLM + DeepSpeed/FSDP）
+backend: msswift              # ms-swift 后端：委托给 ms-swift 生态（vLLM + FSDP2 / Megatron）
                               # 注意：msswift 后端不使用 native 配置段（无 tp_size/dp_size/pp_size）
-                              # 分布式并行由 ms-swift 的 DeepSpeed/Megatron/FSDP 配置控制
+                              # 分布式并行由 ms-swift 的 FSDP2 / Megatron 配置控制
+                              # ★ DeepSpeed 已废除（用户 2026-09-27 拍板：不再作为后端使用——
+                              #   其梯度范数在 step 前读到的是上一步陈旧值，判据不可信）
 
 # ── ms-swift 后端参数（`backend: msswift` 的唯一参数来源）─────────────────────
 #
@@ -23,19 +25,20 @@ backend: msswift              # ms-swift 后端：委托给 ms-swift 生态（vL
 # 分片/并行类型（对应方案 §8 矩阵）：
 #   S1 数据并行 DDP        : nproc_per_node / nnodes / node_rank / master_addr / master_port
 #   S2 device_map 模型并行 : device_map
-#   S3 DeepSpeed ZeRO-0/1/2/3(+offload) : deepspeed（zero0..zero3 / zero2_offload / zero3_offload）
-#   S4 ZeRO++              : zero_hpz_partition_size
-#   S5 DeepSpeed AutoTP    : deepspeed_autotp_size（仅 zero0/1/2 + 仅全参）
-#   S6 FSDP2               : fsdp（fsdp2；与 DeepSpeed 互斥）
+#   S3 DeepSpeed ZeRO-0/1/2/3(+offload) : deepspeed —— **已废除（2026-09-27），勿用于新配置**
+#                                          字段仍被 schema 接受，仅为加载既有历史配置
+#   S4 ZeRO++              : zero_hpz_partition_size —— 同上，DeepSpeed 路径已废除
+#   S5 DeepSpeed AutoTP    : deepspeed_autotp_size —— 同上，DeepSpeed 路径已废除
+#   S6 FSDP2               : fsdp（fsdp2）—— **推荐的分片路线**（替代 DeepSpeed）
 #   微批                   : per_device_train_batch_size
 #   S7 序列并行 SP         : sequence_parallel_size（Ulysses + Ring 共用；默认 1 = 关闭）
 #   长文附项               : rope_scaling / max_model_len / packing / padding_free / attn_impl / use_liger_kernel / use_logits_to_keep
 #   Megatron 路径（MG1-MG11）: megatron.* —— 仅透传 + 启动冒烟，不做长训验证
 #
-# 例（9B LoRA + SP2 + ZeRO3 + 32K 长文）：
+# 例（9B LoRA + SP2 + FSDP2 + 32K 长文）：
 #   msswift:
 #     sequence_parallel_size: 2
-#     deepspeed: zero3
+#     fsdp: fsdp2
 #     rope_scaling: dynamic
 #     max_model_len: 32768
 #     packing: true
@@ -43,8 +46,8 @@ backend: msswift              # ms-swift 后端：委托给 ms-swift 生态（vL
 #     nproc_per_node: 2
 msswift:
   sequence_parallel_size: 1        # S7 序列并行（1 = 关闭）
-  deepspeed: null                  # S3 例：zero3 / zero2_offload ...
-  fsdp: null                       # S6 例：fsdp2（与 deepspeed 互斥）
+  deepspeed: null                  # S3 **已废除**：保留只为加载历史配置；新配置请用 fsdp
+  fsdp: null                       # S6 例：fsdp2（推荐的替代路线；与 deepspeed 互斥）
   device_map: null                 # S2 例：auto（轻量层切分）
   zero_hpz_partition_size: null    # S4
   deepspeed_autotp_size: null      # S5

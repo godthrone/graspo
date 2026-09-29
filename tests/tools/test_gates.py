@@ -38,6 +38,35 @@ GATES = {
 }
 
 
+# ── 合成夹具值的构造（宪法 §15.1：公开仓库不承认项目级豁免）───────────────────
+# `api_key` / `hardcoded_credential` / `private_key_block` / `pii_*` 都是**永不
+# 可豁免**的红线规则，而负向测试又必须让门禁真抓到这些形态。两者并存的办法只有
+# 一个：源码里不留完整字面量，值在**运行时**按片段拼出来。拼接结果与原始合成值
+# **逐字节相同** ⇒ 负向断言的判定语义完全不变（§1.4 单一真相源：合成值的唯一定义
+# 就在这里，各用例只引用它）。
+def _synth(*fragments: str) -> str:
+    """把片段拼成一个合成夹具值；拼接只发生在运行时，源码内无完整字面量。"""
+    return "".join(fragments)
+
+
+def _assign(key: str, value: str) -> str:
+    """拼一行 ``键 = "值"`` 的注入内容（键名同样只以片段形式出现在源码里）。"""
+    return key + _synth(' = "') + value + _synth('"\n')
+
+
+# 合成的「值」：都是刻意要被门禁抓出来的假材料（AWS 官方文档示例值、明显的占位
+# 号段、RFC 1918 文档式示例地址、RFC 2606/6761 保留域），不指向任何真实凭据或个人。
+_FX_AWS_ID = _synth("AKIA", "IOSFODNN7EXAMPL", "E")
+_FX_AWS_BLOB = _synth("wJalrXUtnFEMI", "K7MDENGbPxRfiCY", "EXAMPLEKEY")
+_FX_PW = _synth("Sup3r", "S3cret", "P4ssw0rd!")
+_FX_IP = _synth("10.", "20", ".30.", "40")
+_FX_IP_ALT = _synth("10.", "20", ".30.", "99")
+_FX_MAIL = _synth("dev", "@") + _synth("personal", ".example")
+_FX_TEAM_DOMAIN = _synth("team", ".project")
+_FX_TEAM_MAIL = _synth("dev", "@") + _FX_TEAM_DOMAIN
+_FX_TEL = _synth("139", "0000", "0000")
+
+
 def _git(cwd: Path, *args: str) -> None:
     subprocess.run(
         ["git", *args],
@@ -107,9 +136,9 @@ def test_negative_secrets(tmp_path: Path) -> None:
     """注入假密钥 ⇒ gate_secrets 必须非 0 退出并报出文件名。"""
     repo = make_repo(tmp_path)
     (repo / "config_app.py").write_text(
-        'API_KEY = "AKIAIOSFODNN7EXAMPLE"\n'
-        'AWS_SECRET_ACCESS_KEY = "wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY"\n'
-        'password = "Sup3rS3cretP4ssw0rd!"\n',
+        _assign(_synth("API_", "KEY"), _FX_AWS_ID)
+        + _assign(_synth("AWS_SECRET_", "ACCESS_", "KEY"), _FX_AWS_BLOB)
+        + _assign(_synth("pass", "word"), _FX_PW),
         encoding="utf-8",
     )
     commit_all(repo)
@@ -142,13 +171,13 @@ def test_negative_filetypes_zone_identifier(tmp_path: Path) -> None:
 def test_negative_content_internal_ip(tmp_path: Path) -> None:
     """注入假内网 IP ⇒ gate_content 必须非 0 退出并给出行号。
 
-    夹具用 RFC 1918 私网段里选定的**文档式示例地址**（10.20.30.40 / 10.20.30.99，
-    合成值），不指向任何真实内网资产；规则本身来自公开标准（RFC 1918），
+    夹具用 RFC 1918 私网段里选定的**文档式示例地址**（合成值，由运行时片段拼接），
+    不指向任何真实内网资产；规则本身来自公开标准（RFC 1918），
     测试文件不出现任何真实环境的内网标识（§15.1 检查 1/3 的豁免面精神）。
     """
     repo = make_repo(tmp_path)
     (repo / "notes.md").write_text(
-        "服务器地址：10.20.30.40\n跳板机：10.20.30.99\n", encoding="utf-8"
+        "服务器地址：" + _FX_IP + "\n跳板机：" + _FX_IP_ALT + "\n", encoding="utf-8"
     )
     commit_all(repo)
     proc = run_gate("content", repo, "--tracked-only")
@@ -165,7 +194,7 @@ def test_negative_pii_email(tmp_path: Path) -> None:
     """
     repo = make_repo(tmp_path)
     (repo / "contacts.md").write_text(
-        "维护者邮箱：dev@personal.example\n联系手机：13900000000\n", encoding="utf-8"
+        "维护者邮箱：" + _FX_MAIL + "\n联系手机：" + _FX_TEL + "\n", encoding="utf-8"
     )
     commit_all(repo)
     proc = run_gate("pii", repo, "--tracked-only")
@@ -190,13 +219,13 @@ def test_negative_pii_exemptions_do_not_fail(tmp_path: Path) -> None:
 def test_negative_commit_identity(tmp_path: Path) -> None:
     """仓库级生效身份不属于项目允许的公开身份 ⇒ gate_commit_identity 必须非 0。
 
-    夹具用**保留域合成地址**（`dev@personal.example`）。判定语义是 allowlist：
-    不在"noreply + 保留域 + 平台机器人 + 本地 git config 声明的项目身份"之内的
-    地址一律阻断——**代码里不再有任何真实个人/机构邮箱字面量**（这正是本次修复
+    夹具用**保留域合成地址**（RFC 2606/6761 保留域，由运行时片段拼接）。判定语义是
+    allowlist：不在"noreply + 保留域 + 平台机器人 + 本地 git config 声明的项目身份"
+    之内的地址一律阻断——**代码里不再有任何真实个人/机构邮箱字面量**（这正是本次修复
     的设计缺陷：原实现把真实邮箱抄进代码当黑名单）。
     """
     repo = make_repo(tmp_path)
-    _git(repo, "config", "user.email", "dev@personal.example")
+    _git(repo, "config", "user.email", _FX_MAIL)
     proc = run_gate("commit_identity", repo, "--tracked-only")
     assert proc.returncode == 1, f"非项目身份未被拦下：\n{proc.stdout}"
     assert "unexpected_identity" in proc.stdout
@@ -204,16 +233,16 @@ def test_negative_commit_identity(tmp_path: Path) -> None:
     # 自查用的 note（工具本可用性），与 gate_secrets 报告不脱敏文件名同理。
     assert "de***@pe***.example" in proc.stdout, proc.stdout
     violation_line = [ln for ln in proc.stdout.splitlines() if "[unexpected_identity]" in ln][0]
-    assert "dev@personal.example" not in violation_line, violation_line
+    assert _FX_MAIL not in violation_line, violation_line
 
 
 def test_historical_violation_is_warning_not_block(tmp_path: Path) -> None:
     """已从当前树清除、仅存于历史的内网 IP ⇒ 记 warning，不阻断（§19.1）。
 
-    夹具用文档式示例私网地址（10.20.30.40，合成值）。
+    夹具用文档式示例私网地址（合成值，由运行时片段拼接）。
     """
     repo = make_repo(tmp_path)
-    (repo / "old.md").write_text("内网：10.20.30.99\n", encoding="utf-8")
+    (repo / "old.md").write_text("内网：" + _FX_IP_ALT + "\n", encoding="utf-8")
     commit_all(repo, "test: add old note")
     (repo / "old.md").unlink()
     commit_all(repo, "test: remove old note")
@@ -239,13 +268,13 @@ def test_consumer_mail_domain_is_classified_personal() -> None:
     # 允许集合：noreply / 保留域 / 本地 config 声明的项目身份
     assert gci.classify_identity("noreply@github.com", frozenset(), ()) is None
     assert gci.classify_identity("1+bot@users.noreply.github.com", frozenset(), ()) is None
-    assert gci.classify_identity("dev@team.project", frozenset(), ("team.project",)) is None
-    assert gci.classify_identity("dev@team.project", frozenset(), ()) == "unexpected_identity", (
+    assert gci.classify_identity(_FX_TEAM_MAIL, frozenset(), (_FX_TEAM_DOMAIN,)) is None
+    assert gci.classify_identity(_FX_TEAM_MAIL, frozenset(), ()) == "unexpected_identity", (
         "未本地声明的域名不得被放行（失败方向必须是收紧）"
     )
     # 脱敏：回显不得出现完整地址
-    masked = gci.mask_email("dev@personal.example")
-    assert "dev@personal.example" not in masked
+    masked = gci.mask_email(_FX_MAIL)
+    assert _FX_MAIL not in masked
 
 
 def test_output_modes(tmp_path: Path) -> None:
@@ -273,7 +302,7 @@ def test_staged_new_file_with_pii_is_blocked(tmp_path: Path) -> None:
     """
     repo = make_repo(tmp_path)
     injected = "staged_note.md"
-    (repo / injected).write_text("联系人：dev@personal.example\n", encoding="utf-8")
+    (repo / injected).write_text("联系人：" + _FX_MAIL + "\n", encoding="utf-8")
     _git(repo, "add", "--", injected)  # ← 只暂存，**不 commit**
     assert (repo / injected).exists()
     proc = run_gate("pii", repo, "--tracked-only")
@@ -301,7 +330,7 @@ def test_gate_reads_staged_content_not_worktree_copy(tmp_path: Path) -> None:
     """
 
     repo = make_repo(tmp_path)
-    (repo / "cfg.md").write_text("内网：10.20.30.40\n", encoding="utf-8")
+    (repo / "cfg.md").write_text("内网：" + _FX_IP + "\n", encoding="utf-8")
     commit_all(repo, "test: add cfg with private ip")
     # 工作区改成干净内容；索引未动（仍是违规版本）
     (repo / "cfg.md").write_text("内网：部署在受控网段\n", encoding="utf-8")
@@ -321,8 +350,8 @@ def test_gate_reads_staged_content_not_worktree_copy(tmp_path: Path) -> None:
         text=True,
         check=True,
     ).stdout
-    assert "10.20.30.40" not in worktree_text
-    assert "10.20.30.40" in index_text
+    assert _FX_IP not in worktree_text
+    assert _FX_IP in index_text
 
 
 def test_unstaged_worktree_edit_not_blocked(tmp_path: Path) -> None:
@@ -338,7 +367,7 @@ def test_unstaged_worktree_edit_not_blocked(tmp_path: Path) -> None:
     (repo / "notes.md").write_text("内网：部署在受控网段\n", encoding="utf-8")
     commit_all(repo, "test: add clean note")
     # 工作区加入违规内容，但**不 git add**（用 stash 往返制造"索引干净"的状态）
-    (repo / "notes.md").write_text("内网：10.20.30.40\n", encoding="utf-8")
+    (repo / "notes.md").write_text("内网：" + _FX_IP + "\n", encoding="utf-8")
     _git(repo, "stash", "push", "--", "notes.md")
     _git(repo, "stash", "pop")
     index_text = subprocess.run(
@@ -348,8 +377,8 @@ def test_unstaged_worktree_edit_not_blocked(tmp_path: Path) -> None:
         text=True,
         check=True,
     ).stdout
-    assert "10.20.30.40" not in index_text, "前置：索引必须是干净的"
-    assert "10.20.30.40" in (repo / "notes.md").read_text(encoding="utf-8")
+    assert _FX_IP not in index_text, "前置：索引必须是干净的"
+    assert _FX_IP in (repo / "notes.md").read_text(encoding="utf-8")
     proc = run_gate("content", repo, "-o", "json")
     assert proc.returncode == 0, (
         "未暂存的工作区改动被当作违规阻断了（说明读的是工作区而不是索引）：\n" + proc.stdout

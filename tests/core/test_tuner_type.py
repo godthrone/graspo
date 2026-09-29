@@ -8,7 +8,7 @@
 **为什么需要下面那段垫片（本机无 torch 时的纯逻辑测试通道）**
 
 ``graspo/__init__.py`` 在 import 期导入 ``graspo.ripple.reward.reward``，
-该模块又经 ``graspo/ripple/__init__.py`` → ``ripple/algorithm.py:13`` 拉入 torch；
+该模块又经 ``graspo/ripple/__init__.py`` → ``ripple/algorithm_core.py:13`` 拉入 torch；
 ``core/schema.py`` 的 ``reward: RewardConfig = RewardConfig()`` 也会在类体求值一次。
 ⇒ 在没有 torch 的机器上，连"配置字段长什么样"都无法收集。
 

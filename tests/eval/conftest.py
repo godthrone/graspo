@@ -1,6 +1,6 @@
 """``tests/eval`` 的收集期垫片：让评测链路的**纯逻辑**测试在本机无 torch 时可跑。
 
-**为什么要它**：``graspo/__init__.py`` → ``graspo.ripple.algorithm`` → ``torch``，
+**为什么要它**：``graspo/__init__.py`` → ``graspo.ripple.algorithm_core`` → ``torch``，
 因此无 torch 的机器上任何 ``import graspo.*`` 都在收集阶段失败。但 ``graspo.eval``
 里有一大半是**零设施依赖**的纯计算（口径判定、聚合、Δ 配对、checkpoint 形态识别、
 锁卡规则），这些必须在 CPU 上可独立测试（宪法 §1.3 层次边界）。
