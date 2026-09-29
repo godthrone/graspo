@@ -67,12 +67,16 @@ import sys
 from pathlib import Path
 from typing import Any
 
+# `scripts/` 不是包（无 `__init__.py`），但本脚本既要能"直接执行"，又要能被 importlib
+# 按文件路径加载；自插脚本目录是同时满足两种加载方式的唯一稳妥写法（§2.2 显式依赖）。
+_HERE = Path(__file__).resolve().parent
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))
+
+from errors import UsageError  # noqa: E402  （必须在上面的 sys.path 注入之后）
+
 DEFAULT_TRUNCATION_LEVELS = (1024, 2048, 4096)
 HISTOGRAM_BIN_WIDTH = 128
-
-
-class UsageError(Exception):
-    """用法/环境错误 ⇒ 退出码 2（fail-closed，不产出半成品 JSON）。"""
 
 
 # --------------------------------------------------------------------------- 输入

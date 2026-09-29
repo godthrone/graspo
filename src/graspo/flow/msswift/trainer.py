@@ -114,8 +114,8 @@ class GraspoMsSwiftGRPOTrainer(_MsSwiftGRPOTrainerBase):  # type: ignore[misc,va
                 "GraspoMsSwiftRlhfPipeline (which injects the graspo config), not directly."
             )
         self._graspo_config = graspo_config
-        # 算法核与 native 同源（ripple.algorithm），此处只做装配，不重复实现（§1.1/§1.3）。
-        from graspo.ripple.algorithm import GraspoAlgorithmCore
+        # 算法核与 native 同源（ripple.algorithm_core），此处只做装配，不重复实现（§1.1/§1.3）。
+        from graspo.ripple.algorithm_core import GraspoAlgorithmCore
 
         self._graspo = GraspoAlgorithmCore(
             reward_config=graspo_config.reward,

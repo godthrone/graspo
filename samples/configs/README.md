@@ -30,7 +30,7 @@
 - **保留**：作为历史基线与可比性维度；
 - **不再用于取数**（HTML 配置列的权威 `--config-dir` 是 `matrix54-v2-runasrun/`）；
 - **一字未改**：**不得**在该目录内新增、修改或删除任何文件 —— 该目录的总指纹按「目录内全部文件」计算
-  （`rig/fp_v2.py`；`scripts/env_snapshot.py::collect_config`），**加一个文件也会改变指纹**，
+  （`rig/fp.py`；`scripts/env_snapshot.py::collect_config`），**加一个文件也会改变指纹**，
   而该指纹是被引用的冻结维度（「变则本轮档不可比」）。
 
 ## 复现命令（照抄，只读）
@@ -39,7 +39,7 @@
 cd /home/<user>/Gitlab/graspo
 
 # ① 冻结基线的总指纹（应为 7a230bad535a79cbd9718c7169a1fbabac156948b5bb991a762ee3bcca6f0e47）
-.venv/bin/python rig/fp_v2.py samples/configs/matrix54-v2
+.venv/bin/python rig/fp.py samples/configs/matrix54-v2
 
 # ② 取数目录的目录指纹（**现行**应为 58c999ddca048ef583d8a72f78db56f1bb0a4d4a9babe5f92b6d8f6dfebe45b4）
 #    （沿革：8a146cfa…567e7 是建目录当时值；2026-09-28 对本目录 T050.yaml 做了一处**注释级**更正

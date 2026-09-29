@@ -93,6 +93,7 @@ Flow 不是单一执行载体：同一套配置与算法核（`ripple`）可以�
 
 > **证据归属与版本**：第 1 条的 accelerate 行号来自**与目标 228 镜像逐字节一致**的下游副本
 > `.local/hb-workspace/20260923-analysis/task-msswift-naninf-study/src/accelerate_accelerator.py`
+> ⚠ **该 `.local/` 路径是内部工位留证，不随仓库发布**（公开读者无法跟读）；行号结论已在上文自包含给出，不依赖该路径。
 > （accelerate **1.14.0**，4359 行，sha256 `47088e0ab3bf21eec97e16afa14595e1db511f6ead9ab85c4eaa5f6f66fe5e61`）。
 > `accelerate` 本身不在本仓依赖内，行号是对该副本复核的结果，不是用上游 wheel 直接核的。
 > 补充事实：`clip_grad_value_`（def `:3009`）对 DeepSpeed/FSDP 抛"不支持"异常，位置在 `:3031-3032`。
@@ -368,7 +369,7 @@ src/graspo/
     ├── data_io.py / logging.py
 ```
 
-**依赖方向**：`core` ← `ripple` ← `flow`；`flow` 内部 `adapters` 依赖 `parallel`，`trainer` 依赖 `runtime` + `adapters`；`msswift` 是并列的另一条执行链路，只共享 `core` 与 `ripple`（`flow/msswift/trainer.py:110` 从 `ripple.algorithm` 取算法核）。
+**依赖方向**：`core` ← `ripple` ← `flow`；`flow` 内部 `adapters` 依赖 `parallel`，`trainer` 依赖 `runtime` + `adapters`；`msswift` 是并列的另一条执行链路，只共享 `core` 与 `ripple`（`flow/msswift/trainer.py:110` 从 `ripple.algorithm_core` 取算法核）。
 
 ### 5.1 native 运行时与适配器
 

@@ -14,7 +14,7 @@ Ripple（涟漪）是 GRASPO 的算法层，负责所有训练方法论相关的
 
 - 允许：标准库、pydantic、torch 纯张量计算（CPU 可单测）
 - 禁止：GPU 设备调用（`torch.cuda`）、分布式、网络、文件 IO
-- **不依赖 `graspo.flow` 的任何模块**（`src/graspo/ripple/algorithm.py:6`；全包 `graspo.flow` 只出现在注释里，无 import）
+- **不依赖 `graspo.flow` 的任何模块**（`src/graspo/ripple/algorithm_core.py:6`；全包 `graspo.flow` 只出现在注释里，无 import）
 
 反向依赖是允许且真实的：flow 消费 ripple 的算法核心与监控摘要——`GraspoAlgorithmCore` 被 msswift 训练器注入（`src/graspo/flow/msswift/trainer.py:110-112`），`classify_group` 被两侧训练器调用（`src/graspo/flow/msswift/trainer.py:355`），`monitoring` 被 native 训练器与 optimize 消费（`src/graspo/flow/trainer/trainer.py:35`、`src/graspo/flow/trainer/optimize.py:11`）。
 
@@ -228,6 +228,7 @@ Ripple 层本身是后端无关的算法核心——它**不 import** 任何后�
 - `accelerate` 的 `clip_grad_norm_` 对 DeepSpeed 有专属分支，**不做裁剪、返回的也不是本步的 norm**，而是 `engine.get_global_grad_norm()`：
   `accelerate/accelerator.py:2982-2986`（`return` 在 `:2985`；`clip_grad_norm_` 定义于 `:2946`）。
   **一手证据（可在本工作区直接复读）**：`.local/hb-workspace/20260923-analysis/task-msswift-naninf-study/src/accelerate_accelerator.py:2982-2986`——该文件是从镜像内**原地抽出**的 `accelerate/accelerator.py` 副本。
+  ⚠ **上述 `.local/` 路径（及本文其余 `.local/...` 引用）均为内部工位留证，不随仓库发布**——公开读者无法跟读，它们仅用于标注行号的复核来源。
   ⚠ **本工位独立复核发现的出入**：任务书与先前工位引用的一段 `accelerate/accelerator.py` 行号 **在该副本中并非该分支**——该范围落在 `clip_grad_value_`（def `:3009`）的 **docstring 示例**里，该函数的 "DeepSpeed and FSDP do not support `clip_grad_value_`" 异常实际在 **`:3031-3032`**（`raise` 在 `:3032`）。与本条款有关的正确位置是 **`:2982-2986`**（与 `task-msswift-naninf-study/report.md:159,396` 一致）。本文以**自己复读副本的结果**为准，记 `:2982-2986`。
   （行号依据：调研者裁决 + 本工位复读；副本 sha256 `47088e0ab3bf21eec97e16afa14595e1db511f6ead9ab85c4eaa5f6f66fe5e61`，4359 行，accelerate **1.14.0**。）
 - DeepSpeed 侧 `_global_grad_norm` 在 `_take_model_step()` 里、**`optimizer.step()` 之后**才赋值（`deepspeed/runtime/engine.py:2707-2711`；取值器 `:743-753`；初值 `None` 在 `:256`）⇒ step 前读到的是**陈旧值**；ZeRO-1/2 的 `step()` 在 `overflow` 为真时提前 `return`（`deepspeed/runtime/zero/stage_1_and_2.py:2110-2135`），**根本不计算**。
