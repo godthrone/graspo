@@ -3,9 +3,15 @@
 **职责**：把 ``graspo.core.gpu_guard`` 的锁卡边界接到评测链路上，并提供
 "只采可见卡"的显存采样。
 
-**本文件不负责**：锁卡**规则的判定**——规则在 ``graspo.core.gpu_guard`` 里
-（单一真相源，宪法 §1.4）。本模块只做两件事：① 把评测配置里的卡列表转成
-``GpuPlan``；② 用 ``nvidia-smi -i`` 采样。
+**本文件不负责**：锁卡**规则的判定**与**卡计划契约**——两者都在 ``graspo.core.gpu_guard``
+里（单一真相源，宪法 §1.4）。本模块只做两件事：① 转发 ``GpuGuardError`` /
+``GpuPlan`` / ``parse_gpu_plan`` / ``resolve_gpu_plan``（**2026-09-29 D-03 边界修复**：
+这些定义已下沉到 core，本模块保留同名导入路径，异常类型仍是同一个类对象）；
+② 用 ``nvidia-smi -i`` 采样。
+
+**为什么卡计划契约下沉**：修复前 ``core/schema.py`` 反向导入 ``eval.guard`` 取
+``GpuGuardError`` / ``resolve_gpu_plan``，构成 ``core → eval`` 跨层环（AST 边界测试
+判违规）。下沉后方向变成 ``eval → core``（合法），规则与契约各只有一份定义。
 
 **为什么规则不在这里重写**
 
@@ -39,15 +45,16 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict
-
 from graspo.core.gpu_guard import (
     DEFAULT_ALLOWED_INDICES,
     DEFAULT_RESERVED_INDICES,
     MAX_CARDS,
-    GpuLockError,
-    assert_gpu_lock,
+    GpuGuardError,
+    GpuPlan,
+    # 公共同名转发（D-03）：定义已下沉到 core.gpu_guard，本模块只做再导出。
+    parse_gpu_plan,  # noqa: F401
     resolve_allowed_indices,
+    resolve_gpu_plan,  # noqa: F401
     resolve_reserved_indices,
 )
 
@@ -70,63 +77,11 @@ def resolve_reserved_gpu_indices() -> tuple[int, ...]:
     return resolve_reserved_indices()
 
 
-class GpuGuardError(RuntimeError):
-    """评测链路的锁卡/采样失败。调用方必须让它终止流程——不要 catch 后继续跑。
-
-    ``GpuLockError``（规则层）在 :func:`resolve_gpu_plan` 里被转成本异常，
-    这样评测链路的调用方只需捕获一种异常类型；规则文案原样保留。
-    """
-
-
-class GpuPlan(BaseModel):
-    """一次 GPU 任务的锁卡计划。构造即校验，非法组合不可能存在。"""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    #: 显式指定的物理卡索引（保持调用方给出的顺序）。
-    devices: tuple[int, ...]
-
-    @property
-    def count(self) -> int:
-        return len(self.devices)
-
-    @property
-    def csv(self) -> str:
-        """逗号分隔形式，用于 ``NVIDIA_VISIBLE_DEVICES`` / ``docker --gpus=``。"""
-        return ",".join(str(index) for index in self.devices)
-
-    def docker_gpus_flag(self) -> str:
-        """Docker ``--gpus`` 取值。用 ``device=0,1`` 形式（不是 ``all``）。"""
-        return f'"device={self.csv}"'
-
-
-def parse_gpu_plan(raw: str | None) -> GpuPlan:
-    """把显式卡列表转成 ``GpuPlan``；规则校验交给 ``core.gpu_guard``。
-
-    Args:
-        raw: 形如 ``"0,1"`` 的字符串。``None`` / 空串 = 未显式指定 → 拒绝。
-
-    Returns:
-        ``GpuPlan``。
-
-    Raises:
-        GpuGuardError: 规则层拒绝（未指定 / 含生产卡 / 卡数超限 / 取值非法）。
-    """
-    try:
-        devices = assert_gpu_lock(raw)
-    except GpuLockError as exc:
-        raise GpuGuardError(str(exc)) from None
-    return GpuPlan(devices=devices)
-
-
-def resolve_gpu_plan(raw: str | None) -> GpuPlan:
-    """从**配置**解析卡计划。
-
-    与 :func:`parse_gpu_plan` 同义，但语义上强调"卡计划只来自配置"（宪法 §7.1
-    单一配置入口）：不接受环境变量、不接受隐式默认值。分开命名是为了让调用点
-    一眼看出"这里的卡来自 config"，而不是某个散落的环境变量。
-    """
-    return parse_gpu_plan(raw)
+# ``GpuGuardError`` / ``GpuPlan`` / ``parse_gpu_plan`` / ``resolve_gpu_plan`` 的定义
+# 已下沉到 ``graspo.core.gpu_guard``（2026-09-29 D-03 边界修复：core 不能反向导入
+# ``eval.guard``）。此处按上面的 import 转发，既有导入路径
+# （``from graspo.eval.guard import GpuGuardError, GpuPlan, resolve_gpu_plan``）
+# 与异常类型身份（同一个类对象）都零变化。
 
 
 @dataclass(slots=True)

@@ -9,6 +9,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from graspo.core.discovery import _discover
+from graspo.core.gpu_guard import GpuGuardError, resolve_gpu_plan
+
 #: 训练参数化模式：``lora`` = 只训 LoRA 适配器；``full`` = 全参（全量）微调。
 #: 与 ms-swift 的 ``--tuner_type`` **同轴**（上游合法取值为
 #: ``lora|full|lora_llm``，graspo 只支持前两个）。native 与 msswift 两个后端
@@ -16,15 +19,17 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 TunerType = Literal["lora", "full"]
 
 #: 训练方法（算法）枚举 —— **全项目唯一真相源**（宪法 §1.4）。
-#: 与能力矩阵 `docs/capability-matrix.md` §4「算法」行一一对应：
+#: 与能力矩阵 `docs/capability-matrix.html` §6（能力测试表）的「算法」行一一对应：
 #: ``graspo`` = GRASPO(RL)、``sft`` = 监督微调、``cpt`` = 继续预训练、
 #: ``opd`` = on-policy 蒸馏。新增算法 = 此字面量加一个取值（§1.2 对扩展开放），
 #: 具体实现由 ``core/discovery.py`` 的注册表路由解析。
+#: （2026-09-29 修正引用：旧引用指向 `docs/capability-matrix.md`，该文件已由用户
+#: 2026-09-23 拍板删除，能力矩阵现为 `docs/capability-matrix.html` 单文件。）
 TrainMethod = Literal["graspo", "sft", "cpt", "opd"]
 
 #: ``train_method`` → **支持它的后端**（单一真相源，宪法 §1.4）。
-#: 依据 `docs/capability-matrix.md` §4：CPT / OPD 在 **native 侧就是 `⛔ 不支持`**
-#: ⇒ 这里 fail-closed，而不是把它们静默路由到 SFT/RL 训练器（那等于拿着
+#: 依据 `docs/capability-matrix.html` §6（能力测试表）：CPT / OPD 在 **native 侧就是
+#: `⛔ 不支持`** ⇒ 这里 fail-closed，而不是把它们静默路由到 SFT/RL 训练器（那等于拿着
 #: 另一种算法去训练，属宪法 §3.4 的"坏退路"）。
 TRAIN_METHOD_BACKENDS: dict[str, tuple[str, ...]] = {
     "graspo": ("native", "msswift"),
@@ -104,7 +109,7 @@ def validate_train_method_combination(
             f"train_method={train_method!r} is not supported on backend={backend!r}; "
             f"supported backends for it: {', '.join(supported)}. "
             "CPT and OPD are ms-swift-only capabilities "
-            "(docs/capability-matrix.md §4 lists them as unsupported on native)."
+            "(docs/capability-matrix.html §6 lists them as unsupported on native)."
         )
     if train_method == "opd" and not (distill_teacher_model_path or "").strip():
         raise ValueError(
@@ -242,13 +247,18 @@ class RewardConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_reward_kind(self) -> RewardConfig:
-        """延迟导入 REWARD_REGISTRY 以避免循环依赖，校验 kind 是否已注册。"""
-        from graspo.ripple.reward.reward import REWARD_REGISTRY  # noqa: PLC0415
+        """经 ``core.discovery`` 的 entry-point 注册表校验 kind 是否已注册。
 
-        if self.kind not in REWARD_REGISTRY:
-            raise ValueError(
-                f"Unknown reward kind {self.kind!r}; available: {sorted(REWARD_REGISTRY)}"
-            )
+        **2026-09-29 D-03 边界修复**：原先这里延迟导入
+        ``graspo.ripple.reward.reward.REWARD_REGISTRY``（core → ripple 反向依赖）。
+        ``REWARD_REGISTRY`` 本身就是 ``core.discovery._discover("graspo.rewards")``
+        （见 ``ripple/reward/reward.py``），所以这里**直接查同一份注册表**——
+        校验时机、键集合与报错文案都不变，依赖方向由 core→ripple 改为无跨层依赖。
+        """
+        registry = _discover("graspo.rewards")
+
+        if self.kind not in registry:
+            raise ValueError(f"Unknown reward kind {self.kind!r}; available: {sorted(registry)}")
         return self
 
 
@@ -768,7 +778,7 @@ class MsSwiftConfig(BaseModel):
     # （上游 4.5.3：`arguments/tuner_args.py:122-124` + `_init_multimodal_full`；
     # Megatron 通道 `megatron/arguments/megatron_args.py:451` 同为 True），即
     # "只训语言主干"。而 graspo 的「全量（全参）」承诺"训练全部权重"
-    # （`docs/capability-matrix.md` §4），native 侧也确实放开了全部参数。
+    # （`docs/capability-matrix.html` §6 能力测试表），native 侧也确实放开了全部参数。
     # ⇒ 为消除**两后端语义分叉**，full 模式下这两个开关默认解析为 `false` 并显式
     # 透传（LoRA 模式完全不透传——逐字保持原行为）。
     # None = 用上述模式默认值；显式 true/false = 用户覆盖（唯一真相源，只有这一处开关）。
@@ -829,7 +839,9 @@ class EvalConfig(BaseModel):
     """效果评测链路配置（``graspo eval``）。ELAM V5 + vLLM，温度锁 0。
 
     **卡计划只能来自这里**：``gpus`` 必须显式给出（如 ``"0,1"``），取值限定在
-    ``{0,1,2,3,4,5}``、卡数 ≤ 4；未显式给出时评测链路**拒绝启动**
+    **生效的允许集合**（默认 ``{4,5,6,7}``，见 ``core.gpu_guard`` 的
+    :data:`graspo.core.gpu_guard.DEFAULT_ALLOWED_INDICES`，可用
+    ``GRASPO_ALLOWED_GPU_INDICES`` 覆盖）、卡数 ≤ 4；未显式给出时评测链路**拒绝启动**
     （fail-closed，见 ``eval.guard``）。不给默认值是有意的——目标 GPU 服务器上 GPU 6/7
     被生产 vLLM 占死，任何"顺手用个默认卡"的设计都会炸生产。
 
@@ -876,8 +888,6 @@ class EvalConfig(BaseModel):
         的 ``eval:`` 段是可选的，缺省时 ``GraspoConfig.eval`` 为 ``None``，本模型
         根本不会被构造，因此不触发任何校验（宪法 §2.2：None = 未提供）。
         """
-        from graspo.eval.guard import GpuGuardError  # noqa: PLC0415
-
         missing = [
             name
             for name in ("dataset_path", "base_model_path", "output_dir")
@@ -891,9 +901,9 @@ class EvalConfig(BaseModel):
                 "only role='base' may omit it"
             )
         # 卡计划：必须在加载时就校验，不能等到起容器时才发现写错了 6/7。
+        # ``resolve_gpu_plan`` / ``GpuGuardError`` 现在直接来自 ``core.gpu_guard``
+        # （2026-09-29 D-03：原先经 ``eval.guard`` 反向导入，构成 core → eval 环）。
         try:
-            from graspo.eval.guard import resolve_gpu_plan  # noqa: PLC0415
-
             resolve_gpu_plan(self.gpus)
         except GpuGuardError as exc:
             raise ValueError(f"eval.gpus invalid: {exc}") from None

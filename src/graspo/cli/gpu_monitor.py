@@ -43,6 +43,12 @@ GPU6/7 与他人并发作业，显存数据不可作依据。本工具现在三�
 **本次新增**：:func:`probe_gpu_inventory`（F-1/F-2 所需的"实测可见卡"）与
 :func:`assert_target_gpus_idle`（F-10 目标卡实测空闲断言：>64 MiB 或 util>5%
 即拒绝，宁等不抢、不 kill 他人进程）。
+
+**2026-09-29 D-03 边界修复**：:func:`probe_gpu_inventory` 与
+:func:`parse_visible_device_indices` 的实现**已下沉到** ``graspo.core.gpu_guard``
+（原先 core 反过来延迟导入本模块，构成 ``core → cli`` 跨层环）。本模块保留**同名
+转发**（:func:`probe_gpu_inventory` / :func:`parse_visible_device_indices` 仍可从这里
+导入，既有路径零破坏），依赖方向因此变成 ``cli → core``（合法）。
 """
 
 import argparse
@@ -64,6 +70,9 @@ from graspo.core.gpu_guard import (
     assert_gpu_idle,
     assert_gpu_lock,
     is_runtime_managed,
+    # 公共同名转发（D-03）：定义已下沉到 core.gpu_guard，本模块只做再导出。
+    parse_visible_device_indices,  # noqa: F401
+    probe_gpu_inventory,
     resolve_device_source,
     select_sample_targets,
     select_sample_targets_for_inventory,
@@ -304,28 +313,8 @@ def build_gpu_query_command(gpu_indices: Sequence[str]) -> list[str]:
     ]
 
 
-def parse_visible_device_indices(text: str) -> tuple[int, ...]:
-    """从 ``nvidia-smi -L`` 输出解析**容器内本地序号**（探测可见卡的唯一入口）。
-
-    ``-L`` 每个可见卡一行（``GPU 0: NVIDIA ... (UUID: GPU-xxx)``）。行首序号即
-    容器命名空间里的本地 index——runtime 重编号后，宿主卡号在这里是看不到的
-    （这正是 F-2 的根因：不能拿宿主卡号去查容器内的卡）。
-
-    :raises RuntimeError: 行结构与 ``GPU <n>:`` 不符——宁可 fail-closed，
-        也不要猜出一组卡号去查。
-    """
-    indices: list[int] = []
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        if not stripped.startswith("GPU ") or ":" not in stripped:
-            raise RuntimeError(f"无法解析 nvidia-smi -L 行：{line!r}")
-        head = stripped[len("GPU ") :].split(":", 1)[0].strip()
-        if not head.isdigit():
-            raise RuntimeError(f"无法解析 nvidia-smi -L 卡号：{line!r}")
-        indices.append(int(head))
-    return tuple(indices)
+# ``parse_visible_device_indices`` / ``probe_gpu_inventory`` 的定义已下沉到
+# ``graspo.core.gpu_guard``（D-03 边界修复），此处仅按上面的 import 转发。
 
 
 def query_gpu_rows(
@@ -418,38 +407,9 @@ def utc_timestamp() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
-def probe_gpu_inventory(
-    runner: Callable[[list[str]], str] | None = None,
-) -> GpuInventory:
-    """实测容器内**可见卡**（F-1/F-2 的设施层入口）。
-
-    用 ``nvidia-smi -L``（结构稳定：每个可见卡一行）数卡并取容器内本地序号。
-    ``-L`` 不接受 ``-i``，但它天然只列**可见**卡——这正是我们要的口径
-    （不要 ``--query-gpu`` 的全卡枚举语义）。带 ``-i`` 的查询仍由
-    :func:`build_gpu_query_command` 唯一构造（采样路径）。
-
-    :param runner: 命令执行器（接收 argv、返回 stdout）；默认走 ``subprocess``。
-    :raises RuntimeError: ``nvidia-smi`` 不在或执行失败——调用方必须 fail-closed。
-    """
-    command = ["nvidia-smi", "-L"]
-    if runner is None:
-        try:
-            completed = subprocess.run(command, check=False, capture_output=True, text=True)
-        except FileNotFoundError as exc:
-            raise RuntimeError(f"nvidia-smi 不可用：{exc}") from None
-        if completed.returncode != 0:
-            raise RuntimeError(
-                f"nvidia-smi -L 失败（rc={completed.returncode}）：{completed.stderr.strip()[:200]}"
-            )
-        stdout = completed.stdout
-    else:
-        stdout = runner(command)
-    indices = parse_visible_device_indices(stdout)
-    return GpuInventory(
-        source="nvidia-smi -L",
-        count=len(indices),
-        indices=indices,
-    )
+# ``probe_gpu_inventory`` 的定义已下沉到 ``graspo.core.gpu_guard``（D-03 边界修复），
+# 此处仅按上面的 import 转发——:func:`assert_visible_gpus_idle` / :func:`resolve_sample_gpus`
+# 里的 ``inventory_probe or probe_gpu_inventory`` 默认值继续可用。
 
 
 def query_idle_rows(

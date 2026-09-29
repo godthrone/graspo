@@ -1,4 +1,4 @@
-"""GPU 锁卡守卫（fail-closed）—— 纯计算层，零设施依赖。
+"""GPU 锁卡守卫（fail-closed）—— 规则是纯计算，探测是唯一的设施入口。
 
 职责：把「这次运行允许用哪些 GPU」这条安全边界，编码成一条可复用、
 **默认拒绝**的断言。任何训练 / 测试入口在启动前必须调用本模块。
@@ -22,8 +22,8 @@
    runtime 语义不一致，不是调用方用错。
 
    容器侧的断言因此改为**以容器内实测可见卡为准**：``void`` 时必须给出
-   ``GpuInventory``（由设施层 ``cli/gpu_monitor.probe_gpu_inventory`` 用
-   ``nvidia-smi -L`` 探测），并按**卡数**（≤ :data:`MAX_CARDS`）+ **可见集非空**
+   ``GpuInventory``（由 :func:`probe_gpu_inventory` 用 ``nvidia-smi -L`` 探测），
+   并按**卡数**（≤ :data:`MAX_CARDS`）+ **可见集非空**
    + **与显式声明卡数一致** 做断言。
 
 **为什么 ``void`` 回落不放松防呆（否则就是拿安全换兼容）：**
@@ -39,21 +39,35 @@ runtime 写 ``void`` 的前提是它已按设备收窄；若收窄没收住（�
 其中 GPU6/7 被生产 vLLM 占死。这不是"配置不当"，是"一碰就事故"，
 所以守卫必须 fail-closed（宪法 §2 防呆设计：不靠调用方自觉）。
 
-本模块不调 ``nvidia-smi``、不碰 GPU——输入是字符串、映射与**已探好的**
-``GpuInventory``，输出是不可变设备元组，因此可在 CPU 上独立单测
-（宪法 §1.3 层次边界）。**唯一的环境读取是"允许/保留集合"这两个配置键**
-（:data:`ALLOWED_INDICES_ENV` / :data:`RESERVED_INDICES_ENV`，见
+**规则是纯计算，探测是唯一的设施入口。** 判定函数不调 ``nvidia-smi``、不碰 GPU——
+输入是字符串、映射与**已探好的** ``GpuInventory``，输出是不可变设备元组，因此规则
+部分可在 CPU 上独立单测（宪法 §1.3 层次边界）。**唯一的环境读取是"允许/保留集合"**
+这两个配置键（:data:`ALLOWED_INDICES_ENV` / :data:`RESERVED_INDICES_ENV`，见
 :func:`resolve_allowed_indices`）：所有判定函数都接受 ``env`` mapping，未注入时才
-回落 ``os.environ``；不读任何其它环境变量。设备相关的环境与设施读取分别在
-``assert_gpu_lock_from_env``（接收 mapping 以便注入）、``require_gpu_lock_or_exit``
-（接收探测回调以便注入）与 ``cli/gpu_monitor.probe_gpu_inventory``。
+回落 ``os.environ``；不读任何其它环境变量。设备相关的环境读取在
+``assert_gpu_lock_from_env``（接收 mapping 以便注入）与 ``require_gpu_lock_or_exit``
+（接收探测回调以便注入）。
+
+**本模块内唯一的设施代码是 :func:`probe_gpu_inventory`**（``nvidia-smi -L`` 实测
+容器内可见卡），以及评测链路的卡计划契约（:class:`GpuPlan` / :func:`resolve_gpu_plan`，
+无设施调用）。它们留在 core，是为了让"谁来探测 / 谁来评判"不再有方向问题：下游
+（``cli`` / ``eval``）都从 core 取用，**core 不反向导入任何上层模块**
+（``tests/test_ast_boundary.py`` 把 ``core → cli`` / ``core → eval`` / ``core → ripple``
+判为跨层违规）。**2026-09-29 D-03 修复**：修复前 core 通过延迟导入
+``cli.gpu_monitor.probe_gpu_inventory`` 与 ``eval.guard`` / ``ripple.reward`` 取默认值，
+构成 ``core → {cli, eval, ripple}`` 反向依赖；现在方向是 ``{cli, eval} → core``（合法）。
+:func:`require_gpu_lock_or_exit` 仍接受 ``inventory_probe=`` 注入，未注入时才用本模块
+的 :func:`probe_gpu_inventory`——注入点与判据都没变，只是默认值的来源方向变对了。
 """
 
 from __future__ import annotations
 
 import os
+import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+
+from pydantic import BaseModel, ConfigDict
 
 # ── 安全边界常量（单一真相源，§1.4）────────────────────────────────────────
 #: 允许索引的**配置来源**（环境变量）：取值形如 ``"0,1,2,3"``。
@@ -382,7 +396,7 @@ def assert_gpu_lock(
 
 @dataclass(frozen=True)
 class GpuInventory:
-    """容器内**实测可见卡**的探针结果（见 ``cli/gpu_monitor.probe_gpu_inventory``）。
+    """容器内**实测可见卡**的探针结果（见 :func:`probe_gpu_inventory`）。
 
     "实测"意味着不信任环境变量：runtime 会重编号，容器内本地序号与宿主卡号
     可以完全不同（宿主 GPU2 → 容器 index 0）。这里只带**容器命名空间内**的
@@ -397,6 +411,72 @@ class GpuInventory:
     source: str
     count: int
     indices: tuple[int, ...] = ()
+
+
+# ── 可见卡探测（本模块唯一的设施入口；2026-09-29 由 cli/gpu_monitor.py 下沉）──
+# 为什么下沉：修复前 core/gpu_guard 通过延迟导入 ``cli.gpu_monitor.probe_gpu_inventory``
+# 拿默认探测回调，构成 core → cli 反向依赖（AST 边界测试判为跨层环，D-03）。
+# 探测本身是"读本机事实"的设施动作，规则部分（上面的判定函数）仍保持纯计算。
+# ``cli/gpu_monitor.py`` 保留同名转发，既有 `graspo.cli.gpu_monitor.probe_gpu_inventory`
+# 导入路径零破坏。
+
+
+def parse_visible_device_indices(text: str) -> tuple[int, ...]:
+    """从 ``nvidia-smi -L`` 输出解析**容器内本地序号**（探测可见卡的唯一入口）。
+
+    ``-L`` 每个可见卡一行（``GPU 0: NVIDIA ... (UUID: GPU-xxx)``）。行首序号即
+    容器命名空间里的本地 index——runtime 重编号后，宿主卡号在这里是看不到的
+    （这正是 F-2 的根因：不能拿宿主卡号去查容器内的卡）。
+
+    :raises RuntimeError: 行结构与 ``GPU <n>:`` 不符——宁可 fail-closed，
+        也不要猜出一组卡号去查。
+    """
+    indices: list[int] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if not stripped.startswith("GPU ") or ":" not in stripped:
+            raise RuntimeError(f"无法解析 nvidia-smi -L 行：{line!r}")
+        head = stripped[len("GPU ") :].split(":", 1)[0].strip()
+        if not head.isdigit():
+            raise RuntimeError(f"无法解析 nvidia-smi -L 卡号：{line!r}")
+        indices.append(int(head))
+    return tuple(indices)
+
+
+def probe_gpu_inventory(
+    runner: Callable[[list[str]], str] | None = None,
+) -> GpuInventory:
+    """实测容器内**可见卡**（F-1/F-2 的设施层入口）。
+
+    用 ``nvidia-smi -L``（结构稳定：每个可见卡一行）数卡并取容器内本地序号。
+    ``-L`` 不接受 ``-i``，但它天然只列**可见**卡——这正是我们要的口径
+    （不要 ``--query-gpu`` 的全卡枚举语义）。带 ``-i`` 的查询仍由
+    ``cli/gpu_monitor.build_gpu_query_command`` 唯一构造（采样路径）。
+
+    :param runner: 命令执行器（接收 argv、返回 stdout）；默认走 ``subprocess``。
+    :raises RuntimeError: ``nvidia-smi`` 不在或执行失败——调用方必须 fail-closed。
+    """
+    command = ["nvidia-smi", "-L"]
+    if runner is None:
+        try:
+            completed = subprocess.run(command, check=False, capture_output=True, text=True)
+        except FileNotFoundError as exc:
+            raise RuntimeError(f"nvidia-smi 不可用：{exc}") from None
+        if completed.returncode != 0:
+            raise RuntimeError(
+                f"nvidia-smi -L 失败（rc={completed.returncode}）：{completed.stderr.strip()[:200]}"
+            )
+        stdout = completed.stdout
+    else:
+        stdout = runner(command)
+    indices = parse_visible_device_indices(stdout)
+    return GpuInventory(
+        source="nvidia-smi -L",
+        count=len(indices),
+        indices=indices,
+    )
 
 
 @dataclass(frozen=True)
@@ -604,8 +684,8 @@ def require_gpu_lock_or_exit(
     "容器内 runtime ``void`` + 实测可见卡"两种来源（F-1）。
 
     :param env: 环境映射（``None`` = ``os.environ``）；允许/保留集合也从这里解析。
-    :param inventory_probe: 探测容器内实测可见卡的可调用对象；``None`` 时用
-        ``cli.gpu_monitor.probe_gpu_inventory``（延迟导入，避免本模块依赖设施层）。
+    :param inventory_probe: 探测容器内实测可见卡的可调用对象；``None`` 时用本模块的
+        :func:`probe_gpu_inventory`（``nvidia-smi -L``）。
         仅在 ``NVIDIA_VISIBLE_DEVICES`` 是 runtime 哨兵值时才会被调用。
     :raises SystemExit: 守卫拒绝（退出码 1，消息原样打印到 stderr）。
     """
@@ -649,8 +729,6 @@ def _probe_inventory_for(
     if not needs_inventory:
         return None
     if probe is None:
-        from graspo.cli.gpu_monitor import probe_gpu_inventory  # noqa: PLC0415
-
         probe = probe_gpu_inventory
     try:
         return probe()
@@ -783,3 +861,69 @@ def assert_gpu_idle(
         "或等它空下来——绝不 kill 他人进程、绝不与生产任务混跑（混跑会让显存数字与"
         "训练结果都不可信）。",
     )
+
+
+# ── 评测链路的卡计划契约（2026-09-29 由 eval/guard.py 下沉）──────────────────
+# 为什么下沉：判定规则必须只有一份（§1.4 单一真相源），且 core 不能反向导入
+# ``eval.guard``（跨层环，D-03）。``eval/guard.py`` 保留同名转发，既有
+# `graspo.eval.guard.GpuGuardError` / `GpuPlan` / `resolve_gpu_plan` 导入路径零破坏。
+# 这三个名字都不做设施调用（只有格式转换 + 转发 assert_gpu_lock），是纯契约。
+
+
+class GpuGuardError(RuntimeError):
+    """评测链路的锁卡/采样失败。调用方必须让它终止流程——不要 catch 后继续跑。
+
+    ``GpuLockError``（规则层）在 :func:`resolve_gpu_plan` 里被转成本异常，
+    这样评测链路的调用方只需捕获一种异常类型；规则文案原样保留。
+    """
+
+
+class GpuPlan(BaseModel):
+    """一次 GPU 任务的锁卡计划。构造即校验，非法组合不可能存在。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    #: 显式指定的物理卡索引（保持调用方给出的顺序）。
+    devices: tuple[int, ...]
+
+    @property
+    def count(self) -> int:
+        return len(self.devices)
+
+    @property
+    def csv(self) -> str:
+        """逗号分隔形式，用于 ``NVIDIA_VISIBLE_DEVICES`` / ``docker --gpus=``。"""
+        return ",".join(str(index) for index in self.devices)
+
+    def docker_gpus_flag(self) -> str:
+        """Docker ``--gpus`` 取值。用 ``device=0,1`` 形式（不是 ``all``）。"""
+        return f'"device={self.csv}"'
+
+
+def parse_gpu_plan(raw: str | None) -> GpuPlan:
+    """把显式卡列表转成 ``GpuPlan``；规则校验交给 :func:`assert_gpu_lock`。
+
+    Args:
+        raw: 形如 ``"0,1"`` 的字符串。``None`` / 空串 = 未显式指定 → 拒绝。
+
+    Returns:
+        ``GpuPlan``。
+
+    Raises:
+        GpuGuardError: 规则层拒绝（未指定 / 含生产卡 / 卡数超限 / 取值非法）。
+    """
+    try:
+        devices = assert_gpu_lock(raw)
+    except GpuLockError as exc:
+        raise GpuGuardError(str(exc)) from None
+    return GpuPlan(devices=devices)
+
+
+def resolve_gpu_plan(raw: str | None) -> GpuPlan:
+    """从**配置**解析卡计划。
+
+    与 :func:`parse_gpu_plan` 同义，但语义上强调"卡计划只来自配置"（宪法 §7.1
+    单一配置入口）：不接受环境变量、不接受隐式默认值。分开命名是为了让调用点
+    一眼看出"这里的卡来自 config"，而不是某个散落的环境变量。
+    """
+    return parse_gpu_plan(raw)
