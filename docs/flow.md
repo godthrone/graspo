@@ -506,6 +506,8 @@ PP 的流水线架构（异步 P2P + 可插拔调度）对用户透明——调�
 
 （另有**一项已复核的引用**按 §2 处理、不计入上表：`accelerate/accelerator.py:2982-2986` —— 复核副本的 sha256 / 1.14.0 / 4359 行见 §2「证据归属与版本」。）
 
+> **另注（已知旧名属预期）**：`_tools/*manifest*.json` 等清单里的 `"generator"` 字段是**历史路径**（生成器已改名，记录的是已发生跑次的溯源），`git grep` 到旧名属预期，**不是待修引用**；依据见 `_tools/KNOWN-DEVIATIONS.md` 文末「冻结件内有意保留…」附表。
+
 ### B 档：经报告转述 / 需联网（2 项）
 
 1. **ms-swift issue #3930**：正文 §2 引用它作为"DeepSpeed 侧 grad_norm 陈旧"的同类反馈，但本工位无外网、打不开 issue 页面，其内容依赖 `task-msswift-naninf-study/report.md` 的转述——**不是本仓可复核的事实**。
