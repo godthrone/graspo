@@ -1,6 +1,6 @@
 """``tests/trainmethod`` 的收集期垫片：让 CPT / OPD 通道的**纯逻辑**测试在本机无 torch 时可跑。
 
-**为什么要它**：``graspo/__init__.py`` → ``graspo.ripple.algorithm`` → ``torch``；
+**为什么要它**：``graspo/__init__.py`` → ``graspo.ripple.algorithm_core`` → ``torch``；
 ``graspo/flow/__init__.py`` → ``graspo.flow.runtime`` → ``torch``。本机（开发机）没有
 torch，因此任何 ``import graspo.*`` / ``import graspo.flow.*`` 都会在**收集期**失败。
 但本目录断言的全是**纯计算**：配置模型校验、``(train_method, backend)`` 路由解析、

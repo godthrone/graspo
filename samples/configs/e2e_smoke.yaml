@@ -3,7 +3,7 @@ train_method: graspo
 backend: native
 
 model:
-  model_path: /data/user/models/Qwen3.5-9B
+  model_path: models/Qwen3.5-9B
   trust_remote_code: true
   torch_dtype: bfloat16
   gradient_checkpointing: true

@@ -1891,7 +1891,7 @@ DOCKER_ARGS=(
     #   **训练开始前**就 PermissionError（228 实测：rank0 exit 1，训练一步没跑）。
     #   ★ 逐项由数组展开，本处**不写任何路径字面量** —— 根治"补了三个、漏了第四个"的漂移。
     #   ★ USER/LOGNAME（见 generate_matrix.py::CONTAINER_USER_NAME 的单一真相源）：
-    #   镜像 /etc/passwd 里没有宿主的这个 uid ⇒ `getpass.getuser()` 落到 pwd.getpwuid 会
+    #   镜像的 `passwd` 用户库里没有宿主的这个 uid ⇒ `getpass.getuser()` 落到 pwd.getpwuid 会
     #   KeyError（ms-swift/deepspeed/wandb 启动横幅都调它）。给中性值兜住，同时避免把
     #   宿主账号名注入容器产物（§15.1/§16：账号名属环境信息）。
     -e "USER=graspo"
