@@ -138,7 +138,8 @@ DIAGNOSTIC_PHASES: frozenset[str] = frozenset(
 #:
 #: 本常量 = 上述声明的 native 支路在**可执行代码里的唯一落点**；后端→口径的**唯一映射**
 #: 见 :data:`PEAK_MEMORY_CALIBER_BY_BACKEND`（改口径 = 改那一处 + 同步
-#: `docs/capability-matrix.md` §7 峰值列脚注；两处之外不得再出现第三份口径定义）。
+#: `docs/capability-matrix.html` 的峰值列口径（§3 字段说明；实测值见 §6 表）；
+#: 两处之外不得再出现第三份口径定义）。
 #:
 #: 训练侧落点（allocator 值怎么来的）：
 #:   `src/graspo/flow/parallel/tensor_utils.py:_cuda_memory_snapshot`
@@ -271,7 +272,7 @@ REQUIRED_ARTIFACTS: tuple[str, ...] = (
     "metrics",
 )
 
-#: 正式记录门槛（capability-matrix §6）：≥1 epoch 且 ≥5 optimizer step。
+#: 正式记录门槛（capability-matrix.html §6）：≥1 epoch 且 ≥5 optimizer step。
 #:
 #: ★ 这是**缺省值**（清单未给门槛时用它），**不是**唯一真相源。权威值在
 #: 清单 ``tiers[*].acceptance.formal_gate.min_optimizer_steps``——由采集层读出后
@@ -2848,7 +2849,7 @@ def ledger_row(
     msswift_reserved_peak_gib: float | None = None,
     peak_memory_caliber: str | None = None,
 ) -> dict[str, object]:
-    """把判定落成 capability-matrix §7 台账的一行（可直接填表）。
+    """把判定落成 capability-matrix.html §6 台账的一行（可直接填表）。
 
     **``peak_memory_gib`` 的口径（§9.1 二分口径，2026-09-21 指挥官裁定「方案 A」）**：
     **按本档 ``backend`` 决定**，映射的唯一真相源是

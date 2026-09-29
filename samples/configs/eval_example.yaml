@@ -16,9 +16,11 @@
 # 防呆设计（不要绕过）：
 #   * `temperature` **不是**配置字段——温度在代码里锁成常量 0。历史口径用 0.1 时，
 #     同一份权重复测出现过 ±1.6pp 抖动，与达标余量同阶。
-#   * `gpus` 必须显式写（如 "0,1"）：取值 ⊆ {0,1,2,3,4,5}、卡数 ≤ 4。
-#     留空会**拒绝启动**——目标 GPU 服务器上 GPU 6/7 被常驻生产 vLLM 占死，
-#     不存在安全默认值。机器清单见 `infra` skill / `.local/` 下的环境记录。
+#   * `gpus` 必须显式写（如 "4,5"）：取值 ⊆ **生效的允许集合**、卡数 ≤ 4，留空会
+#     **拒绝启动**——不存在"顺手挑张空闲卡"的安全默认值。生效集合的规则唯一来源是
+#     `src/graspo/core/gpu_guard.py`：默认 `{4,5,6,7}`、上限 4 张、默认保留集合为空，
+#     可用环境变量 `GRASPO_ALLOWED_GPU_INDICES` / `GRASPO_RESERVED_GPU_INDICES` 覆盖。
+#     下面的示例值取自默认允许集合；换机器请按你那里的集合改。
 #   * `output_dir` 必须在 `.local/` 下：产物含宿主路径与 GPU 编号，不入 git。
 #   * `output_dir` / `merged_output_dir` 必须是**绝对路径**（相对路径会被拒绝）：
 #     相对路径的落点随进程 cwd 漂移。历史事故：容器里 cwd 与挂载点不一致时
@@ -66,10 +68,10 @@ eval:
   # 服务
   endpoint: http://127.0.0.1:18889
   served_model_name: graspo-eval    # 必须与 eval_serve_vllm.sh 的 EVAL_SERVED_NAME 一致
-  gpus: "0,1"                       # 显式锁卡；留空 = 拒绝启动
+  gpus: "4,5"                       # 显式锁卡；留空 = 拒绝启动（取值须在生效允许集合内）
   max_workers: 8
   seed: 42
 
-  # 判据阈值（口径见 docs/capability-matrix.md §8）
+  # 判据阈值（下方每项随行注明含义与取值口径）
   graspo_threshold_pp: 20.0         # GRASPO: Δ ≥ 20 个百分点（绝对百分点）
   sft_threshold_percent: 50.0       # SFT: 综合准确率 ≥ 50%

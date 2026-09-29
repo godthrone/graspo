@@ -35,8 +35,9 @@ ARD→graspo 转换（那份契约是数据集侧的），也不产生"教师 lo
 ``Qwen3.5-9B``；教师路径来自**后端中立**的 ``distill.teacher_model_path``
 （§1.4 单一真相源），学生就是既有的 ``model.model_path``——不发明第二个字段。
 
-**已知边界**：native 后端**没有** OPD 实现（``docs/capability-matrix.md`` §4
-「OPD · native」= ``⛔ 不支持``），配置层对 ``train_method: opd`` +
+**已知边界**：native 后端**没有** OPD 实现（OPD · native = ``⛔ 不支持``；
+原引用件 ``docs/capability-matrix.md`` 已删，现行权威件
+``docs/capability-matrix.html`` 不含该后端支持矩阵），配置层对 ``train_method: opd`` +
 ``backend: native`` **fail-closed**。
 
 **前置条件不是"伪造通过"**：ms-swift 未安装时抛 ``RuntimeError`` 并指明缺什么。
@@ -54,7 +55,7 @@ logger = logging.getLogger(__name__)
 MS_SWIFT_OPD_PREREQUISITE = (
     "backend='msswift' OPD (on-policy distillation, GKD) requires the ms-swift package "
     "(pip install graspo[msswift]). OPD has no native implementation "
-    "(docs/capability-matrix.md §4: OPD · native is unsupported)."
+    "(OPD · native is unsupported)."
 )
 
 

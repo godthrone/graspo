@@ -23,7 +23,8 @@ graspo 提供的是**数据形态**（``dataset.py::build_cpt_rows``）与**参�
 （``_config_mapping.py`` 的 ``stage="cpt"`` 分支），算法本体不重复实现（§1.3）。
 
 **已知边界（如实声明，不假装支持）**：native 后端**没有** CPT 实现
-（``docs/capability-matrix.md`` §4「CPT · native」= ``⛔ 不支持``），因此这条通道
+（CPT · native = ``⛔ 不支持``；原引用件 ``docs/capability-matrix.md`` 已删，
+现行权威件 ``docs/capability-matrix.html`` 不含该后端支持矩阵），因此这条通道
 只有 ms-swift 一个实现；配置层对 ``train_method: cpt`` + ``backend: native``
 **fail-closed**（``core/schema.py::validate_train_method_combination``）。
 
@@ -43,7 +44,7 @@ logger = logging.getLogger(__name__)
 MS_SWIFT_CPT_PREREQUISITE = (
     "backend='msswift' CPT (continued pre-training) requires the ms-swift package "
     "(pip install graspo[msswift]). CPT has no native implementation "
-    "(docs/capability-matrix.md §4: CPT · native is unsupported)."
+    "(CPT · native is unsupported)."
 )
 
 
