@@ -4,8 +4,8 @@
 用途
 ----
 从 ELAM V5 balanced 训练集（`data/train.jsonl`，全程只读）中挑出**最短的 N 条**
-多模态样本，产出逐字节原样的 mini JSONL，供 `tests/e2e/run_matrix54.sh` 这类
-矩阵 runner 在容器内做「跑通实测」——把数据量压到最小以缩短单档验证时间。
+多模态样本，产出逐字节原样的 mini JSONL，供跑批脚本这类 runner 在容器内做
+「跑通实测」——把数据量压到最小以缩短单档验证时间。
 
 排序规则
 --------

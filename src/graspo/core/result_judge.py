@@ -138,8 +138,7 @@ DIAGNOSTIC_PHASES: frozenset[str] = frozenset(
 #:
 #: 本常量 = 上述声明的 native 支路在**可执行代码里的唯一落点**；后端→口径的**唯一映射**
 #: 见 :data:`PEAK_MEMORY_CALIBER_BY_BACKEND`（改口径 = 改那一处 + 同步
-#: `docs/capability-matrix.html` 的峰值列口径（§3 字段说明；实测值见 §6 表）；
-#: 两处之外不得再出现第三份口径定义）。
+#: 逐档台账的峰值列口径；两处之外不得再出现第三份口径定义）。
 #:
 #: 训练侧落点（allocator 值怎么来的）：
 #:   `src/graspo/flow/parallel/tensor_utils.py:_cuda_memory_snapshot`
@@ -272,7 +271,7 @@ REQUIRED_ARTIFACTS: tuple[str, ...] = (
     "metrics",
 )
 
-#: 正式记录门槛（capability-matrix.html §6）：≥1 epoch 且 ≥5 optimizer step。
+#: 正式记录门槛：≥1 epoch 且 ≥5 optimizer step。
 #:
 #: ★ 这是**缺省值**（清单未给门槛时用它），**不是**唯一真相源。权威值在
 #: 清单 ``tiers[*].acceptance.formal_gate.min_optimizer_steps``——由采集层读出后
@@ -285,10 +284,8 @@ MIN_OPTIMIZER_STEPS = 5
 
 #: ★ **已核实的口径债（AF1 §⑧-5 / 本包 §⑧，2026-09-21 登记，未改任何行为）**：
 #: 清单 ``acceptance.formal_gate`` 里另有 ``min_epochs`` 与 ``min_train_samples`` 两个键，
-#: **全仓没有任何消费点**——它们只被写（``tests/e2e/generate_matrix.py`` 与
-#: ``tests/e2e/rig_synth/emit_manifests.py``），没有任何判据或采集逻辑读它们
-#: （机核见 ``tests/e2e/test_generate_matrix.py::test_min_train_samples_and_min_epochs_are_declared_orphans``，
-#: 用 ``ast`` 证明本模块不读这两个键）。
+#: **全仓没有任何消费点**——它们只被写（清单生成侧），没有任何判据或采集逻辑读它们
+#: （机核：用 ``ast`` 证明本模块不读这两个键）。
 #: ⇒ **它们是纯声明字段（orphan）**，读者不应把它们当成"已生效的门槛"。
 #: 本包**不**给它们加消费点：加 ``min_epochs`` 断言会改变既有 A2 通过集
 #: （``RunEvidence.epochs_completed`` 在既有读数上不一定可靠），属**收紧判据**，
@@ -360,7 +357,7 @@ A4_MEASURED_BF16_FINAL_LOSS_DRIFT = 1.0302e-3
 #:
 #: ★ **n=5 不是统计意义上的容差上界**：分布无关的单侧 95% 覆盖 / 90% 置信区间需
 #: n = ln(0.10)/ln(0.95) ≈ 45 个样本；`A4_WORST_PAIR_SAFETY_FACTOR = 1.5` 是**工程安全余量**
-#: （人工判断常数），不是从分布推出的分位数。口径说明见 `docs/a4-tolerance-calibration.md`。
+#: （人工判断常数），不是从分布推出的分位数。
 
 #: 全库硬上界（锁一）：AD1 点名的最小真 bug 签名 / 2。任何档族容差都不得越过它。
 A4_TOLERANCE_HARD_UPPER_BOUND = 4.675e-2
@@ -466,14 +463,13 @@ A4_OUTCOME_DEGENERATE = "degenerate"
 
 #: ── 算法名的**显式等价**映射（2026-09-22 指挥官 J5 裁定）────────────────────────
 #:
-#: 清单侧把 RL 档写作 ``GRASPO``（唯一真相源是生成器
-#: ``tests/e2e/generate_matrix.py`` 的 ``_block("GRASPO", …)``），而 A4 标定表把
+#: 清单侧把 RL 档写作 ``GRASPO``（唯一真相源是清单生成侧的 ``_block("GRASPO", …)``），
+#: 而 A4 标定表把
 #: 同一条 RL 机制的实测读数记作 ``GRPO``（GRASPO = GRPO trainer + graspo reward，
 #: 见 ``scripts/collect_results.py`` 由清单逐字透传 algorithm、**不做归一**）。
 #:
-#: 为什么用**显式映射**而不是改生成器：改生成器会连带 rmtree+重写
-#: ``samples/configs/matrix54/`` 与 ``run_matrix54.sh`` ⇒ 228 上已跑批次的清单指纹
-#: 全部失效（``task-matrix-driver/run-plan.md`` §⑨ 记录）。改判定器只动取数入口，
+#: 为什么用**显式映射**而不是改生成器：改生成器会连带 rmtree + 重写档位配置与
+#: 跑批脚本 ⇒ 已跑批次的清单指纹**全部失效**。改判定器只动取数入口，
 #: **不放宽任何判据**——映射只声明一条已文档化的等价。
 #:
 #: ★ 边界（§2.2 显式即防呆）：只做**精确串**映射，不做大小写归一、不做前缀匹配、
@@ -1162,7 +1158,7 @@ class FailureClass(StrEnum):
     #: ``Watchdog caught collective operation timeout`` + ``DistBackendError``
     #: ⇒ T035 被迫落 ``UNCLASSIFIED``。单列还能自证"各 rank 步调不一致"这一**修法方向**，
     #: 而``通信硬件``会把人引向换卡/查线。
-    #: 取值与跑批装置（``rig/matrix_batch_driver.py``）**逐字一致**（同一口径两个消费者）。
+    #: 取值与跑批装置的对应常量**逐字一致**（同一口径两个消费者）。
     NCCL_COLLECTIVE_TIMEOUT = "nccl_collective_timeout（集合通信超时 ⇒ PP/DP 各 rank 步调不一致）"
     #: ★ 新增（2026-09-22 指挥官裁定）：**PP 流水线 P2P 通信超时**，退出码 **86**。
     #: 类名逐字取自裁定（跨工具口径一致）。判据**优先按退出码**——因为 torchrun/弹性启动
@@ -1542,9 +1538,9 @@ LEDGER_INDETERMINATE = "⚠ 口径不可测"
 LEDGER_GATE_NOT_APPLICABLE = "⚠ 口径不可测"   # 与 LEDGER_INDETERMINATE 同字：都是"测不了"，理由写在 note
 #: ★ **当前无配方、将来可能做得了**（blocked）——**不得**与"逻辑上不适用"或"还没跑"混同
 #: （2026-09-22 指挥官裁定：用户专门问过这几个词的区别，塌成一个词是信息量倒退）。
-#: 判据来源必须可查：`samples/configs/matrix54/<T>.blocked.md`。
+#: 判据来源必须可查（档位状态说明件里写明"无配方"的理由）。
 LEDGER_NO_RECIPE = "⛔ 无配方"
-#: ★ **逻辑上不适用**（not_applicable）。判据来源：`samples/configs/matrix54/<T>.not_applicable.md`。
+#: ★ **逻辑上不适用**（not_applicable）。判据来源：档位状态说明件里写明"逻辑上不适用"。
 LEDGER_NOT_APPLICABLE = "⛔ 不适用"
 #: **尚未纳入跑批**。
 LEDGER_UNTESTED = "— 未测"
@@ -1694,8 +1690,8 @@ def resolve_min_optimizer_steps(raw: int | None) -> tuple[int | None, str | None
 #: :attr:`CriterionResult.detail` 的**开头**。:func:`judge_tier` 靠它把第三态从
 #: "阻断项"里移出单列；采集层/台账读者也靠它在文本里一眼分辨
 #: "⚠ 口径不可测" 与 "❌ 训练失败"。
-#: 与生成器侧 ``generate_matrix.STEP_GATE_NOT_APPLICABLE_STRUCTURAL`` 是**同一件事的
-#: 两侧**：清单标"该档门槛不适用"，判据据此产出第三态（防漂移测试见
+#: 与清单生成侧的 ``STEP_GATE_NOT_APPLICABLE_STRUCTURAL`` 是**同一件事的两侧**：
+#: 清单标"该档门槛不适用"，判据据此产出第三态（防漂移测试见
 #: ``tests/core/test_result_judge_threshold.py``）。
 STEP_GATE_NOT_APPLICABLE_MARKER = "⚠ 口径不可测"
 
@@ -2849,7 +2845,7 @@ def ledger_row(
     msswift_reserved_peak_gib: float | None = None,
     peak_memory_caliber: str | None = None,
 ) -> dict[str, object]:
-    """把判定落成 capability-matrix.html §6 台账的一行（可直接填表）。
+    """把判定落成逐档台账的一行（可直接填表）。
 
     **``peak_memory_gib`` 的口径（§9.1 二分口径，2026-09-21 指挥官裁定「方案 A」）**：
     **按本档 ``backend`` 决定**，映射的唯一真相源是

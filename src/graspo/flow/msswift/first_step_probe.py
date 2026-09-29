@@ -592,7 +592,7 @@ def probe_extra_argv(enabled: bool) -> list[str]:
     #   ③四条 ms-swift 通道**已在此处接线**（`extra_argv += probe_active_extra_argv()`）；
     #   ④门是 **CLI/env**（`--determinism --determinism-probe-first-step`，
     #   经 `GRASPO_DETERMINISM` → `--determinism-spec`）⇒ **不动任何生成物**
-    #   （`samples/configs/matrix54/*.yaml` 是生成物，手改违规、228 禁跑生成器）。
+    #   （档位 YAML 是生成物，手改违规、生成器禁跑）。
     #   **探针关闭 ⇒ 本函数返回 `[]` ⇒ 逐字零行为变化**（默认关，既有跑次不受影响）。
     return ["--callbacks", PROBE_CALLBACK_NAME, "--logging_steps", "1"]
 

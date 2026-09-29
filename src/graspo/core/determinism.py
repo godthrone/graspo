@@ -126,7 +126,7 @@ class DeterminismTorchKnob:
 
 #: ── 环境变量型开关清单（**唯一真相源**，§1.4）───────────────────────────────
 #: 渲染点只有 :func:`determinism_env_delta` 一处（"表 + 唯一渲染点"范式，
-#: 与 ``tests/e2e/generate_matrix.py::CONTAINER_CACHE_ROOTS`` 同构）。
+#: 与清单生成侧的同类常量表同构）。
 #: 新增开关 = 本表加一行 + :class:`DeterminismSwitch` 加一个同名字段
 #: （两边由 ``tests/core/test_determinism.py`` 的同步测试守住，不靠人记）。
 DETERMINISM_ENV_KNOBS: tuple[DeterminismEnvKnob, ...] = (

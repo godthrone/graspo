@@ -5,7 +5,7 @@
 #
 # 为什么用派生镜像（而非从头重建）：
 #   · 基座 = 已冻结并全程用于 r1/r2/r3 的矩阵镜像 `graspo:v0.28.11-cu130fix-v2-20260923`
-#     （Image ID `4a7a9e0d336d…`，其 sha256 已记入 matrix54 manifest 快照）；
+#     （Image ID `4a7a9e0d336d…`，其 sha256 已记入当时跑批清单的快照）；
 #   · 派生 ⇒ **除 `mixin.py` 外所有层逐字节相同**，这本身就是「未动其它东西」的结构性证据；
 #   · 成本 O(1)（秒级），不需要重下 8GB base、不触碰任何网络/代理。
 #
@@ -25,7 +25,7 @@ RUN set -eux; \
     echo "NFC PATCH OK"
 
 # 原始备份保留在镜像内（可事后 diff 复原），不删。
-LABEL graspo.image.role="matrix54-rerun-candidate" \
+LABEL graspo.image.role="evidence-rerun-candidate" \
       graspo.patch.name="msswift-nonfinite-grad-step-count" \
       graspo.patch.version="1" \
       graspo.base.image="graspo:v0.28.11-cu130fix-v2-20260923" \

@@ -12,9 +12,7 @@
 5. **不被破坏**：SFT / GRASPO 的 LoRA 与全量两条路径的 argv 与本改动前同形。
 
 判据来源：ms-swift 4.5.3 源码与官方文档（见 ``_config_mapping.py`` 的注释索引），
-以及后端支持矩阵（CPT · native / OPD · native 均不支持；原引用件
-``docs/capability-matrix.md`` 已删，现行权威件 ``docs/capability-matrix.html``
-不含该矩阵）。
+以及配置层的 fail-closed 断言（CPT · native / OPD · native 均不支持）。
 """
 
 from __future__ import annotations

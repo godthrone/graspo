@@ -173,7 +173,7 @@ def test_series_comes_from_rank_metrics_not_stdout(tmp_path):
     #   rank），以避免"只读 rank0 ⇒ rank1 单独跳过时 A7 假通过"。所以**序列层不再给计数**
     #   （None = 该口径不归这一层，不是"0 次"），run 级的正确值见
     #   `test_f4_nan_run_still_fails_open_loop` 的 `record["nonfinite_skips"] == 2`
-    #   （= 逐步求和，与 `_tools/COVERAGE-SEMANTICS.md` §2.4 的"逐步侧 Σ = ledger 侧 Σ"一致）。
+    #   （= 逐步求和，与冻结口径"逐步侧 Σ = ledger 侧 Σ"一致）。
     assert series.nonfinite_skips is None
     # 口径不一致必须被显式记录（rank0 局部 loss=0.0 vs 全局 loss=0.0052）
     assert any("口径不一致" in note for note in series.notes)

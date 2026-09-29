@@ -294,7 +294,7 @@ class TestVisionTokenConsistency:
     def test_b15_full_mode_skips_lora_target_judgement(self) -> None:
         """★ 正向（修复前必失败，正是 T017 的失败态）：全参 + 语言-only 预设 ⇒ 放行。
 
-        全参档按生成器设计**不写** ``lora`` 段（``generate_matrix.py``），
+        全参档按后端设计**不写** ``lora`` 段，
         ``target_preset='language_safe'`` 只是 ``core/schema.py`` 的默认值——
         它不产生任何 LoRA 矩阵，判"LoRA 目标未覆盖视觉塔"无对象可判。
         """

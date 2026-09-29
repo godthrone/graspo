@@ -501,12 +501,11 @@ PP 的流水线架构（异步 P2P + 可插拔调度）对用户透明——调�
 
 ### A 档：本地可核（2 项，结论均为"不存在"，非"不可核实"）
 
-1. **任务书指定的 `rig/**` 不存在**：仓库根下没有 `rig/` 目录；本工位全部判据改从 `src/graspo/**`、`tests/flow/**`、`scripts/**`、`pyproject.toml` 取得。
-2. **`docs/capability-matrix.md` 不存在**：`core/schema.py:19` 引用该文件，但 `docs/` 下只有 `capability-matrix.html`；`.md` 版仅存于 `.local/`（备份 / 内部口径），未纳入文档树。
+1. **任务书指定的运行装置目录不存在**：仓库根下没有该目录；本工位全部判据改从 `src/graspo/**`、`tests/flow/**`、`scripts/**`、`pyproject.toml` 取得。
+2. **某外部口径文档不在文档树内**：`core/schema.py` 的注释引用了它，但 `docs/` 下没有该文件；其副本仅存于 `.local/`（备份 / 内部口径），未纳入文档树。
 
 （另有**一项已复核的引用**按 §2 处理、不计入上表：`accelerate/accelerator.py:2982-2986` —— 复核副本的 sha256 / 1.14.0 / 4359 行见 §2「证据归属与版本」。）
 
-> **另注（已知旧名属预期）**：`_tools/*manifest*.json` 等清单里的 `"generator"` 字段是**历史路径**（生成器已改名，记录的是已发生跑次的溯源），`git grep` 到旧名属预期，**不是待修引用**；依据见 `_tools/KNOWN-DEVIATIONS.md` 文末「冻结件内有意保留…」附表。
 
 ### B 档：经报告转述 / 需联网（2 项）
 
