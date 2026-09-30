@@ -120,9 +120,9 @@ class TestSchemaTemplateCoverageStillHolds:
             Path("samples/configs/config_example.yaml").read_text(encoding="utf-8")
         )
         paths = sorted(module._field_paths(GraspoConfig))
-        # 171 = 167（上一版）+ 4（缺陷 P6：PP rollout 有界等待 / 无进展看门狗 /
-        # 未验证组合闸门 / 末 stage logits 显存预算闸门）。
+        # 172 = 171（上一版）+ 1（2026-09-30：`distill.teacher_model_server`，OPD 教师来源
+        # 二选一——本地冻结模型 `teacher_model_path` 或外部教师服务 URL）。
         # 除计数外判据不放松：仍要求模板全覆盖。
-        assert len(paths) == 171, f"schema 字段路径数变了（{len(paths)}），请复核本断言"
+        assert len(paths) == 172, f"schema 字段路径数变了（{len(paths)}），请复核本断言"
         missing = [path for path in paths if not module._nested_get(example, path)]
         assert missing == [], f"config_example.yaml 缺 schema 字段: {missing}"

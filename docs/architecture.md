@@ -107,9 +107,19 @@ GRASPO（Group Relative Advantage Structured Policy Optimization）是一个**�
 | `opd` | ⛔ 拒绝 | ✅ |
 
 拒绝动作发生在**配置加载**（`validate_train_method_combination`，
-`core/schema.py:67-115`；由 `GraspoConfig` 的 model_validator 调用，`:1061-1074`），
-而不是静默路由到别的训练器。`opd` 还强制要求具体教师路径（`:109-115`，用户 2026-09-18 拍板
-教师 = Qwen3.8-27B、学生 = Qwen3.5-9B）。
+`core/schema.py:70-133`；由 `GraspoConfig` 的 model_validator 调用，`:1124-1137`），
+而不是静默路由到别的训练器。`opd` 还强制要求**具体教师来源**（`:120-133`），
+来源**二选一**：
+
+- `distill.teacher_model_path` —— 训练进程内的本地冻结教师（`--teacher_model`）；
+- `distill.teacher_model_server` —— 外部教师服务地址（`--teacher_model_server`）。
+
+两者**至少给一个**（都不给即拒绝），且**互斥**（同时给即拒绝——`DistillConfig`
+的 model validator，`core/schema.py:585-605`；ms-swift 侧对同设亦显式 raise）。
+**约束语义未放宽**：用户 2026-09-18 拍板"不留教师待定"（教师 = Qwen3.8-27B、
+学生 = Qwen3.5-9B）；**变更依据：2026-09-30 主席裁定走路线 B（教师外挂
+`swift deploy` 服务）⇒ 来源形态由"仅路径"扩展为"路径**或**服务 URL"，
+"必须有具体来源"的约束本身不变**。
 
 `ROLLOUT_TRAIN_METHODS = {"graspo"}`（`core/schema.py:42-48`）：只有 RL 走自回归生成，
 SFT 不采样，CPT/OPD 在 native 侧本就被拒。该常量被 native 的 PP rollout 闸门消费

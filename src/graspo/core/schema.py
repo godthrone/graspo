@@ -72,6 +72,7 @@ def validate_train_method_combination(
     train_method: str,
     backend: str,
     distill_teacher_model_path: str | None,
+    distill_teacher_model_server: str | None = None,
 ) -> None:
     """``train_method`` × ``backend`` × 教师配置的**非法组合**在配置加载时即拒绝。
 
@@ -85,13 +86,20 @@ def validate_train_method_combination(
     - ``backend`` 是**本项目已知的后端之一**、但不在该方法的后端集合里 ⇒ 拒绝。
       非已知后端名（如 ``"thirdparty"``）**不在这里判**——那是
       ``flow/backend_selection.select_backend`` 的职责，避免两处各判一次（§1.4）。
-    - ``train_method == "opd"`` 必须有**具体**的教师模型路径：用户 2026-09-18 拍板
+    - ``train_method == "opd"`` 必须有**具体**的教师**来源**：用户 2026-09-18 拍板
       "教师 = ``Qwen3.8-27B``，学生 = ``Qwen3.5-9B``"，不再留"教师待定"。
+      来源形态有两种、**二选一**（互斥由 :class:`DistillConfig` 的模型校验器 fail-closed）：
+
+      1. ``distill.teacher_model_path`` —— 训练进程内的本地冻结教师（``--teacher_model``）；
+      2. ``distill.teacher_model_server`` —— 外部教师服务地址（``--teacher_model_server``），
+         2026-09-30 主席裁定走"路线 B（教师外挂 ``swift deploy`` 服务）"后新增。
+         **约束语义未放宽**：仍然必须有具体来源，只是形态扩展为"路径**或**服务 URL"。
 
     Args:
         train_method: ``GraspoConfig.train_method`` 的原始值。
         backend: ``GraspoConfig.backend`` 的原始值。
         distill_teacher_model_path: ``distill.teacher_model_path``（``None`` = 未提供）。
+        distill_teacher_model_server: ``distill.teacher_model_server``（``None`` = 未提供）。
 
     Raises:
         ValueError: 命中上述任一非法组合。
@@ -109,13 +117,20 @@ def validate_train_method_combination(
             "CPT and OPD are ms-swift-only capabilities "
             "(they are unsupported on the native backend)."
         )
-    if train_method == "opd" and not (distill_teacher_model_path or "").strip():
-        raise ValueError(
-            "train_method='opd' requires a concrete teacher model: set "
-            "`distill.teacher_model_path` (the user-pinned teacher is Qwen3.8-27B, "
-            "student is Qwen3.5-9B). An empty value is rejected rather than treated as "
-            "'teacher to be decided'."
-        )
+    if train_method == "opd":
+        # 教师**来源**必须具体；形态二选一（路径 or 服务 URL）。空/纯空白串按序列化边界的
+        # "未提供"处理（§2.2 TOML 例外）——与 `DistillConfig` 的互斥校验同一口径（§1.4）。
+        teacher_source = (distill_teacher_model_path or "").strip() or (
+            distill_teacher_model_server or ""
+        ).strip()
+        if not teacher_source:
+            raise ValueError(
+                "train_method='opd' requires a concrete teacher: set "
+                "`distill.teacher_model_path` (local frozen teacher; the user-pinned teacher is "
+                "Qwen3.8-27B, student is Qwen3.5-9B) or `distill.teacher_model_server` "
+                "(external teacher service). An empty value is rejected rather than treated as "
+                "'teacher to be decided'."
+            )
 
 
 def resolve_tuner_type(tuner_type: TunerType | None) -> TunerType:
@@ -516,14 +531,24 @@ class PretrainConfig(BaseModel):
 class DistillConfig(BaseModel):
     """OPD（on-policy 蒸馏）的**教师 / 学生**配置 —— **后端中立**（宪法 §1.4）。
 
-    教师是**具体、可配置的模型路径**，不是"待定"：用户 2026-09-18 拍板
+    教师是**具体、可配置的来源**，不是"待定"：用户 2026-09-18 拍板
     教师 = ``Qwen3.8-27B``、学生 = ``Qwen3.5-9B``；``train_method: opd`` 时
-    :func:`validate_train_method_combination` 强制 ``teacher_model_path`` 非空。
+    :func:`validate_train_method_combination` 强制**至少给出一个教师来源**。
+
+    **教师来源二选一（互斥）** —— 两种形态在语义上是同一个"教师"的两种接入方式，
+    因此放在同一个模型里、由 :meth:`_validate_teacher_source_exclusivity` fail-closed：
+
+    1. :attr:`teacher_model_path` —— 训练进程内的**本地冻结教师**（``--teacher_model``）；
+    2. :attr:`teacher_model_server` —— **外部教师服务**地址（``--teacher_model_server``），
+       2026-09-30 主席裁定走"路线 B（教师外挂 ``swift deploy`` 服务）"后新增。
+       两者同时给会被 ms-swift 显式拒绝（``swift/arguments/rlhf_args.py:415-416``，
+       Megatron 侧同义）⇒ 在配置边界就拒绝，不流到后端才炸（§2.3）。
 
     **学生**就是既有的 ``model.model_path``（GraspoConfig 顶层已有字段）——
     不为它再发明第二个字段（同一语义只有一个字段，§1.4）。
-    教师 logprob 由教师模型**现场前向**算出（教师是同一训练进程里的独立冻结模型），
-    因此**没有**"教师 logprob 数据列"这种契约，见本包 report §④ 的缺口登记。
+    教师 logprob 由教师模型**现场前向**算出（教师是同一训练进程里的独立冻结模型，
+    或外部教师服务的 API 返回值），因此**没有**"教师 logprob 数据列"这种契约，
+    见本包 report §④ 的缺口登记。
 
     字段名与 ms-swift ``TeacherModelArguments`` / GKD 超参名**逐字对应**：这样
     "配置字段 → 后端参数"的映射不需要猜名字（宪法 §2.2 显式即防呆）。
@@ -531,8 +556,12 @@ class DistillConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    #: 教师模型路径（`--teacher_model`）。``None`` = 未提供 ⇒ OPD 配置非法（见上）。
+    #: 教师模型路径（`--teacher_model`）。``None`` = 未走本地教师（须给服务地址，见上）。
     teacher_model_path: str | None = None
+    #: 外部教师服务地址（`--teacher_model_server`）：单 URL（如 ``http://127.0.0.1:16889``）
+    #: 或 ms-swift 的多教师 JSON 列表（``[{"url": …, "tags": […]}]``）。
+    #: ``None`` = 未启用外部教师服务（教师走 :attr:`teacher_model_path`）。
+    teacher_model_server: str | None = None
     #: 教师 LoRA 适配器路径列表（`--teacher_adapters`）。``None`` = 未提供（不透传）。
     teacher_adapters: list[str] | None = None
     #: 教师模型的 DeepSpeed 配置（`--teacher_deepspeed`）。``None`` = 继承学生侧。
@@ -541,6 +570,8 @@ class DistillConfig(BaseModel):
     #: ``None`` = 未提供（交后端默认值 = 不换出），与显式 ``false`` 语义不同。
     offload_teacher_model: bool | None = None
     #: GKD 的 top-k logits 粒度（`--gkd_logits_topk`）。``None`` = 全词表。
+    #: ⚠ 走 :attr:`teacher_model_server`（外部服务）时**上游强制要求非 None**
+    #: （API 只回 top-k logprobs；`swift/arguments/rlhf_args.py:762-765`）。
     gkd_logits_topk: int | None = None
     #: GKD 的 lambda（`--lmbda`）。``None`` = 交后端默认值。
     lmbda: float | None = None
@@ -549,6 +580,29 @@ class DistillConfig(BaseModel):
     #: 教师-学生散度插值系数（`--beta`：0=前向 KL，1=反向 KL，0.5=JSD）。
     #: ``None`` = 交后端默认值（ms-swift GKD 默认 0.5），不在这里发明取值。
     beta: float | None = None
+
+    @model_validator(mode="after")
+    def _validate_teacher_source_exclusivity(self) -> DistillConfig:
+        """教师**来源二选一**：本地冻结模型（路径）或外部教师服务（URL）——**不许同设**。
+
+        ms-swift 4.5.3 对两者同时设置**显式报错**
+        （``swift/arguments/rlhf_args.py:415-416``；Megatron 侧同义于
+        ``swift/megatron/arguments/megatron_args.py:351-352``）⇒ 在配置边界就
+        fail-closed，不让非法组合流到后端才炸（宪法 §2.3 边界校验即防呆）。
+
+        空/纯空白串按序列化边界的"未提供"处理（§2.2 TOML 例外），与
+        :func:`validate_train_method_combination` 判定"来源是否存在"的口径一致（§1.4）。
+        """
+        teacher_path = (self.teacher_model_path or "").strip()
+        teacher_server = (self.teacher_model_server or "").strip()
+        if teacher_path and teacher_server:
+            raise ValueError(
+                "distill.teacher_model_path and distill.teacher_model_server are mutually "
+                "exclusive: ms-swift rejects setting both `--teacher_model` and "
+                "`--teacher_model_server`. Set exactly one teacher source — a local frozen "
+                "model path, or the URL of an external teacher service."
+            )
+        return self
 
 
 class GraspoFlowConfig(BaseModel):
@@ -1078,6 +1132,7 @@ class GraspoConfig(BaseModel):
             train_method=self.train_method,
             backend=self.backend,
             distill_teacher_model_path=self.distill.teacher_model_path,
+            distill_teacher_model_server=self.distill.teacher_model_server,
         )
         return self
 

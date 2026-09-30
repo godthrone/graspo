@@ -562,7 +562,14 @@ def graspo_to_ms_swift_argv(
         # 取值来源唯一：`config.distill`（后端中立段，§1.4）——**不读 `msswift` 段**。
         argv.extend(["--rlhf_type", "gkd"])
         distill = config.distill
-        _extend(argv, "teacher_model", distill.teacher_model_path)
+        # 教师**来源二选一**（§2.3）：本地冻结模型走 `--teacher_model`，外部教师服务走
+        # `--teacher_model_server`。互斥在 `DistillConfig` 的模型校验器里已 fail-closed
+        # （`core/schema.py`；上游 `swift/arguments/rlhf_args.py:415-416` 对同设亦显式 raise），
+        # 这里只按"给了哪个"透传——判定只有一处真相源（§1.4），不在这里再判一次。
+        if distill.teacher_model_server is not None:
+            _extend(argv, "teacher_model_server", distill.teacher_model_server)
+        else:
+            _extend(argv, "teacher_model", distill.teacher_model_path)
         _extend(argv, "teacher_adapters", distill.teacher_adapters)
         _extend(argv, "teacher_deepspeed", distill.teacher_deepspeed)
         _extend(argv, "offload_teacher_model", distill.offload_teacher_model)
