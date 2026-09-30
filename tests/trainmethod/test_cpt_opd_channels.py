@@ -256,6 +256,23 @@ def test_teacher_source_server_only_is_accepted(tmp_path: Path):
     assert _value_of(argv, "--gkd_logits_topk") == "64"
 
 
+def test_teacher_model_server_requires_gkd_logits_topk(tmp_path: Path):
+    """★ 走外部教师服务但**没配 top-k** ⇒ 配置加载即拒绝（§2.3 早失败防呆）。
+
+    上游 ms-swift 的教师 API 只回 top-k logprobs ⇒ 该组合是**确定性非法**
+    （`swift/arguments/rlhf_args.py:762-765` 无条件 raise）。判据不等到后端启动才给，
+    而是在配置边界就拦下，且错误信息指到"服务端路径必须配 top-k"。
+    """
+    with pytest.raises(ValueError, match="gkd_logits_topk"):
+        GraspoConfig.model_validate(
+            {
+                "train_method": "opd",
+                "backend": "msswift",
+                "distill": {"teacher_model_server": TEACHER_SERVER},
+            }
+        )
+
+
 def test_teacher_source_both_given_is_rejected(tmp_path: Path):
     """组合 3/4：**两者同时给** ⇒ 配置加载即拒绝（§2.3 fail-closed；与 ms-swift 同义）。"""
     with pytest.raises(ValueError, match="mutually exclusive"):

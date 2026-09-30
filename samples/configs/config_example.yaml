@@ -28,6 +28,8 @@ pretrain:
 # `train_method: opd` 时 teacher_model_path 与 teacher_model_server **至少给一个**，
 # 否则配置层拒绝（不留"教师待定"）。
 # 两者**二选一**：同时给会被配置层拒绝（ms-swift 侧同样拒绝）。
+# 走 teacher_model_server 时 gkd_logits_topk **必填**（教师 API 只回 top-k logprobs；
+# 缺失会被配置层直接拒绝，不等 ms-swift 启动）。
 # 本期用户拍板（2026-09-18）：教师 = Qwen3.8-27B、学生 = Qwen3.5-9B。
 # 字段名与 ms-swift `TeacherModelArguments` / GKD 超参逐字对应。
 distill:
@@ -36,7 +38,7 @@ distill:
   teacher_adapters: null         # null=不用教师 LoRA 适配器
   teacher_deepspeed: null        # null=继承学生侧配置；DeepSpeed 已废除（2026-09-27），勿新配
   offload_teacher_model: null    # null=不换出；显式 true/false 为用户覆盖
-  gkd_logits_topk: null          # null=全词表散度；N=只取教师 top-N logits（走服务时上游强制非空）
+  gkd_logits_topk: null          # null=全词表散度；N=只取教师 top-N logits（走 teacher_model_server 时必填）
   lmbda: null                    # null=交 ms-swift 默认值
   sft_alpha: null                # null=交 ms-swift 默认值（0=纯蒸馏 loss）
   beta: null                     # null=交 ms-swift 默认值（GKD 默认 0.5=JSD）
