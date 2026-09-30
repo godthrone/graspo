@@ -217,6 +217,66 @@ def test_existing_train_methods_still_accepted():
     )
 
 
+# ── ①b 教师来源二选一：本地路径 **或** 外部服务 URL（2026-09-30 主席裁定路线 B）──
+#
+# 约束语义未放宽：OPD 仍必须有**具体**教师来源（不留"教师待定"），只是形态由
+# "仅路径"扩展为"路径或服务 URL"。四种组合逐一覆盖（每个一个最小用例）。
+
+#: 外部教师服务地址（`distill.teacher_model_server`）；形态见 ms-swift
+#: `swift/rlhf_trainers/gkd_helpers.py::parse_teacher_model_server`（单 URL 或多教师 JSON 列表）。
+TEACHER_SERVER = "http://127.0.0.1:16889"
+
+
+def test_teacher_model_server_defaults_to_disabled(tmp_path: Path):
+    """★ 新字段默认"未启用"（§2.2）：默认 ``None``，且未给时不透传 `--teacher_model_server`。"""
+    assert DistillConfig().teacher_model_server is None
+    argv = _argv(_opd_cfg(tmp_path), "opd")
+    assert "--teacher_model_server" not in argv
+    assert _value_of(argv, "--teacher_model") == TEACHER  # 既有"仅路径"路径行为不变
+
+
+def test_teacher_source_path_only_is_accepted(tmp_path: Path):
+    """组合 1/4：**仅路径** ⇒ 合法，argv 只带 `--teacher_model`（向后兼容）。"""
+    argv = _argv(_opd_cfg(tmp_path), "opd")
+    assert _value_of(argv, "--teacher_model") == TEACHER
+    assert "--teacher_model_server" not in argv
+
+
+def test_teacher_source_server_only_is_accepted(tmp_path: Path):
+    """组合 2/4：**仅服务 URL** ⇒ 合法，argv 只带 `--teacher_model_server`。
+
+    这是本工作包的解封项：不加宽 OPD 闸门的话该字段永远不可达（死配置，§7.2/§18.1）。
+    """
+    config = _opd_cfg(
+        tmp_path, distill={"teacher_model_server": TEACHER_SERVER, "gkd_logits_topk": 64}
+    )
+    argv = _argv(config, "opd")
+    assert _value_of(argv, "--teacher_model_server") == TEACHER_SERVER
+    assert "--teacher_model" not in argv, "两者互斥 ⇒ 不得同时透传"
+    assert _value_of(argv, "--gkd_logits_topk") == "64"
+
+
+def test_teacher_source_both_given_is_rejected(tmp_path: Path):
+    """组合 3/4：**两者同时给** ⇒ 配置加载即拒绝（§2.3 fail-closed；与 ms-swift 同义）。"""
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        GraspoConfig.model_validate(
+            {
+                "train_method": "opd",
+                "backend": "msswift",
+                "distill": {
+                    "teacher_model_path": TEACHER,
+                    "teacher_model_server": TEACHER_SERVER,
+                },
+            }
+        )
+
+
+def test_teacher_source_both_absent_is_rejected(tmp_path: Path):
+    """组合 4/4：**都不给** ⇒ 仍拒绝（不放宽成"教师待定"）。"""
+    with pytest.raises(ValueError, match="teacher_model_path"):
+        GraspoConfig.model_validate({"train_method": "opd", "backend": "msswift"})
+
+
 # ── ② 路由层：四条路由各走预期注册表，且只有一处真相源 ──────────────────────
 
 
