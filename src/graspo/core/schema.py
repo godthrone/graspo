@@ -604,6 +604,28 @@ class DistillConfig(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _validate_external_teacher_requires_topk(self) -> DistillConfig:
+        """外部教师服务路径**必须**配 ``gkd_logits_topk``——上游硬约束（§2.3 早失败防呆）。
+
+        ms-swift 的教师 API **只回 top-k logprobs** ⇒ ``teacher_model_server`` 非 None
+        而 ``gkd_logits_topk`` 为 None 时上游**无条件 raise**
+        （``swift/arguments/rlhf_args.py:762-765``；Megatron 侧同义于
+        ``swift/megatron/arguments/megatron_args.py:240-241``）。这是**确定性非法**组合，
+        不是"运行期才知道"⇒ 在配置边界就拒绝（早失败优于晚失败），不流到后端才炸。
+
+        空/纯空白串按序列化边界的"未提供"处理（§2.2 TOML 例外），与上面的互斥校验
+        同一口径（§1.4）。
+        """
+        if (self.teacher_model_server or "").strip() and self.gkd_logits_topk is None:
+            raise ValueError(
+                "distill.teacher_model_server requires distill.gkd_logits_topk: the external "
+                "teacher API only returns top-k logprobs, so ms-swift rejects a teacher service "
+                "without `--gkd_logits_topk`. Set e.g. `distill.gkd_logits_topk: 64` "
+                "(server side needs `--max_logprobs` >= topk + 1)."
+            )
+        return self
+
 
 class GraspoFlowConfig(BaseModel):
     """GraspoFlow 分布式训练配置 — TP+DP+PP+SP+Checkpoint 五位一体。

@@ -107,7 +107,7 @@ GRASPO（Group Relative Advantage Structured Policy Optimization）是一个**�
 | `opd` | ⛔ 拒绝 | ✅ |
 
 拒绝动作发生在**配置加载**（`validate_train_method_combination`，
-`core/schema.py:70-133`；由 `GraspoConfig` 的 model_validator 调用，`:1124-1137`），
+`core/schema.py:70-133`；由 `GraspoConfig` 的 model_validator 调用，`:1146-1159`），
 而不是静默路由到别的训练器。`opd` 还强制要求**具体教师来源**（`:120-133`），
 来源**二选一**：
 
@@ -116,6 +116,9 @@ GRASPO（Group Relative Advantage Structured Policy Optimization）是一个**�
 
 两者**至少给一个**（都不给即拒绝），且**互斥**（同时给即拒绝——`DistillConfig`
 的 model validator，`core/schema.py:585-605`；ms-swift 侧对同设亦显式 raise）。
+走 `teacher_model_server` 时还**必须**配 `distill.gkd_logits_topk`（外部教师 API 只回
+top-k logprobs；缺失亦由 `DistillConfig` 在配置加载期拒绝——`core/schema.py:608-627`，
+上游 `rlhf_args.py:762-765` 同样无条件 raise）。
 **约束语义未放宽**：用户 2026-09-18 拍板"不留教师待定"（教师 = Qwen3.8-27B、
 学生 = Qwen3.5-9B）；**变更依据：2026-09-30 主席裁定走路线 B（教师外挂
 `swift deploy` 服务）⇒ 来源形态由"仅路径"扩展为"路径**或**服务 URL"，
