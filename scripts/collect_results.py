@@ -233,13 +233,28 @@ class SeriesEvidence:
     #: stdout 兜底拿不到 ⇒ ``None``（此时 A4 如实声明该子检查"未适用"）。
     first_logged_step: int | None = None
     #: 累计因非有限梯度跳过优化器步的次数。**三态**（2026-09-22 指挥官裁定）：
-    #: ``int`` = 有读数（native 精确计数 / ms-swift 从 NaN grad_norm **推断**）；
-    #: ``None`` = **该后端不上报且推断不出** ⇒ A7 必须记「口径不可测」而**绝不自动通过**
-    #: （同一判据对不同后端必须等价）。
+    #: ``int`` = 有读数：native 用 ``skipped_nonfinite`` 精确计数；ms-swift **优先**用补丁自带的
+    #: **真计数** ``nonfinite_grad_step_count``（跨全部 rank SUM，见
+    #: ``extract_ms_swift_nonfinite_count``），**只有补丁计数缺失时**才退化为"从 NaN
+    #: grad_norm 推断"（下界）。⚠ **不要把"ms-swift 只能推断"当现状** —— 那是打 nfc 补丁
+    #: **之前**的情形（更正登记：``.local/repo-moved-out/_tools/CORRECTIONS.md`` E-40）。
+    #: ``None`` = **该档没有可用读数**（既无补丁计数、又无从推断）⇒ A7 必须记「口径不可测」
+    #: 而**绝不自动通过**（同一判据对不同后端必须等价）。
     nonfinite_skips: int | None = None
-    #: 该计数的**来源自证**（§2.2）：`run_metrics:skipped_nonfinite`（native 精确）/
-    #: `log_inference:nan_grad_norm_count` / `log_inference:all_finite_grad_norm` /
-    #: ``""``（不可得）。
+    #: 该计数的**来源自证**（§2.2）。取值域 = 本文件**实际会写出的全部字面量**：
+    #:   · ``ms_swift_counter:trainer_state.json(global_step=N)``
+    #:   · ``ms_swift_counter:stdout.log:ms_swift_counter_line``
+    #:     （ms-swift 补丁的真计数；ms-swift 侧最高优先）
+    #:   · ``run_metrics:all_ranks_max``
+    #:   · ``run_metrics:all_ranks_max（ranks 不一致）``
+    #:     （上面两条：native 逐 rank 全扫取 MAX；**跨来源最高优先**）
+    #:   · ``log_inference:nan_grad_norm_count``
+    #:   · ``log_inference:all_finite_grad_norm``
+    #:     （补丁计数缺失时，由逐步 grad_norm 推断）
+    #:   · ``log_marker:nonfinite_grad_hard_fail``（stdout 硬失败标记）
+    #:   · ``""``（不可得）
+    #: ⚠ 历史注记：旧版此处列的 ``run_metrics:skipped_nonfinite`` **代码从未写出**（已删），
+    #: 而漏掉的 ``ms_swift_counter:*`` 正是 E-40 的核心项。
     nonfinite_skips_source: str = ""
     source: str = "none"
     notes: list[str] = field(default_factory=list)
@@ -732,7 +747,10 @@ def extract_steps_and_series(output_dirs: Sequence[Path], log_text: str) -> Seri
     # ── ★ P0-1（2026-09-22 复核）：跳过计数**必须跨全部 rank**取 MAX ─────────────
     #   `skipped_nonfinite` 是逐 rank 局部读数；只读 rank0 ⇒ rank1 单独跳过时读到 0
     #   ⇒ A7 假通过（一次"权重/LR 已分叉"的运行会被记成 ✅ 可用）。
-    # ★ 2026-09-27（新镜像轮 r4）：ms-swift 补丁自带计数是**最高优先级来源**。
+    # ★ 2026-09-27（新镜像轮 r4）：ms-swift 补丁自带计数是 **ms-swift 侧的最高优先来源**。
+    #   ⚠ 它**不是全链路的最高优先** —— 跨来源优先级见本文件后面
+    #   `if _skip_count is not None: … else: …` 那段：`run_metrics:all_ranks_max` > 本函数产出的
+    #   `series`（含此处）。两处**不得**再各写一句"最高优先"（曾是 S-4 的措辞冲突）。
     #   coverage=1 ⇒ 直接采用（真计数）；coverage=0/缺失 ⇒ 保持 None（口径不可测）。
     nf_count, nf_cov, nf_src = extract_ms_swift_nonfinite_count(output_dirs, log_text)
     if nf_cov == 1 and isinstance(nf_count, int):
@@ -1963,7 +1981,11 @@ def collect_run(
         output_identity: str | None = f"{stat.st_dev}:{stat.st_ino}"
     except OSError:
         output_identity = None
-    # ── ★ P0-1（2026-09-22 复核，最高优先）：跳过计数**必须跨全部 rank**取 MAX ──────
+    # ── ★ P0-1（2026-09-22 复核，**跨来源的最高优先**）：跳过计数**必须跨全部 rank**取 MAX ──
+    #   ★ 优先级（与上面 `nonfinite_skips_source` 的取值域注释同一口径，勿再写两处"最高优先"）：
+    #     `run_metrics:all_ranks_max`（本段：逐 rank 全扫取 MAX）
+    #       > `series.nonfinite_skips`（含 ms-swift 补丁真计数 `ms_swift_counter:*`）
+    #       > 由逐步 grad_norm 推断 / stdout 硬失败标记。
     #   为什么放在这里而不是序列抽取里：`skipped_nonfinite` 是**逐 rank 局部**读数，
     #   而 `_rank_metric_steps` 只读 `rank_metrics.rank_00000.jsonl` ⇒ rank1 单独跳过、
     #   rank0 没跳时读到 0 ⇒ **A7 假通过**（一次权重/LR 已分叉的运行会被记成 ✅ 可用）。
