@@ -58,6 +58,7 @@ from pathlib import Path
 from typing import Any
 
 from graspo.flow.msswift._config_mapping import graspo_to_ms_swift_argv, launcher_env
+from graspo.flow.msswift._logps_shape_guard import check_logps_shapes
 from graspo.flow.msswift.dataset import prepare_ms_swift_dataset
 from graspo.flow.msswift.reward import (
     GRASPO_REWARD_NAME,
@@ -234,6 +235,41 @@ class GraspoMsSwiftGRPOTrainer(_MsSwiftGRPOTrainerBase):  # type: ignore[misc,va
             "completion_mask": completion_mask,
             "completion_token_count": token_count,
         }
+
+    # ── 守卫：per-token logps 的形状自洽（fail-closed，只报错不改数值）──────
+
+    def _get_logps_via_local_forward(
+        self,
+        model: Any,
+        model_inputs: dict[str, Any],
+        logits_to_keep: int,
+        input_ids: Any,
+        compute_entropy: bool = False,
+    ) -> Any:
+        """父类实现 + 进入两处切片前做形状守卫（**不改数值**）。
+
+        为什么在 graspo 侧做（宪法 §1.2：不改上游，只在扩展点适配）：
+
+        ms-swift 4.5.3 ``swift/rlhf_trainers/grpo_trainer.py:1570/1573`` 的两处切片，在
+        "本次前向序列长度 ``S ≤ logits_to_keep``" 时行数/列数**恰好差 1**，随后在
+        ``trl.trainer.utils.selective_log_softmax`` 的 gather 处抛一个不含张量语义的
+        ``RuntimeError: Size does not match at dimension 0 ...``（T037 实测签名：
+        ``expected index [2382, 1] to be no larger than self [2381, 248320]``）。
+        守卫把同一个失败提前成带六个量与 file:line 的 :class:`LogpsShapeGuardError`。
+
+        判据的推导见 :mod:`graspo.flow.msswift._logps_shape_guard`。
+        """
+        check_logps_shapes(
+            input_ids=input_ids,
+            logits_to_keep=int(logits_to_keep),
+            padding_free=bool(getattr(self.template, "padding_free", False)),
+            is_multimodal=bool(getattr(self, "is_multimodal", False)),
+            dynamic_num_samples=bool(getattr(self, "dynamic_num_samples", False)),
+            model=model,
+        )
+        return super()._get_logps_via_local_forward(
+            model, model_inputs, logits_to_keep, input_ids, compute_entropy=compute_entropy
+        )
 
     # ── 内部：标注 / 优势 / 覆盖 / 指标 ───────────────────────────────────
 
