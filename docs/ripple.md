@@ -324,6 +324,89 @@ Ripple 层本身是后端无关的算法核心——它**不 import** 任何后�
 4. **`ripple` 不得依赖 `flow`**（反向依赖 = 分层破了 ⇒ 报指挥官）。现状核查（2026-10-01）：**0 处 import**。
 5. **禁止整片 `revert`**：任何撤回都必须**最小改动**恢复基线语义，**不许**把 `flow` 侧的适配一起打回去。
 
+### 追加登记（2026-10-01 · 裁定十八 / 十九，**只追加、0 删除**）
+
+> 本节 5 条由主席/总理逐条批。落点：本文件（入库）+ 台账（`.local/`，不入库）。
+> **纪律**：**不新增任何 `ripple` 改动**（只登记）；零删除；无 sudo / prune。
+
+#### 登记 R-01 · 「`reward_median >= 0.4` 前置门」= **有意放宽，不属本次对齐范围**
+
+**① 被删掉的门与出处**
+
+| 项 | 内容 |
+|---|---|
+| 出处提交 | **`bccc1aa`**（2026-06-23，作者 Godthrone）`fix: add skip_format_broken_groups to classify_group` |
+| 同日先行的两笔 | `8bd0ff4`（`fix: guard TRAINABLE_NOT_CORRECT with reward_max >= 0.4 threshold`）把条件加为 `… and reward_max >= 0.4`；`40d654b`（`fix: use reward_median instead of reward_max for gating guard`）改为 `… and reward_median >= 0.4` |
+| 被替换掉的条件 | `elif reward_max > reward_median and reward_median >= 0.4:` → `elif skip_format_broken_groups and best_completion_has_parse_error:` |
+| 现状 | `src/graspo/ripple/group_decision.py:130` = `elif reward_max > reward_median:`（**无 0.4 门**） |
+
+**② `bccc1aa` 的 commit message 原文（逐字，证明是"有意替换"而非"顺手删"）**
+
+> `The old hardcoded reward_median >= 0.4 guard in classify_group is replaced by this semantic check.  Default is True.`
+
+**③ 判定「不属本次对齐范围」的理由（机核）**
+
+- `git merge-base --is-ancestor bccc1aa d4ee3b9` ⇒ **✅ 成立**：`bccc1aa`(2026-06-23) 是**对齐基线 `d4ee3b9`(2026-08-31) 的祖先**。
+- `git show d4ee3b9:src/graspo/ripple/group_decision.py | grep -n '0\.4'` ⇒ **零命中** ⇒ **基线本身就不含这个门**。
+- ⇒ **恢复它等于往基线之前走，超出主席「对齐引入 ms-swift 之前的状态」这一范围。**
+- ⇒ **处置：有意放宽，不恢复。**（本条取代我此前"顺带移除"的表述——按 commit message，它是**明示的替换**。）
+
+**④ 影响面（一句话，不重跑、只指面）**
+
+`classify_group` 的 `TRAINABLE_NOT_CORRECT` **准入**因此放宽（低分但仍有方差的组会进入训练），
+**影响所有走该判定的 RL 档（native + ms-swift 两侧）**；按本条结论**不重跑**。
+
+#### 登记 R-02 · `ripple/reward/normalize.py`（#7）= **保留；算法影响为零**
+
+- **改动内容**：`0eb07ce`(2026-09-17) 在 `_normalize_target` 里新增保留 ARD `targets[i].output.reasoning`（空串归 `None`、非字符串报错）。
+- **算法影响 = 零（实测 A/B）**：用**仓库自带测试的真实 fixture**，把基线 `d4ee3b9` 的 `normalize_targets` 与当前实现分别接到同一个 `GraspoReward` 上，
+  对**同一输入**打分 ⇒ **`reward`/`raw_score`/`max_score`/`content_score`/`base_content_score`/`all_right`/`matched_target_index`/`target_scores` 逐字段全等**。
+  用例 **11 例**，其中**真正走进打分路径**（content_score 非 0）的有：`perfect_json_fence` **1.0**、`partial_json_fence` **0.8**、
+  `numeric_continuous` **0.9765**、`numeric_exact` **1.0**，以及 tool_call 路径 3 例 **0.88–0.94**。
+- **不保留会出什么事**：`ripple/data.py:42` 在数据装载时会**静默丢弃** `output.reasoning`；而
+  `flow/msswift/_ard_contract.py:33-36,127-133` 把该键定义为**必须保留的契约键**（`OUTPUT_REASONING_KEY`）
+  ⇒ **契约破、教师推理链丢，且无任何报错**。
+- **⇒ 处置：保留。**
+
+#### 登记 R-03 · `ripple/monitoring/summary.py`（#8）= **保留（零动作）**
+
+- **现状一句话（必须写明）**：**该处已核查为「只读指标层」——不进 `reward` / `advantage` / `loss` / 优化器 / 权重更新。**
+  它的产物只落到 run 的 readable/事件记录与健康字符串，消费方是 `flow/trainer/optimize.py:135,140` 与 `flow/trainer/sft_trainer.py:530`。
+  它**改变**的是 `training_health` 的**判据口径**（把"该指标不适用（两键皆 `None`）"与"读数恰好是 0"分开），修的是**假告警**，不是被监控对象。
+- **总理的两条理由（照录）**：
+  1. **`AGENTS.md` 的分层表把 `monitoring` 列在算法层** ⇒ **把这块搬走会与分层表自相矛盾**；
+  2. **主席口径「尽量不要改」** ⇒ **零动作最稳**。
+- **⇒ 处置：保留，零动作。**
+- **「搬 `flow`」登记为可选优化**：理由与代价见 `.local/milestones/ripple-baseline-20261001/RIPPLE-BASELINE.md` §1.1（监控=基础设施，但搬动会牵动 `flow` 调用点）。
+  **本轮不做，将来单独一笔。**
+
+#### 登记 R-04 · T034 = **度量缺陷（改判）**
+
+**① 三句版（与基线件同口径）**
+
+1. T034 的 `trainable_norm_delta` **5/5 步 = 0.0 是假读数** —— 同 5 步 `optimized=true`、`optimizer_steps=1`、`nonzero_grad_count=808`、`grad_norm_mean` 全非 0；
+2. 它是 **fp32 分辨率假零**（`Σp² = L2² = 3228476.5`（≈2²¹）处 fp32 ULP = **0.25** > 真实 `|Δ(Σp²)| = 0.0263`）⇒ **真修法在 `flow` 的 `27b4228`**（`_chunked_parameter_norm` 累加升 fp64）；
+3. **`def314a` 前后两版对同一批实记录的 `lora_delta_mean` 与 `health.reasons` 完全相等** ⇒ 与 T034 的 0 **无关**（它修的是另一个"结构性假零 P18"）。
+
+**② 归功必须写对**：**T034 改判为「度量缺陷」的功劳属于 `flow` 的 `27b4228`（fp64 累加），不属于 `ripple` 的 `def314a`。**
+
+**③ 边界照实写（未核实 / 未独立复算）**：`641/808 张量`、`9.62% 元素`、`精确 fp64 ΔL2 = −7.32e-06（A）/ −1.09e-05（C）`
+**引自既有只读件** `.local/hb-workspace/20261001-matrix-batch0/T034-readonly.md`，**本工位未独立复算**
+（复算需基座权重 + 该跑次 checkpoint，属上机/占卡作业）。
+
+**④ 改判 ≠ 已通过**：**T034 的"已通过"仍属不可判定 —— 已安排重跑**（重跑前须先满足下一条 R-05）。
+
+#### 常驻口径 R-05 · **228 运行树是"同步快照"、不是 git 树**
+
+> **任何修复在重跑前，必须先部署到运行树，并用 sha256 自证同步前后一致。**
+
+- **理由（指挥官实测，本工位未上机复核）**：**T034 重跑前实测该树两处修复都不在**（`27b4228` 的 fp64 与 `def314a` 的读数口径）。
+  ⇒ 若照现状直接重跑，`trainable_norm_delta` **必然还是全 0**，**正好命中"权重未更新"的判据 ⇒ 给出错误结论**。
+- **执行要求**：重跑任何档之前先做"**部署 → sha256 自证 → 再跑**"三步；
+  **同步前后逐文件 sha256 必须可核对**（同 `.local/milestones/ripple-baseline-20261001/ripple-files.sha256` 的用法）。
+- **性质**：这是**流程口径**，不是代码改动；它解释了"为什么修复已合并却仍可能跑出旧结论"。
+- **本工位未上机复核**该实测结论（零机时纪律）；如需一手证据，应由重跑工作包在 228 上补齐。
+
 ### 方法论（一句话）
 
 > **"`ripple` 未变"此前只是口头结论；本基线把它变成了可核对的对象。**
