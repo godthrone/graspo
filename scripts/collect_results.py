@@ -711,13 +711,24 @@ def extract_steps_and_series(output_dirs: Sequence[Path], log_text: str) -> Seri
     if result.steps is None and result.losses:
         result.steps = len(result.losses)
     # ── ★ A7 取证公平性（2026-09-22 指挥官裁定，C）───────────────────────────
-    #   ms-swift **不上报**跳过计数：实测 `swift/trainers/mixin.py` 的 patch 是
-    #   `if grad_norm.isnan(): p.grad = None` —— **不打任何日志、也不计数**
-    #   （且只判 `isnan()` 不判 `inf`）。旧行为 ⇒ `nonfinite_skips` 缺省 0 ⇒ A7 **自动通过**
-    #   ⇒ native 严格判、ms-swift 宽松 ⇒ **同一判据对不同后端不等价**。
-    #   但从 ms-swift 的 patch 可推：跳过时它返回的 `grad_norm` **就是 NaN**，且该读数会进
-    #   逐步序列 ⇒ 用"**逐步 grad_norm 是否为 NaN**"推断跳过次数（**下界**：它不判 Inf 的
-    #   那种跳过不会留下 NaN 读数）。**推断不出（无 grad_norm 读数）⇒ 保持 None**。
+    #   ⚠️ **本段前 4 句是「打 nfc 补丁之前」的历史（当时为真，现已被取代）**。
+    #   保留它只为解释下面那行 `extract_ms_swift_nonfinite_count` 为什么存在；
+    #   **不得据此判定「ms-swift 不上报 ⇒ ③不可测」**（那正是 2026-09-30 一次误判的来源）：
+    #     历史原话：「ms-swift **不上报**跳过计数：实测 `swift/trainers/mixin.py` 的 patch 是
+    #     `if grad_norm.isnan(): p.grad = None` —— **不打任何日志、也不计数**」
+    #   它描述的是**未打补丁**的上游。自 nfc 补丁（`docker/patches/msswift-nonfinite-grad-count/`，
+    #   新镜像轮 r4 起随镜像发布）ms-swift **确实上报** `nonfinite_grad_step_count`
+    #   （跨全部 rank SUM）+ `nonfinite_grad_step_count_coverage`，由下面
+    #   `extract_ms_swift_nonfinite_count` 以**最高优先级**采用。
+    #   ⇒ **实测复核（2026-10-01）**：跑过的 ms-swift 档读数 100% 拿得到；台账里为 `None` 的档
+    #     全是「未纳入跑批 / 逻辑上不适用」，**不是「测不了」**。
+    #     证据：`.local/hb-workspace/20261001-matrix-batch0/evidence/` `t037-guard/`
+    #           `06-criterion3-review.md`；
+    #     更正登记：`.local/repo-moved-out/_tools/CORRECTIONS.md` E-40。
+    #   ★ 下列历史推论**仍然有效**，但只作**兜底**（补丁计数缺失时）：
+    #     跳过时该 patch 会把该批 `p.grad = None`，而其 `grad_norm` 读数**就是 NaN**、且会进逐步序列
+    #     ⇒ 用"**逐步 grad_norm 是否为 NaN**"推断跳过次数（**下界**：它只判 `isnan()` 不判 `inf`）。
+    #     **推断不出（无 grad_norm 读数）⇒ 保持 None**。
     # ── ★ P0-1（2026-09-22 复核）：跳过计数**必须跨全部 rank**取 MAX ─────────────
     #   `skipped_nonfinite` 是逐 rank 局部读数；只读 rank0 ⇒ rank1 单独跳过时读到 0
     #   ⇒ A7 假通过（一次"权重/LR 已分叉"的运行会被记成 ✅ 可用）。
