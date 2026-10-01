@@ -17,22 +17,34 @@ from torch import nn
 
 from graspo.flow.lora.lora_linear import LoRALinear
 
-#: 权重范数分块大小（元素数）。单块 fp32 临时张量 = 4 × 该值 ≈ 32 MiB。
+#: 权重范数分块大小（元素数）。单块 fp64 临时张量 = 8 × 该值 ≈ 64 MiB。
 #: 取值理由是显存安全：``embed_tokens``/``lm_head`` 各 1.017e9 参数，一次性
-#: ``.float()`` 会产生 ≈4 GiB 峰值，而 native 单卡全参正处在显存边界附近。
+#: ``.double()`` 会产生 ≈8 GiB 峰值，而 native 单卡全参正处在显存边界附近。
+#: **分块只控制峰值显存，不改变结果**——累加精度见 ``_chunked_parameter_norm``。
 _WEIGHT_NORM_CHUNK_ELEMENTS = 8 << 20
 
 
 def _chunked_parameter_norm(parameters: Iterable[torch.Tensor]) -> float:
-    """分块求全部参数的平方和，再开方（fp32 累加，单块临时量有上限）。
+    """分块求全部参数的平方和，再开方（**fp64 累加**，单块临时量有上限）。
 
-    累加器留在参数所在设备上，只在最后做**一次** ``.cpu()`` 同步。
+    **为什么必须是 fp64（T034 只读对照实验，实测）**：旧实现用 fp32 累加，于是
+    9B 全参档这把尺子的分辨率只有 **1.2207e-04**（L2 ≈ 1796.8 处的 fp32 ULP），
+    而真实单步 ``ΔL2 ≈ 1.5e-06``：它的 ``Δ(Σp²) = 2·L2·ΔL2 ≈ 5.3e-03`` 比
+    ``Σp²`` 自己的 fp32 ULP（0.25）还小约 48 倍 ⇒ 块内求和与跨块累加都把变化吃掉，
+    ``sqrt`` 输出逐位相同。实测后果：T034 的终态 checkpoint 与基座
+    **641/808 个张量、9.62 % 的元素逐元素不同**（精确 fp64 ΔL2 = −7.3e-06），
+    而该指标 5 步全部报 ``before == after``、``delta = 0.0``，被误判成「权重未更新」。
+
+    分块只影响**峰值显存**，不影响结果：块内 ``.double()`` 归约、跨块 fp64 累加，
+    任何一级都**不回落 fp32**。累加器留在参数所在设备上，只在最后做**一次**
+    ``.cpu()`` 同步。回归测试见
+    ``tests/flow/adapters/models/test_trainable_norm_precision.py``。
     """
     total: torch.Tensor | None = None
     for param in parameters:
         flat = param.detach().reshape(-1)
         for start in range(0, flat.numel(), _WEIGHT_NORM_CHUNK_ELEMENTS):
-            chunk = flat[start : start + _WEIGHT_NORM_CHUNK_ELEMENTS].float()
+            chunk = flat[start : start + _WEIGHT_NORM_CHUNK_ELEMENTS].double()
             partial = chunk.pow(2).sum()
             total = partial if total is None else total + partial
     if total is None:
@@ -91,9 +103,9 @@ class GraspoFlowCausalLMBase(nn.Module):
     def trainable_parameter_norm(self) -> float:
         """全部 ``requires_grad`` 参数的 L2 范数（全参模式下即"权重范数"）。
 
-        **分块累加**：单块 fp32 临时张量上限 ≈ ``_WEIGHT_NORM_CHUNK_ELEMENTS × 4``
-        字节。不能对整参数直接 ``.float()``——``embed_tokens``/``lm_head`` 各
-        1.017e9 参数，一次性 fp32 副本 ≈ 4 GiB，而 native 单卡全参正处在显存边界上
+        **分块累加**：单块 fp64 临时张量上限 ≈ ``_WEIGHT_NORM_CHUNK_ELEMENTS × 8``
+        字节（≈64 MiB）。不能对整参数直接 ``.double()``——``embed_tokens``/``lm_head``
+        各 1.017e9 参数，一次性 fp64 副本 ≈ 8 GiB，而 native 单卡全参正处在显存边界上
         （见 `task-i2-fullparam/report.md` §3），指标不能把训练推过界。
         """
         return _chunked_parameter_norm(param for param in self.parameters() if param.requires_grad)
