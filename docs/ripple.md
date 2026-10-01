@@ -273,3 +273,60 @@ Ripple 层本身是后端无关的算法核心——它**不 import** 任何后�
 ### C 档：无可核实来源（1 条）
 
 1. **禁用 DeepSpeed 的完整迁移是否被排期**：`.local/hb-workspace/20260923-analysis/task-ds-exit-study/` 的 `evidence/` 与 `src/` 为空目录，但**同目录存在 `report.md`（468 行 / 44,594 B，本次已复读）**——它给出的是**全换 FSDP2** 的推荐结论（`.local/hb-workspace/20260923-analysis/task-ds-exit-study/report.md:351`）与**两阶段技术顺序 + 工作量估算**（`:363` 阶段 1「0.5–1 人天」、`:374` 阶段 2「1–2 人天」），并设有 U1–U10 不确定项清单（`:407-420`）；但它**未给排期**（无日期/责任/承诺，全文 `排期` 0 命中），也未把迁移排期列入任何可核实结论。**排期仍属未定事项**，本文只记录"规则已生效、schema 字段仍在"这一可核实现状（见上节"当前仓库的迁移状态"）。
+
+---
+
+## 核查基线与改动纪律（2026-10-01 主席裁定 · 长期有效）
+
+> 主席原话：「那我觉得这些修改是合规的，让他提交一下，注明 **graspo ripple层核查基线-20261001**，以后作为一个 mark，你觉得呢？」
+> **核查结论（本节的落点）**：**`ripple/`（算法层）自算法基线 `d4ee3b9` 至今，未发生任何算法语义变更。**
+
+### 两个基线（**必须分清，不要混**）
+
+| 名称 | 是什么 | 值 |
+|---|---|---|
+| **算法语义基线** | 算法**应该长什么样**的参照（**对齐目标**） | **`d4ee3b9`**（2026-08-31 17:15，引入 ms-swift `3626719` **之前**） |
+| **核查基线（mark）** | **已核查、已判定合规**的锚点（**核对对象**） | annotated tag **`ripple-baseline-20261001`** → 打 tag 时的 `HEAD` |
+
+- `d4ee3b9` 管"**规范**"，`ripple-baseline-20261001` 管"**已审过的现状**"。日常核对用后者；讨论"算法该不该这样"才回 `d4ee3b9`。
+- **tag 名故意不带 `v` 前缀**：`docker/build.sh::derive_version()` 用 `git describe --match 'v[0-9]*.[0-9]*.[0-9]*'`
+  推导版本，**带 `v` 的 tag 会污染"版本唯一来源"（宪法 §1.4）**。先例：`baseline-2026-09-17`。
+- **可一键核对件**：`.local/milestones/ripple-baseline-20261001/`
+  （`RIPPLE-BASELINE.md` + `ripple-files.sha256`(29 文件) + `ripple-audited-8.sha256`(8 文件) + `compare-ripple-baseline.py`）。
+  用法：`python3 compare-ripple-baseline.py`（期望 PASS）；`--negative` 为负向对照（改 1 字节 ⇒ 必须报差异）。
+
+### 8 处改动的归因表（**主席裁定：全部合规**）
+
+净差异 = `git diff --stat d4ee3b9 HEAD -- src/graspo/ripple/` ⇒ **8 files changed, 275 insertions(+), 16 deletions(-)**。
+
+| # | 文件 | 出处提交（hash / 日期 / message 原文） | 改动原因 | 性质 | 动算法语义 |
+|---|---|---|---|---|---|
+| 1 | `ripple/__init__.py` | `3626719` 09-02 `refactor: dual-backend architecture with native and msswift backends`；`be20d9b` 09-29 `refactor: align single-class file names and drop legacy _v2 suffixes` | 让新门面可从包顶层导入；随后跟随改名 | 🟢 纯搬运（导出面） | 不会 |
+| 2 | `ripple/algorithm_core.py`（新增 201 行） | `3626719` 09-02 同上 | 提供后端无关的算法入口（文件头自述） | 🟢 **零语义新增（门面）**——不是"搬运"，是新建文件 | 不会（15 个方法体逐个 AST 验证：14 个纯转发） |
+| 3 | `ripple/annotation/__init__.py` | `9dd1c1e` 09-28 `chore(delivery): 第 9 步 · 本轮产物入库 + 交付侧车在冻结时刻重取（全绿）` | 相对导入 → 绝对导入 | 🟢 纯搬运 | 不会 |
+| 4 | `ripple/data.py` | `a69211f` 09-20 `style: apply ruff format to src, tests and scripts` | ruff format（f-string 折行） | 🟢 纯格式（AST 逐节点相同） | 不会 |
+| 5 | `ripple/parsing/qwen_tool_parser.py` | `3626719`（docstring 路径）+ `a69211f`（正则折行） | 注释路径更新 + 折行 | 🟢 注释 + 格式 | 不会（注：该注释**仍不准确**，见 §不可核实项） |
+| 6 | `ripple/reward/reward.py` | `1f02ef9` 09-20 `style: fix ruff lint violations across src, tests and scripts` | 延迟导入补 `# noqa: E402` | 🟢 lint 抑制（AST 逐节点相同） | 不会 |
+| 7 | `ripple/reward/normalize.py`（+9） | `0eb07ce` 09-17 `fix: native backend corrections — reward reasoning fidelity and SFT trainer factory` | 保留 ARD `targets[i].output.reasoning`，否则归一化**静默丢弃** | 🟡 行为变更（不在算法链上） | **不会**（reward 数值 A/B 逐字段全等，11 例） |
+| 8 | `ripple/monitoring/summary.py`（+58 −3） | `def314a` 10-01 `fix(monitoring): read the mode-aware weight delta in the training health check` | 旧实现固定读 lora 键，全参档两键皆 `None` ⇒ `float(None or 0.0)` 造**结构性假 0.0** + `zero_lora_delta` 假告警 | 🟡 行为变更（只读指标 + 判据口径） | **不触训练数值**（不进 reward / advantage / loss / 优化器） |
+
+**🔴 算法语义变更 = 0 处。** 撤回列：**全部"不撤回"**。
+
+### `ripple` 层改动的流程（**默认不改**）
+
+1. **默认不改**：`ripple/` 是算法层，**冻结**。
+2. **确需改** ⇒ **先报指挥官，并逐项列原因呈主席审核**，三态必答：
+   - **🟢 纯搬运**（导出 / 改名 / 纯格式 / lint 抑制 / 注释）—— **须留等价性证据**：AST 等价、或 re-export 证明、或同名测试结果一致；
+   - **🟡 基础设施适配但落在算法层** —— **须评估能否搬到 `flow`**；`flow` 才是"该改就改"的设施层；
+   - **🔴 算法语义变更**（reward 数值 / 逐字符标注 / advantage / 组分类 / keep·mask / loss / 回放缓冲 / 判据阈值）—— **一律上报**，
+     确需改时须给 **(a) 不改会出什么事（可验证后果）｜(b) 为什么不能放到 `flow` 做｜(c) 影响面（哪些档、哪些跑次）**。
+3. **口诀**：**算法问题在 `ripple` 找原因、在 `flow` 找修法**；**绝不为适配后端而改 `ripple`**。
+4. **`ripple` 不得依赖 `flow`**（反向依赖 = 分层破了 ⇒ 报指挥官）。现状核查（2026-10-01）：**0 处 import**。
+5. **禁止整片 `revert`**：任何撤回都必须**最小改动**恢复基线语义，**不许**把 `flow` 侧的适配一起打回去。
+
+### 方法论（一句话）
+
+> **"`ripple` 未变"此前只是口头结论；本基线把它变成了可核对的对象。**
+> 以后任何"有没有把 graspo 强化学习逻辑改坏"的判断，都以
+> `python3 .local/milestones/ripple-baseline-20261001/compare-ripple-baseline.py` 的 **PASS/FAIL** 为第一道机核，
+> 再叠加人工的 🟢/🟡/🔴 三态判定。
