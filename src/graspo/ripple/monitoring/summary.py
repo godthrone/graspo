@@ -479,6 +479,7 @@ def compact_optimize_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
     global_optimizer_steps = int(
         metrics.get("global_optimizer_steps_sum") or optimizer_steps_per_rank
     )
+    weight_delta, weight_delta_source = weight_delta_reading(metrics)
     return {
         "optimized": bool(metrics.get("optimized")),
         "replay_buffer_trainable_completion_count": int(
@@ -496,10 +497,59 @@ def compact_optimize_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
         "global_optimizer_steps_sum": global_optimizer_steps,
         "loss_mean": _metric_float(metrics, "global_loss_mean", "loss_mean"),
         "grad_norm_mean": _metric_float(metrics, "global_grad_norm_mean", "grad_norm_mean"),
-        "lora_delta_mean": _metric_float(metrics, "global_lora_norm_delta_mean", "lora_norm_delta"),
+        # 键名保留（既有 readable 消费方按名取数）；但值取自**本档真实口径**——
+        # 全参档填 trainable_norm_delta、LoRA 档填 lora_norm_delta。口径来源随行落盘，
+        # 读者不必猜这个数是什么（§2.2 显式即防呆）。
+        "lora_delta_mean": weight_delta,
+        "weight_delta_source": weight_delta_source,
         "skipped_nonfinite": int(metrics.get("skipped_nonfinite") or 0),
         "force_flush": bool(metrics.get("force_flush")),
     }
+
+
+#: 权重变化量的候选键，**按"该档真正产出的口径"排序**：全参在前、LoRA 在后；
+#: 每档先取全局聚合值、再取 rank 局部值（单卡下二者同值，见
+#: ``flow/adapters/transformer_adapter.py::_aggregate_rank_metrics`` 的单卡分支）。
+#:
+#: 为什么用"哪个键有值"分流两种模式、而不是先判 ``tuner_type``：全参档把
+#: ``lora_norm_*`` **显式置 None**（``flow/progress_metrics.training_norm_event``
+#: 的 None 语义 = "本指标不适用"），所以"非 None 即本档适用"这一条就足以分流，
+#: 不必让 ripple 层 import flow 层（§1.3 计算与设施分离）。
+_WEIGHT_DELTA_KEYS: tuple[str, ...] = (
+    "global_trainable_norm_delta_mean",
+    "trainable_norm_delta",
+    "global_lora_norm_delta_mean",
+    "lora_norm_delta",
+)
+
+
+def weight_delta_reading(metrics: dict[str, Any]) -> tuple[float | None, str | None]:
+    """模式感知的"权重变化量"读数：``(值, 来源键)``；**取不到就是 None**。
+
+    ★ 修的是什么（T034 只读对照实验 + 真机日志，历史登记 P18）：旧实现固定读
+    ``global_lora_norm_delta_mean`` 再回落 ``lora_norm_delta``，而**全参档这两个键
+    都是 None**（无 lora 参数 ⇒ 指标不适用），于是 ``float(None or 0.0)`` 产出
+    **0.0**：既在 readable 记录里写了一个假读数，又必然触发 ``zero_lora_delta``
+    假告警（真机日志原文形如 ``training health degraded: zero_lora_delta``）。
+
+    现在的语义（§2.2 None 是唯一合法空值 / §8.1 三态）：
+    **"没有读数"返回 None，"读数恰好是 0"才返回 0.0** —— 只有后者允许断言
+    "权重没变"。两者混同正是假告警的根。
+
+    前提与边界（如实写）：本函数只负责**把本档已有的读数取出来**，
+    不改变任何读数的数值；全参档读数的**精度**由
+    ``flow/adapters/models/common/base.py::_chunked_parameter_norm``（fp64 累加）保证。
+    """
+    for key in _WEIGHT_DELTA_KEYS:
+        value = metrics.get(key)
+        if value is not None:
+            return float(value), key
+    logging.getLogger("graspo.trainer").warning(
+        "weight-delta metric unavailable (none of %s present in this record); "
+        "the zero-delta health check is skipped — unknown is not zero",
+        " / ".join(_WEIGHT_DELTA_KEYS),
+    )
+    return None, None
 
 
 def _metric_float(metrics: dict[str, Any], preferred: str, fallback: str) -> float:
@@ -523,8 +573,10 @@ def training_health(
     reasons: list[str] = []
     if int(metrics.get("skipped_nonfinite") or 0) > 0:
         reasons.append("nonfinite_loss_or_grad")
-    lora_delta = _metric_float(metrics, "global_lora_norm_delta_mean", "lora_norm_delta")
-    if metrics.get("optimized") and lora_delta == 0.0:
+    weight_delta, _ = weight_delta_reading(metrics)
+    # reason 名沿用历史字符串（既有 readable 消费方按名匹配，§10.2 稳定接口）；
+    # 语义已是"权重变化量读数为 0"，与 lora/full 两种口径都对应。
+    if metrics.get("optimized") and weight_delta == 0.0:
         reasons.append("zero_lora_delta")
     if int(reward_batch.get("attempt_group_count") or 0) > 0:
         if float(reward_batch.get("reward_mean") or 0.0) == 0.0:

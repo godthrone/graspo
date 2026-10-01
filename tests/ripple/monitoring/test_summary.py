@@ -1,5 +1,7 @@
 """Tests for ``graspo.ripple.monitoring.summary`` — monitoring summaries."""
 
+import pytest
+
 from graspo.ripple.monitoring.summary import monitor_group
 
 
@@ -160,3 +162,119 @@ def test_health_high_retry_rate_warns():
     health = training_health({"optimized": True}, batch, {"count": 0})
     assert "batch_high_retry_rate" in health["reasons"]
     assert health["ok"] is False
+
+
+# ── 权重变化量的口径（T034 只读对照实验；缺陷 P18 的结构性恒 0）──────────────
+
+
+def _full_param_metrics(**overrides) -> dict:
+    """一条 native 全参档的逐步指标（键名与形状取自 run 自产的 rank_metrics JSONL）。
+
+    全参档的关键事实：``lora_norm_*`` 是 **None**（无 lora 参数 ⇒ 指标不适用，
+    见 ``flow/progress_metrics.training_norm_event``），真正有读数的是
+    ``trainable_norm_*`` / ``global_trainable_norm_delta_mean``。
+    """
+    metrics = {
+        "optimized": True,
+        "tuner_type": "full",
+        "norm_metric": "trainable_parameter_l2_norm",
+        "lora_norm_before": None,
+        "lora_norm_after": None,
+        "lora_norm_delta": None,
+        "trainable_norm_before": 1796.7959909563967,
+        "trainable_norm_after": 1796.7959836404752,
+        "trainable_norm_delta": -7.315921493500355e-06,
+        "global_lora_norm_delta_mean": None,
+        "global_trainable_norm_delta_mean": -7.315921493500355e-06,
+    }
+    metrics.update(overrides)
+    return metrics
+
+
+def test_full_param_health_reads_the_trainable_delta_not_the_lora_placeholder():
+    """全参档必须读 ``trainable_norm_delta``：``lora_norm_*`` 在本档是 None 占位。
+
+    修前：``_metric_float`` 先取 ``global_lora_norm_delta_mean``（None）→ 回落
+    ``lora_norm_delta``（也是 None）→ ``float(None or 0.0) == 0.0`` ⇒ 必然产出
+    ``zero_lora_delta`` 假告警（真机日志原文就是这个 reason）。
+    """
+    from graspo.ripple.monitoring.summary import training_health
+
+    health = training_health(_full_param_metrics(), {}, {})
+    assert "zero_lora_delta" not in health["reasons"]
+    assert health["ok"] is True
+
+
+def test_full_param_health_does_not_fabricate_zero_when_the_metric_is_missing():
+    """没有读数 ⇒ **未知**，不得冒充 0（§2.2 None 语义 / §8.1 三态）。
+
+    这是"恒 0 假告警"的根：把"取不到"当成"等于 0"。
+    """
+    from graspo.ripple.monitoring.summary import training_health
+
+    health = training_health(
+        _full_param_metrics(trainable_norm_delta=None, global_trainable_norm_delta_mean=None),
+        {},
+        {},
+    )
+    assert "zero_lora_delta" not in health["reasons"]
+
+
+def test_full_param_health_still_flags_a_real_zero_delta():
+    """真读数恰好为 0 时**仍然**要告警——短路只针对"取不到"，不放松判据。"""
+    from graspo.ripple.monitoring.summary import training_health
+
+    health = training_health(
+        _full_param_metrics(trainable_norm_delta=0.0, global_trainable_norm_delta_mean=0.0),
+        {},
+        {},
+    )
+    assert "zero_lora_delta" in health["reasons"]
+
+
+def test_lora_health_keeps_the_original_caliber():
+    """LoRA 档的键名与数值语义逐字不变（含 0.0 ⇒ 告警）。"""
+    from graspo.ripple.monitoring.summary import training_health
+
+    nonzero = training_health(
+        {
+            "optimized": True,
+            "tuner_type": "lora",
+            "lora_norm_delta": 1.6e-06,
+            "global_lora_norm_delta_mean": 1.6e-06,
+        },
+        {},
+        {},
+    )
+    assert "zero_lora_delta" not in nonzero["reasons"]
+
+    zero = training_health(
+        {
+            "optimized": True,
+            "tuner_type": "lora",
+            "lora_norm_delta": 0.0,
+            "global_lora_norm_delta_mean": 0.0,
+        },
+        {},
+        {},
+    )
+    assert "zero_lora_delta" in zero["reasons"]
+
+
+def test_compact_optimize_metrics_reports_the_mode_aware_weight_delta():
+    """readable 记录里那个"权重变化量"必须来自本档的真实口径，且带口径来源。"""
+    from graspo.ripple.monitoring.summary import compact_optimize_metrics
+
+    full = compact_optimize_metrics(_full_param_metrics())
+    assert full["lora_delta_mean"] == pytest.approx(-7.315921493500355e-06)
+    assert full["weight_delta_source"] == "global_trainable_norm_delta_mean"
+
+    lora = compact_optimize_metrics(
+        {"optimized": True, "lora_norm_delta": 1.6e-06, "global_lora_norm_delta_mean": 1.6e-06}
+    )
+    assert lora["lora_delta_mean"] == pytest.approx(1.6e-06)
+    assert lora["weight_delta_source"] == "global_lora_norm_delta_mean"
+
+    missing = compact_optimize_metrics({"optimized": True})
+    assert missing["lora_delta_mean"] is None
+    assert missing["weight_delta_source"] is None
