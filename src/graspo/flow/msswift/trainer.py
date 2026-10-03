@@ -59,6 +59,7 @@ from typing import Any
 
 from graspo.flow.msswift._config_mapping import graspo_to_ms_swift_argv, launcher_env
 from graspo.flow.msswift._logps_shape_guard import check_logps_shapes
+from graspo.flow.msswift._empty_completion_window import repair_empty_completion_window
 from graspo.flow.msswift.dataset import prepare_ms_swift_dataset
 from graspo.flow.msswift.reward import (
     GRASPO_REWARD_NAME,
@@ -235,6 +236,51 @@ class GraspoMsSwiftGRPOTrainer(_MsSwiftGRPOTrainerBase):  # type: ignore[misc,va
             "completion_mask": completion_mask,
             "completion_token_count": token_count,
         }
+
+    # ── 集成层修复：没有可训练位置的 micro-batch（只修形状契约，不改数值语义）──
+
+    def _get_per_token_logps_and_entropies(
+        self,
+        model: Any,
+        model_inputs: dict[str, Any],
+        grpo_batch: Any,
+        compute_entropy: bool = False,
+        origin_data: Any = None,
+    ) -> Any:
+        """父类实现 + 入口处修"无有效 token 批"的形状契约（**不改数值语义**）。
+
+        为什么在 graspo 侧做（宪法 §1.2：不改上游，只在扩展点适配）：上游
+        ``grpo_trainer.py:1570/1573`` 的两处切片在 ``S ≤ L`` 时行数/列数差 1；而
+        ``logits_to_keep`` 的上游口径（``utils.py:2170``）对"全 ``-100`` 的行"会退化成
+        ``S``。本覆写在上游那两处切片**之前**把"一个可训练位置都没有"的批的窗口收窄
+        （把该批本就不存在的 completion 区变成"任意宽度都等价"的形状）。
+
+        **为什么这不是算法判断**：判据是"该批 completion_mask 是否全 False"（一个形状/
+        内容层面的可训练位置计数），不是"这条样本算不算有效答案"（那由组级
+        ``classify_group`` 决定，本轮一行不改）。奖励、标注、优势、loss 公式全部不动。
+
+        **正常批逐字节不变**：判据不成立时本方法**零赋值**，走同一条 ``super()`` 调用。
+
+        判据与安全论证见 :mod:`graspo.flow.msswift._empty_completion_window`。
+        形状守卫（``_get_logps_via_local_forward``）保留为兜底断言，两者判的不是同一件事。
+        """
+        input_ids = model_inputs.get("input_ids") if isinstance(model_inputs, dict) else None
+        if hasattr(input_ids, "shape") and len(input_ids.shape) >= 1:
+            repaired = repair_empty_completion_window(grpo_batch, int(input_ids.shape[-1]))
+            if repaired is not None:
+                logger.info(
+                    "graspo: this micro-batch has no trainable position (empty/malformed "
+                    "response) — narrowing the completion window so the upstream logps slicing "
+                    "stays shape-consistent: %s",
+                    repaired,
+                )
+        return super()._get_per_token_logps_and_entropies(
+            model,
+            model_inputs,
+            grpo_batch,
+            compute_entropy=compute_entropy,
+            origin_data=origin_data,
+        )
 
     # ── 守卫：per-token logps 的形状自洽（fail-closed，只报错不改数值）──────
 
