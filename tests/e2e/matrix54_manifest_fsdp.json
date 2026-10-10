@@ -4581,7 +4581,7 @@
     "hard_requirement": "msswift.fsdp 指向的配置必须 state_dict_type=FULL_STATE_DICT，否则 checkpoint 内不含 HF 权重 ⇒ A4 指纹恒 None（证据见 report.md §2）",
     "count_semantics": "★ 判据③计数（nonfinite_grad_step_count）在 FSDP 下**只能读作 零/非零**：grad_norm 已是跨 rank 归约后的全局量，补丁随后的 all_reduce(SUM) 会把同一事件按 rank 各计一次 ⇒ 数值被放大 world_size 倍。A7 只判 ==0，故零当且仅零未被破坏。",
     "megatron": "★ 不作备选：实际运行镜像（本文件 runtime.image）缺 transformer_engine/apex ⇒ Megatron 通道不可用。FSDP2 是唯一可行路径。",
-    "runs_root": "必须用新产根（不覆盖 runs/v2-r1..r4）。历史：nfc2 冒烟 = runs/v2-fsdp-smoke2；本轮起改为方案 A（大卷）：T037 单档 = /data/<mount>，12 档 ×3 = /data/<mount>{1,2,3}（/ 仅 3.5T，3 跑次约 5.4TB 装不下）",
+    "runs_root": "必须用新产根（不覆盖 runs/v2-r1..r4）。历史：nfc2 冒烟 = runs/v2-fsdp-smoke2；本轮起改为方案 A（大卷）：T037 单档 = ${GRASPO_RUNS_ROOT}/v2-t037-nfc3，12 档 ×3 = ${GRASPO_RUNS_ROOT}/v2-fsdp-r{1,2,3}（/ 仅 3.5T，3 跑次约 5.4TB 装不下）。★ `${GRASPO_RUNS_ROOT}` 为**占位符**（本字段是 provenance 说明，不是 runner 读取的路径；runner 的产根来自环境变量 RUN_ROOT，见 run_matrix54.sh）",
     "runtime_image_id": "sha256:ffb19b78d9a75178188e8085a6419c4b1abca5e452a2116caa1a838044922d28",
     "runtime_image_note": "★ 12 档**统一用 runtime.image/runtime_image_id 所指的 nfc3**（口径单元一致性）。字段名已由 `nfc2_image_id` 改为**中性名** `runtime_image_id`，避免下次再出现「名字与值不符」。镜像链：nfc1（计数器不足）→ nfc2（补 ③ instrumentation）→ nfc3（rollout inference_mode→no_grad，唯一能跑通 6 个 rollout 档）。nfc3 的层前缀证据：nfc2 的 48 层是 nfc3 的 50 层的前缀。",
     "superseded_nfc1": "nfc1 跑次经独立裁决（review-r1r2r3/c3-implication-review.md）判定不足以支撑判据③：①钩子从不读 loss（实测 loss=inf 而 count=0）②两键不含步数、未计 hook 调用次数（grad 全 None 时 clip 返回 0.0 且权重逐位不变）③9/21 档的 rlhf 循环未核实 ⇒ 由 nfc2 取代"
