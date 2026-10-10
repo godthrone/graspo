@@ -850,7 +850,9 @@ bash run.sh samples/configs/sft_example.yaml --smoke
 
 GRASPO is released under the MIT License. See [LICENSE](LICENSE).
 
-Dependency licenses: all runtime dependencies are permissively licensed
-(MIT/Apache-2.0/BSD). The PyTorch CUDA wheels bundle NVIDIA runtime libraries
-under NVIDIA's proprietary EULA (redistributable, non-copyleft); see the
-NVIDIA Software License for details.
+Dependency licenses: permissively licensed (MIT/Apache-2.0/BSD) dependencies make up
+most of the tree, but **not all of it**. The PyTorch CUDA wheels additionally pull in
+NVIDIA **proprietary** runtime libraries under NVIDIA's proprietary EULA (commercially
+usable, non-copyleft, runtime-only, and **not vendored** into this repository). Every
+such exception is named — package, license expression, form and rationale — in
+[docs/licensing-exceptions.md](docs/licensing-exceptions.md).

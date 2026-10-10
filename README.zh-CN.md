@@ -660,6 +660,7 @@ bash run.sh samples/configs/sft_example.yaml --smoke
 
 GRASPO 使用 MIT License。见 [LICENSE](LICENSE)。
 
-依赖许可：所有运行时依赖均为宽松许可（MIT/Apache-2.0/BSD）。PyTorch CUDA wheel
-捆绑的 NVIDIA 运行时库采用 NVIDIA 专有 EULA（可再分发、无传染性），详见
-NVIDIA Software License。
+依赖许可：依赖树以宽松许可（MIT/Apache-2.0/BSD）为主，但**并非全部**。PyTorch CUDA
+wheel 还会捆绑 NVIDIA **专有**运行时库（NVIDIA 专有 EULA：可商用、无传染性、仅运行时
+依赖、**未 vendor 进本仓库**）。每个例外均按「包名 / 许可证表达式 / 形态 / 理由」
+具名登记于 [docs/licensing-exceptions.md](docs/licensing-exceptions.md)。
