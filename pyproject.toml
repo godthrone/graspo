@@ -7,6 +7,9 @@ name = "graspo"
 dynamic = ["version"]
 description = "GRASPO (Group Relative Advantage Structured Policy Optimization) — GRPO-style RL and SFT for structured LLM outputs. Token-level reward via character annotation. 9B on a single 80GB GPU. GraspoFlow unifies TP+DP+PP+SP+Checkpoint five-dimensional parallelism. Group filtering, perfect-skip, multimodal, tool-call reward."
 readme = "README.md"
+# ★ 上界 `<3.13` 是**有意接受**（不放开）：依赖栈（torch 2.11.0 / transformers 5.12.1 /
+#   ms-swift 4.5.3 的镜像血统，见下方 dependencies 注释）尚不支持 Python 3.13 ⇒ 此处即
+#   fail-closed 的兼容性声明，与镜像实测版本绑定；放开上界前必须先有 3.13 实测血统。
 requires-python = ">=3.11,<3.13"
 license = {text = "MIT"}
 authors = [{ name = "Godthrone" }]

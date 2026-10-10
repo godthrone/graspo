@@ -14,6 +14,7 @@
 """
 
 import json
+import logging
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -26,6 +27,8 @@ from graspo.ripple.parsing.qwen_tool_parser import (
     TOOL_CALL_OPEN,
     parse_qwen_tool_completion,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def latest_log_dir(run_dir: Path) -> Path:
@@ -184,7 +187,9 @@ def analyze_attribution(run_dir: Path) -> dict[str, Any]:
             continue
         try:
             records.append(json.loads(line))
-        except ValueError:
+        except ValueError as exc:
+            # §3.2：损坏行**必须留痕**，不得静默 continue（否则归因画像会少行而无人知）。
+            logger.warning("rollouts.readable.jsonl 损坏行已跳过（%s）：%s", readable_path, exc)
             continue
 
     # 按 (sample_index, step) 取终态（attempt_number 最大）
@@ -290,7 +295,11 @@ def _read_events(run_dir: Path, event_name: str) -> list[dict[str, Any]]:
             continue
         try:
             payload = json.loads(line)
-        except ValueError:
+        except ValueError as exc:
+            # §3.2：损坏行**必须留痕**，不得静默 continue。
+            logger.warning(
+                "events.jsonl 损坏行已跳过（%s，event=%s）：%s", events_path, event_name, exc
+            )
             continue
         if payload.get("event") == event_name:
             events.append(payload)
@@ -387,7 +396,11 @@ def analyze_epochs(run_dir: Path) -> dict[str, Any]:
             continue
         try:
             payload = json.loads(line)
-        except ValueError:
+        except ValueError as exc:
+            # §3.2：损坏行**必须留痕**，不得静默 continue。
+            logger.warning(
+                "events.jsonl 损坏行已跳过（%s，event=epoch_summary）：%s", events_path, exc
+            )
             continue
         if payload.get("event") != "epoch_summary":
             continue
@@ -600,7 +613,9 @@ def analyze_errors(run_dir: Path) -> dict[str, Any]:
             continue
         try:
             records.append(json.loads(line))
-        except ValueError:
+        except ValueError as exc:
+            # §3.2：损坏行**必须留痕**，不得静默 continue。
+            logger.warning("rollouts.readable.jsonl 损坏行已跳过（%s）：%s", readable_path, exc)
             continue
     if not records:
         return {"available": True, "records": 0, "by_step": [], "by_epoch": []}
