@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 from typing import NamedTuple
 
@@ -262,3 +263,212 @@ def test_architecture_report():
 
     # 至少验证 ripples 不导入 flow（已在其他测试中验证，此处仅信息性）
     assert True
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ★ P1：`ripple/` 纯算法层边界机核（U4 裁定 + 指挥部 2026-10-10 P1 裁决）
+#
+# 规则（每条都有阳性对照 —— 注入一个已知违规，它**必须**被抓住；⛔ 不接受恒 PASS）：
+#   R1  禁 import：`ripple/` 不得 import `graspo.flow` / `graspo.eval` / `graspo.cli`
+#   R2  禁词：`torch.cuda` / `torch.distributed` / `ProcessGroup` / `init_process_group`
+#       / `all_reduce` / `barrier` / `broadcast`（含 `dist.*` 集合通信）
+#   R3  ★ device **选择**：`device=` 实参不得是**设备字符串字面量**（`"cuda"`/`"cpu"`/…）
+#       、设备序号、或新建 device（`torch.device(...)`）；
+#       ✅ **允许** `device=<expr>.device` —— 读取既有张量的设备并把同一 device 传下去
+#       （"张量运算的设备保持"，无设备选择语义）
+#   R4  禁环境读取：`os.environ` / `os.getenv` / `os.putenv`
+#   R5  禁文件 IO / 网络 / 子进程：`open(` / `subprocess` / `socket` / `requests`
+#
+# ✅ 明确**允许**（不是违规）：`import torch`（张量运算，算法数学底座）、`pydantic`、
+#    `pathlib`（纯路径字符串计算，不读文件）、`graspo.core`（ripple→core 方向合法）。
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_RIPPLE_ROOT = Path(__file__).resolve().parents[1] / "src" / "graspo" / "ripple"
+
+_FORBIDDEN_IMPORT_PREFIXES: tuple[str, ...] = ("graspo.flow", "graspo.eval", "graspo.cli")
+
+#: R2：属性链形态的禁词（`torch.cuda.*` / `torch.distributed.*` / `dist.<集合通信>`）
+_FORBIDDEN_ATTR = re.compile(
+    r"torch\.cuda"
+    r"|torch\.distributed"
+    r"|(?:^|\.)dist\.(?:all_reduce|all_gather|barrier|broadcast|reduce|"
+    r"broadcast_object_list|all_gather_object|gather|scatter)"
+)
+#: R2：裸标识符形态的禁词
+_FORBIDDEN_NAMES: frozenset[str] = frozenset(
+    {
+        "ProcessGroup",
+        "init_process_group",
+        "destroy_process_group",
+        "new_group",
+        "all_reduce",
+        "barrier",
+        "broadcast",
+    }
+)
+
+#: R3：设备名字符串（"cuda" / "cpu" / "cuda:0" / "mps" …）
+_DEVICE_LITERAL = re.compile(r"^(?:cuda|cpu|mps|xpu|npu)(?::\d+)?$")
+
+#: R4：环境读取（`os.path.*` 等纯路径操作**不**在此列）
+_ENV_ACCESS = re.compile(r"^os\.(?:environ(?:\..*)?|getenv|putenv|getenvb|putenvb)$")
+
+#: R5：文件 IO / 网络 / 子进程
+_FORBIDDEN_CALLS: frozenset[str] = frozenset({"open"})
+_FORBIDDEN_CALL_PREFIXES: tuple[str, ...] = (
+    "subprocess.",
+    "socket.",
+    "requests.",
+    "urllib.",
+    "http.",
+)
+
+
+def _facility_rule(dotted: str) -> str | None:
+    """返回该点号路径命中的规则号（R4/R5），未命中返回 None。"""
+    if _ENV_ACCESS.match(dotted):
+        return "R4"
+    if dotted in _FORBIDDEN_CALLS or dotted.startswith(_FORBIDDEN_CALL_PREFIXES):
+        return "R5"
+    return None
+
+
+def _call_dotted(node: ast.expr) -> str:
+    """把 Call.func 渲染成点号路径（`os.getenv` / `open` / `torch.device`）。"""
+    if isinstance(node, ast.Attribute):
+        return ast.unparse(node)
+    if isinstance(node, ast.Name):
+        return node.id
+    return ""
+
+
+def _is_device_selection(node: ast.expr) -> bool:
+    """`device=` 的实参是否是"设备选择"（R3 点名的形态）。
+
+    ⛔ 设备字符串字面量 / 设备序号 / 新建 device 对象；
+    ✅ `old.device`（Attribute）、变量名（Name）—— 是"设备保持/透传"，不是选择。
+    """
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, str):
+            return bool(_DEVICE_LITERAL.match(node.value)) or node.value == ""
+        if isinstance(node.value, int):  # device=0 是设备序号选择
+            return True
+        return False
+    if isinstance(node, ast.Call):  # torch.device("cuda") 等 = 新建 device
+        return True
+    return False
+
+
+def scan_ripple_source(source: str, filename: str = "<memory>") -> list[str]:
+    """扫描一段源码，返回 `ripple/` 边界违规描述（空列表 = 合规）。"""
+    tree = ast.parse(source)
+    out: list[str] = []
+
+    for node in ast.walk(tree):
+        # ── R1 禁 import ────────────────────────────────────────────────────
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.startswith(_FORBIDDEN_IMPORT_PREFIXES):
+                    out.append(f"R1 {filename}:{node.lineno} 禁 import {alias.name}")
+                if _FORBIDDEN_ATTR.search(alias.name):
+                    out.append(f"R2 {filename}:{node.lineno} 禁 import {alias.name}")
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if module.startswith(_FORBIDDEN_IMPORT_PREFIXES):
+                out.append(f"R1 {filename}:{node.lineno} 禁 import {module}")
+            if _FORBIDDEN_ATTR.search(module):
+                out.append(f"R2 {filename}:{node.lineno} 禁 import {module}")
+            for alias in node.names:
+                if alias.name in _FORBIDDEN_NAMES:
+                    out.append(f"R2 {filename}:{node.lineno} 禁词标识符 {alias.name!r}")
+
+        # ── R2 禁词 ─────────────────────────────────────────────────────────
+        if isinstance(node, ast.Attribute) and _FORBIDDEN_ATTR.search(ast.unparse(node)):
+            out.append(f"R2 {filename}:{node.lineno} 禁词 {ast.unparse(node)!r}")
+        elif isinstance(node, ast.Name) and node.id in _FORBIDDEN_NAMES:
+            out.append(f"R2 {filename}:{node.lineno} 禁词标识符 {node.id!r}")
+
+        # ── R4/R5 环境读取与设施调用（属性形态：`os.environ[...]` 也是 Attribute）──
+        if isinstance(node, ast.Attribute):
+            rule = _facility_rule(ast.unparse(node))
+            if rule:
+                out.append(f"{rule} {filename}:{node.lineno} 禁调用 {ast.unparse(node)}")
+
+        # ── R3 device 选择 ──────────────────────────────────────────────────
+        if isinstance(node, ast.Call):
+            dotted = _call_dotted(node.func)
+            if dotted == "torch.device":
+                out.append(f"R3 {filename}:{node.lineno} 禁新建 device：torch.device(...)")
+            for kw in node.keywords:
+                if kw.arg == "device" and _is_device_selection(kw.value):
+                    out.append(
+                        f"R3 {filename}:{node.lineno} 禁 device 选择："
+                        f"device={ast.unparse(kw.value)}（允许 device=<expr>.device）"
+                    )
+            # ── R4 / R5 环境与设施调用 ──────────────────────────────────────
+            rule = _facility_rule(dotted)
+            if rule:
+                out.append(f"{rule} {filename}:{node.lineno} 禁调用 {dotted}")
+
+    return out
+
+
+def _scan_ripple_tree() -> list[str]:
+    """扫描真实 `ripple/` 树（只读）。"""
+    violations: list[str] = []
+    for path in sorted(_RIPPLE_ROOT.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        rel = path.relative_to(_RIPPLE_ROOT.parent.parent.parent)
+        violations += scan_ripple_source(path.read_text(encoding="utf-8"), str(rel))
+    return violations
+
+
+#: 阳性对照用例：每一条**必须**被 scanner 抓住。
+_POSITIVE_CASES: tuple[tuple[str, str], ...] = (
+    ("R1", "from graspo.flow.runtime import GraspoFlowRuntime\n"),
+    ("R1", "import graspo.eval.guard\n"),
+    ("R2", "import torch\ntorch.cuda.is_available()\n"),
+    ("R2", "import torch.distributed as dist\ndist.all_reduce(t)\n"),
+    ("R2", "from torch.distributed import ProcessGroup\n"),
+    ("R2", "init_process_group('nccl')\n"),
+    ("R2", "barrier()\n"),
+    ("R3", "import torch\nt = torch.zeros(1, device=\"cuda\")\n"),
+    ("R3", "import torch\nt = torch.zeros(1, device=\"cpu\")\n"),
+    ("R3", "import torch\nt = torch.zeros(1, device=0)\n"),
+    ("R3", "import torch\nt = torch.zeros(1, device=torch.device(\"cuda\"))\n"),
+    ("R4", "import os\nos.environ[\"X\"]\n"),
+    ("R4", "import os\nos.getenv(\"X\")\n"),
+    ("R5", "open('/tmp/x', 'w')\n"),
+    ("R5", "import subprocess\nsubprocess.run(['ls'])\n"),
+)
+
+#: 阴性对照：这些**必须不**被抓住（否则机核变成"恒 FAIL"的噪声源）。
+_NEGATIVE_CASES: tuple[str, ...] = (
+    "import torch\nimport pydantic\nfrom pathlib import Path\n",
+    "import torch\nt = torch.zeros(1, device=old_log_probs.device)\n",
+    "import torch\nt = torch.zeros(1, device=ref.device)\n",
+    "import torch\nt = torch.zeros(1)  # 默认 device，无选择语义\n",
+    "from graspo.core.schema import Sample\n",
+    "from pathlib import Path\np = Path(data_dir) / 'a.png'\n",
+    "import torch\nt = torch.zeros(1, device=some_device)\n",
+)
+
+
+@pytest.mark.parametrize(("rule", "snippet"), _POSITIVE_CASES)
+def test_ripple_boundary_scanner_catches_injected_violation(rule: str, snippet: str):
+    """★ 阳性对照：注入一个已知违规 ⇒ scanner **必须**抓住（⛔ 不接受恒 PASS）。"""
+    hits = scan_ripple_source(snippet, "<injected>")
+    assert any(h.startswith(f"{rule} ") for h in hits), f"注入的 {rule} 违规未被抓住: {hits}"
+
+
+@pytest.mark.parametrize("snippet", _NEGATIVE_CASES)
+def test_ripple_boundary_scanner_allows_legal_code(snippet: str):
+    """★ 阴性对照：合法写法（含 `device=<expr>.device`）必须**不**被误报。"""
+    assert scan_ripple_source(snippet, "<legal>") == []
+
+
+def test_ripple_layer_is_within_boundary():
+    """真树机核：`ripple/` 全树 0 违规（R1–R5）。"""
+    violations = _scan_ripple_tree()
+    assert not violations, f"ripple/ 边界违规 {len(violations)} 条：\n" + "\n".join(violations)
