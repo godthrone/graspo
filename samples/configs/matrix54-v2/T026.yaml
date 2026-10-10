@@ -1,0 +1,43 @@
+# T026 | 27B | SFT | LoRA | ms-swift | 2卡
+# 配置版本: v2（v1 基线 = samples/configs/matrix54/；本目录为冻结的 v2 定稿）
+# 生成器: 冻结件（不可由仓库重算）；v1 基线 = tests/e2e/generate_matrix.py；v2 逐档补丁件 tests/e2e/generate_matrix_v2.py 已退役留档 .local/repo-moved-out/tests/e2e/；手改无效
+# 本档相对 v1 的改动: 无（training 语义字段逐字节不变；仅 data.train_path: /work/elam-v5/subsets/T026.jsonl → /work/elam-v5/subsets-v2/T026.jsonl）
+# 口径: 只用 1/2/4 卡；GPU 集合取自 {0,1,2,3}；上下文长度由递增加长法实测得出，不预设档位。
+# 数据: ELAM V5 训练子集前 100 条（宿主数据根目录经 GRASPO_ELAM_HOST_ROOT 注入，见 .local/）；子集由 run_matrix54.sh 生成，图像经 ../images 解析。
+# ⚠️ 数据口径告警: ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。
+# 可表达性: ready
+# 显存可行性: [feasible] 估算每卡 62.3 GiB（预算 78 GiB）⇒ 可行：LoRA：基座冻结 ⇒ 权重 2 B/param；激活/其他预算 12 GiB
+train_method: sft
+backend: msswift
+tuner_type: lora
+model:
+  model_path: /models/Qwen3.8-27B
+  torch_dtype: bfloat16
+  gradient_checkpointing: true
+data:
+  train_path: /work/elam-v5/subsets-v2/T026.jsonl
+  max_prompt_length: 8192
+training:
+  output_dir: /out/T026
+  run_name: T026
+  overwrite_output_dir: true
+  seed: 42
+  max_epochs: 1
+  learning_rate: 5e-05
+  gradient_accumulation_micro_batches: 1
+  save_checkpoint_every_epoch: false
+  save_steps: 50
+lora:
+  r: 8
+  alpha: 16
+  dropout: 0.0
+  target_preset: vision_common
+msswift:
+  nproc_per_node: 2
+  per_device_train_batch_size: 1
+  sequence_parallel_size: 1
+  use_vllm: false
+gpu_monitor:
+  output_dir: /out/gpu
+  tag: T026
+  interval_sec: 2.0
