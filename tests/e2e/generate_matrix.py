@@ -3341,8 +3341,12 @@ def _probe_main(argv: list[str] | None = None) -> int:
     torch = None
     try:
         import torch as _torch
-    except Exception:
-        pass
+    except ImportError as exc:  # 无 torch ⇒ 显式记因（下面判 unverifiable_tooling），不静默吞
+        print(
+            f"[probe] torch 不可导入（{exc}）⇒ 记为工具缺失，走不可判定分支",
+            file=sys.stderr,
+            flush=True,
+        )
     else:
         torch = _torch
         torch_version = str(getattr(_torch, "__version__", "unknown"))
