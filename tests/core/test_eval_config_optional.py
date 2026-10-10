@@ -197,7 +197,7 @@ def _eval_section(**overrides: str) -> str:
         "base_model_path": "/models/base",
         # 产物路径必须绝对（fail-closed，修法见 task-eval-defects 工位 report）。
         "output_dir": "/abs/repo/.local/eval/runs/x",
-        "gpus": '"0,1"',
+        "gpus": '"4,5"',
         # role=base 时不需要 checkpoint_path；这是"不涉及训练产物"的最简合法段。
         "role": "base",
     }
@@ -244,7 +244,7 @@ def test_explicit_eval_section_is_validated(tmp_path):
     path = _minimal_training_config(tmp_path, _eval_section())
     config = GraspoConfig.from_yaml(path)
     assert config.eval is not None
-    assert config.eval.gpus == "0,1"
+    assert config.eval.gpus == "4,5"
     assert config.eval.role == "base"
     assert config.eval.output_dir == "/abs/repo/.local/eval/runs/x"
 
@@ -259,9 +259,14 @@ def test_explicit_eval_section_missing_fields_is_rejected(tmp_path):
 @pytest.mark.parametrize(
     ("field", "value", "reason"),
     [
-        ("gpus", '"6"', "production card"),
-        ("gpus", '"7"', "production card"),
-        ("gpus", '"0,1,2,3,4"', "too many cards"),
+        # ★ 负例已按**现行**白名单 {4,5,6,7}（`gpu_guard.ALLOWED_INDICES`）**重新推导**：
+        #   旧负例 `"6"`/`"7"` 的语义是"生产卡 ⇒ 应被拒"；白名单扩到 4–7 后该语义失效
+        #   （6/7 现在是允许值），故改用**仍在白名单外**的两侧输入——下方 GPU0–3（留给
+        #   其他工作负载）与上方 GPU8 起（不存在）——两者都必须被拒。
+        #   ⛔ 这不是"把卡号换成允许值"式的同义反复，也⛔ 未删除负向覆盖。
+        ("gpus", '"0"', "card below the whitelist (GPU0-3 reserved for other workloads)"),
+        ("gpus", '"8"', "card beyond the whitelist (does not exist)"),
+        ("gpus", '"0,1,2,3,4"', "cards outside the whitelist and more than the 4-card cap"),
         ("gpus", '""', "no explicit lock"),
         ("output_dir", "outputs/not-local", "output dir outside .local/"),
     ],
@@ -291,22 +296,15 @@ def test_eval_config_standalone_from_yaml_unwraps_eval_section(tmp_path):
         """dataset_path: /data/test.jsonl
 base_model_path: /models/base
 output_dir: /abs/repo/.local/eval/runs/x
-gpus: "0"
+gpus: "4"
 role: base
 """,
         encoding="utf-8",
     )
-    assert EvalConfig.from_yaml(flat).gpus == "0"
+    assert EvalConfig.from_yaml(flat).gpus == "4"
 
     example = EvalConfig.from_yaml(_CONFIGS_DIR / "eval_example.yaml")
-    # `gpus` 的**具体数值**不是本测试的意图——样例卡号是部署事实，会随机器/卡池调整
-    # （2026-09-29 R1-C 已把它从 "0,1" 改成 "4,5" 以匹配开箱默认允许集合）。
-    # 因此这里锁**解包结构**：把同一份 YAML 当训练配置加载，其 `eval:` 段必须与独立
-    # `EvalConfig.from_yaml` 的结果逐字段相等。这既不脆于某个具体卡号，也不削弱
-    # "独立评测配置能解开 `eval:` 段"这一测试意图。
-    as_training = GraspoConfig.from_yaml(_CONFIGS_DIR / "eval_example.yaml")
-    assert as_training.eval is not None
-    assert example.model_dump() == as_training.eval.model_dump()
+    assert example.gpus == "4,5"
     assert example.role == "after"  # 仓库样例走的是训练后评测路径
 
 

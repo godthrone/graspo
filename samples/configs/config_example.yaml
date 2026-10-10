@@ -294,7 +294,7 @@ reward:
 #   <output_dir>/gpu_memory.jsonl、gpu_processes.jsonl、gpu_memory_summary.json
 # 产物位置与内容**全部由本段决定**（§10.1：禁止 --output-dir 这类输出定位参数，
 # CLI 只有 --config / --gpus / --duration-sec / --assert-idle / --idle-only）。
-# 用法：uv run graspo record-gpu-memory --config config_example.yaml --gpus 0
+# 用法：uv run graspo record-gpu-memory --config config_example.yaml --gpus 4
 # 只想看是否空闲（不落盘）时用 --idle-only，它不需要本段。
 gpu_monitor:
   output_dir: ""                 # 落盘目录；空 = 未提供 ⇒ 命令 fail-closed 拒绝落盘
