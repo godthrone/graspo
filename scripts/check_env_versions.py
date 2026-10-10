@@ -22,6 +22,12 @@ CUDA 渠道本身的核对由构建配方里的 `torch.version.cuda` 断言负�
     python3 scripts/check_env_versions.py --from-container graspo-msswift:4.5.3
 
 退出码：0 = 一致；1 = 不一致（fail-closed）；2 = 用法/IO 错误。
+
+宪法 §10.2：本脚本被测试固化（``tests/e2e/test_check_env_versions.py``）并被
+``pyproject.toml`` / ``docker/Dockerfile*`` 构建门禁引用 ⇒ 已是**制度化接口**，
+**已升级登记为 ``graspo check-env-versions`` 稳定子命令**（``src/graspo/cli/devops.py``，
+同一份实现、参数透传）。镜像构建期无 venv，仍走 ``python scripts/check_env_versions.py --local``
+（``docker/Dockerfile:92`` 是稳定契约，不得迁址）；两者契约见 ``docs/devops-cli.md``。
 """
 
 from __future__ import annotations

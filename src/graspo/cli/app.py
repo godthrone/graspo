@@ -6,6 +6,7 @@
 """
 
 import argparse
+import dataclasses
 import json
 import os
 import subprocess
@@ -119,10 +120,15 @@ def cmd_launch(args: argparse.Namespace) -> int:
     # 超过 4 卡，一律拒绝，连子进程都不创建。容器侧 runtime 的 `void` 哨兵按
     # 实测可见卡判定（F-1，见 core/gpu_guard 模块 docstring）。
     devices = require_gpu_lock_or_exit()
+    # 配置**只加载一次**：确定性开关的合并（config 优先，§10.1）与启动计划共用
+    # 同一份 `GraspoConfig`（§1.4 单一真相源；避免两处各解析一次出现分叉）。
+    config = _load_config(args.config)
+    switch = _switch_from_args(args, config)
     plan = build_launch_plan(
         args.config,
+        config=config,
         smoke=bool(getattr(args, "smoke", False)),
-        determinism=_switch_from_args(args),
+        determinism=switch,
     )
     print(
         json.dumps(
@@ -134,6 +140,10 @@ def cmd_launch(args: argparse.Namespace) -> int:
                 "gpu_lock": list(devices),
                 "determinism_env": plan.determinism_env,
                 "determinism_spec": plan.determinism_spec,
+                # 生效值落启动日志（§10.1：便于复现对账）。这是 **config∪CLI 合并后**
+                # 的逐字段生效值，不是"某一侧的声明"；worker 侧另有
+                # `<output_dir>/logs/determinism.jsonl`（同一份 switch 的产物记录）。
+                "determinism_effective": _determinism_effective(switch),
                 "command": plan.command,
             },
             ensure_ascii=False,
@@ -141,6 +151,19 @@ def cmd_launch(args: argparse.Namespace) -> int:
     )
     completed = subprocess.run(plan.command, env=plan.env, check=False)
     return int(completed.returncode)
+
+
+def _load_config(config_path: str | Path) -> GraspoConfig:
+    """加载并校验配置的**唯一入口**（§2.3 边界校验即防呆）。
+
+    文件不存在 ⇒ fail-closed 退出（与既有报错逐字相同）。集中在这里，是为了让
+    ``cmd_launch``（需要 config 来合并确定性开关，§10.1）与 ``build_launch_plan``
+    共用同一条"存在性 + 解析"路径，不出现两处各判一次的错误信息分叉（§1.4）。
+    """
+    path = Path(config_path)
+    if not path.is_file():
+        raise SystemExit(f"Config file does not exist: {path}")
+    return GraspoConfig.from_yaml(path)
 
 
 def build_launch_plan(
@@ -151,9 +174,7 @@ def build_launch_plan(
     determinism: Any = None,
 ) -> LaunchPlan:
     config_path = Path(config_path)
-    if not config_path.is_file():
-        raise SystemExit(f"Config file does not exist: {config_path}")
-    config = config or GraspoConfig.from_yaml(config_path)
+    config = config or _load_config(config_path)
 
     from graspo.flow.backend.selection import select_backend
 
@@ -370,19 +391,23 @@ def _require_config_value(value: Any, name: str) -> None:
         raise SystemExit(f"{name} must be set in the YAML config")
 
 
-def _switch_from_args(args: argparse.Namespace) -> Any:
+def _switch_from_args(args: argparse.Namespace, config: Any = None) -> Any:
     """把 ``graspo launch`` 的确定性命令行开关组装成 :class:`DeterminismSwitch`。
 
     这是**唯一的 flag → 开关映射点**（§1.4）：CLI 参数名与开关字段名的对应关系
     只在这里出现一次，测试按同一张映射逐项验证（不留"加了 flag 没接线"的字段）。
     不传任何 flag ⇒ 全关的 :class:`DeterminismSwitch` ⇒ 行为逐字不变。
+
+    ``config`` 非空时，把 ``launch.determinism`` 段的**显式声明**叠加到 CLI 取值之上
+    （§10.1：兼容期 CLI 与 config 并存，**config 优先**）。``config=None``（单测与
+    既有调用方式）⇒ 行为与合并功能引入前逐字相同。
     """
     from graspo.core.determinism import DeterminismSwitch
 
     def flag(name: str) -> bool:
         return bool(getattr(args, name, False))
 
-    return DeterminismSwitch(
+    switch = DeterminismSwitch(
         enabled=flag("determinism"),
         warn_only=not flag("determinism_strict"),
         cudnn=not flag("determinism_no_cudnn"),
@@ -400,6 +425,43 @@ def _switch_from_args(args: argparse.Namespace) -> Any:
         torch_deterministic_algorithms=not flag("determinism_no_torch_algorithms"),
         probe_first_step=flag("determinism_probe_first_step"),
     )
+    return _merge_determinism_config(switch, config)
+
+
+def _merge_determinism_config(switch: Any, config: Any) -> Any:
+    """把 ``config.launch.determinism`` 的显式字段叠加到 CLI 开关上（config 优先）。
+
+    逐字段规则（§1.4 单一真相源，不允许"config 半边 + CLI 半边"的隐式拼接）：
+
+    - 字段为 ``None`` ⇒ 该字段**未在 config 声明** ⇒ 保留 CLI 取值；
+    - 字段为 ``true`` / ``false`` ⇒ **覆盖** CLI 取值。
+
+    ``config=None`` 或全 ``None`` 段 ⇒ 返回原开关（逐字不变）。
+    """
+    if config is None:
+        return switch
+    section = getattr(getattr(config, "launch", None), "determinism", None)
+    if section is None:
+        return switch
+    overrides = {
+        item.name: bool(getattr(section, item.name))
+        for item in dataclasses.fields(switch)
+        if getattr(section, item.name, None) is not None
+    }
+    if not overrides:
+        return switch
+    return dataclasses.replace(switch, **overrides)
+
+
+def _determinism_effective(switch: Any) -> dict[str, bool]:
+    """生效的确定性开关**逐字段**取值（config∪CLI 合并后；供启动日志落盘，§10.1）。
+
+    与 :func:`_determinism_spec` 的区别：spec 只带**非默认**字段（紧凑传输），
+    本函数是**全字段**快照，便于事后对账"这次到底按哪一套跑的"。
+    """
+    if switch is None:
+        return {}
+    return {item.name: bool(getattr(switch, item.name)) for item in dataclasses.fields(switch)}
 
 
 def _determinism_env_delta(switch: Any) -> dict[str, str]:
@@ -479,8 +541,9 @@ def build_parser() -> argparse.ArgumentParser:
         "multimodal pipeline, and training forward without a long run.",
     )
     # ── 确定性钉定开关（默认全关；定义与渲染的唯一真相源 = core/determinism.py）──
-    # 为什么不进 YAML：见 core/determinism.py 模块 docstring 的两条硬理由
-    # （配置模板全字段覆盖守卫 + 它是与 --smoke 同性质的运行边界参数）。
+    # 归属（B3 按 §10.1 改写）：**config 与 CLI 并存，config 优先**——config 落点是
+    # `launch.determinism`（schema: DeterminismConfig），本组 flag 是兼容期通道；
+    # 合并点 = _switch_from_args(args, config)。生效值随启动 JSON 落盘。
     launch.add_argument(
         "--determinism",
         action="store_true",
@@ -611,10 +674,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     build_eval_parser(subparsers)
 
+    from graspo.cli.devops import build_devops_parser
+
+    build_devops_parser(subparsers)
+
     return parser
 
 
 def main() -> None:
+    # §10.2 的稳定子命令（gpu-lock-guard / gpu-idle-assert / check-env-versions /
+    # collect-results）参数必须**原样透传**给被登记的脚本（含 ``--help``）。argparse
+    # 无法把「首个 token 即选项」的参数序列交给 REMAINDER（会判成未知选项）⇒ 在这里
+    # 先分派；其余命令仍走同一套 argparse 解析。
+    from graspo.cli.devops import dispatch_argv
+
+    devops_exit = dispatch_argv(sys.argv[1:])
+    if devops_exit is not None:
+        raise SystemExit(devops_exit)
+
     parser = build_parser()
     args = parser.parse_args()
     raise SystemExit(args.func(args))

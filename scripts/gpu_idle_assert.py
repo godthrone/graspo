@@ -18,6 +18,11 @@ GPU3 的 4 卡目标集）。放着不看，就会把"卡上有别人的负载"�
     NVIDIA_VISIBLE_DEVICES=0,1 python3 scripts/gpu_idle_assert.py
     python3 scripts/gpu_idle_assert.py --visible 0,1,2,3     # 宿主侧预检
     python3 scripts/gpu_idle_assert.py --visible 0 --quiet
+
+宪法 §10.2：本脚本被专门测试固化（``tests/scripts/test_gpu_idle_assert.py``）
+⇒ 已是**制度化接口**，**已升级登记为 ``graspo gpu-idle-assert`` 稳定子命令**
+（``src/graspo/cli/devops.py``，同一份实现、参数透传）。宿主/镜像引导层仍走本
+脚本路径（稳定契约，不得迁址）；两者契约见 ``docs/devops-cli.md``。
 """
 
 from __future__ import annotations

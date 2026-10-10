@@ -22,6 +22,13 @@
     #   —— 宿主路径**必须走 CLI 参数**（§10.1）；旧环境变量
     #   GRASPO_MODELS_HOST_ROOT / GRASPO_BASE_MODEL_FOR_COMPARE 已删除（§7.1/§1.4）。
     #   不给该参数时 A2 权重证据按"取证缺口"记不可判定，不猜也不放松。
+
+宪法 §10.2：本脚本被 ``tests/e2e/test_collect_results.py``、
+``tests/core/test_result_judge_threshold.py``、``tests/compliance/test_oss_config_boundaries.py``
+固化并被 ``docs/capability-matrix.md`` 引用 ⇒ 已是**制度化接口**，
+**已升级登记为 ``graspo collect-results`` 稳定子命令**（``src/graspo/cli/devops.py``，
+同一份实现、参数透传；参数表仍由本文件 argparse 唯一声明）。矩阵链内部的按路径
+加载点（``spec_from_file_location``）保持原址不变。两者契约见 ``docs/devops-cli.md``。
 """
 
 from __future__ import annotations

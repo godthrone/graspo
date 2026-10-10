@@ -19,7 +19,10 @@
     python3 scripts/gpu_lock_guard.py --visible 0,1 --assert-idle   # 再断言实测空闲
 
 本脚本是被 run.sh / run_matrix 反复调用的稳定入口，属宪法 §10.2 的
-"制度化接口"；若 README / docs 开始引用它，应升级为 CLI 子命令。
+"制度化接口" ⇒ **已升级登记为 ``graspo gpu-lock-guard`` 稳定子命令**
+（``src/graspo/cli/devops.py``，同一份实现、参数透传）。宿主/镜像引导层
+（尚未建 venv / 未安装 graspo）仍走本脚本路径（``run.sh:114`` 是稳定契约，
+不得迁址）；两者契约见 ``docs/devops-cli.md``。
 """
 
 from __future__ import annotations
@@ -31,25 +34,59 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+_SRC = Path(__file__).resolve().parents[1] / "src"
+
+
+def _install_namespace_shim() -> None:
+    """让 ``graspo.*`` 的**纯逻辑子模块**在裸环境（无 torch）可按路径导入。
+
+    ``graspo/__init__.py`` 会拉 ``core.schema`` → ``ripple`` → ``torch``；因此把
+    ``graspo`` / ``graspo.core`` / ``graspo.flow`` 注册为命名空间包（``__path__``
+    指向真实目录、**不执行它们的 ``__init__``**）。P0 的「gpu_guard 双家消除」把
+    设施操作搬到 ``graspo.flow.guard``（见 ``flow/guard/__init__.py`` docstring）
+    ⇒ 垫片必须覆盖 ``graspo.flow``；``graspo.flow.guard`` 本身仍走正常导入以执行
+    其 ``__init__.py``（它只依赖 ``graspo.core.gpu_guard``，不碰 torch）。
+    """
+    import types
+
+    for name, relative in (
+        ("graspo", "graspo"),
+        ("graspo.core", "graspo/core"),
+        ("graspo.flow", "graspo/flow"),
+    ):
+        if name in sys.modules:
+            continue
+        module = types.ModuleType(name)
+        module.__path__ = [str(_SRC / relative)]
+        module.__package__ = name
+        sys.modules[name] = module
+
 
 def _load_guard_module() -> ModuleType:
-    """加载 ``graspo/core/gpu_guard.py`` 的守卫实现。
+    """加载 ``graspo/flow/guard/__init__.py`` 的守卫**设施**实现。
 
     守卫是任何训练/测试之前的第一道防线，必须在**裸环境**可用——不能因为
     ``graspo/__init__.py`` 会导入 torch/pydantic 就跟着失败。因此优先按文件
     路径独立加载（不经过包 ``__init__``）；文件不存在时才退回常规包导入
     （安装到 site-packages 的场景）。实现仍只有一份（§1.4 单一真相源）。
+
+    ⚠ 这里加载的是 ``flow/guard``（P0 后的唯一设施入口）——它 re-export 了本脚本
+    用到的 ``assert_gpu_lock`` / ``assert_gpu_lock_from_env`` / ``format_verdict``
+    / ``GpuLockError``。改前指 ``core/gpu_guard.py``（只剩纯策略，无
+    ``format_verdict``）⇒ ``run.sh:114`` 会以 ``AttributeError`` 拒绝起跑（静默
+    失效，B3 冒烟抓出并修正）。
     """
-    source = Path(__file__).resolve().parents[1] / "src" / "graspo" / "core" / "gpu_guard.py"
+    _install_namespace_shim()
+    source = _SRC / "graspo" / "flow" / "guard" / "__init__.py"
     if source.is_file():
-        spec = importlib.util.spec_from_file_location("_graspo_gpu_guard_standalone", source)
+        spec = importlib.util.spec_from_file_location("_graspo_gpu_guard_facility", source)
         if spec is not None and spec.loader is not None:
             module = importlib.util.module_from_spec(spec)
             # 登记到 sys.modules，保证模块内 dataclass 等反射逻辑可解析 __module__。
             sys.modules[spec.name] = module
             spec.loader.exec_module(module)
             return module
-    import graspo.core.gpu_guard as installed  # noqa: PLC0415
+    import graspo.flow.guard as installed  # noqa: PLC0415
 
     return installed
 
