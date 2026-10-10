@@ -119,6 +119,32 @@ def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def config_dir_total_fingerprint(config_dir: Path) -> str:
+    """配置目录**总指纹**（v2 冻结点算法，逐字）：按文件名排序 → 拼接每行
+    ``<sha256>  <name>\\n`` → 取 sha256。
+
+    ★ 默认**现算**，不回读 `.local/` 下的历史 `fingerprint.txt`：那种回读在文件陈旧时
+    会把过期指纹静默写回清单（真实发生过：默认路径读的是 `7a230bad…`，而目录实测已是
+    `066ca99a…`，见 `tests/e2e/matrix54_manifest_source.json` 的 `config_v2_fingerprint`）。
+
+    fail-closed：目录不存在 / 为空即抛错——⛔ 不返回 ``"unknown"`` 之类占位值，
+    否则陈旧指纹会以"看起来正常"的形式落盘。
+    """
+    if not config_dir.is_dir():
+        raise FileNotFoundError(f"配置目录不存在，无法现算总指纹：{config_dir}")
+    entries = sorted(
+        (path.name, sha256_bytes(path.read_bytes()))
+        for path in config_dir.iterdir()
+        if path.is_file()
+    )
+    if not entries:
+        raise AssertionError(f"配置目录为空，无法现算总指纹：{config_dir}")
+    digest = hashlib.sha256()
+    for name, sha in entries:
+        digest.update(f"{sha}  {name}\n".encode())
+    return digest.hexdigest()
+
+
 def v2_native_steps_per_epoch(subset_size: int, dp_size: int, q: int = Q) -> int:
     """native GRASPO 每 epoch **真实**步数 = ``ceil(T/Q)``，``T = floor(subset/dp_size)``。
 
@@ -664,7 +690,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="runner 的 RUN_ROOT 推荐值（运行产物根；须与上面两者不嵌套）")
     parser.add_argument(
         "--config-fingerprint", default=None,
-        help="配置 v2 总指纹（默认从 task-config-freeze-v2/fingerprint.txt 读；读不到则记 unknown）",
+        help="配置 v2 总指纹（默认按冻结点算法对 samples/configs/matrix54-v2/ **现算**）",
     )
     args = parser.parse_args(argv)
 
@@ -679,17 +705,11 @@ def main(argv: list[str] | None = None) -> int:
         print_steps(v1_manifest, args.pregen_subset_dir)
         return 0
 
-    fingerprint = args.config_fingerprint
-    if not fingerprint:
-        fp_file = (
-            PROJECT_ROOT / ".local" / "hb-workspace" / "20260923-analysis"
-            / "task-config-freeze-v2" / "fingerprint.txt"
-        )
-        if fp_file.is_file():
-            m = re.search(r"总指纹:\s*([0-9a-f]{64})", fp_file.read_text(encoding="utf-8"))
-            fingerprint = m.group(1) if m else "unknown"
-        else:
-            fingerprint = "unknown"
+    # ★ 默认**现算**（不再回读外部指纹文件）：外部文件会陈旧，回读旧值会把过期指纹
+    # 静默写回清单字段（§1.4 单一真相源 / §2.2 不让文档说假话）。算法逐字 = v2 冻结点口径。
+    fingerprint = args.config_fingerprint or config_dir_total_fingerprint(
+        PROJECT_ROOT / V2_CONFIG_DIR_REL
+    )
 
     manifest = build_v2_manifest(
         v1_manifest, args.host_data_root, args.pregen_subset_dir, args.attempt_root,
