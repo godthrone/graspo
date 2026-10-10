@@ -62,7 +62,8 @@ def _eval_yaml(tmp_path: Path, **overrides: str) -> Path:
         # 目录放 tmp_path 下，幂等；只要求"绝对 + 含 /.local/"。
         "output_dir": str(tmp_path / ".local" / "eval" / "runs" / "cli-test"),
         "role": "base",
-        "gpus": "0,1",
+        # ★ 卡位契约（B7 收口）：允许集合 = {4,5,6,7}；此处必须取集合内的卡。
+        "gpus": "4,5",
         "served_model_name": "graspo-eval",
         "endpoint": "http://127.0.0.1:18889",
     }
@@ -118,8 +119,8 @@ def test_eval_prepare_is_read_only_and_reports_plan(tmp_path, capsys):
     payload = json.loads(captured[: captured.index("\n}\n") + 3])
     assert payload["role"] == "base"
     assert payload["model_directory"] == str(tmp_path / "models" / "base")
-    assert payload["gpus"] == [0, 1]
-    assert payload["gpu_flag"] == '"device=0,1"'
+    assert payload["gpus"] == [4, 5]
+    assert payload["gpu_flag"] == '"device=4,5"'
     assert payload["dataset"]["sample_count"] == 1
     # 重叠分析溯源：未提供训练集时，产物里必须能看出"没做"
     assert payload["overlap_analysis_performed"] is False
@@ -153,9 +154,13 @@ def test_prepare_reports_overlap_analysis_provenance_when_train_set_given(tmp_pa
     assert len(subset["sha256"]) == 64
 
 
-def test_prepare_rejects_production_cards(tmp_path):
-    """gpus 含 6/7 时，配置加载阶段就拒绝——不等到起容器。"""
-    config_path = _eval_yaml(tmp_path, gpus='"6"')
+def test_prepare_rejects_cards_outside_the_allowlist(tmp_path):
+    """gpus 落在允许集合 ``{4,5,6,7}`` 之外时，配置加载阶段就拒绝——不等到起容器。
+
+    ★ B7 重新推导：旧负例 ``"6"``/``"7"`` 建立在"6/7 是生产卡"的已退役语义上；
+    现行契约下 6/7 **允许**，负例必须取真正越界的卡（0–3 或 ≥8）。此处用 ``"0"``。
+    """
+    config_path = _eval_yaml(tmp_path, gpus='"0"')
     from graspo.core.schema import EvalConfig
 
     with pytest.raises(SystemExit):

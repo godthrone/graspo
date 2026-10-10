@@ -1,6 +1,6 @@
 """可信显存采样的负向测试——"可见 2 卡但机上 8 卡"。
 
-历史事故：采样命令不带 ``-i``，峰值混入生产 GPU6/7。本测试构造最坏场景
+历史事故：采样命令不带 ``-i``，峰值混入未点名（历史上是生产 GPU6/7）的卡。本测试构造最坏场景
 （nvidia-smi 无视 ``-i``、返回全部 8 卡），断言采样结果只含可见的 2 卡。
 纯逻辑测试，不触 GPU（runner 注入）。
 
@@ -27,15 +27,7 @@ from graspo.cli.gpu_monitor import (
 )
 from graspo.core.gpu_guard import GpuInventory, GpuLockError
 
-#: 部署事实（**显式声明**，不依赖 `core.gpu_guard` 里曾经写死的元组）：本模块夹具
-#: 用 GPU0–3，并把 6/7 声明为保留（生产）卡。2026-09-28 裁定：允许/保留集合来自
-#: 配置，见 gpu_guard 模块头。
-_DEPLOYMENT_FACT = {
-    "GRASPO_ALLOWED_GPU_INDICES": "0,1,2,3",
-    "GRASPO_RESERVED_GPU_INDICES": "6,7",
-}
-
-#: 机上 8 卡（含生产卡 6/7）的 nvidia-smi 输出：index,uuid,used,free,total,util,temp,power
+#: 机上 8 卡（含允许集合外的 0–3）的 nvidia-smi 输出：index,uuid,used,free,total,util,temp,power
 _EIGHT_CARD_OUTPUT = "".join(
     f"{idx}, GPU-{idx:03d}, {100 * idx}, {81920 - 100 * idx}, 81920, {idx * 5}, 40, 100.0\n"
     for idx in range(8)
@@ -61,16 +53,17 @@ class _NoisyRunner:
 
 
 def test_query_only_returns_visible_two_cards():
-    """可见 2 卡（0,3）但机上 8 卡 → 采样结果只含 0 和 3。"""
+    """可见 2 卡（4,6）但机上 8 卡 → 采样结果只含 4 和 6。"""
     runner = _NoisyRunner()
 
-    rows = query_gpu_rows(["0", "3"], runner=runner)
+    rows = query_gpu_rows(["4", "6"], runner=runner)
 
-    assert [row["gpu_index"] for row in rows] == [0, 3]
+    assert [row["gpu_index"] for row in rows] == [4, 6]
     assert len(rows) == 2
     sampled = {int(row["gpu_index"]) for row in rows}
-    assert 6 not in sampled, "生产卡 GPU6 不得出现在样本中"
-    assert 7 not in sampled, "生产卡 GPU7 不得出现在样本中"
+    # ★ 未点名的卡（含同属允许集合的 7）不得出现在样本中——"只采可见卡"这条铁律
+    assert 7 not in sampled, "未点名的允许集合内卡 7 不得出现在样本中"
+    assert 0 not in sampled, "允许集合外的卡 0 不得出现在样本中"
 
 
 def test_query_command_always_carries_dash_i():
@@ -90,10 +83,10 @@ def test_query_command_rejects_empty_targets():
 
 def test_resolve_sample_gpus_uses_visible_set():
     """默认采样目标 = 可见卡；显式取值必须是可见集子集。"""
-    visible = {"NVIDIA_VISIBLE_DEVICES": "0,3"}
+    visible = {"NVIDIA_VISIBLE_DEVICES": "4,6"}
 
-    assert resolve_sample_gpus(None, visible=visible["NVIDIA_VISIBLE_DEVICES"]) == ["0", "3"]
-    assert resolve_sample_gpus("3", visible=visible["NVIDIA_VISIBLE_DEVICES"]) == ["3"]
+    assert resolve_sample_gpus(None, visible=visible["NVIDIA_VISIBLE_DEVICES"]) == ["4", "6"]
+    assert resolve_sample_gpus("6", visible=visible["NVIDIA_VISIBLE_DEVICES"]) == ["6"]
 
 
 @pytest.mark.parametrize(
@@ -101,8 +94,8 @@ def test_resolve_sample_gpus_uses_visible_set():
     [
         (None, None),  # 未锁卡
         (None, "all"),  # 全卡
-        (None, "0,1,2,3,6"),  # 含生产卡
-        ("0,6", "0,3"),  # 显式越出可见集
+        (None, "4,8"),  # 含允许集合外的卡（≥8 不存在）
+        ("4,7", "4,6"),  # 显式越出可见集
     ],
 )
 def test_resolve_sample_gpus_is_fail_closed(gpus, visible):
@@ -253,9 +246,9 @@ def test_assert_visible_gpus_idle_host_side_uses_host_indices():
     """宿主侧显式卡号通道：逐张查这些宿主卡。"""
     runner = _IdleRunner()
 
-    assert_visible_gpus_idle(visible="0,2", runner=runner)
+    assert_visible_gpus_idle(visible="4,6", runner=runner)
 
-    assert runner.commands[0][runner.commands[0].index("-i") + 1] == "0,2"
+    assert runner.commands[0][runner.commands[0].index("-i") + 1] == "4,6"
 
 
 def test_assert_visible_gpus_idle_container_side_uses_local_indices_once():
@@ -291,7 +284,7 @@ def test_idle_query_asks_for_index_field():
     """
     runner = _IdleRunner()
 
-    assert_visible_gpus_idle(visible="0", runner=runner)
+    assert_visible_gpus_idle(visible="4", runner=runner)
 
     query = next(item for item in runner.commands[0] if item.startswith("--query-gpu="))
     assert IDLE_FIELDS[0] == "index"

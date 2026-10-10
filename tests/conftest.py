@@ -62,7 +62,8 @@ torch / transformers / peft / safetensors / ms-swift，或需要真模型、真�
 
 卡计划铁律（单一路径）：宿主侧先用 ``scripts/gpu_lock_guard.py`` 前置断言，
 容器只认 ``NVIDIA_VISIBLE_DEVICES``（不再叠加 ``--gpus``，两者可能互相覆盖）；
-GPU6/7 是生产卡，永不触碰。新增"纯逻辑"测试时，被测模块不得 import
+**允许卡 = ``{4,5,6,7}``，其余一律拒绝**（0–3 属第三方先到先得；≥8 不存在；
+「生产卡」语义已退役）。新增"纯逻辑"测试时，被测模块不得 import
 torch/transformers；否则归入"容器内测试"。
 """
 

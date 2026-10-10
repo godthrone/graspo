@@ -264,7 +264,14 @@ def test_run_evaluation_refuses_without_explicit_gpus(tmp_path):
     assert not (tmp_path / "out").exists()
 
 
-def test_run_evaluation_refuses_production_cards_before_any_request(tmp_path):
+def test_run_evaluation_refuses_out_of_allowlist_cards_before_any_request(tmp_path):
+    """越界卡（允许集合 ``{4,5,6,7}`` 之外）在**任何请求/建目录之前**就被拒绝。
+
+    ★ B7 重新推导：旧用例拿 ``"6,7"`` 当负例，理由是"它们是生产卡"——该语义已退役，
+    6/7 现在是**允许**的。新契约下唯一合法的负向输入是集合之外的卡（0–3 / ≥8），
+    故改用 ``"0,1"``。守卫在 ``resolve_gpu_plan`` 里先于落盘与网络发生，用例因此
+    可瞬时结束（这也是本用例此前被 deselect 的挂起条件被消除的原因）。
+    """
     dataset_path = _dataset_root(tmp_path)
     dataset, _, _ = load_eval_dataset(dataset_path)
     with pytest.raises(GpuGuardError):
@@ -273,7 +280,7 @@ def test_run_evaluation_refuses_production_cards_before_any_request(tmp_path):
             model=EvalModel(served_name="s", role="base", path="/models/base"),
             dataset=dataset,
             output_dir=tmp_path / "out",
-            gpus="6,7",
+            gpus="0,1",
         )
     assert not (tmp_path / "out").exists()
 
@@ -291,7 +298,9 @@ def test_run_evaluation_refuses_overlap_without_train_subset_metadata(tmp_path):
             model=EvalModel(served_name="s", role="base", path="/models/base"),
             dataset=dataset,
             output_dir=tmp_path / "out",
-            gpus="0,1",
+            # ★ B7：取允许集合 {4,5,6,7} 内的卡（本用例断言的是重叠溯源检查，
+            # 它在卡守卫之前触发；但仍不应依赖"越界卡被前者掩盖"这一巧合）。
+            gpus="4,5",
             overlap_indices=overlap,
             train_subset=None,
         )
@@ -420,6 +429,9 @@ def test_run_evaluation_rejects_relative_output_dir_before_any_write(tmp_path, m
 
     这条堵的正是"产物静默丢失"：不拒绝的话，落点会随进程 cwd 漂移，
     调用方还以为产物在配置写的位置。
+
+    ★ B7：``gpus`` 取允许集合 ``{4,5,6,7}`` 内的 ``"4"``——否则卡守卫会先于
+    "路径必须绝对"这条检查抛错（``resolve_gpu_plan`` 在 ``_resolve_artifact_dir`` 之前）。
     """
     monkeypatch.chdir(tmp_path)
     dataset_path = _dataset_root(tmp_path)
@@ -430,7 +442,7 @@ def test_run_evaluation_rejects_relative_output_dir_before_any_write(tmp_path, m
             model=EvalModel(served_name="s", role="base", path="/models/base"),
             dataset=dataset,
             output_dir=".local/eval/runs/relative",
-            gpus="0",
+            gpus="4",
         )
     # 拒绝发生在 create 之前 ⇒ 相对 cwd 的位置不该被建出来
     assert not (tmp_path / ".local").exists()

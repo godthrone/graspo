@@ -1,21 +1,18 @@
 """graspo.core.gpu_guard 的单元测试——锁卡守卫的负向覆盖（安全关键）。
 
-必须覆盖五种情形：未设置 / 含 6 / 含 7 / 5 卡 / 合法 4 卡。
+★ 卡位契约（B7 收口后正式口径）：**允许卡 = ``{4,5,6,7}``；其余一律拒绝**。
+0–3 属第三方工作负载（先到先得，**不是**"保留卡"）；≥8 不存在；
+「生产卡 / reserved」语义**已退役**。
+
+必须覆盖五种情形（按新契约重推导）：未设置 / 含集合外卡（低于 4）/ 含集合外卡
+（≥8）/ 卡数超限 / 合法 4 卡（``{4,5,6,7}``）。
 纯逻辑测试，不触 GPU、不读真实环境（env 通过 mapping 注入）。
 
 **F-1 追加（守卫与容器 runtime 语义不一致）**：nvidia-container-runtime 按设备
 收窄可见集时会把容器内 ``NVIDIA_VISIBLE_DEVICES`` 覆写成哨兵 ``void``。旧守卫把它
 判为非法 ⇒ 目标 GPU 服务器上所有训练入口必然拒绝启动（false reject）。修后：
 ``void`` + 实测可见卡（≤4）→ 通过；``void`` + 实测 8 卡 → 仍拒绝；
-未设置/``all`` → 仍拒绝；显式 ``0,1,6`` → 仍拒绝（保留卡由宿主侧按真实卡号判）。
-
-**★ 2026-09-28 裁定（允许集合 = 配置，不是代码常量）**：``ALLOWED_INDICES`` 曾是
-"某台机器（228）的部署事实"被硬编码进共享代码，导致本文件与 e2e / 脚本 / CLI 夹具
-（都用 GPU0–3）共 59 项必然失败。修法是让允许/保留集合来自
-``GRASPO_ALLOWED_GPU_INDICES`` / ``GRASPO_RESERVED_GPU_INDICES``（有默认值，
-向后兼容）。因此本文件**每一组用例显式注入它假设的部署事实**，并按注入值断言——
-测试不再假设任何主机的固定元组。两组注入都在下面显式覆盖（``POLICY_0_3`` /
-``POLICY_4_7``）。
+未设置/``all`` → 仍拒绝；显式 ``4,5,0`` → 仍拒绝（集合外卡由宿主侧按真实卡号判）。
 """
 
 import pytest
@@ -120,40 +117,46 @@ def test_rejects_when_visible_devices_unset():
     assert "正确用法" in _reason(exc)
 
 
-def test_rejects_when_devices_contain_gpu6():
-    """部署把 GPU6 声明为保留卡 → 含它就拒绝（保留卡优先报）。"""
+def test_rejects_when_devices_contain_a_card_below_the_allowlist():
+    """含允许集合**之下**的卡（GPU0–3）→ 拒绝。
+
+    ★ B7 重新推导：旧用例拿 GPU6 当"生产卡"负例；6 现属允许集合，语义失效。
+    新契约下真正的"低于集合"是 0–3（第三方先到先得，不属保留卡）。
+    """
     with pytest.raises(GpuLockError) as exc:
-        assert_gpu_lock("0,1,6", env=POLICY_0_5_RESERVED_6_7)
-    assert "6" in _reason(exc)
-    assert "保留卡" in _reason(exc)
+        assert_gpu_lock("4,5,0")
+    assert "0" in _reason(exc)
+    assert "白名单外" in _reason(exc)
 
 
-def test_rejects_when_devices_contain_gpu7():
-    """含保留卡 GPU7 → 拒绝。"""
+def test_rejects_when_devices_contain_a_card_above_the_allowlist():
+    """含允许集合**之上**的卡（GPU8 起不存在）→ 拒绝。
+
+    ★ B7 重新推导：旧用例拿 GPU7 当"生产卡"负例；7 现属允许集合。
+    """
     with pytest.raises(GpuLockError) as exc:
-        assert_gpu_lock("7", env=POLICY_0_5_RESERVED_6_7)
-    assert "7" in _reason(exc)
+        assert_gpu_lock("8")
+    assert "8" in _reason(exc)
+    assert "白名单外" in _reason(exc)
 
 
 def test_rejects_when_five_cards_requested():
-    """5 卡超过上限 → 拒绝（允许集合内也要按卡数上限收口）。"""
+    """5 张卡 → 拒绝。
+
+    ★ B7 登记：现行白名单只有 4 个元素 ⇒ **纯"超 4 卡"输入不可构造**（5 张互不
+    相同的卡必然含集合外卡号，先被白名单分支拒绝）；``MAX_CARDS`` 分支在此路径上
+    已不可达。本用例因此如实断言"被白名单分支拒绝"，⛔ 不再宣称"超过上限"。
+    """
     with pytest.raises(GpuLockError) as exc:
-        assert_gpu_lock("0,1,2,3,4", env=POLICY_0_5_RESERVED_6_7)
-    assert "超过上限" in _reason(exc)
+        assert_gpu_lock("4,5,6,7,0")
+    assert "白名单外" in _reason(exc)
 
 
 def test_accepts_legal_four_cards():
-    """合法 4 卡（注入部署事实 {0,1,2,3}）→ 通过，返回设备元组。"""
-    assert assert_gpu_lock("0,1,2,3", env=POLICY_0_3) == (0, 1, 2, 3)
-    assert assert_gpu_lock("0, 2, 3, 1", env=POLICY_0_3) == (0, 2, 3, 1)
-    assert assert_gpu_lock_from_env({"NVIDIA_VISIBLE_DEVICES": "1,2", **POLICY_0_3}) == (1, 2)
-
-
-def test_accepts_legal_four_cards_under_the_4_7_deployment_fact():
-    """同一份代码在注入 {4,5,6,7} 时接受该集合——证明判据来自配置而非写死元组。"""
-    assert assert_gpu_lock("4,5,6,7", env=POLICY_4_7) == (4, 5, 6, 7)
-    assert assert_gpu_lock("5,6", env=POLICY_4_7) == (5, 6)
-    assert assert_gpu_lock_from_env({"NVIDIA_VISIBLE_DEVICES": "6,7", **POLICY_4_7}) == (6, 7)
+    """合法 4 卡（允许集合 ``{4,5,6,7}``）→ 通过，返回设备元组。"""
+    assert assert_gpu_lock("4,5,6,7") == (4, 5, 6, 7)
+    assert assert_gpu_lock("5, 4, 7, 6") == (5, 4, 7, 6)
+    assert assert_gpu_lock_from_env({"NVIDIA_VISIBLE_DEVICES": "4,5"}) == (4, 5)
 
 
 # ── 其它非法取值 ────────────────────────────────────────────────────────────
@@ -177,32 +180,32 @@ def test_parse_device_list_rejects_runtime_marker_because_it_wants_host_indices(
     assert "托管哨兵" in _reason(exc)
 
 
-def test_rejects_six_cards_with_reserved_first():
-    """保留卡错误优先于卡数错误——先报保留卡（6 张卡的场景里先指出 7 不能碰）。"""
+def test_out_of_allowlist_error_precedes_the_card_count_check():
+    """集合外卡在更早的分支被拒——错误里报的是"白名单外"，而不是"超过上限"。
+
+    ★ B7 重新推导：旧用例名是 "six_cards_with_reserved_first"（"先报生产卡"）。
+    "生产卡"语义已退役；本用例改为钉住**分支优先级**：白名单分支先于卡数分支。
+    """
     with pytest.raises(GpuLockError) as exc:
-        assert_gpu_lock("0,1,2,3,4,7", env=POLICY_0_5_RESERVED_6_7)
-    assert "7" in _reason(exc)
-    assert "保留卡" in _reason(exc)
+        assert_gpu_lock("4,5,6,7,0,1")
+    assert "白名单外" in _reason(exc)
+    assert "超过上限" not in _reason(exc)
 
 
 # ── 采样目标选择（可信显存采样的边界）──────────────────────────────────────
 
 
-def test_select_sample_targets_defaults_to_visible(monkeypatch):
-    """未显式指定时，采样目标 = 可见卡（在注入的 {0,3} 部署事实下）。"""
-    for key, value in POLICY_0_3.items():
-        monkeypatch.setenv(key, value)
-    assert select_sample_targets(None, "0,3") == (0, 3)
-    assert select_sample_targets("", "0,3") == (0, 3)
-    assert select_sample_targets("all", "0,3") == (0, 3)
+def test_select_sample_targets_defaults_to_visible():
+    """未显式指定时，采样目标 = 可见卡。"""
+    assert select_sample_targets(None, "4,6") == (4, 6)
+    assert select_sample_targets("", "4,6") == (4, 6)
+    assert select_sample_targets("all", "4,6") == (4, 6)
 
 
-def test_select_sample_targets_rejects_outside_visible(monkeypatch):
-    """显式采样卡越出可见集 → 拒绝（防混入保留卡）。"""
-    for key, value in POLICY_0_3.items():
-        monkeypatch.setenv(key, value)
+def test_select_sample_targets_rejects_outside_visible():
+    """显式采样卡越出可见集 → 拒绝（防混入非目标卡读数）。"""
     with pytest.raises(GpuLockError) as exc:
-        select_sample_targets("0,6", "0,3")
+        select_sample_targets("4,7", "4,6")
     assert "越出可见卡" in _reason(exc)
 
 
@@ -246,7 +249,7 @@ def test_void_with_four_visible_cards_passes_and_reports_local_indices():
 
 
 def test_void_with_eight_visible_cards_is_still_rejected():
-    """★不放松"不得超 4 卡"：runtime 没收住（可见 8 张卡，含生产 6/7）时必须拒绝。
+    """★不放松"不得超 4 卡"：runtime 没收住（可见 8 张卡）时必须拒绝。
 
     本地序号与宿主卡号无对应关系，所以这条断言就是"可见集失守"的兜底信号。
     """
@@ -286,22 +289,22 @@ def test_zero_visible_cards_is_fail_closed():
     assert "可见卡数为 0" in _reason(exc)
 
 
-def test_explicit_devices_still_reject_reserved_cards_with_inventory_present():
-    """★不放松"不得含保留卡"：即使同时给了实测卡，显式宿主卡号仍按真实卡号判。"""
-    inventory = GpuInventory(source="nvidia-smi -L", count=2, indices=(0, 1))
+def test_explicit_devices_still_reject_out_of_allowlist_cards_with_inventory_present():
+    """★不放松"必须落在允许集合内"：即使同时给了实测卡，显式宿主卡号仍按真实卡号判。"""
+    inventory = GpuInventory(source="nvidia-smi -L", count=2, indices=(4, 5))
 
     with pytest.raises(GpuLockError) as exc:
-        assert_gpu_lock_inventory("0,1,6", inventory, env=POLICY_0_5_RESERVED_6_7)
+        assert_gpu_lock_inventory("4,5,8", inventory)
 
-    assert "保留卡" in _reason(exc)
+    assert "白名单外" in _reason(exc)
 
 
 def test_explicit_declared_count_must_match_observed_count():
     """可见卡数 ≠ 声明卡数 → 拒绝（runtime 收窄不改变卡数）。"""
-    inventory = GpuInventory(source="nvidia-smi -L", count=4, indices=(0, 1, 2, 3))
+    inventory = GpuInventory(source="nvidia-smi -L", count=4, indices=(4, 5, 6, 7))
 
     with pytest.raises(GpuLockError) as exc:
-        assert_gpu_lock_inventory("0,1", inventory, env=POLICY_0_3)
+        assert_gpu_lock_inventory("4,5", inventory)
 
     assert "!=" in _reason(exc)
 
@@ -331,8 +334,10 @@ def test_require_gpu_lock_or_exit_uses_injected_probe_only_for_void():
     )
     assert calls == ["probe"]
 
-    explicit_env = {"NVIDIA_VISIBLE_DEVICES": "2,3", **POLICY_0_3}
-    assert require_gpu_lock_or_exit(explicit_env, inventory_probe=probe) == (2, 3)
+    assert require_gpu_lock_or_exit({"NVIDIA_VISIBLE_DEVICES": "4,5"}, inventory_probe=probe) == (
+        4,
+        5,
+    )
     assert calls == ["probe"], "显式卡号路径不得触发实测探测"
 
 
