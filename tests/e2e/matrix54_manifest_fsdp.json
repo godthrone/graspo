@@ -3990,7 +3990,7 @@
   "supersedes": {
     "relationship": "v2 清单（matrix54_manifest_source.json）**未被改动**；本文件是它的 FSDP 变体派生版",
     "base_manifest": "tests/e2e/matrix54_manifest_source.json",
-    "base_manifest_sha256": "819215c803da1b58c709458c4be424b84319eb586345582a5a036e48c1242ddf",
+    "base_manifest_sha256": "08c9f50454281a7fbf5fae41af9392b0130ee9405e01a83c005993a50c0040f5",
     "note": "v2 的 v1 关系（supersedes.base_manifest）予以保留，不覆盖",
     "base_supersedes_kept": {
       "relationship": "v1 清单（matrix54_manifest.json）**未被改动**；本文件是它的 v2 派生版",

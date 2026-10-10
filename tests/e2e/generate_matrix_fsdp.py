@@ -3,8 +3,12 @@
 
 ## 为什么是独立脚本（而不是改 `generate_matrix.py` / `generate_matrix_v2.py`）
 
-* `samples/configs/matrix54-v2/` 是**已冻结**的定稿（指挥官 2026-09-23 冻结，总指纹
-  `7a230bad…`）。本轮是**新的一轮**（基础＝FSDP 接线），因此
+* `samples/configs/matrix54-v2/` 是**已冻结**的定稿（指挥官 2026-09-23 冻结）。冻结当时
+  记录的总指纹是 `7a230bad…`（**历史值**，现已陈旧）；该目录**当前实测**总指纹为
+  `066ca99a…` —— 与 `matrix54_manifest_source.json` / `matrix54_manifest_fsdp.json` 的
+  `config_v2_fingerprint` 字段同值（均由 `generate_matrix_manifest_source.py::
+  config_dir_total_fingerprint()` 按冻结点算法对目录**现算**）。本轮是**新的一轮**
+  （基础＝FSDP 接线），因此
   **既不覆盖也不手改** 冻结目录，而是从它派生一个**新的、可复核的变体目录**。
 * 与 v2 生成器同一套做法（§ 先例）：**只读**上游 yaml 文本，做**显式枚举、逐条断言**的
   文本变换，写到一个新目录；变换之外**逐字节不变**（脚本内 assert）。
