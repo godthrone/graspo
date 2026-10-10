@@ -1,0 +1,3653 @@
+{
+  "schema_version": 1,
+  "source": "docs/capability-matrix.md §6/§7",
+  "counts": {
+    "total": 54,
+    "by_algorithm": {
+      "CPT": 9,
+      "SFT": 18,
+      "GRASPO": 18,
+      "OPD": 9
+    },
+    "by_cards": {
+      "1": 18,
+      "2": 18,
+      "4": 18
+    },
+    "by_backend": {
+      "ms-swift": 36,
+      "native": 18
+    },
+    "by_mode": {
+      "LoRA": 36,
+      "全量": 18
+    },
+    "by_status": {
+      "ready": 33,
+      "unverified": 18,
+      "not_applicable": 3
+    },
+    "by_applicability": {
+      "applicable": 51,
+      "not_applicable": 3
+    },
+    "by_feasibility_verdict": {
+      "feasible": 45,
+      "unmeasured": 6,
+      "not_applicable": 3
+    }
+  },
+  "runtime": {
+    "image": "graspo-msswift:4.5.3",
+    "timeout_sec": 7200,
+    "initial_max_prompt_length": 8192,
+    "checkpoint_retention": {
+      "policy": "keep-latest-single-checkpoint",
+      "keep_per_tier": 1,
+      "how": "① 配置侧：`training.save_steps` = 该档**计划总步数**（见每档 `checkpoint_save_steps`），=「每档只落一份」；★ 计划步数=「实际参与优化的样本数 ÷ 卡数」，而 **RLHF（GRASPO/GRPO）档的样本数 = 子集 × `training.rollout_group_size`**（ms-swift 的 `RepeatSampler(mini_repeat_count=G)` 会按 G 重复数据集；矩阵档不覆盖该字段，取 schema 默认值 8）⇒ `T031`/`T043` 真机 `global_step/max_steps` = 160/160。**此项 2026-09-20 修复**：修前 GRASPO 档的 `save_steps` 低了 8 倍、每个 run 真落 8 份 ckpt，只剩一份实际全靠②；★ **native GRASPO 的例外**：其计划值（20/10/5）**大于**可达上限（3/2/1）⇒ `save_steps` 不触发 ⇒ 只落终态 `final/`，由②的 native 分支显式承认（`KEEP …（native 终态产物）`）。这是刻意的：native 中间段叫 `step_<N>`、②的清理范围只有 `checkpoint-*`，把计划值压到可达上限反而每档多留一份重 ckpt；② runner 侧：容器内落盘后立即逐项目具名删除旧 ckpt（`[ckpt-retention]` 日志行），并断言至少还剩一份（否则报运行链路错误，不静默通过）。",
+      "keep": [
+        "最新一份 `checkpoint-<step>/`（A2 权重变化证据 + A3 重载证据）",
+        "轻量证据一律保留：`stdout.log`、`logging.jsonl`、`args.json`、`trainer_state.json`、`gpu/` 读数、`subsets/`、`exit_code`、`ckpt_retention.state`"
+      ],
+      "delete": [
+        "同一档内除最新一份以外的 `checkpoint-*/`（逐项具名，不用通配符展开做操作数）"
+      ],
+      "a3_unaffected": "A3 = checkpoint 能否重载；`scripts/collect_results.py` 的 `find_checkpoint_dirs()` 只要求**存在 ≥1 份**可解析的 `checkpoint-<step>/`，没有份数要求 ⇒ 留一份即满足 A3。",
+      "blocked_by_env": "checkpoint 由容器内 root 落盘，宿主普通用户删不掉（228 实测：`sudo` 需密码）⇒ 删除只能发生在容器内，故实现落在 runner 的 entry.sh。"
+    }
+  },
+  "models": {
+    "container_root": "/models",
+    "host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+    "host_root_note": "宿主模型根目录属环境信息（§15.1/§16），由运行时环境变量注入，不入 tracked 文件；runner 只读挂载到容器内 /models。缺失时 runner fail-closed 拒绝启动（运行链路错误，不是数据问题）。",
+    "overrides": {
+      "9B": {
+        "container_path": "/models/Qwen3.5-9B",
+        "host_dir_env_var": "GRASPO_9B_HOST_DIR",
+        "host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B"
+      },
+      "27B": {
+        "container_path": "/models/Qwen3.8-27B",
+        "host_dir_env_var": "GRASPO_27B_HOST_DIR",
+        "host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B"
+      }
+    },
+    "mount_in_runner": "-v \"$MODELS_ROOT:/models:ro\"（container_root 只读挂载）"
+  },
+  "feasibility_model": {
+    "card_budget_gib": 78.0,
+    "activation_allowance_gib": 12.0,
+    "bf16_param_bytes": 2.0,
+    "grad_bytes": 2.0,
+    "adam_bytes": {
+      "native": 4.0,
+      "ms-swift": 8.0,
+      "note": "按后端分别假设（统一口径，§1.4）：native k=8 B/param（bf16 矩估计）；ms-swift k=12 B/param（DeepSpeed fp32 优化器态，保守）。"
+    },
+    "bytes_per_param_by_backend": {
+      "native_full": 8.0,
+      "msswift_full": 12.0,
+      "lora": 2.0
+    },
+    "assumptions": {
+      "native_full": "native 全参 k=8 B/param —— 假设 `torch.optim.AdamW` 的 m/v 矩估计跟随 bf16 参数（`zeros_like(param)`，无 fp32 master）。来源：task-i2-fullparam §3.1。**该假设未经上机实测**：若改为 fp32 矩估计（k=12）则 1 卡估算升至 105 GiB+。",
+      "msswift_full": "ms-swift/DeepSpeed 全参 k=12 B/param —— 保守假设 fp32 优化器态（m+v = 8）。**该假设未经上机实测，方向偏保守。**",
+      "measured": false,
+      "note": "两侧的优化器态精度都是**假设**、不是实测值；因此「估算超预算」只能表述为『判定不可靠』，**不得写成『必然 OOM』**。"
+    },
+    "rules": [
+      "LoRA：基座冻结 ⇒ 权重 2 B/param",
+      "ms-swift 全参 zero2_offload（1/2 卡）：权重 2 + 梯度 2（优化器态在 CPU）",
+      "ms-swift 全参 zero2+AutoTP4（4 卡）：权重 2/4 + (梯度+优化器) 10/4",
+      "native 全参：仅 PP 分片 ⇒ k/卡数（k=8，bf16 Adam 假设）；1 卡无分片 ⇒ 估算超预算、判定不可靠（标 blocked，理由为诚实表述而非『必然 OOM』）",
+      "CPT：与学生侧同一套学生侧算式（算法不改变常驻口径）；全量档沿用 ms-swift 全参配方",
+      "OPD：学生侧算式同上；**教师侧不参与算式**——教师（27B）显存是本生成器**未测算**的量 ⇒ 判定恒为 unmeasured（不得声称可行，P-25）"
+    ],
+    "verdicts": {
+      "values": [
+        "feasible",
+        "infeasible",
+        "unmeasured",
+        "blocked"
+      ],
+      "meaning": {
+        "feasible": "确定性算式 ≤ 预算且无未测算的额外消费者",
+        "infeasible": "确定性算式已超预算 ⇒ 拒绝生成",
+        "unmeasured": "算式通过但有未测算的额外消费者 ⇒ 不得声称可行，待上机测量",
+        "blocked": "当前给不出配方（能力未落地 / 无分片手段）",
+        "not_applicable": "确实不适用——用户拍板口径下不存在该档的合法配置 ⇒ 合法终态，不产出可跑配置、不参与可行性判断"
+      },
+      "note": "`feasibility.feasible` 是向后兼容的布尔视图：True/False/None。`None` 同时覆盖 unmeasured / blocked / not_applicable —— **必须读 `verdict` 区分**，不得用 `feasible is None` 推断原因。"
+    },
+    "opd_teacher": {
+      "teacher_model": "Qwen3.8-27B",
+      "teacher_model_path": "/models/Qwen3.8-27B",
+      "student_model": "OPD 学生**固定 9B**（用户拍板：省显存，价值高）；教师 = 27B 常量。台账 `model` 列在 graspo 里 = 被训练的学生。",
+      "teacher_weights_gib_bf16": 50.3,
+      "teacher_weights_gib_bf16_measured": 50.1,
+      "teacher_weights_measurement": "上机 probe 实测（PyTorch allocator `max_memory_allocated`，bf16，26.896 B 参数）⇒ 50.10 GiB；出处 task-cpt-opd / task-r3-retest2 报告。",
+      "measured": false,
+      "unmeasured_note": "★ **待上机测量（P-25）**：OPD 的教师模型（Qwen3.8-27B）在训练进程内**额外占一份显存**（每个 rank 一份），本生成器**没有**教师侧的实测数字 ⇒ **不得**判定为「可行」。配方已显式设 `distill.offload_teacher_model: true`（教师权重常驻 CPU、前向时换入），但教师**前向时的 GPU 工作集**仍是未测算量 ⇒ 本档标 `unmeasured`，由**上机冒烟**（建议先跑 `T046`）回填实测后再改判定。参考算式（教师**不**换出时）：27B bf16 权重 ≈ 50.3 GiB/卡，与学生侧常驻相加在任何卡数下都超预算 ⇒ 「不换出」不构成可用配方（这是权重常驻的算术事实，不是实测结论）。",
+      "not_applicable_note": "★ 确实不适用（not_applicable）：用户拍板 **OPD 教师 = 27B 常量、学生 = 9B**（省显存，价值高）⇒ OPD 通道的学生**固定 9B**。台账该档的 `model` 列在 graspo 里是**被训练的学生**，按现行口径读作 27B 学生 ⇒ 需要 **27B 学生 + 27B 教师**：教师 bf16 权重**实测 50.10 GiB**（上机 probe），再加 27B 学生权重（≈52 GiB）⇒ **权重常驻 ≈100 GiB**，与用户「省显存」的意图正好相反。**因此用户想要的那种配置不存在** ⇒ 本档不适用。★ 这是**合法终态**（验收口径明文：「失败」与「确实不适用」都是合法产出），**不是「blocked（当前给不出配方、将来可能给得出）」**，也不是「跑失败了」。",
+      "not_applicable_tiers": [
+        "T052",
+        "T053",
+        "T054"
+      ],
+      "relation_by_tier": {
+        "T046": "independent",
+        "T047": "independent",
+        "T048": "independent",
+        "T049": "independent",
+        "T050": "independent",
+        "T051": "independent",
+        "T052": "not-applicable",
+        "T053": "not-applicable",
+        "T054": "not-applicable"
+      },
+      "decision": "★ 已由指挥官裁定并落地（2026-09-19）：`T052`–`T054`（台账的 27B OPD 档）由原口径 A（27B→27B 自蒸馏）改判为 **`not_applicable`（确实不适用）**。理由：用户拍板 **OPD 教师 = 27B 常量、学生 = 9B**（省显存）⇒ OPD 学生固定 9B；27B 行若作为学生则需 27B 学生 + 27B 教师，教师权重实测 50.10 GiB、加 27B 学生权重 ≈100 GiB 权重常驻，与用户意图相反 ⇒ **确实不适用**。`T046`–`T051`（9B OPD）保持 **independent（独立教师）**关系不变。这是**合法终态**（验收口径明文：「失败」与「确实不适用」都是合法产出）。"
+    },
+    "generation_gate": "assert_memory_feasible：确定性算式超预算（infeasible）即拒绝生成（不允许安静产出不可靠配置）；unmeasured 档**允许生成但不声称可行**（未测算的量只能靠上机量出来），并在 stdout 打出待测清单；`not_applicable` 档**不产出可跑配置**（确实不适用、无待测量）"
+  },
+  "data": {
+    "source": "ELAM V5 balanced（与开发机副本 md5 一致）",
+    "host_root_env_var": "GRASPO_ELAM_HOST_ROOT",
+    "host_root_note": "宿主数据根目录属环境信息（§16），由运行时环境变量注入，不入 tracked 文件",
+    "container_root": "/work/elam-v5",
+    "train_jsonl": "/work/elam-v5/data/train.jsonl",
+    "test_jsonl": "/work/elam-v5/data/test.jsonl",
+    "subset_dir": "/work/elam-v5/subsets",
+    "counts": {
+      "train": 6378,
+      "test": 702,
+      "images": 15954
+    },
+    "image_reference_style": "\"image\": \"../images/<name>.jpg\"（相对 data 文件父目录）",
+    "subset_size_by_algorithm": {
+      "CPT": 100,
+      "SFT": 100,
+      "GRASPO": 20,
+      "OPD": 20
+    },
+    "subset_rationale": "按 §6 门槛取下限（SFT ≥100 / RL ≥20），不整集跑（省资源）",
+    "integrity_caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。",
+    "train_source": "mini",
+    "train_source_env_var": "GRASPO_ELAM_MINI_JSONL",
+    "mini_dataset": {
+      "relative_path_under_data_root": "mini-dataset/mini-short-mm-train.jsonl",
+      "jsonl_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+      "line_count": 100,
+      "purpose": "mini 数据集只用于「矩阵跑通」（压时间/压成本），**效果评测必须用全量 test 集**（/work/elam-v5/data/test.jsonl，702 行）；mini 的跑通结果**不得**当作效果结论。",
+      "isolation": "文件名带 `mini-short-mm-` 前缀且落独立目录 `mini-dataset/`，与源数据 `data/train.jsonl` **物理隔离**（用户硬约束：靠命名与路径防误用；源数据只读；禁止混放同名文件）"
+    },
+    "train_path_not_the_source_note": "每档 `data.train_path` 只约束**生成位置**（<RUN_ROOT>/<Tier>/subsets/<Tier>.jsonl），**不约束读取源**；runner 的 `TRAIN_PATH == dirname(TRAIN_PATH)/<Tier>.jsonl` 断言与图像根反推 `dirname(dirname(train_path))/images` 都依赖它 ⇒ **不要改配置来换数据源**，换源只切本段 `train_source`"
+  },
+  "step_gate_audit": {
+    "threshold": 5,
+    "threshold_source": "docs/capability-matrix.md §6「正式记录门槛」（AF1/指挥官裁定：不放宽）",
+    "rule": "reachable >= threshold ⇒ 门槛照常判；reachable < threshold ⇒ 判「⚠ 口径不可测」（不是 ❌ 失败，也不是 ✅ 通过）",
+    "structural_limited_tiers": [
+      {
+        "tier_id": "T028",
+        "algorithm": "GRASPO",
+        "backend": "native",
+        "cards": 1,
+        "subset_size": 20,
+        "per_epoch": 3,
+        "max_epochs": 1,
+        "reachable": 3,
+        "min_optimizer_steps": 5,
+        "derivation": "每 epoch 上限 = floor(floor(20/1)/8) + 1 = 3；× max_epochs(1) = 3  < 门槛 5",
+        "kind": "needs_more_epochs"
+      },
+      {
+        "tier_id": "T029",
+        "algorithm": "GRASPO",
+        "backend": "native",
+        "cards": 2,
+        "subset_size": 20,
+        "per_epoch": 2,
+        "max_epochs": 1,
+        "reachable": 2,
+        "min_optimizer_steps": 5,
+        "derivation": "每 epoch 上限 = floor(floor(20/2)/8) + 1 = 2；× max_epochs(1) = 2  < 门槛 5",
+        "kind": "needs_more_epochs"
+      },
+      {
+        "tier_id": "T030",
+        "algorithm": "GRASPO",
+        "backend": "native",
+        "cards": 4,
+        "subset_size": 20,
+        "per_epoch": 1,
+        "max_epochs": 1,
+        "reachable": 1,
+        "min_optimizer_steps": 5,
+        "derivation": "每 epoch 上限 = floor(floor(20/4)/8) + 1 = 1；× max_epochs(1) = 1  < 门槛 5",
+        "kind": "structural_impossible"
+      },
+      {
+        "tier_id": "T034",
+        "algorithm": "GRASPO",
+        "backend": "native",
+        "cards": 1,
+        "subset_size": 20,
+        "per_epoch": 3,
+        "max_epochs": 1,
+        "reachable": 3,
+        "min_optimizer_steps": 5,
+        "derivation": "每 epoch 上限 = floor(floor(20/1)/8) + 1 = 3；× max_epochs(1) = 3  < 门槛 5",
+        "kind": "needs_more_epochs"
+      },
+      {
+        "tier_id": "T035",
+        "algorithm": "GRASPO",
+        "backend": "native",
+        "cards": 2,
+        "subset_size": 20,
+        "per_epoch": 2,
+        "max_epochs": 1,
+        "reachable": 2,
+        "min_optimizer_steps": 5,
+        "derivation": "每 epoch 上限 = floor(floor(20/2)/8) + 1 = 2；× max_epochs(1) = 2  < 门槛 5",
+        "kind": "needs_more_epochs"
+      },
+      {
+        "tier_id": "T036",
+        "algorithm": "GRASPO",
+        "backend": "native",
+        "cards": 4,
+        "subset_size": 20,
+        "per_epoch": 1,
+        "max_epochs": 1,
+        "reachable": 1,
+        "min_optimizer_steps": 5,
+        "derivation": "每 epoch 上限 = floor(floor(20/4)/8) + 1 = 1；× max_epochs(1) = 1  < 门槛 5",
+        "kind": "structural_impossible"
+      },
+      {
+        "tier_id": "T040",
+        "algorithm": "GRASPO",
+        "backend": "native",
+        "cards": 1,
+        "subset_size": 20,
+        "per_epoch": 3,
+        "max_epochs": 1,
+        "reachable": 3,
+        "min_optimizer_steps": 5,
+        "derivation": "每 epoch 上限 = floor(floor(20/1)/8) + 1 = 3；× max_epochs(1) = 3  < 门槛 5",
+        "kind": "needs_more_epochs"
+      },
+      {
+        "tier_id": "T041",
+        "algorithm": "GRASPO",
+        "backend": "native",
+        "cards": 2,
+        "subset_size": 20,
+        "per_epoch": 2,
+        "max_epochs": 1,
+        "reachable": 2,
+        "min_optimizer_steps": 5,
+        "derivation": "每 epoch 上限 = floor(floor(20/2)/8) + 1 = 2；× max_epochs(1) = 2  < 门槛 5",
+        "kind": "needs_more_epochs"
+      },
+      {
+        "tier_id": "T042",
+        "algorithm": "GRASPO",
+        "backend": "native",
+        "cards": 4,
+        "subset_size": 20,
+        "per_epoch": 1,
+        "max_epochs": 1,
+        "reachable": 1,
+        "min_optimizer_steps": 5,
+        "derivation": "每 epoch 上限 = floor(floor(20/4)/8) + 1 = 1；× max_epochs(1) = 1  < 门槛 5",
+        "kind": "structural_impossible"
+      }
+    ],
+    "structural_limited_note": "这些档的 step 门槛**不是能力失败**，是『子集取数 × 训练器步进语义』算出来的上限所致。其中 kind=structural_impossible 的档**把 epoch 调大也达不到门槛**（阈值 queue×group 在 4 卡下永不可触发）；kind=needs_more_epochs 的档在 max_epochs 提高后可达（属目标/预算层，须用户拍板，本生成器不擅自改）。"
+  },
+  "tiers": [
+    {
+      "tier_id": "T001",
+      "model": "9B",
+      "model_name": "Qwen3.5-9B",
+      "model_path": "/models/Qwen3.5-9B",
+      "algorithm": "CPT",
+      "mode": "LoRA",
+      "backend": "ms-swift",
+      "cards": 1,
+      "gpus": [
+        0
+      ],
+      "status": "ready",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T001.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T001.jsonl",
+        "subset_size": 100,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 100,
+      "checkpoint_save_steps": 100,
+      "expected_optimizer_steps_per_epoch": 100,
+      "expected_optimizer_steps_reachable": 100,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 28.8 GiB（预算 78 GiB）⇒ 可行：LoRA：基座冻结 ⇒ 权重 2 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "msswift": {
+            "nproc_per_node": 1,
+            "per_device_train_batch_size": 1,
+            "sequence_parallel_size": 1,
+            "use_vllm": false
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 100,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=100；per_epoch=100；max_epochs=1；可产出步数上限=100 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T002",
+      "model": "9B",
+      "model_name": "Qwen3.5-9B",
+      "model_path": "/models/Qwen3.5-9B",
+      "algorithm": "CPT",
+      "mode": "LoRA",
+      "backend": "ms-swift",
+      "cards": 2,
+      "gpus": [
+        0,
+        1
+      ],
+      "status": "ready",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T002.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T002.jsonl",
+        "subset_size": 100,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 50,
+      "checkpoint_save_steps": 50,
+      "expected_optimizer_steps_per_epoch": 50,
+      "expected_optimizer_steps_reachable": 50,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 28.8 GiB（预算 78 GiB）⇒ 可行：LoRA：基座冻结 ⇒ 权重 2 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "msswift": {
+            "nproc_per_node": 2,
+            "per_device_train_batch_size": 1,
+            "sequence_parallel_size": 1,
+            "use_vllm": false
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 100,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=50；per_epoch=50；max_epochs=1；可产出步数上限=50 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T003",
+      "model": "9B",
+      "model_name": "Qwen3.5-9B",
+      "model_path": "/models/Qwen3.5-9B",
+      "algorithm": "CPT",
+      "mode": "LoRA",
+      "backend": "ms-swift",
+      "cards": 4,
+      "gpus": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "status": "ready",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T003.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T003.jsonl",
+        "subset_size": 100,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 25,
+      "checkpoint_save_steps": 25,
+      "expected_optimizer_steps_per_epoch": 25,
+      "expected_optimizer_steps_reachable": 25,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 28.8 GiB（预算 78 GiB）⇒ 可行：LoRA：基座冻结 ⇒ 权重 2 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "msswift": {
+            "nproc_per_node": 4,
+            "per_device_train_batch_size": 1,
+            "sequence_parallel_size": 1,
+            "use_vllm": false
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 100,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=25；per_epoch=25；max_epochs=1；可产出步数上限=25 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T004",
+      "model": "9B",
+      "model_name": "Qwen3.5-9B",
+      "model_path": "/models/Qwen3.5-9B",
+      "algorithm": "CPT",
+      "mode": "全量",
+      "backend": "ms-swift",
+      "cards": 1,
+      "gpus": [
+        0
+      ],
+      "status": "unverified",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
+      "status_reason": "全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T004.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T004.jsonl",
+        "subset_size": 100,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 100,
+      "checkpoint_save_steps": 100,
+      "expected_optimizer_steps_per_epoch": 100,
+      "expected_optimizer_steps_reachable": 100,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 45.5 GiB（预算 78 GiB）⇒ 可行：ms-swift 全参 zero2_offload：权重 2/1 + 梯度 2 B/param（优化器态在 CPU）；激活/其他预算 12 GiB",
+        "recipe": {
+          "msswift": {
+            "nproc_per_node": 1,
+            "per_device_train_batch_size": 1,
+            "sequence_parallel_size": 1,
+            "use_vllm": false,
+            "deepspeed": "zero2_offload"
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 100,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=100；per_epoch=100；max_epochs=1；可产出步数上限=100 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T005",
+      "model": "9B",
+      "model_name": "Qwen3.5-9B",
+      "model_path": "/models/Qwen3.5-9B",
+      "algorithm": "CPT",
+      "mode": "全量",
+      "backend": "ms-swift",
+      "cards": 2,
+      "gpus": [
+        0,
+        1
+      ],
+      "status": "unverified",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
+      "status_reason": "全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T005.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T005.jsonl",
+        "subset_size": 100,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 50,
+      "checkpoint_save_steps": 50,
+      "expected_optimizer_steps_per_epoch": 50,
+      "expected_optimizer_steps_reachable": 50,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 45.5 GiB（预算 78 GiB）⇒ 可行：ms-swift 全参 zero2_offload：权重 2/1 + 梯度 2 B/param（优化器态在 CPU）；激活/其他预算 12 GiB",
+        "recipe": {
+          "msswift": {
+            "nproc_per_node": 2,
+            "per_device_train_batch_size": 1,
+            "sequence_parallel_size": 1,
+            "use_vllm": false,
+            "deepspeed": "zero2_offload"
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 100,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=50；per_epoch=50；max_epochs=1；可产出步数上限=50 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T006",
+      "model": "9B",
+      "model_name": "Qwen3.5-9B",
+      "model_path": "/models/Qwen3.5-9B",
+      "algorithm": "CPT",
+      "mode": "全量",
+      "backend": "ms-swift",
+      "cards": 4,
+      "gpus": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "status": "unverified",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
+      "status_reason": "全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T006.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T006.jsonl",
+        "subset_size": 100,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 25,
+      "checkpoint_save_steps": 25,
+      "expected_optimizer_steps_per_epoch": 25,
+      "expected_optimizer_steps_reachable": 25,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 49.7 GiB（预算 78 GiB）⇒ 可行：ms-swift 全参 zero2（纯 DP4，**未开 AutoTP**）：权重 2 + (梯度+优化器) 10/4 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "msswift": {
+            "nproc_per_node": 4,
+            "per_device_train_batch_size": 1,
+            "sequence_parallel_size": 1,
+            "use_vllm": false,
+            "deepspeed": "zero2"
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 100,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=25；per_epoch=25；max_epochs=1；可产出步数上限=25 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T007",
+      "model": "27B",
+      "model_name": "Qwen3.8-27B",
+      "model_path": "/models/Qwen3.8-27B",
+      "algorithm": "CPT",
+      "mode": "LoRA",
+      "backend": "ms-swift",
+      "cards": 1,
+      "gpus": [
+        0
+      ],
+      "status": "ready",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T007.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T007.jsonl",
+        "subset_size": 100,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 100,
+      "checkpoint_save_steps": 100,
+      "expected_optimizer_steps_per_epoch": 100,
+      "expected_optimizer_steps_reachable": 100,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 62.3 GiB（预算 78 GiB）⇒ 可行：LoRA：基座冻结 ⇒ 权重 2 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "msswift": {
+            "nproc_per_node": 1,
+            "per_device_train_batch_size": 1,
+            "sequence_parallel_size": 1,
+            "use_vllm": false
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 100,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=100；per_epoch=100；max_epochs=1；可产出步数上限=100 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T008",
+      "model": "27B",
+      "model_name": "Qwen3.8-27B",
+      "model_path": "/models/Qwen3.8-27B",
+      "algorithm": "CPT",
+      "mode": "LoRA",
+      "backend": "ms-swift",
+      "cards": 2,
+      "gpus": [
+        0,
+        1
+      ],
+      "status": "ready",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T008.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T008.jsonl",
+        "subset_size": 100,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 50,
+      "checkpoint_save_steps": 50,
+      "expected_optimizer_steps_per_epoch": 50,
+      "expected_optimizer_steps_reachable": 50,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 62.3 GiB（预算 78 GiB）⇒ 可行：LoRA：基座冻结 ⇒ 权重 2 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "msswift": {
+            "nproc_per_node": 2,
+            "per_device_train_batch_size": 1,
+            "sequence_parallel_size": 1,
+            "use_vllm": false
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 100,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=50；per_epoch=50；max_epochs=1；可产出步数上限=50 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T009",
+      "model": "27B",
+      "model_name": "Qwen3.8-27B",
+      "model_path": "/models/Qwen3.8-27B",
+      "algorithm": "CPT",
+      "mode": "LoRA",
+      "backend": "ms-swift",
+      "cards": 4,
+      "gpus": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "status": "ready",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T009.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T009.jsonl",
+        "subset_size": 100,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 25,
+      "checkpoint_save_steps": 25,
+      "expected_optimizer_steps_per_epoch": 25,
+      "expected_optimizer_steps_reachable": 25,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 62.3 GiB（预算 78 GiB）⇒ 可行：LoRA：基座冻结 ⇒ 权重 2 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "msswift": {
+            "nproc_per_node": 4,
+            "per_device_train_batch_size": 1,
+            "sequence_parallel_size": 1,
+            "use_vllm": false
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 100,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=25；per_epoch=25；max_epochs=1；可产出步数上限=25 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T010",
+      "model": "9B",
+      "model_name": "Qwen3.5-9B",
+      "model_path": "/models/Qwen3.5-9B",
+      "algorithm": "SFT",
+      "mode": "LoRA",
+      "backend": "native",
+      "cards": 1,
+      "gpus": [
+        0
+      ],
+      "status": "ready",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T010.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T010.jsonl",
+        "subset_size": 100,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 100,
+      "checkpoint_save_steps": 100,
+      "expected_optimizer_steps_per_epoch": 100,
+      "expected_optimizer_steps_reachable": 100,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 28.8 GiB（预算 78 GiB）⇒ 可行：LoRA：基座冻结 ⇒ 权重 2 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "native": {
+            "tp_size": 1,
+            "dp_size": 1,
+            "pp_size": 1,
+            "micro_batch_size": 1
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 100,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=100；per_epoch=100；max_epochs=1；可产出步数上限=100 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T011",
+      "model": "9B",
+      "model_name": "Qwen3.5-9B",
+      "model_path": "/models/Qwen3.5-9B",
+      "algorithm": "SFT",
+      "mode": "LoRA",
+      "backend": "native",
+      "cards": 2,
+      "gpus": [
+        0,
+        1
+      ],
+      "status": "ready",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T011.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T011.jsonl",
+        "subset_size": 100,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 50,
+      "checkpoint_save_steps": 50,
+      "expected_optimizer_steps_per_epoch": 50,
+      "expected_optimizer_steps_reachable": 50,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 28.8 GiB（预算 78 GiB）⇒ 可行：LoRA：基座冻结 ⇒ 权重 2 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "native": {
+            "tp_size": 1,
+            "dp_size": 2,
+            "pp_size": 1,
+            "micro_batch_size": 1
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 100,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=50；per_epoch=50；max_epochs=1；可产出步数上限=50 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T012",
+      "model": "9B",
+      "model_name": "Qwen3.5-9B",
+      "model_path": "/models/Qwen3.5-9B",
+      "algorithm": "SFT",
+      "mode": "LoRA",
+      "backend": "native",
+      "cards": 4,
+      "gpus": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "status": "ready",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T012.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T012.jsonl",
+        "subset_size": 100,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 25,
+      "checkpoint_save_steps": 25,
+      "expected_optimizer_steps_per_epoch": 25,
+      "expected_optimizer_steps_reachable": 25,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 28.8 GiB（预算 78 GiB）⇒ 可行：LoRA：基座冻结 ⇒ 权重 2 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "native": {
+            "tp_size": 1,
+            "dp_size": 4,
+            "pp_size": 1,
+            "micro_batch_size": 1
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 100,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=25；per_epoch=25；max_epochs=1；可产出步数上限=25 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T013",
+      "model": "9B",
+      "model_name": "Qwen3.5-9B",
+      "model_path": "/models/Qwen3.5-9B",
+      "algorithm": "SFT",
+      "mode": "LoRA",
+      "backend": "ms-swift",
+      "cards": 1,
+      "gpus": [
+        0
+      ],
+      "status": "ready",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T013.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T013.jsonl",
+        "subset_size": 100,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 100,
+      "checkpoint_save_steps": 100,
+      "expected_optimizer_steps_per_epoch": 100,
+      "expected_optimizer_steps_reachable": 100,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 28.8 GiB（预算 78 GiB）⇒ 可行：LoRA：基座冻结 ⇒ 权重 2 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "msswift": {
+            "nproc_per_node": 1,
+            "per_device_train_batch_size": 1,
+            "sequence_parallel_size": 1,
+            "use_vllm": false
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 100,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=100；per_epoch=100；max_epochs=1；可产出步数上限=100 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T014",
+      "model": "9B",
+      "model_name": "Qwen3.5-9B",
+      "model_path": "/models/Qwen3.5-9B",
+      "algorithm": "SFT",
+      "mode": "LoRA",
+      "backend": "ms-swift",
+      "cards": 2,
+      "gpus": [
+        0,
+        1
+      ],
+      "status": "ready",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T014.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T014.jsonl",
+        "subset_size": 100,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 50,
+      "checkpoint_save_steps": 50,
+      "expected_optimizer_steps_per_epoch": 50,
+      "expected_optimizer_steps_reachable": 50,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 28.8 GiB（预算 78 GiB）⇒ 可行：LoRA：基座冻结 ⇒ 权重 2 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "msswift": {
+            "nproc_per_node": 2,
+            "per_device_train_batch_size": 1,
+            "sequence_parallel_size": 1,
+            "use_vllm": false
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 100,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=50；per_epoch=50；max_epochs=1；可产出步数上限=50 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T015",
+      "model": "9B",
+      "model_name": "Qwen3.5-9B",
+      "model_path": "/models/Qwen3.5-9B",
+      "algorithm": "SFT",
+      "mode": "LoRA",
+      "backend": "ms-swift",
+      "cards": 4,
+      "gpus": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "status": "ready",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T015.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T015.jsonl",
+        "subset_size": 100,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 25,
+      "checkpoint_save_steps": 25,
+      "expected_optimizer_steps_per_epoch": 25,
+      "expected_optimizer_steps_reachable": 25,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 28.8 GiB（预算 78 GiB）⇒ 可行：LoRA：基座冻结 ⇒ 权重 2 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "msswift": {
+            "nproc_per_node": 4,
+            "per_device_train_batch_size": 1,
+            "sequence_parallel_size": 1,
+            "use_vllm": false
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 100,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=25；per_epoch=25；max_epochs=1；可产出步数上限=25 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T016",
+      "model": "9B",
+      "model_name": "Qwen3.5-9B",
+      "model_path": "/models/Qwen3.5-9B",
+      "algorithm": "SFT",
+      "mode": "全量",
+      "backend": "native",
+      "cards": 1,
+      "gpus": [
+        0
+      ],
+      "status": "unverified",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
+      "status_reason": "全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T016.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T016.jsonl",
+        "subset_size": 100,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 100,
+      "checkpoint_save_steps": 100,
+      "expected_optimizer_steps_per_epoch": 100,
+      "expected_optimizer_steps_reachable": 100,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 45.5 GiB（预算 78 GiB）⇒ 可行：native 全参 1 卡 + **优化器态 CPU offload**（`native.offload_optimizer_state: true`）：(权重 2 + 梯度 2)/1 B/param，优化器态在宿主内存（GPU 侧 0 B/param）。实测对照：`rig/pp1-offload-T017PA.yaml（历史取证档，原件随 rig/ 退役至 .local/repo-moved-out/rig/）`（pp=1 + offload）宿主峰值 **38.18 GiB**；无 offload 对照 **79.24 GiB OOM**；激活/其他预算 12 GiB",
+        "recipe": {
+          "native": {
+            "tp_size": 1,
+            "dp_size": 1,
+            "pp_size": 1,
+            "offload_optimizer_state": true,
+            "micro_batch_size": 1
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 100,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=100；per_epoch=100；max_epochs=1；可产出步数上限=100 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T017",
+      "model": "9B",
+      "model_name": "Qwen3.5-9B",
+      "model_path": "/models/Qwen3.5-9B",
+      "algorithm": "SFT",
+      "mode": "全量",
+      "backend": "native",
+      "cards": 2,
+      "gpus": [
+        0,
+        1
+      ],
+      "status": "unverified",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
+      "status_reason": "全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T017.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T017.jsonl",
+        "subset_size": 100,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 50,
+      "checkpoint_save_steps": 50,
+      "expected_optimizer_steps_per_epoch": 50,
+      "expected_optimizer_steps_reachable": 50,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 45.5 GiB（预算 78 GiB）⇒ 可行：native 全参 PP 分片（k=8 B/param，bf16 Adam 假设）：(2+2+4)/2 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "native": {
+            "tp_size": 1,
+            "dp_size": 1,
+            "pp_size": 2,
+            "micro_batch_size": 1
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 100,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=50；per_epoch=50；max_epochs=1；可产出步数上限=50 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T018",
+      "model": "9B",
+      "model_name": "Qwen3.5-9B",
+      "model_path": "/models/Qwen3.5-9B",
+      "algorithm": "SFT",
+      "mode": "全量",
+      "backend": "native",
+      "cards": 4,
+      "gpus": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "status": "unverified",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
+      "status_reason": "全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T018.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T018.jsonl",
+        "subset_size": 100,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 25,
+      "checkpoint_save_steps": 25,
+      "expected_optimizer_steps_per_epoch": 25,
+      "expected_optimizer_steps_reachable": 25,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 28.8 GiB（预算 78 GiB）⇒ 可行：native 全参 PP 分片（k=8 B/param，bf16 Adam 假设）：(2+2+4)/4 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "native": {
+            "tp_size": 1,
+            "dp_size": 1,
+            "pp_size": 4,
+            "micro_batch_size": 1
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 100,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=25；per_epoch=25；max_epochs=1；可产出步数上限=25 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T019",
+      "model": "9B",
+      "model_name": "Qwen3.5-9B",
+      "model_path": "/models/Qwen3.5-9B",
+      "algorithm": "SFT",
+      "mode": "全量",
+      "backend": "ms-swift",
+      "cards": 1,
+      "gpus": [
+        0
+      ],
+      "status": "unverified",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
+      "status_reason": "全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T019.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T019.jsonl",
+        "subset_size": 100,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 100,
+      "checkpoint_save_steps": 100,
+      "expected_optimizer_steps_per_epoch": 100,
+      "expected_optimizer_steps_reachable": 100,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 45.5 GiB（预算 78 GiB）⇒ 可行：ms-swift 全参 zero2_offload：权重 2/1 + 梯度 2 B/param（优化器态在 CPU）；激活/其他预算 12 GiB",
+        "recipe": {
+          "msswift": {
+            "nproc_per_node": 1,
+            "per_device_train_batch_size": 1,
+            "sequence_parallel_size": 1,
+            "use_vllm": false,
+            "deepspeed": "zero2_offload"
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 100,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=100；per_epoch=100；max_epochs=1；可产出步数上限=100 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T020",
+      "model": "9B",
+      "model_name": "Qwen3.5-9B",
+      "model_path": "/models/Qwen3.5-9B",
+      "algorithm": "SFT",
+      "mode": "全量",
+      "backend": "ms-swift",
+      "cards": 2,
+      "gpus": [
+        0,
+        1
+      ],
+      "status": "unverified",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
+      "status_reason": "全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T020.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T020.jsonl",
+        "subset_size": 100,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 50,
+      "checkpoint_save_steps": 50,
+      "expected_optimizer_steps_per_epoch": 50,
+      "expected_optimizer_steps_reachable": 50,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 45.5 GiB（预算 78 GiB）⇒ 可行：ms-swift 全参 zero2_offload：权重 2/1 + 梯度 2 B/param（优化器态在 CPU）；激活/其他预算 12 GiB",
+        "recipe": {
+          "msswift": {
+            "nproc_per_node": 2,
+            "per_device_train_batch_size": 1,
+            "sequence_parallel_size": 1,
+            "use_vllm": false,
+            "deepspeed": "zero2_offload"
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 100,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=50；per_epoch=50；max_epochs=1；可产出步数上限=50 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T021",
+      "model": "9B",
+      "model_name": "Qwen3.5-9B",
+      "model_path": "/models/Qwen3.5-9B",
+      "algorithm": "SFT",
+      "mode": "全量",
+      "backend": "ms-swift",
+      "cards": 4,
+      "gpus": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "status": "unverified",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
+      "status_reason": "全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T021.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T021.jsonl",
+        "subset_size": 100,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 25,
+      "checkpoint_save_steps": 25,
+      "expected_optimizer_steps_per_epoch": 25,
+      "expected_optimizer_steps_reachable": 25,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 49.7 GiB（预算 78 GiB）⇒ 可行：ms-swift 全参 zero2（纯 DP4，**未开 AutoTP**）：权重 2 + (梯度+优化器) 10/4 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "msswift": {
+            "nproc_per_node": 4,
+            "per_device_train_batch_size": 1,
+            "sequence_parallel_size": 1,
+            "use_vllm": false,
+            "deepspeed": "zero2"
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 100,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=25；per_epoch=25；max_epochs=1；可产出步数上限=25 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T022",
+      "model": "27B",
+      "model_name": "Qwen3.8-27B",
+      "model_path": "/models/Qwen3.8-27B",
+      "algorithm": "SFT",
+      "mode": "LoRA",
+      "backend": "native",
+      "cards": 1,
+      "gpus": [
+        0
+      ],
+      "status": "ready",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T022.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T022.jsonl",
+        "subset_size": 100,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 100,
+      "checkpoint_save_steps": 100,
+      "expected_optimizer_steps_per_epoch": 100,
+      "expected_optimizer_steps_reachable": 100,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 62.3 GiB（预算 78 GiB）⇒ 可行：LoRA：基座冻结 ⇒ 权重 2 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "native": {
+            "tp_size": 1,
+            "dp_size": 1,
+            "pp_size": 1,
+            "micro_batch_size": 1
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 100,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=100；per_epoch=100；max_epochs=1；可产出步数上限=100 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T023",
+      "model": "27B",
+      "model_name": "Qwen3.8-27B",
+      "model_path": "/models/Qwen3.8-27B",
+      "algorithm": "SFT",
+      "mode": "LoRA",
+      "backend": "native",
+      "cards": 2,
+      "gpus": [
+        0,
+        1
+      ],
+      "status": "ready",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T023.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T023.jsonl",
+        "subset_size": 100,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 50,
+      "checkpoint_save_steps": 50,
+      "expected_optimizer_steps_per_epoch": 50,
+      "expected_optimizer_steps_reachable": 50,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 62.3 GiB（预算 78 GiB）⇒ 可行：LoRA：基座冻结 ⇒ 权重 2 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "native": {
+            "tp_size": 1,
+            "dp_size": 2,
+            "pp_size": 1,
+            "micro_batch_size": 1
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 100,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=50；per_epoch=50；max_epochs=1；可产出步数上限=50 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T024",
+      "model": "27B",
+      "model_name": "Qwen3.8-27B",
+      "model_path": "/models/Qwen3.8-27B",
+      "algorithm": "SFT",
+      "mode": "LoRA",
+      "backend": "native",
+      "cards": 4,
+      "gpus": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "status": "ready",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T024.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T024.jsonl",
+        "subset_size": 100,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 25,
+      "checkpoint_save_steps": 25,
+      "expected_optimizer_steps_per_epoch": 25,
+      "expected_optimizer_steps_reachable": 25,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 62.3 GiB（预算 78 GiB）⇒ 可行：LoRA：基座冻结 ⇒ 权重 2 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "native": {
+            "tp_size": 1,
+            "dp_size": 4,
+            "pp_size": 1,
+            "micro_batch_size": 1
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 100,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=25；per_epoch=25；max_epochs=1；可产出步数上限=25 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T025",
+      "model": "27B",
+      "model_name": "Qwen3.8-27B",
+      "model_path": "/models/Qwen3.8-27B",
+      "algorithm": "SFT",
+      "mode": "LoRA",
+      "backend": "ms-swift",
+      "cards": 1,
+      "gpus": [
+        0
+      ],
+      "status": "ready",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T025.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T025.jsonl",
+        "subset_size": 100,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 100,
+      "checkpoint_save_steps": 100,
+      "expected_optimizer_steps_per_epoch": 100,
+      "expected_optimizer_steps_reachable": 100,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 62.3 GiB（预算 78 GiB）⇒ 可行：LoRA：基座冻结 ⇒ 权重 2 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "msswift": {
+            "nproc_per_node": 1,
+            "per_device_train_batch_size": 1,
+            "sequence_parallel_size": 1,
+            "use_vllm": false
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 100,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=100；per_epoch=100；max_epochs=1；可产出步数上限=100 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T026",
+      "model": "27B",
+      "model_name": "Qwen3.8-27B",
+      "model_path": "/models/Qwen3.8-27B",
+      "algorithm": "SFT",
+      "mode": "LoRA",
+      "backend": "ms-swift",
+      "cards": 2,
+      "gpus": [
+        0,
+        1
+      ],
+      "status": "ready",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T026.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T026.jsonl",
+        "subset_size": 100,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 50,
+      "checkpoint_save_steps": 50,
+      "expected_optimizer_steps_per_epoch": 50,
+      "expected_optimizer_steps_reachable": 50,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 62.3 GiB（预算 78 GiB）⇒ 可行：LoRA：基座冻结 ⇒ 权重 2 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "msswift": {
+            "nproc_per_node": 2,
+            "per_device_train_batch_size": 1,
+            "sequence_parallel_size": 1,
+            "use_vllm": false
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 100,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=50；per_epoch=50；max_epochs=1；可产出步数上限=50 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T027",
+      "model": "27B",
+      "model_name": "Qwen3.8-27B",
+      "model_path": "/models/Qwen3.8-27B",
+      "algorithm": "SFT",
+      "mode": "LoRA",
+      "backend": "ms-swift",
+      "cards": 4,
+      "gpus": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "status": "ready",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T027.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T027.jsonl",
+        "subset_size": 100,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 25,
+      "checkpoint_save_steps": 25,
+      "expected_optimizer_steps_per_epoch": 25,
+      "expected_optimizer_steps_reachable": 25,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 62.3 GiB（预算 78 GiB）⇒ 可行：LoRA：基座冻结 ⇒ 权重 2 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "msswift": {
+            "nproc_per_node": 4,
+            "per_device_train_batch_size": 1,
+            "sequence_parallel_size": 1,
+            "use_vllm": false
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 100,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=25；per_epoch=25；max_epochs=1；可产出步数上限=25 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T028",
+      "model": "9B",
+      "model_name": "Qwen3.5-9B",
+      "model_path": "/models/Qwen3.5-9B",
+      "algorithm": "GRASPO",
+      "mode": "LoRA",
+      "backend": "native",
+      "cards": 1,
+      "gpus": [
+        0
+      ],
+      "status": "ready",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T028.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T028.jsonl",
+        "subset_size": 20,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 20,
+      "checkpoint_save_steps": 20,
+      "expected_optimizer_steps_per_epoch": 3,
+      "expected_optimizer_steps_reachable": 3,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 28.8 GiB（预算 78 GiB）⇒ 可行：LoRA：基座冻结 ⇒ 权重 2 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "native": {
+            "tp_size": 1,
+            "dp_size": 1,
+            "pp_size": 1,
+            "micro_batch_size": 1
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 20,
+          "step_gate_applicability": "not_applicable_structural",
+          "step_gate_basis": "expected_optimizer_steps_reachable=3；per_epoch=3；max_epochs=1；该档可产出步数上限=3 < 门槛 5（结构上不可能达标）⇒ 步数门槛对本题不适用，判「⚠ 口径不可测」而不是「❌ 失败」"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T029",
+      "model": "9B",
+      "model_name": "Qwen3.5-9B",
+      "model_path": "/models/Qwen3.5-9B",
+      "algorithm": "GRASPO",
+      "mode": "LoRA",
+      "backend": "native",
+      "cards": 2,
+      "gpus": [
+        0,
+        1
+      ],
+      "status": "ready",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T029.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T029.jsonl",
+        "subset_size": 20,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 10,
+      "checkpoint_save_steps": 10,
+      "expected_optimizer_steps_per_epoch": 2,
+      "expected_optimizer_steps_reachable": 2,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 28.8 GiB（预算 78 GiB）⇒ 可行：LoRA：基座冻结 ⇒ 权重 2 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "native": {
+            "tp_size": 1,
+            "dp_size": 2,
+            "pp_size": 1,
+            "micro_batch_size": 1
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 20,
+          "step_gate_applicability": "not_applicable_structural",
+          "step_gate_basis": "expected_optimizer_steps_reachable=2；per_epoch=2；max_epochs=1；该档可产出步数上限=2 < 门槛 5（结构上不可能达标）⇒ 步数门槛对本题不适用，判「⚠ 口径不可测」而不是「❌ 失败」"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T030",
+      "model": "9B",
+      "model_name": "Qwen3.5-9B",
+      "model_path": "/models/Qwen3.5-9B",
+      "algorithm": "GRASPO",
+      "mode": "LoRA",
+      "backend": "native",
+      "cards": 4,
+      "gpus": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "status": "ready",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T030.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T030.jsonl",
+        "subset_size": 20,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 5,
+      "checkpoint_save_steps": 5,
+      "expected_optimizer_steps_per_epoch": 1,
+      "expected_optimizer_steps_reachable": 1,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 28.8 GiB（预算 78 GiB）⇒ 可行：LoRA：基座冻结 ⇒ 权重 2 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "native": {
+            "tp_size": 1,
+            "dp_size": 4,
+            "pp_size": 1,
+            "micro_batch_size": 1
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 20,
+          "step_gate_applicability": "not_applicable_structural",
+          "step_gate_basis": "expected_optimizer_steps_reachable=1；per_epoch=1；max_epochs=1；该档可产出步数上限=1 < 门槛 5（结构上不可能达标）⇒ 步数门槛对本题不适用，判「⚠ 口径不可测」而不是「❌ 失败」"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T031",
+      "model": "9B",
+      "model_name": "Qwen3.5-9B",
+      "model_path": "/models/Qwen3.5-9B",
+      "algorithm": "GRASPO",
+      "mode": "LoRA",
+      "backend": "ms-swift",
+      "cards": 1,
+      "gpus": [
+        0
+      ],
+      "status": "ready",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T031.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T031.jsonl",
+        "subset_size": 20,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 160,
+      "checkpoint_save_steps": 160,
+      "expected_optimizer_steps_per_epoch": 160,
+      "expected_optimizer_steps_reachable": 160,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 28.8 GiB（预算 78 GiB）⇒ 可行：LoRA：基座冻结 ⇒ 权重 2 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "msswift": {
+            "nproc_per_node": 1,
+            "per_device_train_batch_size": 1,
+            "sequence_parallel_size": 1,
+            "use_vllm": false
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 20,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=160；per_epoch=160；max_epochs=1；可产出步数上限=160 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T032",
+      "model": "9B",
+      "model_name": "Qwen3.5-9B",
+      "model_path": "/models/Qwen3.5-9B",
+      "algorithm": "GRASPO",
+      "mode": "LoRA",
+      "backend": "ms-swift",
+      "cards": 2,
+      "gpus": [
+        0,
+        1
+      ],
+      "status": "ready",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T032.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T032.jsonl",
+        "subset_size": 20,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 80,
+      "checkpoint_save_steps": 80,
+      "expected_optimizer_steps_per_epoch": 80,
+      "expected_optimizer_steps_reachable": 80,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 28.8 GiB（预算 78 GiB）⇒ 可行：LoRA：基座冻结 ⇒ 权重 2 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "msswift": {
+            "nproc_per_node": 2,
+            "per_device_train_batch_size": 1,
+            "sequence_parallel_size": 1,
+            "use_vllm": false
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 20,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=80；per_epoch=80；max_epochs=1；可产出步数上限=80 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T033",
+      "model": "9B",
+      "model_name": "Qwen3.5-9B",
+      "model_path": "/models/Qwen3.5-9B",
+      "algorithm": "GRASPO",
+      "mode": "LoRA",
+      "backend": "ms-swift",
+      "cards": 4,
+      "gpus": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "status": "ready",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T033.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T033.jsonl",
+        "subset_size": 20,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 40,
+      "checkpoint_save_steps": 40,
+      "expected_optimizer_steps_per_epoch": 40,
+      "expected_optimizer_steps_reachable": 40,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 28.8 GiB（预算 78 GiB）⇒ 可行：LoRA：基座冻结 ⇒ 权重 2 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "msswift": {
+            "nproc_per_node": 4,
+            "per_device_train_batch_size": 1,
+            "sequence_parallel_size": 1,
+            "use_vllm": false
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 20,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=40；per_epoch=40；max_epochs=1；可产出步数上限=40 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T034",
+      "model": "9B",
+      "model_name": "Qwen3.5-9B",
+      "model_path": "/models/Qwen3.5-9B",
+      "algorithm": "GRASPO",
+      "mode": "全量",
+      "backend": "native",
+      "cards": 1,
+      "gpus": [
+        0
+      ],
+      "status": "unverified",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
+      "status_reason": "全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T034.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T034.jsonl",
+        "subset_size": 20,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 20,
+      "checkpoint_save_steps": 20,
+      "expected_optimizer_steps_per_epoch": 3,
+      "expected_optimizer_steps_reachable": 3,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 45.5 GiB（预算 78 GiB）⇒ 可行：native 全参 1 卡 + **优化器态 CPU offload**（`native.offload_optimizer_state: true`）：(权重 2 + 梯度 2)/1 B/param，优化器态在宿主内存（GPU 侧 0 B/param）。实测对照：`rig/pp1-offload-T017PA.yaml（历史取证档，原件随 rig/ 退役至 .local/repo-moved-out/rig/）`（pp=1 + offload）宿主峰值 **38.18 GiB**；无 offload 对照 **79.24 GiB OOM**；激活/其他预算 12 GiB",
+        "recipe": {
+          "native": {
+            "tp_size": 1,
+            "dp_size": 1,
+            "pp_size": 1,
+            "offload_optimizer_state": true,
+            "micro_batch_size": 1
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 20,
+          "step_gate_applicability": "not_applicable_structural",
+          "step_gate_basis": "expected_optimizer_steps_reachable=3；per_epoch=3；max_epochs=1；该档可产出步数上限=3 < 门槛 5（结构上不可能达标）⇒ 步数门槛对本题不适用，判「⚠ 口径不可测」而不是「❌ 失败」"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T035",
+      "model": "9B",
+      "model_name": "Qwen3.5-9B",
+      "model_path": "/models/Qwen3.5-9B",
+      "algorithm": "GRASPO",
+      "mode": "全量",
+      "backend": "native",
+      "cards": 2,
+      "gpus": [
+        0,
+        1
+      ],
+      "status": "unverified",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
+      "status_reason": "全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T035.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T035.jsonl",
+        "subset_size": 20,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 10,
+      "checkpoint_save_steps": 10,
+      "expected_optimizer_steps_per_epoch": 2,
+      "expected_optimizer_steps_reachable": 2,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 45.5 GiB（预算 78 GiB）⇒ 可行：native 全参 PP 分片（k=8 B/param，bf16 Adam 假设）：(2+2+4)/2 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "native": {
+            "tp_size": 1,
+            "dp_size": 1,
+            "pp_size": 2,
+            "micro_batch_size": 1
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 20,
+          "step_gate_applicability": "not_applicable_structural",
+          "step_gate_basis": "expected_optimizer_steps_reachable=2；per_epoch=2；max_epochs=1；该档可产出步数上限=2 < 门槛 5（结构上不可能达标）⇒ 步数门槛对本题不适用，判「⚠ 口径不可测」而不是「❌ 失败」"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T036",
+      "model": "9B",
+      "model_name": "Qwen3.5-9B",
+      "model_path": "/models/Qwen3.5-9B",
+      "algorithm": "GRASPO",
+      "mode": "全量",
+      "backend": "native",
+      "cards": 4,
+      "gpus": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "status": "unverified",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
+      "status_reason": "全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T036.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T036.jsonl",
+        "subset_size": 20,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 5,
+      "checkpoint_save_steps": 5,
+      "expected_optimizer_steps_per_epoch": 1,
+      "expected_optimizer_steps_reachable": 1,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 28.8 GiB（预算 78 GiB）⇒ 可行：native 全参 PP 分片（k=8 B/param，bf16 Adam 假设）：(2+2+4)/4 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "native": {
+            "tp_size": 1,
+            "dp_size": 1,
+            "pp_size": 4,
+            "micro_batch_size": 1
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 20,
+          "step_gate_applicability": "not_applicable_structural",
+          "step_gate_basis": "expected_optimizer_steps_reachable=1；per_epoch=1；max_epochs=1；该档可产出步数上限=1 < 门槛 5（结构上不可能达标）⇒ 步数门槛对本题不适用，判「⚠ 口径不可测」而不是「❌ 失败」"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T037",
+      "model": "9B",
+      "model_name": "Qwen3.5-9B",
+      "model_path": "/models/Qwen3.5-9B",
+      "algorithm": "GRASPO",
+      "mode": "全量",
+      "backend": "ms-swift",
+      "cards": 1,
+      "gpus": [
+        0
+      ],
+      "status": "unverified",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
+      "status_reason": "全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T037.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T037.jsonl",
+        "subset_size": 20,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 160,
+      "checkpoint_save_steps": 160,
+      "expected_optimizer_steps_per_epoch": 160,
+      "expected_optimizer_steps_reachable": 160,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 45.5 GiB（预算 78 GiB）⇒ 可行：ms-swift 全参 zero2_offload：权重 2/1 + 梯度 2 B/param（优化器态在 CPU）；激活/其他预算 12 GiB",
+        "recipe": {
+          "msswift": {
+            "nproc_per_node": 1,
+            "per_device_train_batch_size": 1,
+            "sequence_parallel_size": 1,
+            "use_vllm": false,
+            "deepspeed": "zero2_offload"
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 20,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=160；per_epoch=160；max_epochs=1；可产出步数上限=160 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T038",
+      "model": "9B",
+      "model_name": "Qwen3.5-9B",
+      "model_path": "/models/Qwen3.5-9B",
+      "algorithm": "GRASPO",
+      "mode": "全量",
+      "backend": "ms-swift",
+      "cards": 2,
+      "gpus": [
+        0,
+        1
+      ],
+      "status": "unverified",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
+      "status_reason": "全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T038.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T038.jsonl",
+        "subset_size": 20,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 80,
+      "checkpoint_save_steps": 80,
+      "expected_optimizer_steps_per_epoch": 80,
+      "expected_optimizer_steps_reachable": 80,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 45.5 GiB（预算 78 GiB）⇒ 可行：ms-swift 全参 zero2_offload：权重 2/1 + 梯度 2 B/param（优化器态在 CPU）；激活/其他预算 12 GiB",
+        "recipe": {
+          "msswift": {
+            "nproc_per_node": 2,
+            "per_device_train_batch_size": 1,
+            "sequence_parallel_size": 1,
+            "use_vllm": false,
+            "deepspeed": "zero2_offload"
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 20,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=80；per_epoch=80；max_epochs=1；可产出步数上限=80 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T039",
+      "model": "9B",
+      "model_name": "Qwen3.5-9B",
+      "model_path": "/models/Qwen3.5-9B",
+      "algorithm": "GRASPO",
+      "mode": "全量",
+      "backend": "ms-swift",
+      "cards": 4,
+      "gpus": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "status": "unverified",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
+      "status_reason": "全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T039.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T039.jsonl",
+        "subset_size": 20,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 40,
+      "checkpoint_save_steps": 40,
+      "expected_optimizer_steps_per_epoch": 40,
+      "expected_optimizer_steps_reachable": 40,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 49.7 GiB（预算 78 GiB）⇒ 可行：ms-swift 全参 zero2（纯 DP4，**未开 AutoTP**）：权重 2 + (梯度+优化器) 10/4 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "msswift": {
+            "nproc_per_node": 4,
+            "per_device_train_batch_size": 1,
+            "sequence_parallel_size": 1,
+            "use_vllm": false,
+            "deepspeed": "zero2"
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 20,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=40；per_epoch=40；max_epochs=1；可产出步数上限=40 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T040",
+      "model": "27B",
+      "model_name": "Qwen3.8-27B",
+      "model_path": "/models/Qwen3.8-27B",
+      "algorithm": "GRASPO",
+      "mode": "LoRA",
+      "backend": "native",
+      "cards": 1,
+      "gpus": [
+        0
+      ],
+      "status": "ready",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T040.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T040.jsonl",
+        "subset_size": 20,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 20,
+      "checkpoint_save_steps": 20,
+      "expected_optimizer_steps_per_epoch": 3,
+      "expected_optimizer_steps_reachable": 3,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 62.3 GiB（预算 78 GiB）⇒ 可行：LoRA：基座冻结 ⇒ 权重 2 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "native": {
+            "tp_size": 1,
+            "dp_size": 1,
+            "pp_size": 1,
+            "micro_batch_size": 1
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 20,
+          "step_gate_applicability": "not_applicable_structural",
+          "step_gate_basis": "expected_optimizer_steps_reachable=3；per_epoch=3；max_epochs=1；该档可产出步数上限=3 < 门槛 5（结构上不可能达标）⇒ 步数门槛对本题不适用，判「⚠ 口径不可测」而不是「❌ 失败」"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T041",
+      "model": "27B",
+      "model_name": "Qwen3.8-27B",
+      "model_path": "/models/Qwen3.8-27B",
+      "algorithm": "GRASPO",
+      "mode": "LoRA",
+      "backend": "native",
+      "cards": 2,
+      "gpus": [
+        0,
+        1
+      ],
+      "status": "ready",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T041.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T041.jsonl",
+        "subset_size": 20,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 10,
+      "checkpoint_save_steps": 10,
+      "expected_optimizer_steps_per_epoch": 2,
+      "expected_optimizer_steps_reachable": 2,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 62.3 GiB（预算 78 GiB）⇒ 可行：LoRA：基座冻结 ⇒ 权重 2 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "native": {
+            "tp_size": 1,
+            "dp_size": 2,
+            "pp_size": 1,
+            "micro_batch_size": 1
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 20,
+          "step_gate_applicability": "not_applicable_structural",
+          "step_gate_basis": "expected_optimizer_steps_reachable=2；per_epoch=2；max_epochs=1；该档可产出步数上限=2 < 门槛 5（结构上不可能达标）⇒ 步数门槛对本题不适用，判「⚠ 口径不可测」而不是「❌ 失败」"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T042",
+      "model": "27B",
+      "model_name": "Qwen3.8-27B",
+      "model_path": "/models/Qwen3.8-27B",
+      "algorithm": "GRASPO",
+      "mode": "LoRA",
+      "backend": "native",
+      "cards": 4,
+      "gpus": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "status": "ready",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T042.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T042.jsonl",
+        "subset_size": 20,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 5,
+      "checkpoint_save_steps": 5,
+      "expected_optimizer_steps_per_epoch": 1,
+      "expected_optimizer_steps_reachable": 1,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 62.3 GiB（预算 78 GiB）⇒ 可行：LoRA：基座冻结 ⇒ 权重 2 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "native": {
+            "tp_size": 1,
+            "dp_size": 4,
+            "pp_size": 1,
+            "micro_batch_size": 1
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 20,
+          "step_gate_applicability": "not_applicable_structural",
+          "step_gate_basis": "expected_optimizer_steps_reachable=1；per_epoch=1；max_epochs=1；该档可产出步数上限=1 < 门槛 5（结构上不可能达标）⇒ 步数门槛对本题不适用，判「⚠ 口径不可测」而不是「❌ 失败」"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T043",
+      "model": "27B",
+      "model_name": "Qwen3.8-27B",
+      "model_path": "/models/Qwen3.8-27B",
+      "algorithm": "GRASPO",
+      "mode": "LoRA",
+      "backend": "ms-swift",
+      "cards": 1,
+      "gpus": [
+        0
+      ],
+      "status": "ready",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T043.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T043.jsonl",
+        "subset_size": 20,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 160,
+      "checkpoint_save_steps": 160,
+      "expected_optimizer_steps_per_epoch": 160,
+      "expected_optimizer_steps_reachable": 160,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 62.3 GiB（预算 78 GiB）⇒ 可行：LoRA：基座冻结 ⇒ 权重 2 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "msswift": {
+            "nproc_per_node": 1,
+            "per_device_train_batch_size": 1,
+            "sequence_parallel_size": 1,
+            "use_vllm": false
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 20,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=160；per_epoch=160；max_epochs=1；可产出步数上限=160 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T044",
+      "model": "27B",
+      "model_name": "Qwen3.8-27B",
+      "model_path": "/models/Qwen3.8-27B",
+      "algorithm": "GRASPO",
+      "mode": "LoRA",
+      "backend": "ms-swift",
+      "cards": 2,
+      "gpus": [
+        0,
+        1
+      ],
+      "status": "ready",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T044.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T044.jsonl",
+        "subset_size": 20,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 80,
+      "checkpoint_save_steps": 80,
+      "expected_optimizer_steps_per_epoch": 80,
+      "expected_optimizer_steps_reachable": 80,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 62.3 GiB（预算 78 GiB）⇒ 可行：LoRA：基座冻结 ⇒ 权重 2 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "msswift": {
+            "nproc_per_node": 2,
+            "per_device_train_batch_size": 1,
+            "sequence_parallel_size": 1,
+            "use_vllm": false
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 20,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=80；per_epoch=80；max_epochs=1；可产出步数上限=80 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T045",
+      "model": "27B",
+      "model_name": "Qwen3.8-27B",
+      "model_path": "/models/Qwen3.8-27B",
+      "algorithm": "GRASPO",
+      "mode": "LoRA",
+      "backend": "ms-swift",
+      "cards": 4,
+      "gpus": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "status": "ready",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
+      "applicable": true,
+      "config": "samples/configs/matrix54/T045.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T045.jsonl",
+        "subset_size": 20,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 40,
+      "checkpoint_save_steps": 40,
+      "expected_optimizer_steps_per_epoch": 40,
+      "expected_optimizer_steps_reachable": 40,
+      "feasibility": {
+        "verdict": "feasible",
+        "feasible": true,
+        "requires_measurement": false,
+        "estimate": "估算每卡 62.3 GiB（预算 78 GiB）⇒ 可行：LoRA：基座冻结 ⇒ 权重 2 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "msswift": {
+            "nproc_per_node": 4,
+            "per_device_train_batch_size": 1,
+            "sequence_parallel_size": 1,
+            "use_vllm": false
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 20,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=40；per_epoch=40；max_epochs=1；可产出步数上限=40 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T046",
+      "model": "9B",
+      "model_name": "Qwen3.5-9B",
+      "model_path": "/models/Qwen3.5-9B",
+      "algorithm": "OPD",
+      "mode": "LoRA",
+      "backend": "ms-swift",
+      "cards": 1,
+      "gpus": [
+        0
+      ],
+      "status": "ready",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
+      "applicable": true,
+      "opd_teacher_relation": "independent",
+      "config": "samples/configs/matrix54/T046.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T046.jsonl",
+        "subset_size": 20,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 20,
+      "checkpoint_save_steps": 20,
+      "expected_optimizer_steps_per_epoch": 20,
+      "expected_optimizer_steps_reachable": 20,
+      "feasibility": {
+        "verdict": "unmeasured",
+        "feasible": null,
+        "requires_measurement": true,
+        "estimate": "★ **待上机测量（P-25）**：OPD 的教师模型（Qwen3.8-27B）在训练进程内**额外占一份显存**（每个 rank 一份），本生成器**没有**教师侧的实测数字 ⇒ **不得**判定为「可行」。配方已显式设 `distill.offload_teacher_model: true`（教师权重常驻 CPU、前向时换入），但教师**前向时的 GPU 工作集**仍是未测算量 ⇒ 本档标 `unmeasured`，由**上机冒烟**（建议先跑 `T046`）回填实测后再改判定。参考算式（教师**不**换出时）：27B bf16 权重 ≈ 50.3 GiB/卡，与学生侧常驻相加在任何卡数下都超预算 ⇒ 「不换出」不构成可用配方（这是权重常驻的算术事实，不是实测结论）。；学生侧算式：估算每卡 28.8 GiB（预算 78 GiB）⇒ 可行：LoRA：基座冻结 ⇒ 权重 2 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "msswift": {
+            "nproc_per_node": 1,
+            "per_device_train_batch_size": 1,
+            "sequence_parallel_size": 1,
+            "use_vllm": false
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 20,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=20；per_epoch=20；max_epochs=1；可产出步数上限=20 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T047",
+      "model": "9B",
+      "model_name": "Qwen3.5-9B",
+      "model_path": "/models/Qwen3.5-9B",
+      "algorithm": "OPD",
+      "mode": "LoRA",
+      "backend": "ms-swift",
+      "cards": 2,
+      "gpus": [
+        0,
+        1
+      ],
+      "status": "ready",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
+      "applicable": true,
+      "opd_teacher_relation": "independent",
+      "config": "samples/configs/matrix54/T047.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T047.jsonl",
+        "subset_size": 20,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 10,
+      "checkpoint_save_steps": 10,
+      "expected_optimizer_steps_per_epoch": 10,
+      "expected_optimizer_steps_reachable": 10,
+      "feasibility": {
+        "verdict": "unmeasured",
+        "feasible": null,
+        "requires_measurement": true,
+        "estimate": "★ **待上机测量（P-25）**：OPD 的教师模型（Qwen3.8-27B）在训练进程内**额外占一份显存**（每个 rank 一份），本生成器**没有**教师侧的实测数字 ⇒ **不得**判定为「可行」。配方已显式设 `distill.offload_teacher_model: true`（教师权重常驻 CPU、前向时换入），但教师**前向时的 GPU 工作集**仍是未测算量 ⇒ 本档标 `unmeasured`，由**上机冒烟**（建议先跑 `T046`）回填实测后再改判定。参考算式（教师**不**换出时）：27B bf16 权重 ≈ 50.3 GiB/卡，与学生侧常驻相加在任何卡数下都超预算 ⇒ 「不换出」不构成可用配方（这是权重常驻的算术事实，不是实测结论）。；学生侧算式：估算每卡 28.8 GiB（预算 78 GiB）⇒ 可行：LoRA：基座冻结 ⇒ 权重 2 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "msswift": {
+            "nproc_per_node": 2,
+            "per_device_train_batch_size": 1,
+            "sequence_parallel_size": 1,
+            "use_vllm": false
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 20,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=10；per_epoch=10；max_epochs=1；可产出步数上限=10 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T048",
+      "model": "9B",
+      "model_name": "Qwen3.5-9B",
+      "model_path": "/models/Qwen3.5-9B",
+      "algorithm": "OPD",
+      "mode": "LoRA",
+      "backend": "ms-swift",
+      "cards": 4,
+      "gpus": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "status": "ready",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
+      "applicable": true,
+      "opd_teacher_relation": "independent",
+      "config": "samples/configs/matrix54/T048.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T048.jsonl",
+        "subset_size": 20,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 5,
+      "checkpoint_save_steps": 5,
+      "expected_optimizer_steps_per_epoch": 5,
+      "expected_optimizer_steps_reachable": 5,
+      "feasibility": {
+        "verdict": "unmeasured",
+        "feasible": null,
+        "requires_measurement": true,
+        "estimate": "★ **待上机测量（P-25）**：OPD 的教师模型（Qwen3.8-27B）在训练进程内**额外占一份显存**（每个 rank 一份），本生成器**没有**教师侧的实测数字 ⇒ **不得**判定为「可行」。配方已显式设 `distill.offload_teacher_model: true`（教师权重常驻 CPU、前向时换入），但教师**前向时的 GPU 工作集**仍是未测算量 ⇒ 本档标 `unmeasured`，由**上机冒烟**（建议先跑 `T046`）回填实测后再改判定。参考算式（教师**不**换出时）：27B bf16 权重 ≈ 50.3 GiB/卡，与学生侧常驻相加在任何卡数下都超预算 ⇒ 「不换出」不构成可用配方（这是权重常驻的算术事实，不是实测结论）。；学生侧算式：估算每卡 28.8 GiB（预算 78 GiB）⇒ 可行：LoRA：基座冻结 ⇒ 权重 2 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "msswift": {
+            "nproc_per_node": 4,
+            "per_device_train_batch_size": 1,
+            "sequence_parallel_size": 1,
+            "use_vllm": false
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 20,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=5；per_epoch=5；max_epochs=1；可产出步数上限=5 ≥ 门槛 5 ⇒ 门槛照常判（余量不足：上限 5 仅比门槛高 0 步）"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T049",
+      "model": "9B",
+      "model_name": "Qwen3.5-9B",
+      "model_path": "/models/Qwen3.5-9B",
+      "algorithm": "OPD",
+      "mode": "全量",
+      "backend": "ms-swift",
+      "cards": 1,
+      "gpus": [
+        0
+      ],
+      "status": "unverified",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
+      "status_reason": "全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。",
+      "applicable": true,
+      "opd_teacher_relation": "independent",
+      "config": "samples/configs/matrix54/T049.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T049.jsonl",
+        "subset_size": 20,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 20,
+      "checkpoint_save_steps": 20,
+      "expected_optimizer_steps_per_epoch": 20,
+      "expected_optimizer_steps_reachable": 20,
+      "feasibility": {
+        "verdict": "unmeasured",
+        "feasible": null,
+        "requires_measurement": true,
+        "estimate": "★ **待上机测量（P-25）**：OPD 的教师模型（Qwen3.8-27B）在训练进程内**额外占一份显存**（每个 rank 一份），本生成器**没有**教师侧的实测数字 ⇒ **不得**判定为「可行」。配方已显式设 `distill.offload_teacher_model: true`（教师权重常驻 CPU、前向时换入），但教师**前向时的 GPU 工作集**仍是未测算量 ⇒ 本档标 `unmeasured`，由**上机冒烟**（建议先跑 `T046`）回填实测后再改判定。参考算式（教师**不**换出时）：27B bf16 权重 ≈ 50.3 GiB/卡，与学生侧常驻相加在任何卡数下都超预算 ⇒ 「不换出」不构成可用配方（这是权重常驻的算术事实，不是实测结论）。；学生侧算式：估算每卡 45.5 GiB（预算 78 GiB）⇒ 可行：ms-swift 全参 zero2_offload：权重 2/1 + 梯度 2 B/param（优化器态在 CPU）；激活/其他预算 12 GiB",
+        "recipe": {
+          "msswift": {
+            "nproc_per_node": 1,
+            "per_device_train_batch_size": 1,
+            "sequence_parallel_size": 1,
+            "use_vllm": false,
+            "deepspeed": "zero2_offload"
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 20,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=20；per_epoch=20；max_epochs=1；可产出步数上限=20 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T050",
+      "model": "9B",
+      "model_name": "Qwen3.5-9B",
+      "model_path": "/models/Qwen3.5-9B",
+      "algorithm": "OPD",
+      "mode": "全量",
+      "backend": "ms-swift",
+      "cards": 2,
+      "gpus": [
+        0,
+        1
+      ],
+      "status": "unverified",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
+      "status_reason": "全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。",
+      "applicable": true,
+      "opd_teacher_relation": "independent",
+      "config": "samples/configs/matrix54/T050.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T050.jsonl",
+        "subset_size": 20,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 10,
+      "checkpoint_save_steps": 10,
+      "expected_optimizer_steps_per_epoch": 10,
+      "expected_optimizer_steps_reachable": 10,
+      "feasibility": {
+        "verdict": "unmeasured",
+        "feasible": null,
+        "requires_measurement": true,
+        "estimate": "★ **待上机测量（P-25）**：OPD 的教师模型（Qwen3.8-27B）在训练进程内**额外占一份显存**（每个 rank 一份），本生成器**没有**教师侧的实测数字 ⇒ **不得**判定为「可行」。配方已显式设 `distill.offload_teacher_model: true`（教师权重常驻 CPU、前向时换入），但教师**前向时的 GPU 工作集**仍是未测算量 ⇒ 本档标 `unmeasured`，由**上机冒烟**（建议先跑 `T046`）回填实测后再改判定。参考算式（教师**不**换出时）：27B bf16 权重 ≈ 50.3 GiB/卡，与学生侧常驻相加在任何卡数下都超预算 ⇒ 「不换出」不构成可用配方（这是权重常驻的算术事实，不是实测结论）。；学生侧算式：估算每卡 45.5 GiB（预算 78 GiB）⇒ 可行：ms-swift 全参 zero2_offload：权重 2/1 + 梯度 2 B/param（优化器态在 CPU）；激活/其他预算 12 GiB",
+        "recipe": {
+          "msswift": {
+            "nproc_per_node": 2,
+            "per_device_train_batch_size": 1,
+            "sequence_parallel_size": 1,
+            "use_vllm": false,
+            "deepspeed": "zero2_offload"
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 20,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=10；per_epoch=10；max_epochs=1；可产出步数上限=10 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T051",
+      "model": "9B",
+      "model_name": "Qwen3.5-9B",
+      "model_path": "/models/Qwen3.5-9B",
+      "algorithm": "OPD",
+      "mode": "全量",
+      "backend": "ms-swift",
+      "cards": 4,
+      "gpus": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "status": "unverified",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
+      "status_reason": "全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。",
+      "applicable": true,
+      "opd_teacher_relation": "independent",
+      "config": "samples/configs/matrix54/T051.yaml",
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T051.jsonl",
+        "subset_size": 20,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 5,
+      "checkpoint_save_steps": 5,
+      "expected_optimizer_steps_per_epoch": 5,
+      "expected_optimizer_steps_reachable": 5,
+      "feasibility": {
+        "verdict": "unmeasured",
+        "feasible": null,
+        "requires_measurement": true,
+        "estimate": "★ **待上机测量（P-25）**：OPD 的教师模型（Qwen3.8-27B）在训练进程内**额外占一份显存**（每个 rank 一份），本生成器**没有**教师侧的实测数字 ⇒ **不得**判定为「可行」。配方已显式设 `distill.offload_teacher_model: true`（教师权重常驻 CPU、前向时换入），但教师**前向时的 GPU 工作集**仍是未测算量 ⇒ 本档标 `unmeasured`，由**上机冒烟**（建议先跑 `T046`）回填实测后再改判定。参考算式（教师**不**换出时）：27B bf16 权重 ≈ 50.3 GiB/卡，与学生侧常驻相加在任何卡数下都超预算 ⇒ 「不换出」不构成可用配方（这是权重常驻的算术事实，不是实测结论）。；学生侧算式：估算每卡 49.7 GiB（预算 78 GiB）⇒ 可行：ms-swift 全参 zero2（纯 DP4，**未开 AutoTP**）：权重 2 + (梯度+优化器) 10/4 B/param；激活/其他预算 12 GiB",
+        "recipe": {
+          "msswift": {
+            "nproc_per_node": 4,
+            "per_device_train_batch_size": 1,
+            "sequence_parallel_size": 1,
+            "use_vllm": false,
+            "deepspeed": "zero2"
+          }
+        }
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 20,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=5；per_epoch=5；max_epochs=1；可产出步数上限=5 ≥ 门槛 5 ⇒ 门槛照常判（余量不足：上限 5 仅比门槛高 0 步）"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T052",
+      "model": "27B",
+      "model_name": "Qwen3.8-27B",
+      "model_path": "/models/Qwen3.8-27B",
+      "algorithm": "OPD",
+      "mode": "LoRA",
+      "backend": "ms-swift",
+      "cards": 1,
+      "gpus": [
+        0
+      ],
+      "status": "not_applicable",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
+      "status_reason": "★ 确实不适用（not_applicable）：用户拍板 **OPD 教师 = 27B 常量、学生 = 9B**（省显存，价值高）⇒ OPD 通道的学生**固定 9B**。台账该档的 `model` 列在 graspo 里是**被训练的学生**，按现行口径读作 27B 学生 ⇒ 需要 **27B 学生 + 27B 教师**：教师 bf16 权重**实测 50.10 GiB**（上机 probe），再加 27B 学生权重（≈52 GiB）⇒ **权重常驻 ≈100 GiB**，与用户「省显存」的意图正好相反。**因此用户想要的那种配置不存在** ⇒ 本档不适用。★ 这是**合法终态**（验收口径明文：「失败」与「确实不适用」都是合法产出），**不是「blocked（当前给不出配方、将来可能给得出）」**，也不是「跑失败了」。",
+      "applicable": false,
+      "applicability_reason": "★ 确实不适用（not_applicable）：用户拍板 **OPD 教师 = 27B 常量、学生 = 9B**（省显存，价值高）⇒ OPD 通道的学生**固定 9B**。台账该档的 `model` 列在 graspo 里是**被训练的学生**，按现行口径读作 27B 学生 ⇒ 需要 **27B 学生 + 27B 教师**：教师 bf16 权重**实测 50.10 GiB**（上机 probe），再加 27B 学生权重（≈52 GiB）⇒ **权重常驻 ≈100 GiB**，与用户「省显存」的意图正好相反。**因此用户想要的那种配置不存在** ⇒ 本档不适用。★ 这是**合法终态**（验收口径明文：「失败」与「确实不适用」都是合法产出），**不是「blocked（当前给不出配方、将来可能给得出）」**，也不是「跑失败了」。",
+      "opd_teacher_relation": "not-applicable",
+      "config": null,
+      "blocked_doc": null,
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T052.jsonl",
+        "subset_size": 20,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 20,
+      "checkpoint_save_steps": 20,
+      "expected_optimizer_steps_per_epoch": 20,
+      "expected_optimizer_steps_reachable": 20,
+      "feasibility": {
+        "verdict": "not_applicable",
+        "feasible": null,
+        "requires_measurement": false,
+        "estimate": "★ 确实不适用（not_applicable）：用户拍板 **OPD 教师 = 27B 常量、学生 = 9B**（省显存，价值高）⇒ OPD 通道的学生**固定 9B**。台账该档的 `model` 列在 graspo 里是**被训练的学生**，按现行口径读作 27B 学生 ⇒ 需要 **27B 学生 + 27B 教师**：教师 bf16 权重**实测 50.10 GiB**（上机 probe），再加 27B 学生权重（≈52 GiB）⇒ **权重常驻 ≈100 GiB**，与用户「省显存」的意图正好相反。**因此用户想要的那种配置不存在** ⇒ 本档不适用。★ 这是**合法终态**（验收口径明文：「失败」与「确实不适用」都是合法产出），**不是「blocked（当前给不出配方、将来可能给得出）」**，也不是「跑失败了」。",
+        "recipe": null
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 20,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=20；per_epoch=20；max_epochs=1；可产出步数上限=20 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T053",
+      "model": "27B",
+      "model_name": "Qwen3.8-27B",
+      "model_path": "/models/Qwen3.8-27B",
+      "algorithm": "OPD",
+      "mode": "LoRA",
+      "backend": "ms-swift",
+      "cards": 2,
+      "gpus": [
+        0,
+        1
+      ],
+      "status": "not_applicable",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
+      "status_reason": "★ 确实不适用（not_applicable）：用户拍板 **OPD 教师 = 27B 常量、学生 = 9B**（省显存，价值高）⇒ OPD 通道的学生**固定 9B**。台账该档的 `model` 列在 graspo 里是**被训练的学生**，按现行口径读作 27B 学生 ⇒ 需要 **27B 学生 + 27B 教师**：教师 bf16 权重**实测 50.10 GiB**（上机 probe），再加 27B 学生权重（≈52 GiB）⇒ **权重常驻 ≈100 GiB**，与用户「省显存」的意图正好相反。**因此用户想要的那种配置不存在** ⇒ 本档不适用。★ 这是**合法终态**（验收口径明文：「失败」与「确实不适用」都是合法产出），**不是「blocked（当前给不出配方、将来可能给得出）」**，也不是「跑失败了」。",
+      "applicable": false,
+      "applicability_reason": "★ 确实不适用（not_applicable）：用户拍板 **OPD 教师 = 27B 常量、学生 = 9B**（省显存，价值高）⇒ OPD 通道的学生**固定 9B**。台账该档的 `model` 列在 graspo 里是**被训练的学生**，按现行口径读作 27B 学生 ⇒ 需要 **27B 学生 + 27B 教师**：教师 bf16 权重**实测 50.10 GiB**（上机 probe），再加 27B 学生权重（≈52 GiB）⇒ **权重常驻 ≈100 GiB**，与用户「省显存」的意图正好相反。**因此用户想要的那种配置不存在** ⇒ 本档不适用。★ 这是**合法终态**（验收口径明文：「失败」与「确实不适用」都是合法产出），**不是「blocked（当前给不出配方、将来可能给得出）」**，也不是「跑失败了」。",
+      "opd_teacher_relation": "not-applicable",
+      "config": null,
+      "blocked_doc": null,
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T053.jsonl",
+        "subset_size": 20,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 10,
+      "checkpoint_save_steps": 10,
+      "expected_optimizer_steps_per_epoch": 10,
+      "expected_optimizer_steps_reachable": 10,
+      "feasibility": {
+        "verdict": "not_applicable",
+        "feasible": null,
+        "requires_measurement": false,
+        "estimate": "★ 确实不适用（not_applicable）：用户拍板 **OPD 教师 = 27B 常量、学生 = 9B**（省显存，价值高）⇒ OPD 通道的学生**固定 9B**。台账该档的 `model` 列在 graspo 里是**被训练的学生**，按现行口径读作 27B 学生 ⇒ 需要 **27B 学生 + 27B 教师**：教师 bf16 权重**实测 50.10 GiB**（上机 probe），再加 27B 学生权重（≈52 GiB）⇒ **权重常驻 ≈100 GiB**，与用户「省显存」的意图正好相反。**因此用户想要的那种配置不存在** ⇒ 本档不适用。★ 这是**合法终态**（验收口径明文：「失败」与「确实不适用」都是合法产出），**不是「blocked（当前给不出配方、将来可能给得出）」**，也不是「跑失败了」。",
+        "recipe": null
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 20,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=10；per_epoch=10；max_epochs=1；可产出步数上限=10 ≥ 门槛 5 ⇒ 门槛照常判"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    },
+    {
+      "tier_id": "T054",
+      "model": "27B",
+      "model_name": "Qwen3.8-27B",
+      "model_path": "/models/Qwen3.8-27B",
+      "algorithm": "OPD",
+      "mode": "LoRA",
+      "backend": "ms-swift",
+      "cards": 4,
+      "gpus": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "status": "not_applicable",
+      "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
+      "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
+      "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
+      "status_reason": "★ 确实不适用（not_applicable）：用户拍板 **OPD 教师 = 27B 常量、学生 = 9B**（省显存，价值高）⇒ OPD 通道的学生**固定 9B**。台账该档的 `model` 列在 graspo 里是**被训练的学生**，按现行口径读作 27B 学生 ⇒ 需要 **27B 学生 + 27B 教师**：教师 bf16 权重**实测 50.10 GiB**（上机 probe），再加 27B 学生权重（≈52 GiB）⇒ **权重常驻 ≈100 GiB**，与用户「省显存」的意图正好相反。**因此用户想要的那种配置不存在** ⇒ 本档不适用。★ 这是**合法终态**（验收口径明文：「失败」与「确实不适用」都是合法产出），**不是「blocked（当前给不出配方、将来可能给得出）」**，也不是「跑失败了」。",
+      "applicable": false,
+      "applicability_reason": "★ 确实不适用（not_applicable）：用户拍板 **OPD 教师 = 27B 常量、学生 = 9B**（省显存，价值高）⇒ OPD 通道的学生**固定 9B**。台账该档的 `model` 列在 graspo 里是**被训练的学生**，按现行口径读作 27B 学生 ⇒ 需要 **27B 学生 + 27B 教师**：教师 bf16 权重**实测 50.10 GiB**（上机 probe），再加 27B 学生权重（≈52 GiB）⇒ **权重常驻 ≈100 GiB**，与用户「省显存」的意图正好相反。**因此用户想要的那种配置不存在** ⇒ 本档不适用。★ 这是**合法终态**（验收口径明文：「失败」与「确实不适用」都是合法产出），**不是「blocked（当前给不出配方、将来可能给得出）」**，也不是「跑失败了」。",
+      "opd_teacher_relation": "not-applicable",
+      "config": null,
+      "blocked_doc": null,
+      "data": {
+        "train_path": "/work/elam-v5/subsets/T054.jsonl",
+        "subset_size": 20,
+        "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
+        "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。"
+      },
+      "expected_optimizer_steps": 5,
+      "checkpoint_save_steps": 5,
+      "expected_optimizer_steps_per_epoch": 5,
+      "expected_optimizer_steps_reachable": 5,
+      "feasibility": {
+        "verdict": "not_applicable",
+        "feasible": null,
+        "requires_measurement": false,
+        "estimate": "★ 确实不适用（not_applicable）：用户拍板 **OPD 教师 = 27B 常量、学生 = 9B**（省显存，价值高）⇒ OPD 通道的学生**固定 9B**。台账该档的 `model` 列在 graspo 里是**被训练的学生**，按现行口径读作 27B 学生 ⇒ 需要 **27B 学生 + 27B 教师**：教师 bf16 权重**实测 50.10 GiB**（上机 probe），再加 27B 学生权重（≈52 GiB）⇒ **权重常驻 ≈100 GiB**，与用户「省显存」的意图正好相反。**因此用户想要的那种配置不存在** ⇒ 本档不适用。★ 这是**合法终态**（验收口径明文：「失败」与「确实不适用」都是合法产出），**不是「blocked（当前给不出配方、将来可能给得出）」**，也不是「跑失败了」。",
+        "recipe": null
+      },
+      "acceptance": {
+        "formal_gate": {
+          "min_epochs": 1,
+          "min_optimizer_steps": 5,
+          "min_train_samples": 20,
+          "step_gate_applicability": "applicable",
+          "step_gate_basis": "expected_optimizer_steps_reachable=5；per_epoch=5；max_epochs=1；可产出步数上限=5 ≥ 门槛 5 ⇒ 门槛照常判（余量不足：上限 5 仅比门槛高 0 步）"
+        },
+        "criteria": [
+          "A1",
+          "A2",
+          "A3",
+          "A4",
+          "A5",
+          "A6"
+        ]
+      }
+    }
+  ]
+}

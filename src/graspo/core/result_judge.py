@@ -1158,7 +1158,8 @@ class FailureClass(StrEnum):
     #: ``Watchdog caught collective operation timeout`` + ``DistBackendError``
     #: ⇒ T035 被迫落 ``UNCLASSIFIED``。单列还能自证"各 rank 步调不一致"这一**修法方向**，
     #: 而``通信硬件``会把人引向换卡/查线。
-    #: 取值与跑批装置的对应常量**逐字一致**（同一口径两个消费者）。
+    #: 取值与跑批装置（``rig/matrix_batch_driver.py``）**逐字一致**（同一口径两个消费者）。
+    #: ⚠ 该装置已随 rig/ 退役（原件 ``.local/repo-moved-out/rig/``）⇒ 此处为历史口径。
     NCCL_COLLECTIVE_TIMEOUT = "nccl_collective_timeout（集合通信超时 ⇒ PP/DP 各 rank 步调不一致）"
     #: ★ 新增（2026-09-22 指挥官裁定）：**PP 流水线 P2P 通信超时**，退出码 **86**。
     #: 类名逐字取自裁定（跨工具口径一致）。判据**优先按退出码**——因为 torchrun/弹性启动

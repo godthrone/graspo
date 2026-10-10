@@ -1140,7 +1140,8 @@ def test_classify_failure_recognises_nccl_collective_timeout():
     + ``terminate called after throwing an instance of 'c10::DistBackendError'``。
     既有 ``COMM_HARDWARE`` 的签名（``watchdog timeout`` / ``NCCL error|WARN|timeout``）
     **匹配不到**它 ⇒ 修前落 ``UNCLASSIFIED``。
-    取值必须与跑批装置的口径**逐字一致**（同一口径两消费者）。
+    取值必须与跑批装置 ``rig/matrix_batch_driver.py`` 的口径**逐字一致**（同一口径两消费者）。
+    注：该装置为历史件，已随 rig/ 退役；原件见 ``.local/repo-moved-out/rig/``。
     """
     evidence = make_evidence(
         exit_code=1,

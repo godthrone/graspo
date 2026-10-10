@@ -122,7 +122,7 @@ MODELS_ROOT="${GRASPO_MODELS_HOST_ROOT:-}"
 MANIFEST="${GRASPO_RUNNER_MANIFEST:-$ROOT_DIR/tests/e2e/matrix54_manifest.json}"
 # ↑ 清单路径可被 `GRASPO_RUNNER_MANIFEST` 覆盖：给"逐长度递增批"这类需要**单档清单**
 #   的场景用（rig 只换清单、不换 runner 逻辑）；默认路径与行为逐字不变。
-#   本行与 `run_matrix54.sh` 的同一行**逐字对应**（由 rig/verify_runner_parity.py 校验）。
+#   本行与 `run_matrix54.sh` 的同一行**逐字对应**（由 rig/verify_runner_parity.py（历史核对件，随 rig/ 退役至 .local/repo-moved-out/rig/） 校验）。
 PYBIN="${PYTHON:-python3}"
 CONTAINER_PY="${CONTAINER_PYTHON:-python}"
 

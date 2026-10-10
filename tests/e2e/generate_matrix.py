@@ -710,8 +710,9 @@ def classify_expressibility(tier: dict[str, Any]) -> tuple[str, str | None]:
         return "not_applicable", na_reason
     # ★ native 全参 1 卡（T016/T034）**已于 2026-09-23 解除 blocked**：native 侧已实现
     #   全参优化器态 CPU offload（`native.offload_optimizer_state`，实现见
-    #   `src/graspo/flow/backend/native/models/qwen35_36/optim_offload.py::CpuOffloadedAdamW`），
+    #   `cpu_offloaded_adam_w.py::CpuOffloadedAdamW`（native/models/qwen35_36/）），
     #   其 1 卡 pp=1 配方**已真机实测通过**：`rig/pp1-offload-T017PA.yaml` 相对 T017
+    #   （该取证档为历史件，已随 rig/ 退役；原件见 .local/repo-moved-out/rig/）
     #   只改 3 处（`pp_size 2→1`、`offload_optimizer_state false→true`、路径/tag），
     #   读数 = `exit=0`、**50/50 步**、`skipped_nonfinite=0`、grad_norm 8–12 有限、
     #   **宿主峰值 38.18 GiB**（无 offload 的对照 T017P1 是 79.24 GiB OOM，
@@ -1261,6 +1262,7 @@ def _native_static_gib(params: float) -> float:
 #: 实测通过**（``rig/pp1-offload-T017PA.yaml``：``exit=0``、50/50 步、``skipped_nonfinite=0``、
 #: 宿主峰值 **38.18 GiB**；无 offload 对照 **79.24 GiB OOM**，失败点在 ``optimizer.step()``
 #: 的 Adam ``_foreach_sqrt``）。
+#: ⚠ 该取证档为历史件，已随 rig/ 退役；原件见 ``.local/repo-moved-out/rig/``。
 #:
 #: 为什么"offload 不算改档位定义"（指挥官 2026-09-23 裁定）：它**不改变该档的参数组合
 #: 语义**（模型 × 算法 × 模式 × 卡数），属**实现级显存策略**，与"用 ZeRO 的哪个阶段"同类；
@@ -1368,7 +1370,8 @@ def estimate_config_per_card_gib(tier: dict[str, Any], config: dict[str, Any]) -
                 f"（`native.offload_optimizer_state: true`）："
                 f"(权重 {_BF16:g} + 梯度 {_GRAD:g})/{pp_size:g} B/param"
                 f"，优化器态在宿主内存（GPU 侧 0 B/param）"
-                "。实测对照：`rig/pp1-offload-T017PA.yaml`（pp=1 + offload）"
+                "。实测对照：`rig/pp1-offload-T017PA.yaml（历史取证档，"
+                "原件随 rig/ 退役至 .local/repo-moved-out/rig/）`（pp=1 + offload）"
                 "宿主峰值 **38.18 GiB**；无 offload 对照 **79.24 GiB OOM**"
             )
         else:
@@ -1598,6 +1601,7 @@ def build_config(tier: dict[str, Any]) -> dict[str, Any]:
             #   （DeepSpeed ZeRO-Offload：单卡可训至 13B）。配方**已真机实测通过**，
             #   证据是 1 卡取证档 `rig/pp1-offload-T017PA.yaml`（相对 T017 只改 3 处：
             #   `pp_size 2→1`、`offload_optimizer_state false→true`、路径/tag）；
+            #   注：该取证档为历史件，已随 rig/ 退役；原件见 .local/repo-moved-out/rig/。
             #   读数 `exit=0` / 50/50 步 / `skipped_nonfinite=0` / 宿主峰值 38.18 GiB，
             #   无 offload 的对照（T017P1）是 79.24 GiB OOM（崩在 Adam `_foreach_sqrt`）。
             #   ⇒ 这里把这个已验证配方**产品化**（不是发明新配方）。
@@ -3568,7 +3572,7 @@ MODELS_ROOT="${{{MODELS_HOST_ROOT_ENV}:-}}"
 MANIFEST="${{GRASPO_RUNNER_MANIFEST:-$ROOT_DIR/tests/e2e/matrix54_manifest.json}}"
 # ↑ 清单路径可被 `GRASPO_RUNNER_MANIFEST` 覆盖：给"逐长度递增批"这类需要**单档清单**
 #   的场景用（rig 只换清单、不换 runner 逻辑）；默认路径与行为逐字不变。
-#   本行与 `run_matrix54.sh` 的同一行**逐字对应**（由 rig/verify_runner_parity.py 校验）。
+#   本行与 `run_matrix54.sh` 的同一行**逐字对应**（由 rig/verify_runner_parity.py（历史核对件，随 rig/ 退役至 .local/repo-moved-out/rig/） 校验）。
 PYBIN="${{PYTHON:-python3}}"
 CONTAINER_PY="${{CONTAINER_PYTHON:-python}}"
 

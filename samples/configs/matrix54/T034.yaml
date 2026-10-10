@@ -1,0 +1,40 @@
+# T034 | 9B | GRASPO | 全量 | native | 1卡
+# 生成器: tests/e2e/generate_matrix.py（手改无效，请改生成器）
+# 口径: 只用 1/2/4 卡；GPU 集合取自 {0,1,2,3}；上下文长度由递增加长法实测得出，不预设档位。
+# 数据: ELAM V5 训练子集前 20 条（宿主数据根目录经 GRASPO_ELAM_HOST_ROOT 注入，见 .local/）；子集由 run_matrix54.sh 生成，图像经 ../images 解析。
+# ⚠️ 数据口径告警: ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。
+# 可表达性: unverified
+# 显存可行性: [feasible] 估算每卡 45.5 GiB（预算 78 GiB）⇒ 可行：native 全参 1 卡 + **优化器态 CPU offload**（`native.offload_optimizer_state: true`）：(权重 2 + 梯度 2)/1 B/param，优化器态在宿主内存（GPU 侧 0 B/param）。实测对照：`rig/pp1-offload-T017PA.yaml（历史取证档，原件随 rig/ 退役至 .local/repo-moved-out/rig/）`（pp=1 + offload）宿主峰值 **38.18 GiB**；无 offload 对照 **79.24 GiB OOM**；激活/其他预算 12 GiB
+# 注意: 全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。
+train_method: graspo
+backend: native
+tuner_type: full
+model:
+  model_path: /models/Qwen3.5-9B
+  torch_dtype: bfloat16
+  gradient_checkpointing: true
+data:
+  train_path: /work/elam-v5/subsets/T034.jsonl
+  max_prompt_length: 8192
+training:
+  output_dir: /out/T034
+  run_name: T034
+  overwrite_output_dir: true
+  seed: 42
+  max_epochs: 1
+  learning_rate: 5e-06
+  gradient_accumulation_micro_batches: 1
+  save_checkpoint_every_epoch: false
+  save_steps: 20
+native:
+  tp_size: 1
+  dp_size: 1
+  pp_size: 1
+  offload_optimizer_state: true
+  micro_batch_size: 1
+reward:
+  kind: graspo
+gpu_monitor:
+  output_dir: /out/gpu
+  tag: T034
+  interval_sec: 2.0

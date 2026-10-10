@@ -12,7 +12,7 @@ checker 的判定链是：0 类 ⇒ 跳过；≥2 类 ⇒ 多类文件豁免（�
 文档与 1 个契约测试硬编码，改名是净损失；而 checker 允许的单类名集合
 （`error.py` / `input_error.py` / `calibration_input_error.py` / `usage_error.py`）
 **没有一个能编码"a4 标定"或"测 ELAM 长度"**。因此按 §8.4 的多类豁免把它们合并到本文件，
-两个脚本各自 `from errors import <X>Error` 使下游（`rig.CalibrationInputError` 等）零改动。
+两个脚本各自 `from errors import <X>Error` 使下游（`rig.CalibrationInputError` 等；`rig/` 已随宪法合规化 B1 退役，此处为历史口径）零改动。
 
 **本文件不 import 任何东西**（无依赖 ⇒ 脚本直接执行与 importlib 加载都能用）。
 """

@@ -1336,7 +1336,7 @@
         "verdict": "feasible",
         "feasible": true,
         "requires_measurement": false,
-        "estimate": "估算每卡 45.5 GiB（预算 78 GiB）⇒ 可行：native 全参 1 卡 + **优化器态 CPU offload**（`native.offload_optimizer_state: true`）：(权重 2 + 梯度 2)/1 B/param，优化器态在宿主内存（GPU 侧 0 B/param）。实测对照：`rig/pp1-offload-T017PA.yaml`（pp=1 + offload）宿主峰值 **38.18 GiB**；无 offload 对照 **79.24 GiB OOM**；激活/其他预算 12 GiB",
+        "estimate": "估算每卡 45.5 GiB（预算 78 GiB）⇒ 可行：native 全参 1 卡 + **优化器态 CPU offload**（`native.offload_optimizer_state: true`）：(权重 2 + 梯度 2)/1 B/param，优化器态在宿主内存（GPU 侧 0 B/param）。实测对照：`rig/pp1-offload-T017PA.yaml（历史取证档，原件随 rig/ 退役至 .local/repo-moved-out/rig/）`（pp=1 + offload）宿主峰值 **38.18 GiB**；无 offload 对照 **79.24 GiB OOM**；激活/其他预算 12 GiB",
         "recipe": {
           "native": {
             "tp_size": 1,
@@ -2576,7 +2576,7 @@
         "verdict": "feasible",
         "feasible": true,
         "requires_measurement": false,
-        "estimate": "估算每卡 45.5 GiB（预算 78 GiB）⇒ 可行：native 全参 1 卡 + **优化器态 CPU offload**（`native.offload_optimizer_state: true`）：(权重 2 + 梯度 2)/1 B/param，优化器态在宿主内存（GPU 侧 0 B/param）。实测对照：`rig/pp1-offload-T017PA.yaml`（pp=1 + offload）宿主峰值 **38.18 GiB**；无 offload 对照 **79.24 GiB OOM**；激活/其他预算 12 GiB",
+        "estimate": "估算每卡 45.5 GiB（预算 78 GiB）⇒ 可行：native 全参 1 卡 + **优化器态 CPU offload**（`native.offload_optimizer_state: true`）：(权重 2 + 梯度 2)/1 B/param，优化器态在宿主内存（GPU 侧 0 B/param）。实测对照：`rig/pp1-offload-T017PA.yaml（历史取证档，原件随 rig/ 退役至 .local/repo-moved-out/rig/）`（pp=1 + offload）宿主峰值 **38.18 GiB**；无 offload 对照 **79.24 GiB OOM**；激活/其他预算 12 GiB",
         "recipe": {
           "native": {
             "tp_size": 1,
