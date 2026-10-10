@@ -13,8 +13,8 @@
 
 **采样为什么必须带 ``-i``（宪法 §2.4 操作防呆）**
 
-历史教训：不带 ``-i`` 的 ``nvidia-smi`` 会把全部物理卡（含生产卡）都报出来，
-采样被生产卡读数污染。:func:`sample_device_memory_mib` 用
+历史教训：不带 ``-i`` 的 ``nvidia-smi`` 会把全部物理卡（含没被允许的卡）都报出来，
+采样被非目标卡读数污染。:func:`sample_device_memory_mib` 用
 ``nvidia-smi --id=<可见卡>`` 并把子进程的 ``CUDA_VISIBLE_DEVICES`` 钉在可见卡上，
 双保险。
 """
@@ -27,8 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from graspo.core.gpu_guard import (
-    DEFAULT_ALLOWED_INDICES,
-    DEFAULT_RESERVED_INDICES,
+    ALLOWED_INDICES,
     MAX_CARDS,
     RESERVED_INDICES,
     GpuGuardError,
@@ -47,10 +46,14 @@ __all__ = [
 ]
 
 #: 评测链路承认的允许集合与上限——**直接派生自 core.gpu_guard**，不另立一份。
-ALLOWED_GPU_INDICES: frozenset[int] = frozenset(range(ALLOWED_MAX_INDEX + 1))
+#: ★ B7 收口：允许集合 = `ALLOWED_INDICES` 本身（{4,5,6,7}），**不再**用
+#: `range(max+1)` 那种「仅上限」口径——后者会错误地把 0–3 也算成允许卡，
+#: 与真相源的正向白名单判据冲突（宪法 §1.4 单一真相源）。
+ALLOWED_GPU_INDICES: frozenset[int] = frozenset(ALLOWED_INDICES)
 MAX_GPU_COUNT: int = MAX_CARDS
 
 #: 仅透传（便于调用方/报告引用；规则源头仍是 core.gpu_guard）。
+#: ★「生产卡 / reserved」语义已退役 ⇒ 恒为空元组（B7）。
 RESERVED_GPU_INDICES: tuple[int, ...] = RESERVED_INDICES
 
 

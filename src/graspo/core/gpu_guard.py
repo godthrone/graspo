@@ -25,10 +25,17 @@ from dataclasses import dataclass
 from pydantic import BaseModel, ConfigDict
 
 # ── 安全边界常量（单一真相源，§1.4）────────────────────────────────────────
-#: 允许索引的**配置来源**（环境变量）：取值形如 ``"0,1,2,3"``。
-#: 为什么可配置：允许集合是**部署事实**（哪台机器上哪几张卡可用），不是代码常量。
-#: 把某台机器的元组硬编码进共享代码，会让另一台机器（或本机夹具）必然误拒——
-#: 2026-09-28 的 59 项单测失败正是这样来的。部署事实由部署方通过本变量声明。
+# ★★ 卡位契约（正式口径；用户 2026-09-24 批准 A，2026-10-08 B7 收口）：
+#   **允许卡 = {4,5,6,7}；其余一律拒绝。**
+#   · 0–3：第三方工作负载**先到先得**，**不属**任何形式的「保留卡」；
+#   · ≥8：**不存在**（8 卡机只有 0–7）。
+#   ★「生产卡 / reserved」语义**已退役**（生产 vLLM 已 Exited 并释放 6/7）：
+#     本文件只认**允许集合**这一个判据，不再有第二份"保留卡"名单。
+#     :data:`RESERVED_INDICES` 保留常量名仅为兼容引用，恒为空元组。
+#: 变体1（用户 2026-09-24 批准 A）：允许的宿主卡号**显式白名单**。
+#: 取代原来的「仅上限」判据（原值 5、判据 device > max）；语义见 assert_gpu_lock。
+ALLOWED_INDICES: tuple[int, ...] = (4, 5, 6, 7)
+#: 允许卡号的**配置来源**（环境变量）；未设置 ⇒ 回落 :data:`ALLOWED_INDICES`。
 ALLOWED_INDICES_ENV = "GRASPO_ALLOWED_GPU_INDICES"
 #: 保留（不可用/生产）索引的配置来源；与允许集合同样属部署事实。
 RESERVED_INDICES_ENV = "GRASPO_RESERVED_GPU_INDICES"
@@ -48,7 +55,10 @@ ALLOWED_INDICES: tuple[int, ...] = DEFAULT_ALLOWED_INDICES
 ALLOWED_MAX_INDEX = max(DEFAULT_ALLOWED_INDICES)
 #: 单次运行最多使用几张卡（用户拍板：每次最多 4 卡）。
 MAX_CARDS = 4
-RESERVED_INDICES: tuple[int, ...] = DEFAULT_RESERVED_INDICES
+#: 变体1 下不再有「生产卡」（用户批准占用 6/7；生产 vLLM 已 Exited）。
+#: ★ B7 起该语义**正式退役**：唯一判据是 :data:`ALLOWED_INDICES`；本常量恒为空元组，
+#: 保留名字仅为兼容既有 import（含 ``graspo.eval.guard`` 的透传别名）。
+RESERVED_INDICES: tuple[int, ...] = ()
 #: 4 卡首选集合——唯一全部位于 NUMA0。
 PREFERRED_FOUR: tuple[int, ...] = (0, 1, 2, 3)
 
@@ -216,14 +226,14 @@ def _device_source_value(raw: str | None) -> tuple[int, ...] | str:
     中的字面量。其它一律抛 :class:`GpuLockError`（fail-closed）：
 
     - ``None`` / 空串：本镜像 ENV 初值是 ``all``，没有取值就无从判断边界 ⇒ 拒绝；
-    - ``all``：会暴露全部 8 张卡（含生产卡 GPU6/7）⇒ 拒绝；
-    - UUID / 非整数 / 空元素 / 重复卡号：无法与生产卡边界做静态比对 ⇒ 拒绝。
+    - ``all``：会暴露全部 8 张卡（含允许集合外的 GPU0–3）⇒ 拒绝；
+    - UUID / 非整数 / 空元素 / 重复卡号：无法与允许集合做静态比对 ⇒ 拒绝。
     """
     if raw is None:
         raise _reject(
             f"环境变量 {_ENV_KEY} 未设置",
             "本镜像 ENV 默认 NVIDIA_VISIBLE_DEVICES=all，不显式锁卡会看到全部 8 张卡，"
-            "其中 GPU6/7 被生产 vLLM 占死——触碰即事故。",
+            "其中 GPU0–3 属第三方工作负载（先到先得）——必须显式锁定在允许集合 {4,5,6,7} 内。",
         )
     text = raw.strip()
     if not text:
@@ -235,7 +245,7 @@ def _device_source_value(raw: str | None) -> tuple[int, ...] | str:
     if lowered == "all":
         raise _reject(
             f"{_ENV_KEY}=all",
-            "all 会暴露全部 8 张卡（含生产卡 GPU6/7）；必须显式列出要用的卡。",
+            "all 会暴露全部 8 张卡（含允许集合外的 GPU0–3）；必须显式列出要用的卡。",
         )
     if lowered in _RUNTIME_MANAGED_MARKERS:
         # runtime 已按设备收窄可见集后写入的哨兵；不是卡号，必须转"实测可见卡"通道。
@@ -252,7 +262,7 @@ def _device_source_value(raw: str | None) -> tuple[int, ...] | str:
         if not part.isdigit():
             raise _reject(
                 f"{_ENV_KEY} 含非整数索引 {part!r}",
-                "本守卫只接受整数卡号；UUID / 'all' 无法与生产卡边界做静态比对。",
+                "本守卫只接受整数卡号；UUID / 'all' 无法与允许集合做静态比对。",
             )
         devices.append(int(part))
     if len(set(devices)) != len(devices):
@@ -521,7 +531,7 @@ def parse_gpu_plan(raw: str | None) -> GpuPlan:
         ``GpuPlan``。
 
     Raises:
-        GpuGuardError: 规则层拒绝（未指定 / 含生产卡 / 卡数超限 / 取值非法）。
+        GpuGuardError: 规则层拒绝（未指定 / 含允许集合外的卡 / 卡数超限 / 取值非法）。
     """
     try:
         devices = assert_gpu_lock(raw)
