@@ -1121,6 +1121,44 @@ class EvalConfig(BaseModel):
             raise SystemExit(1)
 
 
+class DeterminismConfig(BaseModel):
+    """确定性钉定开关的 **config 落点**（宪法 §10.1）。
+
+    §10.1 的原则：凡参与决定落盘产物的参数必须在 config 文件中。确定性钉定会
+    改变注入的环境变量与进程内 torch 后端开关，从而改变「同 config 两次运行」的
+    效果（§6）⇒ 必须可由 config 决定，不能只活在 CLI。
+
+    **兼容期语义（CLI 与 config 并存，config 优先）**：每个字段缺省 ``None`` =
+    「未在 config 中声明」⇒ 回落到 ``graspo launch --determinism*`` 的 CLI 取值；
+    显式声明（``true`` / ``false``）⇒ **覆盖** CLI（§1.4 单一真相源：声明优先，
+    不由两处各持一半）。
+
+    字段与 :class:`graspo.core.determinism.DeterminismSwitch` **逐字段同名同义**
+    （字段名对拍见 ``tests/cli/test_determinism_config.py``）。生效值随
+    ``graspo launch`` 的启动 JSON 与 worker 的 ``<output_dir>/logs/determinism.jsonl``
+    落盘，便于复现对账。
+
+    ``enabled`` 是总开关（``--determinism``）；细项即使为 ``true``，在 ``enabled``
+    为假时一律不生效——与 CLI 同语义（§2.2 显式）。``probe_first_step`` 是唯一的
+    只读旁路例外，独立于 ``enabled``。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool | None = None
+    torch_deterministic_algorithms: bool | None = None
+    warn_only: bool | None = None
+    cudnn: bool | None = None
+    cublas_workspace_config: bool | None = None
+    nccl_algo: bool | None = None
+    nccl_proto: bool | None = None
+    nccl_deterministic: bool | None = None
+    pin_bf16_reduced_precision_reduction: bool | None = None
+    pin_fp16_reduced_precision_reduction: bool | None = None
+    pin_cudnn_tf32: bool | None = None
+    probe_first_step: bool | None = None
+
+
 class LaunchConfig(BaseModel):
     """分布式启动配置。
 
@@ -1137,6 +1175,9 @@ class LaunchConfig(BaseModel):
     master_addr: str = "127.0.0.1"
     master_port: int = 29500
     python: str | None = None
+    #: 确定性钉定开关（§10.1）。缺省是**全 None 段** ⇒ 既有配置（不含该键）
+    #: 行为逐字不变；显式值覆盖 CLI（见 :class:`DeterminismConfig`）。
+    determinism: DeterminismConfig = DeterminismConfig()
 
 
 class GraspoConfig(BaseModel):

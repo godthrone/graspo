@@ -252,6 +252,26 @@ launch:
   master_addr: 127.0.0.1
   master_port: 29500
   python: null
+  # ── 确定性钉定开关（§10.1：参与决定效果的参数必须在 config）──────────────
+  # 与 `graspo launch --determinism*` 同名同义（定义唯一真相源 =
+  # src/graspo/core/determinism.py）。**兼容期语义**：null = 未在 config 声明
+  # ⇒ 回落到 CLI 取值；显式 true/false ⇒ 覆盖 CLI（config 优先）。
+  # enabled = 总开关（--determinism）；细项在 enabled 为假时一律不生效，
+  # 唯 probe_first_step 是只读旁路例外。生效值随启动 JSON 与
+  # <output_dir>/logs/determinism.jsonl 落盘，便于复现对账。
+  determinism:
+    enabled: null
+    torch_deterministic_algorithms: null
+    warn_only: null
+    cudnn: null
+    cublas_workspace_config: null
+    nccl_algo: null
+    nccl_proto: null
+    nccl_deterministic: null
+    pin_bf16_reduced_precision_reduction: null
+    pin_fp16_reduced_precision_reduction: null
+    pin_cudnn_tf32: null
+    probe_first_step: null
 
 # ── Reward（graspo/RL 用；SFT 忽略，为转 RL 预留）─────────────────────────
 reward:

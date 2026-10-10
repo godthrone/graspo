@@ -9,26 +9,27 @@
 宪法 §6 的口径是「这些都应该被消除」——**可控制而未被控制的差异不得先宣布为
 "无法控制的差异"而排除**。本模块只做一件事：把"钉定"变成**可显式打开**的开关。
 
-**开关放在 CLI 而不是 config（§10.1 的边界判定，理由可核）**
+**开关的归属：config 与 CLI 并存，config 优先（§10.1；本段于宪法合规化 B3 改写）**
 
 a3 报告 §④-0 的首推落点是 `_build_launch_env` 与 `train_worker.main()`——两者都由
-`graspo launch` 的参数驱动。**不进 YAML 配置段**有两条硬理由：
+`graspo launch` 的参数驱动。**早期版本只走 CLI、不进 YAML**，当时的理由是"新增配置段会
+踩红 `config_example.yaml` 全字段覆盖守卫与字段计数守卫"。该理由已被裁定推翻：按 §10.1，
+**凡参与决定落盘产物的参数必须在 config 文件中**——确定性钉定会改变注入的环境变量与
+进程内 torch 后端开关，从而改变"同 config 两次运行"的效果（§6）⇒ 必须可由 config 决定。
 
-1. `samples/configs/config_example.yaml` 必须覆盖 schema 的全部字段
-   （``tests/core/test_schema.py::test_config_example_covers_all_schema_fields``
-   与 ``tests/core/test_nested_get_falsy.py`` 的 167 字段计数守卫），而本包的边界
-   明令**不得修改 ``samples/configs/``**。新增配置段会直接踩红这两条既有守卫，
-   而"改守卫"是本包明令禁止的（不得削弱既有守卫）。
-2. 它本来就是**实验/诊断边界**，与 ``--smoke`` 同一性质（`app.py` 里
-   ``--smoke`` 的 help 原文：infrastructure param，Run 1 step then stop，
-   **never mutates the config object**）。确定性与冒烟一样是"怎么跑"，不是
-   "算法是什么"。
+现行落地（B3）：
 
-⇒ 采用与 ``--smoke`` **同构**的通道：``graspo launch --determinism ...`` ⇒
-``_build_launch_env`` 注入环境变量 + worker 命令行追加 ``--determinism-spec``；
-worker 侧 :func:`bind_active_switch` 把这一份声明绑定为**进程内唯一真相源**
-（与 ``flow/logging.set_run_id`` 的既有范式一致），训练层只查
-:func:`active_switch`，不各自解析。
+- **config 落点**：`launch.determinism`（schema 见 `core/schema.py:DeterminismConfig`），
+  12 个字段与 :class:`DeterminismSwitch` **逐字段同名同义**；字段缺省 `None` =
+  未在 config 声明 ⇒ 回落 CLI，显式 `true`/`false` ⇒ **覆盖** CLI（config 优先，§1.4）。
+- **CLI 兼容通道**：`graspo launch --determinism*` 全部保留，语义不变（既有调用点与
+  测试零改动）；合并点是 `cli/app.py::_switch_from_args(args, config)`（唯一映射点）。
+- **生效值落日志**：`graspo launch` 的启动 JSON 带 `determinism_effective`（全字段
+  生效快照）；worker 侧另落 `<output_dir>/logs/determinism.jsonl`（§2.2 显式）。
+- **传输通道不变**：合并后的 switch 仍经 `_build_launch_env` 注入环境变量 + worker
+  命令行追加 `--determinism-spec`；worker 侧 :func:`bind_active_switch` 把它绑定为
+  **进程内唯一真相源**（与 ``flow/logging.set_run_id`` 同一范式），训练层只查
+  :func:`active_switch`，不各自解析。
 
 **两半场：环境变量型 + 进程内 torch API 型（两张表，不许混）**
 
