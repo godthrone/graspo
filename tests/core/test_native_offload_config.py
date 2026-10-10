@@ -70,7 +70,7 @@ def _validate(**overrides: object) -> None:
     kwargs: dict[str, object] = {
         "offload_optimizer_state": False,
         "backend": "native",
-        "native_adapter": "graspo.flow.adapters.models.qwen35_36.adapter:Qwen35Adapter",
+        "native_adapter": "graspo.flow.backend.native.models.qwen35_36.model_adapter:Qwen35ModelAdapter",
     }
     kwargs.update(overrides)
     validate_native_offload_combination(**kwargs)  # type: ignore[arg-type]
@@ -123,7 +123,7 @@ def test_t016_shaped_config_is_accepted():
 
 def test_adapter_module_prefix_allows_sibling_classes():
     """同模块内的子类/别名路径也应通过（按模块前缀判定，不按逐字相等）。"""
-    _validate(native_adapter="graspo.flow.adapters.models.qwen35_36.adapter:SubclassAdapter")
+    _validate(native_adapter="graspo.flow.backend.native.models.qwen35_36.model_adapter:SubclassAdapter")
 
 
 # ── 字段接线：映射正确 + 拼写错误仍被拒 ──────────────────────────────────
@@ -166,14 +166,14 @@ def test_offload_with_non_qwen35_adapter_is_rejected():
     with pytest.raises(ValueError, match="silently keep the optimizer state on the GPU"):
         _validate(
             offload_optimizer_state=True,
-            native_adapter="graspo.flow.adapters.models.qwen3.adapter:Qwen3Adapter",
+            native_adapter="graspo.flow.backend.native.models.qwen3.model_adapter:Qwen3ModelAdapter",
         )
     with pytest.raises(ValidationError, match="silently keep the optimizer state on the GPU"):
         _validate_config(
             {
                 "native": {
                     "offload_optimizer_state": True,
-                    "adapter": "graspo.flow.adapters.models.qwen3.adapter:Qwen3Adapter",
+                    "adapter": "graspo.flow.backend.native.models.qwen3.model_adapter:Qwen3ModelAdapter",
                 }
             }
         )
@@ -191,16 +191,16 @@ def test_rejection_messages_point_at_the_alternative():
 # ── 接线契约（AST 静态检查，仍然不依赖 torch）───────────────────────────
 #
 # offload 的接线是"在 qwen35_36 的 mixin 上覆盖 ``_build_optimizer``"。**MRO 顺序
-# 一改（别的 mixin 也定义同名方法、或 SFT mixin 被挪到 TransformerAdapter 之后），
+# 一改（别的 mixin 也定义同名方法、或 SFT mixin 被挪到 TransformerModelAdapter 之后），
 # 覆盖就会静默失效** —— 配置照样加载、日志照样打、显存却一点没省。
-# 本机无 torch 无法 import Qwen35Adapter，因此用 AST 把这条契约锁死。
+# 本机无 torch 无法 import Qwen35ModelAdapter，因此用 AST 把这条契约锁死。
 
 import ast  # noqa: E402
 from pathlib import Path  # noqa: E402
 
-_QWEN_DIR = Path("src/graspo/flow/adapters/models/qwen35_36")
-_ADAPTER_PY = _QWEN_DIR / "adapter.py"
-_BASE_PY = Path("src/graspo/flow/adapters/transformer_adapter.py")
+_QWEN_DIR = Path("src/graspo/flow/backend/native/models/qwen35_36")
+_ADAPTER_PY = _QWEN_DIR / "model_adapter.py"
+_BASE_PY = Path("src/graspo/flow/backend/native/transformer_model_adapter.py")
 
 
 def _class_defs(path: Path) -> dict[str, ast.ClassDef]:
@@ -215,23 +215,23 @@ def _defined_methods(node: ast.ClassDef) -> set[str]:
 
 
 def test_offload_hook_is_reachable_in_the_mro():
-    """SFT mixin 的 ``_build_optimizer`` 覆盖必须真的抢在 ``TransformerAdapter`` 之前。"""
+    """SFT mixin 的 ``_build_optimizer`` 覆盖必须真的抢在 ``TransformerModelAdapter`` 之前。"""
     adapter_classes = _class_defs(_ADAPTER_PY)
-    qwen35 = adapter_classes["Qwen35Adapter"]
+    qwen35 = adapter_classes["Qwen35ModelAdapter"]
     bases = [ast.unparse(base).split(".")[-1] for base in qwen35.bases]
     assert "_Qwen35SFTTrainingMethods" in bases, bases
-    assert "TransformerAdapter" in bases, bases
-    assert bases.index("_Qwen35SFTTrainingMethods") < bases.index("TransformerAdapter"), bases
+    assert "TransformerModelAdapter" in bases, bases
+    assert bases.index("_Qwen35SFTTrainingMethods") < bases.index("TransformerModelAdapter"), bases
 
 
 def test_only_the_sft_mixin_defines_the_optimizer_hook():
-    """MRO 里先于 ``TransformerAdapter`` 的 mixin 只允许 SFT 那一个定义该钩子。
+    """MRO 里先于 ``TransformerModelAdapter`` 的 mixin 只允许 SFT 那一个定义该钩子。
 
     否则覆盖会被更靠前的 mixin 抢走，offload 静默失效。
     """
     adapter_classes = _class_defs(_ADAPTER_PY)
-    bases = [ast.unparse(base).split(".")[-1] for base in adapter_classes["Qwen35Adapter"].bases]
-    mixins = [name for name in bases if name != "TransformerAdapter"]
+    bases = [ast.unparse(base).split(".")[-1] for base in adapter_classes["Qwen35ModelAdapter"].bases]
+    mixins = [name for name in bases if name != "TransformerModelAdapter"]
 
     definers: dict[str, set[str]] = {}
     for path in sorted(_QWEN_DIR.glob("*.py")):
@@ -245,7 +245,7 @@ def test_only_the_sft_mixin_defines_the_optimizer_hook():
 def test_base_adapter_still_defines_the_optimizer_hook():
     """覆盖必须 ``super()`` 到一个**真实存在**的基类实现（不是空挂）。"""
     base_classes = _class_defs(_BASE_PY)
-    assert "_build_optimizer" in _defined_methods(base_classes["TransformerAdapter"])
+    assert "_build_optimizer" in _defined_methods(base_classes["TransformerModelAdapter"])
 
 
 def test_sft_mixin_hook_delegates_to_super():

@@ -16,4 +16,8 @@ GRASPO-Ripple token 级奖励算法（annotation/advantages.py，v0.20.0 标注�
 from graspo.ripple.algorithm_core import GraspoAlgorithmCore
 from graspo.ripple.group_decision import has_reward_variance
 
+# ★ X4：ripple 的 entry_points 开发回退表**由本层自己登记**（core 不硬编码
+# ripple 路径）。导入即注册（幂等）。
+from graspo.ripple import registry as _registry  # noqa: E402,F401
+
 __all__ = ["GraspoAlgorithmCore", "has_reward_variance"]

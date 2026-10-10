@@ -779,7 +779,7 @@ def _gather_sequence_positions(
     **语义保证（"逐位一致"）**：``norm``（沿最后一维做统计）与 ``lm_head``（逐 token
     线性）都是**逐位置独立**的算子 ⇒ "先取行再算" 与 "全序列算完再按同一索引取行"
     在同样的输入值上**逐位相同**。这一点由
-    ``tests/flow/adapters/models/test_lm_head_last_only.py`` 用真实 norm/lm_head 钉住。
+    ``tests/flow/backend/native/models/test_lm_head_last_only.py`` 用真实 norm/lm_head 钉住。
 
     **为什么必须存在**：末 stage 在 rollout prefill 上对**整条序列**做 lm_head 会物化
     ``(B, S, vocab)`` 的 logits —— T035 形状下 `(64, 2052) × 248320` = 60–93 GiB，

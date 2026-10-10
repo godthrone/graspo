@@ -15,7 +15,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from graspo.flow.adapters.models.qwen35_36.helpers import (
+from graspo.flow.backend.native.models.qwen35_36.helpers import (
     CHAT_TURN_END_TOKEN,
     apply_stop_mask,
     resolve_stop_token_ids,

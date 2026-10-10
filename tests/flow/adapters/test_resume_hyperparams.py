@@ -5,7 +5,7 @@ param_groups 整体替换（含 lr/weight_decay），配置的 learning_rate 被
 覆盖不生效。修复后配置优先 + 返回被覆盖项供 WARNING 告知。
 """
 
-from graspo.flow.adapters.transformer_adapter import apply_config_optimizer_hyperparams
+from graspo.flow.backend.native.transformer_model_adapter import apply_config_optimizer_hyperparams
 
 
 class _FakeOptimizer:

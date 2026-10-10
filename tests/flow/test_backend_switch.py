@@ -205,22 +205,26 @@ def test_resolve_rejects_removed_backend_names():
 def test_third_backend_needs_zero_code_changes_in_selection_logic():
     """第三后端可插拔：注册表新增一个条目即可被解析，选择逻辑无需改动。
 
-    用 monkeypatch 在 ``_DEV_FALLBACKS`` 上模拟"未来第三个后端"注册，
+    用 monkeypatch 在**各层注册的开发回退表**上模拟"未来第三个后端"注册，
     断言 ``resolve_backend_builder`` 能发现它——证明扩展点是注册表而非 if/else。
+
+    ★ X4 之后回退表不再住在 ``core.discovery``（core 不得硬编码层内路径），
+    而是由 ``graspo.flow.registry`` 注册进 ``discovery._REGISTERED_FALLBACKS``。
     """
     import graspo.core.discovery as discovery
+    import graspo.flow.registry  # noqa: F401  （确保 flow 侧回退表已登记）
 
     sentinel = lambda: "third-backend-factory"  # noqa: E731
-    fallbacks = dict(discovery._DEV_FALLBACKS)
+    fallbacks = dict(discovery._REGISTERED_FALLBACKS)
     fallbacks["graspo.sft_backends"] = dict(fallbacks["graspo.sft_backends"])
     fallbacks["graspo.sft_backends"]["thirdparty"] = "os.path:join"
 
-    original = discovery._DEV_FALLBACKS
-    discovery._DEV_FALLBACKS = fallbacks
+    original = discovery._REGISTERED_FALLBACKS
+    discovery._REGISTERED_FALLBACKS = fallbacks
     try:
         builder = resolve_backend_builder("thirdparty", train_method="sft")
     finally:
-        discovery._DEV_FALLBACKS = original
+        discovery._REGISTERED_FALLBACKS = original
 
     assert builder is __import__("os.path", fromlist=["join"]).join
     assert sentinel() == "third-backend-factory"

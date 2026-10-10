@@ -118,6 +118,19 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
         """
         return self.runtime._require_adapter()
 
+    @property
+    def parallel_degree(self) -> Any | None:
+        """本进程并行度（``flow/backend/parallel_degree.py::ParallelDegree``）。
+
+        ★ 单一真相源在后端（runtime），**不再**从模型适配器上读 ``dp_size``/
+        ``dp_rank``（adapter 一名三义消歧，宪法 §1.4）。取不到 ⇒ ``None``。
+        """
+        degree = getattr(self.runtime, "parallel_degree", None)
+        if degree is not None:
+            return degree
+        adapter = getattr(self.runtime, "_adapter", None)
+        return getattr(adapter, "parallel", None) if adapter is not None else None
+
     def train(self, *, smoke: bool = False) -> None:
         """GRASPO 训练主入口。
 
@@ -242,9 +255,10 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
                 if epoch != start_epoch or self.current_epoch_stats.samples_seen == 0:
                     self.current_epoch_stats = GraspoFlowEpochStats(epoch=epoch)
                 epoch_samples = list(samples)
-                # DP: 每个 DP rank 处理不同的数据分片
-                if self.adapter is not None and self.adapter.dp_size > 1:
-                    epoch_samples = epoch_samples[self.adapter.dp_rank :: self.adapter.dp_size]
+                # DP: 每个 DP rank 处理不同的数据分片（并行度取自 backend，§1.4）
+                parallel = self.parallel_degree
+                if parallel is not None and parallel.dp_size > 1:
+                    epoch_samples = epoch_samples[parallel.dp_rank :: parallel.dp_size]
                 random.Random(int(self.config.training.seed) + epoch).shuffle(epoch_samples)
                 resume_sample_offset = (
                     int(self.current_epoch_stats.samples_seen) if epoch == start_epoch else 0

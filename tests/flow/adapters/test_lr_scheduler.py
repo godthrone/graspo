@@ -9,7 +9,7 @@ import pytest
 import torch
 
 from graspo.core.schema import TrainingConfig
-from graspo.flow.adapters.transformer_adapter import TransformerAdapter
+from graspo.flow.backend.native.transformer_model_adapter import TransformerModelAdapter
 
 
 class _FakeGraspoFlowConfig:
@@ -43,7 +43,7 @@ def _make_scheduler(learning_rate: float = 5e-7, **sched_kwargs):
     param = torch.nn.Parameter(torch.zeros(2))
     optimizer = torch.optim.AdamW([param], lr=learning_rate)
     stub = _StubAdapter(_FakeRootConfig(training), optimizer)
-    return TransformerAdapter._build_scheduler(stub), optimizer
+    return TransformerModelAdapter._build_scheduler(stub), optimizer
 
 
 def _lr_after_steps(scheduler, optimizer, n: int) -> float:
@@ -128,7 +128,7 @@ def test_scheduler_does_not_read_max_epochs():
         )
         param = torch.nn.Parameter(torch.zeros(2))
         optimizer = torch.optim.AdamW([param], lr=5e-7)
-        scheduler = TransformerAdapter._build_scheduler(
+        scheduler = TransformerModelAdapter._build_scheduler(
             _StubAdapter(_FakeRootConfig(training), optimizer)
         )
         for _ in range(50):

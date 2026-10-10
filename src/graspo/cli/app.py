@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from graspo.core.gpu_guard import require_gpu_lock_or_exit
+from graspo.flow.guard import require_gpu_lock_or_exit
 from graspo.core.schema import GraspoConfig
 
 

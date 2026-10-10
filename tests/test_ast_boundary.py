@@ -26,7 +26,7 @@ import pytest
 class ImportEdge(NamedTuple):
     """一条导入边：source 模块 import 了 target 模块。"""
 
-    source: str  # 如 "graspo.flow.adapters.transformer_adapter"
+    source: str  # 如 "graspo.flow.backend.native.transformer_model_adapter"
     target: str  # 如 "graspo.ripple.loss"
     lineno: int
 
@@ -159,7 +159,7 @@ def test_scheduling_does_not_import_models_or_trainer():
 
     for edge in all_imports:
         if _is_under(edge.source, "graspo.flow.parallel.scheduling"):
-            if _is_under(edge.target, "graspo.flow.adapters.models"):
+            if _is_under(edge.target, "graspo.flow.backend.native.models"):
                 violations.append(f"  {edge.source}:{edge.lineno} imports models: {edge.target}")
             if _is_under(edge.target, "graspo.flow.trainer"):
                 violations.append(f"  {edge.source}:{edge.lineno} imports trainer: {edge.target}")
@@ -194,7 +194,7 @@ def test_core_does_not_import_flow_or_ripple():
 def test_no_circular_imports_detected():
     """AST 级别检测跨层循环依赖：不同架构层之间不应双向导入。
 
-    同层内的循环（如 flow.adapters ↔ flow.lora）不在此检查范围，
+    同层内的循环（如 flow.backend.native.models ↔ flow.lora）不在此检查范围，
     因为同层模块间可以有合理的内部依赖。
     """
     all_imports = _collect_all_imports()

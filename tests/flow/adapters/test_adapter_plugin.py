@@ -31,15 +31,15 @@ _AVAILABLE_ADAPTERS = _runtime._AVAILABLE_ADAPTERS
 
 
 def _require_real_torch_and_adapters():
-    """Skip test if torch or graspo.flow.adapters is not genuinely importable."""
+    """Skip test if torch or graspo.flow.adapter is not genuinely importable."""
     try:
         import torch  # noqa: F401
     except ImportError:
         pytest.skip("torch required to load adapter modules")
     try:
-        importlib.import_module("graspo.flow.adapters")
+        importlib.import_module("graspo.flow.adapter")
     except (ImportError, ModuleNotFoundError):
-        pytest.skip("graspo.flow.adapters not importable (torch mock detected)")
+        pytest.skip("graspo.flow.adapter not importable (torch mock detected)")
 
 
 # ── _AVAILABLE_ADAPTERS 基本测试 ──────────────────────────────────────────────
@@ -62,11 +62,11 @@ def test_available_adapters_are_short_names():
 
 
 def test_builtin_adapter_loadable():
-    """内置 Qwen35Adapter 可通过 importlib 加载。"""
+    """内置 Qwen35ModelAdapter 可通过 importlib 加载。"""
     _require_real_torch_and_adapters()
-    module = importlib.import_module("graspo.flow.adapters.models.qwen35_36.adapter")
-    adapter_cls = getattr(module, "Qwen35Adapter")
-    from graspo.flow.adapters.base_graspo_flow_adapter import BaseGraspoFlowAdapter
+    module = importlib.import_module("graspo.flow.backend.native.models.qwen35_36.model_adapter")
+    adapter_cls = getattr(module, "Qwen35ModelAdapter")
+    from graspo.flow.adapter.base_graspo_flow_adapter import BaseGraspoFlowAdapter
 
     assert issubclass(adapter_cls, BaseGraspoFlowAdapter)
 
@@ -83,13 +83,13 @@ def test_adapter_loading_format_error():
 def test_adapter_loading_module_not_found():
     """模块不存在时 ModuleNotFoundError → ValueError。"""
     with pytest.raises(ModuleNotFoundError):
-        importlib.import_module("graspo.flow.adapters.models.nonexistent")
+        importlib.import_module("graspo.flow.backend.native.models.nonexistent")
 
 
 def test_adapter_loading_class_not_found():
     """类不存在时 AttributeError。"""
     _require_real_torch_and_adapters()
-    module = importlib.import_module("graspo.flow.adapters.models.qwen35_36.adapter")
+    module = importlib.import_module("graspo.flow.backend.native.models.qwen35_36.model_adapter")
     with pytest.raises(AttributeError):
         getattr(module, "NonExistentAdapter")
 
@@ -97,11 +97,11 @@ def test_adapter_loading_class_not_found():
 def test_adapter_is_subclass_of_base():
     """所有内置适配器都是 BaseGraspoFlowAdapter 的子类。"""
     _require_real_torch_and_adapters()
-    from graspo.flow.adapters.base_graspo_flow_adapter import BaseGraspoFlowAdapter
+    from graspo.flow.adapter.base_graspo_flow_adapter import BaseGraspoFlowAdapter
 
     adapter_paths = [
-        "graspo.flow.adapters.models.qwen3.adapter:Qwen3Adapter",
-        "graspo.flow.adapters.models.qwen35_36.adapter:Qwen35Adapter",
+        "graspo.flow.backend.native.models.qwen3.model_adapter:Qwen3ModelAdapter",
+        "graspo.flow.backend.native.models.qwen35_36.model_adapter:Qwen35ModelAdapter",
     ]
     for adapter_path in adapter_paths:
         module_name, _, class_name = adapter_path.partition(":")

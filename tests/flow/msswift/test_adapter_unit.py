@@ -4,7 +4,7 @@
 非法样本被拒绝。全部输入用内存对象构造（宪法 §1.3 计算与设施分离）。
 
 被测对象：``graspo.flow.msswift._ard_contract``（纯计算原语）与
-``graspo.flow.msswift.adapter``（适配器类，同样不碰 IO）。
+``graspo.flow.msswift.ard_records``（记录级适配器类，同样不碰 IO）。
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from graspo.flow.msswift._ard_contract import (
     graspo_content_to_ard,
     validate_ard_messages,
 )
-from graspo.flow.msswift.adapter import GraspoToMsSwiftAdapter, MsSwiftToGraspoAdapter
+from graspo.flow.msswift.ard_records import GraspoToMsSwiftAdapter, MsSwiftToGraspoAdapter
 
 
 def _ard_record() -> dict:

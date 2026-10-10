@@ -18,7 +18,7 @@ import pytest
 
 torch = pytest.importorskip("torch", reason="b1 等价性测试需要 torch")
 
-from graspo.flow.adapters.models.common.layers import Qwen35RMSNorm  # noqa: E402
+from graspo.flow.backend.native.models.common.layers import Qwen35RMSNorm  # noqa: E402
 from graspo.flow.parallel.tensor_utils import _gather_sequence_positions  # noqa: E402
 
 

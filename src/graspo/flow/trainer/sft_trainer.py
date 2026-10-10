@@ -119,7 +119,7 @@ class SFTTrainer:
             model_config,
             # 视觉塔按 PP 设计只存在于 embedding stage（pp_rank==0，见
             # placement_plan.py:135）；写死 True 会在 pp_rank≥1 上误判。
-            # 直读 pp_rank（native TransformerAdapter 的固有属性，setup 后为真实值）：
+            # 直读 pp_rank（native TransformerModelAdapter 的固有属性，setup 后为真实值）：
             # 不设缺省——适配器没有该属性属于契约不符，应显式报错而不是默默按 0 处理。
             owns_embeddings=int(adapter.pp_rank) == 0,
             model_name=str(self.config.model.model_path),
@@ -158,9 +158,9 @@ class SFTTrainer:
         samples = load_jsonl(self.config.data.train_path)
         self.total_samples = len(samples)
         # DP: 每个 DP rank 处理不同的数据分片
-        adapter = self.runtime._adapter
-        if adapter is not None and adapter.dp_size > 1:
-            samples = samples[adapter.dp_rank :: adapter.dp_size]
+        parallel = getattr(self.runtime, "parallel_degree", None)
+        if parallel is not None and parallel.dp_size > 1:
+            samples = samples[parallel.dp_rank :: parallel.dp_size]
             self.total_samples = len(samples)
         _log.info("SFT: loaded %d samples from %s", self.total_samples, self.config.data.train_path)
 
@@ -252,7 +252,7 @@ class SFTTrainer:
                 # get different numbers of samples, leading to different batch
                 # counts.  all_reduce(MIN) finds the globally smallest count and
                 # truncates every rank to it, eliminating the deadlock root cause.
-                if adapter.dp_size > 1:
+                if parallel is not None and parallel.dp_size > 1:
                     import torch
                     import torch.distributed as dist
 

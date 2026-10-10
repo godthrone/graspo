@@ -2,7 +2,7 @@
 
 设计原则（§1.2 接口边界）：
 - 新增实现只需在 pyproject.toml 声明 entry_point，不修改任何现有代码
-- 开发模式下（pip install -e 未执行）回退到 _DEV_FALLBACKS 硬编码路径
+- 开发模式下（pip install -e 未执行）回退到各层（flow/ripple）自行注册的回退路径
 - 返回值是 lazy-loading callable：调用方只遍历 .keys() 时不触发重量级导入
 """
 
@@ -13,44 +13,25 @@ import importlib.metadata
 from collections.abc import Callable
 from typing import Any
 
-# ── 开发模式回退注册表 ─────────────────────────────────────────────────
-# 当包未通过 pip install 安装时（entry_points 不可用），从此表加载。
-# 生产环境（pip install）中 entry_points 自动接管，此表不会被使用。
-# 单一真相源（§1.4）：entry_points 是生产真相源，_DEV_FALLBACKS 是开发真相源。
+# ── 开发模式回退注册表（★ X4：core 不得硬编码 flow / ripple 的模块路径）──────
+# 当包未通过 pip install 安装时（entry_points 不可用），从**各层自行注册**的
+# 回退表加载。生产环境（pip install）中 entry_points 自动接管。
+#
+# ★ 边界（宪法 §1.3/§1.4）：具体路径属于**各层自己的知识**——
+#   · flow 侧的表在 ``graspo/flow/registry.py``
+#   · ripple 侧的表在 ``graspo/ripple/registry.py``
+# core 只提供**注册机制**与查询入口，不认识任何 ``graspo.flow.*`` /
+# ``graspo.ripple.*`` 路径（否则就是 core → flow/ripple 的字符串反向依赖）。
+_REGISTERED_FALLBACKS: dict[str, dict[str, str]] = {}
 
-_DEV_FALLBACKS: dict[str, dict[str, str]] = {
-    "graspo.rewards": {
-        "graspo": "graspo.ripple.reward.reward:GraspoReward",
-    },
-    "graspo.adapters": {
-        "qwen3": "graspo.flow.adapters.models.qwen3.adapter:Qwen3Adapter",
-        "qwen35_36": "graspo.flow.adapters.models.qwen35_36.adapter:Qwen35Adapter",
-    },
-    "graspo.backends": {
-        "native": "graspo.flow.backend_selection:create_native_trainer",
-        "msswift": "graspo.flow.msswift.trainer:create_msswift_trainer",
-    },
-    # SFT 后端注册表：与 RL（graspo.backends）分开登记，因为两者的训练器形状
-    # 不同（SFT 消费「已 tokenize 的样本」，RL 消费 rollout group）。
-    # 新增后端 SFT 支持 = 此表加一行 + pyproject entry_points 加一行，
-    # 现有选择逻辑 0 行改动（宪法 §1.2 / 决策 D5）。
-    "graspo.sft_backends": {
-        "native": "graspo.flow.trainer.sft_trainer:create_native_sft_trainer",
-        "msswift": "graspo.flow.msswift.sft_trainer:create_msswift_sft_trainer",
-    },
-    # CPT（继续预训练）注册表：形态与 SFT/RL 都不同——它走 ms-swift 的**预训练**
-    # 管线（`swift.pipelines.pretrain_main`，等价于 `swift pt`），数据集是纯文本行
-    # 而不是对话行。**只有 ms-swift 实现**（能力矩阵 §4：CPT · native = `⛔ 不支持`）。
-    "graspo.cpt_backends": {
-        "msswift": "graspo.flow.msswift.cpt_trainer:create_msswift_cpt_trainer",
-    },
-    # OPD（on-policy 蒸馏）注册表：走 ms-swift 的 GKD 路径
-    # （`--rlhf_type gkd` + 独立冻结教师 `--teacher_model`）。**只有 ms-swift 实现**
-    # （能力矩阵 §4：OPD · native = `⛔ 不支持`）。
-    "graspo.opd_backends": {
-        "msswift": "graspo.flow.msswift.opd_trainer:create_msswift_opd_trainer",
-    },
-}
+
+def register_dev_fallbacks(group: str, mapping: dict[str, str]) -> None:
+    """注册某 entry_point 组的开发模式回退表（由各层在自己的 registry 里调用）。
+
+    同组重复注册时**合并**（后注册的覆盖同名项，不丢项），保证幂等。
+    """
+    _REGISTERED_FALLBACKS.setdefault(group, {}).update(dict(mapping))
+
 
 #: ``train_method`` → entry_point 组名（**路由的单一真相源**，宪法 §1.4）。
 #: 表驱动而不是 if/elif 链：新增训练方法 = 本表加一行 + 注册表加一个实现，
@@ -94,10 +75,10 @@ def _discover(group: str) -> dict[str, Callable[[], Any]]:
     if entries:
         return entries
 
-    # 开发模式回退：从 _DEV_FALLBACKS 加载
-    if group in _DEV_FALLBACKS:
+    # 开发模式回退：从各层注册的回退表加载（core 不含任何层内路径）
+    if group in _REGISTERED_FALLBACKS:
         result: dict[str, Callable[[], Any]] = {}
-        for name, path in _DEV_FALLBACKS[group].items():
+        for name, path in _REGISTERED_FALLBACKS[group].items():
             module_name, _, attr_name = path.partition(":")
             result[name] = _make_loader(module_name, attr_name)
         return result
@@ -115,7 +96,7 @@ def resolve_backend_builder(backend: str, *, train_method: str) -> Callable[[], 
     - ``cpt`` → ``graspo.cpt_backends``
     - ``opd`` → ``graspo.opd_backends``
 
-    所有注册表都走 entry_points 自动发现（开发模式回退 ``_DEV_FALLBACKS``）。
+    所有注册表都走 entry_points 自动发现（开发模式回退由各层 ``registry`` 注册）。
     **未知的 ``train_method`` 直接拒绝**，不再静默落到 RL 注册表——静默兜底会让
     拼错的算法名拿着另一种算法去训练（宪法 §3.4 的"坏退路"）。
 

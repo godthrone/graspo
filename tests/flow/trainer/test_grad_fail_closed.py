@@ -36,7 +36,7 @@ import pytest
 torch = pytest.importorskip("torch", reason="R1/R3 契约测试需要 torch（CPU 即可）")
 
 from graspo.core.result_judge import DIAGNOSTIC_PHASES, STEP_METRICS_PHASES  # noqa: E402
-from graspo.flow.adapters.models.common.grad_probe import (  # noqa: E402
+from graspo.flow.backend.native.models.common.grad_probe import (  # noqa: E402
     FAIL_CLOSED_PHASE,
     GRAD_FAIL_GRAD_NONFINITE,
     GRAD_FAIL_GRAD_UNPOPULATED,
@@ -52,8 +52,8 @@ from graspo.flow.adapters.models.common.grad_probe import (  # noqa: E402
 
 _REPO = Path(__file__).resolve().parents[3]
 _TRAINING_MODULES = (
-    _REPO / "src" / "graspo" / "flow" / "adapters" / "models" / "qwen35_36" / "training_sft.py",
-    _REPO / "src" / "graspo" / "flow" / "adapters" / "models" / "qwen35_36" / "training.py",
+    _REPO / "src" / "graspo" / "flow" / "backend" / "native" / "models" / "qwen35_36" / "training_sft.py",
+    _REPO / "src" / "graspo" / "flow" / "backend" / "native" / "models" / "qwen35_36" / "training.py",
 )
 _COLLECTOR = _REPO / "scripts" / "collect_results.py"
 
@@ -280,7 +280,7 @@ _GLOO_CHILD = textwrap.dedent(
     import json, sys
     import torch, torch.distributed as dist
 
-    from graspo.flow.adapters.models.common.grad_probe import (
+    from graspo.flow.backend.native.models.common.grad_probe import (
         grad_finiteness_report, grad_gate_verdict, reduced_grad_flags,
     )
 
@@ -431,7 +431,7 @@ class TestFirstStepProbeAddsNoCollective:
     """
 
     def test_first_batch_not_in_the_gather_condition(self) -> None:
-        source = (_REPO / "src/graspo/flow/adapters/models/qwen35_36/training_sft.py").read_text(
+        source = (_REPO / "src/graspo/flow/backend/native/models/qwen35_36/training_sft.py").read_text(
             encoding="utf-8"
         )
         assert "is_first_train_batch" in source, "首步探针本身仍必须在（只增行）"
@@ -446,7 +446,7 @@ class TestFirstStepProbeAddsNoCollective:
 
     def test_fail_closed_path_still_gathers(self) -> None:
         """失败路径的逐 rank 诊断表必须保留（与首步解耦）。"""
-        source = (_REPO / "src/graspo/flow/adapters/models/qwen35_36/training_sft.py").read_text(
+        source = (_REPO / "src/graspo/flow/backend/native/models/qwen35_36/training_sft.py").read_text(
             encoding="utf-8"
         )
         assert "rank_grad_reports = [item for item in gathered_reports" in source
@@ -524,7 +524,7 @@ class TestMechanismHistogram:
 
     def test_name_cap_is_enlarged_for_the_mechanism_probe(self) -> None:
         """★ 机制探针需要一个比 5 大得多的名单上限（pp=4 实测 75/134 个张量非有限）。"""
-        from graspo.flow.adapters.models.common import grad_probe
+        from graspo.flow.backend.native.models.common import grad_probe
 
         assert grad_probe.MAX_NONFINITE_GRAD_NAMES >= 64
 
@@ -541,7 +541,7 @@ class TestExchangeTensorReport:
     """★ 方案 #1（2026-09-23 裁定）：裁定"边界携带 vs 本地生成"所需的最小读数。"""
 
     def test_healthy_tensor_fields(self) -> None:
-        from graspo.flow.adapters.models.common.grad_probe import (
+        from graspo.flow.backend.native.models.common.grad_probe import (
             PP_EXCHANGE_BWD_RECEIVED,
             exchange_tensor_report,
         )
@@ -558,7 +558,7 @@ class TestExchangeTensorReport:
         assert "float32" in report["dtype"]
 
     def test_nan_tensor_reports_nan_max_and_first_index(self) -> None:
-        from graspo.flow.adapters.models.common.grad_probe import exchange_tensor_report
+        from graspo.flow.backend.native.models.common.grad_probe import exchange_tensor_report
 
         tensor = torch.ones(2, 3)
         tensor.view(-1)[4] = float("nan")
@@ -568,7 +568,7 @@ class TestExchangeTensorReport:
         assert report["first_nonfinite_index"] == 4
 
     def test_inf_is_not_finite_but_max_abs_is_inf(self) -> None:
-        from graspo.flow.adapters.models.common.grad_probe import exchange_tensor_report
+        from graspo.flow.backend.native.models.common.grad_probe import exchange_tensor_report
 
         tensor = torch.zeros(4)
         tensor[1] = float("inf")
@@ -578,7 +578,7 @@ class TestExchangeTensorReport:
         assert report["first_nonfinite_index"] == 1
 
     def test_probe_does_not_modify_the_tensor(self) -> None:
-        from graspo.flow.adapters.models.common.grad_probe import exchange_tensor_report
+        from graspo.flow.backend.native.models.common.grad_probe import exchange_tensor_report
 
         tensor = torch.ones(2, 3)
         tensor.view(-1)[0] = float("nan")
@@ -587,7 +587,7 @@ class TestExchangeTensorReport:
         assert torch.allclose(before, tensor, equal_nan=True)
 
     def test_none_tensors_are_skipped_and_cap_applies(self) -> None:
-        from graspo.flow.adapters.models.common.grad_probe import pp_exchange_readings
+        from graspo.flow.backend.native.models.common.grad_probe import pp_exchange_readings
 
         items = [("d", "none", None), ("d", "a", torch.ones(1)), ("d", "b", torch.ones(1))]
         readings = pp_exchange_readings(items)
@@ -601,7 +601,7 @@ class TestExchangeTensorReport:
         """读数要能直接进 rank_metrics（jsonl）——不得含 tensor 对象。"""
         import json
 
-        from graspo.flow.adapters.models.common.grad_probe import pp_exchange_readings
+        from graspo.flow.backend.native.models.common.grad_probe import pp_exchange_readings
 
         readings = pp_exchange_readings([("d", "x", torch.ones(2, 2))])
         assert json.loads(json.dumps(readings))[0]["shape"] == [2, 2]
@@ -610,7 +610,7 @@ class TestExchangeTensorReport:
         """★ 硬约束（裁定要求）：**绝不新增集合通信** —— 两个函数源码里不得出现 `dist.`。"""
         import inspect
 
-        from graspo.flow.adapters.models.common import grad_probe
+        from graspo.flow.backend.native.models.common import grad_probe
 
         for func in (grad_probe.exchange_tensor_report, grad_probe.pp_exchange_readings):
             source = inspect.getsource(func)
@@ -627,14 +627,14 @@ class TestTensorDigest:
     零新增通信即可判定"通信是否保真"。"""
 
     def test_identical_content_yields_identical_digest(self) -> None:
-        from graspo.flow.adapters.models.common.grad_probe import tensor_digest
+        from graspo.flow.backend.native.models.common.grad_probe import tensor_digest
 
         a = torch.arange(64, dtype=torch.float32).reshape(8, 8)
         b = a.clone()
         assert tensor_digest(a, with_sha256=True) == tensor_digest(b, with_sha256=True)
 
     def test_single_element_change_is_detected_bitwise(self) -> None:
-        from graspo.flow.adapters.models.common.grad_probe import tensor_digest
+        from graspo.flow.backend.native.models.common.grad_probe import tensor_digest
 
         a = torch.arange(64, dtype=torch.float32)
         b = a.clone()
@@ -645,7 +645,7 @@ class TestTensorDigest:
         assert da["digest_head"] == db["digest_head"]  # 头一致、只有第 8 个元素变
 
     def test_tail_and_head_are_sampled(self) -> None:
-        from graspo.flow.adapters.models.common.grad_probe import tensor_digest
+        from graspo.flow.backend.native.models.common.grad_probe import tensor_digest
 
         digest = tensor_digest(torch.arange(10, dtype=torch.float32), sample=3)
         assert digest["digest_head"] == [0.0, 1.0, 2.0]
@@ -654,7 +654,7 @@ class TestTensorDigest:
     def test_sha256_works_for_bfloat16(self) -> None:
         """★ B 修：bf16 没有 numpy dtype（`.numpy()` 会抛）⇒ 必须走 uint16 逐位字节化，
         且失败要留 `digest_sha256_error`（不许静默 None）。"""
-        from graspo.flow.adapters.models.common.grad_probe import tensor_digest
+        from graspo.flow.backend.native.models.common.grad_probe import tensor_digest
 
         a = torch.arange(8, dtype=torch.bfloat16)
         da = tensor_digest(a, with_sha256=True)
@@ -667,20 +667,20 @@ class TestTensorDigest:
         assert tensor_digest(b, with_sha256=True)["digest_sha256"] != da["digest_sha256"]
 
     def test_sha256_is_opt_in(self) -> None:
-        from graspo.flow.adapters.models.common.grad_probe import tensor_digest
+        from graspo.flow.backend.native.models.common.grad_probe import tensor_digest
 
         assert "digest_sha256" not in tensor_digest(torch.ones(4))
         assert tensor_digest(torch.ones(4), with_sha256=True)["digest_sha256"] is not None
 
     def test_nan_dominates_the_checksum(self) -> None:
-        from graspo.flow.adapters.models.common.grad_probe import tensor_digest
+        from graspo.flow.backend.native.models.common.grad_probe import tensor_digest
 
         tensor = torch.ones(8)
         tensor[3] = float("nan")
         assert tensor_digest(tensor)["digest_sum"] != tensor_digest(tensor)["digest_sum"]
 
     def test_digest_is_read_only(self) -> None:
-        from graspo.flow.adapters.models.common.grad_probe import tensor_digest
+        from graspo.flow.backend.native.models.common.grad_probe import tensor_digest
 
         tensor = torch.arange(8, dtype=torch.float32)
         before = tensor.clone()
@@ -688,7 +688,7 @@ class TestTensorDigest:
         assert torch.equal(before, tensor)
 
     def test_reading_carries_the_digest_fields(self) -> None:
-        from graspo.flow.adapters.models.common.grad_probe import pp_exchange_readings
+        from graspo.flow.backend.native.models.common.grad_probe import pp_exchange_readings
 
         reads = pp_exchange_readings([("d", "x", torch.ones(4))], with_sha256=True)
         for key in ("digest_sum", "digest_head", "digest_tail", "digest_sha256"):
@@ -698,7 +698,7 @@ class TestTensorDigest:
         """裁定约束：**零集合通信**（除保真测试自身）——摘要在两端各自本地算，不需要任何通信。"""
         import inspect
 
-        from graspo.flow.adapters.models.common import grad_probe
+        from graspo.flow.backend.native.models.common import grad_probe
 
         source = inspect.getsource(grad_probe.tensor_digest)
         assert "dist." not in source
@@ -827,7 +827,7 @@ class TestDiagVariantSwitch:
     """★ 指挥官批准的 (a) 方案：运行根标记文件选变体；**默认关 ⇒ 现有行为**。"""
 
     def test_no_marker_means_default_sync(self, tmp_path) -> None:
-        from graspo.flow.adapters.models.common.grad_probe import (
+        from graspo.flow.backend.native.models.common.grad_probe import (
             DIAG_VARIANT_SYNC,
             read_diag_variant,
         )
@@ -837,7 +837,7 @@ class TestDiagVariantSwitch:
         assert read_diag_variant(tmp_path / "does-not-exist") == DIAG_VARIANT_SYNC
 
     def test_hook_off_and_no_sync_markers(self, tmp_path) -> None:
-        from graspo.flow.adapters.models.common import grad_probe as gp
+        from graspo.flow.backend.native.models.common import grad_probe as gp
 
         (tmp_path / gp.DIAG_HOOK_OFF_MARKER).write_text("", encoding="utf-8")
         assert gp.read_diag_variant(tmp_path) == gp.DIAG_VARIANT_HOOK_OFF
@@ -846,7 +846,7 @@ class TestDiagVariantSwitch:
         assert gp.read_diag_variant(tmp_path) == gp.DIAG_VARIANT_NO_SYNC
 
     def test_both_markers_have_deterministic_precedence(self, tmp_path) -> None:
-        from graspo.flow.adapters.models.common import grad_probe as gp
+        from graspo.flow.backend.native.models.common import grad_probe as gp
 
         (tmp_path / gp.DIAG_HOOK_OFF_MARKER).write_text("", encoding="utf-8")
         (tmp_path / gp.DIAG_NO_SYNC_MARKER).write_text("", encoding="utf-8")
@@ -856,7 +856,7 @@ class TestDiagVariantSwitch:
         """纪律：开关本身**不得**引入集合通信或任何同步（除既有 `diag_sync_once`）。"""
         import inspect
 
-        from graspo.flow.adapters.models.common import grad_probe as gp
+        from graspo.flow.backend.native.models.common import grad_probe as gp
 
         source = inspect.getsource(gp.read_diag_variant)
         for forbidden in (
@@ -877,7 +877,8 @@ class TestDiagVariantSwitch:
             / "src"
             / "graspo"
             / "flow"
-            / "adapters"
+            / "backend"
+            / "native"
             / "models"
             / "qwen35_36"
             / "training_sft.py"
@@ -898,7 +899,8 @@ class TestDiagVariantSwitch:
             / "src"
             / "graspo"
             / "flow"
-            / "adapters"
+            / "backend"
+            / "native"
             / "models"
             / "qwen35_36"
             / "training_sft.py"
@@ -971,7 +973,7 @@ class TestExchangeProbeWiringIsPpOnlyAndDiagnosticOnly:
     （不 import 训练 mixin，避免拉起 transformers）。"""
 
     _TRAINING_SFT = (
-        _REPO / "src" / "graspo" / "flow" / "adapters" / "models" / "qwen35_36" / "training_sft.py"
+        _REPO / "src" / "graspo" / "flow" / "backend" / "native" / "models" / "qwen35_36" / "training_sft.py"
     )
 
     def _source(self) -> str:
@@ -1075,17 +1077,17 @@ class TestSkippedNonfiniteProducerAndConsumer:
 
     def test_single_process_branch_emits_the_key(self) -> None:
         """``_aggregate_rank_metrics`` 的单进程分支也必须产出该键（只增不改地补齐）。"""
-        from graspo.flow.adapters.transformer_adapter import TransformerAdapter
+        from graspo.flow.backend.native.transformer_model_adapter import TransformerModelAdapter
 
         stub = _AdapterStub(world_size=1)
-        metrics = TransformerAdapter._aggregate_rank_metrics(stub, {"skipped_nonfinite": 2})
+        metrics = TransformerModelAdapter._aggregate_rank_metrics(stub, {"skipped_nonfinite": 2})
         assert metrics["global_skipped_nonfinite_sum"] == 2
         # 既有键不得被改动（§18 只增不改）
         assert metrics["global_optimizer_steps_sum"] == 0
 
     def test_dist_branch_sums_over_all_ranks(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """dist 分支口径 = **逐 rank 求和**（任一 rank 跳过都计入）。"""
-        import graspo.flow.adapters.transformer_adapter as adapter_module
+        import graspo.flow.backend.native.transformer_model_adapter as adapter_module
 
         per_rank = [
             {"rank": 0, "skipped_nonfinite": 0, "optimizer_steps": 1},
@@ -1108,10 +1110,10 @@ class TestSkippedNonfiniteProducerAndConsumer:
                 out[:] = list(per_rank)
 
         monkeypatch.setattr(adapter_module, "dist", _FakeDist)
-        from graspo.flow.adapters.transformer_adapter import TransformerAdapter
+        from graspo.flow.backend.native.transformer_model_adapter import TransformerModelAdapter
 
         stub = _AdapterStub(world_size=4)
-        metrics = TransformerAdapter._aggregate_rank_metrics(stub, {"skipped_nonfinite": 0})
+        metrics = TransformerModelAdapter._aggregate_rank_metrics(stub, {"skipped_nonfinite": 0})
         assert metrics["global_skipped_nonfinite_sum"] == 3
         assert metrics["global_optimizer_steps_sum"] == 2
 
@@ -1130,6 +1132,6 @@ class _AdapterStub:
 
     @staticmethod
     def _loss_bearing_ranks(ranks: list[dict]) -> tuple[list[dict], str]:
-        from graspo.flow.adapters.transformer_adapter import TransformerAdapter
+        from graspo.flow.backend.native.transformer_model_adapter import TransformerModelAdapter
 
-        return TransformerAdapter._loss_bearing_ranks(ranks)
+        return TransformerModelAdapter._loss_bearing_ranks(ranks)

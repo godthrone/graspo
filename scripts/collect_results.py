@@ -80,7 +80,7 @@ _NUMERIC_LITERAL = re.compile(
 )
 
 #: 训练器在首个非有限梯度处硬失败时打的标记（唯一真相源：
-#: ``flow/adapters/models/qwen35_36/training_sft.py``）。
+#: ``flow/backend/native/models/qwen35_36/training_sft.py``）。
 #: native SFT 路径的实现痕迹（用于逐档判定 A7 的 fail-closed 保证）。
 _NATIVE_SFT_PATH_MARKER = re.compile(r"train_batch_sft|_pipeline_train_batch_sft|sft_trainer\.py")
 
@@ -2012,7 +2012,7 @@ def collect_run(
         evidence_c = (
             "src/graspo/flow/trainer/sft_trainer.py:402-415 (_assert_no_frozen_steps："
             "有跳过则落盘前必然 raise) + "
-            "src/graspo/flow/adapters/models/qwen35_36/training_sft.py:313 "
+            "src/graspo/flow/backend/native/models/qwen35_36/training_sft.py:313 "
             "(_record_nonfinite_skip：默认硬失败)"
         )
         fail_closed_guarantee = f"该档 stdout 实证走 native SFT 路径；锚点 {evidence_c}"

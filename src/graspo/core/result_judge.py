@@ -51,23 +51,23 @@ from typing import Any
 #: .. code-block:: text
 #:
 #:     ── 训练指标（payload 带 ``metrics``，是本注册表存在的理由）──────────────
-#:     src/graspo/flow/adapters/models/qwen35_36/training_sft.py:753   SFT  · PP 路径（pp_size>1）
-#:     src/graspo/flow/adapters/models/qwen35_36/training_sft.py:478   SFT  · 普通路径（pp_size==1，
+#:     src/graspo/flow/backend/native/models/qwen35_36/training_sft.py:753   SFT  · PP 路径（pp_size>1）
+#:     src/graspo/flow/backend/native/models/qwen35_36/training_sft.py:478   SFT  · 普通路径（pp_size==1，
 #:                                                                    含全部单卡/DP/TP 档）
-#:     src/graspo/flow/adapters/models/qwen35_36/training.py:440       RL/GRASPO · PP 路径
-#:     src/graspo/flow/adapters/models/qwen35_36/training.py:204       RL/GRASPO · 普通路径
-#:     src/graspo/flow/adapters/models/qwen3/adapter.py:486            qwen3 后端 · 普通路径
+#:     src/graspo/flow/backend/native/models/qwen35_36/training.py:440       RL/GRASPO · PP 路径
+#:     src/graspo/flow/backend/native/models/qwen35_36/training.py:204       RL/GRASPO · 普通路径
+#:     src/graspo/flow/backend/native/models/qwen3/model_adapter.py:486            qwen3 后端 · 普通路径
 #:
 #:     ── 诊断事件（**不**带 metrics，不进注册表，登记以免被误加）──────────────
-#:     src/graspo/flow/adapters/transformer_adapter.py:271             setup_after
-#:     src/graspo/flow/adapters/transformer_adapter.py:441             checkpoint_after
-#:     src/graspo/flow/adapters/transformer_adapter.py:591             checkpoint_loaded
-#:     src/graspo/flow/adapters/models/qwen35_36/training_sft.py:353   train_before_empty_cache
-#:     src/graspo/flow/adapters/models/qwen35_36/training.py:58        train_before_empty_cache
-#:     src/graspo/flow/adapters/models/qwen3/adapter.py:394            train_before_empty_cache
-#:     src/graspo/flow/adapters/models/qwen35_36/logprobs.py:57        logprob_after
-#:     src/graspo/flow/adapters/models/qwen35_36/logprobs.py:125       pipeline_logprob_after
-#:     src/graspo/flow/adapters/models/qwen3/adapter.py:508            logprob_after
+#:     src/graspo/flow/backend/native/transformer_model_adapter.py:271             setup_after
+#:     src/graspo/flow/backend/native/transformer_model_adapter.py:441             checkpoint_after
+#:     src/graspo/flow/backend/native/transformer_model_adapter.py:591             checkpoint_loaded
+#:     src/graspo/flow/backend/native/models/qwen35_36/training_sft.py:353   train_before_empty_cache
+#:     src/graspo/flow/backend/native/models/qwen35_36/training.py:58        train_before_empty_cache
+#:     src/graspo/flow/backend/native/models/qwen3/model_adapter.py:394            train_before_empty_cache
+#:     src/graspo/flow/backend/native/models/qwen35_36/logprobs.py:57        logprob_after
+#:     src/graspo/flow/backend/native/models/qwen35_36/logprobs.py:125       pipeline_logprob_after
+#:     src/graspo/flow/backend/native/models/qwen3/model_adapter.py:508            logprob_after
 #:
 #: ★ 加新路径时改的**只有本表**；采集侧不得再出现任何 phase 字面量（§2.2 显式即防呆）。
 
@@ -114,7 +114,7 @@ DIAGNOSTIC_PHASES: frozenset[str] = frozenset(
         "first_step_probe",
         # native PP 首步逐 rank 数值探针（R3，2026-09-23）：只读梯度/loss 读数，
         # **不带** ``metrics``（见上条同理）。唯一真相源是
-        # ``graspo/flow/adapters/models/common/grad_probe.py`` 的调用点常量；
+        # ``graspo/flow/backend/native/models/common/grad_probe.py`` 的调用点常量；
         # 同步由 ``tests/flow/trainer/test_grad_fail_closed.py`` 守住。
         "pp_numeric_probe",
         # 失败步诊断行（R1，2026-09-23）：**先落盘、再 raise**，见上方例外说明。
@@ -143,7 +143,7 @@ DIAGNOSTIC_PHASES: frozenset[str] = frozenset(
 #: 训练侧落点（allocator 值怎么来的）：
 #:   `src/graspo/flow/parallel/tensor_utils.py:_cuda_memory_snapshot`
 #:     → `max_allocated_mib = torch.cuda.max_memory_allocated(device) / 1024**2`
-#:   `src/graspo/flow/adapters/transformer_adapter.py:_emit_rank_memory_event`
+#:   `src/graspo/flow/backend/native/transformer_model_adapter.py:_emit_rank_memory_event`
 #:     → 追加一行 `{"event": "rank_memory", "memory": {...}}` 到 rank0 的
 #:       `metrics/rank_metrics.rank_00000.jsonl`。
 #: 采集侧落点（值怎么被取走）：`scripts/collect_results.py:_read_peak_memory`。
@@ -1079,7 +1079,7 @@ NAN_SENTINEL = float("nan")
 MISSING_SENTINEL: Any = "MISSING"
 
 #: 训练器在首个非有限梯度处硬失败时打的标记（唯一真相源：
-#: ``flow/adapters/models/qwen35_36/training_sft.py``）。
+#: ``flow/backend/native/models/qwen35_36/training_sft.py``）。
 NONFINITE_GRAD_MARKER = "非有限梯度"
 
 #: A6 的「最终 loss 不高于初始 loss」子检查的**记录字段名**：appears verbatim in
@@ -1188,7 +1188,7 @@ MAX_CONTEXT_FAILURE_CLASSES: frozenset[str] = frozenset({FailureClass.REAL_OOM})
 #:
 #: ★ **数值异常必须排在表头**（🟡-4，2026-09-18 复核修正）：`非有限梯度` 是
 #: 训练器在首个非有限梯度处**主动打出的硬失败标记**（唯一真相源：
-#: ``flow/adapters/models/qwen35_36/training_sft.py``），是关于训练数值的**事实
+#: ``flow/backend/native/models/qwen35_36/training_sft.py``），是关于训练数值的**事实
 #: 断言**；而 `FileNotFoundError` / `NotImplementedError` 是通用文本。两者同现在
 #: 同一份日志时，旧顺序（数值异常排第 5）会先命中数据/框架文本，把排查引向数据
 #: 而不是数值链路。数值异常与数据问题**都不计入最大可行上下文**，故本次修正只
@@ -1200,7 +1200,7 @@ _LOG_PATTERNS: tuple[tuple[FailureClass, tuple[re.Pattern[str], ...]], ...] = (
             re.compile(pattern, re.IGNORECASE)
             for pattern in (
                 # F-4 P0 修法①：训练器在首个非有限梯度处硬失败时打的显式标记
-                # （``flow/adapters/models/qwen35_36/training_sft.py`` 的唯一真相源）。
+                # （``flow/backend/native/models/qwen35_36/training_sft.py`` 的唯一真相源）。
                 r"非有限梯度",
                 r"non-?finite gradient",
                 r"nonfinite_loss_or_grad",

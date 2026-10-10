@@ -76,7 +76,7 @@ native:
   dp_size: 1
   pp_size: 1
   dp_replicate_lora: true         # DP rank 间复制 LoRA（默认），梯度 AVG
-  adapter: graspo.flow.adapters.models.qwen35_36.adapter:Qwen35Adapter
+  adapter: graspo.flow.backend.native.models.qwen35_36.model_adapter:Qwen35ModelAdapter
   placement_strategy: auto        # auto | qwen36_pp8_lm_head_only_final | manual | qwen3_tp
   layer_ranges: null              # 手动每层分布 [[start,end),...]；覆盖 placement_strategy
   sequence_parallel: false        # TP>=2 时可选；沿序列维度分片激活

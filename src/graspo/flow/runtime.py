@@ -2,7 +2,7 @@
 
 Delegates all work to a model-specific adapter.  The adapter class path is
 configured via ``native.adapter`` in the YAML config (default:
-``graspo.flow.adapters.models.qwen35_36.adapter:Qwen35Adapter``).
+``graspo.flow.backend.native.models.qwen35_36.model_adapter:Qwen35ModelAdapter``).
 """
 
 from __future__ import annotations
@@ -201,6 +201,17 @@ class GraspoFlowRuntimeBase(ABC):
     def _require_adapter(self) -> Any:
         """返回已加载的模型适配器（子类可覆盖以提供具体实现）。"""
         raise NotImplementedError
+
+    @property
+    def parallel_degree(self) -> Any | None:
+        """本进程的并行度（dp/tp/pp 的规模与秩）；未 setup 时为 ``None``。
+
+        ★ 并行度的**单一真相源**在 ``flow/backend/parallel_degree.py::ParallelDegree``。
+        这里是**后端对外**的读取口：训练循环据此分片，不再直接读模型适配器上的
+        ``dp_size`` / ``dp_rank``（那是"adapter 一名三义"的第 2 义，已消歧）。
+        """
+        adapter = getattr(self, "_adapter", None)
+        return getattr(adapter, "parallel", None) if adapter is not None else None
 
 
 class GraspoFlowRuntime(GraspoFlowRuntimeBase):

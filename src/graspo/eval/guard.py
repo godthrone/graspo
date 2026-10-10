@@ -1,38 +1,19 @@
-"""GPU 锁卡与显存采样的评测侧适配层（fail-closed）。
+"""GPU 锁卡与显存采样的**评测侧采样适配**（fail-closed）—— 只剩采样。
 
-**职责**：把 ``graspo.core.gpu_guard`` 的锁卡边界接到评测链路上，并提供
-"只采可见卡"的显存采样。
+★★ 一名一物（gpu_guard 双家消除后）：
+- **契约与纯策略** ⇒ ``graspo.core.gpu_guard``（``GpuPlan`` / ``GpuGuardError`` /
+  ``parse_gpu_plan`` / ``resolve_gpu_plan`` / 允许集合与上限）。**唯一定义处**。
+- **设施操作** ⇒ ``graspo.flow.guard``（读环境、盘点、退出、空闲断言）。
+- **本模块** ⇒ 只做一件事：用 ``nvidia-smi -i`` 采**可见卡**的显存/驱动读数，
+  外加评测链路承认的卡集合别名（**直接派生自 core，不另立一份规则**）。
 
-**本文件不负责**：锁卡**规则的判定**与**卡计划契约**——两者都在 ``graspo.core.gpu_guard``
-里（单一真相源，宪法 §1.4）。本模块只做两件事：① 转发 ``GpuGuardError`` /
-``GpuPlan`` / ``parse_gpu_plan`` / ``resolve_gpu_plan``（**2026-09-29 D-03 边界修复**：
-这些定义已下沉到 core，本模块保留同名导入路径，异常类型仍是同一个类对象）；
-② 用 ``nvidia-smi -i`` 采样。
-
-**为什么卡计划契约下沉**：修复前 ``core/schema.py`` 反向导入 ``eval.guard`` 取
-``GpuGuardError`` / ``resolve_gpu_plan``，构成 ``core → eval`` 跨层环（AST 边界测试
-判违规）。下沉后方向变成 ``eval → core``（合法），规则与契约各只有一份定义。
-
-**为什么规则不在这里重写**
-
-项目里已有 ``src/graspo/core/gpu_guard.py``（另一个工作包产出），它定义了
-默认允许集合 ``{4,5,6,7}``（部署事实，可用 ``GRASPO_ALLOWED_GPU_INDICES`` 覆盖）、
-上限 4 卡（``MAX_CARDS=4``）、默认保留集合 ``()``
-（可用 ``GRASPO_RESERVED_GPU_INDICES`` 覆盖）以及全部拒绝文案。评测链路如果自己
-再写一份，就会出现两份会漂移的边界定义——这正是宪法 §1.4 禁止的双真相源。
-因此本模块**只透传 + 适配**，不重新定义规则。
-
-**fail-closed 的体现**
-
-``GpuPlan`` 只能由 :func:`resolve_gpu_plan` 产生，而它转手就调
-``core.gpu_guard.assert_gpu_lock``：未显式给卡、越出生效的允许集合、落在生效的
-保留集合里、卡数 >4 一律抛错。**没有默认值分支**——任何"顺手挑张空闲卡"的启发式
-都可能踩上别人（或生产）正在用的卡。历史教训：ELAM ``v3_eval_pipeline_v2.sh`` 把
-``EXPORT_GPU=6`` / ``VLLM_GPU=7`` 硬编码进脚本，那份做法严禁照抄。
+**为什么规则不在这里**：评测链路若自己再写一份边界定义，就会出现两份会漂移的
+边界——这正是宪法 §1.4 禁止的双真相源（历史教训：ELAM ``v3_eval_pipeline_v2.sh``
+把 ``EXPORT_GPU=6`` / ``VLLM_GPU=7`` 硬编码进脚本）。
 
 **采样为什么必须带 ``-i``（宪法 §2.4 操作防呆）**
 
-历史教训：不带 ``-i`` 的 ``nvidia-smi`` 会把全部物理卡（含 6/7）都报出来，
+历史教训：不带 ``-i`` 的 ``nvidia-smi`` 会把全部物理卡（含生产卡）都报出来，
 采样被生产卡读数污染。:func:`sample_device_memory_mib` 用
 ``nvidia-smi --id=<可见卡>`` 并把子进程的 ``CUDA_VISIBLE_DEVICES`` 钉在可见卡上，
 双保险。
@@ -49,39 +30,28 @@ from graspo.core.gpu_guard import (
     DEFAULT_ALLOWED_INDICES,
     DEFAULT_RESERVED_INDICES,
     MAX_CARDS,
+    RESERVED_INDICES,
     GpuGuardError,
     GpuPlan,
-    # 公共同名转发（D-03）：定义已下沉到 core.gpu_guard，本模块只做再导出。
-    parse_gpu_plan,  # noqa: F401
-    resolve_allowed_indices,
-    resolve_gpu_plan,  # noqa: F401
-    resolve_reserved_indices,
 )
 
-#: 评测链路承认的**默认**允许集合与上限——**直接取自 core.gpu_guard 的默认值**，
-#: 不另立一份。运行时生效值可能被配置覆盖，见 :func:`resolve_allowed_gpu_indices`。
-ALLOWED_GPU_INDICES: frozenset[int] = frozenset(DEFAULT_ALLOWED_INDICES)
+__all__ = [
+    "ALLOWED_GPU_INDICES",
+    "MAX_GPU_COUNT",
+    "RESERVED_GPU_INDICES",
+    "DeviceMemory",
+    "assert_devices_free",
+    "repo_relative",
+    "sample_device_memory_mib",
+    "sample_driver_version",
+]
+
+#: 评测链路承认的允许集合与上限——**直接派生自 core.gpu_guard**，不另立一份。
+ALLOWED_GPU_INDICES: frozenset[int] = frozenset(range(ALLOWED_MAX_INDEX + 1))
 MAX_GPU_COUNT: int = MAX_CARDS
 
-#: **默认**保留卡（透传，便于调用方/报告引用；规则源头仍是 core.gpu_guard）。
-RESERVED_GPU_INDICES: tuple[int, ...] = DEFAULT_RESERVED_INDICES
-
-
-def resolve_allowed_gpu_indices() -> frozenset[int]:
-    """生效的允许集合（配置优先，回落默认值）——规则源头在 ``core.gpu_guard``。"""
-    return frozenset(resolve_allowed_indices())
-
-
-def resolve_reserved_gpu_indices() -> tuple[int, ...]:
-    """生效的保留卡集合（配置优先，回落默认值）——规则源头在 ``core.gpu_guard``。"""
-    return resolve_reserved_indices()
-
-
-# ``GpuGuardError`` / ``GpuPlan`` / ``parse_gpu_plan`` / ``resolve_gpu_plan`` 的定义
-# 已下沉到 ``graspo.core.gpu_guard``（2026-09-29 D-03 边界修复：core 不能反向导入
-# ``eval.guard``）。此处按上面的 import 转发，既有导入路径
-# （``from graspo.eval.guard import GpuGuardError, GpuPlan, resolve_gpu_plan``）
-# 与异常类型身份（同一个类对象）都零变化。
+#: 仅透传（便于调用方/报告引用；规则源头仍是 core.gpu_guard）。
+RESERVED_GPU_INDICES: tuple[int, ...] = RESERVED_INDICES
 
 
 @dataclass(slots=True)
@@ -116,7 +86,7 @@ def sample_device_memory_mib(plan: GpuPlan) -> list[DeviceMemory]:
     空 plan 无法采样——没有"全部卡"这个选项。
 
     Args:
-        plan: 由 :func:`resolve_gpu_plan` 产出的锁卡计划。
+        plan: 由 ``graspo.core.gpu_guard.resolve_gpu_plan`` 产出的锁卡计划。
 
     Returns:
         与 ``plan.devices`` 对应的读数列表。

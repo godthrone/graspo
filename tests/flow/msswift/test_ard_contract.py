@@ -29,7 +29,7 @@ from pathlib import Path
 import pytest
 
 from graspo.flow.data_io import load_jsonl
-from graspo.flow.msswift.adapter import GraspoToMsSwiftAdapter, MsSwiftToGraspoAdapter
+from graspo.flow.msswift.ard_records import GraspoToMsSwiftAdapter, MsSwiftToGraspoAdapter
 from graspo.ripple.parsing.xml import build_sft_target_text
 
 _ARD_ROOT = Path(

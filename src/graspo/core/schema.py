@@ -63,7 +63,7 @@ ROLLOUT_TRAIN_METHODS: frozenset[str] = frozenset({"graspo"})
 #: （``generation.py``）本来就只取末位 ⇒ 全序列 logits 是**纯浪费**。
 #: 为什么语义不变：``norm``（按最后一维做统计）与 ``lm_head``（逐 token 线性）
 #: 都是**逐位置独立**的算子 ⇒ "先取行再算"与"先算再取行"在同样的输入值上
-#: **逐位相同**（见 ``tests/flow/adapters/models/test_lm_head_last_only.py``）。
+#: **逐位相同**（见 ``tests/flow/backend/native/models/test_lm_head_last_only.py``）。
 PP_ROLLOUT_PREFILL_LAST_ONLY: bool = True
 
 
@@ -191,11 +191,31 @@ def validate_tuner_type_combination(
         )
 
 
-#: native 侧 offload 的接线只落在 qwen35_36 适配器的 mixin 上
-#: （``_Qwen35SFTTrainingMethods._build_optimizer``，WP-X2）。这是**接线范围
-#: 的事实**，不是设计取舍：别的 model family 要开启，得先有同样的接线。
-#: 用模块前缀而不是"逐字等于默认值"，是为了让同模块内的子类/别名路径也能通过。
-_NATIVE_OFFLOAD_ADAPTER_MODULE = "graspo.flow.adapters.models.qwen35_36."
+def _native_backend_default(key: str) -> Any:
+    """取 native 后端的默认值（★ X4：``core/`` 不得硬编码 ``flow/`` 的路径）。
+
+    权威值只住一处 —— ``flow/backend/native/config.py``；core 通过注册表机制
+    ``core.discovery`` 取值（生产 = entry_points，开发 = flow 侧注册的回退表）。
+    这样 ``core`` 既不 import ``flow``、也不认识任何 ``graspo.flow.*`` 路径。
+
+    Raises:
+        RuntimeError: 注册表不可用（flow 侧未加载且无可加载的回退）。
+    """
+    from graspo.core.discovery import _discover  # noqa: PLC0415
+
+    loaders = _discover("graspo.native_defaults")
+    if not loaders:
+        raise RuntimeError(
+            "native backend defaults are not registered: import graspo.flow "
+            "(or ensure the graspo.native_defaults entry point is installed)"
+        )
+    for loader in loaders.values():
+        provider = loader()
+        # entry_point 指向的是 `native_defaults` 函数本身 ⇒ loader() 返回的是函数。
+        if callable(provider):
+            provider = provider()
+        return provider[key]
+    raise RuntimeError("graspo.native_defaults provider returned nothing")
 
 
 def validate_native_offload_combination(
@@ -219,8 +239,8 @@ def validate_native_offload_combination(
        "声明了却无人消费的字段是假配置"，宁可当场报错，也不要让用户以为
        省了显存、实际跑到一半才 OOM。
     2. 与 ``native.adapter`` 指向非 qwen35_36 适配器互斥。offload 的接线落在
-       qwen35_36 的 mixin 上（见 ``_NATIVE_OFFLOAD_ADAPTER_MODULE``）；换别的
-       model family 时开启它同样是假配置，必须报错而不是静默不生效。
+       qwen35_36 的 mixin 上；该前缀是**native 后端的事实**，权威值住
+       ``flow/backend/native/config.py``，经注册表注入（X4：core 不硬编码 flow 路径）。
     """
     if not offload_optimizer_state:
         return
@@ -233,11 +253,12 @@ def validate_native_offload_combination(
             "§7.2). Set native.offload_optimizer_state=false, or use "
             "msswift.deepspeed=zero2_offload (the msswift-side equivalent)."
         )
-    if not str(native_adapter).startswith(_NATIVE_OFFLOAD_ADAPTER_MODULE):
+    offload_adapter_module = str(_native_backend_default("offload_adapter_module"))
+    if not str(native_adapter).startswith(offload_adapter_module):
         raise ValueError(
             "native.offload_optimizer_state=true cannot be combined with "
             f"native.adapter={native_adapter!r}: the offload is only wired into the "
-            f"{_NATIVE_OFFLOAD_ADAPTER_MODULE} adapters "
+            f"{offload_adapter_module} adapters "
             "(Qwen3.5/3.6 mixin _build_optimizer). Enabling it for another model "
             "family would silently keep the optimizer state on the GPU."
         )
@@ -260,18 +281,19 @@ class RewardConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_reward_kind(self) -> RewardConfig:
-        """经 ``core.discovery`` 的 entry-point 注册表校验 kind 是否已注册。
+        """经注册表机制（``core.discovery``）校验 kind 是否已注册。
 
-        **2026-09-29 D-03 边界修复**：原先这里延迟导入
-        ``graspo.ripple.reward.reward.REWARD_REGISTRY``（core → ripple 反向依赖）。
-        ``REWARD_REGISTRY`` 本身就是 ``core.discovery._discover("graspo.rewards")``
-        （见 ``ripple/reward/reward.py``），所以这里**直接查同一份注册表**——
-        校验时机、键集合与报错文案都不变，依赖方向由 core→ripple 改为无跨层依赖。
+        ★ 边界（宪法 §1.3/§1.4）：这里**不得**直接 ``from graspo.ripple... import``
+        ——那会形成 ``core → ripple`` 反向依赖。注册表是唯一的实现发现机制，
+        生产走 entry_points、开发走 fallback 表；新增 reward = 注册表加一行。
         """
-        registry = _discover("graspo.rewards")
+        from graspo.core.discovery import _discover  # noqa: PLC0415
 
+        registry = _discover("graspo.rewards")
         if self.kind not in registry:
-            raise ValueError(f"Unknown reward kind {self.kind!r}; available: {sorted(registry)}")
+            raise ValueError(
+                f"Unknown reward kind {self.kind!r}; available: {sorted(registry)}"
+            )
         return self
 
 
@@ -642,8 +664,9 @@ class GraspoFlowConfig(BaseModel):
     # 是否在 DP rank 间复制 LoRA 权重（默认 true）。true=各 rank 独立副本，
     # 梯度 AVG all-reduce；false=权重分片，需额外通信。LoRA 参数量小，推荐 true。
     dp_replicate_lora: bool = True
-    # 模型适配器路径，默认使用 qwen35_36（兼容 Qwen3.5/3.6 系列）
-    adapter: str = "graspo.flow.adapters.models.qwen35_36.adapter:Qwen35Adapter"
+    # 模型适配器路径。默认值 **不在此处硬编码** —— 权威值住
+    # `flow/backend/native/config.py`，经注册表注入（X4 边界：core 不认识 flow 路径）。
+    adapter: str = Field(default_factory=lambda: str(_native_backend_default("adapter")))
     placement_strategy: str = "auto"
     # 手动指定每层的 stage 分布 [start, end) 区间，设置后覆盖 placement_strategy
     layer_ranges: list[list[int]] | None = None
@@ -670,7 +693,7 @@ class GraspoFlowConfig(BaseModel):
     # 轻微变化，且**必然变慢**——"变慢"不构成失败，但必须由用户在部署前显式
     # 声明接受，故默认关闭。默认值下行为与基线逐位一致。
     #
-    # 消费点只有一处：`flow/adapters/models/qwen35_36/training_sft.py` 的
+    # 消费点只有一处：`flow/backend/native/models/qwen35_36/training_sft.py` 的
     # `_Qwen35SFTTrainingMethods._build_optimizer`（单一真相源，§1.4）。
     # 非法组合由 `validate_native_offload_combination` 在加载时 fail-closed 拒绝。
     offload_optimizer_state: bool = False
@@ -682,7 +705,7 @@ class GraspoFlowConfig(BaseModel):
     # 为什么在 config 而不在环境变量（§7.1/§10.1）：它决定"本 run 是否继续产出
     # checkpoint"——是**产物相关**的预授权开关，且按 §3.3 必须是"部署前决策"。
     # 配置会被备份进输出目录（§8.5），自带留痕；环境变量随启动命令消失、无法复现。
-    # 消费点唯一：`flow/adapters/models/qwen35_36/training_sft.py` 的
+    # 消费点唯一：`flow/backend/native/models/qwen35_36/training_sft.py` 的
     # `_nonfinite_skip_preauthorized()`（单一真相源，§1.4）。旧环境变量
     # `GRASPO_ALLOW_NONFINITE_GRAD_SKIP` 已按 §18.1 删除，不存在第二个来源。
     allow_nonfinite_grad_skip: bool = False
@@ -913,10 +936,8 @@ class EvalConfig(BaseModel):
     """效果评测链路配置（``graspo eval``）。ELAM V5 + vLLM，温度锁 0。
 
     **卡计划只能来自这里**：``gpus`` 必须显式给出（如 ``"0,1"``），取值限定在
-    **生效的允许集合**（默认 ``{4,5,6,7}``，见 ``core.gpu_guard`` 的
-    :data:`graspo.core.gpu_guard.DEFAULT_ALLOWED_INDICES`，可用
-    ``GRASPO_ALLOWED_GPU_INDICES`` 覆盖）、卡数 ≤ 4；未显式给出时评测链路**拒绝启动**
-    （fail-closed，见 ``eval.guard``）。不给默认值是有意的——目标 GPU 服务器上 GPU 6/7
+    ``{0,1,2,3,4,5}``、卡数 ≤ 4；未显式给出时评测链路**拒绝启动**
+    （fail-closed，见 ``core.gpu_guard``）。不给默认值是有意的——目标 GPU 服务器上 GPU 6/7
     被生产 vLLM 占死，任何"顺手用个默认卡"的设计都会炸生产。
 
     ``temperature`` 字段**不存在**：温度在 ``eval.vllm_client`` 里锁成常量 0，
@@ -962,6 +983,8 @@ class EvalConfig(BaseModel):
         的 ``eval:`` 段是可选的，缺省时 ``GraspoConfig.eval`` 为 ``None``，本模型
         根本不会被构造，因此不触发任何校验（宪法 §2.2：None = 未提供）。
         """
+        from graspo.core.gpu_guard import GpuGuardError  # noqa: PLC0415
+
         missing = [
             name
             for name in ("dataset_path", "base_model_path", "output_dir")
@@ -978,6 +1001,8 @@ class EvalConfig(BaseModel):
         # ``resolve_gpu_plan`` / ``GpuGuardError`` 现在直接来自 ``core.gpu_guard``
         # （2026-09-29 D-03：原先经 ``eval.guard`` 反向导入，构成 core → eval 环）。
         try:
+            from graspo.core.gpu_guard import resolve_gpu_plan  # noqa: PLC0415
+
             resolve_gpu_plan(self.gpus)
         except GpuGuardError as exc:
             raise ValueError(f"eval.gpus invalid: {exc}") from None
@@ -1069,7 +1094,9 @@ class GraspoConfig(BaseModel):
 
     train_method: TrainMethod = "graspo"
     backend: str = "native"
-    native: GraspoFlowConfig = GraspoFlowConfig()
+    # ★ 用 default_factory 延迟构造：`GraspoFlowConfig` 的默认值来自 flow 侧注册表，
+    #   若在此处直接构造，会在 `import graspo.core.schema` 期间触发 flow 导入（循环）。
+    native: GraspoFlowConfig = Field(default_factory=GraspoFlowConfig)
     msswift: MsSwiftConfig = MsSwiftConfig()
     model: ModelConfig = ModelConfig()
     data: DataConfig = DataConfig()

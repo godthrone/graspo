@@ -12,4 +12,8 @@ lora/、logger/、adapters/（模型族）、trainer/（训练循环）。
 from graspo.flow.runtime import GraspoFlowRuntime
 from graspo.flow.trainer import GraspoFlowTrainer
 
+# ★ X4：flow 的 entry_points 开发回退表**由本层自己登记**（core 不硬编码
+# flow 路径）。导入即注册（幂等）。
+from graspo.flow import registry as _registry  # noqa: E402,F401
+
 __all__ = ["GraspoFlowTrainer", "GraspoFlowRuntime"]

@@ -10,7 +10,7 @@
 
 import torch
 
-from graspo.flow.adapters.transformer_adapter import _normalize_optimizer_state_to_params
+from graspo.flow.backend.native.transformer_model_adapter import _normalize_optimizer_state_to_params
 
 
 def _param(dtype: torch.dtype) -> torch.nn.Parameter:

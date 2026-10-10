@@ -3,7 +3,7 @@
 import pytest
 import torch
 
-from graspo.flow.adapters.models.qwen35_36.helpers import (
+from graspo.flow.backend.native.models.qwen35_36.helpers import (
     collate_sft_batch,
     collate_sft_multimodal_batch,
     collate_sft_text_batch,

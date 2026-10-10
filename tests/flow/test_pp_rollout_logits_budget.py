@@ -27,7 +27,7 @@ from graspo.core.schema import GraspoConfig  # noqa: E402
 def _runtime() -> Any:
     """**按调用时解析** ``graspo.flow.runtime``（不在模块级 import）。
 
-    为什么必须这样：``tests/flow/adapters/test_adapter_plugin.py`` 会用
+    为什么必须这样：``tests/flow/adapter/test_adapter_plugin.py`` 会用
     ``spec_from_file_location`` 把 ``sys.modules["graspo.flow.runtime"]`` **换成一个
     新的模块对象**（为绕过 ``flow/__init__`` 的 torch 导入链）。于是"经父包属性拿到的
     runtime"与"经 ``sys.modules`` 拿到的 runtime"会是**两个不同的对象**：

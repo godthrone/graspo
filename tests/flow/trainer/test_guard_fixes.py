@@ -360,7 +360,7 @@ class _FakeRuntime:
 class _FakeAdapter:
     def __init__(self, model: object, *, pp_rank: int = 0) -> None:
         self.model = model
-        #: native TransformerAdapter 的固有属性（``setup()`` 后为真实 PP rank）
+        #: native TransformerModelAdapter 的固有属性（``setup()`` 后为真实 PP rank）
         self.pp_rank = pp_rank
 
 

@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 from graspo.eval.criteria import ACCURACY_CRITERIA_VERSION
-from graspo.eval.guard import GpuGuardError
+from graspo.core.gpu_guard import GpuGuardError
 from graspo.eval.merged_export import CheckpointKind
 from graspo.eval.orchestrator import (
     EVAL_REPORT_FILENAME,

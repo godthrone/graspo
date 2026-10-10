@@ -26,7 +26,7 @@ label token 数）⇒ 权重必须是 ``L_i / Σ_j L_j``。
 
 依赖：torch。本机（开发机无 torch）不会收集这些用例；须在目标容器内跑：
     docker run ... graspo-msswift:4.5.3 python -m pytest \\
-      tests/flow/adapters/models/test_qwen35_36_sft_accumulation.py -q -p no:cacheprovider
+      tests/flow/backend/native/models/test_qwen35_36_sft_accumulation.py -q -p no:cacheprovider
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ import pytest
 
 torch = pytest.importorskip("torch", reason="F-13' 测试需要 torch（目标容器内跑）")
 
-from graspo.flow.adapters.models.qwen35_36.training_sft import (  # noqa: E402
+from graspo.flow.backend.native.models.qwen35_36.training_sft import (  # noqa: E402
     _count_sft_valid_tokens,
     _normalized_accumulation_weights,
 )
@@ -65,7 +65,7 @@ class _FakeModel(torch.nn.Module):
 
 def _build_methods():
     """把 mixin 的 `_compute_sft_loss` 绑定到占位模型上（不实例化 adapter）。"""
-    from graspo.flow.adapters.models.qwen35_36.training_sft import _Qwen35SFTTrainingMethods
+    from graspo.flow.backend.native.models.qwen35_36.training_sft import _Qwen35SFTTrainingMethods
 
     class _SUT(_Qwen35SFTTrainingMethods):
         def __init__(self, seed: int = 0) -> None:

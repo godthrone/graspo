@@ -67,13 +67,12 @@ from typing import Any
 
 from graspo.core.gpu_guard import (
     GpuInventory,
-    assert_gpu_idle,
     assert_gpu_lock,
-    is_runtime_managed,
-    # 公共同名转发（D-03）：定义已下沉到 core.gpu_guard，本模块只做再导出。
-    parse_visible_device_indices,  # noqa: F401
-    probe_gpu_inventory,
     resolve_device_source,
+)
+from graspo.flow.guard import (
+    assert_gpu_idle,
+    is_runtime_managed,
     select_sample_targets,
     select_sample_targets_for_inventory,
 )

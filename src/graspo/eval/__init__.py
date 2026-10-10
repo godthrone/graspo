@@ -44,16 +44,13 @@ from graspo.eval.evaluate import (
     load_report,
     summarize,
 )
+from graspo.core.gpu_guard import GpuGuardError, GpuPlan, parse_gpu_plan, resolve_gpu_plan
 from graspo.eval.guard import (
     ALLOWED_GPU_INDICES,
     MAX_GPU_COUNT,
     RESERVED_GPU_INDICES,
-    GpuGuardError,
-    GpuPlan,
     assert_devices_free,
-    parse_gpu_plan,
     repo_relative,
-    resolve_gpu_plan,
     sample_device_memory_mib,
     sample_driver_version,
 )

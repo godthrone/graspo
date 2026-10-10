@@ -321,14 +321,15 @@ def test_each_train_method_routes_to_its_own_builder(train_method: str):
 def test_routing_table_is_the_single_source_of_truth():
     """★ 后端选择只有一个真相源：路由表 + 各注册表，且四组互不重复。"""
     import graspo.core.discovery as discovery
+    import graspo.flow.registry  # noqa: F401  （确保 flow 侧回退表已登记，X4）
 
     registry = discovery._REGISTRY_BY_TRAIN_METHOD
     assert set(registry) == {"graspo", "sft", "cpt", "opd"}
     # 四组名互不相同 ⇒ 不存在"两个 train_method 共用一张表"的隐性耦合
     assert len(set(registry.values())) == len(registry)
-    # 每组都在 _DEV_FALLBACKS 里有实现（生产由 entry_points 接管，见 discovery 文档）
+    # 每组都在 flow/ripple 注册的开发回退表里有实现（生产由 entry_points 接管）
     for group in registry.values():
-        assert group in discovery._DEV_FALLBACKS
+        assert group in discovery._REGISTERED_FALLBACKS
 
 
 def test_cpt_and_opd_are_ms_swift_only_routes():
@@ -349,9 +350,10 @@ def test_unknown_train_method_is_rejected_not_routed_to_rl():
 def test_existing_registries_unchanged():
     """回归：`graspo.backends` / `graspo.sft_backends` 的既有条目一个不少。"""
     import graspo.core.discovery as discovery
+    import graspo.flow.registry  # noqa: F401  （确保 flow 侧回退表已登记，X4）
 
-    assert {"native", "msswift"} <= set(discovery._DEV_FALLBACKS["graspo.backends"])
-    assert {"native", "msswift"} <= set(discovery._DEV_FALLBACKS["graspo.sft_backends"])
+    assert {"native", "msswift"} <= set(discovery._REGISTERED_FALLBACKS["graspo.backends"])
+    assert {"native", "msswift"} <= set(discovery._REGISTERED_FALLBACKS["graspo.sft_backends"])
 
 
 # ── ③ CPT 契约：argv 真含所需参数；LoRA / 全量两条路径都在 ────────────────────

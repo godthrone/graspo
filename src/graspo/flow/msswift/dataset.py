@@ -114,7 +114,7 @@ def load_graspo_samples(path: str | Path) -> list[Any]:
         ValueError: JSONL 解析失败或记录格式非法（带行号定位）。
     """
     from graspo.core.schema import Sample
-    from graspo.flow.msswift.adapter import GraspoToMsSwiftAdapter
+    from graspo.flow.msswift.ard_records import GraspoToMsSwiftAdapter
     from graspo.ripple.data import sample_from_record
 
     adapter = GraspoToMsSwiftAdapter()

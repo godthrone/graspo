@@ -14,16 +14,12 @@ import subprocess
 
 import pytest
 
+from graspo.core.gpu_guard import GpuGuardError, GpuPlan, resolve_gpu_plan
 from graspo.eval.guard import (
     ALLOWED_GPU_INDICES,
     MAX_GPU_COUNT,
     RESERVED_GPU_INDICES,
-    GpuGuardError,
-    GpuPlan,
     repo_relative,
-    resolve_allowed_gpu_indices,
-    resolve_gpu_plan,
-    resolve_reserved_gpu_indices,
     sample_device_memory_mib,
 )
 

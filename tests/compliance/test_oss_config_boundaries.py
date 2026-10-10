@@ -30,7 +30,7 @@ from graspo.cli.app import _build_launch_env
 from graspo.cli.gpu_monitor import build_gpu_monitor_parser
 from graspo.core.schema import GpuMonitorConfig, GraspoConfig
 from graspo.flow import logging as graspo_logging
-from graspo.flow.adapters.models.qwen35_36.training_sft import (
+from graspo.flow.backend.native.models.qwen35_36.training_sft import (
     _REMOVED_NONFINITE_SKIP_ENV,
     _nonfinite_skip_preauthorized,
 )
@@ -204,7 +204,7 @@ def test_removed_nonfinite_env_channel_has_no_reader() -> None:
 
     用 AST 而不是子串匹配，避免把注释/文档字符串里的"历史说明"误当成读取点。
     """
-    source = _REPO_ROOT / "src/graspo/flow/adapters/models/qwen35_36/training_sft.py"
+    source = _REPO_ROOT / "src/graspo/flow/backend/native/models/qwen35_36/training_sft.py"
     tree = ast.parse(source.read_text(encoding="utf-8"))
     readers = [
         node
@@ -332,7 +332,7 @@ def test_custom_graspo_env_var_reads_are_absent() -> None:
         "src/graspo/cli/app.py",
         "src/graspo/cli/gpu_monitor.py",
         "src/graspo/cli/train_worker.py",
-        "src/graspo/flow/adapters/models/qwen35_36/training_sft.py",
+        "src/graspo/flow/backend/native/models/qwen35_36/training_sft.py",
         "src/graspo/flow/logging.py",
     ]
     #: §7.1 允许的标准基础设施变量前缀。

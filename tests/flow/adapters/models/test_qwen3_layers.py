@@ -6,7 +6,7 @@ torch = pytest.importorskip("torch", exc_type=ImportError, reason="torch require
 if not torch.cuda.is_available():
     pytest.skip("CUDA required for Qwen3 layer tests", allow_module_level=True)
 
-from graspo.flow.adapters.models.common.layers_qwen3 import (  # noqa: E402
+from graspo.flow.backend.native.models.common.layers_qwen3 import (  # noqa: E402
     QwenRMSNorm,
     TensorParallelQwenAttention,
     TensorParallelQwenDecoderLayer,

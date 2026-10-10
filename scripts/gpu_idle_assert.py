@@ -43,7 +43,16 @@ def _install_namespace_shim() -> None:
     """
     import types
 
-    for name, relative in (("graspo", "graspo"), ("graspo.core", "graspo/core")):
+    # ★ P0（adapter 消歧 / gpu_guard 双家消除）后，设施操作住 `graspo.flow.guard`，
+    # 因此命名空间垫片也必须覆盖 `graspo.flow` / `graspo.flow.guard`（同样不执行其
+    # `__init__`，避免经 `graspo.flow.runtime` 拉起 torch）。★ 只注册到 `graspo.flow`
+    # 为止：`graspo.flow.guard` 必须走正常导入以执行其 `__init__.py`（它只依赖
+    # `graspo.core.gpu_guard`，不碰 torch）。
+    for name, relative in (
+        ("graspo", "graspo"),
+        ("graspo.core", "graspo/core"),
+        ("graspo.flow", "graspo/flow"),
+    ):
         if name in sys.modules:
             continue
         module = types.ModuleType(name)

@@ -60,12 +60,12 @@ def test_discover_adapters_loader_returns_adapter_class():
         import torch  # noqa: F401
     except ImportError:
         pytest.skip("torch required to load adapter modules")
-    # 额外检查 graspo.flow.adapters 是否可导入（可能被其他测试 mock 污染）
+    # 额外检查 graspo.flow.adapter 是否可导入（可能被其他测试 mock 污染）
     try:
         importlib = __import__("importlib")
-        importlib.import_module("graspo.flow.adapters.models.qwen3.adapter")
+        importlib.import_module("graspo.flow.backend.native.models.qwen3.model_adapter")
     except (ImportError, ModuleNotFoundError):
-        pytest.skip("graspo.flow.adapters not importable (torch mock detected)")
+        pytest.skip("graspo.flow.adapter not importable (torch mock detected)")
     result = _discover("graspo.adapters")
     for name in ("qwen3", "qwen35_36"):
         loader = result[name]

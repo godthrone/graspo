@@ -26,16 +26,16 @@ from graspo.core.gpu_guard import (
     RESERVED_INDICES_ENV,
     GpuInventory,
     GpuLockError,
-    assert_gpu_idle,
     assert_gpu_lock,
+    parse_device_list,
+    resolve_device_source,
+)
+from graspo.flow.guard import (
+    assert_gpu_idle,
     assert_gpu_lock_from_env,
     assert_gpu_lock_inventory,
     is_runtime_managed,
-    parse_device_list,
     require_gpu_lock_or_exit,
-    resolve_allowed_indices,
-    resolve_device_source,
-    resolve_reserved_indices,
     select_sample_targets,
 )
 

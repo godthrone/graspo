@@ -51,7 +51,7 @@ from graspo.eval.dataset import (
 )
 from graspo.eval.error import OrchestrationError
 from graspo.eval.evaluate import summarize
-from graspo.eval.guard import GpuPlan, resolve_gpu_plan
+from graspo.core.gpu_guard import GpuPlan, resolve_gpu_plan
 from graspo.eval.merged_export import (
     CheckpointClassification,
     CheckpointKind,

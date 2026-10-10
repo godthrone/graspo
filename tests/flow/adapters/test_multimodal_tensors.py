@@ -14,7 +14,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from graspo.flow.adapters.multimodal_tensors import (  # noqa: E402
+from graspo.flow.adapter.multimodal_tensors import (  # noqa: E402
     _compute_multimodal_offset_tables,
     _messages_from_multimodal_row,
     _multimodal_rows_from_metadata,
@@ -160,9 +160,9 @@ def test_resolve_with_stale_rows_key_raises():
     这是 v13 断链（图像 token 静默按纯文本嵌入）的回归防线（B3 新增）。
     """
     stale = {MULTIMODAL_ROWS_KEY: None}
-    from graspo.flow.adapters.transformer_adapter import TransformerAdapter
+    from graspo.flow.backend.native.transformer_model_adapter import TransformerModelAdapter
 
-    class _Stub(TransformerAdapter):
+    class _Stub(TransformerModelAdapter):
         def _encode_multimodal_rows(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
             raise AssertionError("encode must not run for empty rows")
 

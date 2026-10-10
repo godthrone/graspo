@@ -13,7 +13,7 @@ import pytest
 
 torch = pytest.importorskip("torch", reason="PP 探针在 pipeline_forward（依赖 torch）里")
 
-from graspo.flow.adapters.models.qwen35_36 import generation, pipeline_forward  # noqa: E402
+from graspo.flow.backend.native.models.qwen35_36 import generation, pipeline_forward  # noqa: E402
 from graspo.flow.logging import get_run_id  # noqa: E402
 from graspo.flow.parallel import rendezvous_watchdog  # noqa: E402
 

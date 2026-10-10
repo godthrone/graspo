@@ -68,7 +68,7 @@ BASE_CONFIG_FILENAME = "config.json"
 
 #: 底座 config 里声明视觉塔的字段。多重判据**任一命中即算多模态**，不猜（§2.2 显式）。
 #:
-#: * ``has_vision_config`` —— 本项目既有约定（``flow/adapters/models/common/model_builders.py``
+#: * ``has_vision_config`` —— 本项目既有约定（``flow/backend/native/models/common/model_builders.py``
 #:   把 ``"vision_config" in config`` 写进该字段；``flow/trainer/preflight.py`` 也读它）。
 #: * ``vision_config`` —— HF 多模态 config 的标准字段（``Qwen3_5Config.vision_config``）。
 #: * ``image_token_id`` / ``video_token_id`` —— 多模态 config 的输入侧标记。
@@ -101,7 +101,7 @@ WEIGHT_FILE_CANDIDATES = (
 #: `target_modules` 带 `model.language_model.` 前缀。前缀本身没错；错的是
 #: 本模块用纯文本类去装它 ⇒ peft 的正则一条都匹配不上 ⇒ `ValueError`。
 #:
-#: 与 `graspo.flow.adapters.models.common.model_builders` 的 `key_prefix` 同值，
+#: 与 `graspo.flow.backend.native.models.common.model_builders` 的 `key_prefix` 同值，
 #: 但那支模块 import torch（设施层），本模块必须保持"无 torch 也能 import"（§1.3），
 #: 所以这里独立声明一份常量，不做跨层 import。
 MULTIMODAL_LANGUAGE_MODEL_PREFIX = "model.language_model."

@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_ADAPTER_DIR = _REPO_ROOT / "src" / "graspo" / "flow" / "adapters" / "models" / "qwen35_36"
+_ADAPTER_DIR = _REPO_ROOT / "src" / "graspo" / "flow" / "backend" / "native" / "models" / "qwen35_36"
 
 #: 训练热路径：**禁止**出现有界等待。
 _HOT_PATH_FILES = ("training.py", "training_sft.py", "logprobs.py")

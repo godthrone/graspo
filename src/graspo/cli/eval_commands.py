@@ -27,12 +27,8 @@ from pathlib import Path
 
 from graspo.core.schema import EvalConfig, GraspoConfig
 from graspo.eval.evaluate import compute_delta, load_report
-from graspo.eval.guard import (
-    GpuGuardError,
-    repo_relative,
-    resolve_gpu_plan,
-    sample_device_memory_mib,
-)
+from graspo.core.gpu_guard import GpuGuardError, resolve_gpu_plan
+from graspo.eval.guard import repo_relative, sample_device_memory_mib
 from graspo.eval.merged_export import (
     CheckpointKind,
     classify_checkpoint,

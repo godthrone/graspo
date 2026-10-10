@@ -64,8 +64,11 @@ graspo = "graspo.cli.app:main"
 graspo = "graspo.ripple.reward.reward:GraspoReward"
 
 [project.entry-points."graspo.adapters"]
-qwen3 = "graspo.flow.adapters.models.qwen3.adapter:Qwen3Adapter"
-qwen35_36 = "graspo.flow.adapters.models.qwen35_36.adapter:Qwen35Adapter"
+qwen3 = "graspo.flow.backend.native.models.qwen3.model_adapter:Qwen3ModelAdapter"
+qwen35_36 = "graspo.flow.backend.native.models.qwen35_36.model_adapter:Qwen35ModelAdapter"
+
+[project.entry-points."graspo.native_defaults"]
+native = "graspo.flow.backend.native.config:native_defaults"
 
 [project.entry-points."graspo.backends"]
 native = "graspo.flow.backend_selection:create_native_trainer"
@@ -111,11 +114,11 @@ ignore_missing_imports = true
 # 约束：tests/core/test_mypy_exemptions.py 保证豁免列表只覆盖 mixin 文件。
 [[tool.mypy.overrides]]
 module = [
-    "graspo.flow.adapters.models.qwen35_36.training",
-    "graspo.flow.adapters.models.qwen35_36.training_sft",
-    "graspo.flow.adapters.models.qwen35_36.generation",
-    "graspo.flow.adapters.models.qwen35_36.logprobs",
-    "graspo.flow.adapters.models.qwen35_36.pipeline_forward",
+    "graspo.flow.backend.native.models.qwen35_36.training",
+    "graspo.flow.backend.native.models.qwen35_36.training_sft",
+    "graspo.flow.backend.native.models.qwen35_36.generation",
+    "graspo.flow.backend.native.models.qwen35_36.logprobs",
+    "graspo.flow.backend.native.models.qwen35_36.pipeline_forward",
     "graspo.flow.trainer.rollout",
     "graspo.flow.trainer.optimize",
     "graspo.flow.trainer.checkpoint",

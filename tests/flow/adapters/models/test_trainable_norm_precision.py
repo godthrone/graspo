@@ -35,7 +35,7 @@ import pytest
 
 torch = pytest.importorskip("torch", reason="权重范数精度测试需要 torch")
 
-from graspo.flow.adapters.models.common.base import (  # noqa: E402
+from graspo.flow.backend.native.models.common.base import (  # noqa: E402
     _WEIGHT_NORM_CHUNK_ELEMENTS,
     _chunked_parameter_norm,
 )

@@ -5,7 +5,7 @@
 训练器工厂，四种训练方法各查自己的注册表
 （``graspo.backends`` / ``graspo.sft_backends`` / ``graspo.cpt_backends`` /
 ``graspo.opd_backends``），都在 ``pyproject.toml`` 的 entry_points 里声明，
-开发模式下回退到 ``_DEV_FALLBACKS``。
+开发模式下回退到各层 ``registry`` 登记的表（flow/ripple 各自注册）。
 
 **本文件不决定"哪个算法走哪张表"**——路由归属路由表（宪法 §1.1 模块边界 /
 §1.4 单一真相源）。因此新增训练方法（如 CPT / OPD）与新增后端都**不需要改动
@@ -21,7 +21,7 @@ native SFT 由 ``create_native_sft_trainer`` 提供，msswift SFT 由
 import argparse
 
 from graspo.core.discovery import resolve_backend_builder
-from graspo.core.gpu_guard import require_gpu_lock_or_exit
+from graspo.flow.guard import require_gpu_lock_or_exit
 from graspo.core.schema import GraspoConfig
 
 

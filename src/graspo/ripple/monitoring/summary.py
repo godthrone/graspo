@@ -509,7 +509,7 @@ def compact_optimize_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
 
 #: 权重变化量的候选键，**按"该档真正产出的口径"排序**：全参在前、LoRA 在后；
 #: 每档先取全局聚合值、再取 rank 局部值（单卡下二者同值，见
-#: ``flow/adapters/transformer_adapter.py::_aggregate_rank_metrics`` 的单卡分支）。
+#: ``flow/backend/native/transformer_model_adapter.py::_aggregate_rank_metrics`` 的单卡分支）。
 #:
 #: 为什么用"哪个键有值"分流两种模式、而不是先判 ``tuner_type``：全参档把
 #: ``lora_norm_*`` **显式置 None**（``flow/progress_metrics.training_norm_event``
@@ -538,7 +538,7 @@ def weight_delta_reading(metrics: dict[str, Any]) -> tuple[float | None, str | N
 
     前提与边界（如实写）：本函数只负责**把本档已有的读数取出来**，
     不改变任何读数的数值；全参档读数的**精度**由
-    ``flow/adapters/models/common/base.py::_chunked_parameter_norm``（fp64 累加）保证。
+    ``flow/backend/native/models/common/base.py::_chunked_parameter_norm``（fp64 累加）保证。
     """
     for key in _WEIGHT_DELTA_KEYS:
         value = metrics.get(key)
