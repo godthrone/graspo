@@ -1,4 +1,25 @@
-"""GraspoFlowTrainer 优化步骤的 mixin。"""
+"""GraspoFlowTrainer 优化步骤的 mixin（★ P4：R5 已退役，步边界改用 β1b 整组配额）。
+
+**R5 退役登记（D3 裁定 + 指挥部 2026-10-11 P4 口径）**
+
+旧实现（R5，2026-10-08 在役本地补丁）在设施层做了三件**改变"喂给 Ripple 的输入"**的事：
+① `_align_dp_usable`：把本 rank 的待训条数对齐到 dp 组**裸 MIN**（逐 rank 同值）；
+② 对齐塌缩为 0 时 **defer**（本步不训、缓冲区不清）；
+③ 终端 force 步的**清余数**（`_flush_terminal_force_remainder`）。
+这三件合起来 **改了每步样本集合与步数** ⇒ 违反设施层契约（可重排，但不得改喂给
+Ripple 的样本集合/步数）⇒ **退役**（`baseline-by-layer.md` §6 D3 裁定）。
+
+**替代方案 = β1b 整组均衡分配**（`flow/backend/native/assignment.py`）：
+
+- ★ **组不拆**：步边界按**整组**取数（`usable = (raw // G) * G`）⇒ Ripple 只见完整组
+  （宪法 §1.1；I1 组完整性）；
+- ★ **按工作量分组**：分片在 `trainer.py` 由 `assignment.assign_whole_groups` 完成
+  （各分片组数差 ≤ 1，`assert_group_partition` 可机核）；
+- ★ **不新增会合**：本文件**不再**引入任何跨 rank 归约（R5 的 `all_reduce(MIN)` 已删，
+  既有 WORLD `all_reduce(MAX)` 进入门保留不变）。
+
+⚠ **本阶段唯一预期行为变化即在此处**：**每步样本集合与步数改变**（见 `phase-4-report.md`）。
+"""
 
 import logging
 import time
@@ -8,6 +29,7 @@ from typing import Any
 import torch
 import torch.distributed as dist
 
+from graspo.flow.backend.native.assignment import whole_group_count
 from graspo.ripple.monitoring.summary import (
     compact_batch_summary,
     compact_optimize_metrics,
@@ -69,7 +91,15 @@ class OptimizeMixin:
             usable = 0
             data: list[Any] = []
         else:
-            usable = len(self.replay_buffer) if force else min(threshold, len(self.replay_buffer))
+            group_size = max(1, int(self.config.training.rollout_group_size))
+            raw_usable = (
+                len(self.replay_buffer) if force else min(threshold, len(self.replay_buffer))
+            )
+            # ★ β1b（P4）：按**整组**配额取数 —— 组不拆，Ripple 只见完整组。
+            #   R5 的"对齐到 dp 组裸 MIN"已删：跨 rank 均衡改由分片保证
+            #   （`assignment.assign_whole_groups`，各分片组数差 ≤1），此处不再引入归约。
+            #   ★ 取整原语是单一真相源（可在 CPU 直接单测）：assignment.whole_group_count。
+            usable = whole_group_count(raw_usable, group_size)
             data = self.replay_buffer.take(usable)
         optimize_started_at = time.monotonic()
         metrics = self.runtime.train_batch(
@@ -90,7 +120,7 @@ class OptimizeMixin:
         )
         metrics["replay_buffer_optimize_threshold"] = threshold
         metrics["replay_buffer_trainable_completion_count"] = usable
-        metrics["replay_buffer_trainable_group_count"] = usable / max(
+        metrics["replay_buffer_trainable_group_count"] = usable // max(
             int(self.config.training.rollout_group_size), 1
         )
         metrics["effective_batch_size"] = int(self.config.native.micro_batch_size) * int(

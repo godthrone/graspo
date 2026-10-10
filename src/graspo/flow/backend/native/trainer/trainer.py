@@ -255,10 +255,26 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
                 if epoch != start_epoch or self.current_epoch_stats.samples_seen == 0:
                     self.current_epoch_stats = GraspoFlowEpochStats(epoch=epoch)
                 epoch_samples = list(samples)
-                # DP: 每个 DP rank 处理不同的数据分片（并行度取自 backend，§1.4）
+                # DP 分片（★ β1b：整组不拆 + 按组数均衡；并行度取自 backend，§1.4）。
+                # 默认模式的不变量与机核见 `flow/backend/native/assignment.py`；
+                # 分配单位是"组"（此处 1 条 prompt = 1 组）⇒ 不存在半个组落在一个 rank。
                 parallel = self.parallel_degree
                 if parallel is not None and parallel.dp_size > 1:
-                    epoch_samples = epoch_samples[parallel.dp_rank :: parallel.dp_size]
+                    from graspo.flow.backend.native.assignment import (
+                        assign_whole_groups,
+                        assert_balanced_assignment,
+                    )
+
+                    group_keys = list(range(len(epoch_samples)))
+                    shard_of = assign_whole_groups(group_keys, parallel.dp_size)
+                    assert_balanced_assignment(
+                        group_keys, shard_of, n_shards=parallel.dp_size
+                    )
+                    epoch_samples = [
+                        sample
+                        for index, sample in enumerate(epoch_samples)
+                        if shard_of[index] == parallel.dp_rank
+                    ]
                 random.Random(int(self.config.training.seed) + epoch).shuffle(epoch_samples)
                 resume_sample_offset = (
                     int(self.current_epoch_stats.samples_seen) if epoch == start_epoch else 0

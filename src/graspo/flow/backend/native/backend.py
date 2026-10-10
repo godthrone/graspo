@@ -64,11 +64,30 @@ class NativeBackend(RLBackend):
 
     # ── 能力 3：分片（★ 整组不拆）───────────────────────────────────────────
     def _step_batches(self, epoch: Any) -> Iterator[Any]:
-        """待 P4 接线：β1b 均衡分配取代静态轮转后的"本卡份额"产出点。"""
-        raise NotImplementedError(
-            "native 的分片当前由既有循环内部完成（静态轮转）；"
-            "ABC 钩子待 P4（β1b 均衡分配）接线"
+        """能力 3（★整组不拆）：按 β1b **整组均衡分配**产出**本卡份额**。
+
+        :param epoch: 可迭代的**全局组键**序列（分片前的口径）。
+
+        不变量由 :func:`graspo.flow.backend.native.assignment.assert_balanced_assignment`
+        机核（覆盖 / 不重 / 分片越界 / 组数差 ≤ 1）；默认模式与既有
+        ``[dp_rank::dp_size]`` **逐位等价**（见测试），因此本钩子是"把既有分片收编到
+        契约面"，而不是改变分布。
+        """
+        from graspo.flow.backend.native.assignment import (
+            assign_whole_groups,
+            assert_balanced_assignment,
         )
+
+        keys = list(epoch)
+        degree = getattr(self.runtime, "parallel_degree", None)
+        n_shards = int(getattr(degree, "dp_size", 1) or 1)
+        rank = int(getattr(degree, "dp_rank", 0) or 0)
+        if n_shards <= 1:
+            yield from keys
+            return
+        shard_of = assign_whole_groups(keys, n_shards)
+        assert_balanced_assignment(keys, shard_of, n_shards=n_shards)
+        yield from (key for key in keys if shard_of[key] == rank)
 
     # ── 能力 1（epoch）/ 4（生成）/ 5（评分）/ 7（优化步进入）─────────────────
     def _epochs(self) -> Iterator[Any]:

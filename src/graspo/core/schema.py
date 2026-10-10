@@ -676,6 +676,11 @@ class GraspoFlowConfig(BaseModel):
     # 一条管线跨越 tp_size × pp_size 个 GPU，只算 1 个 micro batch。
     # DP 下每条管线独立处理自己的数据分片。
     micro_batch_size: int = 1
+    # ★ β1b（P4）：批次级整组再分配允许搬动的组数上限。
+    #   0（默认）= 不搬 ⇒ 不新增任何跨 rank 通信、行为与"仅均衡分片"一致；
+    #   >0 时由 `flow/backend/native/assignment.plan_group_rebalance` 出计划
+    #   （★ 搬组的跨 rank 执行属**待跑次阶段实测**，见 phase-4-report.md）。
+    group_balance_max_move_groups: int = 0
     use_kv_cache_for_rollout: bool = True
     empty_cache_after_rollout_split: bool = False
     empty_cache_before_train: bool = False
