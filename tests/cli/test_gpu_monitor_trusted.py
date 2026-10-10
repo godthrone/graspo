@@ -34,13 +34,6 @@ _EIGHT_CARD_OUTPUT = "".join(
 )
 
 
-@pytest.fixture(autouse=True)
-def _inject_deployment_fact(monkeypatch):
-    """每个用例都在**显式声明**的部署事实下运行（不再依赖写死的 `(4,5,6,7)`）。"""
-    for key, value in _DEPLOYMENT_FACT.items():
-        monkeypatch.setenv(key, value)
-
-
 class _NoisyRunner:
     """最坏情况模拟器：无视 argv，总是返回全部 8 卡。"""
 

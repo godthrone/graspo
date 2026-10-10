@@ -71,6 +71,6 @@ eval:
   max_workers: 8
   seed: 42
 
-  # 判据阈值（下方每项随行注明含义与取值口径）
+  # 判据阈值（口径见 docs/capability-matrix.md §8）
   graspo_threshold_pp: 20.0         # GRASPO: Δ ≥ 20 个百分点（绝对百分点）
   sft_threshold_percent: 50.0       # SFT: 综合准确率 ≥ 50%

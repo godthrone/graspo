@@ -43,12 +43,6 @@ GPU6/7 与他人并发作业，显存数据不可作依据。本工具现在三�
 **本次新增**：:func:`probe_gpu_inventory`（F-1/F-2 所需的"实测可见卡"）与
 :func:`assert_target_gpus_idle`（F-10 目标卡实测空闲断言：>64 MiB 或 util>5%
 即拒绝，宁等不抢、不 kill 他人进程）。
-
-**2026-09-29 D-03 边界修复**：:func:`probe_gpu_inventory` 与
-:func:`parse_visible_device_indices` 的实现**已下沉到** ``graspo.core.gpu_guard``
-（原先 core 反过来延迟导入本模块，构成 ``core → cli`` 跨层环）。本模块保留**同名
-转发**（:func:`probe_gpu_inventory` / :func:`parse_visible_device_indices` 仍可从这里
-导入，既有路径零破坏），依赖方向因此变成 ``cli → core``（合法）。
 """
 
 import argparse

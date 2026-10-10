@@ -1,0 +1,25 @@
+{
+    "_description": "GRASPO 能力矩阵 · FSDP2 配方（多卡全参，无 CPU offload）—— DeepSpeed 退场用（阶段1：4 卡 4 档）",
+    "_authorization": "指挥官 2026-09-27 裁定「推进 FSDP2 两阶段方案」；用户 2026-09-22 拍板 DeepSpeed 彻底废弃。",
+    "_why_a_custom_file": "上游内置 swift/config/fsdp2.json 的 state_dict_type 是 SHARDED_STATE_DICT。ms-swift 允许 `--fsdp` 传自定义配置文件路径（swift/arguments/sft_args.py:304-307 用 `json_parse_to_dict` 读它），本文件即该路径。",
+    "_why_full_state_dict": "★ 硬要求。transformers 的 Trainer.save_model 只在 FULL_STATE_DICT 下走普通 HF 落盘（transformers/trainer.py:3797 `if \"FULL_STATE_DICT\" in str(...state_dict_type): _save(...)`）；SHARDED_STATE_DICT 下该分支整体跳过，checkpoint 里**没有任何 HF 权重**（只剩 pytorch_model_fsdp_0/ 与 optimizer_0/ 两个 DCP 目录）。⇒ 若用 SHARDED，我方 collector 认不出权重文件（scripts/collect_results.py:933-938 的白名单 + :957 的 model.safetensors.index.json 形态都命中不了）⇒ A4 权重指纹恒为 None、判据②退化。",
+    "_evidence": "A/B 对照实测（nfc1 镜像，tiny GPT2 + transformers.Trainer，2 rank）：FULL 产出 checkpoint-N/{model.safetensors, config.json, optimizer.bin, pytorch_model_fsdp.bin, trainer_state.json, training_args.bin}；SHARDED 只产出 checkpoint-N/{trainer_state.json, optimizer_0/, pytorch_model_fsdp_0/}。见 .local/hb-workspace/20260923-analysis/task-fsdp2-migration/evidence/probe-fsdp-ckpt.out",
+    "_notes": [
+        "gradient_checkpointing：本档 yaml 的 model.gradient_checkpointing=true 会被 ms-swift 自动关掉并改用下面的 activation_checkpointing（swift/arguments/sft_args.py:355-361 的 warning 分支），语义等价（同为激活重算），不改训练口径。",
+        "reshard_after_forward=true ⇒ full_shard，等价于 ZeRO-3（参数+梯度+优化器态全按 DP 摊），比原 zero2 的'只摊梯度+优化器态'更强。",
+        "cpu_ram_efficient_loading=true ⇒ 只有 rank0 读全量权重再广播，省宿主内存。",
+        "4 卡 9B 全参不需要 CPU offload；1/2 卡档（阶段2）另建 *_offload.json（加 \"cpu_offload\": true），不要改本文件——两者语义不同（§2.2 显式）。"
+    ],
+    "fsdp": "full_shard auto_wrap",
+    "fsdp_config": {
+        "fsdp_version": 2,
+        "reshard_after_forward": true,
+        "auto_wrap_policy": "TRANSFORMER_BASED_WRAP",
+        "cpu_ram_efficient_loading": true,
+        "activation_checkpointing": true,
+        "state_dict_type": "FULL_STATE_DICT"
+    },
+    "_runtime_image": "graspo:v0.28.11-cu130fix-v2-nfc3",
+    "_runtime_image_id": "sha256:ffb19b78d9a75178188e8085a6419c4b1abca5e452a2116caa1a838044922d28",
+    "_runtime_image_note": "本轮（阶段1（4 卡））12 档 FSDP 重跑统一使用的镜像；口径单元一致性要求同一轮内不得混用镜像。★ 上面的 `_evidence` 记录的是**当时做 A/B 实测所用的镜像**（nfc1），**作为历史如实保留、未改写**；本配方内容（accelerate/FSDP 选项）与镜像版本无关，nfc2/nfc3 下语义相同。镜像链：nfc1 → nfc2（补 ③ instrumentation）→ nfc3（rollout inference_mode→no_grad）。"
+}

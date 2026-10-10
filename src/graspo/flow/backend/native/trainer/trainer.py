@@ -396,24 +396,85 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
         """处理单个样本（仅用于测试）。"""
         return self._sample_queue([sample], epoch=epoch)
 
+    def _collective_any_pending(self, n_pending: int) -> bool:
+        """跨 rank 一致的“是否还有待重试样本”判定（**WORLD `all_reduce(MAX)` 标量**）。
+
+        为什么必须集合化（2026-10-07 探针实测）：`should_retry` 是各 rank 本地判断
+        （各 rank 数据分片不同 ⇒ 重试需求天然不同），而重试循环之后紧跟
+        `default_pg(WORLD)` 的集合（`optimize.py:59` 的 `want`）⇒ **轮数不一致**
+        ⇒ 先跑完的 rank 在上游 WORLD 集合上死等。实测（T041）：rank0 只 1 轮、
+        rank1 跑 5 轮；两者进入同一个 `all_reduce(MAX, numel=1)` 错开 **3 分 23 秒**；
+        修复后 **9 秒**（`native-restore/REPORT.md` §13.2）。
+
+        为什么用 WORLD 而不是 `dp_group`：下游要等的那个集合就在 `default_pg` 上，
+        必须让**同一通信域内的所有 rank** 对齐轮次。
+        ⛔ 只读一个标量、只做 MAX，不改变任何判定语义。
+        """
+        import torch
+        import torch.distributed as _dist
+
+        if not (_dist.is_available() and _dist.is_initialized()):
+            return n_pending > 0
+        adapter = self.runtime._require_adapter()
+        # ★ 守卫（2026-10-08 追加，指挥部裁决 2）：与 SFT 先例 `sft_trainer.py:255` 的
+        #   `adapter.dp_size > 1` 同款判据。本战役授权范围 = T041/T042（dp=2/4）；
+        #   dp_size == 1（T035 tp1/dp1/pp2、T036 tp1/dp1/pp4，world_size>1）时**不得**新增集合
+        #   —— 那会落在 PP 线上，越出「不动 PP 线」的边界，且本机无法证伪。
+        #   ★ dp ≥ 2 时本守卫**恒假** ⇒ T041/T042 行为逐字不变 ⇒ 在案消融（retryfix2/3）结论仍适用。
+        tp_state = getattr(adapter, "tp_state", None)
+        dp_size = int(getattr(tp_state, "dp_size", getattr(adapter, "dp_size", 1)))
+        if dp_size <= 1:
+            return n_pending > 0
+        device = adapter.device
+        flag = torch.tensor([1 if n_pending > 0 else 0], dtype=torch.int, device=device)
+        try:
+            _dist.all_reduce(flag, op=_dist.ReduceOp.MAX)
+        except Exception as exc:  # noqa: BLE001 — 集合失败必须可见，绝不静默
+            raise RuntimeError(f"retry-round collective failed: {type(exc).__name__}: {exc}") from exc
+        return bool(flag.item())
+
     def _sample_queue(self, samples: list[Any], *, epoch: int) -> bool:
         """处理一批样本：rollout → 评分 → 重试 → 最终化。"""
         active = [QueuedSample(sample=sample) for sample in samples]
         finished: list[QueuedSample] = []
         max_attempts = self.config.training.rollout_max_retries + 1
-        while active:
-            attempt_records = self._rollout_queue_attempt(active, epoch=epoch)
+        # ★ 重试轮数跨 rank 一致化（2026-10-08，T041/T042 修法・候选 C；与候选 A **同批落源树**）：
+        #   实测机制见 `_collective_any_pending` 的 docstring；修法 = 每轮末尾做一次
+        #   WORLD `all_reduce(MAX)` 标量一致判定；任一 rank 还要重试 ⇒ 所有 rank 都进下一轮
+        #   （本地无可重试样本的 rank 以空 `active` 参与，只走那次判定并被阻塞到对端到达）。
+        #   ⛔ 不改 `should_retry` 语义、不改 `max_attempts`、不改采样域与阈值。
+        #   ⚠ 已知残余：`retry_count` 仍在本 rank 累加 ⇒ 若某 rank 先撞 `max_attempts`，
+        #     它在 `:381-382` 抛 RuntimeError 时其它 rank 正阻塞在轮次集合上 ⇒ **首错仍以
+        #     "集合超时"形态出现，直到 `_abort_distributed` 的 `destroy_process_group()` 生效**
+        #     （既有路径未变，非新增失败面；须在回执中登记，防被误读成"C 没生效"）。
+        go_on = True
+        _round = 0
+        while active or go_on:
+            _round += 1
             next_active: list[QueuedSample] = []
-            for state, record in zip(active, attempt_records, strict=True):
-                if record.decision.should_retry:
-                    state.attempts.append(record)
-                    state.retry_count += 1
-                    if state.retry_count >= max_attempts:
-                        raise RuntimeError("GRASPO retry state exceeded configured max attempts")
-                    next_active.append(state)
-                else:
-                    state.attempts.append(record)
-                    finished.append(state)
+            if active:
+                attempt_records = self._rollout_queue_attempt(active, epoch=epoch)
+                for state, record in zip(active, attempt_records, strict=True):
+                    if record.decision.should_retry:
+                        state.attempts.append(record)
+                        state.retry_count += 1
+                        if state.retry_count >= max_attempts:
+                            raise RuntimeError("GRASPO retry state exceeded configured max attempts")
+                        next_active.append(state)
+                    else:
+                        state.attempts.append(record)
+                        finished.append(state)
+            go_on = self._collective_any_pending(len(next_active))
+            # ★ 只读探针（诊断跑，与生成器版本的 round-collective 探针同风格 ⇒ 可对账）。
+            #   取 rank 用**模块级** `dist`（= `torch.distributed`，本文件 `:15` 已导入）的
+            #   `dist.get_rank()`（硬规矩 15：⛔ 不得用分维度 rank 字段冒充全局 rank）。
+            if dist.is_available() and dist.is_initialized():
+                print(
+                    f"[DPSYNC] site=retry_round rank={dist.get_rank()} "
+                    f"t={time.monotonic():.3f} round={_round} "
+                    f"n_pending={len(next_active)} go_on={1 if go_on else 0}",
+                    flush=True,
+                )
             active = next_active
 
         stop_requested = False

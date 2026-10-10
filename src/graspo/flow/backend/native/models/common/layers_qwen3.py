@@ -335,7 +335,26 @@ class TensorParallelQwenMLP(nn.Module):
         )
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        output = self.down_proj(F.silu(self.gate_proj(hidden_states)) * self.up_proj(hidden_states))
+        # 分块前向（§2.3 边界校验）：gate/up/silu/乘/down 均为**逐 token** 操作，
+        # 故 split → compute → cat 与整块计算**逐位相同**；但峰值从
+        # 4×(B,S,intermediate) 降到 4×(B,chunk,intermediate)。
+        # 为什么必须分块：B=64、S=4197、intermediate=12288 时单份 6.6 GB，
+        # 整块峰值 ≈33 GB/层，PP 微批并发下 ≈66 GB ⇒ 80 GB 卡顶满 ⇒
+        # 分配器卡死 ⇒ 对端 PP irecv 无界等待 ⇒ 看门狗 code 86（T036 实测）。
+        seq_len = int(hidden_states.shape[1])
+        chunk_size = max(1, seq_len // 8)
+        if chunk_size >= seq_len:
+            output = self.down_proj(
+                F.silu(self.gate_proj(hidden_states)) * self.up_proj(hidden_states)
+            )
+        else:
+            pieces: list[torch.Tensor] = []
+            for start in range(0, seq_len, chunk_size):
+                chunk = hidden_states[:, start : start + chunk_size, :]
+                pieces.append(
+                    self.down_proj(F.silu(self.gate_proj(chunk)) * self.up_proj(chunk))
+                )
+            output = torch.cat(pieces, dim=1)
         return _reduce_scatter_sp(output) if self._use_sp else _all_reduce_tp(output)
 
 

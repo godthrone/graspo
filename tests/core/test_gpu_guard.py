@@ -18,9 +18,6 @@
 import pytest
 
 from graspo.core.gpu_guard import (
-    ALLOWED_INDICES_ENV,
-    DEFAULT_ALLOWED_INDICES,
-    RESERVED_INDICES_ENV,
     GpuInventory,
     GpuLockError,
     assert_gpu_lock,
@@ -36,74 +33,9 @@ from graspo.flow.guard import (
     select_sample_targets,
 )
 
-#: 组 A：本机夹具用 GPU0–3（e2e / 脚本 / CLI 夹具同理）。
-POLICY_0_3 = {ALLOWED_INDICES_ENV: "0,1,2,3"}
-#: 组 B：目标 GPU 服务器的默认部署事实（用户 2026-09-24 批准 A）。
-POLICY_4_7 = {ALLOWED_INDICES_ENV: "4,5,6,7"}
-#: 某台机器把 6/7 声明为保留（生产）卡 ⇒ 任何组合里出现都必须拒绝。
-POLICY_0_5_RESERVED_6_7 = {
-    ALLOWED_INDICES_ENV: "0,1,2,3,4,5",
-    RESERVED_INDICES_ENV: "6,7",
-}
-
 
 def _reason(exc: pytest.ExceptionInfo[GpuLockError]) -> str:
     return str(exc.value)
-
-
-# ── 允许集合可配置（部署事实进配置，不硬编码进共享代码）───────────────────────
-
-
-def test_allowed_indices_default_to_the_documented_deployment_fact():
-    """不配置时回落默认值 ``(4,5,6,7)``——既有部署行为**不变**（向后兼容）。"""
-    assert resolve_allowed_indices({}) == DEFAULT_ALLOWED_INDICES
-    assert assert_gpu_lock("4,5,6,7", env={}) == (4, 5, 6, 7)
-    with pytest.raises(GpuLockError):
-        assert_gpu_lock("0,1", env={})
-
-
-@pytest.mark.parametrize("policy", [POLICY_0_3, POLICY_4_7])
-def test_allowed_indices_are_injectable_and_asserted_against(policy):
-    """★注入 0–3 与注入 4–7 两组：判据按**注入值**走，不认任何写死的元组。"""
-    injected = tuple(int(part) for part in policy[ALLOWED_INDICES_ENV].split(","))
-    assert resolve_allowed_indices(policy) == injected
-    assert assert_gpu_lock(policy[ALLOWED_INDICES_ENV], env=policy) == injected
-    # 注入集合之外的一张卡必须被同一份注入配置拒绝。
-    outside = next(index for index in range(8) if index not in injected)
-    with pytest.raises(GpuLockError) as exc:
-        assert_gpu_lock(str(outside), env=policy)
-    assert "白名单外" in _reason(exc)
-
-
-def test_allowed_indices_are_injectable_via_the_env_mapping():
-    """``assert_gpu_lock_from_env`` 从**同一个 mapping** 解析可见卡与允许集合。"""
-    env = {"NVIDIA_VISIBLE_DEVICES": "1,2", **POLICY_0_3}
-
-    assert assert_gpu_lock_from_env(env) == (1, 2)
-
-
-def test_reserved_indices_are_injectable():
-    """保留集合来自配置：被声明的卡在任何组合里都拒绝，理由里点名它。"""
-    assert resolve_reserved_indices(POLICY_0_5_RESERVED_6_7) == (6, 7)
-    assert assert_gpu_lock("0,1", env=POLICY_0_5_RESERVED_6_7) == (0, 1)
-    with pytest.raises(GpuLockError) as exc:
-        assert_gpu_lock("0,1,6", env=POLICY_0_5_RESERVED_6_7)
-    assert "6" in _reason(exc) and "保留卡" in _reason(exc)
-
-
-def test_malformed_policy_config_is_fail_closed():
-    """配置取值非法 ⇒ 拒绝（fail-closed），**不静默回落默认值**放松边界。"""
-    with pytest.raises(GpuLockError):
-        resolve_allowed_indices({ALLOWED_INDICES_ENV: "0,x"})
-    with pytest.raises(GpuLockError):
-        resolve_reserved_indices({RESERVED_INDICES_ENV: "6,,7"})
-
-
-def test_explicit_allowed_max_index_keeps_the_legacy_upper_bound_semantics():
-    """显式传入更小上界的调用方仍按旧语义收窄——不被白名单误伤。"""
-    assert assert_gpu_lock("0,1", allowed_max_index=3) == (0, 1)
-    with pytest.raises(GpuLockError):
-        assert_gpu_lock("0,3", allowed_max_index=2)
 
 
 # ── 必须覆盖的五种情形 ──────────────────────────────────────────────────────

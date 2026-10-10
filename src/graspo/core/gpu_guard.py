@@ -37,22 +37,8 @@ from pydantic import BaseModel, ConfigDict
 ALLOWED_INDICES: tuple[int, ...] = (4, 5, 6, 7)
 #: 允许卡号的**配置来源**（环境变量）；未设置 ⇒ 回落 :data:`ALLOWED_INDICES`。
 ALLOWED_INDICES_ENV = "GRASPO_ALLOWED_GPU_INDICES"
-#: 保留（不可用/生产）索引的配置来源；与允许集合同样属部署事实。
-RESERVED_INDICES_ENV = "GRASPO_RESERVED_GPU_INDICES"
-
-#: 允许的宿主卡号**默认白名单**（= 变体1，用户 2026-09-24 批准 A 的部署事实）。
-#: **只是默认值**：可用 :data:`ALLOWED_INDICES_ENV` 覆盖（见 :func:`resolve_allowed_indices`）。
-DEFAULT_ALLOWED_INDICES: tuple[int, ...] = (4, 5, 6, 7)
-#: 默认保留集合：变体1 下 6/7 由用户批准占用（生产 vLLM 已 Exited）⇒ 默认为空。
-#: 可用 :data:`RESERVED_INDICES_ENV` 覆盖（例如把某台机器的 6/7 声明为不可碰）。
-DEFAULT_RESERVED_INDICES: tuple[int, ...] = ()
-
-#: 向后兼容常量：默认策略的别名，**不再作为运行时判据的唯一来源**。
-#: 运行时请用 :func:`resolve_allowed_indices` / :func:`resolve_reserved_indices`
-#: （它们读配置、带默认值）。保留常量名是为了不打断既有引用点。
-ALLOWED_INDICES: tuple[int, ...] = DEFAULT_ALLOWED_INDICES
-#: 兼容既有签名的上界（= max(默认允许集合)）；真正的判据是白名单。
-ALLOWED_MAX_INDEX = max(DEFAULT_ALLOWED_INDICES)
+#: 兼容既有签名的上界（= max(ALLOWED_INDICES)）；真正的判据是上面的白名单。
+ALLOWED_MAX_INDEX = max(ALLOWED_INDICES)
 #: 单次运行最多使用几张卡（用户拍板：每次最多 4 卡）。
 MAX_CARDS = 4
 #: 变体1 下不再有「生产卡」（用户批准占用 6/7；生产 vLLM 已 Exited）。
@@ -78,124 +64,49 @@ _RUNTIME_MANAGED_MARKERS: frozenset[str] = frozenset({"void", "none"})
 #: 调用方必须改用"实测可见卡"通道，不得把它当作卡号集合。
 RUNTIME_MANAGED = "<runtime-managed>"
 
-_DEFAULT_USAGE_HINT = (
+_USAGE_HINT = (
     "正确用法（显式指定 ≤4 张、且仅取自 {4,5,6,7} 的卡）：\n"
     "    NVIDIA_VISIBLE_DEVICES=4,5,6,7 <训练/测试命令>\n"
     "    run.sh <config.yaml> --gpus 4,5,6,7\n"
     "    docker run --gpus '\"device=4,5,6,7\"' ...\n"
-    "  默认允许集合 {4,5,6,7}（部署事实，可用 GRASPO_ALLOWED_GPU_INDICES 覆盖）。"
+    "  本期允许集合 {4,5,6,7}（用户 2026-09-24 批准 A）；GPU0–3 留给其他工作负载。"
 )
-
-
-def _usage_hint(allowed: Sequence[int], reserved: Sequence[int]) -> str:
-    """按**实际生效的**策略生成可操作用法提示（不再把默认元组写死进提示）。"""
-    csv = ",".join(str(index) for index in allowed)
-    reserved_line = (
-        f"  保留卡 {tuple(reserved)} 一律拒绝（部署方通过 {RESERVED_INDICES_ENV} 声明）。\n"
-        if reserved
-        else ""
-    )
-    return (
-        f"正确用法（显式指定 ≤{MAX_CARDS} 张、且仅取自 {{{csv}}} 的卡）：\n"
-        f"    NVIDIA_VISIBLE_DEVICES={csv} <训练/测试命令>\n"
-        f"    run.sh <config.yaml> --gpus {csv}\n"
-        f"    docker run --gpus '\"device={csv}\"' ...\n"
-        f"  本期允许集合 {{{csv}}}（部署事实，可用 {ALLOWED_INDICES_ENV} 覆盖）。\n"
-        f"{reserved_line}"
-    )
 
 
 class GpuLockError(RuntimeError):
     """锁卡守卫拒绝启动（fail-closed）。错误消息必须可操作。"""
 
 
-def _reject(
-    reason: str,
-    detail: str,
-    *,
-    allowed: Sequence[int] | None = None,
-    reserved: Sequence[int] | None = None,
-) -> GpuLockError:
+def _reject(reason: str, detail: str) -> GpuLockError:
     """构造统一格式的可操作拒绝消息。"""
-    hint = (
-        _DEFAULT_USAGE_HINT
-        if allowed is None and reserved is None
-        else _usage_hint(
-            DEFAULT_ALLOWED_INDICES if allowed is None else allowed,
-            DEFAULT_RESERVED_INDICES if reserved is None else reserved,
-        )
-    )
     return GpuLockError(
         f"GPU 锁卡守卫拒绝启动（fail-closed）：\n"
         f"  原因: {reason}\n"
         f"  为什么必须拒绝: {detail}\n"
-        f"  {hint}"
+        f"  {_USAGE_HINT}"
     )
-
-
-def _parse_index_set(raw: str | None, *, env_key: str, default: tuple[int, ...]) -> tuple[int, ...]:
-    """解析"允许/保留索引"配置取值（``"0,1,2,3"``）。
-
-    与 :func:`parse_device_list` 的区别：**未设置 / 空串回落默认值**（这是配置，
-    有明确默认），但**取值非法一律 fail-closed 抛错**——不静默回落，
-    否则一个手误的配置会悄悄放松安全边界（宪法 §2.4 操作防呆）。
-    """
-    if raw is None or not raw.strip():
-        return default
-    text = raw.strip()
-    parts = [part.strip() for part in text.split(",")]
-    if any(not part for part in parts):
-        raise _reject(
-            f"{env_key}={raw!r} 含空元素",
-            "该变量是逗号分隔的整数卡号列表（如 '0,1,2,3'）；出现空位说明取值有误，"
-            "拒绝猜测意图（fail-closed）。",
-        )
-    indices: list[int] = []
-    for part in parts:
-        if not part.isdigit():
-            raise _reject(
-                f"{env_key} 含非整数索引 {part!r}",
-                "该变量只接受整数卡号列表；非整数会让边界判据失去意义（fail-closed）。",
-            )
-        indices.append(int(part))
-    if len(set(indices)) != len(indices):
-        raise _reject(
-            f"{env_key}={raw!r} 含重复卡号",
-            "重复卡号说明取值有误（同一张卡不能占两次），拒绝猜测。",
-        )
-    return tuple(indices)
 
 
 def resolve_allowed_indices(env: Mapping[str, str] | None = None) -> tuple[int, ...]:
-    """解析**生效的允许卡号集合**：配置优先，未配置回落默认值。
+    """生效的允许卡号集合：配置优先，未配置/空串回落 :data:`ALLOWED_INDICES`。
 
-    配置来源 :data:`ALLOWED_INDICES_ENV`（``"0,1,2,3"`` 形式）。默认
-    :data:`DEFAULT_ALLOWED_INDICES`（= 变体1 的部署事实 ``(4,5,6,7)``），
-    因此不设该变量的既有调用方行为完全不变（向后兼容）。
-
-    :param env: 环境映射（``None`` = ``os.environ``）；接收 mapping 以便测试注入。
-    :raises GpuLockError: 配置取值非法（fail-closed，不静默回落）。
+    这是"允许集合"这**一个量**的唯一解析入口；不设 :data:`ALLOWED_INDICES_ENV` 时
+    返回值与 :data:`ALLOWED_INDICES` **逐字相等**（默认策略一个字不改）。
+    ⛔ fail-closed：取值非法一律抛 :class:`GpuLockError`，⛔ 不静默回落、⛔ 不放行。
+    ⛔ 只放宽"允许集合"这一个量：越界/卡数上限/显式设置/哨兵处理**均未动**。
     """
     source = os.environ if env is None else env
-    return _parse_index_set(
-        source.get(ALLOWED_INDICES_ENV),
-        env_key=ALLOWED_INDICES_ENV,
-        default=DEFAULT_ALLOWED_INDICES,
-    )
-
-
-def resolve_reserved_indices(env: Mapping[str, str] | None = None) -> tuple[int, ...]:
-    """解析**生效的保留（不可碰）卡号集合**：配置优先，未配置回落默认值。
-
-    默认 :data:`DEFAULT_RESERVED_INDICES`（当前为空）。把某台机器上的生产卡
-    （如 6/7）声明为保留卡即可让守卫无条件拒绝——这是"部署事实进配置"的同一机制。
-    """
-    source = os.environ if env is None else env
-    return _parse_index_set(
-        source.get(RESERVED_INDICES_ENV),
-        env_key=RESERVED_INDICES_ENV,
-        default=DEFAULT_RESERVED_INDICES,
-    )
+    raw = source.get(ALLOWED_INDICES_ENV)
+    if raw is None or not raw.strip():
+        return ALLOWED_INDICES
+    parts = [part.strip() for part in raw.strip().split(",")]
+    if any(not part.isdigit() for part in parts):
+        raise _reject(
+            f"{ALLOWED_INDICES_ENV}={raw!r} 取值非法",
+            "该变量只接受逗号分隔的整数卡号列表（如 '0,1,2,3'）；"
+            "取值非法时拒绝猜测意图（fail-closed）。",
+        )
+    return tuple(int(part) for part in parts)
 
 
 def parse_device_list(raw: str | None) -> tuple[int, ...]:
@@ -278,83 +189,46 @@ def assert_gpu_lock(
     *,
     allowed_max_index: int = ALLOWED_MAX_INDEX,
     max_cards: int = MAX_CARDS,
-    allowed_indices: Sequence[int] | None = None,
-    reserved_indices: Sequence[int] | None = None,
     env: Mapping[str, str] | None = None,
 ) -> tuple[int, ...]:
     """校验**宿主卡号列表**满足锁卡边界，返回设备元组；不满足即抛错。
 
-    判据（全部 fail-closed）：显式设置、索引 ⊆ **生效的允许集合**、索引 ∉
-    **生效的保留集合**、卡数 ≤ ``max_cards``。
-
-    **允许/保留集合从哪来（部署事实进配置）**：优先用参数 ``allowed_indices`` /
-    ``reserved_indices``（调用方显式注入）；未注入时读环境映射
-    （``env``，默认 ``os.environ``）里的 :data:`ALLOWED_INDICES_ENV` /
-    :data:`RESERVED_INDICES_ENV`；都没给就用默认值
-    （:data:`DEFAULT_ALLOWED_INDICES` / :data:`DEFAULT_RESERVED_INDICES`）。
-    这样"某台机器允许哪几张卡"不再硬编码进共享代码。
-
-    向后兼容：``allowed_max_index`` 显式传入**不等于** :data:`ALLOWED_MAX_INDEX`
-    时，仍沿用旧语义"只按上界收窄、不套白名单"（既有调用方不受白名单影响）。
+    三条边界（全部 fail-closed）：显式设置、索引 ⊆ ``{0..allowed_max_index}``、
+    卡数 ≤ ``max_cards``。
 
     :param raw: ``NVIDIA_VISIBLE_DEVICES`` 的原始取值（``None`` = 未设置）。
-    :param allowed_max_index: 兼容上界；仅当它等于默认上界时才启用白名单判据。
-    :param allowed_indices: 显式注入的允许集合（覆盖配置与默认值）。
-    :param reserved_indices: 显式注入的保留集合（覆盖配置与默认值）。
-    :param env: 解析配置用的环境映射（``None`` = ``os.environ``）。
     :raises GpuLockError: 任一边界不满足（含 runtime 的 ``void`` 哨兵——本函数
         要求真实卡号；容器侧请用 :func:`assert_gpu_lock_inventory`）。
     """
     devices = parse_device_list(raw)
 
     # ★ 变体1（用户 2026-09-24 批准 A）：**显式白名单**取代「仅上限」判据——
-    #   判据由 `device > allowed_max_index` 改为 `device not in <允许集合>`。
-    #   允许集合现在来自配置（见 resolve_allowed_indices），不再是写死的机器事实。
+    #   判据由 `device > allowed_max_index` 改为 `device not in ALLOWED_INDICES`。
     #   仅当调用方沿用默认上界时启用（显式传入更小上界的调用方仍按原语义收窄，不放松、
     #   也不被本白名单误伤——例如其他工具/测试显式使用 GPU0–3 的场景）。
-    use_whitelist = allowed_indices is not None or allowed_max_index == ALLOWED_MAX_INDEX
+    # ★ 生效允许集合；未设变量时 == ALLOWED_INDICES ⇒ 判定与消息逐字节不变。
     allowed = (
-        tuple(allowed_indices)
-        if allowed_indices is not None
-        else (resolve_allowed_indices(env) if use_whitelist else ())
+        resolve_allowed_indices(env)
+        if allowed_max_index == ALLOWED_MAX_INDEX
+        else ALLOWED_INDICES
     )
-    reserved = (
-        tuple(reserved_indices) if reserved_indices is not None else resolve_reserved_indices(env)
-    )
-    hint_allowed = allowed if allowed else DEFAULT_ALLOWED_INDICES
-
-    # 保留卡优先报：它是"这张卡明确不能碰"（如生产 vLLM），比"不在允许集合里"更具体。
-    reserved_hits = sorted(device for device in devices if device in reserved)
-    if reserved_hits:
-        raise _reject(
-            f"设备列表 {devices} 含保留卡 {reserved_hits}（保留集合 {reserved}）",
-            "该卡被部署方声明为生产/保留卡，任何组合里出现都必须拒绝。",
-            allowed=hint_allowed,
-            reserved=reserved,
-        )
-    if use_whitelist and allowed:
+    if allowed_max_index == ALLOWED_MAX_INDEX:
         outside = sorted(device for device in devices if device not in allowed)
         if outside:
             raise _reject(
                 f"设备列表 {devices} 含白名单外的卡 {outside}（允许集合 {allowed}）",
-                f"本次部署只允许使用 GPU{list(allowed)}；其余卡留给其他工作负载或不存在的卡位。",
-                allowed=allowed,
-                reserved=reserved,
+                "本期只允许使用 GPU4–7（用户 2026-09-24 批准 A）；GPU0–3 留给其他工作负载，GPU8 起不存在。",
             )
-    reserved_by_bound = sorted(device for device in devices if device > allowed_max_index)
-    if reserved_by_bound:
+    reserved = sorted(device for device in devices if device > allowed_max_index)
+    if reserved:
         raise _reject(
-            f"设备列表 {devices} 含上界外卡 {reserved_by_bound}（上界 {allowed_max_index}）",
+            f"设备列表 {devices} 含上界外卡 {reserved}（允许集合 {allowed}，上界 {allowed_max_index}）",
             "超出允许集合的卡一律拒绝（fail-closed）。",
-            allowed=hint_allowed,
-            reserved=reserved,
         )
     if len(devices) > max_cards:
         raise _reject(
             f"设备列表 {devices} 使用 {len(devices)} 张卡，超过上限 {max_cards}",
             f"用户拍板每次最多 {max_cards} 卡；更多卡会挤占生产余量且超出本期验证口径。",
-            allowed=hint_allowed,
-            reserved=reserved,
         )
     return devices
 
@@ -376,72 +250,6 @@ class GpuInventory:
     source: str
     count: int
     indices: tuple[int, ...] = ()
-
-
-# ── 可见卡探测（本模块唯一的设施入口；2026-09-29 由 cli/gpu_monitor.py 下沉）──
-# 为什么下沉：修复前 core/gpu_guard 通过延迟导入 ``cli.gpu_monitor.probe_gpu_inventory``
-# 拿默认探测回调，构成 core → cli 反向依赖（AST 边界测试判为跨层环，D-03）。
-# 探测本身是"读本机事实"的设施动作，规则部分（上面的判定函数）仍保持纯计算。
-# ``cli/gpu_monitor.py`` 保留同名转发，既有 `graspo.cli.gpu_monitor.probe_gpu_inventory`
-# 导入路径零破坏。
-
-
-def parse_visible_device_indices(text: str) -> tuple[int, ...]:
-    """从 ``nvidia-smi -L`` 输出解析**容器内本地序号**（探测可见卡的唯一入口）。
-
-    ``-L`` 每个可见卡一行（``GPU 0: NVIDIA ... (UUID: GPU-xxx)``）。行首序号即
-    容器命名空间里的本地 index——runtime 重编号后，宿主卡号在这里是看不到的
-    （这正是 F-2 的根因：不能拿宿主卡号去查容器内的卡）。
-
-    :raises RuntimeError: 行结构与 ``GPU <n>:`` 不符——宁可 fail-closed，
-        也不要猜出一组卡号去查。
-    """
-    indices: list[int] = []
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        if not stripped.startswith("GPU ") or ":" not in stripped:
-            raise RuntimeError(f"无法解析 nvidia-smi -L 行：{line!r}")
-        head = stripped[len("GPU ") :].split(":", 1)[0].strip()
-        if not head.isdigit():
-            raise RuntimeError(f"无法解析 nvidia-smi -L 卡号：{line!r}")
-        indices.append(int(head))
-    return tuple(indices)
-
-
-def probe_gpu_inventory(
-    runner: Callable[[list[str]], str] | None = None,
-) -> GpuInventory:
-    """实测容器内**可见卡**（F-1/F-2 的设施层入口）。
-
-    用 ``nvidia-smi -L``（结构稳定：每个可见卡一行）数卡并取容器内本地序号。
-    ``-L`` 不接受 ``-i``，但它天然只列**可见**卡——这正是我们要的口径
-    （不要 ``--query-gpu`` 的全卡枚举语义）。带 ``-i`` 的查询仍由
-    ``cli/gpu_monitor.build_gpu_query_command`` 唯一构造（采样路径）。
-
-    :param runner: 命令执行器（接收 argv、返回 stdout）；默认走 ``subprocess``。
-    :raises RuntimeError: ``nvidia-smi`` 不在或执行失败——调用方必须 fail-closed。
-    """
-    command = ["nvidia-smi", "-L"]
-    if runner is None:
-        try:
-            completed = subprocess.run(command, check=False, capture_output=True, text=True)
-        except FileNotFoundError as exc:
-            raise RuntimeError(f"nvidia-smi 不可用：{exc}") from None
-        if completed.returncode != 0:
-            raise RuntimeError(
-                f"nvidia-smi -L 失败（rc={completed.returncode}）：{completed.stderr.strip()[:200]}"
-            )
-        stdout = completed.stdout
-    else:
-        stdout = runner(command)
-    indices = parse_visible_device_indices(stdout)
-    return GpuInventory(
-        source="nvidia-smi -L",
-        count=len(indices),
-        indices=indices,
-    )
 
 
 @dataclass(frozen=True)

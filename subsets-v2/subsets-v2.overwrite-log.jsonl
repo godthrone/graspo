@@ -1,0 +1,3 @@
+{"tier_id": "T040", "preimage_sha256": "1c41f2cedb2e2f2a546089bcc306f273c4851a7a8e74dda48fd5d4281c127a69", "postimage_sha256": "3345a0dc69b37c09b5e2b51494656fae3b4818a8f498dc5b9cec76e1fbda967c", "authorized_by": "--overwrite-tiers"}
+{"tier_id": "T041", "preimage_sha256": "818db06786d1df0084d7c0631efe33351d7ba97e3f6e8c20ac4f457840d14f07", "postimage_sha256": "f508185f1c552285ffc1f9799acb88092f445fc9fe6ce609a2ba33da3e780329", "authorized_by": "--overwrite-tiers"}
+{"tier_id": "T042", "preimage_sha256": "629bf9971c77253d332c8440efedb16786e896c0f5d991d396b7f3f9e25ea0e0", "postimage_sha256": "79b8c81484e87265426c8b0eef34e0c8ae83c7df708c08ab2937563e19d73ed4", "authorized_by": "--overwrite-tiers"}

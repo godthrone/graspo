@@ -11,12 +11,12 @@
 **硬要求**：只有"真 OOM"才计入最大可行上下文；其余失败记为 ❌ 失败 + 失败类型，
 修复后重测。抽取不到的判据证据一律判不通过（fail-closed），不默认通过。
 
-运行根目录约定（由跑批脚本产出）：
+运行根目录约定（由 ``tests/e2e/run_matrix54.sh`` 产出）：
     <run_root>/<T###>/exit_code, stdout.log, gpu/, <训练输出目录>
 
 用法：
-    python3 scripts/collect_results.py --manifest <清单.json> \
-        --run-root .local/matrix-runs --out .local/matrix-ledger
+    python3 scripts/collect_results.py --manifest tests/e2e/matrix54_manifest.json \
+        --run-root .local/matrix54-runs --out .local/matrix54-ledger
     # A4 双跑：--run-root attempt1 --rerun-root attempt2
     # 全参档 A2 的权重证据（可选）：加 --base-model-root <宿主模型根目录>
     #   —— 宿主路径**必须走 CLI 参数**（§10.1）；旧环境变量
@@ -240,28 +240,13 @@ class SeriesEvidence:
     #: stdout 兜底拿不到 ⇒ ``None``（此时 A4 如实声明该子检查"未适用"）。
     first_logged_step: int | None = None
     #: 累计因非有限梯度跳过优化器步的次数。**三态**（2026-09-22 指挥官裁定）：
-    #: ``int`` = 有读数：native 用 ``skipped_nonfinite`` 精确计数；ms-swift **优先**用补丁自带的
-    #: **真计数** ``nonfinite_grad_step_count``（跨全部 rank SUM，见
-    #: ``extract_ms_swift_nonfinite_count``），**只有补丁计数缺失时**才退化为"从 NaN
-    #: grad_norm 推断"（下界）。⚠ **不要把"ms-swift 只能推断"当现状** —— 那是打 nfc 补丁
-    #: **之前**的情形（更正登记：``.local/repo-moved-out/_tools/CORRECTIONS.md`` E-40）。
-    #: ``None`` = **该档没有可用读数**（既无补丁计数、又无从推断）⇒ A7 必须记「口径不可测」
-    #: 而**绝不自动通过**（同一判据对不同后端必须等价）。
+    #: ``int`` = 有读数（native 精确计数 / ms-swift 从 NaN grad_norm **推断**）；
+    #: ``None`` = **该后端不上报且推断不出** ⇒ A7 必须记「口径不可测」而**绝不自动通过**
+    #: （同一判据对不同后端必须等价）。
     nonfinite_skips: int | None = None
-    #: 该计数的**来源自证**（§2.2）。取值域 = 本文件**实际会写出的全部字面量**：
-    #:   · ``ms_swift_counter:trainer_state.json(global_step=N)``
-    #:   · ``ms_swift_counter:stdout.log:ms_swift_counter_line``
-    #:     （ms-swift 补丁的真计数；ms-swift 侧最高优先）
-    #:   · ``run_metrics:all_ranks_max``
-    #:   · ``run_metrics:all_ranks_max（ranks 不一致）``
-    #:     （上面两条：native 逐 rank 全扫取 MAX；**跨来源最高优先**）
-    #:   · ``log_inference:nan_grad_norm_count``
-    #:   · ``log_inference:all_finite_grad_norm``
-    #:     （补丁计数缺失时，由逐步 grad_norm 推断）
-    #:   · ``log_marker:nonfinite_grad_hard_fail``（stdout 硬失败标记）
-    #:   · ``""``（不可得）
-    #: ⚠ 历史注记：旧版此处列的 ``run_metrics:skipped_nonfinite`` **代码从未写出**（已删），
-    #: 而漏掉的 ``ms_swift_counter:*`` 正是 E-40 的核心项。
+    #: 该计数的**来源自证**（§2.2）：`run_metrics:skipped_nonfinite`（native 精确）/
+    #: `log_inference:nan_grad_norm_count` / `log_inference:all_finite_grad_norm` /
+    #: ``""``（不可得）。
     nonfinite_skips_source: str = ""
     source: str = "none"
     notes: list[str] = field(default_factory=list)
@@ -287,28 +272,19 @@ def extract_skipped_nonfinite_all_ranks(
     一次"权重/LR 已分叉"的运行会被记成「✅ 训练可用」。
     矩阵命中：`T029`(dp2)/`T030`(dp4)/`T041`(dp2)/`T042`(dp4)（native graspo，pp=1）。
 
-    口径（**两层聚合，方向不同**）：
-      · **同一步/同一行内**：优先读全局键 ``global_skipped_nonfinite_sum``（新落盘，
-        若有），否则读该 rank 的局部 ``skipped_nonfinite``；
-      · **同一 rank 的逐步行之间**：**逐行求和**——``skipped_nonfinite`` 是**该步**的
-        局部读数，跨步求和 = "这次运行一共跳过多少次"。★这正是冻结口径要求的：
-        冻结口径明文要求「**双端对账成立：逐步侧 Σ = ledger 侧 Σ**」
-        （即作为与 ledger 双端对账的一端，两侧 Σ 必须相等）——只有求和才能对账。
-        （该册里的实测盘 Σ 恰好全为 0，MAX 与 SUM 同值，故那里的数字本身判不出这一条；
-        判别力由 `tests/e2e/test_collect_results.py` 的 native fixture 给出：
-        「逐 step 计数会被**跨步求和**（fixture 6 行 × 每行 2 次 = 12）」——同一条注释
-        就是本函数的期望语义。**2026-09-28 修正**：本函数此前对逐步行也取 MAX，
-        于是六行 ×2 只报 2、F-4 样例报 1 而非 2 ⇒ 与上述口径冲突，属实现缺陷。）
-      · **rank 文件之间**：取 **MAX**——同一次跳过事件会在每个 rank 的局部读数里各出现一次，
-        逐 rank 求和会**重复计数**；MAX 是"最坏 rank"的保守读数，且不会漏报。
-    返回 ``(worst_count | None, {rank: count}, 人读明细)``；一个读数都没有 ⇒ ``None``（不猜）。
+    口径（**取 MAX 不取 rank0**）：
+      · 优先读全局键 ``global_skipped_nonfinite_sum``（新落盘，若有）；
+      · 否则读该 rank 的局部 ``skipped_nonfinite``；
+      · 对**全部** rank 文件取 **MAX**——任一路径发生过跳过就是发生过（逐 rank 之和会
+        重复计数，MAX 是"最坏 rank"的保守读数，且不会漏报）。
+    返回 ``(max_count | None, {rank: count}, 人读明细)``；一个读数都没有 ⇒ ``None``（不猜）。
     """
     if output_dir is None:
         return None, {}, "无可读产物根"
     per_rank: dict[str, int] = {}
     for events in sorted(output_dir.rglob("rank_metrics.rank_*.jsonl")):
         rank_key = events.name
-        total: int | None = None
+        best: int | None = None
         try:
             text = events.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -323,17 +299,12 @@ def extract_skipped_nonfinite_all_ranks(
             metrics = payload.get("metrics") if isinstance(payload, dict) else None
             if not isinstance(metrics, dict):
                 continue
-            # 本行取值：两个键都在时取大者（与 P0-1 原实现一致，不改行内选择）。
-            row_value: int | None = None
             for key in ("global_skipped_nonfinite_sum", "skipped_nonfinite"):
                 value = metrics.get(key)
                 if isinstance(value, int) and not isinstance(value, bool):
-                    row_value = value if row_value is None else max(row_value, value)
-            if row_value is not None:
-                # ★ 逐步行之间**求和**（跨步计数 = 总数）；见 docstring 的冻结口径依据。
-                total = row_value if total is None else total + row_value
-        if total is not None:
-            per_rank[rank_key] = total
+                    best = value if best is None else max(best, value)
+        if best is not None:
+            per_rank[rank_key] = best
     if not per_rank:
         return None, {}, "没有任何 rank 文件带跳过计数读数"
     worst = max(per_rank.values())
@@ -733,31 +704,17 @@ def extract_steps_and_series(output_dirs: Sequence[Path], log_text: str) -> Seri
     if result.steps is None and result.losses:
         result.steps = len(result.losses)
     # ── ★ A7 取证公平性（2026-09-22 指挥官裁定，C）───────────────────────────
-    #   ⚠️ **本段前 4 句是「打 nfc 补丁之前」的历史（当时为真，现已被取代）**。
-    #   保留它只为解释下面那行 `extract_ms_swift_nonfinite_count` 为什么存在；
-    #   **不得据此判定「ms-swift 不上报 ⇒ ③不可测」**（那正是 2026-09-30 一次误判的来源）：
-    #     历史原话：「ms-swift **不上报**跳过计数：实测 `swift/trainers/mixin.py` 的 patch 是
-    #     `if grad_norm.isnan(): p.grad = None` —— **不打任何日志、也不计数**」
-    #   它描述的是**未打补丁**的上游。自 nfc 补丁（`docker/patches/msswift-nonfinite-grad-count/`，
-    #   新镜像轮 r4 起随镜像发布）ms-swift **确实上报** `nonfinite_grad_step_count`
-    #   （跨全部 rank SUM）+ `nonfinite_grad_step_count_coverage`，由下面
-    #   `extract_ms_swift_nonfinite_count` 以**最高优先级**采用。
-    #   ⇒ **实测复核（2026-10-01）**：跑过的 ms-swift 档读数 100% 拿得到；台账里为 `None` 的档
-    #     全是「未纳入跑批 / 逻辑上不适用」，**不是「测不了」**。
-    #     证据：`.local/hb-workspace/20261001-matrix-batch0/evidence/` `t037-guard/`
-    #           `06-criterion3-review.md`；
-    #     更正登记：`.local/repo-moved-out/_tools/CORRECTIONS.md` E-40。
-    #   ★ 下列历史推论**仍然有效**，但只作**兜底**（补丁计数缺失时）：
-    #     跳过时该 patch 会把该批 `p.grad = None`，而其 `grad_norm` 读数**就是 NaN**、且会进逐步序列
-    #     ⇒ 用"**逐步 grad_norm 是否为 NaN**"推断跳过次数（**下界**：它只判 `isnan()` 不判 `inf`）。
-    #     **推断不出（无 grad_norm 读数）⇒ 保持 None**。
+    #   ms-swift **不上报**跳过计数：实测 `swift/trainers/mixin.py` 的 patch 是
+    #   `if grad_norm.isnan(): p.grad = None` —— **不打任何日志、也不计数**
+    #   （且只判 `isnan()` 不判 `inf`）。旧行为 ⇒ `nonfinite_skips` 缺省 0 ⇒ A7 **自动通过**
+    #   ⇒ native 严格判、ms-swift 宽松 ⇒ **同一判据对不同后端不等价**。
+    #   但从 ms-swift 的 patch 可推：跳过时它返回的 `grad_norm` **就是 NaN**，且该读数会进
+    #   逐步序列 ⇒ 用"**逐步 grad_norm 是否为 NaN**"推断跳过次数（**下界**：它不判 Inf 的
+    #   那种跳过不会留下 NaN 读数）。**推断不出（无 grad_norm 读数）⇒ 保持 None**。
     # ── ★ P0-1（2026-09-22 复核）：跳过计数**必须跨全部 rank**取 MAX ─────────────
     #   `skipped_nonfinite` 是逐 rank 局部读数；只读 rank0 ⇒ rank1 单独跳过时读到 0
     #   ⇒ A7 假通过（一次"权重/LR 已分叉"的运行会被记成 ✅ 可用）。
-    # ★ 2026-09-27（新镜像轮 r4）：ms-swift 补丁自带计数是 **ms-swift 侧的最高优先来源**。
-    #   ⚠ 它**不是全链路的最高优先** —— 跨来源优先级见本文件后面
-    #   `if _skip_count is not None: … else: …` 那段：`run_metrics:all_ranks_max` > 本函数产出的
-    #   `series`（含此处）。两处**不得**再各写一句"最高优先"（曾是 S-4 的措辞冲突）。
+    # ★ 2026-09-27（新镜像轮 r4）：ms-swift 补丁自带计数是**最高优先级来源**。
     #   coverage=1 ⇒ 直接采用（真计数）；coverage=0/缺失 ⇒ 保持 None（口径不可测）。
     nf_count, nf_cov, nf_src = extract_ms_swift_nonfinite_count(output_dirs, log_text)
     if nf_cov == 1 and isinstance(nf_count, int):
@@ -1214,7 +1171,7 @@ def _file_readable(path: Path) -> bool:
     collector 以普通用户运行时**打不开**它。若把 ``PermissionError`` 当成
     "checkpoint 无法重新加载"，就等于把"采集侧读不到"记成一次**训练失败**——
     这正是本包要根治的方向性错误。因此：不可读 ⇒ 取证缺口（返回 ``None``）。
-    运行侧的正解是 runner 收尾时把产物放开读权限（跑批脚本负责）。
+    运行侧的正解是 runner 收尾时把产物放开读权限（见 ``run_matrix54.sh``）。
     """
     try:
         with path.open("rb") as handle:
@@ -1887,7 +1844,8 @@ def extract_expected_optimizer_steps(tier: dict[str, Any]) -> tuple[int | None, 
 
     **单一真相源（§1.4）**：两个上限的权威位置是清单
     ``tiers[*].expected_optimizer_steps_per_epoch`` / ``..._reachable``
-    （由清单生成侧**一处**算出——见 AF1 §⑥ 方案 S1/S2）。
+    （由 ``tests/e2e/generate_matrix.py`` 的 ``expected_optimizer_steps_per_epoch`` /
+    ``expected_optimizer_steps_reachable`` **一处**算出——见 AF1 §⑥ 方案 S1/S2）。
 
     与 :func:`extract_min_optimizer_steps` 同理，本函数**只做取值**，不做合法性裁决：
     非整数 / ``< 1`` 的值由判定层
@@ -1988,11 +1946,7 @@ def collect_run(
         output_identity: str | None = f"{stat.st_dev}:{stat.st_ino}"
     except OSError:
         output_identity = None
-    # ── ★ P0-1（2026-09-22 复核，**跨来源的最高优先**）：跳过计数**必须跨全部 rank**取 MAX ──
-    #   ★ 优先级（与上面 `nonfinite_skips_source` 的取值域注释同一口径，勿再写两处"最高优先"）：
-    #     `run_metrics:all_ranks_max`（本段：逐 rank 全扫取 MAX）
-    #       > `series.nonfinite_skips`（含 ms-swift 补丁真计数 `ms_swift_counter:*`）
-    #       > 由逐步 grad_norm 推断 / stdout 硬失败标记。
+    # ── ★ P0-1（2026-09-22 复核，最高优先）：跳过计数**必须跨全部 rank**取 MAX ──────
     #   为什么放在这里而不是序列抽取里：`skipped_nonfinite` 是**逐 rank 局部**读数，
     #   而 `_rank_metric_steps` 只读 `rank_metrics.rank_00000.jsonl` ⇒ rank1 单独跳过、
     #   rank0 没跳时读到 0 ⇒ **A7 假通过**（一次权重/LR 已分叉的运行会被记成 ✅ 可用）。
@@ -2076,7 +2030,7 @@ def collect_run(
 
 
 def _read_peak_memory(run_dir: Path, backend: str = "native") -> tuple[float | None, str]:
-    """读台账的「实测每卡峰值显存(GiB)」列 —— **二分口径，按后端**。
+    """读 capability-matrix §7「实测每卡峰值显存(GiB)」列 —— **二分口径，按后端**。
 
     **返回 ``(值, 口径标签)``**：值与口径**成对返回**，调用方不可能只拿到数字而不知道
     它是什么口径（§2.2 显式即防呆）。
@@ -2285,8 +2239,8 @@ def run(args: argparse.Namespace) -> int:
         print(
             "FATAL: --run-root 与 --rerun-root 解析后指向同一实体目录"
             f"（{run_root_resolved}）⇒ 这是**自比**，A4 结论无意义。"
-            "请给两个不同的运行根（批次驱动必须让两跑落两棵目录树，"
-            "见跑批脚本的 RUN_ROOT 用法）。",
+            "请给两个不同的运行根（批次驱动必须让两跑落两棵目录树，见 "
+            "`tests/e2e/run_matrix54.sh` 的 RUN_ROOT 用法）。",
             file=sys.stderr,
         )
         return 2
@@ -2318,8 +2272,10 @@ def run(args: argparse.Namespace) -> int:
             #   · `<T>.not_applicable.md`  ⇒ ⛔ 不适用（**逻辑上不适用**）
             #   · 其余（清单 ready 但未跑） ⇒ — 未测（尚未纳入跑批）
             # 出处写进 `status_provenance`（§2.2 显式即防呆：读者能查到依据文件）。
-            # 档位状态说明件所在目录：**必传 CLI 参数**（该目录已按宪法 §16.1 移出仓库）。
-            _cfg_dir = Path(getattr(args, "tier_status_dir", "") or "")
+            _cfg_dir = (
+                Path(getattr(args, "repo_root", None) or Path.cwd())
+                / "samples" / "configs" / "matrix54"
+            )
             _blocked_md = _cfg_dir / f"{tier_id}.blocked.md"
             _na_md = _cfg_dir / f"{tier_id}.not_applicable.md"
             if _blocked_md.is_file():
@@ -2586,12 +2542,12 @@ def _base_model_dir(args: argparse.Namespace, tier: dict[str, Any]) -> Path | No
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Collect A1–A6 verdicts into ledger records.")
-    parser.add_argument("--manifest", required=True, help="档位清单 JSON（路径由调用方给出）")
+    parser.add_argument("--manifest", required=True, help="matrix54_manifest.json")
     parser.add_argument("--run-root", required=True, help="First-attempt run root.")
     parser.add_argument("--rerun-root", default=None, help="Second-attempt run root (for A4).")
-    parser.add_argument("--tier-status-dir", default=None,
-                        help="档位状态说明件目录（用于定位 <T>.blocked.md / "
-                             "<T>.not_applicable.md）；缺省 = 不写 status_provenance")
+    parser.add_argument("--repo-root", default=None,
+                        help="仓库根（用于定位 samples/configs/matrix54/*.blocked.md / "
+                             "*.not_applicable.md）；缺省 = 当前工作目录")
     parser.add_argument("--out", required=True, help="Output directory for ledger.jsonl/.md")
     parser.add_argument(
         "--context-length",

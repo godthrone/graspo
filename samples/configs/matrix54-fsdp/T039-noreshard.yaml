@@ -1,0 +1,44 @@
+# T039 | 9B | GRASPO | 全量 | ms-swift | 4卡
+# 配置版本: fsdp-v1（基线 = 冻结的 samples/configs/matrix54-v2/；本目录是 DeepSpeed→FSDP2 变体）
+# 生成器: tests/e2e/generate_matrix_fsdp.py（手改无效，请改生成器）
+# 授权: 指挥官 2026-09-27 裁定「推进 FSDP2 两阶段方案，先做 4 卡 4 档纯配置直换」（用户 2026-09-22 拍板 DeepSpeed 彻底废弃）
+# 本档相对 v1 的改动: 无（training 语义字段逐字节不变；仅 data.train_path: /work/elam-v5/subsets/T039.jsonl → /work/elam-v5/subsets-v2/T039.jsonl）
+# 口径: 只用 1/2/4 卡；GPU 集合取自 {0,1,2,3}；上下文长度由递增加长法实测得出，不预设档位。
+# 数据: ELAM V5 训练子集前 20 条（宿主数据根目录经 GRASPO_ELAM_HOST_ROOT 注入，见 .local/）；子集由 run_matrix54.sh 生成，图像经 ../images 解析。
+# ⚠️ 数据口径告警: ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。
+# 可表达性: unverified
+# 显存可行性: [feasible] 估算每卡 49.7 GiB（预算 78 GiB）⇒ 可行：ms-swift 全参 **FSDP2**（`full_shard auto_wrap`，= ZeRO-3 等价；纯 DP4，无 TP/PP）：★ **本变体只改分片后端，显存算式待重算**——旧 zero2 数字已随本变体废弃，不在此处编造新数字；重算口径见 `tests/e2e/matrix54_manifest_fsdp.json` 的 `feasibility_model`
+# 注意: 全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。
+# ★ RB-8（授权：指挥官 2026-09-27）：本文件由 _tools/make_rl6_derivatives.py 派生，手改无效；相对冻结档配置**只改 msswift.fsdp 一行**（reshard_after_forward: true→false）。
+train_method: graspo
+backend: msswift
+tuner_type: full
+model:
+  model_path: /models/Qwen3.5-9B
+  torch_dtype: bfloat16
+  gradient_checkpointing: true
+data:
+  train_path: /work/elam-v5/subsets-v2/T039.jsonl
+  max_prompt_length: 8192
+training:
+  output_dir: /out/T039
+  run_name: T039
+  overwrite_output_dir: true
+  seed: 42
+  max_epochs: 1
+  learning_rate: 5e-06
+  gradient_accumulation_micro_batches: 1
+  save_checkpoint_every_epoch: false
+  save_steps: 40
+msswift:
+  nproc_per_node: 4
+  per_device_train_batch_size: 1
+  sequence_parallel_size: 1
+  use_vllm: false
+  fsdp: samples/configs/fsdp/rl6/fsdp2_full_state_dict.json
+reward:
+  kind: graspo
+gpu_monitor:
+  output_dir: /out/gpu
+  tag: T039
+  interval_sec: 2.0

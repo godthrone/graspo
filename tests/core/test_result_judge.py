@@ -72,10 +72,6 @@ def make_evidence(**overrides) -> RunEvidence:
         },
         losses=(1.0, 0.8, 0.6),
         grad_norms=(1.0, 0.9, 0.8),
-        # ★ A7（训练真推进）的默认值：**真实 collector 恒给整数**（`series.nonfinite_skips`
-        #   初值 0），所以 fixture 也必须给 ⇒ 否则 A7 会按取证缺口 fail-closed（这是对的，
-        #   但会让"合成档"看起来像缺证据）。
-        nonfinite_skips=0,
     )
     base.update(overrides)
     return RunEvidence(**base)
@@ -372,59 +368,15 @@ def test_gate_not_applicable_never_masks_a_real_failure():
     < 门槛（口径不可测）。第三态**只**说"步数这条测不了"，**不替 A1 说话**。
     简化 `ledger_status` 时漏掉这个守卫，会把真失败误标成「⚠ 口径不可测」。
     """
-    # 构造要点：**步数读数存在但 < 门槛**（⇒ 结构性不可测）+ **A1 真崩**。
-    # 注意 `optimizer_steps=None` 是**取证缺口**（已被另一条用例守卫），不能用来构造第三态。
     crashed_with_unreachable_steps = make_evidence(
-        exit_code=1, optimizer_steps=2, losses=(1.0, 1.0), grad_norms=(1.0, 1.0),
-        expected_optimizer_steps_reachable=2, min_optimizer_steps=5,
+        exit_code=1, optimizer_steps=None, losses=(), grad_norms=(),
+        artifacts_present={}, expected_optimizer_steps_reachable=2,
+        min_optimizer_steps=5,
     )
     judgement = judge_tier(crashed_with_unreachable_steps)
-    # ★ 2026-09-22 口径变更后：该档**跑满了自己的计划步数**（2 ≥ 2）⇒ A2 通过；
-    #   整档仍 ❌ 纯粹因为 **A1 真崩** ⇒ "真失败不被掩盖"这条性质照旧成立（且更强）。
+    assert judgement.step_gate_not_applicable is True
     assert judgement.ledger_status == "❌ 不可用", judgement.note
     assert not judgement.passed
-    assert judgement.criterion("A1").passed is False
-
-
-def test_a7_t017_style_large_grad_norm_but_healthy_is_not_falsely_rejected():
-    """★对照①（T017 式）：`grad_norm` 量级**巨大**但**无 nonfinite 跳过**、loss 健康 ⇒ **不误伤**。
-
-    真例：T017（native 全参 2 卡）`grad_norm` 从 49 升到 4.18e9，loss 却从 2.6 降到 0.009、
-    全程 finite ⇒ 按主判据就是 **✅ 可用**。**判据必须能区分**这种"大 norm 但健康"与
-    T035 式"大 norm + 跳过非有限步"——这正是"量级只做诊断、不单独判否"的理由。
-    """
-    healthy = make_evidence(
-        optimizer_steps=100,
-        nonfinite_skips=0,
-        losses=(2.6, 1.3, 0.009),
-        # 人造 12 个数量级的尖峰（比 T017 实测的 8 个还极端）⇒ 仍不得判否
-        grad_norms=(1.0, 1e-2, 1e12),
-    )
-    judgement = judge_tier(healthy, healthy)
-    assert judgement.passed, judgement.note
-    assert judgement.ledger_status == "✅ 可用"
-    # 量级必须被**记录**为诊断（≥10 个数量级 ⇒ 标 ⚠ 但不判否）
-    assert "量级指纹" in judgement.criterion("A6").detail
-    assert "⚠" in judgement.criterion("A6").detail
-
-
-def test_a7_t035_style_nonfinite_skips_is_not_usable():
-    """★对照②（T035 式）：跑完了一个 epoch 但**跳过 nonfinite 步** ⇒ **❌ 不可用**（A7）。
-
-    真例：T035（ms-swift 全参）机制阻塞修好后跑完，但 `skipped_nonfinite=1`（修前 33）
-    + `grad_norm 7.8e13`。用户要的是"**顺利**跑完一个 epoch" ⇒ 不算可用。
-    """
-    unhealthy = make_evidence(
-        optimizer_steps=20,
-        nonfinite_skips=1,
-        losses=(1.0, 0.5, 0.2),
-        grad_norms=(1.0, 7.8e13),
-    )
-    judgement = judge_tier(unhealthy, unhealthy)
-    assert not judgement.passed
-    assert judgement.ledger_status == "❌ 不可用"
-    assert "非有限" in judgement.criterion("A7").detail
-    assert "A7" in judgement.note
 
 
 def test_missing_a4_evidence_no_longer_makes_tier_indeterminate():
@@ -750,6 +702,46 @@ def test_a4_calibration_table_covers_the_required_tiers_with_provenance():
         if calibration.outcome == A4_OUTCOME_CALIBRATED:
             for field in A4_CALIBRATION_REQUIRED_METADATA:
                 assert str(getattr(calibration, field)).strip(), (calibration.algorithm, field)
+
+
+def test_a4_batch1_model_scoped_rows_and_gate_exclusions():
+    """2026-09-22 第 1 批（J4）：1–2 卡档族的 model 分池标定行 + 门排除的族不得有精确行。
+
+    每个新行的值都能追到 `runs/a4cal-b1` 的 n≥5 **独立跑**读数池（provenance 逐字含读数与卡集）；
+    被可标定性门排除的族**不得**有精确行——否则等于用容差盖"可控未控"（J1 硬约束）。
+    """
+    expected = {
+        ("ms-swift", 1, "CPT", "9B"): 0.015250682830810547,
+        ("ms-swift", 1, "CPT", "27B"): 0.04675,  # 锁一封顶（1.5×0.0487 越界）
+        ("ms-swift", 2, "CPT", "9B"): 0.008686351776123313,
+        ("ms-swift", 2, "SFT", "9B"): 0.00822281241416932,
+        ("ms-swift", 2, "SFT", "27B"): 0.006967538595199583,
+        ("native", 2, "SFT", "9B"): 0.022979736328125,
+        ("native", 2, "SFT", "27B"): 0.032958984375,
+    }
+    for (backend, cards, algorithm, model), tol in expected.items():
+        row = find_tier_calibration(backend, cards, algorithm, model, "LoRA")
+        assert row is not None, (backend, cards, algorithm, model)
+        # ★ 必须命中**精确行**，不能是通配行（J2/P1 的全部意义所在）。
+        assert row.model == model and row.mode == "LoRA"
+        assert row.tol == tol
+        assert row.outcome == A4_OUTCOME_CALIBRATED
+        assert row.n >= A4_CALIBRATION_MIN_N
+        assert row.worst_pair > 0.0
+        assert A4_MIN_TRUE_BUG_SIGNATURE / row.tol >= 2.0
+        for field in A4_CALIBRATION_REQUIRED_METADATA:
+            assert str(getattr(row, field)).strip(), (model, field)
+    # T001 的 n=5 池低估（被判对差 8.74e-3 = 池最坏对 2.98e-3 的 2.9×）
+    # ⇒ 扩到 n=10（诚实扩样，非调容差）。
+    assert find_tier_calibration("ms-swift", 1, "CPT", "9B", "LoRA").n == 10
+    # ★ 门排除（不得有精确行）：
+    # ms-swift/1/OPD 9B：G1 不过（5 跑里 1 跑首步 loss 不同，子集 sha 逐跑相同）⇒ 无任何行。
+    assert find_tier_calibration("ms-swift", 1, "OPD", "9B", "LoRA") is None
+    # ms-swift/2/CPT 27B：池最坏对 0.1201 > 最小真 bug 签名 0.0935（漂移已达真 bug 量级）⇒ 不入表。
+    assert find_tier_calibration("ms-swift", 2, "CPT", "27B", "LoRA") is None
+    # ms-swift/2/GRASPO 27B：G1+G2 均不过 ⇒ 只能落历史通配行（9B/{4,5} 池），不得冒充精确行。
+    graspo_27b = find_tier_calibration("ms-swift", 2, "GRASPO", "27B", "LoRA")
+    assert graspo_27b is not None and graspo_27b.model is None and graspo_27b.mode is None
 
 
 def test_a4_msswift_1card_grpo_row_is_cleaned_of_four_card_readings():

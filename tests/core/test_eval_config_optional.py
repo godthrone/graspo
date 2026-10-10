@@ -26,20 +26,6 @@ from types import ModuleType
 
 import pytest
 
-#: 部署事实（**显式声明**，不依赖 `core.gpu_guard` 里曾经写死的元组）：本模块夹具
-#: 用 GPU0–1，并把 6/7 声明为保留（生产）卡。2026-09-28 裁定：允许/保留集合是
-#: 部署事实，从配置注入，见 gpu_guard 模块头。
-_DEPLOYMENT_FACT = {
-    "GRASPO_ALLOWED_GPU_INDICES": "0,1,2,3,4,5",
-    "GRASPO_RESERVED_GPU_INDICES": "6,7",
-}
-
-
-@pytest.fixture(autouse=True)
-def _inject_deployment_fact(monkeypatch):
-    for key, value in _DEPLOYMENT_FACT.items():
-        monkeypatch.setenv(key, value)
-
 
 def _ensure_namespace(name: str, source_dir: Path) -> None:
     """确保 ``name`` 是一个**指向真实源码目录**的包命名空间；已存在则不动。
@@ -87,8 +73,8 @@ def _prepare_import_namespaces(src_root: Path) -> None:
     时任何 ``import graspo.*`` 都在收集期失败。把包的 ``__init__`` 跳过、但 ``__path__``
     指向真实目录之后：
 
-    - ``graspo.core.schema`` 可正常导入（它只依赖 pydantic 与 ``graspo.core`` 内的
-      ``discovery`` / ``gpu_guard``——2026-09-29 D-03 修复后它不再导入 ripple / eval）；
+    - ``graspo.core.schema`` 可正常导入（它只依赖 pydantic）；
+    - 它延迟导入的 ``graspo.ripple.reward.reward`` 也走**真实现**（只依赖 pydantic）；
     - ``graspo.ripple.monitoring`` / ``graspo.ripple.buffer`` 等子模块对后继测试
       仍然可发现（原缺陷就是这里被 ``__path__ = []`` 挡死的）。
     """
@@ -102,8 +88,8 @@ def _prepare_import_namespaces(src_root: Path) -> None:
 
 
 #: 只用真实 import 机制取配置类（不再手工装载 / 不再造门面对象）。
-#: ``schema.py`` 的模块级导入（``graspo.core.discovery`` / ``graspo.core.gpu_guard``）
-#: 依赖正常的包解析；手工装载会逼我们伪造父包——那正是"污染全局 sys.modules"缺陷的来源。
+#: ``schema.py`` 内部的延迟导入（``graspo.ripple.reward.reward``）依赖正常的包解析,
+#: 手工装载会逼我们伪造父包——那正是"污染全局 sys.modules"缺陷的来源。
 _prepare_import_namespaces(Path(__file__).resolve().parents[2] / "src" / "graspo")
 from graspo.core.schema import EvalConfig, GraspoConfig  # noqa: E402
 

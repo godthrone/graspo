@@ -594,20 +594,8 @@ def test_probe_extra_argv_default_off_is_empty_and_does_not_register(stub_swift_
 def test_probe_extra_argv_enabled_registers_and_names_the_callback(stub_swift_callbacks):
     from graspo.flow.backend.msswift.first_step_probe import probe_extra_argv
 
-    argv = probe_extra_argv(True)
-    assert argv[:2] == ["--callbacks", PROBE_CALLBACK_NAME]
-    # ★ 逐步日志密度（运行期覆盖，追加在末尾 ⇒ 覆盖 transformers/ms-swift 的默认 5）
-    assert "--logging_steps" in argv, argv
-    assert argv[argv.index("--logging_steps") + 1] == "1", argv
+    assert probe_extra_argv(True) == ["--callbacks", PROBE_CALLBACK_NAME]
     assert PROBE_CALLBACK_NAME in stub_swift_callbacks.callbacks_map
-
-
-def test_logging_steps_density_is_absent_when_probe_off_present_when_on(stub_swift_callbacks):
-    """★ 对照（本轮交付的判据）：**开/关两态的 `--logging_steps` 恰好相反**。"""
-    from graspo.flow.msswift.first_step_probe import probe_extra_argv
-
-    assert "--logging_steps" not in probe_extra_argv(False)
-    assert "--logging_steps" in probe_extra_argv(True)
 
 
 def test_probe_active_extra_argv_reads_the_process_switch(stub_swift_callbacks):
@@ -619,10 +607,7 @@ def test_probe_active_extra_argv_reads_the_process_switch(stub_swift_callbacks):
     assert probe_active_extra_argv() == []
     # 探针独立于总开关：``enabled=False`` 也能单独打开（A/B 的臂 A）。
     bind_active_switch(DeterminismSwitch(enabled=False, probe_first_step=True))
-    # 探针开 ⇒ 回调 + **逐步日志密度**（`--logging_steps 1`，A7 取证；追加在末尾 ⇒ 覆盖默认 5）
-    assert probe_active_extra_argv() == [
-        "--callbacks", PROBE_CALLBACK_NAME, "--logging_steps", "1",
-    ]
+    assert probe_active_extra_argv() == ["--callbacks", PROBE_CALLBACK_NAME]
     # 总开关打开但探针关 ⇒ 仍然什么都不追加。
     bind_active_switch(DeterminismSwitch(enabled=True))
     assert probe_active_extra_argv() == []

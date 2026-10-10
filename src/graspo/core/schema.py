@@ -9,9 +9,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from graspo.core.discovery import _discover
-from graspo.core.gpu_guard import GpuGuardError, resolve_gpu_plan
-
 #: 训练参数化模式：``lora`` = 只训 LoRA 适配器；``full`` = 全参（全量）微调。
 #: 与 ms-swift 的 ``--tuner_type`` **同轴**（上游合法取值为
 #: ``lora|full|lora_llm``，graspo 只支持前两个）。native 与 msswift 两个后端
@@ -19,15 +16,15 @@ from graspo.core.gpu_guard import GpuGuardError, resolve_gpu_plan
 TunerType = Literal["lora", "full"]
 
 #: 训练方法（算法）枚举 —— **全项目唯一真相源**（宪法 §1.4）。
-#: 与逐档实测台账的「算法」行一一对应：
+#: 与能力矩阵 `docs/capability-matrix.md` §4「算法」行一一对应：
 #: ``graspo`` = GRASPO(RL)、``sft`` = 监督微调、``cpt`` = 继续预训练、
 #: ``opd`` = on-policy 蒸馏。新增算法 = 此字面量加一个取值（§1.2 对扩展开放），
 #: 具体实现由 ``core/discovery.py`` 的注册表路由解析。
 TrainMethod = Literal["graspo", "sft", "cpt", "opd"]
 
 #: ``train_method`` → **支持它的后端**（单一真相源，宪法 §1.4）。
-#: 依据逐档实测台账：CPT / OPD 在 **native 侧就是
-#: `⛔ 不支持`** ⇒ 这里 fail-closed，而不是把它们静默路由到 SFT/RL 训练器（那等于拿着
+#: 依据 `docs/capability-matrix.md` §4：CPT / OPD 在 **native 侧就是 `⛔ 不支持`**
+#: ⇒ 这里 fail-closed，而不是把它们静默路由到 SFT/RL 训练器（那等于拿着
 #: 另一种算法去训练，属宪法 §3.4 的"坏退路"）。
 TRAIN_METHOD_BACKENDS: dict[str, tuple[str, ...]] = {
     "graspo": ("native", "msswift"),
@@ -720,7 +717,7 @@ class GraspoFlowConfig(BaseModel):
     raw_log_enabled: bool = True
     readable_log_enabled: bool = True
     synchronize_cuda_timing: bool = False
-    pp_max_inflight_microbatches: int = 0
+    pp_max_inflight_microbatches: int = 2
     # ── PP rollout 会合点有界等待（缺陷 P6 的 a1；**默认 600s = NCCL 默认量级**）──
     # 语义：**PP rollout / 生成路径**上 send/recv 与 pp_group token 广播的等待上限（秒）。
     # **0 = 关闭有界等待**（退化为修复前的无界等待，逐字旧行为）。
@@ -902,7 +899,7 @@ class MsSwiftConfig(BaseModel):
     # （上游 4.5.3：`arguments/tuner_args.py:122-124` + `_init_multimodal_full`；
     # Megatron 通道 `megatron/arguments/megatron_args.py:451` 同为 True），即
     # "只训语言主干"。而 graspo 的「全量（全参）」承诺"训练全部权重"
-    # （逐档实测台账），native 侧也确实放开了全部参数。
+    # （`docs/capability-matrix.md` §4），native 侧也确实放开了全部参数。
     # ⇒ 为消除**两后端语义分叉**，full 模式下这两个开关默认解析为 `false` 并显式
     # 透传（LoRA 模式完全不透传——逐字保持原行为）。
     # None = 用上述模式默认值；显式 true/false = 用户覆盖（唯一真相源，只有这一处开关）。
@@ -1050,8 +1047,6 @@ class EvalConfig(BaseModel):
                 "only role='base' may omit it"
             )
         # 卡计划：必须在加载时就校验，不能等到起容器时才发现写错了 6/7。
-        # ``resolve_gpu_plan`` / ``GpuGuardError`` 现在直接来自 ``core.gpu_guard``
-        # （2026-09-29 D-03：原先经 ``eval.guard`` 反向导入，构成 core → eval 环）。
         try:
             from graspo.core.gpu_guard import resolve_gpu_plan  # noqa: PLC0415
 

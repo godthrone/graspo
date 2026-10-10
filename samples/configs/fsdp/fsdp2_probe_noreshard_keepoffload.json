@@ -1,0 +1,27 @@
+{
+    "_description": "GRASPO 能力矩阵 · FSDP2 配方（1/2 卡全参，**开 CPU offload**）—— DeepSpeed 退场用（★阶段2：8 档）",
+    "_authorization": "指挥官 2026-09-27 裁定「推进 FSDP2 两阶段方案」；用户 2026-09-22 拍板 DeepSpeed 彻底废弃。",
+    "_phase2_only": "本文件**只给 1/2 卡档**（T004/T005/T019/T020/T037/T038/T049/T050）用。4 卡档用 fsdp2_full_state_dict.json。两者语义不同，不要互相替换（§2.2 显式即防呆）。",
+    "_why_cpu_offload": "1/2 卡下 FSDP 的分片面不够：world=1 时 FSDP **零分片**（每卡仍是全量参数），world=2 只摊 2 份 ⇒ 必须靠 offload 才装得下 9B 全参（原 DeepSpeed 档用 zero2_offload 也是同一诉求）。",
+    "_why_full_state_dict": "★ 与阶段1 同一条硬要求，理由见 fsdp2_full_state_dict.json 的 _why_full_state_dict：SHARDED_STATE_DICT 下 checkpoint 内**没有 HF 权重** ⇒ 我方 A4 指纹恒 None。",
+    "_evidence": "实测（nfc1 镜像，nproc=1 + FULL_STATE_DICT + cpu_offload，tiny GPT2 + 真 transformers.Trainer）：checkpoint-N/ 写出 model.safetensors + optimizer.bin + pytorch_model_fsdp.bin。见 .local/hb-workspace/20260923-analysis/task-fsdp2-migration/evidence/probe-fsdp-ckpt-C.out.txt",
+    "_notes": [
+        "cpu_offload: true → accelerate 的 FullyShardedDataParallelPlugin 把它转成 torch.distributed.fsdp.CPUOffloadPolicy（accelerate/utils/dataclasses.py 的 set_cpu_offload），并经 fsdp_utils 的 offload_policy 交给 fully_shard。",
+        "⚠ 吞吐未知：DeepSpeed zero2_offload 只把**优化器态**放 CPU，而 CPUOffloadPolicy 把**参数+梯度+优化器态**都放 CPU（每步 gather/scatter）⇒ 可能显著更慢。**必须以冒烟实测 it/s 与每卡峰值为准**，不得凭机制推断宣布可行。",
+        "备用杠杆（未启用）：ms-swift 专有的 fsdp_config['activation_cpu_offload']=true（swift/trainers/arguments.py 读它，走 swift/callbacks/activation_cpu_offload.py）可把**激活**也换出 CPU。若参数 offload 后仍贴边，再逐档评估开启。",
+        "gradient_checkpointing：档 yaml 的 model.gradient_checkpointing=true 会被 ms-swift 自动关掉并改用下面的 activation_checkpointing（swift/arguments/sft_args.py 的 warning 分支），语义等价（同为激活重算）。"
+    ],
+    "fsdp": "full_shard auto_wrap",
+    "fsdp_config": {
+        "fsdp_version": 2,
+        "reshard_after_forward": false,
+        "auto_wrap_policy": "TRANSFORMER_BASED_WRAP",
+        "cpu_ram_efficient_loading": true,
+        "activation_checkpointing": true,
+        "state_dict_type": "FULL_STATE_DICT",
+        "cpu_offload": true
+    },
+    "_runtime_image": "graspo:v0.28.11-cu130fix-v2-nfc3",
+    "_runtime_image_id": "sha256:ffb19b78d9a75178188e8085a6419c4b1abca5e452a2116caa1a838044922d28",
+    "_runtime_image_note": "本轮（阶段2（1/2 卡））12 档 FSDP 重跑统一使用的镜像；口径单元一致性要求同一轮内不得混用镜像。★ 上面的 `_evidence` 记录的是**当时做 A/B 实测所用的镜像**（nfc1），**作为历史如实保留、未改写**；本配方内容（accelerate/FSDP 选项）与镜像版本无关，nfc2/nfc3 下语义相同。镜像链：nfc1 → nfc2（补 ③ instrumentation）→ nfc3（rollout inference_mode→no_grad）。"
+}

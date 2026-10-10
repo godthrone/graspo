@@ -1,6 +1,8 @@
 """Qwen3.5/3.6 adapter — RL training methods (TP-only, PP 1F1B)."""
 
+import os
 import time
+from collections.abc import Mapping
 from typing import Any
 
 import torch
@@ -148,6 +150,13 @@ class _Qwen35TrainingMethods:
         支持梯度累积：每个 micro_batch 处理 ``micro_batch_size`` 个 experience，
         所有 micro-batch 的梯度累加后统一 ``optimizer.step()``。
         有效 batch size = ``micro_batch_size × gradient_accumulation_micro_batches``。
+
+        ★ 口径注（E-80/E-84，2026-10-05）：上述"累积后统一 ``optimizer.step()``"的描述
+        **修复前仅对非 PP 路径成立**；PP 路径原先每处理 1 条 experience 即 clip+step 一次
+        （T035 实测 ``optimizer_steps_per_rank`` = 31/53/55）。**E-80 起 PP 路径亦按
+        ``gradient_accumulation_micro_batches`` 分组累积**（``G=1`` 时为恒等变换，见 E-80 补注）；
+        **E-84 另将 PP 的梯度裁剪改为跨 PP rank 归约的全局范数**。详见 ``CORRECTIONS.md``
+        E-77/E-78/E-80/E-84。
         """
         self._require_ready()
         assert self.model is not None
@@ -185,7 +194,22 @@ class _Qwen35TrainingMethods:
         num_micro_batches = max(1, len(indices) // batch_size)
         self.optimizer.zero_grad(set_to_none=True)
         valid_micro_batches = 0
+        # ★ K-会合：把本步的 num_micro_batches 条 micro-batch 切成 K 段（余数给前段），
+        #   除**末段**外的每个段末在**下一条的循环开头**做一次 in-place DP 同步；
+        #   末段由循环之后的 R-B 承担 ⇒ 每步恰好 K 次 DP 集合（K=4 ⇒ 4×220）。
+        #   切点只由本 rank 的条数算出；route 3′ 保证逐 rank 条数相等 ⇒ 同进同出。
+        _dp_k_cuts = _dp_sync_segment_cuts(num_micro_batches, _resolve_dp_sync_segments())
         for start in range(0, len(indices) - batch_size + 1, batch_size):
+            # ★ 段末同步（K−1 个切点）——**无条件**：不看 isfinite(loss)、不看
+            #   valid_micro_batches。段边界只由迭代序号决定；放在循环体最开头，
+            #   故上面 `continue` 也跳过不了它 ⇒ 逐 rank 同进同出、无集合失配。
+            _dp_k_meeting_sync_dp_grads(
+                self.model,
+                self.tp_state,
+                iter_index=start // batch_size,
+                cuts=_dp_k_cuts,
+                n_total=num_micro_batches,
+            )
             batch_indices = indices[start : start + batch_size]
             batch = collate_experiences([experiences[idx] for idx in batch_indices], self.device)
             self._sync_timing()
@@ -236,6 +260,16 @@ class _Qwen35TrainingMethods:
             _log_cuda_mem("after_backward")
             self._sync_timing()
             backward_sec += time.monotonic() - backward_started_at
+            # ★ 只读探针 P4（诊断跑）：逐 micro-batch 墙钟 + 序列长度。
+            #   ⚠ 本行只在 `torch.isfinite(loss)` 为真时执行（`:132-134` 的 `continue` 跳过它）
+            #     ⇒ **行数 = `valid_micro_batches` ≤ `n_micro`**；做"单条耗时"分母时必须用它自己的行数
+            #     （`finite_idx=` 即自证），⛔ 不得默认等于 `usable`。
+            print(
+                f"[DPSYNC] site=micro rank={dist.get_rank() if dist.is_initialized() else 0} t={time.monotonic():.3f} "
+                f"idx={start} finite_idx={valid_micro_batches} "
+                f"seqlen={int(batch.sequences.shape[1])}",
+                flush=True,
+            )
 
         # 所有 micro-batch 的 backward 完成后，统一 sync / clip / step
         # 防呆：DP/TP 梯度同步必须所有 rank 参与（集体操作），即使本 rank
@@ -255,12 +289,28 @@ class _Qwen35TrainingMethods:
         )
 
         # DP gradient sync: AVG across DP replicas（不同数据）
+        # ★ K-会合：本处即**末段**同步（段内的 K−1 次已在上面的循环里做过）
+        #   ⇒ 每步 DP 集合总数 = K × 220；K=1 时切点为空，本处即唯一一次（行为等价）。
         if self.tp_state is not None and self.tp_state.dp_group is not None:
+            # ★ 只读探针 P2（诊断跑）：R-B 的到达时刻 + 本 rank 的 micro-batch 条数。
+            print(
+                f"[DPSYNC] site=r_b_enter rank={dist.get_rank() if dist.is_initialized() else 0} t={time.monotonic():.3f} "
+                f"n_micro={num_micro_batches} len_indices={len(indices)} "
+                f"valid_micro={valid_micro_batches}",
+                flush=True,
+            )
             _sync_dp_lora_grads(self.model, self.tp_state.dp_group)
+            # ★ 只读探针 P3（诊断跑）：R-B 退出时刻（与 P2 配对算 R-B 实际耗时）。
+            print(
+                f"[DPSYNC] site=r_b_exit rank={dist.get_rank() if dist.is_initialized() else 0} t={time.monotonic():.3f}",
+                flush=True,
+            )
         # TP gradient sync: SUM across TP ranks（同数据，部分梯度）
         if _TENSOR_PARALLEL_GROUP is not None and _TENSOR_PARALLEL_SIZE > 1:
             _sync_nonsharded_lora_grads(self.model, _TENSOR_PARALLEL_GROUP)
         if valid_micro_batches > 0:
+            # ★ K-会合条件④：裁剪**只在末段同步之后做一次**（⛔ 绝不每段裁一次——
+            #   clip 是非线性的，逐段 clip ≠ 整体 clip，且判据③ 看不见）。
             grad_norm = torch.nn.utils.clip_grad_norm_(
                 [param for param in self.model.parameters() if param.requires_grad],
                 max_grad_norm,
@@ -412,7 +462,20 @@ class _Qwen35TrainingMethods:
         #: R3（2026-09-23）：首步逐 rank 数值探针**只落一行**的幂等标记（每个 rank 各自判）。
         probe_emitted = False
         indices = self._shared_training_indices(len(experiences), optimize_round=optimize_round)
-        for start in range(0, len(indices) - batch_size + 1, batch_size):
+        # ★ E-80（(D) 最小侵入式修复，2026-10-05 指挥官批准）：
+        #   PP 路径原**完全不消费** ``gradient_accumulation_micro_batches`` ⇒ 每处理 1 条
+        #   experience 就 clip+step 一次（实测该批 31–55 条 ⇒ 等效 LR 放大约 31–55×）⇒ 与本包
+        #   非 PP 路径（累积后统一 step；T034 实测 optimizer_steps=1）语义不一致。
+        #   此处引入「组」：按该字段分组、组内累积、组末才 clip+step；
+        #   **门控与 ``reduced_grad_flags`` 仍每轮执行**（保全 PP rank 的集合调用次序）。
+        grad_accum_group = max(1, int(self.config.training.gradient_accumulation_micro_batches))
+        _starts = list(range(0, len(indices) - batch_size + 1, batch_size))
+        _group_poisoned = False
+        _metric_iters = 0
+        for _i, start in enumerate(_starts):
+            do_step = ((_i + 1) % grad_accum_group == 0) or (_i == len(_starts) - 1)
+            if _i % grad_accum_group == 0:
+                _group_poisoned = False
             batch_indices = indices[start : start + batch_size]
             chunk_batches = [
                 collate_experiences(
@@ -429,7 +492,8 @@ class _Qwen35TrainingMethods:
             if not chunk_batches:
                 continue
             max_chunks_per_optimizer_step = max(max_chunks_per_optimizer_step, len(chunk_batches))
-            if self.optimizer is not None:
+            # ★ E-80：只在**组首**清零 ⇒ 组内梯度累积（⛔ 非组首不清零）
+            if self.optimizer is not None and _i % grad_accum_group == 0:
                 self.optimizer.zero_grad(set_to_none=True)
             result = self._pipeline_one_f_one_b_optimizer_step(
                 chunk_batches,
@@ -447,9 +511,13 @@ class _Qwen35TrainingMethods:
             pipeline_backward_sec += float(result.get("pipeline_backward_sec", 0.0))
             micro_batch_count += len(chunk_batches)
             if not result["finite"]:
+                # ★ E-80（组内非有限策略，指挥官 2026-10-05 定）：丢弃整组已累积梯度 ⇒
+                #   zero_grad；skipped_nonfinite 按**组**计 1 次；本组不 step。
                 if self.optimizer is not None:
                     self.optimizer.zero_grad(set_to_none=True)
-                skipped_nonfinite += 1
+                if not _group_poisoned:
+                    _group_poisoned = True
+                    skipped_nonfinite += 1
                 continue
             # ── R1（2026-09-23）：梯度有限性 / 填充度判据 ─────────────────────────
             # ``result["finite"]`` 只反映末 stage 的 loss 是否有限；梯度是否有限此前
@@ -471,7 +539,9 @@ class _Qwen35TrainingMethods:
                 # 负责，这里不新增 raise（不改变 RL 的失败语义；见实施报告"范围与边界"）。
                 if self.optimizer is not None:
                     self.optimizer.zero_grad(set_to_none=True)
-                skipped_nonfinite += 1
+                if not _group_poisoned:
+                    _group_poisoned = True
+                    skipped_nonfinite += 1
                 # 诊断明细只算一次（失败步才做第二遍 max|·| 归约）
                 grad_detail = self.model.gradient_finiteness_report(with_max_abs=True)
                 if self._train_batch_call_index == 0 and not probe_emitted:
@@ -541,15 +611,29 @@ class _Qwen35TrainingMethods:
                 _sync_nonsharded_lora_grads(self.model, _TENSOR_PARALLEL_GROUP)
             trainable_params = [param for param in self.model.parameters() if param.requires_grad]
             grad_clip_started_at = time.monotonic()
-            grad_norm = (
-                torch.nn.utils.clip_grad_norm_(trainable_params, max_grad_norm)
-                if trainable_params
-                else torch.tensor(0.0)
-            )
+            # ★ E-84（候选 A：PP 下按【全局】梯度范数裁剪，与 1 卡语义对齐）
+            #   逐 stage 各自的 clip_grad_norm_ 只覆盖本 rank 分片 ⇒ 同一个 max_grad_norm
+            #   作用在两个不同口径的范数上 ⇒ 与 1 卡（全模型范数）语义不一致。
+            #   先求本 rank 分片的范数平方 ⇒ 跨 PP rank 归约(SUM) ⇒ 开方得全模型范数。
+            #   ★ 集合调用次序保全：下述 all_reduce 无条件执行（各 rank 每轮都跑）。
+            local_sq = torch.zeros(1, device=self.device)
+            for _p in trainable_params:
+                if _p.grad is not None:
+                    local_sq += _p.grad.detach().float().pow(2).sum()
+            _pp_grp = self.tp_state.pp_group if self.tp_state is not None else None
+            if _pp_grp is not None and self.pp_size > 1:
+                dist.all_reduce(local_sq, op=dist.ReduceOp.SUM, group=_pp_grp)
+            global_norm = float(local_sq.sqrt().item())
+            if global_norm > 0.0:
+                _clip_coef = min(1.0, float(max_grad_norm) / (global_norm + 1e-6))
+                for _p in trainable_params:
+                    if _p.grad is not None:
+                        _p.grad.mul_(_clip_coef)
+            grad_norm = torch.tensor(global_norm, device=self.device)
             _add_pipeline_stage_timing(stage_timing, "pipeline_grad_clip_sec", grad_clip_started_at)
             self._sync_timing()
             optimizer_started_at = time.monotonic()
-            if self.optimizer is not None:
+            if self.optimizer is not None and do_step:
                 _log_cuda_mem("before_optimizer_step_pp")
                 self.optimizer.step()
                 _log_cuda_mem("after_optimizer_step_pp")
@@ -558,9 +642,11 @@ class _Qwen35TrainingMethods:
                 stage_timing, "pipeline_optimizer_step_sec", optimizer_started_at
             )
             optimizer_step_sec += time.monotonic() - optimizer_started_at
-            if self.scheduler is not None and self.optimizer is not None:
+            if do_step and self.scheduler is not None and self.optimizer is not None:
                 self.scheduler.step()
-            optimizer_steps += 1
+            if do_step:
+                optimizer_steps += 1
+            _metric_iters += 1
             loss_tensor = torch.tensor(
                 [float(result["loss_value"])], dtype=torch.float, device=self.device
             )
@@ -582,8 +668,8 @@ class _Qwen35TrainingMethods:
             "replay_buffer_trainable_completion_count": len(experiences),
             "optimizer_steps": optimizer_steps,
             "skipped_nonfinite": skipped_nonfinite,
-            "loss_mean": loss_sum / optimizer_steps if optimizer_steps else None,
-            "grad_norm_mean": grad_norm_sum / optimizer_steps if optimizer_steps else None,
+            "loss_mean": loss_sum / _metric_iters if _metric_iters else None,
+            "grad_norm_mean": grad_norm_sum / _metric_iters if _metric_iters else None,
             **grad_count_event(self.config.effective_tuner_type, count=nonzero_grad_count),
             **training_norm_event(
                 self.config.effective_tuner_type, before=norm_before, after=norm_after

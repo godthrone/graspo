@@ -1,0 +1,45 @@
+# T002 | 9B | CPT | LoRA | ms-swift | 2卡
+# 生成器: tests/e2e/generate_matrix.py（手改无效，请改生成器）
+# 口径: 只用 1/2/4 卡；GPU 集合取自 {0,1,2,3}；上下文长度由递增加长法实测得出，不预设档位。
+# 数据: ELAM V5 训练子集前 100 条（宿主数据根目录经 GRASPO_ELAM_HOST_ROOT 注入，见 .local/）；子集由 run_matrix54.sh 生成，图像经 ../images 解析。
+# ⚠️ 数据口径告警: ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。
+# 可表达性: ready
+# 显存可行性: [feasible] 估算每卡 28.8 GiB（预算 78 GiB）⇒ 可行：LoRA：基座冻结 ⇒ 权重 2 B/param；激活/其他预算 12 GiB
+# 算法口径: CPT/OPD 的**配置通道**已由 WP-X3 落地（train_method 枚举 + 专用注册表 + ms-swift pretrain/GKD 映射）。因此本档**可表达**。注意两种口径不要混：**「可表达」= 配置能被接受、能生成、能启动**；**「跑通」= 真机跑出 A1–A6 证据**。本档当前只到前者。 数据形态：ms-swift 官方预训练行（单条 assistant 纯文本 + 媒体块）。**★ 语料口径（不得误读）**：本档用的是 **ELAM V5 形态**的指令数据摊平后的纯文本，目的是**跑通通道**，**不是「CPT 语料已就绪」**——本期没有预训练语料，语料问题按用户 2026-09-18 拍板登记为「回头再说」，本生成器不造语料。
+train_method: cpt
+backend: msswift
+tuner_type: lora
+model:
+  model_path: /models/Qwen3.5-9B
+  torch_dtype: bfloat16
+  gradient_checkpointing: true
+data:
+  train_path: /work/elam-v5/subsets/T002.jsonl
+  max_prompt_length: 8192
+training:
+  output_dir: /out/T002
+  run_name: T002
+  overwrite_output_dir: true
+  seed: 42
+  max_epochs: 1
+  learning_rate: 5e-06
+  gradient_accumulation_micro_batches: 1
+  save_checkpoint_every_epoch: false
+  save_steps: 50
+lora:
+  r: 8
+  alpha: 16
+  dropout: 0.0
+  target_preset: vision_common
+msswift:
+  nproc_per_node: 2
+  per_device_train_batch_size: 1
+  sequence_parallel_size: 1
+  use_vllm: false
+pretrain:
+  loss_scale: all
+  use_chat_template: false
+gpu_monitor:
+  output_dir: /out/gpu
+  tag: T002
+  interval_sec: 2.0

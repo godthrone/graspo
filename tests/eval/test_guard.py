@@ -29,19 +29,6 @@ from graspo.eval.guard import (
     sample_device_memory_mib,
 )
 
-#: 本模块声明的部署事实（与 `tests/core/test_gpu_guard.py` 的 POLICY 同源）。
-_DEPLOYMENT_FACT = {
-    "GRASPO_ALLOWED_GPU_INDICES": "0,1,2,3,4,5",
-    "GRASPO_RESERVED_GPU_INDICES": "6,7",
-}
-
-
-@pytest.fixture(autouse=True)
-def _inject_deployment_fact(monkeypatch):
-    """每个用例都在**显式声明**的部署事实下运行（不再依赖写死的 `(4,5,6,7)`）。"""
-    for key, value in _DEPLOYMENT_FACT.items():
-        monkeypatch.setenv(key, value)
-
 
 def test_allowed_set_and_limit_come_from_core_guard():
     """边界常量必须与 core.gpu_guard 一致（单一真相源，不得各自定义）。
