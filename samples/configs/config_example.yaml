@@ -33,8 +33,10 @@ pretrain:
 # 本期用户拍板（2026-09-18）：教师 = Qwen3.8-27B、学生 = Qwen3.5-9B。
 # 字段名与 ms-swift `TeacherModelArguments` / GKD 超参逐字对应。
 distill:
-  teacher_model_path: null       # 示例：/models/Qwen3.8-27B（与下一行二选一）
-  teacher_model_server: null     # 示例：http://127.0.0.1:16889；null=不走外部教师服务
+  teacher_model_path: null       # 示例：/models/Qwen3.8-27B（opd 必填）
+  teacher_model_server: null     # null=不走外部教师服务；URL 如 http://127.0.0.1:16889
+                                 # 注：与 teacher_model_path 互斥（恰设一个）；走外部服务时
+                                 # 上游强制要求 gkd_logits_topk 非 null（API 只回 top-k）
   teacher_adapters: null         # null=不用教师 LoRA 适配器
   teacher_deepspeed: null        # null=继承学生侧配置；DeepSpeed 已废除（2026-09-27），勿新配
   offload_teacher_model: null    # null=不换出；显式 true/false 为用户覆盖
@@ -82,6 +84,7 @@ native:
   sequence_parallel: false        # TP>=2 时可选；沿序列维度分片激活
   pp_micro_batch_size: 1          # PP 每个微批样本数
   micro_batch_size: 1
+  group_balance_max_move_groups: 0  # β1b 整组再分配可搬动的组数上限（0=不搬，行为与仅均衡分片一致）
   use_kv_cache_for_rollout: true
   empty_cache_after_rollout_split: false
   empty_cache_before_train: false
@@ -221,6 +224,7 @@ training:
   weight_decay: 0.01
   max_grad_norm: 1.0
   policy_ratio_clip_eps: 0.2
+  f3_diag_enabled: true          # P6 F-3 诊断插桩（默认 true=与现状逐字一致；false 只少一行 stdout）
   max_new_tokens: 2048
   temperature: 1.0
   top_p: 1.0

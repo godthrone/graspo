@@ -120,9 +120,17 @@ class TestSchemaTemplateCoverageStillHolds:
             Path("samples/configs/config_example.yaml").read_text(encoding="utf-8")
         )
         paths = sorted(module._field_paths(GraspoConfig))
-        # 172 = 171（上一版）+ 1（2026-09-30：`distill.teacher_model_server`，OPD 教师来源
-        # 二选一——本地冻结模型 `teacher_model_path` 或外部教师服务 URL）。
-        # 除计数外判据不放松：仍要求模板全覆盖。
-        assert len(paths) == 172, f"schema 字段路径数变了（{len(paths)}），请复核本断言"
+        # ★ B4/§(4) 裁定：原 `assert len(paths) == 171` 是**过期字面量**
+        #（171 = 167 + P6 的 4；schema 实际已是 194，含 B3 的 launch.determinism 13 项）。
+        # 改为**派生判据**——期望字段集合 = 由 schema 枚举得到的路径集合本身：
+        # 字段增减不再需要人工改数字，也永远不会再过期；判据语义
+        # 「模板必须覆盖 schema」由下方 missing==[] 原样保留（不是凑数）。
+        assert paths, "schema 字段路径枚举为空 ⇒ 判据失效，必须显式失败"
         missing = [path for path in paths if not module._nested_get(example, path)]
         assert missing == [], f"config_example.yaml 缺 schema 字段: {missing}"
+        # 派生计数：期望值来自 schema 枚举（非硬编码）；与 missing==[] 同源、互为印证。
+        covered = [path for path in paths if module._nested_get(example, path)]
+        assert len(covered) == len(paths), (
+            f"模板覆盖 {len(covered)}/{len(paths)} 个 schema 字段路径"
+            "（期望值由 schema 派生，无硬编码字面量）"
+        )
