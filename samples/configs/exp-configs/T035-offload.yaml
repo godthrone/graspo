@@ -1,0 +1,44 @@
+# T035 | 9B | GRASPO | 全量 | native | 2卡
+# 配置版本: v2（v1 基线 = samples/configs/matrix54/；本目录为冻结的 v2 定稿）
+# 生成器: 历史实验变体（上游 = 冻结件 samples/configs/matrix54-v2/T035.yaml + offload_optimizer_state）；原 v2 生成器 tests/e2e/generate_matrix_v2.py 已退役留档 .local/repo-moved-out/tests/e2e/
+# 本档相对 v1 的改动: data.train_path: /work/elam-v5/subsets/T035.jsonl → /work/elam-v5/subsets-v2/T035.jsonl；training.save_steps: 10 → 48；训练子集条数: 20 → 96（**非 yaml 字段**，由 runner 按 manifest 的 subset_size 落盘，见 changes.md）
+# 口径: 只用 1/2/4 卡；GPU 集合取自 {0,1,2,3}；上下文长度由递增加长法实测得出，不预设档位。
+# 数据: ELAM V5 训练子集前 96 条（宿主数据根目录经 GRASPO_ELAM_HOST_ROOT 注入，见 .local/）；子集由 run_matrix54.sh 生成，图像经 ../images 解析。
+# ⚠️ 数据口径告警: ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。
+# 可表达性: unverified
+# 显存可行性: [feasible] 估算每卡 45.5 GiB（预算 78 GiB）⇒ 可行：native 全参 PP 分片（k=8 B/param，bf16 Adam 假设）：(2+2+4)/2 B/param；激活/其他预算 12 GiB
+# 注意: 全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。
+# 步数口径(v2): 子集 96 → 每卡 prompt P = 96//2 = 48；replay 阈值 = Q×G = 8×8 = 64；每 epoch 真实步数 = floor(P/Q) + [P mod Q ≠ 0] = 6（门槛 ≥5；全有效样本上界）
+train_method: graspo
+backend: native
+tuner_type: full
+model:
+  model_path: /models/Qwen3.5-9B
+  torch_dtype: bfloat16
+  gradient_checkpointing: true
+data:
+  train_path: /work/elam-v5/subsets-v2/T035.jsonl
+  max_prompt_length: 8192
+training:
+  output_dir: /out/T035
+  run_name: T035
+  overwrite_output_dir: true
+  seed: 42
+  max_epochs: 1
+  learning_rate: 5e-06
+  gradient_accumulation_micro_batches: 1
+  save_checkpoint_every_epoch: false
+  save_steps: 48
+native:
+  tp_size: 1
+  dp_size: 1
+  pp_size: 2
+  offload_optimizer_state: true
+  allow_unverified_pp_rollout: true
+  micro_batch_size: 1
+reward:
+  kind: graspo
+gpu_monitor:
+  output_dir: /out/gpu
+  tag: T035
+  interval_sec: 2.0

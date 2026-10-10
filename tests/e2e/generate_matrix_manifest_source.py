@@ -79,11 +79,11 @@ V2_SUBSET_SIZE_BY_TIER: dict[str, int] = {
     "T040": 72, "T041": 144, "T042": 288,
 }
 #: ★ 声明式例外（2026-10-02 批准）：例外档的「每卡 prompt 数」。
-#: 必须与 tests/e2e/generate_matrix_v2.py 的 P_TARGET_OVERRIDE **逐值相等**（不一致即停手）。
+#: 历史 parity 声明（v2 配置生成器 tests/e2e/generate_matrix_v2.py 已退役留档 .local/repo-moved-out/tests/e2e/，不可再核）：本常量为在役唯一 P_TARGET_OVERRIDE 定义。
 P_TARGET_OVERRIDE: dict[str, int] = {"T040": 72, "T041": 72, "T042": 72}
 
 #: ★ 计划步数锚定覆盖（2026-10-02 批准）：这三档的计划步数固定为 6，不随子集放大变 9。
-#: 必须与 tests/e2e/generate_matrix_v2.py 的 PLANNED_STEPS_OVERRIDE **逐值相等**。
+#: 历史 parity 声明（同上，generate_matrix_v2.py 已退役留档）：本常量为在役唯一 PLANNED_STEPS_OVERRIDE 定义。
 PLANNED_STEPS_OVERRIDE: dict[str, int] = {"T040": 6, "T041": 6, "T042": 6}
 #: 3 个 not_applicable 档（v1 已定，v2 不改；不产出可跑配置）。
 NOT_APPLICABLE_TIERS: tuple[str, ...] = ("T052", "T053", "T054")
@@ -300,7 +300,7 @@ def patch_tier(entry: dict, data_root: str, pregen_dir: str) -> dict:
     }
     out["expected_optimizer_steps_reachable"] = reachable
     # 计划步数（ckpt 保留口径）：native GRASPO 的 v2 计划值 = 该档 v2 档配置的 save_steps
-    # （由 generate_matrix_v2.py 按 v1 同式算出；本脚本**只读**它，不另算一份）。
+    # （由已退役留档的 generate_matrix_v2.py 按 v1 同式算出；本脚本**只读**它，不另算一份）。
     if is_native_graspo(out):
         out["checkpoint_save_steps"] = int(
             read_yaml_scalar(PROJECT_ROOT / V2_CONFIG_DIR_REL / f"{tier_id}.yaml", "save_steps")
