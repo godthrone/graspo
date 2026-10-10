@@ -136,6 +136,14 @@ native:
 #   长文：rope_scaling / max_model_len / packing / padding_free / attn_impl / use_liger_kernel / use_logits_to_keep
 #   Megatron 路径 MG1-MG11：megatron.*（仅透传 + 启动冒烟）
 msswift:
+  # ── ★ P5：整组分片（G1）/ retry 的 graspo 侧旋钮（见 option-a-override-plan.md §4）─
+  group_sharding: whole_group       # 只认 whole_group（整组不拆）——切组会造成不完整组（I1 违反）
+  groups_per_rank: 1                # 每进程组数 k（决定每进程批大小与 generation_batch_size）
+  even_batches: false               # ★ 必须 false：true 会复制整批补齐尾部 ⇒ 同一组训两次
+  dataloader_drop_last: false       # 尾批不足一时是否丢弃（V2：各进程组数必须严格相等）
+  retry_mode: aligned               # retry 复用上游 resample，谓词换成 graspo GroupDecision.RETRY
+  dynamic_sample: true              # 启用重采样路径（graspo retry 需要它）
+  max_resample_times: null          # null = 对齐 training.rollout_max_retries
   sequence_parallel_size: 1
   device_map: null
   # 仅 `tuner_type: full` 生效（D-16：解冻 ViT/aligner，使两后端"全参"都训练全部权重）。

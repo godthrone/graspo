@@ -856,6 +856,25 @@ class MsSwiftConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    # ── ★ P5：整组分片（G1）/ 按键对齐（G2）/ retry 的 graspo 侧旋钮 ──────────
+    # 依据 `option-a-override-plan.md` §4（§7.1 单一配置入口 / §10.1 推论 1：
+    # 参与决定产物的参数必须进 config）。
+    #: 分片口径：``whole_group``（整组不拆，默认）—— 决定"整组 vs 切组"⇒ 决定算法语义。
+    group_sharding: str = "whole_group"
+    #: 每进程组数 k（默认 1）⇒ 决定每进程批大小与 `generation_batch_size`。
+    groups_per_rank: int = 1
+    #: ★ 必须为 **false**：true 时 accelerate 的 `BatchSamplerShard` 会**复制整批**
+    #: 补齐尾部 ⇒ 同一组训两次（改变样本集合，违反 G1 的 V1 内容面）。
+    even_batches: bool = False
+    #: 尾批不足一时是否丢弃（V2：各进程组数必须严格相等）。
+    dataloader_drop_last: bool = False
+    #: retry 口径：``aligned``（复用上游 resample，但谓词换成 graspo `GroupDecision.RETRY`）。
+    retry_mode: str = "aligned"
+    #: 是否启用重采样路径（graspo retry 需要它）。
+    dynamic_sample: bool = True
+    #: 最多重采样轮数；``None`` = 对齐 ``training.rollout_max_retries``。
+    max_resample_times: int | None = None
+
     # ── S1 数据并行 DDP（launcher 层；ms-swift 侧是环境变量，非 CLI 参数）────
     nproc_per_node: int | None = None
     nnodes: int | None = None
@@ -925,6 +944,31 @@ class MsSwiftConfig(BaseModel):
     use_vllm: bool | None = None
     vllm_mode: Literal["colocate", "server"] | None = None
 
+
+    @model_validator(mode="after")
+    def _validate_group_sharding_contract(self) -> MsSwiftConfig:
+        """★ P5 G1/G2 的跨字段 fail-closed（§2.3 边界校验即防呆）。
+
+        - ``group_sharding`` 只认 ``whole_group``（切组口径一律拒绝 —— 那正是 6 档降级的机制根）；
+        - ``even_batches`` 必须为 ``False``（``True`` 会复制整批 ⇒ 同一组训两次）；
+        - ``groups_per_rank`` 必须 ≥ 1；``retry_mode`` 只认 ``aligned``。
+        """
+        if self.group_sharding != "whole_group":
+            raise ValueError(
+                f"msswift.group_sharding={self.group_sharding!r} 不支持：只认 'whole_group'"
+                "（整组不拆）。切组会在算法层造成不完整组（I1 违反）。"
+            )
+        if self.even_batches:
+            raise ValueError(
+                "msswift.even_batches=true 被拒绝：accelerate 的 BatchSamplerShard 会**复制整批**"
+                "补齐尾部 ⇒ 同一组训两次（改变样本集合）。请保持 false，用 "
+                "msswift.dataloader_drop_last 处理尾批。"
+            )
+        if self.groups_per_rank < 1:
+            raise ValueError(f"msswift.groups_per_rank 必须 ≥ 1，得到 {self.groups_per_rank}")
+        if self.retry_mode not in ("aligned",):
+            raise ValueError(f"msswift.retry_mode={self.retry_mode!r} 不支持：只认 'aligned'")
+        return self
 
 class ExportConfig(BaseModel):
     """模型导出配置。通过 ``graspo export --config <yaml>`` 驱动。"""

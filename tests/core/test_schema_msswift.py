@@ -19,6 +19,7 @@ from pydantic import ValidationError
 from graspo.core.schema import GraspoConfig, MsSwiftConfig, MsSwiftMegatronConfig
 from graspo.flow.backend.msswift._config_mapping import (
     _MEGATRON_PASSTHROUGH,
+    _MSSWIFT_GRASPO_OVERRIDE_KNOBS,
     _MSSWIFT_RLHF_ONLY,
     _MSSWIFT_SCALAR_PASSTHROUGH,
 )
@@ -123,6 +124,7 @@ def test_every_msswift_field_is_consumed_by_the_mapping():
         set(_MSSWIFT_SCALAR_PASSTHROUGH)
         | set(_MSSWIFT_RLHF_ONLY)
         | set(_MSSWIFT_MODE_CONDITIONAL)
+        | set(_MSSWIFT_GRASPO_OVERRIDE_KNOBS)
         | {"attn_impl", "nproc_per_node", "nnodes", "node_rank", "master_addr", "master_port"}
     )
     assert declared <= consumed, f"declared but never mapped: {sorted(declared - consumed)}"

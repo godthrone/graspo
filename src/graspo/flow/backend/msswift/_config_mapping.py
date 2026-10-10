@@ -184,7 +184,26 @@ _MSSWIFT_SCALAR_PASSTHROUGH: tuple[str, ...] = (
 #: 只在 rollout 类阶段（RL 的 GRPO / OPD 的 GKD）合法的 ``msswift`` 字段。
 #: SFT / CPT 的参数类（``SftArguments`` / ``PretrainArguments``）里不存在这些字段，
 #: 传了就是非法参数（实测口径，见模块 docstring「不可映射清单」）。
-_MSSWIFT_RLHF_ONLY: tuple[str, ...] = ("use_vllm", "vllm_mode", "num_iterations")
+_MSSWIFT_RLHF_ONLY: tuple[str, ...] = (
+    "use_vllm",
+    "vllm_mode",
+    "num_iterations",
+    # ★ P5：graspo retry 复用上游 DAPO resample 机制所需的两个上游开关。
+    "dynamic_sample",
+    "max_resample_times",
+)
+
+#: ★ P5：**graspo 侧覆写旋钮** —— 它们不是 ms-swift CLI 参数，而是
+#: `flow/backend/msswift/` 覆写（group_sharding / 按键对齐 / retry）的输入；
+#: 登记在此是为了让"declared 必被消费"的机核把它们算作已消费（§1.4 单一真相源）。
+#: 依据 `option-a-override-plan.md` §4。
+_MSSWIFT_GRASPO_OVERRIDE_KNOBS: tuple[str, ...] = (
+    "group_sharding",
+    "groups_per_rank",
+    "even_batches",
+    "dataloader_drop_last",
+    "retry_mode",
+)
 
 #: 上表中**只被 GRPO 消费**的字段：``num_iterations`` 是 ``GRPOConfig`` 的
 #: "每个样本的更新步数 𝜇"（ms-swift 4.5.3 ``rlhf_trainers/grpo_trainer.py:2118``），

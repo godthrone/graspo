@@ -64,6 +64,13 @@ from graspo.flow.backend.msswift.reward import (
     GRASPO_TARGETS_COLUMN,
     register_graspo_reward,
 )
+from graspo.flow.adapter.contract import (
+    AlignmentError,
+    IncompleteGroupError,
+    RolloutGroup,
+    assert_complete_group,
+)
+from graspo.flow.backend.msswift.alignment import align_by_key
 from graspo.ripple.annotation.char_tag import CharTag
 
 logger = logging.getLogger(__name__)
@@ -130,6 +137,8 @@ class GraspoMsSwiftGRPOTrainer(_MsSwiftGRPOTrainerBase):  # type: ignore[misc,va
         # 拿到 token id 列表（实测踩过：拿 `str([1,2,3])` 去做字符级标注 → 全 0 优势）。
         self._graspo_completion_text: dict[str, str] = {}
         self._graspo_token_advantages: dict[str, list[float]] = {}
+        #: ★ P5/retry：每条样本的真实重试次数（旧实现硬编码 0）。
+        self._graspo_retry_counts: dict[str, int] = {}
         self._graspo_injection_failures: int = 0
         # 组决策台账（G3 有效性缺口）：本 rollout batch 内每个 group 的 classify_group 结果。
         # 复位点在 `_compute_graspo_token_advantages`（每个 batch 一次），
@@ -382,6 +391,7 @@ class GraspoMsSwiftGRPOTrainer(_MsSwiftGRPOTrainerBase):  # type: ignore[misc,va
         """
         tokenizer = self._resolve_tokenizer()
         self._graspo_token_advantages = {}
+        self._graspo_retry_counts = {}
         self._graspo_group_decisions = []
         if tokenizer is None or not self._graspo_annotations:
             return
@@ -440,10 +450,14 @@ class GraspoMsSwiftGRPOTrainer(_MsSwiftGRPOTrainerBase):  # type: ignore[misc,va
                 1.0 if _is_structurally_annotated(ann) else 0.0 for ann in annotations
             ]
             best = max(range(len(keys)), key=lambda index: group_rewards[index])
+            # ★ P5/retry（option-a §2.5）：传入**真实**重试次数（旧实现硬编码 0 ⇒
+            #   `GroupDecision.RETRY` 退化为"本批不训"，从不重新 rollout）。
+            group_key = str(getattr(group[0], "prompt_id", "") or _sample_key(group[0]))
+            retry_count = int(self._graspo_retry_counts.get(group_key, 0))
             decision = self._graspo.classify_group(
                 group_rewards,
                 content_scores,
-                retry_count=0,
+                retry_count=retry_count,
                 rollout_max_retries=self._graspo_config.training.rollout_max_retries,
                 perfect_skip_reward_threshold=(
                     self._graspo_config.training.perfect_skip_reward_threshold
@@ -507,8 +521,12 @@ class GraspoMsSwiftGRPOTrainer(_MsSwiftGRPOTrainerBase):  # type: ignore[misc,va
             keys = [_sample_key(sample) for sample in chunk]
             missing = [key for key in keys if key not in self._graspo_token_advantages]
             if missing:
-                self._warn_injection(f"chunk is missing graspo advantages for {missing}")
-                continue
+                # ★ P5/G2：缺键 = 对齐被破坏 ⇒ **显式失败**（契约 I2）。
+                #   旧实现只记警告并 `continue`（保留父类 advantage）⇒ 静默错位面。
+                raise AlignmentError(
+                    f"graspo advantage 注入按键失配：本 chunk 缺 {missing[:3]}（I2）。"
+                    "禁止在缺键时静默保留父类 advantage。"
+                )
             grpo_batch = encoded["grpo_batch"]
             mask = grpo_batch.completion_mask
             dtype = (
@@ -928,17 +946,19 @@ def _group_rewards(
         return {}
     ordered = _global_sample_order(samples)
     if len(ordered) != len(weighted):
-        logger.warning(
-            "graspo: rewards_per_func has %d rows but %d samples were ordered by request_id — "
-            "falling back to positional pairing for this batch.",
-            len(weighted),
-            len(ordered),
+        # ★ P5/G2（option-a §2.3）：**删掉 positional fallback**。
+        #   旧实现在长度不匹配时按行号配对并打 "falling back to positional pairing" 警告
+        #   （实测 T044 40 次 / T045 80 次错位）——那是静默错位，必须显式失败（契约 I2）。
+        raise AlignmentError(
+            f"组奖励表与样本未按键对齐：rewards_per_func 有 {len(weighted)} 行，"
+            f"而按 request_id 排序得到 {len(ordered)} 条（I2）。禁止回退为按行号配对。"
         )
-    return {
+    table = {
         _sample_key(sample): float(weighted[index])
         for index, sample in enumerate(ordered)
-        if index < len(weighted)
     }
+    local_keys = [_sample_key(sample) for sample in samples]
+    return dict(zip(local_keys, align_by_key(local_keys, table, what="组奖励"), strict=True))
 
 
 def _ragged_abs_mean(advantages: dict[str, list[float]]) -> float:
@@ -1013,14 +1033,33 @@ def _rollout_groups(samples: list[Any], num_generations: int) -> list[list[Any]]
     ``prompt_id`` 缺失时按 ``num_generations`` 顺序切块——ms-swift 的 ``RepeatSampler``
     就是以 mini_repeat_count=num_generations 复制的，两种判据在这里等价。
     """
-    if num_generations <= 1 or len(samples) <= num_generations:
-        return [list(samples)]
+    # ★ P5/G1（option-a §2.4）：**删掉"本进程切片当整组"的退化分支**。
+    #   旧实现 `len(samples) <= num_generations ⇒ return [list(samples)]` 会把
+    #   **不完整的切片**当成一个完整的组喂给算法层（实测 `groups_seen ≡ 1` 的机制根）。
+    #   现在：不足一组 ⇒ IncompleteGroupError（显式失败，是防线不是退路，§3.4）。
+    if num_generations <= 1:
+        return [[sample] for sample in samples]
+    if len(samples) < num_generations:
+        raise IncompleteGroupError(
+            f"不完整组：本进程只有 {len(samples)} 条样本，而每组需要 {num_generations} 条（I3）。"
+            "禁止把本进程切片当成完整组 —— 请检查整组分片（msswift.group_sharding）。"
+        )
     if all(getattr(sample, "prompt_id", "") for sample in samples):
         grouped: OrderedDict[str, list[Any]] = OrderedDict()
         for sample in samples:
             grouped.setdefault(str(sample.prompt_id), []).append(sample)
-        return list(grouped.values())
-    return [
-        list(samples[start : start + num_generations])
-        for start in range(0, len(samples), num_generations)
-    ]
+        groups = list(grouped.values())
+    else:
+        groups = [
+            list(samples[start : start + num_generations])
+            for start in range(0, len(samples), num_generations)
+        ]
+    for group in groups:  # ★ 逐组机核（I1）：每组的条数必须恰为 G
+        assert_complete_group(
+            RolloutGroup(
+                group_key=str(getattr(group[0], "prompt_id", "") or _sample_key(group[0])),
+                completions=tuple(group),
+                group_size=num_generations,
+            )
+        )
+    return groups
