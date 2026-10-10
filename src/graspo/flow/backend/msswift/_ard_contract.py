@@ -25,6 +25,9 @@ from __future__ import annotations
 import copy
 from typing import Any
 
+# §12.2：异常类抽到同域 ``error.py``，此处 import 把它接回本模块公开面（下游零改动）。
+from graspo.flow.backend.msswift.error import ArdContractError
+
 # ── 契约常量（全项目唯一真相源，禁止在别处硬编码同名字符串）────────────────
 
 #: graspo ``targets[i].output`` 中承载纯文本答案的键。
@@ -51,10 +54,6 @@ ARD_TOP_LEVEL_FIELDS: tuple[str, ...] = (
 
 #: ARD 已知 ``data_source`` 受控枚举（ARD ``core/types.py``）。
 ARD_DATA_SOURCES: tuple[str, ...] = ("ard_text", "ard_multi")
-
-
-class ArdContractError(ValueError):
-    """ARD 样本不符合共享基座契约时抛出（边界校验，宪法 §2.3 防线）。"""
 
 
 # ── 方向 1：ARD → graspo ───────────────────────────────────────────────────

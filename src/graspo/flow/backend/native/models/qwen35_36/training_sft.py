@@ -137,7 +137,7 @@ class _Qwen35SFTTrainingMethods:
             # 无可训参数时基类已经按 ``tuner_type`` 决定是报错还是返回 None；
             # 这里不重复判据，只保证不去 wrap 一个 None。
             return
-        from graspo.flow.backend.native.models.qwen35_36.optim_offload import (
+        from graspo.flow.backend.native.models.qwen35_36.cpu_offloaded_adam_w import (
             build_cpu_offloaded_adamw,
         )
 

@@ -51,6 +51,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from graspo.flow.backend.msswift.error import LogpsShapeGuardError
+
 __all__ = [
     "MS_SWIFT_LOGPS_SLICE_SITE",
     "MS_SWIFT_LOGITS_TO_KEEP_SITE",
@@ -63,17 +65,6 @@ __all__ = [
 MS_SWIFT_LOGPS_SLICE_SITE = "swift/rlhf_trainers/grpo_trainer.py:1570,1573 -> :1582/:1592"
 #: ``logits_to_keep`` 的计算口径。
 MS_SWIFT_LOGITS_TO_KEEP_SITE = "swift/rlhf_trainers/utils.py:2170"
-
-
-class LogpsShapeGuardError(RuntimeError):
-    """per-token logps 的形状在进入切片/gather 前已可判定不自洽（fail-closed）。
-
-    只报告，不修复：持有六个量 + 两个 file:line 位置 + 可复算的预测形状。
-    """
-
-    def __init__(self, message: str, *, context: dict[str, Any]) -> None:
-        super().__init__(message)
-        self.context = context
 
 
 def logps_slice_shapes(seq_len: int, logits_to_keep: int) -> tuple[int, int]:

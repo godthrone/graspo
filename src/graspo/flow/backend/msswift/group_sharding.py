@@ -36,9 +36,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from math import gcd
 
-
-class ShardingError(RuntimeError):
-    """整组分片不满足 G1 不变量（V1–V3）。"""
+from graspo.flow.backend.msswift.error import ShardingError
 
 
 def steps_per_generation_for(per_device_train_batch_size: int, group_size: int) -> int:

@@ -26,11 +26,9 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import TypeVar
 
+from graspo.flow.backend.native.error import AssignmentError
+
 K = TypeVar("K")
-
-
-class AssignmentError(RuntimeError):
-    """分配不满足 β1b 不变量（整组不拆 / 组集合不变 / 均衡）。"""
 
 
 def assign_whole_groups(
