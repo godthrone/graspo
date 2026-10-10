@@ -294,7 +294,13 @@ class TransformerModelAdapter(BaseGraspoFlowAdapter):
     def _build_optimizer(self) -> None:
         from graspo.ripple.loss import GRASPORippleLoss
 
-        self.loss_fn = GRASPORippleLoss(self.config.training.policy_ratio_clip_eps)
+        self.loss_fn = GRASPORippleLoss(
+            self.config.training.policy_ratio_clip_eps,
+            # ★ P6：F-3 诊断开关由配置决定（默认 True = 与现状一致）
+            diag_enabled=bool(
+                getattr(self.config.training, "f3_diag_enabled", True)
+            ),
+        )
         # 优化器收参路径对两种模式**是同一条**：一律只收 ``requires_grad`` 的参数。
         # 区别在模型侧——lora 模式只有 ``lora_*`` 矩阵被放开，full 模式全部参数被放开
         # （``flow/backend/native/models/*/model.py``）。因此这里不需要按模式分支，只需把

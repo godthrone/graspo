@@ -209,9 +209,11 @@ class TestUpstreamAlgorithmDifferential:
             ng = int(_value_of(argv, "--num_generations") or 0)
             assert gbs >= ng, f"pdb={pdb} world={world}: gbs={gbs} < ng={ng}"
             assert gbs % ng == 0
-            assert int(_value_of(argv, "--steps_per_generation") or 0) == max(
-                1, math.ceil(ng / (pdb * world))
-            )
+            # ★ P6（option-a §3）：**新映射** steps = G / gcd(per_device, G)；
+            #   旧式 max(1, ceil(G/(pdb×world))) 正是"每进程半个组"的机制根。
+            assert int(_value_of(argv, "--steps_per_generation") or 0) == ng // math.gcd(pdb, ng)
+            # ★ 新不变量：每进程本地行数必须是 G 的整数倍（V1）
+            assert (pdb * int(_value_of(argv, "--steps_per_generation") or 0)) % ng == 0
 
     def test_old_implementation_pair_is_rejected_by_same_upstream_code(self) -> None:
         """★ 负向用例：旧 argv（无 --generation_batch_size，--steps_per_generation 1）。"""
@@ -237,15 +239,20 @@ class TestValidateCombinationsFailClosed:
         for pdb, world in ((1, 1), (1, 2), (2, 2), (4, 1), (8, 1)):
             validate_combinations(_config(per_device_train_batch_size=pdb, nproc_per_node=world))
 
-    def test_incompatible_config_raises_at_validation_not_at_parsing(self) -> None:
-        """pdb=3, world=1, G=8 ⇒ 派生的 gbs=9 不含 G 的整倍 ⇒ 启动前报错。
+    def test_new_mapping_makes_the_former_incompatible_shape_compatible(self) -> None:
+        """★ P6：pdb=3 在**旧**推导下派生 gbs=9（%8≠0，启动前报错）；**新**映射给
+        steps = G/gcd(3,8) = 8 ⇒ gbs = 3×8 = 24（%8==0）⇒ 该组合**不再存在**。
 
-        该组合**加卡也修不好**（3 卡 ⇒ global=3，gbs=9 仍 %8≠0），与显存无关。
+        新映射是**构造性**的：对任意 (pdb, G) 都有 `pdb × (G/gcd(pdb,G)) ≡ 0 (mod G)`。
+        负向对照保留：**旧** 那对 (gbs=9, steps=3) 喂给上游算法仍然必炸（上游约束没变）。
         """
         config = _config(per_device_train_batch_size=3, nproc_per_node=1)
-        with pytest.raises(ValueError, match="batch/group mismatch"):
-            validate_combinations(config)
-        # 同一组合喂给上游算法也必炸——证明确实是上游约束，不是 graspo 自造判据
+        validate_combinations(config)  # 不抛 = 新映射下相容
+        argv = _rlhf_argv(config)
+        assert _value_of(argv, "--steps_per_generation") == "8"
+        assert _value_of(argv, "--generation_batch_size") == "24"
+
+        # ★ 负向对照：旧推导的那一对仍被上游拒绝（判据没被放松）
         args = _UpstreamArgs(
             per_device_train_batch_size=3,
             world_size=1,
@@ -257,18 +264,34 @@ class TestValidateCombinationsFailClosed:
         with pytest.raises(ValueError, match="must be evenly divisible"):
             _upstream_init_generation_batch_params(args)
 
-    def test_error_message_is_actionable(self) -> None:
-        config = _config(per_device_train_batch_size=3, nproc_per_node=1)
-        with pytest.raises(ValueError) as excinfo:
-            validate_combinations(config)
-        message = str(excinfo.value)
-        for needle in (
-            "rollout_group_size=8",
-            "generation_batch_size=9",
-            "adding cards cannot fix it",
-            "msswift.per_device_train_batch_size",
-        ):
-            assert needle in message, needle
+    def test_mapping_is_total_and_emitted_pair_is_self_consistent(self) -> None:
+        """★ P6：新映射下该判据**不再可达**（构造性保证），故改为钉住"全形状相容"：
+        对一张 (pdb, world, G) 矩阵，`validate_combinations` 不抛、下发对自洽、
+        且每进程行数恒为 G 的整数倍（V1）。旧式在该矩阵里恰好命中 pdb=3/G=8 的切组面。
+        """
+        import math
+
+        for pdb in (1, 2, 3, 4, 8):
+            for world in (1, 2, 4):
+                for g in (2, 4, 8, 16):
+                    config = GraspoConfig.model_validate(
+                        {
+                            "backend": "msswift",
+                            "train_method": "graspo",
+                            "training": {"rollout_group_size": g},
+                            "msswift": {
+                                "per_device_train_batch_size": pdb,
+                                "nproc_per_node": world,
+                            },
+                        }
+                    )
+                    validate_combinations(config)  # 不抛 = 相容
+                    argv = _rlhf_argv(config)
+                    steps = int(_value_of(argv, "--steps_per_generation") or 0)
+                    gbs = int(_value_of(argv, "--generation_batch_size") or 0)
+                    assert steps == g // math.gcd(pdb, g)
+                    assert gbs == pdb * world * steps
+                    assert (pdb * steps) % g == 0
 
     def test_non_graspo_method_is_not_judged(self) -> None:
         """SFT/CPT/OPD 没有 GRPO 组，不该被这条判据误伤。"""

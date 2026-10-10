@@ -41,10 +41,14 @@ class GraspoAlgorithmCore:
         *,
         policy_ratio_clip_eps: float = 0.2,
         replay_buffer_limit: int = 0,
+        diag_enabled: bool | None = None,
     ) -> None:
         self.reward: GraspoReward = create_reward(reward_config)
+        # ★ P6：F-3 诊断开关（``None`` ⇒ 模块默认 True = 与现状一致）。
+        #   ⛔ 本层不得 import flow/eval（X1/X2）；开关只作**参数**传入。
         self.loss_fn: GRASPORippleLoss = GRASPORippleLoss(
-            policy_ratio_clip_eps=policy_ratio_clip_eps
+            policy_ratio_clip_eps=policy_ratio_clip_eps,
+            diag_enabled=diag_enabled,
         )
         self.buffer: ReplayBuffer = ReplayBuffer(limit=replay_buffer_limit)
 

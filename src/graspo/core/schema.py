@@ -374,6 +374,9 @@ class TrainingConfig(BaseModel):
     weight_decay: float = 0.01
     max_grad_norm: float = 1.0
     policy_ratio_clip_eps: float = 0.2
+
+    # ★ P6：F-3 诊断插桩开关（默认 True = 与现状逐字一致；关掉只少一行 stdout）
+    f3_diag_enabled: bool = True
     max_new_tokens: int = 2048
     temperature: float = 1.0
     top_p: float = 1.0

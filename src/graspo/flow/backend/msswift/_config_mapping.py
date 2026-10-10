@@ -48,10 +48,18 @@ ms-swift 的参数类依赖它自己的 ``parse_args`` 做别名/默认值/嵌�
 from __future__ import annotations
 
 import json
+import logging
 import math
 from typing import Any, Literal
 
+from graspo.flow.backend.msswift.group_sharding import (
+    local_batch_rows,
+    steps_per_generation_for,
+)
+
 from graspo.flow.backend.msswift._rope_compat import suggested_rope_parameters
+
+logger = logging.getLogger(__name__)
 
 #: 训练阶段：四种训练方法的 ms-swift 参数集不同。
 #: - ``sft``  → ``SftArguments`` / ``swift.pipelines.sft_main``
@@ -557,10 +565,32 @@ def graspo_to_ms_swift_argv(
         per_device_batch = max(1, int(section.per_device_train_batch_size or 1))
         world_size = max(1, int(section.nproc_per_node or 1)) * max(1, int(section.nnodes or 1))
         global_batch_size = per_device_batch * world_size
-        steps_per_generation = max(
-            1, math.ceil(num_generations / global_batch_size)
-        )  # 覆盖一个完整 GRPO 组所需的最少 rollout 微批
+        # ★ P6（option-a §3）：**新映射** `steps_per_generation = G / gcd(per_device, G)`。
+        #   旧式 `max(1, ceil(G/(per_device×world)))` 在 T044（pdb=1,world=2,G=8）给 4 < 8
+        #   ⇒ 每进程只有半个组 ⇒ **组被切开**（6 档降级的机制根）。
+        #   新式**构造性**保证 `per_device × steps ≡ 0 (mod G)` ⇒ 每进程恰 k 个**整组**。
+        steps_per_generation = steps_per_generation_for(per_device_batch, num_generations)
         generation_batch_size = global_batch_size * steps_per_generation
+        _local_rows = local_batch_rows(per_device_batch, num_generations, steps_per_generation)
+        if num_generations > 1 and _local_rows % num_generations != 0:
+            # fail-closed（§2.3）：宁可在这里炸，也不让半组流到算法层（I1 违反）
+            raise ValueError(
+                f"per-process rows {_local_rows} 不是 G={num_generations} 的整数倍 "
+                f"(per_device={per_device_batch}, steps_per_generation={steps_per_generation})"
+                " ⇒ 会切组（G1 禁止）。"
+            )
+        # ★ 推导值必须可追溯（§2.2 显式即防呆）：落日志，便于跑次对账。
+        logger.info(
+            "[graspo→msswift] 组映射: G=%d per_device=%d world=%d ⇒ steps_per_generation=%d "
+            "generation_batch_size=%d 每进程=%d 行(= %d 个整组)",
+            num_generations,
+            per_device_batch,
+            world_size,
+            steps_per_generation,
+            generation_batch_size,
+            _local_rows,
+            _local_rows // max(1, num_generations),
+        )
         _extend(argv, "generation_batch_size", generation_batch_size)
         _extend(argv, "steps_per_generation", steps_per_generation)
         # KL 惩罚系数固定为 0：graspo 的 GRPO 目标是纯 PPO-clip
@@ -687,8 +717,21 @@ def validate_rl_batch_divisibility(config: Any) -> None:
     per_device_batch = max(1, int(section.per_device_train_batch_size or 1))
     world_size = max(1, int(section.nproc_per_node or 1)) * max(1, int(section.nnodes or 1))
     global_batch_size = per_device_batch * world_size
-    steps_per_generation = max(1, math.ceil(num_generations / global_batch_size))
+    # ★ P6：与发送侧**同一真相源**（`group_sharding`），不得两处各写一套公式。
+    steps_per_generation = steps_per_generation_for(per_device_batch, num_generations)
     generation_batch_size = global_batch_size * steps_per_generation
+    # ★ 新增 fail-closed：**每进程**本地行数必须是 G 的整数倍（G1 的 V1）。
+    #   旧的"全局整除"校验允许 per_device × steps 只覆盖**半个组**（T044/T045 就是），
+    #   那正是 6 档降级的机制根。
+    local_rows = local_batch_rows(per_device_batch, num_generations, steps_per_generation)
+    if local_rows % num_generations != 0:
+        raise ValueError(
+            "graspo→ms-swift G1 组完整性检查失败（fail-closed，无需 GPU 即可判定）："
+            f"每进程本地行数 {local_rows} 不是 rollout_group_size={num_generations} 的整数倍 "
+            f"(per_device_train_batch_size={per_device_batch} × "
+            f"steps_per_generation={steps_per_generation})。ms-swift 会把**不完整的组**摊给每进程 "
+            "⇒ Ripple 收到半个组（I1 违反，实测 groups_seen≡1）。"
+        )
     if generation_batch_size % num_generations == 0:
         return
     valid = [n for n in range(1, generation_batch_size + 1) if generation_batch_size % n == 0]
