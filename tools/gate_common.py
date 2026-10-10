@@ -629,7 +629,13 @@ def run_gate(gate: str, description: str, impl, argv: Sequence[str] | None = Non
     try:
         args = parser.parse_args(list(argv) if argv is not None else None)
     except SystemExit as exc:
-        return int(exc.code or EXIT_USAGE)
+        # ★ `-h/--help` 走的是 argparse 的 help action ⇒ `SystemExit(0)`，必须原样返回 0
+        # （旧写法 `int(exc.code or EXIT_USAGE)` 把 0 当假值吞成 2 ⇒ 六个 gate 工具的
+        #  `-h` 都"打印了用法却报错退出"，被 B4 入口冒烟全覆盖抓出）。
+        # 用法错误（argparse 常规 `SystemExit(2)`）与显式 `SystemExit(None)` 仍是 EXIT_USAGE。
+        if exc.code is None:
+            return EXIT_USAGE
+        return int(exc.code)
     try:
         result = impl(args)
     except RuntimeError as exc:
