@@ -23,7 +23,7 @@
 | M3 | 12 档 `feasibility.estimate` | 去掉 zero2/zero2_offload 的 49.7 / 45.5 GiB 算式，改为"**待重算** + 保守性不变式 / 必须实测项" | 只改后端、未重跑估算器 ⇒ 不复用旧数字、不编新数字 |
 | M4 | `runtime.image` | `graspo-msswift:4.5.3` → `graspo:v0.28.11-cu130fix-v2-nfc3`（经 nfc1→nfc2→nfc3） | ①③ 的读数只在打过补丁的镜像里存在；② **12 档必须同一镜像**（否则"连续 3 次"的口径单元不成立）；③ nfc3 是 rollout 修复后的唯一可用镜像 |
 | M5 | 顶层 provenance | 新增 `config_version/supersedes/fsdp_migration` | 留痕：基线 sha256 + 授权来源 + ③ 计数语义 + Megatron 不可用 |
-| M6 | **全部 54 档** `tiers[*].gpus` | `1卡[0]/2卡[0,1]/4卡[0,1,2,3]` → `1卡[7]/2卡[6,7]/4卡[4,5,6,7]` | ★ 不换就**跑不起来**：v2 清单生成于 2026-09-23，早于用户 2026-09-24 批准的卡池变更；当前 runner 锁卡守卫只允许 `{4,5,6,7}`，实测 `run_matrix54.sh T006 --dry-run` 直接 fail-closed 拒绝 |
+| M6 | **全部 54 档** `tiers[*].gpus` | 源清单逐档 `gpus`（源生成器卡池映射）→ `1卡[7]/2卡[6,7]/4卡[4,5,6,7]` | ★ 不换就**跑不起来**：runner 锁卡守卫只允许 `{4,5,6,7}`，实测 `run_matrix54.sh T006 --dry-run` 直接 fail-closed 拒绝。<br>★ **B8（2026-10-11）**：源清单自 2026-10-05 起**已自带** `{4,5,6,7}` 卡池映射，旧的"v2 基线应为 `[0]/[0,1]/[0,1,2,3]`"前置断言随之失效（`--check` 曾因此 `FATAL T001`）⇒ 本变体不再假定源卡池形态，只记录源值（供反向探针逐档还原）并钉定自身卡池 |
 
 用法::
 
@@ -64,7 +64,6 @@ FSDP_IMAGE = "graspo:v0.28.11-cu130fix-v2-nfc3"
 
 #: M6 卡池映射（当前 runner 锁卡守卫只允许 {4,5,6,7}，用户 2026-09-24 批准 A）
 GPU_POOL_BY_CARDS = {1: [7], 2: [6, 7], 4: [4, 5, 6, 7]}
-OLD_GPUS_BY_CARDS = {1: [0], 2: [0, 1], 4: [0, 1, 2, 3]}
 
 #: M3 要替换掉的旧算式（逐字取自 v2 清单；两阶段各一条）
 CANON_ZERO2_4CARD = (
@@ -158,22 +157,23 @@ def build() -> tuple[dict, list[dict[str, object]]]:
         changes.append({"tier": tier, "id": "M3", "field": "feasibility.estimate", "before": how,
                         "after": "待重算 + 保守性不变式 / 必须实测项"})
 
-    # M6：卡池 —— 当前 runner 的锁卡守卫只允许 {4,5,6,7}（用户 2026-09-24 批准 A；
-    # GPU0–3 留给其他工作负载）。v2 清单早于该变更，故全部 54 档仍写 [0]/[0,1]/[0,1,2,3]。
-    # 按当前批的既有写法（r4 的 runs/v2-batch3/manifest-v2-mini-lora-4card.json）映射。
-    # 这是**调度字段**（不是训练语义），且基线 v2 清单未被改动。
+    # M6：卡池 —— 全部 54 档显式钉到本变体的确定性卡池。
+    # ★ B8（2026-10-11）：源清单 `matrix54_manifest_source.json` 自 2026-10-05 起已自带
+    #   {4,5,6,7} 卡池映射（源生成器 GPU_POOL_BY_CARDS）；旧的"v2 基线应为 [0]/[0,1]/[0,1,2,3]"
+    #   前置断言随源清单演进失效（`--check` 因此 FATAL T001）。本变体**不再假定源卡池形态**：
+    #   ① 逐档记录源值（供反向探针还原）；② 钉定自身卡池。卡池是**调度字段**（不是训练语义）。
     for node in doc["tiers"]:
         cards = int(node["cards"])
         if cards not in GPU_POOL_BY_CARDS:
             raise SystemExit(f"FATAL {node['tier_id']}: 未预期的 cards={cards}")
-        old_gpus = list(node["gpus"])
-        if old_gpus != OLD_GPUS_BY_CARDS[cards]:
+        base_gpus = list(node["gpus"])
+        if len(base_gpus) != cards or len(set(base_gpus)) != cards:
             raise SystemExit(
-                f"FATAL {node['tier_id']}: gpus 期望 {OLD_GPUS_BY_CARDS[cards]}（v2 基线），实际 {old_gpus}")
+                f"FATAL {node['tier_id']}: 源清单 gpus={base_gpus} 与 cards={cards} 不自洽")
         node["gpus"] = list(GPU_POOL_BY_CARDS[cards])
     changes.append({"tier": "全部 54 档", "id": "M6", "field": "tiers[*].gpus",
-                    "before": "1卡[0] / 2卡[0,1] / 4卡[0,1,2,3]（v2 基线，早于卡池变更）",
-                    "after": "1卡[7] / 2卡[6,7] / 4卡[4,5,6,7]（当前允许卡池 {4,5,6,7}）"})
+                    "before": "源清单逐档 gpus（源生成器卡池映射；已逐档记入反向探针）",
+                    "after": "1卡[7] / 2卡[6,7] / 4卡[4,5,6,7]（本变体钉定的允许卡池）"})
 
     old_image = doc["runtime"]["image"]
     if old_image != "graspo-msswift:4.5.3":
@@ -230,9 +230,10 @@ def build() -> tuple[dict, list[dict[str, object]]]:
         m["deepspeed"] = OLD_DS_BY_PHASE[phase]
         n["feasibility"]["estimate"] = next(
             t for t in base["tiers"] if t["tier_id"] == tier)["feasibility"]["estimate"]
-    # M6 作用于**全部 54 档**，还原也必须覆盖全部档
+    # M6 作用于**全部 54 档**，还原也必须覆盖全部档（逐档还原为**源清单**的 gpus 值）
+    base_gpus_by_id = {t["tier_id"]: t["gpus"] for t in base["tiers"]}
     for n in probe["tiers"]:
-        n["gpus"] = OLD_GPUS_BY_CARDS[int(n["cards"])]
+        n["gpus"] = list(base_gpus_by_id[n["tier_id"]])
 
     if probe != base:
         raise SystemExit("FATAL: 除已枚举的 M1-M6 之外还有其它差异 —— 生成器必须显式列举")

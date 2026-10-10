@@ -193,9 +193,9 @@
       "T034": 48,
       "T035": 96,
       "T036": 192,
-      "T040": 48,
-      "T041": 96,
-      "T042": 192
+      "T040": 72,
+      "T041": 144,
+      "T042": 288
     },
     "subset_size_v2_rule": "9 档 GRASPO×native = 48 × 卡数（48/96/192）；其余 45 档沿用 v1 算法下限（仍在 subset_size_by_algorithm 里，逐字节未改）",
     "source_by_tier_v2": {
@@ -331,7 +331,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 100"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 100",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T002",
@@ -399,7 +407,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 50"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 50",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T003",
@@ -469,7 +485,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 25"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 25",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T004",
@@ -538,7 +562,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 100"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 100",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T005",
@@ -608,7 +640,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 50"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 50",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T006",
@@ -680,7 +720,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 25"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 25",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T007",
@@ -747,7 +795,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 100"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 100",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T008",
@@ -815,7 +871,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 50"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 50",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T009",
@@ -885,7 +949,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 25"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 25",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T010",
@@ -952,7 +1024,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 100"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 100",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T011",
@@ -1020,7 +1100,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 50"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 50",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T012",
@@ -1090,7 +1178,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 25"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 25",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T013",
@@ -1157,7 +1253,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 100"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 100",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T014",
@@ -1225,7 +1329,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 50"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 50",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T015",
@@ -1295,7 +1407,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 25"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 25",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T016",
@@ -1364,7 +1484,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 100"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 100",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T017",
@@ -1433,7 +1561,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 50"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 50",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T018",
@@ -1504,7 +1640,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 25"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 25",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T019",
@@ -1573,7 +1717,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 100"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 100",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T020",
@@ -1643,7 +1795,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 50"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 50",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T021",
@@ -1715,7 +1875,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 25"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 25",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T022",
@@ -1782,7 +1950,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 100"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 100",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T023",
@@ -1850,7 +2026,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 50"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 50",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T024",
@@ -1920,7 +2104,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 25"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 25",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T025",
@@ -1987,7 +2179,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 100"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 100",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T026",
@@ -2055,7 +2255,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 50"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 50",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T027",
@@ -2125,7 +2333,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 25"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 25",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T028",
@@ -2192,7 +2408,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "T = floor(48/1) = 48；每 epoch = ceil(T/Q) = ceil(48/8) = 6（Q=8；dp_size=1；PP 档 dp_size=1 ⇒ 不分片）"
+      "step_formula_v2": "T = floor(48/1) = 48；每 epoch = ceil(T/Q) = ceil(48/8) = 6（Q=8；dp_size=1；PP 档 dp_size=1 ⇒ 不分片）",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T029",
@@ -2260,7 +2484,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "T = floor(96/2) = 48；每 epoch = ceil(T/Q) = ceil(48/8) = 6（Q=8；dp_size=2；PP 档 dp_size=1 ⇒ 不分片）"
+      "step_formula_v2": "T = floor(96/2) = 48；每 epoch = ceil(T/Q) = ceil(48/8) = 6（Q=8；dp_size=2；PP 档 dp_size=1 ⇒ 不分片）",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T030",
@@ -2330,7 +2562,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "T = floor(192/4) = 48；每 epoch = ceil(T/Q) = ceil(48/8) = 6（Q=8；dp_size=4；PP 档 dp_size=1 ⇒ 不分片）"
+      "step_formula_v2": "T = floor(192/4) = 48；每 epoch = ceil(T/Q) = ceil(48/8) = 6（Q=8；dp_size=4；PP 档 dp_size=1 ⇒ 不分片）",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T031",
@@ -2397,7 +2637,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 160"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 160",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T032",
@@ -2465,7 +2713,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 80"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 80",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T033",
@@ -2535,7 +2791,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 40"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 40",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T034",
@@ -2604,7 +2868,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "T = floor(48/1) = 48；每 epoch = ceil(T/Q) = ceil(48/8) = 6（Q=8；dp_size=1；PP 档 dp_size=1 ⇒ 不分片）"
+      "step_formula_v2": "T = floor(48/1) = 48；每 epoch = ceil(T/Q) = ceil(48/8) = 6（Q=8；dp_size=1；PP 档 dp_size=1 ⇒ 不分片）",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T035",
@@ -2673,7 +2945,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "T = floor(96/1) = 96；每 epoch = ceil(T/Q) = ceil(96/8) = 12（Q=8；dp_size=1；PP 档 dp_size=1 ⇒ 不分片）"
+      "step_formula_v2": "T = floor(96/1) = 96；每 epoch = ceil(T/Q) = ceil(96/8) = 12（Q=8；dp_size=1；PP 档 dp_size=1 ⇒ 不分片）",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T036",
@@ -2744,7 +3024,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "T = floor(192/1) = 192；每 epoch = ceil(T/Q) = ceil(192/8) = 24（Q=8；dp_size=1；PP 档 dp_size=1 ⇒ 不分片）"
+      "step_formula_v2": "T = floor(192/1) = 192；每 epoch = ceil(T/Q) = ceil(192/8) = 24（Q=8；dp_size=1；PP 档 dp_size=1 ⇒ 不分片）",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T037",
@@ -2813,7 +3101,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 160"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 160",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T038",
@@ -2883,7 +3179,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 80"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 80",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T039",
@@ -2955,7 +3259,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 40"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 40",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T040",
@@ -2977,18 +3289,18 @@
       "config": "samples/configs/matrix54-v2/T040.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T040.jsonl",
-        "subset_size": 48,
+        "subset_size": 72,
         "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
         "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。",
         "source": "formal",
         "source_jsonl": "${GRASPO_ELAM_DATA_ROOT}/data/train.jsonl",
         "source_jsonl_container": "/work/elam-v5/data/train.jsonl",
-        "extract_command": "head -n 48 ${GRASPO_ELAM_DATA_ROOT}/data/train.jsonl > ${GRASPO_PREGEN_SUBSET_DIR}/T040.jsonl",
-        "source_rule": "subsets-v2（v2 冻结子集）：本档取 **formal** 源前 48 条（= 48 × 卡数）",
+        "extract_command": "head -n 72 ${GRASPO_ELAM_DATA_ROOT}/data/train.jsonl > ${GRASPO_PREGEN_SUBSET_DIR}/T040.jsonl",
+        "source_rule": "subsets-v2（v2 冻结子集）：本档取 **formal** 源前 72 条（= 48 × 卡数）",
         "subset_file_pregenerated": true
       },
-      "expected_optimizer_steps": 48,
-      "checkpoint_save_steps": 48,
+      "expected_optimizer_steps": 72,
+      "checkpoint_save_steps": 72,
       "expected_optimizer_steps_per_epoch": 6,
       "expected_optimizer_steps_reachable": 6,
       "feasibility": {
@@ -3011,7 +3323,7 @@
           "min_optimizer_steps": 5,
           "min_train_samples": 20,
           "step_gate_applicability": "applicable",
-          "step_gate_basis": "expected_optimizer_steps_reachable=6；per_epoch=6；max_epochs=1；可产出步数上限=6 ≥ 门槛 5 ⇒ 门槛照常判"
+          "step_gate_basis": "expected_optimizer_steps_reachable=6；per_epoch=6；max_epochs=1；【★ 锚定：本档计划步数按 2026-10-02 批准的覆盖值固定，不随子集放大而变】可产出步数上限=6 ≥ 门槛 5 ⇒ 门槛照常判"
         },
         "criteria": [
           "A1",
@@ -3022,7 +3334,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "T = floor(48/1) = 48；每 epoch = ceil(T/Q) = ceil(48/8) = 6（Q=8；dp_size=1；PP 档 dp_size=1 ⇒ 不分片）"
+      "step_formula_v2": "T = floor(72/1) = 72；每 epoch = ceil(T/Q) = ceil(72/8) = 9（Q=8；dp_size=1；PP 档 dp_size=1 ⇒ 不分片）【★ 锚定覆盖为 6；未锚定公式值为 9】",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T041",
@@ -3045,18 +3365,18 @@
       "config": "samples/configs/matrix54-v2/T041.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T041.jsonl",
-        "subset_size": 96,
+        "subset_size": 144,
         "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
         "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。",
         "source": "formal",
         "source_jsonl": "${GRASPO_ELAM_DATA_ROOT}/data/train.jsonl",
         "source_jsonl_container": "/work/elam-v5/data/train.jsonl",
-        "extract_command": "head -n 96 ${GRASPO_ELAM_DATA_ROOT}/data/train.jsonl > ${GRASPO_PREGEN_SUBSET_DIR}/T041.jsonl",
-        "source_rule": "subsets-v2（v2 冻结子集）：本档取 **formal** 源前 96 条（= 48 × 卡数）",
+        "extract_command": "head -n 144 ${GRASPO_ELAM_DATA_ROOT}/data/train.jsonl > ${GRASPO_PREGEN_SUBSET_DIR}/T041.jsonl",
+        "source_rule": "subsets-v2（v2 冻结子集）：本档取 **formal** 源前 144 条（= 48 × 卡数）",
         "subset_file_pregenerated": true
       },
-      "expected_optimizer_steps": 48,
-      "checkpoint_save_steps": 48,
+      "expected_optimizer_steps": 72,
+      "checkpoint_save_steps": 72,
       "expected_optimizer_steps_per_epoch": 6,
       "expected_optimizer_steps_reachable": 6,
       "feasibility": {
@@ -3079,7 +3399,7 @@
           "min_optimizer_steps": 5,
           "min_train_samples": 20,
           "step_gate_applicability": "applicable",
-          "step_gate_basis": "expected_optimizer_steps_reachable=6；per_epoch=6；max_epochs=1；可产出步数上限=6 ≥ 门槛 5 ⇒ 门槛照常判"
+          "step_gate_basis": "expected_optimizer_steps_reachable=6；per_epoch=6；max_epochs=1；【★ 锚定：本档计划步数按 2026-10-02 批准的覆盖值固定，不随子集放大而变】可产出步数上限=6 ≥ 门槛 5 ⇒ 门槛照常判"
         },
         "criteria": [
           "A1",
@@ -3090,7 +3410,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "T = floor(96/2) = 48；每 epoch = ceil(T/Q) = ceil(48/8) = 6（Q=8；dp_size=2；PP 档 dp_size=1 ⇒ 不分片）"
+      "step_formula_v2": "T = floor(144/2) = 72；每 epoch = ceil(T/Q) = ceil(72/8) = 9（Q=8；dp_size=2；PP 档 dp_size=1 ⇒ 不分片）【★ 锚定覆盖为 6；未锚定公式值为 9】",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T042",
@@ -3115,18 +3443,18 @@
       "config": "samples/configs/matrix54-v2/T042.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T042.jsonl",
-        "subset_size": 192,
+        "subset_size": 288,
         "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
         "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。",
         "source": "formal",
         "source_jsonl": "${GRASPO_ELAM_DATA_ROOT}/data/train.jsonl",
         "source_jsonl_container": "/work/elam-v5/data/train.jsonl",
-        "extract_command": "head -n 192 ${GRASPO_ELAM_DATA_ROOT}/data/train.jsonl > ${GRASPO_PREGEN_SUBSET_DIR}/T042.jsonl",
-        "source_rule": "subsets-v2（v2 冻结子集）：本档取 **formal** 源前 192 条（= 48 × 卡数）",
+        "extract_command": "head -n 288 ${GRASPO_ELAM_DATA_ROOT}/data/train.jsonl > ${GRASPO_PREGEN_SUBSET_DIR}/T042.jsonl",
+        "source_rule": "subsets-v2（v2 冻结子集）：本档取 **formal** 源前 288 条（= 48 × 卡数）",
         "subset_file_pregenerated": true
       },
-      "expected_optimizer_steps": 48,
-      "checkpoint_save_steps": 48,
+      "expected_optimizer_steps": 72,
+      "checkpoint_save_steps": 72,
       "expected_optimizer_steps_per_epoch": 6,
       "expected_optimizer_steps_reachable": 6,
       "feasibility": {
@@ -3149,7 +3477,7 @@
           "min_optimizer_steps": 5,
           "min_train_samples": 20,
           "step_gate_applicability": "applicable",
-          "step_gate_basis": "expected_optimizer_steps_reachable=6；per_epoch=6；max_epochs=1；可产出步数上限=6 ≥ 门槛 5 ⇒ 门槛照常判"
+          "step_gate_basis": "expected_optimizer_steps_reachable=6；per_epoch=6；max_epochs=1；【★ 锚定：本档计划步数按 2026-10-02 批准的覆盖值固定，不随子集放大而变】可产出步数上限=6 ≥ 门槛 5 ⇒ 门槛照常判"
         },
         "criteria": [
           "A1",
@@ -3160,7 +3488,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "T = floor(192/4) = 48；每 epoch = ceil(T/Q) = ceil(48/8) = 6（Q=8；dp_size=4；PP 档 dp_size=1 ⇒ 不分片）"
+      "step_formula_v2": "T = floor(288/4) = 72；每 epoch = ceil(T/Q) = ceil(72/8) = 9（Q=8；dp_size=4；PP 档 dp_size=1 ⇒ 不分片）【★ 锚定覆盖为 6；未锚定公式值为 9】",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T043",
@@ -3227,7 +3563,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 160"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 160",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T044",
@@ -3295,7 +3639,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 80"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 80",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T045",
@@ -3365,7 +3717,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 40"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 40",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T046",
@@ -3433,7 +3793,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 20"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 20",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T047",
@@ -3502,7 +3870,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 10"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 10",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T048",
@@ -3573,7 +3949,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 5"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 5",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T049",
@@ -3643,7 +4027,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 20"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 20",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T050",
@@ -3714,7 +4106,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 10"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 10",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T051",
@@ -3787,7 +4187,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 5"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 5",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T052",
@@ -3851,7 +4259,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 20"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 20",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T053",
@@ -3916,7 +4332,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 10"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 10",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     },
     {
       "tier_id": "T054",
@@ -3983,7 +4407,15 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 5"
+      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 5",
+      "key_semantics": {
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
+        "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
+        "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
+        "data.subset_size": "训练子集**条数**（= 每卡 prompt 数 × 卡数；本轮三档 72/144/288 ⇒ P 恒 72）。⛔ 不是步数。",
+        "acceptance.formal_gate.min_optimizer_steps": "A2 **正式门门槛**（= 5，本轮未动）。与①（= 6）是两个数、都保留：A2 = 正式门，① = 「实际步数 ≥ 计划步数」的完整性指标（更严）。"
+      }
     }
   ],
   "config_version": "fsdp-v1",
