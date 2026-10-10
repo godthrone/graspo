@@ -2,7 +2,7 @@
 
 **它防的是什么**
 
-native 的导出通道（``flow/lora/lora_io.py``）是 **LoRA 语义**：它从
+native 的导出通道（``flow/backend/native/lora/lora_io.py``）是 **LoRA 语义**：它从
 ``lora_state_dict`` / ``lora_tensor_metadata`` 重建 LoRA A/B 对，再把 delta 合并回
 基座权重。全参（``tuner_type: full``）的 checkpoint 里：
 

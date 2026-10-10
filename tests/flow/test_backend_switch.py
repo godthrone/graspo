@@ -26,13 +26,13 @@ from graspo.core.schema import GraspoConfig
 # 直接加载 backend_selection.py，避免触发 flow/__init__.py → trainer → torch 导入链。
 
 _SELECTOR_PATH = (
-    Path(__file__).resolve().parents[2] / "src" / "graspo" / "flow" / "backend_selection.py"
+    Path(__file__).resolve().parents[2] / "src" / "graspo" / "flow" / "backend" / "selection.py"
 )
 _spec = importlib.util.spec_from_file_location(
-    "graspo.flow.backend_selection", _SELECTOR_PATH, submodule_search_locations=[]
+    "graspo.flow.backend.selection", _SELECTOR_PATH, submodule_search_locations=[]
 )
 _selector = importlib.util.module_from_spec(_spec)
-sys.modules["graspo.flow.backend_selection"] = _selector
+sys.modules["graspo.flow.backend.selection"] = _selector
 _spec.loader.exec_module(_selector)
 
 select_backend = _selector.select_backend
@@ -108,7 +108,7 @@ def test_both_sft_backends_expose_identical_trainer_contract():
 
     if importlib.util.find_spec("torch") is None:
         pytest.skip("torch not importable — native SFT trainer cannot be instantiated here")
-    from graspo.flow.trainer.sft_trainer import SFTTrainer, create_native_sft_trainer
+    from graspo.flow.backend.native.trainer.sft_trainer import SFTTrainer, create_native_sft_trainer
 
     native_trainer = create_native_sft_trainer(_sft_config("native"), None)
     assert isinstance(native_trainer, SFTTrainer)
@@ -122,7 +122,7 @@ def test_native_sft_builder_shape_matches_contract():
     只验证工厂本身可解析 + 契约方法名存在，不做实例化（开发机无 GPU）。
     """
     pytest.importorskip("torch", reason="native SFT trainer needs torch to instantiate")
-    from graspo.flow.trainer.sft_trainer import SFTTrainer, create_native_sft_trainer
+    from graspo.flow.backend.native.trainer.sft_trainer import SFTTrainer, create_native_sft_trainer
 
     assert callable(create_native_sft_trainer)
     assert hasattr(SFTTrainer, "train")
@@ -131,7 +131,7 @@ def test_native_sft_builder_shape_matches_contract():
 def test_native_sft_factory_rejects_wrong_train_method():
     """防呆：SFT 工厂拒绝非 SFT 配置（不静默按 RL 处理）。"""
     pytest.importorskip("torch", reason="importing sft_trainer needs torch")
-    from graspo.flow.trainer.sft_trainer import create_native_sft_trainer
+    from graspo.flow.backend.native.trainer.sft_trainer import create_native_sft_trainer
 
     rl_config = GraspoConfig.model_validate({"train_method": "graspo", "backend": "native"})
 
@@ -146,9 +146,9 @@ def test_msswift_sft_is_wired_not_a_placeholder():
 
     - 环境无 ms-swift → ``RuntimeError`` + 可操作的安装指引（不是静默假训练器）
     - 环境有 ms-swift → ``ms_sft_available()`` 为真，且历史占位异常不再出现
-      （真实执行路径由 ``tests/flow/msswift/test_msswift_wiring.py`` 用替身覆盖）
+      （真实执行路径由 ``tests/flow/backend/msswift/test_msswift_wiring.py`` 用替身覆盖）
     """
-    from graspo.flow.msswift.sft_trainer import ms_sft_available
+    from graspo.flow.backend.msswift.sft_trainer import ms_sft_available
 
     builder = resolve_backend_builder("msswift", train_method="sft")
     trainer = builder(_sft_config("msswift"), None)

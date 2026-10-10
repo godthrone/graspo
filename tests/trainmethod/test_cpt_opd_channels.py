@@ -34,11 +34,11 @@ from graspo.core.schema import (
     PretrainConfig,
     validate_train_method_combination,
 )
-from graspo.flow.msswift._config_mapping import (
+from graspo.flow.backend.msswift._config_mapping import (
     DEFAULT_CPT_LOSS_SCALE,
     graspo_to_ms_swift_argv,
 )
-from graspo.flow.msswift.dataset import (
+from graspo.flow.backend.msswift.dataset import (
     build_cpt_rows,
     build_opd_rows,
 )
@@ -46,7 +46,7 @@ from graspo.flow.msswift.dataset import (
 STUDENT = "/models/Qwen3.5-9B"
 TEACHER = "/models/Qwen3.8-27B"
 
-#: ARD v3 形态样本（与 ``tests/flow/msswift/test_msswift_wiring.py`` 同形）；
+#: ARD v3 形态样本（与 ``tests/flow/backend/msswift/test_msswift_wiring.py`` 同形）；
 #: 末轮 user 内含一个图像块 ⇒ 覆盖"多模态通路"这一范围约束（§6）。
 _ARD_SAMPLE = {
     "id": "sample-1",
@@ -298,10 +298,10 @@ def test_teacher_source_both_absent_is_rejected(tmp_path: Path):
 
 
 _ROUTE_EXPECTATIONS = {
-    "graspo": ("graspo.backends", "graspo.flow.msswift.trainer", "create_msswift_trainer"),
-    "sft": ("graspo.sft_backends", "graspo.flow.msswift.sft_trainer", "create_msswift_sft_trainer"),
-    "cpt": ("graspo.cpt_backends", "graspo.flow.msswift.cpt_trainer", "create_msswift_cpt_trainer"),
-    "opd": ("graspo.opd_backends", "graspo.flow.msswift.opd_trainer", "create_msswift_opd_trainer"),
+    "graspo": ("graspo.backends", "graspo.flow.backend.msswift.trainer", "create_msswift_trainer"),
+    "sft": ("graspo.sft_backends", "graspo.flow.backend.msswift.sft_trainer", "create_msswift_sft_trainer"),
+    "cpt": ("graspo.cpt_backends", "graspo.flow.backend.msswift.cpt_trainer", "create_msswift_cpt_trainer"),
+    "opd": ("graspo.opd_backends", "graspo.flow.backend.msswift.opd_trainer", "create_msswift_opd_trainer"),
 }
 
 
@@ -466,7 +466,7 @@ def test_prepare_dataset_resolves_media_to_absolute_paths(tmp_path: Path, monkey
     只替换 loader（它是设施入口），**不替换** ``resolve_sample_media_paths`` 与行构建器
     ——被测的正是"写盘前把相对路径变成绝对路径"这一步。
     """
-    import graspo.flow.msswift.dataset as dataset
+    import graspo.flow.backend.msswift.dataset as dataset
 
     frame = _image_file(tmp_path)
     monkeypatch.setattr(dataset, "load_graspo_samples", lambda _path: [_cpt_sample()])
@@ -481,7 +481,7 @@ def test_prepare_dataset_resolves_media_to_absolute_paths(tmp_path: Path, monkey
 @pytest.mark.parametrize("stage", ["sft", "rlhf", "cpt", "opd"])
 def test_prepare_dataset_stage_dispatch(tmp_path: Path, monkeypatch, stage: str):
     """四种 stage 各有自己的行构建器，产物文件名带 stage（不串味）。"""
-    import graspo.flow.msswift.dataset as dataset
+    import graspo.flow.backend.msswift.dataset as dataset
 
     monkeypatch.setattr(dataset, "load_graspo_samples", lambda _path: [_cpt_sample()])
     if stage == "opd":
@@ -502,7 +502,7 @@ def test_prepare_dataset_stage_dispatch(tmp_path: Path, monkeypatch, stage: str)
 
 def test_prepare_dataset_stage_dispatch_is_closed(tmp_path: Path, monkeypatch):
     """未知 stage 明确拒绝（不静默退回某个既有形态）。"""
-    import graspo.flow.msswift.dataset as dataset
+    import graspo.flow.backend.msswift.dataset as dataset
 
     monkeypatch.setattr(dataset, "load_graspo_samples", lambda _path: [_cpt_sample()])
     config = _cfg(tmp_path)

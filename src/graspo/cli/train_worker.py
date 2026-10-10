@@ -131,7 +131,7 @@ def main() -> None:
             append_jsonl_segment(artifact_path, verify_record)
         print(f"[train-worker] determinism artifact: {artifact_path}")
 
-    from graspo.flow.backend_selection import select_backend
+    from graspo.flow.backend.selection import select_backend
 
     selection = select_backend(config)
 

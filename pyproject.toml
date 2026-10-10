@@ -71,8 +71,8 @@ qwen35_36 = "graspo.flow.backend.native.models.qwen35_36.model_adapter:Qwen35Mod
 native = "graspo.flow.backend.native.config:native_defaults"
 
 [project.entry-points."graspo.backends"]
-native = "graspo.flow.backend_selection:create_native_trainer"
-msswift = "graspo.flow.msswift.trainer:create_msswift_trainer"
+native = "graspo.flow.backend.selection:create_native_trainer"
+msswift = "graspo.flow.backend.msswift.trainer:create_msswift_trainer"
 
 [tool.setuptools.package-dir]
 "" = "src"
@@ -98,7 +98,7 @@ select = ["E", "F", "I", "N", "W", "UP", "BLE"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 # 需要真 CUDA 设备的用例（默认自动 skipif；标记只为便于 `-m gpu` / `-m "not gpu"` 筛选）。
-# 首次登记于缺陷 P6 的 PP 会合 e2e（tests/flow/parallel/test_pp_rendezvous_e2e.py）。
+# 首次登记于缺陷 P6 的 PP 会合 e2e（tests/flow/backend/native/parallel/test_pp_rendezvous_e2e.py）。
 markers = [
     "gpu: 需要真 CUDA 设备（无卡环境自动 skip；`-m gpu` 只跑这些）",
 ]
@@ -119,8 +119,8 @@ module = [
     "graspo.flow.backend.native.models.qwen35_36.generation",
     "graspo.flow.backend.native.models.qwen35_36.logprobs",
     "graspo.flow.backend.native.models.qwen35_36.pipeline_forward",
-    "graspo.flow.trainer.rollout",
-    "graspo.flow.trainer.optimize",
-    "graspo.flow.trainer.checkpoint",
+    "graspo.flow.backend.native.trainer.rollout",
+    "graspo.flow.backend.native.trainer.optimize",
+    "graspo.flow.backend.native.trainer.checkpoint",
 ]
 ignore_errors = true

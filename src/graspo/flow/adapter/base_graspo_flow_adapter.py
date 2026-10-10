@@ -9,7 +9,7 @@ from typing import Any
 
 import torch
 
-from graspo.flow.runtime import NativeGeneration
+from graspo.flow.backend.native.runtime import NativeGeneration
 from graspo.ripple.parsing.completion import ParsedCompletion
 
 

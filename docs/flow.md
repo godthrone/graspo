@@ -126,8 +126,8 @@ Flow 不是单一执行载体：同一套配置与算法核（`ripple`）可以�
 
 ```mermaid
 flowchart TB
-    subgraph PARALLEL["flow/parallel/ — 进程组管理"]
-        PS["state.py<br/>GraspoFlowState<br/>tp_group / dp_group / pp_group<br/>pp_group_fwd / pp_group_bwd"]
+    subgraph PARALLEL["flow/backend/native/parallel/ — 进程组管理"]
+        PS["parallel_state.py<br/>GraspoFlowState<br/>tp_group / dp_group / pp_group"]
         TU["tensor_utils.py<br/>TP all-reduce / SP 原语 / DP all-reduce"]
         PC["pipeline_comm.py<br/>PipelineComm（异步 P2P + CUDA stream 重叠 + 背压）"]
     end
@@ -135,7 +135,7 @@ flowchart TB
         TA["transformer_adapter.py<br/>tp_rank / dp_rank / pp_rank<br/>数据分片 / 梯度同步 / checkpoint"]
         MODEL["models/qwen3/ · models/qwen35_36/<br/>training_sft.py · training.py"]
     end
-    subgraph TRAINER["flow/trainer/ — 训练编排"]
+    subgraph TRAINER["flow/backend/native/trainer/ — 训练编排"]
         TR["GraspoFlowTrainer / SftTrainer<br/>epoch 循环 · 数据分片"]
         CKPT["checkpoint.py<br/>DP 分片保存"]
     end
@@ -329,18 +329,16 @@ class PipelineComm:
 ### 4.7 模块结构
 
 ```
-src/graspo/flow/parallel/
-├── __init__.py
-├── state.py                    # GraspoFlowState — 3D rank 拓扑（dp × tp × pp）+ 进程组
-├── tensor_utils.py             # TP/SP/DP 原语 + collate/生成辅助
-├── pipeline_comm.py            # PipelineComm — 异步 P2P + CUDA stream 重叠 + 背压
-├── placement_plan.py           # NativePlacementPlan — 层放置规划
-├── rendezvous_watchdog.py      # PP rollout 无进展看门狗
-└── scheduling/                 # 调度层（策略模式）
-    ├── __init__.py             # 重导出 PipelineScheduler / OneFOneBScheduler / build_scheduler
-    ├── pipeline_scheduler.py   # PipelineScheduler ABC（契约）
-    ├── one_f_one_b_scheduler.py# OneFOneBScheduler（1F1B，默认/唯一）
-    └── factory.py              # 按配置构建调度策略（预留 interleaved 等）
+src/graspo/flow/backend/native/parallel/
+├── __init__.py            # 对外开放 API
+├── parallel_state.py      # 3D rank 拓扑（dp × tp × pp）
+├── tensor_utils.py        # TP/SP/DP 原语
+├── pipeline_comm.py       # PipelineComm — 异步 P2P 通信 + CUDA stream 重叠（设施层）
+└── scheduling/            # 调度层（策略模式）
+    ├── __init__.py        # 重导出 PipelineScheduler + 工厂
+    ├── base.py            # PipelineScheduler ABC（契约）
+    ├── one_f_one_b.py     # OneFOneBScheduler（1F1B，默认）
+    └── factory.py         # 按配置构建调度策略（预留 interleaved 等）
 ```
 
 ---

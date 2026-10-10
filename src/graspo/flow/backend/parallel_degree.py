@@ -13,7 +13,7 @@
   ``dp_size`` / ``dp_rank`` / ``tp_*`` / ``pp_*`` 九個字段（宪法 §1.4）。
 
 值来源：``config.native.{tp_size,dp_size,pp_size}``（世界大小与各维规模）与
-``flow/parallel/state.py::GraspoFlowState``（setup 后的真实规模与秩）。
+``flow/backend/native/parallel/state.py::GraspoFlowState``（setup 后的真实规模与秩）。
 """
 
 from __future__ import annotations

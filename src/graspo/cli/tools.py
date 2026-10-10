@@ -25,7 +25,7 @@ from graspo.cli.analysis import (
 from graspo.core.result_judge import PIPELINE_TRAIN_METRICS_PHASE
 from graspo.core.schema import GraspoConfig, Sample
 from graspo.flow.data_io import load_jsonl
-from graspo.flow.runtime import GraspoFlowRuntime
+from graspo.flow.backend.native.runtime import GraspoFlowRuntime
 from graspo.ripple.parsing.completion import ParsedCompletion, raw_parsed_completion
 from graspo.ripple.reward.reward import RewardConfig, create_reward
 

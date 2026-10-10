@@ -9,8 +9,8 @@ from torch import nn
 from torch.utils.checkpoint import checkpoint as activation_checkpoint
 
 if TYPE_CHECKING:
-    from graspo.flow.parallel.placement_plan import NativePlacementPlan
-    from graspo.flow.parallel.tensor_utils import SafetensorIndex
+    from graspo.flow.backend.native.parallel.placement_plan import NativePlacementPlan
+    from graspo.flow.backend.native.parallel.tensor_utils import SafetensorIndex
 
 from graspo.flow.backend.native.models.common.base import QwenFamilyBase
 from graspo.flow.backend.native.models.common.layers_qwen3 import (
@@ -18,7 +18,7 @@ from graspo.flow.backend.native.models.common.layers_qwen3 import (
     TensorParallelQwenDecoderLayer,
     _checkpoint_decoder_layer_forward,
 )
-from graspo.flow.parallel.tensor_utils import (
+from graspo.flow.backend.native.parallel.tensor_utils import (
     _dtype_size,
     _position_ids,
     _selected_token_log_probs_from_hidden,

@@ -13,12 +13,12 @@ from torch.nn.utils.rnn import pad_sequence
 from graspo.core.lora import resolve_lora_target_modules
 from graspo.flow.backend.native.models.common.model_builders import build_native_qwen_model
 from graspo.flow.backend.native.transformer_model_adapter import TransformerModelAdapter
-from graspo.flow.lora.lora_helpers import native_qwen_lora_available_targets
-from graspo.flow.lora.lora_io import load_peft_adapter_into_native_model
-from graspo.flow.parallel.placement_plan import (
+from graspo.flow.backend.native.lora.lora_helpers import native_qwen_lora_available_targets
+from graspo.flow.backend.native.lora.lora_io import load_peft_adapter_into_native_model
+from graspo.flow.backend.native.parallel.placement_plan import (
     build_placement_plan,
 )
-from graspo.flow.parallel.tensor_utils import (
+from graspo.flow.backend.native.parallel.tensor_utils import (
     SafetensorIndex,
     _broadcast_and_pad_finished,
     _left_pad_token_rows,
@@ -27,7 +27,7 @@ from graspo.flow.parallel.tensor_utils import (
     collate_experiences,
 )
 from graspo.flow.progress_metrics import grad_count_event, training_norm_event
-from graspo.flow.runtime import NativeGeneration
+from graspo.flow.backend.native.runtime import NativeGeneration
 from graspo.ripple.buffer import Experience
 from graspo.ripple.parsing.completion import ParsedCompletion
 from graspo.ripple.parsing.qwen_tool_parser import parse_qwen_tool_completion
@@ -431,8 +431,8 @@ class Qwen3ModelAdapter(TransformerModelAdapter):
             self._sync_timing()
             backward_started_at = time.monotonic()
             loss.backward()
-            from graspo.flow.lora.lora_linear import _sync_nonsharded_lora_grads
-            from graspo.flow.parallel.tensor_utils import _TENSOR_PARALLEL_GROUP
+            from graspo.flow.backend.native.lora.lora_linear import _sync_nonsharded_lora_grads
+            from graspo.flow.backend.native.parallel.tensor_utils import _TENSOR_PARALLEL_GROUP
 
             if _TENSOR_PARALLEL_GROUP is not None:
                 _sync_nonsharded_lora_grads(self.model, _TENSOR_PARALLEL_GROUP)

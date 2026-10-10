@@ -27,9 +27,9 @@ from graspo.flow.backend.native.models.common.grad_probe import (
 from graspo.flow.backend.native.models.common.layers import _log_cuda_mem
 from graspo.flow.backend.native.models.qwen35_36.helpers import collate_sft_batch
 from graspo.flow.backend.native.models.qwen35_36.model import Qwen35HybridTextModel
-from graspo.flow.parallel.pipeline_comm import PipelineComm, wait_all
-from graspo.flow.parallel.scheduling import build_scheduler
-from graspo.flow.parallel.tensor_utils import (
+from graspo.flow.backend.native.parallel.pipeline_comm import PipelineComm, wait_all
+from graspo.flow.backend.native.parallel.scheduling import build_scheduler
+from graspo.flow.backend.native.parallel.tensor_utils import (
     _new_pipeline_stage_timing,
     _round_pipeline_stage_timing,
 )
@@ -191,11 +191,11 @@ class _Qwen35SFTTrainingMethods:
         Returns:
             (grad_norm_sum, optimizer_steps, nonzero_grad_count)
         """
-        from graspo.flow.lora.lora_linear import (
+        from graspo.flow.backend.native.lora.lora_linear import (
             _sync_dp_lora_grads,
             _sync_nonsharded_lora_grads,
         )
-        from graspo.flow.parallel.tensor_utils import (
+        from graspo.flow.backend.native.parallel.tensor_utils import (
             _TENSOR_PARALLEL_GROUP,
             _TENSOR_PARALLEL_SIZE,
         )
@@ -595,7 +595,7 @@ class _Qwen35SFTTrainingMethods:
         # 释放（`records[chunk_idx] = None`），**事后取不到**。
         # 成本与纪律：每 chunk ≤4 个张量 × (isfinite + max|·|) 两次本地归约；**不改张量、
         # 不改数值、无任何集合通信**；读数**只进诊断行**（首步探针 / 失败步）⇒ 健康步
-        # 不新增行、不新增键（见 tests/flow/trainer/test_grad_fail_closed.py 的钉子）。
+        # 不新增行、不新增键（见 tests/flow/backend/native/trainer/test_grad_fail_closed.py 的钉子）。
         exchange_readings: list[dict[str, Any]] = []
         # #1b（2026-09-23 裁定）：**发送完成后**再读一次同一 buffer，用于分离
         # "我们的读数时刻不对（仪器问题甲）" 与 "通信真不保真（乙）"。

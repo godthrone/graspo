@@ -15,7 +15,7 @@ from typing import Any
 import torch
 from torch import nn
 
-from graspo.flow.lora.lora_linear import LoRALinear
+from graspo.flow.backend.native.lora.lora_linear import LoRALinear
 
 #: 权重范数分块大小（元素数）。单块 fp64 临时张量 = 8 × 该值 ≈ 64 MiB。
 #: 取值理由是显存安全：``embed_tokens``/``lm_head`` 各 1.017e9 参数，一次性

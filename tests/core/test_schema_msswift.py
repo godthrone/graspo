@@ -17,7 +17,7 @@ import pytest
 from pydantic import ValidationError
 
 from graspo.core.schema import GraspoConfig, MsSwiftConfig, MsSwiftMegatronConfig
-from graspo.flow.msswift._config_mapping import (
+from graspo.flow.backend.msswift._config_mapping import (
     _MEGATRON_PASSTHROUGH,
     _MSSWIFT_RLHF_ONLY,
     _MSSWIFT_SCALAR_PASSTHROUGH,
@@ -28,6 +28,7 @@ _MAPPING_SOURCE = (
     / "src"
     / "graspo"
     / "flow"
+    / "backend"
     / "msswift"
     / "_config_mapping.py"
 )
@@ -112,7 +113,7 @@ def test_every_msswift_field_is_consumed_by_the_mapping():
       **模式条件消费**——只在 ``full`` 分支里 ``_extend``，LoRA 分支必须逐字不变。
       因此**绝不能**放进 ``_MSSWIFT_SCALAR_PASSTHROUGH``（那会让 LoRA 路径也产出这两个
       flag，破坏上游行为不变），必须在 full 分支单独注入。行为侧由
-      ``tests/flow/msswift/test_full_param_mapping.py`` 全量覆盖；这里补一条源码级断言，
+      ``tests/flow/backend/msswift/test_full_param_mapping.py`` 全量覆盖；这里补一条源码级断言，
       保证例外清单里的字段**在映射层真的被消费**（写下名字却没实现 = 假配置回归）。
     """
     source = _MAPPING_SOURCE.read_text(encoding="utf-8")

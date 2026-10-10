@@ -1,7 +1,7 @@
 """``tests/trainmethod`` 的收集期垫片：让 CPT / OPD 通道的**纯逻辑**测试在本机无 torch 时可跑。
 
 **为什么要它**：``graspo/__init__.py`` → ``graspo.ripple.algorithm_core`` → ``torch``；
-``graspo/flow/__init__.py`` → ``graspo.flow.runtime`` → ``torch``。本机（开发机）没有
+``graspo/flow/__init__.py`` → ``graspo.flow.backend.native.runtime`` → ``torch``。本机（开发机）没有
 torch，因此任何 ``import graspo.*`` / ``import graspo.flow.*`` 都会在**收集期**失败。
 但本目录断言的全是**纯计算**：配置模型校验、``(train_method, backend)`` 路由解析、
 graspo 配置 → ms-swift 参数向量的映射、数据集行形态——这些必须在 CPU 上独立可测
@@ -34,8 +34,8 @@ _SRC_ROOT = Path(__file__).resolve().parents[2] / "src" / "graspo"
 #: 需要"跳过 __init__、但保留真实 __path__"的包命名空间（模块名, 相对 src/graspo 的目录）。
 #: 覆盖本目录用到的三条导入链：
 #:   schema  → graspo.core.schema（它经 graspo.ripple.reward.reward 取奖励注册表）
-#:   mapping → graspo.flow.msswift._config_mapping（纯计算）+ _rope_compat（纯计算）
-#:   dataset → graspo.flow.msswift.dataset（+ ripple.parsing / ripple.multimodal 的同源函数）
+#:   mapping → graspo.flow.backend.msswift._config_mapping（纯计算）+ _rope_compat（纯计算）
+#:   dataset → graspo.flow.backend.msswift.dataset（+ ripple.parsing / ripple.multimodal 的同源函数）
 _PACKAGE_NAMESPACES: tuple[tuple[str, str], ...] = (
     ("graspo", "."),
     ("graspo.core", "core"),
@@ -44,7 +44,7 @@ _PACKAGE_NAMESPACES: tuple[tuple[str, str], ...] = (
     ("graspo.ripple.parsing", "ripple/parsing"),
     ("graspo.ripple.multimodal", "ripple/multimodal"),
     ("graspo.flow", "flow"),
-    ("graspo.flow.msswift", "flow/msswift"),
+    ("graspo.flow.backend.msswift", "flow/backend/msswift"),
 )
 
 

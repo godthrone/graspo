@@ -12,7 +12,7 @@ ms-swift 4.5.3 的 GKD 每个 batch 先丢一次硬币决定数据来源
 
 ``_get_random_num``（同文件 ``:435-448``）是 ``random.Random(seed + global_step).random()``，
 上游默认 ``lmbda = 0.5``（``arguments/rlhf_args.py:262``）。graspo 的 OPD 数据是
-**纯提示词**（``flow/msswift/dataset.py::build_opd_rows``）——DATASET 分支按定义要
+**纯提示词**（``flow/backend/msswift/dataset.py::build_opd_rows``）——DATASET 分支按定义要
 消费"数据集里的回答"，纯提示词行没有回答 ⇒ 全部 label 为 ``-100`` ⇒
 ``extract_active`` 取到 0 行 ⇒ ``jsd_loss``（``gkd_loss.py:121-122``）直接返回
 ``s_logits.new_zeros(())``（**detached**，没有 ``grad_fn``）⇒ ``gkd_trainer.py:113``
@@ -39,12 +39,12 @@ from types import SimpleNamespace
 import pytest
 
 from graspo.core.schema import GraspoConfig
-from graspo.flow.msswift._config_mapping import (
+from graspo.flow.backend.msswift._config_mapping import (
     DEFAULT_OPD_LMBDA,
     graspo_to_ms_swift_argv,
     validate_combinations,
 )
-from graspo.flow.msswift.dataset import build_opd_rows
+from graspo.flow.backend.msswift.dataset import build_opd_rows
 
 STUDENT = "/models/Qwen3.5-9B"
 TEACHER = "/models/Qwen3.8-27B"

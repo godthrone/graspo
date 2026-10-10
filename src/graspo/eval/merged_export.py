@@ -9,7 +9,7 @@ PEFT/LoRA 目录（**本模块补齐的缺口**，用 peft + transformers 合并
 **为什么需要这个模块**
 
 现状缺口（实测确证）：``graspo export`` 只认 native 的 ``graspoflow-lora`` 格式
-（``flow/lora/lora_io.py::export_from_checkpoint``），而 SFT 走 ms-swift 后端时
+（``flow/backend/native/lora/lora_io.py::export_from_checkpoint``），而 SFT 走 ms-swift 后端时
 产物是标准的 HuggingFace PEFT 目录（``adapter_config.json`` + ``adapter_model.safetensors``）。
 没有这座桥，SFT 的 checkpoint 无法进入评测链路。
 
@@ -69,7 +69,7 @@ BASE_CONFIG_FILENAME = "config.json"
 #: 底座 config 里声明视觉塔的字段。多重判据**任一命中即算多模态**，不猜（§2.2 显式）。
 #:
 #: * ``has_vision_config`` —— 本项目既有约定（``flow/backend/native/models/common/model_builders.py``
-#:   把 ``"vision_config" in config`` 写进该字段；``flow/trainer/preflight.py`` 也读它）。
+#:   把 ``"vision_config" in config`` 写进该字段；``flow/backend/native/trainer/preflight.py`` 也读它）。
 #: * ``vision_config`` —— HF 多模态 config 的标准字段（``Qwen3_5Config.vision_config``）。
 #: * ``image_token_id`` / ``video_token_id`` —— 多模态 config 的输入侧标记。
 #: * ``architectures`` 含 ``ConditionalGeneration`` —— 多模态架构名的共同后缀。

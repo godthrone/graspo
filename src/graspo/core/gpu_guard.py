@@ -351,7 +351,7 @@ def assert_gpu_lock(
 
 @dataclass(frozen=True)
 class GpuInventory:
-    """容器内**实测可见卡**的探针结果（见 :func:`probe_gpu_inventory`）。
+    """容器内**实测可见卡**的探针结果（见 ``flow/guard/inventory.probe_gpu_inventory``）。
 
     "实测"意味着不信任环境变量：runtime 会重编号，容器内本地序号与宿主卡号
     可以完全不同（宿主 GPU2 → 容器 index 0）。这里只带**容器命名空间内**的

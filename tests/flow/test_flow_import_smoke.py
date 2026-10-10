@@ -43,7 +43,7 @@ FLOW_SUBMODULES = _flow_submodules()
 def test_flow_has_submodules() -> None:
     """防呆的前提：遍历确实拿到了模块集合（避免"空集合 ⇒ 全绿"的假通过）。"""
     assert FLOW_SUBMODULES, "未发现任何 graspo.flow 子模块——测试本身失效了"
-    assert "graspo.flow.backend_selection" in FLOW_SUBMODULES
+    assert "graspo.flow.backend.selection" in FLOW_SUBMODULES
 
 
 @pytest.mark.parametrize("module_name", FLOW_SUBMODULES)

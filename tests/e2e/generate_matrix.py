@@ -123,7 +123,7 @@ class ConfigDirForeignEntryError(RuntimeError):
 #: ★ 为什么必须是 `/out/gpu`（RUN_DIR 直下）而**不能**是 `<training.output_dir>/gpu`：
 #:   矩阵档一律 `overwrite_output_dir: true`，训练进程启动时对**非空**的
 #:   `<training.output_dir>` 执行 `shutil.rmtree(out)`
-#:   （`src/graspo/flow/lora/lora_io.py::prepare_output_dir`）。采样器先于 torchrun
+#:   （`src/graspo/flow/backend/native/lora/lora_io.py::prepare_output_dir`）。采样器先于 torchrun
 #:   启动，若落点在该子树内，则采样器刚建好的目录会被整棵删掉，首个 `append_jsonl`
 #:   即 ENOENT——228 真机实测首错签名：`gpu_monitor.py:621 ... '/out/T010/gpu/gpu_memory.jsonl'`
 #:   （2026-09-20，task-e6-nan-verdict 真跑日志）。落点放在 RUN_DIR 直下即与训练
@@ -362,7 +362,7 @@ def lora_target_preset(tier: dict[str, Any]) -> str:
       【实测证据】T028 修复前失败态：`language_safe` ⇒ 0 个可训视觉参数 ⇒
       `RuntimeError: multimodal preflight failed: no trainable visual parameters found`；
       换 `vision_common` ⇒ **同一段代码**产出 28 个可训视觉参数
-      （见 `tests/flow/lora/test_visual_lora_trainable.py`）。
+      （见 `tests/flow/backend/native/lora/test_visual_lora_trainable.py`）。
     - **"只训语言塔"仍是合法组合**：模型无视觉塔、或数据是纯文本时条件不成立，
       仍下发 ``language_safe``——不得无条件改成视觉预设。
 
@@ -504,7 +504,7 @@ NATIVE_ROLLOUT_QUEUE_BATCH_SIZE = 8
 #: **不是新造的口径**：它与 ``src/graspo/core/schema.py`` 的
 #: ``replay_buffer_optimize_threshold`` 属性**同式同值**——该属性返回
 #: ``rollout_queue_batch_size × rollout_group_size``（``schema.py:389-390``），
-#: 消费点是 ``flow/trainer/optimize.py`` 的 ``len(replay_buffer) >= threshold``。
+#: 消费点是 ``flow/backend/native/trainer/optimize.py`` 的 ``len(replay_buffer) >= threshold``。
 #: 生成器不导入 schema（见上）⇒ 就地按同一算式展开；parity 由源码文本级测试兜住。
 NATIVE_REPLAY_BUFFER_OPTIMIZE_THRESHOLD = NATIVE_ROLLOUT_QUEUE_BATCH_SIZE * ROLLOUT_GROUP_SIZE
 
@@ -523,7 +523,7 @@ CPT_OPD_UNBLOCKED_NOTE = (
 
 #: CPT（继续预训练）走了 ms-swift 的 `swift pt` 通道（= `swift sft --use_chat_template false
 #: --loss_scale all`）。数据集形态是**纯文本续训行**，由
-#: `flow/msswift/dataset.py::build_cpt_rows` 从 ELAM V5 形态的样本摊平得到。
+#: `flow/backend/msswift/dataset.py::build_cpt_rows` 从 ELAM V5 形态的样本摊平得到。
 CPT_NOTE = (
     CPT_OPD_UNBLOCKED_NOTE + " 数据形态：ms-swift 官方预训练行（单条 assistant 纯文本 + 媒体块）。"
     "**★ 语料口径（不得误读）**：本档用的是 **ELAM V5 形态**的指令数据摊平后的纯文本，"
@@ -842,13 +842,13 @@ def _repeats_dataset_by_rollout_group(tier: dict[str, Any]) -> bool:
     """该档是否走 ms-swift 的 **RLHF/GRPO** 路径（= 唯一会把数据集按 G 重复的路径）。
 
     **逐路径核实，不做一刀切**（2026-09-20，真机证据见下）：
-      · **ms-swift**：``flow/msswift/_config_mapping.py`` 只有 ``stage == "rlhf"`` 分支
+      · **ms-swift**：``flow/backend/msswift/_config_mapping.py`` 只有 ``stage == "rlhf"`` 分支
         下发 ``--num_generations`` / ``--generation_batch_size`` / ``--steps_per_generation``，
         该 stage 只被 ``msswift/trainer.py``（GRASPO 训练器）使用
         （``sft_trainer`` / ``cpt_trainer`` / ``opd_trainer`` 各传
         ``"sft"`` / ``"cpt"`` / ``"opd"``）
         ⇒ 判据 = ``train_method == "graspo"`` **且 backend 走 ms-swift**。
-      · **native 的 GRASPO 档不重复**：``flow/trainer/trainer.py`` 按
+      · **native 的 GRASPO 档不重复**：``flow/backend/native/trainer/trainer.py`` 按
         ``rollout_queue_batch_size × rollout_group_size`` 归组，**每个 optimizer step
         消费固定条数 prompt**；真机 ``T028``（native/9B/1卡）的 ``events.jsonl`` 逐字：
         ``samples_seen`` 8 → 16、``samples_total`` 20、``optimizer_steps_per_rank`` 1
@@ -866,7 +866,7 @@ def _is_native_graspo(tier: dict[str, Any]) -> bool:
     """该档是否走 **native 训练器的 GRASPO** 路径。
 
     判据含 **backend**（不只是算法），依据与 :func:`_repeats_dataset_by_rollout_group`
-    同源：``flow/trainer/trainer.py`` 是 native 侧唯一的 GRASPO 训练器，它**不重复数据集**，
+    同源：``flow/backend/native/trainer/trainer.py`` 是 native 侧唯一的 GRASPO 训练器，它**不重复数据集**，
     而是按 ``rollout_queue_batch_size × rollout_group_size`` 归组、**阈值触发才出一步**
     （见 :func:`native_graspo_steps_per_epoch`）。ms-swift 侧走的是另一条路径
     （``RepeatSampler`` 重复数据集），**不得**共用本判据。
@@ -917,15 +917,15 @@ def native_graspo_steps_per_epoch(tier: dict[str, Any]) -> int:
 
     代码依据（**函数名/字段名为锚，行号会漂移**）：
 
-      · DP 分片：``flow/trainer/trainer.py`` 的
+      · DP 分片：``flow/backend/native/trainer/trainer.py`` 的
         ``epoch_samples = epoch_samples[adapter.dp_rank :: adapter.dp_size]``；
       · 每条 prompt 追加 ``G`` 条 experience、且非 trainable 的 prompt **不进** buffer：
-        ``flow/trainer/rollout.py`` 的 ``_append_experiences`` / 三条 early-return；
+        ``flow/backend/native/trainer/rollout.py`` 的 ``_append_experiences`` / 三条 early-return；
       · 阈值 = ``rollout_queue_batch_size × rollout_group_size``：
         ``schema.py`` 的 ``replay_buffer_optimize_threshold``，消费在
-        ``flow/trainer/optimize.py`` 的 ``len(replay_buffer) >= threshold``
+        ``flow/backend/native/trainer/optimize.py`` 的 ``len(replay_buffer) >= threshold``
         ⇒ 触发 ``floor(P×G / (Q×G)) = floor(P/Q)`` 次；
-      · epoch 末无条件 force：``flow/trainer/trainer.py`` 的
+      · epoch 末无条件 force：``flow/backend/native/trainer/trainer.py`` 的
         ``self._maybe_optimize(epoch=..., force=True)``；``optimize.py`` 的
         ``local_wants_train = (force and len(replay_buffer) > 0) or ...``
         ⇒ **只要 buffer 非空就恰好 +1 步**（与 buffer 里剩多少条无关）。
@@ -1173,7 +1173,7 @@ def checkpoint_save_steps(tier: dict[str, Any]) -> int:
     ★ **native GRASPO 那 9 档是刻意的例外**：它们的计划值（``T028``=20、``T030``=5）**大于**
     可达上限（3 / 1）⇒ ``save_steps`` **永不触发** ⇒ native 不落中间段、只落终态 ``final/``。
     这正是保留策略要的形态：容器内保留块**只清 ``checkpoint-*``**，而 native 的中间段叫
-    ``step_<N>``（``flow/trainer/optimize.py``）——一旦计划值压到可达上限，每档会真落
+    ``step_<N>``（``flow/backend/native/trainer/optimize.py``）——一旦计划值压到可达上限，每档会真落
     ``step_<N>`` + ``final/`` = **2 份重 ckpt**，与 ``keep_per_tier = 1`` 冲突，且
     ``T034/T035/T036`` 是全参 9B，代价最大。⇒ 计划值偏大**不是缺陷**（旧值无害）。
 
@@ -3840,8 +3840,8 @@ fi
 
 # 1) **由配置自身反推挂载目的地**（单一真相源，不硬编码目的地）：
 #    相对媒体路径的锚点口径（native 与 ms-swift **共用同一条**）是"训练 JSONL 的父目录"
-#    （native: flow/trainer/sft_trainer.py 的 Path(train_path).parent；
-#      ms-swift: flow/msswift/dataset.py. 两处说的是同一件事，本脚本只认这一条）。
+#    （native: flow/backend/native/trainer/sft_trainer.py 的 Path(train_path).parent；
+#      ms-swift: flow/backend/msswift/dataset.py. 两处说的是同一件事，本脚本只认这一条）。
 #    ELAM V5 的样本把图像写作 `../images/<file>.jpg` ⇒ 容器内必须让
 #    `dirname(train_path)/../images` 可达。因此：
 #      TRAIN_PATH_DIR_CONTAINER = dirname(train_path)          ← 子集的宿主目录挂到这里
@@ -4152,7 +4152,7 @@ retain_single_checkpoint() {{
         #   照防呆约束**不写裸反引号/裸美元符**）：
         #     · scripts/collect_results.py 的 NATIVE_CHECKPOINT_DIRNAME = "final"
         #       （find_checkpoint_dirs 对 native 就用 rglob("final") 找）；
-        #     · src/graspo/flow/trainer/trainer.py 的 _save_checkpoint(output_dir / "final")。
+        #     · src/graspo/flow/backend/native/trainer/trainer.py 的 _save_checkpoint(output_dir / "final")。
         #   native 只落**一份**终态 ⇒ **没有"中间段"要删除**，但它**确实有产物** ⇒
         #   不得记 missing（那是"假失败"：训练成功却 rc=4，会污染台账，
         #   见 2026-09-20 复核 N2）。

@@ -4,7 +4,7 @@
 - 本表只是"包未 pip install"时的开发回退；
 - **入口**：`graspo.flow.__init__` 导入本模块即完成注册（幂等）。
 
-⚠ 目录搬迁（P2：`flow/trainer` → `flow/backend/native/trainer` 等）时**必须同步本表**
+⚠ 目录搬迁（P2：`flow/backend/native/trainer` → `flow/backend/native/trainer` 等）时**必须同步本表**
 ——这是重构期最容易漏的接线（§1.4 单一真相源）。
 """
 
@@ -22,8 +22,8 @@ register_dev_fallbacks(
 register_dev_fallbacks(
     "graspo.backends",
     {
-        "native": "graspo.flow.backend_selection:create_native_trainer",
-        "msswift": "graspo.flow.msswift.trainer:create_msswift_trainer",
+        "native": "graspo.flow.backend.selection:create_native_trainer",
+        "msswift": "graspo.flow.backend.msswift.trainer:create_msswift_trainer",
     },
 )
 # SFT 后端注册表：与 RL（graspo.backends）分开登记，因为两者的训练器形状不同
@@ -32,22 +32,22 @@ register_dev_fallbacks(
 register_dev_fallbacks(
     "graspo.sft_backends",
     {
-        "native": "graspo.flow.trainer.sft_trainer:create_native_sft_trainer",
-        "msswift": "graspo.flow.msswift.sft_trainer:create_msswift_sft_trainer",
+        "native": "graspo.flow.backend.native.trainer.sft_trainer:create_native_sft_trainer",
+        "msswift": "graspo.flow.backend.msswift.sft_trainer:create_msswift_sft_trainer",
     },
 )
 # CPT（继续预训练）：走 ms-swift 的预训练管线；**只有 ms-swift 实现**。
 register_dev_fallbacks(
     "graspo.cpt_backends",
     {
-        "msswift": "graspo.flow.msswift.cpt_trainer:create_msswift_cpt_trainer",
+        "msswift": "graspo.flow.backend.msswift.cpt_trainer:create_msswift_cpt_trainer",
     },
 )
 # OPD（on-policy 蒸馏）：走 ms-swift 的 GKD 路径；**只有 ms-swift 实现**。
 register_dev_fallbacks(
     "graspo.opd_backends",
     {
-        "msswift": "graspo.flow.msswift.opd_trainer:create_msswift_opd_trainer",
+        "msswift": "graspo.flow.backend.msswift.opd_trainer:create_msswift_opd_trainer",
     },
 )
 # ★ native 后端的**默认值**（X4：`core/schema.py` 不得硬编码 flow 路径）

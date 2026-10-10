@@ -11,9 +11,9 @@ from torch import nn
 from torch.nn import functional as F  # noqa: N812
 
 from graspo.flow.backend.native.models.common.layers_qwen3 import TensorParallelQwenMLP
-from graspo.flow.lora.lora_helpers import _lora_target_enabled
-from graspo.flow.lora.lora_linear import LoRALinear
-from graspo.flow.parallel.tensor_utils import (
+from graspo.flow.backend.native.lora.lora_helpers import _lora_target_enabled
+from graspo.flow.backend.native.lora.lora_linear import LoRALinear
+from graspo.flow.backend.native.parallel.tensor_utils import (
     _all_gather_sp,
     _all_reduce_tp,
     _apply_mask_to_padding_states,
@@ -47,7 +47,7 @@ def _log_cuda_mem(label: str) -> None:
 
 
 if TYPE_CHECKING:
-    from graspo.flow.parallel.tensor_utils import SafetensorIndex
+    from graspo.flow.backend.native.parallel.tensor_utils import SafetensorIndex
 
 
 class TensorParallelQwen35DecoderLayer(nn.Module):

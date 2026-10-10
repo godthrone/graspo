@@ -18,11 +18,11 @@ import torch
 from torch import nn
 
 from graspo.flow.backend.native.models.common.native_qwen_config import NativeQwenConfig
-from graspo.flow.lora.lora_linear import _replace_visual_lora_modules
+from graspo.flow.backend.native.lora.lora_linear import _replace_visual_lora_modules
 
 if TYPE_CHECKING:
-    from graspo.flow.parallel.placement_plan import NativePlacementPlan
-    from graspo.flow.parallel.tensor_utils import SafetensorIndex
+    from graspo.flow.backend.native.parallel.placement_plan import NativePlacementPlan
+    from graspo.flow.backend.native.parallel.tensor_utils import SafetensorIndex
 
 
 def load_native_qwen_config(model_path: Path) -> NativeQwenConfig:

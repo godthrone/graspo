@@ -33,6 +33,10 @@ from graspo.core.gpu_guard import (
     resolve_gpu_plan,
 )
 from graspo.flow.guard.idle import assert_gpu_idle
+from graspo.flow.guard.inventory import (
+    parse_visible_device_indices,
+    probe_gpu_inventory,
+)
 from graspo.flow.guard.lock import (
     assert_gpu_lock_from_env,
     assert_gpu_lock_inventory,
@@ -68,6 +72,8 @@ __all__ = [
     "resolve_gpu_plan",
     # 设施操作（实现住本包）
     "assert_gpu_idle",
+    "parse_visible_device_indices",
+    "probe_gpu_inventory",
     "assert_gpu_lock_from_env",
     "assert_gpu_lock_inventory",
     "assert_inventory_visible",

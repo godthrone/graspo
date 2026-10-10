@@ -25,7 +25,7 @@ import pytest
 pytest.importorskip("torch", reason="native runtime config validation needs torch")
 
 from graspo.core.schema import GraspoConfig  # noqa: E402
-from graspo.flow.runtime import validate_native_runtime_config  # noqa: E402
+from graspo.flow.backend.native.runtime import validate_native_runtime_config  # noqa: E402
 
 #: T035 档位形状（9B · GRASPO · 全参 · native · 2 卡 ⇒ pp_size=2）。
 _T035_SHAPED: dict[str, Any] = {

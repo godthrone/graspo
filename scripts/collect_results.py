@@ -2010,7 +2010,7 @@ def collect_run(
     fail_closed_guarantee = ""
     if exit_code == 0 and _NATIVE_SFT_PATH_MARKER.search(log_text or ""):
         evidence_c = (
-            "src/graspo/flow/trainer/sft_trainer.py:402-415 (_assert_no_frozen_steps："
+            "src/graspo/flow/backend/native/trainer/sft_trainer.py:402-415 (_assert_no_frozen_steps："
             "有跳过则落盘前必然 raise) + "
             "src/graspo/flow/backend/native/models/qwen35_36/training_sft.py:313 "
             "(_record_nonfinite_skip：默认硬失败)"

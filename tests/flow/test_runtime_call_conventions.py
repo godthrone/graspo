@@ -7,7 +7,7 @@ Any，Any 调用不检查参数形式）。本测试锁定 runtime 转发必须�
 
 from typing import Any
 
-from graspo.flow.runtime import GraspoFlowRuntime
+from graspo.flow.backend.native.runtime import GraspoFlowRuntime
 
 
 class _FakeAdapter:

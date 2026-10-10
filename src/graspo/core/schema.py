@@ -164,7 +164,7 @@ def validate_tuner_type_combination(
        已训好的 LoRA"，全参模式的语义里没有可挂载的适配器；两者同时出现必然是配置
        写错，必须当场报错而不是静默忽略其中一个。
     2. ``native`` 后端的 ``full`` 目前**只支持 PP 分片**（``tp_size>1`` 或
-       ``dp_size>1`` 一律拒绝）。原因是既有梯度同步实现（``flow/lora/lora_linear.py``
+       ``dp_size>1`` 一律拒绝）。原因是既有梯度同步实现（``flow/backend/native/lora/lora_linear.py``
        的 ``_sync_dp_lora_grads`` / ``_sync_nonsharded_lora_grads``）**只覆盖 LoRA
        参数**：全参下 DP 副本的基座梯度不会 all-reduce（静默训错），TP 各 rank 的
        分片基座梯度同步语义也未经适配。让它们在"没同步"的状态下跑起来比拒绝更危险
@@ -379,8 +379,8 @@ class TrainingConfig(BaseModel):
     top_p: float = 1.0
     # §2.2 空值语义例外（已注明理由）：`-1` 不是"缺省/无效"哨兵，而是本领域
     # 沿用已久的**取值语义**——"每 N 个优化步存一次 ckpt"，`<= 0` 表示不做阶段性
-    # 保存（消费点统一写作 `save_steps > 0` 判据，见 flow/trainer/optimize.py 与
-    # flow/msswift/_config_mapping.py）。该语义是**已公开的用户侧配置契约**：
+    # 保存（消费点统一写作 `save_steps > 0` 判据，见 flow/backend/native/trainer/optimize.py 与
+    # flow/backend/msswift/_config_mapping.py）。该语义是**已公开的用户侧配置契约**：
     # `samples/configs/` 下 20+ 份样例与 tests/e2e 的 54 档生成器都以
     # `save_steps: -1` 表达"关闭阶段性保存"，`config_example.yaml` 亦如此注释。
     # 换成 `None` 会同时改契约与那些样例，属另一个范围更大的变更，故此处按
@@ -727,8 +727,8 @@ class GraspoFlowConfig(BaseModel):
     #   训练路径的**有界性另有来源**：它的等待对象是"已入队的 NCCL work"，
     #   由 **NCCL 自己的 600s watchdog** 计时；而 P6 的无界形态恰恰是 NCCL 看不见的
     #   "流/事件依赖 + 尚未入队的会合"，只出现在 rollout 的紧会合序列里。
-    #   由 `tests/flow/parallel/test_pp_bounded_wait_scope.py` 的接线守卫钉住。
-    # 唯一转换点：`flow/parallel/pipeline_comm.pp_rendezvous_timeout`（§1.4）。
+    #   由 `tests/flow/backend/native/parallel/test_pp_bounded_wait_scope.py` 的接线守卫钉住。
+    # 唯一转换点：`flow/backend/native/parallel/pipeline_comm.pp_rendezvous_timeout`（§1.4）。
     pp_rollout_p2p_timeout_sec: int = 600
     # ── PP rollout 无进展看门狗（缺陷 P6 的 a4）────────────────────────────
     # 语义：PP rollout 期间连续多少秒**没有任何会合点进展** ⇒ 判定停滞：
@@ -837,7 +837,7 @@ class MsSwiftConfig(BaseModel):
     （一名一物，宪法 §2.2），避免 ``ms_swift`` / ``msswift`` 两个别名。
 
     **单一真相源（§1.4）**：ms-swift 参数只在这一段配置，映射层
-    （``flow/msswift/_config_mapping.py``）只从这一段取值；graspo 既有的
+    （``flow/backend/msswift/_config_mapping.py``）只从这一段取值；graspo 既有的
     ``model`` / ``data`` / ``lora`` / ``training`` 段继续是训练语义的唯一来源，
     两者不重叠、不互相覆盖。
 

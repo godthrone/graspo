@@ -2,7 +2,7 @@
 
 import torch
 
-from graspo.flow.parallel.tensor_utils import (
+from graspo.flow.backend.native.parallel.tensor_utils import (
     _all_gather_sp,
     _all_reduce_tp,
     _reduce_scatter_sp,

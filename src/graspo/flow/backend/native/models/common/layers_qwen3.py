@@ -9,11 +9,11 @@ from torch import nn
 from torch.nn import functional as F  # noqa: N812
 
 if TYPE_CHECKING:
-    from graspo.flow.parallel.tensor_utils import SafetensorIndex
+    from graspo.flow.backend.native.parallel.tensor_utils import SafetensorIndex
 
-from graspo.flow.lora.lora_helpers import _lora_target_enabled
-from graspo.flow.lora.lora_linear import LoRALinear
-from graspo.flow.parallel.tensor_utils import (
+from graspo.flow.backend.native.lora.lora_helpers import _lora_target_enabled
+from graspo.flow.backend.native.lora.lora_linear import LoRALinear
+from graspo.flow.backend.native.parallel.tensor_utils import (
     _all_reduce_tp,
     _apply_rope,
     _causal_attention_mask,

@@ -50,7 +50,7 @@ GRAD_FAIL_LOSS_NONFINITE = "loss_nonfinite"
 #: native PP **首步逐 rank 数值探针**的 phase 名（R3，2026-09-23）。
 #: **唯一真相源是本常量**；字面量同步登记在 ``graspo.core.result_judge.DIAGNOSTIC_PHASES``
 #: （采集侧按文件路径加载该模块、不能 import graspo），由
-#: ``tests/flow/trainer/test_grad_fail_closed.py`` 守住。
+#: ``tests/flow/backend/native/trainer/test_grad_fail_closed.py`` 守住。
 #: 该行**不带** ``metrics``（纯诊断）⇒ 采集侧不会误当逐步指标（§2.2）。
 PP_NUMERIC_PROBE_PHASE = "pp_numeric_probe"
 
@@ -442,7 +442,7 @@ def reduced_grad_flags(
     **为什么收敛成一个函数**（§1.4 单一真相源）：SFT·PP 与 RL·PP 两条路径要做同一件事，
     而"归约语义"（MAX 而非 SUM/MIN）与"无分布式时退化为本地"都是契约；两处各写一遍必然漂移。
     它同时让"跨 rank 判据"可以**零 GPU** 用 gloo 端到端测试（见
-    ``tests/flow/trainer/test_grad_fail_closed.py``）。
+    ``tests/flow/backend/native/trainer/test_grad_fail_closed.py``）。
 
     :param local_report: :func:`grad_finiteness_report` 的返回值
     :param distributed: ``torch.distributed`` 模块（或同形鸭子类型）；``None`` ⇒ 不归约

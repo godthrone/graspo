@@ -21,12 +21,12 @@ import torch.distributed as dist
 from graspo.flow.adapter.base_graspo_flow_adapter import BaseGraspoFlowAdapter
 from graspo.flow.backend.parallel_degree import ParallelDegree
 from graspo.flow.logging import append_jsonl_segment, rank_metrics_filename, run_log_dir
-from graspo.flow.parallel.placement_plan import (
+from graspo.flow.backend.native.parallel.placement_plan import (
     NativePlacementPlan,
     placement_summary,
 )
-from graspo.flow.parallel.state import GraspoFlowState, destroy_parallel_state
-from graspo.flow.parallel.tensor_utils import (
+from graspo.flow.backend.native.parallel.state import GraspoFlowState, destroy_parallel_state
+from graspo.flow.backend.native.parallel.tensor_utils import (
     _cuda_memory_snapshot,
     _jsonable,
     _mean_present,
@@ -34,7 +34,7 @@ from graspo.flow.parallel.tensor_utils import (
     _scale_rollout_timings,
     _set_tensor_parallel_group,
 )
-from graspo.flow.runtime import NativeGeneration
+from graspo.flow.backend.native.runtime import NativeGeneration
 from graspo.ripple.multimodal.rows import attach_rows
 
 logger = logging.getLogger("graspo.flow")
@@ -812,7 +812,7 @@ class TransformerModelAdapter(BaseGraspoFlowAdapter):
             # 为什么（2026-09-20 实测缺陷）：``parallel/state.py`` 只在
             # ``world_size > 1`` 时 ``init_process_group``，所以单卡档走的就是这个
             # 分支。旧实现只回 ``rank_metrics``、**一个 global_* 键都不给**，于是：
-            #   ① ``flow/trainer/sft_trainer.py`` 读 ``metrics["global_loss_mean"]``
+            #   ① ``flow/backend/native/trainer/sft_trainer.py`` 读 ``metrics["global_loss_mean"]``
             #      拿到 None ⇒ stdout 逐步写 ``loss: null grad_norm: null`` +
             #      ``loss_scope: "global"`` —— 一个自称"全局口径"的逐行 null，
             #      被 collector 如实识别为「数值不可得」⇒ A6 fail-closed 判否；
@@ -982,21 +982,21 @@ class TransformerModelAdapter(BaseGraspoFlowAdapter):
         )
 
     def _pipeline_stage_timing(self) -> dict[str, float | int]:
-        from graspo.flow.parallel.tensor_utils import _new_pipeline_stage_timing
+        from graspo.flow.backend.native.parallel.tensor_utils import _new_pipeline_stage_timing
 
         return _new_pipeline_stage_timing()
 
     def _add_pipeline_stage_timing(
         self, timing: dict[str, float | int], key: str, started_at: float
     ) -> None:
-        from graspo.flow.parallel.tensor_utils import _add_pipeline_stage_timing
+        from graspo.flow.backend.native.parallel.tensor_utils import _add_pipeline_stage_timing
 
         _add_pipeline_stage_timing(timing, key, started_at)
 
     def _round_pipeline_stage_timing(
         self, timing: dict[str, float | int]
     ) -> dict[str, float | int]:
-        from graspo.flow.parallel.tensor_utils import _round_pipeline_stage_timing
+        from graspo.flow.backend.native.parallel.tensor_utils import _round_pipeline_stage_timing
 
         return _round_pipeline_stage_timing(timing)
 

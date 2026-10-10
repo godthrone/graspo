@@ -16,9 +16,9 @@ from graspo.flow.backend.native.models.common.grad_probe import (
 )
 from graspo.flow.backend.native.models.common.layers import _log_cuda_mem
 from graspo.flow.backend.native.models.qwen35_36.model import Qwen35HybridTextModel
-from graspo.flow.parallel.pipeline_comm import PipelineComm, wait_all
-from graspo.flow.parallel.scheduling import build_scheduler
-from graspo.flow.parallel.tensor_utils import (
+from graspo.flow.backend.native.parallel.pipeline_comm import PipelineComm, wait_all
+from graspo.flow.backend.native.parallel.scheduling import build_scheduler
+from graspo.flow.backend.native.parallel.tensor_utils import (
     _add_pipeline_stage_timing,
     _new_pipeline_stage_timing,
     _round_pipeline_stage_timing,
@@ -28,6 +28,105 @@ from graspo.flow.parallel.tensor_utils import (
 from graspo.flow.progress_metrics import grad_count_event, training_norm_event
 from graspo.ripple.buffer import Experience
 from graspo.ripple.multimodal.contract import assert_rl_training_has_multimodal
+
+
+# ── K-会合（step 内分段梯度同步；K 默认 4）──────────────────────────────────
+# ★ 语义（证明见 `task-d3-escalation-design/viability.md` §1.2）：
+#   把「每步一次 DP 梯度同步（R-B）」拆成 K 段，段末对**同一个累积缓冲**
+#   （``param.grad`` 本身）做一次 ``all_reduce(AVG)``。AVG 是线性算子，且段间
+#   **不清零** ⇒ K 次归约与 1 次归约在实数算术下逐元素相等：
+#       Σ_k AVG(L_k) == AVG(Σ_k L_k)
+#   五个必要条件（违反任一条即落入 viability.md §1.3 的反例 A–E，且判据看不见）：
+#     ① 段间不清零/不重置  —— 本实现只在循环**前** ``zero_grad`` 一次；
+#     ② 不再除以 K        —— ``loss / num_micro_batches`` 的分母恒为**全步**条数；
+#     ③ 缩放恒为 1/n_total —— 同上，不按段改分母；
+#     ④ 裁剪只在末段之后一次 —— ``clip_grad_norm_`` 仍在 R-B 之后、只执行一次；
+#     ⑤ 归约算子必须是 AVG —— ``lora_linear.py::_sync_dp_lora_grads``（未改动）。
+#   K=1 ⇒ 切点为空 ⇒ 与未分段版本**行为等价**（零新增集合、数值一致）。
+#: 段数的配置来源（环境变量）：>=1 的整数；未设置时用默认值。
+DP_SYNC_SEGMENTS_ENV = "GRASPO_DP_SYNC_SEGMENTS"
+#: 默认段数 K = 4（用户 2026-10-09 批准实施）。
+DEFAULT_DP_SYNC_SEGMENTS = 4
+
+
+def _resolve_dp_sync_segments(env: "Mapping[str, str] | None" = None) -> int:
+    """解析**生效的段数 K**：配置优先，未配置回落默认值；非法取值 fail-loud。
+
+    ⛔ 不静默回落：一个手误的配置会让"每步同步几次"不可预期（宪法 §2.4 操作防呆）。
+    """
+    source = os.environ if env is None else env
+    raw = source.get(DP_SYNC_SEGMENTS_ENV)
+    if raw is None or not raw.strip():
+        return DEFAULT_DP_SYNC_SEGMENTS
+    text = raw.strip()
+    if not text.isdigit() or int(text) < 1:
+        raise ValueError(
+            f"{DP_SYNC_SEGMENTS_ENV}={raw!r} 非法：必须是 >= 1 的整数"
+            "（1 = 不分段，与未分段版本行为等价）"
+        )
+    return int(text)
+
+
+def _dp_sync_segment_cuts(n_total: int, segments: int) -> tuple[int, ...]:
+    """返回本步需要在哪些 micro-batch **迭代序号之前**做段末同步（K−1 个切点）。
+
+    切法（与设计件一致）：按**条数**均分，余数给**前段**——
+    ``base, rem = divmod(n_total, k_eff)``，前 ``rem`` 段各多 1 条。
+    逐 rank 同切法的前提是 ``n_total`` 逐 rank 相等（route 3′ 的 MIN 对齐已保证）。
+    ``k_eff = min(segments, n_total)``：条数少于段数时退化为"每条一次"，数学上仍正确，
+    且切点随 ``n_total`` 确定性生成 ⇒ 逐 rank 同进同出。
+    """
+    if segments < 1:
+        raise ValueError(f"segments 必须 >= 1，收到 {segments}")
+    if n_total <= 0:
+        return ()
+    k_eff = min(int(segments), int(n_total))
+    base, rem = divmod(int(n_total), k_eff)
+    cuts: list[int] = []
+    acc = 0
+    for idx in range(k_eff - 1):
+        acc += base + (1 if idx < rem else 0)
+        if 0 < acc < n_total:
+            cuts.append(acc)
+    return tuple(cuts)
+
+
+def _dp_k_meeting_sync_dp_grads(
+    model: Any,
+    tp_state: Any,
+    *,
+    iter_index: int,
+    cuts: tuple[int, ...],
+    n_total: int,
+) -> bool:
+    """K-会合：若 ``iter_index`` 命中段边界，做一次 **in-place** DP 梯度同步。
+
+    ⛔ **无条件**执行（不看 ``torch.isfinite(loss)``、不看 ``valid_micro_batches``）：
+       段边界只由**迭代序号**决定 ⇒ 逐 rank 同进同出，不产生"条件集合"失配。
+       因此本调用必须放在循环体的**最开头**（``continue`` 跳过不了它）。
+    ⛔ 段间**不清零**：本函数只做 ``all_reduce(AVG)``，累积在既有 ``param.grad`` 上。
+    ⛔ 守卫与 R-B 同域，并额外要求 ``dp_size > 1``：``dp_size == 1``（PP/单卡档，
+       含 ``dp_group`` 为**1 成员组**的 T035/T036 形态）⇒ **0 次新增集合**。
+
+    :returns: 是否真的做了一次同步（供自证计数）。
+    """
+    if iter_index not in cuts:
+        return False
+    if tp_state is None or getattr(tp_state, "dp_group", None) is None:
+        return False
+    if int(getattr(tp_state, "dp_size", 1)) <= 1:
+        return False
+    from graspo.flow.backend.native.lora.lora_linear import _sync_dp_lora_grads  # noqa: PLC0415
+
+    # ★ 只读探针（诊断跑）：段末同步是否发生、在第几条 micro-batch 之后。
+    #   ⛔ 取 rank 必须用 `dist.get_rank()`（硬规矩 15），不得用分维度 rank 字段冒充（E-97）。
+    print(
+        f"[DPSYNC] site=dp_seg_sync rank={dist.get_rank() if dist.is_initialized() else 0} "
+        f"t={time.monotonic():.3f} seg_after={iter_index} n_micro={n_total}",
+        flush=True,
+    )
+    _sync_dp_lora_grads(model, tp_state.dp_group)
+    return True
 
 
 class _Qwen35TrainingMethods:
@@ -146,11 +245,11 @@ class _Qwen35TrainingMethods:
             for param in self.model.parameters():
                 if param.requires_grad and param.grad is None:
                     param.grad = torch.zeros_like(param)
-        from graspo.flow.lora.lora_linear import (
+        from graspo.flow.backend.native.lora.lora_linear import (
             _sync_dp_lora_grads,
             _sync_nonsharded_lora_grads,
         )
-        from graspo.flow.parallel.tensor_utils import (
+        from graspo.flow.backend.native.parallel.tensor_utils import (
             _TENSOR_PARALLEL_GROUP,
             _TENSOR_PARALLEL_SIZE,
         )
@@ -427,11 +526,11 @@ class _Qwen35TrainingMethods:
                     },
                 )
             # DP/TP gradient sync: 跨 rank 同步梯度后再 clip + step
-            from graspo.flow.lora.lora_linear import (
+            from graspo.flow.backend.native.lora.lora_linear import (
                 _sync_dp_lora_grads,
                 _sync_nonsharded_lora_grads,
             )
-            from graspo.flow.parallel.tensor_utils import (
+            from graspo.flow.backend.native.parallel.tensor_utils import (
                 _TENSOR_PARALLEL_GROUP,
                 _TENSOR_PARALLEL_SIZE,
             )

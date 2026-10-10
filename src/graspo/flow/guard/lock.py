@@ -173,7 +173,7 @@ def require_gpu_lock_or_exit(
 
     :param env: 环境映射（``None`` = ``os.environ``）。
     :param inventory_probe: 探测容器内实测可见卡的可调用对象；``None`` 时用
-        ``cli.gpu_monitor.probe_gpu_inventory``（延迟导入，避免本模块依赖设施层）。
+        ``flow.guard.inventory.probe_gpu_inventory``（本层内，无跨层导入）。
         仅在 ``NVIDIA_VISIBLE_DEVICES`` 是 runtime 哨兵值时才会被调用。
     :raises SystemExit: 守卫拒绝（退出码 1，消息原样打印到 stderr）。
     """
@@ -215,7 +215,7 @@ def _probe_inventory_for(
     if not needs_inventory:
         return None
     if probe is None:
-        from graspo.cli.gpu_monitor import probe_gpu_inventory  # noqa: PLC0415
+        from graspo.flow.guard.inventory import probe_gpu_inventory  # noqa: PLC0415
 
         probe = probe_gpu_inventory
     try:

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
-#: 默认模型适配器（native）。格式 ``module:Class``（由 ``flow/runtime.py`` 解析）。
+#: 默认模型适配器（native）。格式 ``module:Class``（由 ``flow/backend/native/runtime.py`` 解析）。
 NATIVE_DEFAULT_ADAPTER = (
     "graspo.flow.backend.native.models.qwen35_36.model_adapter:Qwen35ModelAdapter"
 )

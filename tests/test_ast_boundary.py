@@ -159,10 +159,10 @@ def test_scheduling_does_not_import_models_or_trainer():
     violations: list[str] = []
 
     for edge in all_imports:
-        if _is_under(edge.source, "graspo.flow.parallel.scheduling"):
+        if _is_under(edge.source, "graspo.flow.backend.native.parallel.scheduling"):
             if _is_under(edge.target, "graspo.flow.backend.native.models"):
                 violations.append(f"  {edge.source}:{edge.lineno} imports models: {edge.target}")
-            if _is_under(edge.target, "graspo.flow.trainer"):
+            if _is_under(edge.target, "graspo.flow.backend.native.trainer"):
                 violations.append(f"  {edge.source}:{edge.lineno} imports trainer: {edge.target}")
 
     assert not violations, (
@@ -426,7 +426,7 @@ def _scan_ripple_tree() -> list[str]:
 
 #: 阳性对照用例：每一条**必须**被 scanner 抓住。
 _POSITIVE_CASES: tuple[tuple[str, str], ...] = (
-    ("R1", "from graspo.flow.runtime import GraspoFlowRuntime\n"),
+    ("R1", "from graspo.flow.backend.native.runtime import GraspoFlowRuntime\n"),
     ("R1", "import graspo.eval.guard\n"),
     ("R2", "import torch\ntorch.cuda.is_available()\n"),
     ("R2", "import torch.distributed as dist\ndist.all_reduce(t)\n"),
@@ -451,6 +451,8 @@ _NEGATIVE_CASES: tuple[str, ...] = (
     "import torch\nt = torch.zeros(1)  # 默认 device，无选择语义\n",
     "from graspo.core.schema import Sample\n",
     "from pathlib import Path\np = Path(data_dir) / 'a.png'\n",
+    # ★ 主席 2026-10-10 裁定 3：`pathlib` 纯路径运算（含 `.resolve()`）**允许**，不得误报
+    "from pathlib import Path\np = (Path(base) / rel).resolve()\n",
     "import torch\nt = torch.zeros(1, device=some_device)\n",
 )
 

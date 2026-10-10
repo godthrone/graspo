@@ -19,9 +19,9 @@ import torch
 
 from graspo.flow.backend.native.models.qwen35_36.model import Qwen35HybridTextModel
 from graspo.flow.logging import rotating_append, run_log_dir
-from graspo.flow.parallel import rendezvous_watchdog
-from graspo.flow.parallel.pipeline_comm import PipelineComm
-from graspo.flow.parallel.tensor_utils import _add_pipeline_stage_timing
+from graspo.flow.backend.native.parallel import rendezvous_watchdog
+from graspo.flow.backend.native.parallel.pipeline_comm import PipelineComm
+from graspo.flow.backend.native.parallel.tensor_utils import _add_pipeline_stage_timing
 
 
 def _pp_debug_log(output_dir: str, msg: str) -> None:
@@ -57,7 +57,7 @@ def _pp_probe(output_dir: str, label: str, /, **fields: Any) -> None:
     就是普通签名，然后 ``_pipeline_forward_hidden`` 传了 ``label=debug_label``
     当场 ``TypeError: _pp_probe() got multiple values for argument 'label'``，
     被 228 的有界冒烟在 20 秒内抓到（探针把 PP 路径打挂，比不探针还糟）。
-    位置参数限定的语义由 ``tests/flow/parallel/test_pp_rendezvous_probes.py``
+    位置参数限定的语义由 ``tests/flow/backend/native/parallel/test_pp_rendezvous_probes.py``
     的签名守卫钉住。
     """
     detail = " ".join(f"{key}={value}" for key, value in fields.items())

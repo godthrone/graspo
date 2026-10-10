@@ -13,13 +13,13 @@ from graspo.flow.adapter.multimodal_tensors import (
     _normalize_tool_batches,
     _slice_multimodal_inputs_offset,
 )
-from graspo.flow.parallel.pipeline_comm import PipelineComm, wait_all
-from graspo.flow.parallel.tensor_utils import (
+from graspo.flow.backend.native.parallel.pipeline_comm import PipelineComm, wait_all
+from graspo.flow.backend.native.parallel.tensor_utils import (
     _broadcast_and_pad_finished,
     _left_pad_token_rows,
     _next_token_from_logits,
 )
-from graspo.flow.runtime import NativeGeneration
+from graspo.flow.backend.native.runtime import NativeGeneration
 from graspo.ripple.multimodal.rows import media_counts, multimodal_row_from_sample
 
 

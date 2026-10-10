@@ -77,6 +77,13 @@ from graspo.flow.guard import (
     select_sample_targets_for_inventory,
 )
 
+# ★ 下标 P2：`probe_gpu_inventory` / `parse_visible_device_indices` 迁入
+#   `flow/guard/inventory.py`（设施实现）。此处**只做转发**，唯一定义处在新模块。
+from graspo.flow.guard.inventory import (  # noqa: E402
+    parse_visible_device_indices,
+    probe_gpu_inventory,
+)
+
 GPU_FIELDS = (
     "index",
     "uuid",
@@ -312,8 +319,6 @@ def build_gpu_query_command(gpu_indices: Sequence[str]) -> list[str]:
     ]
 
 
-# ``parse_visible_device_indices`` / ``probe_gpu_inventory`` 的定义已下沉到
-# ``graspo.core.gpu_guard``（D-03 边界修复），此处仅按上面的 import 转发。
 
 
 def query_gpu_rows(
@@ -406,9 +411,6 @@ def utc_timestamp() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
-# ``probe_gpu_inventory`` 的定义已下沉到 ``graspo.core.gpu_guard``（D-03 边界修复），
-# 此处仅按上面的 import 转发——:func:`assert_visible_gpus_idle` / :func:`resolve_sample_gpus`
-# 里的 ``inventory_probe or probe_gpu_inventory`` 默认值继续可用。
 
 
 def query_idle_rows(

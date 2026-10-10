@@ -538,7 +538,7 @@ def test_cublas_workspace_value_has_exactly_one_definition():
 def test_probe_phase_is_registered_as_diagnostic_not_step_metrics():
     """探针 phase 名两处字面量必须同步（result_judge 不能 import flow，故靠本测试守）。"""
     from graspo.core.result_judge import DIAGNOSTIC_PHASES, STEP_METRICS_PHASES
-    from graspo.flow.msswift.first_step_probe import PROBE_PHASE
+    from graspo.flow.backend.msswift.first_step_probe import PROBE_PHASE
 
     assert PROBE_PHASE in DIAGNOSTIC_PHASES
     assert PROBE_PHASE not in STEP_METRICS_PHASES

@@ -107,7 +107,7 @@ DIAGNOSTIC_PHASES: frozenset[str] = frozenset(
         "logprob_after",
         "pipeline_logprob_after",
         # 每 rank 首步探针（只读旁路：首步 local loss + 首批 input_ids sha256）。
-        # 唯一真相源是 ``graspo/flow/msswift/first_step_probe.py::PROBE_PHASE``；
+        # 唯一真相源是 ``graspo/flow/backend/msswift/first_step_probe.py::PROBE_PHASE``；
         # 这里只能写字面量——采集侧按文件路径加载本模块（不能 import graspo），
         # 因此两个字面量由 ``tests/core/test_determinism.py`` 的同步测试守住。
         # 本行 payload **不带** ``metrics`` ⇒ 采集侧不会误当逐步指标（§2.2 显式）。
@@ -115,7 +115,7 @@ DIAGNOSTIC_PHASES: frozenset[str] = frozenset(
         # native PP 首步逐 rank 数值探针（R3，2026-09-23）：只读梯度/loss 读数，
         # **不带** ``metrics``（见上条同理）。唯一真相源是
         # ``graspo/flow/backend/native/models/common/grad_probe.py`` 的调用点常量；
-        # 同步由 ``tests/flow/trainer/test_grad_fail_closed.py`` 守住。
+        # 同步由 ``tests/flow/backend/native/trainer/test_grad_fail_closed.py`` 守住。
         "pp_numeric_probe",
         # 失败步诊断行（R1，2026-09-23）：**先落盘、再 raise**，见上方例外说明。
         "fail_closed",
@@ -141,7 +141,7 @@ DIAGNOSTIC_PHASES: frozenset[str] = frozenset(
 #: 逐档台账的峰值列口径；两处之外不得再出现第三份口径定义）。
 #:
 #: 训练侧落点（allocator 值怎么来的）：
-#:   `src/graspo/flow/parallel/tensor_utils.py:_cuda_memory_snapshot`
+#:   `src/graspo/flow/backend/native/parallel/tensor_utils.py:_cuda_memory_snapshot`
 #:     → `max_allocated_mib = torch.cuda.max_memory_allocated(device) / 1024**2`
 #:   `src/graspo/flow/backend/native/transformer_model_adapter.py:_emit_rank_memory_event`
 #:     → 追加一行 `{"event": "rank_memory", "memory": {...}}` 到 rank0 的

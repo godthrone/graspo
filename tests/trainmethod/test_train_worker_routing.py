@@ -6,7 +6,7 @@
   ``cli/train_worker`` **只调用一次** ``resolve_backend_builder``，
   自己不再按算法分支——旧版 ``if config.train_method == "sft": ... else: <RL>``
   会把 CPT / OPD 静默送进 RL 注册表。
-- **不存在第二套路由**：``flow/msswift/trainer.py`` 的 RL 工厂不得按
+- **不存在第二套路由**：``flow/backend/msswift/trainer.py`` 的 RL 工厂不得按
   ``train_method`` 分派（那是"为守边界而把设计做坏"的绕行方案，已撤销）。
 
 用**行为**断言而不是读实现细节：跑四次 ``main()``，看它把哪个
@@ -73,7 +73,7 @@ def test_train_worker_dispatches_through_the_single_router(monkeypatch, train_me
     # 按**模块对象**打补丁（不按 "pkg.sub.attr" 字符串）——字符串形式会走
     # `getattr(graspo, "flow")`，在"命名空间垫片只填了 sys.modules、没填父包属性"的
     # 环境下会以与真因无关的 AttributeError 失败。
-    import graspo.flow.backend_selection as backend_selection
+    import graspo.flow.backend.selection as backend_selection
 
     monkeypatch.setattr(
         backend_selection,
@@ -105,7 +105,7 @@ def test_msswift_rl_factory_does_not_route():
     路由只有一处（``core.discovery``）；后端实现按"哪个后端怎么跑"负责，
     不按"该走哪张注册表"负责（宪法 §1.1 模块边界 / §1.4 单一真相源）。
     """
-    source = (_REPO_ROOT / "src" / "graspo" / "flow" / "msswift" / "trainer.py").read_text(
+    source = (_REPO_ROOT / "src" / "graspo" / "flow" / "backend" / "msswift" / "trainer.py").read_text(
         encoding="utf-8"
     )
     assert "resolve_backend_builder" not in source

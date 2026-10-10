@@ -1,4 +1,4 @@
-"""Tests for graspo.flow.runtime._AVAILABLE_ADAPTERS.
+"""Tests for graspo.flow.backend.native.runtime._AVAILABLE_ADAPTERS.
 
 The graspo package has import-time dependencies on torch, trainer, and other
 modules not available in a pure test environment.  We use importlib.util +
@@ -19,17 +19,17 @@ import sys
 import types
 
 # ---------------------------------------------------------------------------
-# Helper: load graspo.flow.runtime directly
+# Helper: load graspo.flow.backend.native.runtime directly
 # ---------------------------------------------------------------------------
 
 
 def _load_runtime_module() -> types.ModuleType:
-    """Load ``graspo.flow.runtime``, bypassing the broken package init chain.
+    """Load ``graspo.flow.backend.native.runtime``, bypassing the broken package init chain.
 
     Returns the loaded module object.  Cached in ``sys.modules`` so repeated
     calls return the same instance.
     """
-    _runtime_key = "graspo.flow.runtime"
+    _runtime_key = "graspo.flow.backend.native.runtime"
 
     if _runtime_key in sys.modules:
         return sys.modules[_runtime_key]
@@ -93,7 +93,7 @@ def _load_runtime_module() -> types.ModuleType:
     # -- load the real runtime.py ------------------------------------------
     _spec = importlib.util.spec_from_file_location(
         _runtime_key,
-        "src/graspo/flow/runtime.py",
+        "src/graspo/flow/backend/native/runtime.py",
     )
     _module = importlib.util.module_from_spec(_spec)
     sys.modules[_runtime_key] = _module
@@ -123,7 +123,7 @@ def _cleanup_mocked_modules():
 
 
 class TestAvailableAdapters:
-    """Tests for ``_AVAILABLE_ADAPTERS`` in ``graspo.flow.runtime``."""
+    """Tests for ``_AVAILABLE_ADAPTERS`` in ``graspo.flow.backend.native.runtime``."""
 
     def test_contains_qwen3(self) -> None:
         """``_AVAILABLE_ADAPTERS`` must include the 'qwen3' adapter."""

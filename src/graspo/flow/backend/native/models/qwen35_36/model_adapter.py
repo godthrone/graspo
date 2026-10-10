@@ -17,16 +17,16 @@ from graspo.flow.backend.native.models.qwen35_36.pipeline_forward import _Qwen35
 from graspo.flow.backend.native.models.qwen35_36.training import _Qwen35TrainingMethods
 from graspo.flow.backend.native.models.qwen35_36.training_sft import _Qwen35SFTTrainingMethods
 from graspo.flow.backend.native.transformer_model_adapter import TransformerModelAdapter
-from graspo.flow.lora.lora_helpers import native_qwen_lora_available_targets
-from graspo.flow.lora.lora_io import load_peft_adapter_into_native_model
-from graspo.flow.parallel.placement_plan import (
+from graspo.flow.backend.native.lora.lora_helpers import native_qwen_lora_available_targets
+from graspo.flow.backend.native.lora.lora_io import load_peft_adapter_into_native_model
+from graspo.flow.backend.native.parallel.placement_plan import (
     build_placement_plan,
 )
-from graspo.flow.parallel.tensor_utils import (
+from graspo.flow.backend.native.parallel.tensor_utils import (
     SafetensorIndex,
     _resolve_dtype,
 )
-from graspo.flow.trainer.preflight import assert_vision_tower_trainable
+from graspo.flow.backend.native.trainer.preflight import assert_vision_tower_trainable
 from graspo.ripple.parsing.completion import ParsedCompletion
 from graspo.ripple.parsing.qwen_tool_parser import parse_qwen_tool_completion
 

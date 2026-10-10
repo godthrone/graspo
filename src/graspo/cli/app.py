@@ -40,7 +40,7 @@ def cmd_export(args: argparse.Namespace) -> int:
     _require_config_value(config.export.checkpoint_path, "export.checkpoint_path")
     _require_config_value(config.export.export_output, "export.export_output")
     _require_config_value(config.model.model_path, "model.model_path")
-    from graspo.flow.lora.lora_io import export_from_checkpoint
+    from graspo.flow.backend.native.lora.lora_io import export_from_checkpoint
 
     export_from_checkpoint(
         config.export.checkpoint_path,
@@ -155,7 +155,7 @@ def build_launch_plan(
         raise SystemExit(f"Config file does not exist: {config_path}")
     config = config or GraspoConfig.from_yaml(config_path)
 
-    from graspo.flow.backend_selection import select_backend
+    from graspo.flow.backend.selection import select_backend
 
     selection = select_backend(config)
     launch = config.launch
@@ -226,8 +226,8 @@ def _build_msswift_launch_plan(
     graspo 的配置段；E1 的旧实现正是这么做的，因此那条链路从未真正跑通
     （E1 报告 §5.4 第 2 条已如实记录）。按 D6，主路线是 ``import swift`` 作库：
     训练在 ``graspo.cli.train_worker`` 进程内完成，配置→ms-swift 参数的映射由
-    ``flow/msswift/_config_mapping.py`` 负责（单一真相源），训练器由
-    ``flow/msswift/trainer.py``（RL）与 ``flow/msswift/sft_trainer.py``（SFT）提供。
+    ``flow/backend/msswift/_config_mapping.py`` 负责（单一真相源），训练器由
+    ``flow/backend/msswift/trainer.py``（RL）与 ``flow/backend/msswift/sft_trainer.py``（SFT）提供。
 
     因此本函数产出的命令与 native 后端**同形**（同一个 worker 入口），差别只在
     并行层：native 用 ``dp×tp×pp`` 推导进程数，msswift 用 ``msswift.nproc_per_node``
@@ -241,7 +241,7 @@ def _build_msswift_launch_plan(
     Returns:
         ``LaunchPlan``；``uses_torchrun`` 表示是否需要 torchrun 拉起多进程。
     """
-    from graspo.flow.msswift._config_mapping import launcher_env
+    from graspo.flow.backend.msswift._config_mapping import launcher_env
 
     python = str(config.launch.python or sys.executable)
     nnodes = int(config.launch.nnodes)
@@ -359,7 +359,7 @@ def _validate_launch_paths(config: GraspoConfig) -> None:
     if not data_path.is_file():
         raise SystemExit(f"data.train_path does not exist: {data_path}")
     # output_dir 现在总是有默认值（配置备份约定），但需确保目录提前创建好
-    from graspo.flow.lora.lora_io import prepare_output_dir
+    from graspo.flow.backend.native.lora.lora_io import prepare_output_dir
 
     prepare_output_dir(config.training.output_dir, overwrite=config.training.overwrite_output_dir)
 
