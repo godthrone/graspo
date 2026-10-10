@@ -22,8 +22,8 @@ register_dev_fallbacks(
 register_dev_fallbacks(
     "graspo.backends",
     {
-        "native": "graspo.flow.backend.selection:create_native_trainer",
-        "msswift": "graspo.flow.backend.msswift.trainer:create_msswift_trainer",
+        "native": "graspo.flow.backend.native:create_native_backend",
+        "msswift": "graspo.flow.backend.msswift:create_msswift_backend",
     },
 )
 # SFT 后端注册表：与 RL（graspo.backends）分开登记，因为两者的训练器形状不同

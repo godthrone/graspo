@@ -71,8 +71,8 @@ qwen35_36 = "graspo.flow.backend.native.models.qwen35_36.model_adapter:Qwen35Mod
 native = "graspo.flow.backend.native.config:native_defaults"
 
 [project.entry-points."graspo.backends"]
-native = "graspo.flow.backend.selection:create_native_trainer"
-msswift = "graspo.flow.backend.msswift.trainer:create_msswift_trainer"
+native = "graspo.flow.backend.native:create_native_backend"
+msswift = "graspo.flow.backend.msswift:create_msswift_backend"
 
 [tool.setuptools.package-dir]
 "" = "src"

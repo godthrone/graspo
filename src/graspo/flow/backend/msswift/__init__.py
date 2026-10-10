@@ -28,13 +28,16 @@ if TYPE_CHECKING:  # pragma: no cover - 仅供类型检查
         create_msswift_opd_trainer,
     )
     from graspo.flow.backend.msswift.sft_trainer import MsSwiftSftTrainer, create_msswift_sft_trainer
+    from graspo.flow.backend.msswift.backend import MsSwiftBackend, create_msswift_backend
     from graspo.flow.backend.msswift.trainer import MsSwiftRlTrainer, create_msswift_trainer
 
 __all__ = [
+    "MsSwiftBackend",
     "MsSwiftCptTrainer",
     "MsSwiftOpdTrainer",
     "MsSwiftRlTrainer",
     "MsSwiftSftTrainer",
+    "create_msswift_backend",
     "create_msswift_cpt_trainer",
     "create_msswift_opd_trainer",
     "create_msswift_sft_trainer",
@@ -42,6 +45,8 @@ __all__ = [
 ]
 
 _EXPORTS = {
+    "MsSwiftBackend": "graspo.flow.backend.msswift.backend",
+    "create_msswift_backend": "graspo.flow.backend.msswift.backend",
     "MsSwiftRlTrainer": "graspo.flow.backend.msswift.trainer",
     "create_msswift_trainer": "graspo.flow.backend.msswift.trainer",
     "MsSwiftSftTrainer": "graspo.flow.backend.msswift.sft_trainer",

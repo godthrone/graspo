@@ -298,7 +298,8 @@ def test_teacher_source_both_absent_is_rejected(tmp_path: Path):
 
 
 _ROUTE_EXPECTATIONS = {
-    "graspo": ("graspo.backends", "graspo.flow.backend.msswift.trainer", "create_msswift_trainer"),
+    # ★ P3：RL 注册表项由 ABC 工厂吸收（返回 RLBackend）
+    "graspo": ("graspo.backends", "graspo.flow.backend.msswift.backend", "create_msswift_backend"),
     "sft": ("graspo.sft_backends", "graspo.flow.backend.msswift.sft_trainer", "create_msswift_sft_trainer"),
     "cpt": ("graspo.cpt_backends", "graspo.flow.backend.msswift.cpt_trainer", "create_msswift_cpt_trainer"),
     "opd": ("graspo.opd_backends", "graspo.flow.backend.msswift.opd_trainer", "create_msswift_opd_trainer"),
