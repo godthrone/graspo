@@ -14,6 +14,11 @@ checker 的判定链是：0 类 ⇒ 跳过；≥2 类 ⇒ 多类文件豁免（�
 **没有一个能编码"a4 标定"或"测 ELAM 长度"**。因此按 §8.4 的多类豁免把它们合并到本文件，
 两个脚本各自 `from errors import <X>Error` 使下游（`rig.CalibrationInputError` 等；`rig/` 已随宪法合规化 B1 退役，此处为历史口径）零改动。
 
+**⚠ 退役记录（2026-10-11，宪法合规化 B3）**：`scripts/a4_calibrate.py` 已随 A4 容差体系
+废弃而退役（原件在 `.local/repo-moved-out/scripts/`）⇒ `CalibrationInputError` 目前**没有
+生产调用方**。**刻意保留本类**：本文件"必须 ≥2 个顶层类"的不变量（见上）依赖于它，
+移走会让文件回退成 §12.2 单类 FAIL。
+
 **本文件不 import 任何东西**（无依赖 ⇒ 脚本直接执行与 importlib 加载都能用）。
 """
 
