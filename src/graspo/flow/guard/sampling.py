@@ -1,6 +1,7 @@
 """flow.guard.sampling — 显存采样目标卡的选择（设施操作）。
 
-只允许落在 ``NVIDIA_VISIBLE_DEVICES`` 之内；越界读取会混入生产卡显存。
+只允许落在 ``NVIDIA_VISIBLE_DEVICES`` 之内；越界读取会把**允许集合 {4,5,6,7} 之外**的卡
+（第三方工作负载，先到先得）算进来，污染显存读数。
 """
 
 from __future__ import annotations
@@ -26,10 +27,10 @@ def select_sample_targets(
     """确定显存采样目标卡：只允许落在 ``NVIDIA_VISIBLE_DEVICES`` 之内。
 
     规则（防呆）：
-    - ``visible`` 必须先通过锁卡守卫（未设置 / 含 6,7 / >4 卡即拒绝）；
+    - ``visible`` 必须先通过锁卡守卫（未设置 / 含**允许集合 {4,5,6,7} 之外**的卡 / >4 卡即拒绝）；
     - ``explicit`` 为 ``None`` / 空 / ``"all"`` 时，采样全部可见卡；
     - ``explicit`` 显式列出时，必须 **⊆ visible**，否则拒绝——采样越出可见集
-      正是"混入生产卡显存"的根因（历史数据污染事故）。
+      正是"把集合外的卡混进显存读数"的根因（历史数据污染事故）。
 
     **宿主侧通道**：``visible`` 是真实宿主卡号，返回的卡号可直接喂给
     ``nvidia-smi -i``（宿主侧采样路径不变）。容器内 runtime 哨兵（``void``）
@@ -48,7 +49,7 @@ def select_sample_targets(
     if outside:
         raise _reject(
             f"采样目标 {requested} 越出可见卡 {visible_devices}（越界: {outside}）",
-            f"采样只允许落在 {_ENV_KEY} 之内；越界读取会混入生产卡 GPU6/7 或他人负载，"
+            f"采样只允许落在 {_ENV_KEY} 之内；越界读取会混入允许集合 {{4,5,6,7}} 之外的卡或他人负载，"
             "使显存峰值数据不可信。",
         )
     return requested

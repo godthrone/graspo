@@ -505,7 +505,7 @@ def resolve_sample_gpus(
       目标 = 容器内**实测可见卡的本地序号**（``--gpus`` 必须是其子集）。
       旧版在这里按宿主卡号查，容器内查不到 ⇒ ``exit status 6``。
 
-    fail-closed：可见集未设置 / ``all`` / 含生产卡 6,7（宿主侧）/ 超过 4 卡 →
+    fail-closed：可见集未设置 / ``all`` / 含允许集合 {4,5,6,7} 之外的卡（宿主侧）/ 超过 4 卡 →
     抛 ``GpuLockError``，不返回任何"全卡"退路（宪法 §2.3 边界校验）。
     """
     if visible is None:

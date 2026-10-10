@@ -73,10 +73,10 @@ def main() -> None:
     for env_name, env_value in apply_env_determinism(determinism).items():
         print(f"[train-worker] determinism env: {env_name}={env_value}")
 
-    # 锁卡守卫（fail-closed）：训练进程启动的第一件事。未显式锁卡 / 含生产卡
-    # GPU6,7 / 超过 4 卡，一律拒绝启动，绝不下探到模型加载才发现问题。
+    # 锁卡守卫（fail-closed）：训练进程启动的第一件事。未显式锁卡 / 含允许集合
+    # {4,5,6,7} 之外的卡 / 超过 4 卡，一律拒绝启动，绝不下探到模型加载才发现问题。
     #
-    # 两种设备来源都支持（F-1）：宿主侧是显式卡号（静态判 6/7）；容器侧被
+    # 两种设备来源都支持（F-1）：宿主侧是显式卡号（静态判允许集合 {4,5,6,7} 之外的卡）；容器侧被
     # nvidia-container-runtime 收窄后，`NVIDIA_VISIBLE_DEVICES` 变成哨兵 `void`，
     # 此时按**容器内实测可见卡**断言（`nvidia-smi -L`），"不得超 4 卡/不得为空"
     # 仍然成立。旧版把 `void` 当非法 ⇒ 目标 GPU 服务器上所有训练入口必然拒绝启动。
