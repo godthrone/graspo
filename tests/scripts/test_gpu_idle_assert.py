@@ -17,11 +17,16 @@ import pytest
 _SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "gpu_idle_assert.py"
 
 #: 假 nvidia-smi：由环境变量控制行为，测试不依赖真卡。
+#:
+#: ★ 卡号只取 **4/5**：设备白名单自用户 2026-09-24 批准 A 起收窄为 `{4,5,6,7}`
+#: （`src/graspo/core/gpu_guard.py`）。用 0/1 会在 `assert_gpu_lock` 处提前 fail-closed，
+#: 根本走不到「实测空闲」这条被本期固化的语义——本文件的历史 4 红即源于此
+#: （测试夹具停留在旧契约，与实现无关）。
 _FAKE_SMI = """#!/bin/bash
 args="$*"
 case "$args" in
-  "-L") printf 'GPU 0: NVIDIA A800-SXM4-80GB (UUID: GPU-fake0)\\n'
-         printf 'GPU 1: NVIDIA A800-SXM4-80GB (UUID: GPU-fake1)\\n'; exit 0;;
+  "-L") printf 'GPU 4: NVIDIA A800-SXM4-80GB (UUID: GPU-fake4)\\n'
+         printf 'GPU 5: NVIDIA A800-SXM4-80GB (UUID: GPU-fake5)\\n'; exit 0;;
 esac
 if [ -n "${FAKE_SMI_EMPTY:-}" ]; then exit 0; fi
 sel="none"
@@ -29,8 +34,8 @@ case "$args" in *" -i "*) sel="${args##* -i }";; esac
 IFS=',' read -ra ids <<< "$sel"
 for id in "${ids[@]}"; do
   case "$id" in
-    0) printf '%s\\n' "${FAKE_SMI_ROW0:-0, 4, 0}";;
-    1) printf '%s\\n' "${FAKE_SMI_ROW1:-1, 0, 0}";;
+    4) printf '%s\\n' "${FAKE_SMI_ROW0:-4, 4, 0}";;
+    5) printf '%s\\n' "${FAKE_SMI_ROW1:-5, 0, 0}";;
     *) printf '%s\\n' "${FAKE_SMI_ROWX:-$id, 4, 0}";;
   esac
 done
@@ -66,7 +71,7 @@ def _run(
 
 def test_idle_assert_passes_when_target_card_is_idle(tmp_path: Path):
     """正例：目标卡实测空闲（4 MiB / 0%）⇒ rc=0。"""
-    completed = _run(tmp_path, ["--visible", "0,1"], {})
+    completed = _run(tmp_path, ["--visible", "4,5"], {})
 
     assert completed.returncode == 0, completed.stderr
     assert "OK" in completed.stdout
@@ -75,13 +80,13 @@ def test_idle_assert_passes_when_target_card_is_idle(tmp_path: Path):
 @pytest.mark.parametrize(
     "row0,expect_in_stderr",
     [
-        ("0, 6029, 0", "显存占用"),  # 被他人占用（目标 GPU 服务器实测过的写法）
-        ("0, 4, 90", "利用率"),  # util 高但显存没涨
+        ("4, 6029, 0", "显存占用"),  # 被他人占用（目标 GPU 服务器实测过的写法）
+        ("4, 4, 90", "利用率"),  # util 高但显存没涨
     ],
 )
 def test_idle_assert_rejects_occupied_target_card(tmp_path: Path, row0, expect_in_stderr):
     """★负向：目标卡被占 ⇒ rc=1 且消息点明是哪种占用。"""
-    completed = _run(tmp_path, ["--visible", "0,1"], {"FAKE_SMI_ROW0": row0})
+    completed = _run(tmp_path, ["--visible", "4,5"], {"FAKE_SMI_ROW0": row0})
 
     assert completed.returncode == 1, completed.stdout
     assert expect_in_stderr in completed.stderr
@@ -92,15 +97,15 @@ def test_idle_assert_is_fail_closed_when_readings_are_empty(tmp_path: Path):
 
     若这里 fail-open，"读不到"就会被当成"空闲"，断言反过来变成抢卡许可证。
     """
-    completed = _run(tmp_path, ["--visible", "0"], {"FAKE_SMI_EMPTY": "1"})
+    completed = _run(tmp_path, ["--visible", "4"], {"FAKE_SMI_EMPTY": "1"})
 
     assert completed.returncode != 0
     assert "fail-closed" in completed.stderr or "拒绝" in completed.stderr
 
 
 def test_idle_assert_rejects_single_field_reading(tmp_path: Path):
-    """★负向：解析不了的行（如只有 2 字段的 ``0, 0``）⇒ rc≠0，绝不静默通过。"""
-    completed = _run(tmp_path, ["--visible", "0"], {"FAKE_SMI_ROW0": "0, 0"})
+    """★负向：解析不了的行（如只有 2 字段的 ``4, 0``）⇒ rc≠0，绝不静默通过。"""
+    completed = _run(tmp_path, ["--visible", "4"], {"FAKE_SMI_ROW0": "4, 0"})
 
     assert completed.returncode != 0
     assert "解析" in completed.stderr
