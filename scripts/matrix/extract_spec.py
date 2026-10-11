@@ -25,7 +25,7 @@ from pathlib import Path
 
 import extract_params as ep
 
-REPO = Path("<repo-root>")
+REPO = Path(__file__).resolve().parents[2]   # 仓库根（本脚本位于 scripts/matrix/）
 GEN = REPO / "tests/e2e/generate_matrix.py"
 
 # ★ 主席 2026-10-11 裁定：LoRA 恢复既有正式口径（出处 = 8 个 git 跟踪示例配置）
@@ -67,10 +67,10 @@ UNIFORM = [
     {"key": "gpu_monitor.interval_sec", "label": "GPU 巡检间隔（秒）", "value": "2.0",
      "layer": "config", "coverage": "config-51/54", "note": "51 份 yaml 全为 2.0"},
     {"key": "train_source_form", "label": "数据源形式 + 图像根",
-     "value": "mini（默认，跑通用）| formal（正式集）；图像根 /work/elam-v5/images，jsonl 内写作 ../images/…",
+     "value": "mini（默认，跑通用）| formal（正式集）；图像根 <data-root>/images，jsonl 内写作 ../images/…",
      "layer": "rule", "coverage": "rule-54/54", "note": "mini 结果不得当效果结论"},
     {"key": "eval_set_path", "label": "固定评测集路径",
-     "value": "/work/elam-v5/data/test.jsonl（702 行）",
+     "value": "<data-root>/test.jsonl（702 行）",
      "layer": "rule", "coverage": "rule-54/54", "note": "见 §1.4 / §1.5"},
 ]
 
@@ -213,7 +213,7 @@ def main():
     conflicts.append({
         "id": "C2", "level": "登记",
         "title": "v1（samples/configs/matrix54）↔ v2（matrix54-v2）差异",
-        "detail": (f"51 档训练语义字段逐字节相同；仅 data.train_path 前缀 /work/elam-v5/subsets/ → /work/elam-v5/subsets-v2/。"
+        "detail": (f"51 档训练语义字段逐字节相同；仅 data.train_path 前缀 <data-root>/subsets/ → <data-root>/subsets-v2/。"
                    f"去前缀后仍不一致的档：{diffs or '无'}"),
         "evidence": "diff v1/v2（本脚本逐档复核）", "ruling": "照实登记；矩阵采用 v2 路径", "basis": "指挥官 2026-10-11 确认",
     })
@@ -514,7 +514,7 @@ def main():
         "conflicts": conflicts,
         "missing": missing,
         "invariants": invariants,
-        "handover_source": ".local/hb-workspace/20261008-105451/task-run-T028/handover-to-matrix.md（已并入）",
+        "handover_source": ".local/hb-workspace/<会话>/task-run-T028/handover-to-matrix.md（已并入）",
         "tiers": tiers,
     }
     outp = Path(a.out)

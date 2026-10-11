@@ -16,16 +16,18 @@ import argparse, datetime, json, re
 from pathlib import Path
 
 # 脱敏映射（顺序敏感：先长后短）
+# 通用形状（⛔ 不写任何具体内网主机 / 账号 / 挂载点字面量）：
+#   顺序敏感 —— 先处理带尾段的规则，再用通用二级/三级路径兜底。
 PATH_MAP = [
-    (r"/work/elam-v5/subsets-v2/", "subsets-v2/"),
-    (r"/work/elam-v5/images", "images"),
-    (r"/work/elam-v5/data/", "data/"),
-    (r"/work/elam-v5/", ""),
+    (r"/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/subsets-v2/", "subsets-v2/"),
+    (r"/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/images", "images"),
+    (r"/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/data/", "data/"),
     (r"/models/", ""),
-    (r"/home/[A-Za-z0-9._-]+/Gitlab/graspo/", ""),
-    (r"/data/<mount>[A-Za-z0-9._-]+/", ""),
+    (r"/home/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/", ""),
+    (r"/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/", ""),
+    (r"/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/", ""),
     (r"\.local/repo-moved-out/", ""),
-    (r"\.local/hb-workspace/[0-9-]+/", ""),
+    (r"\.local/hb-workspace/[A-Za-z0-9-]+/", ""),
     (r"\.local/", ""),
 ]
 OPAQUE_RUN = {"T028": ("RUN-20261011-T028-01", "2026-10-11")}

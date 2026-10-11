@@ -9,9 +9,9 @@
 
 边界：只读；只写本工位 evidence/ 下的 JSON。
 用法：
-  <repo-root>/.venv/bin/python extract_params.py \
-      --html <repo-root>/.local/repo-moved-out/docs/capability-matrix-20261006-r3.html \
-      --config-dir <repo-root>/samples/configs/matrix54 \
+  python3 scripts/matrix/extract_params.py \
+      --html <AUTH_HTML> \
+      --config-dir samples/configs/matrix54-v2 \
       --out evidence/params-raw.json
 """
 import argparse, html, json, re, hashlib, sys
