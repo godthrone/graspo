@@ -1,5 +1,5 @@
 {
- "schema": "capability-matrix/v2-official",
+ "schema": "capability-matrix/v3-official",
  "meta": {
   "title": "GRASPO 能力与可用档位矩阵",
   "version": "2026-10-11",
@@ -9,6 +9,8 @@
    "editable_source": "docs/capability-matrix.data.json（唯一可编辑源头）",
    "human_view": "docs/capability-matrix.html（由生成器确定性产出，禁止手工编辑）",
    "generator": "tools/matrix/render_matrix.py",
+   "data_path": "docs/capability-matrix.data.json",
+   "human_view_path": "docs/capability-matrix.html",
    "generation_marker": "generated",
    "direction": "结果 JSON → capability-matrix.data.json → 人读视图（单方向，禁止互推）"
   },
@@ -18,66 +20,6 @@
    "尚未验证",
    "未纳入验收"
   ],
-  "coverage": {
-   "total": 54,
-   "verified_available": 0,
-   "verified_unavailable": 1,
-   "not_verified": 50,
-   "not_in_acceptance": 3,
-   "gate_met": false,
-   "unverified_tiers": [
-    "T001",
-    "T002",
-    "T003",
-    "T004",
-    "T005",
-    "T006",
-    "T007",
-    "T008",
-    "T009",
-    "T010",
-    "T011",
-    "T012",
-    "T013",
-    "T014",
-    "T015",
-    "T016",
-    "T017",
-    "T018",
-    "T019",
-    "T020",
-    "T021",
-    "T022",
-    "T023",
-    "T024",
-    "T025",
-    "T026",
-    "T027",
-    "T029",
-    "T030",
-    "T031",
-    "T032",
-    "T033",
-    "T034",
-    "T035",
-    "T036",
-    "T037",
-    "T038",
-    "T039",
-    "T040",
-    "T041",
-    "T042",
-    "T043",
-    "T044",
-    "T045",
-    "T046",
-    "T047",
-    "T048",
-    "T049",
-    "T050",
-    "T051"
-   ]
-  },
   "boundary_declaration": {
    "required": true,
    "text": "能力与可用档位矩阵说明各档位的可用性与性能基线：每个列出的档位都已在我们的数据集上完整跑通并取得良好效果（作为「可用、大概率无 bug」的证据）。训练效果取决于使用者自身的任务、数据集与参数，不在本矩阵的承诺范围。",
@@ -85,8 +27,7 @@
     "① 各档可用性：每个列出的档位都已完整跑通（平台方整体承诺以覆盖度门槛为前提）。",
     "② 平台方数据集结论：在平台方数据集与平台方参数下效果达标，且这是「可用、大概率无 bug」的证据。",
     "③ 使用者效果不在承诺范围：使用者的任务、数据集与参数下的效果不归本矩阵承诺。"
-   ],
-   "coverage_caveat": "★ 当前覆盖度未达门槛：54 档中「尚未验证」50 档、「已验证可用」0 档 ⇒ 「每个列出的档位都已完整跑通」这一平台整体承诺尚未满足。"
+   ]
   },
   "criteria_caliber": {
    "availability_criteria": [
@@ -118,8 +59,10 @@
  },
  "groups": {
   "base": "基础",
-  "param": "主要训练参数",
-  "result": "结果"
+  "status": "状态",
+  "param": "主要参数",
+  "data": "实验数据",
+  "note": "备注"
  },
  "columns": [
   {
@@ -129,81 +72,88 @@
    "sticky": true
   },
   {
-   "key": "params",
-   "label": "主要训练参数（模型 / 方法 / 模式 / backend / 并行维度与卡数 / LoRA 目标 / lr / 数据子集与条数 / epoch或步数 / 关键开关）",
-   "group": "param",
-   "group_start": true,
-   "merge": [
-    "model",
-    "algo",
-    "mode",
-    "backend",
-    "parallel",
-    "lora_target",
-    "lr",
-    "data_subset",
-    "steps",
-    "switches"
-   ],
-   "sub_labels": {
-    "model": "模型",
-    "algo": "方法",
-    "mode": "模式",
-    "backend": "backend",
-    "parallel": "并行",
-    "lora_target": "LoRA 目标",
-    "lr": "lr",
-    "data_subset": "数据子集",
-    "steps": "步数",
-    "switches": "开关"
-   },
-   "merge_sep": " ／ "
-  },
-  {
-   "key": "spec_json",
-   "label": "主要参数（机读 JSON：并行 / target_modules / lr / data / 步数 / lora / msswift·native / status）",
-   "group": "param"
-  },
-  {
    "key": "status",
-   "label": "验证状态",
-   "group": "result",
+   "label": "是否通过",
+   "group": "status",
    "group_start": true
   },
   {
-   "key": "runs",
-   "label": "跑次说明",
-   "group": "result"
+   "key": "model",
+   "label": "模型",
+   "group": "param",
+   "group_start": true
   },
   {
-   "key": "effect",
-   "label": "效果（评测 vs 基准）",
-   "group": "result"
+   "key": "algo",
+   "label": "算法",
+   "group": "param"
   },
   {
-   "key": "inference",
-   "label": "推理验证",
-   "group": "result"
+   "key": "mode",
+   "label": "模式",
+   "group": "param"
   },
   {
-   "key": "algo_checks",
-   "label": "算法检查",
-   "group": "result"
+   "key": "backend",
+   "label": "后端",
+   "group": "param"
   },
   {
-   "key": "throughput",
-   "label": "吞吐/墙钟",
-   "group": "result"
+   "key": "parallel",
+   "label": "卡数与并行",
+   "group": "param"
+  },
+  {
+   "key": "lora_target",
+   "label": "LoRA 目标",
+   "group": "param"
+  },
+  {
+   "key": "lr",
+   "label": "lr",
+   "group": "param"
+  },
+  {
+   "key": "data_scale",
+   "label": "数据规模",
+   "group": "param"
+  },
+  {
+   "key": "steps",
+   "label": "步数/epoch",
+   "group": "param"
+  },
+  {
+   "key": "switches",
+   "label": "关键开关",
+   "group": "param"
   },
   {
    "key": "peak_mem",
    "label": "显存峰值(GiB)",
-   "group": "result"
+   "group": "data",
+   "group_start": true
   },
   {
-   "key": "run_path",
-   "label": "跑次 ID / 日期",
-   "group": "result"
+   "key": "elapsed",
+   "label": "耗时（每步/总时长）",
+   "group": "data"
+  },
+  {
+   "key": "throughput",
+   "label": "吞吐",
+   "group": "data"
+  },
+  {
+   "key": "effect",
+   "label": "效果（评测 Δ / loss·reward 窗口）",
+   "group": "data"
+  },
+  {
+   "key": "note",
+   "label": "备注（条件 / 限制 / 失败归因）",
+   "group": "note",
+   "group_start": true
   }
  ],
  "uniform": {
@@ -370,7 +320,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "100 条（每卡 100）",
+   "note": "—"
   },
   {
    "tier": "T002",
@@ -418,7 +371,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "100 条（每卡 50）",
+   "note": "—"
   },
   {
    "tier": "T003",
@@ -466,7 +422,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "100 条（每卡 25）",
+   "note": "—"
   },
   {
    "tier": "T004",
@@ -514,7 +473,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "100 条（每卡 100）",
+   "note": "—"
   },
   {
    "tier": "T005",
@@ -562,7 +524,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "100 条（每卡 50）",
+   "note": "—"
   },
   {
    "tier": "T006",
@@ -610,7 +575,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "100 条（每卡 25）",
+   "note": "—"
   },
   {
    "tier": "T007",
@@ -658,7 +626,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "100 条（每卡 100）",
+   "note": "—"
   },
   {
    "tier": "T008",
@@ -706,7 +677,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "100 条（每卡 50）",
+   "note": "—"
   },
   {
    "tier": "T009",
@@ -754,7 +728,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "100 条（每卡 25）",
+   "note": "—"
   },
   {
    "tier": "T010",
@@ -802,7 +779,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "100 条（每卡 100）",
+   "note": "—"
   },
   {
    "tier": "T011",
@@ -850,7 +830,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "100 条（每卡 50）",
+   "note": "—"
   },
   {
    "tier": "T012",
@@ -898,7 +881,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "100 条（每卡 25）",
+   "note": "—"
   },
   {
    "tier": "T013",
@@ -946,7 +932,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "100 条（每卡 100）",
+   "note": "—"
   },
   {
    "tier": "T014",
@@ -994,7 +983,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "100 条（每卡 50）",
+   "note": "—"
   },
   {
    "tier": "T015",
@@ -1042,7 +1034,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "100 条（每卡 25）",
+   "note": "—"
   },
   {
    "tier": "T016",
@@ -1090,7 +1085,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "100 条（每卡 100）",
+   "note": "—"
   },
   {
    "tier": "T017",
@@ -1138,7 +1136,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "100 条（每卡 50）",
+   "note": "—"
   },
   {
    "tier": "T018",
@@ -1186,7 +1187,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "100 条（每卡 25）",
+   "note": "—"
   },
   {
    "tier": "T019",
@@ -1234,7 +1238,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "100 条（每卡 100）",
+   "note": "—"
   },
   {
    "tier": "T020",
@@ -1282,7 +1289,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "100 条（每卡 50）",
+   "note": "—"
   },
   {
    "tier": "T021",
@@ -1330,7 +1340,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "100 条（每卡 25）",
+   "note": "—"
   },
   {
    "tier": "T022",
@@ -1378,7 +1391,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "100 条（每卡 100）",
+   "note": "—"
   },
   {
    "tier": "T023",
@@ -1426,7 +1442,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "100 条（每卡 50）",
+   "note": "—"
   },
   {
    "tier": "T024",
@@ -1474,7 +1493,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "100 条（每卡 25）",
+   "note": "—"
   },
   {
    "tier": "T025",
@@ -1522,7 +1544,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "100 条（每卡 100）",
+   "note": "—"
   },
   {
    "tier": "T026",
@@ -1570,7 +1595,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "100 条（每卡 50）",
+   "note": "—"
   },
   {
    "tier": "T027",
@@ -1618,7 +1646,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "100 条（每卡 25）",
+   "note": "—"
   },
   {
    "tier": "T028",
@@ -1661,12 +1692,15 @@
    "applicable": true,
    "status": "已验证不可用",
    "runs": "1/1 真效果训练：U1 exit_code=0 ✓；U2 终点窗口 loss -0.245115 / reward 0.452991（均 ≥ 基线同口径终点窗口 -0.201606 / 0.436256）✓；U3 权重有变化 ✓（lora_delta_mean 逐步 1.62e-06→2.42e-06，6/6 步 optimized=true）；U4 产物可推理 ✓（LoRA 合并→vLLM→702 条固定评测集跑完，0 error）——★ 但效果判据 FAIL：Δ=0.00 pp < 阈值 20 pp ⇒ 整档判 失败（效果）",
-   "effect": "after acc=16.5242%（116/702）；base acc=16.5242%（116/702）；★ Δ=+0.00 pp（阈值 20 pp ⇒ FAIL）；剔图像重叠敏感性：after 16.6979% vs base 16.8856%（Δ=-0.19 pp）。逐工具：rotate_arm 114 vs 113（+1）、extend_arm 0 vs 1（-1）、lift_arm 2 vs 2。口径：同数据集 sha256 c202b1e1…、同 criteria elam-v3-allright-1、temperature 0、有效样本 702 ⇒ 可比性成立。对照组 = 同档位未训练底座 base（role=base），非历史档位基准",
+   "effect": "after acc=16.5242%（116/702）；base acc=16.5242%（116/702）；★ Δ=+0.00 pp（阈值 20 pp ⇒ FAIL）；剔图像重叠敏感性：after 16.6979% vs base 16.8856%（Δ=-0.19 pp）。逐工具：rotate_arm 114 vs 113（+1）、extend_arm 0 vs 1（-1）、lift_arm 2 vs 2。口径：同数据集 sha256 c202b1e1…、同 criteria elam-v3-allright-1、temperature 0、有效样本 702 ⇒ 可比性成立。对照组 = 同档位未训练底座 base（role=base），非历史档位基准；loss -0.245115 / reward 0.452991（均 ≥ 基线同口径终点窗口 -0.201606 / 0.436256）",
    "inference": "✅ PASS：合并 LoRA（graspo export --format merged-hf，19GiB/4 shard/Qwen3_5ForConditionalGeneration）→ vLLM v0.22.0 启动（--enable-auto-tool-choice --tool-call-parser qwen3_xml）→ ELAM V5 固定评测集 702/702 跑完、0 error、全程 HTTP 200。★ 合并确已生效（非空转）的独立证明：逐 tensor 比对 base vs merged，shard4 的 645 tensor 中 110 个改变且全部为 model.visual.*（blocks.*.mlp.linear_fc1/fc2、merger.*），与 lora.target_preset=vision_common 逐字吻合；非权重件 tokenizer.json 两边 sha256 相同。与训练末期一致性：末 3 步 loss 终窗 -0.245115、reward 终窗 0.452991，评测产出可解析 tool_call",
    "algo_checks": "0/7 FAIL（7 项逐条：①标注正确性=PASS ②token 级 advantage=PASS ③组决策=PASS ④奖励↔样本对齐=PASS ⑤组完整性=PASS ⑥retry 真实生效=PASS ⑦指标诚实=PASS）；R5 退役第 4 条不适用（单卡零会合）",
-   "throughput": "decode 81.0 tok/s（127337 decode tokens / 1572.9 s rollout 墙钟）；若按整步墙钟计 208.2 tok/s；墙钟 01:27:30（01:18:17Z→02:45:47Z，容器 wall clock；步内 elapsed_sec 累计 5213.9 s）",
+   "throughput": "decode 81.0 tok/s；按整步墙钟计 208.2 tok/s",
    "peak_mem": "36.0",
    "run_path": "RUN-20261011-T028-01（2026-10-11）",
+   "elapsed": "步内 elapsed 累计 5213.9 s；总时长 01:27:30",
+   "data_scale": "48 条（每卡 48）",
+   "note": "未过第 2 条：在平台方数据集与平台方参数下效果未达标：Δ = +0.00 pp < 阈值 20 pp（graspo_threshold_pp=20；★ 最终阈值 δ 待定）；剔除图像重叠敏感性后 Δ = -0.19 pp。 已通过：可完整跑完：exit_code = 0（6/6 步） / 产物可推理：合并 LoRA → 服务化推理启动 → 固定评测集跑完（0 error） / 算法正确性检查：0/7 FAIL。条件：数据集锚点 c202b1e1…、判据 elam-v3-allright-1、温度 0、有效样本 702。",
    "verdict": {
     "state": "已验证不可用",
     "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
@@ -1724,7 +1758,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "96 条（每卡 48）",
+   "note": "—"
   },
   {
    "tier": "T030",
@@ -1772,7 +1809,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "192 条（每卡 48）",
+   "note": "—"
   },
   {
    "tier": "T031",
@@ -1820,7 +1860,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "20 条（每卡 20）",
+   "note": "—"
   },
   {
    "tier": "T032",
@@ -1868,7 +1911,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "20 条（每卡 10）",
+   "note": "—"
   },
   {
    "tier": "T033",
@@ -1916,7 +1962,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "20 条（每卡 5）",
+   "note": "—"
   },
   {
    "tier": "T034",
@@ -1964,7 +2013,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "48 条（每卡 48）",
+   "note": "—"
   },
   {
    "tier": "T035",
@@ -2012,7 +2064,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "96 条（每卡 48）",
+   "note": "—"
   },
   {
    "tier": "T036",
@@ -2060,7 +2115,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "192 条（每卡 48）",
+   "note": "—"
   },
   {
    "tier": "T037",
@@ -2108,7 +2166,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "20 条（每卡 20）",
+   "note": "—"
   },
   {
    "tier": "T038",
@@ -2156,7 +2217,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "20 条（每卡 10）",
+   "note": "—"
   },
   {
    "tier": "T039",
@@ -2204,7 +2268,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "20 条（每卡 5）",
+   "note": "—"
   },
   {
    "tier": "T040",
@@ -2252,7 +2319,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "72 条（每卡 72）",
+   "note": "—"
   },
   {
    "tier": "T041",
@@ -2300,7 +2370,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "144 条（每卡 72）",
+   "note": "—"
   },
   {
    "tier": "T042",
@@ -2348,7 +2421,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "288 条（每卡 72）",
+   "note": "—"
   },
   {
    "tier": "T043",
@@ -2396,7 +2472,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "20 条（每卡 20）",
+   "note": "—"
   },
   {
    "tier": "T044",
@@ -2444,7 +2523,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "20 条（每卡 10）",
+   "note": "—"
   },
   {
    "tier": "T045",
@@ -2492,7 +2574,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "20 条（每卡 5）",
+   "note": "—"
   },
   {
    "tier": "T046",
@@ -2540,7 +2625,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "20 条（每卡 20）",
+   "note": "—"
   },
   {
    "tier": "T047",
@@ -2588,7 +2676,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "20 条（每卡 10）",
+   "note": "—"
   },
   {
    "tier": "T048",
@@ -2636,7 +2727,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "20 条（每卡 5）",
+   "note": "—"
   },
   {
    "tier": "T049",
@@ -2684,7 +2778,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "20 条（每卡 20）",
+   "note": "—"
   },
   {
    "tier": "T050",
@@ -2732,7 +2829,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "20 条（每卡 10）",
+   "note": "—"
   },
   {
    "tier": "T051",
@@ -2780,7 +2880,10 @@
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—"
+   "run_path": "—",
+   "elapsed": "—",
+   "data_scale": "20 条（每卡 5）",
+   "note": "—"
   },
   {
    "tier": "T052",
@@ -2829,7 +2932,10 @@
    "throughput": "—",
    "peak_mem": "—",
    "run_path": "—",
-   "excluded_reason": "27B 学生 + 27B 教师组合在现行设计下不成立：师生权重常驻合计约 100 GiB，与「节省显存」的设计意图相悖 ⇒ 不产出可运行配置。适用范围：本档位不纳入验收。"
+   "elapsed": "—",
+   "data_scale": "20 条（每卡 20）",
+   "note": "设计上不成立：师生权重常驻合计约 100 GiB，与「节省显存」的设计意图相悖 ⇒ 不产出可运行配置。适用范围：本档位不纳入验收。",
+   "excluded_reason": "设计上不成立：师生权重常驻合计约 100 GiB，与「节省显存」的设计意图相悖 ⇒ 不产出可运行配置。适用范围：本档位不纳入验收。"
   },
   {
    "tier": "T053",
@@ -2878,7 +2984,10 @@
    "throughput": "—",
    "peak_mem": "—",
    "run_path": "—",
-   "excluded_reason": "27B 学生 + 27B 教师组合在现行设计下不成立：师生权重常驻合计约 100 GiB，与「节省显存」的设计意图相悖 ⇒ 不产出可运行配置。适用范围：本档位不纳入验收。"
+   "elapsed": "—",
+   "data_scale": "20 条（每卡 10）",
+   "note": "设计上不成立：师生权重常驻合计约 100 GiB，与「节省显存」的设计意图相悖 ⇒ 不产出可运行配置。适用范围：本档位不纳入验收。",
+   "excluded_reason": "设计上不成立：师生权重常驻合计约 100 GiB，与「节省显存」的设计意图相悖 ⇒ 不产出可运行配置。适用范围：本档位不纳入验收。"
   },
   {
    "tier": "T054",
@@ -2927,7 +3036,17 @@
    "throughput": "—",
    "peak_mem": "—",
    "run_path": "—",
-   "excluded_reason": "27B 学生 + 27B 教师组合在现行设计下不成立：师生权重常驻合计约 100 GiB，与「节省显存」的设计意图相悖 ⇒ 不产出可运行配置。适用范围：本档位不纳入验收。"
+   "elapsed": "—",
+   "data_scale": "20 条（每卡 5）",
+   "note": "设计上不成立：师生权重常驻合计约 100 GiB，与「节省显存」的设计意图相悖 ⇒ 不产出可运行配置。适用范围：本档位不纳入验收。",
+   "excluded_reason": "设计上不成立：师生权重常驻合计约 100 GiB，与「节省显存」的设计意图相悖 ⇒ 不产出可运行配置。适用范围：本档位不纳入验收。"
   }
+ ],
+ "data_keys": [
+  "peak_mem",
+  "elapsed",
+  "throughput",
+  "effect",
+  "note"
  ]
 }

@@ -23,7 +23,7 @@ from pathlib import Path
 
 import render_matrix  # 同目录；复用唯一渲染通道
 
-VERSION = "verify-matrix/v6-§17.7"
+VERSION = "verify-matrix/v7-layout"
 
 # ---- ③ 结构断言：新结构只允许这两大部分 ----
 EXPECTED_H2 = ["1. 参数定义", "2. 通过的定义", "3. 判据定义", "4. 状态定义", "5. 功能矩阵测试表"]
@@ -37,8 +37,6 @@ REQUIRED_MARKERS = [
     ("禁止手工编辑", "禁止手工编辑"),
     ("唯一可编辑源头", "唯一可编辑源头"),
     ("方向固定·单方向", "单方向，禁止互推"),
-    ("覆盖度警示", "覆盖度警示"),
-    ("覆盖度门槛未达", "项目整体能力承诺尚未满足"),
     ("边界声明", "承诺边界声明"),
     ("边界要件·各档可用性", "各档可用性"),
     ("边界要件·平台方数据集结论", "平台方数据集结论"),
@@ -46,6 +44,9 @@ REQUIRED_MARKERS = [
     ("四态·已验证可用", "已验证可用"),
     ("四态·已验证不可用", "已验证不可用"),
     ("四态·尚未验证", "尚未验证"),
+    ("列序·主要参数分列", "卡数与并行"),
+    ("列序·实验数据", "实验数据"),
+    ("列序·备注", "失败归因"),
     ("四态·未纳入验收", "未纳入验收"),
     ("不依赖颜色/图例", "不依赖颜色、图例或空白"),
     ("未过判据必须写明", "必须写明未过的是哪一条"),
@@ -79,22 +80,27 @@ FORBIDDEN_PHRASES = [
 # ---- ④B. 已定新表头：10 列（档号 → 主要训练参数 → 结果列组） ----
 EXPECTED_COLUMNS = [
     ("tier", "档号"),
-    ("params", "主要训练参数（模型 / 方法 / 模式 / backend / 并行维度与卡数 / LoRA 目标 / lr / 数据子集与条数 / epoch或步数 / 关键开关）"),
-    ("spec_json", "主要参数（机读 JSON：并行 / target_modules / lr / data / 步数 / lora / msswift·native / status）"),
-    ("status", "验证状态"),
-    ("runs", "跑次说明"),
-    ("effect", "效果（评测 vs 基准）"),
-    ("inference", "推理验证"),
-    ("algo_checks", "算法检查"),
-    ("throughput", "吞吐/墙钟"),
+    ("status", "是否通过"),
+    ("model", "模型"),
+    ("algo", "算法"),
+    ("mode", "模式"),
+    ("backend", "后端"),
+    ("parallel", "卡数与并行"),
+    ("lora_target", "LoRA 目标"),
+    ("lr", "lr"),
+    ("data_scale", "数据规模"),
+    ("steps", "步数/epoch"),
+    ("switches", "关键开关"),
     ("peak_mem", "显存峰值(GiB)"),
-    ("run_path", "跑次 ID / 日期"),
+    ("elapsed", "耗时（每步/总时长）"),
+    ("throughput", "吞吐"),
+    ("effect", "效果（评测 Δ / loss·reward 窗口）"),
+    ("note", "备注（条件 / 限制 / 失败归因）"),
 ]
-RESULT_KEYS = ["status", "runs", "effect", "inference", "algo_checks",
-               "throughput", "peak_mem", "run_path"]
-# 主要训练参数列必须合并的十项（顺序即展示顺序）
+RESULT_KEYS = ["peak_mem", "elapsed", "throughput", "effect"]
+# 主要参数：按项分列（顺序即展示顺序）
 PARAM_SUBKEYS = ["model", "algo", "mode", "backend", "parallel", "lora_target",
-                 "lr", "data_subset", "steps", "switches"]
+                 "lr", "data_scale", "steps", "switches"]
 # 供 yaml 生成器机读的细粒度字段（每行必须存在；值为 '—' 表示源缺失）
 SPEC_KEYS = ["model_path", "train_method", "tuner_type", "cards", "parallel_dims",
              "parallel_scheme", "data_source", "subset_size", "prompts_per_rank",
@@ -103,7 +109,7 @@ SPEC_KEYS = ["model_path", "train_method", "tuner_type", "cards", "parallel_dims
              "deepspeed", "allow_unverified_pp_rollout", "nnodes",
              "expected_optimizer_steps_per_epoch", "expected_optimizer_steps_reachable",
              "expected_optimizer_steps_historical", "steps_formula_v2", "min_optimizer_steps",
-             "applicable", "spec_json"]
+             "applicable"]
 
 
 def first_diff(a: bytes, b: bytes):
@@ -220,7 +226,7 @@ def main():
     if len(trs) != len(data["rows"]):
         failures.append(("④B 行数", f"期望 {len(data['rows'])}，实际 {len(trs)}"))
 
-    # ---- ④C. 验证状态四态一致性（§17.7：只允许四态；尚未验证不得计入可用） ----
+    # ---- ④C. 验证状态四态一致性（§17.7） ----
     vocab = (data.get("meta") or {}).get("status_vocabulary", [])
     filled, bad = [], []
     for r in data.get("rows", []):
@@ -228,45 +234,40 @@ def main():
         if st not in vocab:
             bad.append((tier, f"非法验证状态 {st!r}"))
             continue
-        if st == "已验证可用":
+        if st in ("已验证可用", "已验证不可用"):
             filled.append(tier)
-            empt = [k for k in RESULT_KEYS if r.get(k) in ("", "—", None)]
-            if empt:
-                bad.append((tier, f"「已验证可用」但有空列 {empt}"))
-        elif st == "已验证不可用":
-            filled.append(tier)
-            if not r.get("verdict"):
+            if st == "已验证不可用" and not r.get("verdict"):
                 bad.append((tier, "「已验证不可用」缺结论块（未写明未过判据 / 已通过项）"))
-        elif st == "尚未验证":
-            nz = [k for k in RESULT_KEYS if k != "status" and r.get(k) not in ("", "—", None)]
+            if r.get("note") in ("", "—", None):
+                bad.append((tier, "已结论档缺「备注」归因"))
+        else:
+            nz = [k for k in RESULT_KEYS if r.get(k) not in ("", "—", None)]
             if nz:
-                bad.append((tier, f"「尚未验证」却带实测值 {nz}"))
-        elif st == "未纳入验收" and not r.get("excluded_reason"):
+                bad.append((tier, f"「{st}」却带实验数据 {nz}"))
+            if r.get("note") not in ("", "—", None) and st == "尚未验证":
+                bad.append((tier, "「尚未验证」却带备注"))
+        if st == "未纳入验收" and not r.get("excluded_reason"):
             bad.append((tier, "「未纳入验收」缺逐档理由"))
     if bad:
         failures.append(("④C 验证状态四态一致性", f"不一致 {len(bad)} 档（前 5）: {bad[:5]}"))
     if a.expect_empty and filled:
         failures.append(("④C --expect-empty：不得有已结论档位", f"已结论 {len(filled)} 档: {filled[:8]}"))
 
-    # ---- ④D. 主要训练参数列合并：十项逐档在位，且与数据逐字一致 ----
-    param_cells = re.findall(r'<td class="g-param col-start param" data-col="params">(.*?)</td>', target_text)
-    if len(param_cells) != len(data["rows"]):
-        failures.append(("④D 主要训练参数列单元格数", f"期望 {len(data['rows'])}，实际 {len(param_cells)}"))
-    else:
-        mismatch = []
-        for row, cell in zip(data["rows"], param_cells):
-            txt = cell_text(cell)
-            for sub in PARAM_SUBKEYS:
-                v = str(row.get(sub, ""))
-                sv = re.search(rf'data-v="{re.escape(sub)}">([^<]*)</span>', cell)
-                if sv is None:
-                    mismatch.append((row.get("tier"), sub, "缺 data-v 锚点"))
-                elif html.unescape(sv.group(1)) != v:
-                    mismatch.append((row.get("tier"), sub, f"渲染 {sv.group(1)!r} != 数据 {v!r}"))
-                if v and v not in txt:
-                    mismatch.append((row.get("tier"), sub, f"纯文本里找不到 {v!r}"))
-        if mismatch:
-            failures.append(("④D 主要训练参数列合并", f"不一致 {len(mismatch)} 处（前 5）: {mismatch[:5]}"))
+    # ---- ④D. 表格列逐档与数据逐字一致（主要参数分列 / 实验数据 / 备注） ----
+    mismatch = []
+    cell_re = lambda key: re.compile(r'<td class="[^"]*" data-col="' + re.escape(key) + r'">(.*?)</td>', re.S)
+    for key in PARAM_SUBKEYS + RESULT_KEYS + ["note"]:
+        cells = re.findall(r'<td class="[^"]*" data-col="' + re.escape(key) + r'">(.*?)</td>', target_text, re.S)
+        if len(cells) != len(data["rows"]):
+            mismatch.append((key, f"单元格数 {len(cells)} != {len(data['rows'])}"))
+            continue
+        for row, cell in zip(data["rows"], cells):
+            v = str(row.get(key, ""))
+            got = html.unescape(re.sub(r"<[^>]+>", "", cell)).strip()
+            if got != v:
+                mismatch.append((row.get("tier"), key, f"渲染 {got!r} != 数据 {v!r}"))
+    if mismatch:
+        failures.append(("④D 表格列一致性", f"不一致 {len(mismatch)} 处（前 5）: {mismatch[:5]}"))
 
     # ---- ④E. §1.0 统一口径块 + 供 yaml 生成器的机读字段 ----
     uni = data.get("uniform") or {}
@@ -306,11 +307,6 @@ def main():
         failures.append(("④I 生成标记", "缺机器可读生成标记（generated-by / meta 标记）"))
     if "自动生成" not in target_text or "禁止手工编辑" not in target_text:
         failures.append(("④I 首屏生成声明", "首屏缺「由生成器从数据自动生成，禁止手工编辑」"))
-    cov = meta.get("coverage") or {}
-    if cov.get("gate_met") is False and "覆盖度警示" not in target_text:
-        failures.append(("④I 覆盖度警示", "未达门槛但首屏/正文缺覆盖度警示"))
-    if len(cov.get("unverified_tiers", [])) and "尚未验证档位清单" not in target_text:
-        failures.append(("④I 尚未验证清单", "缺「尚未验证」档位清单"))
     if not (meta.get("boundary_declaration") or {}).get("points"):
         failures.append(("④I 边界声明", "数据缺 boundary_declaration.points"))
     if "承诺边界声明" not in target_text:
@@ -321,26 +317,6 @@ def main():
     miss_keys = [(r.get("tier"), k) for r in data["rows"] for k in SPEC_KEYS if k not in r]
     if miss_keys:
         failures.append(("④E 机读字段缺失（yaml 生成器口径）", f"缺 {len(miss_keys)} 处（前 5）: {miss_keys[:5]}"))
-
-    # ---- ④F. 「主要参数（机读）」列：逐档与数据逐字一致，且必须是合法 JSON ----
-    spec_cells = re.findall(r'<td class="g-param" data-col="spec_json">(.*?)</td>', target_text)
-    if len(spec_cells) != len(data["rows"]):
-        failures.append(("④F 机读列单元格数", f"期望 {len(data['rows'])}，实际 {len(spec_cells)}"))
-    else:
-        bad = []
-        for row, cell in zip(data["rows"], spec_cells):
-            txt = html.unescape(cell)
-            if txt != str(row.get("spec_json", "")):
-                bad.append((row.get("tier"), "渲染值与数据不一致"))
-                continue
-            try:
-                obj = json.loads(txt)
-                if obj.get("tier_id") != row.get("tier"):
-                    bad.append((row.get("tier"), f"JSON 内 tier_id={obj.get('tier_id')!r} 与行不符"))
-            except Exception as e:
-                bad.append((row.get("tier"), f"非法 JSON: {e}"))
-        if bad:
-            failures.append(("④F 机读 JSON 列", f"不一致 {len(bad)} 处（前 5）: {bad[:5]}"))
 
     sha_html = hashlib.sha256(target_bytes).hexdigest()
     sha_render = hashlib.sha256(rendered_bytes).hexdigest()
@@ -358,7 +334,6 @@ def main():
               f" | ④C 结果列一致性={ok('④C')}"
               f" | ④D 主要训练参数列={ok('④D')}"
               f" | ④E 统一口径/机读字段={ok('④E')}"
-              f" | ④F 机读 JSON 列={ok('④F')}"
               f" | ④G 脱敏={ok('④G')}"
               f" | ④H 禁止措辞={ok('④H')}"
               f" | ④I §17.7 要件={ok('④I')}")

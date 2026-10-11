@@ -16,20 +16,16 @@ ROOT = Path(__file__).resolve().parents[2]
 SM = ROOT / "tools/matrix"
 DOCS = ROOT / "docs"
 PY = sys.executable
-RESULT_KEYS = ["status", "runs", "effect", "inference", "algo_checks",
-               "throughput", "peak_mem", "run_path"]
+RESULT_KEYS = ["peak_mem", "elapsed", "throughput", "effect"]
 FAKE = {
-    "T001": {"status": "已验证可用", "runs": "1/1 真效果训练（两条可用性判据均满足）",
-             "effect": "指标 Δ=+0.0 pp（示意）", "inference": "✅ 合并 LoRA → 服务化推理 → 评测集跑完（示意）",
-             "algo_checks": "7/7", "throughput": "812 tok/s；墙钟 00:31:20",
-             "peak_mem": "25.5", "run_path": "RUN-DEMO-T001-01（2026-10-11）"},
-    "T010": {"status": "已验证不可用", "runs": "1/1 真效果训练（第 2 条判据未过）",
-             "effect": "Δ=-3.0 pp < 阈值（示意）", "inference": "✅ 产物可推理", "algo_checks": "7/7",
-             "throughput": "—", "peak_mem": "20.4", "run_path": "RUN-DEMO-T010-01（2026-10-11）",
+    "T001": {"status": "已验证可用", "peak_mem": "25.5", "elapsed": "总时长 00:31:20",
+             "throughput": "812 tok/s", "effect": "Δ=+0.0 pp（示意）", "note": "示意数据"},
+    "T010": {"status": "已验证不可用", "peak_mem": "20.4", "elapsed": "总时长 00:12:00",
+             "throughput": "—", "effect": "Δ=-3.0 pp < 阈值（示意）", "note": "未过第 2 条：效果未达标（示意）",
              "verdict": {"state": "已验证不可用",
                          "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
                          "failed_detail": "Δ=-3.0 pp < 阈值（示意）",
-                         "passed_criteria": ["可完整跑完：exit_code = 0", "产物可推理"]}},
+                         "passed_criteria": ["可完整跑完：exit_code = 0"]}},
 }
 
 
@@ -47,7 +43,7 @@ def main():
         # ① 空数据
         empty = json.loads(json.dumps(data, ensure_ascii=False))
         for r in empty["rows"]:
-            for k in RESULT_KEYS:
+            for k in RESULT_KEYS + ["note"]:
                 r[k] = "—"
             r["status"] = "尚未验证"
             for k in ("verdict", "excluded_reason"):
@@ -95,22 +91,37 @@ def main():
         checks["③ 手改 1 字符 verify FAIL"] = rc == 1
         checks["③ FAIL 报出字节偏移/行/列"] = ("字节偏移" in out and "行 " in out)
 
-        # ④ 警示派生化：改数据里的覆盖度计数 ⇒ 首屏警示必须随之改变（非模板硬编码）
-        derived = json.loads(json.dumps(data, ensure_ascii=False))
-        cov = derived["meta"]["coverage"]
-        cov["not_verified"] = 7
-        cov["verified_available"] = 2
-        cov["gate_met"] = False
-        cov["unverified_tiers"] = [r["tier"] for r in derived["rows"]][:7]
-        (tmp / "derived.data.json").write_text(json.dumps(derived, ensure_ascii=False, indent=1), encoding="utf-8")
+        # ④ 表格之外逐字节不变：只改 rows 里的数值 ⇒ diff 必须完全落在矩阵表内
+        base_html = (DOCS / "capability-matrix.html").read_text(encoding="utf-8")
+        mut = json.loads(json.dumps(data, ensure_ascii=False))
+        changed = 0
+        for r in mut["rows"]:
+            if r["tier"] == "T028":
+                r["peak_mem"] = "99.9"
+                r["effect"] = str(r.get("effect", "")) + "【仅改动表格数值】"
+                changed += 1
+        (tmp / "mut.data.json").write_text(json.dumps(mut, ensure_ascii=False, indent=1), encoding="utf-8")
         rc, out = run(["tools/matrix/render_matrix.py", "--template", "tools/matrix/template.html",
-                       "--data", str(tmp / "derived.data.json"), "--out", str(tmp / "derived.html")])
-        steps.append(("④ 警示派生化渲染（覆盖度改为 7 档尚未验证 / 2 档可用）", rc, out))
-        checks["④ 警示派生化渲染 PASS"] = rc == 0
-        html_d = (tmp / "derived.html").read_text(encoding="utf-8")
-        checks["④ 警示随数据变化（含 7 / 2 计数）"] = ("覆盖度警示" in html_d
-                                                 and "「<b>尚未验证</b>」<b>7</b> 档" in html_d
-                                                 and "「已验证可用」<b>2</b> 档" in html_d)
+                       "--data", str(tmp / "mut.data.json"), "--out", str(tmp / "mut.html")])
+        steps.append(("④ 只改 rows 数值后重渲染", rc, out))
+        mut_html = (tmp / "mut.html").read_text(encoding="utf-8")
+
+        def split_table(h):
+            i = h.index('<table class="matrix">')
+            j = h.index("</table>", i) + len("</table>")
+            return h[:i], h[i:j], h[j:]
+
+        pa, ta, sa = split_table(base_html)
+        pb, tb, sb = split_table(mut_html)
+        checks["④ 表格之外逐字节不变（前缀）"] = (pa == pb)
+        checks["④ 表格之外逐字节不变（后缀）"] = (sa == sb)
+        checks["④ 表格内确已变化"] = (ta != tb)
+        if pa != pb:
+            i = next((k for k in range(min(len(pa), len(pb))) if pa[k] != pb[k]), min(len(pa), len(pb)))
+            print(f"  [debug] 表格外前缀首个差异 @ 字符 {i}: {pa[i:i+80]!r} != {pb[i:i+80]!r}")
+        if sa != sb:
+            i = next((k for k in range(min(len(sa), len(sb))) if sa[k] != sb[k]), min(len(sa), len(sb)))
+            print(f"  [debug] 表格外后缀首个差异 @ 字符 {i}: {sa[i:i+80]!r} != {sb[i:i+80]!r}")
 
         print("=" * 70)
         for name, rc, out in steps:

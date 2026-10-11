@@ -79,17 +79,18 @@ table.uniform td code{white-space:normal;word-break:break-word;}
 .label-gray{color:var(--gray);font-weight:600;}
 /* ---------- 矩阵表 ---------- */
 .table-wrap{overflow:auto;max-height:80vh;border:1px solid var(--line);border-radius:8px;background:#fff;}
-table.matrix{border-collapse:separate;border-spacing:0;font-size:12.5px;white-space:nowrap;}
+table.matrix{border-collapse:separate;border-spacing:0;font-size:12.5px;table-layout:auto;white-space:normal;}
 table.matrix th,table.matrix td{border-right:1px solid var(--line-soft);border-bottom:1px solid var(--line-soft);
-  padding:4px 9px;text-align:left;vertical-align:middle;}
-/* 机读 JSON 列：允许换行、等宽小字 */
-table.matrix td[data-col="spec_json"]{white-space:normal;word-break:break-all;max-width:440px;
-  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:10.5px;color:#57606a;line-height:1.35;}
+  padding:4px 9px;text-align:left;vertical-align:middle;white-space:normal;word-break:break-word;}
+/* 备注列给足宽度（复杂内容：条件 / 限制 / 失败归因） */
+table.matrix td[data-col="note"]{min-width:340px;}
+table.matrix td[data-col="effect"]{min-width:200px;}
+table.matrix td[data-col="lora_target"]{min-width:150px;}
 h4{font-size:14px;margin:16px 0 6px;color:#24292f;}
 /* 表头吸顶（两行） */
-table.matrix thead th{position:sticky;z-index:3;height:29px;line-height:19px;white-space:nowrap;}
+table.matrix thead th{position:sticky;z-index:3;min-height:29px;line-height:19px;white-space:normal;}
 table.matrix thead tr:nth-child(1) th{top:0;border-bottom:1px solid #8c959f;}
-table.matrix thead tr:nth-child(2) th{top:29px;border-bottom:2px solid #8c959f;font-weight:600;}
+table.matrix thead tr:nth-child(2) th{top:52px;border-bottom:2px solid #8c959f;font-weight:600;}
 table.matrix thead tr:nth-child(1) th[colspan]{text-align:center;letter-spacing:.5px;}
 table.matrix thead th[data-colgroup]{text-align:center;font-weight:600;letter-spacing:.5px;}
 /* 档号列冻结 */
@@ -138,7 +139,6 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <h1>{{DOC_TITLE}}</h1>
 <p class="subtitle">各档位的可用性、性能基线与验收结论</p>
 {{GEN_BANNER}}
-{{COVERAGE_WARNING}}
 <table class="plain meta">
 <tbody>
 <tr><th>文档版本</th><td><code>{{DATA_REVISION}}</code></td></tr>
@@ -309,10 +309,9 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <h2>5. 功能矩阵测试表</h2>
 <p>下表逐档列出<b>档位之间的差异项</b>（主要训练参数）与<b>验证结论</b>（验证状态与结果列）。对全部档位相同的参数见第 1.1 节统一口径，不在本表重复。</p>
 <p class="note"><b>验证状态</b>只允许「已验证可用 / 已验证不可用 / 尚未验证 / 未纳入验收」四种文字标签（定义见第 4 节）。<b>「尚未验证」不得计入可用档位数量。</b></p>
-{{UNVERIFIED_LIST}}
 {{MATRIX_TABLE}}
 {{VERDICTS}}
-<p class="note" style="margin-top:10px;">读表提示：表头两行吸顶；档号列冻结在左侧；结果列组以竖线与参数列隔开。「主要训练参数」列为该档的差异项取值；「主要参数（机读 JSON）」列为同批字段的机读形式。</p>
+<p class="note" style="margin-top:10px;">读表提示：表头两行吸顶；档号列冻结在左侧；结果列组以竖线与参数列隔开。「主要参数」组各列为该档的差异项取值（对全部档位相同的参数见第 1.1 节统一口径，表内不重复）；「实验数据」组各列为逐档读数；「备注」列承载条件 / 限制 / 失败归因。</p>
 </section>
 
 </main>

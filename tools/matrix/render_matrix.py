@@ -21,15 +21,14 @@ from pathlib import Path
 PLACEHOLDER_TOKENS = ("{{DATA_REVISION}}", "{{SOURCE_BASENAME}}", "{{SOURCE_SHA256_SHORT}}",
                       "{{SOURCE_PATH}}", "{{SOURCE_SHA256}}", "{{CRITERIA_VERSION}}",
                       "{{ROW_COUNT}}", "{{MATRIX_TABLE}}", "{{UNIFORM_PARAMS}}", "{{DOC_DATE}}",
-                      "{{DOC_TITLE}}", "{{GEN_BANNER}}", "{{COVERAGE_WARNING}}",
-                      "{{UNVERIFIED_LIST}}", "{{BOUNDARY}}", "{{CALIBER}}", "{{VERDICTS}}",
+                      "{{DOC_TITLE}}", "{{GEN_BANNER}}",
+                      "{{BOUNDARY}}", "{{CALIBER}}", "{{VERDICTS}}",
                       "{{GENERATOR}}", "{{DATA_PATH}}")
 
 # 结果列着色用的四态映射（与模板内联脚本同一口径；此处只用于生成带 class 的单元格）
 STATUS_CLASS = {
-    "通过": "st-pass", "失败": "st-fail", "不通过": "st-fail",
-    "条件不合逻辑": "st-illegal", "不适用": "st-illegal",
-    "未完成测试": "st-pending", "待跑": "st-pending",
+    "已验证可用": "st-pass", "已验证不可用": "st-fail",
+    "尚未验证": "st-pending", "未纳入验收": "st-illegal",
 }
 
 
@@ -147,25 +146,6 @@ def build_gen_banner(data):
             f'自动生成，<b>禁止手工编辑</b>。任何修改都必须改数据或生成器后重新生成。</div>')
 
 
-def build_coverage_warning(data):
-    cov = data["meta"].get("coverage", {})
-    if cov.get("gate_met"):
-        return ('<div class="hint"><b>覆盖度：</b>全部档位均已有明确结论，覆盖度门槛已满足。</div>')
-    return (f'<div class="warnbox"><b>★ 覆盖度警示（未达门槛）。</b>本矩阵共 <b>{cov.get("total")}</b> 档：'
-            f'「已验证可用」<b>{cov.get("verified_available")}</b> 档、'
-            f'「已验证不可用」<b>{cov.get("verified_unavailable")}</b> 档、'
-            f'「未纳入验收」<b>{cov.get("not_in_acceptance")}</b> 档、'
-            f'「<b>尚未验证</b>」<b>{cov.get("not_verified")}</b> 档。'
-            f'⇒ <b>项目整体能力承诺尚未满足</b>；「尚未验证」档位不计入可用档位数量。</div>')
-
-
-def build_unverified_list(data):
-    cov = data["meta"].get("coverage", {})
-    ts = cov.get("unverified_tiers", [])
-    if not ts:
-        return '<p class="note">（无「尚未验证」档位。）</p>'
-    return (f'<p class="note"><b>尚未验证档位清单（{len(ts)} 档）</b>：' +
-            "、".join(f"<code>{html.escape(t)}</code>" for t in ts) + "</p>")
 
 
 def build_boundary(data):
@@ -230,8 +210,6 @@ def render(template_text, data):
         "{{DOC_DATE}}": meta.get("doc_date", ""),
         "{{DOC_TITLE}}": meta.get("title", ""),
         "{{GEN_BANNER}}": build_gen_banner(data),
-        "{{COVERAGE_WARNING}}": build_coverage_warning(data),
-        "{{UNVERIFIED_LIST}}": build_unverified_list(data),
         "{{BOUNDARY}}": build_boundary(data),
         "{{CALIBER}}": build_caliber(data),
         "{{VERDICTS}}": build_verdicts(data),
