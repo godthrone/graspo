@@ -58,6 +58,7 @@ COLUMNS = [
 
 # 供 yaml 生成器机读的扁平字段（每行必须存在；'—' = 源缺失 / 不适用）
 SPEC_KEYS = ["model_path", "train_method", "tuner_type", "cards", "parallel_dims",
+             "tp_size", "pp_size", "dp_size", "cp_size", "sp_size", "nproc_per_node", "nnodes",
              "parallel_scheme", "data_source", "subset_size", "prompts_per_rank",
              "subset_generation", "subset_r3_historical", "train_path",
              "planned_steps", "save_steps", "gpus", "target_modules", "target_modules_mode",
@@ -299,6 +300,14 @@ def main():
             "tuner_type": v(t.get("tuner_type")),
             "cards": v((t.get("parallel") or {}).get("cards")),
             "parallel_dims": v((t.get("parallel") or {}).get("summary")),
+            # ★ 并行维度逐档字段（渲染与"配置值 / 派生值"标注都由生成器做，⛔ 不手写）
+            "tp_size": v((t.get("parallel") or {}).get("tp_size")),
+            "pp_size": v((t.get("parallel") or {}).get("pp_size")),
+            "dp_size": v((t.get("parallel") or {}).get("dp_size")),
+            "nproc_per_node": v((t.get("msswift") or {}).get("nproc_per_node")),
+            "nnodes": v((t.get("msswift") or {}).get("nnodes")),
+            "cp_size": "1",          # 全档同值：无 CP 配置（口径块写明）
+            "sp_size": "off",        # 全档同值：SP 关闭（口径块写明）
             "gpus": json.dumps((t.get("parallel") or {}).get("gpus"), ensure_ascii=False),
             "parallel_scheme": v((t.get("parallel") or {}).get("scheme")),
             "target_modules": json.dumps(t.get("target_modules"), ensure_ascii=False),
@@ -325,6 +334,8 @@ def main():
         for k in RESULT_KEYS:
             row[k] = PLACEHOLDER
         p = prev.get(t["tier_id"])
+        if p and p.get("conclusion_annotation"):        # ★ 结论有效性注记：随数据长期保留
+            row["conclusion_annotation"] = p["conclusion_annotation"]
         if p and any(p.get(k) not in ("", PLACEHOLDER) for k in RESULT_KEYS):
             for k in RESULT_KEYS:
                 row[k] = p.get(k, PLACEHOLDER)

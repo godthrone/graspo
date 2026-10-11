@@ -66,6 +66,7 @@ def main():
 
         # ② 假数据
         fake = json.loads(json.dumps(data, ensure_ascii=False))
+        fake["meta"]["_selfproof_fixture"] = True   # 自证夹具：刻意含"已结论"态
         for r in fake["rows"]:
             if r["tier"] in FAKE:
                 r.update(FAKE[r["tier"]])

@@ -44,7 +44,7 @@ REQUIRED_MARKERS = [
     ("四态·已验证可用", "已验证可用"),
     ("四态·已验证不可用", "已验证不可用"),
     ("四态·尚未验证", "尚未验证"),
-    ("列序·主要参数分列", "卡数与并行"),
+    ("列序·主要参数分列", "总卡数"),
     ("列序·实验数据", "实验数据"),
     ("列序·备注", "失败归因"),
     ("四态·未纳入验收", "未纳入验收"),
@@ -64,6 +64,9 @@ REQUIRED_MARKERS = [
     ("评测/推理验证列", "效果（评测 vs 基准）"),
     ("步数为上限", "该值是上限"),
     ("并行按后端分列", "nproc_per_node"),
+    ("并行·配置值", "配置值"),
+    ("并行·派生值", "派生"),
+    ("并行·关系式", "总卡数 = nproc_per_node × nnodes = TP × PP × CP × DP"),
     ("LoRA 目标分列", "target_modules"),
     ("检查点间隔键名", "checkpoint_save_steps"),
 ]
@@ -85,7 +88,10 @@ EXPECTED_COLUMNS = [
     ("algo", "算法"),
     ("mode", "模式"),
     ("backend", "后端"),
-    ("parallel", "卡数与并行"),
+    ("tp", "TP"),
+    ("pp", "PP"),
+    ("dp", "DP"),
+    ("cards_total", "总卡数"),
     ("lora_target", "LoRA 目标"),
     ("lr", "lr"),
     ("data_scale", "数据规模"),
@@ -99,8 +105,8 @@ EXPECTED_COLUMNS = [
 ]
 RESULT_KEYS = ["peak_mem", "elapsed", "throughput", "effect"]
 # 主要参数：按项分列（顺序即展示顺序）
-PARAM_SUBKEYS = ["model", "algo", "mode", "backend", "parallel", "lora_target",
-                 "lr", "data_scale", "steps", "switches"]
+PARAM_SUBKEYS = ["model", "algo", "mode", "backend", "tp", "pp", "dp", "cards_total",
+                 "lora_target", "lr", "data_scale", "steps", "switches"]
 # 供 yaml 生成器机读的细粒度字段（每行必须存在；值为 '—' 表示源缺失）
 SPEC_KEYS = ["model_path", "train_method", "tuner_type", "cards", "parallel_dims",
              "parallel_scheme", "data_source", "subset_size", "prompts_per_rank",
@@ -244,10 +250,16 @@ def main():
             nz = [k for k in RESULT_KEYS if r.get(k) not in ("", "—", None)]
             if nz:
                 bad.append((tier, f"「{st}」却带实验数据 {nz}"))
-            if r.get("note") not in ("", "—", None) and st == "尚未验证":
-                bad.append((tier, "「尚未验证」却带备注"))
+            if r.get("note") not in ("", "—", None) and st == "尚未验证" and not r.get("voided_conclusion"):
+                bad.append((tier, "「尚未验证」却带备注（且无作废注记）"))
         if st == "未纳入验收" and not r.get("excluded_reason"):
             bad.append((tier, "「未纳入验收」缺逐档理由"))
+    # ★ 现状约束：结论与同行参数一一对应 ⇒ 参数更正后旧结论作废；当前只应有「尚未验证 / 未纳入验收」
+    present = sorted({r.get("status") for r in data.get("rows", [])})
+    allowed_now = {"尚未验证", "未纳入验收"}
+    # 自证夹具（刻意造出"已结论"态以覆盖渲染/校验路径）豁免该"现状"断言；真实件不受豁免
+    if not (data.get("meta") or {}).get("_selfproof_fixture") and not set(present) <= allowed_now:
+        failures.append(("④C 现状状态集合", f"当前只允许 {sorted(allowed_now)}，实际 {present}（结论需与同行参数对应）"))
     if bad:
         failures.append(("④C 验证状态四态一致性", f"不一致 {len(bad)} 档（前 5）: {bad[:5]}"))
     if a.expect_empty and filled:

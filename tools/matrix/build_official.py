@@ -81,7 +81,10 @@ COLUMNS = [
     {"key": "algo", "label": "算法", "group": "param"},
     {"key": "mode", "label": "模式", "group": "param"},
     {"key": "backend", "label": "后端", "group": "param"},
-    {"key": "parallel", "label": "卡数与并行", "group": "param"},
+    {"key": "tp", "label": "TP", "group": "param"},
+    {"key": "pp", "label": "PP", "group": "param"},
+    {"key": "dp", "label": "DP", "group": "param"},
+    {"key": "cards_total", "label": "总卡数", "group": "param"},
     {"key": "lora_target", "label": "LoRA 目标", "group": "param"},
     {"key": "lr", "label": "lr", "group": "param"},
     {"key": "data_scale", "label": "数据规模", "group": "param"},
@@ -95,6 +98,66 @@ COLUMNS = [
 ]
 
 DATA_KEYS = ["peak_mem", "elapsed", "throughput", "effect", "note"]
+
+
+#: ★ 并行维度的固定口径（写进表前「统一口径」块；⛔ 不进表格列）
+PARALLEL_UNIFORM = [
+    {"key": "parallel_relation", "label": "总卡数与并行维度的关系式",
+     "value": "总卡数 = nproc_per_node × nnodes = TP × PP × CP × DP",
+     "layer": "rule", "coverage": "rule-54/54",
+     "note": "两个后端的配置面不同，见下两行；表中 TP / PP / DP / 总卡数 四列即由此式给出"},
+    {"key": "native_parallel", "label": "native 后端的并行配置面",
+     "value": "显式配置 tp_size / dp_size / pp_size",
+     "layer": "rule", "coverage": "rule-54/54",
+     "note": "表中 TP / PP / DP 三列对 native 档均为**配置值**"},
+    {"key": "msswift_parallel", "label": "ms-swift 后端的并行配置面",
+     "value": "不暴露 dp_size；world_size = nproc_per_node × nnodes；DP 由框架内部（DeepSpeed）决定",
+     "layer": "rule", "coverage": "rule-54/54",
+     "note": "★ 防呆：ms-swift 档**不得**设 dp_size（设了会直接报错）；因此表中 ms-swift 档的 DP 为**派生值**并显式标注，TP / PP 记「—（框架内部决定）」"},
+    {"key": "cp", "label": "CP（上下文并行）",
+     "value": "全部档 = 1", "layer": "rule", "coverage": "rule-54/54",
+     "note": "全档同值 ⇒ ⛔ 不占列（只列差异项）"},
+    {"key": "sp", "label": "SP（序列并行）",
+     "value": "全部档 = 关闭（不切分）", "layer": "rule", "coverage": "rule-54/54",
+     "note": "全档同值 ⇒ ⛔ 不占列；ms-swift 的 sequence_parallel_size = 1 即不切分，native 档未配置"},
+]
+
+
+def parallel_cols(r, state):
+    """★ 并行维度列（TP / PP / DP / 总卡数）——由生成器拼装，⛔ 不手写。
+
+    配置值 vs 派生值必须区分（§ 主席裁决）：
+      · native：TP / PP / DP = **配置值**；总卡数 = TP×PP×CP×DP；
+      · ms-swift：DP = **派生值**（nproc_per_node × nnodes）显式标注；TP / PP = 「—（框架内部决定）」；
+        总卡数 = nproc_per_node × nnodes（标注来源）。
+    """
+    if state in (S_UNVERIFIED, S_EXCLUDED) and r.get("cards") in (None, "", "—"):
+        return {"tp": "—", "pp": "—", "dp": "—", "cards_total": "—"}
+    backend = r.get("backend")
+    if backend == "native":
+        tp, pp, dp = r.get("tp_size"), r.get("pp_size"), r.get("dp_size")
+        cp = r.get("cp_size", "1")
+        cards = r.get("cards")
+        if tp in (None, "—") or pp in (None, "—") or dp in (None, "—"):
+            return {"tp": "—", "pp": "—", "dp": "—", "cards_total": f"—（{cards} 卡）" if cards else "—"}
+        total = f"{tp}×{pp}×{cp}×{dp} = {cards} 卡" if cards not in (None, "—") else f"{tp}×{pp}×{cp}×{dp}"
+        return {"tp": str(tp), "pp": str(pp), "dp": str(dp), "cards_total": total,
+                "dp_derived": False, "dp_source": "配置值（native.tp_size / pp_size / dp_size）"}
+    if backend == "ms-swift":
+        nproc = r.get("nproc_per_node")
+        if nproc in (None, "", "—"):
+            cards = r.get("cards")
+            return {"tp": "—（框架内部决定）", "pp": "—（框架内部决定）",
+                    "dp": "—（框架内部决定）", "cards_total": f"—（{cards} 卡）" if cards else "—"}
+        nn = r.get("nnodes")
+        nn = 1 if nn in (None, "", "—") else nn
+        world = int(nproc) * int(nn)
+        return {"tp": "—（框架内部决定）", "pp": "—（框架内部决定）",
+                "dp": f"{world}（派生）",
+                "cards_total": f"nproc_per_node×nnodes = {world} 卡",
+                "dp_derived": True,
+                "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）"}
+    return {"tp": "—", "pp": "—", "dp": "—", "cards_total": "—"}
 
 
 def boundary_declaration():
@@ -125,6 +188,11 @@ def criteria_caliber():
                       "status": "★ 最终阈值 δ 待定 —— 本值仅为该跑次所用阈值，尚不作为冻结基线。"},
         "baseline": {"role": "同档位未训练底座（role=base）",
                      "caliber": "U2 终点窗口 = 末段 max(3, 10% 步数) 步的均值；该档计划/可达优化步数上限见档位「步数」子项。"},
+        "conclusion_rule": {
+            "rule": ("结论必须与同一行的参数一一对应。若一行的参数已被更正，而结论来自旧参数下的跑次 ⇒ "
+                     "该结论作废，该档标「尚未验证」；仅在参数冻定后重跑，才可给出「已验证可用 / 已验证不可用」判定。"),
+            "status_wording": ("「尚未验证」在本文档中等同「未测试」；宪法 §17.7 的固定取值为「尚未验证」，用词以它为准。"),
+        },
     }
 
 
@@ -205,6 +273,12 @@ def main():
             state = S_UNAVAILABLE
         else:
             state = S_UNVERIFIED
+        # ★ 结论有效性：结论必须与同一行的参数一一对应；参数已更正而结论来自旧参数 ⇒ 结论作废
+        ann = r.get("conclusion_annotation")
+        voided = bool(ann) and ann.get("conclusion_valid") is False
+        if voided:
+            state = S_UNVERIFIED
+            r["voided_conclusion"] = ann
         r["status"] = state
         r.pop("spec_status", None)
 
@@ -227,7 +301,12 @@ def main():
         else:
             r["data_scale"] = "—"
         # 备注：失败归因（未过判据 + 已通过项 + 条件） / 未纳入验收理由
-        if state == S_EXCLUDED:
+        if voided:
+            ref = (ann.get("reference_record") or "").strip()
+            r["note"] = ("参考记录（旧配方；不对应当前行参数 ⇒ 判定作废，不作为该档可用/不可用判定）："
+                         + (ref or "—"))
+            r["conclusion_void_reason"] = ann.get("reason", "")
+        elif state == S_EXCLUDED:
             r["note"] = EXCLUDED_REASON
             r["excluded_reason"] = EXCLUDED_REASON
         elif v:
@@ -236,6 +315,7 @@ def main():
                          "。条件：数据集锚点 c202b1e1…、判据 elam-v3-allright-1、温度 0、有效样本 702。")
         else:
             r["note"] = "—"
+        r.update(parallel_cols(r, state))
         r["run_path"] = official_run_path(r, state)
         if v:
             r["verdict"] = v
@@ -264,7 +344,8 @@ def main():
         },
         "groups": GROUPS,
         "columns": COLUMNS,
-        "uniform": sanitize(src.get("uniform", {})),
+        "uniform": {"rule": (src.get("uniform") or {}).get("rule", ""),
+                    "items": sanitize((src.get("uniform") or {}).get("items", [])) + PARALLEL_UNIFORM},
         "rows": rows,
         "data_keys": DATA_KEYS,
     }

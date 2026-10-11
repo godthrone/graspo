@@ -168,6 +168,8 @@ def build_caliber(data):
             f'<tr><th>阈值与目标值</th><td>{html.escape(th.get("name", ""))} = {th.get("value")} {html.escape(th.get("unit", ""))}；'
             f'{html.escape(th.get("status", ""))}</td></tr>'
             f'<tr><th>基线口径</th><td>{html.escape(bl.get("role", ""))}；{html.escape(bl.get("caliber", ""))}</td></tr>'
+            f'<tr><th>结论与参数的对应</th><td>{html.escape((c.get("conclusion_rule") or {}).get("rule", ""))}</td></tr>'
+            f'<tr><th>状态用词</th><td>{html.escape((c.get("conclusion_rule") or {}).get("status_wording", ""))}</td></tr>'
             '</tbody></table>')
 
 
