@@ -101,4 +101,9 @@ def main():
 
 
 if __name__ == "__main__":
+    import argparse
+    argparse.ArgumentParser(
+        description="功能矩阵正式件的三组自证（空数据 / 假数据 / 手改 1 字符）。"
+                    "无参数即运行全部自证；中间产物写临时目录，不改正式件。"
+    ).parse_args()
     sys.exit(main())

@@ -84,6 +84,15 @@ POLICY: dict[str, Spec] = {
     "scripts/gpu_idle_assert.py": Spec(HELP, "F-10 空闲断言入口（ticket ⑤ 的 UUT）"),
     "scripts/gpu_lock_guard.py": Spec(HELP, "run.sh:114 锁卡守卫（B3 修过 P0 后损坏）"),
     "scripts/measure_elam_seq_len.py": Spec(HELP, "ELAM 序列长度测量入口"),
+    # ── scripts/matrix/ 文档工具链入口（功能矩阵 SSOT 的产出/校验链）────────
+    "scripts/matrix/render_matrix.py": Spec(HELP, "矩阵 HTML 的唯一渲染通道（模板+数据⇒HTML）"),
+    "scripts/matrix/verify_matrix.py": Spec(HELP, "矩阵执法：重渲染+逐字节比对+结构/内容/脱敏断言"),
+    "scripts/matrix/build_official.py": Spec(HELP, "正式机读件（脱敏）构建入口"),
+    "scripts/matrix/build_data.py": Spec(HELP, "内部数据构建入口（列定义+统一口径+逐档参数）"),
+    "scripts/matrix/extract_params.py": Spec(HELP, "逐档参数抽取入口"),
+    "scripts/matrix/extract_spec.py": Spec(HELP, "逐档规格抽取入口（含冲突/缺项登记）"),
+    "scripts/matrix/backfill_matrix.py": Spec(HELP, "跑次结果回填入口（增量/fail-closed）"),
+    "scripts/matrix/run_self_proof.py": Spec(HELP, "三组自证入口（空数据/假数据/手改 1 字符）"),
     # ── shell 工具/运维入口 ────────────────────────────────────────────────
     "scripts/eval_cleanup.sh": Spec(SH_HELP, "评测清理入口；支持 -h/--help ⇒ rc=0"),
     "scripts/eval_export_checkpoint.sh": Spec(SH_HELP, "评测导出入口；-h 显式 exit 0"),
