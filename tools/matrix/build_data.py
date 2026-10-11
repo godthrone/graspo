@@ -66,13 +66,13 @@ SPEC_KEYS = ["model_path", "train_method", "tuner_type", "cards", "parallel_dims
              "expected_optimizer_steps_historical", "steps_formula_v2", "min_optimizer_steps",
              "applicable", "spec_status", "spec_json"]
 
-EXTRACT_CMD = ("python3 scripts/matrix/extract_params.py --html <AUTH_HTML> "
+EXTRACT_CMD = ("python3 tools/matrix/extract_params.py --html <AUTH_HTML> "
                "--config-dir samples/configs/matrix54-v2 "
                "--out evidence/params-raw.json")
-SPEC_CMD = ("python3 scripts/matrix/extract_spec.py --params evidence/params-raw.json "
+SPEC_CMD = ("python3 tools/matrix/extract_spec.py --params evidence/params-raw.json "
             "--config-dir samples/configs/matrix54-v2 "
             "--out evidence/spec-54.json --conflicts-out evidence/spec-conflicts.md")
-BUILD_CMD = ("python3 scripts/matrix/build_data.py --spec evidence/spec-54.json "
+BUILD_CMD = ("python3 tools/matrix/build_data.py --spec evidence/spec-54.json "
              "--out matrix-data.json --preserve-from matrix-data.json")
 
 PROVENANCE = {

@@ -3,7 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>GRASPO 能力矩阵</title>
+<title>{{DOC_TITLE}}</title>
+<!-- generated-by: {{GENERATOR}} ; source: {{DATA_PATH}} ; do-not-edit -->
+<meta name="generator" content="{{GENERATOR}}">
+<meta name="matrix-source" content="{{DATA_PATH}}">
+<meta name="matrix-generation-marker" content="generated">
 <style>
 
 :root{
@@ -131,19 +135,22 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <body>
 
 <header>
-<h1>GRASPO 能力矩阵</h1>
-<p class="subtitle">训练配置能力规格与实测结论</p>
+<h1>{{DOC_TITLE}}</h1>
+<p class="subtitle">各档位的可用性、性能基线与验收结论</p>
+{{GEN_BANNER}}
+{{COVERAGE_WARNING}}
 <table class="plain meta">
 <tbody>
 <tr><th>文档版本</th><td><code>{{DATA_REVISION}}</code></td></tr>
 <tr><th>发布日期</th><td>{{DOC_DATE}}</td></tr>
-<tr><th>适用范围</th><td>GRASPO 训练框架的训练配置能力规格与实测结论</td></tr>
-<tr><th>文档性质</th><td>★ 本文件是 GRASPO <b>所有训练实验的唯一真相源</b>（Single Source of Truth）。训练配置（<code>*.yaml</code> 等）以本文件为准派生；与本文件不一致的配置不具效力。</td></tr>
-<tr><th>机读接口</th><td>同目录 <code>capability-matrix.data.json</code>——本文件的机读形式，与本文档同为真相源。</td></tr>
+<tr><th>适用范围</th><td>GRASPO 训练框架的能力与可用档位：逐档可用性、性能基线与验收结论</td></tr>
+<tr><th>唯一可编辑源头</th><td><code>{{DATA_PATH}}</code> —— 本矩阵<b>唯一可编辑的源头</b>。</td></tr>
+<tr><th>本文件（人读视图）</th><td>由 <code>{{GENERATOR}}</code> 从上述数据文件<b>确定性生成</b>；<b>禁止手工编辑</b>。派生方向固定：结果 JSON → 数据文件 → 人读视图（单方向，禁止互推）。</td></tr>
 <tr><th>判据版本</th><td>{{CRITERIA_VERSION}}</td></tr>
 <tr><th>档位总数</th><td>{{ROW_COUNT}} 档</td></tr>
 </tbody>
 </table>
+{{BOUNDARY}}
 </header>
 
 <nav class="toc">
@@ -274,28 +281,25 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <h3>3.4 评测与推理验证</h3>
 <ul>
 <li>矩阵以两列承载：「<b>效果（评测 vs 基准）</b>」列 = 固定评测集上的评测指标与基准的差值；「<b>推理验证</b>」列 = 判据 U4 的结论。</li>
-<li>两列与「是否通过」同表并置——结论与证据必须相邻可读。</li>
+<li>两列与「验证状态」同表并置——结论与证据必须相邻可读。</li>
 </ul>
+
+<h3>3.5 可用性判据与判定口径（数据集 / 判据 / 阈值与目标值 / 基线口径）</h3>
+{{CALIBER}}
 </section>
 
 <!-- ========================= 4. 状态定义 ========================= -->
 <section class="part" id="s4">
 <h2>4. 状态定义</h2>
-<div class="legend">
-<span class="k"><span class="sw sw-pass"></span>通过</span>
-<span class="k"><span class="sw sw-fail"></span>失败</span>
-<span class="k"><span class="sw sw-illegal"></span>条件不合逻辑</span>
-<span class="k"><span class="sw sw-pending"></span>未完成测试</span>
-<span class="k"><code>—</code> ＝ 尚未回填</span>
-</div>
+<p>每个档位必须显式标注验证状态，只允许以下四种取值。四种状态均有<b>可区分的文字标签</b>——判定不依赖颜色、图例或空白。</p>
 <table class="plain">
 <colgroup><col class="u"><col></colgroup>
-<thead><tr><th>状态</th><th>含义</th></tr></thead>
+<thead><tr><th>状态（文字标签）</th><th>含义与判定</th></tr></thead>
 <tbody>
-<tr><td><span class="label-ok">通过</span></td><td>四条通用判据与该算法的算法正确性检查，在一次真效果训练中全部成立。</td></tr>
-<tr><td><span class="label-bad">失败</span></td><td>任一条被事实否定；必带结构化归因：我方实现 / 上游依赖 / 资源不足。</td></tr>
-<tr><td><span class="label-gray">条件不合逻辑</span></td><td>该配置逻辑上不存在，或构不成一次正式记录。</td></tr>
-<tr><td><span class="label-gray">未完成测试</span></td><td>真效果训练未跑，或关键读数缺失 ⇒ 不能下结论，补测；它不是失败。</td></tr>
+<tr><td><b>已验证可用</b></td><td>两条可用性判据<b>同时满足</b>：① 能完整跑完；② 在平台方数据集与平台方参数下效果达标。</td></tr>
+<tr><td><b>已验证不可用</b></td><td>两条可用性判据中<b>任一条未过</b>。必须写明未过的是哪一条，并保留已通过项的事实——不得只写「失败」。</td></tr>
+<tr><td><b>尚未验证</b></td><td>数据中尚无实测结论。<b>不得计入可用档位数量</b>，也不得以设计目标冒充已验证能力。</td></tr>
+<tr><td><b>未纳入验收</b></td><td>该档位不纳入验收范围；逐档写明未纳入的理由与适用范围。</td></tr>
 </tbody>
 </table>
 </section>
@@ -303,9 +307,11 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <!-- ========================= 5. 功能矩阵测试表 ========================= -->
 <section class="part" id="s5">
 <h2>5. 功能矩阵测试表</h2>
-<p>下表逐档列出<b>档位之间的差异项</b>（主要训练参数）与<b>实测结论</b>（结果列）。对全部档位相同的参数见第 1.1 节统一口径，不在本表重复。未跑档位的结果列保持占位 <code>—</code>。</p>
-<p class="note"><b>不适用档位（<code>not_applicable</code>）的设计理由</b>：T052 / T053 / T054 为「27B 学生 + 27B 教师」组合，教师与学生的权重常驻合计约 100 GiB，与「节省显存」的设计意图相悖 ⇒ 该组合在设计上不成立，不产出可运行配置。这是合法终态，不是失败、也不是待补测。</p>
+<p>下表逐档列出<b>档位之间的差异项</b>（主要训练参数）与<b>验证结论</b>（验证状态与结果列）。对全部档位相同的参数见第 1.1 节统一口径，不在本表重复。</p>
+<p class="note"><b>验证状态</b>只允许「已验证可用 / 已验证不可用 / 尚未验证 / 未纳入验收」四种文字标签（定义见第 4 节）。<b>「尚未验证」不得计入可用档位数量。</b></p>
+{{UNVERIFIED_LIST}}
 {{MATRIX_TABLE}}
+{{VERDICTS}}
 <p class="note" style="margin-top:10px;">读表提示：表头两行吸顶；档号列冻结在左侧；结果列组以竖线与参数列隔开。「主要训练参数」列为该档的差异项取值；「主要参数（机读 JSON）」列为同批字段的机读形式。</p>
 </section>
 

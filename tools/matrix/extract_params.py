@@ -9,7 +9,7 @@
 
 边界：只读；只写本工位 evidence/ 下的 JSON。
 用法：
-  python3 scripts/matrix/extract_params.py \
+  python3 tools/matrix/extract_params.py \
       --html <AUTH_HTML> \
       --config-dir samples/configs/matrix54-v2 \
       --out evidence/params-raw.json

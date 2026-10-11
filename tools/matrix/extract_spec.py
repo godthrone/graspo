@@ -25,7 +25,7 @@ from pathlib import Path
 
 import extract_params as ep
 
-REPO = Path(__file__).resolve().parents[2]   # 仓库根（本脚本位于 scripts/matrix/）
+REPO = Path(__file__).resolve().parents[2]   # 仓库根（本脚本位于 tools/matrix/）
 GEN = REPO / "tests/e2e/generate_matrix.py"
 
 # ★ 主席 2026-10-11 裁定：LoRA 恢复既有正式口径（出处 = 8 个 git 跟踪示例配置）

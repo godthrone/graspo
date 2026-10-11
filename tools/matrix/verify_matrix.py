@@ -23,7 +23,7 @@ from pathlib import Path
 
 import render_matrix  # 同目录；复用唯一渲染通道
 
-VERSION = "verify-matrix/v5-official"
+VERSION = "verify-matrix/v6-§17.7"
 
 # ---- ③ 结构断言：新结构只允许这两大部分 ----
 EXPECTED_H2 = ["1. 参数定义", "2. 通过的定义", "3. 判据定义", "4. 状态定义", "5. 功能矩阵测试表"]
@@ -32,28 +32,48 @@ FORBIDDEN_OLD_SECTIONS = ["part1", "part2", "sec1", "sec1b", "sec2", "sec3", "se
 
 # ---- ④A. 必须出现的规则关键词（缺一即 FAIL） ----
 REQUIRED_MARKERS = [
-    ("权威性声明·唯一真相源", "所有训练实验的唯一真相源"),
+    ("机器可读生成标记", "generated-by:"),
+    ("首屏生成声明", "自动生成"),
+    ("禁止手工编辑", "禁止手工编辑"),
+    ("唯一可编辑源头", "唯一可编辑源头"),
+    ("方向固定·单方向", "单方向，禁止互推"),
+    ("覆盖度警示", "覆盖度警示"),
+    ("覆盖度门槛未达", "项目整体能力承诺尚未满足"),
+    ("边界声明", "承诺边界声明"),
+    ("边界要件·各档可用性", "各档可用性"),
+    ("边界要件·平台方数据集结论", "平台方数据集结论"),
+    ("边界要件·使用者效果不在范围", "不在本矩阵的承诺范围"),
+    ("四态·已验证可用", "已验证可用"),
+    ("四态·已验证不可用", "已验证不可用"),
+    ("四态·尚未验证", "尚未验证"),
+    ("四态·未纳入验收", "未纳入验收"),
+    ("不依赖颜色/图例", "不依赖颜色、图例或空白"),
+    ("未过判据必须写明", "必须写明未过的是哪一条"),
+    ("已通过项事实保留", "exit_code = 0"),
+    ("判据口径·数据集锚点", "版本锚点"),
+    ("判据口径·判据标识", "elam-v3-allright-1"),
+    ("判据口径·阈值待定", "最终阈值 δ 待定"),
+    ("判据口径·基线口径", "U2 终点窗口"),
     ("参数定义", "参数定义"),
     ("统一口径", "统一口径"),
     ("只列差异项", "只列出档位之间的差异项"),
-    ("通过的定义", "通过的定义"),
-    ("U1 exit_code 权威", "exit_code = 0"),
-    ("U2 窗口口径", "max(3, 10% 步数)"),
-    ("U3 权重有变化", "权重有变化"),
-    ("U4 产物可推理", "产物可推理"),
-    ("算法检查·必须能失败", "必须能失败"),
-    ("算法检查·SFT", "prompt 段被正确 mask"),
-    ("算法检查·CPT", "全序列 loss"),
-    ("算法检查·OPD", "教师来源二选一互斥"),
+    ("判据定义 U1", "exit_code = 0"),
+    ("算法检查必须能失败", "必须能失败"),
     ("B3 基础设施不影响", "都不应显著影响效果"),
     ("评测/推理验证列", "效果（评测 vs 基准）"),
-    ("状态定义·条件不合逻辑", "条件不合逻辑"),
-    ("not_applicable 设计理由", "权重常驻合计约 100 GiB"),
-    ("并行按后端分列", "nproc_per_node"),
-    ("ms-swift 无 dp_size", "不含"),
-    ("LoRA 目标分列", "target_modules"),
     ("步数为上限", "该值是上限"),
+    ("并行按后端分列", "nproc_per_node"),
+    ("LoRA 目标分列", "target_modules"),
     ("检查点间隔键名", "checkpoint_save_steps"),
+]
+
+#: 禁止措辞（§17.7：双真相源 / 能力承诺式措辞）
+FORBIDDEN_PHRASES = [
+    ("同为真相源", "双真相源表述"),
+    ("互为真相源", "双真相源表述"),
+    ("两个真相源", "双真相源表述"),
+    ("全组合可用", "能力承诺式措辞"),
+    ("已验证全组合", "能力承诺式措辞"),
 ]
 
 # ---- ④B. 已定新表头：10 列（档号 → 主要训练参数 → 结果列组） ----
@@ -61,7 +81,7 @@ EXPECTED_COLUMNS = [
     ("tier", "档号"),
     ("params", "主要训练参数（模型 / 方法 / 模式 / backend / 并行维度与卡数 / LoRA 目标 / lr / 数据子集与条数 / epoch或步数 / 关键开关）"),
     ("spec_json", "主要参数（机读 JSON：并行 / target_modules / lr / data / 步数 / lora / msswift·native / status）"),
-    ("status", "是否通过"),
+    ("status", "验证状态"),
     ("runs", "跑次说明"),
     ("effect", "效果（评测 vs 基准）"),
     ("inference", "推理验证"),
@@ -83,7 +103,7 @@ SPEC_KEYS = ["model_path", "train_method", "tuner_type", "cards", "parallel_dims
              "deepspeed", "allow_unverified_pp_rollout", "nnodes",
              "expected_optimizer_steps_per_epoch", "expected_optimizer_steps_reachable",
              "expected_optimizer_steps_historical", "steps_formula_v2", "min_optimizer_steps",
-             "applicable", "spec_status", "spec_json"]
+             "applicable", "spec_json"]
 
 
 def first_diff(a: bytes, b: bytes):
@@ -200,27 +220,33 @@ def main():
     if len(trs) != len(data["rows"]):
         failures.append(("④B 行数", f"期望 {len(data['rows'])}，实际 {len(trs)}"))
 
-    # ---- ④C. 结果列占位一致性：判「通过」⇒ 8 列全实；未判定 ⇒ 8 列全 '—'；
-    #          非「通过」判定（失败/条件不合逻辑/未完成测试）允许逐列显式 '—'（不适用/未测） ----
-    filled, half = [], []
+    # ---- ④C. 验证状态四态一致性（§17.7：只允许四态；尚未验证不得计入可用） ----
+    vocab = (data.get("meta") or {}).get("status_vocabulary", [])
+    filled, bad = [], []
     for r in data.get("rows", []):
-        tier = r.get("tier")
-        st = r.get("status")
-        st_filled = st not in ("", "—", None)
-        if st_filled:
+        tier, st = r.get("tier"), r.get("status")
+        if st not in vocab:
+            bad.append((tier, f"非法验证状态 {st!r}"))
+            continue
+        if st == "已验证可用":
             filled.append(tier)
-            if st == "通过":
-                empt = [k for k in RESULT_KEYS if r.get(k) in ("", "—", None)]
-                if empt:
-                    half.append((tier, f"判「通过」但有空列: {empt}"))
-        else:
-            bad = [k for k in RESULT_KEYS if r.get(k) not in ("", "—", None)]
-            if bad:
-                half.append((tier, f"未判定但其它列有值: {bad}"))
-    if half:
-        failures.append(("④C 结果列占位一致性", f"不一致 {len(half)} 档（前 5）: {half[:5]}"))
+            empt = [k for k in RESULT_KEYS if r.get(k) in ("", "—", None)]
+            if empt:
+                bad.append((tier, f"「已验证可用」但有空列 {empt}"))
+        elif st == "已验证不可用":
+            filled.append(tier)
+            if not r.get("verdict"):
+                bad.append((tier, "「已验证不可用」缺结论块（未写明未过判据 / 已通过项）"))
+        elif st == "尚未验证":
+            nz = [k for k in RESULT_KEYS if k != "status" and r.get(k) not in ("", "—", None)]
+            if nz:
+                bad.append((tier, f"「尚未验证」却带实测值 {nz}"))
+        elif st == "未纳入验收" and not r.get("excluded_reason"):
+            bad.append((tier, "「未纳入验收」缺逐档理由"))
+    if bad:
+        failures.append(("④C 验证状态四态一致性", f"不一致 {len(bad)} 档（前 5）: {bad[:5]}"))
     if a.expect_empty and filled:
-        failures.append(("④C --expect-empty：结果列应全部置空", f"非空 {len(filled)} 档: {filled[:8]}"))
+        failures.append(("④C --expect-empty：不得有已结论档位", f"已结论 {len(filled)} 档: {filled[:8]}"))
 
     # ---- ④D. 主要训练参数列合并：十项逐档在位，且与数据逐字一致 ----
     param_cells = re.findall(r'<td class="g-param col-start param" data-col="params">(.*?)</td>', target_text)
@@ -269,6 +295,29 @@ def main():
     if leaks:
         failures.append(("④G 脱敏（宪法 §15.1）", f"命中 {len(leaks)} 处（前 5）: {leaks[:5]}"))
 
+    # ---- ④H. 禁止措辞（§17.7：双真相源 / 能力承诺式措辞） ----
+    forbidden = [(w, why) for w, why in FORBIDDEN_PHRASES if w in target_text]
+    if forbidden:
+        failures.append(("④H 禁止措辞", f"命中 {forbidden}"))
+
+    # ---- ④I. §17.7 结构要件：生成标记 / 覆盖度 / 边界声明 / 判定口径 ----
+    meta = data.get("meta") or {}
+    if 'name="matrix-generation-marker"' not in target_text or "generated-by:" not in target_text:
+        failures.append(("④I 生成标记", "缺机器可读生成标记（generated-by / meta 标记）"))
+    if "自动生成" not in target_text or "禁止手工编辑" not in target_text:
+        failures.append(("④I 首屏生成声明", "首屏缺「由生成器从数据自动生成，禁止手工编辑」"))
+    cov = meta.get("coverage") or {}
+    if cov.get("gate_met") is False and "覆盖度警示" not in target_text:
+        failures.append(("④I 覆盖度警示", "未达门槛但首屏/正文缺覆盖度警示"))
+    if len(cov.get("unverified_tiers", [])) and "尚未验证档位清单" not in target_text:
+        failures.append(("④I 尚未验证清单", "缺「尚未验证」档位清单"))
+    if not (meta.get("boundary_declaration") or {}).get("points"):
+        failures.append(("④I 边界声明", "数据缺 boundary_declaration.points"))
+    if "承诺边界声明" not in target_text:
+        failures.append(("④I 边界声明可见性", "人读视图缺边界声明"))
+    if not (meta.get("criteria_caliber") or {}).get("criteria_id"):
+        failures.append(("④I 判定口径", "数据缺 criteria_caliber.criteria_id"))
+
     miss_keys = [(r.get("tier"), k) for r in data["rows"] for k in SPEC_KEYS if k not in r]
     if miss_keys:
         failures.append(("④E 机读字段缺失（yaml 生成器口径）", f"缺 {len(miss_keys)} 处（前 5）: {miss_keys[:5]}"))
@@ -310,7 +359,9 @@ def main():
               f" | ④D 主要训练参数列={ok('④D')}"
               f" | ④E 统一口径/机读字段={ok('④E')}"
               f" | ④F 机读 JSON 列={ok('④F')}"
-              f" | ④G 脱敏={ok('④G')}")
+              f" | ④G 脱敏={ok('④G')}"
+              f" | ④H 禁止措辞={ok('④H')}"
+              f" | ④I §17.7 要件={ok('④I')}")
         print(f"results: 已回填 {len(filled)} 档 {filled}；其余 {len(data['rows'])-len(filled)} 档保持 '—'"
               + ("；--expect-empty 已开启" if a.expect_empty else ""))
         if off is None:

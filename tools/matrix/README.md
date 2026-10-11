@@ -1,4 +1,4 @@
-# `scripts/matrix/` — 功能矩阵文档工具链
+# `tools/matrix/` — 功能矩阵文档工具链
 
 本目录是功能矩阵文档（`docs/capability-matrix.html`）与其机读形式
 （`docs/capability-matrix.data.json`）的**唯一产出与校验通道**。
@@ -9,7 +9,7 @@
 ## 产出模型
 
 ```
-scripts/matrix/template.html   （骨架 / 版式 / 定义文字）
+tools/matrix/template.html   （骨架 / 版式 / 定义文字）
 docs/capability-matrix.data.json（机读数据：列定义 + 统一口径 + 逐档参数与结果）
         └── render_matrix.py ──► docs/capability-matrix.html（人读正式件）
         └── verify_matrix.py ──► 重新渲染 + 逐字节比对 + 结构/内容/脱敏断言
@@ -26,19 +26,19 @@ docs/capability-matrix.data.json（机读数据：列定义 + 统一口径 + 逐
 
 ```bash
 # 渲染（唯一允许的 HTML 产出通道）
-python3 scripts/matrix/render_matrix.py \
-    --template scripts/matrix/template.html \
+python3 tools/matrix/render_matrix.py \
+    --template tools/matrix/template.html \
     --data docs/capability-matrix.data.json \
     --out docs/capability-matrix.html
 
 # 校验（逐字节比对 + 结构 / 内容 / 脱敏断言）
-python3 scripts/matrix/verify_matrix.py \
-    --template scripts/matrix/template.html \
+python3 tools/matrix/verify_matrix.py \
+    --template tools/matrix/template.html \
     --data docs/capability-matrix.data.json \
     --html docs/capability-matrix.html
 
 # 三组自证（空数据 PASS / 假数据 PASS / 手改 1 字符 FAIL + 报偏移）
-python3 scripts/matrix/run_self_proof.py
+python3 tools/matrix/run_self_proof.py
 ```
 
 ## 文件职责
@@ -59,3 +59,25 @@ python3 scripts/matrix/run_self_proof.py
 正式件（HTML 与 data.json）**不得出现**宿主路径、内网地址、机器名、人名。
 `verify_matrix.py` 的 ④G 断言在每次校验时扫描这些模式，**命中即校验失败**；
 `build_official.py` 在生成机读件时先行替换为符号路径，并对跑次只保留**不透明跑次 ID**。
+
+
+## 设计规则：固定部分恒定，变量全在数据
+
+★ **凡是会随跑次变化的内容，一律进数据（`docs/capability-matrix.data.json`），⛔ 不得以手写散文形式写在模板里。**
+
+落到工程上：
+
+| 层 | 内容 | 是否随跑次变化 |
+|---|---|---|
+| `template.html` | 版式、定义（判据定义 / 参数定义 / 状态定义）、表头 | **恒定**——不因跑次变化而改动 |
+| `capability-matrix.data.json` | 档位清单、逐档参数、逐档结论、覆盖度计数、边界声明文案、判定口径 | **全部变量都在这里** |
+| `capability-matrix.html` | 由上面两者确定性生成 | 结果 = 表格跟随数据变化 |
+
+**推论（零人工维护）：**
+
+- 首屏的**覆盖度警示**与**「尚未验证」清单与数量**由 `render_matrix.py` 从 `meta.coverage` **派生**——
+  数据一变即自动跟着变；**全部档位验证完成后，警示自动消失**，无需任何人改文档或删段落。
+- 边界声明、判定口径同样由数据派生（`meta.boundary_declaration` / `meta.criteria_meta`…）。
+
+**校验方式**：`run_self_proof.py` 的「④ 警示派生化」用一份改过覆盖度计数的数据重新渲染，
+断言首屏警示随之改变（证明它不是模板里的硬编码文字）。

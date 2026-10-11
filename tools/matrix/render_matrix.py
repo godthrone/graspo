@@ -20,7 +20,10 @@ from pathlib import Path
 
 PLACEHOLDER_TOKENS = ("{{DATA_REVISION}}", "{{SOURCE_BASENAME}}", "{{SOURCE_SHA256_SHORT}}",
                       "{{SOURCE_PATH}}", "{{SOURCE_SHA256}}", "{{CRITERIA_VERSION}}",
-                      "{{ROW_COUNT}}", "{{MATRIX_TABLE}}", "{{UNIFORM_PARAMS}}", "{{DOC_DATE}}")
+                      "{{ROW_COUNT}}", "{{MATRIX_TABLE}}", "{{UNIFORM_PARAMS}}", "{{DOC_DATE}}",
+                      "{{DOC_TITLE}}", "{{GEN_BANNER}}", "{{COVERAGE_WARNING}}",
+                      "{{UNVERIFIED_LIST}}", "{{BOUNDARY}}", "{{CALIBER}}", "{{VERDICTS}}",
+                      "{{GENERATOR}}", "{{DATA_PATH}}")
 
 # 结果列着色用的四态映射（与模板内联脚本同一口径；此处只用于生成带 class 的单元格）
 STATUS_CLASS = {
@@ -136,6 +139,79 @@ def build_uniform_block(data):
     return "\n".join(out)
 
 
+
+def build_gen_banner(data):
+    a = data["meta"].get("authority", {})
+    gen, src = html.escape(a.get("generator", "")), html.escape(a.get("data_path", ""))
+    return (f'<div class="warnbox"><b>自动生成文件。</b>本文件由 <code>{gen}</code> 从 <code>{src}</code> '
+            f'自动生成，<b>禁止手工编辑</b>。任何修改都必须改数据或生成器后重新生成。</div>')
+
+
+def build_coverage_warning(data):
+    cov = data["meta"].get("coverage", {})
+    if cov.get("gate_met"):
+        return ('<div class="hint"><b>覆盖度：</b>全部档位均已有明确结论，覆盖度门槛已满足。</div>')
+    return (f'<div class="warnbox"><b>★ 覆盖度警示（未达门槛）。</b>本矩阵共 <b>{cov.get("total")}</b> 档：'
+            f'「已验证可用」<b>{cov.get("verified_available")}</b> 档、'
+            f'「已验证不可用」<b>{cov.get("verified_unavailable")}</b> 档、'
+            f'「未纳入验收」<b>{cov.get("not_in_acceptance")}</b> 档、'
+            f'「<b>尚未验证</b>」<b>{cov.get("not_verified")}</b> 档。'
+            f'⇒ <b>项目整体能力承诺尚未满足</b>；「尚未验证」档位不计入可用档位数量。</div>')
+
+
+def build_unverified_list(data):
+    cov = data["meta"].get("coverage", {})
+    ts = cov.get("unverified_tiers", [])
+    if not ts:
+        return '<p class="note">（无「尚未验证」档位。）</p>'
+    return (f'<p class="note"><b>尚未验证档位清单（{len(ts)} 档）</b>：' +
+            "、".join(f"<code>{html.escape(t)}</code>" for t in ts) + "</p>")
+
+
+def build_boundary(data):
+    b = data["meta"].get("boundary_declaration", {})
+    pts = "".join(f"<li>{html.escape(x)}</li>" for x in b.get("points", []))
+    return (f'<div class="hint"><b>承诺边界声明。</b>{html.escape(b.get("text", ""))}'
+            f'<ul>{pts}</ul><p class="note">{html.escape(b.get("coverage_caveat", ""))}</p></div>')
+
+
+def build_caliber(data):
+    c = data["meta"].get("criteria_caliber", {})
+    d, th, bl = c.get("dataset", {}), c.get("threshold", {}), c.get("baseline", {})
+    crit = "".join(f"<li>{html.escape(x)}</li>" for x in c.get("availability_criteria", []))
+    return ('<table class="plain"><tbody>'
+            f'<tr><th>可用性判据</th><td><ul>{crit}</ul></td></tr>'
+            f'<tr><th>评测数据集</th><td>{html.escape(d.get("id", ""))}；'
+            f'{html.escape(d.get("availability", ""))}；版本锚点 sha256 <code>{html.escape(d.get("version_anchor_sha256", ""))}</code>；'
+            f'样本量 {d.get("sample_count")}；评测方法 {html.escape(d.get("method", ""))}</td></tr>'
+            f'<tr><th>判据标识</th><td><code>{html.escape(c.get("criteria_id", ""))}</code></td></tr>'
+            f'<tr><th>阈值与目标值</th><td>{html.escape(th.get("name", ""))} = {th.get("value")} {html.escape(th.get("unit", ""))}；'
+            f'{html.escape(th.get("status", ""))}</td></tr>'
+            f'<tr><th>基线口径</th><td>{html.escape(bl.get("role", ""))}；{html.escape(bl.get("caliber", ""))}</td></tr>'
+            '</tbody></table>')
+
+
+def build_verdicts(data):
+    rows = [r for r in data.get("rows", []) if r.get("verdict")]
+    excl = [r for r in data.get("rows", []) if r.get("excluded_reason")]
+    if not rows and not excl:
+        return ""
+    out = ['<table class="plain"><thead><tr><th>档号</th><th>结论</th><th>未过判据</th><th>已通过项（事实保留）</th></tr></thead><tbody>']
+    for r in rows:
+        v = r["verdict"]
+        passed = "；".join(html.escape(x) for x in v.get("passed_criteria", []))
+        out.append(f'<tr><td><code>{html.escape(r["tier"])}</code></td><td>{html.escape(v.get("state", ""))}</td>'
+                   f'<td>{html.escape(v.get("failed_criterion", ""))}<br><span class="note">'
+                   f'{html.escape(v.get("failed_detail", ""))}</span></td><td>{passed}</td></tr>')
+    out.append("</tbody></table>")
+    if excl:
+        out.append('<p class="note"><b>未纳入验收档位（逐档理由）</b>：</p><ul>')
+        for r in excl:
+            out.append(f'<li><code>{html.escape(r["tier"])}</code>：{html.escape(r["excluded_reason"])}</li>')
+        out.append("</ul>")
+    return "\n".join(out)
+
+
 def render(template_text, data):
     meta = data["meta"]
     # 正式件不含 authoritative_source（脱敏）⇒ 用 .get 兜底；模板若未引用这些占位符则无需取值
@@ -152,6 +228,15 @@ def render(template_text, data):
         "{{MATRIX_TABLE}}": table,
         "{{UNIFORM_PARAMS}}": build_uniform_block(data),
         "{{DOC_DATE}}": meta.get("doc_date", ""),
+        "{{DOC_TITLE}}": meta.get("title", ""),
+        "{{GEN_BANNER}}": build_gen_banner(data),
+        "{{COVERAGE_WARNING}}": build_coverage_warning(data),
+        "{{UNVERIFIED_LIST}}": build_unverified_list(data),
+        "{{BOUNDARY}}": build_boundary(data),
+        "{{CALIBER}}": build_caliber(data),
+        "{{VERDICTS}}": build_verdicts(data),
+        "{{GENERATOR}}": (meta.get("authority") or {}).get("generator", ""),
+        "{{DATA_PATH}}": (meta.get("authority") or {}).get("data_path", ""),
     }
     out = template_text
     for token in PLACEHOLDER_TOKENS:
