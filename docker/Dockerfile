@@ -62,13 +62,20 @@ COPY pyproject.toml uv.lock .python-version README.md LICENSE ./
 # `name==version` 正则取值，引号若紧贴 `torchvision==0.26.0` 会被并进版本（`0.26.0'`）
 # ⇒ 声明点比对报不一致；且本文件 :104 的 `RUN python scripts/check_env_versions.py --local`
 # 会在镜像内解析本文件 ⇒ 不止单测红，**镜像构建会直接失败**。改动此行前请先读该函数。
+# ★ 下面两条 pip 的公共参数（PEP 668 + 经代理下载大轮子的韧性，实测补入）：
+#   · `--break-system-packages`：base 是 Ubuntu 24.04 系统 Python 3.12
+#     （`/usr/lib/python3.12/EXTERNALLY-MANAGED` 在位）⇒ 裸 `pip install` 必报
+#     `externally-managed-environment`；与 :106 的 `uv pip install` 保持同一姿态。
+#   · `--resume-retries/--retries/--timeout` + 去掉 `--no-cache-dir`：经构建期代理拉
+#     大 CUDA 轮子会 IncompleteRead 断流，允许续传并让下载落进上面的 pip cache mount。
+#     cache mount 不进镜像层 ⇒ 这一项对**镜像内容中性**。
 # torch/torchvision：走 cu130 官方索引（**公开常量，内联**），拿到 `+cu130` 轮子（渠道由断言兜底）。
 RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=secret,id=http_proxy,required=false \
     --mount=type=secret,id=https_proxy,required=false \
     --mount=type=secret,id=no_proxy,required=false \
     sh -eu -c '. /usr/local/bin/proxy-env.sh; \
-    pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu130 \
+    pip install --break-system-packages --resume-retries 15 --retries 15 --timeout 60 --index-url https://download.pytorch.org/whl/cu130 \
       torch==2.11.0 torchvision==0.26.0 '
 
 # 其余运行时依赖：走 PyPI（**公开常量，内联**）。闭合引号前同样留空格（见上方说明）。
@@ -77,7 +84,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=secret,id=https_proxy,required=false \
     --mount=type=secret,id=no_proxy,required=false \
     sh -eu -c '. /usr/local/bin/proxy-env.sh; \
-    pip install --no-cache-dir --index-url https://pypi.org/simple/ \
+    pip install --break-system-packages --resume-retries 15 --retries 15 --timeout 60 --index-url https://pypi.org/simple/ \
       transformers==5.12.1 pydantic==2.11.10 pyyaml==6.0.3 safetensors==0.8.0 \
       pillow==11.3.0 numpy==1.26.4 ms-swift==4.5.3 '
 
