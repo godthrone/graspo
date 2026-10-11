@@ -1,0 +1,62 @@
+# T028L | 9B | GRASPO | LoRA | native | 1卡  —— ★ **基线专用档（补充基准）**，不进冻结 54 档 roster
+#
+# 授权：指挥官 2026-10-11 派单 c 六条裁定（T028 效果 FAIL 根因 = 配方错配）
+# 与 T028 的差异（逐项，其余保持同口径以便对照）：
+#   · lora.target_modules : language_all_linear(12) + vision_merger(2) = 14 件
+#                           （T028 用 target_preset=vision_common = 110 件，全 model.visual.* ⇒ 错配对照）
+#   · training.learning_rate : 5e-06 -> 1e-05（仓内 *-rl*.yaml 自述"RL 比 SFT 低一个数量级"，
+#                                SFT 主流 5e-5 ⇒ 取 2× 折中，不违背自有指引）
+#   · 训练子集 : 48 -> 64 条；max_epochs : 1 -> 2（可达 16 步，T028 为 6 步 ⇒ ~2.7×）
+#   · training.save_steps : 48 -> 64（★ 不变量：save_steps 必须 > 可达步数）
+# 保持同口径：model_path / tp,dp,pp=1,1,1 单卡 / max_prompt_length=8192 / seed=42 /
+#             lora r=8,alpha=16,dropout=0.0 / reward.kind=graspo / gpu_monitor interval=2.0
+# ⛔ 本文件为**新增**，不改动 samples/configs/matrix54-v2/ 下任何冻结件。
+train_method: graspo
+backend: native
+tuner_type: lora
+model:
+  model_path: /models/Qwen3.5-9B
+  torch_dtype: bfloat16
+  gradient_checkpointing: true
+data:
+  train_path: /work/elam-v5/subsets-v2/T028L.jsonl
+  max_prompt_length: 8192
+training:
+  output_dir: /out/T028L
+  run_name: T028L
+  overwrite_output_dir: true
+  seed: 42
+  max_epochs: 2
+  learning_rate: 1.0e-05
+  gradient_accumulation_micro_batches: 1
+  save_checkpoint_every_epoch: false
+  save_steps: 64
+lora:
+  r: 8
+  alpha: 16
+  dropout: 0.0
+  # ★ 多模式显式列表（官方支持；优先于 target_preset；⛔ 未动 preset 表）
+  #   = language_safe/language_all_linear 的语言层 9 项 + vision_merger 的 2 项
+  target_modules:
+    - "language.*.q_proj"
+    - "language.*.k_proj"
+    - "language.*.v_proj"
+    - "language.*.o_proj"
+    - "language.*.in_proj_z"
+    - "language.*.out_proj"
+    - "language.*.gate_proj"
+    - "language.*.up_proj"
+    - "language.*.down_proj"
+    - "visual.merger.linear_fc1"
+    - "visual.merger.linear_fc2"
+native:
+  tp_size: 1
+  dp_size: 1
+  pp_size: 1
+  micro_batch_size: 1
+reward:
+  kind: graspo
+gpu_monitor:
+  output_dir: /out/gpu
+  tag: T028L
+  interval_sec: 2.0
