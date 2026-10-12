@@ -98,12 +98,13 @@ EXPECTED_COLUMNS = [
     ("steps", "步数/epoch"),
     ("switches", "关键开关"),
     ("peak_mem", "显存峰值(GiB)"),
+    ("steps_actual", "实跑步数"),
     ("elapsed", "耗时（每步/总时长）"),
     ("throughput", "吞吐"),
     ("effect", "效果（评测 Δ / loss·reward 窗口）"),
     ("note", "备注（条件 / 限制 / 失败归因）"),
 ]
-RESULT_KEYS = ["peak_mem", "elapsed", "throughput", "effect"]
+RESULT_KEYS = ["peak_mem", "steps_actual", "elapsed", "throughput", "effect"]
 # 主要参数：按项分列（顺序即展示顺序）
 PARAM_SUBKEYS = ["model", "algo", "mode", "backend", "tp", "pp", "dp", "cards_total",
                  "lora_target", "lr", "data_scale", "steps", "switches"]
@@ -247,7 +248,8 @@ def main():
             if r.get("note") in ("", "—", None):
                 bad.append((tier, "已结论档缺「备注」归因"))
         else:
-            nz = [k for k in RESULT_KEYS if r.get(k) not in ("", "—", None)]
+            skip = {"steps_actual"} if r.get("voided_conclusion") else set()
+            nz = [k for k in RESULT_KEYS if k not in skip and r.get(k) not in ("", "—", None)]
             if nz:
                 bad.append((tier, f"「{st}」却带实验数据 {nz}"))
             if r.get("note") not in ("", "—", None) and st == "尚未验证" and not r.get("voided_conclusion"):

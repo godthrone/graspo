@@ -91,13 +91,14 @@ COLUMNS = [
     {"key": "steps", "label": "步数/epoch", "group": "param"},
     {"key": "switches", "label": "关键开关", "group": "param"},
     {"key": "peak_mem", "label": "显存峰值(GiB)", "group": "data", "group_start": True},
+    {"key": "steps_actual", "label": "实跑步数", "group": "data"},
     {"key": "elapsed", "label": "耗时（每步/总时长）", "group": "data"},
     {"key": "throughput", "label": "吞吐", "group": "data"},
     {"key": "effect", "label": "效果（评测 Δ / loss·reward 窗口）", "group": "data"},
     {"key": "note", "label": "备注（条件 / 限制 / 失败归因）", "group": "note", "group_start": True},
 ]
 
-DATA_KEYS = ["peak_mem", "elapsed", "throughput", "effect", "note"]
+DATA_KEYS = ["peak_mem", "steps_actual", "elapsed", "throughput", "effect", "note"]
 
 
 #: ★ 并行维度的固定口径（写进表前「统一口径」块；⛔ 不进表格列）
@@ -160,6 +161,28 @@ def parallel_cols(r, state):
     return {"tp": "—", "pp": "—", "dp": "—", "cards_total": "—"}
 
 
+#: ★ epoch 口径（主席裁定）：SFT / CPT / OPD = 1；GRASPO(RL) = 3（RL 需要更多 epoch 才能看到效果）
+EPOCHS_BY_METHOD = {"sft": 1, "cpt": 1, "opd": 1, "graspo": 3}
+
+#: ★ 取消"计划步数上限"：步数由 数据量 × epoch 推导，不设人为上限
+STEPS_POLICY = "步数 = epoch 数 × 每 epoch 推导步数（由数据量与批大小推导）；⛔ 不设人为步数上限（无 max_steps 约束）。"
+
+
+#: ★ 生成 yaml 所需的其余固定口径（LoRA 恢复值 / 推理与序列并行开关）
+EXTRA_UNIFORM = [
+    {"key": "lora_r", "label": "LoRA rank r（恢复口径）", "value": "128",
+     "layer": "config", "coverage": "config-33/54", "note": "仅 LoRA 档；全参档不适用"},
+    {"key": "lora_alpha", "label": "LoRA alpha（恢复口径）", "value": "256",
+     "layer": "config", "coverage": "config-33/54", "note": "仅 LoRA 档"},
+    {"key": "lora_dropout", "label": "LoRA dropout（恢复口径）", "value": "0.05",
+     "layer": "config", "coverage": "config-33/54", "note": "仅 LoRA 档"},
+    {"key": "sequence_parallel_size", "label": "序列并行尺寸（ms-swift）", "value": "1",
+     "layer": "config", "coverage": "config-33/54", "note": "1 = 不切分；与 §统一口径 的 SP 一致"},
+    {"key": "use_vllm", "label": "训练期启用 vLLM（ms-swift）", "value": "false",
+     "layer": "config", "coverage": "config-33/54", "note": "推理验证阶段另起服务，见结果列"},
+]
+
+
 def boundary_declaration():
     return {
         "required": True,
@@ -187,7 +210,12 @@ def criteria_caliber():
         "threshold": {"name": "graspo_threshold_pp", "value": 20, "unit": "百分点（pp）",
                       "status": "★ 最终阈值 δ 待定 —— 本值仅为该跑次所用阈值，尚不作为冻结基线。"},
         "baseline": {"role": "同档位未训练底座（role=base）",
-                     "caliber": "U2 终点窗口 = 末段 max(3, 10% 步数) 步的均值；该档计划/可达优化步数上限见档位「步数」子项。"},
+                     "caliber": "U2 终点窗口 = 末段 max(3, 10% 步数) 步的均值；该档的 epoch 数与推导步数见档位「步数/epoch」子项。"},
+        "epoch_policy": {
+            "by_method": "SFT / CPT / OPD = 1 epoch；GRASPO(RL) = 3 epoch（RL 需要更多 epoch 才能看到效果）。",
+            "steps": STEPS_POLICY + " 推导式：steps = epoch 数 × 每 epoch 步数（每 epoch 步数由数据量与批大小推导）。",
+            "checkpoint": "save_steps = 推导步数 + 1（大于总步数 ⇒ 只保留最终检查点）。",
+        },
         "conclusion_rule": {
             "rule": ("结论必须与同一行的参数一一对应。若一行的参数已被更正，而结论来自旧参数下的跑次 ⇒ "
                      "该结论作废，该档标「尚未验证」；仅在参数冻定后重跑，才可给出「已验证可用 / 已验证不可用」判定。"),
@@ -294,6 +322,22 @@ def main():
         else:
             for k in ("peak_mem", "elapsed", "throughput", "effect"):
                 r[k] = "—"
+        # ★ epoch 口径（按方法）+ 步数推导（取消人为上限）
+        method = (r.get("train_method") or "").strip().lower()
+        epochs = EPOCHS_BY_METHOD.get(method)
+        per_epoch = r.get("expected_optimizer_steps_per_epoch")
+        if epochs and per_epoch not in (None, "", "—"):
+            derived = int(per_epoch) * epochs
+            r["max_epochs"] = epochs
+            r["derived_steps"] = derived
+            r["per_epoch_steps"] = int(per_epoch)
+            r["steps"] = f"{epochs} epoch × {per_epoch} 步/epoch = 推导 {derived} 步"
+            r["save_steps"] = derived + 1
+            r["save_steps_basis"] = (f"= 推导步数 {derived} + 1（⛔ 不设人为步数上限；"
+                                     f"save_steps 大于总步数 ⇒ 只留最终检查点）")
+        # ★ 实跑步数（有跑次记录即填，含"作废参考记录"）
+        m = re.search(r"(\d+)\s*/\s*(\d+)\s*步", r.get("runs", "") or "")
+        r["steps_actual"] = f"{m.group(1)}/{m.group(2)}" if m else "—"
         # 数据规模 = 全局条数 + 每卡派生
         if r.get("subset_size") not in (None, "", "—"):
             ppr = r.get("prompts_per_rank")
@@ -345,7 +389,7 @@ def main():
         "groups": GROUPS,
         "columns": COLUMNS,
         "uniform": {"rule": (src.get("uniform") or {}).get("rule", ""),
-                    "items": sanitize((src.get("uniform") or {}).get("items", [])) + PARALLEL_UNIFORM},
+                    "items": sanitize((src.get("uniform") or {}).get("items", [])) + PARALLEL_UNIFORM + EXTRA_UNIFORM},
         "rows": rows,
         "data_keys": DATA_KEYS,
     }

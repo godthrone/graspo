@@ -94,6 +94,7 @@ POLICY: dict[str, Spec] = {
     "tools/matrix/backfill_matrix.py": Spec(HELP, "跑次结果回填入口（增量/fail-closed）"),
     "tools/matrix/run_self_proof.py": Spec(HELP, "三组自证入口（空数据/假数据/手改 1 字符）"),
     "tools/matrix/scan_matrix_leaks.py": Spec(HELP, "矩阵脱敏扫描（§17.7 禁止项：宿主路径/内网/机器名/人名/账号）"),
+    "tools/matrix/gen_configs.py": Spec(HELP, "矩阵数据 → 测试 yaml 生成器（确定性；禁手改 yaml）"),
     # ── shell 工具/运维入口 ────────────────────────────────────────────────
     "scripts/eval_cleanup.sh": Spec(SH_HELP, "评测清理入口；支持 -h/--help ⇒ rc=0"),
     "scripts/eval_export_checkpoint.sh": Spec(SH_HELP, "评测导出入口；-h 显式 exit 0"),
