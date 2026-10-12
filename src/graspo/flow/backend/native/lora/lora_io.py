@@ -637,6 +637,51 @@ def _collect_weight_deltas(
     return grouped
 
 
+def _merge_axis(
+    *,
+    kind: str,
+    base_name: Any,
+    axis: int,
+    base_dim: int,
+    start: int,
+    stop: int,
+    delta_dim: int,
+    merged_shape: tuple[int, ...],
+    delta_shape: tuple[int, ...],
+) -> None:
+    """★ 合并前**显式校验切片**（B12）——防"基座与 delta 不同源"被静默错并。
+
+    为什么必须校验（实测 2026-10-12，T022 = 27B LoRA native）：
+    ``export --format merged-hf`` 若拿到**与 adapter 不同源**的基座（例如把 9B 基座
+    配给 27B 的 checkpoint），旧实现对 ``out``/``rows``/``in``/``cols`` **直接切片相加**、
+    **不校验上界**，于是
+
+    - 基座**窄于** delta 期望（实测 MLP 中间维 12288 < 17408）⇒ Python 切片被**截断**，
+      靠广播偶然抛 ``RuntimeError: The size of tensor a (12288) must match ... (17408)``
+      —— 报错点远离真因（在 ``_apply_deltas`` 的加法行），排查成本极高；
+    - 基座**宽于** delta 期望（``base_dim >= stop``）⇒ **静默写到错误位置**，
+      ⛔ 这是更危险的形态：产物表面成功、内容错位。
+
+    本函数把两种形态都变成**显式可操作**的 :class:`ValueError`（fail-closed，
+    ⛔ 不静默忽略形状不符）。
+    """
+    if stop > base_dim:
+        raise ValueError(
+            f"LoRA shard slice out of range while merging {base_name}: "
+            f"kind={kind} axis={axis} slice=[{start}:{stop}] but base tensor "
+            f"{merged_shape} has {base_dim} on that axis; delta is {delta_shape}. "
+            "The base model does not match the checkpoint that produced this adapter "
+            "(different model/size?) — refusing to merge."
+        )
+    if stop - start != delta_dim:
+        raise ValueError(
+            f"LoRA shard slice width does not match the delta while merging {base_name}: "
+            f"kind={kind} axis={axis} slice=[{start}:{stop}] width {stop - start} "
+            f"but delta {delta_shape} has {delta_dim} on that axis; base tensor is "
+            f"{merged_shape}. The base model does not match the adapter — refusing to merge."
+        )
+
+
 def _apply_deltas(
     tensor: torch.Tensor,
     deltas: list[tuple[dict[str, Any], torch.Tensor]],
@@ -644,6 +689,7 @@ def _apply_deltas(
     merged = tensor.float().clone()
     for record, delta in deltas:
         kind = str(record["shard_kind"])
+        base_name = record.get("base_weight_name")
         if kind in {"none"}:
             if tuple(delta.shape) != tuple(merged.shape):
                 raise ValueError(
@@ -652,17 +698,45 @@ def _apply_deltas(
                 )
             merged += delta
         elif kind == "out":
-            merged[int(record["row_start"]) : int(record["row_stop"])] += delta
+            start, stop = int(record["row_start"]), int(record["row_stop"])
+            _merge_axis(
+                kind=kind, base_name=base_name, axis=0, base_dim=int(merged.shape[0]),
+                start=start, stop=stop, delta_dim=int(delta.shape[0]),
+                merged_shape=tuple(merged.shape), delta_shape=tuple(delta.shape),
+            )
+            merged[start:stop] += delta
         elif kind == "rows":
             indices = record.get("row_indices")
             if indices is not None:
-                merged.index_add_(0, torch.tensor(indices, dtype=torch.long), delta)
+                index_tensor = torch.tensor(indices, dtype=torch.long)
+                if int(index_tensor.numel()) != int(delta.shape[0]):
+                    raise ValueError(
+                        f"LoRA row_indices count {int(index_tensor.numel())} does not match "
+                        f"delta {tuple(delta.shape)} while merging {base_name} — refusing to merge."
+                    )
+                if index_tensor.numel() and int(index_tensor.max()) >= int(merged.shape[0]):
+                    raise ValueError(
+                        f"LoRA row_indices max {int(index_tensor.max())} exceeds base tensor "
+                        f"{tuple(merged.shape)} while merging {base_name}; the base model does "
+                        "not match the adapter — refusing to merge."
+                    )
+                merged.index_add_(0, index_tensor, delta)
             else:
-                merged[int(record["row_start"]) : int(record["row_stop"])] += delta
-        elif kind == "in":
-            merged[:, int(record["col_start"]) : int(record["col_stop"])] += delta
-        elif kind == "cols":
-            merged[:, int(record["col_start"]) : int(record["col_stop"])] += delta
+                start, stop = int(record["row_start"]), int(record["row_stop"])
+                _merge_axis(
+                    kind=kind, base_name=base_name, axis=0, base_dim=int(merged.shape[0]),
+                    start=start, stop=stop, delta_dim=int(delta.shape[0]),
+                    merged_shape=tuple(merged.shape), delta_shape=tuple(delta.shape),
+                )
+                merged[start:stop] += delta
+        elif kind in {"in", "cols"}:
+            start, stop = int(record["col_start"]), int(record["col_stop"])
+            _merge_axis(
+                kind=kind, base_name=base_name, axis=1, base_dim=int(merged.shape[1]),
+                start=start, stop=stop, delta_dim=int(delta.shape[1]),
+                merged_shape=tuple(merged.shape), delta_shape=tuple(delta.shape),
+            )
+            merged[:, start:stop] += delta
         else:
             raise ValueError(f"Unsupported LoRA shard kind for merge: {kind}")
     return merged
