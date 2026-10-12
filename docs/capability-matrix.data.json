@@ -66,7 +66,7 @@
     "status_wording": "「尚未验证」在本文档中等同「未测试」；宪法 §17.7 的固定取值为「尚未验证」，用词以它为准。"
    },
    "caliber_evidence": [
-    "★ 基准重复跑量散布（同一 base 侧 run-to-run 抖动）：同底座 base 实测 113 vs 116 /702（Δ 分别 +0.7122 与 +0.2849 pp）。定性 = vLLM 连续批处理浮点非确定性；★ 判定不变（均 < +5.0 pp）；★ 供『基准散布』口径使用，⛔ 不因此改阈值。"
+    "★★ **噪声底 ≈ ±0.43 pp**（两次独立 base 评测：同底座 / 同 702 条 `c202b1e1…` / 同 temp 0·top_p 0.9·max_tokens 128·seed 42 / 同 criteria）：**116/702 = 16.5242%** vs **113/702 = 16.0969%**；逐样本 GT 不一致 **0**；预测 (name,action) 不同 **21/702 = 2.99%**；all_right 翻转 **5/702**。定性 = **vLLM 连续批处理浮点非确定性**。证据件 `13-base-rerun-variance.md` sha `449d5f7253860934558bca732f37d8fd71bf13c91e2f02dcd91827f961888620`。★ 用途：供「基准散布 / 阈值余量」判断；★ **δ 判定不变，⛔ 不因此改阈值**。"
    ],
    "known_corrections": [
     "★ 待订正：T028.json 的数据锚 `eval_dataset.sha256` 写作 `6da72199…`，实为 train.jsonl；正确的评测集锚 = `c202b1e1…`。评测执行者正在订正 ⇒ 订正后其 json sha 变化，我方将**重跑一次回填**（幂等按 sha，自动更新）。"
@@ -2528,7 +2528,16 @@
     "verdict": "★ 不是「提前收尾」—— epoch_summary 5/5（epoch 0–4）证明 5 个 epoch 全部完成；权威步数计数器 run_cumulative.step = 19。★ 「计划 30 步」系我们的预期公式误差（推导步数 vs 实际步数须并记）。★ 判据①「完整跑完」按 epoch 5/5 判定为成立。"
    },
    "note_extra_steps_formula_issue": "★ 登记待修：'推导步数公式'对 native GRASPO 档不成立（推导 30 vs 实际 19）—— 本轮不顺手改公式，后续单独修。",
-   "note": "★ 未过第 2 条判据（效果不足）——after acc=21.0826%（148/702）；base acc=16.5242%（116/702）；★ Δ=+4.5584 pp（< +5.0 pp 冻结阈值 ⇒ 未过判据②）；★ 目标值 +10.0 pp 仅展示、不作通过线（Δ 落在 5–10 之间才需展示，本档低于 5）。口径：同数据集 sha256 6da72199…、同 criteria、温度 0、702/702 有效、0 error ⇒ 可比性成立。★ 相邻参照：SFT 档 T010/T011/T013 的 Δ 分别为 +13.39/+5.98/+8.55 pp（SFT 阈值同为 +5.0 pp）。 ★ 已通过项（事实保留）：native GRASPO：跑次侧可观测项通过（exit_code=0、ckpt_retention=ok、torch_probe all_ok=True、final ckpt 在位）。★ 运行期见 batch_high_retry_rate 告警（已定性 ① 正常采样波动：组规模恒 G=8、terminal 恒 ≥8 收敛、墙钟与 attempt 同量级）。 ★ 判据① 依据：1/1 真效果训练（native GRASPO LoRA 单卡，5 epoch）：判据① 通过（★ 见步数定案）；判据② 未过（训练类冻结阈值 Δ ≥ +5.0 pp）：实测 Δ=+4.5584 pp < +5.0 pp ⇒ 判「已验证不可用」，★ 未过的是第 2 条（效果不足），非跑次失败。 ★ 步数对账（如实登记）：推导 30 vs 实际 19；★ 不是「提前收尾」—— epoch_summary 5/5（epoch 0–4）证明 5 个 epoch 全部完成；权威步数计数器 run_cumulative.step = 19。★ 「计划 30 步」系我们的预期公式误差（推导步数 vs 实际步数须并记）。★ 判据①「完整跑完」按 epoch 5/5 判定为成立。 ★ LoRA 目标按后端：ms-swift 实测 358 件（language 248 + visual 110）｜native 122 件（language 12 + visual 110）⇒ ★ 两后端覆盖集不相等。",
+   "note": "★ 未过第 2 条判据（效果不足）——after acc=21.0826%（148/702）；base acc=16.5242%（116/702）；★ Δ=+4.5584 pp（< +5.0 pp 冻结阈值 ⇒ 未过判据②）；★ 目标值 +10.0 pp 仅展示、不作通过线（Δ 落在 5–10 之间才需展示，本档低于 5）。口径：同数据集 sha256 6da72199…、同 criteria、温度 0、702/702 有效、0 error ⇒ 可比性成立。★ 相邻参照：SFT 档 T010/T011/T013 的 Δ 分别为 +13.39/+5.98/+8.55 pp（SFT 阈值同为 +5.0 pp）。 ★ 已通过项（事实保留）：native GRASPO：跑次侧可观测项通过（exit_code=0、ckpt_retention=ok、torch_probe all_ok=True、final ckpt 在位）。★ 运行期见 batch_high_retry_rate 告警（已定性 ① 正常采样波动：组规模恒 G=8、terminal 恒 ≥8 收敛、墙钟与 attempt 同量级）。 ★ 判据① 依据：1/1 真效果训练（native GRASPO LoRA 单卡，5 epoch）：判据① 通过（★ 见步数定案）；判据② 未过（训练类冻结阈值 Δ ≥ +5.0 pp）：实测 Δ=+4.5584 pp < +5.0 pp ⇒ 判「已验证不可用」，★ 未过的是第 2 条（效果不足），非跑次失败。 ★ 步数对账（如实登记）：推导 30 vs 实际 19；★ 不是「提前收尾」—— epoch_summary 5/5（epoch 0–4）证明 5 个 epoch 全部完成；权威步数计数器 run_cumulative.step = 19。★ 「计划 30 步」系我们的预期公式误差（推导步数 vs 实际步数须并记）。★ 判据①「完整跑完」按 epoch 5/5 判定为成立。 ★ 评测集锚订正（跑次侧当场实测）：★ 2026-10-12 订正 run_environment.eval_dataset.sha256：6da72199…（= train.jsonl）→ c202b1e1…（= test.jsonl, 702 条）。订正人：BADGE 会话 20261008-105451 · T031 评测执行者（subagent）。依据：228 当场实测 sha256sum + 与本批次 T010T031 eval_report 数据锚交叉一致。★ 本次订正未改动本档任何其他字段、未重跑、未覆盖为新跑次。 ★ LoRA 目标按后端：ms-swift 实测 358 件（language 248 + visual 110）｜native 122 件（language 12 + visual 110）⇒ ★ 两后端覆盖集不相等。",
+   "tree_fingerprint": "c673b6a2…",
+   "tree_fingerprint_role": "起跑断言值",
+   "eval_dataset_anchor_correction": "★ 2026-10-12 订正 run_environment.eval_dataset.sha256：6da72199…（= train.jsonl）→ c202b1e1…（= test.jsonl, 702 条）。订正人：BADGE 会话 20261008-105451 · T031 评测执行者（subagent）。依据：228 当场实测 sha256sum + 与本批次 T010T031 eval_report 数据锚交叉一致。★ 本次订正未改动本档任何其他字段、未重跑、未覆盖为新跑次。",
+   "eval_dataset": {
+    "path": "/homedata/test.jsonl",
+    "sha256": "c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a",
+    "samples": 702,
+    "sha256_note": "★ 锚点订正（2026-10-12，T031 评测执行者当场实测）：本档原记 6da72199… 实为同目录 train.jsonl（6378 条）的 sha256；702 条评测集 test.jsonl 的 sha256 = c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a。依据：在 228 上对 /homedata/{test,train}.jsonl 当场 sha256sum（test=702 行→c202b1e1…、train→6da72199…）；且 T010T031 的 eval_report.json 中 dataset.sha256 均为 c202b1e1…，与本订正一致。仅改本字段，其余内容与实测值一律未动。"
+   },
    "elapsed": "—",
    "max_epochs": 5,
    "derived_steps": 30,
@@ -2767,6 +2776,11 @@
    "tree_fingerprint_remeasured": "63808a3b161033797fcd68fc403b77aa0144fe038ff38cb67cf38bef74e67d21",
    "tree_fingerprint_drift": "★ 当场重算（2026-10-12T13:11Z，launcher 同款公式）得 63808a3b…，与起跑断言值 66387a4c… 不同；差异唯一来源 = tests/e2e/matrix54_manifest_source.json（mtime 2026-10-12 12:37:54，sha256 639445f30ac2dfcc0d65953900775d6f220f7f6b63930f9cd22d92669f2a7cf6）——该改动发生在本档训练【结束之后】（训练结束 12:35:03），且 samplesT031.yaml 未被重新生成（mtime 仍 08:59）⇒ 对本档训练语义无影响，属跑次后共享树漂移；评测只用 eval config + merged-hf，不受影响。",
    "note": "★ 未过第 2 条判据（效果不足）——after acc=16.8091%（118/702）；base acc=16.0969%（113/702）；★ Δ=+0.7122 pp（< +5.0 pp 冻结阈值 ⇒ 未过判据②）；★ 目标值 +10.0 pp 仅展示、不作通过线。口径：数据集 /homedata/test.jsonl、sha256 c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a（702 条，当场实测）、criteria elam-v3-allright-1、temperature 0.0、702/702 有效、0 error；base 与 after 各自独立 output_dir（{base,after}）、评测前 fail-closed 断言通过（目录不存在/为空）、stdout 双份留证；`graspo eval delta` comparability_notes 校验通过（dataset sha256 match c202b1e1…、criteria elam-v3-allright-1、temperature 0.0/0.0、valid 702）。★ 剔图像重叠（169 条）：after 15.9475% vs base 16.3227%。★ 逐工具（correct/234）：base extend 1 / lift 2 / rotate 110，after extend 0 / lift 0 / rotate 118。★ 相邻参照：SFT 档 T010/T011/T013 的 Δ 分别为 +13.39/+5.98/+8.55 pp。 ★ 已通过项（事实保留）：ms-swift GRASPO 链路跑次侧可观测项通过：exit_code=0、ckpt_retention.state=ok、torch_probe all_ok=True（layout=hf_single、layout_status=verified、shards 1/1、tensors=716、total_elements=410120192、all_zero_count=0、nonfinite_count=0）、checkpoint-800 在位、PeftModelForCausalLM 9819.9339M Params（410.1202M Trainable [4.1764%]）。★ 本档 = v5（msgspec）修复后 ms-swift GRASPO 链路首次完整跑通：全日志 `No module named msgspec` / `MS_SWIFT_RL_PREREQUISITE` / `requires the ms-swift package` / `Traceback` / `AlignmentError` 计数均为 0；161 条 graspo/injection_failures 全为 0。 ★ 判据① 依据：1/1 真效果训练（ms-swift GRASPO LoRA 单卡，5 epoch / 800 步）：判据① 通过（exit_code=0、800/800 步、epoch 5/5、ckpt_retention=ok、torch_probe all_ok=True/layout_status=verified、msgspec/RL 前置错误 0、Traceback 0、injection_failures 全 0）；★ 判据② 未过（训练类冻结阈值 Δ ≥ +5.0 pp ∧ after > base）：after 16.8091% > base 16.0969% 成立，但 Δ=+0.7122 pp < +5.0 pp ⇒ 判「已验证不可用」，★ 未过的是第 2 条（效果不足），非跑次失败。 ★ 步数对账（如实登记）：推导 800 vs 实际 800；★ 本档推导步数 800 与实际步数 800 一致（与 native 档 T028 的「推导 30 vs 实际 19」不同）⇒ 判据①「完整跑完」按 800/800 且 epoch 5/5 成立。 ★ 树指纹（取起跑断言值）：66387a4c…；当场重算 63808a3b…；差异原因见 provenance.code_identity.tree_fingerprint_drift（已如实登记）。 ★ LoRA 目标按后端：ms-swift 实测 358 件（language 248 + visual 110）｜native 122 件（language 12 + visual 110）⇒ ★ 两后端覆盖集不相等。",
+   "eval_dataset": {
+    "path": "/homedata/test.jsonl",
+    "sha256": "c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a",
+    "samples": 702
+   },
    "elapsed": "—",
    "max_epochs": 5,
    "derived_steps": 800,

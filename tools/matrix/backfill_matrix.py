@@ -463,7 +463,9 @@ def main():
         prev = new_rows[tier].get("run_provenance") or {}
         # 幂等判据：只比"读数"；★ status 不由跑次 json 直接决定（阈值未冻结时保持「尚未验证」），故排除
         changed = {k: new_rows[tier].get(k) != _s(doc[k]) for k in RESULT_KEYS if k != "status"}
-        if prev.get("source_sha256") == src_sha and not any(changed.values()):
+        _corr = (doc.get("provenance") or {}).get("eval_dataset_anchor_correction")
+        _missing_new = bool(_corr) and not new_rows[tier].get("eval_dataset_anchor_correction")
+        if prev.get("source_sha256") == src_sha and not any(changed.values()) and not _missing_new:
             skipped.append(tier)
             ledger_rows.append(f"| {now} | `{tier}` | `{f.name}` | `{src_sha[:12]}` | "
                                f"{doc['status']} | — | 跳过：同源 sha（`{src_sha[:12]}`）已回填，幂等 |")
@@ -537,6 +539,14 @@ def main():
                 new_rows[tier]["tree_fingerprint_drift"] = ci.get("tree_fingerprint_drift", "起跑值与当场重算不同")
                 note += (" ★ 树指纹（取起跑断言值）：%s…；当场重算 %s…；差异原因见 provenance.code_identity.tree_fingerprint_drift（已如实登记）。"
                          % (str(ci["tree_fingerprint"])[:8], str(ci["tree_fingerprint_remeasured"])[:8]))
+            # ★ 评测集锚订正（跑次侧当场实测更正）⇒ 如实并入备注与数据
+            corr = (doc.get("provenance") or {}).get("eval_dataset_anchor_correction")
+            ed = ((doc.get("provenance") or {}).get("run_environment") or {}).get("eval_dataset")
+            if corr:
+                new_rows[tier]["eval_dataset_anchor_correction"] = corr
+                note += " ★ 评测集锚订正（跑次侧当场实测）：" + str(corr)
+            if ed:
+                new_rows[tier]["eval_dataset"] = ed
             new_rows[tier]["note"] = note
         new_rows[tier]["run_provenance"] = {
             "produced_by": doc["provenance"]["produced_by"],
