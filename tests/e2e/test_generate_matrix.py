@@ -1841,8 +1841,8 @@ case "$args" in
   "-L") echo "GPU 0: NVIDIA A800-SXM4-80GB (UUID: GPU-fake000)"; exit 0;;
 esac
 case "$args" in
-  *--query-gpu=index,memory.used,utilization.gpu*)
-    echo "0, 4, 0"; exit 0;;
+  *--query-gpu=index,memory.used,memory.total,utilization.gpu*)
+    echo "0, 4, 81920, 0"; exit 0;;
   *--query-gpu=index,uuid*) echo "0, GPU-fake000, 4, 81916, 81920, 0, 40, 100.0"; exit 0;;
 esac
 exit 0

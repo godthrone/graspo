@@ -87,19 +87,20 @@ done
 exit 0
 """
 
-#: 假 nvidia-smi：**F-10 空闲断言的真实代码路径**要在这里跑通。
-#: 只回答 0 号卡（run_matrix 的 T010 只用一张卡），实测空闲（4 MiB / 0%）。
+#: 假 nvidia-smi：**起跑前可用断言的真实代码路径**要在这里跑通（B10）。
+#: 只回答 0 号卡（run_matrix 的 T010 只用一张卡），实测可用（used 4 / total 81920 / util 0）。
 #: `-L` 给出容器内可见卡；`--query-gpu=...` 只接受带 `-i` 的查询。
-#: 空闲查询的字段串必须与 `cli/gpu_monitor.IDLE_FIELDS` 一致（含 index）。
-#: 环境变量 ``FAKE_NVIDIA_SMI_BUSY_MIB`` 可让 0 号卡"被占"（构造 F-10 负向场景）。
+#: 空闲查询的字段串必须与 `cli/gpu_monitor.IDLE_FIELDS` 一致（B10 = index+used+total+util）。
+#: 环境变量 ``FAKE_NVIDIA_SMI_BUSY_MIB`` 可让 0 号卡"被占"
+#: （B10：须 **> 头寸** 才判不可用，如 51200 ⇒ 剩余 30720 < 48 GiB）。
 _FAKE_NVIDIA_SMI = """#!/bin/bash
 args="$*"
 case "$args" in
   "-L") echo "GPU 0: NVIDIA A800-SXM4-80GB (UUID: GPU-fake000)"; exit 0;;
 esac
 case "$args" in
-  *--query-gpu=index,memory.used,utilization.gpu*)
-    echo "0, ${FAKE_NVIDIA_SMI_BUSY_MIB:-4}, 0"; exit 0;;
+  *--query-gpu=index,memory.used,memory.total,utilization.gpu*)
+    echo "0, ${FAKE_NVIDIA_SMI_BUSY_MIB:-4}, 81920, 0"; exit 0;;
   *--query-gpu=index,uuid*) echo "0, GPU-fake000, 4, 81916, 81920, 0, 40, 100.0"; exit 0;;
 esac
 exit 0
@@ -390,11 +391,11 @@ def test_occupied_target_gpu_is_refused_before_docker(tmp_path: Path):
         bin_dir,
         elam_root=elam_root,
         models_root=models_root,
-        extra_env={"FAKE_NVIDIA_SMI_BUSY_MIB": "299"},
+        extra_env={"FAKE_NVIDIA_SMI_BUSY_MIB": "51200"},
     )
 
     assert completed.returncode == 1, completed.stdout
-    assert "实测非空闲" in completed.stderr
+    assert "头寸" in completed.stderr
     assert "GPU0" in completed.stderr
     assert not (tmp_path / "docker_argv.txt").exists()
 
@@ -425,7 +426,7 @@ def test_idle_assert_can_be_skipped_explicitly_for_scaffold_checks(tmp_path: Pat
         bin_dir,
         elam_root=elam_root,
         models_root=models_root,
-        extra_env={"GRASPO_SKIP_IDLE_ASSERT": "1", "FAKE_NVIDIA_SMI_BUSY_MIB": "299"},
+        extra_env={"GRASPO_SKIP_IDLE_ASSERT": "1", "FAKE_NVIDIA_SMI_BUSY_MIB": "51200"},
     )
 
     assert completed.returncode == 0, completed.stderr
@@ -2388,8 +2389,8 @@ case "$args" in
   "-L") for i in 0 1 2 3 4 5; do echo "GPU $i: NVIDIA A800 (UUID: GPU-fake000$i)"; done; exit 0;;
 esac
 case "$args" in
-  *--query-gpu=index,memory.used,utilization.gpu*)
-    for i in 0 1 2 3 4 5; do echo "$i, 4, 0"; done; exit 0;;
+  *--query-gpu=index,memory.used,memory.total,utilization.gpu*)
+    for i in 0 1 2 3 4 5; do echo "$i, 4, 81920, 0"; done; exit 0;;
   *--query-gpu=index,uuid*)
     for i in 0 1 2 3 4 5; do echo "$i, GPU-fake000$i, 4, 81916, 81920, 0, 40, 100.0"; done; exit 0;;
 esac
