@@ -3,10 +3,10 @@
 这些测试是**安全回归**：任何一条挂掉都意味着"评测链路可能跑到允许集合之外的卡上"
 或"显存采样可能混入非目标卡读数"。
 
-★ 卡位契约（B7 收口后正式口径）：**允许卡 = ``{4,5,6,7}``；其余一律拒绝**。
-0–3 属第三方工作负载（先到先得，**不是**"保留卡"）；≥8 不存在。
-「生产卡 / reserved」语义**已退役**。故本文件的负例一律取**允许集合之外**的取值
-（0–3 / ≥8），正例一律取集合之内——⛔ 不再有"6/7 是生产卡所以拒绝"的用例。
+★ 卡位契约（B10 再推导，2026-10-12）：**允许卡 = 本机全卡 0–7（先到先得）；
+唯一要求 = 不破坏别人的服务**。旧白名单 ``{4,5,6,7}`` 已退役；≥8 不存在。
+「生产卡 / reserved」语义已退役。故本文件的负例改为**只在 ≥8**（唯一"集合外"），
+正例覆盖 0–7 全部；⛔ 不再有"0–3 是第三方所以拒绝"的用例。
 """
 
 from __future__ import annotations
@@ -33,13 +33,14 @@ from graspo.eval.guard import (
 def test_allowed_set_and_limit_come_from_core_guard():
     """边界常量必须与 core.gpu_guard 一致（单一真相源，不得各自定义）。
 
-    ★ B7：允许集合是**正向白名单** ``{4,5,6,7}`` 本身，⛔ 不是 ``range(max+1)``
-    （后者会把 0–3 也算成允许卡）；「保留卡」已退役 ⇒ 别名必须为空元组。
+    ★ B10：允许集合 = ``ALLOWED_INDICES`` 本身（默认 = **本机全卡 0–7**），
+    ⛔ 不是硬编码的小集合、⛔ 不是 ``range(max+1)`` 之类的第二定义；
+    「保留卡」已退役 ⇒ 别名必须为空元组。
     """
     from graspo.core.gpu_guard import ALLOWED_MAX_INDEX, MAX_CARDS, RESERVED_INDICES
 
-    assert ALLOWED_GPU_INDICES == frozenset(ALLOWED_INDICES) == frozenset({4, 5, 6, 7})
-    assert ALLOWED_MAX_INDEX == max(ALLOWED_INDICES)
+    assert ALLOWED_GPU_INDICES == frozenset(ALLOWED_INDICES) == frozenset(range(8))
+    assert ALLOWED_MAX_INDEX == max(ALLOWED_INDICES) == 7
     assert MAX_GPU_COUNT == MAX_CARDS
     # ★ 「生产卡 / reserved」语义退役：两处都必须为空
     assert RESERVED_GPU_INDICES == ()
@@ -62,38 +63,38 @@ def test_sentinel_device_lists_are_rejected(raw):
 @pytest.mark.parametrize(
     "raw",
     [
-        "0",  # 低于允许集合（第三方先到先得，不是"保留卡"）
-        "8",  # 高于允许集合（8 卡机只有 0–7）
-        "0,4",  # 一张越界一张合法 ⇒ 整组拒绝
-        "3,7",  # 同上（另一侧）
-        "1,2",  # 整组越界
+        "8",  # ≥8：不存在（8 卡机只有 0–7）
+        "9",  # 更远的越界
+        "8,4",  # 一张越界一张合法 ⇒ 整组拒绝
+        "0,8",  # 同上（越界在另一侧）
+        "7,8,9",  # 多张越界
     ],
 )
 def test_cards_outside_the_allowlist_are_always_rejected(raw):
-    """允许集合 ``{4,5,6,7}`` 之外的卡——任何组合里出现都必须拒绝（fail-closed）。"""
+    """★B10：允许集合 = 全卡 0–7 ⇒ **唯一在集合外的是 ≥8**；任何组合里出现都必须拒绝。"""
     with pytest.raises(GpuGuardError):
         resolve_gpu_plan(raw)
 
 
-@pytest.mark.parametrize("raw", ["4", "5", "6", "7"])
+@pytest.mark.parametrize("raw", ["0", "1", "2", "3", "4", "5", "6", "7"])
 def test_every_allowlist_card_is_accepted(raw):
-    """★ 正向对照：4/5/6/7 每一张都**必须被接受**。
+    """★ 正向对照：**0–7 每一张**都必须被接受（B10 起 0–3 不再被拒）。
 
     这条与上面的负例成对存在，用来证明负例**不是同义反复**：
-    同一判据在集合内接受、在集合外拒绝。特别是 6/7——它们**不再是"生产卡"**。
+    同一判据在 0–7 内接受、在 ≥8 拒绝。
     """
     assert resolve_gpu_plan(raw).devices == (int(raw),)
 
 
 def test_more_than_four_cards_is_rejected():
-    """5 张卡（必然是"允许集合外 × 卡数超限"的混合输入）→ 拒绝。
+    """5 张卡 → 拒绝。
 
-    ★ 登记：现行白名单只有 4 个元素 ⇒ **纯"超 4 卡"输入在显式卡号路径上不可构造**
-    （5 张互不相同的卡必然含集合外卡号，先被白名单分支拒绝）。``MAX_CARDS`` 分支
-    在此路径上**已不可达**（B7 只登记、⛔ 未删）。
+    ★ B10 再推导：旧白名单只有 4 个元素时，"纯超 4 卡"输入不可构造（5 张必然含集合外卡，
+    先被白名单分支拒绝）；**B10 解禁后 0–7 全在集合内** ⇒ ``"0,1,2,3,4"`` 首次真正
+    走到 **``MAX_CARDS`` 分支**。本用例因此改为钉住"卡数上限独立生效"。
     """
     with pytest.raises(GpuGuardError):
-        resolve_gpu_plan("4,5,6,7,0")
+        resolve_gpu_plan("0,1,2,3,4")
 
 
 def test_four_cards_is_accepted():

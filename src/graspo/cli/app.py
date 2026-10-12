@@ -117,7 +117,7 @@ def cmd_analyze_profile(args: argparse.Namespace) -> int:
 
 def cmd_launch(args: argparse.Namespace) -> int:
     # 锁卡守卫在构建启动计划之前执行（fail-closed）：未显式锁卡 / 含允许集合
-    # {4,5,6,7} 之外的卡 / 超过 4 卡，一律拒绝，连子进程都不创建。容器侧 runtime 的 `void` 哨兵按
+    # 允许集合之外的卡 / 超过 4 卡，一律拒绝，连子进程都不创建（默认允许集合 = 全卡 0–7）。容器侧 runtime 的 `void` 哨兵按
     # 实测可见卡判定（F-1，见 core/gpu_guard 模块 docstring）。
     devices = require_gpu_lock_or_exit()
     # 配置**只加载一次**：确定性开关的合并（config 优先，§10.1）与启动计划共用

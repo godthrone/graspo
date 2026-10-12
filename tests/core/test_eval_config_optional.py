@@ -245,14 +245,15 @@ def test_explicit_eval_section_missing_fields_is_rejected(tmp_path):
 @pytest.mark.parametrize(
     ("field", "value", "reason"),
     [
-        # ★ 负例已按**现行**白名单 {4,5,6,7}（`gpu_guard.ALLOWED_INDICES`）**重新推导**：
-        #   旧负例 `"6"`/`"7"` 的语义是"生产卡 ⇒ 应被拒"；白名单扩到 4–7 后该语义失效
-        #   （6/7 现在是允许值），故改用**仍在白名单外**的两侧输入——下方 GPU0–3（留给
-        #   其他工作负载）与上方 GPU8 起（不存在）——两者都必须被拒。
-        #   ⛔ 这不是"把卡号换成允许值"式的同义反复，也⛔ 未删除负向覆盖。
-        ("gpus", '"0"', "card below the whitelist (GPU0-3 reserved for other workloads)"),
-        ("gpus", '"8"', "card beyond the whitelist (does not exist)"),
-        ("gpus", '"0,1,2,3,4"', "cards outside the whitelist and more than the 4-card cap"),
+        # ★ B10 再推导（2026-10-12）：允许集合 = **本机全卡 0–7**（先到先得）⇒
+        #   旧的「GPU0–3 在集合外」负例**语义已失效**（0–3 现在合法），改为：
+        #   · `"8"` —— 唯一仍在集合外的形态（≥8 不存在）；
+        #   · `"-1"` —— 非法的显式卡号（守卫只接受非负整数）；
+        #   · `"0,1,2,3,4"` —— 全在集合内但**超过 4 卡上限**（B10 后首次真正走到卡数分支）。
+        #   ⛔ 未删除负向覆盖，也⛔ 不是"把卡号换成允许值"式的同义反复。
+        ("gpus", '"-1"', "negative index is not a valid explicit card"),
+        ("gpus", '"8"', "card beyond the allowlist (does not exist)"),
+        ("gpus", '"0,1,2,3,4"', "all inside the allowlist but more than the 4-card cap"),
         ("gpus", '""', "no explicit lock"),
         ("output_dir", "outputs/not-local", "output dir outside .local/"),
     ],

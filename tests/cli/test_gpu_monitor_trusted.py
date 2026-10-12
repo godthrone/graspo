@@ -9,7 +9,9 @@
 **实测可见卡的本地序号**采样；"只采可见卡、绝不发不带 ``-i`` 的全卡查询"
 这条铁律在两条通道上都由测试锁死。
 
-**F-10 追加**：目标卡实测空闲断言（>64 MiB 或 util>5% 即拒绝，宁等不抢）。
+**F-10 → B10 再推导（2026-10-12）**：目标卡**起跑前可用**断言——判据由"``memory.used``
+> 64 MiB 或 util>5% 即拒绝"改为"**剩余显存 ≥ 本档头寸** ∧ **util == 0**"，且默认**连续
+采样**（本模块用 autouse fixture 注入 2 帧 × 0 s，避免单测真等 24 s；真语义不变）。
 """
 
 import pytest
@@ -27,7 +29,14 @@ from graspo.cli.gpu_monitor import (
 )
 from graspo.core.gpu_guard import GpuInventory, GpuLockError
 
-#: 机上 8 卡（含允许集合外的 0–3）的 nvidia-smi 输出：index,uuid,used,free,total,util,temp,power
+@pytest.fixture(autouse=True)
+def _fast_idle_sampling(monkeypatch):
+    """B10：默认 3 帧 × 12 s 会让单测真等 24 s ⇒ 统一注入 2 帧 × 0 s（判据语义不变）。"""
+    monkeypatch.setenv("GRASPO_GPU_IDLE_SAMPLES", "2")
+    monkeypatch.setenv("GRASPO_GPU_IDLE_INTERVAL_S", "0")
+
+
+#: 机上 8 卡（含 0–3；B10 起全卡均在允许集合内）的 nvidia-smi 输出：index,uuid,used,free,total,util,temp,power
 _EIGHT_CARD_OUTPUT = "".join(
     f"{idx}, GPU-{idx:03d}, {100 * idx}, {81920 - 100 * idx}, 81920, {idx * 5}, 40, 100.0\n"
     for idx in range(8)
@@ -178,7 +187,12 @@ def test_query_gpu_rows_raises_when_nvidia_smi_missing(monkeypatch):
 
 
 class _IdleRunner:
-    """按目标卡返回实测读数；``busy`` 集合里的卡返回被占（299 MiB）。"""
+    """按目标卡返回实测读数：``busy[卡] = (memory.used, utilization.gpu)``，total 固定 81920。
+
+    ★ B10：读数形状 = ``index, memory.used, memory.total, utilization.gpu``（4 字段）。
+    """
+
+    TOTAL = 81920.0
 
     def __init__(self, busy: dict[int, tuple[float, float]] | None = None) -> None:
         self.busy = busy or {}
@@ -189,7 +203,7 @@ class _IdleRunner:
         selected = command[command.index("-i") + 1].split(",")
         return "".join(
             f"{int(idx)}, {self.busy.get(int(idx), (4.0, 0.0))[0]}, "
-            f"{self.busy.get(int(idx), (4.0, 0.0))[1]}\n"
+            f"{self.TOTAL:g}, {self.busy.get(int(idx), (4.0, 0.0))[1]}\n"
             for idx in selected
         )
 
@@ -207,18 +221,18 @@ def test_assert_target_gpus_idle_passes_and_only_queries_target_cards():
 
 
 def test_assert_target_gpus_idle_rejects_occupied_card():
-    """★F-10：目标卡被第三方占用（299 MiB）→ 拒绝启动（实测救场的那次断言）。"""
-    runner = _IdleRunner(busy={3: (299.0, 0.0)})
+    """★B10 再推导：目标卡剩余显存跌破头寸（used 40 GiB ⇒ 剩余 41 GiB < 48 GiB）→ 拒绝。"""
+    runner = _IdleRunner(busy={3: (40 * 1024, 0.0)})
 
     with pytest.raises(GpuLockError) as exc:
         assert_target_gpus_idle([0, 1, 2, 3], runner=runner)
 
     assert "GPU3" in str(exc.value)
-    assert "非空闲" in str(exc.value)
+    assert "头寸" in str(exc.value)
 
 
 def test_assert_target_gpus_idle_rejects_busy_utilization():
-    """util>5% → 拒绝（显存没涨也不行）。"""
+    """util != 0 → 拒绝（显存没涨也不行；B10 起 util 必须恰为 0）。"""
     runner = _IdleRunner(busy={1: (4.0, 77.0)})
 
     with pytest.raises(GpuLockError):
@@ -287,33 +301,30 @@ def test_idle_query_asks_for_index_field():
 @pytest.mark.parametrize(
     "raw,expected",
     [
-        # 守卫自用：--format=csv,noheader,nounits（目标 GPU 服务器实测原文）
-        ("0, 0, 0\n1, 0, 0\n", [(0, 0.0, 0.0), (1, 0.0, 0.0)]),
+        # 守卫自用：--format=csv,noheader,nounits（★B10：4 字段，返回**剩余**显存）
+        ("0, 4096, 81920, 0\n1, 0, 81920, 0\n", [(0, 77824.0, 0.0), (1, 81920.0, 0.0)]),
         # --format=csv（带表头 + 单位；目标 GPU 服务器实测原文）
-        (
-            "index, memory.used [MiB], utilization.gpu [%]\n0, 0 MiB, 0 %\n1, 0 MiB, 0 %\n",
-            [(0, 0.0, 0.0), (1, 0.0, 0.0)],
-        ),
-        # 别人工作包用过的 4 字段 --format=csv：多一个 memory.total（目标 GPU 服务器实测原文）。
-        # 按位置读会把它当成利用率（荒谬的"81920%"）⇒ 必须按列名定位。
         (
             "index, memory.used [MiB], memory.total [MiB], utilization.gpu [%]\n"
             "0, 0 MiB, 81920 MiB, 0 %\n1, 0 MiB, 81920 MiB, 0 %\n",
-            [(0, 0.0, 0.0), (1, 0.0, 0.0)],
+            [(0, 81920.0, 0.0), (1, 81920.0, 0.0)],
         ),
         # --format=csv,noheader（带单位、无表头）
-        ("0, 0 MiB, 0 %\n1, 0 MiB, 0 %\n", [(0, 0.0, 0.0), (1, 0.0, 0.0)]),
+        ("0, 0 MiB, 81920 MiB, 0 %\n1, 0 MiB, 81920 MiB, 0 %\n",
+         [(0, 81920.0, 0.0), (1, 81920.0, 0.0)]),
         # 额外列（温度）不影响目标列
         (
-            "index, memory.used [MiB], utilization.gpu [%], temperature.gpu\n0, 7 MiB, 1 %, 40\n",
-            [(0, 7.0, 1.0)],
+            "index, memory.used [MiB], memory.total [MiB], utilization.gpu [%], temperature.gpu\n"
+            "0, 7 MiB, 81920 MiB, 1 %, 40\n",
+            [(0, 81913.0, 1.0)],
         ),
         # 非标准空白分隔
-        ("0 1024 12\n", [(0, 1024.0, 12.0)]),
+        ("0 1024 81920 12\n", [(0, 80896.0, 12.0)]),
         # 标准 CSV 引号包裹的千位逗号
         (
-            'index, memory.used [MiB], utilization.gpu [%]\n0, "1,234.5 MiB", 4.5 %\n',
-            [(0, 1234.5, 4.5)],
+            'index, memory.used [MiB], memory.total [MiB], utilization.gpu [%]\n'
+            '0, "1,234.5 MiB", 81920 MiB, 4.5 %\n',
+            [(0, 80685.5, 4.5)],
         ),
     ],
 )
@@ -326,6 +337,8 @@ def test_parse_idle_query_accepts_real_nvidia_smi_formats(raw, expected):
     "raw",
     [
         "0, 0\n",  # ★旧 bug 现场：只查 2 字段时 nvidia-smi 的真实输出
+        "0, 0, 0\n",  # ★B10：3 字段（缺 memory.total）⇒ 必须拒绝，否则算不出剩余
+        "0, 0 MiB, 0 %\n",  # 同上（带单位、无表头）
         "0, 0 %\n",  # 带表头却缺 memory.used 列 ⇒ 不猜位置
         "0, abc MiB, 0 %\n",  # 数值字段坏掉
         "0, , 0\n",  # 空字段

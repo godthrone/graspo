@@ -46,7 +46,7 @@ __all__ = [
 ]
 
 #: 评测链路承认的允许集合与上限——**直接派生自 core.gpu_guard**，不另立一份。
-#: ★ B7 收口：允许集合 = `ALLOWED_INDICES` 本身（{4,5,6,7}），**不再**用
+#: ★ 允许集合 = `ALLOWED_INDICES` 本身（B10 起默认 = 本机全卡 0–7），**不再**用
 #: `range(max+1)` 那种「仅上限」口径——后者会错误地把 0–3 也算成允许卡，
 #: 与真相源的正向白名单判据冲突（宪法 §1.4 单一真相源）。
 ALLOWED_GPU_INDICES: frozenset[int] = frozenset(ALLOWED_INDICES)

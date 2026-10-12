@@ -232,12 +232,12 @@ def test_run_evaluation_refuses_without_explicit_gpus(tmp_path):
 
 
 def test_run_evaluation_refuses_out_of_allowlist_cards_before_any_request(tmp_path):
-    """越界卡（允许集合 ``{4,5,6,7}`` 之外）在**任何请求/建目录之前**就被拒绝。
+    """越界卡（允许集合**之外**）在**任何请求/建目录之前**就被拒绝。
 
-    ★ B7 重新推导：旧用例拿 ``"6,7"`` 当负例，理由是"它们是生产卡"——该语义已退役，
-    6/7 现在是**允许**的。新契约下唯一合法的负向输入是集合之外的卡（0–3 / ≥8），
-    故改用 ``"0,1"``。守卫在 ``resolve_gpu_plan`` 里先于落盘与网络发生，用例因此
-    可瞬时结束（这也是本用例此前被 deselect 的挂起条件被消除的原因）。
+    ★ B10 再推导（2026-10-12）：允许集合 = **本机全卡 0–7**（先到先得）⇒
+    旧的 ``"0,1"`` 负例**已失效**（0/1 现在合法；用它会让评测真的跑起来并挂住——
+    这正是本轮回归里实测到的挂起）。唯一仍在集合外的形态是 ``"8,9"``（≥8 不存在）。
+    守卫在 ``resolve_gpu_plan`` 里先于落盘与网络发生，用例因此可瞬时结束。
     """
     dataset_path = _dataset_root(tmp_path)
     dataset, _, _ = load_eval_dataset(dataset_path)
@@ -247,7 +247,7 @@ def test_run_evaluation_refuses_out_of_allowlist_cards_before_any_request(tmp_pa
             model=EvalModel(served_name="s", role="base", path="/models/base"),
             dataset=dataset,
             output_dir=tmp_path / "out",
-            gpus="0,1",
+            gpus="8,9",
         )
     assert not (tmp_path / "out").exists()
 

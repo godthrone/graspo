@@ -60,9 +60,13 @@ from pathlib import Path
 from typing import Any
 
 from graspo.core.gpu_guard import (
+    DEFAULT_IDLE_SAMPLES,
+    DEFAULT_IDLE_SAMPLE_INTERVAL_S,
     GpuInventory,
     assert_gpu_lock,
     resolve_device_source,
+    resolve_idle_interval_s,
+    resolve_idle_samples,
 )
 from graspo.flow.guard import (
     assert_gpu_idle,
@@ -95,7 +99,9 @@ PROCESS_FIELDS = ("gpu_uuid", "pid", "process_name", "used_memory")
 #: ``memory.used,utilization.gpu``，输出就是 ``0, 0``（2 字段），解析器拿不到卡号，
 #: 也失去了"这一行到底是哪张卡"的校验锚点。曾因漏掉 index 导致真机上
 #: ``无法解析 ...（字段数 2）：'0, 0'``，使 F-10 的空闲断言在真机路径上不可用。
-IDLE_FIELDS = ("index", "memory.used", "utilization.gpu")
+#: ★ B10：判据由"绝对占用阈值"改为"**剩余显存 ≥ 本档头寸** ∧ **util == 0**"，
+#: 因此必须一起查 ``memory.total``（只查 used 算不出剩余）。
+IDLE_FIELDS = ("index", "memory.used", "memory.total", "utilization.gpu")
 
 #: 单个数值字段的严格形状（剥单位后必须整串就是一个数）。
 #: 刻意**不**放行 ``nan`` / ``inf`` / ``1e5``——它们不是 nvidia-smi 的读数写法。
@@ -234,7 +240,10 @@ def _idle_value(
 
 
 def parse_idle_query(text: str) -> list[tuple[int, float, float]]:
-    """解析空闲断言查询行 → ``(index, memory_used_mib, utilization_pct)``。
+    """解析空闲断言查询行 → ``(index, free_mib, utilization_pct)``。
+
+    ★ B10：返回的是**剩余显存** ``free = memory.total - memory.used``（判据是
+    "剩余 ≥ 头寸"，不再是"占用 ≤ 64 MiB"）。
 
     **必须同时覆盖真实输出**（目标 GPU 服务器实测原文，见工单 F-10 修复；
     机器与环境记录见 `infra` skill 与 `.local/`）：
@@ -270,10 +279,11 @@ def parse_idle_query(text: str) -> list[tuple[int, float, float]]:
             continue
         index = _numeric(fields[0]) if fields else None
         memory_used = _idle_value(fields, 1, "memory.used", header=header)
-        utilization = _idle_value(fields, 2, "utilization.gpu", header=header)
-        if index is None or memory_used is None or utilization is None:
+        memory_total = _idle_value(fields, 2, "memory.total", header=header)
+        utilization = _idle_value(fields, 3, "utilization.gpu", header=header)
+        if index is None or memory_used is None or memory_total is None or utilization is None:
             raise RuntimeError(f"无法解析 nvidia-smi 空闲查询行（字段数 {len(fields)}）：{line!r}")
-        rows.append((int(index), memory_used, utilization))
+        rows.append((int(index), memory_total - memory_used, utilization))
     return rows
 
 
@@ -423,36 +433,68 @@ def query_idle_rows(
     return parse_idle_query(_run_query(command, runner))
 
 
+def _assert_idle_rows(
+    rows: Sequence[tuple[int, float, float]],
+    *,
+    position_mib: float | None = None,
+) -> None:
+    """逐行跑**单帧**双判据（剩余 ≥ 头寸 ∧ util == 0）。判据在 ``flow.guard.idle``。"""
+    for index, free_mib, util_pct in rows:
+        assert_gpu_idle(
+            index, free_mib=free_mib, utilization_pct=util_pct, position_mib=position_mib
+        )
+
+
 def assert_target_gpus_idle(
     gpu_indices: Sequence[int | str],
     *,
     runner: Callable[[list[str]], str] | None = None,
+    position_mib: float | None = None,
+    samples: int | None = None,
+    interval_s: float | None = None,
+    sleeper: Callable[[float], None] = time.sleep,
 ) -> None:
-    """断言目标卡**实测空闲**（F-10）：>64 MiB 或 util>5% 即拒绝启动。
+    """断言目标卡**起跑前可用**（B10）：剩余显存 ≥ 本档头寸 ∧ util == 0。
 
-    逐卡只查该卡（命令必带 ``-i``），任一卡非空闲即抛 :class:`GpuLockError`。
-    **宁等不抢**：不 kill 他人进程、不与他人混跑。判定边界与消息在
-    ``gpu_guard.assert_gpu_idle``（纯逻辑层，§1.3）。
+    ★ 判据已由"绝对占用阈值（>64 MiB）"改为"**剩余 ≥ 头寸**"：邻居的常驻占用只要
+    不吃掉我们的头寸就算可用（先到先得）。
+    ★ **连续采样**：默认 3 帧、间隔 12 s，**帧帧满足**才算可用（防"邻居正好落在两次
+    kernel 之间"）；帧数/间隔可用 ``GRASPO_GPU_IDLE_SAMPLES`` / ``GRASPO_GPU_IDLE_INTERVAL_S``
+    覆盖。
+
+    逐卡只查该卡（命令必带 ``-i``），任一卡任一帧不满足即抛 :class:`GpuLockError`。
+    **宁等不抢**：不 kill 他人进程。
 
     :param gpu_indices: 目标卡号（宿主侧为宿主卡号，容器内为本地序号）。
     :param runner: 命令执行器（注入点，便于负向测试构造"卡被占"场景）。
-    :raises GpuLockError: 任一目标卡非空闲。
-    :raises RuntimeError: 查询命令失败——拿不到读数时 fail-closed。
+    :param position_mib: 本档头寸（MiB）；None ⇒ 走 env/默认（48 GiB）。
+    :param samples: 采样帧数（≥2）；None ⇒ 走 env/默认。
+    :param interval_s: 帧间隔秒数；None ⇒ 走 env/默认。
+    :raises GpuLockError: 任一目标卡任一帧不满足双判据。
+    :raises RuntimeError: 查询命令失败/读数不完整——拿不到读数时 fail-closed。
     """
     targets = [str(item) for item in gpu_indices]
     if not targets:
         raise RuntimeError("assert_target_gpus_idle 需要至少一个目标卡号")
-    rows = query_idle_rows(targets, runner=runner)
-    if not rows:
-        raise RuntimeError(f"nvidia-smi 未返回任何读数（目标卡 {targets}）——拒绝启动")
-    # 读数必须覆盖每一个目标卡：少一张就等于有一张没验过（fail-closed）。
-    reported = {index for index, _, _ in rows}
+    frames = DEFAULT_IDLE_SAMPLES if samples is None else samples
+    gap = DEFAULT_IDLE_SAMPLE_INTERVAL_S if interval_s is None else interval_s
+    if samples is None:
+        frames = resolve_idle_samples()
+    if interval_s is None:
+        gap = resolve_idle_interval_s()
     requested = {int(item) for item in targets}
-    missing = sorted(requested - reported)
-    if missing:
-        raise RuntimeError(f"nvidia-smi 未返回这些目标卡的读数：{missing}——拒绝启动")
-    for index, used_mib, util_pct in rows:
-        assert_gpu_idle(index, used_mib, util_pct)
+    for frame_no in range(max(frames, 1)):
+        if frame_no:
+            sleeper(gap)
+        rows = query_idle_rows(targets, runner=runner)
+        if not rows:
+            raise RuntimeError(f"nvidia-smi 未返回任何读数（目标卡 {targets}）——拒绝启动")
+        # 读数必须覆盖每一个目标卡：少一张就等于有一张没验过（fail-closed）。
+        reported = {index for index, _, _ in rows}
+        missing = sorted(requested - reported)
+        if missing:
+            raise RuntimeError(f"nvidia-smi 未返回这些目标卡的读数：{missing}——拒绝启动")
+        _assert_idle_rows(rows, position_mib=position_mib)
 
 
 def assert_visible_gpus_idle(
@@ -460,6 +502,10 @@ def assert_visible_gpus_idle(
     visible: str | None = None,
     inventory_probe: Callable[[], GpuInventory] | None = None,
     runner: Callable[[list[str]], str] | None = None,
+    position_mib: float | None = None,
+    samples: int | None = None,
+    interval_s: float | None = None,
+    sleeper: Callable[[float], None] = time.sleep,
 ) -> None:
     """按当前设备来源断言目标卡空闲（宿主侧卡号 / 容器内实测可见卡都支持）。
 
@@ -480,7 +526,14 @@ def assert_visible_gpus_idle(
         inventory = (inventory_probe or probe_gpu_inventory)()
         source = resolve_device_source(raw, inventory)
         targets = source.inventory.indices if source.inventory is not None else ()
-    assert_target_gpus_idle(targets, runner=runner)
+    assert_target_gpus_idle(
+        targets,
+        runner=runner,
+        position_mib=position_mib,
+        samples=samples,
+        interval_s=interval_s,
+        sleeper=sleeper,
+    )
 
 
 def resolve_sample_gpus(
@@ -499,8 +552,9 @@ def resolve_sample_gpus(
       目标 = 容器内**实测可见卡的本地序号**（``--gpus`` 必须是其子集）。
       旧版在这里按宿主卡号查，容器内查不到 ⇒ ``exit status 6``。
 
-    fail-closed：可见集未设置 / ``all`` / 含允许集合 {4,5,6,7} 之外的卡（宿主侧）/ 超过 4 卡 →
+    fail-closed：可见集未设置 / ``all`` / 含**允许集合之外**的卡（宿主侧）/ 超过 4 卡 →
     抛 ``GpuLockError``，不返回任何"全卡"退路（宪法 §2.3 边界校验）。
+    默认允许集合 = 本机全卡 0–7（B10 2026-10-12，先到先得）。
     """
     if visible is None:
         visible = os.environ.get("NVIDIA_VISIBLE_DEVICES")

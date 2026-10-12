@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """目标卡"实测空闲"断言命令行入口（F-10）——任何上机作业启动前调用，fail-closed。
 
-职责：逐卡实测 ``nvidia-smi`` 的 ``memory.used`` 与 ``utilization.gpu``，任一张
-目标卡 **>64 MiB 或 util>5%** 即拒绝启动（退出码 1），通过则打印确认行并退出 0。
+职责（B10）：逐卡实测 ``nvidia-smi`` 的 ``memory.used``/``memory.total`` 与
+``utilization.gpu``，任一张目标卡 **剩余显存 < 本档头寸** 或 **util != 0** 即拒绝启动
+（退出码 1）；默认**连续采样 3 帧、间隔 12 s、帧帧满足**才算通过。
 **不启动任何进程、不 kill 任何进程、不抢卡**——宁等不抢。
 
 为什么必须固化：这是本轮上机实战里救过场的一次断言（实测拦下了含被第三方占用的
@@ -87,8 +88,9 @@ _monitor: Any = _load_monitor_module()
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Fail-closed idle assertion: every target GPU must show "
-            "memory.used <= 64 MiB and utilization.gpu <= 5%."
+            "Fail-closed pre-run availability assertion (B10): every target GPU must show "
+            "memory.free >= the tier position (default 48 GiB) and utilization.gpu == 0 "
+            "across consecutive samples."
         )
     )
     parser.add_argument(
@@ -99,6 +101,24 @@ def build_parser() -> argparse.ArgumentParser:
             "NVIDIA_VISIBLE_DEVICES (host-side pre-check)."
         ),
     )
+    parser.add_argument(
+        "--position-mib",
+        type=float,
+        default=None,
+        help="Tier memory position in MiB (default: GRASPO_GPU_POSITION_MIB or 48 GiB).",
+    )
+    parser.add_argument(
+        "--samples",
+        type=int,
+        default=3,
+        help="Consecutive samples that must ALL satisfy the criterion (default 3).",
+    )
+    parser.add_argument(
+        "--interval-s",
+        type=float,
+        default=12.0,
+        help="Seconds between consecutive samples (default 12).",
+    )
     parser.add_argument("--quiet", action="store_true", help="Print nothing on success.")
     return parser
 
@@ -108,7 +128,12 @@ def main(argv: list[str] | None = None) -> int:
     from graspo.core.gpu_guard import GpuLockError
 
     try:
-        _monitor.assert_visible_gpus_idle(visible=args.visible)
+        _monitor.assert_visible_gpus_idle(
+            visible=args.visible,
+            position_mib=args.position_mib,
+            samples=args.samples,
+            interval_s=args.interval_s,
+        )
     except GpuLockError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -117,7 +142,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"目标卡空闲断言失败（fail-closed）：{exc}", file=sys.stderr)
         return 1
     if not args.quiet:
-        print("[gpu-idle] OK: 目标卡实测空闲（memory.used ≤64 MiB 且 util ≤5%）")
+        print(
+            "[gpu-idle] OK: 目标卡起跑前可用"
+            "（剩余显存 ≥ 本档头寸 且 util == 0；连续采样全满足）"
+        )
     return 0
 
 

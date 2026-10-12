@@ -66,7 +66,7 @@ def assert_inventory_visible(
             f"实测可见 {inventory.count} 张卡，超过上限 {max_cards}"
             f"（来源 {inventory.source}，本地序号 {list(inventory.indices)}）",
             f"用户拍板每次最多 {max_cards} 卡；可见集没收住（可能配方未限定设备）时，"
-            "多出来的卡可能是允许集合 {4,5,6,7} 之外的他人负载，必须拒绝。",
+            "多出来的卡可能是可见集之外的他人负载，必须拒绝。",
         )
     if declared_count is not None and inventory.count != declared_count:
         raise _reject(
