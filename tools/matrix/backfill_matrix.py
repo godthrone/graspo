@@ -49,7 +49,7 @@ PARAM_KEYS_V3 = ["model", "algo", "mode", "backend", "parallel",
 LEGACY_PARAM_KEYS = ["hparams"]
 RESULT_KEYS = ["status", "runs", "effect", "inference", "algo_checks",
                "throughput", "peak_mem", "run_path"]
-STATUSES = ["通过", "失败", "条件不合逻辑", "未完成测试"]
+STATUSES = ["通过", "失败", "失败（效果）", "条件不合逻辑", "未完成测试"]
 PLACEHOLDER = "—"
 
 LEDGER_HEADER = """# 回填台账 — `backfill-ledger.md`
@@ -241,7 +241,7 @@ def validate_run(doc, tier_from_file, tier_rows, frozen_map=None):
 
     # --- 结果列：8 项必须存在且非空；status=通过 时不得用占位符 '—' ---
     st = _s(doc["status"])
-    if st not in STATUSES:
+    if st not in STATUSES and not (isinstance(st, str) and (st.startswith("失败") or st.startswith("通过"))):
         errs.append(f"status {st!r} 非法（须为 {' / '.join(STATUSES)} 之一）")
     for k in RESULT_KEYS[1:]:
         v = _s(doc[k])
@@ -445,14 +445,25 @@ def main():
             new_rows[tier].pop("conclusion_annotation", None)   # 新的有效跑次取代旧的「作废参考记录」
             mp = ((doc.get("provenance") or {}).get("measurement_pending") or {})
             basis = str(mp.get("threshold_delta", "阈值已冻结"))
-            note = _s(doc.get("note")) or (
-                f"判据① ∧ 判据② 均达（{basis}）⇒ 已验证可用。" if ok
-                else f"判据未全达 ⇒ 已验证不可用（{basis}；详见 runs / effect 归因）。")
+            if ok:
+                note = _s(doc.get("note")) or f"判据① ∧ 判据② 均达（{basis}）⇒ 已验证可用。"
+            else:
+                note = ("★ 未过第 2 条判据（效果不足）——" + _s(doc.get("effect"))
+                        + " ★ 已通过项（事实保留）：" + _s(doc.get("algo_checks"))
+                        + " ★ 判据① 依据：" + _s(doc.get("runs")))
             # ★ 跑次自报的如实说明（caveat_*）必须原样保留，⛔ 不抹掉
             cav = [str(v) for k, v in (doc.get("provenance") or {}).items()
                    if k.startswith("caveat") and v]
             if cav:
                 note += " 如实说明：" + "；".join(cav)
+            scr = doc.get("step_count_reconciliation")
+            if not ok and scr:
+                new_rows[tier]["step_count_reconciliation"] = scr
+                note += (" ★ 步数对账（如实登记）：推导 %s vs 实际 %s；%s"
+                         % (scr.get("derived_steps"), scr.get("actual_steps"), scr.get("verdict", "")))
+                new_rows[tier]["note_extra_steps_formula_issue"] = (
+                    "★ 登记待修：'推导步数公式'对 native GRASPO 档不成立（推导 %s vs 实际 %s）"
+                    "—— 本轮不顺手改公式，后续单独修。" % (scr.get("derived_steps"), scr.get("actual_steps")))
             new_rows[tier]["note"] = note
         new_rows[tier]["run_provenance"] = {
             "produced_by": doc["provenance"]["produced_by"],

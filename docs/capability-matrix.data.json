@@ -58,7 +58,8 @@
    "epoch_policy": {
     "by_method": "SFT / CPT / OPD = 2 epoch；GRASPO(RL) = 5 epoch。理由：跨 epoch 容易出问题（循环结构决定）⇒ 2 epoch 正好覆盖一次 epoch 边界，这正是要压的地方；RL 需要更多 epoch 才能看到效果。",
     "steps": "步数 = epoch 数 × 每 epoch 推导步数（由数据量与批大小推导）；⛔ 不设人为步数上限（无 max_steps 约束）。 推导式：steps = epoch 数 × 每 epoch 步数（每 epoch 步数由数据量与批大小推导）。",
-    "checkpoint": "save_steps = 推导步数 + 1（大于总步数 ⇒ 只保留最终检查点）。"
+    "checkpoint": "save_steps = 推导步数 + 1（大于总步数 ⇒ 只保留最终检查点）。",
+    "known_issue": "★ 登记待修：「推导步数公式」对 **native GRASPO** 档不成立（T028 实测：推导 30 vs 实际 19 optimizer step；epoch_summary 5/5 证明 5 个 epoch 全部完成，「计划 30 步」系预期公式误差）。本轮**不顺手改公式**，后续单独修。"
    },
    "conclusion_rule": {
     "rule": "结论必须与同一行的参数一一对应。若一行的参数已被更正，而结论来自旧参数下的跑次 ⇒ 该结论作废，该档标「尚未验证」；仅在参数冻定后重跑，才可给出「已验证可用 / 已验证不可用」判定。",
@@ -2485,39 +2486,64 @@
    "expected_optimizer_steps_per_epoch": "6",
    "expected_optimizer_steps_reachable": "6",
    "applicable": true,
-   "status": "尚未验证",
-   "runs": "1/1 真效果训练：U1 exit_code=0 ✓；U2 终点窗口 loss -0.245115 / reward 0.452991（均 ≥ 基线同口径终点窗口 -0.201606 / 0.436256）✓；U3 权重有变化 ✓（lora_delta_mean 逐步 1.62e-06→2.42e-06，6/6 步 optimized=true）；U4 产物可推理 ✓（LoRA 合并→vLLM→702 条固定评测集跑完，0 error）——★ 但效果判据 FAIL：Δ=0.00 pp < 阈值 20 pp ⇒ 整档判 失败（效果）",
-   "effect": "—",
-   "inference": "✅ PASS：合并 LoRA（graspo export --format merged-hf，19GiB/4 shard/Qwen3_5ForConditionalGeneration）→ vLLM v0.22.0 启动（--enable-auto-tool-choice --tool-call-parser qwen3_xml）→ ELAM V5 固定评测集 702/702 跑完、0 error、全程 HTTP 200。★ 合并确已生效（非空转）的独立证明：逐 tensor 比对 base vs merged，shard4 的 645 tensor 中 110 个改变且全部为 model.visual.*（blocks.*.mlp.linear_fc1/fc2、merger.*），与 lora.target_preset=vision_common 逐字吻合；非权重件 tokenizer.json 两边 sha256 相同。与训练末期一致性：末 3 步 loss 终窗 -0.245115、reward 终窗 0.452991，评测产出可解析 tool_call",
-   "algo_checks": "0/7 FAIL（7 项逐条：①标注正确性=PASS ②token 级 advantage=PASS ③组决策=PASS ④奖励↔样本对齐=PASS ⑤组完整性=PASS ⑥retry 真实生效=PASS ⑦指标诚实=PASS）；R5 退役第 4 条不适用（单卡零会合）",
+   "status": "已验证不可用",
+   "runs": "1/1 真效果训练（native GRASPO LoRA 单卡，5 epoch）：判据① 通过（★ 见步数定案）；判据② 未过（训练类冻结阈值 Δ ≥ +5.0 pp）：实测 Δ=+4.5584 pp < +5.0 pp ⇒ 判「已验证不可用」，★ 未过的是第 2 条（效果不足），非跑次失败。",
+   "effect": "after acc=21.0826%（148/702）；base acc=16.5242%（116/702）；★ Δ=+4.5584 pp（< +5.0 pp 冻结阈值 ⇒ 未过判据②）；★ 目标值 +10.0 pp 仅展示、不作通过线（Δ 落在 5–10 之间才需展示，本档低于 5）。口径：同数据集 sha256 6da72199…、同 criteria、温度 0、702/702 有效、0 error ⇒ 可比性成立。★ 相邻参照：SFT 档 T010/T011/T013 的 Δ 分别为 +13.39/+5.98/+8.55 pp（SFT 阈值同为 +5.0 pp）。",
+   "inference": "✅ native checkpoint（runsfinal，format=native-lora，manifest 122 项签名）→ `graspo export --config`（export_format=merged-hf）合并为 merged-hf → vLLM v0.22.0（--enable-auto-tool-choice --tool-call-parser qwen3_xml、max-model-len 8192、gpu-mem-util 0.85）→ 固定评测集 702/702 跑完、0 error。base 与 after 分离目录 + fail-closed 断言 + stdout 留证。",
+   "algo_checks": "native GRASPO：跑次侧可观测项通过（exit_code=0、ckpt_retention=ok、torch_probe all_ok=True、final ckpt 在位）。★ 运行期见 batch_high_retry_rate 告警（已定性 ① 正常采样波动：组规模恒 G=8、terminal 恒 ≥8 收敛、墙钟与 attempt 同量级）。",
    "throughput": "—",
-   "peak_mem": "—",
-   "run_path": "—",
-   "conclusion_annotation": {
-    "conclusion_valid": false,
-    "reason": "该跑次使用旧配方（LoRA 仅打视觉塔 vision_common、r=8、lr=5e-06），与当前行参数（language_all_linear + vision_common、r=128、lr=1.0e-05）不对应 ⇒ 判定作废；该档按「尚未验证」（= 未测试）记。",
-    "reference_record": "旧配方下跑次事实（仅作参考，⛔ 不作为该档可用/不可用判定）：exit_code=0（6/6 步）；产物可推理（合并 LoRA → 服务化推理 → 固定评测集跑完，0 error）；算法正确性检查 0/7 FAIL；Δ=+0.00 pp（阈值 20 pp；★ 最终阈值 δ 待定）。"
+   "peak_mem": "35.2",
+   "run_path": "RUN-20261011-T028-01（2026-10-11）",
+   "measurement_pending": false,
+   "step_count_reconciliation": {
+    "derived_steps": 30,
+    "actual_steps": 19,
+    "derived_formula": "5 epoch × per_epoch 6 = 30（★ 事后证明该推导对本档不成立）",
+    "actual_evidence": {
+     "run_cumulative_step": 19,
+     "last_train_step": {
+      "step": 19,
+      "epoch": 4,
+      "elapsed_sec": 25915.178,
+      "attempt_groups": 547,
+      "completions": 4376
+     },
+     "epoch_summary_events": 5,
+     "epoch_summary_epochs": [
+      0,
+      1,
+      2,
+      3,
+      4
+     ],
+     "manifest": "runsmanifest.json（format=native-lora、checkpoint_type=recoverable_lora_training_state、has_trainer_state=true）",
+     "evidence_path": "runsstdout.log"
+    },
+    "verdict": "★ 不是「提前收尾」—— epoch_summary 5/5（epoch 0–4）证明 5 个 epoch 全部完成；权威步数计数器 run_cumulative.step = 19。★ 「计划 30 步」系我们的预期公式误差（推导步数 vs 实际步数须并记）。★ 判据①「完整跑完」按 epoch 5/5 判定为成立。"
    },
-   "voided_conclusion": {
-    "conclusion_valid": false,
-    "reason": "该跑次使用旧配方（LoRA 仅打视觉塔 vision_common、r=8、lr=5e-06），与当前行参数（language_all_linear + vision_common、r=128、lr=1.0e-05）不对应 ⇒ 判定作废；该档按「尚未验证」（= 未测试）记。",
-    "reference_record": "旧配方下跑次事实（仅作参考，⛔ 不作为该档可用/不可用判定）：exit_code=0（6/6 步）；产物可推理（合并 LoRA → 服务化推理 → 固定评测集跑完，0 error）；算法正确性检查 0/7 FAIL；Δ=+0.00 pp（阈值 20 pp；★ 最终阈值 δ 待定）。"
-   },
+   "note_extra_steps_formula_issue": "★ 登记待修：'推导步数公式'对 native GRASPO 档不成立（推导 30 vs 实际 19）—— 本轮不顺手改公式，后续单独修。",
+   "note": "★ 未过第 2 条判据（效果不足）——after acc=21.0826%（148/702）；base acc=16.5242%（116/702）；★ Δ=+4.5584 pp（< +5.0 pp 冻结阈值 ⇒ 未过判据②）；★ 目标值 +10.0 pp 仅展示、不作通过线（Δ 落在 5–10 之间才需展示，本档低于 5）。口径：同数据集 sha256 6da72199…、同 criteria、温度 0、702/702 有效、0 error ⇒ 可比性成立。★ 相邻参照：SFT 档 T010/T011/T013 的 Δ 分别为 +13.39/+5.98/+8.55 pp（SFT 阈值同为 +5.0 pp）。 ★ 已通过项（事实保留）：native GRASPO：跑次侧可观测项通过（exit_code=0、ckpt_retention=ok、torch_probe all_ok=True、final ckpt 在位）。★ 运行期见 batch_high_retry_rate 告警（已定性 ① 正常采样波动：组规模恒 G=8、terminal 恒 ≥8 收敛、墙钟与 attempt 同量级）。 ★ 判据① 依据：1/1 真效果训练（native GRASPO LoRA 单卡，5 epoch）：判据① 通过（★ 见步数定案）；判据② 未过（训练类冻结阈值 Δ ≥ +5.0 pp）：实测 Δ=+4.5584 pp < +5.0 pp ⇒ 判「已验证不可用」，★ 未过的是第 2 条（效果不足），非跑次失败。 ★ 步数对账（如实登记）：推导 30 vs 实际 19；★ 不是「提前收尾」—— epoch_summary 5/5（epoch 0–4）证明 5 个 epoch 全部完成；权威步数计数器 run_cumulative.step = 19。★ 「计划 30 步」系我们的预期公式误差（推导步数 vs 实际步数须并记）。★ 判据①「完整跑完」按 epoch 5/5 判定为成立。",
    "elapsed": "—",
    "max_epochs": 5,
    "derived_steps": 30,
    "per_epoch_steps": 6,
    "save_steps_basis": "= 推导步数 30 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
-   "steps_actual": "6/6",
+   "steps_actual": "19（推导 30）",
    "data_scale": "48 条（每卡 48）",
-   "note": "参考记录（该跑次使用旧配方（LoRA 仅打视觉塔 vision_common、r=8、lr=5e-06），与当前行参数（language_all_linear + vision_common、r=128、lr=1.0e-05）不对应 ⇒ 判定作废；该档按「尚未验证」（= 未测试）记。 ⇒ 判定作废，不作为该档可用/不可用判定）：旧配方下跑次事实（仅作参考，⛔ 不作为该档可用/不可用判定）：exit_code=0（6/6 步）；产物可推理（合并 LoRA → 服务化推理 → 固定评测集跑完，0 error）；算法正确性检查 0/7 FAIL；Δ=+0.00 pp（阈值 20 pp；★ 最终阈值 δ 待定）。",
-   "conclusion_void_reason": "该跑次使用旧配方（LoRA 仅打视觉塔 vision_common、r=8、lr=5e-06），与当前行参数（language_all_linear + vision_common、r=128、lr=1.0e-05）不对应 ⇒ 判定作废；该档按「尚未验证」（= 未测试）记。",
    "tp": "1",
    "pp": "1",
    "dp": "1",
    "cards_total": "1×1×1×1 = 1 卡",
    "dp_derived": false,
-   "dp_source": "配置值（native.tp_size / pp_size / dp_size）"
+   "dp_source": "配置值（native.tp_size / pp_size / dp_size）",
+   "verdict": {
+    "state": "已验证不可用",
+    "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
+    "failed_detail": "Δ = +4.5584 pp < 冻结阈值 +5.0 pp",
+    "passed_criteria": [
+     "native GRASPO：跑次侧可观测项通过（exit_code=0、ckpt_retention=ok、torch_probe all_ok=True、final ckpt 在位）。★ 运行期见 batch_high_retry_rate 告警（已定性 ① 正常采样波动：组规模恒 G=8、terminal 恒 ≥8 收敛、墙钟与 attempt 同量级）。"
+    ]
+   }
   },
   {
    "tier": "T029",

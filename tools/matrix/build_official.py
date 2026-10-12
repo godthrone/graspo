@@ -343,6 +343,9 @@ def criteria_caliber():
             "by_method": ("SFT / CPT / OPD = 2 epoch；GRASPO(RL) = 5 epoch。理由：跨 epoch 容易出问题（循环结构决定）⇒ 2 epoch 正好覆盖一次 epoch 边界，这正是要压的地方；RL 需要更多 epoch 才能看到效果。"),
             "steps": STEPS_POLICY + " 推导式：steps = epoch 数 × 每 epoch 步数（每 epoch 步数由数据量与批大小推导）。",
             "checkpoint": "save_steps = 推导步数 + 1（大于总步数 ⇒ 只保留最终检查点）。",
+            "known_issue": ("★ 登记待修：「推导步数公式」对 **native GRASPO** 档不成立"
+                            "（T028 实测：推导 30 vs 实际 19 optimizer step；epoch_summary 5/5 证明 5 个 epoch 全部完成，"
+                            "「计划 30 步」系预期公式误差）。本轮**不顺手改公式**，后续单独修。"),
         },
         "conclusion_rule": {
             "rule": ("结论必须与同一行的参数一一对应。若一行的参数已被更正，而结论来自旧参数下的跑次 ⇒ "
@@ -353,18 +356,22 @@ def criteria_caliber():
 
 
 def verdict_of(row, state):
-    """已验证不可用档的结论：写明未过的是哪一条判据，并保留已通过项的事实（机器可读）。"""
+    """已验证不可用档的结论：写明未过的是哪一条判据，并保留已通过项的事实（**数据驱动**）。"""
     if state != S_UNAVAILABLE:
         return None
-    return {
-        "state": state,
-        "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
-        "failed_detail": ("Δ = +0.00 pp < 阈值 20 pp（graspo_threshold_pp=20；★ 最终阈值 δ 待定）；"
-                          "剔除图像重叠敏感性后 Δ = -0.19 pp。"),
-        "passed_criteria": ["可完整跑完：exit_code = 0（6/6 步）",
-                            "产物可推理：合并 LoRA → 服务化推理启动 → 固定评测集跑完（0 error）",
-                            "算法正确性检查：0/7 FAIL"],
-    }
+    eff = str(row.get("effect", ""))
+    m = re.search(r"Δ\s*=?\s*\+?([0-9.]+)\s*pp", eff)
+    th = re.search(r"\+([0-9.]+)\s*pp\s*冻结阈值", eff)
+    detail = (f"Δ = +{m.group(1)} pp < 冻结阈值 +{th.group(1)} pp" if (m and th)
+              else (f"Δ = +{m.group(1)} pp（低于冻结阈值）" if m else "效果未达标（见 effect）"))
+    passed = []
+    algo = str(row.get("algo_checks", ""))
+    if algo and algo not in ("—", ""):
+        passed.append(algo)
+    return {"state": state,
+            "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
+            "failed_detail": detail,
+            "passed_criteria": passed or ["判据① 通过（见 runs）"]}
 
 
 def split_elapsed(tp):
@@ -432,7 +439,7 @@ def main():
             state = S_EXCLUDED
         elif raw == "通过":
             state = S_AVAILABLE
-        elif raw in ("失败", "不通过"):
+        elif isinstance(raw, str) and raw.startswith("失败"):
             state = S_UNAVAILABLE
         else:
             state = S_UNVERIFIED
@@ -473,8 +480,12 @@ def main():
             r["save_steps_basis"] = (f"= 推导步数 {derived} + 1（⛔ 不设人为步数上限；"
                                      f"save_steps 大于总步数 ⇒ 只留最终检查点）")
         # ★ 实跑步数（有跑次记录即填，含"作废参考记录"）
-        m = re.search(r"(\d+)\s*/\s*(\d+)\s*步", r.get("runs", "") or "")
-        r["steps_actual"] = f"{m.group(1)}/{m.group(2)}" if m else "—"
+        scr = r.get("step_count_reconciliation") or {}
+        if scr.get("actual_steps") is not None:
+            r["steps_actual"] = f"{scr.get('actual_steps')}（推导 {scr.get('derived_steps')}）"
+        else:
+            m = re.search(r"(\d+)\s*/\s*(\d+)\s*步", r.get("runs", "") or "")
+            r["steps_actual"] = f"{m.group(1)}/{m.group(2)}" if m else "—"
         # 数据规模 = 全局条数 + 每卡派生
         if r.get("subset_size") not in (None, "", "—"):
             ppr = r.get("prompts_per_rank")
@@ -492,6 +503,8 @@ def main():
         elif state == S_EXCLUDED:
             r["note"] = EXCLUDED_REASON
             r["excluded_reason"] = EXCLUDED_REASON
+        elif r.get("note") not in (None, "", "—"):
+            pass                                   # ★ 回填写入的备注（含失败归因/步数对账）优先保留
         elif v:
             r["note"] = ("未过" + v["failed_criterion"] + "：" + v["failed_detail"] +
                          " 已通过：" + " / ".join(v["passed_criteria"]) +

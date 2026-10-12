@@ -173,6 +173,7 @@ def build_caliber(data):
             f'<tr><th>epoch 口径</th><td>{html.escape((c.get("epoch_policy") or {}).get("by_method", ""))}</td></tr>'
             f'<tr><th>步数口径（取消上限）</th><td>{html.escape((c.get("epoch_policy") or {}).get("steps", ""))}</td></tr>'
             f'<tr><th>检查点间隔</th><td>{html.escape((c.get("epoch_policy") or {}).get("checkpoint", ""))}</td></tr>'
+            f'<tr><th>已知问题（登记待修）</th><td>{html.escape((c.get("epoch_policy") or {}).get("known_issue", "—"))}</td></tr>'
             f'<tr><th>LoRA 目标（按后端分流）</th><td>{_lora_backends_html(data)}</td></tr>'
             f'<tr><th>ms-swift 正则下发机制</th><td>{_target_regex_html(data)}</td></tr>'
             '</tbody></table>')
