@@ -352,6 +352,14 @@ def criteria_caliber():
                      "该结论作废，该档标「尚未验证」；仅在参数冻定后重跑，才可给出「已验证可用 / 已验证不可用」判定。"),
             "status_wording": ("「尚未验证」在本文档中等同「未测试」；宪法 §17.7 的固定取值为「尚未验证」，用词以它为准。"),
         },
+            "caliber_evidence": [
+                "★ 基准重复跑量散布（同一 base 侧 run-to-run 抖动）：同底座 base 实测 113 vs 116 /702（Δ 分别 +0.7122 与 +0.2849 pp）。"
+                "定性 = vLLM 连续批处理浮点非确定性；★ 判定不变（均 < +5.0 pp）；★ 供『基准散布』口径使用，⛔ 不因此改阈值。",
+            ],
+            "known_corrections": [
+                "★ 待订正：T028.json 的数据锚 `eval_dataset.sha256` 写作 `6da72199…`，实为 train.jsonl；正确的评测集锚 = `c202b1e1…`。"
+                "评测执行者正在订正 ⇒ 订正后其 json sha 变化，我方将**重跑一次回填**（幂等按 sha，自动更新）。",
+        ],
     }
 
 
@@ -479,6 +487,14 @@ def main():
             r["save_steps"] = derived + 1
             r["save_steps_basis"] = (f"= 推导步数 {derived} + 1（⛔ 不设人为步数上限；"
                                      f"save_steps 大于总步数 ⇒ 只留最终检查点）")
+        # ★ 备注补充：LoRA 按后端的真实覆盖（对 LoRA 档；数据驱动的口径事实，⛔ 不手写）
+        if r.get("tuner_type") == "lora" and r.get("note") not in (None, "", "—"):
+            lb = lora_target_backends()
+            r["note"] = r["note"] + (" ★ LoRA 目标按后端：ms-swift 实测 %d 件（language %d + visual %d）｜native %d 件"
+                                     "（language %d + visual %d）⇒ ★ 两后端覆盖集不相等。"
+                                     % (lb["msswift"]["coverage"]["total"], lb["msswift"]["coverage"]["language"],
+                                        lb["msswift"]["coverage"]["visual"], lb["native"]["coverage"]["total"],
+                                        lb["native"]["coverage"]["language"], lb["native"]["coverage"]["visual"]))
         # ★ 实跑步数（有跑次记录即填，含"作废参考记录"）
         scr = r.get("step_count_reconciliation") or {}
         if scr.get("actual_steps") is not None:

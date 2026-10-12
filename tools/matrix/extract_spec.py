@@ -412,7 +412,7 @@ def main():
         "id": "C5", "level": "★ 待 B10（不据旧值下结论）",
         "title": "gpus(list) 来源过期：退役生成器默认 vs 现行卡池口径",
         "detail": ("GPU_SETS={1:[0],2:[0,1],4:[0,1,2,3]} 是退役生成器默认；"
-                   "现行 core/gpu_guard.py:ALLOWED_INDICES=(4,5,6,7)，且主席 2026-10-11 已改口径为"
+                   "现行 core/gpu_guard.py:ALLOWED_INDICES 默认 = 全卡 0–7（B10 2026-10-12 解禁卡池闸门），且主席已改口径为"
                    "「全卡先到先得、util 0% 且剩余显存够」⇒ 待 B10 更新（含 B7 的 27 条测试再推导）"),
         "evidence": "tests/e2e/generate_matrix.py:GPU_SETS；跑次侧移交件 §2.1「卡池」",
         "ruling": "矩阵 gpus 列标为「仅参考 / 待 B10」；cards 仍为权威差异项",

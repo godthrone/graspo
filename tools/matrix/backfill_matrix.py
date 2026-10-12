@@ -44,8 +44,10 @@ REQUIRED_TOP = ["schema", "tier", "params", "status", "runs", "effect",
 #   - 其余键：json 若提供，则与档位表比对；json 未提供不报错（档位表是参数真相源）；
 #   - 表里已不存在的键（如 legacy `hparams`）：登记为 legacy，**忽略**而不 fail-closed（兼容旧 json）。
 PARAM_IDENTITY_KEYS = ["model", "algo", "mode", "backend", "parallel"]
-PARAM_KEYS_V3 = ["model", "algo", "mode", "backend", "parallel",
-                 "lora_target", "lr", "data_subset", "steps", "switches"]
+#: ★ 严格比对集（防「跑 A 填 B」的身份事实）：身份键 + 并行维度 + lr
+PARAM_KEYS_V3 = ["model", "algo", "mode", "backend", "parallel", "lr"]
+#: ★ 仅登记不判错（**描述性/派生**字段：各档用语与格式本就不同，⛔ 不据此判错位）
+PARAM_INFO_KEYS = ["lora_target", "steps", "switches", "data_subset", "target_modules"]
 LEGACY_PARAM_KEYS = ["hparams"]
 RESULT_KEYS = ["status", "runs", "effect", "inference", "algo_checks",
                "throughput", "peak_mem", "run_path"]
@@ -234,6 +236,11 @@ def validate_run(doc, tier_from_file, tier_rows, frozen_map=None):
                     errs.extend(compare_parallel(j, r_))     # ★ canonical + 维度逐项一致
                 elif r_ != j:
                     errs.append(f"params.{k} 与档位表不一致（防错位）：json={j!r} 表={r_!r}")
+            # 描述性字段：只登记，不判错（格式差异不构成错位证据）
+            doc.setdefault("_param_info_diffs", [])
+            for k in PARAM_INFO_KEYS:
+                if k in p and _s(p.get(k)) is not None and _s(ref.get(k, "")) != _s(p.get(k)):
+                    doc["_param_info_diffs"].append(k)
             doc.setdefault("_legacy_params_ignored", [])
             for k in LEGACY_PARAM_KEYS:
                 if k in p and k not in ref:
@@ -464,6 +471,16 @@ def main():
                 new_rows[tier]["note_extra_steps_formula_issue"] = (
                     "★ 登记待修：'推导步数公式'对 native GRASPO 档不成立（推导 %s vs 实际 %s）"
                     "—— 本轮不顺手改公式，后续单独修。" % (scr.get("derived_steps"), scr.get("actual_steps")))
+            # ★ 树指纹：**取起跑断言值**；若当场重算不同 ⇒ 如实登记漂移（⛔ 不抹）
+            ci = ((doc.get("provenance") or {}).get("code_identity") or {})
+            if ci.get("tree_fingerprint"):
+                new_rows[tier]["tree_fingerprint"] = ci["tree_fingerprint"]
+                new_rows[tier]["tree_fingerprint_role"] = ci.get("tree_fingerprint_role", "起跑断言值")
+            if ci.get("tree_fingerprint_remeasured") and ci["tree_fingerprint_remeasured"] != ci.get("tree_fingerprint"):
+                new_rows[tier]["tree_fingerprint_remeasured"] = ci["tree_fingerprint_remeasured"]
+                new_rows[tier]["tree_fingerprint_drift"] = ci.get("tree_fingerprint_drift", "起跑值与当场重算不同")
+                note += (" ★ 树指纹（取起跑断言值）：%s…；当场重算 %s…；差异原因见 provenance.code_identity.tree_fingerprint_drift（已如实登记）。"
+                         % (str(ci["tree_fingerprint"])[:8], str(ci["tree_fingerprint_remeasured"])[:8]))
             new_rows[tier]["note"] = note
         new_rows[tier]["run_provenance"] = {
             "produced_by": doc["provenance"]["produced_by"],
