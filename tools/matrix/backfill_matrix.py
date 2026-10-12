@@ -48,7 +48,8 @@ PARAM_IDENTITY_KEYS = ["model", "algo", "mode", "backend", "parallel"]
 PARAM_KEYS_V3 = ["model", "algo", "mode", "backend", "parallel", "lr"]
 #: ★ "训练身份"字段：**比归一化后的语义值**（⛔ 不比展示串/散文）
 # ★ `steps` 不列入严格比对：它是**名义/派生值**且正在被公式纠正（json 可能仍带旧推导）⇒ 其核算由 step_count_reconciliation 负责
-PARAM_SEMANTIC_KEYS = ["lora_target", "target_modules", "data_subset", "switches"]
+# ★ `steps_derived`（名义/派生）**可宽松**；★ `steps_actual`（实跑步数）是**训练身份** ⇒ 留在严格比对
+PARAM_SEMANTIC_KEYS = ["lora_target", "target_modules", "data_subset", "switches", "steps_actual"]
 #: ★ 仅登记不判错（纯散文/口径说明）
 PARAM_INFO_KEYS = []
 
@@ -76,6 +77,15 @@ def norm_param(key, v):
             return 122
         if "language_model" in t or "visual" in t:
             return 358
+        return None
+    if key == "steps_actual":
+        # 实跑步数：优先取"数字/数字"或"实测 19 步"等形态的数值
+        if isinstance(v, dict):
+            a = v.get("actual_steps")
+            return int(a) if a is not None else None
+        m2 = re.search(r"(?:实测|实际|actual)[^0-9]{0,8}(\d+)", t) or re.search(r"^(\d+)", t.strip())
+        if m2:
+            return int(m2.group(1))
         return None
     if key == "data_subset":
         ns = _ints(t)
@@ -307,7 +317,10 @@ def validate_run(doc, tier_from_file, tier_rows, frozen_map=None, ref_rows_offic
             for k in PARAM_SEMANTIC_KEYS:
                 if k not in p:
                     continue
-                nj, nt = norm_param(k, p.get(k)), norm_param(k, ref_sem.get(k, ""))
+                _jv = p.get(k)
+                if k == "steps_actual" and _jv is None:
+                    _jv = ((doc.get("step_count_reconciliation") or {}).get("actual_steps"))
+                nj, nt = norm_param(k, _jv), norm_param(k, ref_sem.get("steps_actual", ""))
                 if nj is not None and nt is not None and nj != nt:
                     errs.append(f"params.{k} 语义不一致（训练身份，防错位）：json={nj} 表={nt}")
             # 纯散文字段：只登记，不判错

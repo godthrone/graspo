@@ -366,6 +366,11 @@ def criteria_caliber():
             "⇒ **无法从配置先验算出**；⛔ 公式仍不改，维持“native 以实跑 run_cumulative.step 为准”。"),
         },
             "step_reconciliation": {
+                "three_concepts": ("★ **三者关系（务必分清）**：① **名义步数 `steps_derived`（可宽松）** = 矩阵按 epoch 口径推导、"
+                                   "写入 yaml 的 steps / save_steps —— 是**派生值**且正被公式纠正；"
+                                   "② **实测步数 `steps_actual`（严格身份）** = 实跑 `run_cumulative.step` / epoch 实测 —— "
+                                   "★ **属训练身份，留在防「跑 A 填 B」的严格比对里**；"
+                                   "③ **对账式（核算）** = 用运行期量校验实跑步数，归 `step_count_reconciliation` 负责。"),
                 "nominal": ("**名义步数** = 矩阵按 epoch 口径推导的步数（写入 yaml 的 steps / save_steps）；"
                             "⛔ 对 native GRASPO 仅为名义值，不是承诺。"),
                 "reconciliation_rule": ("**对账式** = 用运行期量校验实跑步数；两个后端各自复现本后端实际值："
