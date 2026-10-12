@@ -418,6 +418,8 @@ def main():
     ap.add_argument("--self-test", action="store_true",
                     help="跑校验器的正/反向用例（阈值信任边界 + 并行维度逐项），不读跑次目录")
     ap.add_argument("--dry-run", action="store_true", help="只校验与报告，不写任何文件")
+    ap.add_argument("--unvoid", action="append", default=[], metavar="TIER",
+                    help="解除指定档的作废态：该档已有新跑次且与当前口径对应 ⇒ 按常规落判定")
     ap.add_argument("--force", action="store_true",
                     help="跳过幂等判定强制重处理（用于「渲染/备注口径升级」后回灌既有档）")
     a = ap.parse_args()
@@ -464,9 +466,10 @@ def main():
         void_map[t.strip()] = why.strip()
     # ★ 已作废档的"重跑回填"（如跑次侧订正了依据/来源）自动走作废路径，
     #   避免其"参数已更正"的既成事实被参数对应校验拦下（作废前提本就是参数不对应）。
+    _unvoid = set(a.unvoid)
     for _r in matrix.get("rows", []):
         _ann = _r.get("conclusion_annotation") or {}
-        if _ann.get("conclusion_valid") is False and _r.get("tier") not in void_map:
+        if _ann.get("conclusion_valid") is False and _r.get("tier") not in void_map and _r.get("tier") not in _unvoid:
             void_map[_r["tier"]] = _ann.get("reason", "既有作废记录：结论不对应当前行参数")
     files = sorted(runs_dir.glob("*.json"))
     if only:
@@ -523,7 +526,7 @@ def main():
         for k in RESULT_KEYS:
             new_rows[tier][k] = _s(doc[k])
         # ★ 显式作废（参数已更正 ⇒ 结论不对应当前行参数）：作为"参考记录"留存，不作判定
-        if tier in void_map:
+        if tier in void_map and tier not in set(a.unvoid):
             ref = "；".join(x for x in (_s(doc.get("runs")), _s(doc.get("effect"))) if x)
             new_rows[tier]["conclusion_annotation"] = {
                 "conclusion_valid": False, "reason": void_map[tier], "reference_record": ref,

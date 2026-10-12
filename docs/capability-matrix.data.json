@@ -2973,69 +2973,92 @@
    "expected_optimizer_steps_per_epoch": "160",
    "expected_optimizer_steps_reachable": "160",
    "applicable": true,
-   "status": "尚未验证",
-   "runs": "1/1 真效果训练（ms-swift GRASPO LoRA 单卡，5 epoch / 800 步）：判据① 通过（exit_code=0、800/800 步、epoch 5/5、ckpt_retention=ok、torch_probe all_ok=True/layout_status=verified、msgspec/RL 前置错误 0、Traceback 0、injection_failures 全 0）；★ 判据② 未过（训练类冻结阈值 Δ ≥ +5.0 pp ∧ after > base）：after 16.8091% > base 16.0969% 成立，但 Δ=+0.7122 pp < +5.0 pp ⇒ 判「已验证不可用」，★ 未过的是第 2 条（效果不足），非跑次失败。",
-   "effect": "—",
-   "inference": "✅ 合并：ms-swift PEFT adapter（runscheckpoint-800，含 adapter_config.json + adapter_model.safetensors 1,640,588,464 B）→ `graspo eval export`（checkpoint_kind=peft-adapter，complete: true）合并为 merged-hf → vLLM v0.22.0（vllm-openai:v0.22.0 id sha256:6ae95f640cbb…；--enable-auto-tool-choice --tool-call-parser qwen3_xml、max-model-len 8192、gpu-memory-utilization 0.85、--ipc=host、GPU7；base/after 各起独立具名容器，用毕 `docker stop` 具名停并记录）→ 固定评测集 702/702 跑完、0 error。（eval 执行镜像 = 本档训练同一 msgspec 薄包装，非 T028 配方里硬编码的旧 efe2132 镜像。）",
-   "algo_checks": "ms-swift GRASPO 链路跑次侧可观测项通过：exit_code=0、ckpt_retention.state=ok、torch_probe all_ok=True（layout=hf_single、layout_status=verified、shards 1/1、tensors=716、total_elements=410120192、all_zero_count=0、nonfinite_count=0）、checkpoint-800 在位、PeftModelForCausalLM 9819.9339M Params（410.1202M Trainable [4.1764%]）。★ 本档 = v5（msgspec）修复后 ms-swift GRASPO 链路首次完整跑通：全日志 `No module named msgspec` / `MS_SWIFT_RL_PREREQUISITE` / `requires the ms-swift package` / `Traceback` / `AlignmentError` 计数均为 0；161 条 graspo/injection_failures 全为 0。",
-   "throughput": "—",
-   "peak_mem": "—",
-   "run_path": "—",
+   "status": "已验证不可用",
+   "runs": "1/1 真效果训练（ms-swift GRASPO LoRA **单卡 8ep**，**1280 步**）：判据① 通过（exit_code=0、**1280/1280 步**、ckpt_retention ok、torch_probe all_ok/verified（716 张量）、Traceback 0）；★ 判据② 未过：**after 16.5242% < base 16.8091%**（Δ = **−0.2849 pp**）⇒ `失败（效果）`，★ 未过的是「**效果不足/无提升**」，非跑次失败。",
+   "effect": "after acc=16.5242%（116/702）；base acc=16.8091%（118/702）；★ **Δ = −0.2849 pp**（< +5.0 pp 冻结阈值，且 after < base）⇒ 未过判据②；目标 +10.0 pp 仅展示。口径：数据锚 c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a（702 条）、criteria elam-v3-allright-1、温度 0、702/702、0 error；base/after 独立 output_dir + fail-closed + stdout 双份；comparability_notes 全过。★ 参照：同档 **5ep 旧读数 Δ=+0.7122 pp**（树/口径不同）已由本 **8ep** 跑次取代、**并存标注不混**；base 侧重复跑噪声底 ≈±0.43 pp（T031 证据件 13-base-rerun-variance.md）。",
+   "inference": "✅ ms-swift PEFT adapter（runscheckpoint-1280）→ `graspo eval export --eval-config`（complete:true）→ merged-hf → vLLM v0.22.0（GPU6 :18897，qwen3_xml 工具解析）→ 702/702、0 error；base/after 具名停。",
+   "algo_checks": "exit_code=0、ckpt_retention ok、torch_probe all_ok=True（hf_single/verified/716 张量）、checkpoint-1280 在位、Traceback 0。",
+   "throughput": "不适用（ms-swift GRASPO RL 后端不产出生成式 tok/s）",
+   "peak_mem": "见 runsgpu_memory_summary.json（单卡峰值）＋ trainer 自报 `memory(GiB)`；★ 两类口径分开（trainer allocator vs nvidia-smi 卡上总占用）。",
+   "run_path": "RUN-T031",
    "step_count_reconciliation": {
-    "derived_steps": 800,
-    "actual_steps": 800,
-    "derived_formula": "num_train_epochs(5) × (subset(20) × num_generations(8) / (per_device_train_batch_size(1) × grad_accum(1))) = 5 × 160 = 800",
+    "steps_nominal": 1280,
+    "steps_actual": 1280,
+    "derived_formula": "ms-swift 配置式（不含 nproc）：max_epochs(8) × subset(20) × num_generations(8) / (per_device(1)×grad_accum(1)) = 1280",
+    "reconciliation_formula": "★ 对账式（含 nproc=1）：`steps = epochs × subset × G / nproc = 8×20×8/1 = **1280**` = steps_actual ✓",
     "actual_evidence": {
-     "run_cumulative_step": 800,
-     "global_step_occurrences": 162,
-     "last_global_step": "800/800",
-     "tqdm_final": "800/800",
-     "logging_jsonl_last_global_step": 800,
-     "log_history_events": 161,
-     "last_model_checkpoint": "checkpoint-800",
+     "progress_bar": "1280/1280",
      "evidence_paths": [
       "runs/T031/stdout.log",
-      "runslogging.jsonl",
       "runsargs.json"
      ]
     },
-    "verdict": "★ 本档推导步数 800 与实际步数 800 一致（与 native 档 T028 的「推导 30 vs 实际 19」不同）⇒ 判据①「完整跑完」按 800/800 且 epoch 5/5 成立。"
+    "trainable_completions": {
+     "applicable": false,
+     "value": "不适用（配置式）",
+     "reason": "ms-swift GRASPO 走配置式，无 native replay buffer 的 `replay_buffer_trainable_completion_count`。",
+     "config_formula_check": "8×20×8/1 = 1280 = 实际 1280 ✓"
+    },
+    "verdict": "对账式 1280 = 实际 1280 ✓ ⇒ 判据①「完整跑完」成立。"
    },
-   "note_extra_steps_formula_issue": "★ 登记待修：'推导步数公式'对 native GRASPO 档不成立（推导 800 vs 实际 800）—— 本轮不顺手改公式，后续单独修。",
-   "tree_fingerprint": "66387a4c64c018482e382b39ea65f4a3756fdd8f9974db19d701a32c4c52c46e",
-   "tree_fingerprint_role": "本档【起跑时 launcher 实测并断言通过】的树指纹（status-T031/launch.log assert 0，2026-10-12T10:36:33Z）",
+   "note_extra_steps_formula_issue": "★ 登记待修：'推导步数公式'对 native GRASPO 档不成立（推导 None vs 实际 None）—— 本轮不顺手改公式，后续单独修。",
+   "tree_fingerprint": "5cb4c7f86b39d4d4e1714b65cbb1059bc10d1abdcf1cbded6d1034471f35b3f7",
+   "tree_fingerprint_role": "本档【起跑时 launcher 实测并断言通过】的树指纹（status-T031/launch.log assert 0）",
    "tree_fingerprint_remeasured": "63808a3b161033797fcd68fc403b77aa0144fe038ff38cb67cf38bef74e67d21",
    "tree_fingerprint_drift": "★ 当场重算（2026-10-12T13:11Z，launcher 同款公式）得 63808a3b…，与起跑断言值 66387a4c… 不同；差异唯一来源 = tests/e2e/matrix54_manifest_source.json（mtime 2026-10-12 12:37:54，sha256 639445f30ac2dfcc0d65953900775d6f220f7f6b63930f9cd22d92669f2a7cf6）——该改动发生在本档训练【结束之后】（训练结束 12:35:03），且 samplesT031.yaml 未被重新生成（mtime 仍 08:59）⇒ 对本档训练语义无影响，属跑次后共享树漂移；评测只用 eval config + merged-hf，不受影响。",
-   "note": "参考记录（epoch 口径由 5 改为 8，旧参数下的结论不对应 ⇒ 判定作废，不作为该档可用/不可用判定）：1/1 真效果训练（ms-swift GRASPO LoRA 单卡，5 epoch / 800 步）：判据① 通过（exit_code=0、800/800 步、epoch 5/5、ckpt_retention=ok、torch_probe all_ok=True/layout_status=verified、msgspec/RL 前置错误 0、Traceback 0、injection_failures 全 0）；★ 判据② 未过（训练类冻结阈值 Δ ≥ +5.0 pp ∧ after > base）：after 16.8091% > base 16.0969% 成立，但 Δ=+0.7122 pp < +5.0 pp ⇒ 判「已验证不可用」，★ 未过的是第 2 条（效果不足），非跑次失败。；after acc=16.8091%（118/702）；base acc=16.0969%（113/702）；★ Δ=+0.7122 pp（< +5.0 pp 冻结阈值 ⇒ 未过判据②）；★ 目标值 +10.0 pp 仅展示、不作通过线。口径：数据集 /homedata/test.jsonl、sha256 c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a（702 条，当场实测）、criteria elam-v3-allright-1、temperature 0.0、702/702 有效、0 error；base 与 after 各自独立 output_dir（{base,after}）、评测前 fail-closed 断言通过（目录不存在/为空）、stdout 双份留证；`graspo eval delta` comparability_notes 校验通过（dataset sha256 match c202b1e1…、criteria elam-v3-allright-1、temperature 0.0/0.0、valid 702）。★ 剔图像重叠（169 条）：after 15.9475% vs base 16.3227%。★ 逐工具（correct/234）：base extend 1 / lift 2 / rotate 110，after extend 0 / lift 0 / rotate 118。★ 相邻参照：SFT 档 T010/T011/T013 的 Δ 分别为 +13.39/+5.98/+8.55 pp。",
+   "note": "★ 未过第 2 条判据（效果不足）——after acc=16.5242%（116/702）；base acc=16.8091%（118/702）；★ **Δ = −0.2849 pp**（< +5.0 pp 冻结阈值，且 after < base）⇒ 未过判据②；目标 +10.0 pp 仅展示。口径：数据锚 c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a（702 条）、criteria elam-v3-allright-1、温度 0、702/702、0 error；base/after 独立 output_dir + fail-closed + stdout 双份；comparability_notes 全过。★ 参照：同档 **5ep 旧读数 Δ=+0.7122 pp**（树/口径不同）已由本 **8ep** 跑次取代、**并存标注不混**；base 侧重复跑噪声底 ≈±0.43 pp（T031 证据件 13-base-rerun-variance.md）。 ★ 已通过项（事实保留）：exit_code=0、ckpt_retention ok、torch_probe all_ok=True（hf_single/verified/716 张量）、checkpoint-1280 在位、Traceback 0。 ★ 判据① 依据：1/1 真效果训练（ms-swift GRASPO LoRA **单卡 8ep**，**1280 步**）：判据① 通过（exit_code=0、**1280/1280 步**、ckpt_retention ok、torch_probe all_ok/verified（716 张量）、Traceback 0）；★ 判据② 未过：**after 16.5242% < base 16.8091%**（Δ = **−0.2849 pp**）⇒ `失败（效果）`，★ 未过的是「**效果不足/无提升**」，非跑次失败。 ★ 步数对账（如实登记）：推导 None vs 实际 None；对账式 1280 = 实际 1280 ✓ ⇒ 判据①「完整跑完」成立。 ★ LoRA 目标按后端：ms-swift 实测 358 实例（language 248 + visual 110）｜native **同为 358 实例**（122 为签名/模式条目数）⇒ ★ 两后端**实例数相同但命中集合不同（不等价）**。 ★ 锚点：树 5cb4c7f8… + image_base_official sha256:a… + image_run_wrapper sha256:7…",
    "eval_dataset": {
     "path": "/homedata/test.jsonl",
     "sha256": "c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a",
     "samples": 702
    },
-   "conclusion_annotation": {
-    "conclusion_valid": false,
-    "reason": "epoch 口径由 5 改为 8，旧参数下的结论不对应",
-    "reference_record": "1/1 真效果训练（ms-swift GRASPO LoRA 单卡，5 epoch / 800 步）：判据① 通过（exit_code=0、800/800 步、epoch 5/5、ckpt_retention=ok、torch_probe all_ok=True/layout_status=verified、msgspec/RL 前置错误 0、Traceback 0、injection_failures 全 0）；★ 判据② 未过（训练类冻结阈值 Δ ≥ +5.0 pp ∧ after > base）：after 16.8091% > base 16.0969% 成立，但 Δ=+0.7122 pp < +5.0 pp ⇒ 判「已验证不可用」，★ 未过的是第 2 条（效果不足），非跑次失败。；after acc=16.8091%（118/702）；base acc=16.0969%（113/702）；★ Δ=+0.7122 pp（< +5.0 pp 冻结阈值 ⇒ 未过判据②）；★ 目标值 +10.0 pp 仅展示、不作通过线。口径：数据集 /homedata/test.jsonl、sha256 c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a（702 条，当场实测）、criteria elam-v3-allright-1、temperature 0.0、702/702 有效、0 error；base 与 after 各自独立 output_dir（{base,after}）、评测前 fail-closed 断言通过（目录不存在/为空）、stdout 双份留证；`graspo eval delta` comparability_notes 校验通过（dataset sha256 match c202b1e1…、criteria elam-v3-allright-1、temperature 0.0/0.0、valid 702）。★ 剔图像重叠（169 条）：after 15.9475% vs base 16.3227%。★ 逐工具（correct/234）：base extend 1 / lift 2 / rotate 110，after extend 0 / lift 0 / rotate 118。★ 相邻参照：SFT 档 T010/T011/T013 的 Δ 分别为 +13.39/+5.98/+8.55 pp。"
+   "measurement_pending": false,
+   "p5p6_readings": {
+    "source": "待补（本档 P5/P6 六项下一轮从 runs/T031/stdout.log + logging.jsonl 逐项统计）"
    },
-   "voided_conclusion": {
-    "conclusion_valid": false,
-    "reason": "epoch 口径由 5 改为 8，旧参数下的结论不对应",
-    "reference_record": "1/1 真效果训练（ms-swift GRASPO LoRA 单卡，5 epoch / 800 步）：判据① 通过（exit_code=0、800/800 步、epoch 5/5、ckpt_retention=ok、torch_probe all_ok=True/layout_status=verified、msgspec/RL 前置错误 0、Traceback 0、injection_failures 全 0）；★ 判据② 未过（训练类冻结阈值 Δ ≥ +5.0 pp ∧ after > base）：after 16.8091% > base 16.0969% 成立，但 Δ=+0.7122 pp < +5.0 pp ⇒ 判「已验证不可用」，★ 未过的是第 2 条（效果不足），非跑次失败。；after acc=16.8091%（118/702）；base acc=16.0969%（113/702）；★ Δ=+0.7122 pp（< +5.0 pp 冻结阈值 ⇒ 未过判据②）；★ 目标值 +10.0 pp 仅展示、不作通过线。口径：数据集 /homedata/test.jsonl、sha256 c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a（702 条，当场实测）、criteria elam-v3-allright-1、temperature 0.0、702/702 有效、0 error；base 与 after 各自独立 output_dir（{base,after}）、评测前 fail-closed 断言通过（目录不存在/为空）、stdout 双份留证；`graspo eval delta` comparability_notes 校验通过（dataset sha256 match c202b1e1…、criteria elam-v3-allright-1、temperature 0.0/0.0、valid 702）。★ 剔图像重叠（169 条）：after 15.9475% vs base 16.3227%。★ 逐工具（correct/234）：base extend 1 / lift 2 / rotate 110，after extend 0 / lift 0 / rotate 118。★ 相邻参照：SFT 档 T010/T011/T013 的 Δ 分别为 +13.39/+5.98/+8.55 pp。"
+   "anomalies": [
+    "★ **口径取代**：同档 5ep 旧读数（Δ=+0.7122 pp）由本 8ep 跑次取代，两者**并存但标注不混**；是否作废由矩阵侧裁定。",
+    "★ base 侧重复跑噪声底 ≈±0.43 pp（同底座/同数据/同 decoding 三次读数 116/113/115）⇒ 本档 Δ=−0.2849 pp 属噪声量级。",
+    "★ after 由 vLLM 判为单工具倾向（详见 eval_report by_tool）；判据②结论不变。",
+    "★ 树指纹起跑断言 ≠ 现测（post-launch 改 manifest）⇒ 回填取起跑断言值。"
+   ],
+   "code_identity": {
+    "tree_fingerprint": "5cb4c7f86b39d4d4e1714b65cbb1059bc10d1abdcf1cbded6d1034471f35b3f7",
+    "tree_fingerprint_role": "本档【起跑时 launcher 实测并断言通过】的树指纹（status-T031/launch.log assert 0）",
+    "tree_fingerprint_drift": "★ 该树其后被其他档起跑改动 manifest（post-launch）⇒ 现测不同；回填请取起跑断言值。",
+    "generated_yaml": "samplesT031.yaml",
+    "generated_yaml_sha256": "f11a4a80223113d25c05c772fae84db3c50a7eb72516f5961d1667596b116736",
+    "image_base_official": {
+     "tag": "graspo:v0.28.11-cu130fix-v2-msgspec-20261012",
+     "digest": "sha256:a75bcc78382fa358b73bf6abd4411a46307225ad8a5dd752b121cc6fb02ac253"
+    },
+    "image_run_wrapper": {
+     "tag": "graspo:v0.28.11-cu130fix-v2-msgspec-20261012-run",
+     "digest": "sha256:7afdf062b044482b6808310d398794647be5cede7aff6a79a690e0fa088a3b77"
+    }
    },
    "elapsed": "—",
    "max_epochs": 8,
    "derived_steps": 1280,
    "per_epoch_steps": 160,
    "save_steps_basis": "= 推导步数 1280 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
-   "steps_actual": "800（推导 800）",
+   "p5p6": "",
+   "steps_actual": "1280/1280",
    "data_scale": "20 条（每卡 20）",
-   "conclusion_void_reason": "epoch 口径由 5 改为 8，旧参数下的结论不对应",
    "tp": "—（框架内部决定）",
    "pp": "—（框架内部决定）",
    "dp": "1（派生）",
    "cards_total": "nproc_per_node×nnodes = 1 卡",
    "dp_derived": true,
-   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）"
+   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）",
+   "verdict": {
+    "state": "已验证不可用",
+    "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
+    "failed_detail": "Δ = +0.7122 pp < 冻结阈值 +5.0 pp",
+    "passed_criteria": [
+     "exit_code=0、ckpt_retention ok、torch_probe all_ok=True（hf_single/verified/716 张量）、checkpoint-1280 在位、Traceback 0。"
+    ]
+   }
   },
   {
    "tier": "T032",
