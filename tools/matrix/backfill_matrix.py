@@ -46,8 +46,50 @@ REQUIRED_TOP = ["schema", "tier", "params", "status", "runs", "effect",
 PARAM_IDENTITY_KEYS = ["model", "algo", "mode", "backend", "parallel"]
 #: ★ 严格比对集（防「跑 A 填 B」的身份事实）：身份键 + 并行维度 + lr
 PARAM_KEYS_V3 = ["model", "algo", "mode", "backend", "parallel", "lr"]
-#: ★ 仅登记不判错（**描述性/派生**字段：各档用语与格式本就不同，⛔ 不据此判错位）
-PARAM_INFO_KEYS = ["lora_target", "steps", "switches", "data_subset", "target_modules"]
+#: ★ "训练身份"字段：**比归一化后的语义值**（⛔ 不比展示串/散文）
+PARAM_SEMANTIC_KEYS = ["lora_target", "target_modules", "data_subset", "steps", "switches"]
+#: ★ 仅登记不判错（纯散文/口径说明）
+PARAM_INFO_KEYS = []
+
+
+def _ints(v):
+    return [int(x) for x in re.findall(r"\d+", str(v))]
+
+
+def norm_param(key, v):
+    """把"训练身份"字段归一化为可比语义值；无法判定 ⇒ None（不据此判错）。
+
+    · lora_target / target_modules ⇒ **解析/实测件数**（native 122 / ms-swift 358），⛔ 不比展示串；
+    · data_subset ⇒ 子集规模（首个整数）；
+    · steps ⇒ 步数（取最大整数，即推导/实跑总数）；
+    · switches ⇒ `k=v` 键值对集合（⛔ 不比顺序/措辞）。
+    """
+    if v is None or str(v).strip() in ("", "—"):
+        return None
+    t = str(v).replace("*", "")          # 去 markdown 强调符（否则 **358** 件 解析不到）
+    if key in ("lora_target", "target_modules"):
+        m = re.search(r"(\d+)\s*件", t)                       # 「122 件」/「358 件」
+        if m:
+            return int(m.group(1))
+        if "language_all_linear" in t or "vision_common" in t:
+            return 122
+        if "language_model" in t or "visual" in t:
+            return 358
+        return None
+    if key == "data_subset":
+        ns = _ints(t)
+        return max(ns) if ns else None
+    if key == "steps":
+        ns = _ints(t)
+        return max(ns) if ns else None
+    if key == "switches":
+        pairs = set()
+        for seg in re.split(r"[;,]", t):
+            if "=" in seg:
+                k, _, val = seg.partition("=")
+                pairs.add(k.strip().lower() + "=" + val.strip())
+        return frozenset(pairs) if pairs else None
+    return None
 LEGACY_PARAM_KEYS = ["hparams"]
 RESULT_KEYS = ["status", "runs", "effect", "inference", "algo_checks",
                "throughput", "peak_mem", "run_path"]
@@ -193,7 +235,7 @@ def compare_parallel(js, ts):
     return errs
 
 
-def validate_run(doc, tier_from_file, tier_rows, frozen_map=None):
+def validate_run(doc, tier_from_file, tier_rows, frozen_map=None, ref_rows_official=None):
     """严格校验一份跑次 json。返回错误列表（空 = 合法）。"""
     if not isinstance(doc, dict):
         return ["顶层不是 JSON 对象"]
@@ -236,7 +278,15 @@ def validate_run(doc, tier_from_file, tier_rows, frozen_map=None):
                     errs.extend(compare_parallel(j, r_))     # ★ canonical + 维度逐项一致
                 elif r_ != j:
                     errs.append(f"params.{k} 与档位表不一致（防错位）：json={j!r} 表={r_!r}")
-            # 描述性字段：只登记，不判错（格式差异不构成错位证据）
+            # ★ "训练身份"字段：比**归一化语义值**（LoRA 目标件数 / 数据规模 / 步数 / 开关集合）
+            ref_sem = (ref_rows_official or {}).get(tier, ref)      # ★ 语义参照取正式件（含当期派生值）
+            for k in PARAM_SEMANTIC_KEYS:
+                if k not in p:
+                    continue
+                nj, nt = norm_param(k, p.get(k)), norm_param(k, ref_sem.get(k, ""))
+                if nj is not None and nt is not None and nj != nt:
+                    errs.append(f"params.{k} 语义不一致（训练身份，防错位）：json={nj} 表={nt}")
+            # 纯散文字段：只登记，不判错
             doc.setdefault("_param_info_diffs", [])
             for k in PARAM_INFO_KEYS:
                 if k in p and _s(p.get(k)) is not None and _s(ref.get(k, "")) != _s(p.get(k)):
@@ -356,6 +406,12 @@ def main():
         return 1
 
     frozen_map = matrix_frozen_map(a.official_data)
+    ref_rows_official = {}
+    try:
+        _d = json.loads(Path(a.official_data).read_text(encoding="utf-8"))
+        ref_rows_official = {x["tier"]: x for x in _d.get("rows", [])}
+    except Exception:
+        ref_rows_official = {}
     matrix = json.loads(data_in.read_text(encoding="utf-8"))
     tier_rows = {r["tier"]: r for r in matrix["rows"]}
 
@@ -382,7 +438,7 @@ def main():
         except json.JSONDecodeError as e:
             all_errs.append((f, [f"JSON 解析失败: {e}"]))
             continue
-        errs = validate_run(doc, f.stem, tier_rows, frozen_map)
+        errs = validate_run(doc, f.stem, tier_rows, frozen_map, ref_rows_official)
         if errs:
             all_errs.append((f, errs))
         else:
@@ -569,6 +625,16 @@ def _self_test():
          not compare_parallel("TP=1 PP=1 DP=1（1 卡；总卡数 1）", "nproc_per_node=1（1 卡）")),
         ("④ 并行：TP/PP 不符 ⇒ FAIL",
          bool(compare_parallel("TP=2 PP=1 DP=1（2 卡）", "TP=1 PP=2 DP=1（2 卡）"))),
+        ("⑤ LoRA 目标语义不同（122 vs 358）⇒ FAIL",
+         norm_param("lora_target", "language_all_linear + vision_common（122 件）") !=
+         norm_param("lora_target", "ms-swift 实测 358 件（语言 248 + 视觉 110）")),
+        ("⑥ 数据子集规模不同（100 vs 200）⇒ FAIL",
+         norm_param("data_subset", "前 100 条") != norm_param("data_subset", "前 200 条")),
+        ("⑦ 步数不同（800 vs 801）⇒ FAIL",
+         norm_param("steps", "推导 800 步") != norm_param("steps", "推导步数 801")),
+        ("⑧ 仅措辞/格式不同、语义相同 ⇒ 放行",
+         norm_param("switches", "save_steps=31;loss_scale=all") ==
+         norm_param("switches", "loss_scale=all; save_steps=31")),
     ]
     ok = True
     for name, passed in cases:
