@@ -65,7 +65,16 @@ dev = [
 # "swift_version": "4.5.3"。ms-swift 在 `uv.lock` 中已随 msswift extra 解析；
 # 镜像配方另用 pip `ms-swift==4.5.3` 精确安装——两处声明由
 # `scripts/check_env_versions.py` 逐包比对，不得分叉。
-msswift = ["ms-swift==4.5.3"]
+#
+# qwen_vl_utils / decord 是 ms-swift **Qwen-VL 模型组的运行时硬依赖**，必须进镜像：
+#   · `swift/model/models/qwen.py:1121` 的 `Qwen3VLLoader._check_qwen_vl_utils()` 直接
+#     `require_version('qwen_vl_utils>=0.0.14')` ⇒ 缺失即抛 `PackageNotFoundError`（真崩，不是告警）；
+#   · `swift/model/model_meta.py` 里本跑次模型组 `qwen3_5` 的 `requires` =
+#     `['transformers>=5.2.0', 'qwen_vl_utils>=0.0.14', 'decord']`；`ModelMeta.check_requires`
+#     对缺件只 warn，⇒ 两者都必须显式钉住才不会漏。
+# 声明值取满足该下界的当前版本并按仓内惯例精确锁定；`av` 由 `qwen_vl_utils` 的元数据自动带入。
+# 同样同步写在 docker/Dockerfile 的 pip 行，否则 compare_declaration_sites 报分叉。
+msswift = ["ms-swift==4.5.3", "qwen_vl_utils==0.0.14", "decord==0.6.0"]
 
 [project.scripts]
 graspo = "graspo.cli.app:main"
