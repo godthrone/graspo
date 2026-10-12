@@ -176,6 +176,11 @@ def build_caliber(data):
             f'<tr><th>已知问题（登记待修）</th><td>{html.escape((c.get("epoch_policy") or {}).get("known_issue", "—"))}</td></tr>'
             f'<tr><th>口径证据（基准散布）</th><td>{html.escape("；".join(c.get("caliber_evidence") or []) or "—")}</td></tr>'
             f'<tr><th>已知订正（待跑次侧）</th><td>{html.escape("；".join(c.get("known_corrections") or []) or "—")}</td></tr>'
+            f'<tr><th>步数对账（名义 vs 对账式）</th><td>'
+            f'<b>名义</b>：{html.escape((c.get("step_reconciliation") or {}).get("nominal", ""))}<br>'
+            f'<b>对账式</b>：{html.escape((c.get("step_reconciliation") or {}).get("reconciliation_rule", ""))}<br>'
+            f'<b>双验</b>：{html.escape((c.get("step_reconciliation") or {}).get("worked_example", ""))}</td></tr>'
+            f'<tr><th>口径订正记录</th><td>{html.escape("；".join(c.get("caliber_corrections") or []) or "—")}</td></tr>'
             f'<tr><th>LoRA 目标（按后端分流）</th><td>{_lora_backends_html(data)}</td></tr>'
             f'<tr><th>ms-swift 正则下发机制</th><td>{_target_regex_html(data)}</td></tr>'
             '</tbody></table>')
