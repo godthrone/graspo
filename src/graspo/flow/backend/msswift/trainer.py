@@ -70,7 +70,7 @@ from graspo.flow.adapter.contract import (
     RolloutGroup,
     assert_complete_group,
 )
-from graspo.flow.backend.msswift.alignment import align_by_key
+from graspo.flow.backend.msswift.alignment import keyed_rows_from_table
 from graspo.ripple.annotation.char_tag import CharTag
 
 logger = logging.getLogger(__name__)
@@ -864,21 +864,34 @@ def _group_rewards(
             "graspo: could not reduce rewards_per_func to per-sample rewards", exc_info=True
         )
         return {}
-    ordered = _global_sample_order(samples)
-    if len(ordered) != len(weighted):
+    # ★ G2/I2 的"**同一作用域**"（T032 多卡缺陷修复）：表是 ``[N_global, …]``，而
+    #   ``samples`` 只是**本进程的切片** ⇒ 拿来比对的键序也必须是**全局**键序。
+    global_keys = _gather_sample_order(samples)
+    if len(global_keys) != len(weighted):
         # ★ P5/G2（option-a §2.3）：**删掉 positional fallback**。
         #   旧实现在长度不匹配时按行号配对并打 "falling back to positional pairing" 警告
         #   （实测 T044 40 次 / T045 80 次错位）——那是静默错位，必须显式失败（契约 I2）。
         raise AlignmentError(
             f"组奖励表与样本未按键对齐：rewards_per_func 有 {len(weighted)} 行，"
-            f"而按 request_id 排序得到 {len(ordered)} 条（I2）。禁止回退为按行号配对。"
+            f"而全局样本键有 {len(global_keys)} 条（I2）。禁止回退为按行号配对。"
         )
-    table = {
-        _sample_key(sample): float(weighted[index])
-        for index, sample in enumerate(ordered)
-    }
-    local_keys = [_sample_key(sample) for sample in samples]
-    return dict(zip(local_keys, align_by_key(local_keys, table, what="组奖励"), strict=True))
+    table = keyed_rows_from_table(weighted, global_keys, what="组奖励表")
+    # ★ 本地键取**旧实现的同一顺序**（``_global_sample_order`` 的结果）⇒ 单卡下返回的
+    #   dict 键序与修复前逐字一致（字典序是可观测行为，不能"值对就行"）。
+    local_keys = [_sample_key(sample) for sample in _global_sample_order(samples)]
+    if len(set(local_keys)) != len(local_keys):
+        duplicates = sorted({key for key in local_keys if local_keys.count(key) > 1})
+        raise AlignmentError(f"本地样本键重复：{duplicates[:3]}（I2：键必须一一对应）")
+    # ★ 多卡下 ``table``（全局）**天然比**本地切片**多** ⇒ 这里按键**取本地那几行**，
+    #   而不是要求两侧键集相等（后者只对单卡成立，会把多卡误判成错位）。
+    #   ⛔ 依然 fail-closed：本地键在全局表里找不到行即抛错，⛔ 不回退按行号配对。
+    missing = [key for key in local_keys if key not in table]
+    if missing:
+        raise AlignmentError(
+            f"组奖励表里缺少本地样本键：{missing[:3]}（I2：每个本地 completion 都必须能在"
+            "全局奖励表里按 request_id 找到对应行）。禁止回退为按行号配对。"
+        )
+    return {key: table[key] for key in local_keys}
 
 
 def _ragged_abs_mean(advantages: dict[str, list[float]]) -> float:
@@ -896,6 +909,79 @@ def _global_sample_order(samples: list[Any]) -> list[Any]:
     if not all(getattr(sample, "request_id", "") for sample in samples):
         return list(samples)
     return sorted(samples, key=lambda sample: str(sample.request_id))
+
+
+def _process_group_world_size() -> int:
+    """当前默认进程组的 world_size；未初始化 / 不可用 ⇒ ``1``（单进程语义）。"""
+    try:
+        import torch.distributed as dist
+
+        if dist.is_available() and dist.is_initialized():
+            return int(dist.get_world_size())
+    except Exception:  # noqa: BLE001 - 拿不到就当单进程（与旧行为一致，不新增失败面）
+        logger.debug("graspo: could not read distributed world size", exc_info=True)
+    return 1
+
+
+def _all_gather_sample_entries(entries: list[tuple[str, bool]]) -> list[tuple[str, bool]]:
+    """把各 rank 的 ``[(key, has_request_id)]`` 收集成**一份扁平列表**。
+
+    只在 world_size > 1 时调用；所有 rank 必须同时进入（``_group_rewards`` 在每个 rank 上
+    对称调用，见 ``_compute_advantages``）。
+    """
+    import torch.distributed as dist
+
+    gathered: list[Any] = [None] * _process_group_world_size()
+    dist.all_gather_object(gathered, entries)
+    return [item for part in gathered for item in (part or [])]
+
+
+def _gather_sample_order(samples: list[Any]) -> list[str]:
+    """``rewards_per_func`` **行序**所对应的**全局**样本键序（契约 I2 的"同一作用域"）。
+
+    ★ 为什么必须 gather（T032 多卡缺陷的根因修复，探针已定案）：``rewards_per_func`` 是
+    ``[N_global, …]``（其 docstring 与上游 ``_compute_rewards_per_func`` 均表明 gather 过），
+    而 ``samples`` 只是**本进程的切片**。旧实现只对本地列表排序 ⇒ 单卡（本地 == 全局）通过，
+    多卡必抛 I2：实测量级 = 全局 16 行 vs 本地 8 条；两 rank 是**互补切片**
+    （交集 ∅、并集 16 = 表行数）⇒ 缺陷在本函数，与上游 ms-swift 无关。
+
+    ★ **单卡逐字不变**：world_size ≤ 1 时返回值 ==
+    ``[_sample_key(s) for s in _global_sample_order(samples)]``（含"缺 request_id 保持原序"）。
+
+    ★ **防呆不放宽**（⛔ 不静默放行、⛔ 不回退按行号配对）：
+
+    - 跨 rank 出现**重复键** ⇒ ``AlignmentError``（上游"复制而非切分"的场景必须显式失败：
+      ``rewards_per_func`` 的行数与样本数在这种情形下也无法一一对应）；
+    - 跨 rank 采样**缺 request_id** ⇒ ``AlignmentError``（没有稳定标识就无法确定全局键序）。
+
+    :raises AlignmentError: 跨 rank 键重复，或缺少 ``request_id``。
+    """
+    ordered = _global_sample_order(samples)
+    entries = [
+        (_sample_key(sample), bool(getattr(sample, "request_id", "") or ""))
+        for sample in ordered
+    ]
+    if _process_group_world_size() <= 1:
+        return [key for key, _stable in entries]
+
+    flat = _all_gather_sample_entries(entries)
+    unstable = [key for key, stable in flat if not stable]
+    if unstable:
+        raise AlignmentError(
+            f"跨 rank 采样缺少 request_id（如 {unstable[:3]}）——无法确定组奖励表的全局键序（I2）。"
+        )
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    for key, _stable in flat:
+        if key in seen:
+            duplicates.append(key)
+        seen.add(key)
+    if duplicates:
+        raise AlignmentError(
+            f"跨 rank 样本键重复：{sorted(set(duplicates))[:3]}（I2：每个 completion 在所有 "
+            "rank 上必须恰好出现一次；上游按副本而非切片分发时不得静默放行）。"
+        )
+    return sorted(seen)
 
 
 def _sample_targets(sample: Any) -> list[dict[str, Any]] | None:
