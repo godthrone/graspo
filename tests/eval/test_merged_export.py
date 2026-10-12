@@ -20,6 +20,7 @@ from graspo.eval.merged_export import (
     prepare_output_directory,
     read_adapter_base,
     resolve_peft_adapter_dir,
+    targets_use_language_model_namespace,
 )
 
 
@@ -551,3 +552,48 @@ def test_merge_detects_shape_before_importing_heavy_deps(tmp_path):
     bare_base.mkdir()
     with pytest.raises(ExportError, match="cannot determine the loader class"):
         merge_peft_checkpoint(adapter, bare_base, tmp_path / "out")
+
+
+#: ms-swift 档实际使用的 LoRA 目标正则（matrix54-generated，含语言 + 视觉两支）。
+_MS_SWIFT_REGEX = (
+    r"^(?:model\.)?language_model\..*\.(q_proj|k_proj|v_proj|o_proj|in_proj_z|out_proj|"
+    r"in_proj_qkv|in_proj_a|in_proj_b|gate_proj|up_proj|down_proj)$"
+    r"|^(?:model\.)?visual\.(blocks\.\d+\.(attn\.(qkv|proj)|mlp\.linear_fc1|mlp\.linear_fc2)"
+    r"|merger\.linear_fc1|merger\.linear_fc2)$"
+)
+
+
+def test_namespace_guard_accepts_regex_with_optional_model_group():
+    """★ 含语言分支的正则必须放行（E2b 实测：可选组 ``(?:model\\.)?`` 使旧的字面子串判据误拒）。
+
+    该正则在真机上对真实模块名 ``model.language_model.layers.0.mlp.down_proj``
+    做 ``re.fullmatch`` 命中（358 项中的一项），因此**命名空间是正确的**，
+    旧的"字面子串包含"判据（要求串里出现 ``model.language_model.``）会误判为不在该命名空间。
+    """
+    assert targets_use_language_model_namespace(_MS_SWIFT_REGEX) is True
+
+
+def test_namespace_guard_still_rejects_vision_only_regex():
+    """★★ 只训视觉的正则**仍必须拒绝**——这正是守卫存在的意义。
+
+    放行它会去合并一个"语言层没训、只有视觉层有 LoRA"的模型，
+    而多模态加载器下语言层命名空间不匹配 ⇒ **合并出形状错误的模型**。
+    """
+    assert targets_use_language_model_namespace(r"^(?:model\.)?visual\..*$") is False
+
+
+def test_namespace_guard_rejects_unrelated_and_undecidable():
+    """无关正则、非法正则（无法判定）都必须 **fail-closed（拒绝）**。"""
+    assert targets_use_language_model_namespace(r"^foo\.bar$") is False
+    assert targets_use_language_model_namespace("^(") is False  # 非法正则 ⇒ 不可判定 ⇒ 拒绝
+    assert targets_use_language_model_namespace(None) is False
+
+
+def test_namespace_guard_list_behaviour_unchanged():
+    """list 形态沿用"字面 / 正则转义子串"判据，**原行为不变**（向后兼容）。"""
+    # 字面全名 ⇒ 放行
+    assert targets_use_language_model_namespace(["model.language_model.layers.0.mlp.down_proj"]) is True
+    # 正则转义形态 ⇒ 放行
+    assert targets_use_language_model_namespace([r"model\.language_model\.layers\.0\.mlp\.down_proj"]) is True
+    # 不含该命名空间的普通末段名 ⇒ 拒绝
+    assert targets_use_language_model_namespace(["q_proj", "v_proj"]) is False

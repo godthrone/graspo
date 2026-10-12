@@ -112,6 +112,16 @@ MULTIMODAL_LANGUAGE_MODEL_PREFIX = "model.language_model."
 #: ``^(model\\.language_model(?=\\.).*\\....)$``。
 MULTIMODAL_LANGUAGE_MODEL_PREFIX_REGEX = r"model\.language_model"
 
+#: 用于"正则形态目标"命名空间实测的**代表性真实模块名**
+#: （取自 Qwen3.5-9B 多模态底座的真实命名空间；见 `.local/` 的实机 dump）。
+#: ★ 只用于 :func:`targets_use_language_model_namespace` 的 `re.fullmatch` 抽样，
+#: 不参与任何权重计算；★ 缺省为空元组时该函数 fail-closed（拒绝）。
+MULTIMODAL_NAMESPACE_PROBE_NAMES: tuple[str, ...] = (
+    MULTIMODAL_LANGUAGE_MODEL_PREFIX + "layers.0.mlp.down_proj",
+    MULTIMODAL_LANGUAGE_MODEL_PREFIX + "layers.0.self_attn.q_proj",
+    MULTIMODAL_LANGUAGE_MODEL_PREFIX + "layers.0.linear_attn.in_proj_z",
+)
+
 
 def normalize_language_model_targets(targets: str | Iterable[str]) -> str | list[str]:
     """把"多模态语言层命名空间"的 target_modules 归一到纯文本模型的命名空间。
@@ -476,11 +486,38 @@ def targets_use_language_model_namespace(targets: str | Iterable[str] | None) ->
     """
     if targets is None:
         return False
-    items = [targets] if isinstance(targets, str) else [str(item) for item in targets]
-    return any(
-        MULTIMODAL_LANGUAGE_MODEL_PREFIX_REGEX in item or MULTIMODAL_LANGUAGE_MODEL_PREFIX in item
-        for item in items
-    )
+    # list 形态：沿用"字面 / 正则转义子串"判据（**原行为不变**，向后兼容）。
+    if not isinstance(targets, str):
+        items = [str(item) for item in targets]
+        return any(
+            MULTIMODAL_LANGUAGE_MODEL_PREFIX_REGEX in item
+            or MULTIMODAL_LANGUAGE_MODEL_PREFIX in item
+            for item in items
+        )
+    # str 形态：按 PEFT 语义**它就是正则**（`tuners_utils.py:34` 只在 str 时走正则），
+    # 因此不能再做"字面子串包含"——可选组写法（如 `(?:model\.)?language_model\.`）
+    # 虽然不是字面子串，却**确实匹配**该命名空间，旧判据会误拒（E2b 实测 2026-10-12）。
+    # 改为**用 re 实测**：对代表性真实模块名做 `re.fullmatch`（与 PEFT
+    # `match_target_against_key` 同一语义——它内部就是 `re.fullmatch`）。
+    # ★ fail-closed：模式非法 / 无代表性名字 / 全部不匹配 ⇒ **判否（拒绝）**。
+    if (
+        MULTIMODAL_LANGUAGE_MODEL_PREFIX_REGEX in targets
+        or MULTIMODAL_LANGUAGE_MODEL_PREFIX in targets
+    ):
+        return True
+    if not MULTIMODAL_NAMESPACE_PROBE_NAMES:
+        return False
+
+    import re  # noqa: PLC0415  标准库轻量导入，放函数内与模块"重型依赖延迟导入"的风格一致
+
+    try:
+        pattern = re.compile(targets)
+    except re.error:
+        return False
+    try:
+        return any(pattern.fullmatch(name) is not None for name in MULTIMODAL_NAMESPACE_PROBE_NAMES)
+    except re.error:
+        return False
 
 
 def _resolve_injection_targets(
