@@ -16,11 +16,32 @@
 """
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
 HEADER = ("# 本文件由 tools/matrix/gen_configs.py 从 docs/capability-matrix.data.json 自动生成，"
           "⛔ 禁止手工编辑；请改数据后重新生成。\n")
+
+
+def _load_scalars(path):
+    """极简 YAML 标量加载（覆盖本生成器输出的形态）：单引号=字面量（'' -> '），双引号=转义，plain=字面量。
+
+    ★ 验收以**加载值**为准（⛔ 不看文件文本写了几个反斜杠）。
+    """
+    out = []
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        m = re.match(r"^\s*-\s+(.*\S)\s*$", line)
+        if not m:
+            continue
+        v = m.group(1)
+        if v.startswith("'") and v.endswith("'"):
+            out.append(v[1:-1].replace("''", "'"))
+        elif v.startswith('"') and v.endswith('"'):
+            out.append(v[1:-1].encode().decode("unicode_escape"))
+        else:
+            out.append(v)
+    return out
 
 
 def uniform_map(data):
@@ -117,6 +138,8 @@ def main():
     ap.add_argument("--only", default=None, help="逗号分隔档号；缺省=全部 applicable 档")
     ap.add_argument("--check-determinism", action="store_true", help="生成两次并逐字节比对（幂等自证）")
     ap.add_argument("--check-dir", default=None, help="与既有冻结 yaml 目录做差异归因")
+    ap.add_argument("--verify-loadable", action="store_true",
+                    help="按【加载值】验收：正则项加载后须为单反斜杠、可编译、结构符合收紧版")
     a = ap.parse_args()
 
     data = json.loads(Path(a.data).read_text(encoding="utf-8"))
@@ -134,6 +157,24 @@ def main():
         p.write_text(text, encoding="utf-8")
         written[r["tier"]] = p
         print(f"wrote {p}  max_epochs={r.get('max_epochs')}  derived_steps={r.get('derived_steps')}  save_steps={r.get('save_steps')}")
+
+    if a.verify_loadable:
+        bad = []
+        for tier, pth in sorted(written.items()):
+            for v in _load_scalars(pth):
+                if "language_model" not in v and "visual" not in v:
+                    continue
+                if "\\\\" in v:                      # 加载值出现双反斜杠 ⇒ 过度转义
+                    bad.append((tier, "加载值含双反斜杠（过度转义）"))
+                try:
+                    re.compile(v)
+                except re.error as e:
+                    bad.append((tier, f"正则不可编译: {e}"))
+                if "visual\\.(blocks\\.\\d+" not in v and "language_model" in v:
+                    bad.append((tier, "未采用收紧版视觉枚举（仍为过宽写法）"))
+        print(f"LOADABLE {'PASS' if not bad else 'FAIL'}（{len(written)} 档；问题 {bad}）")
+        if bad:
+            return 1
 
     if a.check_determinism:
         bad = []

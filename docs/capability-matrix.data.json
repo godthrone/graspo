@@ -228,7 +228,7 @@
    "msswift": {
     "kind": "hf_regex",
     "expression": [
-     "^(?:model\\.)?language_model\\..*\\.(q_proj|k_proj|v_proj|o_proj|in_proj_z|out_proj|in_proj_qkv|in_proj_a|in_proj_b|gate_proj|up_proj|down_proj)$|^(?:model\\.)?visual\\..*$"
+     "^(?:model\\.)?language_model\\..*\\.(q_proj|k_proj|v_proj|o_proj|in_proj_z|out_proj|in_proj_qkv|in_proj_a|in_proj_b|gate_proj|up_proj|down_proj)$|^(?:model\\.)?visual\\.(blocks\\.\\d+\\.(attn\\.(qkv|proj)|mlp\\.linear_fc1|mlp\\.linear_fc2)|merger\\.linear_fc1|merger\\.linear_fc2)$"
     ],
     "resolved": [],
     "resolved_count": null,
@@ -237,8 +237,9 @@
      "language": 248,
      "visual": 110,
      "total": 358,
-     "basis": "★ 探针实测（证据：evidence/45-lora-target-probe-newregex.md sha 1c3830b119946946fcfbbae0aa8e29ea6e1184c4c99b434e83ce8e4deeef34e5）。语言 248 分解：q/k/v/o_proj 各 8｜in_proj_qkv 24、in_proj_a/b 各 24｜in_proj_z 24｜out_proj 24｜gate/up/down_proj 各 32。"
+     "basis": "★ 探针实测（证据：evidence/45-lora-target-probe-newregex.md sha 1c3830b119946946fcfbbae0aa8e29ea6e1184c4c99b434e83ce8e4deeef34e5）。语言 248 分解：q/k/v/o_proj 各 8｜in_proj_qkv 24、in_proj_a/b 各 24｜in_proj_z 24｜out_proj 24｜gate/up/down_proj 各 32。★ 收紧版视觉侧显式枚举 ⇒ 命中 358 全为 nn.Linear（Conv3d 0）；旧过宽版 visual\\..* 实测 528 命中（含 170 非 Linear）⇒ 已弃用。"
     },
+    "escape_note": "转义：正则含反斜杠，YAML 出参用**单引号标量**（字面量）⇒ 加载值应为**单反斜杠**。★ 验收以**加载值**为准（GraspoConfig 加载后 repr），⛔ 不看文件文本。",
     "comparability_note": "★ ms-swift 档的 LoRA 目标约为 native 的 3 倍（358 vs 122）⇒ 两后端的效果/性能读数**不直接可比**，跨后端比较须注明。",
     "equivalence_with_native": false,
     "evidence": [
