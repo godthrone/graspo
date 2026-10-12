@@ -229,8 +229,13 @@ def lora_target_backends():
             "expression": ["language_all_linear", "vision_common"],
             "resolved": list(RESOLVED_LORA_TARGETS),
             "resolved_count": len(RESOLVED_LORA_TARGETS),
-            "coverage": {"language": 12, "visual": 110, "total": 122,
-                         "basis": "实测：checkpoint 的 lora_target_signature.resolved（T010/T011 相同）"},
+            "resolved_count_meaning": "签名/模式条目数（⛔ 不是实例数）；实例数见 coverage.total",
+            "coverage": {"language": 248, "visual": 110, "total": 358,
+                         "signature_entries": 122,
+                         "basis": ("★ 口径订正（2026-10-12）：`lora_target_signature.resolved = 122` 是**签名/模式条目数**"
+                                   "（12 条「无 layer 索引的语言模式」+ 110 条视觉实例），**不是件数**；"
+                                   "12 条语言模式**逐层展开为 248 个实例** ⇒ 与 ms-swift **同为 358 个实例**"
+                                   "（张量键数同为 716）。依据 `task-run-T012/evidence/13-lora-target-count.md`。")},
             "language_targets": list(LANGUAGE_TARGETS),
             "signature_evidence": {
                 "field": "lora_target_signature.resolved / parameter_count",
@@ -249,6 +254,7 @@ def lora_target_backends():
             "resolved": [],
             "resolved_count": None,
             "coverage": {"status": "measured", "language": 248, "visual": 110, "total": 358,
+                         "param_count": 410120192,
                          "basis": ("★ 探针实测（证据：evidence/45-lora-target-probe-newregex.md "
                                    "sha 1c3830b119946946fcfbbae0aa8e29ea6e1184c4c99b434e83ce8e4deeef34e5）。"
                                    "语言 248 分解：q/k/v/o_proj 各 8｜in_proj_qkv 24、in_proj_a/b 各 24｜"
@@ -257,8 +263,8 @@ def lora_target_backends():
                                    "旧过宽版 visual\\..* 实测 528 命中（含 170 非 Linear）⇒ 已弃用。")},
             "escape_note": ("转义：正则含反斜杠，YAML 出参用**单引号标量**（字面量）⇒ 加载值应为**单反斜杠**。"
                                    "★ 验收以**加载值**为准（GraspoConfig 加载后 repr），⛔ 不看文件文本。"),
-            "comparability_note": ("★ ms-swift 档的 LoRA 目标约为 native 的 3 倍（358 vs 122）"
-                                   "⇒ 两后端的效果/性能读数**不直接可比**，跨后端比较须注明。"),
+            "comparability_note": ("★ 两后端 **LoRA 实例数同为 358**（language 248 + visual 110），但**命中的模块集合不同**"
+                                   "（native `token_mixer.*` vs ms-swift `linear_attn.*`/`full_attn.*`）⇒ 两后端的效果/性能读数**不直接可比**，跨后端比较须注明。"),
             "target_regex_mechanism": {
                 "field": "lora.target_regex（ms-swift 官方字段 swift/arguments/tuner_args.py:127；:201-202 覆盖 target_modules）",
                 "shape_chain": ("仓内 lora.target_modules 是 list → graspo_to_ms_swift_argv() 出口是 str → "
@@ -291,8 +297,12 @@ def lora_target_backends():
             "namespace": "language_model.layers.N.* / visual.*（HF 真实名）",
             "note": ("ms-swift 不认 native preset 名（另一套语汇 ⇒ `ValueError: Target modules not found`）"
                      "⇒ 用**真实 HF 名正则**（仓内 13 份曾训练成功的 adapter 的既有形态 ∪ 视觉）。"
-                     "★★ **两后端覆盖集不相等**（均为实测锚）：native **122**；ms-swift **358**（语言 248 + 视觉 110）"
-                     "⇒ ⛔ 不得宣称等价；且 ms-swift 约为 native 的 3 倍 ⇒ 跨后端读数不直接可比。"),
+                     "★★ **两后端不等价（结论不变，依据订正）**：★ 实例数**同为 358**（language 248 + visual 110；"
+                     "张量键数同为 716），参数量 native 409,923,584 vs ms-swift 410,120,192（差 196,608 ≈0.048%）"
+                     "—— ⛔ **不得再写「122 件 vs 358 件」**；★ 不等价的依据 = **命中的模块集合不同**："
+                     "native `layers.N.token_mixer.{k,q,v,in_proj_z,out_proj}` + `mlp.*`；"
+                     "ms-swift `language_model.layers.N.linear_attn.{in_proj_a,in_proj_b,in_proj_qkv,in_proj_z,out_proj}` "
+                     "+ `full_attn.{q,k,v,o}` + `mlp.*` ⇒ 跨后端读数不直接可比。"),
         },
         "namespaces": {
             "native_public": "language.* / visual.*（checkpoint 签名）",
@@ -346,9 +356,14 @@ def criteria_caliber():
             "known_issue": ("★★ 登记待修（未修）：推导步数公式对 native GRASPO 不成立，根因已读清：两个后端的 step 语义本就不同。\n"
                             "① ms-swift：步数 = epochs × (subset × num_generations) / (micro_batch × grad_accum)；锚：T031（5ep）推导 800 = 实际 800 ✓。\n"
                             "② native：步数 = replay 缓冲区触发次数（optimize.py::_maybe_optimize）；阈值 = rollout_queue_batch_size × rollout_group_size（core/schema.py:458 / ripple/group_decision.py:152），每次仅消耗整组（whole_group_count，组不拆），epoch 尾可有 force 刷尾；★ 与 micro_batch/grad_accum 解耦。\n"
-                            "③ native 锚不成立原因：T028 实测 19 步 / 累计 completions 4376 ⇒ 每步约 230 条（约 28.8 组），而默认阈值 = 8×8 = 64 ⇒ 该档解析后的 rollout_queue_batch_size ≈ 29（非默认 8），而该值不在回填 json 里（在跑次 manifest 的解析后配置中）。\n"
-                            "★ 双锚不成立 ⇒ ⛔ 一字不改公式；暂行口径：native GRASPO 档步数以实跑 run_cumulative.step 为准，推导值仅名义值。\n"
-                            "★ 拟合所需：① T028 解析后的 rollout_queue_batch_size / rollout_group_size（manifest）；② T029（native 2 卡）5ep 实测步数；③ 8ep 各档实测步数。多锚到齐后才拟合。"),
+                            "③ native 锚的正确账（口径订正）：**阈值 = Q×G = 8×8 = 64**"
+            "（`runs/T028/config.yaml:159-160`；运行期 19/19 步均为 64 }交叉验证）；"
+            "步数由**可训练补全数**决定：可训练组 147 × 8 = **1176** ⇒ 1176/64 = 18.4 "
+            "⇒ **19 步**（末步可含 force_flush），与实测吻合。"
+            "★ 此前推理中的 ≈29 是 **尝试组/步**（attempt_groups 547/19≈28.8，含 retry/perfect_skip/invalid）"
+            "—— **不是阈值**；把它当阈值是旧推导 30≠19 的原因（把“尝试组”当成了“可训练组”）。"
+            "★ 但**可训练补全数是运行期结果**（取决于 retry/perfect_skip），"
+            "⇒ **无法从配置先验算出**；⛔ 公式仍不改，维持“native 以实跑 run_cumulative.step 为准”。"),
         },
         "conclusion_rule": {
             "rule": ("结论必须与同一行的参数一一对应。若一行的参数已被更正，而结论来自旧参数下的跑次 ⇒ "
@@ -362,6 +377,14 @@ def criteria_caliber():
                 "定性 = **vLLM 连续批处理浮点非确定性**。证据件 `13-base-rerun-variance.md` "
                 "sha `449d5f7253860934558bca732f37d8fd71bf13c91e2f02dcd91827f961888620`。"
                 "★ 用途：供「基准散布 / 阈值余量」判断；★ **δ 判定不变，⛔ 不因此改阈值**。",
+            ],
+            "caliber_corrections": [
+                "★ **口径订正记录（2026-10-12）**：原写法「native 122 件 vs ms-swift 358 件」**有误**——"
+                "`lora_target_signature.resolved = 122` 是**签名/模式条目数**（12 条语言模式 + 110 条视觉实例），"
+                "其中 12 条语言模式实际展开为 **248** 个逐层实例 ⇒ **两后端实例数同为 358**、张量键数同为 716。"
+                "依据：`task-run-T012/evidence/13-lora-target-count.md`（双路实测）。"
+                "★ 结论「两后端不等价」**仍成立**，依据改为**命中的模块集合不同**（native `token_mixer.*` vs "
+                "ms-swift `linear_attn.*`/`full_attn.*`）。",
             ],
             "known_corrections": [
                 "★ 待订正：T028.json 的数据锚 `eval_dataset.sha256` 写作 `6da72199…`，实为 train.jsonl；正确的评测集锚 = `c202b1e1…`。"
@@ -538,13 +561,13 @@ def main():
         # ★ LoRA 目标按 backend 呈现（记录两后端的表达差异，避免再混）
         if r.get("tuner_type") == "lora" and r.get("lora_target") not in (None, "", "—"):
             if r.get("backend") == "ms-swift":
-                r["lora_target"] = ("ms-swift：真实 HF 名正则（修正版）⇒ 实测 **358** 件"
-                                    "（language_model 248 + visual 110）｜★ 与 native 122 件**不相等**"
-                                    "（约 3 倍）⇒ 跨后端读数不直接可比")
+                r["lora_target"] = ("ms-swift：真实 HF 名正则（修正版）⇒ 实测 **358** 实例"
+                                    "（language_model 248 + visual 110）｜★ native **同为 358 实例**"
+                                    "（122 为签名/模式条目数），但**命中集合不同** ⇒ 跨后端读数不直接可比")
             else:
                 r["lora_target"] = (r["lora_target"]
-                                    + f"｜native：canonical preset 名（{len(RESOLVED_LORA_TARGETS)} 件）"
-                                    + "｜★ 两后端覆盖集不相等")
+                                    + "｜native：canonical preset 名（358 实例；122 为签名/模式条目数）"
+                                    + "｜★ 两后端实例数相同但**命中集合不同**（不等价）")
         r["run_path"] = official_run_path(r, state)
         if v:
             r["verdict"] = v

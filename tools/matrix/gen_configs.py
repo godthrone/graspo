@@ -229,7 +229,7 @@ def flatten(text):
 
 #: 差异归因表（逐条对应已登记的口径变更）
 ATTRIBUTION = [
-    ("lora.target_modules", "LoRA 恢复口径：单 preset → 列表 [language_all_linear, vision_common]（122 件）"),
+    ("lora.target_modules", "LoRA 恢复口径：单 preset → 列表 [language_all_linear, vision_common]（358 实例；122 为签名/模式条目数）"),
     ("lora.target_preset", "LoRA 恢复口径：旧单 preset 已被 target_modules 列表取代"),
     ("lora.r", "LoRA 恢复口径：r 8 → 128"),
     ("lora.alpha", "LoRA 恢复口径：alpha 16 → 256"),
