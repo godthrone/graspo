@@ -14,11 +14,11 @@ training:
   run_name: T028
   overwrite_output_dir: true
   seed: 42
-  max_epochs: 3
+  max_epochs: 5
   learning_rate: 1.0e-05
   gradient_accumulation_micro_batches: 1
   save_checkpoint_every_epoch: false
-  save_steps: 19
+  save_steps: 31
 reward:
   kind: graspo
 lora:

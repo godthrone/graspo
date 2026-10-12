@@ -1,0 +1,39 @@
+# 本文件由 tools/matrix/gen_configs.py 从 docs/capability-matrix.data.json 自动生成，⛔ 禁止手工编辑；请改数据后重新生成。
+train_method: graspo
+backend: native
+tuner_type: lora
+model:
+  model_path: /models/Qwen3.5-9B
+  torch_dtype: bfloat16
+  gradient_checkpointing: true
+data:
+  train_path: /work/elam-v5/subsets-v2/T029.jsonl
+  max_prompt_length: 8192
+training:
+  output_dir: /out/T029
+  run_name: T029
+  overwrite_output_dir: true
+  seed: 42
+  max_epochs: 5
+  learning_rate: 1.0e-05
+  gradient_accumulation_micro_batches: 1
+  save_checkpoint_every_epoch: false
+  save_steps: 31
+reward:
+  kind: graspo
+lora:
+  r: 128
+  alpha: 256
+  dropout: 0.05
+  target_modules:
+    - language_all_linear
+    - vision_common
+native:
+  tp_size: 1
+  dp_size: 2
+  pp_size: 1
+  micro_batch_size: 1
+gpu_monitor:
+  output_dir: /out/gpu
+  tag: T029
+  interval_sec: 2.0

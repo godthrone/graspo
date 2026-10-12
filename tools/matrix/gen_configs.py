@@ -183,7 +183,7 @@ ATTRIBUTION = [
     ("lora.alpha", "LoRA 恢复口径：alpha 16 → 256"),
     ("lora.dropout", "LoRA 恢复口径：dropout 0.0 → 0.05"),
     ("training.learning_rate", "lr：LoRA 走恢复值 1.0e-05（旧值为偏离值）"),
-    ("training.max_epochs", "epoch 口径（主席裁定）：SFT/CPT/OPD=1；GRASPO(RL)=3"),
+    ("training.max_epochs", "epoch 口径（主席定案）：SFT/CPT/OPD=2；GRASPO(RL)=5"),
     ("training.save_steps", "save_steps 重算：= 推导步数 + 1（取消人为步数上限）"),
     ("gpu_monitor", "生成器未覆盖的既有字段（gpu_monitor.*）：矩阵数据未收录 ⇒ 本次生成不含"),
     ("reward", "内容不变（kind=graspo），仅块序前移（生成器固定键序）"),

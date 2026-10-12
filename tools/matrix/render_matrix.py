@@ -166,7 +166,7 @@ def build_caliber(data):
             f'样本量 {d.get("sample_count")}；评测方法 {html.escape(d.get("method", ""))}</td></tr>'
             f'<tr><th>判据标识</th><td><code>{html.escape(c.get("criteria_id", ""))}</code></td></tr>'
             f'<tr><th>阈值与目标值</th><td>{html.escape(th.get("name", ""))} = {th.get("value")} {html.escape(th.get("unit", ""))}；'
-            f'{html.escape(th.get("status", ""))}</td></tr>'
+            f'{html.escape(th.get("applies_to", ""))}；{html.escape(th.get("status", ""))}</td></tr>'
             f'<tr><th>基线口径</th><td>{html.escape(bl.get("role", ""))}；{html.escape(bl.get("caliber", ""))}</td></tr>'
             f'<tr><th>结论与参数的对应</th><td>{html.escape((c.get("conclusion_rule") or {}).get("rule", ""))}</td></tr>'
             f'<tr><th>状态用词</th><td>{html.escape((c.get("conclusion_rule") or {}).get("status_wording", ""))}</td></tr>'

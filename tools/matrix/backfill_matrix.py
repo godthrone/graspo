@@ -27,6 +27,7 @@
 import argparse
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -72,6 +73,23 @@ def _s(v):
     return v.strip() if isinstance(v, str) else v
 
 
+def norm_parallel(s):
+    """把并行展示串归一化为维度元组（tp,pp,dp,nproc,总卡数），用于**语义**身份比对。
+
+    容许措辞差异（如尾部多一句「总卡数 N」），但**维度必须逐项一致**——防「跑 A 填 B」错位的
+    严格性不变；⛔ 不因展示串写法不同而绕过比对。
+    """
+    if not isinstance(s, str):
+        return None
+
+    def num(pat):
+        m = re.search(pat, s)
+        return m.group(1) if m else None
+
+    return (num(r"TP\s*=\s*(\d+)"), num(r"PP\s*=\s*(\d+)"), num(r"DP\s*=\s*(\d+)"),
+            num(r"nproc_per_node\s*=\s*(\d+)"), num(r"(\d+)\s*卡"))
+
+
 def validate_run(doc, tier_from_file, tier_rows):
     """严格校验一份跑次 json。返回错误列表（空 = 合法）。"""
     if not isinstance(doc, dict):
@@ -108,8 +126,17 @@ def validate_run(doc, tier_from_file, tier_rows):
         if tier in tier_rows:
             ref = tier_rows[tier]
             for k in PARAM_KEYS_V3:
-                if k in p and _s(p.get(k)) is not None and _s(ref.get(k, "")) != _s(p.get(k)):
-                    errs.append(f"params.{k} 与档位表不一致（防错位）：json={p.get(k)!r} 表={ref.get(k)!r}")
+                if k not in p or _s(p.get(k)) is None:
+                    continue
+                j, r_ = _s(p.get(k)), _s(ref.get(k, ""))
+                if k == "parallel":
+                    # ★ 语义比对：容许措辞差异，但维度必须逐项一致（防错位严格性不变）
+                    nj, nr = norm_parallel(j), norm_parallel(r_)
+                    if nj != nr:
+                        errs.append(f"params.parallel 维度与档位表不一致（防错位）："
+                                    f"json={j!r}→{nj} 表={r_!r}→{nr}")
+                elif r_ != j:
+                    errs.append(f"params.{k} 与档位表不一致（防错位）：json={j!r} 表={r_!r}")
             doc.setdefault("_legacy_params_ignored", [])
             for k in LEGACY_PARAM_KEYS:
                 if k in p and k not in ref:
@@ -182,6 +209,9 @@ def main():
                     help="正式人读视图（由 render_matrix.py 派生）")
     ap.add_argument("--version", default=None)
     ap.add_argument("--date", default=None)
+    ap.add_argument("--void", action="append", default=[],
+                    help='显式声明"该跑次结论作废、仅作参考"，格式 档号:理由（可重复）。'
+                         '用于"参数已更正 ⇒ 结论不对应当前行参数"（§结论与参数一一对应）')
     ap.add_argument("--dry-run", action="store_true", help="只校验与报告，不写任何文件")
     a = ap.parse_args()
 
@@ -205,6 +235,13 @@ def main():
     tier_rows = {r["tier"]: r for r in matrix["rows"]}
 
     only = set(x.strip() for x in a.only.split(",") if x.strip()) if a.only else None
+    void_map = {}
+    for spec in a.void:
+        t, _, why = spec.partition(":")
+        if not t.strip() or not why.strip():
+            print(f"FAIL: --void 格式必须是 档号:理由，实际 {spec!r}")
+            return 1
+        void_map[t.strip()] = why.strip()
     files = sorted(runs_dir.glob("*.json"))
     if only:
         files = [f for f in files if f.stem in only]
@@ -252,6 +289,26 @@ def main():
             continue
         for k in RESULT_KEYS:
             new_rows[tier][k] = _s(doc[k])
+        # ★ 显式作废（参数已更正 ⇒ 结论不对应当前行参数）：作为"参考记录"留存，不作判定
+        if tier in void_map:
+            ref = "；".join(x for x in (_s(doc.get("runs")), _s(doc.get("effect"))) if x)
+            new_rows[tier]["conclusion_annotation"] = {
+                "conclusion_valid": False, "reason": void_map[tier], "reference_record": ref,
+            }
+            new_rows[tier]["status"] = "尚未验证"
+            new_rows[tier].pop("measurement_pending", None)
+            new_rows[tier]["note"] = ("参考记录（" + void_map[tier] + "）：" + (ref or "—"))
+            new_rows[tier]["run_provenance"] = {
+                "produced_by": doc["provenance"]["produced_by"],
+                "command": doc["provenance"]["command"],
+                "evidence_paths": list(doc["provenance"]["evidence_paths"]),
+                "source_json": str(f), "source_sha256": src_sha, "backfilled_at": now,
+                "voided": True,
+            }
+            filled.append(tier)
+            ledger_rows.append(f"| {now} | `{tier}` | `{f.name}` | `{src_sha[:12]}` | "
+                               f"作废（仅参考） | 见下 | 参数已更正 ⇒ 判定作废 |")
+            continue
         # ★ 状态规则（§17.7：「已验证可用」须两条判据同时满足）：
         #   跑次 json 未声明「阈值已冻结」⇒ 判据②无法判定 ⇒ 状态保持「尚未验证」，只录读数。
         frozen = bool(doc.get("threshold_frozen"))

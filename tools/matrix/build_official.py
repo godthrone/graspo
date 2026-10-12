@@ -162,7 +162,7 @@ def parallel_cols(r, state):
 
 
 #: ★ epoch 口径（主席裁定）：SFT / CPT / OPD = 1；GRASPO(RL) = 3（RL 需要更多 epoch 才能看到效果）
-EPOCHS_BY_METHOD = {"sft": 1, "cpt": 1, "opd": 1, "graspo": 3}
+EPOCHS_BY_METHOD = {"sft": 2, "cpt": 2, "opd": 2, "graspo": 5}
 
 #: ★ 取消"计划步数上限"：步数由 数据量 × epoch 推导，不设人为上限
 STEPS_POLICY = "步数 = epoch 数 × 每 epoch 推导步数（由数据量与批大小推导）；⛔ 不设人为步数上限（无 max_steps 约束）。"
@@ -207,12 +207,17 @@ def criteria_caliber():
                     "version_anchor_sha256": "c202b1e1…", "sample_count": 702,
                     "method": "工具调用准确率（acc）"},
         "criteria_id": "elam-v3-allright-1",
-        "threshold": {"name": "graspo_threshold_pp", "value": 20, "unit": "百分点（pp）",
-                      "status": "★ 最终阈值 δ 待定 —— 本值仅为该跑次所用阈值，尚不作为冻结基线。"},
+        "threshold": {
+            "name": "delta_pp", "value": 5.0, "unit": "百分点（pp）",
+            "applies_to": "训练类（SFT / CPT / OPD）：判据② = after > base 且 Δ ≥ +5.0 pp",
+            "status": ("★ 训练类阈值已冻结（δ = +5 pp，主席定案）；"
+                       "★ GRASPO(RL) 的 δ_pp 待定 —— 等 5-epoch 的 T028 读数出来后再定。"),
+            "historical_note": "该值取代此前跑次所用的临时阈值 20 pp（未冻结，已不再作为判据）。",
+        },
         "baseline": {"role": "同档位未训练底座（role=base）",
                      "caliber": "U2 终点窗口 = 末段 max(3, 10% 步数) 步的均值；该档的 epoch 数与推导步数见档位「步数/epoch」子项。"},
         "epoch_policy": {
-            "by_method": "SFT / CPT / OPD = 1 epoch；GRASPO(RL) = 3 epoch（RL 需要更多 epoch 才能看到效果）。",
+            "by_method": ("SFT / CPT / OPD = 2 epoch；GRASPO(RL) = 5 epoch。理由：跨 epoch 容易出问题（循环结构决定）⇒ 2 epoch 正好覆盖一次 epoch 边界，这正是要压的地方；RL 需要更多 epoch 才能看到效果。"),
             "steps": STEPS_POLICY + " 推导式：steps = epoch 数 × 每 epoch 步数（每 epoch 步数由数据量与批大小推导）。",
             "checkpoint": "save_steps = 推导步数 + 1（大于总步数 ⇒ 只保留最终检查点）。",
         },
@@ -355,8 +360,8 @@ def main():
             r["note"] = r.get("note") or ("读数已录、★ 阈值 δ 待定 ⇒ 状态暂保持「尚未验证」（读数不作判定）。")
         elif voided:
             ref = (ann.get("reference_record") or "").strip()
-            r["note"] = ("参考记录（旧配方；不对应当前行参数 ⇒ 判定作废，不作为该档可用/不可用判定）："
-                         + (ref or "—"))
+            r["note"] = ("参考记录（" + (ann.get("reason") or "不对应当前行参数")
+                         + " ⇒ 判定作废，不作为该档可用/不可用判定）：" + (ref or "—"))
             r["conclusion_void_reason"] = ann.get("reason", "")
         elif state == S_EXCLUDED:
             r["note"] = EXCLUDED_REASON

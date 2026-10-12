@@ -1,0 +1,38 @@
+# 本文件由 tools/matrix/gen_configs.py 从 docs/capability-matrix.data.json 自动生成，⛔ 禁止手工编辑；请改数据后重新生成。
+train_method: opd
+backend: msswift
+tuner_type: lora
+model:
+  model_path: /models/Qwen3.5-9B
+  torch_dtype: bfloat16
+  gradient_checkpointing: true
+data:
+  train_path: /work/elam-v5/subsets-v2/T048.jsonl
+  max_prompt_length: 8192
+training:
+  output_dir: /out/T048
+  run_name: T048
+  overwrite_output_dir: true
+  seed: 42
+  max_epochs: 2
+  learning_rate: 1.0e-05
+  gradient_accumulation_micro_batches: 1
+  save_checkpoint_every_epoch: false
+  save_steps: 11
+lora:
+  r: 128
+  alpha: 256
+  dropout: 0.05
+  target_modules:
+    - language_all_linear
+    - vision_common
+msswift:
+  nproc_per_node: 4
+  nnodes: 1
+  per_device_train_batch_size: 1
+  sequence_parallel_size: 1
+  use_vllm: false
+gpu_monitor:
+  output_dir: /out/gpu
+  tag: T048
+  interval_sec: 2.0
