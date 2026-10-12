@@ -82,24 +82,37 @@ def is_frozen(doc):
     if doc.get("threshold_frozen") is True:
         return True
     mp = ((doc.get("provenance") or {}).get("measurement_pending") or {})
-    return "已冻结" in (str(mp.get("threshold_delta", "")) + str(mp.get("verdict", "")))
+    txt = str(mp.get("threshold_delta", "")) + str(mp.get("verdict", ""))
+    if "冻结" in txt:
+        return True
+    # 回退：跑次自述里明确写出"冻结阈值"（T013 即此形态）⇒ 视为阈值已冻结
+    return "冻结阈值" in (str(doc.get("runs", "")) + str(doc.get("effect", "")))
 
 
 def norm_parallel(s):
-    """把并行展示串归一化为维度元组（tp,pp,dp,nproc,总卡数），用于**语义**身份比对。
+    """把并行展示串归一化为 **canonical 二元组 (总卡数, 世界大小)**，用于语义身份比对。
 
-    容许措辞差异（如尾部多一句「总卡数 N」），但**维度必须逐项一致**——防「跑 A 填 B」错位的
-    严格性不变；⛔ 不因展示串写法不同而绕过比对。
+    两后端的表达面不同：native 用 `TP=… PP=… DP=…`，ms-swift 用 `nproc_per_node=…`（+ nnodes）。
+    ⇒ 统一换算成"世界大小 = TP×PP×DP（native）或 nproc_per_node×nnodes（ms-swift）"再比，
+    **容许措辞差异、⛔ 不放过真实不一致**（防「跑 A 填 B」错位的严格性不变）。
     """
     if not isinstance(s, str):
         return None
 
     def num(pat):
         m = re.search(pat, s)
-        return m.group(1) if m else None
+        return int(m.group(1)) if m else None
 
-    return (num(r"TP\s*=\s*(\d+)"), num(r"PP\s*=\s*(\d+)"), num(r"DP\s*=\s*(\d+)"),
-            num(r"nproc_per_node\s*=\s*(\d+)"), num(r"(\d+)\s*卡"))
+    tp, pp, dp = num(r"TP\s*=\s*(\d+)"), num(r"PP\s*=\s*(\d+)"), num(r"DP\s*=\s*(\d+)")
+    nproc, nnodes = num(r"nproc_per_node\s*=\s*(\d+)"), num(r"nnodes\s*=\s*(\d+)")
+    cards = num(r"(\d+)\s*卡")
+    if nproc is not None:
+        world = nproc * (nnodes or 1)
+    elif None not in (tp, pp, dp):
+        world = tp * pp * dp
+    else:
+        world = None
+    return (cards, world)
 
 
 def validate_run(doc, tier_from_file, tier_rows):

@@ -259,9 +259,33 @@ def lora_target_backends():
                                    "★ 验收以**加载值**为准（GraspoConfig 加载后 repr），⛔ 不看文件文本。"),
             "comparability_note": ("★ ms-swift 档的 LoRA 目标约为 native 的 3 倍（358 vs 122）"
                                    "⇒ 两后端的效果/性能读数**不直接可比**，跨后端比较须注明。"),
+            "target_regex_mechanism": {
+                "field": "lora.target_regex（ms-swift 官方字段 swift/arguments/tuner_args.py:127；:201-202 覆盖 target_modules）",
+                "shape_chain": ("仓内 lora.target_modules 是 list → graspo_to_ms_swift_argv() 出口是 str → "
+                                "PEFT LoraConfig.__post_init__ 把 list 变 set → swift/tuners_utils.py:34 的 "
+                                "isinstance(..., str) 判否 ⇒ 落「字面/点后缀」分支 ⇒ **正则永不命中**"),
+                "fix": ("映射层识别「形如正则的单元素列表/单 str」并改发官方 --target_regex ⇒ PEFT 收 str ⇒ 走正则分支；"
+                        "非正则的预设名/后缀名列表仍走 --target_modules（行为不变）"),
+                "constraints": "⛔ 不改 ms-swift 源码、⛔ 不手改 yaml；native 路径不受影响",
+                "commit": "30a8e15d588a8a763ffa40d21b2a40422b29b6f1",
+                "evidence": "evidence/54-… sha 0e4f5998…",
+            },
+            "guard_fix": {
+                "function": "merged_export.py::targets_use_language_model_namespace()",
+                "str_branch": "正则分支改用 re.fullmatch 实测（原先按字面/后缀判断 ⇒ 误判）",
+                "list_branch": "原行为不变",
+                "fail_closed": "非法 / 不可判定一律拒绝",
+                "retained": "★ 保留防呆：「仅视觉正则」仍被拒绝",
+                "commit": "2381c54c…",
+                "evidence": "evidence/56-… sha d28213b2…",
+            },
             "equivalence_with_native": False,
             "evidence": ["checkpoint lora_target_signature（native 侧 122 实测）",
                          "evidence/44-lora-target-probe-report.md sha e20c3cf6…",
+                         "收紧版探针 sha 1c3830b1… / 转义夹逼 sha e28314a5…",
+                         "evidence/54-… sha 0e4f5998…（target_regex 机制）",
+                         "evidence/56-… sha d28213b2…（守卫修正）",
+                         "提交 30a8e15…（target_regex）/ 2381c54c…（守卫）",
                          "本地 13 份曾训练成功的 ms-swift adapter_config.json（本正则形态实证）",
                          "T010 实测 Δ=+13.39 pp（与 native 签名互证）"],
             "namespace": "language_model.layers.N.* / visual.*（HF 真实名）",

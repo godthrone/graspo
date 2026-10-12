@@ -174,6 +174,7 @@ def build_caliber(data):
             f'<tr><th>步数口径（取消上限）</th><td>{html.escape((c.get("epoch_policy") or {}).get("steps", ""))}</td></tr>'
             f'<tr><th>检查点间隔</th><td>{html.escape((c.get("epoch_policy") or {}).get("checkpoint", ""))}</td></tr>'
             f'<tr><th>LoRA 目标（按后端分流）</th><td>{_lora_backends_html(data)}</td></tr>'
+            f'<tr><th>ms-swift 正则下发机制</th><td>{_target_regex_html(data)}</td></tr>'
             '</tbody></table>')
 
 
@@ -226,6 +227,19 @@ def _lora_backends_html(data):
         f'native 内部存储 <code>{html.escape(ns.get("native_internal", ""))}</code>；'
         f'HF/ms-swift <code>{html.escape(ns.get("hf_msswift", ""))}</code> ⇒ 不能跨后端共用同一串目标。'
         f'<br>证据链：{html.escape("；".join(m.get("evidence") or []))}。</span>')
+
+def _target_regex_html(data):
+    m = ((data.get("meta") or {}).get("lora_target_backends") or {}).get("msswift") or {}
+    t, g = m.get("target_regex_mechanism") or {}, m.get("guard_fix") or {}
+    if not t:
+        return "—"
+    return (f'<b>字段</b>：<code>{html.escape(t.get("field", ""))}</code>。<br>'
+            f'<b>形状链</b>：{html.escape(t.get("shape_chain", ""))}<br>'
+            f'<b>修法</b>：{html.escape(t.get("fix", ""))}（{html.escape(t.get("constraints", ""))}；提交 <code>{html.escape(t.get("commit", ""))}</code>）<br>'
+            f'<b>守卫修正</b>：<code>{html.escape(g.get("function", ""))}</code> —— {html.escape(g.get("str_branch", ""))}；'
+            f'{html.escape(g.get("list_branch", ""))}；{html.escape(g.get("fail_closed", ""))}；{html.escape(g.get("retained", ""))}'
+            f'（提交 <code>{html.escape(g.get("commit", ""))}</code>）')
+
 
 def render(template_text, data):
     meta = data["meta"]
