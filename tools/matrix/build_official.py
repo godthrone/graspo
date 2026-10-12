@@ -534,11 +534,10 @@ def main():
         # ★ 备注补充：LoRA 按后端的真实覆盖（对 LoRA 档；数据驱动的口径事实，⛔ 不手写）
         if r.get("tuner_type") == "lora" and r.get("note") not in (None, "", "—"):
             lb = lora_target_backends()
-            r["note"] = r["note"] + (" ★ LoRA 目标按后端：ms-swift 实测 %d 件（language %d + visual %d）｜native %d 件"
-                                     "（language %d + visual %d）⇒ ★ 两后端覆盖集不相等。"
+            r["note"] = r["note"] + (" ★ LoRA 目标按后端：ms-swift 实测 %d 实例（language %d + visual %d）｜native **同为 %d 实例**"
+                                     "（122 为签名/模式条目数）⇒ ★ 两后端**实例数相同但命中集合不同（不等价）**。"
                                      % (lb["msswift"]["coverage"]["total"], lb["msswift"]["coverage"]["language"],
-                                        lb["msswift"]["coverage"]["visual"], lb["native"]["coverage"]["total"],
-                                        lb["native"]["coverage"]["language"], lb["native"]["coverage"]["visual"]))
+                                        lb["msswift"]["coverage"]["visual"], lb["native"]["coverage"]["total"]))
         # ★ 实跑步数（有跑次记录即填，含"作废参考记录"）
         scr = r.get("step_count_reconciliation") or {}
         if scr.get("actual_steps") is not None:

@@ -168,9 +168,11 @@ def correction_texts(doc, _path=""):
     out = []
     if isinstance(doc, dict):
         for k, v in doc.items():
-            if any(t in str(k).lower() for t in ("correct", "订正", "口径更正")):
-                if v:
-                    out.append(f"{k}：{v}" if not isinstance(v, str) else v)
+            _k_hit = any(t in str(k).lower() for t in ("correct", "订正", "口径更正"))
+            if _k_hit and v:
+                out.append(f"{k}：{v}" if not isinstance(v, str) else v)
+            elif isinstance(v, str) and "订正" in v:
+                out.append(f"{k}：{v}")     # ★ 值里声明式订正（如 run_path / guard_assertions）
             out.extend(correction_texts(v, _path + "." + str(k)))
     elif isinstance(doc, list):
         for x in doc:
@@ -491,9 +493,11 @@ def main():
         # 幂等判据：只比"读数"；★ status 不由跑次 json 直接决定（阈值未冻结时保持「尚未验证」），故排除
         changed = {k: new_rows[tier].get(k) != _s(doc[k]) for k in RESULT_KEYS if k != "status"}
         _corr = (doc.get("provenance") or {}).get("eval_dataset_anchor_correction")
+        _corrs_now = correction_texts(doc)
+        _corr_changed = bool(_corrs_now) and new_rows[tier].get("corrections") != _corrs_now
         _missing_new = bool(_corr) and not new_rows[tier].get("eval_dataset_anchor_correction")
         if (tier not in void_map and prev.get("source_sha256") == src_sha
-                and not any(changed.values()) and not _missing_new):
+                and not any(changed.values()) and not _missing_new and not _corr_changed):
             skipped.append(tier)
             ledger_rows.append(f"| {now} | `{tier}` | `{f.name}` | `{src_sha[:12]}` | "
                                f"{doc['status']} | — | 跳过：同源 sha（`{src_sha[:12]}`）已回填，幂等 |")
