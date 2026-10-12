@@ -39,6 +39,13 @@ dependencies = [
   "transformers==5.12.1",
   "pillow==11.3.0",
   "numpy==1.26.4",
+  # pyarrow 是 datasets→transformers→ms-swift 链的传递依赖，必须**显式钉住**：
+  # pip 默认会拉到最新的 pyarrow，而 pyarrow>=26 在导入期硬要求 NumPy 2.x
+  # （`ImportError: pyarrow requires NumPy 2.0 or newer, found 1.26.4`），
+  # 会让 `import pyarrow` / `import datasets` 与 `from swift.trainers import Trainer` 直接崩。
+  # 锁定值 = uv.lock 中与 numpy==1.26.4 同一次解析通过的版本（§1.4 单一真相源），
+  # 并同步写在 docker/Dockerfile 的 pip 行，否则 compare_declaration_sites 会报分叉。
+  "pyarrow==25.0.1",
 ]
 
 [project.optional-dependencies]
