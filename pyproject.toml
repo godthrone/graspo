@@ -74,7 +74,18 @@ dev = [
 #     对缺件只 warn，⇒ 两者都必须显式钉住才不会漏。
 # 声明值取满足该下界的当前版本并按仓内惯例精确锁定；`av` 由 `qwen_vl_utils` 的元数据自动带入。
 # 同样同步写在 docker/Dockerfile 的 pip 行，否则 compare_declaration_sites 报分叉。
-msswift = ["ms-swift==4.5.3", "qwen_vl_utils==0.0.14", "decord==0.6.0"]
+#
+# deepspeed：ms-swift 的 DeepSpeed 分片路径（`--deepspeed zero2|zero2_offload|…`）硬依赖它。
+#   · `swift/arguments/sft_args.py` 的 `SftArguments._init_deepspeed()` 在 `self.deepspeed`
+#     非空时直接 `require_version('deepspeed')`；对账档 T038（2 卡, zero2_offload）/T039（4 卡, zero2）
+#     都在 12 个带 deepspeed 的档里 ⇒ 缺了必失败。
+#   · **版本依据**：`uv.lock` / `pyproject` 原本**没有** deepspeed 锁定；ms-swift 4.5.3 的元数据
+#     **不声明** deepspeed，其代码也只 `require_version('deepspeed')`（无版本上下界）⇒ 无仓内依据可循。
+#     故取 **PyPI 最新稳定版 0.19.7**，并逐条核对它的 requirements 与镜像现状：
+#     `torch>=2.0.0`(镜像 2.11.0+cu130 ✓) / `pydantic>=2.0.0`(2.11.10 ✓) / `numpy`(1.26.4 ✓) /
+#     einops·hjson·msgpack·ninja·packaging·psutil·py-cpuinfo·tqdm —— **无可解冲突**。
+#     已用临时容器实测：安装成功 + 真路径预检全绿（见工位 `evidence/`）。
+msswift = ["ms-swift==4.5.3", "qwen_vl_utils==0.0.14", "decord==0.6.0", "deepspeed==0.19.7"]
 
 [project.scripts]
 graspo = "graspo.cli.app:main"
