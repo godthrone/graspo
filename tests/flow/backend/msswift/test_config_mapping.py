@@ -496,3 +496,60 @@ def test_rope_compatibility_context_restores_from_pretrained():
     assert inspect.getattr_static(PreTrainedModel, "from_pretrained") is before, (
         "退出必须还原原 descriptor"
     )
+
+
+#: E2b 实测（2026-10-12）用的**真实正则**形态（取自 matrix54-generated 的 ms-swift 档）。
+_REGEX_TARGET = (
+    r"^(?:model\.)?language_model\..*\.(q_proj|k_proj|gate_proj)$"
+    r"|^(?:model\.)?visual\.(attn\.qkv|mlp\.linear_fc1)$"
+)
+
+
+def _argv_for(target_modules):
+    return graspo_to_ms_swift_argv(
+        GraspoConfig.model_validate(
+            {
+                "backend": "msswift",
+                "model": {"model_path": "m"},
+                "data": {"train_path": "d", "max_prompt_length": 2048},
+                "lora": {"target_modules": target_modules},
+            }
+        ),
+        stage="sft",
+        dataset_path="/tmp/ds.jsonl",
+        output_dir="/tmp/out",
+    )
+
+
+def test_regex_target_modules_routes_to_target_regex():
+    """★ 正则串必须走官方 ``--target_regex``（否则 PEFT 收 set ⇒ 字面/后缀 ⇒ 永不命中）。
+
+    E2b 实测链：``swift/arguments/tuner_args.py:126`` 把 target_modules 声明为
+    ``List[str]`` ⇒ argparse 必得 list；PEFT 的 LoraConfig ``__post_init__`` 把 list
+    变成 ``set``；而 ``peft/tuners/tuners_utils.py:34`` 只在 ``str`` 时走正则
+    ⇒ 正则串作为 list 传入时 **0 命中**。ms-swift 官方 ``target_regex: Optional[str]``
+    （``:127`` + ``:201-202`` 覆盖 target_modules）是唯一不改上游源码的通道。
+    """
+    argv = _argv_for([_REGEX_TARGET])
+
+    assert "--target_regex" in argv, "正则串必须发 --target_regex"
+    assert "--target_modules" not in argv, "正则串不得再发 --target_modules（会落 list/set 分支）"
+    assert argv[argv.index("--target_regex") + 1] == _REGEX_TARGET, "正则必须逐字透传"
+    # 紧跟其后必须是另一个 flag（说明没有多吞参数）
+    assert argv[argv.index("--target_regex") + 2].startswith("--")
+
+
+def test_non_regex_target_modules_keeps_target_modules():
+    """非正则（预设名 / 后缀名列表）**必须仍走** ``--target_modules``，不得误路由。"""
+    for value in (
+        ["all-linear"],
+        ["q_proj", "v_proj"],
+        ["q_proj", "k_proj", "attn.qkv"],  # 后缀名列表（含点，但不是正则）
+        ["language_all_linear", "vision_common"],
+    ):
+        argv = _argv_for(value)
+        assert "--target_modules" in argv, f"{value!r} 应仍走 --target_modules"
+        assert "--target_regex" not in argv, f"{value!r} 不应被误判为正则"
+        index = argv.index("--target_modules")
+        assert argv[index + 1] == value[0]
+        assert argv[index + 1 + len(value)].startswith("--")

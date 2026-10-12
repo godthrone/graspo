@@ -158,6 +158,50 @@ def _extend(argv: list[str], name: str, value: Any) -> None:
     argv.extend(_flag(name, value))
 
 
+#: 正则目标判定字符集：模块名 / 预设名里都不会出现的正则元字符。
+_REGEX_TARGET_CHARS = frozenset("^$()[]{}|*+?\\")
+
+
+def _looks_like_regex_target(value: str) -> bool:
+    """该字符串是否"形如正则"（含模块名不会出现的正则元字符）。"""
+    return any(ch in _REGEX_TARGET_CHARS for ch in value)
+
+
+def _regex_target_of(target_modules: Any) -> str | None:
+    """LoRA 目标是**单个正则串**时返回它，否则 ``None``（§1.4 单一真相源）。
+
+    **为什么必须这样路由**（E2b 实测，2026-10-12）：
+
+    - ms-swift 的 ``target_modules`` 声明为 ``List[str]``
+      （``swift/arguments/tuner_args.py:126``）⇒ argparse 解析 ``--target_modules X``
+      **必然得到 list** ``['X']``。
+    - 而 PEFT **只在 ``target_modules`` 是 ``str`` 时才当正则用**
+      （``peft/tuners/tuners_utils.py:34``：``isinstance(config.target_modules, str)``）；
+      list 会被 LoraConfig 的 ``__post_init__`` 变成 ``set``
+      （``set(self.target_modules) if isinstance(self.target_modules, list) ...``）
+      ⇒ 落到"字面 / 点后缀"分支 ⇒ **正则串永不命中任何模块**（实测 0 命中）。
+    - ms-swift 官方为此提供 ``target_regex: Optional[str]``
+      （``swift/arguments/tuner_args.py:127``），其 ``__post_init__`` 用它覆盖
+      ``target_modules``（``:201-202``）⇒ **PEFT 最终收到 ``str``、走正则分支**。
+
+    ⇒ 本函数把"形如正则的**单元素**列表（或单个 str）"识别出来，由调用方改发官方
+    ``--target_regex``；**非正则的预设名 / 后缀名列表仍走 ``--target_modules``**。
+
+    Args:
+        target_modules: ``lora.target_modules`` 原值（``list[str] | str | None``）。
+
+    Returns:
+        需要路由到 ``--target_regex`` 的字符串；不需要则 ``None``。
+    """
+    if isinstance(target_modules, str):
+        return target_modules if _looks_like_regex_target(target_modules) else None
+    if isinstance(target_modules, (list, tuple)) and len(target_modules) == 1:
+        only = target_modules[0]
+        if isinstance(only, str) and _looks_like_regex_target(only):
+            return only
+    return None
+
+
 def _rope_scaling_json(value: Any) -> str | None:
     """``rope_scaling`` → JSON 字符串（键名换成 transformers 5.x 的 ``rope_type``）。
 
@@ -477,7 +521,13 @@ def graspo_to_ms_swift_argv(
         _extend(argv, "lora_alpha", lora.alpha)
         _extend(argv, "lora_dropout", lora.dropout)
         if lora.target_modules is not None:
-            _extend(argv, "target_modules", list(lora.target_modules))
+            # 正则串走官方 --target_regex（否则 list 会被 PEFT 变成 set 而退化为
+            # 字面/后缀匹配 ⇒ 正则永不命中）；非正则仍走 --target_modules。
+            regex_target = _regex_target_of(lora.target_modules)
+            if regex_target is not None:
+                _extend(argv, "target_regex", regex_target)
+            else:
+                _extend(argv, "target_modules", list(lora.target_modules))
         if lora.adapter_path:
             _extend(argv, "adapters", [str(lora.adapter_path)])
     else:
