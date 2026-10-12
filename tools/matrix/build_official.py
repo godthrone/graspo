@@ -569,6 +569,25 @@ def main():
                                      "（122 为签名/模式条目数）⇒ ★ 两后端**实例数相同但命中集合不同（不等价）**。"
                                      % (lb["msswift"]["coverage"]["total"], lb["msswift"]["coverage"]["language"],
                                         lb["msswift"]["coverage"]["visual"], lb["native"]["coverage"]["total"]))
+        # ★ 双锚（树 + 官方基底/包装）与吞吐口径 ⇒ 随件进备注（数值全取自跑次件，⛔ 不臆造）
+        _ci = r.get("code_identity") or {}
+        if _ci:
+            _anchors = []
+            if _ci.get("tree_fingerprint"):
+                _anchors.append("树 " + str(_ci["tree_fingerprint"])[:8] + "…")
+            for _k in ("image_base_official", "image_run_wrapper"):
+                _v = _ci.get(_k)
+                if isinstance(_v, dict) and _v.get("digest"):
+                    _anchors.append(str(_v.get("role") or _k) + " " + str(_v["digest"])[:8] + "…")
+            if _anchors:
+                r["note"] = (r.get("note") or "") + " ★ 锚点：" + " + ".join(_anchors)
+        _tp = str(r.get("throughput") or "")
+        if "s/step" in _tp:
+            import re as _re
+            _m = _re.search(r"[≈~]?\s*([0-9.]+)\s*s/step", _tp)
+            if _m:
+                r["note"] = (r.get("note") or "") + f" ★ 吞吐（如实）：SFT 无生成式 tok/s；均值 ≈{_m.group(1)} s/step。"
+
         # ★ P5/P6 六项（标准交付项）⇒ 逐档结构化备注段（逐项可读；"待补"如实标）
         _p = r.get("p5p6_readings")
         if _p:

@@ -418,6 +418,8 @@ def main():
     ap.add_argument("--self-test", action="store_true",
                     help="跑校验器的正/反向用例（阈值信任边界 + 并行维度逐项），不读跑次目录")
     ap.add_argument("--dry-run", action="store_true", help="只校验与报告，不写任何文件")
+    ap.add_argument("--force", action="store_true",
+                    help="跳过幂等判定强制重处理（用于「渲染/备注口径升级」后回灌既有档）")
     a = ap.parse_args()
 
     if a.self_test:
@@ -512,7 +514,7 @@ def main():
         _missing_new = (bool(_corr) and not new_rows[tier].get("eval_dataset_anchor_correction")) or any(
             doc.get(_k) and not new_rows[tier].get(_k)
             for _k in ("p5p6_readings", "anomalies", "step_count_reconciliation"))
-        if (tier not in void_map and prev.get("source_sha256") == src_sha
+        if (not a.force and tier not in void_map and prev.get("source_sha256") == src_sha
                 and not any(changed.values()) and not _missing_new and not _corr_changed):
             skipped.append(tier)
             ledger_rows.append(f"| {now} | `{tier}` | `{f.name}` | `{src_sha[:12]}` | "
@@ -588,6 +590,8 @@ def main():
                     "—— 本轮不顺手改公式，后续单独修。" % (scr.get("derived_steps"), scr.get("actual_steps")))
             # ★ 树指纹：**取起跑断言值**；若当场重算不同 ⇒ 如实登记漂移（⛔ 不抹）
             ci = ((doc.get("provenance") or {}).get("code_identity") or {})
+            if ci:
+                new_rows[tier]["code_identity"] = ci          # ★ 双锚/镜像摘要来源（供备注渲染）
             if ci.get("tree_fingerprint"):
                 new_rows[tier]["tree_fingerprint"] = ci["tree_fingerprint"]
                 new_rows[tier]["tree_fingerprint_role"] = ci.get("tree_fingerprint_role", "起跑断言值")
