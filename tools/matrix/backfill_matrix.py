@@ -73,6 +73,63 @@ def _s(v):
     return v.strip() if isinstance(v, str) else v
 
 
+TRAINING_CLASSES = {"sft", "cpt", "opd"}
+
+
+def matrix_frozen_pp(official_path, train_method):
+    """★ 阈值只能来自**矩阵自身的冻结口径**（`meta.criteria_caliber.threshold`）。
+
+    返回该档类别适用的冻结阈值（pp）；**未冻结 ⇒ None**（跑次无论自报什么都不得据此判定）。
+    """
+    try:
+        d = json.loads(Path(official_path).read_text(encoding="utf-8"))
+        cal = (d.get("meta") or {}).get("criteria_caliber") or {}
+        th = cal.get("threshold") or {}
+        val = th.get("value")
+        applies = str(th.get("applies_to", ""))
+        status = str(th.get("status", ""))
+        if val is None:
+            return None
+        if str(train_method).lower() in TRAINING_CLASSES:
+            return float(val) if "训练类" in applies or "冻结" in status else None
+        return None      # 非训练类（GRASPO 等）⇒ 矩阵侧尚未冻结
+    except Exception:
+        return None
+
+
+def matrix_frozen_map(official_path):
+    """从**矩阵自身冻结口径**导出 方法→冻结阈值(pp) 的映射；未冻结 ⇒ 该方法映射为 None。"""
+    out = {m: None for m in TRAINING_CLASSES}
+    out["graspo"] = None
+    try:
+        d = json.loads(Path(official_path).read_text(encoding="utf-8"))
+        th = (((d.get("meta") or {}).get("criteria_caliber") or {}).get("threshold")) or {}
+        val, applies, status = th.get("value"), str(th.get("applies_to", "")), str(th.get("status", ""))
+        if val is not None and ("训练类" in applies or "冻结" in status):
+            for m in TRAINING_CLASSES:
+                out[m] = float(val)
+    except Exception:
+        pass
+    return out
+
+
+def run_claimed_pp(doc):
+    """从跑次自述里抽其**自报**的阈值（pp）；抽不到 ⇒ None。
+
+    只在**阈值语境**下取值（`≥ N pp` / `阈值 N pp`），⛔ 不把"达标差 Δ"当成阈值。
+    """
+    mp = ((doc.get("provenance") or {}).get("measurement_pending") or {})
+    blob = " ".join([str(doc.get("runs", "")), str(doc.get("effect", "")),
+                     str(mp.get("threshold_delta", ""))])
+    pats = [r"(?:≥|>=)\s*\+?\s*([0-9]+(?:\.[0-9]+)?)\s*pp",
+            r"阈值\s*[Δdelta]*\s*(?:为|=|≥|>=)?\s*\+?\s*([0-9]+(?:\.[0-9]+)?)\s*pp"]
+    for pat in pats:
+        m = re.search(pat, blob)
+        if m:
+            return float(m.group(1))
+    return None
+
+
 def is_frozen(doc):
     """判据② 的阈值是否已冻结（正式判定 vs 仅录读数）。
 
@@ -83,18 +140,15 @@ def is_frozen(doc):
         return True
     mp = ((doc.get("provenance") or {}).get("measurement_pending") or {})
     txt = str(mp.get("threshold_delta", "")) + str(mp.get("verdict", ""))
-    if "冻结" in txt:
-        return True
-    # 回退：跑次自述里明确写出"冻结阈值"（T013 即此形态）⇒ 视为阈值已冻结
-    return "冻结阈值" in (str(doc.get("runs", "")) + str(doc.get("effect", "")))
+    # ★ 收紧后：这里只表示"跑次自述声称阈值已冻结"；**能否据此判定以矩阵口径为准**（见 main）。
+    return "冻结" in txt or "冻结阈值" in (str(doc.get("runs", "")) + str(doc.get("effect", "")))
 
 
 def norm_parallel(s):
-    """把并行展示串归一化为 **canonical 二元组 (总卡数, 世界大小)**，用于语义身份比对。
+    """归一化为 (总卡数, 世界大小, 维度字典)，用于语义身份比对。
 
-    两后端的表达面不同：native 用 `TP=… PP=… DP=…`，ms-swift 用 `nproc_per_node=…`（+ nnodes）。
-    ⇒ 统一换算成"世界大小 = TP×PP×DP（native）或 nproc_per_node×nnodes（ms-swift）"再比，
-    **容许措辞差异、⛔ 不放过真实不一致**（防「跑 A 填 B」错位的严格性不变）。
+    ★ 加固：canonical 相等**且双方都声明了同名字段时，维度必须逐项一致**
+      （⛔ 不因表达面不同而丢掉「跑 A 填 B」的检出能力）。
     """
     if not isinstance(s, str):
         return None
@@ -103,19 +157,38 @@ def norm_parallel(s):
         m = re.search(pat, s)
         return int(m.group(1)) if m else None
 
-    tp, pp, dp = num(r"TP\s*=\s*(\d+)"), num(r"PP\s*=\s*(\d+)"), num(r"DP\s*=\s*(\d+)")
-    nproc, nnodes = num(r"nproc_per_node\s*=\s*(\d+)"), num(r"nnodes\s*=\s*(\d+)")
+    dims = {}
+    for key, pat in (("tp", r"TP\s*=\s*(\d+)"), ("pp", r"PP\s*=\s*(\d+)"), ("dp", r"DP\s*=\s*(\d+)"),
+                     ("nproc", r"nproc_per_node\s*=\s*(\d+)"), ("nnodes", r"nnodes\s*=\s*(\d+)")):
+        v = num(pat)
+        if v is not None:
+            dims[key] = v
     cards = num(r"(\d+)\s*卡")
-    if nproc is not None:
-        world = nproc * (nnodes or 1)
-    elif None not in (tp, pp, dp):
-        world = tp * pp * dp
+    if "nproc" in dims:
+        world = dims["nproc"] * dims.get("nnodes", 1)
+    elif all(k in dims for k in ("tp", "pp", "dp")):
+        world = dims["tp"] * dims["pp"] * dims["dp"]
     else:
         world = None
-    return (cards, world)
+    return (cards, world, dims)
 
 
-def validate_run(doc, tier_from_file, tier_rows):
+def compare_parallel(js, ts):
+    """比对跑次 json 与档位表的并行表达；返回错误列表（空 = 通过）。"""
+    nj, nt = norm_parallel(js), norm_parallel(ts)
+    if nj is None or nt is None:
+        return [] if js == ts else [f"params.parallel 不可解析且与档位表不一致：json={js!r} 表={ts!r}"]
+    errs = []
+    if nj[:2] != nt[:2]:
+        errs.append(f"params.parallel 语义不一致（防错位）：json={js!r}->{nj[:2]} 表={ts!r}->{nt[:2]}")
+    # ★ 双方都声明的维度必须逐项一致
+    for k in sorted(set(nj[2]) & set(nt[2])):
+        if nj[2][k] != nt[2][k]:
+            errs.append(f"params.parallel 维度 {k} 不一致（防错位）：json={nj[2][k]} 表={nt[2][k]}")
+    return errs
+
+
+def validate_run(doc, tier_from_file, tier_rows, frozen_map=None):
     """严格校验一份跑次 json。返回错误列表（空 = 合法）。"""
     if not isinstance(doc, dict):
         return ["顶层不是 JSON 对象"]
@@ -155,11 +228,7 @@ def validate_run(doc, tier_from_file, tier_rows):
                     continue
                 j, r_ = _s(p.get(k)), _s(ref.get(k, ""))
                 if k == "parallel":
-                    # ★ 语义比对：容许措辞差异，但维度必须逐项一致（防错位严格性不变）
-                    nj, nr = norm_parallel(j), norm_parallel(r_)
-                    if nj != nr:
-                        errs.append(f"params.parallel 维度与档位表不一致（防错位）："
-                                    f"json={j!r}→{nj} 表={r_!r}→{nr}")
+                    errs.extend(compare_parallel(j, r_))     # ★ canonical + 维度逐项一致
                 elif r_ != j:
                     errs.append(f"params.{k} 与档位表不一致（防错位）：json={j!r} 表={r_!r}")
             doc.setdefault("_legacy_params_ignored", [])
@@ -177,6 +246,18 @@ def validate_run(doc, tier_from_file, tier_rows):
             errs.append(f"结果字段 {k!r} 为空 / 非字符串")
         elif v == PLACEHOLDER and st == "通过":
             errs.append(f"status=通过 但 {k!r} 仍是占位符 '—'（不许半填）")
+
+    # --- ★ 阈值信任边界：阈值只能来自矩阵冻结口径；跑次自述仅作交叉核对，不一致即拒绝 ---
+    if tier in tier_rows and frozen_map is not None:
+        method = str(tier_rows[tier].get("train_method", "")).lower()
+        frozen_pp = frozen_map.get(method)
+        claimed = run_claimed_pp(doc)
+        if frozen_pp is None and claimed is not None:
+            errs.append(f"矩阵侧 {method!r} 类阈值**尚未冻结**，跑次却自述阈值 {claimed} pp "
+                        f"⇒ 拒绝（⛔ 跑次不得自定阈值）")
+        elif frozen_pp is not None and claimed is not None and claimed != frozen_pp:
+            errs.append(f"跑次自述阈值 {claimed} pp ≠ 矩阵冻结口径 {frozen_pp} pp ⇒ 拒绝"
+                        f"（阈值只能来自矩阵）")
 
     # --- provenance：谁产出 / 哪条命令 / 原始证据路径 ---
     prov = doc["provenance"]
@@ -237,8 +318,13 @@ def main():
     ap.add_argument("--void", action="append", default=[],
                     help='显式声明"该跑次结论作废、仅作参考"，格式 档号:理由（可重复）。'
                          '用于"参数已更正 ⇒ 结论不对应当前行参数"（§结论与参数一一对应）')
+    ap.add_argument("--self-test", action="store_true",
+                    help="跑校验器的正/反向用例（阈值信任边界 + 并行维度逐项），不读跑次目录")
     ap.add_argument("--dry-run", action="store_true", help="只校验与报告，不写任何文件")
     a = ap.parse_args()
+
+    if a.self_test:
+        return _self_test()
 
     data_in = Path(a.data_in)
     data_out = Path(a.data_out) if a.data_out else data_in
@@ -259,6 +345,7 @@ def main():
         print(f"FAIL: 跑次目录不存在: {runs_dir}")
         return 1
 
+    frozen_map = matrix_frozen_map(a.official_data)
     matrix = json.loads(data_in.read_text(encoding="utf-8"))
     tier_rows = {r["tier"]: r for r in matrix["rows"]}
 
@@ -285,7 +372,7 @@ def main():
         except json.JSONDecodeError as e:
             all_errs.append((f, [f"JSON 解析失败: {e}"]))
             continue
-        errs = validate_run(doc, f.stem, tier_rows)
+        errs = validate_run(doc, f.stem, tier_rows, frozen_map)
         if errs:
             all_errs.append((f, errs))
         else:
@@ -339,7 +426,7 @@ def main():
             continue
         # ★ 状态规则（§17.7：「已验证可用」须两条判据同时满足）：
         #   跑次 json 未声明「阈值已冻结」⇒ 判据②无法判定 ⇒ 状态保持「尚未验证」，只录读数。
-        frozen = is_frozen(doc)
+        frozen = frozen_map.get(str(new_rows[tier].get("train_method", "")).lower()) is not None
         if not frozen:
             new_rows[tier]["status"] = "尚未验证"
             new_rows[tier]["measurement_pending"] = True   # ★ 读数已录、阈值待定（不作判定）
@@ -435,6 +522,39 @@ def main():
         return 0
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _self_test():
+    """★ 四条正/反向用例（⛔ 不依赖外部文件、不写任何东西）。"""
+    fm = {"sft": 5.0, "cpt": 5.0, "opd": 5.0, "graspo": None}
+    base_doc = {"runs": "判据② 达标（训练类冻结阈值 Δ ≥ 5.0 pp）", "effect": "Δ=+8.5 pp（≥ 5.0 pp 冻结阈值）"}
+    cases = [
+        ("① 阈值：跑次自述 5 pp == 矩阵 5 pp ⇒ 放行",
+         not _threshold_errs(dict(base_doc, effect="Δ=+8.5 pp（≥ 5.0 pp 冻结阈值）"), fm, "sft")),
+        ("② 阈值：跑次自述 3 pp ≠ 矩阵 5 pp ⇒ FAIL",
+         bool(_threshold_errs(dict(base_doc, runs="判据② 达标（阈值 Δ ≥ 3 pp）", effect="Δ=+8.5 pp（≥ 3 pp）"),
+                              fm, "sft"))),
+        ("③ 并行：表达面不同但维度等价 ⇒ 放行",
+         not compare_parallel("TP=1 PP=1 DP=1（1 卡；总卡数 1）", "nproc_per_node=1（1 卡）")),
+        ("④ 并行：TP/PP 不符 ⇒ FAIL",
+         bool(compare_parallel("TP=2 PP=1 DP=1（2 卡）", "TP=1 PP=2 DP=1（2 卡）"))),
+    ]
+    ok = True
+    for name, passed in cases:
+        print(f"  [{'PASS' if passed else 'FAIL'}] {name}")
+        ok = ok and passed
+    print(f"SELF-TEST {'PASS' if ok else 'FAIL'}（{sum(1 for _, x in cases if x)}/{len(cases)}）")
+    return 0 if ok else 1
+
+
+def _threshold_errs(doc, frozen_map, method):
+    frozen_pp = frozen_map.get(method)
+    claimed = run_claimed_pp(doc)
+    if frozen_pp is None and claimed is not None:
+        return ["未冻结却自述阈值"]
+    if frozen_pp is not None and claimed is not None and claimed != frozen_pp:
+        return [f"自述 {claimed} ≠ 矩阵 {frozen_pp}"]
+    return []
 
 
 if __name__ == "__main__":
