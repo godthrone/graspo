@@ -218,7 +218,10 @@ def main():
     data_in = Path(a.data_in)
     data_out = Path(a.data_out) if a.data_out else data_in
     html_out = Path(a.html_out)
+    # 相对路径的台账落在"矩阵数据所在目录"（工作区），⛔ 不再落进仓库根造成 stray 文件
     ledger_out = Path(a.ledger_out)
+    if not ledger_out.is_absolute() and not ledger_out.exists():
+        ledger_out = data_in.parent / ledger_out.name
     runs_dir = Path(a.runs_dir)
 
     if not data_in.exists():
