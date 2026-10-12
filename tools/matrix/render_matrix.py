@@ -173,6 +173,7 @@ def build_caliber(data):
             f'<tr><th>epoch 口径</th><td>{html.escape((c.get("epoch_policy") or {}).get("by_method", ""))}</td></tr>'
             f'<tr><th>步数口径（取消上限）</th><td>{html.escape((c.get("epoch_policy") or {}).get("steps", ""))}</td></tr>'
             f'<tr><th>检查点间隔</th><td>{html.escape((c.get("epoch_policy") or {}).get("checkpoint", ""))}</td></tr>'
+            f'<tr><th>LoRA 目标（按后端分流）</th><td>{_lora_backends_html(data)}</td></tr>'
             '</tbody></table>')
 
 
@@ -196,6 +197,20 @@ def build_verdicts(data):
         out.append("</ul>")
     return "\n".join(out)
 
+
+
+def _lora_backends_html(data):
+    lb = (data.get("meta") or {}).get("lora_target_backends") or {}
+    if not lb:
+        return "—"
+    n, m = lb.get("native", {}), lb.get("msswift", {})
+    ne = " + ".join(n.get("expression", [])) or "—"
+    return (f'<b>native</b>：preset 名 <code>{html.escape(ne)}</code>'
+            f'（解析 <b>{n.get("resolved_count")}</b> 件）。'
+            f'<b>ms-swift</b>：<b>不认 preset 名</b>（另一套语汇，会 <code>ValueError: Target modules not found</code>）'
+            f'⇒ 用显式 <b>{m.get("resolved_count")}</b> 项模块名列表表达（⛔ 不用 <code>all-linear</code>：全集会多训）。'
+            f'<br><span class="note">★ 等价性未在本机验证（本地无 ms-swift/PEFT，无法确认其匹配语义）'
+            f'⇒ 起跑前需一次探针确认命中集合。</span>')
 
 def render(template_text, data):
     meta = data["meta"]

@@ -183,6 +183,49 @@ EXTRA_UNIFORM = [
 ]
 
 
+#: ★ LoRA 目标：native preset 名 → **解析后的具体模块名**（按本仓文档化的匹配语汇逐项构造）
+#:   语言 12 项（attn 4 + 线性注意力 3+2 + MLP 3）+ 视觉 110 项（merger 2 + 27 层 × 4）= 122
+LANGUAGE_TARGETS = [
+    "language.full_attn.q_proj", "language.full_attn.k_proj",
+    "language.full_attn.v_proj", "language.full_attn.o_proj",
+    "language.linear_attn.q_proj", "language.linear_attn.k_proj", "language.linear_attn.v_proj",
+    "language.linear_attn.in_proj_z", "language.linear_attn.out_proj",
+    "language.mlp.gate_proj", "language.mlp.up_proj", "language.mlp.down_proj",
+]
+VISION_TARGETS = (["visual.merger.linear_fc1", "visual.merger.linear_fc2"]
+                  + [f"visual.blocks.{i}.{m}" for i in range(27)
+                     for m in ("attn.qkv", "attn.proj", "mlp.linear_fc1", "mlp.linear_fc2")])
+RESOLVED_LORA_TARGETS = LANGUAGE_TARGETS + VISION_TARGETS        # 122
+
+
+def lora_target_backends():
+    """两后端的 LoRA 目标表达（★ 矩阵为源；生成器据此分流，⛔ 不手写）。
+
+    native 与 ms-swift 的 `target_modules` 是**两套语汇**（仓内证据：
+    `msswift/_config_mapping.py:28-30` 明示"另一套（regex / all-linear），不做猜测式转换"，
+    并在 :479-480 原样透传 `list(lora.target_modules)`）⇒ 必须按 backend 分流。
+    """
+    return {
+        "native": {
+            "kind": "preset_names",
+            "expression": ["language_all_linear", "vision_common"],
+            "resolved": list(RESOLVED_LORA_TARGETS),
+            "resolved_count": len(RESOLVED_LORA_TARGETS),
+            "note": "native 侧支持 preset 名（glob），由本仓 lora 模块解析；已验证命中 122 件。",
+        },
+        "msswift": {
+            "kind": "explicit_module_list",
+            "expression": list(RESOLVED_LORA_TARGETS),
+            "resolved": list(RESOLVED_LORA_TARGETS),
+            "resolved_count": len(RESOLVED_LORA_TARGETS),
+            "note": ("ms-swift 不认 native preset 名（会 ValueError: Target modules {...} not found）⇒ 用**同一覆盖集的"
+                     "显式模块名列表**表达（⛔ 不用 all-linear：那是全集，会多训）。"
+                     "★ 等价性**未在本机验证**：本地无 ms-swift/PEFT，无法确认其匹配语义（后缀匹配 / fullmatch）"
+                     "⇒ 起跑前需一次探针确认命中集合。"),
+        },
+    }
+
+
 def boundary_declaration():
     return {
         "required": True,
@@ -376,6 +419,14 @@ def main():
         else:
             r["note"] = r.get("note") or "—"      # 已结论档保留回填写入的备注
         r.update(parallel_cols(r, state))
+        # ★ LoRA 目标按 backend 呈现（记录两后端的表达差异，避免再混）
+        if r.get("tuner_type") == "lora" and r.get("lora_target") not in (None, "", "—"):
+            if r.get("backend") == "ms-swift":
+                r["lora_target"] = (f"ms-swift：显式 {len(RESOLVED_LORA_TARGETS)} 项模块名列表"
+                                    f"（与 native 同覆盖集；匹配语义待探针确认）")
+            else:
+                r["lora_target"] = (r["lora_target"]
+                                    + f"｜native 表达式：language_all_linear + vision_common（{len(RESOLVED_LORA_TARGETS)} 件）")
         r["run_path"] = official_run_path(r, state)
         if v:
             r["verdict"] = v
@@ -398,6 +449,7 @@ def main():
             "status_vocabulary": STATUS_VOCABULARY,
             "boundary_declaration": boundary_declaration(),
             "criteria_caliber": criteria_caliber(),
+            "lora_target_backends": lora_target_backends(),
             "criteria_version": meta.get("criteria_version", ""),
             "result_placeholder": meta.get("result_placeholder", "—"),
             "results_policy": "结果列由跑次记录回填；未有实测结论的档位标注为「尚未验证」；不得手工填写。",

@@ -27,7 +27,7 @@ def uniform_map(data):
     return {it["key"]: it["value"] for it in (data.get("uniform") or {}).get("items", [])}
 
 
-def yaml_of(row, uni, model_root, data_root):
+def yaml_of(row, uni, model_root, data_root, lora_backends=None):
     """渲染一个档位的 yaml 文本（确定性：固定键序、无时钟/环境）。"""
     tier = row["tier"]
     tuner = row.get("tuner_type")
@@ -62,13 +62,20 @@ def yaml_of(row, uni, model_root, data_root):
         L.append(f"  kind: {uni.get('reward.kind')}\n")
 
     if tuner == "lora":
-        tms = json.loads(row.get("target_modules") or "null") or []
+        # ★ 按 backend 分流：native 用 preset 名；ms-swift 不认 preset 名（另一套语汇）⇒ 用同覆盖集的显式模块名列表
+        lb = (lora_backends or {})
+        if backend == "ms-swift":
+            expr = (lb.get("msswift") or {}).get("expression") or []
+        else:
+            expr = (lb.get("native") or {}).get("expression") or []
+        if not expr:
+            expr = json.loads(row.get("target_modules") or "null") or []
         L.append("lora:\n")
         L.append(f"  r: {uni.get('lora_r')}\n")
         L.append(f"  alpha: {uni.get('lora_alpha')}\n")
         L.append(f"  dropout: {uni.get('lora_dropout')}\n")
         L.append("  target_modules:\n")
-        for t in tms:
+        for t in expr:
             L.append(f"    - {t}\n")
 
     if backend == "native":
@@ -111,6 +118,7 @@ def main():
 
     data = json.loads(Path(a.data).read_text(encoding="utf-8"))
     uni = uniform_map(data)
+    lora_backends = (data.get("meta") or {}).get("lora_target_backends") or {}
     only = set(x.strip() for x in a.only.split(",")) if a.only else None
     rows = [r for r in data["rows"] if r.get("applicable") and (only is None or r["tier"] in only)]
     out = Path(a.out_dir)
@@ -118,7 +126,7 @@ def main():
 
     written = {}
     for r in rows:
-        text = yaml_of(r, uni, a.model_root, a.data_root)
+        text = yaml_of(r, uni, a.model_root, a.data_root, lora_backends)
         p = out / f"{r['tier']}.yaml"
         p.write_text(text, encoding="utf-8")
         written[r["tier"]] = p
@@ -127,7 +135,7 @@ def main():
     if a.check_determinism:
         bad = []
         for r in rows:
-            again = yaml_of(r, uni, a.model_root, a.data_root)
+            again = yaml_of(r, uni, a.model_root, a.data_root, lora_backends)
             if again != written[r["tier"]].read_text(encoding="utf-8"):
                 bad.append(r["tier"])
         print(f"DETERMINISM {'PASS' if not bad else 'FAIL'}（{len(rows)} 档；不一致 {bad}）")
