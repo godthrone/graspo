@@ -73,6 +73,18 @@ def _s(v):
     return v.strip() if isinstance(v, str) else v
 
 
+def is_frozen(doc):
+    """判据② 的阈值是否已冻结（正式判定 vs 仅录读数）。
+
+    顶层 `threshold_frozen: true` 优先；否则回退到跑次自报的
+    `provenance.measurement_pending` 声明（含「已冻结」即视为冻结）。
+    """
+    if doc.get("threshold_frozen") is True:
+        return True
+    mp = ((doc.get("provenance") or {}).get("measurement_pending") or {})
+    return "已冻结" in (str(mp.get("threshold_delta", "")) + str(mp.get("verdict", "")))
+
+
 def norm_parallel(s):
     """把并行展示串归一化为维度元组（tp,pp,dp,nproc,总卡数），用于**语义**身份比对。
 
@@ -314,7 +326,7 @@ def main():
             continue
         # ★ 状态规则（§17.7：「已验证可用」须两条判据同时满足）：
         #   跑次 json 未声明「阈值已冻结」⇒ 判据②无法判定 ⇒ 状态保持「尚未验证」，只录读数。
-        frozen = bool(doc.get("threshold_frozen"))
+        frozen = is_frozen(doc)
         if not frozen:
             new_rows[tier]["status"] = "尚未验证"
             new_rows[tier]["measurement_pending"] = True   # ★ 读数已录、阈值待定（不作判定）
@@ -324,9 +336,15 @@ def main():
                                       ("①「能完整跑完」已通过；" if passed1 else "") +
                                       "②「平台方数据集效果达标」读数已录，★ 阈值 δ 待定 ⇒ 状态暂保持「尚未验证」。")
         else:
-            new_rows[tier]["status"] = "通过" if _s(doc.get("status")) == "通过" else "失败"
+            ok = _s(doc.get("status")) == "通过"
+            new_rows[tier]["status"] = "通过" if ok else "失败"
             new_rows[tier]["measurement_pending"] = False
-            new_rows[tier]["note"] = _s(doc.get("note")) or "阈值已冻结，按两条可用性判据判定。"
+            new_rows[tier].pop("conclusion_annotation", None)   # 新的有效跑次取代旧的「作废参考记录」
+            mp = ((doc.get("provenance") or {}).get("measurement_pending") or {})
+            basis = str(mp.get("threshold_delta", "阈值已冻结"))
+            new_rows[tier]["note"] = _s(doc.get("note")) or (
+                f"判据① ∧ 判据② 均达（{basis}）⇒ 已验证可用。" if ok
+                else f"判据未全达 ⇒ 已验证不可用（{basis}；详见 runs / effect 归因）。")
         new_rows[tier]["run_provenance"] = {
             "produced_by": doc["provenance"]["produced_by"],
             "command": doc["provenance"]["command"],

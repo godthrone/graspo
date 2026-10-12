@@ -249,7 +249,7 @@ def split_elapsed(tp):
     if not tp or tp in ("—",):
         return "—"
     m1 = (re.search(r"墙钟\s*([0-9]{2}:[0-9]{2}:[0-9]{2})", tp)
-          or re.search(r"墙钟\s*([0-9.]+)\s*s", tp))
+          or re.search(r"墙钟\s*([0-9.]+\s*s)", tp))
     m2 = re.search(r"(?:elapsed_sec\s*累计|步内累计)\s*([0-9.]+)\s*s", tp)
     m3 = re.search(r"每步(?:约|平均)?\s*([0-9.]+)\s*s", tp)
     parts = []
@@ -266,6 +266,9 @@ def split_throughput(tp):
     """由跑次读数文本抽出「吞吐」口径（decode / 整步）。抽不到记 '—'（不编造）。"""
     if not tp or tp in ("—",):
         return "—"
+    m0 = re.search(r"本档不适用（([^）]*)）", tp)
+    if m0:
+        return f"不适用（{m0.group(1)}）"      # ★ 如实在注明，⛔ 不填假数
     parts = []
     m1 = re.search(r"((?:decode|解码)\s*[0-9.]+\s*tok/s)", tp) or re.search(r"([0-9.]+\s*tok/s)", tp)
     m2 = re.search(r"(按整步墙钟计\s*[0-9.]+\s*tok/s)", tp)
@@ -371,7 +374,7 @@ def main():
                          " 已通过：" + " / ".join(v["passed_criteria"]) +
                          "。条件：数据集锚点 c202b1e1…、判据 elam-v3-allright-1、温度 0、有效样本 702。")
         else:
-            r["note"] = "—"
+            r["note"] = r.get("note") or "—"      # 已结论档保留回填写入的备注
         r.update(parallel_cols(r, state))
         r["run_path"] = official_run_path(r, state)
         if v:

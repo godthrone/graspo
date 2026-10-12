@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SM = ROOT / "tools/matrix"
 DOCS = ROOT / "docs"
 PY = sys.executable
-RESULT_KEYS = ["peak_mem", "elapsed", "throughput", "effect"]
+RESULT_KEYS = ["peak_mem", "steps_actual", "elapsed", "throughput", "effect"]
 FAKE = {
     "T001": {"status": "已验证可用", "peak_mem": "25.5", "elapsed": "总时长 00:31:20",
              "throughput": "812 tok/s", "effect": "Δ=+0.0 pp（示意）", "note": "示意数据"},
@@ -43,10 +43,10 @@ def main():
         # ① 空数据
         empty = json.loads(json.dumps(data, ensure_ascii=False))
         for r in empty["rows"]:
-            for k in RESULT_KEYS + ["note"]:
+            for k in RESULT_KEYS + ["note", "runs", "inference", "algo_checks", "run_path"]:
                 r[k] = "—"
             r["status"] = "尚未验证"
-            for k in ("verdict", "excluded_reason"):
+            for k in ("verdict", "excluded_reason", "conclusion_annotation", "measurement_pending"):
                 r.pop(k, None)
         ep = tmp / "empty.data.json"
         ep.write_text(json.dumps(empty, ensure_ascii=False, indent=1), encoding="utf-8")

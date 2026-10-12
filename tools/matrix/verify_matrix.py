@@ -265,11 +265,14 @@ def main():
         if st == "未纳入验收" and not r.get("excluded_reason"):
             bad.append((tier, "「未纳入验收」缺逐档理由"))
     # ★ 现状约束：结论与同行参数一一对应 ⇒ 参数更正后旧结论作废；当前只应有「尚未验证 / 未纳入验收」
+    # ★ 现状集合断言改为**数据驱动**（`meta.current_state_expectation`）：
+    #   硬编码"当前只应有 X/Y"会随跑次推进而必须手改（与"只有表格随数据变"相悖）⇒ 缺省不设预期，
+    #   仅保留"取值 ∈ 四态"与"各有其证据"两项校验。项目若确需冻结现状，可在数据里显式声明预期集合。
+    expected_now = (data.get("meta") or {}).get("current_state_expectation")
     present = sorted({r.get("status") for r in data.get("rows", [])})
-    allowed_now = {"尚未验证", "未纳入验收"}
-    # 自证夹具（刻意造出"已结论"态以覆盖渲染/校验路径）豁免该"现状"断言；真实件不受豁免
-    if not (data.get("meta") or {}).get("_selfproof_fixture") and not set(present) <= allowed_now:
-        failures.append(("④C 现状状态集合", f"当前只允许 {sorted(allowed_now)}，实际 {present}（结论需与同行参数对应）"))
+    if expected_now and not (data.get("meta") or {}).get("_selfproof_fixture"):
+        if set(present) - set(expected_now):
+            failures.append(("④C 现状状态集合", f"数据声明预期 {expected_now}，实际 {present}"))
     pend = [r["tier"] for r in data.get("rows", []) if r.get("measurement_pending")]
     for r in data.get("rows", []):
         if r.get("measurement_pending") and "阈值 δ 待定" not in str(r.get("note", "")):
