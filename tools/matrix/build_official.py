@@ -328,10 +328,13 @@ def criteria_caliber():
                     "method": "工具调用准确率（acc）"},
         "criteria_id": "elam-v3-allright-1",
         "threshold": {
-            "name": "delta_pp", "value": 5.0, "unit": "百分点（pp）",
-            "applies_to": "训练类（SFT / CPT / OPD）：判据② = after > base 且 Δ ≥ +5.0 pp",
-            "status": ("★ 训练类阈值已冻结（δ = +5 pp，主席定案）；"
-                       "★ GRASPO(RL) 的 δ_pp 待定 —— 等 5-epoch 的 T028 读数出来后再定。"),
+            "name": "delta_pp", "unit": "百分点（pp）",
+            "value": 5.0,
+            "target": 10.0,
+            "applies_to": ("训练类（SFT / CPT / OPD）与 GRASPO(RL)：判据② = after > base 且 Δ ≥ +5.0 pp"),
+            "status": ("★ 已冻结（主席定案）：**训练类与 GRASPO 的通过线均为 δ = +5.0 pp**；"
+                       "**目标值 = +10.0 pp（仅展示，⛔ 不用于判定）**——"
+                       "Δ 落在 5.0–10.0 之间仍判**通过**，不判不可用。"),
             "historical_note": "该值取代此前跑次所用的临时阈值 20 pp（未冻结，已不再作为判据）。",
         },
         "baseline": {"role": "同档位未训练底座（role=base）",

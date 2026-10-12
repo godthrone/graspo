@@ -108,6 +108,9 @@ def matrix_frozen_map(official_path):
         if val is not None and ("训练类" in applies or "冻结" in status):
             for m in TRAINING_CLASSES:
                 out[m] = float(val)
+        # ★ GRASPO 已按主席定案冻结（阈值 +5.0 pp；目标 +10.0 pp 仅展示、⛔ 不作通过线）
+        if val is not None and "GRASPO" in applies:
+            out["graspo"] = float(val)
     except Exception:
         pass
     return out
