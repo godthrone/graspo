@@ -18,11 +18,15 @@
 
 1. 先看容器：`docker inspect <name> --format '{{.State.Status}} {{.State.ExitCode}}'`
    —— **`running` ⇒ 本次跑次在途，⛔ 不得据此判失败**；
-2. 容器已退：只有 **`mtime >= 本次起跑时刻`** 的产物才算本次的；
-   **早于起跑时刻的，一律视为陈旧，⛔ 不得据此判败**；
-3. 起跑时刻的锚点：runner 起跑时打印
-   `[attempt-start] tier=<T###> launched_at=<UTC> run_dir=<path>`
-   —— 拿它和产物 mtime 比。
+2. 容器已退：只有 **`mtime >= 本次尝试的锚点`** 的产物才算本次的；
+   **早于锚点的，一律视为陈旧，⛔ 不得据此判败**；
+3. ★★ **锚点必须取"本次尝试真正开始的时刻"，首选 `docker inspect … {{.State.StartedAt}}`**，
+   次选 runner 打印的 `[attempt-start] tier=<T###> launched_at=<UTC> run_dir=<path>`。
+   ⛔ **不得只用 launcher 的"末次 `nohup 起跑` 时刻"**——**两次尝试重叠**时它会误判：
+   实测 T033（fix8ep，2026-10-12）attempt1 的 `exit_code` mtime = 15:16:16，
+   而 attempt2 的 `nohup 起跑` = **15:16:05**（更早！）⇒ "≥ 末次起跑"会把它判成"本次"，
+   实际它属于 attempt1。用 **attempt2 容器 `StartedAt` = 15:16:30** 作锚点则正确判定为陈旧。
+   ⇒ **判定优先级：容器 `StartedAt` > `[attempt-start]` 行 > launcher `nohup` 时刻**。
 
 ### 实测事故（2026-10-12，T033）
 
