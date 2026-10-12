@@ -365,6 +365,20 @@ def criteria_caliber():
             "★ 但**可训练补全数是运行期结果**（取决于 retry/perfect_skip），"
             "⇒ **无法从配置先验算出**；⛔ 公式仍不改，维持“native 以实跑 run_cumulative.step 为准”。"),
         },
+            "step_reconciliation": {
+                "nominal": ("**名义步数** = 矩阵按 epoch 口径推导的步数（写入 yaml 的 steps / save_steps）；"
+                            "⛔ 对 native GRASPO 仅为名义值，不是承诺。"),
+                "reconciliation_rule": ("**对账式** = 用运行期量校验实跑步数；两个后端各自复现本后端实际值："
+                                        "① ms-swift（配置式）steps = epochs × (subset × num_generations) / "
+                                        "(micro_batch × grad_accum)；② native（运行期式）steps = "
+                                        "ceil(trainable_completions / (rollout_queue_batch_size × rollout_group_size))，"
+                                        "本仓 Q×G = 8×8 = 64。"),
+                "worked_example": ("T028（native, 5ep）：可训练组 147 × G=8 = **1176** ⇒ ceil(1176/64) = **19** "
+                                   "= 实测 19 ✓；ms-swift 锚 T031（5ep）：5 × (20×8)/(1×1) = **800** = 实测 800 ✓。"),
+                "input_note": ("★ native 对账式**必须**输入运行期量 `trainable_completions`（可训练补全数，"
+                               "取决于 retry / perfect_skip / invalid）⇒ 不可先验计算；回填 json 未提供该字段时，"
+                               "对账记录标为「缺输入 ⇒ 待补」，⛔ 不臆测、⛔ 不硬编码。"),
+            },
         "conclusion_rule": {
             "rule": ("结论必须与同一行的参数一一对应。若一行的参数已被更正，而结论来自旧参数下的跑次 ⇒ "
                      "该结论作废，该档标「尚未验证」；仅在参数冻定后重跑，才可给出「已验证可用 / 已验证不可用」判定。"),
@@ -545,6 +559,8 @@ def main():
             ref = (ann.get("reference_record") or "").strip()
             r["note"] = ("参考记录（" + (ann.get("reason") or "不对应当前行参数")
                          + " ⇒ 判定作废，不作为该档可用/不可用判定）：" + (ref or "—"))
+            if r.get("corrections"):     # ★ 跑次侧的订正说明必须随备注保留（⛔ 不被重建覆盖）
+                r["note"] += " ★ 订正说明（跑次侧）：" + "；".join(str(x) for x in r["corrections"][:3])
             r["conclusion_void_reason"] = ann.get("reason", "")
         elif state == S_EXCLUDED:
             r["note"] = EXCLUDED_REASON

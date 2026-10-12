@@ -61,6 +61,12 @@
     "checkpoint": "save_steps = 推导步数 + 1（大于总步数 ⇒ 只保留最终检查点）。",
     "known_issue": "★★ 登记待修（未修）：推导步数公式对 native GRASPO 不成立，根因已读清：两个后端的 step 语义本就不同。\n① ms-swift：步数 = epochs × (subset × num_generations) / (micro_batch × grad_accum)；锚：T031（5ep）推导 800 = 实际 800 ✓。\n② native：步数 = replay 缓冲区触发次数（optimize.py::_maybe_optimize）；阈值 = rollout_queue_batch_size × rollout_group_size（core/schema.py:458 / ripple/group_decision.py:152），每次仅消耗整组（whole_group_count，组不拆），epoch 尾可有 force 刷尾；★ 与 micro_batch/grad_accum 解耦。\n③ native 锚的正确账（口径订正）：**阈值 = Q×G = 8×8 = 64**（`runs/T028/config.yaml:159-160`；运行期 19/19 步均为 64 }交叉验证）；步数由**可训练补全数**决定：可训练组 147 × 8 = **1176** ⇒ 1176/64 = 18.4 ⇒ **19 步**（末步可含 force_flush），与实测吻合。★ 此前推理中的 ≈29 是 **尝试组/步**（attempt_groups 547/19≈28.8，含 retry/perfect_skip/invalid）—— **不是阈值**；把它当阈值是旧推导 30≠19 的原因（把“尝试组”当成了“可训练组”）。★ 但**可训练补全数是运行期结果**（取决于 retry/perfect_skip），⇒ **无法从配置先验算出**；⛔ 公式仍不改，维持“native 以实跑 run_cumulative.step 为准”。"
    },
+   "step_reconciliation": {
+    "nominal": "**名义步数** = 矩阵按 epoch 口径推导的步数（写入 yaml 的 steps / save_steps）；⛔ 对 native GRASPO 仅为名义值，不是承诺。",
+    "reconciliation_rule": "**对账式** = 用运行期量校验实跑步数；两个后端各自复现本后端实际值：① ms-swift（配置式）steps = epochs × (subset × num_generations) / (micro_batch × grad_accum)；② native（运行期式）steps = ceil(trainable_completions / (rollout_queue_batch_size × rollout_group_size))，本仓 Q×G = 8×8 = 64。",
+    "worked_example": "T028（native, 5ep）：可训练组 147 × G=8 = **1176** ⇒ ceil(1176/64) = **19** = 实测 19 ✓；ms-swift 锚 T031（5ep）：5 × (20×8)/(1×1) = **800** = 实测 800 ✓。",
+    "input_note": "★ native 对账式**必须**输入运行期量 `trainable_completions`（可训练补全数，取决于 retry / perfect_skip / invalid）⇒ 不可先验计算；回填 json 未提供该字段时，对账记录标为「缺输入 ⇒ 待补」，⛔ 不臆测、⛔ 不硬编码。"
+   },
    "conclusion_rule": {
     "rule": "结论必须与同一行的参数一一对应。若一行的参数已被更正，而结论来自旧参数下的跑次 ⇒ 该结论作废，该档标「尚未验证」；仅在参数冻定后重跑，才可给出「已验证可用 / 已验证不可用」判定。",
     "status_wording": "「尚未验证」在本文档中等同「未测试」；宪法 §17.7 的固定取值为「尚未验证」，用词以它为准。"
@@ -1526,6 +1532,13 @@
    "run_path": "RUN-T013",
    "measurement_pending": false,
    "note": "判据① ∧ 判据② 均达（阈值已冻结）⇒ 已验证可用。 ★ LoRA 目标按后端：ms-swift 实测 358 件（language 248 + visual 110）｜native 358 件（language 248 + visual 110）⇒ ★ 两后端覆盖集不相等。",
+   "tree_fingerprint": "6222dcd99daceda6342304e7579229fb2d3e8a4478dec8e38f69e26fc899fc6a",
+   "tree_fingerprint_role": "起跑断言值",
+   "eval_dataset": {
+    "path": "/homedata/test.jsonl",
+    "sha256": "c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a",
+    "samples": 702
+   },
    "elapsed": "总时长 832.7 s",
    "max_epochs": 2,
    "derived_steps": 200,
@@ -2540,7 +2553,7 @@
    "status": "尚未验证",
    "runs": "1/1 真效果训练（native GRASPO LoRA 单卡，5 epoch）：判据① 通过（★ 见步数定案）；判据② 未过（训练类冻结阈值 Δ ≥ +5.0 pp）：实测 Δ=+4.5584 pp < +5.0 pp ⇒ 判「已验证不可用」，★ 未过的是第 2 条（效果不足），非跑次失败。",
    "effect": "—",
-   "inference": "✅ native checkpoint（runsfinal，format=native-lora，manifest 122 项签名）→ `graspo export --config`（export_format=merged-hf）合并为 merged-hf → vLLM v0.22.0（--enable-auto-tool-choice --tool-call-parser qwen3_xml、max-model-len 8192、gpu-mem-util 0.85）→ 固定评测集 702/702 跑完、0 error。base 与 after 分离目录 + fail-closed 断言 + stdout 留证。",
+   "inference": "✅ native checkpoint（runsfinal，format=native-lora，manifest 的 `lora_target_signature.resolved` 122 条（模式/签名条目数；★ 实测实例数 = 358））→ `graspo export --config`（export_format=merged-hf）合并为 merged-hf → vLLM v0.22.0（--enable-auto-tool-choice --tool-call-parser qwen3_xml、max-model-len 8192、gpu-mem-util 0.85）→ 固定评测集 702/702 跑完、0 error。base 与 after 分离目录 + fail-closed 断言 + stdout 留证。",
    "algo_checks": "native GRASPO：跑次侧可观测项通过（exit_code=0、ckpt_retention=ok、torch_probe all_ok=True、final ckpt 在位）。★ 运行期见 batch_high_retry_rate 告警（已定性 ① 正常采样波动：组规模恒 G=8、terminal 恒 ≥8 收敛、墙钟与 attempt 同量级）。",
    "throughput": "—",
    "peak_mem": "—",
@@ -2572,7 +2585,7 @@
     "verdict": "★ 不是「提前收尾」—— epoch_summary 5/5（epoch 0–4）证明 5 个 epoch 全部完成；权威步数计数器 run_cumulative.step = 19。★ 「计划 30 步」系我们的预期公式误差（推导步数 vs 实际步数须并记）。★ 判据①「完整跑完」按 epoch 5/5 判定为成立。"
    },
    "note_extra_steps_formula_issue": "★ 登记待修：'推导步数公式'对 native GRASPO 档不成立（推导 30 vs 实际 19）—— 本轮不顺手改公式，后续单独修。",
-   "note": "参考记录（epoch 口径由 5 改为 8，旧参数下的结论不对应 ⇒ 判定作废，不作为该档可用/不可用判定）：1/1 真效果训练（native GRASPO LoRA 单卡，5 epoch）：判据① 通过（★ 见步数定案）；判据② 未过（训练类冻结阈值 Δ ≥ +5.0 pp）：实测 Δ=+4.5584 pp < +5.0 pp ⇒ 判「已验证不可用」，★ 未过的是第 2 条（效果不足），非跑次失败。；after acc=21.0826%（148/702）；base acc=16.5242%（116/702）；★ Δ=+4.5584 pp（< +5.0 pp 冻结阈值 ⇒ 未过判据②）；★ 目标值 +10.0 pp 仅展示、不作通过线（Δ 落在 5–10 之间才需展示，本档低于 5）。口径：同数据集 sha256 6da72199…、同 criteria、温度 0、702/702 有效、0 error ⇒ 可比性成立。★ 相邻参照：SFT 档 T010/T011/T013 的 Δ 分别为 +13.39/+5.98/+8.55 pp（SFT 阈值同为 +5.0 pp）。",
+   "note": "参考记录（epoch 口径由 5 改为 8，旧参数下的结论不对应 ⇒ 判定作废，不作为该档可用/不可用判定）：1/1 真效果训练（native GRASPO LoRA 单卡，5 epoch）：判据① 通过（★ 见步数定案）；判据② 未过（训练类冻结阈值 Δ ≥ +5.0 pp）：实测 Δ=+4.5584 pp < +5.0 pp ⇒ 判「已验证不可用」，★ 未过的是第 2 条（效果不足），非跑次失败。；after acc=21.0826%（148/702）；base acc=16.5242%（116/702）；★ Δ=+4.5584 pp（< +5.0 pp 冻结阈值 ⇒ 未过判据②）；★ 目标值 +10.0 pp 仅展示、不作通过线（Δ 落在 5–10 之间才需展示，本档低于 5）。口径：同数据集 sha256 6da72199…、同 criteria、温度 0、702/702 有效、0 error ⇒ 可比性成立。★ 相邻参照：SFT 档 T010/T011/T013 的 Δ 分别为 +13.39/+5.98/+8.55 pp（SFT 阈值同为 +5.0 pp）。 ★ 订正说明（跑次侧）：★ 2026-10-12 订正 run_environment.eval_dataset.sha256：6da72199…（= train.jsonl）→ c202b1e1…（= test.jsonl, 702 条）。订正人：BADGE 会话 20261008-105451 · T031 评测执行者（subagent）。依据：228 当场实测 sha256sum + 与本批次 T010T031 eval_report 数据锚交叉一致。★ 本次订正未改动本档任何其他字段、未重跑、未覆盖为新跑次。",
    "tree_fingerprint": "c673b6a2…",
    "tree_fingerprint_role": "起跑断言值",
    "eval_dataset_anchor_correction": "★ 2026-10-12 订正 run_environment.eval_dataset.sha256：6da72199…（= train.jsonl）→ c202b1e1…（= test.jsonl, 702 条）。订正人：BADGE 会话 20261008-105451 · T031 评测执行者（subagent）。依据：228 当场实测 sha256sum + 与本批次 T010T031 eval_report 数据锚交叉一致。★ 本次订正未改动本档任何其他字段、未重跑、未覆盖为新跑次。",
@@ -2587,6 +2600,9 @@
     "reason": "epoch 口径由 5 改为 8，旧参数下的结论不对应",
     "reference_record": "1/1 真效果训练（native GRASPO LoRA 单卡，5 epoch）：判据① 通过（★ 见步数定案）；判据② 未过（训练类冻结阈值 Δ ≥ +5.0 pp）：实测 Δ=+4.5584 pp < +5.0 pp ⇒ 判「已验证不可用」，★ 未过的是第 2 条（效果不足），非跑次失败。；after acc=21.0826%（148/702）；base acc=16.5242%（116/702）；★ Δ=+4.5584 pp（< +5.0 pp 冻结阈值 ⇒ 未过判据②）；★ 目标值 +10.0 pp 仅展示、不作通过线（Δ 落在 5–10 之间才需展示，本档低于 5）。口径：同数据集 sha256 6da72199…、同 criteria、温度 0、702/702 有效、0 error ⇒ 可比性成立。★ 相邻参照：SFT 档 T010/T011/T013 的 Δ 分别为 +13.39/+5.98/+8.55 pp（SFT 阈值同为 +5.0 pp）。"
    },
+   "corrections": [
+    "★ 2026-10-12 订正 run_environment.eval_dataset.sha256：6da72199…（= train.jsonl）→ c202b1e1…（= test.jsonl, 702 条）。订正人：BADGE 会话 20261008-105451 · T031 评测执行者（subagent）。依据：228 当场实测 sha256sum + 与本批次 T010T031 eval_report 数据锚交叉一致。★ 本次订正未改动本档任何其他字段、未重跑、未覆盖为新跑次。"
+   ],
    "voided_conclusion": {
     "conclusion_valid": false,
     "reason": "epoch 口径由 5 改为 8，旧参数下的结论不对应",

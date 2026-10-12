@@ -160,6 +160,24 @@ def matrix_frozen_map(official_path):
     return out
 
 
+def correction_texts(doc, _path=""):
+    """递归找出跑次 json 中所有"订正/口径更正"类字段（键名含 correct/订正/口径更正），返回文本列表。
+
+    ★ 目的：跑次侧的**依据/来源订正**必须如实进入备注与证据链（⛔ 不吞）。
+    """
+    out = []
+    if isinstance(doc, dict):
+        for k, v in doc.items():
+            if any(t in str(k).lower() for t in ("correct", "订正", "口径更正")):
+                if v:
+                    out.append(f"{k}：{v}" if not isinstance(v, str) else v)
+            out.extend(correction_texts(v, _path + "." + str(k)))
+    elif isinstance(doc, list):
+        for x in doc:
+            out.extend(correction_texts(x, _path))
+    return out
+
+
 def run_claimed_pp(doc):
     """从跑次自述里抽其**自报**的阈值（pp）；抽不到 ⇒ None。
 
@@ -426,6 +444,12 @@ def main():
             print(f"FAIL: --void 格式必须是 档号:理由，实际 {spec!r}")
             return 1
         void_map[t.strip()] = why.strip()
+    # ★ 已作废档的"重跑回填"（如跑次侧订正了依据/来源）自动走作废路径，
+    #   避免其"参数已更正"的既成事实被参数对应校验拦下（作废前提本就是参数不对应）。
+    for _r in matrix.get("rows", []):
+        _ann = _r.get("conclusion_annotation") or {}
+        if _ann.get("conclusion_valid") is False and _r.get("tier") not in void_map:
+            void_map[_r["tier"]] = _ann.get("reason", "既有作废记录：结论不对应当前行参数")
     files = sorted(runs_dir.glob("*.json"))
     if only:
         files = [f for f in files if f.stem in only]
@@ -484,7 +508,12 @@ def main():
             }
             new_rows[tier]["status"] = "尚未验证"
             new_rows[tier].pop("measurement_pending", None)
-            new_rows[tier]["note"] = ("参考记录（" + void_map[tier] + "）：" + (ref or "—"))
+            _corrs_v = correction_texts(doc)
+            _vnote = "参考记录（" + void_map[tier] + "）：" + (ref or "—")
+            if _corrs_v:
+                new_rows[tier]["corrections"] = _corrs_v
+                _vnote += " ★ 订正说明（跑次侧）：" + "；".join(_corrs_v[:3])
+            new_rows[tier]["note"] = _vnote
             new_rows[tier]["run_provenance"] = {
                 "produced_by": doc["provenance"]["produced_by"],
                 "command": doc["provenance"]["command"],
@@ -543,6 +572,11 @@ def main():
                 new_rows[tier]["tree_fingerprint_drift"] = ci.get("tree_fingerprint_drift", "起跑值与当场重算不同")
                 note += (" ★ 树指纹（取起跑断言值）：%s…；当场重算 %s…；差异原因见 provenance.code_identity.tree_fingerprint_drift（已如实登记）。"
                          % (str(ci["tree_fingerprint"])[:8], str(ci["tree_fingerprint_remeasured"])[:8]))
+            # ★ 一切"订正/更正"类字段（跑次侧依据/来源订正）⇒ 如实并入备注与数据（通用扫描）
+            _corrs = correction_texts(doc)
+            if _corrs:
+                new_rows[tier]["corrections"] = _corrs
+                note += " ★ 订正说明（跑次侧）：" + "；".join(_corrs[:3])
             # ★ 评测集锚订正（跑次侧当场实测更正）⇒ 如实并入备注与数据
             corr = (doc.get("provenance") or {}).get("eval_dataset_anchor_correction")
             ed = ((doc.get("provenance") or {}).get("run_environment") or {}).get("eval_dataset")
