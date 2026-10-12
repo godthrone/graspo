@@ -370,20 +370,20 @@ def criteria_caliber():
                             "⛔ 对 native GRASPO 仅为名义值，不是承诺。"),
                 "reconciliation_rule": ("**对账式** = 用运行期量校验实跑步数；两个后端各自复现本后端实际值："
                                         "① ms-swift（配置式）steps = epochs × (subset × num_generations) / "
-                                        "(micro_batch × grad_accum)；② native（运行期式）steps = "
+                                        "(micro_batch × grad_accum × nproc)；★ 实测校正：T032（nproc=2, 8ep, subset 20, G 8）"
+                                        "= 8×(20×8)/(1×1)/2 = **640 = 实际 640 ✓**（未除 nproc 的「1280」已被实测否证）；"
+                                        "T031（nproc=1）= 800 ✓ 与新式自洽；② native（运行期式）steps = "
                                         "floor(trainable_completions / (rollout_queue_batch_size × rollout_group_size)) "
                                         "+ (force_flush 步数)，本仓 Q×G = 8×8 = 64。"
                                         "★ **带 flush 修正项**：实测 T029 的 22 步里有多次「不足一组的 flush」"
                                         "（per-step = 64,56,56,56,56,48,56,32,48,64×7,48,32,40,56…，Σpartial=1224）"
                                         "⇒ `ceil(Σ/(Q×G)) = 20 < 实际 22` ⇒ **一次性 ceil 会低估**，必须写成"
                                         "`floor(Σ/(Q×G)) + flush 步数`。"),
-                "worked_example": ("① T028（native, 5ep）：可训练组 147 × G=8 = **1176** ⇒ floor(1176/64) = 18 "
-                                   "+ **1**（末步 flush）= **19** = 实测 19 ✓；"
-                                   "② T029（native, 5ep, 反例）：Σpartial = **1224** ⇒ floor(1224/64) = 20 "
-                                   "+ **2** = **22** = 实测 22 ✓（一次性 ceil 会给 20 ⇒ 低估）；"
-                                   "③ ms-swift 锚 T031（5ep）：5 × (20×8)/(1×1) = **800** = 实测 800 ✓；"
-                                   "④ **SFT 配置式已双档核对**：T010 200 / T011 100 / T012 50 / T013 200 均 = 实际 ✓。"),
-                "input_note": ("★ native 对账式**必须**输入运行期量 `trainable_completions`（可训练补全数，"
+                "worked_example": ("① T028（native, dp=1, 5ep）：可训练组 147 × G=8 = 1176 ⇒ floor(1176/64) = 18 + 1（末步 flush）= **19 = 实测 19 ✓**；"
+                                   "② T029（native, **dp=2**, 5ep）：Σ `trainable_completions` = **1240** ⇒ ceil(1240/64) = 20 "
+                                   "⇒ ★ **≠ 实际 23，差 −3 ⇒ 不吻合，如实记差**（⛔ 不为凑吻合改公式、⛔ 不写死 23）；"
+                                   "★ **假设（明确标为假设，未证实）**：`dp>1` 时阈值可能**按 rank 生效**（Q×G per rank）"
+                                   "⇒ 需更多 dp>1 实测样本才能定论。③ ms-swift 锚与 SFT 四档核对见上。"),                "input_note": ("★ native 对账式**必须**输入运行期量 `trainable_completions`（可训练补全数，"
                                "取决于 retry / perfect_skip / invalid）⇒ 不可先验计算；回填 json 未提供该字段时，"
                                "对账记录标为「缺输入 ⇒ 待补」，⛔ 不臆测、⛔ 不硬编码。"),
             },
@@ -401,6 +401,12 @@ def criteria_caliber():
                 "★ 用途：供「基准散布 / 阈值余量」判断；★ **δ 判定不变，⛔ 不因此改阈值**。",
             ],
             "caliber_corrections": [
+                "★★ **锚点纠正（按「起跑断言值」，两处）**：`T029` ⇒ 起跑断言 **`db209997…`**（现测 `1335546a…`，post-launch 漂移）；"
+                "`T032` ⇒ 起跑断言 **`ea930330…`**（现测 `820fb5a5…`）—— ★ 指挥部此前转来的 `8020010f…` 在该树 "
+                "`launch.log` / `.env.sh` / `status-T032/` 及**全树 grep 中均查无**，**无法佐证**，如实登记；"
+                "★ 一律**以起跑断言值为锚**。",
+                "★ **native 档自动评测流程统一用 `graspo export --config`**（T029 首轮在 `eval export --eval-config` 处 fail-fast，"
+                "已改续跑脚本后成功）。",
                 "★★ **坑（务必防错位）：228 上存在两个 T010 跑次** —— `graspo-batch2-20261012/runs/T010` = **1ep/100 步**"
                 "（对应已作废的 1-epoch 口径）；`graspo-batch3-20261012/runs/T010` = **2ep/200 步/Δ=+13.39 pp/指纹 `e57a5701…`**"
                 "⇒ ★ **本矩阵的 T010 一律以 batch3 为准**；原 json 的 `run_path` 曾错指 batch2、"

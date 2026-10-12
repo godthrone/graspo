@@ -47,7 +47,8 @@ PARAM_IDENTITY_KEYS = ["model", "algo", "mode", "backend", "parallel"]
 #: ★ 严格比对集（防「跑 A 填 B」的身份事实）：身份键 + 并行维度 + lr
 PARAM_KEYS_V3 = ["model", "algo", "mode", "backend", "parallel", "lr"]
 #: ★ "训练身份"字段：**比归一化后的语义值**（⛔ 不比展示串/散文）
-PARAM_SEMANTIC_KEYS = ["lora_target", "target_modules", "data_subset", "steps", "switches"]
+# ★ `steps` 不列入严格比对：它是**名义/派生值**且正在被公式纠正（json 可能仍带旧推导）⇒ 其核算由 step_count_reconciliation 负责
+PARAM_SEMANTIC_KEYS = ["lora_target", "target_modules", "data_subset", "switches"]
 #: ★ 仅登记不判错（纯散文/口径说明）
 PARAM_INFO_KEYS = []
 
