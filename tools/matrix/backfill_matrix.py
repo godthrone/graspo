@@ -509,7 +509,9 @@ def main():
         _corr = (doc.get("provenance") or {}).get("eval_dataset_anchor_correction")
         _corrs_now = correction_texts(doc)
         _corr_changed = bool(_corrs_now) and new_rows[tier].get("corrections") != _corrs_now
-        _missing_new = bool(_corr) and not new_rows[tier].get("eval_dataset_anchor_correction")
+        _missing_new = (bool(_corr) and not new_rows[tier].get("eval_dataset_anchor_correction")) or any(
+            doc.get(_k) and not new_rows[tier].get(_k)
+            for _k in ("p5p6_readings", "anomalies", "step_count_reconciliation"))
         if (tier not in void_map and prev.get("source_sha256") == src_sha
                 and not any(changed.values()) and not _missing_new and not _corr_changed):
             skipped.append(tier)
@@ -572,6 +574,10 @@ def main():
                    if k.startswith("caveat") and v]
             if cav:
                 note += " 如实说明：" + "；".join(cav)
+            # ★ 结构化"标准交付项"：P5/P6 六项 / 异常（非字符串 ⇒ 不塞 RESULT_KEYS，单独随件入库）
+            for _k in ("p5p6_readings", "anomalies"):
+                if doc.get(_k):
+                    new_rows[tier][_k] = doc[_k]
             scr = doc.get("step_count_reconciliation")
             if not ok and scr:
                 new_rows[tier]["step_count_reconciliation"] = scr

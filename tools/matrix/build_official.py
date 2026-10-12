@@ -377,7 +377,7 @@ def criteria_caliber():
                                         "① ms-swift（配置式）steps = epochs × (subset × num_generations) / "
                                         "(micro_batch × grad_accum × nproc)；★ 实测校正：T032（nproc=2, 8ep, subset 20, G 8）"
                                         "= 8×(20×8)/(1×1)/2 = **640 = 实际 640 ✓**（未除 nproc 的「1280」已被实测否证）；"
-                                        "T031（nproc=1）= 800 ✓ 与新式自洽；② native（运行期式）steps = "
+                                        "T031（nproc=1）= 800 ✓；T033（nproc=4）= 8×20×8/4 = 320 ✓ ⇒ ★ **/nproc 形式已在 nproc=1/2/4 三锚验证**（T031 800 / T032 640 / T033 320）；② native（运行期式）steps = "
                                         "floor(trainable_completions / (rollout_queue_batch_size × rollout_group_size)) "
                                         "+ (force_flush 步数)，本仓 Q×G = 8×8 = 64。"
                                         "★ **带 flush 修正项**：实测 T029 的 22 步里有多次「不足一组的 flush」"
@@ -406,6 +406,14 @@ def criteria_caliber():
                 "★ 用途：供「基准散布 / 阈值余量」判断；★ **δ 判定不变，⛔ 不因此改阈值**。",
             ],
             "caliber_corrections": [
+                "★★ **runner 日志跨版本交错 ⇒ 不可用作判据**：`status-T033/train.T033.stdout.log` 里**新版 runner 的行在前**、"
+                "**旧版 runner 的 `ckpt-retention FATAL` / `torch-probe SKIP` 行在后**（来自第一次尝试的旧树 `3df0a7de…`）"
+                "⇒ ★ **判成败一律用三件**：`exit_code` + `ckpt_retention.state` + `torch_probe.json`（配锚点时间序）。",
+                "★★ **`batch_high_retry_rate` 代理与真值矛盾（已证）**：代理（classify_group retry **33/36 = 0.917 ≥ 0.5**）"
+                "**说触发**，而**指标实测 0 次触发** ⇒ **代理分母 ≠ 指标分母**；★ 真值到手前该列必须标「**缺输入 ⇒ 待补**」，"
+                "**⛔ 不得用代理冒充真值**。",
+                "★ **T033 树指纹无漂移**：起跑断言 **`820fb5a5…` = 评测期间现测值**；第一次尝试的旧树 **`3df0a7de…`** "
+                "已登记为 `first_attempt_fingerprint`。",
                 "★★ **锚点纠正（按「起跑断言值」，两处）**：`T029` ⇒ 起跑断言 **`db209997…`**（现测 `1335546a…`，post-launch 漂移）；"
                 "`T032` ⇒ 起跑断言 **`ea930330…`**（现测 `820fb5a5…`）—— ★ 指挥部此前转来的 `8020010f…` 在该树 "
                 "`launch.log` / `.env.sh` / `status-T032/` 及**全树 grep 中均查无**，**无法佐证**，如实登记；"
@@ -561,6 +569,17 @@ def main():
                                      "（122 为签名/模式条目数）⇒ ★ 两后端**实例数相同但命中集合不同（不等价）**。"
                                      % (lb["msswift"]["coverage"]["total"], lb["msswift"]["coverage"]["language"],
                                         lb["msswift"]["coverage"]["visual"], lb["native"]["coverage"]["total"]))
+        # ★ P5/P6 六项（标准交付项）⇒ 逐档结构化备注段（逐项可读；"待补"如实标）
+        _p = r.get("p5p6_readings")
+        if _p:
+            _lab = {"1_group_integrity": "① 组完整性恒等式", "2_retry_count": "② retry_count 真值",
+                    "3_group_decision_distribution": "③ 组决策分布", "4_reward_alignment": "④ 奖励对齐",
+                    "5_steps_mapping": "⑤ steps 映射", "6_batch_high_retry_rate": "⑥ batch_high_retry_rate"}
+            _seg = " ｜ ".join(f"{v}：{_p[k]}" for k, v in _lab.items() if _p.get(k))
+            r["p5p6"] = _seg
+            if _seg:
+                r["note"] = ((r.get("note") or "") + " ★★ P5/P6 六项对账：" + _seg)
+
         # ★ 实跑步数（有跑次记录即填，含"作废参考记录"）
         scr = r.get("step_count_reconciliation") or {}
         if scr.get("actual_steps") is not None:
