@@ -144,8 +144,18 @@ def validate_run(doc, tier_from_file, tier_rows):
     return errs
 
 
+TOOL_DIR = Path(__file__).resolve().parent
+
+
 def run_cmd(args):
-    p = subprocess.run([sys.executable] + args, capture_output=True, text=True)
+    """运行同目录工具脚本；脚本名按本文件所在目录解析（可从仓库根调用）。"""
+    argv = [sys.executable]
+    for i, x in enumerate(args):
+        if i < 2 and x.endswith(".py") and not Path(x).is_absolute() and (TOOL_DIR / x).exists():
+            argv.append(str(TOOL_DIR / x))
+        else:
+            argv.append(x)
+    p = subprocess.run(argv, capture_output=True, text=True)
     return p.returncode, (p.stdout or "") + (p.stderr or "")
 
 
@@ -166,6 +176,12 @@ def main():
     ap.add_argument("--html-out", default="capability-matrix-new.html")
     ap.add_argument("--ledger-out", default="backfill-ledger.md")
     ap.add_argument("--only", default=None, help="只回填这些档号，逗号分隔（增量）")
+    ap.add_argument("--official-data", default="docs/capability-matrix.data.json",
+                    help="正式机读件（由 build_official.py 从内部数据派生）")
+    ap.add_argument("--official-html", default="docs/capability-matrix.html",
+                    help="正式人读视图（由 render_matrix.py 派生）")
+    ap.add_argument("--version", default=None)
+    ap.add_argument("--date", default=None)
     ap.add_argument("--dry-run", action="store_true", help="只校验与报告，不写任何文件")
     a = ap.parse_args()
 
@@ -227,7 +243,8 @@ def main():
         tier = doc["tier"]
         src_sha = sha256_file(f)
         prev = new_rows[tier].get("run_provenance") or {}
-        changed = {k: new_rows[tier].get(k) != _s(doc[k]) for k in RESULT_KEYS}
+        # 幂等判据：只比"读数"；★ status 不由跑次 json 直接决定（阈值未冻结时保持「尚未验证」），故排除
+        changed = {k: new_rows[tier].get(k) != _s(doc[k]) for k in RESULT_KEYS if k != "status"}
         if prev.get("source_sha256") == src_sha and not any(changed.values()):
             skipped.append(tier)
             ledger_rows.append(f"| {now} | `{tier}` | `{f.name}` | `{src_sha[:12]}` | "
@@ -235,6 +252,21 @@ def main():
             continue
         for k in RESULT_KEYS:
             new_rows[tier][k] = _s(doc[k])
+        # ★ 状态规则（§17.7：「已验证可用」须两条判据同时满足）：
+        #   跑次 json 未声明「阈值已冻结」⇒ 判据②无法判定 ⇒ 状态保持「尚未验证」，只录读数。
+        frozen = bool(doc.get("threshold_frozen"))
+        if not frozen:
+            new_rows[tier]["status"] = "尚未验证"
+            new_rows[tier]["measurement_pending"] = True   # ★ 读数已录、阈值待定（不作判定）
+            new_rows[tier].pop("conclusion_annotation", None)   # 新读数取代旧「作废参考记录」注记
+            passed1 = _s(doc.get("status")) == "通过"
+            new_rows[tier]["note"] = ("读数为实测记录，⛔ 暂不作判定：" +
+                                      ("①「能完整跑完」已通过；" if passed1 else "") +
+                                      "②「平台方数据集效果达标」读数已录，★ 阈值 δ 待定 ⇒ 状态暂保持「尚未验证」。")
+        else:
+            new_rows[tier]["status"] = "通过" if _s(doc.get("status")) == "通过" else "失败"
+            new_rows[tier]["measurement_pending"] = False
+            new_rows[tier]["note"] = _s(doc.get("note")) or "阈值已冻结，按两条可用性判据判定。"
         new_rows[tier]["run_provenance"] = {
             "produced_by": doc["provenance"]["produced_by"],
             "command": doc["provenance"]["command"],
@@ -267,29 +299,42 @@ def main():
     # ---- ③④ 先写临时件 ⇒ 渲染 ⇒ 逐字节校验 ⇒ PASS 才落盘 ----
     tmp = Path(tempfile.mkdtemp(prefix=".backfill-tmp-", dir=str(data_out.parent or Path("."))))
     try:
-        tmp_data, tmp_html = tmp / "data.json", tmp / "out.html"
+        tmp_data, tmp_off, tmp_html = tmp / "internal.json", tmp / "official.json", tmp / "out.html"
         tmp_data.write_text(json.dumps(new_matrix, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+        # 内部数据 ⇒ 正式机读件（四态 / epoch / 派生步数 等派生逻辑在 build_official 内）
+        bo = ["build_official.py", "--in", str(tmp_data), "--out", str(tmp_off)]
+        if a.version:
+            bo += ["--version", a.version]
+        date = a.date or (matrix.get("meta") or {}).get("backfill", {}).get("last_run", "")[:10] or None
+        if date:
+            bo += ["--date", date]
+        rc, out = run_cmd(bo)
+        if rc != 0:
+            print(f"FAIL: 正式机读件生成失败\n{out}")
+            return 1
         rc, out = run_cmd(["render_matrix.py", "--template", str(a.template),
-                           "--data", str(tmp_data), "--out", str(tmp_html)])
+                           "--data", str(tmp_off), "--out", str(tmp_html)])
         if rc != 0:
             print(f"FAIL: 渲染失败\n{out}")
             return 1
         rc, out = run_cmd(["verify_matrix.py", "--template", str(a.template),
-                           "--data", str(tmp_data), "--html", str(tmp_html), "--allow-filled"])
+                           "--data", str(tmp_off), "--html", str(tmp_html)])
         print(out.strip())
         if rc != 0:
             print("FAIL: 校验未通过 ⇒ **不落盘**（交付件与数据保持原样）")
             return 1
 
-        data_out.parent.mkdir(parents=True, exist_ok=True)
-        html_out.parent.mkdir(parents=True, exist_ok=True)
+        for f in (data_out, Path(a.official_data), Path(a.official_html)):
+            f.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(tmp_data, data_out)
-        shutil.copyfile(tmp_html, html_out)
+        shutil.copyfile(tmp_off, Path(a.official_data))
+        shutil.copyfile(tmp_html, Path(a.official_html))
         ledger_rows = [r.replace("| 见下 |", "| ✅ PASS |") for r in ledger_rows]
         append_ledger(ledger_out, ledger_rows)
-        print(f"OK: 回填 {len(filled)} 档 ⇒ {data_out} / {html_out}；台账 +{len(ledger_rows)} 行 ⇒ {ledger_out}")
-        print(f"    data sha256 = {sha256_file(data_out)}")
-        print(f"    html sha256 = {sha256_file(html_out)}")
+        print(f"OK: 回填 {len(filled)} 档 ⇒ {data_out}（内部）/ {a.official_data} / {a.official_html}；"
+              f"台账 +{len(ledger_rows)} 行 ⇒ {ledger_out}")
+        print(f"    official data sha256 = {sha256_file(Path(a.official_data))}")
+        print(f"    official html sha256 = {sha256_file(Path(a.official_html))}")
         return 0
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

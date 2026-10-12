@@ -248,12 +248,18 @@ def main():
             if r.get("note") in ("", "—", None):
                 bad.append((tier, "已结论档缺「备注」归因"))
         else:
-            skip = {"steps_actual"} if r.get("voided_conclusion") else set()
+            if r.get("measurement_pending"):
+                skip = set(RESULT_KEYS)          # 读数已录、阈值待定 ⇒ 允许带读数
+            elif r.get("voided_conclusion"):
+                skip = {"steps_actual"}          # 作废参考记录 ⇒ 只允许保留实跑步数
+            else:
+                skip = set()                     # 纯「尚未验证」⇒ 不得带任何读数
             nz = [k for k in RESULT_KEYS if k not in skip and r.get(k) not in ("", "—", None)]
             if nz:
                 bad.append((tier, f"「{st}」却带实验数据 {nz}"))
-            if r.get("note") not in ("", "—", None) and st == "尚未验证" and not r.get("voided_conclusion"):
-                bad.append((tier, "「尚未验证」却带备注（且无作废注记）"))
+            if (r.get("note") not in ("", "—", None) and st == "尚未验证"
+                    and not (r.get("voided_conclusion") or r.get("measurement_pending"))):
+                bad.append((tier, "「尚未验证」却带备注（且无作废/待定注记）"))
         if st == "未纳入验收" and not r.get("excluded_reason"):
             bad.append((tier, "「未纳入验收」缺逐档理由"))
     # ★ 现状约束：结论与同行参数一一对应 ⇒ 参数更正后旧结论作废；当前只应有「尚未验证 / 未纳入验收」
@@ -262,6 +268,10 @@ def main():
     # 自证夹具（刻意造出"已结论"态以覆盖渲染/校验路径）豁免该"现状"断言；真实件不受豁免
     if not (data.get("meta") or {}).get("_selfproof_fixture") and not set(present) <= allowed_now:
         failures.append(("④C 现状状态集合", f"当前只允许 {sorted(allowed_now)}，实际 {present}（结论需与同行参数对应）"))
+    pend = [r["tier"] for r in data.get("rows", []) if r.get("measurement_pending")]
+    for r in data.get("rows", []):
+        if r.get("measurement_pending") and "阈值 δ 待定" not in str(r.get("note", "")):
+            bad.append((r.get("tier"), "读数已录但备注未写明「阈值 δ 待定」"))
     if bad:
         failures.append(("④C 验证状态四态一致性", f"不一致 {len(bad)} 档（前 5）: {bad[:5]}"))
     if a.expect_empty and filled:

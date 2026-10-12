@@ -243,13 +243,17 @@ def split_elapsed(tp):
     """由跑次读数文本抽出「耗时」口径（总时长 / 步内累计）。抽不到记 '—'（不编造）。"""
     if not tp or tp in ("—",):
         return "—"
-    m1 = re.search(r"墙钟\s*([0-9]{2}:[0-9]{2}:[0-9]{2})", tp)
-    m2 = re.search(r"elapsed_sec\s*累计\s*([0-9.]+)\s*s", tp)
+    m1 = (re.search(r"墙钟\s*([0-9]{2}:[0-9]{2}:[0-9]{2})", tp)
+          or re.search(r"墙钟\s*([0-9.]+)\s*s", tp))
+    m2 = re.search(r"(?:elapsed_sec\s*累计|步内累计)\s*([0-9.]+)\s*s", tp)
+    m3 = re.search(r"每步(?:约|平均)?\s*([0-9.]+)\s*s", tp)
     parts = []
     if m2:
-        parts.append(f"步内 elapsed 累计 {m2.group(1)} s")
+        parts.append(f"步内累计 {m2.group(1)} s")
     if m1:
         parts.append(f"总时长 {m1.group(1)}")
+    if m3:
+        parts.append(f"每步约 {m3.group(1)} s")
     return "；".join(parts) if parts else "—"
 
 
@@ -258,7 +262,7 @@ def split_throughput(tp):
     if not tp or tp in ("—",):
         return "—"
     parts = []
-    m1 = re.search(r"(decode\s*[0-9.]+\s*tok/s)", tp)
+    m1 = re.search(r"((?:decode|解码)\s*[0-9.]+\s*tok/s)", tp) or re.search(r"([0-9.]+\s*tok/s)", tp)
     m2 = re.search(r"(按整步墙钟计\s*[0-9.]+\s*tok/s)", tp)
     if m1:
         parts.append(m1.group(1))
@@ -311,7 +315,9 @@ def main():
         r.pop("spec_status", None)
 
         v = verdict_of(r, state)
-        concluded = state in CONCLUDED
+        # ★ 读数已录但阈值未定（measurement_pending）⇒ 保留读数列，状态仍「尚未验证」（读数不作判定）
+        pending = bool(r.get("measurement_pending"))
+        concluded = (state in CONCLUDED) or pending
         # 实验数据四列：只有已结论档才有读数；其余记 '—'
         if concluded:
             tp_raw = r.get("throughput", "—")
@@ -345,7 +351,9 @@ def main():
         else:
             r["data_scale"] = "—"
         # 备注：失败归因（未过判据 + 已通过项 + 条件） / 未纳入验收理由
-        if voided:
+        if pending:
+            r["note"] = r.get("note") or ("读数已录、★ 阈值 δ 待定 ⇒ 状态暂保持「尚未验证」（读数不作判定）。")
+        elif voided:
             ref = (ann.get("reference_record") or "").strip()
             r["note"] = ("参考记录（旧配方；不对应当前行参数 ⇒ 判定作废，不作为该档可用/不可用判定）："
                          + (ref or "—"))
