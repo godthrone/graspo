@@ -235,10 +235,13 @@ def compare_parallel(js, ts):
     return errs
 
 
-def validate_run(doc, tier_from_file, tier_rows, frozen_map=None, ref_rows_official=None):
+def validate_run(doc, tier_from_file, tier_rows, frozen_map=None, ref_rows_official=None, void_tiers=None):
     """严格校验一份跑次 json。返回错误列表（空 = 合法）。"""
     if not isinstance(doc, dict):
         return ["顶层不是 JSON 对象"]
+    # ★ 显式作废档：参数已更正 ⇒ **跳过"参数/阈值对应"校验**（只保留结构校验），
+    #   其结论按"参考记录"留存（§结论与参数一一对应：不对应 ⇒ 作废，而非报错）。
+    _voided = bool(void_tiers) and tier_from_file in void_tiers
     errs = [f"缺字段 {k!r}" for k in REQUIRED_TOP if k not in doc]
     if errs:
         return errs
@@ -268,7 +271,7 @@ def validate_run(doc, tier_from_file, tier_rows, frozen_map=None, ref_rows_offic
                 errs.append(f"params 缺身份键 {k!r}")
             elif not isinstance(v, str) or not v:
                 errs.append(f"params.{k} 为空")
-        if tier in tier_rows:
+        if tier in tier_rows and not _voided:
             ref = tier_rows[tier]
             for k in PARAM_KEYS_V3:
                 if k not in p or _s(p.get(k)) is None:
@@ -308,7 +311,7 @@ def validate_run(doc, tier_from_file, tier_rows, frozen_map=None, ref_rows_offic
             errs.append(f"status=通过 但 {k!r} 仍是占位符 '—'（不许半填）")
 
     # --- ★ 阈值信任边界：阈值只能来自矩阵冻结口径；跑次自述仅作交叉核对，不一致即拒绝 ---
-    if tier in tier_rows and frozen_map is not None:
+    if tier in tier_rows and frozen_map is not None and not _voided:
         method = str(tier_rows[tier].get("train_method", "")).lower()
         frozen_pp = frozen_map.get(method)
         claimed = run_claimed_pp(doc)
@@ -438,7 +441,7 @@ def main():
         except json.JSONDecodeError as e:
             all_errs.append((f, [f"JSON 解析失败: {e}"]))
             continue
-        errs = validate_run(doc, f.stem, tier_rows, frozen_map, ref_rows_official)
+        errs = validate_run(doc, f.stem, tier_rows, frozen_map, ref_rows_official, set(void_map))
         if errs:
             all_errs.append((f, errs))
         else:
@@ -465,7 +468,8 @@ def main():
         changed = {k: new_rows[tier].get(k) != _s(doc[k]) for k in RESULT_KEYS if k != "status"}
         _corr = (doc.get("provenance") or {}).get("eval_dataset_anchor_correction")
         _missing_new = bool(_corr) and not new_rows[tier].get("eval_dataset_anchor_correction")
-        if prev.get("source_sha256") == src_sha and not any(changed.values()) and not _missing_new:
+        if (tier not in void_map and prev.get("source_sha256") == src_sha
+                and not any(changed.values()) and not _missing_new):
             skipped.append(tier)
             ledger_rows.append(f"| {now} | `{tier}` | `{f.name}` | `{src_sha[:12]}` | "
                                f"{doc['status']} | — | 跳过：同源 sha（`{src_sha[:12]}`）已回填，幂等 |")

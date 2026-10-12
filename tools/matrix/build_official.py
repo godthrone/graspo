@@ -162,7 +162,7 @@ def parallel_cols(r, state):
 
 
 #: ★ epoch 口径（主席裁定）：SFT / CPT / OPD = 1；GRASPO(RL) = 3（RL 需要更多 epoch 才能看到效果）
-EPOCHS_BY_METHOD = {"sft": 2, "cpt": 2, "opd": 2, "graspo": 5}
+EPOCHS_BY_METHOD = {"sft": 2, "cpt": 2, "opd": 2, "graspo": 8}
 
 #: ★ 取消"计划步数上限"：步数由 数据量 × epoch 推导，不设人为上限
 STEPS_POLICY = "步数 = epoch 数 × 每 epoch 推导步数（由数据量与批大小推导）；⛔ 不设人为步数上限（无 max_steps 约束）。"
@@ -340,12 +340,10 @@ def criteria_caliber():
         "baseline": {"role": "同档位未训练底座（role=base）",
                      "caliber": "U2 终点窗口 = 末段 max(3, 10% 步数) 步的均值；该档的 epoch 数与推导步数见档位「步数/epoch」子项。"},
         "epoch_policy": {
-            "by_method": ("SFT / CPT / OPD = 2 epoch；GRASPO(RL) = 5 epoch。理由：跨 epoch 容易出问题（循环结构决定）⇒ 2 epoch 正好覆盖一次 epoch 边界，这正是要压的地方；RL 需要更多 epoch 才能看到效果。"),
+            "by_method": ("SFT / CPT / OPD = 2 epoch（⛔ 不动）；GRASPO(RL) = 8 epoch（主席令；若 8 仍不过线则升 10 为后备；理由：RL 耗时长、5 epoch 下效果仅差 0.44 pp 未过线）。理由：跨 epoch 容易出问题（循环结构决定）⇒ 2 epoch 正好覆盖一次 epoch 边界，这正是要压的地方；RL 需要更多 epoch 才能看到效果。"),
             "steps": STEPS_POLICY + " 推导式：steps = epoch 数 × 每 epoch 步数（每 epoch 步数由数据量与批大小推导）。",
             "checkpoint": "save_steps = 推导步数 + 1（大于总步数 ⇒ 只保留最终检查点）。",
-            "known_issue": ("★ 登记待修：「推导步数公式」对 **native GRASPO** 档不成立"
-                            "（T028 实测：推导 30 vs 实际 19 optimizer step；epoch_summary 5/5 证明 5 个 epoch 全部完成，"
-                            "「计划 30 步」系预期公式误差）。本轮**不顺手改公式**，后续单独修。"),
+            "known_issue": ("★★ 登记待修（**未修**）：「推导步数公式」对 **native GRASPO 单卡/小数据子集** 不成立。双锚实证：① **T031（ms-swift，5ep）推导 800 = 实际 800** ✓（= 5 × 20×8/(1×1)）；② **T028（native，5ep）推导 30 vs 实际 19** ✗（epoch_summary 5/5 证明 5 个 epoch 全部完成 ⇒ 非提前收尾，系公式对 native GRASPO 的 step 语义失配）。★ 本轮**只登记、⛔ 不猜改公式**（native 的 step 语义需读其训练循环口径）。★ 暂行口径：native GRASPO 档的步数**以实跑 `run_cumulative.step` 为准**，推导值仅作名义值。"),
         },
         "conclusion_rule": {
             "rule": ("结论必须与同一行的参数一一对应。若一行的参数已被更正，而结论来自旧参数下的跑次 ⇒ "
