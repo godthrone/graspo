@@ -471,6 +471,36 @@ fi
 RUN_DIR="$RUN_ROOT/$TIER"
 mkdir -p "$RUN_DIR/subsets"
 
+# ★ B11（2026-10-12，主席批准）：**同一 tier 重跑必须先清场**。
+#   为什么：`exit_code` / `ckpt_retention.state` / `torch_probe.json` / `stdout.log`
+#   都是**跑后**才写的产物。重跑复用同一个 `$RUN_DIR` 而不清理 ⇒ 新跑次**仍在途**时
+#   读到的是**上一轮**的产物 ⇒ **假失败**（228 实测：T033 第二次起跑被第一次尝试
+#   `nostalgic_lederberg` 39 s 退出留下的 `exit_code=1` 误判为失败，详见
+#   `.local/.../task-t033-diagnosis/report.md`）。
+#   语义：把上一轮这些**具名**产物**移入** `$RUN_DIR/attempt-<UTC 时间戳>/`——
+#   ⛔ 不用通配符、⛔ 不删任何其他文件、⛔ 不触碰训练输出目录（`$RUN_DIR/$TIER`）。
+#   ★ 判据同时修正（运行纪律，见 docs/run-discipline.md）：
+#     **容器 `Status=running` 优先于 `exit_code` 文件**；且只有 `mtime >= 本次起跑时刻`
+#     的产物才算本次的，早于起跑的**一律视为陈旧、不得据此判败**。
+STALE_POST_RUN_ARTIFACTS=(exit_code ckpt_retention.state torch_probe.json stdout.log)
+if [ -d "$RUN_DIR" ]; then
+    stale_found=()
+    for stale_name in "${STALE_POST_RUN_ARTIFACTS[@]}"; do
+        if [ -e "$RUN_DIR/$stale_name" ]; then
+            stale_found+=("$stale_name")
+        fi
+    done
+    if [ "${#stale_found[@]}" -gt 0 ]; then
+        stale_archive="$RUN_DIR/attempt-$(date -u +%Y%m%dT%H%M%SZ)"
+        mkdir -p "$stale_archive"
+        for stale_name in "${stale_found[@]}"; do
+            mv -- "$RUN_DIR/$stale_name" "$stale_archive/$stale_name"
+        done
+        echo "[stale-clear] 上一轮跑后产物已移入 $stale_archive ：${stale_found[*]}"
+    fi
+fi
+echo "[attempt-start] tier=$TIER launched_at=$(date -u +%Y-%m-%dT%H:%M:%SZ) run_dir=$RUN_DIR"
+
 # 3) 生成训练子集：只取门槛下限（SFT ≥100 / RL ≥20），不整集跑。
 # 3a) **读取源**（← 与 `data.train_path` 无关）：默认 mini 数据集（跑通用），
 #     可用 `GRASPO_ELAM_MINI_JSONL` 覆盖；切回源数据见文件头「数据」段注释。

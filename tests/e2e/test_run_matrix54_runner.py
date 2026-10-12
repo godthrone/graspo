@@ -2908,3 +2908,63 @@ def test_determinism_guard_empty_string_is_treated_as_off(tmp_path: Path, monkey
     argv = (tmp_path / "worker_argv.txt").read_text(encoding="utf-8").splitlines()
     assert "--determinism-spec" not in argv, argv
     assert "GRASPO_DETERMINISM 未设置" in completed.stderr
+
+
+# ══ B11：重跑清场（防"旧产物被误读成本次失败"）═══════════════════════════════
+
+
+def test_rerun_archives_the_previous_attempt_post_run_artifacts(tmp_path: Path):
+    """★B11 核心回归：同一 tier 重跑 ⇒ 上一轮**跑后产物**必须先移入 ``attempt-<ts>/``。
+
+    实测事故（228，2026-10-12）：T033 第二次起跑时，第一次尝试（`nostalgic_lederberg`，
+    39 s 退出）留在**同一个** ``runs/T033/`` 的 ``exit_code=1`` 被读成"本次失败"。
+    本用例钉住：清场发生、旧内容**逐字**进归档、新跑次写下的是**本次**的 ``exit_code``。
+    """
+    run_dir = tmp_path / "runs" / "T010"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    stale = {
+        "exit_code": "137\n",
+        "ckpt_retention.state": "FATAL\n",
+        "torch_probe.json": '{"all_ok": false}\n',
+        "stdout.log": "OLD ATTEMPT\n",
+    }
+    for name, body in stale.items():
+        (run_dir / name).write_text(body, encoding="utf-8")
+        # 明确落在**过去**：模拟"上一轮"的产物（判据里 mtime < 本次起跑时刻 = 陈旧）。
+        os.utime(run_dir / name, (1_600_000_000, 1_600_000_000))
+
+    completed, run_dir = _run_runner_with_fake_container(tmp_path, worker_rc=1)
+
+    assert completed.returncode == 1, completed.stderr
+    # ① 清场发生了（可读的运行痕迹）
+    assert "[stale-clear]" in completed.stdout, completed.stdout
+    # ② 旧产物**逐字**进了 attempt-<ts>/（不是被删掉、也不是被覆盖）
+    archives = sorted(p for p in run_dir.iterdir() if p.name.startswith("attempt-"))
+    assert len(archives) == 1, [p.name for p in run_dir.iterdir()]
+    for name, body in stale.items():
+        assert (archives[0] / name).read_text(encoding="utf-8") == body, name
+    # ③ 新跑次的 exit_code 是**本次**的（worker_rc=1），⛔ 不是陈旧的 137
+    assert (run_dir / "exit_code").read_text(encoding="utf-8").strip() == "1"
+
+
+def test_attempt_start_anchor_is_printed_for_staleness_comparison(tmp_path: Path):
+    """★B11 判据可操作性：runner 打印本次**起跑时刻**锚点，供"mtime < 起跑 ⇒ 陈旧"比对。
+
+    运行纪律：**容器 ``Status=running`` 优先于 ``exit_code`` 文件**；即便容器已退，
+    也只有 ``mtime >= 起跑时刻`` 的产物才算本次的。没有这个锚点，比对只能靠人工记忆。
+    """
+    completed, _ = _run_runner_with_fake_container(tmp_path, worker_rc=1)
+
+    assert completed.returncode == 1, completed.stderr
+    anchor = [ln for ln in completed.stdout.splitlines() if "[attempt-start]" in ln]
+    assert len(anchor) == 1, anchor
+    assert "launched_at=" in anchor[0] and "tier=T010" in anchor[0]
+
+
+def test_fresh_run_dir_does_not_create_an_empty_attempt_archive(tmp_path: Path):
+    """★负向对照：首次起跑（无旧产物）⇒ **不得**建空的 ``attempt-*`` 目录（不做无谓动作）。"""
+    completed, run_dir = _run_runner_with_fake_container(tmp_path, worker_rc=1)
+
+    assert completed.returncode == 1, completed.stderr
+    assert "[stale-clear]" not in completed.stdout
+    assert not [p for p in run_dir.iterdir() if p.name.startswith("attempt-")]
