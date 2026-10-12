@@ -107,6 +107,11 @@ POLICY: dict[str, Spec] = {
         COMPILE, "构建期双向诚实门禁（Dockerfile RUN 调用），非镜像环境跑必 fail-closed"
     ),
     # ── tests/e2e 生成器/启动器（宿主侧实验链入口）──────────────────────────
+    # ★ 补登记（2026-10-13）：跑次侧新增起跑 launcher —— 六条断言（树指纹/实测空闲/排期/叠跑闸/镜像+单源/dry-run）。
+    #   依赖真实树 + docker + 卡 ⇒ 无副作用下只能做 `bash -n` 语法冒烟（SH_SYNTAX）。
+    "tests/e2e/launch_matrix54.sh": Spec(
+        SH_SYNTAX, "矩阵起跑 launcher（六条断言 → nohup 起跑 + 巡检）；需真实树/docker/卡 ⇒ 语法冒烟"
+    ),
     "tests/e2e/generate_matrix.py": Spec(HELP, "54 档矩阵生成器（v1 基线）"),
     "tests/e2e/generate_matrix_fsdp.py": Spec(HELP, "matrix54-fsdp 变体生成器"),
     "tests/e2e/generate_matrix_manifest_fsdp.py": Spec(HELP, "fsdp 清单生成器"),

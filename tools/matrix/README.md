@@ -111,3 +111,9 @@ python3 -m py_compile tools/matrix/<改动文件>.py     # 或等价的 AST 解�
 ⇒ **提交前语法检查**已固化为本工具链的固定步骤（与 `verify`/自证同批执行）。
 
 ★ **`git add` 一律逐条点名文件**（⛔ 不对目录 add）：曾因对 `tools/matrix` 目录 add，把他人未提交的单行改动一并带入提交。
+
+## 常设检查项（系统性要求）
+
+★ **凡新增「入口 / 产物 / 字段 / 依赖」，必须"同批"改其校验器·登记表·测试** —— ⛔ 不得只加入口不登记。
+本战役已为此痛过多次：`PARAM_KEYS` 滞后、Dockerfile pin 引号空格、入口 POLICY 未登记（`tests/e2e/launch_matrix54.sh` 致闸门 4 变红）等。
+⇒ 提交前对照本清单自查：**新增入口 ⇒ 登入 `tests/scripts/test_entry_smoke.py` 的 POLICY/EXCLUSIONS（含冒烟）**；新增产物 ⇒ 同批加 `verify_matrix.py` 断言；新增字段 ⇒ 同批改 `PARAM_*`/渲染/文档。
