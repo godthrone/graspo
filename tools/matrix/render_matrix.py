@@ -205,12 +205,17 @@ def _lora_backends_html(data):
         return "—"
     n, m = lb.get("native", {}), lb.get("msswift", {})
     ne = " + ".join(n.get("expression", [])) or "—"
-    return (f'<b>native</b>：preset 名 <code>{html.escape(ne)}</code>'
-            f'（解析 <b>{n.get("resolved_count")}</b> 件）。'
-            f'<b>ms-swift</b>：<b>不认 preset 名</b>（另一套语汇，会 <code>ValueError: Target modules not found</code>）'
-            f'⇒ 用显式 <b>{m.get("resolved_count")}</b> 项模块名列表表达（⛔ 不用 <code>all-linear</code>：全集会多训）。'
-            f'<br><span class="note">★ 等价性未在本机验证（本地无 ms-swift/PEFT，无法确认其匹配语义）'
-            f'⇒ 起跑前需一次探针确认命中集合。</span>')
+    cov = m.get("coverage") or {}
+    reg = (m.get("expression") or [""])[0]
+    return (f'<b>native</b>：preset 名 <code>{html.escape(ne)}</code> ⇒ 覆盖 <b>{n.get("resolved_count")}</b> 件'
+            f'（canonical 命名空间：语言 12 + 视觉 110）。'
+            f'<b>ms-swift</b>：<b>不认 preset 名</b>（另一套语汇 ⇒ 会 <code>ValueError: Target modules not found</code>）'
+            f'⇒ 用<b>真实 HF 名正则</b>（仓内既有可用形态）：<br>'
+            f'<code>{html.escape(reg)}</code><br>'
+            f'⇒ 覆盖 <b>{m.get("resolved_count")}</b> 件（语言 <b>{cov.get("language")}</b> + 视觉 <b>{cov.get("visual")}</b>）。'
+            f'<br><span class="note">★★ <b>两后端覆盖集不相等</b>：ms-swift 实际覆盖该模型<b>全部 nn.Linear</b>'
+            f'（{m.get("resolved_count")} 件），比 native 的 {n.get("resolved_count")} 件<b>多 {m.get("excess_over_native")} 件</b>；'
+            f'⛔ 不得宣称等价。证据链：{html.escape("；".join(m.get("evidence") or []))}。</span>')
 
 def render(template_text, data):
     meta = data["meta"]

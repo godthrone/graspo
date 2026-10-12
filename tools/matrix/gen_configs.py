@@ -76,7 +76,10 @@ def yaml_of(row, uni, model_root, data_root, lora_backends=None):
         L.append(f"  dropout: {uni.get('lora_dropout')}\n")
         L.append("  target_modules:\n")
         for t in expr:
-            L.append(f"    - {t}\n")
+            ent = str(t)
+            # 正则/含特殊字符的条目加单引号，避免 YAML 误读（内部无单引号）
+            ent = f"'{ent}'" if any(c in ent for c in "^|*\\:") else ent
+            L.append(f"    - {ent}\n")
 
     if backend == "native":
         L.append("native:\n")

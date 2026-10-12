@@ -195,15 +195,27 @@ LANGUAGE_TARGETS = [
 VISION_TARGETS = (["visual.merger.linear_fc1", "visual.merger.linear_fc2"]
                   + [f"visual.blocks.{i}.{m}" for i in range(27)
                      for m in ("attn.qkv", "attn.proj", "mlp.linear_fc1", "mlp.linear_fc2")])
-RESOLVED_LORA_TARGETS = LANGUAGE_TARGETS + VISION_TARGETS        # 122
+RESOLVED_LORA_TARGETS = LANGUAGE_TARGETS + VISION_TARGETS        # 122（native canonical）
+
+#: ★ ms-swift 的真实 HF 正则 = 仓内 13 份曾训练成功的 adapter 的 target_modules 形态 ∪ 视觉部分
+#:   （证据见 lora_target_backends() 的 evidence 字段）
+HF_LORA_TARGET_REGEX = (
+    r"^(model\.language_model(?=\.).*\.(q_proj|k_proj|v_proj|o_proj|in_proj_z|out_proj|in_proj_qkv|"
+    r"in_proj_a|in_proj_b|gate_proj|up_proj|down_proj))$|^(model\.)?visual\..*$"
+)
 
 
 def lora_target_backends():
     """两后端的 LoRA 目标表达（★ 矩阵为源；生成器据此分流，⛔ 不手写）。
 
-    native 与 ms-swift 的 `target_modules` 是**两套语汇**（仓内证据：
-    `msswift/_config_mapping.py:28-30` 明示"另一套（regex / all-linear），不做猜测式转换"，
-    并在 :479-480 原样透传 `list(lora.target_modules)`）⇒ 必须按 backend 分流。
+    native：仓内 canonical 命名空间下的 preset 名（`language_all_linear` + `vision_common`）。
+    ms-swift：**不认 native preset 名**（另一套语汇）；采用**仓内 13 份曾训练成功的 adapter 的真实正则形态**
+    （证据：本地 adapter_config.json 的 target_modules）∪ 视觉部分。
+
+    ★★ 两后端覆盖集**不相等**（探针实测，证据 `44-lora-target-probe-report.md` sha `e20c3cf6…`）：
+      · native  = canonical 122 件（语言 12 + 视觉 110）；
+      · ms-swift = 真实 HF 名 358 件（语言 248 + 视觉 110）= **该模型全部 nn.Linear**（等价于 all-linear 的覆盖面），
+        比 native **多 236 件**。
     """
     return {
         "native": {
@@ -211,17 +223,21 @@ def lora_target_backends():
             "expression": ["language_all_linear", "vision_common"],
             "resolved": list(RESOLVED_LORA_TARGETS),
             "resolved_count": len(RESOLVED_LORA_TARGETS),
-            "note": "native 侧支持 preset 名（glob），由本仓 lora 模块解析；已验证命中 122 件。",
+            "note": "native 侧支持 preset 名（glob），由本仓 lora 模块解析；覆盖 122 件（canonical 命名空间）。",
         },
         "msswift": {
-            "kind": "explicit_module_list",
-            "expression": list(RESOLVED_LORA_TARGETS),
-            "resolved": list(RESOLVED_LORA_TARGETS),
-            "resolved_count": len(RESOLVED_LORA_TARGETS),
-            "note": ("ms-swift 不认 native preset 名（会 ValueError: Target modules {...} not found）⇒ 用**同一覆盖集的"
-                     "显式模块名列表**表达（⛔ 不用 all-linear：那是全集，会多训）。"
-                     "★ 等价性**未在本机验证**：本地无 ms-swift/PEFT，无法确认其匹配语义（后缀匹配 / fullmatch）"
-                     "⇒ 起跑前需一次探针确认命中集合。"),
+            "kind": "hf_regex",
+            "expression": [HF_LORA_TARGET_REGEX],
+            "resolved": [],
+            "resolved_count": 358,
+            "coverage": {"language": 248, "visual": 110, "total": 358},
+            "equivalence_with_native": False,
+            "excess_over_native": 358 - len(RESOLVED_LORA_TARGETS),
+            "evidence": ["evidence/44-lora-target-probe-report.md sha e20c3cf6…",
+                         "本地 13 份曾训练成功的 ms-swift adapter_config.json（target_modules 正则形态）"],
+            "note": ("ms-swift 不认 native preset 名（会 ValueError: Target modules not found）⇒ 用**真实 HF 名正则**"
+                     "（仓内既有可用形态 ∪ 视觉）。★ 两后端覆盖集**不相等**：ms-swift 实测覆盖该模型**全部 nn.Linear**"
+                     "（语言 248 + 视觉 110 = 358），比 native 的 122 **多 236 件**。"),
         },
     }
 
@@ -422,11 +438,12 @@ def main():
         # ★ LoRA 目标按 backend 呈现（记录两后端的表达差异，避免再混）
         if r.get("tuner_type") == "lora" and r.get("lora_target") not in (None, "", "—"):
             if r.get("backend") == "ms-swift":
-                r["lora_target"] = (f"ms-swift：显式 {len(RESOLVED_LORA_TARGETS)} 项模块名列表"
-                                    f"（与 native 同覆盖集；匹配语义待探针确认）")
+                r["lora_target"] = ("ms-swift：真实 HF 名正则（覆盖该模型全部 nn.Linear = 语言 248 + 视觉 110 = 358 件）"
+                                    "｜★ 与 native 122 件不等价（多 236）")
             else:
                 r["lora_target"] = (r["lora_target"]
-                                    + f"｜native 表达式：language_all_linear + vision_common（{len(RESOLVED_LORA_TARGETS)} 件）")
+                                    + f"｜native：canonical preset 名（{len(RESOLVED_LORA_TARGETS)} 件）"
+                                    + "｜★ 两后端覆盖集不相等")
         r["run_path"] = official_run_path(r, state)
         if v:
             r["verdict"] = v
