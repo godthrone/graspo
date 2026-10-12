@@ -204,18 +204,25 @@ def _lora_backends_html(data):
     if not lb:
         return "—"
     n, m = lb.get("native", {}), lb.get("msswift", {})
-    ne = " + ".join(n.get("expression", [])) or "—"
-    cov = m.get("coverage") or {}
+    nc, mc = n.get("coverage") or {}, m.get("coverage") or {}
+    ns = lb.get("namespaces") or {}
     reg = (m.get("expression") or [""])[0]
-    return (f'<b>native</b>：preset 名 <code>{html.escape(ne)}</code> ⇒ 覆盖 <b>{n.get("resolved_count")}</b> 件'
-            f'（canonical 命名空间：语言 12 + 视觉 110）。'
-            f'<b>ms-swift</b>：<b>不认 preset 名</b>（另一套语汇 ⇒ 会 <code>ValueError: Target modules not found</code>）'
-            f'⇒ 用<b>真实 HF 名正则</b>（仓内既有可用形态）：<br>'
-            f'<code>{html.escape(reg)}</code><br>'
-            f'⇒ 覆盖 <b>{m.get("resolved_count")}</b> 件（语言 <b>{cov.get("language")}</b> + 视觉 <b>{cov.get("visual")}</b>）。'
-            f'<br><span class="note">★★ <b>两后端覆盖集不相等</b>：ms-swift 实际覆盖该模型<b>全部 nn.Linear</b>'
-            f'（{m.get("resolved_count")} 件），比 native 的 {n.get("resolved_count")} 件<b>多 {m.get("excess_over_native")} 件</b>；'
-            f'⛔ 不得宣称等价。证据链：{html.escape("；".join(m.get("evidence") or []))}。</span>')
+    lang = "、".join(f"<code>{html.escape(x)}</code>" for x in (n.get("language_targets") or []))
+    return (
+        f'<b>native</b>：preset 名 <code>{" + ".join(n.get("expression", []))}</code> ⇒ '
+        f'实测覆盖 <b>{nc.get("total")}</b> 件（语言 <b>{nc.get("language")}</b> + 视觉 <b>{nc.get("visual")}</b>；'
+        f'依据：{html.escape(nc.get("basis", ""))}）。<br>'
+        f'native 语言 12 项逐字：{lang}。<br>'
+        f'<b>ms-swift</b>：<b>不认 preset 名</b>（另一套语汇 ⇒ <code>ValueError: Target modules not found</code>）'
+        f'⇒ 用<b>真实 HF 名正则</b>（仓内 13 份曾训练成功的 adapter 的既有形态）：<br>'
+        f'<code>{html.escape(reg)}</code><br>'
+        f'⇒ 视觉 <b>{mc.get("visual")}</b> 实测；语言侧<b>待探针实测</b>（跑次侧预判 ≈{mc.get("predicted_language")}）。<br>'
+        f'<span class="note">★★ <b>两后端覆盖集不相等</b>：native 实测 <b>{nc.get("total")}</b> 件 vs ms-swift '
+        f'（预判语言 ≈{mc.get("predicted_language")} + 视觉 {mc.get("visual")}）⇒ ⛔ 不得宣称等价。'
+        f'<br>★ 三方命名空间各不相同：native 公开签名 <code>{html.escape(ns.get("native_public", ""))}</code>；'
+        f'native 内部存储 <code>{html.escape(ns.get("native_internal", ""))}</code>；'
+        f'HF/ms-swift <code>{html.escape(ns.get("hf_msswift", ""))}</code> ⇒ 不能跨后端共用同一串目标。'
+        f'<br>证据链：{html.escape("；".join(m.get("evidence") or []))}。</span>')
 
 def render(template_text, data):
     meta = data["meta"]

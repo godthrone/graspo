@@ -206,16 +206,14 @@ HF_LORA_TARGET_REGEX = (
 
 
 def lora_target_backends():
-    """两后端的 LoRA 目标表达（★ 矩阵为源；生成器据此分流，⛔ 不手写）。
+    """两后端的 LoRA 目标表达与**真实覆盖集**（★ 矩阵为源；生成器据此分流，⛔ 不手写）。
 
-    native：仓内 canonical 命名空间下的 preset 名（`language_all_linear` + `vision_common`）。
-    ms-swift：**不认 native preset 名**（另一套语汇）；采用**仓内 13 份曾训练成功的 adapter 的真实正则形态**
-    （证据：本地 adapter_config.json 的 target_modules）∪ 视觉部分。
-
-    ★★ 两后端覆盖集**不相等**（探针实测，证据 `44-lora-target-probe-report.md` sha `e20c3cf6…`）：
-      · native  = canonical 122 件（语言 12 + 视觉 110）；
-      · ms-swift = 真实 HF 名 358 件（语言 248 + 视觉 110）= **该模型全部 nn.Linear**（等价于 all-linear 的覆盖面），
-        比 native **多 236 件**。
+    ★★ 结论：**两后端覆盖集不相等**，且**三方命名空间各不相同**（⇒ 不能跨后端共用同一串目标）。
+      · native 公开签名 = `language.*`（**真存在**，由 T010/T011 checkpoint 的
+        `lora_target_signature.resolved` 实测为 **122 = 语言 12 + 视觉 110**；
+        字段名 `lora_target_signature.resolved` / `parameter_count`，⛔ 语义按字段名判、不猜）；
+      · native 内部存储键名 = `…token_mixer.*`（LoRA 权重键名可见）；
+      · HF / ms-swift = `language_model.layers.N.linear_attn.*`（探针实测 `language.*` 命中 **0**）。
     """
     return {
         "native": {
@@ -223,21 +221,47 @@ def lora_target_backends():
             "expression": ["language_all_linear", "vision_common"],
             "resolved": list(RESOLVED_LORA_TARGETS),
             "resolved_count": len(RESOLVED_LORA_TARGETS),
-            "note": "native 侧支持 preset 名（glob），由本仓 lora 模块解析；覆盖 122 件（canonical 命名空间）。",
+            "coverage": {"language": 12, "visual": 110, "total": 122,
+                         "basis": "实测：checkpoint 的 lora_target_signature.resolved（T010/T011 相同）"},
+            "language_targets": list(LANGUAGE_TARGETS),
+            "signature_evidence": {
+                "field": "lora_target_signature.resolved / parameter_count",
+                "runs": "T010（1 卡）与 T011（2 卡）签名完全相同",
+                "parameter_count": 409923584,
+                "note": "★ 该值即字段 `parameter_count` 的原值，语义按字段名判（⛔ 不推测）。",
+            },
+            "namespace": "language.* / visual.*（native canonical，公开签名）",
+            "note": ("native 侧支持 preset 名（glob），由本仓 lora 模块解析。"
+                     "★ 实测证明 `language_all_linear` **确实命中语言层 12 项、不是空转**"
+                     "（与 T010 实测 Δ=+13.39 pp 互证：语言层空转不可能有该增益）。"),
         },
         "msswift": {
             "kind": "hf_regex",
             "expression": [HF_LORA_TARGET_REGEX],
             "resolved": [],
-            "resolved_count": 358,
-            "coverage": {"language": 248, "visual": 110, "total": 358},
+            "resolved_count": None,
+            "coverage": {"status": "pending_probe",
+                         "visual": 110,
+                         "predicted_language": 288,
+                         "basis": ("★ 未实测：视觉 110 为探针实测；语言侧为跑次侧**预判 ≈288**。"
+                                   "早期探针按类计数曾推得 `language_model.*` = 248 个 nn.Linear，与本预判**不一致**"
+                                   "⇒ 二者都必须由探针实测裁决，⛔ 不得任取其一写入文档。")},
             "equivalence_with_native": False,
-            "excess_over_native": 358 - len(RESOLVED_LORA_TARGETS),
-            "evidence": ["evidence/44-lora-target-probe-report.md sha e20c3cf6…",
-                         "本地 13 份曾训练成功的 ms-swift adapter_config.json（target_modules 正则形态）"],
-            "note": ("ms-swift 不认 native preset 名（会 ValueError: Target modules not found）⇒ 用**真实 HF 名正则**"
-                     "（仓内既有可用形态 ∪ 视觉）。★ 两后端覆盖集**不相等**：ms-swift 实测覆盖该模型**全部 nn.Linear**"
-                     "（语言 248 + 视觉 110 = 358），比 native 的 122 **多 236 件**。"),
+            "evidence": ["checkpoint lora_target_signature（native 侧 122 实测）",
+                         "evidence/44-lora-target-probe-report.md sha e20c3cf6…",
+                         "本地 13 份曾训练成功的 ms-swift adapter_config.json（本正则形态实证）",
+                         "T010 实测 Δ=+13.39 pp（与 native 签名互证）"],
+            "namespace": "language_model.layers.N.* / visual.*（HF 真实名）",
+            "note": ("ms-swift 不认 native preset 名（另一套语汇 ⇒ `ValueError: Target modules not found`）"
+                     "⇒ 用**真实 HF 名正则**（仓内 13 份曾训练成功的 adapter 的既有形态 ∪ 视觉）。"
+                     "★★ **两后端覆盖集不相等**：native 实测 122；ms-swift 的真实命中集合**待探针实测**"
+                     "（预判语言 ≈288，+ 视觉 110）⇒ ⛔ 不得宣称等价。"),
+        },
+        "namespaces": {
+            "native_public": "language.* / visual.*（checkpoint 签名）",
+            "native_internal": "…token_mixer.*（LoRA 权重键名）",
+            "hf_msswift": "language_model.layers.N.*（HF 真实名；探针实测 language.* = 0）",
+            "conclusion": "★ 三方命名空间各不相同 ⇒ **不能跨后端共用同一串 LoRA 目标**。",
         },
     }
 
@@ -438,8 +462,8 @@ def main():
         # ★ LoRA 目标按 backend 呈现（记录两后端的表达差异，避免再混）
         if r.get("tuner_type") == "lora" and r.get("lora_target") not in (None, "", "—"):
             if r.get("backend") == "ms-swift":
-                r["lora_target"] = ("ms-swift：真实 HF 名正则（覆盖该模型全部 nn.Linear = 语言 248 + 视觉 110 = 358 件）"
-                                    "｜★ 与 native 122 件不等价（多 236）")
+                r["lora_target"] = ("ms-swift：真实 HF 名正则（HF 命名空间 language_model.*；"
+                                    "视觉 110 已实测，语言命中**待探针实测**）｜★ 与 native 122 件不等价")
             else:
                 r["lora_target"] = (r["lora_target"]
                                     + f"｜native：canonical preset 名（{len(RESOLVED_LORA_TARGETS)} 件）"
