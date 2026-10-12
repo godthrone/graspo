@@ -85,7 +85,17 @@ dev = [
 #     `torch>=2.0.0`(镜像 2.11.0+cu130 ✓) / `pydantic>=2.0.0`(2.11.10 ✓) / `numpy`(1.26.4 ✓) /
 #     einops·hjson·msgpack·ninja·packaging·psutil·py-cpuinfo·tqdm —— **无可解冲突**。
 #     已用临时容器实测：安装成功 + 真路径预检全绿（见工位 `evidence/`）。
-msswift = ["ms-swift==4.5.3", "qwen_vl_utils==0.0.14", "decord==0.6.0", "deepspeed==0.19.7"]
+#
+# msgspec：ms-swift 的 **RL(GRPO) 路径**硬依赖它。
+#   · `swift/rlhf_trainers/utils.py:17` 模块级 `from msgspec import field`（**无 try 守卫**）
+#     ⇒ 缺它则 `from swift.rlhf_trainers import GRPOTrainer` 直接 `ModuleNotFoundError`，
+#     进而 trigger repo `msswift/trainer.py` 的 `_MsSwiftGRPOTrainerBase = object` 回退
+#     ⇒ 起跑即 `RuntimeError: backend='msswift' RL(GRPO) requires the ms-swift package …`；
+#     影响 9 个 ms-swift GRASPO/RL 档（T031/T032/T033/T037/T038/T039/T043/T044/T045）。
+#   · **版本依据**：`uv.lock`/`pyproject` 无 msgspec 锁定；ms-swift 4.5.3 元数据**不声明**它，
+#     上游只用 `msgspec.field`（自 0.6 起稳定）⇒ 取 PyPI 最新稳定版 **0.22.0**（依赖为空、
+#     有 cp312 manylinux 轮子）。已在临时容器实测安装 + 全扫零缺件。
+msswift = ["ms-swift==4.5.3", "qwen_vl_utils==0.0.14", "decord==0.6.0", "deepspeed==0.19.7", "msgspec==0.22.0"]
 
 [project.scripts]
 graspo = "graspo.cli.app:main"
