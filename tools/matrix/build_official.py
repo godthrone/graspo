@@ -266,7 +266,7 @@ def split_throughput(tp):
     """由跑次读数文本抽出「吞吐」口径（decode / 整步）。抽不到记 '—'（不编造）。"""
     if not tp or tp in ("—",):
         return "—"
-    m0 = re.search(r"本档不适用（([^）]*)）", tp)
+    m0 = re.search(r"不适用（([^）]*)）", tp)
     if m0:
         return f"不适用（{m0.group(1)}）"      # ★ 如实在注明，⛔ 不填假数
     parts = []

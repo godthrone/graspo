@@ -342,9 +342,15 @@ def main():
             new_rows[tier].pop("conclusion_annotation", None)   # 新的有效跑次取代旧的「作废参考记录」
             mp = ((doc.get("provenance") or {}).get("measurement_pending") or {})
             basis = str(mp.get("threshold_delta", "阈值已冻结"))
-            new_rows[tier]["note"] = _s(doc.get("note")) or (
+            note = _s(doc.get("note")) or (
                 f"判据① ∧ 判据② 均达（{basis}）⇒ 已验证可用。" if ok
                 else f"判据未全达 ⇒ 已验证不可用（{basis}；详见 runs / effect 归因）。")
+            # ★ 跑次自报的如实说明（caveat_*）必须原样保留，⛔ 不抹掉
+            cav = [str(v) for k, v in (doc.get("provenance") or {}).items()
+                   if k.startswith("caveat") and v]
+            if cav:
+                note += " 如实说明：" + "；".join(cav)
+            new_rows[tier]["note"] = note
         new_rows[tier]["run_provenance"] = {
             "produced_by": doc["provenance"]["produced_by"],
             "command": doc["provenance"]["command"],
