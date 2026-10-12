@@ -33,6 +33,22 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
+# ★ CUDA_HOME 必须指向**与 torch 同版（13.0）的工具链**，否则任何 CUDA 扩展编译都会因
+#   版本不匹配而失败。判据的取法已实测坐实：**deepspeed 的算子构建器只认 `CUDA_HOME`，
+#   不认 PATH**（把 13.0 的 nvcc 放到 PATH 最前，`installed_cuda_version()` 仍返回 (13,2)）；
+#   而 base 的 `CUDA_HOME=/usr/local/cuda -> cuda-13.2` 与 `torch.version.cuda=13.0` 不一致
+#   ⇒ 运行期 JIT 报 `CUDAMismatchException`。这里改指 pip 的 CUDA 13.0 栈
+#   （`nvidia/cu13/`，其 `include/`+`lib/` 已在镜像内，`bin/nvcc` 由下面的
+#   `nvidia-cuda-nvcc==13.0.88` 补上，与镜像内 `nvidia-cuda-nvrtc==13.0.88` 同批）。
+ENV CUDA_HOME=/usr/local/lib/python3.12/dist-packages/nvidia/cu13
+
+# ★ 同时把 13.0 的编译器放到 PATH 最前，让**不带路径的 `nvcc --version`** 也等于
+#   `torch.version.cuda`。只设 `CUDA_HOME` 会留下"PATH 上仍是 13.2、CUDA_HOME 已是 13.0"的
+#   分叉（实测：`command -v nvcc` -> `/usr/local/cuda/bin/nvcc` = 13.2，而 `$CUDA_HOME/bin/nvcc` = 13.0），
+#   任何按 PATH 取 nvcc 的构建/脚本仍会踩版本不匹配。base 里 nvcc/nvlink/ptxas/cudafe++/bin2c
+#   全部来自 `/usr/local/cuda/bin`（13.2），此处置前后这批工具统一变成 13.0，与 `CUDA_HOME` 一致。
+ENV PATH="/usr/local/lib/python3.12/dist-packages/nvidia/cu13/bin:$PATH"
+
 # 代理读取器（§14.3）：每个需要网络的 RUN 用 `. /usr/local/bin/proxy-env.sh` 引入。
 COPY docker/proxy-env.sh /usr/local/bin/proxy-env.sh
 
@@ -86,7 +102,60 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     sh -eu -c '. /usr/local/bin/proxy-env.sh; \
     pip install --break-system-packages --resume-retries 15 --retries 15 --timeout 60 --index-url https://pypi.org/simple/ \
       transformers==5.12.1 pydantic==2.11.10 pyyaml==6.0.3 safetensors==0.8.0 \
-      pillow==11.3.0 numpy==1.26.4 pyarrow==25.0.1 qwen_vl_utils==0.0.14 decord==0.6.0 deepspeed==0.19.7 msgspec==0.22.0 ms-swift==4.5.3 '
+      pillow==11.3.0 numpy==1.26.4 pyarrow==25.0.1 qwen_vl_utils==0.0.14 decord==0.6.0 deepspeed==0.19.7 nvidia-cuda-nvcc==13.0.88 msgspec==0.22.0 ms-swift==4.5.3 '
+
+# ── Layer 1b: DeepSpeed 算子**构建期预编译**（运行期不再 JIT）───────────────────
+# ★ 为什么必须预编译：deepspeed 的算子（`ds_opt_adam`、`utils` 等）默认**运行期 JIT**；
+#   一旦 JIT，用的就是运行期环境的 `CUDA_HOME` 判据，正是上面那处不匹配的崩因（T038）。
+#   这里用 `DS_BUILD_CPU_ADAM=1 DS_BUILD_UTILS=1` 在构建期把算子编进镜像 ⇒ 运行期直接加载 `.so`。
+# ⛔ **不使用 `DS_SKIP_CUDA_CHECK` 之类跳过检查的开关**：要求的是"版本真匹配"，不是"绕过检查"。
+#   `CUDA_HOME` 已在镜像顶部 ENV 指向 pip 的 CUDA 13.0 栈，nvcc 版本 ≡ `torch.version.cuda`。
+# `--no-build-isolation`：构建依赖（torch/setuptools/wheel/ninja）镜像内齐备；开隔离会另拉一个
+#   无 `+cu130` 标签的 torch 参与编译，反而制造渠道分叉。
+# `--no-cache-dir`：按任务书要求；sdist 很小，重下成本可忽略。
+# ★ **`--force-reinstall --no-deps` 是本层能生效的关键（实测坐实）**：deepspeed 0.19.7 已由
+#   上面那条 PyPI 行装进镜像，裸 `pip install deepspeed==0.19.7` 会被判为
+#   "Requirement already satisfied" ⇒ **直接跳过、一个算子都不编**（实测 `.so` 列表为空，
+#   `DeepSpeedCPUAdam` 仍走 JIT）。必须强制重装才会真正执行带 `DS_BUILD_*` 的 build。
+#   `--no-deps` 防止 `--force-reinstall` 连 torch 等一并重装（那会把 `+cu130` 渠道冲掉）。
+# ★ **补无版本号 `.so` 软链（实测坐实）**：pip 的 CUDA 13.0 轮子只装带版本号的库
+#   （`libcudart.so.13` / `libcurand.so.10` / `libcublas.so.13` …），**没有**链接器
+#   `-lcudart` / `-lcurand` 所需的 `libcudart.so` / `libcurand.so`；缺它们则算子编译到
+#   链接阶段必失败（`/usr/bin/ld: cannot find -lcudart`）。这里为 `$CUDA_HOME/lib` 下每个
+#   `libX.so.<ver>` 补一个 `libX.so` 软链（已存在则不覆盖），指向 torch 同版（13.0）的库。
+# ★ **必须 `DS_ACCELERATOR=cuda`（实测坐实，缺它则 `utils` 静默不编）**：deepspeed 的
+#   `ops/op_builder/all_ops.py` 按 `get_accelerator().op_builder_dir()` 决定**算子集合**，
+#   `setup.py` 只从该集合里取 `DS_BUILD_*`。`docker build` **看不到 GPU** ⇒
+#   `real_accelerator` 回落 **CPU 加速器** ⇒ 集合缩小，**`utils` 根本不在集合里**
+#   （实测 `Install Ops` 只有 7 个键、无 `utils`；`DS_BUILD_UTILS=1` 被静默忽略，
+#   setup.py 连 `op_envvar('utils')` 都取不到）。显式指定后集合才是运行期那一套
+#   （24 个 op、含 `utils`），且 `cpu_adam` 与运行期 JIT 同形态（CUDAExtension）。
+#   作用域仅限本 RUN（不写 ENV），不影响运行期。
+RUN --mount=type=secret,id=http_proxy,required=false \
+    --mount=type=secret,id=https_proxy,required=false \
+    --mount=type=secret,id=no_proxy,required=false \
+    sh -eu -c '. /usr/local/bin/proxy-env.sh; \
+    cd "$CUDA_HOME/lib"; \
+    for f in lib*.so.*; do [ -e "$f" ] || continue; b="${f%%.so.*}"; [ -e "$b.so" ] || ln -s "$f" "$b.so"; done; \
+    export DS_ACCELERATOR=cuda; \
+    export DS_BUILD_CPU_ADAM=1; \
+    export DS_BUILD_UTILS=1; \
+    pip install --break-system-packages --no-build-isolation --no-cache-dir \
+      --force-reinstall --no-deps deepspeed==0.19.7 '
+
+# 算子预编译取证（fail-closed）：构建期即断言 `cpu_adam` 已随包编译、且版本判据通过。
+# ⚠ 这里只断言"文件存在 + 版本不匹配断言通过"，**真构造 `DeepSpeedCPUAdam` 在验收阶段做**。
+RUN python -c "\
+import glob, os, deepspeed, torch;\
+from deepspeed.ops.op_builder.builder import installed_cuda_version, assert_no_cuda_mismatch;\
+ops = sorted(glob.glob(os.path.join(os.path.dirname(deepspeed.__file__), 'ops', '**', '*.so'), recursive=True));\
+print('torch.version.cuda =', torch.version.cuda);\
+print('deepspeed.installed_cuda_version() =', installed_cuda_version());\
+assert_no_cuda_mismatch();\
+print('built ops:', ops);\
+missing = [n for n in ('cpu_adam', 'utils') if not any(n in o for o in ops)];\
+assert not missing, 'PRECOMPILE FAILED, missing ops: %s' % missing;\
+print('PRECOMPILE OK')"
 
 # CUDA 渠道断言（fail-closed）：release 段比较会剔除 `+cu130`，渠道单独断言。
 RUN python -c "import torch, sys; cuda=torch.version.cuda or ''; print('torch', torch.__version__, 'cuda', cuda); sys.exit('CUDA CHANNEL FAILED: '+cuda) if not cuda.startswith('13.0') else None"
