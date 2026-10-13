@@ -126,7 +126,7 @@
       "teacher_weights_gib_bf16": 50.3,
       "teacher_weights_gib_bf16_measured": 50.1,
       "teacher_weights_measurement": "上机 probe 实测（PyTorch allocator `max_memory_allocated`，bf16，26.896 B 参数）⇒ 50.10 GiB；出处 task-cpt-opd / task-r3-retest2 报告。",
-      "measured": "partial",
+      "measured": true,
       "unmeasured_note": "★ **待上机测量（P-25）**：OPD 的教师模型（Qwen3.8-27B）在训练进程内**额外占一份显存**（每个 rank 一份），本生成器**没有**教师侧的实测数字 ⇒ **不得**判定为「可行」。配方已显式设 `distill.offload_teacher_model: true`（教师权重常驻 CPU、前向时换入），但教师**前向时的 GPU 工作集**仍是未测算量 ⇒ 本档标 `unmeasured`，由**上机冒烟**（建议先跑 `T046`）回填实测后再改判定。参考算式（教师**不**换出时）：27B bf16 权重 ≈ 50.3 GiB/卡，与学生侧常驻相加在任何卡数下都超预算 ⇒ 「不换出」不构成可用配方（这是权重常驻的算术事实，不是实测结论）。 ★ 2026-10-13 已上机测量并回填（见 measurement_note）⇒ 本档不再属 unmeasured。",
       "not_applicable_note": "★ 确实不适用（not_applicable）：用户拍板 **OPD 教师 = 27B 常量、学生 = 9B**（省显存，价值高）⇒ OPD 通道的学生**固定 9B**。台账该档的 `model` 列在 graspo 里是**被训练的学生**，按现行口径读作 27B 学生 ⇒ 需要 **27B 学生 + 27B 教师**：教师 bf16 权重**实测 50.10 GiB**（上机 probe），再加 27B 学生权重（≈52 GiB）⇒ **权重常驻 ≈100 GiB**，与用户「省显存」的意图正好相反。**因此用户想要的那种配置不存在** ⇒ 本档不适用。★ 这是**合法终态**（验收口径明文：「失败」与「确实不适用」都是合法产出），**不是「blocked（当前给不出配方、将来可能给得出）」**，也不是「跑失败了」。",
       "not_applicable_tiers": [
@@ -148,8 +148,8 @@
       "decision": "★ 已由指挥官裁定并落地（2026-09-19）：`T052`–`T054`（台账的 27B OPD 档）由原口径 A（27B→27B 自蒸馏）改判为 **`not_applicable`（确实不适用）**。理由：用户拍板 **OPD 教师 = 27B 常量、学生 = 9B**（省显存）⇒ OPD 学生固定 9B；27B 行若作为学生则需 27B 学生 + 27B 教师，教师权重实测 50.10 GiB、加 27B 学生权重 ≈100 GiB 权重常驻，与用户意图相反 ⇒ **确实不适用**。`T046`–`T051`（9B OPD）保持 **independent（独立教师）**关系不变。这是**合法终态**（验收口径明文：「失败」与「确实不适用」都是合法产出）。",
       "min_cards": null,
       "per_card_peak_gib_at_min_cards": null,
-      "measurement_note": "★ P-25 上机实测（2026-10-13，**订正版**）：**1 卡 OOM @ 训练第 1/40 步**（峰值 78.06 GiB）；**2 卡：生成阶段可通过（1184/1184 rollout），但训练第 1/20 步即双 rank OOM**（rank0 79.06 GiB / rank1 79.08 GiB，`memory(GiB): 77.27`；`exit_code=1`、`ckpt_retention.state=missing`、`Traceback=3`）⇒ ★★ **2 卡不足已实测**，**`min_cards ≥ 2` 不成立**。★ 机理：**`offload_teacher_model: true` 已设，但训练步仍需 ~77 GiB/卡** ⇒ 瓶颈是「teacher 前反向 + 优化器态的联合驻留」，offload 覆盖不到。★ **4 卡量测待做（T048）** ⇒ 在此之前 **OPD 全族 ⛔ 不得起跑**。",
-      "pending_measurement": "4 卡量测（T048）待做；4 卡可行 ⇒ min_cards=4；仍 OOM ⇒ 走 teacher_model_server 外置或判\"本硬件不可行\"（报主席）"
+      "measurement_note": "★ P-25 定案（2026-10-13，**1/2/4 卡全部实测**）：**1 卡** OOM@训练 1/40 步（峰值 78.06 GiB）；**2 卡** 生成可过（1184/1184）、OOM@训练 1/20 步（79.06 / 79.08 GiB）；**4 卡** 生成可过、**OOM@训练 1/10 步**、**四 rank 各 79.08 GiB**（余 15.88 MiB）⇒ ★★ 机理：**teacher 每 rank 各持一份（非分片）⇒ 加卡只增总显存、不降单卡占用** ⇒ **本硬件不可行（infeasible_on_hardware）**。★ ⛔ 这不是 skip，是**实测不可行**。",
+      "pending_measurement": "★ 需换方案：① 外置 teacher（teacher_model_server，⚠ 尚无 token-level logits 契约）② teacher 分片（⚠ 现无开关）③ 换更小 teacher"
     },
     "generation_gate": "assert_memory_feasible：确定性算式超预算（infeasible）即拒绝生成（不允许安静产出不可靠配置）；unmeasured 档**允许生成但不声称可行**（未测算的量只能靠上机量出来），并在 stdout 打出待测清单；`not_applicable` 档**不产出可跑配置**（确实不适用、无待测量）"
   },

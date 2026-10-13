@@ -63,10 +63,19 @@ def opd_pending_unmarked(teacher, row):
     """
     if not teacher:
         return False
+    if row.get("availability") == "blocked":
+        return False          # ★ blocked 档由 blocked 断言负责（它们本就不得起跑）
     if teacher.get("measured") is True and teacher.get("min_cards"):
         why = opd_cards_shortfall(teacher, row.get("cards"))
         return bool(why) is False and False        # 已定态：由卡数断言负责
     return not bool(row.get("cards_pending"))
+
+
+def blocked_unmarked(row):
+    """★ blocked 档必须有 `blocked_reason`（起跑侧据此拒跑）；缺理由 ⇒ fail-closed。"""
+    if row.get("availability") != "blocked":
+        return False
+    return not bool(str(row.get("blocked_reason") or "").strip())
 
 
 def _gen_self_test():
@@ -82,6 +91,10 @@ def _gen_self_test():
          opd_cards_shortfall({"measured": False}, 1) is None),
         ("⑧ ★ 未定态：实测未完成且未声明 min_cards ⇒ 缺 `cards_pending` **必须判缺**（fail-closed）",
          opd_pending_unmarked({"measured": "partial", "min_cards": None}, {"cards": 4}) is True),
+        ("⑩ ★ blocked 档缺 `blocked_reason` ⇒ **必须判缺**（fail-closed）",
+         blocked_unmarked({"availability": "blocked"}) is True),
+        ("⑪ blocked 档带理由 ⇒ 放行（但仍不得起跑）",
+         blocked_unmarked({"availability": "blocked", "blocked_reason": "P-25 实测不可行"}) is False),
         ("⑨ 未定态：带 `cards_pending` ⇒ 放行",
          opd_pending_unmarked({"measured": "partial", "min_cards": None}, {"cards": 4, "cards_pending": True}) is False),
     ]
@@ -258,6 +271,11 @@ def main():
         print(f"LOADABLE {'PASS' if not bad else 'FAIL'}（{len(written)} 档；问题 {bad}）")
         if bad:
             return 1
+
+    _bl = [r["tier"] for r in rows if blocked_unmarked(r)]
+    if _bl:
+        print(f"FAIL-CLOSED：以下档标 blocked 却无理由 ⇒ 拒绝产出：{_bl}")
+        return 1
 
     _unmarked = [r["tier"] for r in rows
                  if str(r.get("train_method") or "").lower() == "opd" and opd_pending_unmarked(teacher, r)]

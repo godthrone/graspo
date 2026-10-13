@@ -378,6 +378,7 @@ def distill_teacher():
             _root, _dir = _cp.split("/", 1) if "/" in _cp else (_cp, "")
             return {"model": t.get("teacher_model"), "path_parts": [_root, _dir],   # ★ 分片存，避免整串进文档
                     "measured": t.get("measured"),          # ★ 原样透传（可为 "partial"，⛔ 不 bool 化）
+                    "pending_measurement": t.get("pending_measurement"),
                     "min_cards": t.get("min_cards"),          # ★ 若编排侧按 P-25 实测回填，则成为硬约束
                     "teacher_weights_gib_bf16": t.get("teacher_weights_gib_bf16"),
                     "verdict_rule": ("★ **部分实测（partial）**：1 卡 OOM@训练第 1 步；**2 卡生成可通过但训练第 1 步双 rank OOM ⇒ 2 卡不足已实测**；"
