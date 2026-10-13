@@ -605,7 +605,8 @@ def main():
             if cav:
                 note += " 如实说明：" + "；".join(cav)
             # ★ 结构化"标准交付项"：P5/P6 六项 / 异常（非字符串 ⇒ 不塞 RESULT_KEYS，单独随件入库）
-            for _k in ("p5p6_readings", "anomalies"):
+            for _k in ("p5p6_readings", "anomalies",
+                       "after_acc", "base_acc", "delta_pp", "n_correct", "n_total"):
                 if doc.get(_k):
                     new_rows[tier][_k] = doc[_k]
             scr = doc.get("step_count_reconciliation")

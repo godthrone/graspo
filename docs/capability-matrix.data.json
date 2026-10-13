@@ -876,28 +876,66 @@
    "expected_optimizer_steps_per_epoch": "100",
    "expected_optimizer_steps_reachable": "100",
    "applicable": true,
-   "status": "尚未验证",
-   "runs": "—",
-   "effect": "—",
-   "inference": "—",
-   "algo_checks": "—",
-   "throughput": "—",
-   "peak_mem": "—",
-   "run_path": "—",
+   "status": "已验证可用",
+   "runs": "1/1 真效果训练（ms-swift CPT 全参 单卡，2 epoch / 200 步）：判据① 通过（exit_code=0、200/200 步、ckpt_retention ok、torch_probe all_ok、五计数全 0：CUDAMismatchExceptionTraceback）；★★ 判据② 通过：after 24.9288% > base 16.3818% 且 Δ = +8.547 pp ≥ +5.0 pp ⇒ 判『已验证可用』。",
+   "effect": "after acc=24.9288%（175/702）；base acc=16.3818%（115/702）；★ Δ = +8.547 pp（≥ +5.0 pp 冻结阈值 ⇒ 过判据②）；目标 +10.0 pp 仅展示。口径：数据锚 c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a（702 条）、criteria elam-v3-allright-1、温度 0、702/702、0 error；base/after 独立 output_dir + fail-closed + stdout 双份；comparability_notes 全过。★ 服务档 --gpu-memory-utilization 0.85（after/base 同配）。",
+   "inference": "✅ CPT 全参终态 = 完整 HF 模型（runscheckpoint-200：含 model-*.safetensors + config.json 等）⇒ ★ 零 merge，vLLM 直接挂载该目录并 --model /model 服务；evals 步的 checkpoint_path 按 run-eval.sh L40 的容器内可达路径 /runs/... 传入（★ 本档曾因把该字段写错而失败一次，已修并加『存在 ∧ 含 config.json』自检）。",
+   "algo_checks": "ms-swift CPT 全参跑次侧可观测项通过：exit_code=0、200/200、ckpt_retention ok、五计数全 0。",
+   "throughput": "不适用（CPT 档不跑 rollout/生成）",
+   "peak_mem": "见 runsgpu_memory_summary.json（单卡峰值）＋ trainer 自报；两类口径分开。",
+   "run_path": "RUN-T004",
+   "measurement_pending": false,
+   "anomalies": [
+    "★ 评测曾失败一次（已修）：eval 配置的 checkpoint_path 误写成容器内 /model（只存在于 vLLM 容器），实际应为本档自身 config 推导的 …/checkpoint-200（由 run-eval.sh L40 的 -v $TREE/runs:/runs:ro 提供）⇒ 已改为按 v0-* 通配定位并加『存在 ∧ 含 config.json』fail-closed 自检。",
+    "★ v6 冒烟与全参族验证：本档是 v6（dsprek）镜像下首个完成的 deepspeed/CPT 全量档，五计数全 0，与 T005/T006 同族同镜像。",
+    "★ 树指纹：起跑断言 24bc4485… ≠ 现测（post-launch 改 manifest）⇒ 回填取起跑断言值。"
+   ],
+   "code_identity": {
+    "tree_fingerprint": "24bc4485a1ef446945168b012c0325848ca0bebed108ca4c2eafe231418ccabf",
+    "tree_fingerprint_role": "本档【起跑时 launcher 实测并断言通过】的树指纹（status-T004/launch.log assert 0）",
+    "tree_fingerprint_drift": "★ 该树其后被其他档起跑改动 manifest（post-launch）⇒ 现测不同；回填取起跑断言值。",
+    "generated_yaml": "samplesT004.yaml",
+    "generated_yaml_sha256": "b03daf19e4ad21b7602b84cb696c06b2fd19de9953dab628afac5280382b828f",
+    "image_base_official": {
+     "tag": "graspo:v0.28.11-cu130fix-v2-dsprek-20261012",
+     "digest": "sha256:ecaf897a7534ef0901096e48fefbf10a42adf76029920ba8d54e88a738783abe"
+    },
+    "image_run_wrapper": {
+     "tag": "graspo:v0.28.11-cu130fix-v2-dsprek-20261012-run",
+     "digest": "sha256:629642a4c4ec28d370debb035417d9ec9586fde07a9339b47c1834b75c31c041"
+    }
+   },
+   "tree_fingerprint": "24bc4485a1ef446945168b012c0325848ca0bebed108ca4c2eafe231418ccabf",
+   "tree_fingerprint_role": "本档【起跑时 launcher 实测并断言通过】的树指纹（status-T004/launch.log assert 0）",
+   "corrections": [
+    "n_correct：175"
+   ],
+   "eval_dataset": {
+    "path": "/homedata/test.jsonl",
+    "sha256": "c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a",
+    "samples": 702
+   },
+   "note": "判定：已验证可用。after 24.9288%/base 16.3818%/Δ=+8.5470 pp。P5/P6 待补。",
+   "after_acc": 0.249288,
+   "base_acc": 0.163818,
+   "delta_pp": 8.547,
+   "n_correct": 175,
+   "n_total": 702,
+   "throughput_detail": "★ 生成式 tok/s 不适用（CPT 档不跑 rollout/生成）⇒ 不编造；墙钟见 runs/T004/stdout.log 的 200 步记录。",
    "elapsed": "—",
    "max_epochs": 2,
    "derived_steps": 200,
    "per_epoch_steps": 100,
    "save_steps_basis": "= 推导步数 200 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
-   "steps_actual": "—",
+   "steps_actual": "200/200",
    "data_scale": "100 条（每卡 100）",
-   "note": "—",
    "tp": "—（框架内部决定）",
    "pp": "—（框架内部决定）",
    "dp": "1（派生）",
    "cards_total": "nproc_per_node×nnodes = 1 卡",
    "dp_derived": true,
-   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）"
+   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）",
+   "note_full": "判据① ∧ 判据② 均达（阈值已冻结）⇒ 已验证可用。 ★ 订正说明（跑次侧）：n_correct：175 ★ 异常登记：★ 评测曾失败一次（已修）：eval 配置的 checkpoint_path 误写成容器内 /model（只存在于 vLLM 容器），实际应为本档自身 config 推导的 …/checkpoint-200（由 run-eval.sh L40 的 -v $TREE/runs:/runs:ro 提供）⇒ 已改为按 v0-* 通配定位并加『存在 ∧ 含 config.json』fail-closed 自检。 ★ 异常登记：★ v6 冒烟与全参族验证：本档是 v6（dsprek）镜像下首个完成的 deepspeed/CPT 全量档，五计数全 0，与 T005/T006 同族同镜像。 ★ 异常登记：★ 树指纹：起跑断言 24bc4485… ≠ 现测（post-launch 改 manifest）⇒ 回填取起跑断言值。 ★ 锚点：树 24bc4485… + image_base_official sha256:e… + image_run_wrapper sha256:6…"
   },
   {
    "tier": "T005",
