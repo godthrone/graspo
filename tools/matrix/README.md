@@ -232,3 +232,12 @@ python3 -m py_compile tools/matrix/<改动文件>.py     # 或等价的 AST 解�
 ★ **资源余量必须在"该资源被使用的路径"所在挂载上量，⛔ 不得以 `/` 或任意挂载代替**（与"别假设环境存在""卡上没显存≠卡没人用"同族）。
 ★ 实证（2026-10-13）：★ 我曾量 `/` ⇒ **1.5 T 可用**；★ 而**产物实际落在 `/data/remote`** ⇒ **5.5 T 可用**（★ 误差近 4 倍、且结论的"余量"判断依据错误）。
 ★ 同类：★ GPU 余量看目标卡上；★ 磁盘看产物落点挂载；★ 网络看目标链路。
+
+## 校验对象 = 实际执行对象（强制 · 本日反复撞到的同一族）
+
+★ **产物级断言的对象必须是"实际被执行的 config"**（如 `runs/<T>/<T>/config.yaml`），⛔ **不是"生成器写出的 yaml"**。
+★ 实证（2026-10-13，T023）：★ 部署树 `T023.yaml:23` 有 `final_formats: ["merged-hf"]`，而**运行 config 的 `export.final_formats = []`** ⇒ ★ `checkpoint.py:38` 的门不成立、导出未触发、`ec=1`、磁盘零增量。
+★ 工具：`tools/matrix/check_run_config.py --run-config <runs/…/config.yaml> --deploy-yaml <部署树 yaml>` ⇒ **不一致即 FAIL-CLOSED**（用例见 `tests/scripts/test_check_run_config.py`）。
+★ 注意 `schema.py:981` 的默认值 = `[]` ⇒ ★ 若装配链**未携带 yaml 的 `export` 段**，默认空值会静默生效 ⇒ **须逐档比对运行 config 与部署树**。
+★ **今日同族三例**：① 断言过了但产物没对（T023）② 改动未提交 ⇒ 交付物与本地不一致 ③ 段落未透传 ⇒ 共同根因 = **"校验对象 ≠ 实际执行对象"**。
+★ **归属对账（补充）**：★ **manifest / 矩阵 / 部署树 yaml 三处的 `backend`/`cards` 应逐档对账**（2026-10-13 全表对账：**不一致 0**；★ T032 三处一致 = `ms-swift`，此前"记错"的怀疑**不成立**）。
