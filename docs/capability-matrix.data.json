@@ -4284,7 +4284,7 @@
    "peak_mem": "—",
    "run_path": "—",
    "availability": "blocked",
-   "blocked_reason": "★ **本档自身实测 OOM（9B GRASPO 全参 × native × 1 卡）**：逐字 `OutOfMemory`（★ 完整逐字证据待跑次侧补；⛔ 未臆断异常细节）⇒ ⛔ 不得以本配置起跑；★ 这不是效果结论、是硬件不可行；★ 四态保持「尚未验证」；★ **本理由不依赖族/卡数外推**（⛔ 未引用他档实测）。",
+   "blocked_reason": "★ **本档自身实测 OOM（9B GRASPO 全参 × native × 1 卡）** —— 逐字证据：\n```\ntorch.OutOfMemoryError: CUDA out of memory. Tried to allocate 96.00 MiB.\n  GPU 0 has a total capacity of 79.25 GiB of which 27.88 MiB is free.\n  Process 3624748 has 79.21 GiB memory in use. Of the allocated memory 78.33 GiB is\n  allocated by PyTorch, and 382.49 MiB [reserved]\n```\n⇒ ⛔ 不得以本配置起跑；★ 这不是效果结论、是硬件不可行；★ 四态保持「尚未验证」；★ **本理由不依赖族/卡数外推**（⛔ 未引用他档实测；★ 与 T016 为**两条独立实测**、数值相近但不同：T016 `79.20 GiB in use` vs 本档 `79.21 GiB memory in use`、Process 号亦不同）。",
    "elapsed": "—",
    "max_epochs": 8,
    "derived_steps": 48,

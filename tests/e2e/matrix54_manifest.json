@@ -271,13 +271,15 @@
           "combo": "9B × SFT × full × native × 1 卡",
           "verdict": "infeasible",
           "evidence": "本档自身实测 OOM（`79.20 GiB in use`、`ec=1`、`Traceback 2`）",
-          "tier": "T016"
+          "tier": "T016",
+          "independence_note": "★ 见 T034 条的同名注（两例独立、数值相近但不同）"
         },
         "native_full_1card_T034": {
           "combo": "9B × GRASPO × full × native × 1 卡",
           "verdict": "infeasible",
-          "evidence": "本档自身实测 OOM（逐字 `OutOfMemory`；★ 完整逐字证据待补）",
-          "tier": "T034"
+          "evidence": "torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 96.00 MiB.\n  GPU 0 has a total capacity of 79.25 GiB of which 27.88 MiB is free.\n  Process 3624748 has 79.21 GiB memory in use. Of the allocated memory 78.33 GiB is\n  allocated by PyTorch, and 382.49 MiB [reserved]",
+          "tier": "T034",
+          "independence_note": "★ 与 `native_full_1card_T016` 为**两条独立实测**（各档各证、⛔ 不合并）：T016 ⇒ `79.20 GiB in use`（Process 3130462）；T034 ⇒ `79.21 GiB memory in use`（Process 3624748）○"
         }
       },
       "not_extrapolated": {
@@ -285,7 +287,7 @@
           "T018（9B SFT 全参 × native × 4 卡）",
           "T036（9B GRASPO 全参 × native × 4 卡）"
         ],
-        "reason": "★ 不同卡数 = 不同配置 ⇒ ★ 未被实测者 ⛔ 不得推断（标 unmeasured）"
+        "reason": "★ 不同卡数 = 不同配置 ⇒ ★ 未被实测者（T018/T036 四卡）⛔ 不得推断，保持 `unmeasured`"
       }
     }
   },
