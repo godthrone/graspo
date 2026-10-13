@@ -868,12 +868,25 @@ def convert_native_rank_to_peft(checkpoint_dir: str | Path, output_dir: str | Pa
     converted: dict[str, Any] = {}
     for key, tensor in lora.items():
         name = str(key)
+        # ★ 前缀按"塔"分流 —— 由**基座实测**确定（Qwen3_5ForConditionalGeneration：
+        #   index 里 850 键在 `model.language_model.` 下、333 键在 `model.visual.` 下）：
+        #   源键 `layers.<N>.<mod>`        ⇒ `model.language_model.layers.<N>.<mod>`
+        #   源键 `visual.blocks.<N>.<mod>` ⇒ `model.visual.blocks.<N>.<mod>`
+        #   ★ 其余前缀一律**不猜**、直接拒（宁可拒，也不要静默合出错误模型）。
         if name.endswith(".lora_a"):
-            target = "base_model.model.model." + name[: -len(".lora_a")] + ".lora_A.weight"
+            suffix, peft = ".lora_a", ".lora_A.weight"
         elif name.endswith(".lora_b"):
-            target = "base_model.model.model." + name[: -len(".lora_b")] + ".lora_B.weight"
+            suffix, peft = ".lora_b", ".lora_B.weight"
         else:
             raise ExportError(f"未映射的 LoRA 键（规则不含）：{name}")
+        stem = name[: -len(suffix)]
+        if stem.startswith("layers."):
+            tower = "base_model.model.model.language_model."
+        elif stem.startswith("visual."):
+            tower = "base_model.model.model.visual."
+        else:
+            raise ExportError(f"源键前缀未知（不猜前缀）⇒ fail-closed：{name}")
+        target = tower + stem + peft
         # LoRA A: (r, in) / B: (out, r)；PEFT 同为该形状 ⇒ 不转置，仅校验
         if tensor.dim() != 2:
             raise ExportError(f"{name} 不是二维张量（shape={tuple(tensor.shape)}）⇒ 拒绝")
