@@ -228,6 +228,22 @@ def final_formats_valid(vals):
     return any(str(v) not in FINAL_FORMATS_ALLOWED for v in vals)
 
 
+#: ★★ 镜像 `LaunchConfig` 的**允许键集合**（逐字来自镜像报错信息；`extra="forbid"` ⇒ 越界即 SystemExit）。
+LAUNCH_ALLOWED_KEYS: set[str] = {
+    "determinism", "master_addr", "master_port", "nnodes", "node_rank", "nproc_per_node", "python",
+}
+
+
+def launch_keys_invalid(text: str) -> bool:
+    """★ 断言：产物 `launch:` 段的键集合必须 ⊆ `LAUNCH_ALLOWED_KEYS`（否则起跑当场 SystemExit）。"""
+    import re as _re
+    m = _re.search(r"^launch:\s*$([\s\S]*?)(?=^\S|\Z)", text, _re.M)
+    if not m:
+        return False                      # ★ 无 launch 段 ⇒ 放行（非必需段）
+    keys = set(_re.findall(r"^\s+([A-Za-z_][A-Za-z0-9_]*)\s*:", m.group(1), _re.M))
+    return not keys <= LAUNCH_ALLOWED_KEYS
+
+
 def blocked_unmarked(row):
     """★ blocked 档必须有 `blocked_reason`（起跑侧据此拒跑）；缺理由 ⇒ fail-closed。"""
     if row.get("availability") != "blocked":
@@ -256,9 +272,9 @@ def _gen_self_test():
         ("⑭ 同源性：cards=2 + gpus 两张 + nproc=2 ⇒ 放行",
          cards_procs_mismatch({"cards": 2, "gpus": [1, 7], "parallel": "nproc_per_node=2（2 卡）"}) is None),
         ("⑮ ★ 卡号纪律：配置含 `gpus:` ⇒ **必须拒**（§12 一族）",
-         config_pins_gpus("launch:\n  cards: 2\n  gpus: [1, 7]\n") is True),
+         config_pins_gpus("launch:\n  nproc_per_node: 2\n  gpus: [1, 7]\n") is True),
         ("⑯ 卡号纪律：只含 cards/nproc ⇒ 放行",
-         config_pins_gpus("launch:\n  cards: 2\n  nproc_per_node: 2\n") is False),
+         config_pins_gpus("launch:\n  nproc_per_node: 2\n") is False),
         ("⑯b ★ 轴冲突：同档既 `blocked` 又「已验证不可用」⇒ **必须拒**",
          blocked_vs_unavailable_conflict({"availability": "blocked", "status": "已验证不可用"}) is True),
         ("⑯c 轴分离：`blocked` + 「尚未验证」⇒ 放行",
@@ -309,6 +325,16 @@ def _gen_self_test():
          final_formats_valid(["hf"]) is True),
         ("⑲ ⑥ final_formats：合法取值 ⇒ 放行",
          final_formats_valid(["merged-hf"]) is False),
+        ("⑳① ★ launch 键集合：含 `cards` ⇒ **必须拒**（本次 P0 事故形态）",
+         launch_keys_invalid("launch:\n  cards: 2\n") is True),
+        ("⑳② launch 键集合：`nproc_per_node` ⇒ 放行",
+         launch_keys_invalid("launch:\n  nproc_per_node: 2\n") is False),
+        ("⑳③ launch 键集合：`nproc_per_node` + `python` ⇒ 放行",
+         launch_keys_invalid("launch:\n  nproc_per_node: 2\n  python: python3\n") is False),
+        ("⑳④ ★ launch 键集合：`cards` + `nproc_per_node` ⇒ **必须拒**",
+         launch_keys_invalid("launch:\n  cards: 1\n  nproc_per_node: 1\n") is True),
+        ("⑳⑤ launch 键集合：无 `launch` 段 ⇒ 放行",
+         launch_keys_invalid("backend: native\n") is False),
         ("⑩ ★ blocked 档缺 `blocked_reason` ⇒ **必须判缺**（fail-closed）",
          blocked_unmarked({"availability": "blocked"}) is True),
         ("⑪ blocked 档带理由 ⇒ 放行（但仍不得起跑）",
@@ -392,8 +418,9 @@ def yaml_of(row, uni, model_root, data_root, lora_backends=None, teacher=None):
 
     if _cards:
         L.append("launch:\n")
-        L.append(f"  cards: {_cards}\n")
-        L.append(f"  nproc_per_node: {_cards}   # ★ 由 cards 推导（同一真源；⛔ 不得只改一半）\n")
+        # ★★ 只写镜像认识的键（LaunchConfig 允许集：determinism/master_addr/master_port/
+        #    nnodes/node_rank/nproc_per_node/python）；⛔ 不写 `cards`（extra=forbid ⇒ 直接 SystemExit）。
+        L.append(f"  nproc_per_node: {_cards}   # ★ 由 cards={_cards} 推导（§12 同源：卡数与进程数不得各改一半）\n")
 
     # ★ OPD：教师身份是**已 pin 的事实**（manifest `feasibility_model.opd_teacher`）⇒ 必须落进 yaml。
     #   ★ 配置值 = **容器内路径**（`/models/Qwen3.8-27B`）；**挂载源用宿主路径**（起跑侧决定）——两者别混。
@@ -532,6 +559,11 @@ def main():
     _live = [(r["tier"], r.get("live_evidence")) for r in rows if blocked_contradicted_by_live(r)]
     if _live:
         print(f"FAIL-CLOSED：以下档标 blocked 却存在**矛盾的活证据** ⇒ 拒绝产出：{_live}")
+        return 1
+
+    _lk = [t for t, pth in sorted(written.items()) if launch_keys_invalid(Path(pth).read_text(encoding="utf-8"))]
+    if _lk:
+        print(f"FAIL-CLOSED：以下产物的 `launch` 段含镜像不认识的键（⛔ 起跑会 SystemExit）⇒ 拒绝产出：{_lk}")
         return 1
 
     _ff_bad = [(r["tier"], r.get("final_formats")) for r in rows

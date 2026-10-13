@@ -20,8 +20,7 @@ training:
   save_checkpoint_every_epoch: false
   save_steps: 101
 launch:
-  cards: 2
-  nproc_per_node: 2   # ★ 由 cards 推导（同一真源；⛔ 不得只改一半）
+  nproc_per_node: 2   # ★ 由 cards=2 推导（§12 同源：卡数与进程数不得各改一半）
 native:
   tp_size: 1
   dp_size: 1
