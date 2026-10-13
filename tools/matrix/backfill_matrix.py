@@ -171,6 +171,20 @@ def matrix_frozen_map(official_path):
     return out
 
 
+def conclusion_of(raw):
+    """把跑次 `status` 规范化为 'pass' / 'fail' / 'other'。
+
+    ★ 状态字符串**一律走规范化匹配，⛔ 不用精确相等**：跑次可能写「通过（已验证可用）」这类**带括注**形态。
+    ★ 负例安全性：`未通过` / `非通过` / `不通过` **不以**「通过」开头 ⇒ 归 'other'，⛔ 不会被误判为 pass。
+    """
+    t = str(raw or "").strip()
+    if t.startswith("通过"):
+        return "pass"
+    if t.startswith("失败"):
+        return "fail"
+    return "other"
+
+
 def correction_texts(doc, _path=""):
     """递归找出跑次 json 中所有"订正/口径更正"类字段（键名含 correct/订正/口径更正），返回文本列表。
 
@@ -341,7 +355,7 @@ def validate_run(doc, tier_from_file, tier_rows, frozen_map=None, ref_rows_offic
         v = _s(doc[k])
         if not isinstance(v, str) or not v:
             errs.append(f"结果字段 {k!r} 为空 / 非字符串")
-        elif v == PLACEHOLDER and st == "通过":
+        elif v == PLACEHOLDER and conclusion_of(st) == "pass":
             errs.append(f"status=通过 但 {k!r} 仍是占位符 '—'（不许半填）")
 
     # --- ★ 阈值信任边界：阈值只能来自矩阵冻结口径；跑次自述仅作交叉核对，不一致即拒绝 ---
@@ -557,7 +571,7 @@ def main():
             new_rows[tier]["status"] = "尚未验证"
             new_rows[tier]["measurement_pending"] = True   # ★ 读数已录、阈值待定（不作判定）
             new_rows[tier].pop("conclusion_annotation", None)   # 新读数取代旧「作废参考记录」注记
-            passed1 = _s(doc.get("status")) == "通过"
+            passed1 = conclusion_of(doc.get("status")) == "pass"
             new_rows[tier]["note"] = ("读数为实测记录，⛔ 暂不作判定：" +
                                       ("①「能完整跑完」已通过；" if passed1 else "") +
                                       "②「平台方数据集效果达标」读数已录，★ 阈值 δ 待定 ⇒ 状态暂保持「尚未验证」。")
@@ -719,6 +733,11 @@ def _self_test():
          norm_param("data_subset", "前 100 条") != norm_param("data_subset", "前 200 条")),
         ("⑦ 步数不同（800 vs 801）⇒ FAIL",
          norm_param("steps", "推导 800 步") != norm_param("steps", "推导步数 801")),
+        ("⑨ 状态：带括注「通过（已验证可用）」⇒ pass", conclusion_of("通过（已验证可用）") == "pass"),
+        ("⑩ 状态：带括注「失败（效果）」⇒ fail", conclusion_of("失败（效果）") == "fail"),
+        ("⑪ 状态：「尚未验证」⇒ other（不判过）", conclusion_of("尚未验证") == "other"),
+        ("⑫ ★ 负例：「未通过」/「非通过」/「不通过」**不得**判 pass",
+         all(conclusion_of(x) != "pass" for x in ("未通过", "非通过", "不通过"))),
         ("⑧ 仅措辞/格式不同、语义相同 ⇒ 放行",
          norm_param("switches", "save_steps=31;loss_scale=all") ==
          norm_param("switches", "loss_scale=all; save_steps=31")),

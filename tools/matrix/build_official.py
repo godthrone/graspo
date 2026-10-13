@@ -542,6 +542,7 @@ def main():
         # 实验数据四列：只有已结论档才有读数；其余记 '—'
         if concluded:
             tp_raw = r.get("throughput", "—")
+            r["throughput_detail"] = tp_raw        # ★ 归一化**之前**的原文（含 ≈3.9 s/step 等可核数）
             r["elapsed"] = split_elapsed(tp_raw)
             r["throughput"] = split_throughput(tp_raw)
             w = window_text(r.get("runs", ""))
@@ -581,7 +582,7 @@ def main():
                     _anchors.append(str(_v.get("role") or _k) + " " + str(_v["digest"])[:8] + "…")
             if _anchors:
                 r["note"] = (r.get("note") or "") + " ★ 锚点：" + " + ".join(_anchors)
-        _tp = str(r.get("throughput") or "")
+        _tp = str(r.get("throughput_detail") or r.get("throughput") or "")
         if "s/step" in _tp:
             import re as _re
             _m = _re.search(r"[≈~]?\s*([0-9.]+)\s*s/step", _tp)
