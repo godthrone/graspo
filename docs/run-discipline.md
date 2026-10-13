@@ -277,3 +277,16 @@
 - 为什么：T002 评测起在 **GPU6**，而 **T044 正占 GPU6/7** ⇒ vLLM 只剩 `3.81/79.25 GiB` ⇒
   `ValueError: Free memory ... less than desired GPU memory utilization (0.85, 67.36 GiB)`。
   ★ 根因 = "哪些卡被我方占着"**靠人记/人看** ⇒ 当天已复发多次 ⇒ 故升级为代码强制。
+
+### 17.2 择卡前跑 `cards-busy`（逐字命令与判读，2026-10-13 补）
+
+```bash
+docker ps --format '{{.Names}}' > /tmp/ps.txt
+docker inspect $(docker ps -q) > /tmp/ins.txt 2>/dev/null
+python3 $TREE/scripts/run_guards.py cards-busy --ps-file /tmp/ps.txt --inspect-file /tmp/ins.txt
+# ⇒ BUSY_CARDS=0,1,3,4,5,6,7
+```
+- 判读：★ **禁用集非空 ⇒ 这些卡一律排除**（含 `created`/`restarting` 的"已预约未加载"态）；
+  择卡把该集合作为 `plan_full_cards(..., reserved=…)` 的**硬排除**参数。
+- ★ 采集口径：★ 卡可能来自 **`HostConfig.DeviceRequests`** 或 **`Config.Env` 的 `NVIDIA_VISIBLE_DEVICES`**
+  （228 实测为后者）⇒ 台账**两者都读**。

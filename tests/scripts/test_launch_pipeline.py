@@ -464,3 +464,11 @@ def test_max_num_seqs_rejects_too_large():
 
 def test_max_num_seqs_not_required_for_small_tier():
     assert lp.check_max_num_seqs_in_script("--gpu-memory-utilization 0.85\n", False) == []
+
+
+def test_plan_full_cards_hard_excludes_reserved():
+    """★ §17.1 最后一块：占卡台账（含 loading 态）是**硬排除**，⛔ 不是建议。"""
+    cards = _cards(("1", 0, 81153, 0), ("3", 0, 81153, 0), ("6", 0, 81153, 0))
+    picked, why = lp.plan_full_cards(cards, 1, reserved={"1", "3"})   # 1/3 上有我方 loading 容器
+    assert picked == ["6"], (picked, why)
+    assert "§17" in why, why

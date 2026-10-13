@@ -387,7 +387,8 @@ def require_usable_gate(gate_rc: int, gate_stdout: str) -> list[str]:
     return []
 
 
-def plan_full_cards(cards: list[dict], required: int, allow_used_mib: int = 0) -> tuple[list[str] | None, str]:
+def plan_full_cards(cards: list[dict], required: int, allow_used_mib: int = 0,
+                    reserved: set[str] | None = None) -> tuple[list[str] | None, str]:
     """★ 为**大模型训练档**取卡：只接受"整卡基本空闲"的卡（第 11 个坑的收口）。
 
     228 实测（2026-10-13 T009，27B 全参 4 卡）：卡集里混进了 **宿主 GPU2**（上面有第三方
@@ -404,6 +405,9 @@ def plan_full_cards(cards: list[dict], required: int, allow_used_mib: int = 0) -
     rejected: list[str] = []
     for c in cards:
         idx = str(c.get("index"))
+        if reserved and idx in {str(x) for x in reserved}:
+            rejected.append(f"{idx}(★ §17 占卡台账禁用：我方容器已占/已预约)")
+            continue
         used = int(c.get("used_mib", 0))
         free = int(c.get("free_mib", 0))
         need = int(c.get("need_mib", 0)) or 0
