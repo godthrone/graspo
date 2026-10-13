@@ -35,6 +35,10 @@
     "models",
     "Qwen3.8-27B"
    ],
+   "measured": false,
+   "min_cards": null,
+   "teacher_weights_gib_bf16": 50.3,
+   "verdict_rule": "unmeasured（教师侧未测算）⇒ 不得声称可行；待 P-25 上机测量后回填",
    "offload": true,
    "source": "tests/e2e/matrix54_manifest.json::feasibility_model.opd_teacher",
    "note": "★ 配置值 = **容器内路径**（由 path_parts 拼成）；**挂载源用宿主路径**（起跑侧决定）——两者别混。"

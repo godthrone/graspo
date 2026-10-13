@@ -39,12 +39,35 @@ def opd_teacher_missing(text):
     return not (ok_path or ok_srv)
 
 
+def opd_cards_shortfall(teacher, cards):
+    """★ OPD 卡数断言（**数据驱动**）：manifest 若声明了 `min_cards`（P-25 实测回填后），则 `cards` 不得低于它。
+
+    返回 None = 通过；否则返回拒绝理由。★ manifest **未声明**时不做限制（其规则明载教师侧"未测算"、
+    判定恒为 unmeasured，禁止凭空编造卡数）。
+    """
+    if not teacher or not teacher.get("min_cards"):
+        return None
+    try:
+        c = int(cards or 0)
+    except Exception:
+        return f"cards 不可解析（{cards!r}）"
+    mc = int(teacher["min_cards"])
+    if c < mc:
+        return f"OPD 卡数不足：cards={c} < feasibility_model.opd_teacher.min_cards={mc}"
+    return None
+
+
 def _gen_self_test():
     cases = [
         ("① OPD 有 teacher_model_path ⇒ 放行", not opd_teacher_missing("train_method: opd\n  teacher_model_path: /models/Qwen3.8-27B\n")),
         ("② ★ 负例：OPD 缺 teacher ⇒ **必须判缺**（fail-closed）", opd_teacher_missing("train_method: opd\nlora:\n  r: 8\n")),
         ("③ ★ 负例：OPD 空值 teacher ⇒ **必须判缺**", opd_teacher_missing("train_method: opd\n  teacher_model_path:\n")),
         ("④ 非 OPD 档 ⇒ 不判缺", not opd_teacher_missing("train_method: sft\n")),
+        ("⑤ 卡数断言：min_cards=2 且 cards=1 ⇒ **必须拒**",
+         opd_cards_shortfall({"min_cards": 2}, 1) is not None),
+        ("⑥ 卡数断言：min_cards=2 且 cards=2 ⇒ 放行", opd_cards_shortfall({"min_cards": 2}, 2) is None),
+        ("⑦ ★ 卡数断言：manifest 未声明 min_cards ⇒ **不放宽也不臆造**（不限制）",
+         opd_cards_shortfall({"measured": False}, 1) is None),
     ]
     ok = True
     for name, good in cases:
@@ -219,6 +242,16 @@ def main():
         print(f"LOADABLE {'PASS' if not bad else 'FAIL'}（{len(written)} 档；问题 {bad}）")
         if bad:
             return 1
+
+    _short = []
+    for r in rows:
+        if str(r.get("train_method") or "").lower() == "opd":
+            why = opd_cards_shortfall(teacher, r.get("cards") or r.get("cards_total"))
+            if why:
+                _short.append((r["tier"], why))
+    if _short:
+        print(f"FAIL-CLOSED：OPD 卡数低于 manifest 声明 ⇒ 拒绝产出：{_short}")
+        return 1
 
     _no_teacher = [t for t, pth in sorted(written.items()) if opd_teacher_missing(Path(pth).read_text(encoding="utf-8"))]
     if _no_teacher:

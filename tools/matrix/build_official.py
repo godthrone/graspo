@@ -377,6 +377,10 @@ def distill_teacher():
             _cp = str(t["teacher_model_path"]).strip("/")          # 如 models/Qwen3.8-27B
             _root, _dir = _cp.split("/", 1) if "/" in _cp else (_cp, "")
             return {"model": t.get("teacher_model"), "path_parts": [_root, _dir],   # ★ 分片存，避免整串进文档
+                    "measured": bool(t.get("measured")),
+                    "min_cards": t.get("min_cards"),          # ★ 若编排侧按 P-25 实测回填，则成为硬约束
+                    "teacher_weights_gib_bf16": t.get("teacher_weights_gib_bf16"),
+                    "verdict_rule": "unmeasured（教师侧未测算）⇒ 不得声称可行；待 P-25 上机测量后回填",
                     "offload": True, "source": f"{local}::feasibility_model.opd_teacher",
                     "note": "★ 配置值 = **容器内路径**（由 path_parts 拼成）；**挂载源用宿主路径**（起跑侧决定）——两者别混。"}
     except Exception:
