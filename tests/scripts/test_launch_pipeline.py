@@ -253,3 +253,35 @@ def test_plan_cards_defers_when_not_enough():
     """★ 卡不足 ⇒ 返回 None（顺延），⛔ 不硬上。"""
     cards, why = lp.plan_cards(["7"], 4)
     assert cards is None and "顺延" in why, (cards, why)
+
+
+# ---------- 生成的脚本必须自定义变量（T024 `TS: unbound variable` 事故） ----------
+_OK_SCRIPT = """#!/usr/bin/env bash
+set -uo pipefail
+TS=$(date -u +%s)
+nohup docker run --rm --name t024-export-$TS ...
+"""
+
+_BAD_SCRIPT = """#!/usr/bin/env bash
+set -uo pipefail
+nohup docker run --rm --name t024-export-$TS ...
+"""
+
+
+def test_script_self_contained_accepts_defined_var():
+    assert lp.check_script_self_contained(_OK_SCRIPT, ["TS"]) == []
+
+
+def test_script_self_contained_rejects_undefined_var():
+    """★ 回归：T024 生成的脚本里 TS 未定义 ⇒ 一跑到那行就 unbound variable。"""
+    problems = lp.check_script_self_contained(_BAD_SCRIPT, ["TS"])
+    assert problems and "未定义 $TS" in problems[0], problems
+
+
+def test_script_self_contained_flags_unused_var():
+    problems = lp.check_script_self_contained("VAR=1\n", ["VAR"])
+    assert problems and "未使用" in problems[0], problems
+
+
+def test_script_self_contained_rejects_empty_script():
+    assert lp.check_script_self_contained("", ["TS"])

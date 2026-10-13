@@ -231,6 +231,27 @@ def plan_cards(available: list[str], required: int) -> tuple[list[str] | None, s
     return (available[:required], f"取自实测空闲：{available[:required]}（需 {required} 张）")
 
 
+def check_script_self_contained(script_text: str, required_vars: list[str]) -> list[str]:
+    """★ 生成的启动脚本必须**自己定义**它用到的每个变量（第 9 个"启动前置"类坑）。
+
+    228 实测（2026-10-13 T024）：我用 sed 把容器名改成 `t024-export-${TS}`，**却把 `TS=` 的定义
+    留在了外层脚本**⇒ 生成的脚本一跑到那行就 `TS: unbound variable` 而死（现象是"日志停住、
+    容器已退、GPU 已空"，离真因很远）。护栏：生成后**断言每个必需变量在脚本内被赋值**。
+    """
+    import re as _re
+    problems: list[str] = []
+    if not script_text:
+        return ["脚本内容为空 ⇒ fail-closed"]
+    for var in required_vars:
+        pat = _re.compile(rf"^\s*(?:export\s+)?{_re.escape(var)}=", _re.M)
+        if not pat.search(script_text):
+            problems.append(f"生成的脚本未定义 ${var}（形如 `{var}=…`）⇒ fail-closed（会 unbound variable）")
+        # 若脚本里根本没用它，则属"多余要求"，也提示出来（避免护栏变成噪音）
+        elif f"${var}" not in script_text and f"${{{var}}}" not in script_text:
+            problems.append(f"脚本定义了 ${var} 但未使用（请从 required_vars 移除，避免护栏噪音）")
+    return problems
+
+
 def build_json_reason(after_correct: int, n_total: int, base_correct: int, status: str) -> str:
     """落 json 的备注（≤100 字）：判定 + 读数，与结构化字段同源。"""
     after = after_correct / n_total * 100 if n_total else 0.0
