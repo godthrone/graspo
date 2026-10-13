@@ -132,3 +132,11 @@ python3 -m py_compile tools/matrix/<改动文件>.py     # 或等价的 AST 解�
 ★★ **⛔ 不得做任何可能"合并真实不同值"的归一**（如把 `全参` 与 `LoRA`、`native` 与 `ms-swift`、`dp_size=2` 与 `dp_size=1` 混同）——否则"防错位"防线会被归一化**悄悄打薄**。
 ★ 本战役同类根因已两次被拦下（均 fail-closed 零写入）：① `通过（已验证可用）`；② `全参（full-parameter）` vs `全参`。
 ★ **负例已钉在 `--self-test`**：`全参（full-parameter）`≡`全参` ✓／`仅视觉`≠`全参`／`LoRA`≠`全参`／`native`≠`ms-swift`／`dp_size=2`≠`dp_size=1`。
+
+## 脱敏纪律（强制 · 对抗性验证）
+
+★ **脱敏规则必须"顺序无关"，并用对抗性输入验证** —— 因为规则顺序一旦让某条**先行规则把路径打碎**，后面的规则就再也匹配不到。
+★ 真实事故（2026-10-13）：`/models/` 排在 `/home/` **之前** ⇒ `/home/<u>/models/Qwen3.8-27B` 被打碎成 `/home/<u>Qwen3.8-27B` ⇒ **任何带斜杠的规则都匹配不到** ⇒ 泄漏进 `data.json` 2 处。
+★ 因此 `sanitize_str()` **末尾必须有一道与顺序无关的兜底**：`/home/<seg>[/<seg>…]` 残形整体抹掉。
+★ **回归自检**：`python3 tools/matrix/build_official.py --self-test` —— 含三例：① 真实案例宿主绝对路径 ⇒ 0 命中；② 无尾斜杠同形 ⇒ 被抹掉；③ ★ **反转 `PATH_MAP` 后仍须 0 命中**（顺序无关）。
+★ 交付前另跑 **`grep -c <用户名> docs/capability-matrix.{data.json,html}` ⇒ 必须 0**。

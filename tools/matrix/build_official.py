@@ -38,8 +38,41 @@ OPAQUE_RUN = {"T028": ("RUN-20261011-T028-01", "2026-10-11")}
 def sanitize_str(s: str) -> str:
     for pat, rep in PATH_MAP:
         s = re.sub(pat, rep, s)
+    # ★★ 兜底（**顺序无关**）：无论规则先后如何，`/home/<seg>[/<seg>…]` 残形整体抹掉。
+    #    动机（2026-10-13 实测泄漏）：`/models/` 先于 `/home/` 执行会把 `/home/<u>/models/X`
+    #    打碎成 `/home/<u>X`（任何带斜杠的规则都匹配不到）⇒ 必须有一道与顺序无关的兜底。
+    s = re.sub(r"/home/[A-Za-z0-9._-]+[A-Za-z0-9._-]*(?:/[A-Za-z0-9._-]+)*", "", s)
     s = re.sub(r"runs/[A-Za-z0-9._-]+/runs/(T\d{3})", r"\1", s)
     return s
+
+
+def _sanitizer_self_test():
+    """★ 脱敏回归（含**对抗性输入**与**顺序无关**验证）。"""
+    cases = [
+        ("① 负例·本次真实案例：含宿主绝对路径（`/home/<u>/models/X`）⇒ 必须 0 命中",
+         "/home/user/models/Qwen3.8-27B", "user"),
+        ("② 负例·**无尾斜杠**同形 ⇒ 必须被抹掉",
+         "/home/user/elam-v5-balanced", "user"),
+    ]
+    ok = True
+    for name, raw, needle in cases:
+        out = sanitize_str(raw)
+        good = needle not in out
+        print(f"  [{'PASS' if good else 'FAIL'}] {name} ⇒ {out!r}")
+        ok = ok and good
+    # ★ 顺序无关：把 PATH_MAP 反转（最坏顺序）再跑，仍须 0 命中
+    global PATH_MAP
+    orig = PATH_MAP
+    try:
+        PATH_MAP = list(reversed(orig))
+        out = sanitize_str("/home/user/models/Qwen3.8-27B")
+        good = "user" not in out
+        print(f"  [{'PASS' if good else 'FAIL'}] ③ ★ 顺序无关：反转 PATH_MAP 后仍须 0 命中 ⇒ {out!r}")
+        ok = ok and good
+    finally:
+        PATH_MAP = orig
+    print(f"SANITIZER-SELF-TEST {'PASS' if ok else 'FAIL'}")
+    return 0 if ok else 1
 
 
 def sanitize(obj):
@@ -541,9 +574,12 @@ def main():
     ap.add_argument("--in", dest="inp", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--version", default=None)
+    ap.add_argument("--self-test", action="store_true", help="脱敏回归自检（对抗性输入 + 顺序无关）")
     ap.add_argument("--date", default=None,
                     help="文档日期；缺省读输入数据的 meta.doc_date。⛔ 不读时钟（§17.7 生成确定性）。")
     a = ap.parse_args()
+    if getattr(a, "self_test", False):
+        return _sanitizer_self_test()
 
     src = json.loads(Path(a.inp).read_text(encoding="utf-8"))
     meta = src.get("meta", {})
