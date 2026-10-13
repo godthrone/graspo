@@ -216,6 +216,11 @@ def dedup_ledger(text):
     return "\n".join(out) + "\n"
 
 
+def ledger_covers(rows, filled_tiers):
+    """★ 断言辅助（可单测）：本次处理的每一档是否都在台账行里。返回缺失的档号列表。"""
+    return [t for t in filled_tiers if not any(f"`{t}`" in r for r in rows)]
+
+
 def conclusion_of(raw):
     """把跑次 `status` 规范化为 'pass' / 'fail' / 'other'。
 
@@ -465,7 +470,8 @@ def main():
     ap.add_argument("--data-out", default=None, help="默认 = --data-in（原地回填）")
     ap.add_argument("--template", default="template.html")
     ap.add_argument("--html-out", default="capability-matrix-new.html")
-    ap.add_argument("--ledger-out", default="backfill-ledger.md")
+    ap.add_argument("--ledger-out", default=None,
+                    help="台账路径（缺省 = 数据目录下的 backfill-ledger.md，⛔ 不用相对 CWD 以免 stray）")
     ap.add_argument("--only", default=None, help="只回填这些档号，逗号分隔（增量）")
     ap.add_argument("--official-data", default="docs/capability-matrix.data.json",
                     help="正式机读件（由 build_official.py 从内部数据派生）")
@@ -492,7 +498,8 @@ def main():
     data_out = Path(a.data_out) if a.data_out else data_in
     html_out = Path(a.html_out)
     # 相对路径的台账落在"矩阵数据所在目录"（工作区），⛔ 不再落进仓库根造成 stray 文件
-    ledger_out = Path(a.ledger_out)
+    ledger_out = (Path(a.ledger_out) if a.ledger_out
+                  else Path(a.data_out).parent / "backfill-ledger.md")   # ★ 锚定数据目录
     if not ledger_out.is_absolute() and not ledger_out.exists():
         ledger_out = data_in.parent / ledger_out.name
     runs_dir = Path(a.runs_dir)
@@ -532,6 +539,7 @@ def main():
         _ann = _r.get("conclusion_annotation") or {}
         if _ann.get("conclusion_valid") is False and _r.get("tier") not in void_map and _r.get("tier") not in _unvoid:
             void_map[_r["tier"]] = _ann.get("reason", "既有作废记录：结论不对应当前行参数")
+    _anchor_corr_tiers: set[str] = set()
     files = sorted(runs_dir.glob("*.json"))
     if only:
         files = [f for f in files if f.stem in only]
@@ -573,6 +581,8 @@ def main():
         # 幂等判据：只比"读数"；★ status 不由跑次 json 直接决定（阈值未冻结时保持「尚未验证」），故排除
         changed = {k: new_rows[tier].get(k) != _s(doc[k]) for k in RESULT_KEYS if k != "status"}
         _corr = (doc.get("provenance") or {}).get("eval_dataset_anchor_correction")
+        if _corr:
+            _anchor_corr_tiers.add(tier)
         _corrs_now = correction_texts(doc)
         _corr_changed = bool(_corrs_now) and new_rows[tier].get("corrections") != _corrs_now
         _missing_new = (bool(_corr) and not new_rows[tier].get("eval_dataset_anchor_correction")) or any(
@@ -744,6 +754,11 @@ def main():
             print("FAIL: 校验未通过 ⇒ **不落盘**（交付件与数据保持原样）")
             return 1
 
+        # ★★ 落盘前断言：**本次处理的每一档必须出现在台账中**（⛔ 不再静默漏行）
+        _missing_rows = [t for t in filled if not any(f"`{t}`" in r for r in ledger_rows)]
+        if _missing_rows:
+            print(f"FAIL-CLOSED：以下档已处理但**未生成台账行** ⇒ 拒绝落盘：{_missing_rows}")
+            return 1
         for f in (data_out, Path(a.official_data), Path(a.official_html)):
             f.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(tmp_data, data_out)
@@ -753,7 +768,7 @@ def main():
         # ★ 触发方式显式写进行内标记（审计件：`×N（含 M 次 --force 重跑）` 必须准）
         _mode = ("--force" if a.force else
                  ("--unvoid" if a.unvoid else
-                  ("锚点订正" if any((d.get("provenance") or {}).get("eval_dataset_anchor_correction") for d in docs) else "增量")))
+                  ("锚点订正" if _anchor_corr_tiers else "增量")))
         ledger_rows = [(_r[:-2] + f" [{_mode}] |") if _r.endswith(" |") else _r for _r in ledger_rows]
         append_ledger(ledger_out, ledger_rows)
         print(f"OK: 回填 {len(filled)} 档 ⇒ {data_out}（内部）/ {a.official_data} / {a.official_html}；"
@@ -808,6 +823,8 @@ def _self_test():
          "含 1 次 --force 重跑" in dedup_ledger(
              "| t1 | `T1` | `a.json` | `aaaa` | 通过 | ✅ | n [增量] |\n"
              "| t2 | `T1` | `a.json` | `aaaa` | 通过 | ✅ | n [--force] |")),
+        ("⑲ ★ 台账覆盖率：处理了但未落行 ⇒ **必须拒**（fail-closed）",
+         ledger_covers(["| t | `T1` | `a.json` | `sha` | 通过 | ✅ | n |"], ["T1", "T2"]) == ["T2"]),
         ("⑧ 仅措辞/格式不同、语义相同 ⇒ 放行",
          norm_param("switches", "save_steps=31;loss_scale=all") ==
          norm_param("switches", "loss_scale=all; save_steps=31")),
