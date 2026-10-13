@@ -80,3 +80,10 @@ def test_selfcheck_rejects_empty_provenance_command():
     for bad in ("", "   ", None):
         with pytest.raises(AssertionError):
             g.selfcheck(_minimal_doc(provenance={"evidence_paths": ["/data/x/eval.log"], "command": bad}))
+
+
+def test_delta_tolerance_allows_report_rounding():
+    """★ 回归：报告侧 accuracy_percent 只保留 4 位小数（T020: 0.1424 vs 精确 0.14245）⇒ 容差 1e-3。"""
+    a, b, dp = g.fractions(118, 702, 117, 702)
+    assert dp == 0.1425, dp                      # 精确分数 ⇒ 0.1425
+    assert abs(round(16.8091 - 16.6667, 4) - dp) < 1e-3   # 报告舍入值 ⇒ 0.1424

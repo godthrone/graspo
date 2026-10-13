@@ -40,9 +40,14 @@ def build(args) -> collections.OrderedDict:
     ac, at, ap = summarise(after)
     bc, bt, bp = summarise(base)
     assert at == bt, f"两侧样本数不一致：{at} vs {bt}"
-    delta_pp = round((ap - bp), 4)          # ★ 报告里已是百分数
-    delta_field = round((ac / at - bc / bt) * 100, 4)   # 结构化字段：小数点差 × 100
-    assert abs(delta_pp - delta_field) < 1e-6, f"delta 不同源：{delta_pp} vs {delta_field}"
+    # ★ 结构化字段一律从**精确分数**推导（报告里的 accuracy_percent 已被舍入到 4 位小数）
+    a_exact, b_exact = ac / at, bc / bt
+    delta_field = round((a_exact - b_exact) * 100, 4)
+    delta_reported = round(ap - bp, 4)
+    # 容差 1e-3：报告侧百分比只保留 4 位小数，二者最多差 0.0001（实测 T020: 0.1424 vs 0.1425）
+    assert abs(delta_reported - delta_field) < 1e-3, \
+        f"delta 不同源（报告 {delta_reported} vs 精确 {delta_field}）⇒ 超出舍入容差"
+    delta_pp = delta_field
     status = PASS if delta_pp >= 5.0 else FAIL
     d = collections.OrderedDict()
     d["schema"] = "matrix-run/v1"
@@ -105,7 +110,8 @@ def build(args) -> collections.OrderedDict:
 def selfcheck(d: dict) -> None:
     """落盘前自检（四类，全部来自 228 实测教训）。"""
     # ① 单位/同源：delta_pp 必须是**百分点**且与结构化字段一致（曾误写成小数差 0.0057）
-    assert abs(d["delta_pp"] - round((d["after_acc"] - d["base_acc"]) * 100, 4)) < 1e-6, \
+    # ★ 容差 1e-3：after_acc/base_acc 落盘时保留 6 位小数，反推 delta 会有 ≤0.0001 的舍入差
+    assert abs(d["delta_pp"] - round((d["after_acc"] - d["base_acc"]) * 100, 4)) < 1e-3, \
         f"delta_pp 单位/同源自检失败：{d['delta_pp']}"
     # ② evidence_paths 非空（曾因漏填被回填校验器 fail-closed 拦下）
     paths = d["provenance"]["evidence_paths"]
