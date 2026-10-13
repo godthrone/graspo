@@ -171,3 +171,32 @@ def test_merged_artifact_rejects_empty_host_dir(tmp_path: Path):
     d.mkdir()
     problems = lp.check_merged_artifact(str(d), "/evalout/x")
     assert problems and "§7 失败（merged 宿主侧）" in problems[0], problems
+
+
+# ---------- 基座路径：容器内 → 宿主（T024 事故 + T008 险些事故的收口） ----------
+def test_resolve_base_maps_container_path_to_host(tmp_path: Path):
+    """`/models/Qwen3.8-27B` ⇒ `<host_root>/Qwen3.8-27B`（存在则通过）。"""
+    host_root = tmp_path / "models"
+    (host_root / "Qwen3.8-27B").mkdir(parents=True)
+    src, msg = lp.resolve_base_mount_source("/models/Qwen3.8-27B", host_root=str(host_root) + "/")
+    assert src == str(host_root / "Qwen3.8-27B") and "宿主路径且存在" in msg, (src, msg)
+
+
+def test_resolve_base_refuses_when_host_counterpart_missing(tmp_path: Path):
+    host_root = tmp_path / "models"
+    host_root.mkdir()
+    src, msg = lp.resolve_base_mount_source("/models/Qwen3.8-27B", host_root=str(host_root) + "/")
+    assert src is None and "不存在" in msg, (src, msg)
+
+
+def test_resolve_base_refuses_empty():
+    src, msg = lp.resolve_base_mount_source("")
+    assert src is None and "为空" in msg, (src, msg)
+
+
+def test_resolve_base_accepts_already_host_path(tmp_path: Path):
+    host_root = tmp_path / "models"
+    (host_root / "Qwen3.8-27B").mkdir(parents=True)
+    p = str(host_root / "Qwen3.8-27B")
+    src, msg = lp.resolve_base_mount_source(p)
+    assert src == p and "宿主路径且存在" in msg, (src, msg)

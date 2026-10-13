@@ -155,6 +155,31 @@ def check_merged_artifact(host_merge_dir: str, eval_container_path: str) -> list
     return problems
 
 
+#: 模型路径的"容器内 → 宿主"映射根（228）：容器里看到 /models，宿主上是 /home/user/models
+MODEL_CONTAINER_ROOT = "/models/"
+MODEL_HOST_ROOT = "/home/user/models/"
+
+
+def resolve_base_mount_source(model_path: str, host_root: str = MODEL_HOST_ROOT) -> tuple[str | None, str]:
+    """把"本档基座路径"解析成**可用于 `docker run -v <src>:<dst>` 的宿主机路径**。
+
+    ★ 这是 228 上一次事故 + 一次险些事故的收口：`$MP`（本档 config 里的 `model_path`）是
+    **容器内路径**（如 `/models/Qwen3.8-27B`），直接当挂载源写进 `-v` 会让 docker 建空目录，
+    随后 vLLM 报 `Invalid repository ID or local directory specified: '/model'`（T024 实测）。
+    规则：`/models/X` ⇒ `<host_root>X`（默认 `/home/user/models/X`）并断言其存在；
+    若传入的已经是宿主路径则直接校验存在性。
+    """
+    if not model_path or not str(model_path).strip():
+        return (None, "基座路径为空 ⇒ fail-closed（变量非空断言）")
+    src = str(model_path).strip()
+    if src.startswith(MODEL_CONTAINER_ROOT):
+        src = os.path.join(host_root, src[len(MODEL_CONTAINER_ROOT):])
+    ok, msg = check_mount_source(src)
+    if not ok:
+        return (None, msg)
+    return (src, msg)
+
+
 def build_json_reason(after_correct: int, n_total: int, base_correct: int, status: str) -> str:
     """落 json 的备注（≤100 字）：判定 + 读数，与结构化字段同源。"""
     after = after_correct / n_total * 100 if n_total else 0.0
