@@ -377,13 +377,15 @@ def distill_teacher():
             _cp = str(t["teacher_model_path"]).strip("/")          # 如 models/Qwen3.8-27B
             _root, _dir = _cp.split("/", 1) if "/" in _cp else (_cp, "")
             return {"model": t.get("teacher_model"), "path_parts": [_root, _dir],   # ★ 分片存，避免整串进文档
-                    "measured": bool(t.get("measured")),
+                    "measured": t.get("measured"),          # ★ 原样透传（可为 "partial"，⛔ 不 bool 化）
                     "min_cards": t.get("min_cards"),          # ★ 若编排侧按 P-25 实测回填，则成为硬约束
                     "teacher_weights_gib_bf16": t.get("teacher_weights_gib_bf16"),
-                    "verdict_rule": ("★ 已实测（P-25 2026-10-13）：**1 卡不可行、2 卡可行** ⇒ min_cards=2；"
-                                     "1 卡档不得产出（生成器按 min_cards fail-closed）"
-                                     if t.get("measured") else
-                                     "unmeasured（教师侧未测算）⇒ 不得声称可行；待 P-25 上机测量后回填"),
+                    "verdict_rule": ("★ **部分实测（partial）**：1 卡 OOM@训练第 1 步；**2 卡生成可通过但训练第 1 步双 rank OOM ⇒ 2 卡不足已实测**；"
+                                     "★ **min_cards 未定（4 卡量测待做）⇒ OPD 全族 ⛔ 不得起跑**"
+                                     if t.get("measured") == "partial" else
+                                     ("★ 已实测：min_cards=%s（低于即 fail-closed）" % t.get("min_cards")
+                                      if t.get("measured") is True else
+                                      "unmeasured（教师侧未测算）⇒ 不得声称可行；待 P-25 上机测量后回填")),
                     "offload": True, "source": f"{local}::feasibility_model.opd_teacher",
                     "note": "★ 配置值 = **容器内路径**（由 path_parts 拼成）；**挂载源用宿主路径**（起跑侧决定）——两者别混。"}
     except Exception:

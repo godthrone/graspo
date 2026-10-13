@@ -57,6 +57,18 @@ def opd_cards_shortfall(teacher, cards):
     return None
 
 
+def opd_pending_unmarked(teacher, row):
+    """★ 未定态断言：`measured` 非 True 且 `min_cards` 未声明 ⇒ 该档**必须带未定标记**（`cards_pending`），
+    ⛔ 不允许"看起来已定"地生成（否则会被误当可跑）。返回 True = 缺标记（应 fail-closed）。
+    """
+    if not teacher:
+        return False
+    if teacher.get("measured") is True and teacher.get("min_cards"):
+        why = opd_cards_shortfall(teacher, row.get("cards"))
+        return bool(why) is False and False        # 已定态：由卡数断言负责
+    return not bool(row.get("cards_pending"))
+
+
 def _gen_self_test():
     cases = [
         ("① OPD 有 teacher_model_path ⇒ 放行", not opd_teacher_missing("train_method: opd\n  teacher_model_path: /models/Qwen3.8-27B\n")),
@@ -68,6 +80,10 @@ def _gen_self_test():
         ("⑥ 卡数断言：min_cards=2 且 cards=2 ⇒ 放行", opd_cards_shortfall({"min_cards": 2}, 2) is None),
         ("⑦ ★ 卡数断言：manifest 未声明 min_cards ⇒ **不放宽也不臆造**（不限制）",
          opd_cards_shortfall({"measured": False}, 1) is None),
+        ("⑧ ★ 未定态：实测未完成且未声明 min_cards ⇒ 缺 `cards_pending` **必须判缺**（fail-closed）",
+         opd_pending_unmarked({"measured": "partial", "min_cards": None}, {"cards": 4}) is True),
+        ("⑨ 未定态：带 `cards_pending` ⇒ 放行",
+         opd_pending_unmarked({"measured": "partial", "min_cards": None}, {"cards": 4, "cards_pending": True}) is False),
     ]
     ok = True
     for name, good in cases:
@@ -242,6 +258,12 @@ def main():
         print(f"LOADABLE {'PASS' if not bad else 'FAIL'}（{len(written)} 档；问题 {bad}）")
         if bad:
             return 1
+
+    _unmarked = [r["tier"] for r in rows
+                 if str(r.get("train_method") or "").lower() == "opd" and opd_pending_unmarked(teacher, r)]
+    if _unmarked:
+        print(f"FAIL-CLOSED：以下 OPD 档处于「教师卡数未定」却缺 cards_pending 标记 ⇒ 拒绝产出：{_unmarked}")
+        return 1
 
     _short = []
     for r in rows:
