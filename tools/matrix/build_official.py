@@ -438,6 +438,26 @@ def criteria_caliber():
     }
 
 
+def short_note(row, full):
+    """★ 备注瘦身（主席令）：备注列只留「判定 + 关键读数 + 必要口径例外」，≤100 字。
+
+    长文（证据链/自检/订正全文/锚点/P5P6 细则）一律进 `note_full`（→ 工作日志历史，⛔ 不进表格）。
+    """
+    st = str(row.get("status") or "—")
+    parts = [f"判定：{st}。"]
+    eff = str(row.get("effect") or "")
+    a = re.search(r"after[^0-9]*([0-9.]+)%", eff)
+    b = re.search(r"base[^0-9]*([0-9.]+)%", eff)
+    d = re.search(r"Δ\s*=?\s*\+?(-?[0-9.]+)\s*pp", eff)
+    if a and b and d:
+        parts.append(f"after {a.group(1)}%/base {b.group(1)}%/Δ={d.group(1)} pp。")
+    if st == S_UNAVAILABLE:
+        parts.append("Δ<阈值，未过第 2 条。")
+    elif st == S_UNVERIFIED and row.get("voided_conclusion"):
+        parts.append("5ep 作废参考。")
+    return "".join(parts)[:100]
+
+
 def verdict_of(row, state):
     """已验证不可用档的结论：写明未过的是哪一条判据，并保留已通过项的事实（**数据驱动**）。"""
     if state != S_UNAVAILABLE:
@@ -648,6 +668,11 @@ def main():
         r["run_path"] = official_run_path(r, state)
         if v:
             r["verdict"] = v
+        # ★★ 短/长备注分离（**行循环最末端**：所有备注追加/覆盖之后；⛔ 不在中途插入）
+        _full = str(r.get("note") or "")
+        if _full and _full != "—":           # ★ 仅对"确有结论/读数"的档做短/长分离；⛔ 不碰未跑档的占位符
+            r["note_full"] = _full
+            r["note"] = short_note(r, _full)
         rows.append(r)
 
     doc = {
