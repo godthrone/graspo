@@ -30,6 +30,7 @@ from graspo.eval.evaluate import compute_delta, load_report
 from graspo.core.gpu_guard import GpuGuardError, resolve_gpu_plan
 from graspo.eval.guard import repo_relative, sample_device_memory_mib
 from graspo.eval.merged_export import (
+    convert_native_rank_to_peft,
     CheckpointKind,
     classify_checkpoint,
     existing_merged_output,
@@ -98,6 +99,33 @@ def cmd_export(args: argparse.Namespace) -> int:
             "# native GRASPO checkpoint: use the existing exporter (it validates its own format)\n"
             "uv run graspo export --config <graspo config with export.checkpoint_path set>"
         )
+        return 0
+
+    if classification.kind is CheckpointKind.NATIVE_RANK:
+        # ★ native 的 `final/`（manifest.json + rank_*.pt）：先转成 PEFT adapter，
+        #   再走**既有的** PEFT merge 路径（不重写第二份合并逻辑）。
+        #   ★ dp/pp/tp > 1 时 convert 会 fail-closed（分歧的 lora_a 无唯一正解）。
+        if config.merged_output_dir is None:
+            raise SystemExit("eval.merged_output_dir is required to convert native rank shards")
+        adapter_out = Path(str(config.merged_output_dir)) / "_native_rank_adapter"
+        info = convert_native_rank_to_peft(
+            config.checkpoint_path, adapter_out, base_model_path=config.base_model_path
+        )
+        print(
+            json.dumps(
+                {"event": "native_rank_converted", "keys": info["keys"], "shard": info["shard"],
+                 "adapter_dir": str(adapter_out)},
+                ensure_ascii=False,
+            )
+        )
+        adapter = adapter_out
+        destination = merge_peft_checkpoint(
+            adapter_dir=adapter,
+            base_model_path=config.base_model_path,
+            output_dir=config.merged_output_dir,
+            allow_overwrite=args.allow_overwrite,
+        )
+        print(json.dumps({"event": "merged", "output": str(destination)}, ensure_ascii=False))
         return 0
 
     if config.merged_output_dir is None:
