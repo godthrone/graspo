@@ -58,6 +58,17 @@ def _ints(v):
     return [int(x) for x in re.findall(r"\d+", str(v))]
 
 
+def norm_ident(v):
+    """★ 身份字符串规范化：去括注（全/半角）、去首尾空白、去 markdown 强调符。
+
+    同一类别会有「全参」「全参（full-parameter）」这类**同义带括注**写法 ⇒ ⛔ 精确相等会误判错位。
+    ★ 只用于**身份键**（model/algo/mode/backend）与语义字段的字符串比较；⛔ 不改数值/阈值判定。
+    """
+    t = str(v or "").replace("*", "").strip()
+    t = re.sub(r"[（(][^）)]*[）)]\s*$", "", t).strip()
+    return t.lower()
+
+
 def norm_param(key, v):
     """把"训练身份"字段归一化为可比语义值；无法判定 ⇒ None（不据此判错）。
 
@@ -324,7 +335,7 @@ def validate_run(doc, tier_from_file, tier_rows, frozen_map=None, ref_rows_offic
                 j, r_ = _s(p.get(k)), _s(ref.get(k, ""))
                 if k == "parallel":
                     errs.extend(compare_parallel(j, r_))     # ★ canonical + 维度逐项一致
-                elif r_ != j:
+                elif norm_ident(r_) != norm_ident(j):
                     errs.append(f"params.{k} 与档位表不一致（防错位）：json={j!r} 表={r_!r}")
             # ★ "训练身份"字段：比**归一化语义值**（LoRA 目标件数 / 数据规模 / 步数 / 开关集合）
             ref_sem = (ref_rows_official or {}).get(tier, ref)      # ★ 语义参照取正式件（含当期派生值）

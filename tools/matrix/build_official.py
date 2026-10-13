@@ -446,13 +446,21 @@ def short_note(row, full):
     st = str(row.get("status") or "—")
     parts = [f"判定：{st}。"]
     eff = str(row.get("effect") or "").replace("*", "")     # 去 markdown 强调符
-    a = re.search(r"after[^0-9]{0,12}([0-9]+\.[0-9]+)\s*%", eff)
-    b = re.search(r"base[^0-9]{0,12}([0-9]+\.[0-9]+)\s*%", eff)
-    d = re.search("Δ[^0-9+\\-\u2212]{0,6}([+\\-\u2212]?[0-9]+\\.[0-9]+)\\s*pp", eff)
-    if a and b and d:
-        parts.append(f"after {a.group(1)}%/base {b.group(1)}%/Δ={d.group(1)} pp。")
+    # ★ 优先用**结构化字段**（after_acc/base_acc/delta_pp）；无则回退 effect（固定格式结果字段）
+    aa, ba, dp = row.get("after_acc"), row.get("base_acc"), row.get("delta_pp")
+    if isinstance(aa, (int, float)) and isinstance(ba, (int, float)) and isinstance(dp, (int, float)):
+        parts.append(f"after {aa * 100:.4f}%/base {ba * 100:.4f}%/Δ={dp:+.4f} pp。")
+    else:
+        a = re.search(r"after[^0-9]{0,12}([0-9]+\.[0-9]+)\s*%", eff)
+        b = re.search(r"base[^0-9]{0,12}([0-9]+\.[0-9]+)\s*%", eff)
+        d = re.search("Δ[^0-9+\\-\u2212]{0,6}([+\\-\u2212]?[0-9]+\\.[0-9]+)\\s*pp", eff)
+        if a and b and d:
+            parts.append(f"after {a.group(1)}%/base {b.group(1)}%/Δ={d.group(1)} pp。")
     if st == S_UNAVAILABLE:
         parts.append("Δ<阈值，未过第 2 条。")
+    _p5 = row.get("p5p6_readings")
+    if not _p5 or "待补" in str(_p5):
+        parts.append("P5/P6 待补。")
     elif st == S_UNVERIFIED and row.get("voided_conclusion"):
         parts.append("5ep 作废参考。")
     return "".join(parts)[:100]

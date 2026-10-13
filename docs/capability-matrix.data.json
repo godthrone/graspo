@@ -1292,7 +1292,7 @@
    "throughput": "不适用（SFT 无 rollout/生成）",
    "peak_mem": "trainer allocator 自报 `max_allocated=22.99 GB`；GPU 监控峰值 **24.66 GiB（25247 MiB，mean 24717.4 MiB / 442 采样）**。★ 订正说明：原写 `22.4` 与两者都不符、**无实测来源**，已订正（两口径含义不同：trainer 只含本进程张量，监控含该卡全部占用）。",
    "run_path": "RUN-T010",
-   "note": "判定：已验证可用。after 29.9145%/base 16.5242%/Δ=+13.3903 pp。",
+   "note": "判定：已验证可用。after 29.9145%/base 16.5242%/Δ=+13.3903 pp。P5/P6 待补。",
    "measurement_pending": false,
    "tree_fingerprint": "e57a57010dd913c8a638e2e62c88919b8b570df9881860715b1b07ad71cacb1a",
    "tree_fingerprint_role": "起跑断言值",
@@ -1399,7 +1399,7 @@
    "peak_mem": "trainer allocator 自报 `max_allocated=22.99 GB`；GPU 监控峰值 **26.11 GiB（26741 MiB，双卡序号 0/1 同值，mean 25305 MiB / 239 采样）**。★ 订正说明：原写 `26.2` 近似监控值但未标口径，已按实测写明两口径（含义不同：trainer 只含本进程张量，监控含该卡全部占用）。",
    "run_path": "RUN-T011",
    "measurement_pending": false,
-   "note": "判定：已验证可用。after 22.6496%/base 16.6667%/Δ=+5.98 pp。",
+   "note": "判定：已验证可用。after 22.6496%/base 16.6667%/Δ=+5.98 pp。P5/P6 待补。",
    "tree_fingerprint": "db209997d1d0473b7a1e557b3cdedc55f15640990db3f8b93c80ef0cd7fd497c",
    "tree_fingerprint_role": "起跑断言值",
    "eval_dataset": {
@@ -1538,7 +1538,7 @@
     "sha256": "c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a",
     "samples": 702
    },
-   "note": "判定：已验证不可用。after 16.6667%/base 16.3818%/Δ=+0.2849 pp。Δ<阈值，未过第 2 条。",
+   "note": "判定：已验证不可用。after 16.6667%/base 16.3818%/Δ=+0.2849 pp。Δ<阈值，未过第 2 条。P5/P6 待补。",
    "anomalies": [
     "★ **LoRA 目标件数口径订正（重要，影响矩阵对账）**：`lora_target_signature.resolved = 122` 是**签名/模式条目数**，而 checkpoint 内**实际挂 LoRA 的模块实例是 358 个（language 248 + visual 110）**——与 ms-swift 侧 T031 的 358 **数量相同**。两后端仍然**不等价**，但依据是**命中的具体模块名集合不同**（native `token_mixer.*` vs ms-swift `linear_attn.*`/`full_attn.*`）+ 参数量差 196608。⇒ ⛔ 此前 T013.json / T028.json 里「native 122 件 vs ms-swift 358 件」的写法应订正为「实例数同为 358，但模块集合不同 ⇒ 不等价」。证据：evidence/13-lora-target-count.md（torch.load 与 safetensors header 双路实测）。",
     "★ **效率观察（非判据）**：after 为退化策略——702 条全部预测 `lift_arm/抬高手臂`（命中 117/234 lift_arm GT，extend/rotate 均 0），准确率与 base（rotate 主导）同量级 ⇒ 2 epoch / 100 条子集的 native SFT 未学到可泛化策略；Δ=+0.2849 pp 属噪声量级。",
@@ -1642,7 +1642,7 @@
    "peak_mem": "见 runsgpu_memory_summary.json（单卡峰值）＋ trainer 自报 `memory(GiB)`；★ 两类口径分开（trainer allocator vs nvidia-smi 卡上总占用）。",
    "run_path": "RUN-T013",
    "measurement_pending": false,
-   "note": "判定：已验证可用。after 25.0712%/base 16.3818%/Δ=+8.6894 pp。",
+   "note": "判定：已验证可用。after 25.0712%/base 16.3818%/Δ=+8.6894 pp。P5/P6 待补。",
    "tree_fingerprint": "fbd86593babefe0bc766650a52fb6f0af9d97a83049734548ba72975fd41fbef",
    "tree_fingerprint_role": "本档【起跑时 launcher 实测并断言通过】的树指纹（status-T013/launch.log assert 0）",
    "eval_dataset": {
@@ -1794,7 +1794,7 @@
     "sha256": "c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a",
     "samples": 702
    },
-   "note": "判定：已验证不可用。after 19.8006%/base 16.6667%/Δ=+3.1339 pp。Δ<阈值，未过第 2 条。",
+   "note": "判定：已验证不可用。after 19.8006%/base 16.6667%/Δ=+3.1339 pp。Δ<阈值，未过第 2 条。P5/P6 待补。",
    "code_identity": {
     "tree_fingerprint": "212121949f1b5837c28d2e9012dbc57a23eedeafc8639f39cc9a7b6ed766bbcd",
     "tree_fingerprint_role": "本档【起跑时 launcher 实测并断言通过】的树指纹（status-T014/launch.log assert 0，2026-10-12T17:52:13Z）",
@@ -1940,7 +1940,7 @@
     "sha256": "c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a",
     "samples": 702
    },
-   "note": "判定：已验证不可用。after 17.2365%/base 16.5242%/Δ=+0.7123 pp。Δ<阈值，未过第 2 条。",
+   "note": "判定：已验证不可用。after 17.2365%/base 16.5242%/Δ=+0.7123 pp。Δ<阈值，未过第 2 条。P5/P6 待补。",
    "throughput_detail": "★ 生成式 tok/s 不适用（注明原因）：ms-swift **SFT** 档不跑 rollout/生成 ⇒ 不编造。可核数：墙钟见 runs/T015/stdout.log 的 `train_runtime`；50 步。",
    "elapsed": "—",
    "max_epochs": 2,
@@ -2861,7 +2861,7 @@
     "verdict": "★ 不是「提前收尾」—— epoch_summary 5/5（epoch 0–4）证明 5 个 epoch 全部完成；权威步数计数器 run_cumulative.step = 19。★ 「计划 30 步」系我们的预期公式误差（推导步数 vs 实际步数须并记）。★ 判据①「完整跑完」按 epoch 5/5 判定为成立。"
    },
    "note_extra_steps_formula_issue": "★ 登记待修：'推导步数公式'对 native GRASPO 档不成立（推导 30 vs 实际 19）—— 本轮不顺手改公式，后续单独修。",
-   "note": "判定：尚未验证。5ep 作废参考。",
+   "note": "判定：尚未验证。P5/P6 待补。",
    "tree_fingerprint": "c673b6a2…",
    "tree_fingerprint_role": "起跑断言值",
    "eval_dataset_anchor_correction": "★ 2026-10-12 订正 run_environment.eval_dataset.sha256：6da72199…（= train.jsonl）→ c202b1e1…（= test.jsonl, 702 条）。订正人：BADGE 会话 20261008-105451 · T031 评测执行者（subagent）。依据：228 当场实测 sha256sum + 与本批次 T010T031 eval_report 数据锚交叉一致。★ 本次订正未改动本档任何其他字段、未重跑、未覆盖为新跑次。",
@@ -2960,7 +2960,7 @@
     "reason": "epoch 口径由 5 改为 8，旧参数下的结论不对应（按 5ep 参考处理）",
     "reference_record": "1/1 真效果训练（native GRASPO LoRA 2 卡，5 epoch / 23 optimizer step）：判据① 通过（exit_code=0、epoch 5/5、ckpt_retention.state=ok、torch_probe all_ok=True（native_rank_pt / verified / 2 个 rank 文件各 716 张量 / layers 0–31 齐全 / all_zero 0 / nonfinite 0）、`AlignmentError`/`Traceback`/`No module named` 计数均 0）；★ 判据② 未过（训练类冻结阈值 Δ ≥ +5.0 pp）：after 16.6667% > base 16.3818% 成立，但 **Δ=+0.2849 pp < +5.0 pp** ⇒ 判「已验证不可用」，★ 未过的是第 2 条（**效果不足**），非跑次失败。；after acc=16.6667%（117/702）；base acc=16.3818%（115/702）；★ Δ=+0.2849 pp（< +5.0 pp 冻结阈值 ⇒ 未过判据②）；★ 目标值 +10.0 pp 仅展示、不作通过线。口径：数据集 /homedata/test.jsonl、sha256 c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a（702 条，当场实测）、criteria elam-v3-allright-1、temperature 0.0、702/702 有效、0 error；base/after 各自独立 output_dir、评测前 fail-closed 断言通过、stdout 双份留证；`graspo eval delta` comparability_notes 校验通过。★ 剔图像重叠（169 条）：after 16.1351% vs base 16.6979%。★ 逐工具（correct/234）：base extend 1 / lift 2 / rotate 112；after extend 0 / lift **117** / rotate 0 ⇒ after 为**退化策略**（702 条全预测 `lift_arm/抬高手臂`），准确率与 base 同量级、非有效提升。★ 相邻参照：T028(native 单卡) Δ=+4.5584 pp、T031(ms-swift 单卡) Δ=+0.7122 pp、T032(ms-swift 2 卡) Δ=+0.2849 pp、T012(native 4 卡 SFT) Δ=+0.2849 pp。"
    },
-   "note": "判定：尚未验证。5ep 作废参考。",
+   "note": "判定：尚未验证。P5/P6 待补。",
    "voided_conclusion": {
     "conclusion_valid": false,
     "reason": "epoch 口径由 5 改为 8，旧参数下的结论不对应（按 5ep 参考处理）",
@@ -3128,7 +3128,7 @@
    "tree_fingerprint_role": "本档【起跑时 launcher 实测并断言通过】的树指纹（status-T031/launch.log assert 0）",
    "tree_fingerprint_remeasured": "63808a3b161033797fcd68fc403b77aa0144fe038ff38cb67cf38bef74e67d21",
    "tree_fingerprint_drift": "★ 当场重算（2026-10-12T13:11Z，launcher 同款公式）得 63808a3b…，与起跑断言值 66387a4c… 不同；差异唯一来源 = tests/e2e/matrix54_manifest_source.json（mtime 2026-10-12 12:37:54，sha256 639445f30ac2dfcc0d65953900775d6f220f7f6b63930f9cd22d92669f2a7cf6）——该改动发生在本档训练【结束之后】（训练结束 12:35:03），且 samplesT031.yaml 未被重新生成（mtime 仍 08:59）⇒ 对本档训练语义无影响，属跑次后共享树漂移；评测只用 eval config + merged-hf，不受影响。",
-   "note": "判定：已验证不可用。after 16.5242%/base 16.8091%/Δ=−0.2849 pp。Δ<阈值，未过第 2 条。",
+   "note": "判定：已验证不可用。after 16.5242%/base 16.8091%/Δ=−0.2849 pp。Δ<阈值，未过第 2 条。P5/P6 待补。",
    "eval_dataset": {
     "path": "/homedata/test.jsonl",
     "sha256": "c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a",
@@ -3273,7 +3273,7 @@
     "sha256": "c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a",
     "samples": 702
    },
-   "note": "判定：已验证不可用。after 16.8091%/base 16.5242%/Δ=+0.2849 pp。Δ<阈值，未过第 2 条。",
+   "note": "判定：已验证不可用。after 16.8091%/base 16.5242%/Δ=+0.2849 pp。Δ<阈值，未过第 2 条。P5/P6 待补。",
    "p5p6_readings": {
     "source": ".localevidence/09-P5P6-readings.md（六项逐条实测）",
     "1_group_integrity": "groups_seen 恒 1.0/记录（rank 本地）；恒等式 trainable+skipped+unparseable==seen 在全部 129 条窗口记录上成立 ✓；Σseen=129.0、Σtrainable=108.2、Σskipped=20.8、Σunparseable=0.0",
@@ -3424,7 +3424,7 @@
     "sha256": "c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a",
     "samples": 702
    },
-   "note": "判定：已验证不可用。after 16.5242%/base 16.3818%/Δ=+0.1424 pp。Δ<阈值，未过第 2 条。",
+   "note": "判定：已验证不可用。after 16.5242%/base 16.3818%/Δ=+0.1424 pp。Δ<阈值，未过第 2 条。P5/P6 待补。",
    "p5p6_readings": {
     "source": ".localevidence/09-P5P6-readings.md（六项逐条实测）",
     "1_group_integrity": "groups_seen 恒 1.0/窗口记录（rank 本地）；★ 恒等式 trainable+skipped+unparseable==seen 在**全部 65 条**窗口记录上成立 ✓；Σseen=65.0、Σtrainable=49.0、Σskipped=16.0、Σunparseable=0.0",
@@ -3870,28 +3870,93 @@
    "expected_optimizer_steps_per_epoch": "40",
    "expected_optimizer_steps_reachable": "40",
    "applicable": true,
-   "status": "尚未验证",
-   "runs": "—",
-   "effect": "—",
-   "inference": "—",
-   "algo_checks": "—",
-   "throughput": "—",
-   "peak_mem": "—",
-   "run_path": "—",
+   "status": "已验证不可用",
+   "runs": "1/1 真效果训练（ms-swift GRASPO 全参 4 卡，8 epoch / 320 步）：判据① 通过（exit_code=0、320/320 步、ckpt_retention ok、torch_probe all_ok、★ 五计数全 0：CUDAMismatchExceptionTraceback）；★ 判据② 未过：after 0/702 = 0.0% < base 117/702 = 16.6667%（Δ = −16.6667 pp）⇒ 失败（效果）；★ 0.0% 已定性为真实的模型行为退化（非服务/评测/导出缺陷，证据见 anomalies）。",
+   "effect": "after acc=0.0%（0/702）；base acc=16.6667%（117/702）；★ Δ = −16.6667 pp（< +5.0 pp 冻结阈值且 after < base）⇒ 未过判据②；目标 +10.0 pp 仅展示、不作通过线。口径：数据锚 c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a（702 条）、criteria elam-v3-allright-1、温度 0、702/702 有效、0 error；base/after 独立 output_dir + fail-closed + stdout 双份留证；comparability_notes 全过。★ 服务档 --gpu-memory-utilization 0.70（after/base 同配，因 GPU2 余量所限；只影响吞吐，不影响本次格式退化判定）。",
+   "inference": "✅ 全参终态 = 完整 HF 模型（runscheckpoint-320/：model-00001..00004-of-00004.safetensors + model.safetensors.index.json + config.jsonchat_template.jinja/preprocessor_config.json + global_step320/）⇒ ★ 零 merge，vLLM 直接挂载该目录并 --model /model 服务（base 侧另一容器指 Qwen3.5-9B）→ 702/702、0 error ⇒ graspo eval delta。★ 容器名带唯一后缀（§6.1）：t039-vllm-after-1791855802 / t039-vllm-base-1791855802，用毕具名停。",
+   "algo_checks": "ms-swift GRASPO 全参跑次侧可观测项通过：exit_code=0、320/320、ckpt_retention ok、★ 五计数全 0。评测侧：702/702 有效、0 error、parse_error 全 None ⇒ 0.0% 不是评测器崩溃/报错，而是输出语法本身不可解析。",
+   "throughput": "不适用（ms-swift GRASPO RL 后端不产出生成式 tok/s）",
+   "peak_mem": "见 runsgpu_memory_summary.json（4 卡各自峰值）＋ trainer 自报；★ 两类口径分开：trainer allocator 自报 vs nvidia-smi 卡上总占用。",
+   "run_path": "RUN-T039",
+   "measurement_pending": false,
+   "p5p6_readings": {
+    "source": "★ 待补：下一轮从 runslogging.jsonl + runs/T039/stdout.log 逐项统计（组完整性 / retry_count=max_resample_times / 组决策分布 / 奖励对齐 / steps 映射 G/gcd(per_device,G) / batch_high_retry_rate 阈值+量化；缺输入如实标『待补』）",
+    "note": "★ 本轮余量用于完成 T039 的 0/702 定案（该定案决定能否落盘）与本题 json 落盘；P5/P6 六项未编造，如实标『待补』并给出下一轮明确取数源。"
+   },
+   "anomalies": [
+    "★★ 0/702 的定案（本档最有价值的证据）：after 逐字 completion = `<function=extend_arm\">` 换行 `<parameter=action_type>` 换行 `[` 换行 `\"  \"` 换行 `</function>` ⇒ 语法畸形（function 标签引号错位、参数体为空、缺闭合）⇒ pred_name=''/pred_action='' ⇒ 702 条全部解析为空预测、all_right=False；而 base 逐字 completion = {\"name\": \"rotate_arm\", \"arguments\": {\"action_type\": \"逆时针旋转\"}}（合法 JSON、解析正常）。★ 两侧同一 --tool-call-parser qwen3_xml、同一 criteria（elam-v3-allright-1）、同一批 702 条、同一温度 0 ⇒ 差异只来自被服务的权重 ⇒ 结论：本档把工具调用输出格式训坏了（真实退化），⛔ 不是服务/评测/导出缺陷。★ 旁证：parse_error 全为 None（评测器未报错，是输出语法本身不可解析）；checkpoint-320 的 tokenizer4 分片齐备（缺件候选已排除）。",
+    "★ 服务档参数变更留痕：评测 vLLM --gpu-memory-utilization 由 0.85 降至 0.70（GPU2 余量 67,818 MiB < 0.85×81,920=69,632 MiB，按 §6.2 降档；after/base 同配）⇒ 只影响吞吐与 KV 容量，不影响本次『输出格式退化』判定（base 侧同为 0.70 档、仍得 16.6667%）。",
+    "★ 容器命名纪律（§6.1）：本轮评测容器名带唯一后缀 t039-vllm-after-1791855802 / t039-vllm-base-1791855802，避免上轮『同名实例互相 stop』的事故复现。",
+    "★ 树指纹：起跑断言 9e3ff4eb… ≠ 现测（post-launch 改 manifest）⇒ 回填取起跑断言值。"
+   ],
+   "step_count_reconciliation": {
+    "steps_nominal": 320,
+    "steps_actual": 320,
+    "derived_formula": "ms-swift 配置式（不含 nproc）：max_epochs(8) × subset(20) × num_generations(8) / (per_device(1)×grad_accum(1)) = 1280",
+    "reconciliation_formula": "★ 对账式（含 nproc=4）：steps = epochs × subset × G / nproc = 8×20×8/4 = 320 = steps_actual ✓",
+    "actual_evidence": {
+     "progress_bar": "320/320",
+     "evidence_paths": [
+      "runs/T039/stdout.log",
+      "runsargs.json"
+     ]
+    },
+    "trainable_completions": {
+     "applicable": false,
+     "value": "不适用（配置式）",
+     "reason": "ms-swift GRASPO 走配置式，无 native replay buffer 的 replay_buffer_trainable_completion_count。",
+     "config_formula_check": "8×20×8/4 = 320 = 实际 320 ✓"
+    },
+    "verdict": "对账式 320 = 实际 320 ✓ ⇒ 判据①「完整跑完」成立；判据② 未过（Δ=−16.6667 pp，已定性为真实退化）。"
+   },
+   "note_extra_steps_formula_issue": "★ 登记待修：'推导步数公式'对 native GRASPO 档不成立（推导 None vs 实际 None）—— 本轮不顺手改公式，后续单独修。",
+   "code_identity": {
+    "tree_fingerprint": "9e3ff4ebf8ed9ee572d1569a3688cba76e7c9c72d0c08a908beebdad71b8cf4f",
+    "tree_fingerprint_role": "本档【起跑时 launcher 实测并断言通过】的树指纹（status-T039/launch.log assert 0）",
+    "tree_fingerprint_drift": "★ 该树其后被其他档起跑改动 manifest（post-launch）⇒ 现测不同；回填取起跑断言值。",
+    "generated_yaml": "samplesT039.yaml",
+    "generated_yaml_sha256": "522726c87a69807dde2cc6c079308f9a871614bb915747d5cb5e1f077b2016d4",
+    "image_base_official": {
+     "tag": "graspo:v0.28.11-cu130fix-v2-dsprek-20261012",
+     "digest": "sha256:ecaf897a7534ef0901096e48fefbf10a42adf76029920ba8d54e88a738783abe"
+    },
+    "image_run_wrapper": {
+     "tag": "graspo:v0.28.11-cu130fix-v2-dsprek-20261012-run",
+     "digest": "sha256:629642a4c4ec28d370debb035417d9ec9586fde07a9339b47c1834b75c31c041"
+    }
+   },
+   "tree_fingerprint": "9e3ff4ebf8ed9ee572d1569a3688cba76e7c9c72d0c08a908beebdad71b8cf4f",
+   "tree_fingerprint_role": "本档【起跑时 launcher 实测并断言通过】的树指纹（status-T039/launch.log assert 0）",
+   "eval_dataset": {
+    "path": "/homedata/test.jsonl",
+    "sha256": "c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a",
+    "samples": 702
+   },
+   "note": "判定：已验证不可用。after 0.0%/base 16.6667%/Δ=−16.6667 pp。Δ<阈值，未过第 2 条。P5/P6 待补。",
+   "throughput_detail": "★ 生成式 tok/s 不适用（ms-swift GRASPO RL 后端不产出生成式 tok/s）⇒ 不编造；评测侧单样本 elapsed_sec ≈ 3.99 s（抽样）可作 serving 吞吐旁证。",
    "elapsed": "—",
    "max_epochs": 8,
    "derived_steps": 320,
    "per_epoch_steps": 40,
    "save_steps_basis": "= 推导步数 320 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
-   "steps_actual": "—",
+   "p5p6": "",
+   "steps_actual": "320/320",
    "data_scale": "20 条（每卡 5）",
-   "note": "—",
    "tp": "—（框架内部决定）",
    "pp": "—（框架内部决定）",
    "dp": "4（派生）",
    "cards_total": "nproc_per_node×nnodes = 4 卡",
    "dp_derived": true,
-   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）"
+   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）",
+   "verdict": {
+    "state": "已验证不可用",
+    "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
+    "failed_detail": "效果未达标（见 effect）",
+    "passed_criteria": [
+     "ms-swift GRASPO 全参跑次侧可观测项通过：exit_code=0、320/320、ckpt_retention ok、★ 五计数全 0。评测侧：702/702 有效、0 error、parse_error 全 None ⇒ 0.0% 不是评测器崩溃/报错，而是输出语法本身不可解析。"
+    ]
+   },
+   "note_full": "★ 未过第 2 条判据（效果不足）——after acc=0.0%（0/702）；base acc=16.6667%（117/702）；★ Δ = −16.6667 pp（< +5.0 pp 冻结阈值且 after < base）⇒ 未过判据②；目标 +10.0 pp 仅展示、不作通过线。口径：数据锚 c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a（702 条）、criteria elam-v3-allright-1、温度 0、702/702 有效、0 error；base/after 独立 output_dir + fail-closed + stdout 双份留证；comparability_notes 全过。★ 服务档 --gpu-memory-utilization 0.70（after/base 同配，因 GPU2 余量所限；只影响吞吐，不影响本次格式退化判定）。 ★ 已通过项（事实保留）：ms-swift GRASPO 全参跑次侧可观测项通过：exit_code=0、320/320、ckpt_retention ok、★ 五计数全 0。评测侧：702/702 有效、0 error、parse_error 全 None ⇒ 0.0% 不是评测器崩溃/报错，而是输出语法本身不可解析。 ★ 判据① 依据：1/1 真效果训练（ms-swift GRASPO 全参 4 卡，8 epoch / 320 步）：判据① 通过（exit_code=0、320/320 步、ckpt_retention ok、torch_probe all_ok、★ 五计数全 0：CUDAMismatchExceptionTraceback）；★ 判据② 未过：after 0/702 = 0.0% < base 117/702 = 16.6667%（Δ = −16.6667 pp）⇒ 失败（效果）；★ 0.0% 已定性为真实的模型行为退化（非服务/评测/导出缺陷，证据见 anomalies）。 ★ 步数对账（如实登记）：推导 None vs 实际 None；对账式 320 = 实际 320 ✓ ⇒ 判据①「完整跑完」成立；判据② 未过（Δ=−16.6667 pp，已定性为真实退化）。 ★ 异常登记：★★ 0/702 的定案（本档最有价值的证据）：after 逐字 completion = `<function=extend_arm\">` 换行 `<parameter=action_type>` 换行 `[` 换行 `\"  \"` 换行 `</function>` ⇒ 语法畸形（function 标签引号错位、参数体为空、缺闭合）⇒ pred_name=''/pred_action='' ⇒ 702 条全部解析为空预测、all_right=False；而 base 逐字 completion = {\"name\": \"rotate_arm\", \"arguments\": {\"action_type\": \"逆时针旋转\"}}（合法 JSON、解析正常）。★ 两侧同一 --tool-call-parser qwen3_xml、同一 criteria（elam-v3-allright-1）、同一批 702 条、同一温度 0 ⇒ 差异只来自被服务的权重 ⇒ 结论：本档把工具调用输出格式训坏了（真实退化），⛔ 不是服务/评测/导出缺陷。★ 旁证：parse_error 全为 None（评测器未报错，是输出语法本身不可解析）；checkpoint-320 的 tokenizer4 分片齐备（缺件候选已排除）。 ★ 异常登记：★ 服务档参数变更留痕：评测 vLLM --gpu-memory-utilization 由 0.85 降至 0.70（GPU2 余量 67,818 MiB < 0.85×81,920=69,632 MiB，按 §6.2 降档；after/base 同配）⇒ 只影响吞吐与 KV 容量，不影响本次『输出格式退化』判定（base 侧同为 0.70 档、仍得 16.6667%）。 ★ 异常登记：★ 容器命名纪律（§6.1）：本轮评测容器名带唯一后缀 t039-vllm-after-1791855802 / t039-vllm-base-1791855802，避免上轮『同名实例互相 stop』的事故复现。 ★ 异常登记：★ 树指纹：起跑断言 9e3ff4eb… ≠ 现测（post-launch 改 manifest）⇒ 回填取起跑断言值。 ★ 锚点：树 9e3ff4eb… + image_base_official sha256:e… + image_run_wrapper sha256:6…"
   },
   {
    "tier": "T040",
@@ -4769,7 +4834,7 @@
    "save_steps_basis": "= 推导步数 40 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "20 条（每卡 20）",
-   "note": "判定：未纳入验收。",
+   "note": "判定：未纳入验收。P5/P6 待补。",
    "excluded_reason": "设计上不成立：师生权重常驻合计约 100 GiB，与「节省显存」的设计意图相悖 ⇒ 不产出可运行配置。适用范围：本档位不纳入验收。",
    "tp": "—（框架内部决定）",
    "pp": "—（框架内部决定）",
@@ -4837,7 +4902,7 @@
    "save_steps_basis": "= 推导步数 20 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "20 条（每卡 10）",
-   "note": "判定：未纳入验收。",
+   "note": "判定：未纳入验收。P5/P6 待补。",
    "excluded_reason": "设计上不成立：师生权重常驻合计约 100 GiB，与「节省显存」的设计意图相悖 ⇒ 不产出可运行配置。适用范围：本档位不纳入验收。",
    "tp": "—（框架内部决定）",
    "pp": "—（框架内部决定）",
@@ -4905,7 +4970,7 @@
    "save_steps_basis": "= 推导步数 10 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "20 条（每卡 5）",
-   "note": "判定：未纳入验收。",
+   "note": "判定：未纳入验收。P5/P6 待补。",
    "excluded_reason": "设计上不成立：师生权重常驻合计约 100 GiB，与「节省显存」的设计意图相悖 ⇒ 不产出可运行配置。适用范围：本档位不纳入验收。",
    "tp": "—（框架内部决定）",
    "pp": "—（框架内部决定）",
