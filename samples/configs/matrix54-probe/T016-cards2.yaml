@@ -1,6 +1,6 @@
 # ★ 量测专用派生档（⛔ 非 canonical；canonical = samples/configs/matrix54-generated/T016.yaml）
 # 用途：T016（9B SFT 全参 native）1 卡实测 OOM ⇒ 2 卡复测「是否越过训练阶段第 1 步」
-# ★ 同源性要求：**卡数与训练进程数必须一致** —— 本档 native.dp_size=2 ⇒ 起跑侧须 cards=2 且 nproc_per_node=2
+# ★ 同源性要求：**卡数与训练进程数必须一致**（⛔ 卡号不进配置：物理卡集由起跑侧按 §12/§13/§17 按实测空闲动态择取） —— 本档 native.dp_size=2 ⇒ 起跑侧须 cards=2 且 nproc_per_node=2
 #   （事故背景：set_cards.py 曾只改 gpus、未同步 nproc ⇒ dry-run 出 `gpus=1,7 nproc=1` ⇒ 量测口径不成立）
 # 生成方式：由 canonical T016.yaml 派生，仅改 native.dp_size（1→2）；其余字段逐字不变。
 # 本文件由 tools/matrix/gen_configs.py 从 docs/capability-matrix.data.json 自动生成，⛔ 禁止手工编辑；请改数据后重新生成。
@@ -32,7 +32,6 @@ native:
 launch:
   cards: 2
   nproc_per_node: 2          # ★ 由 cards 推导（同一真源；⛔ 不得只改一半）
-  gpus: [1, 7]               # ★ 长度必须 == cards
 gpu_monitor:
   output_dir: /out/gpu
   tag: T016

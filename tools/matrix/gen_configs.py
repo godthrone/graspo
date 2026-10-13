@@ -105,6 +105,12 @@ def cards_procs_mismatch(row):
     return None
 
 
+def config_pins_gpus(text):
+    """★ 断言辅助：配置文本里**不得**出现 `gpus:`（★ 卡号一律不进配置；由起跑侧动态择卡，§12 一族）。"""
+    import re as _re
+    return bool(_re.search(r"^\s*gpus\s*:", text, _re.M))
+
+
 def blocked_unmarked(row):
     """★ blocked 档必须有 `blocked_reason`（起跑侧据此拒跑）；缺理由 ⇒ fail-closed。"""
     if row.get("availability") != "blocked":
@@ -132,6 +138,10 @@ def _gen_self_test():
          cards_procs_mismatch({"cards": 2, "parallel": "nproc_per_node=1（1 卡）"}) is not None),
         ("⑭ 同源性：cards=2 + gpus 两张 + nproc=2 ⇒ 放行",
          cards_procs_mismatch({"cards": 2, "gpus": [1, 7], "parallel": "nproc_per_node=2（2 卡）"}) is None),
+        ("⑮ ★ 卡号纪律：配置含 `gpus:` ⇒ **必须拒**（§12 一族）",
+         config_pins_gpus("launch:\n  cards: 2\n  gpus: [1, 7]\n") is True),
+        ("⑯ 卡号纪律：只含 cards/nproc ⇒ 放行",
+         config_pins_gpus("launch:\n  cards: 2\n  nproc_per_node: 2\n") is False),
         ("⑩ ★ blocked 档缺 `blocked_reason` ⇒ **必须判缺**（fail-closed）",
          blocked_unmarked({"availability": "blocked"}) is True),
         ("⑪ blocked 档带理由 ⇒ 放行（但仍不得起跑）",
@@ -324,6 +334,11 @@ def main():
         print(f"LOADABLE {'PASS' if not bad else 'FAIL'}（{len(written)} 档；问题 {bad}）")
         if bad:
             return 1
+
+    _pin = [t for t, pth in sorted(written.items()) if config_pins_gpus(Path(pth).read_text(encoding="utf-8"))]
+    if _pin:
+        print(f"FAIL-CLOSED：以下配置 pin 了物理卡号 `gpus`（⛔ 卡号不进配置，§12 一族）⇒ 拒绝产出：{_pin}")
+        return 1
 
     _mm = [(r["tier"], why) for r in rows if (why := cards_procs_mismatch(r))]
     if _mm:
