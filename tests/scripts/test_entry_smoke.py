@@ -71,6 +71,7 @@ class Spec:
 
 #: 入口/启动脚本 → 冒烟方式（**每个候选都必须在此**）。
 POLICY: dict[str, Spec] = {
+    "scripts/run_guards.py": Spec(HELP, "起跑/评测护栏 CLI（§7 形态谓词 / §8 新鲜度 / §10 Mamba），argparse 子命令"),
     # ── 仓库根 / 宿主启动链 ────────────────────────────────────────────────
     "run.sh": Spec(SH_HELP, "训练启动主入口；支持 --help（宿主引导层稳定契约）"),
     # ── scripts/*.py（§10.2 制度化脚本，B3 已登记稳定子命令）────────────────
@@ -167,6 +168,7 @@ POLICY: dict[str, Spec] = {
 
 #: 具名排除（附理由；自动发现到的、落在此表的路径不参与冒烟）。
 EXCLUSIONS: dict[str, str] = {
+    "scripts/launch_pipeline.py": "纯模块（无 CLI/无 __main__ 入口），被单测 import；启动链的判定函数由 launcher/评测脚本调用",
     "scripts/errors.py": "纯模块（无 __main__/无 CLI），被单测 import，不是启动脚本",
     "tools/gate_common.py": "门禁库（无 __main__），由 6 个 gate 入口间接覆盖",
 }
