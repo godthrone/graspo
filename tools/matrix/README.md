@@ -185,3 +185,11 @@ python3 -m py_compile tools/matrix/<改动文件>.py     # 或等价的 AST 解�
 ★ **族级结论必须限定作用域（后端/形态/卡数），⛔ 不得跨后端外推；★ 且"标注"与"活证据"必须双向相容。**
 ★ 真实事故（2026-10-13）：把 native 的 `T040`（1 卡 OOM）与 ms-swift 的 `T044`（2 卡 OOM）概括成"该族 `min_cards=4`"⇒ ★ **误标了 ms-swift 的 `T043`（1 卡），而它当时已在训练 768/1280** ⇒ ★ **标注与活证据直接冲突**（★ 与今日 T016 native 9B 全参单卡 OOM vs T019/T020 ms-swift 成功 **同类现象**：**后端不同、显存行为不同**）。
 ★ 处置：① **撤销 T043/T041 的 `blocked`**；② 族级条目改为 **`by_backend`**（native / ms_swift **各列各自实测**）；③ **双向断言**：`family_under_min_unblocked`（防"该标没标"）＋ `blocked_contradicted_by_live`（防"**不该标乱标**"：标了 blocked 却有活证据 ⇒ fail-closed）。
+
+## 可行性结论的登记口径（强制 · 配置五元组 + ⛔ 不得假设单调）
+
+★ **可行性结论必须按「配置五元组」登记**：**model × algo × mode × backend × cards** ⇒ ★ **⛔ 不得跨卡数 / 跨后端外推**。
+★ ★★ **且不得假设单调**："卡数越多越可行" **不成立**：★ 真实实证（2026-10-13）—— ★ **9B GRASPO 全量族实测非单调**（★ 1 卡可跑、**2 卡 OOM**）；★ 可能的机理：**2 卡配置改了 per-device batch / rollout 并行度 ⇒ 单卡占用反而升高**（⛔ 未下结论）。
+★ 断言（新增）：`combo_infeasible_still_runnable` —— ★ **同族同后端内已被实测证伪的 `(cards)` 组合**，⛔ **不得再有标为可起的同组合档**（用例 ⑰g/⑰h/⑰i，含"**不同后端不套用**"负例）。
+★ 与既有两条断言构成**三重防线**：`family_under_min_unblocked`（防该标没标）＋ `blocked_contradicted_by_live`（防不该标乱标）＋ `combo_infeasible_still_runnable`（防**同配漏标**）。
+★ **归属纪律**：★ **tier 表的 `backend`/`cards` 与跑次侧报告不一致时，⛔ 不得单侧采信** —— ★ 如实标出差异并**请上级裁定**（★ 2026-10-13 实例：矩阵表记 T035 = native、跑次侧报 ms-swift ⇒ 已在 manifest `graspo_9b_full_cards.open_question` 如实登记）。

@@ -147,6 +147,22 @@ def blocked_contradicted_by_live(row):
     return bool(str(row.get("live_evidence") or "").strip())
 
 
+def combo_infeasible_still_runnable(row, falsified):
+    """★ 同配拦截：**同族同后端内已被实测证伪的 `(cards)` 组合**，⛔ 不得再有标为可起的同组合档。
+
+    `falsified`: dict[(family, backend)] = set(cards)（实测 OOM 的卡数）
+    返回 True = **违规**（应 fail-closed）。
+    """
+    key = (row.get("family"), row.get("backend"))
+    try:
+        cards = int(row.get("cards") or 0)
+    except Exception:
+        return False
+    if key in falsified and cards in falsified[key] and row.get("availability") != "blocked":
+        return True
+    return False
+
+
 def blocked_unmarked(row):
     """★ blocked 档必须有 `blocked_reason`（起跑侧据此拒跑）；缺理由 ⇒ fail-closed。"""
     if row.get("availability") != "blocked":
@@ -192,6 +208,12 @@ def _gen_self_test():
          blocked_contradicted_by_live({"availability": "blocked", "live_evidence": "★ 已到 768/1280"}) is True),
         ("⑰f 反证拦截：标 blocked 且无活证据 ⇒ 放行",
          blocked_contradicted_by_live({"availability": "blocked"}) is False),
+        ("⑰g ★ 同配拦截：同族同后端 2 卡已实测 OOM，另一同配档未标 blocked ⇒ **必须拒**",
+         combo_infeasible_still_runnable({"family": "g", "backend": "native", "cards": 2}, {("g", "native"): {2}}) is True),
+        ("⑰h 同配拦截：同配档已标 blocked ⇒ 放行",
+         combo_infeasible_still_runnable({"family": "g", "backend": "native", "cards": 2, "availability": "blocked"}, {("g", "native"): {2}}) is False),
+        ("⑰i 同配拦截：**不同后端**同卡数 ⇒ 不套用（⛔ 不跨后端外推）",
+         combo_infeasible_still_runnable({"family": "g", "backend": "ms-swift", "cards": 2}, {("g", "native"): {2}}) is False),
         ("⑩ ★ blocked 档缺 `blocked_reason` ⇒ **必须判缺**（fail-closed）",
          blocked_unmarked({"availability": "blocked"}) is True),
         ("⑪ blocked 档带理由 ⇒ 放行（但仍不得起跑）",
@@ -393,6 +415,18 @@ def main():
     _mm = [(r["tier"], why) for r in rows if (why := cards_procs_mismatch(r))]
     if _mm:
         print(f"FAIL-CLOSED：卡数与进程数/卡列表不同源（⛔ 不得只改一半）⇒ 拒绝产出：{_mm}")
+        return 1
+
+    _fals = {}
+    for r in rows:
+        if r.get("availability") == "blocked" and r.get("family"):
+            try:
+                _fals.setdefault((r["family"], r.get("backend")), set()).add(int(r.get("cards") or 0))
+            except Exception:
+                pass
+    _combo = [r["tier"] for r in rows if combo_infeasible_still_runnable(r, _fals)]
+    if _combo:
+        print(f"FAIL-CLOSED：以下档与**同族同后端的实测证伪组合**冲突（同 cards 却未标 blocked）⇒ 拒绝产出：{_combo}")
         return 1
 
     _live = [(r["tier"], r.get("live_evidence")) for r in rows if blocked_contradicted_by_live(r)]

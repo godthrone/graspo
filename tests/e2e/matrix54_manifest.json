@@ -212,6 +212,30 @@
       },
       "conclusion": "★ **按后端分列**：ms-swift ⇒ 1 卡可跑（T043）、2 卡 OOM（T044）、4 卡可行（T045）；native ⇒ 1 卡 OOM（T040）、**2/4 卡待实测**（⛔ 不外推）。★ **⛔ 不存在覆盖所有后端的单一 `min_cards`。**",
       "note": "★ 与 OPD 族如实并存、⛔ 不互相套用（OPD = 1/2/4 全 OOM）。★ 本条目只登记**卡数可行性**；T045 效果结论已在矩阵四态（已验证不可用，Δ=−2.9915 pp）。"
+    },
+    "graspo_9b_full_cards": {
+      "family": "9B GRASPO 全量",
+      "measured": true,
+      "scope_note": "★★ **配置五元组** = model × algo × mode × backend × cards ⇒ ⛔ **不得跨卡数 / 跨后端外推**；★★ **本族实测非单调**：★ **1 卡可跑、2 卡 OOM ⇒ ⛔ 不得假设卡数越多越可行**。",
+      "by_config": {
+        "T038": {
+          "combo": "9B × GRASPO × full × ms-swift × 2 卡（按矩阵 tier 表）",
+          "verdict": "feasible",
+          "evidence": "训练跑完（640/640、ec=0）⇒ 效果为负已入四态（已验证不可用，Δ=−16.6667 pp）"
+        },
+        "T035": {
+          "combo": "9B × GRASPO × full × 2 卡（★ 后端归属待核：矩阵表记 native、跑次侧报 ms-swift）",
+          "verdict": "infeasible",
+          "evidence": "本档实测 OOM：`exit_code = 1`、逐字 `OutOfMemory`"
+        },
+        "T039": {
+          "combo": "9B × GRASPO × full × ms-swift × 4 卡（按矩阵 tier 表）",
+          "verdict": "feasible",
+          "evidence": "训练跑完（ec=0）⇒ 效果为负已入四态"
+        }
+      },
+      "open_question": "★ 待核：跑次侧报告称「T038 = 1 卡已跑完、T035 = 2 卡 OOM（ms-swift）」，而矩阵 tier 表记 T038 = 2 卡（ms-swift）、T035 = 2 卡（native）⇒ ★ 两侧卡数/后端归属不一致 ⇒ ★ 请裁定以哪侧为准（我按矩阵表登记，并已把差异如实标出）。",
+      "note": "★ 非单调结论只适用于被实测覆盖的配置；⛔ 不得据此推断同族其他卡数/后端。"
     }
   },
   "data": {
