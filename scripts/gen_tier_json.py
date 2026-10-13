@@ -27,8 +27,11 @@ def load_report(path: str) -> dict:
 
 
 def summarise(report: dict) -> tuple[int, int, float]:
+    """兼容两种 summary 口径：`total` 或 `sample_count_total`（228 实测为后者）。"""
     s = report["summary"]
-    return int(s["correct"]), int(s["total"]), float(s["accuracy_percent"])
+    total = s.get("total", s.get("sample_count_total"))
+    assert total is not None, f"summary 既无 total 也无 sample_count_total：{list(s)}"
+    return int(s["correct"]), int(total), float(s["accuracy_percent"])
 
 
 def build(args) -> collections.OrderedDict:
