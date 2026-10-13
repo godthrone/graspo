@@ -913,8 +913,11 @@ def convert_native_rank_to_peft(checkpoint_dir: str | Path, output_dir: str | Pa
     modules: set[str] = set()
     ranks: set[int] = set()
     for key, tensor in converted.items():
-        stem = key[len("base_model.model.model."):-len(".lora_A.weight")] \
-            if key.endswith(".lora_A.weight") else key[len("base_model.model.model."):-len(".lora_B.weight")]
+        # ★ 只剥 `base_model.model.`：保留 `model.` ⇒ 得到 `model.language_model.layers.<N>.<mod>`
+        #   （★ 多模态基座的守卫要求 target_modules 引用 `model.language_model.`）
+        _p = "base_model.model."
+        stem = key[len(_p):-len(".lora_A.weight")] if key.endswith(".lora_A.weight") \
+            else key[len(_p):-len(".lora_B.weight")]
         # ★ 用**完整模块路径**（`model.language_model.layers.<N>.<mod>`）：多模态基座必须带
         #   `model.language_model.` 命名空间，裸模块名会被 `_resolve_injection_targets` 正确拒绝
         #   （2026-10-13 实测：T022 第三次重跑即卡在此守卫）。
