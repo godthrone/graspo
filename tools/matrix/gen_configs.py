@@ -137,6 +137,16 @@ def family_under_min_unblocked(row):
     return under and row.get("availability") != "blocked"
 
 
+def blocked_contradicted_by_live(row):
+    """★ 反证拦截：标了 `blocked`，但**存在与之矛盾的活证据**（如已在跑的训练进度 / `ec=0`）⇒ 必须拒。
+
+    与 `family_under_min_unblocked` 同族、**方向相反**：那条防"该标没标"，这条防"**不该标乱标**"。
+    """
+    if row.get("availability") != "blocked":
+        return False
+    return bool(str(row.get("live_evidence") or "").strip())
+
+
 def blocked_unmarked(row):
     """★ blocked 档必须有 `blocked_reason`（起跑侧据此拒跑）；缺理由 ⇒ fail-closed。"""
     if row.get("availability") != "blocked":
@@ -178,6 +188,10 @@ def _gen_self_test():
          family_under_min_unblocked({"family": "graspo_lora_27b", "family_min_cards": 4, "cards": 2, "availability": "blocked"}) is False),
         ("⑰d 族级相容：cards=4 ≥ min_cards ⇒ 放行",
          family_under_min_unblocked({"family": "graspo_lora_27b", "family_min_cards": 4, "cards": 4}) is False),
+        ("⑰e ★ 反证拦截：标 blocked 却已有活证据（768/1280 进度）⇒ **必须拒**",
+         blocked_contradicted_by_live({"availability": "blocked", "live_evidence": "★ 已到 768/1280"}) is True),
+        ("⑰f 反证拦截：标 blocked 且无活证据 ⇒ 放行",
+         blocked_contradicted_by_live({"availability": "blocked"}) is False),
         ("⑩ ★ blocked 档缺 `blocked_reason` ⇒ **必须判缺**（fail-closed）",
          blocked_unmarked({"availability": "blocked"}) is True),
         ("⑪ blocked 档带理由 ⇒ 放行（但仍不得起跑）",
@@ -379,6 +393,11 @@ def main():
     _mm = [(r["tier"], why) for r in rows if (why := cards_procs_mismatch(r))]
     if _mm:
         print(f"FAIL-CLOSED：卡数与进程数/卡列表不同源（⛔ 不得只改一半）⇒ 拒绝产出：{_mm}")
+        return 1
+
+    _live = [(r["tier"], r.get("live_evidence")) for r in rows if blocked_contradicted_by_live(r)]
+    if _live:
+        print(f"FAIL-CLOSED：以下档标 blocked 却存在**矛盾的活证据** ⇒ 拒绝产出：{_live}")
         return 1
 
     _fam = [r["tier"] for r in rows if family_under_min_unblocked(r)]

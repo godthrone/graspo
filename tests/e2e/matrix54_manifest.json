@@ -153,32 +153,65 @@
     },
     "generation_gate": "assert_memory_feasible：确定性算式超预算（infeasible）即拒绝生成（不允许安静产出不可靠配置）；unmeasured 档**允许生成但不声称可行**（未测算的量只能靠上机量出来），并在 stdout 打出待测清单；`not_applicable` 档**不产出可跑配置**（确实不适用、无待测量）",
     "graspo_lora_27b_cards": {
-      "family": "27B GRASPO LoRA（SFT 之外的主线族）",
+      "family": "27B GRASPO LoRA",
       "measured": true,
-      "min_cards": 4,
-      "by_cards": {
-        "1": {
-          "verdict": "infeasible",
-          "evidence": "T040 实测 OOM：torch.OutOfMemoryError … Tried to allocate 572.00 MiB. GPU 0 … of which 485.88 MiB is free. Process 3247552 has 78.77 GiB memory in use.；exit_code=1 ⇒ 1 卡不足"
+      "scope_note": "★★ **族级结论必须限定作用域（后端/形态）**：★ 同族不同后端**显存行为不同** ⇒ ⛔ **不得跨后端外推**，也 ⛔ 不得用一个 `min_cards` 覆盖所有后端。",
+      "by_backend": {
+        "native": {
+          "tiers": [
+            "T040",
+            "T041",
+            "T042"
+          ],
+          "measured_cards": {
+            "1": {
+              "verdict": "infeasible",
+              "tier": "T040",
+              "evidence": "native 1 卡实测 OOM：Tried to allocate 572.00 MiB … 485.88 MiB is free … 78.77 GiB in use.；exit_code=1"
+            },
+            "2": {
+              "verdict": "unmeasured",
+              "evidence": "★ **无 native 2 卡实测**（T041 未跑；⛔ 不得用 ms-swift 的 T044 结果外推）⇒ 撤销先前的 blocked，改「待实测」"
+            },
+            "4": {
+              "verdict": "unmeasured",
+              "evidence": "★ 无 native 4 卡实测（T042 未跑）"
+            }
+          }
         },
-        "2": {
-          "verdict": "infeasible",
-          "evidence": "T044 实测 OOM：torch.OutOfMemoryError … Tried to allocate 1.89 GiB … 1.23 GiB free … 78.01 GiB in use；exitcode=1（死在 GRASPO rollout ＋ 27B 权重联合显存）"
-        },
-        "4": {
-          "verdict": "feasible",
-          "evidence": "T045 实测：训练第 1 步已越过（global_step/max_steps 1/320 ⇒ 5/320）、各卡 memory(GiB) 70.49 ⇒ 74.13、五计数全 0、GRASPO 指标正常（graspo/ratio_mean 0.9909、injection_failures 0、groups_seen 1、reward mean 0.396）"
+        "ms_swift": {
+          "tiers": [
+            "T043",
+            "T044",
+            "T045"
+          ],
+          "measured_cards": {
+            "1": {
+              "verdict": "feasible",
+              "tier": "T043",
+              "evidence": "★ ms-swift 1 卡**实测可跑**：训练已到 768/1280（2026-10-13 进行中）⇒ 1 卡对该后端正可行"
+            },
+            "2": {
+              "verdict": "infeasible",
+              "tier": "T044",
+              "evidence": "ms-swift 2 卡实测 OOM：Tried to allocate 1.89 GiB … 1.23 GiB free … 78.01 GiB in use；exitcode=1"
+            },
+            "4": {
+              "verdict": "feasible",
+              "tier": "T045",
+              "evidence": "ms-swift 4 卡实测可行：训练第 1 步越过并持续（320/320）、各卡 ~74–81 GiB、五计数全 0"
+            }
+          }
         }
       },
-      "conclusion": "★ 27B GRASPO LoRA（全部实测、单调）：**1 卡 OOM（T040：78.77 GiB in use）、2 卡 OOM（T044：78.01 GiB in use）、4 卡可行（T045：已越过首步并持续，各卡 ~74–81 GiB、五计数全 0）** ⇒ ★ **该族 `min_cards = 4`**；★ **1/2 卡实测不可行，4 卡实测可行** ⇒ ★ **`blocked` 只针对 1/2 卡配置，⛔ 不得读成整族不可行**。",
-      "note": "★ 与 OPD 的 `min_cards` 字段同形；★ 本条目只登记**卡数可行性**这一层——★ T045 **尚在跑**，其**效果结论（P5/P6 与 Δ）待评测后另记**（届时按评测结果进四态）。★★ **与 OPD 族如实并存、⛔ 不得互相套用**：★ **27B GRASPO LoRA** = 1/2 OOM、**4 可行**（单调）；★ **OPD** = 1/2/4 **全 OOM**（全不可行，见 `opd_teacher`）。",
-      "measured_note": "★ 均为上机实测，非推算。",
       "available_config": {
         "tier": "T045",
+        "backend": "ms_swift",
         "cards": 4,
-        "status": "★ 可行（实测）",
-        "evidence": "训练第 1 步越过并持续（140/320）、各卡 ~74–81 GiB、五计数全 0"
-      }
+        "status": "★ 可行（实测）"
+      },
+      "conclusion": "★ **按后端分列**：ms-swift ⇒ 1 卡可跑（T043）、2 卡 OOM（T044）、4 卡可行（T045）；native ⇒ 1 卡 OOM（T040）、**2/4 卡待实测**（⛔ 不外推）。★ **⛔ 不存在覆盖所有后端的单一 `min_cards`。**",
+      "note": "★ 与 OPD 族如实并存、⛔ 不互相套用（OPD = 1/2/4 全 OOM）。★ 本条目只登记**卡数可行性**；T045 效果结论已在矩阵四态（已验证不可用，Δ=−2.9915 pp）。"
     }
   },
   "data": {

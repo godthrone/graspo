@@ -179,3 +179,9 @@ python3 -m py_compile tools/matrix/<改动文件>.py     # 或等价的 AST 解�
 | **OPD** | ★ `epochs×(subset×G)/(micro×grad_accum×nproc)`（含 `nproc`） |
 ★ **⛔ 不得跨档套用公式**（与"没按本档自身实体取值""实测权威"同族）。
 ★ 真实事故（2026-10-13）：对 **GRASPO 档 T045** 误用 ms-swift SFT 口径 `2×100/4 = 50` ⇒ ★ 正确为 `8×20×8/4 = **320**`；★ 该档 `steps_actual` 按实测取 **320**（与 T038 的 640 同族）✓。
+
+## 族级结论的作用域纪律（强制 · ⛔ 不得跨后端外推）
+
+★ **族级结论必须限定作用域（后端/形态/卡数），⛔ 不得跨后端外推；★ 且"标注"与"活证据"必须双向相容。**
+★ 真实事故（2026-10-13）：把 native 的 `T040`（1 卡 OOM）与 ms-swift 的 `T044`（2 卡 OOM）概括成"该族 `min_cards=4`"⇒ ★ **误标了 ms-swift 的 `T043`（1 卡），而它当时已在训练 768/1280** ⇒ ★ **标注与活证据直接冲突**（★ 与今日 T016 native 9B 全参单卡 OOM vs T019/T020 ms-swift 成功 **同类现象**：**后端不同、显存行为不同**）。
+★ 处置：① **撤销 T043/T041 的 `blocked`**；② 族级条目改为 **`by_backend`**（native / ms_swift **各列各自实测**）；③ **双向断言**：`family_under_min_unblocked`（防"该标没标"）＋ `blocked_contradicted_by_live`（防"**不该标乱标**"：标了 blocked 却有活证据 ⇒ fail-closed）。
