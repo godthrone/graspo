@@ -802,3 +802,29 @@ def merge_peft_checkpoint(
             f"(looked for {MERGED_REQUIRED_FILES} + one of {WEIGHT_FILE_CANDIDATES})"
         )
     return destination
+
+#: ★ 允许自动转换的 native 分片形态上限：仅 `dp_size==1 且 pp_size==1`。
+#: 理由（2026-10-13 实测）：`dp_size>1` 时各 DP 副本的 `lora_a` **逐键分歧**（T023：606/606 不同，
+#: 而 `lora_b` 606/606 相同）⇒ **checkpoint 无唯一正解、本质不可合并**；`pp_size>1` 的分片拼接未实现。
+NATIVE_RANK_MERGE_ALLOWED = {"dp_size": 1, "pp_size": 1}
+
+
+def assert_native_rank_mergeable(manifest: dict) -> list[str]:
+    """★ §防呆：`dp_size>1` 或 `pp_size>1` ⇒ fail-closed，绝不用分歧权重合出"看起来正常"的模型。
+
+    静默合出错误模型比"暂不可评"更糟 —— 它会污染矩阵里的效果结论。
+    """
+    problems: list[str] = []
+    dp = int(manifest.get("dp_size", 1) or 1)
+    pp = int(manifest.get("pp_size", 1) or 1)
+    tp = int(manifest.get("tp_size", 1) or 1)
+    if dp > 1:
+        problems.append(
+            f"dp_size={dp} > 1：native SFT 的 DP 副本 `lora_a` 逐键分歧（实测 T023：606/606 不同，"
+            f"而 `lora_b` 606/606 相同）⇒ checkpoint 无唯一正解、不可合并（★ 这是训练侧缺陷）"
+        )
+    if pp > 1:
+        problems.append(f"pp_size={pp} > 1：PP 分片合并未实现 ⇒ 暂不可评")
+    if tp > 1:
+        problems.append(f"tp_size={tp} > 1：TP 分片合并未实现 ⇒ 暂不可评")
+    return problems
