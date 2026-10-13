@@ -180,6 +180,28 @@ def resolve_base_mount_source(model_path: str, host_root: str = MODEL_HOST_ROOT)
     return (src, msg)
 
 
+def render_vllm_base_mount(model_path: str, container_dst: str = "/model", host_root: str = MODEL_HOST_ROOT) -> tuple[str | None, str]:
+    """**生成链唯一出口**：返回 base 侧 vLLM 的 `-v <host>:<dst>:ro` 片段。
+
+    这是 §7/§8 那一族"路径域"错误的**根治**：生成评测脚本时**不要**手写 `-v $MP:/model:ro`
+    （`$MP` 是容器内路径），而是调用本函数 —— 它内部走 `resolve_base_mount_source`，
+    自动转宿主路径、断言存在，失败返回 `(None, 原因)` 由调用方 fail-closed。
+
+    用法（生成脚本时）::
+
+        mount, why = render_vllm_base_mount(cfg["model"]["model_path"])
+        if mount is None:
+            raise SystemExit(f"base 挂载源不可用：{why}")   # fail-closed
+        cmd += f" {mount} "
+    """
+    src, msg = resolve_base_mount_source(model_path, host_root=host_root)
+    if src is None:
+        return (None, msg)
+    if not container_dst.startswith("/"):
+        return (None, f"容器内目标路径非法：{container_dst} ⇒ fail-closed")
+    return (f"-v {src}:{container_dst}:ro", f"base 挂载源 {src}（宿主，存在）⇒ {container_dst}:ro")
+
+
 def build_json_reason(after_correct: int, n_total: int, base_correct: int, status: str) -> str:
     """落 json 的备注（≤100 字）：判定 + 读数，与结构化字段同源。"""
     after = after_correct / n_total * 100 if n_total else 0.0

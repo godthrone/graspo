@@ -200,3 +200,26 @@ def test_resolve_base_accepts_already_host_path(tmp_path: Path):
     p = str(host_root / "Qwen3.8-27B")
     src, msg = lp.resolve_base_mount_source(p)
     assert src == p and "宿主路径且存在" in msg, (src, msg)
+
+
+# ---------- 生成链唯一出口：base 侧 vLLM 挂载片段 ----------
+def test_render_vllm_base_mount_from_container_path(tmp_path: Path):
+    host_root = tmp_path / "models"
+    (host_root / "Qwen3.8-27B").mkdir(parents=True)
+    frag, why = lp.render_vllm_base_mount("/models/Qwen3.8-27B", host_root=str(host_root) + "/")
+    assert frag == f"-v {host_root / 'Qwen3.8-27B'}:/model:ro", (frag, why)
+
+
+def test_render_vllm_base_mount_refuses_unresolvable(tmp_path: Path):
+    """★ 回归：`$MP` 原样当挂载源（宿主无对应件）⇒ 生成链必须 fail-closed，而不是产出坏命令。"""
+    host_root = tmp_path / "models"
+    host_root.mkdir()
+    frag, why = lp.render_vllm_base_mount("/models/Qwen3.8-27B", host_root=str(host_root) + "/")
+    assert frag is None and "不存在" in why, (frag, why)
+
+
+def test_render_vllm_base_mount_refuses_bad_dst(tmp_path: Path):
+    host_root = tmp_path / "models"
+    (host_root / "Qwen3.8-27B").mkdir(parents=True)
+    frag, why = lp.render_vllm_base_mount("/models/Qwen3.8-27B", container_dst="model", host_root=str(host_root) + "/")
+    assert frag is None and "目标路径非法" in why, (frag, why)
