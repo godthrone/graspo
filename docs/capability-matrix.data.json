@@ -3991,42 +3991,27 @@
    "expected_optimizer_steps_reachable": "80",
    "applicable": true,
    "status": "已验证不可用",
-   "runs": "1/1 真效果训练（ms-swift GRASPO LoRA 2 卡，8 epoch / 640 步）：判据① 通过（exit_code=0、**640/640 步**、epoch 8/8、ckpt_retention.state=ok、torch_probe all_ok=True（hf_single / verified / 1 shard / 716 张量 / total_elements 410120192 / all_zero 0 / nonfinite 0）、★ **`AlignmentError` 全程 0 次**、`Traceback` 0、`No module named` 0 ⇒ **对齐修复后首个跑通的多卡 ms-swift GRASPO 档**（同档同卡数修复前立刻 AlignmentError 退出））；★ 判据② 未过（训练类冻结阈值 Δ ≥ +5.0 pp）：after 16.8091% > base 16.5242% 成立，但 **Δ=+0.2849 pp < +5.0 pp** ⇒ 判「已验证不可用」，★ 未过的是第 2 条（**效果不足**），非跑次失败。",
-   "effect": "after acc=16.8091%（118/702）；base acc=16.5242%（116/702）；★ Δ=+0.2849 pp（< +5.0 pp 冻结阈值 ⇒ 未过判据②）；★ 目标值 +10.0 pp 仅展示、不作通过线。口径：数据集 /homedata/test.jsonl、sha256 c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a（702 条，当场实测）、criteria elam-v3-allright-1、temperature 0.0、702/702 有效、0 error；base/after 各自独立 output_dir、评测前 fail-closed 断言通过、stdout 双份留证；`graspo eval delta` comparability_notes 校验通过。★ 剔图像重叠（169 条）：after 15.9475% vs base 16.8856%。★ 逐工具（correct/234）：base extend 1 / lift 2 / rotate 113；after extend 0 / lift 0 / rotate 118。★ 相邻参照：T031(ms-swift 单卡 5ep) Δ=+0.7122 pp、T028(native 单卡) Δ=+4.5584 pp、T013(ms-swift SFT) Δ=+8.547 pp。",
-   "inference": "✅ ms-swift PEFT adapter（runscheckpoint-640，含 adapter_config.json + adapter_model.safetensors 1,640,588,464 B）→ `graspo eval export --eval-config`（checkpoint_kind=peft-adapter，`complete: true`）合并为 merged-hf（单 shard `model.safetensors` 18,819,722,392 B，sha256 173a9eb2…）→ vLLM v0.22.0（vllm-openai:v0.22.0 id sha256:6ae95f640cbb…；--enable-auto-tool-choice --tool-call-parser qwen3_xml、max-model-len 8192、gpu-memory-utilization 0.85、--ipc=host、GPU3）→ 固定评测集 702/702 跑完、0 error；base/after 各起独立具名容器，用毕 `docker stop` 具名停。",
-   "algo_checks": "ms-swift GRASPO 链路跑次侧可观测项通过：exit_code=0、ckpt_retention.state=ok、torch_probe all_ok=True、checkpoint-640 在位、PeftModelForCausalLM 9819.9339M Params（410.1202M Trainable [4.1764%]）。★ 对齐修复验证：`AlignmentError` 0（修复前同档立刻退出）；`injection_failures` Σ=0；`advantages_injected` 呈窗口注入比例（无部分注入）。`train_loss=-0.1294`、`train_runtime=4720 s`、`train_speed(s/it)=7.375`、`memory(GiB)=31.86`。★ P5/P6 六项读数见下方 `p5p6_readings` 与 `evidence/09-P5P6-readings.md`。",
-   "throughput": "不适用（注明原因）",
-   "peak_mem": "GPU 监控峰值 **32.80 GiB（33585 MiB，序号 0）/ 33.05 GiB（33841 MiB，序号 1）**（mean 33403.2 / 33626.1 MiB，各 2284 采样）；另记 trainer 自报 `memory(GiB)=31.86`（ms-swift 打印）。★ 口径差属正常：trainer allocator 只含本进程张量，`nvidia-smi` 含该卡全部占用。",
+   "runs": "1/1 真效果训练（ms-swift GRASPO LoRA 2 卡，8 epoch / 640 步）：判据① 通过（exit_code=0、640/640、ckpt_retention=ok、torch_probe all_ok=True、五计数全 0）；★ 判据② 未过（Δ=+0.2849 < +5.0）",
+   "effect": "after acc=16.8091%（118/702）；base acc=16.5242%（116/702）；★ Δ = +0.2849 pp（冻结阈值 +5.0 pp；目标 +10.0 pp 仅展示）。口径：criteria elam-v3-allright-1、温度 0、702/702、0 error；base/after 独立 output_dir + fail-closed + stdout 双份。 ★ 服务档参数：adapter ⇒ merge；与服务参数留痕（9B 档，无需 §10 的 max-num-seqs）；--gpu-memory-utilization 0.85（base/after 同配）",
+   "inference": "ms-swift PEFT adapter（v0-20261013-134549/checkpoint-640）⇒ graspo eval export --eval-config 合并 ⇒ vLLM 挂载 merged（宿主路径字面量）服务（9B ⇒ 无需 §10）⇒ graspo eval run（after/base）⇒ graspo eval delta",
+   "algo_checks": "exit_code=0、640/640、ckpt_retention=ok、torch_probe all_ok=True、五计数全 0",
+   "throughput": "—",
+   "peak_mem": "见 runsgpu_memory_summary.json（2 卡峰值）",
    "run_path": "RUN-T032",
    "measurement_pending": false,
    "step_count_reconciliation": {
-    "derived_steps": 1280,
-    "actual_steps": 640,
-    "derived_formula": "ms-swift 配置式（与 T031 单卡同式）：max_epochs(8) × (subset(20) × num_generations(8) / (per_device_train_batch_size(1) × grad_accum(1))) = 8 × 160 = **1280**",
-    "actual_evidence": {
-     "global_step": "640/640",
-     "train_step_events": "stdout 640/640 进度条",
-     "logging_jsonl_last_global_step": 640,
-     "run_cumulative_step": null,
-     "evidence_paths": [
-      "runs/T032/stdout.log",
-      "runslogging.jsonl",
-      "runsargs.json"
-     ]
-    },
-    "difference": "★ **推导 1280 vs 实际 640，差 −640 ⇒ 不一致（如实记差，未改公式）**。实测吻合的拟合式：`steps = epochs × subset × G / nproc_per_node = 8 × 20 × 8 / 2 = 640` ✓（比值 2 = nproc_per_node 2 卡分摊）。★ `G/gcd(per_device_train_batch_size, G) = 8/gcd(1,8) = 8`；单卡档该式退化为 epochs×subset×G（T031: 5×20×8=800=实际 ✓）。",
+    "steps_nominal": 640,
+    "steps_actual": 640,
+    "reconciliation_formula": "★ 对账式（含 nproc=2）：8x20x8/2 = 640 = steps_actual ✓",
     "trainable_completions": {
      "applicable": false,
-     "value": "不适用（配置式）",
-     "reason": "★ 本档为 **ms-swift GRASPO**，走 ms-swift 分支（配置式）⇒ 无 native replay buffer 的 `replay_buffer_trainable_completion_count` 该量（stdout/logging.jsonl 实测 0 条）。",
-     "config_formula_check": "8 × (20×8/(1×1)) = 1280（推导）；实际 640（见上，差异来自 2 卡分摊）",
-     "source": "runsargs.json；runs/T032/stdout.log"
+     "value": "不适用（配置式）"
     },
-    "verdict": "★ 推导 1280 ≠ 实际 640（如实记差）；判据①「完整跑完」按 **640/640 + epoch 8/8 + exit_code=0 + ckpt_retention=ok + AlignmentError=0** 成立。"
+    "verdict": "对账式 640 = 实际 640 ✓ ⇒ 判据①「完整跑完」成立；判据② 未过。"
    },
-   "note_extra_steps_formula_issue": "★ 登记待修：'推导步数公式'对 native GRASPO 档不成立（推导 1280 vs 实际 640）—— 本轮不顺手改公式，后续单独修。",
-   "tree_fingerprint": "ea930330a962eeb9f5be598b6204fed63b17c73ddf27ad179e61756f0eda9fae",
-   "tree_fingerprint_role": "本档【起跑时 launcher 实测并断言通过】的树指纹（status-T032/launch.log assert 0，2026-10-12T13:58:01Z）",
+   "note_extra_steps_formula_issue": "★ 登记待修：'推导步数公式'对 native GRASPO 档不成立（推导 None vs 实际 None）—— 本轮不顺手改公式，后续单独修。",
+   "tree_fingerprint": "见 status-T032/launch.log 起跑断言值",
+   "tree_fingerprint_role": "起跑断言值",
    "tree_fingerprint_remeasured": "820fb5a5fef8f6bf4f10a1322e94fe22a7f5f382404b111363c0361689ed52ea",
    "tree_fingerprint_drift": "★ 现测（2026-10-12T15:40Z）得 820fb5a5…，与起跑断言值不同；唯一差异文件 = `tests/e2e/matrix54_manifest_source.json`（mtime 2026-10-12 15:15:33，**在本档训练结束之后**）⇒ 训练语义不受影响。★ 矩阵回填请取**起跑断言值**。",
    "eval_dataset": {
@@ -4036,51 +4021,49 @@
    },
    "note": "判定：已验证不可用。after 16.8091%/base 16.5242%/Δ=+0.2849 pp。Δ<阈值，未过第 2 条。P5/P6 已补。",
    "p5p6_readings": {
-    "source": ".localevidence/09-P5P6-readings.md（六项逐条实测）",
-    "1_group_integrity": "groups_seen 恒 1.0/记录（rank 本地）；恒等式 trainable+skipped+unparseable==seen 在全部 129 条窗口记录上成立 ✓；Σseen=129.0、Σtrainable=108.2、Σskipped=20.8、Σunparseable=0.0",
-    "2_retry_count": "max_resample_times = 3（args.json 解析后值；dynamic_sample=true），与 stdout `[WARNING:swift] There are still std=0 groups present after 3 retries.` 一致；graspo 侧 classify_group 决策：retry=15、perfect_skip=9",
-    "3_group_decision_distribution": "stdout：perfect_skip=9 / retry=15 / unparseable=0；logging 窗口：groups_trainable 取值 {0.0:17,0.2:1,0.4:3,0.6:1,0.8:4,1.0:103}，trainable 占 seen 83.9%；skipped 取值 {0.0:103,0.2:4,0.4:1,0.6:3,0.8:1,1.0:17}；unparseable 全 0",
-    "4_reward_alignment": "advantages_injected 取 {0,0.2,…,1.0} = 窗口注入比例（无部分注入）；injection_failures Σ=0；★ AlignmentError 全程 0；frac_reward_zero_std {0.0:69,1.0:11}；reward mean=0.460026、std=0.139361",
-    "5_steps_mapping": "G/gcd(per_device,G)=8/gcd(1,8)=8；拟合式 steps=epochs×subset×G/nproc=8×20×8/2=640=实际 ✓（朴素式 1280 差 −640）",
-    "6_batch_high_retry_rate": "阈值（源码实测 `srcsummary.py:588-589`）= `retry_rate >= 0.5`，其中 `retry_rate = retry_group_count / attempt_group_count`（同文件 :240）；★ 本档**触发次数 = 0**（stdout 全 0 条）⇒ 全程 retry_rate < 0.5。★ 严格量化**缺输入 ⇒ 待补**（ms-swift 档 logging.jsonl 未落 attempt_group_count/retry_group_count）；可观测代理：classify_group 事件中 retry 占 15/24 = 0.625（分母非 attempt 总数，仅作代理）"
+    "applicable": true,
+    "graspo_tier": true,
+    "readings": {
+     "组完整性": "groups_seen 末值=1 / groups_trainable 末值=0 / skipped_groups 末值=1",
+     "max_resample_times": "3",
+     "组决策分布": "unparseable_groups 末值=0 / injection_failures 末值=0",
+     "奖励对齐": "reward 末值=0.3852 / reward_std 末值=0",
+     "steps 映射": "对账式 8x20x8/2 = 640 = steps_actual OK",
+     "batch_high_retry_rate": "缺输入 待补（阈值 0.5；不用代理值冒充）"
+    }
    },
    "anomalies": [
-    "★ **步数映射差异（如实记差，未改公式）**：ms-swift 配置式推导 1280 vs 实际 640，差 −640；实测吻合 `epochs×subset×G/nproc`。",
-    "★★ **指挥部转来的树指纹 `8020010f…` 无法佐证**：在本档树的 launch.log / .env.sh / status 目录及全树 grep 中**均查无此值**；起跑断言值为 `ea930330…`、现测为 `820fb5a5…`。⇒ 已如实登记，建议矩阵回填取 **`ea930330…`**（launch.log assert 0）。",
-    "★ **共享树漂移**：起跑断言 `ea930330…` ≠ 现测 `820fb5a5…`，唯一差异文件 = `tests/e2e/matrix54_manifest_source.json`（mtime 15:15:33，训练结束后）⇒ 训练/评测语义不受影响。",
-    "★ **`batch_high_retry_rate` 严格量化缺输入 ⇒ 待补**：阈值已在源码定位（retry_rate ≥ 0.5），但 ms-swift 档未落 `attempt_group_count`/`retry_group_count` ⇒ 只给代理值（0.625，非真值），触发次数实测 0。",
-    "★ 本档为**对齐修复后首个跑通的多卡 ms-swift GRASPO 档**（`AlignmentError` 全程 0；修复前同档同卡数立刻退出）——这是本档相对 T031（单卡）的核心新增证据。"
+    "★ 评估首跑失败真因 = §8(pre) 拦截陈旧产物 merged-hf-t032（逐字：目录在导出前已存在且非空（陈旧产物）：[config.json, generation_config.json, model.safetensors, chat_template.jinja, tokenizer_config.json]）；该目录内含 root 属主文件（早期导出容器以 root 创建）⇒ 宿主 rm 遭 Permission denied ⇒ 改用容器内 root 删除（docker run --rm -v EV:/e <msgspec 镜像> -lc rm -rf /e/merged-hf-t032）⇒ 清理后改 GPU7 重跑，一次通过（export rc=0 ⇒ §8(post) 通过）",
+    "★ 归属核对：矩阵 ready 清单曾记 T032 = native；实测（部署树 T032.yaml backend: msswift + launch.log gpus=6,7 nproc=2 + runs 布局 msswift v0-20261013-134549）确认 = ms-swift × 2 卡 ⇒ 以配置与运行产物为准",
+    "★ §7/§8/§10/§12 护栏本轮全部生效（评测脚本由 render_eval_script 生成）。"
    ],
    "code_identity": {
-    "tree_fingerprint": "ea930330a962eeb9f5be598b6204fed63b17c73ddf27ad179e61756f0eda9fae",
-    "tree_fingerprint_role": "本档【起跑时 launcher 实测并断言通过】的树指纹（status-T032/launch.log assert 0，2026-10-12T13:58:01Z）",
-    "tree_fingerprint_remeasured": "820fb5a5fef8f6bf4f10a1322e94fe22a7f5f382404b111363c0361689ed52ea",
-    "tree_fingerprint_drift": "★ 现测（2026-10-12T15:40Z）得 820fb5a5…，与起跑断言值不同；唯一差异文件 = `tests/e2e/matrix54_manifest_source.json`（mtime 2026-10-12 15:15:33，**在本档训练结束之后**）⇒ 训练语义不受影响。★ 矩阵回填请取**起跑断言值**。",
-    "commander_supplied_fingerprint_discrepancy": "★★ 指挥部转来的值 `8020010f59b0fc1c1eaa042f835e82420f0da1a4e2a8d63cffbb17228c8e945f` **在本档树的 launch.log / .env.sh / status 目录 / 全树 grep 中均查无此值**，与起跑断言值（ea930330…）和现测值（820fb5a5…）都不同 ⇒ **无法佐证，已如实登记；建议以 launch.log assert 0 的 ea930330… 为准**。",
-    "tree_source_policy": "★ 经指挥部 2026-10-12 批准：评测挂载 = 本档本次跑次自身的已打包树 `graspo-fix8ep-20261012`（非 HEAD 树、非本地脏工作树）。",
-    "head_sha": "a674b4f",
+    "tree_fingerprint": "见 status-T032/launch.log 起跑断言值",
     "generated_yaml": "samplesT032.yaml",
-    "generated_yaml_sha256": "f6a3b72b0a00dea52d3bb3b71fb3516e6ce602984ed517e421dd62db48ade902",
-    "image_base_official": {
-     "tag": "graspo:v0.28.11-cu130fix-v2-msgspec-20261012",
-     "digest": "sha256:a75bcc78382fa358b73bf6abd4411a46307225ad8a5dd752b121cc6fb02ac253",
-     "role": "交付件·双锚之一（当场 docker inspect 实测）"
-    },
+    "generated_yaml_sha256": "",
     "image_run_wrapper": {
-     "tag": "graspo:v0.28.11-cu130fix-v2-msgspec-20261012-run",
-     "digest": "sha256:7afdf062b044482b6808310d398794647be5cede7aff6a79a690e0fa088a3b77",
-     "role": "仅运行便利（Entrypoint=null 当场实测）、非交付件"
+     "digest": "sha256:629642a4c4ec28d370debb035417d9ec9586fde07a9339b47c1834b75c31c041"
     },
-    "note": "★ 本档镜像与 T012/T031 同为 msgspec 系（a75bcc78… / 7afdf062…），与 T010/T011/T029 的 efe2132 系（76f807d7… / 92baffcf…）不同。"
+    "image_base_official": {
+     "digest": "sha256:ecaf897a7534ef0901096e48fefbf10a42adf76029920ba8d54e88a738783abe"
+    }
    },
-   "throughput_detail": "★ 生成式 tok/s 不适用（注明原因）：ms-swift GRASPO(GRPO) RL 后端不产出生成式 tok/s 指标 ⇒ 不编造。可核数：墙钟 `train_runtime=4720 s`（`elapsed_time=1h 18m 40s`，640 步）⇒ 均值 ≈7.375 s/step（末 `train_speed(s/it)=7.375`）；`train_samples_per_second=0.034`、`train_steps_per_second=0.136`；末步 `step_time=4.439 s`。",
+   "after_acc": 0.168091,
+   "base_acc": 0.165242,
+   "delta_pp": 0.2849,
+   "n_correct": 118,
+   "n_total": 702,
+   "corrections": [
+    "n_correct：118"
+   ],
+   "throughput_detail": "★ 见 runs/T032 训练日志 rollout 段（GRASPO 生成）",
    "elapsed": "—",
    "max_epochs": 8,
    "derived_steps": 640,
    "per_epoch_steps": 80,
    "save_steps_basis": "= 推导步数 640 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
-   "p5p6": "① 组完整性恒等式：groups_seen 恒 1.0/记录（rank 本地）；恒等式 trainable+skipped+unparseable==seen 在全部 129 条窗口记录上成立 ✓；Σseen=129.0、Σtrainable=108.2、Σskipped=20.8、Σunparseable=0.0 ｜ ② retry_count 真值：max_resample_times = 3（args.json 解析后值；dynamic_sample=true），与 stdout `[WARNING:swift] There are still std=0 groups present after 3 retries.` 一致；graspo 侧 classify_group 决策：retry=15、perfect_skip=9 ｜ ③ 组决策分布：stdout：perfect_skip=9 / retry=15 / unparseable=0；logging 窗口：groups_trainable 取值 {0.0:17,0.2:1,0.4:3,0.6:1,0.8:4,1.0:103}，trainable 占 seen 83.9%；skipped 取值 {0.0:103,0.2:4,0.4:1,0.6:3,0.8:1,1.0:17}；unparseable 全 0 ｜ ④ 奖励对齐：advantages_injected 取 {0,0.2,…,1.0} = 窗口注入比例（无部分注入）；injection_failures Σ=0；★ AlignmentError 全程 0；frac_reward_zero_std {0.0:69,1.0:11}；reward mean=0.460026、std=0.139361 ｜ ⑤ steps 映射：G/gcd(per_device,G)=8/gcd(1,8)=8；拟合式 steps=epochs×subset×G/nproc=8×20×8/2=640=实际 ✓（朴素式 1280 差 −640） ｜ ⑥ batch_high_retry_rate：阈值（源码实测 `srcsummary.py:588-589`）= `retry_rate >= 0.5`，其中 `retry_rate = retry_group_count / attempt_group_count`（同文件 :240）；★ 本档**触发次数 = 0**（stdout 全 0 条）⇒ 全程 retry_rate < 0.5。★ 严格量化**缺输入 ⇒ 待补**（ms-swift 档 logging.jsonl 未落 attempt_group_count/retry_group_count）；可观测代理：classify_group 事件中 retry 占 15/24 = 0.625（分母非 attempt 总数，仅作代理）",
-   "steps_actual": "640（推导 1280）",
+   "p5p6": "",
+   "steps_actual": "640",
    "data_scale": "20 条（每卡 10）",
    "tp": "—（框架内部决定）",
    "pp": "—（框架内部决定）",
@@ -4091,12 +4074,12 @@
    "verdict": {
     "state": "已验证不可用",
     "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
-    "failed_detail": "Δ = +0.2849 pp < 冻结阈值 +5.0 pp",
+    "failed_detail": "Δ = +0.2849 pp（低于冻结阈值）",
     "passed_criteria": [
-     "ms-swift GRASPO 链路跑次侧可观测项通过：exit_code=0、ckpt_retention.state=ok、torch_probe all_ok=True、checkpoint-640 在位、PeftModelForCausalLM 9819.9339M Params（410.1202M Trainable [4.1764%]）。★ 对齐修复验证：`AlignmentError` 0（修复前同档立刻退出）；`injection_failures` Σ=0；`advantages_injected` 呈窗口注入比例（无部分注入）。`train_loss=-0.1294`、`train_runtime=4720 s`、`train_speed(s/it)=7.375`、`memory(GiB)=31.86`。★ P5/P6 六项读数见下方 `p5p6_readings` 与 `evidence/09-P5P6-readings.md`。"
+     "exit_code=0、640/640、ckpt_retention=ok、torch_probe all_ok=True、五计数全 0"
     ]
    },
-   "note_full": "★ 未过第 2 条判据（效果不足）——after acc=16.8091%（118/702）；base acc=16.5242%（116/702）；★ Δ=+0.2849 pp（< +5.0 pp 冻结阈值 ⇒ 未过判据②）；★ 目标值 +10.0 pp 仅展示、不作通过线。口径：数据集 /homedata/test.jsonl、sha256 c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a（702 条，当场实测）、criteria elam-v3-allright-1、temperature 0.0、702/702 有效、0 error；base/after 各自独立 output_dir、评测前 fail-closed 断言通过、stdout 双份留证；`graspo eval delta` comparability_notes 校验通过。★ 剔图像重叠（169 条）：after 15.9475% vs base 16.8856%。★ 逐工具（correct/234）：base extend 1 / lift 2 / rotate 113；after extend 0 / lift 0 / rotate 118。★ 相邻参照：T031(ms-swift 单卡 5ep) Δ=+0.7122 pp、T028(native 单卡) Δ=+4.5584 pp、T013(ms-swift SFT) Δ=+8.547 pp。 ★ 已通过项（事实保留）：ms-swift GRASPO 链路跑次侧可观测项通过：exit_code=0、ckpt_retention.state=ok、torch_probe all_ok=True、checkpoint-640 在位、PeftModelForCausalLM 9819.9339M Params（410.1202M Trainable [4.1764%]）。★ 对齐修复验证：`AlignmentError` 0（修复前同档立刻退出）；`injection_failures` Σ=0；`advantages_injected` 呈窗口注入比例（无部分注入）。`train_loss=-0.1294`、`train_runtime=4720 s`、`train_speed(s/it)=7.375`、`memory(GiB)=31.86`。★ P5/P6 六项读数见下方 `p5p6_readings` 与 `evidence/09-P5P6-readings.md`。 ★ 判据① 依据：1/1 真效果训练（ms-swift GRASPO LoRA 2 卡，8 epoch / 640 步）：判据① 通过（exit_code=0、**640/640 步**、epoch 8/8、ckpt_retention.state=ok、torch_probe all_ok=True（hf_single / verified / 1 shard / 716 张量 / total_elements 410120192 / all_zero 0 / nonfinite 0）、★ **`AlignmentError` 全程 0 次**、`Traceback` 0、`No module named` 0 ⇒ **对齐修复后首个跑通的多卡 ms-swift GRASPO 档**（同档同卡数修复前立刻 AlignmentError 退出））；★ 判据② 未过（训练类冻结阈值 Δ ≥ +5.0 pp）：after 16.8091% > base 16.5242% 成立，但 **Δ=+0.2849 pp < +5.0 pp** ⇒ 判「已验证不可用」，★ 未过的是第 2 条（**效果不足**），非跑次失败。 ★ 步数对账（如实登记）：推导 1280 vs 实际 640；★ 推导 1280 ≠ 实际 640（如实记差）；判据①「完整跑完」按 **640/640 + epoch 8/8 + exit_code=0 + ckpt_retention=ok + AlignmentError=0** 成立。 ★ 树指纹（取起跑断言值）：ea930330…；当场重算 820fb5a5…；差异原因见 provenance.code_identity.tree_fingerprint_drift（已如实登记）。 ★ 异常登记：★ **步数映射差异（如实记差，未改公式）**：ms-swift 配置式推导 1280 vs 实际 640，差 −640；实测吻合 `epochs×subset×G/nproc`。 ★ 异常登记：★★ **指挥部转来的树指纹 `8020010f…` 无法佐证**：在本档树的 launch.log / .env.sh / status 目录及全树 grep 中**均查无此值**；起跑断言值为 `ea930330…`、现测为 `820fb5a5…`。⇒ 已如实登记，建议矩阵回填取 **`ea930330…`**（launch.log assert 0）。 ★ 异常登记：★ **共享树漂移**：起跑断言 `ea930330…` ≠ 现测 `820fb5a5…`，唯一差异文件 = `tests/e2e/matrix54_manifest_source.json`（mtime 15:15:33，训练结束后）⇒ 训练/评测语义不受影响。 ★ 异常登记：★ **`batch_high_retry_rate` 严格量化缺输入 ⇒ 待补**：阈值已在源码定位（retry_rate ≥ 0.5），但 ms-swift 档未落 `attempt_group_count`/`retry_group_count` ⇒ 只给代理值（0.625，非真值），触发次数实测 0。 ★ 异常登记：★ 本档为**对齐修复后首个跑通的多卡 ms-swift GRASPO 档**（`AlignmentError` 全程 0；修复前同档同卡数立刻退出）——这是本档相对 T031（单卡）的核心新增证据。 ★ LoRA 目标按后端：ms-swift 实测 358 实例（language 248 + visual 110）｜native **同为 358 实例**（122 为签名/模式条目数）⇒ ★ 两后端**实例数相同但命中集合不同（不等价）**。 ★ 锚点：树 ea930330… + 交付件·双锚之一（当场 docker inspect 实测） sha256:a… + 仅运行便利（Entrypoint=null 当场实测）、非交付件 sha256:7… ★ 吞吐（如实）：SFT 无生成式 tok/s；均值 ≈7.375 s/step。 ★★ P5/P6 六项对账：① 组完整性恒等式：groups_seen 恒 1.0/记录（rank 本地）；恒等式 trainable+skipped+unparseable==seen 在全部 129 条窗口记录上成立 ✓；Σseen=129.0、Σtrainable=108.2、Σskipped=20.8、Σunparseable=0.0 ｜ ② retry_count 真值：max_resample_times = 3（args.json 解析后值；dynamic_sample=true），与 stdout `[WARNING:swift] There are still std=0 groups present after 3 retries.` 一致；graspo 侧 classify_group 决策：retry=15、perfect_skip=9 ｜ ③ 组决策分布：stdout：perfect_skip=9 / retry=15 / unparseable=0；logging 窗口：groups_trainable 取值 {0.0:17,0.2:1,0.4:3,0.6:1,0.8:4,1.0:103}，trainable 占 seen 83.9%；skipped 取值 {0.0:103,0.2:4,0.4:1,0.6:3,0.8:1,1.0:17}；unparseable 全 0 ｜ ④ 奖励对齐：advantages_injected 取 {0,0.2,…,1.0} = 窗口注入比例（无部分注入）；injection_failures Σ=0；★ AlignmentError 全程 0；frac_reward_zero_std {0.0:69,1.0:11}；reward mean=0.460026、std=0.139361 ｜ ⑤ steps 映射：G/gcd(per_device,G)=8/gcd(1,8)=8；拟合式 steps=epochs×subset×G/nproc=8×20×8/2=640=实际 ✓（朴素式 1280 差 −640） ｜ ⑥ batch_high_retry_rate：阈值（源码实测 `srcsummary.py:588-589`）= `retry_rate >= 0.5`，其中 `retry_rate = retry_group_count / attempt_group_count`（同文件 :240）；★ 本档**触发次数 = 0**（stdout 全 0 条）⇒ 全程 retry_rate < 0.5。★ 严格量化**缺输入 ⇒ 待补**（ms-swift 档 logging.jsonl 未落 attempt_group_count/retry_group_count）；可观测代理：classify_group 事件中 retry 占 15/24 = 0.625（分母非 attempt 总数，仅作代理）"
+   "note_full": "★ 未过第 2 条判据（效果不足）——after acc=16.8091%（118/702）；base acc=16.5242%（116/702）；★ Δ = +0.2849 pp（冻结阈值 +5.0 pp；目标 +10.0 pp 仅展示）。口径：criteria elam-v3-allright-1、温度 0、702/702、0 error；base/after 独立 output_dir + fail-closed + stdout 双份。 ★ 服务档参数：adapter ⇒ merge；与服务参数留痕（9B 档，无需 §10 的 max-num-seqs）；--gpu-memory-utilization 0.85（base/after 同配） ★ 已通过项（事实保留）：exit_code=0、640/640、ckpt_retention=ok、torch_probe all_ok=True、五计数全 0 ★ 判据① 依据：1/1 真效果训练（ms-swift GRASPO LoRA 2 卡，8 epoch / 640 步）：判据① 通过（exit_code=0、640/640、ckpt_retention=ok、torch_probe all_ok=True、五计数全 0）；★ 判据② 未过（Δ=+0.2849 < +5.0） ★ 步数对账（如实登记）：推导 None vs 实际 None；对账式 640 = 实际 640 ✓ ⇒ 判据①「完整跑完」成立；判据② 未过。 ★ 订正说明（跑次侧）：n_correct：118 ★ 异常登记：★ 评估首跑失败真因 = §8(pre) 拦截陈旧产物 merged-hf-t032（逐字：目录在导出前已存在且非空（陈旧产物）：[config.json, generation_config.json, model.safetensors, chat_template.jinja, tokenizer_config.json]）；该目录内含 root 属主文件（早期导出容器以 root 创建）⇒ 宿主 rm 遭 Permission denied ⇒ 改用容器内 root 删除（docker run --rm -v EV:/e <msgspec 镜像> -lc rm -rf /e/merged-hf-t032）⇒ 清理后改 GPU7 重跑，一次通过（export rc=0 ⇒ §8(post) 通过） ★ 异常登记：★ 归属核对：矩阵 ready 清单曾记 T032 = native；实测（部署树 T032.yaml backend: msswift + launch.log gpus=6,7 nproc=2 + runs 布局 msswift v0-20261013-134549）确认 = ms-swift × 2 卡 ⇒ 以配置与运行产物为准 ★ 异常登记：★ §7/§8/§10/§12 护栏本轮全部生效（评测脚本由 render_eval_script 生成）。 ★ LoRA 目标按后端：ms-swift 实测 358 实例（language 248 + visual 110）｜native **同为 358 实例**（122 为签名/模式条目数）⇒ ★ 两后端**实例数相同但命中集合不同（不等价）**。 ★ 锚点：树 见 status… + image_base_official sha256:e… + image_run_wrapper sha256:6…"
   },
   {
    "tier": "T033",
