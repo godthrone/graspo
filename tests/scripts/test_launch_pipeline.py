@@ -108,3 +108,30 @@ def test_json_reason_is_short_and_matches_fields():
     reason = lp.build_json_reason(after_correct=171, n_total=702, base_correct=118, status="通过（已验证可用）")
     assert len(reason) <= 100
     assert "171/702" in reason and "+7.55 pp" in reason
+
+
+# ---------- 挂载源必须宿主路径（第 6 次"路径域"错误的收口） ----------
+def test_mount_source_accepts_existing_host_path(tmp_path: Path):
+    ok, msg = lp.check_mount_source(str(tmp_path))
+    assert ok and "宿主路径且存在" in msg, msg
+
+
+def test_mount_source_rejects_container_only_models_path():
+    """★ 回归：base 侧曾写 `/models/Qwen3.8-27B`（容器内路径）⇒ docker 建空目录 ⇒ vLLM 起不来。"""
+    ok, msg = lp.check_mount_source("/models/Qwen3.8-27B")
+    assert ok is False and "容器内专有路径" in msg, msg
+
+
+def test_mount_source_rejects_container_only_model_root():
+    ok, msg = lp.check_mount_source("/model")
+    assert ok is False and "容器内专有路径" in msg, msg
+
+
+def test_mount_source_rejects_missing_host_path(tmp_path: Path):
+    ok, msg = lp.check_mount_source(str(tmp_path / "nope"))
+    assert ok is False and "不存在" in msg, msg
+
+
+def test_mount_sources_reports_each_problem():
+    problems = lp.check_mount_sources(["/models/Qwen3.8-27B", "/evalout/merged-hf-t024"])
+    assert len(problems) == 2, problems

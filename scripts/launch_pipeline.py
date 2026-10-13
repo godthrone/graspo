@@ -94,6 +94,37 @@ def validate_post(plan: Plan) -> list[str]:
     return [] if ok else [msg]
 
 
+#: 容器内专有路径前缀 —— ⛔ 绝不能当宿主机挂载源（宿主上不存在 ⇒ docker 建空目录）
+CONTAINER_ONLY_PREFIXES = ("/model", "/models/", "/evalout", "/workspace/graspo", "/runs/", "/work/elam-v5")
+
+
+def check_mount_source(source: str) -> tuple[bool, str]:
+    """挂载源**必须是宿主机路径**且**在宿主上存在**（T024 第 6 次"路径域"错误的收口）。
+
+    ⛔ 拒绝容器内专有路径（`/models/...`、`/model`、`/evalout`、`/workspace/graspo`、`/runs/...`、
+    `/work/elam-v5`）——它们只在容器里存在；写进 `-v <src>:<dst>` 会让 docker **自动建空目录**，
+    随后 vLLM 报 `Invalid repository ID or local directory specified: '/model'`（引擎起不来）。
+    """
+    if not source or not str(source).strip():
+        return (False, "挂载源为空 ⇒ fail-closed")
+    src = str(source)
+    for prefix in CONTAINER_ONLY_PREFIXES:
+        if src == prefix or src.startswith(prefix.rstrip("/") + "/") or src == prefix.rstrip("/"):
+            return (False, f"挂载源 {src} 是**容器内专有路径**（宿主不存在）⇒ fail-closed；请改用宿主路径")
+    if not os.path.exists(src):
+        return (False, f"挂载源 {src} 在宿主上不存在 ⇒ fail-closed（docker 会建空目录）")
+    return (True, f"挂载源 {src} 为宿主路径且存在 ✓")
+
+
+def check_mount_sources(sources: list[str]) -> list[str]:
+    problems: list[str] = []
+    for src in sources:
+        ok, msg = check_mount_source(src)
+        if not ok:
+            problems.append(msg)
+    return problems
+
+
 def build_json_reason(after_correct: int, n_total: int, base_correct: int, status: str) -> str:
     """落 json 的备注（≤100 字）：判定 + 读数，与结构化字段同源。"""
     after = after_correct / n_total * 100 if n_total else 0.0
