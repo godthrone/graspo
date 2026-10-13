@@ -718,8 +718,14 @@ def main():
         if scr.get("actual_steps") is not None:
             r["steps_actual"] = f"{scr.get('actual_steps')}（推导 {scr.get('derived_steps')}）"
         else:
-            m = re.search(r"(\d+)\s*/\s*(\d+)\s*步", r.get("runs", "") or "")
-            r["steps_actual"] = f"{m.group(1)}/{m.group(2)}" if m else "—"
+            _t = r.get("runs", "") or ""
+            m = re.search(r"(\d+)\s*/\s*(\d+)\s*步", _t)
+            if m:
+                r["steps_actual"] = f"{m.group(1)}/{m.group(2)}"
+            else:
+                # ★ 回退：接受"2 epoch / 100 步"这类形态（取最后出现的 "N 步"）
+                _all = re.findall(r"(\d+)\s*步", _t)
+                r["steps_actual"] = _all[-1] if _all else "—"
         # 数据规模 = 全局条数 + 每卡派生
         if r.get("subset_size") not in (None, "", "—"):
             ppr = r.get("prompts_per_rank")

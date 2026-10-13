@@ -2649,28 +2649,81 @@
    "expected_optimizer_steps_per_epoch": "50",
    "expected_optimizer_steps_reachable": "50",
    "applicable": true,
-   "status": "尚未验证",
-   "runs": "—",
-   "effect": "—",
-   "inference": "—",
-   "algo_checks": "—",
-   "throughput": "—",
-   "peak_mem": "—",
-   "run_path": "—",
+   "status": "已验证不可用",
+   "runs": "1/1 真效果训练（ms-swift SFT 全参 2 卡，2 epoch / 100 步）：判据① 通过",
+   "effect": "after acc=16.8091%（118/702）；base acc=16.6667%（117/702）；★ Δ = +0.1425 pp（冻结阈值 +5.0 pp；目标 +10.0 pp 仅展示）。口径：criteria elam-v3-allright-1、温度 0、702/702、0 error；base/after 独立 output_dir + fail-closed + stdout 双份。 ★ 服务档参数：★ 零 merge（form=full）；--gpu-memory-utilization 0.85",
+   "inference": "★ form=full ⇒ ★ 零 merge：vLLM 直指 checkpoint 目录（⛔ 不 export）⇒ graspo eval run（after/base）⇒ graspo eval delta",
+   "algo_checks": "exit_code=0、100/100、ckpt_retention=ok、五计数全 0",
+   "throughput": "不适用（SFT 档不跑 rollout/生成）",
+   "peak_mem": "见 runsgpu_memory_summary.json（2 卡峰值）",
+   "run_path": "RUN-T020",
+   "measurement_pending": false,
+   "p5p6_readings": {
+    "applicable": false,
+    "value": "不适用（非 GRASPO 档）",
+    "reason": "非 GRASPO 档 ⇒ 无 rollout 组/重采样/优势注入等专有指标。"
+   },
+   "anomalies": [
+    "评测脚本由本地生成器产出：form 探测 ⇒ decide_eval_mode ⇒ 宿主/容器路径分离（MDHOST 供 §8 与 vLLM 挂载、MD 写 yaml）⇒ §15 产物级断言前置",
+    "★ §7/§8/§10/§12 护栏本轮全部生效（评测脚本由 render_eval_script 生成）。"
+   ],
+   "after_acc": 0.168091,
+   "base_acc": 0.166667,
+   "delta_pp": 0.1425,
+   "n_correct": 118,
+   "n_total": 702,
+   "step_count_reconciliation": {
+    "steps_nominal": 100,
+    "steps_actual": 100,
+    "reconciliation_formula": "★ 对账式（含 nproc=2）：2×100/2 = 100 = steps_actual ✓",
+    "trainable_completions": {
+     "applicable": false,
+     "value": "不适用（配置式）"
+    },
+    "verdict": "对账式 100 = 实际 100 ✓ ⇒ 判据①「完整跑完」成立；判据② 未过。"
+   },
+   "note_extra_steps_formula_issue": "★ 登记待修：'推导步数公式'对 native GRASPO 档不成立（推导 None vs 实际 None）—— 本轮不顺手改公式，后续单独修。",
+   "code_identity": {
+    "tree_fingerprint": "046f68a67495df604ef571d350de4738385610f39b2787edbd42521741ebbfb2",
+    "generated_yaml": "samplesT020.yaml",
+    "generated_yaml_sha256": "",
+    "image_run_wrapper": {
+     "digest": "sha256:629642a4c4ec28d370debb035417d9ec9586fde07a9339b47c1834b75c31c041"
+    },
+    "image_base_official": {
+     "digest": "sha256:ecaf897a7534ef0901096e48fefbf10a42adf76029920ba8d54e88a738783abe"
+    }
+   },
+   "tree_fingerprint": "046f68a67495df604ef571d350de4738385610f39b2787edbd42521741ebbfb2",
+   "tree_fingerprint_role": "起跑断言值",
+   "corrections": [
+    "n_correct：118"
+   ],
+   "note": "判定：已验证不可用。after 16.8091%/base 16.6667%/Δ=+0.1425 pp。Δ<阈值，未过第 2 条。",
+   "throughput_detail": "★ 生成式 tok/s 不适用（SFT 档不跑 rollout/生成）",
    "elapsed": "—",
    "max_epochs": 2,
    "derived_steps": 100,
    "per_epoch_steps": 50,
    "save_steps_basis": "= 推导步数 100 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
-   "steps_actual": "—",
+   "p5p6": "",
+   "steps_actual": "100",
    "data_scale": "100 条（每卡 50）",
-   "note": "—",
    "tp": "—（框架内部决定）",
    "pp": "—（框架内部决定）",
    "dp": "2（派生）",
    "cards_total": "nproc_per_node×nnodes = 2 卡",
    "dp_derived": true,
-   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）"
+   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）",
+   "verdict": {
+    "state": "已验证不可用",
+    "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
+    "failed_detail": "Δ = +0.1425 pp（低于冻结阈值）",
+    "passed_criteria": [
+     "exit_code=0、100/100、ckpt_retention=ok、五计数全 0"
+    ]
+   },
+   "note_full": "★ 未过第 2 条判据（效果不足）——after acc=16.8091%（118/702）；base acc=16.6667%（117/702）；★ Δ = +0.1425 pp（冻结阈值 +5.0 pp；目标 +10.0 pp 仅展示）。口径：criteria elam-v3-allright-1、温度 0、702/702、0 error；base/after 独立 output_dir + fail-closed + stdout 双份。 ★ 服务档参数：★ 零 merge（form=full）；--gpu-memory-utilization 0.85 ★ 已通过项（事实保留）：exit_code=0、100/100、ckpt_retention=ok、五计数全 0 ★ 判据① 依据：1/1 真效果训练（ms-swift SFT 全参 2 卡，2 epoch / 100 步）：判据① 通过 ★ 步数对账（如实登记）：推导 None vs 实际 None；对账式 100 = 实际 100 ✓ ⇒ 判据①「完整跑完」成立；判据② 未过。 ★ 订正说明（跑次侧）：n_correct：118 ★ 异常登记：评测脚本由本地生成器产出：form 探测 ⇒ decide_eval_mode ⇒ 宿主/容器路径分离（MDHOST 供 §8 与 vLLM 挂载、MD 写 yaml）⇒ §15 产物级断言前置 ★ 异常登记：★ §7/§8/§10/§12 护栏本轮全部生效（评测脚本由 render_eval_script 生成）。 ★ 锚点：树 046f68a6… + image_base_official sha256:e… + image_run_wrapper sha256:6…"
   },
   {
    "tier": "T021",
