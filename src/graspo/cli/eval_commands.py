@@ -107,7 +107,9 @@ def cmd_export(args: argparse.Namespace) -> int:
         #   ★ dp/pp/tp > 1 时 convert 会 fail-closed（分歧的 lora_a 无唯一正解）。
         if config.merged_output_dir is None:
             raise SystemExit("eval.merged_output_dir is required to convert native rank shards")
-        adapter_out = Path(str(config.merged_output_dir)) / "_native_rank_adapter"
+        # ★ 落点必须在**输出目录之外**：写进去会让 prepare_output_directory 判"非空"而拒绝合并
+        #   （2026-10-13 实测缺陷：T022 首跑即因此失败）。
+        adapter_out = Path(str(config.merged_output_dir) + ".adapter")
         info = convert_native_rank_to_peft(
             config.checkpoint_path, adapter_out, base_model_path=config.base_model_path
         )
