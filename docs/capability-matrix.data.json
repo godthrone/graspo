@@ -966,7 +966,7 @@
     "sha256": "c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a",
     "samples": 702
    },
-   "note": "判定：已验证可用。after 24.9288%/base 16.3818%/Δ=+8.5470 pp。P5/P6 待补。",
+   "note": "判定：已验证可用。after 24.9288%/base 16.3818%/Δ=+8.5470 pp。",
    "after_acc": 0.249288,
    "base_acc": 0.163818,
    "delta_pp": 8.547,
@@ -1641,7 +1641,7 @@
    "throughput": "不适用（SFT 无 rollout/生成）",
    "peak_mem": "trainer allocator 自报 `max_allocated=22.99 GB`；GPU 监控峰值 **24.66 GiB（25247 MiB，mean 24717.4 MiB / 442 采样）**。★ 订正说明：原写 `22.4` 与两者都不符、**无实测来源**，已订正（两口径含义不同：trainer 只含本进程张量，监控含该卡全部占用）。",
    "run_path": "RUN-T010",
-   "note": "判定：已验证可用。after 29.9145%/base 16.5242%/Δ=+13.3903 pp。P5/P6 待补。",
+   "note": "判定：已验证可用。after 29.9145%/base 16.5242%/Δ=+13.3903 pp。",
    "measurement_pending": false,
    "tree_fingerprint": "e57a57010dd913c8a638e2e62c88919b8b570df9881860715b1b07ad71cacb1a",
    "tree_fingerprint_role": "起跑断言值",
@@ -1748,7 +1748,7 @@
    "peak_mem": "trainer allocator 自报 `max_allocated=22.99 GB`；GPU 监控峰值 **26.11 GiB（26741 MiB，双卡序号 0/1 同值，mean 25305 MiB / 239 采样）**。★ 订正说明：原写 `26.2` 近似监控值但未标口径，已按实测写明两口径（含义不同：trainer 只含本进程张量，监控含该卡全部占用）。",
    "run_path": "RUN-T011",
    "measurement_pending": false,
-   "note": "判定：已验证可用。after 22.6496%/base 16.6667%/Δ=+5.98 pp。P5/P6 待补。",
+   "note": "判定：已验证可用。after 22.6496%/base 16.6667%/Δ=+5.98 pp。",
    "tree_fingerprint": "db209997d1d0473b7a1e557b3cdedc55f15640990db3f8b93c80ef0cd7fd497c",
    "tree_fingerprint_role": "起跑断言值",
    "eval_dataset": {
@@ -1887,7 +1887,7 @@
     "sha256": "c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a",
     "samples": 702
    },
-   "note": "判定：已验证不可用。after 16.6667%/base 16.3818%/Δ=+0.2849 pp。Δ<阈值，未过第 2 条。P5/P6 待补。",
+   "note": "判定：已验证不可用。after 16.6667%/base 16.3818%/Δ=+0.2849 pp。Δ<阈值，未过第 2 条。",
    "anomalies": [
     "★ **LoRA 目标件数口径订正（重要，影响矩阵对账）**：`lora_target_signature.resolved = 122` 是**签名/模式条目数**，而 checkpoint 内**实际挂 LoRA 的模块实例是 358 个（language 248 + visual 110）**——与 ms-swift 侧 T031 的 358 **数量相同**。两后端仍然**不等价**，但依据是**命中的具体模块名集合不同**（native `token_mixer.*` vs ms-swift `linear_attn.*`/`full_attn.*`）+ 参数量差 196608。⇒ ⛔ 此前 T013.json / T028.json 里「native 122 件 vs ms-swift 358 件」的写法应订正为「实例数同为 358，但模块集合不同 ⇒ 不等价」。证据：evidence/13-lora-target-count.md（torch.load 与 safetensors header 双路实测）。",
     "★ **效率观察（非判据）**：after 为退化策略——702 条全部预测 `lift_arm/抬高手臂`（命中 117/234 lift_arm GT，extend/rotate 均 0），准确率与 base（rotate 主导）同量级 ⇒ 2 epoch / 100 条子集的 native SFT 未学到可泛化策略；Δ=+0.2849 pp 属噪声量级。",
@@ -1991,7 +1991,7 @@
    "peak_mem": "见 runsgpu_memory_summary.json（单卡峰值）＋ trainer 自报 `memory(GiB)`；★ 两类口径分开（trainer allocator vs nvidia-smi 卡上总占用）。",
    "run_path": "RUN-T013",
    "measurement_pending": false,
-   "note": "判定：已验证可用。after 25.0712%/base 16.3818%/Δ=+8.6894 pp。P5/P6 待补。",
+   "note": "判定：已验证可用。after 25.0712%/base 16.3818%/Δ=+8.6894 pp。",
    "tree_fingerprint": "fbd86593babefe0bc766650a52fb6f0af9d97a83049734548ba72975fd41fbef",
    "tree_fingerprint_role": "本档【起跑时 launcher 实测并断言通过】的树指纹（status-T013/launch.log assert 0）",
    "eval_dataset": {
@@ -2143,7 +2143,7 @@
     "sha256": "c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a",
     "samples": 702
    },
-   "note": "判定：已验证不可用。after 19.8006%/base 16.6667%/Δ=+3.1339 pp。Δ<阈值，未过第 2 条。P5/P6 待补。",
+   "note": "判定：已验证不可用。after 19.8006%/base 16.6667%/Δ=+3.1339 pp。Δ<阈值，未过第 2 条。",
    "code_identity": {
     "tree_fingerprint": "212121949f1b5837c28d2e9012dbc57a23eedeafc8639f39cc9a7b6ed766bbcd",
     "tree_fingerprint_role": "本档【起跑时 launcher 实测并断言通过】的树指纹（status-T014/launch.log assert 0，2026-10-12T17:52:13Z）",
@@ -2289,7 +2289,7 @@
     "sha256": "c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a",
     "samples": 702
    },
-   "note": "判定：已验证不可用。after 17.2365%/base 16.5242%/Δ=+0.7123 pp。Δ<阈值，未过第 2 条。P5/P6 待补。",
+   "note": "判定：已验证不可用。after 17.2365%/base 16.5242%/Δ=+0.7123 pp。Δ<阈值，未过第 2 条。",
    "throughput_detail": "★ 生成式 tok/s 不适用（注明原因）：ms-swift **SFT** 档不跑 rollout/生成 ⇒ 不编造。可核数：墙钟见 runs/T015/stdout.log 的 `train_runtime`；50 步。",
    "elapsed": "—",
    "max_epochs": 2,
@@ -3131,28 +3131,57 @@
    "expected_optimizer_steps_per_epoch": "100",
    "expected_optimizer_steps_reachable": "100",
    "applicable": true,
-   "status": "尚未验证",
-   "runs": "—",
-   "effect": "—",
-   "inference": "—",
-   "algo_checks": "—",
-   "throughput": "—",
-   "peak_mem": "—",
-   "run_path": "—",
+   "status": "已验证可用",
+   "runs": "1/1 真效果训练（ms-swift SFT LoRA 单卡，2 epoch / 200 步）：判据① 通过（exit_code=0、200/200、ckpt_retention=ok、torch_probe all_ok、五计数全 0）",
+   "effect": "after acc=27.4929%（193/702）；base acc=19.6581%（138/702）；★ Δ = +7.8348 pp（冻结阈值 +5.0 pp；目标 +10.0 pp 仅展示）。口径：criteria elam-v3-allright-1、温度 0、702/702、0 error；base/after 独立 output_dir + fail-closed + stdout 双份。 ★ 服务档参数：★ §10：--max-num-seqs 192（27B/Mamba；实测 blocks=232）＋ --gpu-memory-utilization 0.85（base/after 同配）",
+   "inference": "ms-swift PEFT adapter ⇒ graspo eval export --eval-config 合并 ⇒ vLLM 挂载 merged（宿主路径字面量）服务（★ §10：--max-num-seqs 192，27B/Mamba）⇒ graspo eval run（after/base）⇒ graspo eval delta",
+   "algo_checks": "exit_code=0、200/200、ckpt_retention=ok、torch_probe all_ok、五计数全 0",
+   "throughput": "不适用（SFT 档不跑 rollout/生成）",
+   "peak_mem": "见 runsgpu_memory_summary.json（单卡峰值）",
+   "run_path": "RUN-T025",
+   "measurement_pending": false,
+   "anomalies": [
+    "评测首次尝试失败：vLLM 报 ValueError: max_num_seqs (1024) exceeds available Mamba cache blocks (232) ⇒ Engine core initialization failed（§10 场景）⇒ 修正后（生成器对 27B 档自动加 --max-num-seqs 192）重跑成功",
+    "空转脚本已按精确 PID 终止（kill 3185660），未用 pkill -f",
+    "★ §7/§8/§10/§12 护栏本轮全部生效（评测脚本由 render_eval_script 生成）。"
+   ],
+   "after_acc": 0.274929,
+   "base_acc": 0.196581,
+   "delta_pp": 7.8348,
+   "n_correct": 193,
+   "n_total": 702,
+   "code_identity": {
+    "tree_fingerprint": "见 status-T025/launch.log 起跑断言值",
+    "generated_yaml": "samplesT025.yaml",
+    "generated_yaml_sha256": "",
+    "image_run_wrapper": {
+     "digest": "sha256:629642a4c4ec28d370debb035417d9ec9586fde07a9339b47c1834b75c31c041"
+    },
+    "image_base_official": {
+     "digest": "sha256:ecaf897a7534ef0901096e48fefbf10a42adf76029920ba8d54e88a738783abe"
+    }
+   },
+   "tree_fingerprint": "见 status-T025/launch.log 起跑断言值",
+   "tree_fingerprint_role": "起跑断言值",
+   "corrections": [
+    "n_correct：193"
+   ],
+   "note": "判定：已验证可用。after 27.4929%/base 19.6581%/Δ=+7.8348 pp。",
+   "throughput_detail": "★ 生成式 tok/s 不适用（SFT 档不跑 rollout/生成）",
    "elapsed": "—",
    "max_epochs": 2,
    "derived_steps": 200,
    "per_epoch_steps": 100,
    "save_steps_basis": "= 推导步数 200 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
-   "steps_actual": "—",
+   "steps_actual": "200",
    "data_scale": "100 条（每卡 100）",
-   "note": "—",
    "tp": "—（框架内部决定）",
    "pp": "—（框架内部决定）",
    "dp": "1（派生）",
    "cards_total": "nproc_per_node×nnodes = 1 卡",
    "dp_derived": true,
-   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）"
+   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）",
+   "note_full": "判据① ∧ 判据② 均达（阈值已冻结）⇒ 已验证可用。 ★ 订正说明（跑次侧）：n_correct：193 ★ 异常登记：评测首次尝试失败：vLLM 报 ValueError: max_num_seqs (1024) exceeds available Mamba cache blocks (232) ⇒ Engine core initialization failed（§10 场景）⇒ 修正后（生成器对 27B 档自动加 --max-num-seqs 192）重跑成功 ★ 异常登记：空转脚本已按精确 PID 终止（kill 3185660），未用 pkill -f ★ 异常登记：★ §7/§8/§10/§12 护栏本轮全部生效（评测脚本由 render_eval_script 生成）。 ★ LoRA 目标按后端：ms-swift 实测 358 实例（language 248 + visual 110）｜native **同为 358 实例**（122 为签名/模式条目数）⇒ ★ 两后端**实例数相同但命中集合不同（不等价）**。 ★ 锚点：树 见 status… + image_base_official sha256:e… + image_run_wrapper sha256:6…"
   },
   {
    "tier": "T026",
@@ -5449,7 +5478,7 @@
    "save_steps_basis": "= 推导步数 40 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "20 条（每卡 20）",
-   "note": "判定：未纳入验收。P5/P6 待补。",
+   "note": "判定：未纳入验收。",
    "excluded_reason": "设计上不成立：师生权重常驻合计约 100 GiB，与「节省显存」的设计意图相悖 ⇒ 不产出可运行配置。适用范围：本档位不纳入验收。",
    "tp": "—（框架内部决定）",
    "pp": "—（框架内部决定）",
@@ -5517,7 +5546,7 @@
    "save_steps_basis": "= 推导步数 20 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "20 条（每卡 10）",
-   "note": "判定：未纳入验收。P5/P6 待补。",
+   "note": "判定：未纳入验收。",
    "excluded_reason": "设计上不成立：师生权重常驻合计约 100 GiB，与「节省显存」的设计意图相悖 ⇒ 不产出可运行配置。适用范围：本档位不纳入验收。",
    "tp": "—（框架内部决定）",
    "pp": "—（框架内部决定）",
@@ -5585,7 +5614,7 @@
    "save_steps_basis": "= 推导步数 10 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "20 条（每卡 5）",
-   "note": "判定：未纳入验收。P5/P6 待补。",
+   "note": "判定：未纳入验收。",
    "excluded_reason": "设计上不成立：师生权重常驻合计约 100 GiB，与「节省显存」的设计意图相悖 ⇒ 不产出可运行配置。适用范围：本档位不纳入验收。",
    "tp": "—（框架内部决定）",
    "pp": "—（框架内部决定）",

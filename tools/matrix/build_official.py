@@ -541,7 +541,9 @@ def short_note(row, full):
         str(k).startswith(tuple("123456")) for k in (_p5 if isinstance(_p5, dict) else {}))
     _p5_done = bool(_p5) and (isinstance(_p5, dict) and _p5.get("applicable") is True
                               or any(str(k).startswith(tuple("123456")) for k in (_p5 or {})))
-    if _p5_na:
+    # ★ P5/P6 是 **GRASPO 专有**指标：非 GRASPO 档（SFT/CPT/OPD）一律"不适用" ⇒ ⛔ 不加任何标记
+    _not_graspo = str(row.get("train_method") or "").lower() != "graspo"
+    if _not_graspo or _p5_na or (isinstance(_p5, dict) and _p5.get("applicable") is False):
         pass                              # ★ 明确"不适用"（如非 GRASPO 档）⇒ 不加任何 P5/P6 标记
     elif not _p5_done:
         parts.append("P5/P6 待补。")
