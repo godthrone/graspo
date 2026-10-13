@@ -21,13 +21,15 @@ def test_t023_artifact_carries_final_formats(tmp_path):
     assert '"merged-hf"' in text
 
 
-def test_other_ready_tiers_stay_without_the_field(tmp_path):
-    """★ 与"生效集合只含 T023"一致：其余 ready 档**产物不得**含该字段。"""
+def test_effective_set_matches_the_approved_list(tmp_path):
+    """★ 生效集合 = 指挥部批准的 5 档（T018/T023/T030/T036/T042）；其余档**产物不得**含该字段。"""
     r = subprocess.run(
         [sys.executable, str(REPO / "tools/matrix/gen_configs.py"),
          "--data", str(DATA), "--out-dir", str(tmp_path)],
         capture_output=True, text=True, cwd=str(REPO), timeout=300,
     )
     assert r.returncode == 0, r.stdout + r.stderr
-    for tier in ("T018", "T022", "T029", "T030", "T034", "T036", "T041", "T042"):
+    for tier in ("T018", "T023", "T030", "T036", "T042"):
+        assert "final_formats" in (tmp_path / f"{tier}.yaml").read_text(encoding="utf-8"), tier
+    for tier in ("T022", "T029", "T034", "T041"):
         assert "final_formats" not in (tmp_path / f"{tier}.yaml").read_text(encoding="utf-8"), tier

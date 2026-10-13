@@ -203,9 +203,13 @@ def running_but_ready(row):
 
 #: ★ 生效集合：**由指挥部给、与铺开进度同步扩大**（⛔ 不得一次要求全部档）。
 #: 2026-10-13 起 = {"T023"}（单档小步验证：该档已知无评测通道）。
-FINAL_FORMATS_REQUIRED: set[str] = {"T023"}
+FINAL_FORMATS_REQUIRED: set[str] = {"T018", "T023", "T030", "T036", "T042"}
 #: ★ 逐档取值（★ 与生效集合同步维护；2026-10-13 起 = T023 单档小步）
-FINAL_FORMATS_BY_TIER: dict[str, list[str]] = {"T023": ["merged-hf"]}
+FINAL_FORMATS_BY_TIER: dict[str, list[str]] = {
+    # ★ 只对"未跑/未判定/非 blocked"的档生效（已判定档保持可比性、⛔ 不动）
+    "T018": ["merged-hf"], "T023": ["merged-hf"], "T030": ["merged-hf"],
+    "T036": ["merged-hf"], "T042": ["merged-hf"],
+}
 #: ★ 取值域（与 `lora_io.export_from_checkpoint` 对齐，⛔ 不得自造）
 FINAL_FORMATS_ALLOWED: set[str] = {"peft-adapter", "merged-hf"}
 

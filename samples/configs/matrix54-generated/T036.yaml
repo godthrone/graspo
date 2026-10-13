@@ -19,6 +19,8 @@ training:
   gradient_accumulation_micro_batches: 1
   save_checkpoint_every_epoch: false
   save_steps: 193
+export:
+  final_formats: ["merged-hf"]
 launch:
   nproc_per_node: 4   # ★ 由 cards=4 推导（§12 同源：卡数与进程数不得各改一半）
 reward:

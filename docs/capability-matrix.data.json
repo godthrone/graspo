@@ -2582,6 +2582,10 @@
    "throughput": "—",
    "peak_mem": "—",
    "run_path": "—",
+   "final_formats": [
+    "merged-hf"
+   ],
+   "final_formats_note": "★ 2026-10-13 指挥部批准：纳入 final_formats 生效集合（★ 只对未跑/未判定/非 blocked 档生效）",
    "elapsed": "—",
    "max_epochs": 2,
    "derived_steps": 50,
@@ -3796,6 +3800,10 @@
    "throughput": "—",
    "peak_mem": "—",
    "run_path": "—",
+   "final_formats": [
+    "merged-hf"
+   ],
+   "final_formats_note": "★ 2026-10-13 指挥部批准：纳入 final_formats 生效集合（★ 只对未跑/未判定/非 blocked 档生效）",
    "elapsed": "—",
    "max_epochs": 8,
    "derived_steps": 48,
@@ -4425,6 +4433,10 @@
    "throughput": "—",
    "peak_mem": "—",
    "run_path": "—",
+   "final_formats": [
+    "merged-hf"
+   ],
+   "final_formats_note": "★ 2026-10-13 指挥部批准：纳入 final_formats 生效集合（★ 只对未跑/未判定/非 blocked 档生效）",
    "elapsed": "—",
    "max_epochs": 8,
    "derived_steps": 192,
@@ -4974,6 +4986,10 @@
    "run_path": "—",
    "family": "graspo_lora_27b",
    "family_scope_note": "★ 族级结论按后端分列（native / ms_swift）⇒ ⛔ 无单一 min_cards；⛔ 不得跨后端外推",
+   "final_formats": [
+    "merged-hf"
+   ],
+   "final_formats_note": "★ 2026-10-13 指挥部批准：纳入 final_formats 生效集合（★ 只对未跑/未判定/非 blocked 档生效）",
    "elapsed": "—",
    "max_epochs": 8,
    "derived_steps": 48,
