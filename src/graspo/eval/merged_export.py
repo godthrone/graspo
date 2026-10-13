@@ -360,8 +360,11 @@ FORM_CHANNELS: dict[str, dict[str, str]] = {
     "base_model": {"channel": "direct-serve", "status": "available"},
     "adapter": {"channel": "merge-adapter", "status": "available"},
     "native_graspo": {"channel": "merge-native-safetensors", "status": "available"},
-    # ★ native `final`（manifest.json + rank_*.pt）：**当前无可用通道**
-    "native_rank": {"channel": "merge-native-rank", "status": "missing"},
+    # ★★ native `final`（manifest.json + rank_*.pt）：★ **有可用通道** —— 经 `graspo export`（merged-hf）
+    #    把 rank 分片合并为可服务目录（★ 2026-10-13 T024 实证：其推理链逐字 = "native LoRA 终态
+    #    （final/rank_*.pt + manifest.json）⇒ graspo export --config 合并为 merged-hf ⇒ vLLM 挂载 merged ⇒ eval"）。
+    #    ★ 更正：先前标 `missing` **有误**（把"训练期 final_formats 未触发"误当成"无通道"）。
+    "native_rank": {"channel": "graspo-export-merged-hf", "status": "available"},
 }
 
 
