@@ -750,6 +750,11 @@ def main():
         shutil.copyfile(tmp_off, Path(a.official_data))
         shutil.copyfile(tmp_html, Path(a.official_html))
         ledger_rows = [r.replace("| 见下 |", "| ✅ PASS |") for r in ledger_rows]
+        # ★ 触发方式显式写进行内标记（审计件：`×N（含 M 次 --force 重跑）` 必须准）
+        _mode = ("--force" if a.force else
+                 ("--unvoid" if a.unvoid else
+                  ("锚点订正" if any((d.get("provenance") or {}).get("eval_dataset_anchor_correction") for d in docs) else "增量")))
+        ledger_rows = [(_r[:-2] + f" [{_mode}] |") if _r.endswith(" |") else _r for _r in ledger_rows]
         append_ledger(ledger_out, ledger_rows)
         print(f"OK: 回填 {len(filled)} 档 ⇒ {data_out}（内部）/ {a.official_data} / {a.official_html}；"
               f"台账 +{len(ledger_rows)} 行 ⇒ {ledger_out}")
@@ -799,6 +804,10 @@ def _self_test():
         ("⑰ ★ 台账去重：**不同 sha ⇒ 必须 2 行**（真增量不得被吞）",
          dedup_ledger("| t1 | `T1` | `a.json` | `aaaa` | 通过 | ✅ | n |\n"
                       "| t2 | `T1` | `a.json` | `bbbb` | 通过 | ✅ | n |").count("`T1`") == 2),
+        ("⑱ ★ 台账：一次 --force 重跑 ⇒ 计数必须为 **1**（⛔ 不是 0）",
+         "含 1 次 --force 重跑" in dedup_ledger(
+             "| t1 | `T1` | `a.json` | `aaaa` | 通过 | ✅ | n [增量] |\n"
+             "| t2 | `T1` | `a.json` | `aaaa` | 通过 | ✅ | n [--force] |")),
         ("⑧ 仅措辞/格式不同、语义相同 ⇒ 放行",
          norm_param("switches", "save_steps=31;loss_scale=all") ==
          norm_param("switches", "loss_scale=all; save_steps=31")),
