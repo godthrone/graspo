@@ -158,8 +158,8 @@
       "min_cards": 4,
       "by_cards": {
         "1": {
-          "verdict": "undetermined",
-          "evidence": "T040 加载中（未定论）"
+          "verdict": "infeasible",
+          "evidence": "T040 实测 OOM：torch.OutOfMemoryError … Tried to allocate 572.00 MiB. GPU 0 … of which 485.88 MiB is free. Process 3247552 has 78.77 GiB memory in use.；exit_code=1 ⇒ 1 卡不足"
         },
         "2": {
           "verdict": "infeasible",
@@ -170,9 +170,15 @@
           "evidence": "T045 实测：训练第 1 步已越过（global_step/max_steps 1/320 ⇒ 5/320）、各卡 memory(GiB) 70.49 ⇒ 74.13、五计数全 0、GRASPO 指标正常（graspo/ratio_mean 0.9909、injection_failures 0、groups_seen 1、reward mean 0.396）"
         }
       },
-      "conclusion": "★ 27B GRASPO LoRA：**1 卡未定论（T040 加载中）、2 卡 OOM（T044 实测）、4 卡可行（T045 实测）⇒ 该族 `min_cards = 4`**；★ **1 卡待 T040 定论**。",
-      "note": "★ 与 OPD 的 `min_cards` 字段同形；★ 本条目只登记**卡数可行性**这一层——★ T045 **尚在跑（未收尾）**，其**效果结论（P5/P6 与 Δ）待评测后另记**。",
-      "measured_note": "★ 均为上机实测，非推算。"
+      "conclusion": "★ 27B GRASPO LoRA（全部实测、单调）：**1 卡 OOM（T040：78.77 GiB in use）、2 卡 OOM（T044：78.01 GiB in use）、4 卡可行（T045：已越过首步并持续，各卡 ~74–81 GiB、五计数全 0）** ⇒ ★ **该族 `min_cards = 4`**；★ **1/2 卡实测不可行，4 卡实测可行** ⇒ ★ **`blocked` 只针对 1/2 卡配置，⛔ 不得读成整族不可行**。",
+      "note": "★ 与 OPD 的 `min_cards` 字段同形；★ 本条目只登记**卡数可行性**这一层——★ T045 **尚在跑**，其**效果结论（P5/P6 与 Δ）待评测后另记**（届时按评测结果进四态）。★★ **与 OPD 族如实并存、⛔ 不得互相套用**：★ **27B GRASPO LoRA** = 1/2 OOM、**4 可行**（单调）；★ **OPD** = 1/2/4 **全 OOM**（全不可行，见 `opd_teacher`）。",
+      "measured_note": "★ 均为上机实测，非推算。",
+      "available_config": {
+        "tier": "T045",
+        "cards": 4,
+        "status": "★ 可行（实测）",
+        "evidence": "训练第 1 步越过并持续（140/320）、各卡 ~74–81 GiB、五计数全 0"
+      }
     }
   },
   "data": {
