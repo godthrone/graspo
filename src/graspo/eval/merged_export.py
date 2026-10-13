@@ -902,7 +902,10 @@ def convert_native_rank_to_peft(checkpoint_dir: str | Path, output_dir: str | Pa
     for key, tensor in converted.items():
         stem = key[len("base_model.model.model."):-len(".lora_A.weight")] \
             if key.endswith(".lora_A.weight") else key[len("base_model.model.model."):-len(".lora_B.weight")]
-        modules.add(stem.split(".")[-1])
+        # ★ 用**完整模块路径**（`model.language_model.layers.<N>.<mod>`）：多模态基座必须带
+        #   `model.language_model.` 命名空间，裸模块名会被 `_resolve_injection_targets` 正确拒绝
+        #   （2026-10-13 实测：T022 第三次重跑即卡在此守卫）。
+        modules.add(stem)
         if key.endswith(".lora_A.weight"):
             ranks.add(int(tensor.shape[0]))
     if len(ranks) != 1:
