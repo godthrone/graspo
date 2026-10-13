@@ -177,6 +177,25 @@ def citation_missing_config(text, cited_tier, cited_row):
     return any(not cited_row.get(k) for k in need)
 
 
+def derive_tier_status(matrix_status, availability=None, running=False):
+    """★★ **`status` 由矩阵推导**（单一真相源，⛔ 不得手工维护）。
+
+    词表：已判定 ⇒ `judged`｜在跑 ⇒ `running`｜blocked ⇒ `blocked`｜未纳入验收 ⇒ `not_applicable`｜其余 ⇒ `ready`
+    """
+    if availability == "blocked":
+        return "blocked"
+    if matrix_status == "未纳入验收":
+        return "not_applicable"
+    if matrix_status in ("已验证可用", "已验证不可用"):
+        return "running" if running else "judged"
+    return "running" if running else "ready"
+
+
+def status_ready_but_judged(matrix_status, status):
+    """★ 一致性断言：四态 ∈ {已验证可用, 已验证不可用} ⇒ ⛔ `status` 不得为 `ready`（否则会被重跑）。"""
+    return matrix_status in ("已验证可用", "已验证不可用") and status == "ready"
+
+
 def blocked_unmarked(row):
     """★ blocked 档必须有 `blocked_reason`（起跑侧据此拒跑）；缺理由 ⇒ fail-closed。"""
     if row.get("availability") != "blocked":
@@ -232,6 +251,14 @@ def _gen_self_test():
          citation_missing_config("★ 与 T044 同族 ⇒ blocked", "T044", None) is True),
         ("⑰k 引用纪律：引用时**同时给出配置字段** ⇒ 放行",
          citation_missing_config("★ 与 T044 同族 ⇒ blocked", "T044", {"backend": "ms-swift", "cards": 2}) is False),
+        ("⑱ ②★ 清单一致性：已判定却标 ready ⇒ **必须判违规**（T028 事故）",
+         status_ready_but_judged("已验证不可用", "ready") is True),
+        ("⑱ ③ 清单一致性：已判定 ⇒ `judged` ⇒ 放行",
+         status_ready_but_judged("已验证不可用", "judged") is False),
+        ("⑱ ④ 清单一致性：未判定 + ready ⇒ 放行",
+         status_ready_but_judged("尚未验证", "ready") is False),
+        ("⑱ ⑤ status 推导：blocked ⇒ `blocked`（优先于四态）",
+         derive_tier_status("尚未验证", "blocked") == "blocked"),
         ("⑩ ★ blocked 档缺 `blocked_reason` ⇒ **必须判缺**（fail-closed）",
          blocked_unmarked({"availability": "blocked"}) is True),
         ("⑪ blocked 档带理由 ⇒ 放行（但仍不得起跑）",

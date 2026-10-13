@@ -206,3 +206,15 @@ python3 -m py_compile tools/matrix/<改动文件>.py     # 或等价的 AST 解�
 ★ **"已判定"的档 ⛔ 不得在待跑清单里标 `ready` 而不加注明**（★ 否则会被**重跑**，浪费算力：2026-10-13 T028 实测发生过）。
 ★ 处置：★ manifest 的逐档条目增 **`matrix_conclusion`**（四态）＋ **`list_stale: true`**（标明"清单滞后"）；★ 若该档是**同档再测** ⇒ 另加 **`retest`**（如 `flush 修正重测`）。
 ★ 断言/作业：★ **每次回填后须扫一遍**"四态 ∈ {已验证可用, 已验证不可用} 而 manifest `status == ready`"的档，逐一列出并标注。
+
+## `status` 单一真相源（强制）
+
+★ **`status` 必须由矩阵推导，⛔ 不得手工维护**：`derive_tier_status(matrix_status, availability, running)`
+| 矩阵状态 | `status` |
+|---|---|
+| 四态 ∈ {已验证可用, 已验证不可用} | **`judged`**（在跑 ⇒ `running`） |
+| `availability == blocked` | **`blocked`**（优先于四态判定） |
+| 四态 = 未纳入验收 | `not_applicable` |
+| 其余 | `ready` |
+★ 事故（2026-10-13）：`status` 手工维护 ⇒ **21 档"已判定却标 `ready`"** ⇒ **T028 被误重跑，白耗一张卡数小时**。
+★ 断言：**四态已判定 ⇒ `status` 不得为 `ready`**（用例 ⑱②–⑱⑤，违规即 fail-closed）。

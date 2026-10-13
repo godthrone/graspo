@@ -434,7 +434,7 @@
       "gpus": [
         0
       ],
-      "status": "ready",
+      "status": "judged",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
@@ -483,7 +483,8 @@
       },
       "matrix_conclusion": "已验证可用",
       "list_stale": true,
-      "conclusion_ref": "docs/capability-matrix.data.json"
+      "conclusion_ref": "docs/capability-matrix.data.json",
+      "status_before_derivation": "ready"
     },
     {
       "tier_id": "T002",
@@ -498,7 +499,7 @@
         0,
         1
       ],
-      "status": "ready",
+      "status": "judged",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
@@ -547,7 +548,8 @@
       },
       "matrix_conclusion": "已验证可用",
       "list_stale": true,
-      "conclusion_ref": "docs/capability-matrix.data.json"
+      "conclusion_ref": "docs/capability-matrix.data.json",
+      "status_before_derivation": "ready"
     },
     {
       "tier_id": "T003",
@@ -564,7 +566,7 @@
         2,
         3
       ],
-      "status": "ready",
+      "status": "judged",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
@@ -613,7 +615,8 @@
       },
       "matrix_conclusion": "已验证不可用",
       "list_stale": true,
-      "conclusion_ref": "docs/capability-matrix.data.json"
+      "conclusion_ref": "docs/capability-matrix.data.json",
+      "status_before_derivation": "ready"
     },
     {
       "tier_id": "T004",
@@ -627,7 +630,7 @@
       "gpus": [
         0
       ],
-      "status": "unverified",
+      "status": "judged",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
@@ -678,7 +681,8 @@
       },
       "matrix_conclusion": "已验证可用",
       "list_stale": true,
-      "conclusion_ref": "docs/capability-matrix.data.json"
+      "conclusion_ref": "docs/capability-matrix.data.json",
+      "status_before_derivation": "unverified"
     },
     {
       "tier_id": "T005",
@@ -693,7 +697,7 @@
         0,
         1
       ],
-      "status": "unverified",
+      "status": "judged",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
@@ -744,7 +748,8 @@
       },
       "matrix_conclusion": "已验证不可用",
       "list_stale": true,
-      "conclusion_ref": "docs/capability-matrix.data.json"
+      "conclusion_ref": "docs/capability-matrix.data.json",
+      "status_before_derivation": "unverified"
     },
     {
       "tier_id": "T006",
@@ -761,7 +766,7 @@
         2,
         3
       ],
-      "status": "unverified",
+      "status": "judged",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
@@ -812,7 +817,8 @@
       },
       "matrix_conclusion": "已验证可用",
       "list_stale": true,
-      "conclusion_ref": "docs/capability-matrix.data.json"
+      "conclusion_ref": "docs/capability-matrix.data.json",
+      "status_before_derivation": "unverified"
     },
     {
       "tier_id": "T007",
@@ -826,7 +832,7 @@
       "gpus": [
         0
       ],
-      "status": "ready",
+      "status": "judged",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
@@ -875,7 +881,8 @@
       },
       "matrix_conclusion": "已验证可用",
       "list_stale": true,
-      "conclusion_ref": "docs/capability-matrix.data.json"
+      "conclusion_ref": "docs/capability-matrix.data.json",
+      "status_before_derivation": "ready"
     },
     {
       "tier_id": "T008",
@@ -890,7 +897,7 @@
         0,
         1
       ],
-      "status": "ready",
+      "status": "judged",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
@@ -939,7 +946,8 @@
       },
       "matrix_conclusion": "已验证不可用",
       "list_stale": true,
-      "conclusion_ref": "docs/capability-matrix.data.json"
+      "conclusion_ref": "docs/capability-matrix.data.json",
+      "status_before_derivation": "ready"
     },
     {
       "tier_id": "T009",
@@ -956,7 +964,7 @@
         2,
         3
       ],
-      "status": "ready",
+      "status": "judged",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
@@ -1005,7 +1013,8 @@
       },
       "matrix_conclusion": "已验证不可用",
       "list_stale": true,
-      "conclusion_ref": "docs/capability-matrix.data.json"
+      "conclusion_ref": "docs/capability-matrix.data.json",
+      "status_before_derivation": "ready"
     },
     {
       "tier_id": "T010",
@@ -1019,7 +1028,7 @@
       "gpus": [
         0
       ],
-      "status": "ready",
+      "status": "judged",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
@@ -1068,7 +1077,8 @@
       },
       "matrix_conclusion": "已验证可用",
       "list_stale": true,
-      "conclusion_ref": "docs/capability-matrix.data.json"
+      "conclusion_ref": "docs/capability-matrix.data.json",
+      "status_before_derivation": "ready"
     },
     {
       "tier_id": "T011",
@@ -1083,7 +1093,7 @@
         0,
         1
       ],
-      "status": "ready",
+      "status": "judged",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
@@ -1132,7 +1142,8 @@
       },
       "matrix_conclusion": "已验证可用",
       "list_stale": true,
-      "conclusion_ref": "docs/capability-matrix.data.json"
+      "conclusion_ref": "docs/capability-matrix.data.json",
+      "status_before_derivation": "ready"
     },
     {
       "tier_id": "T012",
@@ -1149,7 +1160,7 @@
         2,
         3
       ],
-      "status": "ready",
+      "status": "judged",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
@@ -1198,7 +1209,8 @@
       },
       "matrix_conclusion": "已验证不可用",
       "list_stale": true,
-      "conclusion_ref": "docs/capability-matrix.data.json"
+      "conclusion_ref": "docs/capability-matrix.data.json",
+      "status_before_derivation": "ready"
     },
     {
       "tier_id": "T013",
@@ -1212,7 +1224,7 @@
       "gpus": [
         0
       ],
-      "status": "ready",
+      "status": "judged",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
@@ -1261,7 +1273,8 @@
       },
       "matrix_conclusion": "已验证可用",
       "list_stale": true,
-      "conclusion_ref": "docs/capability-matrix.data.json"
+      "conclusion_ref": "docs/capability-matrix.data.json",
+      "status_before_derivation": "ready"
     },
     {
       "tier_id": "T014",
@@ -1276,7 +1289,7 @@
         0,
         1
       ],
-      "status": "ready",
+      "status": "judged",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
@@ -1325,7 +1338,8 @@
       },
       "matrix_conclusion": "已验证不可用",
       "list_stale": true,
-      "conclusion_ref": "docs/capability-matrix.data.json"
+      "conclusion_ref": "docs/capability-matrix.data.json",
+      "status_before_derivation": "ready"
     },
     {
       "tier_id": "T015",
@@ -1342,7 +1356,7 @@
         2,
         3
       ],
-      "status": "ready",
+      "status": "judged",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
@@ -1391,7 +1405,8 @@
       },
       "matrix_conclusion": "已验证不可用",
       "list_stale": true,
-      "conclusion_ref": "docs/capability-matrix.data.json"
+      "conclusion_ref": "docs/capability-matrix.data.json",
+      "status_before_derivation": "ready"
     },
     {
       "tier_id": "T016",
@@ -1405,7 +1420,7 @@
       "gpus": [
         0
       ],
-      "status": "unverified",
+      "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
@@ -1453,7 +1468,8 @@
           "A5",
           "A6"
         ]
-      }
+      },
+      "status_before_derivation": "unverified"
     },
     {
       "tier_id": "T017",
@@ -1468,7 +1484,7 @@
         0,
         1
       ],
-      "status": "unverified",
+      "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
@@ -1515,7 +1531,8 @@
           "A5",
           "A6"
         ]
-      }
+      },
+      "status_before_derivation": "unverified"
     },
     {
       "tier_id": "T018",
@@ -1532,7 +1549,7 @@
         2,
         3
       ],
-      "status": "unverified",
+      "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
@@ -1579,7 +1596,8 @@
           "A5",
           "A6"
         ]
-      }
+      },
+      "status_before_derivation": "unverified"
     },
     {
       "tier_id": "T019",
@@ -1593,7 +1611,7 @@
       "gpus": [
         0
       ],
-      "status": "unverified",
+      "status": "judged",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
@@ -1644,7 +1662,8 @@
       },
       "matrix_conclusion": "已验证不可用",
       "list_stale": true,
-      "conclusion_ref": "docs/capability-matrix.data.json"
+      "conclusion_ref": "docs/capability-matrix.data.json",
+      "status_before_derivation": "unverified"
     },
     {
       "tier_id": "T020",
@@ -1659,7 +1678,7 @@
         0,
         1
       ],
-      "status": "unverified",
+      "status": "judged",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
@@ -1710,7 +1729,8 @@
       },
       "matrix_conclusion": "已验证不可用",
       "list_stale": true,
-      "conclusion_ref": "docs/capability-matrix.data.json"
+      "conclusion_ref": "docs/capability-matrix.data.json",
+      "status_before_derivation": "unverified"
     },
     {
       "tier_id": "T021",
@@ -1727,7 +1747,7 @@
         2,
         3
       ],
-      "status": "unverified",
+      "status": "judged",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
@@ -1778,7 +1798,8 @@
       },
       "matrix_conclusion": "已验证不可用",
       "list_stale": true,
-      "conclusion_ref": "docs/capability-matrix.data.json"
+      "conclusion_ref": "docs/capability-matrix.data.json",
+      "status_before_derivation": "unverified"
     },
     {
       "tier_id": "T022",
@@ -1916,7 +1937,7 @@
         2,
         3
       ],
-      "status": "ready",
+      "status": "judged",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
@@ -1965,7 +1986,8 @@
       },
       "matrix_conclusion": "已验证不可用",
       "list_stale": true,
-      "conclusion_ref": "docs/capability-matrix.data.json"
+      "conclusion_ref": "docs/capability-matrix.data.json",
+      "status_before_derivation": "ready"
     },
     {
       "tier_id": "T025",
@@ -1979,7 +2001,7 @@
       "gpus": [
         0
       ],
-      "status": "ready",
+      "status": "judged",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
@@ -2028,7 +2050,8 @@
       },
       "matrix_conclusion": "已验证可用",
       "list_stale": true,
-      "conclusion_ref": "docs/capability-matrix.data.json"
+      "conclusion_ref": "docs/capability-matrix.data.json",
+      "status_before_derivation": "ready"
     },
     {
       "tier_id": "T026",
@@ -2043,7 +2066,7 @@
         0,
         1
       ],
-      "status": "ready",
+      "status": "judged",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
@@ -2092,7 +2115,8 @@
       },
       "matrix_conclusion": "已验证可用",
       "list_stale": true,
-      "conclusion_ref": "docs/capability-matrix.data.json"
+      "conclusion_ref": "docs/capability-matrix.data.json",
+      "status_before_derivation": "ready"
     },
     {
       "tier_id": "T027",
@@ -2109,7 +2133,7 @@
         2,
         3
       ],
-      "status": "ready",
+      "status": "judged",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
@@ -2158,7 +2182,8 @@
       },
       "matrix_conclusion": "已验证不可用",
       "list_stale": true,
-      "conclusion_ref": "docs/capability-matrix.data.json"
+      "conclusion_ref": "docs/capability-matrix.data.json",
+      "status_before_derivation": "ready"
     },
     {
       "tier_id": "T028",
@@ -2172,7 +2197,7 @@
       "gpus": [
         0
       ],
-      "status": "ready",
+      "status": "judged",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
@@ -2222,7 +2247,8 @@
       "matrix_conclusion": "已验证不可用",
       "list_stale": true,
       "conclusion_ref": "docs/capability-matrix.data.json",
-      "retest": "★ flush 修正重测（同档第二份测量；★ 旧结论 = 8ep 取代 5ep、Δ=−0.1424，且当时注明\"flush 修正实测未做\"）"
+      "retest": "★ flush 修正重测（同档第二份测量；★ 旧结论 = 8ep 取代 5ep、Δ=−0.1424，且当时注明\"flush 修正实测未做\"）",
+      "status_before_derivation": "ready"
     },
     {
       "tier_id": "T029",
@@ -2360,7 +2386,7 @@
       "gpus": [
         0
       ],
-      "status": "ready",
+      "status": "judged",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
@@ -2409,7 +2435,8 @@
       },
       "matrix_conclusion": "已验证不可用",
       "list_stale": true,
-      "conclusion_ref": "docs/capability-matrix.data.json"
+      "conclusion_ref": "docs/capability-matrix.data.json",
+      "status_before_derivation": "ready"
     },
     {
       "tier_id": "T032",
@@ -2424,7 +2451,7 @@
         0,
         1
       ],
-      "status": "ready",
+      "status": "judged",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
@@ -2473,7 +2500,8 @@
       },
       "matrix_conclusion": "已验证不可用",
       "list_stale": true,
-      "conclusion_ref": "docs/capability-matrix.data.json"
+      "conclusion_ref": "docs/capability-matrix.data.json",
+      "status_before_derivation": "ready"
     },
     {
       "tier_id": "T033",
@@ -2490,7 +2518,7 @@
         2,
         3
       ],
-      "status": "ready",
+      "status": "judged",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
@@ -2539,7 +2567,8 @@
       },
       "matrix_conclusion": "已验证不可用",
       "list_stale": true,
-      "conclusion_ref": "docs/capability-matrix.data.json"
+      "conclusion_ref": "docs/capability-matrix.data.json",
+      "status_before_derivation": "ready"
     },
     {
       "tier_id": "T034",
@@ -2553,7 +2582,7 @@
       "gpus": [
         0
       ],
-      "status": "unverified",
+      "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
@@ -2601,7 +2630,8 @@
           "A5",
           "A6"
         ]
-      }
+      },
+      "status_before_derivation": "unverified"
     },
     {
       "tier_id": "T035",
@@ -2616,7 +2646,7 @@
         0,
         1
       ],
-      "status": "unverified",
+      "status": "blocked",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
@@ -2665,7 +2695,8 @@
         ]
       },
       "availability": "blocked",
-      "blocked_reason": "★ **本档自身实测 OOM（native × 2 卡，PP=2）**：`exit_code = 1`、逐字 `OutOfMemory` ⇒ ⛔ 不得以本配置起跑；★ 这不是效果结论，是硬件不可行。★ 四态保持「尚未验证」。★ 本理由**不依赖族/卡数外推**（⛔ 未引用他档实测）；★ 后端归属已由 `T035.yaml`(backend: native) 与 launch.log 钉死。"
+      "blocked_reason": "★ **本档自身实测 OOM（native × 2 卡，PP=2）**：`exit_code = 1`、逐字 `OutOfMemory` ⇒ ⛔ 不得以本配置起跑；★ 这不是效果结论，是硬件不可行。★ 四态保持「尚未验证」。★ 本理由**不依赖族/卡数外推**（⛔ 未引用他档实测）；★ 后端归属已由 `T035.yaml`(backend: native) 与 launch.log 钉死。",
+      "status_before_derivation": "unverified"
     },
     {
       "tier_id": "T036",
@@ -2682,7 +2713,7 @@
         2,
         3
       ],
-      "status": "unverified",
+      "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
@@ -2729,7 +2760,8 @@
           "A5",
           "A6"
         ]
-      }
+      },
+      "status_before_derivation": "unverified"
     },
     {
       "tier_id": "T037",
@@ -2743,7 +2775,7 @@
       "gpus": [
         0
       ],
-      "status": "unverified",
+      "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
@@ -2791,7 +2823,8 @@
           "A5",
           "A6"
         ]
-      }
+      },
+      "status_before_derivation": "unverified"
     },
     {
       "tier_id": "T038",
@@ -2806,7 +2839,7 @@
         0,
         1
       ],
-      "status": "unverified",
+      "status": "judged",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
@@ -2857,7 +2890,8 @@
       },
       "matrix_conclusion": "已验证不可用",
       "list_stale": true,
-      "conclusion_ref": "docs/capability-matrix.data.json"
+      "conclusion_ref": "docs/capability-matrix.data.json",
+      "status_before_derivation": "unverified"
     },
     {
       "tier_id": "T039",
@@ -2874,7 +2908,7 @@
         2,
         3
       ],
-      "status": "unverified",
+      "status": "judged",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
@@ -2925,7 +2959,8 @@
       },
       "matrix_conclusion": "已验证不可用",
       "list_stale": true,
-      "conclusion_ref": "docs/capability-matrix.data.json"
+      "conclusion_ref": "docs/capability-matrix.data.json",
+      "status_before_derivation": "unverified"
     },
     {
       "tier_id": "T040",
@@ -2939,7 +2974,7 @@
       "gpus": [
         0
       ],
-      "status": "ready",
+      "status": "blocked",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
@@ -2987,7 +3022,8 @@
         ]
       },
       "availability": "blocked",
-      "blocked_reason": "★ 1 卡实测 OOM（T040：torch.OutOfMemoryError … Tried to allocate 572.00 MiB … 485.88 MiB is free；Process 3247552 has 78.77 GiB memory in use.；exit_code=1）⇒ 该族 min_cards=4（T045 4 卡实测可行）⇒ ⛔ **不得以 1 卡起跑**；★ **这不是效果结论，是硬件不可行**（与 T044/OPD 同形）。★ 四态保持「尚未验证」。"
+      "blocked_reason": "★ 1 卡实测 OOM（T040：torch.OutOfMemoryError … Tried to allocate 572.00 MiB … 485.88 MiB is free；Process 3247552 has 78.77 GiB memory in use.；exit_code=1）⇒ 该族 min_cards=4（T045 4 卡实测可行）⇒ ⛔ **不得以 1 卡起跑**；★ **这不是效果结论，是硬件不可行**（与 T044/OPD 同形）。★ 四态保持「尚未验证」。",
+      "status_before_derivation": "ready"
     },
     {
       "tier_id": "T041",
@@ -3125,7 +3161,7 @@
       "gpus": [
         0
       ],
-      "status": "ready",
+      "status": "running",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
@@ -3171,7 +3207,8 @@
           "A5",
           "A6"
         ]
-      }
+      },
+      "status_before_derivation": "ready"
     },
     {
       "tier_id": "T044",
@@ -3186,7 +3223,7 @@
         0,
         1
       ],
-      "status": "ready",
+      "status": "blocked",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
@@ -3234,7 +3271,8 @@
         ]
       },
       "availability": "blocked",
-      "blocked_reason": "★ 2 卡实测 OOM（T044：Tried to allocate 1.89 GiB / 1.23 GiB free / 78.01 GiB in use；exitcode=1）⇒ 该族 min_cards=4（T045 4 卡实测可行：训练第 1 步已越过、指标正常）⇒ ⛔ 不得以 2 卡起跑；★ 这不是效果结论，是硬件不可行（与 OPD 的 blocked 同形）。★ 四态保持「尚未验证」（未获得效果读数）。"
+      "blocked_reason": "★ 2 卡实测 OOM（T044：Tried to allocate 1.89 GiB / 1.23 GiB free / 78.01 GiB in use；exitcode=1）⇒ 该族 min_cards=4（T045 4 卡实测可行：训练第 1 步已越过、指标正常）⇒ ⛔ 不得以 2 卡起跑；★ 这不是效果结论，是硬件不可行（与 OPD 的 blocked 同形）。★ 四态保持「尚未验证」（未获得效果读数）。",
+      "status_before_derivation": "ready"
     },
     {
       "tier_id": "T045",
@@ -3251,7 +3289,7 @@
         2,
         3
       ],
-      "status": "ready",
+      "status": "judged",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
@@ -3300,7 +3338,8 @@
       },
       "matrix_conclusion": "已验证不可用",
       "list_stale": true,
-      "conclusion_ref": "docs/capability-matrix.data.json"
+      "conclusion_ref": "docs/capability-matrix.data.json",
+      "status_before_derivation": "ready"
     },
     {
       "tier_id": "T046",
@@ -3314,7 +3353,7 @@
       "gpus": [
         0
       ],
-      "status": "ready",
+      "status": "blocked",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
@@ -3363,7 +3402,8 @@
         ]
       },
       "availability": "blocked",
-      "blocked_reason": "P-25 实测不可行（infeasible_on_hardware）：1/2/4 卡均在训练第 1 步 OOM（teacher 每 rank 一份、非分片 ⇒ 加卡不降单卡占用）原句：1卡 OOM@1/40；2卡 OOM@1/20（79.06/79.08 GiB）；4卡 OOM@1/10（四 rank 各 79.08 GiB）⇒ ⛔ 不得起跑；★ 这不是 skip，是实测不可行"
+      "blocked_reason": "P-25 实测不可行（infeasible_on_hardware）：1/2/4 卡均在训练第 1 步 OOM（teacher 每 rank 一份、非分片 ⇒ 加卡不降单卡占用）原句：1卡 OOM@1/40；2卡 OOM@1/20（79.06/79.08 GiB）；4卡 OOM@1/10（四 rank 各 79.08 GiB）⇒ ⛔ 不得起跑；★ 这不是 skip，是实测不可行",
+      "status_before_derivation": "ready"
     },
     {
       "tier_id": "T047",
@@ -3378,7 +3418,7 @@
         0,
         1
       ],
-      "status": "ready",
+      "status": "blocked",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
@@ -3427,7 +3467,8 @@
         ]
       },
       "availability": "blocked",
-      "blocked_reason": "P-25 实测不可行（infeasible_on_hardware）：1/2/4 卡均在训练第 1 步 OOM（teacher 每 rank 一份、非分片 ⇒ 加卡不降单卡占用）原句：1卡 OOM@1/40；2卡 OOM@1/20（79.06/79.08 GiB）；4卡 OOM@1/10（四 rank 各 79.08 GiB）⇒ ⛔ 不得起跑；★ 这不是 skip，是实测不可行"
+      "blocked_reason": "P-25 实测不可行（infeasible_on_hardware）：1/2/4 卡均在训练第 1 步 OOM（teacher 每 rank 一份、非分片 ⇒ 加卡不降单卡占用）原句：1卡 OOM@1/40；2卡 OOM@1/20（79.06/79.08 GiB）；4卡 OOM@1/10（四 rank 各 79.08 GiB）⇒ ⛔ 不得起跑；★ 这不是 skip，是实测不可行",
+      "status_before_derivation": "ready"
     },
     {
       "tier_id": "T048",
@@ -3444,7 +3485,7 @@
         2,
         3
       ],
-      "status": "ready",
+      "status": "blocked",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
@@ -3493,7 +3534,8 @@
         ]
       },
       "availability": "blocked",
-      "blocked_reason": "P-25 实测不可行（infeasible_on_hardware）：1/2/4 卡均在训练第 1 步 OOM（teacher 每 rank 一份、非分片 ⇒ 加卡不降单卡占用）原句：1卡 OOM@1/40；2卡 OOM@1/20（79.06/79.08 GiB）；4卡 OOM@1/10（四 rank 各 79.08 GiB）⇒ ⛔ 不得起跑；★ 这不是 skip，是实测不可行"
+      "blocked_reason": "P-25 实测不可行（infeasible_on_hardware）：1/2/4 卡均在训练第 1 步 OOM（teacher 每 rank 一份、非分片 ⇒ 加卡不降单卡占用）原句：1卡 OOM@1/40；2卡 OOM@1/20（79.06/79.08 GiB）；4卡 OOM@1/10（四 rank 各 79.08 GiB）⇒ ⛔ 不得起跑；★ 这不是 skip，是实测不可行",
+      "status_before_derivation": "ready"
     },
     {
       "tier_id": "T049",
@@ -3507,7 +3549,7 @@
       "gpus": [
         0
       ],
-      "status": "unverified",
+      "status": "blocked",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
@@ -3558,7 +3600,8 @@
         ]
       },
       "availability": "blocked",
-      "blocked_reason": "P-25 实测不可行（infeasible_on_hardware）：1/2/4 卡均在训练第 1 步 OOM（teacher 每 rank 一份、非分片 ⇒ 加卡不降单卡占用）原句：1卡 OOM@1/40；2卡 OOM@1/20（79.06/79.08 GiB）；4卡 OOM@1/10（四 rank 各 79.08 GiB）⇒ ⛔ 不得起跑；★ 这不是 skip，是实测不可行"
+      "blocked_reason": "P-25 实测不可行（infeasible_on_hardware）：1/2/4 卡均在训练第 1 步 OOM（teacher 每 rank 一份、非分片 ⇒ 加卡不降单卡占用）原句：1卡 OOM@1/40；2卡 OOM@1/20（79.06/79.08 GiB）；4卡 OOM@1/10（四 rank 各 79.08 GiB）⇒ ⛔ 不得起跑；★ 这不是 skip，是实测不可行",
+      "status_before_derivation": "unverified"
     },
     {
       "tier_id": "T050",
@@ -3573,7 +3616,7 @@
         0,
         1
       ],
-      "status": "unverified",
+      "status": "blocked",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
@@ -3624,7 +3667,8 @@
         ]
       },
       "availability": "blocked",
-      "blocked_reason": "P-25 实测不可行（infeasible_on_hardware）：1/2/4 卡均在训练第 1 步 OOM（teacher 每 rank 一份、非分片 ⇒ 加卡不降单卡占用）原句：1卡 OOM@1/40；2卡 OOM@1/20（79.06/79.08 GiB）；4卡 OOM@1/10（四 rank 各 79.08 GiB）⇒ ⛔ 不得起跑；★ 这不是 skip，是实测不可行"
+      "blocked_reason": "P-25 实测不可行（infeasible_on_hardware）：1/2/4 卡均在训练第 1 步 OOM（teacher 每 rank 一份、非分片 ⇒ 加卡不降单卡占用）原句：1卡 OOM@1/40；2卡 OOM@1/20（79.06/79.08 GiB）；4卡 OOM@1/10（四 rank 各 79.08 GiB）⇒ ⛔ 不得起跑；★ 这不是 skip，是实测不可行",
+      "status_before_derivation": "unverified"
     },
     {
       "tier_id": "T051",
@@ -3641,7 +3685,7 @@
         2,
         3
       ],
-      "status": "unverified",
+      "status": "blocked",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
@@ -3692,7 +3736,8 @@
         ]
       },
       "availability": "blocked",
-      "blocked_reason": "P-25 实测不可行（infeasible_on_hardware）：1/2/4 卡均在训练第 1 步 OOM（teacher 每 rank 一份、非分片 ⇒ 加卡不降单卡占用）原句：1卡 OOM@1/40；2卡 OOM@1/20（79.06/79.08 GiB）；4卡 OOM@1/10（四 rank 各 79.08 GiB）⇒ ⛔ 不得起跑；★ 这不是 skip，是实测不可行"
+      "blocked_reason": "P-25 实测不可行（infeasible_on_hardware）：1/2/4 卡均在训练第 1 步 OOM（teacher 每 rank 一份、非分片 ⇒ 加卡不降单卡占用）原句：1卡 OOM@1/40；2卡 OOM@1/20（79.06/79.08 GiB）；4卡 OOM@1/10（四 rank 各 79.08 GiB）⇒ ⛔ 不得起跑；★ 这不是 skip，是实测不可行",
+      "status_before_derivation": "unverified"
     },
     {
       "tier_id": "T052",
