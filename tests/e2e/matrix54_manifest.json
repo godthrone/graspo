@@ -151,7 +151,29 @@
       "measurement_note": "★ P-25 定案（2026-10-13，**1/2/4 卡全部实测**）：**1 卡** OOM@训练 1/40 步（峰值 78.06 GiB）；**2 卡** 生成可过（1184/1184）、OOM@训练 1/20 步（79.06 / 79.08 GiB）；**4 卡** 生成可过、**OOM@训练 1/10 步**、**四 rank 各 79.08 GiB**（余 15.88 MiB）⇒ ★★ 机理：**teacher 每 rank 各持一份（非分片）⇒ 加卡只增总显存、不降单卡占用** ⇒ **本硬件不可行（infeasible_on_hardware）**。★ ⛔ 这不是 skip，是**实测不可行**。",
       "pending_measurement": "★ 需换方案：① 外置 teacher（teacher_model_server，⚠ 尚无 token-level logits 契约）② teacher 分片（⚠ 现无开关）③ 换更小 teacher"
     },
-    "generation_gate": "assert_memory_feasible：确定性算式超预算（infeasible）即拒绝生成（不允许安静产出不可靠配置）；unmeasured 档**允许生成但不声称可行**（未测算的量只能靠上机量出来），并在 stdout 打出待测清单；`not_applicable` 档**不产出可跑配置**（确实不适用、无待测量）"
+    "generation_gate": "assert_memory_feasible：确定性算式超预算（infeasible）即拒绝生成（不允许安静产出不可靠配置）；unmeasured 档**允许生成但不声称可行**（未测算的量只能靠上机量出来），并在 stdout 打出待测清单；`not_applicable` 档**不产出可跑配置**（确实不适用、无待测量）",
+    "graspo_lora_27b_cards": {
+      "family": "27B GRASPO LoRA（SFT 之外的主线族）",
+      "measured": true,
+      "min_cards": 4,
+      "by_cards": {
+        "1": {
+          "verdict": "undetermined",
+          "evidence": "T040 加载中（未定论）"
+        },
+        "2": {
+          "verdict": "infeasible",
+          "evidence": "T044 实测 OOM：torch.OutOfMemoryError … Tried to allocate 1.89 GiB … 1.23 GiB free … 78.01 GiB in use；exitcode=1（死在 GRASPO rollout ＋ 27B 权重联合显存）"
+        },
+        "4": {
+          "verdict": "feasible",
+          "evidence": "T045 实测：训练第 1 步已越过（global_step/max_steps 1/320 ⇒ 5/320）、各卡 memory(GiB) 70.49 ⇒ 74.13、五计数全 0、GRASPO 指标正常（graspo/ratio_mean 0.9909、injection_failures 0、groups_seen 1、reward mean 0.396）"
+        }
+      },
+      "conclusion": "★ 27B GRASPO LoRA：**1 卡未定论（T040 加载中）、2 卡 OOM（T044 实测）、4 卡可行（T045 实测）⇒ 该族 `min_cards = 4`**；★ **1 卡待 T040 定论**。",
+      "note": "★ 与 OPD 的 `min_cards` 字段同形；★ 本条目只登记**卡数可行性**这一层——★ T045 **尚在跑（未收尾）**，其**效果结论（P5/P6 与 Δ）待评测后另记**。",
+      "measured_note": "★ 均为上机实测，非推算。"
+    }
   },
   "data": {
     "source": "ELAM V5 balanced（与开发机副本 md5 一致）",
