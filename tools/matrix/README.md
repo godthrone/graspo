@@ -167,3 +167,15 @@ python3 -m py_compile tools/matrix/<改动文件>.py     # 或等价的 AST 解�
 ★ **⛔ 不得写成四态里的「已验证不可用」** —— 那是**效果层否定**（方法/输出退化）。★ 混用会**污染结论语义**（后人会把"硬件跑不动"读成"该方法失败"）。
 ★ 真实裁定（2026-10-13，T044）：该档 canonical `cards=2` **实测 OOM**（`Tried to allocate 1.89 GiB / 1.23 GiB free / 78.01 GiB in use`、`exitcode=1`），该族 `min_cards=4`（T045 4 卡实测可行）⇒ ★ **保持四态「尚未验证」**（未获得效果读数）＋ `availability: blocked` ＋ 理由"**这不是效果结论，是硬件不可行**"。
 ★ 断言：**同一档不得同时标 `blocked` 与「已验证不可用」**（用例 ⑯b/⑯c，冲突即 fail-closed）。
+
+## 对账式纪律（强制 · 按档型选公式，⛔ 不得跨档套用）
+
+★ **对账式必须按"该档自身的训练口径"选公式**：
+| 档型 | 公式 |
+|---|---|
+| **GRASPO**（含 27B GRASPO LoRA 族） | `8×20×8 / cards`（★ T038 2 卡 = **640**；T045 4 卡 = **320**） |
+| **ms-swift SFT/CPT** | `epochs×subset / nproc`（★ 如 `2×100 / nproc`） |
+| **native** | ★ **按实测**（`measured_authority`） |
+| **OPD** | ★ `epochs×(subset×G)/(micro×grad_accum×nproc)`（含 `nproc`） |
+★ **⛔ 不得跨档套用公式**（与"没按本档自身实体取值""实测权威"同族）。
+★ 真实事故（2026-10-13）：对 **GRASPO 档 T045** 误用 ms-swift SFT 口径 `2×100/4 = 50` ⇒ ★ 正确为 `8×20×8/4 = **320**`；★ 该档 `steps_actual` 按实测取 **320**（与 T038 的 640 同族）✓。

@@ -71,6 +71,17 @@ def _sanitizer_self_test():
         ok = ok and good
     finally:
         PATH_MAP = orig
+    extra = [
+        ("★ 按档型：GRASPO 档套用 `2×100/4=50` ⇒ **必须判外来**",
+         recon_formula_foreign({"train_method": "graspo"}, "对账式 2×100/4 = 50 ✓") is True),
+        ("★ 按档型：GRASPO 档用 `8×20×8/4=320` ⇒ 放行",
+         recon_formula_foreign({"train_method": "graspo"}, "对账式 8×20×8/4 = 320 ✓") is False),
+        ("★ 按档型：ms-swift SFT 档套用 `8×20×8` ⇒ **必须判外来**",
+         recon_formula_foreign({"train_method": "sft"}, "对账式 8×20×8/2 = 640") is True),
+    ]
+    for name, good in extra:
+        print(f"  [{'PASS' if good else 'FAIL'}] {name}")
+        ok = ok and good
     print(f"SANITIZER-SELF-TEST {'PASS' if ok else 'FAIL'}")
     return 0 if ok else 1
 
@@ -394,6 +405,23 @@ def distill_teacher():
     # 兜底 = 已 pin 的常量（与 manifest 同值；manifest 缺失时不至于产出空 teacher）
     return {"model": "Qwen3.8-27B", "path_parts": ["models", "Qwen3.8-27B"], "offload": True,
             "source": "内置常量（manifest 不可读时的兜底）"}
+
+
+def recon_formula_foreign(row, text):
+    """★ 对账式"按档型选公式"断言：该档文本是否**套用了别族的公式**。
+
+    · GRASPO 档 ⇒ 正确为 `8×20×8/cards`；若文本出现 ms-swift SFT 口径（如 `2×100/`）⇒ 外来公式
+    · ms-swift SFT/CPT 档 ⇒ 正确为 `epochs×subset/nproc`；若文本出现 `8×20×8` ⇒ 外来公式
+    返回 True = **外来公式**（应 fail-closed）。
+    """
+    import re as _re
+    t = str(text or "")
+    tm = str(row.get("train_method") or "").lower()
+    if tm == "graspo":
+        return bool(_re.search(r"2\s*[×x]\s*100\s*/", t))
+    if tm in ("sft", "cpt"):
+        return bool(_re.search(r"8\s*[×x]\s*20\s*[×x]\s*8", t))
+    return False
 
 
 def criteria_caliber():
