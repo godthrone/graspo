@@ -362,3 +362,35 @@ def test_usable_gate_accepts_ok_and_plain_refusal():
     assert lp.require_usable_gate(0, "[gpu-idle] OK") == []
     # 普通拒绝（卡确实忙）不算工具故障
     assert lp.require_usable_gate(1, "目标卡 GPU0 起跑前不可用：利用率 71.0% != 0") == []
+
+
+# ---------- 训练档取卡：只接受整卡空闲（T009 GPU2 混入 ⇒ OOM） ----------
+def _cards(*specs):
+    return [{"index": i, "used_mib": u, "free_mib": f, "need_mib": n} for (i, u, f, n) in specs]
+
+
+def test_plan_full_cards_rejects_card_with_third_party_resident():
+    """★ 回归：GPU2 有 13.01 GiB 常驻（free 67.8 GB ≥ 旧头寸 48 GiB）⇒ 必须拒。"""
+    cards = _cards(("0", 0, 81153, 70000), ("2", 13335, 67818, 70000), ("5", 0, 81153, 70000))
+    picked, why = lp.plan_full_cards(cards, 3)
+    assert picked is None and "整卡空闲" in why and "2(" in why, (picked, why)
+
+
+def test_plan_full_cards_accepts_clean_cards():
+    cards = _cards(("0", 0, 81153, 70000), ("5", 0, 81153, 70000), ("6", 0, 81153, 70000))
+    picked, why = lp.plan_full_cards(cards, 3)
+    assert picked == ["0", "5", "6"], (picked, why)
+
+
+def test_plan_full_cards_defers_when_not_enough_clean():
+    cards = _cards(("0", 0, 81153, 70000), ("2", 13335, 67818, 70000))
+    picked, why = lp.plan_full_cards(cards, 4)
+    assert picked is None and "顺延" in why and "不硬上" in why, (picked, why)
+
+
+def test_plan_full_cards_respects_need_mib():
+    """余量不足（need 给足）⇒ 拒；同卡 need 放宽 ⇒ 过。"""
+    tight = _cards(("0", 0, 60000, 70000))
+    assert lp.plan_full_cards(tight, 1)[0] is None
+    loose = _cards(("0", 0, 60000, 50000))
+    assert lp.plan_full_cards(loose, 1)[0] == ["0"]

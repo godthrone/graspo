@@ -387,6 +387,41 @@ def require_usable_gate(gate_rc: int, gate_stdout: str) -> list[str]:
     return []
 
 
+def plan_full_cards(cards: list[dict], required: int, allow_used_mib: int = 0) -> tuple[list[str] | None, str]:
+    """★ 为**大模型训练档**取卡：只接受"整卡基本空闲"的卡（第 11 个坑的收口）。
+
+    228 实测（2026-10-13 T009，27B 全参 4 卡）：卡集里混进了 **宿主 GPU2**（上面有第三方
+    **13.01 GiB** 常驻）—— 旧判据"free ≥ 头寸(48 GiB) ∧ util == 0"**放行了它**，而该档实际要**接近整卡**
+    ⇒ `torch.OutOfMemoryError: Tried to allocate 1.81 GiB. GPU 1 … of which 154.25 MiB is free`。
+
+    规则（对训练档）：**该卡 `used_mib <= allow_used_mib`（默认 0 ⇒ 有第三方常驻就不选）**，
+    且 `free_mib` 足够（由调用方按该档真实头寸传入 `cards[*]["need_mib"]`，缺省按整卡 95%）。
+    与 §6.2（服务档 = `util × 总显存`）同族：**不同 workload 的每卡余量要求不同，⛔ 不用一把尺子量所有档**。
+    """
+    if required <= 0:
+        return (None, f"required={required} 非法 ⇒ fail-closed")
+    picked: list[str] = []
+    rejected: list[str] = []
+    for c in cards:
+        idx = str(c.get("index"))
+        used = int(c.get("used_mib", 0))
+        free = int(c.get("free_mib", 0))
+        need = int(c.get("need_mib", 0)) or 0
+        if used > allow_used_mib:
+            rejected.append(f"{idx}(常驻 {used} MiB > 允许 {allow_used_mib})")
+            continue
+        if need and free < need:
+            rejected.append(f"{idx}(余量 {free} < 需 {need})")
+            continue
+        picked.append(idx)
+        if len(picked) == required:
+            break
+    if len(picked) < required:
+        return (None, f"需 {required} 张『整卡空闲』卡，实测仅 {len(picked)} 张 ({picked})；"
+                      f"被排除：{rejected or '无'} ⇒ 顺延，⛔ 不硬上")
+    return (picked, f"取自整卡空闲：{picked}（已排除：{rejected or '无'}）")
+
+
 def build_json_reason(after_correct: int, n_total: int, base_correct: int, status: str) -> str:
     """落 json 的备注（≤100 字）：判定 + 读数，与结构化字段同源。"""
     after = after_correct / n_total * 100 if n_total else 0.0
