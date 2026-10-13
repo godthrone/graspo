@@ -203,3 +203,17 @@
   **任一失败即非零退出**（fail-closed）。
 - 为什么需要它：228 上**两次**都是"起跑时才发现护栏不在部署树"（`ModuleNotFoundError`）——
   第一次是 `run_guards.py`，第二次是 `launch_pipeline.py` / `gen_tier_json.py`。
+
+## 13. 每卡余量按 workload 定，⛔ 不用单一"头寸"量所有档
+
+- 规则：择卡时**按该档 workload 定每卡余量**，并**默认拒绝"卡上有第三方常驻"**的卡
+  （`memory.used > 0` ⇒ 不选，除非显式放行）；大模型**训练档**要"**整卡基本空闲**"。
+  落地件：`launch_pipeline.plan_full_cards()`（`used_mib <= allow_used_mib` 且 `free_mib >= need_mib`）。
+- 为什么：228 实测（2026-10-13 T009，27B 全参 4 卡）—— 旧判据"`free ≥ 头寸 48 GiB` ∧ `util == 0`"
+  **放行了带第三方 13.01 GiB 常驻的 GPU2**（它当时 67.8 GB free ∧ util 0），而该档实际需要接近整卡 ⇒
+  rank1（容器内 "GPU 1" = 宿主 GPU2）直接
+  `torch.OutOfMemoryError: Tried to allocate 1.81 GiB. GPU 1 … of which 154.25 MiB is free.
+   Process 3912182 has 13.01 GiB memory in use …`。
+- 与 §6.2 同族：**服务档**要 `util × 总显存`，**训练档**要整卡 —— ⛔ 一把尺子量不了所有档。
+- 判读提示：**"起跑成功但 rank N 秒退 + OOM"** ⇒ 先查 **卡集里是否混进了带常驻的卡**
+  （容器内 GPU 序号 ≠ 宿主 GPU 序号，务必按 `CUDA_VISIBLE_DEVICES` 映射回宿主核对）。
