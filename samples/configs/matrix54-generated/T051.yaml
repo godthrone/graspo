@@ -19,6 +19,9 @@ training:
   gradient_accumulation_micro_batches: 1
   save_checkpoint_every_epoch: false
   save_steps: 11
+distill:
+  teacher_model_path: /models/Qwen3.8-27B
+  offload_teacher_model: true
 msswift:
   nproc_per_node: 4
   nnodes: 1

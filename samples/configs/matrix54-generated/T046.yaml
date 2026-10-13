@@ -19,6 +19,9 @@ training:
   gradient_accumulation_micro_batches: 1
   save_checkpoint_every_epoch: false
   save_steps: 41
+distill:
+  teacher_model_path: /models/Qwen3.8-27B
+  offload_teacher_model: true
 lora:
   r: 128
   alpha: 256

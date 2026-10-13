@@ -24,6 +24,36 @@ HEADER = ("# 本文件由 tools/matrix/gen_configs.py 从 docs/capability-matrix
           "⛔ 禁止手工编辑；请改数据后重新生成。\n")
 
 
+def opd_teacher_missing(text):
+    """★ 断言辅助（可单测）：OPD 档是否缺教师（`teacher_model_path` 非空 或 显式 `teacher_model_server`）。
+
+    返回 True = **缺**（应 fail-closed）。
+    """
+    if "train_method: opd" not in text:
+        return False
+    import re as _re
+    m = _re.search(r"^\s+teacher_model_path:\s*(\S+)\s*$", text, _re.M)
+    srv = _re.search(r"^\s+teacher_model_server:\s*(\S+)\s*$", text, _re.M)
+    ok_path = bool(m) and m.group(1) not in ('""', "''", "~", "null")
+    ok_srv = bool(srv) and srv.group(1) not in ('""', "''", "~", "null")
+    return not (ok_path or ok_srv)
+
+
+def _gen_self_test():
+    cases = [
+        ("① OPD 有 teacher_model_path ⇒ 放行", not opd_teacher_missing("train_method: opd\n  teacher_model_path: /models/Qwen3.8-27B\n")),
+        ("② ★ 负例：OPD 缺 teacher ⇒ **必须判缺**（fail-closed）", opd_teacher_missing("train_method: opd\nlora:\n  r: 8\n")),
+        ("③ ★ 负例：OPD 空值 teacher ⇒ **必须判缺**", opd_teacher_missing("train_method: opd\n  teacher_model_path:\n")),
+        ("④ 非 OPD 档 ⇒ 不判缺", not opd_teacher_missing("train_method: sft\n")),
+    ]
+    ok = True
+    for name, good in cases:
+        print(f"  [{'PASS' if good else 'FAIL'}] {name}")
+        ok = ok and good
+    print(f"GEN-SELF-TEST {'PASS' if ok else 'FAIL'}")
+    return 0 if ok else 1
+
+
 def _load_scalars(path):
     """极简 YAML 标量加载（覆盖本生成器输出的形态）：单引号=字面量（'' -> '），双引号=转义，plain=字面量。
 
@@ -48,7 +78,7 @@ def uniform_map(data):
     return {it["key"]: it["value"] for it in (data.get("uniform") or {}).get("items", [])}
 
 
-def yaml_of(row, uni, model_root, data_root, lora_backends=None):
+def yaml_of(row, uni, model_root, data_root, lora_backends=None, teacher=None):
     """渲染一个档位的 yaml 文本（确定性：固定键序、无时钟/环境）。"""
     tier = row["tier"]
     tuner = row.get("tuner_type")
@@ -78,6 +108,15 @@ def yaml_of(row, uni, model_root, data_root, lora_backends=None):
     L.append(f"  save_checkpoint_every_epoch: {uni.get('save_checkpoint_every_epoch')}\n")
     L.append(f"  save_steps: {row.get('save_steps')}\n")
 
+    # ★ OPD：教师身份是**已 pin 的事实**（manifest `feasibility_model.opd_teacher`）⇒ 必须落进 yaml。
+    #   ★ 配置值 = **容器内路径**（`/models/Qwen3.8-27B`）；**挂载源用宿主路径**（起跑侧决定）——两者别混。
+    if str(row.get("train_method") or "").lower() == "opd" and teacher:
+        L.append("distill:\n")
+        _parts = teacher.get("path_parts") or []
+        _cp = "/" + "/".join(str(x) for x in _parts if x) if _parts else ""
+        L.append(f"  teacher_model_path: {_cp}\n")
+        if teacher.get("offload"):
+            L.append("  offload_teacher_model: true\n")
     if row.get("train_method") == "graspo" and uni.get("reward.kind"):
         L.append("reward:\n")
         L.append(f"  kind: {uni.get('reward.kind')}\n")
@@ -138,12 +177,17 @@ def main():
     ap.add_argument("--only", default=None, help="逗号分隔档号；缺省=全部 applicable 档")
     ap.add_argument("--check-determinism", action="store_true", help="生成两次并逐字节比对（幂等自证）")
     ap.add_argument("--check-dir", default=None, help="与既有冻结 yaml 目录做差异归因")
+    ap.add_argument("--self-test", action="store_true", help="OPD 教师断言自检（含缺值/空值负例）")
     ap.add_argument("--verify-loadable", action="store_true",
                     help="按【加载值】验收：正则项加载后须为单反斜杠、可编译、结构符合收紧版")
     a = ap.parse_args()
 
+    if getattr(a, "self_test", False):
+        return _gen_self_test()
+
     data = json.loads(Path(a.data).read_text(encoding="utf-8"))
     uni = uniform_map(data)
+    teacher = (data.get("meta") or {}).get("distill_teacher")
     lora_backends = (data.get("meta") or {}).get("lora_target_backends") or {}
     only = set(x.strip() for x in a.only.split(",")) if a.only else None
     rows = [r for r in data["rows"] if r.get("applicable") and (only is None or r["tier"] in only)]
@@ -152,7 +196,7 @@ def main():
 
     written = {}
     for r in rows:
-        text = yaml_of(r, uni, a.model_root, a.data_root, lora_backends)
+        text = yaml_of(r, uni, a.model_root, a.data_root, lora_backends, teacher)
         p = out / f"{r['tier']}.yaml"
         p.write_text(text, encoding="utf-8")
         written[r["tier"]] = p
@@ -176,10 +220,15 @@ def main():
         if bad:
             return 1
 
+    _no_teacher = [t for t, pth in sorted(written.items()) if opd_teacher_missing(Path(pth).read_text(encoding="utf-8"))]
+    if _no_teacher:
+        print(f"FAIL-CLOSED：以下 OPD 档缺教师（teacher_model_path 空 且无 teacher_model_server）⇒ 拒绝产出：{_no_teacher}")
+        return 1
+
     if a.check_determinism:
         bad = []
         for r in rows:
-            again = yaml_of(r, uni, a.model_root, a.data_root, lora_backends)
+            again = yaml_of(r, uni, a.model_root, a.data_root, lora_backends, teacher)
             if again != written[r["tier"]].read_text(encoding="utf-8"):
                 bad.append(r["tier"])
         print(f"DETERMINISM {'PASS' if not bad else 'FAIL'}（{len(rows)} 档；不一致 {bad}）")

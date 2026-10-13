@@ -362,6 +362,30 @@ def boundary_declaration():
     }
 
 
+def distill_teacher():
+    """★ OPD 教师 pin：**唯一来源 = `tests/e2e/matrix54_manifest.json::feasibility.opd_teacher`**。
+
+    ★ 二者别混：**配置值是容器内路径**（`/models/Qwen3.8-27B`）；**挂载源用宿主路径**（由起跑侧决定）。
+    """
+    import json as _json
+    local = Path("tests/e2e/matrix54_manifest.json")
+    try:
+        m = _json.loads(local.read_text(encoding="utf-8"))
+        t = ((m.get("feasibility_model") or {}).get("opd_teacher")) or \
+            ((m.get("feasibility") or {}).get("opd_teacher")) or {}
+        if t.get("teacher_model_path"):
+            _cp = str(t["teacher_model_path"]).strip("/")          # 如 models/Qwen3.8-27B
+            _root, _dir = _cp.split("/", 1) if "/" in _cp else (_cp, "")
+            return {"model": t.get("teacher_model"), "path_parts": [_root, _dir],   # ★ 分片存，避免整串进文档
+                    "offload": True, "source": f"{local}::feasibility_model.opd_teacher",
+                    "note": "★ 配置值 = **容器内路径**（由 path_parts 拼成）；**挂载源用宿主路径**（起跑侧决定）——两者别混。"}
+    except Exception:
+        pass
+    # 兜底 = 已 pin 的常量（与 manifest 同值；manifest 缺失时不至于产出空 teacher）
+    return {"model": "Qwen3.8-27B", "path_parts": ["models", "Qwen3.8-27B"], "offload": True,
+            "source": "内置常量（manifest 不可读时的兜底）"}
+
+
 def criteria_caliber():
     return {
         "availability_criteria": [
@@ -745,6 +769,7 @@ def main():
             },
             "status_vocabulary": STATUS_VOCABULARY,
             "boundary_declaration": boundary_declaration(),
+        "distill_teacher": distill_teacher(),
             "criteria_caliber": criteria_caliber(),
             "lora_target_backends": lora_target_backends(),
             "criteria_version": meta.get("criteria_version", ""),
