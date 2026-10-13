@@ -196,6 +196,11 @@ def status_ready_but_judged(matrix_status, status):
     return matrix_status in ("已验证可用", "已验证不可用") and status == "ready"
 
 
+def running_but_ready(row):
+    """★ 有活证据（在跑）却标 `ready` ⇒ 违规（与"已判定却 ready"同族、方向相反）。"""
+    return bool(str(row.get("live_evidence") or "").strip()) and row.get("_status") == "ready"
+
+
 def blocked_unmarked(row):
     """★ blocked 档必须有 `blocked_reason`（起跑侧据此拒跑）；缺理由 ⇒ fail-closed。"""
     if row.get("availability") != "blocked":
@@ -257,6 +262,12 @@ def _gen_self_test():
          status_ready_but_judged("已验证不可用", "judged") is False),
         ("⑱ ④ 清单一致性：未判定 + ready ⇒ 放行",
          status_ready_but_judged("尚未验证", "ready") is False),
+        ("⑱ ⑥ ★ 在跑却标 ready ⇒ **必须判违规**（T017/T037 事故族）",
+         running_but_ready({"live_evidence": "★ 在跑 504/1280", "_status": "ready"}) is True),
+        ("⑱ ⑦ 在跑 ⇒ `running` ⇒ 放行",
+         running_but_ready({"live_evidence": "★ 在跑", "_status": "running"}) is False),
+        ("⑱ ⑧ ★ 有活证据 ⇒ 推导必得 `running`（不得 ready）",
+         derive_tier_status("尚未验证", None, running=bool("x")) == "running"),
         ("⑱ ⑤ status 推导：blocked ⇒ `blocked`（优先于四态）",
          derive_tier_status("尚未验证", "blocked") == "blocked"),
         ("⑩ ★ blocked 档缺 `blocked_reason` ⇒ **必须判缺**（fail-closed）",
