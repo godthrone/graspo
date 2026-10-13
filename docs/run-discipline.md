@@ -158,3 +158,13 @@
   `exit=1`、**非 OOM**），评测容器空转 16 分钟无日志推进。
 - 判读提示：**"vLLM 起不来 + 日志无 OOM + GPU 显存已释放"** ⇒ 先怀疑**引擎初始化参数**类
   （`max_num_seqs` / cache blocks / `max-model-len`），而不是显存不够。
+
+### 7.1 §7 的谓词**必须按形态分支**（2026-10-13 补）
+
+- 谓词不能只写 `config.json`：
+  · **全参/HF** ⇒ `config.json` ∨ `model-*.safetensors`；
+  · **PEFT adapter** ⇒ `adapter_config.json` ∨ `adapter_model.safetensors`（★ adapter 目录里
+    **通常没有** `config.json` —— 只认 `config.json` 会把 adapter 档**误拒**，T008 实测）；
+  · **native rank 分片** ⇒ `rank_*.pt` ∨ `manifest.json`。
+- 落地件：`scripts/run_guards.py`（`form` / `fresh` / `mamba` 三条子命令）＋
+  `tests/scripts/test_run_guards.py`（每族正例 + 负例，共 13 例）。
