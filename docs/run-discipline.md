@@ -255,3 +255,15 @@
   而该档实际是**全参/HF**（`form` 已打印 `[full]`）⇒ export 回执
   **`checkpoint is already a servable base model — nothing to merge`** ⇒ **合并目录根本不会生成**
   ⇒ `§8(post)` **正确 fail-closed**（拦下"没有产物的成功"）。护栏救了场，但**惯性本身该改**。
+
+## 17. 评测预约卡与训练择卡互斥
+
+- 规则：**择卡不得仅凭 `nvidia-smi` 快照判空闲** —— 必须**同时看 `docker ps` 里"我方容器占用的卡"**
+  （`--gpus '"device=N"'` 的参数），把已预约的卡排除。★ **评测 vLLM 的加载期（约 4 min）里卡看起来是空的**
+  ⇒ 必须视为**"已预约"**。★ 更稳的做法 = **评测与训练分卡池**。
+- 为什么：228 实测（2026-10-13 T038 评测 / T022 训练）—— 08:11:48 起 T022 训练到 **GPU3**（当时
+  T038 的 vLLM 尚未加载、显存 0 MiB ⇒ §13 整卡判据放行），08:12:30 起 T038 评测到**同一张 GPU3**；
+  4 分钟后 vLLM 要显存却只剩 14.48 GiB ⇒
+  `ValueError: Free memory on device cuda:0 (14.48/79.25 GiB) on startup is less than desired GPU
+   memory utilization (0.85, 67.36 GiB)` ⇒ `RuntimeError: Engine core initialization failed`。
+- 判读提示：**"卡上没显存"≠"卡没人用"** —— 容器刚起、模型还在加载时就是这个形态。
