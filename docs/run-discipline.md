@@ -102,3 +102,19 @@
   而 `util=0.85` 需要 ≈68 GB ⇒ vLLM **`RuntimeError: Engine core initialization failed`**，
   起不来。旧判据（剩余 ≥ 48 GiB ∧ util 0）**会放行**这种卡。
 - 同一口径也适用于"卡上有邻居常驻"的一切服务类作业（评测 vLLM、探针服务等）。
+
+## 7. 评测配置的 `checkpoint_path` 必须是**评测容器内可达**路径
+
+- 规则：凡"**vLLM 直指全参目录、零 merge**"的档，写入 `eval-<TIER>-<role>.yaml` 的
+  `checkpoint_path` **必须是评测容器内可达的路径** —— 即 `$TREE/runs` 被挂到 `/runs`
+  （`run-eval.sh` 的 `-v "$TREE/runs":/runs:ro`）之后的 **`/runs/<TIER>/<TIER>/v0-*/checkpoint-*`**；
+  ⛔ **不得写 vLLM 容器内的 `/model`**（评测容器没有该挂载）。
+- **起跑前置断言（fail-closed）**：解析结果必须 **存在 ∧ 含 `config.json`**，否则拒绝起跑；
+  解析一律用 **`v0-*` 通配**，⛔ 不用 `ls … | head -1`（会取到 `msswift/` 之类的目录名）。
+- 为什么：228 实测**三次同类事故**（T039 / T004 / T005）——`checkpoint_path: /model` 让
+  `after` 侧 `graspo eval run` 直接抛
+  `graspo.eval.error.OrchestrationError: checkpoint directory not found: /model`，
+  `after` 报告从未产出，随后 `delta` 又以 `DeltaError: eval report not found` **次生失败**；
+  症状（"delta 挂了"）离真因（"after 从没跑成"）很远。
+- 判读提示：**`after` 缺报告 + `delta` 报 `report not found`** ⇒ 先看 `after` 的 `eval run` 输出，
+  ⛔ 不要只在 `delta` 上排查。
