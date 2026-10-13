@@ -3083,7 +3083,7 @@
     "merged-hf"
    ],
    "final_formats_note": "★ 2026-10-13 指挥部批准的单档小步：显式设 merged-hf；★ 本次为重测（配置变更），旧记录按 (档号, json sha) 并存、⛔ 不覆盖",
-   "channel_gap_note": "★★ **T023 = 训练成功 ＋ 导出未触发**：训练 **SFT complete: steps=100 elapsed=1026.6s**、`ec=0`、`ckpt_retention=ok`，但 **`final/merged-hf/` 未产出**、stdout **无导出相关行** ⇒ ★ **结论不可得**（⛔ 非效果结论、⛔ 非硬件不可行）。⇒ ★ 登记口径：**四态保持「尚未验证」**、**`availability` 保持空**。★★ **归因待核（⛔ 未下结论）**：★ 我核过**三处配置均记 `backend: native`**（矩阵/清单/部署树 yaml 一致），而\"ms-swift 经 `sft_trainer.py:286/387` 绕过 `checkpoint.py:31 _save_checkpoint`\"这条解释**只适用于 ms-swift** ⇒ ★ 两者**不一致**；★ 候选归因：**(a) 交付/代际问题**（该次**实际读到**的 config 未带 `export.final_formats` ⇒ 门不成立）；**(b) 运行侧证实该次确走 ms-swift 路径**（★ 则说明清单/部署树的 backend 记错，须按产物更正）。★ **定论所需**：`runs/T023` 的 `entry.sh`／stdout 头部（实际 `--backend`）＋ 起跑侧打印的**实际读取 config 路径与 sha256**（编排侧已批准打印）。",
+   "channel_gap_note": "★★ **T023 = 训练成功 ＋ 导出未触发（★ 归因已定论：SFT 训练器路径绕过）**：训练 **SFT complete: steps=100 elapsed=1026.6s**、`ec=0`、`ckpt_retention=ok`，但 **`final/merged-hf/` 未产出**、stdout **无导出相关行**。★ **真因**：★ 该档走 **`srcnative/trainer/sft_trainer.py`**（SFT 家族）⇒ 它经 `:286/:387` 直接把 `output_dir/\"final\"` 交给另一落盘函数，**绕过** `checkpoint.py:31 _save_checkpoint`（★ 导出分支挂在 `:38`）⇒ ★ **导出永不触发**（★ 与\"产物呈 native 风格 `final/` ＋ `manifest.json`/`rank_*.pt`\"**完全自洽**）。★★ **更正**：先前\"ms-swift 绕过\"的表述**作废**（★ 该代码在 **`native/`** 目录下、是 native 的 SFT 训练器；★ 三处配置记 `native` **是对的**）。⇒ ★ 登记口径：**四态保持「尚未验证」**（结论不可得）、**`availability` 保持空**（硬件可行）｜★ 分界 = **训练器路径（SFT vs GRASPO）**，⛔ 不是 backend。",
    "elapsed": "—",
    "max_epochs": 2,
    "derived_steps": 100,
