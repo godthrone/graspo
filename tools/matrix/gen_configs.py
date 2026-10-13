@@ -120,6 +120,23 @@ def blocked_vs_unavailable_conflict(row):
     return row.get("availability") == "blocked" and str(row.get("status") or "") == "已验证不可用"
 
 
+def family_under_min_unblocked(row):
+    """★ 合成谬误拦截：**档级"可起"必须与族级实测相容**。
+
+    若该档属某族（`family`）且该族有实测 `family_min_cards`，而本档 `cards < family_min_cards`，
+    则本档**必须**已标 `availability == "blocked"`（★ 单档看"ready"、与族级事实矛盾 ⇒ 拒绝产出）。
+    返回 True = **不相容**（应 fail-closed）。
+    """
+    fmc = row.get("family_min_cards")
+    if not fmc or not row.get("family"):
+        return False
+    try:
+        under = int(row.get("cards") or 0) < int(fmc)
+    except Exception:
+        return False
+    return under and row.get("availability") != "blocked"
+
+
 def blocked_unmarked(row):
     """★ blocked 档必须有 `blocked_reason`（起跑侧据此拒跑）；缺理由 ⇒ fail-closed。"""
     if row.get("availability") != "blocked":
@@ -155,6 +172,12 @@ def _gen_self_test():
          blocked_vs_unavailable_conflict({"availability": "blocked", "status": "已验证不可用"}) is True),
         ("⑯c 轴分离：`blocked` + 「尚未验证」⇒ 放行",
          blocked_vs_unavailable_conflict({"availability": "blocked", "status": "尚未验证"}) is False),
+        ("⑰b ★ 族级相容：族 min_cards=4 而本档 cards=2 却未标 blocked ⇒ **必须拒**",
+         family_under_min_unblocked({"family": "graspo_lora_27b", "family_min_cards": 4, "cards": 2}) is True),
+        ("⑰c 族级相容：同档已标 blocked ⇒ 放行",
+         family_under_min_unblocked({"family": "graspo_lora_27b", "family_min_cards": 4, "cards": 2, "availability": "blocked"}) is False),
+        ("⑰d 族级相容：cards=4 ≥ min_cards ⇒ 放行",
+         family_under_min_unblocked({"family": "graspo_lora_27b", "family_min_cards": 4, "cards": 4}) is False),
         ("⑩ ★ blocked 档缺 `blocked_reason` ⇒ **必须判缺**（fail-closed）",
          blocked_unmarked({"availability": "blocked"}) is True),
         ("⑪ blocked 档带理由 ⇒ 放行（但仍不得起跑）",
@@ -356,6 +379,11 @@ def main():
     _mm = [(r["tier"], why) for r in rows if (why := cards_procs_mismatch(r))]
     if _mm:
         print(f"FAIL-CLOSED：卡数与进程数/卡列表不同源（⛔ 不得只改一半）⇒ 拒绝产出：{_mm}")
+        return 1
+
+    _fam = [r["tier"] for r in rows if family_under_min_unblocked(r)]
+    if _fam:
+        print(f"FAIL-CLOSED：以下档与**族级实测**矛盾（cards < 族 min_cards 却未标 blocked）⇒ 拒绝产出：{_fam}")
         return 1
 
     _conf = [r["tier"] for r in rows if blocked_vs_unavailable_conflict(r)]

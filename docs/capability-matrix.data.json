@@ -888,28 +888,75 @@
    "expected_optimizer_steps_per_epoch": "25",
    "expected_optimizer_steps_reachable": "25",
    "applicable": true,
-   "status": "尚未验证",
-   "runs": "—",
-   "effect": "—",
-   "inference": "—",
-   "algo_checks": "—",
-   "throughput": "—",
-   "peak_mem": "—",
-   "run_path": "—",
+   "status": "已验证不可用",
+   "runs": "1/1 真效果训练（ms-swift CPT LoRA 4 卡，2 epoch / 50 步）：判据① 通过（exit_code=0、50/50、ckpt_retention=ok、torch_probe all_ok=True、五计数全 0）；★ 判据② 未过（Δ=+3.8462 < +5.0）",
+   "effect": "after acc=20.0855%（141/702）；base acc=16.2393%（114/702）；★ Δ = +3.8462 pp（冻结阈值 +5.0 pp；目标 +10.0 pp 仅展示）。口径：criteria elam-v3-allright-1、温度 0、702/702、0 error；base/after 独立 output_dir + fail-closed + stdout 双份。 ★ 服务档参数：adapter ⇒ merge；--gpu-memory-utilization 0.85（9B 档，无需 §10 的 max-num-seqs）",
+   "inference": "ms-swift PEFT adapter（checkpoint-50）⇒ graspo eval export --eval-config 合并 ⇒ vLLM 挂载 merged（宿主路径字面量）服务 ⇒ graspo eval run（after/base）⇒ graspo eval delta（9B 档，无需 §10）",
+   "algo_checks": "exit_code=0、50/50、ckpt_retention=ok、torch_probe all_ok=True、五计数全 0",
+   "throughput": "不适用（CPT 档不跑 rollout/生成）",
+   "peak_mem": "见 runsgpu_memory_summary.json（4 卡峰值）",
+   "run_path": "RUN-T003",
+   "measurement_pending": false,
+   "anomalies": [
+    "★ 对账式按该档自身口径（9B CPT LoRA ms-swift ⇒ 2x100/4 = 50）；已由 gen_tier_json.check_reconciliation_matches_tier 在落盘前断言（⛔ 不得套 GRASPO 的 8x20x8）",
+    "★ §7/§8/§10/§12 护栏本轮全部生效（评测脚本由 render_eval_script 生成）。"
+   ],
+   "after_acc": 0.200855,
+   "base_acc": 0.162393,
+   "delta_pp": 3.8462,
+   "n_correct": 141,
+   "n_total": 702,
+   "step_count_reconciliation": {
+    "steps_nominal": 50,
+    "steps_actual": 50,
+    "reconciliation_formula": "★ 对账式（含 nproc=4）：2x100/4 = 50 = steps_actual ✓",
+    "trainable_completions": {
+     "applicable": false,
+     "value": "不适用（配置式）"
+    },
+    "verdict": "对账式 50 = 实际 50 ✓ ⇒ 判据①「完整跑完」成立；判据② 未过。"
+   },
+   "note_extra_steps_formula_issue": "★ 登记待修：'推导步数公式'对 native GRASPO 档不成立（推导 None vs 实际 None）—— 本轮不顺手改公式，后续单独修。",
+   "code_identity": {
+    "tree_fingerprint": "见 status-T003/launch.log 起跑断言值",
+    "generated_yaml": "samplesT003.yaml",
+    "generated_yaml_sha256": "",
+    "image_run_wrapper": {
+     "digest": "sha256:629642a4c4ec28d370debb035417d9ec9586fde07a9339b47c1834b75c31c041"
+    },
+    "image_base_official": {
+     "digest": "sha256:ecaf897a7534ef0901096e48fefbf10a42adf76029920ba8d54e88a738783abe"
+    }
+   },
+   "tree_fingerprint": "见 status-T003/launch.log 起跑断言值",
+   "tree_fingerprint_role": "起跑断言值",
+   "corrections": [
+    "n_correct：141"
+   ],
+   "note": "判定：已验证不可用。after 20.0855%/base 16.2393%/Δ=+3.8462 pp。Δ<阈值，未过第 2 条。",
+   "throughput_detail": "★ 生成式 tok/s 不适用（CPT 档不跑 rollout/生成）",
    "elapsed": "—",
    "max_epochs": 2,
    "derived_steps": 50,
    "per_epoch_steps": 25,
    "save_steps_basis": "= 推导步数 50 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
-   "steps_actual": "—",
+   "steps_actual": "50",
    "data_scale": "100 条（每卡 25）",
-   "note": "—",
    "tp": "—（框架内部决定）",
    "pp": "—（框架内部决定）",
    "dp": "4（派生）",
    "cards_total": "nproc_per_node×nnodes = 4 卡",
    "dp_derived": true,
-   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）"
+   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）",
+   "verdict": {
+    "state": "已验证不可用",
+    "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
+    "failed_detail": "Δ = +3.8462 pp（低于冻结阈值）",
+    "passed_criteria": [
+     "exit_code=0、50/50、ckpt_retention=ok、torch_probe all_ok=True、五计数全 0"
+    ]
+   },
+   "note_full": "★ 未过第 2 条判据（效果不足）——after acc=20.0855%（141/702）；base acc=16.2393%（114/702）；★ Δ = +3.8462 pp（冻结阈值 +5.0 pp；目标 +10.0 pp 仅展示）。口径：criteria elam-v3-allright-1、温度 0、702/702、0 error；base/after 独立 output_dir + fail-closed + stdout 双份。 ★ 服务档参数：adapter ⇒ merge；--gpu-memory-utilization 0.85（9B 档，无需 §10 的 max-num-seqs） ★ 已通过项（事实保留）：exit_code=0、50/50、ckpt_retention=ok、torch_probe all_ok=True、五计数全 0 ★ 判据① 依据：1/1 真效果训练（ms-swift CPT LoRA 4 卡，2 epoch / 50 步）：判据① 通过（exit_code=0、50/50、ckpt_retention=ok、torch_probe all_ok=True、五计数全 0）；★ 判据② 未过（Δ=+3.8462 < +5.0） ★ 步数对账（如实登记）：推导 None vs 实际 None；对账式 50 = 实际 50 ✓ ⇒ 判据①「完整跑完」成立；判据② 未过。 ★ 订正说明（跑次侧）：n_correct：141 ★ 异常登记：★ 对账式按该档自身口径（9B CPT LoRA ms-swift ⇒ 2x100/4 = 50）；已由 gen_tier_json.check_reconciliation_matches_tier 在落盘前断言（⛔ 不得套 GRASPO 的 8x20x8） ★ 异常登记：★ §7/§8/§10/§12 护栏本轮全部生效（评测脚本由 render_eval_script 生成）。 ★ LoRA 目标按后端：ms-swift 实测 358 实例（language 248 + visual 110）｜native **同为 358 实例**（122 为签名/模式条目数）⇒ ★ 两后端**实例数相同但命中集合不同（不等价）**。 ★ 锚点：树 见 status… + image_base_official sha256:e… + image_run_wrapper sha256:6…"
   },
   {
    "tier": "T004",
@@ -4692,6 +4739,8 @@
    "availability": "blocked",
    "blocked_reason": "★ 1 卡实测 OOM（T040：torch.OutOfMemoryError … Tried to allocate 572.00 MiB … 485.88 MiB is free；Process 3247552 has 78.77 GiB memory in use.；exit_code=1）⇒ 该族 min_cards=4（T045 4 卡实测可行）⇒ ⛔ **不得以 1 卡起跑**；★ **这不是效果结论，是硬件不可行**（与 T044/OPD 同形）。★ 四态保持「尚未验证」。",
    "cards_note": "★ 2026-10-13：1 卡实测 OOM ⇒ availability=blocked（⛔ 不得以 1 卡起跑）",
+   "family": "graspo_lora_27b",
+   "family_min_cards": 4,
    "elapsed": "—",
    "max_epochs": 8,
    "derived_steps": 48,
@@ -4760,6 +4809,11 @@
    "throughput": "—",
    "peak_mem": "—",
    "run_path": "—",
+   "family": "graspo_lora_27b",
+   "family_min_cards": 4,
+   "availability": "blocked",
+   "blocked_reason": "★ 2 卡同族已实测 OOM（T044：Tried to allocate 1.89 GiB / 1.23 GiB free / 78.01 GiB in use；exitcode=1）× 1 卡同族亦 OOM（T040：78.77 GiB in use）⇒ 该族（27B GRASPO LoRA）min_cards=4（T042/T045 4 卡实测可行）⇒ ⛔ 不得以 2 卡起跑；★ 这不是效果结论，是硬件不可行（与 T040/T044/OPD 同形）。★ 四态保持「尚未验证」。",
+   "cards_note": "★ 2026-10-13：族级实测（min_cards=4）⇒ availability=blocked（⛔ 不得起跑）",
    "elapsed": "—",
    "max_epochs": 8,
    "derived_steps": 48,
@@ -4828,6 +4882,8 @@
    "throughput": "—",
    "peak_mem": "—",
    "run_path": "—",
+   "family": "graspo_lora_27b",
+   "family_min_cards": 4,
    "elapsed": "—",
    "max_epochs": 8,
    "derived_steps": 48,
@@ -4896,6 +4952,11 @@
    "throughput": "—",
    "peak_mem": "—",
    "run_path": "—",
+   "family": "graspo_lora_27b",
+   "family_min_cards": 4,
+   "availability": "blocked",
+   "blocked_reason": "★ 2 卡同族已实测 OOM（T044：Tried to allocate 1.89 GiB / 1.23 GiB free / 78.01 GiB in use；exitcode=1）× 1 卡同族亦 OOM（T040：78.77 GiB in use）⇒ 该族（27B GRASPO LoRA）min_cards=4（T042/T045 4 卡实测可行）⇒ ⛔ 不得以 1 卡起跑；★ 这不是效果结论，是硬件不可行（与 T040/T044/OPD 同形）。★ 四态保持「尚未验证」。",
+   "cards_note": "★ 2026-10-13：族级实测（min_cards=4）⇒ availability=blocked（⛔ 不得起跑）",
    "elapsed": "—",
    "max_epochs": 8,
    "derived_steps": 1280,
@@ -4967,6 +5028,8 @@
    "availability": "blocked",
    "blocked_reason": "★ 2 卡实测 OOM（T044：Tried to allocate 1.89 GiB / 1.23 GiB free / 78.01 GiB in use；exitcode=1）⇒ 该族 min_cards=4（T045 4 卡实测可行：训练第 1 步已越过、指标正常）⇒ ⛔ 不得以 2 卡起跑；★ 这不是效果结论，是硬件不可行（与 OPD 的 blocked 同形）。★ 四态保持「尚未验证」（未获得效果读数）。",
    "cards_note": "★ 2026-10-13 裁定：2 卡硬件不可行 ⇒ availability=blocked（⛔ 不得以 2 卡起跑）",
+   "family": "graspo_lora_27b",
+   "family_min_cards": 4,
    "elapsed": "—",
    "max_epochs": 8,
    "derived_steps": 640,
@@ -5087,6 +5150,8 @@
     "n_correct：116"
    ],
    "note": "判定：已验证不可用。after 16.5242%/base 19.5157%/Δ=-2.9915 pp。Δ<阈值，未过第 2 条。P5/P6 已补。",
+   "family": "graspo_lora_27b",
+   "family_min_cards": 4,
    "throughput_detail": "★ 见 runs/T045 训练日志 rollout 段（GRASPO 生成）",
    "elapsed": "—",
    "max_epochs": 8,
