@@ -472,3 +472,14 @@ def test_plan_full_cards_hard_excludes_reserved():
     picked, why = lp.plan_full_cards(cards, 1, reserved={"1", "3"})   # 1/3 上有我方 loading 容器
     assert picked == ["6"], (picked, why)
     assert "§17" in why, why
+
+
+# ---------- §17.3：禁用集不得复用旧快照 ----------
+def test_require_card_registered_detects_stale_snapshot():
+    """★ 回归（T022 撞卡）：起跑后该卡仍未入禁用集 ⇒ 拒（不得视为已占用）。"""
+    problems = lp.require_card_registered("6", {"0", "1", "3", "5"})
+    assert problems and "仍未登记" in problems[0], problems
+
+
+def test_require_card_registered_passes_when_registered():
+    assert lp.require_card_registered("7", {"0", "1", "3", "5", "7"}) == []

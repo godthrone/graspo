@@ -512,6 +512,20 @@ def check_max_num_seqs_in_script(script_text: str, needs_limit: bool, safe: int 
     return []
 
 
+def require_card_registered(chosen: str, busy_after_start: set[str]) -> list[str]:
+    """★ §17.3：起跑后必须**回验**该档容器已登记（该卡已入禁用集）；未登记 ⇒ 不得视为已占用。
+
+    实证（2026-10-13，三次）：① 连排 T032 评测 + T029 后立刻起 T022 ⇒ 快照缺 GPU6 ⇒ T022 落在 6、
+    与评测同卡；② T034 起后 8 s 仍未登记；③ T043 评测起后亦未登记。
+    """
+    if not chosen:
+        return ["未给出卡号 ⇒ fail-closed"]
+    if str(chosen) not in {str(x) for x in busy_after_start}:
+        return [f"卡 {chosen} 在起跑后的占卡台账里【仍未登记】⇒ 不得视为已占用；"
+                f"须重取 cards-busy 后再判（§17.3；禁用集不得复用旧快照）"]
+    return []
+
+
 def build_json_reason(after_correct: int, n_total: int, base_correct: int, status: str) -> str:
     """落 json 的备注（≤100 字）：判定 + 读数，与结构化字段同源。"""
     after = after_correct / n_total * 100 if n_total else 0.0

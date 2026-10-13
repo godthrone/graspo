@@ -290,3 +290,13 @@ python3 $TREE/scripts/run_guards.py cards-busy --ps-file /tmp/ps.txt --inspect-f
   择卡把该集合作为 `plan_full_cards(..., reserved=…)` 的**硬排除**参数。
 - ★ 采集口径：★ 卡可能来自 **`HostConfig.DeviceRequests`** 或 **`Config.Env` 的 `NVIDIA_VISIBLE_DEVICES`**
   （228 实测为后者）⇒ 台账**两者都读**。
+
+### 17.3 禁用集不得复用旧快照（连排必逐档重取 + 起跑后回验）
+
+- ⓐ **连排多档时，每档起跑前必须重新采样 `cards-busy`** —— ⛔ 不复用上一次的快照。
+- ⓑ **每档起跑后必须回验"该档容器已登记 / 该卡已入禁用集"** —— **未登记 ⇒ 不得视为已占用**。
+- ⓒ **`plan_full_cards` / 择卡只能吃"刚取到的"禁用集**。
+- 机器护栏：`launch_pipeline.require_card_registered(card, busy_after_start)`（未登记 ⇒ fail-closed）。
+- 实证三条（2026-10-13）：① **T022 撞卡** —— 连排 T032 评测 + T029 后立刻起 T022，快照缺 GPU6 ⇒
+  `plan_full_cards` 返回 `['6']` ⇒ 与评测同卡；② **T034 起后 8 s 仍未登记**；③ **T043 评测起后亦未登记**。
+  ⇒ 前一次同类被门禁拦下、后两次放行 ⇒ **光靠台账不够，必须"起跑后回验"**。
