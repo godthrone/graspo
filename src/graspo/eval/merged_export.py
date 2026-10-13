@@ -360,11 +360,16 @@ FORM_CHANNELS: dict[str, dict[str, str]] = {
     "base_model": {"channel": "direct-serve", "status": "available"},
     "adapter": {"channel": "merge-adapter", "status": "available"},
     "native_graspo": {"channel": "merge-native-safetensors", "status": "available"},
-    # ★★ native `final`（manifest.json + rank_*.pt）：★ **有可用通道** —— 经 `graspo export`（merged-hf）
-    #    把 rank 分片合并为可服务目录（★ 2026-10-13 T024 实证：其推理链逐字 = "native LoRA 终态
-    #    （final/rank_*.pt + manifest.json）⇒ graspo export --config 合并为 merged-hf ⇒ vLLM 挂载 merged ⇒ eval"）。
-    #    ★ 更正：先前标 `missing` **有误**（把"训练期 final_formats 未触发"误当成"无通道"）。
-    "native_rank": {"channel": "graspo-export-merged-hf", "status": "available"},
+    # ★★ native `final`（`manifest.json` + `rank_*_tp_*_pp_*.pt`）：★★ **当前未实现** ——
+    #    `classify_checkpoint` **不认**该形态（拒绝路径见本文件 `:395`），⇒ `graspo export` 会抛
+    #    `ExportError: cannot classify checkpoint … (entries: ['manifest.json','rank_*.pt'])`。
+    #    ★ **待实现**（才能翻 `available`）：`classify_checkpoint` 需支持
+    #      `manifest.json` ＋ `rank_*_tp_*_pp_*.pt` ⇒ 合并为可服务 HF 目录。
+    #    ★★ 事故记录（2026-10-13）：★ 曾依据"T024 的历史成功叙述"误标为 `available`（★ 该成功的
+    #      来源至今未查明、git 全历史亦无该实现）⇒ ★ **虚标解除了起跑前 fail-closed ⇒ 导致 T023 评测白跑一次**
+    #      ⇒ ★ **已改回 `missing`**。★ 纪律：★ **通道登记必须反映"已实现的能力"（判据 = 导出器是否认），
+    #      ⛔ 不得写成"期望/应然"；★ 凡标 `available` 必须同批给出"导出器已支持"的 `file:line` 证据 ＋ 用例。**
+    "native_rank": {"channel": "rank-shards-to-hf", "status": "missing"},
 }
 
 
