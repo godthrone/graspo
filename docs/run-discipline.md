@@ -243,3 +243,15 @@
 - 落地件：`launch_pipeline.check_script_mount_sources()`（对脚本文本断言：`:/model` 的源必须是
   宿主模型根下的路径或脚本内解析到该处的变量；⛔ 拒 `/model`、`/models/…`、`/evalout/…`、
   `/workspace/…`、`/runs/…`）＋ `render_eval_script()` 直接把宿主路径字面量嵌入模板。
+
+## 16. 评测路径由**形态探测**决定，⛔ 不靠惯性（全参 ⇒ 零 merge）
+
+- 规则：起评测前**先跑 `run_guards form`**，再按形态分支：
+  · **`full`（全参/HF）** ⇒ ★ **零 merge**，vLLM **直指 checkpoint 目录**；
+  · **`adapter` / `native_rank`** ⇒ ★ 先 `graspo eval export` **合并为 merged-hf** 再服务；
+  · **unknown** ⇒ ★ **fail-closed**，⛔ 不得凭惯性选一条路。
+  落地件：`launch_pipeline.decide_eval_mode()`。
+- 为什么：228 实测（2026-10-13 T019）—— 我按"LoRA ⇒ 合并"的惯性写了 export 步骤，
+  而该档实际是**全参/HF**（`form` 已打印 `[full]`）⇒ export 回执
+  **`checkpoint is already a servable base model — nothing to merge`** ⇒ **合并目录根本不会生成**
+  ⇒ `§8(post)` **正确 fail-closed**（拦下"没有产物的成功"）。护栏救了场，但**惯性本身该改**。

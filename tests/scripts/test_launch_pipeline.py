@@ -426,3 +426,20 @@ def test_rendered_eval_script_passes_mount_check(tmp_path: Path):
     text, why = lp.render_eval_script(**kw)
     assert text is not None, why
     assert lp.check_script_mount_sources(text) == []
+
+
+# ---------- 形态决定评测路径：零 merge vs 合并（T019 事故） ----------
+def test_decide_eval_mode_full_is_zero_merge():
+    mode, why = lp.decide_eval_mode("full")
+    assert mode == "zero-merge" and "零 merge" in why, (mode, why)
+
+
+def test_decide_eval_mode_adapter_and_native_merge():
+    assert lp.decide_eval_mode("adapter")[0] == "merge"
+    assert lp.decide_eval_mode("native_rank")[0] == "merge"
+
+
+def test_decide_eval_mode_unknown_fails_closed():
+    """★ 回归：形态未知时 ⛔ 不得凭惯性选路径。"""
+    mode, why = lp.decide_eval_mode("unknown")
+    assert mode == "unknown" and "fail-closed" in why, (mode, why)

@@ -464,6 +464,23 @@ def check_script_mount_sources(script_text: str, host_model_prefix: str = MODEL_
     return problems
 
 
+def decide_eval_mode(form: str) -> tuple[str, str]:
+    """★ 由 §7 形态探测结果决定评测怎么起：0=零 merge（全参直服务）/ 1=合并。
+
+    228 实测（2026-10-13 T019）：我按"LoRA ⇒ 合并"的惯性写了 export 步骤，而该档实际是
+    **全参/HF 形态**（`run_guards form` 已打印 `[full]`）⇒ `graspo eval export` 回执
+    `checkpoint is already a servable base model — nothing to merge` ⇒ **合并产物根本不会产生**
+    ⇒ `§8(post)` 正确 fail-closed（"没有产物的成功"）。规则：**先探测、再分支**，⛔ 不靠惯性。
+
+    返回 `(mode, why)`：`mode` ∈ {"zero-merge", "merge", "unknown"}。
+    """
+    if form == "full":
+        return ("zero-merge", "全参/HF 形态 ⇒ vLLM 直指 checkpoint 目录，零 merge（export 会回 nothing to merge）")
+    if form in ("adapter", "native_rank"):
+        return ("merge", f"{form} 形态 ⇒ 需先合并为 merged-hf（graspo eval export）再服务")
+    return ("unknown", f"形态未知（{form}）⇒ ⛔ 不得凭惯性选路径，须人工确认 ⇒ fail-closed")
+
+
 def build_json_reason(after_correct: int, n_total: int, base_correct: int, status: str) -> str:
     """落 json 的备注（≤100 字）：判定 + 读数，与结构化字段同源。"""
     after = after_correct / n_total * 100 if n_total else 0.0
