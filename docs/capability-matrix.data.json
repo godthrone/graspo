@@ -5028,7 +5028,7 @@
    "expected_optimizer_steps_reachable": "40",
    "applicable": true,
    "status": "已验证不可用",
-   "runs": "1/1 真效果训练（ms-swift GRASPO LoRA 4 卡，2 epoch / 50 步）：判据① 通过（exit_code=0、320/320 步、ckpt_retention=ok、torch_probe all_ok=True、五计数全 0）；★ 判据② 未过（Δ 为负）",
+   "runs": "1/1 真效果训练（ms-swift GRASPO LoRA 4 卡，8 epoch / 320 步）：判据① 通过（exit_code=0、320/320 步、ckpt_retention=ok、torch_probe all_ok=True、五计数全 0）；★ 判据② 未过（Δ 为负）",
    "effect": "after acc=16.5242%（116/702）；base acc=19.5157%（137/702）；★ Δ = -2.9915 pp（冻结阈值 +5.0 pp；目标 +10.0 pp 仅展示）。口径：criteria elam-v3-allright-1、温度 0、702/702、0 error；base/after 独立 output_dir + fail-closed + stdout 双份。 ★ 服务档参数：★ §10：--max-num-seqs 192（27B/Mamba）＋ --gpu-memory-utilization 0.85（base/after 同配）",
    "inference": "ms-swift PEFT adapter（checkpoint-320）⇒ graspo eval export --eval-config 合并 ⇒ vLLM 挂载 merged（宿主路径字面量）服务（★ §10：--max-num-seqs 192）⇒ graspo eval run（after/base）⇒ graspo eval delta",
    "algo_checks": "exit_code=0、320/320、ckpt_retention=ok、torch_probe all_ok=True、五计数全 0",
@@ -5051,6 +5051,7 @@
    "anomalies": [
     "★★ 结论：训练成功（320/320、exit_code=0、ckpt_retention=ok、torch_probe all_ok、五计数全 0）但★效果为负（Δ=-2.9915 pp：after 16.5242% < base 19.5157%）⇒ 判据②未过 ⇒ 失败（效果）",
     "★ 族级卡数结论（实测）：27B GRASPO LoRA —— 1 卡 OOM（T040）／2 卡 OOM（T044）／4 卡可跑通（本档）；★ 本档首次给出该族的效果结论",
+    "★★ 口径更正：本档首版误用 ms-swift SFT 的 2x100/4 = 50；GRASPO 档应为 8x20x8/4 = 320（与 T038 的 8x20x8/2 = 640 同族）⇒ 已按实测 global_step/max_steps=320 更正（旧 sha f08bdda3... 作废）",
     "★ §7/§8/§10/§12 护栏本轮全部生效（评测脚本由 render_eval_script 生成）。"
    ],
    "after_acc": 0.165242,
@@ -5059,18 +5060,18 @@
    "n_correct": 116,
    "n_total": 702,
    "step_count_reconciliation": {
-    "steps_nominal": 50,
-    "steps_actual": 50,
-    "reconciliation_formula": "★ 对账式（含 nproc=4）：2x100/4 = 50 = steps_actual ✓",
+    "steps_nominal": 320,
+    "steps_actual": 320,
+    "reconciliation_formula": "★ 对账式（含 nproc=4）：8x20x8/4 = 320 = steps_actual ✓",
     "trainable_completions": {
      "applicable": false,
      "value": "不适用（配置式）"
     },
-    "verdict": "对账式 50 = 实际 50 ✓ ⇒ 判据①「完整跑完」成立；判据② 未过。"
+    "verdict": "对账式 320 = 实际 320 ✓ ⇒ 判据①「完整跑完」成立；判据② 未过。"
    },
    "note_extra_steps_formula_issue": "★ 登记待修：'推导步数公式'对 native GRASPO 档不成立（推导 None vs 实际 None）—— 本轮不顺手改公式，后续单独修。",
    "code_identity": {
-    "tree_fingerprint": "见 status-T045/launch.log 起跑断言值（本轮未重读，不编造）",
+    "tree_fingerprint": "见 status-T045/launch.log 起跑断言值",
     "generated_yaml": "samplesT045.yaml",
     "generated_yaml_sha256": "",
     "image_run_wrapper": {
@@ -5080,7 +5081,7 @@
      "digest": "sha256:ecaf897a7534ef0901096e48fefbf10a42adf76029920ba8d54e88a738783abe"
     }
    },
-   "tree_fingerprint": "见 status-T045/launch.log 起跑断言值（本轮未重读，不编造）",
+   "tree_fingerprint": "见 status-T045/launch.log 起跑断言值",
    "tree_fingerprint_role": "起跑断言值",
    "corrections": [
     "n_correct：116"
@@ -5109,7 +5110,7 @@
      "exit_code=0、320/320、ckpt_retention=ok、torch_probe all_ok=True、五计数全 0"
     ]
    },
-   "note_full": "★ 未过第 2 条判据（效果不足）——after acc=16.5242%（116/702）；base acc=19.5157%（137/702）；★ Δ = -2.9915 pp（冻结阈值 +5.0 pp；目标 +10.0 pp 仅展示）。口径：criteria elam-v3-allright-1、温度 0、702/702、0 error；base/after 独立 output_dir + fail-closed + stdout 双份。 ★ 服务档参数：★ §10：--max-num-seqs 192（27B/Mamba）＋ --gpu-memory-utilization 0.85（base/after 同配） ★ 已通过项（事实保留）：exit_code=0、320/320、ckpt_retention=ok、torch_probe all_ok=True、五计数全 0 ★ 判据① 依据：1/1 真效果训练（ms-swift GRASPO LoRA 4 卡，2 epoch / 50 步）：判据① 通过（exit_code=0、320/320 步、ckpt_retention=ok、torch_probe all_ok=True、五计数全 0）；★ 判据② 未过（Δ 为负） ★ 步数对账（如实登记）：推导 None vs 实际 None；对账式 50 = 实际 50 ✓ ⇒ 判据①「完整跑完」成立；判据② 未过。 ★ 订正说明（跑次侧）：n_correct：116 ★ 异常登记：★★ 结论：训练成功（320/320、exit_code=0、ckpt_retention=ok、torch_probe all_ok、五计数全 0）但★效果为负（Δ=-2.9915 pp：after 16.5242% < base 19.5157%）⇒ 判据②未过 ⇒ 失败（效果） ★ 异常登记：★ 族级卡数结论（实测）：27B GRASPO LoRA —— 1 卡 OOM（T040）／2 卡 OOM（T044）／4 卡可跑通（本档）；★ 本档首次给出该族的效果结论 ★ 异常登记：★ §7/§8/§10/§12 护栏本轮全部生效（评测脚本由 render_eval_script 生成）。 ★ LoRA 目标按后端：ms-swift 实测 358 实例（language 248 + visual 110）｜native **同为 358 实例**（122 为签名/模式条目数）⇒ ★ 两后端**实例数相同但命中集合不同（不等价）**。 ★ 锚点：树 见 status… + image_base_official sha256:e… + image_run_wrapper sha256:6…"
+   "note_full": "★ 未过第 2 条判据（效果不足）——after acc=16.5242%（116/702）；base acc=19.5157%（137/702）；★ Δ = -2.9915 pp（冻结阈值 +5.0 pp；目标 +10.0 pp 仅展示）。口径：criteria elam-v3-allright-1、温度 0、702/702、0 error；base/after 独立 output_dir + fail-closed + stdout 双份。 ★ 服务档参数：★ §10：--max-num-seqs 192（27B/Mamba）＋ --gpu-memory-utilization 0.85（base/after 同配） ★ 已通过项（事实保留）：exit_code=0、320/320、ckpt_retention=ok、torch_probe all_ok=True、五计数全 0 ★ 判据① 依据：1/1 真效果训练（ms-swift GRASPO LoRA 4 卡，8 epoch / 320 步）：判据① 通过（exit_code=0、320/320 步、ckpt_retention=ok、torch_probe all_ok=True、五计数全 0）；★ 判据② 未过（Δ 为负） ★ 步数对账（如实登记）：推导 None vs 实际 None；对账式 320 = 实际 320 ✓ ⇒ 判据①「完整跑完」成立；判据② 未过。 ★ 订正说明（跑次侧）：n_correct：116 ★ 异常登记：★★ 结论：训练成功（320/320、exit_code=0、ckpt_retention=ok、torch_probe all_ok、五计数全 0）但★效果为负（Δ=-2.9915 pp：after 16.5242% < base 19.5157%）⇒ 判据②未过 ⇒ 失败（效果） ★ 异常登记：★ 族级卡数结论（实测）：27B GRASPO LoRA —— 1 卡 OOM（T040）／2 卡 OOM（T044）／4 卡可跑通（本档）；★ 本档首次给出该族的效果结论 ★ 异常登记：★★ 口径更正：本档首版误用 ms-swift SFT 的 2x100/4 = 50；GRASPO 档应为 8x20x8/4 = 320（与 T038 的 8x20x8/2 = 640 同族）⇒ 已按实测 global_step/max_steps=320 更正（旧 sha f08bdda3... 作废） ★ 异常登记：★ §7/§8/§10/§12 护栏本轮全部生效（评测脚本由 render_eval_script 生成）。 ★ LoRA 目标按后端：ms-swift 实测 358 实例（language 248 + visual 110）｜native **同为 358 实例**（122 为签名/模式条目数）⇒ ★ 两后端**实例数相同但命中集合不同（不等价）**。 ★ 锚点：树 见 status… + image_base_official sha256:e… + image_run_wrapper sha256:6…"
   },
   {
    "tier": "T046",
