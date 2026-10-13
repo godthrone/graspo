@@ -11,6 +11,7 @@ from graspo.eval.merged_export import (
     ExportError,
     assert_native_rank_mergeable,
     classify_checkpoint,
+    convert_native_rank_to_peft,
 )
 
 
@@ -49,3 +50,44 @@ def test_assert_native_rank_mergeable_rejects_pp_gt_1():
 
 def test_assert_native_rank_mergeable_allows_dp1_pp1():
     assert assert_native_rank_mergeable({"dp_size": 1, "pp_size": 1, "tp_size": 1}) == []
+
+
+def _fake_shard(tmp_path, manifest: dict, n: int = 2):
+    import json
+    import torch
+    d = tmp_path / "final"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    lora = {}
+    for i in range(n):
+        lora[f"layers.{i}.mlp.down_proj.lora_a"] = torch.zeros(4, 8)
+        lora[f"layers.{i}.mlp.down_proj.lora_b"] = torch.zeros(8, 4)
+    torch.save({"lora_state_dict": lora}, d / "rank_00000_tp_00_pp_00.pt")
+    return d
+
+
+def test_convert_native_rank_dp1_produces_peft_adapter(tmp_path):
+    """★ dp==1 ⇒ 可转；产出 adapter_config.json + adapter_model.safetensors，键数守恒。"""
+    src = _fake_shard(tmp_path, {"dp_size": 1, "pp_size": 1, "tp_size": 1})
+    out = tmp_path / "adapter"
+    info = convert_native_rank_to_peft(src, out, base_model_path="/models/base")
+    assert info["keys"] == 4
+    assert (out / "adapter_model.safetensors").is_file()
+    assert (out / "adapter_config.json").is_file()
+
+
+def test_convert_native_rank_rejects_dp_gt_1(tmp_path):
+    """★ dp>1 ⇒ 必拒（不得用分歧权重合出错误模型）。"""
+    src = _fake_shard(tmp_path, {"dp_size": 2, "pp_size": 1, "tp_size": 1})
+    with pytest.raises(ExportError):
+        convert_native_rank_to_peft(src, tmp_path / "adapter", base_model_path="/models/base")
+
+
+def test_convert_native_rank_rejects_unmapped_key(tmp_path):
+    """★ 出现规则外的键 ⇒ 必拒（不静默丢键）。"""
+    src = _fake_shard(tmp_path, {"dp_size": 1, "pp_size": 1, "tp_size": 1})
+    import torch
+    torch.save({"lora_state_dict": {"weird_key": torch.zeros(2, 2)}},
+               src / "rank_00000_tp_00_pp_00.pt")
+    with pytest.raises(ExportError):
+        convert_native_rank_to_peft(src, tmp_path / "adapter", base_model_path="/models/base")

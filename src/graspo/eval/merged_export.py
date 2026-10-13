@@ -828,3 +828,74 @@ def assert_native_rank_mergeable(manifest: dict) -> list[str]:
     if tp > 1:
         problems.append(f"tp_size={tp} > 1：TP 分片合并未实现 ⇒ 暂不可评")
     return problems
+
+def convert_native_rank_to_peft(checkpoint_dir: str | Path, output_dir: str | Path,
+                                *, base_model_path: str) -> dict[str, Any]:
+    """★ 把 native 的 `final/`（`manifest.json` + `rank_*.pt`）转成 **PEFT adapter** 目录。
+
+    ★ 仅支持 `dp_size==1 ∧ pp_size==1 ∧ tp_size==1`（见 `assert_native_rank_mergeable`）；
+    ★ 其它形态一律 `ExportError`（绝不用分歧权重合出"看起来正常"的模型）。
+    ★ 产 adapter 而非直接合 HF：复用评测链既有的 `PEFT_ADAPTER ⇒ merge` 路径，不重写合并逻辑。
+
+    ★ 自校验三道（任一不符 ⇒ fail-closed）：
+    ⓐ 回读产出的 safetensors，逐键形状与源 `lora_state_dict` 对齐；
+    ⓑ 键集合守恒：源键数 == 目标键数（映射覆盖 100%）；
+    ⓒ 键名前缀/后缀映射必须完全落在已知规则内（无未映射键）。
+    """
+    import json
+    import torch
+    from safetensors.torch import save_file
+
+    root = Path(checkpoint_dir)
+    manifest_path = root / "manifest.json"
+    if not manifest_path.is_file():
+        raise ExportError(f"native rank 转换需要 manifest.json：{manifest_path} 不存在")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    problems = assert_native_rank_mergeable(manifest)
+    if problems:
+        raise ExportError("native rank 不可合并：" + "；".join(problems))
+
+    shards = sorted(root.glob("rank_*.pt"))
+    if len(shards) != 1:
+        raise ExportError(f"期望恰好 1 个分片（dp=pp=tp=1），实际 {len(shards)}：{[p.name for p in shards]}")
+
+    payload = torch.load(shards[0], map_location="cpu", weights_only=False)
+    lora = payload.get("lora_state_dict") if isinstance(payload, dict) else None
+    if not isinstance(lora, dict) or not lora:
+        raise ExportError(f"{shards[0].name} 内没有可用的 lora_state_dict")
+
+    # ★ 键名映射：`layers.<N>.<mod>.lora_a` ⇒ `base_model.model.model.layers.<N>.<mod>.lora_A.weight`
+    converted: dict[str, Any] = {}
+    for key, tensor in lora.items():
+        name = str(key)
+        if name.endswith(".lora_a"):
+            target = "base_model.model.model." + name[: -len(".lora_a")] + ".lora_A.weight"
+        elif name.endswith(".lora_b"):
+            target = "base_model.model.model." + name[: -len(".lora_b")] + ".lora_B.weight"
+        else:
+            raise ExportError(f"未映射的 LoRA 键（规则不含）：{name}")
+        # LoRA A: (r, in) / B: (out, r)；PEFT 同为该形状 ⇒ 不转置，仅校验
+        if tensor.dim() != 2:
+            raise ExportError(f"{name} 不是二维张量（shape={tuple(tensor.shape)}）⇒ 拒绝")
+        converted[target] = tensor.detach().to(torch.float32).contiguous()
+
+    if len(converted) != len(lora):                       # ★ ⓑ 键集合守恒
+        raise ExportError(f"键集合不守恒：源 {len(lora)} ⇒ 目标 {len(converted)}")
+
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    save_file(converted, str(out / "adapter_model.safetensors"))
+
+    # ★ ⓐ 回读校验
+    from safetensors.torch import load_file
+    back = load_file(str(out / "adapter_model.safetensors"))
+    if set(back) != set(converted):
+        raise ExportError("回读键集合与写出不一致 ⇒ fail-closed")
+    for key, tensor in back.items():
+        if tuple(tensor.shape) != tuple(converted[key].shape):
+            raise ExportError(f"回读形状不一致：{key} ⇒ fail-closed")
+
+    (out / "adapter_config.json").write_text(
+        json.dumps({"peft_type": "LORA", "base_model_name_or_path": base_model_path,
+                    "task_type": "CAUSAL_LM"}, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"keys": len(converted), "shard": shards[0].name}
