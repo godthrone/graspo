@@ -225,3 +225,4 @@ python3 -m py_compile tools/matrix/<改动文件>.py     # 或等价的 AST 解�
 ★ 实证（2026-10-13）：★ 旧推断"native LoRA 走 adapter、不撞缺口"**被 T022（27B SFT LoRA native）推翻** —— 它同样产出 `native_rank`；★ 而同为 27B native LoRA 的 T024 **有通道**（已评测）⇒ ★ **配置字段无法预判**。
 ★ 保护：★ `FORM_CHANNELS`（单一真源）＋ `assert_form_has_channel` ⇒ **起跑前探测到无通道即拒跑**（★ 本次实测证明该保护必要）。
 ★ 影响面口径：★ **"已确认（实测）＋ 疑似（待测）"分段**，⛔ 不用"族 × mode"聚合。
+★ **补充（2026-10-13）**：★ "通道有无"的**语义开关**已定位 = **`export.final_formats`**（`src/graspo/flow/backend/native/trainer/checkpoint.py:38`：`if path.name == "final" and self.config.export.final_formats and self.runtime.is_primary()`）⇒ ★ **但矩阵各档均未设该项** ⇒ ★ 差异来自**运行期条件**；★ **建议跑次侧/生成器为每档显式设 `export.final_formats`** ⇒ **使形态可预判、从源头消除缺口**（★ 在未设之前仍须逐档探测）。
