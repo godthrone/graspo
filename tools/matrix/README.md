@@ -226,3 +226,9 @@ python3 -m py_compile tools/matrix/<改动文件>.py     # 或等价的 AST 解�
 ★ 保护：★ `FORM_CHANNELS`（单一真源）＋ `assert_form_has_channel` ⇒ **起跑前探测到无通道即拒跑**（★ 本次实测证明该保护必要）。
 ★ 影响面口径：★ **"已确认（实测）＋ 疑似（待测）"分段**，⛔ 不用"族 × mode"聚合。
 ★ **补充（2026-10-13）**：★ "通道有无"的**语义开关**已定位 = **`export.final_formats`**（`src/graspo/flow/backend/native/trainer/checkpoint.py:38`：`if path.name == "final" and self.config.export.final_formats and self.runtime.is_primary()`）⇒ ★ **但矩阵各档均未设该项** ⇒ ★ 差异来自**运行期条件**；★ **建议跑次侧/生成器为每档显式设 `export.final_formats`** ⇒ **使形态可预判、从源头消除缺口**（★ 在未设之前仍须逐档探测）。
+
+## 资源度量纪律（强制 · 在"被使用的路径"所在挂载上量）
+
+★ **资源余量必须在"该资源被使用的路径"所在挂载上量，⛔ 不得以 `/` 或任意挂载代替**（与"别假设环境存在""卡上没显存≠卡没人用"同族）。
+★ 实证（2026-10-13）：★ 我曾量 `/` ⇒ **1.5 T 可用**；★ 而**产物实际落在 `/data/remote`** ⇒ **5.5 T 可用**（★ 误差近 4 倍、且结论的"余量"判断依据错误）。
+★ 同类：★ GPU 余量看目标卡上；★ 磁盘看产物落点挂载；★ 网络看目标链路。

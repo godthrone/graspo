@@ -204,6 +204,8 @@ def running_but_ready(row):
 #: ★ 生效集合：**由指挥部给、与铺开进度同步扩大**（⛔ 不得一次要求全部档）。
 #: 2026-10-13 起 = {"T023"}（单档小步验证：该档已知无评测通道）。
 FINAL_FORMATS_REQUIRED: set[str] = {"T023"}
+#: ★ 逐档取值（★ 与生效集合同步维护；2026-10-13 起 = T023 单档小步）
+FINAL_FORMATS_BY_TIER: dict[str, list[str]] = {"T023": ["merged-hf"]}
 #: ★ 取值域（与 `lora_io.export_from_checkpoint` 对齐，⛔ 不得自造）
 FINAL_FORMATS_ALLOWED: set[str] = {"peft-adapter", "merged-hf"}
 
@@ -221,10 +223,8 @@ def final_formats_explicit(row):
 
 def final_formats_valid(vals):
     """★ 断言：取值必须 ⊆ `{peft-adapter, merged-hf}`（★ 与上游 ValueError 对齐，提前到生成期）。"""
-    if vals is None:
-        return True
-    if not isinstance(vals, list):
-        return True
+    if vals is None or not isinstance(vals, list) or not vals:
+        return False          # ★ 缺/空 由 final_formats_explicit 负责；这里只管"给了但非法"
     return any(str(v) not in FINAL_FORMATS_ALLOWED for v in vals)
 
 
@@ -385,6 +385,11 @@ def yaml_of(row, uni, model_root, data_root, lora_backends=None, teacher=None):
         _cards = int(_cards)
     except Exception:
         _cards = None
+    _ff = FINAL_FORMATS_BY_TIER.get(str(row.get("tier")))
+    if _ff:
+        L.append("export:\n")
+        L.append("  final_formats: [" + ", ".join(f'"{x}"' for x in _ff) + "]\n")
+
     if _cards:
         L.append("launch:\n")
         L.append(f"  cards: {_cards}\n")
@@ -527,6 +532,12 @@ def main():
     _live = [(r["tier"], r.get("live_evidence")) for r in rows if blocked_contradicted_by_live(r)]
     if _live:
         print(f"FAIL-CLOSED：以下档标 blocked 却存在**矛盾的活证据** ⇒ 拒绝产出：{_live}")
+        return 1
+
+    _ff_bad = [(r["tier"], r.get("final_formats")) for r in rows
+               if final_formats_explicit(r) or final_formats_valid(r.get("final_formats"))]
+    if _ff_bad:
+        print(f"FAIL-CLOSED：export.final_formats 缺失/为空或取值非法（生效集合 {sorted(FINAL_FORMATS_REQUIRED)}）⇒ 拒绝产出：{_ff_bad}")
         return 1
 
     _fam = [r["tier"] for r in rows if family_under_min_unblocked(r)]

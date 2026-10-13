@@ -3075,6 +3075,10 @@
    "throughput": "—",
    "peak_mem": "—",
    "run_path": "—",
+   "final_formats": [
+    "merged-hf"
+   ],
+   "final_formats_note": "★ 2026-10-13 指挥部批准的单档小步：显式设 merged-hf；★ 本次为重测（配置变更），旧记录按 (档号, json sha) 并存、⛔ 不覆盖",
    "elapsed": "—",
    "max_epochs": 2,
    "derived_steps": 100,
