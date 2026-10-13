@@ -442,7 +442,7 @@ def check_script_mount_sources(script_text: str, host_model_prefix: str = MODEL_
         if src.startswith("$"):
             var = src.lstrip("${").rstrip("}")
             # 脚本内该变量的赋值必须是宿主路径
-            m2 = _re.search(rf"^\s*(?:export\s+)?{_re.escape(var)}=(.+)$", script_text, _re.M)
+            m2 = _re.search(rf"(?:^|[;\s])(?:export\s+)?{_re.escape(var)}=([^;\n]+)", script_text, _re.M)
             if not m2:
                 problems.append(f"挂载源 {src} 是未定义变量（{dst}）⇒ fail-closed")
                 continue
