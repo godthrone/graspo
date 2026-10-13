@@ -459,8 +459,12 @@ def short_note(row, full):
     if st == S_UNAVAILABLE:
         parts.append("Δ<阈值，未过第 2 条。")
     _p5 = row.get("p5p6_readings")
-    if not _p5 or "待补" in str(_p5):
+    # "待补"判定：**整块未取数**才算（有 1..6 项即算已补；子项里的"待补"字样不改变整块状态）
+    _p5_done = bool(_p5) and any(str(k).startswith(tuple("123456")) for k in (_p5 or {}))
+    if not _p5_done:
         parts.append("P5/P6 待补。")
+    elif st == S_UNAVAILABLE:
+        parts.append("P5/P6 已补。")      # ★ 六项已填实（细则在 note_full / json）
     elif st == S_UNVERIFIED and row.get("voided_conclusion"):
         parts.append("5ep 作废参考。")
     return "".join(parts)[:100]
