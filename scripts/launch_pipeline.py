@@ -125,6 +125,36 @@ def check_mount_sources(sources: list[str]) -> list[str]:
     return problems
 
 
+#: 评测容器内可达的挂载点前缀（run-eval.sh 提供）—— §7 的"可达性"只认这些
+EVAL_CONTAINER_PREFIXES = ("/evalout/", "/runs/")
+
+
+def check_merged_artifact(host_merge_dir: str, eval_container_path: str) -> list[str]:
+    """§7 扩到**合并产物**：merged 目录本身要过形态谓词，且**评测配置里写的路径必须评测容器内可达**。
+
+    为什么单列：228 上 §7 的坑在"训练 checkpoint"与"合并产物"两个路径上**各踩过一次**
+    （T004/T005 修了前者，T024 的 `eval-t024-after.yaml` 里又出现 `checkpoint_path: /model`）。
+    规则：
+      · **宿主侧** `host_merge_dir` 必须存在 ∧ 过 `run_guards.detect_form_and_validate`（至少含权重）；
+      · **评测配置侧** `eval_container_path` 必须是**评测容器内**路径（`/evalout/...` 或 `/runs/...`），
+        ⛔ 不得是 vLLM 容器里的 `/model`，⛔ 也不得是宿主路径（评测容器看不到宿主路径）。
+    """
+    problems: list[str] = []
+    if not host_merge_dir or not eval_container_path:
+        return ["§7 失败：merged 宿主目录或评测容器内路径为空 ⇒ fail-closed"]
+    form, ok, msg = guards.detect_form_and_validate(host_merge_dir)
+    if not ok:
+        problems.append(f"§7 失败（merged 宿主侧）：{msg}")
+    if eval_container_path == "/model" or eval_container_path.startswith("/model/"):
+        problems.append(f"§7 失败：评测配置的 checkpoint_path={eval_container_path} 是 **vLLM 容器路径** ⇒ fail-closed")
+    elif not any(eval_container_path.startswith(pfx) for pfx in EVAL_CONTAINER_PREFIXES):
+        problems.append(
+            f"§7 失败：评测配置的 checkpoint_path={eval_container_path} 不在评测容器可达前缀内"
+            f"（{EVAL_CONTAINER_PREFIXES}）⇒ fail-closed"
+        )
+    return problems
+
+
 def build_json_reason(after_correct: int, n_total: int, base_correct: int, status: str) -> str:
     """落 json 的备注（≤100 字）：判定 + 读数，与结构化字段同源。"""
     after = after_correct / n_total * 100 if n_total else 0.0

@@ -135,3 +135,39 @@ def test_mount_source_rejects_missing_host_path(tmp_path: Path):
 def test_mount_sources_reports_each_problem():
     problems = lp.check_mount_sources(["/models/Qwen3.8-27B", "/evalout/merged-hf-t024"])
     assert len(problems) == 2, problems
+
+
+# ---------- §7 扩到"合并产物"（第 7 次路径域类问题的收口） ----------
+def _mk_merged(tmp_path: Path) -> Path:
+    d = tmp_path / "merged-hf-t024"
+    d.mkdir()
+    (d / "config.json").write_text("{}")
+    (d / "model-00001-of-00018.safetensors").write_text("x")
+    return d
+
+
+def test_merged_artifact_accepts_evalout_path(tmp_path: Path):
+    assert lp.check_merged_artifact(str(_mk_merged(tmp_path)), "/evalout/merged-hf-t024") == []
+
+
+def test_merged_artifact_accepts_runs_path(tmp_path: Path):
+    assert lp.check_merged_artifact(str(_mk_merged(tmp_path)), "/runs/T004/T004/v0-x/checkpoint-200") == []
+
+
+def test_merged_artifact_rejects_vllm_model_path(tmp_path: Path):
+    """★ 回归：T024 的 `eval-t024-after.yaml` 曾写 `checkpoint_path: /model` ⇒ after 报告 MISSING。"""
+    problems = lp.check_merged_artifact(str(_mk_merged(tmp_path)), "/model")
+    assert problems and "vLLM 容器路径" in problems[0], problems
+
+
+def test_merged_artifact_rejects_host_path(tmp_path: Path):
+    merged = _mk_merged(tmp_path)
+    problems = lp.check_merged_artifact(str(merged), str(merged))
+    assert problems and "不在评测容器可达前缀内" in problems[0], problems
+
+
+def test_merged_artifact_rejects_empty_host_dir(tmp_path: Path):
+    d = tmp_path / "merged-empty"
+    d.mkdir()
+    problems = lp.check_merged_artifact(str(d), "/evalout/x")
+    assert problems and "§7 失败（merged 宿主侧）" in problems[0], problems

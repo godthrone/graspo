@@ -42,6 +42,9 @@ def detect_form_and_validate(checkpoint_dir: str) -> tuple[str, bool, str]:
         return ("adapter", True, "adapter 形态：命中 adapter_config.json / adapter_model.safetensors")
     if any(os.path.exists(os.path.join(checkpoint_dir, m)) for m in FORM_MARKERS["full"]):
         return ("full", True, "全参/HF 形态：命中 config.json / model*.safetensors")
+    # 分片权重：model-00001-of-00018.safetensors（merged-hf 的真实形态）
+    if any(f.startswith("model-") and f.endswith(".safetensors") and "-of-" in f for f in os.listdir(checkpoint_dir)):
+        return ("full", True, "全参/HF 分片形态：命中 model-*-of-*.safetensors")
     if any(os.path.exists(os.path.join(checkpoint_dir, m)) for m in FORM_MARKERS["native_rank"]):
         return ("native_rank", True, "native 形态：命中 manifest.json")
     for pat in ("rank_",):
