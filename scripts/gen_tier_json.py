@@ -70,6 +70,8 @@ def build(args) -> collections.OrderedDict:
     d["throughput"] = args.throughput
     d["peak_mem"] = args.peak_mem
     d["run_path"] = args.run_path
+    if not (args.command or "").strip():
+        raise SystemExit("★ --command 为空 ⇒ fail-closed（矩阵侧必填 provenance.command）")
     d["provenance"] = {
         "produced_by": args.produced_by,
         "command": args.command,
@@ -109,6 +111,10 @@ def selfcheck(d: dict) -> None:
     paths = d["provenance"]["evidence_paths"]
     assert isinstance(paths, list) and paths and all(isinstance(p, str) and p for p in paths), \
         "evidence_paths 必须是非空字符串数组 ⇒ 否则会被回填校验器拦下"
+    # ②b provenance.command 非空（与 evidence_paths 同族；矩阵侧 fail-closed 实测拦下过 T008）
+    cmd = d["provenance"].get("command")
+    assert isinstance(cmd, str) and cmd.strip(), \
+        "provenance.command 为空 ⇒ 会被矩阵侧 fail-closed 拦下"
     # ③ 读数在 [0,1] 且样本数一致
     assert 0 <= d["after_acc"] <= 1 and 0 <= d["base_acc"] <= 1, "acc 必须在 [0,1]"
     assert d["n_total"] == d["step_count_reconciliation"]["steps_nominal"] * 0 + d["n_total"]

@@ -26,11 +26,12 @@ def test_fractions_negative_delta_keeps_sign():
 # ② evidence_paths 非空（否则回填校验器 fail-closed）
 def _minimal_doc(**over):
     d = {
+        "provenance_command_placeholder": None,
         "delta_pp": 1.0,
         "after_acc": 0.20,
         "base_acc": 0.19,
         "n_total": 702,
-        "provenance": {"evidence_paths": ["/data/x/eval.log"]},
+        "provenance": {"evidence_paths": ["/data/x/eval.log"], "command": "launcher … ::: graspo eval run"},
         "step_count_reconciliation": {"steps_nominal": 10},
     }
     d.update(over)
@@ -72,3 +73,10 @@ def test_summarise_reads_report_summary(tmp_path: Path):
     p = tmp_path / "eval_report.json"
     p.write_text(json.dumps({"summary": {"correct": 171, "total": 702, "accuracy_percent": 24.359}}))
     assert g.summarise(g.load_report(str(p))) == (171, 702, 24.359)
+
+
+def test_selfcheck_rejects_empty_provenance_command():
+    """★ 回归：T008 的 provenance.command 为空串 ⇒ 被矩阵侧 fail-closed 拦下。"""
+    for bad in ("", "   ", None):
+        with pytest.raises(AssertionError):
+            g.selfcheck(_minimal_doc(provenance={"evidence_paths": ["/data/x/eval.log"], "command": bad}))
