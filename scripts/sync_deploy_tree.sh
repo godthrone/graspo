@@ -12,7 +12,7 @@ set -uo pipefail
 
 TREE=""
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DRY=0
+CHECK=0
 REMOTE=""; RUSER=""; RHOST=""; RPORT=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -20,6 +20,7 @@ while [ $# -gt 0 ]; do
     --tree) TREE="$2"; shift 2 ;;
     --repo) REPO="$2"; shift 2 ;;
     --dry-run) DRY=1; shift ;;
+    --check) CHECK=1; shift ;;
     -h|--help)
       echo "用法: $0 --tree <部署树> [--repo <仓根>] [--dry-run]"
       echo "  幂等同步仓内 scripts/*.py 到部署树并逐件冒烟（sha256/import/--help）；任一失败即非零退出。"
@@ -43,6 +44,20 @@ set -- "$REPO"/scripts/*.py
 [ $# -gt 0 ] || { echo "★ 仓内无 scripts/*.py（--repo=$REPO 对吗？）" >&2; exit 1; }
 
 fail=0
+if [ "$CHECK" = "1" ]; then
+  echo "=== §11 --check：只比对不写（${REPO}/scripts vs ${TREE}/scripts）==="
+  diffn=0
+  for src in "$REPO"/scripts/*.py; do
+    base="$(basename "$src")"; dst="$TREE/scripts/$base"
+    a=$(sha256sum "$src" | awk '{print $1}')
+    if [ -n "${REMOTE:-}" ]; then b=$($SSH "sha256sum '$dst' 2>/dev/null" | awk '{print $1}'); else b=$(sha256sum "$dst" 2>/dev/null | awk '{print $1}'); fi
+    if [ "$a" = "$b" ]; then echo "  OK   $base"
+    else echo "  DIFF $base（仓 $a / 树 ${b:-缺失}）"; diffn=$((diffn+1)); fi
+  done
+  [ "$diffn" = "0" ] || { echo "=== §11 --check 失败：$diffn 件不一致（请跑不带 --check 的同步）==="; exit 1; }
+  echo "=== §11 --check 通过：部署树与仓逐字节一致 ==="; exit 0
+fi
+
 echo "=== 同步 ${REPO}/scripts/*.py → ${TREE}/scripts/ ==="
 for src in "$REPO"/scripts/*.py; do
   base="$(basename "$src")"
