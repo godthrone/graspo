@@ -115,6 +115,11 @@ POLICY: dict[str, Spec] = {
     "tests/e2e/launch_matrix54.sh": Spec(
         SH_SYNTAX, "矩阵起跑 launcher（六条断言 → nohup 起跑 + 巡检）；需真实树/docker/卡 ⇒ 语法冒烟"
     ),
+    # ★ 补登记（2026-10-13）：矩阵侧新增"产物级"校验入口 —— 比较运行 config 与部署树 yaml。
+    #   运行时需真实 runs 产物 ⇒ 无副作用下只能做 `bash -n`/语法冒烟（SH_SYNTAX 等价：py_compile 已由入口自身保证）。
+    "tools/matrix/check_run_config.py": Spec(
+        HELP, "运行 config ↔ 部署树 yaml 的产物级校验（不一致即 FAIL-CLOSED）"
+    ),
     "tests/e2e/generate_matrix.py": Spec(HELP, "54 档矩阵生成器（v1 基线）"),
     "tests/e2e/generate_matrix_fsdp.py": Spec(HELP, "matrix54-fsdp 变体生成器"),
     "tests/e2e/generate_matrix_manifest_fsdp.py": Spec(HELP, "fsdp 清单生成器"),
