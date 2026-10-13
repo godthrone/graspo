@@ -202,6 +202,35 @@ def render_vllm_base_mount(model_path: str, container_dst: str = "/model", host_
     return (f"-v {src}:{container_dst}:ro", f"base 挂载源 {src}（宿主，存在）⇒ {container_dst}:ro")
 
 
+def check_card_count(selected: list[str], required: int) -> list[str]:
+    """★ 卡数必须等于该档 manifest 的 `cards`（第 8 个"启动前置"类坑的收口）。
+
+    228 实测（2026-10-13 T009）：起跑脚本**写死了 `SEL=7`**（1 卡），而该档
+    `nproc_per_node=4` ⇒ torchrun 起 4 个 rank、rank 1/2/3 全失败 ⇒ `exitcode=1`。
+    护栏：起跑前**从 manifest 读 `cards`**，断言"选中卡数 == cards"，不匹配即 fail-closed。
+    ⛔ 禁止在起跑脚本里写死卡集。
+    """
+    if required <= 0:
+        return [f"manifest 的 cards={required} 非法 ⇒ fail-closed"]
+    if len(selected) != required:
+        return [f"卡数不匹配：该档 cards={required}，实选 {len(selected)} 张（{selected}）⇒ fail-closed"]
+    if len(set(selected)) != len(selected):
+        return [f"卡集有重复项：{selected} ⇒ fail-closed"]
+    return []
+
+
+def plan_cards(available: list[str], required: int) -> tuple[list[str] | None, str]:
+    """从**实测空闲**卡里为该档取 `required` 张；不足则返回 `(None, 原因)`（fail-closed）。
+
+    ⛔ 不写死卡集：卡集由"manifest 的 cards"＋"当前实测空闲"共同决定。
+    """
+    if required <= 0:
+        return (None, f"required={required} 非法 ⇒ fail-closed")
+    if len(available) < required:
+        return (None, f"需 {required} 张，实测仅 {len(available)} 张空闲（{available}）⇒ 顺延，不硬上")
+    return (available[:required], f"取自实测空闲：{available[:required]}（需 {required} 张）")
+
+
 def build_json_reason(after_correct: int, n_total: int, base_correct: int, status: str) -> str:
     """落 json 的备注（≤100 字）：判定 + 读数，与结构化字段同源。"""
     after = after_correct / n_total * 100 if n_total else 0.0

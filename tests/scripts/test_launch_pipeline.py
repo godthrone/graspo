@@ -223,3 +223,33 @@ def test_render_vllm_base_mount_refuses_bad_dst(tmp_path: Path):
     (host_root / "Qwen3.8-27B").mkdir(parents=True)
     frag, why = lp.render_vllm_base_mount("/models/Qwen3.8-27B", container_dst="model", host_root=str(host_root) + "/")
     assert frag is None and "目标路径非法" in why, (frag, why)
+
+
+# ---------- 卡数必须等于 manifest.cards（T009 事故：写死 1 卡而该档 nproc=4） ----------
+def test_card_count_accepts_matching_set():
+    assert lp.check_card_count(["3", "5", "6", "7"], 4) == []
+
+
+def test_card_count_rejects_too_few_cards():
+    """★ 回归：T009 给了 1 张卡但该档 cards=4 ⇒ 必须拒。"""
+    problems = lp.check_card_count(["7"], 4)
+    assert problems and "卡数不匹配" in problems[0], problems
+
+
+def test_card_count_rejects_duplicates():
+    assert lp.check_card_count(["7", "7"], 2)
+
+
+def test_card_count_rejects_bad_manifest_value():
+    assert lp.check_card_count([], 0)
+
+
+def test_plan_cards_takes_exactly_required():
+    cards, why = lp.plan_cards(["3", "5", "6", "7"], 2)
+    assert cards == ["3", "5"], (cards, why)
+
+
+def test_plan_cards_defers_when_not_enough():
+    """★ 卡不足 ⇒ 返回 None（顺延），⛔ 不硬上。"""
+    cards, why = lp.plan_cards(["7"], 4)
+    assert cards is None and "顺延" in why, (cards, why)
