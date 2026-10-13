@@ -342,6 +342,51 @@ def render_eval_script(*, tier: str, tree: str, eval_dir: str, checkpoint: str, 
     return (text, f"已生成 {tier} 评测脚本（base 挂载源={src}，§8/§10 断言内嵌，容器名带 -$TS）")
 
 
+#: 部署树里脚本运行所需的依赖根（228 实测：缺它会让 gpu_idle_assert 因 pydantic 导入失败而**非零退出**）
+HOSTDEPS_SUFFIX = ".hostdeps"
+
+
+def check_tooling_env(tree: str, pythonpath: str | None, require_hostdeps: bool = True) -> list[str]:
+    """★ 断言"跑选卡门/护栏时 PYTHONPATH 里必须有部署树的 `.hostdeps`"。
+
+    为什么单列：228 实测（2026-10-13）—— 我把 `PYTHONPATH` 只设成 `$TREE/scripts`，
+    `gpu_idle_assert.py` 因 **`ModuleNotFoundError: No module named 'pydantic'`** 对**每一张卡**
+    非零退出 ⇒ 选卡循环读出 **"0 张空闲"** ⇒ **工具自身的失败被误读成"资源不足"**，
+    这会让人以为卡不够而白白顺延。规则：**必须显式区分"工具坏了"与"卡真的不够"**。
+
+    返回问题列表（空 = 通过）。`require_hostdeps=False` 时只校验 PATH 非空。
+    """
+    problems: list[str] = []
+    if require_hostdeps:
+        want = tree.rstrip("/") + HOSTDEPS_SUFFIX
+        pp = pythonpath or ""
+        if want not in pp.split(os.pathsep):
+            problems.append(
+                f"工具环境不满足：PYTHONPATH 缺少 {want}（缺它会让 gpu_idle_assert 因 pydantic 导入失败"
+                f"而对每张卡非零退出 ⇒ 会被误读成『0 张空闲』）⇒ fail-closed；"
+                f"正确用法：PYTHONPATH={want}:{tree}/scripts"
+            )
+    if not (pythonpath or "").strip():
+        problems.append("PYTHONPATH 为空 ⇒ 无法保证护栏脚本可运行 ⇒ fail-closed")
+    return problems
+
+
+def require_usable_gate(gate_rc: int, gate_stdout: str) -> list[str]:
+    """★ 把"选卡门的返回码"与"卡的真实空闲情况"分开判读。
+
+    · rc==0 ⇒ 该卡可用；
+    · rc!=0 且输出里有 `ModuleNotFoundError`/`ImportError`/`Traceback` ⇒ **工具坏了**（⛔ 不能当成
+      "卡被占用"）；调用方应**立即 fail-closed 并修工具**，而不是顺延等卡。
+    """
+    if gate_rc == 0:
+        return []
+    text = gate_stdout or ""
+    for marker in ("ModuleNotFoundError", "ImportError", "Traceback (most recent call last)"):
+        if marker in text:
+            return [f"选卡门**工具自身失败**（{marker}）⇒ ⛔ 不得解读为『卡被占用/不够』；先修工具环境（见 check_tooling_env）"]
+    return []
+
+
 def build_json_reason(after_correct: int, n_total: int, base_correct: int, status: str) -> str:
     """落 json 的备注（≤100 字）：判定 + 读数，与结构化字段同源。"""
     after = after_correct / n_total * 100 if n_total else 0.0

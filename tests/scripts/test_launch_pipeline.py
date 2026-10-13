@@ -332,3 +332,33 @@ def test_render_eval_script_refuses_empty_param(tmp_path: Path):
     kw["checkpoint"] = ""
     text, why = lp.render_eval_script(**kw)
     assert text is None and "为空" in why, (text, why)
+
+
+# ---------- 工具环境：hostdeps 必须在 PYTHONPATH（"假 0 张空闲"事故） ----------
+def test_tooling_env_accepts_hostdeps_on_path():
+    tree = "/data/tree"
+    pp = f"/data/tree.hostdeps:{tree}/scripts"
+    assert lp.check_tooling_env(tree, pp) == []
+
+
+def test_tooling_env_rejects_missing_hostdeps():
+    """★ 回归：只给 $TREE/scripts ⇒ gpu_idle_assert 因 pydantic 导入失败 ⇒ 假'0 张空闲'。"""
+    problems = lp.check_tooling_env("/data/tree", "/data/tree/scripts")
+    assert problems and "缺少 /data/tree.hostdeps" in problems[0], problems
+    assert "0 张空闲" in problems[0]  # 给出可操作原因
+
+
+def test_tooling_env_rejects_empty_pythonpath():
+    assert lp.check_tooling_env("/data/tree", "")
+
+
+def test_usable_gate_flags_broken_tool_not_busy_card():
+    """★ 工具坏了（ModuleNotFoundError）⛔ 不得当成"卡被占用"。"""
+    problems = lp.require_usable_gate(1, "ModuleNotFoundError: No module named 'pydantic'")
+    assert problems and "工具自身失败" in problems[0], problems
+
+
+def test_usable_gate_accepts_ok_and_plain_refusal():
+    assert lp.require_usable_gate(0, "[gpu-idle] OK") == []
+    # 普通拒绝（卡确实忙）不算工具故障
+    assert lp.require_usable_gate(1, "目标卡 GPU0 起跑前不可用：利用率 71.0% != 0") == []
