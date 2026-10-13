@@ -1560,23 +1560,63 @@
    "expected_optimizer_steps_reachable": "100",
    "applicable": true,
    "status": "已验证可用",
-   "runs": "1/1 真效果训练（ms-swift SFT LoRA 单卡）：判据① 通过（exit_code=0、200/200 步、ckpt_retention=ok、torch_probe all_ok/hf_single/verified、`not found in the base model` 错误 0）；★ 判据② 达标（训练类冻结阈值 Δ ≥ +5.0 pp ∧ after > base）：Δ=+8.547 pp、after 25.4986% > base 16.9516% ⇒ 两判据均过。",
-   "effect": "after acc=25.4986%（179/702）；base acc=16.9516%（119/702）；★ Δ=+8.547 pp（≥ +5.0 pp 冻结阈值）；剔图像重叠：after 28.7054% vs base 17.4484%。口径：同数据集 sha256 c202b1e1…、同 criteria elam-v3-allright-1、temperature 0、有效样本 702/702、0 error ⇒ 可比性成立。★ 判定：after > base 且 Δ ≥ +5.0 pp ⇒ 判据② 达标。",
-   "inference": "✅ 合并：ms-swift PEFT adapter（runsv0-*/checkpoint-200，含 adapter_config.json）→ `graspo eval export` 合并为 merged-hf（complete: true）→ vLLM v0.22.0（--enable-auto-tool-choice --tool-call-parser qwen3_xml、max-model-len 8192、gpu-mem-util 0.85、GPU7）→ 固定评测集 702/702 跑完、0 error。",
-   "algo_checks": "SFT 档（ms-swift 后端）：跑次侧可观测项通过（train_loss 0.07469、token_acc 0.9669–0.9801、torch_probe verified）。★ 本档另修复两处链路缺陷（详见 provenance）。",
-   "throughput": "不适用（SFT）",
-   "peak_mem": "trainer 自报 `memory(GiB)=35.16`（= 原写 35.2 的来源）；**GPU 监控峰值 36.12 GiB（36989 MiB，mean 36084.4 MiB / 420 采样）**。★ 口径说明：两者差 ~1 GiB 属**口径差**（trainer allocator 只含本进程张量 vs `nvidia-smi` 含该卡全部占用），**非矛盾**。",
+   "runs": "1/1 真效果训练（ms-swift SFT LoRA 单卡，2 epoch / 200 步）：判据① 通过（exit_code=0、**200/200 步**、ckpt_retention ok、torch_probe all_ok=True（hf_single/verified/716 张量）、Traceback 0）；★★ 判据② **通过**：after 25.0712% > base 16.3818% 且 **Δ = +8.6894 pp ≥ +5.0 pp**（冻结阈值）⇒ 判「**已验证可用**」。",
+   "effect": "after acc=**25.0712%**（176/702）；base acc=**16.3818%**（115/702）；★ **Δ = +8.6894 pp**（≥ +5.0 pp 冻结阈值 ⇒ **过判据②**）；★ 目标值 +10.0 pp 仅展示、不作通过线。口径：数据集 /homedata/test.jsonl、sha256 c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a（702 条）、criteria elam-v3-allright-1、temperature 0.0、702/702 有效、0 error；base/after 各自独立 output_dir、fail-closed 断言通过、stdout 双份留证；`graspo eval delta` comparability_notes 校验通过。★ 历史参考：本档早前一次读数（**Δ=+8.547 pp**）为**同为 2ep 口径的重复测量**，**以本次为准**、并存保留（不混）。",
+   "inference": "✅ ms-swift PEFT adapter（runscheckpoint-200）→ `graspo eval export --eval-config`（peft-adapter，complete:true）→ merged-hf → vLLM v0.22.0（GPU6 :18898，--enable-auto-tool-choice --tool-call-parser qwen3_xml、max-model-len 8192、gpu-memory-utilization 0.85）→ 702/702、0 error；base/after 独立具名容器、用毕具名停。",
+   "algo_checks": "exit_code=0、ckpt_retention.state=ok、torch_probe all_ok=True（hf_single/verified/716 张量）、checkpoint-200 在位、Traceback 0。",
+   "throughput": "不适用（ms-swift **SFT** 档不跑 rollout/生成）",
+   "peak_mem": "见 runsgpu_memory_summary.json（单卡峰值）＋ trainer 自报 `memory(GiB)`；★ 两类口径分开（trainer allocator vs nvidia-smi 卡上总占用）。",
    "run_path": "RUN-T013",
    "measurement_pending": false,
-   "note": "判据① ∧ 判据② 均达（阈值已冻结）⇒ 已验证可用。 ★ LoRA 目标按后端：ms-swift 实测 358 实例（language 248 + visual 110）｜native **同为 358 实例**（122 为签名/模式条目数）⇒ ★ 两后端**实例数相同但命中集合不同（不等价）**。",
-   "tree_fingerprint": "6222dcd99daceda6342304e7579229fb2d3e8a4478dec8e38f69e26fc899fc6a",
-   "tree_fingerprint_role": "起跑断言值",
+   "note": "判据① ∧ 判据② 均达（阈值已冻结）⇒ 已验证可用。 ★ 异常登记：★ **重复测量并存**：本档早前一次读数 Δ=+8.547 pp（同为 2ep 口径）作为历史参考保留，**以本次 Δ=+8.6894 pp 为准**；两者不混。 ★ 异常登记：★ 树指纹起跑断言 ≠ 现测（post-launch 改 manifest）⇒ 回填取起跑断言值。 ★ 异常登记：★ 本档为新 runner（B11）+ 修复后逐卡 launcher 下起跑。 ★ LoRA 目标按后端：ms-swift 实测 358 实例（language 248 + visual 110）｜native **同为 358 实例**（122 为签名/模式条目数）⇒ ★ 两后端**实例数相同但命中集合不同（不等价）**。 ★ 锚点：树 fbd86593… + image_base_official sha256:a… + image_run_wrapper sha256:7…",
+   "tree_fingerprint": "fbd86593babefe0bc766650a52fb6f0af9d97a83049734548ba72975fd41fbef",
+   "tree_fingerprint_role": "本档【起跑时 launcher 实测并断言通过】的树指纹（status-T013/launch.log assert 0）",
    "eval_dataset": {
     "path": "/homedata/test.jsonl",
     "sha256": "c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a",
     "samples": 702
    },
-   "elapsed": "总时长 832.7 s",
+   "anomalies": [
+    "★ **重复测量并存**：本档早前一次读数 Δ=+8.547 pp（同为 2ep 口径）作为历史参考保留，**以本次 Δ=+8.6894 pp 为准**；两者不混。",
+    "★ 树指纹起跑断言 ≠ 现测（post-launch 改 manifest）⇒ 回填取起跑断言值。",
+    "★ 本档为新 runner（B11）+ 修复后逐卡 launcher 下起跑。"
+   ],
+   "step_count_reconciliation": {
+    "steps_nominal": 200,
+    "steps_actual": 200,
+    "derived_formula": "ms-swift 配置式（不含 nproc）：max_epochs(2) × subset(100) = 200",
+    "reconciliation_formula": "★ 对账式（含 nproc=1）：`steps = epochs × subset / nproc = 2×100/1 = **200**` = steps_actual ✓",
+    "actual_evidence": {
+     "progress_bar": "200/200",
+     "evidence_paths": [
+      "runs/T013/stdout.log"
+     ]
+    },
+    "trainable_completions": {
+     "applicable": false,
+     "value": "不适用（SFT 档）",
+     "reason": "ms-swift SFT ⇒ 无 native replay buffer 该量。",
+     "config_formula_check": "2×100/1 = 200 = 实际 200 ✓"
+    },
+    "verdict": "对账式 200 = 实际 200 ✓ ⇒ 判据①「完整跑完」成立；判据② 亦通过（Δ=+8.6894 pp）。"
+   },
+   "note_extra_steps_formula_issue": "★ 登记待修：'推导步数公式'对 native GRASPO 档不成立（推导 None vs 实际 None）—— 本轮不顺手改公式，后续单独修。",
+   "code_identity": {
+    "tree_fingerprint": "fbd86593babefe0bc766650a52fb6f0af9d97a83049734548ba72975fd41fbef",
+    "tree_fingerprint_role": "本档【起跑时 launcher 实测并断言通过】的树指纹（status-T013/launch.log assert 0）",
+    "tree_fingerprint_drift": "★ 该树其后被其他档起跑改动 manifest（post-launch）⇒ 现测不同；回填取起跑断言值。",
+    "generated_yaml": "samplesT013.yaml",
+    "generated_yaml_sha256": "bbcc2062cb1e3fb4166e41c957351de49417e51fe19a5ba0b9d376a6bb0c91e1",
+    "image_base_official": {
+     "tag": "graspo:v0.28.11-cu130fix-v2-msgspec-20261012",
+     "digest": "sha256:a75bcc78382fa358b73bf6abd4411a46307225ad8a5dd752b121cc6fb02ac253"
+    },
+    "image_run_wrapper": {
+     "tag": "graspo:v0.28.11-cu130fix-v2-msgspec-20261012-run",
+     "digest": "sha256:7afdf062b044482b6808310d398794647be5cede7aff6a79a690e0fa088a3b77"
+    }
+   },
+   "elapsed": "—",
    "max_epochs": 2,
    "derived_steps": 200,
    "per_epoch_steps": 100,

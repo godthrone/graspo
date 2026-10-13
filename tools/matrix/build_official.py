@@ -520,7 +520,7 @@ def main():
         raw = r.get("status")
         if r.get("applicable") is False:
             state = S_EXCLUDED
-        elif raw == "通过":
+        elif isinstance(raw, str) and raw.startswith("通过"):
             state = S_AVAILABLE
         elif isinstance(raw, str) and raw.startswith("失败"):
             state = S_UNAVAILABLE

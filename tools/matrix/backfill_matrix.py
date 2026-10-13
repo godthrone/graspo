@@ -562,7 +562,7 @@ def main():
                                       ("①「能完整跑完」已通过；" if passed1 else "") +
                                       "②「平台方数据集效果达标」读数已录，★ 阈值 δ 待定 ⇒ 状态暂保持「尚未验证」。")
         else:
-            ok = _s(doc.get("status")) == "通过"
+            ok = _s(doc.get("status")).startswith("通过")   # ★ 支持「通过（已验证可用）」等带括注形态
             new_rows[tier]["status"] = "通过" if ok else "失败"
             new_rows[tier]["measurement_pending"] = False
             new_rows[tier].pop("conclusion_annotation", None)   # 新的有效跑次取代旧的「作废参考记录」
@@ -616,6 +616,14 @@ def main():
                 note += " ★ 评测集锚订正（跑次侧当场实测）：" + str(corr)
             if ed:
                 new_rows[tier]["eval_dataset"] = ed
+            # ★ 重复测量：早前读数**保留为参考**（⛔ 不覆盖历史、不混为一谈）
+            _prev_eff, _prev_sha = prev.get("effect"), prev.get("source_sha256")
+            if (_prev_eff and _prev_sha and _prev_sha != src_sha
+                    and str(_prev_eff) != str(doc.get("effect"))):
+                note += " ★ 早前读数（参考，同口径重复测量，来源 sha " + str(_prev_sha)[:12] + "…）：" + str(_prev_eff)
+            # ★ anomalies 如实并入备注
+            for _a in (doc.get("anomalies") or []) if isinstance(doc.get("anomalies"), list) else ([doc["anomalies"]] if doc.get("anomalies") else []):
+                note += " ★ 异常登记：" + str(_a)
             new_rows[tier]["note"] = note
         new_rows[tier]["run_provenance"] = {
             "produced_by": doc["provenance"]["produced_by"],
