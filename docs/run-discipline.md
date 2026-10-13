@@ -181,3 +181,16 @@
   而是固化为 `scripts/launch_pipeline.py` ＋ `tests/scripts/test_launch_pipeline.py`。
   该链在 228 上连踩 5 次坑（§8 断言位置 → §7 谓词过窄 → 护栏件未同步 → 生成顺序错 →
   生成链变量为空），根因都是"启动脚本每轮现写"。
+
+## 12. 起跑卡集必须**从 manifest 读 `cards`**，⛔ 禁止写死
+
+- 规则：起跑前**从该档 manifest 读 `cards`**，据此在**实测空闲**卡里取同样多的卡；
+  并**断言 `len(卡集) == cards`**（无重复、`cards > 0`）。不匹配即 **fail-closed**；
+  实测空闲不足时**顺延**（⛔ 不硬上）。
+- 为什么：228 实测（2026-10-13 T009）—— 起跑脚本**写死 `SEL=7`（1 卡）**，而该档
+  `nproc_per_node=4` ⇒ torchrun 起 4 个 rank，`rank: 3 (local_rank: 3)` **`exitcode: 1`**，
+  起跑即失败；而 launcher 的四条前置断言**全部通过**（树指纹/逐卡复测/镜像/dry-run），
+  dry-run 行 `[dry-run] T009 gpus=7 nproc=4` 已经把矛盾写在脸上。
+- 这是"没按本档自身实体取值"族错误的又一例（同族：基座取模板默认、`$MP` 当宿主机挂载源、
+  `checkpoint_path` 写成 vLLM 容器路径）⇒ 落地件：`launch_pipeline.check_card_count()` /
+  `plan_cards()`（含回归用例）。
