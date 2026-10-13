@@ -34,7 +34,28 @@ def summarise(report: dict) -> tuple[int, int, float]:
     return int(s["correct"]), int(total), float(s["accuracy_percent"])
 
 
+#: ★ `params.mode` 是**结构化字段**（训练器/适配器类型），⛔ 不得填叙述长文本。
+#: 2026-10-13 事故：T022 首版把"native final/ ⇒ 转 PEFT adapter ⇒ merge…"塞进 mode，
+#: 被矩阵侧判"语义不一致"退回。教训固化为此断言。
+MODE_ALLOWED = {"LoRA", "full", "CPT", "SFT"}
+
+#: ★ `params.parallel` 必须形如 `TP=.. PP=.. DP=..`（与档位表逐字一致）。
+PARALLEL_RE = re.compile(r"^TP=\d+ PP=\d+ DP=\d+")
+
+
+def assert_structured_params(args) -> None:
+    """★ §防呆：把 `mode`/`parallel` 的语义钉死，避免再填叙述长文本。"""
+    if args.mode not in MODE_ALLOWED:
+        raise SystemExit(
+            f"★ params.mode 必须是结构化值之一 {sorted(MODE_ALLOWED)}，当前 = {args.mode!r}"
+            "（叙述性长文本请写进 --inference）"
+        )
+    if args.parallel and not PARALLEL_RE.match(args.parallel):
+        raise SystemExit(f"★ params.parallel 必须形如 'TP=.. PP=.. DP=..'，当前 = {args.parallel!r}")
+
+
 def build(args) -> collections.OrderedDict:
+    assert_structured_params(args)
     after = load_report(os.path.join(args.eval_dir, ".local/reports/after/eval_report.json"))
     base = load_report(os.path.join(args.eval_dir, ".local/reports/base/eval_report.json"))
     ac, at, ap = summarise(after)
