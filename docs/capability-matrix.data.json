@@ -1292,7 +1292,7 @@
    "throughput": "不适用（SFT 无 rollout/生成）",
    "peak_mem": "trainer allocator 自报 `max_allocated=22.99 GB`；GPU 监控峰值 **24.66 GiB（25247 MiB，mean 24717.4 MiB / 442 采样）**。★ 订正说明：原写 `22.4` 与两者都不符、**无实测来源**，已订正（两口径含义不同：trainer 只含本进程张量，监控含该卡全部占用）。",
    "run_path": "RUN-T010",
-   "note": "判定：已验证可用。after 29.9145%/base 16.5242%/Δ=13.3903 pp。",
+   "note": "判定：已验证可用。after 29.9145%/base 16.5242%/Δ=+13.3903 pp。",
    "measurement_pending": false,
    "tree_fingerprint": "e57a57010dd913c8a638e2e62c88919b8b570df9881860715b1b07ad71cacb1a",
    "tree_fingerprint_role": "起跑断言值",
@@ -1399,7 +1399,7 @@
    "peak_mem": "trainer allocator 自报 `max_allocated=22.99 GB`；GPU 监控峰值 **26.11 GiB（26741 MiB，双卡序号 0/1 同值，mean 25305 MiB / 239 采样）**。★ 订正说明：原写 `26.2` 近似监控值但未标口径，已按实测写明两口径（含义不同：trainer 只含本进程张量，监控含该卡全部占用）。",
    "run_path": "RUN-T011",
    "measurement_pending": false,
-   "note": "判定：已验证可用。",
+   "note": "判定：已验证可用。after 22.6496%/base 16.6667%/Δ=+5.98 pp。",
    "tree_fingerprint": "db209997d1d0473b7a1e557b3cdedc55f15640990db3f8b93c80ef0cd7fd497c",
    "tree_fingerprint_role": "起跑断言值",
    "eval_dataset": {
@@ -1538,7 +1538,7 @@
     "sha256": "c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a",
     "samples": 702
    },
-   "note": "判定：已验证不可用。after 16.6667%/base 16.3818%/Δ=0.2849 pp。Δ<阈值，未过第 2 条。",
+   "note": "判定：已验证不可用。after 16.6667%/base 16.3818%/Δ=+0.2849 pp。Δ<阈值，未过第 2 条。",
    "anomalies": [
     "★ **LoRA 目标件数口径订正（重要，影响矩阵对账）**：`lora_target_signature.resolved = 122` 是**签名/模式条目数**，而 checkpoint 内**实际挂 LoRA 的模块实例是 358 个（language 248 + visual 110）**——与 ms-swift 侧 T031 的 358 **数量相同**。两后端仍然**不等价**，但依据是**命中的具体模块名集合不同**（native `token_mixer.*` vs ms-swift `linear_attn.*`/`full_attn.*`）+ 参数量差 196608。⇒ ⛔ 此前 T013.json / T028.json 里「native 122 件 vs ms-swift 358 件」的写法应订正为「实例数同为 358，但模块集合不同 ⇒ 不等价」。证据：evidence/13-lora-target-count.md（torch.load 与 safetensors header 双路实测）。",
     "★ **效率观察（非判据）**：after 为退化策略——702 条全部预测 `lift_arm/抬高手臂`（命中 117/234 lift_arm GT，extend/rotate 均 0），准确率与 base（rotate 主导）同量级 ⇒ 2 epoch / 100 条子集的 native SFT 未学到可泛化策略；Δ=+0.2849 pp 属噪声量级。",
@@ -1642,7 +1642,7 @@
    "peak_mem": "见 runsgpu_memory_summary.json（单卡峰值）＋ trainer 自报 `memory(GiB)`；★ 两类口径分开（trainer allocator vs nvidia-smi 卡上总占用）。",
    "run_path": "RUN-T013",
    "measurement_pending": false,
-   "note": "判定：已验证可用。after 25.0712%/base 16.3818%/Δ=8.6894 pp。",
+   "note": "判定：已验证可用。after 25.0712%/base 16.3818%/Δ=+8.6894 pp。",
    "tree_fingerprint": "fbd86593babefe0bc766650a52fb6f0af9d97a83049734548ba72975fd41fbef",
    "tree_fingerprint_role": "本档【起跑时 launcher 实测并断言通过】的树指纹（status-T013/launch.log assert 0）",
    "eval_dataset": {
@@ -1794,7 +1794,7 @@
     "sha256": "c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a",
     "samples": 702
    },
-   "note": "判定：已验证不可用。after 19.8006%/base 16.6667%/Δ=3.1339 pp。Δ<阈值，未过第 2 条。",
+   "note": "判定：已验证不可用。after 19.8006%/base 16.6667%/Δ=+3.1339 pp。Δ<阈值，未过第 2 条。",
    "code_identity": {
     "tree_fingerprint": "212121949f1b5837c28d2e9012dbc57a23eedeafc8639f39cc9a7b6ed766bbcd",
     "tree_fingerprint_role": "本档【起跑时 launcher 实测并断言通过】的树指纹（status-T014/launch.log assert 0，2026-10-12T17:52:13Z）",
@@ -1940,7 +1940,7 @@
     "sha256": "c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a",
     "samples": 702
    },
-   "note": "判定：已验证不可用。after 17.2365%/base 16.5242%/Δ=0.7123 pp。Δ<阈值，未过第 2 条。",
+   "note": "判定：已验证不可用。after 17.2365%/base 16.5242%/Δ=+0.7123 pp。Δ<阈值，未过第 2 条。",
    "throughput_detail": "★ 生成式 tok/s 不适用（注明原因）：ms-swift **SFT** 档不跑 rollout/生成 ⇒ 不编造。可核数：墙钟见 runs/T015/stdout.log 的 `train_runtime`；50 步。",
    "elapsed": "—",
    "max_epochs": 2,
@@ -3128,7 +3128,7 @@
    "tree_fingerprint_role": "本档【起跑时 launcher 实测并断言通过】的树指纹（status-T031/launch.log assert 0）",
    "tree_fingerprint_remeasured": "63808a3b161033797fcd68fc403b77aa0144fe038ff38cb67cf38bef74e67d21",
    "tree_fingerprint_drift": "★ 当场重算（2026-10-12T13:11Z，launcher 同款公式）得 63808a3b…，与起跑断言值 66387a4c… 不同；差异唯一来源 = tests/e2e/matrix54_manifest_source.json（mtime 2026-10-12 12:37:54，sha256 639445f30ac2dfcc0d65953900775d6f220f7f6b63930f9cd22d92669f2a7cf6）——该改动发生在本档训练【结束之后】（训练结束 12:35:03），且 samplesT031.yaml 未被重新生成（mtime 仍 08:59）⇒ 对本档训练语义无影响，属跑次后共享树漂移；评测只用 eval config + merged-hf，不受影响。",
-   "note": "判定：已验证不可用。after 16.5242%/base 16.8091%/Δ=0.7122 pp。Δ<阈值，未过第 2 条。",
+   "note": "判定：已验证不可用。after 16.5242%/base 16.8091%/Δ=−0.2849 pp。Δ<阈值，未过第 2 条。",
    "eval_dataset": {
     "path": "/homedata/test.jsonl",
     "sha256": "c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a",
@@ -3273,7 +3273,7 @@
     "sha256": "c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a",
     "samples": 702
    },
-   "note": "判定：已验证不可用。after 16.8091%/base 16.5242%/Δ=0.2849 pp。Δ<阈值，未过第 2 条。",
+   "note": "判定：已验证不可用。after 16.8091%/base 16.5242%/Δ=+0.2849 pp。Δ<阈值，未过第 2 条。",
    "p5p6_readings": {
     "source": ".localevidence/09-P5P6-readings.md（六项逐条实测）",
     "1_group_integrity": "groups_seen 恒 1.0/记录（rank 本地）；恒等式 trainable+skipped+unparseable==seen 在全部 129 条窗口记录上成立 ✓；Σseen=129.0、Σtrainable=108.2、Σskipped=20.8、Σunparseable=0.0",
@@ -3424,7 +3424,7 @@
     "sha256": "c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a",
     "samples": 702
    },
-   "note": "判定：已验证不可用。after 16.5242%/base 16.3818%/Δ=0.1424 pp。Δ<阈值，未过第 2 条。",
+   "note": "判定：已验证不可用。after 16.5242%/base 16.3818%/Δ=+0.1424 pp。Δ<阈值，未过第 2 条。",
    "p5p6_readings": {
     "source": ".localevidence/09-P5P6-readings.md（六项逐条实测）",
     "1_group_integrity": "groups_seen 恒 1.0/窗口记录（rank 本地）；★ 恒等式 trainable+skipped+unparseable==seen 在**全部 65 条**窗口记录上成立 ✓；Σseen=65.0、Σtrainable=49.0、Σskipped=16.0、Σunparseable=0.0",

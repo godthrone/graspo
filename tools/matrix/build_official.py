@@ -445,10 +445,10 @@ def short_note(row, full):
     """
     st = str(row.get("status") or "—")
     parts = [f"判定：{st}。"]
-    eff = str(row.get("effect") or "")
-    a = re.search(r"after[^0-9]*([0-9.]+)%", eff)
-    b = re.search(r"base[^0-9]*([0-9.]+)%", eff)
-    d = re.search(r"Δ\s*=?\s*\+?(-?[0-9.]+)\s*pp", eff)
+    eff = str(row.get("effect") or "").replace("*", "")     # 去 markdown 强调符
+    a = re.search(r"after[^0-9]{0,12}([0-9]+\.[0-9]+)\s*%", eff)
+    b = re.search(r"base[^0-9]{0,12}([0-9]+\.[0-9]+)\s*%", eff)
+    d = re.search("Δ[^0-9+\\-\u2212]{0,6}([+\\-\u2212]?[0-9]+\\.[0-9]+)\\s*pp", eff)
     if a and b and d:
         parts.append(f"after {a.group(1)}%/base {b.group(1)}%/Δ={d.group(1)} pp。")
     if st == S_UNAVAILABLE:
