@@ -175,6 +175,7 @@ POLICY: dict[str, Spec] = {
 
 #: 具名排除（附理由；自动发现到的、落在此表的路径不参与冒烟）。
 EXCLUSIONS: dict[str, str] = {
+    "scripts/gen_eval.py": "会话级评测脚本生成器：需活的 tier 与空闲卡才能渲染/执行，不适合常设冒烟",
     "scripts/launch_pipeline.py": "纯模块（无 CLI/无 __main__ 入口），被单测 import；启动链的判定函数由 launcher/评测脚本调用",
     "scripts/errors.py": "纯模块（无 __main__/无 CLI），被单测 import，不是启动脚本",
     "tools/gate_common.py": "门禁库（无 __main__），由 6 个 gate 入口间接覆盖",

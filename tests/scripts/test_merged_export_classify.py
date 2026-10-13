@@ -6,6 +6,9 @@
 """
 import pytest
 
+# ★ 本文件的转换类用例需要 torch（本地环境通常无 torch）⇒ 跳过而非红；镜像内会自动真跑。
+torch = pytest.importorskip("torch", reason="native rank 转换用例需 torch（请在镜像内跑）")
+
 from graspo.eval.merged_export import (
     CheckpointKind,
     ExportError,
