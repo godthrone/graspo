@@ -101,3 +101,38 @@ def test_mamba_rejects_default_over_blocks():
     """★ 关键回归：缺省 1024 > 232 blocks（T024 实测事故）。"""
     ok, msg = g.check_mamba(1024, 232)
     assert ok is False and "Engine core initialization failed" in msg, msg
+
+
+# ---------- §17 结构性兜底：我方占卡台账（含 loading 态） ----------
+import json as _json
+import sys
+from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(_ROOT / "scripts"))
+import run_guards as rg  # noqa: E402
+
+
+def _inspect(name, status, gpus):
+    return {"Name": "/" + name, "State": {"Status": status},
+            "HostConfig": {"DeviceRequests": [{"DeviceIDs": [gpus]}] if gpus else []}}
+
+
+def test_busy_cards_covers_running_and_loading():
+    """★ 回归（T002/§17）：loading 中的容器同样禁用其卡（用户可传 names 过滤我方）。"""
+    data = _json.dumps([_inspect("t044-train", "running", "6,7"),
+                        _inspect("t002-vllm-after", "created", "6")])
+    busy, notes = rg.busy_cards_from_docker(names=["t044-train", "t002-vllm-after"], docker_json=data)
+    assert {"6", "7"} <= busy, (busy, notes)
+    assert any("created" in n for n in notes), notes
+
+
+def test_busy_cards_ignores_containers_without_gpus():
+    data = _json.dumps([_inspect("neighbour", "running", None)])
+    busy, _ = rg.busy_cards_from_docker(names=["neighbour"], docker_json=data)
+    assert busy == set()
+
+
+def test_include_reserved_cards_hard_excludes():
+    """★ 择卡硬排除：loading 态的卡不得被选中。"""
+    assert rg.include_reserved_cards(["1", "3", "6", "7"], {"6", "7"}) == ["1", "3"]

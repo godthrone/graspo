@@ -267,3 +267,13 @@
   `ValueError: Free memory on device cuda:0 (14.48/79.25 GiB) on startup is less than desired GPU
    memory utilization (0.85, 67.36 GiB)` ⇒ `RuntimeError: Engine core initialization failed`。
 - 判读提示：**"卡上没显存"≠"卡没人用"** —— 容器刚起、模型还在加载时就是这个形态。
+
+### 17.1 占卡台账：从"人记"改成"代码强制"（2026-10-13 补）
+
+- 落地件：`run_guards.busy_cards_from_docker()`（解析 `docker inspect` 的 `HostConfig.DeviceRequests`
+  ⇒ **我方容器占用的卡**，★ **同时覆盖 `running` 与 `created`/`restarting` 等"已预约未加载"态**）
+  ＋ `include_reserved_cards()`（择卡**硬排除**，⛔ 不是建议）。
+- 规则：★ **择卡前必须查询占卡台账（含 loading 态）**，并把结果作为硬排除集。
+- 为什么：T002 评测起在 **GPU6**，而 **T044 正占 GPU6/7** ⇒ vLLM 只剩 `3.81/79.25 GiB` ⇒
+  `ValueError: Free memory ... less than desired GPU memory utilization (0.85, 67.36 GiB)`。
+  ★ 根因 = "哪些卡被我方占着"**靠人记/人看** ⇒ 当天已复发多次 ⇒ 故升级为代码强制。

@@ -38,6 +38,42 @@ FORM_MARKERS: dict[str, tuple[str, ...]] = {
 }
 
 
+def busy_cards_from_docker(names: list[str] | None = None, docker_json: str | None = None) -> tuple[set[str], list[str]]:
+    """★ §17 结构性兜底：从 `docker inspect` 的 `DeviceRequests` 解析**我方容器占用的卡**。
+
+    ★ 必须覆盖两类：ⓐ **已占**（running）ⓑ **已预约未加载**（created/restarting/刚起、vLLM 未就绪）
+    —— 后者正是"加载期卡看似空闲"的坑（T002 评测起在 GPU6，而 T044 占着 GPU6/7 ⇒ 只剩 3.81 GiB）。
+
+    入参 `docker_json` 为 `docker inspect` 输出的 JSON 数组（便于单测）；返回 (禁用卡集, 说明列表)。
+    """
+    import json as _json
+    busy: set[str] = set()
+    notes: list[str] = []
+    try:
+        items = _json.loads(docker_json) if docker_json else []
+    except Exception as exc:  # pragma: no cover - 解析失败必须显式
+        return (set(), [f"解析 docker inspect 失败：{exc}"])
+    for it in items:
+        name = (it.get("Name") or "").lstrip("/")
+        if names and name not in names:
+            continue
+        state = ((it.get("State") or {}).get("Status") or "").lower()
+        reqs = ((it.get("HostConfig") or {}).get("DeviceRequests")) or []
+        gids: list[str] = []
+        for r in reqs:
+            for d in (r.get("DeviceIDs") or []):
+                gids.extend(str(d).split(","))
+        if gids:
+            busy.update(g.strip() for g in gids if g.strip() != "")
+            notes.append(f"{name}[{state}] ⇒ GPU {','.join(gids)}")
+    return (busy, notes)
+
+
+def include_reserved_cards(available: list[str], busy_cards: set[str]) -> list[str]:
+    """★ 择卡硬排除：把"我方已占/已预约（含 loading 态）"的卡从可用集里剔除（⛔ 不是建议，是硬排除）。"""
+    return [c for c in available if str(c) not in busy_cards]
+
+
 def detect_form_and_validate(checkpoint_dir: str) -> tuple[str, bool, str]:
     """§7：返回 (形态, 是否通过, 说明)。全参/ adapter / native rank 三种形态各按自己的谓词判。"""
     if not checkpoint_dir or not os.path.isdir(checkpoint_dir):
