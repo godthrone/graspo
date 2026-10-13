@@ -422,6 +422,47 @@ def plan_full_cards(cards: list[dict], required: int, allow_used_mib: int = 0) -
     return (picked, f"取自整卡空闲：{picked}（已排除：{rejected or '无'}）")
 
 
+def check_script_mount_sources(script_text: str, host_model_prefix: str = MODEL_HOST_ROOT) -> list[str]:
+    """★ 对**生成出来的脚本文本**做挂载源断言（⛔ 只校验函数输出不算数）。
+
+    228 实测（2026-10-13，T009/T007/T008/T024 共四次）：我确实调用并核对了
+    `render_vllm_base_mount()` 的返回值，**但生成脚本时仍写成容器内变量**（如 `-v $MPB:/model:ro`
+    其中 `MPB=/models/...`）⇒ 起跑后 `/model` 是空目录 ⇒ `ValidationError … params.json`。
+    规则：**必须对"即将执行的脚本文本"断言** —— 文本里任何 `-v <src>:/model...` 的 `<src>`
+    **要么是宿主路径（以 `host_model_prefix` 开头且存在），要么是脚本内自身定义的宿主路径变量**；
+    ⛔ **不得出现** `/model`、`/models/...`、`/evalout/...`、`/workspace/...`、`/runs/...` 这类容器内路径。
+    """
+    import re as _re
+    problems: list[str] = []
+    if not script_text:
+        return ["脚本文本为空 ⇒ fail-closed"]
+    for m in _re.finditer(r"-v\s+(\S+?):(/model\S*)", script_text):
+        src, dst = m.group(1), m.group(2)
+        if src.startswith("$"):
+            var = src.lstrip("${").rstrip("}")
+            # 脚本内该变量的赋值必须是宿主路径
+            m2 = _re.search(rf"^\s*(?:export\s+)?{_re.escape(var)}=(.+)$", script_text, _re.M)
+            if not m2:
+                problems.append(f"挂载源 {src} 是未定义变量（{dst}）⇒ fail-closed")
+                continue
+            val = m2.group(1).strip().strip('"').strip("'")
+            # 由其它脚本内变量拼出的宿主路径（如 MD=$EV/merged-hf-x）无法静态解析 ⇒ 放行
+            if val.startswith("$"):
+                continue
+            if not val.startswith(host_model_prefix) and not val.startswith("/"):
+                problems.append(f"挂载源 {src} 解析为 {val}，不是宿主路径 ⇒ fail-closed")
+            elif any(val.startswith(pfx) for pfx in CONTAINER_ONLY_PREFIXES) and val == "/model":
+                problems.append(f"挂载源 {src} 解析为容器内专有路径 {val} ⇒ fail-closed")
+            elif val.startswith(MODEL_CONTAINER_ROOT):
+                problems.append(f"挂载源 {src} 解析为容器内路径 {val}（应为 {host_model_prefix}…）⇒ fail-closed")
+            continue
+        if src.startswith(MODEL_CONTAINER_ROOT) or src in ("/model",):
+            problems.append(f"挂载源 {src} 是容器内路径（{dst}）⇒ fail-closed；应为 {host_model_prefix}…")
+        elif not src.startswith(host_model_prefix):
+            problems.append(f"挂载源 {src} 不在宿主模型根 {host_model_prefix} 下（{dst}）⇒ fail-closed")
+    return problems
+
+
 def build_json_reason(after_correct: int, n_total: int, base_correct: int, status: str) -> str:
     """落 json 的备注（≤100 字）：判定 + 读数，与结构化字段同源。"""
     after = after_correct / n_total * 100 if n_total else 0.0

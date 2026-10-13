@@ -394,3 +394,35 @@ def test_plan_full_cards_respects_need_mib():
     assert lp.plan_full_cards(tight, 1)[0] is None
     loose = _cards(("0", 0, 60000, 50000))
     assert lp.plan_full_cards(loose, 1)[0] == ["0"]
+
+
+# ---------- 对"生成的脚本文本"断言挂载源（T009/T007/T008/T024 四次坑） ----------
+def test_script_mount_sources_rejects_container_path_literal():
+    """★ 回归：脚本里写死/解析为容器内模型路径 ⇒ 拒。"""
+    text = "nohup docker run -v $MPB:/model:ro ...\nMPB=/models/Qwen3.8-27B\n"
+    problems = lp.check_script_mount_sources(text)
+    assert problems and "容器内路径" in problems[0], problems
+
+
+def test_script_mount_sources_accepts_host_literal():
+    text = "nohup docker run -v /home/user/models/Qwen3.8-27B:/model:ro ...\n"
+    assert lp.check_script_mount_sources(text) == []
+
+
+def test_script_mount_sources_accepts_host_variable():
+    text = "HOSTMODEL=/home/user/models/Qwen3.8-27B\nnohup docker run -v $HOSTMODEL:/model:ro\n"
+    assert lp.check_script_mount_sources(text) == []
+
+
+def test_script_mount_sources_flags_undefined_variable():
+    text = "nohup docker run -v $MPB:/model:ro\n"
+    problems = lp.check_script_mount_sources(text)
+    assert problems and "未定义变量" in problems[0], problems
+
+
+def test_rendered_eval_script_passes_mount_check(tmp_path: Path):
+    """★ 生成链产物必须过这条断言（把'只校验函数输出'升级为'校验脚本产物'）。"""
+    kw, _ = _render_kwargs(tmp_path)
+    text, why = lp.render_eval_script(**kw)
+    assert text is not None, why
+    assert lp.check_script_mount_sources(text) == []
