@@ -895,7 +895,26 @@ def convert_native_rank_to_peft(checkpoint_dir: str | Path, output_dir: str | Pa
         if tuple(tensor.shape) != tuple(converted[key].shape):
             raise ExportError(f"回读形状不一致：{key} ⇒ fail-closed")
 
+    # ★ PEFT 必须拿到 target_modules 与 r，否则加载 adapter 时直接 ValueError
+    #   （2026-10-13 实测缺陷：T022 首跑即因此失败）。二者都从源张量**推导**，不留隐式默认。
+    modules: set[str] = set()
+    ranks: set[int] = set()
+    for key, tensor in converted.items():
+        stem = key[len("base_model.model.model."):-len(".lora_A.weight")] \
+            if key.endswith(".lora_A.weight") else key[len("base_model.model.model."):-len(".lora_B.weight")]
+        modules.add(stem.split(".")[-1])
+        if key.endswith(".lora_A.weight"):
+            ranks.add(int(tensor.shape[0]))
+    if len(ranks) != 1:
+        raise ExportError(f"lora_A 的 r 不一致：{sorted(ranks)} ⇒ fail-closed")
+    r = ranks.pop()
+    if not modules:
+        raise ExportError("未能从键名推导出任何 target_modules ⇒ fail-closed")
+    alpha = r  # ★ 源分片未记 alpha ⇒ 取 r（产物里注明为推导值）
     (out / "adapter_config.json").write_text(
         json.dumps({"peft_type": "LORA", "base_model_name_or_path": base_model_path,
-                    "task_type": "CAUSAL_LM"}, ensure_ascii=False, indent=2), encoding="utf-8")
+                    "task_type": "CAUSAL_LM",
+                    "target_modules": sorted(modules), "r": r, "lora_alpha": alpha,
+                    "_note": "★ target_modules/r/lora_alpha 均由源 lora_state_dict 键名与形状推导"},
+                   ensure_ascii=False, indent=2), encoding="utf-8")
     return {"keys": len(converted), "shard": shards[0].name}
