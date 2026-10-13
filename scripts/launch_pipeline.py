@@ -436,7 +436,8 @@ def check_script_mount_sources(script_text: str, host_model_prefix: str = MODEL_
     problems: list[str] = []
     if not script_text:
         return ["脚本文本为空 ⇒ fail-closed"]
-    for m in _re.finditer(r"-v\s+(\S+?):(/model\S*)", script_text):
+    # 只匹配挂到 **/model** 的挂载（`/models` 是另一回事，别误伤）
+    for m in _re.finditer(r"-v\s+(\S+?):(/model(?::[a-z,]+)?)(?=\s|$)", script_text):
         src, dst = m.group(1), m.group(2)
         if src.startswith("$"):
             var = src.lstrip("${").rstrip("}")
