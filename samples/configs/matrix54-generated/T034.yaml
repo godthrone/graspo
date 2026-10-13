@@ -19,6 +19,9 @@ training:
   gradient_accumulation_micro_batches: 1
   save_checkpoint_every_epoch: false
   save_steps: 49
+launch:
+  cards: 1
+  nproc_per_node: 1   # ★ 由 cards 推导（同一真源；⛔ 不得只改一半）
 reward:
   kind: graspo
 native:

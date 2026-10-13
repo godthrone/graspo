@@ -353,6 +353,33 @@ class CheckpointClassification:
     evidence: tuple[str, ...]
 
 
+#: ★★ 单一真源：`form → 可用评测通道`（守卫与导出器**都读它**，§1.4）。
+#: ★ 背景（2026-10-13 实测缺口）：`run_guards form` 认 `manifest.json`/`rank_*.pt` ⇒ 报 `native_rank`，
+#:   但导出器**没有**该通道 ⇒ "形态探测通过、通道却不存在" ⇒ 起跑前必须 fail-closed。
+FORM_CHANNELS: dict[str, dict[str, str]] = {
+    "base_model": {"channel": "direct-serve", "status": "available"},
+    "adapter": {"channel": "merge-adapter", "status": "available"},
+    "native_graspo": {"channel": "merge-native-safetensors", "status": "available"},
+    # ★ native `final`（manifest.json + rank_*.pt）：**当前无可用通道**
+    "native_rank": {"channel": "merge-native-rank", "status": "missing"},
+}
+
+
+def form_channel_status(form: str) -> str:
+    """返回该形态的通道状态；未登记 = ``"unregistered"``。"""
+    e = FORM_CHANNELS.get(str(form))
+    return e["status"] if e else "unregistered"
+
+
+def assert_form_has_channel(form: str) -> None:
+    """★ 起跑前断言：该 `form` 必须有**可用评测通道**，否则 fail-closed（⛔ 不允许跑到评测才发现没通道）。"""
+    st = form_channel_status(form)
+    if st != "available":
+        raise ExportError(
+            f"form={form!r} 无可用评测通道（status={st}）："
+            f"通道={FORM_CHANNELS.get(str(form), {}).get('channel', '未登记')} ⇒ fail-closed（⛔ 不得静默起跑）")
+
+
 def classify_checkpoint(path: str | Path) -> CheckpointClassification:
     """按目录内容识别 checkpoint 形态（纯文件系统检查，不加载权重）。
 

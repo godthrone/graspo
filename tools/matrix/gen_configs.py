@@ -201,6 +201,18 @@ def yaml_of(row, uni, model_root, data_root, lora_backends=None, teacher=None):
     L.append(f"  save_checkpoint_every_epoch: {uni.get('save_checkpoint_every_epoch')}\n")
     L.append(f"  save_steps: {row.get('save_steps')}\n")
 
+    # ★★ 卡数/进程数**同源**：`nproc_per_node` 一律由 `cards` 推导（⛔ 不得各改一半；
+    #    事故背景：set_cards.py 曾只改 gpus、未同步 nproc ⇒ dry-run 出 `gpus=1,7 nproc=1`）。
+    _cards = row.get("cards") or row.get("cards_total")
+    try:
+        _cards = int(_cards)
+    except Exception:
+        _cards = None
+    if _cards:
+        L.append("launch:\n")
+        L.append(f"  cards: {_cards}\n")
+        L.append(f"  nproc_per_node: {_cards}   # ★ 由 cards 推导（同一真源；⛔ 不得只改一半）\n")
+
     # ★ OPD：教师身份是**已 pin 的事实**（manifest `feasibility_model.opd_teacher`）⇒ 必须落进 yaml。
     #   ★ 配置值 = **容器内路径**（`/models/Qwen3.8-27B`）；**挂载源用宿主路径**（起跑侧决定）——两者别混。
     if str(row.get("train_method") or "").lower() == "opd" and teacher:

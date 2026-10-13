@@ -26,6 +26,11 @@ import os
 import sys
 
 #: 形态 → 该形态下的"可信标志文件"（任一命中即认为形态成立）
+def _probe(form, checkpoint_dir):
+    """极薄探测：目录是否命中 `form` 的标记（供"通道是否存在"断言使用）。"""
+    return any(os.path.exists(os.path.join(checkpoint_dir, m)) for m in FORM_MARKERS.get(form, ()))
+
+
 FORM_MARKERS: dict[str, tuple[str, ...]] = {
     "full": ("config.json", "model.safetensors", "model.safetensors.index.json"),
     "adapter": ("adapter_config.json", "adapter_model.safetensors"),
@@ -45,6 +50,18 @@ def detect_form_and_validate(checkpoint_dir: str) -> tuple[str, bool, str]:
     # 分片权重：model-00001-of-00018.safetensors（merged-hf 的真实形态）
     if any(f.startswith("model-") and f.endswith(".safetensors") and "-of-" in f for f in os.listdir(checkpoint_dir)):
         return ("full", True, "全参/HF 分片形态：命中 model-*-of-*.safetensors")
+    # ★★ 起跑前 fail-closed：该形态**必须有可用评测通道**（单一真源在 eval.merged_export）
+    try:
+        from graspo.eval.merged_export import ExportError as _ExportError  # noqa: PLC0415
+        from graspo.eval.merged_export import assert_form_has_channel  # noqa: PLC0415
+        for _f in ("base_model", "adapter", "native_graspo", "native_rank"):
+            if _probe(_f, checkpoint_dir):
+                assert_form_has_channel(_f)
+    except ImportError:
+        pass
+    except _ExportError as exc:                   # ★ 只吞"无通道"这一类；⛔ 不用 Exception 掩盖真 bug
+        raise SystemExit(f"FAIL-CLOSED：起跑前形态通道断言未通过：{exc}")
+
     if any(os.path.exists(os.path.join(checkpoint_dir, m)) for m in FORM_MARKERS["native_rank"]):
         return ("native_rank", True, "native 形态：命中 manifest.json")
     for pat in ("rank_",):

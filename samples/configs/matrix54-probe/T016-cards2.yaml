@@ -29,6 +29,10 @@ native:
   dp_size: 2
   pp_size: 1
   micro_batch_size: 1
+launch:
+  cards: 2
+  nproc_per_node: 2          # ★ 由 cards 推导（同一真源；⛔ 不得只改一半）
+  gpus: [1, 7]               # ★ 长度必须 == cards
 gpu_monitor:
   output_dir: /out/gpu
   tag: T016
