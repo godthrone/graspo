@@ -182,6 +182,40 @@ def matrix_frozen_map(official_path):
     return out
 
 
+LEDGER_ROW = re.compile(
+    r"^\|\s*(?P<time>[^|]+?)\s*\|\s*`(?P<tier>[^`]+)`\s*\|\s*`(?P<file>[^`]+)`\s*\|\s*`(?P<sha>[^`]+)`\s*\|"
+    r"\s*(?P<status>[^|]*?)\s*\|\s*(?P<verdict>[^|]*?)\s*\|\s*(?P<note>[^|]*?)\s*\|\s*$")
+
+
+def dedup_ledger(text):
+    """★ 台账按 `(档号, json sha)` 去重：同键合并为一行，保留次数与原因（审计痕迹）。
+
+    ★ 硬要求：**不同 sha ⇒ 必须保留两行**（那才是真增量，⛔ 不得被去重吞掉）。
+    ★ 行序保持：非数据行（表头/分隔线等）**留在原位置**（用槽位占位，不搬动）。
+    """
+    slots, bykey = [], {}          # slots: (kind, payload)
+    for ln in text.splitlines():
+        m = LEDGER_ROW.match(ln)
+        if not m:
+            slots.append(("raw", ln))
+            continue
+        key = (m.group("tier"), m.group("sha"))
+        row = ("| %s | `%s` | `%s` | `%s` | %s | %s | %s |"
+               % (m.group("time"), m.group("tier"), m.group("file"), m.group("sha"),
+                  m.group("status"), m.group("verdict"), m.group("note").strip()))
+        if key in bykey:
+            k, cnt, forced = bykey[key]
+            cnt += 1
+            forced += 1 if "--force" in ln else 0
+            bykey[key] = (k, cnt, forced)
+            slots[k] = ("row", row[:-1] + " ×%d（含 %d 次 --force 重跑） |" % (cnt, forced))
+        else:
+            bykey[key] = (len(slots), 1, 1 if "--force" in ln else 0)
+            slots.append(("row", row))
+    out = [payload for _kind, payload in slots]
+    return "\n".join(out) + "\n"
+
+
 def conclusion_of(raw):
     """把跑次 `status` 规范化为 'pass' / 'fail' / 'other'。
 
@@ -420,7 +454,9 @@ def append_ledger(path: Path, rows):
         path.parent.mkdir(parents=True, exist_ok=True)
     lines = [r for r in rows]
     path.write_text(text.rstrip("\n") + "\n" + "\n".join(lines) + "\n", encoding="utf-8")
-
+    # ★ 写后台账按 (档号, json sha) 去重（保留次数与原因；不同 sha 仍两行）
+    if path.exists():
+        path.write_text(dedup_ledger(path.read_text(encoding="utf-8")), encoding="utf-8")
 
 def main():
     ap = argparse.ArgumentParser()
@@ -755,6 +791,14 @@ def _self_test():
          all(norm_ident(x) != norm_ident("全参") for x in ("仅视觉", "LoRA"))),
         ("⑮ ★ 负例：`native` ≠ `ms-swift`；`dp_size=2` ≠ `dp_size=1`",
          all(norm_ident(a) != norm_ident(b) for a, b in (("native", "ms-swift"), ("dp_size=2", "dp_size=1")))),
+        ("⑯ 台账去重：同 (档号, sha) 两次 ⇒ 1 行 + ×2",
+         dedup_ledger("| t1 | `T1` | `a.json` | `aaaa` | 通过 | ✅ | n |\n"
+                      "| t2 | `T1` | `a.json` | `aaaa` | 通过 | ✅ | n |").count("`T1`") == 1
+         and "×2" in dedup_ledger("| t1 | `T1` | `a.json` | `aaaa` | 通过 | ✅ | n |\n"
+                                  "| t2 | `T1` | `a.json` | `aaaa` | 通过 | ✅ | n |")),
+        ("⑰ ★ 台账去重：**不同 sha ⇒ 必须 2 行**（真增量不得被吞）",
+         dedup_ledger("| t1 | `T1` | `a.json` | `aaaa` | 通过 | ✅ | n |\n"
+                      "| t2 | `T1` | `a.json` | `bbbb` | 通过 | ✅ | n |").count("`T1`") == 2),
         ("⑧ 仅措辞/格式不同、语义相同 ⇒ 放行",
          norm_param("switches", "save_steps=31;loss_scale=all") ==
          norm_param("switches", "loss_scale=all; save_steps=31")),
