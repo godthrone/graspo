@@ -2864,81 +2864,98 @@
    "expected_optimizer_steps_per_epoch": "6",
    "expected_optimizer_steps_reachable": "6",
    "applicable": true,
-   "status": "尚未验证",
-   "runs": "1/1 真效果训练（native GRASPO LoRA 单卡，5 epoch）：判据① 通过（★ 见步数定案）；判据② 未过（训练类冻结阈值 Δ ≥ +5.0 pp）：实测 Δ=+4.5584 pp < +5.0 pp ⇒ 判「已验证不可用」，★ 未过的是第 2 条（效果不足），非跑次失败。",
-   "effect": "—",
-   "inference": "✅ native checkpoint（runsfinal，format=native-lora，manifest 的 `lora_target_signature.resolved` 122 条（模式/签名条目数；★ 实测实例数 = 358））→ `graspo export --config`（export_format=merged-hf）合并为 merged-hf → vLLM v0.22.0（--enable-auto-tool-choice --tool-call-parser qwen3_xml、max-model-len 8192、gpu-mem-util 0.85）→ 固定评测集 702/702 跑完、0 error。base 与 after 分离目录 + fail-closed 断言 + stdout 留证。",
-   "algo_checks": "native GRASPO：跑次侧可观测项通过（exit_code=0、ckpt_retention=ok、torch_probe all_ok=True、final ckpt 在位）。★ 运行期见 batch_high_retry_rate 告警（已定性 ① 正常采样波动：组规模恒 G=8、terminal 恒 ≥8 收敛、墙钟与 attempt 同量级）。",
-   "throughput": "—",
-   "peak_mem": "—",
-   "run_path": "—",
+   "status": "已验证不可用",
+   "runs": "1/1 真效果训练（native GRASPO LoRA 单卡 8ep，1280 步）：判据① 通过（exit_code=0、1280/1280 步、ckpt_retention ok、torch_probe all_ok（native_rank_pt/verified）、Traceback 0）；★ 判据② 未过：after 16.6667% < base 16.8091%（Δ = −0.1424 pp）⇒ 失败（效果）；★ 该 Δ 落在 base 重复跑噪声底（≈±0.43 pp）量级内。",
+   "effect": "after acc=16.6667%（117/702）；base acc=16.8091%（118/702）；★ Δ = −0.1424 pp（< +5.0 pp 且 after 略低于 base）⇒ 未过判据②；目标 +10.0 pp 仅展示。口径：数据锚 c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a（702 条）、criteria elam-v3-allright-1、温度 0、702/702、0 error；base/after 独立 output_dir + fail-closed + stdout 双份。★ 噪声底参照：同底座/同数据/同 decoding 的三次 base 读数 118/113/115（极差 3/702 ≈ ±0.43 pp）。",
+   "inference": "✅ native LoRA 终态（graspo-8ep-20261012final：manifest.json + rank_00000_tp_00_pp_00.pt）→ graspo export --config（native 委派路径）合并为 merged-hf → vLLM v0.22.0（GPU5 :18903，--gpu-memory-utilization 0.85，qwen3_xml 工具解析）→ 702/702、0 error ⇒ graspo eval delta。★ 容器名带唯一后缀。",
+   "algo_checks": "native GRASPO 跑次侧可观测项通过：exit_code=0、1280/1280 步、ckpt_retention ok、torch_probe all_ok=True（native_rank_pt/verified）、Traceback 0。",
+   "throughput": "不适用（native GRASPO(GRPO) 后端不产出生成式 tok/s）",
+   "peak_mem": "见 graspo-8ep-20261012gpu_memory_summary.json（单卡峰值）＋ trainer 自报；两类口径分开。",
+   "run_path": "RUN-20261011-T028-01（2026-10-11）",
    "step_count_reconciliation": {
-    "derived_steps": 30,
-    "actual_steps": 19,
-    "derived_formula": "5 epoch × per_epoch 6 = 30（★ 事后证明该推导对本档不成立）",
+    "steps_nominal": 1280,
+    "steps_actual": 1280,
+    "derived_formula": "native 配置式（不含 nproc）：max_epochs(8) × subset(20) × G(8) / (Q(8)×… 分母口径见下) ⇒ 1280",
+    "reconciliation_formula": "★ 对账式（含 nproc=1）：steps = epochs × subset × G / nproc = 8×20×8/1 = 1280 = steps_actual ✓",
+    "flush_item": "★ flush 项：本 8ep 跑次的逐 step `replay_buffer_trainable_completion_count` 未采集 ⇒ 「ceil(Σ/(Q×G)) + flush 修正」的实测核对**本轮未做**（如实标注）；早前 5ep 跑次曾实测 Σ=1176、ceil(1176/64)=19=实际19（仅末步 flush）。",
     "actual_evidence": {
-     "run_cumulative_step": 19,
-     "last_train_step": {
-      "step": 19,
-      "epoch": 4,
-      "elapsed_sec": 25915.178,
-      "attempt_groups": 547,
-      "completions": 4376
-     },
-     "epoch_summary_events": 5,
-     "epoch_summary_epochs": [
-      0,
-      1,
-      2,
-      3,
-      4
-     ],
-     "manifest": "runsmanifest.json（format=native-lora、checkpoint_type=recoverable_lora_training_state、has_trainer_state=true）",
-     "evidence_path": "runsstdout.log"
+     "progress_bar": "1280/1280",
+     "evidence_paths": [
+      "runs/T028/stdout.log"
+     ]
     },
-    "verdict": "★ 不是「提前收尾」—— epoch_summary 5/5（epoch 0–4）证明 5 个 epoch 全部完成；权威步数计数器 run_cumulative.step = 19。★ 「计划 30 步」系我们的预期公式误差（推导步数 vs 实际步数须并记）。★ 判据①「完整跑完」按 epoch 5/5 判定为成立。"
+    "trainable_completions": {
+     "applicable": true,
+     "value": "★ 本 8ep 跑次未采集（待补）；5ep 跑次实测 Σ=1176、ceil(Σ/64)=19=实际19",
+     "reason": "本档为 native GRASPO，有 replay buffer 该量；但本轮未跑逐 step 采集器。",
+     "config_formula_check": "8×20×8/1 = 1280 = 实际 1280 ✓"
+    },
+    "verdict": "对账式 1280 = 实际 1280 ✓ ⇒ 判据①「完整跑完」成立；判据② 未过（Δ=−0.1424 pp，噪声底量级）。"
    },
-   "note_extra_steps_formula_issue": "★ 登记待修：'推导步数公式'对 native GRASPO 档不成立（推导 30 vs 实际 19）—— 本轮不顺手改公式，后续单独修。",
-   "note": "判定：尚未验证。P5/P6 待补。",
-   "tree_fingerprint": "c673b6a2…",
+   "note_extra_steps_formula_issue": "★ 登记待修：'推导步数公式'对 native GRASPO 档不成立（推导 None vs 实际 None）—— 本轮不顺手改公式，后续单独修。",
+   "note": "判定：已验证不可用。after 16.6667%/base 16.8091%/Δ=-0.1424 pp。Δ<阈值，未过第 2 条。P5/P6 待补。",
+   "tree_fingerprint": "（起跑断言值见 status-T028/launch.log；本档树 graspo-8ep-20261012）",
    "tree_fingerprint_role": "起跑断言值",
    "eval_dataset_anchor_correction": "★ 2026-10-12 订正 run_environment.eval_dataset.sha256：6da72199…（= train.jsonl）→ c202b1e1…（= test.jsonl, 702 条）。订正人：BADGE 会话 20261008-105451 · T031 评测执行者（subagent）。依据：228 当场实测 sha256sum + 与本批次 T010T031 eval_report 数据锚交叉一致。★ 本次订正未改动本档任何其他字段、未重跑、未覆盖为新跑次。",
    "eval_dataset": {
     "path": "/homedata/test.jsonl",
     "sha256": "c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a",
-    "samples": 702,
-    "sha256_note": "★ 锚点订正（2026-10-12，T031 评测执行者当场实测）：本档原记 6da72199… 实为同目录 train.jsonl（6378 条）的 sha256；702 条评测集 test.jsonl 的 sha256 = c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a。依据：在 228 上对 /homedata/{test,train}.jsonl 当场 sha256sum（test=702 行→c202b1e1…、train→6da72199…）；且 T010T031 的 eval_report.json 中 dataset.sha256 均为 c202b1e1…，与本订正一致。仅改本字段，其余内容与实测值一律未动。"
-   },
-   "conclusion_annotation": {
-    "conclusion_valid": false,
-    "reason": "epoch 口径由 5 改为 8，旧参数下的结论不对应",
-    "reference_record": "1/1 真效果训练（native GRASPO LoRA 单卡，5 epoch）：判据① 通过（★ 见步数定案）；判据② 未过（训练类冻结阈值 Δ ≥ +5.0 pp）：实测 Δ=+4.5584 pp < +5.0 pp ⇒ 判「已验证不可用」，★ 未过的是第 2 条（效果不足），非跑次失败。；after acc=21.0826%（148/702）；base acc=16.5242%（116/702）；★ Δ=+4.5584 pp（< +5.0 pp 冻结阈值 ⇒ 未过判据②）；★ 目标值 +10.0 pp 仅展示、不作通过线（Δ 落在 5–10 之间才需展示，本档低于 5）。口径：同数据集 sha256 6da72199…、同 criteria、温度 0、702/702 有效、0 error ⇒ 可比性成立。★ 相邻参照：SFT 档 T010/T011/T013 的 Δ 分别为 +13.39/+5.98/+8.55 pp（SFT 阈值同为 +5.0 pp）。"
+    "samples": 702
    },
    "corrections": [
-    "peak_mem：**GPU 监控峰值 59.32 GiB（60741 MiB，mean 54989.7 MiB / 12606 采样）**；另记 **trainer allocator 自报 `max_allocated=35.34 GB`**（★ 事实订正：native 后端**会**以 `[MEM rank=0] … max_allocated=` 行打印该值，并非「不打此字段」；原写 `35.2` 未标口径且与 T013 的值雷同，已按实测写明两口径）。★ 口径差 ~24 GiB 属正常：trainer 只含本进程张量，`nvidia-smi` 含该卡全部占用（含 KV cache/通信缓冲）。",
-    "sha256_note：★ 锚点订正（2026-10-12，T031 评测执行者当场实测）：本档原记 6da72199… 实为同目录 train.jsonl（6378 条）的 sha256；702 条评测集 test.jsonl 的 sha256 = c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a。依据：在 228 上对 /homedata/{test,train}.jsonl 当场 sha256sum（test=702 行→c202b1e1…、train→6da72199…）；且 T010T031 的 eval_report.json 中 dataset.sha256 均为 c202b1e1…，与本订正一致。仅改本字段，其余内容与实测值一律未动。",
-    "★ 2026-10-12 订正 run_environment.eval_dataset.sha256：6da72199…（= train.jsonl）→ c202b1e1…（= test.jsonl, 702 条）。订正人：BADGE 会话 20261008-105451 · T031 评测执行者（subagent）。依据：228 当场实测 sha256sum + 与本批次 T010T031 eval_report 数据锚交叉一致。★ 本次订正未改动本档任何其他字段、未重跑、未覆盖为新跑次。"
+    "n_correct：117"
    ],
-   "voided_conclusion": {
-    "conclusion_valid": false,
-    "reason": "epoch 口径由 5 改为 8，旧参数下的结论不对应",
-    "reference_record": "1/1 真效果训练（native GRASPO LoRA 单卡，5 epoch）：判据① 通过（★ 见步数定案）；判据② 未过（训练类冻结阈值 Δ ≥ +5.0 pp）：实测 Δ=+4.5584 pp < +5.0 pp ⇒ 判「已验证不可用」，★ 未过的是第 2 条（效果不足），非跑次失败。；after acc=21.0826%（148/702）；base acc=16.5242%（116/702）；★ Δ=+4.5584 pp（< +5.0 pp 冻结阈值 ⇒ 未过判据②）；★ 目标值 +10.0 pp 仅展示、不作通过线（Δ 落在 5–10 之间才需展示，本档低于 5）。口径：同数据集 sha256 6da72199…、同 criteria、温度 0、702/702 有效、0 error ⇒ 可比性成立。★ 相邻参照：SFT 档 T010/T011/T013 的 Δ 分别为 +13.39/+5.98/+8.55 pp（SFT 阈值同为 +5.0 pp）。"
+   "measurement_pending": false,
+   "p5p6_readings": {
+    "source": "★ 待补：可从 graspo-8ep-20261012stdout.log + logging.jsonl 逐项统计（组完整性 / retry_count / 组决策分布 / 奖励对齐 / steps 映射 / batch_high_retry_rate）",
+    "note": "★ 本轮余量用于落盘与 T006 起跑；未编造。"
    },
+   "anomalies": [
+    "★ 口径取代：本档早前 5ep 读数（Δ=+4.5584 pp）由本 8ep 跑次取代，维持『作废参考』地位；两者并存标注不混。",
+    "★ 本 Δ = −0.1424 pp 落在 base 重复跑噪声底（≈±0.43 pp）量级内 ⇒ 判定为『效果不足（无提升）』而非『明显变差』。",
+    "★ flush 项：本 8ep 跑次未采集逐 step trainable_completions ⇒ 『对账式 + flush 修正』的实测核对如实标注为『本轮未做』（⛔ 不用 5ep 的数字冒充）。"
+   ],
+   "after_acc": 0.166667,
+   "base_acc": 0.168091,
+   "delta_pp": -0.1424,
+   "n_correct": 117,
+   "n_total": 702,
+   "code_identity": {
+    "tree_fingerprint": "（起跑断言值见 status-T028/launch.log；本档树 graspo-8ep-20261012）",
+    "generated_yaml": "samplesT028.yaml",
+    "image_run_wrapper": {
+     "tag": "graspo:v0.28.11-cu130fix-v2-msgspec-20261012-run",
+     "digest": "sha256:7afdf062b044482b6808310d398794647be5cede7aff6a79a690e0fa088a3b77"
+    },
+    "image_base_official": {
+     "tag": "graspo:v0.28.11-cu130fix-v2-msgspec-20261012",
+     "digest": "sha256:a75bcc78382fa358b73bf6abd4411a46307225ad8a5dd752b121cc6fb02ac253"
+    }
+   },
+   "throughput_detail": "★ 生成式 tok/s 不适用（native GRASPO(GRPO) 后端不产出生成式 tok/s）⇒ 不编造；墙钟与步速见 runs/T028/stdout.log 的 train_step 事件。",
    "elapsed": "—",
    "max_epochs": 8,
    "derived_steps": 48,
    "per_epoch_steps": 6,
    "save_steps_basis": "= 推导步数 48 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
-   "steps_actual": "19（推导 30）",
+   "p5p6": "",
+   "steps_actual": "1280/1280",
    "data_scale": "48 条（每卡 48）",
-   "conclusion_void_reason": "epoch 口径由 5 改为 8，旧参数下的结论不对应",
    "tp": "1",
    "pp": "1",
    "dp": "1",
    "cards_total": "1×1×1×1 = 1 卡",
    "dp_derived": false,
    "dp_source": "配置值（native.tp_size / pp_size / dp_size）",
-   "note_full": "参考记录（epoch 口径由 5 改为 8，旧参数下的结论不对应 ⇒ 判定作废，不作为该档可用/不可用判定）：1/1 真效果训练（native GRASPO LoRA 单卡，5 epoch）：判据① 通过（★ 见步数定案）；判据② 未过（训练类冻结阈值 Δ ≥ +5.0 pp）：实测 Δ=+4.5584 pp < +5.0 pp ⇒ 判「已验证不可用」，★ 未过的是第 2 条（效果不足），非跑次失败。；after acc=21.0826%（148/702）；base acc=16.5242%（116/702）；★ Δ=+4.5584 pp（< +5.0 pp 冻结阈值 ⇒ 未过判据②）；★ 目标值 +10.0 pp 仅展示、不作通过线（Δ 落在 5–10 之间才需展示，本档低于 5）。口径：同数据集 sha256 6da72199…、同 criteria、温度 0、702/702 有效、0 error ⇒ 可比性成立。★ 相邻参照：SFT 档 T010/T011/T013 的 Δ 分别为 +13.39/+5.98/+8.55 pp（SFT 阈值同为 +5.0 pp）。 ★ 订正说明（跑次侧）：peak_mem：**GPU 监控峰值 59.32 GiB（60741 MiB，mean 54989.7 MiB / 12606 采样）**；另记 **trainer allocator 自报 `max_allocated=35.34 GB`**（★ 事实订正：native 后端**会**以 `[MEM rank=0] … max_allocated=` 行打印该值，并非「不打此字段」；原写 `35.2` 未标口径且与 T013 的值雷同，已按实测写明两口径）。★ 口径差 ~24 GiB 属正常：trainer 只含本进程张量，`nvidia-smi` 含该卡全部占用（含 KV cache/通信缓冲）。；sha256_note：★ 锚点订正（2026-10-12，T031 评测执行者当场实测）：本档原记 6da72199… 实为同目录 train.jsonl（6378 条）的 sha256；702 条评测集 test.jsonl 的 sha256 = c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a。依据：在 228 上对 /homedata/{test,train}.jsonl 当场 sha256sum（test=702 行→c202b1e1…、train→6da72199…）；且 T010T031 的 eval_report.json 中 dataset.sha256 均为 c202b1e1…，与本订正一致。仅改本字段，其余内容与实测值一律未动。；★ 2026-10-12 订正 run_environment.eval_dataset.sha256：6da72199…（= train.jsonl）→ c202b1e1…（= test.jsonl, 702 条）。订正人：BADGE 会话 20261008-105451 · T031 评测执行者（subagent）。依据：228 当场实测 sha256sum + 与本批次 T010T031 eval_report 数据锚交叉一致。★ 本次订正未改动本档任何其他字段、未重跑、未覆盖为新跑次。"
+   "verdict": {
+    "state": "已验证不可用",
+    "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
+    "failed_detail": "效果未达标（见 effect）",
+    "passed_criteria": [
+     "native GRASPO 跑次侧可观测项通过：exit_code=0、1280/1280 步、ckpt_retention ok、torch_probe all_ok=True（native_rank_pt/verified）、Traceback 0。"
+    ]
+   },
+   "note_full": "★ 未过第 2 条判据（效果不足）——after acc=16.6667%（117/702）；base acc=16.8091%（118/702）；★ Δ = −0.1424 pp（< +5.0 pp 且 after 略低于 base）⇒ 未过判据②；目标 +10.0 pp 仅展示。口径：数据锚 c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a（702 条）、criteria elam-v3-allright-1、温度 0、702/702、0 error；base/after 独立 output_dir + fail-closed + stdout 双份。★ 噪声底参照：同底座/同数据/同 decoding 的三次 base 读数 118/113/115（极差 3/702 ≈ ±0.43 pp）。 ★ 已通过项（事实保留）：native GRASPO 跑次侧可观测项通过：exit_code=0、1280/1280 步、ckpt_retention ok、torch_probe all_ok=True（native_rank_pt/verified）、Traceback 0。 ★ 判据① 依据：1/1 真效果训练（native GRASPO LoRA 单卡 8ep，1280 步）：判据① 通过（exit_code=0、1280/1280 步、ckpt_retention ok、torch_probe all_ok（native_rank_pt/verified）、Traceback 0）；★ 判据② 未过：after 16.6667% < base 16.8091%（Δ = −0.1424 pp）⇒ 失败（效果）；★ 该 Δ 落在 base 重复跑噪声底（≈±0.43 pp）量级内。 ★ 步数对账（如实登记）：推导 None vs 实际 None；对账式 1280 = 实际 1280 ✓ ⇒ 判据①「完整跑完」成立；判据② 未过（Δ=−0.1424 pp，噪声底量级）。 ★ 订正说明（跑次侧）：n_correct：117 ★ 异常登记：★ 口径取代：本档早前 5ep 读数（Δ=+4.5584 pp）由本 8ep 跑次取代，维持『作废参考』地位；两者并存标注不混。 ★ 异常登记：★ 本 Δ = −0.1424 pp 落在 base 重复跑噪声底（≈±0.43 pp）量级内 ⇒ 判定为『效果不足（无提升）』而非『明显变差』。 ★ 异常登记：★ flush 项：本 8ep 跑次未采集逐 step trainable_completions ⇒ 『对账式 + flush 修正』的实测核对如实标注为『本轮未做』（⛔ 不用 5ep 的数字冒充）。 ★ LoRA 目标按后端：ms-swift 实测 358 实例（language 248 + visual 110）｜native **同为 358 实例**（122 为签名/模式条目数）⇒ ★ 两后端**实例数相同但命中集合不同（不等价）**。 ★ 锚点：树 （起跑断言值见 … + image_base_official sha256:a… + image_run_wrapper sha256:7…"
   },
   {
    "tier": "T029",
