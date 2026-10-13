@@ -63,6 +63,12 @@ def busy_cards_from_docker(names: list[str] | None = None, docker_json: str | No
         for r in reqs:
             for d in (r.get("DeviceIDs") or []):
                 gids.extend(str(d).split(","))
+        # ★ 228 实测：训练容器用 `--runtime=nvidia -e NVIDIA_VISIBLE_DEVICES=1,3,6,7` 传卡
+        #   ⇒ `HostConfig.DeviceRequests` 为 **null** ⇒ 必须同时从 env 采（否则台账恒为空）
+        for e in ((it.get("Config") or {}).get("Env") or []):
+            if e.startswith("NVIDIA_VISIBLE_DEVICES="):
+                val = e.split("=", 1)[1]
+                gids.extend(g.strip() for g in val.split(",") if g.strip() not in ("", "all", "void", "none"))
         if gids:
             busy.update(g.strip() for g in gids if g.strip() != "")
             notes.append(f"{name}[{state}] ⇒ GPU {','.join(gids)}")

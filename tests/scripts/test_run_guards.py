@@ -154,3 +154,12 @@ def test_busy_cards_cli_end_to_end():
            '[{"Name":"/b","State":{"Status":"created"},"HostConfig":{"DeviceRequests":[{"DeviceIDs":["6"]}]}}]')
     busy, csv = rg.busy_cards_cli(ps, ins)
     assert csv == "1,3,6", (busy, csv)
+
+
+def test_busy_cards_from_nvidia_visible_devices_env():
+    """★ 真机实测形态：容器用 `-e NVIDIA_VISIBLE_DEVICES=1,3,6,7` 传卡 ⇒ DeviceRequests 为 null。"""
+    item = {"Name": "/t045", "State": {"Status": "running"},
+            "HostConfig": {"DeviceRequests": None},
+            "Config": {"Env": ["NVIDIA_VISIBLE_DEVICES=1,3,6,7", "PATH=/usr/bin"]}}
+    busy, notes = rg.busy_cards_from_docker(names=["t045"], docker_json=_json.dumps([item]))
+    assert busy == {"1", "3", "6", "7"}, (busy, notes)
