@@ -71,6 +71,40 @@ def opd_pending_unmarked(teacher, row):
     return not bool(row.get("cards_pending"))
 
 
+def cards_procs_mismatch(row):
+    """★ 同源性断言：**卡数与训练进程数必须一致**（"两个必须同源的参数只改一个"是事故根因）。
+
+    · native：`cards == tp_size × pp_size × dp_size`（并行维度落在 native 段）
+    · ms-swift：`cards == nproc_per_node`（并行维度落在 parallel 展示串）
+    · 另：`gpus` 的**个数**必须等于 `cards`（★ set_cards 类改动必须三处同改）
+    返回 None = 一致；否则返回拒绝理由。
+    """
+    def _i(v):
+        try:
+            return int(v)
+        except Exception:
+            return None
+    cards = _i(row.get("cards"))
+    if cards is None:
+        return None
+    tp, pp, dp = (_i(row.get("native_tp")), _i(row.get("native_pp")), _i(row.get("native_dp")))
+    if any(v is not None for v in (tp, pp, dp)):
+        if all(v is not None for v in (tp, pp, dp)):
+            world = tp * pp * dp
+            if world != cards:
+                return f"native 并行维度与卡数不同源：tp×pp×dp={world} ≠ cards={cards}"
+    parallel = str(row.get("parallel") or "")
+    m = re.search(r"nproc_per_node\s*=\s*(\d+)", parallel)
+    if m:
+        nproc = int(m.group(1))
+        if nproc != cards:
+            return f"ms-swift 进程数与卡数不同源：nproc_per_node={nproc} ≠ cards={cards}（⛔ 不得只改一半）"
+    gpus = row.get("gpus")
+    if isinstance(gpus, list) and gpus and len(gpus) != cards:
+        return f"gpus 个数与卡数不同源：len(gpus)={len(gpus)} ≠ cards={cards}"
+    return None
+
+
 def blocked_unmarked(row):
     """★ blocked 档必须有 `blocked_reason`（起跑侧据此拒跑）；缺理由 ⇒ fail-closed。"""
     if row.get("availability") != "blocked":
@@ -91,6 +125,13 @@ def _gen_self_test():
          opd_cards_shortfall({"measured": False}, 1) is None),
         ("⑧ ★ 未定态：实测未完成且未声明 min_cards ⇒ 缺 `cards_pending` **必须判缺**（fail-closed）",
          opd_pending_unmarked({"measured": "partial", "min_cards": None}, {"cards": 4}) is True),
+        ("⑫ ★ 同源性：cards=2 而 gpus 只给 1 张 ⇒ **必须拒**（本次事故形态）",
+         cards_procs_mismatch({"cards": 2, "gpus": [1, 7]}) is None
+         or cards_procs_mismatch({"cards": 2, "gpus": [7]}) is not None),
+        ("⑬ ★ 同源性：cards=2 但 nproc_per_node=1 ⇒ **必须拒**",
+         cards_procs_mismatch({"cards": 2, "parallel": "nproc_per_node=1（1 卡）"}) is not None),
+        ("⑭ 同源性：cards=2 + gpus 两张 + nproc=2 ⇒ 放行",
+         cards_procs_mismatch({"cards": 2, "gpus": [1, 7], "parallel": "nproc_per_node=2（2 卡）"}) is None),
         ("⑩ ★ blocked 档缺 `blocked_reason` ⇒ **必须判缺**（fail-closed）",
          blocked_unmarked({"availability": "blocked"}) is True),
         ("⑪ blocked 档带理由 ⇒ 放行（但仍不得起跑）",
@@ -271,6 +312,11 @@ def main():
         print(f"LOADABLE {'PASS' if not bad else 'FAIL'}（{len(written)} 档；问题 {bad}）")
         if bad:
             return 1
+
+    _mm = [(r["tier"], why) for r in rows if (why := cards_procs_mismatch(r))]
+    if _mm:
+        print(f"FAIL-CLOSED：卡数与进程数/卡列表不同源（⛔ 不得只改一半）⇒ 拒绝产出：{_mm}")
+        return 1
 
     _bl = [r["tier"] for r in rows if blocked_unmarked(r)]
     if _bl:
