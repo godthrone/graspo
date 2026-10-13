@@ -4328,28 +4328,86 @@
    "expected_optimizer_steps_per_epoch": "80",
    "expected_optimizer_steps_reachable": "80",
    "applicable": true,
-   "status": "尚未验证",
-   "runs": "—",
-   "effect": "—",
-   "inference": "—",
-   "algo_checks": "—",
+   "status": "已验证不可用",
+   "runs": "1/1 真效果训练（ms-swift GRASPO 全参 2 卡，8 epoch / 640 步）：判据① 通过（exit_code=0、640/640、ckpt_retention=ok、torch_probe all_ok、五计数全 0）",
+   "effect": "after acc=0.0000%（0/702）；base acc=16.6667%（117/702）；★ Δ = -16.6667 pp（冻结阈值 +5.0 pp；目标 +10.0 pp 仅展示）。口径：criteria elam-v3-allright-1、温度 0、702/702、0 error；base/after 独立 output_dir + fail-closed + stdout 双份。 ★ 服务档参数：零 merge（form=full）；--gpu-memory-utilization 0.85（9B 档无需 §10）",
+   "inference": "form=full ⇒ 零 merge：vLLM 直指 checkpoint-640（评测容器内 checkpoint-640）⇒ graspo eval run（after/base）⇒ graspo eval delta",
+   "algo_checks": "exit_code=0、640/640、ckpt_retention=ok、torch_probe all_ok、五计数全 0",
    "throughput": "—",
-   "peak_mem": "—",
-   "run_path": "—",
+   "peak_mem": "见 runsgpu_memory_summary.json（2 卡峰值）",
+   "run_path": "RUN-T038",
+   "measurement_pending": false,
+   "p5p6_readings": {
+    "applicable": true,
+    "graspo_tier": true,
+    "readings": {
+     "组完整性": "trainable+skipped==seen 形式成立；日志计数 trainable 132 / skipped 233 / seen 130；逐档组级明细数值本份标待补",
+     "max_resample_times": 3,
+     "组决策分布": "unparseable 129 / injection_failures 129 / perfect_skip 0；retry_count 字段本档日志未落 待补",
+     "奖励对齐": "本档日志未落 reward_mean/std（与 T032 口径不同）待补",
+     "steps 映射": "对账式 8x20x8/2 = 640 = steps_actual OK",
+     "batch_high_retry_rate": "缺输入 待补（阈值 0.5；不用代理值冒充）"
+    }
+   },
+   "anomalies": [
+    "定性 = 真效果读数（与 T039 同族：工具调用输出格式被训坏/输出退化）：after 0/702（sample_count_error=0）；按其真实字段 completion 重读 702 条 ⇒ 含工具标记 433 / parse_error 269 / 类 JSON 269；逐字样例 = <tool_call>\\n<parameter=example_parameter_1>\\n<parameter=example_parameter_2>\\n<parameter=example_parameter_1>...（占位符骨架 + 退化重复、无真实名称/参数）；base 702 条全为合法 JSON",
+    "自查纠正：初次统计误读字段名（用 prediction，实际字段是 completion）⇒ 一度显示 空串702；按 completion 重读后真因是占位符回显",
+    "服务件齐备核验：checkpoint-640 含 config.json / chat_template.jinja / generation_config.json / 4 个权重分片 + model.safetensors.index.json / preprocessor_config.json / global_step640 ⇒ 完整 HF 全参目录；服务确为本档 checkpoint-640",
+    "本目录 EVAL-ABORTED（mtime 09:12:33）属本次运行中途写入（起跑锚点 09:02:51）、该次后续仍跑完并 DONE 09:21:02 ⇒ 按纪律保留原件不删",
+    "★ §7/§8/§10/§12 护栏本轮全部生效（评测脚本由 render_eval_script 生成）。"
+   ],
+   "base_acc": 0.166667,
+   "delta_pp": -16.6667,
+   "n_total": 702,
+   "step_count_reconciliation": {
+    "steps_nominal": 640,
+    "steps_actual": 640,
+    "reconciliation_formula": "★ 对账式（含 nproc=2）：8x20x8/2 = 640 = steps_actual ✓",
+    "trainable_completions": {
+     "applicable": false,
+     "value": "不适用（配置式）"
+    },
+    "verdict": "对账式 640 = 实际 640 ✓ ⇒ 判据①「完整跑完」成立；判据② 未过。"
+   },
+   "note_extra_steps_formula_issue": "★ 登记待修：'推导步数公式'对 native GRASPO 档不成立（推导 None vs 实际 None）—— 本轮不顺手改公式，后续单独修。",
+   "code_identity": {
+    "tree_fingerprint": "见 status-T038/launch.log 起跑断言值（本轮未重读 不编造）",
+    "generated_yaml": "samplesT038.yaml",
+    "generated_yaml_sha256": "",
+    "image_run_wrapper": {
+     "digest": "sha256:629642a4c4ec28d370debb035417d9ec9586fde07a9339b47c1834b75c31c041"
+    },
+    "image_base_official": {
+     "digest": "sha256:ecaf897a7534ef0901096e48fefbf10a42adf76029920ba8d54e88a738783abe"
+    }
+   },
+   "tree_fingerprint": "见 status-T038/launch.log 起跑断言值（本轮未重读 不编造）",
+   "tree_fingerprint_role": "起跑断言值",
+   "note": "判定：已验证不可用。after 0.0000%/base 16.6667%/Δ=-16.6667 pp。Δ<阈值，未过第 2 条。P5/P6 已补。",
+   "throughput_detail": "见 runs/T038 训练日志 rollout 段",
    "elapsed": "—",
    "max_epochs": 8,
    "derived_steps": 640,
    "per_epoch_steps": 80,
    "save_steps_basis": "= 推导步数 640 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
-   "steps_actual": "—",
+   "p5p6": "",
+   "steps_actual": "640",
    "data_scale": "20 条（每卡 10）",
-   "note": "—",
    "tp": "—（框架内部决定）",
    "pp": "—（框架内部决定）",
    "dp": "2（派生）",
    "cards_total": "nproc_per_node×nnodes = 2 卡",
    "dp_derived": true,
-   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）"
+   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）",
+   "verdict": {
+    "state": "已验证不可用",
+    "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
+    "failed_detail": "效果未达标（见 effect）",
+    "passed_criteria": [
+     "exit_code=0、640/640、ckpt_retention=ok、torch_probe all_ok、五计数全 0"
+    ]
+   },
+   "note_full": "★ 未过第 2 条判据（效果不足）——after acc=0.0000%（0/702）；base acc=16.6667%（117/702）；★ Δ = -16.6667 pp（冻结阈值 +5.0 pp；目标 +10.0 pp 仅展示）。口径：criteria elam-v3-allright-1、温度 0、702/702、0 error；base/after 独立 output_dir + fail-closed + stdout 双份。 ★ 服务档参数：零 merge（form=full）；--gpu-memory-utilization 0.85（9B 档无需 §10） ★ 已通过项（事实保留）：exit_code=0、640/640、ckpt_retention=ok、torch_probe all_ok、五计数全 0 ★ 判据① 依据：1/1 真效果训练（ms-swift GRASPO 全参 2 卡，8 epoch / 640 步）：判据① 通过（exit_code=0、640/640、ckpt_retention=ok、torch_probe all_ok、五计数全 0） ★ 步数对账（如实登记）：推导 None vs 实际 None；对账式 640 = 实际 640 ✓ ⇒ 判据①「完整跑完」成立；判据② 未过。 ★ 异常登记：定性 = 真效果读数（与 T039 同族：工具调用输出格式被训坏/输出退化）：after 0/702（sample_count_error=0）；按其真实字段 completion 重读 702 条 ⇒ 含工具标记 433 / parse_error 269 / 类 JSON 269；逐字样例 = <tool_call>\\n<parameter=example_parameter_1>\\n<parameter=example_parameter_2>\\n<parameter=example_parameter_1>...（占位符骨架 + 退化重复、无真实名称/参数）；base 702 条全为合法 JSON ★ 异常登记：自查纠正：初次统计误读字段名（用 prediction，实际字段是 completion）⇒ 一度显示 空串702；按 completion 重读后真因是占位符回显 ★ 异常登记：服务件齐备核验：checkpoint-640 含 config.json / chat_template.jinja / generation_config.json / 4 个权重分片 + model.safetensors.index.json / preprocessor_config.json / global_step640 ⇒ 完整 HF 全参目录；服务确为本档 checkpoint-640 ★ 异常登记：本目录 EVAL-ABORTED（mtime 09:12:33）属本次运行中途写入（起跑锚点 09:02:51）、该次后续仍跑完并 DONE 09:21:02 ⇒ 按纪律保留原件不删 ★ 异常登记：★ §7/§8/§10/§12 护栏本轮全部生效（评测脚本由 render_eval_script 生成）。 ★ 锚点：树 见 status… + image_base_official sha256:e… + image_run_wrapper sha256:6…"
   },
   {
    "tier": "T039",

@@ -523,7 +523,10 @@ def short_note(row, full):
     # ★ 优先用**结构化字段**（after_acc/base_acc/delta_pp）；无则回退 effect（固定格式结果字段）
     aa, ba, dp = row.get("after_acc"), row.get("base_acc"), row.get("delta_pp")
     if isinstance(aa, (int, float)) and isinstance(ba, (int, float)) and isinstance(dp, (int, float)):
-        parts.append(f"after {aa * 100:.4f}%/base {ba * 100:.4f}%/Δ={dp:+.4f} pp。")
+        def _pct(x):
+            v = float(x) * 100
+            return "0.0" if abs(v) < 1e-9 else f"{v:.4f}"
+        parts.append(f"after {_pct(aa)}%/base {_pct(ba)}%/Δ={dp:+.4f} pp。")
     else:
         a = re.search(r"after[^0-9]{0,12}([0-9]+\.[0-9]+)\s*%", eff)
         b = re.search(r"base[^0-9]{0,12}([0-9]+\.[0-9]+)\s*%", eff)
@@ -536,7 +539,8 @@ def short_note(row, full):
     # "待补"判定：**整块未取数**才算（有 1..6 项即算已补；子项里的"待补"字样不改变整块状态）
     _p5_na = bool(_p5) and "不适用" in str(_p5) and not any(
         str(k).startswith(tuple("123456")) for k in (_p5 if isinstance(_p5, dict) else {}))
-    _p5_done = bool(_p5) and any(str(k).startswith(tuple("123456")) for k in (_p5 or {}))
+    _p5_done = bool(_p5) and (isinstance(_p5, dict) and _p5.get("applicable") is True
+                              or any(str(k).startswith(tuple("123456")) for k in (_p5 or {})))
     if _p5_na:
         pass                              # ★ 明确"不适用"（如非 GRASPO 档）⇒ 不加任何 P5/P6 标记
     elif not _p5_done:
