@@ -749,6 +749,11 @@ def _self_test():
         ("⑪ 状态：「尚未验证」⇒ other（不判过）", conclusion_of("尚未验证") == "other"),
         ("⑫ ★ 负例：「未通过」/「非通过」/「不通过」**不得**判 pass",
          all(conclusion_of(x) != "pass" for x in ("未通过", "非通过", "不通过"))),
+        ("⑬ 身份规范化：「全参（full-parameter）」≡「全参」", norm_ident("全参（full-parameter）") == norm_ident("全参")),
+        ("⑭ ★ 负例：「仅视觉」/「LoRA」**不得**等同于「全参」",
+         all(norm_ident(x) != norm_ident("全参") for x in ("仅视觉", "LoRA"))),
+        ("⑮ ★ 负例：`native` ≠ `ms-swift`；`dp_size=2` ≠ `dp_size=1`",
+         all(norm_ident(a) != norm_ident(b) for a, b in (("native", "ms-swift"), ("dp_size=2", "dp_size=1")))),
         ("⑧ 仅措辞/格式不同、语义相同 ⇒ 放行",
          norm_param("switches", "save_steps=31;loss_scale=all") ==
          norm_param("switches", "loss_scale=all; save_steps=31")),
