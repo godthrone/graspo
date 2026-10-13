@@ -460,8 +460,12 @@ def short_note(row, full):
         parts.append("Δ<阈值，未过第 2 条。")
     _p5 = row.get("p5p6_readings")
     # "待补"判定：**整块未取数**才算（有 1..6 项即算已补；子项里的"待补"字样不改变整块状态）
+    _p5_na = bool(_p5) and "不适用" in str(_p5) and not any(
+        str(k).startswith(tuple("123456")) for k in (_p5 if isinstance(_p5, dict) else {}))
     _p5_done = bool(_p5) and any(str(k).startswith(tuple("123456")) for k in (_p5 or {}))
-    if not _p5_done:
+    if _p5_na:
+        pass                              # ★ 明确"不适用"（如非 GRASPO 档）⇒ 不加任何 P5/P6 标记
+    elif not _p5_done:
         parts.append("P5/P6 待补。")
     elif st == S_UNAVAILABLE:
         parts.append("P5/P6 已补。")      # ★ 六项已填实（细则在 note_full / json）

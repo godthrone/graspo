@@ -982,28 +982,101 @@
    "expected_optimizer_steps_per_epoch": "50",
    "expected_optimizer_steps_reachable": "50",
    "applicable": true,
-   "status": "尚未验证",
-   "runs": "—",
-   "effect": "—",
-   "inference": "—",
-   "algo_checks": "—",
-   "throughput": "—",
-   "peak_mem": "—",
-   "run_path": "—",
+   "status": "已验证不可用",
+   "runs": "1/1 真效果训练（ms-swift CPT 全参 2 卡，2 epoch / 100 步）：判据① 通过（exit_code=0、100/100 步、ckpt_retention ok、torch_probe all_ok、五计数全 0：CUDAMismatchExceptionTraceback）；★ 判据② 未过：after 16.8091% > base 16.2393% 且 Δ = +0.0057 pp< +5.0 pp ⇒ 判『未过』。",
+   "effect": "after acc=16.8091%（118/702）；base acc=16.2393%（114/702）；★ Δ = +0.0057 pp（冻结阈值 +5.0 pp；目标 +10.0 pp 仅展示）。口径：数据锚 c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a（702 条）、criteria elam-v3-allright-1、温度 0、702/702、0 error；base/after 独立 output_dir + fail-closed + stdout 双份；comparability_notes 全过。",
+   "inference": "✅ CPT 全参终态 = 完整 HF 模型（runscheckpoint-100（228 树 graspo-b11fix-20261012）），含 model-*.safetensors + config.json ⇒ ★ 零 merge，vLLM 直接挂载该目录并 --model /model 服务；★ 评测配置的 checkpoint_path 用评测容器内可达的 /runs/... （run-eval.sh 的 -v $TREE/runs:/runs:ro），并前置断言『存在 ∧ 含 config.json』。",
+   "algo_checks": "ms-swift CPT 全参跑次侧可观测项通过：exit_code=0、100/100 步、ckpt_retention ok、五计数全 0。",
+   "throughput": "不适用（CPT 档不跑 rollout/生成）",
+   "peak_mem": "见 runsgpu_memory_summary.json（2 卡各自峰值）＋ trainer 自报；两类口径分开。",
+   "run_path": "RUN-T005",
+   "measurement_pending": false,
+   "p5p6_readings": {
+    "applicable": false,
+    "value": "不适用（非 GRASPO 档）",
+    "reason": "CPT 属非 GRASPO 档 ⇒ 无 rollout 组/重采样/优势注入等 GRASPO 专有指标。",
+    "note": "★ 按指挥部口径：非 GRASPO（SFT/CPT）档一律标『不适用（非 GRASPO 档）』，⛔ 不用『待补』。"
+   },
+   "anomalies": [
+    "★ §7 修法生效：本档评测的 after 报告正常产出（未再出现『after 缺报告 + delta 次生 DeltaError』）。",
+    "★ 本 Δ = +0.5698 pp 落在 base 重复跑噪声底（≈±0.43 pp）量级附近 ⇒ 判定『效果不足』。",
+    "★ 树指纹：起跑断言值 ≠ 现测（post-launch 改 manifest）⇒ 回填取起跑断言值。"
+   ],
+   "after_acc": 0.168091,
+   "base_acc": 0.162393,
+   "delta_pp": 0.5698,
+   "n_correct": 118,
+   "n_total": 702,
+   "step_count_reconciliation": {
+    "steps_nominal": 100,
+    "steps_actual": 100,
+    "derived_formula": "ms-swift 配置式（不含 nproc）：max_epochs(2) × subset(100) = 200",
+    "reconciliation_formula": "★ 对账式（含 nproc=2）：steps = epochs × subset / nproc = 2×100/2 = 100 = steps_actual ✓",
+    "actual_evidence": {
+     "progress_bar": "100/100",
+     "evidence_paths": [
+      "runs/T005/stdout.log"
+     ]
+    },
+    "trainable_completions": {
+     "applicable": false,
+     "value": "不适用（配置式）",
+     "reason": "CPT 档走 ms-swift 配置式，无 native replay buffer 该量。",
+     "config_formula_check": "2×100/2 = 100 = 实际 100 ✓"
+    },
+    "verdict": "对账式 100 = 实际 100 ✓ ⇒ 判据①「完整跑完」成立。"
+   },
+   "note_extra_steps_formula_issue": "★ 登记待修：'推导步数公式'对 native GRASPO 档不成立（推导 None vs 实际 None）—— 本轮不顺手改公式，后续单独修。",
+   "code_identity": {
+    "tree_fingerprint": "24bc4485a1ef446945168b012c0325848ca0bebed108ca4c2eafe231418ccabf",
+    "tree_fingerprint_role": "本档【起跑时 launcher 实测并断言通过】的树指纹（status-T005/launch.log assert 0）",
+    "tree_fingerprint_drift": "★ 该树其后被其他档起跑改动 manifest（post-launch）⇒ 现测不同；回填取起跑断言值。",
+    "generated_yaml": "samplesT005.yaml",
+    "generated_yaml_sha256": "（本档 yaml sha 见 status-T005/launch.log）",
+    "image_base_official": {
+     "tag": "graspo:v0.28.11-cu130fix-v2-dsprek-20261012",
+     "digest": "sha256:ecaf897a7534ef0901096e48fefbf10a42adf76029920ba8d54e88a738783abe"
+    },
+    "image_run_wrapper": {
+     "tag": "graspo:v0.28.11-cu130fix-v2-dsprek-20261012-run",
+     "digest": "sha256:629642a4c4ec28d370debb035417d9ec9586fde07a9339b47c1834b75c31c041"
+    }
+   },
+   "tree_fingerprint": "24bc4485a1ef446945168b012c0325848ca0bebed108ca4c2eafe231418ccabf",
+   "tree_fingerprint_role": "本档【起跑时 launcher 实测并断言通过】的树指纹（status-T005/launch.log assert 0）",
+   "corrections": [
+    "n_correct：118"
+   ],
+   "eval_dataset": {
+    "path": "/homedata/test.jsonl",
+    "sha256": "c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a",
+    "samples": 702
+   },
+   "note": "判定：已验证不可用。after 16.8091%/base 16.2393%/Δ=+0.5698 pp。Δ<阈值，未过第 2 条。",
+   "throughput_detail": "★ 生成式 tok/s 不适用（CPT 档不跑 rollout/生成）⇒ 不编造；墙钟见 runs/T005/stdout.log。",
    "elapsed": "—",
    "max_epochs": 2,
    "derived_steps": 100,
    "per_epoch_steps": 50,
    "save_steps_basis": "= 推导步数 100 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
-   "steps_actual": "—",
+   "p5p6": "",
+   "steps_actual": "100/100",
    "data_scale": "100 条（每卡 50）",
-   "note": "—",
    "tp": "—（框架内部决定）",
    "pp": "—（框架内部决定）",
    "dp": "2（派生）",
    "cards_total": "nproc_per_node×nnodes = 2 卡",
    "dp_derived": true,
-   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）"
+   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）",
+   "verdict": {
+    "state": "已验证不可用",
+    "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
+    "failed_detail": "Δ = +0.0057 pp（低于冻结阈值）",
+    "passed_criteria": [
+     "ms-swift CPT 全参跑次侧可观测项通过：exit_code=0、100/100 步、ckpt_retention ok、五计数全 0。"
+    ]
+   },
+   "note_full": "★ 未过第 2 条判据（效果不足）——after acc=16.8091%（118/702）；base acc=16.2393%（114/702）；★ Δ = +0.0057 pp（冻结阈值 +5.0 pp；目标 +10.0 pp 仅展示）。口径：数据锚 c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a（702 条）、criteria elam-v3-allright-1、温度 0、702/702、0 error；base/after 独立 output_dir + fail-closed + stdout 双份；comparability_notes 全过。 ★ 已通过项（事实保留）：ms-swift CPT 全参跑次侧可观测项通过：exit_code=0、100/100 步、ckpt_retention ok、五计数全 0。 ★ 判据① 依据：1/1 真效果训练（ms-swift CPT 全参 2 卡，2 epoch / 100 步）：判据① 通过（exit_code=0、100/100 步、ckpt_retention ok、torch_probe all_ok、五计数全 0：CUDAMismatchExceptionTraceback）；★ 判据② 未过：after 16.8091% > base 16.2393% 且 Δ = +0.0057 pp< +5.0 pp ⇒ 判『未过』。 ★ 步数对账（如实登记）：推导 None vs 实际 None；对账式 100 = 实际 100 ✓ ⇒ 判据①「完整跑完」成立。 ★ 订正说明（跑次侧）：n_correct：118 ★ 异常登记：★ §7 修法生效：本档评测的 after 报告正常产出（未再出现『after 缺报告 + delta 次生 DeltaError』）。 ★ 异常登记：★ 本 Δ = +0.5698 pp 落在 base 重复跑噪声底（≈±0.43 pp）量级附近 ⇒ 判定『效果不足』。 ★ 异常登记：★ 树指纹：起跑断言值 ≠ 现测（post-launch 改 manifest）⇒ 回填取起跑断言值。 ★ 锚点：树 24bc4485… + image_base_official sha256:e… + image_run_wrapper sha256:6…"
   },
   {
    "tier": "T006",
@@ -1050,28 +1123,73 @@
    "expected_optimizer_steps_per_epoch": "25",
    "expected_optimizer_steps_reachable": "25",
    "applicable": true,
-   "status": "尚未验证",
-   "runs": "—",
-   "effect": "—",
-   "inference": "—",
-   "algo_checks": "—",
-   "throughput": "—",
-   "peak_mem": "—",
-   "run_path": "—",
+   "status": "已验证可用",
+   "runs": "1/1 真效果训练（ms-swift CPT 全参 4 卡，2 epoch / 50 步）：判据① 通过（exit_code=0、50/50 步、ckpt_retention ok、torch_probe all_ok、五计数全 0：CUDAMismatchExceptionTraceback）；★ 判据② 未过：after 24.3590% > base 16.8091% 且 Δ = +0.0755 pp< +5.0 pp ⇒ 判『未过』。",
+   "effect": "after acc=24.3590%（171/702）；base acc=16.8091%（118/702）；★ Δ = +0.0755 pp（冻结阈值 +5.0 pp；目标 +10.0 pp 仅展示）。口径：数据锚 c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a（702 条）、criteria elam-v3-allright-1、温度 0、702/702、0 error；base/after 独立 output_dir + fail-closed + stdout 双份；comparability_notes 全过。",
+   "inference": "✅ CPT 全参终态 = 完整 HF 模型（runsv0-*/checkpoint-50（228 树 graspo-b11fix-20261012）），含 model-*.safetensors + config.json ⇒ ★ 零 merge，vLLM 直接挂载该目录并 --model /model 服务；★ 评测配置的 checkpoint_path 用评测容器内可达的 /runs/... （run-eval.sh 的 -v $TREE/runs:/runs:ro），并前置断言『存在 ∧ 含 config.json』。",
+   "algo_checks": "ms-swift CPT 全参跑次侧可观测项通过：exit_code=0、50/50 步、ckpt_retention ok、五计数全 0。",
+   "throughput": "不适用（CPT 档不跑 rollout/生成）",
+   "peak_mem": "见 runsgpu_memory_summary.json（4 卡各自峰值）＋ trainer 自报；两类口径分开。",
+   "run_path": "RUN-T006",
+   "measurement_pending": false,
+   "p5p6_readings": {
+    "applicable": false,
+    "value": "不适用（非 GRASPO 档）",
+    "reason": "CPT 属非 GRASPO 档 ⇒ 无 rollout 组/重采样/优势注入等 GRASPO 专有指标。",
+    "note": "★ 按指挥部口径：非 GRASPO（SFT/CPT）档一律标『不适用（非 GRASPO 档）』，⛔ 不用『待补』。"
+   },
+   "anomalies": [
+    "★ §7 修法生效：本档评测的 after 报告正常产出（未再出现『after 缺报告 + delta 次生 DeltaError』）。",
+    "★ 本档为 v6（dsprek）镜像下 CPT 全量 4 卡档，五计数全 0；Δ=+7.5499 pp 过 +5.0 阈值。",
+    "★ 树指纹：起跑断言值 ≠ 现测（post-launch 改 manifest）⇒ 回填取起跑断言值。"
+   ],
+   "after_acc": 0.24359,
+   "base_acc": 0.168091,
+   "delta_pp": 7.5499,
+   "n_correct": 171,
+   "n_total": 702,
+   "code_identity": {
+    "tree_fingerprint": "668bb1d6ebd07e42435b4ab1e7905caa7b09831335c63af87726ab9a845a89d9",
+    "tree_fingerprint_role": "本档【起跑时 launcher 实测并断言通过】的树指纹（status-T006/launch.log assert 0）",
+    "tree_fingerprint_drift": "★ 该树其后被其他档起跑改动 manifest（post-launch）⇒ 现测不同；回填取起跑断言值。",
+    "generated_yaml": "samplesT006.yaml",
+    "generated_yaml_sha256": "3e36c97a6c2bddc0add445233a1bdb35595d05caa818aed0eef15d82ca4b11f6",
+    "image_base_official": {
+     "tag": "graspo:v0.28.11-cu130fix-v2-dsprek-20261012",
+     "digest": "sha256:ecaf897a7534ef0901096e48fefbf10a42adf76029920ba8d54e88a738783abe"
+    },
+    "image_run_wrapper": {
+     "tag": "graspo:v0.28.11-cu130fix-v2-dsprek-20261012-run",
+     "digest": "sha256:629642a4c4ec28d370debb035417d9ec9586fde07a9339b47c1834b75c31c041"
+    }
+   },
+   "tree_fingerprint": "668bb1d6ebd07e42435b4ab1e7905caa7b09831335c63af87726ab9a845a89d9",
+   "tree_fingerprint_role": "本档【起跑时 launcher 实测并断言通过】的树指纹（status-T006/launch.log assert 0）",
+   "corrections": [
+    "n_correct：171"
+   ],
+   "eval_dataset": {
+    "path": "/homedata/test.jsonl",
+    "sha256": "c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a",
+    "samples": 702
+   },
+   "note": "判定：已验证可用。after 24.3590%/base 16.8091%/Δ=+7.5499 pp。",
+   "throughput_detail": "★ 生成式 tok/s 不适用（CPT 档不跑 rollout/生成）⇒ 不编造；墙钟见 runs/T006/stdout.log。",
    "elapsed": "—",
    "max_epochs": 2,
    "derived_steps": 50,
    "per_epoch_steps": 25,
    "save_steps_basis": "= 推导步数 50 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
-   "steps_actual": "—",
+   "p5p6": "",
+   "steps_actual": "50/50",
    "data_scale": "100 条（每卡 25）",
-   "note": "—",
    "tp": "—（框架内部决定）",
    "pp": "—（框架内部决定）",
    "dp": "4（派生）",
    "cards_total": "nproc_per_node×nnodes = 4 卡",
    "dp_derived": true,
-   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）"
+   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）",
+   "note_full": "判据① ∧ 判据② 均达（阈值已冻结）⇒ 已验证可用。 ★ 订正说明（跑次侧）：n_correct：171 ★ 异常登记：★ §7 修法生效：本档评测的 after 报告正常产出（未再出现『after 缺报告 + delta 次生 DeltaError』）。 ★ 异常登记：★ 本档为 v6（dsprek）镜像下 CPT 全量 4 卡档，五计数全 0；Δ=+7.5499 pp 过 +5.0 阈值。 ★ 异常登记：★ 树指纹：起跑断言值 ≠ 现测（post-launch 改 manifest）⇒ 回填取起跑断言值。 ★ 锚点：树 668bb1d6… + image_base_official sha256:e… + image_run_wrapper sha256:6…"
   },
   {
    "tier": "T007",
