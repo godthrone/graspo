@@ -1320,7 +1320,7 @@
    },
    "anomalies": [
     "评测脚本为存量手工件（未用 render_eval_script 重写，避免打断在跑评测），但 §7/§8/§10 前置断言全部执行",
-    "★ base 侧挂载源曾误用容器内 Qwen3.8-27B（宿主不存在 ⇒ docker 建空目录 ⇒ vLLM 起不来）；已改为宿主路径 /home/userQwen3.8-27B 后 base 阶段由 base-only 续跑脚本接续完成",
+    "★ base 侧挂载源曾误用容器内 Qwen3.8-27B（宿主不存在 ⇒ docker 建空目录 ⇒ vLLM 起不来）；已改为宿主路径  后 base 阶段由 base-only 续跑脚本接续完成",
     "★ §7/§8/§10/§12 护栏本轮全部生效（评测脚本由 render_eval_script 生成）。"
    ],
    "after_acc": 0.245014,
@@ -1379,7 +1379,7 @@
      "exit_code=0、100/100、五计数全 0"
     ]
    },
-   "note_full": "★ 未过第 2 条判据（效果不足）——after acc=24.5014%（172/702）；base acc=19.6581%（138/702）；★ Δ = +4.8433 pp（冻结阈值 +5.0 pp；目标 +10.0 pp 仅展示）。口径：criteria elam-v3-allright-1、温度 0、702/702、0 error；base/after 独立 output_dir + fail-closed + stdout 双份。 ★ 服务档参数：--gpu-memory-utilization 0.85 + --max-num-seqs 192（§10；base/after 同配） ★ 已通过项（事实保留）：exit_code=0、100/100、五计数全 0 ★ 判据① 依据：1/1 真效果训练（ms-swift CPT LoRA 2 卡，2 epoch / 100 步）：判据① 通过（exit_code=0、100/100 步、五计数全 0） ★ 步数对账（如实登记）：推导 None vs 实际 None；对账式 100 = 实际 100 ✓ ⇒ 判据①「完整跑完」成立；判据② 未过。 ★ 订正说明（跑次侧）：n_correct：172 ★ 异常登记：评测脚本为存量手工件（未用 render_eval_script 重写，避免打断在跑评测），但 §7/§8/§10 前置断言全部执行 ★ 异常登记：★ base 侧挂载源曾误用容器内 Qwen3.8-27B（宿主不存在 ⇒ docker 建空目录 ⇒ vLLM 起不来）；已改为宿主路径 /home/userQwen3.8-27B 后 base 阶段由 base-only 续跑脚本接续完成 ★ 异常登记：★ §7/§8/§10/§12 护栏本轮全部生效（评测脚本由 render_eval_script 生成）。 ★ LoRA 目标按后端：ms-swift 实测 358 实例（language 248 + visual 110）｜native **同为 358 实例**（122 为签名/模式条目数）⇒ ★ 两后端**实例数相同但命中集合不同（不等价）**。 ★ 锚点：树 见 status… + image_base_official sha256:a… + image_run_wrapper sha256:7…"
+   "note_full": "★ 未过第 2 条判据（效果不足）——after acc=24.5014%（172/702）；base acc=19.6581%（138/702）；★ Δ = +4.8433 pp（冻结阈值 +5.0 pp；目标 +10.0 pp 仅展示）。口径：criteria elam-v3-allright-1、温度 0、702/702、0 error；base/after 独立 output_dir + fail-closed + stdout 双份。 ★ 服务档参数：--gpu-memory-utilization 0.85 + --max-num-seqs 192（§10；base/after 同配） ★ 已通过项（事实保留）：exit_code=0、100/100、五计数全 0 ★ 判据① 依据：1/1 真效果训练（ms-swift CPT LoRA 2 卡，2 epoch / 100 步）：判据① 通过（exit_code=0、100/100 步、五计数全 0） ★ 步数对账（如实登记）：推导 None vs 实际 None；对账式 100 = 实际 100 ✓ ⇒ 判据①「完整跑完」成立；判据② 未过。 ★ 订正说明（跑次侧）：n_correct：172 ★ 异常登记：评测脚本为存量手工件（未用 render_eval_script 重写，避免打断在跑评测），但 §7/§8/§10 前置断言全部执行 ★ 异常登记：★ base 侧挂载源曾误用容器内 Qwen3.8-27B（宿主不存在 ⇒ docker 建空目录 ⇒ vLLM 起不来）；已改为宿主路径  后 base 阶段由 base-only 续跑脚本接续完成 ★ 异常登记：★ §7/§8/§10/§12 护栏本轮全部生效（评测脚本由 render_eval_script 生成）。 ★ LoRA 目标按后端：ms-swift 实测 358 实例（language 248 + visual 110）｜native **同为 358 实例**（122 为签名/模式条目数）⇒ ★ 两后端**实例数相同但命中集合不同（不等价）**。 ★ 锚点：树 见 status… + image_base_official sha256:a… + image_run_wrapper sha256:7…"
   },
   {
    "tier": "T009",

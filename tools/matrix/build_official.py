@@ -22,8 +22,10 @@ PATH_MAP = [
     (r"/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/subsets-v2/", "subsets-v2/"),
     (r"/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/images", "images"),
     (r"/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/data/", "data/"),
-    (r"/models/", ""),
+    # ★ /home/ 规则必须先于 /models/ 等：否则先行替换会把 `/home/<u>/models/X` 打碎成 `/home/<u>X`（无法再匹配）
     (r"/home/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/", ""),
+    (r"/home/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+", ""),
+    (r"/models/", ""),
     (r"/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/", ""),
     (r"/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/", ""),
     (r"\.local/repo-moved-out/", ""),
