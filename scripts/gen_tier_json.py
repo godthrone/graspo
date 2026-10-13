@@ -143,6 +143,35 @@ def short_note(status: str, after_correct: int, base_correct: int, total: int) -
     return note[:100]
 
 
+#: 对账式必须按**该档自身训练口径**（⛔ 不得跨档套用公式）
+GRASPO_RECON_RE = r"8\s*[x×*]\s*\d+\s*[x×*]\s*8\s*/\s*\d+"     # GRASPO: 8×subset×8/cards
+SFT_RECON_RE = r"\d+\s*[x×*]\s*\d+\s*/\s*\d+"                    # SFT: epochs×subset/nproc
+
+
+def check_reconciliation_matches_tier(algo: str, recon: str, steps_actual: int) -> list[str]:
+    """★ "公式用错档"一族的根治（T045 首版误用 SFT 的 `2x100/4` 算 GRASPO 档，已实测更正）。
+
+    规则：★ **GRASPO 档**对账式必须形如 `8×subset×8/cards`；★ **SFT/CPT 档**必须形如
+    `epochs×subset/nproc`；★ 两者**不得互换**；★ 且**等号右侧必须等于 `steps_actual`**（实测权威）。
+    """
+    import re as _re
+    problems: list[str] = []
+    r = (recon or "").replace(" ", "")
+    is_graspo = "GRASPO" in (algo or "").upper()
+    if is_graspo:
+        if not _re.search(GRASPO_RECON_RE, r):
+            problems.append(f"GRASPO 档的对账式必须形如 `8×subset×8/cards`，实际 `{recon}` ⇒ fail-closed（⛔ 不得套用 SFT 公式）")
+    else:
+        if _re.search(GRASPO_RECON_RE, r):
+            problems.append(f"非 GRASPO 档（{algo}）不得用 GRASPO 的 `8×…×8/cards`，实际 `{recon}` ⇒ fail-closed")
+    m = _re.search(r"=\s*(\d+)", r)
+    if not m:
+        problems.append(f"对账式缺少 `= <steps>`（实际 `{recon}`）⇒ fail-closed")
+    elif int(m.group(1)) != int(steps_actual):
+        problems.append(f"对账式右侧 {m.group(1)} ≠ steps_actual {steps_actual} ⇒ 以**实测**为准并写明 ⇒ fail-closed")
+    return problems
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--tier", required=True); ap.add_argument("--eval-dir", required=True)

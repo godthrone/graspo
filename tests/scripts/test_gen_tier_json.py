@@ -87,3 +87,29 @@ def test_delta_tolerance_allows_report_rounding():
     a, b, dp = g.fractions(118, 702, 117, 702)
     assert dp == 0.1425, dp                      # 精确分数 ⇒ 0.1425
     assert abs(round(16.8091 - 16.6667, 4) - dp) < 1e-3   # 报告舍入值 ⇒ 0.1424
+
+
+# ---------- 对账式必须按该档自身口径（T045 误用 SFT 公式） ----------
+def test_recon_graspo_accepts_graspo_formula():
+    assert g.check_reconciliation_matches_tier("GRASPO", "8x20x8/4 = 320", 320) == []
+
+
+def test_recon_graspo_rejects_sft_formula():
+    """★ 回归：T045 首版误用 ms-swift SFT 的 `2x100/4 = 50` 算 GRASPO 档 ⇒ 必须拒。"""
+    problems = g.check_reconciliation_matches_tier("GRASPO", "2x100/4 = 50", 320)
+    assert problems and "8×subset×8/cards" in problems[0], problems
+
+
+def test_recon_sft_rejects_graspo_formula():
+    problems = g.check_reconciliation_matches_tier("SFT", "8x20x8/4 = 320", 320)
+    assert problems and "不得用 GRASPO" in problems[0], problems
+
+
+def test_recon_sft_accepts_sft_formula():
+    assert g.check_reconciliation_matches_tier("CPT", "2x100/2 = 100", 100) == []
+
+
+def test_recon_right_side_must_match_measured_steps():
+    """★ 实测权威：右侧 ≠ steps_actual ⇒ 拒（以实测为准）。"""
+    problems = g.check_reconciliation_matches_tier("GRASPO", "8x20x8/4 = 640", 320)
+    assert problems and "≠ steps_actual" in problems[0], problems
