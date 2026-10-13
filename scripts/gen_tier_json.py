@@ -15,7 +15,7 @@
 """
 from __future__ import annotations
 
-import argparse, collections, hashlib, json, os, sys
+import argparse, collections, hashlib, json, os, re, sys
 
 FAIL = "失败（效果）"
 PASS = "通过（已验证可用）"
