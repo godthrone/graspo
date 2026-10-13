@@ -261,6 +261,32 @@
         },
         "conclusion": "★ **同卡数（2）、不同后端**：★ **ms-swift × 2 卡 = 跑完**（T038，640/640、ec=0）｜★ **native × 2 卡 = OOM**（T035，exit_code=1、逐字 OutOfMemory）⇒ ★ **结论 = 后端差异**，★ ⛔ 不是卡数非单调；★ 编制侧先前的叙述（T038=1 卡、T035=ms-swift）有误并已认错。"
       }
+    },
+    "native_full_cards": {
+      "scope": "native backend × 全参（full）× cards",
+      "measured": true,
+      "scope_note": "★★ **按【配置五元组】登记**（model × algo × mode × backend × cards）⇒ ⛔ **不得跨卡数外推**；★ **4 卡档（T018/T036）未被实测 ⇒ ⛔ 不得据 1 卡 OOM 推断**（要判就得实测）。",
+      "by_config": {
+        "native_full_1card_T016": {
+          "combo": "9B × SFT × full × native × 1 卡",
+          "verdict": "infeasible",
+          "evidence": "本档自身实测 OOM（`79.20 GiB in use`、`ec=1`、`Traceback 2`）",
+          "tier": "T016"
+        },
+        "native_full_1card_T034": {
+          "combo": "9B × GRASPO × full × native × 1 卡",
+          "verdict": "infeasible",
+          "evidence": "本档自身实测 OOM（逐字 `OutOfMemory`；★ 完整逐字证据待补）",
+          "tier": "T034"
+        }
+      },
+      "not_extrapolated": {
+        "native_full_4card": [
+          "T018（9B SFT 全参 × native × 4 卡）",
+          "T036（9B GRASPO 全参 × native × 4 卡）"
+        ],
+        "reason": "★ 不同卡数 = 不同配置 ⇒ ★ 未被实测者 ⛔ 不得推断（标 unmeasured）"
+      }
     }
   },
   "data": {
