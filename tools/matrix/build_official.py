@@ -454,7 +454,12 @@ def criteria_caliber():
                                    "② T029（native, **dp=2**, 5ep）：Σ `trainable_completions` = **1240** ⇒ ceil(1240/64) = 20 "
                                    "⇒ ★ **≠ 实际 23，差 −3 ⇒ 不吻合，如实记差**（⛔ 不为凑吻合改公式、⛔ 不写死 23）；"
                                    "★ **假设（明确标为假设，未证实）**：`dp>1` 时阈值可能**按 rank 生效**（Q×G per rank）"
-                                   "⇒ 需更多 dp>1 实测样本才能定论。③ ms-swift 锚与 SFT 四档核对见上。"),                "input_note": ("★ native 对账式**必须**输入运行期量 `trainable_completions`（可训练补全数，"
+                                   "⇒ 需更多 dp>1 实测样本才能定论。③ ms-swift 锚与 SFT 四档核对见上。"),                "measured_authority": ("★★ **实测总步数 = 1184（权威）**（T047，native 2 卡 OPD，P-25 上机实测）；"
+                                       "★ 推导 `8×20×8/2 = 640` **已证伪**（原因待定：`num_generations` / subset 语义或运行期项）"
+                                       "⇒ ★ **一律以实测为准**；该档 `steps_actual` = **1184**。"
+                                       "★ **族纪律**：步数口径必须以**该档自身配置 ＋ 运行期产物**为准，"
+                                       "⛔ **不用通用公式推断**（与「没按本档自身实体取值」同族）。"),
+                "input_note": ("★ native 对账式**必须**输入运行期量 `trainable_completions`（可训练补全数，"
                                "取决于 retry / perfect_skip / invalid）⇒ 不可先验计算；回填 json 未提供该字段时，"
                                "对账记录标为「缺输入 ⇒ 待补」，⛔ 不臆测、⛔ 不硬编码。"),
             },
