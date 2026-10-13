@@ -3448,28 +3448,75 @@
    "expected_optimizer_steps_per_epoch": "25",
    "expected_optimizer_steps_reachable": "25",
    "applicable": true,
-   "status": "尚未验证",
-   "runs": "—",
-   "effect": "—",
-   "inference": "—",
-   "algo_checks": "—",
-   "throughput": "—",
-   "peak_mem": "—",
-   "run_path": "—",
+   "status": "已验证不可用",
+   "runs": "1/1 真效果训练（ms-swift SFT LoRA 4 卡，2 epoch / 50 步）：判据① 通过（exit_code=0、50/50、ckpt_retention=ok、torch_probe all_ok=True、五计数全 0）；★ 判据② 未过（Δ=+1.8518 < +5.0）",
+   "effect": "after acc=21.3675%（150/702）；base acc=19.5157%（137/702）；★ Δ = +1.8519 pp（冻结阈值 +5.0 pp；目标 +10.0 pp 仅展示）。口径：criteria elam-v3-allright-1、温度 0、702/702、0 error；base/after 独立 output_dir + fail-closed + stdout 双份。 ★ 服务档参数：★ §10：--max-num-seqs 192（27B/Mamba；实测 blocks=232）＋ --gpu-memory-utilization 0.85（base/after 同配）",
+   "inference": "ms-swift PEFT adapter（checkpoint-50）⇒ graspo eval export --eval-config 合并 ⇒ vLLM 挂载 merged（宿主路径字面量）服务（★ §10：--max-num-seqs 192，27B/Mamba）⇒ graspo eval run（after/base）⇒ graspo eval delta",
+   "algo_checks": "exit_code=0、50/50、ckpt_retention=ok、torch_probe all_ok=True、五计数全 0",
+   "throughput": "不适用（SFT 档不跑 rollout/生成）",
+   "peak_mem": "见 runsgpu_memory_summary.json（4 卡峰值）",
+   "run_path": "RUN-T027",
+   "measurement_pending": false,
+   "anomalies": [
+    "★ manifest 实测 algo = SFT（⛔ 非 GRASPO）⇒ p5p6_readings 按非 GRASPO 档处理（不适用）；★ 形态 adapter ⇒ merge（§16 decide_eval_mode，⛔ 未按形态猜 algo）",
+    "★ §7/§8/§10/§12 护栏本轮全部生效（评测脚本由 render_eval_script 生成）。"
+   ],
+   "after_acc": 0.213675,
+   "base_acc": 0.195157,
+   "delta_pp": 1.8519,
+   "n_correct": 150,
+   "n_total": 702,
+   "step_count_reconciliation": {
+    "steps_nominal": 50,
+    "steps_actual": 50,
+    "reconciliation_formula": "★ 对账式（含 nproc=4）：2x100/4 = 50 = steps_actual ✓",
+    "trainable_completions": {
+     "applicable": false,
+     "value": "不适用（配置式）"
+    },
+    "verdict": "对账式 50 = 实际 50 ✓ ⇒ 判据①「完整跑完」成立；判据② 未过。"
+   },
+   "note_extra_steps_formula_issue": "★ 登记待修：'推导步数公式'对 native GRASPO 档不成立（推导 None vs 实际 None）—— 本轮不顺手改公式，后续单独修。",
+   "code_identity": {
+    "tree_fingerprint": "见 status-T027/launch.log 起跑断言值",
+    "generated_yaml": "samplesT027.yaml",
+    "generated_yaml_sha256": "",
+    "image_run_wrapper": {
+     "digest": "sha256:629642a4c4ec28d370debb035417d9ec9586fde07a9339b47c1834b75c31c041"
+    },
+    "image_base_official": {
+     "digest": "sha256:ecaf897a7534ef0901096e48fefbf10a42adf76029920ba8d54e88a738783abe"
+    }
+   },
+   "tree_fingerprint": "见 status-T027/launch.log 起跑断言值",
+   "tree_fingerprint_role": "起跑断言值",
+   "corrections": [
+    "n_correct：150"
+   ],
+   "note": "判定：已验证不可用。after 21.3675%/base 19.5157%/Δ=+1.8519 pp。Δ<阈值，未过第 2 条。",
+   "throughput_detail": "★ 生成式 tok/s 不适用（SFT 档不跑 rollout/生成）",
    "elapsed": "—",
    "max_epochs": 2,
    "derived_steps": 50,
    "per_epoch_steps": 25,
    "save_steps_basis": "= 推导步数 50 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
-   "steps_actual": "—",
+   "steps_actual": "50",
    "data_scale": "100 条（每卡 25）",
-   "note": "—",
    "tp": "—（框架内部决定）",
    "pp": "—（框架内部决定）",
    "dp": "4（派生）",
    "cards_total": "nproc_per_node×nnodes = 4 卡",
    "dp_derived": true,
-   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）"
+   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）",
+   "verdict": {
+    "state": "已验证不可用",
+    "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
+    "failed_detail": "Δ = +1.8519 pp（低于冻结阈值）",
+    "passed_criteria": [
+     "exit_code=0、50/50、ckpt_retention=ok、torch_probe all_ok=True、五计数全 0"
+    ]
+   },
+   "note_full": "★ 未过第 2 条判据（效果不足）——after acc=21.3675%（150/702）；base acc=19.5157%（137/702）；★ Δ = +1.8519 pp（冻结阈值 +5.0 pp；目标 +10.0 pp 仅展示）。口径：criteria elam-v3-allright-1、温度 0、702/702、0 error；base/after 独立 output_dir + fail-closed + stdout 双份。 ★ 服务档参数：★ §10：--max-num-seqs 192（27B/Mamba；实测 blocks=232）＋ --gpu-memory-utilization 0.85（base/after 同配） ★ 已通过项（事实保留）：exit_code=0、50/50、ckpt_retention=ok、torch_probe all_ok=True、五计数全 0 ★ 判据① 依据：1/1 真效果训练（ms-swift SFT LoRA 4 卡，2 epoch / 50 步）：判据① 通过（exit_code=0、50/50、ckpt_retention=ok、torch_probe all_ok=True、五计数全 0）；★ 判据② 未过（Δ=+1.8518 < +5.0） ★ 步数对账（如实登记）：推导 None vs 实际 None；对账式 50 = 实际 50 ✓ ⇒ 判据①「完整跑完」成立；判据② 未过。 ★ 订正说明（跑次侧）：n_correct：150 ★ 异常登记：★ manifest 实测 algo = SFT（⛔ 非 GRASPO）⇒ p5p6_readings 按非 GRASPO 档处理（不适用）；★ 形态 adapter ⇒ merge（§16 decide_eval_mode，⛔ 未按形态猜 algo） ★ 异常登记：★ §7/§8/§10/§12 护栏本轮全部生效（评测脚本由 render_eval_script 生成）。 ★ LoRA 目标按后端：ms-swift 实测 358 实例（language 248 + visual 110）｜native **同为 358 实例**（122 为签名/模式条目数）⇒ ★ 两后端**实例数相同但命中集合不同（不等价）**。 ★ 锚点：树 见 status… + image_base_official sha256:e… + image_run_wrapper sha256:6…"
   },
   {
    "tier": "T028",
