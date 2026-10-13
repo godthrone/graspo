@@ -803,6 +803,9 @@ def main():
             r["verdict"] = v
         # ★★ 短/长备注分离（**行循环最末端**：所有备注追加/覆盖之后；⛔ 不在中途插入）
         _full = str(r.get("note") or "")
+        _sup = str(r.get("superseded_note") or "").strip()
+        if _sup:
+            _full = (_full + "\n" + _sup).strip()
         if _full and _full != "—":           # ★ 仅对"确有结论/读数"的档做短/长分离；⛔ 不碰未跑档的占位符
             r["note_full"] = _full
             r["note"] = short_note(r, _full)

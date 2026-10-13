@@ -221,6 +221,18 @@ def ledger_covers(rows, filled_tiers):
     return [t for t in filled_tiers if not any(f"`{t}`" in r for r in rows)]
 
 
+def verdict_transition(already_judged: bool, status_before: str, status_after: str) -> int:
+    """★ "重测 vs 新判定"计数断言：返回**四态总判定数**的期望变化。
+
+    · 该档**已在四态内**（already_judged=True）⇒ 走"更新"路径 ⇒ ★ **期望变化 = 0**（总数不变）
+    · 该档**不在四态内** ⇒ 走"新增判定"路径 ⇒ ★ 期望变化 = +1（且 status_before 应为"—"/尚未验证）
+    ★ 用途：机器拦住"计数漂移"（人工算术今日已两次出偏差）。
+    """
+    if already_judged:
+        return 0
+    return 1 if status_after in ("已验证可用", "已验证不可用") else 0
+
+
 def conclusion_of(raw):
     """把跑次 `status` 规范化为 'pass' / 'fail' / 'other'。
 
@@ -825,6 +837,12 @@ def _self_test():
              "| t2 | `T1` | `a.json` | `aaaa` | 通过 | ✅ | n [--force] |")),
         ("⑲ ★ 台账覆盖率：处理了但未落行 ⇒ **必须拒**（fail-closed）",
          ledger_covers(["| t | `T1` | `a.json` | `sha` | 通过 | ✅ | n |"], ["T1", "T2"]) == ["T2"]),
+        ("⑲a ★ 计数：已判定档重测 ⇒ 期望变化 **0**",
+         verdict_transition(True, "已验证不可用", "已验证不可用") == 0),
+        ("⑲b ★ 计数：新判定档 ⇒ 期望变化 **+1**",
+         verdict_transition(False, "—", "已验证可用") == 1),
+        ("⑲c ★ 计数：未判定档仍无结论 ⇒ 变化 0",
+         verdict_transition(False, "—", "尚未验证") == 0),
         ("⑧ 仅措辞/格式不同、语义相同 ⇒ 放行",
          norm_param("switches", "save_steps=31;loss_scale=all") ==
          norm_param("switches", "loss_scale=all; save_steps=31")),
