@@ -72,6 +72,7 @@ class Spec:
 #: 入口/启动脚本 → 冒烟方式（**每个候选都必须在此**）。
 POLICY: dict[str, Spec] = {
     "scripts/run_guards.py": Spec(HELP, "起跑/评测护栏 CLI（§7 形态谓词 / §8 新鲜度 / §10 Mamba），argparse 子命令"),
+    "scripts/gen_tier_json.py": Spec(HELP, "由两侧 eval_report 生成 task-matrix-runs/<TIER>.json（落盘自检：delta_pp 同源 / evidence_paths 非空）"),
     # ── 仓库根 / 宿主启动链 ────────────────────────────────────────────────
     "run.sh": Spec(SH_HELP, "训练启动主入口；支持 --help（宿主引导层稳定契约）"),
     # ── scripts/*.py（§10.2 制度化脚本，B3 已登记稳定子命令）────────────────
