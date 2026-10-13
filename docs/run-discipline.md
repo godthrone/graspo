@@ -141,3 +141,20 @@
   第二次仍复现 ⇒ 这**必须是硬纪律**，⛔ 不再靠"重申"。
 - 配套：容器**只具名停**（且只停自己这一批的**唯一名**，见 §6.1）；需要连带停止派生进程时，
   先 `ps -ef` 取 PID，再逐个 `kill <pid>`。
+
+## 10. 27B（Mamba）服务档：`--max-num-seqs` 必须 ≤ 可用 Mamba cache blocks
+
+- 规则：用 vLLM 服务 **27B（Mamba 混合架构）**档时，**必须显式设 `--max-num-seqs`
+  且其值 ≤ 该卡可用 Mamba cache blocks**（或改为**提高 `--gpu-memory-utilization`** 以换取更多
+  blocks）。**base 与 after 必须同配**，并在跑次 json 的 `anomalies` 里**如实留痕**（服务参数变更、
+  可能影响吞吐、**不改评测语义**）。
+- **起跑前探针（fail-closed）**：读 vLLM 日志/配置给出的可用 blocks 数，断言
+  `max_num_seqs ≤ blocks`，不满足即拒绝起跑。
+- 为什么：228 实测（2026-10-13，T024 27B 评测）——vLLM 缺省 `max_num_seqs = 1024`，而单卡
+  `--gpu-memory-utilization 0.85` 下**可用 Mamba cache blocks 仅 232** ⇒
+  `ValueError: max_num_seqs (1024) exceeds available Mamba cache blocks (232). Each decode
+  sequence requires one Mamba cache block, so CUDA graph capture cannot proceed.` ⇒
+  `RuntimeError: Engine core initialization failed` ⇒ 引擎**从未就绪**（`docker events` =
+  `exit=1`、**非 OOM**），评测容器空转 16 分钟无日志推进。
+- 判读提示：**"vLLM 起不来 + 日志无 OOM + GPU 显存已释放"** ⇒ 先怀疑**引擎初始化参数**类
+  （`max_num_seqs` / cache blocks / `max-model-len`），而不是显存不够。
