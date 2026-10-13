@@ -374,7 +374,18 @@ FORM_CHANNELS: dict[str, dict[str, str]] = {
     #      来源至今未查明、git 全历史亦无该实现）⇒ ★ **虚标解除了起跑前 fail-closed ⇒ 导致 T023 评测白跑一次**
     #      ⇒ ★ **已改回 `missing`**。★ 纪律：★ **通道登记必须反映"已实现的能力"（判据 = 导出器是否认），
     #      ⛔ 不得写成"期望/应然"；★ 凡标 `available` 必须同批给出"导出器已支持"的 `file:line` 证据 ＋ 用例。**
-    "native_rank": {"channel": "rank-shards-to-hf", "status": "missing"},
+    # ★★ 2026-10-13 **翻回 `available`**（★ 三要件齐：实现 ＋ 行为实测 ＋ 端到端实证）：
+    #    · 实现：`CheckpointKind.NATIVE_RANK`（本文件 `:341`）／`classify_checkpoint` 分类（`:440`）
+    #      ／`assert_native_rank_mergeable`（`:812`，★ `dp==1 ∧ pp==1 ∧ tp==1` 才放行）／
+    #      `convert_native_rank_to_peft`（`:832`）／接线到 `cmd_export`。
+    #    · 行为实测（镜像内对**部署树那份**代码）：分类 `native-rank`×2；`dp==1` 放行、`dp>1` 明确拒绝；
+    #      `dp=1` 转换 ⇒ **1212 键、自校验通过**；adapter 产物齐备。
+    #    · ★★ **端到端实证（2026-10-13 T022 真实链）**：`run_guards form ⇒ native_rank` ＋ `graspo export ⇒ rc=0`
+    #      ＋ 产出 `merged-hf-t022/`（`config.json` ＋ 2 个权重分片）＋ vLLM(GPU7) 起服务 ⇒ after/base ⇒ delta ⇒ json。
+    #    ★ 与今日"虚标"事故的区别：★ 那次只有 T024 的历史叙述（来源未查明、git 无实现）⇒ 标 `missing`；
+    #      ★ 本次是**实现＋行为＋端到端三齐** ⇒ 可翻。
+    #    ★ 前置条件：★ **评测须在能跑通转换的环境/部署树下执行**（★ 镜像内**烘入的是旧代码**、评测靠 `-v $T:…` 覆盖）。
+    "native_rank": {"channel": "graspo-export-merged-hf", "status": "available"},
 }
 
 

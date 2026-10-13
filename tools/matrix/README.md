@@ -274,3 +274,11 @@ python3 -m py_compile tools/matrix/<改动文件>.py     # 或等价的 AST 解�
 ★★ **登记与实现必须同批**：★ **凡把某形态标为 `available`，必须同批给出"导出器已支持"的 `file:line` 证据 ＋ 用例** ⇒ ★ **否则视为虚标**。
 ★ **事故记录（2026-10-13）**：★ **曾误将 `native_rank` 标为 `available`**（★ 依据是 T024 的历史成功叙述，★ **而该成功来源至今未查明**、★ git 全历史亦无该实现）⇒ ★ **虚标解除了起跑前 fail-closed ⇒ 导致 T023 评测白跑一次** ⇒ ★ **已改回 `missing`，保护恢复**。
 ★ **待查（并行）**：★ 镜像内**烘入**的 `/workspace/graspo/src/graspo/eval/merged_export.py`（评测时被挂载覆盖 ⇒ 不挂载即可见）⇒ ★ 若含 rank 分片处理 ⇒ **即为"当年那版实现"**（★ 可能是部署树本地补丁、不在 git）⇒ ★ 移植 + 预检通过后**才可**把登记翻回 `available` ✓
+
+## ★★ `native_rank` 通道：**已翻回 `available`**（2026-10-13，三要件齐）
+
+★ **实现（`file:line`）**：`src/graspo/eval/merged_export.py` ⇒ `CheckpointKind.NATIVE_RANK`（`:341`）｜`classify_checkpoint` 分类到该形态（`:440`）｜`assert_native_rank_mergeable`（`:812`，★ `dp==1 ∧ pp==1 ∧ tp==1` 才放行）｜`convert_native_rank_to_peft`（`:832`）｜接线到 `cmd_export`。
+★ **行为实测（镜像内、对部署树那份代码）**：★ 分类 `native-rank`×2｜★ `dp==1` 放行／`dp>1` **明确拒绝**｜★ `dp=1` 转换 ⇒ **1212 键、自校验通过**｜★ adapter 产物齐备。
+★★ **端到端实证（以 2026-10-13 T022 真实 export 链为证）**：★ `run_guards form ⇒ native_rank` ＋ ★ `graspo export ⇒ rc=0` ＋ ★ 产出 `merged-hf-t022/`（`config.json` ＋ 2 个权重分片）＋ ★ vLLM(GPU7) 起服务 ⇒ after/base ⇒ delta ⇒ json。
+★ **前置条件**：★ **评测须在"能跑通转换的环境/部署树"下执行** —— ★ **镜像内烘入的是旧代码**（`grep -c convert_native_rank` = 0），★ 评测实际执行的是 `-v $T:…` 覆盖进来的**部署树那份** ✓
+★ **与今日"虚标"事故的区别**：★ 那次**只有 T024 的历史叙述**（来源未查明、git 全历史无实现）⇒ 标 `missing`；★ 本次 **实现 ＋ 行为实测 ＋ 端到端实证 三齐** ⇒ **可翻** ✓
