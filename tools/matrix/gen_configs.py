@@ -111,6 +111,15 @@ def config_pins_gpus(text):
     return bool(_re.search(r"^\s*gpus\s*:", text, _re.M))
 
 
+def blocked_vs_unavailable_conflict(row):
+    """★ 轴冲突断言：**同一档不得同时标 `blocked` 与四态的「已验证不可用」**。
+
+    理由（2026-10-13 裁定）：**「已验证不可用」是效果层否定**（方法/输出退化），
+    **`blocked` 是可用性层**（硬件/依赖不可行）⇒ 混用会污染结论语义（后人会读成"该方法失败"）。
+    """
+    return row.get("availability") == "blocked" and str(row.get("status") or "") == "已验证不可用"
+
+
 def blocked_unmarked(row):
     """★ blocked 档必须有 `blocked_reason`（起跑侧据此拒跑）；缺理由 ⇒ fail-closed。"""
     if row.get("availability") != "blocked":
@@ -142,6 +151,10 @@ def _gen_self_test():
          config_pins_gpus("launch:\n  cards: 2\n  gpus: [1, 7]\n") is True),
         ("⑯ 卡号纪律：只含 cards/nproc ⇒ 放行",
          config_pins_gpus("launch:\n  cards: 2\n  nproc_per_node: 2\n") is False),
+        ("⑯b ★ 轴冲突：同档既 `blocked` 又「已验证不可用」⇒ **必须拒**",
+         blocked_vs_unavailable_conflict({"availability": "blocked", "status": "已验证不可用"}) is True),
+        ("⑯c 轴分离：`blocked` + 「尚未验证」⇒ 放行",
+         blocked_vs_unavailable_conflict({"availability": "blocked", "status": "尚未验证"}) is False),
         ("⑩ ★ blocked 档缺 `blocked_reason` ⇒ **必须判缺**（fail-closed）",
          blocked_unmarked({"availability": "blocked"}) is True),
         ("⑪ blocked 档带理由 ⇒ 放行（但仍不得起跑）",
@@ -343,6 +356,11 @@ def main():
     _mm = [(r["tier"], why) for r in rows if (why := cards_procs_mismatch(r))]
     if _mm:
         print(f"FAIL-CLOSED：卡数与进程数/卡列表不同源（⛔ 不得只改一半）⇒ 拒绝产出：{_mm}")
+        return 1
+
+    _conf = [r["tier"] for r in rows if blocked_vs_unavailable_conflict(r)]
+    if _conf:
+        print(f"FAIL-CLOSED：以下档同时标 blocked 与「已验证不可用」（轴混用）⇒ 拒绝产出：{_conf}")
         return 1
 
     _bl = [r["tier"] for r in rows if blocked_unmarked(r)]
