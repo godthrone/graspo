@@ -481,6 +481,33 @@ def decide_eval_mode(form: str) -> tuple[str, str]:
     return ("unknown", f"形态未知（{form}）⇒ ⛔ 不得凭惯性选路径，须人工确认 ⇒ fail-closed")
 
 
+#: §10 的缺省安全值：228 实测 27B(Mamba) 的可用 cache blocks = 232 ⇒ 取 192
+MAMBA_SAFE_MAX_NUM_SEQS = 192
+
+
+def check_max_num_seqs_in_script(script_text: str, needs_limit: bool, safe: int = MAMBA_SAFE_MAX_NUM_SEQS) -> list[str]:
+    """★ §10 的**产物级**落实（与 §15 同精神：纪律必须落在"被执行的那份产物"上）。
+
+    §10 早已入纪律（"27B/Mamba 必须显式 `--max-num-seqs ≤ 可用 blocks`"），但 2026-10-13 T025
+    评测仍炸：`max_num_seqs (1024) exceeds available Mamba cache blocks (232) … CUDA graph capture
+    cannot proceed` —— 因为**我改生成器时丢了这条参数** ⇒ 纪律没有落在产物上。
+    规则：需要限制的档（27B/Mamba），**生成的脚本文本里必须出现 `--max-num-seqs N`，且 N ≤ safe**。
+    """
+    import re as _re
+    if not script_text:
+        return ["脚本文本为空 ⇒ fail-closed"]
+    if not needs_limit:
+        return []
+    hits = [int(m.group(1)) for m in _re.finditer(r"--max-num-seqs\s+(\d+)", script_text)]
+    if not hits:
+        return [f"该档属 27B/Mamba ⇒ 脚本必须显式 --max-num-seqs（≤ {safe}）；⛔ 缺参数会致 "
+                f"`max_num_seqs (1024) exceeds available Mamba cache blocks (232)` ⇒ fail-closed"]
+    bad = [n for n in hits if n > safe]
+    if bad:
+        return [f"--max-num-seqs 取值 {bad} > 安全上限 {safe} ⇒ fail-closed"]
+    return []
+
+
 def build_json_reason(after_correct: int, n_total: int, base_correct: int, status: str) -> str:
     """落 json 的备注（≤100 字）：判定 + 读数，与结构化字段同源。"""
     after = after_correct / n_total * 100 if n_total else 0.0

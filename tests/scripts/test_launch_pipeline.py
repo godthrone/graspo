@@ -443,3 +443,24 @@ def test_decide_eval_mode_unknown_fails_closed():
     """★ 回归：形态未知时 ⛔ 不得凭惯性选路径。"""
     mode, why = lp.decide_eval_mode("unknown")
     assert mode == "unknown" and "fail-closed" in why, (mode, why)
+
+
+# ---------- §10 的产物级落实（T025 实测 1024 > 232） ----------
+def test_max_num_seqs_required_for_mamba_tier():
+    """★ 回归：27B/Mamba 档脚本缺 `--max-num-seqs` ⇒ 拒（T025 事故）。"""
+    text = "docker run ... --gpu-memory-utilization 0.85 --trust-remote-code ...\n"
+    problems = lp.check_max_num_seqs_in_script(text, needs_limit=True)
+    assert problems and "必须显式 --max-num-seqs" in problems[0], problems
+
+
+def test_max_num_seqs_accepts_safe_value():
+    assert lp.check_max_num_seqs_in_script("--max-num-seqs 192 --trust-remote-code\n", True) == []
+
+
+def test_max_num_seqs_rejects_too_large():
+    problems = lp.check_max_num_seqs_in_script("--max-num-seqs 1024\n", True)
+    assert problems and "1024" in problems[0], problems
+
+
+def test_max_num_seqs_not_required_for_small_tier():
+    assert lp.check_max_num_seqs_in_script("--gpu-memory-utilization 0.85\n", False) == []
