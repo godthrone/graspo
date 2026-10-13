@@ -200,3 +200,9 @@ python3 -m py_compile tools/matrix/<改动文件>.py     # 或等价的 AST 解�
 ★ 配置产物 = `samples/configs/matrix54-*/<T>.yaml`（`backend` / `launch.cards` / `nproc_per_node` / `native.*`）；★ 运行产物 = `runs/<T>/…` 的 `entry.sh` 与 stdout 头部（实际 `--backend` / `nproc` / 卡集）。
 ★ **实证（2026-10-13）**：跑次侧叙述称「T038 = 1 卡」⇒ ★ 但 **`T038.yaml` = `backend: msswift` + `cards: 2`**、且 **`T038.json` 的对账式 `8×20×8/2 = 640`（分母 = cards = 2）** ⇒ ★ **矩阵表正确、叙述有误**；★ 据此**撤回了"同族非单调"的说法**（真实情况是 **native 2 卡 OOM / ms-swift 2 卡可行 —— 后端不同**）。
 ★ **引用纪律**：★ 结论若**引用了其他档的实测（外推）** ⇒ ★ **必须同时引用被引档的配置字段**（`backend` / `cards` 等），否则 **fail-closed**（用例 ⑰j/⑰k）。
+
+## 清单与结论一致性（强制）
+
+★ **"已判定"的档 ⛔ 不得在待跑清单里标 `ready` 而不加注明**（★ 否则会被**重跑**，浪费算力：2026-10-13 T028 实测发生过）。
+★ 处置：★ manifest 的逐档条目增 **`matrix_conclusion`**（四态）＋ **`list_stale: true`**（标明"清单滞后"）；★ 若该档是**同档再测** ⇒ 另加 **`retest`**（如 `flush 修正重测`）。
+★ 断言/作业：★ **每次回填后须扫一遍**"四态 ∈ {已验证可用, 已验证不可用} 而 manifest `status == ready`"的档，逐一列出并标注。
