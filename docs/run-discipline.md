@@ -168,3 +168,16 @@
   · **native rank 分片** ⇒ `rank_*.pt` ∨ `manifest.json`。
 - 落地件：`scripts/run_guards.py`（`form` / `fresh` / `mamba` 三条子命令）＋
   `tests/scripts/test_run_guards.py`（每族正例 + 负例，共 13 例）。
+
+## 11. 仓内件必须**同批同步**部署树；调用方先探测存在性
+
+- 规则：**仓内新增的护栏/脚本，落仓后必须同批 `scp` 同步到部署树，并在真机上跑一次冒烟**
+  （如 `run_guards.py form` / `mamba` 各一条）。**调用方必须先探测依赖脚本存在性，缺失即
+  fail-closed**（不要等它 `No such file` 才发现）。
+- 为什么：228 实测（2026-10-13）——护栏脚本 `scripts/run_guards.py` **已提交进仓**，但**没有同步到
+  部署树** ⇒ 评测脚本调用 `python3 $TREE/scripts/run_guards.py` 报 `No such file or directory` ⇒
+  §7 自检 fail-closed 拒跑（零副作用，但白跑一轮）。
+- 结构性配套：**启动流水线**（生成 → 护栏 → 起跑 → 监控 → 评测 → 落 json）不再每轮临时写，
+  而是固化为 `scripts/launch_pipeline.py` ＋ `tests/scripts/test_launch_pipeline.py`。
+  该链在 228 上连踩 5 次坑（§8 断言位置 → §7 谓词过窄 → 护栏件未同步 → 生成顺序错 →
+  生成链变量为空），根因都是"启动脚本每轮现写"。
