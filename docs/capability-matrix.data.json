@@ -791,28 +791,57 @@
    "expected_optimizer_steps_per_epoch": "50",
    "expected_optimizer_steps_reachable": "50",
    "applicable": true,
-   "status": "尚未验证",
-   "runs": "—",
-   "effect": "—",
-   "inference": "—",
-   "algo_checks": "—",
-   "throughput": "—",
-   "peak_mem": "—",
-   "run_path": "—",
+   "status": "已验证可用",
+   "runs": "1/1 真效果训练（ms-swift CPT LoRA 2 卡，2 epoch / 100 步）：判据① 通过（exit_code=0、100/100、ckpt_retention=ok、torch_probe all_ok=True、五计数全 0）",
+   "effect": "after acc=22.2222%（156/702）；base acc=16.8091%（118/702）；★ Δ = +5.4131 pp（冻结阈值 +5.0 pp；目标 +10.0 pp 仅展示）。口径：criteria elam-v3-allright-1、温度 0、702/702、0 error；base/after 独立 output_dir + fail-closed + stdout 双份。 ★ 服务档参数：adapter ⇒ merge；--gpu-memory-utilization 0.85（9B 档，无需 §10 的 max-num-seqs）",
+   "inference": "ms-swift PEFT adapter ⇒ graspo eval export --eval-config 合并 ⇒ vLLM 挂载 merged（宿主路径字面量）⇒ graspo eval run（after/base）⇒ graspo eval delta",
+   "algo_checks": "exit_code=0、100/100、ckpt_retention=ok、torch_probe all_ok=True、五计数全 0",
+   "throughput": "不适用（CPT 档不跑 rollout/生成）",
+   "peak_mem": "见 runsgpu_memory_summary.json（2 卡峰值）",
+   "run_path": "RUN-T002",
+   "measurement_pending": false,
+   "anomalies": [
+    "★ 上一轮该档评测失败真因：evidence/ 目录当时不存在 ⇒ docker run 前的输出重定向在 bash 层失败（run-t002-eval.sh: line 22: No such file or directory）⇒ docker run 根本没执行（无容器、证据文件缺失、镜像存在）；修法 = 生成器自建产物目录 mkdir -p $EVLOG $EV（commit d98efae）；本次一次通过（export rc=0 ⇒ §8(post) 通过）",
+    "★ 另一轮失败真因 = §17 卡冲突（评测 vLLM 起在 GPU6，而 T044 占着 GPU6/7 ⇒ Free memory 3.81/79.25 GiB ⇒ Engine core initialization failed）；修法 = §17.1/§17.2 占卡台账 + reserved 硬排除（COMMIT 9cdc897 等）",
+    "★ §7/§8/§10/§12 护栏本轮全部生效（评测脚本由 render_eval_script 生成）。"
+   ],
+   "after_acc": 0.222222,
+   "base_acc": 0.168091,
+   "delta_pp": 5.4131,
+   "n_correct": 156,
+   "n_total": 702,
+   "code_identity": {
+    "tree_fingerprint": "3416af475b67cc1de682842a64d0bcd0320a5aaac371fd2b230190becbc54a7a",
+    "generated_yaml": "samplesT002.yaml",
+    "generated_yaml_sha256": "",
+    "image_run_wrapper": {
+     "digest": "sha256:629642a4c4ec28d370debb035417d9ec9586fde07a9339b47c1834b75c31c041"
+    },
+    "image_base_official": {
+     "digest": "sha256:ecaf897a7534ef0901096e48fefbf10a42adf76029920ba8d54e88a738783abe"
+    }
+   },
+   "tree_fingerprint": "3416af475b67cc1de682842a64d0bcd0320a5aaac371fd2b230190becbc54a7a",
+   "tree_fingerprint_role": "起跑断言值",
+   "corrections": [
+    "n_correct：156"
+   ],
+   "note": "判定：已验证可用。after 22.2222%/base 16.8091%/Δ=+5.4131 pp。",
+   "throughput_detail": "★ 生成式 tok/s 不适用（CPT 档不跑 rollout/生成）",
    "elapsed": "—",
    "max_epochs": 2,
    "derived_steps": 100,
    "per_epoch_steps": 50,
    "save_steps_basis": "= 推导步数 100 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
-   "steps_actual": "—",
+   "steps_actual": "100",
    "data_scale": "100 条（每卡 50）",
-   "note": "—",
    "tp": "—（框架内部决定）",
    "pp": "—（框架内部决定）",
    "dp": "2（派生）",
    "cards_total": "nproc_per_node×nnodes = 2 卡",
    "dp_derived": true,
-   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）"
+   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）",
+   "note_full": "判据① ∧ 判据② 均达（阈值已冻结）⇒ 已验证可用。 ★ 订正说明（跑次侧）：n_correct：156 ★ 异常登记：★ 上一轮该档评测失败真因：evidence/ 目录当时不存在 ⇒ docker run 前的输出重定向在 bash 层失败（run-t002-eval.sh: line 22: No such file or directory）⇒ docker run 根本没执行（无容器、证据文件缺失、镜像存在）；修法 = 生成器自建产物目录 mkdir -p $EVLOG $EV（commit d98efae）；本次一次通过（export rc=0 ⇒ §8(post) 通过） ★ 异常登记：★ 另一轮失败真因 = §17 卡冲突（评测 vLLM 起在 GPU6，而 T044 占着 GPU6/7 ⇒ Free memory 3.81/79.25 GiB ⇒ Engine core initialization failed）；修法 = §17.1/§17.2 占卡台账 + reserved 硬排除（COMMIT 9cdc897 等） ★ 异常登记：★ §7/§8/§10/§12 护栏本轮全部生效（评测脚本由 render_eval_script 生成）。 ★ LoRA 目标按后端：ms-swift 实测 358 实例（language 248 + visual 110）｜native **同为 358 实例**（122 为签名/模式条目数）⇒ ★ 两后端**实例数相同但命中集合不同（不等价）**。 ★ 锚点：树 3416af47… + image_base_official sha256:e… + image_run_wrapper sha256:6…"
   },
   {
    "tier": "T003",
