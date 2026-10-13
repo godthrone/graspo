@@ -3003,28 +3003,78 @@
    "expected_optimizer_steps_per_epoch": "100",
    "expected_optimizer_steps_reachable": "100",
    "applicable": true,
-   "status": "尚未验证",
-   "runs": "—",
-   "effect": "—",
-   "inference": "—",
-   "algo_checks": "—",
+   "status": "已验证不可用",
+   "runs": "$TREE：config.yaml、final/（manifest.json + rank_00000_tp_00_pp_00.pt）、logs/",
+   "effect": "after acc=20.7977%（146/702）；base acc=19.5157%（137/702）；★ Δ = +1.2821 pp（冻结阈值 +5.0 pp；目标 +10.0 pp 仅展示）。口径：criteria elam-v3-allright-1、温度 native-sft-lora-27b、702/702、0 error；base/after 独立 output_dir + fail-closed + stdout 双份。 ★ 服务档参数：27B ⇒ §10 --max-num-seqs 192；评测因与 T030 共用 GPU4 显存不足移至空闲卡 7（逐字：Free memory on device cuda:0 (30.82/79.25 GiB) < 0.85 (67.36 GiB)）",
+   "inference": "native rank 分片 ⇒ 转 PEFT adapter（dp=1；键名按塔前缀 model.language_model./model.visual.）⇒ graspo export merge 为 merged-hf ⇒ vLLM 挂载 merged（GPU7）⇒ graspo eval run ⇒ graspo eval delta",
+   "algo_checks": "不适用（SFT 档 ⇒ 无 rollout 组/重采样/优势注入等 GRASPO 专有指标）",
    "throughput": "—",
-   "peak_mem": "—",
-   "run_path": "—",
+   "peak_mem": "训练 rank0 max_allocated=61.82 GB（stdout [MEM] 实测最大值）",
+   "run_path": "RUN-T022",
+   "measurement_pending": false,
+   "p5p6_readings": {
+    "applicable": false,
+    "value": "不适用（非 GRASPO 档）",
+    "reason": "非 GRASPO 档 ⇒ 无 rollout 组/重采样/优势注入等专有指标。"
+   },
+   "anomalies": [
+    "★ §7/§8/§10/§12 护栏本轮全部生效（评测脚本由 render_eval_script 生成）。"
+   ],
+   "after_acc": 0.207977,
+   "base_acc": 0.195157,
+   "delta_pp": 1.2821,
+   "n_correct": 146,
+   "n_total": 702,
+   "step_count_reconciliation": {
+    "steps_nominal": 200,
+    "steps_actual": 200,
+    "reconciliation_formula": "★ 对账式（含 nproc=1）：200 = steps_actual ✓",
+    "trainable_completions": {
+     "applicable": false,
+     "value": "不适用（配置式）"
+    },
+    "verdict": "对账式 200 = 实际 200 ✓ ⇒ 判据①「完整跑完」成立；判据② 未过。"
+   },
+   "note_extra_steps_formula_issue": "★ 登记待修：'推导步数公式'对 native GRASPO 档不成立（推导 None vs 实际 None）—— 本轮不顺手改公式，后续单独修。",
+   "code_identity": {
+    "tree_fingerprint": "",
+    "generated_yaml": "graspo-b11fix-20261012T022.yaml",
+    "generated_yaml_sha256": "",
+    "image_run_wrapper": {
+     "digest": ""
+    },
+    "image_base_official": {
+     "digest": ""
+    }
+   },
+   "corrections": [
+    "n_correct：146"
+   ],
+   "note": "判定：已验证不可用。after 20.7977%/base 19.5157%/Δ=+1.2821 pp。Δ<阈值，未过第 2 条。",
+   "throughput_detail": "训练 200 步 / 1981.8 s = 0.1009 步/s；末批 batch_sec=9.71",
    "elapsed": "—",
    "max_epochs": 2,
    "derived_steps": 200,
    "per_epoch_steps": 100,
    "save_steps_basis": "= 推导步数 200 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
+   "p5p6": "",
    "steps_actual": "—",
    "data_scale": "100 条（每卡 100）",
-   "note": "—",
    "tp": "1",
    "pp": "1",
    "dp": "1",
    "cards_total": "1×1×1×1 = 1 卡",
    "dp_derived": false,
-   "dp_source": "配置值（native.tp_size / pp_size / dp_size）"
+   "dp_source": "配置值（native.tp_size / pp_size / dp_size）",
+   "verdict": {
+    "state": "已验证不可用",
+    "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
+    "failed_detail": "Δ = +1.2821 pp（低于冻结阈值）",
+    "passed_criteria": [
+     "不适用（SFT 档 ⇒ 无 rollout 组/重采样/优势注入等 GRASPO 专有指标）"
+    ]
+   },
+   "note_full": "★ 未过第 2 条判据（效果不足）——after acc=20.7977%（146/702）；base acc=19.5157%（137/702）；★ Δ = +1.2821 pp（冻结阈值 +5.0 pp；目标 +10.0 pp 仅展示）。口径：criteria elam-v3-allright-1、温度 native-sft-lora-27b、702/702、0 error；base/after 独立 output_dir + fail-closed + stdout 双份。 ★ 服务档参数：27B ⇒ §10 --max-num-seqs 192；评测因与 T030 共用 GPU4 显存不足移至空闲卡 7（逐字：Free memory on device cuda:0 (30.82/79.25 GiB) < 0.85 (67.36 GiB)） ★ 已通过项（事实保留）：不适用（SFT 档 ⇒ 无 rollout 组/重采样/优势注入等 GRASPO 专有指标） ★ 判据① 依据：$TREE：config.yaml、final/（manifest.json + rank_00000_tp_00_pp_00.pt）、logs/ ★ 步数对账（如实登记）：推导 None vs 实际 None；对账式 200 = 实际 200 ✓ ⇒ 判据①「完整跑完」成立；判据② 未过。 ★ 订正说明（跑次侧）：n_correct：146 ★ 异常登记：★ §7/§8/§10/§12 护栏本轮全部生效（评测脚本由 render_eval_script 生成）。 ★ LoRA 目标按后端：ms-swift 实测 358 实例（language 248 + visual 110）｜native **同为 358 实例**（122 为签名/模式条目数）⇒ ★ 两后端**实例数相同但命中集合不同（不等价）**。"
   },
   {
    "tier": "T023",
