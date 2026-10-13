@@ -99,6 +99,7 @@ POLICY: dict[str, Spec] = {
     "tools/matrix/gen_configs.py": Spec(HELP, "矩阵数据 → 测试 yaml 生成器（确定性；禁手改 yaml）"),
     # ── shell 工具/运维入口 ────────────────────────────────────────────────
     "scripts/eval_cleanup.sh": Spec(SH_HELP, "评测清理入口；支持 -h/--help ⇒ rc=0"),
+    "scripts/sync_deploy_tree.sh": Spec(SH_HELP, "§11：仓内 scripts/*.py 幂等同步到部署树 + 逐件冒烟（失败即非零退出）"),
     "scripts/eval_export_checkpoint.sh": Spec(SH_HELP, "评测导出入口；-h 显式 exit 0"),
     "scripts/eval_serve_vllm.sh": Spec(
         SH_SYNTAX, "容器生命周期脚本，跑一次会起 vLLM 并占 GPU（红线：不占 GPU）"

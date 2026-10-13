@@ -194,3 +194,12 @@
 - 这是"没按本档自身实体取值"族错误的又一例（同族：基座取模板默认、`$MP` 当宿主机挂载源、
   `checkpoint_path` 写成 vLLM 容器路径）⇒ 落地件：`launch_pipeline.check_card_count()` /
   `plan_cards()`（含回归用例）。
+
+### 11.1 §11 的"一条命令"（2026-10-13 补）
+
+- 仓内件落仓后，**同轮跑一次**：`scripts/sync_deploy_tree.sh --tree <部署树>`。
+  它**幂等**（可重复跑）、把 `scripts/*.py` 同步到部署树，并**逐件冒烟**：
+  ① sha256 与仓内一致；② `python3 -c "import <mod>"` 可导入；③ 带 CLI 的件 `--help` rc=0。
+  **任一失败即非零退出**（fail-closed）。
+- 为什么需要它：228 上**两次**都是"起跑时才发现护栏不在部署树"（`ModuleNotFoundError`）——
+  第一次是 `run_guards.py`，第二次是 `launch_pipeline.py` / `gen_tier_json.py`。
