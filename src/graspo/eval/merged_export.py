@@ -338,6 +338,11 @@ class CheckpointKind(StrEnum):
     """本身就是可服务模型（有 config.json + 权重），无需合并。"""
 
     GRASPO_NATIVE = "graspo-native"
+    NATIVE_RANK = "native-rank"
+    """native 的 ``final/``：``manifest.json`` + ``rank_*_tp_*_pp_*.pt``（PyTorch 分片）。
+
+    ★ 与 ``GRASPO_NATIVE`` 的区别：后者要求 ``*.safetensors`` 分片；本形态是 ``.pt`` 分片。
+    """
     """native GRASPO checkpoint（graspoflow-lora 分片格式），走 ``graspo export``。"""
 
     PEFT_ADAPTER = "peft-adapter"
@@ -427,9 +432,16 @@ def classify_checkpoint(path: str | Path) -> CheckpointClassification:
         evidence.append(f"found safetensors shards without config.json: {names}")
         return CheckpointClassification(CheckpointKind.GRASPO_NATIVE, root, tuple(evidence))
 
+    manifest = root / "manifest.json"
+    rank_shards = sorted(root.glob("rank_*.pt"))
+    if manifest.is_file() and rank_shards:
+        names = ", ".join(item.name for item in rank_shards[:3])
+        evidence.append(f"found manifest.json and .pt rank shards: {names}")
+        return CheckpointClassification(CheckpointKind.NATIVE_RANK, root, tuple(evidence))
+
     raise ExportError(
         f"cannot classify checkpoint at {root}: no config.json+weights, no adapter_config.json, "
-        f"no *.safetensors (entries: {sorted(item.name for item in root.iterdir())[:10]})"
+        f"no *.safetensors, no manifest.json+rank_*.pt (entries: {sorted(item.name for item in root.iterdir())[:10]})"
     )
 
 
