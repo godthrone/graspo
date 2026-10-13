@@ -19,6 +19,8 @@ while [ $# -gt 0 ]; do
     --repo) REPO="$2"; shift 2 ;;
     --dry-run) DRY=1; shift ;;
     -h|--help)
+      echo "用法: $0 --tree <部署树> [--repo <仓根>] [--dry-run]"
+      echo "  幂等同步仓内 scripts/*.py 到部署树并逐件冒烟（sha256/import/--help）；任一失败即非零退出。"
       sed -n '2,12p' "$0"; exit 0 ;;
     *) echo "未知参数：$1" >&2; exit 2 ;;
   esac
