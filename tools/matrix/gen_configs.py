@@ -201,6 +201,33 @@ def running_but_ready(row):
     return bool(str(row.get("live_evidence") or "").strip()) and row.get("_status") == "ready"
 
 
+#: ★ 生效集合：**由指挥部给、与铺开进度同步扩大**（⛔ 不得一次要求全部档）。
+#: 2026-10-13 起 = {"T023"}（单档小步验证：该档已知无评测通道）。
+FINAL_FORMATS_REQUIRED: set[str] = {"T023"}
+#: ★ 取值域（与 `lora_io.export_from_checkpoint` 对齐，⛔ 不得自造）
+FINAL_FORMATS_ALLOWED: set[str] = {"peft-adapter", "merged-hf"}
+
+
+def final_formats_explicit(row):
+    """★ 断言：**生效集合内**的档必须显式给出 `export.final_formats`（缺 / 空 ⇒ 拒）。
+
+    ★ 作用范围 = `FINAL_FORMATS_REQUIRED`（★ 与铺开同步扩大；⛔ 作用范围外的档不受约束，防误伤）。
+    """
+    if row.get("tier") not in FINAL_FORMATS_REQUIRED:
+        return False
+    ff = row.get("final_formats")
+    return not (isinstance(ff, list) and len(ff) > 0)
+
+
+def final_formats_valid(vals):
+    """★ 断言：取值必须 ⊆ `{peft-adapter, merged-hf}`（★ 与上游 ValueError 对齐，提前到生成期）。"""
+    if vals is None:
+        return True
+    if not isinstance(vals, list):
+        return True
+    return any(str(v) not in FINAL_FORMATS_ALLOWED for v in vals)
+
+
 def blocked_unmarked(row):
     """★ blocked 档必须有 `blocked_reason`（起跑侧据此拒跑）；缺理由 ⇒ fail-closed。"""
     if row.get("availability") != "blocked":
@@ -270,6 +297,18 @@ def _gen_self_test():
          derive_tier_status("尚未验证", None, running=bool("x")) == "running"),
         ("⑱ ⑤ status 推导：blocked ⇒ `blocked`（优先于四态）",
          derive_tier_status("尚未验证", "blocked") == "blocked"),
+        ("⑲ ① ★ final_formats：生效集合内缺该字段 ⇒ **必须拒**",
+         final_formats_explicit({"tier": "T023"}) is True),
+        ("⑲ ② ★ final_formats：生效集合内空数组 ⇒ **必须拒**",
+         final_formats_explicit({"tier": "T023", "final_formats": []}) is True),
+        ("⑲ ③ final_formats：生效集合内显式给出 ⇒ 放行",
+         final_formats_explicit({"tier": "T023", "final_formats": ["merged-hf"]}) is False),
+        ("⑲ ④ ★ final_formats：**作用范围外**的档不受约束（防误伤）",
+         final_formats_explicit({"tier": "T099"}) is False),
+        ("⑲ ⑤ ★ final_formats：非法取值（`hf`）⇒ **必须拒**",
+         final_formats_valid(["hf"]) is True),
+        ("⑲ ⑥ final_formats：合法取值 ⇒ 放行",
+         final_formats_valid(["merged-hf"]) is False),
         ("⑩ ★ blocked 档缺 `blocked_reason` ⇒ **必须判缺**（fail-closed）",
          blocked_unmarked({"availability": "blocked"}) is True),
         ("⑪ blocked 档带理由 ⇒ 放行（但仍不得起跑）",
