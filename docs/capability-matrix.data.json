@@ -4361,7 +4361,7 @@
    "peak_mem": "—",
    "run_path": "—",
    "availability": "blocked",
-   "blocked_reason": "★ 本档自身实测 OOM（9B GRASPO 全量、2 卡）：`exit_code = 1`、逐字 `OutOfMemory` ⇒ ⛔ 不得以本配置起跑；★ 这不是效果结论，是硬件不可行。★ 四态保持「尚未验证」。★★ 登记口径：按【配置五元组】= model × algo × mode × backend × cards，⛔ 不跨卡数/跨后端外推。",
+   "blocked_reason": "★ **本档自身实测 OOM（native × 2 卡，PP=2）**：`exit_code = 1`、逐字 `OutOfMemory` ⇒ ⛔ 不得以本配置起跑；★ 这不是效果结论，是硬件不可行。★ 四态保持「尚未验证」。★ 本理由**不依赖族/卡数外推**（⛔ 未引用他档实测）；★ 后端归属已由 `T035.yaml`(backend: native) 与 launch.log 钉死。",
    "family": "graspo_9b_full",
    "family_scope_note": "★ 族内**已实测非单调**（见 manifest `graspo_9b_full_cards`）⇒ ⛔ 不得假设卡数越多越可行",
    "elapsed": "—",

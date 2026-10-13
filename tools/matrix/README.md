@@ -193,3 +193,10 @@ python3 -m py_compile tools/matrix/<改动文件>.py     # 或等价的 AST 解�
 ★ 断言（新增）：`combo_infeasible_still_runnable` —— ★ **同族同后端内已被实测证伪的 `(cards)` 组合**，⛔ **不得再有标为可起的同组合档**（用例 ⑰g/⑰h/⑰i，含"**不同后端不套用**"负例）。
 ★ 与既有两条断言构成**三重防线**：`family_under_min_unblocked`（防该标没标）＋ `blocked_contradicted_by_live`（防不该标乱标）＋ `combo_infeasible_still_runnable`（防**同配漏标**）。
 ★ **归属纪律**：★ **tier 表的 `backend`/`cards` 与跑次侧报告不一致时，⛔ 不得单侧采信** —— ★ 如实标出差异并**请上级裁定**（★ 2026-10-13 实例：矩阵表记 T035 = native、跑次侧报 ms-swift ⇒ 已在 manifest `graspo_9b_full_cards.open_question` 如实登记）。
+
+## 归属纪律（强制 · 以配置与运行产物为准）
+
+★ **档的归属（backend / cards / algo）⛔ 不得以叙述或记忆为准** —— ★ **一律以"配置产物 + 运行产物"钉死**：
+★ 配置产物 = `samples/configs/matrix54-*/<T>.yaml`（`backend` / `launch.cards` / `nproc_per_node` / `native.*`）；★ 运行产物 = `runs/<T>/…` 的 `entry.sh` 与 stdout 头部（实际 `--backend` / `nproc` / 卡集）。
+★ **实证（2026-10-13）**：跑次侧叙述称「T038 = 1 卡」⇒ ★ 但 **`T038.yaml` = `backend: msswift` + `cards: 2`**、且 **`T038.json` 的对账式 `8×20×8/2 = 640`（分母 = cards = 2）** ⇒ ★ **矩阵表正确、叙述有误**；★ 据此**撤回了"同族非单调"的说法**（真实情况是 **native 2 卡 OOM / ms-swift 2 卡可行 —— 后端不同**）。
+★ **引用纪律**：★ 结论若**引用了其他档的实测（外推）** ⇒ ★ **必须同时引用被引档的配置字段**（`backend` / `cards` 等），否则 **fail-closed**（用例 ⑰j/⑰k）。

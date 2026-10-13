@@ -216,26 +216,51 @@
     "graspo_9b_full_cards": {
       "family": "9B GRASPO 全量",
       "measured": true,
-      "scope_note": "★★ **配置五元组** = model × algo × mode × backend × cards ⇒ ⛔ **不得跨卡数 / 跨后端外推**；★★ **本族实测非单调**：★ **1 卡可跑、2 卡 OOM ⇒ ⛔ 不得假设卡数越多越可行**。",
+      "scope_note": "★★ **配置五元组** = model × algo × mode × backend × cards ⇒ ⛔ **不得跨卡数 / 跨后端外推**。★★ 先前的「本族实测非单调（1 卡可跑、2 卡 OOM）」**已撤回**：★ 真实情况是 **同卡数（2）、不同后端** ⇒ 见 `by_config`。",
       "by_config": {
         "T038": {
-          "combo": "9B × GRASPO × full × ms-swift × 2 卡（按矩阵 tier 表）",
+          "combo": "9B × GRASPO × full × ms-swift × 2 卡",
           "verdict": "feasible",
           "evidence": "训练跑完（640/640、ec=0）⇒ 效果为负已入四态（已验证不可用，Δ=−16.6667 pp）"
         },
         "T035": {
-          "combo": "9B × GRASPO × full × 2 卡（★ 后端归属待核：矩阵表记 native、跑次侧报 ms-swift）",
+          "combo": "9B × GRASPO × full × native × 2 卡（PP=2）",
           "verdict": "infeasible",
-          "evidence": "本档实测 OOM：`exit_code = 1`、逐字 `OutOfMemory`"
+          "evidence": "本档自身实测 OOM：`exit_code = 1`、逐字 `OutOfMemory`"
         },
         "T039": {
-          "combo": "9B × GRASPO × full × ms-swift × 4 卡（按矩阵 tier 表）",
+          "combo": "9B × GRASPO × full × ms-swift × 4 卡",
           "verdict": "feasible",
           "evidence": "训练跑完（ec=0）⇒ 效果为负已入四态"
         }
       },
-      "open_question": "★ 待核：跑次侧报告称「T038 = 1 卡已跑完、T035 = 2 卡 OOM（ms-swift）」，而矩阵 tier 表记 T038 = 2 卡（ms-swift）、T035 = 2 卡（native）⇒ ★ 两侧卡数/后端归属不一致 ⇒ ★ 请裁定以哪侧为准（我按矩阵表登记，并已把差异如实标出）。",
-      "note": "★ 非单调结论只适用于被实测覆盖的配置；⛔ 不得据此推断同族其他卡数/后端。"
+      "note": "★ 非单调结论只适用于被实测覆盖的配置；⛔ 不得据此推断同族其他卡数/后端。",
+      "attribution_resolution": {
+        "status": "★ 已解决（两侧一致，矩阵 tier 表正确）",
+        "evidence": {
+          "T035.yaml": [
+            "backend: native",
+            "tuner_type: full",
+            "launch.cards: 2",
+            "launch.nproc_per_node: 2",
+            "native: tp_size 1 / dp_size 1 / pp_size 2"
+          ],
+          "T035 运行侧": [
+            "status-T035/launch.log 逐字 `gpus=3,5 nproc=2`"
+          ],
+          "T038.yaml": [
+            "backend: msswift",
+            "tuner_type: full",
+            "launch.cards: 2",
+            "launch.nproc_per_node: 2"
+          ],
+          "T038 运行侧": [
+            "runs 目录含 checkpoint-640 与 args.json",
+            "T038.json: steps_actual = 640 且对账式 8×20×8/2 = 640 ⇒ 分母 = cards = 2"
+          ]
+        },
+        "conclusion": "★ **同卡数（2）、不同后端**：★ **ms-swift × 2 卡 = 跑完**（T038，640/640、ec=0）｜★ **native × 2 卡 = OOM**（T035，exit_code=1、逐字 OutOfMemory）⇒ ★ **结论 = 后端差异**，★ ⛔ 不是卡数非单调；★ 编制侧先前的叙述（T038=1 卡、T035=ms-swift）有误并已认错。"
+      }
     }
   },
   "data": {

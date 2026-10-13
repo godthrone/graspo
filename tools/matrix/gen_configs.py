@@ -163,6 +163,20 @@ def combo_infeasible_still_runnable(row, falsified):
     return False
 
 
+def citation_missing_config(text, cited_tier, cited_row):
+    """★ 引用纪律：结论若**引用了其他档的实测（外推）**，则**必须同时引用被引档的配置字段**才能成立。
+
+    `text`: 结论文本；`cited_tier`: 被引档号；`cited_row`: 被引档的**配置**（须含 backend/cards 等）。
+    返回 True = **缺配置依据**（应 fail-closed）。
+    """
+    if not text or cited_tier not in str(text):
+        return False
+    if not cited_row:
+        return True
+    need = ("backend", "cards")
+    return any(not cited_row.get(k) for k in need)
+
+
 def blocked_unmarked(row):
     """★ blocked 档必须有 `blocked_reason`（起跑侧据此拒跑）；缺理由 ⇒ fail-closed。"""
     if row.get("availability") != "blocked":
@@ -214,6 +228,10 @@ def _gen_self_test():
          combo_infeasible_still_runnable({"family": "g", "backend": "native", "cards": 2, "availability": "blocked"}, {("g", "native"): {2}}) is False),
         ("⑰i 同配拦截：**不同后端**同卡数 ⇒ 不套用（⛔ 不跨后端外推）",
          combo_infeasible_still_runnable({"family": "g", "backend": "ms-swift", "cards": 2}, {("g", "native"): {2}}) is False),
+        ("⑰j ★ 引用纪律：结论引用了 T044 却**未同时引用其配置** ⇒ **必须拒**",
+         citation_missing_config("★ 与 T044 同族 ⇒ blocked", "T044", None) is True),
+        ("⑰k 引用纪律：引用时**同时给出配置字段** ⇒ 放行",
+         citation_missing_config("★ 与 T044 同族 ⇒ blocked", "T044", {"backend": "ms-swift", "cards": 2}) is False),
         ("⑩ ★ blocked 档缺 `blocked_reason` ⇒ **必须判缺**（fail-closed）",
          blocked_unmarked({"availability": "blocked"}) is True),
         ("⑪ blocked 档带理由 ⇒ 放行（但仍不得起跑）",
