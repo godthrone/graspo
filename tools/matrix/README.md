@@ -218,3 +218,10 @@ python3 -m py_compile tools/matrix/<改动文件>.py     # 或等价的 AST 解�
 | 其余 | `ready` |
 ★ 事故（2026-10-13）：`status` 手工维护 ⇒ **21 档"已判定却标 `ready`"** ⇒ **T028 被误重跑，白耗一张卡数小时**。
 ★ 断言：**四态已判定 ⇒ `status` 不得为 `ready`**（用例 ⑱②–⑱⑤，违规即 fail-closed）。
+
+## 产物形态纪律（强制 · 逐档实测，⛔ 不得按族/后端/mode 推断）
+
+★ **"评测通道有无"取决于该档实际产出的终态格式（`adapter` / `native_rank` / HF）⇒ ★ 必须逐档实测（§16），⛔ 不得按 `mode`（LoRA/全参）、`backend` 或 `model` 推断。**
+★ 实证（2026-10-13）：★ 旧推断"native LoRA 走 adapter、不撞缺口"**被 T022（27B SFT LoRA native）推翻** —— 它同样产出 `native_rank`；★ 而同为 27B native LoRA 的 T024 **有通道**（已评测）⇒ ★ **配置字段无法预判**。
+★ 保护：★ `FORM_CHANNELS`（单一真源）＋ `assert_form_has_channel` ⇒ **起跑前探测到无通道即拒跑**（★ 本次实测证明该保护必要）。
+★ 影响面口径：★ **"已确认（实测）＋ 疑似（待测）"分段**，⛔ 不用"族 × mode"聚合。
