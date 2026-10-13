@@ -136,3 +136,21 @@ def test_busy_cards_ignores_containers_without_gpus():
 def test_include_reserved_cards_hard_excludes():
     """★ 择卡硬排除：loading 态的卡不得被选中。"""
     assert rg.include_reserved_cards(["1", "3", "6", "7"], {"6", "7"}) == ["1", "3"]
+
+
+def test_parse_docker_inspect_stream_multiple_objects():
+    """★ 回归：`docker inspect c1 c2` 是**多对象流**（非数组）⇒ 两个都要识别。"""
+    text = ('[{"Name":"/a","State":{"Status":"running"},"HostConfig":{"DeviceRequests":[{"DeviceIDs":["0"]}]}}]'
+            '[{"Name":"/b","State":{"Status":"created"},"HostConfig":{"DeviceRequests":[{"DeviceIDs":["6,7"]}]}}]')
+    objs = rg.parse_docker_inspect_stream(text)
+    assert len(objs) == 2, objs
+    busy, notes = rg.busy_cards_from_docker(names=["a", "b"], docker_json=_json.dumps(objs))
+    assert {"0", "6", "7"} <= busy, (busy, notes)
+
+
+def test_busy_cards_cli_end_to_end():
+    ps = "a\nb\n"
+    ins = ('[{"Name":"/a","State":{"Status":"running"},"HostConfig":{"DeviceRequests":[{"DeviceIDs":["1,3"]}]}}]'
+           '[{"Name":"/b","State":{"Status":"created"},"HostConfig":{"DeviceRequests":[{"DeviceIDs":["6"]}]}}]')
+    busy, csv = rg.busy_cards_cli(ps, ins)
+    assert csv == "1,3,6", (busy, csv)

@@ -137,6 +137,39 @@ def check_mamba(max_num_seqs: int, blocks: int) -> tuple[bool, str]:
     return (False, f"§10 失败：max_num_seqs={max_num_seqs} > 可用 Mamba cache blocks={blocks}（会 Engine core initialization failed）")
 
 
+def parse_docker_inspect_stream(text: str) -> list[dict]:
+    """★ 解析 `docker inspect` 的**多 JSON 对象流**（非单个数组）。
+
+    `docker inspect <c1> <c2>` 输出的是**并排的多个 JSON 对象**（不是数组）⇒ 直接 `json.loads`
+    会失败（T002 那次我的真机冒烟就卡在这里）。本函数用 `json.JSONDecoder.raw_decode` 逐个解码。
+    """
+    import json as _json
+    dec = _json.JSONDecoder(); objs: list[dict] = []; i = 0; n = len(text or "")
+    while i < n:
+        while i < n and text[i] in " \t\r\n,":
+            i += 1
+        if i >= n:
+            break
+        try:
+            obj, j = dec.raw_decode(text, i)
+        except Exception:
+            break
+        if isinstance(obj, list):
+            objs.extend(obj)          # ★ 单数组及其拼接（docker inspect 有时按容器给数组）
+        else:
+            objs.append(obj)
+        i = j
+    return objs
+
+
+def busy_cards_cli(docker_ps_text: str = "", docker_inspect_text: str = "") -> tuple[set[str], str]:
+    """给 CLI 用：由 `docker ps --format '{{.Names}}'` 与 `docker inspect <names>` 的原始输出算出禁用卡集。"""
+    names = [l.strip() for l in (docker_ps_text or "").splitlines() if l.strip()]
+    items = parse_docker_inspect_stream(docker_inspect_text)
+    busy, _ = busy_cards_from_docker(names=names, docker_json=__import__("json").dumps(items))
+    return (busy, ",".join(sorted(busy, key=lambda x: int(x) if x.isdigit() else 99)))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="起跑/评测护栏（§7/§8/§10）")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -153,10 +186,20 @@ def main(argv: list[str] | None = None) -> int:
     p_mamba.add_argument("--max-num-seqs", type=int, required=True)
     p_mamba.add_argument("--blocks", type=int, required=True)
 
+    p_busy = sub.add_parser("cards-busy", help="§17 占卡台账（我方容器占用的卡，含加载期）")
+    p_busy.add_argument("--ps-file", default="-", help="docker ps --format {{.Names}} 的输出文件（- = 读 stdin 的 ps 段）")
+    p_busy.add_argument("--inspect-file", default=None, help="docker inspect 的输出文件（多对象流）")
+
     args = parser.parse_args(argv)
     if args.cmd == "form":
         form, ok, msg = detect_form_and_validate(args.checkpoint)
         print(f"[{form}] {msg}")
+    elif args.cmd == "cards-busy":
+        ps_text = sys.stdin.read() if args.ps_file == "-" else open(args.ps_file, encoding="utf-8").read()
+        ins_text = open(args.inspect_file, encoding="utf-8").read() if args.inspect_file else ""
+        busy, csv = busy_cards_cli(ps_text, ins_text)
+        print(f"BUSY_CARDS={csv}")
+        ok = True
     elif args.cmd == "fresh":
         ok, msg = check_fresh(args.dir, args.phase, args.since)
         print(msg)
