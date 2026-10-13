@@ -285,3 +285,50 @@ def test_script_self_contained_flags_unused_var():
 
 def test_script_self_contained_rejects_empty_script():
     assert lp.check_script_self_contained("", ["TS"])
+
+
+# ---------- 生成链唯一出口：整份评测脚本 ----------
+def _render_kwargs(tmp_path: Path, **kw):
+    host_root = tmp_path / "models"
+    (host_root / "Qwen3.8-27B").mkdir(parents=True, exist_ok=True)
+    base = dict(host_root=str(host_root) + "/",
+        tier="T024", tree="/data/tree", eval_dir="/data/eval", checkpoint="/runs/T024/T024/v0-x/checkpoint-100",
+        base_model_path="/models/Qwen3.8-27B", merge_name="merged-hf-t024", gpu="3", port=18906,
+        export_cmd="export --config /evalout/export-t024.yaml",
+        image_run="graspo:run", image_base="graspo:base",
+    )
+    base.update(kw)
+    return base, str(host_root) + "/"
+
+
+def test_render_eval_script_is_self_contained(tmp_path: Path):
+    kw, _ = _render_kwargs(tmp_path)
+    text, why = lp.render_eval_script(**kw)
+    assert text is not None, why
+    # 生成的脚本必须自定义它用到的变量（T024 `TS: unbound variable` 回归）
+    assert lp.check_script_self_contained(text, ["T", "EV", "G", "PORT", "MD", "MP", "TS"]) == []
+    assert "TS=$(date -u +%s)" in text
+
+
+def test_render_eval_script_embeds_guards_and_unique_names(tmp_path: Path):
+    kw, _ = _render_kwargs(tmp_path)
+    text, why = lp.render_eval_script(**kw)
+    assert text is not None, why
+    assert "run_guards.py fresh --dir" in text and "--phase pre" in text and "--phase post" in text
+    assert "run_guards.py mamba --max-num-seqs 192 --blocks 232" in text
+    assert "T024-vllm-after-$TS" in text and "T024-vllm-base-$TS" in text
+
+
+def test_render_eval_script_refuses_unresolvable_base(tmp_path: Path):
+    """★ 回归：基座用容器内路径且宿主无对应件 ⇒ 生成链 fail-closed（⛔ 不产出坏命令）。"""
+    kw, _ = _render_kwargs(tmp_path)
+    kw["base_model_path"] = "/models/DoesNotExist-27B"
+    text, why = lp.render_eval_script(**kw)
+    assert text is None and "不存在" in why, (text, why)
+
+
+def test_render_eval_script_refuses_empty_param(tmp_path: Path):
+    kw, _ = _render_kwargs(tmp_path)
+    kw["checkpoint"] = ""
+    text, why = lp.render_eval_script(**kw)
+    assert text is None and "为空" in why, (text, why)

@@ -252,6 +252,96 @@ def check_script_self_contained(script_text: str, required_vars: list[str]) -> l
     return problems
 
 
+EVAL_SCRIPT_TEMPLATE = """#!/usr/bin/env bash
+# 由 scripts/launch_pipeline.render_eval_script() 生成 —— ⛔ 请勿手改（改了就会重演"每轮现写"那一族坑）
+set -uo pipefail
+T={tree}
+EV={eval_dir}
+IMG={image_run}
+BASEIMG={image_base}
+G={gpu}
+PORT={port}
+MD=$EV/{merge_name}
+MP={base_mount_src}
+TS=$(date -u +%s)
+EVLOG=$EV/evidence
+LOG=$EV/eval.log
+say() {{ printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" | tee -a "$LOG"; }}
+say "{tier} eval START GPU=$G port=$PORT ck={checkpoint} base=$MP"
+python3 $T/scripts/run_guards.py fresh --dir "$MD" --phase pre | tee -a "$LOG" || {{ say "§8(pre) 失败 ⇒ fail-closed"; echo stale > "$EV/EVAL-ABORTED"; exit 6; }}
+docker run --rm --name {tier}-export-$TS --network=none --runtime=nvidia --gpus "\"device=$G\"" -e NVIDIA_VISIBLE_DEVICES=$G \
+  -e GRASPO_IMG=$IMG -e GRASPO_BASEIMG=$BASEIMG \
+  -v $T:/workspace/graspo:ro -v /home/user/models:/models:ro -v $T/runs:/runs:ro -v $EV:/evalout \
+  -v /home/user/elam-v5-balanced:/work/elam-v5:ro -w /workspace/graspo -e PYTHONPATH=/workspace/graspo/src $IMG \
+  graspo {export_cmd} > "$EVLOG/02-eval-export.txt" 2>&1
+say "export rc=$?"
+python3 $T/scripts/run_guards.py fresh --dir "$MD" --phase post --since $TS | tee -a "$LOG" || {{ say "§8(post) 失败 ⇒ fail-closed"; echo export-failed > "$EV/EVAL-ABORTED"; exit 6; }}
+python3 $T/scripts/run_guards.py mamba --max-num-seqs {max_num_seqs} --blocks {mamba_blocks} | tee -a "$LOG" || {{ say "§10 失败 ⇒ fail-closed"; echo mamba > "$EV/EVAL-ABORTED"; exit 6; }}
+wait_ready() {{ for i in $(seq 1 240); do curl -s -m 3 http://127.0.0.1:$PORT/v1/models 2>/dev/null | grep -q graspo-eval && return 0; sleep 15; done; return 1; }}
+say "--- vLLM after（§10 max-num-seqs {max_num_seqs}）---"
+nohup docker run --rm --name {tier}-vllm-after-$TS --runtime=nvidia --gpus "\"device=$G\"" -e NVIDIA_VISIBLE_DEVICES=$G \
+  -v $MD:/model:ro -p $PORT:8000 --ipc=host --shm-size=16g {vllm_image} --model /model --served-model-name graspo-eval \
+  --port 8000 --max-model-len {max_model_len} --gpu-memory-utilization {util} --max-num-seqs {max_num_seqs} --trust-remote-code \
+  --enable-auto-tool-choice --tool-call-parser qwen3_xml > "$EVLOG/vllm-after.log" 2>&1 &
+wait_ready || {{ say "★ vLLM after 未就绪 ⇒ abort"; docker stop {tier}-vllm-after-$TS >/dev/null 2>&1; echo vllm-after-not-ready > "$EV/EVAL-ABORTED"; exit 8; }}
+say "vLLM after READY"; say "--- eval after ---"
+bash "$EV/run-eval.sh" "$T" "$EV" {tier_upper} after "$EV/eval-{tier_lower}-after.yaml" > "$EVLOG/03-run-eval-after.out" 2>&1
+say "eval after rc=$?"; docker stop {tier}-vllm-after-$TS >/dev/null 2>&1
+say "--- vLLM base（§10 同配，挂载源=宿主路径）---"
+nohup docker run --rm --name {tier}-vllm-base-$TS --runtime=nvidia --gpus "\"device=$G\"" -e NVIDIA_VISIBLE_DEVICES=$G \
+  -v $MP:/model:ro -p $PORT:8000 --ipc=host --shm-size=16g {vllm_image} --model /model --served-model-name graspo-eval \
+  --port 8000 --max-model-len {max_model_len} --gpu-memory-utilization {util} --max-num-seqs {max_num_seqs} --trust-remote-code \
+  --enable-auto-tool-choice --tool-call-parser qwen3_xml > "$EVLOG/vllm-base.log" 2>&1 &
+wait_ready || {{ say "★ vLLM base 未就绪 ⇒ abort"; docker stop {tier}-vllm-base-$TS >/dev/null 2>&1; echo vllm-base-not-ready > "$EV/EVAL-ABORTED"; exit 9; }}
+say "vLLM base READY"; say "--- eval base + delta ---"
+bash "$EV/run-eval.sh" "$T" "$EV" {tier_upper} base "$EV/eval-{tier_lower}-base.yaml" > "$EVLOG/04-run-eval-base.out" 2>&1
+say "eval base rc=$?"; docker stop {tier}-vllm-base-$TS >/dev/null 2>&1
+docker run --rm --network=none -e GRASPO_IMG=$IMG -e GRASPO_BASEIMG=$BASEIMG \
+  -v $T:/workspace/graspo:ro -v $EV:/evalout -v /home/user/elam-v5-balanced:/work/elam-v5:ro \
+  -w /workspace/graspo -e PYTHONPATH=/workspace/graspo/src $IMG \
+  graspo eval delta --before /evalout/.local/reports/base/eval_report.json --after /evalout/.local/reports/after/eval_report.json \
+  --eval-config /evalout/eval-{tier_lower}-after.yaml > "$EVLOG/05-eval-delta.txt" 2>&1
+say "delta rc=$?"; say "=== {tier_upper} EVAL DONE ==="; echo done > "$EV/EVAL-DONE"
+"""
+
+
+def render_eval_script(*, tier: str, tree: str, eval_dir: str, checkpoint: str, base_model_path: str,
+                       merge_name: str, gpu: str, port: int, export_cmd: str,
+                       image_run: str, image_base: str,
+                       vllm_image: str = "vllm-openai:v0.22.0",
+                       max_num_seqs: int = 192, mamba_blocks: int = 232,
+                       max_model_len: int = 8192, util: float = 0.85,
+                       host_root: str = MODEL_HOST_ROOT) -> tuple[str | None, str]:
+    """**生成链唯一出口**：产出整份评测脚本（自含变量、唯一容器名、内嵌三护栏）。
+
+    它把 campaign 里踩过的坑一次固化进模板：
+      · `TS=$(date +%s)` **在脚本内定义**（§"生成脚本自含性"）；
+      · 容器名带 `-$TS` 唯一后缀（§6.1）；
+      · base 侧挂载源 = **宿主路径**（`resolve_base_mount_source`，§"挂载源"族）；
+      · `run_guards.py fresh --phase pre/post` 与 `mamba` 断言内嵌（§8/§10）。
+    失败（基座不可解析 / 变量为空）⇒ 返回 `(None, 原因)`，调用方 fail-closed。
+    """
+    src, why = resolve_base_mount_source(base_model_path, host_root=host_root)
+    if src is None:
+        return (None, why)
+    for name, val in (("tier", tier), ("tree", tree), ("eval_dir", eval_dir), ("checkpoint", checkpoint),
+                      ("merge_name", merge_name), ("gpu", gpu), ("export_cmd", export_cmd),
+                      ("image_run", image_run), ("image_base", image_base)):
+        if not val:
+            return (None, f"参数 {name} 为空 ⇒ fail-closed")
+    text = EVAL_SCRIPT_TEMPLATE.format(
+        tier=tier, tier_upper=tier.upper(), tier_lower=tier.lower(), tree=tree, eval_dir=eval_dir,
+        checkpoint=checkpoint, merge_name=merge_name, gpu=gpu, port=port, export_cmd=export_cmd,
+        image_run=image_run, image_base=image_base, vllm_image=vllm_image,
+        max_num_seqs=max_num_seqs, mamba_blocks=mamba_blocks, max_model_len=max_model_len,
+        util=util, base_mount_src=src,
+    )
+    problems = check_script_self_contained(text, ["T", "EV", "G", "PORT", "MD", "MP", "TS"])
+    if problems:
+        return (None, "；".join(problems))
+    return (text, f"已生成 {tier} 评测脚本（base 挂载源={src}，§8/§10 断言内嵌，容器名带 -$TS）")
+
+
 def build_json_reason(after_correct: int, n_total: int, base_correct: int, status: str) -> str:
     """落 json 的备注（≤100 字）：判定 + 读数，与结构化字段同源。"""
     after = after_correct / n_total * 100 if n_total else 0.0
