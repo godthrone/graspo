@@ -2968,3 +2968,18 @@ def test_fresh_run_dir_does_not_create_an_empty_attempt_archive(tmp_path: Path):
     assert completed.returncode == 1, completed.stderr
     assert "[stale-clear]" not in completed.stdout
     assert not [p for p in run_dir.iterdir() if p.name.startswith("attempt-")]
+
+
+def test_entry_sh_prints_config_sha_before_launch():
+    """★ 回归（T023 读到旧代际事故）：生成的 entry.sh 必须在起跑前打印 config 路径 ＋ sha256。
+
+    没有这行时，"这一跑到底读了哪一代 config" 只能靠猜 —— T023 曾因此白跑一轮。
+    """
+    import re
+    from pathlib import Path
+
+    src = Path("tests/e2e/generate_matrix.py").read_text(encoding="utf-8")
+    assert "[config-sha]" in src, "生成器必须输出 [config-sha] 留痕行"
+    m = re.search(r'\[config-sha\][^\n]*sha256sum', src)
+    assert m, "[config-sha] 行必须同时打印路径与 sha256sum(路径)"
+    assert "TIER_CONFIG_PATH" in src
