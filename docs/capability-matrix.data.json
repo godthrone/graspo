@@ -4721,7 +4721,7 @@
      "digest": ""
     }
    },
-   "note": "判定：已验证不可用。不可评：训练失败（`pp-watchdog` 停滞。P5/P6 已补。",
+   "note": "判定：已验证不可用。不可评：训练失败（`pp-watchdog` 停滞 ⇒ force-exit 86）。P5/P6 已补。",
    "not_evaluable_brief": "训练失败（`pp-watchdog` 停滞 ⇒ force-exit 86）",
    "throughput_detail": "",
    "elapsed": "—",
