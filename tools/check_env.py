@@ -32,7 +32,9 @@ IMAGE_ONLY: tuple[tuple[str, str], ...] = (
 )
 
 
-def check(required=REQUIRED, image_only=IMAGE_ONLY) -> tuple[list[str], list[str]]:
+def check(required=None, image_only=None) -> tuple[list[str], list[str]]:
+    required = REQUIRED if required is None else required
+    image_only = IMAGE_ONLY if image_only is None else image_only
     missing = [f"{n}（{why}）" for n, why in required if importlib.util.find_spec(n) is None]
     absent_img = [f"{n}（{why}）" for n, why in image_only if importlib.util.find_spec(n) is None]
     return missing, absent_img
