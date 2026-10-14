@@ -3698,6 +3698,7 @@
      "digest": "sha256:a75bcc78382fa358b73bf6abd4411a46307225ad8a5dd752b121cc6fb02ac253"
     }
    },
+   "retest_conclusion_20261014": "★ 2026-10-14 retest 收官：`ec=0`、`ckpt_retention=ok`、进程已退；★ 属「重测/更新 ⇒ 期望 0」（★ 已在四态内、结论未变）⇒ 按 `(档号, json sha)` 并存留痕，⛔ 不覆盖既有结论。",
    "throughput_detail": "★ 生成式 tok/s 不适用（native GRASPO(GRPO) 后端不产出生成式 tok/s）⇒ 不编造；墙钟与步速见 runs/T028/stdout.log 的 train_step 事件。",
    "elapsed": "—",
    "max_epochs": 8,
