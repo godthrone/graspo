@@ -2664,7 +2664,8 @@
      "digest": ""
     }
    },
-   "note": "判定：已验证不可用。不可评：final/manifest.json 逐字 format: native-full-param｜dp_size: 1｜。",
+   "note": "判定：已验证不可用。不可评：PP 分片拼接未实现（pp_size=4）。",
+   "not_evaluable_brief": "PP 分片拼接未实现（pp_size=4）",
    "throughput_detail": "",
    "elapsed": "—",
    "max_epochs": 2,
@@ -4720,7 +4721,8 @@
      "digest": ""
     }
    },
-   "note": "判定：已验证不可用。不可评：训练失败：PP rendezvous 停滞 300 s 触发 pp-watchdog。P5/P6 已补。",
+   "note": "判定：已验证不可用。不可评：训练失败（pp-watchdog 停滞。P5/P6 已补。",
+   "not_evaluable_brief": "训练失败（pp-watchdog 停滞 ⇒ force-exit 86）",
    "throughput_detail": "",
    "elapsed": "—",
    "max_epochs": 8,
@@ -6340,14 +6342,25 @@
    "expected_optimizer_steps_per_epoch": "20",
    "expected_optimizer_steps_reachable": "20",
    "applicable": false,
-   "status": "未纳入验收",
+   "status": "已验证不可用",
    "runs": "—",
    "effect": "—",
    "inference": "—",
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—",
+   "run_path": "RUN-T052",
+   "caliber_verdict": "已验证不可用",
+   "caliber_cause": "未做（OPD 族）：★ 依主席 2026-10-14 裁定「那三个 OPD 不做」（外置 `teacher_model_server`／teacher 分片（DeepSpeed）／换更小 teacher 均不采用）⇒ 判不实施、记失败；★ 并保留设计层排除依据（师生权重常驻合计约 100 GiB，与「节省显存」的设计意图相悖 ⇒ 不产出可运行配置）。",
+   "not_evaluable_reason": "未做（OPD 族）：★ 依主席 2026-10-14 裁定「那三个 OPD 不做」（外置 `teacher_model_server`／teacher 分片（DeepSpeed）／换更小 teacher 均不采用）⇒ 判不实施、记失败；★ 并保留设计层排除依据（师生权重常驻合计约 100 GiB，与「节省显存」的设计意图相悖 ⇒ 不产出可运行配置）。",
+   "caliber_change": {
+    "effective": "2026-10-14",
+    "rule": "跑了没成功＝失败（OOM／超时／未实现／硬件不可行 均记失败）",
+    "source": "主席口径变更（2026-10-14）"
+   },
+   "excluded_reason": "设计上不成立：师生权重常驻合计约 100 GiB，与「节省显存」的设计意图相悖 ⇒ 不产出可运行配置。适用范围：本档位不纳入验收。",
+   "not_evaluable_brief": "未做（OPD 族，依 2026-10-14 裁定不做）",
+   "throughput_detail": "—",
    "elapsed": "—",
    "max_epochs": 2,
    "derived_steps": 40,
@@ -6355,13 +6368,20 @@
    "save_steps_basis": "= 推导步数 40 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "20 条（每卡 20）",
-   "note": "判定：未纳入验收。",
-   "excluded_reason": "设计上不成立：师生权重常驻合计约 100 GiB，与「节省显存」的设计意图相悖 ⇒ 不产出可运行配置。适用范围：本档位不纳入验收。",
+   "note": "判定：已验证不可用。不可评：未做（OPD 族，依 2026-10-14 裁定不做）。",
    "tp": "—（框架内部决定）",
    "pp": "—（框架内部决定）",
    "dp": "—（框架内部决定）",
    "cards_total": "—（1 卡）",
-   "note_full": "设计上不成立：师生权重常驻合计约 100 GiB，与「节省显存」的设计意图相悖 ⇒ 不产出可运行配置。适用范围：本档位不纳入验收。"
+   "verdict": {
+    "state": "已验证不可用",
+    "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
+    "failed_detail": "效果未达标（见 effect）",
+    "passed_criteria": [
+     "判据① 通过（见 runs）"
+    ]
+   },
+   "note_full": "未过第 2 条：在平台方数据集与平台方参数下效果未达标：效果未达标（见 effect） 已通过：判据① 通过（见 runs）。条件：数据集锚点 c202b1e1…、判据 elam-v3-allright-1、温度 0、有效样本 702。"
   },
   {
    "tier": "T053",
@@ -6408,14 +6428,25 @@
    "expected_optimizer_steps_per_epoch": "10",
    "expected_optimizer_steps_reachable": "10",
    "applicable": false,
-   "status": "未纳入验收",
+   "status": "已验证不可用",
    "runs": "—",
    "effect": "—",
    "inference": "—",
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—",
+   "run_path": "RUN-T053",
+   "caliber_verdict": "已验证不可用",
+   "caliber_cause": "未做（OPD 族）：★ 依主席 2026-10-14 裁定「那三个 OPD 不做」（外置 `teacher_model_server`／teacher 分片（DeepSpeed）／换更小 teacher 均不采用）⇒ 判不实施、记失败；★ 并保留设计层排除依据（师生权重常驻合计约 100 GiB，与「节省显存」的设计意图相悖 ⇒ 不产出可运行配置）。",
+   "not_evaluable_reason": "未做（OPD 族）：★ 依主席 2026-10-14 裁定「那三个 OPD 不做」（外置 `teacher_model_server`／teacher 分片（DeepSpeed）／换更小 teacher 均不采用）⇒ 判不实施、记失败；★ 并保留设计层排除依据（师生权重常驻合计约 100 GiB，与「节省显存」的设计意图相悖 ⇒ 不产出可运行配置）。",
+   "caliber_change": {
+    "effective": "2026-10-14",
+    "rule": "跑了没成功＝失败（OOM／超时／未实现／硬件不可行 均记失败）",
+    "source": "主席口径变更（2026-10-14）"
+   },
+   "excluded_reason": "设计上不成立：师生权重常驻合计约 100 GiB，与「节省显存」的设计意图相悖 ⇒ 不产出可运行配置。适用范围：本档位不纳入验收。",
+   "not_evaluable_brief": "未做（OPD 族，依 2026-10-14 裁定不做）",
+   "throughput_detail": "—",
    "elapsed": "—",
    "max_epochs": 2,
    "derived_steps": 20,
@@ -6423,13 +6454,20 @@
    "save_steps_basis": "= 推导步数 20 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "20 条（每卡 10）",
-   "note": "判定：未纳入验收。",
-   "excluded_reason": "设计上不成立：师生权重常驻合计约 100 GiB，与「节省显存」的设计意图相悖 ⇒ 不产出可运行配置。适用范围：本档位不纳入验收。",
+   "note": "判定：已验证不可用。不可评：未做（OPD 族，依 2026-10-14 裁定不做）。",
    "tp": "—（框架内部决定）",
    "pp": "—（框架内部决定）",
    "dp": "—（框架内部决定）",
    "cards_total": "—（2 卡）",
-   "note_full": "设计上不成立：师生权重常驻合计约 100 GiB，与「节省显存」的设计意图相悖 ⇒ 不产出可运行配置。适用范围：本档位不纳入验收。"
+   "verdict": {
+    "state": "已验证不可用",
+    "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
+    "failed_detail": "效果未达标（见 effect）",
+    "passed_criteria": [
+     "判据① 通过（见 runs）"
+    ]
+   },
+   "note_full": "未过第 2 条：在平台方数据集与平台方参数下效果未达标：效果未达标（见 effect） 已通过：判据① 通过（见 runs）。条件：数据集锚点 c202b1e1…、判据 elam-v3-allright-1、温度 0、有效样本 702。"
   },
   {
    "tier": "T054",
@@ -6476,14 +6514,25 @@
    "expected_optimizer_steps_per_epoch": "5",
    "expected_optimizer_steps_reachable": "5",
    "applicable": false,
-   "status": "未纳入验收",
+   "status": "已验证不可用",
    "runs": "—",
    "effect": "—",
    "inference": "—",
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—",
+   "run_path": "RUN-T054",
+   "caliber_verdict": "已验证不可用",
+   "caliber_cause": "未做（OPD 族）：★ 依主席 2026-10-14 裁定「那三个 OPD 不做」（外置 `teacher_model_server`／teacher 分片（DeepSpeed）／换更小 teacher 均不采用）⇒ 判不实施、记失败；★ 并保留设计层排除依据（师生权重常驻合计约 100 GiB，与「节省显存」的设计意图相悖 ⇒ 不产出可运行配置）。",
+   "not_evaluable_reason": "未做（OPD 族）：★ 依主席 2026-10-14 裁定「那三个 OPD 不做」（外置 `teacher_model_server`／teacher 分片（DeepSpeed）／换更小 teacher 均不采用）⇒ 判不实施、记失败；★ 并保留设计层排除依据（师生权重常驻合计约 100 GiB，与「节省显存」的设计意图相悖 ⇒ 不产出可运行配置）。",
+   "caliber_change": {
+    "effective": "2026-10-14",
+    "rule": "跑了没成功＝失败（OOM／超时／未实现／硬件不可行 均记失败）",
+    "source": "主席口径变更（2026-10-14）"
+   },
+   "excluded_reason": "设计上不成立：师生权重常驻合计约 100 GiB，与「节省显存」的设计意图相悖 ⇒ 不产出可运行配置。适用范围：本档位不纳入验收。",
+   "not_evaluable_brief": "未做（OPD 族，依 2026-10-14 裁定不做）",
+   "throughput_detail": "—",
    "elapsed": "—",
    "max_epochs": 2,
    "derived_steps": 10,
@@ -6491,13 +6540,20 @@
    "save_steps_basis": "= 推导步数 10 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "20 条（每卡 5）",
-   "note": "判定：未纳入验收。",
-   "excluded_reason": "设计上不成立：师生权重常驻合计约 100 GiB，与「节省显存」的设计意图相悖 ⇒ 不产出可运行配置。适用范围：本档位不纳入验收。",
+   "note": "判定：已验证不可用。不可评：未做（OPD 族，依 2026-10-14 裁定不做）。",
    "tp": "—（框架内部决定）",
    "pp": "—（框架内部决定）",
    "dp": "—（框架内部决定）",
    "cards_total": "—（4 卡）",
-   "note_full": "设计上不成立：师生权重常驻合计约 100 GiB，与「节省显存」的设计意图相悖 ⇒ 不产出可运行配置。适用范围：本档位不纳入验收。"
+   "verdict": {
+    "state": "已验证不可用",
+    "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
+    "failed_detail": "效果未达标（见 effect）",
+    "passed_criteria": [
+     "判据① 通过（见 runs）"
+    ]
+   },
+   "note_full": "未过第 2 条：在平台方数据集与平台方参数下效果未达标：效果未达标（见 effect） 已通过：判据① 通过（见 runs）。条件：数据集锚点 c202b1e1…、判据 elam-v3-allright-1、温度 0、有效样本 702。"
   }
  ],
  "data_keys": [

@@ -565,8 +565,9 @@ def short_note(row, full):
     if st == S_UNAVAILABLE and _ner:
         # ★★ "不可评（工程缺口）"：★ **未经效果评测** ⇒ ⛔ 不得写"未过第 2 条"（那是效果层判据）
         #    只写"不可评：<真因摘要>"（★ 真因全文在 `not_evaluable_reason`；★ 且已由校验器保证不含"效果"）
-        _brief = _ner.replace("不可评：", "").strip()
-        _brief = _brief.split("；")[0].split("⇒")[0].strip()[:60]
+        # ★ 优先用**短摘要字段**（`not_evaluable_brief`）⇒ 保证备注 ≤100 字；无则由真因截断
+        _brief = str(row.get("not_evaluable_brief") or "").strip() or _ner.replace("不可评：", "").strip()
+        _brief = _brief.split("；")[0].split("⇒")[0].strip()[:48]
         parts.append(f"不可评：{_brief}。")
     elif st == S_UNAVAILABLE:
         parts.append("Δ<阈值，未过第 2 条。")
