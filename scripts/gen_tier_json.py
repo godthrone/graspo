@@ -56,20 +56,31 @@ def assert_structured_params(args) -> None:
 
 def build(args) -> collections.OrderedDict:
     assert_structured_params(args)
-    after = load_report(os.path.join(args.eval_dir, ".local/reports/after/eval_report.json"))
-    base = load_report(os.path.join(args.eval_dir, ".local/reports/base/eval_report.json"))
-    ac, at, ap = summarise(after)
-    bc, bt, bp = summarise(base)
-    assert at == bt, f"两侧样本数不一致：{at} vs {bt}"
-    # ★ 结构化字段一律从**精确分数**推导（报告里的 accuracy_percent 已被舍入到 4 位小数）
-    a_exact, b_exact = ac / at, bc / bt
-    delta_field = round((a_exact - b_exact) * 100, 4)
-    delta_reported = round(ap - bp, 4)
-    # 容差 1e-3：报告侧百分比只保留 4 位小数，二者最多差 0.0001（实测 T020: 0.1424 vs 0.1425）
-    assert abs(delta_reported - delta_field) < 1e-3, \
-        f"delta 不同源（报告 {delta_reported} vs 精确 {delta_field}）⇒ 超出舍入容差"
-    delta_pp = delta_field
-    status = PASS if delta_pp >= 5.0 else FAIL
+    if args.no_eval:
+        # ★ 不可评分支（2026-10-14，T018 驱动）：**只跳过【读报告/推导评测三件】这一段**，
+        #   ★ 其余结构（tier/params/provenance/evidence/anomalies/对账式）**照常填** ⇒ ⛔ 不提前 return。
+        assert (args.not_evaluable_reason or "").strip(), \
+            "★ --no-eval 必须给 --not-evaluable-reason（空原因 ⇒ FAIL-CLOSED）"
+        ac = at = ap = bc = bt = bp = None
+        delta_pp = None
+        # ★ 不可评 ⇒ 状态取【无"效果"字样】的失败态（与矩阵侧同判据：不可评 ≠ 达标性失败）
+        status = "失败"
+    else:
+        assert args.eval_dir, "★ 非 --no-eval 时必须给 --eval-dir"
+        after = load_report(os.path.join(args.eval_dir, ".local/reports/after/eval_report.json"))
+        base = load_report(os.path.join(args.eval_dir, ".local/reports/base/eval_report.json"))
+        ac, at, ap = summarise(after)
+        bc, bt, bp = summarise(base)
+        assert at == bt, f"两侧样本数不一致：{at} vs {bt}"
+        # ★ 结构化字段一律从**精确分数**推导（报告里的 accuracy_percent 已被舍入到 4 位小数）
+        a_exact, b_exact = ac / at, bc / bt
+        delta_field = round((a_exact - b_exact) * 100, 4)
+        delta_reported = round(ap - bp, 4)
+        # 容差 1e-3：报告侧百分比只保留 4 位小数，二者最多差 0.0001（实测 T020: 0.1424 vs 0.1425）
+        assert abs(delta_reported - delta_field) < 1e-3, \
+            f"delta 不同源（报告 {delta_reported} vs 精确 {delta_field}）⇒ 超出舍入容差"
+        delta_pp = delta_field
+        status = PASS if delta_pp >= 5.0 else FAIL
     d = collections.OrderedDict()
     d["schema"] = "matrix-run/v1"
     d["tier"] = args.tier
@@ -81,13 +92,21 @@ def build(args) -> collections.OrderedDict:
         "steps": f"steps_actual={args.steps}（严格身份）；名义 {args.steps}；★ 对账式（含 nproc={args.nproc}）：{args.recon} ✓",
     }
     d["status"] = status
-    d["after_acc"] = round(ac / at, 6)
-    d["base_acc"] = round(bc / bt, 6)
-    d["delta_pp"] = delta_field
-    d["n_correct"] = ac
-    d["n_total"] = at
+    if args.no_eval:
+        # ★ 不可评：三件留 None（矩阵侧按 not_evaluable 处理），真因单独留痕
+        d["not_evaluable_reason"] = args.not_evaluable_reason
+        d["after_acc"] = d["base_acc"] = d["delta_pp"] = None
+        d["n_correct"] = d["n_total"] = None
+    else:
+        d["after_acc"] = round(ac / at, 6)
+        d["base_acc"] = round(bc / bt, 6)
+        d["delta_pp"] = delta_field
+        d["n_correct"] = ac
+        d["n_total"] = at
     d["runs"] = args.runs
-    d["effect"] = (f"after acc={ap:.4f}%（{ac}/{at}）；base acc={bp:.4f}%（{bc}/{bt}）；"
+    d["effect"] = ("★ 不可评（见 not_evaluable_reason）；⛔ 本档不可评与达标与否无关。"
+                   if args.no_eval else
+                   f"after acc={ap:.4f}%（{ac}/{at}）；base acc={bp:.4f}%（{bc}/{bt}）；"
                    f"★ Δ = {delta_pp:+.4f} pp（冻结阈值 +5.0 pp；目标 +10.0 pp 仅展示）。口径："
                    f"criteria {args.criteria}、温度 {args.temp}、{at}/{at}、0 error；base/after 独立 output_dir + fail-closed + stdout 双份。"
                    + (f" ★ 服务档参数：{args.serving_note}" if args.serving_note else ""))
@@ -130,6 +149,14 @@ def build(args) -> collections.OrderedDict:
 
 def selfcheck(d: dict) -> None:
     """落盘前自检（四类，全部来自 228 实测教训）。"""
+    # ⓪ 不可评分支（2026-10-14，T018 驱动）：与矩阵侧校验器同判据
+    if d.get("after_acc") is None:
+        reason = (d.get("not_evaluable_reason") or "").strip()
+        assert reason, "★ 三件为空时必须给 --not-evaluable-reason（空原因 ⇒ FAIL-CLOSED）"
+        assert "效果" not in reason, \
+            "★ not_evaluable_reason 不得含『效果』字样（不可评 ≠ 效果失败；与矩阵侧同判据）"
+        assert d["provenance"]["evidence_paths"], "evidence_paths 必须非空"
+        return
     # ① 单位/同源：delta_pp 必须是**百分点**且与结构化字段一致（曾误写成小数差 0.0057）
     # ★ 容差 1e-3：after_acc/base_acc 落盘时保留 6 位小数，反推 delta 会有 ≤0.0001 的舍入差
     assert abs(d["delta_pp"] - round((d["after_acc"] - d["base_acc"]) * 100, 4)) < 1e-3, \
@@ -195,7 +222,10 @@ def check_reconciliation_matches_tier(algo: str, recon: str, steps_actual: int) 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--tier", required=True); ap.add_argument("--eval-dir", required=True)
+    ap.add_argument("--tier", required=True); ap.add_argument("--eval-dir", default=None)
+    # ★ 无评测分支（2026-10-14 立，T018 驱动）：产物不可评时留痕，⛔ 不得写"效果"字样
+    ap.add_argument("--no-eval", action="store_true")
+    ap.add_argument("--not-evaluable-reason", default="")
     ap.add_argument("--nproc", type=int, required=True); ap.add_argument("--steps", type=int, required=True)
     ap.add_argument("--recon", required=True)
     for k, dv in (("model", "9B"), ("label", "CPT"), ("mode", ""), ("backend", "ms-swift"),
