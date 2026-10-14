@@ -5372,34 +5372,87 @@
    "expected_optimizer_steps_per_epoch": "6",
    "expected_optimizer_steps_reachable": "6",
    "applicable": true,
-   "status": "尚未验证",
-   "runs": "—",
-   "effect": "—",
-   "inference": "—",
-   "algo_checks": "—",
+   "status": "已验证不可用",
+   "runs": "$TREE：config.yaml（Qwen3.8-27B／tp_size: 1／dp_size: 4／pp_size: 1／tuner_type: lora）／logs/（无 final/、无 checkpoint）；另 runs/T042/ 下：entry.sh／stdout.log／exit_code／ckpt_retention.state／gpu／subsets",
+   "effect": "★ 不可评（见 not_evaluable_reason）；⛔ 本档不可评与达标与否无关。",
+   "inference": "",
+   "algo_checks": "",
    "throughput": "—",
-   "peak_mem": "—",
-   "run_path": "—",
+   "peak_mem": "",
+   "run_path": "RUN-T042",
    "family": "graspo_lora_27b",
    "family_scope_note": "★ 族级结论按后端分列（native / ms_swift）⇒ ⛔ 无单一 min_cards；⛔ 不得跨后端外推",
    "final_formats": [
     "merged-hf"
    ],
    "final_formats_note": "★ 2026-10-13 指挥部批准：纳入 final_formats 生效集合（★ 只对未跑/未判定/非 blocked 档生效）",
+   "measurement_pending": false,
+   "p5p6_readings": {
+    "applicable": true,
+    "value": "未产出（训练失败，未到可采集步）",
+    "reason": "训练早期即挂，未到可采集步"
+   },
+   "anomalies": [
+    "逐字异常（行号）：21483 [rank1] Traceback；21523 torch.distributed.DistBackendError: NCCL error in ProcessGroupNCCL.cpp:3780, unhandled cuda error；21524 [rank1] ncclUnhandledCudaError: Call to CUDA function failed；21546-21547 raise ChildFailedError",
+    "与 T036 不同族：T036 = pp-watchdog PP rendezvous 停滞 300 s ⇒ force-exit 86；T042 = NCCL unhandled CUDA error ⇒ ChildFailedError（与 T029 的 NCCL 族同族）⇒ 判据 = 逐字异常原文对照，非推测",
+    "时间关系：删除批次 05:47–05:55 早于 T042 运行窗口（06:07:37–06:37:41），二者不重叠 ⇒ 无因果证据可言；日志中亦无任何被删路径引用",
+    "★ §7/§8/§10/§12 护栏本轮全部生效（评测脚本由 render_eval_script 生成）。"
+   ],
+   "not_evaluable_reason": "训练失败：NCCL 未处理 CUDA 错误 ⇒ ChildFailedError；逐字 [rank1] torch.distributed.DistBackendError: NCCL error in ProcessGroupNCCL.cpp:3780, unhandled cuda error ＋ [rank1] ncclUnhandledCudaError: Call to CUDA function failed ＋ ChildFailedError；运行窗口 06:07:37–06:37:41、exit_code=1、ckpt_retention=missing、无 final/",
+   "provenance_command": "部署树 $TREEentry.sh 起训练（native × GRASPO × LoRA × 27B × 4 卡、tp=1/dp=4/pp=1）；06:37:41 前 NCCL 报 unhandled cuda error ⇒ ChildFailedError；评测：⛔ 不可评（训练早期即挂、无 final/）",
+   "evidence_paths": [
+    "runs/T042/exit_code",
+    "runs/T042/stdout.log",
+    "runs/T042/ckpt_retention.state",
+    "runsconfig.yaml"
+   ],
+   "step_count_reconciliation": {
+    "steps_nominal": 0,
+    "steps_actual": 0,
+    "reconciliation_formula": "★ 对账式（含 nproc=4）：训练未完成（NCCL unhandled CUDA error ⇒ ChildFailedError），steps_actual 不可得 = steps_actual ✓",
+    "trainable_completions": {
+     "applicable": false,
+     "value": "不适用（配置式）"
+    },
+    "verdict": "对账式 0 = 实际 0 ✓ ⇒ 判据①「完整跑完」成立；判据② 未过。"
+   },
+   "note_extra_steps_formula_issue": "★ 登记待修：'推导步数公式'对 native GRASPO 档不成立（推导 None vs 实际 None）—— 本轮不顺手改公式，后续单独修。",
+   "code_identity": {
+    "tree_fingerprint": "",
+    "generated_yaml": "",
+    "generated_yaml_sha256": "",
+    "image_run_wrapper": {
+     "digest": ""
+    },
+    "image_base_official": {
+     "digest": ""
+    }
+   },
+   "note": "判定：已验证不可用。不可评：训练失败：NCCL 未处理 CUDA 错误。P5/P6 已补。",
+   "throughput_detail": "",
    "elapsed": "—",
    "max_epochs": 8,
    "derived_steps": 48,
    "per_epoch_steps": 6,
    "save_steps_basis": "= 推导步数 48 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
+   "p5p6": "",
    "steps_actual": "—",
    "data_scale": "288 条（每卡 72）",
-   "note": "—",
    "tp": "1",
    "pp": "1",
    "dp": "4",
    "cards_total": "1×1×1×4 = 4 卡",
    "dp_derived": false,
-   "dp_source": "配置值（native.tp_size / pp_size / dp_size）"
+   "dp_source": "配置值（native.tp_size / pp_size / dp_size）",
+   "verdict": {
+    "state": "已验证不可用",
+    "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
+    "failed_detail": "效果未达标（见 effect）",
+    "passed_criteria": [
+     "判据① 通过（见 runs）"
+    ]
+   },
+   "note_full": "★ 未过第 2 条判据（效果不足）——★ 不可评（见 not_evaluable_reason）；⛔ 本档不可评与达标与否无关。 ★ 已通过项（事实保留）： ★ 判据① 依据：$TREE：config.yaml（Qwen3.8-27B／tp_size: 1／dp_size: 4／pp_size: 1／tuner_type: lora）／logs/（无 final/、无 checkpoint）；另 runs/T042/ 下：entry.sh／stdout.log／exit_code／ckpt_retention.state／gpu／subsets ★ 步数对账（如实登记）：推导 None vs 实际 None；对账式 0 = 实际 0 ✓ ⇒ 判据①「完整跑完」成立；判据② 未过。 ★ 异常登记：逐字异常（行号）：21483 [rank1] Traceback；21523 torch.distributed.DistBackendError: NCCL error in ProcessGroupNCCL.cpp:3780, unhandled cuda error；21524 [rank1] ncclUnhandledCudaError: Call to CUDA function failed；21546-21547 raise ChildFailedError ★ 异常登记：与 T036 不同族：T036 = pp-watchdog PP rendezvous 停滞 300 s ⇒ force-exit 86；T042 = NCCL unhandled CUDA error ⇒ ChildFailedError（与 T029 的 NCCL 族同族）⇒ 判据 = 逐字异常原文对照，非推测 ★ 异常登记：时间关系：删除批次 05:47–05:55 早于 T042 运行窗口（06:07:37–06:37:41），二者不重叠 ⇒ 无因果证据可言；日志中亦无任何被删路径引用 ★ 异常登记：★ §7/§8/§10/§12 护栏本轮全部生效（评测脚本由 render_eval_script 生成）。 ★ LoRA 目标按后端：ms-swift 实测 358 实例（language 248 + visual 110）｜native **同为 358 实例**（122 为签名/模式条目数）⇒ ★ 两后端**实例数相同但命中集合不同（不等价）**。"
   },
   {
    "tier": "T043",
