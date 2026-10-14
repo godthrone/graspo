@@ -561,7 +561,14 @@ def short_note(row, full):
         d = re.search("Δ[^0-9+\\-\u2212]{0,6}([+\\-\u2212]?[0-9]+\\.[0-9]+)\\s*pp", eff)
         if a and b and d:
             parts.append(f"after {a.group(1)}%/base {b.group(1)}%/Δ={d.group(1)} pp。")
-    if st == S_UNAVAILABLE:
+    _ner = str(row.get("not_evaluable_reason") or "").strip()
+    if st == S_UNAVAILABLE and _ner:
+        # ★★ "不可评（工程缺口）"：★ **未经效果评测** ⇒ ⛔ 不得写"未过第 2 条"（那是效果层判据）
+        #    只写"不可评：<真因摘要>"（★ 真因全文在 `not_evaluable_reason`；★ 且已由校验器保证不含"效果"）
+        _brief = _ner.replace("不可评：", "").strip()
+        _brief = _brief.split("；")[0].split("⇒")[0].strip()[:60]
+        parts.append(f"不可评：{_brief}。")
+    elif st == S_UNAVAILABLE:
         parts.append("Δ<阈值，未过第 2 条。")
     _p5 = row.get("p5p6_readings")
     # "待补"判定：**整块未取数**才算（有 1..6 项即算已补；子项里的"待补"字样不改变整块状态）

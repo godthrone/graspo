@@ -238,6 +238,9 @@ def _sanitize_paths(t: str) -> str:
     return re.sub(r"/home/[^\s/]+(/[^\s]*)?", "<HOST>", str(t or ""))
 
 
+#: ★ 不可评档**允许为空**的结果字段（★ 仅当 `not_evaluable_reason` 非空且不含"效果"）
+NOT_EVALUABLE_MAY_BE_EMPTY = ("inference", "algo_checks", "throughput", "peak_mem", "run_path", "runs")
+
 NON_EVALUABLE_HINTS = ("冒烟", "超时", "未实现", "不可合并", "异常退出", "不可评")
 
 
@@ -473,8 +476,15 @@ def validate_run(doc, tier_from_file, tier_rows, frozen_map=None, ref_rows_offic
     st = _s(doc["status"])
     if st not in STATUSES and not (isinstance(st, str) and (st.startswith("失败") or st.startswith("通过"))):
         errs.append(f"status {st!r} 非法（须为 {' / '.join(STATUSES)} 之一）")
+    # ★★ "不可评（工程缺口）"例外（2026-10-14 主席口径下必需）：★ `not_evaluable_reason` 非空
+    #    且**不含"效果"** ⇒ ★ **评测相关的结果字段允许为空/"不适用"**（★ 因该档产物不可评，
+    #    ⛔ 不是漏填）；★ 反之（空评测＋无 reason）由 `not_evaluable_ok()` 兜住。
+    _ner = str(doc.get("not_evaluable_reason") or "").strip()
+    _not_evaluable = bool(_ner) and "效果" not in _ner
     for k in RESULT_KEYS[1:]:
         v = _s(doc[k])
+        if _not_evaluable and k in NOT_EVALUABLE_MAY_BE_EMPTY:
+            continue
         if not isinstance(v, str) or not v:
             errs.append(f"结果字段 {k!r} 为空 / 非字符串")
         elif v == PLACEHOLDER and conclusion_of(st) == "pass":

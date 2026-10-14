@@ -2611,32 +2611,84 @@
    "expected_optimizer_steps_per_epoch": "25",
    "expected_optimizer_steps_reachable": "25",
    "applicable": true,
-   "status": "尚未验证",
-   "runs": "—",
-   "effect": "—",
-   "inference": "—",
-   "algo_checks": "—",
+   "status": "已验证不可用",
+   "runs": "$TREE：config.yaml／final/（manifest.json ＋ 4 个 rank_*_tp_00_pp_0{0..3}.pt）／logs/／step_102/／step_153/；另 runs/T018/ 下：entry.sh／stdout.log／exit_code／ckpt_retention.state／torch_probe.json／gpu／subsets",
+   "effect": "★ 不可评（见 not_evaluable_reason）；⛔ 本档不可评与达标与否无关。",
+   "inference": "",
+   "algo_checks": "",
    "throughput": "—",
-   "peak_mem": "—",
-   "run_path": "—",
+   "peak_mem": "",
+   "run_path": "RUN-T018",
    "final_formats": [
     "merged-hf"
    ],
    "final_formats_note": "★ 2026-10-13 指挥部批准：纳入 final_formats 生效集合（★ 只对未跑/未判定/非 blocked 档生效）",
+   "measurement_pending": false,
+   "p5p6_readings": {
+    "applicable": false,
+    "value": "不适用（非 GRASPO 档）",
+    "reason": "非 GRASPO 档 ⇒ 无 rollout 组/重采样/优势注入等专有指标。"
+   },
+   "anomalies": [
+    "PP 分片真因：manifest.json 逐字 format=native-full-param｜dp_size=1｜pp_size=4｜world_size=4；4 片 rank_*_tp_00_pp_0{0..3}.pt，local_layer_indices [0..8]、include_lm_head=false ⇒ 拼接未实现",
+    "grad_norm = 623972848762881.75／loss = 2.71875／skipped_nonfinite = 0 ⇒ 疑似训练发散/未收敛；达标结论因不可评而暂缺",
+    "★ §7/§8/§10/§12 护栏本轮全部生效（评测脚本由 render_eval_script 生成）。"
+   ],
+   "not_evaluable_reason": "不可评：final/manifest.json 逐字 format: native-full-param｜dp_size: 1｜pp_size: 4｜world_size: 4；final/ 为 4 个 rank_*_tp_00_pp_0{0..3}.pt 分片、local_layer_indices [0..8]、include_lm_head: false ⇒ PP 分片拼接未实现 ⇒ 不可评；与 T017（pp_size=2）同族；⛔ 非 DP 分歧（dp_size: 1）",
+   "provenance_command": "部署树 $TREEentry.sh 起训练（native × SFT × 全参 × 4 卡、steps=200、elapsed=536.9s、ec=0）；评测：⛔ 不可评（PP 分片合并未实现，评测侧 fail-closed）",
+   "evidence_paths": [
+    "runsmanifest.json",
+    "runs/T018/stdout.log",
+    "runs/T018/ckpt_retention.state",
+    "runs/T018/torch_probe.json"
+   ],
+   "step_count_reconciliation": {
+    "steps_nominal": 200,
+    "steps_actual": 200,
+    "reconciliation_formula": "★ 对账式（含 nproc=4）：200 = steps_actual ✓",
+    "trainable_completions": {
+     "applicable": false,
+     "value": "不适用（配置式）"
+    },
+    "verdict": "对账式 200 = 实际 200 ✓ ⇒ 判据①「完整跑完」成立；判据② 未过。"
+   },
+   "note_extra_steps_formula_issue": "★ 登记待修：'推导步数公式'对 native GRASPO 档不成立（推导 None vs 实际 None）—— 本轮不顺手改公式，后续单独修。",
+   "code_identity": {
+    "tree_fingerprint": "",
+    "generated_yaml": "",
+    "generated_yaml_sha256": "",
+    "image_run_wrapper": {
+     "digest": ""
+    },
+    "image_base_official": {
+     "digest": ""
+    }
+   },
+   "note": "判定：已验证不可用。不可评：final/manifest.json 逐字 format: native-full-param｜dp_size: 1｜。",
+   "throughput_detail": "",
    "elapsed": "—",
    "max_epochs": 2,
    "derived_steps": 50,
    "per_epoch_steps": 25,
    "save_steps_basis": "= 推导步数 50 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
+   "p5p6": "",
    "steps_actual": "—",
    "data_scale": "100 条（每卡 25）",
-   "note": "—",
    "tp": "1",
    "pp": "4",
    "dp": "1",
    "cards_total": "1×4×1×1 = 4 卡",
    "dp_derived": false,
-   "dp_source": "配置值（native.tp_size / pp_size / dp_size）"
+   "dp_source": "配置值（native.tp_size / pp_size / dp_size）",
+   "verdict": {
+    "state": "已验证不可用",
+    "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
+    "failed_detail": "效果未达标（见 effect）",
+    "passed_criteria": [
+     "判据① 通过（见 runs）"
+    ]
+   },
+   "note_full": "★ 未过第 2 条判据（效果不足）——★ 不可评（见 not_evaluable_reason）；⛔ 本档不可评与达标与否无关。 ★ 已通过项（事实保留）： ★ 判据① 依据：$TREE：config.yaml／final/（manifest.json ＋ 4 个 rank_*_tp_00_pp_0{0..3}.pt）／logs/／step_102/／step_153/；另 runs/T018/ 下：entry.sh／stdout.log／exit_code／ckpt_retention.state／torch_probe.json／gpu／subsets ★ 步数对账（如实登记）：推导 None vs 实际 None；对账式 200 = 实际 200 ✓ ⇒ 判据①「完整跑完」成立；判据② 未过。 ★ 异常登记：PP 分片真因：manifest.json 逐字 format=native-full-param｜dp_size=1｜pp_size=4｜world_size=4；4 片 rank_*_tp_00_pp_0{0..3}.pt，local_layer_indices [0..8]、include_lm_head=false ⇒ 拼接未实现 ★ 异常登记：grad_norm = 623972848762881.75／loss = 2.71875／skipped_nonfinite = 0 ⇒ 疑似训练发散/未收敛；达标结论因不可评而暂缺 ★ 异常登记：★ §7/§8/§10/§12 护栏本轮全部生效（评测脚本由 render_eval_script 生成）。"
   },
   {
    "tier": "T019",
