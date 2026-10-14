@@ -96,6 +96,36 @@ def sanitize(obj):
     return obj
 
 
+def _final_sanitize(obj):
+    """★ 全量脱敏：递归抹除矩阵三件中的数据集存放路径与机器号（宪法 §15／§10.1 同族）。"""
+    if isinstance(obj, str):
+        return matrix_text_sanitize(obj)
+    if isinstance(obj, list):
+        return [_final_sanitize(x) for x in obj]
+    if isinstance(obj, dict):
+        return {k: _final_sanitize(v) for k, v in obj.items()}
+    return obj
+
+
+NOT_EVALUABLE_FULL_NOTE = ("★★ 不可评（工程缺口）——★ 依主席 2026-10-14 口径「跑了没成功即失败」记入失败；"
+                           "★ 真因见 `not_evaluable_reason`（逐字）。⛔ 本档**未经效果评测** ⇒ "
+                           "⛔ 不得表述为「效果未达标」、⛔ 不得表述为「未过第 2 条」。")
+
+#: ★ 常设脱敏：矩阵三件**不得出现**数据集存放路径与机器号
+BANNED_IN_MATRIX = ("/homedata/", "test.jsonl")
+
+
+def matrix_text_sanitize(t: str) -> str:
+    """★ 矩阵文本脱敏：抹除数据集存放路径与机器号（宪法 §15／§10.1 同族）。"""
+    import re as _re
+    t = str(t or "")
+    t = t.replace("/homedata/test.jsonl", "平台方自有数据集（不公开）")
+    t = _re.sub(r"/homedata/[^\s，。；]*", "平台方自有数据集（不公开）", t)
+    t = t.replace("test.jsonl", "平台方自有数据集（不公开）")   # ★ 裸文件名（无路径前缀）亦抹
+    t = _re.sub(r"(?<![0-9A-Za-z])228(?![0-9A-Za-z])", "<HOST>", t)
+    return t
+
+
 def official_run_path(row, state):
     """跑次列 = 不透明跑次 ID + 日期（不含任何文件系统路径）。"""
     if state in ("尚未验证", "未纳入验收"):
@@ -110,7 +140,7 @@ STATUS_VOCABULARY = [S_AVAILABLE, S_UNAVAILABLE, S_UNVERIFIED, S_EXCLUDED]
 CONCLUDED = (S_AVAILABLE, S_UNAVAILABLE)
 
 EXCLUDED_REASON = ("设计上不成立：师生权重常驻合计约 100 GiB，与「节省显存」的设计意图相悖 ⇒ 不产出可运行配置。"
-                   "适用范围：本档位不纳入验收。")
+                   "适用范围：依 2026-10-14 裁定，本档位不实施（不产出可运行配置）。")
 
 GENERATOR = "tools/matrix/render_matrix.py"
 SOURCE = "docs/capability-matrix.data.json"
@@ -599,6 +629,13 @@ def verdict_of(row, state):
     """已验证不可用档的结论：写明未过的是哪一条判据，并保留已通过项的事实（**数据驱动**）。"""
     if state != S_UNAVAILABLE:
         return None
+    # ★★ 不可评档（`not_evaluable_reason` 非空）⇒ ⛔ 不得套用"效果未达标/未过第 2 条"模板
+    #    （该档**未经效果评测**）⇒ 返回"不可评"结构，真因指向 `not_evaluable_reason`。
+    if str(row.get("not_evaluable_reason") or "").strip():
+        return {"state": state,
+                "failed_criterion": "不可评（工程缺口）—— 依主席 2026-10-14 口径记入失败",
+                "failed_detail": str(row.get("not_evaluable_reason") or "").strip(),
+                "passed_criteria": []}
     eff = str(row.get("effect", ""))
     m = re.search(r"Δ\s*=?\s*\+?([0-9.]+)\s*pp", eff)
     th = re.search(r"\+([0-9.]+)\s*pp\s*冻结阈值", eff)
@@ -866,6 +903,12 @@ def main():
     }
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
+    # ★★ 落盘前**全量脱敏**（数据集存放路径／机器号 ⇒ 占位）—— 与"脱敏顺序无关兜底"同族
+    doc = _final_sanitize(doc)
+    _banned = [b for b in BANNED_IN_MATRIX if b in json.dumps(doc, ensure_ascii=False)]
+    if _banned:
+        print(f"FAIL-CLOSED：矩阵件仍含禁用串 {_banned} ⇒ 拒绝落盘")
+        return 1
     out.write_text(json.dumps(doc, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     counts = {s: sum(1 for r in rows if r["status"] == s) for s in STATUS_VOCABULARY}
     print(f"official data: {len(rows)} 档；四态 {counts} -> {out}")

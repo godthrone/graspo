@@ -29,6 +29,9 @@ DENYLIST = REPO / ".local" / "matrix-leak-denylist.txt"
 
 # 通用形状（⛔ 无具体内部字面量）
 PATTERNS = [
+    (r"/homedata/", "★ 数据集存放路径（⛔ 矩阵不得出现）"),
+    (r"test\.jsonl", "★ 数据集文件名（⛔ 矩阵不得出现）"),
+    (r"(?<![0-9A-Za-z])228(?![0-9A-Za-z])", "★ 机器号（⛔ 矩阵不得出现）"),
     (r"(?:^|[^A-Za-z0-9._/-])/(?:home|root|Users|mnt|work|data|opt|srv|var|models)/[A-Za-z0-9._-]+",
      "宿主路径 / 内网路径"),
     (r"\b(?:10|172|192)\.(?:[0-9]{1,3})\.(?:[0-9]{1,3})\.(?:[0-9]{1,3})\b", "内网 IP"),

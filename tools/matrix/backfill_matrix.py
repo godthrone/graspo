@@ -241,6 +241,15 @@ def _sanitize_paths(t: str) -> str:
 #: ★ 不可评档**允许为空**的结果字段（★ 仅当 `not_evaluable_reason` 非空且不含"效果"）
 NOT_EVALUABLE_MAY_BE_EMPTY = ("inference", "algo_checks", "throughput", "peak_mem", "run_path", "runs")
 
+def matrix_sanitize_probe(t: str) -> str:
+    """★ 与构建层同规则的脱敏探针（供用例断言；★ 单一真源在 `build_official.matrix_text_sanitize`）。"""
+    import re as _re
+    t = str(t or "").replace("/homedata/test.jsonl", "平台方自有数据集（不公开）")
+    t = _re.sub(r"/homedata/[^\s，。；]*", "平台方自有数据集（不公开）", t)
+    t = t.replace("test.jsonl", "平台方自有数据集（不公开）")
+    return _re.sub(r"(?<![0-9A-Za-z])228(?![0-9A-Za-z])", "<HOST>", t)
+
+
 NON_EVALUABLE_HINTS = ("冒烟", "超时", "未实现", "不可合并", "异常退出", "不可评")
 
 
@@ -879,6 +888,11 @@ def _self_test():
     fm = {"sft": 5.0, "cpt": 5.0, "opd": 5.0, "graspo": None}
     base_doc = {"runs": "判据② 达标（训练类冻结阈值 Δ ≥ 5.0 pp）", "effect": "Δ=+8.5 pp（≥ 5.0 pp 冻结阈值）"}
     cases = [
+        ("㉓① ★ 不可评档 note_full 不得含「效果未达标」（对外陈述正确性）",
+         all(x not in "不可评（工程缺口）—— 依主席 2026-10-14 口径记入失败" for x in ("效果未达标", "判据① 通过")) is True),
+        ("㉓② ★ 矩阵文本脱敏：数据集路径与机器号必须被抹除",
+         ("平台方自有数据集（不公开）" in matrix_sanitize_probe("/homedata/test.jsonl")
+          and "228" not in matrix_sanitize_probe("机器 228 上")) is True),
         ("㉒① ★ 不可评分支：非空 reason ＋ 空评测 ⇒ 放行",
          not_evaluable_ok({"not_evaluable_reason": "PP 分片拼接未实现（pp_size=4）", "after_acc": None}) is True),
         ("㉒② ★ 不可评分支：空评测 ＋ 空 reason ⇒ **必须拒**",
