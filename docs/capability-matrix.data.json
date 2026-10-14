@@ -3674,7 +3674,8 @@
     "source": "★ 待补：可从 graspo-8ep-20261012stdout.log + logging.jsonl 逐项统计（组完整性 / retry_count / 组决策分布 / 奖励对齐 / steps 映射 / batch_high_retry_rate）",
     "note": "★ 本轮余量用于落盘与 T006 起跑；未编造。",
     "6_batch_high_retry_rate": "batch_high_retry_rate = retry/total = 538/922 = 0.5835（58.35%）；来源逐字：run_cumulative.decisions.rollout_attempts{total: 922, retry: 538, terminal: 384}（runs/T028/stdout.log 的 train_step JSON，★ 精确分数推导、⛔ 非代理值）",
-    "_native_sft_note": "★ 该档为 native SFT ⇒ GRASPO 专有五计数（ratio_mean/injection_failures/groups_seen 等）不适用"
+    "_native_sft_note": "★ 该档为 native SFT ⇒ GRASPO 专有五计数（ratio_mean/injection_failures/groups_seen 等）不适用",
+    "_retest_conclusion_20261014": "2026-10-14 retest 收官：ec=0、ckpt_retention=ok、进程已退；★ 属『重测/更新 ⇒ 期望 0』（已在四态内、结论未变）"
    },
    "anomalies": [
     "★ 口径取代：本档早前 5ep 读数（Δ=+4.5584 pp）由本 8ep 跑次取代，维持『作废参考』地位；两者并存标注不混。",
@@ -3698,7 +3699,6 @@
      "digest": "sha256:a75bcc78382fa358b73bf6abd4411a46307225ad8a5dd752b121cc6fb02ac253"
     }
    },
-   "retest_conclusion_20261014": "★ 2026-10-14 retest 收官：`ec=0`、`ckpt_retention=ok`、进程已退；★ 属「重测/更新 ⇒ 期望 0」（★ 已在四态内、结论未变）⇒ 按 `(档号, json sha)` 并存留痕，⛔ 不覆盖既有结论。",
    "throughput_detail": "★ 生成式 tok/s 不适用（native GRASPO(GRPO) 后端不产出生成式 tok/s）⇒ 不编造；墙钟与步速见 runs/T028/stdout.log 的 train_step 事件。",
    "elapsed": "—",
    "max_epochs": 8,
