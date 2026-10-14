@@ -679,8 +679,11 @@ def main():
             # ★ 结构化"标准交付项"：P5/P6 六项 / 异常（非字符串 ⇒ 不塞 RESULT_KEYS，单独随件入库）
             for _k in ("p5p6_readings", "anomalies",
                        "after_acc", "base_acc", "delta_pp", "n_correct", "n_total"):
-                if doc.get(_k):
-                    new_rows[tier][_k] = doc[_k]
+                _v = doc.get(_k)
+                # ★ 值等于 0/0.0 是**合法实测值**（如 `after_acc=0.0`）⇒ ⛔ 不得用真值判断吞掉；
+                #   仅跳过 None 与空容器。
+                if _v is not None and (not isinstance(_v, (list, dict, str)) or len(_v) > 0):
+                    new_rows[tier][_k] = _v
             scr = doc.get("step_count_reconciliation")
             if not ok and scr:
                 new_rows[tier]["step_count_reconciliation"] = scr

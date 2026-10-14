@@ -4556,29 +4556,83 @@
    "expected_optimizer_steps_per_epoch": "160",
    "expected_optimizer_steps_reachable": "160",
    "applicable": true,
-   "status": "尚未验证",
-   "runs": "—",
-   "effect": "—",
-   "inference": "—",
-   "algo_checks": "—",
+   "status": "已验证不可用",
+   "runs": "$TREE：msswift、v0-20261013-065624/checkpoint-1280/（config.json + model-00001..00004-of-00004.safetensors + tokenizer 件 + global_step1280）、logs/",
+   "effect": "after acc=0.0000%（0/702）；base acc=16.3818%（115/702）；★ Δ = -16.3818 pp（冻结阈值 +5.0 pp；目标 +10.0 pp 仅展示）。口径：criteria elam-v3-allright-1、温度 0、702/702、0 error；base/after 独立 output_dir + fail-closed + stdout 双份。",
+   "inference": "form=full ⇒ 零 merge（vLLM 直指 v0-20261013-065624/checkpoint-1280）⇒ after/base ⇒ delta；耗时 ~17.5 min（含两次 vLLM 加载）",
+   "algo_checks": "GRASPO 六项齐：ratio_mean=1；ratio_abs_dev_mean=0；ratio_abs_dev_max=0；ratio_is_exactly_one=1；injection_failures=0；groups_seen=1（最终步，runs/T037/stdout.log）",
    "throughput": "—",
-   "peak_mem": "—",
-   "run_path": "—",
+   "peak_mem": "未采集",
+   "run_path": "RUN-T037",
    "live_evidence": "★ 在跑：已跑 ~7 h、504/1280",
+   "measurement_pending": false,
+   "p5p6_readings": {
+    "1_ratio_mean": "1",
+    "2_ratio_abs_dev_mean": "0",
+    "3_ratio_abs_dev_max": "0",
+    "4_ratio_is_exactly_one": "1",
+    "5_injection_failures": "0",
+    "6_groups_seen": "1",
+    "_source": "runs/T037/stdout.log 最终步（GRASPO 专有；该档 GRASPO ⇒ 六项适用）"
+   },
+   "anomalies": [
+    "★ §7/§8/§10/§12 护栏本轮全部生效（评测脚本由 render_eval_script 生成）。",
+    "after=0.0%（0/702）与 T038/T045 同族：工具调用输出格式被训坏 ⇒ 0 正确",
+    "训练尾部 [rank0] ProcessGroupNCCL.cpp:1575 destroy_process_group() Warning —— 仅退出告警、非失败",
+    "评测 form=full ⇒ 零 merge（vLLM 直指 v0-20261013-065624/checkpoint-1280）；耗时约 17.5 min"
+   ],
+   "base_acc": 0.163818,
+   "delta_pp": -16.3818,
+   "n_total": 702,
+   "step_count_reconciliation": {
+    "steps_nominal": 1280,
+    "steps_actual": 1280,
+    "reconciliation_formula": "★ 对账式（含 nproc=1）：1280 = steps_actual ✓",
+    "trainable_completions": {
+     "applicable": false,
+     "value": "不适用（配置式）"
+    },
+    "verdict": "对账式 1280 = 实际 1280 ✓ ⇒ 判据①「完整跑完」成立；判据② 未过。"
+   },
+   "note_extra_steps_formula_issue": "★ 登记待修：'推导步数公式'对 native GRASPO 档不成立（推导 None vs 实际 None）—— 本轮不顺手改公式，后续单独修。",
+   "code_identity": {
+    "tree_fingerprint": "",
+    "generated_yaml": "",
+    "generated_yaml_sha256": "",
+    "image_run_wrapper": {
+     "digest": ""
+    },
+    "image_base_official": {
+     "digest": ""
+    }
+   },
+   "note": "判定：已验证不可用。after 0.0%/base 16.3818%/Δ=-16.3818 pp。Δ<阈值，未过第 2 条。P5/P6 已补。",
+   "after_acc": 0.0,
+   "n_correct": 0,
+   "throughput_detail": "未采集（该档未落吞吐指标；runs/T037/stdout.log 无 batch_sec 类行）",
    "elapsed": "—",
    "max_epochs": 8,
    "derived_steps": 1280,
    "per_epoch_steps": 160,
    "save_steps_basis": "= 推导步数 1280 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
+   "p5p6": "",
    "steps_actual": "—",
    "data_scale": "20 条（每卡 20）",
-   "note": "—",
    "tp": "—（框架内部决定）",
    "pp": "—（框架内部决定）",
    "dp": "1（派生）",
    "cards_total": "nproc_per_node×nnodes = 1 卡",
    "dp_derived": true,
-   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）"
+   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）",
+   "verdict": {
+    "state": "已验证不可用",
+    "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
+    "failed_detail": "效果未达标（见 effect）",
+    "passed_criteria": [
+     "GRASPO 六项齐：ratio_mean=1；ratio_abs_dev_mean=0；ratio_abs_dev_max=0；ratio_is_exactly_one=1；injection_failures=0；groups_seen=1（最终步，runs/T037/stdout.log）"
+    ]
+   },
+   "note_full": "★ 未过第 2 条判据（效果不足）——after acc=0.0000%（0/702）；base acc=16.3818%（115/702）；★ Δ = -16.3818 pp（冻结阈值 +5.0 pp；目标 +10.0 pp 仅展示）。口径：criteria elam-v3-allright-1、温度 0、702/702、0 error；base/after 独立 output_dir + fail-closed + stdout 双份。 ★ 已通过项（事实保留）：GRASPO 六项齐：ratio_mean=1；ratio_abs_dev_mean=0；ratio_abs_dev_max=0；ratio_is_exactly_one=1；injection_failures=0；groups_seen=1（最终步，runs/T037/stdout.log） ★ 判据① 依据：$TREE：msswift、v0-20261013-065624/checkpoint-1280/（config.json + model-00001..00004-of-00004.safetensors + tokenizer 件 + global_step1280）、logs/ ★ 步数对账（如实登记）：推导 None vs 实际 None；对账式 1280 = 实际 1280 ✓ ⇒ 判据①「完整跑完」成立；判据② 未过。 ★ 异常登记：★ §7/§8/§10/§12 护栏本轮全部生效（评测脚本由 render_eval_script 生成）。 ★ 异常登记：after=0.0%（0/702）与 T038/T045 同族：工具调用输出格式被训坏 ⇒ 0 正确 ★ 异常登记：训练尾部 [rank0] ProcessGroupNCCL.cpp:1575 destroy_process_group() Warning —— 仅退出告警、非失败 ★ 异常登记：评测 form=full ⇒ 零 merge（vLLM 直指 v0-20261013-065624/checkpoint-1280）；耗时约 17.5 min"
   },
   {
    "tier": "T038",
