@@ -316,3 +316,10 @@ python3 -m py_compile tools/matrix/<改动文件>.py     # 或等价的 AST 解�
 ★ **⛔ 不为历史档做批量回填补 `provenance_command`/`evidence_paths`** —— ★ 理由：★ 52 次调用 ＋ 52 行台账，**值/成本不划算**；★ 且**各档证据本就完整保存在其工位 json（主记录）** ⇒ ★ 矩阵行里的「**未记录**」是**如实标注、⛔ 不是数据缺失**。
 ★ **策略 = «后续自然补齐»**：★ **谁被重跑回填（未跑档首次入册／既有档重测）⇒ 谁的矩阵行就带上这两字段**。
 ★ **例外（★ 供将来）**：★ 若**主席层审计需要全表证据链** ⇒ ★ **再做一次性批量补齐**（★ 届时按清单跑 `--force`，★ **四态不变**、仅补字段与台账行）✓
+
+## ★ 基线解释器 = `.venv/bin/python`（2026-10-14 立）
+
+**门禁/校验一律用 `.venv/bin/python`**（自测亦用 `.venv/bin/pytest`）。
+⛔ **不用系统 `python3` 判"工具链缺依赖"** —— 系统解释器缺项更多，会误判为工具链坏
+（实测：`.venv/bin/python tools/check_env.py` ⇒ rc=0；`python3 tools/check_env.py` ⇒ rc=1）。
+`tools/check_env.py` 已自检 `sys.prefix`/`VIRTUAL_ENV`，非 venv 运行会打印提示。

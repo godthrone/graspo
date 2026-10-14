@@ -105,6 +105,40 @@ def check_train_infer_exclusive(target_card: str, card_roles: dict[str, str]) ->
     return False, f"卡 {target_card} 已被【{existing}】容器占用 ⇒ 拒绝复用"
 
 
+def card_roles_from_containers(docker_ps_text: str) -> dict[str, str]:
+    """★ 汇聚 `{card: role}`：从运行中容器（只读）判定该卡承载的是训练还是推理。
+
+    判定依据（依次）：容器名/`--name`、`-e TIER=`（训练档）、``vllm``/``served-model-name``（推理服务）；
+    卡号取 `-e NVIDIA_VISIBLE_DEVICES=`。⛔ 只读，**不 kill、不动任何容器**。
+    """
+    roles: dict[str, str] = {}
+    for line in (docker_ps_text or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        role = "infer" if ("vllm" in line or "served-model-name" in line) else "train"
+        for token in line.replace('"', " ").split():
+            if token.startswith("NVIDIA_VISIBLE_DEVICES="):
+                # ★ 值内逗号是卡分隔符（`=1,3`）；⛔ 不可先把逗号当空白切开，否则丢卡
+                for card in token.split("=", 1)[1].split(","):
+                    card = card.strip()
+                    if card and card not in ("all", "void", "none"):
+                        roles.setdefault(card, role)
+    return roles
+
+
+def assert_no_card_reuse(target_cards: list[str], docker_ps_text: str) -> None:
+    """★ B10 规则 1/2 的【接线】：起跑前对每张目标卡做互斥校验，违反即 fail-closed。
+
+    ★ 顺序保证：**本函数在起跑前调用** ⇒ ⛔ 不会"跑起来才发现"。
+    """
+    roles = card_roles_from_containers(docker_ps_text)
+    for card in target_cards:
+        ok, why = check_train_infer_exclusive(card, roles)
+        if not ok:
+            raise SystemExit(f"★ B10 卡池契约 fail-closed（起跑前）：{why}")
+
+
 def detect_form_and_validate(checkpoint_dir: str) -> tuple[str, bool, str]:
     """§7：返回 (形态, 是否通过, 说明)。全参/ adapter / native rank 三种形态各按自己的谓词判。"""
     if not checkpoint_dir or not os.path.isdir(checkpoint_dir):
