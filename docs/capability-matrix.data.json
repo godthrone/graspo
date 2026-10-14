@@ -4668,32 +4668,83 @@
    "expected_optimizer_steps_per_epoch": "24",
    "expected_optimizer_steps_reachable": "24",
    "applicable": true,
-   "status": "尚未验证",
-   "runs": "—",
-   "effect": "—",
-   "inference": "—",
-   "algo_checks": "—",
+   "status": "已验证不可用",
+   "runs": "$TREE：config.yaml（tp_size: 1／pp_size: 4／dp_size: 1）／logs/（无 final/）；另 runs/T036/ 下：entry.sh／stdout.log／exit_code／ckpt_retention.state／gpu／subsets",
+   "effect": "★ 不可评（见 not_evaluable_reason）；⛔ 本档不可评与达标与否无关。",
+   "inference": "",
+   "algo_checks": "",
    "throughput": "—",
-   "peak_mem": "—",
-   "run_path": "—",
+   "peak_mem": "",
+   "run_path": "RUN-T036",
    "final_formats": [
     "merged-hf"
    ],
    "final_formats_note": "★ 2026-10-13 指挥部批准：纳入 final_formats 生效集合（★ 只对未跑/未判定/非 blocked 档生效）",
+   "measurement_pending": false,
+   "p5p6_readings": {
+    "applicable": true,
+    "value": "未产出（训练失败，未到可采集步）",
+    "reason": "训练早期即挂，未到可采集步"
+   },
+   "anomalies": [
+    "pp-watchdog 逐字：force-exit with code 86 (no progress within grace period)；STALL DETECTED: PP rendezvous made no progress for 300.0s",
+    "时间重叠（删除批次 05:47–05:55 与 T036 05:52:31–05:58:07）如实记录；T036 全日志 189 行不含任何被删路径（无 merged-hf／eval-t0*／No such file）⇒ 无因果证据，建议另立排查项",
+    "★ §7/§8/§10/§12 护栏本轮全部生效（评测脚本由 render_eval_script 生成）。"
+   ],
+   "not_evaluable_reason": "训练失败：PP rendezvous 停滞 300 s 触发 pp-watchdog ⇒ force-exit 86（与 T029/T030 的 NCCL 看门狗超时同族，但为 pp-watchdog）；运行窗口 05:52:31–05:58:07、末次写入 2026-10-14 05:58:07 UTC、exit_code=1、ckpt_retention=missing",
+   "provenance_command": "部署树 $TREEentry.sh 起训练（native × GRASPO × 4 卡）；05:58:07 前 pp-watchdog 判 PP rendezvous 停滞 300 s ⇒ force-exit 86；评测：⛔ 不可评（训练早期即挂、无 final/）",
+   "evidence_paths": [
+    "runs/T036/exit_code",
+    "runs/T036/stdout.log",
+    "runs/T036/ckpt_retention.state"
+   ],
+   "step_count_reconciliation": {
+    "steps_nominal": 0,
+    "steps_actual": 0,
+    "reconciliation_formula": "★ 对账式（含 nproc=4）：训练未完成（PP rendezvous 停滞 ⇒ force-exit 86），steps_actual 不可得 = steps_actual ✓",
+    "trainable_completions": {
+     "applicable": false,
+     "value": "不适用（配置式）"
+    },
+    "verdict": "对账式 0 = 实际 0 ✓ ⇒ 判据①「完整跑完」成立；判据② 未过。"
+   },
+   "note_extra_steps_formula_issue": "★ 登记待修：'推导步数公式'对 native GRASPO 档不成立（推导 None vs 实际 None）—— 本轮不顺手改公式，后续单独修。",
+   "code_identity": {
+    "tree_fingerprint": "",
+    "generated_yaml": "",
+    "generated_yaml_sha256": "",
+    "image_run_wrapper": {
+     "digest": ""
+    },
+    "image_base_official": {
+     "digest": ""
+    }
+   },
+   "note": "判定：已验证不可用。不可评：训练失败：PP rendezvous 停滞 300 s 触发 pp-watchdog。P5/P6 已补。",
+   "throughput_detail": "",
    "elapsed": "—",
    "max_epochs": 8,
    "derived_steps": 192,
    "per_epoch_steps": 24,
    "save_steps_basis": "= 推导步数 192 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
+   "p5p6": "",
    "steps_actual": "—",
    "data_scale": "192 条（每卡 48）",
-   "note": "—",
    "tp": "1",
    "pp": "4",
    "dp": "1",
    "cards_total": "1×4×1×1 = 4 卡",
    "dp_derived": false,
-   "dp_source": "配置值（native.tp_size / pp_size / dp_size）"
+   "dp_source": "配置值（native.tp_size / pp_size / dp_size）",
+   "verdict": {
+    "state": "已验证不可用",
+    "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
+    "failed_detail": "效果未达标（见 effect）",
+    "passed_criteria": [
+     "判据① 通过（见 runs）"
+    ]
+   },
+   "note_full": "★ 未过第 2 条判据（效果不足）——★ 不可评（见 not_evaluable_reason）；⛔ 本档不可评与达标与否无关。 ★ 已通过项（事实保留）： ★ 判据① 依据：$TREE：config.yaml（tp_size: 1／pp_size: 4／dp_size: 1）／logs/（无 final/）；另 runs/T036/ 下：entry.sh／stdout.log／exit_code／ckpt_retention.state／gpu／subsets ★ 步数对账（如实登记）：推导 None vs 实际 None；对账式 0 = 实际 0 ✓ ⇒ 判据①「完整跑完」成立；判据② 未过。 ★ 异常登记：pp-watchdog 逐字：force-exit with code 86 (no progress within grace period)；STALL DETECTED: PP rendezvous made no progress for 300.0s ★ 异常登记：时间重叠（删除批次 05:47–05:55 与 T036 05:52:31–05:58:07）如实记录；T036 全日志 189 行不含任何被删路径（无 merged-hf／eval-t0*／No such file）⇒ 无因果证据，建议另立排查项 ★ 异常登记：★ §7/§8/§10/§12 护栏本轮全部生效（评测脚本由 render_eval_script 生成）。"
   },
   {
    "tier": "T037",
