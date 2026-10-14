@@ -80,6 +80,31 @@ def include_reserved_cards(available: list[str], busy_cards: set[str]) -> list[s
     return [c for c in available if str(c) not in busy_cards]
 
 
+def check_train_infer_exclusive(target_card: str, card_roles: dict[str, str]) -> tuple[bool, str]:
+    """★ B10 契约规则 1/2（2026-10-14 立，实例驱动）：同一张卡不得同时承载训练与推理。
+
+    ★ 实例：T022 的评测 vLLM 与 T030 的训练共用 GPU4 ⇒ 起服务失败，逐字
+    `Free memory on device cuda:0 (30.82/79.25 GiB) … < 0.85 (67.36 GiB)` ⇒ 评测白跑一轮。
+
+    ★ 判据："卡上没显存 ≠ 卡没人用" —— 推理 vLLM 加载期卡看似空闲，实为已预约。
+    ★ 违反 ⇒ 返回 (False, 理由)，调用方**起跑前 fail-closed**。
+
+    Args:
+        target_card: 拟使用的卡号（字符串）。
+        card_roles: 卡号 → 角色（``"train"`` / ``"infer"``）；同一卡若已登记任一角色，
+            再以另一角色申请即视为冲突。
+    """
+    existing = card_roles.get(str(target_card))
+    if existing is None:
+        return True, f"卡 {target_card} 未被任何训练/推理容器引用 ⇒ 放行"
+    if existing == "train":
+        return False, (
+            f"卡 {target_card} 已被【训练】容器占用 ⇒ 拒绝以【推理】复用"
+            "（B10 规则 1/2：二者不得交叉；★ 卡上没显存 ≠ 卡没人用）"
+        )
+    return False, f"卡 {target_card} 已被【{existing}】容器占用 ⇒ 拒绝复用"
+
+
 def detect_form_and_validate(checkpoint_dir: str) -> tuple[str, bool, str]:
     """§7：返回 (形态, 是否通过, 说明)。全参/ adapter / native rank 三种形态各按自己的谓词判。"""
     if not checkpoint_dir or not os.path.isdir(checkpoint_dir):
