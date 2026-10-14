@@ -238,6 +238,27 @@ def _sanitize_paths(t: str) -> str:
     return re.sub(r"/home/[^\s/]+(/[^\s]*)?", "<HOST>", str(t or ""))
 
 
+NON_EVALUABLE_HINTS = ("冒烟", "超时", "未实现", "不可合并", "异常退出", "不可评")
+
+
+def not_evaluable_ok(row: dict) -> bool:
+    """★ "不可评（工程缺口）"分支校验：
+
+    · 评测三件（`after_acc`/`base_acc`/`delta_pp`）为空 ⇒ ★ **必须**给出非空 `not_evaluable_reason`；
+      ★ **反之（空评测＋空 reason）⇒ 判不合规**（防"悄悄把不可评写成失败而不说原因"）；
+    · ★ `not_evaluable_reason` **不得出现"效果"字样**（防误标为效果失败）；★ 并须含非空真因
+      （★ 建议含 `冒烟/超时/未实现/不可合并/异常退出/不可评` 之一）。
+    """
+    ev = [row.get(k) for k in ("after_acc", "base_acc", "delta_pp")]
+    empty = all(v in (None, "", "—", "不适用") for v in ev)
+    reason = str(row.get("not_evaluable_reason") or "").strip()
+    if reason and "效果" in reason:
+        return False                      # ★ 误标：不可评 ⛔ 不得写成效果失败
+    if not empty:
+        return True                       # ★ 正常评测档 ⇒ 无需 reason
+    return bool(reason)                   # ★ 空评测 ⇒ 必须给非空 reason
+
+
 def copy_result_field(doc: dict, key: str):
     """★ 结果字段拷贝口径：**仅跳过 `None` 与空容器** ⇒ ⛔ 不得用真值判断（`0`/`0.0`/空串是合法实测值）。"""
     v = doc.get(key)
@@ -846,6 +867,12 @@ def _self_test():
     fm = {"sft": 5.0, "cpt": 5.0, "opd": 5.0, "graspo": None}
     base_doc = {"runs": "判据② 达标（训练类冻结阈值 Δ ≥ 5.0 pp）", "effect": "Δ=+8.5 pp（≥ 5.0 pp 冻结阈值）"}
     cases = [
+        ("㉒① ★ 不可评分支：非空 reason ＋ 空评测 ⇒ 放行",
+         not_evaluable_ok({"not_evaluable_reason": "PP 分片拼接未实现（pp_size=4）", "after_acc": None}) is True),
+        ("㉒② ★ 不可评分支：空评测 ＋ 空 reason ⇒ **必须拒**",
+         not_evaluable_ok({"after_acc": None, "base_acc": None, "delta_pp": None}) is False),
+        ("㉒③ ★ 不可评分支：reason 写成「效果未达标」⇒ **必须拒**（防误标）",
+         not_evaluable_ok({"not_evaluable_reason": "效果未达标", "after_acc": None}) is False),
         ("㉑① ★ 零值回归：`after_acc = 0.0` ⇒ **必须留下 `0.0`**（⛔ 不得变 None）",
          copy_result_field({"after_acc": 0.0}, "after_acc") == 0.0),
         ("㉑② 零值回归：`n_correct = 0` ⇒ **必须留下 `0`**",

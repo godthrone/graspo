@@ -323,3 +323,10 @@ python3 -m py_compile tools/matrix/<改动文件>.py     # 或等价的 AST 解�
 ⛔ **不用系统 `python3` 判"工具链缺依赖"** —— 系统解释器缺项更多，会误判为工具链坏
 （实测：`.venv/bin/python tools/check_env.py` ⇒ rc=0；`python3 tools/check_env.py` ⇒ rc=1）。
 `tools/check_env.py` 已自检 `sys.prefix`/`VIRTUAL_ENV`，非 venv 运行会打印提示。
+
+## ★★ "不可评（工程缺口）"分支（2026-10-14 主席口径下必需）
+
+★ **背景**：★ 有的档**训练成功但产物不可评**（如 **T018/T017：PP 分片拼接未实现**；★ `final/manifest.json` 逐字 `pp_size: 4`／`format: native-full-param`，★ **⛔ 非 DP 分歧**、⛔ 非效果失败）。
+★ **口径**：★ 依主席 2026-10-14「**跑了没成功即失败**」⇒ ★ **`status` = 「已验证不可用（失败）」**，★ **未过的是第 1 条（跑不通/产物不可用）**；★ **备注必须写明"不可评：<真因>"**（★ ⛔ 不得写成"效果未达标"）。
+★ **新字段**：`not_evaluable_reason`（非空字符串，记逐字真因）⇒ ★ **当且仅当它非空**时，★ **评测三件可为空/「不适用」**。
+★ **校验器（同批）**：`not_evaluable_ok()` —— ★ 空评测 ＋ 空 reason ⇒ **FAIL-CLOSED**；★ reason 含"效果"字样 ⇒ **FAIL-CLOSED**（防误标）。★ 用例 ㉒①–㉒③ ✓
