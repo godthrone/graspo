@@ -65,8 +65,20 @@ def norm_ident(v):
     ★ 只用于**身份键**（model/algo/mode/backend）与语义字段的字符串比较；⛔ 不改数值/阈值判定。
     """
     t = str(v or "").replace("*", "").strip()
-    t = re.sub(r"[（(][^）)]*[）)]\s*$", "", t).strip()
-    return t.lower()
+    t = re.sub(r"[（(][^）)]*[）)]\s*$", "", t).strip().lower()
+    # ★ 已登记的**同义写法**（⛔ 只收已知别名，不合并真实不同值）：配置侧与档位表用词不同但同义。
+    return _IDENT_ALIASES.get(t, t)
+
+
+#: ★ 同义写法表（★ 逐条有据：`msswift` 是 `ms-swift` 的配置写法；`full` 是 `全参` 的英文写法）
+_IDENT_ALIASES = {
+    "msswift": "ms-swift",
+    "ms_swift": "ms-swift",
+    "full": "全参",
+    "full-parameter": "全参",
+    "full_parameter": "全参",
+    "native": "native",
+}
 
 
 def norm_param(key, v):
@@ -324,6 +336,8 @@ def norm_parallel(s):
         world = dims["tp"] * dims["pp"] * dims["dp"]
     else:
         world = None
+    if cards is None and world:      # ★ 单节点下卡数 = nproc 或 tp×pp×dp（表达面不同、语义相同）
+        cards = world
     return (cards, world, dims)
 
 
