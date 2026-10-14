@@ -3657,7 +3657,7 @@
     "verdict": "对账式 1280 = 实际 1280 ✓ ⇒ 判据①「完整跑完」成立；判据② 未过（Δ=−0.1424 pp，噪声底量级）。"
    },
    "note_extra_steps_formula_issue": "★ 登记待修：'推导步数公式'对 native GRASPO 档不成立（推导 None vs 实际 None）—— 本轮不顺手改公式，后续单独修。",
-   "note": "判定：已验证不可用。after 16.6667%/base 16.8091%/Δ=-0.1424 pp。Δ<阈值，未过第 2 条。P5/P6 待补。",
+   "note": "判定：已验证不可用。after 16.6667%/base 16.8091%/Δ=-0.1424 pp。Δ<阈值，未过第 2 条。P5/P6 已补。",
    "tree_fingerprint": "（起跑断言值见 status-T028/launch.log；本档树 graspo-8ep-20261012）",
    "tree_fingerprint_role": "起跑断言值",
    "eval_dataset_anchor_correction": "★ 2026-10-12 订正 run_environment.eval_dataset.sha256：6da72199…（= train.jsonl）→ c202b1e1…（= test.jsonl, 702 条）。订正人：BADGE 会话 20261008-105451 · T031 评测执行者（subagent）。依据：228 当场实测 sha256sum + 与本批次 T010T031 eval_report 数据锚交叉一致。★ 本次订正未改动本档任何其他字段、未重跑、未覆盖为新跑次。",
@@ -3672,7 +3672,9 @@
    "measurement_pending": false,
    "p5p6_readings": {
     "source": "★ 待补：可从 graspo-8ep-20261012stdout.log + logging.jsonl 逐项统计（组完整性 / retry_count / 组决策分布 / 奖励对齐 / steps 映射 / batch_high_retry_rate）",
-    "note": "★ 本轮余量用于落盘与 T006 起跑；未编造。"
+    "note": "★ 本轮余量用于落盘与 T006 起跑；未编造。",
+    "6_batch_high_retry_rate": "batch_high_retry_rate = retry/total = 538/922 = 0.5835（58.35%）；来源逐字：run_cumulative.decisions.rollout_attempts{total: 922, retry: 538, terminal: 384}（runs/T028/stdout.log 的 train_step JSON，★ 精确分数推导、⛔ 非代理值）",
+    "_native_sft_note": "★ 该档为 native SFT ⇒ GRASPO 专有五计数（ratio_mean/injection_failures/groups_seen 等）不适用"
    },
    "anomalies": [
     "★ 口径取代：本档早前 5ep 读数（Δ=+4.5584 pp）由本 8ep 跑次取代，维持『作废参考』地位；两者并存标注不混。",
@@ -3702,7 +3704,7 @@
    "derived_steps": 48,
    "per_epoch_steps": 6,
    "save_steps_basis": "= 推导步数 48 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
-   "p5p6": "",
+   "p5p6": "⑥ batch_high_retry_rate：batch_high_retry_rate = retry/total = 538/922 = 0.5835（58.35%）；来源逐字：run_cumulative.decisions.rollout_attempts{total: 922, retry: 538, terminal: 384}（runs/T028/stdout.log 的 train_step JSON，★ 精确分数推导、⛔ 非代理值）",
    "steps_actual": "1280/1280",
    "data_scale": "48 条（每卡 48）",
    "tp": "1",
@@ -3719,7 +3721,7 @@
      "native GRASPO 跑次侧可观测项通过：exit_code=0、1280/1280 步、ckpt_retention ok、torch_probe all_ok=True（native_rank_pt/verified）、Traceback 0。"
     ]
    },
-   "note_full": "★ 未过第 2 条判据（效果不足）——after acc=16.6667%（117/702）；base acc=16.8091%（118/702）；★ Δ = −0.1424 pp（< +5.0 pp 且 after 略低于 base）⇒ 未过判据②；目标 +10.0 pp 仅展示。口径：数据锚 c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a（702 条）、criteria elam-v3-allright-1、温度 0、702/702、0 error；base/after 独立 output_dir + fail-closed + stdout 双份。★ 噪声底参照：同底座/同数据/同 decoding 的三次 base 读数 118/113/115（极差 3/702 ≈ ±0.43 pp）。 ★ 已通过项（事实保留）：native GRASPO 跑次侧可观测项通过：exit_code=0、1280/1280 步、ckpt_retention ok、torch_probe all_ok=True（native_rank_pt/verified）、Traceback 0。 ★ 判据① 依据：1/1 真效果训练（native GRASPO LoRA 单卡 8ep，1280 步）：判据① 通过（exit_code=0、1280/1280 步、ckpt_retention ok、torch_probe all_ok（native_rank_pt/verified）、Traceback 0）；★ 判据② 未过：after 16.6667% < base 16.8091%（Δ = −0.1424 pp）⇒ 失败（效果）；★ 该 Δ 落在 base 重复跑噪声底（≈±0.43 pp）量级内。 ★ 步数对账（如实登记）：推导 None vs 实际 None；对账式 1280 = 实际 1280 ✓ ⇒ 判据①「完整跑完」成立；判据② 未过（Δ=−0.1424 pp，噪声底量级）。 ★ 订正说明（跑次侧）：n_correct：117 ★ 异常登记：★ 口径取代：本档早前 5ep 读数（Δ=+4.5584 pp）由本 8ep 跑次取代，维持『作废参考』地位；两者并存标注不混。 ★ 异常登记：★ 本 Δ = −0.1424 pp 落在 base 重复跑噪声底（≈±0.43 pp）量级内 ⇒ 判定为『效果不足（无提升）』而非『明显变差』。 ★ 异常登记：★ flush 项：本 8ep 跑次未采集逐 step trainable_completions ⇒ 『对账式 + flush 修正』的实测核对如实标注为『本轮未做』（⛔ 不用 5ep 的数字冒充）。 ★ LoRA 目标按后端：ms-swift 实测 358 实例（language 248 + visual 110）｜native **同为 358 实例**（122 为签名/模式条目数）⇒ ★ 两后端**实例数相同但命中集合不同（不等价）**。 ★ 锚点：树 （起跑断言值见 … + image_base_official sha256:a… + image_run_wrapper sha256:7…"
+   "note_full": "★ 未过第 2 条判据（效果不足）——after acc=16.6667%（117/702）；base acc=16.8091%（118/702）；★ Δ = −0.1424 pp（< +5.0 pp 且 after 略低于 base）⇒ 未过判据②；目标 +10.0 pp 仅展示。口径：数据锚 c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a（702 条）、criteria elam-v3-allright-1、温度 0、702/702、0 error；base/after 独立 output_dir + fail-closed + stdout 双份。★ 噪声底参照：同底座/同数据/同 decoding 的三次 base 读数 118/113/115（极差 3/702 ≈ ±0.43 pp）。 ★ 已通过项（事实保留）：native GRASPO 跑次侧可观测项通过：exit_code=0、1280/1280 步、ckpt_retention ok、torch_probe all_ok=True（native_rank_pt/verified）、Traceback 0。 ★ 判据① 依据：1/1 真效果训练（native GRASPO LoRA 单卡 8ep，1280 步）：判据① 通过（exit_code=0、1280/1280 步、ckpt_retention ok、torch_probe all_ok（native_rank_pt/verified）、Traceback 0）；★ 判据② 未过：after 16.6667% < base 16.8091%（Δ = −0.1424 pp）⇒ 失败（效果）；★ 该 Δ 落在 base 重复跑噪声底（≈±0.43 pp）量级内。 ★ 步数对账（如实登记）：推导 None vs 实际 None；对账式 1280 = 实际 1280 ✓ ⇒ 判据①「完整跑完」成立；判据② 未过（Δ=−0.1424 pp，噪声底量级）。 ★ 订正说明（跑次侧）：n_correct：117 ★ 异常登记：★ 口径取代：本档早前 5ep 读数（Δ=+4.5584 pp）由本 8ep 跑次取代，维持『作废参考』地位；两者并存标注不混。 ★ 异常登记：★ 本 Δ = −0.1424 pp 落在 base 重复跑噪声底（≈±0.43 pp）量级内 ⇒ 判定为『效果不足（无提升）』而非『明显变差』。 ★ 异常登记：★ flush 项：本 8ep 跑次未采集逐 step trainable_completions ⇒ 『对账式 + flush 修正』的实测核对如实标注为『本轮未做』（⛔ 不用 5ep 的数字冒充）。 ★ LoRA 目标按后端：ms-swift 实测 358 实例（language 248 + visual 110）｜native **同为 358 实例**（122 为签名/模式条目数）⇒ ★ 两后端**实例数相同但命中集合不同（不等价）**。 ★ 锚点：树 （起跑断言值见 … + image_base_official sha256:a… + image_run_wrapper sha256:7… ★★ P5/P6 六项对账：⑥ batch_high_retry_rate：batch_high_retry_rate = retry/total = 538/922 = 0.5835（58.35%）；来源逐字：run_cumulative.decisions.rollout_attempts{total: 922, retry: 538, terminal: 384}（runs/T028/stdout.log 的 train_step JSON，★ 精确分数推导、⛔ 非代理值）"
   },
   {
    "tier": "T029",
