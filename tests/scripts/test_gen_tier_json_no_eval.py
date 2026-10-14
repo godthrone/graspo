@@ -43,3 +43,11 @@ def test_no_eval_reason_with_effect_word_rejected():
     r = _run(["--no-eval", "--not-evaluable-reason", "效果未达标"])
     assert r.returncode != 0
     assert "效果" in (r.stderr + r.stdout)
+
+
+def test_parallel_must_match_nproc():
+    """★ 回归（T018 真错位）：`params.parallel` 抄了别档模板 ⇒ TP×PP×DP 与卡数不符 ⇒ FAIL-CLOSED。"""
+    r = _run(["--no-eval", "--not-evaluable-reason", "不可评：测试用",
+              "--parallel", "TP=1 PP=1 DP=1", "--nproc", "4"])
+    assert r.returncode != 0, "★ 应 fail-closed 却放行"
+    assert "parallel" in (r.stderr + r.stdout)

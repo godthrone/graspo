@@ -52,6 +52,17 @@ def assert_structured_params(args) -> None:
         )
     if args.parallel and not PARALLEL_RE.match(args.parallel):
         raise SystemExit(f"★ params.parallel 必须形如 'TP=.. PP=.. DP=..'，当前 = {args.parallel!r}")
+    # ★ 2026-10-14 立（T018 驱动）：`parallel` 与 `nproc` 必须同源。
+    #   事故：T018 的 parallel 抄了 T022 模板写成 `TP=1 PP=1 DP=1`，而该档 manifest.json 逐字
+    #   `pp_size: 4`、final/ 为 4 个 `*_pp_0{0..3}.pt` 分片 ⇒ 档位事实被写错。
+    #   以机器断言替代人眼：TP×PP×DP 必须等于 nproc（卡数/进程数）。
+    nums = [int(x) for x in __import__("re").findall(r"(?:TP|PP|DP)=(\d+)", args.parallel or "")]
+    if len(nums) == 3 and int(args.nproc) != nums[0] * nums[1] * nums[2]:
+        raise SystemExit(
+            f"★ params.parallel 与 nproc 不一致：TP×PP×DP = {nums[0]}×{nums[1]}×{nums[2]} ="
+            f" {nums[0]*nums[1]*nums[2]}，但 nproc = {args.nproc} ⇒ FAIL-CLOSED"
+            "（parallel 必须由该档实际配置/manifest.json 推导，⛔ 不手工填）"
+        )
 
 
 def build(args) -> collections.OrderedDict:
