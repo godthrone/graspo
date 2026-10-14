@@ -43,6 +43,54 @@ MODE_ALLOWED = {"LoRA", "full", "CPT", "SFT"}
 PARALLEL_RE = re.compile(r"^TP=\d+ PP=\d+ DP=\d+")
 
 
+#: ★ 身份字段的**唯一合法来源**（2026-10-14 立，两次真实错位驱动）：
+#:   T018 把 `PP=1` 写成 4 卡档（实为 `pp_size: 4`）；T042 把 `9B`/`full` 写成 27B LoRA 档。
+#:   两次都是"手填/抄模板" ⇒ 以机器断言替代人眼：身份字段必须与该档配置同源。
+MODE_BY_TUNER = {"lora": "LoRA", "full": "全参"}
+
+
+def identity_from_config_text(text: str) -> dict:
+    """从该档 `config.yaml`（或 manifest）文本提取身份事实（★ 只读、⛔ 不手填）。"""
+    import re as _re
+    out: dict = {}
+    m = _re.search(r"tp_size:\s*(\d+)", text);  out["tp"] = int(m.group(1)) if m else None
+    m = _re.search(r"pp_size:\s*(\d+)", text);  out["pp"] = int(m.group(1)) if m else None
+    m = _re.search(r"dp_size:\s*(\d+)", text);  out["dp"] = int(m.group(1)) if m else None
+    m = _re.search(r"tuner_type:\s*([a-zA-Z_]+)", text); out["tuner"] = m.group(1).lower() if m else None
+    m = _re.search(r"backend:\s*([a-zA-Z_]+)", text);    out["backend"] = m.group(1).lower() if m else None
+    m = _re.search(r"(9B|27B)", text);                    out["model"] = m.group(1) if m else None
+    return out
+
+
+def assert_identity_consistent(args) -> None:
+    """★ 身份同源断言（与 `TP×PP×DP==nproc` 同一族）：四项身份必须由该档配置推导。
+
+    ★ 依据 = 该档 `--identity-from-config` 指向的配置/`manifest.json`。
+    ★ 不一致 ⇒ FAIL-CLOSED（⛔ 不允许"手填的值"进 json）。
+    """
+    path = getattr(args, "identity_from_config", None)
+    if not path:
+        return
+    if not os.path.exists(path):
+        raise SystemExit(f"★ --identity-from-config 指向的配置不存在：{path} ⇒ FAIL-CLOSED")
+    facts = identity_from_config_text(open(path, encoding="utf-8", errors="ignore").read())
+    problems = []
+    want_par = f"TP={facts['tp']} PP={facts['pp']} DP={facts['dp']}"
+    if facts["tp"] and not (args.parallel or "").startswith(want_par):
+        problems.append(f"parallel 应为 '{want_par}…'，实为 {args.parallel!r}")
+    if facts["tuner"]:
+        want_mode = MODE_BY_TUNER.get(facts["tuner"])
+        if want_mode and args.mode != want_mode:
+            problems.append(f"mode 应由 tuner_type={facts['tuner']} 映射为 {want_mode!r}，实为 {args.mode!r}")
+    if facts["backend"] and args.backend and facts["backend"] != args.backend.lower():
+        problems.append(f"backend 应为 {facts['backend']!r}，实为 {args.backend!r}")
+    if facts["model"] and args.model and facts["model"] != args.model:
+        problems.append(f"model 应为 {facts['model']!r}（该档配置规模），实为 {args.model!r}")
+    if problems:
+        raise SystemExit("★ 身份字段与该档配置不一致 ⇒ FAIL-CLOSED：\n  - " + "\n  - ".join(problems)
+                         + "\n（★ 身份字段必须由配置推导，⛔ 不手工填/抄模板）")
+
+
 def assert_structured_params(args) -> None:
     """★ §防呆：把 `mode`/`parallel` 的语义钉死，避免再填叙述长文本。"""
     if args.mode not in MODE_ALLOWED:
@@ -67,6 +115,7 @@ def assert_structured_params(args) -> None:
 
 def build(args) -> collections.OrderedDict:
     assert_structured_params(args)
+    assert_identity_consistent(args)
     if args.no_eval:
         # ★ 不可评分支（2026-10-14，T018 驱动）：**只跳过【读报告/推导评测三件】这一段**，
         #   ★ 其余结构（tier/params/provenance/evidence/anomalies/对账式）**照常填** ⇒ ⛔ 不提前 return。
@@ -252,6 +301,8 @@ def main(argv=None) -> int:
     ap.add_argument("--anomaly", action="append", default=[])
     ap.add_argument("--non-graspo", action="store_true")
     ap.add_argument("--out", default=None)
+    # ★ 身份同源：该档配置/manifest 路径（提供则做身份断言）
+    ap.add_argument("--identity-from-config", default=None, dest="identity_from_config")
     args = ap.parse_args(argv)
     d = build(args)
     selfcheck(d)

@@ -51,3 +51,32 @@ def test_parallel_must_match_nproc():
               "--parallel", "TP=1 PP=1 DP=1", "--nproc", "4"])
     assert r.returncode != 0, "★ 应 fail-closed 却放行"
     assert "parallel" in (r.stderr + r.stdout)
+
+
+_CFG_27B_LORA = "/tmp/_id_cfg.yaml"
+
+
+def _write_cfg(text):
+    open(_CFG_27B_LORA, "w", encoding="utf-8").write(text)
+
+
+def test_identity_rejects_copied_template():
+    """★ 回归（T042 真错位）：27B×LoRA 档被抄成 9B×full ⇒ FAIL-CLOSED。"""
+    _write_cfg("Qwen3.8-27B\ntuner_type: lora\nbackend: native\ntp_size: 1\npp_size: 1\ndp_size: 4\n")
+    r = _run(["--no-eval", "--not-evaluable-reason", "不可评：测试用",
+              "--identity-from-config", _CFG_27B_LORA,
+              "--model", "9B", "--mode", "full", "--backend", "native",
+              "--parallel", "TP=1 PP=1 DP=4", "--nproc", "4"])
+    assert r.returncode != 0, "★ 应 fail-closed 却放行"
+    out = r.stderr + r.stdout
+    assert "身份字段与该档配置不一致" in out and "9B" in out
+
+
+def test_identity_accepts_matching_model_scale():
+    """★ 正例：身份与配置同源 ⇒ 放行；★ 同时覆盖"model 写错规模必拒"的反面。"""
+    _write_cfg("Qwen3.8-27B\ntuner_type: lora\nbackend: native\ntp_size: 1\npp_size: 1\ndp_size: 4\n")
+    r = _run(["--no-eval", "--not-evaluable-reason", "不可评：测试用",
+              "--identity-from-config", _CFG_27B_LORA,
+              "--model", "27B", "--mode", "LoRA", "--backend", "native",
+              "--parallel", "TP=1 PP=1 DP=4", "--nproc", "4"])
+    assert r.returncode == 0, r.stderr[-400:]

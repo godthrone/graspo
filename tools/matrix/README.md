@@ -346,3 +346,18 @@ python3 -m py_compile tools/matrix/<改动文件>.py     # 或等价的 AST 解�
 ★ **记录自身 sha 不写入文件**（★ 避免自指；★ 由交付回执给出）。
 ★ 实证（2026-10-14）：★ 曾因"顶层冻结件写旧值、修订段写新值、并残留悬空指向" ⇒ 记录自相矛盾、误导校验 ⇒ 本次改为单一真相源 ＋ 逐条自检。
 ★ **「冻结件」节由工具生成**：`python3 tools/matrix/freeze_table.py [--inject <记录.md>]` ⇒ ★ **值一律来自实物**（`sha256sum` ＋ `wc -c`）⇒ ★ **⛔ 不得手工编辑**；★ 规则：★ **该节【存值】、其他节【只引用】**（写"见「冻结件」节"）；★ **记录自身 sha 不写入文件**。★ 可复现校验：重跑工具 ⇒ 输出须与记录内该节**逐字节一致** ✓
+
+## ★ 身份字段必须由配置推导（2026-10-14 立，两次真实错位）
+
+**今日两次真错位都是"手填/抄模板"**：
+1. **T018**：`params.parallel` 抄 T022 模板写成 `TP=1 PP=1 DP=1`，而该档 `manifest.json` 逐字
+   `pp_size: 4`、`final/` 为 4 个 `*_pp_0{0..3}.pt` 分片；
+2. **T042**：`params.model`/`params.mode` 抄 T018 写成 `9B`/`full`，而该档 `config.yaml` 逐字
+   `Qwen3.8-27B` ＋ `tuner_type: lora`。
+
+**规则**：`model`/`mode`/`backend`/`parallel` 四项**一律由该档配置推导**（⛔ 不手工填）：
+- `model` ← 档位表/配置；`mode` ← `tuner_type` 映射（`lora⇒LoRA`、`full⇒全参`）；
+  `backend` ← 映射；`parallel` ← `tp/pp/dp`。
+- `gen_tier_json.py --identity-from-config <该档配置/manifest>` ⇒ **四项与配置不一致即 FAIL-CLOSED**
+  （与 `TP×PP×DP == nproc` 组成"身份同源"检查）；两条回归用例见
+  `tests/scripts/test_gen_tier_json_no_eval.py`。
