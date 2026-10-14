@@ -3862,6 +3862,7 @@
     "merged-hf"
    ],
    "final_formats_note": "★ 2026-10-13 指挥部批准：纳入 final_formats 生效集合（★ 只对未跑/未判定/非 blocked 档生效）",
+   "channel_gap_note": "★★ **T030 = 失败**：`ec=1`、**`SIGABRT(-6)`**、**`ckpt_retention=missing`** ⇒ ★ **与 T029 同款**（**NCCL 看门狗超时 ⇒ SIGABRT**）。★ 四态保持「尚未验证」、`availability` 空（⛔ **不判\"不可用\"**、⛔ **不外推为整族不可行**）。★★ 其 `runsconfig.yaml` 逐字：**`tp_size: 1`｜`dp_size: 4`｜`nproc_per_node: 4`** ⇒ ★ **属 GRASPO 路（`trainer.py`）且 `dp_size > 1`** —— ★ **表述纪律**：★ **T030 只证明其**配置** `dp_size=4`（★ 该档训练失败、**未落 `final/`** ⇒ **未能实测其 `lora_a` 分歧**）⇒ ★ **\"GRASPO 路同样分歧\"属**由机制与配置推得**、⛔ 不是实测**。",
    "elapsed": "—",
    "max_epochs": 8,
    "derived_steps": 48,
