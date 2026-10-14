@@ -3053,6 +3053,13 @@
    ],
    "note": "判定：已验证不可用。after 20.7977%/base 19.5157%/Δ=+1.2821 pp。Δ<阈值，未过第 2 条。",
    "channel_gap_note": "★ 台账注：★ **移卡原因 = 与 T030 共用 GPU4、显存不足**（逐字 `Free memory on device cuda:0 (30.82/79.25 GiB) < 0.85 (67.36 GiB)`）⇒ **移至空闲卡 7 后全链通过** ✓",
+   "provenance_command": "bash /evalout/run-t022-eval.sh  # (部署树 $TREEentry.sh 起训练；评测链：graspo export --config /evalout/export-t022.yaml ⇒ vLLM(graspo:v0.28.11-cu130fix-v2-msgspec-20261012-run + vllm-openai:v0.22.0) ⇒ graspo eval run ⇒ graspo eval delta)",
+   "evidence_paths": [
+    "evidence/02-eval-export.txt",
+    "evidence/vllm-after.log",
+    "evidence/05-eval-delta.txt",
+    "evidence/eval-after-stdout.log"
+   ],
    "throughput_detail": "训练 200 步 / 1981.8 s = 0.1009 步/s；末批 batch_sec=9.71",
    "elapsed": "—",
    "max_epochs": 2,
@@ -4609,6 +4616,12 @@
    "note": "判定：已验证不可用。after 0.0%/base 16.3818%/Δ=-16.3818 pp。Δ<阈值，未过第 2 条。P5/P6 已补。",
    "after_acc": 0.0,
    "n_correct": 0,
+   "provenance_command": "x",
+   "evidence_paths": [
+    "evidence/05-eval-delta.txt",
+    "evidence/vllm-after.log",
+    "v0-20261013-065624/checkpoint-1280/"
+   ],
    "throughput_detail": "未采集（该档未落吞吐指标；runs/T037/stdout.log 无 batch_sec 类行）",
    "elapsed": "—",
    "max_epochs": 8,

@@ -233,6 +233,31 @@ def ledger_covers(rows, filled_tiers):
     return [t for t in filled_tiers if not any(f"`{t}`" in r for r in rows)]
 
 
+def _sanitize_paths(t: str) -> str:
+    """★ 命令链脱敏：抹除宿主家目录残形（与导出器/校验器同一纪律）。"""
+    return re.sub(r"/home/[^\s/]+(/[^\s]*)?", "<HOST>", str(t or ""))
+
+
+def copy_result_field(doc: dict, key: str):
+    """★ 结果字段拷贝口径：**仅跳过 `None` 与空容器** ⇒ ⛔ 不得用真值判断（`0`/`0.0`/空串是合法实测值）。"""
+    v = doc.get(key)
+    if v is None:
+        return None
+    if isinstance(v, (list, dict, str)) and len(v) == 0:
+        return None
+    return v
+
+
+def evidence_chain_ok(row: dict) -> bool:
+    """★ 断言：矩阵行的证据链必须非空（`evidence_paths` 非空 且 `provenance_command` 非空）。"""
+    ev = row.get("evidence_paths")
+    cmd = str(row.get("provenance_command") or "").strip()
+    placeholder = ("", "未记录")
+    if ev in (None,) or (isinstance(ev, str) and ev.strip() in placeholder) or (isinstance(ev, list) and not ev):
+        return False
+    return cmd not in placeholder
+
+
 def verdict_transition(already_judged: bool, status_before: str, status_after: str) -> int:
     """★ "重测 vs 新判定"计数断言：返回**四态总判定数**的期望变化。
 
@@ -684,6 +709,13 @@ def main():
                 #   仅跳过 None 与空容器。
                 if _v is not None and (not isinstance(_v, (list, dict, str)) or len(_v) > 0):
                     new_rows[tier][_k] = _v
+            # ★★ 证据链随行（2026-10-14 批准）：矩阵是唯一真相源 ⇒ 证据必须落在会被搬的区域。
+            _prov = doc.get("provenance") or {}
+            _cmd = _sanitize_paths(str(_prov.get("command") or "")).strip()
+            _ev = [_sanitize_paths(str(x)) for x in (_prov.get("evidence_paths") or []) if str(x).strip()]
+            new_rows[tier]["provenance_command"] = _cmd if _cmd else "未记录"
+            new_rows[tier]["evidence_paths"] = _ev if _ev else "未记录"
+
             scr = doc.get("step_count_reconciliation")
             if not ok and scr:
                 new_rows[tier]["step_count_reconciliation"] = scr
@@ -814,6 +846,18 @@ def _self_test():
     fm = {"sft": 5.0, "cpt": 5.0, "opd": 5.0, "graspo": None}
     base_doc = {"runs": "判据② 达标（训练类冻结阈值 Δ ≥ 5.0 pp）", "effect": "Δ=+8.5 pp（≥ 5.0 pp 冻结阈值）"}
     cases = [
+        ("㉑① ★ 零值回归：`after_acc = 0.0` ⇒ **必须留下 `0.0`**（⛔ 不得变 None）",
+         copy_result_field({"after_acc": 0.0}, "after_acc") == 0.0),
+        ("㉑② 零值回归：`n_correct = 0` ⇒ **必须留下 `0`**",
+         copy_result_field({"n_correct": 0}, "n_correct") == 0),
+        ("㉑③ 缺失值不编造：`after_acc` 不存在 ⇒ None",
+         copy_result_field({}, "after_acc") is None),
+        ("㉑④ 空容器跳过：`anomalies = []` ⇒ None",
+         copy_result_field({"anomalies": []}, "anomalies") is None),
+        ("㉑⑤ ★ 证据链：`evidence_paths` 为「未记录」 ⇒ **必须判不合规**",
+         evidence_chain_ok({"evidence_paths": "未记录", "provenance_command": "x"}) is False),
+        ("㉑⑥ 证据链：两者齐 ⇒ 合规",
+         evidence_chain_ok({"evidence_paths": ["x"], "provenance_command": "graspo export"} ) is True),
         ("① 阈值：跑次自述 5 pp == 矩阵 5 pp ⇒ 放行",
          not _threshold_errs(dict(base_doc, effect="Δ=+8.5 pp（≥ 5.0 pp 冻结阈值）"), fm, "sft")),
         ("② 阈值：跑次自述 3 pp ≠ 矩阵 5 pp ⇒ FAIL",
