@@ -120,6 +120,11 @@ POLICY: dict[str, Spec] = {
     "tools/matrix/check_run_config.py": Spec(
         HELP, "运行 config ↔ 部署树 yaml 的产物级校验（不一致即 FAIL-CLOSED）"
     ),
+    # ★ 补登记（2026-10-14）：里程碑记录「冻结件」节的**机读生成器**（只读打印 / `--inject` 注入）。
+    #   无参运行 ⇒ rc==0 且输出含三件 sha 行 ⇒ 用 HELP 模式做常设冒烟（⛔ 不注入任何文件）。
+    "tools/matrix/freeze_table.py": Spec(
+        HELP, "里程碑「冻结件」节机读生成器（值来自实物 sha256＋字节；支持 --inject）"
+    ),
     "tests/e2e/generate_matrix.py": Spec(HELP, "54 档矩阵生成器（v1 基线）"),
     "tests/e2e/generate_matrix_fsdp.py": Spec(HELP, "matrix54-fsdp 变体生成器"),
     "tests/e2e/generate_matrix_manifest_fsdp.py": Spec(HELP, "fsdp 清单生成器"),

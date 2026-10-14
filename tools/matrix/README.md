@@ -361,3 +361,4 @@ python3 -m py_compile tools/matrix/<改动文件>.py     # 或等价的 AST 解�
 - `gen_tier_json.py --identity-from-config <该档配置/manifest>` ⇒ **四项与配置不一致即 FAIL-CLOSED**
   （与 `TP×PP×DP == nproc` 组成"身份同源"检查）；两条回归用例见
   `tests/scripts/test_gen_tier_json_no_eval.py`。
+★ **入口登记**：★ `tools/matrix/freeze_table.py` 属**常设冒烟对象**（无参运行 ⇒ rc==0、输出含三件 sha 行）⇒ 已按 `HELP` 模式登记入 `tests/scripts/test_entry_smoke.py` 的 `POLICY`（★ 与"新增入口必须同批登记"纪律一致）✓
