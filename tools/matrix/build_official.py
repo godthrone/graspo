@@ -115,6 +115,18 @@ NOT_EVALUABLE_FULL_NOTE = ("★★ 不可评（工程缺口）——★ 依主�
 BANNED_IN_MATRIX = ("/homedata/", "test.jsonl")
 
 
+#: ★ 无意义残片（★ 生成期清理：⛔ 不留"已通过：。"、"判据①「完整跑完」成立；判据② 未过。"等悬空片段）
+DEAD_NOTE_FRAGMENTS = ("判据①「完整跑完」成立；判据② 未过。", "已通过：。", "已通过：", "未过。 ")
+
+
+def strip_dead_fragments(t: str) -> str:
+    t = str(t or "")
+    for fr in DEAD_NOTE_FRAGMENTS:
+        t = t.replace(fr, "")
+    import re as _re
+    return _re.sub(r"\s{2,}", " ", t).strip()
+
+
 def matrix_text_sanitize(t: str) -> str:
     """★ 矩阵文本脱敏：抹除数据集存放路径与机器号（宪法 §15／§10.1 同族）。"""
     import re as _re
@@ -842,8 +854,9 @@ def main():
         elif r.get("note") not in (None, "", "—"):
             pass                                   # ★ 回填写入的备注（含失败归因/步数对账）优先保留
         elif v:
+            _pc = " / ".join(v["passed_criteria"])
             r["note"] = ("未过" + v["failed_criterion"] + "：" + v["failed_detail"] +
-                         " 已通过：" + " / ".join(v["passed_criteria"]) +
+                         ((" 已通过：" + _pc) if _pc else "") +
                          "。条件：数据集锚点 c202b1e1…、判据 elam-v3-allright-1、温度 0、有效样本 702。")
         else:
             r["note"] = r.get("note") or "—"      # 已结论档保留回填写入的备注
@@ -905,6 +918,10 @@ def main():
     out.parent.mkdir(parents=True, exist_ok=True)
     # ★★ 落盘前**全量脱敏**（数据集存放路径／机器号 ⇒ 占位）—— 与"脱敏顺序无关兜底"同族
     doc = _final_sanitize(doc)
+    for _r in doc.get("rows", []):
+        for _k in ("note", "note_full"):
+            if _r.get(_k):
+                _r[_k] = strip_dead_fragments(_r[_k])
     _banned = [b for b in BANNED_IN_MATRIX if b in json.dumps(doc, ensure_ascii=False)]
     if _banned:
         print(f"FAIL-CLOSED：矩阵件仍含禁用串 {_banned} ⇒ 拒绝落盘")
