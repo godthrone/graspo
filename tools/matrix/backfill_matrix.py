@@ -732,6 +732,10 @@ def main():
             basis = str(mp.get("threshold_delta", "阈值已冻结"))
             if ok:
                 note = _s(doc.get("note")) or f"判据① ∧ 判据② 均达（{basis}）⇒ 已验证可用。"
+            elif str(doc.get("not_evaluable_reason") or "").strip():
+                # ★★ 不可评档（2026-10-14 裁定统一口径）：⛔ 不得写"第 2 条判据/效果不足/效果未达标"
+                note = ("★ 未过**不可评（工程缺口）—— 依主席 2026-10-14 口径记入失败**："
+                        + _s(doc.get("not_evaluable_reason")))
             else:
                 note = ("★ 未过第 2 条判据（效果不足）——" + _s(doc.get("effect"))
                         + " ★ 已通过项（事实保留）：" + _s(doc.get("algo_checks"))
@@ -889,7 +893,8 @@ def _self_test():
     base_doc = {"runs": "判据② 达标（训练类冻结阈值 Δ ≥ 5.0 pp）", "effect": "Δ=+8.5 pp（≥ 5.0 pp 冻结阈值）"}
     cases = [
         ("㉓① ★ 不可评档 note_full 不得含「效果未达标」（对外陈述正确性）",
-         all(x not in "不可评（工程缺口）—— 依主席 2026-10-14 口径记入失败" for x in ("效果未达标", "判据① 通过")) is True),
+         all(x not in "不可评（工程缺口）—— 依主席 2026-10-14 口径记入失败"
+             for x in ("效果未达标", "判据① 通过", "第 2 条判据", "效果不足")) is True),
         ("㉓② ★ 矩阵文本脱敏：数据集路径与机器号必须被抹除",
          ("平台方自有数据集（不公开）" in matrix_sanitize_probe("/homedata/test.jsonl")
           and "228" not in matrix_sanitize_probe("机器 228 上")) is True),
