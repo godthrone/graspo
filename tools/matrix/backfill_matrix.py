@@ -724,7 +724,9 @@ def main():
                 note += " 如实说明：" + "；".join(cav)
             # ★ 结构化"标准交付项"：P5/P6 六项 / 异常（非字符串 ⇒ 不塞 RESULT_KEYS，单独随件入库）
             for _k in ("p5p6_readings", "anomalies",
-                       "after_acc", "base_acc", "delta_pp", "n_correct", "n_total"):
+                       "after_acc", "base_acc", "delta_pp", "n_correct", "n_total",
+                       # ★ "不可评"真因：**必须随行**（否则关键信息丢失 —— 与"结论字段必须落在回填会搬移的区域"同族）
+                       "not_evaluable_reason"):
                 _v = doc.get(_k)
                 # ★ 值等于 0/0.0 是**合法实测值**（如 `after_acc=0.0`）⇒ ⛔ 不得用真值判断吞掉；
                 #   仅跳过 None 与空容器。
