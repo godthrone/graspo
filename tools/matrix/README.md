@@ -282,3 +282,16 @@ python3 -m py_compile tools/matrix/<改动文件>.py     # 或等价的 AST 解�
 ★★ **端到端实证（以 2026-10-13 T022 真实 export 链为证）**：★ `run_guards form ⇒ native_rank` ＋ ★ `graspo export ⇒ rc=0` ＋ ★ 产出 `merged-hf-t022/`（`config.json` ＋ 2 个权重分片）＋ ★ vLLM(GPU7) 起服务 ⇒ after/base ⇒ delta ⇒ json。
 ★ **前置条件**：★ **评测须在"能跑通转换的环境/部署树"下执行** —— ★ **镜像内烘入的是旧代码**（`grep -c convert_native_rank` = 0），★ 评测实际执行的是 `-v $T:…` 覆盖进来的**部署树那份** ✓
 ★ **与今日"虚标"事故的区别**：★ 那次**只有 T024 的历史叙述**（来源未查明、git 全历史无实现）⇒ 标 `missing`；★ 本次 **实现 ＋ 行为实测 ＋ 端到端实证 三齐** ⇒ **可翻** ✓
+
+## ★ 结论字段必须落在"回填会搬移的区域"
+
+**纪律（2026-10-14 立，实例驱动）**：凡**结论相关**字段 —— 重测结论、指标真值、机理说明、
+异常说明 —— **必须写进回填会搬移的区域**（`p5p6_readings` 或 `anomalies`），
+**⛔ 不得只放 json 顶层**。
+
+**事由**：`T028.json` 的 `retest_conclusion_20261014` 曾写在**顶层**，而回填只搬
+`p5p6_readings` ⇒ **该结论未随行**（矩阵侧首检 `= False`），由矩阵侧代补后三项自检才全 True。
+**写进 json ≠ 落进矩阵** —— 与"回填 fail-closed"同属"写出去的必须到位"一族。
+
+**生成器约定**：`scripts/gen_tier_json.py` 的自定义字段**默认落在 `p5p6_readings`（或 `anomalies`）**；
+确有顶层字段需求时，**同时在 `p5p6_readings` 留一份**，或**显式报备矩阵侧补登**。
