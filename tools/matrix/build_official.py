@@ -679,6 +679,16 @@ def main():
         if voided:
             state = S_UNVERIFIED
             r["voided_conclusion"] = ann
+        # ★★ 口径变更（主席 2026-10-14）：**"跑了没成功＝失败"** ⇒ 命中 `caliber_verdict` 的档
+        #    按该值记四态（★ 真因仍逐字保留在 `blocked_reason`/备注/`anomalies`，⛔ 不抹证据）。
+        _cv = r.get("caliber_verdict")
+        if _cv in STATUS_VOCABULARY:
+            state = _cv
+            r["caliber_change"] = {
+                "effective": "2026-10-14",
+                "rule": "跑了没成功＝失败（OOM／超时／未实现／硬件不可行 均记失败）",
+                "source": "主席口径变更（2026-10-14）",
+            }
         r["status"] = state
         r.pop("spec_status", None)
 

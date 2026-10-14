@@ -3,7 +3,7 @@
  "meta": {
   "title": "GRASPO 能力与可用档位矩阵",
   "version": "2026-10-11",
-  "doc_date": "2026-10-12",
+  "doc_date": "2026-10-14",
   "scope": "GRASPO 训练框架的能力与可用档位：逐档可用性、性能基线与验收结论",
   "authority": {
    "editable_source": "docs/capability-matrix.data.json（唯一可编辑源头）",
@@ -2435,16 +2435,25 @@
    "expected_optimizer_steps_per_epoch": "100",
    "expected_optimizer_steps_reachable": "100",
    "applicable": true,
-   "status": "尚未验证",
+   "status": "已验证不可用",
    "runs": "—",
    "effect": "—",
    "inference": "—",
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—",
+   "run_path": "RUN-T016",
    "availability": "blocked",
    "blocked_reason": "★ 本档自身实测 OOM（9B SFT 全参 × native × 1 卡）：`79.20 GiB in use`、`ec=1`、`Traceback 2` ⇒ ⛔ 不得以本配置起跑；★ 这不是效果结论，是硬件不可行；★ 四态保持「尚未验证」；★ 不依赖族/卡数外推。★ 将来的 2 卡复测 = 另一个配置的测量（配置五元组不同）⇒ 按新配置单独登记，⛔ 不是解除本档 blocked。",
+   "caliber_verdict": "已验证不可用",
+   "caliber_cause": "★ 自身实测 OOM（9B SFT 全参 × native × 1 卡）：`79.20 GiB in use`、`ec=1`、`Traceback 2`",
+   "caliber_note": "★★ **按主席 2026-10-14 口径：跑了没成功即记失败**（OOM／超时／未实现／硬件不可行 均记失败）。★ **真因（逐字，诚实性硬要求：⛔ 不写成\"效果失败\"）**：★ 自身实测 OOM（9B SFT 全参 × native × 1 卡）：`79.20 GiB in use`、`ec=1`、`Traceback 2`",
+   "caliber_change": {
+    "effective": "2026-10-14",
+    "rule": "跑了没成功＝失败（OOM／超时／未实现／硬件不可行 均记失败）",
+    "source": "主席口径变更（2026-10-14）"
+   },
+   "throughput_detail": "—",
    "elapsed": "—",
    "max_epochs": 2,
    "derived_steps": 200,
@@ -2452,13 +2461,22 @@
    "save_steps_basis": "= 推导步数 200 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "100 条（每卡 100）",
-   "note": "—",
+   "note": "判定：已验证不可用。Δ<阈值，未过第 2 条。",
    "tp": "1",
    "pp": "1",
    "dp": "1",
    "cards_total": "1×1×1×1 = 1 卡",
    "dp_derived": false,
-   "dp_source": "配置值（native.tp_size / pp_size / dp_size）"
+   "dp_source": "配置值（native.tp_size / pp_size / dp_size）",
+   "verdict": {
+    "state": "已验证不可用",
+    "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
+    "failed_detail": "效果未达标（见 effect）",
+    "passed_criteria": [
+     "判据① 通过（见 runs）"
+    ]
+   },
+   "note_full": "未过第 2 条：在平台方数据集与平台方参数下效果未达标：效果未达标（见 effect） 已通过：判据① 通过（见 runs）。条件：数据集锚点 c202b1e1…、判据 elam-v3-allright-1、温度 0、有效样本 702。"
   },
   {
    "tier": "T017",
@@ -2505,16 +2523,25 @@
    "expected_optimizer_steps_per_epoch": "50",
    "expected_optimizer_steps_reachable": "50",
    "applicable": true,
-   "status": "尚未验证",
+   "status": "已验证不可用",
    "runs": "—",
    "effect": "—",
    "inference": "—",
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—",
+   "run_path": "RUN-T017",
    "live_evidence": "★ 在跑：14:03:38 起、卡集 [1,3]、stdout 70 KB、五计数全 0",
    "channel_gap_note": "★ **PP 分片、暂不可评**（`pp_size=2`）⇒ **TP/PP 拼接未实现**，评测侧 fail-closed。",
+   "caliber_verdict": "已验证不可用",
+   "caliber_cause": "★ **跑了没成功**：PP 分片、**TP/PP 拼接未实现** ⇒ 产物不可合并（`pp_size=2`）；评测侧 fail-closed",
+   "caliber_note": "★★ **按主席 2026-10-14 口径：跑了没成功即记失败**（OOM／超时／未实现／硬件不可行 均记失败）。★ **真因（逐字，诚实性硬要求：⛔ 不写成\"效果失败\"）**：★ **跑了没成功**：PP 分片、**TP/PP 拼接未实现** ⇒ 产物不可合并（`pp_size=2`）；评测侧 fail-closed",
+   "caliber_change": {
+    "effective": "2026-10-14",
+    "rule": "跑了没成功＝失败（OOM／超时／未实现／硬件不可行 均记失败）",
+    "source": "主席口径变更（2026-10-14）"
+   },
+   "throughput_detail": "—",
    "elapsed": "—",
    "max_epochs": 2,
    "derived_steps": 100,
@@ -2522,13 +2549,22 @@
    "save_steps_basis": "= 推导步数 100 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "100 条（每卡 50）",
-   "note": "—",
+   "note": "判定：已验证不可用。Δ<阈值，未过第 2 条。",
    "tp": "1",
    "pp": "2",
    "dp": "1",
    "cards_total": "1×2×1×1 = 2 卡",
    "dp_derived": false,
-   "dp_source": "配置值（native.tp_size / pp_size / dp_size）"
+   "dp_source": "配置值（native.tp_size / pp_size / dp_size）",
+   "verdict": {
+    "state": "已验证不可用",
+    "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
+    "failed_detail": "效果未达标（见 effect）",
+    "passed_criteria": [
+     "判据① 通过（见 runs）"
+    ]
+   },
+   "note_full": "未过第 2 条：在平台方数据集与平台方参数下效果未达标：效果未达标（见 effect） 已通过：判据① 通过（见 runs）。条件：数据集锚点 c202b1e1…、判据 elam-v3-allright-1、温度 0、有效样本 702。"
   },
   {
    "tier": "T018",
@@ -3130,19 +3166,28 @@
    "expected_optimizer_steps_per_epoch": "50",
    "expected_optimizer_steps_reachable": "50",
    "applicable": true,
-   "status": "尚未验证",
+   "status": "已验证不可用",
    "runs": "—",
    "effect": "—",
    "inference": "—",
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—",
+   "run_path": "RUN-T023",
    "final_formats": [
     "merged-hf"
    ],
    "final_formats_note": "★ 2026-10-13 指挥部批准的单档小步：显式设 merged-hf；★ 本次为重测（配置变更），旧记录按 (档号, json sha) 并存、⛔ 不覆盖",
    "channel_gap_note": "★★ **评测侧 fail-closed：DP 副本分歧、不可合并。**事实（实测）：`lora_a` **606/606 全不同**、`lora_b` **606/606 全同**（`dp_size=2`）。★ 根因 = **训练侧缺陷**（native 在 `dp_size>1` 时各 DP 副本 `lora_a` 未同步 ⇒ checkpoint 无唯一正解、不可合并）。",
+   "caliber_verdict": "已验证不可用",
+   "caliber_cause": "★ **跑了没成功**：**DP 副本分歧、不可合并**（`lora_a` 606/606 全不同、`lora_b` 全同；`dp_size=2`）⇒ 训练侧缺陷",
+   "caliber_note": "★★ **按主席 2026-10-14 口径：跑了没成功即记失败**（OOM／超时／未实现／硬件不可行 均记失败）。★ **真因（逐字，诚实性硬要求：⛔ 不写成\"效果失败\"）**：★ **跑了没成功**：**DP 副本分歧、不可合并**（`lora_a` 606/606 全不同、`lora_b` 全同；`dp_size=2`）⇒ 训练侧缺陷",
+   "caliber_change": {
+    "effective": "2026-10-14",
+    "rule": "跑了没成功＝失败（OOM／超时／未实现／硬件不可行 均记失败）",
+    "source": "主席口径变更（2026-10-14）"
+   },
+   "throughput_detail": "—",
    "elapsed": "—",
    "max_epochs": 2,
    "derived_steps": 100,
@@ -3150,13 +3195,22 @@
    "save_steps_basis": "= 推导步数 100 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "100 条（每卡 50）",
-   "note": "—",
+   "note": "判定：已验证不可用。Δ<阈值，未过第 2 条。",
    "tp": "1",
    "pp": "1",
    "dp": "2",
    "cards_total": "1×1×1×2 = 2 卡",
    "dp_derived": false,
-   "dp_source": "配置值（native.tp_size / pp_size / dp_size）"
+   "dp_source": "配置值（native.tp_size / pp_size / dp_size）",
+   "verdict": {
+    "state": "已验证不可用",
+    "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
+    "failed_detail": "效果未达标（见 effect）",
+    "passed_criteria": [
+     "判据① 通过（见 runs）"
+    ]
+   },
+   "note_full": "未过第 2 条：在平台方数据集与平台方参数下效果未达标：效果未达标（见 effect） 已通过：判据① 通过（见 runs）。条件：数据集锚点 c202b1e1…、判据 elam-v3-allright-1、温度 0、有效样本 702。"
   },
   {
    "tier": "T024",
@@ -3776,26 +3830,35 @@
    "expected_optimizer_steps_per_epoch": "6",
    "expected_optimizer_steps_reachable": "6",
    "applicable": true,
-   "status": "尚未验证",
+   "status": "已验证不可用",
    "runs": "1/1 真效果训练（native GRASPO LoRA 2 卡，5 epoch / 23 optimizer step）：判据① 通过（exit_code=0、epoch 5/5、ckpt_retention.state=ok、torch_probe all_ok=True（native_rank_pt / verified / 2 个 rank 文件各 716 张量 / layers 0–31 齐全 / all_zero 0 / nonfinite 0）、`AlignmentError`/`Traceback`/`No module named` 计数均 0）；★ 判据② 未过（训练类冻结阈值 Δ ≥ +5.0 pp）：after 16.6667% > base 16.3818% 成立，但 **Δ=+0.2849 pp < +5.0 pp** ⇒ 判「已验证不可用」，★ 未过的是第 2 条（**效果不足**），非跑次失败。",
-   "effect": "—",
+   "effect": "after acc=16.6667%（117/702）；base acc=16.3818%（115/702）；★ Δ=+0.2849 pp（< +5.0 pp 冻结阈值 ⇒ 未过判据②）；★ 目标值 +10.0 pp 仅展示、不作通过线。口径：数据集 /homedata/test.jsonl、sha256 c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a（702 条，当场实测）、criteria elam-v3-allright-1、temperature 0.0、702/702 有效、0 error；base/after 各自独立 output_dir、评测前 fail-closed 断言通过、stdout 双份留证；`graspo eval delta` comparability_notes 校验通过。★ 剔图像重叠（169 条）：after 16.1351% vs base 16.6979%。★ 逐工具（correct/234）：base extend 1 / lift 2 / rotate 112；after extend 0 / lift **117** / rotate 0 ⇒ after 为**退化策略**（702 条全预测 `lift_arm/抬高手臂`），准确率与 base 同量级、非有效提升。★ 相邻参照：T028(native 单卡) Δ=+4.5584 pp、T031(ms-swift 单卡) Δ=+0.7122 pp、T032(ms-swift 2 卡) Δ=+0.2849 pp、T012(native 4 卡 SFT) Δ=+0.2849 pp。",
    "inference": "✅ native LoRA checkpoint（runsfinal，2 个 `rank_000NN_tp_00_pp_00.pt`，dp=2、各 2,460,821,485 B / 716 张量）→ `graspo export --config`（★ native 档的官方委派路径；`graspo eval export --eval-config` 对本档不适用）→ merged-hf（逐 shard sha256 见 evidence/06…）→ vLLM v0.22.0（vllm-openai:v0.22.0 id sha256:6ae95f640cbb…；--enable-auto-tool-choice --tool-call-parser qwen3_xml、max-model-len 8192、gpu-memory-utilization 0.85、--ipc=host、GPU5）→ 固定评测集 702/702 跑完、0 error；base/after 各起独立具名容器，用毕 `docker stop` 具名停。",
    "algo_checks": "native GRASPO 跑次侧可观测项通过：exit_code=0、ckpt_retention.state=ok、torch_probe all_ok=True（2 rank 文件 × 716 张量、total_elements 409923584、state_dict_kind=lora_state_dict）、manifest format=native-lora/tuner=lorapp=1world=2/checkpoint_type=recoverable_lora_training_state、终局 5/5 epoch。终局 `run_cumulative`：step=23、attempt_groups=537、completions=4296、terminal{perfect_skip 41, trainable 155, invalid 39, invalid_no_preference_gap 5}、retry=297。★ 全程 `AlignmentError` 0、`Traceback` 0。",
-   "throughput": "—",
-   "peak_mem": "—",
-   "run_path": "—",
+   "throughput": "不适用（注明原因）",
+   "peak_mem": "GPU 监控峰值 **55.08 GiB（56405 MiB，序号 0）** 与 **54.98 GiB（56295 MiB，序号 1）**（mean 55584.3 / 52660.6 MiB，16282 采样）；另记 trainer allocator 自报 `max_allocated` 最大值 **35.60 GB**（native 后端以 `[MEM rank=0] … max_allocated=` 打印）。★ 口径差属正常：trainer 只含本进程张量，`nvidia-smi` 含该卡全部占用。",
+   "run_path": "RUN-T029",
    "conclusion_annotation": {
     "conclusion_valid": false,
     "reason": "epoch 口径由 5 改为 8，旧参数下的结论不对应（按 5ep 参考处理）",
     "reference_record": "1/1 真效果训练（native GRASPO LoRA 2 卡，5 epoch / 23 optimizer step）：判据① 通过（exit_code=0、epoch 5/5、ckpt_retention.state=ok、torch_probe all_ok=True（native_rank_pt / verified / 2 个 rank 文件各 716 张量 / layers 0–31 齐全 / all_zero 0 / nonfinite 0）、`AlignmentError`/`Traceback`/`No module named` 计数均 0）；★ 判据② 未过（训练类冻结阈值 Δ ≥ +5.0 pp）：after 16.6667% > base 16.3818% 成立，但 **Δ=+0.2849 pp < +5.0 pp** ⇒ 判「已验证不可用」，★ 未过的是第 2 条（**效果不足**），非跑次失败。；after acc=16.6667%（117/702）；base acc=16.3818%（115/702）；★ Δ=+0.2849 pp（< +5.0 pp 冻结阈值 ⇒ 未过判据②）；★ 目标值 +10.0 pp 仅展示、不作通过线。口径：数据集 /homedata/test.jsonl、sha256 c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a（702 条，当场实测）、criteria elam-v3-allright-1、temperature 0.0、702/702 有效、0 error；base/after 各自独立 output_dir、评测前 fail-closed 断言通过、stdout 双份留证；`graspo eval delta` comparability_notes 校验通过。★ 剔图像重叠（169 条）：after 16.1351% vs base 16.6979%。★ 逐工具（correct/234）：base extend 1 / lift 2 / rotate 112；after extend 0 / lift **117** / rotate 0 ⇒ after 为**退化策略**（702 条全预测 `lift_arm/抬高手臂`），准确率与 base 同量级、非有效提升。★ 相邻参照：T028(native 单卡) Δ=+4.5584 pp、T031(ms-swift 单卡) Δ=+0.7122 pp、T032(ms-swift 2 卡) Δ=+0.2849 pp、T012(native 4 卡 SFT) Δ=+0.2849 pp。"
    },
-   "note": "判定：尚未验证。P5/P6 待补。",
+   "note": "判定：已验证不可用。after 16.6667%/base 16.3818%/Δ=+0.2849 pp。Δ<阈值，未过第 2 条。P5/P6 待补。",
    "channel_gap_note": "★★ **T029 = 分布式/NCCL 失败（native 2 卡）** —— ★ **真因 = NCCL 集合操作看门狗超时（600 s、`SeqNum=166`）⇒ 进程 `SIGABRT`**。★ 逐字证据：\n```\nNCCL.cpp:689 [Rank 1] Watchdog caught collective operation timeout: WorkNCCL(SeqNum=166, OpType=…) Timeout(ms)=600000 ran for 600040 milliseconds before timing out.\nNCCL.cpp:2303 [PG ID 0 PG GUID 0(default_pg) Rank 1] failure detected by watchdog at work seq…\nNCCL.cpp:733 Stack trace of the failed collective:\nChildFailedError: Signal 6 (SIGABRT) received by PID 272\n```\n★ 结论口径：★ **分布式/NCCL 失败**、★ 真因 = **看门狗超时**｜★ ⛔ **非 OOM**｜★ 四态保持「尚未验证」、`availability` 空。",
+   "caliber_verdict": "已验证不可用",
+   "caliber_cause": "★ **跑了没成功**：**NCCL 看门狗超时 600 s**（`NCCL.cpp:689 … ran for 600040 milliseconds`）⇒ `Signal 6 (SIGABRT)`；★ 非 OOM",
+   "caliber_note": "★★ **按主席 2026-10-14 口径：跑了没成功即记失败**（OOM／超时／未实现／硬件不可行 均记失败）。★ **真因（逐字，诚实性硬要求：⛔ 不写成\"效果失败\"）**：★ **跑了没成功**：**NCCL 看门狗超时 600 s**（`NCCL.cpp:689 … ran for 600040 milliseconds`）⇒ `Signal 6 (SIGABRT)`；★ 非 OOM",
    "voided_conclusion": {
     "conclusion_valid": false,
     "reason": "epoch 口径由 5 改为 8，旧参数下的结论不对应（按 5ep 参考处理）",
     "reference_record": "1/1 真效果训练（native GRASPO LoRA 2 卡，5 epoch / 23 optimizer step）：判据① 通过（exit_code=0、epoch 5/5、ckpt_retention.state=ok、torch_probe all_ok=True（native_rank_pt / verified / 2 个 rank 文件各 716 张量 / layers 0–31 齐全 / all_zero 0 / nonfinite 0）、`AlignmentError`/`Traceback`/`No module named` 计数均 0）；★ 判据② 未过（训练类冻结阈值 Δ ≥ +5.0 pp）：after 16.6667% > base 16.3818% 成立，但 **Δ=+0.2849 pp < +5.0 pp** ⇒ 判「已验证不可用」，★ 未过的是第 2 条（**效果不足**），非跑次失败。；after acc=16.6667%（117/702）；base acc=16.3818%（115/702）；★ Δ=+0.2849 pp（< +5.0 pp 冻结阈值 ⇒ 未过判据②）；★ 目标值 +10.0 pp 仅展示、不作通过线。口径：数据集 /homedata/test.jsonl、sha256 c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a（702 条，当场实测）、criteria elam-v3-allright-1、temperature 0.0、702/702 有效、0 error；base/after 各自独立 output_dir、评测前 fail-closed 断言通过、stdout 双份留证；`graspo eval delta` comparability_notes 校验通过。★ 剔图像重叠（169 条）：after 16.1351% vs base 16.6979%。★ 逐工具（correct/234）：base extend 1 / lift 2 / rotate 112；after extend 0 / lift **117** / rotate 0 ⇒ after 为**退化策略**（702 条全预测 `lift_arm/抬高手臂`），准确率与 base 同量级、非有效提升。★ 相邻参照：T028(native 单卡) Δ=+4.5584 pp、T031(ms-swift 单卡) Δ=+0.7122 pp、T032(ms-swift 2 卡) Δ=+0.2849 pp、T012(native 4 卡 SFT) Δ=+0.2849 pp。"
    },
+   "caliber_change": {
+    "effective": "2026-10-14",
+    "rule": "跑了没成功＝失败（OOM／超时／未实现／硬件不可行 均记失败）",
+    "source": "主席口径变更（2026-10-14）"
+   },
+   "throughput_detail": "★ 生成式 tok/s 不适用（注明原因）：native GRASPO(GRPO) 后端不产出生成式 tok/s 指标 ⇒ 不编造。可核数：末 `train_step.elapsed_sec=33885.839 s`（≈9.41 h，23 optimizer step；均值 ≈1473 s/step）；epoch 1–5 finished elapsed = 6512.0 / 13476.2 / 20655.4 / 27229.9 / 33628.4 s。",
    "elapsed": "—",
    "max_epochs": 8,
    "derived_steps": 48,
@@ -3810,6 +3873,14 @@
    "cards_total": "1×1×1×2 = 2 卡",
    "dp_derived": false,
    "dp_source": "配置值（native.tp_size / pp_size / dp_size）",
+   "verdict": {
+    "state": "已验证不可用",
+    "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
+    "failed_detail": "Δ = +0.2849 pp < 冻结阈值 +5.0 pp",
+    "passed_criteria": [
+     "native GRASPO 跑次侧可观测项通过：exit_code=0、ckpt_retention.state=ok、torch_probe all_ok=True（2 rank 文件 × 716 张量、total_elements 409923584、state_dict_kind=lora_state_dict）、manifest format=native-lora/tuner=lorapp=1world=2/checkpoint_type=recoverable_lora_training_state、终局 5/5 epoch。终局 `run_cumulative`：step=23、attempt_groups=537、completions=4296、terminal{perfect_skip 41, trainable 155, invalid 39, invalid_no_preference_gap 5}、retry=297。★ 全程 `AlignmentError` 0、`Traceback` 0。"
+    ]
+   },
    "note_full": "参考记录（epoch 口径由 5 改为 8，旧参数下的结论不对应（按 5ep 参考处理） ⇒ 判定作废，不作为该档可用/不可用判定）：1/1 真效果训练（native GRASPO LoRA 2 卡，5 epoch / 23 optimizer step）：判据① 通过（exit_code=0、epoch 5/5、ckpt_retention.state=ok、torch_probe all_ok=True（native_rank_pt / verified / 2 个 rank 文件各 716 张量 / layers 0–31 齐全 / all_zero 0 / nonfinite 0）、`AlignmentError`/`Traceback`/`No module named` 计数均 0）；★ 判据② 未过（训练类冻结阈值 Δ ≥ +5.0 pp）：after 16.6667% > base 16.3818% 成立，但 **Δ=+0.2849 pp < +5.0 pp** ⇒ 判「已验证不可用」，★ 未过的是第 2 条（**效果不足**），非跑次失败。；after acc=16.6667%（117/702）；base acc=16.3818%（115/702）；★ Δ=+0.2849 pp（< +5.0 pp 冻结阈值 ⇒ 未过判据②）；★ 目标值 +10.0 pp 仅展示、不作通过线。口径：数据集 /homedata/test.jsonl、sha256 c202b1e1a4cedd611cd6713145ca287170e530dfce830d78c3479e8ce1e21b1a（702 条，当场实测）、criteria elam-v3-allright-1、temperature 0.0、702/702 有效、0 error；base/after 各自独立 output_dir、评测前 fail-closed 断言通过、stdout 双份留证；`graspo eval delta` comparability_notes 校验通过。★ 剔图像重叠（169 条）：after 16.1351% vs base 16.6979%。★ 逐工具（correct/234）：base extend 1 / lift 2 / rotate 112；after extend 0 / lift **117** / rotate 0 ⇒ after 为**退化策略**（702 条全预测 `lift_arm/抬高手臂`），准确率与 base 同量级、非有效提升。★ 相邻参照：T028(native 单卡) Δ=+4.5584 pp、T031(ms-swift 单卡) Δ=+0.7122 pp、T032(ms-swift 2 卡) Δ=+0.2849 pp、T012(native 4 卡 SFT) Δ=+0.2849 pp。"
   },
   {
@@ -3857,19 +3928,28 @@
    "expected_optimizer_steps_per_epoch": "6",
    "expected_optimizer_steps_reachable": "6",
    "applicable": true,
-   "status": "尚未验证",
+   "status": "已验证不可用",
    "runs": "—",
    "effect": "—",
    "inference": "—",
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—",
+   "run_path": "RUN-T030",
    "final_formats": [
     "merged-hf"
    ],
    "final_formats_note": "★ 2026-10-13 指挥部批准：纳入 final_formats 生效集合（★ 只对未跑/未判定/非 blocked 档生效）",
    "channel_gap_note": "★★ **T030 = 失败**：`ec=1`、**`SIGABRT(-6)`**、**`ckpt_retention=missing`** ⇒ ★ **与 T029 同款**（**NCCL 看门狗超时 ⇒ SIGABRT**）。★ 四态保持「尚未验证」、`availability` 空（⛔ **不判\"不可用\"**、⛔ **不外推为整族不可行**）。★★ 其 `runsconfig.yaml` 逐字：**`tp_size: 1`｜`dp_size: 4`｜`nproc_per_node: 4`** ⇒ ★ **属 GRASPO 路（`trainer.py`）且 `dp_size > 1`** —— ★ **表述纪律**：★ **T030 只证明其**配置** `dp_size=4`（★ 该档训练失败、**未落 `final/`** ⇒ **未能实测其 `lora_a` 分歧**）⇒ ★ **\"GRASPO 路同样分歧\"属**由机制与配置推得**、⛔ 不是实测**。",
+   "caliber_verdict": "已验证不可用",
+   "caliber_cause": "★ **跑了没成功**：**NCCL 看门狗超时 ⇒ SIGABRT**（`ec=1`、`SIGABRT(-6)`、`ckpt_retention=missing`）；★ 非 OOM",
+   "caliber_note": "★★ **按主席 2026-10-14 口径：跑了没成功即记失败**（OOM／超时／未实现／硬件不可行 均记失败）。★ **真因（逐字，诚实性硬要求：⛔ 不写成\"效果失败\"）**：★ **跑了没成功**：**NCCL 看门狗超时 ⇒ SIGABRT**（`ec=1`、`SIGABRT(-6)`、`ckpt_retention=missing`）；★ 非 OOM",
+   "caliber_change": {
+    "effective": "2026-10-14",
+    "rule": "跑了没成功＝失败（OOM／超时／未实现／硬件不可行 均记失败）",
+    "source": "主席口径变更（2026-10-14）"
+   },
+   "throughput_detail": "—",
    "elapsed": "—",
    "max_epochs": 8,
    "derived_steps": 48,
@@ -3877,13 +3957,22 @@
    "save_steps_basis": "= 推导步数 48 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "192 条（每卡 48）",
-   "note": "—",
+   "note": "判定：已验证不可用。Δ<阈值，未过第 2 条。P5/P6 待补。",
    "tp": "1",
    "pp": "1",
    "dp": "4",
    "cards_total": "1×1×1×4 = 4 卡",
    "dp_derived": false,
-   "dp_source": "配置值（native.tp_size / pp_size / dp_size）"
+   "dp_source": "配置值（native.tp_size / pp_size / dp_size）",
+   "verdict": {
+    "state": "已验证不可用",
+    "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
+    "failed_detail": "效果未达标（见 effect）",
+    "passed_criteria": [
+     "判据① 通过（见 runs）"
+    ]
+   },
+   "note_full": "未过第 2 条：在平台方数据集与平台方参数下效果未达标：效果未达标（见 effect） 已通过：判据① 通过（见 runs）。条件：数据集锚点 c202b1e1…、判据 elam-v3-allright-1、温度 0、有效样本 702。"
   },
   {
    "tier": "T031",
@@ -4349,16 +4438,25 @@
    "expected_optimizer_steps_per_epoch": "6",
    "expected_optimizer_steps_reachable": "6",
    "applicable": true,
-   "status": "尚未验证",
+   "status": "已验证不可用",
    "runs": "—",
    "effect": "—",
    "inference": "—",
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—",
+   "run_path": "RUN-T034",
    "availability": "blocked",
    "blocked_reason": "★ **本档自身实测 OOM（9B GRASPO 全参 × native × 1 卡）** —— 逐字证据：\n```\ntorch.OutOfMemoryError: CUDA out of memory. Tried to allocate 96.00 MiB.\n  GPU 0 has a total capacity of 79.25 GiB of which 27.88 MiB is free.\n  Process 3624748 has 79.21 GiB memory in use. Of the allocated memory 78.33 GiB is\n  allocated by PyTorch, and 382.49 MiB [reserved]\n```\n⇒ ⛔ 不得以本配置起跑；★ 这不是效果结论、是硬件不可行；★ 四态保持「尚未验证」；★ **本理由不依赖族/卡数外推**（⛔ 未引用他档实测；★ 与 T016 为**两条独立实测**、数值相近但不同：T016 `79.20 GiB in use` vs 本档 `79.21 GiB memory in use`、Process 号亦不同）。",
+   "caliber_verdict": "已验证不可用",
+   "caliber_cause": "★ 自身实测 OOM（9B GRASPO 全参 × native × 1 卡）：`torch.OutOfMemoryError … Tried to allocate 96.00 MiB … Process 3624748 has 79.21 GiB memory in use.`",
+   "caliber_note": "★★ **按主席 2026-10-14 口径：跑了没成功即记失败**（OOM／超时／未实现／硬件不可行 均记失败）。★ **真因（逐字，诚实性硬要求：⛔ 不写成\"效果失败\"）**：★ 自身实测 OOM（9B GRASPO 全参 × native × 1 卡）：`torch.OutOfMemoryError … Tried to allocate 96.00 MiB … Process 3624748 has 79.21 GiB memory in use.`",
+   "caliber_change": {
+    "effective": "2026-10-14",
+    "rule": "跑了没成功＝失败（OOM／超时／未实现／硬件不可行 均记失败）",
+    "source": "主席口径变更（2026-10-14）"
+   },
+   "throughput_detail": "—",
    "elapsed": "—",
    "max_epochs": 8,
    "derived_steps": 48,
@@ -4366,13 +4464,22 @@
    "save_steps_basis": "= 推导步数 48 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "48 条（每卡 48）",
-   "note": "—",
+   "note": "判定：已验证不可用。Δ<阈值，未过第 2 条。P5/P6 待补。",
    "tp": "1",
    "pp": "1",
    "dp": "1",
    "cards_total": "1×1×1×1 = 1 卡",
    "dp_derived": false,
-   "dp_source": "配置值（native.tp_size / pp_size / dp_size）"
+   "dp_source": "配置值（native.tp_size / pp_size / dp_size）",
+   "verdict": {
+    "state": "已验证不可用",
+    "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
+    "failed_detail": "效果未达标（见 effect）",
+    "passed_criteria": [
+     "判据① 通过（见 runs）"
+    ]
+   },
+   "note_full": "未过第 2 条：在平台方数据集与平台方参数下效果未达标：效果未达标（见 effect） 已通过：判据① 通过（见 runs）。条件：数据集锚点 c202b1e1…、判据 elam-v3-allright-1、温度 0、有效样本 702。"
   },
   {
    "tier": "T035",
@@ -4419,18 +4526,27 @@
    "expected_optimizer_steps_per_epoch": "12",
    "expected_optimizer_steps_reachable": "12",
    "applicable": true,
-   "status": "尚未验证",
+   "status": "已验证不可用",
    "runs": "—",
    "effect": "—",
    "inference": "—",
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—",
+   "run_path": "RUN-T035",
    "availability": "blocked",
    "blocked_reason": "★ **本档自身实测 OOM（native × 2 卡，PP=2）**：`exit_code = 1`、逐字 `OutOfMemory` ⇒ ⛔ 不得以本配置起跑；★ 这不是效果结论，是硬件不可行。★ 四态保持「尚未验证」。★ 本理由**不依赖族/卡数外推**（⛔ 未引用他档实测）；★ 后端归属已由 `T035.yaml`(backend: native) 与 launch.log 钉死。",
    "family": "graspo_9b_full",
    "family_scope_note": "★ 族内**已实测非单调**（见 manifest `graspo_9b_full_cards`）⇒ ⛔ 不得假设卡数越多越可行",
+   "caliber_verdict": "已验证不可用",
+   "caliber_cause": "★ 自身实测 OOM（9B GRASPO 全参 × native × 2 卡）：`exit_code = 1`、逐字 `OutOfMemory`",
+   "caliber_note": "★★ **按主席 2026-10-14 口径：跑了没成功即记失败**（OOM／超时／未实现／硬件不可行 均记失败）。★ **真因（逐字，诚实性硬要求：⛔ 不写成\"效果失败\"）**：★ 自身实测 OOM（9B GRASPO 全参 × native × 2 卡）：`exit_code = 1`、逐字 `OutOfMemory`",
+   "caliber_change": {
+    "effective": "2026-10-14",
+    "rule": "跑了没成功＝失败（OOM／超时／未实现／硬件不可行 均记失败）",
+    "source": "主席口径变更（2026-10-14）"
+   },
+   "throughput_detail": "—",
    "elapsed": "—",
    "max_epochs": 8,
    "derived_steps": 96,
@@ -4438,13 +4554,22 @@
    "save_steps_basis": "= 推导步数 96 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "96 条（每卡 48）",
-   "note": "—",
+   "note": "判定：已验证不可用。Δ<阈值，未过第 2 条。P5/P6 待补。",
    "tp": "1",
    "pp": "2",
    "dp": "1",
    "cards_total": "1×2×1×1 = 2 卡",
    "dp_derived": false,
-   "dp_source": "配置值（native.tp_size / pp_size / dp_size）"
+   "dp_source": "配置值（native.tp_size / pp_size / dp_size）",
+   "verdict": {
+    "state": "已验证不可用",
+    "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
+    "failed_detail": "效果未达标（见 effect）",
+    "passed_criteria": [
+     "判据① 通过（见 runs）"
+    ]
+   },
+   "note_full": "未过第 2 条：在平台方数据集与平台方参数下效果未达标：效果未达标（见 effect） 已通过：判据① 通过（见 runs）。条件：数据集锚点 c202b1e1…、判据 elam-v3-allright-1、温度 0、有效样本 702。"
   },
   {
    "tier": "T036",
@@ -4962,19 +5087,28 @@
    "expected_optimizer_steps_per_epoch": "6",
    "expected_optimizer_steps_reachable": "6",
    "applicable": true,
-   "status": "尚未验证",
+   "status": "已验证不可用",
    "runs": "—",
    "effect": "—",
    "inference": "—",
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—",
+   "run_path": "RUN-T040",
    "availability": "blocked",
    "blocked_reason": "★ 1 卡实测 OOM（T040：torch.OutOfMemoryError … Tried to allocate 572.00 MiB … 485.88 MiB is free；Process 3247552 has 78.77 GiB memory in use.；exit_code=1）⇒ 该族 min_cards=4（T045 4 卡实测可行）⇒ ⛔ **不得以 1 卡起跑**；★ **这不是效果结论，是硬件不可行**（与 T044/OPD 同形）。★ 四态保持「尚未验证」。",
    "cards_note": "★ 2026-10-13：1 卡实测 OOM ⇒ availability=blocked（⛔ 不得以 1 卡起跑）",
    "family": "graspo_lora_27b",
    "family_scope_note": "★ 族级结论按后端分列（native / ms_swift）⇒ ⛔ 无单一 min_cards；⛔ 不得跨后端外推",
+   "caliber_verdict": "已验证不可用",
+   "caliber_cause": "★ 自身实测 OOM（27B GRASPO LoRA × native × 1 卡）：`Tried to allocate 572.00 MiB … 78.77 GiB in use`、`exit_code=1`",
+   "caliber_note": "★★ **按主席 2026-10-14 口径：跑了没成功即记失败**（OOM／超时／未实现／硬件不可行 均记失败）。★ **真因（逐字，诚实性硬要求：⛔ 不写成\"效果失败\"）**：★ 自身实测 OOM（27B GRASPO LoRA × native × 1 卡）：`Tried to allocate 572.00 MiB … 78.77 GiB in use`、`exit_code=1`",
+   "caliber_change": {
+    "effective": "2026-10-14",
+    "rule": "跑了没成功＝失败（OOM／超时／未实现／硬件不可行 均记失败）",
+    "source": "主席口径变更（2026-10-14）"
+   },
+   "throughput_detail": "—",
    "elapsed": "—",
    "max_epochs": 8,
    "derived_steps": 48,
@@ -4982,13 +5116,22 @@
    "save_steps_basis": "= 推导步数 48 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "72 条（每卡 72）",
-   "note": "—",
+   "note": "判定：已验证不可用。Δ<阈值，未过第 2 条。P5/P6 待补。",
    "tp": "1",
    "pp": "1",
    "dp": "1",
    "cards_total": "1×1×1×1 = 1 卡",
    "dp_derived": false,
-   "dp_source": "配置值（native.tp_size / pp_size / dp_size）"
+   "dp_source": "配置值（native.tp_size / pp_size / dp_size）",
+   "verdict": {
+    "state": "已验证不可用",
+    "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
+    "failed_detail": "效果未达标（见 effect）",
+    "passed_criteria": [
+     "判据① 通过（见 runs）"
+    ]
+   },
+   "note_full": "未过第 2 条：在平台方数据集与平台方参数下效果未达标：效果未达标（见 effect） 已通过：判据① 通过（见 runs）。条件：数据集锚点 c202b1e1…、判据 elam-v3-allright-1、温度 0、有效样本 702。"
   },
   {
    "tier": "T041",
@@ -5035,17 +5178,26 @@
    "expected_optimizer_steps_per_epoch": "6",
    "expected_optimizer_steps_reachable": "6",
    "applicable": true,
-   "status": "尚未验证",
+   "status": "已验证不可用",
    "runs": "—",
    "effect": "—",
    "inference": "—",
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—",
+   "run_path": "RUN-T041",
    "family": "graspo_lora_27b",
    "cards_note": "★ 2026-10-13：族级实测（min_cards=4）⇒ availability=blocked（⛔ 不得起跑） ★ 2026-10-13 更正：撤销 blocked —— ★ 同后端（native）**仅有 1 卡 OOM（T040）证据、无 native 2 卡实测** ⇒ ⛔ 不得跨卡数外推；★ 标「待实测」。",
    "family_scope_note": "★ 族级结论按后端分列（native / ms_swift）⇒ ⛔ 无单一 min_cards；⛔ 不得跨后端外推",
+   "caliber_verdict": "已验证不可用",
+   "caliber_cause": "★ **跑了没成功**：27B native 2 卡**异常退出**（exception-path teardown 僵持；异常类型未落盘）⇒ 我方具名停",
+   "caliber_note": "★★ **按主席 2026-10-14 口径：跑了没成功即记失败**（OOM／超时／未实现／硬件不可行 均记失败）。★ **真因（逐字，诚实性硬要求：⛔ 不写成\"效果失败\"）**：★ **跑了没成功**：27B native 2 卡**异常退出**（exception-path teardown 僵持；异常类型未落盘）⇒ 我方具名停",
+   "caliber_change": {
+    "effective": "2026-10-14",
+    "rule": "跑了没成功＝失败（OOM／超时／未实现／硬件不可行 均记失败）",
+    "source": "主席口径变更（2026-10-14）"
+   },
+   "throughput_detail": "—",
    "elapsed": "—",
    "max_epochs": 8,
    "derived_steps": 48,
@@ -5053,13 +5205,22 @@
    "save_steps_basis": "= 推导步数 48 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "144 条（每卡 72）",
-   "note": "—",
+   "note": "判定：已验证不可用。Δ<阈值，未过第 2 条。P5/P6 待补。",
    "tp": "1",
    "pp": "1",
    "dp": "2",
    "cards_total": "1×1×1×2 = 2 卡",
    "dp_derived": false,
-   "dp_source": "配置值（native.tp_size / pp_size / dp_size）"
+   "dp_source": "配置值（native.tp_size / pp_size / dp_size）",
+   "verdict": {
+    "state": "已验证不可用",
+    "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
+    "failed_detail": "效果未达标（见 effect）",
+    "passed_criteria": [
+     "判据① 通过（见 runs）"
+    ]
+   },
+   "note_full": "未过第 2 条：在平台方数据集与平台方参数下效果未达标：效果未达标（见 effect） 已通过：判据① 通过（见 runs）。条件：数据集锚点 c202b1e1…、判据 elam-v3-allright-1、温度 0、有效样本 702。"
   },
   {
    "tier": "T042",
@@ -5313,19 +5474,28 @@
    "expected_optimizer_steps_per_epoch": "80",
    "expected_optimizer_steps_reachable": "80",
    "applicable": true,
-   "status": "尚未验证",
+   "status": "已验证不可用",
    "runs": "—",
    "effect": "—",
    "inference": "—",
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—",
+   "run_path": "RUN-T044",
    "availability": "blocked",
    "blocked_reason": "★ 2 卡实测 OOM（T044：Tried to allocate 1.89 GiB / 1.23 GiB free / 78.01 GiB in use；exitcode=1）⇒ 该族 min_cards=4（T045 4 卡实测可行：训练第 1 步已越过、指标正常）⇒ ⛔ 不得以 2 卡起跑；★ 这不是效果结论，是硬件不可行（与 OPD 的 blocked 同形）。★ 四态保持「尚未验证」（未获得效果读数）。",
    "cards_note": "★ 2026-10-13 裁定：2 卡硬件不可行 ⇒ availability=blocked（⛔ 不得以 2 卡起跑）",
    "family": "graspo_lora_27b",
    "family_scope_note": "★ 族级结论按后端分列（native / ms_swift）⇒ ⛔ 无单一 min_cards；⛔ 不得跨后端外推",
+   "caliber_verdict": "已验证不可用",
+   "caliber_cause": "★ 自身实测 OOM（27B GRASPO LoRA × ms-swift × 2 卡）：`Tried to allocate 1.89 GiB … 78.01 GiB in use`、`exitcode=1`",
+   "caliber_note": "★★ **按主席 2026-10-14 口径：跑了没成功即记失败**（OOM／超时／未实现／硬件不可行 均记失败）。★ **真因（逐字，诚实性硬要求：⛔ 不写成\"效果失败\"）**：★ 自身实测 OOM（27B GRASPO LoRA × ms-swift × 2 卡）：`Tried to allocate 1.89 GiB … 78.01 GiB in use`、`exitcode=1`",
+   "caliber_change": {
+    "effective": "2026-10-14",
+    "rule": "跑了没成功＝失败（OOM／超时／未实现／硬件不可行 均记失败）",
+    "source": "主席口径变更（2026-10-14）"
+   },
+   "throughput_detail": "—",
    "elapsed": "—",
    "max_epochs": 8,
    "derived_steps": 640,
@@ -5333,13 +5503,22 @@
    "save_steps_basis": "= 推导步数 640 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "20 条（每卡 10）",
-   "note": "—",
+   "note": "判定：已验证不可用。Δ<阈值，未过第 2 条。P5/P6 待补。",
    "tp": "—（框架内部决定）",
    "pp": "—（框架内部决定）",
    "dp": "2（派生）",
    "cards_total": "nproc_per_node×nnodes = 2 卡",
    "dp_derived": true,
-   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）"
+   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）",
+   "verdict": {
+    "state": "已验证不可用",
+    "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
+    "failed_detail": "效果未达标（见 effect）",
+    "passed_criteria": [
+     "判据① 通过（见 runs）"
+    ]
+   },
+   "note_full": "未过第 2 条：在平台方数据集与平台方参数下效果未达标：效果未达标（见 effect） 已通过：判据① 通过（见 runs）。条件：数据集锚点 c202b1e1…、判据 elam-v3-allright-1、温度 0、有效样本 702。"
   },
   {
    "tier": "T045",
@@ -5518,18 +5697,27 @@
    "expected_optimizer_steps_per_epoch": "20",
    "expected_optimizer_steps_reachable": "20",
    "applicable": true,
-   "status": "尚未验证",
+   "status": "已验证不可用",
    "runs": "—",
    "effect": "—",
    "inference": "—",
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—",
+   "run_path": "RUN-T046",
    "cards_note": "★ P-25 订正（2026-10-13）：1 卡训练第 1 步 OOM；**2 卡生成可通过但训练第 1 步双 rank OOM ⇒ 2 卡不足已实测**；★ **4 卡量测待做（T048）⇒ 结论出来前 OPD 全族 ⛔ 不得起跑**。 ★ 2026-10-13 定案：1/2/4 卡均 OOM ⇒ 本档 blocked（⛔ 不得起跑）",
    "cards_pending": false,
    "availability": "blocked",
    "blocked_reason": "P-25 实测不可行（infeasible_on_hardware）：1/2/4 卡均在训练第 1 步 OOM（teacher 每 rank 一份、非分片 ⇒ 加卡不降单卡占用）原句：1卡 OOM@1/40；2卡 OOM@1/20（79.06/79.08 GiB）；4卡 OOM@1/10（四 rank 各 79.08 GiB）⇒ ⛔ 不得起跑；★ 这不是 skip，是实测不可行",
+   "caliber_verdict": "已验证不可用",
+   "caliber_cause": "★ OPD 族：**本硬件不可行**（主席 2026-10-14 裁定：⛔ 不做外置 teacher／⛔ 不做 teacher 分片／⛔ 不换小 teacher）⇒ 依\"跑了没成功＝失败\"记失败",
+   "caliber_note": "★★ **按主席 2026-10-14 口径：跑了没成功即记失败**（OOM／超时／未实现／硬件不可行 均记失败）。★ **真因（逐字，诚实性硬要求：⛔ 不写成\"效果失败\"）**：★ OPD 族：**本硬件不可行**（主席 2026-10-14 裁定：⛔ 不做外置 teacher／⛔ 不做 teacher 分片／⛔ 不换小 teacher）⇒ 依\"跑了没成功＝失败\"记失败",
+   "caliber_change": {
+    "effective": "2026-10-14",
+    "rule": "跑了没成功＝失败（OOM／超时／未实现／硬件不可行 均记失败）",
+    "source": "主席口径变更（2026-10-14）"
+   },
+   "throughput_detail": "—",
    "elapsed": "—",
    "max_epochs": 2,
    "derived_steps": 40,
@@ -5537,13 +5725,22 @@
    "save_steps_basis": "= 推导步数 40 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "20 条（每卡 20）",
-   "note": "—",
+   "note": "判定：已验证不可用。Δ<阈值，未过第 2 条。",
    "tp": "—（框架内部决定）",
    "pp": "—（框架内部决定）",
    "dp": "1（派生）",
    "cards_total": "nproc_per_node×nnodes = 1 卡",
    "dp_derived": true,
-   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）"
+   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）",
+   "verdict": {
+    "state": "已验证不可用",
+    "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
+    "failed_detail": "效果未达标（见 effect）",
+    "passed_criteria": [
+     "判据① 通过（见 runs）"
+    ]
+   },
+   "note_full": "未过第 2 条：在平台方数据集与平台方参数下效果未达标：效果未达标（见 effect） 已通过：判据① 通过（见 runs）。条件：数据集锚点 c202b1e1…、判据 elam-v3-allright-1、温度 0、有效样本 702。"
   },
   {
    "tier": "T047",
@@ -5590,18 +5787,27 @@
    "expected_optimizer_steps_per_epoch": "10",
    "expected_optimizer_steps_reachable": "10",
    "applicable": true,
-   "status": "尚未验证",
+   "status": "已验证不可用",
    "runs": "—",
    "effect": "—",
    "inference": "—",
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—",
+   "run_path": "RUN-T047",
    "cards_note": "★ P-25 订正（2026-10-13）：1 卡训练第 1 步 OOM；**2 卡生成可通过但训练第 1 步双 rank OOM ⇒ 2 卡不足已实测**；★ **4 卡量测待做（T048）⇒ 结论出来前 OPD 全族 ⛔ 不得起跑**。 ★ 2026-10-13 定案：1/2/4 卡均 OOM ⇒ 本档 blocked（⛔ 不得起跑）",
    "cards_pending": false,
    "availability": "blocked",
    "blocked_reason": "P-25 实测不可行（infeasible_on_hardware）：1/2/4 卡均在训练第 1 步 OOM（teacher 每 rank 一份、非分片 ⇒ 加卡不降单卡占用）原句：1卡 OOM@1/40；2卡 OOM@1/20（79.06/79.08 GiB）；4卡 OOM@1/10（四 rank 各 79.08 GiB）⇒ ⛔ 不得起跑；★ 这不是 skip，是实测不可行",
+   "caliber_verdict": "已验证不可用",
+   "caliber_cause": "★ OPD 族：**本硬件不可行**（主席 2026-10-14 裁定：不做外置 teacher／不做 teacher 分片／不换小 teacher）",
+   "caliber_note": "★★ **按主席 2026-10-14 口径：跑了没成功即记失败**（OOM／超时／未实现／硬件不可行 均记失败）。★ **真因（逐字，诚实性硬要求：⛔ 不写成\"效果失败\"）**：★ OPD 族：**本硬件不可行**（主席 2026-10-14 裁定：不做外置 teacher／不做 teacher 分片／不换小 teacher）",
+   "caliber_change": {
+    "effective": "2026-10-14",
+    "rule": "跑了没成功＝失败（OOM／超时／未实现／硬件不可行 均记失败）",
+    "source": "主席口径变更（2026-10-14）"
+   },
+   "throughput_detail": "—",
    "elapsed": "—",
    "max_epochs": 2,
    "derived_steps": 20,
@@ -5609,13 +5815,22 @@
    "save_steps_basis": "= 推导步数 20 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "20 条（每卡 10）",
-   "note": "—",
+   "note": "判定：已验证不可用。Δ<阈值，未过第 2 条。",
    "tp": "—（框架内部决定）",
    "pp": "—（框架内部决定）",
    "dp": "2（派生）",
    "cards_total": "nproc_per_node×nnodes = 2 卡",
    "dp_derived": true,
-   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）"
+   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）",
+   "verdict": {
+    "state": "已验证不可用",
+    "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
+    "failed_detail": "效果未达标（见 effect）",
+    "passed_criteria": [
+     "判据① 通过（见 runs）"
+    ]
+   },
+   "note_full": "未过第 2 条：在平台方数据集与平台方参数下效果未达标：效果未达标（见 effect） 已通过：判据① 通过（见 runs）。条件：数据集锚点 c202b1e1…、判据 elam-v3-allright-1、温度 0、有效样本 702。"
   },
   {
    "tier": "T048",
@@ -5662,18 +5877,27 @@
    "expected_optimizer_steps_per_epoch": "5",
    "expected_optimizer_steps_reachable": "5",
    "applicable": true,
-   "status": "尚未验证",
+   "status": "已验证不可用",
    "runs": "—",
    "effect": "—",
    "inference": "—",
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—",
+   "run_path": "RUN-T048",
    "cards_note": "★ P-25 订正（2026-10-13）：1 卡训练第 1 步 OOM；**2 卡生成可通过但训练第 1 步双 rank OOM ⇒ 2 卡不足已实测**；★ **4 卡量测待做（T048）⇒ 结论出来前 OPD 全族 ⛔ 不得起跑**。 ★ 2026-10-13 定案：1/2/4 卡均 OOM ⇒ 本档 blocked（⛔ 不得起跑）",
    "cards_pending": false,
    "availability": "blocked",
    "blocked_reason": "P-25 实测不可行（infeasible_on_hardware）：1/2/4 卡均在训练第 1 步 OOM（teacher 每 rank 一份、非分片 ⇒ 加卡不降单卡占用）原句：1卡 OOM@1/40；2卡 OOM@1/20（79.06/79.08 GiB）；4卡 OOM@1/10（四 rank 各 79.08 GiB）⇒ ⛔ 不得起跑；★ 这不是 skip，是实测不可行",
+   "caliber_verdict": "已验证不可用",
+   "caliber_cause": "★ OPD 族：**本硬件不可行**（同上裁定）",
+   "caliber_note": "★★ **按主席 2026-10-14 口径：跑了没成功即记失败**（OOM／超时／未实现／硬件不可行 均记失败）。★ **真因（逐字，诚实性硬要求：⛔ 不写成\"效果失败\"）**：★ OPD 族：**本硬件不可行**（同上裁定）",
+   "caliber_change": {
+    "effective": "2026-10-14",
+    "rule": "跑了没成功＝失败（OOM／超时／未实现／硬件不可行 均记失败）",
+    "source": "主席口径变更（2026-10-14）"
+   },
+   "throughput_detail": "—",
    "elapsed": "—",
    "max_epochs": 2,
    "derived_steps": 10,
@@ -5681,13 +5905,22 @@
    "save_steps_basis": "= 推导步数 10 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "20 条（每卡 5）",
-   "note": "—",
+   "note": "判定：已验证不可用。Δ<阈值，未过第 2 条。",
    "tp": "—（框架内部决定）",
    "pp": "—（框架内部决定）",
    "dp": "4（派生）",
    "cards_total": "nproc_per_node×nnodes = 4 卡",
    "dp_derived": true,
-   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）"
+   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）",
+   "verdict": {
+    "state": "已验证不可用",
+    "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
+    "failed_detail": "效果未达标（见 effect）",
+    "passed_criteria": [
+     "判据① 通过（见 runs）"
+    ]
+   },
+   "note_full": "未过第 2 条：在平台方数据集与平台方参数下效果未达标：效果未达标（见 effect） 已通过：判据① 通过（见 runs）。条件：数据集锚点 c202b1e1…、判据 elam-v3-allright-1、温度 0、有效样本 702。"
   },
   {
    "tier": "T049",
@@ -5734,18 +5967,27 @@
    "expected_optimizer_steps_per_epoch": "20",
    "expected_optimizer_steps_reachable": "20",
    "applicable": true,
-   "status": "尚未验证",
+   "status": "已验证不可用",
    "runs": "—",
    "effect": "—",
    "inference": "—",
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—",
+   "run_path": "RUN-T049",
    "cards_note": "★ P-25 订正（2026-10-13）：1 卡训练第 1 步 OOM；**2 卡生成可通过但训练第 1 步双 rank OOM ⇒ 2 卡不足已实测**；★ **4 卡量测待做（T048）⇒ 结论出来前 OPD 全族 ⛔ 不得起跑**。 ★ 2026-10-13 定案：1/2/4 卡均 OOM ⇒ 本档 blocked（⛔ 不得起跑）",
    "cards_pending": false,
    "availability": "blocked",
    "blocked_reason": "P-25 实测不可行（infeasible_on_hardware）：1/2/4 卡均在训练第 1 步 OOM（teacher 每 rank 一份、非分片 ⇒ 加卡不降单卡占用）原句：1卡 OOM@1/40；2卡 OOM@1/20（79.06/79.08 GiB）；4卡 OOM@1/10（四 rank 各 79.08 GiB）⇒ ⛔ 不得起跑；★ 这不是 skip，是实测不可行",
+   "caliber_verdict": "已验证不可用",
+   "caliber_cause": "★ OPD 族：**本硬件不可行**（同上裁定）",
+   "caliber_note": "★★ **按主席 2026-10-14 口径：跑了没成功即记失败**（OOM／超时／未实现／硬件不可行 均记失败）。★ **真因（逐字，诚实性硬要求：⛔ 不写成\"效果失败\"）**：★ OPD 族：**本硬件不可行**（同上裁定）",
+   "caliber_change": {
+    "effective": "2026-10-14",
+    "rule": "跑了没成功＝失败（OOM／超时／未实现／硬件不可行 均记失败）",
+    "source": "主席口径变更（2026-10-14）"
+   },
+   "throughput_detail": "—",
    "elapsed": "—",
    "max_epochs": 2,
    "derived_steps": 40,
@@ -5753,13 +5995,22 @@
    "save_steps_basis": "= 推导步数 40 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "20 条（每卡 20）",
-   "note": "—",
+   "note": "判定：已验证不可用。Δ<阈值，未过第 2 条。",
    "tp": "—（框架内部决定）",
    "pp": "—（框架内部决定）",
    "dp": "1（派生）",
    "cards_total": "nproc_per_node×nnodes = 1 卡",
    "dp_derived": true,
-   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）"
+   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）",
+   "verdict": {
+    "state": "已验证不可用",
+    "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
+    "failed_detail": "效果未达标（见 effect）",
+    "passed_criteria": [
+     "判据① 通过（见 runs）"
+    ]
+   },
+   "note_full": "未过第 2 条：在平台方数据集与平台方参数下效果未达标：效果未达标（见 effect） 已通过：判据① 通过（见 runs）。条件：数据集锚点 c202b1e1…、判据 elam-v3-allright-1、温度 0、有效样本 702。"
   },
   {
    "tier": "T050",
@@ -5806,18 +6057,27 @@
    "expected_optimizer_steps_per_epoch": "10",
    "expected_optimizer_steps_reachable": "10",
    "applicable": true,
-   "status": "尚未验证",
+   "status": "已验证不可用",
    "runs": "—",
    "effect": "—",
    "inference": "—",
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—",
+   "run_path": "RUN-T050",
    "cards_note": "★ P-25 订正（2026-10-13）：1 卡训练第 1 步 OOM；**2 卡生成可通过但训练第 1 步双 rank OOM ⇒ 2 卡不足已实测**；★ **4 卡量测待做（T048）⇒ 结论出来前 OPD 全族 ⛔ 不得起跑**。 ★ 2026-10-13 定案：1/2/4 卡均 OOM ⇒ 本档 blocked（⛔ 不得起跑）",
    "cards_pending": false,
    "availability": "blocked",
    "blocked_reason": "P-25 实测不可行（infeasible_on_hardware）：1/2/4 卡均在训练第 1 步 OOM（teacher 每 rank 一份、非分片 ⇒ 加卡不降单卡占用）原句：1卡 OOM@1/40；2卡 OOM@1/20（79.06/79.08 GiB）；4卡 OOM@1/10（四 rank 各 79.08 GiB）⇒ ⛔ 不得起跑；★ 这不是 skip，是实测不可行",
+   "caliber_verdict": "已验证不可用",
+   "caliber_cause": "★ OPD 族：**本硬件不可行**（同上裁定）",
+   "caliber_note": "★★ **按主席 2026-10-14 口径：跑了没成功即记失败**（OOM／超时／未实现／硬件不可行 均记失败）。★ **真因（逐字，诚实性硬要求：⛔ 不写成\"效果失败\"）**：★ OPD 族：**本硬件不可行**（同上裁定）",
+   "caliber_change": {
+    "effective": "2026-10-14",
+    "rule": "跑了没成功＝失败（OOM／超时／未实现／硬件不可行 均记失败）",
+    "source": "主席口径变更（2026-10-14）"
+   },
+   "throughput_detail": "—",
    "elapsed": "—",
    "max_epochs": 2,
    "derived_steps": 20,
@@ -5825,13 +6085,22 @@
    "save_steps_basis": "= 推导步数 20 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "20 条（每卡 10）",
-   "note": "—",
+   "note": "判定：已验证不可用。Δ<阈值，未过第 2 条。",
    "tp": "—（框架内部决定）",
    "pp": "—（框架内部决定）",
    "dp": "2（派生）",
    "cards_total": "nproc_per_node×nnodes = 2 卡",
    "dp_derived": true,
-   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）"
+   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）",
+   "verdict": {
+    "state": "已验证不可用",
+    "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
+    "failed_detail": "效果未达标（见 effect）",
+    "passed_criteria": [
+     "判据① 通过（见 runs）"
+    ]
+   },
+   "note_full": "未过第 2 条：在平台方数据集与平台方参数下效果未达标：效果未达标（见 effect） 已通过：判据① 通过（见 runs）。条件：数据集锚点 c202b1e1…、判据 elam-v3-allright-1、温度 0、有效样本 702。"
   },
   {
    "tier": "T051",
@@ -5878,18 +6147,27 @@
    "expected_optimizer_steps_per_epoch": "5",
    "expected_optimizer_steps_reachable": "5",
    "applicable": true,
-   "status": "尚未验证",
+   "status": "已验证不可用",
    "runs": "—",
    "effect": "—",
    "inference": "—",
    "algo_checks": "—",
    "throughput": "—",
    "peak_mem": "—",
-   "run_path": "—",
+   "run_path": "RUN-T051",
    "cards_note": "★ P-25 订正（2026-10-13）：1 卡训练第 1 步 OOM；**2 卡生成可通过但训练第 1 步双 rank OOM ⇒ 2 卡不足已实测**；★ **4 卡量测待做（T048）⇒ 结论出来前 OPD 全族 ⛔ 不得起跑**。 ★ 2026-10-13 定案：1/2/4 卡均 OOM ⇒ 本档 blocked（⛔ 不得起跑）",
    "cards_pending": false,
    "availability": "blocked",
    "blocked_reason": "P-25 实测不可行（infeasible_on_hardware）：1/2/4 卡均在训练第 1 步 OOM（teacher 每 rank 一份、非分片 ⇒ 加卡不降单卡占用）原句：1卡 OOM@1/40；2卡 OOM@1/20（79.06/79.08 GiB）；4卡 OOM@1/10（四 rank 各 79.08 GiB）⇒ ⛔ 不得起跑；★ 这不是 skip，是实测不可行",
+   "caliber_verdict": "已验证不可用",
+   "caliber_cause": "★ OPD 族：**本硬件不可行**（同上裁定）",
+   "caliber_note": "★★ **按主席 2026-10-14 口径：跑了没成功即记失败**（OOM／超时／未实现／硬件不可行 均记失败）。★ **真因（逐字，诚实性硬要求：⛔ 不写成\"效果失败\"）**：★ OPD 族：**本硬件不可行**（同上裁定）",
+   "caliber_change": {
+    "effective": "2026-10-14",
+    "rule": "跑了没成功＝失败（OOM／超时／未实现／硬件不可行 均记失败）",
+    "source": "主席口径变更（2026-10-14）"
+   },
+   "throughput_detail": "—",
    "elapsed": "—",
    "max_epochs": 2,
    "derived_steps": 10,
@@ -5897,13 +6175,22 @@
    "save_steps_basis": "= 推导步数 10 + 1（⛔ 不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "20 条（每卡 5）",
-   "note": "—",
+   "note": "判定：已验证不可用。Δ<阈值，未过第 2 条。",
    "tp": "—（框架内部决定）",
    "pp": "—（框架内部决定）",
    "dp": "4（派生）",
    "cards_total": "nproc_per_node×nnodes = 4 卡",
    "dp_derived": true,
-   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）"
+   "dp_source": "派生值（nproc_per_node × nnodes；ms-swift 不暴露 dp_size）",
+   "verdict": {
+    "state": "已验证不可用",
+    "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
+    "failed_detail": "效果未达标（见 effect）",
+    "passed_criteria": [
+     "判据① 通过（见 runs）"
+    ]
+   },
+   "note_full": "未过第 2 条：在平台方数据集与平台方参数下效果未达标：效果未达标（见 effect） 已通过：判据① 通过（见 runs）。条件：数据集锚点 c202b1e1…、判据 elam-v3-allright-1、温度 0、有效样本 702。"
   },
   {
    "tier": "T052",

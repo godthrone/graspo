@@ -117,7 +117,12 @@ def blocked_vs_unavailable_conflict(row):
     理由（2026-10-13 裁定）：**「已验证不可用」是效果层否定**（方法/输出退化），
     **`blocked` 是可用性层**（硬件/依赖不可行）⇒ 混用会污染结论语义（后人会读成"该方法失败"）。
     """
-    return row.get("availability") == "blocked" and str(row.get("status") or "") == "已验证不可用"
+    if row.get("availability") != "blocked" or str(row.get("status") or "") != "已验证不可用":
+        return False
+    # ★★ 例外（主席口径变更 2026-10-14）：**"跑了没成功＝失败"** ⇒ blocked 档**可以**记四态「已验证不可用」，
+    #    但**必须**带 `caliber_change` 标记（★ 且真因仍在 `blocked_reason`/`caliber_cause` 里逐字保留）
+    #    ⇒ ★ 否则仍判轴混用（防"悄悄把硬件不可行写成效果失败"）。
+    return not bool(row.get("caliber_change"))
 
 
 def family_under_min_unblocked(row):
@@ -289,6 +294,11 @@ def _gen_self_test():
          family_under_min_unblocked({"family": "graspo_lora_27b", "family_min_cards": 4, "cards": 2, "availability": "blocked"}) is False),
         ("⑰d 族级相容：cards=4 ≥ min_cards ⇒ 放行",
          family_under_min_unblocked({"family": "graspo_lora_27b", "family_min_cards": 4, "cards": 4}) is False),
+        ("⑯b2 ★ 轴冲突例外：blocked + 已验证不可用 + **带口径变更标记** ⇒ 放行（主席 2026-10-14）",
+         blocked_vs_unavailable_conflict({"availability": "blocked", "status": "已验证不可用",
+                                          "caliber_change": {"effective": "2026-10-14"}}) is False),
+        ("⑯b3 ★ 轴冲突：blocked + 已验证不可用 + **无口径标记** ⇒ **必须拒**（防悄悄改写）",
+         blocked_vs_unavailable_conflict({"availability": "blocked", "status": "已验证不可用"}) is True),
         ("⑰e ★ 反证拦截：标 blocked 却已有活证据（768/1280 进度）⇒ **必须拒**",
          blocked_contradicted_by_live({"availability": "blocked", "live_evidence": "★ 已到 768/1280"}) is True),
         ("⑰f 反证拦截：标 blocked 且无活证据 ⇒ 放行",
