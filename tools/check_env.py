@@ -18,13 +18,14 @@ import sys
 #: ★ 矩阵/护栏工具链的纯 Python 依赖（宿主应齐备）。
 REQUIRED: tuple[tuple[str, str], ...] = (
     ("pydantic", "run_guards / 配置解析"),
-    ("msgspec", "配置 schema"),
     ("yaml", "yaml 配置读写"),
     ("pytest", "工具链自测（tests/scripts/）"),
 )
 
 #: ★ 只在镜像内需要的（宿主缺失属预期，⛔ 不计失败）。
 IMAGE_ONLY: tuple[tuple[str, str], ...] = (
+    # ★ msgspec 属镜像侧：`graspo.core.schema` 的配置解析在镜像内跑（2026-10-14 核）
+    ("msgspec", "graspo.core.schema 配置解析（镜像内）"),
     ("torch", "native rank 转换（tests/scripts/test_merged_export_classify.py）"),
     ("safetensors", "adapter 读写"),
     ("vllm", "评测服务"),
@@ -38,6 +39,11 @@ def check(required=REQUIRED, image_only=IMAGE_ONLY) -> tuple[list[str], list[str
 
 
 def main() -> int:
+    # ★ 基线解释器 = `.venv/bin/python`（见 docs/toolchain-pin.md）：
+    #   非 venv ⇒ 打印提示（系统解释器缺项更多，⛔ 易误判为工具链坏）
+    if not (sys.prefix != sys.base_prefix or __import__("os").environ.get("VIRTUAL_ENV")):
+        print(f"★ 提示：当前解释器非 venv（sys.prefix={sys.prefix}）；"
+              "基线解释器为 `.venv/bin/python` ⇒ 缺项可能多于既有工具链的真实缺口。")
     missing, absent_img = check()
     if absent_img:
         print("★ 以下依赖宿主缺失属预期（需 torch/pytest 的校验一律在镜像内执行）：")
