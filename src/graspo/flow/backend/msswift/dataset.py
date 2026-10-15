@@ -10,9 +10,11 @@
 
 **两种形态（同一份输入数据，两种用法——对应决策 D4「SFT 与 RL 共享基座」）**
 
-- SFT：``{"messages": [system?, user, assistant=<target text>]}``。
+- SFT：``{"messages": [system?, user, assistant=<target text>], "tools"?: <JSON 字符串>}``。
   target 文本由 ``ripple`` 的 ``build_sft_target_text`` 生成——**与 native SFT 用的是
-  同一个函数**（宪法 §1.3：算法只实现一次）。
+  同一个函数**（宪法 §1.3：算法只实现一次）。带工具的样本额外携带 ``tools`` 列
+  （与 GRPO 行同列名同编码）：ms-swift 据此把工具 schema 渲染进 system 段，
+  与恒发 tools 的评测请求对齐。
 - GRPO：``{"messages": [system?, user], "targets": <JSON 字符串>}``。
   提示词交给 ms-swift 采样，``targets`` 作为额外列透传给奖励函数（ms-swift 会把
   数据集列原样喂给 reward，见 ``GRPO 奖励适配器`` ``reward.py``）。
@@ -407,6 +409,20 @@ def build_sft_rows(samples: list[Any], *, config: Any = None) -> list[dict[str, 
         rows.append(
             {
                 MESSAGES_KEY: [*messages, {"role": "assistant", "content": target_text}],
+                # 工具调用样本必须带上 ``tools`` schema——理由与 :func:`build_grpo_rows`
+                # 同源：**评测请求恒发 tools**（``eval/vllm_client.py``），ms-swift 侧
+                # 只有在行里有该列时才会把 tools 渲染进 system 段
+                # （``StdTemplateInputs.from_dict`` 读 ``tools`` →
+                # ``Template._preprocess_tools`` → ``_get_system``/``_jinja_encode``）。
+                # 缺列 ⇒ 训练 system 段比评测**短 441 token**（4.5.3 实测：1970 vs 2411），
+                # 训练与推理的上下文错配。列名与 ``json.dumps`` 编码**逐字复用 GRPO 行**，
+                # ⛔ 不另造写法（4.5.3 实测字符串列由上游 ``agent_template._parse_json``
+                # 解析，与行内 Python list 等价）。
+                **(
+                    {GRASPO_TOOLS_COLUMN: json.dumps(sample.tools, ensure_ascii=False)}
+                    if getattr(sample, "tools", None)
+                    else {}
+                ),
                 **extra_columns,
             }
         )
