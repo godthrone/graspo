@@ -7,7 +7,7 @@
    未训练的基座副本**（"导出成功、权重没学到"）。
 
 **不依赖 torch**：被测的两个模块（``graspo.flow.progress_metrics`` /
-``graspo.flow.checkpoint_semantics``）**零依赖**，因此可以按文件路径直接加载，
+``graspo.export.semantics``）**零依赖**，因此可以按文件路径直接加载，
 连 import 垫片都不需要。
 
 **为什么按文件加载而不是普通 import**：普通 import 会执行 `graspo/__init__.py` →
@@ -44,7 +44,7 @@ def _load_pure_module(dotted_name: str, relative_path: str):
 
 
 _checkpoint_semantics = _load_pure_module(
-    "graspo.flow.checkpoint_semantics", "graspo/flow/checkpoint_semantics.py"
+    "graspo.export.semantics", "graspo/export/semantics.py"
 )
 _progress_metrics = _load_pure_module(
     "graspo.flow.progress_metrics", "graspo/flow/progress_metrics.py"

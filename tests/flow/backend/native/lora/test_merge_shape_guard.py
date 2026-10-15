@@ -11,6 +11,10 @@
 
 本文件钉住：两种形态都**显式 fail-closed**，且错误消息点名基座名与两侧形状。
 纯 CPU、零 GPU、零 ms-swift。
+
+★ 迁移登记：``_apply_deltas`` 随导出子集搬入 ``graspo.export.exporters.native_lora``
+（设计 §7.1）；异常类型同步收敛为公开契约
+:class:`graspo.export.errors.ExportError`（§2.4 单一可捕获类型）。消息文本逐字未变。
 """
 
 from __future__ import annotations
@@ -18,7 +22,8 @@ from __future__ import annotations
 import pytest
 import torch
 
-from graspo.flow.backend.native.lora.lora_io import _apply_deltas
+from graspo.export.errors import ExportError
+from graspo.export.exporters.native_lora import _apply_deltas
 
 
 def _rec(kind: str, **kw) -> dict:
@@ -65,10 +70,10 @@ def test_out_and_rows_kinds_merge_the_right_rows():
 
 
 def test_base_narrower_than_the_delta_raises_actionable_error():
-    """★T022 复现：基座列宽 12288 < 切片终点 17408 ⇒ **显式 ValueError**（不是广播 RuntimeError）。"""
+    """★T022 复现：基座列宽 12288 < 切片终点 17408 ⇒ **显式 ExportError**（不是广播 RuntimeError）。"""
     base = torch.zeros(2, 12288)  # 9B 的 MLP 中间维
     delta = torch.ones(2, 17408)  # 27B 的 MLP 中间维
-    with pytest.raises(ValueError) as exc:
+    with pytest.raises(ExportError) as exc:
         _apply_deltas(base, [(_rec("in", col_start=0, col_stop=17408), delta)])
     msg = str(exc.value)
     assert "out of range" in msg
@@ -84,7 +89,7 @@ def test_base_wider_than_the_delta_raises_instead_of_silently_mis_merging():
     """★最危险形态：旧实现会静默把 delta 写到错误位置；现在必须显式拒绝。"""
     base = torch.zeros(2, 20000)
     delta = torch.ones(2, 16384)  # 切片宽 17408 ≠ delta 16384
-    with pytest.raises(ValueError) as exc:
+    with pytest.raises(ExportError) as exc:
         _apply_deltas(base, [(_rec("in", col_start=0, col_stop=17408), delta)])
     msg = str(exc.value)
     assert "does not match the delta" in msg
@@ -93,22 +98,22 @@ def test_base_wider_than_the_delta_raises_instead_of_silently_mis_merging():
 
 def test_out_kind_slice_beyond_base_rows_is_rejected():
     base = torch.zeros(8, 3)
-    with pytest.raises(ValueError, match="out of range"):
+    with pytest.raises(ExportError, match="out of range"):
         _apply_deltas(base, [(_rec("out", row_start=0, row_stop=16), torch.ones(16, 3))])
 
 
 def test_row_indices_beyond_base_rows_is_rejected():
     base = torch.zeros(4, 3)
-    with pytest.raises(ValueError, match="exceeds base tensor"):
+    with pytest.raises(ExportError, match="exceeds base tensor"):
         _apply_deltas(base, [(_rec("rows", row_indices=[0, 9]), torch.ones(2, 3))])
 
 
 def test_row_indices_count_mismatch_is_rejected():
     base = torch.zeros(8, 3)
-    with pytest.raises(ValueError, match="row_indices count"):
+    with pytest.raises(ExportError, match="row_indices count"):
         _apply_deltas(base, [(_rec("rows", row_indices=[0, 1, 2]), torch.ones(2, 3))])
 
 
 def test_unsupported_kind_is_still_rejected():
-    with pytest.raises(ValueError, match="Unsupported LoRA shard kind"):
+    with pytest.raises(ExportError, match="Unsupported LoRA shard kind"):
         _apply_deltas(torch.zeros(2, 2), [(_rec("bogus"), torch.zeros(2, 2))])

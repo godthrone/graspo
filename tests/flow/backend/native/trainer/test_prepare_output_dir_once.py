@@ -66,7 +66,7 @@ def test_non_primary_never_touches_the_filesystem(tmp_path, monkeypatch):
         calls.append(1)
         raise AssertionError("非 primary rank 不得执行破坏性的 prepare_output_dir")
 
-    monkeypatch.setattr("graspo.flow.backend.native.lora.lora_io.prepare_output_dir", probe)
+    monkeypatch.setattr("graspo.export.paths.prepare_output_dir", probe)
     fake = _FakeDist(on_first_broadcast=None).install(monkeypatch)
 
     returned = prepare_output_dir_once(out, overwrite=True, is_primary=False)
@@ -91,7 +91,7 @@ def test_non_primary_returns_only_after_rank0_finished_cleaning(tmp_path, monkey
 
     fake = _FakeDist(on_first_broadcast=rank0_cleanup).install(monkeypatch)
     monkeypatch.setattr(
-        "graspo.flow.backend.native.lora.lora_io.prepare_output_dir",
+        "graspo.export.paths.prepare_output_dir",
         lambda output_dir, *, overwrite: (observed.append(True), Path(output_dir))[1],
     )
 
@@ -135,7 +135,7 @@ def test_primary_raises_when_overwrite_not_authorized_and_all_ranks_fail(tmp_pat
 
     monkeypatch.setattr(dist, "broadcast", broadcast_with_primary_status, raising=False)
     monkeypatch.setattr(
-        "graspo.flow.backend.native.lora.lora_io.prepare_output_dir",
+        "graspo.export.paths.prepare_output_dir",
         lambda output_dir, *, overwrite: Path(output_dir),
     )
     with pytest.raises(FileExistsError):
@@ -151,7 +151,7 @@ def test_primary_hard_failure_is_broadcast_as_runtime_error(tmp_path, monkeypatc
     def boom(output_dir, *, overwrite):
         raise PermissionError("EPERM: /out/T030")
 
-    monkeypatch.setattr("graspo.flow.backend.native.lora.lora_io.prepare_output_dir", boom)
+    monkeypatch.setattr("graspo.export.paths.prepare_output_dir", boom)
     with pytest.raises(RuntimeError, match="rank0 准备输出目录失败"):
         prepare_output_dir_once(out, overwrite=True, is_primary=True)
 

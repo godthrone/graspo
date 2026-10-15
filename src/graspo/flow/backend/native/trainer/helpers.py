@@ -209,7 +209,7 @@ def prepare_output_dir_once(
     语义不变：``overwrite=True`` 仍然清掉上次的全部产物；``overwrite=False`` 且
     目录非空仍然 ``FileExistsError``（预授权退路 §3.3）。
     """
-    from graspo.flow.backend.native.lora.lora_io import prepare_output_dir
+    from graspo.export.paths import prepare_output_dir
 
     import torch
     import torch.distributed as dist

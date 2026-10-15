@@ -22,7 +22,9 @@ import pytest
 
 from graspo.flow.backend.native.logger.native_rollout_logger import NativeRolloutLogger
 from graspo.flow.logging import run_log_dir
-from graspo.flow.backend.native.lora.lora_io import prepare_output_dir
+
+# ★ 输出目录防呆的**唯一实现**已迁到 ``graspo.export.paths``（§1.4）。
+from graspo.export.paths import prepare_output_dir
 
 _TRAINER = (
     Path(__file__).resolve().parents[5] / "src" / "graspo" / "flow" / "backend" / "native" / "trainer" / "trainer.py"
@@ -117,7 +119,7 @@ def test_trainer_prepares_output_dir_before_building_logger():
     """``train()`` 里的输出目录准备必须出现在 ``_build_rollout_logger`` 之前。
 
     唯一入口自 task-ac1 起是 ``helpers.prepare_output_dir_once``（多 rank 安全：
-    只 rank0 清目录、其余 rank 等广播），它内部调用 ``lora_io.prepare_output_dir``。
+    只 rank0 清目录、其余 rank 等广播），它内部调用 ``graspo.export.paths.prepare_output_dir``。
     """
     source = _train_source()
     body = source[source.index("    def train(self, *, smoke: bool = False)") :]

@@ -39,17 +39,19 @@ class CheckpointMixin:
             self._export_final_checkpoint(path)
 
     def _export_final_checkpoint(self, checkpoint_dir: Path) -> None:
-        """导出最终 checkpoint 为可部署格式。"""
-        from graspo.flow.backend.native.lora.lora_io import export_from_checkpoint
+        """导出最终 checkpoint 为可部署格式（唯一入口 = ``graspo.export.export_checkpoint``）。"""
+        from graspo.export import export_checkpoint
 
         for export_format in self.config.export.final_formats:
             output_dir = checkpoint_dir / str(export_format)
-            export_from_checkpoint(
-                checkpoint_dir,
-                output_dir,
-                export_format=str(export_format),
-                base_model_path=self.config.model.model_path,
+            export_config = self.config.export.model_copy(
+                update={
+                    "checkpoint_path": str(checkpoint_dir),
+                    "export_output": str(output_dir),
+                    "export_format": str(export_format),
+                }
             )
+            export_checkpoint(export_config, base_model_path=self.config.model.model_path)
             self._print_json(
                 {
                     "timestamp": self._timestamp(),
