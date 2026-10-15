@@ -10,6 +10,10 @@
 - 参数来源：evidence/spec-54.json（由 extract_spec.py 抽 r3 权威件 + 54 档 v2 yaml + 归档生成器 + 8 个示例）；
   缺项写 '—'（不编造）。
 - 结果列：默认占位符 '—'；`--preserve-from <旧 matrix-data.json>` 保留已回填档位的结果与 run_provenance（如 T028）。
+- ★ 防丢失硬不变量（2026-10-16）：`--preserve-from` 的语义 =「**字段全集不减少**」而不是白名单。
+  输出必须覆盖被保留输入里出现的**全部字段路径**；任何被丢的路径 ⇒ **fail-closed（不写盘、逐条列出）**。
+  实现见 `deep_fill()` + `field_paths()`；确需例外只能加进 `PRESERVE_ALLOWED_DROP`（显式具名，用到即打印）。
+  病史：旧白名单语义曾静默丢掉逐档 16 类回填字段，端到端把四态由 13/41/0/0 崩成 13/23/15/3。
 
 用法：
   python3 extract_params.py --html <AUTH_HTML> --config-dir .../matrix54-v2 --out evidence/params-raw.json
@@ -17,12 +21,75 @@
       --out evidence/spec-54.json --conflicts-out evidence/spec-conflicts.md
   python3 build_data.py --spec evidence/spec-54.json --out matrix-data.json --preserve-from matrix-data.json
 """
-import argparse, json
+import argparse, copy, fnmatch, json, sys
 from pathlib import Path
 
 PLACEHOLDER = "—"
 RESULT_KEYS = ["status", "runs", "effect", "inference", "algo_checks",
                "throughput", "peak_mem", "run_path"]
+
+# ★★ 生成链防丢失（2026-10-16）——「字段全集不减少」硬不变量 ★★
+#
+# 病史（真实事故，见 .local/hb-workspace/20261014-sft-kickoff/task-lr-matrix-sync/report.md §9.1）：
+#   旧语义是**白名单**（只保留 RESULT_KEYS + run_provenance），于是所有**逐档回填字段**
+#   （after_acc / base_acc / delta_pp / note / evidence_paths / code_identity / elapsed_evidence /
+#   p5p6_readings / anomalies / corrections / tree_fingerprint … 共 16 类）在一次
+#   `--preserve-from` 重生成里被**静默丢掉** —— 端到端实测把四态由 **13/41/0/0** 崩成
+#   **13/23/15/3**。白名单的毛病是：**每来一个新字段都要记得加进去**，漏一个就再炸一次。
+#
+# 新语义（默认**不丢**）：
+#   1) ``deep_fill``：输出以新生成值为骨架，把被保留输入里**输出没有的字段**（递归）补回来；
+#      新生成的值优先（生成器有意见的地方不会被旧值覆盖）。
+#   2) 断言 ``field_paths(输出) ⊇ field_paths(输入)``：任何仍被丢掉的**字段路径** ⇒
+#      **fail-closed**（逐条列出、**不写盘**）。这是兜底：结构冲突（如某键新版是标量、
+#      旧版是对象）或档位被删仍会被抓住。
+#   3) 确需例外 ⇒ 只能加进下面这个**显式具名清单**，且每次用到都会**打印出来**。
+#      ⛔ 不许用通配符把它变成"整类放行"。
+PRESERVE_ALLOWED_DROP: tuple[str, ...] = ()
+#: 例外清单的写法 = 精确路径，或含 ``*``/``?`` 的 fnmatch 模式（路径形如 ``/rows[]/note``）。
+#: ⚠ 故意一条都没有：清单里的每一条都必须是**具名**路径，否则就退化成白名单了。
+
+
+def field_paths(obj, prefix: str = "") -> set[str]:
+    """递归收集 JSON 里出现的**全部字段路径**（索引无关：列表元素统一记 ``[]``）。
+
+    路径形如 ``/meta/backfill/last_run``、``/rows[]/after_acc``、
+    ``/rows[]/p5p6_readings/readings``。
+    ★ 列表下标**不进路径**：逐档字段在 54 档之间是同一个字段，不该因为某档没回填就判"少了"。
+    """
+    out: set[str] = set()
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            path = f"{prefix}/{key}"
+            out.add(path)
+            out |= field_paths(value, path)
+    elif isinstance(obj, list):
+        path = prefix + "[]"
+        out.add(path)
+        for value in obj:
+            out |= field_paths(value, path)
+    return out
+
+
+def deep_fill(new, old):
+    """以 ``new`` 为骨架，把 ``old`` 里 ``new`` **没有**的字段递归补回来（``new`` 的值优先）。
+
+    只对 dict 递归合并；list / 标量一律保留 ``new``（列表按新生成整体替换，不做逐元素混合）。
+    """
+    if isinstance(new, dict) and isinstance(old, dict):
+        merged = dict(new)
+        for key, value in old.items():
+            if key in merged:
+                merged[key] = deep_fill(merged[key], value)
+            else:
+                merged[key] = copy.deepcopy(value)
+        return merged
+    return new
+
+
+def allowed_drop(path: str) -> bool:
+    """该字段路径是否命中显式具名例外清单。"""
+    return any(fnmatch.fnmatchcase(path, pattern) for pattern in PRESERVE_ALLOWED_DROP)
 
 ALGO_DISPLAY = {"cpt": "CPT", "sft": "SFT", "graspo": "GRASPO", "opd": "OPD"}
 MODE_DISPLAY = {"lora": "LoRA", "full": "全参"}
@@ -274,9 +341,19 @@ def main():
 
     spec = json.loads(Path(a.spec).read_text(encoding="utf-8"))
     prev = {}
-    if a.preserve_from and Path(a.preserve_from).exists():
-        pd = json.loads(Path(a.preserve_from).read_text(encoding="utf-8"))
-        prev = {r["tier"]: r for r in pd.get("rows", [])}
+    prev_doc = None
+    if a.preserve_from:
+        preserve_path = Path(a.preserve_from)
+        if not preserve_path.exists():
+            # ★ fail-closed：声称要保留，却连保留源都读不到 ⇒ 等于把全部真值丢掉。
+            print(
+                f"FATAL: --preserve-from 指向的文件不存在：{preserve_path}\n"
+                f"       拒绝在「无保留源」下生成（那会静默丢掉全部已回填字段）。",
+                file=sys.stderr,
+            )
+            return 1
+        prev_doc = json.loads(preserve_path.read_text(encoding="utf-8"))
+        prev = {r["tier"]: r for r in prev_doc.get("rows", [])}
 
     rows, preserved = [], []
     for t in spec["tiers"]:
@@ -344,6 +421,10 @@ def main():
             if p.get("run_provenance"):
                 row["run_provenance"] = p["run_provenance"]
             preserved.append(t["tier_id"])
+        if p:
+            # ★ 防丢失：把旧行里**本行没有的字段**（递归）补回来。新生成值优先，
+            #   所以「生成器有意见的字段」不会被旧值覆盖；而回填字段一个都不会丢。
+            row = deep_fill(row, p)
         rows.append(row)
 
     doc = {
@@ -387,11 +468,41 @@ def main():
         "conflicts": [{"id": c["id"], "level": c["level"], "title": c["title"]} for c in spec.get("conflicts", [])],
         "rows": rows,
     }
+    if prev_doc is not None:
+        # ★ 文档级补回（meta / provenance / uniform / 顶层键）：``rows`` 是列表 ⇒ 保留新生成的整体。
+        doc = deep_fill(doc, prev_doc)
+        in_paths = field_paths(prev_doc)
+        out_paths = field_paths(doc)
+        dropped = sorted(in_paths - out_paths)
+        excused = [p for p in dropped if allowed_drop(p)]
+        missing = [p for p in dropped if not allowed_drop(p)]
+        for p in excused:
+            print(f"ALLOW-DROP（显式具名例外）: {p}")
+        if missing:
+            # ★★ fail-closed：**不写盘**。宁可让操作者看见，也不静默丢真值。
+            print(
+                f"FATAL: --preserve-from 的 {len(missing)} 条字段路径在输出中缺失"
+                f"（字段全集减少）⇒ 拒绝写盘 {a.out}：",
+                file=sys.stderr,
+            )
+            for p in missing:
+                print(f"  DROPPED {p}", file=sys.stderr)
+            print(
+                "  处置：① 让生成器产出该字段；② 或把它加进 "
+                "build_data.PRESERVE_ALLOWED_DROP（须写明理由）。",
+                file=sys.stderr,
+            )
+            return 1
+        print(
+            f"字段全集不减少 ✓ 保留源字段路径 {len(in_paths)} 条，输出 {len(out_paths)} 条，"
+            f"丢弃 0 条（显式例外 {len(excused)} 条）"
+        )
     Path(a.out).write_text(json.dumps(doc, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     filled = [r["tier"] for r in rows if any(r[k] != PLACEHOLDER for k in RESULT_KEYS)]
     print(f"rows={len(rows)} 结果列非空档数={len(filled)} {filled}（--preserve-from 保留 {len(preserved)} 档）")
     print(f"列数={len(COLUMNS)} uniform={len(spec['uniform'])} 项；wrote {a.out}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

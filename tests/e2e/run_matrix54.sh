@@ -282,6 +282,11 @@ fi
 #          且**不在** <training.output_dir> 之内：取证链不断、训练清洗不伤证据；
 #       c. interval_sec == 2：与旧 CLI 口径逐值相同（样本条数不变）。
 TIER_CONFIG_PATH="$ROOT_DIR/$CONFIG"
+# ★ 起跑前留痕：实际读取的 config 路径 ＋ sha256（治"读到哪一代"的可见性；
+#   T023 曾因读到旧代际产物而白跑）—— 与 §15"护栏须作用于产物"同族。
+if command -v sha256sum >/dev/null 2>&1; then
+    echo "[config-sha] $TIER_CONFIG_PATH $(sha256sum "$TIER_CONFIG_PATH" | cut -d' ' -f1)" >&2
+fi
 # 取 gpu_monitor 段内某字段的标量值（不存在则输出空）。
 read_gpu_monitor_field() {
     sed -n '/^gpu_monitor:$/,/^[^ #]/p' "$TIER_CONFIG_PATH" | sed -n "s/^  $1:[[:space:]]*\([^[:space:]#]*\).*/\1/p" | head -n 1
@@ -1480,8 +1485,12 @@ def _probe_main(argv: list[str] | None = None) -> int:
     torch = None
     try:
         import torch as _torch
-    except Exception:
-        pass
+    except ImportError as exc:  # 无 torch ⇒ 显式记因（下面判 unverifiable_tooling），不静默吞
+        print(
+            f"[probe] torch 不可导入（{exc}）⇒ 记为工具缺失，走不可判定分支",
+            file=sys.stderr,
+            flush=True,
+        )
     else:
         torch = _torch
         torch_version = str(getattr(_torch, "__version__", "unknown"))

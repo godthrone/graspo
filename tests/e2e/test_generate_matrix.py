@@ -60,6 +60,15 @@ gpu_assignment = importlib.util.module_from_spec(_gpu_spec)
 sys.modules["gpu_assignment"] = gpu_assignment
 _gpu_spec.loader.exec_module(gpu_assignment)
 
+#: 生成链防丢失的共享判定实现（清单生成器与测试同一份，§1.4 单一真相源）。
+_guard_spec = importlib.util.spec_from_file_location(
+    "regen_field_guard", Path(__file__).resolve().parent / "regen_field_guard.py"
+)
+assert _guard_spec is not None and _guard_spec.loader is not None
+regen_guard = importlib.util.module_from_spec(_guard_spec)
+sys.modules["regen_field_guard"] = regen_guard
+_guard_spec.loader.exec_module(regen_guard)
+
 
 def test_ledger_has_54_tiers_with_expected_counts():
     tiers = generate_matrix.build_ledger()
@@ -1058,10 +1067,20 @@ def test_override_does_not_touch_configs_or_train_path():
     assert default_data == overridden_data
 
 
-def test_default_regeneration_is_byte_identical_to_on_disk_artifacts(tmp_path, monkeypatch):
-    """★向后兼容硬证据：无覆盖重生成 ⇒ manifest 与 runner **逐字节相同**。
+def test_default_regeneration_matches_generator_field_universe_and_runner_bytes(
+    tmp_path, monkeypatch
+):
+    """★向后兼容硬证据（2026-10-16 收紧口径，改名以名副其实）。
 
-    把生成落点改到 tmp，重跑 `generate()`，再与仓内既有产物逐字节比对。
+    无覆盖重生成 ⇒ **runner 逐字节相同**；**manifest 在「生成器字段全集」上逐值相同**，
+    且在盘**多出的**字段必须**全部登记**在 `generate_matrix.POST_FILL_*` 注册表里。
+
+    ★ 为什么不再断言 manifest 整份逐字节相同（⛔ 不是"把断言删掉/放宽成只要 config 相同"）：
+    在盘 `matrix54_manifest.json` 含生成器**不产出**的后填字段（跑次结论 status/matrix_conclusion/
+    availability、实测显存 feasibility_model.graspo_*_cards、OPD 教师测量 …，实测 106 条路径）。
+    整体重生成会把它们抹掉 ⇒ 生成器侧已加 **fail-closed** 防线（`generate()` 在写盘前拒绝，
+    见 `ManifestFieldLossError`）。本用例负责另一半：**把这 106 条路径逐条钉进注册表**——
+    任何未登记的新增字段、或生成器字段值漂移，都会让本用例失败。
     """
     if not generate_matrix.LOCAL_MINI_JSONL.is_file():
         pytest.skip("开发机缺 mini 数据集本地镜像，无法重生成 manifest")
@@ -1075,8 +1094,33 @@ def test_default_regeneration_is_byte_identical_to_on_disk_artifacts(tmp_path, m
 
     generate_matrix.generate(54)
 
-    assert (tmp_path / "manifest.json").read_bytes() == on_disk_manifest
+    # ① runner：**仍然**逐字节相同（这一条没有放宽）。
     assert (tmp_path / "runner.sh").read_bytes() == on_disk_runner
+
+    regen = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+    on_disk = json.loads(on_disk_manifest.decode("utf-8"))
+
+    # ② 在盘**多出**的字段路径 ⇒ 必须全部登记为 post-fill（陌生漂移即失败）。
+    regen_paths = regen_guard.field_paths(regen)
+    on_disk_paths = regen_guard.field_paths(on_disk)
+    extra = sorted(on_disk_paths - regen_paths)
+    unregistered = [p for p in extra if not generate_matrix.is_post_fill_extra(p)]
+    assert not unregistered, (
+        f"在盘清单多出 {len(unregistered)} 条**未登记**的字段路径（既非生成器产出、也不在 "
+        f"POST_FILL_EXTRA_PATTERNS 注册表里）——请判定归属后再登记：{unregistered[:20]}"
+    )
+    # 反向：生成器产出的字段在盘必须都有（在盘不得落后于生成器）。
+    assert not sorted(regen_paths - on_disk_paths), (
+        f"生成器产出但清单缺失的字段路径：{sorted(regen_paths - on_disk_paths)[:20]}"
+    )
+
+    # ③ 生成器字段全集上，在盘与新生成**逐值相同**（仅登记的 post-fill 覆盖字段除外）。
+    projected = regen_guard.prune_like(on_disk, regen)
+    projected = regen_guard.apply_like_at(
+        projected, regen, "", generate_matrix.POST_FILL_OVERRIDE_PATTERNS
+    )
+    assert projected == regen, "在盘清单在「生成器字段全集」上与重生成结果不一致（值漂移）"
+    assert extra, "在盘清单不含任何 post-fill 字段——注册表形同虚设，请复核本用例的前提"
 
 
 def test_gpu_assignment_cli_fingerprint_is_stable_and_detects_drift():

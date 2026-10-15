@@ -81,11 +81,73 @@ from gpu_assignment import (  # noqa: E402  （必须在 sys.path 就位之后�
     gpu_assignment_fingerprint,
     parse_override,
 )
+from regen_field_guard import (  # noqa: E402  （同上；生成链防丢失的**唯一**判定实现）
+    guard_regeneration_keeps_on_disk_fields,
+    matches_any,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_DIR = PROJECT_ROOT / "samples" / "configs" / "matrix54"
 MANIFEST_PATH = PROJECT_ROOT / "tests" / "e2e" / "matrix54_manifest.json"
 RUNNER_PATH = PROJECT_ROOT / "tests" / "e2e" / "run_matrix54.sh"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ★★ 生成链防丢失（2026-10-16）：post-fill 注册表 + 「重生成不得移除在盘字段」守卫 ★★
+#
+# 病史：在盘 ``matrix54_manifest.json`` 含生成器**不产出**的字段（跑次结论、实测显存、
+#   OPD 教师测量 …）。整体重生成会把它们**静默抹掉**（实测 106 条字段路径），
+#   而当时的测试只报 "index 6787 字节不同"，看不出丢的是什么、更拦不住。
+#
+# 语义：
+#   · ``POST_FILL_EXTRA_PATTERNS``   = 只在盘出现、生成器不产出的**后填字段**（具名）。
+#   · ``POST_FILL_OVERRIDE_PATTERNS`` = 生成器**也产出**、但在盘的值是后填覆盖的字段。
+#   · 两者都**不是**"允许丢弃"的清单：生成时丢任何字段一律 fail-closed（见 ``generate()``）。
+#     它们的用途是：① 让失败信息区分"已知后填"与"陌生漂移"；② 让
+#     ``test_default_regeneration_is_byte_identical_to_on_disk_artifacts`` 只比
+#     **生成器字段全集**，并断言在盘多出的字段**全部在册**（⛔ 不是放宽成"只要 config 相同"）。
+POST_FILL_TIER_FIELDS: tuple[str, ...] = (
+    # 逐档跑次回填：可用性/阻塞原因/结论指针/清单陈旧标记/实测证据/矩阵结论/复测/推导前状态
+    "availability",
+    "blocked_reason",
+    "conclusion_ref",
+    "list_stale",
+    "live_evidence",
+    "matrix_conclusion",
+    "retest",
+    "status_before_derivation",
+)
+#: 顶层 post-fill 子树/字段（每条都是具名路径；前缀匹配只对它自己的子树生效）。
+POST_FILL_TOP_LEVEL_PATHS: tuple[str, ...] = (
+    "/feasibility_model/graspo_9b_full_cards",
+    "/feasibility_model/graspo_lora_27b_cards",
+    "/feasibility_model/native_full_cards",
+    "/feasibility_model/opd_teacher/caliber_note_20261015",
+    "/feasibility_model/opd_teacher/measurement_note",
+    "/feasibility_model/opd_teacher/min_cards",
+    "/feasibility_model/opd_teacher/pending_measurement",
+    "/feasibility_model/opd_teacher/per_card_peak_gib_at_min_cards",
+)
+POST_FILL_EXTRA_PATTERNS: tuple[str, ...] = (
+    tuple(f"/tiers[]/{field}" for field in POST_FILL_TIER_FIELDS) + POST_FILL_TOP_LEVEL_PATHS
+)
+#: 生成器产出、但在盘的值被后填覆盖的字段（比对时以生成值为准，但字段本身必须在）。
+POST_FILL_OVERRIDE_PATTERNS: tuple[str, ...] = (
+    "/tiers[]/status",
+    "/feasibility_model/opd_teacher/measured",
+    "/feasibility_model/opd_teacher/unmeasured_note",
+)
+#: 确需让重生成丢弃某些字段时的**显式具名例外**（精确路径或 fnmatch 模式；用到即打印）。
+MANIFEST_ALLOWED_FIELD_LOSS: tuple[str, ...] = ()
+
+
+def is_post_fill_extra(path: str) -> bool:
+    """该字段路径是否已登记为「只在盘出现、生成器不产出」的后填字段。"""
+    return matches_any(path, POST_FILL_EXTRA_PATTERNS)
+
+
+def is_post_fill_override(path: str) -> bool:
+    """该字段路径是否已登记为「生成器产出但值被后填覆盖」。"""
+    return matches_any(path, POST_FILL_OVERRIDE_PATTERNS)
 
 #: 生成器**认识**的配置目录产物名（正则）：只有匹配它的条目才允许被生成器删除。
 #: ★ 判据是"名字形态"而不是"本轮要写的名字集合"：上一轮留下、本轮不再产出的**陈旧生成物**
@@ -100,6 +162,15 @@ CONFIG_DIR_PRESERVED = frozenset({"industry-cells.json", "industry-cells.baselin
 
 class ConfigDirForeignEntryError(RuntimeError):
     """配置目录里出现生成器不认识、也不在白名单里的条目（fail-closed，一个都不删）。"""
+
+
+class ManifestFieldLossError(RuntimeError):
+    """★ 重生成会移除在盘清单已有的字段（生成链防丢失，fail-closed，一个字节都不写）。
+
+    病史：在盘 ``matrix54_manifest.json`` 含生成器不产出的后填字段（跑次结论/实测显存/OPD
+    教师测量 …，实测 106 条路径）。整体重生成会把它们静默抹掉 ⇒ 本异常让它在写盘**之前**
+    就可见。处置：让生成器产出、或登记为 post-fill、或进 ``MANIFEST_ALLOWED_FIELD_LOSS``。
+    """
 
 
 #: `record-gpu-memory` 采样产物的容器内落点（**单一真相源**，§1.4）。
@@ -2762,7 +2833,7 @@ def _audit_state_dict(
     extra = [
         index for index in sorted(layer_found) if expected_layers and index not in expected_layers
     ]
-    # ★ 生产侧（2026-10-02，登记册 E-57）：视觉塔 LoRA ⇒ 层审计**不适用**（None），⛔ 不是 False
+    # ★ 生产侧（2026-10-02，登记册 E-65）：视觉塔 LoRA ⇒ 层审计**不适用**（None），⛔ 不是 False
     _sig = (manifest.get("lora_target_signature") or {{}}).get("resolved") or []
     lora_visual_only = (
         kind == "lora_state_dict"
@@ -2779,7 +2850,6 @@ def _audit_state_dict(
     return {{
         "audit_ok": audit_ok,
         "audit_reasons": audit_reasons,
-        "audit_reasons": reasons,
         "total_elements": total_elements,
         "nonfinite_tensors": sorted(nonfinite)[:5],
         "nonfinite_count": len(nonfinite),
@@ -3903,6 +3973,13 @@ if [ "$MODE" = "--dry-run" ]; then
     else
         echo "[dry-run]   {DETERMINISM_ENV} 未设置 ⇒ 不透传 --determinism-spec（默认关，行为与不引入本开关时相同）"
     fi
+    # ★ RB-5：显存分配器开关同样必须"看得见"（同 §2.2 显式即防呆）。
+    echo "[dry-run] allocator（裸 -e 透传变量 PYTORCH_CUDA_ALLOC_CONF，默认无）:"
+    if [ -n "${{PYTORCH_CUDA_ALLOC_CONF:-}}" ]; then
+        echo "[dry-run]   PYTORCH_CUDA_ALLOC_CONF 已设置 ⇒ 将注入容器（原值逐字）：${{PYTORCH_CUDA_ALLOC_CONF}}"
+    else
+        echo "[dry-run]   PYTORCH_CUDA_ALLOC_CONF 未设置 ⇒ 容器内不出现该变量（默认无行为变化）"
+    fi
     echo "[dry-run] config=$CONFIG train_subset=$SUBSET 条 -> $TRAINPATH"
     echo "[dry-run] models=$MODELS_ROOT:$MODEL_DIR_NAME -> {MODELS_CONTAINER_ROOT}（只读）"
     echo "[dry-run] subsets=$RUN_ROOT/$TIER/subsets -> $TRAIN_PATH_DIR_CONTAINER（只读）"
@@ -3912,6 +3989,36 @@ fi
 
 RUN_DIR="$RUN_ROOT/$TIER"
 mkdir -p "$RUN_DIR/subsets"
+
+# ★ B11（2026-10-12，主席批准）：**同一 tier 重跑必须先清场**。
+#   为什么：`exit_code` / `ckpt_retention.state` / `torch_probe.json` / `stdout.log`
+#   都是**跑后**才写的产物。重跑复用同一个 `$RUN_DIR` 而不清理 ⇒ 新跑次**仍在途**时
+#   读到的是**上一轮**的产物 ⇒ **假失败**（228 实测：T033 第二次起跑被第一次尝试
+#   `nostalgic_lederberg` 39 s 退出留下的 `exit_code=1` 误判为失败，详见
+#   `.local/.../task-t033-diagnosis/report.md`）。
+#   语义：把上一轮这些**具名**产物**移入** `$RUN_DIR/attempt-<UTC 时间戳>/`——
+#   ⛔ 不用通配符、⛔ 不删任何其他文件、⛔ 不触碰训练输出目录（`$RUN_DIR/$TIER`）。
+#   ★ 判据同时修正（运行纪律，见 docs/run-discipline.md）：
+#     **容器 `Status=running` 优先于 `exit_code` 文件**；且只有 `mtime >= 本次起跑时刻`
+#     的产物才算本次的，早于起跑的**一律视为陈旧、不得据此判败**。
+STALE_POST_RUN_ARTIFACTS=(exit_code ckpt_retention.state torch_probe.json stdout.log)
+if [ -d "$RUN_DIR" ]; then
+    stale_found=()
+    for stale_name in "${{STALE_POST_RUN_ARTIFACTS[@]}}"; do
+        if [ -e "$RUN_DIR/$stale_name" ]; then
+            stale_found+=("$stale_name")
+        fi
+    done
+    if [ "${{#stale_found[@]}}" -gt 0 ]; then
+        stale_archive="$RUN_DIR/attempt-$(date -u +%Y%m%dT%H%M%SZ)"
+        mkdir -p "$stale_archive"
+        for stale_name in "${{stale_found[@]}}"; do
+            mv -- "$RUN_DIR/$stale_name" "$stale_archive/$stale_name"
+        done
+        echo "[stale-clear] 上一轮跑后产物已移入 $stale_archive ：${{stale_found[*]}}"
+    fi
+fi
+echo "[attempt-start] tier=$TIER launched_at=$(date -u +%Y-%m-%dT%H:%M:%SZ) run_dir=$RUN_DIR"
 
 # 3) 生成训练子集：只取门槛下限（SFT ≥100 / RL ≥20），不整集跑。
 # 3a) **读取源**（← 与 `data.train_path` 无关）：默认 mini 数据集（跑通用），
@@ -4453,6 +4560,15 @@ DOCKER_ARGS=(
     #   容器内为未设置、entry.sh 的守卫走"默认关"分支。这样"宿主没设"与"容器没收到"
     #   不可能分叉（§2.2）；也**不必**在生成期读宿主环境（生成物因此与宿主环境无关）。
     -e {DETERMINISM_ENV}
+    # ★ RB-5（授权：指挥官 2026-09-27「批准 A」）显存分配器开关的**裸 -e 透传**，
+    #   与上面 {DETERMINISM_ENV} **完全同范式**：
+    #     裸 `-e NAME`（不带 =值）⇒ docker 只在**宿主确实设了**该变量时才注入；
+    #     宿主未设 ⇒ 容器内**不出现**该变量 ⇒ 对回合（12 档 ×3）**零行为变化**。
+    #   用途：探针用 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` 缓解
+    #   FSDP2 FULL_STATE_DICT **落盘期**的显存尖峰（B1 实测 80911 MiB > 70 GiB 判据）。
+    #   为什么必须是"裸"：写成 `-e PYTORCH_CUDA_ALLOC_CONF=xxx` 会给**全部 12 档**强行开
+    #   分配器开关 ⇒ 那是口径变更，超出本次授权；裸透传把"是否启用"留在宿主侧显式决定。
+    -e PYTORCH_CUDA_ALLOC_CONF
 )
 # ★ 可写缓存/状态根逐个 `-e` 注入（清单与上面 CONTAINER_CACHE_ROOTS 同源，§1.4）：
 #   展开成 `-e VAR=/path`，docker run 处不再出现任何缓存根字面量。
@@ -4608,6 +4724,23 @@ def generate(
     runner_text = render_runner(resolved_train_source)
     assert_no_legacy_terms([("manifest", manifest_text), ("runner", runner_text)])
 
+    # ★★ 生成链防丢失（fail-closed，**在任何写盘之前**）：重生成不得移除在盘清单已有的字段。
+    #   病史见本模块顶部 POST_FILL_* 注册表注释。命中后**一个字节都不写**
+    #   （不删 config、不写 runner、不写 manifest）。
+    manifest_path = MANIFEST_PATH if manifest_out is None else Path(manifest_out)
+    lost = guard_regeneration_keeps_on_disk_fields(
+        manifest,
+        manifest_path,
+        post_fill_patterns=POST_FILL_EXTRA_PATTERNS,
+        allowed_drop=MANIFEST_ALLOWED_FIELD_LOSS,
+        what="运行清单 matrix54_manifest.json",
+    )
+    if lost:
+        raise ManifestFieldLossError(
+            f"重生成会从在盘清单移除 {len(lost)} 条字段路径（前 5 条：{lost[:5]}）；"
+            f"⛔ 拒绝生成（fail-closed）。见 tests/e2e/generate_matrix.py 的 POST_FILL_* 注册表。"
+        )
+
     # ★ P21：**禁止 rmtree 整目录**。只删自己认识的生成物；白名单原样保留；
     #   遇到非生成物 ⇒ 抛 ConfigDirForeignEntryError（在任何删除之前）。
     deleted, preserved = clean_config_dir(CONFIG_DIR)
@@ -4617,7 +4750,6 @@ def generate(
     #   exit_code；容器成孤儿把训练跑完）。os.replace 换 inode ⇒ 旧读者读完旧内容。
     for name, text in rendered:
         _atomic_write_text(CONFIG_DIR / name, text)
-    manifest_path = MANIFEST_PATH if manifest_out is None else Path(manifest_out)
     _atomic_write_text(manifest_path, manifest_text)
     _atomic_write_text(RUNNER_PATH, runner_text, mode=0o755)
     write_feasibility_table(tiers)
