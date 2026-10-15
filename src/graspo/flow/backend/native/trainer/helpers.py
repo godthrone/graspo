@@ -24,7 +24,13 @@ def _timestamp() -> str:
 
 
 def _set_random_seed(seed: int, *, rank: int = 0) -> None:
-    """设置所有随机数生成器的种子，确保可复现性。"""
+    """设置所有随机数生成器的种子，确保可复现性。
+
+    ★ 逐 rank 语义：种子 = ``seed + rank``。用于**数据打散 / 训练期随机性**
+    （dropout 等），这些量本来就该逐 rank 不同。
+
+    ⛔ **不得**用于模型权重初始化——见 :func:`_set_model_init_seed`。
+    """
     import numpy as np
     import torch
 
@@ -33,6 +39,32 @@ def _set_random_seed(seed: int, *, rank: int = 0) -> None:
     torch.manual_seed(seed + rank)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed + rank)
+
+
+def _set_model_init_seed(seed: int) -> None:
+    """模型初始化专用播种：**与 rank 无关**（DP 组内所有副本同一初值）。
+
+    为什么必须与 :func:`_set_random_seed` 分开（两种语义不能共用一个旋钮）：
+    LoRA 的 ``lora_a`` 由 ``kaiming_uniform_`` **随机初始化**、``lora_b`` 恒 0
+    （``lora/lora_linear.py:127-131``）。DP 同步只同步**更新量**，不同步初值
+    ⇒ 各副本 ``lora_a`` 的初值差会被**永久保留**，训练结束时各副本权重仍不一致
+    （实测 dp=4：``lora_a`` 110/110 键互不相同，``lora_b`` 110/110 逐位相同）。
+
+    因此在**建模之前**用本函数播种（种子 = ``seed``，**不加 rank**），DP 组内
+    每个副本从同一 RNG 状态构造模型 ⇒ 初值逐位相同；建模**之后**再按原逻辑用
+    :func:`_set_random_seed`（``seed + rank``）重新播种，数据打散等逐 rank 随机性
+    的行为保持不变。
+
+    rank=0 时与 ``_set_random_seed(seed, rank=0)`` 逐位等价（单卡路径不变）。
+    """
+    import numpy as np
+    import torch
+
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 
 # ── 配置备份 ──────────────────────────────────────────────────────────────────
