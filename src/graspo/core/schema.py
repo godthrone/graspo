@@ -979,6 +979,9 @@ class ExportConfig(BaseModel):
     export_format: str = "peft-adapter"
     export_output: str = ""
     final_formats: list[str] = []
+    #: 覆盖预授权（§3.3 预授权退路）：默认 False ⇒ 非空输出目录一律拒绝。
+    #: 必须在 config 里声明，CLI 不提供开关（§10.1 推论 2）。
+    allow_overwrite: bool = False
 
 
 class EvalConfig(BaseModel):

@@ -243,6 +243,7 @@ export:
   export_format: peft-adapter
   export_output: ""
   final_formats: []
+  allow_overwrite: false         # 预授权退路（§3.3）：true 才允许覆盖已有产物目录
 
 # ── 启动（单节点）───────────────────────────────────────────────────────────
 launch:

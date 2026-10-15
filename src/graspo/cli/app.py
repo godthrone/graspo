@@ -41,14 +41,9 @@ def cmd_export(args: argparse.Namespace) -> int:
     _require_config_value(config.export.checkpoint_path, "export.checkpoint_path")
     _require_config_value(config.export.export_output, "export.export_output")
     _require_config_value(config.model.model_path, "model.model_path")
-    from graspo.flow.backend.native.lora.lora_io import export_from_checkpoint
+    from graspo.export import export_checkpoint
 
-    export_from_checkpoint(
-        config.export.checkpoint_path,
-        config.export.export_output,
-        export_format=config.export.export_format,
-        base_model_path=config.model.model_path,
-    )
+    export_checkpoint(config.export, base_model_path=config.model.model_path)
     print(
         json.dumps(
             {
@@ -380,7 +375,7 @@ def _validate_launch_paths(config: GraspoConfig) -> None:
     if not data_path.is_file():
         raise SystemExit(f"data.train_path does not exist: {data_path}")
     # output_dir 现在总是有默认值（配置备份约定），但需确保目录提前创建好
-    from graspo.flow.backend.native.lora.lora_io import prepare_output_dir
+    from graspo.export.paths import prepare_output_dir
 
     prepare_output_dir(config.training.output_dir, overwrite=config.training.overwrite_output_dir)
 

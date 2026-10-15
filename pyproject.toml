@@ -125,6 +125,14 @@ native = "graspo.flow.backend.native.config:native_defaults"
 native = "graspo.flow.backend.native:create_native_backend"
 msswift = "graspo.flow.backend.msswift:create_msswift_backend"
 
+# 导出形态登记（唯一的"生产真相源"；开发回退见 src/graspo/export/registry.py）。
+# 新增一类形态 = 本组加一行 + CheckpointForm 加一个成员（分派逻辑 0 行改动）。
+[project.entry-points."graspo.exporters"]
+hf-base-model = "graspo.export.exporters.base_model_exporter:BaseModelExporter"
+peft-adapter = "graspo.export.exporters.peft_adapter:PEFT_ADAPTER_UNSUPPORTED"
+native-lora-rank = "graspo.export.exporters.native_lora:NativeLoraRankExporter"
+native-full-param-rank = "graspo.export.exporters.native_full_param:NativeFullParamRankExporter"
+
 [tool.setuptools.package-dir]
 "" = "src"
 

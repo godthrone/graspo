@@ -270,6 +270,7 @@ def test_architecture_report():
 #
 # 规则（每条都有阳性对照 —— 注入一个已知违规，它**必须**被抓住；⛔ 不接受恒 PASS）：
 #   R1  禁 import：`ripple/` 不得 import `graspo.flow` / `graspo.eval` / `graspo.cli`
+#       / `graspo.export`（★ 2026-10-15 指挥授权：新增顶层导出共享包后补上的纯强化项）
 #   R2  禁词：`torch.cuda` / `torch.distributed` / `ProcessGroup` / `init_process_group`
 #       / `all_reduce` / `barrier` / `broadcast`（含 `dist.*` 集合通信）
 #   R3  ★ device **选择**：`device=` 实参不得是**设备字符串字面量**（`"cuda"`/`"cpu"`/…）
@@ -285,7 +286,12 @@ def test_architecture_report():
 
 _RIPPLE_ROOT = Path(__file__).resolve().parents[1] / "src" / "graspo" / "ripple"
 
-_FORBIDDEN_IMPORT_PREFIXES: tuple[str, ...] = ("graspo.flow", "graspo.eval", "graspo.cli")
+_FORBIDDEN_IMPORT_PREFIXES: tuple[str, ...] = (
+    "graspo.flow",
+    "graspo.eval",
+    "graspo.cli",
+    "graspo.export",
+)
 
 #: R2：属性链形态的禁词（`torch.cuda.*` / `torch.distributed.*` / `dist.<集合通信>`）
 _FORBIDDEN_ATTR = re.compile(

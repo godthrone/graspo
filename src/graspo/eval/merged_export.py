@@ -53,12 +53,18 @@ PEFT 合并需要知道"往哪个底座上合并"。adapter 目录里的
 from __future__ import annotations
 
 import json
-import shutil
 from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
+
+# ★ 导出失败类型与"输出目录防呆"实现的**唯一真相源**已升格为 ``graspo.export``：
+#   · ``ExportError``（§2.4 公开错误契约）；
+#   · ``prepare_output_directory``（§2.4 合规语义：非空拒绝 / 预授权后逐项删除）。
+# 本模块只 import 契约，⛔ 不再自带第二份实现（§1.4）。
+from graspo.export.errors import ExportError
+from graspo.export.paths import prepare_output_dir as prepare_output_directory
 
 #: merged-hf 产物必须有的文件（判断"导出成功"的判据，与 v3 脚本一致）。
 MERGED_REQUIRED_FILES = ("config.json",)
@@ -178,10 +184,6 @@ def normalize_language_model_targets(targets: str | Iterable[str]) -> str | list
             seen.add(candidate)
             normalized.append(candidate)
     return normalized
-
-
-class ExportError(RuntimeError):
-    """导出/识别失败。调用方应终止，不要拿半成品去评测。"""
 
 
 @dataclass(slots=True)
@@ -684,43 +686,6 @@ def existing_merged_output(output_dir: str | Path) -> bool:
     if not all((root / name).is_file() for name in MERGED_REQUIRED_FILES):
         return False
     return any((root / name).is_file() for name in WEIGHT_FILE_CANDIDATES)
-
-
-def prepare_output_directory(output_dir: str | Path, *, overwrite: bool = False) -> Path:
-    """准备合并输出目录。
-
-    防呆（宪法 §2.4）：目录非空且未显式 ``overwrite`` 时拒绝——不覆盖已有产物；
-    显式覆盖时先逐项列出将删除的内容，再用具体路径逐个删除（不用通配符）。
-
-    Args:
-        output_dir: 目标目录。
-        overwrite: 是否允许覆盖已有非空目录（默认 False = 预授权退路未开启）。
-
-    Returns:
-        目标目录 Path。
-
-    Raises:
-        ExportError: 目录非空且未允许覆盖。
-    """
-    root = Path(output_dir)
-    if not root.exists():
-        root.mkdir(parents=True, exist_ok=True)
-        return root
-    entries = sorted(root.iterdir())
-    if not entries:
-        return root
-    if not overwrite:
-        raise ExportError(
-            f"output directory {root} is not empty ({len(entries)} entries); "
-            "refusing to overwrite — set allow_overwrite explicitly to accept losing it"
-        )
-    # 显式列出 → 逐项删除（§2.4：先看得见，再动手；严禁通配符）
-    for entry in entries:
-        if entry.is_dir():
-            shutil.rmtree(entry)
-        else:
-            entry.unlink()
-    return root
 
 
 def merge_peft_checkpoint(
