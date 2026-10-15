@@ -15,6 +15,10 @@
 import argparse, datetime, json, re
 from pathlib import Path
 
+# ★ lr 口径的**唯一真相源**（`extract_spec.py` 与本脚本同目录）：正式机读件直接引用它，
+#   ⛔ 不在本文件里再抄一份取值表（§1.4 单一真相源；否则改口径要改两处、必然漂移）。
+import extract_spec as _spec
+
 # 脱敏映射（顺序敏感：先长后短）
 # 通用形状（⛔ 不写任何具体内网主机 / 账号 / 挂载点字面量）：
 #   顺序敏感 —— 先处理带尾段的规则，再用通用二级/三级路径兜底。
@@ -474,6 +478,38 @@ def recon_formula_foreign(row, text):
     return False
 
 
+def _lr_policy_block():
+    """★★ lr 口径登记（机读）：新口径 =「按方法一个值」；两条旧口径作历史；三条「已裁定不做」。
+
+    ★ 取值表**直接来自** `extract_spec.LR_POLICY`（唯一真相源，⛔ 不抄写、不发明数字）；
+      主席 2026-10-15 裁定「按卡数缩放 lr」机制**整体删除**（不是保留开关）⇒
+      现行生效 lr = 声明 lr，与 dp_size / tp_size / pp_size / 卡数**无关**。
+    """
+    return {
+        "effective": "2026-10-15",
+        "source": "主席 2026-10-15 裁定（新学习率口径 / lr 按方法一个值）",
+        "single_source": "tools/matrix/extract_spec.py:LR_POLICY",
+        "rule": ("lr = 按 (训练方法, 微调模式) **一个值**；⛔ 不随 dp_size / tp_size / pp_size / "
+                 "总卡数变化；⛔ 不按卡数补偿训练量。"),
+        "by_method_and_tuner": {f"{m}|{t}": v for (m, t), v in sorted(_spec.LR_POLICY.items())},
+        "history": [
+            ("① 旧口径（已被取代，留痕、⛔ 不再作为判定依据）：**LoRA 档统一 1.0e-05、不分算法**"
+             "（由该口径产生的旧跑次读数在切换后与现行声明不再一一对应）。"),
+            ("② 旧口径（已被取代，留痕、⛔ 不再作为判定依据）：**按卡数缩放 lr** —— "
+             "`lr_scaling=linear` ⇒ 生效 lr = 配置 lr × dp_size（默认 linear；仅 native 后端消费）。"
+             "★ 该机制已**整体删除**（配置字段与方法都不再存在）；带该键的旧配置被 "
+             "pydantic `extra=\"forbid\"` **fail-closed 拒绝**（⛔ 不静默忽略）。"),
+        ],
+        "mechanism_removed": ("「按卡数缩放 lr」机制（配置字段 `lr_scaling` ＋ 方法 "
+                              "`effective_learning_rate` ＋ 各 native 消费点）已**整体删除** ⇒ "
+                              "现行生效 lr 一律 = 声明 lr（⛔ 不再有 ×dp_size 这一步）。"),
+        "ruled_out": list(_spec.RULED_OUT),
+        "consequence": ("★ 口径变更后**读数与配置的一一对应性**须逐档复核：凡读数来自旧口径跑次"
+                        "（旧 lr 或旧 epoch）而本行参数已更正者 ⇒ 结论作废、该档标「尚未验证」"
+                        "（行级机读字段 `reading_consistency`；旧读数保留为历史、⛔ 不抹）。"),
+    }
+
+
 def criteria_caliber():
     return {
         "availability_criteria": [
@@ -503,7 +539,23 @@ def criteria_caliber():
         },
         "dataset": {"id": "平台方自有评测集（名称 test.jsonl）", "availability": "平台方自有 / 不公开",
                     "version_anchor_sha256": "c202b1e1…", "sample_count": 702,
-                    "method": "工具调用准确率（acc）"},
+                    "method": "工具调用准确率（acc）",
+                    # ★★ 「是否同分布」口径（主席诉求 5；审查项 W9/W10）：评测集**就是**矩阵各档
+                    #    自己的训练分布的同源评测集（同源、样本 id 不重叠）——⛔ 不是「训练分布之外」的评测。
+                    "train_eval_relation": (
+                        "★ 训练/评测**是否同分布**：**同源**（与各档训练数据同一数据集、同一分布口径），"
+                        "**样本 id 不重叠**；⛔ 本矩阵**不**评测「模型在训练分布之外的表现」。"
+                        "★ 图像层面的同源不成立须并读：训练与评测图像去重交集 752 张（占评测图像 38.5%），"
+                        "且 169/702 个评测样本的图像集是某个训练样本的子集 ⇒ 评测结论按此口径解读；"
+                        "矩阵行给出「剔除 169 条图像重叠」的敏感性读数。★ 口径出处：跑次 manifest 的"
+                        "数据完整性注记。"),
+                    "train_eval_relation_role": (
+                        "★ 本条是**评测集口径**（不是能力承诺）：矩阵只声明「已在本口径下完整跑通并取数」，"
+                        "使用者自身任务/数据集/参数下的效果不在承诺范围（见边界声明）。")},
+        # ★★ lr 口径登记（审查项 🔴B1/W3）：机读字段 `lr_policy` / `ruled_out` 必须在正式件可查。
+        #    取值表**直接引用唯一真相源** `extract_spec.LR_POLICY`（⛔ 不在此抄写）。
+        "lr_policy": _lr_policy_block(),
+        "ruled_out": list(_spec.RULED_OUT),
         "criteria_id": "elam-v3-allright-1",
         "threshold": {
             "name": "delta_pp（SFT / GRASPO）＋ non_inferiority（CPT / OPD）", "unit": "百分点（pp）",
@@ -646,6 +698,15 @@ def short_note(row, full):
     st = str(row.get("status") or "—")
     _rule0 = _caliber_rule(row.get("train_method"))
     parts = [f"判定：{st}。"]
+    # ★★ 读数-配置一致性作废（🔴B1/B2）：**放在最前**（截断也不丢这条硬要求）。
+    #    该档结论因「读数取自旧参数（旧 lr 口径 / 旧 epoch）、本行参数已更正」而作废 ⇒
+    #    ⛔ 不得在短备注里把旧读数当**有效读数**呈现（旧读数在 effect/note_full 与
+    #    `reading_consistency` 里保留为历史）。
+    _rcc0 = row.get("reading_consistency") if isinstance(row.get("reading_consistency"), dict) else {}
+    _voided = st == S_UNVERIFIED and row.get("voided_conclusion")
+    if _voided:
+        _mm = "；".join(str(x) for x in (_rcc0.get("mismatch") or [])) or "参数已更正"
+        parts.append(f"★ 结论作废（读数与当前配置不对应）：{_mm} ⇒ 待重跑复核。")
     # ★★ 「epoch 已变 ⇒ 结论待重跑复核」标记（**数据驱动**：由 `threshold.by_method.<方法>` 的
     #    epoch / epoch_previous 推出，⛔ 不写死方法名与数字）。放在最前 ⇒ 截断也不会丢这条硬要求。
     #    ★ 若该档已**按新 epoch 复核过**（行级 `caliber_change.epoch_recheck` 非空）⇒ 改标「已按 epoch=N 复核」。
@@ -666,7 +727,9 @@ def short_note(row, full):
     #    `caliber_change.reading_after.valid = true` ⇒ 旧读数的无效性**只作历史**
     #    （如 T024：判据① 产物唯一性缺陷已修、新读数有效）⇒ ⛔ 不得把**新**读数标成无效、⛔ 不得吞掉读数。
     _cur_reading_valid = (_cc0.get("reading_after") or {}).get("valid")
-    if str(row.get("reading_validity") or "").strip() and st == S_UNAVAILABLE and _cur_reading_valid is not True:
+    if _voided:
+        pass                                             # ★ 作废档：旧读数不打进短备注（历史在 note_full）
+    elif str(row.get("reading_validity") or "").strip() and st == S_UNAVAILABLE and _cur_reading_valid is not True:
         parts.append("★ 判据② 读数无效、⛔ 不得引用。")
     elif isinstance(aa, (int, float)) and isinstance(ba, (int, float)) and isinstance(dp, (int, float)):
         def _pct(x):
@@ -923,6 +986,192 @@ def window_text(runs):
     return f"{m.group(1)}（{m.group(2)}）" if m else ""
 
 
+# ★★ 2026-10-16 追补（审查项 🔴R1 整改）——「发布件里不得出现与现行行 status 矛盾的结论断言」★★
+#
+# 病史：lr 口径变更（按卡数缩放机制整体删除 + lr 按方法一个值）后，37 档的旧跑次读数与现行声明参数
+#   不再一一对应 ⇒ 行级 `status` 回落为「尚未验证」、`voided_conclusion` 记录作废；但**历史叙述字段**
+#   （`runs` / `note_full` / `caliber_change.rule` / `caliber_verdict` / `conclusion_annotation` …）
+#   仍逐字保留旧四态结论句（「⇒ 判「已验证不可用」」「⇒ 翻为「已验证可用」」…）⇒ **同一份发布件内自相矛盾**
+#   （复查者 🟡R1 点名 T012/T024；本包系统性扫查另命中 32 处，见工位 report.md §③）。
+#
+# 处置（只追加、⛔ 不删改原句 ⇒ 历史完整保留；幂等：已有作废标记者跳过）：
+#   凡本行结论因该审计作废者（`status == 尚未验证` 且 `reading_consistency.consistent is False`），
+#   行内**含四态结论措辞**的历史字段逐条追加日期化追补句 ⇒ 历史句一律被显式「已作废/追补」包裹。
+VOID_ADDENDUM_20261016 = (
+    "★★ 2026-10-16 追补：本条所记结论已因 lr 口径变更作废，"
+    "以本行现行 `status` 为准（尚未验证）。"
+)
+#: 「四态结论措辞」的字面（出现即视为该字段在断言四态之一）
+_FOUR_STATE_LITERALS = ("已验证可用", "已验证不可用")
+#: 已有的作废/留痕标记（命中即认定该历史句**已被包裹** ⇒ ⛔ 不重复追加，保证幂等与不啰嗦）
+_VOID_WRAP_MARKERS = ("已作废", "追补", "作废", "留痕", "不得引用", "保留为历史",
+                      "不得视为", "已被取代", "已被推翻")
+#: 机读「状态快照」键：键名本身即声明历史角色（作废前 / 后状态快照），⛔ 不追加散文追补
+_AUDIT_SNAPSHOT_KEYS = ("status_before", "status_after")
+
+
+def _naked_four_state(text):
+    """该文本是否**裸**断言四态之一（含四态字面、且无任何作废/留痕标记）。"""
+    if not any(lit in str(text) for lit in _FOUR_STATE_LITERALS):
+        return False
+    return not any(m in str(text) for m in _VOID_WRAP_MARKERS)
+
+
+def wrap_voided_conclusions(rows):
+    """★★ 把「因读数-配置一致性审计作废」的档位行内**裸四态结论句**逐条追加日期化追补。
+
+    ★ 只对 `status == 尚未验证` 且 `reading_consistency.consistent is False` 的行生效；
+    ⛔ 不改原句（追加在句尾）；⛔ 不碰 `status_before/status_after` 等机读快照枚举。
+    """
+    for r in rows:
+        if r.get("status") != S_UNVERIFIED:
+            continue
+        rcc = r.get("reading_consistency")
+        if not (isinstance(rcc, dict) and rcc.get("consistent") is False):
+            continue
+        for key, val in list(r.items()):
+            if isinstance(val, str):
+                if _naked_four_state(val):
+                    r[key] = val + " " + VOID_ADDENDUM_20261016
+            elif isinstance(val, dict):
+                for k2, v2 in list(val.items()):
+                    if k2 in _AUDIT_SNAPSHOT_KEYS:
+                        continue
+                    if isinstance(v2, str) and _naked_four_state(v2):
+                        val[k2] = v2 + " " + VOID_ADDENDUM_20261016
+    return rows
+
+
+# ============================================================================================
+# ★★ 2026-10-16 追补（🟡W1 + 扫查规则补齐，task-matrix-r3-fix）：
+#    前一包的「系统性扫查 33→0」规则偏窄，漏了 `superseded_note` / `blocked_reason` 等字段
+#    （详见工位 report.md §④）。本段把规则**补全为**：
+#      · 扫查面 = 行内**全部字段**（递归每一层）＋ meta 派生文本；
+#      · 断言面 = 四态字面（已验证可用/已验证不可用/尚未验证/未纳入验收）＋「当前有效读数」；
+#      · 矛盾面 = 断言与本行现行 `status` 不一致（「由「X」翻为「Y」」按**单个断言 Y**计，
+#        X 是过渡叙述的旧状态，⛔ 不算独立断言）；
+#      · 包裹面 = 同字段内**紧邻（标记起点 ↔ 断言起点 ≤ 40 字符）**的作废/追补标记。
+#    ⚠️ 前一包把光杆「留痕」当标记 ⇒ T032 的 `superseded_note`（「旧测量留痕」）
+#       被误判为已包裹而漏网；本段的标记集**不含**「留痕」「旧读数」这类只修饰旧测量的词。
+#    处置 = 在原断言**紧邻处前缀**作废标记 ＋ 字段末段补日期化追补；⛔ 不改原句。
+# ============================================================================================
+VOID_MARK_ADJ_20261016 = "**【已作废，见末段追补】**"
+#: 2026-10-14 主席口径（跑了没成功即记失败）追补 —— 供 `status = 已验证不可用` 的档用
+OOM_ADDENDUM_20261016 = (
+    "★★ 2026-10-16 追补：本条旧表述「保持尚未验证」**已失效**；"
+    "按 2026-10-14 主席口径（OOM／超时／未实现／跑过未成功一律记失败），"
+    "本档现状为 `已验证不可用`，以本行现行 `status` 为准。"
+)
+#: 结论类断言：四态字面 ＋ 措辞
+_ASSERT_PHRASES = ("当前有效读数",)
+#: 判定「紧邻」用的标记集（★ ⛔ 不含「留痕」——它只修饰旧测量，不构成「本条结论已作废」声明）
+_ADJ_MARKERS = ("作废", "追补", "不得引用", "不得视为", "已被取代", "已被推翻",
+                "保留为历史", "旧读数无效", "不作为判定")
+#: 标记就近插入点（在这些分隔符之后插入）
+_ADJ_DELIMS = set("。；\n★⇒—")
+_MAX_ADJ_GAP = 40
+_TRANS_RE = re.compile(r"由[「（](已验证[^」）]*)[」）]\s*(?:翻为|改为|转为)[「（](已验证[^」）]*)[」）]")
+
+
+def _stale_asserts(text, cur_status):
+    """返回 [(start, end, 断言原文)]：与本行现行 `status` 矛盾的结论类断言。"""
+    old = [m.span(1) for m in _TRANS_RE.finditer(text)]
+    out = []
+    for lit in STATUS_VOCABULARY:
+        for m in re.finditer(re.escape(lit), text):
+            if any(m.start() == s and m.end() == e for s, e in old):
+                continue                        # 过渡叙述的**旧状态**，⛔ 非独立断言
+            if lit != cur_status:
+                out.append((m.start(), m.end(), m.group(0)))
+    for ph in _ASSERT_PHRASES:
+        if cur_status in (S_UNVERIFIED, S_EXCLUDED):
+            for m in re.finditer(re.escape(ph), text):
+                out.append((m.start(), m.end(), m.group(0)))
+    out.sort()
+    return out
+
+
+def _adj_gap(text, pos):
+    """该位置到同字段内最近作废/追补标记的字符距离（标记起点 ↔ 断言起点）；无标记 ⇒ None。"""
+    best = None
+    for mk in _ADJ_MARKERS:
+        for m in re.finditer(re.escape(mk), text):
+            g = abs(m.start() - pos)
+            if best is None or g < best:
+                best = g
+    return best
+
+
+def _insert_adj_marker(text, a_start):
+    """在断言 a_start 之前**就近**插入标记（优先落在最近的分隔符之后；过远则直接贴断言前）。"""
+    ins = None
+    for j in range(a_start - 1, max(-1, a_start - 121), -1):
+        if text[j] in _ADJ_DELIMS:
+            ins = j + 1
+            while ins < len(text) and text[ins] in " \u3000":
+                ins += 1
+            break
+    if ins is None:
+        ins = a_start
+    if (a_start + len(VOID_MARK_ADJ_20261016) + 1) - ins > _MAX_ADJ_GAP:
+        ins = a_start
+    return text[:ins] + VOID_MARK_ADJ_20261016 + " " + text[ins:]
+
+
+def _fix_adjacent(text, cur_status):
+    """反复加标记直到本字段无「无紧邻标记的矛盾断言」；再在字段末段补日期化追补。"""
+    for _ in range(12):
+        hits = [s for s, _e, _r in _stale_asserts(text, cur_status)
+                if _adj_gap(text, s) is None or _adj_gap(text, s) > _MAX_ADJ_GAP]
+        if not hits:
+            break
+        for s in sorted(set(hits), reverse=True):
+            text = _insert_adj_marker(text, s)
+    if VOID_MARK_ADJ_20261016 in text and "2026-10-16 追补" not in text:
+        add = OOM_ADDENDUM_20261016 if cur_status == S_UNAVAILABLE else VOID_ADDENDUM_20261016
+        text = text.rstrip() + " " + add
+    return text
+
+
+def ensure_adjacent_void_markers(rows):
+    """★★ W1：把行内**全部字段**（递归每一层）中「与本行现行 status 矛盾的结论断言」
+    逐条加**紧邻**作废标记（≤40 字符）；⛔ 不改原句；幂等（已紧邻者跳过）。
+
+    ★ 必须在本函数**之后**再派生 `reading_change_registry`（registry 取行内 `caliber_change.rule`
+      ⇒ 否则 registry 条目会漏掉标记）。★ 本函数在 `note_full` 组装**之后**调用，
+      故派生键 `note_full` 亦被覆盖（⛔ 只改上游数据做不到这一点）。
+    """
+    for r in rows:
+        st = r.get("status")
+        if st not in STATUS_VOCABULARY:
+            continue
+        for key, val in list(r.items()):
+            if key in _AUDIT_SNAPSHOT_KEYS:
+                continue
+            if isinstance(val, str):
+                if _stale_asserts(val, st) or VOID_MARK_ADJ_20261016 in val:
+                    nv = _fix_adjacent(val, st)
+                    if nv != val:
+                        r[key] = nv
+            elif isinstance(val, dict):
+                for k2, v2 in list(val.items()):
+                    if k2 in _AUDIT_SNAPSHOT_KEYS or not isinstance(v2, str):
+                        continue
+                    if _stale_asserts(v2, st) or VOID_MARK_ADJ_20261016 in v2:
+                        nv = _fix_adjacent(v2, st)
+                        if nv != v2:
+                            val[k2] = nv
+            elif isinstance(val, list):
+                for i, v2 in enumerate(val):
+                    if not isinstance(v2, str):
+                        continue
+                    if _stale_asserts(v2, st) or VOID_MARK_ADJ_20261016 in v2:
+                        nv = _fix_adjacent(v2, st)
+                        if nv != v2:
+                            val[i] = nv
+    return rows
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--in", dest="inp", required=True)
@@ -962,13 +1211,30 @@ def main():
             r["voided_conclusion"] = ann
         # ★★ 口径变更（主席 2026-10-14）：**"跑了没成功＝失败"** ⇒ 命中 `caliber_verdict` 的档
         #    按该值记四态（★ 真因仍逐字保留在 `blocked_reason`/备注/`anomalies`，⛔ 不抹证据）。
+        #    ★ 但若该档同时命中「读数-配置一致性」作废（下表）⇒ 以作废为**最终**四态（⛔ 不被覆盖）。
+        _rcc = r.get("reading_consistency")
+        _voided_reading = bool(_rcc) and isinstance(_rcc, dict) and _rcc.get("consistent") is False
         _cv = r.get("caliber_verdict")
-        if _cv in STATUS_VOCABULARY:
+        if _cv in STATUS_VOCABULARY and not _voided_reading:
             state = _cv
             r["caliber_change"] = {
                 "effective": "2026-10-14",
                 "rule": "跑了没成功＝失败（OOM／超时／未实现／硬件不可行 均记失败）",
                 "source": "主席口径变更（2026-10-14）",
+            }
+        # ★★ 读数-配置一致性（审查项 🔴B1/B2）：**结论必须与同一行的参数一一对应** ——
+        #    凡跑次读数取自旧参数（旧 lr 口径 / 旧 epoch）而本行参数已更正者 ⇒ 结论**作废**，
+        #    该档标「尚未验证」；旧读数与旧结论**保留为历史**（机器可读字段仍在行内，⛔ 不抹）。
+        if _voided_reading:
+            state = S_UNVERIFIED
+            r["voided_conclusion"] = {
+                "kind": "reading_config_mismatch",
+                "audit": _rcc.get("audit"),
+                "status_before": _rcc.get("status_before"),
+                "current": _rcc.get("current"),
+                "reading": _rcc.get("reading"),
+                "mismatch": _rcc.get("mismatch"),
+                "reason": _rcc.get("cause"),
             }
         r["status"] = state
         r.pop("spec_status", None)
@@ -987,6 +1253,10 @@ def main():
             w = window_text(r.get("runs", ""))
             r["effect"] = (r.get("effect", "—") + ("；" + w if w else "")).strip("；") or "—"
         else:
+            # ★★ 结论作废（读数-配置不对应）档：⛔ 旧读数不得**抹掉** ⇒ 原文迁入
+            #    `voided_conclusion.historical_effect` 作为历史（结果列本身仍按规则置 '—'）。
+            if r.get("voided_conclusion") and str(r.get("effect") or "").strip() not in ("", "—"):
+                r["voided_conclusion"]["historical_effect"] = r["effect"]
             for k in ("peak_mem", "elapsed", "throughput", "effect"):
                 r[k] = "—"
         # ★ epoch 口径（按方法）+ 步数推导（取消人为上限）
@@ -1108,6 +1378,13 @@ def main():
             r["note"] = short_note(r, _full)
         rows.append(r)
 
+    # ★★ 2026-10-16 追补（🔴R1）：先把「因读数-配置一致性审计作废」的行内**裸四态结论句**
+    #    逐条包裹（只追加、⛔ 不改原句）⇒ 其后派生的 registry 亦自动携带该追补。
+    wrap_voided_conclusions(rows)
+    # ★★ 2026-10-16（🟡W1 + 扫查规则补齐）：把「无紧邻作废标记的矛盾断言」逐条加**紧邻**标记。
+    #    ★ 必须在 registry 派生**之前**调用（registry 从行内 `caliber_change.rule` 取文本）。
+    ensure_adjacent_void_markers(rows)
+
     # ★★ 「读数变化登记表」：**数据驱动**地从档位行派生（⛔ 不写死档号/数值）——
     #    凡行级 `caliber_change.kind` 以 `reading_change` 开头者 ⇒ 逐条进 `criteria_caliber.caliber_change`。
     _cal = criteria_caliber()
@@ -1125,12 +1402,38 @@ def main():
         #    缺省 True（兼容既有 T011 等翻盘档的既有渲染文本）；T024 为「读数由无效转有效 + 归因更正，
         #    但四态未变（仍为不可用）」⇒ 显式 False。
         _flip = "四态翻盘" if _cc.get("four_state_flip", True) else "四态未变（★ 仅归因与读数更正）"
+        # ★★ 2026-10-16 追补（🔴R1）：该档若已被 lr 口径一致性审计作废 ⇒ 条目**末尾再加一句**追补，
+        #    与条目内 `rule` 上携带的追补一起构成「显式包裹」（只追加、⛔ 不改原句）。
+        _voided_entry = (_r.get("status") == S_UNVERIFIED
+                         and isinstance(_r.get("reading_consistency"), dict)
+                         and _r["reading_consistency"].get("consistent") is False)
+        _tail = (" " + VOID_ADDENDUM_20261016) if _voided_entry else ""
         _reg.append(
             f"★ {_cc.get('effective', '')} **{_r.get('tier')}**：{_flip} —— {_cc.get('rule', '')} "
             f"★ 旧读数 {_rd(_b)}**无效、⛔ 不得引用**（保留为历史）；"
             f"★ 新读数 {_rd(_a)}**有效**。"
             f"★ 与判据口径的关系：{_cc.get('verdict_unchanged_by_caliber', '')} "
-            f"来源：{_cc.get('source', '')}。{_cc.get('epoch_marker', '')}")
+            f"来源：{_cc.get('source', '')}。{_cc.get('epoch_marker', '')}" + _tail)
+    # ★★ 2026-10-16 追补（🔴R1 第③条）：把「**本次 lr 口径变更导致读数作废**」正式登记进本清单。
+    #    ★ 数据驱动：作废范围由行内 `reading_consistency.consistent is False` 现算（⛔ 不写死档号/数字）；
+    #    ★ 口径依据一律取 `criteria_caliber.lr_policy`（唯一真相源在 `extract_spec.LR_POLICY`）。
+    _lrvoid_tiers = [_r.get("tier") for _r in rows
+                     if isinstance(_r.get("reading_consistency"), dict)
+                     and _r["reading_consistency"].get("consistent") is False]
+    if _lrvoid_tiers:
+        _lp = _cal.get("lr_policy") or {}
+        _reg.append(
+            "★ 2026-10-16 **本次 lr 口径变更 ⇒ 读数作废（正式登记）**：★ 新口径 = "
+            f"{_lp.get('rule', '')} ★ 机制面 = {_lp.get('mechanism_removed', '')} "
+            f"★ **作废范围 = {len(_lrvoid_tiers)} 档**"
+            f"（{', '.join(str(x) for x in _lrvoid_tiers)}；"
+            "逐档机读判据 `reading_consistency.consistent == false`，即现行 `status = 尚未验证` 的档）"
+            "—— 这些档的读数取自**旧口径跑次**（native：生效 lr = 配置 lr × dp_size；"
+            "或旧 epoch）⇒ **结论作废、⛔ 不得引用**；"
+            "★ 旧读数与旧结论一律保留于行内 `voided_conclusion` / `reading_consistency`（⛔ 不抹）。"
+            f"★ 依据 = `meta.criteria_caliber.lr_policy`（source = {_lp.get('source', '')}；"
+            f"effective = {_lp.get('effective', '')}；single_source = {_lp.get('single_source', '')}）；"
+            f"★ 后果判据 = {_lp.get('consequence', '')}")
     _cal["caliber_change"]["reading_change_registry"] = _reg
 
     doc = {

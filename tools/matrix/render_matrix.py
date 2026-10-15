@@ -224,7 +224,10 @@ def build_caliber(data):
             f'<tr><th>判据口径变更留痕</th><td>{caliber_change_html(c)}</td></tr>'
             f'<tr><th>评测数据集</th><td>{html.escape(d.get("id", ""))}；'
             f'{html.escape(d.get("availability", ""))}；版本锚点 sha256 <code>{html.escape(d.get("version_anchor_sha256", ""))}</code>；'
-            f'样本量 {d.get("sample_count")}；评测方法 {html.escape(d.get("method", ""))}</td></tr>'
+            f'样本量 {d.get("sample_count")}；评测方法 {html.escape(d.get("method", ""))}'
+            # ★ 「是否同分布」口径（诉求 5）：数据驱动 —— 数据里没写就渲染空串（⛔ 不写死文本）
+            f'{"<br><b>训练/评测是否同分布</b>：" + html.escape(str(d.get("train_eval_relation"))) if d.get("train_eval_relation") else ""}'
+            f'{"<br>" + html.escape(str(d.get("train_eval_relation_role"))) if d.get("train_eval_relation_role") else ""}</td></tr>'
             f'<tr><th>判据标识</th><td><code>{html.escape(c.get("criteria_id", ""))}</code></td></tr>'
             f'<tr><th>阈值与目标值（判据②）</th><td>{threshold_html(th)}</td></tr>'
             f'<tr><th>基线口径</th><td>{html.escape(bl.get("role", ""))}；{html.escape(bl.get("caliber", ""))}</td></tr>'
