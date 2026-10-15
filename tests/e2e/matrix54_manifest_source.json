@@ -283,7 +283,7 @@
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T001.yaml",
+      "config": "samples/configs/matrix54-generated/T001.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T001.jsonl",
         "subset_size": 100,
@@ -359,7 +359,7 @@
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T002.yaml",
+      "config": "samples/configs/matrix54-generated/T002.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T002.jsonl",
         "subset_size": 100,
@@ -437,7 +437,7 @@
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T003.yaml",
+      "config": "samples/configs/matrix54-generated/T003.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T003.jsonl",
         "subset_size": 100,
@@ -513,7 +513,7 @@
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
       "status_reason": "全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T004.yaml",
+      "config": "samples/configs/matrix54-generated/T004.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T004.jsonl",
         "subset_size": 100,
@@ -591,7 +591,7 @@
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
       "status_reason": "全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T005.yaml",
+      "config": "samples/configs/matrix54-generated/T005.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T005.jsonl",
         "subset_size": 100,
@@ -671,7 +671,7 @@
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
       "status_reason": "全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T006.yaml",
+      "config": "samples/configs/matrix54-generated/T006.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T006.jsonl",
         "subset_size": 100,
@@ -747,7 +747,7 @@
       "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T007.yaml",
+      "config": "samples/configs/matrix54-generated/T007.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T007.jsonl",
         "subset_size": 100,
@@ -823,7 +823,7 @@
       "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T008.yaml",
+      "config": "samples/configs/matrix54-generated/T008.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T008.jsonl",
         "subset_size": 100,
@@ -901,7 +901,7 @@
       "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T009.yaml",
+      "config": "samples/configs/matrix54-generated/T009.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T009.jsonl",
         "subset_size": 100,
@@ -976,7 +976,7 @@
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T010.yaml",
+      "config": "samples/configs/matrix54-generated/T010.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T010.jsonl",
         "subset_size": 100,
@@ -1052,7 +1052,7 @@
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T011.yaml",
+      "config": "samples/configs/matrix54-generated/T011.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T011.jsonl",
         "subset_size": 100,
@@ -1130,7 +1130,7 @@
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T012.yaml",
+      "config": "samples/configs/matrix54-generated/T012.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T012.jsonl",
         "subset_size": 100,
@@ -1205,7 +1205,7 @@
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T013.yaml",
+      "config": "samples/configs/matrix54-generated/T013.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T013.jsonl",
         "subset_size": 100,
@@ -1281,7 +1281,7 @@
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T014.yaml",
+      "config": "samples/configs/matrix54-generated/T014.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T014.jsonl",
         "subset_size": 100,
@@ -1359,7 +1359,7 @@
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T015.yaml",
+      "config": "samples/configs/matrix54-generated/T015.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T015.jsonl",
         "subset_size": 100,
@@ -1435,7 +1435,7 @@
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
       "status_reason": "全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T016.yaml",
+      "config": "samples/configs/matrix54-generated/T016.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T016.jsonl",
         "subset_size": 100,
@@ -1513,7 +1513,7 @@
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
       "status_reason": "全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T017.yaml",
+      "config": "samples/configs/matrix54-generated/T017.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T017.jsonl",
         "subset_size": 100,
@@ -1592,7 +1592,7 @@
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
       "status_reason": "全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T018.yaml",
+      "config": "samples/configs/matrix54-generated/T018.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T018.jsonl",
         "subset_size": 100,
@@ -1668,7 +1668,7 @@
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
       "status_reason": "全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T019.yaml",
+      "config": "samples/configs/matrix54-generated/T019.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T019.jsonl",
         "subset_size": 100,
@@ -1746,7 +1746,7 @@
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
       "status_reason": "全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T020.yaml",
+      "config": "samples/configs/matrix54-generated/T020.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T020.jsonl",
         "subset_size": 100,
@@ -1826,7 +1826,7 @@
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
       "status_reason": "全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T021.yaml",
+      "config": "samples/configs/matrix54-generated/T021.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T021.jsonl",
         "subset_size": 100,
@@ -1902,7 +1902,7 @@
       "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T022.yaml",
+      "config": "samples/configs/matrix54-generated/T022.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T022.jsonl",
         "subset_size": 100,
@@ -1978,7 +1978,7 @@
       "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T023.yaml",
+      "config": "samples/configs/matrix54-generated/T023.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T023.jsonl",
         "subset_size": 100,
@@ -2056,7 +2056,7 @@
       "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T024.yaml",
+      "config": "samples/configs/matrix54-generated/T024.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T024.jsonl",
         "subset_size": 100,
@@ -2131,7 +2131,7 @@
       "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T025.yaml",
+      "config": "samples/configs/matrix54-generated/T025.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T025.jsonl",
         "subset_size": 100,
@@ -2207,7 +2207,7 @@
       "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T026.yaml",
+      "config": "samples/configs/matrix54-generated/T026.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T026.jsonl",
         "subset_size": 100,
@@ -2285,7 +2285,7 @@
       "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T027.yaml",
+      "config": "samples/configs/matrix54-generated/T027.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T027.jsonl",
         "subset_size": 100,
@@ -2360,7 +2360,7 @@
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T028.yaml",
+      "config": "samples/configs/matrix54-generated/T028.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T028.jsonl",
         "subset_size": 48,
@@ -2436,7 +2436,7 @@
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T029.yaml",
+      "config": "samples/configs/matrix54-generated/T029.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T029.jsonl",
         "subset_size": 96,
@@ -2514,7 +2514,7 @@
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T030.yaml",
+      "config": "samples/configs/matrix54-generated/T030.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T030.jsonl",
         "subset_size": 192,
@@ -2589,7 +2589,7 @@
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T031.yaml",
+      "config": "samples/configs/matrix54-generated/T031.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T031.jsonl",
         "subset_size": 20,
@@ -2665,7 +2665,7 @@
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T032.yaml",
+      "config": "samples/configs/matrix54-generated/T032.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T032.jsonl",
         "subset_size": 20,
@@ -2743,7 +2743,7 @@
       "model_host_dir_env_var": "GRASPO_9B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T033.yaml",
+      "config": "samples/configs/matrix54-generated/T033.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T033.jsonl",
         "subset_size": 20,
@@ -2819,7 +2819,7 @@
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
       "status_reason": "全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T034.yaml",
+      "config": "samples/configs/matrix54-generated/T034.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T034.jsonl",
         "subset_size": 48,
@@ -2897,7 +2897,7 @@
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
       "status_reason": "全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T035.yaml",
+      "config": "samples/configs/matrix54-generated/T035.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T035.jsonl",
         "subset_size": 96,
@@ -2976,7 +2976,7 @@
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
       "status_reason": "全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T036.yaml",
+      "config": "samples/configs/matrix54-generated/T036.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T036.jsonl",
         "subset_size": 192,
@@ -3052,7 +3052,7 @@
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
       "status_reason": "全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T037.yaml",
+      "config": "samples/configs/matrix54-generated/T037.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T037.jsonl",
         "subset_size": 20,
@@ -3130,7 +3130,7 @@
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
       "status_reason": "全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T038.yaml",
+      "config": "samples/configs/matrix54-generated/T038.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T038.jsonl",
         "subset_size": 20,
@@ -3210,7 +3210,7 @@
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
       "status_reason": "全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T039.yaml",
+      "config": "samples/configs/matrix54-generated/T039.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T039.jsonl",
         "subset_size": 20,
@@ -3286,7 +3286,7 @@
       "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T040.yaml",
+      "config": "samples/configs/matrix54-generated/T040.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T040.jsonl",
         "subset_size": 72,
@@ -3362,7 +3362,7 @@
       "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T041.yaml",
+      "config": "samples/configs/matrix54-generated/T041.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T041.jsonl",
         "subset_size": 144,
@@ -3440,7 +3440,7 @@
       "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T042.yaml",
+      "config": "samples/configs/matrix54-generated/T042.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T042.jsonl",
         "subset_size": 288,
@@ -3515,7 +3515,7 @@
       "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T043.yaml",
+      "config": "samples/configs/matrix54-generated/T043.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T043.jsonl",
         "subset_size": 20,
@@ -3591,7 +3591,7 @@
       "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T044.yaml",
+      "config": "samples/configs/matrix54-generated/T044.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T044.jsonl",
         "subset_size": 20,
@@ -3669,7 +3669,7 @@
       "model_host_dir_env_var": "GRASPO_27B_HOST_DIR",
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.8-27B",
       "applicable": true,
-      "config": "samples/configs/matrix54-v2/T045.yaml",
+      "config": "samples/configs/matrix54-generated/T045.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T045.jsonl",
         "subset_size": 20,
@@ -3745,7 +3745,7 @@
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
       "applicable": true,
       "opd_teacher_relation": "independent",
-      "config": "samples/configs/matrix54-v2/T046.yaml",
+      "config": "samples/configs/matrix54-generated/T046.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T046.jsonl",
         "subset_size": 20,
@@ -3822,7 +3822,7 @@
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
       "applicable": true,
       "opd_teacher_relation": "independent",
-      "config": "samples/configs/matrix54-v2/T047.yaml",
+      "config": "samples/configs/matrix54-generated/T047.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T047.jsonl",
         "subset_size": 20,
@@ -3901,7 +3901,7 @@
       "model_host_dir_default": "<GRASPO_MODELS_HOST_ROOT>/Qwen3.5-9B",
       "applicable": true,
       "opd_teacher_relation": "independent",
-      "config": "samples/configs/matrix54-v2/T048.yaml",
+      "config": "samples/configs/matrix54-generated/T048.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T048.jsonl",
         "subset_size": 20,
@@ -3978,7 +3978,7 @@
       "status_reason": "全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。",
       "applicable": true,
       "opd_teacher_relation": "independent",
-      "config": "samples/configs/matrix54-v2/T049.yaml",
+      "config": "samples/configs/matrix54-generated/T049.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T049.jsonl",
         "subset_size": 20,
@@ -4057,7 +4057,7 @@
       "status_reason": "全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。",
       "applicable": true,
       "opd_teacher_relation": "independent",
-      "config": "samples/configs/matrix54-v2/T050.yaml",
+      "config": "samples/configs/matrix54-generated/T050.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T050.jsonl",
         "subset_size": 20,
@@ -4138,7 +4138,7 @@
       "status_reason": "全参路径由 `tuner_type: full` 表达（native 与 ms-swift 共用同一开关）。该能力当前 ⚠️ 未验证（capability-matrix §4「全量 · native / ms-swift」），且 native 全参只支持 PP 分片（tp_size>1 或 dp_size>1 会被配置校验 fail-closed 拒绝），因此本档 native 布局固定为 pp_size=卡数、dp=tp=1。",
       "applicable": true,
       "opd_teacher_relation": "independent",
-      "config": "samples/configs/matrix54-v2/T051.yaml",
+      "config": "samples/configs/matrix54-generated/T051.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T051.jsonl",
         "subset_size": 20,
@@ -4422,17 +4422,20 @@
   "supersedes": {
     "relationship": "v1 清单（matrix54_manifest.json）**未被改动**；本文件是它的 v2 派生版",
     "base_manifest": "tests/e2e/matrix54_manifest.json",
-    "base_manifest_sha256": "b0cfe28a5155993d56eba2ad6404b414d90587806988a1f98cd842025f7ceb54",
+    "base_manifest_sha256": "63be9d453143e08e3e9cf85808303c838c459a7b3bde0298aadd44f2cdcc02ad",
     "config_v2_fingerprint": "066ca99a908a3f636f94dec6d80f79d1d3a4d1a918c697b7765658172185e99a",
     "generator": "tests/e2e/generate_matrix_manifest_source.py",
     "config_v2_dir": "samples/configs/matrix54-v2",
     "subset_dir_container": "/work/elam-v5/subsets-v2",
     "subset_dir_host": "${GRASPO_PREGEN_SUBSET_DIR}",
     "host_data_root": "${GRASPO_ELAM_DATA_ROOT}",
-    "attempt_root": "${GRASPO_ATTEMPT_ROOT}"
+    "attempt_root": "${GRASPO_ATTEMPT_ROOT}",
+    "config_dir": "samples/configs/matrix54-generated",
+    "config_dir_fingerprint": "3c8dbf72901da02da58fe2d03b77a8b456d76d8e1b9f76db8723cb371b166b79",
+    "config_dir_note": "★ 跑次实际读取的档配置目录 = samples/configs/matrix54-generated（矩阵生成件；由 tools/matrix/gen_configs.py 从 docs/capability-matrix.data.json 生成，与矩阵声明逐档一致）。★ samples/configs/matrix54-v2 仅作**步数口径来源**（dp_size/save_steps），⛔ 不再是跑次配置来源。"
   },
   "changes_vs_v1": {
-    "config": "samples/configs/matrix54/T0NN.yaml → samples/configs/matrix54-v2/T0NN.yaml（51 个可跑档）",
+    "config": "samples/configs/matrix54/T0NN.yaml → samples/configs/matrix54-generated/T0NN.yaml（51 个可跑档）｜★ 步数口径仍只读 samples/configs/matrix54-v2/（不随 config 改指而变）",
     "subset_size": "9 档 GRASPO×native：20 → 48×卡数（48/96/192）；其余 45 档不变（CPT/SFT=100、GRASPO/OPD=20）",
     "train_path": "/work/elam-v5/subsets/ → /work/elam-v5/subsets-v2/（51 个可跑档）",
     "steps": "expected_optimizer_steps_per_epoch/_reachable 按**真实步进语义**重算：native GRASPO = ceil(floor(subset/dp_size)/Q)",

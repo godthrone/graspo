@@ -6,8 +6,13 @@
     本脚本**只读**它（作为 v1 台账的单一真相源），把它按 v2 规则**改写出一份新清单**
     ``tests/e2e/matrix54_manifest_source.json``。v1 生成器一行未动。
   · 改写面**只有四类**，逐条显式、逐条可核：
-      ① ``config``：``samples/configs/matrix54/T0NN.yaml`` → ``samples/configs/matrix54-v2/T0NN.yaml``
-         （runner 实际读取的就是这个字段，见 ``run_matrix54.sh`` 的 ``CONFIG="${CONFIG_STATUS%%|*}"``）
+      ① ``config``：``samples/configs/matrix54/T0NN.yaml`` → ``samples/configs/matrix54-generated/T0NN.yaml``
+         （runner 实际读取的就是这个字段，见 ``run_matrix54.sh`` 的 ``CONFIG="${CONFIG_STATUS%%|*}"``）。
+         ★ **2026-10-16 改指**（消「跑次用的配置 ≠ 清单声明的配置」）：跑次树逐字引用的是
+         ``matrix54-generated/``（= ``tools/matrix/gen_configs.py`` 从
+         ``docs/capability-matrix.data.json`` 生成、经实测与矩阵声明 lr **逐档一致**的现行世代）；
+         改指前清单指向 ``matrix54-v2/``，而它仍是旧 lr/epoch 口径（**21 档与矩阵声明不一致**）。
+         ★ 步数口径**仍只读** ``matrix54-v2/``（见 :data:`V2_CONFIG_DIR_REL`），⛔ 本次不动。
       ② ``data.subset_size``：9 档 ``GRASPO × native`` → ``48 × 卡数``（48/96/192）；
          其余 45 档**照 v1**（CPT/SFT=100、GRASPO/OPD=20）。3 个 not_applicable 档保持 v1。
       ③ ``data.train_path`` / 步数两字段 / ``acceptance.formal_gate.*``：按 v2 真值重算
@@ -53,6 +58,20 @@ PROJECT_ROOT = _HERE.parents[2]  # tests/e2e/x.py → tests/e2e → tests → <r
 V1_GENERATOR_PATH = _HERE.parent / "generate_matrix.py"
 V1_MANIFEST_PATH = _HERE.parent / "matrix54_manifest.json"
 V2_MANIFEST_PATH = _HERE.parent / "matrix54_manifest_source.json"
+
+# ★ 生成链防丢失（2026-10-16）：判定实现与 v1 生成器/测试共用同一份（§1.4 单一真相源）。
+sys.path.insert(0, str(_HERE.parent))
+from regen_field_guard import (  # noqa: E402  （sys.path 就位之后导入）
+    guard_regeneration_keeps_on_disk_fields,
+    matches_any,
+)
+
+#: ★ **跑次实际读取的档配置目录**（= 矩阵生成件）：由 ``tools/matrix/gen_configs.py`` 从
+#:   ``docs/capability-matrix.data.json`` 确定性生成 ⇒ 可复现、且与矩阵声明逐档一致。
+#:   ``tiers[*].config`` 一律指这里（⛔ 不再指 ``matrix54-v2/``，那是旧 lr/epoch 世代）。
+CONFIG_DIR_REL = "samples/configs/matrix54-generated"
+#: ★ **步数口径来源目录**（v2 冻结历史，**只读**）：``dp_size`` / ``save_steps`` 从这里读，
+#:   ⛔ 不因 ``config`` 改指而变 —— 改它会牵动 ``expected_optimizer_steps*`` 与矩阵台账。
 V2_CONFIG_DIR_REL = "samples/configs/matrix54-v2"
 V1_CONFIG_DIR_REL = "samples/configs/matrix54"
 
@@ -113,6 +132,27 @@ gm = load_v1_module()
 assert int(gm.NATIVE_ROLLOUT_QUEUE_BATCH_SIZE) == Q, "Q 与 v1 生成器不一致"
 assert int(gm.FORMAL_GATE_MIN_OPTIMIZER_STEPS) == MIN_OPTIMIZER_STEPS, "门槛与 v1 不一致"
 assert int(gm.ELAM_TRAIN_COUNT) == FORMAL_LINE_COUNT, "正式集行数与 v1 不一致"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ★★ 生成链防丢失（2026-10-16）：post-fill 注册表 + 「重生成不得移除在盘字段」守卫 ★★
+#
+# 病史：在盘 ``matrix54_manifest_source.json`` 是**跑次台账**，跑后会回填逐档
+#   ``status`` / ``matrix_conclusion`` / ``availability`` / ``blocked_reason`` / ``live_evidence`` /
+#   ``retest`` 等字段（manifest-authority 包实测：跑一次默认生成器就会把这些状态冲掉，
+#   故当时被迫改用外科式改指）。整体重生成**静默丢真值**正是本守卫要挡的。
+#
+# 语义（与 ``tests/e2e/generate_matrix.py`` 同一份注册表的**下游继承**）：
+#   · 本生成器的输出 = 深拷贝 v1 清单 + 显式改写，故 v1 清单里登记过的后填字段会**原样继承**；
+#     注册表直接取 ``gm.POST_FILL_EXTRA_PATTERNS``（⛔ 不在这里另抄一份，避免两处漂移）。
+#   · 生成前先比对**在盘旧文件**：新内容若比它少任何字段路径 ⇒ **fail-closed、不写盘、逐条列出**。
+#   · 确需例外 ⇒ 进 ``MANIFEST_ALLOWED_FIELD_LOSS``（显式具名，用到即打印）。
+POST_FILL_EXTRA_PATTERNS: tuple[str, ...] = tuple(getattr(gm, "POST_FILL_EXTRA_PATTERNS", ()))
+MANIFEST_ALLOWED_FIELD_LOSS: tuple[str, ...] = ()
+
+
+def is_post_fill_extra(path: str) -> bool:
+    """该字段路径是否已登记为「只在盘出现、生成器不产出」的后填字段。"""
+    return matches_any(path, POST_FILL_EXTRA_PATTERNS)
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -216,7 +256,7 @@ def patch_tier(entry: dict, data_root: str, pregen_dir: str) -> dict:
     if out.get("config"):
         if Path(out["config"]).parent.as_posix() != V1_CONFIG_DIR_REL:
             raise AssertionError(f"{tier_id}: v1 config 目录异常：{out['config']}")
-        out["config"] = f"{V2_CONFIG_DIR_REL}/{tier_id}.yaml"
+        out["config"] = f"{CONFIG_DIR_REL}/{tier_id}.yaml"
 
     # ② 子集条数
     v1_subset = int(out["data"]["subset_size"])
@@ -417,7 +457,7 @@ def build_v2_audit(entries: list[dict]) -> dict:
 
 def build_v2_manifest(
     v1_manifest: dict, data_root: str, pregen_dir: str, attempt_root: str,
-    v1_manifest_sha: str, config_fingerprint: str,
+    v1_manifest_sha: str, config_fingerprint: str, config_dir_fingerprint: str = "",
 ) -> dict:
     v1_tiers = v1_manifest["tiers"]
     entries = [patch_tier(t, data_root, pregen_dir) for t in v1_tiers]
@@ -434,13 +474,22 @@ def build_v2_manifest(
         "config_v2_fingerprint": config_fingerprint,
         "generator": "tests/e2e/generate_matrix_manifest_source.py",
         "config_v2_dir": V2_CONFIG_DIR_REL,
+        "config_dir": CONFIG_DIR_REL,
+        "config_dir_fingerprint": config_dir_fingerprint,
+        "config_dir_note": (
+            "★ 跑次实际读取的档配置目录 = " + CONFIG_DIR_REL + "（矩阵生成件；由 tools/matrix/gen_configs.py "
+            "从 docs/capability-matrix.data.json 生成，与矩阵声明逐档一致）。"
+            "★ " + V2_CONFIG_DIR_REL + " 仅作**步数口径来源**（dp_size/save_steps），⛔ 不再是"
+            "跑次配置来源。"
+        ),
         "subset_dir_container": f"/work/elam-v5/{V2_SUBSET_DIRNAME}",
         "subset_dir_host": pregen_dir,
         "host_data_root": data_root,
         "attempt_root": attempt_root,
     }
     out["changes_vs_v1"] = {
-        "config": f"{V1_CONFIG_DIR_REL}/T0NN.yaml → {V2_CONFIG_DIR_REL}/T0NN.yaml（51 个可跑档）",
+        "config": f"{V1_CONFIG_DIR_REL}/T0NN.yaml → {CONFIG_DIR_REL}/T0NN.yaml（51 个可跑档）"
+                  f"｜★ 步数口径仍只读 {V2_CONFIG_DIR_REL}/（不随 config 改指而变）",
         "subset_size": (
             "9 档 GRASPO×native：20 → 48×卡数（48/96/192）；其余 45 档不变（CPT/SFT=100、GRASPO/OPD=20）"
         ),
@@ -583,6 +632,8 @@ def check(manifest_path: Path) -> int:
     entries = manifest["tiers"]
     config_dir = PROJECT_ROOT / V2_CONFIG_DIR_REL
     have_configs = config_dir.is_dir()
+    run_config_dir = PROJECT_ROOT / CONFIG_DIR_REL
+    have_run_configs = run_config_dir.is_dir()
     problems: list[str] = []
     declared_anchor_diffs: list[str] = []
     if len(entries) != 54:
@@ -591,8 +642,12 @@ def check(manifest_path: Path) -> int:
         problems.append("config_version != v2")
     for e in entries:
         tid = e["tier_id"]
-        if e.get("config") and not str(e["config"]).startswith(V2_CONFIG_DIR_REL):
-            problems.append(f"{tid}: config 不在 {V2_CONFIG_DIR_REL}")
+        if e.get("config") and not str(e["config"]).startswith(CONFIG_DIR_REL):
+            problems.append(f"{tid}: config 不在 {CONFIG_DIR_REL}（跑次实际读取的档配置目录）")
+        # ★ 跑次配置存在性核对（看不到目录即跳过，不静默通过）：清单指哪一份就必须有哪一份。
+        if have_run_configs and e.get("config"):
+            if not (PROJECT_ROOT / str(e["config"])).is_file():
+                problems.append(f"{tid}: 清单声明的 config 文件不存在：{e['config']}")
         per = int(e["expected_optimizer_steps_per_epoch"])
         reach = int(e["expected_optimizer_steps_reachable"])
         if reach != per * int(gm.MATRIX_MAX_EPOCHS):
@@ -630,6 +685,11 @@ def check(manifest_path: Path) -> int:
         "配置 v2 交叉核对："
         + (f"已逐档复算（{config_dir}）" if have_configs
            else f"**跳过**（本机看不到 {config_dir}；改由清单内的 step_formula_v2 自洽性核对）")
+    )
+    print(
+        "跑次配置交叉核对："
+        + (f"已逐档核对存在性（{run_config_dir}）" if have_run_configs
+           else f"**跳过**（本机看不到 {run_config_dir}）")
     )
     # 冻结子集交叉核对（能看到才做）
     subset_dir = Path(manifest["data_sources"]["pregenerated_subsets"]["host_dir"])
@@ -690,7 +750,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="runner 的 RUN_ROOT 推荐值（运行产物根；须与上面两者不嵌套）")
     parser.add_argument(
         "--config-fingerprint", default=None,
-        help="配置 v2 总指纹（默认按冻结点算法对 samples/configs/matrix54-v2/ **现算**）",
+        help="**步数口径来源**目录总指纹（默认按冻结点算法对 samples/configs/matrix54-v2/ **现算**）",
     )
     args = parser.parse_args(argv)
 
@@ -710,17 +770,34 @@ def main(argv: list[str] | None = None) -> int:
     fingerprint = args.config_fingerprint or config_dir_total_fingerprint(
         PROJECT_ROOT / V2_CONFIG_DIR_REL
     )
+    run_fingerprint = config_dir_total_fingerprint(PROJECT_ROOT / CONFIG_DIR_REL)
 
     manifest = build_v2_manifest(
         v1_manifest, args.host_data_root, args.pregen_subset_dir, args.attempt_root,
-        v1_manifest_sha, fingerprint,
+        v1_manifest_sha, fingerprint, run_fingerprint,
     )
+    # ★★ 生成链防丢失（fail-closed，**在写盘之前**）：重生成不得移除在盘清单已有的字段。
+    lost = guard_regeneration_keeps_on_disk_fields(
+        manifest,
+        args.out,
+        post_fill_patterns=POST_FILL_EXTRA_PATTERNS,
+        allowed_drop=MANIFEST_ALLOWED_FIELD_LOSS,
+        what="v2 运行清单 matrix54_manifest_source.json",
+    )
+    if lost:
+        print(
+            f"FATAL: 重生成会从在盘清单移除 {len(lost)} 条字段路径（前 5 条：{lost[:5]}）"
+            f"⇒ 拒绝写盘 {args.out}（fail-closed）。",
+            file=sys.stderr,
+        )
+        return 1
     text = json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
     args.out.write_text(text, encoding="utf-8")
     rc = check(args.out)
     print(f"v2 清单已写出：{args.out}（sha256={sha256_bytes(text.encode())}）")
     print(f"  v1 基线 sha256={v1_manifest_sha}（v1 清单字节未动）")
-    print(f"  配置 v2 总指纹={fingerprint}")
+    print(f"  步数口径来源 v2 总指纹={fingerprint}")
+    print(f"  跑次配置目录 {CONFIG_DIR_REL} 总指纹={run_fingerprint}")
     return rc
 
 

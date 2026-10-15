@@ -18,7 +18,7 @@
 
 | # | 位置 | 改动 | 理由 |
 |---|---|---|---|
-| M1 | 12 档 `tiers[*].config` | `samples/configs/matrix54-v2/<T>.yaml` → `samples/configs/matrix54-fsdp/<T>.yaml` | 指向 FSDP 变体配置 |
+| M1 | 12 档 `tiers[*].config` | `<基线清单 supersedes.config_dir>/<T>.yaml` → `samples/configs/matrix54-fsdp/<T>.yaml` | 指向 FSDP 变体配置（★ 2026-10-16：基线目录**由基线清单自己声明**，⛔ 不再硬编码 `matrix54-v2`） |
 | M2 | 12 档 `feasibility.recipe.msswift` | `deepspeed: zero2[_offload]` → `fsdp: samples/configs/fsdp/fsdp2_full_state_dict[_offload].json` | 与 M1 同源（§1.4 配方只有一处） |
 | M3 | 12 档 `feasibility.estimate` | 去掉 zero2/zero2_offload 的 49.7 / 45.5 GiB 算式，改为"**待重算** + 保守性不变式 / 必须实测项" | 只改后端、未重跑估算器 ⇒ 不复用旧数字、不编新数字 |
 | M4 | `runtime.image` | `graspo-msswift:4.5.3` → `graspo:v0.28.11-cu130fix-v2-nfc3`（经 nfc1→nfc2→nfc3） | ①③ 的读数只在打过补丁的镜像里存在；② **12 档必须同一镜像**（否则"连续 3 次"的口径单元不成立）；③ nfc3 是 rollout 修复后的唯一可用镜像 |
@@ -41,8 +41,21 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-BASE = ROOT / "tests/e2e/matrix54_manifest_source.json"
-OUT = ROOT / "tests/e2e/matrix54_manifest_fsdp.json"
+BASE = ROOT / "tests/e2e" / "matrix54_manifest_source.json"
+OUT = ROOT / "tests/e2e" / "matrix54_manifest_fsdp.json"
+
+# ★ 生成链防丢失（2026-10-16）：判定实现与其它清单生成器共用同一份（§1.4 单一真相源）。
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from regen_field_guard import (  # noqa: E402  （sys.path 就位之后导入）
+    guard_regeneration_keeps_on_disk_fields,
+)
+
+#: post-fill 注册表（本变体是**纯派生**：输出 = 源清单 + 显式枚举的 M1–M6，`build()` 内
+#: 还有"除枚举外与基线深度相等"的断言 ⇒ 生成器**不产出**的后填字段理应一条都没有）。
+#: 故这里**为空**：在盘 fsdp 清单若多出任何字段路径 ⇒ fail-closed（陌生漂移，先判定归属）。
+POST_FILL_EXTRA_PATTERNS: tuple[str, ...] = ()
+#: 确需例外时的**显式具名清单**（用到即打印）。
+MANIFEST_ALLOWED_FIELD_LOSS: tuple[str, ...] = ()
 
 PHASE1_TIERS = ("T006", "T021", "T039", "T051")                                  # 4 卡，原 zero2
 PHASE2_TIERS = ("T004", "T005", "T019", "T020", "T037", "T038", "T049", "T050")   # 1/2 卡，原 zero2_offload
@@ -129,6 +142,12 @@ def build() -> tuple[dict, list[dict[str, object]]]:
     changes: list[dict[str, object]] = []
 
     by_id = {t["tier_id"]: t for t in doc["tiers"]}
+    # ★ 基线档配置目录 = **基线清单自己声明的** `supersedes.config_dir`（单一真相源）：
+    #   ⛔ 不再硬编码 `matrix54-v2`（2026-10-16 源清单已把 config 改指
+    #   `samples/configs/matrix54-generated/` = 跑次实际读取的世代）。
+    base_cfg_dir = (base.get("supersedes") or {}).get("config_dir")
+    if not base_cfg_dir:
+        raise SystemExit("FATAL: 基线清单缺少 supersedes.config_dir，无法确定档配置目录（fail-closed）")
     for tier in TIERS:
         phase = TIER_PHASE[tier]
         node = by_id.get(tier)
@@ -136,8 +155,8 @@ def build() -> tuple[dict, list[dict[str, object]]]:
             raise SystemExit(f"FATAL: 基线清单里没有 {tier}")
 
         old_cfg = node["config"]
-        if old_cfg != f"samples/configs/matrix54-v2/{tier}.yaml":
-            raise SystemExit(f"FATAL {tier}: config 期望 matrix54-v2，实际 {old_cfg!r}")
+        if old_cfg != f"{base_cfg_dir}/{tier}.yaml":
+            raise SystemExit(f"FATAL {tier}: config 期望 {base_cfg_dir}，实际 {old_cfg!r}")
         node["config"] = f"samples/configs/matrix54-fsdp/{tier}.yaml"
         changes.append({"tier": tier, "id": "M1", "field": "tiers[*].config",
                         "before": old_cfg, "after": node["config"]})
@@ -224,7 +243,7 @@ def build() -> tuple[dict, list[dict[str, object]]]:
     for tier in TIERS:
         phase = TIER_PHASE[tier]
         n = next(t for t in probe["tiers"] if t["tier_id"] == tier)
-        n["config"] = f"samples/configs/matrix54-v2/{tier}.yaml"
+        n["config"] = f"{base_cfg_dir}/{tier}.yaml"
         m = n["feasibility"]["recipe"]["msswift"]
         m.pop("fsdp")
         m["deepspeed"] = OLD_DS_BY_PHASE[phase]
@@ -265,6 +284,22 @@ def main() -> int:
             return 1
         print("\nCHECK OK：落盘内容与重算逐字节一致")
         return 0
+
+    # ★★ 生成链防丢失（fail-closed，**在写盘之前**）：重生成不得移除在盘清单已有的字段。
+    lost = guard_regeneration_keeps_on_disk_fields(
+        doc,
+        OUT,
+        post_fill_patterns=POST_FILL_EXTRA_PATTERNS,
+        allowed_drop=MANIFEST_ALLOWED_FIELD_LOSS,
+        what="FSDP 变体清单 matrix54_manifest_fsdp.json",
+    )
+    if lost:
+        print(
+            f"\nFATAL: 重生成会从在盘清单移除 {len(lost)} 条字段路径（前 5 条：{lost[:5]}）"
+            f"⇒ 拒绝写盘 {OUT}（fail-closed）。",
+            file=sys.stderr,
+        )
+        return 1
 
     OUT.write_text(payload, encoding="utf-8")
     print(f"\n已写 {OUT.relative_to(ROOT)}")
