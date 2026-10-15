@@ -33,10 +33,81 @@ RESTORED_LORA = {
     "target_modules": ["language_all_linear", "vision_common"],   # 122 件 = language 12 + visual 110
     "target_preset": None,
     "r": 128, "alpha": 256, "dropout": 0.05,
-    "learning_rate_cfg": "1.0e-05",
 }
-# full 档保持按方法的既有值（④ 裁定：不进统一块，按方法依据写清）
-FULL_LR_BASIS = "仓内指引「RL 比 SFT 低一个数量级」：SFT 主流 5e-5、GRASPO 5e-6"
+
+# ══ ★★ 主席 2026-10-15 裁定：lr =「一个方法一个值」，⛔ 不按卡数缩放 ══════════════
+# 逐字裁定：
+#   ·「针对不同的训练方式，给它不同的步长。比如：SFT 的步长要长一点，强化学习的步长要短一点。」
+#   ·「这种东西，既然我们取消了，那就直接让这个机制消失就完了，干嘛后再除一次？」
+# ⇒「按卡数缩放学习率」这个机制（其配置字段与计算方法）已**整体删除**；
+#   lr 与 dp_size / tp_size / pp_size / 卡数**无关**，本表是 lr 的**唯一真相源**。
+# 取值一律锚定实测，⛔ 不许发明数字（逐条依据见 LR_BASIS）。
+LR_POLICY: dict[tuple[str, str], str] = {
+    ("sft", "lora"): "2.0e-05",
+    ("sft", "full"): "5.0e-06",
+    ("graspo", "lora"): "5.0e-06",
+    ("graspo", "full"): "5.0e-06",
+    ("cpt", "lora"): "5.0e-06",
+    ("cpt", "full"): "5.0e-06",
+    ("opd", "lora"): "2.0e-05",
+    ("opd", "full"): "5.0e-06",
+}
+LR_BASIS: dict[tuple[str, str], str] = {
+    ("sft", "lora"): ("SFT-LoRA 2.0e-05 = 刚达标档 T011/T023 的**实际生效值**"
+                      "（跑次 params.lr=1.0e-05 × DP=2；Δ=+11.2536pp / +10.6837pp ≥ +10.0pp）"),
+    ("sft", "full"): "SFT 全参 5.0e-06 = 与 CPT 对齐（矩阵无 SFT 全参通过档，取同族保守值）",
+    ("graspo", "lora"): ("GRASPO(RL)-LoRA 5.0e-06 = 跑次实测值；原在盘 1.0e-05 是"
+                         "「LoRA 统一 1.0e-05」误抬值"),
+    ("graspo", "full"): "GRASPO(RL) 全参 5.0e-06 = 跑次实测值",
+    ("cpt", "lora"): "CPT 5.0e-06 = ★ 保持现状不动（CPT 9/9 档已通过，⛔ 不折腾能工作的东西）",
+    ("cpt", "full"): "CPT 5.0e-06 = ★ 保持现状不动（CPT 9/9 档已通过，⛔ 不折腾能工作的东西）",
+    ("opd", "lora"): "OPD-LoRA 2.0e-05 = 与 SFT 同族同量级",
+    ("opd", "full"): "OPD 全参 5.0e-06 = 与 SFT 全参同族同量级",
+}
+#: 仓内原口径的**逐字**出处（报告须引用；本表与之同向，但 LoRA 档差 4×、全参档 1×）。
+LEGACY_CALIBER = {
+    "text": "RL 推荐比 SFT 低一个数量级",
+    "sources": [
+        "samples/configs/a800x1_qwen35_9b_rl.yaml:51",
+        "samples/configs/a800x1_qwen35_27b_rl.yaml:54",
+        "samples/configs/rl_example.yaml:50",
+    ],
+    "deviation": ("同向；SFT-LoRA(2e-05) vs RL-LoRA(5e-06) = **4×**（不是 10×，⛔ 不硬凑）；"
+                  "全参档两者同为 5e-06（1×）。锚点：SFT-LoRA 取「刚达标的实际生效值 2e-05」，"
+                  "而非示例里的 5e-05"),
+}
+#: ★ 主席已裁定「不做」的事项（登记进报告与口径节，避免后人再提）。
+RULED_OUT = [
+    "不补 epoch：多张卡不需要补 epoch（训练量不由卡数决定）。",
+    "不做「按全局步数定长」。",
+    "不做任何「按卡数补偿训练量」的机制，也不做任何「按卡数缩放/补偿 lr」的机制。",
+]
+
+
+def normalize_tuner(tuner_type: str | None) -> str:
+    """``None`` ⇒ ``"lora"``（与 ``graspo.core.schema.resolve_tuner_type`` 同语义）。"""
+    return "lora" if tuner_type is None else str(tuner_type)
+
+
+def lr_for(train_method: str | None, tuner_type: str | None) -> str:
+    """取该 (方法, 模式) 的学习率。
+
+    ★ 显式 fail-closed：未知组合**当场报错**，⛔ 不静默回退默认值（宪法 §2.3 边界校验即防呆
+    ——静默回退会让「一个方法一个值」的约束悄悄失效）。
+    """
+    key = (str(train_method), normalize_tuner(tuner_type))
+    if key not in LR_POLICY:
+        raise KeyError(
+            f"lr policy: no learning rate defined for train_method={key[0]!r} / "
+            f"tuner_type={key[1]!r}; known combos = {sorted(LR_POLICY)}"
+        )
+    return LR_POLICY[key]
+
+
+def lr_basis(train_method: str | None, tuner_type: str | None) -> str:
+    """取该组合的取值依据（供 spec / 报告引用）。"""
+    return LR_BASIS[(str(train_method), normalize_tuner(tuner_type))]
+
 
 # 统一口径块（spec A 清单）——config 项来自 51 份 yaml 全同；rule 项为规则口径
 UNIFORM = [
@@ -193,7 +264,9 @@ def main():
                                for k, n in dev.most_common())),
         "evidence": "samples/configs/matrix54-v2/T0NN.yaml（lora 段）",
         "ruling": ("恢复既有正式口径：target_modules=[language_all_linear, vision_common]（122 件 = language 12 + visual 110）、"
-                   "r=128 / alpha=256 / dropout=0.05、lr=1.0e-05"),
+                   "r=128 / alpha=256 / dropout=0.05；"
+                   "★ lr **不再随 LoRA 口径统一**（原「统一 1.0e-05」已被主席 2026-10-15 裁定推翻）"
+                   "——改按 (方法, 模式) 从 LR_POLICY 取值，⛔ 不按卡数缩放"),
         "basis": f"{len(examples)} 个 git 跟踪示例配置 " + "、".join(x["file"] for x in examples),
         "root_cause": "生成器 " + g["lora_target_preset_rule"] + " 把「训视觉塔」与「训语言层」隐含对立",
     })
@@ -278,13 +351,13 @@ def main():
                                     g["NATIVE_ROLLOUT_QUEUE_BATCH_SIZE"], g["ROLLOUT_GROUP_SIZE"], max_epochs)
         lora = None
         target_modules = target_preset = None
-        lr = sc(c.get("learning_rate"))
+        # ★ lr 由 (方法, 模式) **唯一确定** —— 与卡数无关、与 v2 yaml 原值无关（⛔ 不做 dp 反除/
+        #   正乘任何二次修正）。非适用档不写 lr。
+        lr = lr_for(algo, tuner) if applicable else None
+        lr_basis_text = lr_basis(algo, tuner) if applicable else None
         if tuner == "lora" and applicable:
             lora = {"r": RESTORED_LORA["r"], "alpha": RESTORED_LORA["alpha"], "dropout": RESTORED_LORA["dropout"]}
             target_modules = list(RESTORED_LORA["target_modules"])
-            lr = RESTORED_LORA["learning_rate_cfg"]
-        lora_basis = ("8 个 git 跟踪示例（a800x*_qwen35_*.yaml）" if (tuner == "lora" and applicable)
-                      else (FULL_LR_BASIS if tuner == "full" else None))
         msswift = native = None
         if backend == "msswift" and applicable:
             # ★ ms-swift：无 dp_size（MsSwiftConfig 不含该字段）；卡数/进程数由 nproc_per_node(×nnodes) 表达
@@ -336,7 +409,7 @@ def main():
             "e54_note": ("历史键 expected_optimizer_steps 语义 = checkpoint_save_steps（ckpt 间隔），"
                          "⛔ 不是计划步数；计划步数看 expected_optimizer_steps_per_epoch（E-54）"),
             "learning_rate": lr,
-            "learning_rate_basis": lora_basis,
+            "learning_rate_basis": lr_basis_text,
             "data": {
                 "train_path": sc(c.get("train_path")),
                 "subset_size": subset_size,
@@ -363,7 +436,7 @@ def main():
                                             "r": num(c.get("lora_r")), "alpha": num(c.get("lora_alpha")),
                                             "dropout": num(c.get("lora_dropout")),
                                             "learning_rate": sc(c.get("learning_rate"))},
-                                "restored": dict(RESTORED_LORA, learning_rate=RESTORED_LORA["learning_rate_cfg"])}
+                                "restored": dict(RESTORED_LORA, learning_rate=lr)}
                                if (tuner == "lora" and applicable) else None),
         }
         tiers.append(spec)
@@ -509,6 +582,15 @@ def main():
         },
         "generator_constants": g,
         "restored_lora": RESTORED_LORA,
+        # ★ lr 策略（唯一真相源）——随 spec 落盘，供 build_data / 报告引用
+        "lr_policy": {
+            "ruling": ("主席 2026-10-15：lr =「一个方法一个值」，⛔ 不按卡数缩放；"
+                       "原「按卡数缩放学习率」机制的配置字段与计算方法已整体删除"),
+            "table": {f"{m}|{t}": v for (m, t), v in LR_POLICY.items()},
+            "basis": {f"{m}|{t}": b for (m, t), b in LR_BASIS.items()},
+            "legacy_caliber": LEGACY_CALIBER,
+            "ruled_out": RULED_OUT,
+        },
         "example_configs": examples,
         "uniform": UNIFORM,
         "conflicts": conflicts,

@@ -239,7 +239,7 @@ class SFTTrainer:
             ga,
             effective_batch_size,
             self.config.training.max_epochs,
-            self.config.training.effective_learning_rate(dp_size=self.config.native.dp_size),
+            self.config.training.learning_rate,
             self.config.data.max_prompt_length,
         )
 

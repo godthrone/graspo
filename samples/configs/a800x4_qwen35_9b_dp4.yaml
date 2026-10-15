@@ -44,8 +44,7 @@ training:
   seed: 43
   max_epochs: 20
   gradient_accumulation_micro_batches: 4
-  learning_rate: 1.0e-05
-  lr_scaling: linear
+  learning_rate: 2.0e-5                # SFT-LoRA 固定值（一个方法一个值；⛔ 不按卡数缩放）
   weight_decay: 0.01
   max_grad_norm: 1.0
   save_checkpoint_every_epoch: true

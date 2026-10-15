@@ -167,7 +167,11 @@ cp samples/configs/sft_example.yaml my_sft.yaml
 - `micro_batch_size` 和 `gradient_accumulation_micro_batches` 控制 batch size；
   effective batch/GPU = micro_batch_size × gradient_accumulation_micro_batches；
 - `max_prompt_length` 是完整序列长度（prompt + response）；
-- `learning_rate` 通常比 RL 高（如 `5e-5` vs `5e-6`）；
+- `learning_rate` **按方法取固定值、不随卡数变化**：SFT LoRA `2e-5` / SFT 全参 `5e-6`；
+  GRASPO（RL）`5e-6`；CPT `5e-6`；OPD LoRA `2e-5` / OPD 全参 `5e-6`。
+  SFT LoRA 是 RL 的 4 倍（仓内原口径「RL 推荐比 SFT 低一个数量级」方向一致）；
+  全参档两者同值。★ 已裁定不做：不补 epoch、不做「按全局步数定长」、
+  不做任何「按卡数补偿训练量 / 补偿 lr」的机制；
 - `reward` 配置段在 SFT 中被忽略。
 
 启动方式相同：
@@ -470,7 +474,6 @@ GRASPO 目前仅支持 LoRA 训练，不支持全参数训练。
 - `dp_size`：DP size（默认 1）。`world_size = dp_size × tp_size × pp_size`。
 - `pp_size`：PP size（默认 1）。
 - `dp_replicate_lora`：DP rank 间复制 LoRA（默认 true）；梯度跨 `dp_group` 做 AVG all-reduce。
-- `lr_scaling`：DP 学习率缩放策略（`"linear"`=lr×dp_size，默认；`"none"`=不缩放）。
 - `placement_strategy`：placement 策略，例如 `qwen3_tp` 或 `qwen36_pp8_static`（默认 `auto`）。
 - `layer_ranges`：手动逐 stage 层数分配。例如 pp=4, 32 层：
   `[[0,9], [9,17], [17,25], [25,32]]`。设置后覆盖 `placement_strategy`。
@@ -647,7 +650,7 @@ bash run.sh samples/configs/sft_example.yaml --smoke
 - 需要 PEFT 兼容：通过 `lora.adapter_path` 加载 PEFT/GRASPO-PEFT adapter，通过 `graspo export --config <yaml>` 导出便携产物。
 - **SFT 转 RL**：SFT 训练完成后，将 `train_method: graspo`，
   将 `lora.adapter_path` 指向 SFT checkpoint 的 adapter，
-  降低 `learning_rate`（如 `1e-6`）。SFT LoRA adapter 可直接用于 GRASPO RL 训练。
+  把 `learning_rate` 设为 RL 值（`5e-6`）。SFT LoRA adapter 可直接用于 GRASPO RL 训练。
 - **SFT OOM**：减小 `micro_batch_size`（micro-batch）或 `max_prompt_length`；
   增大 `gradient_accumulation_micro_batches` 以保持有效 batch size 不变。
 - **A800 PCIe 拓扑 DP 训练 hang（NCCL all-reduce 超时）**：在 A800 PCIe 拓扑的机器上（GPU 以 NVLink pair 成对、pair 之间通过 PCIe bridge(PXB) 连接），NCCL 的 P2P/CUMEM 路径在小张量 all-reduce 时可能 hang。TP 训练不受影响（大张量走 Simple 协议，不经过 P2P 路径）。**修复**：`NCCL_P2P_DISABLE=1`。框架现在会**自动检测并设置，无需手动 `-e`**：

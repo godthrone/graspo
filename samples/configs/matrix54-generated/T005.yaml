@@ -15,7 +15,7 @@ training:
   overwrite_output_dir: true
   seed: 42
   max_epochs: 2
-  learning_rate: 5e-06
+  learning_rate: 5.0e-06
   gradient_accumulation_micro_batches: 1
   save_checkpoint_every_epoch: false
   save_steps: 101

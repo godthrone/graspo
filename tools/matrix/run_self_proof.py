@@ -18,9 +18,13 @@ DOCS = ROOT / "docs"
 PY = sys.executable
 RESULT_KEYS = ["peak_mem", "steps_actual", "elapsed", "throughput", "effect"]
 FAKE = {
+    # ★ 与 verify ④J（耗时列 fail-closed：跑次输入域有墙钟 ⇒ 列不得为空）**同批更新**：
+    #   示意档必须自带 `throughput_detail` 的墙钟，否则「列有值、输入域无读数」会被判为疑编造。
     "T001": {"status": "已验证可用", "peak_mem": "25.5", "elapsed": "总时长 00:31:20",
+             "throughput_detail": "墙钟 00:31:20（示意）",
              "throughput": "812 tok/s", "effect": "Δ=+0.0 pp（示意）", "note": "示意数据"},
     "T010": {"status": "已验证不可用", "peak_mem": "20.4", "elapsed": "总时长 00:12:00",
+             "throughput_detail": "墙钟 00:12:00（示意）",
              "throughput": "—", "effect": "Δ=-3.0 pp < 阈值（示意）", "note": "未过第 2 条：效果未达标（示意）",
              "verdict": {"state": "已验证不可用",
                          "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",

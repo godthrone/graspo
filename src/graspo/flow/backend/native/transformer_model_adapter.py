@@ -315,7 +315,7 @@ class TransformerModelAdapter(BaseGraspoFlowAdapter):
         self.optimizer = (
             torch.optim.AdamW(
                 trainable,
-                lr=self.config.training.effective_learning_rate(dp_size=self.config.native.dp_size),
+                lr=self.config.training.learning_rate,
                 weight_decay=self.config.training.weight_decay,
             )
             if trainable
@@ -331,9 +331,7 @@ class TransformerModelAdapter(BaseGraspoFlowAdapter):
         if sched_cfg.type == "constant":
             return None
 
-        base_lr = float(
-            self.config.training.effective_learning_rate(dp_size=self.config.native.dp_size)
-        )
+        base_lr = float(self.config.training.learning_rate)
         warmup_steps = max(0, int(sched_cfg.warmup_steps))
         min_lr = base_lr * float(sched_cfg.min_lr_ratio)
 
@@ -671,9 +669,7 @@ class TransformerModelAdapter(BaseGraspoFlowAdapter):
         overridden = apply_config_optimizer_hyperparams(
             self.optimizer,
             self.scheduler,
-            learning_rate=float(
-                self.config.training.effective_learning_rate(dp_size=self.config.native.dp_size)
-            ),
+            learning_rate=float(self.config.training.learning_rate),
             weight_decay=float(self.config.training.weight_decay),
         )
         if overridden:
@@ -1062,9 +1058,7 @@ class TransformerModelAdapter(BaseGraspoFlowAdapter):
             return float(self.scheduler.get_last_lr()[0])
         if self.optimizer is not None:
             return float(self.optimizer.param_groups[0]["lr"])
-        return float(
-            self.config.training.effective_learning_rate(dp_size=self.config.native.dp_size)
-        )
+        return float(self.config.training.learning_rate)
 
     def _emit_rank_memory_event(self, phase: str, extra: dict[str, Any] | None = None) -> None:
         output_dir = Path(self.config.training.output_dir)

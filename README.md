@@ -182,7 +182,14 @@ Key differences from RL:
 - `micro_batch_size` and `gradient_accumulation_micro_batches` control batch size;
   effective batch/GPU = micro_batch_size × gradient_accumulation_micro_batches;
 - `max_prompt_length` is the full sequence length (prompt + response);
-- `learning_rate` is typically higher than RL (e.g. `5e-5` vs `5e-6`);
+- `learning_rate` is **method-specific and constant** (never scaled by card count):
+  SFT LoRA `2e-5` / SFT full `5e-6`; GRASPO (RL) `5e-6`; CPT `5e-6`;
+  OPD LoRA `2e-5` / OPD full `5e-6`. SFT LoRA is 4x RL (the in-repo caliber
+  "RL is recommended one order of magnitude below SFT" still gives the same
+  direction); the full-parameter rate is the same for both.
+  ★ Ruled out: no extra epochs (multiple cards need no epoch compensation), no
+  "fixed length by global step" scheme, and no card-count compensation for
+  training volume or LR;
 - `reward` section is ignored by SFT.
 
 Launch the same way:
@@ -591,8 +598,6 @@ is only a LoRA warm-start.
 - `pp_size`: PP size (default 1).
 - `dp_replicate_lora`: replicate LoRA across DP ranks (default `true`);
   gradients are AVG all-reduced across `dp_group`.
-- `lr_scaling`: DP learning-rate scaling (`"linear"` = lr × dp_size, default;
-  `"none"` = no scaling).
 - `placement_strategy`: placement policy such as `qwen3_tp` or
   `qwen36_pp8_static` (default `auto`).
 - `layer_ranges`: manual per-stage layer distribution. Example for pp=4, 32 layers:
@@ -820,8 +825,8 @@ bash run.sh samples/configs/sft_example.yaml --smoke
 - Need PEFT compatibility: load PEFT/GRASPO-PEFT adapters through `lora.adapter_path`, and
   export portable artifacts with `graspo export --config <yaml>`.
 - **SFT to RL**: after SFT training, set `train_method: graspo`, point
-  `lora.adapter_path` to the SFT checkpoint's adapter, and adjust
-  `learning_rate` down (e.g. `1e-6`). The SFT LoRA adapter is directly
+  `lora.adapter_path` to the SFT checkpoint's adapter, and set
+  `learning_rate` to the RL value (`5e-6`). The SFT LoRA adapter is directly
   compatible with GRASPO RL training.
 - **SFT OOM**: reduce `micro_batch_size` (micro-batch) or `max_prompt_length`;
   increase `gradient_accumulation_micro_batches` to keep the

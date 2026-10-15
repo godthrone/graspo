@@ -45,7 +45,7 @@ training:
   output_dir: ""                       # 空=自动生成 outputs/sft_<timestamp>
   seed: 42
   max_epochs: 20
-  learning_rate: 5.0e-5
+  learning_rate: 2.0e-5                # SFT-LoRA 固定值（一个方法一个值；⛔ 不按卡数缩放）
   weight_decay: 0.01
   max_grad_norm: 1.0
   gradient_accumulation_micro_batches: 4  # 攒 4 个微批做一次 optimizer step

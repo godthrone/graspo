@@ -50,7 +50,7 @@ training:
   rollout_group_size: 8
   rollout_queue_batch_size: 8
   gradient_accumulation_micro_batches: 4  # 有效 batch/GPU = 1×4 = 4
-  learning_rate: 1.0e-05
+  learning_rate: 2.0e-5                # SFT-LoRA 固定值（一个方法一个值；⛔ 不按卡数缩放）
   weight_decay: 0.01
   max_grad_norm: 1.0
   max_new_tokens: 128
@@ -64,7 +64,6 @@ training:
     warmup_steps: 50
     min_lr_ratio: 0.1
     decay_steps: 13600
-  lr_scaling: linear                   # DP=8 时 lr 自动 ×8
 
 launch:
   # nproc_per_node 自动推导 = dp_size × tp_size × pp_size = 8

@@ -120,6 +120,7 @@
       "note": "`feasibility.feasible` 是向后兼容的布尔视图：True/False/None。`None` 同时覆盖 unmeasured / blocked / not_applicable —— **必须读 `verdict` 区分**，不得用 `feasible is None` 推断原因。"
     },
     "opd_teacher": {
+      "caliber_note_20261015": "★ 口径已改为「教师 = **SFT 之后的 27B 产物**」（判据② 逐算法分列，2026-10-15）。★ 本字段上方 `teacher_model` / `teacher_model_path` 现仍 pin **基线 27B**，是**旧值、暂未更新**：因 SFT 正按 epoch=4 重跑，**新的 SFT 产物尚不存在**，此刻 pin 新值会指向一个将被取代的产物 ⇒ ★ **待 SFT epoch=4 重跑完成后，由指挥指定专人重新 pin**（⛔ 本注记不改变本字段任何既有值；⛔ OPD 仍按「不做」记录）。",
       "teacher_model": "Qwen3.8-27B",
       "teacher_model_path": "/models/Qwen3.8-27B",
       "student_model": "OPD 学生**固定 9B**（用户拍板：省显存，价值高）；教师 = 27B 常量。台账 `model` 列在 graspo 里 = 被训练的学生。",

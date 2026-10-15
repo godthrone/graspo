@@ -23,7 +23,7 @@ from pathlib import Path
 
 import render_matrix  # 同目录；复用唯一渲染通道
 
-VERSION = "verify-matrix/v7-layout"
+VERSION = "verify-matrix/v9-layout-elapsed-evidence"
 
 # ---- ③ 结构断言：新结构只允许这两大部分 ----
 EXPECTED_H2 = ["1. 参数定义", "2. 通过的定义", "3. 判据定义", "4. 状态定义", "5. 功能矩阵测试表"]
@@ -53,10 +53,15 @@ REQUIRED_MARKERS = [
     ("已通过项事实保留", "exit_code = 0"),
     ("判据口径·数据集锚点", "版本锚点"),
     ("判据口径·判据标识", "elam-v3-allright-1"),
-    ("判据口径·阈值冻结", "已冻结（主席定案）"),
-    ("判据口径·δ 值", "δ = +5.0 pp"),
-    ("判据口径·GRASPO 冻结", "GRASPO 的通过线均为 δ = +5.0 pp"),
-    ("判据口径·目标值仅展示", "目标值 = +10.0 pp（仅展示，⛔ 不用于判定）"),
+    ("判据口径·四条判据", "判据（四条）"),
+    ("判据口径·阈值冻结", "已冻结（主席最新裁定，2026-10-15）"),
+    ("判据口径·SFT 通过线", "after − base ≥ +10.0 pp"),
+    ("判据口径·GRASPO 通过线", "after − base ≥ +5.0 pp"),
+    ("判据口径·CPT 不劣化线", "after ≥ base（不劣化）"),
+    ("判据口径·OPD 能力回收", "学生 after ≥ base（能力回收）"),
+    ("判据口径·不做假设检验", "⛔ 不做假设检验"),
+    ("判据口径·旧口径留痕", "旧口径（已被取代、留痕，⛔ 不再作为判定依据）"),
+    ("判据口径·口径变更留痕", "判据口径变更留痕"),
     ("判据口径·基线口径", "U2 终点窗口"),
     ("参数定义", "参数定义"),
     ("统一口径", "统一口径"),
@@ -344,6 +349,46 @@ def main():
     if not (meta.get("criteria_caliber") or {}).get("criteria_id"):
         failures.append(("④I 判定口径", "数据缺 criteria_caliber.criteria_id"))
 
+    # ---- ④J. 耗时列（★ fail-closed，四向）----
+    #   ① 有读数（跑次文本 或 228 只读侦察 `elapsed_evidence`）⇒ 列**必须**有值；
+    #   ② 列有值（非「未取到」）⇒ **必须**有读数证据（⛔ 防编造）；
+    #   ③ 列标「未取到」⇒ 括号内**必须**有具名原因，且此时**不得**存在读数证据（口径矛盾）；
+    #   ④ 列**为空** ⇒ FAIL（⛔ 不留空白让它看起来像"忘了填"）。
+    el_bad, el_filled, el_na = [], [], []
+    try:
+        import build_official as _bo
+        for r in data.get("rows", []):
+            # ★ 仅对**已结论**档断言：未结论档按 §17.7 结果列一律 '—'（不适用本断言）
+            if r.get("status") not in ("已验证可用", "已验证不可用"):
+                continue
+            parsed = _bo.split_elapsed(_bo.elapsed_source_blob(r)) != "—"
+            ev = r.get("elapsed_evidence") if isinstance(r.get("elapsed_evidence"), dict) else {}
+            st = str(ev.get("status") or "")
+            has_ev = st in ("found", "found_from_run_json")
+            got = str(r.get("elapsed") or "").strip()
+            if got in ("", "—"):
+                el_bad.append((r.get("tier"), "「耗时」列为空（既无读数也无具名原因）"))
+                continue
+            if got.startswith("未取到"):
+                el_na.append(r.get("tier"))
+                mm = re.match(r"^未取到（\s*(.+?)\s*）$", got)
+                if not mm or not mm.group(1):
+                    el_bad.append((r.get("tier"), "标「未取到」但缺具名原因"))
+                if parsed or has_ev:
+                    el_bad.append((r.get("tier"), "标「未取到」但跑次文本/侦察证据里有读数 ⇒ 口径矛盾"))
+                continue
+            el_filled.append(r.get("tier"))
+            if not (parsed or has_ev):
+                el_bad.append((r.get("tier"), f"「耗时」列有值 {got!r}，但跑次文本与侦察证据都无读数（疑编造）"))
+            if st == "found" and ev.get("value_s") is None:
+                el_bad.append((r.get("tier"), "elapsed_evidence=found 但缺 value_s"))
+            if st == "not_found":
+                el_bad.append((r.get("tier"), "elapsed_evidence=not_found 但「耗时」列有值"))
+        if el_bad:
+            failures.append(("④J 耗时列一致性（fail-closed）", f"不一致 {len(el_bad)} 档（前 5）: {el_bad[:5]}"))
+    except Exception as e:                       # ⛔ 校验器自身出错也不得静默
+        failures.append(("④J 耗时列一致性（fail-closed）", f"断言执行失败: {e!r}"))
+
     miss_keys = [(r.get("tier"), k) for r in data["rows"] for k in SPEC_KEYS if k not in r]
     if miss_keys:
         failures.append(("④E 机读字段缺失（yaml 生成器口径）", f"缺 {len(miss_keys)} 处（前 5）: {miss_keys[:5]}"))
@@ -366,9 +411,14 @@ def main():
               f" | ④E 统一口径/机读字段={ok('④E')}"
               f" | ④G 脱敏={ok('④G')}"
               f" | ④H 禁止措辞={ok('④H')}"
-              f" | ④I §17.7 要件={ok('④I')}")
+              f" | ④I §17.7 要件={ok('④I')}"
+              f" | ④J 耗时列={ok('④J')}")
         print(f"results: 已回填 {len(filled)} 档 {filled}；其余 {len(data['rows'])-len(filled)} 档保持 '—'"
               + ("；--expect-empty 已开启" if a.expect_empty else ""))
+        print(f"elapsed: 有值 {len(el_filled)} 档"
+              + (f"（{'、'.join(el_filled)}）" if el_filled else "")
+              + f"；标「未取到（具名原因）」{len(el_na)} 档"
+              + (f"（{'、'.join(el_na)}）" if el_na else ""))
         if off is None:
             print("hand-edit detection: 无差异（改 1 个字符即会在此打印字节偏移 / 行 / 列）")
         for name, detail in failures:

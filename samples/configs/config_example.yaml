@@ -235,7 +235,6 @@ training:
     warmup_steps: 0
     min_lr_ratio: 0.0
     decay_steps: 0               # type!=constant 时必填 >0
-  lr_scaling: linear             # 梯度累积跨 DP 的 LR 缩放策略
 
 # ── 导出（graspo export 用）───────────────────────────────────────────────
 export:

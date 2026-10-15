@@ -96,9 +96,11 @@ PROVENANCE = {
                     "produced_by": "extract_spec.py:RESTORED_LORA + build_data.py:lora_target_of()",
                     "command": SPEC_CMD + " ; " + BUILD_CMD,
                     "owner": "主席裁定（2026-10-11）", "kind": "config"},
-    "lr": {"source": "LoRA 档 = 恢复值 1.0e-05（8 个示例）；full 档 = 按方法既有值（SFT 5e-5 / GRASPO 5e-6）",
-           "produced_by": "extract_spec.py + build_data.py", "command": SPEC_CMD + " ; " + BUILD_CMD,
-           "owner": "主席裁定（2026-10-11）", "kind": "config"},
+    "lr": {"source": ("★ lr =「一个方法一个值」（extract_spec.py:LR_POLICY）："
+                      "SFT 2e-05(LoRA)/5e-06(全参)；GRASPO(RL) 5e-06；CPT 5e-06；"
+                      "OPD 2e-05(LoRA)/5e-06(全参)。⛔ 不随 dp_size/tp_size/pp_size/卡数变化"),
+           "produced_by": "extract_spec.py:LR_POLICY + build_data.py", "command": SPEC_CMD + " ; " + BUILD_CMD,
+           "owner": "主席裁定（2026-10-15）", "kind": "config"},
     "data_subset": {"source": "r3 <td data-col=\"data_source\"> + <td data-col=\"subset_size\">",
                     "produced_by": "build_data.py:data_subset_of()", "command": SPEC_CMD + " ; " + BUILD_CMD,
                     "owner": "报表/收集脚本（矩阵侧）", "kind": "config"},
@@ -356,7 +358,17 @@ def main():
             "common_params_policy": "对全部档位相同的参数集中在 §1「统一口径」块（本文件 uniform 字段）一次写清；"
                                     "矩阵表（rows[]）只承载档位之间的差异项",
             "lora_restoration": "★ LoRA 目标恢复既有正式口径：target_modules=[language_all_linear, vision_common]"
-                                "（122 件）、r=128/alpha=256/dropout=0.05、lr=1.0e-05；出处 = 8 个 git 跟踪示例配置",
+                                "（122 件）、r=128/alpha=256/dropout=0.05；出处 = 8 个 git 跟踪示例配置"
+                                "（★ lr 不在其中：见 lr_policy）",
+            "lr_policy": ("★ lr =「一个方法一个值」，⛔ 不随卡数缩放。「按卡数缩放 lr」机制已**整体删除**"
+                          "（其配置字段与计算方法都不再存在）。取值："
+                          "SFT 2e-05(LoRA)/5e-06(全参)；GRASPO(RL) 5e-06；CPT 5e-06；"
+                          "OPD 2e-05(LoRA)/5e-06(全参)。出处 = tools/matrix/extract_spec.py:LR_POLICY。"
+                          "★ 仓内原口径「RL 推荐比 SFT 低一个数量级」（samples/configs/a800x1_qwen35_9b_rl.yaml:51 等）"
+                          "与本表**同向**；但 LoRA 档为 4×（2e-05 vs 5e-06，⛔ 不硬凑 10×）、全参档为 1×。"),
+            "ruled_out": ("★ 已裁定不做（主席 2026-10-15，⛔ 后人不得再提）：① 不补 epoch"
+                          "（多张卡不需要补 epoch）；② 不做「按全局步数定长」；"
+                          "③ 不做任何「按卡数补偿训练量」或「按卡数缩放/补偿 lr」的机制。"),
             "subset_size_semantics": "权威含义 = 全局总条数；派生 prompts_per_rank = subset_size // cards",
             "authoritative_source": {
                 "path": a.source_path,

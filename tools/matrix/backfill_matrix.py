@@ -93,6 +93,16 @@ def norm_param(key, v):
         return None
     t = str(v).replace("*", "")          # 去 markdown 强调符（否则 **358** 件 解析不到）
     if key in ("lora_target", "target_modules"):
+        # ★★ 2026-10-15 修（与「逐键取同类参照」同批）：**优先取「实例数」**。
+        #   现行档位表文本形如「language_all_linear + vision_common（**122 件**：language 12 + visual 110）
+        #   ｜native：canonical preset 名（**358 实例**；122 为签名/模式条目数）」
+        #   —— **122 = 模式/签名条目数**、**358 = 模块实例数**（README 已登记该区分）；
+        #   跑次 json 写的是「358 个 LoRA 模块实例 = language 248 + visual 110」。
+        #   ⇒ 若仍按第一个「N 件」取值，会把**同一事实的两种计数**判成"错位"（实证：T022/T024/T028/T029
+        #     4 档全被误判）⇒ 必须先认「N 个?…实例」，再退到「N 件」。
+        m = re.search(r"(\d+)\s*(?:个)?\s*(?:LoRA\s*)?(?:模块\s*)?实例", t)
+        if m:
+            return int(m.group(1))
         m = re.search(r"(\d+)\s*件", t)                       # 「122 件」/「358 件」
         if m:
             return int(m.group(1))
@@ -154,44 +164,67 @@ def _s(v):
 TRAINING_CLASSES = {"sft", "cpt", "opd"}
 
 
+#: ★ 判据②（效果）逐算法通过线的方法键（顺序即文档展示顺序）
+CALIBER_METHODS = ("sft", "graspo", "cpt", "opd")
+
+
+def _frozen_text(s):
+    """★ 「已冻结」判定：含「冻结」且**不含「未冻结」**（⛔ 子串误判会解除 fail-closed）。"""
+    t = str(s or "")
+    return "冻结" in t and "未冻结" not in t
+
+
+def frozen_map_from_caliber(th):
+    """★ 纯函数：`meta.criteria_caliber.threshold` ⇒ 方法→冻结阈值(pp) 映射（便于自检，不读文件）。
+
+    ★ 唯一真相源 = `threshold.by_method`（逐算法）；未冻结 ⇒ None。
+    ★ 回退（**仅当** `by_method` 缺失，如旧代际正式件）：用旧的单一 `value` —— 该值已被取代，
+      只为兼容旧数据而保留，⛔ 不得据此声称"当前口径仍是统一阈值"。
+    """
+    out = {m: None for m in TRAINING_CLASSES}      # sft / cpt / opd
+    out["graspo"] = None
+    th = th if isinstance(th, dict) else {}
+    bm = th.get("by_method") or {}
+    if bm:
+        for m in CALIBER_METHODS:
+            e = bm.get(m) or {}
+            v = e.get("value")
+            if v is None:
+                continue
+            # ★ 只认判据② 的两类通过线；其余判据类型 ⇒ 不据此判定（fail-closed）
+            if str(e.get("criterion", "")) not in ("delta_pp", "non_inferiority"):
+                continue
+            if _frozen_text(th.get("status")) or _frozen_text(e.get("status")):
+                out[m] = float(v)
+        return out
+    val, applies = th.get("value"), str(th.get("applies_to", ""))
+    status = str(th.get("status", ""))
+    if val is not None and ("训练类" in applies or "冻结" in status):
+        for m in TRAINING_CLASSES:
+            out[m] = float(val)
+    if val is not None and "GRASPO" in applies:
+        out["graspo"] = float(val)
+    return out
+
+
 def matrix_frozen_pp(official_path, train_method):
-    """★ 阈值只能来自**矩阵自身的冻结口径**（`meta.criteria_caliber.threshold`）。
+    """★ 阈值只能来自**矩阵自身的冻结口径**（`meta.criteria_caliber.threshold.by_method`）。
 
     返回该档类别适用的冻结阈值（pp）；**未冻结 ⇒ None**（跑次无论自报什么都不得据此判定）。
+    ★ 新口径（2026-10-15）：判据② **逐算法分列** ⇒ 一律读 `by_method[<方法>].value`；
+      CPT / OPD 走「不劣化线 after ≥ base」⇒ 其数值等价于 `value = 0.0`（**不是**放宽，是换判据）。
     """
-    try:
-        d = json.loads(Path(official_path).read_text(encoding="utf-8"))
-        cal = (d.get("meta") or {}).get("criteria_caliber") or {}
-        th = cal.get("threshold") or {}
-        val = th.get("value")
-        applies = str(th.get("applies_to", ""))
-        status = str(th.get("status", ""))
-        if val is None:
-            return None
-        if str(train_method).lower() in TRAINING_CLASSES:
-            return float(val) if "训练类" in applies or "冻结" in status else None
-        return None      # 非训练类（GRASPO 等）⇒ 矩阵侧尚未冻结
-    except Exception:
-        return None
+    return matrix_frozen_map(official_path).get(str(train_method).lower())
 
 
 def matrix_frozen_map(official_path):
     """从**矩阵自身冻结口径**导出 方法→冻结阈值(pp) 的映射；未冻结 ⇒ 该方法映射为 None。"""
-    out = {m: None for m in TRAINING_CLASSES}
-    out["graspo"] = None
     try:
         d = json.loads(Path(official_path).read_text(encoding="utf-8"))
         th = (((d.get("meta") or {}).get("criteria_caliber") or {}).get("threshold")) or {}
-        val, applies, status = th.get("value"), str(th.get("applies_to", "")), str(th.get("status", ""))
-        if val is not None and ("训练类" in applies or "冻结" in status):
-            for m in TRAINING_CLASSES:
-                out[m] = float(val)
-        # ★ GRASPO 已按主席定案冻结（阈值 +5.0 pp；目标 +10.0 pp 仅展示、⛔ 不作通过线）
-        if val is not None and "GRASPO" in applies:
-            out["graspo"] = float(val)
+        return frozen_map_from_caliber(th)
     except Exception:
-        pass
-    return out
+        return frozen_map_from_caliber(None)
 
 
 LEDGER_ROW = re.compile(
@@ -468,7 +501,12 @@ def validate_run(doc, tier_from_file, tier_rows, frozen_map=None, ref_rows_offic
                 _jv = p.get(k)
                 if k == "steps_actual" and _jv is None:
                     _jv = ((doc.get("step_count_reconciliation") or {}).get("actual_steps"))
-                nj, nt = norm_param(k, _jv), norm_param(k, ref_sem.get("steps_actual", ""))
+                # ★★ 逐键比**同类**的语义值。2026-10-15 修：原写法对**所有** k 都取
+                #    `ref_sem["steps_actual"]`（只有 k == "steps_actual" 时才是对的）⇒
+                #    `switches`/`data_subset`/`lora_target` 的"防错位"检查**形同虚设**；
+                #    且当行内 `steps_actual` 变化时会**误报**别的键不一致（实证：T011 二次回填
+                #    报 `params.data_subset 语义不一致：json=100 表=200` —— 表取的是 steps_actual）。
+                nj, nt = norm_param(k, _jv), norm_param(k, ref_sem.get(k, ""))
                 if nj is not None and nt is not None and nj != nt:
                     errs.append(f"params.{k} 语义不一致（训练身份，防错位）：json={nj} 表={nt}")
             # 纯散文字段：只登记，不判错
@@ -736,6 +774,16 @@ def main():
                 # ★★ 不可评档（2026-10-14 裁定统一口径）：⛔ 不得写"第 2 条判据/效果不足/效果未达标"
                 note = ("★ 未过**不可评（工程缺口）—— 依主席 2026-10-14 口径记入失败**："
                         + _s(doc.get("not_evaluable_reason")))
+            elif str(new_rows[tier].get("caliber_cause") or "").strip():
+                # ★★ §17.7 第①项同族：数据级 `caliber_cause` 已把该档归因到**判据①（跑通/工程合规）**
+                #    （如"产物不具备唯一性／DP 副本分歧"、"OOM／看门狗超时／未实现／硬件不可行"）
+                #    ⇒ ⛔ 不得兜底写成"未过第 2 条（效果不足）"（那是效果层否定，与真因冲突）。
+                note = ("★ 未过第 1 条判据（跑通/工程合规，★ 非效果结论）——"
+                        + _s(new_rows[tier].get("caliber_cause"))
+                        + " ★ 已通过项（事实保留）：" + _s(doc.get("algo_checks")))
+                _rv = str(new_rows[tier].get("reading_validity") or "").strip()
+                if _rv:
+                    note += " ★ " + _rv
             else:
                 note = ("★ 未过第 2 条判据（效果不足）——" + _s(doc.get("effect"))
                         + " ★ 已通过项（事实保留）：" + _s(doc.get("algo_checks"))
@@ -767,9 +815,15 @@ def main():
                 new_rows[tier]["step_count_reconciliation"] = scr
                 note += (" ★ 步数对账（如实登记）：推导 %s vs 实际 %s；%s"
                          % (scr.get("derived_steps"), scr.get("actual_steps"), scr.get("verdict", "")))
-                new_rows[tier]["note_extra_steps_formula_issue"] = (
-                    "★ 登记待修：'推导步数公式'对 native GRASPO 档不成立（推导 %s vs 实际 %s）"
-                    "—— 本轮不顺手改公式，后续单独修。" % (scr.get("derived_steps"), scr.get("actual_steps")))
+                # ★★ 该"待修公式"仅对 **native GRASPO** 成立 ⇒ ⛔ 不得贴到别的算法档上
+                #    （2026-10-15 实证：SFT 档 T011/T025/T026 因判据② 翻为不可用而命中此分支 ⇒
+                #     曾被贴上"对 native GRASPO 档不成立"的错误表述）
+                if str(new_rows[tier].get("train_method", "")).lower() == "graspo":
+                    new_rows[tier]["note_extra_steps_formula_issue"] = (
+                        "★ 登记待修：'推导步数公式'对 native GRASPO 档不成立（推导 %s vs 实际 %s）"
+                        "—— 本轮不顺手改公式，后续单独修。" % (scr.get("derived_steps"), scr.get("actual_steps")))
+                else:
+                    new_rows[tier].pop("note_extra_steps_formula_issue", None)
             # ★ 树指纹：**取起跑断言值**；若当场重算不同 ⇒ 如实登记漂移（⛔ 不抹）
             ci = ((doc.get("provenance") or {}).get("code_identity") or {})
             if ci:
@@ -889,8 +943,8 @@ def main():
 
 def _self_test():
     """★ 四条正/反向用例（⛔ 不依赖外部文件、不写任何东西）。"""
-    fm = {"sft": 5.0, "cpt": 5.0, "opd": 5.0, "graspo": None}
-    base_doc = {"runs": "判据② 达标（训练类冻结阈值 Δ ≥ 5.0 pp）", "effect": "Δ=+8.5 pp（≥ 5.0 pp 冻结阈值）"}
+    fm = {"sft": 10.0, "cpt": 0.0, "opd": 0.0, "graspo": 5.0}
+    base_doc = {"runs": "判据② 达标（SFT 通过线 Δ ≥ +10.0 pp）", "effect": "Δ=+13.5 pp（≥ +10.0 pp 新判据② SFT 通过线）"}
     cases = [
         ("㉓① ★ 不可评档 note_full 不得含「效果未达标」（对外陈述正确性）",
          all(x not in "不可评（工程缺口）—— 依主席 2026-10-14 口径记入失败"
@@ -916,11 +970,33 @@ def _self_test():
          evidence_chain_ok({"evidence_paths": "未记录", "provenance_command": "x"}) is False),
         ("㉑⑥ 证据链：两者齐 ⇒ 合规",
          evidence_chain_ok({"evidence_paths": ["x"], "provenance_command": "graspo export"} ) is True),
-        ("① 阈值：跑次自述 5 pp == 矩阵 5 pp ⇒ 放行",
-         not _threshold_errs(dict(base_doc, effect="Δ=+8.5 pp（≥ 5.0 pp 冻结阈值）"), fm, "sft")),
-        ("② 阈值：跑次自述 3 pp ≠ 矩阵 5 pp ⇒ FAIL",
-         bool(_threshold_errs(dict(base_doc, runs="判据② 达标（阈值 Δ ≥ 3 pp）", effect="Δ=+8.5 pp（≥ 3 pp）"),
+        ("① 阈值：跑次自述 10 pp == 矩阵 SFT 10 pp ⇒ 放行",
+         not _threshold_errs(dict(base_doc), fm, "sft")),
+        ("② 阈值：跑次自述 3 pp ≠ 矩阵 SFT 10 pp ⇒ FAIL",
+         bool(_threshold_errs(dict(base_doc, runs="判据② 达标（SFT 通过线 Δ ≥ 3 pp）", effect="Δ=+13.5 pp（≥ 3 pp）"),
                               fm, "sft"))),
+        ("②b ★ 旧口径残留：SFT 自述 +5.0 pp ≠ 新 SFT 10.0 pp ⇒ FAIL",
+         bool(_threshold_errs({"runs": "训练类冻结阈值 Δ ≥ +5.0 pp", "effect": "Δ=+13.5 pp（≥ +5.0 pp 冻结阈值）"},
+                              fm, "sft"))),
+        ("②c ★ 逐算法分列：CPT 自述 0.0 pp == 矩阵 CPT 0.0 pp ⇒ 放行",
+         not _threshold_errs({"runs": "判据② CPT 不劣化线 Δ ≥ +0.0 pp", "effect": "Δ=+3.8 pp（≥ 0.0 pp）"},
+                             fm, "cpt")),
+        ("②d ★ 逐算法分列：CPT 自述旧值 5.0 pp ≠ 矩阵 CPT 0.0 pp ⇒ FAIL（防旧口径偷偷生效）",
+         bool(_threshold_errs({"runs": "训练类 Δ ≥ +5.0 pp（已冻结）", "effect": "Δ=+3.8 pp（≥ +5.0 pp 冻结阈值）"},
+                              fm, "cpt"))),
+        ("★ by_method 解析：逐算法取值（sft10 / graspo5 / cpt0 / opd0）",
+         frozen_map_from_caliber({"status": "★ 已冻结（主席最新裁定）", "by_method": {
+             "sft": {"criterion": "delta_pp", "value": 10.0},
+             "graspo": {"criterion": "delta_pp", "value": 5.0},
+             "cpt": {"criterion": "non_inferiority", "value": 0.0},
+             "opd": {"criterion": "non_inferiority", "value": 0.0}}})
+         == {"sft": 10.0, "graspo": 5.0, "cpt": 0.0, "opd": 0.0}),
+        ("★ by_method 未冻结 ⇒ 全 None（⛔ 不据此判定）",
+         frozen_map_from_caliber({"status": "未冻结", "by_method": {"sft": {"criterion": "delta_pp", "value": 10.0}}})
+         == {"sft": None, "graspo": None, "cpt": None, "opd": None}),
+        ("★ by_method 缺失 ⇒ 回退旧单一 value（兼容旧代际正式件）",
+         frozen_map_from_caliber({"value": 5.0, "applies_to": "训练类与 GRASPO", "status": "已冻结"})
+         == {"sft": 5.0, "graspo": 5.0, "cpt": 5.0, "opd": 5.0}),
         ("③ 并行：表达面不同但维度等价 ⇒ 放行",
          not compare_parallel("TP=1 PP=1 DP=1（1 卡；总卡数 1）", "nproc_per_node=1（1 卡）")),
         ("④ 并行：TP/PP 不符 ⇒ FAIL",
@@ -928,6 +1004,13 @@ def _self_test():
         ("⑤ LoRA 目标语义不同（122 vs 358）⇒ FAIL",
          norm_param("lora_target", "language_all_linear + vision_common（122 件）") !=
          norm_param("lora_target", "ms-swift 实测 358 件（语言 248 + 视觉 110）")),
+        ("⑤b ★ 实例数优先：档位表「（122 件：…）｜（358 实例；122 为签名/模式条目数）」⇒ 取 358（与跑次 json 同事实）",
+         norm_param("lora_target",
+                    "language_all_linear + vision_common（122 件：language 12 + visual 110）｜native："
+                    "canonical preset 名（358 实例；122 为签名/模式条目数）") == 358),
+        ("⑤c ★ 实例数优先仍能拦真错位：json「358 个 LoRA 模块实例」 vs 表「100 实例」⇒ FAIL",
+         norm_param("lora_target", "★★ 实测：358 个 LoRA 模块实例 = language 248 + visual 110") !=
+         norm_param("lora_target", "canonical preset 名（100 实例）")),
         ("⑥ 数据子集规模不同（100 vs 200）⇒ FAIL",
          norm_param("data_subset", "前 100 条") != norm_param("data_subset", "前 200 条")),
         ("⑦ 步数不同（800 vs 801）⇒ FAIL",

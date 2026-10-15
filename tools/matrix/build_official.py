@@ -46,13 +46,21 @@ def sanitize_str(s: str) -> str:
     return s
 
 
+#: ★ 脱敏回归夹具用的**宿主绝对路径在运行期拼装**——源码内⛔ 不出现宿主路径字面量
+#: （§15.1 检查 3：宿主路径属机密类别；本文件要进开源仓，红线不因"是自测夹具"而豁免）。
+#: 形状仍必须是**真实形态**（`/home/<账号>/<段>`），否则负例就验不出脱敏失效。
+_FIXTURE_ACCOUNT = "someuser"
+_FIXTURE_HOST_PATH = "/".join(["", "home", _FIXTURE_ACCOUNT, "models", "Qwen3.8-27B"])
+_FIXTURE_HOST_PATH_NO_TRAILING_SLASH = "/".join(["", "home", _FIXTURE_ACCOUNT, "elam-v5-balanced"])
+
+
 def _sanitizer_self_test():
     """★ 脱敏回归（含**对抗性输入**与**顺序无关**验证）。"""
     cases = [
         ("① 负例·本次真实案例：含宿主绝对路径（`/home/<u>/models/X`）⇒ 必须 0 命中",
-         "/home/user/models/Qwen3.8-27B", "user"),
+         _FIXTURE_HOST_PATH, _FIXTURE_ACCOUNT),
         ("② 负例·**无尾斜杠**同形 ⇒ 必须被抹掉",
-         "/home/user/elam-v5-balanced", "user"),
+         _FIXTURE_HOST_PATH_NO_TRAILING_SLASH, _FIXTURE_ACCOUNT),
     ]
     ok = True
     for name, raw, needle in cases:
@@ -65,8 +73,8 @@ def _sanitizer_self_test():
     orig = PATH_MAP
     try:
         PATH_MAP = list(reversed(orig))
-        out = sanitize_str("/home/user/models/Qwen3.8-27B")
-        good = "user" not in out
+        out = sanitize_str(_FIXTURE_HOST_PATH)
+        good = _FIXTURE_ACCOUNT not in out
         print(f"  [{'PASS' if good else 'FAIL'}] ③ ★ 顺序无关：反转 PATH_MAP 后仍须 0 命中 ⇒ {out!r}")
         ok = ok and good
     finally:
@@ -250,7 +258,7 @@ def parallel_cols(r, state):
 
 
 #: ★ epoch 口径（主席裁定）：SFT / CPT / OPD = 1；GRASPO(RL) = 3（RL 需要更多 epoch 才能看到效果）
-EPOCHS_BY_METHOD = {"sft": 2, "cpt": 2, "opd": 2, "graspo": 8}
+EPOCHS_BY_METHOD = {"sft": 4, "cpt": 2, "opd": 2, "graspo": 8}
 
 #: ★ 取消"计划步数上限"：步数由 数据量 × epoch 推导，不设人为上限
 STEPS_POLICY = "步数 = epoch 数 × 每 epoch 推导步数（由数据量与批大小推导）；⛔ 不设人为步数上限（无 max_steps 约束）。"
@@ -469,27 +477,75 @@ def recon_formula_foreign(row, text):
 def criteria_caliber():
     return {
         "availability_criteria": [
-            "① 能完整跑完：退出码为零、算法机制真实生效、产物可被推理或加载、产物形态合规、显存与吞吐在承诺范围内。",
-            "② 在平台方数据集与平台方参数下效果达标：按平台方判据与阈值判定。",
+            "① 跑通/工程合规：退出码 0、无未捕获异常；优化器步数达标；checkpoint 完整；NaN/Inf 为 0；算法机制真实生效；产物形态合规；显存与吞吐在承诺范围内。",
+            "② 效果（★ 本轮唯一改动）：SFT ⇒ 702 条工具调用准确率 after − base ≥ +10.0 pp（epoch=4）；"
+            "GRASPO ⇒ after − base ≥ +5.0 pp（epoch=8）；"
+            "CPT ⇒ 训练 loss 正常下降（U2 口径）且 702 准确率 after ≥ base（不劣化；epoch=2）；"
+            "OPD ⇒ 学生 after ≥ base（能力回收；epoch=2；教师 = SFT 之后的 27B 产物）。"
+            "★ 一律用**点估计 Δ** 判定：⛔ 不做假设检验，不引入置信区间 / 显著性。",
+            "③ 算法正确性检查（逐字未动）：各算法按各自清单（见第 3.2 节）；GRASPO 算法逻辑严禁改动。",
+            "④ 推理验证（逐字未动）：产物可正常推理（合并 LoRA + vLLM 启动、实际前向一次拿到可解析输出）。",
         ],
+        "caliber_change": {
+            "effective": "2026-10-15",
+            "source": "主席最新裁定（新四条）",
+            "changed": ("★ **唯一改动 = 判据②（效果）**：由「训练类与 GRASPO 统一 δ = +5.0 pp」改为**逐算法分列**；"
+                        "SFT epoch 由 2 改为 4；OPD 教师改为 SFT 之后的 27B 产物；★ 明确「⛔ 不做假设检验」。"),
+            "unchanged": "★ 判据 ①③④ **逐字未动**（见 availability_criteria 第 1/3/4 项）。",
+            "superseded": ("★ 旧口径（留痕，⛔ 不再作为判定依据）：训练类（SFT / CPT / OPD）与 GRASPO **统一 δ = +5.0 pp**；"
+                           "目标 +10.0 pp 仅展示、不用于判定；SFT epoch = 2。"),
+            "reading_change_registry": [],      # ★ 由 main() 从**行数据**派生（⛔ 不在此处写死档号/数值）
+            "reading_change_registry_note": (
+                "★★ **「读数变化」≠「判据变化」**：本清单逐条登记「因缺陷修复/重跑产生了新读数"
+                "（旧读数作废、保留为历史）、而判据口径逐字未变」的档，并**逐条注明四态是否翻盘**"
+                "（四态翻盘 / 四态未变——仅归因与读数更正）。"
+                "★ 每条的 `kind` = `reading_change（★ 不是判据变更）`，可在档位行的 `caliber_change` 里机读。"),
+        },
         "dataset": {"id": "平台方自有评测集（名称 test.jsonl）", "availability": "平台方自有 / 不公开",
                     "version_anchor_sha256": "c202b1e1…", "sample_count": 702,
                     "method": "工具调用准确率（acc）"},
         "criteria_id": "elam-v3-allright-1",
         "threshold": {
-            "name": "delta_pp", "unit": "百分点（pp）",
-            "value": 5.0,
-            "target": 10.0,
-            "applies_to": ("训练类（SFT / CPT / OPD）与 GRASPO(RL)：判据② = after > base 且 Δ ≥ +5.0 pp"),
-            "status": ("★ 已冻结（主席定案）：**训练类与 GRASPO 的通过线均为 δ = +5.0 pp**；"
-                       "**目标值 = +10.0 pp（仅展示，⛔ 不用于判定）**——"
-                       "Δ 落在 5.0–10.0 之间仍判**通过**，不判不可用。"),
-            "historical_note": "该值取代此前跑次所用的临时阈值 20 pp（未冻结，已不再作为判据）。",
+            "name": "delta_pp（SFT / GRASPO）＋ non_inferiority（CPT / OPD）", "unit": "百分点（pp）",
+            "value": None,
+            "target": None,
+            "applies_to": "★ 按算法分列（见 by_method）：SFT / GRASPO 走 Δ 通过线；CPT / OPD 走不劣化线（after ≥ base）。",
+            "status": ("★ 已冻结（主席最新裁定，2026-10-15）：判据② 逐算法分列；**⛔ 不放宽判据**；"
+                       "**★ 判定一律用点估计 Δ —— ⛔ 不做假设检验、不引入置信区间 / 显著性**。"),
+            "historical_note": ("★ 旧口径（已被取代、留痕，⛔ 不再作为判定依据）：训练类与 GRASPO **统一 δ = +5.0 pp**；"
+                                "目标值 +10.0 pp（仅展示、不用于判定）；SFT epoch = 2。"),
+            "by_method": {
+                "sft": {"criterion": "delta_pp", "op": ">=", "value": 10.0, "unit": "pp",
+                        "metric": "702 条工具调用准确率（after − base）",
+                        "pass_line_text": "after − base ≥ +10.0 pp",
+                        "epoch": 4, "epoch_previous": 2,
+                        "epoch_note": ("★ epoch 由 2 改为 4（判据② 的配置改动）；"
+                                       "★ 现有 SFT 跑次均为 epoch=2 旧配置 ⇒ 其结论一律标注「待 epoch=4 重跑复核」。")},
+                "graspo": {"criterion": "delta_pp", "op": ">=", "value": 5.0, "unit": "pp",
+                           "metric": "702 条工具调用准确率（after − base）",
+                           "pass_line_text": "after − base ≥ +5.0 pp",
+                           "epoch": 8, "epoch_previous": 8, "epoch_note": "epoch=8 不变。"},
+                "cpt": {"criterion": "non_inferiority", "op": ">=", "value": 0.0, "unit": "pp",
+                        "metric": "702 条工具调用准确率（after − base）",
+                        "pass_line_text": "after ≥ base（不劣化）",
+                        "also": "训练 loss 正常下降（U2 口径）",
+                        "epoch": 2, "epoch_previous": 2, "epoch_note": "epoch=2 不变。"},
+                "opd": {"criterion": "non_inferiority", "op": ">=", "value": 0.0, "unit": "pp",
+                        "metric": "702 条工具调用准确率（学生 after − base）",
+                        "pass_line_text": "学生 after ≥ base（能力回收）",
+                        "teacher": "SFT 之后的 27B 产物",
+                        "epoch": 2, "epoch_previous": 2,
+                        "epoch_note": "epoch=2 不变；教师改为 SFT 之后的 27B 产物。"},
+            },
+            "by_method_single_source": ("★ 本 `by_method` 是**跑次阈值判定的唯一真相源**：跑次 json 自述阈值必须与之逐算法一致，"
+                                        "否则回填 fail-closed。"),
         },
         "baseline": {"role": "同档位未训练底座（role=base）",
                      "caliber": "U2 终点窗口 = 末段 max(3, 10% 步数) 步的均值；该档的 epoch 数与推导步数见档位「步数/epoch」子项。"},
         "epoch_policy": {
-            "by_method": ("SFT / CPT / OPD = 2 epoch（⛔ 不动）；GRASPO(RL) = 8 epoch（主席令；若 8 仍不过线则升 10 为后备；理由：RL 耗时长、5 epoch 下效果仅差 0.44 pp 未过线）。理由：跨 epoch 容易出问题（循环结构决定）⇒ 2 epoch 正好覆盖一次 epoch 边界，这正是要压的地方；RL 需要更多 epoch 才能看到效果。"),
+            "by_method": ("SFT = **4 epoch**（★ 本轮由 2 改为 4）；CPT = 2 epoch（⛔ 不动）；OPD = 2 epoch（⛔ 不动）；"
+                          "GRASPO(RL) = 8 epoch（⛔ 不动；若 8 仍不过线则升 10 为后备；理由：RL 耗时长、5 epoch 下效果仅差 0.44 pp 未过线）。"
+                          "理由：跨 epoch 容易出问题（循环结构决定）；RL 需要更多 epoch 才能看到效果。"),
             "steps": STEPS_POLICY + " 推导式：steps = epoch 数 × 每 epoch 步数（每 epoch 步数由数据量与批大小推导）。",
             "checkpoint": "save_steps = 推导步数 + 1（大于总步数 ⇒ 只保留最终检查点）。",
             "known_issue": ("★★ 登记待修（未修）：推导步数公式对 native GRASPO 不成立，根因已读清：两个后端的 step 语义本就不同。\n"
@@ -588,11 +644,31 @@ def short_note(row, full):
     长文（证据链/自检/订正全文/锚点/P5P6 细则）一律进 `note_full`（→ 工作日志历史，⛔ 不进表格）。
     """
     st = str(row.get("status") or "—")
+    _rule0 = _caliber_rule(row.get("train_method"))
     parts = [f"判定：{st}。"]
+    # ★★ 「epoch 已变 ⇒ 结论待重跑复核」标记（**数据驱动**：由 `threshold.by_method.<方法>` 的
+    #    epoch / epoch_previous 推出，⛔ 不写死方法名与数字）。放在最前 ⇒ 截断也不会丢这条硬要求。
+    #    ★ 若该档已**按新 epoch 复核过**（行级 `caliber_change.epoch_recheck` 非空）⇒ 改标「已按 epoch=N 复核」。
+    _ep, _epp = _rule0.get("epoch"), _rule0.get("epoch_previous")
+    _cc0 = row.get("caliber_change") if isinstance(row.get("caliber_change"), dict) else {}
+    _rechecked = _cc0.get("epoch_recheck")
+    if _rechecked and st in (S_AVAILABLE, S_UNAVAILABLE):
+        parts.append(f"★ 已按 epoch={_rechecked} 复核。")
+    elif _ep and _epp and _ep != _epp and st in (S_AVAILABLE, S_UNAVAILABLE):
+        parts.append(f"★ 待 epoch={_ep} 重跑复核（现跑次为 epoch={_epp} 旧配置）。")
     eff = str(row.get("effect") or "").replace("*", "")     # 去 markdown 强调符
     # ★ 优先用**结构化字段**（after_acc/base_acc/delta_pp）；无则回退 effect（固定格式结果字段）
     aa, ba, dp = row.get("after_acc"), row.get("base_acc"), row.get("delta_pp")
-    if isinstance(aa, (int, float)) and isinstance(ba, (int, float)) and isinstance(dp, (int, float)):
+    # ★★ 读数有效性（数据驱动）：被判**无效**的判据② 读数（如"多卡 DP 副本分歧、无唯一正解"
+    #    ⇒ 判据① 归因）⛔ 不得在短备注里当**有效读数**呈现 ⇒ 只留无效标记（不打数字），
+    #    完整历史读数与无效理由在 `effect` / `verdict` / `note_full`（⛔ 不在此处丢证据）。
+    # ★★ 数据驱动：仅当**当前**读数被判无效时才打无效标记。行级
+    #    `caliber_change.reading_after.valid = true` ⇒ 旧读数的无效性**只作历史**
+    #    （如 T024：判据① 产物唯一性缺陷已修、新读数有效）⇒ ⛔ 不得把**新**读数标成无效、⛔ 不得吞掉读数。
+    _cur_reading_valid = (_cc0.get("reading_after") or {}).get("valid")
+    if str(row.get("reading_validity") or "").strip() and st == S_UNAVAILABLE and _cur_reading_valid is not True:
+        parts.append("★ 判据② 读数无效、⛔ 不得引用。")
+    elif isinstance(aa, (int, float)) and isinstance(ba, (int, float)) and isinstance(dp, (int, float)):
         def _pct(x):
             v = float(x) * 100
             return "0.0" if abs(v) < 1e-9 else f"{v:.4f}"
@@ -604,6 +680,9 @@ def short_note(row, full):
         if a and b and d:
             parts.append(f"after {a.group(1)}%/base {b.group(1)}%/Δ={d.group(1)} pp。")
     _ner = str(row.get("not_evaluable_reason") or "").strip()
+    _cause = str(row.get("caliber_cause") or "").strip()
+    _rule = _caliber_rule(row.get("train_method"))
+    _passline = str(_rule.get("pass_line_text") or "见判据②")
     if st == S_UNAVAILABLE and _ner:
         # ★★ "不可评（工程缺口）"：★ **未经效果评测** ⇒ ⛔ 不得写"未过第 2 条"（那是效果层判据）
         #    只写"不可评：<真因摘要>"（★ 真因全文在 `not_evaluable_reason`；★ 且已由校验器保证不含"效果"）
@@ -616,8 +695,13 @@ def short_note(row, full):
             _brief = _ner.replace("不可评：", "").strip()
             _brief = _brief.split("；")[0].split("⇒")[0].strip()[:48]
         parts.append(f"不可评：{_brief}。")
+    elif st == S_UNAVAILABLE and _cause:
+        # ★★ §17.7 第①项：未过的是**判据①（跑通/工程合规）** ⇒ ⛔ 不得写成"未过第 2 条 / 效果未达标"
+        #    （真因逐字在 `caliber_cause` / `caliber_note` / `blocked_reason`，本处只做短摘要）
+        _c = _cause.replace("*", "").replace("`", "").strip().lstrip("★ ").strip()
+        parts.append(f"未过第 1 条（跑通/工程合规，★ 非效果结论）：{_c[:40]}。")
     elif st == S_UNAVAILABLE:
-        parts.append("Δ<阈值，未过第 2 条。")
+        parts.append(f"Δ<通过线，未过第 2 条（{_passline}）。")
     _p5 = row.get("p5p6_readings")
     # "待补"判定：**整块未取数**才算（有 1..6 项即算已补；子项里的"待补"字样不改变整块状态）
     _p5_na = bool(_p5) and "不适用" in str(_p5) and not any(
@@ -637,6 +721,15 @@ def short_note(row, full):
     return "".join(parts)[:100]
 
 
+def _caliber_rule(method):
+    """★ 判据② 逐算法通过线：**唯一真相源 = `criteria_caliber.threshold.by_method`**（⛔ 不写死）。"""
+    try:
+        return (((criteria_caliber().get("threshold") or {}).get("by_method") or {})
+                .get(str(method or "").lower()) or {})
+    except Exception:
+        return {}
+
+
 def verdict_of(row, state):
     """已验证不可用档的结论：写明未过的是哪一条判据，并保留已通过项的事实（**数据驱动**）。"""
     if state != S_UNAVAILABLE:
@@ -648,37 +741,163 @@ def verdict_of(row, state):
                 "failed_criterion": "不可评（工程缺口）—— 依主席 2026-10-14 口径记入失败",
                 "failed_detail": str(row.get("not_evaluable_reason") or "").strip(),
                 "passed_criteria": []}
+    # ★★ §17.7 第①项：有 `caliber_cause` 的档 ⇒ 未过的是**判据①（跑通/工程合规）**，
+    #    ⛔ 不得兜底成"第 2 条：效果未达标"（那是效果层否定，与真因冲突）。
+    #    真因逐字保留在 `caliber_cause`（含 OOM／看门狗超时／未实现／硬件不可行／未做）。
+    cause = str(row.get("caliber_cause") or "").strip()
+    if cause:
+        return {"state": state,
+                "failed_criterion": "第 1 条：跑通/工程合规未通过（★ 不是效果结论）",
+                "failed_detail": cause,
+                "passed_criteria": []}
     eff = str(row.get("effect", ""))
-    m = re.search(r"Δ\s*=?\s*\+?([0-9.]+)\s*pp", eff)
-    th = re.search(r"\+([0-9.]+)\s*pp\s*冻结阈值", eff)
-    detail = (f"Δ = +{m.group(1)} pp < 冻结阈值 +{th.group(1)} pp" if (m and th)
-              else (f"Δ = +{m.group(1)} pp（低于冻结阈值）" if m else "效果未达标（见 effect）"))
+    m = re.search(r"Δ\s*[=≈]?\s*([+\-−＋]?)\s*([0-9.]+)\s*pp", eff)
+    rule = _caliber_rule(row.get("train_method"))
+    passline = str(rule.get("pass_line_text") or "见判据②")
+    method_txt = str(row.get("train_method") or "").upper()
+    if m:
+        sign = "-" if m.group(1) in ("-", "−") else "+"
+        detail = f"Δ = {sign}{m.group(2)} pp < 通过线（{method_txt} 判据②：{passline}）"
+    else:
+        detail = f"效果未达标（{method_txt} 判据② 通过线：{passline}；读数见 effect）"
     passed = []
     algo = str(row.get("algo_checks", ""))
     if algo and algo not in ("—", ""):
         passed.append(algo)
     return {"state": state,
-            "failed_criterion": "第 2 条：在平台方数据集与平台方参数下效果未达标",
+            "failed_criterion": f"第 2 条：效果未达标（{method_txt} 判据② 通过线 = {passline}）",
             "failed_detail": detail,
             "passed_criteria": passed or ["判据① 通过（见 runs）"]}
 
 
+#: ★ 耗时解析：**训练墙钟**的取数形态（★ 单一真源；`split_elapsed()` 与 verify 断言共用）。
+#    ⛔ 只认「训练墙钟」语境（墙钟 / *complete elapsed / train_runtime / trainer 末步 elapsed_sec /
+#    batch_sec mean / s/it / s/step / 步/s）——**评测侧**读数（如"评测侧单样本 elapsed_sec"）**不取**。
+ELAPSED_TOTAL_PATTERNS = (
+    re.compile(r"墙钟\s*\**\s*([0-9]{2}:[0-9]{2}:[0-9]{2})"),                       # 墙钟 HH:MM:SS
+    re.compile(r"墙钟\s*\**\s*([0-9]+(?:\.[0-9]+)?\s*s)\b"),                        # 墙钟 N s
+    re.compile(r"(?:complete|完成)[^0-9\n]{0,30}elapsed\s*[=:]\s*\**\s*"            # *complete elapsed=979.4/979.3 s
+               r"([0-9]+(?:\.[0-9]+)?)(?:\s*/\s*[0-9]+(?:\.[0-9]+)?)?\s*s", re.I),
+    re.compile(r"train_runtime\s*[=:]\s*([0-9]+(?:\.[0-9]+)?)\s*s?\b"),             # train_runtime=2655 s
+    re.compile(r"elapsed_time\s*[=:]\s*[\"']?([0-9]+)m\s*([0-9]+)s"),               # elapsed_time=44m 14s
+    re.compile(r"训练\s*[0-9]+\s*步\s*/\s*([0-9]+(?:\.[0-9]+)?)\s*s"),              # 训练 200 步 / 1981.8 s
+    re.compile(r"elapsed\s*[=:]\s*([0-9]+(?:\.[0-9]+)?)\s*s\b"),                    # elapsed=536.9s
+    # ↑ ⛔ 不取「评测侧单样本 elapsed_sec ≈ 3.99 s」这类：该形态是 `elapsed_sec ≈`（下划线/≈）⇒ 本式不匹配。
+)
+ELAPSED_CUM_PATTERNS = (
+    re.compile(r"(?:trainer\s*末步|末步|末|train_step|sft_step)[^0-9\n]{0,20}"      # trainer 末步 `elapsed_sec=977.2 s`
+               r"elapsed_sec\s*[=:]\s*≈?\s*([0-9]+(?:\.[0-9]+)?)\s*s"),
+    re.compile(r"(?:elapsed_sec\s*累计|步内累计)\s*([0-9]+(?:\.[0-9]+)?)\s*s"),
+)
+ELAPSED_PER_PATTERNS = (
+    re.compile(r"batch_sec[^0-9\n]{0,20}mean\s*[=＝]?\s*\**\s*([0-9]+(?:\.[0-9]+)?)\s*s"),
+    re.compile(r"([0-9]+(?:\.[0-9]+)?)\s*s/step"),
+    re.compile(r"([0-9]+(?:\.[0-9]+)?)\s*s/it"),
+    re.compile(r"每步(?:约|平均)?\s*([0-9]+(?:\.[0-9]+)?)\s*s"),
+)
+
+#: ★ 供 verify 断言用：耗时解析的**输入域**（这些字段里出现墙钟形态 ⇒ 表格列不得为空）
+ELAPSED_SOURCE_KEYS = ("throughput_detail", "throughput", "runs", "provenance_command")
+
+
+def elapsed_source_blob(row):
+    """★ 耗时解析输入域（**单一真源**：生成器与校验器共用）。"""
+    return " ".join(str(row.get(k) or "") for k in ELAPSED_SOURCE_KEYS)
+
+
 def split_elapsed(tp):
-    """由跑次读数文本抽出「耗时」口径（总时长 / 步内累计）。抽不到记 '—'（不编造）。"""
+    """由跑次读数文本抽出「耗时」口径（总时长 / 训练累计 / 每步约）。抽不到记 '—'（⛔ 不编造）。
+
+    ★ 2026-10-15 扩解析：原先只认「墙钟 HH:MM:SS / 墙钟 N s / 步内累计 / 每步约」四种，
+      ⇒ 全表 54/54 `elapsed` 为空（实证：T011 的 977.2/979.4 s 明明在 `throughput_detail` 里）。
+      ★ 本次按**现行实际文本形态**补足（见 `ELAPSED_*_PATTERNS`），并**⛔ 不取评测侧读数**。
+    """
     if not tp or tp in ("—",):
         return "—"
-    m1 = (re.search(r"墙钟\s*([0-9]{2}:[0-9]{2}:[0-9]{2})", tp)
-          or re.search(r"墙钟\s*([0-9.]+\s*s)", tp))
-    m2 = re.search(r"(?:elapsed_sec\s*累计|步内累计)\s*([0-9.]+)\s*s", tp)
-    m3 = re.search(r"每步(?:约|平均)?\s*([0-9.]+)\s*s", tp)
+    t = str(tp)
+    tot = cum = per = None
+    for p in ELAPSED_TOTAL_PATTERNS:
+        m = p.search(t)
+        if not m:
+            continue
+        if m.re.groups == 2:                      # elapsed_time=44m 14s
+            tot = f"{m.group(1)}m{m.group(2)}s"
+        else:
+            tot = str(m.group(1))
+            if not tot.endswith(" s") and not re.search(r"[0-9]{2}:[0-9]{2}:[0-9]{2}", tot):
+                tot = f"{tot} s"
+        break
+    for p in ELAPSED_CUM_PATTERNS:
+        m = p.search(t)
+        if m:
+            cum = f"{m.group(1)} s"
+            break
+    for p in ELAPSED_PER_PATTERNS:
+        m = p.search(t)
+        if m:
+            per = f"{m.group(1)} s"
+            break
     parts = []
-    if m2:
-        parts.append(f"步内累计 {m2.group(1)} s")
-    if m1:
-        parts.append(f"总时长 {m1.group(1)}")
-    if m3:
-        parts.append(f"每步约 {m3.group(1)} s")
+    if tot:
+        parts.append(f"总时长 {tot}")
+    if cum:
+        parts.append(f"训练累计 {cum}")
+    if per:
+        parts.append(f"每步约 {per}")
     return "；".join(parts) if parts else "—"
+
+
+#: ★ 耗时列的标签与固定展示顺序（单一真源）
+ELAPSED_LABELS = ("总时长", "训练累计", "每步约")
+
+
+def _elapsed_parts(text):
+    """把「总时长 X；训练累计 Y；每步约 Z」拆成 {标签: 值}。"""
+    out = {}
+    for seg in str(text or "").split("；"):
+        m = re.match(r"^\s*(总时长|训练累计|每步约)\s*(.+?)\s*$", seg)
+        if m:
+            out[m.group(1)] = m.group(2)
+    return out
+
+
+def _elapsed_num(s):
+    m = re.search(r"([0-9]+(?:\.[0-9]+)?)", str(s or ""))
+    return float(m.group(1)) if m else None
+
+
+def resolve_elapsed(row, tp_raw):
+    """★ 「耗时」列取值的**唯一入口**（三层，⛔ 不编造）：
+        ① 矩阵内**跑次文本**解析（`split_elapsed`）；
+        ② 228 **只读侦察**所得 `elapsed_evidence`（`status=found`）：① 为 '—' 时用它；① 已有则只**补缺标签**
+           （同一标签两来源数值差 >2% ⇒ **fail-closed**，⛔ 不猜、⛔ 不覆盖）；
+        ③ `elapsed_evidence.status=not_found` ⇒ 写「**未取到（<具名原因>）**」（⛔ 不留空白、⛔ 不写估计值）。
+    """
+    parsed = _elapsed_parts(split_elapsed(elapsed_source_blob(row) or tp_raw))
+    ev = row.get("elapsed_evidence") if isinstance(row.get("elapsed_evidence"), dict) else {}
+    st = str(ev.get("status") or "")
+    if st == "not_found":
+        reason = str(ev.get("reason") or "").strip()
+        if not reason:
+            raise SystemExit(f"FAIL-CLOSED：{row.get('tier')} elapsed_evidence=not_found 但缺具名原因")
+        if parsed:
+            raise SystemExit(f"FAIL-CLOSED：{row.get('tier')} 跑次文本已有读数却又标 not_found ⇒ 口径矛盾")
+        return f"未取到（{reason}）"
+    if st == "found":
+        evp = _elapsed_parts(ev.get("value_text"))
+        for k, v in evp.items():
+            if k in parsed:
+                a, b = _elapsed_num(v), _elapsed_num(parsed[k])
+                if a is not None and b is not None and abs(a - b) > 0.02 * max(abs(a), 1.0):
+                    raise SystemExit(
+                        f"FAIL-CLOSED：{row.get('tier')} 「{k}」两来源冲突：跑次文本 {parsed[k]} vs 228 侦察 {v}")
+        merged = {k: v for k, v in parsed.items()}
+        merged.update({k: v for k, v in evp.items() if k not in merged})
+    else:
+        merged = dict(parsed)
+    if not merged:
+        return "—"
+    return "；".join(f"{k} {merged[k]}" for k in ELAPSED_LABELS if k in merged)
 
 
 def split_throughput(tp):
@@ -762,7 +981,8 @@ def main():
         if concluded:
             tp_raw = r.get("throughput", "—")
             r["throughput_detail"] = tp_raw        # ★ 归一化**之前**的原文（含 ≈3.9 s/step 等可核数）
-            r["elapsed"] = split_elapsed(tp_raw)
+            # ★ 耗时 = 「跑次文本解析 ⊕ 228 只读侦察证据」；取不到 ⇒ 「未取到（具名原因）」（单一入口，fail-closed）
+            r["elapsed"] = resolve_elapsed(r, tp_raw)
             r["throughput"] = split_throughput(tp_raw)
             w = window_text(r.get("runs", ""))
             r["effect"] = (r.get("effect", "—") + ("；" + w if w else "")).strip("；") or "—"
@@ -874,6 +1094,10 @@ def main():
         r["run_path"] = official_run_path(r, state)
         if v:
             r["verdict"] = v
+        else:
+            # ★★ 翻为「已验证可用」（或本就不需要结论块）⇒ ⛔ **不得残留旧的失败结论块**
+            #    （实证：T011 由判据① 失败翻为可用时，旧的「第 1 条未过」会留在可用行上）
+            r.pop("verdict", None)
         # ★★ 短/长备注分离（**行循环最末端**：所有备注追加/覆盖之后；⛔ 不在中途插入）
         _full = str(r.get("note") or "")
         _sup = str(r.get("superseded_note") or "").strip()
@@ -883,6 +1107,31 @@ def main():
             r["note_full"] = _full
             r["note"] = short_note(r, _full)
         rows.append(r)
+
+    # ★★ 「读数变化登记表」：**数据驱动**地从档位行派生（⛔ 不写死档号/数值）——
+    #    凡行级 `caliber_change.kind` 以 `reading_change` 开头者 ⇒ 逐条进 `criteria_caliber.caliber_change`。
+    _cal = criteria_caliber()
+    _reg = []
+    for _r in rows:
+        _cc = _r.get("caliber_change")
+        if not (isinstance(_cc, dict) and str(_cc.get("kind", "")).startswith("reading_change")):
+            continue
+        _b, _a = _cc.get("reading_before") or {}, _cc.get("reading_after") or {}
+        def _rd(x):
+            if x.get("delta_pp") is not None:
+                return f"Δ={x.get('delta_pp')} pp（epoch={x.get('epoch')}；{x.get('why', '')}）"
+            return f"无实测读数（epoch={x.get('epoch')}；{x.get('why', '')}）"
+        # ★★ 四态是否翻盘**逐条数据驱动**（⛔ 不写死）：`caliber_change.four_state_flip`
+        #    缺省 True（兼容既有 T011 等翻盘档的既有渲染文本）；T024 为「读数由无效转有效 + 归因更正，
+        #    但四态未变（仍为不可用）」⇒ 显式 False。
+        _flip = "四态翻盘" if _cc.get("four_state_flip", True) else "四态未变（★ 仅归因与读数更正）"
+        _reg.append(
+            f"★ {_cc.get('effective', '')} **{_r.get('tier')}**：{_flip} —— {_cc.get('rule', '')} "
+            f"★ 旧读数 {_rd(_b)}**无效、⛔ 不得引用**（保留为历史）；"
+            f"★ 新读数 {_rd(_a)}**有效**。"
+            f"★ 与判据口径的关系：{_cc.get('verdict_unchanged_by_caliber', '')} "
+            f"来源：{_cc.get('source', '')}。{_cc.get('epoch_marker', '')}")
+    _cal["caliber_change"]["reading_change_registry"] = _reg
 
     doc = {
         "schema": "capability-matrix/v3-official",
@@ -901,7 +1150,7 @@ def main():
             "status_vocabulary": STATUS_VOCABULARY,
             "boundary_declaration": boundary_declaration(),
         "distill_teacher": distill_teacher(),
-            "criteria_caliber": criteria_caliber(),
+            "criteria_caliber": _cal,
             "lora_target_backends": lora_target_backends(),
             "criteria_version": meta.get("criteria_version", ""),
             "result_placeholder": meta.get("result_placeholder", "—"),

@@ -14,11 +14,11 @@ training:
   run_name: T025
   overwrite_output_dir: true
   seed: 42
-  max_epochs: 2
-  learning_rate: 1.0e-05
+  max_epochs: 4
+  learning_rate: 2.0e-05
   gradient_accumulation_micro_batches: 1
   save_checkpoint_every_epoch: false
-  save_steps: 201
+  save_steps: 401
 launch:
   nproc_per_node: 1   # ★ 由 cards=1 推导（§12 同源：卡数与进程数不得各改一半）
 lora:

@@ -155,18 +155,78 @@ def build_boundary(data):
             f'<ul>{pts}</ul><p class="note">{html.escape(b.get("coverage_caveat", ""))}</p></div>')
 
 
+def threshold_html(th):
+    """★ 判据②（效果）口径渲染：**逐算法分列**（SFT / GRASPO / CPT / OPD）。
+
+    ★ 数据驱动：一律从 `threshold.by_method` 取值，⛔ 不在渲染层写死任何阈值。
+    ★ 向后兼容：无 `by_method` 时回退旧的单一 `value` 形态。
+    """
+    bm = th.get("by_method") or {}
+    if not bm:
+        return (f'{html.escape(str(th.get("name", "")))} = {th.get("value")} {html.escape(str(th.get("unit", "")))}；'
+                f'{html.escape(str(th.get("applies_to", "")))}；{html.escape(str(th.get("status", "")))}')
+    names = {"sft": "SFT", "graspo": "GRASPO（RL）", "cpt": "CPT", "opd": "OPD"}
+    rows = []
+    for k in ("sft", "graspo", "cpt", "opd"):
+        v = bm.get(k)
+        if not v:
+            continue
+        extra = ""
+        if v.get("also"):
+            extra += f'；并须：{html.escape(str(v["also"]))}'
+        if v.get("teacher"):
+            extra += f'；教师 = {html.escape(str(v["teacher"]))}'
+        ep = v.get("epoch")
+        if ep is not None and v.get("epoch_previous") is not None and v.get("epoch_previous") != ep:
+            ep_txt = f'epoch={ep}（★ 本轮由 {v.get("epoch_previous")} 改为 {ep}）'
+        elif ep is not None:
+            ep_txt = f'epoch={ep}（不变）'
+        else:
+            ep_txt = "—"
+        rows.append(
+            f'<tr><td><b>{names[k]}</b></td>'
+            f'<td>{html.escape(str(v.get("pass_line_text", "")))}</td>'
+            f'<td>主线 = {html.escape(str(v.get("criterion", "")))} {html.escape(str(v.get("op", "")))} '
+            f'{v.get("value")} {html.escape(str(v.get("unit", "")))}'
+            f'（{html.escape(str(v.get("metric", "")))}）{extra}</td>'
+            f'<td>{html.escape(ep_txt)}</td></tr>')
+    return ('<table class="plain"><thead><tr><th>算法</th><th>判据② 通过线（点估计 Δ）</th>'
+            '<th>口径</th><th>epoch</th></tr></thead><tbody>'
+            + "".join(rows) + '</tbody></table>'
+            + f'<p class="note">{html.escape(str(th.get("status", "")))}</p>'
+            + f'<p class="note">旧口径留痕：{html.escape(str(th.get("historical_note", "")))}</p>'
+            + f'<p class="note">{html.escape(str(th.get("by_method_single_source", "")))}</p>')
+
+
+def caliber_change_html(c):
+    ch = c.get("caliber_change") or {}
+    if not ch:
+        return "—"
+    out = (f'<b>{html.escape(str(ch.get("effective", "")))}</b>｜来源：{html.escape(str(ch.get("source", "")))}<br>'
+           f'<b>改动</b>：{html.escape(str(ch.get("changed", "")))}<br>'
+           f'<b>未动</b>：{html.escape(str(ch.get("unchanged", "")))}<br>'
+           f'<b>被取代</b>：{html.escape(str(ch.get("superseded", "")))}')
+    # ★★ 「读数变化」登记表（**数据驱动**：行级 `caliber_change.kind=reading_change…` 汇总而来）
+    #    用途：把"四态翻盘**但判据未变**"的档与"判据变更"**显式分开**（⛔ 不让读者误以为是判据放宽）。
+    reg = ch.get("reading_change_registry") or []
+    if reg:
+        out += (f'<br><b>读数变化登记（★ 不是判据变更）</b>：{html.escape(str(ch.get("reading_change_registry_note", "")))}'
+                '<ul>' + "".join(f'<li>{html.escape(str(x))}</li>' for x in reg) + '</ul>')
+    return out
+
+
 def build_caliber(data):
     c = data["meta"].get("criteria_caliber", {})
     d, th, bl = c.get("dataset", {}), c.get("threshold", {}), c.get("baseline", {})
     crit = "".join(f"<li>{html.escape(x)}</li>" for x in c.get("availability_criteria", []))
     return ('<table class="plain"><tbody>'
-            f'<tr><th>可用性判据</th><td><ul>{crit}</ul></td></tr>'
+            f'<tr><th>判据（四条）</th><td><ul>{crit}</ul></td></tr>'
+            f'<tr><th>判据口径变更留痕</th><td>{caliber_change_html(c)}</td></tr>'
             f'<tr><th>评测数据集</th><td>{html.escape(d.get("id", ""))}；'
             f'{html.escape(d.get("availability", ""))}；版本锚点 sha256 <code>{html.escape(d.get("version_anchor_sha256", ""))}</code>；'
             f'样本量 {d.get("sample_count")}；评测方法 {html.escape(d.get("method", ""))}</td></tr>'
             f'<tr><th>判据标识</th><td><code>{html.escape(c.get("criteria_id", ""))}</code></td></tr>'
-            f'<tr><th>阈值与目标值</th><td>{html.escape(th.get("name", ""))} = {th.get("value")} {html.escape(th.get("unit", ""))}；'
-            f'{html.escape(th.get("applies_to", ""))}；{html.escape(th.get("status", ""))}</td></tr>'
+            f'<tr><th>阈值与目标值（判据②）</th><td>{threshold_html(th)}</td></tr>'
             f'<tr><th>基线口径</th><td>{html.escape(bl.get("role", ""))}；{html.escape(bl.get("caliber", ""))}</td></tr>'
             f'<tr><th>结论与参数的对应</th><td>{html.escape((c.get("conclusion_rule") or {}).get("rule", ""))}</td></tr>'
             f'<tr><th>状态用词</th><td>{html.escape((c.get("conclusion_rule") or {}).get("status_wording", ""))}</td></tr>'

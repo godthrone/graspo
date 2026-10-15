@@ -392,19 +392,11 @@ class TrainingConfig(BaseModel):
     reject_unparseable_groups: bool = True
     resume_from_checkpoint: str | None = None
     lr_scheduler: LRSchedulerConfig = LRSchedulerConfig()
-    # DP 学习率缩放策略：dp_size > 1 时按 linear scaling rule 调整 lr
-    # "linear" = lr × dp_size；"none" = 不缩放
-    lr_scaling: Literal["linear", "none"] = "linear"
-
-    def effective_learning_rate(self, dp_size: int = 1) -> float:
-        """DP 缩放后的有效学习率。
-
-        linear scaling rule（§1.4 单一真相源）：有效 lr 由 learning_rate、
-        lr_scaling、dp_size 三者唯一确定，不分散到多个调用点各自计算。
-        """
-        if self.lr_scaling == "linear" and dp_size > 1:
-            return self.learning_rate * float(dp_size)
-        return self.learning_rate
+    # ★ 主席 2026-10-15 裁定：**不按卡数缩放 lr**——「按卡数缩放学习率」这个机制已
+    #   **整体删除**（⛔ 不是"保留开关设成 none"、⛔ 不留 deprecation 别名）：
+    #   「直接让这个机制消失」。`learning_rate` 就是最终生效值，与 dp_size / tp_size /
+    #   pp_size / 卡数无关；取值由「一个方法一个值」的策略层决定
+    #   （`tools/matrix/extract_spec.py:LR_POLICY`）。
 
     @model_validator(mode="after")
     def _validate_output_dir(self) -> TrainingConfig:
