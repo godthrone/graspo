@@ -26,6 +26,7 @@ from graspo.flow.backend.native.runtime import (
 from graspo.flow.backend.native.trainer.checkpoint import CheckpointMixin
 from graspo.flow.backend.native.trainer.helpers import (
     _backup_config,
+    _set_model_init_seed,
     _set_random_seed,
     _timestamp,
 )
@@ -140,6 +141,26 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
         self._smoke_boundary = bool(smoke)
         validate_native_runtime_config(self.config)
         self.runtime.validate()
+        # ── 建模前播种（DP 副本初值一致性；与 SFT 路径同一类管道问题）────────────
+        #
+        # ``runtime.setup()`` 里会构造模型并随机初始化 LoRA ``lora_a``
+        # （``kaiming_uniform_``，``lora/lora_linear.py:131``）。DP 只同步
+        # **更新量**、不同步初值 ⇒ 各副本若从不同 RNG 状态建模，``lora_a`` 的初值差
+        # 会被**永久保留**，训练完各副本仍不一致、产物不可合并。
+        #
+        # 此前建模发生在**任何播种之前** ⇒ 建模读的是 torch 进程默认种子（取自 OS
+        # 熵、逐进程不同）。这里在建模**之前**用**与 rank 无关**的种子播种
+        # （``_set_model_init_seed``，与 SFT 路径 `sft_trainer.py:154` 复用**同一个**
+        # helper，⛔ 不新增第二份实现——"权重初始化"与"数据打散"是两种语义，
+        # 不得共用一个旋钮）。
+        #
+        # 建模**之后**仍按原逻辑用 ``_set_random_seed(seed, rank=rank)`` 重新播种
+        # （本文件 L198）⇒ dropout / 数据打散等逐 rank 随机性行为与改动前**逐位一致**
+        # （鲁棒打散另用显式 ``random.Random(seed + epoch)``，本就不受此影响）。
+        #
+        # ⛔ 本处只改"建模之前的播种"：loss / advantage / 采样 rollout / 优化器实体 /
+        #    DP 梯度同步机制一律零改动（见工位 report.md §4 红线证明）。
+        _set_model_init_seed(int(self.config.training.seed))
         self.runtime.setup()
         # ── 输出目录身份先定下来（阻断 B 修复：顺序对齐）────────────────────
         #
