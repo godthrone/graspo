@@ -103,10 +103,27 @@ flowchart TB
 | **ripple/** | 算法逻辑：奖励、advantage、loss、解析、标注、监控 | 纯 CPU，无 GPU/网络/文件 IO |
 | **core/** | 跨层契约：配置模型、chat template、LoRA 工具 | 同上 |
 | **flow/** | 执行载体：TP/DP/PP/SP 分布式、模型加载、checkpoint、训练循环 | 需 GPU（纯设施逻辑可在单 GPU 上测试） |
+| **export/** | **共享叶子层**（不属三层中的任何一层）：导出/推理产物形态的公共工具 | 纯 CPU；⛔ 本层不得 import 训练栈（flow/ripple） |
 
 **边界判断**：改这个文件会让训练结果变吗？会 → ripple。不会但和配置有关 → core。其余 → flow。
 
 **DP 的边界**：DP 完全在 flow/ 中实现。ripple 永远不知道 `dp_rank`、`dp_size`、`dp_group` 的存在——它只看到"一份数据"，flow 负责把不同数据分片喂给不同的 DP rank。
+
+**登记方向（★ 机核，`tests/test_ast_boundary.py`；⛔ 新增同类边必须先登记再改测试表）**：
+
+- **`flow → export`：允许**。`export/` 是共享**叶子层**（不属三层中任何一层），且反向
+  `export → flow/ripple` 已被 `tests/export/test_boundaries.py` 强制为假 ⇒ 不构成双向耦合。
+  允许项**逐处**登记在 `_REGISTERED_FLOW_TO_EXPORT`：
+  1. `flow/backend/native/lora/lora_io.py` → `graspo.export.paths.prepare_output_dir`
+  2. `flow/backend/native/trainer/checkpoint.py` → `graspo.export.export_checkpoint`
+  3. `flow/backend/native/trainer/helpers.py` → `graspo.export.paths.prepare_output_dir`
+  守卫：`test_flow_to_export_edges_are_all_registered`（未登记新边 ⇒ 红）。
+- **`cli → flow.backend`：只许经 `flow/backend/selection.py`（facade/注册表）与
+  `flow/backend/base.py`（接口）**；⛔ 不得直取 `flow.backend.{native,msswift}`（具体实现）。
+  runtime / launcher 环境变量走 `selection.create_runtime` / `selection.launcher_env`。
+  守卫：`test_cli_does_not_import_backend_impl_at_runtime`。
+- **`flow/adapter → flow.backend`：运行时禁止**（契约层不认识具体后端实现）；
+  仅**类型**引用可放 `if TYPE_CHECKING:`。守卫：`test_adapter_does_not_import_backend_at_runtime`。
 
 详细设计见：
 - **[Ripple 算法层](ripple.md)** — 奖励、标注、advantage、group 决策、loss

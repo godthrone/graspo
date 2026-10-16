@@ -257,7 +257,9 @@ def _build_msswift_launch_plan(
     Returns:
         ``LaunchPlan``；``uses_torchrun`` 表示是否需要 torchrun 拉起多进程。
     """
-    from graspo.flow.backend.msswift._config_mapping import launcher_env
+    # ★ Phase 1b：经 flow.backend.selection facade 取 launcher 环境变量
+    # （cli 不直取 flow.backend.msswift 实现包；真相源仍在 msswift/_config_mapping）。
+    from graspo.flow.backend.selection import launcher_env
 
     python = str(config.launch.python or sys.executable)
     nnodes = int(config.launch.nnodes)

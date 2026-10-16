@@ -95,6 +95,107 @@ def _collect_all_imports() -> list[ImportEdge]:
     return all_edges
 
 
+# ── ★ task-arch-b1 新增：内存源码 / 子树 导入收集（守卫与阳性对照共用）──────────
+#
+# 与 `_collect_imports` 同口径的别名逻辑，但：
+#   1. `_imports_from_source` 可直接吃**内存源码**（阳性/阴性对照用），无需落盘；
+#   2. `_runtime_imports_from_source` 跳过 `if TYPE_CHECKING:` 的**块体** ——
+#      该块体永不执行 ⇒ 不构成**运行时**依赖（`else` 分支照进）。
+#      这是 1a/1b 收口的口径基础：只禁运行时依赖，仅类型引用允许。
+
+#: 仓库根 / `src/` / `src/graspo` —— 绝对路径，不依赖 cwd（测试可从任意目录跑）。
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_SRC_ROOT = _REPO_ROOT / "src"
+_GRASPO_ROOT = _SRC_ROOT / "graspo"
+
+
+def _edges_of_import_node(node: ast.AST, module: str) -> list[ImportEdge]:
+    """把一个 import 节点渲染成导入边（与 `_collect_imports` 同口径）。"""
+    if isinstance(node, ast.Import):
+        return [
+            ImportEdge(module, alias.name, node.lineno)
+            for alias in node.names
+            if alias.name.startswith("graspo.")
+        ]
+    if isinstance(node, ast.ImportFrom):
+        if node.module and node.module.startswith("graspo."):
+            return [
+                ImportEdge(
+                    module,
+                    f"{node.module}.{alias.name}" if alias.name != "*" else node.module,
+                    node.lineno,
+                )
+                for alias in node.names
+            ]
+        if node.module is None and node.level is not None and node.level > 0:
+            resolved = _resolve_relative(module, node.level, node.module)
+            return [
+                ImportEdge(
+                    module,
+                    f"{resolved}.{alias.name}" if alias.name != "*" else resolved,
+                    node.lineno,
+                )
+                for alias in node.names
+            ]
+    return []
+
+
+def _imports_from_source(source: str, module: str) -> list[ImportEdge]:
+    """解析**内存源码**，返回全部 graspo 内部导入边（全层级，含 TYPE_CHECKING 块内）。
+
+    与 `_collect_all_imports` 同口径 —— 供层规则（1–5）的注入式阳性对照使用。
+    """
+    tree = ast.parse(source)
+    edges: list[ImportEdge] = []
+    for node in ast.walk(tree):
+        edges.extend(_edges_of_import_node(node, module))
+    return edges
+
+
+def _is_type_checking_guard(node: ast.If) -> bool:
+    """`if TYPE_CHECKING:` / `if typing.TYPE_CHECKING:` 守卫判断。"""
+    test = node.test
+    if isinstance(test, ast.Name):
+        return test.id == "TYPE_CHECKING"
+    if isinstance(test, ast.Attribute):
+        return test.attr == "TYPE_CHECKING"
+    return False
+
+
+def _runtime_imports_from_source(source: str, module: str) -> list[ImportEdge]:
+    """解析内存源码，返回**运行时**导入边（⛔ 跳过 `if TYPE_CHECKING:` 块体）。"""
+    out: list[ImportEdge] = []
+
+    def _walk(node: ast.AST) -> None:
+        if isinstance(node, ast.If) and _is_type_checking_guard(node):
+            # 块体永不执行 ⇒ 不算运行时依赖；`else` / `elif` 分支照进。
+            for stmt in node.orelse:
+                _walk(stmt)
+            return
+        out.extend(_edges_of_import_node(node, module))
+        for child in ast.iter_child_nodes(node):
+            _walk(child)
+
+    _walk(ast.parse(source))
+    return out
+
+
+def _subtree_runtime_imports(subtree: str) -> list[ImportEdge]:
+    """扫 `src/graspo/<subtree>/**`（全层级，含函数体内延迟 import）的运行时导入边。"""
+    root = _GRASPO_ROOT / subtree
+    assert root.is_dir(), f"subtree not found: {root}"
+    edges: list[ImportEdge] = []
+    for py_file in sorted(root.rglob("*.py")):
+        if "__pycache__" in py_file.parts:
+            continue
+        edges.extend(
+            _runtime_imports_from_source(
+                py_file.read_text(encoding="utf-8"), _file_to_module(py_file, _SRC_ROOT)
+            )
+        )
+    return edges
+
+
 # ── 边界规则 ──────────────────────────────────────────────────────────────────
 
 
@@ -106,6 +207,76 @@ def _is_under(module: str, prefix: str) -> bool:
 def _is_relative_import(module: str) -> bool:
     """是否为相对导入（以 . 开头）。"""
     return module.startswith(".")
+
+
+# ── ★ task-arch-b1：四条层规则抽成**纯函数**（可注入内存边做阳性对照）──────────
+#
+# 纯函数的收益：规则本身可以被"喂一段违规边 ⇒ 必须报"直接检验。
+# ⛔ 若规则实现被删空（恒返回 []），对应阳性对照用例**必然红** —— 这正是
+# 「不能自证能失败的检查」的修法（原实现把规则与文件系统扫描焊死，无法注入）。
+
+
+def find_ripple_importing_flow(edges: list[ImportEdge]) -> list[str]:
+    """规则 1：`ripple/` 不得 import `flow/`（纯计算层，零设施依赖）。"""
+    return [
+        f"  {edge.source}:{edge.lineno} imports {edge.target}"
+        for edge in edges
+        if _is_under(edge.source, "graspo.ripple") and _is_under(edge.target, "graspo.flow")
+    ]
+
+
+def find_scheduling_importing_models_or_trainer(edges: list[ImportEdge]) -> list[str]:
+    """规则 2：`flow/backend/native/parallel/scheduling/` 不得 import models/ 或 trainer/。"""
+    violations: list[str] = []
+    for edge in edges:
+        if _is_under(edge.source, "graspo.flow.backend.native.parallel.scheduling"):
+            if _is_under(edge.target, "graspo.flow.backend.native.models"):
+                violations.append(f"  {edge.source}:{edge.lineno} imports models: {edge.target}")
+            if _is_under(edge.target, "graspo.flow.backend.native.trainer"):
+                violations.append(f"  {edge.source}:{edge.lineno} imports trainer: {edge.target}")
+    return violations
+
+
+def find_core_importing_flow_or_ripple(edges: list[ImportEdge]) -> list[str]:
+    """规则 3：`core/` 不得 import `flow/` 或 `ripple/`（跨层契约不依赖上层）。"""
+    violations: list[str] = []
+    for edge in edges:
+        if _is_under(edge.source, "graspo.core"):
+            if _is_under(edge.target, "graspo.flow"):
+                violations.append(f"  {edge.source}:{edge.lineno} imports flow: {edge.target}")
+            if _is_under(edge.target, "graspo.ripple"):
+                violations.append(f"  {edge.source}:{edge.lineno} imports ripple: {edge.target}")
+    return violations
+
+
+def _layer_group(module: str) -> str:
+    """取架构层：graspo.flow.xxx → graspo.flow, graspo.ripple.xxx → graspo.ripple"""
+    parts = module.split(".")
+    if len(parts) >= 2:
+        return ".".join(parts[:2])  # graspo.flow, graspo.ripple, graspo.core
+    return module
+
+
+def find_cross_layer_cycles(edges: list[ImportEdge]) -> list[str]:
+    """规则 4：不同架构层之间不得双向导入（A→B 且 B→A）。
+
+    同层内的循环（如 flow.backend.native.models ↔ flow.lora）不在此检查范围，
+    因为同层模块间可以有合理的内部依赖。
+    """
+    graph: dict[str, set[str]] = {}
+    for edge in edges:
+        src = _layer_group(edge.source)
+        tgt = _layer_group(edge.target)
+        if src == tgt:
+            continue  # 同层内导入不检查
+        graph.setdefault(src, set()).add(tgt)
+
+    cycles: list[str] = []
+    for src, tgts in graph.items():
+        for tgt in tgts:
+            if tgt in graph and src in graph[tgt] and src < tgt:
+                cycles.append(f"  {src} ↔ {tgt}")
+    return cycles
 
 
 def test_flow_imports_ripple_is_documented():
@@ -138,12 +309,7 @@ def test_ripple_does_not_import_flow():
 
     ripple 是纯计算层，零设施依赖，不能引入 flow 的任何内容。
     """
-    all_imports = _collect_all_imports()
-    violations: list[str] = []
-
-    for edge in all_imports:
-        if _is_under(edge.source, "graspo.ripple") and _is_under(edge.target, "graspo.flow"):
-            violations.append(f"  {edge.source}:{edge.lineno} imports {edge.target}")
+    violations = find_ripple_importing_flow(_collect_all_imports())
 
     assert not violations, (
         f"ripple/ must not import flow/ ({len(violations)} violations):\n" + "\n".join(violations)
@@ -155,15 +321,7 @@ def test_scheduling_does_not_import_models_or_trainer():
 
     调度层只关心何时执行 forward/backward，与模型实现和训练循环解耦。
     """
-    all_imports = _collect_all_imports()
-    violations: list[str] = []
-
-    for edge in all_imports:
-        if _is_under(edge.source, "graspo.flow.backend.native.parallel.scheduling"):
-            if _is_under(edge.target, "graspo.flow.backend.native.models"):
-                violations.append(f"  {edge.source}:{edge.lineno} imports models: {edge.target}")
-            if _is_under(edge.target, "graspo.flow.backend.native.trainer"):
-                violations.append(f"  {edge.source}:{edge.lineno} imports trainer: {edge.target}")
+    violations = find_scheduling_importing_models_or_trainer(_collect_all_imports())
 
     assert not violations, (
         f"scheduling/ must not import adapters/models/ or trainer/ "
@@ -176,15 +334,7 @@ def test_core_does_not_import_flow_or_ripple():
 
     core 是基础设施层（schema、config），不应依赖上层模块。
     """
-    all_imports = _collect_all_imports()
-    violations: list[str] = []
-
-    for edge in all_imports:
-        if _is_under(edge.source, "graspo.core"):
-            if _is_under(edge.target, "graspo.flow"):
-                violations.append(f"  {edge.source}:{edge.lineno} imports flow: {edge.target}")
-            if _is_under(edge.target, "graspo.ripple"):
-                violations.append(f"  {edge.source}:{edge.lineno} imports ripple: {edge.target}")
+    violations = find_core_importing_flow_or_ripple(_collect_all_imports())
 
     assert not violations, (
         f"core/ must not import flow/ or ripple/ ({len(violations)} violations):\n"
@@ -193,35 +343,8 @@ def test_core_does_not_import_flow_or_ripple():
 
 
 def test_no_circular_imports_detected():
-    """AST 级别检测跨层循环依赖：不同架构层之间不应双向导入。
-
-    同层内的循环（如 flow.backend.native.models ↔ flow.lora）不在此检查范围，
-    因为同层模块间可以有合理的内部依赖。
-    """
-    all_imports = _collect_all_imports()
-    # 构建模块组（前两级）导入图
-    graph: dict[str, set[str]] = {}
-
-    def _layer_group(m: str) -> str:
-        """取架构层：graspo.flow.xxx → graspo.flow, graspo.ripple.xxx → graspo.ripple"""
-        parts = m.split(".")
-        if len(parts) >= 2:
-            return ".".join(parts[:2])  # graspo.flow, graspo.ripple, graspo.core
-        return m
-
-    for edge in all_imports:
-        src = _layer_group(edge.source)
-        tgt = _layer_group(edge.target)
-        if src == tgt:
-            continue  # 同层内导入不检查
-        graph.setdefault(src, set()).add(tgt)
-
-    # 检测跨层循环：A→B 且 B→A（不同层）
-    cycles: list[str] = []
-    for src, tgts in graph.items():
-        for tgt in tgts:
-            if tgt in graph and src in graph[tgt] and src < tgt:
-                cycles.append(f"  {src} ↔ {tgt}")
+    """AST 级别检测跨层循环依赖：不同架构层之间不应双向导入。"""
+    cycles = find_cross_layer_cycles(_collect_all_imports())
 
     assert not cycles, f"cross-layer circular imports detected ({len(cycles)}):\n" + "\n".join(
         cycles
@@ -480,3 +603,317 @@ def test_ripple_layer_is_within_boundary():
     """真树机核：`ripple/` 全树 0 违规（R1–R5）。"""
     violations = _scan_ripple_tree()
     assert not violations, f"ripple/ 边界违规 {len(violations)} 条：\n" + "\n".join(violations)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ★ task-arch-b1（Phase 1a/1b/1c/1d）：结构性越界收口 + 守卫
+#
+#   1d  四条层规则的**注入式阳性对照**（此前只有 ripple 的 R1–R5 扫描器有对照，
+#       四条层规则**无** ⇒ 不能自证"注入越界会红"）。
+#   1a  `flow.adapter` 子树 ⛔ **运行时** import `flow.backend`
+#       （契约层不得直取具体后端实现；收口形态 = `if TYPE_CHECKING:` 仅类型引用）。
+#   1b  `cli` 子树 ⛔ **运行时**直取 `flow.backend.{native,msswift}`
+#       （只许 `flow.backend.selection` facade 与 `flow.backend.base` 接口）。
+#   1c  `flow → export` 是**登记允许**方向（export = 共享叶子层，反向已由
+#       `tests/export/test_boundaries.py` 强制为假）；未登记的新边 ⇒ 红。
+#
+# ★ 口径（关键）：1a/1b 的守卫只禁**运行时**导入 —— `if TYPE_CHECKING:` 的块体
+#   永不执行，不构成运行时依赖，故允许（1a 的收口形态正是它）。层规则 1–4 沿用
+#   原口径（全层级扫描，含 TYPE_CHECKING 块内），⛔ 不因新守卫而放宽。
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+# ── 1d：四条层规则 × 注入式阳性对照 + 阴性对照 ──────────────────────────────
+
+
+def test_layer_rule_ripple_to_flow_catches_injected_violation():
+    """★ 1d 阳性对照（规则 1）：`ripple → flow` 注入 ⇒ 必红。
+
+    （若 `find_ripple_importing_flow` 被删空/恒返回 []，本用例**必然** FAIL。）
+    """
+    edges = _imports_from_source(
+        "from graspo.flow.backend.native.runtime import GraspoFlowRuntime\n",
+        "graspo.ripple.annotation.advantages",
+    )
+    assert find_ripple_importing_flow(edges) == [
+        "  graspo.ripple.annotation.advantages:1 imports "
+        "graspo.flow.backend.native.runtime.GraspoFlowRuntime"
+    ]
+
+
+def test_layer_rule_ripple_to_flow_allows_legal_import():
+    """★ 1d 阴性对照（规则 1）：`ripple → core` 合法 ⇒ 绿。"""
+    edges = _imports_from_source(
+        "from graspo.core.schema import Sample\n", "graspo.ripple.annotation.advantages"
+    )
+    assert find_ripple_importing_flow(edges) == []
+
+
+def test_layer_rule_scheduling_catches_injected_models_and_trainer_violation():
+    """★ 1d 阳性对照（规则 2）：`scheduling → models` 与 `→ trainer` 注入 ⇒ 必红（2 条）。"""
+    edges = _imports_from_source(
+        "from graspo.flow.backend.native.models.qwen3.model_adapter import Qwen3ModelAdapter\n"
+        "def f():\n"
+        "    from graspo.flow.backend.native.trainer.rollout import rollout_loop\n",
+        "graspo.flow.backend.native.parallel.scheduling.schedule_1f1b",
+    )
+    assert find_scheduling_importing_models_or_trainer(edges) == [
+        "  graspo.flow.backend.native.parallel.scheduling.schedule_1f1b:1 imports models: "
+        "graspo.flow.backend.native.models.qwen3.model_adapter.Qwen3ModelAdapter",
+        "  graspo.flow.backend.native.parallel.scheduling.schedule_1f1b:3 imports trainer: "
+        "graspo.flow.backend.native.trainer.rollout.rollout_loop",
+    ]
+
+
+def test_layer_rule_scheduling_allows_legal_import():
+    """★ 1d 阴性对照（规则 2）：`scheduling → 同层通信层` 合法 ⇒ 绿。"""
+    edges = _imports_from_source(
+        "from graspo.flow.backend.native.parallel.pipeline_comm import PipeComm\n",
+        "graspo.flow.backend.native.parallel.scheduling.schedule_1f1b",
+    )
+    assert find_scheduling_importing_models_or_trainer(edges) == []
+
+
+def test_layer_rule_core_catches_injected_flow_and_ripple_violation():
+    """★ 1d 阳性对照（规则 3）：`core → flow` 与 `core → ripple` 注入 ⇒ 必红（2 条）。"""
+    edges = _imports_from_source(
+        "from graspo.flow.backend.base import RLBackend\nfrom graspo.ripple.loss import loss_fn\n",
+        "graspo.core.result_judge",
+    )
+    assert find_core_importing_flow_or_ripple(edges) == [
+        "  graspo.core.result_judge:1 imports flow: graspo.flow.backend.base.RLBackend",
+        "  graspo.core.result_judge:2 imports ripple: graspo.ripple.loss.loss_fn",
+    ]
+
+
+def test_layer_rule_core_allows_legal_import():
+    """★ 1d 阴性对照（规则 3）：`core → core` 合法 ⇒ 绿。"""
+    edges = _imports_from_source(
+        "from graspo.core.schema import GraspoConfig\n", "graspo.core.result_judge"
+    )
+    assert find_core_importing_flow_or_ripple(edges) == []
+
+
+def test_layer_rule_cycles_catches_injected_cross_layer_cycle():
+    """★ 1d 阳性对照（规则 4）：注入 `core → flow` ＋ `flow → core` ⇒ 必红。"""
+    edges = _imports_from_source(
+        "from graspo.flow.data_io import load_jsonl\n", "graspo.core.schema"
+    ) + _imports_from_source("from graspo.core.schema import GraspoConfig\n", "graspo.flow.data_io")
+    assert find_cross_layer_cycles(edges) == ["  graspo.core ↔ graspo.flow"]
+
+
+def test_layer_rule_cycles_allows_single_direction():
+    """★ 1d 阴性对照（规则 4）：单向 `flow → core` 合法 ⇒ 绿。"""
+    edges = _imports_from_source(
+        "from graspo.core.schema import GraspoConfig\n", "graspo.flow.data_io"
+    )
+    assert find_cross_layer_cycles(edges) == []
+
+
+# ── 1a：契约层（flow/adapter）⛔ 运行时依赖具体后端实现 ─────────────────────
+
+#: 1b：`cli` 允许的 `flow.backend` 入口（facade / 接口），其余子模块一律违规。
+_CLI_ALLOWED_BACKEND_SUBMODULES: tuple[str, ...] = (
+    "graspo.flow.backend.selection",
+    "graspo.flow.backend.base",
+)
+
+#: 1c：**登记允许**的 `flow → export` 边（逐处登记；新边必须先登记再改本表）。
+_REGISTERED_FLOW_TO_EXPORT: frozenset[tuple[str, str]] = frozenset(
+    {
+        (
+            "graspo.flow.backend.native.lora.lora_io",
+            "graspo.export.paths.prepare_output_dir",
+        ),
+        ("graspo.flow.backend.native.trainer.checkpoint", "graspo.export.export_checkpoint"),
+        ("graspo.flow.backend.native.trainer.helpers", "graspo.export.paths.prepare_output_dir"),
+    }
+)
+
+
+def find_adapter_to_backend_runtime_violations(edges: list[ImportEdge]) -> list[str]:
+    """1a 规则：`flow/adapter` 子树 ⛔ 运行时 import `flow/backend`（具体后端实现）。"""
+    return [
+        f"  {edge.source}:{edge.lineno} imports {edge.target}"
+        for edge in edges
+        if _is_under(edge.source, "graspo.flow.adapter")
+        and _is_under(edge.target, "graspo.flow.backend")
+    ]
+
+
+def find_cli_to_backend_impl_runtime_violations(edges: list[ImportEdge]) -> list[str]:
+    """1b 规则：`cli` 子树 ⛔ 运行时直取 `flow.backend.{native,msswift}` 等实现子模块。"""
+    return [
+        f"  {edge.source}:{edge.lineno} imports {edge.target}"
+        f"（cli 只许经 {' / '.join(_CLI_ALLOWED_BACKEND_SUBMODULES)}）"
+        for edge in edges
+        if _is_under(edge.source, "graspo.cli")
+        and _is_under(edge.target, "graspo.flow.backend")
+        and not any(_is_under(edge.target, allowed) for allowed in _CLI_ALLOWED_BACKEND_SUBMODULES)
+    ]
+
+
+def find_unregistered_flow_to_export(edges: list[ImportEdge]) -> list[str]:
+    """1c 规则：`flow → export` 方向允许，但每条边必须**逐处登记**。"""
+    return [
+        f"  {edge.source}:{edge.lineno} → {edge.target}"
+        for edge in edges
+        if _is_under(edge.source, "graspo.flow")
+        and _is_under(edge.target, "graspo.export")
+        and (edge.source, edge.target) not in _REGISTERED_FLOW_TO_EXPORT
+    ]
+
+
+def test_adapter_does_not_import_backend_at_runtime():
+    """★ 1a 真树守卫：`flow/adapter` 子树运行时 0 条 `flow.backend` 导入。"""
+    violations = find_adapter_to_backend_runtime_violations(
+        _subtree_runtime_imports("flow/adapter")
+    )
+    assert not violations, (
+        "flow/adapter（契约层）⛔ 不得在运行时 import flow/backend（具体后端实现）：\n"
+        + "\n".join(violations)
+        + "\n（仅类型引用请放 `if TYPE_CHECKING:`）"
+    )
+
+
+def test_adapter_backend_guard_catches_planted_runtime_import():
+    """★ 1a 阳性对照：把收口掉的 import **注回模块级** ⇒ 必红。"""
+    planted = "from graspo.flow.backend.native.runtime import NativeGeneration\n"
+    hits = find_adapter_to_backend_runtime_violations(
+        _runtime_imports_from_source(planted, "graspo.flow.adapter.base_graspo_flow_adapter")
+    )
+    assert hits == [
+        "  graspo.flow.adapter.base_graspo_flow_adapter:1 imports "
+        "graspo.flow.backend.native.runtime.NativeGeneration"
+    ]
+
+
+def test_adapter_backend_guard_catches_deferred_import_inside_function():
+    """★ 1a 阳性对照（全层级）：函数体内的延迟 import 同样命中（不是只扫模块级）。"""
+    planted = "def f():\n    from graspo.flow.backend.native.runtime import NativeGeneration\n"
+    hits = find_adapter_to_backend_runtime_violations(
+        _runtime_imports_from_source(planted, "graspo.flow.adapter.contract")
+    )
+    assert len(hits) == 1 and hits[0].startswith("  graspo.flow.adapter.contract:2 imports ")
+
+
+def test_adapter_backend_guard_allows_type_checking_and_legal_imports():
+    """★ 1a 阴性对照：`if TYPE_CHECKING:` 仅类型引用 + 合法方向 ⇒ 绿。"""
+    legal = (
+        "from __future__ import annotations\n"
+        "from typing import TYPE_CHECKING, Any\n"
+        "from graspo.ripple.parsing.completion import ParsedCompletion\n"
+        "if TYPE_CHECKING:\n"
+        "    from graspo.flow.backend.native.runtime import NativeGeneration\n"
+    )
+    assert (
+        find_adapter_to_backend_runtime_violations(
+            _runtime_imports_from_source(legal, "graspo.flow.adapter.base_graspo_flow_adapter")
+        )
+        == []
+    )
+
+
+def test_cli_does_not_import_backend_impl_at_runtime():
+    """★ 1b 真树守卫：`cli` 子树运行时 0 条 `flow.backend.{native,msswift}` 直取。
+
+    非空转断言：真树里必须**看得见**至少一条合法 `flow.backend.selection` 边
+    （否则守卫"绿"可能只是因为它一无所见）。
+    """
+    edges = _subtree_runtime_imports("cli")
+    violations = find_cli_to_backend_impl_runtime_violations(edges)
+    assert not violations, (
+        "cli（入口层）⛔ 不得在运行时直取 flow/backend 的具体实现：\n"
+        + "\n".join(violations)
+        + "\n（请经 flow/backend/selection.py 的 facade）"
+    )
+    allowed = [
+        e
+        for e in edges
+        if _is_under(e.source, "graspo.cli")
+        and any(_is_under(e.target, a) for a in _CLI_ALLOWED_BACKEND_SUBMODULES)
+    ]
+    assert allowed, "守卫空转：真树里没有一条 cli → flow.backend.selection/base 合法边"
+
+
+def test_cli_backend_guard_catches_planted_msswift_import():
+    """★ 1b 阳性对照（msswift 侧）：注回 `app.py:260` 的原直取 ⇒ 必红。"""
+    planted = "from graspo.flow.backend.msswift._config_mapping import launcher_env\n"
+    hits = find_cli_to_backend_impl_runtime_violations(
+        _runtime_imports_from_source(planted, "graspo.cli.app")
+    )
+    assert len(hits) == 1 and hits[0].startswith(
+        "  graspo.cli.app:1 imports graspo.flow.backend.msswift._config_mapping.launcher_env"
+    )
+
+
+def test_cli_backend_guard_catches_planted_native_import():
+    """★ 1b 阳性对照（native 侧）：注回 `tools.py:28` 的原直取 ⇒ 必红。"""
+    planted = (
+        "def run_evaluate():\n"
+        "    from graspo.flow.backend.native.runtime import GraspoFlowRuntime\n"
+        "    return GraspoFlowRuntime.from_config(None)\n"
+    )
+    hits = find_cli_to_backend_impl_runtime_violations(
+        _runtime_imports_from_source(planted, "graspo.cli.tools")
+    )
+    assert len(hits) == 1 and hits[0].startswith(
+        "  graspo.cli.tools:2 imports graspo.flow.backend.native.runtime.GraspoFlowRuntime"
+    )
+
+
+def test_cli_backend_guard_allows_facade_and_type_checking():
+    """★ 1b 阴性对照：`selection` / `base` facade ＋ `if TYPE_CHECKING:` 仅类型引用 ⇒ 绿。"""
+    legal = (
+        "from typing import TYPE_CHECKING\n"
+        "from graspo.flow.backend.selection import create_runtime, launcher_env, select_backend\n"
+        "from graspo.flow.backend.base import RLBackend\n"
+        "if TYPE_CHECKING:\n"
+        "    from graspo.flow.backend.native.runtime import GraspoFlowRuntime\n"
+    )
+    assert (
+        find_cli_to_backend_impl_runtime_violations(
+            _runtime_imports_from_source(legal, "graspo.cli.tools")
+        )
+        == []
+    )
+
+
+def test_flow_to_export_edges_are_all_registered():
+    """★ 1c 真树守卫：`flow → export` 方向允许，但每条边必须在登记表里。"""
+    edges = _subtree_runtime_imports("flow")
+    violations = find_unregistered_flow_to_export(edges)
+    assert not violations, (
+        "flow → export 出现**未登记**新边（方向本身合法 —— export 是共享叶子层 ——"
+        "但必须逐处登记到 _REGISTERED_FLOW_TO_EXPORT 并在 docs/architecture.md 登记）：\n"
+        + "\n".join(violations)
+    )
+    registered = [
+        (e.source, e.target)
+        for e in edges
+        if _is_under(e.source, "graspo.flow") and _is_under(e.target, "graspo.export")
+    ]
+    assert sorted(registered) == sorted(_REGISTERED_FLOW_TO_EXPORT), (
+        "登记表与真树不一致（登记项失效或漏登记）：\n"
+        f"  真树 = {sorted(registered)}\n  表 = {sorted(_REGISTERED_FLOW_TO_EXPORT)}"
+    )
+
+
+def test_flow_export_guard_catches_unregistered_edge():
+    """★ 1c 阳性对照：未登记的 `flow → export` 新边 ⇒ 必红。"""
+    planted = "from graspo.export.paths import prepare_output_dir\n"
+    hits = find_unregistered_flow_to_export(
+        _runtime_imports_from_source(planted, "graspo.flow.backend.native.trainer.brand_new")
+    )
+    assert hits == [
+        "  graspo.flow.backend.native.trainer.brand_new:1 → graspo.export.paths.prepare_output_dir"
+    ]
+
+
+def test_flow_export_guard_allows_registered_edges():
+    """★ 1c 阴性对照：三条**已登记**边的精确形态 ⇒ 绿。"""
+    edges = _imports_from_source(
+        "from graspo.export.paths import prepare_output_dir\n",
+        "graspo.flow.backend.native.lora.lora_io",
+    )
+    assert find_unregistered_flow_to_export(edges) == []

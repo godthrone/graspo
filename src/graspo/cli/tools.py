@@ -8,11 +8,13 @@
   （与训练数据内容无关的结构级分析）写入 ``<run_dir>/logs/analysis_attribution.json``
 """
 
+from __future__ import annotations
+
 import json
 import time
 from pathlib import Path
 from statistics import mean
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from graspo.cli.analysis import (
     analyze_attribution,
@@ -24,10 +26,15 @@ from graspo.cli.analysis import (
 )
 from graspo.core.result_judge import PIPELINE_TRAIN_METRICS_PHASE
 from graspo.core.schema import GraspoConfig, Sample
+from graspo.flow.backend.selection import create_runtime
 from graspo.flow.data_io import load_jsonl
-from graspo.flow.backend.native.runtime import GraspoFlowRuntime
 from graspo.ripple.parsing.completion import ParsedCompletion, raw_parsed_completion
 from graspo.ripple.reward.reward import RewardConfig, create_reward
+
+if TYPE_CHECKING:
+    # ★ 仅类型引用（Phase 1b 边界收口）：cli 不得在**运行时** import 具体后端实现，
+    # 运行时构造走 `flow.backend.selection.create_runtime`（守卫见 tests/test_ast_boundary.py）。
+    from graspo.flow.backend.native.runtime import GraspoFlowRuntime
 
 # ── validate-reward ──────────────────────────────────────────────────────────
 
@@ -217,7 +224,8 @@ def run_evaluate(
 
     # 评测输出位置由 config 决定（禁止输出定位参数）
     output_dir = Path(config.training.output_dir) / "evaluate"
-    runtime = GraspoFlowRuntime.from_config(config)
+    # ★ Phase 1b：runtime 构造走 flow.backend.selection facade（cli 不直取 backend 实现包）。
+    runtime = create_runtime(config)
     started_at = time.monotonic()
     try:
         runtime.setup()

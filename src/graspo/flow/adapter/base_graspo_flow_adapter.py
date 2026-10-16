@@ -4,13 +4,22 @@ Every model-family adapter must implement this interface.  The Trainer and
 Runtime only see this ABC, so they are completely model-agnostic.
 """
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 
-from graspo.flow.backend.native.runtime import NativeGeneration
 from graspo.ripple.parsing.completion import ParsedCompletion
+
+if TYPE_CHECKING:
+    # ★ 契约层只允许**类型**引用具体后端的返回形状，⛔ 不得在运行时依赖具体实现。
+    # 收口前：本行在模块级 ⇒ `flow.adapter → flow.backend.native`（契约层直取实现）。
+    # 收口后：注解是字符串（`from __future__ import annotations` + `TYPE_CHECKING`），
+    # 运行时零导入；`tests/test_ast_boundary.py::test_adapter_does_not_import_backend_at_runtime`
+    # 是这条边界的守卫（注入模块级 import ⇒ 必红）。
+    from graspo.flow.backend.native.runtime import NativeGeneration
 
 
 class BaseGraspoFlowAdapter(ABC):
