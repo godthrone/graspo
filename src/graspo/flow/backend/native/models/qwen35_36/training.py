@@ -163,6 +163,78 @@ def _dp_consistent_has_valid_micro_batches(tp_state: Any, valid_micro_batches: i
     return bool(flag.item())
 
 
+#: 日程三量的字段名（报错文案与逐 rank 明细的**单一真相源**，宪法 §1.4）。
+_DP_SCHEDULE_FIELDS = ("num_micro_batches", "dp_sync_segments", "micro_batch_size")
+
+
+def _gather_dp_schedule_rows(tp_state: Any, local: Any) -> list[tuple[int, ...]]:
+    """收集逐 dp rank 的日程三量（**只在失败路径调用**，用于把逐 rank 数值打进报错文案）。"""
+    dp_size = int(getattr(tp_state, "dp_size", 1))
+    rows = [torch.zeros_like(local) for _ in range(max(dp_size, 1))]
+    dist.all_gather(rows, local, group=tp_state.dp_group)
+    return [tuple(int(value) for value in row.tolist()) for row in rows]
+
+
+def _assert_dp_schedule_consistent(
+    tp_state: Any,
+    *,
+    num_micro_batches: int,
+    dp_sync_segments: int,
+    micro_batch_size: int,
+) -> None:
+    """★ fail-closed（U-B）：断言**日程三量**逐 ``dp_group`` rank 严格相等。
+
+    **为什么钉"日程"而不是 ``len(indices)`` 这个代理量**：决定死锁与否的真实链条是
+    ``len(indices)`` →(``train_batch`` 内) ``num_micro_batches`` → ``_dp_sync_segment_cuts``
+    的 ``cuts``；循环起点集 ``range(0, len(indices) - batch_size + 1, batch_size)`` 与
+    ``cuts`` **都只是** ``num_micro_batches``（以及 K、``batch_size``）的函数。当前代码里
+    "`len(indices)` 相等"与"日程相等"等价，但只要有人把"梯度累积"接进非 PP 路径
+    （``gradient_accumulation_micro_batches`` 目前**只进 metrics**），这条推导就断，
+    钉代理量的守卫会**假通过**。⇒ 直接断言 ``[num_micro_batches, K, batch_size]`` 三元。
+
+    不等 ⇒ **显式失败**（把"静默自旋"变成"一行报错"），并把**逐 rank 数值**打进文案。
+
+    ⛔ 判据域与集合域**同域**：集合走 ``tp_state.dp_group``（与 K-会合
+    ``_dp_k_meeting_sync_dp_grads``、R-B ``_sync_dp_lora_grads``、step 门
+    ``_dp_consistent_has_valid_micro_batches`` **同一个** 进程组）。
+    ``tp_state is None`` / ``dp_group is None`` / ``dp_size <= 1`` / 进程组未初始化
+    ⇒ **直接返回、0 次新增集合** ⇒ 单卡（含 ``dp_size == 1`` 的 PP 档）行为逐位不变
+    —— 短路口径与 ``_dp_consistent_has_valid_micro_batches`` **逐字同款**。
+
+    ⛔ 调用点必须**无条件抵达**（各 dp rank 同一次数、同一位置），否则集合失配。
+    """
+    if tp_state is None or getattr(tp_state, "dp_group", None) is None:
+        return
+    if int(getattr(tp_state, "dp_size", 1)) <= 1:
+        return
+    if not (dist.is_available() and dist.is_initialized()):
+        return
+    # 设备回落与 `_dp_consistent_has_valid_micro_batches` 同款（`GraspoFlowState.device`
+    # 是必填字段 ⇒ 实际不触发；保留只为单测/鸭子类型场景不炸）。
+    device = getattr(tp_state, "device", None)
+    if device is None:
+        device = torch.device("cpu")
+    local = torch.tensor(
+        [int(num_micro_batches), int(dp_sync_segments), int(micro_batch_size)],
+        dtype=torch.int,
+        device=device,
+    )
+    lowest = local.clone()
+    highest = local.clone()
+    dist.all_reduce(lowest, op=dist.ReduceOp.MIN, group=tp_state.dp_group)
+    dist.all_reduce(highest, op=dist.ReduceOp.MAX, group=tp_state.dp_group)
+    if torch.equal(lowest, highest):
+        return
+    rows = _gather_dp_schedule_rows(tp_state, local)
+    raise RuntimeError(
+        "DP 日程不一致（fail-closed）：本步各 dp rank 的 "
+        f"{list(_DP_SCHEDULE_FIELDS)} 必须逐 rank 严格相等，否则 K-会合切点"
+        "（_dp_sync_segment_cuts）与 micro-batch 循环起点集逐 rank 不同 ⇒ "
+        "dp_group 上的段末 all_reduce / R-B / step 门错位 ⇒ 静默自旋（无超时兜底）。"
+        f"实际逐 rank 值（序号 = dp_group 内 rank 序号）：{rows}"
+    )
+
+
 class _Qwen35TrainingMethods:
     """Mixin: RL training/batch optimization methods for Qwen35ModelAdapter."""
 
@@ -224,13 +296,30 @@ class _Qwen35TrainingMethods:
         indices = self._shared_training_indices(len(experiences), optimize_round=optimize_round)
         # 梯度累积：zero_grad 只调一次，所有 micro-batch 的梯度累加后统一 step。
         num_micro_batches = max(1, len(indices) // batch_size)
+        # ★ fail-closed 守卫（U-B）：钉住"**日程三量逐 dp rank 相等**"这个前提——
+        #   它在 rollout 分卡（U-C）落地之前靠上游"恰好成立"；一旦失效，下面的
+        #   K-会合切点 `cuts` 与 micro-batch 循环起点集逐 rank 不同 ⇒ `dp_group`
+        #   上的段末 all_reduce / R-B 错位 ⇒ **静默自旋**（无超时兜底）。
+        #   必须落在 `num_micro_batches` 已算出、`cuts` 还没算之间；断言对象是
+        #   `[num_micro_batches, K, batch_size]` 而不是 `len(indices)` 代理量
+        #   （理由见 `_assert_dp_schedule_consistent` 的 docstring）。
+        #   ⛔ 只读本 rank 的日程量；dp_size <= 1 / 无 dp_group ⇒ 短路、0 次新增集合。
+        #   ⛔ 不动 loss/advantage/clip/决策/采样/阈值/epoch/lr，也不动 PP 路径
+        #      （PP 在上面的 `_is_pipeline_parallel()` 早退，本守卫只进非 PP 路径）。
+        _dp_sync_segments = _resolve_dp_sync_segments()
+        _assert_dp_schedule_consistent(
+            self.tp_state,
+            num_micro_batches=num_micro_batches,
+            dp_sync_segments=_dp_sync_segments,
+            micro_batch_size=batch_size,
+        )
         self.optimizer.zero_grad(set_to_none=True)
         valid_micro_batches = 0
         # ★ K-会合：把本步的 num_micro_batches 条 micro-batch 切成 K 段（余数给前段），
         #   除**末段**外的每个段末在**下一条的循环开头**做一次 in-place DP 同步；
         #   末段由循环之后的 R-B 承担 ⇒ 每步恰好 K 次 DP 集合（K=4 ⇒ 4×220）。
         #   切点只由本 rank 的条数算出；route 3′ 保证逐 rank 条数相等 ⇒ 同进同出。
-        _dp_k_cuts = _dp_sync_segment_cuts(num_micro_batches, _resolve_dp_sync_segments())
+        _dp_k_cuts = _dp_sync_segment_cuts(num_micro_batches, _dp_sync_segments)
         for start in range(0, len(indices) - batch_size + 1, batch_size):
             # ★ 段末同步（K−1 个切点）——**无条件**：不看 isfinite(loss)、不看
             #   valid_micro_batches。段边界只由迭代序号决定；放在循环体最开头，

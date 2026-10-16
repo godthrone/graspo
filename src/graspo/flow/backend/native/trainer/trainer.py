@@ -301,12 +301,16 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
                     int(self.current_epoch_stats.samples_seen) if epoch == start_epoch else 0
                 )
                 pending_samples = epoch_samples[resume_sample_offset:]
-                if not pending_samples:
-                    continue
                 queue_size = max(1, int(self.config.training.rollout_queue_batch_size))
-                for start in range(0, len(pending_samples), queue_size):
-                    sample_queue = pending_samples[start : start + queue_size]
-                    if self._sample_queue(sample_queue, epoch=epoch):
+                # ★ U-A：dp ≥ 2 时走"固定轮数 + 每轮补门"的对齐路径（见
+                #   `_run_aligned_sample_queues` 的 docstring 与工位 plan.md §1）。
+                if self._world_gate_alignment_enabled():
+                    # ⚠ 本分支**不做** `if not pending_samples: continue`：本地无样本的
+                    #   rank 也必须进循环（以空队列参与轮次判定与补门），否则 WORLD
+                    #   集合逐 rank 错位 —— 那正是本单元要修的形态。
+                    if self._run_aligned_sample_queues(
+                        pending_samples, epoch=epoch, queue_size=queue_size
+                    ):
                         # smoke 提前终止：先 flush replay buffer 再保存，
                         # 否则 _checkpoint_trainer_state 会因 buffer 非空而
                         # 拒绝保存（防线生效，但提前终止路径漏了 flush）。
@@ -315,6 +319,24 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
                         self._maybe_optimize(epoch=epoch, force=True)
                         self._save_checkpoint(output_dir / "final", epoch=epoch)
                         return
+                else:
+                    # ── dp ≤ 1：原路径**逐字保留**（A-1 回归锚）─────────────────────
+                    #   `_world_gate_alignment_enabled()` 在 dp_size ≤ 1（含单卡与
+                    #   dp==1 的 PP 档）时恒 False ⇒ 本分支就是改动前的代码，零新增
+                    #   集合、行为逐位不变（见工位 plan.md §1.5 与 A-1b 文本级对照）。
+                    if not pending_samples:
+                        continue
+                    for start in range(0, len(pending_samples), queue_size):
+                        sample_queue = pending_samples[start : start + queue_size]
+                        if self._sample_queue(sample_queue, epoch=epoch):
+                            # smoke 提前终止：先 flush replay buffer 再保存，
+                            # 否则 _checkpoint_trainer_state 会因 buffer 非空而
+                            # 拒绝保存（防线生效，但提前终止路径漏了 flush）。
+                            # force 无条件调用：空的 dp_rank 也参与 WORLD 集结算子，
+                            # 避免其在 teardown barrier 上等待仍在训练的 dp_rank。
+                            self._maybe_optimize(epoch=epoch, force=True)
+                            self._save_checkpoint(output_dir / "final", epoch=epoch)
+                            return
                 self._print_json(
                     {
                         "timestamp": _timestamp(),
@@ -454,6 +476,113 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
             raise RuntimeError(f"retry-round collective failed: {type(exc).__name__}: {exc}") from exc
         return bool(flag.item())
 
+    # ── ★ U-A：WORLD 门（`_maybe_optimize`）节奏对齐 ───────────────────────────
+
+    def _world_gate_alignment_enabled(self) -> bool:
+        """本 rank 是否走「WORLD 门节奏对齐」路径（U-A）。
+
+        **为什么需要**：`_maybe_optimize` 在 `local_wants_train` 判定**之前**无条件发一次
+        WORLD `all_reduce(MAX)`（`optimize.py:75-82`，无 `group=` ⇒ `default_pg`，与 K-会合
+        的 `dp_group` **不是同一个 communicator**），而它是**每终结一条 prompt 调用一次**
+        （`trainer.py` 的 `for state in finished:` → `_finalize_sample` → `rollout.py:434`）。
+        各 rank 分到的 prompt 数可差 1（`assign_whole_groups` 只保证**组数**差 ≤ 1，
+        `assignment.py:104-130`）⇒ 门次数不等 ⇒ 集合调用次数不等 ⇒ **静默自旋**（无超时兜底）。
+
+        **判据 = 「进程组已初始化 ∧ dp_size > 1」**，与**分片判据同源**（`train()` 里只有
+        `parallel.dp_size > 1` 才切分片）：不切分片 ⇒ 逐 rank prompt 数必然相同 ⇒ 无需对齐。
+        `dp_size <= 1`（含单卡与 `dp==1` 的 PP 档）⇒ **恒 False** ⇒ 走原路径、**零新增集合**
+        —— 与 `_collective_any_pending`（本类上方）的短路口径同族，⛔ 不新增 PP 线上的集合。
+        """
+        if not (dist.is_available() and dist.is_initialized()):
+            return False
+        degree = self.parallel_degree
+        return degree is not None and int(degree.dp_size) > 1
+
+    def _collective_any_queues_pending(self, has_more_local: bool) -> bool:
+        """跨 rank 一致的「是否还有下一个样本队列」判定（**WORLD `all_reduce(MAX)` 标量**）。
+
+        与 `_collective_any_pending`（重试轮次）**同款形制、同一通信域、同一短路口径**，
+        只换了语义：那里问"还有待重试样本吗"，这里问"还有下一轮队列吗"。
+
+        **为什么需要**：队列数 `ceil(len(分片)/Q)` 逐 rank 可不等（分片长度可差 1）⇒ 轮数不等
+        ⇒ 循环体内每一个 WORLD 集合（`_collective_any_pending`、WORLD 门、以及循环之后
+        `_teardown_after_train_loop` 的 barrier）**逐 rank 错位**。修法照抄既有 `go_on` 模式：
+        每轮末尾做一次标量 MAX 一致判定，任一 rank 还有队列 ⇒ **所有** rank 都进下一轮
+        （本地无队列的 rank 以**空队列**参与，见 `_run_aligned_sample_queues`）。
+
+        ⛔ 只读一个标量、只做 MAX，不改变任何判定语义。
+        """
+        import torch
+        import torch.distributed as _dist
+
+        if not (_dist.is_available() and _dist.is_initialized()):
+            return has_more_local
+        degree = self.parallel_degree
+        if degree is None or int(degree.dp_size) <= 1:
+            return has_more_local
+        device = self.runtime._require_adapter().device
+        flag = torch.tensor([1 if has_more_local else 0], dtype=torch.int, device=device)
+        try:
+            _dist.all_reduce(flag, op=_dist.ReduceOp.MAX)
+        except Exception as exc:  # noqa: BLE001 — 集合失败必须可见，绝不静默
+            raise RuntimeError(
+                f"queue-round collective failed: {type(exc).__name__}: {exc}"
+            ) from exc
+        return bool(flag.item())
+
+    def _run_aligned_sample_queues(
+        self, pending_samples: list[Any], *, epoch: int, queue_size: int
+    ) -> bool:
+        """dp≥2：把队列循环跑成**固定轮数**，并把每轮的 WORLD 门补齐到 `queue_size` 次（U-A）。
+
+        **机制**（真值与逐行证据见工位 `plan.md` §0/§1）：门次数 = 本 rank 终结的 prompt 数；
+        分片长度可差 1 ⇒ 门次数不等 ⇒ 集合调用次数不等 ⇒ 静默自旋。本方法（= 设计件
+        §8-U-A 的**候选 (a)**）只做两件**节奏**上的事，⛔ 不动门本体（`optimize.py`）、
+        ⛔ 不动门的调用点（`rollout.py:434`）：
+
+        ① **轮数对齐**：轮数由 `_collective_any_queues_pending` 的 `go_on` 决定（= 全局 max
+           队列数）；本地已无队列的 rank 以**空队列**参与（`_sample_queue([])` 只走那次轮次
+           判定，不发门）。
+        ② **每轮门数补齐到 `queue_size`**：`_sample_queue` 本轮实际发 `len(queue)` 次**真门**
+           （= 本轮终结 prompt 数，见 `_sample_queue` 收尾的 fail-closed 校验），此处再补
+           `queue_size - len(queue)` 次**空门**（`_maybe_optimize`：本地缓冲不达阈值时只是
+           参与那次 MAX 归约，不训练）。
+
+        ⇒ 每个 rank 每轮恰好 `queue_size` 次门、每 epoch 恰好 `轮数 × queue_size` 次门
+        ⇒ **逐 rank 次数相等**；且每次门的布尔由**同一次** WORLD MAX 归约产生
+        ⇒ `global_step` / `optimized_steps` **逐 rank 一致**（`optimize.py:134-135`）。
+
+        **空门为什么安全**：空门就是同一个门，语义零变化；它与真门的差别只是"发它时本 rank
+        缓冲有多少条"，而这正是**既有**语义（任一 rank 达阈值 ⇒ 所有 rank 一起进 `train_batch`，
+        含本地缓冲为空的 rank，见 `optimize.py:60-92`）。等分片时（既有一切能跑通的 dp≥2 档）
+        各 rank 每轮终结数相同 ⇒ 空门只与空门配对、之间不新增样本 ⇒ 布尔与最后一次真门相同
+        ⇒ **空门恒为 no-op**；满轮（`len(queue)==queue_size`）时补 0 次 ⇒ 逐位不变。
+
+        ⛔ **禁止**改成"按本 rank 应欠的步数发门"：那会让 `global_step`/`optimized_steps`
+           逐 rank 分叉，污染 time-based checkpoint 门（`optimize.py:148-155`）、周期保存与
+           smoke 边界。本方法发的是**同一个固定次数**，不是"各 rank 各自的欠数"。
+        ⛔ **不改算法**：advantage / loss / clip / 决策 / 采样 / 阈值 / epoch / lr 全不动；
+           本方法只决定**门发几次**。
+
+        :returns: 是否触发 smoke 提前终止（与 `_sample_queue` 的返回值同义）。
+        """
+        rounds = 0
+        go_on = True
+        while go_on:
+            rounds += 1
+            sample_queue = pending_samples[(rounds - 1) * queue_size : rounds * queue_size]
+            stop_requested = self._sample_queue(sample_queue, epoch=epoch)
+            # ★ 补门：本轮真门数 = len(sample_queue)（每条 prompt 恰好终结一次，见
+            #   `_sample_queue` 收尾的 fail-closed 校验）⇒ 补齐到 queue_size 次。
+            for _ in range(queue_size - len(sample_queue)):
+                self._maybe_optimize(epoch=epoch)
+            if stop_requested:
+                return True
+            go_on = self._collective_any_queues_pending(
+                len(pending_samples) > rounds * queue_size
+            )
+        return False
+
     def _sample_queue(self, samples: list[Any], *, epoch: int) -> bool:
         """处理一批样本：rollout → 评分 → 重试 → 最终化。"""
         active = [QueuedSample(sample=sample) for sample in samples]
@@ -498,6 +627,19 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
                 )
             active = next_active
 
+        # ★ fail-closed 不变式（U-A 依托，**放在任何门之前**）：本队列**每条** prompt
+        #   恰好终结一次 ⇒ 本轮真门次数 == `len(samples)`。`_run_aligned_sample_queues`
+        #   正是按这个数推算"要补几次空门"；若该不变式被破坏，补门次数逐 rank 就会不同
+        #   ⇒ WORLD 集合错位 ⇒ 又回到静默自旋。故此处**显式失败**而不是继续发门：
+        #   `finished` 在重试循环结束时已经定型（下面的终结循环只迭代它，不再增删），
+        #   所以这个校验能在**发出第一个门之前**判红。
+        #   ⛔ 纯本地判断、零集合；不改任何判定语义（dp ≤ 1 路径同样不受影响）。
+        if len(finished) != len(samples):
+            raise RuntimeError(
+                "sample queue finished-count mismatch: "
+                f"finished={len(finished)} queue={len(samples)} — WORLD 门节奏对齐按 "
+                "len(queue) 推算补门次数，此处不等会使 WORLD 集合逐 rank 错位（静默自旋）"
+            )
         stop_requested = False
         for state in finished:
             if self._finalize_sample(state, epoch=epoch):
