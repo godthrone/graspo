@@ -10,12 +10,16 @@ from __future__ import annotations
 import pytest
 
 from graspo.flow.adapter.contract import (
+    ASSEMBLY_DELIVERY_POINTS,
+    ROLLOUT_SLICING_ASSEMBLY,
     AlignmentError,
+    AssemblyError,
     ContractError,
     IncompleteGroupError,
     PartitionError,
     RolloutGroup,
     assert_aligned,
+    assert_assembled_group_complete,
     assert_complete_group,
     assert_group_partition,
     assert_no_partial_group,
@@ -134,3 +138,88 @@ def test_beta1_shard_index_out_of_range_fails():
     groups = [_group("p0")]
     with pytest.raises(PartitionError):
         assert_group_partition(groups, {"p0": 2}, n_shards=2)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ★ 装配点契约（rollout 分卡 / U-C）：`assert_assembled_group_complete`
+#
+# 语义（`report.md` §7.4 / X-09）：**I1 一个字都没放宽**（上面 I1/I3 的用例一字未改），
+# 新增的是"**G 条齐在哪一层被断言**"—— 交给算法层**之前**必须跨卡拼齐。
+# ⛔ 本段只**新增**，不改任何既有期望值（回归只许加强）。
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def test_assembly_point_accepts_sliced_slots_gathered_from_all_ranks():
+    """★ 正例：`m=2, G=8` 的**连续**切片按 rank 序拼齐 ⇒ 通过。"""
+    slots = [(0, s) for s in range(4)] + [(1, s) for s in range(4, 8)]
+    assert_assembled_group_complete("p1", slots, group_size=8, dp_size=2)
+    # 乱序拼齐也必须通过（键语义天然支持乱序/跨卡）
+    assert_assembled_group_complete(
+        "p1", list(reversed(slots)), group_size=8, dp_size=2
+    )
+
+
+def test_assembly_point_accepts_m1_identity():
+    """`m=1` ⇒ 恒等（槽位 0..G−1 全来自 rank 0）。"""
+    assert_assembled_group_complete(
+        "p1", [(0, s) for s in range(8)], group_size=8, dp_size=1
+    )
+
+
+@pytest.mark.parametrize("n", [0, 1, 7])
+def test_assembly_point_rejects_missing_slots(n: int):
+    """★ 阳性对照 A：**只交 `G/m` 条**（或不完整）⇒ **必须**抛 :class:`AssemblyError`。
+
+    这正是"分卡后不做会合"的形态 ⇒ 组决策会在部分组上做（`groups_seen ≡ 1`）。
+    """
+    slots = [(0, s) for s in range(n)]
+    if n > 4:
+        slots += [(1, s) for s in range(4, n)]
+    with pytest.raises(AssemblyError, match="装配点契约被违反"):
+        assert_assembled_group_complete("p1", slots, group_size=8, dp_size=2)
+
+
+def test_assembly_point_rejects_duplicate_slot():
+    """★ 阳性对照 B：槽位重复（有重）⇒ 必须抛。"""
+    slots = [(0, s) for s in range(4)] + [(1, s) for s in range(3, 8)]
+    with pytest.raises(AssemblyError, match="重复槽位"):
+        assert_assembled_group_complete("p1", slots, group_size=8, dp_size=2)
+
+
+def test_assembly_point_rejects_slot_from_wrong_rank():
+    """★ 阳性对照 C：槽位**齐**但**来源 rank 与切片口径不符** ⇒ 必须抛。
+
+    这条比"条数齐"更严：它抓的是"拼接顺序/切片口径不一致"（例如把连续切片误写成
+    轮转 `[rank::m]`）。
+    """
+    wrong = [(1, s) for s in range(4)] + [(0, s) for s in range(4, 8)]
+    with pytest.raises(AssemblyError, match="切片口径不符"):
+        assert_assembled_group_complete("p1", wrong, group_size=8, dp_size=2)
+
+
+def test_assembly_point_rejects_out_of_range_source_rank():
+    with pytest.raises(AssemblyError, match="rank 越界"):
+        assert_assembled_group_complete(
+            "p1", [(2, s) for s in range(4)] + [(1, s) for s in range(4, 8)],
+            group_size=8, dp_size=2,
+        )
+
+
+def test_assembly_point_rejects_non_divisible_group_and_dp():
+    """★ fail-closed：`G` 不被 `m` 整除 ⇒ **任何装配都配不出整组** ⇒ 必须显式失败。"""
+    with pytest.raises(AssemblyError, match="整除"):
+        assert_assembled_group_complete("p1", [], group_size=8, dp_size=3)
+
+
+@pytest.mark.parametrize(("g", "m"), [(0, 1), (8, 0)])
+def test_assembly_point_rejects_non_positive_sizes(g: int, m: int):
+    with pytest.raises(AssemblyError):
+        assert_assembled_group_complete("p1", [], group_size=g, dp_size=m)
+
+
+def test_assembly_delivery_points_are_named_and_differ():
+    """★ 交付点声明：两个 backend 的**交付点不同** ⇒ 必须具名登记（§7.4）。"""
+    assert set(ASSEMBLY_DELIVERY_POINTS) == {"native", "msswift"}
+    assert ASSEMBLY_DELIVERY_POINTS["native"] != ASSEMBLY_DELIVERY_POINTS["msswift"]
+    assert "装配" in ASSEMBLY_DELIVERY_POINTS["native"]
+    assert ROLLOUT_SLICING_ASSEMBLY == "rollout_slicing_assembly"

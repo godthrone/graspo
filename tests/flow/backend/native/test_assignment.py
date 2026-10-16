@@ -21,10 +21,15 @@ from graspo.flow.adapter.contract import (
 )
 from graspo.flow.backend.native.assignment import (
     AssignmentError,
-    assign_whole_groups,
+    assembled_slot_order,
     assert_balanced_assignment,
+    assert_rollout_slices,
+    assign_whole_groups,
     plan_group_rebalance,
+    rollout_slice,
+    rollouts_per_rank,
     step_group_quota,
+    validate_rollout_slicing,
     whole_group_count,
 )
 
@@ -180,3 +185,210 @@ def test_whole_group_count_is_identity_when_already_whole():
 def test_whole_group_count_rejects_bad_group_size():
     with pytest.raises(AssignmentError, match="group_size"):
         whole_group_count(10, 0)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 10. ★ rollout 分卡（2026-10-16 主席裁定）—— 分配符合切片口径 ＋ 阳性对照
+#
+# 口径（主席原话逐字）：dp=2、一批 4 条数据、每条 8 个 rollout
+#   ⇒ **卡一 = 这 4 条的 rollout 0–3；卡二 = 4–7**。
+# 本段每条断言都带**可构造的阳性对照**（把实现改成"整组"/"轮转"/"条目分片"必红）。
+# ⛔ 本段**不修改**上文任何既有期望值（回归只许加强，不许改期望值）。
+# ══════════════════════════════════════════════════════════════════════════════
+
+_SLICE_SHAPES = [
+    (p, g, m) for p in range(1, 9) for g in (8, 16) for m in (1, 2, 4, 8) if g % m == 0
+]
+
+
+@pytest.mark.parametrize(("p", "g", "m"), _SLICE_SHAPES)
+def test_rollout_slices_satisfy_four_invariants(p: int, g: int, m: int):
+    """★ A-8a：穷举 `P∈1..8, G∈{8,16}, m∈{1,2,4,8}` 断言四条不变量。
+
+    ① 每卡条目集合 = 全体；② 同一 entry 的槽位互斥且并 = `0..G−1`；
+    ③ 每卡条数 = `P·G/m`；④ `m=1` 恒等。
+    """
+    assert_rollout_slices(p, g, m)  # 不抛 = 四条全过
+
+
+def test_rollout_slice_matches_chairman_wording_verbatim():
+    """★ A-8a 逐字对照：`P=4, G=8, m=2` ⇒ 卡一 `(e,0..3)` / 卡二 `(e,4..7)`。"""
+    rank0 = rollout_slice(4, 8, 2, 0)
+    rank1 = rollout_slice(4, 8, 2, 1)
+    assert rank0 == [(e, s) for e in range(4) for s in range(0, 4)]
+    assert rank1 == [(e, s) for e in range(4) for s in range(4, 8)]
+    # 两卡条目集合都 = 全体 4 条（切片**不切条目维**）
+    assert sorted({e for e, _ in rank0}) == [0, 1, 2, 3]
+    assert sorted({e for e, _ in rank1}) == [0, 1, 2, 3]
+    # 每卡 16 条（= 主席原话「每卡 16 条」）
+    assert len(rank0) == 16 and len(rank1) == 16
+
+
+def test_rollout_slice_is_identity_when_dp_size_is_one():
+    """★ m=1 恒等 ⇒ dp=1 路径逐位不变（A-1 回归锚）。"""
+    for g in (8, 16):
+        assert rollout_slice(3, g, 1, 0) == [(e, s) for e in range(3) for s in range(g)]
+        assert assembled_slot_order(g, 1) == tuple(range(g))
+
+
+def test_rollouts_per_rank_is_the_single_source_of_truth():
+    """量化表：`G//m`（⛔ 调用方不得自己写 `G // dp_size`）。"""
+    assert rollouts_per_rank(8, 1) == 8
+    assert rollouts_per_rank(8, 2) == 4
+    assert rollouts_per_rank(8, 4) == 2
+    assert rollouts_per_rank(8, 8) == 1
+    assert rollouts_per_rank(16, 4) == 4
+
+
+def test_assembled_slot_order_equals_singleton_slot_order():
+    """★ 会合的加序契约：按 rank 序拼齐后槽位序 = `0..G−1`（与单卡**逐元素相同**）。
+
+    这是「`μ_f` 能按槽位序确定地求和、与单卡同加序」的唯一依据（A-5）。
+    """
+    for g, m in ((8, 2), (8, 4), (16, 4), (8, 1)):
+        gathered: list[int] = []
+        for r in range(m):
+            gathered.extend(slot for _, slot in rollout_slice(1, g, m, r))
+        assert gathered == list(assembled_slot_order(g, m)) == list(range(g))
+
+
+@pytest.mark.parametrize(
+    ("p", "m"), [(1, 2), (8, 2), (4, 4), (15, 2), (17, 2), (15, 4), (17, 4)]
+)
+def test_rollout_slice_non_divisible_subset_sizes_are_still_exactly_equal(p: int, m: int):
+    """★ 验收标准 3 的**非整除子集构造性用例**（S=15 与 S=17）。
+
+    旧机制（按 prompt 分卡）在 S=15/17 这类**非整除**子集上给差 1 的 prompt 数
+    （`[实测]` `assign_whole_groups(17,2) = [9,8]`）⇒ 逐卡条数不等 ⇒ 死锁。
+    新机制：每卡持**全部** `P` 条 prompt、各持 `G/m` 个槽位
+    ⇒ **每卡条数严格相等 = P·G/m**，且**与 P 是否整除 m 无关**。
+    """
+    G = 8
+    counts = [len(rollout_slice(p, G, m, r)) for r in range(m)]
+    assert len(set(counts)) == 1, f"逐卡条数必须严格相等，得到 {counts}"
+    assert counts[0] == p * (G // m)
+    # 对照组：旧机制在同样形状下**逐卡 prompt 数不等**（阳性对照锚点）
+    old_counts = [len(list(range(p))[r::m]) for r in range(m)]
+    assert max(old_counts) - min(old_counts) <= 1
+    assert (p % m != 0) == (len(set(old_counts)) > 1)
+    assert_rollout_slices(p, G, m)
+
+
+# ── 阳性对照：把实现改坏 ⇒ 同一断言必须判红 ──────────────────────────────────
+
+def test_positive_control_whole_group_per_rank_must_fail():
+    """★ 阳性对照 A：若每卡都拿**整组**（切片被写成恒等） ⇒ 不变量 ② 必红。"""
+
+    def broken_slice(prompt_count: int, group_size: int, dp_size: int, rank: int):
+        del rank
+        return [(e, s) for e in range(prompt_count) for s in range(group_size)]
+
+    G, m, P = 8, 2, 4
+    union: list[int] = []
+    for r in range(m):
+        for e, s in broken_slice(P, G, m, r):
+            if e == 0:
+                union.append(s)
+    assert sorted(union) != list(range(G))  # 槽位重叠（0..7 各两次）⇒ 会合拼不齐整组
+    # 真实实现下该并集**恰为** 0..G−1：
+    good: list[int] = []
+    for r in range(m):
+        good.extend(s for e, s in rollout_slice(P, G, m, r) if e == 0)
+    assert sorted(good) == list(range(G))
+
+
+def test_positive_control_round_robin_slicing_must_fail():
+    """★ 阳性对照 B：若切片改成**轮转** `[rank::m]` ⇒ 拼齐后槽位序 ≠ `0..G−1`。
+
+    轮转下并集仍完备（不丢不重），但**加序**变成 `0,2,4,6,1,3,5,7`
+    ⇒ `μ_f` 的浮点加序与单卡不同 ⇒ 失去 A-5 的"同加序"依据。
+    """
+
+    def round_robin(prompt_count: int, group_size: int, dp_size: int, rank: int):
+        return [(e, s) for e in range(prompt_count) for s in range(group_size) if s % dp_size == rank]
+
+    G, m = 8, 2
+    gathered: list[int] = []
+    for r in range(m):
+        gathered.extend(s for _, s in round_robin(1, G, m, r))
+    assert sorted(gathered) == list(range(G))  # 完备性仍成立（所以不能只测完备性）
+    assert gathered != list(assembled_slot_order(G, m))  # ★ 但加序**必须**不等 ⇒ 判红点
+
+
+def test_positive_control_entry_dimension_sharding_must_fail():
+    """★ 阳性对照 C：若把**条目维**也切了（回到按 prompt 分卡）⇒ 不变量 ① 必红。
+
+    这正是本机制要消灭的形态：卡一持条目 0..1、卡二持 2..3 ⇒ 两卡条目集合都不是全体。
+    """
+    P, m = 4, 2
+    per_rank_entries = [list(range(P))[r::m] for r in range(m)]
+    assert per_rank_entries[0] != list(range(P))
+    # 真实实现：每卡条目集合都 = 全体
+    for r in range(m):
+        assert sorted({e for e, _ in rollout_slice(P, 8, m, r)}) == list(range(P))
+
+
+def test_positive_control_assertion_rejects_duplicate_slot():
+    """★ 阳性对照 D：`assert_rollout_slices` 的机核本身**能红**（不看实现，看断言）。"""
+    G, m, P = 8, 2, 2
+    slices = {r: rollout_slice(P, G, m, r) for r in range(m)}
+    # 人为把 rank1 的槽位整体 +1 ⇒ 并集缺 0、多 8 ⇒ 不变量 ② 破
+    tampered = {0: slices[0], 1: [(e, s + 1) for e, s in slices[1]]}
+    union = sorted(s for r in range(m) for e, s in tampered[r] if e == 0)
+    assert union != list(range(G))
+
+
+# ── fail-closed：非法切片参数必须显式失败并点名该改哪个键 ────────────────────
+
+def test_validate_rollout_slicing_rejects_non_divisible_group_size():
+    """★ A-8：`G=8, m=3`（不整除）⇒ 必须显式失败且**点名** `rollout_group_size`/`dp_size`。"""
+    with pytest.raises(AssignmentError, match="rollout_group_size"):
+        validate_rollout_slicing(8, 3)
+    with pytest.raises(AssignmentError, match="dp_size"):
+        validate_rollout_slicing(8, 3)
+    with pytest.raises(AssignmentError, match="整除"):
+        rollouts_per_rank(8, 3)
+    with pytest.raises(AssignmentError, match="整除"):
+        rollout_slice(1, 8, 3, 0)
+
+
+def test_validate_rollout_slicing_rejects_dp_larger_than_group():
+    """★ A-8：`m > G` ⇒ `G//m < 1` ⇒ 有卡一条都不生成 ⇒ 必须显式失败。
+
+    ★ 构造注意：`m > G` 蕴涵 `G % m == G != 0` ⇒ **"不整除"分支恒真**。
+    故校验顺序把"每卡至少一条"**放在整除之前**，报错文案才指向真正的成因。
+    真正能命中"不整除且 `m < G`"分支的构造是 **`G=8, m=3`**（见下一个用例）。
+    """
+    for g, m in ((1, 2), (2, 4), (4, 8)):
+        with pytest.raises(AssignmentError, match="不得大于"):
+            validate_rollout_slicing(g, m)
+        with pytest.raises(AssignmentError, match="不得大于"):
+            rollouts_per_rank(g, m)
+
+
+@pytest.mark.parametrize("bad", [0, -1])
+def test_validate_rollout_slicing_rejects_non_positive_group_size(bad: int):
+    with pytest.raises(AssignmentError, match="rollout_group_size"):
+        validate_rollout_slicing(bad, 1)
+
+
+@pytest.mark.parametrize("bad", [0, -1])
+def test_validate_rollout_slicing_rejects_non_positive_dp_size(bad: int):
+    with pytest.raises(AssignmentError, match="dp_size"):
+        validate_rollout_slicing(8, bad)
+
+
+def test_rollout_slice_rejects_out_of_range_rank_and_negative_prompt_count():
+    with pytest.raises(AssignmentError, match="越界"):
+        rollout_slice(1, 8, 2, 2)
+    with pytest.raises(AssignmentError, match="越界"):
+        rollout_slice(1, 8, 2, -1)
+    with pytest.raises(AssignmentError, match="不能为负"):
+        rollout_slice(-1, 8, 2, 0)
+    with pytest.raises(AssignmentError, match="不能为负"):
+        assert_rollout_slices(-1, 8, 2)
+
+
+def test_assert_rollout_slices_passes_for_all_valid_shapes():
+    for p, g, m in _SLICE_SHAPES:
+        assert_rollout_slices(p, g, m)

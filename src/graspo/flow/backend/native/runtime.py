@@ -436,6 +436,54 @@ def validate_native_runtime_config(config: GraspoConfig, native_config: Any | No
         raise ValueError("native.pp_rollout_logits_budget_gib must be >= 0 (0 = auto)")
     _validate_native_pp_rollout_gate(config, native)
     _validate_pp_rollout_logits_budget(config, native)
+    validate_rollout_sharding_config(config, native)
+
+
+def validate_rollout_sharding_config(config: GraspoConfig, native: Any | None = None) -> None:
+    """★ rollout 分卡（U-C）的**启动期 fail-closed 清单**（§11.2 / A-8）。
+
+    每条失败都**点名该改哪个键**（宪法 §2.3 边界校验即防呆）；⛔ 绝不静默启动一个
+    "切片拼不齐 / 有卡恒空 / 步边界不整除 / 本地 drop"的组合。
+
+    | # | 条件 | 违反时 |
+    |:--:|---|---|
+    | 1 | ``G % m == 0`` | 各卡切片并集 ≠ 整组 G 条 ⇒ 决策输入不再是整组 |
+    | 2 | ``G // m >= 1`` | 有 dp rank 一条 rollout 都不生成 ⇒ 日程必然不等 |
+    | 3 | ``(Q · (G // m)) % micro_batch_size == 0`` | ``training.py`` 的 micro-batch 循环会**静默丢尾**（X-08） |
+
+    ★ ``ReplayBuffer.limit``（本地 drop 会破坏"逐卡等长"）**不在此处校验**：它不是配置键
+    —— ``trainer.py`` 硬编码 ``ReplayBuffer()``（``limit=0``）。该前提由 **trainer 侧**
+    的运行期守卫机核（见 ``trainer.py::train`` 的 ``replay_buffer.limit`` 断言），
+    本函数只负责**配置面**的 fail-closed。
+    ★ 第 5 条（``m == dp_size``）在本函数里**天然恒真**（``native.dp_size`` 就是 ``m``）
+    ⇒ 不另设校验（写了也只是同义反复）。★ ``G % m != 0`` 与 ``G // m < 1`` 由
+    ``TrainingConfig.rollout_slice_quantum`` 统一抛出（单一真相源，§1.4）。
+
+    ★ **dp_size <= 1 ⇒ 全部短路**（单卡与 ``dp==1`` 的 PP 档行为逐位不变）。
+    """
+    native = native or config.native
+    dp_size = int(getattr(native, "dp_size", 1) or 1)
+    if dp_size <= 1:
+        return
+    group_size = int(config.training.rollout_group_size)
+    queue_size = int(config.training.rollout_queue_batch_size)
+    micro_batch_size = int(getattr(native, "micro_batch_size", 1) or 1)
+
+    # ① + ②：量子合法性 —— 由配置层的**单一真相源**抛出（消息已点名两个键）。
+    quantum = int(config.training.rollout_slice_quantum(dp_size))
+
+    # ③ 步边界整批量：`training.py` 的循环 `range(0, len(indices)-batch_size+1, batch_size)`
+    #    会**丢尾**；`micro_batch_size == 1`（当前全部 RL 配方）时无影响，>1 时丢尾比例
+    #    随 m 放大 ⇒ 显式失败。
+    lane = queue_size * quantum
+    if micro_batch_size > 0 and lane % micro_batch_size != 0:
+        raise ValueError(
+            f"rollout 分卡：每队列每卡条数 rollout_queue_batch_size × (rollout_group_size // "
+            f"native.dp_size) = {queue_size} × {quantum} = {lane} 必须能被 "
+            f"native.micro_batch_size ({micro_batch_size}) 整除，否则 native 的训练微批循环"
+            "会静默丢弃尾巴（比例随 dp_size 放大）。请改 native.micro_batch_size、"
+            "training.rollout_queue_batch_size、training.rollout_group_size 或 native.dp_size"
+        )
 
 
 def _validate_native_pp_rollout_gate(config: GraspoConfig, native: Any) -> None:

@@ -20,6 +20,12 @@
 另有一条 **β1 专用**断言 :func:`assert_group_partition`（整组不拆 / 全局组集合不变 /
 各分片组数差 ≤ 1），供 P4 的均衡分配接线使用。
 
+★ 以及一条 **rollout 分卡专用**的**装配点契约** :func:`assert_assembled_group_complete`
+（`report.md` §7.4 / X-09）：分卡把**组内 rollout 维**切成 ``G//m`` ⇒ 在把组交给算法层
+**之前**必须跨卡拼齐 G 条。⛔ 它**不放宽 I1** —— I1 的原文与机核
+（:func:`assert_complete_group`）**一字不动**；变的只是"G 条齐在哪一层被断言"。
+交付点由 :data:`ASSEMBLY_DELIVERY_POINTS` 具名登记（native = 装配后；msswift = 本进程整组）。
+
 ## 边界
 
 - 本模块**只做形状与判定**，零 IO、零 torch、零通信（便于 CPU 独立单测）；
@@ -54,6 +60,27 @@ class AlignmentError(ContractError):
 class PartitionError(ContractError):
     """β1：分配不满足"整组不拆 / 全局组集合不变 / 各分片组数差 ≤ 1"。"""
 
+
+class AssemblyError(ContractError):
+    """★ **装配点契约**：交给算法层的组没有从同一 dp 组的各成员处拼齐 G 条。
+
+    这不是 β1 的"分片"问题，也不是 I1 的"组形状"问题 —— 它说的是**交付点**：
+    rollout 分卡（``G → G//m`` 切片）之后，组内 G 条**分散在 m 张卡上**，
+    ⇒ 在把组交给算法层**之前**必须先把它们拼齐。拼不齐 = **显式失败**
+    （⛔ 绝不允许算法层在"部分组"上做决策 —— 那正是
+    :class:`IncompleteGroupError` docstring 点名的事故 ``groups_seen ≡ 1``）。
+    """
+
+
+#: ★ 装配点契约的**具名标识**（能力矩阵/文档引用它，避免"装配"一词散落成隐式约定）。
+ROLLOUT_SLICING_ASSEMBLY: str = "rollout_slicing_assembly"
+
+#: ★ 交付点声明（`report.md` §7.4 / X-09）：**"G 条齐"这条不变量只有一份**（I1），
+#: 变的只是"它在哪一层被断言"。两个 backend 的交付点**不同**，故必须具名登记。
+ASSEMBLY_DELIVERY_POINTS: dict[str, str] = {
+    "native": "装配后（决策前一次 dp_group all_gather 把各卡切片拼成整组 G 条）",
+    "msswift": "本进程整组（ms-swift 侧不切 rollout 维）",
+}
 
 # ── 形状 ─────────────────────────────────────────────────────────────────────
 def sample_key(group_key: str, completion_index: int) -> str:
@@ -181,13 +208,83 @@ def assert_group_partition(
         raise PartitionError(f"各分片组数失衡：{counts}（β1 要求差 ≤ 1 组）")
 
 
+# ── ★ 装配点契约（rollout 分卡 / U-C）：交付给算法层之前必须拼齐整组 ──────────
+def assert_assembled_group_complete(
+    group_key: str,
+    slots: Iterable[tuple[int, int]],
+    *,
+    group_size: int,
+    dp_size: int,
+) -> None:
+    """**装配点契约**：跨卡拼齐的槽位必须**恰为** ``0..G−1`` 各一次。
+
+    :param group_key: 组标识（仅用于报错定位）。
+    :param slots: 跨卡收集到的 ``(dp_rank, rollout_slot)`` 二元组（**顺序无关** ——
+        键语义天然支持乱序/跨卡，:func:`sample_key` 同源）。
+    :param group_size: 算法组大小 ``G``（= ``training.rollout_group_size``）。
+    :param dp_size: 切片数 ``m``（= ``native.dp_size``）。
+
+    语义（`report.md` §7.4 / X-09）：**"G 条齐"只有一份不变量（I1）**，本函数断言的是
+    "它**在哪一层**被断言" —— 必须在**把组交给算法层之前**。
+
+    Raises:
+        AssemblyError: 槽位有缺 / 有重 / 越界 / ``G`` 与 ``m`` 不自洽。
+    """
+    if int(group_size) < 1:
+        raise AssemblyError(f"group_size 必须 >= 1，得到 {group_size!r}")
+    if int(dp_size) < 1:
+        raise AssemblyError(f"dp_size 必须 >= 1，得到 {dp_size!r}")
+    if int(group_size) % int(dp_size) != 0:
+        raise AssemblyError(
+            f"group_size (G={int(group_size)}) 必须能被 dp_size (m={int(dp_size)}) 整除 —— "
+            "否则任何装配都不可能得到整组 G 条（切片本身就配不出整组）"
+        )
+    rows = [(int(rank), int(slot)) for rank, slot in slots]
+    ranks = [rank for rank, _ in rows]
+    if any(not 0 <= rank < int(dp_size) for rank in ranks):
+        raise AssemblyError(
+            f"槽位来源 rank 越界（应在 [0, {int(dp_size)})）：group_key={group_key!r} "
+            f"实际 {sorted(set(ranks))}"
+        )
+    got = sorted(slot for _, slot in rows)
+    expected = list(range(int(group_size)))
+    if got != expected:
+        missing = sorted(set(expected) - set(got))
+        extra = sorted(set(got) - set(expected))
+        raise AssemblyError(
+            f"装配点契约被违反：group_key={group_key!r} 拼齐后应有 {int(group_size)} 条"
+            f"（槽位 0..{int(group_size) - 1} 各一次），实际 {len(got)} 条；"
+            f"缺 {missing[:5]}、多 {extra[:5]}（重复槽位 {len(got) - len(set(got))} 个）。"
+            f"来源 rank 分布={ {rank: ranks.count(rank) for rank in sorted(set(ranks))} }。"
+            "⛔ 不完整的组不得交给算法层（否则组决策在部分组上做，groups_seen ≡ 1）。"
+        )
+    # 每条 slot 的来源 rank 也必须在**切片口径**下自洽（每个 slot 只有一个出处）。
+    expected_rank_of_slot = {
+        slot: slot // (int(group_size) // int(dp_size)) for slot in expected
+    }
+    wrong = [
+        (rank, slot) for rank, slot in rows if expected_rank_of_slot[slot] != rank
+    ]
+    if wrong:
+        raise AssemblyError(
+            f"槽位来源与切片口径不符：group_key={group_key!r} 的 "
+            f"{wrong[:3]} 不属于其 rank 的连续槽位区间 "
+            f"（G//m = {int(group_size) // int(dp_size)}）—— "
+            "说明装配时拼接顺序/切片口径不一致。"
+        )
+
+
 __all__ = [
+    "ASSEMBLY_DELIVERY_POINTS",
     "AlignmentError",
+    "AssemblyError",
     "ContractError",
     "IncompleteGroupError",
     "PartitionError",
+    "ROLLOUT_SLICING_ASSEMBLY",
     "RolloutGroup",
     "assert_aligned",
+    "assert_assembled_group_complete",
     "assert_complete_group",
     "assert_group_partition",
     "assert_no_partial_group",

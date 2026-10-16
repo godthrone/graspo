@@ -65,6 +65,21 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
         self.runtime = runtime or GraspoFlowRuntime.from_config(config)
         self.reward = create_reward(config.reward)
         self.replay_buffer = ReplayBuffer()
+        # ★ rollout 分卡（U-C）的两个基础设施槽位：
+        #   - `_ucd_shard_payload`：按 `id(QueuedSample)` 索引的**会合结果旁挂表**
+        #     （整组 rewards/content、整组 `μ_f` 的 `(Σraw, n)`、本卡切片的标注）。
+        #     为什么不塞进 `AttemptRecord`：那是 `ripple/`（算法层）的数据契约，
+        #     分卡是设施层机制（宪法 §1.1 分层）。`_finalize_sample` 每次 `pop` 自己那条
+        #     ⇒ 表长 = 未终结样本数（有界）。
+        #   - `_ucd_max_pending`：本轮**全局最大**待重试条目数 = 逐 rank 一致的
+        #     `all_gather` 会合长度（由 `_collective_any_pending` 的 MAX 归约写入）。
+        self._ucd_shard_payload: dict[int, dict[str, Any]] = {}
+        self._ucd_max_pending = 0
+        # ★ 切片开关与量子（在 `train()` 的 epoch 循环里按 `parallel_degree` 落值；
+        #   `__init__` 给的是"未切片"的安全默认 ⇒ 任何未进 `train()` 的调用点
+        #   （单测 / 诊断）都拿到 dp=1 语义）。
+        self._ucd_sliced = False
+        self._ucd_rollouts_per_rank = int(int(config.training.rollout_group_size) or 1)
         self._smoke_boundary = False  # 冒烟运行边界：首轮 optimize 后停止（见 train(smoke=)）
         self.stats = GraspoFlowTrainStats()
         self.backend_name = "native"
@@ -276,26 +291,43 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
                 if epoch != start_epoch or self.current_epoch_stats.samples_seen == 0:
                     self.current_epoch_stats = GraspoFlowEpochStats(epoch=epoch)
                 epoch_samples = list(samples)
-                # DP 分片（★ β1b：整组不拆 + 按组数均衡；并行度取自 backend，§1.4）。
-                # 默认模式的不变量与机核见 `flow/backend/native/assignment.py`；
-                # 分配单位是"组"（此处 1 条 prompt = 1 组）⇒ 不存在半个组落在一个 rank。
+                # ★ rollout 分卡（U-C，2026-10-16 主席裁定「必须做 rollout 分卡」）：
+                #   **分配单位从"整组"改成"(条目, rollout 槽位)"** —— 卡 `r` 持**全部条目**，
+                #   但每条只生成/训练槽位 `[r·(G/m), (r+1)·(G/m))`（`assignment.rollout_slice`）。
+                #   ⇒ **不再按 prompt 分片**；各卡持有的 prompt 集合**逐条相同**
+                #   （⇒ 逐卡条数严格相等、终结数相同 ⇒ 两条死锁面同时消失）。
+                #
+                #   ⚠ **β1b 未被推翻**：它管的是"组整体落在哪个分片"（整组不拆 / 组集合不变 /
+                #   组数差 ≤ 1）。切片管的是**组内 rollout 维**，且交给算法层之前必须
+                #   **拼齐整组 G 条**（装配点契约）。两者是**不同维度**（复核者 C7 / X-09）。
+                #   ⚠ **β1 的"均衡"理由已被推翻**：它均衡不了**可训条数**
+                #   （T041 `{64,48}`、T042 `{24,40,40,24}`，见 2026-10-16 主席裁定）。
                 parallel = self.parallel_degree
-                if parallel is not None and parallel.dp_size > 1:
-                    from graspo.flow.backend.native.assignment import (
-                        assign_whole_groups,
-                        assert_balanced_assignment,
-                    )
+                sliced = parallel is not None and int(parallel.dp_size) > 1
+                # 切片模式下**不做条目分片** —— 这正是本机制与 β1b 的差别所在。
+                # ⛔ 不删 β1b：`_step_batches`（能力 3 钩子）与其它调用面仍按 β1b 语义工作；
+                #    此处只改**训练循环的取数方式**。
+                self._ucd_sliced = sliced
+                # ★ 切片量子（= 生成入参 / 步边界量子 / 读数除数），来自**单一真相源**
+                #   `assignment.rollouts_per_rank`；dp≤1 ⇒ = G（恒等，逐位不变）。
+                from graspo.flow.backend.native.assignment import rollouts_per_rank
 
-                    group_keys = list(range(len(epoch_samples)))
-                    shard_of = assign_whole_groups(group_keys, parallel.dp_size)
-                    assert_balanced_assignment(
-                        group_keys, shard_of, n_shards=parallel.dp_size
+                self._ucd_rollouts_per_rank = int(
+                    rollouts_per_rank(
+                        int(self.config.training.rollout_group_size),
+                        1 if not sliced else int(parallel.dp_size),
                     )
-                    epoch_samples = [
-                        sample
-                        for index, sample in enumerate(epoch_samples)
-                        if shard_of[index] == parallel.dp_rank
-                    ]
+                )
+                # ★ 运行期守卫（§11.2 第 4 条 / A-8）：`ReplayBuffer.limit != 0` 会**本地
+                #   drop** 最旧的 experience ⇒ 逐卡条数不再严格相等 ⇒ 本机制的前提被破坏。
+                #   框架硬编码 `ReplayBuffer()`（limit=0），此处**机核**该前提，
+                #   而不是等它静默漂移成死锁。⛔ 只在切片模式（dp≥2）判。
+                if sliced and int(getattr(self.replay_buffer, "limit", 0) or 0) != 0:
+                    raise RuntimeError(
+                        "rollout 分卡要求 ReplayBuffer.limit == 0（本地 drop 会让各卡条数"
+                        f"不再严格相等），实际 limit={self.replay_buffer.limit} —— "
+                        "请改 trainer.py 里 ReplayBuffer() 的构造（⛔ 这不是配置键）。"
+                    )
                 random.Random(int(self.config.training.seed) + epoch).shuffle(epoch_samples)
                 resume_sample_offset = (
                     int(self.current_epoch_stats.samples_seen) if epoch == start_epoch else 0
@@ -452,11 +484,18 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
         为什么用 WORLD 而不是 `dp_group`：下游要等的那个集合就在 `default_pg` 上，
         必须让**同一通信域内的所有 rank** 对齐轮次。
         ⛔ 只读一个标量、只做 MAX，不改变任何判定语义。
+
+        ★ **U-C（rollout 分卡）复用**：本方法现在归约的是**计数**（不是 0/1 标志），
+        返回**计数本身**，并把全局最大计数写进 ``self._ucd_max_pending``
+        —— 那是"决策前 ``all_gather`` 的会合长度必须逐 rank 相同"的**唯一来源**
+        （某 rank 本轮已无待重试条目时，它也要以同一长度参与会合，否则集合失配）。
+        布尔语义逐字保留：调用方只问"**还有没有**待重试样本" ⇒ 真值等价于 ``n_max > 0``。
         """
         import torch
         import torch.distributed as _dist
 
         if not (_dist.is_available() and _dist.is_initialized()):
+            self._ucd_max_pending = int(n_pending)
             return n_pending > 0
         adapter = self.runtime._require_adapter()
         # ★ 守卫（2026-10-08 追加，指挥部裁决 2）：与 SFT 先例 `sft_trainer.py:255` 的
@@ -467,14 +506,18 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
         tp_state = getattr(adapter, "tp_state", None)
         dp_size = int(getattr(tp_state, "dp_size", getattr(adapter, "dp_size", 1)))
         if dp_size <= 1:
+            self._ucd_max_pending = int(n_pending)
             return n_pending > 0
         device = adapter.device
-        flag = torch.tensor([1 if n_pending > 0 else 0], dtype=torch.int, device=device)
+        counts = torch.tensor([int(n_pending)], dtype=torch.int, device=device)
         try:
-            _dist.all_reduce(flag, op=_dist.ReduceOp.MAX)
+            _dist.all_reduce(counts, op=_dist.ReduceOp.MAX)
         except Exception as exc:  # noqa: BLE001 — 集合失败必须可见，绝不静默
             raise RuntimeError(f"retry-round collective failed: {type(exc).__name__}: {exc}") from exc
-        return bool(flag.item())
+        n_max = int(counts.item())
+        # ★ U-C：会合长度（逐 rank 相同）
+        self._ucd_max_pending = n_max
+        return n_max > 0
 
     # ── ★ U-A：WORLD 门（`_maybe_optimize`）节奏对齐 ───────────────────────────
 

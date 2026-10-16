@@ -19,6 +19,15 @@ R5（2026-10-08 在役本地补丁）在设施层把每步训练集缩到 **dp �
 - **不做**生成、评分、算法判定（那是 backend / ripple 的活）；
 - 跨 rank 的**搬组执行**（真正把整组从一个 rank 挪到另一个 rank 的那次会合）属
   **待跑次阶段**（`native.group_balance_max_move_groups` 默认 0 = 不搬 ⇒ 无新增通信）。
+
+## ★ 新增：**rollout 分卡**（2026-10-16 主席裁定「必须做 rollout 分卡…只有这个才能治本」）
+
+第二条分配单位——**组内 rollout 维的切片**（本模块后半部分：`rollouts_per_rank` /
+`rollout_slice` / `assembled_slot_order` / `assert_rollout_slices`）。
+β1b 的「整组不拆」在这里**不被放宽**：β1b 管的是"组整体落在哪个分片"，
+切片管的是"**同一条 prompt 的各 rollout 由哪张卡生成/训练**"；
+交给算法层之前仍必须**拼齐整组 G 条**（装配点契约，
+`flow/adapter/contract.py::assert_assembled_group_complete`）。
 """
 
 from __future__ import annotations
@@ -191,11 +200,177 @@ def plan_group_rebalance(
     return plan
 
 
+# ── ★ rollout 分卡（2026-10-16 主席裁定「必须做 rollout 分卡」）────────────────
+#
+# 分配单位从「整组（一条 prompt 的 G 条）」改成「**(条目, rollout 槽位)**」：
+# 卡 `r` 持**该批全部条目**，但每条只生成/训练槽位 `[r·(G/m), (r+1)·(G/m))`。
+#
+# **为什么这不是 β2 复活**：β2 是「每卡只看本卡的 `G/m` 条就做组决策」；
+# 本机制在**决策之前**把整组凑齐（一次 ~300 B 的 `all_gather`）⇒ **算法可见输入仍是整组 G 条**。
+# 决定性的差别在**会合**，不在切片本身（`report.md` §4-②）。
+#
+# **切片是"连续"口径**（= 主席原话「卡一 0–3、卡二 4–7」），⛔ 不是 `[rank::m]` 轮转：
+# 连续切片才让「按 rank 序拼接」与「单卡槽位序」逐元素对齐（`assembled_slot_order`）。
+
+
+def validate_rollout_slicing(group_size: int, dp_size: int) -> None:
+    """切片参数合法性（**fail-closed**，消息点名该改哪个键 —— 宪法 §2.3 防呆）。
+
+    两条：① ``G % m == 0``（否则各卡切片并集 ≠ 整组 G 条）；
+    ② ``G // m >= 1``（否则有卡一条都不生成 ⇒ 该卡恒空、日程必然不等）。
+
+    Raises:
+        AssignmentError: 任一不成立。
+    """
+    if int(group_size) < 1:
+        raise AssignmentError(
+            f"training.rollout_group_size (G) 必须 >= 1，得到 {group_size!r}；"
+            "请改 training.rollout_group_size"
+        )
+    if int(dp_size) < 1:
+        raise AssignmentError(
+            f"native.dp_size (m) 必须 >= 1，得到 {dp_size!r}；请改 native.dp_size"
+        )
+    # ★ 顺序有讲究：`m > G` 时 `G % m == G != 0` **恒真** ⇒ 若先判整除，
+    #   下面这条"每卡至少一条"的分支就永远到不了（`m > G ⇒ G//m == 0`）。
+    #   先判它 ⇒ 报错文案才指向**真正的**成因（"有卡一条都不生成"）。
+    if int(group_size) // int(dp_size) < 1:
+        raise AssignmentError(
+            f"native.dp_size (m={int(dp_size)}) 不得大于 training.rollout_group_size "
+            f"(G={int(group_size)})：G // m 必须 >= 1，否则有 dp rank 一条 rollout 都不生成。"
+            "请改 G 或 dp_size"
+        )
+    if int(group_size) % int(dp_size) != 0:
+        raise AssignmentError(
+            f"training.rollout_group_size (G={int(group_size)}) 必须能被 "
+            f"native.dp_size (m={int(dp_size)}) 整除（否则各卡 rollout 切片并集 "
+            "≠ 整组 G 条 ⇒ 决策输入不再是整组）。请改 G 或 dp_size"
+        )
+
+
+def rollouts_per_rank(group_size: int, dp_size: int) -> int:
+    """每卡对**每条 prompt**生成/训练的 rollout 数 ``G // m``（★ 切片量子）。
+
+    ★ **单一真相源**（§1.4）：生成入参（``rollout.py``）、步边界量子（``optimize.py``）、
+    落盘读数除数（``optimize.py``）、配置阈值口径（``schema.py``）**全部**从这里取，
+    ⛔ 任何调用方**不得**自己写 ``G // dp_size``。
+
+    ``m == 1`` ⇒ 返回 ``G``（**恒等**）⇒ dp=1 全路径逐位不变（A-1 回归锚）。
+
+    Raises:
+        AssignmentError: ``G % m != 0``（切片拼不齐整组）或 ``G // m < 1``。
+    """
+    validate_rollout_slicing(group_size, dp_size)
+    return int(group_size) // int(dp_size)
+
+
+def rollout_slice(
+    prompt_count: int, group_size: int, dp_size: int, rank: int
+) -> list[tuple[int, int]]:
+    """卡 ``rank`` 应负责的 ``(条目序号, rollout 槽位)`` 清单（确定性、纯函数）。
+
+    槽位区间 = **连续** ``[rank·(G/m), (rank+1)·(G/m))``；条目维**不切**
+    （卡 ``rank`` 对 ``0..prompt_count-1`` **每一条**都持有一段槽位）。
+
+    返回顺序：**先条目、后槽位**（与 ``generate_groups`` 的
+    ``(chunk_prompt_count, rollout_group_size)`` 行序一致）—— 故
+    ``[slot for _, slot in rollout_slice(1, G, m, r)]`` 就是该卡的槽位序列。
+
+    Raises:
+        AssignmentError: 切片参数非法 / ``prompt_count < 0`` / ``rank`` 越界。
+    """
+    validate_rollout_slicing(group_size, dp_size)
+    if int(prompt_count) < 0:
+        raise AssignmentError(f"prompt_count 不能为负，得到 {prompt_count!r}")
+    m = int(dp_size)
+    if not 0 <= int(rank) < m:
+        raise AssignmentError(f"rank 越界：{rank!r} ∉ [0, {m})")
+    rpr = int(group_size) // m
+    lo = int(rank) * rpr
+    hi = lo + rpr
+    return [(entry, slot) for entry in range(int(prompt_count)) for slot in range(lo, hi)]
+
+
+def assembled_slot_order(group_size: int, dp_size: int) -> tuple[int, ...]:
+    """跨卡**按 rank 序**拼齐后的槽位序列（★ 会合的加序契约）。
+
+    机制：``all_gather`` 按 rank 序返回各卡切片，沿**槽位维**拼接 ⇒ 槽位序列
+    恰为 ``(0, 1, …, G−1)`` —— 与**单卡整组**的槽位序**逐元素相同**。
+
+    ★ 这条等式是「``μ_f`` 能按槽位序确定地求和、与单卡同加序」的**唯一依据**
+    （`report.md` §4-③ / A-5）。⛔ 若切片改成轮转 ``[rank::m]``，本等式**不成立**。
+
+    Raises:
+        AssignmentError: 切片参数非法。
+    """
+    validate_rollout_slicing(group_size, dp_size)
+    return tuple(range(int(group_size)))
+
+
+def assert_rollout_slices(prompt_count: int, group_size: int, dp_size: int) -> None:
+    """机核四条切片不变量（A-8a / A-6）—— 违反即 :class:`AssignmentError`。
+
+    1. **条目集合不变**：每卡的条目集合都 = 全体条目（切片**不切条目维**）；
+    2. **槽位互斥且完备**：同一 entry 的各卡槽位两两不交，并集 = ``0..G−1``；
+    3. **等长**：每卡条数 = ``prompt_count · (G/m)``（⇒ 逐卡条数**严格相等**）；
+    4. **``m == 1`` 恒等**：单卡时槽位序列 = ``0..G−1``（逐位不变）。
+
+    ★ 这是「能失败的断言」：把 `rollout_slice` 改成"整组给每卡"或"轮转切片"，
+    #2 或 #4 立即判红（阳性对照见 ``tests/flow/backend/native/test_assignment.py``）。
+
+    Raises:
+        AssignmentError: 任一不变量被违反。
+    """
+    validate_rollout_slicing(group_size, dp_size)
+    P, G, m = int(prompt_count), int(group_size), int(dp_size)
+    if P < 0:
+        raise AssignmentError(f"prompt_count 不能为负，得到 {prompt_count!r}")
+    rpr = G // m
+    slices = {r: rollout_slice(P, G, m, r) for r in range(m)}
+
+    # 1. 条目集合不变 + 3. 等长
+    for r in range(m):
+        entries = sorted({e for e, _ in slices[r]})
+        if entries != list(range(P)):
+            raise AssignmentError(
+                f"切片改变了条目集合：rank={r} 的条目 {entries[:3]}… ≠ 全体 0..{P - 1}"
+                "（切片只切 rollout 维，⛔ 不切条目维）"
+            )
+        if len(slices[r]) != P * rpr:
+            raise AssignmentError(
+                f"各卡条数不等：rank={r} 有 {len(slices[r])} 条，应为 P·(G/m)"
+                f" = {P}·{rpr} = {P * rpr}"
+            )
+
+    # 2. 槽位互斥且完备
+    for entry in range(P):
+        union: list[int] = []
+        for r in range(m):
+            got = [slot for e, slot in slices[r] if e == entry]
+            if len(set(got)) != len(got):
+                raise AssignmentError(f"rank={r} entry={entry} 的槽位有重复：{got}")
+            union.extend(got)
+        if sorted(union) != list(range(G)):
+            raise AssignmentError(
+                f"entry={entry} 的跨卡槽位并集 ≠ 0..{G - 1}：得到 {sorted(union)}"
+                "（切片必须互斥且完备，否则组凑不齐 G 条）"
+            )
+
+    # 4. m == 1 恒等
+    if m == 1 and [slot for _, slot in slices[0]] != list(range(G)) * P:
+        raise AssignmentError("m == 1 时切片必须恒等（槽位序列 = 0..G−1）")
+
+
 __all__ = [
     "AssignmentError",
-    "assign_whole_groups",
+    "assembled_slot_order",
     "assert_balanced_assignment",
+    "assert_rollout_slices",
+    "assign_whole_groups",
     "plan_group_rebalance",
+    "rollout_slice",
+    "rollouts_per_rank",
     "step_group_quota",
+    "validate_rollout_slicing",
     "whole_group_count",
 ]

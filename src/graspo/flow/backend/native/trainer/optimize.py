@@ -56,6 +56,51 @@ class OptimizeMixin:
     backend_name: str
     _last_checkpoint_time: float  # wall-clock monotonic seconds for time-based save
 
+    def _ucd_threshold(self) -> int:
+        """★ replay 触发阈值（**切片口径** = ``Q × (G//m)``；dp≤1 与既有属性同值）。
+
+        单一真相源 = ``core.schema.TrainingConfig.replay_buffer_optimize_threshold_for``。
+        ⛔ 本方法**不复制**该算式：它只是把"配置对象可能没有该方法"的两种非生产形态
+        （单测里的 ``SimpleNamespace`` / 旧配置对象）回落成**语义等价**的取值。
+        """
+        training = self.config.training
+        compute = getattr(training, "replay_buffer_optimize_threshold_for", None)
+        if callable(compute):
+            return int(compute(self._ucd_dp_size()))
+        # 回落：既有的 `Q × G` 属性（dp≤1 语义），再按量子折算（等价变换）。
+        base = int(training.replay_buffer_optimize_threshold)
+        group_size = max(1, int(training.rollout_group_size))
+        quantum = self._ucd_quantum()
+        if quantum == group_size or group_size % max(quantum, 1) != 0:
+            return base
+        return base * quantum // group_size
+
+    def _ucd_quantum(self) -> int:
+        """★ 步边界**量子**（= 切片后每条 prompt 对 replay buffer 的贡献条数）。
+
+        ``rollout 分卡`` 下 = ``G // dp_size``；``dp_size <= 1`` ⇒ ``= G``（**恒等**，
+        逐位不变）。取值优先用 epoch 循环落下的 ``_ucd_rollouts_per_rank``
+        （与**生成入参 / 读数除数**同源）；未进 ``train()``（单测 / 诊断）⇒ 现算一次。
+
+        ⛔ **不得**在这里重写 ``G // dp_size`` 算式：单一真相源是
+        ``core.schema.TrainingConfig.rollout_slice_quantum``（§1.4）。
+        """
+        preset = getattr(self, "_ucd_rollouts_per_rank", None)
+        if preset is not None:
+            return max(1, int(preset))
+        # 回落：配置对象可能没有该方法（单测的 `SimpleNamespace` / 旧配置对象）
+        # ⇒ 用 `G // m` 的**同一算式**（仍由 §1.4 的 `rollout_slice_quantum` 定义）。
+        compute = getattr(self.config.training, "rollout_slice_quantum", None)
+        dp_size = self._ucd_dp_size()
+        if callable(compute):
+            return max(1, int(compute(dp_size)))
+        return max(1, int(self.config.training.rollout_group_size) // dp_size)
+
+    def _ucd_dp_size(self) -> int:
+        """切片口径下的 ``m``（= 实际 ``dp_size``）；取不到或 ≤1 ⇒ 1（**切片关闭**）。"""
+        degree = getattr(self, "parallel_degree", None)
+        return max(1, int(getattr(degree, "dp_size", 1) or 1))
+
     def _maybe_optimize(self, *, epoch: int, force: bool = False) -> bool:
         """当 replay buffer 达到阈值时触发优化步骤。
 
@@ -66,7 +111,14 @@ class OptimizeMixin:
         集结算子。否则 dp_rank=0 卡在 dp_group 的 all_reduce，而 dp_rank=1 在 teardown
         的 WORLD barrier 上等待 dp_rank=0（两个不同进程组互等），即 RL-1 死锁。
         """
-        threshold = self.config.training.replay_buffer_optimize_threshold
+        # ★ 阈值取**切片口径**（= 配置层单一真相源；dp≤1 与既有属性**同值**）。
+        threshold = self._ucd_threshold()
+        # ★ **两个量分开命名**（W-1「一名两义」的落点，两处都在函数**入口**求值，
+        #   避免"只有某些分支才定义"的 NameError 与口径漂移）：
+        #   - `group_size` = **算法组大小 G**（语义面：`reward_batch_summary` 的"每组 G 条"）；
+        #   - `rollouts_per_rank` = **步边界量子**（切片后 = `G//m`；dp≤1 ⇒ = G）。
+        group_size = max(1, int(self.config.training.rollout_group_size))
+        rollouts_per_rank = self._ucd_quantum()
         # 本地是否具备训练条件（保留原语义：不达阈值不训练，force 强制刷新）。
         local_wants_train = (force and len(self.replay_buffer) > 0) or (
             not force and len(self.replay_buffer) >= threshold
@@ -91,7 +143,7 @@ class OptimizeMixin:
             usable = 0
             data: list[Any] = []
         else:
-            group_size = max(1, int(self.config.training.rollout_group_size))
+            # ★ 量子已在函数入口求值（见上）；此处只做**取整**，不再重算。
             raw_usable = (
                 len(self.replay_buffer) if force else min(threshold, len(self.replay_buffer))
             )
@@ -99,7 +151,11 @@ class OptimizeMixin:
             #   R5 的"对齐到 dp 组裸 MIN"已删：跨 rank 均衡改由分片保证
             #   （`assignment.assign_whole_groups`，各分片组数差 ≤1），此处不再引入归约。
             #   ★ 取整原语是单一真相源（可在 CPU 直接单测）：assignment.whole_group_count。
-            usable = whole_group_count(raw_usable, group_size)
+            #   ★ U-C：量子由 `G` 改为 `rollouts_per_rank`（切片下每条 prompt 只贡献 G/m 条）。
+            #     正向副产品：新量子下每个条目恰好贡献 0 或 `G/m` 条 ⇒ buffer 长度永远是该
+            #     量子的整数倍 ⇒ **取整变成恒等、不再丢尾**（前提：离散决策逐卡同判 + 无本地
+            #     drop + `ReplayBuffer.limit == 0`，启动期已 fail-closed 校验）。
+            usable = whole_group_count(raw_usable, rollouts_per_rank)
             data = self.replay_buffer.take(usable)
         optimize_started_at = time.monotonic()
         metrics = self.runtime.train_batch(
@@ -120,9 +176,9 @@ class OptimizeMixin:
         )
         metrics["replay_buffer_optimize_threshold"] = threshold
         metrics["replay_buffer_trainable_completion_count"] = usable
-        metrics["replay_buffer_trainable_group_count"] = usable // max(
-            int(self.config.training.rollout_group_size), 1
-        )
+        # ★ M5 / 复核者 B-2：**除数必须随量子改**（切片后 = `G//m`）。
+        #   不改 ⇒「可训组数」静默缩到 1/m（可能为 0），污染健康判据与矩阵对账。
+        metrics["replay_buffer_trainable_group_count"] = usable // max(rollouts_per_rank, 1)
         metrics["effective_batch_size"] = int(self.config.native.micro_batch_size) * int(
             self.config.training.gradient_accumulation_micro_batches
         )

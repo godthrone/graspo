@@ -62,16 +62,35 @@ class NativeBackend(RLBackend):
         """委托既有 ``GraspoFlowTrainer.train()`` —— 与 P2 及以前逐字同路径。"""
         self._trainer.train(smoke=smoke)
 
-    # ── 能力 3：分片（★ 整组不拆）───────────────────────────────────────────
+    # ── 能力 3：分片（★ 整组不拆；组内 rollout 可切 G//m）─────────────────────
     def _step_batches(self, epoch: Any) -> Iterator[Any]:
-        """能力 3（★整组不拆）：按 β1b **整组均衡分配**产出**本卡份额**。
+        """能力 3：按 β1b **整组均衡分配**产出**本卡份额**。
 
         :param epoch: 可迭代的**全局组键**序列（分片前的口径）。
 
-        不变量由 :func:`graspo.flow.backend.native.assignment.assert_balanced_assignment`
-        机核（覆盖 / 不重 / 分片越界 / 组数差 ≤ 1）；默认模式与既有
-        ``[dp_rank::dp_size]`` **逐位等价**（见测试），因此本钩子是"把既有分片收编到
-        契约面"，而不是改变分布。
+        ★ **两段式语义（2026-10-16 主席裁定 rollout 分卡后的真语义）**：
+
+        1. **条目维（β1b，本方法实现）**：分配单位是**组**，整组不拆、全局组集合不变、
+           各分片组数差 ≤ 1（:func:`...assignment.assert_balanced_assignment` 机核）。
+           默认模式与既有 ``[dp_rank::dp_size]`` **逐位等价** ⇒ 本钩子是"把既有分片
+           收编到契约面"，而不是改变分布。
+        2. **组内 rollout 维（U-C，训练循环实现）**：切片模式下**不做条目分片**
+           （各卡持**全部条目**），只把组内 rollout 槽位切成 `G//m`
+           （:func:`...assignment.rollout_slice`）。⇒ **交给算法层之前必须装配**：
+           组的 G 条要已从**同一 dp 组**的各成员处拼齐
+           （:func:`graspo.flow.adapter.contract.assert_assembled_group_complete`），
+           拼不齐 = **显式失败**（⛔ 不允许"算法在部分组上做决策"）。
+
+        ⛔ 两段**不同维度**：本方法管"组整体落在哪个分片"，切片管"组内 rollout 由哪张卡
+        生成/训练"。**I1（G 条齐）一个字都没放宽** —— 变的只是"它在哪一层被断言"。
+
+        ★ **本钩子只实现第 1 段**（条目维 β1b；这是 P4 收编的契约面）。
+        ★ 第 2 段（组内 rollout 切片）由**训练循环**实现（``trainer.py`` 的 epoch 循环
+        ＋ ``rollout.py`` 的决策前会合）—— 本钩子**不改**它的行为：
+        ``_step_batches`` 不是训练取数路径（``NativeBackend._run`` 直接委托既有
+        ``GraspoFlowTrainer.train()``，见 ``_run`` 的"行为等价"注释），
+        且把"条目维是否分片"绑到本钩子上会让**能力矩阵的既有断言**（默认模式与
+        ``[dp_rank::dp_size]`` 逐位等价）失真。⇒ ⛔ 保持逐位等价。
         """
         from graspo.flow.backend.native.assignment import (
             assign_whole_groups,

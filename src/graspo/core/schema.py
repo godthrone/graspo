@@ -450,6 +450,58 @@ class TrainingConfig(BaseModel):
     def replay_buffer_optimize_threshold(self) -> int:
         return int(self.rollout_queue_batch_size) * int(self.rollout_group_size)
 
+    # ── ★ rollout 分卡（2026-10-16 主席裁定）的三件配置面 ──────────────────────
+
+    def rollout_slice_quantum(self, dp_size: int) -> int:
+        """★ rollout 分卡下每卡对**每条 prompt**的 rollout 数 —— **步边界量子** ``G // m``。
+
+        **为什么必须新名**（X-12 / W-1）：``rollout_group_size`` 现在**一名三义**——
+        ① 生成入参 ② 步边界量子 ③ 统计口径。切片后 ① 与 ② 都变成 ``G // m``，
+        而 ③（``μ_f`` 的定义域、``reward_batch_summary`` 的"每组 G 条"）**仍是 G**。
+        ⛔ 因此**不复用** ``rollout_group_size`` 承载量子，而是给出这个具名取值口。
+
+        ``dp_size <= 1`` ⇒ 返回 ``G``（**恒等**）⇒ dp=1 路径逐位不变（A-1 回归锚）。
+
+        Raises:
+            ValueError: ``G % m != 0`` 或 ``G // m < 1``（fail-closed，消息点名该改哪个键）。
+        """
+        group_size = int(self.rollout_group_size)
+        shards = int(dp_size)
+        if shards < 1:
+            raise ValueError(f"dp_size 必须 >= 1，得到 {dp_size!r}；请改 native.dp_size")
+        quotient = group_size // shards
+        if quotient < 1:
+            raise ValueError(
+                f"native.dp_size (m={shards}) 不得大于 training.rollout_group_size "
+                f"(G={group_size})：G // m 必须 >= 1，否则有 dp rank 一条 rollout 都不生成。"
+                "请改 training.rollout_group_size 或 native.dp_size"
+            )
+        if group_size % shards != 0:
+            raise ValueError(
+                f"training.rollout_group_size (G={group_size}) 必须能被 "
+                f"native.dp_size (m={shards}) 整除（否则各卡 rollout 切片并集 "
+                "≠ 整组 G 条 ⇒ 决策输入不再是整组）。请改 training.rollout_group_size "
+                "或 native.dp_size"
+            )
+        return quotient
+
+    def replay_buffer_optimize_threshold_for(self, dp_size: int) -> int:
+        """★ rollout 分卡下的 replay 阈值 = ``Q × (G // m)``（**切片口径**）。
+
+        口径推导：一个 rollout 队列 = ``Q`` 条 prompt × 每卡 ``G//m`` 条/条 prompt
+        ⇒ 恰好触发一次 optimize（与 :attr:`replay_buffer_optimize_threshold` 同构，
+        只是把"每组 G 条"换成"每卡切片 G//m 条"）。
+
+        ★ **既有的** :attr:`replay_buffer_optimize_threshold`（``Q × G``）**保留不动**：
+        它是 **dp≤1 口径**，也是 ``tests/e2e/generate_matrix.py`` 与 msswift 侧的既有口径
+        ⇒ 改它会把工作树里"口径线"冻结的字节改掉（并让源码文本级 parity 判红）。
+        本方法与之的关系：``dp_size == 1 ⇒ 两者同值``。
+
+        Raises:
+            ValueError: 同 :meth:`rollout_slice_quantum`。
+        """
+        return int(self.rollout_queue_batch_size) * int(self.rollout_slice_quantum(dp_size))
+
 
 class GpuMonitorConfig(BaseModel):
     """``graspo record-gpu-memory`` 的产物参数（§10.1 配置驱动命令）。

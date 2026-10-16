@@ -8,8 +8,8 @@
 |:--:|---|---|---|
 | 1 | **生命周期** | `validate()` / `_setup()` / `_close()` | 启动期校验失败必须 fail-closed |
 | 2 | **设备管理** | device / rank / world_size / 卡位守卫 / 并行组 | 卡守卫规则**唯一来源**在 `core/gpu_guard` + `flow/guard` |
-| 3 | **分片** | 把全局 prompt/组清单切成"本卡要做的部分" | ★**必须整组不拆**（β1） |
-| 4 | **生成** | 产出 `RolloutGroup`（G 条 completion + 原始序列/张量） | ★**必须 G 条齐**（I1） |
+| 3 | **分片** | 把全局 prompt/组清单切成"本卡要做的部分" | ★**必须整组不拆**（β1）；★ 组内 rollout **可**切 `G//m`，但**交给算法层前必须装配成整组**（见下） |
+| 4 | **生成** | 产出 `RolloutGroup`（G 条 completion + 原始序列/张量） | ★**必须 G 条齐**（I1）。**交付点**：native = **装配后**（决策前一次 `all_gather` 拼齐）；msswift = 本进程整组 |
 | 5 | **评分** | 对每条 completion 打分，产出"奖励 ↔ 样本"的按键映射 | ★**按键对齐**（I2），禁行号回退 |
 | 6 | **同步** | dp/tp/pp 集合通信、会合点预算与看门狗 | 会合点可枚举、可预算（NCCL 600 s 对照面） |
 | 7 | **优化步进入** | 决定本 step 全局训哪些组、各 rank 训多少 | ★**各 rank micro-batch 次数相等** |
@@ -54,8 +54,8 @@ class BackendCapability(StrEnum):
 CAPABILITY_SPECS: tuple[tuple[BackendCapability, str, str], ...] = (
     (BackendCapability.LIFECYCLE, "validate/_setup/_close", "启动期校验失败 fail-closed"),
     (BackendCapability.DEVICE, "device/rank/world_size/并行组", "卡守卫规则唯一来源"),
-    (BackendCapability.SHARDING, "全局清单 → 本卡份额", "★整组不拆（β1）"),
-    (BackendCapability.GENERATE, "产出 RolloutGroup", "★G 条齐（I1）"),
+    (BackendCapability.SHARDING, "全局清单 → 本卡份额", "★整组不拆（β1）；组内 rollout 可切 G//m，装配后仍 G 条齐（I1）"),
+    (BackendCapability.GENERATE, "产出 RolloutGroup", "★G 条齐（I1）；native 交付点 = 装配后"),
     (BackendCapability.SCORE, "奖励 ↔ 样本按键映射", "★按键对齐（I2），禁行号回退"),
     (BackendCapability.SYNC, "dp/tp/pp 集合通信与看门狗", "会合点可枚举、可预算"),
     (BackendCapability.OPTIMIZE_STEP, "本 step 训哪些组、各 rank 训多少", "★各 rank micro-batch 次数相等"),
