@@ -7,10 +7,37 @@
 
 设备来源两种（F-1，见 ``core/gpu_guard`` 模块 docstring）：
 
-- ``--visible`` / 环境变量是**显式宿主卡号** → 静态比对（含 6/7 或 >4 卡即拒绝）；
+- ``--visible`` / 环境变量是**显式宿主卡号** → 静态比对，全部判据 = 四条：
+  **① 必须显式设置；② 卡号 ⊆ 允许集合（默认 0–7，可用
+  ``GRASPO_ALLOWED_GPU_INDICES`` 收窄）；③ 卡数 ≤ 4；④ 无空元素 / 重复卡**。
+  ★ **本层不做任何"禁用卡号"过滤** —— 它既不按卡号判"邻居卡"，也不判"生产锁卡"：
+  这两类拦截住在**另外三层**（见下），⛔ 不得对外声称本守卫会拒 GPU2 / GPU6 / GPU7。
 - 环境变量是 runtime 哨兵 ``void`` → **不提供** ``--probe-inventory`` 时拒绝
   （本脚本要的是真实卡号；容器内请用 ``python -m graspo record-gpu-memory --idle-only``
   或训练入口的 ``require_gpu_lock_or_exit``，它们会实测可见卡）。
+
+★ 邻居卡 GPU2 与生产锁卡 GPU6/7 的拦截点（三层，**本层不在其中**；依据 =
+`graspo.core.gpu_guard` 的 B10 口径「允许卡 = 本机全卡 0–7、先到先得；生产卡/预留卡
+语义已退役」，2026-10-12 主席批准）：
+
+1. **清单生成器** ``tests/e2e/generate_matrix_manifest_source.py``：
+   ``NEIGHBOR_CARDS = (2,)`` / ``LOCKED_CARDS = (2, 6, 7)`` ⇒ 生成期即拒（含越界卡）。
+2. **投放冒烟 (b2)**（部署侧工件 ``deploy/smoke_deploy_tree.sh``，⛔ 不在本仓）：
+   检查**全 54 档声明**不得含 GPU0 或 GPU2 ⇒ 含则"拒绝投放/起跑"（实测对含
+   ``T041=[2,3]`` 的投放树报失败并整体 rc=2）。
+3. **清单级守卫** ``tests/e2e/gpu_assignment.py``：``GPU_ALLOWED = (0..5)`` /
+   ``GPU_FORBIDDEN_PRODUCTION = (6, 7)`` ⇒ ``check_gpus()`` 对声明值 fail-closed。
+
+⇒ 权威运行清单（``matrix54_manifest_source.json``，runner 侧由
+``GRASPO_RUNNER_MANIFEST`` 指到它）上，这条链已闭合（复核实测：含 GPU2 的档 = 0）。
+**残余缺口（已知、待裁，⛔ 本层不修）**：三层拦截**只对"被指到的那份清单"生效** ——
+① **fsdp 变体清单** 54/54 含 GPU7、36 档含 GPU6；② **v1 归档件**
+``tests/e2e/matrix54_manifest.json`` 18 档 ``[0,1,2,3]`` 含 GPU2，而它正是 runner 的
+**默认清单**（``run_matrix54.sh`` 的
+``MANIFEST="${GRASPO_RUNNER_MANIFEST:-…/matrix54_manifest.json}"``）
+⇒ 未显式把该变量指到 v2 的投放/起跑会在 GPU2 上起容器，而本层**不会**拦。
+加固方案见 ``.local/hb-workspace/20261014-sft-kickoff/task-gate-reinforce/report-guard.md``
+（① 本层收窄 = 推翻 B10，须主席批；② 清单级加判据/换默认线 = 动 ``tests/e2e/**``，须等口径线收工）。
 
 用法：
     NVIDIA_VISIBLE_DEVICES=0,1,2,3 python3 scripts/gpu_lock_guard.py

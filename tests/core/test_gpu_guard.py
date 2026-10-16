@@ -114,6 +114,80 @@ def test_accepts_legal_four_cards():
     assert assert_gpu_lock_from_env({"NVIDIA_VISIBLE_DEVICES": "4,5"}) == (4, 5)
 
 
+# ── ★ 防线分层（2026-10-16 补）：运行期守卫**不做**禁用卡过滤 ────────────────
+# 背景：`scripts/gpu_lock_guard.py` 的 docstring 曾声称"含 6/7 或 >4 卡即拒绝"，
+# 而实现（本文件被测的 `assert_gpu_lock`）**只有**四条判据（显式设置 / 允许集合
+# ⊆0..7 / ≤4 卡 / 空元素·重复卡）。实测 `--visible 2` / `2,3` / `6` / `6,7` /
+# `4,5,6,7` **全 rc=0**。
+# ★ 处置口径（2026-10-16 指挥裁定；★ **不推翻 B10**）：运行期守卫语义保持不动
+#   （B10 = 2026-10-12 主席批准「允许卡 = 本机全卡 0–7、先到先得；生产卡/预留卡
+#   语义已退役」）⇒ 只把 docstring 改回**已批准口径** ＋ 把"邻卡/生产锁卡的拦截
+#   面"写清在三层：① 清单生成器 `NEIGHBOR_CARDS=(2,)` / `LOCKED_CARDS=(2,6,7)`；
+#   ② 投放冒烟 (b2)（全 54 档声明不得含 GPU0/GPU2）；③ `gpu_assignment.check_gpus()`。
+# 下面两条**只新增**、⛔ 不改任何既有期望值：它们把"本层不拦"这一契约钉住，使
+# "把禁用卡判据塞进运行期守卫"这类改法必须显式过测试（⇒ 必须显式过裁定），而不是
+# 静默改变运行期语义（那等于推翻 B10，须主席批准）。
+
+
+def _load_module_from_path(name: str, relpath: str):
+    """按文件路径加载仓内模块（与 `scripts/gpu_lock_guard.py` 同款做法）。"""
+    import importlib.util
+    from pathlib import Path as _Path
+
+    root = _Path(__file__).resolve().parents[2]
+    source = root / relpath
+    spec = importlib.util.spec_from_file_location(name, source)
+    assert spec is not None and spec.loader is not None, f"加载失败：{source}"
+    module = importlib.util.module_from_spec(spec)
+    import sys as _sys
+
+    _sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_docstring_names_the_four_judgements_and_disclaims_forbidden_cards():
+    """★ 契约钉住：docstring 与实现一致（四条判据），且**明写本层不拦 2/6/7**。"""
+    guard_cli = _load_module_from_path("_gpu_lock_guard_cli_doc", "scripts/gpu_lock_guard.py")
+    doc = guard_cli.__doc__ or ""
+    for needle in (
+        "必须显式设置",
+        "允许集合",
+        "卡数 ≤ 4",
+        "重复卡",
+        '不做任何"禁用卡号"过滤',
+        "NEIGHBOR_CARDS",
+        "LOCKED_CARDS",
+        "GPU_FORBIDDEN_PRODUCTION",
+    ):
+        assert needle in doc, f"docstring 缺少防线分层要素：{needle!r}"
+    assert "含 6/7 或 >4 卡即拒绝" not in doc, "旧的过度承诺句仍在 ⇒ 文档未回到已批准口径"
+
+
+def test_neighbour_and_production_cards_map_exactly_to_generator_side_constants():
+    """★ 三方常量一致性：运行期允许集合 = 生成器侧「`GPU_ALLOWED` ∪ 禁用集合」。
+
+    生成器侧：`gpu_assignment.GPU_ALLOWED = (0..5)` /
+    `GPU_FORBIDDEN_PRODUCTION = (6, 7)`；`generate_matrix_manifest_source` 另有
+    `NEIGHBOR_CARDS = (2,)` / `LOCKED_CARDS = (2, 6, 7)`。
+    ⇒ 「运行期允许 0–7」与「生成/投放侧禁 2/6/7」**不是矛盾，而是分层**：本用例把
+    这个等式钉住，任一侧改动都会在这里现形（而不是靠两条线各自的口头约定）。
+    """
+    import sys
+
+    assignment = _load_module_from_path("gpu_assignment", "tests/e2e/gpu_assignment.py")
+    sys.modules.setdefault("gpu_assignment", assignment)
+    genv2 = _load_module_from_path(
+        "generate_matrix_manifest_source", "tests/e2e/generate_matrix_manifest_source.py"
+    )
+    locked = set(assignment.GPU_FORBIDDEN_PRODUCTION) | set(genv2.NEIGHBOR_CARDS)
+    assert locked == {2, 6, 7}, f"禁用集合 ≠ {{2,6,7}}：{sorted(locked)}"
+    assert tuple(genv2.LOCKED_CARDS) == (2, 6, 7)
+    assert set(ALLOWED_INDICES) == set(assignment.GPU_ALLOWED) | locked, (
+        "运行期允许集合 ≠ 生成器侧「允许卡 ∪ 禁用卡」⇒ 两侧口径分叉，需显式裁定"
+    )
+
+
 # ── 其它非法取值 ────────────────────────────────────────────────────────────
 
 

@@ -6,6 +6,15 @@
   提交信息正文（§15.1 原文「提交信息同样纳入扫描」）。
 - 不管文件内容——那是 `gate_secrets.py` / `gate_pii.py` / `gate_content.py`。
 
+★ 两项阻断级检查（二者并存，缺一不可）：
+  ① **仓库级约定身份**：`git config --local user.email` 必须在允许集合内；
+  ①b **git 实际解析身份（真跑）**：`git var GIT_AUTHOR_IDENT` 与
+      `git var GIT_COMMITTER_IDENT` 必须**真执行**，其解析出的地址也必须在允许
+      集合内——否则 `GIT_AUTHOR_EMAIL` / `GIT_COMMITTER_EMAIL` / `EMAIL` 等
+      环境变量（或换 clone 丢掉 local 覆盖）会让**另一个**身份写进提交对象，
+      而只读 local config 的实现对此完全无感（实测见本包阳性对照）。
+      `git var` 非 0（身份未配置）同样 fail-closed。
+
 ★ 判定语义：**合规性 allowlist，而不是"命中某个真实身份的黑名单"**
   （设计理由见下「为什么不是黑名单」）：
   - **允许**（`ALLOWED_PATTERNS`，对完整地址做 `fullmatch`）：
@@ -50,6 +59,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -167,6 +177,56 @@ def _split_config_list(value: str) -> tuple[str, ...]:
     return tuple(item.strip() for item in re.split(r"[,\s]+", value) if item.strip())
 
 
+# ── ★ 真正执行 `git var GIT_AUTHOR_IDENT` / `GIT_COMMITTER_IDENT` ─────────────
+# 为什么必须真跑（来源 = 提交前全局审查 Q6 的裁定）：
+#   上面 ① 读的是 `git config --local user.email`——那是**仓库约定值**，不是
+#   git 提交时**实际会写进提交对象的身份**。两者在下列任一情形下分叉：
+#     `GIT_AUTHOR_EMAIL` / `GIT_AUTHOR_NAME` / `GIT_COMMITTER_EMAIL` /
+#     `GIT_COMMITTER_NAME` / `EMAIL` 任一被设置（`git var` 优先取 env），
+#     或 clone / `git -c user.email=…` 使 local 覆盖丢失。
+#   实测（本包阳性对照）：local config = `gate-test@users.noreply.github.com`（合规），
+#   `env GIT_AUTHOR_EMAIL=<非项目地址>` 内联时 `git var GIT_AUTHOR_IDENT`
+#   返回 `Gate Test <<非项目地址>> …` **rc=0**，而旧实现照旧 exit 0 ⇒
+#   "工具已在 hook 里、缺的只是真的跑"的结构性缺口就在这里。
+#   ★ 此处**不写具体地址字面量**（2026-10-16 门禁自指修复）：本文件会被 `gate_pii` /
+#     `gate_commit_identity` 自己扫，任何"看起来像个人邮箱"的示例都会把门禁打红；
+#     需要可执行样例时一律**运行时拼接**（见 `tests/tools/test_gates.py` 的 `_ident_addr`），
+#     注释里只留占位符。
+#   故本轮把「解析身份必须合规」做成**阻断级**检查，与 ① 并存（① 仍管约定值）。
+# 实现纪律：⛔ 不 `export` 任何 `GIT_*`（本函数只**读**子进程输出，不设置环境变量）。
+_IDENTITY_ENV_KEYS = (
+    "GIT_AUTHOR_NAME",
+    "GIT_AUTHOR_EMAIL",
+    "GIT_COMMITTER_NAME",
+    "GIT_COMMITTER_EMAIL",
+    "EMAIL",
+)
+
+
+def resolve_effective_identity(root: Path, var_name: str) -> tuple[str | None, str]:
+    """跑 `git var <var_name>` 取 git **实际解析**出的身份。
+
+    返回 `(原始输出或 None, 说明)`；`None` = `git var` 非 0（身份未配置 ⇒ fail-closed）。
+    """
+    proc = subprocess.run(
+        ["git", "var", var_name],
+        cwd=str(root),
+        capture_output=True,
+    )
+    out = proc.stdout.decode("utf-8", "replace").strip()
+    if proc.returncode != 0:
+        tail = proc.stderr.decode("utf-8", "replace").strip().splitlines() or ["(无 stderr)"]
+        return None, f"`git var {var_name}` 退出码 {proc.returncode}：{tail[-1]}"
+    return out, ""
+
+
+def ident_email(ident: str) -> str:
+    """从 `Name <addr> ts tz` 里取地址；取不到返回空串（判为不合规）。"""
+    if "<" not in ident or ">" not in ident:
+        return ""
+    return ident[ident.rindex("<") + 1 : ident.rindex(">")].strip()
+
+
 def _identity_config(root: Path) -> tuple[frozenset[str], tuple[str, ...]]:
     """从仓库级 git config 读项目自有身份（§1.4 单一真相源，无 fallback 链）。"""
     emails = gc._git(
@@ -272,6 +332,59 @@ def _impl(args) -> gc.ScanResult:
                     origin="tracked",
                 )
             )
+
+    # ── ①b 真正执行 `git var …`：解析身份必须合规（阻断级）──────────────────
+    # 见 `resolve_effective_identity()` 上方的设计说明；这是"工具已有、缺的是真的跑"
+    # 的那一半，**必须真跑**（本块一进 `_impl` 就在受制裁的入口里生效）。
+    for var_name, role in (("GIT_AUTHOR_IDENT", "author"), ("GIT_COMMITTER_IDENT", "committer")):
+        resolved, why = resolve_effective_identity(root, var_name)
+        if resolved is None:
+            result.violations.append(
+                gc.Finding(
+                    rule="missing_effective_identity",
+                    path=f"<git var {var_name}>",
+                    line=None,
+                    snippet=(
+                        f"git 无法解析出{role}身份（{why}）⇒ 提交归属未定，"
+                        "§15.1 检查 5 fail-closed。用 `git config --local user.name/"
+                        "user.email` 设为项目允许的公开身份后重跑。"
+                    ),
+                    origin="tracked",
+                )
+            )
+            continue
+        resolved_email = ident_email(resolved)
+        rule = classify_identity(resolved_email, allowed_emails, allowed_domains)
+        # 回显一律脱敏（本脚本的输出本身不得二次抄录身份）。
+        shown = mask_email(resolved_email) or "(未取到地址)"
+        result.notes.append(f"`git var {var_name}`（{role} 解析身份，脱敏）：{shown}")
+        if rule is not None:
+            result.violations.append(
+                gc.Finding(
+                    rule=f"unexpected_effective_identity_{role}",
+                    path=f"<git var {var_name}>",
+                    line=None,
+                    snippet=(
+                        f"git **实际**会用 `{mask_email(resolved_email)}` 作为{role}"
+                        "（已脱敏），它不属于本项目允许的公开身份。§15.1 检查 5：仓库级"
+                        "`git config --local user.email` 是**约定**，一旦被环境变量"
+                        "（`GIT_AUTHOR_EMAIL`/`GIT_COMMITTER_EMAIL`/`EMAIL`）或换 clone 覆盖，"
+                        "就会以该身份写入提交。⛔ 不得用 `export GIT_AUTHOR_*` 去'修正'"
+                        "身份（会跨命令残留并劫持他线）；改为 `git config --local` 设成"
+                        "项目允许的身份。"
+                    ),
+                    origin="tracked",
+                )
+            )
+
+    env_overrides = [key for key in _IDENTITY_ENV_KEYS if os.environ.get(key)]
+    if env_overrides:
+        result.notes.append(
+            "★ 检测到身份相关环境变量已设置："
+            + "、".join(env_overrides)
+            + "（`git var` 优先取 env ⇒ 上面的解析身份检查正是拦这一条）。"
+            "⛔ 不要 `export` 任何 `GIT_*`（共享仓会劫持后续所有 git 调用）。"
+        )
 
     # ── ② 全部提交的元数据（历史，警告级）────────────────────────────────────
     if args.tracked_only:
