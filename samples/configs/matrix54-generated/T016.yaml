@@ -26,6 +26,7 @@ native:
   dp_size: 1
   pp_size: 1
   micro_batch_size: 1
+  offload_optimizer_state: true
 gpu_monitor:
   output_dir: /out/gpu
   tag: T016

@@ -388,7 +388,70 @@ def uniform_map(data):
     return {it["key"]: it["value"] for it in (data.get("uniform") or {}).get("items", [])}
 
 
-def yaml_of(row, uni, model_root, data_root, lora_backends=None, teacher=None):
+def declared_switch_gaps(cfg_dir, declared_by_tier, tiers) -> list:
+    """★★ 机检：「**声明所依赖的开关 ⊆ 该档实际配置**」（第 4 批）。
+    逐档取清单 `feasibility.recipe.<backend>.*` 的**非几何**开关，核其是否真的写进了该档 yaml。
+    ★ 与 `--check-dir` 走**同一条通路**（同一 `iter_declared`／同一 yaml 目录）；⛔ 不另立第二家。
+    """
+    base = Path(cfg_dir)
+    gaps = []
+    for tier in tiers:
+        declared = declared_by_tier.get(tier) or {}
+        p = base / f"{tier}.yaml"
+        body = p.read_text(encoding="utf-8") if p.is_file() else ""
+        for backend in sorted(declared):
+            for k, v in iter_declared(declared, backend):
+                if not re.search(rf"^\s*{re.escape(k)}\s*:", body, re.M):
+                    gaps.append((tier, backend, k, v))
+    return gaps
+
+
+def report_declared_switches(cfg_dir, declared_by_tier, tiers, label="declared") -> int:
+    gaps = declared_switch_gaps(cfg_dir, declared_by_tier, tiers)
+    if gaps:
+        print(f"DECLARED-SWITCH FAIL（{label}）：{len(gaps)} 处「已声明的前提未落进配置」")
+        for tier, backend, k, v in gaps:
+            print(f"    {tier}.{backend}.{k} = {v!r} ⇒ 该档 yaml 中缺失")
+        return 1
+    n = sum(len(iter_declared(declared_by_tier.get(t) or {}, be))
+            for t in tiers for be in sorted(declared_by_tier.get(t) or {}))
+    print(f"DECLARED-SWITCH OK（{label}）：{len(tiers)} 档、{n} 条已声明开关全部落进配置")
+    return 0
+
+
+#: 开关类声明的**几何键**（已由 native 段固定写出，不进通用规则）
+DECLARED_GEOMETRY_KEYS = frozenset({"tp_size", "dp_size", "pp_size", "micro_batch_size", "cards"})
+
+#: 跑次侧口径权威清单（提供 `feasibility.recipe.<backend>.*` ⇒ **已声明的前提必须落进配置**）
+DEFAULT_DECLARED_MANIFEST = "tests/e2e/matrix54_manifest_source.json"
+
+
+def _yaml_scalar(v) -> str:
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    return "null" if v is None else str(v)
+
+
+def iter_declared(declared, backend):
+    """从清单 ``feasibility.recipe.<backend>`` 取**已声明的前提**（几何键除外），确定性排序。"""
+    recipe = ((declared or {}).get(backend) or {}) if isinstance(declared, dict) else {}
+    return [(k, recipe[k]) for k in sorted(recipe) if k not in DECLARED_GEOMETRY_KEYS]
+
+
+def load_declared(path) -> dict:
+    """读清单 ⇒ ``{tier: feasibility.recipe}``。★ fail-closed：清单不在 ⇒ 直接拒绝生成。"""
+    p = Path(path)
+    if not p.is_file():
+        raise SystemExit(f"FATAL: 声明清单不存在：{path}\n"
+                         "  ⇒ 无法保证「清单里已声明的前提落进该档配置」；"
+                         "⛔ 不静默降级（曾因丢键导致 T016/T034 真机 OOM）。")
+    doc = json.loads(p.read_text(encoding="utf-8"))
+    return {(t.get("tier_id") or t.get("tier")): ((t.get("feasibility") or {}).get("recipe") or {})
+            for t in (doc.get("tiers") or [])}
+
+
+def yaml_of(row, uni, model_root, data_root, lora_backends=None, teacher=None,
+            declared=None):
     """渲染一个档位的 yaml 文本（确定性：固定键序、无时钟/环境）。"""
     tier = row["tier"]
     tuner = row.get("tuner_type")
@@ -471,12 +534,23 @@ def yaml_of(row, uni, model_root, data_root, lora_backends=None, teacher=None):
 
     if backend == "native":
         L.append("native:\n")
-        L.append(f"  tp_size: {row.get('tp_size')}\n")
-        L.append(f"  dp_size: {row.get('dp_size')}\n")
-        L.append(f"  pp_size: {row.get('pp_size')}\n")
-        L.append(f"  micro_batch_size: {uni.get('micro_batch_size')}\n")
+        _emitted = set()
+        for _k, _line in (("tp_size", f"  tp_size: {row.get('tp_size')}\n"),
+                          ("dp_size", f"  dp_size: {row.get('dp_size')}\n"),
+                          ("pp_size", f"  pp_size: {row.get('pp_size')}\n"),
+                          ("micro_batch_size", f"  micro_batch_size: {uni.get('micro_batch_size')}\n")):
+            L.append(_line); _emitted.add(_k)
         if row.get("allow_unverified_pp_rollout") not in (None, "", "—"):
             L.append(f"  allow_unverified_pp_rollout: {row.get('allow_unverified_pp_rollout')}\n")
+            _emitted.add("allow_unverified_pp_rollout")
+        # ★★ 通用规则（第 4 批）：**清单里已声明**、且本段尚未写出的开关 ⇒ **一律写出**。
+        #    ⛔ 无按档手写表；⛔ 不改任何对外宣称参数（卡数/步数/epoch/方法/超参）；
+        #    只把**已声明的前提**落进配置。由来：现行生成器重写时**丢了**旧世代
+        #    （`samples/configs/matrix54-v2/`）已有的 `native.offload_optimizer_state`
+        #    ⇒ T016/T034 真机 48.5 s／0 步／OOM。
+        for _k, _v in iter_declared(declared, backend):
+            if _k not in _emitted:
+                L.append(f"  {_k}: {_yaml_scalar(_v)}\n"); _emitted.add(_k)
     elif backend == "ms-swift":
         nn = row.get("nnodes")
         nn = 1 if nn in (None, "", "—") else nn
@@ -499,12 +573,16 @@ def yaml_of(row, uni, model_root, data_root, lora_backends=None, teacher=None):
 def main():
     ap = argparse.ArgumentParser(description="矩阵数据 → 测试 yaml（确定性生成）")
     ap.add_argument("--data", default="docs/capability-matrix.data.json")
+    ap.add_argument("--manifest", default=DEFAULT_DECLARED_MANIFEST,
+                    help="跑次侧口径权威清单；其 feasibility.recipe.<backend>.* 即**已声明前提**，必须落进配置")
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--model-root", default="/models")
     ap.add_argument("--data-root", default="/work/elam-v5")
     ap.add_argument("--only", default=None, help="逗号分隔档号；缺省=全部 applicable 档")
     ap.add_argument("--check-determinism", action="store_true", help="生成两次并逐字节比对（幂等自证）")
     ap.add_argument("--check-dir", default=None, help="与既有冻结 yaml 目录做差异归因")
+    ap.add_argument("--check-declared", default=None, metavar="DIR",
+                    help="★ 机检：清单里**已声明的前提**是否落进 DIR 下各档配置（缺失 ⇒ rc=1）")
     ap.add_argument("--self-test", action="store_true", help="OPD 教师断言自检（含缺值/空值负例）")
     ap.add_argument("--verify-loadable", action="store_true",
                     help="按【加载值】验收：正则项加载后须为单反斜杠、可编译、结构符合收紧版")
@@ -519,12 +597,19 @@ def main():
     lora_backends = (data.get("meta") or {}).get("lora_target_backends") or {}
     only = set(x.strip() for x in a.only.split(",")) if a.only else None
     rows = [r for r in data["rows"] if r.get("applicable") and (only is None or r["tier"] in only)]
+    declared_by_tier = load_declared(a.manifest)
+    if a.check_declared:
+        rc = report_declared_switches(a.check_declared, declared_by_tier,
+                                      [r["tier"] for r in rows], label=a.check_declared)
+        return rc
+
     out = Path(a.out_dir)
     out.mkdir(parents=True, exist_ok=True)
 
     written = {}
     for r in rows:
-        text = yaml_of(r, uni, a.model_root, a.data_root, lora_backends, teacher)
+        text = yaml_of(r, uni, a.model_root, a.data_root, lora_backends, teacher,
+                       declared_by_tier.get(r["tier"]))
         p = out / f"{r['tier']}.yaml"
         p.write_text(text, encoding="utf-8")
         written[r["tier"]] = p
@@ -633,6 +718,8 @@ def main():
             return 1
 
     if a.check_dir:
+        rc_declared = report_declared_switches(a.out_dir, declared_by_tier,
+                                               [r["tier"] for r in rows], label=str(a.out_dir))
         base = Path(a.check_dir)
         print(f"\n=== 与既有冻结 yaml 的差异归因（{base}）===")
         for tier, p in sorted(written.items()):
@@ -647,6 +734,7 @@ def main():
             print(f"  {tier}: 字段级差异 {len(rows_diff)} 处")
             for k, o, n in rows_diff:
                 print(f"      {k}: {o!r} -> {n!r}   【{attribute(k)}】")
+        return rc_declared
     return 0
 
 
