@@ -130,19 +130,33 @@ def test_accepts_legal_four_cards():
 
 
 def _load_module_from_path(name: str, relpath: str):
-    """按文件路径加载仓内模块（与 `scripts/gpu_lock_guard.py` 同款做法）。"""
+    """按文件路径加载仓内模块（与 `scripts/gpu_lock_guard.py` 同款做法），**同名副本一律复用**。
+
+    ★ 选型理由（真 guard：同名副本复用 ＋ 失败即摘除）：原先无条件
+      ``sys.modules[name] = module`` 会**顶掉**同键上已登记的那一份——典型是公开键
+      ``gpu_assignment``（``tests/e2e/test_generate_matrix.py`` 也写它）⇒ 两份副本：
+      先登记者的模块级捕获与 ``sys.modules`` 现值分叉，对该键的 patch 打空、断言退化
+      （实测见 ``task-arch-b3/evidence/b3-control-BEFORE.txt``）。命中即复用 ⇒ 同键只有
+      一份。登记失败即摘除，⛔ 不留半截模块。
+    """
     import importlib.util
+    import sys as _sys
     from pathlib import Path as _Path
 
     root = _Path(__file__).resolve().parents[2]
     source = root / relpath
+    cached = _sys.modules.get(name)
+    if cached is not None:
+        return cached
     spec = importlib.util.spec_from_file_location(name, source)
     assert spec is not None and spec.loader is not None, f"加载失败：{source}"
     module = importlib.util.module_from_spec(spec)
-    import sys as _sys
-
     _sys.modules[name] = module
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        _sys.modules.pop(name, None)
+        raise
     return module
 
 
@@ -176,7 +190,14 @@ def test_neighbour_and_production_cards_map_exactly_to_generator_side_constants(
     import sys
 
     assignment = _load_module_from_path("gpu_assignment", "tests/e2e/gpu_assignment.py")
-    sys.modules.setdefault("gpu_assignment", assignment)
+    # ★ 真 guard（替换原先的 ``sys.modules.setdefault("gpu_assignment", assignment)`` 假防呆）：
+    #   上面那次加载**本身**已保证本键 == ``assignment``（命中即复用）；原先的 setdefault 是
+    #   在「无条件覆盖**已发生**」（旧 ``_load_module_from_path`` 的 `sys.modules[name] = module`）
+    #   之后才调用 ⇒ 必然 no-op：看着有保护、实则没有。这里把该不变量**钉成断言**，
+    #   ⛔ 不是"删断言"，而是把假防呆换成能失败的真 guard。
+    assert sys.modules["gpu_assignment"] is assignment, (
+        "同名副本未被复用（键被顶掉）⇒ 断言会打在第二份副本上"
+    )
     genv2 = _load_module_from_path(
         "generate_matrix_manifest_source", "tests/e2e/generate_matrix_manifest_source.py"
     )

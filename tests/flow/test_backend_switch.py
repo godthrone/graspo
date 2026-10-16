@@ -25,15 +25,42 @@ from graspo.core.schema import GraspoConfig
 # ── 与 tests/flow/test_selector.py 同款加载方式 ─────────────────────────────
 # 直接加载 backend_selection.py，避免触发 flow/__init__.py → trainer → torch 导入链。
 
+_SELECTOR_MODULE_NAME = "graspo.flow.backend.selection"
 _SELECTOR_PATH = (
     Path(__file__).resolve().parents[2] / "src" / "graspo" / "flow" / "backend" / "selection.py"
 )
-_spec = importlib.util.spec_from_file_location(
-    "graspo.flow.backend.selection", _SELECTOR_PATH, submodule_search_locations=[]
-)
-_selector = importlib.util.module_from_spec(_spec)
-sys.modules["graspo.flow.backend.selection"] = _selector
-_spec.loader.exec_module(_selector)
+
+
+def _load_selector_module():
+    """按文件路径加载 selection.py，**同名副本一律复用** ``sys.modules`` 里那一份。
+
+    ★ 选型理由（同名副本复用 ＋ 失败即摘除）：``tests/flow/test_selector.py`` 与本文件
+      **争同一个 canonical 键**、加载同一份源码、双方原先都无 guard ⇒ 后收集者把前者
+      **顶掉**：先导入文件里模块级捕获的 ``select_backend`` / ``SUPPORTED_BACKENDS`` 遂与
+      ``sys.modules`` 现值分叉，对该键的任何 ``monkeypatch``／``isinstance`` 都打空／假红
+      （实测见本工作包 ``evidence/b3-control-BEFORE.txt``：先导入者那条断言在"活对象被
+      patch"之后**照样绿**）。命中即复用 ⇒ 两文件共用同一份 selection 模块。
+      登记失败即摘除，⛔ 不留半截模块。
+    """
+    cached = sys.modules.get(_SELECTOR_MODULE_NAME)
+    if cached is not None:
+        return cached
+    _spec = importlib.util.spec_from_file_location(
+        _SELECTOR_MODULE_NAME, _SELECTOR_PATH, submodule_search_locations=[]
+    )
+    assert _spec is not None and _spec.loader is not None, f"加载失败：{_SELECTOR_PATH}"
+    _module = importlib.util.module_from_spec(_spec)
+    sys.modules[_SELECTOR_MODULE_NAME] = _module
+    try:
+        _spec.loader.exec_module(_module)
+    except BaseException:
+        sys.modules.pop(_SELECTOR_MODULE_NAME, None)
+        raise
+    return _module
+
+
+_selector = _load_selector_module()
+assert sys.modules[_SELECTOR_MODULE_NAME] is _selector, "同名副本未被复用 ⇒ 断言会打在第二份副本上"
 
 select_backend = _selector.select_backend
 

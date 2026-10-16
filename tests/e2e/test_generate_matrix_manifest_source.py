@@ -302,11 +302,14 @@ def test_declared_caliber_registry_is_the_single_source_of_truth():
     """★ 18 档声明口径的唯一真相源 = `make_subsets.MINI_SUBSET_TIERS_DECLARED`（生成器只读加载）。"""
     assert len(gmv2.MINI_DECLARED_SUBSET_SIZE) == 18
     assert set(gmv2.MINI_DECLARED_SUBSET_SIZE.values()) == {100}
-    # 生成器**不许**再抄一份常量：三张表必须与 make_subsets 逐字相同
-    import importlib.util as _iu
-    spec = _iu.spec_from_file_location("_t_ms", gmv2.MAKE_SUBSETS_PATH)
-    ms = _iu.module_from_spec(spec)
-    spec.loader.exec_module(ms)
+    # 生成器**不许**再抄一份常量：三张表必须与 make_subsets 逐字相同。
+    # ★ 选型理由（同名副本复用，与生成器同一个 loader 收口）：原先这里用
+    #   `spec_from_file_location("_t_ms", …)` 又造了**第三份**副本（既不登记、也不复用）——
+    #   表格是只读比较时读数一致，但它是个**补丁目标陷阱**：往 sys.modules 里那份打补丁，
+    #   本用例读的是另一份 ⇒ 断言空转（实测见 task-arch-b3/evidence/b3-control-BEFORE.txt）。
+    #   改走生成器自己的 `load_make_subsets_module()`（同名副本复用）⇒ 断言作用在活对象上。
+    ms = gmv2.load_make_subsets_module()
+    assert ms is gmv2.ms, "同名副本未复用 ⇒ 本用例读的表格与生成器不是同一份"
     assert gmv2.MINI_DECLARED_SUBSET_SIZE == ms.MINI_SUBSET_TIERS_DECLARED
     assert gmv2.MINI_LANDED_SUBSET_SIZE == ms.MINI_TIERS
     assert gmv2.MINI_DECLARED_NOT_LANDED == ms.DECLARED_NOT_LANDED

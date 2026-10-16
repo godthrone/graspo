@@ -12,17 +12,30 @@ import pytest
 from graspo.core.schema import GraspoConfig
 
 # 直接加载 backend_selection.py 模块文件，避免触发 flow/__init__.py→trainer→torch 导入链
+# ★ 选型理由（同名副本复用 ＋ 失败即摘除）：``tests/flow/test_backend_switch.py`` 与本文件
+#   争同一个 canonical 键、加载同一份源码、双方原先都无 guard ⇒ 后收集者把前者顶掉，
+#   先导入文件里模块级捕获的 ``select_backend`` / ``SUPPORTED_BACKENDS`` 与 sys.modules
+#   现值分叉 ⇒ 对该键的任何 monkeypatch 打空、断言退化。命中即复用 ⇒ 两文件共用同一份。
+_SELECTOR_MODULE_NAME = "graspo.flow.backend.selection"
 _selector_path = (
     Path(__file__).resolve().parents[2] / "src" / "graspo" / "flow" / "backend" / "selection.py"
 )
-_spec = importlib.util.spec_from_file_location(
-    "graspo.flow.backend.selection",
-    _selector_path,
-    submodule_search_locations=[],
-)
-_selector = importlib.util.module_from_spec(_spec)
-sys.modules["graspo.flow.backend.selection"] = _selector
-_spec.loader.exec_module(_selector)
+_selector = sys.modules.get(_SELECTOR_MODULE_NAME)
+if _selector is None:
+    _spec = importlib.util.spec_from_file_location(
+        _SELECTOR_MODULE_NAME,
+        _selector_path,
+        submodule_search_locations=[],
+    )
+    assert _spec is not None and _spec.loader is not None, f"加载失败：{_selector_path}"
+    _selector = importlib.util.module_from_spec(_spec)
+    sys.modules[_SELECTOR_MODULE_NAME] = _selector
+    try:
+        _spec.loader.exec_module(_selector)
+    except BaseException:
+        sys.modules.pop(_SELECTOR_MODULE_NAME, None)
+        raise
+assert sys.modules[_SELECTOR_MODULE_NAME] is _selector, "同名副本未被复用 ⇒ 断言会打在第二份副本上"
 
 select_backend = _selector.select_backend
 SUPPORTED_BACKENDS = _selector.SUPPORTED_BACKENDS
