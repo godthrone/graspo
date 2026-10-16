@@ -450,6 +450,44 @@ def load_declared(path) -> dict:
             for t in (doc.get("tiers") or [])}
 
 
+def premises_by_tier(doc) -> dict:
+    """★ 已声明的**可行性前提**：``{tier: [(backend, key, value), ...]}``。
+
+    判据（**机算**、⛔ 不手写档号）：
+      ① 取自清单 ``feasibility.recipe.<backend>.*``，键**减去几何键**
+         （`DECLARED_GEOMETRY_KEYS` —— 几何键已由「卡数 / 并列」列唯一决定）；
+      ② 且该键**在该档 `feasibility.estimate` 正文里被点名**（``k`` 或 ``<backend>.k`` 形态）
+         ⇒ 即「该档可行性所依赖的开关」，而非「该档恰好也写下的全部开关」。
+
+    ★ 单一真相源：本函数是「前提」这一定义的**唯一实现**，并入端（矩阵侧并入器）
+      与校验端（`verify_matrix` ④T）共同 import，⛔ 不各抄一份。
+    """
+    out = {}
+    for t in ((doc or {}).get("tiers") or []):
+        tier = t.get("tier_id") or t.get("tier")
+        fe = t.get("feasibility") or {}
+        estimate = str(fe.get("estimate") or "")
+        recipe = fe.get("recipe") or {}
+        items = []
+        for backend in sorted(recipe):
+            for key, val in iter_declared(recipe, backend):
+                if key in estimate or f"{backend}.{key}" in estimate:
+                    items.append((backend, key, val))
+        if items:
+            out[tier] = items
+    return out
+
+
+def load_premises(path) -> dict:
+    """读清单 ⇒ `premises_by_tier()`。★ fail-closed：清单不在 ⇒ 直接拒绝（⛔ 不静默跳过检查）。"""
+    p = Path(path)
+    if not p.is_file():
+        raise SystemExit(f"FATAL: 声明清单不存在：{path}\n"
+                         "  ⇒ 无法核对「清单里已声明的前提是否出现在对外人读面」；"
+                         "⛔ 不静默降级（跳过即等于把透明性缺口藏起来）。")
+    return premises_by_tier(json.loads(p.read_text(encoding="utf-8")))
+
+
 def yaml_of(row, uni, model_root, data_root, lora_backends=None, teacher=None,
             declared=None):
     """渲染一个档位的 yaml 文本（确定性：固定键序、无时钟/环境）。"""

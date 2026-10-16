@@ -23,8 +23,9 @@ from pathlib import Path
 
 import render_matrix  # 同目录；复用唯一渲染通道
 import build_official  # 同目录；★ 结论列契约与归因依据关键词**同源**（⛔ 不复制一份）
+import gen_configs     # 同目录；★ 「已声明的前提」定义**同源**（`load_premises`，⛔ 不复制一份）
 
-VERSION = "verify-matrix/v14-datafile-churn-scan-exemption-anchor-and-dash-semantics"
+VERSION = "verify-matrix/v15-declared-premise-visibility"
 
 # ---- ③ 结构断言：新结构只允许这两大部分 ----
 #: ★ 人读件结构（宪法 §17.7 + 使用者诉求「判据 + 实验条件 + 功能矩阵表」）：
@@ -198,6 +199,9 @@ def main():
                     help="要求结果列全部为占位符（空结果版 / 起手式用）；默认只要求「无半填」一致性")
     ap.add_argument("--allow-filled", action="store_true",
                     help="（保留兼容，已等价于默认行为）结果列允许有实测读数")
+    ap.add_argument("--manifest", default=gen_configs.DEFAULT_DECLARED_MANIFEST,
+                    help="跑次侧口径权威清单（★ 「已声明的前提」的唯一真相源；缺省 " +
+                         gen_configs.DEFAULT_DECLARED_MANIFEST + "）")
     ap.add_argument("--quiet", action="store_true")
     a = ap.parse_args()
 
@@ -660,6 +664,59 @@ def main():
                          f"数据里 not_executable 行数 = {_ne_n} ⇒ 散文应恰为 ['{_ne_word}']，"
                          f"实际 = {_ne_phrases}（散文与数据不一致：硬编码残留 / 多取值 / 漏插值）"))
 
+    # ---- ④T. 清单里**已声明的前提**必须出现在对外人读面（2026-10-16 透明性缺口）----
+    #   ★ 缺口实况：`T016` / `T034` 的可行性依赖 `native.offload_optimizer_state = true`
+    #     （清单 `feasibility.recipe.native.offload_optimizer_state`，v1/v2 清单各 2 档携带），
+    #     而对外人读件里 **0/54** —— `rows[T016/T034]` 连 `feasibility` 键都没有，
+    #     `note` 只写「尚未验证」⇒ 照着对外件复现的人会踩同一个 OOM（真机已复现 48.5 s / 0 步）。
+    #   ★ 判据（fail-closed、三面，**双向 iff**）：
+    #     a 发布面：`{(档, 前提键)}` **出现在对外件者** == 清单**声明者**
+    #       —— ⛔ 不是"包含"：**多写与漏写都红** ⇒「当且仅当该档有声明才出现」；
+    #     b 渲染面：声明的前提必须出现在**渲染列**（`EXPECTED_COLUMNS`）里
+    #       —— 防"把令牌藏进不渲染字段"造成假绿（该子项**能失败**，见阳性对照 ④）；
+    #     c 取值面：对外令牌取值必须**等于**清单声明取值（⛔ 不得写假开关）。
+    #   ★ 前提的定义**同源** = `gen_configs.load_premises()`（含"正文点名"判据），⛔ 本文件不另实现。
+    _prem_err = None
+    try:
+        _prem = gen_configs.load_premises(a.manifest)
+    except SystemExit as _e:                                   # 清单缺失 ⇒ fail-closed
+        _prem_err = str(_e).strip().splitlines()[0]
+    if _prem_err:
+        failures.append(("④T 已声明前提的可见性（清单不可读 ⇒ fail-closed）", _prem_err))
+    else:
+        _vocab = {k for _items in _prem.values() for (_b, k, _v) in _items}
+        _declared = {(str(t), k): v for t, _items in _prem.items() for (_b, k, v) in _items}
+        _anywhere, _rendered, _tokenval = set(), set(), {}
+        for _r in data["rows"]:
+            _t = str(_r.get("tier"))
+            for _k in _vocab:
+                if any(_k in json.dumps(_r.get(_c), ensure_ascii=False) for _c in _r):
+                    _anywhere.add((_t, _k))
+                if any(_k in json.dumps(_r.get(_c), ensure_ascii=False)
+                       for (_c, _lbl) in EXPECTED_COLUMNS):
+                    _rendered.add((_t, _k))
+            for _tok in str(_r.get("switches") or "").split(";"):
+                _tok = _tok.strip()
+                if "=" not in _tok:
+                    continue
+                _k, _v = _tok.split("=", 1)
+                if _k in _vocab:
+                    _tokenval[(_t, _k)] = _v
+        _dset = set(_declared)
+        _not_published = sorted(_dset - _anywhere)      # 声明了但对外件里根本没有
+        _undeclared = sorted(_anywhere - _dset)         # 对外件里写了但清单没声明
+        _not_rendered = sorted(_dset - _rendered)       # 发布了、但没进任何渲染列
+        _wrong = sorted((t, k, _tokenval[(t, k)], _declared[(t, k)])
+                        for (t, k) in _dset
+                        if (t, k) in _tokenval
+                        and str(_declared[(t, k)]).lower() != _tokenval[(t, k)].lower())
+        if _not_published or _undeclared or _not_rendered or _wrong:
+            failures.append(("④T 已声明前提的人读面可见性",
+                             f"前提词汇 = {sorted(_vocab)}；清单声明 {len(_dset)} 条、"
+                             f"对外件出现 {len(_anywhere)} 条、其中渲染列 {len(_rendered)} 条｜"
+                             f"声明了但未发布 = {_not_published}｜发布了但未声明 = {_undeclared}｜"
+                             f"未进渲染列 = {_not_rendered}｜取值不符（档,键,实际,声明）= {_wrong}"))
+
     sha_html = hashlib.sha256(target_bytes).hexdigest()
     sha_render = hashlib.sha256(rendered_bytes).hexdigest()
 
@@ -689,7 +746,8 @@ def main():
               f" | ④Q0 关键开关列—语义={ok('④Q0')}"
               f" | ④Q 开关列不重复发布检查点间隔={ok('④Q')}"
               f" | ④R 正文无开发过程内容={ok('④R')}"
-              f" | ④S 散文档数==数据={ok('④S')}")
+              f" | ④S 散文档数==数据={ok('④S')}"
+              f" | ④T 已声明前提可见性={ok('④T')}")
         print(f"results: 已回填 {len(filled)} 档 {filled}；其余 {len(data['rows'])-len(filled)} 档保持 '—'"
               + ("；--expect-empty 已开启" if a.expect_empty else ""))
         print(f"elapsed: 有值 {len(el_filled)} 档"
