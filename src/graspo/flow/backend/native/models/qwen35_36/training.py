@@ -131,6 +131,38 @@ def _dp_k_meeting_sync_dp_grads(
     return True
 
 
+def _dp_consistent_has_valid_micro_batches(tp_state: Any, valid_micro_batches: int) -> bool:
+    """跨 ``dp_group`` 一致的“本步是否做 clip + ``optimizer.step()``”判定。
+
+    **为什么必须集合化**（缺陷：副本一致性）：R-B（``_sync_dp_lora_grads(dp_group)``，AVG）
+    完成后两个 DP 副本的 ``param.grad`` 已**逐位相同**，但“是否 step”若仍取**本地**
+    ``valid_micro_batches``，则“本 rank 全部 micro-batch 非有限”的那个副本会跳过
+    ``optimizer.step()``/``scheduler.step()`` ⇒ 权重、AdamW 一/二阶矩、per-param step 计数、
+    LR、以及逐 rank 独立保存的 checkpoint 分片全部静默分叉（破坏“产物唯一”）。
+    ⇒ 判据必须与 ``grad`` 的域**同域**：任一 rank 有有效微批 ⇒ **所有** dp rank 一起 step；
+    全都为 0 ⇒ **所有** dp rank 一起跳过。⛔ 只改“是否 step”的判定域，不改 loss/advantage/
+    采样/优化器实体/更新规则。
+
+    守卫与 :func:`_dp_k_meeting_sync_dp_grads` **逐字同款**（同域 + ``dp_size <= 1`` 短路）：
+    ``tp_state`` 为 ``None``、``dp_group`` 为 ``None``、``dp_size <= 1``（含单卡与
+    ``dp_size==1`` 的 PP 档）⇒ 直接回落本地判据、**0 次新增集合** ⇒ 单卡行为逐位不变。
+
+    ⛔ 调用点必须**无条件**抵达（各 dp rank 同一次数、同一位置），否则集合失配。
+    """
+    if tp_state is None or getattr(tp_state, "dp_group", None) is None:
+        return valid_micro_batches > 0
+    if int(getattr(tp_state, "dp_size", 1)) <= 1:
+        return valid_micro_batches > 0
+    if not (dist.is_available() and dist.is_initialized()):
+        return valid_micro_batches > 0
+    device = getattr(tp_state, "device", None)
+    if device is None:
+        device = torch.device("cpu")
+    flag = torch.tensor([1 if valid_micro_batches > 0 else 0], dtype=torch.int, device=device)
+    dist.all_reduce(flag, op=dist.ReduceOp.MAX, group=tp_state.dp_group)
+    return bool(flag.item())
+
+
 class _Qwen35TrainingMethods:
     """Mixin: RL training/batch optimization methods for Qwen35ModelAdapter."""
 
@@ -308,7 +340,12 @@ class _Qwen35TrainingMethods:
         # TP gradient sync: SUM across TP ranks（同数据，部分梯度）
         if _TENSOR_PARALLEL_GROUP is not None and _TENSOR_PARALLEL_SIZE > 1:
             _sync_nonsharded_lora_grads(self.model, _TENSOR_PARALLEL_GROUP)
-        if valid_micro_batches > 0:
+        # ★ 副本一致性（本包修复）：clip + step 的判定必须与 grad 的域**同域**——
+        #   R-B 之后两 DP 副本的 grad 已逐位相同，若仍按**本地** valid_micro_batches
+        #   判定，“本 rank 无有效微批”的副本会跳过 step ⇒ 权重/Adam 矩/step 计数/
+        #   LR/scheduler/checkpoint 分片静默分叉。⛔ 不改 loss/advantage/采样/优化器
+        #   实体/更新规则，只改判定域；dp_size <= 1 时短路（0 次新增集合）。
+        if _dp_consistent_has_valid_micro_batches(self.tp_state, valid_micro_batches):
             # ★ K-会合条件④：裁剪**只在末段同步之后做一次**（⛔ 绝不每段裁一次——
             #   clip 是非线性的，逐段 clip ≠ 整体 clip，且判据③ 看不见）。
             grad_norm = torch.nn.utils.clip_grad_norm_(

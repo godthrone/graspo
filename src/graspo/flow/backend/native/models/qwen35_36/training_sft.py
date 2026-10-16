@@ -27,6 +27,9 @@ from graspo.flow.backend.native.models.common.grad_probe import (
 from graspo.flow.backend.native.models.common.layers import _log_cuda_mem
 from graspo.flow.backend.native.models.qwen35_36.helpers import collate_sft_batch
 from graspo.flow.backend.native.models.qwen35_36.model import Qwen35HybridTextModel
+from graspo.flow.backend.native.models.qwen35_36.training import (
+    _dp_consistent_has_valid_micro_batches,
+)
 from graspo.flow.backend.native.parallel.pipeline_comm import PipelineComm, wait_all
 from graspo.flow.backend.native.parallel.scheduling import build_scheduler
 from graspo.flow.backend.native.parallel.tensor_utils import (
@@ -212,7 +215,14 @@ class _Qwen35SFTTrainingMethods:
         if _TENSOR_PARALLEL_GROUP is not None and _TENSOR_PARALLEL_SIZE > 1:
             _sync_nonsharded_lora_grads(self.model, _TENSOR_PARALLEL_GROUP)
 
-        if valid_micro_batches > 0:
+        # ★ 副本一致性（本包修复）：clip + step 的判定必须与 grad 的域**同域**——
+        #   R-B（上一行 `_sync_dp_lora_grads`，AVG）之后两 DP 副本的 grad 已逐位相同；
+        #   若仍按**本地** valid_micro_batches 判定，"本 rank 无有效微批"的副本会跳过
+        #   step ⇒ 权重/AdamW 一阶二阶矩/per-param step/LR 与 scheduler/逐 rank 独立的
+        #   checkpoint 分片全部静默分叉（破坏"产物唯一"）。
+        #   ⛔ 只改"是否 step"的判定域，不改 loss/advantage/采样/优化器实体/更新规则；
+        #   `dp_size <= 1` 由 helper 短路 ⇒ 单卡 0 次新增集合、行为逐位不变。
+        if _dp_consistent_has_valid_micro_batches(self.tp_state, valid_micro_batches):
             trainable_params = [p for p in self.model.parameters() if p.requires_grad]
             grad_norm = (
                 torch.nn.utils.clip_grad_norm_(trainable_params, max_grad_norm)
