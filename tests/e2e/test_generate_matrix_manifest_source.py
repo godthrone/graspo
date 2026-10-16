@@ -55,24 +55,52 @@ def _patched(tier_id: str) -> dict:
 
 
 def test_default_pool_map_is_verbatim():
-    """2026-10-05 主席令的卡数→卡位映射**逐字未变**（覆盖表不得顶替它）。"""
-    assert gmv2.GPU_POOL_BY_CARDS == {1: [4], 2: [4, 5], 3: [4, 5, 6], 4: [4, 5, 6, 7]}
+    """★ 2026-10-16 修订（**前提已消失**）：卡数→卡位映射的 4 卡项由 `[4,5,6,7]` 改为**合法卡集**
+    `[1,3,4,5]` —— 旧值含两张**生产锁卡** GPU6/7，过去只靠「恰等于整卡池即登记不 raise」的豁免通过。
+    ★ 断言**只增不减**：逐档默认值一律过「合法卡集」与「锁卡」两道判据，且旧值必须**被拒**。"""
+    assert gmv2.GPU_POOL_BY_CARDS == {1: [4], 2: [4, 5], 3: [4, 5], 4: [1, 3, 4, 5]}
+    for cards, gpus in gmv2.GPU_POOL_BY_CARDS.items():
+        # ★ 不校验 len == cards：卡池是"允许域"，3 卡档本世代不存在（其项仅登记合法性）
+        assert gmv2.non_legal_card_violation(f"pool{cards}", gpus) is None
+        assert gmv2.locked_card_violation(f"pool{cards}", gpus, cards) is None
+    # ★ 反向断言：旧 4 卡池与新判据下必须红（否则本用例形同虚设）
+    assert gmv2.non_legal_card_violation("old", [4, 5, 6, 7]) is not None
+    assert gmv2.locked_card_violation("old", [4, 5, 6, 7], 4) is not None
 
 
 # ── ② 陈旧例外已撤销 ────────────────────────────────────────────────────────
 
 
-def test_tier_gpu_override_is_now_empty():
-    """★ 2026-10-16：陈旧例外（T041 `[2,3]`，2026-10-09 的一次性调度值）已撤销 ⇒ 覆盖表为空。"""
-    assert gmv2.TIER_GPU_OVERRIDE == {}
+def test_tier_gpu_override_is_the_lane_table():
+    """★ 2026-10-16 修订：覆盖表**不再是空表** —— 它是**车道表**（合法卡集 `{1,3,4,5}` 内重出）。
+    陈旧例外（T041 `[2,3]`）仍必须被拒，见 `test_override_outside_generation_pool_is_fail_closed`。"""
+    L = gmv2.TIER_GPU_OVERRIDE
+    assert set(L) == {"T031", "T001", "T010", "T013", "T028", "T016", "T022", "T040",
+                      "T002", "T011", "T014", "T017", "T023", "T029", "T032", "T041"}
+    assert L["T031"] == [1] and L["T002"] == [3, 5] and L["T010"] == [4]
+    for tid, g in L.items():
+        out = _patched(tid)
+        assert out["gpus"] == g, tid
+        assert out["cards"] == len(g), tid
+        assert gmv2.non_legal_card_violation(tid, g) is None, tid
+    # ★ 反向断言：车道里**一张**禁用卡都不许有（0/2/6/7）
+    assert not ({0, 2, 6, 7} & {x for g in L.values() for x in g})
 
 
-def test_t041_falls_back_to_pool_and_cards_unchanged():
-    """★ 核心断言：T041 走默认映射 ⇒ `gpus == [4,5]`，而 `cards`（卡数）**仍为 2**。"""
+def test_t041_lane_and_cards_unchanged():
+    """★ 核心断言：T041 走**车道表** `[3,5]`（合法集内），而 `cards`（卡数）**仍为 2**。"""
     out = _patched("T041")
-    assert out["gpus"] == [4, 5]
+    assert out["gpus"] == [3, 5]
     assert out["cards"] == 2
     assert len(out["gpus"]) == out["cards"]
+    # ★ 反向断言：历史陈旧例外 `[2,3]`（含邻居卡）**仍必须被拒**
+    saved = dict(gmv2.TIER_GPU_OVERRIDE)
+    try:
+        gmv2.TIER_GPU_OVERRIDE = {**saved, "T041": [2, 3]}
+        with pytest.raises(AssertionError):
+            _patched("T041")
+    finally:
+        gmv2.TIER_GPU_OVERRIDE = saved
 
 
 def test_t041_revocation_reason_is_written_down():
@@ -88,14 +116,15 @@ def test_t041_revocation_reason_is_written_down():
 
 def test_override_only_changes_gpus():
     """★ 覆盖只改 `gpus`：给一个池内合法覆盖后逐字段对比，除 `gpus` 外**一字不改**。"""
+    saved = dict(gmv2.TIER_GPU_OVERRIDE)   # ★ 2026-10-16：不得清空车道表（旧码 `= {}` 会毁掉它）
     default = _patched("T041")
-    assert default["gpus"] == [4, 5]
-    gmv2.TIER_GPU_OVERRIDE = {"T041": [5, 4]}          # 池内、卡数一致 ⇒ 合法覆盖
+    assert default["gpus"] == [3, 5]
+    gmv2.TIER_GPU_OVERRIDE = {**saved, "T041": [5, 3]}   # 合法集内、卡数一致 ⇒ 合法覆盖
     try:
         overridden = _patched("T041")
     finally:
-        gmv2.TIER_GPU_OVERRIDE = {}
-    assert overridden["gpus"] == [5, 4]
+        gmv2.TIER_GPU_OVERRIDE = saved
+    assert overridden["gpus"] == [5, 3]
     assert set(default) == set(overridden)
     for key, value in default.items():
         if key == "gpus":
@@ -168,14 +197,18 @@ def test_locked_card_assertion_passes_for_a_clean_set():
     assert gmv2.locked_card_hits([4, 5]) == ()
 
 
-def test_pool_contract_conflict_is_registered_not_silently_allowed():
-    """★ 本世代 4 卡池 `[4,5,6,7]` 与 `GPU_FORBIDDEN_PRODUCTION=(6,7)` 相交 ⇒
-    **不 raise**（⛔ 本生成器不擅自改池）但**必须登记**（机读、可审计）。"""
+def test_pool_contract_conflict_is_now_fail_closed():
+    """★ 2026-10-16 修订（**前提已消失**）：豁免条件由 `norm == pool` **收窄**为
+    `norm == pool and not locked_card_hits(pool)` ⇒ **池自身含锁卡即 raise**，不再"登记了事"。"""
     gmv2.POOL_CONTRACT_CONFLICTS.clear()
     gmv2._uncaptured_pool_conflicts.clear()
-    assert gmv2.locked_card_violation("T003", [4, 5, 6, 7], 4) is None
-    assert gmv2.POOL_CONTRACT_CONFLICTS == {(4, 5, 6, 7): (6, 7)}
-    assert [t for t, _p, _h in gmv2._uncaptured_pool_conflicts] == ["T003"]
+    # ★ 契约：本函数**返回**违规串（由调用方 raise），⛔ 不是自己抛
+    assert gmv2.locked_card_violation("T003", [4, 5, 6, 7], 4) is not None   # 旧池形态 ⇒ 必红
+    assert gmv2.POOL_CONTRACT_CONFLICTS == {}               # ⛔ 不再登记后放过
+    assert gmv2._uncaptured_pool_conflicts == []
+    # ★ 反向断言（更强）：所有在册卡池**自身合法** ⇒ 上述豁免分支对合法池**不可达**
+    for cards, gpus in gmv2.GPU_POOL_BY_CARDS.items():
+        assert gmv2.locked_card_hits(gpus) == (), cards
     gmv2.POOL_CONTRACT_CONFLICTS.clear()
     gmv2._uncaptured_pool_conflicts.clear()
 
@@ -185,33 +218,41 @@ def test_pool_contract_conflict_is_registered_not_silently_allowed():
 
 def test_override_card_count_mismatch_is_fail_closed():
     """覆盖表卡数 ≠ `cards` ⇒ fail-closed（不静默"将就"成错卡数）。"""
-    gmv2.TIER_GPU_OVERRIDE = {"T041": [4, 5, 6]}
+    saved = dict(gmv2.TIER_GPU_OVERRIDE)
+    gmv2.TIER_GPU_OVERRIDE = {**saved, "T041": [4, 5, 6]}
     try:
         with pytest.raises(AssertionError, match="卡数"):
             _patched("T041")
     finally:
-        gmv2.TIER_GPU_OVERRIDE = {}
+        gmv2.TIER_GPU_OVERRIDE = saved
 
 
 def test_override_duplicate_gpus_is_fail_closed():
     """覆盖表含重复卡 ⇒ fail-closed（重复卡会让"卡数"名不副实）。"""
-    gmv2.TIER_GPU_OVERRIDE = {"T041": [4, 4]}
+    saved = dict(gmv2.TIER_GPU_OVERRIDE)
+    gmv2.TIER_GPU_OVERRIDE = {**saved, "T041": [4, 4]}
     try:
         with pytest.raises(AssertionError, match="重复"):
             _patched("T041")
     finally:
-        gmv2.TIER_GPU_OVERRIDE = {}
+        gmv2.TIER_GPU_OVERRIDE = saved
 
 
-def test_override_outside_generation_pool_is_fail_closed():
-    """★ 显式例外**必须落在本世代卡池内** —— 这就是「陈旧调度值」缺陷的根因判据。"""
-    for bad in ([2, 3], [0, 1], [4, 6]):
-        gmv2.TIER_GPU_OVERRIDE = {"T041": list(bad)}
-        try:
-            with pytest.raises(AssertionError, match="卡池外"):
+def test_override_outside_legal_card_set_is_fail_closed():
+    """★ 2026-10-16 修订：显式例外的判据域由 `GPU_POOL_BY_CARDS[cards]`（**默认值**）改为
+    `legal_card_set()`（= GPU_ALLOWED − 生产锁卡 − 主席禁用 {0,2}）—— 车道重出后同一卡数有多条车道。
+    ★ 保护**只增不减**：旧域漏掉的 `[4,5,6,7]` 在此必红。"""
+    saved = dict(gmv2.TIER_GPU_OVERRIDE)
+    try:
+        for bad in ([2, 3], [0, 1], [4, 6], [6, 7], [5, 7]):   # ★ 卡数一律 2（否则先撞卡数断言）
+            gmv2.TIER_GPU_OVERRIDE = {**saved, "T041": list(bad)}
+            with pytest.raises(AssertionError, match="合法卡集外"):
                 _patched("T041")
-        finally:
-            gmv2.TIER_GPU_OVERRIDE = {}
+        # ★ 反向断言：合法集内的车道**必须被接受**（判据不是"与默认值逐字相等"）
+        gmv2.TIER_GPU_OVERRIDE = {**saved, "T041": [3, 5]}
+        assert _patched("T041")["gpus"] == [3, 5]
+    finally:
+        gmv2.TIER_GPU_OVERRIDE = saved
 
 
 def test_override_inside_generation_pool_is_accepted():
@@ -639,3 +680,163 @@ def test_internal_authority_prior_chains_are_canonical_and_not_lost():
         assert probs == [], (r.get("tier"), probs)
     assert checked == 9, f"内部权威的修正记录数应为 9（零丢失），实为 {checked}"
     assert len(set(tiers)) == 9, tiers
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ⑤ **三向一致** ＋ **epoch 单真相源**（2026-10-16 修复包）
+#
+# 病史（起跑包实跑发现、指挥定性后批准修）：在盘清单的
+#   `expected_optimizer_steps_reachable`（全 54 档 = per_epoch × **1**）与
+#   `checkpoint_save_steps`（native 从**已退役**目录读、其余走 v1 透传）都不是跑次真值 ⇒
+#   T010 = 100/100/100，而它自带 yaml 是 `max_epochs: 4` ＋ `save_steps: 401`、
+#   发布矩阵是 `derived_steps=400` / `save_steps=401` ⇒ **清单自相矛盾 ＋ 与跑次 yaml 矛盾**。
+# 根因（**一个**，不是三个）：epoch 数存在**两个真相源** —— 生成器用 v1 冻结常量
+#   `gm.MATRIX_MAX_EPOCHS`（=1），而 2026-10-15 主席把 epoch 口径改为 SFT=4／CPT/OPD=2／
+#   GRASPO=8 后，矩阵与档位 yaml 都跟上了，**只有本生成器没跟** ⇒ `reachable` 低估 2–8 倍。
+# 为什么原来的 B-1 跨件机检漏检：它**只读矩阵行的 `per_epoch_steps` 一个字段**，
+#   而 `max_epochs` **只存在于矩阵行**（清单无此字段）⇒ 需要 `max_epochs` 才能算出的量
+#   （`reachable` / `css`）**结构上不在它的定义域内**。矩阵行本来就有
+#   `max_epochs` / `derived_steps` / `save_steps` ⇒ 三向对拍完全可做。
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def _mutant_manifest(tmp: Path, mutate) -> Path:
+    """造一份**清单变异体**（⛔ 不碰在盘件）：`mutate(doc)` 就地改内存里的副本。"""
+    doc = json.loads(gmv2.V2_MANIFEST_PATH.read_text(encoding="utf-8"))
+    mutate(doc)
+    p = tmp / "mutant-manifest.json"
+    p.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return p
+
+
+def _tier_of(doc: dict, tid: str) -> dict:
+    return next(t for t in doc["tiers"] if str(t["tier_id"]) == tid)
+
+
+def test_manifest_matrix_yaml_three_way_consistency_is_green():
+    """★ 三向一致（清单 ↔ 发布矩阵 ↔ 档位 yaml）：在盘三件必须**零问题**。
+
+    三向 = ① `manifest.expected_optimizer_steps_per_epoch == matrix.per_epoch_steps`
+           ② `manifest.expected_optimizer_steps_reachable == matrix.derived_steps`
+           ③ `manifest.checkpoint_save_steps == matrix.save_steps == <该档 yaml>.training.save_steps`
+    """
+    assert gmv2.cross_check_manifest_against_matrix() == []
+
+
+@pytest.mark.parametrize(
+    "mutate, needle",
+    [
+        # ② reachable 被改回旧值（本包修的那个病）
+        (lambda d: _tier_of(d, "T010").__setitem__("expected_optimizer_steps_reachable", 100),
+         "!= matrix.derived_steps"),
+        # ③ css 被改回旧值
+        (lambda d: _tier_of(d, "T010").__setitem__("checkpoint_save_steps", 100),
+         "training.save_steps=401"),
+        # ③' css 差 1（"只差一点"也要抓）
+        (lambda d: _tier_of(d, "T010").__setitem__("checkpoint_save_steps", 402),
+         "training.save_steps=401"),
+        # ③'' eos 与 css 分叉（同清单内不变量）
+        (lambda d: _tier_of(d, "T010").__setitem__("expected_optimizer_steps", 999),
+         "同清单内不变量破"),
+        # ① B-1 老病（per_epoch 回退）仍被同一条机检抓住
+        (lambda d: _tier_of(d, "T031").__setitem__("expected_optimizer_steps_per_epoch", 160),
+         "per_epoch_steps=800"),
+        # ④ 重投闸门：有档跨过 `reachable < 门槛` ⇒ 必须报（"先跑后收集"的适用前提）
+        (lambda d: _tier_of(d, "T010").__setitem__("expected_optimizer_steps_reachable", 4),
+         "会触发 A2 第三态"),
+    ],
+)
+def test_three_way_check_detects_each_mutation(tmp_path, mutate, needle):
+    """★ 阳性对照：**任一**被改回旧值/改坏 ⇒ 三向机检必须**红**（⛔ 不是"扫过了就算"）。"""
+    p = _mutant_manifest(tmp_path, mutate)
+    probs = gmv2.cross_check_manifest_against_matrix(p)
+    assert probs, "变异体上机检没报任何问题 ⇒ 对照失效"
+    assert any(needle in x for x in probs), (needle, probs)
+
+
+def test_three_way_check_detects_mutated_tier_yaml(tmp_path):
+    """★ 第三向（**档位 yaml**）的阳性对照：只改 yaml（清单/矩阵都还对）也必须被抓。
+
+    为什么必须有这一向：只比"清单 ↔ 矩阵"会漏掉"矩阵对、而**跑次实际读的 yaml** 错"——
+    那一类错误清单与矩阵永远自洽地错，正是 B-1 的漏检形态。
+    """
+    import shutil
+
+    cfg = tmp_path / "cfg"
+    shutil.copytree(gmv2.PROJECT_ROOT / gmv2.CONFIG_DIR_REL, cfg)
+    y = cfg / "T010.yaml"
+    y.write_text(y.read_text(encoding="utf-8").replace("save_steps: 401", "save_steps: 777"),
+                 encoding="utf-8")
+    saved_root, saved_rel = gmv2.PROJECT_ROOT, gmv2.CONFIG_DIR_REL
+    # ★ 矩阵路径必须**显式给真实件**：`PROJECT_ROOT` 被指向 tmp 后，默认矩阵路径会落空
+    #   ⇒ 函数会在"矩阵不在盘"处早退，测不到 yaml 这一向（本用例第一版就踩了这个坑）。
+    real_matrix = saved_root / "docs" / "capability-matrix.data.json"
+    try:
+        gmv2.PROJECT_ROOT, gmv2.CONFIG_DIR_REL = tmp_path, "cfg"
+        probs = gmv2.cross_check_manifest_against_matrix(matrix_path=real_matrix)
+        assert any("training.save_steps=777" in x for x in probs), probs
+    finally:
+        gmv2.PROJECT_ROOT, gmv2.CONFIG_DIR_REL = saved_root, saved_rel
+
+
+def test_epoch_has_exactly_one_truth_source():
+    """★★ **epoch 单真相源**：扰动 v1 冻结常量后，除具名豁免档外**任何档都不得变化**。
+
+    ★ 这条测的不是"值对不对"，而是**"第二个来源的那条路已经断掉"**——本次全 54 档
+      `reachable` 低估 2–8 倍的根因就是那条路。⛔ 只改值不测路 = 日后必然复发。
+    ★ 阳性对照（同一断言的反面）：把 `run_config_epochs` 换回旧实现 ⇒ 必须红。
+    """
+    v1 = json.loads(gmv2.V1_MANIFEST_PATH.read_text(encoding="utf-8"))["tiers"]
+    assert gmv2.epoch_single_source_probe(v1) == []
+    saved = gmv2.run_config_epochs
+    try:
+        gmv2.run_config_epochs = lambda tid: int(gmv2.gm.MATRIX_MAX_EPOCHS)  # 复现旧实现
+        bad = gmv2.epoch_single_source_probe(v1)
+        assert len(bad) >= 51, f"复现旧实现后应几乎全档变化，实测 {len(bad)}"
+    finally:
+        gmv2.run_config_epochs = saved
+
+
+def test_reachable_uses_the_run_config_epochs_not_a_frozen_constant():
+    """★ 值层面：`reachable` 必须 = `per_epoch × 该档 yaml 的 max_epochs`（逐档、含档例算式）。
+
+    档例（`evidence/58`）：T010 = 100 × 4 = **400**（改前 100）；T031 = 800 × 8 = **6400**（改前 800）。
+    """
+    doc = _regen_doc()
+    checked = 0
+    for e in doc["tiers"]:
+        tid = str(e["tier_id"])
+        ep = gmv2.run_config_epochs(tid)
+        if ep is None:
+            continue
+        checked += 1
+        assert int(e["expected_optimizer_steps_reachable"]) == \
+            int(e["expected_optimizer_steps_per_epoch"]) * int(ep), tid
+    assert checked == 51, checked
+    t010 = _tier_of(doc, "T010")
+    t031 = _tier_of(doc, "T031")
+    assert (t010["expected_optimizer_steps_reachable"], t010["checkpoint_save_steps"]) == (400, 401)
+    assert (t031["expected_optimizer_steps_reachable"], t031["checkpoint_save_steps"]) == (6400, 6401)
+
+
+def test_checkpoint_save_steps_comes_from_the_run_config_yaml():
+    """★ 值层面：`css` 必须逐档 == 跑次 yaml 的 `training.save_steps`（⛔ 不再读退役目录/透传 v1）。"""
+    doc = _regen_doc()
+    for e in doc["tiers"]:
+        tid = str(e["tier_id"])
+        yaml_ss = gmv2.run_config_scalar(tid, "save_steps")
+        if yaml_ss is None:
+            continue
+        assert int(e["checkpoint_save_steps"]) == int(yaml_ss), tid
+        assert int(e["expected_optimizer_steps"]) == int(yaml_ss), tid
+
+
+def test_no_yaml_exemption_is_exactly_the_non_runnable_tiers():
+    """★ 豁免**不是静默白名单**（反向断言）：无 yaml 集合必须**恰好**等于具名豁免表，
+    且这些档必须 `applicable=False`（否则"没有跑次配置"这个前提就不成立）。"""
+    man = json.loads(gmv2.V2_MANIFEST_PATH.read_text(encoding="utf-8"))
+    have = {str(t["tier_id"]) for t in man["tiers"] if gmv2.run_config_scalar(str(t["tier_id"]), "save_steps") is not None}
+    no_yaml = {str(t["tier_id"]) for t in man["tiers"]} - have
+    assert no_yaml == set(gmv2.NOT_APPLICABLE_NO_CONFIG), (sorted(no_yaml), gmv2.NOT_APPLICABLE_NO_CONFIG)
+    for tid in no_yaml:
+        assert not bool(_tier_of(man, tid).get("applicable")), tid

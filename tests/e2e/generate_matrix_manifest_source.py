@@ -12,7 +12,13 @@
          ``matrix54-generated/``（= ``tools/matrix/gen_configs.py`` 从
          ``docs/capability-matrix.data.json`` 生成、经实测与矩阵声明 lr **逐档一致**的现行世代）；
          改指前清单指向 ``matrix54-v2/``，而它仍是旧 lr/epoch 口径（**21 档与矩阵声明不一致**）。
-         ★ 步数口径**仍只读** ``matrix54-v2/``（见 :data:`V2_CONFIG_DIR_REL`），⛔ 本次不动。
+         ★ **2026-10-16 步数/检查点口径改指**（消「清单声明的步数 ≠ 跑次实际」）：``checkpoint_save_steps``
+         与 ``expected_optimizer_steps_reachable`` 的 epoch 数**一律从该档 ``config`` 所指的
+         ``matrix54-generated/`` yaml 现读**（``training.save_steps`` / ``training.max_epochs``）。
+         改指前：epoch 数走 **v1 冻结期常量** ``MATRIX_MAX_EPOCHS=1`` ⇒ 全 54 档 ``reachable``
+         **低估 2–8 倍**（T010 清单 100 vs 真值 400）；``checkpoint_save_steps`` 则分两路
+         （native 读**已退役**的 ``matrix54-v2/``、其余走 v1 透传）⇒ 与跑次 yaml **51/51 不一致**。
+         ``matrix54-v2/`` 现**只**用于读 ``dp_size``（native 分片口径），⛔ 不再作步数/保存口径来源。
       ② ``data.subset_size``：9 档 ``GRASPO × native`` → ``48 × 卡数``（48/96/192）；
          其余 45 档**照 v1**（CPT/SFT=100、GRASPO/OPD=20）。3 个 not_applicable 档保持 v1。
       ③ ``data.train_path`` / 步数两字段 / ``acceptance.formal_gate.*``：按 v2 真值重算
@@ -29,6 +35,9 @@
       每 epoch 步数 = ceil(T / Q) = (T + Q - 1) // Q        Q = rollout_queue_batch_size = 8
 
   v2 子集 48×卡数 ⇒ 每卡 prompt 数 P = 48（PP 档例外：dp_size=1 ⇒ T=96/192）::
+
+      ★ 每 epoch 步数**不随 epoch 数变**；""整个 run 可达""= 每 epoch 步数 × **该档 yaml 的
+        ``training.max_epochs``**（SFT 4／CPT/OPD 2／GRASPO 8，2026-10-15 主席裁定；唯一真相源）。
 
       T028 T029 T030 T034 T040 T041 T042  →  T = 48  →  6 步
       T035（dp=1, pp=2）                  →  T = 96  → 12 步
@@ -74,8 +83,9 @@ from gpu_assignment import (  # noqa: E402  （§1.4 单一真相源：锁卡集
 #:   ``docs/capability-matrix.data.json`` 确定性生成 ⇒ 可复现、且与矩阵声明逐档一致。
 #:   ``tiers[*].config`` 一律指这里（⛔ 不再指 ``matrix54-v2/``，那是旧 lr/epoch 世代）。
 CONFIG_DIR_REL = "samples/configs/matrix54-generated"
-#: ★ **步数口径来源目录**（v2 冻结历史，**只读**）：``dp_size`` / ``save_steps`` 从这里读，
-#:   ⛔ 不因 ``config`` 改指而变 —— 改它会牵动 ``expected_optimizer_steps*`` 与矩阵台账。
+#: ★ **native ``dp_size`` 口径来源目录**（v2 冻结历史，**只读**）：**只**读 ``dp_size``。
+#:   ★ 2026-10-16：``save_steps`` **不再**从这里读（它已退役，T028 实测 48 vs 现行 49）——
+#:   步数/保存口径一律从 ``CONFIG_DIR_REL``（= 跑次实际读的 yaml）现读。
 V2_CONFIG_DIR_REL = "samples/configs/matrix54-v2"
 V1_CONFIG_DIR_REL = "samples/configs/matrix54"
 
@@ -118,6 +128,14 @@ Q = 8  # 与 v1 生成器同源（下面用断言核对，不另抄常量）
 MINI_LINE_COUNT = 100
 FORMAL_LINE_COUNT = 6378
 MIN_OPTIMIZER_STEPS = 5
+
+#: ★ **A2 的最低 epoch 门槛**（= 1）：语义是"至少跑完几个 epoch"，⛔ **不是**该档的计划 epoch 数。
+#:   与 v1 冻结常量 ``gm.MATRIX_MAX_EPOCHS``（=1）**解耦**（值相同 ⇒ 行为逐字不变）。
+#:   为什么必须解耦（2026-10-16）：epoch 数只能有**一个**真相源 = 跑次档配置 yaml 的
+#:   ``training.max_epochs``（= SFT 4／CPT/OPD 2／GRASPO 8）。若这里继续引用 v1 常量，
+#:   "epoch 的第二个来源"就还在，日后仍会有人拿它去算步数（本次全 54 档 `reachable`
+#:   低估 2–8 倍正是这么来的）。
+MIN_EPOCHS_GATE = 1
 
 
 def load_v1_module():
@@ -279,13 +297,53 @@ def v2_dp_size(tier_id: str) -> int:
     return int(read_yaml_scalar(PROJECT_ROOT / V2_CONFIG_DIR_REL / f"{tier_id}.yaml", "dp_size"))
 
 
+def run_config_scalar(tier_id: str, key: str) -> "int | None":
+    """★ 从**跑次实际读取**的档配置（``CONFIG_DIR_REL``）读一个标量；无该档 yaml ⇒ ``None``。
+
+    ★ 为什么必须是这个目录（§1.4「跑次用的口径 ⇒ 清单声明的口径」）：``tiers[*].config``
+      指的就是这里，runner 起跑读的也是这里。清单里的步数/检查点口径若从**别处**取，
+      就会出现"清单声明 ≠ 跑次实际"（本次修复的正是这个病）。
+    ★ 只允许**这一个**取值入口：本函数是 epoch 数与 ``save_steps`` 的唯一读取点，
+      ⛔ 不许在别处再写一遍目录拼接（否则又造出第二真相源）。
+    """
+    path = PROJECT_ROOT / CONFIG_DIR_REL / f"{tier_id}.yaml"
+    if not path.is_file():
+        return None
+    return int(read_yaml_scalar(path, key))
+
+
+def run_config_epochs(tier_id: str) -> "int | None":
+    """该档**跑次实际使用**的 epoch 数（= yaml 的 ``training.max_epochs``）。
+
+    ★★ 这是 epoch 数的**唯一真相源**（§1.4）。病史（2026-10-16，本包修复）：
+      原先 ``reachable`` 走 ``gm.MATRIX_MAX_EPOCHS``——那是 **v1 冻结期常量（=1）**，
+      而 2026-10-15 主席把 epoch 口径改为 SFT=4／CPT/OPD=2／GRASPO=8 后，矩阵与 yaml
+      都跟上了，**只有本生成器没跟** ⇒ 全 54 档 ``expected_optimizer_steps_reachable``
+      被**低估 2–8 倍**（T010：清单 100 vs 真值 400）。
+    ★ 读不到（该档无 yaml）⇒ 返回 ``None``，由调用方按**具名豁免**处置（⛔ 不猜、⛔ 不退回 1）。
+    """
+    return run_config_scalar(tier_id, "max_epochs")
+
+
+#: ★ 无 yaml 档的**具名豁免**（epoch 口径不适用）：这 3 档 ``not_applicable``（当前无配方）
+#:   ⇒ **三个 config 目录里都没有它们的 yaml**（实测 matrix54/ · matrix54-v2/ ·
+#:   matrix54-generated/ 三处皆无）⇒ "按 yaml 现算"这条口径对它们**无定义**。
+#:   ⇒ 生成器**原样保留其 v1 口径值**（⛔ 不发明、⛔ 不引入第二份 epoch 表），
+#:   且三向机检对它们**具名豁免 ＋ 反向断言**（豁免表必须仍恰好等于本集合）。
+#:   ★ 它们从不被跑 ⇒ 三键对它们**无任何消费方**（无 run ⇒ 无 ``RunEvidence``）⇒ 无害。
+NOT_APPLICABLE_NO_CONFIG: tuple[str, ...] = tuple(NOT_APPLICABLE_TIERS)
+
+
 def is_native_graspo(entry: dict) -> bool:
     return str(entry["backend"]) == "native" and str(entry["algorithm"]) == "GRASPO"
 
 
-#: ★ 卡池确定性映射（2026-10-05 主席令：八卡全开，卡池限定在 {4,5,6,7} 内）。
+#: ★ 卡池确定性映射（**2026-10-16 起改为只含合法卡**；合法性 = :data:`GPU_ALLOWED` −
+#:   :data:`GPU_FORBIDDEN_PRODUCTION` − 主席禁用集 ``{0,2}``）。
+#: ★ 旧值 ``4卡->[4,5,6,7]`` **含两张生产锁卡**，过去只靠 :func:`locked_card_violation`
+#:   的「恰等于整卡池即登记不 raise」豁免才通过 ⇒ 该豁免已按主席令**收窄**（池自身非法即 raise）。
 #: 1卡->[4]｜2卡->[4,5]｜3卡->[4,5,6]｜4卡->[4,5,6,7]
-GPU_POOL_BY_CARDS: dict[int, list[int]] = {1: [4], 2: [4, 5], 3: [4, 5, 6], 4: [4, 5, 6, 7]}
+GPU_POOL_BY_CARDS: dict[int, list[int]] = {1: [4], 2: [4, 5], 3: [4, 5], 4: [1, 3, 4, 5]}
 
 #: ★ 按档的**显式卡位覆盖表**（项目准许的**资源调度例外**；⛔ 不改卡数）。
 #: ★★ **2026-10-16 撤销唯一一条例外（T041 `[2,3]`）** —— 该值是 **2026-10-09 的一次性调度决策**
@@ -296,7 +354,27 @@ GPU_POOL_BY_CARDS: dict[int, list[int]] = {1: [4], 2: [4, 5], 3: [4, 5, 6], 4: [
 #:    ⇒ 撤销后 T041 走默认映射 :data:`GPU_POOL_BY_CARDS`\[2\] = ``[4,5]``。
 #: ★ `cards`（卡数）**保持 2 不变**：卡数属基础列不得改动；本表只改"用哪几张卡"。
 #: ★ 未列出的档一律走 :data:`GPU_POOL_BY_CARDS`（上面那行映射**逐字未变**）。
-TIER_GPU_OVERRIDE: dict[str, list[int]] = {}
+TIER_GPU_OVERRIDE: dict[str, list[int]] = {
+    # ★ 2026-10-16 车道重出（合法卡集 {1,3,4,5}；卡数逐档不变）：
+    #   {1} = T031 关键路径（7.64 h，独占）｜{3,5} = 唯一 2 卡通道｜
+    #   {4} = 共享卡，只放 ≤0.6 h 的 9B LoRA 1 卡档（⛔ 不上 27B/全参）｜{3} = 1 卡溢出
+    "T031": [1],
+    "T001": [4],
+    "T010": [4],
+    "T013": [4],
+    "T028": [4],
+    "T016": [3],
+    "T022": [3],
+    "T040": [3],
+    "T002": [3, 5],
+    "T011": [3, 5],
+    "T014": [3, 5],
+    "T017": [3, 5],
+    "T023": [3, 5],
+    "T029": [3, 5],
+    "T032": [3, 5],
+    "T041": [3, 5],
+}
 
 #: ★ **邻居/他人常驻卡**（⛔ 我方声明里绝不可出现）：GPU2 = 第三方账号占用中的常驻邻居卡
 #:   （★ §15 去标识：本件为正式件，第三方**具名账号一律角色化表述**，⛔ 不写账号字面量）
@@ -351,7 +429,10 @@ def locked_card_violation(
         return None
     norm = tuple(int(g) for g in gpus)
     pool = tuple(GPU_POOL_BY_CARDS.get(int(cards), ()))
-    if norm == pool:
+    if norm == pool and not locked_card_hits(pool):
+        # ★ 2026-10-16 收窄：豁免**只对自身合法的卡池**生效。旧码 `norm == pool` 单独成立即放过，
+        #   使 ``[4,5,6,7]``（含两张生产锁卡 GPU6/7）长期"合法"通过 —— 这个洞已堵：
+        #   池自身命中锁卡 ⇒ 继续往下走 raise（⛔ 不再登记了事）。
         POOL_CONTRACT_CONFLICTS[pool] = hits
         _uncaptured_pool_conflicts.append((tier_id, pool, hits))
         return None
@@ -367,6 +448,33 @@ def locked_card_violation(
         f"{tier_id}: gpus={list(gpus)} 含被锁的卡 ⇒ {'；'.join(names)}"
         f"（本世代卡池为 {list(pool)}）"
     )
+
+
+#: ★★ **主席禁用集**（2026-10-16）：GPU0 = 他人占用中；GPU2 = 邻居常驻卡。
+#:   ⛔ 与「当前空闲与否」无关 —— 它是**策略级**禁用清单，⛔ 不得因"此刻空着"而放宽。
+CHAIRMAN_BANNED_CARDS: tuple[int, ...] = (0, 2)
+
+
+def legal_card_set() -> tuple[int, ...]:
+    """★ 合法卡集（**单一入口**）= ``GPU_ALLOWED`` − ``GPU_FORBIDDEN_PRODUCTION`` − 主席禁用集。
+
+    2026-10-16 实测 = ``(1, 3, 4, 5)``。⛔ 生产锁卡 ``(6,7)`` 与邻居卡 ``(2,)`` 不在内。
+    """
+    return tuple(sorted(set(GPU_ALLOWED) - set(GPU_FORBIDDEN_PRODUCTION) - set(CHAIRMAN_BANNED_CARDS)))
+
+
+def non_legal_card_violation(tier_id: str, gpus: "list[int] | tuple[int, ...]") -> "str | None":
+    """★ 合法卡集断言（fail-closed）：``gpus`` 必须 ⊆ :func:`legal_card_set`。
+
+    ★ 这条**专抓**旧「池等价豁免」放过的形态：旧 4 卡池 ``[4,5,6,7]`` 含生产锁卡 GPU6/7，
+    过去因 `norm == pool` 被登记了事、**从未 raise**；本断言看的是**合法集**，与卡池无关。
+    """
+    bad = tuple(sorted({int(g) for g in gpus} - set(legal_card_set())))
+    if not bad:
+        return None
+    return (f"{tier_id}: gpus={list(gpus)} 含非合法卡 {list(bad)}"
+            f"（合法集 = {list(legal_card_set())}；禁 = 生产锁卡 {list(GPU_FORBIDDEN_PRODUCTION)} ∪ "
+            f"邻卡 {list(NEIGHBOR_CARDS)} ∪ 主席禁用 {list(CHAIRMAN_BANNED_CARDS)}）")
 
 
 def mini_tier_subset_size(tier_id: str, v1_subset: int | None = None) -> int:
@@ -497,16 +605,19 @@ def patch_tier(entry: dict, data_root: str, pregen_dir: str) -> dict:
             )
         if len(set(_override)) != len(_override):
             raise AssertionError(f"{tier_id}: 覆盖卡位 {_override} 含重复卡")
-        # ★★ 通用断言（2026-10-16 新增）：**显式卡位例外必须落在本世代卡池内**。
+        # ★★ 通用断言：**显式卡位例外必须落在「合法卡集」内**。
         #    这就是「陈旧调度值」这一类缺陷的根因判据：例外描述的是**当时的空闲状态**，
-        #    一旦卡池换代（2026-10-05 起为 {4,5,6,7}），旧例外就指向了不该占的卡
-        #    （T041 `[2,3]` 即此形态）⇒ 必须显式重建，不得静默沿用。
-        _pool = set(GPU_POOL_BY_CARDS[_cards])
+        #    一旦锁卡策略换代，旧例外就指向了不该占的卡（T041 `[2,3]` 即此形态）⇒ 必须显式重建。
+        #    ★ 2026-10-16：判据域从 `GPU_POOL_BY_CARDS[cards]`（**默认值**）改为
+        #      `legal_card_set()`（= GPU_ALLOWED − 生产锁卡 − 主席禁用 {0,2}）—— 因为车道重出后
+        #      同一卡数会有**多条车道**（如 2 卡档分属 `[3,5]` 与 `[4,5]`），默认值不再是全体上界。
+        #      ★ 保护强度**只增不减**：旧域漏掉的 `[4,5,6,7]`（含生产锁卡）在此被拒。
+        _pool = set(legal_card_set())
         _outside = sorted(set(_override) - _pool)
         if _outside:
             raise AssertionError(
-                f"{tier_id}: 覆盖卡位 {_override} 含本世代卡池外的卡 {_outside}"
-                f"（卡池 GPU_POOL_BY_CARDS[{_cards}]={sorted(_pool)}）⇒ 拒绝（陈旧例外须显式重建）"
+                f"{tier_id}: 覆盖卡位 {_override} 含合法卡集外的卡 {_outside}"
+                f"（合法集 legal_card_set()={sorted(_pool)}）⇒ 拒绝（陈旧例外须显式重建）"
             )
         out["gpus"] = _override
     else:
@@ -628,7 +739,25 @@ def patch_tier(entry: dict, data_root: str, pregen_dir: str) -> dict:
                 if caliber_ratio != 1 else "；比率 = 1（子集与 v1 同口径）"
             )
         )
-    reachable = per_epoch * int(gm.MATRIX_MAX_EPOCHS)
+    # ★★★ 2026-10-16 修复（🔴「reachable 低估 2–8 倍」）：epoch 数改从**跑次实际使用的
+    #     档配置 yaml** 现算（`run_config_epochs`，单一真相源），⛔ 不再用 `gm.MATRIX_MAX_EPOCHS`。
+    #     病史：v1 冻结期常量 = 1，而 2026-10-15 主席把 epoch 口径改为 SFT=4／CPT/OPD=2／
+    #     GRASPO=8 ⇒ 矩阵与 yaml 都跟上了、**只有本生成器没跟** ⇒ 全 54 档
+    #     `expected_optimizer_steps_reachable` = per_epoch × 1（T010：100 vs 真值 400）。
+    #     后果（`result_judge.resolve_step_gate_applicability`）：低估使"结构上够不着门槛"
+    #     更易成立 ⇒ A2 门槛退出闸门、改按每 epoch 步数判 ⇒ 是**软化**方向。当前 54 档
+    #     因最低值 6 ≥ 门槛 5 而未触发（实测 0/54 判定变化），属**潜伏**缺陷。
+    epochs = run_config_epochs(tier_id)
+    assert epochs is not None or tier_id in NOT_APPLICABLE_NO_CONFIG, (
+        f"{tier_id}: 读不到跑次档配置的 max_epochs，且该档不在无 yaml 具名豁免 "
+        f"{list(NOT_APPLICABLE_NO_CONFIG)} 内 ⇒ fail-closed（⛔ 不猜、⛔ 不退回 MATRIX_MAX_EPOCHS）"
+    )
+    if epochs is not None:
+        assert epochs >= 1, f"{tier_id}: yaml max_epochs={epochs} 非正整数"
+        reachable = per_epoch * int(epochs)
+    else:
+        # 无 yaml 档：**原样保留 v1 口径**（= per_epoch × 1），具名豁免、机检反向断言兜住。
+        reachable = per_epoch * int(gm.MATRIX_MAX_EPOCHS)
     # ★ 锚定覆盖（2026-10-02 批准）：仅这三档
     if tier_id in PLANNED_STEPS_OVERRIDE:
         anchored = int(PLANNED_STEPS_OVERRIDE[tier_id])
@@ -636,7 +765,8 @@ def patch_tier(entry: dict, data_root: str, pregen_dir: str) -> dict:
             f"{tier_id}: 锚定步数 {anchored} < 门槛 {MIN_OPTIMIZER_STEPS}"
         )
         per_epoch = anchored
-        reachable = anchored * int(gm.MATRIX_MAX_EPOCHS)
+        reachable = anchored * int(epochs) if epochs is not None \
+            else anchored * int(gm.MATRIX_MAX_EPOCHS)
 
     out["expected_optimizer_steps_per_epoch"] = per_epoch
     # ★ 键名语义 ≠ 实际语义时必须就地加注（2026-10-02 通则；本块随清单同行、机可读）
@@ -646,10 +776,14 @@ def patch_tier(entry: dict, data_root: str, pregen_dir: str) -> dict:
             "不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。"
         ),
         "expected_optimizer_steps_reachable": (
-            "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。"
+            "整个 run 的可达步数上限 = `expected_optimizer_steps_per_epoch` × "
+            "**该档跑次档配置 yaml 的 `training.max_epochs`**（= 该键的唯一真相源，"
+            "见 `step_gate_basis` 与本档 `config` 所指文件；⛔ 不再用 v1 冻结期常量）。"
+            "当前值见本键本身（⛔ 此处不写死数字：写死的例子会随 epoch 口径变更而变成假话）。"
         ),
         "checkpoint_save_steps": (
-            "**ckpt 保存间隔**（= 该档 v2 yaml 的 `training.save_steps`；本轮三档 = 72）。"
+            "**ckpt 保存间隔**（= 该档**跑次档配置 yaml** 的 `training.save_steps`，"
+            "逐档从该 yaml 现读、⛔ 不再从已退役的 " + V2_CONFIG_DIR_REL + "/ 读）。"
             "⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。"
             "（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）"
         ),
@@ -667,17 +801,23 @@ def patch_tier(entry: dict, data_root: str, pregen_dir: str) -> dict:
         ),
     }
     out["expected_optimizer_steps_reachable"] = reachable
-    # 计划步数（ckpt 保留口径）：native GRASPO 的 v2 计划值 = 该档 v2 档配置的 save_steps
-    # （由已退役留档的 generate_matrix_v2.py 按 v1 同式算出；本脚本**只读**它，不另算一份）。
-    if is_native_graspo(out):
-        out["checkpoint_save_steps"] = int(
-            read_yaml_scalar(PROJECT_ROOT / V2_CONFIG_DIR_REL / f"{tier_id}.yaml", "save_steps")
-        )
+    # ★★★ 2026-10-16 修复（🔴「css 与跑次 yaml 矛盾」）：**全 54 档一律**从**跑次实际使用**的
+    #     档配置 yaml 现读 `save_steps`（⛔ 不再分 native/非 native 两条路，也⛔ 不再从**已退役**的
+    #     V2_CONFIG_DIR_REL 读）。病史：native 档从 matrix54-v2 读（T028：退役 48 vs 现行 49），
+    #     其余档走 `v1 值 × caliber_ratio`（T010：100 vs yaml 401）⇒ 实测 **51/51 有 yaml 的档
+    #     全部与跑次 yaml 不一致**，而该键的 `key_semantics` 逐字声明它就是"该档 yaml 的
+    #     training.save_steps" ⇒ 清单**自相矛盾**。改由 yaml 现读后，该声明**由构造成立**，
+    #     且与矩阵 `save_steps`（= derived_steps + 1）自动三向一致（实测 51/51）。
+    _css = run_config_scalar(tier_id, "save_steps")
+    if _css is not None:
+        out["checkpoint_save_steps"] = int(_css)
     else:
-        # ★★ 修正轮 1（🔴B1c）＋ 修正轮 2（🔴B-1）：非 native 档的 `checkpoint_save_steps` 不能纯透传 v1
-        #    （子集扩面后它与 `per_epoch` 一起停在旧口径）；按**同一个** `caliber_ratio` 同比例放大
-        #    （整数运算，⛔ 不另立 epoch 公式）。★ B-1 修正 = 比率由 `subset_ratio`（漏 3 档豁免档、
-        #    且未被 per_epoch 使用）改为 `caliber_ratio`（声明口径唯一入口、与 per_epoch 同源）。
+        # 无 yaml 档（具名豁免 NOT_APPLICABLE_NO_CONFIG）：原样保留 v1 口径 × 口径比率。
+        # ⛔ 不发明数值；机检对其具名豁免 ＋ 反向断言。
+        assert tier_id in NOT_APPLICABLE_NO_CONFIG, (
+            f"{tier_id}: 读不到跑次档配置的 save_steps，且不在无 yaml 具名豁免 "
+            f"{list(NOT_APPLICABLE_NO_CONFIG)} 内 ⇒ fail-closed"
+        )
         out["checkpoint_save_steps"] = int(out["checkpoint_save_steps"]) * int(caliber_ratio)
     # ★★ 清单自带 `key_semantics.expected_optimizer_steps` 逐字声明：该键语义 = `checkpoint_save_steps`
     #    ⇒ 本不变量**对全 54 档无条件成立**（HEAD 清单实测 54/54 相等；本包手工并入曾只改一半
@@ -687,7 +827,11 @@ def patch_tier(entry: dict, data_root: str, pregen_dir: str) -> dict:
     # ⑤ formal_gate：门槛值与 v1 一致（不放宽），只重算标记与 basis
     gate = dict(out["acceptance"]["formal_gate"])
     gate["min_optimizer_steps"] = MIN_OPTIMIZER_STEPS
-    gate["min_epochs"] = int(gm.MATRIX_MAX_EPOCHS)
+    # ★ 2026-10-16：`min_epochs` 与 v1 冻结常量**解耦**（值不变、仍是 1 ⇒ 行为逐字不变）。
+    #   它语义是「**最少**要跑完几个 epoch」（门槛的下限），⛔ **不是**该档的计划 epoch 数 ——
+    #   后者是 `training.max_epochs`（= 4/2/8，见 `run_config_epochs`）。原先误用
+    #   `gm.MATRIX_MAX_EPOCHS`（=1）当来源，既掩盖了"它只是下限"，又让 epoch 出现第二个来源。
+    gate["min_epochs"] = MIN_EPOCHS_GATE
     gate["step_gate_applicability"] = (
         gm.STEP_GATE_APPLICABLE
         if reachable >= MIN_OPTIMIZER_STEPS
@@ -695,7 +839,7 @@ def patch_tier(entry: dict, data_root: str, pregen_dir: str) -> dict:
     )
     gate["step_gate_basis"] = (
         f"expected_optimizer_steps_reachable={reachable}；per_epoch={per_epoch}；"
-        f"max_epochs={gm.MATRIX_MAX_EPOCHS}；"
+        f"max_epochs={epochs if epochs is not None else '—（无档配置 yaml，具名豁免）'}；"
         + ("【★ 锚定：本档计划步数按 2026-10-02 批准的覆盖值固定，不随子集放大而变】"
            if tier_id in PLANNED_STEPS_OVERRIDE else "")
         + (
@@ -743,7 +887,7 @@ def build_v2_audit(entries: list[dict]) -> dict:
                     "cards": entry["cards"],
                     "subset_size": entry["data"]["subset_size"],
                     "per_epoch": entry["expected_optimizer_steps_per_epoch"],
-                    "max_epochs": int(gm.MATRIX_MAX_EPOCHS),
+                    "max_epochs": run_config_epochs(entry["tier_id"]),
                     "reachable": reachable,
                     "min_optimizer_steps": MIN_OPTIMIZER_STEPS,
                     "derivation": entry.get("step_formula_v2", ""),
@@ -792,8 +936,9 @@ def build_v2_manifest(
         "config_dir_note": (
             "★ 跑次实际读取的档配置目录 = " + CONFIG_DIR_REL + "（矩阵生成件；由 tools/matrix/gen_configs.py "
             "从 docs/capability-matrix.data.json 生成，与矩阵声明逐档一致）。"
-            "★ " + V2_CONFIG_DIR_REL + " 仅作**步数口径来源**（dp_size/save_steps），⛔ 不再是"
-            "跑次配置来源。"
+            "★ " + V2_CONFIG_DIR_REL + " 仅作 **native ``dp_size`` 口径来源**，⛔ 不再是跑次配置来源。"
+            "★ 2026-10-16：``save_steps`` / epoch 数（``training.max_epochs``）**只读本目录**"
+            "（= 跑次实际读的 yaml，单一真相源）；改指前 epoch 数走 v1 常量 ⇒ ``reachable`` 低估 2–8 倍。"
         ),
         "subset_dir_container": f"/work/elam-v5/{V2_SUBSET_DIRNAME}",
         "subset_dir_host": pregen_dir,
@@ -802,7 +947,8 @@ def build_v2_manifest(
     }
     out["changes_vs_v1"] = {
         "config": f"{V1_CONFIG_DIR_REL}/T0NN.yaml → {CONFIG_DIR_REL}/T0NN.yaml（51 个可跑档）"
-                  f"｜★ 步数口径仍只读 {V2_CONFIG_DIR_REL}/（不随 config 改指而变）",
+                  "｜★ 2026-10-16：步数/保存口径**同指**本目录（yaml 的 training.max_epochs / "
+                  f"save_steps 即唯一真相源）；{V2_CONFIG_DIR_REL}/ 现只供 native dp_size",
         "subset_size": (
             "① 9 档 GRASPO×native：20 → 48×卡数（48/96/192）；"
             "② ★ **2026-10-16 主席裁定「18 个 20 行档放大到 100 行」**：原 18 个 20 行档的"
@@ -815,7 +961,10 @@ def build_v2_manifest(
         "train_path": f"/work/elam-v5/subsets/ → /work/elam-v5/{V2_SUBSET_DIRNAME}/（51 个可跑档）",
         "steps": (
             "expected_optimizer_steps_per_epoch/_reachable 按**真实步进语义**重算："
-            "native GRASPO = ceil(floor(subset/dp_size)/Q)"
+            "native GRASPO = ceil(floor(subset/dp_size)/Q)；"
+            "★ 2026-10-16：`_reachable` = per_epoch × **该档 yaml 的 training.max_epochs**"
+            "（改前误用 v1 常量 1 ⇒ 低估 2–8 倍）；`checkpoint_save_steps` = 该 yaml 的 "
+            "training.save_steps（改前 native 读已退役目录、其余走 v1 透传 ⇒ 51/51 与跑次 yaml 不一致）"
         ),
         "new_fields": [
             "config_version", "supersedes", "changes_vs_v1", "data_sources", "checkpoint_retention_v2",
@@ -1042,25 +1191,42 @@ def cross_check_manifest_against_matrix(
     manifest_path: "Path | str | None" = None,
     matrix_path: "Path | str | None" = None,
     exempt_drift: "tuple[str, ...] | None" = None,
+    exempt_no_config: "tuple[str, ...] | None" = None,
 ) -> list[str]:
-    """★★ **跨件不变量机检**（修正轮 2 / 🔴B-1 ＋ 审查建议 S2）：全 54 档
+    """★★ **跨件不变量机检**（修正轮 2 / 🔴B-1 ＋ 2026-10-16 **扩为三向一致**）：全 54 档
 
-        `manifest.expected_optimizer_steps_per_epoch  ==  docs.rows[].per_epoch_steps`
+        I-a  `manifest.expected_optimizer_steps_per_epoch == docs.rows[].per_epoch_steps`
+        I-b  `manifest.expected_optimizer_steps_reachable   == docs.rows[].derived_steps`
+        I-c  `manifest.checkpoint_save_steps == docs.rows[].save_steps == <该档 yaml>.training.save_steps`
+        I-d  `manifest.expected_optimizer_steps == manifest.checkpoint_save_steps`（同清单内）
+        I-e  `manifest.expected_optimizer_steps_reachable >= MIN_OPTIMIZER_STEPS`（**重投闸门**：
+             修正前后都不得有档跨过 `reachable < 门槛` 这条线 ⇒ "先跑后收集"才成立）
 
     为什么必须跨件（⛔ 不能只比"清单 ↔ 重生成"）：B-1 之所以漏网，正是因为
     `caliber_value_regression()` 只比**清单 ↔ 重生成**（两者同为 160，自洽地错），
     而**真值在 `docs/capability-matrix.data.json`**（`per_epoch_steps` = 800）。
     ⇒ 这条机检把"矩阵 ↔ runner 权威清单"这一对**唯一真相源**钉在一起（§1.4）。
 
-    ★ **豁免不是静默白名单**：`exempt_drift`（默认 :data:`KNOWN_PRE_EXISTING_PER_EPOCH_DRIFT` = W-7 的
-      T017/T018，⛔ 本轮不修）里的档 **必须确实仍在漂**；一旦不漂了 ⇒ 报「豁免表陈旧」，
-      逼下一轮把具名例外删掉（fail-closed 的反向断言）。
+    ★★ **为什么 2026-10-16 要扩到 I-b/I-c**：原实现只读矩阵行的 `per_epoch_steps` **一个字段**
+      ⇒ 凡需 `max_epochs` 才能算出的量**都不在它的定义域内**，而 `max_epochs` **只在矩阵行**
+      （清单里没有这个字段）⇒ `expected_optimizer_steps_reachable`（低估 2–8 倍）与
+      `checkpoint_save_steps`（与跑次 yaml 51/51 不一致）**结构上看不到**。矩阵行**已有**
+      `max_epochs` / `derived_steps` / `save_steps` ⇒ 三向对拍本来就可做，只是没写。
+    ★ I-c 的第三向 = **档位 yaml**：它是**跑次实际读**的那一份（`tiers[*].config`）；只比
+      "清单 ↔ 矩阵"会漏掉"矩阵对、yaml 错"的情形。
+
+    ★ **豁免不是静默白名单**（两处，均带反向断言）：
+      · `exempt_drift`（默认 :data:`KNOWN_PRE_EXISTING_PER_EPOCH_DRIFT` = W-7 的 T017/T018，
+        ⛔ 本轮不修）里的档 **必须确实仍在漂**；不漂了 ⇒ 报「豁免表陈旧」。
+      · `exempt_no_config`（默认 :data:`NOT_APPLICABLE_NO_CONFIG` = T052–T054）里的档
+        **必须确实没有档配置 yaml**；有了 ⇒ 报「豁免表陈旧」（逼下一轮改走 yaml 现算）。
     """
     mpath = Path(manifest_path) if manifest_path is not None else V2_MANIFEST_PATH
     dpath = Path(matrix_path) if matrix_path is not None else (
         PROJECT_ROOT / "docs" / "capability-matrix.data.json"
     )
     exempt = KNOWN_PRE_EXISTING_PER_EPOCH_DRIFT if exempt_drift is None else tuple(exempt_drift)
+    exempt_nc = (NOT_APPLICABLE_NO_CONFIG if exempt_no_config is None else tuple(exempt_no_config))
     if not mpath.is_file():
         return [f"清单不在盘：{mpath}"]
     if not dpath.is_file():
@@ -1069,12 +1235,14 @@ def cross_check_manifest_against_matrix(
     rows = {str(r.get("tier")): r for r in json.loads(dpath.read_text(encoding="utf-8"))["rows"]}
     problems: list[str] = []
     drifted: set[str] = set()
+    no_config_seen: set[str] = set()
     for e in man.get("tiers", []):
         tid = str(e["tier_id"])
         r = rows.get(tid)
         if r is None:
             problems.append(f"{tid}: 矩阵正式件里没有该档 ⇒ 无法跨件核对")
             continue
+        # ── I-a：per_epoch（B-1 原有）────────────────────────────────────────
         want = r.get("per_epoch_steps")
         if want is None:
             problems.append(f"{tid}: 矩阵行缺 per_epoch_steps ⇒ 无法跨件核对")
@@ -1087,14 +1255,145 @@ def cross_check_manifest_against_matrix(
                     f"{tid}: manifest.per_epoch={got} != matrix.per_epoch_steps={want}"
                     f"（§1.4 单一真相源破 ⇒ ① 步数门基准被改）"
                 )
-    # ★ 反向断言：具名豁免必须仍然"确实在漂"，否则豁免表陈旧（⛔ 不许留静默白名单）
+        # ── I-b：reachable == matrix.derived_steps（2026-10-16 新增）──────────
+        der = r.get("derived_steps")
+        reach = int(e["expected_optimizer_steps_reachable"])
+        if run_config_epochs(tid) is None:
+            # ★ 无档配置 yaml 档（not_applicable，⛔ 无配方 ⇒ 无跑次）：**本不变量的定义域之外**
+            #   —— I-b/I-c 讲的是"清单声明 == 跑次实际"，而它们**没有跑次配置**可比。
+            #   ⇒ 具名豁免（`exempt_nc`，集合必须**恰好**等于实测无 yaml 的档），
+            #     且**仍**要求它自洽：`applicable` 必须为假 ＋ `reachable == per_epoch × epochs`
+            #     （生成器对它们原样保留 v1 口径，epochs 走具名常量） ＋ `eos == css`。
+            if bool(e.get("applicable")):
+                problems.append(
+                    f"{tid}: 无档配置 yaml 却标 `applicable=True` ⇒ 豁免前提破（fail-closed）"
+                )
+            if reach != got * int(gm.MATRIX_MAX_EPOCHS):
+                problems.append(
+                    f"{tid}: 无 yaml 豁免档自洽性破：reachable={reach} != "
+                    f"per_epoch({got}) × {int(gm.MATRIX_MAX_EPOCHS)}（v1 冻结口径）"
+                )
+        elif der is None:
+            problems.append(f"{tid}: 矩阵行缺 derived_steps ⇒ I-b 无法核对（fail-closed）")
+        else:
+            if reach != int(der):
+                if tid in exempt:
+                    # W-7 档：manifest.per_epoch 本身在漂 ⇒ reachable 必然跟着漂；
+                    # 仍要求它严格等于 manifest.per_epoch × yaml.max_epochs（自洽即可）。
+                    ep = r.get("max_epochs")
+                    if ep is None or reach != got * int(ep):
+                        problems.append(
+                            f"{tid}: 豁免档 I-b 自洽性破：reachable={reach} != "
+                            f"per_epoch({got}) × matrix.max_epochs({ep})"
+                        )
+                else:
+                    problems.append(
+                        f"{tid}: manifest.reachable={reach} != matrix.derived_steps={der}"
+                        f"（epoch 口径分叉 ⇒ A2「结构可达性」前置判定输入被低估/高估）"
+                    )
+        # ── I-c：css == matrix.save_steps == yaml.training.save_steps ─────────
+        mss = r.get("save_steps")
+        css = int(e["checkpoint_save_steps"])
+        yaml_cfg = run_config_scalar(tid, "save_steps")
+        if yaml_cfg is None:
+            no_config_seen.add(tid)
+            if tid not in exempt_nc:
+                problems.append(
+                    f"{tid}: 该档无档配置 yaml（读不到 training.save_steps）且不在无 yaml 具名豁免 "
+                    f"{list(exempt_nc)} 内 ⇒ I-c 无法核对（fail-closed）"
+                )
+        elif mss is None:
+            problems.append(f"{tid}: 矩阵行缺 save_steps ⇒ I-c 无法核对（fail-closed）")
+        else:
+            if css != int(yaml_cfg):
+                problems.append(
+                    f"{tid}: manifest.checkpoint_save_steps={css} != "
+                    f"{CONFIG_DIR_REL}/{tid}.yaml 的 training.save_steps={yaml_cfg}"
+                    f"（清单声明 ≠ 跑次实际）"
+                )
+            if int(mss) != int(yaml_cfg):
+                problems.append(
+                    f"{tid}: matrix.save_steps={mss} != "
+                    f"{CONFIG_DIR_REL}/{tid}.yaml 的 training.save_steps={yaml_cfg}"
+                    f"（矩阵生成件与跑次 yaml 分叉 ⇒ 需重生成 yaml）"
+                )
+        # ── I-d：清单内不变量 eos == css ─────────────────────────────────────
+        if "expected_optimizer_steps" in e and int(e["expected_optimizer_steps"]) != css:
+            problems.append(
+                f"{tid}: manifest.expected_optimizer_steps={e['expected_optimizer_steps']} != "
+                f"checkpoint_save_steps={css}（同清单内不变量破）"
+            )
+        # ── I-e：重投闸门（修正前后都不得有档跨过 reachable < 门槛）────────────
+        #   ★ 只对**可跑档**（有 yaml）成立：无 yaml 档 not_applicable ⇒ 从不产生 RunEvidence
+        #     ⇒ 那个"第三态"分支对它们永远不会执行（其 v1 口径值也不参与任何判定）。
+        reach_v = int(e["expected_optimizer_steps_reachable"])
+        if run_config_epochs(tid) is not None and reach_v < MIN_OPTIMIZER_STEPS:
+            problems.append(
+                f"{tid}: reachable={reach_v} < 门槛 {MIN_OPTIMIZER_STEPS} ⇒ **该档会触发 A2 第三态**"
+                f"（门槛退出闸门、改按每 epoch 步数判）⇒ 「先跑、事后用修正清单收集」**不成立**，"
+                f"必须重跑/重判。修 epoch 口径前请先处理本档。"
+            )
+    # ★ 反向断言 ①：具名豁免必须仍然"确实在漂"，否则豁免表陈旧（⛔ 不许留静默白名单）
     stale = sorted(set(exempt) - drifted)
     if stale:
         problems.append(
             f"豁免表陈旧：{stale} 已不再漂移 ⇒ 必须从 KNOWN_PRE_EXISTING_PER_EPOCH_DRIFT 删出"
             f"（本表只允许承载**确实仍在漂**的既有档）"
         )
+    # ★ 反向断言 ②：无 yaml 豁免表必须**恰好**等于"矩阵里无档配置 yaml"的档集合
+    if no_config_seen != set(exempt_nc):
+        problems.append(
+            f"无 yaml 豁免表陈旧：实测无 yaml 的档={sorted(no_config_seen)}，"
+            f"具名豁免表={sorted(exempt_nc)} ⇒ 两者必须相等（有了 yaml 就该改走 yaml 现算）"
+        )
     return problems
+
+
+def epoch_single_source_probe(entries: list[dict], data_root: str = "",
+                             pregen_dir: str = "") -> list[str]:
+    """★★ **epoch 单真相源** 机检（2026-10-16）：把 v1 冻结常量 ``gm.MATRIX_MAX_EPOCHS``
+    **扰动成哨兵值**后逐档重建，断言**除无 yaml 具名豁免档外**，任何档的步数/保存/注记
+    **都不得改变**。
+
+    为什么这条必须有（⛔ 光"把值改对"不够）：本次全 54 档 ``expected_optimizer_steps_reachable``
+    低估 2–8 倍的**根因**就是"epoch 存在第二个来源（``gm.MATRIX_MAX_EPOCHS``）被拿去算步数"。
+    只把值改对、不测"那条路已断" ⇒ 日后有人再拿它算一次，同样的病会静默复发。
+    ★ 这条**能失败**：把 :func:`patch_tier` 里的 ``run_config_epochs()`` 换回
+      ``int(gm.MATRIX_MAX_EPOCHS)`` ⇒ 本探针立刻红（除豁免档外全档变化）。
+    """
+    sentinel = int(gm.MATRIX_MAX_EPOCHS) + 5
+    watched = (
+        "expected_optimizer_steps_per_epoch", "expected_optimizer_steps_reachable",
+        "expected_optimizer_steps", "checkpoint_save_steps", "step_formula_v2",
+    )
+    real = [patch_tier(e, data_root, pregen_dir) for e in entries]
+    saved = gm.MATRIX_MAX_EPOCHS
+    try:
+        gm.MATRIX_MAX_EPOCHS = sentinel
+        probed = [patch_tier(e, data_root, pregen_dir) for e in entries]
+    finally:
+        gm.MATRIX_MAX_EPOCHS = saved
+    problems: list[str] = []
+    for a, b in zip(real, probed):
+        tid = str(a["tier_id"])
+        hits = [k for k in watched if a.get(k) != b.get(k)]
+        ga = (a.get("acceptance") or {}).get("formal_gate") or {}
+        gb = (b.get("acceptance") or {}).get("formal_gate") or {}
+        if ga.get("step_gate_basis") != gb.get("step_gate_basis"):
+            hits.append("acceptance.formal_gate.step_gate_basis")
+        if tid in NOT_APPLICABLE_NO_CONFIG:
+            continue  # 具名豁免：这 3 档本就（且只）用 v1 常量，⛔ 不判否
+        if hits:
+            problems.append(
+                f"{tid}: 扰动 v1 常量 MATRIX_MAX_EPOCHS → {sentinel} 后字段变化 {hits}"
+                f" ⇒ epoch 仍有**第二个来源**参与步数/保存口径（⛔ 必须走 run_config_epochs）"
+            )
+    return problems
+
+
+def v1_entries_for_probe(manifest_path: Path) -> list[dict]:
+    """探针用的 v1 条目集（与生成路径**逐字同源**：v1 清单的 tiers，⛔ 不用 v2 件反推）。"""
+    return json.loads(V1_MANIFEST_PATH.read_text(encoding="utf-8"))["tiers"]
 
 
 def check(manifest_path: Path, allow_unverified_subset_check: bool = False,
@@ -1111,6 +1410,11 @@ def check(manifest_path: Path, allow_unverified_subset_check: bool = False,
     run_config_dir = PROJECT_ROOT / CONFIG_DIR_REL
     have_run_configs = run_config_dir.is_dir()
     problems: list[str] = []
+    # ★★ 合法卡集机检（2026-10-16 新增）：对**在盘清单**逐档断言 gpus ⊆ legal_card_set()。
+    for _t in entries:
+        _v = non_legal_card_violation(str(_t.get("tier_id") or "?"), _t.get("gpus") or [])
+        if _v:
+            problems.append("合法卡集：" + _v)
     declared_anchor_diffs: list[str] = []
     if len(entries) != 54:
         problems.append(f"档数 {len(entries)} != 54")
@@ -1126,8 +1430,15 @@ def check(manifest_path: Path, allow_unverified_subset_check: bool = False,
                 problems.append(f"{tid}: 清单声明的 config 文件不存在：{e['config']}")
         per = int(e["expected_optimizer_steps_per_epoch"])
         reach = int(e["expected_optimizer_steps_reachable"])
-        if reach != per * int(gm.MATRIX_MAX_EPOCHS):
-            problems.append(f"{tid}: reachable({reach}) != per_epoch({per}) × max_epochs")
+        # ★ 2026-10-16：epoch 数从**跑次档配置 yaml** 现算（单一真相源），⛔ 不用 v1 冻结常量。
+        _ep = run_config_epochs(tid)
+        if _ep is None:
+            if tid not in NOT_APPLICABLE_NO_CONFIG:
+                problems.append(f"{tid}: 读不到跑次档配置 yaml 的 max_epochs（且不在无 yaml 具名豁免内）")
+        elif reach != per * int(_ep):
+            problems.append(
+                f"{tid}: reachable({reach}) != per_epoch({per}) × max_epochs({_ep})（yaml 现算）"
+            )
         if reach < MIN_OPTIMIZER_STEPS:
             problems.append(f"{tid}: reachable={reach} < 门槛 {MIN_OPTIMIZER_STEPS}")
         if tid in V2_SUBSET_SIZE_BY_TIER:
@@ -1296,11 +1607,17 @@ def check(manifest_path: Path, allow_unverified_subset_check: bool = False,
     #    `manifest.per_epoch == docs.per_epoch_steps`（全 54 档；具名豁免 T017/T018 = W-7 既有，
     #    且豁免必须"确实仍在漂"，否则报陈旧 ⇒ 逼下一轮删出）。
     cross = cross_check_manifest_against_matrix(manifest_path)
+    # ★★ epoch 单真相源（2026-10-16）：扰动 v1 常量 ⇒ 除具名豁免档外不得有任何变化。
+    cross = list(cross) + epoch_single_source_probe(
+        v1_entries_for_probe(manifest_path), "", ""
+    )
     if cross:
         problems.extend(f"[跨件] {x}" for x in cross)
     else:
         print(
-            "跨件不变量核对：manifest.per_epoch == docs.per_epoch_steps —— **52/52 成立**"
+            "跨件不变量核对（三向）：manifest.per_epoch == docs.per_epoch_steps（52/52）"
+            "｜manifest.reachable == docs.derived_steps ｜manifest.checkpoint_save_steps "
+            "== docs.save_steps == 档位 yaml 的 training.save_steps"
             f"（具名豁免 {len(KNOWN_PRE_EXISTING_PER_EPOCH_DRIFT)} 档 = "
             f"{list(KNOWN_PRE_EXISTING_PER_EPOCH_DRIFT)}，W-7 既有、⛔ 本轮不修；已验明确实在漂）"
         )
@@ -1319,15 +1636,18 @@ def check(manifest_path: Path, allow_unverified_subset_check: bool = False,
 
 
 def print_steps(v1_manifest: dict, pregen_dir: str = "") -> None:
-    print(f"Q={Q} 门槛={MIN_OPTIMIZER_STEPS} epoch={gm.MATRIX_MAX_EPOCHS}  公式=ceil(floor(subset/dp)/Q)")
+    print(f"Q={Q} 门槛={MIN_OPTIMIZER_STEPS}  公式=ceil(floor(subset/dp)/Q)"
+          f"   epoch 逐档读自 {CONFIG_DIR_REL}/<T>.yaml 的 training.max_epochs（单一真相源）")
     for tid in sorted(V2_SUBSET_SIZE_BY_TIER):
         size = V2_SUBSET_SIZE_BY_TIER[tid]
         dp = v2_dp_size(tid)
         steps = v2_native_steps_per_epoch(size, dp)
         v1e = next(t for t in v1_manifest["tiers"] if t["tier_id"] == tid)
+        _ep = run_config_epochs(tid)
         print(
             f"  {tid}: subset {v1e['data']['subset_size']}→{size}  dp={dp}  "
-            f"T={size // dp}  steps={steps}  (v1 朴素/上界式={v1e['expected_optimizer_steps_per_epoch']})"
+            f"T={size // dp}  steps={steps}  epoch={_ep}  reachable={steps * int(_ep or 0)}  "
+            f"(v1 朴素/上界式={v1e['expected_optimizer_steps_per_epoch']})"
         )
 
 

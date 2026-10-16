@@ -183,10 +183,12 @@ HUMAN_VIEW_META_KEYS = (
 #: ★★ **机读消费者字段（不进人读视图）**：`gen_configs.py` 的 fail-closed 检查要读它们
 #:   （`final_formats` 还直接决定生成的 yaml）。它们**保留在正式机读件里**但不被渲染：
 #:   ① 渲染层无任何引用（模板占位符只有 4 组 + 表格列，见 `render_matrix.py`）；
-#:   ② 本清单同时是 `forbidden_in_human_view()` 的**扫描豁免面**（只准这 8 个，逐条具名）。
+#:   ② ★★ **本清单不再是 `forbidden_in_human_view()` 的扫描豁免面**（2026-10-16 收口）：
+#:      `blocked_reason` / `executability` 是**使用者有权知道的结论与归因**（§17.7）⇒ 退出本清单、
+#:      进入人读视图，并被内部术语扫描覆盖。⇒ 扫描面 = 全行（⛔ 无逐字段豁免）。
 TOOLCHAIN_ONLY_ROW_KEYS = (
-    "final_formats", "family", "family_min_cards", "cards_pending", "blocked_reason",
-    "live_evidence", "caliber_change", "executability",
+    "final_formats", "family", "family_min_cards", "cards_pending",
+    "live_evidence", "caliber_change",
 )
 
 #: ①**允许清单**（行级）：= 矩阵表 21 列 + 逐档结论块 + 机读列定义（`gen_configs.py` 的消费者）。
@@ -216,6 +218,10 @@ HUMAN_VIEW_ROW_KEYS = (
     "inference", "algo_checks", "verdict", "excluded_reason", "availability",
     # ★★ 精简轮 2 新增的**派生结论列**（从 `verdict` 派生，⛔ 不从内部权威搬）
     "not_failed_reason",
+    # ★★ 2026-10-16 矩阵侧收口：**「本环境不可执行」的三个机读字段**进入人读允许清单
+    #    （§17.7「结论与归因都是使用者有权知道的」）—— 从此**被渲染 / 被扫描 / 被机核**；
+    #    ⛔ 它们**不再**是 `TOOLCHAIN_ONLY_ROW_KEYS`（那本是「机读消费者、渲染层无引用」的豁免面）。
+    "executability", "availability", "blocked_reason",
 ) + TOOLCHAIN_ONLY_ROW_KEYS
 
 #: ②**内部术语兜底**：允许清单之外（或清单内被回填污染）的内部术语命中即 **fail-closed 拒绝写盘**。
@@ -865,17 +871,62 @@ def drop_non_view_fields(doc):
 
 
 def forbidden_in_human_view(doc):
-    """② 兜底扫描：**会被渲染的字段**里若出现内部术语（人称 / 内部编排 / 内部角色）即拒写盘。
+    """② 兜底扫描：**使用者读得到的字段**里若出现内部术语（人称 / 内部编排 / 内部角色）即拒写盘。
 
-    ★ 扫描面 = 除 `TOOLCHAIN_ONLY_ROW_KEYS`（机读消费者字段，逐条具名、渲染层无引用）之外的全部内容。
-      ⇒ 「不进人读视图」从"靠人自觉"变成**可机核的事实**。
+    ★ 扫描面 = **全行减去 `TOOLCHAIN_ONLY_ROW_KEYS`**（机读消费者字段）。
+      豁免面**只**由 `HUMAN_VIEW_ROW_KEYS` ∩ `TOOLCHAIN_ONLY_ROW_KEYS` 决定 —— ⛔ 不在此另写一份
+      硬编码清单（否则「字段退出豁免面」这件事会在这儿被静默忽略）。
+      ⇒ 「不进人读视图」从"靠人自觉"变成**可机核的事实**；
+      ⇒ `blocked_reason` / `executability` **已被扫描覆盖**（2026-10-16 收口）。
     """
     probe = json.loads(json.dumps(doc, ensure_ascii=False))
+    # ★ 单一真相源：只有**同时**属于机读清单、且**不**属于人读允许清单的键才豁免
+    _exempt = tuple(k for k in TOOLCHAIN_ONLY_ROW_KEYS if k not in HUMAN_VIEW_ROW_KEYS)
     for _r in probe.get("rows", []):
-        for _k in TOOLCHAIN_ONLY_ROW_KEYS:
+        for _k in _exempt:
             _r.pop(_k, None)
     blob = json.dumps(probe, ensure_ascii=False)
     return sorted({t for t in FORBIDDEN_TERMS if t in blob})
+
+
+# ══ ★★ 「本环境不可执行」档数的**唯一真相源**（2026-10-16 收口）════════════════════
+#  病史：散文里 4 处「**10 档不可执行**」是**硬编码**的 —— 口径扩面（27 档并集）之后
+#        「文档说假话」而不自知。⇒ 一律**从数据现算**；`verify_matrix` ④S 机核
+#        「散文档数 == 数据里 `executability == "not_executable"` 的实际行数」。
+def not_executable_count(rows) -> int:
+    """从**行数据**现算「本环境不可执行」档数（判据 = 行级 `executability`）。"""
+    return sum(1 for r in (rows or []) if str(r.get("executability") or "") == "not_executable")
+
+
+def not_executable_count_txt(rows) -> str:
+    """散文中出现的档数短语（**单一写法**，生成端与校验端同源引用）。"""
+    return f"{not_executable_count(rows)} 档"
+
+
+def _not_executable_count_self_test():
+    """★ **能失败**的阳性对照：证明散文档数**确实由数据驱动**（⛔ 不是又一个硬编码）。
+
+    三组**合成的**行集合 —— 若本函数/调用点是写死的，这三组会给出同一个数。
+    """
+    ok = True
+
+    def chk(name, cond):
+        nonlocal ok
+        print(f"  [{'PASS' if cond else 'FAIL'}] {name}")
+        ok = ok and bool(cond)
+
+    r0 = [{"tier": "T001", "executability": "executable"},
+          {"tier": "T002", "executability": None}]
+    r1 = r0 + [{"tier": "T003", "executability": "not_executable"}]
+    r2 = r1 + [{"tier": "T004", "executability": "not_executable"},
+               {"tier": "T005", "executability": "not_executable"}]
+    chk("① 0 档不可执行 ⇒ 文案 '0 档'", not_executable_count_txt(r0) == "0 档")
+    chk("② 1 档不可执行 ⇒ 文案 '1 档'（⛔ 不是 10）", not_executable_count_txt(r1) == "1 档")
+    chk("③ 3 档不可执行 ⇒ 文案 '3 档'（随数据变，⛔ 不是常量）", not_executable_count_txt(r2) == "3 档")
+    chk("④ 计数 = 行级判据（只认 not_executable，⛔ 不认其它取值）",
+        not_executable_count([{"executability": "blocked"}, {"executability": "not_executable"}] * 2) == 2)
+    chk("⑤ 空数据 ⇒ 0（⛔ 不抛异常、不回落到常量）", not_executable_count(None) == 0)
+    return ok
 
 
 def _row_normalize_self_test():
@@ -1202,6 +1253,11 @@ def boundary_declaration():
                  "不在本矩阵的承诺范围。"),
         "points": [
             "① 各档可用性：每个列出的档位都已完整跑通（平台方整体承诺以覆盖度门槛为前提）。",
+            # ★ 2026-10-16 最小补正（矩阵侧收口）：不可执行档的承诺边界 —— ⛔ **不削弱原三点**
+            #   （原三点逐字未动，仅在 ① 之后**新增** ①′）
+            "①′ 不可执行档**不计入**承诺面：标为「本环境不可执行」的档位**既不充当可用证据、"
+            "也不充当不可用结论** —— 它们是**环境 / 硬件层面的排除**，"
+            "⛔ 不改变任何档位的历史结论与四态计数。",
             "② 平台方数据集结论：在平台方数据集与平台方参数下效果达标，且这是「可用、大概率无 bug」的证据。",
             "③ 使用者效果不在承诺范围：使用者的任务、数据集与参数下的效果不归本矩阵承诺。",
         ],
@@ -1298,6 +1354,10 @@ def criteria_caliber(rows=None):
     _rows = list(rows or [])
     _fit_tiers = [str(r.get("tier")) for r in _rows if str(r.get("subset_size")) == "100"]
     _fit_txt = f"{len(_fit_tiers)} 档（{', '.join(_fit_tiers)}）" if _fit_tiers else "（无）"
+    # ★★ 「本环境不可执行」档数：**一律从行数据现算**（单一真相源 = `not_executable_count_txt`），
+    #    ⛔ 不再硬编码 —— 口径扩面（27 档并集）后硬编码会让文档说假话。
+    #    机核 = `verify_matrix` ④S「散文档数 == 数据实际 not_executable 行数」。
+    _ne_txt = not_executable_count_txt(_rows)
     return {
         "availability_criteria": [
             "① 跑通/工程合规：退出码 0、无未捕获异常；优化器步数达标；checkpoint 完整；NaN/Inf 为 0；算法机制真实生效；产物形态合规；显存与吞吐在承诺范围内。",
@@ -1311,8 +1371,9 @@ def criteria_caliber(rows=None):
             "★★ **2026-10-16 扩面（主席裁定「18 个 20 行档放大到 100 行」）**：原 18 个 **20 行**档"
             "（`T031–T033`/`T037–T039`/`T043–T045` 的 GRASPO×ms-swift，＋ `T046–T054` 的 OPD）"
             "宣布口径**已裁定**（不再属于「口径未定、不下结论」）⇒ 其 `subset_size` 由 20 改为 100，"
-            "一并纳入 fit 口径。★ 其中 **10 档不可执行**（见各行具名 `not_executable_reason`）"
-            "⇒ ⛔ **不为它们拼凑一份看似可跑的配置**，只登记声明口径；★ **T052–T054 为 `not_applicable`"
+            f"一并纳入 fit 口径。★ 其中 **{_ne_txt}不可执行**"
+            "（**本环境不可执行**：逐档具名原因在行内标注）⇒ ⛔ **不为它们拼凑一份看似可跑的配置**，"
+            "只登记声明口径；★ **T052–T054 为 `not_applicable`"
             "（设计上不成立、不产出可运行配置）⇒ 四态 = 「未纳入验收」，⛔ 不得读成「试过了不行」**。"
             "★ **通过线数值逐字未动**（⛔ 未放宽、⛔ 未收紧）。"
             "★ 一律用**点估计 Δ** 判定：⛔ 不做假设检验，不引入置信区间 / 显著性。",
@@ -1332,7 +1393,8 @@ def criteria_caliber(rows=None):
                         "★★ **改动三（2026-10-16）= 20 行档扩面到 100 行（主席裁定）**：原 18 个 **20 行**档"
                         "（GRASPO×ms-swift 的 `T031–T033`/`T037–T039`/`T043–T045` ＋ OPD 的 `T046–T054`）"
                         "由「主席裁定未回、口径待定、⛔ 不下效果结论」改为**已裁定：放大到 100 行、"
-                        "适用同一 fit 口径**；★ 其中 10 档**不可执行**（具名原因见行内 `not_executable_reason`）"
+                        f"适用同一 fit 口径**；★ 其中 **{_ne_txt}不可执行**"
+                        "（**本环境不可执行**：逐档具名原因在行内标注）"
                         "⇒ 只登记声明口径、⛔ 不伪造可跑配置；★ 9 个 formal 档**不动**。"),
             "unchanged": "★ 判据 ①③④ **逐字未动**（见 availability_criteria 第 1/3/4 项）。",
             "superseded": ("★ 旧口径（留痕，⛔ 不再作为判定依据）：训练类（SFT / CPT / OPD）与 GRASPO **统一 δ = +5.0 pp**；"
@@ -1362,7 +1424,8 @@ def criteria_caliber(rows=None):
                         "旧 702 行口径下的读数**已作废**，保留于各行 `voided_conclusion.historical_effect`。"
                         "★★ **2026-10-16 扩面**：档位清单一律从行数据现算（判据 = `subset_size == 100`）"
                         "⇒ 原 18 个 **20 行**档已随主席裁定**放大到 100 行**并纳入 fit 口径；"
-                        "★ 其中 **10 档不可执行**（具名 `not_executable_reason`）⇒ 只登记声明口径、"
+                        f"★ 其中 **{_ne_txt}不可执行**"
+                        "（**本环境不可执行**：逐档具名原因在行内标注）⇒ 只登记声明口径、"
                         "⛔ 不为它们伪造可跑配置；★ **T052–T054 = `not_applicable` ⇒ 四态「未纳入验收」**"
                         "（⛔ 不得读成「试过了不行」）。"
                         "② **其余档**（9 个 formal 档）= 平台方自有 702 行评测集"
@@ -1402,9 +1465,10 @@ def criteria_caliber(rows=None):
                                "★ 立此裁定的理由（旧表述保留于下）：n=20 ⇒ 每样本 **5.00 pp**，而 GRASPO "
                                "通过线正好 +5.0 pp ⇒ 判据退化为「1 个样本决定成败」——放大到 100 行后"
                                "每样本粒度回到 **1.00 pp**（达线需净跳 ≥10 条），判别力恢复。"
-                               "★ **10 档不可执行**（T044 2 卡实测 OOM；T046–T051 首步实测 OOM；"
-                               "T052–T054 `not_applicable`、无生成件）⇒ ⛔ **只登记声明口径、不为它们伪造"
-                               "可跑配置**，逐档具名原因见行内 `not_executable_reason`。"
+                               f"★ **{_ne_txt}不可执行**（**本环境不可执行**：其声明实现路径依赖 DeepSpeed；"
+                               "或 27B × ms-swift 在声明卡数下不切分基座权重；或首步实测 OOM；"
+                               "或 `not_applicable`、无生成件）⇒ ⛔ **只登记声明口径、不为它们伪造"
+                               "可跑配置**，逐档具名原因在行内标注。"
                                "★ **T052–T054 的四态 = 「未纳入验收」**（`applicable == false`）—— "
                                "⛔ 它们**不是「试过了不行」**，而是**从未尝试、不实施**：⛔ 不得读成效果否定。"),
             "untouched": "★ 9 个 formal 档（T028–T030 / T034–T036 / T040–T042）不动：训练源 = 全量训练集前 N，与 702 评测集本就同分布。",
@@ -2310,6 +2374,8 @@ def main():
         return _sanitizer_self_test()
     if getattr(a, "human_view_self_test", False):
         _ok = _row_normalize_self_test()
+        print("★ 「不可执行」档数**数据驱动**阳性对照（2026-10-16 收口）：")
+        _ok = _not_executable_count_self_test() and _ok
         print("★ 检查点间隔令牌移除（修正包 🔴-1）阳性对照：")
         _ok = _save_steps_token_self_test() and _ok
         return 0 if _ok else 1

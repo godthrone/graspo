@@ -646,6 +646,20 @@ def main():
     if miss_keys:
         failures.append(("④E 机读字段缺失（yaml 生成器口径）", f"缺 {len(miss_keys)} 处（前 5）: {miss_keys[:5]}"))
 
+    # ---- ④S. 「不可执行」档数：**散文 == 数据**（2026-10-16 矩阵侧收口）----
+    #   ★ 病史：散文里 4 处「10 档不可执行」是**硬编码**；口径扩面到 27 档并集后 ⇒ 文档说假话。
+    #   ★ 判据（fail-closed）：① 数据里 `executability == not_executable` 的行数**现算**（唯一入口
+    #     = `build_official.not_executable_count`，与生成端同源）；② 散文里的档数短语只能有**一个**
+    #     取值，且必须等于 ①（多取值 / 漏插值 / 硬编码残留 ⇒ 必红）。
+    _ne_n = build_official.not_executable_count(data["rows"])
+    _ne_word = f"{_ne_n} 档不可执行"
+    _meta_blob = json.dumps(data.get("meta", {}), ensure_ascii=False)
+    _ne_phrases = sorted(set(re.findall(r"\d+ 档不可执行", _meta_blob)))
+    if _ne_phrases != [_ne_word]:
+        failures.append(("④S 散文档数 == 数据",
+                         f"数据里 not_executable 行数 = {_ne_n} ⇒ 散文应恰为 ['{_ne_word}']，"
+                         f"实际 = {_ne_phrases}（散文与数据不一致：硬编码残留 / 多取值 / 漏插值）"))
+
     sha_html = hashlib.sha256(target_bytes).hexdigest()
     sha_render = hashlib.sha256(rendered_bytes).hexdigest()
 
@@ -674,7 +688,8 @@ def main():
               f" | ④P 覆盖度门槛注={ok('④P')}"
               f" | ④Q0 关键开关列—语义={ok('④Q0')}"
               f" | ④Q 开关列不重复发布检查点间隔={ok('④Q')}"
-              f" | ④R 正文无开发过程内容={ok('④R')}")
+              f" | ④R 正文无开发过程内容={ok('④R')}"
+              f" | ④S 散文档数==数据={ok('④S')}")
         print(f"results: 已回填 {len(filled)} 档 {filled}；其余 {len(data['rows'])-len(filled)} 档保持 '—'"
               + ("；--expect-empty 已开启" if a.expect_empty else ""))
         print(f"elapsed: 有值 {len(el_filled)} 档"
