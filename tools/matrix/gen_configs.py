@@ -641,6 +641,21 @@ def main():
                                       [r["tier"] for r in rows], label=a.check_declared)
         return rc
 
+    # ★★ 第 6 批（①）：**被比对目录**（`--check-dir`）的声明开关校验必须**能失败**。
+    #    病史：原实现把这道校验写在写盘后的 `--check-dir` 分支里、且**校验的是 `a.out_dir`**
+    #    —— 即**刚刚生成的新目录**；而 `yaml_of()` 的通用规则保证新目录恒含全部已声明开关
+    #    ⇒ 该分支**永不能失败**（「不能失败的检查」），真正被比对的 `a.check_dir` **从未被校验**。
+    #    ★ 位置：**早于生成、且早于一切写盘侧守卫** ——「被比对目录是否缺声明开关」是**纯只读判定**，
+    #    与本次能否生成无关。否则它会像写盘守卫一样被**既有红**挡在后面而永不可达
+    #    （实测：全量 `--check-dir` 在 `blocked_contradicted_by_live` 的 T037/T043 处 rc=1，
+    #      `--check-dir` 分支根本走不到）。
+    #    ★ 两个目录都校验：本处查 `a.check_dir`（被比对者）；分支内仍查 `a.out_dir`（产出者）。
+    if a.check_dir:
+        rc_cmp = report_declared_switches(a.check_dir, declared_by_tier,
+                                          [r["tier"] for r in rows], label=str(a.check_dir))
+        if rc_cmp:
+            return rc_cmp
+
     out = Path(a.out_dir)
     out.mkdir(parents=True, exist_ok=True)
 
@@ -748,7 +763,13 @@ def main():
     if a.check_determinism:
         bad = []
         for r in rows:
-            again = yaml_of(r, uni, a.model_root, a.data_root, lora_backends, teacher)
+            # ★★ 第 6 批（⑤）：自证重渲染**必须与写盘循环（见上 :665）同参**。
+            #    病史：本行原漏传 `declared_by_tier.get(r["tier"])` ⇒ 自证版本不含
+            #    「已声明的前提」开关，而写盘版本含 ⇒ T016/T034 的两份重渲染**必不相等**，
+            #    该「幂等自证」自第 4 批接线起**永远 FAIL**（「不能通过的检查」；
+            #    与 `--check-dir` 那条「不能失败的检查」同族）。
+            again = yaml_of(r, uni, a.model_root, a.data_root, lora_backends, teacher,
+                            declared_by_tier.get(r["tier"]))
             if again != written[r["tier"]].read_text(encoding="utf-8"):
                 bad.append(r["tier"])
         print(f"DETERMINISM {'PASS' if not bad else 'FAIL'}（{len(rows)} 档；不一致 {bad}）")

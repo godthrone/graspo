@@ -1607,10 +1607,13 @@ def criteria_caliber(rows=None):
                     "★ **登记待裁（⛔ 不改）**：`T013/T015/T020/T021/T025/T026/T027` 的跑次读数取自 **epoch=2 世代**"
                     "（现行判据为 epoch=4）—— 该差异**已由行级 `reading_consistency` / `eval_caliber_consistency`"
                     "作废并留痕**，不另改数值。"
-                    "★ **已知 🟡（登记待裁、⛔ 不猜）**：**51 档清单**的 `checkpoint_save_steps` 与"
-                    "`expected_optimizer_steps_reachable` 仍是 **v2 口径**（= 每 epoch 步数，未乘 epoch 数），"
-                    "与矩阵侧的 `derived_steps`（= 每 epoch × epoch 数）**两代混用**；"
-                    "本包只对其中的 18 档做 20→100 的**线性同步（×5）**，⛔ 不擅自统一其口径 —— 由指挥裁定。"
+                    "★ **已闭合（2026-10-17 核销；原登记为「🟡 待裁、⛔ 不猜」）**：**51 档清单**的"
+                    "`checkpoint_save_steps` 现由**该档跑次 yaml 现读**（`config` 所指文件），"
+                    "与矩阵 `derived_steps + 1` **恒等**（三向机检 **51/51**；旧 v2 签名"
+                    "「`checkpoint_save_steps == expected_optimizer_steps_per_epoch`」= **0 档**"
+                    "⇒「两代混用」不再存在）；`expected_optimizer_steps_reachable` 与矩阵 `derived_steps` "
+                    "一致 **49/51**，余 `T017`/`T018` 为**既有具名豁免**、确实仍在漂"
+                    "（源清单 `--check` 已逐字登记；⛔ 不因该核销而放松）。"
                     "★★ **对外投影侧已止损（修正包 🔴-1，2026-10-16，窄复核报出）**：该 v2 值曾被 "
                     "`build_data.switches_of()` 以 `save_steps=<v2 值>` 的**键名**渲染进人读件「关键开关」列 ⇒ "
                     "与 ① 同行权威字段 `save_steps`（= 推导步数 + 1）② §3.1 定义行 ③ 跑次 yaml "
@@ -2541,8 +2544,8 @@ def main():
             #      ⇒ 改名为 `checkpoint_save_steps=<旧值>` 只会把同一个错误换个名字（仍与定义行矛盾）；
             #      移除后**该量在文档里只剩一个来源** = 定义行（按公式）＋ 本行 `save_steps`（机读件内）。
             #    ★ 与既有登记**互指**（§1.4 单一真相源，⛔ 不各写一份）：见本文件 `criteria_caliber`
-            #      「步数口径」的 `**已知 🟡（登记待裁、⛔ 不猜）**：**51 档清单**的
-            #      `checkpoint_save_steps` …仍是 v2 口径` 一条。
+            #      「步数口径」的 `**已闭合（2026-10-17 核销）**：**51 档清单**的 `checkpoint_save_steps`
+            #      现由该档跑次 yaml 现读、与矩阵 `derived_steps + 1` 恒等（三向机检 51/51）` 一条。
             r["switches"] = _strip_save_steps_token(r.get("switches"))
         # ★ 备注补充：LoRA 按后端的真实覆盖（对 LoRA 档；数据驱动的口径事实，⛔ 不手写）
         if r.get("tuner_type") == "lora" and r.get("note") not in (None, "", "—"):

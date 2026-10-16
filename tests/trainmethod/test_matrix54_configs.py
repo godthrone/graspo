@@ -139,7 +139,16 @@ def test_no_tier_still_produces_a_blocked_stub_for_cpt_or_opd() -> None:
         for tier in TIERS
         if generate_matrix.classify_expressibility(tier)[0] == "blocked"
     ]
-    assert blocked == ["T016", "T034"], blocked
+    # ★ 订正（2026-10-17，单处）：**期望集合 `["T016", "T034"]` → `[]`**。
+    #   事实来源：`generate_matrix.classify_expressibility()`（本文件所测生成器）的 docstring
+    #   逐字登记「native 全参 1 卡（T016/T034）**已于 2026-09-23 解除 blocked**」——改走
+    #   `native.offload_optimizer_state`，真机实测 `exit=0`／**50/50 步**／宿主峰值 38.18 GiB
+    #   （无 offload 对照为 79.24 GiB OOM）；收口提交 = 4 卡线 `36d6959`／`8222190`
+    #   （`fix(matrix): move 4-card full-param tiers off AutoTP, enable native 1-card offload`）。
+    #   故现行取值为 `unverified`、`blocked` 集合确实为**空**；T016(SFT)/T034(GRASPO) **不属**
+    #   CPT/OPD 18 档，下一循环「CPT/OPD 不得 blocked」仍被完整保留（断言只收敛、不放松）。
+    #   病史：该陈旧期望已由先前窗口归因并登记（.local 工作日志：期望 `["T016","T034"]` 实得 `[]`）。
+    assert blocked == [], blocked
     for tier_id, tier in _BY_ID.items():
         if tier["algorithm"] in {"CPT", "OPD"}:
             assert tier_id not in blocked
