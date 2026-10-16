@@ -21,6 +21,24 @@ _RUNTIME_MODULE_NAME = "graspo.flow.backend.native.runtime"
 _RUNTIME_PATH = Path(__file__).resolve().parents[4] / "src" / "graspo" / "flow" / "backend" / "native" / "runtime.py"
 
 
+def _same_source_file(module, target: Path) -> bool:
+    """★ S2 加固：判定"已登记的同名模块"与本次目标是否**同一来源文件**。
+
+    先 ``Path.samefile``（对相对/绝对、符号链接等价判断，需要两侧都存在）；任一侧
+    不存在时退化为 ``realpath`` 字符串比较。⛔ 不静默：判定不确定时**返回 False**
+    （fail-closed），由调用方报错。
+    """
+    import os
+
+    cached_file = getattr(module, "__file__", None)
+    if not cached_file:
+        return False
+    try:
+        return Path(cached_file).samefile(target)
+    except OSError:
+        return os.path.realpath(str(cached_file)) == os.path.realpath(str(target))
+
+
 def _load_runtime_module():
     """按文件路径加载 runtime.py，**同名副本一律复用** ``sys.modules`` 里那一份。
 
@@ -34,6 +52,17 @@ def _load_runtime_module():
     """
     cached = sys.modules.get(_RUNTIME_MODULE_NAME)
     if cached is not None:
+        # ★ fail-closed 来源路径校验（S2 加固）：复用**只按键名**是不够的——若同键上
+        #   登记的是"另一份**来源**"的同名模块（别处用别的路径加载过／路径表达式不同），
+        #   复用会把断言静默钉在那一份上（方向＝可能假绿）。故要求缓存件与本次目标
+        #   是**同一个文件**；不同即报错（⛔ 不静默复用）。`samefile` 对相对/绝对、
+        #   符号链接均等价判断；`realpath` 兜底"缓存件 `__file__` 已不存在"的情形。
+        if not _same_source_file(cached, _RUNTIME_PATH):
+            raise RuntimeError(
+                f"同键 {_RUNTIME_MODULE_NAME!r} 已被**另一份来源**登记："
+                f"缓存件={getattr(cached, '__file__', None)!r} ≠ 本次目标={str(_RUNTIME_PATH)!r}"
+                " ⇒ 复用会让断言打在另一份同名模块上（fail-closed，⛔ 不静默）"
+            )
         return cached
     _spec = importlib.util.spec_from_file_location(
         _RUNTIME_MODULE_NAME,

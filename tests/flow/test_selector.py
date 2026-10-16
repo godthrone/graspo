@@ -20,7 +20,32 @@ _SELECTOR_MODULE_NAME = "graspo.flow.backend.selection"
 _selector_path = (
     Path(__file__).resolve().parents[2] / "src" / "graspo" / "flow" / "backend" / "selection.py"
 )
+def _same_source_file(module, target) -> bool:
+    """★ S2 加固：判定"已登记的同名模块"与本次目标是否**同一来源文件**。
+
+    先 ``Path.samefile``（相对/绝对、符号链接等价判断）；任一侧不存在时退化为
+    ``realpath`` 比较。判定不确定 ⇒ 返回 False（fail-closed），由调用方报错。
+    """
+    import os
+
+    cached_file = getattr(module, "__file__", None)
+    if not cached_file:
+        return False
+    try:
+        return Path(cached_file).samefile(target)
+    except OSError:
+        return os.path.realpath(str(cached_file)) == os.path.realpath(str(target))
+
+
 _selector = sys.modules.get(_SELECTOR_MODULE_NAME)
+if _selector is not None and not _same_source_file(_selector, _selector_path):
+    # ★ fail-closed（S2 加固）：复用**只按键名**不够——若同键上是"另一份来源"的同名
+    #   模块，复用会让断言静默打在那一份上（方向＝可能假绿）。要求两者同一文件。
+    raise RuntimeError(
+        f"同键 {_SELECTOR_MODULE_NAME!r} 已被**另一份来源**登记："
+        f"缓存件={getattr(_selector, '__file__', None)!r} ≠ 本次目标={str(_selector_path)!r}"
+        " ⇒ 复用会让断言打在另一份同名模块上（fail-closed，⛔ 不静默）"
+    )
 if _selector is None:
     _spec = importlib.util.spec_from_file_location(
         _SELECTOR_MODULE_NAME,

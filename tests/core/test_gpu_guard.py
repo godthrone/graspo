@@ -129,6 +129,23 @@ def test_accepts_legal_four_cards():
 # 静默改变运行期语义（那等于推翻 B10，须主席批准）。
 
 
+def _same_source_file(module, target) -> bool:
+    """★ S2 加固：判定"已登记的同名模块"与本次目标是否**同一来源文件**。
+
+    先 ``Path.samefile``（相对/绝对、符号链接等价判断）；任一侧不存在时退化为
+    ``realpath`` 比较。判定不确定 ⇒ 返回 False（fail-closed），由调用方报错。
+    """
+    import os
+
+    cached_file = getattr(module, "__file__", None)
+    if not cached_file:
+        return False
+    try:
+        return target.samefile(cached_file)
+    except OSError:
+        return os.path.realpath(str(cached_file)) == os.path.realpath(str(target))
+
+
 def _load_module_from_path(name: str, relpath: str):
     """按文件路径加载仓内模块（与 `scripts/gpu_lock_guard.py` 同款做法），**同名副本一律复用**。
 
@@ -147,6 +164,15 @@ def _load_module_from_path(name: str, relpath: str):
     source = root / relpath
     cached = _sys.modules.get(name)
     if cached is not None:
+        # ★ fail-closed 来源路径校验（S2 加固）：复用**只按键名**不够——若同键上是
+        #   "另一份来源"的同名模块（别处用别的路径加载过），复用会让断言静默打在
+        #   那一份上（方向＝可能假绿）。要求缓存件与本次目标是同一文件；不同即报错。
+        if not _same_source_file(cached, source):
+            raise RuntimeError(
+                f"同键 {name!r} 已被**另一份来源**登记："
+                f"缓存件={getattr(cached, '__file__', None)!r} ≠ 本次目标={str(source)!r}"
+                " ⇒ 复用会让断言打在另一份同名模块上（fail-closed，⛔ 不静默）"
+            )
         return cached
     spec = importlib.util.spec_from_file_location(name, source)
     assert spec is not None and spec.loader is not None, f"加载失败：{source}"
