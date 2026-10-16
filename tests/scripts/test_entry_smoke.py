@@ -17,8 +17,13 @@ B3 的冒烟抓出 `scripts/gpu_lock_guard.py` 自 P0 起加载错模块（`run.
 
 ## 发现规则与排除理由（★ 新的入口脚本不会被静默漏掉）
 
-候选由 `git ls-files` **自动发现**：所有 `*.sh`、`scripts/*.py`、`docker/*.py`、
-`tools/*.py`、`tests/e2e/{,rig_synth/}*.py`（去掉 pytest 测试件）。发现到的每个路径
+候选由 `git ls-files`（**已跟踪**）∪ `git ls-files --others --exclude-standard`
+（**未跟踪但不被 `.gitignore` 忽略**）**自动发现**：所有 `*.sh`、`scripts/*.py`、
+`docker/*.py`、`tools/*.py`、`tests/e2e/{,rig_synth/}*.py`（去掉 pytest 测试件）。
+★ 只扫已跟踪集合是本检查器此前的**结构性盲区**：新落的入口脚本在 `git add` 之前是
+`??`（未跟踪），不在候选集里 ⇒ 断言无从触发 ⇒ 门禁在"提交前"通过、"提交后"才失败
+（实测事件：`tests/e2e/regen_field_guard.py` 随 U4 `a1e53b1` 入库时漏登记）。补上
+未跟踪段后，"新增入口未登记"在提交前即可被拦。发现到的每个路径
 必须在本文件的 `POLICY` 或 `EXCLUSIONS` 里有**具名**条目，否则测试**当场失败**
 （fail-closed：新增入口必须显式登记冒烟方式，不得漏检）。
 
@@ -125,6 +130,14 @@ POLICY: dict[str, Spec] = {
     "tools/matrix/freeze_table.py": Spec(
         HELP, "里程碑「冻结件」节机读生成器（值来自实物 sha256＋字节；支持 --inject）"
     ),
+    # ★ 补登记（2026-10-16）：生成链「防丢失」共享守卫 —— 上一批 U4 commit `a1e53b1` 新增时
+    #   仍是**未跟踪**文件，`git ls-files` 发现不到 ⇒ 提交后才发现漏登记（详见 tools/matrix/README.md）。
+    #   本件是**库模块**（无 `__main__`/无 CLI，被 3 个清单生成器与 `test_regen_field_guard.py` import）
+    #   ⇒ 无 `--help` 可冒烟，按 POLICY 既有先例（无 argparse 的件）取 **COMPILE** 模式做语法/可编译冒烟。
+    "tests/e2e/regen_field_guard.py": Spec(
+        COMPILE,
+        "生成链防丢失共享守卫库（重生成不得移除在盘字段；仅 stdlib）；由 3 个清单生成器 import",
+    ),
     "tests/e2e/generate_matrix.py": Spec(HELP, "54 档矩阵生成器（v1 基线）"),
     "tests/e2e/generate_matrix_fsdp.py": Spec(HELP, "matrix54-fsdp 变体生成器"),
     "tests/e2e/generate_matrix_manifest_fsdp.py": Spec(HELP, "fsdp 清单生成器"),
@@ -188,13 +201,29 @@ EXCLUSIONS: dict[str, str] = {
 }
 
 
-def _discover() -> list[str]:
-    """`git ls-files` 自动发现入口/启动脚本候选（见模块 docstring 的发现规则）。"""
-    tracked = subprocess.run(
-        ["git", "ls-files"], cwd=REPO, capture_output=True, text=True, check=True
+def _ls_files(*extra: str) -> list[str]:
+    """跑一次 `git ls-files`（`extra` 见调用点），返回相对仓库根的 posix 路径。"""
+    return subprocess.run(
+        ["git", "ls-files", *extra], cwd=REPO, capture_output=True, text=True, check=True
     ).stdout.splitlines()
+
+
+def _discover() -> list[str]:
+    """自动发现入口/启动脚本候选（见模块 docstring 的发现规则）。
+
+    候选集 = **已跟踪**（`git ls-files`）∪ **未跟踪但不被 `.gitignore` 忽略**
+    （`git ls-files --others --exclude-standard`）。
+
+    ★ 只取前者是本检查器此前的**结构性盲区**：新落的入口脚本在 `git add` 之前
+    是 `??`（未跟踪），不在索引里 ⇒ 候选集里没有它 ⇒ `uncovered` 断言无从触发
+    ⇒ 门禁在"提交前"通过、"提交后"失败（实测事件：`tests/e2e/regen_field_guard.py`
+    随 U4 `a1e53b1` 入库时漏登记，提交包内 `pytest tests/scripts/` = 147 passed，
+    提交后同一条 gate = 1 failed）。补上未跟踪段后，该盲区闭合。
+    """
+    tracked = _ls_files()
+    untracked = _ls_files("--others", "--exclude-standard")
     out: list[str] = []
-    for path in tracked:
+    for path in [*tracked, *untracked]:
         if path.endswith(".sh"):
             out.append(path)
         elif path.endswith(".py") and (

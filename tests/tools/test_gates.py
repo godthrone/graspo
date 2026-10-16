@@ -360,10 +360,14 @@ def test_unstaged_worktree_edit_not_blocked(tmp_path: Path) -> None:
 
 
 def test_staged_all_files_scan_includes_new_paths(tmp_path: Path) -> None:
-    """★ 暂存全部候选文件后，扫描面必须包含本次新增的路径（"门禁能扫自己"）。
+    """★ 新增路径必须进入扫描面——**`git add` 之前就已经进入**（时间窗已关）。
 
-    断言两件事：① 暂存的新路径出现在扫描面说明里；② 索引里的新增文件确实
-    被读入（`scanned_files` 随暂存增加）。这是 P2 建议的"把缺口变成可核断言"。
+    断言两件事：① 新增路径在 `git add` **之前**与**之后**都出现在扫描面说明里；
+    ② `scanned_files` 不因 `git add` 而变（同一路径只计一次，不重复计数）。
+
+    旧版只断言 `after["scanned_files"] > before["scanned_files"]`——那等于把
+    "add 之前看不见新文件"这个**时间窗正向固化**成契约。候选集并入"未跟踪且非
+    忽略"路径后，两种时机必须同严，故该断言同步改为"前后同面、不重复计数"。
     """
     repo = make_repo(tmp_path)
     new_dir = repo / "tools"
@@ -372,12 +376,116 @@ def test_staged_all_files_scan_includes_new_paths(tmp_path: Path) -> None:
     before = json.loads(run_gate("secrets", repo, "-o", "json", "--tracked-only").stdout)
     _git(repo, "add", "--", "tools/gate_new.py")
     after = json.loads(run_gate("secrets", repo, "-o", "json", "--tracked-only").stdout)
-    assert after["scanned_files"] > before["scanned_files"], (
+    for label, payload in (("add 之前", before), ("add 之后", after)):
+        notes = "\n".join(payload["notes"])
+        assert "tools/gate_new.py" in notes, f"{label}：新增路径不在扫描面内\n{notes}"
+    assert before["scanned_files"] == after["scanned_files"], (
+        "add 前后扫描对象数不一致（重复计数，或 add 之前未纳入）：",
         before["scanned_files"],
         after["scanned_files"],
     )
-    notes = "\n".join(after["notes"])
-    assert "tools/gate_new.py" in notes, notes
+
+
+# ── ★ 时间窗：`git add` **之前**跑门禁也必须拦得住未跟踪的新文件 ──────────────
+# 本仓提交纪律是"提交前手动跑门禁"。若候选集只取索引 ∪ 已暂存，在 `git add`
+# 之前跑就是**假绿**（新文件完全不在扫描面内）；add 之后若不重跑，违规就随提交
+# 落地。下面四条逐一证明：未跟踪、非忽略的合成文件在 add 之前必须被拦。
+# 夹具字符串一律**运行时拼接**，避免把规则要抓的字面量写进本测试文件
+# （否则测试文件自己会命中门禁，又要为它加白名单——那正是本包要避免的"排除"）。
+
+
+def _untracked(repo: Path) -> list[str]:
+    """`git ls-files --others --exclude-standard` 的仓库内真值。"""
+    return subprocess.run(
+        ["git", "ls-files", "--others", "--exclude-standard"],
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+
+
+def test_untracked_new_file_with_secret_is_blocked(tmp_path: Path) -> None:
+    """★ 未跟踪（**未 `git add`**）的新文件含伪造密钥 ⇒ 机密门禁必须非 0。"""
+    repo = make_repo(tmp_path)
+    probe = "notes_untracked.md"
+    fake = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"
+    (repo / probe).write_text(f"临时记录：{fake}\n", encoding="utf-8")
+    assert _untracked(repo) == [probe], "前置：探针必须是未跟踪、非忽略文件"
+    proc = run_gate("secrets", repo, "--tracked-only")
+    assert proc.returncode == 1, "未跟踪新文件里的密钥未被扫到（时间窗未关）：\n" + proc.stdout
+    assert probe in proc.stdout
+    assert "github_token" in proc.stdout
+
+
+def test_untracked_new_file_with_pii_is_blocked(tmp_path: Path) -> None:
+    """★ 未跟踪（**未 `git add`**）的新文件含伪造 PII ⇒ PII 门禁必须非 0。
+
+    夹具用**保留域**（`personal.example`，RFC 2606/6761）运行时拼出，不含真实身份。
+    """
+    repo = make_repo(tmp_path)
+    probe = "contacts_untracked.md"
+    addr = "dev" + "@" + "personal.example"
+    (repo / probe).write_text(f"联系人：{addr}\n", encoding="utf-8")
+    assert _untracked(repo) == [probe], "前置：探针必须是未跟踪、非忽略文件"
+    proc = run_gate("pii", repo, "--tracked-only")
+    assert proc.returncode == 1, "未跟踪新文件里的 PII 未被扫到（时间窗未关）：\n" + proc.stdout
+    assert probe in proc.stdout
+    assert "personal_email" in proc.stdout
+
+
+def test_untracked_new_file_with_internal_ip_is_blocked(tmp_path: Path) -> None:
+    """★ 未跟踪（**未 `git add`**）的新文件含内网 IP ⇒ 内容门禁必须非 0。
+
+    夹具用 RFC 1918 私网段里的**文档式示例地址**（合成值，运行时拼接），不指向
+    任何真实资产。
+    """
+    repo = make_repo(tmp_path)
+    probe = "notes_untracked.md"
+    addr = "10.20.30." + "40"
+    (repo / probe).write_text("服务器地址：" + addr + "\n", encoding="utf-8")
+    assert _untracked(repo) == [probe], "前置：探针必须是未跟踪、非忽略文件"
+    proc = run_gate("content", repo, "--tracked-only")
+    assert proc.returncode == 1, "未跟踪新文件里的内网 IP 未被扫到（时间窗未关）：\n" + proc.stdout
+    assert probe in proc.stdout
+    assert "private_ipv4" in proc.stdout
+
+
+def test_untracked_new_forbidden_filetype_is_blocked(tmp_path: Path) -> None:
+    """★ 未跟踪（**未 `git add`**）的禁止类型文件 ⇒ 文件类型门禁必须非 0。
+
+    选 `*.pem`（`key_material` 规则）：它**不在 `.gitignore` 里**，故 `git add`
+    即可提交 ⇒ 正是"add 之前必须拦"的靶子。（`.env` / `*.log` 被 `.gitignore`
+    覆盖，需 `git add -f` 才可能进历史，本函数的候选集不覆盖——该残余面由
+    "提交门禁在 add 之后跑"兜底，见 `.pre-commit-config.yaml` 文件头。）
+    """
+    repo = make_repo(tmp_path)
+    probe = "service_account.pem"
+    (repo / probe).write_text("REPLACE_ME\n", encoding="utf-8")
+    assert _untracked(repo) == [probe], "前置：探针必须是未跟踪、非忽略文件"
+    proc = run_gate("filetypes", repo, "--tracked-only")
+    assert proc.returncode == 1, "未跟踪的禁止类型文件未被扫到（时间窗未关）：\n" + proc.stdout
+    assert probe in proc.stdout
+    assert "key_material" in proc.stdout
+
+
+def test_untracked_ignored_file_is_still_out_of_scope(tmp_path: Path) -> None:
+    """★ 边界（不得过度收录）：被 `.gitignore` 忽略的未跟踪文件**仍不入候选集**。
+
+    这是候选集并入未跟踪段的**代价显式化**，不是许可放宽：`.local/`、`.venv/`、
+    构建产物必须留在门外（否则门禁永远红、不可用）。该残余面靠"提交门禁在
+    `git add` 之后跑"覆盖（届时路径已进索引，会被索引段扫到）。
+    """
+    repo = make_repo(tmp_path)
+    (repo / ".gitignore").write_text("local_notes/\n", encoding="utf-8")
+    commit_all(repo, "test: ignore local notes")
+    (repo / "local_notes").mkdir()
+    (repo / "local_notes" / "scratch.md").write_text(
+        "临时：" + "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8" + "\n", encoding="utf-8"
+    )
+    assert _untracked(repo) == [], "前置：被忽略的未跟踪文件不得进入候选集"
+    proc = run_gate("secrets", repo, "--tracked-only")
+    assert proc.returncode == 0, "被 `.gitignore` 忽略的未跟踪文件不得被扫（过度收录）：\n" + proc.stdout
 
 
 # 无 pytest 时可直接执行本文件

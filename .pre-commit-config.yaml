@@ -10,17 +10,29 @@
 # - 脚本是纯标准库实现，`language: system` 直接用 `python3`，不引入新依赖、
 #   不为门禁单独建虚拟环境（本机 python3=3.13 不满足项目 requires-python，
 #   但门禁脚本不 import 项目代码，故不受影响）。
-# - hook 默认扫描「已跟踪文件 + 全部 git 历史」（§15.1 明定推送会公开三样东西）；
-#   如需加速可在命令行直接跑脚本并加 `--tracked-only`。
+# - hook 默认扫描「索引内容 ∪ 未跟踪非忽略文件 + 全部 git 历史」（§15.1 明定推送会
+#   公开三样东西）；如需加速可在命令行直接跑脚本并加 `--tracked-only`。
 # - 历史命中一律是 warning（§19.1 禁止回溯改写已推送历史），不会让 hook 失败；
-#   只有当前已跟踪内容里的违规才阻断提交。
+#   只有当前面（索引 ∪ 未跟踪非忽略）里的违规才阻断提交。
+#
+# ★ 运行时机（2026-10-16 补，实测依据见
+#   `.local/hb-workspace/20261014-sft-kickoff/task-content-gate-window/`）：
+# - 当前面口径已含「未跟踪且不被 `.gitignore` 忽略」的文件，**在 `git add` 之前跑
+#   也拦得住新增文件**（此前只取"索引 ∪ 已暂存" ⇒ add 之前跑是假绿、add 之后才现形）。
+# - 但被 `.gitignore` 忽略的文件（`.env`、`*.log`、`AGENTS.md` …）**只有 `git add`
+#   （或 `git add -f`）之后才可见** ⇒ **提交门禁一律在 `git add` 之后跑**；先 add、
+#   再跑门禁、最后 commit。`git add` 之前跑出来的"绿"不得作为可提交依据。
+# - 自动化那一层要求 hook 真的装上：`.pre-commit-config.yaml` 在仓库里，但
+#   `.git/hooks/` 不属于仓库内容。跑门禁前先确认 `.pre-commit-config.yaml` 生效：
+#   `pre-commit install` 之后 `.git/hooks/pre-commit` 必须存在（只有 `.sample` 时
+#   自动运行不生效，此时手动跑是唯一保障）。
 #
 # 用法：
 #   uvx pre-commit install            # 或 pipx/pip install pre-commit 后 pre-commit install
 #   pre-commit run --all-files        # 手动全量跑一遍
 #   pre-commit run gate_secrets       # 只跑某一个门禁
 #
-# 单独复跑（不依赖 pre-commit）：
+# 单独复跑（不依赖 pre-commit；★ 在 `git add` 之后跑）：
 #   python3 tools/gate_secrets.py -o quiet        # 机密
 #   python3 tools/gate_filetypes.py -o quiet      # 文件类型
 #   python3 tools/gate_content.py -o quiet        # 内容（内网 IP/域名/路径）

@@ -4,7 +4,7 @@
 # 为什么有这件：228 上两次在**起跑时**才发现"护栏已落仓、部署树里没有"（`ModuleNotFoundError`）。
 # 本脚本幂等、可重复、任一冒烟失败即非零退出，供任何一轮随时调用：
 #
-#   scripts/sync_deploy_tree.sh --tree /data/remote/graspo-b11fix-20261012
+#   scripts/sync_deploy_tree.sh --tree <部署树绝对路径>
 #
 # 冒烟内容：① 文件就位且与仓内 sha256 一致；② `python3 -c "import <mod>"` 可导入；
 #           ③ 对带 CLI 的件跑 `--help`（rc=0）。

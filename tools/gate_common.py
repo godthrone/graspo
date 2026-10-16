@@ -214,6 +214,38 @@ def staged_paths(root: Path) -> list[str]:
     return sorted(candidates & present)
 
 
+def untracked_paths(root: Path) -> list[str]:
+    """★ 未跟踪、且**不被 `.gitignore` 忽略**的路径——"`git add` 之前"的候选来源。
+
+    为什么必须有这个函数（§2.3 边界校验即防呆 / §15.1「将要提交的内容」）：
+
+    `staged_paths()` 只在 `git add` **之后**才看得见新文件。本仓的提交纪律是
+    "提交前手动跑门禁"（`AGENTS.md` 硬约束 4）。若在 `git add` **之前**跑，一个
+    刚落盘的新文件对门禁**完全不可见** ⇒ 门禁"全绿"是**假绿**；随后一次
+    `git add` 就把它变成"将要提交的内容"，而门禁已不再跑——这就是与
+    `tests/scripts/test_entry_smoke.py::_discover()` 同构的**时间窗**。
+    典型后果：新增文件里的机密 / PII / 禁止类型 / 内网信息**从未被扫描即落地**。
+
+    `git ls-files --others --exclude-standard` 报出的正是"磁盘上存在、尚未进索引、
+    且**有可能被 `git add` 提交**"的路径。`--exclude-standard` 排掉 `.gitignore`
+    覆盖的本地/临时/产物（`.local/`、`.venv/`、`__pycache__`、`outputs/` …），
+    故不会把显然不该扫描的东西拉进候选集。
+
+    已知残余面（本函数**故意不覆盖**，由流程侧兜底）：被 `.gitignore` 忽略的文件
+    （`.env` / `*.log` / `AGENTS.md` …）必须先 `git add -f` 才可能进历史，故
+    只能在 `git add` 之后（索引已含该路径）被扫到。要覆盖它们，提交门禁必须在
+    `git add` 之后跑——见 `.pre-commit-config.yaml` 文件头的操作说明。
+
+    返回：去重排序后的 posix 路径列表。
+    """
+    out = _git(["ls-files", "--others", "--exclude-standard", "-z"], cwd=root, check=False)
+    if not out:
+        # 无匹配或极老 git 不支持 -z：退回无 -z 的一次调用
+        out = _git(["ls-files", "--others", "--exclude-standard"], cwd=root, check=False) or ""
+        return [p for p in out.splitlines() if p]
+    return [p for p in out.split("\0") if p]
+
+
 def read_index_text(root: Path, rel: str, limit: int | None = None) -> str | None:
     """★ 读**索引**里该路径的内容（= 即将被提交的字节），二进制/不存在返回 None。
 
@@ -508,8 +540,8 @@ def build_arg_parser(gate: str, description: str) -> argparse.ArgumentParser:
         epilog=(
             "退出码：0 = 通过；1 = 发现违规；2 = 用法错误；3 = 内部错误。\n"
             "示例：\n"
-            f"  python3 tools/{gate}                 # 扫已跟踪文件 + 全部 git 历史\n"
-            f"  python3 tools/{gate} --tracked-only  # 只扫已跟踪文件（快）\n"
+            f"  python3 tools/{gate}                 # 扫当前面（索引 ∪ 未跟踪非忽略）+ 全部 git 历史\n"
+            f"  python3 tools/{gate} --tracked-only  # 只扫当前面，跳过 git 历史（快）\n"
             f"  python3 tools/{gate} -o json         # 机器可读输出\n"
             f"  python3 tools/{gate} -o quiet        # 只报计数，不列明细\n"
         ),
@@ -518,7 +550,11 @@ def build_arg_parser(gate: str, description: str) -> argparse.ArgumentParser:
     parser.add_argument(
         "--tracked-only",
         action="store_true",
-        help="只扫已跟踪文件当前内容，跳过 git 历史（§15.1 要求默认含历史）",
+        help=(
+            "只扫当前面（索引内容 ∪ 未跟踪非忽略文件；后者覆盖 `git add` 之前的新文件），"
+            "跳过 git 历史（§15.1 要求默认含历史）。"
+            "注：选项名沿用旧名，语义已含未跟踪段。"
+        ),
     )
     parser.add_argument(
         "--history-only",
@@ -675,21 +711,27 @@ def scan_worktree(
     whitelist: Whitelist,
     prefilter: Sequence[re.Pattern[str]] = (),
 ) -> ScanResult:
-    """扫「将要进入本次提交的内容」（§15.1 公开物之一）——**索引 + 工作区**。
+    """扫「将要进入本次提交的内容」（§15.1 公开物之一）——**索引 ∪ 未跟踪非忽略**。
 
     两段口径，互不重叠、合起来覆盖"提交会公开什么"：
 
     1. **索引内容**（`git diff --cached` ∩ `git ls-files`，用 `git cat-file :path`
        读暂存 blob）：即**这次 commit 真正要写进历史的字节**，包含**本次新增
-       但尚未提交的文件**。这是原来的缺口所在——缺了这一段，新增文件在
-       `git add` 之前完全不在扫描面内。
-    2. **工作区已跟踪文件**：索引中已跟踪、但工作区有新改动（未 `git add`）的
-       路径也读一遍，使"工作区当前内容"同样可见（§15.1 口径是已跟踪文件的
-       内容）。闸门在提交前跑，`pre-commit` 的语义本就是"检查工作区"。
+       但尚未提交的文件**。缺了这一段，新增文件在 `git add` 之后仍不可见。
+    2. **未跟踪、非忽略文件**（`git ls-files --others --exclude-standard`）：读
+       **工作区**字节（它们不在索引里，没有索引版本）。这些文件尚未 `git add`，
+       故在"提交前手动跑门禁"的流程里会落到两段之外——**add 之前跑 = 假绿，
+       add 之后才现形**。纳入后两种时机同严（见 `untracked_paths()`）。
 
-    因此 `scanned_files` 大于"文件数"是正常的（同一路径可能两段各计一次），
-    报告里的计数是**扫描对象数**而非文件数——此语义在 `-o` 输出与 `note` 中
-    明示，避免读报告的人把 512 当成"仓库有 512 个文件"。
+    **不在阻断面内的**：已跟踪路径的**未暂存工作区改动**（索引与工作区不一致的
+    路径只在报告里具名提示，见 `unstaged_diffs`）——它们本次不会被提交，口径由
+    `tests/tools/test_gates.py::test_unstaged_worktree_edit_not_blocked` 锁定。
+    （旧版本 docstring 曾声称这些内容"也读一遍"，与实现不符：实现只读索引内容；
+    本包已把该描述改成与代码一致，行为未变。）
+
+    因此 `scanned_files` 是**扫描对象数**而非文件数（同一路径在索引/未跟踪两段中
+    只计一次）——此语义在 `-o` 输出与 `note` 中明示，避免读报告的人把 512 当成
+    "仓库有 512 个文件"。
     """
     result = ScanResult(gate="worktree")
 
@@ -716,6 +758,7 @@ def scan_worktree(
 
     staged_set = set(staged_paths(root))
     tracked = tracked_paths(root)
+    untracked = untracked_paths(root)
     dirty = unstaged_diff_paths(root)
     unstaged_diffs: list[str] = []
     seen: set[str] = set()
@@ -730,6 +773,13 @@ def scan_worktree(
         if content is not None and rel not in staged_set and rel in dirty:
             unstaged_diffs.append(rel)
 
+    def _consume_untracked(rel: str, origin: str) -> None:
+        """按**工作区**读取并扫描一个未跟踪路径（它没有索引版本）。"""
+        if rel in seen:
+            return
+        seen.add(rel)
+        _consume(read_worktree_text(root, rel), rel, origin, exists=True)
+
     # ── 索引内容：覆盖全部已跟踪路径 + 本次新增的已暂存路径 ────────────────
     # 单位路径只扫一次（不因"已暂存"而重复计数）。
     for rel in tracked:
@@ -737,12 +787,18 @@ def scan_worktree(
     # 兜底：已暂存但不在 `git ls-files` 输出中的路径（正常不会出现）
     for rel in sorted(staged_set):
         _consume_path(rel, "staged")
+    # ── 未跟踪、非忽略：`git add` 之前就已存在的候选（读工作区字节） ───────
+    # 这一段关掉"add 之前跑 = 假绿、add 之后才现形"的时间窗；add 之后这些路径
+    # 进入索引，改由上面第一段扫（`seen` 去重 ⇒ 不重复计数）。
+    for rel in untracked:
+        _consume_untracked(rel, "untracked")
 
-    coverage = sorted(set(tracked) | staged_set)
+    coverage = sorted(set(tracked) | staged_set | set(untracked))
     result.notes.append(
         f"扫描面口径：索引（已跟踪 {len(tracked)} 个 ∪ 已暂存 {len(staged_set)} 个）"
-        f"⇒ 覆盖 {len(coverage)} 个唯一路径。**扫的是索引里的内容**——即这次提交"
-        "真正会写进历史的字节（含本次新增但尚未提交的文件）。"
+        f" ∪ 未跟踪非忽略（{len(untracked)} 个）⇒ 覆盖 {len(coverage)} 个唯一路径。"
+        "**扫的是将要提交的内容**：索引里的字节（这次提交真正会写进历史的）+ "
+        "未跟踪非忽略文件的工作区字节（`git add` 之前就已进入扫描面 ⇒ 两种时机同严）。"
     )
     if staged_set:
         shown = sorted(staged_set)[:20]
@@ -750,6 +806,13 @@ def scan_worktree(
             "本次已暂存（即将提交）的路径："
             + "、".join(shown)
             + (f" …（共 {len(staged_set)} 个）" if len(staged_set) > len(shown) else "")
+        )
+    if untracked:
+        shown = sorted(untracked)[:20]
+        result.notes.append(
+            f"未跟踪、非忽略（`git add` 之前即在扫描面内）的路径 {len(untracked)} 个："
+            + "、".join(shown)
+            + (f" …（共 {len(untracked)} 个）" if len(untracked) > len(shown) else "")
         )
     if unstaged_diffs:
         shown = sorted(unstaged_diffs)[:20]

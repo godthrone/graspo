@@ -4,14 +4,18 @@
 职责边界（§1.1）：
 - 只看「路径与文件名」，不读内容 ⇒ 与 `gate_secrets.py`（内容）/ `gate_content.py`
   （内部引用）不重叠。
-- 判定对象是「会被提交/已被提交的路径」，不是工作区磁盘上的文件——磁盘上存在但
-  未被跟踪的文件（如 `src/graspo.egg-info/`）不构成本门禁的违规。
+- 判定对象是「**有可能被提交**的路径」：索引路径 ∪ 已暂存路径 ∪ **未跟踪且不被
+  `.gitignore` 忽略**的路径。前两者是"将要提交/已提交"，第三者是"`git add` 之前
+  的候选"——纳入它是为了关掉"提交前手动跑门禁"的时间窗（缺了它，`add` 之前跑
+  就是假绿）。被 `.gitignore` 忽略的磁盘文件（如 `src/graspo.egg-info/`、`.venv/`）
+  仍不构成违规：它们必须 `git add -f` 才可能进历史。
 
 判据来源：BADGE 宪法 §15.1 检查 2（`.env`、构建产物、缓存、虚拟环境、IDE 配置、
 AI 助手本地文件）+ §16.1（本地与临时文件唯一归宿是 `.local/`）+ §19.2（`.gitignore`
 必须覆盖清单）。
 扫描目标：① `git ls-files`（当前索引路径）∪ `git diff --cached`（已暂存路径，
-含本次新增但尚未提交的文件；违规=阻断）；② `git rev-list --objects --all`
+含本次新增但尚未提交的文件）∪ `git ls-files --others --exclude-standard`（未跟踪、
+非忽略，含 `git add` 之前的新文件；三者违规=阻断）；② `git rev-list --objects --all`
 的全历史路径集（含已删除文件，违规=警告，理由同 §19.1 历史不可改写）。
 
 退出码：0 通过 / 1 发现阻断级违规 / 2 用法或环境错误 / 3 内部错误。
@@ -143,16 +147,26 @@ def _impl(args) -> gc.ScanResult:
     root = gc.repo_root(args.repo)
     result = gc.ScanResult(gate=GATE)
     if not args.history_only:
-        # 扫描面 = 索引现存路径 ∪ 已暂存路径。后者覆盖"本次新增但尚未提交"的
-        # 文件（如新落的 `.env`：`git ls-files` 看不到，但它一旦提交就进入历史）。
+        # 扫描面 = 索引现存路径 ∪ 已暂存路径 ∪ 未跟踪非忽略路径。
+        # ① 后两者分别覆盖"本次新增但尚未提交"（`git add` 之后）与"新增但仍
+        #    未跟踪"（`git add` 之前）——缺了未跟踪段，在 `git add` 之前跑门禁
+        #    就是**假绿**：新落的 `.pem` / `id_rsa` / `.netrc` 等完全不在候选集。
+        # ② 被 `.gitignore` 忽略的路径（`.env`、`*.log`、`AGENTS.md` …）不在此列：
+        #    它们必须 `git add -f` 才可能进历史，只有 `git add` 之后才可见 ⇒
+        #    提交门禁必须在 `git add` 之后跑（见 `.pre-commit-config.yaml` 文件头）。
         tracked = gc.tracked_paths(root)
         staged = gc.staged_paths(root)
-        covered = sorted(set(tracked) | set(staged))
+        untracked = gc.untracked_paths(root)
+        index_side = sorted(set(tracked) | set(staged))
+        untracked_only = sorted(set(untracked) - set(tracked) - set(staged))
+        covered = sorted(set(index_side) | set(untracked_only))
         result.scanned_files += len(covered)
-        gc.merge(result, _scan_paths(covered, "tracked"))
+        gc.merge(result, _scan_paths(index_side, "tracked"))
+        gc.merge(result, _scan_paths(untracked_only, "untracked"))
         result.notes.append(
-            f"扫描面口径：索引 {len(tracked)} 个 ∪ 已暂存 {len(staged)} 个 "
-            f"⇒ 唯一路径 {len(covered)} 个（含本次新增未提交文件）。"
+            f"扫描面口径：索引 {len(tracked)} 个 ∪ 已暂存 {len(staged)} 个 ∪ "
+            f"未跟踪非忽略 {len(untracked_only)} 个 ⇒ 唯一路径 {len(covered)} 个"
+            "（含本次新增未提交文件、以及 `git add` 之前就已存在的未跟踪新文件）。"
         )
     if not args.tracked_only:
         history_paths = sorted(gc.collect_history_paths(root))
