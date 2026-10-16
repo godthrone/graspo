@@ -5,6 +5,8 @@
 
 禁止项（§17.7「矩阵中仍然禁止」）：
   宿主路径 / 内网地址、域名、路径 / 机器名 / 人名 / 内部节点与内部账号。
+  ＋★ 人脸与内部编排（内部称谓、内部批次/工位/口径包…）——矩阵的读者是**使用者**，
+  过程、日志、决策与内部编排不进人读视图（§17.7「矩阵数据与合规底线」＋ §16.2 存放位置）。
 
 设计约束（§15.1 首段分工：脚本承载具体判定规则）：
   - 模式一律为**通用形状**，⛔ 不在本脚本内写任何具体主机名 / 账号 / 内网路径字面量
@@ -23,12 +25,24 @@ import re
 import sys
 from pathlib import Path
 
+# ★★ 修正轮 4（⚠③）：**生成端与扫描端同源引用**内部过程词表与内部证据路径形态
+#    （§1.4 单一真相源：⛔ 不在本脚本另抄一份词表/正则）。
+#    ★ 现在**数据件面**也有能失败的机检 —— 上一版本脚本只覆盖宿主路径/数据集位置/denylist，
+#      而 ④R 只扫渲染后正文 ⇒ `docs/capability-matrix.data.json`（**发布件**）这一面无机检。
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import build_official as _bo    # noqa: E402  （同目录，纯常量与纯函数，⛔ 无副作用）
+
 REPO = Path(__file__).resolve().parents[2]
 DEFAULT_TARGETS = ["docs/capability-matrix.data.json", "docs/capability-matrix.html"]
 DENYLIST = REPO / ".local" / "matrix-leak-denylist.txt"
 
 # 通用形状（⛔ 无具体内部字面量）
 PATTERNS = [
+    # ★ 内部称谓 / 内部编排 / 内部过程（⛔ 通用形状，不带任何具体人名或档号字面量）
+    (r"主席|总参谋长|总司令|指挥部|指挥官|审查者|执行者|口径包|修正轮|归属层",
+     "内部称谓 / 内部角色"),
+    (r"(?<![0-9])第\s*[0-9一二三四五六七八九十]+\s*批(?![号次])", "内部批次编号"),
+    (r"工位|work_log|跑次根目录|机核可跑|必须能失败", "内部编排 / 内部过程用语"),
     (r"/homedata/", "★ 数据集存放路径（⛔ 矩阵不得出现）"),
     (r"test\.jsonl", "★ 数据集文件名（⛔ 矩阵不得出现）"),
     (r"(?<![0-9A-Za-z])228(?![0-9A-Za-z])", "★ 机器号（⛔ 矩阵不得出现）"),
@@ -40,6 +54,15 @@ PATTERNS = [
     (r"\b[0-9]{2,3}\s*(?:共享机|机器|主机|在役快照)", "机器名（数字 + 机器语境）"),
     (r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", "邮箱（PII）"),
     (r"\bssh[-_][A-Za-z0-9._-]+\b", "内部账号（ssh 账号式）"),
+] + [
+    # ★ 内部证据路径形态（同源常量 `build_official.EVIDENCE_PATH_PATTERN`）
+    #   形态判据：必须 `evidence/` 目录形态 ＋ 一位路径字符起头 ＋ `.md` 后缀或省略号收尾
+    #   ⇒ ⛔ 不误伤普通英文词 `evidence-based`、仓内公开文件 `docs/capability-matrix.md`。
+    (_bo.EVIDENCE_PATH_PATTERN, "内部证据路径（发布件不得出现）"),
+] + [
+    # ★ 内部开发过程词（同源常量 `build_official.DEV_CHURN_TERMS`，⛔ 不另抄）
+    (re.escape(_w), f"内部过程用语：{_why}")
+    for _w, _why in _bo.DEV_CHURN_TERMS
 ]
 
 

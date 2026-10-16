@@ -18,7 +18,8 @@ desired GPU memory utilization (0.85, 67.36 GiB)` ⇒ 评测白跑一轮。移�
 - 起跑后**回验**容器已登记（`launch_pipeline.require_card_registered`，未登记 ⇒ fail-closed）
 
 ## 规则 4：邻居资源只读不占
-第三方占用（如 GPU2 的 `remote+`）**只观测、不排队、不干预**；`cards-busy` 不把它计入我方。
+第三方占用（如 GPU2 的第三方账号占用）**只观测、不排队、不干预**；`cards-busy` 不把它计入我方。
+★ 本件为对外正式件 ⇒ 第三方**具名账号一律以角色化表述**（§15 去标识）；具名归属另存内部台账。
 
 ## 落地要求
 1. 本文件为契约唯一真相源；

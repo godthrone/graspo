@@ -824,19 +824,47 @@ def test_docker_argv_carries_shared_memory_config(tmp_path: Path):
     assert "--gpus" not in argv
 
 
+#: ★★ **变异副本登记表**（2026-10-16 仓库卫生修复）。
+#: 变异体**必须**落在 `tests/e2e/`：runner 用 `dirname($0)/../..` 反推仓库根（`ROOT_DIR`），
+#: 换到 `tmp_path` 会让 GPU 守卫脚本与挂载源指向错误位置 ⇒ 不能用"挪去临时目录"消除仓内写入。
+#: 因此改为**机制层保证删除**：每个变异体写出后**立即登记**，由 autouse fixture 在用例结束
+#: （**含异常**）统一删除。★ 这补的正是旧写法的漏洞——「写在 `try:` **之前**」那段窗口一旦抛异常，
+#: 既有 `finally` 根本不执行，副本就留在仓里了（实测已发生：`_mutant_tier_…_0.sh` 泄漏）。
+#: ★ 进程被 SIGKILL（跑套件时被外部终止）时 fixture 亦不执行 ⇒ 另由 `.gitignore` 的
+#: `tests/e2e/_mutant_*.sh` 兜底（被忽略 ⇒ 不进入口门禁候选集 `--others --exclude-standard`）。
+_MUTANTS: list[Path] = []
+
+
+@pytest.fixture(autouse=True)
+def _cleanup_mutants():
+    """用例结束（含失败/异常）无条件清掉本用例登记的全部变异副本。"""
+    del _MUTANTS[:]
+    yield
+    for _p in _MUTANTS:
+        _p.unlink(missing_ok=True)
+    del _MUTANTS[:]
+
+
+def _write_mutant(tmp_path: Path, name: str, text: str) -> Path:
+    """把变异副本写进 `tests/e2e/`（与 runner 同级，`ROOT_DIR` 推导才成立）并**登记清理**。"""
+    mutant = _REPO_ROOT / "tests" / "e2e" / f"_mutant_{name}_{tmp_path.name}.sh"
+    mutant.write_text(text, encoding="utf-8")
+    mutant.chmod(0o755)
+    _MUTANTS.append(mutant)
+    return mutant
+
+
 def _mutant_runner(tmp_path: Path, *, remove: str) -> Path:
     """造一个**删掉了共享内存行**的 runner 副本（只变异这一处，其余逐字相同）。
 
     变异体必须落在 `tests/e2e/` 下：runner 用 `dirname($0)/../..` 反推仓库根
     （见 `ROOT_DIR`），换到 `tmp_path` 会让 GPU 守卫脚本与挂载源指向错误位置。
-    文件名带 `tmp_path.name` 保证唯一，调用方负责在 `finally` 里删除。
+    文件名带 `tmp_path.name` 保证唯一；清理交给 `_write_mutant` 的登记 + autouse fixture
+    （★ 不再只依赖调用方的 `finally`——那条只覆盖 try 内、漏掉"写出后立刻抛异常"的窗口）。
     """
     text = _RUNNER.read_text(encoding="utf-8")
     assert remove in text, f"变异目标不存在，测试前提失效：{remove!r}"
-    mutant = _REPO_ROOT / "tests" / "e2e" / f"_mutant_run_matrix54_{tmp_path.name}.sh"
-    mutant.write_text(text.replace(remove, "", 1), encoding="utf-8")
-    mutant.chmod(0o755)
-    return mutant
+    return _write_mutant(tmp_path, "run_matrix54", text.replace(remove, "", 1))
 
 
 def test_shm_assertion_really_fails_when_the_parameter_is_removed(tmp_path: Path):
@@ -1571,9 +1599,7 @@ def _mutant_retention_text(tmp_path: Path, *, old_silent_skip: bool) -> Path:
         # 退回加固②：把 `missing` / `none` 的硬失败拿掉（恢复成"静默跳过、rc=0"）。
         # 源码里是 4 空格缩进 + **字面量** `\n`（heredoc 正文，不是真换行）。
         text = text.replace('    if [ "\\$RC" = "0" ]; then exit 4; fi', "", 2)
-    mutant = _REPO_ROOT / "tests" / "e2e" / f"_mutant_retention_{tmp_path.name}.sh"
-    mutant.write_text(text, encoding="utf-8")
-    mutant.chmod(0o755)
+    mutant = _write_mutant(tmp_path, "retention", text)
     return mutant
 
 
@@ -1685,9 +1711,7 @@ def test_retention_tier_injection_assertion_really_fails_when_it_is_removed(tmp_
     text = _RUNNER.read_text(encoding="utf-8")
     needle = '    -e "TIER=$TIER"\n'
     assert needle in text, "突变目标不存在，测试前提失效"
-    mutant = _REPO_ROOT / "tests" / "e2e" / f"_mutant_tier_{tmp_path.name}.sh"
-    mutant.write_text(text.replace(needle, "", 1), encoding="utf-8")
-    mutant.chmod(0o755)
+    mutant = _write_mutant(tmp_path, "tier", text.replace(needle, "", 1))
     try:
         bin_dir, elam_root, models_root = _make_fakes(tmp_path)
         completed = _run(

@@ -1,7 +1,21 @@
-# GRASPO 能力矩阵
+# GRASPO 能力与可用档位矩阵（已迁移）
 
-> 本文件已迁移为正式文档：**`docs/capability-matrix.html`**（人读）与
-> **`docs/capability-matrix.data.json`**（机读，与 HTML 同为唯一真相源）。
-> 工具链见 `tools/matrix/`。
+> ★ **数据文件是唯一真相源**：`docs/capability-matrix.data.json`（唯一可编辑的源头）。
+> 人读件 `docs/capability-matrix.html` 由「该数据 + 固定生成器 `tools/matrix/render_matrix.py`」
+> **确定性生成**，是**只读派生视图**、**禁止手工编辑**；派生方向唯一且固定
+> （结果 JSON → 数据文件 → 人读视图，单方向、禁止互推）。
+> 工具链与命令见 `tools/matrix/README.md`。
 >
-> 原 Markdown 版本因含陈旧读数、且与 HTML 构成双真相源，已退役留档。
+> 原 Markdown 版本因含陈旧读数、且曾与 HTML 并列为真相源，已退役留档。
+
+## 人读件里有什么（一句话）
+
+`docs/capability-matrix.html` = **首屏三块**（自动生成声明 / 覆盖度警示 / 承诺边界声明）
+＋ **① 先读这一页 ② 判据（含口径）③ 实验条件 ④ 功能矩阵表**；
+矩阵表 **13 列**（档号 → 实验条件 6 列 → 实验数据 6 列），**只列档位之间的差异项**，
+对全部档位相同的条件集中在「实验条件」一节。
+
+> 访客想回答的问题只有三个：**这框架好不好用**、**能用哪些档位**、**我要复现的话参数是什么**。
+> 其余（生成 / 校验 / 口径迭代 / 内部台账等过程内容）**不进人读件**；
+> 移出内容的原文逐字归档在 `.local/matrix-process-archive-20261016.md`（轮 1）
+> 与 `.local/matrix-process-archive-2.md`（轮 2）。

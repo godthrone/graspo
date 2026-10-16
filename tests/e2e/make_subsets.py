@@ -20,8 +20,14 @@
       默认 ``P=48``（48/96/192）；★ T040/T041/T042 按 2026-10-02 批准的 E-49 例外 ``P=72``
       （⇒ 72/144/288，失效条件见下方 E-50）。
   · 其余 45 档（含 42 个可跑档 + 3 个 not_applicable 档）⇒ **mini 冒烟集**
-    ``<data_root>/mini-dataset/mini-short-mm-train.jsonl`` 前 100 条
-    （CPT/SFT=100、GRASPO/OPD=20）。
+    ``<data_root>/mini-dataset/mini-short-mm-train.jsonl`` 前 N 条：
+      - CPT/SFT 27 档 = 100（历来如此）；
+      - ★ **2026-10-16 主席裁定「18 个 20 行档放大到 100 行」** ⇒ 原 18 个 20 行档的**声明口径 = 100**；
+        其中 **15 档已落地**（`T031/T032/T033`、`T037/T038/T039`、`T043/T044/T045`、`T046…T051`），
+        另 **3 档豁免未落地**（`T052–T054`：`not_applicable` ⇒ 无生成件、⛔ 不伪造）——具名登记见
+        :data:`DECLARED_NOT_LANDED`。
+      - ⚠ 本表 :data:`MINI_TIERS` 是**在盘落地真值**（15 档 = 100、`T052–T054` = 20）；
+        **声明口径真值**是 :data:`MINI_SUBSET_TIERS_DECLARED`（18 档 = 100）。两者**不得混用**。
 
 用法::
 
@@ -60,7 +66,33 @@ FORMAL_TIERS: dict[str, int] = {
     "T042": 288,
 }
 
-#: 其余 45 档的 v2 子集条数（= v1 算法下限，逐档显式；CPT/SFT=100、GRASPO/OPD=20）。
+#: ★★ **原 18 个「20 行档」的声明口径**（2026-10-16 主席裁定：「18 个 20 行档放大到 100 行」）。
+#: 这是**声明真值**（矩阵/权威清单据此声明 `subset_size`），与 :data:`MINI_TIERS`（在盘落地真值）
+#: **是两张不同的表**：声明 ⊇ 落地，差额 = :data:`DECLARED_NOT_LANDED`（具名豁免）。
+#: ★ 纪律：新增/追加时**必须**同时更新本表与 :data:`MINI_TIERS`（或登记进豁免表），
+#:   否则 `generate_matrix_manifest_source.py::check()` 的冻结子集交叉核对会当场报 MISMATCH（fail-closed）。
+MINI_SUBSET_TIERS_DECLARED: dict[str, int] = {
+    "T031": 100, "T032": 100, "T033": 100,
+    "T037": 100, "T038": 100, "T039": 100,
+    "T043": 100, "T044": 100, "T045": 100,
+    "T046": 100, "T047": 100, "T048": 100,
+    "T049": 100, "T050": 100, "T051": 100,
+    "T052": 100, "T053": 100, "T054": 100,
+}
+
+#: ★ 声明口径为 100、但**数据未落地**的具名豁免（⛔ 不是"偷偷跳过"：理由逐档写下、逐次打印）。
+#: T052–T054 = `not_applicable`（师生权重常驻约 100 GiB、依裁定不实施）⇒ **无生成件**，
+#: ⛔ 不为它们伪造 100 行冻结件；"声明未落地"这一事实本身在账本里显式登记。
+DECLARED_NOT_LANDED: dict[str, str] = {
+    "T052": "not_applicable（主席裁定不实施；师生权重常驻约 100 GiB）⇒ 无生成件，⛔ 不伪造冻结子集",
+    "T053": "not_applicable（同上）⇒ 无生成件，⛔ 不伪造冻结子集",
+    "T054": "not_applicable（同上）⇒ 无生成件，⛔ 不伪造冻结子集",
+}
+
+#: 其余 45 档的 v2 子集条数 = **在盘落地真值**（逐档显式）。
+#: ★ 27 档 CPT/SFT = 100（历来如此）；★ 15 档（原 20 行档中已落地者）= 100（2026-10-16 扩面）；
+#: ★ T052–T054 = 20（`not_applicable` 豁免，见 :data:`DECLARED_NOT_LANDED`——仍产出 20 行件
+#:   只是为了清单完整、逐档可核，⛔ 不代表声明口径）。
 MINI_TIERS: dict[str, int] = {
     # CPT × 9（T004–T006 为全量档，条数口径不变）
     "T001": 100, "T002": 100, "T003": 100, "T004": 100, "T005": 100,
@@ -70,12 +102,12 @@ MINI_TIERS: dict[str, int] = {
     "T015": 100, "T016": 100, "T017": 100, "T018": 100, "T019": 100,
     "T020": 100, "T021": 100, "T022": 100, "T023": 100, "T024": 100,
     "T025": 100, "T026": 100, "T027": 100,
-    # GRASPO × ms-swift × 9（v2 未改：仍取门槛下限 20）
-    "T031": 20, "T032": 20, "T033": 20,
-    "T037": 20, "T038": 20, "T039": 20,
-    "T043": 20, "T044": 20, "T045": 20,
-    # OPD × 9（T052–T054 为 not_applicable，仍生成以便清单完整、逐档可核）
-    "T046": 20, "T047": 20, "T048": 20, "T049": 20, "T050": 20, "T051": 20,
+    # GRASPO × ms-swift × 9（★ 2026-10-16：原 20 行档 ⇒ 100 行，已全部落地）
+    "T031": 100, "T032": 100, "T033": 100,
+    "T037": 100, "T038": 100, "T039": 100,
+    "T043": 100, "T044": 100, "T045": 100,
+    # OPD × 9（★ T046–T051 = 2026-10-16 扩面落地；T052–T054 = not_applicable 豁免，仍 20）
+    "T046": 100, "T047": 100, "T048": 100, "T049": 100, "T050": 100, "T051": 100,
     "T052": 20, "T053": 20, "T054": 20,
 }
 
@@ -91,6 +123,25 @@ assert set(FORMAL_TIERS) | set(MINI_TIERS) == set(RUNNABLE_TIER_IDS) | set(
 ), "逐档表覆盖不全"
 assert set(FORMAL_TIERS) & set(MINI_TIERS) == set(), "逐档表有重叠"
 assert sorted(set(FORMAL_TIERS) | set(MINI_TIERS)) == [f"T{i:03d}" for i in range(1, 55)]
+
+#: ★★ 声明口径表 vs 落地真值表的**自洽断言**（load 即校验 ⇒ 任何一处漏改立即 fail-closed）。
+assert len(MINI_SUBSET_TIERS_DECLARED) == 18, (
+    f"声明口径表应恰 18 档（2026-10-16 裁定的 18 个原 20 行档），实为 {len(MINI_SUBSET_TIERS_DECLARED)}"
+)
+assert set(MINI_SUBSET_TIERS_DECLARED) - set(MINI_TIERS) == set(), "声明口径表里有非 mini 档"
+assert {t: v for t, v in MINI_SUBSET_TIERS_DECLARED.items() if v != 100} == {}, (
+    "声明口径表的值应全部为 100（18 档放大到 100 行）"
+)
+assert set(DECLARED_NOT_LANDED) == set(NOT_APPLICABLE_TIER_IDS), (
+    "声明未落地的豁免集合必须与 NOT_APPLICABLE_TIER_IDS 逐档一致"
+)
+assert all(MINI_TIERS[t] < MINI_SUBSET_TIERS_DECLARED[t] for t in DECLARED_NOT_LANDED), (
+    "豁免档的在盘件条数必须小于声明口径（否则它就不是'未落地'，应删出豁免表）"
+)
+assert all(MINI_TIERS[t] == MINI_SUBSET_TIERS_DECLARED[t]
+           for t in set(MINI_SUBSET_TIERS_DECLARED) - set(DECLARED_NOT_LANDED)), (
+    "非豁免的声明口径档必须已按声明落地（在盘真值 == 声明口径）"
+)
 
 FORMAL_TRAIN_REL = "data/train.jsonl"
 MINI_TRAIN_REL = "mini-dataset/mini-short-mm-train.jsonl"

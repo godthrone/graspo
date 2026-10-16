@@ -65,6 +65,10 @@ from regen_field_guard import (  # noqa: E402  （sys.path 就位之后导入）
     guard_regeneration_keeps_on_disk_fields,
     matches_any,
 )
+from gpu_assignment import (  # noqa: E402  （§1.4 单一真相源：锁卡集合只有这一份定义）
+    GPU_ALLOWED,
+    GPU_FORBIDDEN_PRODUCTION,
+)
 
 #: ★ **跑次实际读取的档配置目录**（= 矩阵生成件）：由 ``tools/matrix/gen_configs.py`` 从
 #:   ``docs/capability-matrix.data.json`` 确定性生成 ⇒ 可复现、且与矩阵声明逐档一致。
@@ -132,6 +136,69 @@ gm = load_v1_module()
 assert int(gm.NATIVE_ROLLOUT_QUEUE_BATCH_SIZE) == Q, "Q 与 v1 生成器不一致"
 assert int(gm.FORMAL_GATE_MIN_OPTIMIZER_STEPS) == MIN_OPTIMIZER_STEPS, "门槛与 v1 不一致"
 assert int(gm.ELAM_TRAIN_COUNT) == FORMAL_LINE_COUNT, "正式集行数与 v1 不一致"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ★★ 18 档口径扩面（2026-10-16 主席裁定）的**单一真相源**（修正轮 1 / 🔴B1a）
+#
+# 病史（复核报告 B1a，实测）：本清单的 18 档 ``subset_size`` / 步数 **只存在于在盘文件里**，
+#   生成器没有任何输入或表编码它们 ⇒ 任何人走「声明的唯一写路径」重生成，18 档就
+#   ``subset 100→20``、步数 ÷5，而 ``guard_regeneration_keeps_on_disk_fields()`` 只防
+#   **字段路径丢失**、``check()`` 对非 native 档又不重算 ⇒ **rc=0 且仍打印 `check OK`**。
+#
+# 修法（⛔ 不是"加豁免/白名单变绿"，而是把真值编码进生成链 ＋ 让值回退 fail-closed）：
+#   · **声明口径**唯一真相源 = ``tests/e2e/make_subsets.py::MINI_SUBSET_TIERS_DECLARED``
+#     （18 档 = 100；其中 3 档具名豁免未落地，见 ``DECLARED_NOT_LANDED``）；
+#   · **在盘落地真值** = ``make_subsets.MINI_TIERS``（15 档 = 100、T052–54 = 20）；
+#   · 两者**只读加载**，⛔ 不在本文件另抄一份常量（§1.4）。
+# ═══════════════════════════════════════════════════════════════════════════════
+MAKE_SUBSETS_PATH = PROJECT_ROOT / "tests/e2e" / "make_subsets.py"
+
+
+def load_make_subsets_module():
+    """只读加载子集生成器（拿声明口径表与在盘真值表；不触发任何写盘）。"""
+    spec = importlib.util.spec_from_file_location("_manifest_v2_make_subsets", MAKE_SUBSETS_PATH)
+    if spec is None or spec.loader is None:  # pragma: no cover
+        raise RuntimeError(f"无法加载子集生成器：{MAKE_SUBSETS_PATH}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+ms = load_make_subsets_module()
+
+#: ★ 声明口径表（18 档 = 100），来自唯一真相源。
+MINI_DECLARED_SUBSET_SIZE: dict[str, int] = dict(ms.MINI_SUBSET_TIERS_DECLARED)
+#: ★ 在盘落地真值表（15 档 = 100、T052–54 = 20）。
+MINI_LANDED_SUBSET_SIZE: dict[str, int] = dict(ms.MINI_TIERS)
+#: ★ 具名豁免（声明 100、数据未落地）。
+MINI_DECLARED_NOT_LANDED: dict[str, str] = dict(ms.DECLARED_NOT_LANDED)
+#: 生成器**只读**判据用的「仓内冻结子集目录」（宿主机路径是运行时占位符，见 `resolve_subset_check_dir`）。
+REPO_SUBSET_DIR_REL = V2_SUBSET_DIRNAME
+
+#: v1 清单的**逐档 `data.subset_size`**（只读；供 `mini_tier_subset_size` 的「非声明面」下限核对，
+#: 以及 `check()` 的现算复核）。★ 读一次、离线复用，⛔ 不每次重读文件（避免半截编辑时的竞态）。
+V1_SUBSET_SIZE_BY_TIER: dict[str, int] = {
+    str(t["tier_id"]): int(t["data"]["subset_size"])
+    for t in json.loads(V1_MANIFEST_PATH.read_text(encoding="utf-8"))["tiers"]
+}
+
+#: v1 清单的**逐档 `expected_optimizer_steps_per_epoch`**（只读）：`check()` 用来复核
+#: 非 native 档的 `per_epoch` 是否等于「v1 值 × 口径比率」（修正轮 2 / 🔴B-1）。
+V1_PER_EPOCH_BY_TIER: dict[str, int] = {
+    str(t["tier_id"]): int(t["expected_optimizer_steps_per_epoch"])
+    for t in json.loads(V1_MANIFEST_PATH.read_text(encoding="utf-8"))["tiers"]
+}
+
+#: ★ 已具名登记的**既有**（⛔ 非本轮引入）`per_epoch` 漂移档 —— 第二轮全局审查 W-7，
+#: 属"原包步数口径对齐只改了矩阵侧"，**须单独裁定**（⛔ 本轮不修）。
+#: ★ 该表**不是静默白名单**：`cross_check_manifest_against_matrix()` 会断言这些档**确实仍在漂**，
+#:   一旦被修好（不再漂）⇒ 立即报「豁免表陈旧」（fail-closed），必须删出。
+KNOWN_PRE_EXISTING_PER_EPOCH_DRIFT: tuple[str, ...] = ("T017", "T018")
+
+assert set(MINI_DECLARED_NOT_LANDED) <= set(MINI_DECLARED_SUBSET_SIZE), "豁免档必须在声明口径表里"
+assert all(v == 100 for v in MINI_DECLARED_SUBSET_SIZE.values()), "18 档声明口径应为 100"
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ★★ 生成链防丢失（2026-10-16）：post-fill 注册表 + 「重生成不得移除在盘字段」守卫 ★★
@@ -221,12 +288,195 @@ def is_native_graspo(entry: dict) -> bool:
 GPU_POOL_BY_CARDS: dict[int, list[int]] = {1: [4], 2: [4, 5], 3: [4, 5, 6], 4: [4, 5, 6, 7]}
 
 #: ★ 按档的**显式卡位覆盖表**（项目准许的**资源调度例外**；⛔ 不改卡数）。
-#: T041（2 卡档）：2026-10-09 用户明文指令——「4卡最好是相邻的…把4-7给四卡」、
-#: 「0-3是先到先得」⇒ 把 GPU4–7 让给 4 卡档（T042 仍 `[4,5,6,7]`），
-#: T041 挪到 0–3 内唯一可用的相邻空闲对 `[2,3]`（GPU1 被他人 `rrc-runtime` 占用 ⇒ 不可用）。
+#: ★★ **2026-10-16 撤销唯一一条例外（T041 `[2,3]`）** —— 该值是 **2026-10-09 的一次性调度决策**
+#:    （原文：「4卡最好是相邻的…把4-7给四卡」「0-3是先到先得」⇒ T041 挪到 0–3 内当时唯一可用的
+#:    相邻空闲对 `[2,3]`，因为「GPU1 被他人 `rrc-runtime` 占用」）。它描述的是**当时的空闲状态**，
+#:    不是设计约束；而 **GPU2 是第三方账号占用中的常驻邻居卡**（`docs/card-pool-contract.md:20-22`
+#:    规则 4「邻居资源只读不占…只观测、不排队、不干预」）⇒ 该值把邻居的卡写进了我方声明。
+#:    ⇒ 撤销后 T041 走默认映射 :data:`GPU_POOL_BY_CARDS`\[2\] = ``[4,5]``。
 #: ★ `cards`（卡数）**保持 2 不变**：卡数属基础列不得改动；本表只改"用哪几张卡"。
 #: ★ 未列出的档一律走 :data:`GPU_POOL_BY_CARDS`（上面那行映射**逐字未变**）。
-TIER_GPU_OVERRIDE: dict[str, list[int]] = {"T041": [2, 3]}
+TIER_GPU_OVERRIDE: dict[str, list[int]] = {}
+
+#: ★ **邻居/他人常驻卡**（⛔ 我方声明里绝不可出现）：GPU2 = 第三方账号占用中的常驻邻居卡
+#:   （★ §15 去标识：本件为正式件，第三方**具名账号一律角色化表述**，⛔ 不写账号字面量）
+#:   （`docs/card-pool-contract.md` 规则 4）。这是一份**具名**清单：新增邻居卡必须显式登记。
+NEIGHBOR_CARDS: tuple[int, ...] = (2,)
+
+#: ★ **具名锁卡集合**（任一档 `gpus` 都不得含其中任何一张）：
+#:   生产锁卡 :data:`GPU_FORBIDDEN_PRODUCTION` ∪ 邻居卡 :data:`NEIGHBOR_CARDS`。
+#:   ★ 另有**越界 leg**：任何**不在** :data:`GPU_ALLOWED` 内的卡同样被拒（见 :func:`locked_card_hits`）
+#:   —— 越界集的基数无界（8, 99, …），故不枚举进本常量，而由 :data:`GPU_ALLOWED` 成员判定。
+LOCKED_CARDS: tuple[int, ...] = tuple(sorted(
+    set(GPU_FORBIDDEN_PRODUCTION) | set(NEIGHBOR_CARDS)
+))
+
+#: ★ 本世代卡池与项目锁卡契约的**已知冲突登记**（只登记、⛔ 不擅自改池；由指挥统一处置）。
+#:   键 = 卡池 tuple；值 = 冲突的锁卡 tuple。生成时打印，并写入清单顶层
+#:   ``gpu_pool_contract_conflicts``（机读、可审计），⛔ 不是静默放行。
+POOL_CONTRACT_CONFLICTS: dict[tuple[int, ...], tuple[int, ...]] = {}
+#: 生成期逐档的池冲突命中（供 main() 汇总打印）。
+_uncaptured_pool_conflicts: list[tuple[str, tuple[int, ...], tuple[int, ...]]] = []
+
+
+def locked_card_hits(gpus: "list[int] | tuple[int, ...]") -> tuple[int, ...]:
+    """返回 ``gpus`` 里命中的**锁卡**（升序、去重）；空 tuple = 通过。
+
+    命中 = 具名锁卡（:data:`LOCKED_CARDS` = 邻居卡 ∪ 生产锁卡）**或**越界卡（∉ :data:`GPU_ALLOWED`）。
+    """
+    out_of_range = {int(g) for g in gpus if int(g) not in set(GPU_ALLOWED)}
+    return tuple(sorted(({int(g) for g in gpus} & set(LOCKED_CARDS)) | out_of_range))
+
+
+def locked_card_violation(
+    tier_id: str, gpus: "list[int] | tuple[int, ...]", cards: int
+) -> "str | None":
+    """★ 通用锁卡断言（fail-closed）：**任何档**的 ``gpus`` 都不得含被锁的卡。
+
+    判据（三条，全部具名）：
+      ① 不得含 :data:`NEIGHBOR_CARDS`（邻居常驻卡 ⇒ 占别人的卡）；
+      ② 不得含 :data:`GPU_FORBIDDEN_PRODUCTION`（生产锁卡）；
+      ③ 不得含任何**不在** :data:`GPU_ALLOWED` 内的卡（越界卡）。
+
+    ★ 唯一例外（**具名、逐次打印、写入清单**）：当该值**恰好等于本世代卡池**
+    :data:`GPU_POOL_BY_CARDS`\\[cards\\] 时，冲突来自**卡池本身**（2026-10-05 主席令「八卡全开」
+    定的 ``{4,5,6,7}``），不是本档的调度选择 ⇒ **登记进 :data:`POOL_CONTRACT_CONFLICTS` 与
+    ``_uncaptured_pool_conflicts``，不 raise**（⛔ 本生成器不擅自改池）。
+    任何**其它**形态一旦命中 ⇒ 直接 raise（这正是能抓到 T041 `[2,3]` 的那条断言）。
+
+    返回 None = 通过；否则返回拒绝理由（供测试与自证直接调用）。
+    """
+    hits = locked_card_hits(gpus)
+    if not hits:
+        return None
+    norm = tuple(int(g) for g in gpus)
+    pool = tuple(GPU_POOL_BY_CARDS.get(int(cards), ()))
+    if norm == pool:
+        POOL_CONTRACT_CONFLICTS[pool] = hits
+        _uncaptured_pool_conflicts.append((tier_id, pool, hits))
+        return None
+    names = []
+    for g in hits:
+        if g in NEIGHBOR_CARDS:
+            names.append(f"GPU{g}=邻居常驻卡（NEIGHBOR_CARDS）")
+        elif g in GPU_FORBIDDEN_PRODUCTION:
+            names.append(f"GPU{g}=生产锁卡（GPU_FORBIDDEN_PRODUCTION）")
+        else:
+            names.append(f"GPU{g}=越界卡（不在 GPU_ALLOWED={tuple(GPU_ALLOWED)} 内）")
+    return (
+        f"{tier_id}: gpus={list(gpus)} 含被锁的卡 ⇒ {'；'.join(names)}"
+        f"（本世代卡池为 {list(pool)}）"
+    )
+
+
+def mini_tier_subset_size(tier_id: str, v1_subset: int | None = None) -> int:
+    """★ mini 档（非 formal / 非 not_applicable）的 v2 子集条数 —— **唯一入口**（🔴B1a）。
+
+    取数顺序（任一步不成立即 **fail-closed**，⛔ **绝不回落 v1 的 20**）：
+
+    ① 该档在 :data:`MINI_DECLARED_SUBSET_SIZE`（= ``make_subsets.MINI_SUBSET_TIERS_DECLARED``）
+       ⇒ 声明口径（18 档 = 100）；
+    ② 与 :data:`MINI_LANDED_SUBSET_SIZE`（= ``make_subsets.MINI_TIERS``，在盘真值）对照：
+       已落地档两者必须**相等**；豁免档（:data:`MINI_DECLARED_NOT_LANDED`）允许在盘值更小，
+       但**必须在豁免表里有具名理由**；
+    ③ 若仓内有该档冻结子集文件（``subsets-v2/<T>.jsonl``）⇒ 行数必须等于**在盘真值**；
+    ④ 既不在声明表、也不在 v1 可核范围 ⇒ **raise**（陌生档 ⇒ 不猜）。
+    """
+    landed = MINI_LANDED_SUBSET_SIZE.get(tier_id)
+    declared = MINI_DECLARED_SUBSET_SIZE.get(tier_id)
+    if declared is not None:
+        if tier_id in MINI_DECLARED_NOT_LANDED:
+            if landed is None:
+                raise AssertionError(f"{tier_id}: 声明口径豁免档却缺在盘真值表条目")
+            if landed >= declared:
+                raise AssertionError(
+                    f"{tier_id}: 已登记为「声明未落地」但在盘真值 {landed} ≥ 声明 {declared}"
+                    f" ⇒ 豁免表陈旧，应删出（fail-closed）"
+                )
+        else:
+            if landed != declared:
+                raise AssertionError(
+                    f"{tier_id}: 声明口径 {declared} != 在盘落地真值 {landed}"
+                    f"（make_subsets.MINI_SUBSET_TIERS_DECLARED vs MINI_TIERS）⇒ "
+                    f"⛔ 拒绝生成（值回退 fail-closed；请同步两表或登记豁免）"
+                )
+        f = PROJECT_ROOT / REPO_SUBSET_DIR_REL / f"{tier_id}.jsonl"
+        if f.is_file():
+            lines = f.read_bytes().count(b"\n")
+            if lines != landed:
+                raise AssertionError(
+                    f"{tier_id}: 冻结子集在盘 {lines} 行 != make_subsets.MINI_TIERS[{tier_id}]={landed}"
+                    f" ⇒ ⛔ 拒绝生成（声明与产物不同值）"
+                )
+        # ★ 返回**声明口径**（= 清单 `data.subset_size` 声明的条数）：豁免档的冻结件虽然只有 20 行，
+        #   但清单声明的就是 100（"声明未落地"这一事实由 `subset_file_pregenerated=False` ＋
+        #   账本 `declared_not_landed` ＋ 交叉核对的具名豁免共同承担，⛔ 不是靠把声明值改小）。
+        return int(declared)
+    # 非声明面：以 v1 为下限（改前既有行为），但**必须**能由 v1 核出，⛔ 不用魔法默认值
+    if v1_subset is None:
+        raise AssertionError(f"{tier_id}: 非声明面档缺 v1 subset_size ⇒ 拒绝猜默认值")
+    if landed is not None and int(landed) != int(v1_subset):
+        raise AssertionError(
+            f"{tier_id}: 非声明面档 v1 subset_size={v1_subset} != 在盘真值 {landed} ⇒ 拒绝生成"
+        )
+    return int(v1_subset)
+
+
+def caliber_subset_ratio(tier_id: str, v1_subset: int, subset: int, is_na: bool) -> int:
+    """★★ **口径扩张比率** —— 步数/ckpt 间隔随子集扩面同步的**唯一入口**（修正轮 2 / 🔴B-1）。
+
+    病史（第二轮全局审查 B-1，本人机算确认）：修正轮 1 让本文件的**非 native 分支透传 v1**
+    （`per_epoch = int(out["expected_optimizer_steps_per_epoch"])`），于是把在盘的
+    `per_epoch/reachable` 由 **800/800 回退成 160/160**（原包 `merge_manifest_18.py` 的既定意图是
+    `subset_size/per_epoch/reachable/checkpoint_save_steps` **四者一律 ×5**，其 docstring 与
+    `SCALED_KEYS` 逐字可查），而 `docs/capability-matrix.data.json` 的 `per_epoch_steps` 仍是 800
+    ⇒ 18 档"每 epoch 计划步数"在矩阵与 runner 权威清单里**两个值**（§1.4 破 ＋ ① 步数门被实质放宽）。
+
+    比率取值（★ 与"在盘落地子集"解耦，⛔ 不混用）：
+      · **声明口径档**（`MINI_DECLARED_SUBSET_SIZE`，18 档）⇒ `声明口径 // v1 声明口径`。
+        ★ **含 3 档 `not_applicable` 豁免档**：它们的在盘 `subset_size` 仍是 v1 的 20，但**声明口径 = 100**
+        （`declared_subset_size`），原包对 18 档一律 ×5，矩阵侧 `per_epoch_steps` 也是 100
+        ⇒ 比率**必须取声明口径**（取落地值会得到 1，把这三档落回 20/10/5，与矩阵不符）。
+      · 其余档 ⇒ `subset // v1_subset`（CPT/SFT 100→100 = 1）。
+    非整数倍 ⇒ **raise**（⛔ 不静默取整、不静默豁免）。
+    """
+    if tier_id in MINI_DECLARED_SUBSET_SIZE:
+        numer = int(MINI_DECLARED_SUBSET_SIZE[tier_id])
+        basis = f"声明口径 {numer}"
+    else:
+        numer = int(v1_subset)
+        basis = f"在盘子集 {numer}"
+    v1s = int(v1_subset)
+    if v1s <= 0:
+        raise AssertionError(f"{tier_id}: v1 subset_size={v1s} 非法 ⇒ 拒绝算比率")
+    if numer % v1s:
+        raise AssertionError(
+            f"{tier_id}: {basis} / v1 {v1s} 非整数倍 ⇒ ⛔ 拒绝按比率改步数（需人工裁定）"
+        )
+    return numer // v1s
+
+
+def resolve_subset_check_dir(declared: str, repo: Path | None = None) -> "tuple[Path | None, str]":
+    """解析「冻结子集交叉核对」的真实目录；返回 ``(目录或 None, 不能解析的具名原因)``。
+
+    ★★ 病史（复核报告 B1b / §2.3）：``check()`` 原先直接 ``Path(manifest.host_dir).is_dir()``，
+      而在盘 ``host_dir`` = **未展开字面量** ``${GRASPO_PREGEN_SUBSET_DIR}`` ⇒ 恒 False ⇒
+      **每次都静默跳过**整套行数核对（7 条 MISMATCH 就是这样漏掉的）。
+    ★ 现在**三级解析**（⛔ 不许静默跳过；解析不到 ⇒ 调用方必须按"未核对"处理并 fail-closed）：
+      ① 清单里是**真实路径**且存在 ⇒ 用它（228 现场）；
+      ② 仓内 ``subsets-v2/``（冻结件的**唯一真相源副本**）存在 ⇒ 用它（本机常态）；
+      ③ 都不存在 ⇒ 返回 ``None`` ＋ 具名原因。
+    """
+    repo = repo or PROJECT_ROOT
+    s = str(declared or "")
+    if s and not s.startswith("${"):
+        p = Path(s)
+        if p.is_dir():
+            return p, ""
+    in_repo = repo / REPO_SUBSET_DIR_REL
+    if in_repo.is_dir():
+        return in_repo, ""
+    return None, (f"清单 host_dir={declared!r}（未展开占位符/不可达）且仓内 {REPO_SUBSET_DIR_REL}/ 不存在")
 
 
 def patch_tier(entry: dict, data_root: str, pregen_dir: str) -> dict:
@@ -247,9 +497,30 @@ def patch_tier(entry: dict, data_root: str, pregen_dir: str) -> dict:
             )
         if len(set(_override)) != len(_override):
             raise AssertionError(f"{tier_id}: 覆盖卡位 {_override} 含重复卡")
+        # ★★ 通用断言（2026-10-16 新增）：**显式卡位例外必须落在本世代卡池内**。
+        #    这就是「陈旧调度值」这一类缺陷的根因判据：例外描述的是**当时的空闲状态**，
+        #    一旦卡池换代（2026-10-05 起为 {4,5,6,7}），旧例外就指向了不该占的卡
+        #    （T041 `[2,3]` 即此形态）⇒ 必须显式重建，不得静默沿用。
+        _pool = set(GPU_POOL_BY_CARDS[_cards])
+        _outside = sorted(set(_override) - _pool)
+        if _outside:
+            raise AssertionError(
+                f"{tier_id}: 覆盖卡位 {_override} 含本世代卡池外的卡 {_outside}"
+                f"（卡池 GPU_POOL_BY_CARDS[{_cards}]={sorted(_pool)}）⇒ 拒绝（陈旧例外须显式重建）"
+            )
         out["gpus"] = _override
     else:
         out["gpus"] = list(GPU_POOL_BY_CARDS[_cards])
+    # ★★ 通用锁卡断言（2026-10-16 新增）：**全部 54 档**一律过 —— 不得含邻居卡 / 生产锁卡 / 越界卡。
+    #    这就是当初能抓到「T041 声明了邻居 GPU2」的那条断言；⛔ 撤销例外时不得把它一起删掉。
+    #    ★ 卡池自身的已知冲突（如 {4,5,6,7} ∩ {6,7}）走具名登记分支（不 raise），见 locked_card_violation。
+    _lv = locked_card_violation(tier_id, out["gpus"], _cards)
+    if _lv:
+        raise AssertionError(f"锁卡断言失败 ⇒ {_lv}")
+    if len(out["gpus"]) != _cards:
+        raise AssertionError(
+            f"{tier_id}: gpus={out['gpus']} 个数 {len(out['gpus'])} ≠ cards={_cards}（§12 同源）"
+        )
     is_na = tier_id in NOT_APPLICABLE_TIERS
 
     # ① config 口径
@@ -258,7 +529,7 @@ def patch_tier(entry: dict, data_root: str, pregen_dir: str) -> dict:
             raise AssertionError(f"{tier_id}: v1 config 目录异常：{out['config']}")
         out["config"] = f"{CONFIG_DIR_REL}/{tier_id}.yaml"
 
-    # ② 子集条数
+    # ② 子集条数（★ 修正轮 1：18 档扩面**由唯一真相源现算**，⛔ 不再回落 v1 的 20）
     v1_subset = int(out["data"]["subset_size"])
     if is_na:
         subset = v1_subset  # not_applicable：不跑，保持 v1（不假装有 v2 子集）
@@ -267,8 +538,16 @@ def patch_tier(entry: dict, data_root: str, pregen_dir: str) -> dict:
         subset = V2_SUBSET_SIZE_BY_TIER[tier_id]
         source = SOURCE_FORMAL
     else:
-        subset = v1_subset
+        subset = mini_tier_subset_size(tier_id, v1_subset)
         source = SOURCE_MINI
+    # ★★ 口径扩张比率（修正轮 2 / 🔴B-1）：**声明口径档一律适用（含 3 档 `not_applicable` 豁免档）**。
+    #   · formal 档（`V2_SUBSET_SIZE_BY_TIER`，9 档 native）的步数走真实式（`v2_native_steps_per_epoch`），
+    #     ckpt 间隔由 v2 档配置决定 ⇒ **不按比率**；
+    #   · 其余档（含 18 档声明口径档）⇒ 走 :func:`caliber_subset_ratio`（唯一入口）。
+    #   ⛔ 旧实现只在 `not is_na` 时算比率 ⇒ 3 档豁免档漏掉，且非 native 分支根本没用它（B-1 根因）。
+    caliber_ratio = 1
+    if tier_id not in V2_SUBSET_SIZE_BY_TIER:
+        caliber_ratio = caliber_subset_ratio(tier_id, v1_subset, subset, is_na)
 
     # ③ 数据源逐档标注（逐档具名；取数命令与条数都写死在这一档里）
     src_rel = (
@@ -285,7 +564,20 @@ def patch_tier(entry: dict, data_root: str, pregen_dir: str) -> dict:
     data["subset_size"] = subset
     if is_na:
         data["train_path"] = out["data"]["train_path"]  # v1 原值（该档不跑）
+        # ★★ 修正轮 1（🔴B1b 的 3 档具名豁免）：`not_applicable` 档的 `subset_size` **保持 v1 的 20**
+        #    （⛔ 不假装有 v2 冻结件、⛔ 不为它伪造数据），但"**声明口径 = 100 未落地**"这一事实
+        #    **机读登记**在本字段（唯一真相源 = `make_subsets.MINI_SUBSET_TIERS_DECLARED`），
+        #    与 `subsets-v2.manifest.json::tiers[].declared_not_landed` 同源同义。
+        data["declared_subset_size"] = int(MINI_DECLARED_SUBSET_SIZE[tier_id])
+        data["declared_not_landed"] = {
+            "declared": int(MINI_DECLARED_SUBSET_SIZE[tier_id]),
+            "landed": int(v1_subset),
+            "reason": MINI_DECLARED_NOT_LANDED[tier_id],
+            "authority": "make_subsets.MINI_SUBSET_TIERS_DECLARED vs MINI_TIERS 的差额",
+        }
     else:
+        data.pop("declared_subset_size", None)
+        data.pop("declared_not_landed", None)
         data["train_path"] = f"/work/elam-v5/{V2_SUBSET_DIRNAME}/{tier_id}.jsonl"
     data["source"] = source
     # ★ source_jsonl = **原始源文件**（不是 subsets-v2 冻结件）：runner 的
@@ -321,10 +613,20 @@ def patch_tier(entry: dict, data_root: str, pregen_dir: str) -> dict:
             )
         )
     else:
-        per_epoch = int(out["expected_optimizer_steps_per_epoch"])
+        # ★★★ 修正轮 2（🔴B-1 根因）：**必须乘口径比率**。
+        #     旧实现 `per_epoch = int(out["expected_optimizer_steps_per_epoch"])` 是**纯透传 v1**
+        #     ⇒ 18 档声明口径扩面（20→100）后 `per_epoch` 停在 20 行口径的 160/80/40/20/10/5，
+        #     而 `docs` 矩阵的 `per_epoch_steps` = 800/400/200/100/50/25 ⇒ §1.4 双真相源 ＋
+        #     `scripts/collect_results.py:1846-1858,2348` 的 ① 步数门被实质放宽 5 倍。
+        _v1_per = int(out["expected_optimizer_steps_per_epoch"])
+        per_epoch = _v1_per * int(caliber_ratio)
         out["step_formula_v2"] = (
-            "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变）"
-            f" = {per_epoch}"
+            "非 native GRASPO：v1 口径 × **口径扩张比率**"
+            f"（v1={_v1_per} × {caliber_ratio} = {per_epoch}）"
+            + (
+                "；★ 本档属「声明口径扩面」⇒ 比率 = 声明口径 ÷ v1 声明口径"
+                if caliber_ratio != 1 else "；比率 = 1（子集与 v1 同口径）"
+            )
         )
     reachable = per_epoch * int(gm.MATRIX_MAX_EPOCHS)
     # ★ 锚定覆盖（2026-10-02 批准）：仅这三档
@@ -371,7 +673,16 @@ def patch_tier(entry: dict, data_root: str, pregen_dir: str) -> dict:
         out["checkpoint_save_steps"] = int(
             read_yaml_scalar(PROJECT_ROOT / V2_CONFIG_DIR_REL / f"{tier_id}.yaml", "save_steps")
         )
-        out["expected_optimizer_steps"] = out["checkpoint_save_steps"]
+    else:
+        # ★★ 修正轮 1（🔴B1c）＋ 修正轮 2（🔴B-1）：非 native 档的 `checkpoint_save_steps` 不能纯透传 v1
+        #    （子集扩面后它与 `per_epoch` 一起停在旧口径）；按**同一个** `caliber_ratio` 同比例放大
+        #    （整数运算，⛔ 不另立 epoch 公式）。★ B-1 修正 = 比率由 `subset_ratio`（漏 3 档豁免档、
+        #    且未被 per_epoch 使用）改为 `caliber_ratio`（声明口径唯一入口、与 per_epoch 同源）。
+        out["checkpoint_save_steps"] = int(out["checkpoint_save_steps"]) * int(caliber_ratio)
+    # ★★ 清单自带 `key_semantics.expected_optimizer_steps` 逐字声明：该键语义 = `checkpoint_save_steps`
+    #    ⇒ 本不变量**对全 54 档无条件成立**（HEAD 清单实测 54/54 相等；本包手工并入曾只改一半
+    #    ⇒ 18 档违反）。⛔ 不再把它限制在 native 分支里。
+    out["expected_optimizer_steps"] = out["checkpoint_save_steps"]
 
     # ⑤ formal_gate：门槛值与 v1 一致（不放宽），只重算标记与 basis
     gate = dict(out["acceptance"]["formal_gate"])
@@ -460,6 +771,8 @@ def build_v2_manifest(
     v1_manifest_sha: str, config_fingerprint: str, config_dir_fingerprint: str = "",
 ) -> dict:
     v1_tiers = v1_manifest["tiers"]
+    POOL_CONTRACT_CONFLICTS.clear()
+    _uncaptured_pool_conflicts.clear()
     entries = [patch_tier(t, data_root, pregen_dir) for t in v1_tiers]
 
     # 顶层：深拷贝 v1 → 只改版本/来源/数据源/审计节，其余（counts/models/feasibility_model…）
@@ -491,7 +804,13 @@ def build_v2_manifest(
         "config": f"{V1_CONFIG_DIR_REL}/T0NN.yaml → {CONFIG_DIR_REL}/T0NN.yaml（51 个可跑档）"
                   f"｜★ 步数口径仍只读 {V2_CONFIG_DIR_REL}/（不随 config 改指而变）",
         "subset_size": (
-            "9 档 GRASPO×native：20 → 48×卡数（48/96/192）；其余 45 档不变（CPT/SFT=100、GRASPO/OPD=20）"
+            "① 9 档 GRASPO×native：20 → 48×卡数（48/96/192）；"
+            "② ★ **2026-10-16 主席裁定「18 个 20 行档放大到 100 行」**：原 18 个 20 行档的"
+            "**声明口径 = 100**（唯一真相源 = `tests/e2e/make_subsets.py::MINI_SUBSET_TIERS_DECLARED`），"
+            "其中 **15 档已在盘落地**（`MINI_TIERS` 同步为 100、冻结件实做 ×100），"
+            "**3 档具名豁免未落地**（`T052–T054`：`not_applicable` ⇒ 无生成件、⛔ 不伪造；见 "
+            "`make_subsets.DECLARED_NOT_LANDED` 与 `subsets-v2.manifest.json::tiers[].declared_not_landed`）；"
+            "③ 其余 CPT/SFT 27 档 = 100（不变）"
         ),
         "train_path": f"/work/elam-v5/subsets/ → /work/elam-v5/{V2_SUBSET_DIRNAME}/（51 个可跑档）",
         "steps": (
@@ -503,9 +822,40 @@ def build_v2_manifest(
             "per-tier data.source / data.source_jsonl / data.source_jsonl_container / "
             "data.extract_command / data.source_rule / data.subset_file_pregenerated / step_formula_v2",
         ],
+        "gpus": (
+            "★ 2026-10-16：**撤销 T041 的陈旧卡位例外** `[2,3]`（2026-10-09 的一次性调度值，"
+            "把第三方账号占用中的常驻邻居卡 GPU2 写进了我方声明）⇒ T041 走默认映射 "
+            "`GPU_POOL_BY_CARDS[2] = [4,5]`。★ 其余 53 档 `gpus` **逐档逐字未变**（仍 = 本世代卡池）。"
+        ),
         "unchanged": (
             "counts / models / feasibility_model / runtime.checkpoint_retention / 每档的 "
-            "model*/algorithm/mode/backend/cards/gpus/status/feasibility/acceptance.criteria"
+            "model*/algorithm/mode/backend/cards/status/feasibility/acceptance.criteria"
+            "（★ `gpus` 见上条：仅 T041 一档改）"
+        ),
+    }
+    # ★★ 卡池/锁卡契约的**已知冲突登记**（只登记、⛔ 不擅自改池；由指挥统一处置）：
+    #    机读、可审计 —— 后人不必靠读注释去发现「本世代 4 卡池 {4,5,6,7} 含生产锁卡 6/7」。
+    out["gpu_pool_contract_conflicts"] = {
+        "locked_cards": list(LOCKED_CARDS),
+        "gpu_allowed": list(GPU_ALLOWED),
+        "gpu_forbidden_production": list(GPU_FORBIDDEN_PRODUCTION),
+        "neighbor_cards": list(NEIGHBOR_CARDS),
+        "assertion": (
+            "locked_card_violation()：任何档 gpus 不得含 locked_cards 中任一张；"
+            "唯一例外 = 该值恰等于本世代卡池 GPU_POOL_BY_CARDS[cards]（登记于此，不 raise）"
+        ),
+        "conflicts": [
+            {
+                "pool": list(pool),
+                "locked_hits": list(hits),
+                "tiers": sorted(t for t, p, _h in _uncaptured_pool_conflicts if p == pool),
+            }
+            for pool, hits in sorted(POOL_CONTRACT_CONFLICTS.items())
+        ],
+        "note": (
+            "★ 上列冲突是**卡池定义**（2026-10-05 主席令「八卡全开」定的 {4,5,6,7}）与"
+            "`gpu_assignment.GPU_FORBIDDEN_PRODUCTION=(6,7)` 之间的矛盾，**不是本生成器的调度选择**"
+            "⇒ 本生成器只登记、⛔ 不擅自改池。邻居卡 GPU2 已随 T041 例外撤销而从全部声明中清零。"
         ),
     }
     # 顶层 data 段：v1 的算法级口径保留（向后兼容），另加 v2 的逐档口径。
@@ -622,7 +972,133 @@ def build_v2_manifest(
     return out
 
 
-def check(manifest_path: Path) -> int:
+def derived_state_regression(new_doc, out_path) -> list[str]:
+    """★★ **派生状态**守卫（修正轮 2 / 🟡W-1b）：`--out` 覆盖**已存在的跑次台账**时，
+    重生成不得改写任何 tier 的 `status`。
+
+    病史（第二轮全局审查 W-1）：在盘清单的 `status` 是**跑次派生态**（`ready`/`blocked`/`running`/
+    `not_applicable`，由 `backfill_matrix.py` 一族回填），而重生成从 v1 深拷贝 ⇒ 会把 **45 档**
+    改写成静态 `judged`（实测 `ready→judged` 21、`unverified→judged` 8、`unverified→blocked` 5…）。
+    ⇒ "声明的写路径"会**静默翻转派生状态**（§1.4/§2.4）。`caliber_value_regression()` 只管口径字段，
+    覆盖不到这一面，故单列本守卫。
+
+    语义（fail-closed，⛔ 不是"警告"）：
+      · `out_path` **不存在** ⇒ 首次生成，没有可比对象 ⇒ 通过（⛔ 不阻塞正常通路）；
+      · 存在 ⇒ 逐档比 `status`（在盘 vs 新内容），**任一不同即返回具名条目**，调用方**拒绝写盘**。
+    """
+    out_path = Path(out_path)
+    if not out_path.is_file():
+        return []
+    on_disk = json.loads(out_path.read_text(encoding="utf-8"))
+    od = {str(t.get("tier_id")): t for t in on_disk.get("tiers", [])}
+    drift: list[str] = []
+    for t in new_doc.get("tiers", []):
+        tid = str(t.get("tier_id"))
+        o = od.get(tid)
+        if o is None:
+            continue
+        if "status" in t and "status" in o and str(t["status"]) != str(o["status"]):
+            drift.append(f"{tid}.status: 在盘 {o['status']!r} → 重生成 {t['status']!r}")
+    return drift
+
+
+def caliber_value_regression(new_doc, out_path) -> list[str]:
+    """★★ **值回退**守卫（修正轮 1 / 🔴B1a 的 fail-closed 面）：在盘 vs 新内容的**口径值**必须一致。
+
+    病史（复核报告 B1a）：`guard_regeneration_keeps_on_disk_fields()` 只防**字段路径丢失**
+    （实测 `only_disk=0` 却仍把 18 档 `subset_size` 100 写回 20）⇒ 值回退**静默**发生且
+    `check()` 照样打印 `check OK`。本函数把"值"也纳入 fail-closed。
+
+    比对面 = **口径关键字段**（⛔ 不是全部字段：在盘清单是跑次台账，含生成器之外的 post-fill
+    字段与派生 status，逐字段全比会误伤 —— 见工位报告 §B1a 的实测归因）：
+      · `data.subset_size` / `data.source` / `data.extract_command` / `data.source_rule`
+      · `expected_optimizer_steps` / `..._per_epoch` / `..._reachable` / `checkpoint_save_steps`
+    判据：**在盘值 == 新内容值**。不等 ⇒ 返回具名条目（调用方**拒绝写盘**）。
+    ★ 首次生成（在盘不存在）没有可比对象 ⇒ 直接通过。
+    """
+    out_path = Path(out_path)
+    if not out_path.is_file():
+        return []
+    on_disk = json.loads(out_path.read_text(encoding="utf-8"))
+    od = {str(e["tier_id"]): e for e in on_disk.get("tiers", [])}
+    drift: list[str] = []
+    for e in new_doc.get("tiers", []):
+        tid = str(e["tier_id"])
+        o = od.get(tid)
+        if o is None:
+            continue
+        for k in ("expected_optimizer_steps", "expected_optimizer_steps_per_epoch",
+                  "expected_optimizer_steps_reachable", "checkpoint_save_steps"):
+            if k in e and k in o and str(e[k]) != str(o[k]):
+                drift.append(f"{tid}.{k}: 在盘 {o[k]} → 重生成 {e[k]}")
+        for k in ("subset_size", "source", "extract_command", "source_rule"):
+            if k in e.get("data", {}) and k in o.get("data", {}) \
+                    and str(e["data"][k]) != str(o["data"][k]):
+                drift.append(f"{tid}.data.{k}: 在盘 {str(o['data'][k])[:50]} → 重生成 {str(e['data'][k])[:50]}")
+    return drift
+
+
+def cross_check_manifest_against_matrix(
+    manifest_path: "Path | str | None" = None,
+    matrix_path: "Path | str | None" = None,
+    exempt_drift: "tuple[str, ...] | None" = None,
+) -> list[str]:
+    """★★ **跨件不变量机检**（修正轮 2 / 🔴B-1 ＋ 审查建议 S2）：全 54 档
+
+        `manifest.expected_optimizer_steps_per_epoch  ==  docs.rows[].per_epoch_steps`
+
+    为什么必须跨件（⛔ 不能只比"清单 ↔ 重生成"）：B-1 之所以漏网，正是因为
+    `caliber_value_regression()` 只比**清单 ↔ 重生成**（两者同为 160，自洽地错），
+    而**真值在 `docs/capability-matrix.data.json`**（`per_epoch_steps` = 800）。
+    ⇒ 这条机检把"矩阵 ↔ runner 权威清单"这一对**唯一真相源**钉在一起（§1.4）。
+
+    ★ **豁免不是静默白名单**：`exempt_drift`（默认 :data:`KNOWN_PRE_EXISTING_PER_EPOCH_DRIFT` = W-7 的
+      T017/T018，⛔ 本轮不修）里的档 **必须确实仍在漂**；一旦不漂了 ⇒ 报「豁免表陈旧」，
+      逼下一轮把具名例外删掉（fail-closed 的反向断言）。
+    """
+    mpath = Path(manifest_path) if manifest_path is not None else V2_MANIFEST_PATH
+    dpath = Path(matrix_path) if matrix_path is not None else (
+        PROJECT_ROOT / "docs" / "capability-matrix.data.json"
+    )
+    exempt = KNOWN_PRE_EXISTING_PER_EPOCH_DRIFT if exempt_drift is None else tuple(exempt_drift)
+    if not mpath.is_file():
+        return [f"清单不在盘：{mpath}"]
+    if not dpath.is_file():
+        return [f"矩阵正式件不在盘：{dpath}（⛔ 跨件不变量无法核对 ⇒ fail-closed）"]
+    man = json.loads(mpath.read_text(encoding="utf-8"))
+    rows = {str(r.get("tier")): r for r in json.loads(dpath.read_text(encoding="utf-8"))["rows"]}
+    problems: list[str] = []
+    drifted: set[str] = set()
+    for e in man.get("tiers", []):
+        tid = str(e["tier_id"])
+        r = rows.get(tid)
+        if r is None:
+            problems.append(f"{tid}: 矩阵正式件里没有该档 ⇒ 无法跨件核对")
+            continue
+        want = r.get("per_epoch_steps")
+        if want is None:
+            problems.append(f"{tid}: 矩阵行缺 per_epoch_steps ⇒ 无法跨件核对")
+            continue
+        got = int(e["expected_optimizer_steps_per_epoch"])
+        if got != int(want):
+            drifted.add(tid)
+            if tid not in exempt:
+                problems.append(
+                    f"{tid}: manifest.per_epoch={got} != matrix.per_epoch_steps={want}"
+                    f"（§1.4 单一真相源破 ⇒ ① 步数门基准被改）"
+                )
+    # ★ 反向断言：具名豁免必须仍然"确实在漂"，否则豁免表陈旧（⛔ 不许留静默白名单）
+    stale = sorted(set(exempt) - drifted)
+    if stale:
+        problems.append(
+            f"豁免表陈旧：{stale} 已不再漂移 ⇒ 必须从 KNOWN_PRE_EXISTING_PER_EPOCH_DRIFT 删出"
+            f"（本表只允许承载**确实仍在漂**的既有档）"
+        )
+    return problems
+
+
+def check(manifest_path: Path, allow_unverified_subset_check: bool = False,
+          subset_dir_override: "str | Path | None" = None) -> int:
     """只读校验：v2 清单的字段自洽性（不依赖网络/服务器）。
 
     配置 v2 目录、冻结子集目录都是**可选**交叉核对：本机看不到就**打印跳过原因**
@@ -676,10 +1152,83 @@ def check(manifest_path: Path) -> int:
         elif tid not in NOT_APPLICABLE_TIERS:
             if e["data"].get("source") != SOURCE_MINI:
                 problems.append(f"{tid}: source != mini")
+            # ★★ 修正轮 1（🔴B1a）：mini 档的 `subset_size` 必须**逐档等于**唯一真相源现算值
+            #    ⇒ 值回退（100→20）当场报 MISMATCH、非 0 退出（⛔ 不再"check OK 却已回退"）。
+            v1_subset = (V1_SUBSET_SIZE_BY_TIER.get(tid))
+            try:
+                want_mini = mini_tier_subset_size(tid, v1_subset)
+            except AssertionError as exc:
+                problems.append(f"{tid}: 子集条数唯一入口 fail-closed ⇒ {exc}")
+            else:
+                if int(e["data"]["subset_size"]) != int(want_mini):
+                    problems.append(
+                        f"{tid}: subset_size {e['data']['subset_size']} != 唯一真相源现算值 {want_mini}"
+                        f"（⛔ 值回退）"
+                    )
+        # ★★ 修正轮 2（🔴B-1）：**非 native 档的 `per_epoch` 必须 = v1 值 × 口径比率**
+        #    ⇒ 旧实现纯透传 v1（把 800 回退成 160）当场报 MISMATCH、非 0 退出。
+        if tid not in V2_SUBSET_SIZE_BY_TIER:
+            _v1_per = V1_PER_EPOCH_BY_TIER.get(tid)
+            if _v1_per is None:
+                problems.append(f"{tid}: 非 native 档但 v1 清单无 per_epoch ⇒ 无法复核（fail-closed）")
+            else:
+                try:
+                    _ratio = caliber_subset_ratio(
+                        tid, V1_SUBSET_SIZE_BY_TIER[tid], int(e["data"]["subset_size"]),
+                        tid in NOT_APPLICABLE_TIERS,
+                    )
+                except AssertionError as exc:
+                    problems.append(f"{tid}: 口径比率唯一入口 fail-closed ⇒ {exc}")
+                else:
+                    _want_per = int(_v1_per) * int(_ratio)
+                    if per != _want_per:
+                        problems.append(
+                            f"{tid}: per_epoch {per} != v1({_v1_per}) × 口径比率({_ratio}) = {_want_per}"
+                            f"（⛔ 计划步数回退；① 步数门会被实质放宽）"
+                        )
+        # ★★ 修正轮 1（🔴B1c）：清单自带 `key_semantics` 声明
+        #    `expected_optimizer_steps` 语义 = `checkpoint_save_steps` ⇒ 逐档必须相等。
+        if "checkpoint_save_steps" in e and "expected_optimizer_steps" in e:
+            if int(e["expected_optimizer_steps"]) != int(e["checkpoint_save_steps"]):
+                problems.append(
+                    f"{tid}: expected_optimizer_steps {e['expected_optimizer_steps']} != "
+                    f"checkpoint_save_steps {e['checkpoint_save_steps']}"
+                    f"（违反清单自带 key_semantics 不变量）"
+                )
         if not e.get("config") and tid not in NOT_APPLICABLE_TIERS:
             problems.append(f"{tid}: 可跑档却缺 config")
     if manifest["step_gate_audit"]["structural_limited_tiers"]:
         problems.append("v2 仍存在 structural_limited 档")
+
+    # ★★ 通用锁卡断言（对**在盘清单**复核，⛔ 不只信生成期）：任何档 gpus 不得含邻居卡 / 生产锁卡 / 越界卡。
+    #    唯一例外 = 该值恰等于本世代卡池（卡池自身与锁卡契约的矛盾 ⇒ 只登记）。
+    _pool_hits: list[tuple[str, tuple[int, ...]]] = []
+    for e in entries:
+        _gpus = e.get("gpus") or []
+        _hits = locked_card_hits(_gpus)
+        if not _hits:
+            continue
+        _pool = tuple(GPU_POOL_BY_CARDS.get(int(e["cards"]), ()))
+        if tuple(int(g) for g in _gpus) == _pool:
+            _pool_hits.append((e["tier_id"], _hits))
+        else:
+            problems.append(
+                f"{e['tier_id']}: gpus={_gpus} 含锁卡 {list(_hits)}（⛔ 不等于本世代卡池 {list(_pool)} "
+                f"⇒ 拒绝；锁卡集合 LOCKED_CARDS={list(LOCKED_CARDS)}）"
+            )
+    if _pool_hits:
+        _pools = sorted({tuple(int(g) for g in (next(x for x in entries if x["tier_id"] == t)["gpus"] or []))
+                         for t, _h in _pool_hits})
+        print(
+            f"LOCKED-CARD-POOL-CONFLICT（已登记、不判否）: {len(_pool_hits)} 档的 gpus == 本世代卡池，"
+            f"而该卡池与 GPU_FORBIDDEN_PRODUCTION={list(GPU_FORBIDDEN_PRODUCTION)} 相交 ⇒ "
+            f"池={[list(p) for p in _pools]}；档号={sorted(t for t, _h in _pool_hits)}"
+        )
+    print(
+        f"锁卡断言：LOCKED_CARDS={list(LOCKED_CARDS)}（邻居 {list(NEIGHBOR_CARDS)} ∪ 生产锁卡 "
+        f"{list(GPU_FORBIDDEN_PRODUCTION)} ∪ 越界）——{len(entries)} 档逐档已核；"
+        f"含邻居卡 GPU2 的档 = {sum(1 for e in entries if 2 in (e.get('gpus') or []))} 档"
+    )
 
     print(
         "配置 v2 交叉核对："
@@ -691,25 +1240,70 @@ def check(manifest_path: Path) -> int:
         + (f"已逐档核对存在性（{run_config_dir}）" if have_run_configs
            else f"**跳过**（本机看不到 {run_config_dir}）")
     )
-    # 冻结子集交叉核对（能看到才做）
-    subset_dir = Path(manifest["data_sources"]["pregenerated_subsets"]["host_dir"])
-    if subset_dir.is_dir():
+    # ★★ 冻结子集交叉核对（修正轮 1 · 🔴B1b 根因）：**三态、⛔ 不许静默跳过**。
+    #    病史：原先 `Path(host_dir).is_dir()` 在盘值为**未展开字面量** ⇒ 恒 False ⇒
+    #    每次只打印「跳过」并继续，7 条行数 MISMATCH 因此从未被发现，而报告仍引 `check OK`。
+    #    现在：① 真实目录 ⇒ 逐档真核对；② 仓内 `subsets-v2/` ⇒ 用它真核对（本机常态）；
+    #          ③ 都拿不到 ⇒ 打印 **UNVERIFIED** 并把"未覆盖范围"计入 problems（fail-closed，
+    #             除非调用方**显式**传 `--allow-unverified-subset-check` —— 显式即会打印）。
+    subset_dir, why_unresolved = resolve_subset_check_dir(
+        str(subset_dir_override or manifest["data_sources"]["pregenerated_subsets"]["host_dir"])
+    )
+    subset_ok = subset_exempt = 0
+    unverified_scope: list[str] = []
+    if subset_dir is not None:
         for e in entries:
+            tid = e["tier_id"]
             if not e["data"].get("subset_file_pregenerated"):
+                # ★ 逐档具名豁免（⛔ 不是静默跳过）：打印档号与理由，且**不计入已核对数**。
+                subset_exempt += 1
+                unverified_scope.append(
+                    f"{tid}: subset_file_pregenerated=False（未落地/不适用 ⇒ 本项不核对）"
+                )
                 continue
-            p = subset_dir / f"{e['tier_id']}.jsonl"
+            p = subset_dir / f"{tid}.jsonl"
             if not p.is_file():
-                problems.append(f"{e['tier_id']}: 冻结子集缺失 {p}")
+                problems.append(f"{tid}: 冻结子集缺失 {p}")
                 continue
             lines = p.read_bytes().count(b"\n")
             if lines != int(e["data"]["subset_size"]):
                 problems.append(
-                    f"{e['tier_id']}: 冻结子集行数 {lines} != subset_size {e['data']['subset_size']}"
+                    f"{tid}: 冻结子集行数 {lines} != subset_size {e['data']['subset_size']}"
                 )
-        print(f"冻结子集核对：{subset_dir}（已逐档核对行数）")
+            else:
+                subset_ok += 1
+        print(
+            f"冻结子集核对：{subset_dir}（**已逐档核对行数**：OK {subset_ok} 档；"
+            f"具名豁免 {subset_exempt} 档＝{sorted(x.split(':')[0] for x in unverified_scope)}）"
+        )
     else:
-        print(f"冻结子集核对：**跳过**（本机看不到 {subset_dir}；以 228 上的 subsets-v2.manifest.json 为准）")
+        print(f"冻结子集核对：**UNVERIFIED（未核对）** —— {why_unresolved}")
+        unverified_scope = [
+            f"{e['tier_id']}: 未核对（{why_unresolved}）" for e in entries
+        ]
+        if not allow_unverified_subset_check:
+            problems.append(
+                f"冻结子集核对 UNVERIFIED（{why_unresolved}）⇒ 本清单的"
+                f"「声明 subset_size vs 冻结件行数」这一面**未被覆盖**，"
+                f"⛔ 不得据此宣称 check OK；如需临时放行请显式加 --allow-unverified-subset-check"
+            )
+    if unverified_scope:
+        print(f"UNVERIFIED-SCOPE（未覆盖范围，逐档具名；共 {len(unverified_scope)} 档）:")
+        for x in unverified_scope:
+            print(f"  · {x}")
 
+    # ★★ 修正轮 2（🔴B-1 ＋ 审查建议 S2）：**跨件不变量机检** ——
+    #    `manifest.per_epoch == docs.per_epoch_steps`（全 54 档；具名豁免 T017/T018 = W-7 既有，
+    #    且豁免必须"确实仍在漂"，否则报陈旧 ⇒ 逼下一轮删出）。
+    cross = cross_check_manifest_against_matrix(manifest_path)
+    if cross:
+        problems.extend(f"[跨件] {x}" for x in cross)
+    else:
+        print(
+            "跨件不变量核对：manifest.per_epoch == docs.per_epoch_steps —— **52/52 成立**"
+            f"（具名豁免 {len(KNOWN_PRE_EXISTING_PER_EPOCH_DRIFT)} 档 = "
+            f"{list(KNOWN_PRE_EXISTING_PER_EPOCH_DRIFT)}，W-7 既有、⛔ 本轮不修；已验明确实在漂）"
+        )
     for d in declared_anchor_diffs:
         print(f"DECLARED-ANCHOR: {d}（已声明的锚定差异，不判否）")
     if problems:
@@ -742,6 +1336,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, default=V2_MANIFEST_PATH, help="v2 清单落点")
     parser.add_argument("--check", action="store_true", help="只校验已落盘的 v2 清单")
     parser.add_argument("--print-steps", action="store_true", help="只打印步数对照，不写文件")
+    parser.add_argument(
+        "--allow-unverified-subset-check", action="store_true",
+        help="★ 显式放行「冻结子集目录解析不到 ⇒ 未核对」的 fail-closed（默认不放行；用到即打印）",
+    )
     parser.add_argument("--host-data-root", default=DEFAULT_HOST_DATA_ROOT,
                         help="228 上的 ELAM V5 原始数据根（data/、mini-dataset/、images/）")
     parser.add_argument("--pregen-subset-dir", default=DEFAULT_PREGEN_SUBSET_DIR,
@@ -755,7 +1353,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.check:
-        return check(args.out)
+        _ov = args.pregen_subset_dir if args.pregen_subset_dir != DEFAULT_PREGEN_SUBSET_DIR else None
+        return check(args.out, allow_unverified_subset_check=args.allow_unverified_subset_check,
+                     subset_dir_override=_ov)
 
     v1_bytes = V1_MANIFEST_PATH.read_bytes()
     v1_manifest_sha = sha256_bytes(v1_bytes)
@@ -791,9 +1391,46 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
+    # ★★ 修正轮 1（🔴B1a 的 fail-closed 面，⛔ 不是豁免/白名单变绿）：**值回退**守卫。
+    #    病史：`guard_regeneration_keeps_on_disk_fields()` 只防"字段路径丢失"，**不防值回退**
+    #    ⇒ 生成器把在盘 18 档 `subset_size=100` 写回 20 时 rc=0、且 `check()` 照样 OK。
+    #    现在：写盘前对**口径关键字段**逐档做值一致性断言 —— 新内容的值必须 == **唯一真相源现算值**
+    #    （同一套 `mini_tier_subset_size()` / `expected_optimizer_steps` 不变量）；
+    #    在盘值若与现算值不同，要么是**在盘漂移**（如上一轮的手工并入漏改一半）⇒ 打印具名清单并**拒绝写盘**。
+    drift = caliber_value_regression(manifest, args.out)
+    if drift:
+        print(
+            f"FATAL: 重生成相对在盘清单存在 {len(drift)} 处**口径值不一致** ⇒ 拒绝写盘 {args.out}"
+            f"（fail-closed；⛔ 不许静默回退 100→20 / 步数 ÷5）。前 8 条：",
+            file=sys.stderr,
+        )
+        for d in drift[:8]:
+            print(f"  VALUE-DRIFT {d}", file=sys.stderr)
+        print(
+            "  处置：① 口径变更请改 `make_subsets.MINI_SUBSET_TIERS_DECLARED` / `MINI_TIERS`（唯一真相源）；"
+            "② 若在盘件才是真值 ⇒ 先查清为何与本生成器现算不一致；⛔ 不得加例外放行。",
+            file=sys.stderr,
+        )
+        return 1
+    # ★★ 修正轮 2（🟡W-1b）：**派生状态**守卫 —— 覆盖已存在的跑次台账时，⛔ 不得改写任何 tier 的 `status`。
+    state_drift = derived_state_regression(manifest, args.out)
+    if state_drift:
+        print(
+            f"FATAL: 重生成会把在盘清单的 {len(state_drift)} 档**派生 status** 改写"
+            f"（跑次台账真值 ⇒ 只许外科式并入）⇒ 拒绝写盘 {args.out}。前 8 条：",
+            file=sys.stderr,
+        )
+        for d in state_drift[:8]:
+            print(f"  STATE-DRIFT {d}", file=sys.stderr)
+        print(
+            "  处置：① 整体重生成**不是**本清单的合法写路径（在盘含跑次回填字段）；"
+            "② 口径/字段改动请走数据级外科式并入器；⛔ 不得加例外放行。",
+            file=sys.stderr,
+        )
+        return 1
     text = json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
     args.out.write_text(text, encoding="utf-8")
-    rc = check(args.out)
+    rc = check(args.out, allow_unverified_subset_check=args.allow_unverified_subset_check)
     print(f"v2 清单已写出：{args.out}（sha256={sha256_bytes(text.encode())}）")
     print(f"  v1 基线 sha256={v1_manifest_sha}（v1 清单字节未动）")
     print(f"  步数口径来源 v2 总指纹={fingerprint}")

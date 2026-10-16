@@ -177,7 +177,7 @@
       "relative_path_under_data_root": "mini-dataset/mini-short-mm-train.jsonl",
       "jsonl_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
       "line_count": 100,
-      "purpose": "mini 数据集只用于「矩阵跑通」（压时间/压成本）；**效果评测集按档分列**（2026-10-16 口径）：★ **100 行档**（`subset_size == 100`，CPT/SFT 的 T001–T027）＝ **fit 口径（训练集自评）**——评测集就是该档**自身训练用的同一份文件**（100 行、`dataset_split: train`）；★ 该读数只是「在该档自身训练集上的拟合表现」，**⛔ 不得作为泛化能力解读**；★ **20 行档**（GRASPO/OPD）是否随本口径变更**尚未裁定**（n=20 ⇒ 每样本 5.00 pp、与 GRASPO 通过线 +5.0 pp 同量级 ⇒ 判据退化为「1 个样本决定成败」）⇒ ⛔ 本注记**不为 20 行档下任何效果结论**；★ 其余档仍用平台方 702 行评测集（/work/elam-v5/data/test.jsonl，702 行）。★ 无论哪种口径，mini 的**跑通**结果都**不得**当作效果结论。",
+      "purpose": "mini 数据集只用于「矩阵跑通」（压时间/压成本）；**效果评测集按档分列**（2026-10-16 口径）：★ **100 行档**（`subset_size == 100`）＝ **fit 口径（训练集自评）**——评测集就是该档**自身训练用的同一份文件**（100 行、`dataset_split: train`）；★ 该读数只是「在该档自身训练集上的拟合表现」，**⛔ 不得读作训练分布之外的表现**；★★ **原 20 行档（18 档）的口径已裁定**（2026-10-16 主席裁定「18 个 20 行档放大到 100 行」）：由「n=20 ⇒ 每样本 5.00 pp、与 GRASPO 通过线 +5.0 pp 同量级 ⇒ 判据退化为「1 个样本决定成败」⇒ ⛔ 不下效果结论、裁定待回」改为**已裁定：`subset_size` 20 → 100、纳入同一 fit 口径**（每样本粒度回到 1.00 pp）★ 其中 **10 档不可执行**（T044 2 卡实测 OOM；T046–T051 首步实测 OOM；T052–T054 `not_applicable`、无生成件）⇒ **只登记声明口径、⛔ 不为它们伪造可跑配置**；★ **T052–T054 的四态 = 「未纳入验收」**（从未尝试、依裁定不实施），⛔ **不得读成「试过了不行」**；★ 其余档（9 个 formal 档）仍用平台方 702 行评测集（/work/elam-v5/data/test.jsonl，702 行）。★ 无论哪种口径，mini 的**跑通**结果都**不得**当作效果结论。",
       "isolation": "文件名带 `mini-short-mm-` 前缀且落独立目录 `mini-dataset/`，与源数据 `data/train.jsonl` **物理隔离**（用户硬约束：靠命名与路径防误用；源数据只读；禁止混放同名文件）"
     },
     "train_path_not_the_source_note": "每档 `data.train_path` 只约束**生成位置**（<RUN_ROOT>/<Tier>/subsets/<Tier>.jsonl），**不约束读取源**；runner 的 `TRAIN_PATH == dirname(TRAIN_PATH)/<Tier>.jsonl` 断言与图像根反推 `dirname(dirname(train_path))/images` 都依赖它 ⇒ **不要改配置来换数据源**，换源只切本段 `train_source`",
@@ -331,7 +331,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 100",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=100 × 1 = 100）；比率 = 1（子集与 v1 同口径）",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -407,7 +407,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 50",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=50 × 1 = 50）；比率 = 1（子集与 v1 同口径）",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -485,7 +485,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 25",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=25 × 1 = 25）；比率 = 1（子集与 v1 同口径）",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -562,7 +562,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 100",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=100 × 1 = 100）；比率 = 1（子集与 v1 同口径）",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -640,7 +640,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 50",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=50 × 1 = 50）；比率 = 1（子集与 v1 同口径）",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -720,7 +720,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 25",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=25 × 1 = 25）；比率 = 1（子集与 v1 同口径）",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -795,7 +795,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 100",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=100 × 1 = 100）；比率 = 1（子集与 v1 同口径）",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -871,7 +871,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 50",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=50 × 1 = 50）；比率 = 1（子集与 v1 同口径）",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -949,7 +949,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 25",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=25 × 1 = 25）；比率 = 1（子集与 v1 同口径）",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -1024,7 +1024,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 100",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=100 × 1 = 100）；比率 = 1（子集与 v1 同口径）",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -1100,7 +1100,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 50",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=50 × 1 = 50）；比率 = 1（子集与 v1 同口径）",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -1178,7 +1178,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 25",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=25 × 1 = 25）；比率 = 1（子集与 v1 同口径）",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -1253,7 +1253,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 100",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=100 × 1 = 100）；比率 = 1（子集与 v1 同口径）",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -1329,7 +1329,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 50",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=50 × 1 = 50）；比率 = 1（子集与 v1 同口径）",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -1407,7 +1407,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 25",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=25 × 1 = 25）；比率 = 1（子集与 v1 同口径）",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -1484,7 +1484,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 100",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=100 × 1 = 100）；比率 = 1（子集与 v1 同口径）",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -1561,7 +1561,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 50",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=50 × 1 = 50）；比率 = 1（子集与 v1 同口径）",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -1640,7 +1640,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 25",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=25 × 1 = 25）；比率 = 1（子集与 v1 同口径）",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -1717,7 +1717,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 100",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=100 × 1 = 100）；比率 = 1（子集与 v1 同口径）",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -1795,7 +1795,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 50",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=50 × 1 = 50）；比率 = 1（子集与 v1 同口径）",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -1875,7 +1875,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 25",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=25 × 1 = 25）；比率 = 1（子集与 v1 同口径）",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -1950,7 +1950,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 100",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=100 × 1 = 100）；比率 = 1（子集与 v1 同口径）",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -2026,7 +2026,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 50",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=50 × 1 = 50）；比率 = 1（子集与 v1 同口径）",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -2104,7 +2104,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 25",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=25 × 1 = 25）；比率 = 1（子集与 v1 同口径）",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -2179,7 +2179,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 100",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=100 × 1 = 100）；比率 = 1（子集与 v1 同口径）",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -2255,7 +2255,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 50",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=50 × 1 = 50）；比率 = 1（子集与 v1 同口径）",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -2333,7 +2333,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 25",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=25 × 1 = 25）；比率 = 1（子集与 v1 同口径）",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -2592,20 +2592,20 @@
       "config": "samples/configs/matrix54-generated/T031.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T031.jsonl",
-        "subset_size": 20,
+        "subset_size": 100,
         "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
         "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。",
         "source": "mini",
         "source_jsonl": "${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl",
         "source_jsonl_container": "/work/elam-v5/mini-dataset/mini-short-mm-train.jsonl",
-        "extract_command": "head -n 20 ${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl > ${GRASPO_PREGEN_SUBSET_DIR}/T031.jsonl",
-        "source_rule": "subsets-v2（v2 冻结子集）：本档取 **mini** 源前 20 条（沿用 v1 算法下限）",
+        "extract_command": "head -n 100 ${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl > ${GRASPO_PREGEN_SUBSET_DIR}/T031.jsonl",
+        "source_rule": "subsets-v2（v2 冻结子集）：本档取 **mini** 源前 100 条（沿用 v1 算法下限）",
         "subset_file_pregenerated": true
       },
-      "expected_optimizer_steps": 160,
-      "checkpoint_save_steps": 160,
-      "expected_optimizer_steps_per_epoch": 160,
-      "expected_optimizer_steps_reachable": 160,
+      "expected_optimizer_steps": 800,
+      "checkpoint_save_steps": 800,
+      "expected_optimizer_steps_per_epoch": 800,
+      "expected_optimizer_steps_reachable": 800,
       "feasibility": {
         "verdict": "feasible",
         "feasible": true,
@@ -2637,7 +2637,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 160",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=160 × 5 = 800）；★ 本档属「声明口径扩面」⇒ 比率 = 声明口径 ÷ v1 声明口径",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -2668,20 +2668,20 @@
       "config": "samples/configs/matrix54-generated/T032.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T032.jsonl",
-        "subset_size": 20,
+        "subset_size": 100,
         "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
         "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。",
         "source": "mini",
         "source_jsonl": "${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl",
         "source_jsonl_container": "/work/elam-v5/mini-dataset/mini-short-mm-train.jsonl",
-        "extract_command": "head -n 20 ${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl > ${GRASPO_PREGEN_SUBSET_DIR}/T032.jsonl",
-        "source_rule": "subsets-v2（v2 冻结子集）：本档取 **mini** 源前 20 条（沿用 v1 算法下限）",
+        "extract_command": "head -n 100 ${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl > ${GRASPO_PREGEN_SUBSET_DIR}/T032.jsonl",
+        "source_rule": "subsets-v2（v2 冻结子集）：本档取 **mini** 源前 100 条（沿用 v1 算法下限）",
         "subset_file_pregenerated": true
       },
-      "expected_optimizer_steps": 80,
-      "checkpoint_save_steps": 80,
-      "expected_optimizer_steps_per_epoch": 80,
-      "expected_optimizer_steps_reachable": 80,
+      "expected_optimizer_steps": 400,
+      "checkpoint_save_steps": 400,
+      "expected_optimizer_steps_per_epoch": 400,
+      "expected_optimizer_steps_reachable": 400,
       "feasibility": {
         "verdict": "feasible",
         "feasible": true,
@@ -2713,7 +2713,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 80",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=80 × 5 = 400）；★ 本档属「声明口径扩面」⇒ 比率 = 声明口径 ÷ v1 声明口径",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -2746,20 +2746,20 @@
       "config": "samples/configs/matrix54-generated/T033.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T033.jsonl",
-        "subset_size": 20,
+        "subset_size": 100,
         "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
         "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。",
         "source": "mini",
         "source_jsonl": "${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl",
         "source_jsonl_container": "/work/elam-v5/mini-dataset/mini-short-mm-train.jsonl",
-        "extract_command": "head -n 20 ${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl > ${GRASPO_PREGEN_SUBSET_DIR}/T033.jsonl",
-        "source_rule": "subsets-v2（v2 冻结子集）：本档取 **mini** 源前 20 条（沿用 v1 算法下限）",
+        "extract_command": "head -n 100 ${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl > ${GRASPO_PREGEN_SUBSET_DIR}/T033.jsonl",
+        "source_rule": "subsets-v2（v2 冻结子集）：本档取 **mini** 源前 100 条（沿用 v1 算法下限）",
         "subset_file_pregenerated": true
       },
-      "expected_optimizer_steps": 40,
-      "checkpoint_save_steps": 40,
-      "expected_optimizer_steps_per_epoch": 40,
-      "expected_optimizer_steps_reachable": 40,
+      "expected_optimizer_steps": 200,
+      "checkpoint_save_steps": 200,
+      "expected_optimizer_steps_per_epoch": 200,
+      "expected_optimizer_steps_reachable": 200,
       "feasibility": {
         "verdict": "feasible",
         "feasible": true,
@@ -2791,7 +2791,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 40",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=40 × 5 = 200）；★ 本档属「声明口径扩面」⇒ 比率 = 声明口径 ÷ v1 声明口径",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -3055,20 +3055,20 @@
       "config": "samples/configs/matrix54-fsdp/T037.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T037.jsonl",
-        "subset_size": 20,
+        "subset_size": 100,
         "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
         "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。",
         "source": "mini",
         "source_jsonl": "${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl",
         "source_jsonl_container": "/work/elam-v5/mini-dataset/mini-short-mm-train.jsonl",
-        "extract_command": "head -n 20 ${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl > ${GRASPO_PREGEN_SUBSET_DIR}/T037.jsonl",
-        "source_rule": "subsets-v2（v2 冻结子集）：本档取 **mini** 源前 20 条（沿用 v1 算法下限）",
+        "extract_command": "head -n 100 ${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl > ${GRASPO_PREGEN_SUBSET_DIR}/T037.jsonl",
+        "source_rule": "subsets-v2（v2 冻结子集）：本档取 **mini** 源前 100 条（沿用 v1 算法下限）",
         "subset_file_pregenerated": true
       },
-      "expected_optimizer_steps": 160,
-      "checkpoint_save_steps": 160,
-      "expected_optimizer_steps_per_epoch": 160,
-      "expected_optimizer_steps_reachable": 160,
+      "expected_optimizer_steps": 800,
+      "checkpoint_save_steps": 800,
+      "expected_optimizer_steps_per_epoch": 800,
+      "expected_optimizer_steps_reachable": 800,
       "feasibility": {
         "verdict": "feasible",
         "feasible": true,
@@ -3101,7 +3101,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 160",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=160 × 5 = 800）；★ 本档属「声明口径扩面」⇒ 比率 = 声明口径 ÷ v1 声明口径",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -3133,20 +3133,20 @@
       "config": "samples/configs/matrix54-fsdp/T038.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T038.jsonl",
-        "subset_size": 20,
+        "subset_size": 100,
         "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
         "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。",
         "source": "mini",
         "source_jsonl": "${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl",
         "source_jsonl_container": "/work/elam-v5/mini-dataset/mini-short-mm-train.jsonl",
-        "extract_command": "head -n 20 ${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl > ${GRASPO_PREGEN_SUBSET_DIR}/T038.jsonl",
-        "source_rule": "subsets-v2（v2 冻结子集）：本档取 **mini** 源前 20 条（沿用 v1 算法下限）",
+        "extract_command": "head -n 100 ${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl > ${GRASPO_PREGEN_SUBSET_DIR}/T038.jsonl",
+        "source_rule": "subsets-v2（v2 冻结子集）：本档取 **mini** 源前 100 条（沿用 v1 算法下限）",
         "subset_file_pregenerated": true
       },
-      "expected_optimizer_steps": 80,
-      "checkpoint_save_steps": 80,
-      "expected_optimizer_steps_per_epoch": 80,
-      "expected_optimizer_steps_reachable": 80,
+      "expected_optimizer_steps": 400,
+      "checkpoint_save_steps": 400,
+      "expected_optimizer_steps_per_epoch": 400,
+      "expected_optimizer_steps_reachable": 400,
       "feasibility": {
         "verdict": "feasible",
         "feasible": true,
@@ -3179,7 +3179,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 80",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=80 × 5 = 400）；★ 本档属「声明口径扩面」⇒ 比率 = 声明口径 ÷ v1 声明口径",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -3213,20 +3213,20 @@
       "config": "samples/configs/matrix54-fsdp/T039.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T039.jsonl",
-        "subset_size": 20,
+        "subset_size": 100,
         "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
         "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。",
         "source": "mini",
         "source_jsonl": "${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl",
         "source_jsonl_container": "/work/elam-v5/mini-dataset/mini-short-mm-train.jsonl",
-        "extract_command": "head -n 20 ${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl > ${GRASPO_PREGEN_SUBSET_DIR}/T039.jsonl",
-        "source_rule": "subsets-v2（v2 冻结子集）：本档取 **mini** 源前 20 条（沿用 v1 算法下限）",
+        "extract_command": "head -n 100 ${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl > ${GRASPO_PREGEN_SUBSET_DIR}/T039.jsonl",
+        "source_rule": "subsets-v2（v2 冻结子集）：本档取 **mini** 源前 100 条（沿用 v1 算法下限）",
         "subset_file_pregenerated": true
       },
-      "expected_optimizer_steps": 40,
-      "checkpoint_save_steps": 40,
-      "expected_optimizer_steps_per_epoch": 40,
-      "expected_optimizer_steps_reachable": 40,
+      "expected_optimizer_steps": 200,
+      "checkpoint_save_steps": 200,
+      "expected_optimizer_steps_per_epoch": 200,
+      "expected_optimizer_steps_reachable": 200,
       "feasibility": {
         "verdict": "feasible",
         "feasible": true,
@@ -3259,7 +3259,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 40",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=40 × 5 = 200）；★ 本档属「声明口径扩面」⇒ 比率 = 声明口径 ÷ v1 声明口径",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -3518,20 +3518,20 @@
       "config": "samples/configs/matrix54-generated/T043.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T043.jsonl",
-        "subset_size": 20,
+        "subset_size": 100,
         "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
         "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。",
         "source": "mini",
         "source_jsonl": "${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl",
         "source_jsonl_container": "/work/elam-v5/mini-dataset/mini-short-mm-train.jsonl",
-        "extract_command": "head -n 20 ${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl > ${GRASPO_PREGEN_SUBSET_DIR}/T043.jsonl",
-        "source_rule": "subsets-v2（v2 冻结子集）：本档取 **mini** 源前 20 条（沿用 v1 算法下限）",
+        "extract_command": "head -n 100 ${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl > ${GRASPO_PREGEN_SUBSET_DIR}/T043.jsonl",
+        "source_rule": "subsets-v2（v2 冻结子集）：本档取 **mini** 源前 100 条（沿用 v1 算法下限）",
         "subset_file_pregenerated": true
       },
-      "expected_optimizer_steps": 160,
-      "checkpoint_save_steps": 160,
-      "expected_optimizer_steps_per_epoch": 160,
-      "expected_optimizer_steps_reachable": 160,
+      "expected_optimizer_steps": 800,
+      "checkpoint_save_steps": 800,
+      "expected_optimizer_steps_per_epoch": 800,
+      "expected_optimizer_steps_reachable": 800,
       "feasibility": {
         "verdict": "feasible",
         "feasible": true,
@@ -3563,7 +3563,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 160",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=160 × 5 = 800）；★ 本档属「声明口径扩面」⇒ 比率 = 声明口径 ÷ v1 声明口径",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -3594,20 +3594,20 @@
       "config": "samples/configs/matrix54-generated/T044.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T044.jsonl",
-        "subset_size": 20,
+        "subset_size": 100,
         "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
         "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。",
         "source": "mini",
         "source_jsonl": "${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl",
         "source_jsonl_container": "/work/elam-v5/mini-dataset/mini-short-mm-train.jsonl",
-        "extract_command": "head -n 20 ${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl > ${GRASPO_PREGEN_SUBSET_DIR}/T044.jsonl",
-        "source_rule": "subsets-v2（v2 冻结子集）：本档取 **mini** 源前 20 条（沿用 v1 算法下限）",
+        "extract_command": "head -n 100 ${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl > ${GRASPO_PREGEN_SUBSET_DIR}/T044.jsonl",
+        "source_rule": "subsets-v2（v2 冻结子集）：本档取 **mini** 源前 100 条（沿用 v1 算法下限）",
         "subset_file_pregenerated": true
       },
-      "expected_optimizer_steps": 80,
-      "checkpoint_save_steps": 80,
-      "expected_optimizer_steps_per_epoch": 80,
-      "expected_optimizer_steps_reachable": 80,
+      "expected_optimizer_steps": 400,
+      "checkpoint_save_steps": 400,
+      "expected_optimizer_steps_per_epoch": 400,
+      "expected_optimizer_steps_reachable": 400,
       "feasibility": {
         "verdict": "feasible",
         "feasible": true,
@@ -3639,7 +3639,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 80",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=80 × 5 = 400）；★ 本档属「声明口径扩面」⇒ 比率 = 声明口径 ÷ v1 声明口径",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -3672,20 +3672,20 @@
       "config": "samples/configs/matrix54-generated/T045.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T045.jsonl",
-        "subset_size": 20,
+        "subset_size": 100,
         "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
         "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。",
         "source": "mini",
         "source_jsonl": "${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl",
         "source_jsonl_container": "/work/elam-v5/mini-dataset/mini-short-mm-train.jsonl",
-        "extract_command": "head -n 20 ${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl > ${GRASPO_PREGEN_SUBSET_DIR}/T045.jsonl",
-        "source_rule": "subsets-v2（v2 冻结子集）：本档取 **mini** 源前 20 条（沿用 v1 算法下限）",
+        "extract_command": "head -n 100 ${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl > ${GRASPO_PREGEN_SUBSET_DIR}/T045.jsonl",
+        "source_rule": "subsets-v2（v2 冻结子集）：本档取 **mini** 源前 100 条（沿用 v1 算法下限）",
         "subset_file_pregenerated": true
       },
-      "expected_optimizer_steps": 40,
-      "checkpoint_save_steps": 40,
-      "expected_optimizer_steps_per_epoch": 40,
-      "expected_optimizer_steps_reachable": 40,
+      "expected_optimizer_steps": 200,
+      "checkpoint_save_steps": 200,
+      "expected_optimizer_steps_per_epoch": 200,
+      "expected_optimizer_steps_reachable": 200,
       "feasibility": {
         "verdict": "feasible",
         "feasible": true,
@@ -3717,7 +3717,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 40",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=40 × 5 = 200）；★ 本档属「声明口径扩面」⇒ 比率 = 声明口径 ÷ v1 声明口径",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -3748,20 +3748,20 @@
       "config": "samples/configs/matrix54-generated/T046.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T046.jsonl",
-        "subset_size": 20,
+        "subset_size": 100,
         "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
         "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。",
         "source": "mini",
         "source_jsonl": "${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl",
         "source_jsonl_container": "/work/elam-v5/mini-dataset/mini-short-mm-train.jsonl",
-        "extract_command": "head -n 20 ${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl > ${GRASPO_PREGEN_SUBSET_DIR}/T046.jsonl",
-        "source_rule": "subsets-v2（v2 冻结子集）：本档取 **mini** 源前 20 条（沿用 v1 算法下限）",
+        "extract_command": "head -n 100 ${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl > ${GRASPO_PREGEN_SUBSET_DIR}/T046.jsonl",
+        "source_rule": "subsets-v2（v2 冻结子集）：本档取 **mini** 源前 100 条（沿用 v1 算法下限）",
         "subset_file_pregenerated": true
       },
-      "expected_optimizer_steps": 20,
-      "checkpoint_save_steps": 20,
-      "expected_optimizer_steps_per_epoch": 20,
-      "expected_optimizer_steps_reachable": 20,
+      "expected_optimizer_steps": 100,
+      "checkpoint_save_steps": 100,
+      "expected_optimizer_steps_per_epoch": 100,
+      "expected_optimizer_steps_reachable": 100,
       "feasibility": {
         "verdict": "unmeasured",
         "feasible": null,
@@ -3793,7 +3793,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 20",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=20 × 5 = 100）；★ 本档属「声明口径扩面」⇒ 比率 = 声明口径 ÷ v1 声明口径",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -3825,20 +3825,20 @@
       "config": "samples/configs/matrix54-generated/T047.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T047.jsonl",
-        "subset_size": 20,
+        "subset_size": 100,
         "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
         "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。",
         "source": "mini",
         "source_jsonl": "${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl",
         "source_jsonl_container": "/work/elam-v5/mini-dataset/mini-short-mm-train.jsonl",
-        "extract_command": "head -n 20 ${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl > ${GRASPO_PREGEN_SUBSET_DIR}/T047.jsonl",
-        "source_rule": "subsets-v2（v2 冻结子集）：本档取 **mini** 源前 20 条（沿用 v1 算法下限）",
+        "extract_command": "head -n 100 ${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl > ${GRASPO_PREGEN_SUBSET_DIR}/T047.jsonl",
+        "source_rule": "subsets-v2（v2 冻结子集）：本档取 **mini** 源前 100 条（沿用 v1 算法下限）",
         "subset_file_pregenerated": true
       },
-      "expected_optimizer_steps": 10,
-      "checkpoint_save_steps": 10,
-      "expected_optimizer_steps_per_epoch": 10,
-      "expected_optimizer_steps_reachable": 10,
+      "expected_optimizer_steps": 50,
+      "checkpoint_save_steps": 50,
+      "expected_optimizer_steps_per_epoch": 50,
+      "expected_optimizer_steps_reachable": 50,
       "feasibility": {
         "verdict": "unmeasured",
         "feasible": null,
@@ -3870,7 +3870,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 10",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=10 × 5 = 50）；★ 本档属「声明口径扩面」⇒ 比率 = 声明口径 ÷ v1 声明口径",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -3904,20 +3904,20 @@
       "config": "samples/configs/matrix54-generated/T048.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T048.jsonl",
-        "subset_size": 20,
+        "subset_size": 100,
         "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
         "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。",
         "source": "mini",
         "source_jsonl": "${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl",
         "source_jsonl_container": "/work/elam-v5/mini-dataset/mini-short-mm-train.jsonl",
-        "extract_command": "head -n 20 ${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl > ${GRASPO_PREGEN_SUBSET_DIR}/T048.jsonl",
-        "source_rule": "subsets-v2（v2 冻结子集）：本档取 **mini** 源前 20 条（沿用 v1 算法下限）",
+        "extract_command": "head -n 100 ${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl > ${GRASPO_PREGEN_SUBSET_DIR}/T048.jsonl",
+        "source_rule": "subsets-v2（v2 冻结子集）：本档取 **mini** 源前 100 条（沿用 v1 算法下限）",
         "subset_file_pregenerated": true
       },
-      "expected_optimizer_steps": 5,
-      "checkpoint_save_steps": 5,
-      "expected_optimizer_steps_per_epoch": 5,
-      "expected_optimizer_steps_reachable": 5,
+      "expected_optimizer_steps": 25,
+      "checkpoint_save_steps": 25,
+      "expected_optimizer_steps_per_epoch": 25,
+      "expected_optimizer_steps_reachable": 25,
       "feasibility": {
         "verdict": "unmeasured",
         "feasible": null,
@@ -3949,7 +3949,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 5",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=5 × 5 = 25）；★ 本档属「声明口径扩面」⇒ 比率 = 声明口径 ÷ v1 声明口径",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -3981,20 +3981,20 @@
       "config": "samples/configs/matrix54-fsdp/T049.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T049.jsonl",
-        "subset_size": 20,
+        "subset_size": 100,
         "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
         "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。",
         "source": "mini",
         "source_jsonl": "${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl",
         "source_jsonl_container": "/work/elam-v5/mini-dataset/mini-short-mm-train.jsonl",
-        "extract_command": "head -n 20 ${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl > ${GRASPO_PREGEN_SUBSET_DIR}/T049.jsonl",
-        "source_rule": "subsets-v2（v2 冻结子集）：本档取 **mini** 源前 20 条（沿用 v1 算法下限）",
+        "extract_command": "head -n 100 ${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl > ${GRASPO_PREGEN_SUBSET_DIR}/T049.jsonl",
+        "source_rule": "subsets-v2（v2 冻结子集）：本档取 **mini** 源前 100 条（沿用 v1 算法下限）",
         "subset_file_pregenerated": true
       },
-      "expected_optimizer_steps": 20,
-      "checkpoint_save_steps": 20,
-      "expected_optimizer_steps_per_epoch": 20,
-      "expected_optimizer_steps_reachable": 20,
+      "expected_optimizer_steps": 100,
+      "checkpoint_save_steps": 100,
+      "expected_optimizer_steps_per_epoch": 100,
+      "expected_optimizer_steps_reachable": 100,
       "feasibility": {
         "verdict": "unmeasured",
         "feasible": null,
@@ -4027,7 +4027,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 20",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=20 × 5 = 100）；★ 本档属「声明口径扩面」⇒ 比率 = 声明口径 ÷ v1 声明口径",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -4060,20 +4060,20 @@
       "config": "samples/configs/matrix54-fsdp/T050.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T050.jsonl",
-        "subset_size": 20,
+        "subset_size": 100,
         "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
         "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。",
         "source": "mini",
         "source_jsonl": "${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl",
         "source_jsonl_container": "/work/elam-v5/mini-dataset/mini-short-mm-train.jsonl",
-        "extract_command": "head -n 20 ${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl > ${GRASPO_PREGEN_SUBSET_DIR}/T050.jsonl",
-        "source_rule": "subsets-v2（v2 冻结子集）：本档取 **mini** 源前 20 条（沿用 v1 算法下限）",
+        "extract_command": "head -n 100 ${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl > ${GRASPO_PREGEN_SUBSET_DIR}/T050.jsonl",
+        "source_rule": "subsets-v2（v2 冻结子集）：本档取 **mini** 源前 100 条（沿用 v1 算法下限）",
         "subset_file_pregenerated": true
       },
-      "expected_optimizer_steps": 10,
-      "checkpoint_save_steps": 10,
-      "expected_optimizer_steps_per_epoch": 10,
-      "expected_optimizer_steps_reachable": 10,
+      "expected_optimizer_steps": 50,
+      "checkpoint_save_steps": 50,
+      "expected_optimizer_steps_per_epoch": 50,
+      "expected_optimizer_steps_reachable": 50,
       "feasibility": {
         "verdict": "unmeasured",
         "feasible": null,
@@ -4106,7 +4106,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 10",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=10 × 5 = 50）；★ 本档属「声明口径扩面」⇒ 比率 = 声明口径 ÷ v1 声明口径",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -4141,20 +4141,20 @@
       "config": "samples/configs/matrix54-fsdp/T051.yaml",
       "data": {
         "train_path": "/work/elam-v5/subsets-v2/T051.jsonl",
-        "subset_size": 20,
+        "subset_size": 100,
         "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
         "caveat": "ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。",
         "source": "mini",
         "source_jsonl": "${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl",
         "source_jsonl_container": "/work/elam-v5/mini-dataset/mini-short-mm-train.jsonl",
-        "extract_command": "head -n 20 ${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl > ${GRASPO_PREGEN_SUBSET_DIR}/T051.jsonl",
-        "source_rule": "subsets-v2（v2 冻结子集）：本档取 **mini** 源前 20 条（沿用 v1 算法下限）",
+        "extract_command": "head -n 100 ${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl > ${GRASPO_PREGEN_SUBSET_DIR}/T051.jsonl",
+        "source_rule": "subsets-v2（v2 冻结子集）：本档取 **mini** 源前 100 条（沿用 v1 算法下限）",
         "subset_file_pregenerated": true
       },
-      "expected_optimizer_steps": 5,
-      "checkpoint_save_steps": 5,
-      "expected_optimizer_steps_per_epoch": 5,
-      "expected_optimizer_steps_reachable": 5,
+      "expected_optimizer_steps": 25,
+      "checkpoint_save_steps": 25,
+      "expected_optimizer_steps_per_epoch": 25,
+      "expected_optimizer_steps_reachable": 25,
       "feasibility": {
         "verdict": "unmeasured",
         "feasible": null,
@@ -4187,7 +4187,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 5",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=5 × 5 = 25）；★ 本档属「声明口径扩面」⇒ 比率 = 声明口径 ÷ v1 声明口径",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -4229,12 +4229,19 @@
         "source_jsonl_container": null,
         "extract_command": null,
         "source_rule": null,
-        "subset_file_pregenerated": false
+        "subset_file_pregenerated": false,
+        "declared_subset_size": 100,
+        "declared_not_landed": {
+          "declared": 100,
+          "landed": 20,
+          "reason": "not_applicable（主席裁定不实施；师生权重常驻约 100 GiB）⇒ 无生成件，⛔ 不伪造冻结子集",
+          "authority": "make_subsets.MINI_SUBSET_TIERS_DECLARED vs MINI_TIERS 的差额"
+        }
       },
-      "expected_optimizer_steps": 20,
-      "checkpoint_save_steps": 20,
-      "expected_optimizer_steps_per_epoch": 20,
-      "expected_optimizer_steps_reachable": 20,
+      "expected_optimizer_steps": 100,
+      "checkpoint_save_steps": 100,
+      "expected_optimizer_steps_per_epoch": 100,
+      "expected_optimizer_steps_reachable": 100,
       "feasibility": {
         "verdict": "not_applicable",
         "feasible": null,
@@ -4259,7 +4266,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 20",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=20 × 5 = 100）；★ 本档属「声明口径扩面」⇒ 比率 = 声明口径 ÷ v1 声明口径",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -4302,12 +4309,19 @@
         "source_jsonl_container": null,
         "extract_command": null,
         "source_rule": null,
-        "subset_file_pregenerated": false
+        "subset_file_pregenerated": false,
+        "declared_subset_size": 100,
+        "declared_not_landed": {
+          "declared": 100,
+          "landed": 20,
+          "reason": "not_applicable（同上）⇒ 无生成件，⛔ 不伪造冻结子集",
+          "authority": "make_subsets.MINI_SUBSET_TIERS_DECLARED vs MINI_TIERS 的差额"
+        }
       },
-      "expected_optimizer_steps": 10,
-      "checkpoint_save_steps": 10,
-      "expected_optimizer_steps_per_epoch": 10,
-      "expected_optimizer_steps_reachable": 10,
+      "expected_optimizer_steps": 50,
+      "checkpoint_save_steps": 50,
+      "expected_optimizer_steps_per_epoch": 50,
+      "expected_optimizer_steps_reachable": 50,
       "feasibility": {
         "verdict": "not_applicable",
         "feasible": null,
@@ -4332,7 +4346,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 10",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=10 × 5 = 50）；★ 本档属「声明口径扩面」⇒ 比率 = 声明口径 ÷ v1 声明口径",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -4377,12 +4391,19 @@
         "source_jsonl_container": null,
         "extract_command": null,
         "source_rule": null,
-        "subset_file_pregenerated": false
+        "subset_file_pregenerated": false,
+        "declared_subset_size": 100,
+        "declared_not_landed": {
+          "declared": 100,
+          "landed": 20,
+          "reason": "not_applicable（同上）⇒ 无生成件，⛔ 不伪造冻结子集",
+          "authority": "make_subsets.MINI_SUBSET_TIERS_DECLARED vs MINI_TIERS 的差额"
+        }
       },
-      "expected_optimizer_steps": 5,
-      "checkpoint_save_steps": 5,
-      "expected_optimizer_steps_per_epoch": 5,
-      "expected_optimizer_steps_reachable": 5,
+      "expected_optimizer_steps": 25,
+      "checkpoint_save_steps": 25,
+      "expected_optimizer_steps_per_epoch": 25,
+      "expected_optimizer_steps_reachable": 25,
       "feasibility": {
         "verdict": "not_applicable",
         "feasible": null,
@@ -4407,7 +4428,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：沿用 v1 口径（子集/卡数与 epoch 数均未变） = 5",
+      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=5 × 5 = 25）；★ 本档属「声明口径扩面」⇒ 比率 = 声明口径 ÷ v1 声明口径",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = per_epoch × max_epochs（本轮三档 = 6）。",
@@ -4422,12 +4443,12 @@
   "supersedes": {
     "relationship": "v2 清单（matrix54_manifest_source.json）**未被改动**；本文件是它的 FSDP 变体派生版",
     "base_manifest": "tests/e2e/matrix54_manifest_source.json",
-    "base_manifest_sha256": "3551a841514a9dd8207bbf4e6b16add5acdba1d5b5cc9b26cb5fd3dd3756c69b",
+    "base_manifest_sha256": "be9e73d3f4b071b32d807bdc6b209ee2177c8fbbcf12f4f30dc1a9df90938bb6",
     "note": "v2 的 v1 关系（supersedes.base_manifest）予以保留，不覆盖",
     "base_supersedes_kept": {
       "relationship": "v1 清单（matrix54_manifest.json）**未被改动**；本文件是它的 v2 派生版",
       "base_manifest": "tests/e2e/matrix54_manifest.json",
-      "base_manifest_sha256": "71b572c9007fe358d4098ec13f7549ded2289b1a149a151ab908f0c89e0e82fd",
+      "base_manifest_sha256": "1de6f5d37a103178390ecda0fd086253a73c771abbc478c47d2bf7046b77eb94",
       "config_v2_fingerprint": "066ca99a908a3f636f94dec6d80f79d1d3a4d1a918c697b7765658172185e99a",
       "generator": "tests/e2e/generate_matrix_manifest_source.py",
       "config_v2_dir": "samples/configs/matrix54-v2",
@@ -4436,13 +4457,13 @@
       "host_data_root": "${GRASPO_ELAM_DATA_ROOT}",
       "attempt_root": "${GRASPO_ATTEMPT_ROOT}",
       "config_dir": "samples/configs/matrix54-generated",
-      "config_dir_fingerprint": "3c8dbf72901da02da58fe2d03b77a8b456d76d8e1b9f76db8723cb371b166b79",
+      "config_dir_fingerprint": "a279b62cfb22d978570291180ebdc5374b1c513c9e8cc5eefe17d2bca9672e1e",
       "config_dir_note": "★ 跑次实际读取的档配置目录 = samples/configs/matrix54-generated（矩阵生成件；由 tools/matrix/gen_configs.py 从 docs/capability-matrix.data.json 生成，与矩阵声明逐档一致）。★ samples/configs/matrix54-v2 仅作**步数口径来源**（dp_size/save_steps），⛔ 不再是跑次配置来源。"
     }
   },
   "changes_vs_v1": {
     "config": "samples/configs/matrix54/T0NN.yaml → samples/configs/matrix54-generated/T0NN.yaml（51 个可跑档）｜★ 步数口径仍只读 samples/configs/matrix54-v2/（不随 config 改指而变）",
-    "subset_size": "9 档 GRASPO×native：20 → 48×卡数（48/96/192）；其余 45 档不变（CPT/SFT=100、GRASPO/OPD=20）",
+    "subset_size": "① 9 档 GRASPO×native：20 → 48×卡数（48/96/192）；② ★ **2026-10-16 主席裁定「18 个 20 行档放大到 100 行」**：原 18 个 20 行档的**声明口径 = 100**（唯一真相源 = `tests/e2e/make_subsets.py::MINI_SUBSET_TIERS_DECLARED`），其中 **15 档已在盘落地**（`MINI_TIERS` 同步为 100、冻结件实做 ×100），**3 档具名豁免未落地**（`T052–T054`：`not_applicable` ⇒ 无生成件、⛔ 不伪造；见 `make_subsets.DECLARED_NOT_LANDED` 与 `subsets-v2.manifest.json::tiers[].declared_not_landed`）；③ 其余 CPT/SFT 27 档 = 100（不变）",
     "train_path": "/work/elam-v5/subsets/ → /work/elam-v5/subsets-v2/（51 个可跑档）",
     "steps": "expected_optimizer_steps_per_epoch/_reachable 按**真实步进语义**重算：native GRASPO = ceil(floor(subset/dp_size)/Q)",
     "new_fields": [
@@ -4453,7 +4474,8 @@
       "checkpoint_retention_v2",
       "per-tier data.source / data.source_jsonl / data.source_jsonl_container / data.extract_command / data.source_rule / data.subset_file_pregenerated / step_formula_v2"
     ],
-    "unchanged": "counts / models / feasibility_model / runtime.checkpoint_retention / 每档的 model*/algorithm/mode/backend/cards/gpus/status/feasibility/acceptance.criteria"
+    "gpus": "★ 2026-10-16：**撤销 T041 的陈旧卡位例外** `[2,3]`（2026-10-09 的一次性调度值，把第三方账号占用中的常驻邻居卡 GPU2 写进了我方声明）⇒ T041 走默认映射 `GPU_POOL_BY_CARDS[2] = [4,5]`。★ 其余 53 档 `gpus` **逐档逐字未变**（仍 = 本世代卡池）。",
+    "unchanged": "counts / models / feasibility_model / runtime.checkpoint_retention / 每档的 model*/algorithm/mode/backend/cards/status/feasibility/acceptance.criteria（★ `gpus` 见上条：仅 T041 一档改）"
   },
   "data_sources": {
     "rule": "★ 逐档、**进程作用域**切换：不得用全局 export 一次性切源（mini 集不是正式集头部，全局切换会让 45 档拿到错的 100 条）。用法见 launcher",
@@ -4573,6 +4595,64 @@
       },
       "other_45_tiers": "与 v1 逐值相同（未改子集/卡数/epoch）"
     }
+  },
+  "gpu_pool_contract_conflicts": {
+    "locked_cards": [
+      2,
+      6,
+      7
+    ],
+    "gpu_allowed": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "gpu_forbidden_production": [
+      6,
+      7
+    ],
+    "neighbor_cards": [
+      2
+    ],
+    "assertion": "locked_card_violation()：任何档 gpus 不得含 locked_cards 中任一张；唯一例外 = 该值恰等于本世代卡池 GPU_POOL_BY_CARDS[cards]（登记于此，不 raise）",
+    "conflicts": [
+      {
+        "pool": [
+          4,
+          5,
+          6,
+          7
+        ],
+        "locked_hits": [
+          6,
+          7
+        ],
+        "tiers": [
+          "T003",
+          "T006",
+          "T009",
+          "T012",
+          "T015",
+          "T018",
+          "T021",
+          "T024",
+          "T027",
+          "T030",
+          "T033",
+          "T036",
+          "T039",
+          "T042",
+          "T045",
+          "T048",
+          "T051",
+          "T054"
+        ]
+      }
+    ],
+    "note": "★ 上列冲突是**卡池定义**（2026-10-05 主席令「八卡全开」定的 {4,5,6,7}）与`gpu_assignment.GPU_FORBIDDEN_PRODUCTION=(6,7)` 之间的矛盾，**不是生成器的调度选择**⇒ 生成器只登记、⛔ 不擅自改池。★ 邻居卡 GPU2 已随 T041 例外撤销而从**全部声明中清零**。"
   },
   "fsdp_migration": {
     "round": "fsdp-phase1+2",

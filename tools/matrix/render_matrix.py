@@ -23,7 +23,8 @@ PLACEHOLDER_TOKENS = ("{{DATA_REVISION}}", "{{SOURCE_BASENAME}}", "{{SOURCE_SHA2
                       "{{ROW_COUNT}}", "{{MATRIX_TABLE}}", "{{UNIFORM_PARAMS}}", "{{DOC_DATE}}",
                       "{{DOC_TITLE}}", "{{GEN_BANNER}}",
                       "{{BOUNDARY}}", "{{CALIBER}}", "{{VERDICTS}}",
-                      "{{GENERATOR}}", "{{DATA_PATH}}")
+                      "{{GENERATOR}}", "{{DATA_PATH}}",
+                      "{{COVERAGE_WARNING}}", "{{DOC_SCOPE}}", "{{VENUE}}", "{{CODE_VERSION}}")
 
 # 结果列着色用的四态映射（与模板内联脚本同一口径；此处只用于生成带 class 的单元格）
 STATUS_CLASS = {
@@ -148,11 +149,78 @@ def build_gen_banner(data):
 
 
 
+def count_statuses(data):
+    """按四态统计档位（★ 数据驱动：计数一律从 `rows` 现算，⛔ 不写死任何数字）。"""
+    vocab = list((data.get("meta") or {}).get("status_vocabulary") or [])
+    rows = data.get("rows") or []
+    for r in rows:
+        st = r.get("status")
+        if st not in vocab:
+            vocab.append(st)
+    return {s: sum(1 for r in rows if r.get("status") == s) for s in vocab}
+
+
+def build_coverage_warning(data):
+    """★ 覆盖度门槛与首屏警示 + 「尚未验证」档位清单与数量（宪法 §17.7「覆盖度门槛与失败态」）。
+
+    判据（§17.7）：只有当**全部档位都已有明确结论**（取值属于「已验证可用 / 已验证不可用 /
+    未纳入验收」——即：不是「尚未验证」）时，才允许在文档任何位置宣称项目整体能力承诺；
+    未达此条件时，**必须**在文档首屏写明显式警示，且**标题与摘要不得使用能力承诺式措辞**，
+    并**同时列出「尚未验证」的档位清单与数量**。
+
+    ★ 一切计数与清单从数据现算；★ 覆盖度达标时本警示块**自动消失**（⛔ 不留空壳、⛔ 不写死文案）。
+    """
+    counts = count_statuses(data)
+    unverified = [str(r.get("tier")) for r in (data.get("rows") or [])
+                  if r.get("status") == "尚未验证"]
+    if not unverified:
+        return ""
+    vocab = list((data.get("meta") or {}).get("status_vocabulary") or [])
+    order = [s for s in vocab if s in counts] or list(counts)
+    cnt = "；".join(f"{s} <b>{counts[s]}</b> 档" for s in order)
+    _total = len(data.get("rows") or [])
+    return (
+        f'<div class="warnbox" id="coverage-warning" data-row-count="{_total}">'
+        '<b>覆盖度警示（结论尚未齐备）。</b>'
+        f'本矩阵共 <b>{_total}</b> 个档位，当前结论分布为：{cnt}。'
+        '<b>尚有档位没有明确结论</b>（状态为「尚未验证」）⇒ <b>本矩阵此时不得被读作'
+        '「所列举的能力组合都可用」</b>，标题与摘要也不作能力承诺；'
+        '「尚未验证」<b>不计入</b>可用档位数量。'
+        f'<br><b>尚未验证的档位（{len(unverified)} 档）</b>：'
+        + "、".join(f"<code>{html.escape(t)}</code>" for t in unverified) + "。</div>")
+
+
+def build_venue(data):
+    """实验场所（★ 数据驱动；⛔ 不在渲染层写死机器名 / 内网地址 / 主机编号）。"""
+    return html.escape(str((data.get("meta") or {}).get("venue") or ""))
+
+
+def build_code_version(data):
+    """代码版本（实验条件之一；★ 数据驱动）。"""
+    cv = ((data.get("meta") or {}).get("code_version") or {})
+    if not cv:
+        return ""
+    parts = [str(cv.get(k)) for k in ("repo", "branch", "commit") if cv.get(k)]
+    return html.escape(" · ".join(parts))
+
+
 def build_boundary(data):
+    """★ 承诺边界声明（§17.7）。措辞**逐字**取自宪法 §17.7 的引文（不得弱于），
+    另加一行**覆盖度门槛注**：本矩阵的「整体能力承诺」以覆盖度门槛为前提，
+    当前是否已达成由「覆盖度警示」块给出（⛔ 断言的目标不是覆盖度必须达标，
+    而是**不得在未达标时读作已完成承诺**）。
+    """
     b = data["meta"].get("boundary_declaration", {})
     pts = "".join(f"<li>{html.escape(x)}</li>" for x in b.get("points", []))
+    n_pending = count_statuses(data).get("尚未验证", 0)
+    gate = (f'<p class="note"><b>覆盖度门槛（本矩阵整体承诺的生效前提）：</b>'
+            f'只有当全部档位都已有明确结论（不是「尚未验证」）时，才在文档任何位置宣称项目整体能力承诺。'
+            f'当前尚有 {n_pending} 档为「尚未验证」⇒ <b>上述整体承诺尚未生效</b>；'
+            f'本矩阵此时只呈现<b>逐档状态</b>，不把「未验证」读作「可用」。</p>') if n_pending else ""
+    caveat = html.escape(b.get("coverage_caveat", ""))
     return (f'<div class="hint"><b>承诺边界声明。</b>{html.escape(b.get("text", ""))}'
-            f'<ul>{pts}</ul><p class="note">{html.escape(b.get("coverage_caveat", ""))}</p></div>')
+            f'<ul>{pts}</ul>{gate}'
+            + (f'<p class="note">{caveat}</p>' if caveat else "") + '</div>')
 
 
 def threshold_html(th):
@@ -178,7 +246,9 @@ def threshold_html(th):
             extra += f'；教师 = {html.escape(str(v["teacher"]))}'
         ep = v.get("epoch")
         if ep is not None and v.get("epoch_previous") is not None and v.get("epoch_previous") != ep:
-            ep_txt = f'epoch={ep}（★ 本轮由 {v.get("epoch_previous")} 改为 {ep}）'
+            # ★ 修正包 🔴-2：不得写「本轮/本次」这类**相对时间指代**（开发过程措辞）
+            #   ⇒ 只陈述**现行取值**（数值逐字不变），变更史不进人读件。
+            ep_txt = f'epoch={ep}（现行口径）'
         elif ep is not None:
             ep_txt = f'epoch={ep}（不变）'
         else:
@@ -194,8 +264,8 @@ def threshold_html(th):
             '<th>口径</th><th>epoch</th></tr></thead><tbody>'
             + "".join(rows) + '</tbody></table>'
             + f'<p class="note">{html.escape(str(th.get("status", "")))}</p>'
-            + f'<p class="note">旧口径留痕：{html.escape(str(th.get("historical_note", "")))}</p>'
-            + f'<p class="note">{html.escape(str(th.get("by_method_single_source", "")))}</p>')
+            + f'<p class="note">旧口径留痕：{html.escape(str(th.get("historical_note", "")))}</p>')
+            # ★ 「by_method 是跑次阈值判定的唯一真相源」= **内部回填机制说明** ⇒ 不进人读视图。
 
 
 def caliber_change_html(c):
@@ -206,13 +276,22 @@ def caliber_change_html(c):
            f'<b>改动</b>：{html.escape(str(ch.get("changed", "")))}<br>'
            f'<b>未动</b>：{html.escape(str(ch.get("unchanged", "")))}<br>'
            f'<b>被取代</b>：{html.escape(str(ch.get("superseded", "")))}')
-    # ★★ 「读数变化」登记表（**数据驱动**：行级 `caliber_change.kind=reading_change…` 汇总而来）
-    #    用途：把"四态翻盘**但判据未变**"的档与"判据变更"**显式分开**（⛔ 不让读者误以为是判据放宽）。
-    reg = ch.get("reading_change_registry") or []
-    if reg:
-        out += (f'<br><b>读数变化登记（★ 不是判据变更）</b>：{html.escape(str(ch.get("reading_change_registry_note", "")))}'
-                '<ul>' + "".join(f'<li>{html.escape(str(x))}</li>' for x in reg) + '</ul>')
+    # ★★ 「读数变化登记」= 内部跑次史（逐档旧读数作废 / 归因更正的经过）⇒ **不进人读视图**
+    #    （宪法 §17.7：矩阵只承载判据 / 口径 / 实验条件 / 逐档结论；过程迁 `.local/`）。
+    #    ★ 仍进人读视图的是上文的「改动 / 未动 / 被取代」三行——它们是**口径**，不是过程。
     return out
+
+
+def _measured_authority_short(c):
+    """★ 精简轮 2：把「步数对账」压成一句话——只留**实测权威 + 以实跑为准 + 结论**。
+
+    ⛔ 不改数值：`measured_authority` 逐字保留；⛔ 不渲染内部概念对账过程。
+    """
+    sr = c.get("step_reconciliation") or {}
+    ma = str(sr.get("measured_authority") or "—").strip()
+    return (f"{ma}"
+            "（**以实跑累计步数为准**：该组合的优化步数由运行期触发次数决定，"
+            "无法从配置先验算出；表中「步数」列为按推导式的**上限**。）")
 
 
 def build_caliber(data):
@@ -221,7 +300,11 @@ def build_caliber(data):
     crit = "".join(f"<li>{html.escape(x)}</li>" for x in c.get("availability_criteria", []))
     return ('<table class="plain"><tbody>'
             f'<tr><th>判据（四条）</th><td><ul>{crit}</ul></td></tr>'
-            f'<tr><th>判据口径变更留痕</th><td>{caliber_change_html(c)}</td></tr>'
+            # ★ 精简轮 2：内部口径迭代史（改动一/二/三、来源、未动项）已移出 ⇒ 归档件 §1.3 逐字保留；
+            #   此处只留**访客需要的一句**：判据口径变更过、旧读数作废、只以现行口径结论为准。
+            '<tr><th>判据口径（现行）</th><td>'
+            '<b>本页结论一律以现行判据口径为准</b>（判据口径本身经过变更，变更明细不进本页面）；'
+            '旧口径下的读数一律作废、<b>不得引用</b>（历史读数仅作为留痕保留在数据文件里）。变更明细不进本页面。</td></tr>'
             f'<tr><th>评测数据集</th><td>{html.escape(d.get("id", ""))}；'
             f'{html.escape(d.get("availability", ""))}；版本锚点 sha256 <code>{html.escape(d.get("version_anchor_sha256", ""))}</code>；'
             f'样本量 {d.get("sample_count")}；评测方法 {html.escape(d.get("method", ""))}'
@@ -236,15 +319,16 @@ def build_caliber(data):
             f'<tr><th>epoch 口径</th><td>{html.escape((c.get("epoch_policy") or {}).get("by_method", ""))}</td></tr>'
             f'<tr><th>步数口径（取消上限）</th><td>{html.escape((c.get("epoch_policy") or {}).get("steps", ""))}</td></tr>'
             f'<tr><th>检查点间隔</th><td>{html.escape((c.get("epoch_policy") or {}).get("checkpoint", ""))}</td></tr>'
-            f'<tr><th>已知问题（登记待修）</th><td>{html.escape((c.get("epoch_policy") or {}).get("known_issue", "—"))}</td></tr>'
-            f'<tr><th>口径证据（基准散布）</th><td>{html.escape("；".join(c.get("caliber_evidence") or []) or "—")}</td></tr>'
-            f'<tr><th>已知订正（待跑次侧）</th><td>{html.escape("；".join(c.get("known_corrections") or []) or "—")}</td></tr>'
-            f'<tr><th>步数对账（名义 vs 对账式）</th><td>'
-            f'<b>实测权威</b>：{html.escape((c.get("step_reconciliation") or {}).get("measured_authority", ""))}<br>'
-            f'<b>三者关系</b>：{html.escape((c.get("step_reconciliation") or {}).get("three_concepts", ""))}<br>'
-            f'<b>名义</b>：{html.escape((c.get("step_reconciliation") or {}).get("nominal", ""))}<br>'
-            f'<b>对账式</b>：{html.escape((c.get("step_reconciliation") or {}).get("reconciliation_rule", ""))}<br>'
-            f'<b>双验</b>：{html.escape((c.get("step_reconciliation") or {}).get("worked_example", ""))}</td></tr>'
+            # ★★ 精简轮 2：移出三段**给自己看的开发过程**（原文进《归档 · 轮 2》§1.3）：
+            #   「口径证据（基准散布）」= 旧口径下的基准散布推算；「已知订正（待跑次侧）」= 空行；
+            #   「已知问题（登记待修）」= 内部缺陷台账（含代码路径与内部推理）。
+            #   ⛔ 不是丢事实：① 该缺陷的**面向使用者结论**已在实验条件「步数口径」里如实披露
+            #      （「GRASPO × native 的推导式不成立 ⇒ 以实跑累计步数为准」）；
+            #   ② 三段原文逐字保留在归档件里。
+            # ★ 保留但重写措辞：「步数对账」只留**访客需要的那一句**（实测权威 + 以实跑为准），
+            #   去掉内部概念对账（三者关系 / 名义 / 对账式 / 双验 = 内部推算过程）。
+            f'<tr><th>步数口径 · 实测权威</th><td>'
+            f'{html.escape(_measured_authority_short(c))}</td></tr>'
             
             f'<tr><th>LoRA 目标（按后端分流）</th><td>{_lora_backends_html(data)}</td></tr>'
             f'<tr><th>ms-swift 正则下发机制</th><td>{_target_regex_html(data)}</td></tr>'
@@ -252,25 +336,41 @@ def build_caliber(data):
 
 
 def build_verdicts(data):
-    rows = [r for r in data.get("rows", []) if r.get("verdict")]
-    excl = [r for r in data.get("rows", []) if r.get("excluded_reason")]
-    if not rows and not excl:
-        return ""
-    out = ['<table class="plain"><thead><tr><th>档号</th><th>结论</th><th>未过判据</th><th>已通过项（事实保留）</th></tr></thead><tbody>']
+    """★ 精简轮 2：结论说明**压到两小段**（逐档结论已在矩阵表的「状态 / 未过判据 / 备注」三列里）。
+
+    只保留矩阵表**放不下**的两件事：
+      ① 「已验证不可用」各档的**已通过项**（§17.7 要求"已通过项事实保留"）；
+      ② 「未纳入验收」各档的**不实施理由**（§17.7 要求"逐档写明理由与适用范围"）。
+    ⛔ 不再重复"状态 + 未过判据"（表里已有）；⛔ 不改任何取值。
+    """
+    rows = data.get("rows", [])
+    passed_items, excl_items = [], []
     for r in rows:
-        v = r["verdict"]
-        passed = "；".join(html.escape(x) for x in v.get("passed_criteria", []))
-        out.append(f'<tr><td><code>{html.escape(r["tier"])}</code></td><td>{html.escape(v.get("state", ""))}</td>'
-                   f'<td>{html.escape(v.get("failed_criterion", ""))}<br><span class="note">'
-                   f'{html.escape(v.get("failed_detail", ""))}</span></td><td>{passed}</td></tr>')
-    out.append("</tbody></table>")
-    if excl:
-        out.append('<p class="note"><b>未纳入验收档位（逐档理由）</b>：</p><ul>')
-        for r in excl:
-            out.append(f'<li><code>{html.escape(r["tier"])}</code>：{html.escape(r["excluded_reason"])}</li>')
+        v = r.get("verdict") or {}
+        if r.get("status") == "已验证不可用" and (v.get("passed_criteria") or []):
+            txt = "；".join(str(x).strip() for x in v["passed_criteria"] if str(x).strip())
+            if txt:
+                passed_items.append((str(r.get("tier")), txt))
+        if r.get("status") == "未纳入验收" and str(r.get("excluded_reason") or "").strip():
+            excl_items.append((str(r.get("tier")), str(r["excluded_reason"]).strip()))
+    out = []
+    if passed_items:
+        out.append('<p class="note" style="margin-top:12px;">'
+                   '<b>已通过项（事实保留）</b>——「未过第 1 / 2 条」时，其余已通过的事实一律保留：'
+                   '未过一条不等于整档没有可用的部分。</p>')
+        out.append('<ul class="tight">')
+        for t, txt in passed_items:
+            out.append(f'<li><code>{html.escape(t)}</code>：{html.escape(txt)}</li>')
+        out.append("</ul>")
+    if excl_items:
+        out.append('<p class="note" style="margin-top:12px;">'
+                   '<b>未纳入验收档位（逐档理由）</b>——这些档位不实施、不产出可运行配置；'
+                   '它们<b>不是</b>「试过了不行」，<b>不得</b>读作效果否定。</p>')
+        out.append('<ul class="tight">')
+        for t, txt in excl_items:
+            out.append(f'<li><code>{html.escape(t)}</code>：{html.escape(txt)}</li>')
         out.append("</ul>")
     return "\n".join(out)
-
 
 
 def _lora_backends_html(data):
@@ -292,14 +392,14 @@ def _lora_backends_html(data):
         f'<code>{html.escape(reg)}</code><br>'
         f'⇒ **实测 <b>{mc.get("total")}</b>** 件（language_model <b>{mc.get("language")}</b> '
         f'+ visual <b>{mc.get("visual")}</b>）。<br>'
-        f'<span class="note">★★ <b>两后端覆盖集不相等</b>（均为实测锚）：native <b>{nc.get("total")}</b> 件'
+        f'<span class="note"><b>两后端覆盖集不相等</b>（均为实测锚）：native <b>{nc.get("total")}</b> 件'
         f'（language {nc.get("language")} + visual {nc.get("visual")}） vs ms-swift <b>{mc.get("total")}</b> 件'
-        f'（language {mc.get("language")} + visual {mc.get("visual")}）⇒ ⛔ 不得宣称等价。'
-        f'<br>★ 可比性提示：{html.escape(mc.get("comparability_note", ""))}'
-        f'<br>★ 三方命名空间各不相同：native 公开签名 <code>{html.escape(ns.get("native_public", ""))}</code>；'
-        f'native 内部存储 <code>{html.escape(ns.get("native_internal", ""))}</code>；'
-        f'HF/ms-swift <code>{html.escape(ns.get("hf_msswift", ""))}</code> ⇒ 不能跨后端共用同一串目标。'
-        f'<br>证据链：{html.escape("；".join(m.get("evidence") or []))}。</span>')
+        f'（language {mc.get("language")} + visual {mc.get("visual")}）⇒ 不得宣称等价。'
+        + ('' if not mc.get("comparability_note") else f'<br>可比性提示：{html.escape(str(mc.get("comparability_note")))}')
+        + f'<br>三方命名空间各不相同：native 公开签名 <code>{html.escape(ns.get("native_public", ""))}</code>；'
+        + f'native 内部存储 <code>{html.escape(ns.get("native_internal", ""))}</code>；'
+        + f'HF/ms-swift <code>{html.escape(ns.get("hf_msswift", ""))}</code> ⇒ 不能跨后端共用同一串目标。'
+        + '</span>')
 
 def _target_regex_html(data):
     m = ((data.get("meta") or {}).get("lora_target_backends") or {}).get("msswift") or {}
@@ -337,6 +437,10 @@ def render(template_text, data):
         "{{VERDICTS}}": build_verdicts(data),
         "{{GENERATOR}}": (meta.get("authority") or {}).get("generator", ""),
         "{{DATA_PATH}}": (meta.get("authority") or {}).get("data_path", ""),
+        "{{COVERAGE_WARNING}}": build_coverage_warning(data),
+        "{{DOC_SCOPE}}": meta.get("scope", ""),
+        "{{VENUE}}": build_venue(data),
+        "{{CODE_VERSION}}": build_code_version(data),
     }
     out = template_text
     for token in PLACEHOLDER_TOKENS:

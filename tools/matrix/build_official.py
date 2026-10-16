@@ -1,18 +1,26 @@
 #!/usr/bin/env python3
 """build_official.py — 由内部 matrix-data.json 生成正式机读数据 docs/capability-matrix.data.json。
 
-★ 定位：正式官方文档的**机读形式**，与 docs/capability-matrix.html 同为唯一真相源。
-★ 脱敏（宪法 §15.1，A 类零容忍）：宿主路径 / 内网路径 / 机器名 / 人名一律替换为符号或删除；
-   跑次只引用**不透明跑次 ID**，不含任何部署环境记录（尊重 §17.2 的立法目的）。
+★ 定位（宪法 §17.7「同源生成」第 1 款）：**数据文件 docs/capability-matrix.data.json 是矩阵唯一
+   可编辑的源头**；人读视图 docs/capability-matrix.html 由「本数据 + 固定生成器
+   tools/matrix/render_matrix.py」**确定性产出**，是**只读派生视图**、**禁止手工编辑**。
+   派生方向唯一且固定：结果 JSON → capability-matrix.data.json → 人读视图（⛔ 禁止互推）。
+★ 脱敏（宪法 §15.1／§17.7「矩阵数据与合规底线」；矩阵落点**不适用** §15.4 的放宽）：宿主路径 /
+   内网地址与路径 / 机器名 / 人名 / 内部节点与内部账号一律替换为符号或删除；跑次只引用
+   **不透明跑次 ID**，不含任何部署环境记录（尊重 §17.2 的立法目的）。
 ★ 只保留「定义 + 表格」层：parameters(columns/groups/uniform) + rows；过程件（provenance /
    conflicts / invariants / 取证叙述）不进正式件，迁至 .local/ 决策记录与工作日志。
+★ ★ **内部字段不进人读视图**：`HUMAN_VIEW_ROW_KEYS` / `HUMAN_VIEW_META_KEYS` 是**显式允许清单**，
+   清单之外的字段在落盘前由 `drop_non_view_fields()` 逐条剔除并打印（内部权威
+   `.local/…/matrix-data.json` 一行不动、全字段保留）。允许清单之外的内部术语再由
+   `forbidden_in_human_view()` 兜底扫描，**命中即 fail-closed 拒绝写盘**。
 
 用法：
   python3 tools/matrix/build_official.py \
       --in  .local/hb-workspace/<会话>/task-matrix-html/matrix-data.json \
       --out docs/capability-matrix.data.json
 """
-import argparse, datetime, json, re
+import argparse, datetime, json, re, sys
 from pathlib import Path
 
 # ★ lr 口径的**唯一真相源**（`extract_spec.py` 与本脚本同目录）：正式机读件直接引用它，
@@ -158,44 +166,817 @@ def official_run_path(row, state):
     return f"{rid}（{date}）" if date else rid
 
 
-#: 四态（§17.7）——只允许这四个取值，且必须是可区分的文字标签
+# ============================================================================
+# ★★ 人读视图（`docs/capability-matrix.html` 及其机读源 data 件）的**可见面**
+#    宪法 §17.7：矩阵是**面向使用者**的文档 ⇒ 只承载「判据 / 口径 / 实验条件 / 逐档结论」，
+#    过程、日志、决策、证据、内部编排与人称**一律不进人读视图**（迁 `.local/`）。
+#    本区四件（允许清单 / 术语兜底 / 术语改写 / 表格格归一）**同源同处**，⛔ 不设第二家。
+# ============================================================================
+
+#: ①**允许清单**（meta 级）：人读视图渲染这些键；其余一律由 `drop_non_view_fields()` 剔除。
+HUMAN_VIEW_META_KEYS = (
+    "title", "version", "doc_date", "scope", "venue", "code_version", "authority",
+    "status_vocabulary", "boundary_declaration", "criteria_caliber", "criteria_version",
+    "results_policy", "distill_teacher", "lora_target_backends",
+)
+
+#: ★★ **机读消费者字段（不进人读视图）**：`gen_configs.py` 的 fail-closed 检查要读它们
+#:   （`final_formats` 还直接决定生成的 yaml）。它们**保留在正式机读件里**但不被渲染：
+#:   ① 渲染层无任何引用（模板占位符只有 4 组 + 表格列，见 `render_matrix.py`）；
+#:   ② 本清单同时是 `forbidden_in_human_view()` 的**扫描豁免面**（只准这 8 个，逐条具名）。
+TOOLCHAIN_ONLY_ROW_KEYS = (
+    "final_formats", "family", "family_min_cards", "cards_pending", "blocked_reason",
+    "live_evidence", "caliber_change", "executability",
+)
+
+#: ①**允许清单**（行级）：= 矩阵表 21 列 + 逐档结论块 + 机读列定义（`gen_configs.py` 的消费者）。
+#: ★ 逐档参数/读数字段是**矩阵表本身**（§17.7 的「结论与归因都是使用者有权知道的」）⇒ 保留；
+#:   过程件（证据索引、跑次溯源、内部对账、作废结论全文、陈旧读数史…）⇒ 剔除、迁 `.local/`。
 S_AVAILABLE, S_UNAVAILABLE, S_UNVERIFIED, S_EXCLUDED = "已验证可用", "已验证不可用", "尚未验证", "未纳入验收"
 STATUS_VOCABULARY = [S_AVAILABLE, S_UNAVAILABLE, S_UNVERIFIED, S_EXCLUDED]
+
+#: ★★ **实测读数列**（单一真相源）：未结论档必须全为 `—`（§17.7「未验证不得冒充可用」）。
+#:   校验端（`verify_matrix` ④C）与自证端（`run_self_proof`）都从这里取，⛔ 不各自手抄一份。
+EXP_DATA_KEYS = ("peak_mem", "elapsed", "effect")
+
+HUMAN_VIEW_ROW_KEYS = (
+    # 矩阵表 21 列 + 列定义里用到的逐档参数
+    "tier", "status", "model", "algo", "mode", "backend", "parallel", "parallel_dims",
+    "parallel_scheme", "lora_target", "lr", "data_subset", "steps", "switches", "spec_json",
+    "model_path", "train_method", "tuner_type", "cards", "tp_size", "pp_size", "dp_size",
+    "nproc_per_node", "nnodes", "cp_size", "sp_size", "gpus", "target_modules",
+    "target_modules_mode", "deepspeed", "allow_unverified_pp_rollout", "subset_generation",
+    "subset_r3_historical", "expected_optimizer_steps_historical", "steps_formula_v2",
+    "min_optimizer_steps", "data_source", "subset_size", "prompts_per_rank", "train_path",
+    "planned_steps", "save_steps", "expected_optimizer_steps_per_epoch",
+    "expected_optimizer_steps_reachable", "applicable", "max_epochs", "derived_steps",
+    "per_epoch_steps", "save_steps_basis", "data_scale", "tp", "pp", "dp", "cards_total",
+    # 实验数据列 + 结论块
+    "peak_mem", "steps_actual", "elapsed", "throughput", "effect", "note", "runs",
+    "inference", "algo_checks", "verdict", "excluded_reason", "availability",
+    # ★★ 精简轮 2 新增的**派生结论列**（从 `verdict` 派生，⛔ 不从内部权威搬）
+    "not_failed_reason",
+) + TOOLCHAIN_ONLY_ROW_KEYS
+
+#: ②**内部术语兜底**：允许清单之外（或清单内被回填污染）的内部术语命中即 **fail-closed 拒绝写盘**。
+#: ★ 只收「人称 / 内部编排 / 内部角色」三类；`§<数字>` 形式的规范与代码引用属公开仓内容、
+#:   ⛔ 不在本清单（§17.7 允许失败归因与判据标识）。
+FORBIDDEN_TERMS = (
+    "主席", "总参谋长", "总司令", "指挥部", "指挥官", "执行者", "审查者",
+    "口径包", "修正轮", "本包", "本批", "归属层", "工位", "work_log", "跑次根目录",
+    "第 1 批", "第 2 批", "第 3 批", "第 4 批", "第 5 批", "第 6 批", "第 7 批",
+)
+
+#: ★★ **逐档字段直通清单**（内部权威 → 正式件）：这些字段在**内部数据**里逐档给出、
+#:   下游机读消费者要用（`gen_configs.py` 的 `export.final_formats` 直接决定生成 yaml），
+#:   但**不被渲染**（与 `TOOLCHAIN_ONLY_ROW_KEYS` 同一渲染豁免面）。
+#:   ★ 来源＝内部权威行上的同名键（⛔ 不写死档号、⛔ 不在本文件里抄取值表）——
+#:   原生成器漏了 `final_formats` 的透传，导致「重生成即丢」，会让下游的 fail-closed 守卫静默失效；
+#:   本清单把透传**显式登记**，并在 `_carry_through_row_fields()` 里逐条搬运。
+#:   ⚠ **未列入** `eval_caliber_consistency`：那是口径一致性的机读审计记录，其值里含
+#:   **真实宿主路径（`/home/<账号>/…`）、数据集文件名与内部称谓**——实测把它留在正式机读件里，
+#:   `scan_matrix_leaks.py` 立刻 **40 处命中**（宿主路径 11 / 数据集文件名 11 / 内部称谓 18）
+#:   ⇒ 与 §17.7「矩阵禁止项 + 扫描不豁免」**直接冲突**。`tests/e2e/test_verify_matrix_guard.py`
+#:   的 `test_on_disk_prior_chains_are_canonical`（断言在盘件恰有 9 条 `prior_chain`）因此会
+#:   因「断言前提消失」而失败 ⇒ 该冲突已**如实上报**（见 `report.md` 待裁项 A1），⛔ 本包不擅自
+#:   放宽扫描器、也⛔ 不改 `tests/**`。
+CARRY_THROUGH_ROW_KEYS = ("final_formats",)
+
+
+def _carry_through_row_fields(doc, src_rows):
+    """逐档直通：把内部权威行上具名的直通字段搬到正式件（⛔ 不渲染、⛔ 不猜值）。"""
+    by_tier = {str(r.get("tier")): r for r in (src_rows or [])}
+    moved = 0
+    for r in doc.get("rows", []):
+        _s = by_tier.get(str(r.get("tier"))) or {}
+        for k in CARRY_THROUGH_ROW_KEYS:
+            if k in _s and _s.get(k) not in (None, "", "—", []):
+                r[k] = _s[k]
+                moved += 1
+    return moved
+
+
+#: ③**术语改写表**（`(旧, 新)` 顺序应用；★ 显示面文本专用）。
+#: ★ 只改写「谁在什么场合说了什么」⇒「何时生效的口径」；⛔ 不动任何数值、判据、阈值与结论。
+HUMAN_VIEW_REWRITES = (
+    ("（「用同一个数据集」：训练用什么、评测就用什么）", "（口径：训练用什么数据、评测就用什么数据）"),
+    ("（新学习率口径 / lr 按方法一个值）", "（新学习率口径：lr 按方法取一个值）"),
+    ("（机制「按卡数缩放学习率」已整体删除）", "（原「按卡数缩放学习率」机制已整体删除）"),
+    ("扩面（主席裁定「18 个 20 行档放大到 100 行」）", "扩面（口径变更：18 个 20 行档放大到 100 行）"),
+    ("★ 2026-10-16 扩面", "★ 2026-10-16 口径扩面"),
+    ("口径（2026-10-16 主席裁定）", "口径（2026-10-16）"),
+    ("评测集口径（2026-10-16 主席裁定）逐档分列", "评测集口径（2026-10-16）逐档分列"),
+    ("已随主席裁定", "已随口径变更"),
+    # ★ 内部机读字段名与内部代号 ⇒ 面向使用者的说法（⛔ 不删事实、只换称谓）
+    ("（具名原因见行内 `not_executable_reason`）", "（该档在表中已具名标注不可执行的原因）"),
+    ("（见各行具名 `not_executable_reason`）", "（各档在表中已具名标注不可执行的原因）"),
+    ("（见各行具名 not_executable_reason）", "（各档在表中已具名标注不可执行的原因）"),
+    ("逐档具名原因见行内 `not_executable_reason`", "逐档原因在表中已具名标注"),
+    ("逐档具名原因见行内 not_executable_reason", "逐档原因在表中已具名标注"),
+    ("`not_applicable`", "设计上不成立"),
+    ("not_applicable", "设计上不成立"),
+    ("（`applicable == false`）", ""),
+    ("（applicable == false）", ""),
+    ("`lora_target_signature.resolved` = 122", "LoRA 目标的签名条目数 = 122"),
+    ("lora_target_signature.resolved = 122", "LoRA 目标的签名条目数 = 122"),
+    ("（具名原因见行内 not_executable_reason）", "（该档在表中已具名标注不可执行的原因）"),
+    ("（具名 `not_executable_reason`）", "（表中已具名标注）"),
+    ("行内 `voided_conclusion.historical_effect`", "各档的历史读数记录"),
+    ("行内 voided_conclusion.historical_effect", "各档的历史读数记录"),
+    ("各行 `voided_conclusion.historical_effect`", "各档的历史读数记录"),
+    ("`eval_caliber_consistency.status_after`", "该档的现行状态"),
+    ("（详值见行内 `status` / `eval_caliber_consistency.status_after`）", "（详值以该档现行状态字段为准）"),
+    ("（详值见行内 status / eval_caliber_consistency.status_after）", "（详值以该档现行状态字段为准）"),
+    ("（静默取 `dp_rank==0`）", ""),
+    ("（静默取 dp_rank==0）", ""),
+    ("以本行现行 `status` 字段为准", "以该档现行状态为准"),
+    ("以本行现行 status 字段为准", "以该档现行状态为准"),
+    ("`lora_target_signature.resolved`", "LoRA 目标的签名条目数"),
+    ("参照 `T028.json`", "参照同类单卡基准跑次"),
+    ("`eval/merged_export.py`", "仓内既有的导出模块"),
+    # ★ 内部代号与截断残片（改前**已渲染进人读件**）—— P5/P6 = 内部六项读数编号，
+    #   ":to。" / ":ex。" = 上游截断残片 ⇒ 一律换成面向使用者的自然结尾（⛔ 不删事实）。
+    ("P5/P6 已补。", "其余指标已采集。"),
+    ("P5/P6 待补。", "其余指标未采集。"),
+    ("P5/P6", "其余指标"),
+    ("（pp-watchdog 停滞 ⇒ force-exit 86）", "（流水线并行停滞、进程未正常结束）"),
+    ("不可评：训练失败", "第 1 条：跑通/工程合规未通过 —— 训练失败"),
+    ("pp-watchdog 停滞 ⇒ force-exit 86", "流水线并行停滞 ⇒ 进程未正常结束"),
+    ("force-exit 86", "进程未正常结束"),
+    ("pp-watchdog", "流水线并行看门狗"),
+    ("：to。", "。"),
+    ("：ex。", "。"),
+    ("：su。", "。"),
+    # ★ 内部过程/内部交接 ⇒ 移出（不是"改词"，是"删句"；⛔ 不碰数值/判据/结论）
+    ("＋ 本包（唯一回填通道 backfill_matrix.py 落盘）", ""),
+    ("由「主席裁定未回、口径待定、⛔ 不下效果结论」改为", "改为"),
+    ("主席裁定", "口径变更"),
+    ("主席拍定", "判据基线"),
+    ("主席最新裁定", "现行口径"),
+    ("依主席 2026-10-14 口径记入失败", "依 2026-10-14 口径记入失败"),
+    ("依主席 2026-10-14 口径", "依 2026-10-14 口径"),
+    ("依主席 2026-10-14 裁定", "依 2026-10-14 口径"),
+    ("依 2026-10-14 裁定，本档位不实施", "依 2026-10-14 口径，本档位不实施"),
+    ("依 2026-10-14 裁定", "依 2026-10-14 口径"),
+    ("主席 2026-10-16 裁定", "2026-10-16 口径变更"),
+    ("主席 2026-10-15 裁定", "2026-10-15 口径变更"),
+    ("主席 2026-10-14 裁定", "2026-10-14 口径变更"),
+    ("主席 2026-10-14 口径", "2026-10-14 口径"),
+    ("主席 2026-10-15 口径", "2026-10-15 口径"),
+    ("主席", "口径来源"),
+    ("指挥部", "内部项目组"),
+    ("经指挥部批准", "经项目组批准"),
+    ("由指挥裁定", "由项目组裁定"),
+    ("指挥裁定", "内部裁定"),
+    ("指挥统一批量做", "项目组统一批量做"),
+    ("（同上裁定）", "（同族，同判据①）"),
+    ("已裁定", "已定口径"),
+    ("裁定", "口径变更"),
+)
+
+
+#: 文档内部编号 §1.x / §2.x（本模板重排前的旧编号）⇒ 新文档的等价落点
+SECTION_ALIAS = {
+    "§1.0": "见实验条件（统一口径）", "§1.2": "见实验条件", "§1.3": "见实验条件",
+    "§1.4": "见判定口径明细", "§1.5": "见判定口径明细",
+    "§6.1": "工程约定", "§10": "27B 服务档参数口径", "§12": "卡集口径", "§13": "整卡判据",
+}
+
+
+def human_view_notation(t: str) -> str:
+    """③c 记号清理：去掉面向内部写作的记号与旧编号，保留事实与数值。
+
+    ★ 移出的是**写法**（`★` / `⛔` / `✅` / `**` / 反引号 / 旧文档编号），⛔ 不是内容。
+    """
+    t = str(t or "")
+    for _k, _v in SECTION_ALIAS.items():
+        t = t.replace(_k, _v)
+    t = re.sub(r"§[0-9]+(?:\.[0-9]+)*", "见实验条件", t)
+    for _sym in ("★", "⛔", "✅", "⚠️", "🟡", "🔴"):
+        t = t.replace(_sym, "")
+    t = t.replace("**", "").replace("`", "")
+    t = re.sub(r"[ \t]{2,}", " ", t)
+    t = re.sub(r"——\s*(?=[，。；、)])", "", t)
+    t = re.sub(r"\s+([，。；、）])", r"\1", t)
+    t = re.sub(r"([（「『])\s+", r"\1", t)             # 「 不做…」⇒「不做…」
+    t = re.sub(r"\s+([）」』])", r"\1", t)             # 未收紧 ）⇒ 未收紧）
+    t = re.sub(r"([。；，、])\s+", r"\1", t)
+    t = re.sub(r"[ \t]{2,}", " ", t)                  # 记号删除后可能留下双空格
+    t = re.sub(r"(?<=[\u4e00-\u9fff]) (?=[\u4e00-\u9fff])", "", t)   # 「看门狗 停滞」⇒「看门狗停滞」
+    return t.strip()
+
+
+def _human_view_final_clean(t: str) -> str:
+    """③b 结构级清理：删掉**整句内部过程 / 内部交接**，并收拢空白。
+
+    ★ 与 `human_view_text`（词级改写）分开：这里是"删句"，⛔ 不碰数值、判据与结论。
+    """
+    t = str(t or "")
+    t = re.sub(r"＋\s*本包（[^）]*）", "", t)                          # 内部交接单位
+    t = re.sub(r"本包只对其中的[^。]*?——\s*由指挥(?:部)?裁定。", "", t)  # 内部编排说明
+    t = re.sub(r"本包[^。]{0,40}。", "", t)                          # 其余"本包…"整句
+    t = t.replace("＋ 来源：", "来源：").replace("＋。", "。").replace("＋＋", "＋")
+    return re.sub(r"\s{2,}", " ", t).strip()
+
+
+def human_view_text(s: str) -> str:
+    """③ 术语改写：把「谁在什么场合说的」改写成「何时生效的口径」。
+
+    ★ 纯文本级、**不动数值/判据/结论**；顺序应用 `HUMAN_VIEW_REWRITES`。
+    """
+    t = _human_view_final_clean(s)          # ★ 先"删句"（内部过程/内部交接），再"改词"
+    for old, new in HUMAN_VIEW_REWRITES:
+        t = t.replace(old, new)
+    t = _human_view_final_clean(t)           # ★ 收拢空白（删句可能留下空档）
+    return human_view_notation(t)            # ★ 末次清理内部记号与旧编号
+
+
+def _rewrite_tree(obj):
+    """递归对全部字符串做③术语改写（对象结构不变）。"""
+    if isinstance(obj, str):
+        return human_view_text(obj)
+    if isinstance(obj, list):
+        return [_rewrite_tree(x) for x in obj]
+    if isinstance(obj, dict):
+        return {k: _rewrite_tree(v) for k, v in obj.items()}
+    return obj
+
+
+def _context_ok(s):
+    """未过判据的**条次**已写明（§17.7「不得只写失败」）。"""
+    t = str(s or "")
+    return any(x in t for x in ("第 1 条", "第 2 条", "第一条", "第二条"))
+
+
+#: ★★ 精简轮 2：结论列「未过判据（失败归因，逐档）」——**从 `verdict` 派生**，⛔ 不新增数据源。
+#:   设计依据（§17.7）：① 访客必须一眼看出"这档为什么不能用"，且**不得只写「失败」**；
+#:   ② 原先的「备注」列与它高度重复 ⇒ 合并为一列，表宽立刻减一列。
+_NOT_FAILED = {
+    "已验证可用": "—",
+    "尚未验证": "—",
+    "未纳入验收": "—",
+}
+
+
+#: ★★ 精简轮 2：**备注列的契约**（单一真相源）——生成端与校验端共用同一组字符串。
+#:   `已结论` = 判据①②全过；`未过` = 归因正文在「未过判据」列（本列不重复）；
+#:   `不纳入` = 不实施，逐档理由在结论说明里；`无结论` = 尚未验证。
+NOTE_CONTRACT = {
+    "已结论": "判据 ①② 与该算法的正确性检查全过。",
+    "未过": "未过判据见「未过判据」列（已通过项一律保留，不因未过一条而抹掉）。",
+    "不纳入": "不实施，不纳入验收范围。",
+    "无结论": "判定：尚未验证 —— 尚无实测结论，不计入可用档位。",
+    "无结论作废": "判定：尚未验证 —— 原有结论因口径已更正而作废，待重跑复核。",
+}
+
+#: 未过判据列里，`failed_detail` 的依据关键词（每条都要有**可构造的阳性对照**）
+_DETAIL_EVIDENCE = {
+    "T034": ("OutOfMemoryError",), "T035": ("OutOfMemory",),
+    # ★ T036 的归因正文经 `human_view_notation` 归一后，「pp-watchdog」写作「流水线并行看门狗」
+    #   ⇒ 依据关键词取**归一后仍存在**的形态（⛔ 不是放宽：改的是关键词证据面，断言仍要求逐条命中）
+    "T036": ("看门狗", "exit_code = 1"),
+    "T037": ("<", "+5.0 pp"), "T038": ("<", "+5.0 pp"), "T039": ("<", "+5.0 pp"),
+    "T049": ("OOM",), "T050": ("OOM",), "T051": ("OOM",),
+}
+
+
+def note_contract(state, has_verdict=False, has_excluded=False, raw_note=""):
+    """备注列的**唯一**取值来源（生成端与校验端共用）。"""
+    if state == S_AVAILABLE:
+        return NOTE_CONTRACT["已结论"]
+    if state == S_UNAVAILABLE:
+        return NOTE_CONTRACT["未过"] if has_verdict else (raw_note or "—")
+    if state == S_EXCLUDED:
+        return NOTE_CONTRACT["不纳入"] if has_excluded else (raw_note or "—")
+    return NOTE_CONTRACT["无结论作废"] if "作废" in str(raw_note) else NOTE_CONTRACT["无结论"]
+
+
+def compose_short_note(r):
+    """★ 精简轮 2：备注列压到**一句话**（原文逐段保留在归档件与内部权威里）。
+
+    依据：原备注平均 ~100 字符、且与「未过判据」列大量重复；访客只需要
+    「这一档为什么还没结论 / 为什么不纳入」。⛔ 不改任何数值与四态取值。
+    """
+    return note_contract(str(r.get("status") or ""),
+                         has_verdict=bool(r.get("verdict")),
+                         has_excluded=bool(str(r.get("excluded_reason") or "").strip()),
+                         raw_note=str(r.get("note") or ""))
+
+
+def derive_not_failed_reason(r):
+    """把 `verdict` 压成**一列**结论文本；⛔ 不改 `verdict` 本身。"""
+    st = str(r.get("status") or "")
+    v = r.get("verdict")
+    if not isinstance(v, dict):
+        return _NOT_FAILED.get(st, "—")
+    fc = str(v.get("failed_criterion") or "").strip()
+    fd = str(v.get("failed_detail") or "").strip()
+    if not fc and not fd:
+        return _NOT_FAILED.get(st, "—")
+    # ★ §17.7：不得只写「失败」——必须写明未过的是第 1 条还是第 2 条
+    if not _context_ok(fc):
+        fc = ("第 1 条：跑通/工程合规未通过" if st == S_UNAVAILABLE else fc)
+    parts = [fc.rstrip("。")]
+    if fd and fd != "—":
+        parts.append(fd.rstrip("。"))
+    return "；".join(x for x in parts if x) + "。"
+
+
+DEV_CHURN_TERMS = (
+    # ★ 修正包 🔴-2（窄复核）／建议 S2：**人读件正文不得含开发过程内容**。
+    #   判据 = 主席原话「不要把修改过程写进去，不要把给我们自己写的东西写进去」＋ §17.2。
+    #   ★ 词表 = 内部工位/证据路径形态 ＋ 相对时间指代；⛔ 不做通配、⛔ 不豁免生成物。
+    #   ★ 生成端（`forbidden_in_human_view` 兜底）与校验端（`verify_matrix` ④R）**同源引用本表**，
+    #     ⛔ 不各抄一份（§1.4 单一真相源）。
+    #   ★ 豁免面：§17.7 承诺边界声明的**宪法逐字引文**（其中的「我们」不是过程措辞）——
+    #     由校验端显式排除该块后再扫，⛔ 不是"整段跳过不扫"。
+    ("task-run-", "内部工位目录名（访客不可达、不可复核）"),
+    ("evidence/", "内部证据目录路径"),
+    ("本轮", "相对时间指代（开发过程措辞）"),
+    ("本次", "相对时间指代（开发过程措辞）"),
+)
+
+
+#: ★ 修正轮 4（⚠③）：**内部证据路径形态**（数据件面）。
+#:   ★ 与 `scan_matrix_leaks.py` **同源引用本常量**（§1.4 单一真相源，⛔ 不另抄一份正则）。
+#:   形态判据（防"`evidence` 作普通英文词"误报）：
+#:     ① 必须有 `evidence/` **目录形态**（带斜杠）；② 其后必须是**一位路径字符**起头；
+#:     ③ 必须以 `.md` **文件后缀**或**省略号**（`evidence/54-…`）收尾。
+#:   ⇒ 裸英文词 `evidence-based`、仓内公开文件 `docs/capability-matrix.md`、历史底稿名
+#:     `13-base-rerun-variance.md`（无 `evidence/` 前缀、已归档）**均不命中**。
+EVIDENCE_PATH_PATTERN = r"evidence/[^\s，。；、）)」』\"']*?(?:\.md\b|…)"
+
+#: ★ 脱敏后的中性替代文本（保留紧随其后的 sha256 内容指纹作可复核锚点；
+#:   ⛔ 不删结论本身 —— 结论、数值与依据链逐字保留，只把"指向内部文件的路径"换成占位说明）。
+EVIDENCE_PATH_PLACEHOLDER = "内部验收底稿（不随发布件提供）"
+
+
+def redact_internal_paths(t):
+    """把字符串里的**内部证据路径**换成中性占位（修正轮 4 ⚠③）。
+
+    ★ 幂等；★ ⛔ 不动数值 / 四态 / 判据 / 结论；★ ⛔ 不动其它任何路径形态（如仓内公开文件路径）。
+    """
+    import re as _re
+    return _re.sub(EVIDENCE_PATH_PATTERN, EVIDENCE_PATH_PLACEHOLDER, str(t))
+
+
+def _redact_tree(obj):
+    """对整棵数据树做 `redact_internal_paths`（就地改写，⛔ 不动结构）。"""
+    if isinstance(obj, dict):
+        for k, v in list(obj.items()):
+            obj[k] = _redact_tree(v)
+        return obj
+    if isinstance(obj, list):
+        for i, v in enumerate(obj):
+            obj[i] = _redact_tree(v)
+        return obj
+    return redact_internal_paths(obj) if isinstance(obj, str) else obj
+
+
+SAVE_STEPS_TOKEN = "save_steps="
+"""「关键开关」列里**禁止出现**的令牌前缀（修正包 🔴-1）。
+
+★ 单一真相源：检查点间隔只在 §3.1 的定义行出现一次（`checkpoint_save_steps = 推导步数 + 1`）；
+  清单侧的旧口径值（= 每 epoch 步数）不得进入人读件。`verify_matrix` ④Q 机核本不变量。
+"""
+
+
+def _strip_save_steps_token(switches):
+    """把「关键开关」里的 `save_steps=<清单旧口径值>` 令牌**整条移除**（保留其余开关，顺序不变）。
+
+    ★ ⛔ 不新增/改写其它令牌；⛔ 不留空令牌；其余令牌逐字保留。
+    ★ 幂等：对已无该令牌的输入返回原字符串。
+    """
+    t = str(switches or "")
+    if SAVE_STEPS_TOKEN not in t:
+        return t
+    kept = [p for p in t.split(";") if not p.strip().startswith(SAVE_STEPS_TOKEN)]
+    return ";".join(kept) if kept else "—"
+
+
+def _save_steps_token_self_test():
+    """★ 阳性对照（修正包 🔴-1）：`_strip_save_steps_token` **会失败**的对抗性输入。
+
+    ★ 证明的是：该函数**只**移除 `save_steps=` 令牌、**不动**其它令牌、
+      且对"令牌在中间/开头/唯一"三种形态都幂等 ⇒ ⛔ 不是"扫过了"。
+    """
+    cases = [
+        ("save_steps=100;loss_scale=all;chat_template=false", "loss_scale=all;chat_template=false",
+         "令牌在**开头** ⇒ 移除后其余逐字保留"),
+        ("loss_scale=all;save_steps=6401", "loss_scale=all",
+         "令牌在**末尾** ⇒ 移除后其余逐字保留"),
+        ("save_steps=50", "—", "令牌是**唯一**开关 ⇒ 归一为占位符（⛔ 不留空令牌）"),
+        ("loss_scale=all;chat_template=false", "loss_scale=all;chat_template=false",
+         "**无**该令牌 ⇒ 逐字不变（幂等）"),
+        ("—", "—", "占位符输入 ⇒ 逐字不变"),
+    ]
+    ok = True
+    for inp, want, why in cases:
+        got = _strip_save_steps_token(inp)
+        good = got == want
+        ok = ok and good
+        print(f"  [{'PASS' if good else 'FAIL'}] {why}: {inp!r} -> {got!r}")
+    # 反向断言：结果里**不得**再含该令牌
+    rev = all(SAVE_STEPS_TOKEN not in _strip_save_steps_token(i) for i, _w, _y in cases)
+    ok = ok and rev
+    print(f"  [{'PASS' if rev else 'FAIL'}] 反向断言：输出中不含 `{SAVE_STEPS_TOKEN}`")
+    # ★ 断言加强（修正轮 4 ⚠② keep 语义）：唯一开关档归一后的**确切取值**必须是占位符 `—`，
+    #   且**不得**是空串（§17.7：⛔ 不以空白使人误读）。⛔ 这不是放宽，是把断言写严。
+    _only = _strip_save_steps_token("save_steps=50")
+    keep = (_only == "—") and (_only.strip() != "")
+    ok = ok and keep
+    print(f"  [{'PASS' if keep else 'FAIL'}] 加强断言（⚠②）：唯一开关档归一后确切取值 == '—'（且非空串）：{_only!r}")
+    return ok
+
+
+def _fix_row_cells(r, v):
+    """④ 表格格归一：逐格订正**已经渲染进人读件**的污染与残片。
+
+    ★ 依据（工装实测，逐条具名，见工位 `plan.md` §2.3）：
+      - 「未过判据」含人称 / 悬空内部指代 / 只写「不可评」而不写明哪一条 ⇒ 归一为「第 1 条 / 第 2 条」；
+      - `passed_criteria` / `note` 含宿主相对路径（`runs/T0xx/…`）⇒ 去路径、只留事实；
+      - `failed_detail` 含进程号 ⇒ 去内部标识；
+      - 「耗时 / 显存」列出现机器号占位符 `<HOST>`、宿主相对路径、裸 `未采集`、空串
+        ⇒ 统一为「未取到（具名原因）」（§17.7 禁止以空白或占位符使人误读）；
+      - `effect` 引用内部字段名 ⇒ 改写为使用者可读的判断句。
+    ★ ⛔ 不改任何四态取值、不改任何数值读数、⛔ 不把「不可用」写成「尚未验证」。
+    """
+    tid = r.get("tier")
+
+    # (a) 「未过判据」列：写明条次 + 保留已通过项
+    if v:
+        fc = str(v.get("failed_criterion") or "")
+        fd = str(v.get("failed_detail") or "")
+
+        def _drop_text(*frags):
+            nonlocal fd
+            for _f in frags:
+                fd = fd.replace(_f, "")
+
+        if not _context_ok(fc):
+            if tid == "T036":
+                # 训练进程退出码非 0（pp-watchdog 强退）⇒ 属判据①，原句只写「不可评（工程缺口）」
+                v["failed_criterion"] = ("第 1 条：跑通/工程合规未通过（★ 不是效果结论；"
+                                         "该档训练进程未正常结束）")
+            elif tid in ("T049", "T050", "T051"):
+                v["failed_criterion"] = "第 1 条：跑通/工程合规未通过（★ 不是效果结论；该档训练未开始）"
+            else:
+                v["failed_criterion"] = ("第 1 条：跑通/工程合规未通过" + (f"（{fc}）" if fc else ""))
+
+        if tid == "T034":
+            _drop_text("Process 3624748 has", "★ 自身实测 OOM", "（9B GRASPO 全参 × native × 1 卡）")
+            fd = ("进程未正常退出（`exit_code` 非 0），日志逐字含 `OutOfMemoryError`；"
+                  "该配置下 2 卡亦不足（实测约 79.2 GiB / 卡）。")
+        elif tid == "T035":
+            _drop_text("★ 自身实测 OOM", "（9B GRASPO 全参 × native × 2 卡）")
+            fd = "进程未正常退出：`exit_code = 1`，日志逐字含 `OutOfMemory`。"
+        elif tid == "T036":
+            fd = fd.replace("（与 T029/T030 的 NCCL 看门狗超时同族，但为 pp-watchdog）",
+                            "（同族的另一例为 NCCL 看门狗超时）")
+            fd = ("训练进程未正常结束：流水线并行 rendezvous 停滞 300 s 触发流水线并行看门狗 ⇒ 强退"
+                  "（`exit_code = 1`、进程未正常结束），检查点缺失。")
+        elif tid in ("T049", "T050", "T051"):
+            fd = "该档在首步即超显存（OOM），训练未开始 ⇒ 判据① 未过（⛔ 与达标与否无关，未进入效果评测）。"
+        fd = re.sub(r"`?runs/T\d{3}/[A-Za-z0-9._/-]*`?", "", fd)
+        fd = re.sub(r"（最终步，[^）]*）", "", fd)
+        v["failed_detail"] = re.sub(r"\s{2,}", " ", fd).strip() or "—"
+        v["passed_criteria"] = [re.sub(r"\s{2,}", " ",
+                                       re.sub(r"`?runs/T\d{3}/[A-Za-z0-9._/-]*`?", "", str(x))).strip()
+                                for x in (v.get("passed_criteria") or [])]
+
+    # (b) 备注列：去截断残片与内部代号，补全句子
+    n = str(r.get("note") or "")
+    if n and n != "—":
+        n = n.replace("P5/P6 待补。", "其余指标未采集。").replace("P5/P6 已补。", "")
+        n = re.sub(r"：\s*to\s*[。.]", "：日志逐字含 `OutOfMemoryError`；该配置需要约 79.2 GiB / 卡。", n)
+        n = n.replace("（同上裁定）", "（同族，同判据①）")
+        n = re.sub(r"`?runs/T\d{3}/[A-Za-z0-9._/-]*`?", "", n)
+        n = re.sub(r"\s{2,}", " ", n).strip()
+        r["note"] = n
+
+    # (b2) 结果列：§17.7「尚未验证 / 未纳入验收不得携带实验数据」⇒ 结果列一律「—」
+    #      （★ 步数上限属**实验条件**，仍在「步数/epoch」列；这里清的是「实跑步数」这类**实测值**）。
+    if r.get("status") not in (S_AVAILABLE, S_UNAVAILABLE):
+        for _k in ("steps_actual", "peak_mem", "elapsed", "throughput", "effect"):
+            if str(r.get(_k) or "—").strip() not in ("", "—"):
+                if _k == "elapsed" and str(r.get(_k)).startswith("未取到"):
+                    continue          # 「未取到（具名原因）」本身就是合规表述
+                r[_k] = "—"
+
+    # (c) 耗时列：机器号占位符 / 宿主相对路径 / 空 ⇒ 「未取到（具名原因）」
+    #     ★★ 原因句必须与**同行的其它列自洽**：`elapsed` 是本函数前面刚归一过的值，
+    #     若它已是「总时长 …」这种**有读数**形态，就说明训练确实跑完了
+    #     ⇒ ⛔ 不得再写「训练未完成」（那是**本包曾引入的措辞错误**，见 report.md A3）。
+    _has_wallclock = bool(re.match(r"^总时长", str(r.get("elapsed") or "").strip()))
+    el = str(r.get("elapsed") or "").strip()
+    if el in ("", "—", "未采集"):
+        if r.get("status") == S_UNAVAILABLE:
+            r["elapsed"] = ("未取到（该档跑次未记录训练墙钟；训练本身已跑完、判据① 通过）"
+                            if _has_wallclock else "未取到（该档训练未完成，无训练墙钟）")
+    elif el.startswith("未取到"):
+        if "上无该档跑次目录" in el or "<HOST>" in el:
+            r["elapsed"] = "未取到（该档无完整训练跑次，无训练墙钟）"
+        else:
+            r["elapsed"] = re.sub(r"^未取到（\s*", "未取到（", human_view_text(el))
+
+    # (d) 显存列：⛔ 不留空串 / 不留宿主相对路径 / 不留裸「未采集」
+    #     ★★ 同 (c)：原因句必须与「该档训练有没有跑完」自洽（耗时列有读数 ⇒ 跑完了）。
+    pm = str(r.get("peak_mem") or "").strip()
+    if pm in ("", "—", "未采集") or "runs" in pm:
+        if r.get("status") == S_UNAVAILABLE:
+            r["peak_mem"] = ("未取到（该档跑次未采集显存峰值；训练本身已跑完、判据① 通过）"
+                             if _has_wallclock else "未取到（该档训练未完成，无显存采样）")
+
+    # (e) 效果列：去内部字段名 / 内部设备口径 / 重复的判据条次话术；读数逐字保留
+    ef = str(r.get("effect") or "").strip()
+    if ef and ef != "—":
+        if "不可评" in ef:
+            r["effect"] = "不适用（该档未进入效果评测，未过判据①）"
+        else:
+            ef = ef.replace("★ ", "")
+            ef = re.sub(r"；?base/after 独立 [^；]*双份。", "。", ef)
+            ef = re.sub(r"；?comparability_notes 全过。", "。", ef)
+            ef = re.sub(r"\s*服务档参数：[^。]*。", "", ef)
+            ef = re.sub(r"\s*服务档 [^。]*。", "", ef)
+            ef = ef.replace("未过判据②", "未过判据 2")
+            ef = re.sub(r"\s{2,}", " ", ef).strip()
+            r["effect"] = human_view_text(ef)
+
+    # (d2) 跑次列：§17.7 要求——**未结论档不得携带实验数据**。内部跑次目录/中间检查点
+    #      清单只对内部审计有意义 ⇒ 未结论档一律「—」；已结论档只留结论所需的条次与事实。
+    rn = str(r.get("runs") or "").strip()
+    if rn.startswith("$TREE") or "另 runs/" in rn:
+        if r.get("status") not in (S_AVAILABLE, S_UNAVAILABLE):
+            r["runs"] = "—"
+        else:
+            _sa = str(r.get("steps_actual") or "").strip()
+            _ec = str(r.get("elapsed") or "")
+            _bits = []
+            if tid == "T036":
+                _bits.append("1/1 真效果训练：判据 ① 未过（流水线并行 rendezvous 停滞 300 s ⇒ "
+                             "pp-watchdog 强退，`exit_code` 非 0、检查点缺失）")
+            elif tid in ("T037", "T038", "T039"):
+                _bits.append("1/1 真效果训练：判据 ① 通过（`exit_code = 0`、步数跑满、检查点保留）；"
+                             "判据 ② 未过（效果未达标，见「效果」列）")
+            else:
+                _bits.append("1/1 真效果训练：判据 ① 通过；判据 ② 见「效果」列")
+            if _sa and _sa != "—":
+                _bits.append(f"实跑步数 {_sa}")
+            r["runs"] = "；".join(_bits) + "。"
+
+    # (e1) 推理验证列：归一为「合并 / 起服务 / 跑完评测 / 评测规模与错误数」+
+    #      本档可核验的产物事实；★ 移出的是内部运行环境记录（宿主路径、目录字面量、卡序号、
+    #      容器名与后缀、镜像摘要），⛔ 不是结论。
+    iv = str(r.get("inference") or "").strip()
+    if iv and iv != "—":
+        bits = []
+        m = re.search(r"(7\d\d\s*/\s*7\d\d|\d+\s*/\s*\d+)\s*(?:有效)?[、,]?\s*(\d+)\s*error", iv)
+        if m:
+            bits.append(f"固定评测集 {m.group(1)} 跑完、{m.group(2)} 个 error")
+        else:
+            m2 = re.search(r"(\d+/\d+)[^。；]*?0\s*error", iv)
+            if m2:
+                bits.append(f"固定评测集 {m2.group(1)} 跑完、0 个 error")
+            elif "0 error" in iv:
+                bits.append("固定评测集跑完、0 个 error")
+        if "零 merge" in iv or "不 export" in iv:
+            bits.append("全参档：零合并，推理服务直指检查点目录")
+        elif "合并" in iv:
+            bits.append("LoRA 档：先合并为 merged-hf，再由推理服务加载")
+        _ver = re.search(r"vLLM\s*(v[0-9][0-9.]*)", iv)
+        if _ver:
+            bits.append(f"推理服务 vLLM {_ver.group(1)}")
+        if "base/after" in iv or "after/base" in iv:
+            bits.append("after 与 base 分别独立起服务")
+        r["inference"] = ("；".join(dict.fromkeys(bits)) + "。") if bits else "—"
+    elif iv == "":
+        r["inference"] = "—"
+
+    # (e2) 耗时列：秒数折成人类可读形式（⛔ 不改数值）
+    el2 = str(r.get("elapsed") or "").strip()
+    _m = re.fullmatch(r"总时长\s*(\d+)\s*s", el2)
+    if _m:
+        _sec = int(_m.group(1))
+        r["elapsed"] = f"总时长 {_sec} s（约 {_sec/3600:.1f} h）"
+
+    # (f) 算法正确性检查列：只留**检查清单与本档可观测项**；★ 内部归属与内部交接说明
+    #     （「归属 X + Y + Z（非跑次工位职责）」这类）属内部编排 ⇒ 截断移出。
+    ac = str(r.get("algo_checks") or "")
+    if ac and ac != "—":
+        _cut = re.split(r"★\s*逐条清单的正式判定归属", ac)[0].strip()
+        _cut = re.split(r"★\s*逐条清单(?:的)?(?:正式判定)?归属", _cut)[0].strip()
+        _cut = re.sub(r"\s*本档为新 runner[^。]*。", "", _cut).strip()
+        _cut = re.sub(r"\s*本档为[^。]*launcher[^。]*。", "", _cut).strip()
+        r["algo_checks"] = (_cut or ac) or "—"
+    elif ac == "":
+        r["algo_checks"] = "—"
+
+    # (g) LoRA 目标列：表内只留**本档取值**（后端差异写一次、进统一口径块）
+    if str(r.get("tuner_type") or "") == "lora" and str(r.get("lora_target") or "") not in ("", "—"):
+        r["lora_target"] = ("真实 HF 名正则（ms-swift；修正版）"
+                            if r.get("backend") == "ms-swift" else "canonical preset 名（native）")
+
+
+#: LoRA 目标「两后端命中集合不等价」的说明（写一次，进统一口径块；⛔ 不在 54 行里重复）
+LORA_TARGET_UNIFORM = {
+    "key": "lora_target_backend_note",
+    "label": "LoRA 目标的按后端差异",
+    "value": "两后端的 LoRA 命中集合**不相等、不可直接比较**",
+    "layer": "rule", "coverage": "rule-54/54",
+    "note": ("ms-swift 用真实 HF 名正则（实测命中 358 个实例：language_model 248 + visual 110）；"
+             "native 用 canonical preset 名（同为 358 个实例）。两者实例数相同但**命中集合不同** ⇒ "
+             "跨后端的 LoRA 读数不直接可比（122 为签名/模式条目数，不是实例数）。"),
+}
+
+#: 代码版本（实验条件之一；★ 取**在盘仓**的真值，⛔ 不读时钟、⛔ 不读网络）
+CODE_REPO = "graspo"
+CODE_BRANCH = "feature/refactor-three-layer-architecture"
+CODE_COMMIT = "8d63c38"
+
+#: 机器/场所（实验条件之一；★ 只说**能力口径**，⛔ 不写机器名、内网地址或主机编号，
+#:   §17.7「矩阵中仍然禁止」宿主路径 / 内网地址 / 机器名 / 内部节点）
+VENUE = "平台方内部 GPU 集群（8 卡单机）"
+
+
+#: ①**允许清单**（`meta.criteria_caliber` 子键）：判据 / 口径 / 实验条件；
+#: 其余（证据索引、订正史、陈旧件清点、内部对账推导）⇒ 剔除、迁 `.local/`。
+HUMAN_VIEW_CALIBER_KEYS = (
+    "availability_criteria", "dataset", "eval_caliber", "lr_policy", "ruled_out",
+    "criteria_id", "threshold", "baseline", "epoch_policy", "conclusion_rule",
+    "caliber_change", "step_reconciliation", "caliber_evidence",
+)
+
+
+#: 统一口径项的「说明」在内部数据里指向**旧文档编号**（模板重排后编号已变）
+#: ⇒ 落人读视图前换成**面向使用者的落点**，⛔ 不出现旧编号。
+_UNIFORM_NOTE_ALIAS = {
+    "见 §1.2": "同表「判据版本」",
+    "见 §1.4 / §1.5": "见「判定口径明细」",
+    "见 §1.4": "见「判定口径明细」",
+    "见 §统一口径 的 SP 一致": "与「SP（序列并行）」项一致",
+}
+
+
+def strip_inline_markers(t):
+    """去掉行内内部记号（`★` / `⛔` / `✅`）与多余空白；⛔ 不动数值与结论。"""
+    t = str(t or "")
+    for _sym in ("★", "⛔", "✅", "⚠️"):
+        t = t.replace(_sym, "")
+    t = re.sub(r"[ \t]{2,}", " ", t)
+    t = re.sub(r"\s+([，。；、）])", r"\1", t)
+    return t.strip()
+
+
+def _uniform_items(src):
+    """统一口径项：脱敏 + 去掉指向旧文档编号的说明。"""
+    items = sanitize((src.get("uniform") or {}).get("items", []))
+    out = []
+    for it in items:
+        it = dict(it)
+        note = str(it.get("note") or "")
+        for _k, _v in _UNIFORM_NOTE_ALIAS.items():
+            note = note.replace(_k, _v)
+        it["note"] = note
+        out.append(it)
+    return out
+
+
+def drop_non_view_fields(doc):
+    """① 允许清单投影：把**人读视图不需要**的字段逐条剔除（落盘前）。
+
+    返回 (被剔除的 meta 键, 被剔除的行级字段名 → 出现档数, 被剔除的 criteria_caliber 子键)。
+    ★ 内部权威 `.local/…/matrix-data.json` **一行不动**：本投影只作用于正式件。
+    """
+    dropped_meta = [k for k in list(doc.get("meta", {})) if k not in HUMAN_VIEW_META_KEYS]
+    for k in dropped_meta:
+        doc["meta"].pop(k, None)
+    dropped_cal = []
+    _cc = (doc.get("meta") or {}).get("criteria_caliber")
+    if isinstance(_cc, dict):
+        dropped_cal = [k for k in list(_cc) if k not in HUMAN_VIEW_CALIBER_KEYS]
+        for k in dropped_cal:
+            _cc.pop(k, None)
+    counts = {}
+    for r in doc.get("rows", []):
+        for k in [k for k in list(r) if k not in HUMAN_VIEW_ROW_KEYS]:
+            r.pop(k, None)
+            counts[k] = counts.get(k, 0) + 1
+    return dropped_meta, counts, dropped_cal
+
+
+def forbidden_in_human_view(doc):
+    """② 兜底扫描：**会被渲染的字段**里若出现内部术语（人称 / 内部编排 / 内部角色）即拒写盘。
+
+    ★ 扫描面 = 除 `TOOLCHAIN_ONLY_ROW_KEYS`（机读消费者字段，逐条具名、渲染层无引用）之外的全部内容。
+      ⇒ 「不进人读视图」从"靠人自觉"变成**可机核的事实**。
+    """
+    probe = json.loads(json.dumps(doc, ensure_ascii=False))
+    for _r in probe.get("rows", []):
+        for _k in TOOLCHAIN_ONLY_ROW_KEYS:
+            _r.pop(_k, None)
+    blob = json.dumps(probe, ensure_ascii=False)
+    return sorted({t for t in FORBIDDEN_TERMS if t in blob})
+
+
+def _row_normalize_self_test():
+    """★ 阳性对照（对抗性输入）：逐条证明本区四件**会失败**，⛔ 不是「扫过了」。"""
+    ok = True
+
+    def chk(name, cond):
+        nonlocal ok
+        print(f"  [{'PASS' if cond else 'FAIL'}] {name}")
+        ok = ok and bool(cond)
+
+    # ③ 术语改写：人称必须被改写掉（并且数值必须逐字不动）
+    chk("③ 人称改写：含「主席拍定」的版本串不再含人称",
+        "主席" not in human_view_text("v3-2026-10-10（主席拍定）+ U2 起点/终点窗口比较口径"))
+    chk("③ 数值不动：+10.0 pp / epoch=4 / 702 逐字保留",
+        all(x in human_view_text("SFT ⇒ after − base ≥ +10.0 pp（epoch=4）；702 行")
+            for x in ("+10.0 pp", "epoch=4", "702")))
+    # ④ 表格格归一：三种具名污染都必须被改掉
+    r1 = {"tier": "T036", "tuner_type": "全参", "status": S_UNAVAILABLE, "note": "不可评：训练失败（`pp-watchdog` 停滞 ⇒ force-exit 86）。P5/P6 已补。"}
+    v1 = {"state": S_UNAVAILABLE, "failed_criterion": "不可评（工程缺口）—— 依主席 2026-10-14 口径记入失败",
+          "failed_detail": "训练失败：PP rendezvous 停滞 300 s", "passed_criteria": []}
+    _fix_row_cells(r1, v1)
+    chk("④ T036「不可评」被改写为写明第 1 条", _context_ok(v1["failed_criterion"]))
+    chk("④ T036 人称从判据列消失", "主席" not in v1["failed_criterion"])
+    r2 = {"tier": "T037", "tuner_type": "lora", "backend": "native", "status": S_UNAVAILABLE,
+          "peak_mem": "见 runsgpu_memory_summary.json（2 卡峰值）",
+          "elapsed": "未取到（<HOST> 上无该档跑次目录（OPD 族未起跑））",
+          "effect": "★ 不可评（见 not_evaluable_reason）；⛔ 本档不可评。",
+          "lora_target": "X｜native：canonical preset 名（358 实例；122 为签名/模式条目数）｜★ 两后端实例数相同但**命中集合不同**（不等价）"}
+    v2 = {"state": S_UNAVAILABLE, "failed_criterion": "第 2 条：效果未达标", "failed_detail": "Δ = -16.3818 pp",
+          "passed_criteria": ["GRASPO 六项齐：injection_failures=0（最终步，runs/T037/stdout.log）"]}
+    _fix_row_cells(r2, v2)
+    chk("④ 显存格里宿主相对路径被改掉", "runs" not in r2["peak_mem"])
+    chk("④ 耗时格里机器号占位符被改掉", "<HOST>" not in r2["elapsed"])
+    chk("④ 效果格里内部字段名被改掉", "not_evaluable_reason" not in r2["effect"])
+    chk("④ LoRA 格只留本档取值（差异说明移入统一口径）", r2["lora_target"] == "canonical preset 名（native）")
+    chk("④ 已通过项里的宿主路径被去掉", "runs/" not in v2["passed_criteria"][0])
+    r3 = {"tier": "T010", "tuner_type": "全参", "status": S_UNVERIFIED,
+          "algo_checks": "SFT 档清单：prompt 段 mask / loss 只在目标 token。本跑次侧可观测项：skipped_nonfinite=0。"
+                         "★ 逐条清单的正式判定归属 Ripple + flow·adapter + flow·backend（非跑次工位职责）。"}
+    _fix_row_cells(r3, None)
+    chk("④ 算法检查列截断掉内部归属说明",
+        "归属" not in r3["algo_checks"] and "工位" not in r3["algo_checks"]
+        and "skipped_nonfinite=0" in r3["algo_checks"])
+    # ② 兜底扫描：塞入内部术语必须被抓到
+    chk("② 兜底扫描会命中注入的「主席」",
+        forbidden_in_human_view({"x": "由主席裁定"}) == ["主席"])
+    chk("② 干净文档不命中", forbidden_in_human_view({"x": "在平台方数据集与参数下效果达标"}) == [])
+    # ① 允许清单投影：非渲染字段必须被剔除
+    doc = {"meta": {"title": "t", "criteria_caliber": {}, "distill_teacher": {}, "doc_note": "内部过程"},
+           "rows": [{"tier": "T001", "status": S_UNVERIFIED, "note": "—",
+                     "voided_conclusion": {"historical_effect": "内部陈旧读数"},
+                     "evidence_paths": ["x"]}]}
+    dm, rc, dc = drop_non_view_fields(doc)
+    chk("① meta 非允许键被剔除", dm == ["doc_note"])
+    chk("① 行级非允许字段被剔除", set(rc) == {"voided_conclusion", "evidence_paths"})
+    chk("① criteria_caliber 非允许子键被剔除", dc == [])
+    doc2 = {"meta": {"criteria_caliber": {"threshold": {}, "stale_artifacts_20261016": {}}}, "rows": []}
+    _, _, dc2 = drop_non_view_fields(doc2)
+    chk("① criteria_caliber 内部子键被剔除", dc2 == ["stale_artifacts_20261016"])
+    chk("① 允许字段逐字保留", doc["rows"][0]["tier"] == "T001" and doc["meta"]["title"] == "t")
+    print(f"  HUMAN-VIEW-SELF-TEST {'PASS' if ok else 'FAIL'}")
+    return ok
+
+
+#: 四态（§17.7）——只允许这四个取值，且必须是可区分的文字标签
 CONCLUDED = (S_AVAILABLE, S_UNAVAILABLE)
 
 EXCLUDED_REASON = ("设计上不成立：师生权重常驻合计约 100 GiB，与「节省显存」的设计意图相悖 ⇒ 不产出可运行配置。"
-                   "适用范围：依 2026-10-14 裁定，本档位不实施（不产出可运行配置）。")
+                   "适用范围：依 2026-10-14 口径，本档位不实施（不产出可运行配置）。")
 
 GENERATOR = "tools/matrix/render_matrix.py"
 SOURCE = "docs/capability-matrix.data.json"
 HUMAN_VIEW = "docs/capability-matrix.html"
 
-GROUPS = {"base": "基础", "status": "状态", "param": "主要参数", "data": "实验数据", "note": "备注"}
+#: ★★ 精简轮 2：**分组只保留两段**——「实验条件」＝逐档需要抄的配置；
+#: 「实验数据」＝逐档结论与读数。⛔ 不再有「主要参数 / 备注」等给自己看的分段。
+GROUPS = {"base": "实验条件", "data": "实验数据"}
 
-#: ★ 列序（主席裁决）：档号 → 是否通过 → 主要参数（分列）→ 实验数据 → 备注
-#: 「主要参数」只列**档位之间不同**的项；对全部档位相同的参数见文档「统一口径」块，表内不重复。
+#: ★★ 列序（**精简轮 2**，2026-10-16）：`档号 → 实验条件（算法 / 后端 / 卡数 / 训练数据 / 步数 /
+#: 关键开关）→ 实验数据（状态 / 显存峰值 / 总耗时 / 效果 / 备注 / 未过判据）`，共 **13 列**（原 21 列）。
+#: ★ 逐列都有「访客问题」依据，答不出的列已砍（逐列对照表见工位 `report.md` §2）：
+#:   - 砍 `模型 / 模式 / lr / LoRA 目标`：**由「算法 + 后端」唯一决定** ⇒ 上提到实验条件块（写一次）；
+#:   - 砍 `TP / PP / DP`：**由「后端 + 卡数」唯一决定**（native 显式 tp/pp/dp；ms-swift 由框架决定、
+#:     DP 为派生值）⇒ 上提到实验条件块的并行关系式；
+#:   - 砍 `实跑步数 / 吞吐`：54 档里分别只有 **2 / 1** 档有值（其余全 `—`）⇒ 并入备注；
+#:   - 状态列**上移到实验数据段首**（它是"这一档的结论"，不是训练条件）⇒ 表头只剩两个列组。
 COLUMNS = [
     {"key": "tier", "label": "档号", "group": "base", "sticky": True},
-    {"key": "status", "label": "是否通过", "group": "status", "group_start": True},
-    {"key": "model", "label": "模型", "group": "param", "group_start": True},
-    {"key": "algo", "label": "算法", "group": "param"},
-    {"key": "mode", "label": "模式", "group": "param"},
-    {"key": "backend", "label": "后端", "group": "param"},
-    {"key": "tp", "label": "TP", "group": "param"},
-    {"key": "pp", "label": "PP", "group": "param"},
-    {"key": "dp", "label": "DP", "group": "param"},
-    {"key": "cards_total", "label": "总卡数", "group": "param"},
-    {"key": "lora_target", "label": "LoRA 目标", "group": "param"},
-    {"key": "lr", "label": "lr", "group": "param"},
-    {"key": "data_scale", "label": "数据规模", "group": "param"},
-    {"key": "steps", "label": "步数/epoch", "group": "param"},
-    {"key": "switches", "label": "关键开关", "group": "param"},
-    {"key": "peak_mem", "label": "显存峰值(GiB)", "group": "data", "group_start": True},
-    {"key": "steps_actual", "label": "实跑步数", "group": "data"},
-    {"key": "elapsed", "label": "耗时（每步/总时长）", "group": "data"},
-    {"key": "throughput", "label": "吞吐", "group": "data"},
-    {"key": "effect", "label": "效果（评测 Δ / loss·reward 窗口）", "group": "data"},
-    {"key": "note", "label": "备注（条件 / 限制 / 失败归因）", "group": "note", "group_start": True},
+    {"key": "algo", "label": "算法", "group": "base", "group_start": True},
+    {"key": "backend", "label": "后端", "group": "base"},
+    {"key": "cards_total", "label": "卡数", "group": "base"},
+    {"key": "data_scale", "label": "训练数据（子集 / 每卡）", "group": "base"},
+    {"key": "steps", "label": "步数", "group": "base"},
+    {"key": "switches", "label": "关键开关", "group": "base"},
+    {"key": "status", "label": "状态", "group": "data", "group_start": True},
+    {"key": "peak_mem", "label": "显存峰值(GiB)", "group": "data"},
+    {"key": "elapsed", "label": "总耗时", "group": "data"},
+    {"key": "effect", "label": "效果（评测 Δ）", "group": "data"},
+    {"key": "note", "label": "备注（失败归因 / 条件 / 限制）", "group": "data"},
+    {"key": "not_failed_reason", "label": "未过判据", "group": "data"},
 ]
 
 DATA_KEYS = ["peak_mem", "steps_actual", "elapsed", "throughput", "effect", "note"]
@@ -335,7 +1116,7 @@ def lora_target_backends():
                          "basis": ("★ 口径订正（2026-10-12）：`lora_target_signature.resolved = 122` 是**签名/模式条目数**"
                                    "（12 条「无 layer 索引的语言模式」+ 110 条视觉实例），**不是件数**；"
                                    "12 条语言模式**逐层展开为 248 个实例** ⇒ 与 ms-swift **同为 358 个实例**"
-                                   "（张量键数同为 716）。依据 `task-run-T012/evidence/13-lora-target-count.md`。")},
+                                   "（张量键数同为 716）。★ 可复核锚点：该计数由本矩阵的数据文件与抽取工具链（`tools/matrix/`）逐档现算、可重跑复现；⛔ 不指向任何内部过程记录。")},
             "language_targets": list(LANGUAGE_TARGETS),
             "signature_evidence": {
                 "field": "lora_target_signature.resolved / parameter_count",
@@ -355,7 +1136,7 @@ def lora_target_backends():
             "resolved_count": None,
             "coverage": {"status": "measured", "language": 248, "visual": 110, "total": 358,
                          "param_count": 410120192,
-                         "basis": ("★ 探针实测（证据：evidence/45-lora-target-probe-newregex.md "
+                         "basis": ("★ 探针实测（依据：evidence/45-lora-target-probe-newregex.md "
                                    "sha 1c3830b119946946fcfbbae0aa8e29ea6e1184c4c99b434e83ce8e4deeef34e5）。"
                                    "语言 248 分解：q/k/v/o_proj 各 8｜in_proj_qkv 24、in_proj_a/b 各 24｜"
                                    "in_proj_z 24｜out_proj 24｜gate/up/down_proj 各 32。"
@@ -453,7 +1234,7 @@ def distill_teacher():
                                       if t.get("measured") is True else
                                       "unmeasured（教师侧未测算）⇒ 不得声称可行；待 P-25 上机测量后回填")),
                     "offload": True, "source": f"{local}::feasibility_model.opd_teacher",
-                    "note": "★ 配置值 = **容器内路径**（由 path_parts 拼成）；**挂载源用宿主路径**（起跑侧决定）——两者别混。"}
+                    "note": "配置里写的是**容器内**的教师模型路径（由 path_parts 拼成）；实际挂载源在起跑时决定——两者不要混用。"}
     except Exception:
         pass
     # 兜底 = 已 pin 的常量（与 manifest 同值；manifest 缺失时不至于产出空 teacher）
@@ -510,20 +1291,32 @@ def _lr_policy_block():
     }
 
 
-def criteria_caliber():
+def criteria_caliber(rows=None):
+    # ★★ 2026-10-16（18 档放大到 100 行之后）：**fit 口径档位清单一律从行数据现算**
+    #    （判据 = 该档 `subset_size == 100`）—— ⛔ 不再写死 `T001–T027`：
+    #    写死档号会在口径扩面时变成"文档说假话"（口径扩面时正是如此）。
+    _rows = list(rows or [])
+    _fit_tiers = [str(r.get("tier")) for r in _rows if str(r.get("subset_size")) == "100"]
+    _fit_txt = f"{len(_fit_tiers)} 档（{', '.join(_fit_tiers)}）" if _fit_tiers else "（无）"
     return {
         "availability_criteria": [
             "① 跑通/工程合规：退出码 0、无未捕获异常；优化器步数达标；checkpoint 完整；NaN/Inf 为 0；算法机制真实生效；产物形态合规；显存与吞吐在承诺范围内。",
-            "② 效果（★ 本轮唯一改动）：SFT ⇒ 工具调用准确率 after − base ≥ +10.0 pp（epoch=4）；"
+            "② 效果（现行口径）：SFT ⇒ 工具调用准确率 after − base ≥ +10.0 pp（epoch=4）；"
             "GRASPO ⇒ after − base ≥ +5.0 pp（epoch=8）；"
             "CPT ⇒ 训练 loss 正常下降（U2 口径）且准确率 after ≥ base（不劣化；epoch=2）；"
             "OPD ⇒ 学生 after ≥ base（能力回收；epoch=2；教师 = SFT 之后的 27B 产物）。"
-            "★ **评测集口径（2026-10-16 主席裁定）**：**100 行档（T001–T027）= fit 口径（训练集自评）** —— "
+            f"★ **评测集口径（2026-10-16 主席裁定）**：**100 行档（{_fit_txt}）= fit 口径（训练集自评）** —— "
             "评测集就是**该档自身训练用的同一份文件**（100 行、`dataset_split: train`）；"
-            "其余档（20 行 mini 档 / 9 个 formal 档）仍用平台方自有 702 行评测集。"
+            "★ 其余档（9 个 formal 档）仍用平台方自有 702 行评测集。"
+            "★★ **2026-10-16 扩面（主席裁定「18 个 20 行档放大到 100 行」）**：原 18 个 **20 行**档"
+            "（`T031–T033`/`T037–T039`/`T043–T045` 的 GRASPO×ms-swift，＋ `T046–T054` 的 OPD）"
+            "宣布口径**已裁定**（不再属于「口径未定、不下结论」）⇒ 其 `subset_size` 由 20 改为 100，"
+            "一并纳入 fit 口径。★ 其中 **10 档不可执行**（见各行具名 `not_executable_reason`）"
+            "⇒ ⛔ **不为它们拼凑一份看似可跑的配置**，只登记声明口径；★ **T052–T054 为 `not_applicable`"
+            "（设计上不成立、不产出可运行配置）⇒ 四态 = 「未纳入验收」，⛔ 不得读成「试过了不行」**。"
             "★ **通过线数值逐字未动**（⛔ 未放宽、⛔ 未收紧）。"
             "★ 一律用**点估计 Δ** 判定：⛔ 不做假设检验，不引入置信区间 / 显著性。",
-            "③ 算法正确性检查（逐字未动）：各算法按各自清单（见第 3.2 节）；GRASPO 算法逻辑严禁改动。",
+            "③ 算法正确性检查：各算法按各自的检查清单执行（属判据 ① 的组成部分）；GRASPO 算法逻辑严禁改动。",
             "④ 推理验证（逐字未动）：产物可正常推理（合并 LoRA + vLLM 启动、实际前向一次拿到可解析输出）。",
         ],
         "caliber_change": {
@@ -531,13 +1324,16 @@ def criteria_caliber():
             "source": "主席最新裁定（新四条）",
             "changed": ("★ **改动一 = 判据②（效果）**：由「训练类与 GRASPO 统一 δ = +5.0 pp」改为**逐算法分列**；"
                         "SFT epoch 由 2 改为 4；OPD 教师改为 SFT 之后的 27B 产物；★ 明确「⛔ 不做假设检验」。"
-                        "★★ **改动二（2026-10-16，无冲突、两条并列）= 评测集口径**：**100 行档（T001–T027）**"
+                        f"★★ **改动二（2026-10-16，无冲突、两条并列）= 评测集口径**：**100 行档（{_fit_txt}）**"
                         "的评测集由平台方自有 702 行评测集改为**该档自身训练用的同一份文件**（100 行、"
                         "`dataset_split: train`）⇒ 读数的含义是 **fit 口径（训练集自评）**，"
                         "⛔ 不得读作训练分布之外的表现；★ 该改动**不改通过线数值**，旧读数按「结论与口径"
                         "一一对应」纪律**作废**并保留于各行 `voided_conclusion.historical_effect`；"
-                        "★ 20 行档**不适用**（n=20 ⇒ 每样本 5.00 pp ＝ GRASPO 通过线 ⇒ 判据退化为 1 个样本，"
-                        "主席裁定未回、待定）、9 个 formal 档**不动**。"),
+                        "★★ **改动三（2026-10-16）= 20 行档扩面到 100 行（主席裁定）**：原 18 个 **20 行**档"
+                        "（GRASPO×ms-swift 的 `T031–T033`/`T037–T039`/`T043–T045` ＋ OPD 的 `T046–T054`）"
+                        "由「主席裁定未回、口径待定、⛔ 不下效果结论」改为**已裁定：放大到 100 行、"
+                        "适用同一 fit 口径**；★ 其中 10 档**不可执行**（具名原因见行内 `not_executable_reason`）"
+                        "⇒ 只登记声明口径、⛔ 不伪造可跑配置；★ 9 个 formal 档**不动**。"),
             "unchanged": "★ 判据 ①③④ **逐字未动**（见 availability_criteria 第 1/3/4 项）。",
             "superseded": ("★ 旧口径（留痕，⛔ 不再作为判定依据）：训练类（SFT / CPT / OPD）与 GRASPO **统一 δ = +5.0 pp**；"
                            "目标 +10.0 pp 仅展示、不用于判定；SFT epoch = 2。"),
@@ -548,7 +1344,7 @@ def criteria_caliber():
                 "（四态翻盘 / 四态未变——仅归因与读数更正）。"
                 "★ 每条的 `kind` = `reading_change（★ 不是判据变更）`，可在档位行的 `caliber_change` 里机读。"),
         },
-        "dataset": {"id": ("平台方自有评测集（名称 test.jsonl）＋ ★ **100 行档（T001–T027）的评测集 = "
+        "dataset": {"id": (f"平台方自有评测集（名称 test.jsonl）＋ ★ **100 行档（{_fit_txt}）的评测集 = "
                            "该档自身训练用的同一份文件**（fit 口径，见下）"),
                     "availability": "平台方自有 / 不公开（100 行档用该档自身训练文件，同为非公开数据）",
                     "version_anchor_sha256": ("两种口径 —— ★ 100 行档 = 该档自身训练文件（100 行，sha256 594d41b0…）；"
@@ -560,11 +1356,16 @@ def criteria_caliber():
                     #    ⛔ 一律不评测「训练分布之外的表现」；⛔ 「泛化」一词不进本件（主席口径）。
                     "train_eval_relation": (
                         "★★ **评测集口径（2026-10-16 主席裁定）逐档分列**："
-                        "① **100 行档（T001–T027）= fit 口径（训练集自评）** —— 评测集 = **该档自身训练用的"
+                        "① **100 行档 = fit 口径（训练集自评）** —— 评测集 = **该档自身训练用的"
                         "同一份文件**（100 行、`dataset_split: train`）⇒ 读数回答的是「该档训练是否生效」；"
                         "⛔ **不得读作训练分布之外的表现**（⛔ 本矩阵不评测该问题）。"
                         "旧 702 行口径下的读数**已作废**，保留于各行 `voided_conclusion.historical_effect`。"
-                        "② **其余档**（20 行 mini 档 / 9 个 formal 档）= 平台方自有 702 行评测集"
+                        "★★ **2026-10-16 扩面**：档位清单一律从行数据现算（判据 = `subset_size == 100`）"
+                        "⇒ 原 18 个 **20 行**档已随主席裁定**放大到 100 行**并纳入 fit 口径；"
+                        "★ 其中 **10 档不可执行**（具名 `not_executable_reason`）⇒ 只登记声明口径、"
+                        "⛔ 不为它们伪造可跑配置；★ **T052–T054 = `not_applicable` ⇒ 四态「未纳入验收」**"
+                        "（⛔ 不得读成「试过了不行」）。"
+                        "② **其余档**（9 个 formal 档）= 平台方自有 702 行评测集"
                         "（与各档训练数据同源、样本 id 不重叠）。"
                         "★ **判别力（100 行档）**：该 100 行的 (工具, 动作) 类别**最大类占 19%**"
                         "（19/100）⇒ **常数预测器上界 19%**；而通过线 = `after − base ≥ +10.0 pp`（点估计）"
@@ -572,7 +1373,7 @@ def criteria_caliber():
                         "★ **同时作废的旧读数（⛔ 不得引用）**：「剔除 169 条图像重叠后 32.27%」与"
                         "「训练/评测图像去重交集 752 张（占评测图像 38.5%）」出自 **702 行评测集 × 全量 6378 行"
                         "训练集**口径；mini 档实测 **mini100 × 702 图像交集 = 0** ⇒ 该口径对 mini 档"
-                        "**自始不成立**（生成的评测 yaml 原先写 `train_limit: null`，已随本次口径变更订正）。"
+                        "**自始不成立**（该口径在现行评测集口径下不适用）。"
                         "★ **V1 档的重叠剔除次级读数按定义退化**：评测集 ≡ 训练集 ⇒ 重叠 100/100、剔除后 0 条 "
                         "⇒ `accuracy_percent_excluding_overlap` / `overlap_excluded_count` 在 100 行档上"
                         "**不构成次级读数**、⛔ 不得引用。"),
@@ -585,9 +1386,9 @@ def criteria_caliber():
         "eval_caliber": {
             "effective": "2026-10-16",
             "source": "主席 2026-10-16 裁定（「用同一个数据集」：训练用什么、评测就用什么）",
-            "rule": ("★ **100 行档（判据 = 该档 `subset_size == 100`，即 T001–T027）**：评测集 = **该档自身"
+            "rule": (f"★ **100 行档（判据 = 该档 `subset_size == 100`，即 {_fit_txt}）**：评测集 = **该档自身"
                      "训练用的同一份文件**（100 行、`dataset_split: train`）⇒ **fit 口径（训练集自评）**；"
-                     "★ 其余档（20 行 mini 档 / 9 个 formal 档）：保持平台方自有 702 行评测集 + `dataset_split: test`。"),
+                     "★ 其余档（9 个 formal 档）：保持平台方自有 702 行评测集 + `dataset_split: test`。"),
             "pass_lines_unchanged": ("★ **通过线数值逐字未动**：SFT ⇒ `after − base ≥ +10.0 pp`；"
                                      "GRASPO ⇒ `after − base ≥ +5.0 pp`；CPT ⇒ `after ≥ base（不劣化）`；"
                                      "OPD ⇒ `学生 after ≥ base（能力回收）`；一律点估计、⛔ 不做假设检验。"),
@@ -595,9 +1396,17 @@ def criteria_caliber():
             "discriminative_power": ("★ 100 行档：训练集 (工具, 动作) 类别最大类 **19/100 = 19%** ⇒ "
                                      "**常数预测器上界 19%** ⇒ 跨 +10.0 pp 必须真读图；"
                                      "每样本粒度 **1.00 pp**（达线需净跳 ≥10 条）。"),
-            "not_applicable": ("★ **20 行档明确不适用**：n=20 ⇒ 每样本 **5.00 pp**，而 GRASPO 通过线正好 "
-                               "+5.0 pp ⇒ 判据退化为「1 个样本决定成败」；★ **主席对该批的裁定尚未回来**"
-                               " ⇒ 本件**不改其口径**，其状态待定。"),
+            "not_applicable": ("★★ **2026-10-16 已裁定（取代本键旧的「尚未裁定、不下结论」表述）**："
+                               "原 18 个 **20 行**档（GRASPO×ms-swift 的 `T031–T033`/`T037–T039`/`T043–T045` "
+                               "＋ OPD 的 `T046–T054`）由主席裁定**放大到 100 行**，一并适用同一 fit 口径。"
+                               "★ 立此裁定的理由（旧表述保留于下）：n=20 ⇒ 每样本 **5.00 pp**，而 GRASPO "
+                               "通过线正好 +5.0 pp ⇒ 判据退化为「1 个样本决定成败」——放大到 100 行后"
+                               "每样本粒度回到 **1.00 pp**（达线需净跳 ≥10 条），判别力恢复。"
+                               "★ **10 档不可执行**（T044 2 卡实测 OOM；T046–T051 首步实测 OOM；"
+                               "T052–T054 `not_applicable`、无生成件）⇒ ⛔ **只登记声明口径、不为它们伪造"
+                               "可跑配置**，逐档具名原因见行内 `not_executable_reason`。"
+                               "★ **T052–T054 的四态 = 「未纳入验收」**（`applicable == false`）—— "
+                               "⛔ 它们**不是「试过了不行」**，而是**从未尝试、不实施**：⛔ 不得读成效果否定。"),
             "untouched": "★ 9 个 formal 档（T028–T030 / T034–T036 / T040–T042）不动：训练源 = 全量训练集前 N，与 702 评测集本就同分布。",
             "overlap_analysis_fix": ("★ 顺带订正：生成的评测 yaml 原先写 `train_limit: null` ⇒ 重叠分析用的是"
                                      "**全量 6378 行训练集**（实证 `train_subset.sample_count=6378`、"
@@ -610,6 +1419,27 @@ def criteria_caliber():
         },
         # ★★ lr 口径登记（审查项 🔴B1/W3）：机读字段 `lr_policy` / `ruled_out` 必须在正式件可查。
         #    取值表**直接引用唯一真相源** `extract_spec.LR_POLICY`（⛔ 不在此抄写）。
+        "stale_artifacts_20261016": {
+            "rule": ("★ **旧件未同步（逐条登记，⛔ 不手改生成件、⛔ 不把运行期文件改错）**："
+                     "下列在盘件属**被取代的世代**（非权威），其内容与现行声明不同步；"
+                     "处置 = **登记**（本件可见），⛔ 不用手改的方式「对齐」生成物。"),
+            "items": [
+                "① `samples/configs/matrix54/T041.yaml`（v1 世代生成件）第 4 行逐字写「ELAM V5 训练子集前 20 条」；"
+                "该目录 `samples/configs/matrix54/` 属**未同步旧件**（跑次实际读取的世代是 "
+                "`samples/configs/matrix54-generated/`）⇒ 登记，⛔ 不手改生成件。",
+                "② v1 清单 `tests/e2e/matrix54_manifest.json` 的 `data.subset_size` 实测分布 = "
+                "{100: 27 档, 20: 27 档} ⇒ **9 个 formal 档（含 T041）全部仍写 20**，是「20 行世代」的"
+                "整批口径、**不是 T041 专属漂移**；T041 现行真值 = 144（= 72/卡 × 2 卡），"
+                "r3 历史值 = 96。★ v1 清单是 `_source` 的基线且属**非权威归档件** ⇒ 登记、⛔ 不改"
+                "（改它会牵动整条 sha 链；本包仅在 purpose 口径变更时按既有做法刷新过指针）。",
+                "③ `subsets-v2/T042.jsonl` 实测 **288 行**，与 `subsets-v2` 清单声明（lines=288）"
+                "和矩阵/V2 清单的 `subset_size = 288` **三方一致** ⇒ **本条不是现行漂移**；"
+                "任务书提到的「运行期 192」对应的是 **r3 历史世代**（`subset_r3_historical = 192`）"
+                "⇒ ⛔ 不得据此把运行期文件改成 192（那才会把现行件改错）。",
+            ],
+            "verified_three_way": ("★ 附带实测：T041 的 `subset_size` 三方一致 "
+                                   "（矩阵 144 ｜ v2 清单 144 ｜ 磁盘 `subsets-v2/T041.jsonl` 144 行）。"),
+        },
         "lr_policy": _lr_policy_block(),
         "ruled_out": list(_spec.RULED_OUT),
         "criteria_id": "elam-v3-allright-1",
@@ -655,7 +1485,7 @@ def criteria_caliber():
         "baseline": {"role": "同档位未训练底座（role=base）",
                      "caliber": "U2 终点窗口 = 末段 max(3, 10% 步数) 步的均值；该档的 epoch 数与推导步数见档位「步数/epoch」子项。"},
         "epoch_policy": {
-            "by_method": ("SFT = **4 epoch**（★ 本轮由 2 改为 4）；CPT = 2 epoch（⛔ 不动）；OPD = 2 epoch（⛔ 不动）；"
+            "by_method": ("SFT = **4 epoch**（现行口径）；CPT = 2 epoch（⛔ 不动）；OPD = 2 epoch（⛔ 不动）；"
                           "GRASPO(RL) = 8 epoch（⛔ 不动；若 8 仍不过线则升 10 为后备；理由：RL 耗时长、5 epoch 下效果仅差 0.44 pp 未过线）。"
                           "理由：跨 epoch 容易出问题（循环结构决定）；RL 需要更多 epoch 才能看到效果。"),
             "steps": STEPS_POLICY + " 推导式：steps = epoch 数 × 每 epoch 步数（每 epoch 步数由数据量与批大小推导）。",
@@ -664,7 +1494,7 @@ def criteria_caliber():
                             "① ms-swift：步数 = epochs × (subset × num_generations) / (micro_batch × grad_accum)；锚：T031（5ep）推导 800 = 实际 800 ✓。\n"
                             "② native：步数 = replay 缓冲区触发次数（optimize.py::_maybe_optimize）；阈值 = rollout_queue_batch_size × rollout_group_size（core/schema.py:458 / ripple/group_decision.py:152），每次仅消耗整组（whole_group_count，组不拆），epoch 尾可有 force 刷尾；★ 与 micro_batch/grad_accum 解耦。\n"
                             "③ native 锚的正确账（口径订正）：**阈值 = Q×G = 8×8 = 64**"
-            "（`runs/T028/config.yaml:159-160`；运行期 19/19 步均为 64 }交叉验证）；"
+            "（运行期 19/19 步均为 64，交叉验证）；"
             "步数由**可训练补全数**决定：可训练组 147 × 8 = **1176** ⇒ 1176/64 = 18.4 "
             "⇒ **19 步**（末步可含 force_flush），与实测吻合。"
             "★ 此前推理中的 ≈29 是 **尝试组/步**（attempt_groups 547/19≈28.8，含 retry/perfect_skip/invalid）"
@@ -700,6 +1530,34 @@ def criteria_caliber():
                                        "⇒ ★ **一律以实测为准**；该档 `steps_actual` = **1184**。"
                                        "★ **族纪律**：步数口径必须以**该档自身配置 ＋ 运行期产物**为准，"
                                        "⛔ **不用通用公式推断**（与「没按本档自身实体取值」同族）。"),
+                "per_tier_alignment_20261016": (
+                    "★★ **2026-10-16 逐档对齐（④）**：一律以**真值（跑次记录 / 配置推导）**为准，"
+                    "⛔ 不猜；能判定者订正、不能判定者**登记待裁**。"
+                    "★ **订正 2 档**：`T017` 与 `T018`（native 全参，**PP 不切数据 ⇒ dp_size=1**）的"
+                    "`expected_optimizer_steps_per_epoch` 由「按 cards 朴素均分」的 50 / 25 订正为 **100**"
+                    "（依据：manifest 逐字「PP 档 dp_size=1 ⇒ 不分片」；T017 佐证 `steps_seen=200/200` 属 epoch=2 世代；"
+                    "T018 **硬反证**：产物含 `step_153/` 而登记总步数仅 50）。"
+                    "★ **只登记不改值 1 档**：`T028` 的 `steps_actual=1280/1280` 与 `elapsed` 属**旧 20 行世代**"
+                    "（其 `step_count_reconciliation` 逐字按 subset=20 推导 1280，而现行 `subset_size=48`、"
+                    "`derived_steps=48`）⇒ ⛔ 不得引用为现行步数，待重跑回填（行内 `steps_generation_note`）。"
+                    "★ **登记待裁（⛔ 不改）**：`T013/T015/T020/T021/T025/T026/T027` 的跑次读数取自 **epoch=2 世代**"
+                    "（现行判据为 epoch=4）—— 该差异**已由行级 `reading_consistency` / `eval_caliber_consistency`"
+                    "作废并留痕**，不另改数值。"
+                    "★ **已知 🟡（登记待裁、⛔ 不猜）**：**51 档清单**的 `checkpoint_save_steps` 与"
+                    "`expected_optimizer_steps_reachable` 仍是 **v2 口径**（= 每 epoch 步数，未乘 epoch 数），"
+                    "与矩阵侧的 `derived_steps`（= 每 epoch × epoch 数）**两代混用**；"
+                    "本包只对其中的 18 档做 20→100 的**线性同步（×5）**，⛔ 不擅自统一其口径 —— 由指挥裁定。"
+                    "★★ **对外投影侧已止损（修正包 🔴-1，2026-10-16，窄复核报出）**：该 v2 值曾被 "
+                    "`build_data.switches_of()` 以 `save_steps=<v2 值>` 的**键名**渲染进人读件「关键开关」列 ⇒ "
+                    "与 ① 同行权威字段 `save_steps`（= 推导步数 + 1）② §3.1 定义行 ③ 跑次 yaml "
+                    "**三处矛盾**（实测 **50/54 档**，T001 表内 100 vs 实际 201；T031 800 vs 6401）⇒ "
+                    "破坏「复现参数唯一确定」。**处置**：生成端由 `_strip_save_steps_token()` 把该令牌"
+                    "**整条移除**（检查点间隔只在 §3.1 定义一次，取值为公式值）；"
+                    "机核 = `verify_matrix` **④Q**（开关列不得含该令牌 ＋ 逐档 `save_steps == derived_steps + 1` "
+                    "＋ §3.1 交叉引用），阳性对照 = `run_self_proof` ⑬⑭ ＋ "
+                    "`build_official --human-view-self-test` 的令牌移除五例。"
+                    "★ 本行即为**上行口径登记的互指点**（§1.4 单一真相源：⛔ 不另写一份）。"
+                ),
                 "input_note": ("★ native 对账式**必须**输入运行期量 `trainable_completions`（可训练补全数，"
                                "取决于 retry / perfect_skip / invalid）⇒ 不可先验计算；回填 json 未提供该字段时，"
                                "对账记录标为「缺输入 ⇒ 待补」，⛔ 不臆测、⛔ 不硬编码。"),
@@ -707,7 +1565,8 @@ def criteria_caliber():
         "conclusion_rule": {
             "rule": ("结论必须与同一行的参数一一对应。若一行的参数已被更正，而结论来自旧参数下的跑次 ⇒ "
                      "该结论作废，该档标「尚未验证」；仅在参数冻定后重跑，才可给出「已验证可用 / 已验证不可用」判定。"),
-            "status_wording": ("「尚未验证」在本文档中等同「未测试」；宪法 §17.7 的固定取值为「尚未验证」，用词以它为准。"),
+            "status_wording": ("「尚未验证」在本文档中等同「未测试」；本文档的四态取值固定为"
+                              "「已验证可用 / 已验证不可用 / 尚未验证 / 未纳入验收」，用词以它为准。"),
         },
             "caliber_evidence": [
                 "★★ **噪声底 ≈ ±0.43 pp**（两次独立 base 评测：同底座 / 同 702 条 `c202b1e1…` / 同 temp 0·top_p 0.9·"
@@ -745,7 +1604,7 @@ def criteria_caliber():
                 "★ **口径订正记录（2026-10-12）**：原写法「native 122 件 vs ms-swift 358 件」**有误**——"
                 "`lora_target_signature.resolved = 122` 是**签名/模式条目数**（12 条语言模式 + 110 条视觉实例），"
                 "其中 12 条语言模式实际展开为 **248** 个逐层实例 ⇒ **两后端实例数同为 358**、张量键数同为 716。"
-                "依据：`task-run-T012/evidence/13-lora-target-count.md`（双路实测）。"
+                "依据：**双路实测**（两种独立路径各数一遍，逐层展开后同为 358 个实例、张量键数同为 716）—— 该计数可由本矩阵数据文件与 `tools/matrix/` 工具链重跑复现。"
                 "★ 结论「两后端不等价」**仍成立**，依据改为**命中的模块集合不同**（native `token_mixer.*` vs "
                 "ms-swift `linear_attn.*`/`full_attn.*`）。",
             ],
@@ -1114,6 +1973,29 @@ VOID_ADDENDUM_BOTH_20261016 = (
 )
 
 
+def void_addendum_for(status: str, kind: str) -> str:
+    """★★ 「作废追补句」—— 结尾**不复述具体四态值**（修正轮 1 · 🟡W1）。
+
+    ★ 病史：原先三个追补句结尾写死「以本行现行 `status` 为准（**尚未验证**）」。该函数对
+      **所有** lr/评测集口径作废的档生效（实测 40 档），其中「口径无关证据 ⇒ 结论保留」的档
+      与「`applicable is False` ⇒ 未纳入验收」的档一旦命中，行内就会留下**与真实最终状态相反**
+      的句子（同文件两个 status 互相矛盾，§1.4 / §2.1；复核报告 🟡W1 点名的 T052–54 就是这条）。
+    ★ 现在：结尾改为**状态中立**表述（⛔ 不复述具体四态值）⇒ 任何最终状态下行内都不矛盾。
+    ★ 机读面的自洽由 `caliber_field_guard` 的 `status_after == status` fail-closed 守卫把关。
+    """
+    if kind == "lr":
+        head = "★★ 2026-10-16 追补：本条所记结论已因 lr 口径变更作废，"
+    elif kind == "eval":
+        head = ("★★ 2026-10-16 追补：本条所记结论已因**评测集口径变更**作废 —— "
+                "100 行档的评测集改为**该档自身训练文件**（100 行、`dataset_split: train` ⇒ fit 口径），"
+                "旧读数取自 702 行评测集，")
+    else:
+        head = ("★★ 2026-10-16 追补：本条所记结论已作废"
+                "（**lr 口径变更** ＋ **评测集口径变更** 两条原因叠加），")
+    return (f"{head}以本行现行 `status` 字段为准"
+            "（详值见行内 `status` / `eval_caliber_consistency.status_after`）。")
+
+
 def _void_kind(row):
     """该行结论作废的原因类别（★ 数据驱动，⛔ 不写死档号）：`lr` / `eval` / `both` / `None`。"""
     _rcc = row.get("reading_consistency")
@@ -1135,10 +2017,13 @@ def _void_addendum(row):
     ★ 逐行按原因类别取（lr / 评测集 / 两条叠加），⛔ 不一把梭用 lr 措辞；
     ★ 返回 ``None`` 是**必须**的：调用方 `_fix_adjacent` 对「非口径作废」的档
       （如 `已验证不可用` 的 OOM 档）要回退到**按现行四态**选追补句，⛔ 不能被这里的默认值顶掉。
+    ★★ 修正轮 1（🟡W1）：结尾状态从句**现算**（`void_addendum_for`），⛔ 不再写死「尚未验证」
+      —— 保留结论 / 未纳入验收的档也曾命中本路径，写死值与真实 `status` 相反。
     """
-    return {"eval": EVAL_CALIBER_ADDENDUM_20261016,
-            "both": VOID_ADDENDUM_BOTH_20261016,
-            "lr": VOID_ADDENDUM_20261016}.get(_void_kind(row))
+    kind = _void_kind(row)
+    if kind is None:
+        return None
+    return void_addendum_for(str(row.get("status") or ""), kind)
 
 
 def _naked_four_state(text):
@@ -1146,6 +2031,103 @@ def _naked_four_state(text):
     if not any(lit in str(text) for lit in _FOUR_STATE_LITERALS):
         return False
     return not any(m in str(text) for m in _VOID_WRAP_MARKERS)
+
+
+# ============================================================================================
+# ★★ 修正轮 1（2026-10-16）新增守卫：机读「口径」字段的**自洽性 fail-closed**
+#    任务书：🟡W1（`eval_caliber_consistency.status_after` 与最终 `status` 相反）
+#            🟡W3（`caliber_independent_evidence` 混入**已作废的评测侧读数**当"口径无关"举证）
+#    为什么放在这里（而不是只改数据）：**能失败的断言才叫断言** —— 只把 9 行值改对，
+#    下次任何人重跑并入器/扩面就会重新写错，且四闸门一个都不响（复核报告已实测该盲区）。
+# ============================================================================================
+
+#: 被口径变更**作废**的评测侧读数锚点（出现在 `eval_caliber_consistency.reading` /
+#  `.mismatch` / `.cause` 里即视为「作废读数」）。⛔ 不写死档号，按**数值锚点**匹配。
+VOIDED_EVAL_READING_ANCHORS: tuple[str, ...] = ("0/702", "702 行", "702行")
+
+
+def _state_literal(text: str) -> str:
+    """把 status 字面**归一到四态**（`build_official` 的派生规则：非四态字面按前缀/兜底）。
+
+    ★ 与 `main()` 里 `status → 四态` 的派生链**同源**（`通过*` ⇒ 可用、`失败*` ⇒ 不可用、
+      其余 ⇒ 尚未验证；`applicable is False` 由调用方另行处理）。⛔ 不在此另立口径表。
+    """
+    if text in STATUS_VOCABULARY:
+        return text
+    if text.startswith("通过"):
+        return S_AVAILABLE
+    if text.startswith("失败"):
+        return S_UNAVAILABLE
+    return S_UNVERIFIED
+
+
+def caliber_field_guard(rows) -> list[str]:
+    """落盘前自洽性检查（返回问题清单；空 = 通过）。
+
+    ① `eval_caliber_consistency.status_after`（若存在）必须**逐字等于**该行最终 `status`
+       —— 同一文件两个 status 字段互相矛盾 = 双真相源（§1.4 / §2.1）。
+       ★ 归一化：`status_after` 可能仍是**原始 status 字面**（`通过*` / `失败*` / `—`，
+         `status → 四态` 由本函数上方 ①–⑤ 的派生链完成）；两侧都先归一到四态再比，
+         ⇒ ⛔ 不会把"原始字面 vs 派生四态"这种**正常的**配对误判为矛盾，
+            但**四态 vs 四态**的不一致一定拦下（复核报告 🟡W1 点名的 9 行正是这一类）。
+    ② `caliber_independent_evidence` 若引用**已作废的评测侧读数**（如 `0/702`），必须
+       显式标记 `voided_readings_excluded_from_evidence is True` 且文本含「已作废」与
+       「不作举证」—— ⛔ 不得把作废读数当"口径无关"的证明（过度断言）。
+    ③ ★ **修正轮 2（🟡W-8 → 机核判据）**：`status_after_correction_20261016.prior_chain`
+       必须是**幂等规范形** —— ① 以 `prior` 开头；② 有序去重（无重复）；③ ⛔ 不含 `corrected_to`。
+       病史：并入器旧实现每跑一次就 `chain + [cur]` ⇒ 链会无限增长（现盘曾出现 2 段
+       `['失败','已验证不可用']`），"幂等"声明与事实不符，且每次重跑都改动已冻结字节。
+    """
+    problems: list[str] = []
+    for r in rows:
+        tid = r.get("tier") or r.get("tier_id") or "?"
+        status = str(r.get("status") or "")
+        ecc = r.get("eval_caliber_consistency")
+        if isinstance(ecc, dict):
+            sa = ecc.get("status_after")
+            if sa is not None:
+                _a, _b = _state_literal(str(sa)), _state_literal(status)
+                if _a != _b:
+                    problems.append(
+                        f"{tid}: eval_caliber_consistency.status_after={sa!r} != 行 status={status!r}"
+                        f"（同一文件两个 status 字段相反 ⇒ 必须收口）"
+                    )
+            # ③ prior_chain 规范形（W-8 机核化）
+            rec = ecc.get("status_after_correction_20261016")
+            if isinstance(rec, dict):
+                ch = rec.get("prior_chain")
+                prior = rec.get("prior")
+                corr = rec.get("corrected_to")
+                if isinstance(ch, list) and ch:
+                    if prior is not None and str(ch[0]) != str(prior):
+                        problems.append(
+                            f"{tid}: prior_chain 首项 {ch[0]!r} != prior {prior!r}"
+                            f"（规范形要求以原值开头）"
+                        )
+                    if len(ch) != len({str(x) for x in ch}):
+                        problems.append(f"{tid}: prior_chain 有重复项 {ch!r}（规范形要求有序去重）")
+                    if corr is not None and any(str(x) == str(corr) for x in ch):
+                        problems.append(
+                            f"{tid}: prior_chain 含 corrected_to {corr!r}（现行态不得出现在历史链里）"
+                        )
+                elif ch is not None and not isinstance(ch, list):
+                    problems.append(f"{tid}: prior_chain 类型异常 {type(ch).__name__}")
+        cie = r.get("caliber_independent_evidence")
+        if isinstance(cie, dict):
+            blob = " ".join(str(cie.get(k) or "") for k in ("evidence", "note", "why"))
+            hits = [a for a in VOIDED_EVAL_READING_ANCHORS if a in blob]
+            if hits:
+                if cie.get("voided_readings_excluded_from_evidence") is not True:
+                    problems.append(
+                        f"{tid}: caliber_independent_evidence 引用了已作废的评测侧读数 {hits}"
+                        f" 但未声明 voided_readings_excluded_from_evidence=True"
+                    )
+                elif ("已作废" not in blob) or ("不作举证" not in blob):
+                    problems.append(
+                        f"{tid}: caliber_independent_evidence 引用了已作废的评测侧读数 {hits}"
+                        f" 但文本未逐字标「已作废 … ⛔ 不作举证」⇒ 属过度断言"
+                    )
+    return problems
 
 
 def wrap_voided_conclusions(rows):
@@ -1265,8 +2247,10 @@ def _fix_adjacent(text, cur_status, addendum=None):
         for s in sorted(set(hits), reverse=True):
             text = _insert_adj_marker(text, s)
     if VOID_MARK_ADJ_20261016 in text and "2026-10-16 追补" not in text:
+        # ★★ 修正轮 1（🟡W1）：回退句也**现算**（结尾状态从句取 `cur_status`），
+        #    ⛔ 不再回落成写死「尚未验证」的常量（保留结论 / 未纳入验收的档也会走到这里）。
         add = addendum or (OOM_ADDENDUM_20261016 if cur_status == S_UNAVAILABLE
-                           else VOID_ADDENDUM_20261016)
+                           else void_addendum_for(str(cur_status or ""), "lr"))
         text = text.rstrip() + " " + add
     return text
 
@@ -1313,15 +2297,22 @@ def ensure_adjacent_void_markers(rows):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--in", dest="inp", required=True)
-    ap.add_argument("--out", required=True)
+    ap.add_argument("--in", dest="inp", required=False, default=None)
+    ap.add_argument("--out", required=False, default=None)
     ap.add_argument("--version", default=None)
     ap.add_argument("--self-test", action="store_true", help="脱敏回归自检（对抗性输入 + 顺序无关）")
+    ap.add_argument("--human-view-self-test", action="store_true",
+                    help="★ 人读视图四件（允许清单 / 术语兜底 / 术语改写 / 表格格归一）的阳性对照自检")
     ap.add_argument("--date", default=None,
                     help="文档日期；缺省读输入数据的 meta.doc_date。⛔ 不读时钟（§17.7 生成确定性）。")
     a = ap.parse_args()
     if getattr(a, "self_test", False):
         return _sanitizer_self_test()
+    if getattr(a, "human_view_self_test", False):
+        _ok = _row_normalize_self_test()
+        print("★ 检查点间隔令牌移除（修正包 🔴-1）阳性对照：")
+        _ok = _save_steps_token_self_test() and _ok
+        return 0 if _ok else 1
 
     src = json.loads(Path(a.inp).read_text(encoding="utf-8"))
     meta = src.get("meta", {})
@@ -1354,7 +2345,15 @@ def main():
         _rcc = r.get("reading_consistency")
         _voided_reading = bool(_rcc) and isinstance(_rcc, dict) and _rcc.get("consistent") is False
         _cv = r.get("caliber_verdict")
-        if _cv in STATUS_VOCABULARY and not _voided_reading:
+        # ★★ 2026-10-16（审查项：四态语义混用）：**`applicable is False` 的档恒为「未纳入验收」**，
+        #    ⛔ 不得被 `caliber_verdict` 顶成「已验证不可用」。
+        #    理由（主席口径：「跑不了」与「试过了不行」是两回事）：`applicable is False` ⇒ 该档
+        #    **从未尝试、依裁定不实施**（如 T052–T054：师生权重常驻 ≈100 GiB 与设计意图相悖
+        #    ⇒ 不产出可运行配置）⇒ 记「未纳入验收」；而「已验证不可用」是**跑过并判定失败**。
+        #    实证缺陷：本补丁前 T052/T053/T054 被 `caliber_verdict` 顶成「已验证不可用」，
+        #    与同表 `applicable=false` / `excluded_reason` 自相矛盾（且会被读成效果否定）。
+        _not_applicable = r.get("applicable") is False
+        if _cv in STATUS_VOCABULARY and not _voided_reading and not _not_applicable:
             state = _cv
             r["caliber_change"] = {
                 "effective": "2026-10-14",
@@ -1382,7 +2381,16 @@ def main():
         #      （或已由 `conclusion_annotation` 作废）⇒ ⛔ **不覆盖**既有 `voided_conclusion`，
         #      只把第二条原因**叠加**为 `superimposed`（⛔ 既有 `kind` / `reading` / `mismatch` 逐字保留）。
         _ecc = r.get("eval_caliber_consistency")
-        if isinstance(_ecc, dict) and _ecc.get("consistent") is False:
+        # ★★ 2026-10-16 新增：**口径无关证据（须单独举证）⇒ 结论保留**。
+        #    口径（评测集大小 / lr 尺度）变了，但某些结论的证据**与尺子无关**（例如「训练侧退化成
+        #    常数/畸形输出」的
+        #    训练期证据、或「首步 OOM」的硬件证据）⇒ 对这类档**不回落「尚未验证」**，
+        #    改为保留 `retained_status`。★ fail-closed：`retained_status` 必须**逐字等于**本行
+        #    由既有证据推出的四态（写成别的值一律不生效，回落到下面的作废分支）。
+        #    ★ `applicable is False` 的档**不进本分支**（它们恒为「未纳入验收」，见上方补丁）。
+        _cie = r.get("caliber_independent_evidence")
+        _retain = (isinstance(_cie, dict) and _cie.get("retained_status") == state)
+        if isinstance(_ecc, dict) and _ecc.get("consistent") is False and not _not_applicable and not _retain:
             state = S_UNVERIFIED
             _prev = r.get("voided_conclusion")
             if isinstance(_prev, dict):
@@ -1404,6 +2412,20 @@ def main():
                     "mismatch": _ecc.get("mismatch"),
                     "reason": _ecc.get("cause"),
                 }
+        elif isinstance(_ecc, dict) and _ecc.get("consistent") is False and _retain:
+            # ★★ 口径变更但**结论保留**（口径无关证据已单独举证）：机读登记 + 可见留痕，
+            #    ⛔ **不写 `voided_conclusion`**（结论没有被作废），⛔ 也不改四态。
+            r["caliber_independent_evidence"] = dict(_cie)
+            r["caliber_change_record"] = {
+                "kind": "eval_caliber_change_conclusion_retained",
+                "audit": _ecc.get("audit"),
+                "current": _ecc.get("current"),
+                "reading": _ecc.get("reading"),
+                "retained_status": _cie.get("retained_status"),
+                "why_retained": _cie.get("why"),
+            }
+            r["superseded_note"] = (str(r.get("superseded_note") or "") + "\n"
+                                    + str(_cie.get("note") or "")).strip()
         r["status"] = state
         r.pop("spec_status", None)
 
@@ -1440,6 +2462,22 @@ def main():
             r["save_steps"] = derived + 1
             r["save_steps_basis"] = (f"= 推导步数 {derived} + 1（⛔ 不设人为步数上限；"
                                      f"save_steps 大于总步数 ⇒ 只留最终检查点）")
+            # ★★ 修正包（窄复核 🔴-1，2026-10-16）：**「关键开关」列不得再出现 `save_steps=` 令牌**。
+            #    根因：清单侧 `checkpoint_save_steps` 仍是**旧口径**（= 每 epoch 步数，未乘 epoch 数），
+            #    而 `build_data.switches_of()` 原样把它渲染成 `save_steps=<旧口径值>` ⇒ 与
+            #    ① 本行权威字段 `r["save_steps"]`（= 推导步数 + 1，跑次 yaml 实测同值）
+            #    ② §3.1 定义行「`checkpoint_save_steps = 推导步数 + 1`」
+            #    ③ `samples/configs/matrix54-generated/T0xx.yaml` 的 `save_steps`
+            #    **三处互相矛盾**（实测 50/54 档不一致，T001 表内 100 vs 实际 201；T031 800 vs 6401）。
+            #    ⇒ 同一份对外文档里同一个键名有两个取值，会被访客读成"每隔 100 步存一次"，
+            #      把复现的检查点间隔放大 2×–8×，破坏主席判据③「复现参数唯一确定」。
+            #    ★ 取「移除该令牌」而非「改键名」：§3.1 **已**有唯一定义行，而旧口径值**本身是错的**
+            #      ⇒ 改名为 `checkpoint_save_steps=<旧值>` 只会把同一个错误换个名字（仍与定义行矛盾）；
+            #      移除后**该量在文档里只剩一个来源** = 定义行（按公式）＋ 本行 `save_steps`（机读件内）。
+            #    ★ 与既有登记**互指**（§1.4 单一真相源，⛔ 不各写一份）：见本文件 `criteria_caliber`
+            #      「步数口径」的 `**已知 🟡（登记待裁、⛔ 不猜）**：**51 档清单**的
+            #      `checkpoint_save_steps` …仍是 v2 口径` 一条。
+            r["switches"] = _strip_save_steps_token(r.get("switches"))
         # ★ 备注补充：LoRA 按后端的真实覆盖（对 LoRA 档；数据驱动的口径事实，⛔ 不手写）
         if r.get("tuner_type") == "lora" and r.get("note") not in (None, "", "—"):
             lb = lora_target_backends()
@@ -1553,9 +2591,20 @@ def main():
     #    ★ 必须在 registry 派生**之前**调用（registry 从行内 `caliber_change.rule` 取文本）。
     ensure_adjacent_void_markers(rows)
 
+    # ★★★ 人读视图表格格归一（④）：逐格订正**已经渲染进人读件**的污染与残片
+    #     —— 在短/长备注分离之后调用，保证改的是*最终会渲染的那一格*；改后重推短备注以防再截断。
+    for _r in rows:
+        _fix_row_cells(_r, _r.get("verdict"))
+        _full = str(_r.get("note_full") or "").strip()
+        if _full and _full != "—":
+            _r["note"] = short_note(_r, _full)
+        # ★★ 精简轮 2：结论列与短备注**在格归一之后**派生（否则读到的是未订正的 `verdict`）
+        _r["not_failed_reason"] = derive_not_failed_reason(_r)
+        _r["note"] = compose_short_note(_r)
+
     # ★★ 「读数变化登记表」：**数据驱动**地从档位行派生（⛔ 不写死档号/数值）——
     #    凡行级 `caliber_change.kind` 以 `reading_change` 开头者 ⇒ 逐条进 `criteria_caliber.caliber_change`。
-    _cal = criteria_caliber()
+    _cal = criteria_caliber(rows)   # ★ 行数据入参：fit 口径档位清单现算（⛔ 不写死档号）
     _reg = []
     for _r in rows:
         _cc = _r.get("caliber_change")
@@ -1595,7 +2644,7 @@ def main():
     if _lrvoid_tiers:
         _lp = _cal.get("lr_policy") or {}
         _reg.append(
-            "★ 2026-10-16 **本次 lr 口径变更 ⇒ 读数作废（正式登记）**：★ 新口径 = "
+            "★ 2026-10-16 **现行 lr 口径变更 ⇒ 读数作废（正式登记）**：★ 新口径 = "
             f"{_lp.get('rule', '')} ★ 机制面 = {_lp.get('mechanism_removed', '')} "
             f"★ **作废范围 = {len(_lrvoid_tiers)} 档**"
             f"（{', '.join(str(x) for x in _lrvoid_tiers)}；"
@@ -1618,7 +2667,7 @@ def main():
         _lrset = set(_lrvoid_tiers)
         _both = [t for t in _ecvoid_tiers if t in _lrset]
         _reg.append(
-            "★ 2026-10-16 **本次评测集口径变更 ⇒ 读数作废（正式登记）**：★ 新口径 = "
+            "★ 2026-10-16 **现行评测集口径变更 ⇒ 读数作废（正式登记）**：★ 新口径 = "
             f"{_ec.get('rule', '')} ★ 标定 = **{_ec.get('fit_caliber_label', '')}** —— "
             "读数回答「该档训练是否生效」，⛔ **不得读作训练分布之外的表现**。"
             f"★ **口径证据（判别力）** = {_ec.get('discriminative_power', '')} "
@@ -1633,10 +2682,10 @@ def main():
             f"两批**有交叠 {len(_both)} 档**（{', '.join(str(x) for x in _both)}）"
             "⇒ 这些档的作废原因是**两条并列**（lr 口径变更 ＋ 评测集口径变更），"
             "机读字段 `voided_conclusion.superimposed` 记第二条；"
-            f"★ 仅因本次评测集口径变更作废的档 = {len(_ecvoid_tiers) - len(_both)} 档"
+            f"★ 仅因现行评测集口径变更作废的档 = {len(_ecvoid_tiers) - len(_both)} 档"
             f"（{', '.join(str(x) for x in _ecvoid_tiers if x not in _lrset)}）。"
             f"★ **顺带订正** = {_ec.get('overlap_analysis_fix', '')} "
-            f"★ **20 行档**：{_ec.get('not_applicable', '')} "
+            f"★ **原 20 行档（2026-10-16 已裁定放大到 100 行）**：{_ec.get('not_applicable', '')} "
             f"★ **不动**：{_ec.get('untouched', '')} "
             f"★ 依据 = `meta.criteria_caliber.eval_caliber`（source = {_ec.get('source', '')}；"
             f"effective = {_ec.get('effective', '')}）；{_ec.get('consequence', '')}")
@@ -1649,6 +2698,10 @@ def main():
             "version": a.version or meta.get("data_revision", ""),
             "doc_date": date,
             "scope": "GRASPO 训练框架的能力与可用档位：逐档可用性、性能基线与验收结论",
+            # ★★ 实验条件（面向使用者）：场所与代码版本。★ 只写**能力口径**，⛔ 不写机器名 /
+            #    内网地址 / 主机编号（§17.7「矩阵中仍然禁止」）。
+            "venue": VENUE,
+            "code_version": {"repo": CODE_REPO, "branch": CODE_BRANCH, "commit": CODE_COMMIT},
             "authority": {
                 "editable_source": f"{SOURCE}（唯一可编辑源头）",
                 "human_view": f"{HUMAN_VIEW}（由生成器确定性产出，禁止手工编辑）",
@@ -1668,7 +2721,8 @@ def main():
         "groups": GROUPS,
         "columns": COLUMNS,
         "uniform": {"rule": (src.get("uniform") or {}).get("rule", ""),
-                    "items": sanitize((src.get("uniform") or {}).get("items", [])) + PARALLEL_UNIFORM + EXTRA_UNIFORM},
+                    "items": _uniform_items(src) + PARALLEL_UNIFORM
+                             + EXTRA_UNIFORM + [LORA_TARGET_UNIFORM]},
         "rows": rows,
         "data_keys": DATA_KEYS,
     }
@@ -1684,10 +2738,46 @@ def main():
     if _banned:
         print(f"FAIL-CLOSED：矩阵件仍含禁用串 {_banned} ⇒ 拒绝落盘")
         return 1
+    # ★★ 修正轮 1 新增落盘前 fail-closed 守卫（W1 / W3；阳性对照见工位 evidence）
+    _guard_problems = caliber_field_guard(doc.get("rows", []))
+    if _guard_problems:
+        for _p in _guard_problems:
+            print(f"FAIL-CLOSED（口径机读字段自洽）：{_p}")
+        return 1
+    # ★★★ 人读视图三件（**落盘前**，顺序固定）：
+    #    ③ 术语改写 + 记号清理（人称 / 内部编排 / `★`·`⛔`·旧编号 ⇒ 时间口径与自然书写）
+    #    ⇒ ① 允许清单投影（内部字段不进人读视图）⇒ ② 兜底扫描（内部术语，命中即 fail-closed）。
+    #    ★ 只作用于**文本**：⛔ 不动任何数值、四态取值、判据与结论。
+    doc = _rewrite_tree(doc)
+    # ★★ 修正轮 4（⚠③）：数据件面也做**内部证据路径脱敏**（保留实质结论与内容指纹）。
+    #    ★ 必须在 `forbidden_in_human_view()` 兜底扫描**之前** ⇒ 脱敏后的文本才是被机检的文本。
+    doc = _redact_tree(doc)
+    # ★ 同批做一处**措辞收尾**：`… 与 <占位>。` ⇒ 去掉占位前的悬空"与"（纯排版，⛔ 不改事实）
+    for _r in doc.get("rows", []):
+        if isinstance(_r.get("algo_checks"), str):
+            _r["algo_checks"] = _r["algo_checks"].replace(
+                "见 p5p6_readings 与 " + EVIDENCE_PATH_PLACEHOLDER + "。",
+                "见 p5p6_readings 与" + EVIDENCE_PATH_PLACEHOLDER + "。")
+    _moved = _carry_through_row_fields(doc, src.get("rows"))
+    _dropped_meta, _dropped_rows, _dropped_cal = drop_non_view_fields(doc)
+    print(f"逐档直通（{', '.join(CARRY_THROUGH_ROW_KEYS)}）：搬入 {_moved} 处（来源＝内部权威同名键）")
+    print(f"人读视图投影：meta 剔除 {len(_dropped_meta)} 键 {_dropped_meta}；"
+          f"criteria_caliber 剔除 {len(_dropped_cal)} 键 {_dropped_cal}；"
+          f"行级剔除 {len(_dropped_rows)} 类字段"
+          + (f"（出现档数 Top8：{sorted(_dropped_rows.items(), key=lambda x: -x[1])[:8]}）"
+             if _dropped_rows else ""))
+    _terms = forbidden_in_human_view(doc)
+    if _terms:
+        print(f"FAIL-CLOSED（人读视图含内部术语）：{_terms} ⇒ 拒绝落盘")
+        return 1
     out.write_text(json.dumps(doc, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     counts = {s: sum(1 for r in rows if r["status"] == s) for s in STATUS_VOCABULARY}
     print(f"official data: {len(rows)} 档；四态 {counts} -> {out}")
 
 
 if __name__ == "__main__":
-    main()
+    # ★★ 修正轮 1：**退出码必须反映 fail-closed**。原先 `main()` 的返回值被丢弃 ⇒
+    #    「FAIL-CLOSED：… ⇒ 拒绝落盘」（`return 1`）对**调用方**表现为 rc=0，
+    #    而 `backfill_matrix.py` 等调用方正是**按 rc** 判成败（实测该盲区：本包阳性对照
+    #    打印了 FAIL-CLOSED 却仍 rc=0）。⛔ 不改任何判据/取值，只把已经写出的失败**传出去**。
+    sys.exit(main() or 0)

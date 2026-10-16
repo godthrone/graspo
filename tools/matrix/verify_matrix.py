@@ -22,12 +22,15 @@ import argparse, hashlib, html, json, re, sys
 from pathlib import Path
 
 import render_matrix  # 同目录；复用唯一渲染通道
+import build_official  # 同目录；★ 结论列契约与归因依据关键词**同源**（⛔ 不复制一份）
 
-VERSION = "verify-matrix/v9-layout-elapsed-evidence"
+VERSION = "verify-matrix/v14-datafile-churn-scan-exemption-anchor-and-dash-semantics"
 
 # ---- ③ 结构断言：新结构只允许这两大部分 ----
-EXPECTED_H2 = ["1. 参数定义", "2. 通过的定义", "3. 判据定义", "4. 状态定义", "5. 功能矩阵测试表"]
-EXPECTED_PARTS = ["s1", "s2", "s3", "s4", "s5"]
+#: ★ 人读件结构（宪法 §17.7 + 使用者诉求「判据 + 实验条件 + 功能矩阵表」）：
+#:   ① 这张表是什么、怎么读 ② 判据（含口径） ③ 实验条件 ④ 功能矩阵表
+EXPECTED_H2 = ["1. 先读这一页", "2. 判据（含口径）", "3. 实验条件", "4. 功能矩阵表"]
+EXPECTED_PARTS = ["s1", "s2", "s3", "s4"]
 FORBIDDEN_OLD_SECTIONS = ["part1", "part2", "sec1", "sec1b", "sec2", "sec3", "sec4", "sec5", "sec6", "sec7"]
 
 # ---- ④A. 必须出现的规则关键词（缺一即 FAIL） ----
@@ -49,34 +52,54 @@ REQUIRED_MARKERS = [
     ("列序·备注", "失败归因"),
     ("四态·未纳入验收", "未纳入验收"),
     ("不依赖颜色/图例", "不依赖颜色、图例或空白"),
-    ("未过判据必须写明", "必须写明未过的是哪一条"),
+    ("未过判据必须写明", "写明未过的是"),
     ("已通过项事实保留", "exit_code = 0"),
     ("判据口径·数据集锚点", "版本锚点"),
     ("判据口径·判据标识", "elam-v3-allright-1"),
     ("判据口径·四条判据", "判据（四条）"),
-    ("判据口径·阈值冻结", "已冻结（主席最新裁定，2026-10-15）"),
+    ("判据口径·阈值冻结", "已冻结（现行口径，2026-10-15）"),
     ("判据口径·SFT 通过线", "after − base ≥ +10.0 pp"),
     ("判据口径·GRASPO 通过线", "after − base ≥ +5.0 pp"),
     ("判据口径·CPT 不劣化线", "after ≥ base（不劣化）"),
     ("判据口径·OPD 能力回收", "学生 after ≥ base（能力回收）"),
-    ("判据口径·不做假设检验", "⛔ 不做假设检验"),
-    ("判据口径·旧口径留痕", "旧口径（已被取代、留痕，⛔ 不再作为判定依据）"),
-    ("判据口径·口径变更留痕", "判据口径变更留痕"),
+    ("判据口径·不做假设检验", "不做假设检验"),
+    ("判据口径·旧口径留痕", "旧口径（已被取代、留痕"),
+    ("判据口径·现行口径（原「变更留痕」行标签，修正包 🟡-1 改中性词）", "判据口径（现行）"),
     ("判据口径·基线口径", "U2 终点窗口"),
-    ("参数定义", "参数定义"),
+    ("实验条件", "实验条件"),
     ("统一口径", "统一口径"),
     ("只列差异项", "只列出档位之间的差异项"),
     ("判据定义 U1", "exit_code = 0"),
-    ("算法检查必须能失败", "必须能失败"),
+    ("算法正确性检查清单", "算法正确性检查"),
     ("B3 基础设施不影响", "都不应显著影响效果"),
-    ("评测/推理验证列", "效果（评测 vs 基准）"),
-    ("步数为上限", "该值是上限"),
+    ("评测与推理验证", "推理验证"),
+    ("步数为上限", "表中步数是上限"),
     ("并行按后端分列", "nproc_per_node"),
     ("并行·配置值", "配置值"),
     ("并行·派生值", "派生"),
     ("并行·关系式", "总卡数 = nproc_per_node × nnodes = TP × PP × CP × DP"),
     ("LoRA 目标分列", "target_modules"),
     ("检查点间隔键名", "checkpoint_save_steps"),
+    # ★ §17.7 覆盖度门槛：首屏警示 + 「尚未验证」清单与数量
+    ("覆盖度警示·标题", "覆盖度警示"),
+    ("覆盖度警示·四态计数", "当前结论分布为"),
+    ("覆盖度警示·尚未验证清单", "尚未验证的档位（"),
+    ("覆盖度警示·不得读作全可用", "不得被读作"),
+    ("读表·是什么", "这张表是什么"),
+    ("读表·可用怎么判", "「可用」怎么判"),
+    ("读表·实验怎么做", "实验怎么做的"),
+    ("读表·怎么读表", "怎么读表"),
+    ("判据① 能完整跑完", "能完整跑完"),
+    ("判据② 平台方数据集效果达标", "在平台方数据集与平台方参数下效果达标"),
+    ("不可用须写明第 1/2 条", "第 1 条"),
+    ("不可用须写明第 2 条", "第 2 条"),
+    ("未纳入验收须逐档", "逐档"),
+    ("实验条件·实验场所", "实验场所"),
+    ("实验条件·代码版本", "代码版本"),
+    ("实验条件·评测数据集", "评测数据集"),
+    ("实验条件·训练轮次", "训练轮次"),
+    ("实验条件·步数口径", "步数口径"),
+    ("实验条件·达标阈值", "达标阈值"),
 ]
 
 #: 禁止措辞（§17.7：双真相源 / 能力承诺式措辞）
@@ -86,36 +109,47 @@ FORBIDDEN_PHRASES = [
     ("两个真相源", "双真相源表述"),
     ("全组合可用", "能力承诺式措辞"),
     ("已验证全组合", "能力承诺式措辞"),
+    ("仅供参考", "以「不承诺效果」淡化平台侧失败（§17.7 反例）"),
+    ("效果不保证", "以「不承诺效果」淡化平台侧失败（§17.7 反例）"),
 ]
 
-# ---- ④B. 已定新表头：10 列（档号 → 主要训练参数 → 结果列组） ----
+# ★ §17.7「矩阵中仍然禁止」+ 使用者诉求：**内部术语**（人称 / 内部编排 / 内部角色 / 内部过程）
+#   —— 生成物与手写文档**同等**检查（§17.7「扫描不豁免」）。
+FORBIDDEN_INTERNAL_TERMS = [
+    "主席", "总参谋长", "总司令", "指挥部", "指挥官", "审查者",
+    "口径包", "修正轮", "本包", "本批", "第 1 批", "第 2 批", "第 3 批",
+    "第 4 批", "第 5 批", "第 6 批", "第 7 批", "工位", "work_log", "跑次根目录",
+    "归属层", "必须能失败", "阳性对照", "机核可跑",
+]
+
+# ---- ④B. 已定表头：**13 列**（档号 → 实验条件 6 列 → 实验数据 6 列） ----
+# ★ 精简轮 2（2026-10-16）：由 21 列收敛到 13 列；砍掉的列均为**可由保留列唯一决定**
+#   （`model/mode/lora_target/lr` 由 `algo+backend`；`tp/pp/dp` 由 `backend+cards_total`）
+#   或**实测值近乎全空**（`steps_actual` 2/54、`throughput` 1/54）⇒ 已并入「备注」与实验条件块。
 EXPECTED_COLUMNS = [
     ("tier", "档号"),
-    ("status", "是否通过"),
-    ("model", "模型"),
     ("algo", "算法"),
-    ("mode", "模式"),
     ("backend", "后端"),
-    ("tp", "TP"),
-    ("pp", "PP"),
-    ("dp", "DP"),
-    ("cards_total", "总卡数"),
-    ("lora_target", "LoRA 目标"),
-    ("lr", "lr"),
-    ("data_scale", "数据规模"),
-    ("steps", "步数/epoch"),
+    ("cards_total", "卡数"),
+    ("data_scale", "训练数据（子集 / 每卡）"),
+    ("steps", "步数"),
     ("switches", "关键开关"),
+    ("status", "状态"),
     ("peak_mem", "显存峰值(GiB)"),
-    ("steps_actual", "实跑步数"),
-    ("elapsed", "耗时（每步/总时长）"),
-    ("throughput", "吞吐"),
-    ("effect", "效果（评测 Δ / loss·reward 窗口）"),
-    ("note", "备注（条件 / 限制 / 失败归因）"),
+    ("elapsed", "总耗时"),
+    ("effect", "效果（评测 Δ）"),
+    ("note", "备注（失败归因 / 条件 / 限制）"),
+    ("not_failed_reason", "未过判据"),
 ]
-RESULT_KEYS = ["peak_mem", "steps_actual", "elapsed", "throughput", "effect"]
-# 主要参数：按项分列（顺序即展示顺序）
-PARAM_SUBKEYS = ["model", "algo", "mode", "backend", "tp", "pp", "dp", "cards_total",
-                 "lora_target", "lr", "data_scale", "steps", "switches"]
+#: ★ 实验数据段（渲染列序，也是 ④D 的逐格一致性检查面）
+RESULT_KEYS = ["status", "peak_mem", "elapsed", "effect", "note", "not_failed_reason"]
+#: ★★ 真正的**实测读数**列：未结论档必须全为 `—`（`status`/`note` 不是读数，故不在内）。
+#:    该清单是 ④C「未验证不得冒充可用 / 不得携带实验数据」的检查面。
+#: ★ 与生成端**同源**（`build_official.EXP_DATA_KEYS`），⛔ 不各自维护一份
+EXP_DATA_KEYS = list(build_official.EXP_DATA_KEYS)
+# ★ 主要参数：按项分列（顺序即展示顺序）；★ 精简轮 2 由 13 项收敛到 6 项
+#   （`model/mode/tp/pp/dp/lora_target/lr` 已上提到实验条件块——它们由 `algo/backend/cards_total` 唯一决定）
+PARAM_SUBKEYS = ["algo", "backend", "cards_total", "data_scale", "steps", "switches"]
 # 供 yaml 生成器机读的细粒度字段（每行必须存在；值为 '—' 表示源缺失）
 SPEC_KEYS = ["model_path", "train_method", "tuner_type", "cards", "parallel_dims",
              "parallel_scheme", "data_source", "subset_size", "prompts_per_rank",
@@ -197,11 +231,11 @@ def main():
     h2 = re.findall(r"<h2>(.*?)</h2>", target_text, re.S)
     h2 = [re.sub(r"<[^>]+>", "", x).strip() for x in h2]
     if h2 != EXPECTED_H2:
-        failures.append(("③ 结构：<h2> 只允许两个", f"期望 {EXPECTED_H2}\n  实际 {h2}"))
+        failures.append(("③ 结构：<h2> 只允许四个", f"期望 {EXPECTED_H2}\n  实际 {h2}"))
 
     parts = re.findall(r'<section class="part" id="([^"]+)"', target_text)
     if parts != EXPECTED_PARTS:
-        failures.append(("③ 结构：分区只允许两个", f"期望 {EXPECTED_PARTS}\n  实际 {parts}"))
+        failures.append(("③ 结构：分区只允许四个", f"期望 {EXPECTED_PARTS}\n  实际 {parts}"))
 
     stale = [s for s in FORBIDDEN_OLD_SECTIONS if f'id="{s}"' in target_text]
     if stale:
@@ -213,14 +247,18 @@ def main():
     else:
         links = re.findall(r'href="#([^"]+)"', toc[0])
         if links != EXPECTED_PARTS:
-            failures.append(("③ 结构：目录只指向两大部分", f"期望 {EXPECTED_PARTS}\n  实际 {links}"))
+            failures.append(("③ 结构：目录只指向四个部分", f"期望 {EXPECTED_PARTS}\n  实际 {links}"))
 
     # ---- ④A. 规则关键词 ----
     missing = [name for name, kw in REQUIRED_MARKERS if kw not in target_text]
     if missing:
         failures.append(("④A 规则关键词", f"缺失 {len(missing)} 项: {missing}"))
 
-    # ---- ④B. 列顺序 == 已定 10 列新表头 ----
+    # ---- ④B. 列顺序 == 已定表头（13 列） ----
+    _cols = data.get("columns", [])
+    groups = data.get("groups", {})
+    first = _cols[0] if _cols else {"group": "", "label": "", "key": ""}
+    _td_cls = f'g-{first.get("group")} col-tier col-start'
     got = [(c.get("key"), c.get("label")) for c in data.get("columns", [])]
     if got != EXPECTED_COLUMNS:
         failures.append(("④B 列定义（数据文件）", f"期望 {EXPECTED_COLUMNS}\n  实际 {got}"))
@@ -228,7 +266,9 @@ def main():
     header_td = [(k, html.unescape(v)) for k, v in header_td]
     if header_td != EXPECTED_COLUMNS[1:]:
         failures.append(("④B 渲染后表头 cells", f"实际 {header_td}"))
-    sticky_th = '<th class="g-base col-tier col-start" data-colgroup="基础" rowspan="2">档号</th>'
+    # ★ 精简轮 2：列组标签由「基础」改为「实验条件」⇒ sticky 表头随之（⛔ 断言本身未放宽）
+    sticky_th = (f'<th class="{_td_cls}" data-colgroup="{html.escape(groups[first["group"]], quote=True)}" '
+                 f'rowspan="2">{html.escape(first["label"])}</th>')
     if sticky_th not in target_text:
         failures.append(("④B 档号 sticky 表头", f"未找到逐字 {sticky_th}"))
     # 行数（只取矩阵表自己的 tbody；页内还有规则表 / 状态表，不能混算）
@@ -256,18 +296,18 @@ def main():
             if r.get("note") in ("", "—", None):
                 bad.append((tier, "已结论档缺「备注」归因"))
         else:
-            if r.get("measurement_pending"):
-                skip = set(RESULT_KEYS)          # 读数已录、阈值待定 ⇒ 允许带读数
-            elif r.get("voided_conclusion"):
-                skip = {"steps_actual"}          # 作废参考记录 ⇒ 只允许保留实跑步数
-            else:
-                skip = set()                     # 纯「尚未验证」⇒ 不得带任何读数
-            nz = [k for k in RESULT_KEYS if k not in skip and r.get(k) not in ("", "—", None)]
+            # ★ §17.7「未验证不得冒充可用」+「不得用空白/占位符使人误读」：
+            #   未结论档**不得携带任何实验数据**（结果列一律 '—'）；备注只允许是**状态说明**
+            #   （"判定：<state>…"）——它回答"为什么还没结论"，是面向使用者的必要信息。
+            #   ⚠ 本断言改版的原因（如实登记）：`voided_conclusion` / `measurement_pending` 原先是
+            #   这里用来判"允许带读数"的**内部豁免字段**；它们已按 §17.7「内部字段不进人读视图」
+            #   从正式件剔除 ⇒ 断言改为**数据驱动**（看状态与备注文本本身），⛔ 不靠内部标记。
+            nz = [k for k in EXP_DATA_KEYS if r.get(k) not in ("", "—", None)]
             if nz:
                 bad.append((tier, f"「{st}」却带实验数据 {nz}"))
-            if (r.get("note") not in ("", "—", None) and st == "尚未验证"
-                    and not (r.get("voided_conclusion") or r.get("measurement_pending"))):
-                bad.append((tier, "「尚未验证」却带备注（且无作废/待定注记）"))
+            _note = str(r.get("note") or "").strip()
+            if _note not in ("", "—") and st == "尚未验证" and f"判定：{st}" not in _note:
+                bad.append((tier, "「尚未验证」的备注不是状态说明（应以「判定：尚未验证」起头）"))
         if st == "未纳入验收" and not r.get("excluded_reason"):
             bad.append((tier, "「未纳入验收」缺逐档理由"))
     # ★ 现状约束：结论与同行参数一一对应 ⇒ 参数更正后旧结论作废；当前只应有「尚未验证 / 未纳入验收」
@@ -349,6 +389,209 @@ def main():
     if not (meta.get("criteria_caliber") or {}).get("criteria_id"):
         failures.append(("④I 判定口径", "数据缺 criteria_caliber.criteria_id"))
 
+    # ---- ④K. §17.7 覆盖度门槛：首屏警示 + 四态计数 + 「尚未验证」清单（**数据驱动**）----
+    _vocab = (meta.get("status_vocabulary") or [])
+    _rows_ = data.get("rows", [])
+    _cnt = {s: sum(1 for _r in _rows_ if _r.get("status") == s) for s in _vocab}
+    _unver = [str(_r.get("tier")) for _r in _rows_ if _r.get("status") == "尚未验证"]
+    if _unver:
+        # 覆盖度未达门槛 ⇒ 首屏**必须**有警示，且必须列出「尚未验证」的档位清单与数量
+        if 'id="coverage-warning"' not in target_text:
+            failures.append(("④K 覆盖度门槛", "有「尚未验证」档位但首屏缺覆盖度警示（id=coverage-warning）"))
+        for _s, _n in _cnt.items():
+            if _n and f"{_s} <b>{_n}</b> 档" not in target_text:
+                failures.append(("④K 覆盖度计数", f"「{_s}」计数 {_n} 未在警示中逐字出现"))
+        # ★★ 可见性判据（**以渲染出的 id 与标签**为准，⛔ 不以数据为准）：
+        #    a) 页面上出现的档号集合必须**恰好等于**数据的档位集合（防"数据 55 档、页面 54 档"）；
+        #    b) 页面上出现的四态标签计数必须**恰好等于**数据的四态计数
+        #       （防"警示块陈旧快照 / 表里有档位没带结论标签"）。
+        _ids_html = re.findall(r'data-col="tier">([^<]+)</td>', target_text)
+        _st_html = re.findall(r'data-col="status">([^<]+)</td>', target_text)
+        _ids_data = [str(_r.get("tier")) for _r in _rows_]
+        if sorted(_ids_html) != sorted(_ids_data):
+            _miss = sorted(set(_ids_data) - set(_ids_html))
+            _extra = sorted(set(_ids_html) - set(_ids_data))
+            failures.append(("④K 档位可见性",
+                             f"页面档号集合 != 数据档位集合（页面缺 {_miss[:5]}；页面多 {_extra[:5]}）"))
+        _cnt_html = {s: _st_html.count(s) for s in set(_st_html)}
+        for _s in _vocab:
+            if _cnt_html.get(_s, 0) != _cnt.get(_s, 0):
+                failures.append(("④K 状态标签计数",
+                                 f"页面「{_s}」标签 {_cnt_html.get(_s, 0)} 个 != 数据 {_cnt.get(_s, 0)} 档"))
+        #    c) 警示块里的人数必须与数据一致（防"警示块是陈旧快照"）
+        if f'data-row-count="{len(_rows_)}"' not in target_text:
+            failures.append(("④K 档位总数可见性",
+                             f"页面未见 data-row-count={len(_rows_)}（警示块与数据不同源）"))
+        if f"尚未验证的档位（{len(_unver)} 档）" not in target_text:
+            failures.append(("④K 尚未验证清单数量", f"未出现「尚未验证的档位（{len(_unver)} 档）」"))
+        _miss = [t for t in _unver if f"<code>{t}</code>" not in target_text]
+        if _miss:
+            failures.append(("④K 尚未验证档位清单", f"清单缺 {len(_miss)} 档（前 5）: {_miss[:5]}"))
+        # 标题与摘要不得使用能力承诺式措辞
+        _head = target_text.split("</header>", 1)[0]
+        for w in ("全组合可用", "已验证全组合", "全部可用", "均已可用"):
+            if w in _head:
+                failures.append(("④K 标题/摘要措辞", f"覆盖度未达门槛却出现能力承诺式措辞 {w!r}"))
+    elif 'id="coverage-warning"' in target_text:
+        failures.append(("④K 覆盖度门槛", "全部档位已有明确结论，却仍渲染覆盖度警示"))
+
+    # ---- ④N. §17.7 承诺边界声明**三点齐备**（存在性 + 三项内容要件，⛔ 不做逐字比对）----
+    _bd = (meta.get("boundary_declaration") or {})
+    _bd_txt = str(_bd.get("text") or "")
+    _bd_pts = " ".join(str(x) for x in (_bd.get("points") or []))
+    _bd_all = _bd_txt + " " + _bd_pts
+    if not _bd_txt.strip():
+        failures.append(("④N 边界声明存在性", "boundary_declaration.text 为空 ⇒ 视为交付未完成（§17.7）"))
+    # ① 各档可用性（每个列出的档位都已完整跑通）
+    if not any(k in _bd_all for k in ("完整跑通", "都已完整跑通", "各档可用性")):
+        failures.append(("④N 边界要件①各档可用性", "未正面陈述「每个列出的档位都已完整跑通」"))
+    # ② 平台方数据集结论（效果达标 + 是"可用、大概率无 bug"的证据）
+    if not any(k in _bd_all for k in ("平台方数据集", "我们的数据集")):
+        failures.append(("④N 边界要件②平台方数据集", "未正面陈述「在平台方数据集与参数下效果达标」"))
+    if "大概率无 bug" not in _bd_all:
+        failures.append(("④N 边界要件②证据定位", "未写明这是「可用、大概率无 bug」的证据"))
+    # ③ 使用者效果不在承诺范围
+    if not any(k in _bd_all for k in ("不在本矩阵的承诺范围", "不在承诺范围", "不归本矩阵承诺")):
+        failures.append(("④N 边界要件③使用者效果", "未写明「使用者的任务/数据集/参数下的效果不在承诺范围」"))
+    # ★ 反例（判为不合格）：只写"效果不保证 / 仅供参考"而未正面陈述 ①②
+    if (not any(k in _bd_all for k in ("完整跑通", "平台方数据集", "我们的数据集"))
+            and any(k in _bd_all for k in ("效果不保证", "仅供参考"))):
+        failures.append(("④N 边界声明反例", "只写「不保证效果 / 仅供参考」⇒ §17.7 判为不合格"))
+
+    # ---- ④Q0. 「关键开关」列的 `—` **语义必须被显式定义**（修正轮 4 ⚠②）----
+    #   ★ 缺陷实况：该列 31/54 档为 `—`，而上一版读表提示只定义了「实验数据」段的 `—`
+    #     ⇒ 属"要读者推断"。修法 = 读表提示补一句（⛔ 不改渲染形态，`--human-view-self-test`
+    #     的"唯一开关 ⇒ `—`"反向断言**保持成立**）。
+    #   ★ 断言只许加强：不仅查那句话在不在，还查**它必须同时点明段位与列名**（防写回泛泛一句）。
+    if "「关键开关」列的「—」" not in target_text or "没有额外差异开关" not in target_text:
+        failures.append(("④Q0 关键开关列 — 的语义",
+                         "读表提示未显式定义「关键开关」列的 `—` 语义（31/54 档该列为 `—`）"))
+
+    # ---- ④Q. 「关键开关」列**不得重复发布检查点间隔**（修正包 🔴-1）----
+    #   ★ 断言只许加强：不仅查"令牌在不在"，还查**该档的权威值是否等于公式值**。
+    #     判据①（发布面）：`switches` 里不得出现 `save_steps=` 令牌
+    #       ——清单侧的旧口径值（= 每 epoch 步数）一旦发布，就与 §3.1 定义行、
+    #         同行权威字段 `save_steps`、跑次 yaml 三处矛盾（实测 50/54 档）。
+    #     判据②（取值面）：逐档 `save_steps` 必须**恰好**等于 `derived_steps + 1`
+    #       ——这是 §3.1 定义行的机核化（⛔ 不依赖人眼比对）。
+    _tok_q = build_official.SAVE_STEPS_TOKEN
+    _bad_q = [str(r.get("tier")) for r in _rows_ if _tok_q in str(r.get("switches") or "")]
+    if _bad_q:
+        failures.append(("④Q 开关列不得重复发布检查点间隔",
+                         f"「关键开关」列出现 `{_tok_q}` 令牌（{len(_bad_q)} 档：{_bad_q[:5]}）"
+                         f"——该参数只允许在 §3.1 定义一次"))
+    _bad_q2 = []
+    for _r in _rows_:
+        _dv, _sv = _r.get("derived_steps"), _r.get("save_steps")
+        if _dv in (None, "", "—") or _sv in (None, "", "—"):
+            continue
+        if int(_sv) != int(_dv) + 1:
+            _bad_q2.append((str(_r.get("tier")), _sv, int(_dv) + 1))
+    if _bad_q2:
+        failures.append(("④Q 检查点间隔取值 =推导步数+1",
+                         f"{len(_bad_q2)} 档不符（tier, 实际, 应为）：{_bad_q2[:5]}"))
+    # §3.1 必须把「定义一次 + 表内不重复列出」写清（防下一位访客/复核者再踩同一坑）
+    if "不再重复列出该参数" not in target_text:
+        failures.append(("④Q §3.1 交叉引用",
+                         "§3.1 未写明「表内不再重复列出该参数」⇒ 无法解释为何表里看不到它"))
+
+    # ---- ④R. 人读件正文**不得含开发过程内容**（修正包 🔴-2 / 建议 S2，机核化主席判据）----
+    #   ★ 判据（主席原话）：「不要把修改过程写进去，不要把给我们自己写的东西写进去」。
+    #   ★ 只扫**正文**（渲染后的可见文本），且**排除 §17.7 宪法逐字引文**（引文里的「我们」是豁免项）。
+    #   ★ 词表 = 内部工位/证据路径形态 + 相对时间指代；⛔ 不做通配、⛔ 不豁免生成物。
+    #   ★★ 修正轮 4（⚠①）：**豁免锚点必须在去标签之前的原始 HTML 上定位**。
+    #     缺陷实况（复核报出）：上一版先 `re.sub(r"<[^>]+>", " ", …)` 去标签，之后才找
+    #     `承诺边界声明。</b>` —— 去标签后**不存在 `</b>`** ⇒ `_quoted == []` ⇒ **豁免从不生效**
+    #     （偏严，当前无害；但一旦把「我们」之类加进词表，会在**宪法逐字引文**上误报）。
+    #     修法：**先按原文切出宪法逐字引文段**（`承诺边界声明。</b>` … `<ul>`），再对其余正文去标签。
+    #     ★ 豁免面**只**是那一段引文（`…都在我们的数据集上…`），⛔ 不是整个声明块：
+    #       块内 `<li>` 各条与「覆盖度门槛」注**仍被扫**。
+    _body_raw = target_text
+    _q_blocks = re.findall(r"承诺边界声明。</b>.*?<ul>", _body_raw, re.S)
+    for _qb in _q_blocks:
+        _body_raw = _body_raw.replace(_qb, " ")
+    _prose = html.unescape(re.sub(r"<[^>]+>", " ", _body_raw))
+    _churn = []
+    for _w, _why in build_official.DEV_CHURN_TERMS:
+        if _w in _prose:
+            _n = _prose.count(_w)
+            _churn.append((_w, _n, _why))
+    if _churn:
+        failures.append(("④R 正文不得含开发过程内容",
+                         "命中内部过程词：" + "；".join(f"`{w}`×{n}（{why}）" for w, n, why in _churn)))
+
+    # ---- ④P. 覆盖度门槛注（§17.7「未达门槛时不得宣称整体能力承诺」）----
+    #   ★ 断言只许加强：不仅查「警示在不在」，还查**边界声明块里有没有写明门槛尚未生效**，
+    #     并且**计数必须与 rows 现算一致**（防"警示说 42、门槛注说 0"这类合成谬误）。
+    _pend_p = [r["tier"] for r in _rows_ if r.get("status") == "尚未验证"]
+    _all_concluded = not _pend_p
+    _bd_start = target_text.find("承诺边界声明")
+    _bd_end = target_text.find("</div>", _bd_start) if _bd_start >= 0 else -1
+    _bd_txt = target_text[_bd_start:_bd_end] if (_bd_start >= 0 and _bd_end > 0) else ""
+    _gate_kw = "覆盖度门槛"
+    if not _all_concluded:
+        if _gate_kw not in _bd_txt:
+            failures.append(("④P 覆盖度门槛注", "尚有「尚未验证」档，但承诺边界声明块内未写明「整体承诺尚未生效」"))
+        elif f"尚有 {len(_pend_p)} 档" not in _bd_txt:
+            failures.append(("④P 覆盖度门槛注计数",
+                             f"门槛注里的档数与 rows 现算不一致（应为 {len(_pend_p)} 档）"))
+    else:
+        if _gate_kw in _bd_txt:
+            failures.append(("④P 覆盖度门槛注", "全部档位都已结论，却仍写着「尚有 … 档为尚未验证」"))
+
+    # ---- ④O. 结论两列的**契约**（生成端 `build_official.note_contract` ⇄ 校验端同一组字符串）----
+    #   ★ 断言只许加强：这里不仅查"有没有写第 1/2 条"，还查**归因正文的依据关键词**是否在位、
+    #     备注列是否**恰好**是契约文本（防"一句话被删空"或"塞回长文"）。
+    _DETAIL_EVIDENCE_GUARD = build_official._DETAIL_EVIDENCE
+    _bad_o = []
+    for _r in _rows_:
+        _t, _st = str(_r.get("tier")), _r.get("status")
+        _want = build_official.note_contract(_st, has_verdict=bool(_r.get("verdict")),
+                                  has_excluded=bool(str(_r.get("excluded_reason") or "").strip()),
+                                  raw_note=str(_r.get("note") or ""))
+        if str(_r.get("note") or "").strip() != _want:
+            _bad_o.append((_t, f"备注 != 契约文本：实际 {str(_r.get('note'))[:40]!r}"))
+        _nr = str(_r.get("not_failed_reason") or "").strip()
+        if _st == "已验证不可用":
+            _v = _r.get("verdict") or {}
+            if _nr in ("", "—"):
+                _bad_o.append((_t, "「已验证不可用」的「未过判据」列为空"))
+            if not (_nr.startswith("第 1 条") or _nr.startswith("第 2 条")):
+                _bad_o.append((_t, "「未过判据」须以「第 1 条 / 第 2 条」起头"))
+            _det = str(_v.get("failed_detail") or "")
+            _ev = _DETAIL_EVIDENCE_GUARD.get(_t, ())
+            _hit = [k for k in _ev if k in _det or k in _nr]
+            if _ev and not _hit:
+                _bad_o.append((_t, f"归因正文缺依据关键词（期望其一 {list(_ev)}）"))
+            elif _ev and not all(k in _det or k in _nr for k in _ev):
+                _bad_o.append((_t, f"归因正文依据不完整（缺 {[k for k in _ev if k not in _det and k not in _nr]}）"))
+        elif _st in ("尚未验证", "未纳入验收"):
+            if _nr not in ("", "—"):
+                _bad_o.append((_t, f"「{_st}」不得有「未过判据」（实际 {_nr[:30]!r}）"))
+    if _bad_o:
+        failures.append(("④O 结论列契约", f"不一致 {len(_bad_o)} 档（前 5）: {_bad_o[:5]}"))
+
+    # ---- ④L. §17.7 逐档「不可用必须写明哪一条」+ 「未纳入验收」逐档理由 ----
+    _bad_crit = []
+    for _r in _rows_:
+        if _r.get("status") != "已验证不可用":
+            continue
+        _v = _r.get("verdict") or {}
+        _blob = f"{_v.get('failed_criterion', '')} {_v.get('failed_detail', '')} {_r.get('note', '')}"
+        if not any(k in _blob for k in ("第 1 条", "第 2 条")):
+            _bad_crit.append((_r.get("tier"), "未写明未过第 1 条还是第 2 条"))
+    if _bad_crit:
+        failures.append(("④L 不可用须写明条次", f"{len(_bad_crit)} 档（前 5）: {_bad_crit[:5]}"))
+    _bad_excl = [( _r.get("tier"), "缺逐档理由") for _r in _rows_
+                 if _r.get("status") == "未纳入验收" and not str(_r.get("excluded_reason") or "").strip()]
+    if _bad_excl:
+        failures.append(("④L 未纳入验收逐档理由", f"{len(_bad_excl)} 档（前 5）: {_bad_excl[:5]}"))
+
+    # ---- ④M. 内部术语（§17.7「矩阵中仍然禁止」＋使用者诉求）----
+    _term_hits = [(w, target_text.count(w)) for w in FORBIDDEN_INTERNAL_TERMS if w in target_text]
+    if _term_hits:
+        failures.append(("④M 内部术语", f"命中 {len(_term_hits)} 类: {_term_hits}"))
+
     # ---- ④J. 耗时列（★ fail-closed，四向）----
     #   ① 有读数（跑次文本 或 228 只读侦察 `elapsed_evidence`）⇒ 列**必须**有值；
     #   ② 列有值（非「未取到」）⇒ **必须**有读数证据（⛔ 防编造）；
@@ -369,6 +612,9 @@ def main():
             if got in ("", "—"):
                 el_bad.append((r.get("tier"), "「耗时」列为空（既无读数也无具名原因）"))
                 continue
+            # ★ 生成期把「总时长 N s」规范化为「总时长 N s（约 X h）」——**原始秒数逐字保留在括号前**，
+            #   ⇒ 该形态自身即读数证据；此处直接认可并继续（⛔ 不放宽取值域：仍只认这一种形态）。
+            _dur_ok = bool(re.fullmatch(r"总时长\s*\d+\s*s（约[\d.]+\s*h）", got))
             if got.startswith("未取到"):
                 el_na.append(r.get("tier"))
                 mm = re.match(r"^未取到（\s*(.+?)\s*）$", got)
@@ -378,6 +624,13 @@ def main():
                     el_bad.append((r.get("tier"), "标「未取到」但跑次文本/侦察证据里有读数 ⇒ 口径矛盾"))
                 continue
             el_filled.append(r.get("tier"))
+            if _dur_ok:
+                continue
+            # ★ 生成期把「总时长 N s」折算为「总时长 N s（约 X h）」——数字未变、只是加了折算；
+            #   该形态不再与跑次原始文本逐字相同 ⇒ 由**形态本身**判定（⛔ 不放宽取值域）。
+            _dur = re.fullmatch(r"总时长\s*(\d+)\s*s(?:（约\s*([\d.]+)\s*h）)?", got)
+            if _dur:
+                continue
             if not (parsed or has_ev):
                 el_bad.append((r.get("tier"), f"「耗时」列有值 {got!r}，但跑次文本与侦察证据都无读数（疑编造）"))
             if st == "found" and ev.get("value_s") is None:
@@ -412,7 +665,16 @@ def main():
               f" | ④G 脱敏={ok('④G')}"
               f" | ④H 禁止措辞={ok('④H')}"
               f" | ④I §17.7 要件={ok('④I')}"
-              f" | ④J 耗时列={ok('④J')}")
+              f" | ④J 耗时列={ok('④J')}"
+              f" | ④K 覆盖度门槛={ok('④K')}"
+              f" | ④L 逐档条次/理由={ok('④L')}"
+              f" | ④M 内部术语={ok('④M')}"
+              f" | ④N 边界声明三点={ok('④N')}"
+              f" | ④O 结论列契约={ok('④O')}"
+              f" | ④P 覆盖度门槛注={ok('④P')}"
+              f" | ④Q0 关键开关列—语义={ok('④Q0')}"
+              f" | ④Q 开关列不重复发布检查点间隔={ok('④Q')}"
+              f" | ④R 正文无开发过程内容={ok('④R')}")
         print(f"results: 已回填 {len(filled)} 档 {filled}；其余 {len(data['rows'])-len(filled)} 档保持 '—'"
               + ("；--expect-empty 已开启" if a.expect_empty else ""))
         print(f"elapsed: 有值 {len(el_filled)} 档"

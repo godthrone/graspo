@@ -119,7 +119,7 @@ UNIFORM = [
      "layer": "rule", "coverage": "rule-54/54", "note": "与 T028 跑次 effect 字段所记一致"},
     {"key": "criteria_version", "label": "文档判据版本",
      "value": "v3-2026-10-10（主席拍定）+ U2 起点/终点窗口比较口径",
-     "layer": "rule", "coverage": "rule-54/54", "note": "见 §1.2"},
+     "layer": "rule", "coverage": "rule-54/54", "note": "见实验条件（判据版本）"},
     {"key": "seed", "label": "随机种子 seed", "value": "42", "layer": "config",
      "coverage": "config-51/54", "note": "51 份 yaml 全为 42；与 8 个示例的 seed=43 属不同语境（仅登记差异）"},
     {"key": "max_prompt_length", "label": "上下文 / 序列上限（plen）", "value": "8192",
@@ -142,7 +142,7 @@ UNIFORM = [
      "layer": "rule", "coverage": "rule-54/54", "note": "mini 结果不得当效果结论"},
     {"key": "eval_set_path", "label": "固定评测集路径",
      "value": "<data-root>/test.jsonl（702 行）",
-     "layer": "rule", "coverage": "rule-54/54", "note": "见 §1.4 / §1.5"},
+     "layer": "rule", "coverage": "rule-54/54", "note": "见判定口径明细"},
 ]
 
 

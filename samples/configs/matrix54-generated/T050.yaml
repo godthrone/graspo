@@ -18,9 +18,9 @@ training:
   learning_rate: 5.0e-06
   gradient_accumulation_micro_batches: 1
   save_checkpoint_every_epoch: false
-  save_steps: 21
+  save_steps: 101
 launch:
-  nproc_per_node: 4   # ★ 由 cards=4 推导（§12 同源：卡数与进程数不得各改一半）
+  nproc_per_node: 2   # ★ 由 cards=2 推导（§12 同源：卡数与进程数不得各改一半）
 distill:
   teacher_model_path: /models/Qwen3.8-27B
   offload_teacher_model: true

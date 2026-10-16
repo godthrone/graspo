@@ -45,9 +45,13 @@ SSH_TARGET = f"{SSH_USER}@{SSH_HOST}"
 # ★ 该文件与 `subsets-v2/T0NN.jsonl` **逐字节相同**（27 档同内容，md5 2049ff04…）；
 #   `"image": "../images/…"` 按**数据文件父目录**解析 ⇒ /work/elam-v5/images
 #   （228 上实测：该 100 行引用的 200 张图像 200/200 在场，missing=0）。
-# ⛔ **20 行档不适用**（T031–T033/T037–T039/T043–T045/T046–T051）：n=20 ⇒ 每样本 5.00 pp，
-#   而 GRASPO 通过线正好 +5.0 pp ⇒ 判据退化为「1 个样本决定成败」；主席对该批的裁定尚未回来
-#   ⇒ **本包不动它们**（保持 702 口径），其待定状态登记在矩阵与工位 report.md。
+# ★★ **原 20 行档的口径已裁定**（2026-10-16 主席裁定「18 个 20 行档放大到 100 行」）：
+#   由「n=20 ⇒ 每样本 5.00 pp ＝ GRASPO 通过线 ⇒ 判据退化为「1 个样本决定成败」、⛔ 不下效果结论」
+#   改为**纳入同一 fit 口径**（`subset_size` 20 → 100 ⇒ 每样本粒度回到 1.00 pp）。
+#   ⇒ `FIT_CALIBER_TIERS` 由 T001–T027 扩到 **45 档**。
+#   ★ 其中 10 档**不可执行**（T044 2 卡实测 OOM；T046–T051 首步实测 OOM；T052–T054 `not_applicable`、
+#     无生成件）⇒ 本脚本对它们**只声明口径**，⛔ 不为它们伪造可跑配置（`ckpt` 断言会先 fail-closed）；
+#     具名不可执行原因登记在矩阵行内 `not_executable_reason`。
 # ⛔ **9 个 formal 档不动**（T028–T030/T034–T036/T040–T042）：训练源 = 全量 train 前 N，
 #   措辞分布与 702 评测集本就一致（48–288 行，非 100 行档）。
 # ★ 重叠分析（`train_dataset_path` / `train_limit`）**随档取真值**：原先写死
@@ -55,7 +59,11 @@ SSH_TARGET = f"{SSH_USER}@{SSH_HOST}"
 #   而 mini 档实际只训 100 行 ⇒ 剔掉的样本与该档训练过的图像毫无关系（T011 实证
 #   `train_subset.sample_count=6378` / `overlap_excluded_count=169`，而实测
 #   mini100 × 702 图像交集 = 0）。现改为**该档自己的训练集**：100 行档 = 同一份文件 + 100。
-FIT_CALIBER_TIERS = tuple(f"T{i:03d}" for i in range(1, 28))
+FIT_CALIBER_TIERS = tuple(f"T{i:03d}" for i in range(1, 28)) + (
+    # ★ 2026-10-16 扩面：原 18 个「20 行档」（GRASPO×ms-swift ×9 + OPD ×9）
+    "T031", "T032", "T033", "T037", "T038", "T039", "T043", "T044", "T045",
+    "T046", "T047", "T048", "T049", "T050", "T051", "T052", "T053", "T054",
+)
 FIT_CALIBER_SUBSET = 100
 FIT_CALIBER_JSONL = "/work/elam-v5/mini-dataset/mini-short-mm-train.jsonl"
 TEST_JSONL = "/work/elam-v5/data/test.jsonl"
@@ -65,7 +73,7 @@ if _is_fit:
     # ★ 评测集 = 训练文件本身；重叠分析按定义恒为 100/100 ⇒ 见矩阵口径说明（⛔ 不作次级读数）
     ds_path, ds_split, tr_path, tr_limit = FIT_CALIBER_JSONL, "train", FIT_CALIBER_JSONL, str(FIT_CALIBER_SUBSET)
 else:
-    # 20 行档 / 9 formal 档：保持 702 口径（⛔ 本包不动；train_limit 的既有缺陷登记在案、未修）
+    # 仅剩 9 个 formal 档：保持 702 口径（⛔ 不动；train_limit 的既有缺陷登记在案、未修）
     ds_path, ds_split, tr_path, tr_limit = TEST_JSONL, "test", FULL_TRAIN_JSONL, "null"
 print(f"CALIBER tier={tier} fit={_is_fit} dataset_path={ds_path} dataset_split={ds_split} "
       f"train_dataset_path={tr_path} train_limit={tr_limit}")

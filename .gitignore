@@ -79,3 +79,10 @@ experiment_data/
 .dataset/
 .datasets/
 *.bak
+
+# ★ 变异测试的临时副本：`test_run_matrix54_runner.py` 的负向（突变）用例会把 runner 的变异副本
+#   写进 `tests/e2e/`（**必须**与 runner 同级 —— 它用 `dirname($0)/../..` 反推仓库根 `ROOT_DIR`，
+#   挪去 tmp_path 会让守卫脚本与挂载源指向错处）。用例内由 autouse fixture 保证删除，
+#   但**进程被 SIGKILL 时不会执行** ⇒ 这里兜底忽略：泄漏的副本不得进入口门禁候选集
+#   （候选集 = `git ls-files` ∪ `--others --exclude-standard`）。
+tests/e2e/_mutant_*.sh
