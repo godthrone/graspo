@@ -320,7 +320,7 @@
       "relative_path_under_data_root": "mini-dataset/mini-short-mm-train.jsonl",
       "jsonl_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
       "line_count": 100,
-      "purpose": "mini 数据集只用于「矩阵跑通」（压时间/压成本），**效果评测必须用全量 test 集**（/work/elam-v5/data/test.jsonl，702 行）；mini 的跑通结果**不得**当作效果结论。",
+      "purpose": "mini 数据集只用于「矩阵跑通」（压时间/压成本）；**效果评测集按档分列**（2026-10-16 口径）：★ **100 行档**（`subset_size == 100`，CPT/SFT 的 T001–T027）＝ **fit 口径（训练集自评）**——评测集就是该档**自身训练用的同一份文件**（100 行、`dataset_split: train`）；★ 该读数只是「在该档自身训练集上的拟合表现」，**⛔ 不得作为泛化能力解读**；★ **20 行档**（GRASPO/OPD）是否随本口径变更**尚未裁定**（n=20 ⇒ 每样本 5.00 pp、与 GRASPO 通过线 +5.0 pp 同量级 ⇒ 判据退化为「1 个样本决定成败」）⇒ ⛔ 本注记**不为 20 行档下任何效果结论**；★ 其余档仍用平台方 702 行评测集（/work/elam-v5/data/test.jsonl，702 行）。★ 无论哪种口径，mini 的**跑通**结果都**不得**当作效果结论。",
       "isolation": "文件名带 `mini-short-mm-` 前缀且落独立目录 `mini-dataset/`，与源数据 `data/train.jsonl` **物理隔离**（用户硬约束：靠命名与路径防误用；源数据只读；禁止混放同名文件）"
     },
     "train_path_not_the_source_note": "每档 `data.train_path` 只约束**生成位置**（<RUN_ROOT>/<Tier>/subsets/<Tier>.jsonl），**不约束读取源**；runner 的 `TRAIN_PATH == dirname(TRAIN_PATH)/<Tier>.jsonl` 断言与图像根反推 `dirname(dirname(train_path))/images` 都依赖它 ⇒ **不要改配置来换数据源**，换源只切本段 `train_source`"

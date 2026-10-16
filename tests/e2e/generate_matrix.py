@@ -45,8 +45,12 @@
 
 **训练子集的取数来源（本生成器是唯一真相源）**：默认取 **mini 数据集**
 （`<ELAM_HOST>/mini-dataset/mini-short-mm-train.jsonl`，100 行、sha256 记入 manifest 的
-`data.mini_dataset`）——它只用于「矩阵跑通」阶段压时间/压成本。**效果评测必须用全量 test 集
-（`data/test.jsonl`，702 行），不得用 mini 集的跑通结果替代效果结论。**
+`data.mini_dataset`）——它只用于「矩阵跑通」阶段压时间/压成本。**效果评测集按档分列**
+（2026-10-16 评测口径 V1，逐字口径见常量 `MINI_PURPOSE_NOTE`）：**100 行档**
+（CPT/SFT，`subset_size == 100`）= **fit 口径（训练集自评）**、评测集就是该档自身训练用的同一份文件，
+★ 该读数**⛔ 不得作为泛化能力解读**；**20 行档**（GRASPO/OPD）是否随本口径变更**尚未裁定**
+⇒ ⛔ 不为它下效果结论；其余档仍用 702 行 test 集。
+★ 无论哪种口径，**mini 集的跑通结果都不得替代效果结论**。
 ⚠ **不要为了"顺手修正"去改 `data.train_path`**：该字段只约束**生成位置**，不约束**读取源**；
 每档的 `<Tier>.jsonl` 仍生成到原 `$RUN_DIR/subsets/`，runner 的断言
 `TRAIN_PATH == dirname(TRAIN_PATH)/<Tier>.jsonl` 与图像根反推
@@ -823,10 +827,19 @@ TRAIN_SOURCE_MINI = "mini"
 TRAIN_SOURCE_FULL = "full"
 TRAIN_SOURCES: tuple[str, ...] = (TRAIN_SOURCE_MINI, TRAIN_SOURCE_FULL)
 
-#: 跑通阶段**必须**说明的一句话：mini 不是效果口径。
+#: 跑通阶段**必须**说明的一句话：mini 不是唯一效果口径，口径**按档分列**（2026-10-16 评测口径 V1）。
+#: ★ 旧句「效果评测必须用全量 test 集；mini 的跑通结果不得当作效果结论」对 **100 行档已不成立**：
+#:   100 行档的评测集 = 该档**自身训练用的同一份文件**（fit 口径），故 2026-10-16 改写。
 MINI_PURPOSE_NOTE = (
-    "mini 数据集只用于「矩阵跑通」（压时间/压成本），**效果评测必须用全量 test 集**"
-    f"（{ELAM_TEST_JSONL}，{ELAM_TEST_COUNT} 行）；mini 的跑通结果**不得**当作效果结论。"
+    "mini 数据集只用于「矩阵跑通」（压时间/压成本）；**效果评测集按档分列**（2026-10-16 口径）："
+    "★ **100 行档**（`subset_size == 100`，CPT/SFT 的 T001–T027）＝ **fit 口径（训练集自评）**"
+    "——评测集就是该档**自身训练用的同一份文件**（100 行、`dataset_split: train`）；"
+    "★ 该读数只是「在该档自身训练集上的拟合表现」，**⛔ 不得作为泛化能力解读**；"
+    "★ **20 行档**（GRASPO/OPD）是否随本口径变更**尚未裁定**（n=20 ⇒ 每样本 5.00 pp、"
+    "与 GRASPO 通过线 +5.0 pp 同量级 ⇒ 判据退化为「1 个样本决定成败」）"
+    "⇒ ⛔ 本注记**不为 20 行档下任何效果结论**；"
+    f"★ 其余档仍用平台方 702 行评测集（{ELAM_TEST_JSONL}，{ELAM_TEST_COUNT} 行）。"
+    "★ 无论哪种口径，mini 的**跑通**结果都**不得**当作效果结论。"
 )
 
 

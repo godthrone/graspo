@@ -242,7 +242,10 @@
   这是 base 挂载源**同族第四次**：前三次是"写错"，第四次是"**验证了错的层**"。
 - 落地件：`launch_pipeline.check_script_mount_sources()`（对脚本文本断言：`:/model` 的源必须是
   宿主模型根下的路径或脚本内解析到该处的变量；⛔ 拒 `/model`、`/models/…`、`/evalout/…`、
-  `/workspace/…`、`/runs/…`）＋ `render_eval_script()` 直接把宿主路径字面量嵌入模板。
+  `/workspace/…`、`/runs/…`）＋ `render_eval_script()` 把**运行期取值**（环境派生/入参的宿主路径，
+  见 §18）解析后写进模板。
+  ★ **2026-10-16 订正**：仓内已无宿主路径字面量 ⇒ 原先"直接把宿主路径**字面量**嵌入模板"的写法
+  在去标识后**不再成立**（现为运行期取值 / 环境派生，缺省值由 `__file__` 与 `$HOME` 推导）。
 
 ## 16. 评测路径由**形态探测**决定，⛔ 不靠惯性（全参 ⇒ 零 merge）
 
@@ -300,3 +303,16 @@ python3 $TREE/scripts/run_guards.py cards-busy --ps-file /tmp/ps.txt --inspect-f
 - 实证三条（2026-10-13）：① **T022 撞卡** —— 连排 T032 评测 + T029 后立刻起 T022，快照缺 GPU6 ⇒
   `plan_full_cards` 返回 `['6']` ⇒ 与评测同卡；② **T034 起后 8 s 仍未登记**；③ **T043 评测起后亦未登记**。
   ⇒ 前一次同类被门禁拦下、后两次放行 ⇒ **光靠台账不够，必须"起跑后回验"**。
+
+## 18. 评测生成脚本的运行期取值（最短 runbook，2026-10-16 补）
+
+- 生成脚本里的宿主路径与远端执行目标一律**运行期取值**（§15.1：源码里不留内网字面量）。
+  本批引入的 6 个变量与必需等级：
+  - `GRASPO_EVAL_SSH_USER`、`GRASPO_EVAL_SSH_HOST` —— ★ **必需**（两者任一缺失 ⇒
+    `scripts/gen_eval.py` **fail-closed 退出**；⛔ 不回落成假地址把命令静默发到错机器）。
+  - `GRASPO_EVAL_TREE`、`GRASPO_EVAL_DIR`、`GRASPO_MODEL_HOST_ROOT`、`GRASPO_ELAM_V5_DIR`
+    —— 可选，有按脚本自身位置 / `$HOME` 推导的默认值。
+- ★ **这 4 个默认值只在"在部署机上、以部署账号、从部署树运行"时才成立，且该前提未在部署机实测。**
+  在别的机器上直接跑生成脚本**不报错**，而是**静默产出指向本机路径的脚本**（`$T`/`$EV`/`-v …:/models`/
+  `-v …:/work/elam-v5` 全落在本机）⇒ 起跑前必须逐条核对生成脚本里的宿主路径。
+- `scripts/launch_pipeline.py` 侧同族变量为 `GRASPO_MODEL_HOST_ROOT` / `GRASPO_ELAM_V5_DIR`。

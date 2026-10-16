@@ -362,3 +362,4 @@ python3 -m py_compile tools/matrix/<改动文件>.py     # 或等价的 AST 解�
   （与 `TP×PP×DP == nproc` 组成"身份同源"检查）；两条回归用例见
   `tests/scripts/test_gen_tier_json_no_eval.py`。
 ★ **入口登记**：★ `tools/matrix/freeze_table.py` 属**常设冒烟对象**（无参运行 ⇒ rc==0、输出含三件 sha 行）⇒ 已按 `HELP` 模式登记入 `tests/scripts/test_entry_smoke.py` 的 `POLICY`（★ 与"新增入口必须同批登记"纪律一致）✓
+★ **入口登记**（2026-10-16）：★ `tests/e2e/regen_field_guard.py`（生成链「重生成不得丢在盘字段」的共享守卫库，被 `generate_matrix.py` / `generate_matrix_manifest_source.py` / `generate_matrix_manifest_fsdp.py` 三个生成器 import）⇒ 其**新增时仍是未跟踪文件**、`git ls-files` 发现不到，故 `a1e53b1` 提交后才由本闸门报出**漏登记**；本件**无 `__main__`/无 CLI**（不适合 `HELP` 冒烟）⇒ 按 `COMPILE` 模式登记入 `POLICY`，并保留"未具名登记即失败"的 fail-closed 断言（⛔ 未放宽）✓

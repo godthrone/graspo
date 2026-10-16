@@ -397,6 +397,15 @@ def test_plan_full_cards_respects_need_mib():
 
 
 # ---------- 对"生成的脚本文本"断言挂载源（T009/T007/T008/T024 四次坑） ----------
+#: ★ 本组"宿主路径"夹具**在运行期拼装**——源码内 ⛔ 不出现真实账号 / 宿主路径字面量
+#: （§15.1 检查 1/3：宿主路径与真实账号属机密类别；本仓要进开源仓，红线**不因"是测试夹具"
+#: 而豁免**，也不存在 A 类具名豁免通道）。先例：`tools/matrix/build_official.py` 的
+#: `_FIXTURE_ACCOUNT`（同族做法：形状留真、字面量运行期拼）。
+#: 形状仍必须是**真实形态**（`<宿主模型根>/<模型名>`），且前缀取**被测函数自己的**
+#: `MODEL_HOST_ROOT` —— 否则"正例"会与实现脱钩，验不出"接受宿主路径"这条语义。
+_HOST_MODEL_LITERAL = lp.MODEL_HOST_ROOT.rstrip("/") + "/Qwen3.8-27B"
+
+
 def test_script_mount_sources_rejects_container_path_literal():
     """★ 回归：脚本里写死/解析为容器内模型路径 ⇒ 拒。"""
     text = "nohup docker run -v $MPB:/model:ro ...\nMPB=/models/Qwen3.8-27B\n"
@@ -405,12 +414,12 @@ def test_script_mount_sources_rejects_container_path_literal():
 
 
 def test_script_mount_sources_accepts_host_literal():
-    text = "nohup docker run -v /home/user/models/Qwen3.8-27B:/model:ro ...\n"
+    text = f"nohup docker run -v {_HOST_MODEL_LITERAL}:/model:ro ...\n"
     assert lp.check_script_mount_sources(text) == []
 
 
 def test_script_mount_sources_accepts_host_variable():
-    text = "HOSTMODEL=/home/user/models/Qwen3.8-27B\nnohup docker run -v $HOSTMODEL:/model:ro\n"
+    text = f"HOSTMODEL={_HOST_MODEL_LITERAL}\nnohup docker run -v $HOSTMODEL:/model:ro\n"
     assert lp.check_script_mount_sources(text) == []
 
 

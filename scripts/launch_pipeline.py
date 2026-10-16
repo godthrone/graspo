@@ -155,9 +155,20 @@ def check_merged_artifact(host_merge_dir: str, eval_container_path: str) -> list
     return problems
 
 
-#: 模型路径的"容器内 → 宿主"映射根（228）：容器里看到 /models，宿主上是 /home/user/models
+#: 模型路径的"容器内 → 宿主"映射根（部署机）：容器里看到 /models，宿主上是**宿主模型根**。
+#: ★ §15.1（机密）：真实账号 / 宿主路径 / 内网地址一律不得写成源码字面量——本文件要进开源仓，
+#:   故宿主根在**运行期**取值：默认由运行账号的 `$HOME` 推导（`$HOME/models/`），
+#:   需要换根时用**唯一**覆写入口 `GRASPO_MODEL_HOST_ROOT`（§1.4 单一真相源，⛔ 不设多级 fallback）。
+#:   同理，宿主侧 elam 数据根见 `ELAM_HOST_DIR`（`GRASPO_ELAM_V5_DIR`）。
 MODEL_CONTAINER_ROOT = "/models/"
-MODEL_HOST_ROOT = "/home/user/models/"
+MODEL_HOST_ROOT = (
+    os.environ.get("GRASPO_MODEL_HOST_ROOT")
+    or os.path.join(os.path.expanduser("~"), "models")
+).rstrip("/") + "/"
+#: 宿主侧 elam 数据根（评测容器挂到 `/work/elam-v5`）；同上为运行期取值，⛔ 不入源码字面量。
+ELAM_HOST_DIR = os.environ.get("GRASPO_ELAM_V5_DIR") or os.path.join(
+    os.path.expanduser("~"), "elam-v5-balanced"
+)
 
 
 def resolve_base_mount_source(model_path: str, host_root: str = MODEL_HOST_ROOT) -> tuple[str | None, str]:
@@ -166,7 +177,7 @@ def resolve_base_mount_source(model_path: str, host_root: str = MODEL_HOST_ROOT)
     ★ 这是 228 上一次事故 + 一次险些事故的收口：`$MP`（本档 config 里的 `model_path`）是
     **容器内路径**（如 `/models/Qwen3.8-27B`），直接当挂载源写进 `-v` 会让 docker 建空目录，
     随后 vLLM 报 `Invalid repository ID or local directory specified: '/model'`（T024 实测）。
-    规则：`/models/X` ⇒ `<host_root>X`（默认 `/home/user/models/X`）并断言其存在；
+    规则：`/models/X` ⇒ `<host_root>X`（默认 `<宿主模型根>/X`，即 `MODEL_HOST_ROOT`）并断言其存在；
     若传入的已经是宿主路径则直接校验存在性。
     """
     if not model_path or not str(model_path).strip():
@@ -271,8 +282,8 @@ say "{tier} eval START GPU=$G port=$PORT ck={checkpoint} base=$MP"
 python3 $T/scripts/run_guards.py fresh --dir "$MD" --phase pre | tee -a "$LOG" || {{ say "§8(pre) 失败 ⇒ fail-closed"; echo stale > "$EV/EVAL-ABORTED"; exit 6; }}
 docker run --rm --name {tier}-export-$TS --network=none --runtime=nvidia --gpus "\"device=$G\"" -e NVIDIA_VISIBLE_DEVICES=$G \
   -e GRASPO_IMG=$IMG -e GRASPO_BASEIMG=$BASEIMG \
-  -v $T:/workspace/graspo:ro -v /home/user/models:/models:ro -v $T/runs:/runs:ro -v $EV:/evalout \
-  -v /home/user/elam-v5-balanced:/work/elam-v5:ro -w /workspace/graspo -e PYTHONPATH=/workspace/graspo/src $IMG \
+  -v $T:/workspace/graspo:ro -v {models_host_root}:/models:ro -v $T/runs:/runs:ro -v $EV:/evalout \
+  -v {elam_host_dir}:/work/elam-v5:ro -w /workspace/graspo -e PYTHONPATH=/workspace/graspo/src $IMG \
   graspo {export_cmd} > "$EVLOG/02-eval-export.txt" 2>&1
 say "export rc=$?"
 python3 $T/scripts/run_guards.py fresh --dir "$MD" --phase post --since $TS | tee -a "$LOG" || {{ say "§8(post) 失败 ⇒ fail-closed"; echo export-failed > "$EV/EVAL-ABORTED"; exit 6; }}
@@ -297,7 +308,7 @@ say "vLLM base READY"; say "--- eval base + delta ---"
 bash "$EV/run-eval.sh" "$T" "$EV" {tier_upper} base "$EV/eval-{tier_lower}-base.yaml" > "$EVLOG/04-run-eval-base.out" 2>&1
 say "eval base rc=$?"; docker stop {tier}-vllm-base-$TS >/dev/null 2>&1
 docker run --rm --network=none -e GRASPO_IMG=$IMG -e GRASPO_BASEIMG=$BASEIMG \
-  -v $T:/workspace/graspo:ro -v $EV:/evalout -v /home/user/elam-v5-balanced:/work/elam-v5:ro \
+  -v $T:/workspace/graspo:ro -v $EV:/evalout -v {elam_host_dir}:/work/elam-v5:ro \
   -w /workspace/graspo -e PYTHONPATH=/workspace/graspo/src $IMG \
   graspo eval delta --before /evalout/.local/reports/base/eval_report.json --after /evalout/.local/reports/after/eval_report.json \
   --eval-config /evalout/eval-{tier_lower}-after.yaml > "$EVLOG/05-eval-delta.txt" 2>&1
@@ -311,7 +322,9 @@ def render_eval_script(*, tier: str, tree: str, eval_dir: str, checkpoint: str, 
                        vllm_image: str = "vllm-openai:v0.22.0",
                        max_num_seqs: int = 192, mamba_blocks: int = 232,
                        max_model_len: int = 8192, util: float = 0.85,
-                       host_root: str = MODEL_HOST_ROOT) -> tuple[str | None, str]:
+                       host_root: str = MODEL_HOST_ROOT,
+                       models_host_root: str | None = None,
+                       elam_host_dir: str = ELAM_HOST_DIR) -> tuple[str | None, str]:
     """**生成链唯一出口**：产出整份评测脚本（自含变量、唯一容器名、内嵌三护栏）。
 
     它把 campaign 里踩过的坑一次固化进模板：
@@ -320,13 +333,20 @@ def render_eval_script(*, tier: str, tree: str, eval_dir: str, checkpoint: str, 
       · base 侧挂载源 = **宿主路径**（`resolve_base_mount_source`，§"挂载源"族）；
       · `run_guards.py fresh --phase pre/post` 与 `mamba` 断言内嵌（§8/§10）。
     失败（基座不可解析 / 变量为空）⇒ 返回 `(None, 原因)`，调用方 fail-closed。
+
+    ★ §15.1（机密）：模板里另两处宿主挂载源（`/models`、`/work/elam-v5`）也必须**运行期取值**，
+    ⛔ 不得写死某个人的家目录。`models_host_root` 缺省取 `host_root`（**同一根，单一真相源**），
+    `elam_host_dir` 缺省取 `ELAM_HOST_DIR`。
     """
+    if models_host_root is None:
+        models_host_root = host_root
     src, why = resolve_base_mount_source(base_model_path, host_root=host_root)
     if src is None:
         return (None, why)
     for name, val in (("tier", tier), ("tree", tree), ("eval_dir", eval_dir), ("checkpoint", checkpoint),
                       ("merge_name", merge_name), ("gpu", gpu), ("export_cmd", export_cmd),
-                      ("image_run", image_run), ("image_base", image_base)):
+                      ("image_run", image_run), ("image_base", image_base),
+                      ("models_host_root", models_host_root), ("elam_host_dir", elam_host_dir)):
         if not val:
             return (None, f"参数 {name} 为空 ⇒ fail-closed")
     text = EVAL_SCRIPT_TEMPLATE.format(
@@ -335,6 +355,7 @@ def render_eval_script(*, tier: str, tree: str, eval_dir: str, checkpoint: str, 
         image_run=image_run, image_base=image_base, vllm_image=vllm_image,
         max_num_seqs=max_num_seqs, mamba_blocks=mamba_blocks, max_model_len=max_model_len,
         util=util, base_mount_src=src,
+        models_host_root=models_host_root.rstrip("/"), elam_host_dir=elam_host_dir.rstrip("/"),
     )
     problems = check_script_self_contained(text, ["T", "EV", "G", "PORT", "MD", "MP", "TS"])
     if problems:

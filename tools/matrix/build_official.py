@@ -514,10 +514,14 @@ def criteria_caliber():
     return {
         "availability_criteria": [
             "① 跑通/工程合规：退出码 0、无未捕获异常；优化器步数达标；checkpoint 完整；NaN/Inf 为 0；算法机制真实生效；产物形态合规；显存与吞吐在承诺范围内。",
-            "② 效果（★ 本轮唯一改动）：SFT ⇒ 702 条工具调用准确率 after − base ≥ +10.0 pp（epoch=4）；"
+            "② 效果（★ 本轮唯一改动）：SFT ⇒ 工具调用准确率 after − base ≥ +10.0 pp（epoch=4）；"
             "GRASPO ⇒ after − base ≥ +5.0 pp（epoch=8）；"
-            "CPT ⇒ 训练 loss 正常下降（U2 口径）且 702 准确率 after ≥ base（不劣化；epoch=2）；"
+            "CPT ⇒ 训练 loss 正常下降（U2 口径）且准确率 after ≥ base（不劣化；epoch=2）；"
             "OPD ⇒ 学生 after ≥ base（能力回收；epoch=2；教师 = SFT 之后的 27B 产物）。"
+            "★ **评测集口径（2026-10-16 主席裁定）**：**100 行档（T001–T027）= fit 口径（训练集自评）** —— "
+            "评测集就是**该档自身训练用的同一份文件**（100 行、`dataset_split: train`）；"
+            "其余档（20 行 mini 档 / 9 个 formal 档）仍用平台方自有 702 行评测集。"
+            "★ **通过线数值逐字未动**（⛔ 未放宽、⛔ 未收紧）。"
             "★ 一律用**点估计 Δ** 判定：⛔ 不做假设检验，不引入置信区间 / 显著性。",
             "③ 算法正确性检查（逐字未动）：各算法按各自清单（见第 3.2 节）；GRASPO 算法逻辑严禁改动。",
             "④ 推理验证（逐字未动）：产物可正常推理（合并 LoRA + vLLM 启动、实际前向一次拿到可解析输出）。",
@@ -525,8 +529,15 @@ def criteria_caliber():
         "caliber_change": {
             "effective": "2026-10-15",
             "source": "主席最新裁定（新四条）",
-            "changed": ("★ **唯一改动 = 判据②（效果）**：由「训练类与 GRASPO 统一 δ = +5.0 pp」改为**逐算法分列**；"
-                        "SFT epoch 由 2 改为 4；OPD 教师改为 SFT 之后的 27B 产物；★ 明确「⛔ 不做假设检验」。"),
+            "changed": ("★ **改动一 = 判据②（效果）**：由「训练类与 GRASPO 统一 δ = +5.0 pp」改为**逐算法分列**；"
+                        "SFT epoch 由 2 改为 4；OPD 教师改为 SFT 之后的 27B 产物；★ 明确「⛔ 不做假设检验」。"
+                        "★★ **改动二（2026-10-16，无冲突、两条并列）= 评测集口径**：**100 行档（T001–T027）**"
+                        "的评测集由平台方自有 702 行评测集改为**该档自身训练用的同一份文件**（100 行、"
+                        "`dataset_split: train`）⇒ 读数的含义是 **fit 口径（训练集自评）**，"
+                        "⛔ 不得读作训练分布之外的表现；★ 该改动**不改通过线数值**，旧读数按「结论与口径"
+                        "一一对应」纪律**作废**并保留于各行 `voided_conclusion.historical_effect`；"
+                        "★ 20 行档**不适用**（n=20 ⇒ 每样本 5.00 pp ＝ GRASPO 通过线 ⇒ 判据退化为 1 个样本，"
+                        "主席裁定未回、待定）、9 个 formal 档**不动**。"),
             "unchanged": "★ 判据 ①③④ **逐字未动**（见 availability_criteria 第 1/3/4 项）。",
             "superseded": ("★ 旧口径（留痕，⛔ 不再作为判定依据）：训练类（SFT / CPT / OPD）与 GRASPO **统一 δ = +5.0 pp**；"
                            "目标 +10.0 pp 仅展示、不用于判定；SFT epoch = 2。"),
@@ -537,21 +548,66 @@ def criteria_caliber():
                 "（四态翻盘 / 四态未变——仅归因与读数更正）。"
                 "★ 每条的 `kind` = `reading_change（★ 不是判据变更）`，可在档位行的 `caliber_change` 里机读。"),
         },
-        "dataset": {"id": "平台方自有评测集（名称 test.jsonl）", "availability": "平台方自有 / 不公开",
-                    "version_anchor_sha256": "c202b1e1…", "sample_count": 702,
+        "dataset": {"id": ("平台方自有评测集（名称 test.jsonl）＋ ★ **100 行档（T001–T027）的评测集 = "
+                           "该档自身训练用的同一份文件**（fit 口径，见下）"),
+                    "availability": "平台方自有 / 不公开（100 行档用该档自身训练文件，同为非公开数据）",
+                    "version_anchor_sha256": ("两种口径 —— ★ 100 行档 = 该档自身训练文件（100 行，sha256 594d41b0…）；"
+                                              "其余档 = 平台方自有评测集（702 行，c202b1e1…）"),
+                    "sample_count": "★ 100 行档 = 100（fit 口径）；其余档 = 702",
                     "method": "工具调用准确率（acc）",
-                    # ★★ 「是否同分布」口径（主席诉求 5；审查项 W9/W10）：评测集**就是**矩阵各档
-                    #    自己的训练分布的同源评测集（同源、样本 id 不重叠）——⛔ 不是「训练分布之外」的评测。
+                    # ★★ 「是否同分布」口径（主席诉求 5；审查项 W9/W10）＋ 2026-10-16 评测集口径变更（fit）：
+                    #    100 行档的评测集**就是它自己的训练文件**（不是"同分布的另一份"）；其余档仍为同源不同样本。
+                    #    ⛔ 一律不评测「训练分布之外的表现」；⛔ 「泛化」一词不进本件（主席口径）。
                     "train_eval_relation": (
-                        "★ 训练/评测**是否同分布**：**同源**（与各档训练数据同一数据集、同一分布口径），"
-                        "**样本 id 不重叠**；⛔ 本矩阵**不**评测「模型在训练分布之外的表现」。"
-                        "★ 图像层面的同源不成立须并读：训练与评测图像去重交集 752 张（占评测图像 38.5%），"
-                        "且 169/702 个评测样本的图像集是某个训练样本的子集 ⇒ 评测结论按此口径解读；"
-                        "矩阵行给出「剔除 169 条图像重叠」的敏感性读数。★ 口径出处：跑次 manifest 的"
-                        "数据完整性注记。"),
+                        "★★ **评测集口径（2026-10-16 主席裁定）逐档分列**："
+                        "① **100 行档（T001–T027）= fit 口径（训练集自评）** —— 评测集 = **该档自身训练用的"
+                        "同一份文件**（100 行、`dataset_split: train`）⇒ 读数回答的是「该档训练是否生效」；"
+                        "⛔ **不得读作训练分布之外的表现**（⛔ 本矩阵不评测该问题）。"
+                        "旧 702 行口径下的读数**已作废**，保留于各行 `voided_conclusion.historical_effect`。"
+                        "② **其余档**（20 行 mini 档 / 9 个 formal 档）= 平台方自有 702 行评测集"
+                        "（与各档训练数据同源、样本 id 不重叠）。"
+                        "★ **判别力（100 行档）**：该 100 行的 (工具, 动作) 类别**最大类占 19%**"
+                        "（19/100）⇒ **常数预测器上界 19%**；而通过线 = `after − base ≥ +10.0 pp`（点估计）"
+                        "⇒ **跨过它必须真的读图**，任何常数输出都拿不到。"
+                        "★ **同时作废的旧读数（⛔ 不得引用）**：「剔除 169 条图像重叠后 32.27%」与"
+                        "「训练/评测图像去重交集 752 张（占评测图像 38.5%）」出自 **702 行评测集 × 全量 6378 行"
+                        "训练集**口径；mini 档实测 **mini100 × 702 图像交集 = 0** ⇒ 该口径对 mini 档"
+                        "**自始不成立**（生成的评测 yaml 原先写 `train_limit: null`，已随本次口径变更订正）。"
+                        "★ **V1 档的重叠剔除次级读数按定义退化**：评测集 ≡ 训练集 ⇒ 重叠 100/100、剔除后 0 条 "
+                        "⇒ `accuracy_percent_excluding_overlap` / `overlap_excluded_count` 在 100 行档上"
+                        "**不构成次级读数**、⛔ 不得引用。"),
                     "train_eval_relation_role": (
                         "★ 本条是**评测集口径**（不是能力承诺）：矩阵只声明「已在本口径下完整跑通并取数」，"
-                        "使用者自身任务/数据集/参数下的效果不在承诺范围（见边界声明）。")},
+                        "使用者自身任务/数据集/参数下的效果不在承诺范围（见边界声明）。"
+                        "★ **100 行档为 fit 口径（训练集自评）**：其读数只证明该档在其自身训练数据上的"
+                        "拟合与训练有效性，⛔ 不得据此外推到其他数据上的表现。")},
+        # ★★ 评测集口径登记（机读，2026-10-16 主席裁定）：与 `dataset` 的散文同源，供机读消费。
+        "eval_caliber": {
+            "effective": "2026-10-16",
+            "source": "主席 2026-10-16 裁定（「用同一个数据集」：训练用什么、评测就用什么）",
+            "rule": ("★ **100 行档（判据 = 该档 `subset_size == 100`，即 T001–T027）**：评测集 = **该档自身"
+                     "训练用的同一份文件**（100 行、`dataset_split: train`）⇒ **fit 口径（训练集自评）**；"
+                     "★ 其余档（20 行 mini 档 / 9 个 formal 档）：保持平台方自有 702 行评测集 + `dataset_split: test`。"),
+            "pass_lines_unchanged": ("★ **通过线数值逐字未动**：SFT ⇒ `after − base ≥ +10.0 pp`；"
+                                     "GRASPO ⇒ `after − base ≥ +5.0 pp`；CPT ⇒ `after ≥ base（不劣化）`；"
+                                     "OPD ⇒ `学生 after ≥ base（能力回收）`；一律点估计、⛔ 不做假设检验。"),
+            "fit_caliber_label": "fit 口径（训练集自评）",
+            "discriminative_power": ("★ 100 行档：训练集 (工具, 动作) 类别最大类 **19/100 = 19%** ⇒ "
+                                     "**常数预测器上界 19%** ⇒ 跨 +10.0 pp 必须真读图；"
+                                     "每样本粒度 **1.00 pp**（达线需净跳 ≥10 条）。"),
+            "not_applicable": ("★ **20 行档明确不适用**：n=20 ⇒ 每样本 **5.00 pp**，而 GRASPO 通过线正好 "
+                               "+5.0 pp ⇒ 判据退化为「1 个样本决定成败」；★ **主席对该批的裁定尚未回来**"
+                               " ⇒ 本件**不改其口径**，其状态待定。"),
+            "untouched": "★ 9 个 formal 档（T028–T030 / T034–T036 / T040–T042）不动：训练源 = 全量训练集前 N，与 702 评测集本就同分布。",
+            "overlap_analysis_fix": ("★ 顺带订正：生成的评测 yaml 原先写 `train_limit: null` ⇒ 重叠分析用的是"
+                                     "**全量 6378 行训练集**（实证 `train_subset.sample_count=6378`、"
+                                     "`overlap_excluded_count=169`），而 mini 档实际只训 100 行 ⇒ 现改为"
+                                     "**该档自身训练集 + 该档子集条数（100）**。"),
+            "consequence": ("★ 后果判据：**旧读数取自 702 行评测集、与本行现行评测集口径不再一一对应** ⇒ 结论作废、"
+                            "该档标「尚未验证」（行级机读字段 `eval_caliber_consistency`；旧读数保留于 "
+                            "`voided_conclusion.historical_effect`，⛔ 不抹）。"
+                            "★ 与 lr 口径的叠加：两批档**有交叠** ⇒ ⛔ 不覆盖既有 `caliber_cause`，两条原因**并列写清**。"),
+        },
         # ★★ lr 口径登记（审查项 🔴B1/W3）：机读字段 `lr_policy` / `ruled_out` 必须在正式件可查。
         #    取值表**直接引用唯一真相源** `extract_spec.LR_POLICY`（⛔ 不在此抄写）。
         "lr_policy": _lr_policy_block(),
@@ -568,22 +624,26 @@ def criteria_caliber():
                                 "目标值 +10.0 pp（仅展示、不用于判定）；SFT epoch = 2。"),
             "by_method": {
                 "sft": {"criterion": "delta_pp", "op": ">=", "value": 10.0, "unit": "pp",
-                        "metric": "702 条工具调用准确率（after − base）",
+                        "metric": ("工具调用准确率（after − base）；★ **100 行档 = fit 口径**"
+                                   "（评测集 = 该档自身训练文件，100 行）；其余档 = 平台方自有 702 行评测集"),
                         "pass_line_text": "after − base ≥ +10.0 pp",
                         "epoch": 4, "epoch_previous": 2,
                         "epoch_note": ("★ epoch 由 2 改为 4（判据② 的配置改动）；"
                                        "★ 现有 SFT 跑次均为 epoch=2 旧配置 ⇒ 其结论一律标注「待 epoch=4 重跑复核」。")},
                 "graspo": {"criterion": "delta_pp", "op": ">=", "value": 5.0, "unit": "pp",
-                           "metric": "702 条工具调用准确率（after − base）",
+                           "metric": ("工具调用准确率（after − base）；★ **100 行档 = fit 口径**"
+                                   "（评测集 = 该档自身训练文件，100 行）；其余档 = 平台方自有 702 行评测集"),
                            "pass_line_text": "after − base ≥ +5.0 pp",
                            "epoch": 8, "epoch_previous": 8, "epoch_note": "epoch=8 不变。"},
                 "cpt": {"criterion": "non_inferiority", "op": ">=", "value": 0.0, "unit": "pp",
-                        "metric": "702 条工具调用准确率（after − base）",
+                        "metric": ("工具调用准确率（after − base）；★ **100 行档 = fit 口径**"
+                                   "（评测集 = 该档自身训练文件，100 行）；其余档 = 平台方自有 702 行评测集"),
                         "pass_line_text": "after ≥ base（不劣化）",
                         "also": "训练 loss 正常下降（U2 口径）",
                         "epoch": 2, "epoch_previous": 2, "epoch_note": "epoch=2 不变。"},
                 "opd": {"criterion": "non_inferiority", "op": ">=", "value": 0.0, "unit": "pp",
-                        "metric": "702 条工具调用准确率（学生 after − base）",
+                        "metric": ("工具调用准确率（学生 after − base）；★ **100 行档 = fit 口径**"
+                                 "（评测集 = 该档自身训练文件，100 行）；其余档 = 平台方自有 702 行评测集"),
                         "pass_line_text": "学生 after ≥ base（能力回收）",
                         "teacher": "SFT 之后的 27B 产物",
                         "epoch": 2, "epoch_previous": 2,
@@ -655,6 +715,12 @@ def criteria_caliber():
                 "逐样本 GT 不一致 **0**；预测 (name,action) 不同 **21/702 = 2.99%**；all_right 翻转 **5/702**。"
                 "定性 = **vLLM 连续批处理浮点非确定性**。证据件 `13-base-rerun-variance.md` "
                 "sha `449d5f7253860934558bca732f37d8fd71bf13c91e2f02dcd91827f961888620`。"
+                "★ 用途：供「基准散布 / 阈值余量」判断；★ **δ 判定不变，⛔ 不因此改阈值**。"
+                "★★ **2026-10-16 限定**：上列噪声底**绑定 702 行评测集** ⇒ **对 100 行档（fit 口径）"
+                "不再适用、⛔ 不得引用**（100 行档的配对噪声未实测；按翻转率等比外推约 ±0.84 pp，"
+                "**属推断、未实测**，⛔ 不作判定依据）。"
+                "★ **100 行档的分辨力（如实）**：每样本 **1.00 pp**、达线需净跳 **≥10 条**；"
+                "通过线仍 `after − base ≥ +10.0 pp`（点估计、⛔ 不做假设检验）。",
                 "★ 用途：供「基准散布 / 阈值余量」判断；★ **δ 判定不变，⛔ 不因此改阈值**。",
             ],
             "caliber_corrections": [
@@ -698,15 +764,28 @@ def short_note(row, full):
     st = str(row.get("status") or "—")
     _rule0 = _caliber_rule(row.get("train_method"))
     parts = [f"判定：{st}。"]
-    # ★★ 读数-配置一致性作废（🔴B1/B2）：**放在最前**（截断也不丢这条硬要求）。
-    #    该档结论因「读数取自旧参数（旧 lr 口径 / 旧 epoch）、本行参数已更正」而作废 ⇒
-    #    ⛔ 不得在短备注里把旧读数当**有效读数**呈现（旧读数在 effect/note_full 与
-    #    `reading_consistency` 里保留为历史）。
+    # ★★ 口径一致性作废：**放在最前**（截断也不丢这条硬要求）。
+    #    该档结论因「读数取自旧参数/旧口径、本行现行口径已变」而作废（**两条独立原因**：
+    #    ① lr 口径（`reading_consistency`）；② 评测集口径 = fit 口径（`eval_caliber_consistency`））
+    #    ⇒ ⛔ 不得在短备注里把旧读数当**有效读数**呈现（旧读数在 `voided_conclusion` 里保留为历史）。
     _rcc0 = row.get("reading_consistency") if isinstance(row.get("reading_consistency"), dict) else {}
+    _ecc0 = row.get("eval_caliber_consistency") if isinstance(row.get("eval_caliber_consistency"), dict) else {}
     _voided = st == S_UNVERIFIED and row.get("voided_conclusion")
     if _voided:
-        _mm = "；".join(str(x) for x in (_rcc0.get("mismatch") or [])) or "参数已更正"
-        parts.append(f"★ 结论作废（读数与当前配置不对应）：{_mm} ⇒ 待重跑复核。")
+        _lr_mm = "；".join(str(x) for x in (_rcc0.get("mismatch") or []))
+        _ev_mm = "；".join(str(x) for x in (_ecc0.get("mismatch") or []))
+        _lr_bad = bool(_rcc0.get("consistent") is False)
+        _ev_bad = bool(_ecc0.get("consistent") is False)
+        if _lr_bad and _ev_bad:
+            _why = "两条口径变更叠加（lr ＋ 评测集）"
+            _mm = "／".join(x for x in (_lr_mm, _ev_mm) if x) or "参数已更正"
+        elif _ev_bad:
+            _why = "评测集口径变更"
+            _mm = _ev_mm or "评测集已由 702 行改为本档自身训练文件（100 行）"
+        else:
+            _why = "读数与当前配置不对应"
+            _mm = _lr_mm or "参数已更正"
+        parts.append(f"★ 结论作废（{_why}）：{_mm} ⇒ 待重跑复核。")
     # ★★ 「epoch 已变 ⇒ 结论待重跑复核」标记（**数据驱动**：由 `threshold.by_method.<方法>` 的
     #    epoch / epoch_previous 推出，⛔ 不写死方法名与数字）。放在最前 ⇒ 截断也不会丢这条硬要求。
     #    ★ 若该档已**按新 epoch 复核过**（行级 `caliber_change.epoch_recheck` 非空）⇒ 改标「已按 epoch=N 复核」。
@@ -1009,6 +1088,58 @@ _VOID_WRAP_MARKERS = ("已作废", "追补", "作废", "留痕", "不得引用",
 #: 机读「状态快照」键：键名本身即声明历史角色（作废前 / 后状态快照），⛔ 不追加散文追补
 _AUDIT_SNAPSHOT_KEYS = ("status_before", "status_after")
 
+# ============================================================================================
+# ★★ 2026-10-16 **评测集口径变更（V1 = fit 口径）** —— 与 lr 口径**并列的第二条作废原因** ★★
+#
+# 主席 2026-10-16 裁定（原话「我们只要同一个数据集，先训练一遍，然后测试的时候还是这个数据集」）：
+#   **100 行档**（判据 = 矩阵该档 `subset_size == 100`，即 T001–T027）的**评测集改为该档自身
+#   训练用的同一份文件**（100 行、`dataset_split: train`）⇒ 读数含义 = **fit 口径（训练集自评）**，
+#   ⛔ 不得读作训练分布之外的表现。
+# ⇒ 后果判据：**旧读数取自 702 行评测集、与本行现行评测集口径不再一一对应** ⇒ 结论作废、
+#   该档标「尚未验证」；旧读数保留于 `voided_conclusion.historical_effect`（⛔ 不抹）。
+# ★ 只对 100 行档生效（行级机读判据 = `eval_caliber_consistency.consistent is False`，
+#   ⛔ 本文件不写死档号）：20 行档（n=20 ⇒ 每样本 5.00 pp ＝ GRASPO 通过线 ⇒ 判据退化为
+#   1 个样本）**不适用**、9 个 formal 档**不动**（训练源与 702 评测集同分布）。
+# ★ 与 lr 口径的关系：两批档**有交叠**（22 档同时命中）⇒ ⛔ **不覆盖**既有 `voided_conclusion`
+#   与既有 `caliber_cause`，第二条原因**叠加**写入（`voided_conclusion.superimposed` ＋ 数据侧散文）。
+EVAL_CALIBER_AUDIT = "eval-caliber-audit/v1"
+EVAL_CALIBER_ADDENDUM_20261016 = (
+    "★★ 2026-10-16 追补：本条所记结论已因**评测集口径变更**作废 —— "
+    "100 行档的评测集改为**该档自身训练文件**（100 行、`dataset_split: train` ⇒ fit 口径），"
+    "旧读数取自 702 行评测集 ⇒ 以本行现行 `status` 为准（尚未验证）。"
+)
+VOID_ADDENDUM_BOTH_20261016 = (
+    "★★ 2026-10-16 追补：本条所记结论已作废（**lr 口径变更** ＋ **评测集口径变更** 两条原因叠加），"
+    "以本行现行 `status` 为准（尚未验证）。"
+)
+
+
+def _void_kind(row):
+    """该行结论作废的原因类别（★ 数据驱动，⛔ 不写死档号）：`lr` / `eval` / `both` / `None`。"""
+    _rcc = row.get("reading_consistency")
+    lr = isinstance(_rcc, dict) and _rcc.get("consistent") is False
+    _ecc = row.get("eval_caliber_consistency")
+    ev = isinstance(_ecc, dict) and _ecc.get("consistent") is False
+    if lr and ev:
+        return "both"
+    if ev:
+        return "eval"
+    if lr:
+        return "lr"
+    return None
+
+
+def _void_addendum(row):
+    """该行适用的「作废追补句」；**无口径作废** ⇒ 返回 ``None``。
+
+    ★ 逐行按原因类别取（lr / 评测集 / 两条叠加），⛔ 不一把梭用 lr 措辞；
+    ★ 返回 ``None`` 是**必须**的：调用方 `_fix_adjacent` 对「非口径作废」的档
+      （如 `已验证不可用` 的 OOM 档）要回退到**按现行四态**选追补句，⛔ 不能被这里的默认值顶掉。
+    """
+    return {"eval": EVAL_CALIBER_ADDENDUM_20261016,
+            "both": VOID_ADDENDUM_BOTH_20261016,
+            "lr": VOID_ADDENDUM_20261016}.get(_void_kind(row))
+
 
 def _naked_four_state(text):
     """该文本是否**裸**断言四态之一（含四态字面、且无任何作废/留痕标记）。"""
@@ -1018,27 +1149,29 @@ def _naked_four_state(text):
 
 
 def wrap_voided_conclusions(rows):
-    """★★ 把「因读数-配置一致性审计作废」的档位行内**裸四态结论句**逐条追加日期化追补。
+    """★★ 把「因口径一致性审计作废」的档位行内**裸四态结论句**逐条追加日期化追补。
 
-    ★ 只对 `status == 尚未验证` 且 `reading_consistency.consistent is False` 的行生效；
+    ★ 生效面（**数据驱动**）：`status == 尚未验证` 且（`reading_consistency.consistent is False`【lr 口径】
+      或 `eval_caliber_consistency.consistent is False`【评测集口径】）的行；
+    ★ 追补句**逐行按原因类别取**（lr / 评测集 / 两条叠加），⛔ 不把评测集口径的档套上 lr 措辞；
     ⛔ 不改原句（追加在句尾）；⛔ 不碰 `status_before/status_after` 等机读快照枚举。
     """
     for r in rows:
         if r.get("status") != S_UNVERIFIED:
             continue
-        rcc = r.get("reading_consistency")
-        if not (isinstance(rcc, dict) and rcc.get("consistent") is False):
+        if _void_kind(r) is None:
             continue
+        _add = _void_addendum(r)
         for key, val in list(r.items()):
             if isinstance(val, str):
                 if _naked_four_state(val):
-                    r[key] = val + " " + VOID_ADDENDUM_20261016
+                    r[key] = val + " " + _add
             elif isinstance(val, dict):
                 for k2, v2 in list(val.items()):
                     if k2 in _AUDIT_SNAPSHOT_KEYS:
                         continue
                     if isinstance(v2, str) and _naked_four_state(v2):
-                        val[k2] = v2 + " " + VOID_ADDENDUM_20261016
+                        val[k2] = v2 + " " + _add
     return rows
 
 
@@ -1118,8 +1251,12 @@ def _insert_adj_marker(text, a_start):
     return text[:ins] + VOID_MARK_ADJ_20261016 + " " + text[ins:]
 
 
-def _fix_adjacent(text, cur_status):
-    """反复加标记直到本字段无「无紧邻标记的矛盾断言」；再在字段末段补日期化追补。"""
+def _fix_adjacent(text, cur_status, addendum=None):
+    """反复加标记直到本字段无「无紧邻标记的矛盾断言」；再在字段末段补日期化追补。
+
+    ★ `addendum` 由调用方**逐行**给出（lr 口径 / 评测集口径 / 两条叠加）——⛔ 不再写死 lr 措辞，
+      否则评测集口径作废的档会被挂上"因 lr 口径变更作废"的**错误**追补。
+    """
     for _ in range(12):
         hits = [s for s, _e, _r in _stale_asserts(text, cur_status)
                 if _adj_gap(text, s) is None or _adj_gap(text, s) > _MAX_ADJ_GAP]
@@ -1128,7 +1265,8 @@ def _fix_adjacent(text, cur_status):
         for s in sorted(set(hits), reverse=True):
             text = _insert_adj_marker(text, s)
     if VOID_MARK_ADJ_20261016 in text and "2026-10-16 追补" not in text:
-        add = OOM_ADDENDUM_20261016 if cur_status == S_UNAVAILABLE else VOID_ADDENDUM_20261016
+        add = addendum or (OOM_ADDENDUM_20261016 if cur_status == S_UNAVAILABLE
+                           else VOID_ADDENDUM_20261016)
         text = text.rstrip() + " " + add
     return text
 
@@ -1145,12 +1283,13 @@ def ensure_adjacent_void_markers(rows):
         st = r.get("status")
         if st not in STATUS_VOCABULARY:
             continue
+        _add = _void_addendum(r)
         for key, val in list(r.items()):
             if key in _AUDIT_SNAPSHOT_KEYS:
                 continue
             if isinstance(val, str):
                 if _stale_asserts(val, st) or VOID_MARK_ADJ_20261016 in val:
-                    nv = _fix_adjacent(val, st)
+                    nv = _fix_adjacent(val, st, _add)
                     if nv != val:
                         r[key] = nv
             elif isinstance(val, dict):
@@ -1158,7 +1297,7 @@ def ensure_adjacent_void_markers(rows):
                     if k2 in _AUDIT_SNAPSHOT_KEYS or not isinstance(v2, str):
                         continue
                     if _stale_asserts(v2, st) or VOID_MARK_ADJ_20261016 in v2:
-                        nv = _fix_adjacent(v2, st)
+                        nv = _fix_adjacent(v2, st, _add)
                         if nv != v2:
                             val[k2] = nv
             elif isinstance(val, list):
@@ -1166,7 +1305,7 @@ def ensure_adjacent_void_markers(rows):
                     if not isinstance(v2, str):
                         continue
                     if _stale_asserts(v2, st) or VOID_MARK_ADJ_20261016 in v2:
-                        nv = _fix_adjacent(v2, st)
+                        nv = _fix_adjacent(v2, st, _add)
                         if nv != v2:
                             val[i] = nv
     return rows
@@ -1236,6 +1375,35 @@ def main():
                 "mismatch": _rcc.get("mismatch"),
                 "reason": _rcc.get("cause"),
             }
+        # ★★ 评测集口径一致性（V1 = fit 口径，2026-10-16 主席裁定）：100 行档的**评测集**
+        #    由 702 行改为**该档自身训练文件**（100 行、`dataset_split: train`）⇒ 旧读数与
+        #    本行现行**评测集口径**不再一一对应 ⇒ 结论**作废**、该档标「尚未验证」。
+        #    ★ ★ 与 lr 口径的关系（**强制**）：两批档有交叠（22 档）⇒ 若该档**已**因 lr 口径作废
+        #      （或已由 `conclusion_annotation` 作废）⇒ ⛔ **不覆盖**既有 `voided_conclusion`，
+        #      只把第二条原因**叠加**为 `superimposed`（⛔ 既有 `kind` / `reading` / `mismatch` 逐字保留）。
+        _ecc = r.get("eval_caliber_consistency")
+        if isinstance(_ecc, dict) and _ecc.get("consistent") is False:
+            state = S_UNVERIFIED
+            _prev = r.get("voided_conclusion")
+            if isinstance(_prev, dict):
+                _prev["superimposed"] = {
+                    "kind": "eval_caliber_change",
+                    "audit": _ecc.get("audit"),
+                    "current": _ecc.get("current"),
+                    "reading": _ecc.get("reading"),
+                    "mismatch": _ecc.get("mismatch"),
+                    "reason": _ecc.get("cause"),
+                }
+            else:
+                r["voided_conclusion"] = {
+                    "kind": "eval_caliber_change",
+                    "audit": _ecc.get("audit"),
+                    "status_before": _ecc.get("status_before"),
+                    "current": _ecc.get("current"),
+                    "reading": _ecc.get("reading"),
+                    "mismatch": _ecc.get("mismatch"),
+                    "reason": _ecc.get("cause"),
+                }
         r["status"] = state
         r.pop("spec_status", None)
 
@@ -1402,18 +1570,22 @@ def main():
         #    缺省 True（兼容既有 T011 等翻盘档的既有渲染文本）；T024 为「读数由无效转有效 + 归因更正，
         #    但四态未变（仍为不可用）」⇒ 显式 False。
         _flip = "四态翻盘" if _cc.get("four_state_flip", True) else "四态未变（★ 仅归因与读数更正）"
-        # ★★ 2026-10-16 追补（🔴R1）：该档若已被 lr 口径一致性审计作废 ⇒ 条目**末尾再加一句**追补，
+        # ★★ 2026-10-16 追补（🔴R1）：该档若已被口径一致性审计作废（**原因类别逐行取**：
+        #    lr 口径 / 评测集口径 / 两条叠加）⇒ 条目**末尾再加一句**追补，
         #    与条目内 `rule` 上携带的追补一起构成「显式包裹」（只追加、⛔ 不改原句）。
-        _voided_entry = (_r.get("status") == S_UNVERIFIED
-                         and isinstance(_r.get("reading_consistency"), dict)
-                         and _r["reading_consistency"].get("consistent") is False)
-        _tail = (" " + VOID_ADDENDUM_20261016) if _voided_entry else ""
-        _reg.append(
+        _voided_entry = _r.get("status") == S_UNVERIFIED and _void_kind(_r) is not None
+        _entry = (
             f"★ {_cc.get('effective', '')} **{_r.get('tier')}**：{_flip} —— {_cc.get('rule', '')} "
             f"★ 旧读数 {_rd(_b)}**无效、⛔ 不得引用**（保留为历史）；"
             f"★ 新读数 {_rd(_a)}**有效**。"
             f"★ 与判据口径的关系：{_cc.get('verdict_unchanged_by_caliber', '')} "
-            f"来源：{_cc.get('source', '')}。{_cc.get('epoch_marker', '')}" + _tail)
+            f"来源：{_cc.get('source', '')}。{_cc.get('epoch_marker', '')}")
+        if _voided_entry:
+            # ★ 逐行按原因类别取追补句；★ 条目内（`rule` 上）已逐字带同一句 ⇒ ⛔ 不重复追加。
+            _add = _void_addendum(_r)
+            if _add and _add not in _entry:
+                _entry += " " + _add
+        _reg.append(_entry)
     # ★★ 2026-10-16 追补（🔴R1 第③条）：把「**本次 lr 口径变更导致读数作废**」正式登记进本清单。
     #    ★ 数据驱动：作废范围由行内 `reading_consistency.consistent is False` 现算（⛔ 不写死档号/数字）；
     #    ★ 口径依据一律取 `criteria_caliber.lr_policy`（唯一真相源在 `extract_spec.LR_POLICY`）。
@@ -1434,6 +1606,40 @@ def main():
             f"★ 依据 = `meta.criteria_caliber.lr_policy`（source = {_lp.get('source', '')}；"
             f"effective = {_lp.get('effective', '')}；single_source = {_lp.get('single_source', '')}）；"
             f"★ 后果判据 = {_lp.get('consequence', '')}")
+    # ★★ 2026-10-16 追补（本次评测集口径变更 · 第二条原因）：把「**评测集改为该档自身训练文件
+    #    ⇒ 100 行档旧读数作废**」正式登记进同一清单（★ 与上面 lr 条目**并列**，⛔ 不合并、不覆盖）。
+    #    ★ 数据驱动：作废范围由行内 `eval_caliber_consistency.consistent is False` 现算（⛔ 不写死档号）；
+    #    ★ 口径依据一律取 `criteria_caliber.eval_caliber`（本函数上方生成，单一入口）。
+    _ecvoid_tiers = [_r.get("tier") for _r in rows
+                     if isinstance(_r.get("eval_caliber_consistency"), dict)
+                     and _r["eval_caliber_consistency"].get("consistent") is False]
+    if _ecvoid_tiers:
+        _ec = _cal.get("eval_caliber") or {}
+        _lrset = set(_lrvoid_tiers)
+        _both = [t for t in _ecvoid_tiers if t in _lrset]
+        _reg.append(
+            "★ 2026-10-16 **本次评测集口径变更 ⇒ 读数作废（正式登记）**：★ 新口径 = "
+            f"{_ec.get('rule', '')} ★ 标定 = **{_ec.get('fit_caliber_label', '')}** —— "
+            "读数回答「该档训练是否生效」，⛔ **不得读作训练分布之外的表现**。"
+            f"★ **口径证据（判别力）** = {_ec.get('discriminative_power', '')} "
+            f"{_ec.get('pass_lines_unchanged', '')} "
+            f"★ **作废范围 = {len(_ecvoid_tiers)} 档**"
+            f"（{', '.join(str(x) for x in _ecvoid_tiers)}；"
+            "逐档机读判据 `eval_caliber_consistency.consistent == false`）"
+            "—— 这些档的读数取自**旧 702 行评测集**、与本行现行评测集口径不再一一对应 ⇒ "
+            "**结论作废、⛔ 不得引用**；★ 旧读数与旧结论一律保留于行内 "
+            "`voided_conclusion.historical_effect`（⛔ 不抹）。"
+            f"★ **与 lr 口径的叠加（⛔ 不重复标注、⛔ 不覆盖既有 `caliber_cause`）**："
+            f"两批**有交叠 {len(_both)} 档**（{', '.join(str(x) for x in _both)}）"
+            "⇒ 这些档的作废原因是**两条并列**（lr 口径变更 ＋ 评测集口径变更），"
+            "机读字段 `voided_conclusion.superimposed` 记第二条；"
+            f"★ 仅因本次评测集口径变更作废的档 = {len(_ecvoid_tiers) - len(_both)} 档"
+            f"（{', '.join(str(x) for x in _ecvoid_tiers if x not in _lrset)}）。"
+            f"★ **顺带订正** = {_ec.get('overlap_analysis_fix', '')} "
+            f"★ **20 行档**：{_ec.get('not_applicable', '')} "
+            f"★ **不动**：{_ec.get('untouched', '')} "
+            f"★ 依据 = `meta.criteria_caliber.eval_caliber`（source = {_ec.get('source', '')}；"
+            f"effective = {_ec.get('effective', '')}）；{_ec.get('consequence', '')}")
     _cal["caliber_change"]["reading_change_registry"] = _reg
 
     doc = {

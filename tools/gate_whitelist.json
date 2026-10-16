@@ -22,6 +22,18 @@
       "reason": "`uv.lock` 中 nvidia-curand 的版本号形如 10.4.0.35 / 10.3.5.147，字面撞上 10.0.0.0/8 私有网段；同段 URL 里的 sha256 片段也可能被误判。二者均为 PyPI 发布的包版本与内容哈希，不是内网地址。本轮在完整扫描面下复跑确认：uv.lock 仅此形态命中，退出码 0。"
     },
     {
+      "rule": "private_ipv4",
+      "path": "^docker/Dockerfile\\.msswift$",
+      "content": "^\\s*ARG CUDA13_CURAND=10\\.4\\.0\\.35-1\\s*$",
+      "reason": "命中串 `10.4.0.35` 是 **nvidia-curand 的公开 PyPI 发布版本号**（与同组 `ARG CUDA13_NVCC` / `CUDA13_CUDART` / `CUDA13_COMPILER` 同为四条点分的版本写法），只是字面撞上 10.0.0.0/8 私网段，**不指向任何主机、不是内网地址**。条款依据：§15.1 检查 1「可接受形态」段明定「**放行的是形态，不是类别**」——经机械判定为版本号形态的值，在判定时即不属于该项禁令的类别；§15.1 首段分工「宪法定义检查类别，脚本定义具体匹配模式」，而宪法配套 `tools/check_secrets.sh` 对这一类误报的既有一贯口径正是**在匹配层排除版本号上下文**（`grep -v 'version.*[0-9]\\.[0-9]\\.[0-9]'`、`grep -v '^uv\\.lock:'`）。豁免**窄到该一行原文**（`ARG CUDA13_CURAND=10.4.0.35-1`）：⛔ 不是通配「任何形如 x.y.z.w 的串」，⛔ 不是放行整个 docker/ 或整类版本号。"
+    },
+    {
+      "rule": "private_ipv4",
+      "path": "^docs/licensing-exceptions\\.md$",
+      "content": "\\|\\s*`nvidia-curand`\\s*\\|\\s*10\\.4\\.0\\.35\\s*\\|",
+      "reason": "与上一条同因：命中串 `10.4.0.35` 出现在许可证例外表的 `nvidia-curand` **版本号单元格**里，是 PyPI 公开版本号，非内网地址。条款依据同 §15.1 检查 1「可接受形态 / 放行的是形态，不是类别」+ §15.1 首段分工（宪法配套 `check_secrets.sh` 以版本号上下文排除该类误报）。豁免**窄到该表格行的 `nvidia-curand` × 版本号单元格**：⛔ 不是通配「任何形如 x.y.z.w 的串」，⛔ 不是放行整份 `docs/` 或整个 `docs/licensing-exceptions.md`——该文件里其余任何命中仍会阻断。"
+    },
+    {
       "rule": "*",
       "path": "(^|/)pyproject\\.toml$|(^|/)Dockerfile(\\.msswift)?$|^scripts/check_env_versions\\.py$|^tests/|^src/",
       "content": "graspo-msswift:4\\.5\\.3",
