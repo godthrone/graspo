@@ -351,7 +351,7 @@ GPU_POOL_BY_CARDS: dict[int, list[int]] = {1: [4], 2: [4, 5], 3: [4, 5], 4: [1, 
 #:    相邻空闲对 `[2,3]`，因为「GPU1 被他人 `rrc-runtime` 占用」）。它描述的是**当时的空闲状态**，
 #:    不是设计约束；而 **GPU2 是第三方账号占用中的常驻邻居卡**（`docs/card-pool-contract.md:20-22`
 #:    规则 4「邻居资源只读不占…只观测、不排队、不干预」）⇒ 该值把邻居的卡写进了我方声明。
-#:    ⇒ 撤销后 T041 走默认映射 :data:`GPU_POOL_BY_CARDS`\[2\] = ``[4,5]``。
+#:    ⇒ 撤销后 T041 走**显式车道** :data:`TIER_GPU_OVERRIDE`\[``"T041"``\]（★ 2026-10-16 车道重出后**不再是**默认映射 ``[4,5]``）。
 #: ★ `cards`（卡数）**保持 2 不变**：卡数属基础列不得改动；本表只改"用哪几张卡"。
 #: ★ 未列出的档一律走 :data:`GPU_POOL_BY_CARDS`（上面那行映射**逐字未变**）。
 TIER_GPU_OVERRIDE: dict[str, list[int]] = {
@@ -973,13 +973,23 @@ def build_v2_manifest(
         ],
         "gpus": (
             "★ 2026-10-16：**撤销 T041 的陈旧卡位例外** `[2,3]`（2026-10-09 的一次性调度值，"
-            "把第三方账号占用中的常驻邻居卡 GPU2 写进了我方声明）⇒ T041 走默认映射 "
-            "`GPU_POOL_BY_CARDS[2] = [4,5]`。★ 其余 53 档 `gpus` **逐档逐字未变**（仍 = 本世代卡池）。"
+            "把第三方账号占用中的常驻邻居卡 GPU2 写进了我方声明）。"
+            # ★★ 以下**全部由模块数据机算**（⛔ 不手写数字、⛔ 不引入新声称；2026-10-16 订正
+            #    「自述与事实不符」：旧文自称「T041 走默认映射 [4,5]、其余 53 档逐档逐字未变」，
+            #    而车道重出后 T041 走显式车道、多数档的 gpus 已被重写 ⇒ 旧文为**假话**，已删。）
+            f"⇒ T041 走**显式车道** `TIER_GPU_OVERRIDE['T041'] = "
+            f"{json.dumps(TIER_GPU_OVERRIDE.get('T041', GPU_POOL_BY_CARDS[2]))}`"
+            f"（★ 不再是默认映射 `GPU_POOL_BY_CARDS[2] = {json.dumps(GPU_POOL_BY_CARDS[2])}`）。"
+            f"★ 同日**车道重出**：`gpus` 按**合法卡集**（:func:`legal_card_set` = "
+            f"{json.dumps(list(legal_card_set()))}）逐档重定 —— 显式车道 **{len(TIER_GPU_OVERRIDE)} 条**，"
+            f"其余档走卡数默认值 `GPU_POOL_BY_CARDS` = "
+            f"{json.dumps({str(k): v for k, v in sorted(GPU_POOL_BY_CARDS.items())}, ensure_ascii=False)}；"
+            f"⛔ 同时废止旧表述「其余 53 档逐档逐字未变」（**与事实不符**）。"
         ),
         "unchanged": (
             "counts / models / feasibility_model / runtime.checkpoint_retention / 每档的 "
             "model*/algorithm/mode/backend/cards/status/feasibility/acceptance.criteria"
-            "（★ `gpus` 见上条：仅 T041 一档改）"
+            "（★ `gpus` **不属于**本清单：见上条，2026-10-16 已按合法卡集逐档重出）"
         ),
     }
     # ★★ 卡池/锁卡契约的**已知冲突登记**（只登记、⛔ 不擅自改池；由指挥统一处置）：

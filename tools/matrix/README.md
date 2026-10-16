@@ -466,3 +466,31 @@ python3 -m py_compile tools/matrix/<改动文件>.py     # 或等价的 AST 解�
   `tests/scripts/test_gen_tier_json_no_eval.py`。
 ★ **入口登记**：★ `tools/matrix/freeze_table.py` 属**常设冒烟对象**（无参运行 ⇒ rc==0、输出含三件 sha 行）⇒ 已按 `HELP` 模式登记入 `tests/scripts/test_entry_smoke.py` 的 `POLICY`（★ 与"新增入口必须同批登记"纪律一致）✓
 ★ **入口登记**（2026-10-16）：★ `tests/e2e/regen_field_guard.py`（生成链「重生成不得丢在盘字段」的共享守卫库，被 `generate_matrix.py` / `generate_matrix_manifest_source.py` / `generate_matrix_manifest_fsdp.py` 三个生成器 import）⇒ 其**新增时仍是未跟踪文件**、`git ls-files` 发现不到，故 `a1e53b1` 提交后才由本闸门报出**漏登记**；本件**无 `__main__`/无 CLI**（不适合 `HELP` 冒烟）⇒ 按 `COMPILE` 模式登记入 `POLICY`，并保留"未具名登记即失败"的 fail-closed 断言（⛔ 未放宽）✓
+
+---
+
+## 已知限制
+
+### 生成链世代不匹配（2026-10-16 登记）
+
+**`tools/matrix/build_data.py` 会按 2026-10-11 的 `params-raw` 世代对整份数据件做整体回退** ——
+它会**静默覆盖**后续各包在这份数据件上做过的修订（实测：跑一次即回退 **300+ 条字段路径**）。
+
+**后果**：`extract_spec.py → build_data.py → build_official.py` 这条链**当前不是可用的重出通道**。
+⛔ 不要用它去"重出"清单或口径的修订 —— 那不是重出，那是**把别人的修订删掉**，而且**不会有任何报错**。
+
+**唯一合法的重出路径** = **内部权威数据件 ＋ 数据级外科式并入器**
+（逐路径白名单 ＋ 三条 fail-closed ＋ 幂等；先例见本仓既有并入器记录）。
+★ 若确需走生成链，必须先把 `params-raw` 世代对齐到目标修订所在世代，
+并**在写盘前机检「字段路径消失数 = 0」**（`regen_field_guard` 只覆盖"重生成不得丢在盘字段"的一部分场景，⛔ 不足以替代该检查）。
+
+### 并入器的输入谱系不可字节复现（2026-10-16 登记）
+
+本仓用于"数据级外科式并入"的并入器，其**输入谱系不可复现**：可查面（并入器本体／并入前起点备份／
+并入后在盘件／记录中引用的 spec）**均已登记 sha256**，但**用记录内任何一个候选 spec 从记录起点复跑**，
+都落在**另一个不动点**（逐路径实测：复跑产物与在盘件共 **60 条路径**不同，**全部**落在
+`rows[*].gpus` 与 `rows[*].spec_json` 的内联 `gpus`；⛔ 不触及
+`executability` / `availability` / `blocked_reason` / `status`；复跑侧含生产锁卡的档位 **19** 档，在盘侧 **0** 档）。
+
+**后果**：该并入器**不是"从零重放"的通道** —— **在盘件本身即真相源**；任何重出**只能以在盘件为输入**，
+⛔ 不得以"记录里的命令 ＋ 当时的 spec"重放并期望字节一致。逐条枚举与定性见本仓内的留档记录。

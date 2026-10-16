@@ -23,7 +23,7 @@
 | M3 | 12 档 `feasibility.estimate` | 去掉 zero2/zero2_offload 的 49.7 / 45.5 GiB 算式，改为"**待重算** + 保守性不变式 / 必须实测项" | 只改后端、未重跑估算器 ⇒ 不复用旧数字、不编新数字 |
 | M4 | `runtime.image` | `graspo-msswift:4.5.3` → `graspo:v0.28.11-cu130fix-v2-nfc3`（经 nfc1→nfc2→nfc3） | ①③ 的读数只在打过补丁的镜像里存在；② **12 档必须同一镜像**（否则"连续 3 次"的口径单元不成立）；③ nfc3 是 rollout 修复后的唯一可用镜像 |
 | M5 | 顶层 provenance | 新增 `config_version/supersedes/fsdp_migration` | 留痕：基线 sha256 + 授权来源 + ③ 计数语义 + Megatron 不可用 |
-| M6 | **全部 54 档** `tiers[*].gpus` | 源清单逐档 `gpus`（源生成器卡池映射）→ `1卡[7]/2卡[6,7]/4卡[4,5,6,7]` | ★ 不换就**跑不起来**：runner 锁卡守卫只允许 `{4,5,6,7}`，实测 `run_matrix54.sh T006 --dry-run` 直接 fail-closed 拒绝。<br>★ **B8（2026-10-11）**：源清单自 2026-10-05 起**已自带** `{4,5,6,7}` 卡池映射，旧的"v2 基线应为 `[0]/[0,1]/[0,1,2,3]`"前置断言随之失效（`--check` 曾因此 `FATAL T001`）⇒ 本变体不再假定源卡池形态，只记录源值（供反向探针逐档还原）并钉定自身卡池 |
+| M6 | **全部 54 档** `tiers[*].gpus` | 源清单逐档 `gpus`（源生成器卡池映射）→ **本变体当前钉定** `1卡[1] / 2卡[3,5] / 4卡[1,3,4,5]`（★ 2026-10-16 改。**旧值** `1卡[7]/2卡[6,7]/4卡[4,5,6,7]` **含生产锁卡 GPU6/7 且 GPU7 越界**，已废，⛔ 不再有效） | **（历史理由，2026-10-16 起不再适用）** 当时不换就**跑不起来**：旧世代 runner 锁卡守卫只允许 `{4,5,6,7}`，实测 `run_matrix54.sh T006 --dry-run` 直接 fail-closed 拒绝。<br>★ **B8（2026-10-11）**：源清单自 2026-10-05 起**已自带** `{4,5,6,7}` 卡池映射，旧的"v2 基线应为 `[0]/[0,1]/[0,1,2,3]`"前置断言随之失效（`--check` 曾因此 `FATAL T001`）⇒ 本变体不再假定源卡池形态，只记录源值（供反向探针逐档还原）并钉定自身卡池 |
 
 用法::
 
@@ -46,6 +46,10 @@ OUT = ROOT / "tests/e2e" / "matrix54_manifest_fsdp.json"
 
 # ★ 生成链防丢失（2026-10-16）：判定实现与其它清单生成器共用同一份（§1.4 单一真相源）。
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from generate_matrix_manifest_source import (  # noqa: E402  （§1.4 单一真相源：合法卡集只这一份）
+    legal_card_set,
+    non_legal_card_violation as legal_card_violation,
+)
 from regen_field_guard import (  # noqa: E402  （sys.path 就位之后导入）
     guard_regeneration_keeps_on_disk_fields,
 )
@@ -76,7 +80,11 @@ FSDP_CONF_BY_PHASE = {1: FSDP_CONFIG_RELPATH, 2: FSDP_CONFIG_RELPATH_OFFLOAD}
 FSDP_IMAGE = "graspo:v0.28.11-cu130fix-v2-nfc3"
 
 #: M6 卡池映射（当前 runner 锁卡守卫只允许 {4,5,6,7}，用户 2026-09-24 批准 A）
-GPU_POOL_BY_CARDS = {1: [7], 2: [6, 7], 4: [4, 5, 6, 7]}
+#: ★★ 2026-10-16 修订：原值 ``{1:[7], 2:[6,7], 4:[4,5,6,7]}`` **全含生产锁卡**（GPU6/7，且 GPU7
+#:   越界 ∉ ``GPU_ALLOWED=(0..5)``）—— 那是「runner 锁卡守卫只允许 {4,5,6,7}」时代的遗留。
+#:   主席裁定「**任何入库件的卡位声明都不得含生产锁卡**」⇒ 本变体改钉**合法卡集**同源子集；
+#:   **卡数逐档不变**，⛔ 不含 0/2/6/7。合法性判据与主清单**同一份**（见 :func:`_assert_legal_pool`）。
+GPU_POOL_BY_CARDS = {1: [1], 2: [3, 5], 4: [1, 3, 4, 5]}
 
 #: M3 要替换掉的旧算式（逐字取自 v2 清单；两阶段各一条）
 CANON_ZERO2_4CARD = (
@@ -192,7 +200,7 @@ def build() -> tuple[dict, list[dict[str, object]]]:
         node["gpus"] = list(GPU_POOL_BY_CARDS[cards])
     changes.append({"tier": "全部 54 档", "id": "M6", "field": "tiers[*].gpus",
                     "before": "源清单逐档 gpus（源生成器卡池映射；已逐档记入反向探针）",
-                    "after": "1卡[7] / 2卡[6,7] / 4卡[4,5,6,7]（本变体钉定的允许卡池）"})
+                    "after": "1卡[1] / 2卡[3,5] / 4卡[1,3,4,5]（本变体当前钉定的允许卡池；★ 2026-10-16 前为 1卡[7] / 2卡[6,7] / 4卡[4,5,6,7]，含生产锁卡，已废）"})
 
     old_image = doc["runtime"]["image"]
     if old_image != "graspo-msswift:4.5.3":
@@ -259,10 +267,25 @@ def build() -> tuple[dict, list[dict[str, object]]]:
     return doc, changes
 
 
+def _assert_legal_pool() -> None:
+    """★ 同一条合法卡集断言（**复用主清单的单一入口**，⛔ 不另抄一份词表）。
+
+    ``gpus ⊆ legal_card_set()``（= ``GPU_ALLOWED`` − 生产锁卡 − 主席禁用 ``{0,2}``）；
+    逐档卡数必须与 ``cards`` 一致。任一条不成立 ⇒ **fail-closed**。
+    """
+    for cards, gpus in GPU_POOL_BY_CARDS.items():
+        if len(gpus) != cards:
+            raise SystemExit(f"FATAL fsdp 卡池 {cards} 卡 => {gpus} 个数 != {cards}")
+        bad = legal_card_violation(f"fsdp-pool{cards}", gpus)
+        if bad:
+            raise SystemExit(f"FATAL fsdp 卡池越过合法卡集 ⇒ {bad}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
+    _assert_legal_pool()          # ★ 合法卡集断言：写盘前 fail-closed（--check 与写盘同一入口）
 
     doc, changes = build()
     payload = json.dumps(doc, ensure_ascii=False, indent=2, sort_keys=False) + "\n"

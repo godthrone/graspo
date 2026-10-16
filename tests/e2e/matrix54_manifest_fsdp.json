@@ -276,7 +276,7 @@
       "backend": "ms-swift",
       "cards": 1,
       "gpus": [
-        7
+        1
       ],
       "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -351,8 +351,8 @@
       "backend": "ms-swift",
       "cards": 2,
       "gpus": [
-        6,
-        7
+        3,
+        5
       ],
       "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -427,10 +427,10 @@
       "backend": "ms-swift",
       "cards": 4,
       "gpus": [
+        1,
+        3,
         4,
-        5,
-        6,
-        7
+        5
       ],
       "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -505,7 +505,7 @@
       "backend": "ms-swift",
       "cards": 1,
       "gpus": [
-        7
+        1
       ],
       "status": "unverified",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -582,8 +582,8 @@
       "backend": "ms-swift",
       "cards": 2,
       "gpus": [
-        6,
-        7
+        3,
+        5
       ],
       "status": "unverified",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -660,10 +660,10 @@
       "backend": "ms-swift",
       "cards": 4,
       "gpus": [
+        1,
+        3,
         4,
-        5,
-        6,
-        7
+        5
       ],
       "status": "unverified",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -740,7 +740,7 @@
       "backend": "ms-swift",
       "cards": 1,
       "gpus": [
-        7
+        1
       ],
       "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -815,8 +815,8 @@
       "backend": "ms-swift",
       "cards": 2,
       "gpus": [
-        6,
-        7
+        3,
+        5
       ],
       "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -891,10 +891,10 @@
       "backend": "ms-swift",
       "cards": 4,
       "gpus": [
+        1,
+        3,
         4,
-        5,
-        6,
-        7
+        5
       ],
       "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -969,7 +969,7 @@
       "backend": "native",
       "cards": 1,
       "gpus": [
-        7
+        1
       ],
       "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -1044,8 +1044,8 @@
       "backend": "native",
       "cards": 2,
       "gpus": [
-        6,
-        7
+        3,
+        5
       ],
       "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -1120,10 +1120,10 @@
       "backend": "native",
       "cards": 4,
       "gpus": [
+        1,
+        3,
         4,
-        5,
-        6,
-        7
+        5
       ],
       "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -1198,7 +1198,7 @@
       "backend": "ms-swift",
       "cards": 1,
       "gpus": [
-        7
+        1
       ],
       "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -1273,8 +1273,8 @@
       "backend": "ms-swift",
       "cards": 2,
       "gpus": [
-        6,
-        7
+        3,
+        5
       ],
       "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -1349,10 +1349,10 @@
       "backend": "ms-swift",
       "cards": 4,
       "gpus": [
+        1,
+        3,
         4,
-        5,
-        6,
-        7
+        5
       ],
       "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -1427,7 +1427,7 @@
       "backend": "native",
       "cards": 1,
       "gpus": [
-        7
+        1
       ],
       "status": "unverified",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -1504,8 +1504,8 @@
       "backend": "native",
       "cards": 2,
       "gpus": [
-        6,
-        7
+        3,
+        5
       ],
       "status": "unverified",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -1581,10 +1581,10 @@
       "backend": "native",
       "cards": 4,
       "gpus": [
+        1,
+        3,
         4,
-        5,
-        6,
-        7
+        5
       ],
       "status": "unverified",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -1660,7 +1660,7 @@
       "backend": "ms-swift",
       "cards": 1,
       "gpus": [
-        7
+        1
       ],
       "status": "unverified",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -1737,8 +1737,8 @@
       "backend": "ms-swift",
       "cards": 2,
       "gpus": [
-        6,
-        7
+        3,
+        5
       ],
       "status": "unverified",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -1815,10 +1815,10 @@
       "backend": "ms-swift",
       "cards": 4,
       "gpus": [
+        1,
+        3,
         4,
-        5,
-        6,
-        7
+        5
       ],
       "status": "unverified",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -1895,7 +1895,7 @@
       "backend": "native",
       "cards": 1,
       "gpus": [
-        7
+        1
       ],
       "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -1970,8 +1970,8 @@
       "backend": "native",
       "cards": 2,
       "gpus": [
-        6,
-        7
+        3,
+        5
       ],
       "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -2046,10 +2046,10 @@
       "backend": "native",
       "cards": 4,
       "gpus": [
+        1,
+        3,
         4,
-        5,
-        6,
-        7
+        5
       ],
       "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -2124,7 +2124,7 @@
       "backend": "ms-swift",
       "cards": 1,
       "gpus": [
-        7
+        1
       ],
       "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -2199,8 +2199,8 @@
       "backend": "ms-swift",
       "cards": 2,
       "gpus": [
-        6,
-        7
+        3,
+        5
       ],
       "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -2275,10 +2275,10 @@
       "backend": "ms-swift",
       "cards": 4,
       "gpus": [
+        1,
+        3,
         4,
-        5,
-        6,
-        7
+        5
       ],
       "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -2353,7 +2353,7 @@
       "backend": "native",
       "cards": 1,
       "gpus": [
-        7
+        1
       ],
       "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -2428,8 +2428,8 @@
       "backend": "native",
       "cards": 2,
       "gpus": [
-        6,
-        7
+        3,
+        5
       ],
       "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -2504,10 +2504,10 @@
       "backend": "native",
       "cards": 4,
       "gpus": [
+        1,
+        3,
         4,
-        5,
-        6,
-        7
+        5
       ],
       "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -2582,7 +2582,7 @@
       "backend": "ms-swift",
       "cards": 1,
       "gpus": [
-        7
+        1
       ],
       "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -2657,8 +2657,8 @@
       "backend": "ms-swift",
       "cards": 2,
       "gpus": [
-        6,
-        7
+        3,
+        5
       ],
       "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -2733,10 +2733,10 @@
       "backend": "ms-swift",
       "cards": 4,
       "gpus": [
+        1,
+        3,
         4,
-        5,
-        6,
-        7
+        5
       ],
       "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -2811,7 +2811,7 @@
       "backend": "native",
       "cards": 1,
       "gpus": [
-        7
+        1
       ],
       "status": "unverified",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -2888,8 +2888,8 @@
       "backend": "native",
       "cards": 2,
       "gpus": [
-        6,
-        7
+        3,
+        5
       ],
       "status": "unverified",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -2965,10 +2965,10 @@
       "backend": "native",
       "cards": 4,
       "gpus": [
+        1,
+        3,
         4,
-        5,
-        6,
-        7
+        5
       ],
       "status": "unverified",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -3044,7 +3044,7 @@
       "backend": "ms-swift",
       "cards": 1,
       "gpus": [
-        7
+        1
       ],
       "status": "unverified",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -3121,8 +3121,8 @@
       "backend": "ms-swift",
       "cards": 2,
       "gpus": [
-        6,
-        7
+        3,
+        5
       ],
       "status": "unverified",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -3199,10 +3199,10 @@
       "backend": "ms-swift",
       "cards": 4,
       "gpus": [
+        1,
+        3,
         4,
-        5,
-        6,
-        7
+        5
       ],
       "status": "unverified",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -3279,7 +3279,7 @@
       "backend": "native",
       "cards": 1,
       "gpus": [
-        7
+        1
       ],
       "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -3354,8 +3354,8 @@
       "backend": "native",
       "cards": 2,
       "gpus": [
-        6,
-        7
+        3,
+        5
       ],
       "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -3430,10 +3430,10 @@
       "backend": "native",
       "cards": 4,
       "gpus": [
+        1,
+        3,
         4,
-        5,
-        6,
-        7
+        5
       ],
       "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -3508,7 +3508,7 @@
       "backend": "ms-swift",
       "cards": 1,
       "gpus": [
-        7
+        1
       ],
       "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -3583,8 +3583,8 @@
       "backend": "ms-swift",
       "cards": 2,
       "gpus": [
-        6,
-        7
+        3,
+        5
       ],
       "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -3659,10 +3659,10 @@
       "backend": "ms-swift",
       "cards": 4,
       "gpus": [
+        1,
+        3,
         4,
-        5,
-        6,
-        7
+        5
       ],
       "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -3737,7 +3737,7 @@
       "backend": "ms-swift",
       "cards": 1,
       "gpus": [
-        7
+        1
       ],
       "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -3813,8 +3813,8 @@
       "backend": "ms-swift",
       "cards": 2,
       "gpus": [
-        6,
-        7
+        3,
+        5
       ],
       "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -3890,10 +3890,10 @@
       "backend": "ms-swift",
       "cards": 4,
       "gpus": [
+        1,
+        3,
         4,
-        5,
-        6,
-        7
+        5
       ],
       "status": "ready",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -3969,7 +3969,7 @@
       "backend": "ms-swift",
       "cards": 1,
       "gpus": [
-        7
+        1
       ],
       "status": "unverified",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -4047,8 +4047,8 @@
       "backend": "ms-swift",
       "cards": 2,
       "gpus": [
-        6,
-        7
+        3,
+        5
       ],
       "status": "unverified",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -4126,10 +4126,10 @@
       "backend": "ms-swift",
       "cards": 4,
       "gpus": [
+        1,
+        3,
         4,
-        5,
-        6,
-        7
+        5
       ],
       "status": "unverified",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -4207,7 +4207,7 @@
       "backend": "ms-swift",
       "cards": 1,
       "gpus": [
-        7
+        1
       ],
       "status": "not_applicable",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -4286,8 +4286,8 @@
       "backend": "ms-swift",
       "cards": 2,
       "gpus": [
-        6,
-        7
+        3,
+        5
       ],
       "status": "not_applicable",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -4366,10 +4366,10 @@
       "backend": "ms-swift",
       "cards": 4,
       "gpus": [
+        1,
+        3,
         4,
-        5,
-        6,
-        7
+        5
       ],
       "status": "not_applicable",
       "model_host_root_env_var": "GRASPO_MODELS_HOST_ROOT",
@@ -4443,7 +4443,7 @@
   "supersedes": {
     "relationship": "v2 清单（matrix54_manifest_source.json）**未被改动**；本文件是它的 FSDP 变体派生版",
     "base_manifest": "tests/e2e/matrix54_manifest_source.json",
-    "base_manifest_sha256": "08c02458bc29c1250c350b171e3d62ab40ef0ea2ef0355ca34fc3af06b28a379",
+    "base_manifest_sha256": "d157b951125ee80a6d72c050dee05ff2cf857ab7ceb3dca5f11735a790c20c8c",
     "note": "v2 的 v1 关系（supersedes.base_manifest）予以保留，不覆盖",
     "base_supersedes_kept": {
       "relationship": "v1 清单（matrix54_manifest.json）**未被改动**；本文件是它的 v2 派生版",
@@ -4474,8 +4474,8 @@
       "checkpoint_retention_v2",
       "per-tier data.source / data.source_jsonl / data.source_jsonl_container / data.extract_command / data.source_rule / data.subset_file_pregenerated / step_formula_v2"
     ],
-    "gpus": "★ 2026-10-16：**撤销 T041 的陈旧卡位例外** `[2,3]`（2026-10-09 的一次性调度值，把第三方账号占用中的常驻邻居卡 GPU2 写进了我方声明）⇒ T041 走默认映射 `GPU_POOL_BY_CARDS[2] = [4,5]`。★ 其余 53 档 `gpus` **逐档逐字未变**（仍 = 本世代卡池）。",
-    "unchanged": "counts / models / feasibility_model / runtime.checkpoint_retention / 每档的 model*/algorithm/mode/backend/cards/status/feasibility/acceptance.criteria（★ `gpus` 见上条：仅 T041 一档改）"
+    "gpus": "★ 2026-10-16：**撤销 T041 的陈旧卡位例外** `[2,3]`（2026-10-09 的一次性调度值，把第三方账号占用中的常驻邻居卡 GPU2 写进了我方声明）。⇒ T041 走**显式车道** `TIER_GPU_OVERRIDE['T041'] = [3, 5]`（★ 不再是默认映射 `GPU_POOL_BY_CARDS[2] = [4, 5]`）。★ 同日**车道重出**：`gpus` 按**合法卡集**（:func:`legal_card_set` = [1, 3, 4, 5]）逐档重定 —— 显式车道 **16 条**，其余档走卡数默认值 `GPU_POOL_BY_CARDS` = {\"1\": [4], \"2\": [4, 5], \"3\": [4, 5], \"4\": [1, 3, 4, 5]}；⛔ 同时废止旧表述「其余 53 档逐档逐字未变」（**与事实不符**）。",
+    "unchanged": "counts / models / feasibility_model / runtime.checkpoint_retention / 每档的 model*/algorithm/mode/backend/cards/status/feasibility/acceptance.criteria（★ `gpus` **不属于**本清单：见上条，2026-10-16 已按合法卡集逐档重出）"
   },
   "data_sources": {
     "rule": "★ 逐档、**进程作用域**切换：不得用全局 export 一次性切源（mini 集不是正式集头部，全局切换会让 45 档拿到错的 100 条）。用法见 launcher",
