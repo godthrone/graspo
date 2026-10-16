@@ -312,6 +312,33 @@ def test_declared_caliber_registry_is_the_single_source_of_truth():
     assert gmv2.MINI_DECLARED_NOT_LANDED == ms.DECLARED_NOT_LANDED
 
 
+def _reimport_generator():
+    """按文件路径**再执行一遍**生成器模块体（= 重新导入一份新副本）。"""
+    spec = importlib.util.spec_from_file_location(
+        "generate_matrix_manifest_source_uut_reimport",
+        _HERE.parent / "generate_matrix_manifest_source.py",
+    )
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_formal_tiers_drift_fails_the_import(monkeypatch):
+    """★ **能失败对照**（`V2_SUBSET_SIZE_BY_TIER` vs `make_subsets.FORMAL_TIERS`）。
+
+    两张表逐值相等，过去**无直接断言**（只经冻结 jsonl 行数间接相连）⇒ 会漂。
+    本用例证明那条断言**能红**：把唯一真相源某档改值 ⇒ 导入生成器当场报错。
+    ★ 前提（否则对照不成立）：未篡改时同一导入路径**必须成功**。
+    """
+    _reimport_generator()  # 未篡改 ⇒ 导入成功
+    assert gmv2.V2_SUBSET_SIZE_BY_TIER == gmv2.ms.FORMAL_TIERS
+    monkeypatch.setitem(gmv2.ms.FORMAL_TIERS, "T028", 48 + 1)
+    with pytest.raises(AssertionError) as e:
+        _reimport_generator()
+    assert "FORMAL_TIERS 漂移" in str(e.value)
+
+
 def test_mini_tier_subset_size_never_falls_back_to_v1_20():
     """★ 18 档现算值恒为 100（⛔ 不许回落 v1 的 20）——这是 B1a 的核心。"""
     for tid in gmv2.MINI_DECLARED_SUBSET_SIZE:

@@ -173,17 +173,41 @@ assert int(gm.ELAM_TRAIN_COUNT) == FORMAL_LINE_COUNT, "正式集行数与 v1 不
 MAKE_SUBSETS_PATH = PROJECT_ROOT / "tests/e2e" / "make_subsets.py"
 
 
+MAKE_SUBSETS_MODULE_NAME = "_manifest_v2_make_subsets"
+
+
 def load_make_subsets_module():
-    """只读加载子集生成器（拿声明口径表与在盘真值表；不触发任何写盘）。"""
-    spec = importlib.util.spec_from_file_location("_manifest_v2_make_subsets", MAKE_SUBSETS_PATH)
+    """只读加载子集生成器（拿声明口径表与在盘真值表；不触发任何写盘）。
+
+    ★ 同名副本**一律复用** ``sys.modules`` 里那一份：``spec_from_file_location`` 每次调用都
+      造**新副本** ⇒ 模块级表对象与「后解析到的那个」分叉，``monkeypatch`` 打在第二份上、
+      断言退化成空转（本文件原先正是这个形状）。登记失败即摘除，⛔ 不留半截模块。
+    """
+    cached = sys.modules.get(MAKE_SUBSETS_MODULE_NAME)
+    if cached is not None:
+        return cached
+    spec = importlib.util.spec_from_file_location(MAKE_SUBSETS_MODULE_NAME, MAKE_SUBSETS_PATH)
     if spec is None or spec.loader is None:  # pragma: no cover
         raise RuntimeError(f"无法加载子集生成器：{MAKE_SUBSETS_PATH}")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    sys.modules[MAKE_SUBSETS_MODULE_NAME] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(MAKE_SUBSETS_MODULE_NAME, None)
+        raise
     return module
 
 
 ms = load_make_subsets_module()
+
+#: ★★ 手抄表 vs **唯一真相源**（``make_subsets.FORMAL_TIERS``）：9 档逐值必须相等
+#:   ⇒ 任一处漂移**导入即失败**（fail-closed）。原先两张表只经「冻结 jsonl 行数」间接相连，
+#:   表本身无直接断言 ⇒ 改一张、另一张静默不动，直到某次跑批才暴露。
+assert V2_SUBSET_SIZE_BY_TIER == ms.FORMAL_TIERS, (
+    f"V2_SUBSET_SIZE_BY_TIER 与 make_subsets.FORMAL_TIERS 漂移："
+    f"{V2_SUBSET_SIZE_BY_TIER} != {ms.FORMAL_TIERS}"
+)
 
 #: ★ 声明口径表（18 档 = 100），来自唯一真相源。
 MINI_DECLARED_SUBSET_SIZE: dict[str, int] = dict(ms.MINI_SUBSET_TIERS_DECLARED)
