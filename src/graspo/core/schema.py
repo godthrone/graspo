@@ -1032,7 +1032,7 @@ class EvalConfig(BaseModel):
     """效果评测链路配置（``graspo eval``）。ELAM V5 + vLLM，温度锁 0。
 
     **卡计划只能来自这里**：``gpus`` 必须显式给出（如 ``"4,5"``），取值限定在
-    ``ALLOWED_INDICES``（默认 = 本机全卡 0–7，先到先得）、卡数 ≤ 4；未显式给出时评测链路**拒绝启动**
+    ``ALLOWED_INDICES``（默认 = 本机全卡 0–7，先到先得）、**卡数不设上限**（2026-10-17 主席令：「单个作业不限制卡数。」）；未显式给出时评测链路**拒绝启动**
     （fail-closed，见 ``core.gpu_guard``）。不给默认值是有意的——目标 GPU 服务器上 0–3 号卡
     由第三方工作负载先到先得、≥8 不存在，任何"顺手用个默认卡"的设计都可能踩到别人的卡。
 
@@ -1068,8 +1068,13 @@ class EvalConfig(BaseModel):
     gpus: str = ""
     max_workers: int = 8
     seed: int | None = 42
-    graspo_threshold_pp: float = 20.0
-    sft_threshold_percent: float = 50.0
+    #: 判据② 用哪个算法的通过线（``sft`` / ``graspo`` / ``cpt`` / ``opd``）。
+    #: ``None`` = 由 after 产物的 ``role`` 推断（``sft`` ⇒ SFT 线；其余 ⇒ GRASPO 线）；
+    #: CPT / OPD **必须显式写**（``role`` 字面量里没有它们）。
+    #: ★ 通过线的**数值不在这里**：唯一真相源 =
+    #: ``docs/capability-matrix.data.json`` 的 ``meta.criteria_caliber.threshold.by_method``，
+    #: 由 ``eval/thresholds.py`` 现读（⛔ 配置里不存第二份数值副本）。
+    judge_method: Literal["graspo", "sft", "cpt", "opd"] | None = None
 
     @model_validator(mode="after")
     def _validate_eval_contract(self) -> EvalConfig:

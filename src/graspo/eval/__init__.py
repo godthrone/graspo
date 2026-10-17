@@ -10,6 +10,7 @@ checkpoint 形态识别）零设施依赖、可在 CPU 上单测；设施部分�
 - `guard.py`        — GPU 锁卡防呆 + 只采可见卡的显存采样
 - `vllm_client.py`  — vLLM Chat Completions 客户端（温度锁 0）
 - `evaluate.py`     — 聚合 + Δ 配对 + 阈值判定
+- `thresholds.py`   — 判据② 通过线的唯一读取通道（真相源 = 能力矩阵数据文件）
 - `merged_export.py`— checkpoint → merged-hf（补齐 ms-swift PEFT 缺口）
 - `orchestrator.py` — 链路编排与产物落盘
 
@@ -47,7 +48,6 @@ from graspo.eval.evaluate import (
 from graspo.core.gpu_guard import GpuGuardError, GpuPlan, parse_gpu_plan, resolve_gpu_plan
 from graspo.eval.guard import (
     ALLOWED_GPU_INDICES,
-    MAX_GPU_COUNT,
     RESERVED_GPU_INDICES,
     assert_devices_free,
     repo_relative,
@@ -86,6 +86,12 @@ from graspo.eval.schema import (
     EvalSummary,
     EvalTrainSubset,
 )
+from graspo.eval.thresholds import (
+    FrozenCaliberError,
+    MethodThreshold,
+    frozen_method_threshold,
+    load_frozen_method_thresholds,
+)
 from graspo.eval.vllm_client import (
     EVAL_MAX_TOKENS,
     EVAL_TEMPERATURE,
@@ -109,7 +115,6 @@ __all__ = [
     "EVAL_REPORT_FILENAME",
     "EVAL_TEMPERATURE",
     "EVAL_TOP_P",
-    "MAX_GPU_COUNT",
     "CheckpointClassification",
     "CheckpointKind",
     "ClientConfig",
@@ -127,9 +132,11 @@ __all__ = [
     "EvalTrainSubset",
     "ExportError",
     "BaseModelShape",
+    "FrozenCaliberError",
     "GpuGuardError",
     "GpuPlan",
     "GroundTruth",
+    "MethodThreshold",
     "OrchestrationError",
     "OverlapStats",
     "RESERVED_GPU_INDICES",
@@ -151,10 +158,12 @@ __all__ = [
     "extract_ground_truth",
     "extract_prediction",
     "file_sha256",
+    "frozen_method_threshold",
     "is_all_right",
     "is_multimodal_base_config",
     "load_dataset",
     "load_eval_dataset",
+    "load_frozen_method_thresholds",
     "load_report",
     "merge_peft_checkpoint",
     "normalize_language_model_targets",

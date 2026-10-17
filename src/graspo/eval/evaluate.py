@@ -9,11 +9,24 @@
 **本文件不负责**：判定单样本对错（`criteria.py`）、发请求（`vllm_client.py`）、
 锁卡/起服务（`guard.py` / 调用方）。聚合是纯函数，可在 CPU 上单测。
 
-**Δ 口径（用户已拍板，覆盖此前口径）**
+**Δ 口径（冻结口径，2026-10-15 起；以真相源为准）**
 
 ``Δ = acc_after − acc_before``，**绝对百分点**；``acc_before`` 的基线锚点是
-**base 模型**（不是 SFT 产物）。GRASPO 判据 ``Δ ≥ 20pp``。
-SFT 判据独立：``acc_after ≥ 50%``。
+**base 模型**（不是 SFT 产物）。判据② **逐算法分列**（一律**点估计**，
+⛔ 不做假设检验、不引置信区间 / 显著性）：
+
+- SFT    ⇒ ``Δ ≥ +10.0 pp``（epoch=4）
+- GRASPO ⇒ ``Δ ≥ +5.0 pp``（epoch=8）
+- CPT    ⇒ ``after ≥ base``（不劣化，non-inferiority；epoch=2）
+- OPD    ⇒ 学生 ``after ≥ base``（能力回收，non-inferiority；epoch=2）
+
+★ 通过线**不在本模块**、也不在任何配置里：唯一真相源 =
+``docs/capability-matrix.data.json`` 的 ``meta.criteria_caliber.threshold.by_method``，
+由 :mod:`graspo.eval.thresholds` 现读（⛔ 不得新增第二份数值副本）。
+"CPT 的『训练 loss 正常下降』另有强制方"不属本模块（本模块只判 ``after ≥ base``）。
+
+**量纲纪律**：SFT 与 GRASPO 比的都是 ``Δ``（百分点）——⛔ 不得拿 ``after`` 的
+**绝对准确率**去比通过线（那会把"底子本来就好"误判成"训练有效"，结论必错）。
 
 **为什么 Δ 必须配对同一个数据集**
 
@@ -34,23 +47,34 @@ from pydantic import ValidationError
 
 from graspo.eval.criteria import ACCURACY_CRITERIA_VERSION, accuracy
 from graspo.eval.schema import EvalReport, EvalSummary
+from graspo.eval.thresholds import KNOWN_METHODS, frozen_method_threshold
 
 
 class DeltaError(RuntimeError):
-    """Δ 配对失败（两份产物不可比）。"""
+    """Δ 配对失败（两份产物不可比 / 算法名不合法）。"""
 
 
 @dataclass(slots=True)
 class DeltaResult:
-    """Δ 配对结论。"""
+    """Δ 配对结论（判据② **逐算法分列**，一律点估计）。
+
+    通过线**不是**本对象的输入：``threshold_pp`` / ``criterion`` / ``pass_line_text``
+    都是 :func:`compute_delta` 从唯一真相源现读后**照抄**进来的留证字段（§2.2 显式即可见）。
+    """
 
     acc_before_percent: float
     acc_after_percent: float
     delta_percentage_points: float
-    graspo_threshold_pp: float
-    graspo_pass: bool
-    sft_threshold_percent: float
-    sft_pass: bool | None
+    #: 判据② 用的算法（``sft`` / ``graspo`` / ``cpt`` / ``opd``）——决定用哪条通过线。
+    method: str
+    #: 冻结口径登记的判据类型：``delta_pp``（SFT / GRASPO）或 ``non_inferiority``（CPT / OPD）。
+    criterion: str
+    #: 该通过线的数值（百分点），逐字来自真相源（SFT 10.0 / GRASPO 5.0 / CPT·OPD 0.0）。
+    threshold_pp: float
+    #: 真相源里那条通过线的原文（如 ``after − base ≥ +5.0 pp``），便于人读核对。
+    pass_line_text: str
+    #: 按 ``criterion`` 对 ``Δ`` 的判定（点估计；⛔ 不做假设检验）。
+    passed: bool
     before_run_id: str
     after_run_id: str
     comparability_notes: list[str]
@@ -60,10 +84,11 @@ class DeltaResult:
             "acc_before_percent": round(self.acc_before_percent, 4),
             "acc_after_percent": round(self.acc_after_percent, 4),
             "delta_percentage_points": round(self.delta_percentage_points, 4),
-            "graspo_threshold_pp": self.graspo_threshold_pp,
-            "graspo_pass": self.graspo_pass,
-            "sft_threshold_percent": self.sft_threshold_percent,
-            "sft_pass": self.sft_pass,
+            "method": self.method,
+            "criterion": self.criterion,
+            "threshold_pp": self.threshold_pp,
+            "pass_line_text": self.pass_line_text,
+            "passed": self.passed,
             "before_run_id": self.before_run_id,
             "after_run_id": self.after_run_id,
             "comparability_notes": self.comparability_notes,
@@ -166,27 +191,30 @@ def compute_delta(
     before: EvalReport,
     after: EvalReport,
     *,
-    graspo_threshold_pp: float = 20.0,
-    sft_threshold_percent: float = 50.0,
+    method: str | None = None,
     expect_role_before: str = "base",
     role_after: str | None = None,
 ) -> DeltaResult:
-    """算出 Δ 并给出与阈值的比较结论。
+    """算出 Δ 并按**冻结口径**给出结论（判据② 逐算法分列，一律点估计）。
 
     Args:
         before: 基线产物。**必须是 base 模型**（用户拍板），默认强制校验。
-        after: 训练后产物（GRASPO 或 SFT）。
-        graspo_threshold_pp: GRASPO 阈值，绝对百分点。
-        sft_threshold_percent: SFT 达标线，百分数。
+        after: 训练后产物。
+        method: 判据② 适用的算法（``sft`` / ``graspo`` / ``cpt`` / ``opd``）。
+            ``None`` = 由 after 角色推断：``role == "sft"`` ⇒ ``sft``，否则 ``graspo``。
+            ★ CPT / OPD **必须显式给出**（``role`` 字面量里没有它们；不显式给就会
+            被当成 GRASPO 判）。
         expect_role_before: 期望的基线角色；``""`` 表示不校验。
         role_after: 明确指定 after 的角色；``None`` 表示沿用产物自带角色。
 
     Returns:
-        ``DeltaResult``（含 ``sft_pass``：仅当 after 角色是 ``sft`` 时判定，否则 ``None``）。
+        ``DeltaResult``：``method`` / ``criterion`` / ``threshold_pp`` / ``pass_line_text``
+        全部照抄自唯一真相源，``passed`` = 按该算法的判定式对 ``Δ`` 的点估计判定。
 
     Raises:
-        DeltaError: 两份产物不可比（数据集/口径/温度/有效样本数不一致），
-            或基线角色不符合要求。
+        DeltaError: 两份产物不可比（数据集/口径/温度/有效样本数不一致）、
+            基线角色不符合要求，或 ``method`` 不是冻结口径认得的那四个。
+        FrozenCaliberError: 冻结口径真相源读不到 / 形状不对（fail-closed）。
     """
     notes = _comparability_notes(before, after)
     if notes:
@@ -200,17 +228,25 @@ def compute_delta(
         )
 
     role = role_after or after.model.role
+    resolved_method = method or ("sft" if role == "sft" else "graspo")
+    if resolved_method not in KNOWN_METHODS:
+        # 算法名不认识属"调用参数错"；真相源读不到是另一回事（让 FrozenCaliberError 冒上去）。
+        raise DeltaError(
+            f"未知算法 {resolved_method!r}：冻结口径只认 {KNOWN_METHODS}（判据② 逐算法分列）"
+        )
+    threshold = frozen_method_threshold(resolved_method)
+
+    # 量纲纪律：SFT / GRASPO 比的都是 Δ（百分点），⛔ 不是 after 的绝对准确率。
     delta = after.summary.accuracy_percent - before.summary.accuracy_percent
     return DeltaResult(
         acc_before_percent=before.summary.accuracy_percent,
         acc_after_percent=after.summary.accuracy_percent,
         delta_percentage_points=delta,
-        graspo_threshold_pp=graspo_threshold_pp,
-        graspo_pass=delta >= graspo_threshold_pp,
-        sft_threshold_percent=sft_threshold_percent,
-        sft_pass=(after.summary.accuracy_percent >= sft_threshold_percent)
-        if role == "sft"
-        else None,
+        method=resolved_method,
+        criterion=threshold.criterion,
+        threshold_pp=threshold.value_pp,
+        pass_line_text=threshold.pass_line_text,
+        passed=threshold.judge(delta),
         before_run_id=before.run_id,
         after_run_id=after.run_id,
         comparability_notes=[

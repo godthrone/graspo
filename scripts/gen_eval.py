@@ -88,7 +88,20 @@ assert ck, "无 checkpoint"
 form_out=run(f"PYTHONPATH={T}.hostdeps python3 {T}/scripts/run_guards.py form --checkpoint {ck}")
 form=form_out.split("]")[0].strip("[")
 mode=run(f"python3 -c \"import sys;sys.path.insert(0,'{T}/scripts');import launch_pipeline as lp;print(lp.decide_eval_mode('{form}')[0])\"")
-mp=run(f"python3 -c \"import json;m=json.load(open('{T}/tests/e2e/matrix54_manifest_source.json'));t=[x for x in m['tiers'] if x['tier_id']=='{tier}'][0];print(t.get('model_path',''))\"")
+_manifest_py=("import json;"
+              f"m=json.load(open('{T}/tests/e2e/matrix54_manifest_source.json'));"
+              f"t=[x for x in m['tiers'] if x['tier_id']=='{tier}'][0];"
+              "print(t.get('model_path','')+'|'+t.get('algorithm',''))")
+mp,_algo_raw=run(f'python3 -c "{_manifest_py}"').split("|",1)
+# ★ 判据② 通过线**逐算法分列**（冻结口径）⇒ 生成的评测 yaml 必须声明该档算法，
+#   否则评测侧只能从 role 推断（gen_eval 两侧 yaml 的 role 一律 after/base，
+#   推断结果恒为 GRASPO）——SFT / CPT / OPD 档就会被按 GRASPO 线判，结论必错。
+#   ★ 算法取自与 model_path **同一份**清单（§1.4 单一真相源），不另抄一份映射表。
+_algo_map={"SFT":"sft","GRASPO":"graspo","CPT":"cpt","OPD":"opd"}
+judge_method=_algo_map.get(_algo_raw.strip().upper())
+assert judge_method, (
+    f"清单里 {tier} 的 algorithm={_algo_raw!r} 不是 SFT/GRASPO/CPT/OPD 之一 ⇒ fail-closed"
+)
 hostmp=mp.replace("/models/", HOSTMODELS, 1) if mp.startswith("/models/") else mp
 cp="/runs"+ck[len(T+"/runs"):]
 merge=f"/evalout/merged-hf-{lower}"          # yaml 配置值（容器内）
@@ -192,7 +205,7 @@ served_model_name: graspo-eval
 gpus: "{gpu}"
 max_workers: 8
 seed: 42
-graspo_threshold_pp: 20.0
+judge_method: {judge_method}
 """
     open(f"/tmp/eval-{lower}-{_role}.yaml","w").write(y)
 print("WROTE yamls:", f"/tmp/eval-{lower}-after.yaml", f"/tmp/eval-{lower}-base.yaml")

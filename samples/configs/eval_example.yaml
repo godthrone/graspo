@@ -71,6 +71,10 @@ eval:
   max_workers: 8
   seed: 42
 
-  # 判据阈值（口径见 docs/capability-matrix.md §8）
-  graspo_threshold_pp: 20.0         # GRASPO: Δ ≥ 20 个百分点（绝对百分点）
-  sft_threshold_percent: 50.0       # SFT: 综合准确率 ≥ 50%
+  # 判据② 用哪个算法的通过线（逐算法分列，一律点估计）。
+  # ★ 通过线的**数值不在这里**：唯一真相源 =
+  #   docs/capability-matrix.data.json 的 meta.criteria_caliber.threshold.by_method
+  #   （SFT Δ≥+10.0 pp / GRASPO Δ≥+5.0 pp / CPT·OPD after≥base），由评测侧现读。
+  # 缺省（留空/删掉）= 由 after 产物 role 推断：sft ⇒ SFT 线；其余 ⇒ GRASPO 线。
+  # CPT / OPD 必须显式写（role 字面量里没有它们）。
+  judge_method: graspo              # graspo / sft / cpt / opd（本样例是训练后 GRASPO 评测）

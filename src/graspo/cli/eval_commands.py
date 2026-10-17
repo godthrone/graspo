@@ -333,15 +333,16 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_delta(args: argparse.Namespace) -> int:
-    """Δ 配对：base 产物 vs 训练后产物 → 绝对百分点差 + 阈值结论。"""
+    """Δ 配对：base 产物 vs 训练后产物 → 绝对百分点差 + 冻结口径结论（逐算法分列）。"""
     before = load_report(args.before)
     after = load_report(args.after)
     config = _load_eval_config(args) if (args.eval_config or args.config) else None
+    # 优先级：显式 --method > 配置 judge_method > 由 after 角色推断（compute_delta 内）。
+    # ★ 通过线的**数值**不来自这里：compute_delta 现读唯一真相源（⛔ 无第二份副本）。
     result = compute_delta(
         before,
         after,
-        graspo_threshold_pp=config.graspo_threshold_pp if config else 20.0,
-        sft_threshold_percent=config.sft_threshold_percent if config else 50.0,
+        method=args.method or (config.judge_method if config else None),
         expect_role_before="" if args.allow_any_baseline_role else "base",
         role_after=args.after_role,
     )
@@ -412,13 +413,33 @@ def build_eval_parser(subparsers: argparse._SubParsersAction) -> None:
 
     delta = eval_sub.add_parser(
         "delta",
-        help="Pair a base report with a post-training report and compare against the thresholds.",
+        help=(
+            "Pair a base report with a post-training report and judge criterion ② "
+            "against the frozen per-algorithm pass lines."
+        ),
     )
     delta.add_argument("--before", required=True, help="Baseline eval_report.json (base model).")
     delta.add_argument("--after", required=True, help="Post-training eval_report.json.")
-    delta.add_argument("--eval-config", default="", help="Optional EvalConfig YAML for thresholds.")
+    delta.add_argument(
+        "--eval-config",
+        default="",
+        help=(
+            "Optional EvalConfig YAML. Its `judge_method` picks the criterion-② algorithm; "
+            "the pass line itself always comes from the frozen caliber source."
+        ),
+    )
     delta.add_argument(
         "--config", "-c", default="", help="Optional GraspoConfig YAML (eval: section)."
+    )
+    delta.add_argument(
+        "--method",
+        default=None,
+        choices=["sft", "graspo", "cpt", "opd"],
+        help=(
+            "Criterion-② algorithm (which frozen pass line applies). Overrides `judge_method`. "
+            "Default: inferred from the after report role (sft ⇒ SFT line, else GRASPO line); "
+            "CPT / OPD must be given explicitly."
+        ),
     )
     delta.add_argument(
         "--after-role",

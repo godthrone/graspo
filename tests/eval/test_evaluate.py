@@ -196,31 +196,57 @@ def _make_report(
 
 
 def test_compute_delta_uses_absolute_percentage_points(tmp_path):
+    """GRASPO（role=after ⇒ 推断 method=graspo）：通过线 = 真相源的 +5.0 pp。"""
     before = _make_report(tmp_path, role="base", accuracy_percent=30.0)
     after = _make_report(tmp_path, role="after", accuracy_percent=52.0)
-    result = compute_delta(before, after, graspo_threshold_pp=20.0)
-    assert result.delta_percentage_points == pytest.approx(22.0)
-    assert result.graspo_pass is True
-    # after 角色不是 sft → SFT 判据不适用（None，而不是 False）
-    assert result.sft_pass is None
-
-
-def test_compute_delta_fails_threshold_just_below_20pp(tmp_path):
-    before = _make_report(tmp_path, role="base", accuracy_percent=30.0)
-    after = _make_report(tmp_path, role="after", accuracy_percent=49.0)
     result = compute_delta(before, after)
-    assert result.delta_percentage_points == pytest.approx(19.0)
-    assert result.graspo_pass is False
+    assert result.delta_percentage_points == pytest.approx(22.0)
+    assert result.method == "graspo"
+    assert result.criterion == "delta_pp"
+    assert result.threshold_pp == pytest.approx(5.0)  # 唯一真相源，不是旧副本 20.0
+    assert result.passed is True
 
 
-def test_compute_delta_sft_role_applies_percent_threshold(tmp_path):
+def test_compute_delta_fails_graspo_line_just_below(tmp_path):
+    """Δ = 4.0 pp < +5.0 pp ⇒ 不通过（旧副本 20.0 也会判否——但那是另一个数）。"""
     before = _make_report(tmp_path, role="base", accuracy_percent=30.0)
-    after = _make_report(tmp_path, role="sft", accuracy_percent=51.0)
-    result = compute_delta(before, after, sft_threshold_percent=50.0)
-    assert result.sft_pass is True
+    after = _make_report(tmp_path, role="after", accuracy_percent=34.0)
+    result = compute_delta(before, after)
+    assert result.delta_percentage_points == pytest.approx(4.0)
+    assert result.passed is False
 
-    below = _make_report(tmp_path, role="sft", accuracy_percent=49.5)
-    assert compute_delta(before, below, sft_threshold_percent=50.0).sft_pass is False
+
+def test_compute_delta_sft_role_applies_delta_threshold(tmp_path):
+    """SFT：通过线 = Δ ≥ +10.0 pp（**不是** after 的绝对准确率）。"""
+    before = _make_report(tmp_path, role="base", accuracy_percent=40.0)
+    after = _make_report(tmp_path, role="sft", accuracy_percent=52.0)
+    result = compute_delta(before, after)
+    assert result.method == "sft"
+    assert result.criterion == "delta_pp"
+    assert result.threshold_pp == pytest.approx(10.0)
+    assert result.passed is True  # Δ = +12.0
+
+    below = _make_report(tmp_path, role="sft", accuracy_percent=49.0)
+    assert compute_delta(before, below).passed is False  # Δ = +9.0
+
+
+def test_compute_delta_cpt_opd_methods_apply_non_inferiority(tmp_path):
+    """CPT / OPD：non_inferiority，after ≥ base（Δ ≥ 0.0）——role 推断不出来，必须显式给。"""
+    before = _make_report(tmp_path, role="base", accuracy_percent=50.0)
+    for method in ("cpt", "opd"):
+        flat = _make_report(tmp_path, role="after", accuracy_percent=50.0)
+        ok = compute_delta(before, flat, method=method)
+        assert (ok.criterion, ok.threshold_pp, ok.passed) == ("non_inferiority", 0.0, True)
+
+        worse = _make_report(tmp_path, role="after", accuracy_percent=49.9)
+        assert compute_delta(before, worse, method=method).passed is False
+
+
+def test_compute_delta_rejects_unknown_method(tmp_path):
+    before = _make_report(tmp_path, role="base", accuracy_percent=30.0)
+    after = _make_report(tmp_path, role="after", accuracy_percent=60.0)
+    with pytest.raises(DeltaError, match="未知算法"):
+        compute_delta(before, after, method="dpo")
 
 
 def test_compute_delta_requires_base_as_baseline(tmp_path):
