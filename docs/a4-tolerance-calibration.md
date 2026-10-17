@@ -1,26 +1,39 @@
-# A4 终态容差的标定口径（方法论 · 单一真相源说明）
+# A4 终态容差的标定口径（⚠ 历史方法论记录 · 口径已作废）
 
+> ⛔ **A4 容差体系已整体作废**（2026-10-17 冻结口径）⇒ 本文档**仅作历史方法论记录**：
+> 其中一切"在役 / 正式口径 / 不受影响"表述**均已不成立**。
+> 现行判据以唯一真相源 `docs/capability-matrix.data.json`（人读件 `docs/capability-matrix.html`）为准；
+> A4 容差体系（k / ε / cap 与档族容差表）**不再参与任何通过 / 不通过判定**，
+> ⛔ 本文任何结论不得作为判据引用。
+>
 > ⛔ **标定工具已退役**（2026-10-11，宪法合规化 B3 / §10.2）：A4 容差体系经主席裁定
 > 废弃 ⇒ 标定脚本 `scripts/a4_calibrate.py` 已从仓库退役（原件移入
 > `.local/repo-moved-out/scripts/a4_calibrate.py`，其契约测试
-> `tests/core/test_a4_calibrate.py` 同批退役）。本文档保留为**历史方法论记录**；
-> 在役的 A4 判据（`src/graspo/core/result_judge.py` 侧）与本文其余结论不受影响。
+> `tests/core/test_a4_calibrate.py` 同批退役）。
+> **【2026-10-17 更正·原句已作废】** 原句"在役的 A4 判据（`src/graspo/core/result_judge.py` 侧）
+> 与本文其余结论不受影响"**已不成立**：A4 容差体系整体作废后，
+> 现行判据是 `docs/capability-matrix.data.json` 的 `pass_criteria` 四条（含"算法正确性检查"），
+> 与本文所述容差口径无关。
 
 > ⚠ **待复核**（标注日期 2026-10-10；**本条只加标注，未删除、未修改本文任何结论**）
 >
 > 本文件当前内容 == `a4-calibration-batch1/1b` 标定支线的版本（含「1–2 卡 A4 档族五跑池标定」，
 > 对应标定支线 `0e33cde`）；而本树的判据代码 `src/graspo/core/result_judge.py` 的
 > `A4_TIER_CALIBRATIONS` 只有 **7** 条（形态同 `HEAD/main`），标定支线为 **14** 条。
-> ⇒ 本文所述口径与在役判据代码**不同源**，需在主席裁定标定线归属后复核。
+> ⇒ 本文所述口径与当时的判据代码**不同源**，需在主席裁定标定线归属后复核。
 
-> 本文档是 A4「同 config 同 seed 双跑一致」判据中**终态容差**怎么来的正式口径说明。
-> 判据实现见 `src/graspo/core/result_judge.py`（`A4_TIER_CALIBRATIONS`、
+> 本文档（**历史件**）记录 A4「同 config 同 seed 双跑一致」判据中**终态容差**是怎么来的；
+> 该判据体系**已整体作废**（见文首），下文仅为历史方法论。
+> 历史实现见 `src/graspo/core/result_judge.py`（`A4_TIER_CALIBRATIONS`、
 > `find_tier_calibration`、`judge_a4`）；标定工具见 `scripts/a4_calibrate.py`
 > （⛔ 该脚本已退役，见文首退役说明；原物件在 `.local/repo-moved-out/scripts/`）。
 >
 > 本文档解决一个问题：**怎样才能"正确"给一个档族建立 A4 容差，而不是循环论证？**
 
 ## 1. A4 判据的四个子检查（先分清谁在管什么）
+
+> ⛔ **以下全部为历史口径**（A4 容差体系已整体作废，见文首）：仅作方法论留痕，
+> ⛔ 不得作为现行判据引用；现行判据见 `docs/capability-matrix.data.json`。
 
 `judge_a4` 有四条**并列**子检查，任何一条不满足都判 A4 不通过：
 

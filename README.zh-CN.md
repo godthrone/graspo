@@ -169,7 +169,8 @@ cp samples/configs/sft_example.yaml my_sft.yaml
 - `max_prompt_length` 是完整序列长度（prompt + response）；
 - `learning_rate` **按方法取固定值、不随卡数变化**：SFT LoRA `2e-5` / SFT 全参 `5e-6`；
   GRASPO（RL）`5e-6`；CPT `5e-6`；OPD LoRA `2e-5` / OPD 全参 `5e-6`。
-  SFT LoRA 是 RL 的 4 倍（仓内原口径「RL 推荐比 SFT 低一个数量级」方向一致）；
+  SFT LoRA 是 RL 的 4 倍（与仓内既有**超参经验值**「RL 推荐比 SFT 低一个数量级」方向一致；
+  此处说的不是**判定口径**——判定口径的唯一真相源是 `docs/capability-matrix.data.json`）；
   全参档两者同值。★ 已裁定不做：不补 epoch、不做「按全局步数定长」、
   不做任何「按卡数补偿训练量 / 补偿 lr」的机制；
 - `reward` 配置段在 SFT 中被忽略。

@@ -184,9 +184,11 @@ Key differences from RL:
 - `max_prompt_length` is the full sequence length (prompt + response);
 - `learning_rate` is **method-specific and constant** (never scaled by card count):
   SFT LoRA `2e-5` / SFT full `5e-6`; GRASPO (RL) `5e-6`; CPT `5e-6`;
-  OPD LoRA `2e-5` / OPD full `5e-6`. SFT LoRA is 4x RL (the in-repo caliber
-  "RL is recommended one order of magnitude below SFT" still gives the same
-  direction); the full-parameter rate is the same for both.
+  OPD LoRA `2e-5` / OPD full `5e-6`. SFT LoRA is 4x RL (consistent in direction
+  with the existing in-repo empirical rule "RL is recommended one order of
+  magnitude below SFT"; this is a hyper-parameter rule of thumb, not an
+  acceptance caliber — the single source of truth for acceptance criteria is
+  `docs/capability-matrix.data.json`); the full-parameter rate is the same for both.
   ★ Ruled out: no extra epochs (multiple cards need no epoch compensation), no
   "fixed length by global step" scheme, and no card-count compensation for
   training volume or LR;
