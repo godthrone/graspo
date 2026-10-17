@@ -3,6 +3,7 @@
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -113,3 +114,104 @@ def test_recon_right_side_must_match_measured_steps():
     """★ 实测权威：右侧 ≠ steps_actual ⇒ 拒（以实测为准）。"""
     problems = g.check_reconciliation_matches_tier("GRASPO", "8x20x8/4 = 640", 320)
     assert problems and "≠ steps_actual" in problems[0], problems
+
+
+# ---------- ★★ 判据② 通过线：逐算法现读唯一真相源（修正轮 1，审 B1） ----------
+# 病史：本脚本曾对所有算法一律写死 `status = PASS if delta_pp >= 5.0 else FAIL`
+# ⇒ SFT 档 Δ=+7.3 pp 被判成「通过（已验证可用）」（冻结口径 SFT 线 = +10.0 pp ⇒ 结论错），
+# 且 `effect` 文本自述「冻结阈值 +5.0 pp」⇒ 回填器 `backfill_matrix.run_claimed_pp`
+# 按算法交叉核对时 SFT/CPT/OPD 三档会被直接拒绝。下列断言即该事故的回归网。
+
+def _write_reports(eval_dir: Path, base_correct: int, after_correct: int, total: int) -> None:
+    for side, correct in (("base", base_correct), ("after", after_correct)):
+        d = eval_dir / ".local/reports" / side
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "eval_report.json").write_text(json.dumps({"summary": {
+            "correct": correct, "total": total,
+            "accuracy_percent": round(correct / total * 100, 4)}}), encoding="utf-8")
+
+
+def _gen_args(label: str, eval_dir: Path) -> SimpleNamespace:
+    """与 `main()` 的 argparse 缺省值同形的最小 Namespace（够 `build()` 走评测分支）。"""
+    return SimpleNamespace(
+        tier="T999", eval_dir=str(eval_dir), no_eval=False, not_evaluable_reason="",
+        nproc=1, steps=1, recon="1", model="9B", label=label, mode="full", backend="native",
+        parallel="TP=1 PP=1 DP=1", hparams="", lora_target="", runs="", inference="",
+        algo_checks="", throughput="", peak_mem="", run_path="", produced_by="x", command="x",
+        tree_fp="", yaml="", yaml_sha="", img_run="", img_base="", host="example-host",
+        gpu="0", epochs="2", exit_code="0", criteria="c", temp="0", serving_note="", p5p6="",
+        evidence=["e.txt"], anomaly=[], non_graspo=True, identity_from_config=None)
+
+
+def _build_with_delta(tmp_path: Path, label: str, delta_pp: float) -> dict:
+    """造一份 base=500/1000 的报告，after 使其 Δ = `delta_pp` pp（1000 档 ⇒ 整数样本）。"""
+    after = 500 + int(round(delta_pp * 10))          # Δ pp = (after−base)/1000×100 = 10×Δ
+    d = tmp_path / f"ev-{label}-{delta_pp}"
+    _write_reports(d, 500, after, 1000)
+    return g.build(_gen_args(label, d))
+
+
+# ★ 能失败对照（落证见工位 evidence/B1-before-fix.txt）：
+#   本断言在旧代码（`>= 5.0`）上**必红** —— 旧代码把 SFT +7.3 判成 PASS。
+def test_sft_seven_point_three_must_not_pass(tmp_path: Path):
+    """★ 回归（B1 核心）：SFT Δ=+7.3 pp < 冻结线 +10.0 pp ⇒ **不得**判「通过」。"""
+    doc = _build_with_delta(tmp_path, "SFT", 7.3)
+    assert doc["delta_pp"] == pytest.approx(7.3)
+    assert doc["status"] != g.PASS, f"★ SFT +7.3 pp 被判成了通过 ⇒ 第二份阈值副本又回来了：{doc['status']}"
+    assert doc["status"] == g.FAIL
+
+
+def test_sft_at_or_above_ten_passes(tmp_path: Path):
+    doc = _build_with_delta(tmp_path, "SFT", 10.5)
+    assert doc["status"] == g.PASS
+    # 边界：恰好 10.0 ⇒ 通过（算子 `>=`，逐字取自真相源）
+    assert _build_with_delta(tmp_path, "SFT", 10.0)["status"] == g.PASS
+    assert _build_with_delta(tmp_path, "SFT", 9.9)["status"] == g.FAIL
+
+
+def test_graspo_line_is_five(tmp_path: Path):
+    assert _build_with_delta(tmp_path, "GRASPO", 7.3)["status"] == g.PASS
+    assert _build_with_delta(tmp_path, "GRASPO", 5.0)["status"] == g.PASS
+    assert _build_with_delta(tmp_path, "GRASPO", 4.9)["status"] == g.FAIL
+
+
+@pytest.mark.parametrize("label", ["CPT", "OPD"])
+def test_cpt_opd_use_non_inferiority_zero(tmp_path: Path, label: str):
+    """CPT / OPD 走「不劣化线」（真相源 value = 0.0 pp）⇒ `Δ ≥ 0` 通过、`Δ < 0` 不过。"""
+    assert _build_with_delta(tmp_path, label, 0.0)["status"] == g.PASS
+    assert _build_with_delta(tmp_path, label, 7.3)["status"] == g.PASS
+    assert _build_with_delta(tmp_path, label, -0.1)["status"] == g.FAIL
+
+
+def test_effect_renders_current_pass_line_and_no_stale_wording(tmp_path: Path):
+    """★ `effect` 必须按**该算法**渲染现行通过线，且**不得**再带已作废的旧口径措辞。"""
+    sft = _build_with_delta(tmp_path, "SFT", 7.3)["effect"]
+    assert "after − base ≥ +10.0 pp" in sft, sft
+    graspo = _build_with_delta(tmp_path, "GRASPO", 7.3)["effect"]
+    assert "after − base ≥ +5.0 pp" in graspo, graspo
+    cpt = _build_with_delta(tmp_path, "CPT", 0.0)["effect"]
+    assert "after ≥ base（不劣化）" in cpt, cpt
+    for effect in (sft, graspo, cpt):
+        for stale in ("目标 +10.0 pp", "仅展示", "冻结阈值 +5.0 pp"):
+            assert stale not in effect, f"残留旧口径措辞 {stale!r}：{effect}"
+
+
+def test_self_claimed_threshold_matches_matrix_frozen_caliber(tmp_path: Path):
+    """★ 回填器交叉核对的前置：`effect` 自述阈值 == 矩阵冻结口径（SFT/GRASPO）。"""
+    matrix = json.loads((_ROOT / "docs/capability-matrix.data.json").read_text(encoding="utf-8"))
+    by_method = matrix["meta"]["criteria_caliber"]["threshold"]["by_method"]
+    for label, method in (("SFT", "sft"), ("GRASPO", "graspo")):
+        effect = _build_with_delta(tmp_path, label, 7.3)["effect"]
+        assert by_method[method]["pass_line_text"] in effect
+
+
+def test_unknown_label_fails_closed():
+    """★ 不认识的算法名 ⇒ FAIL-CLOSED（⛔ 不猜、⛔ 不回落某条线套所有算法）。"""
+    for bad in ("GRPO", "", "RLHF"):
+        with pytest.raises(SystemExit):
+            g.method_from_label(bad)
+
+
+def test_method_from_label_maps_the_four_frozen_methods():
+    assert {g.method_from_label(k) for k in ("SFT", "GRASPO", "CPT", "OPD")} == \
+        {"sft", "graspo", "cpt", "opd"}

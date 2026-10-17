@@ -79,6 +79,10 @@ experiment_data/
 .dataset/
 .datasets/
 *.bak
+# ★ 口径变更前的成对备份（形如 `*.bak-before-caliber-YYYYMMDD`）：`*.bak` **不覆盖**它，
+#   曾被 `git status -uall` 报成残留未跟踪件（修正轮 1 W1）⇒ 显式忽略。
+#   备份本体移入 `.local/`（`.local/` 已整体忽略），本行是第二道兜底。
+*.bak-before-*
 
 # ★ 变异测试的临时副本：`test_run_matrix54_runner.py` 的负向（突变）用例会把 runner 的变异副本
 #   写进 `tests/e2e/`（**必须**与 runner 同级 —— 它用 `dirname($0)/../..` 反推仓库根 `ROOT_DIR`，
