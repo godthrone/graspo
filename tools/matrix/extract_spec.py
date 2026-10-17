@@ -521,7 +521,7 @@ def main():
         "basis": "跑次侧回执 spec-ack-to-matrix.md §C4 + core/schema.py::MsSwiftConfig + _config_mapping.py:566"})
     byid["C5"].update({
         "level": "★ 已回执（现状登记 + B10 依赖）",
-        "ruling": ("gpus 唯一定档 = manifest tiers[].gpus（现行 override 后的落盘值，如 T028=[4]/T041=[2,3]/T042=[4,5,6,7]）；"
+        "ruling": ("gpus 唯一定档 = manifest tiers[].gpus（现行 override 后的落盘值，如 T028=[4]/T041=[3,5]/T042=[1,3,4,5]）；"
                    "B10 依赖：idle 阈值 + runner 硬编码 {4,5,6,7} + B7 的 27 条契约测试再推导；★ B10 必须排在批与批之间"),
         "basis": "跑次侧回执 §C5 + tests/e2e/matrix54_manifest_source.json"})
     byid["C6"].update({

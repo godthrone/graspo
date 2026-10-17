@@ -28,19 +28,19 @@ docs/capability-matrix.data.json（机读数据：列定义 + 统一口径 + 逐
 
 ```bash
 # 渲染（唯一允许的 HTML 产出通道）
-python3 tools/matrix/render_matrix.py \
+.venv/bin/python tools/matrix/render_matrix.py \
     --template tools/matrix/template.html \
     --data docs/capability-matrix.data.json \
     --out docs/capability-matrix.html
 
 # 校验（逐字节比对 + 结构 / 内容 / 脱敏断言）
-python3 tools/matrix/verify_matrix.py \
+.venv/bin/python tools/matrix/verify_matrix.py \
     --template tools/matrix/template.html \
     --data docs/capability-matrix.data.json \
     --html docs/capability-matrix.html
 
 # 三组自证（空数据 PASS / 假数据 PASS / 手改 1 字符 FAIL + 报偏移）
-python3 tools/matrix/run_self_proof.py
+.venv/bin/python tools/matrix/run_self_proof.py
 ```
 
 ## 文件职责
@@ -74,8 +74,8 @@ python3 tools/matrix/run_self_proof.py
 
 自检（阳性对照）：
 ```bash
-python3 tools/matrix/build_official.py --human-view-self-test   # 人读视图四件的对抗性输入自检
-python3 tools/matrix/build_official.py --self-test              # 脱敏回归（含顺序无关）
+.venv/bin/python tools/matrix/build_official.py --human-view-self-test   # 人读视图四件的对抗性输入自检
+.venv/bin/python tools/matrix/build_official.py --self-test              # 脱敏回归（含顺序无关）
 ```
 
 ## 人读件结构与 §17.7 强制项
@@ -208,7 +208,7 @@ python3 tools/matrix/build_official.py --self-test              # 脱敏回归�
 
 ★ **长文本写入后、`git add` 前必须先跑语法检查**：
 ```bash
-python3 -m py_compile tools/matrix/<改动文件>.py     # 或等价的 AST 解析
+.venv/bin/python -m py_compile tools/matrix/<改动文件>.py     # 或等价的 AST 解析
 ```
 理由：本战役曾两次因长文本里的**裸双引号/未闭合字符串**引入语法错（都当场发现、未入库，但成本白付）
 ⇒ **提交前语法检查**已固化为本工具链的固定步骤（与 `verify`/自证同批执行）。
@@ -241,7 +241,7 @@ python3 -m py_compile tools/matrix/<改动文件>.py     # 或等价的 AST 解�
 ★ **脱敏规则必须"顺序无关"，并用对抗性输入验证** —— 因为规则顺序一旦让某条**先行规则把路径打碎**，后面的规则就再也匹配不到。
 ★ 真实事故（2026-10-13）：`/models/` 排在 `/home/` **之前** ⇒ `/home/<u>/models/Qwen3.8-27B` 被打碎成 `/home/<u>Qwen3.8-27B` ⇒ **任何带斜杠的规则都匹配不到** ⇒ 泄漏进 `data.json` 2 处。
 ★ 因此 `sanitize_str()` **末尾必须有一道与顺序无关的兜底**：`/home/<seg>[/<seg>…]` 残形整体抹掉。
-★ **回归自检**：`python3 tools/matrix/build_official.py --self-test` —— 含三例：① 真实案例宿主绝对路径 ⇒ 0 命中；② 无尾斜杠同形 ⇒ 被抹掉；③ ★ **反转 `PATH_MAP` 后仍须 0 命中**（顺序无关）。
+★ **回归自检**：`.venv/bin/python tools/matrix/build_official.py --self-test` —— 含三例：① 真实案例宿主绝对路径 ⇒ 0 命中；② 无尾斜杠同形 ⇒ 被抹掉；③ ★ **反转 `PATH_MAP` 后仍须 0 命中**（顺序无关）。
 ★ 交付前另跑 **`grep -c <用户名> docs/capability-matrix.{data.json,html}` ⇒ 必须 0**。
 
 ## 审计件纪律（强制 · 断言拦截）
@@ -448,7 +448,7 @@ python3 -m py_compile tools/matrix/<改动文件>.py     # 或等价的 AST 解�
 ★ **其他任何位置 ⛔ 不得复制 sha 值** ⇒ ★ 一律写 **"见「冻结件」节"**；★ 若确需保留历史值 ⇒ ★ **必须显式标注"历史值、已被取代"**。
 ★ **记录自身 sha 不写入文件**（★ 避免自指；★ 由交付回执给出）。
 ★ 实证（2026-10-14）：★ 曾因"顶层冻结件写旧值、修订段写新值、并残留悬空指向" ⇒ 记录自相矛盾、误导校验 ⇒ 本次改为单一真相源 ＋ 逐条自检。
-★ **「冻结件」节由工具生成**：`python3 tools/matrix/freeze_table.py [--inject <记录.md>]` ⇒ ★ **值一律来自实物**（`sha256sum` ＋ `wc -c`）⇒ ★ **⛔ 不得手工编辑**；★ 规则：★ **该节【存值】、其他节【只引用】**（写"见「冻结件」节"）；★ **记录自身 sha 不写入文件**。★ 可复现校验：重跑工具 ⇒ 输出须与记录内该节**逐字节一致** ✓
+★ **「冻结件」节由工具生成**：`.venv/bin/python tools/matrix/freeze_table.py [--inject <记录.md>]` ⇒ ★ **值一律来自实物**（`sha256sum` ＋ `wc -c`）⇒ ★ **⛔ 不得手工编辑**；★ 规则：★ **该节【存值】、其他节【只引用】**（写"见「冻结件」节"）；★ **记录自身 sha 不写入文件**。★ 可复现校验：重跑工具 ⇒ 输出须与记录内该节**逐字节一致** ✓
 
 ## ★ 身份字段必须由配置推导（2026-10-14 立，两次真实错位）
 

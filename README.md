@@ -53,7 +53,7 @@ GRASPO (Group Relative Advantage Structured Policy Optimization) — GRPO-style 
 
 > **Bilingual docs:** `README.md` and `README.zh-CN.md` are content mirrors
 > (§17.1): every section, config key, command block, and FAQ entry exists in
-> both. Run `python3 tools/readme_mirror_check.py` to verify — it compares
+> both. Run `.venv/bin/python tools/readme_mirror_check.py` to verify — it compares
 > section structure and inline-code tokens on both sides and prints the
 > "only in EN / only in ZH" list. Known notation-only differences are
 > registered in that script with their reasons.

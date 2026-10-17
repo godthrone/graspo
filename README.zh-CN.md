@@ -40,7 +40,7 @@ GRASPO (Group Relative Advantage Structured Policy Optimization) — GRPO 风格
 ## 快速开始
 
 > **双语文档**：`README.md` 与 `README.zh-CN.md` 内容镜像（§17.1）——每个章节、
-> 配置键、命令块与 FAQ 条目两侧都有。可用 `python3 tools/readme_mirror_check.py`
+> 配置键、命令块与 FAQ 条目两侧都有。可用 `.venv/bin/python tools/readme_mirror_check.py`
 > 核验：该脚本对比两侧章节结构与内联代码 token，并打印"仅见 EN / 仅见 ZH"清单。
 > 已登记的纯记号差异（不算内容缺失）写在该脚本里，附理由。
 

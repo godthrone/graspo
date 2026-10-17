@@ -21,7 +21,7 @@
 | M1 | 12 档 `tiers[*].config` | `<基线清单 supersedes.config_dir>/<T>.yaml` → `samples/configs/matrix54-fsdp/<T>.yaml` | 指向 FSDP 变体配置（★ 2026-10-16：基线目录**由基线清单自己声明**，⛔ 不再硬编码 `matrix54-v2`） |
 | M2 | 12 档 `feasibility.recipe.msswift` | `deepspeed: zero2[_offload]` → `fsdp: samples/configs/fsdp/fsdp2_full_state_dict[_offload].json` | 与 M1 同源（§1.4 配方只有一处） |
 | M3 | 12 档 `feasibility.estimate` | 去掉 zero2/zero2_offload 的 49.7 / 45.5 GiB 算式，改为"**待重算** + 保守性不变式 / 必须实测项" | 只改后端、未重跑估算器 ⇒ 不复用旧数字、不编新数字 |
-| M4 | `runtime.image` | `graspo-msswift:4.5.3` → `graspo:v0.28.11-cu130fix-v2-nfc3`（经 nfc1→nfc2→nfc3） | ①③ 的读数只在打过补丁的镜像里存在；② **12 档必须同一镜像**（否则"连续 3 次"的口径单元不成立）；③ nfc3 是 rollout 修复后的唯一可用镜像 |
+| M4 | `runtime.image` | `graspo-msswift:4.5.3` → `graspo:v0.28.11-cu130fix-v2-nfc3`（经 nfc1→nfc2→nfc3） | ①③ 的读数只在打过补丁的镜像里存在；② **12 档必须同一镜像**（否则"一次有效训练"的口径单元不成立）；③ nfc3 是 rollout 修复后的唯一可用镜像 |
 | M5 | 顶层 provenance | 新增 `config_version/supersedes/fsdp_migration` | 留痕：基线 sha256 + 授权来源 + ③ 计数语义 + Megatron 不可用 |
 | M6 | **全部 54 档** `tiers[*].gpus` | 源清单逐档 `gpus`（源生成器卡池映射）→ **本变体当前钉定** `1卡[1] / 2卡[3,5] / 4卡[1,3,4,5]`（★ 2026-10-16 改。**旧值** `1卡[7]/2卡[6,7]/4卡[4,5,6,7]` **含生产锁卡 GPU6/7 且 GPU7 越界**，已废，⛔ 不再有效） | **（历史理由，2026-10-16 起不再适用）** 当时不换就**跑不起来**：旧世代 runner 锁卡守卫只允许 `{4,5,6,7}`，实测 `run_matrix54.sh T006 --dry-run` 直接 fail-closed 拒绝。<br>★ **B8（2026-10-11）**：源清单自 2026-10-05 起**已自带** `{4,5,6,7}` 卡池映射，旧的"v2 基线应为 `[0]/[0,1]/[0,1,2,3]`"前置断言随之失效（`--check` 曾因此 `FATAL T001`）⇒ 本变体不再假定源卡池形态，只记录源值（供反向探针逐档还原）并钉定自身卡池 |
 
@@ -70,7 +70,7 @@ FSDP_CONFIG_RELPATH = "samples/configs/fsdp/fsdp2_full_state_dict.json"
 FSDP_CONFIG_RELPATH_OFFLOAD = "samples/configs/fsdp/fsdp2_full_state_dict_offload.json"
 OLD_DS_BY_PHASE = {1: "zero2", 2: "zero2_offload"}
 FSDP_CONF_BY_PHASE = {1: FSDP_CONFIG_RELPATH, 2: FSDP_CONFIG_RELPATH_OFFLOAD}
-# 2026-09-27：镜像链条 nfc1 → nfc2 → **nfc3**（三者必须逐档统一，否则"连续 3 次"的口径单元不成立）
+# 2026-09-27：镜像链条 nfc1 → nfc2 → **nfc3**（三者必须逐档统一，否则"一次有效训练"口径单元不成立）
 #   · nfc1：只有"非有限梯度计数"，经独立裁决不足以支撑判据③；
 #   · nfc2：补齐"逐步 + 原始 loss/梯度"证据（完整 ③ instrumentation）；
 #   · **nfc3**（本值）：修掉 rollout 的 `inference_mode` 与 FSDP2 参数簿记的冲突
