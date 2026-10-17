@@ -1010,9 +1010,28 @@ MATRIX_MAX_EPOCHS = 1
 def native_graspo_steps_per_epoch(tier: dict[str, Any]) -> int:
     """``GRASPO × native`` 档**每 epoch 可产出的 optimizer 步数上限**。
 
+    ★★★ **本函数只喂 v1 冻结快照，⛔ 不是运行期/发布件的步数来源**（M12/M13，2026-10-17 裁定）★★★
+
+    | 项 | 值 |
+    |---|---|
+    | 本函数的**唯一消费者** | ``build_manifest()`` ⇒ ``tests/e2e/matrix54_manifest.json``（**v1 冻结快照**，逐字节冻结） |
+    | **活链**（发布件 ``docs/capability-matrix.data.json`` 的步数来源） | ``tests/e2e/generate_matrix_manifest_source.py::v2_native_steps_per_epoch()``（**运行期同源语义**：每 epoch 上界 = ``floor(S/Q)+1``，切片后每 rank 持全部 ``S`` 条 ⇒ 与 ``dp_size`` 无关；阈值 = ``Q×(G//dp_size)``） |
+    | 两式关系 | **故意不同**，属**已登记项**（⛔ 不得据此判运行期步数） |
+
+    ★ **为什么保留旧式而不就地改**（裁定依据，逐字见工位
+    ``.local/hb-workspace/20261014-sft-kickoff/task-m12m13-dpderive/report.md`` §1／§2）：
+    ``tests/e2e/matrix54_manifest.json`` 是**冻结快照**，且
+    ``tests/e2e/test_generate_matrix.py::test_default_regeneration_matches_generator_field_universe_and_runner_bytes``
+    把「本函数的产出 ↔ 在盘快照」**逐值钉死** ⇒ 就地改本式会**连带改冻结件**（实测恰好 6 档：
+    T029/T030/T035/T036/T041/T042 的 ``expected_optimizer_steps_per_epoch``／``..._reachable``
+    ＋ ``acceptance.*`` ＋ ``step_gate_audit``）。主席 2026-10-17 裁定走仓内先例
+    （HEAD ``413b35f`` W-7：**只改 v2 活链、明示 v1 冻结清单未触**）⇒ 本式**保持 v1 快照口径**，
+    运行期同源语义一律落在 v2 活链（``v2_native_steps_per_epoch``）。
+    ★ **任何人不得**用本函数判断运行期步数、也不得把它当"现行推导式"引用。
+
     公式（AF1 §② 推导，逐条都有代码依据）::
 
-        每 rank prompt 数 P = floor(subset_size / cards)        # DP 分片
+        每 rank prompt 数 P = floor(subset_size / cards)        # v1 快照期：DP 分片口径
         阈值触发步数        = floor(P / rollout_queue_batch_size)
         epoch 末 force flush = +1                               # 每 epoch 恰好一次
         ⇒ 每 epoch 上限 = floor(P / Q) + 1

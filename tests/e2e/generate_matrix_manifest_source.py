@@ -22,7 +22,7 @@
       ② ``data.subset_size``：9 档 ``GRASPO × native`` → ``48 × 卡数``（48/96/192）；
          其余 45 档**照 v1**（CPT/SFT=100、GRASPO/OPD=20）。3 个 not_applicable 档保持 v1。
       ③ ``data.train_path`` / 步数两字段 / ``acceptance.formal_gate.*``：按 v2 真值重算
-         （``expected_optimizer_steps_per_epoch`` / ``_reachable`` 用**真实步进语义**，
+         （``expected_optimizer_steps_per_epoch`` / ``_reachable`` 用**运行期切片语义**，
          不是 v1 的朴素均分；见 :func:`v2_native_steps_per_epoch`）
       ④ ``data.source`` / ``data.source_jsonl``（**新增字段**）：逐档标注取数来源与命令，
          供 ``tests/e2e/run_matrix54_source.sh`` 做**单档进程作用域**的读取源切换。
@@ -31,17 +31,27 @@
 ★ 步数真值（逐条有代码依据，见 ``docs/capability-matrix.html`` §1 与
   ``.local/hb-workspace/20260923-analysis/task-config-freeze-v2/changes.md`` §1）::
 
-      T = floor(subset_size / dp_size)          # native 只按 DP 分片；PP 档 dp_size=1 ⇒ 不分片
-      每 epoch 步数 = ceil(T / Q) = (T + Q - 1) // Q        Q = rollout_queue_batch_size = 8
+      ★★ 2026-10-17（M12/M13）：口径改为**运行期切片语义**（⛔ 旧式已废）::
 
-  v2 子集 48×卡数 ⇒ 每卡 prompt 数 P = 48（PP 档例外：dp_size=1 ⇒ T=96/192）::
+          每 epoch 步数上界 = floor(S / Q) + 1        Q = rollout_queue_batch_size = 8
+          （S = 该档**全局** prompt 数；切片后每 rank 持全部 S 条 ⇒ **与 dp_size 无关**）
+
+      旧式（已废）``T = floor(subset_size / dp_size)`` ＋ ``ceil(T/Q)``：它假设
+      **DP 分片数据**（每 rank 只拿 S/dp 条）。切片设计（rollout 分卡）下**每 rank 持全部 S 条**、
+      阈值 = ``Q × (G//dp_size)``（``schema.replay_buffer_optimize_threshold_for``，
+      ``optimize.py`` 消费）⇒ 阈值触发 ``floor(S/Q)`` 次 ＋ epoch 末一次 force flush。
+      ★ 逐字裁定与出处见 ``.local/hb-workspace/20261014-sft-kickoff/task-m12m13-dpderive/report.md`` §1。
+
+  v2 子集 48×卡数 ⇒ S = 48×卡数::
 
       ★ 每 epoch 步数**不随 epoch 数变**；""整个 run 可达""= 每 epoch 步数 × **该档 yaml 的
         ``training.max_epochs``**（SFT 4／CPT/OPD 2／GRASPO 8，2026-10-15 主席裁定；唯一真相源）。
 
-      T028 T029 T030 T034 T040 T041 T042  →  T = 48  →  6 步
-      T035（dp=1, pp=2）                  →  T = 96  → 12 步
-      T036（dp=1, pp=4）                  →  T = 192 → 24 步
+      T028（S=48）  → floor(48/8)+1 = 7
+      T029（S=96）  → floor(96/8)+1 = 13
+      T030（S=192） → floor(192/8)+1 = 25
+      T034/T035/T036 同 T028/T029/T030（S=48/96/192）
+      T040/T041/T042（S=72/144/288）→ 10/19/37，但受**已声明的锚定覆盖** ``PLANNED_STEPS_OVERRIDE`` = 6
       全部 ≥ 硬前提 5 步 ⇒ step 门槛对 54 档**全部适用**（v2 无 structural_limited 档）。
 
 用法::
@@ -300,17 +310,49 @@ def config_dir_total_fingerprint(config_dir: Path) -> str:
 
 
 def v2_native_steps_per_epoch(subset_size: int, dp_size: int, q: int = Q) -> int:
-    """native GRASPO 每 epoch **真实**步数 = ``ceil(T/Q)``，``T = floor(subset/dp_size)``。
+    """native GRASPO 每 epoch **步数上界** = ``floor(S/Q) + 1``（**运行期切片语义**；M12/M13）。
 
-    与 v1 生成器 :func:`generate_matrix.native_graspo_steps_per_epoch` 的
-    ``floor(P/Q) + 1`` 的差别：后者是**上界**，当 ``P mod Q == 0`` 时会多算 1
-    （epoch 末 force flush 遇上空 buffer 直接返回 False）。v2 的 48/96/192 全是
-    8 的整数倍，两者**必然不同**（v1 式会算出 7/13/25），故 v2 必须用真实式。
+    ★★ **2026-10-17 口径重订**（裁定逐字见工位
+    ``.local/hb-workspace/20261014-sft-kickoff/task-m12m13-dpderive/report.md`` §1）：
+    切片（rollout 分卡）之后**每 rank 持全部 ``S`` 条 prompt**（⛔ 不再按 dp/卡数均分数据）⇒
+    每 rank 的 experience 数 = ``S × (G//dp)``，阈值 = ``Q × (G//dp)``（运行期
+    ``schema.replay_buffer_optimize_threshold_for(dp_size)``，``optimize.py`` 消费）
+    ⇒ 阈值触发 ``floor(S×(G//dp) / (Q×(G//dp))) = floor(S/Q)`` 次，加 epoch 末一次 force flush::
+
+        per_epoch = floor(S / Q) + 1        # ★ 与 dp_size **无关**
+        （S = 该档**全局** prompt 数 = ``V2_SUBSET_SIZE_BY_TIER[tier]``）
+
+    ★ **旧式（已废）** ``T = floor(subset_size/dp_size)`` ＋ ``ceil(T/Q)``：它假设
+    **DP 分片数据**（每 rank 只拿 ``S/dp`` 条）。切片设计下该假设**不再成立** ⇒ 旧式对 dp≥2
+    档把每 rank prompt 数少算 ``dp_size`` 倍（本仓同源先例：HEAD ``413b35f`` 修 PP 步数时
+    也是"按 dp/卡数分片 vs 不切数据"这一点错）。
+
+    ★ ``dp_size`` 仍作**入参**：它的作用不是缩放步数，而是 ① 供调用方按运行期语义核对
+    ``G % dp_size == 0 ∧ G//dp_size >= 1``（fail-closed，与 ``schema.rollout_slice_quantum``
+    同判据）② 让本函数的签名与调用点保留"步数依赖 dp 口径"的显式位置（⛔ 不悄悄丢弃参数）。
+
+    ★ 这是**上界，不是保证**：``S % Q == 0`` 时阈值触发恰好把 buffer 排空，epoch 末 force flush
+    会遇上空 buffer 而不计一步 ⇒ 真实值可能比本上界**低 1**（``optimize.py``：
+    ``local_wants_train = (force and len(replay_buffer) > 0) or ...``）。矩阵公布的是**上界**口径
+    （与 :func:`generate_matrix.native_graspo_steps_per_epoch` 的"上限，不是保证"同义）。
     """
-    prompts = max(0, int(subset_size)) // max(1, int(dp_size))
-    if prompts <= 0:
+    prompts_per_rank = max(0, int(subset_size))          # ★ 切片：每 rank 持**全部** S 条
+    if prompts_per_rank <= 0:
         return 0
-    return (prompts + max(1, int(q)) - 1) // max(1, int(q))
+    shards = max(1, int(dp_size))
+    # fail-closed：与运行期 `schema.rollout_slice_quantum` 同判据（消息点名该改哪个键）
+    group_size = 8                                       # = schema.rollout_group_size 默认值
+    if shards > group_size:
+        raise AssertionError(
+            f"dp_size (m={shards}) 不得大于 rollout_group_size (G={group_size})："
+            "G // m 必须 >= 1（请改 training.rollout_group_size 或 native.dp_size）"
+        )
+    if group_size % shards != 0:
+        raise AssertionError(
+            f"rollout_group_size (G={group_size}) 必须能被 dp_size (m={shards}) 整除"
+            "（否则各卡 rollout 切片并集 ≠ 整组 G 条；请改 training.rollout_group_size 或 native.dp_size）"
+        )
+    return prompts_per_rank // max(1, int(q)) + 1
 
 
 def read_yaml_scalar(path: Path, key: str) -> str:
@@ -377,7 +419,8 @@ def run_config_dp_size(tier_id: str, backend: str) -> int | None:
     source 生成器透传 v1×口径比率时把「按卡数相除」一并继承。对 **PP 档不成立**：
     **PP 切层、不切数据**（``native.pp_size>1 ∧ dp_size=1`` ⇒ 每条 rank 都看全量数据）。
 
-    口径（与矩阵 / 本文件头 ``T = floor(subset_size / dp_size)`` 自述逐字一致）：
+    口径（与矩阵 / 本文件头自述逐字一致；★ 2026-10-17 起 native 步数走**切片语义**、
+     不再按 dp 折算步数，但**数据并行度**仍是 PP 档「除错」的唯一正确除数）：
       · ``native`` 后端 ⇒ ``native.dp_size``（PP/TP 不折算数据）；
       · ``ms-swift`` 后端 ⇒ ``msswift.nproc_per_node × nnodes``（ms-swift 不暴露 ``dp_size``，
         其 DP 由 torchrun ``world_size`` 派生；``nnodes`` 缺省 = 1）。
@@ -672,7 +715,8 @@ def patch_tier(entry: dict, data_root: str, pregen_dir: str) -> dict:
         subset = mini_tier_subset_size(tier_id, v1_subset)
         source = SOURCE_MINI
     # ★★ 口径扩张比率（修正轮 2 / 🔴B-1）：**声明口径档一律适用（含 3 档 `not_applicable` 豁免档）**。
-    #   · formal 档（`V2_SUBSET_SIZE_BY_TIER`，9 档 native）的步数走真实式（`v2_native_steps_per_epoch`），
+    #   · formal 档（`V2_SUBSET_SIZE_BY_TIER`，9 档 native）的步数走**运行期切片式**
+    #     （`v2_native_steps_per_epoch`：`floor(S/Q)+1`，与 dp_size 无关），
     #     ckpt 间隔由 v2 档配置决定 ⇒ **不按比率**；
     #   · 其余档（含 18 档声明口径档）⇒ 走 :func:`caliber_subset_ratio`（唯一入口）。
     #   ⛔ 旧实现只在 `not is_na` 时算比率 ⇒ 3 档豁免档漏掉，且非 native 分支根本没用它（B-1 根因）。
@@ -730,14 +774,14 @@ def patch_tier(entry: dict, data_root: str, pregen_dir: str) -> dict:
     data["subset_file_pregenerated"] = not is_na
     out["data"] = data
 
-    # ④ 步数两字段：native GRASPO 走真实式；其余 45 档与 v1 同式同值（v1 已按真机校准）
+    # ④ 步数两字段：native GRASPO 走**运行期切片语义**；其余 45 档与 v1 同式同值（v1 已按真机校准）
     if is_native_graspo(out):
         dp_size = v2_dp_size(tier_id)
         per_epoch = v2_native_steps_per_epoch(subset, dp_size)
         out["step_formula_v2"] = (
-            f"T = floor({subset}/{dp_size}) = {subset // dp_size}；"
-            f"每 epoch = ceil(T/Q) = ceil({subset // dp_size}/{Q}) = {per_epoch}"
-            f"（Q={Q}；dp_size={dp_size}；PP 档 dp_size=1 ⇒ 不分片）"
+            f"每 epoch 上界 = floor(S/Q) + 1 = floor({subset}/{Q}) + 1 = {per_epoch}"
+            f"（S = 全局 prompt 数 = {subset}；切片后每 rank 持**全部** S 条 ⇒ **与 dp_size 无关**；"
+            f"Q={Q}；dp_size={dp_size}、切片阈值 = Q×(G//dp) = {Q}×({8}//{dp_size})）"
             + (
                 f"【★ 锚定覆盖为 {PLANNED_STEPS_OVERRIDE[tier_id]}；未锚定公式值为 {per_epoch}】"
                 if tier_id in PLANNED_STEPS_OVERRIDE else ""
@@ -818,8 +862,10 @@ def patch_tier(entry: dict, data_root: str, pregen_dir: str) -> dict:
     # ★ 键名语义 ≠ 实际语义时必须就地加注（2026-10-02 通则；本块随清单同行、机可读）
     out["key_semantics"] = {
         "expected_optimizer_steps_per_epoch": (
-            "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，"
-            "不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。"
+            "每 epoch 的**步数上界**（① 的比较基准；M12/M13 2026-10-17 起 = `floor(S/Q)+1`，"
+            "S = 该档**全局** prompt 数、切片后每 rank 持全部 S 条 ⇒ **与 dp_size 无关**）。"
+            "T040/T041/T042 为**锚定覆盖** = 6（不随子集放大而变；未锚定公式值见 step_formula_v2 的"
+            "【★ 锚定覆盖…】尾注，⛔ 此处不写死数字）。"
         ),
         "expected_optimizer_steps_reachable": (
             "整个 run 的可达步数上限 = `expected_optimizer_steps_per_epoch` × "
@@ -1004,8 +1050,10 @@ def build_v2_manifest(
         ),
         "train_path": f"/work/elam-v5/subsets/ → /work/elam-v5/{V2_SUBSET_DIRNAME}/（51 个可跑档）",
         "steps": (
-            "expected_optimizer_steps_per_epoch/_reachable 按**真实步进语义**重算："
-            "native GRASPO = ceil(floor(subset/dp_size)/Q)；"
+            "expected_optimizer_steps_per_epoch/_reachable 按**运行期切片语义**重算："
+            "native GRASPO = floor(S/Q)+1（S = 全局 prompt 数；切片后每 rank 持全部 S 条 ⇒ 与 dp_size 无关；"
+            "切片阈值 = Q×(G//dp_size)，见 schema.replay_buffer_optimize_threshold_for）；"
+            "★ 2026-10-17（M12/M13）：旧式 ceil(floor(subset/dp_size)/Q)（假设 DP 分片数据）已废；"
             "★ 2026-10-16：`_reachable` = per_epoch × **该档 yaml 的 training.max_epochs**"
             "（改前误用 v1 常量 1 ⇒ 低估 2–8 倍）；`checkpoint_save_steps` = 该 yaml 的 "
             "training.save_steps（改前 native 读已退役目录、其余走 v1 透传 ⇒ 51/51 与跑次 yaml 不一致）"
@@ -1711,7 +1759,7 @@ def check(manifest_path: Path, allow_unverified_subset_check: bool = False,
 
 
 def print_steps(v1_manifest: dict, pregen_dir: str = "") -> None:
-    print(f"Q={Q} 门槛={MIN_OPTIMIZER_STEPS}  公式=ceil(floor(subset/dp)/Q)"
+    print(f"Q={Q} 门槛={MIN_OPTIMIZER_STEPS}  公式=floor(S/Q)+1（切片：每 rank 持全部 S 条 ⇒ 与 dp 无关）"
           f"   epoch 逐档读自 {CONFIG_DIR_REL}/<T>.yaml 的 training.max_epochs（单一真相源）")
     for tid in sorted(V2_SUBSET_SIZE_BY_TIER):
         size = V2_SUBSET_SIZE_BY_TIER[tid]
@@ -1721,8 +1769,8 @@ def print_steps(v1_manifest: dict, pregen_dir: str = "") -> None:
         _ep = run_config_epochs(tid)
         print(
             f"  {tid}: subset {v1e['data']['subset_size']}→{size}  dp={dp}  "
-            f"T={size // dp}  steps={steps}  epoch={_ep}  reachable={steps * int(_ep or 0)}  "
-            f"(v1 朴素/上界式={v1e['expected_optimizer_steps_per_epoch']})"
+            f"S={size}  steps=floor({size}/{Q})+1={steps}  epoch={_ep}  reachable={steps * int(_ep or 0)}  "
+            f"(v1 冻结快照式={v1e['expected_optimizer_steps_per_epoch']})"
         )
 
 

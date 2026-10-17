@@ -2373,10 +2373,10 @@
         "source_rule": "subsets-v2（v2 冻结子集）：本档取 **formal** 源前 48 条（= 48 × 卡数）",
         "subset_file_pregenerated": true
       },
-      "expected_optimizer_steps": 49,
-      "checkpoint_save_steps": 49,
-      "expected_optimizer_steps_per_epoch": 6,
-      "expected_optimizer_steps_reachable": 48,
+      "expected_optimizer_steps": 57,
+      "checkpoint_save_steps": 57,
+      "expected_optimizer_steps_per_epoch": 7,
+      "expected_optimizer_steps_reachable": 56,
       "feasibility": {
         "verdict": "feasible",
         "feasible": true,
@@ -2397,7 +2397,7 @@
           "min_optimizer_steps": 5,
           "min_train_samples": 20,
           "step_gate_applicability": "applicable",
-          "step_gate_basis": "expected_optimizer_steps_reachable=48；per_epoch=6；max_epochs=8；可产出步数上限=48 ≥ 门槛 5 ⇒ 门槛照常判"
+          "step_gate_basis": "expected_optimizer_steps_reachable=56；per_epoch=7；max_epochs=8；可产出步数上限=56 ≥ 门槛 5 ⇒ 门槛照常判"
         },
         "criteria": [
           "A1",
@@ -2408,9 +2408,9 @@
           "A6"
         ]
       },
-      "step_formula_v2": "T = floor(48/1) = 48；每 epoch = ceil(T/Q) = ceil(48/8) = 6（Q=8；dp_size=1；PP 档 dp_size=1 ⇒ 不分片）",
+      "step_formula_v2": "每 epoch 上界 = floor(S/Q) + 1 = floor(48/8) + 1 = 7（S = 全局 prompt 数 = 48；切片后每 rank 持**全部** S 条 ⇒ **与 dp_size 无关**；Q=8；dp_size=1、切片阈值 = Q×(G//dp) = 8×(8//1)）",
       "key_semantics": {
-        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**步数上界**（① 的比较基准；M12/M13 2026-10-17 起 = `floor(S/Q)+1`，S = 该档**全局** prompt 数、切片后每 rank 持全部 S 条 ⇒ **与 dp_size 无关**）。T040/T041/T042 为**锚定覆盖** = 6（不随子集放大而变；未锚定公式值见 step_formula_v2 的【★ 锚定覆盖…】尾注，⛔ 此处不写死数字）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = `expected_optimizer_steps_per_epoch` × **该档跑次档配置 yaml 的 `training.max_epochs`**（= 该键的唯一真相源，见 `step_gate_basis` 与本档 `config` 所指文件；⛔ 不再用 v1 冻结期常量）。当前值见本键本身（⛔ 此处不写死数字：写死的例子会随 epoch 口径变更而变成假话）。",
         "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档**跑次档配置 yaml** 的 `training.save_steps`，逐档从该 yaml 现读、⛔ 不再从已退役的 samples/configs/matrix54-v2/ 读）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
         "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
@@ -2449,10 +2449,10 @@
         "source_rule": "subsets-v2（v2 冻结子集）：本档取 **formal** 源前 96 条（= 48 × 卡数）",
         "subset_file_pregenerated": true
       },
-      "expected_optimizer_steps": 49,
-      "checkpoint_save_steps": 49,
-      "expected_optimizer_steps_per_epoch": 6,
-      "expected_optimizer_steps_reachable": 48,
+      "expected_optimizer_steps": 105,
+      "checkpoint_save_steps": 105,
+      "expected_optimizer_steps_per_epoch": 13,
+      "expected_optimizer_steps_reachable": 104,
       "feasibility": {
         "verdict": "feasible",
         "feasible": true,
@@ -2473,7 +2473,7 @@
           "min_optimizer_steps": 5,
           "min_train_samples": 20,
           "step_gate_applicability": "applicable",
-          "step_gate_basis": "expected_optimizer_steps_reachable=48；per_epoch=6；max_epochs=8；可产出步数上限=48 ≥ 门槛 5 ⇒ 门槛照常判"
+          "step_gate_basis": "expected_optimizer_steps_reachable=104；per_epoch=13；max_epochs=8；可产出步数上限=104 ≥ 门槛 5 ⇒ 门槛照常判"
         },
         "criteria": [
           "A1",
@@ -2484,9 +2484,9 @@
           "A6"
         ]
       },
-      "step_formula_v2": "T = floor(96/2) = 48；每 epoch = ceil(T/Q) = ceil(48/8) = 6（Q=8；dp_size=2；PP 档 dp_size=1 ⇒ 不分片）",
+      "step_formula_v2": "每 epoch 上界 = floor(S/Q) + 1 = floor(96/8) + 1 = 13（S = 全局 prompt 数 = 96；切片后每 rank 持**全部** S 条 ⇒ **与 dp_size 无关**；Q=8；dp_size=2、切片阈值 = Q×(G//dp) = 8×(8//2)）",
       "key_semantics": {
-        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**步数上界**（① 的比较基准；M12/M13 2026-10-17 起 = `floor(S/Q)+1`，S = 该档**全局** prompt 数、切片后每 rank 持全部 S 条 ⇒ **与 dp_size 无关**）。T040/T041/T042 为**锚定覆盖** = 6（不随子集放大而变；未锚定公式值见 step_formula_v2 的【★ 锚定覆盖…】尾注，⛔ 此处不写死数字）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = `expected_optimizer_steps_per_epoch` × **该档跑次档配置 yaml 的 `training.max_epochs`**（= 该键的唯一真相源，见 `step_gate_basis` 与本档 `config` 所指文件；⛔ 不再用 v1 冻结期常量）。当前值见本键本身（⛔ 此处不写死数字：写死的例子会随 epoch 口径变更而变成假话）。",
         "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档**跑次档配置 yaml** 的 `training.save_steps`，逐档从该 yaml 现读、⛔ 不再从已退役的 samples/configs/matrix54-v2/ 读）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
         "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
@@ -2527,10 +2527,10 @@
         "source_rule": "subsets-v2（v2 冻结子集）：本档取 **formal** 源前 192 条（= 48 × 卡数）",
         "subset_file_pregenerated": true
       },
-      "expected_optimizer_steps": 49,
-      "checkpoint_save_steps": 49,
-      "expected_optimizer_steps_per_epoch": 6,
-      "expected_optimizer_steps_reachable": 48,
+      "expected_optimizer_steps": 201,
+      "checkpoint_save_steps": 201,
+      "expected_optimizer_steps_per_epoch": 25,
+      "expected_optimizer_steps_reachable": 200,
       "feasibility": {
         "verdict": "feasible",
         "feasible": true,
@@ -2551,7 +2551,7 @@
           "min_optimizer_steps": 5,
           "min_train_samples": 20,
           "step_gate_applicability": "applicable",
-          "step_gate_basis": "expected_optimizer_steps_reachable=48；per_epoch=6；max_epochs=8；可产出步数上限=48 ≥ 门槛 5 ⇒ 门槛照常判"
+          "step_gate_basis": "expected_optimizer_steps_reachable=200；per_epoch=25；max_epochs=8；可产出步数上限=200 ≥ 门槛 5 ⇒ 门槛照常判"
         },
         "criteria": [
           "A1",
@@ -2562,9 +2562,9 @@
           "A6"
         ]
       },
-      "step_formula_v2": "T = floor(192/4) = 48；每 epoch = ceil(T/Q) = ceil(48/8) = 6（Q=8；dp_size=4；PP 档 dp_size=1 ⇒ 不分片）",
+      "step_formula_v2": "每 epoch 上界 = floor(S/Q) + 1 = floor(192/8) + 1 = 25（S = 全局 prompt 数 = 192；切片后每 rank 持**全部** S 条 ⇒ **与 dp_size 无关**；Q=8；dp_size=4、切片阈值 = Q×(G//dp) = 8×(8//4)）",
       "key_semantics": {
-        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**步数上界**（① 的比较基准；M12/M13 2026-10-17 起 = `floor(S/Q)+1`，S = 该档**全局** prompt 数、切片后每 rank 持全部 S 条 ⇒ **与 dp_size 无关**）。T040/T041/T042 为**锚定覆盖** = 6（不随子集放大而变；未锚定公式值见 step_formula_v2 的【★ 锚定覆盖…】尾注，⛔ 此处不写死数字）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = `expected_optimizer_steps_per_epoch` × **该档跑次档配置 yaml 的 `training.max_epochs`**（= 该键的唯一真相源，见 `step_gate_basis` 与本档 `config` 所指文件；⛔ 不再用 v1 冻结期常量）。当前值见本键本身（⛔ 此处不写死数字：写死的例子会随 epoch 口径变更而变成假话）。",
         "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档**跑次档配置 yaml** 的 `training.save_steps`，逐档从该 yaml 现读、⛔ 不再从已退役的 samples/configs/matrix54-v2/ 读）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
         "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
@@ -2832,10 +2832,10 @@
         "source_rule": "subsets-v2（v2 冻结子集）：本档取 **formal** 源前 48 条（= 48 × 卡数）",
         "subset_file_pregenerated": true
       },
-      "expected_optimizer_steps": 49,
-      "checkpoint_save_steps": 49,
-      "expected_optimizer_steps_per_epoch": 6,
-      "expected_optimizer_steps_reachable": 48,
+      "expected_optimizer_steps": 57,
+      "checkpoint_save_steps": 57,
+      "expected_optimizer_steps_per_epoch": 7,
+      "expected_optimizer_steps_reachable": 56,
       "feasibility": {
         "verdict": "feasible",
         "feasible": true,
@@ -2857,7 +2857,7 @@
           "min_optimizer_steps": 5,
           "min_train_samples": 20,
           "step_gate_applicability": "applicable",
-          "step_gate_basis": "expected_optimizer_steps_reachable=48；per_epoch=6；max_epochs=8；可产出步数上限=48 ≥ 门槛 5 ⇒ 门槛照常判"
+          "step_gate_basis": "expected_optimizer_steps_reachable=56；per_epoch=7；max_epochs=8；可产出步数上限=56 ≥ 门槛 5 ⇒ 门槛照常判"
         },
         "criteria": [
           "A1",
@@ -2868,9 +2868,9 @@
           "A6"
         ]
       },
-      "step_formula_v2": "T = floor(48/1) = 48；每 epoch = ceil(T/Q) = ceil(48/8) = 6（Q=8；dp_size=1；PP 档 dp_size=1 ⇒ 不分片）",
+      "step_formula_v2": "每 epoch 上界 = floor(S/Q) + 1 = floor(48/8) + 1 = 7（S = 全局 prompt 数 = 48；切片后每 rank 持**全部** S 条 ⇒ **与 dp_size 无关**；Q=8；dp_size=1、切片阈值 = Q×(G//dp) = 8×(8//1)）",
       "key_semantics": {
-        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**步数上界**（① 的比较基准；M12/M13 2026-10-17 起 = `floor(S/Q)+1`，S = 该档**全局** prompt 数、切片后每 rank 持全部 S 条 ⇒ **与 dp_size 无关**）。T040/T041/T042 为**锚定覆盖** = 6（不随子集放大而变；未锚定公式值见 step_formula_v2 的【★ 锚定覆盖…】尾注，⛔ 此处不写死数字）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = `expected_optimizer_steps_per_epoch` × **该档跑次档配置 yaml 的 `training.max_epochs`**（= 该键的唯一真相源，见 `step_gate_basis` 与本档 `config` 所指文件；⛔ 不再用 v1 冻结期常量）。当前值见本键本身（⛔ 此处不写死数字：写死的例子会随 epoch 口径变更而变成假话）。",
         "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档**跑次档配置 yaml** 的 `training.save_steps`，逐档从该 yaml 现读、⛔ 不再从已退役的 samples/configs/matrix54-v2/ 读）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
         "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
@@ -2910,10 +2910,10 @@
         "source_rule": "subsets-v2（v2 冻结子集）：本档取 **formal** 源前 96 条（= 48 × 卡数）",
         "subset_file_pregenerated": true
       },
-      "expected_optimizer_steps": 97,
-      "checkpoint_save_steps": 97,
-      "expected_optimizer_steps_per_epoch": 12,
-      "expected_optimizer_steps_reachable": 96,
+      "expected_optimizer_steps": 105,
+      "checkpoint_save_steps": 105,
+      "expected_optimizer_steps_per_epoch": 13,
+      "expected_optimizer_steps_reachable": 104,
       "feasibility": {
         "verdict": "feasible",
         "feasible": true,
@@ -2934,7 +2934,7 @@
           "min_optimizer_steps": 5,
           "min_train_samples": 20,
           "step_gate_applicability": "applicable",
-          "step_gate_basis": "expected_optimizer_steps_reachable=96；per_epoch=12；max_epochs=8；可产出步数上限=96 ≥ 门槛 5 ⇒ 门槛照常判"
+          "step_gate_basis": "expected_optimizer_steps_reachable=104；per_epoch=13；max_epochs=8；可产出步数上限=104 ≥ 门槛 5 ⇒ 门槛照常判"
         },
         "criteria": [
           "A1",
@@ -2945,9 +2945,9 @@
           "A6"
         ]
       },
-      "step_formula_v2": "T = floor(96/1) = 96；每 epoch = ceil(T/Q) = ceil(96/8) = 12（Q=8；dp_size=1；PP 档 dp_size=1 ⇒ 不分片）",
+      "step_formula_v2": "每 epoch 上界 = floor(S/Q) + 1 = floor(96/8) + 1 = 13（S = 全局 prompt 数 = 96；切片后每 rank 持**全部** S 条 ⇒ **与 dp_size 无关**；Q=8；dp_size=1、切片阈值 = Q×(G//dp) = 8×(8//1)）",
       "key_semantics": {
-        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**步数上界**（① 的比较基准；M12/M13 2026-10-17 起 = `floor(S/Q)+1`，S = 该档**全局** prompt 数、切片后每 rank 持全部 S 条 ⇒ **与 dp_size 无关**）。T040/T041/T042 为**锚定覆盖** = 6（不随子集放大而变；未锚定公式值见 step_formula_v2 的【★ 锚定覆盖…】尾注，⛔ 此处不写死数字）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = `expected_optimizer_steps_per_epoch` × **该档跑次档配置 yaml 的 `training.max_epochs`**（= 该键的唯一真相源，见 `step_gate_basis` 与本档 `config` 所指文件；⛔ 不再用 v1 冻结期常量）。当前值见本键本身（⛔ 此处不写死数字：写死的例子会随 epoch 口径变更而变成假话）。",
         "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档**跑次档配置 yaml** 的 `training.save_steps`，逐档从该 yaml 现读、⛔ 不再从已退役的 samples/configs/matrix54-v2/ 读）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
         "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
@@ -2989,10 +2989,10 @@
         "source_rule": "subsets-v2（v2 冻结子集）：本档取 **formal** 源前 192 条（= 48 × 卡数）",
         "subset_file_pregenerated": true
       },
-      "expected_optimizer_steps": 193,
-      "checkpoint_save_steps": 193,
-      "expected_optimizer_steps_per_epoch": 24,
-      "expected_optimizer_steps_reachable": 192,
+      "expected_optimizer_steps": 201,
+      "checkpoint_save_steps": 201,
+      "expected_optimizer_steps_per_epoch": 25,
+      "expected_optimizer_steps_reachable": 200,
       "feasibility": {
         "verdict": "feasible",
         "feasible": true,
@@ -3013,7 +3013,7 @@
           "min_optimizer_steps": 5,
           "min_train_samples": 20,
           "step_gate_applicability": "applicable",
-          "step_gate_basis": "expected_optimizer_steps_reachable=192；per_epoch=24；max_epochs=8；可产出步数上限=192 ≥ 门槛 5 ⇒ 门槛照常判"
+          "step_gate_basis": "expected_optimizer_steps_reachable=200；per_epoch=25；max_epochs=8；可产出步数上限=200 ≥ 门槛 5 ⇒ 门槛照常判"
         },
         "criteria": [
           "A1",
@@ -3024,9 +3024,9 @@
           "A6"
         ]
       },
-      "step_formula_v2": "T = floor(192/1) = 192；每 epoch = ceil(T/Q) = ceil(192/8) = 24（Q=8；dp_size=1；PP 档 dp_size=1 ⇒ 不分片）",
+      "step_formula_v2": "每 epoch 上界 = floor(S/Q) + 1 = floor(192/8) + 1 = 25（S = 全局 prompt 数 = 192；切片后每 rank 持**全部** S 条 ⇒ **与 dp_size 无关**；Q=8；dp_size=1、切片阈值 = Q×(G//dp) = 8×(8//1)）",
       "key_semantics": {
-        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**步数上界**（① 的比较基准；M12/M13 2026-10-17 起 = `floor(S/Q)+1`，S = 该档**全局** prompt 数、切片后每 rank 持全部 S 条 ⇒ **与 dp_size 无关**）。T040/T041/T042 为**锚定覆盖** = 6（不随子集放大而变；未锚定公式值见 step_formula_v2 的【★ 锚定覆盖…】尾注，⛔ 此处不写死数字）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = `expected_optimizer_steps_per_epoch` × **该档跑次档配置 yaml 的 `training.max_epochs`**（= 该键的唯一真相源，见 `step_gate_basis` 与本档 `config` 所指文件；⛔ 不再用 v1 冻结期常量）。当前值见本键本身（⛔ 此处不写死数字：写死的例子会随 epoch 口径变更而变成假话）。",
         "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档**跑次档配置 yaml** 的 `training.save_steps`，逐档从该 yaml 现读、⛔ 不再从已退役的 samples/configs/matrix54-v2/ 读）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
         "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
@@ -3334,9 +3334,9 @@
           "A6"
         ]
       },
-      "step_formula_v2": "T = floor(72/1) = 72；每 epoch = ceil(T/Q) = ceil(72/8) = 9（Q=8；dp_size=1；PP 档 dp_size=1 ⇒ 不分片）【★ 锚定覆盖为 6；未锚定公式值为 9】",
+      "step_formula_v2": "每 epoch 上界 = floor(S/Q) + 1 = floor(72/8) + 1 = 10（S = 全局 prompt 数 = 72；切片后每 rank 持**全部** S 条 ⇒ **与 dp_size 无关**；Q=8；dp_size=1、切片阈值 = Q×(G//dp) = 8×(8//1)）【★ 锚定覆盖为 6；未锚定公式值为 10】",
       "key_semantics": {
-        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**步数上界**（① 的比较基准；M12/M13 2026-10-17 起 = `floor(S/Q)+1`，S = 该档**全局** prompt 数、切片后每 rank 持全部 S 条 ⇒ **与 dp_size 无关**）。T040/T041/T042 为**锚定覆盖** = 6（不随子集放大而变；未锚定公式值见 step_formula_v2 的【★ 锚定覆盖…】尾注，⛔ 此处不写死数字）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = `expected_optimizer_steps_per_epoch` × **该档跑次档配置 yaml 的 `training.max_epochs`**（= 该键的唯一真相源，见 `step_gate_basis` 与本档 `config` 所指文件；⛔ 不再用 v1 冻结期常量）。当前值见本键本身（⛔ 此处不写死数字：写死的例子会随 epoch 口径变更而变成假话）。",
         "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档**跑次档配置 yaml** 的 `training.save_steps`，逐档从该 yaml 现读、⛔ 不再从已退役的 samples/configs/matrix54-v2/ 读）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
         "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
@@ -3410,9 +3410,9 @@
           "A6"
         ]
       },
-      "step_formula_v2": "T = floor(144/2) = 72；每 epoch = ceil(T/Q) = ceil(72/8) = 9（Q=8；dp_size=2；PP 档 dp_size=1 ⇒ 不分片）【★ 锚定覆盖为 6；未锚定公式值为 9】",
+      "step_formula_v2": "每 epoch 上界 = floor(S/Q) + 1 = floor(144/8) + 1 = 19（S = 全局 prompt 数 = 144；切片后每 rank 持**全部** S 条 ⇒ **与 dp_size 无关**；Q=8；dp_size=2、切片阈值 = Q×(G//dp) = 8×(8//2)）【★ 锚定覆盖为 6；未锚定公式值为 19】",
       "key_semantics": {
-        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**步数上界**（① 的比较基准；M12/M13 2026-10-17 起 = `floor(S/Q)+1`，S = 该档**全局** prompt 数、切片后每 rank 持全部 S 条 ⇒ **与 dp_size 无关**）。T040/T041/T042 为**锚定覆盖** = 6（不随子集放大而变；未锚定公式值见 step_formula_v2 的【★ 锚定覆盖…】尾注，⛔ 此处不写死数字）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = `expected_optimizer_steps_per_epoch` × **该档跑次档配置 yaml 的 `training.max_epochs`**（= 该键的唯一真相源，见 `step_gate_basis` 与本档 `config` 所指文件；⛔ 不再用 v1 冻结期常量）。当前值见本键本身（⛔ 此处不写死数字：写死的例子会随 epoch 口径变更而变成假话）。",
         "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档**跑次档配置 yaml** 的 `training.save_steps`，逐档从该 yaml 现读、⛔ 不再从已退役的 samples/configs/matrix54-v2/ 读）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
         "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",
@@ -3488,9 +3488,9 @@
           "A6"
         ]
       },
-      "step_formula_v2": "T = floor(288/4) = 72；每 epoch = ceil(T/Q) = ceil(72/8) = 9（Q=8；dp_size=4；PP 档 dp_size=1 ⇒ 不分片）【★ 锚定覆盖为 6；未锚定公式值为 9】",
+      "step_formula_v2": "每 epoch 上界 = floor(S/Q) + 1 = floor(288/8) + 1 = 37（S = 全局 prompt 数 = 288；切片后每 rank 持**全部** S 条 ⇒ **与 dp_size 无关**；Q=8；dp_size=4、切片阈值 = Q×(G//dp) = 8×(8//4)）【★ 锚定覆盖为 6；未锚定公式值为 37】",
       "key_semantics": {
-        "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
+        "expected_optimizer_steps_per_epoch": "每 epoch 的**步数上界**（① 的比较基准；M12/M13 2026-10-17 起 = `floor(S/Q)+1`，S = 该档**全局** prompt 数、切片后每 rank 持全部 S 条 ⇒ **与 dp_size 无关**）。T040/T041/T042 为**锚定覆盖** = 6（不随子集放大而变；未锚定公式值见 step_formula_v2 的【★ 锚定覆盖…】尾注，⛔ 此处不写死数字）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = `expected_optimizer_steps_per_epoch` × **该档跑次档配置 yaml 的 `training.max_epochs`**（= 该键的唯一真相源，见 `step_gate_basis` 与本档 `config` 所指文件；⛔ 不再用 v1 冻结期常量）。当前值见本键本身（⛔ 此处不写死数字：写死的例子会随 epoch 口径变更而变成假话）。",
         "checkpoint_save_steps": "**ckpt 保存间隔**（= 该档**跑次档配置 yaml** 的 `training.save_steps`，逐档从该 yaml 现读、⛔ 不再从已退役的 samples/configs/matrix54-v2/ 读）。⛔ **不是**计划优化步数 —— 计划优化步数见 `expected_optimizer_steps_per_epoch`。（不变量：save_steps 必须 > 可达步数，否则会落中间 step_<N> ckpt、破坏「每档只留一份」。）",
         "expected_optimizer_steps": "**历史键名**：语义 = `checkpoint_save_steps`（保存间隔），⛔ **不是**计划优化步数。保留旧名仅为不破坏既有消费方；新代码请读 `expected_optimizer_steps_per_epoch`。",

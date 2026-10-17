@@ -18,7 +18,7 @@ training:
   learning_rate: 5.0e-06
   gradient_accumulation_micro_batches: 1
   save_checkpoint_every_epoch: false
-  save_steps: 193
+  save_steps: 201
 export:
   final_formats: ["merged-hf"]
 launch:
