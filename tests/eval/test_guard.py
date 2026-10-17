@@ -3,10 +3,11 @@
 这些测试是**安全回归**：任何一条挂掉都意味着"评测链路可能跑到允许集合之外的卡上"
 或"显存采样可能混入非目标卡读数"。
 
-★ 卡位契约（B10 再推导，2026-10-12）：**允许卡 = 本机全卡 0–7（先到先得）；
-唯一要求 = 不破坏别人的服务**。旧白名单 ``{4,5,6,7}`` 已退役；≥8 不存在。
-「生产卡 / reserved」语义已退役。故本文件的负例改为**只在 ≥8**（唯一"集合外"），
-正例覆盖 0–7 全部；⛔ 不再有"0–3 是第三方所以拒绝"的用例。
+★ 卡位契约（**2026-10-17 主席令**，逐字）：「**228 先到先得，随便用。**」
+＋「**单个作业不限制卡数。**」⇒ **允许卡 = 本机全卡 0–7（先到先得）**；≥8 不存在。
+⛔ 不预留、⛔ 不禁用、⛔ 无"生产锁卡"、⛔ 无"邻居卡"、⛔ **无单作业卡数上限**。
+故本文件的负例**只在 ≥8**（唯一"集合外"），正例覆盖 0–7 全部；
+⛔ 不再有"0–3 是第三方所以拒绝""最多 4 卡"的用例。
 """
 
 from __future__ import annotations
@@ -21,9 +22,9 @@ from graspo.core.gpu_guard import (
     GpuPlan,
     resolve_gpu_plan,
 )
+from graspo.eval import guard as eval_guard
 from graspo.eval.guard import (
     ALLOWED_GPU_INDICES,
-    MAX_GPU_COUNT,
     RESERVED_GPU_INDICES,
     repo_relative,
     sample_device_memory_mib,
@@ -41,7 +42,12 @@ def test_allowed_set_and_limit_come_from_core_guard():
 
     assert ALLOWED_GPU_INDICES == frozenset(ALLOWED_INDICES) == frozenset(range(8))
     assert ALLOWED_MAX_INDEX == max(ALLOWED_INDICES) == 7
-    assert MAX_GPU_COUNT == MAX_CARDS
+    # ★ 2026-10-17：评测侧**不设卡数常量**——旧透传别名已删（它本身不构成拦截，
+    #   却是"这里有个卡数上限"的误解诱因）。本机卡数这类派生量直接引用真相源。
+    assert not hasattr(eval_guard, "MAX_GPU_COUNT")
+    from graspo.core import gpu_guard as core_guard
+
+    assert MAX_CARDS == core_guard.MAX_CARDS == len(core_guard.ALLOWED_INDICES)
     # ★ 「生产卡 / reserved」语义退役：两处都必须为空
     assert RESERVED_GPU_INDICES == ()
     assert RESERVED_INDICES == ()
@@ -86,15 +92,15 @@ def test_every_allowlist_card_is_accepted(raw):
     assert resolve_gpu_plan(raw).devices == (int(raw),)
 
 
-def test_more_than_four_cards_is_rejected():
-    """5 张卡 → 拒绝。
+def test_card_count_is_not_capped():
+    """★★ 2026-10-17 主席令「单个作业不限制卡数」⇒ **5 张卡必须放行**。
 
-    ★ B10 再推导：旧白名单只有 4 个元素时，"纯超 4 卡"输入不可构造（5 张必然含集合外卡，
-    先被白名单分支拒绝）；**B10 解禁后 0–7 全在集合内** ⇒ ``"0,1,2,3,4"`` 首次真正
-    走到 **``MAX_CARDS`` 分支**。本用例因此改为钉住"卡数上限独立生效"。
+    （本用例由旧的 `test_more_than_four_cards_is_rejected` **反转**而来：
+    旧口径下 ``"0,1,2,3,4"`` 走到 ``MAX_CARDS`` 分支被拒；该平台级上限已删除。）
+    ★ 没放松边界：越界卡（≥8）仍拒（见下一条用例）。
     """
-    with pytest.raises(GpuGuardError):
-        resolve_gpu_plan("0,1,2,3,4")
+    assert resolve_gpu_plan("0,1,2,3,4").devices == (0, 1, 2, 3, 4)
+    assert resolve_gpu_plan("0,1,2,3,4,5,6,7").count == 8
 
 
 def test_four_cards_is_accepted():

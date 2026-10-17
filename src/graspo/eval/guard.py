@@ -2,7 +2,7 @@
 
 ★★ 一名一物（gpu_guard 双家消除后）：
 - **契约与纯策略** ⇒ ``graspo.core.gpu_guard``（``GpuPlan`` / ``GpuGuardError`` /
-  ``parse_gpu_plan`` / ``resolve_gpu_plan`` / 允许集合与上限）。**唯一定义处**。
+  ``parse_gpu_plan`` / ``resolve_gpu_plan`` / 允许卡号白名单）。**唯一定义处**。
 - **设施操作** ⇒ ``graspo.flow.guard``（读环境、盘点、退出、空闲断言）。
 - **本模块** ⇒ 只做一件事：用 ``nvidia-smi -i`` 采**可见卡**的显存/驱动读数，
   外加评测链路承认的卡集合别名（**直接派生自 core，不另立一份规则**）。
@@ -28,7 +28,6 @@ from pathlib import Path
 
 from graspo.core.gpu_guard import (
     ALLOWED_INDICES,
-    MAX_CARDS,
     RESERVED_INDICES,
     GpuGuardError,
     GpuPlan,
@@ -36,7 +35,6 @@ from graspo.core.gpu_guard import (
 
 __all__ = [
     "ALLOWED_GPU_INDICES",
-    "MAX_GPU_COUNT",
     "RESERVED_GPU_INDICES",
     "DeviceMemory",
     "assert_devices_free",
@@ -45,12 +43,18 @@ __all__ = [
     "sample_driver_version",
 ]
 
-#: 评测链路承认的允许集合与上限——**直接派生自 core.gpu_guard**，不另立一份。
-#: ★ 允许集合 = `ALLOWED_INDICES` 本身（B10 起默认 = 本机全卡 0–7），**不再**用
-#: `range(max+1)` 那种「仅上限」口径——后者会错误地把 0–3 也算成允许卡，
+#: 评测链路承认的**允许卡号白名单**——**直接派生自 core.gpu_guard**，不另立一份。
+#: ★ 允许集合 = `ALLOWED_INDICES` 本身（默认 = 本机全卡 0–7），**不再**用
+#: `range(max+1)` 那种「仅卡号上界」口径——后者会错误地把 0–3 也算成允许卡，
 #: 与真相源的正向白名单判据冲突（宪法 §1.4 单一真相源）。
+#:
+#: ★⛔ 评测侧**不设卡数常量、更没有卡数阈值**（2026-10-17 主席令逐字：
+#: 「单个作业不限制卡数。」）。旧的透传别名 `MAX_GPU_COUNT`（= `MAX_CARDS`）**已删**：
+#: 它本身不构成任何拦截，却是"此处存在卡数阈值"的**误解诱因**——后来者可能据此
+#: 把「每次至多四张」那类拦截接回来。需要"本机卡数"这个派生量时，**直接引用真相源**
+#: `core.gpu_guard.MAX_CARDS`（= `len(ALLOWED_INDICES)`，是机器宽度、不是阈值）。
+#: 唯一硬要求 = **不抢占他人**（起跑前逐卡实测：剩余 ≥ 本档头寸 ∧ util == 0）。
 ALLOWED_GPU_INDICES: frozenset[int] = frozenset(ALLOWED_INDICES)
-MAX_GPU_COUNT: int = MAX_CARDS
 
 #: 仅透传（便于调用方/报告引用；规则源头仍是 core.gpu_guard）。
 #: ★「生产卡 / reserved」语义已退役 ⇒ 恒为空元组（B7）。
