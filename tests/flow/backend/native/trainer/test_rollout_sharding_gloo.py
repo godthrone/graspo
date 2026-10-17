@@ -13,6 +13,14 @@
 3. **等长切片下跨卡平均 = 全局均值**（验收标准 5）：在真进程组上做
    `all_reduce(AVG)`（等长切片）与"单卡整组均值"对拍；并提供
    不等长切片的阳性对照（必须不等）。
+4. ★ **U2 字段并集**（真 gloo，dp∈{1,2,4} × 三支）：`gather_field_names` 让每卡得到
+   **同一个 sorted 全局并集** ⇒ `gather_field_stats` 的合并结果与 `μ_f` 与 **dp=1 单卡路径
+   逐值相同**。覆盖 `same_set` / `distinct_same_cardinality`（支 C，修复前静默错 μ）/
+   `distinct_cardinality`（支 A，修复前 `all_gather` 形状失配）；两条阳性对照证明断言能失败。
+5. ★ **U2 载荷边界机核**：录下**真正发给集合**的载荷元素，断言它**恰是本卡切片字段名**且
+   每个元素都是**标识符形态**（正则 `^[A-Za-z_][A-Za-z0-9_.-]*$` ＋ 长度上限 ＋ 无空白/换行/
+   控制字符）⇒ 守住 `rollout_shard.py` 模块 docstring「载荷里没有文本、没有标注」那条边界。
+   ★ **能失败对照**：`text_leak` 模式把一段真正的文本追加进载荷 ⇒ 形态断言**必红**。
 """
 
 from __future__ import annotations
@@ -20,6 +28,7 @@ from __future__ import annotations
 import atexit
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -340,3 +349,383 @@ def test_shard_module_source_has_the_dp_shortcut_anchor(tmp_path: Path) -> None:
     assert "if dp_group is None or dp_size <= 1:" in src, (
         "阳性对照的替换锚点漂移 ⇒ 该对照会退化成哑断言（必须同步更新变体）"
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ★ U2 字段并集（验收判据 1/3）：真 gloo 上「分卡路径 == dp=1 单卡路径」逐值
+# ══════════════════════════════════════════════════════════════════════════════
+
+_FIELD_UNION_CHILD = textwrap.dedent(
+    '''
+    """gloo 子进程：用**真** rollout_shard 做 μ_f 字段通道会合，把结果写 JSONL。"""
+    import atexit
+    import json
+    import os
+    import shutil
+    import sys
+    import tempfile
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    import torch
+    import torch.distributed as dist
+
+    SRC = Path(sys.argv[1])
+    VARIANT = sys.argv[2]           # "production" | "local_union"
+    SCENARIO = sys.argv[3]          # same_set | distinct_same_cardinality | distinct_cardinality
+    OUT = Path(sys.argv[4])
+    RANK = int(sys.argv[5])
+    WORLD = int(sys.argv[6])
+    RENDEZVOUS = sys.argv[7]
+    M = int(sys.argv[8])            # 组内切片数（decomposition size）
+    DP = int(sys.argv[9])           # 本 rank 看到的 dp_size（会合域）
+    PAYLOAD_MODE = sys.argv[10]     # "clean" | "text_leak"（载荷边界阳性对照）
+
+    torch.set_num_threads(1)
+    sys.path.insert(0, str(SRC))
+
+    import graspo.flow.backend.native.trainer.rollout_shard as rs
+    from graspo.ripple.annotation.advantages import field_means, merge_field_stats
+
+    if VARIANT == "local_union":
+        # ★ 阳性对照：把 `gather_field_names` 的**全局会合**撤掉 ⇒ 退回
+        #   "本卡切片并集"（= 修复前 `rollout.py` 的行为）。
+        source = Path(rs.__file__).read_text(encoding="utf-8")
+        start = source.index("def gather_field_names(")
+        end = source.index("def gather_field_stats(")
+        replacement = "\\n".join(
+            [
+                "def gather_field_names(runtime, local_field_names, *, what='μ_f 字段名'):",
+                '    """阳性对照变体：撤掉全局会合 ⇒ 本卡切片并集（修复前行为）。"""',
+                "    return sorted({str(name) for name in local_field_names})",
+                "",
+                "",
+            ]
+        )
+        broken = source[:start] + replacement + source[end:]
+        assert broken != source, "阳性对照变体必须真的改动了源码"
+        variant_dir = Path(tempfile.mkdtemp(prefix="u2_broken_field_union_"))
+        atexit.register(shutil.rmtree, variant_dir, ignore_errors=True)
+        target = variant_dir / "_broken_rollout_shard.py"
+        target.write_text(broken, encoding="utf-8")
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("broken_rollout_shard_u2", target)
+        assert spec is not None and spec.loader is not None
+        rs = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(rs)
+        assert "阳性对照变体" in (rs.gather_field_names.__doc__ or "")
+
+    os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
+    os.environ.setdefault("MASTER_PORT", RENDEZVOUS)
+    dist.init_process_group(backend="gloo", rank=RANK, world_size=WORLD)
+
+    class _Adapter:
+        def __init__(self, dp_size):
+            self.tp_state = SimpleNamespace(
+                dp_size=dp_size, dp_group=dist.group.WORLD, device=torch.device("cpu")
+            )
+
+    class _Runtime:
+        def __init__(self, dp_size):
+            self._adapter = _Adapter(dp_size)
+
+        def _require_adapter(self):
+            return self._adapter
+
+    CUTOFF = 2
+    NAMES = ["a", "b", "c", "d"]
+
+    def _cell(scenario, r, i):
+        if scenario == "same_set":
+            return {"a": (float((r + 1) * (r + 2) * (i + 1)), (r + 1) + i)}
+        if scenario == "distinct_same_cardinality":
+            return {NAMES[r]: (float((r + 1) * (r + 2) * (i + 1)), (r + 1) + i)}
+        if scenario == "distinct_cardinality":
+            return {
+                NAMES[k]: (float((k + 1) * (k + 2) * (i + 1)), (k + 1) + i)
+                for k in range(r + 1)
+            }
+        raise AssertionError("unknown scenario " + repr(scenario))
+
+    CONTRIB = [[_cell(SCENARIO, r, i) for i in range(CUTOFF)] for r in range(M)]
+    whole_stats = [merge_field_stats([CONTRIB[r][i] for r in range(M)]) for i in range(CUTOFF)]
+    if DP == 1:
+        local_stats = [dict(s) for s in whole_stats]      # 单卡 = 整组（切片未启用）
+    else:
+        local_stats = [dict(s) for s in CONTRIB[RANK]]    # 本卡切片
+
+    local_names = rs.union_field_names(local_stats)
+
+    # ★ U2 载荷边界：把**真正发给集合**的载荷元素录下来，供父进程做"标识符形态"机核
+    #   （守住模块 docstring「载荷里没有文本、没有标注」那条边界）。
+    _payload_log = {}
+    _real_all_gather_object = dist.all_gather_object
+
+    def _spy_all_gather_object(object_list, obj, group=None):
+        if PAYLOAD_MODE == "text_leak":
+            # ★ 阳性对照：模拟"将来有人往这个会合塞真正的文本/标注"。
+            obj = list(obj) + ["sorry i cannot help with that request, please contact support"]
+        _payload_log["sent"] = [str(element) for element in obj]
+        return _real_all_gather_object(object_list, obj, group=group)
+
+    dist.all_gather_object = _spy_all_gather_object
+
+    global_names = rs.gather_field_names(
+        _Runtime(DP), local_names, what="μ_f 的 (Σraw, n) 字段名"
+    )
+    sharded = rs.gather_field_stats(
+        _Runtime(DP),
+        local_stats,
+        cutoff=CUTOFF,
+        field_names=global_names,
+        what="μ_f 的 (Σraw, n)",
+    )
+    # ★ dp=1 单卡路径：同一个函数 + dp_size=1 的 runtime（短路 ⇒ 原样返回整组统计）
+    dp1 = rs.gather_field_stats(
+        _Runtime(1),
+        whole_stats,
+        cutoff=CUTOFF,
+        field_names=global_names,
+        what="μ_f 的 (Σraw, n)",
+    )
+
+    def _enc(stats):
+        return [{f: [float(raw), int(n)] for f, (raw, n) in s.items()} for s in stats]
+
+    row = {
+        "rank": RANK,
+        "world": WORLD,
+        "dp_size": DP,
+        "m": M,
+        "scenario": SCENARIO,
+        "local_names": list(local_names),
+        "global_names": list(global_names),
+        "payload_elements": list(_payload_log.get("sent", [])),
+        "sharded_stats": _enc(sharded),
+        "dp1_stats": _enc(dp1),
+        "sharded_mu": [field_means(s) for s in sharded],
+        "dp1_mu": [field_means(s) for s in dp1],
+    }
+    with OUT.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(row) + "\\n")
+    dist.barrier()
+    dist.destroy_process_group()
+    '''
+)
+
+_FIELD_SCENARIOS = ["same_set", "distinct_same_cardinality", "distinct_cardinality"]
+
+# ★ U2 载荷边界机核（守住 `rollout_shard.py` 模块 docstring「载荷里没有文本、没有标注」）：
+#   进入 `gather_field_names` 会合的载荷元素**必须**是**标识符形态**的短字段名——
+#   ⛔ 不是 completion 文本、⛔ 不是标注内容。正则/长度上限/无空白三条一起判。
+_FIELD_PAYLOAD_MAX_CHARS = 64
+_FIELD_PAYLOAD_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*$")
+_TEXT_LIKE_PAYLOAD = "sorry i cannot help with that request, please contact support"
+
+
+def _assert_identifier_payload(elements: list[str]) -> None:
+    """★ U2 载荷边界机核：会合载荷元素必须是**标识符形态**（不是文本/标注）。
+
+    三条判据（任一不满足 ⇒ `AssertionError`，⛔ 不静默放过）：
+    1. 载荷非空、每个元素是 `str`；
+    2. 匹配标识符正则 ``^[A-Za-z_][A-Za-z0-9_.-]*$``；
+    3. 长度 ≤ `_FIELD_PAYLOAD_MAX_CHARS` 且**不含空白/换行/控制字符**（文本/标注特征）。
+    """
+    assert elements, "会合载荷不能为空（空载荷 ⇒ 求不出全局并集）"
+    for element in elements:
+        assert isinstance(element, str), f"载荷元素必须是 str，实际 {type(element)!r}"
+        assert _FIELD_PAYLOAD_RE.match(element), (
+            f"载荷元素不是标识符形态（疑似把文本/标注塞进了这个会合）：{element!r}"
+        )
+        assert len(element) <= _FIELD_PAYLOAD_MAX_CHARS, (
+            f"载荷元素超长：len={len(element)} > {_FIELD_PAYLOAD_MAX_CHARS}：{element!r}"
+        )
+        assert not any(ch.isspace() or ord(ch) < 32 for ch in element), (
+            f"载荷元素含空白/换行/控制字符（疑似文本/标注）：{element!r}"
+        )
+
+
+def _launch_field_union(
+    tmp_path: Path,
+    *,
+    variant: str,
+    scenario: str,
+    m: int,
+    dp: int,
+    expect_launch_failure: bool = False,
+    payload_mode: str = "clean",
+) -> list[dict]:
+    """跑一次字段并集子进程（dp=1 ⇒ world=1；dp≥2 ⇒ world=dp）。"""
+    world = 1 if dp == 1 else dp
+    assert dp == 1 or m >= world, "切片数必须 >= 会合成员数"
+    child = tmp_path / "gloo_child_field_union_u2.py"
+    child.write_text(_FIELD_UNION_CHILD, encoding="utf-8")
+    out = tmp_path / f"fu_{variant}_{scenario}_m{m}_dp{dp}_{payload_mode}.jsonl"
+    port = str(_free_port())
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(_SRC)
+    env["OMP_NUM_THREADS"] = "1"
+    procs = [
+        subprocess.Popen(
+            [
+                sys.executable, str(child), str(_SRC), variant, scenario, str(out),
+                str(rank), str(world), port, str(m), str(dp), payload_mode,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+        )
+        for rank in range(world)
+    ]
+    errs: list[str] = []
+    for proc in procs:
+        _, stderr = proc.communicate(timeout=180)
+        errs.append(stderr)
+    failed = any(proc.returncode != 0 for proc in procs)
+    if expect_launch_failure:
+        assert failed, "阳性对照必须发起失败（撤掉全局会合 ⇒ 各卡载荷宽度不一致）"
+        return []
+    if failed:
+        detail = "\n".join(
+            f"----- rank{index} (rc={proc.returncode}) -----\n{errs[index]}"
+            for index, proc in enumerate(procs)
+        )
+        raise AssertionError(detail)
+    return [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines()]
+
+
+@pytest.mark.parametrize("scenario", _FIELD_SCENARIOS)
+@pytest.mark.parametrize(("m", "dp"), [(2, 2), (4, 4)])
+def test_field_union_sharded_path_equals_dp1_single_card(
+    tmp_path: Path, scenario: str, m: int, dp: int
+) -> None:
+    """★ U2 验收 1：dp=m 分卡路径与 dp=1 单卡路径**逐值相同**（真 gloo 实会合）。
+
+    三支都跑：
+
+    - `same_set`（集合相同，对照：修复不改数值）；
+    - `distinct_same_cardinality`（**支 C**：同基数不同名 —— 修复前静默错 μ，且两卡 μ 不一致）；
+    - `distinct_cardinality`（**支 A**：基数不同 —— 修复前 `all_gather` 形状失配）。
+    """
+    single = _launch_field_union(tmp_path, variant="production", scenario=scenario, m=m, dp=1)
+    assert len(single) == 1
+    # dp=1 是真正的单卡路径：`sharded` 与 `dp1` 引用都应是"整组统计的原样返回"。
+    assert single[0]["sharded_stats"] == single[0]["dp1_stats"]
+
+    rows = _launch_field_union(tmp_path, variant="production", scenario=scenario, m=m, dp=dp)
+    assert len(rows) == dp
+
+    # ① 每 rank 的全局并集 = **同一个** sorted 去重并集
+    names = rows[0]["global_names"]
+    assert names == sorted(names) and len(set(names)) == len(names), f"必须是 sorted 去重：{names}"
+    assert all(row["global_names"] == names for row in rows), (
+        f"各 rank 的全局并集必须一致：{[row['global_names'] for row in rows]}"
+    )
+    # ② 它就是**每张卡局部并集的并**（每卡局部集 ⊆ 全局并集，且无多余）
+    assert names == sorted({n for row in rows for n in row["local_names"]}), (
+        f"全局并集 {names} ≠ 各卡局部并集之并"
+    )
+    # ③ 分卡结果与 dp=1 单卡路径**逐值相同**（同加序 ⇒ 精确相等，不用容差）
+    for row in rows:
+        assert row["sharded_stats"] == single[0]["dp1_stats"], (
+            f"scenario={scenario} rank{row['rank']} 分卡统计 ≠ dp=1 单卡路径："
+            f"{row['sharded_stats']} vs {single[0]['dp1_stats']}"
+        )
+        assert row["sharded_mu"] == single[0]["dp1_mu"], (
+            f"scenario={scenario} rank{row['rank']} 分卡 μ ≠ dp=1 单卡路径："
+            f"{row['sharded_mu']} vs {single[0]['dp1_mu']}"
+        )
+    # ④ ★ 载荷边界：真实发出去的会合载荷元素必须是**标识符形态**，且**恰是本卡切片字段名**
+    #    （守住模块 docstring「载荷里没有文本、没有标注」那条边界）。
+    for row in rows:
+        _assert_identifier_payload(row["payload_elements"])
+        assert row["payload_elements"] == row["local_names"], (
+            f"会合载荷必须恰是本卡切片字段名（⛔ 无附加内容）：{row['payload_elements']}"
+        )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ★ 阳性对照（验收判据 2）：撤掉全局会合 ⇒ 上面两条断言必红
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def test_field_union_positive_control_same_cardinality_is_silently_wrong(tmp_path: Path) -> None:
+    """★ 阳性对照（**支 C**，真 gloo）：撤掉全局会合 ⇒ 本卡局部并集 ⇒ 两卡 μ 不一致且 ≠ dp=1。
+
+    ⇒ `test_field_union_sharded_path_equals_dp1_single_card` 的 ①②③ 断言**能失败**，
+    不是哑断言。
+    """
+    scenario = "distinct_same_cardinality"
+    broken = _launch_field_union(tmp_path, variant="local_union", scenario=scenario, m=2, dp=2)
+    single = _launch_field_union(tmp_path, variant="production", scenario=scenario, m=2, dp=1)
+    assert len(broken) == 2
+    mu = {row["rank"]: row["sharded_mu"] for row in broken}
+    assert mu[0] != mu[1], f"阳性对照必须让两卡 μ 不一致（修复前静默错），实际 {mu}"
+    ref = single[0]["dp1_mu"]
+    assert mu[0] != ref and mu[1] != ref, f"阳性对照必须偏离 dp=1 单卡路径：{mu} vs {ref}"
+    # 并集断言也必红：撤掉会合后各卡的"全局并集"就是本卡局部集
+    assert broken[0]["global_names"] != broken[1]["global_names"]
+
+
+def test_field_union_positive_control_distinct_cardinality_launch_fails(tmp_path: Path) -> None:
+    """★ 阳性对照（**支 A**，真 gloo）：撤掉全局会合 ⇒ 载荷宽度 1 vs 2 ⇒ `all_gather` 形状失配。
+
+    gloo 对形状失配是 **fail-fast**（`EnforceNotMet` / connection reset），不会挂起
+    （本机实测，见工位 evidence）。
+    """
+    _launch_field_union(
+        tmp_path,
+        variant="local_union",
+        scenario="distinct_cardinality",
+        m=2,
+        dp=2,
+        expect_launch_failure=True,
+    )
+
+
+def test_field_union_helper_source_anchor_is_present() -> None:
+    """★ 防呆：上面两条阳性对照依赖的源码锚点必须仍在（否则对照会退化成哑断言）。"""
+    src = _SHARD_SRC.read_text(encoding="utf-8")
+    assert "def gather_field_names(" in src, "阳性对照变体的起始锚点漂移"
+    assert src.index("def gather_field_names(") < src.index("def gather_field_stats("), (
+        "阳性对照变体的结束锚点漂移"
+    )
+    assert "if dp_group is None or dp_size <= 1:" in src, "dp≤1 短路锚点漂移"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ★ U2 载荷边界（审查加强建议）：塞入"像文本"的元素 ⇒ 形态断言**必红**
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def test_payload_shape_assertion_goes_red_on_text_like_element(tmp_path: Path) -> None:
+    """★ **能失败对照**（载荷边界，真 gloo）：往这个会合里塞一个"像文本"的元素 ⇒ 断言必红。
+
+    `text_leak` 模式在子进程里对 `dist.all_gather_object` 装 spy，并在**真正转发前**把一段
+    真正的文本追加进载荷（= 模拟"将来有人往这个会合里塞文本/标注"）⇒ 父进程的
+    `_assert_identifier_payload` **必须**判红。⛔ 若不红 ⇒ 该机核是哑断言（本用例会失败）。
+    """
+    rows = _launch_field_union(
+        tmp_path,
+        variant="production",
+        scenario="distinct_same_cardinality",
+        m=2,
+        dp=2,
+        payload_mode="text_leak",
+    )
+    assert len(rows) == 2
+    leaked = [
+        element
+        for row in rows
+        for element in row["payload_elements"]
+        if element == _TEXT_LIKE_PAYLOAD
+    ]
+    assert leaked, (
+        "text_leak 变体必须真的把文本塞进会合载荷，实际载荷："
+        f"{[row['payload_elements'] for row in rows]}"
+    )
+    with pytest.raises(AssertionError, match="标识符形态"):
+        for row in rows:
+            _assert_identifier_payload(row["payload_elements"])

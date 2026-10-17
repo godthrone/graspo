@@ -14,6 +14,7 @@ from graspo.flow.backend.native.trainer.helpers import (
     safe_sample_metadata,
 )
 from graspo.flow.backend.native.trainer.rollout_shard import (
+    gather_field_names,
     gather_field_stats,
     gather_rollout_values,
     union_field_names,
@@ -269,7 +270,14 @@ class RolloutMixin:
                 self._prompt_field_stats(entry["state"], entry["generation"], entry["annotations"])
                 for entry in local
             ]
-            field_names = union_field_names(per_prompt)
+            # ★ 契约：`gather_field_stats` 的 `field_names` 必须是**全局并集**（逐 rank 一致的
+            #   sorted 并集）；本卡切片的并集不满足 ⇒ 在并集的求取处做一次跨卡对象会合
+            #   （U2：同基数不同字段集静默错 μ / 不同基数形状失配，两者都源于此）。
+            field_names = gather_field_names(
+                self.runtime,
+                union_field_names(per_prompt),
+                what="μ_f 的 (Σraw, n) 字段名",
+            )
             field_stats = gather_field_stats(
                 self.runtime,
                 per_prompt,
