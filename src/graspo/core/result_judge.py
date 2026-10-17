@@ -1422,7 +1422,9 @@ class RunEvidence:
     # ── U2 的比较基准：**基线同口径终点窗口**（口径见 :func:`judge_u2` 上方注释块）──
     #: ★ **基线**（``meta.criteria_caliber.baseline``：role =「同档位未训练底座
     #: （role=base）」）的**同口径终点窗口**：loss 口径填 loss 窗、GRASPO 支路填 reward
-    #: 窗（必须与 :func:`judge_u2` 的 ``higher_is_better`` 同向）。
+    #: 窗（**必须与 U2 判定的方向同向**；方向由本类的 :attr:`algorithm` 经
+    #: :func:`u2_higher_is_better_from_algorithm` 导出 —— ⛔ 不再是调用方的缺省开关，
+    #: 见 :func:`judge_u2` 与 :data:`U2_REWARD_ALGORITHMS`）。
     #: 口径原文 = ``docs/capability-matrix.data.json:189-191``（生成处
     #: ``tools/matrix/build_official.py:1549-1550``）；完整比较口径原文 =
     #: ``docs/capability-matrix-milestone-20261014.html:280``：「**主判据 = 终点窗口
@@ -2552,6 +2554,36 @@ U2_BASELINE_MISSING_DETAIL = (
     "不得当成「训练失败」、更不得默认通过"
 )
 
+#: ★ **U2 曲线方向 = 该次运行的算法**（唯一真相源；§1.4）。
+#:
+#: 口径原文（`docs/capability-matrix-milestone-20261014.html:280`，逐字）：
+#: 「**loss 正常下降（SFT / CPT / OPD）或 reward 正常上升（GRASPO）**」
+#: ⇒ 方向**不是调用方的缺省约定**，而是「**这一次跑的是哪个算法**」这个事实的函数。
+#:
+#: ★ 机械缺陷登记（2026-10-17，本包 `task-u2-direction`）：此前 :func:`judge_u2` 的
+#: ``higher_is_better`` **缺省写死 `False`**，而 :func:`judge_tier` 的调用处
+#: （``u2 = judge_u2(first)``）**不传该开关** ⇒ **GRASPO 档一律按 loss 方向判**
+#: （reward 上升被判成「未正常下降」、台账把 reward 曲线记成 loss）。★ 它当时落在
+#: **诊断轴**（未接线）才没有翻结论 —— **一旦接线就会判错**。本包把方向改为**由证据导出**。
+#:
+#: ★ 取值域 = 清单 `tests/e2e/matrix54_manifest.json` 的 ``tiers[*].algorithm``，
+#: 实测恰为 ``SFT×18 / CPT×9 / OPD×9 / GRASPO×18``（无第五种、无大小写变体）；
+#: `RunEvidence` 里**没有** curve-kind / train_method 字段 ⇒ ``algorithm`` 是唯一可核来源。
+#: ⛔ **只做精确串匹配**：不大小写归一、不去空白、不做前缀匹配、**不猜**（§2.2）——
+#: 未登记的串（含 ``None``）一律 **fail-closed**，⛔ 不得回落到「按 loss 判」的旧缺省。
+U2_REWARD_ALGORITHMS: frozenset[str] = frozenset({"GRASPO"})
+U2_LOSS_ALGORITHMS: frozenset[str] = frozenset({"SFT", "CPT", "OPD"})
+
+#: U2 明细里的**方向不可判定**前缀（fail-closed，**不降格**为「训练失败」、⛔ 也不默认按 loss）。
+#: ★ 与 :data:`U2_EVIDENCE_MISSING_DETAIL` / :data:`U2_BASELINE_MISSING_DETAIL` **分开**：
+#: 前两者缺的是**读数**、本条缺的是**读数的解释方向**；混成一句会让排查找错方向。
+U2_DIRECTION_UNKNOWN_DETAIL = (
+    "无法确定 U2 曲线方向（fail-closed）：证据字段 `RunEvidence.algorithm` 为 None / "
+    "未登记方向（已登记：reward 类 = GRASPO；loss 类 = SFT / CPT / OPD）⇒ "
+    "判**不通过**并记「取证缺口」；⛔ 不猜方向、⛔ 不默认按 loss 判，"
+    "更⛔ 不得当成「训练失败」"
+)
+
 #: U2 **暂不接入 ✅/❌ 阻断轴**的状态登记（**显式**，§2.2 显式即防呆；与
 #: :data:`U4_WIRING_PENDING_NOTE` 同一条纪律）。
 #:
@@ -2574,6 +2606,39 @@ U2_WIRING_PENDING_NOTE = (
     "「**判词①：U2 主判据 = 与文档化口径相悖的自行取舍 ⇒ 🔴（本批最关键，能翻转档位"
     "结论）**」（`review-narrow/freeze-note-13.md` §2 ⇒ 要改的是代码、不是策略）"
 )
+
+
+def u2_higher_is_better_from_algorithm(algorithm: str | None) -> bool | None:
+    """由**算法名**导出 U2 的方向（唯一来源 = :attr:`RunEvidence.algorithm`，见上方常量块）。
+
+    返回值**三态**（§2.2：不知道就说不知道，⛔ 不拿缺省值充数）：
+
+    - ``True`` = **reward 类**（越高越好，「正常上升」）：:data:`U2_REWARD_ALGORITHMS`；
+    - ``False`` = **loss 类**（越低越好，「正常下降」）：:data:`U2_LOSS_ALGORITHMS`；
+    - ``None`` = **无法确定**（``None`` / 空串 / 未登记串）⇒ 调用方必须 **fail-closed**。
+
+    ⛔ 只做**精确串**匹配：不大小写归一、不去空白、不做前缀匹配、**不猜**
+    （与 :func:`normalize_a4_algorithm` 同一条纪律）。为什么这么严：方向一旦猜错，
+    U2 的判词与结论会**整体反向**——那正是本函数要堵住的那个缺陷。
+    """
+    if algorithm in U2_REWARD_ALGORITHMS:
+        return True
+    if algorithm in U2_LOSS_ALGORITHMS:
+        return False
+    return None
+
+
+def u2_direction_label(evidence: RunEvidence, *, higher_is_better: bool | None = None) -> str:
+    """U2 的**人读方向标签**（供 :func:`judge_u2` / :func:`judge_tier` 共用，§1.4 单一真相源）。
+
+    例：``"reward 正常上升"`` / ``"loss 正常下降"`` / ``"曲线方向不可判定"``。
+    方向解析规则与 :func:`judge_u2` **逐字一致**（未传时由证据导出）。
+    """
+    if higher_is_better is None:
+        higher_is_better = u2_higher_is_better_from_algorithm(evidence.algorithm)
+    if higher_is_better is None:
+        return "曲线方向不可判定"
+    return "reward 正常上升" if higher_is_better else "loss 正常下降"
 
 
 def u2_window_size(point_count: int) -> int:
@@ -2606,17 +2671,29 @@ def u2_window_means(values: Sequence[float]) -> tuple[float, float, int] | None:
     return sum(head) / len(head), sum(tail) / len(tail), k
 
 
-def judge_u2(evidence: RunEvidence, *, higher_is_better: bool = False) -> CriterionResult:
+def judge_u2(
+    evidence: RunEvidence, *, higher_is_better: bool | None = None
+) -> CriterionResult:
     """**U2**：loss 正常下降（SFT / CPT / OPD）或 reward 正常上升（GRASPO）。
 
     判定式（**文档化口径**，见本段上方注释块）：
     **``终点窗口`` 达到 / 超过 ``基线同口径终点窗口`` ⇒ 通过**；否则不通过。
-    序列默认取 :attr:`RunEvidence.losses`（**越低越好**）；``higher_is_better=True``
-    时用于 reward 序列（越高越好，方向即"正常上升"）。
+
+    ★ **方向由该次运行的算法导出**（本包 `task-u2-direction` 修掉的机械缺陷）：
+    ``higher_is_better`` 缺省 ``None`` ⇒ 走 :func:`u2_higher_is_better_from_algorithm`
+    读 :attr:`RunEvidence.algorithm`（``GRASPO`` ⇒ reward 越高越好；``SFT`` / ``CPT`` /
+    ``OPD`` ⇒ loss 越低越好）；⛔ **不再有「缺省 False」**——那个缺省会让 GRASPO 档
+    按 loss 方向判（reward 上升被判成「未正常下降」）。传 ``True`` / ``False`` 则视为
+    **调用方显式指定**，并在判词里如实登记来源。
+    ★ **方向无法确定**（``algorithm`` 为 ``None`` / 未登记串）⇒ **fail-closed**：
+    判不通过 + ``evidence_missing=True``（:data:`U2_DIRECTION_UNKNOWN_DETAIL`），
+    ⛔ 不猜方向、⛔ 不回落成「按 loss 判」、⛔ 不降格为「训练失败」。
     ★ **起点窗口只作归因诊断**（口径原文逐字），⛔ 不参与判定。
 
-    四态边界（与 A6 的分野是刻意的，§1.4）：
+    五态边界（与 A6 的分野是刻意的，§1.4）：
 
+    - **方向无法确定** ⇒ 不通过且 ``evidence_missing=True``（取证缺口；**先于**
+      任何按方向解释读数的分支，因为"这条曲线该往哪边看"是读数的前置）；
     - **真读到 NaN/Inf**（序列或基线窗读数）⇒ 不通过且 ``evidence_missing=False``
       —— 这是关于证据的**事实**，且窗口均值对非有限值无定义 ⇒ fail-loud；
     - **读不到序列**（空 / ``loss: null`` / 字段缺失）⇒ 不通过且 ``evidence_missing=True``
@@ -2631,6 +2708,21 @@ def judge_u2(evidence: RunEvidence, *, higher_is_better: bool = False) -> Criter
     ⛔ **不碰** :data:`A6_LOSS_TREND_BLOCKS`：A6 用**首末两点**且自称「数值健康」，
     U2 用**首尾窗口均值**。两者**不同源**，混用会把「口径债」写成「数值异常」。
     """
+    # ── 方向解析（先于一切按方向解释读数的分支）─────────────────────────────
+    if higher_is_better is None:
+        resolved = u2_higher_is_better_from_algorithm(evidence.algorithm)
+        direction_source = f"由证据 `RunEvidence.algorithm` = {evidence.algorithm!r} 导出"
+    else:
+        resolved = higher_is_better
+        direction_source = f"调用方显式指定（evidence.algorithm = {evidence.algorithm!r}）"
+    if resolved is None:
+        return CriterionResult(
+            U2_CRITERION,
+            False,
+            f"{U2_DIRECTION_UNKNOWN_DETAIL}；算法串 = {evidence.algorithm!r}"
+            "；★ 方向来源本应是 `RunEvidence.algorithm`（本模块判据层的唯一可核字段）",
+            evidence_missing=True,
+        )
     values = tuple(evidence.losses)
     if not values:
         return CriterionResult(
@@ -2659,9 +2751,9 @@ def judge_u2(evidence: RunEvidence, *, higher_is_better: bool = False) -> Criter
             U2_CRITERION, False, U2_EVIDENCE_MISSING_DETAIL, evidence_missing=True
         )
     start, end, k = windows
-    quantity = "reward" if higher_is_better else "loss"
-    better = "越高越好" if higher_is_better else "越低越好"
-    direction = "上升" if higher_is_better else "下降"
+    quantity = "reward" if resolved else "loss"
+    better = "越高越好" if resolved else "越低越好"
+    direction = "上升" if resolved else "下降"
     # ★ 起点窗 = **归因诊断**（口径原文逐字：「起点窗口仅作归因诊断」）⇒ ⛔ 不参与判定，
     #   只如实登记。★ `k == n`（n ≤ 3）时起点窗与终点窗同集合 ⇒ 这里**只登记该退化**，
     #   既不把它当缺口、也不把它当判据：口径给的是「末段 k 个点的均值」，对任何
@@ -2682,7 +2774,8 @@ def judge_u2(evidence: RunEvidence, *, higher_is_better: bool = False) -> Criter
             False,
             f"{U2_BASELINE_MISSING_DETAIL}；"
             "本条已算出的窗口读数（窗口 = 首尾各 max(3, 10% 记录点数) 的均值）："
-            f"终点窗 {end:.6g}（{quantity} {better}）；{diagnostic}",
+            f"终点窗 {end:.6g}（{quantity} {better}）；{diagnostic}"
+            f"；★ 方向来源 = {direction_source}",
             evidence_missing=True,
         )
     if isinstance(baseline, bool) or not isinstance(baseline, (int, float)) or not math.isfinite(
@@ -2695,7 +2788,7 @@ def judge_u2(evidence: RunEvidence, *, higher_is_better: bool = False) -> Criter
             " ⇒ 无从比较、fail-loud 判否（不降格为取证缺口）",
         )
     baseline_value = float(baseline)
-    improved = end >= baseline_value if higher_is_better else end <= baseline_value
+    improved = end >= baseline_value if resolved else end <= baseline_value
     verdict = f"正常{direction}成立" if improved else f"未正常{direction}"
     return CriterionResult(
         U2_CRITERION,
@@ -2703,6 +2796,7 @@ def judge_u2(evidence: RunEvidence, *, higher_is_better: bool = False) -> Criter
         "U2 窗口均值（窗口 = 首尾各 max(3, 10% 记录点数) 的均值）："
         f"终点窗 {end:.6g} vs **基线同口径终点窗** {baseline_value:.6g}"
         f"（{quantity} {better}；达到/超过 = 非严格）⇒ {verdict}；{diagnostic}"
+        f"；★ 方向来源 = {direction_source}"
         "；★ 判定式 = 文档化主判据「终点窗口达到/超过基线同口径的终点窗口」，"
         "起点窗口仅作归因诊断（⛔ 不再是「自比」）"
         "；本条是否参与 ✅/❌ 见 U2_WIRING_PENDING_NOTE",
@@ -3047,6 +3141,10 @@ def judge_tier(
     u2 = judge_u2(first)
     u4 = judge_u4(first)
     criteria = (a1, a2, a3, a4, a5, a6, a7, u2, u4)
+    # ★ U2 的**人读方向标签**（`reward 正常上升` / `loss 正常下降` / `曲线方向不可判定`）
+    #   与判据层**同源**（:func:`u2_direction_label`，§1.4）：⛔ 不得在这里写死 "loss" ——
+    #   写死会把 GRASPO 档的 reward 曲线在台账里记成 loss（本包修掉的方向缺陷之一）。
+    u2_label = u2_direction_label(first)
 
     # ══ 新口径（2026-09-22 用户纠正；本函数的判定轴）══════════════════════════
     #   用户原话："你的判定标准应该是**能顺利跑完一个 epoch**……我们现在看的
@@ -3073,7 +3171,7 @@ def judge_tier(
     diagnostics_note = (
         "【诊断字段·不参与判定】"
         f"A4 双跑一致性 = {a4.passed}（{a4.detail[:240]}）；"
-        f"U2 loss 正常下降 = {u2.passed}（{u2.detail[:160]}；{U2_WIRING_PENDING_NOTE}）；"
+        f"U2 {u2_label} = {u2.passed}（{u2.detail[:160]}；{U2_WIRING_PENDING_NOTE}）；"
         f"U4 产物可推理 = {u4.passed}（{u4.detail[:160]}；{U4_WIRING_PENDING_NOTE}）"
     )
 

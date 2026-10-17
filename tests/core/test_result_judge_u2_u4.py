@@ -25,8 +25,11 @@ from graspo.core.result_judge import (
     PRIMARY_CRITERIA,
     U2_BASELINE_MISSING_DETAIL,
     U2_CRITERION,
+    U2_DIRECTION_UNKNOWN_DETAIL,
     U2_EVIDENCE_MISSING_DETAIL,
+    U2_LOSS_ALGORITHMS,
     U2_NONFINITE_DETAIL,
+    U2_REWARD_ALGORITHMS,
     U2_WIRING_PENDING_NOTE,
     U4_CRITERION,
     U4_WIRING_PENDING_NOTE,
@@ -36,6 +39,8 @@ from graspo.core.result_judge import (
     judge_tier,
     judge_u2,
     judge_u4,
+    u2_direction_label,
+    u2_higher_is_better_from_algorithm,
     u2_window_means,
     u2_window_size,
 )
@@ -60,6 +65,11 @@ def make_evidence(**overrides) -> RunEvidence:
         },
         losses=(1.0, 0.8, 0.6, 0.5, 0.4, 0.3),
         grad_norms=(1.0, 0.9, 0.8),
+        # ★ U2 的**方向来源**（2026-10-17 本包修掉方向缺陷后，方向不再是缺省开关而是
+        #   证据字段）：缺省给 loss 类算法 `SFT`，使本夹具老用例的"loss 越低越好"
+        #   口径**逐字不变**（⛔ 未改任何期望值，只是把方向输入显式化）。
+        #   缺方向 / 未登记算法串的 fail-closed 有专门用例（★ 锁：⛔ 不得默认按 loss 判）。
+        algorithm="SFT",
         # ★ U2 的比较基准（口径 = `meta.criteria_caliber.baseline`）。
         #   缺省给一个"本跑终窗（0.4）达到/超过它"的基线 ⇒ 缺省夹具在 U2 上判绿，
         #   免得 U2/U4 的对照被"基线证据未到"淹没。缺基线那一态有专门用例。
@@ -307,14 +317,21 @@ def test_u2_keeps_the_start_window_as_attribution_diagnostic_only():
 
 
 def test_u2_passes_for_rising_reward():
-    """GRASPO 支路：reward 越高越好（``higher_is_better=True``），同样对**基线**比。"""
+    """GRASPO 支路：reward 越高越好，同样对**基线**比。
+
+    ★ 输入口径已改（2026-10-17，本包 `task-u2-direction`）：方向**不再由开关传入**，
+    而是由证据字段 ``RunEvidence.algorithm="GRASPO"`` **导出**（这正是本包要钉死的修法）。
+    ★ 期望值**逐字未变**：reward 升 ⇒ 绿；reward 降 ⇒ 红。
+    """
     rising = judge_u2(
-        make_evidence(losses=(0.1, 0.2, 0.3, 0.4, 0.5), baseline_end_window=0.39),
-        higher_is_better=True,
+        make_evidence(
+            losses=(0.1, 0.2, 0.3, 0.4, 0.5), baseline_end_window=0.39, algorithm="GRASPO"
+        )
     )
     falling = judge_u2(
-        make_evidence(losses=(0.5, 0.4, 0.3, 0.2, 0.1), baseline_end_window=0.39),
-        higher_is_better=True,
+        make_evidence(
+            losses=(0.5, 0.4, 0.3, 0.2, 0.1), baseline_end_window=0.39, algorithm="GRASPO"
+        )
     )
 
     assert rising.passed, "终窗 reward 0.4 ≥ 基线窗 0.39"
@@ -378,6 +395,199 @@ def test_u2_does_not_disturb_the_a6_trend_record():
 
     assert a6.passed, "A6 仍只看数值健康（首末走向是记录项）"
     assert a6_loss_trend(a6) == "increased"
+
+
+# ── U2 · 方向由证据导出（2026-10-17 本包 `task-u2-direction` 修的方向缺陷）──
+#
+# ★ 被修掉的缺陷：`judge_u2` 的 `higher_is_better` **缺省写死 False**，而 `judge_tier`
+#   的调用处 `u2 = judge_u2(first)` 不传该开关 ⇒ **GRASPO 档按 loss 方向判**
+#   （reward 明显上升、且终窗高于基线终窗，却被判「未正常下降」，台账把它记成 loss）。
+#   ★ 当时的后果被"U2 在诊断轴、未接线"掩盖；**一旦接线就会判错**。
+# ★ 修法：方向由**证据里已有的、可核的字段** `RunEvidence.algorithm` 导出
+#   （口径原文 `docs/capability-matrix-milestone-20261014.html:280` 逐字把方向绑在算法上：
+#   「loss 正常下降（SFT / CPT / OPD）或 reward 正常上升（GRASPO）」）；
+#   ⛔ 未登记 / 缺方向 ⇒ **fail-closed**（⛔ 不得默认按 loss 判）。
+# ⛔ 本包**不接线**：`PRIMARY_CRITERIA` / `DIAGNOSTIC_CRITERIA` 一个字没动。
+
+
+def test_u2_direction_mapping_is_explicit_exact_and_fail_closed():
+    """★方向映射是**显式登记表** + **精确串**匹配：未登记串一律 ``None``（fail-closed）。
+
+    反例保护：若有人把方向改回"缺省 False"、或加了大小写归一 / 前缀匹配去"猜"方向，
+    本用例必红（``None`` 与 ``False`` 是**不同**的三态取值，⛔ 不得混同）。
+    """
+    # ★ 已登记的两类（唯一真相源 = 本模块常量）
+    assert U2_REWARD_ALGORITHMS == frozenset({"GRASPO"})
+    assert U2_LOSS_ALGORITHMS == frozenset({"SFT", "CPT", "OPD"})
+    for algorithm in ("GRASPO",):
+        assert u2_higher_is_better_from_algorithm(algorithm) is True
+    for algorithm in ("SFT", "CPT", "OPD"):
+        assert u2_higher_is_better_from_algorithm(algorithm) is False
+
+    # ★ 未登记 / 缺方向 ⇒ **None**（= 不可判定），⛔ 不是 False（= "按 loss 判"）
+    for algorithm in (None, "", "graspo", "GRPO", "PPO", " SFT", "SFT "):
+        assert u2_higher_is_better_from_algorithm(algorithm) is None, (
+            f"算法串 {algorithm!r} 未登记 ⇒ 必须返回 None（不可判定），"
+            "⛔ 不得回落成 False（那正是被修掉的旧缺省）"
+        )
+
+    # ★ 人读标签与判据层同源
+    assert u2_direction_label(make_evidence(algorithm="GRASPO")) == "reward 正常上升"
+    assert u2_direction_label(make_evidence(algorithm="CPT")) == "loss 正常下降"
+    assert u2_direction_label(make_evidence(algorithm=None)) == "曲线方向不可判定"
+
+
+def test_u2_reward_evidence_is_judged_by_reward_direction_both_ways():
+    """★★**能失败对照①（本包主对照）**：reward 类证据必须按 **reward 方向**判。
+
+    证据 = `algorithm="GRASPO"`、曲线是 reward（越高越好）、基线给同口径终点窗：
+      * **上升且高于基线** ⇒ **通过**，判词必须用 **reward / 越高越好 / 上升**；
+      * **下降且低于基线** ⇒ **不通过**，判词必须是 **「未正常上升」（reward 口径）**。
+    ⛔ 两个方向都不得出现 loss 口径的判词（``loss 越低越好`` / ``未正常下降``）——
+    那正是修复前 GRASPO 档的错判词。
+    """
+    # k=3：终窗 = mean(0.45, 0.48, 0.50) = 0.4766667 > 基线窗 0.30 ⇒ 达标
+    rising = judge_u2(
+        make_evidence(
+            algorithm="GRASPO",
+            losses=(0.10, 0.20, 0.30, 0.35, 0.40, 0.45, 0.48, 0.50),
+            baseline_end_window=0.30,
+        )
+    )
+    assert rising.passed, f"reward 明显上升且终窗高于基线窗 ⇒ 必须通过；判词 = {rising.detail}"
+    assert rising.evidence_missing is False
+    assert "reward" in rising.detail and "越高越好" in rising.detail
+    assert "正常上升成立" in rising.detail
+    assert "loss 越低越好" not in rising.detail
+    assert "未正常下降" not in rising.detail
+    # ★ 方向来源必须**可核**（判词里点名算法字段与取值）
+    assert "RunEvidence.algorithm" in rising.detail and "'GRASPO'" in rising.detail
+
+    # k=3：终窗 = mean(0.12, 0.11, 0.10) = 0.11 < 基线窗 0.30 ⇒ 未达标 ⇒ 必红
+    falling = judge_u2(
+        make_evidence(
+            algorithm="GRASPO",
+            losses=(0.50, 0.48, 0.45, 0.40, 0.20, 0.12, 0.11, 0.10),
+            baseline_end_window=0.30,
+        )
+    )
+    assert not falling.passed, "reward 终窗 0.11 < 基线窗 0.30 ⇒ 必须红"
+    assert falling.evidence_missing is False, "读全了序列与基线 ⇒ 事实判否，不是取证缺口"
+    assert "未正常上升" in falling.detail
+    assert "越高越好" in falling.detail
+    assert "未正常下降" not in falling.detail
+
+
+def test_u2_loss_evidence_keeps_the_mirror_direction():
+    """★对照（镜像）：loss 类（SFT / CPT / OPD）仍按 **loss 方向**判——⛔ 没有被整体反向。
+
+    两个方向各一例：loss 降到基线窗之下 ⇒ 绿（「正常下降成立」）；升到基线窗之上 ⇒ 红
+    （「未正常下降」）。若有人把方向写成"恒 reward"（另一种写死），本用例必红。
+    """
+    for algorithm in ("SFT", "CPT", "OPD"):
+        falling = judge_u2(
+            make_evidence(
+                algorithm=algorithm,
+                losses=(1.0, 0.9, 0.8, 0.7, 0.6, 0.5),
+                baseline_end_window=0.75,
+            )
+        )
+        assert falling.passed, f"{algorithm}：终窗 0.5 ≤ 基线窗 0.75 ⇒ 必须绿"
+        assert "loss" in falling.detail and "越低越好" in falling.detail
+        assert "正常下降成立" in falling.detail
+        assert "reward" not in falling.detail
+
+        rising = judge_u2(
+            make_evidence(
+                algorithm=algorithm,
+                losses=(0.2, 0.3, 0.4, 0.5, 0.9, 0.9),
+                baseline_end_window=0.75,
+            )
+        )
+        assert not rising.passed, f"{algorithm}：终窗 0.7667 > 基线窗 0.75 ⇒ 必须红"
+        assert "未正常下降" in rising.detail
+
+
+def test_u2_direction_unknown_is_fail_closed_and_never_defaults_to_loss():
+    """★★**能失败对照③**：方向不可判定 ⇒ fail-closed，⛔ **不得默认按 loss 判**。
+
+    关键构造（这条是"不得默认按 loss"的**判据级**证明）：序列**下降**且**终窗低于基线窗**
+    —— 在旧的"缺省 False（按 loss 判）"实现下，它会被判 **通过**（绿）。修后必须
+    **不通过 + `evidence_missing=True`（取证缺口）**，且判词**不得**出现任何按方向下的结论。
+    """
+    # ★ 只在 loss 口径下会判绿的序列（终窗 0.2333 ≤ 基线窗 0.3；
+    #   在 reward 口径下 0.2333 < 0.3 ⇒ 判红）⇒ 用它证明"没有回落成按 loss 判"。
+    would_pass_under_loss_default = dict(
+        losses=(1.0, 0.8, 0.6, 0.4, 0.2, 0.1), baseline_end_window=0.3
+    )
+
+    for algorithm in (None, "", "graspo", "PPO"):
+        result = judge_u2(make_evidence(algorithm=algorithm, **would_pass_under_loss_default))
+
+        assert not result.passed, (
+            f"algorithm={algorithm!r} 无法定方向 ⇒ 绝不放行（⛔ 不得默认按 loss 判成绿）"
+        )
+        assert result.evidence_missing is True, "「方向不知道」是取证缺口，⛔ 不是训练失败"
+        assert U2_DIRECTION_UNKNOWN_DETAIL in result.detail
+        assert "fail-closed" in result.detail
+        assert "RunEvidence.algorithm" in result.detail
+        # ⛔ 不得给出按某一方向的结论
+        assert "正常下降成立" not in result.detail
+        assert "正常上升成立" not in result.detail
+
+
+def test_u2_direction_unknown_keeps_the_tier_indeterminate_in_the_note_not_silent():
+    """整档视角：方向不可判定时必须**写进台账备注**（⛔ 不得静默按 loss 记）。
+
+    ★ 同时锁死"未接线"：U2 仍是诊断项 ⇒ 整档结论**不因它翻转**（本次⛔ 不接线）。
+    """
+    judgement = judge_tier(make_evidence(algorithm=None))
+
+    assert judgement.criterion(U2_CRITERION).passed is False
+    assert judgement.criterion(U2_CRITERION).evidence_missing is True
+    assert "U2 曲线方向不可判定 = False" in judgement.note
+    assert "U2 loss 正常下降" not in judgement.note, "⛔ 不得把方向未知的档记成 loss 口径"
+    assert judgement.passed, "U2 未接线 ⇒ 不得因它翻转整档结论"
+    assert U2_WIRING_PENDING_NOTE in judgement.note
+
+
+def test_u2_judge_tier_call_site_derives_the_direction_from_the_algorithm():
+    """★★**调用处锁**（原缺陷就在调用处：``u2 = judge_u2(first)`` 不传方向开关）。
+
+    同一个 ``judge_tier`` 入口，只换 ``algorithm``：
+      * ``GRASPO`` ⇒ 台账备注写 **「U2 reward 正常上升」**；
+      * ``SFT``/``CPT``/``OPD`` ⇒ 写 **「U2 loss 正常下降」**。
+    ⛔ 若调用处退回"不传/写死 loss"，第一条断言必红。
+    """
+    reward_evidence = make_evidence(
+        algorithm="GRASPO",
+        losses=(0.10, 0.20, 0.30, 0.35, 0.40, 0.45, 0.48, 0.50),
+        baseline_end_window=0.30,
+    )
+    reward_note = judge_tier(reward_evidence).note
+    assert "U2 reward 正常上升 = True" in reward_note
+    assert "U2 loss 正常下降" not in reward_note
+
+    for algorithm in ("SFT", "CPT", "OPD"):
+        loss_note = judge_tier(make_evidence(algorithm=algorithm)).note
+        assert "U2 loss 正常下降 = True" in loss_note
+        assert "reward" not in loss_note.split("U4 产物可推理")[0]
+
+
+def test_u2_explicit_direction_argument_is_an_explicit_override_never_a_silent_default():
+    """显式传 ``higher_is_better`` = **调用方的显式断言**（并在判词里登记来源）。
+
+    为什么保留这个入参：非矩阵档可能拿不到 ``algorithm``，此时调用方可以**显式**断言方向。
+    ⛔ 但它**不是缺省路径**：缺省 ``None`` 时方向只能来自证据，且缺方向即 fail-closed
+    （见上一条用例）。
+    """
+    explicit_reward = judge_u2(
+        make_evidence(algorithm=None, losses=(0.1, 0.2, 0.3, 0.4, 0.5), baseline_end_window=0.39),
+        higher_is_better=True,
+    )
+    assert explicit_reward.passed
+    assert "reward" in explicit_reward.detail and "正常上升成立" in explicit_reward.detail
+    assert "调用方显式指定" in explicit_reward.detail
 
 
 # ── U4 · 能失败对照 ─────────────────────────────────────────────────────────
