@@ -80,10 +80,9 @@ fi
 CONFIG_ABS="$(realpath "$CONFIG")"
 
 # ── 防呆 1: 自动选择空闲 GPU（--gpus 未指定时）──────────────────────────────
-# 只有 1..N 卡在允许集合 {0,1,2,3,4,5} 内、且上限 4 张时才自动选择。
-# 生产卡 GPU6/7 永不自动选中（nvidia-smi 里它们若"空闲"也只是暂时现象）。
-MAX_CARDS=4
-MAX_INDEX=5
+# ★ 2026-10-17 主席令：「228 先到先得，随便用。」⇒ 本机全卡 **0–7 一律可用**：⛔ 无预留卡、⛔ 无禁用卡、⛔ 无"生产锁卡"；⛔ 也不再按张数截断（「单个作业不限制卡数」）。
+# ★ 不抢占他人：只挑 **memory.used == 0（当前无人在用）** 的卡；权威判据在设施层 `scripts/gpu_idle_assert.py`（**剩余显存 ≥ 本档头寸 ∧ util == 0**）；被占则换卡或等。
+MAX_INDEX=7
 if [ -z "$GPU_IDS" ]; then
     if ! command -v nvidia-smi >/dev/null 2>&1; then
         echo "ERROR: nvidia-smi 不可用，请确认 GPU 驱动已安装"
@@ -91,10 +90,11 @@ if [ -z "$GPU_IDS" ]; then
     fi
     GPU_IDS="$(nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits \
         | awk -F', *' -v max_index="$MAX_INDEX" '$1+0<=max_index && $2+0==0 {print $1}' \
-        | head -n "$MAX_CARDS" | paste -sd, -)"
+        | paste -sd, -)"
     if [ -z "$GPU_IDS" ]; then
-        echo "ERROR: 没有可用 GPU（GPU0-5 都被占用）"
-        echo "  可用: bash run.sh $CONFIG --gpus 0,1 指定要用的卡（仅 0-5，最多 4 张）"
+        echo "ERROR: 没有空闲 GPU（本机全卡 0–7 都被占用）"
+        echo "  可用: bash run.sh $CONFIG --gpus 0,1 显式指定卡号（0–7 任意，不限制卡数）"
+        echo "  ★ 不抢占他人：换卡或等它空下来，⛔ 绝不 kill 他人进程 / 绝不停他人容器。"
         exit 1
     fi
     echo "自动选择 GPU: $GPU_IDS"
@@ -105,7 +105,7 @@ fi
 # ── 防呆 1b: 锁卡守卫（fail-closed，宿主侧预检）──────────────────────────────
 # 与容器内 `train_worker` / `graspo launch` 的守卫同一实现
 # （src/graspo/core/gpu_guard.py，§1.4 单一真相源）：
-#   未显式锁卡 / 含生产卡 6,7 / 超过 4 卡 → 拒绝启动，连容器都不创建。
+#   卡号须显式给出且 ⊆ 本机全卡 0–7；⛔ 不判卡数、⛔ 无预留/禁用卡、⛔ 无"生产锁卡"。
 if ! command -v python3 >/dev/null 2>&1; then
     echo "ERROR: 宿主机缺少 python3，无法执行锁卡守卫；拒绝启动（fail-closed）"
     echo "  守卫位于 scripts/gpu_lock_guard.py，容器内还有第二道同样的断言"

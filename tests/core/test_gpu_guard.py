@@ -1,9 +1,12 @@
 """graspo.core.gpu_guard 的单元测试——锁卡守卫的负向覆盖（安全关键）。
 
-★ 卡位契约（**B10 再推导**，主席 2026-10-12 批准）：
-**允许卡 = 本机全卡 0–7（先到先得）；唯一要求 = 不破坏别人的服务**。
-旧的「只允许 ``{4,5,6,7}`` / GPU0–3 留给他人」白名单**已退役**；≥8 不存在；
-「生产卡 / reserved」语义更早已退役。
+★★ 卡位契约（**2026-10-17 主席令**，逐字）：「**228 先到先得，随便用。**」
+＋「**单个作业不限制卡数。**」⇒ **允许卡 = 本机全卡 0–7（先到先得）**；≥8 不存在；
+⛔ 不预留、⛔ 不禁用、⛔ 无"生产锁卡"、⛔ 无"邻居卡"、⛔ 无单作业卡数上限。
+旧的「只允许 ``{4,5,6,7}`` / GPU0–3 留给他人」白名单、以及「生产卡 / reserved」
+语义**均已退役**；旧的「每次最多 4 卡」上限**已废**（卡数不再有平台级上限）。
+★ 唯一保留的硬要求 =「不抢占他人」（起跑前逐卡实测空闲，被占则换卡或等，
+⛔ 绝不 kill 他人进程）。
 
 ★ 空闲判据（B10 再推导）：**可用 ⟺ 剩余显存 ≥ 本档头寸 ∧ util == 0**；
 旧绝对阈值（``memory.used ≤ 64 MiB``）**已作废**。起跑前须**连续采样**（≥2 帧）全满足；
@@ -14,7 +17,7 @@
 **F-1 追加（守卫与容器 runtime 语义不一致）**：nvidia-container-runtime 按设备
 收窄可见集时会把容器内 ``NVIDIA_VISIBLE_DEVICES`` 覆写成哨兵 ``void``。旧守卫把它
 判为非法 ⇒ 目标 GPU 服务器上所有训练入口必然拒绝启动（false reject）。修后：
-``void`` + 实测可见卡（≤4）→ 通过；``void`` + 实测 8 卡 → 仍拒绝；
+``void`` + 实测可见卡 → 通过（**含实测 8 张** —— 那就是本机全卡，不是失守）；
 未设置/``all`` → 仍拒绝；显式 ``4,5,0`` → 通过（0 现在也在允许集合内）。
 """
 
@@ -99,11 +102,26 @@ def test_env_override_rejects_malformed_value():
     assert "取值非法" in _reason(exc)
 
 
-def test_rejects_when_five_cards_requested():
-    """★B10 再推导：0–7 全在集合内 ⇒ 5 张卡首次真正走到 **卡数上限** 分支。"""
+def test_accepts_five_and_eight_cards():
+    """★★ 2026-10-17 主席令「单个作业不限制卡数」⇒ **5 张、8 张都必须放行**。
+
+    （本用例由旧的 `test_rejects_when_five_cards_requested` **反转**而来：
+    旧口径下 5 张走到"卡数上限"分支被拒；该上限已按主席令删除。）
+    """
+    assert assert_gpu_lock("0,1,2,3,4") == (0, 1, 2, 3, 4)
+    assert assert_gpu_lock("0,1,2,3,4,5") == (0, 1, 2, 3, 4, 5)
+    assert assert_gpu_lock("0,1,2,3,4,5,6,7") == (0, 1, 2, 3, 4, 5, 6, 7)
+
+
+def test_explicit_caller_side_cap_still_bites():
+    """★ 没放松边界：调用方**显式**传入的自限（``max_cards``）仍然生效。
+
+    它与旧口径的区别是**默认值**：旧默认 = `MAX_CARDS(4)`（平台级上限，已删）；
+    现在默认 = ``None``（不判卡数），只有显式给正整数才收窄。
+    """
     with pytest.raises(GpuLockError) as exc:
-        assert_gpu_lock("0,1,2,3,4")
-    assert "超过上限" in _reason(exc)
+        assert_gpu_lock("0,1,2,3,4", max_cards=4)
+    assert "显式设置的自限" in _reason(exc)
 
 
 def test_accepts_legal_four_cards():
@@ -114,19 +132,18 @@ def test_accepts_legal_four_cards():
     assert assert_gpu_lock_from_env({"NVIDIA_VISIBLE_DEVICES": "4,5"}) == (4, 5)
 
 
-# ── ★ 防线分层（2026-10-16 补）：运行期守卫**不做**禁用卡过滤 ────────────────
+# ── ★ 防线分层（2026-10-17 重写）：运行期守卫**只有**一条卡号判据 ────────────
 # 背景：`scripts/gpu_lock_guard.py` 的 docstring 曾声称"含 6/7 或 >4 卡即拒绝"，
-# 而实现（本文件被测的 `assert_gpu_lock`）**只有**四条判据（显式设置 / 允许集合
-# ⊆0..7 / ≤4 卡 / 空元素·重复卡）。实测 `--visible 2` / `2,3` / `6` / `6,7` /
-# `4,5,6,7` **全 rc=0**。
-# ★ 处置口径（2026-10-16 指挥裁定；★ **不推翻 B10**）：运行期守卫语义保持不动
-#   （B10 = 2026-10-12 主席批准「允许卡 = 本机全卡 0–7、先到先得；生产卡/预留卡
-#   语义已退役」）⇒ 只把 docstring 改回**已批准口径** ＋ 把"邻卡/生产锁卡的拦截
-#   面"写清在三层：① 清单生成器 `NEIGHBOR_CARDS=(2,)` / `LOCKED_CARDS=(2,6,7)`；
-#   ② 投放冒烟 (b2)（全 54 档声明不得含 GPU0/GPU2）；③ `gpu_assignment.check_gpus()`。
-# 下面两条**只新增**、⛔ 不改任何既有期望值：它们把"本层不拦"这一契约钉住，使
-# "把禁用卡判据塞进运行期守卫"这类改法必须显式过测试（⇒ 必须显式过裁定），而不是
-# 静默改变运行期语义（那等于推翻 B10，须主席批准）。
+# 而实现（本文件被测的 `assert_gpu_lock`）从来只做静态卡号比对。
+# ★ 现行口径（2026-10-17 主席令「228 先到先得，随便用。」＋「单个作业不限制卡数。」）：
+#   运行期守卫的判据 = **① 必须显式设置 ② 卡号 ⊆ 本机全卡 0–7（存在性白名单）
+#   ③ 无空元素 / 重复卡**；⛔ 无"禁用卡号"过滤、⛔ 无卡数上限。
+#   ★ 静态禁用（邻居卡/生产锁卡/主席禁用卡）**已全部废除** —— 因此**不再有**"另外
+#   几层在拦 GPU2/6/7"这回事；"某张卡此刻被谁占着"是**动态事实**，由起跑前的
+#   **逐卡实测空闲断言**判定（`flow.guard.idle`：剩余 ≥ 本档头寸 ∧ util == 0），
+#   被占则换卡或等，⛔ 绝不 kill 他人进程。
+# 下面两条把"**本层不拦 2/6/7、也不设卡数上限**"这一契约钉住，使"把静态禁用判据
+# 塞回运行期守卫"这类改法必须显式过测试（⇒ 必须显式过裁定）。
 
 
 def _same_source_file(module, target) -> bool:
@@ -186,53 +203,62 @@ def _load_module_from_path(name: str, relpath: str):
     return module
 
 
-def test_docstring_names_the_four_judgements_and_disclaims_forbidden_cards():
-    """★ 契约钉住：docstring 与实现一致（四条判据），且**明写本层不拦 2/6/7**。"""
+def test_docstring_names_the_current_judgements_and_disclaims_forbidden_cards():
+    """★ 契约钉住：docstring 与实现一致（**三条**判据），且**明写本层不拦卡号、不判卡数**。
+
+    ★ 与旧用例的差异（2026-10-17）：旧文要求 docstring 出现 `卡数 ≤ 4` /
+    `NEIGHBOR_CARDS` / `LOCKED_CARDS` / `GPU_FORBIDDEN_PRODUCTION` —— 那是在把
+    **已废除的旧口径词表**钉进文档（= 用文档反向复活旧口径）。现行版本改为钉
+    **新口径**：唯一卡号判据 = 允许集合（0–7），且**无**静态禁用、**无**卡数上限，
+    "不抢占他人"指向实测空闲断言。
+    """
     guard_cli = _load_module_from_path("_gpu_lock_guard_cli_doc", "scripts/gpu_lock_guard.py")
     doc = guard_cli.__doc__ or ""
     for needle in (
         "必须显式设置",
         "允许集合",
-        "卡数 ≤ 4",
         "重复卡",
         '不做任何"禁用卡号"过滤',
-        "NEIGHBOR_CARDS",
-        "LOCKED_CARDS",
-        "GPU_FORBIDDEN_PRODUCTION",
+        "也不判卡数",
+        "不抢占他人",
+        "剩余显存 ≥ 本档头寸",
+        "util == 0",
+        "绝不 kill",
     ):
-        assert needle in doc, f"docstring 缺少防线分层要素：{needle!r}"
-    assert "含 6/7 或 >4 卡即拒绝" not in doc, "旧的过度承诺句仍在 ⇒ 文档未回到已批准口径"
+        assert needle in doc, f"docstring 缺少现行口径要素：{needle!r}"
+    assert "含 6/7 或 >4 卡即拒绝" not in doc, "旧的过度承诺句仍在 ⇒ 文档未回到现行口径"
+    assert "卡数 ≤ 4" not in doc, "旧卡数上限口径仍在 docstring 里"
+    assert "NEIGHBOR_CARDS" not in doc and "LOCKED_CARDS" not in doc, (
+        "旧静态禁用判据的名字仍在 docstring 里（该概念已废）"
+    )
 
 
-def test_neighbour_and_production_cards_map_exactly_to_generator_side_constants():
-    """★ 三方常量一致性：运行期允许集合 = 生成器侧「`GPU_ALLOWED` ∪ 禁用集合」。
+def test_runtime_guard_matches_generator_side_allowed_set():
+    """★ 单一真相源交叉断言：生成器侧允许集合 == 运行期 ``ALLOWED_INDICES``（**逐值相等**）。
 
-    生成器侧：`gpu_assignment.GPU_ALLOWED = (0..5)` /
-    `GPU_FORBIDDEN_PRODUCTION = (6, 7)`；`generate_matrix_manifest_source` 另有
-    `NEIGHBOR_CARDS = (2,)` / `LOCKED_CARDS = (2, 6, 7)`。
-    ⇒ 「运行期允许 0–7」与「生成/投放侧禁 2/6/7」**不是矛盾，而是分层**：本用例把
-    这个等式钉住，任一侧改动都会在这里现形（而不是靠两条线各自的口头约定）。
+    ★ 与旧用例 `test_neighbour_and_production_cards_map_exactly_to_generator_side_constants`
+      的关系：旧式把等式写成「运行期允许 = 生成器侧允许 ∪ 禁用集合（2/6/7）」——
+      那是**分层静态禁用**时代的产物。现行口径下两侧**就是同一个集合**（本机全卡 0–7），
+      ⛔ 不存在任何"只在生成侧被禁"的卡 ⇒ 等式直接退化为集合相等（更强、更简单）。
+    ★ 同时反向断言：生成器侧**不得再有** `NEIGHBOR_CARDS` / `LOCKED_CARDS` /
+      `GPU_FORBIDDEN_PRODUCTION`（一旦复活，本用例当场红）。
     """
     import sys
 
     assignment = _load_module_from_path("gpu_assignment", "tests/e2e/gpu_assignment.py")
-    # ★ 真 guard（替换原先的 ``sys.modules.setdefault("gpu_assignment", assignment)`` 假防呆）：
-    #   上面那次加载**本身**已保证本键 == ``assignment``（命中即复用）；原先的 setdefault 是
-    #   在「无条件覆盖**已发生**」（旧 ``_load_module_from_path`` 的 `sys.modules[name] = module`）
-    #   之后才调用 ⇒ 必然 no-op：看着有保护、实则没有。这里把该不变量**钉成断言**，
-    #   ⛔ 不是"删断言"，而是把假防呆换成能失败的真 guard。
     assert sys.modules["gpu_assignment"] is assignment, (
         "同名副本未被复用（键被顶掉）⇒ 断言会打在第二份副本上"
     )
     genv2 = _load_module_from_path(
         "generate_matrix_manifest_source", "tests/e2e/generate_matrix_manifest_source.py"
     )
-    locked = set(assignment.GPU_FORBIDDEN_PRODUCTION) | set(genv2.NEIGHBOR_CARDS)
-    assert locked == {2, 6, 7}, f"禁用集合 ≠ {{2,6,7}}：{sorted(locked)}"
-    assert tuple(genv2.LOCKED_CARDS) == (2, 6, 7)
-    assert set(ALLOWED_INDICES) == set(assignment.GPU_ALLOWED) | locked, (
-        "运行期允许集合 ≠ 生成器侧「允许卡 ∪ 禁用卡」⇒ 两侧口径分叉，需显式裁定"
+    assert tuple(assignment.GPU_ALLOWED) == tuple(ALLOWED_INDICES) == tuple(range(8)), (
+        "生成器侧与运行期的允许集合必须逐值相等（单一真相源）"
     )
+    assert tuple(genv2.GPU_ALLOWED) == tuple(ALLOWED_INDICES)
+    for retired in ("NEIGHBOR_CARDS", "LOCKED_CARDS", "GPU_FORBIDDEN_PRODUCTION"):
+        assert not hasattr(assignment, retired), f"生成器侧旧符号 {retired} 复活"
+        assert not hasattr(genv2, retired), f"生成器侧旧符号 {retired} 复活"
 
 
 # ── 其它非法取值 ────────────────────────────────────────────────────────────
@@ -252,20 +278,20 @@ def test_parse_device_list_rejects_runtime_marker_because_it_wants_host_indices(
     assert "托管哨兵" in _reason(exc)
 
 
-def test_card_count_limit_is_reachable_and_checked_after_the_allowlist():
-    """★B10 再推导：集合外卡仍先于卡数被拒；而 0–7 内的 6 张卡走卡数分支。
+def test_out_of_allowlist_error_precedes_everything_and_count_is_not_capped():
+    """★ 现行口径：集合外卡仍一律被拒；而 0–7 内**任意张数**都放行（无卡数上限）。
 
-    （旧用例名是 "out_of_allowlist_error_precedes_the_card_count_check"，
-    在白名单只有 4 个元素时"6 张合法卡"不可构造；B10 后可构造，两个分支都能钉住。）
+    （本用例由旧 `test_card_count_limit_is_reachable_and_checked_after_the_allowlist`
+    **反转**而来：旧口径下 0–7 内的 6 张卡会走"超过上限"分支被拒；
+    2026-10-17 主席令「单个作业不限制卡数」⇒ 该分支**已删除**。）
     """
     with pytest.raises(GpuLockError) as exc:
-        assert_gpu_lock("0,1,2,3,4,8")  # 集合外 + 超卡数
+        assert_gpu_lock("0,1,2,3,4,8")  # 集合外（越界）⇒ 必拒
     assert "白名单外" in _reason(exc)
-    assert "超过上限" not in _reason(exc)
 
-    with pytest.raises(GpuLockError) as exc2:
-        assert_gpu_lock("0,1,2,3,4,5")  # 全在集合内 + 超卡数
-    assert "超过上限" in _reason(exc2)
+    # ★ 0–7 内的 6 张 / 8 张 ⇒ 一律放行，且报错文案里**不得**再出现"超过上限"
+    assert assert_gpu_lock("0,1,2,3,4,5") == (0, 1, 2, 3, 4, 5)
+    assert assert_gpu_lock("0,1,2,3,4,5,6,7") == (0, 1, 2, 3, 4, 5, 6, 7)
 
 
 # ── 采样目标选择（可信显存采样的边界）──────────────────────────────────────
@@ -312,18 +338,28 @@ def test_void_with_single_visible_card_passes_the_guard():
 
 
 def test_void_with_four_visible_cards_passes_and_reports_local_indices():
-    """``void`` + 实测 4 卡（上限）→ 通过，返回容器内本地序号。"""
+    """``void`` + 实测 4 卡 → 通过，返回容器内本地序号。"""
     inventory = GpuInventory(source="nvidia-smi -L", count=4, indices=(0, 1, 2, 3))
     assert assert_gpu_lock_inventory("void", inventory) == (0, 1, 2, 3)
 
 
-def test_void_with_eight_visible_cards_is_still_rejected():
-    """★不放松"不得超 4 卡"：runtime 没收住（可见 8 张卡）时必须拒绝。"""
+def test_void_with_eight_visible_cards_is_accepted():
+    """★★ 2026-10-17 主席令（反转旧用例 `..._is_still_rejected`）：
+    实测可见 **8 张 = 本机全卡**，**不是失守** ⇒ 必须放行。
+
+    ★ 仍不放松的边界：可见 **0 张** 必须拒（探不到卡 = 不确定就不启动），
+      以及调用方**显式**给 ``max_cards`` 时仍按该自限收窄。
+    """
     inventory = GpuInventory(source="nvidia-smi -L", count=8, indices=tuple(range(8)))
-    with pytest.raises(GpuLockError) as exc:
-        assert_gpu_lock_inventory("void", inventory)
-    assert "超过上限" in _reason(exc)
-    assert "8" in _reason(exc)
+    assert assert_gpu_lock_inventory("void", inventory) == tuple(range(8))
+    # ★ 调用方**显式**自限仍生效（默认不判卡数）
+    with pytest.raises(GpuLockError):
+        assert_gpu_lock_inventory("void", inventory, max_cards=4)
+    # ★ 0 卡照旧拒（探不到卡 = 不确定就不启动，fail-closed）
+    with pytest.raises(GpuLockError):
+        assert_gpu_lock_inventory(
+            "void", GpuInventory(source="nvidia-smi -L", count=0, indices=())
+        )
 
 
 @pytest.mark.parametrize("raw", [None, "", "  ", "all"])
@@ -397,16 +433,18 @@ def test_require_gpu_lock_or_exit_uses_injected_probe_only_for_void():
     assert calls == ["probe"], "显式卡号路径不得触发实测探测"
 
 
-def test_require_gpu_lock_or_exit_exits_on_void_with_eight_visible_cards():
-    """入口包装在可见集失守时 **SystemExit(1)**——不把事故放到模型加载之后。"""
+def test_require_gpu_lock_or_exit_accepts_void_with_eight_visible_cards():
+    """★ 入口包装（反转旧用例）：实测可见 8 张 = 本机全卡 ⇒ **必须放行**，不得 SystemExit。
+
+    ★ 仍不放松：可见 **0 张**（探不到卡）⇒ 照旧 **SystemExit(1)**（见下一条用例）。
+    """
     probe = lambda: GpuInventory(  # noqa: E731
         source="nvidia-smi -L", count=8, indices=tuple(range(8))
     )
 
-    with pytest.raises(SystemExit) as exc:
-        require_gpu_lock_or_exit({"NVIDIA_VISIBLE_DEVICES": "void"}, inventory_probe=probe)
-
-    assert "超过上限" in str(exc.value.code)
+    assert require_gpu_lock_or_exit(
+        {"NVIDIA_VISIBLE_DEVICES": "void"}, inventory_probe=probe
+    ) == tuple(range(8))
 
 
 def test_require_gpu_lock_or_exit_exits_when_probe_fails():

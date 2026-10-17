@@ -46,7 +46,10 @@
 #     （`TRAIN_PATH == dirname(TRAIN_PATH)/<Tier>.jsonl` 与图像根反推
 #     `dirname(dirname(train_path))/images`）依赖它；改动它会直接打断整条链。
 #
-# 红线：只用 GPU0-5、每次最多 4 卡、GPU6/7 永不触碰。本脚本不自动执行矩阵。
+# 红线：卡号取本机全卡 GPU0-7（**先到先得**，⛔ 无预留/禁用/生产锁卡/邻居卡；
+#       存在性判据，≥8 不存在即拒）；⛔ 无单作业卡数上限。
+#       ★ 保留的硬要求 =「不抢占他人」：起跑前逐卡实测空闲（剩余 ≥ 本档头寸 ∧ util == 0），
+#       被占则换卡或等，⛔ 绝不 kill 他人进程 / 绝不停他人容器。本脚本不自动执行矩阵。
 set -uo pipefail
 
 # ── 挂载结构不变量（fail-closed，纯 argv 分析，不需要 docker）──────────────────
@@ -371,10 +374,14 @@ fi
 #   逐文件比对（873 文件）失效。本变量只影响字节码落盘，不改任何命令行/退出码/fail-closed 语义。
 PYTHONDONTWRITEBYTECODE=1 "$PYBIN" "$ROOT_DIR/scripts/gpu_lock_guard.py" --visible "$GPUS" || exit 1
 
-# 2a) 宿主侧**目标卡实测空闲断言**（F-10，fail-closed）：逐卡实测
-#     memory.used ≤64 MiB 且 utilization.gpu ≤5%；任一卡被占即拒绝启动。
+# 2a) 宿主侧**目标卡实测空闲断言**（F-10；判据 = B10，fail-closed）：逐卡实测
+#     **剩余显存 ≥ 本档头寸（默认 48 GiB，可用 GRASPO_GPU_POSITION_MIB 覆盖）∧ util == 0**，
+#     默认连续 3 帧、间隔 12 s、帧帧满足；任一卡的任一帧不满足即拒绝启动。
+#     ★ 旧口径「memory.used ≤64 MiB ∧ utilization.gpu ≤5%」**已作废**（B10，2026-10-12）：
+#       绝对占用阈值会把"卡上有他人常驻但不在算（util=0%）"误判为不可用，与"先到先得"冲突。
+#       生效实现在 `scripts/gpu_idle_assert.py` → `graspo.flow.guard.idle`。
 #     本轮实战里这道断言拦下过含被第三方占用的 GPU3 的 4 卡目标集。
-#     宁等不抢：不 kill 他人进程，改选实测空闲的卡或等它空下来。
+#     ★ 不抢占他人：不 kill 他人进程、不停他人容器，改选实测空闲的卡或等它空下来。
 #     GRASPO_SKIP_IDLE_ASSERT=1 仅供无 GPU 的脚手架自检（如假 docker 的 dry-run 回归），
 #     真实上机**不得**设置——跳过即失去这道防线，属显式降级。
 if [ "${GRASPO_SKIP_IDLE_ASSERT:-0}" != "1" ]; then

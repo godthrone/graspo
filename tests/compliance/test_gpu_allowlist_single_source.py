@@ -144,9 +144,16 @@ def analyze_sources(sources: dict[str, str], allowed: tuple[int, ...],
     return problems
 
 
-#: 已裁定登记的**冻结 v1 e2e 子系统**（B7 §3「登记不动」；改动会波及冻结的 v1 清单）。
+#: 已裁定登记的**例外**（用到即打印）。
+#: ★ 2026-10-17（卡池口径对齐）：`tests/e2e/gpu_assignment.py` 是**stdlib-only** 模块
+#:   （生成器与运行期都要在**裸解释器**下可用，⛔ 不得 import `graspo.core.gpu_guard`）
+#:   ⇒ 它的 `GPU_ALLOWED` 只能是**本机推导量** `tuple(range(GPU_MAX_INDEX + 1))`，
+#:   **结构上**不可能引用真相源符号。这不是"第二处真相源"，而是**唯一不得不重复的一份派生定义**；
+#:   它由 `tests/compliance/test_gpu_caliber_consistency.py` 与真相源**逐值交叉断言**，
+#:   并由 `test_gpu_contract_retired_sweep.py` 保证"卡数上限字面量/旧允许集字面量"不复活。
+#:   ★ 计数由 2 降为 1：旧口径的 `GPU_FORBIDDEN_PRODUCTION`（第二处定义之一）**已删除**。
 REGISTERED_LEGACY: dict[str, dict[str, int]] = {
-    "tests/e2e/gpu_assignment.py": {"second_definition": 2},
+    "tests/e2e/gpu_assignment.py": {"second_definition": 1},
 }
 
 

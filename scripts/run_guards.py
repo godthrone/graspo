@@ -75,8 +75,17 @@ def busy_cards_from_docker(names: list[str] | None = None, docker_json: str | No
     return (busy, notes)
 
 
-def include_reserved_cards(available: list[str], busy_cards: set[str]) -> list[str]:
-    """★ 择卡硬排除：把"我方已占/已预约（含 loading 态）"的卡从可用集里剔除（⛔ 不是建议，是硬排除）。"""
+def exclude_cards_held_by_us(available: list[str], busy_cards: set[str]) -> list[str]:
+    """★ 择卡硬排除：把"**我方**已占/已预约（含 loading 态）"的卡从可用集里剔除
+    （⛔ 不是建议，是硬排除）。
+
+    ★ 2026-10-17 更名（原 ``include_reserved_cards``）：主席令「228 先到先得，随便用。」
+    ＋「单个作业不限制卡数。」⇒ 卡池**不存在**"预留/禁用/生产锁卡"这类静态名单
+    （本仓的契约扫查 ``tests/compliance/test_gpu_contract_retired_sweep.py`` 会对该词表报红）。
+    本函数的语义从来不是"预留卡"，而是"**我方自己**这些卡已经在用了 ⇒ 别自己撞自己"——
+    真正对外的硬要求是「不抢占**他人**」，那一条住在起跑前的逐卡实测空闲断言里
+    （``scripts/gpu_idle_assert.py``：剩余 ≥ 本档头寸 ∧ util == 0；⛔ 绝不 kill 他人）。
+    """
     return [c for c in available if str(c) not in busy_cards]
 
 

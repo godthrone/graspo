@@ -12,7 +12,6 @@ from collections.abc import Callable, Mapping, Sequence
 
 from graspo.core.gpu_guard import (
     ALLOWED_MAX_INDEX,
-    MAX_CARDS,
     RUNTIME_MANAGED,
     GpuInventory,
     GpuLockError,
@@ -27,7 +26,7 @@ from graspo.core.gpu_guard import (
 def assert_inventory_visible(
     inventory: GpuInventory,
     *,
-    max_cards: int = MAX_CARDS,
+    max_cards: int | None = None,
     declared_count: int | None = None,
 ) -> tuple[int, ...]:
     """按**实测可见卡**做断言（F-1 容器侧通道），返回该卡集合。
@@ -35,7 +34,10 @@ def assert_inventory_visible(
     三条边界（全部 fail-closed）：
 
     1. 实测卡数为 0（探到空集）→ 拒绝——看不见卡说明探测或 runtime 有问题；
-    2. 实测卡数 > :data:`MAX_CARDS` → 拒绝——"不得超 4 卡"在实测卡上仍然成立；
+    2. ``max_cards`` **显式给出**时，实测卡数 > 该值 → 拒绝。★ 默认 ``None`` =
+       **不判卡数**（2026-10-17 主席令「单个作业不限制卡数」）；⛔ 旧的
+       ``max_cards=MAX_CARDS(4)`` 平台级上限已删除——"本机 8 卡全可见"不再是失守，
+       它**就是**本机全卡（先到先得）；
     3. ``declared_count`` 给出时，实测卡数必须与之**相等**——runtime 可以重编号
        （宿主 2 → 容器 0），但**不改变卡数**；多一张就是把没声明的卡暴露进来了。
 
@@ -51,8 +53,10 @@ def assert_inventory_visible(
     `.local/hb-workspace/20260915-152747/review-round2-fixes/review-report.md` 🟡-3。
 
     容器内本地序号**不做** 6/7 比对：重编号后本地 0..n-1 与宿主卡号没有对应关系，
-    按本地序号判 6/7 只会得到错误的结论。6/7 的判定由宿主侧
-    :func:`assert_gpu_lock` 按真实宿主卡号负责（宿主侧是唯一持有真实卡号的层级）。
+    按本地序号判 6/7 只会得到错误的结论。★ 而且 2026-10-17 主席令起**根本不再有**
+    "哪张卡不能用"的静态判据（「228 先到先得，随便用。」）——卡号判据只剩宿主侧的
+    存在性白名单 :data:`ALLOWED_INDICES`（0–7），"卡上有没有别人"由**起跑前的逐卡
+    实测空闲断言**（``flow.guard.idle``）负责。
 
     :raises GpuLockError: 任一边界不满足。
     """
@@ -61,12 +65,14 @@ def assert_inventory_visible(
             f"实测可见卡数为 {inventory.count}（来源 {inventory.source}）",
             "看不见任何卡说明 runtime 未生效或探测失败；不确定就不启动（fail-closed）。",
         )
-    if inventory.count > max_cards:
+    # ★★ 2026-10-17 主席令「单个作业不限制卡数」⇒ **默认不判卡数**（max_cards=None）。
+    #    ⛔ 旧默认 `max_cards=MAX_CARDS(4)` 的拦截已删除：本机全卡可见不是失守。
+    if max_cards is not None and inventory.count > max_cards:
         raise _reject(
-            f"实测可见 {inventory.count} 张卡，超过上限 {max_cards}"
+            f"实测可见 {inventory.count} 张卡，超过调用方显式设置的自限 {max_cards}"
             f"（来源 {inventory.source}，本地序号 {list(inventory.indices)}）",
-            f"用户拍板每次最多 {max_cards} 卡；可见集没收住（可能配方未限定设备）时，"
-            "多出来的卡可能是可见集之外的他人负载，必须拒绝。",
+            f"这是**调用方显式**传入的自限（不是平台口径）；主席令「单个作业不限制卡数」"
+            f"⇒ 默认路径不设卡数上限。",
         )
     if declared_count is not None and inventory.count != declared_count:
         raise _reject(
@@ -96,7 +102,7 @@ def assert_gpu_lock_inventory(
     inventory: GpuInventory | None = None,
     *,
     allowed_max_index: int = ALLOWED_MAX_INDEX,
-    max_cards: int = MAX_CARDS,
+    max_cards: int | None = None,
     env: Mapping[str, str] | None = None,
 ) -> tuple[int, ...]:
     """入口守卫的统一判定：显式卡号走静态比对，runtime 哨兵走实测可见卡。
@@ -140,7 +146,7 @@ def assert_gpu_lock_from_env(
     env: Mapping[str, str] | None = None,
     *,
     allowed_max_index: int = ALLOWED_MAX_INDEX,
-    max_cards: int = MAX_CARDS,
+    max_cards: int | None = None,
 ) -> tuple[int, ...]:
     """从环境映射读取 ``NVIDIA_VISIBLE_DEVICES`` 并按**显式宿主卡号**校验。
 
@@ -163,7 +169,7 @@ def require_gpu_lock_or_exit(
     env: Mapping[str, str] | None = None,
     *,
     allowed_max_index: int = ALLOWED_MAX_INDEX,
-    max_cards: int = MAX_CARDS,
+    max_cards: int | None = None,
     inventory_probe: Callable[[], GpuInventory] | None = None,
 ) -> tuple[int, ...]:
     """训练/测试入口使用的守卫包装：通过返回设备，不通过即可操作地终止。
@@ -232,5 +238,6 @@ def format_verdict(devices: Sequence[int], *, source: str = _ENV_KEY) -> str:
     allowed = resolve_allowed_indices()
     return (
         f"[gpu-guard] OK: {source}={','.join(str(d) for d in devices)} "
-        f"（{len(devices)} 卡，全部 ∈ {allowed}，≤{MAX_CARDS} 卡上限）"
+        f"（{len(devices)} 卡，全部 ∈ {allowed}；⛔ 无卡数上限"
+        f"——主席 2026-10-17「单个作业不限制卡数」；★ 不抢占他人：起跑前逐卡实测空闲）"
     )

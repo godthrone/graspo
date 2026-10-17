@@ -41,8 +41,11 @@ GPU6/7 与他人并发作业，显存数据不可作依据。本工具现在三�
 仍是"只采目标卡 + 命令必带 ``-i``"）。
 
 **本次新增**：:func:`probe_gpu_inventory`（F-1/F-2 所需的"实测可见卡"）与
-:func:`assert_target_gpus_idle`（F-10 目标卡实测空闲断言：>64 MiB 或 util>5%
-即拒绝，宁等不抢、不 kill 他人进程）。
+:func:`assert_target_gpus_idle`（F-10 目标卡实测空闲断言，判据 = **B10**：
+**剩余显存 ≥ 本档头寸（默认 48 GiB）∧ util == 0** 才算可用，连续 3 帧帧帧满足；
+★ 2026-10-17 主席令「228 先到先得，随便用。」⇒ 邻居的常驻占用只要不吃掉我们的头寸
+就算可用。⛔ 旧口径「占用 ≤64 MiB / util ≤5%」**已作废**（它不是现行判据）。
+**宁等不抢**：被占则换卡或等，⛔ 绝不 kill 他人进程 / 绝不停他人容器）。
 """
 
 import argparse
@@ -552,7 +555,8 @@ def resolve_sample_gpus(
       目标 = 容器内**实测可见卡的本地序号**（``--gpus`` 必须是其子集）。
       旧版在这里按宿主卡号查，容器内查不到 ⇒ ``exit status 6``。
 
-    fail-closed：可见集未设置 / ``all`` / 含**允许集合之外**的卡（宿主侧）/ 超过 4 卡 →
+    fail-closed：可见集未设置 / ``all`` / 含**允许集合之外**的卡（宿主侧）→
+    （★ 2026-10-17 主席令「单个作业不限制卡数」⇒ **不再判卡数**，旧的"超过 4 卡"拦截已删除）
     抛 ``GpuLockError``，不返回任何"全卡"退路（宪法 §2.3 边界校验）。
     默认允许集合 = 本机全卡 0–7（B10 2026-10-12，先到先得）。
     """
@@ -699,9 +703,10 @@ def build_gpu_monitor_parser(subparsers: Any) -> None:
         "--assert-idle",
         action="store_true",
         help=(
-            "F-10: before sampling, assert every target GPU is idle "
-            "(memory.used <= 64 MiB and utilization.gpu <= 5%%); refuse if busy. "
-            "Never kills other processes."
+            "F-10/B10: before sampling, assert every target GPU is available — free memory "
+            ">= this run's position (default 48 GiB, GRASPO_GPU_POSITION_MIB) AND "
+            "utilization.gpu == 0 across consecutive samples; refuse if unavailable. "
+            "Never kills other processes or stops other containers."
         ),
     )
     gpu.add_argument(

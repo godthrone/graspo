@@ -121,11 +121,18 @@ def test_wrong_expected_count_fails_assertion():
 
 
 def test_gpu_sets_are_within_allowed_range():
+    """★ 默认卡集合必须落在本机全卡 0–7 内，且卡数 == 该档 cards。
+
+    ★ 2026-10-17 主席令：「228 先到先得，随便用。」＋「单个作业不限制卡数。」
+    ⇒ 判据 = **卡号 ∈ 0–7**（存在性）与 **卡数 == cards**；⛔ 不再有"≤ 4 卡"上限、
+    ⛔ 不再有"不得含 6/7"的生产锁卡判据。原用例写死 `max(gpus) <= 3` /
+    `len(gpus) <= 4`，那是**默认值**的事实而非判据 —— 改为对本机允许集合断言（更强且不误伤）。
+    """
     for tier in generate_matrix.build_ledger():
         gpus = tier["gpus"]
         assert len(gpus) == tier["cards"]
-        assert max(gpus) <= 3
-        assert len(gpus) <= 4
+        assert set(gpus) <= set(gpu_assignment.GPU_ALLOWED), tier["tier_id"]
+        assert gpu_assignment.GPU_ALLOWED == tuple(range(8))
 
 
 def test_native_full_uses_pipeline_parallel_only():
@@ -964,10 +971,9 @@ def test_gpu_override_keeps_cards_and_every_other_field():
     [
         ("T001=4,5", "卡数不符"),  # 1 卡档给 2 张 ⇒ fail-closed（不"将就"）
         ("T002=4", "卡数不符"),  # 2 卡档给 1 张
-        ("T001=6", "生产卡 GPU[6]"),  # GPU6 是生产 vLLM，永不触碰
-        ("T001=7", "生产卡 GPU[7]"),
-        ("T002=6,7", "生产卡 GPU[6, 7]"),
-        ("T001=9", "越界卡"),  # 只允许 GPU0–5
+        ("T001=8", "越界卡"),  # ★ 现行唯一卡号判据 = 存在性（本机只有 0–7）
+        ("T001=9", "越界卡"),
+        ("T002=8,9", "越界卡"),
         ("T001=", "卡号列表为空"),
         ("T001=4,4", "含重复卡"),  # 去重
         ("T999=4", "未知档号"),  # 写错档号不得被静默忽略
@@ -977,11 +983,40 @@ def test_gpu_override_keeps_cards_and_every_other_field():
     ],
 )
 def test_gpu_override_is_fail_closed(spec: str, needle: str):
-    """负向用例：越界 / 含 6,7 / 卡数不符 / 空 / 重复 / 未知档 / 语法错 ⇒ 一律拒绝。"""
+    """负向用例：越界（≥8）/ 卡数不符 / 空 / 重复 / 未知档 / 语法错 ⇒ 一律拒绝。
+
+    ★ 2026-10-17 主席令：「228 先到先得，随便用。」＋「单个作业不限制卡数。」
+    ⇒ 旧参数化里的 `T001=6` / `T001=7` / `T002=6,7`（断言"生产卡…永不触碰"）**旧口径已废** ⇒ 删除：
+      它们现在是**合法**输入，由 `test_card_pool_caliber_*` 正向钉住。
+    """
     with pytest.raises(generate_matrix.GpuAssignmentError) as excinfo:
         override = generate_matrix.parse_override(spec)
         generate_matrix.build_ledger(override)
     assert needle in str(excinfo.value), str(excinfo.value)
+
+
+def test_card_pool_caliber_allows_all_machine_cards_and_any_card_count():
+    """★ 正向对照（能与上面那条成对）：旧口径拒的三类输入，现行口径**必须放行**。
+
+    ① GPU6/7（旧"生产锁卡"）② GPU2（旧"邻居卡"）③ 5 张卡（旧"每次最多 4 卡"上限）。
+    ★ 同时证明"没放松边界"：越界 GPU8、卡数 != cards、重复卡仍然被拒。
+    """
+    tiers = {
+        t["tier_id"]: t
+        for t in generate_matrix.build_ledger(
+            generate_matrix.parse_override("T002=6,7;T003=2,3,0,1")
+        )
+    }
+    assert tiers["T002"]["gpus"] == [6, 7]          # 旧"生产锁卡" ⇒ 现在合法
+    assert tiers["T003"]["gpus"] == [2, 3, 0, 1]    # 旧"邻居卡 GPU2" + 旧"禁用 GPU0" ⇒ 现在合法
+    assert generate_matrix.GPU_ALLOWED == tuple(range(8))
+    # 5 卡：把某档的 cards 声明成 5 是台账层面的事，这里直接测守卫本身不受卡数上限拦截
+    assert gpu_assignment.check_gpus("TX", [0, 1, 2, 3, 4], 5) == (0, 1, 2, 3, 4)
+    assert gpu_assignment.check_gpus("TX", list(range(8)), 8) == tuple(range(8))
+    # ★ 没放松：越界 / 卡数不符 / 重复 仍拒
+    for bad, cards in ([[8], 1], [[0, 8], 2], [[3], 2], [[4, 4], 2], [[], 0]):
+        with pytest.raises(gpu_assignment.GpuAssignmentError):
+            gpu_assignment.check_gpus("TX", bad, cards)
 
 
 def test_gpu_override_accepts_partial_maps_and_allowed_edges():
@@ -995,7 +1030,7 @@ def test_gpu_override_accepts_partial_maps_and_allowed_edges():
         )
     }
     assert tiers["T002"]["gpus"] == [4, 5]
-    assert tiers["T003"]["gpus"] == [3, 4, 5, 2]  # 4 卡允许 0–5 的任意组合
+    assert tiers["T003"]["gpus"] == [3, 4, 5, 2]  # 4 卡允许 **0–7** 的任意组合
     assert gpu_assignment.crosses_numa([4, 5]) is False
     assert gpu_assignment.crosses_numa([3, 4]) is True
     assert gpu_assignment.numa_nodes([4, 5]) == (1,)
@@ -1018,9 +1053,13 @@ def test_override_manifest_records_spec_and_fingerprint():
     record = manifest["gpu_assignment"]
     assert record["source"] == "override"
     assert record["override_spec"] == "T001=4;T002=4,5"
-    assert record["allowed_gpus"] == [0, 1, 2, 3, 4, 5]
-    assert record["forbidden_production_gpus"] == [6, 7]
-    assert record["max_cards_per_job"] == 4
+    assert record["allowed_gpus"] == list(range(8))          # ★ 本机全卡 0–7（旧值 0–5 已废）
+    # ★★ 旧两个键 `forbidden_production_gpus=[6,7]` 与 `max_cards_per_job=4` **随旧口径一起删除**
+    #    （2026-10-17 主席令：「228 先到先得，随便用。」＋「单个作业不限制卡数。」）
+    #    ⇒ 这里**断言它们不存在**（⛔ 不留空壳键，否则读件的人会以为还有这样的边界）。
+    assert "forbidden_production_gpus" not in record
+    assert "max_cards_per_job" not in record
+    assert "无预留卡" in record["card_pool_caliber"] and "不抢占他人" in record["card_pool_caliber"]
     assert record["default_by_cards"] == {"1": [0], "2": [0, 1], "4": [0, 1, 2, 3]}
 
     entries = {e["tier_id"]: e for e in manifest["tiers"]}

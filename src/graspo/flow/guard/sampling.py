@@ -9,7 +9,6 @@ from __future__ import annotations
 from graspo.flow.guard.lock import assert_inventory_visible
 
 from graspo.core.gpu_guard import (
-    MAX_CARDS,
     RUNTIME_MANAGED,
     GpuInventory,
     GpuLockError,
@@ -27,8 +26,9 @@ def select_sample_targets(
     """确定显存采样目标卡：只允许落在 ``NVIDIA_VISIBLE_DEVICES`` 之内。
 
     规则（防呆）：
-    - ``visible`` 必须先通过锁卡守卫（未设置 / 含**允许集合之外**的卡 / >4 卡即拒绝；
-      默认允许集合 = 本机全卡 0–7，先到先得）；
+    - ``visible`` 必须先通过锁卡守卫（未设置 / 含**允许集合之外**的卡即拒绝；
+      默认允许集合 = 本机全卡 0–7，先到先得；★ 2026-10-17 主席令「单个作业不限制卡数」
+      ⇒ **不再判卡数**，旧的 >4 卡拦截已删除）；
     - ``explicit`` 为 ``None`` / 空 / ``"all"`` 时，采样全部可见卡；
     - ``explicit`` 显式列出时，必须 **⊆ visible**，否则拒绝——采样越出可见集
       正是"把集合外的卡混进显存读数"的根因（历史数据污染事故）。
@@ -60,7 +60,7 @@ def select_sample_targets_for_inventory(
     explicit: str | None,
     inventory: GpuInventory,
     *,
-    max_cards: int = MAX_CARDS,
+    max_cards: int | None = None,
 ) -> tuple[int, ...]:
     """容器内 runtime 收窄 + 重编号场景下的采样目标（F-2 修复点）。
 
@@ -70,7 +70,8 @@ def select_sample_targets_for_inventory(
     ``GpuInventory.indices`` 给出的那一组。
 
     规则（防呆）：
-    - ``inventory`` 先过 :func:`assert_inventory_visible`（0 卡 / >4 卡即拒绝）；
+    - ``inventory`` 先过 :func:`assert_inventory_visible`（0 卡即拒绝；
+      ★ ``max_cards`` 默认 ``None`` = **不判卡数**——主席 2026-10-17「单个作业不限制卡数」）；
     - ``explicit`` 为 ``None`` / 空 / ``"all"`` 时，目标 = 全部可见卡；
     - 显式给出时，其元素必须 ⊆ 实测可见序号，否则拒绝——采样不得越出可见集
       （"只采可见卡、绝不带不带 ``-i`` 的全卡查询"这条铁律在这里继续成立）。

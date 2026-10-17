@@ -26,7 +26,9 @@ set -euo pipefail
 EVAL_CONFIG="${EVAL_CONFIG:-}"
 INCLUDE_REPORTS=0
 
-ALLOWED_GPUS="0 1 2 3 4 5"
+# ★ 2026-10-17 主席令（逐字）：「228 先到先得，随便用。」＋「单个作业不限制卡数。」
+#   ⇒ 允许卡 = **本机全卡 0–7**；⛔ 无预留/禁用卡、⛔ 无卡数上限。
+ALLOWED_GPUS="0 1 2 3 4 5 6 7"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
@@ -104,7 +106,8 @@ echo "    docker stop ${CONTAINER_NAME}"
 echo "    docker rm ${CONTAINER_NAME}"
 echo
 echo "verify the GPU(s) really went back to idle, listing ONLY the eval cards"
-echo "(never sample all cards — production reads get mixed in):"
+echo "(never sample all cards — other people's reads get mixed in):"
 echo "    nvidia-smi --id=<your eval cards, e.g. 0,1> --query-gpu=index,memory.used --format=csv"
 echo
-echo "allowed eval cards are only: {$ALLOWED_GPUS}. GPU 6/7 are production — leave them alone."
+echo "the cards that exist here are: {$ALLOWED_GPUS}. There is no reserved or disabled card;"
+echo "verify they really went back to idle and NEVER preempt others (do not kill their processes)."

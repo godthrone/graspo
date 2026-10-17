@@ -21,8 +21,13 @@
 
 **★ 「可表达」≠「能跑通」≠「显存可行」**：三者都不互相蕴含。
 
-**口径（用户拍板，权威）**：只用 1/2/4 卡，每次最多 4 卡且仅取 GPU0-5；
-4 卡首选 {0,1,2,3}；上下文长度由递增加长法实测得出、不预设档位。
+**口径（主席 2026-10-17 裁定，逐字复核后为权威）**：「**228 先到先得，随便用。**」
+＋「**单个作业不限制卡数。**」⇒ 矩阵档位设计仍只用 1/2/4 卡，但**卡号取本机全卡
+GPU0–7（先到先得）**：⛔ 无预留卡、⛔ 无禁用卡、⛔ 无"生产锁卡"、⛔ 无"邻居卡"、
+⛔ 无单作业卡数上限；默认 4 卡首选 {0,1,2,3} 只是**建议首选**，⛔ 不是限制。
+★ 保留的硬要求 =「**不抢占他人**」：起跑前逐卡实测空闲（剩余 ≥ 本档头寸 ∧ util == 0），
+被占则换卡或等，⛔ 绝不 kill 他人进程 / 绝不停他人容器。
+上下文长度由递增加长法实测得出、不预设档位。
 
 **为什么是重写而不是改造旧生成器**：旧 `generate_matrix.py` 的口径已废——
 数学全排列出 56 个 yaml、镜像名 `graspo:0.29.0`（不存在）、`WORLD_SIZES=[1,2,4]`
@@ -39,7 +44,8 @@
 
 **卡集合覆盖点（唯一一处）**：默认 `GPU_SETS` 把 10 个 1 卡档全压在 GPU0 ⇒ 只能串行。
 `--gpu-override` 给出「档 → 卡集合」显式映射（无通配符），**只改用哪几张卡、不改卡数**
-（不符即 fail-closed）；卡号 ⊆ GPU0–5，GPU6/7（生产 vLLM）出现即拒绝；跨 NUMA 只提示。
+（不符即 fail-closed）；卡号 ⊆ **本机全卡 GPU0–7**（存在性判据，⛔ 无预留/禁用/生产锁卡/邻居卡；
+≥8 不存在 ⇒ 拒绝）；跨 NUMA 只提示。
 不传该参数 ⇒ manifest/runner 与旧版**逐字节相同**。运行期换卡集合用既有
 `GRASPO_RUNNER_MANIFEST` 指向另一份清单（runner 零改动、档位 YAML 零改动）。
 
@@ -82,8 +88,6 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from gpu_assignment import (  # noqa: E402  （必须在 sys.path 就位之后导入）
     GPU_ALLOWED,
-    GPU_FORBIDDEN_PRODUCTION,
-    MAX_CARDS_PER_JOB,
     GpuAssignmentError,
     check_gpus,
     describe_default_sets,
@@ -345,8 +349,10 @@ EXPECTED_BY_CARDS = {1: 18, 2: 18, 4: 18}
 EXPECTED_BY_BACKEND = {"ms-swift": 36, "native": 18}
 EXPECTED_BY_MODE = {"LoRA": 36, "全量": 18}
 
-#: 4 卡首选 {0,1,2,3}（唯一全部位于 NUMA0）；GPU6/7 为生产卡，永不出现。
-#  —— 这是**默认值**：不设覆盖时逐字生效（向后兼容）。
+#: 默认卡位 = **建议首选**（⛔ 不是限制）：4 卡首选 {0,1,2,3}（唯一全部位于 NUMA0）。
+# ★ 主席 2026-10-17：「228 先到先得，随便用。」＋「单个作业不限制卡数。」⇒ 本机全卡
+#   0–7 一律可用（⛔ 无预留/禁用/生产锁卡/邻居卡）；GPU_SETS 只是**默认建议值**——
+#   不设覆盖时逐字生效（向后兼容），设了覆盖就按覆盖走，换了别处的卡同样合法。
 GPU_SETS: dict[int, tuple[int, ...]] = {1: (0,), 2: (0, 1), 4: (0, 1, 2, 3)}
 
 #: ★ 卡集合**覆盖点**（本工程唯一一处；判据/解析在 `tests/e2e/gpu_assignment.py`）。
@@ -696,8 +702,9 @@ def apply_gpu_override(
 ) -> list[str]:
     """把「档 → 卡集合」覆盖值应用到每档 ``gpus``，返回被覆盖的档号（升序）。
 
-    **fail-closed**（§2.3）：未知档号、卡数不符、含 GPU6/7、越界、重复、空集合
+    **fail-closed**（§2.3）：未知档号、卡数不符、**越界卡（≥8）**、重复、空集合
     一律抛 :class:`GpuAssignmentError` —— 拒绝生成，不产出"将就"的清单。
+    ★ 2026-10-17 主席令：⛔ 不再拒绝 GPU6/7（全卡 0–7 先到先得）、⛔ 不再有卡数上限。
     **未覆盖的档同样过守卫**（默认值也必须合法），因此这条判据对全部 54 档生效。
     覆盖只改 ``gpus``，**不碰** ``cards`` 与任何其它字段。
     """
@@ -1400,7 +1407,10 @@ NATIVE_FULL_1CARD_EXPRESSIBILITY = "unverified"
 
 
 def ms_swift_full_recipe(cards: int) -> dict[str, Any]:
-    """ms-swift 全参的可行配方（≤4 卡；依据全量入口工作包的方案）。
+    """ms-swift 全参的可行配方（本台账只有 1/2/4 卡档；依据全量入口工作包的方案）。
+
+    ★ 这里写"本台账只有 1/2/4 卡档"而不是"≤4 卡"：后者读起来像**平台卡数上限**，
+      而 2026-10-17 主席令已明令「**单个作业不限制卡数**」⇒ 本函数只覆盖台账出现的卡数。
 
     - 1 / 2 卡 → ``zero2_offload``（优化器态换出到 CPU，否则单卡常驻超预算）
     - 4 卡 → ``zero2``（**纯 DP4**，不叠 AutoTP）
@@ -1924,8 +1934,17 @@ def gpu_assignment_record(spec: str, tiers: list[dict[str, Any]]) -> dict[str, A
         "override_cli_flag": GPU_OVERRIDE_CLI_FLAG,
         "default_by_cards": {str(cards): list(gpus) for cards, gpus in sorted(GPU_SETS.items())},
         "allowed_gpus": list(GPU_ALLOWED),
-        "forbidden_production_gpus": list(GPU_FORBIDDEN_PRODUCTION),
-        "max_cards_per_job": MAX_CARDS_PER_JOB,
+        # ★★ 2026-10-17 主席令（逐字）：「228 先到先得，随便用。」＋「单个作业不限制卡数。」
+        #    ⇒ 旧的 `forbidden_production_gpus=[6,7]` 与 `max_cards_per_job=4` 两个键
+        #    **随旧口径一起删除**（⛔ 不留空壳键，否则读件的人会以为还有这样的边界）。
+        #    替代 = 下面这段自述：无预留/禁用/锁卡，无卡数上限，唯一硬要求 = 不抢占他人。
+        "card_pool_caliber": (
+            "主席 2026-10-17：「228 先到先得，随便用。」＋「单个作业不限制卡数。」"
+            "⇒ 本机全卡 GPU0–7 一律可用（⛔ 无预留卡、⛔ 无禁用卡、⛔ 无『生产锁卡』、"
+            "⛔ 无『邻居卡』、⛔ 无单作业卡数上限）；唯一的卡号判据 = **存在性**（≥8 不存在 ⇒ 拒），"
+            "唯一的卡数判据 = 该档 cards 本身。★ 保留的硬要求 =『不抢占他人』：起跑前逐卡实测空闲"
+            "（剩余显存 ≥ 本档头寸 ∧ util == 0），被占则换卡或等，⛔ 绝不 kill 他人进程 / 停他人容器。"
+        ),
         "numa_nodes": {"0": [0, 1, 2, 3], "1": [4, 5, 6, 7]},
         "fingerprint_sha256": gpu_assignment_fingerprint(pairs),
         "fingerprint_note": (
@@ -2423,15 +2442,18 @@ def assert_ledger(tiers: list[dict[str, Any]], expected_total: int) -> None:
         )
         assert actual == expected, f"{tier_id}: expected {expected}, got {actual}"
 
-    # GPU 集合守卫（**加强版**，逐档跑 `gpu_assignment.check_gpus` 这一条实现）：
-    # 卡数必须等于该档 cards；卡号 ⊆ {0..5}；不得含 GPU6/7（生产 vLLM）；≤ 4 卡；去重；非空。
-    # 旧版写死 `max(gpus) <= 3`，与本次新增的覆盖点（允许把档挪到 GPU4/5 避让共享机他人占用）
-    # 冲突，因此改为**显式允许集合** {0..5} —— 6/7 与越界卡仍然 fail-closed（未削弱边界）。
+    # GPU 集合守卫（逐档跑 `gpu_assignment.check_gpus` 这一条实现，§1.4 单一真相源）：
+    # ★★ 2026-10-17 主席令（逐字）：「228 先到先得，随便用。」＋「单个作业不限制卡数。」
+    #    ⇒ 判据 = ① 卡号 ⊆ 本机全卡 {0..7}（存在性，⛔ 无预留/禁用/生产锁卡/邻居卡）
+    #              ② 卡数 == 该档 cards（唯一卡数约束）
+    #              ③ 去重、非空；越界卡（≥8）仍 fail-closed。
+    #    ⛔ 旧「卡数 ≤ 4」上限与「GPU6/7 = 生产 vLLM 永不触碰」两条口径**已废**（随主席令删除）。
+    #    ★ 保留的硬要求 =「不抢占他人」：起跑前逐卡实测空闲（剩余 ≥ 头寸 ∧ util == 0），
+    #      被占则换卡或等，⛔ 绝不 kill 他人进程——判据属**设施层**（见 gpu_idle_assert）。
     for tier in tiers:
         gpus = tier["gpus"]
         check_gpus(str(tier["tier_id"]), gpus, int(tier["cards"]))
-    assert GPU_FORBIDDEN_PRODUCTION == (6, 7) and MAX_CARDS_PER_JOB == 4
-    assert GPU_ALLOWED == (0, 1, 2, 3, 4, 5)
+    assert GPU_ALLOWED == tuple(range(8))
 
 
 def assert_no_legacy_terms(rendered: list[tuple[str, str]]) -> None:
@@ -3589,7 +3611,10 @@ def render_runner(train_source: str | None = None) -> str:
 #     （`TRAIN_PATH == dirname(TRAIN_PATH)/<Tier>.jsonl` 与图像根反推
 #     `dirname(dirname(train_path))/images`）依赖它；改动它会直接打断整条链。
 #
-# 红线：只用 GPU0-5、每次最多 4 卡、GPU6/7 永不触碰。本脚本不自动执行矩阵。
+# 红线：卡号取本机全卡 GPU0-7（**先到先得**，⛔ 无预留/禁用/生产锁卡/邻居卡；
+#       存在性判据，≥8 不存在即拒）；⛔ 无单作业卡数上限。
+#       ★ 保留的硬要求 =「不抢占他人」：起跑前逐卡实测空闲（剩余 ≥ 本档头寸 ∧ util == 0），
+#       被占则换卡或等，⛔ 绝不 kill 他人进程 / 绝不停他人容器。本脚本不自动执行矩阵。
 set -uo pipefail
 
 # ── 挂载结构不变量（fail-closed，纯 argv 分析，不需要 docker）──────────────────
@@ -3908,10 +3933,14 @@ fi
 #   逐文件比对（873 文件）失效。本变量只影响字节码落盘，不改任何命令行/退出码/fail-closed 语义。
 PYTHONDONTWRITEBYTECODE=1 "$PYBIN" "$ROOT_DIR/scripts/gpu_lock_guard.py" --visible "$GPUS" || exit 1
 
-# 2a) 宿主侧**目标卡实测空闲断言**（F-10，fail-closed）：逐卡实测
-#     memory.used ≤64 MiB 且 utilization.gpu ≤5%；任一卡被占即拒绝启动。
+# 2a) 宿主侧**目标卡实测空闲断言**（F-10；判据 = B10，fail-closed）：逐卡实测
+#     **剩余显存 ≥ 本档头寸（默认 48 GiB，可用 GRASPO_GPU_POSITION_MIB 覆盖）∧ util == 0**，
+#     默认连续 3 帧、间隔 12 s、帧帧满足；任一卡的任一帧不满足即拒绝启动。
+#     ★ 旧口径「memory.used ≤64 MiB ∧ utilization.gpu ≤5%」**已作废**（B10，2026-10-12）：
+#       绝对占用阈值会把"卡上有他人常驻但不在算（util=0%）"误判为不可用，与"先到先得"冲突。
+#       生效实现在 `scripts/gpu_idle_assert.py` → `graspo.flow.guard.idle`。
 #     本轮实战里这道断言拦下过含被第三方占用的 GPU3 的 4 卡目标集。
-#     宁等不抢：不 kill 他人进程，改选实测空闲的卡或等它空下来。
+#     ★ 不抢占他人：不 kill 他人进程、不停他人容器，改选实测空闲的卡或等它空下来。
 #     GRASPO_SKIP_IDLE_ASSERT=1 仅供无 GPU 的脚手架自检（如假 docker 的 dry-run 回归），
 #     真实上机**不得**设置——跳过即失去这道防线，属显式降级。
 if [ "${{GRASPO_SKIP_IDLE_ASSERT:-0}}" != "1" ]; then
@@ -4943,7 +4972,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help=(
             "卡集合覆盖值（**唯一覆盖点**，逐档显式映射、无通配符）："
             "'T001=4;T010=4,5'。只改每档用哪几张卡，**不改卡数**（不符即拒绝生成）；"
-            "卡号必须 ⊆{0..5}（GPU6/7 是生产 vLLM，出现即拒绝）。"
+            "卡号必须 ⊆ 本机全卡 {0..7}（存在性判据：≥8 不存在即拒；"
+            "⛔ 无预留/禁用/生产锁卡/邻居卡，⛔ 无卡数上限）。"
             "未出现的档沿用默认 GPU_SETS。不传 ⇒ 产物与旧版逐字节相同。"
         ),
     )

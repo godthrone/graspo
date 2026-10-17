@@ -246,14 +246,15 @@ def test_explicit_eval_section_missing_fields_is_rejected(tmp_path):
     ("field", "value", "reason"),
     [
         # ★ B10 再推导（2026-10-12）：允许集合 = **本机全卡 0–7**（先到先得）⇒
-        #   旧的「GPU0–3 在集合外」负例**语义已失效**（0–3 现在合法），改为：
-        #   · `"8"` —— 唯一仍在集合外的形态（≥8 不存在）；
-        #   · `"-1"` —— 非法的显式卡号（守卫只接受非负整数）；
-        #   · `"0,1,2,3,4"` —— 全在集合内但**超过 4 卡上限**（B10 后首次真正走到卡数分支）。
-        #   ⛔ 未删除负向覆盖，也⛔ 不是"把卡号换成允许值"式的同义反复。
+        #   旧的「GPU0–3 在集合外」负例**语义已失效**（0–3 现在合法）。
+        # ★ 2026-10-17 主席令（逐字）：「228 先到先得，随便用。」＋「单个作业不限制卡数。」
+        #   ⇒ 旧第三条负例「`"0,1,2,3,4"` 全在集合内但超过 4 卡上限」**前提已消失**
+        #     （卡数上限已删）⇒ 换成仍能咬的形态，并把"5 卡放行"移入**正向**用例
+        #     （见 `test_card_count_is_not_capped_in_eval_config`）；
+        #     ⛔ 未删除负向覆盖，也⛔ 不是"把卡号换成允许值"式的同义反复。
         ("gpus", '"-1"', "negative index is not a valid explicit card"),
         ("gpus", '"8"', "card beyond the allowlist (does not exist)"),
-        ("gpus", '"0,1,2,3,4"', "all inside the allowlist but more than the 4-card cap"),
+        ("gpus", '"0,,1"', "empty element in the card list"),
         ("gpus", '""', "no explicit lock"),
         ("output_dir", "outputs/not-local", "output dir outside .local/"),
     ],
@@ -263,6 +264,18 @@ def test_validation_still_catches_dangerous_eval_sections(tmp_path, field, value
     path = _minimal_training_config(tmp_path, _eval_section(**{field: value}))
     with pytest.raises(SystemExit):
         GraspoConfig.from_yaml(path)
+
+
+def test_card_count_is_not_capped_in_eval_config(tmp_path):
+    """★★ 2026-10-17 主席令「单个作业不限制卡数」⇒ 5 张卡**必须被接受**。
+
+    （本用例是旧负例 `gpus="0,1,2,3,4"` 的**正向反面**：那条断言 5 卡被拒，
+    而卡数上限已删 ⇒ 它必须变成"5 卡放行"，否则会把旧口径钉死在这里。）
+    ★ 没放松边界：越界（≥8）仍被拒（见上一条负向用例）。
+    """
+    path = _minimal_training_config(tmp_path, _eval_section(gpus="0,1,2,3,4"))
+    cfg = GraspoConfig.from_yaml(path)
+    assert cfg.eval is not None and cfg.eval.gpus == "0,1,2,3,4"
 
 
 def test_eval_train_limit_is_optional_and_recorded(tmp_path):

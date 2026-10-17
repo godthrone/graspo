@@ -41,8 +41,19 @@ ALLOWED_INDICES: tuple[int, ...] = (0, 1, 2, 3, 4, 5, 6, 7)
 ALLOWED_INDICES_ENV = "GRASPO_ALLOWED_GPU_INDICES"
 #: 兼容既有签名的上界（= max(ALLOWED_INDICES)）；真正的判据是上面的白名单。
 ALLOWED_MAX_INDEX = max(ALLOWED_INDICES)
-#: 单次运行最多使用几张卡（用户拍板：每次最多 4 卡）。
-MAX_CARDS = 4
+#: ★ 2026-10-17 主席令（逐字）：「**单个作业不限制卡数。**」
+#: ⇒ **不再有单作业卡数上限**。本常量**保留名字仅为兼容既有 import**，其语义已从
+#: "每次最多几张"变成"**本机最多几张**"（8 卡机 = 8）⇒ ⛔ **不得**再拿它当"每个作业
+#: 最多用几张"的拦截阈值。
+#: ★ 旧的**透传别名** ``graspo.eval.guard.MAX_GPU_COUNT``（= 本常量）**已删**（2026-10-17）：
+#: 见 ``src/graspo/eval/guard.py`` 的具名注释——本机全卡 0–7、**不限制卡数**、
+#: 唯一硬要求 =「不抢占他人」；需要该值时请**直接引用** :data:`MAX_CARDS`（⛔ 别再起别名）。
+#: 真正生效的判据只有两条：**卡号 ∈ ALLOWED_INDICES**（0–7）与
+#: **卡计划自身的一致性**（如 TP × PP × DP = 卡数；见 :func:`parse_gpu_plan`）。
+#: ★ 唯一保留的硬要求 =「不抢占他人」：起跑前**逐卡实测空闲**
+#: （剩余显存 ≥ 本档头寸 ∧ util == 0；见 ``flow.guard.idle``），被占则**换卡或等**，
+#: ⛔ 绝不 kill 他人进程 / 绝不停他人容器。
+MAX_CARDS: int = len(ALLOWED_INDICES)
 #: 不再有「生产卡」：唯一判据是 :data:`ALLOWED_INDICES`；本常量恒为空元组，
 #: 保留名字仅为兼容既有 import（含 ``graspo.eval.guard`` 的透传别名）。
 RESERVED_INDICES: tuple[int, ...] = ()
@@ -81,11 +92,13 @@ _RUNTIME_MANAGED_MARKERS: frozenset[str] = frozenset({"void", "none"})
 RUNTIME_MANAGED = "<runtime-managed>"
 
 _USAGE_HINT = (
-    "正确用法（显式指定 ≤4 张、取自**本机全卡 0–7**）：\n"
+    "正确用法（显式指定卡号、取自**本机全卡 0–7**；⛔ 不限卡数）：\n"
     "    NVIDIA_VISIBLE_DEVICES=0,1 <训练/测试命令>\n"
     "    run.sh <config.yaml> --gpus 0,1\n"
     "    docker run --gpus '\"device=0,1\"' ...\n"
-    "  默认允许集合 = 全卡 0–7（先到先得；唯一要求 = 不破坏别人的服务）。\n"
+    "  默认允许集合 = 全卡 0–7（先到先得；⛔ 无预留/禁用/生产锁卡，⛔ 无卡数上限）；\n"
+    "  唯一硬要求 =「不抢占他人」：起跑前逐卡实测空闲（剩余 ≥ 本档头寸 ∧ util == 0），\n"
+    "  被占则换卡或等，⛔ 绝不 kill 他人进程 / 绝不停他人容器。\n"
     "  卡是否真能用另由 **头寸 + util** 双判据把关（见 gpu_idle_assert）。"
 )
 
@@ -110,7 +123,9 @@ def resolve_allowed_indices(env: Mapping[str, str] | None = None) -> tuple[int, 
     这是"允许集合"这**一个量**的唯一解析入口；不设 :data:`ALLOWED_INDICES_ENV` 时
     返回值与 :data:`ALLOWED_INDICES` **逐字相等**（默认策略一个字不改）。
     ⛔ fail-closed：取值非法一律抛 :class:`GpuLockError`，⛔ 不静默回落、⛔ 不放行。
-    ⛔ 只放宽"允许集合"这一个量：越界/卡数上限/显式设置/哨兵处理**均未动**。
+    ⛔ 只放宽"允许集合"这一个量：越界/显式设置/哨兵处理**均未动**。
+    ★ 2026-10-17 主席令「单个作业不限制卡数」之后，**"卡数上限"这个量本身已不存在**
+      （不再是"未动"而是"已删"）⇒ 见 :data:`MAX_CARDS` 的说明。
     """
     source = os.environ if env is None else env
     raw = source.get(ALLOWED_INDICES_ENV)
@@ -417,15 +432,20 @@ def assert_gpu_lock(
     raw: str | None,
     *,
     allowed_max_index: int = ALLOWED_MAX_INDEX,
-    max_cards: int = MAX_CARDS,
+    max_cards: int | None = None,
     env: Mapping[str, str] | None = None,
 ) -> tuple[int, ...]:
     """校验**宿主卡号列表**满足锁卡边界，返回设备元组；不满足即抛错。
 
-    三条边界（全部 fail-closed）：显式设置、索引 ⊆ ``{0..allowed_max_index}``、
-    卡数 ≤ ``max_cards``。
+    边界（全部 fail-closed）：**显式设置**、索引 ⊆ 允许集合（默认 ``{0..7}`` = 本机全卡）。
+
+    ★ 2026-10-17 主席令（逐字）：「单个作业不限制卡数。」⇒ **默认不再有卡数上限**：
+    ``max_cards=None``（默认）= 不判卡数。只有调用方**显式**传入正整数时才按该值收窄
+    （保留这个显式入口给"确实需要自限"的调用方/测试；⛔ 它不再是生产默认行为，
+    也⛔ 不得被描述成"每次最多 4 卡"这类平台级口径）。
 
     :param raw: ``NVIDIA_VISIBLE_DEVICES`` 的原始取值（``None`` = 未设置）。
+    :param max_cards: ``None`` = 不限制卡数（默认）；正整数 = 调用方显式自限。
     :raises GpuLockError: 任一边界不满足（含 runtime 的 ``void`` 哨兵——本函数
         要求真实卡号；容器侧请用 :func:`assert_gpu_lock_inventory`）。
     """
@@ -455,10 +475,13 @@ def assert_gpu_lock(
             f"设备列表 {devices} 含上界外卡 {reserved}（允许集合 {allowed}，上界 {allowed_max_index}）",
             "超出允许集合的卡一律拒绝（fail-closed）。",
         )
-    if len(devices) > max_cards:
+    # ★★ 2026-10-17 主席令：「单个作业不限制卡数。」⇒ 默认**不判卡数**（max_cards=None）。
+    #    ⛔ 删除旧默认 `max_cards=MAX_CARDS(4)` 的拦截及其"用户拍板每次最多 4 卡"文案。
+    if max_cards is not None and len(devices) > max_cards:
         raise _reject(
-            f"设备列表 {devices} 使用 {len(devices)} 张卡，超过上限 {max_cards}",
-            f"用户拍板每次最多 {max_cards} 卡；更多卡会挤占生产余量且超出本期验证口径。",
+            f"设备列表 {devices} 使用 {len(devices)} 张卡，超过调用方显式设置的自限 {max_cards}",
+            f"这是**调用方显式**传入的自限（不是平台口径）；主席令「单个作业不限制卡数」"
+            f"⇒ 默认路径不设卡数上限。",
         )
     return devices
 
@@ -569,7 +592,8 @@ def parse_gpu_plan(raw: str | None) -> GpuPlan:
         ``GpuPlan``。
 
     Raises:
-        GpuGuardError: 规则层拒绝（未指定 / 含允许集合外的卡 / 卡数超限 / 取值非法）。
+        GpuGuardError: 规则层拒绝（未指定 / 含允许集合外的卡 / 取值非法）。
+        ★ 2026-10-17 主席令「单个作业不限制卡数」⇒ **卡数不再超限**（无该判据）。
     """
     try:
         devices = assert_gpu_lock(raw)

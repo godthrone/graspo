@@ -15,7 +15,7 @@
 #
 # 防呆设计（宪法 §2.3 / §2.4）:
 #   1. EVAL_GPUS 未显式给出 → 退出，无默认值（同 eval_serve_vllm.sh）。
-#   2. 卡取值 ⊆ {0,1,2,3,4,5}，卡数 ≤ 4，含 6/7 一律拒绝。
+#   2. 卡取值 ⊆ **本机全卡 {0,1,2,3,4,5,6,7}**；⛔ 不判卡数、⛔ 无预留/禁用卡。
 #      （历史教训：ELAM v3 脚本硬编码 EXPORT_GPU=6——严禁照抄。）
 #   3. 输出目录若已有完整 merged-hf 产物 → **直接复用**，不重复合并
 #      （省时间且避免覆盖既有产物）。需要强制重做时用 --allow-overwrite。
@@ -29,8 +29,10 @@ EVAL_GPUS="${EVAL_GPUS:-}"
 EVAL_IMAGE="${EVAL_IMAGE:-}"
 ALLOW_OVERWRITE_FLAG=""
 
-ALLOWED_GPUS="0 1 2 3 4 5"
-MAX_GPU_COUNT=4
+# ★ 2026-10-17 主席令（逐字）：「228 先到先得，随便用。」＋「单个作业不限制卡数。」
+#   ⇒ 允许卡 = **本机全卡 0–7**；⛔ 无预留/禁用卡、⛔ 无卡数上限。
+#   ★ 唯一硬要求 =「不抢占他人」：卡被占则**换卡或等**，⛔ 绝不 kill 他人进程 / 停他人容器。
+ALLOWED_GPUS="0 1 2 3 4 5 6 7"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
@@ -43,10 +45,10 @@ while [ $# -gt 0 ]; do
 done
 
 # 顺序有意如此：**绑卡检查先于配置文件检查**。安全边界必须在最前面 ——
-# 否则配置文件路径写错会把"你正在碰生产卡"这条更严重的错误盖掉。
-[ -n "$EVAL_GPUS" ] || die "EVAL_GPUS is required (e.g. EVAL_GPUS=0). No default: GPU 6/7 are occupied by the production vLLM on the target GPU host."
+# 否则配置文件路径写错会把"你正在占用别人的卡"这条更严重的错误盖掉。
+[ -n "$EVAL_GPUS" ] || die "EVAL_GPUS is required (e.g. EVAL_GPUS=0). No default: cards are shared first-come-first-served; pick explicitly and never preempt others."
 
-# ── 卡集合校验 ────────────────────────────────────────────────────────────
+# ── 卡集合校验（取值域 = 本机全卡 0–7；⛔ 不判卡数）─────────────────────────
 IFS=',' read -ra GPU_ARR <<< "$EVAL_GPUS"
 GPU_COUNT=0
 NORMALIZED_GPUS=()
@@ -57,7 +59,7 @@ for gpu in "${GPU_ARR[@]}"; do
         ''|*[!0-9]*) die "invalid GPU index '$gpu' in EVAL_GPUS='$EVAL_GPUS'" ;;
     esac
     echo " $ALLOWED_GPUS " | grep -q " $gpu " \
-        || die "GPU $gpu is outside the permitted set {$ALLOWED_GPUS}; GPU 6/7 belong to the production vLLM"
+        || die "GPU $gpu is outside the permitted set {$ALLOWED_GPUS}; indices >= 8 do not exist on this machine. There is no reserved or disabled card — never preempt others: if a card is busy, pick another one or wait."
     dup=0
     for seen in ${NORMALIZED_GPUS[@]+"${NORMALIZED_GPUS[@]}"}; do
         [ "$seen" = "$gpu" ] && dup=1
@@ -66,10 +68,10 @@ for gpu in "${GPU_ARR[@]}"; do
 done
 GPU_COUNT=${#NORMALIZED_GPUS[@]}
 [ "$GPU_COUNT" -gt 0 ] || die "EVAL_GPUS='$EVAL_GPUS' parsed to zero devices"
-[ "$GPU_COUNT" -le "$MAX_GPU_COUNT" ] || die "requested $GPU_COUNT GPUs but at most $MAX_GPU_COUNT are allowed"
+# ★ 2026-10-17 主席令「单个作业不限制卡数」⇒ 旧 `-le MAX_GPU_COUNT` 卡数拦截**已删除**。
 
 IFS=',' GPU_CSV="${NORMALIZED_GPUS[*]}"
-echo "export will use GPU(s): $GPU_CSV (verified ⊆ {$ALLOWED_GPUS}, count $GPU_COUNT ≤ $MAX_GPU_COUNT)"
+echo "export will use GPU(s): $GPU_CSV (verified ⊆ {$ALLOWED_GPUS}; no per-job card-count cap)"
 
 [ -n "$EVAL_CONFIG" ] || die "EVAL_CONFIG is required (path to the eval config YAML)"
 [ -f "$EVAL_CONFIG" ] || die "EVAL_CONFIG does not exist: $EVAL_CONFIG"

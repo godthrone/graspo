@@ -32,11 +32,18 @@
 
 ## 范围守卫（fail-closed，生成期与运行期同一条判据）
 
-- 卡号必须 ⊆ ``{0..5}``；出现 **GPU6/7（生产 vLLM，各约 74 GiB，永不触碰）** 即拒绝；
-- 卡数 ≤ ``4``；非空；不得重复；
+- **卡号必须 ⊆ ``{0..7}``（本机全卡，先到先得）**；⛔ 无预留卡、⛔ 无禁用卡、
+  ⛔ 无"生产锁卡"、⛔ 无"邻居卡"（主席 2026-10-17 令，逐字：「**228 先到先得，随便用。**」）；
+- **卡数不设上限**（同令，逐字：「**单个作业不限制卡数。**」）；非空；不得重复；
 - **卡数必须等于该档的 ``cards``**——覆盖只改「用哪几张」，**不改卡数**；
   不符即拒绝（不"将就"，§2.3 边界校验即防呆）。
+- 越界卡（≥8，本机不存在）一律拒绝——这是**存在性**判据，**不是**策略白名单。
 - 跨 NUMA 只做**信息性提示**（GPU0–3 = NUMA0，GPU4–7 = NUMA1），不阻断。
+
+★ **唯一保留的硬要求 =「不抢占他人」**：声明合法 ≠ 此刻能起跑。起跑前必须**逐卡实测空闲**
+（判据 = ``剩余显存 ≥ 本档头寸（默认 48 GiB） ∧ util == 0``，见 ``flow.guard.idle`` 与
+``scripts/gpu_idle_assert.py``）；被占则**换卡或等**，⛔ **绝不 kill 他人进程、绝不停他人容器**。
+本模块只校验"声明"，不做设施探测（不碰 GPU、不起进程）。
 
 ## A4「同档两跑必须同卡位」
 
@@ -65,12 +72,20 @@ from pathlib import Path
 from typing import Any
 
 # ── 边界常量（单一真相源；生成器与 runner 侧校验都引用这里）────────────────────
-#: 允许使用的卡（228 上仅 GPU0–5 可用于矩阵跑批）。
-GPU_ALLOWED: tuple[int, ...] = (0, 1, 2, 3, 4, 5)
-#: **永不触碰**的生产卡：GPU6/7 跑生产 vLLM（各约 74741 MiB）。
-GPU_FORBIDDEN_PRODUCTION: tuple[int, ...] = (6, 7)
-#: 单次作业卡数上限。
-MAX_CARDS_PER_JOB = 4
+# ★★ 主席 2026-10-17 裁定（唯一标尺，逐字复核）：
+#   「228 先到先得，随便用。」＋「单个作业不限制卡数。」
+#   ⇒ 卡号判据只剩**存在性**：本机 8 卡 0–7 一律可用。
+#   ⛔ 不预留、⛔ 不禁用、⛔ 无"生产锁卡"、⛔ 无"邻居卡"、⛔ 无单作业卡数上限。
+#   ★ 唯一保留的硬要求 =「不抢占他人」（起跑前逐卡实测空闲，被占则换卡或等，
+#     ⛔ 绝不 kill 他人进程 / 停他人容器）——那是**设施层**判据，见文件头。
+#: 本机卡数上限（8 卡机 = GPU0–7）。这是**机器事实**，⛔ 不是策略白名单。
+GPU_MAX_INDEX: int = 7
+#: 可用卡 = 本机全卡 0–7（先到先得）。取值**派生**自 :data:`GPU_MAX_INDEX`。
+#: ⚠ 本模块 stdlib-only（⛔ 不得 import ``graspo.core.gpu_guard``，那是生成器的硬约束）
+#:   ⇒ 允许集合的**真相源**仍是 ``core/gpu_guard.py::ALLOWED_INDICES``；本处是
+#:   **stdlib-only 派生**，在 ``tests/compliance/test_gpu_allowlist_single_source.py``
+#:   显式登记，并由 ``tests/compliance/test_gpu_caliber_consistency.py`` 交叉断言两者相等。
+GPU_ALLOWED: tuple[int, ...] = tuple(range(GPU_MAX_INDEX + 1))
 #: NUMA 归属（GPU0–3 = NUMA0，GPU4–7 = NUMA1）；仅用于信息性提示，不作判据。
 NUMA_NODE_BY_GPU: dict[int, int] = {0: 0, 1: 0, 2: 0, 3: 0, 4: 1, 5: 1, 6: 1, 7: 1}
 
@@ -131,29 +146,25 @@ def parse_override(spec: str) -> dict[str, tuple[int, ...]]:
 def check_gpus(tier_id: str, gpus: Sequence[int], cards: int) -> tuple[int, ...]:
     """校验一组卡；返回规范化元组。任何违规 ⇒ :class:`GpuAssignmentError`（fail-closed）。
 
-    判据：非空、≤4 卡、去重、⊆{0..5}、不含 GPU6/7、**卡数 == 该档 ``cards``**。
+    判据（主席 2026-10-17 口径）：非空、去重、⊆ ``{0..7}``（本机全卡，**无预留/无禁用**）、
+    **卡数 == 该档 ``cards``**。
+    ★ **不设单作业卡数上限**（主席令：「单个作业不限制卡数」）——旧 ``MAX_CARDS_PER_JOB = 4``
+    的拦截已删除；卡数的唯一边界仍来自"该档 ``cards``"本身（TP × PP × DP 的不变量）。
+    ★ **不设"生产锁卡"/"邻居卡"**——旧 ``GPU_FORBIDDEN_PRODUCTION`` 的拦截已删除；
+    他人此刻是否占用 GPU6/7 由**设施层**起跑前的逐卡实测空闲断言判定（见模块 docstring），
+    本函数不猜"哪张卡被谁占着"。越界卡（≥8）仍一律拒绝。
     """
     normalized = tuple(gpus)
     if not normalized:
         raise GpuAssignmentError(f"{tier_id}: 卡集合为空（必须至少 1 张卡）")
-    if len(normalized) > MAX_CARDS_PER_JOB:
-        raise GpuAssignmentError(
-            f"{tier_id}: 卡数 {len(normalized)} 超过单次作业上限 {MAX_CARDS_PER_JOB} 卡"
-        )
     duplicates = sorted({gpu for gpu in normalized if list(normalized).count(gpu) > 1})
     if duplicates:
         raise GpuAssignmentError(f"{tier_id}: 卡集合 {list(normalized)} 含重复卡 {duplicates}")
-    forbidden = [gpu for gpu in normalized if gpu in GPU_FORBIDDEN_PRODUCTION]
-    if forbidden:
-        raise GpuAssignmentError(
-            f"{tier_id}: 卡集合 {list(normalized)} 含生产卡 GPU{forbidden}"
-            f"（GPU6/7 跑生产 vLLM，永不触碰）"
-        )
     out_of_range = [gpu for gpu in normalized if gpu not in GPU_ALLOWED]
     if out_of_range:
         raise GpuAssignmentError(
             f"{tier_id}: 卡集合 {list(normalized)} 含越界卡 {out_of_range}"
-            f"（只允许 GPU0–{GPU_ALLOWED[-1]}）"
+            f"（本机只有 GPU0–{GPU_MAX_INDEX}；越界 = 不存在，非『被禁用』）"
         )
     if len(normalized) != cards:
         raise GpuAssignmentError(

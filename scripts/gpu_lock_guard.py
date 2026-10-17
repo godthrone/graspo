@@ -7,37 +7,26 @@
 
 设备来源两种（F-1，见 ``core/gpu_guard`` 模块 docstring）：
 
-- ``--visible`` / 环境变量是**显式宿主卡号** → 静态比对，全部判据 = 四条：
-  **① 必须显式设置；② 卡号 ⊆ 允许集合（默认 0–7，可用
-  ``GRASPO_ALLOWED_GPU_INDICES`` 收窄）；③ 卡数 ≤ 4；④ 无空元素 / 重复卡**。
-  ★ **本层不做任何"禁用卡号"过滤** —— 它既不按卡号判"邻居卡"，也不判"生产锁卡"：
-  这两类拦截住在**另外三层**（见下），⛔ 不得对外声称本守卫会拒 GPU2 / GPU6 / GPU7。
+- ``--visible`` / 环境变量是**显式宿主卡号** → 静态比对，全部判据 = 三条：
+  **① 必须显式设置；② 卡号 ⊆ 允许集合（默认 0–7 = 本机全卡，可用
+  ``GRASPO_ALLOWED_GPU_INDICES`` 收窄）；③ 无空元素 / 重复卡**。
+  ★ **本层不做任何"禁用卡号"过滤**，**也不判卡数** —— 既不按卡号判"邻居卡"，
+  也不判"生产锁卡"，更不判"单作业卡数上限"。
 - 环境变量是 runtime 哨兵 ``void`` → **不提供** ``--probe-inventory`` 时拒绝
   （本脚本要的是真实卡号；容器内请用 ``python -m graspo record-gpu-memory --idle-only``
   或训练入口的 ``require_gpu_lock_or_exit``，它们会实测可见卡）。
 
-★ 邻居卡 GPU2 与生产锁卡 GPU6/7 的拦截点（三层，**本层不在其中**；依据 =
-`graspo.core.gpu_guard` 的 B10 口径「允许卡 = 本机全卡 0–7、先到先得；生产卡/预留卡
-语义已退役」，2026-10-12 主席批准）：
-
-1. **清单生成器** ``tests/e2e/generate_matrix_manifest_source.py``：
-   ``NEIGHBOR_CARDS = (2,)`` / ``LOCKED_CARDS = (2, 6, 7)`` ⇒ 生成期即拒（含越界卡）。
-2. **投放冒烟 (b2)**（部署侧工件 ``deploy/smoke_deploy_tree.sh``，⛔ 不在本仓）：
-   检查**全 54 档声明**不得含 GPU0 或 GPU2 ⇒ 含则"拒绝投放/起跑"（实测对含
-   ``T041=[2,3]`` 的投放树报失败并整体 rc=2）。
-3. **清单级守卫** ``tests/e2e/gpu_assignment.py``：``GPU_ALLOWED = (0..5)`` /
-   ``GPU_FORBIDDEN_PRODUCTION = (6, 7)`` ⇒ ``check_gpus()`` 对声明值 fail-closed。
-
-⇒ 权威运行清单（``matrix54_manifest_source.json``，runner 侧由
-``GRASPO_RUNNER_MANIFEST`` 指到它）上，这条链已闭合（复核实测：含 GPU2 的档 = 0）。
-**残余缺口（已知、待裁，⛔ 本层不修）**：三层拦截**只对"被指到的那份清单"生效** ——
-① **fsdp 变体清单** 54/54 含 GPU7、36 档含 GPU6；② **v1 归档件**
-``tests/e2e/matrix54_manifest.json`` 18 档 ``[0,1,2,3]`` 含 GPU2，而它正是 runner 的
-**默认清单**（``run_matrix54.sh`` 的
-``MANIFEST="${GRASPO_RUNNER_MANIFEST:-…/matrix54_manifest.json}"``）
-⇒ 未显式把该变量指到 v2 的投放/起跑会在 GPU2 上起容器，而本层**不会**拦。
-加固方案见 ``.local/hb-workspace/20261014-sft-kickoff/task-gate-reinforce/report-guard.md``
-（① 本层收窄 = 推翻 B10，须主席批；② 清单级加判据/换默认线 = 动 ``tests/e2e/**``，须等口径线收工）。
+★★ 2026-10-17 主席裁定（唯一标尺，逐字）：「**228 先到先得，随便用。**」
+＋「**单个作业不限制卡数。**」⇒ 本守卫**只有一条**卡号判据（**存在性**：卡号 ∈ 0–7）
+且**没有卡数上限**：
+  · ⛔ 无预留卡、⛔ 无禁用卡、⛔ 无"生产锁卡"、⛔ 无"邻居卡"、⛔ 无单作业卡数上限；
+  · 生成/清单侧同此口径（``gpu_assignment.GPU_ALLOWED = (0..7)``；生成器只判
+    "卡号 ∈ 0–7 ∧ 卡数 == 该档 cards"，见 ``generate_matrix_manifest_source.card_range_violation``）；
+  · ★ 唯一的**硬要求 =「不抢占他人」**，它是**动态事实**判据、住在**设施层**：
+    起跑前**逐卡实测空闲** = **剩余显存 ≥ 本档头寸（默认 48 GiB）∧ util == 0**
+    （``scripts/gpu_idle_assert.py`` → ``graspo.flow.guard.idle``），被占则**换卡或等**，
+    ⛔ **绝不 kill 他人进程 / 绝不停他人容器**。
+  · 因此"某张卡此刻被谁占着"**不是**静态禁用问题：本层不猜、不拦，由上面那道实测断言负责。
 
 用法：
     NVIDIA_VISIBLE_DEVICES=0,1,2,3 python3 scripts/gpu_lock_guard.py
@@ -124,7 +113,8 @@ _guard: Any = _load_guard_module()
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Fail-closed GPU lock guard: reject unset/all/out-of-range/>4-card device sets."
+            "Fail-closed GPU lock guard: reject unset/all/out-of-range device sets "
+            "(card indices must be a subset of the machine's 0-7; no per-job card-count cap)."
         ),
     )
     parser.add_argument(
@@ -140,9 +130,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--assert-idle",
         action="store_true",
         help=(
-            "F-10: after the lock check, also assert every target GPU is idle "
-            "(nvidia-smi memory.used <= 64 MiB and utilization.gpu <= 5%%). "
-            "Never kills other processes."
+            "F-10/B10: after the lock check, also assert every target GPU is available — "
+            "free memory >= this run's position (default 48 GiB, GRASPO_GPU_POSITION_MIB) "
+            "AND utilization.gpu == 0 over consecutive samples. "
+            "Never kills other processes or stops other containers."
         ),
     )
     return parser

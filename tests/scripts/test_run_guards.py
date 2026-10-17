@@ -133,9 +133,9 @@ def test_busy_cards_ignores_containers_without_gpus():
     assert busy == set()
 
 
-def test_include_reserved_cards_hard_excludes():
+def test_exclude_cards_held_by_us_hard_excludes():
     """★ 择卡硬排除：loading 态的卡不得被选中。"""
-    assert rg.include_reserved_cards(["1", "3", "6", "7"], {"6", "7"}) == ["1", "3"]
+    assert rg.exclude_cards_held_by_us(["1", "3", "6", "7"], {"6", "7"}) == ["1", "3"]
 
 
 def test_parse_docker_inspect_stream_multiple_objects():
