@@ -801,13 +801,13 @@ CODE_COMMIT = "8d63c38"
 
 #: 机器/场所（实验条件之一；★ 只说**能力口径**，⛔ 不写机器名、内网地址或主机编号，
 #:   §17.7「矩阵中仍然禁止」宿主路径 / 内网地址 / 机器名 / 内部节点）
-VENUE = "平台方内部 GPU 集群（8 卡单机）"
+VENUE = "平台方内部训练集群"
 
 
 #: ①**允许清单**（`meta.criteria_caliber` 子键）：判据 / 口径 / 实验条件；
 #: 其余（证据索引、订正史、陈旧件清点、内部对账推导）⇒ 剔除、迁 `.local/`。
 HUMAN_VIEW_CALIBER_KEYS = (
-    "availability_criteria", "dataset", "eval_caliber", "lr_policy", "ruled_out",
+    "pass_criteria", "dataset", "eval_caliber", "lr_policy", "ruled_out",
     "criteria_id", "threshold", "baseline", "epoch_policy", "conclusion_rule",
     "caliber_change", "step_reconciliation", "caliber_evidence",
 )
@@ -1006,27 +1006,24 @@ HUMAN_VIEW = "docs/capability-matrix.html"
 #: 「实验数据」＝逐档结论与读数。⛔ 不再有「主要参数 / 备注」等给自己看的分段。
 GROUPS = {"base": "实验条件", "data": "实验数据"}
 
-#: ★★ 列序（**精简轮 2**，2026-10-16）：`档号 → 实验条件（算法 / 后端 / 卡数 / 训练数据 / 步数 /
-#: 关键开关）→ 实验数据（状态 / 显存峰值 / 总耗时 / 效果 / 备注 / 未过判据）`，共 **13 列**（原 21 列）。
-#: ★ 逐列都有「访客问题」依据，答不出的列已砍（逐列对照表见工位 `report.md` §2）：
-#:   - 砍 `模型 / 模式 / lr / LoRA 目标`：**由「算法 + 后端」唯一决定** ⇒ 上提到实验条件块（写一次）；
-#:   - 砍 `TP / PP / DP`：**由「后端 + 卡数」唯一决定**（native 显式 tp/pp/dp；ms-swift 由框架决定、
-#:     DP 为派生值）⇒ 上提到实验条件块的并行关系式；
-#:   - 砍 `实跑步数 / 吞吐`：54 档里分别只有 **2 / 1** 档有值（其余全 `—`）⇒ 并入备注；
+#: ★★ 列序（**精简轮 4**，2026-10-17，主席令「大幅精简 / 删卡位」）：`档号 → 实验条件（算法 / 后端 /
+#: 训练数据 / 关键开关）→ 实验数据（状态 / 显存峰值 / 总耗时 / 效果 / 未过判据）`，共 **10 列**（原 13 列）。
+#: 逐列都有「访客问题」依据，答不出的列已砍：
+#:   - 砍 `卡数`：**卡位 / GPU 编号不是使用者关心的事**（主席原话）⇒ 整列删除；
+#:   - 砍 `步数`：长串推导式逐档重复，且由「epoch × 数据量」在实验条件里给出口径；
+#:   - 砍 `备注`：54 档为同一句样板 / 与「状态」「未过判据」两列重复
+#:     ⇒ 已通过项与未纳入验收理由另在表下逐档列出（§17.7 要求的事实不丢）；
 #:   - 状态列**上移到实验数据段首**（它是"这一档的结论"，不是训练条件）⇒ 表头只剩两个列组。
 COLUMNS = [
     {"key": "tier", "label": "档号", "group": "base", "sticky": True},
     {"key": "algo", "label": "算法", "group": "base", "group_start": True},
     {"key": "backend", "label": "后端", "group": "base"},
-    {"key": "cards_total", "label": "卡数", "group": "base"},
-    {"key": "data_scale", "label": "训练数据（子集 / 每卡）", "group": "base"},
-    {"key": "steps", "label": "步数", "group": "base"},
+    {"key": "data_scale", "label": "训练数据", "group": "base"},
     {"key": "switches", "label": "关键开关", "group": "base"},
     {"key": "status", "label": "状态", "group": "data", "group_start": True},
     {"key": "peak_mem", "label": "显存峰值(GiB)", "group": "data"},
     {"key": "elapsed", "label": "总耗时", "group": "data"},
     {"key": "effect", "label": "效果（评测 Δ）", "group": "data"},
-    {"key": "note", "label": "备注（失败归因 / 条件 / 限制）", "group": "data"},
     {"key": "not_failed_reason", "label": "未过判据", "group": "data"},
 ]
 
@@ -1248,7 +1245,7 @@ def lora_target_backends():
 def boundary_declaration():
     return {
         "required": True,
-        "text": ("能力与可用档位矩阵说明各档位的可用性与性能基线：每个列出的档位都已在我们的数据集上完整跑通"
+        "text": ("能力与可用档位矩阵说明各档位的可用性与性能表现：每个列出的档位都已在我们的数据集上完整跑通"
                  "并取得良好效果（作为「可用、大概率无 bug」的证据）。训练效果取决于使用者自身的任务、数据集与参数，"
                  "不在本矩阵的承诺范围。"),
         "points": [
@@ -1359,26 +1356,20 @@ def criteria_caliber(rows=None):
     #    机核 = `verify_matrix` ④S「散文档数 == 数据实际 not_executable 行数」。
     _ne_txt = not_executable_count_txt(_rows)
     return {
-        "availability_criteria": [
-            "① 跑通/工程合规：退出码 0、无未捕获异常；优化器步数达标；checkpoint 完整；NaN/Inf 为 0；算法机制真实生效；产物形态合规；显存与吞吐在承诺范围内。",
-            "② 效果（现行口径）：SFT ⇒ 工具调用准确率 after − base ≥ +10.0 pp（epoch=4）；"
-            "GRASPO ⇒ after − base ≥ +5.0 pp（epoch=8）；"
-            "CPT ⇒ 训练 loss 正常下降（U2 口径）且准确率 after ≥ base（不劣化；epoch=2）；"
-            "OPD ⇒ 学生 after ≥ base（能力回收；epoch=2；教师 = SFT 之后的 27B 产物）。"
-            f"★ **评测集口径（2026-10-16 主席裁定）**：**100 行档（{_fit_txt}）= fit 口径（训练集自评）** —— "
-            "评测集就是**该档自身训练用的同一份文件**（100 行、`dataset_split: train`）；"
-            "★ 其余档（9 个 formal 档）仍用平台方自有 702 行评测集。"
-            "★★ **2026-10-16 扩面（主席裁定「18 个 20 行档放大到 100 行」）**：原 18 个 **20 行**档"
-            "（`T031–T033`/`T037–T039`/`T043–T045` 的 GRASPO×ms-swift，＋ `T046–T054` 的 OPD）"
-            "宣布口径**已裁定**（不再属于「口径未定、不下结论」）⇒ 其 `subset_size` 由 20 改为 100，"
-            f"一并纳入 fit 口径。★ 其中 **{_ne_txt}不可执行**"
-            "（**本环境不可执行**：逐档具名原因在行内标注）⇒ ⛔ **不为它们拼凑一份看似可跑的配置**，"
-            "只登记声明口径；★ **T052–T054 为 `not_applicable`"
-            "（设计上不成立、不产出可运行配置）⇒ 四态 = 「未纳入验收」，⛔ 不得读成「试过了不行」**。"
-            "★ **通过线数值逐字未动**（⛔ 未放宽、⛔ 未收紧）。"
-            "★ 一律用**点估计 Δ** 判定：⛔ 不做假设检验，不引入置信区间 / 显著性。",
-            "③ 算法正确性检查：各算法按各自的检查清单执行（属判据 ① 的组成部分）；GRASPO 算法逻辑严禁改动。",
-            "④ 推理验证（逐字未动）：产物可正常推理（合并 LoRA + vLLM 启动、实际前向一次拿到可解析输出）。",
+        "pass_criteria": [
+            {"title": "能完整跑完",
+             "text": "训练正常结束、不中断、不报错：退出码 0、优化器步数达标、检查点完整、没有 NaN/Inf；"
+                     "算法机制真的在起作用（不是空转）；产物能加载或推理。"},
+            # ★★ 判据② 的通过线**一律从 `threshold.by_method` 现取**（⛔ 不在此另写一份数值，
+            #    §1.4 单一真相源）⇒ `from_threshold: True` 表示「本条的逐算法细则由数据现算」。
+            {"title": "效果变好（核心判据）",
+             "text": "在平台方数据集与平台方参数下，训练之后模型效果比不训练好（逐算法通过线见下）：",
+             "from_threshold": True},
+            {"title": "算法正确性检查通过",
+             "text": "SFT / GRASPO / CPT / OPD 各按自己的检查清单逐项通过（这是第 1 条的组成部分）；"
+                     "GRASPO 的算法逻辑严禁改动。"},
+            {"title": "能推理",
+             "text": "合并 LoRA 后用 vLLM 启动，实际前向一次能拿到可解析输出。"},
         ],
         "caliber_change": {
             "effective": "2026-10-15",
@@ -1396,9 +1387,29 @@ def criteria_caliber(rows=None):
                         f"适用同一 fit 口径**；★ 其中 **{_ne_txt}不可执行**"
                         "（**本环境不可执行**：逐档具名原因在行内标注）"
                         "⇒ 只登记声明口径、⛔ 不伪造可跑配置；★ 9 个 formal 档**不动**。"),
-            "unchanged": "★ 判据 ①③④ **逐字未动**（见 availability_criteria 第 1/3/4 项）。",
+            "unchanged": "★ 判据 ①③④ **逐字未动**（见 pass_criteria 第 1/3/4 项）。",
             "superseded": ("★ 旧口径（留痕，⛔ 不再作为判定依据）：训练类（SFT / CPT / OPD）与 GRASPO **统一 δ = +5.0 pp**；"
                            "目标 +10.0 pp 仅展示、不用于判定；SFT epoch = 2。"),
+            # ★★ 2026-10-17 口径变更（**现行条目**；上列 effective/source/changed/unchanged/superseded
+            #    是 2026-10-15 / 10-16 的历史条目）—— ★ 历史逐字留痕，⛔ 一字不删。
+            #    ★ 单一真相源：判据② 的通过线数值一律以 `threshold.by_method` 为准（本条目只登记口径，
+            #      ⛔ 不另写一份数值表）。
+            "caliber_change_20261017": {
+                "effective": "2026-10-17",
+                "source": "2026-10-17 主席裁定（判据② 定死）",
+                "changed": ("★ **判据②（效果）定死为逐算法四条**：SFT / GRASPO 只判准确率 Δ —— "
+                            "**不再看 loss / reward 曲线趋势**，也不需要为曲线单独采的单卡基线；"
+                            "★ **U2 即判据②** —— 旧「曲线窗口比较」口径随之作废；"
+                            "★ **CPT 保留「训练 loss 正常下降」，不走效果 Δ** —— 理由：**CPT 与 SFT 不同**；"
+                            "★ CPT 的训练 loss 判据与「base 得分口径」**不是一回事**，⛔ 不得连带删除。"),
+                "unchanged": ("★ **通过线数值逐字未动**：SFT ⇒ after − base ≥ +10.0 pp（epoch=4）；"
+                              "GRASPO ⇒ after − base ≥ +5.0 pp（epoch=8）；CPT ⇒ 准确率 after ≥ base"
+                              "（不劣化；epoch=2）；OPD ⇒ 学生 after ≥ base（能力回收；epoch=2）。"
+                              "★ 判据 ①③④ **逐字未动**；★ **CPT 的「训练 loss 正常下降」判据逐字保留**。"),
+                "superseded": ("★ 旧口径（逐字留痕，⛔ 不再作为判定依据）：「**U2 = loss 趋势 vs 未训练底座"
+                               "同口径终窗**」；★ 随之作废的文档判据版本标识 = 「v3-2026-10-10（判据基线）"
+                               "+ U2 起点/终点窗口比较口径」（两条原文逐字见精简轮 3 归档件）。"),
+            },
             "reading_change_registry": [],      # ★ 由 main() 从**行数据**派生（⛔ 不在此处写死档号/数值）
             "reading_change_registry_note": (
                 "★★ **「读数变化」≠「判据变化」**：本清单逐条登记「因缺陷修复/重跑产生了新读数"
@@ -1407,7 +1418,7 @@ def criteria_caliber(rows=None):
                 "★ 每条的 `kind` = `reading_change（★ 不是判据变更）`，可在档位行的 `caliber_change` 里机读。"),
         },
         "dataset": {"id": (f"平台方自有评测集（名称 test.jsonl）＋ ★ **100 行档（{_fit_txt}）的评测集 = "
-                           "该档自身训练用的同一份文件**（fit 口径，见下）"),
+                           "该档自身训练用的同一份文件**（fit 口径：训练集自评）"),
                     "availability": "平台方自有 / 不公开（100 行档用该档自身训练文件，同为非公开数据）",
                     "version_anchor_sha256": ("两种口径 —— ★ 100 行档 = 该档自身训练文件（100 行，sha256 594d41b0…）；"
                                               "其余档 = 平台方自有评测集（702 行，c202b1e1…）"),
@@ -1533,7 +1544,9 @@ def criteria_caliber(rows=None):
                         "metric": ("工具调用准确率（after − base）；★ **100 行档 = fit 口径**"
                                    "（评测集 = 该档自身训练文件，100 行）；其余档 = 平台方自有 702 行评测集"),
                         "pass_line_text": "after ≥ base（不劣化）",
-                        "also": "训练 loss 正常下降（U2 口径）",
+                        # ★★ 2026-10-17 定死：**CPT 的 loss 判据逐字保留**（CPT 与 SFT 不同，
+                        #    不走效果 Δ）；⛔ 不连带删除、⛔ 不改通过线数值。
+                        "also": "训练 loss 正常下降",
                         "epoch": 2, "epoch_previous": 2, "epoch_note": "epoch=2 不变。"},
                 "opd": {"criterion": "non_inferiority", "op": ">=", "value": 0.0, "unit": "pp",
                         "metric": ("工具调用准确率（学生 after − base）；★ **100 行档 = fit 口径**"
@@ -1546,8 +1559,14 @@ def criteria_caliber(rows=None):
             "by_method_single_source": ("★ 本 `by_method` 是**跑次阈值判定的唯一真相源**：跑次 json 自述阈值必须与之逐算法一致，"
                                         "否则回填 fail-closed。"),
         },
-        "baseline": {"role": "同档位未训练底座（role=base）",
-                     "caliber": "U2 终点窗口 = 末段 max(3, 10% 步数) 步的均值；该档的 epoch 数与推导步数见档位「步数/epoch」子项。"},
+        # ★★ 2026-10-17：本字段不再是「曲线窗口」那套（旧值「U2 终点窗口 = 末段 max(3, 10% 步数) 步的
+        #    均值」随之作废、原文逐字归档于精简轮 3 归档件）；改为**判据② 的 base 得分口径** ——
+        #    Δ = after − base 里的 base，是**评测集上的得分**，⛔ 不是曲线上的窗口。
+        "baseline": {"role": "未训练基座（role=base）",
+                     "caliber": ("未训练基座在**同一评测集**上的工具调用准确率（accuracy），来自 "
+                                 "`graspo eval` 的 `role=base` 通道；**100 行档 = fit 口径（该档自身训练"
+                                 "文件）**、**其余档 = 702 行评测集**。本项是判据② 的被减数"
+                                 "（after − base 中的 base）；⛔ 与 CPT 的「训练 loss 正常下降」判据不是一回事。")},
         "epoch_policy": {
             "by_method": ("SFT = **4 epoch**（现行口径）；CPT = 2 epoch（⛔ 不动）；OPD = 2 epoch（⛔ 不动）；"
                           "GRASPO(RL) = 8 epoch（⛔ 不动；若 8 仍不过线则升 10 为后备；理由：RL 耗时长、5 epoch 下效果仅差 0.44 pp 未过线）。"
@@ -1632,6 +1651,11 @@ def criteria_caliber(rows=None):
         "conclusion_rule": {
             "rule": ("结论必须与同一行的参数一一对应。若一行的参数已被更正，而结论来自旧参数下的跑次 ⇒ "
                      "该结论作废，该档标「尚未验证」；仅在参数冻定后重跑，才可给出「已验证可用 / 已验证不可用」判定。"),
+            # ★★ 2026-10-17 定死（主席裁定）：**通过规则** —— 措辞与 `status_vocabulary` 四态一致。
+            #    ★ 精简轮 4：压成一句人话（⛔ 不改判定逻辑：四条全过 ⇔ 方可「已验证可用」）。
+            "pass_rule": ("四条判据（① 能完整跑完、② 效果变好、③ 算法正确性检查、④ 能推理）"
+                          "全部通过 ⇒ 才能标「已验证可用」；任一条不过 ⇒ 不得标「已验证可用」"
+                          "（按事实标「已验证不可用 / 尚未验证 / 未纳入验收」）。"),
             "status_wording": ("「尚未验证」在本文档中等同「未测试」；本文档的四态取值固定为"
                               "「已验证可用 / 已验证不可用 / 尚未验证 / 未纳入验收」，用词以它为准。"),
         },

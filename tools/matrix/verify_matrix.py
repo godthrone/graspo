@@ -27,80 +27,85 @@ import gen_configs     # 同目录；★ 「已声明的前提」定义**同源*
 
 VERSION = "verify-matrix/v15-declared-premise-visibility"
 
-# ---- ③ 结构断言：新结构只允许这两大部分 ----
-#: ★ 人读件结构（宪法 §17.7 + 使用者诉求「判据 + 实验条件 + 功能矩阵表」）：
-#:   ① 这张表是什么、怎么读 ② 判据（含口径） ③ 实验条件 ④ 功能矩阵表
-EXPECTED_H2 = ["1. 先读这一页", "2. 判据（含口径）", "3. 实验条件", "4. 功能矩阵表"]
+# ---- ③ 结构断言：只允许这四章 ----
+#: ★ 人读件结构（宪法 §17.7 + 主席令「大幅精简成四章」）：
+#:   ① 这是什么表 ② 通过标准 ③ 实验条件 ④ 档位功能矩阵（结果）
+EXPECTED_H2 = ["1. 这是什么表", "2. 通过标准", "3. 实验条件", "4. 档位功能矩阵（结果）"]
 EXPECTED_PARTS = ["s1", "s2", "s3", "s4"]
 FORBIDDEN_OLD_SECTIONS = ["part1", "part2", "sec1", "sec1b", "sec2", "sec3", "sec4", "sec5", "sec6", "sec7"]
 
 # ---- ④A. 必须出现的规则关键词（缺一即 FAIL） ----
+# ★ 精简轮 4（2026-10-17 主席令）：人读件只留四章（这是什么表 / 通过标准 / 实验条件 / 结果矩阵）。
+#   本清单**随结构同步收敛**：⛔ 不再是"关键词越多越好"，只保留§17.7 的强制要件
+#   ＋ 主席判定「数值与方向一字不错」的通过线原文 ＋ 复现条件必需项。
 REQUIRED_MARKERS = [
+    # 生成关系（§17.7「自动生成的入库文档」）
     ("机器可读生成标记", "generated-by:"),
     ("首屏生成声明", "自动生成"),
     ("禁止手工编辑", "禁止手工编辑"),
     ("唯一可编辑源头", "唯一可编辑源头"),
     ("方向固定·单方向", "单方向，禁止互推"),
+    # 承诺边界声明（§17.7「边界声明义务」三点）
     ("边界声明", "承诺边界声明"),
-    ("边界要件·各档可用性", "各档可用性"),
-    ("边界要件·平台方数据集结论", "平台方数据集结论"),
+    ("边界要件·各档可用性", "完整跑通"),
+    ("边界要件·平台方数据集结论", "在我们的数据集上"),
+    ("边界要件·证据定位", "大概率无 bug"),
     ("边界要件·使用者效果不在范围", "不在本矩阵的承诺范围"),
-    ("四态·已验证可用", "已验证可用"),
-    ("四态·已验证不可用", "已验证不可用"),
-    ("四态·尚未验证", "尚未验证"),
-    ("列序·主要参数分列", "总卡数"),
-    ("列序·实验数据", "实验数据"),
-    ("列序·备注", "失败归因"),
-    ("四态·未纳入验收", "未纳入验收"),
-    ("不依赖颜色/图例", "不依赖颜色、图例或空白"),
-    ("未过判据必须写明", "写明未过的是"),
-    ("已通过项事实保留", "exit_code = 0"),
-    ("判据口径·数据集锚点", "版本锚点"),
-    ("判据口径·判据标识", "elam-v3-allright-1"),
-    ("判据口径·四条判据", "判据（四条）"),
-    ("判据口径·阈值冻结", "已冻结（现行口径，2026-10-15）"),
-    ("判据口径·SFT 通过线", "after − base ≥ +10.0 pp"),
-    ("判据口径·GRASPO 通过线", "after − base ≥ +5.0 pp"),
-    ("判据口径·CPT 不劣化线", "after ≥ base（不劣化）"),
-    ("判据口径·OPD 能力回收", "学生 after ≥ base（能力回收）"),
-    ("判据口径·不做假设检验", "不做假设检验"),
-    ("判据口径·旧口径留痕", "旧口径（已被取代、留痕"),
-    ("判据口径·现行口径（原「变更留痕」行标签，修正包 🟡-1 改中性词）", "判据口径（现行）"),
-    ("判据口径·基线口径", "U2 终点窗口"),
-    ("实验条件", "实验条件"),
-    ("统一口径", "统一口径"),
-    ("只列差异项", "只列出档位之间的差异项"),
-    ("判据定义 U1", "exit_code = 0"),
-    ("算法正确性检查清单", "算法正确性检查"),
-    ("B3 基础设施不影响", "都不应显著影响效果"),
-    ("评测与推理验证", "推理验证"),
-    ("步数为上限", "表中步数是上限"),
-    ("并行按后端分列", "nproc_per_node"),
-    ("并行·配置值", "配置值"),
-    ("并行·派生值", "派生"),
-    ("并行·关系式", "总卡数 = nproc_per_node × nnodes = TP × PP × CP × DP"),
-    ("LoRA 目标分列", "target_modules"),
-    ("检查点间隔键名", "checkpoint_save_steps"),
-    # ★ §17.7 覆盖度门槛：首屏警示 + 「尚未验证」清单与数量
+    # 覆盖度门槛（§17.7「覆盖度门槛与失败态」）
     ("覆盖度警示·标题", "覆盖度警示"),
     ("覆盖度警示·四态计数", "当前结论分布为"),
     ("覆盖度警示·尚未验证清单", "尚未验证的档位（"),
     ("覆盖度警示·不得读作全可用", "不得被读作"),
-    ("读表·是什么", "这张表是什么"),
-    ("读表·可用怎么判", "「可用」怎么判"),
-    ("读表·实验怎么做", "实验怎么做的"),
-    ("读表·怎么读表", "怎么读表"),
+    ("覆盖度门槛·尚未生效", "覆盖度门槛"),
+    # 四章（标题逐字）
+    ("章①这是什么表", "这是什么表"),
+    ("章②通过标准", "通过标准"),
+    ("章③实验条件", "实验条件"),
+    ("章④档位功能矩阵（结果）", "档位功能矩阵（结果）"),
+    # 通过标准 = 一个列表；核心 = 有效性
+    ("判据·有效性是核心", "训练之后模型效果变好了"),
     ("判据① 能完整跑完", "能完整跑完"),
-    ("判据② 平台方数据集效果达标", "在平台方数据集与平台方参数下效果达标"),
-    ("不可用须写明第 1/2 条", "第 1 条"),
-    ("不可用须写明第 2 条", "第 2 条"),
-    ("未纳入验收须逐档", "逐档"),
-    ("实验条件·实验场所", "实验场所"),
-    ("实验条件·代码版本", "代码版本"),
-    ("实验条件·评测数据集", "评测数据集"),
+    ("判据③ 算法正确性检查", "算法正确性检查通过"),
+    ("判据④ 能推理", "能推理"),
+    ("判据·合并规则", "任一条不过"),
+    # 判据② 逐算法通过线（数值与方向逐字）
+    ("判据②·SFT 通过线", "after − base ≥ +10.0 pp"),
+    ("判据②·GRASPO 通过线", "after − base ≥ +5.0 pp"),
+    ("判据②·CPT 训练 loss", "训练 loss 正常下降"),
+    ("判据②·CPT 不劣化", "after ≥ base（不劣化）"),
+    ("判据②·OPD 能力回收", "学生 after ≥ base（能力回收）"),
+    ("判据②·不做假设检验", "不做假设检验"),
+    ("判据标识", "elam-v3-allright-1"),
+    # 四态（§17.7「四种状态必须有可区分的文字标签」）
+    ("四态·已验证可用", "已验证可用"),
+    ("四态·已验证不可用", "已验证不可用"),
+    ("四态·尚未验证", "尚未验证"),
+    ("四态·未纳入验收", "未纳入验收"),
+    ("四态·不依赖颜色/图例", "不依赖颜色、图例或空白"),
+    ("未过判据必须写明第 1 条", "第 1 条"),
+    ("未过判据必须写明第 2 条", "第 2 条"),
+    # 实验条件（只列复现需要的）
+    ("实验条件·基础模型", "基础模型"),
+    ("实验条件·算法", "算法："),
+    ("实验条件·训练后端", "训练后端"),
+    ("实验条件·可训练参数", "可训练参数"),
+    ("实验条件·学习率", "学习率"),
     ("实验条件·训练轮次", "训练轮次"),
-    ("实验条件·步数口径", "步数口径"),
-    ("实验条件·达标阈值", "达标阈值"),
+    ("实验条件·训练数据", "训练数据"),
+    ("实验条件·统一超参", "统一超参"),
+    # 评测口径可复核（§17.7「基线值与判据口径必须带口径」）
+    ("评测口径·评测集", "评测集"),
+    ("评测口径·版本锚点", "版本锚点"),
+    ("评测口径·样本量", "样本量"),
+    ("评测口径·评测方法", "评测方法"),
+    # 矩阵表与结果列
+    ("矩阵表", '<table class="matrix">'),
+    ("列组·实验条件", "实验条件"),
+    ("列组·实验数据", "实验数据"),
+    ("结果列·状态", "状态"),
+    ("结果列·效果", "效果（评测 Δ）"),
+    ("结果列·未过判据", "未过判据"),
+    ("读表·关键开关列 — 语义", "没有额外差异开关"),
 ]
 
 #: 禁止措辞（§17.7：双真相源 / 能力承诺式措辞）
@@ -112,6 +117,14 @@ FORBIDDEN_PHRASES = [
     ("已验证全组合", "能力承诺式措辞"),
     ("仅供参考", "以「不承诺效果」淡化平台侧失败（§17.7 反例）"),
     ("效果不保证", "以「不承诺效果」淡化平台侧失败（§17.7 反例）"),
+    # ★★ 修正轮 1（全局审查 B2）：已作废的**旧口径措辞**不得出现在发布人读件。
+    #   背景：T037/T038/T039 的效果列曾残留「冻结阈值 +5.0 pp；目标 +10.0 pp 仅展示」，
+    #   与同页 §2「通过标准」（逐算法现行通过线、无「目标值」概念）自相矛盾。
+    #   修法在**展示层**（`render_matrix.human_view_effect`，⛔ `rows[]` 一字不动）；
+    #   此处是它的**能失败机核**（阳性对照见 `run_self_proof` ⑱）。
+    ("目标 +10.0 pp", "旧口径措辞：目标值仅展示（现行口径无「目标值」概念）"),
+    ("仅展示", "旧口径措辞：「目标值仅展示」已被取代"),
+    ("冻结阈值 +5.0 pp", "旧口径措辞：统一阈值副本（现行口径逐算法分列）"),
 ]
 
 # ★ §17.7「矩阵中仍然禁止」+ 使用者诉求：**内部术语**（人称 / 内部编排 / 内部角色 / 内部过程）
@@ -123,34 +136,31 @@ FORBIDDEN_INTERNAL_TERMS = [
     "归属层", "必须能失败", "阳性对照", "机核可跑",
 ]
 
-# ---- ④B. 已定表头：**13 列**（档号 → 实验条件 6 列 → 实验数据 6 列） ----
-# ★ 精简轮 2（2026-10-16）：由 21 列收敛到 13 列；砍掉的列均为**可由保留列唯一决定**
-#   （`model/mode/lora_target/lr` 由 `algo+backend`；`tp/pp/dp` 由 `backend+cards_total`）
-#   或**实测值近乎全空**（`steps_actual` 2/54、`throughput` 1/54）⇒ 已并入「备注」与实验条件块。
+# ---- ④B. 已定表头：**10 列**（档号 → 实验条件 4 列 → 实验数据 5 列） ----
+# ★ 精简轮 4（2026-10-17，主席令「删卡位 / 大幅精简」）：由 13 列收敛到 10 列。
+#   砍 `cards_total`（卡位 / GPU 编号不是使用者关心的事）、`steps`（长串推导式逐档重复）、
+#   `note`（54 档同句样板 / 与「状态」「未过判据」重复）。
+#   ★ 生成端**同源**（`build_official.COLUMNS`），⛔ 不各自维护一份。
 EXPECTED_COLUMNS = [
     ("tier", "档号"),
     ("algo", "算法"),
     ("backend", "后端"),
-    ("cards_total", "卡数"),
-    ("data_scale", "训练数据（子集 / 每卡）"),
-    ("steps", "步数"),
+    ("data_scale", "训练数据"),
     ("switches", "关键开关"),
     ("status", "状态"),
     ("peak_mem", "显存峰值(GiB)"),
     ("elapsed", "总耗时"),
     ("effect", "效果（评测 Δ）"),
-    ("note", "备注（失败归因 / 条件 / 限制）"),
     ("not_failed_reason", "未过判据"),
 ]
 #: ★ 实验数据段（渲染列序，也是 ④D 的逐格一致性检查面）
-RESULT_KEYS = ["status", "peak_mem", "elapsed", "effect", "note", "not_failed_reason"]
-#: ★★ 真正的**实测读数**列：未结论档必须全为 `—`（`status`/`note` 不是读数，故不在内）。
+RESULT_KEYS = ["status", "peak_mem", "elapsed", "effect", "not_failed_reason"]
+#: ★★ 真正的**实测读数**列：未结论档必须全为 `—`（`status` 不是读数，故不在内）。
 #:    该清单是 ④C「未验证不得冒充可用 / 不得携带实验数据」的检查面。
 #: ★ 与生成端**同源**（`build_official.EXP_DATA_KEYS`），⛔ 不各自维护一份
 EXP_DATA_KEYS = list(build_official.EXP_DATA_KEYS)
-# ★ 主要参数：按项分列（顺序即展示顺序）；★ 精简轮 2 由 13 项收敛到 6 项
-#   （`model/mode/tp/pp/dp/lora_target/lr` 已上提到实验条件块——它们由 `algo/backend/cards_total` 唯一决定）
-PARAM_SUBKEYS = ["algo", "backend", "cards_total", "data_scale", "steps", "switches"]
+# ★ 主要参数：按项分列（顺序即展示顺序）；★ 精简轮 4 由 6 项收敛到 4 项。
+PARAM_SUBKEYS = ["algo", "backend", "data_scale", "switches"]
 # 供 yaml 生成器机读的细粒度字段（每行必须存在；值为 '—' 表示源缺失）
 SPEC_KEYS = ["model_path", "train_method", "tuner_type", "cards", "parallel_dims",
              "parallel_scheme", "data_source", "subset_size", "prompts_per_rank",
@@ -258,7 +268,7 @@ def main():
     if missing:
         failures.append(("④A 规则关键词", f"缺失 {len(missing)} 项: {missing}"))
 
-    # ---- ④B. 列顺序 == 已定表头（13 列） ----
+    # ---- ④B. 列顺序 == 已定表头（10 列） ----
     _cols = data.get("columns", [])
     groups = data.get("groups", {})
     first = _cols[0] if _cols else {"group": "", "label": "", "key": ""}
@@ -332,33 +342,48 @@ def main():
     if a.expect_empty and filled:
         failures.append(("④C --expect-empty：不得有已结论档位", f"已结论 {len(filled)} 档: {filled[:8]}"))
 
-    # ---- ④D. 表格列逐档与数据逐字一致（主要参数分列 / 实验数据 / 备注） ----
+    # ---- ④D. 表格列逐档与数据逐字一致（主要参数分列 / 实验数据） ----
+    #   ★ 修正轮 1（审 B2）：「效果」列经**展示层归一**（旧口径措辞 ⇒ 现行通过线），
+    #     期望值必须用**同一个** `render_matrix.human_view_effect`（§1.4 单一真相源），
+    #     ⛔ 校验端不另抄一份归一规则。
+    _by_method = (((data.get("meta") or {}).get("criteria_caliber") or {})
+                  .get("threshold") or {}).get("by_method") or {}
     mismatch = []
     cell_re = lambda key: re.compile(r'<td class="[^"]*" data-col="' + re.escape(key) + r'">(.*?)</td>', re.S)
-    for key in PARAM_SUBKEYS + RESULT_KEYS + ["note"]:
+    for key in PARAM_SUBKEYS + RESULT_KEYS:
         cells = re.findall(r'<td class="[^"]*" data-col="' + re.escape(key) + r'">(.*?)</td>', target_text, re.S)
         if len(cells) != len(data["rows"]):
             mismatch.append((key, f"单元格数 {len(cells)} != {len(data['rows'])}"))
             continue
         for row, cell in zip(data["rows"], cells):
             v = str(row.get(key, ""))
+            if key == "effect":
+                v = render_matrix.human_view_effect(v, row.get("train_method"), _by_method)
             got = html.unescape(re.sub(r"<[^>]+>", "", cell)).strip()
             if got != v:
                 mismatch.append((row.get("tier"), key, f"渲染 {got!r} != 数据 {v!r}"))
     if mismatch:
         failures.append(("④D 表格列一致性", f"不一致 {len(mismatch)} 处（前 5）: {mismatch[:5]}"))
 
-    # ---- ④E. §1.0 统一口径块 + 供 yaml 生成器的机读字段 ----
+    # ---- ④E. §3 统一超参块（**人读视图白名单**）+ 供 yaml 生成器的机读字段 ----
+    #   ★ 机读件 `uniform.items` 全量保留（yaml 生成器的输入）；人读件只渲染白名单
+    #     （`render_matrix.UNIFORM_VIEW_KEYS`，与渲染端**同源**，§1.4）。
+    #   ★ 两面都查：白名单里的项**必须**出现在人读件里（漏渲染即红）；取值**必须**逐字一致。
     uni = data.get("uniform") or {}
     if not uni.get("items"):
-        failures.append(("④E 统一口径块", "数据文件缺 uniform.items"))
+        failures.append(("④E 统一超参块", "数据文件缺 uniform.items"))
     else:
-        if '<table class="plain uniform">' not in target_text:
-            failures.append(("④E 统一口径块", "渲染结果里未找到 uniform 表"))
-        missing_uni = [it.get("key") for it in uni["items"]
-                       if f'<code>{html.escape(str(it.get("value", "")))}</code>' not in target_text]
-        if missing_uni:
-            failures.append(("④E 统一口径取值", f"未逐字在位: {missing_uni}"))
+        if '<ul class="uniform">' not in target_text:
+            failures.append(("④E 统一超参块", "渲染结果里未找到 uniform 列表"))
+        by_key = {it.get("key"): it for it in uni["items"]}
+        view_keys = list(render_matrix.UNIFORM_VIEW_KEYS)
+        missing_key = [k for k in view_keys if k in by_key and f'data-uniform-key="{k}"' not in target_text]
+        missing_val = [k for k in view_keys if k in by_key
+                       and f'<code>{html.escape(str(by_key[k].get("value", "")))}</code>' not in target_text]
+        if missing_key:
+            failures.append(("④E 统一超参项", f"白名单项未渲染: {missing_key}"))
+        if missing_val:
+            failures.append(("④E 统一超参取值", f"未逐字在位: {missing_val}"))
     # ---- ④G. 脱敏：正式件不得出现宿主路径 / 内网路径 / 机器名 / 人名（宪法 §15.1，A 类零容忍） ----
     SENSITIVE = [
         # 通用形状（⛔ 检测器自身不得携带任何具体主机 / 账号 / 挂载点字面量）
@@ -483,7 +508,7 @@ def main():
     if _bad_q:
         failures.append(("④Q 开关列不得重复发布检查点间隔",
                          f"「关键开关」列出现 `{_tok_q}` 令牌（{len(_bad_q)} 档：{_bad_q[:5]}）"
-                         f"——该参数只允许在 §3.1 定义一次"))
+                         f"——该参数不进人读件"))
     _bad_q2 = []
     for _r in _rows_:
         _dv, _sv = _r.get("derived_steps"), _r.get("save_steps")
@@ -494,10 +519,9 @@ def main():
     if _bad_q2:
         failures.append(("④Q 检查点间隔取值 =推导步数+1",
                          f"{len(_bad_q2)} 档不符（tier, 实际, 应为）：{_bad_q2[:5]}"))
-    # §3.1 必须把「定义一次 + 表内不重复列出」写清（防下一位访客/复核者再踩同一坑）
-    if "不再重复列出该参数" not in target_text:
-        failures.append(("④Q §3.1 交叉引用",
-                         "§3.1 未写明「表内不再重复列出该参数」⇒ 无法解释为何表里看不到它"))
+    # ★ 精简轮 4：检查点间隔（`save_steps`）**整段移出人读件**（主席令「只列复现需要的」）⇒
+    #   原先「§3.1 必须写明『定义一次 + 表内不重复列出』」的交叉引用断言随该段一并作废。
+    #   ★ 但**发布面禁令照旧**（上条 ④Q 令牌检查 + 取值检查），⛔ 不放宽。
 
     # ---- ④R. 人读件正文**不得含开发过程内容**（修正包 🔴-2 / 建议 S2，机核化主席判据）----
     #   ★ 判据（主席原话）：「不要把修改过程写进去，不要把给我们自己写的东西写进去」。

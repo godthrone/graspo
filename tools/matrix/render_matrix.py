@@ -15,16 +15,41 @@
     * 合并列（列定义里带 "merge"）：把若干字段按 "sub_labels" 组装成「小节 + 值」的一格，
       用于满足主席「参数（模型/方法/模式/backend/并行维度/关键超参）」合并成一列的要求。
 """
-import argparse, html, json, sys
+import argparse, html, json, re, sys
 from pathlib import Path
 
 PLACEHOLDER_TOKENS = ("{{DATA_REVISION}}", "{{SOURCE_BASENAME}}", "{{SOURCE_SHA256_SHORT}}",
                       "{{SOURCE_PATH}}", "{{SOURCE_SHA256}}", "{{CRITERIA_VERSION}}",
                       "{{ROW_COUNT}}", "{{MATRIX_TABLE}}", "{{UNIFORM_PARAMS}}", "{{DOC_DATE}}",
                       "{{DOC_TITLE}}", "{{GEN_BANNER}}",
-                      "{{BOUNDARY}}", "{{CALIBER}}", "{{VERDICTS}}",
+                      "{{BOUNDARY}}", "{{CALIBER}}", "{{CRITERIA}}", "{{EVAL_INFO}}", "{{VERDICTS}}",
                       "{{GENERATOR}}", "{{DATA_PATH}}",
                       "{{COVERAGE_WARNING}}", "{{DOC_SCOPE}}", "{{VENUE}}", "{{CODE_VERSION}}")
+
+#: ★★ 统一口径的**人读视图白名单**（精简轮 4，2026-10-17 主席令「只列复现需要的」）：
+#:   机读件 `uniform.items` 一字不动（它是 yaml 生成器的输入，⛔ 不删）；此处只决定**渲染哪几项**。
+#:   ★ 被排除项逐条理由：
+#:     - `gpu_monitor.interval_sec`：巡检间隔不是复现参数（且含「GPU」字样，用户不关心测的哪张卡）；
+#:     - `parallel_*` / `cp` / `sp` / `sequence_parallel_size`：**卡位 / 并行维度**，主席令不进人读件；
+#:     - `criteria_id` / `criteria_version` / `eval_set_path`：判据与评测口径另在 §2 / §3 给出；
+#:     - `train_source_form` / `use_vllm` / `save_checkpoint_every_epoch` / `lora_target_backend_note`：
+#:       面向生成器的实现细节，不改变使用者复现所需的取值。
+#:   ★ 校验端 `verify_matrix` **同源引用本常量**（§1.4 单一真相源，⛔ 不另抄一份）。
+#:   ★ 呈现用短标签写在这里（版式层）；**取值一律取自数据**（⛔ 不写死任何数值）。
+#:     数据里的 `label` 带内部字段名 / 内部说明（如「（恢复口径）」「（两后端同名字段，显式写出）」）
+#:     ⇒ 按主席令「删括号补充说明 / 内部标识」换成使用者看得懂的名字。
+UNIFORM_VIEW = (
+    ("max_prompt_length", "上下文长度上限（token）"),
+    ("torch_dtype", "权重精度"),
+    ("gradient_checkpointing", "梯度检查点"),
+    ("micro_batch_size", "单卡 micro batch size（native：micro_batch_size／ms-swift：per_device_train_batch_size）"),
+    ("gradient_accumulation_micro_batches", "梯度累积 micro-batches"),
+    ("lora_r", "LoRA rank r"),
+    ("lora_alpha", "LoRA alpha"),
+    ("lora_dropout", "LoRA dropout"),
+    ("reward.kind", "GRASPO 奖励类型"),
+)
+UNIFORM_VIEW_KEYS = tuple(k for k, _l in UNIFORM_VIEW)
 
 # 结果列着色用的四态映射（与模板内联脚本同一口径；此处只用于生成带 class 的单元格）
 STATUS_CLASS = {
@@ -33,8 +58,12 @@ STATUS_CLASS = {
 }
 
 
-def cell_html(col, row):
-    """渲染一个数据单元格的 HTML 片段。"""
+def cell_html(col, row, by_method=None):
+    """渲染一个数据单元格的 HTML 片段。
+
+    ★ `by_method` 只用于「效果」列的**展示层归一**（见 `human_view_effect`）：
+      `rows[].effect` 是**冻结行**里的历史读数原文，⛔ 一字不动；旧口径措辞在渲染时改写。
+    """
     key, group = col["key"], col["group"]
     classes = [f"g-{group}"]
     if col.get("sticky"):
@@ -62,16 +91,56 @@ def cell_html(col, row):
         return f'<td class="{" ".join(classes)}" data-col="{key}">{inner}</td>'
 
     val = "" if row.get(key) is None else str(row[key])
+    if key == "effect":
+        val = human_view_effect(val, row.get("train_method"), by_method)
     if key == "status":
         cls = STATUS_CLASS.get(val.strip(), "st-dash")
         classes.append(cls)
     return f'<td class="{" ".join(classes)}" data-col="{key}">{html.escape(val)}</td>'
 
 
+#: ★★ 展示层归一（2026-10-17 修正轮 1，全局审查 B2）：
+#:   `rows[].effect` 是**冻结行**里的历史读数原文，其中 T037/T038/T039 三格带已作废的
+#:   旧口径措辞（「冻结阈值 +5.0 pp」/「目标 +10.0 pp 仅展示」），与同一页 §2「通过标准」
+#:   自相矛盾。★ 修法**只能在展示层**（⛔ `rows[]` 一字不动），⇒ 与「rows sha 不变」不冲突。
+#:   ★ 数值与方向**一律取自** `meta.criteria_caliber.threshold.by_method[<算法>]`
+#:     （⛔ 本文件不写死任何阈值）；旧措辞的*模式*匹配不改变任何读数/结论。
+_RE_STALE_CALIBER_PAREN = re.compile(r"（\s*冻结阈值\s*[^）]*?仅展示\s*）")
+_RE_STALE_FROZEN_CLAUSE = re.compile(r"（\s*[^）]*?冻结阈值[^）]*?）")
+_RE_STALE_TARGET_SENTENCE = re.compile(r"[；;]?\s*目标\s*[^。]*?仅展示[^。]*。?")
+#: 兜底（防新变体漏网 ⇒ 机核 ④H 必红）：数字无关的旧措辞清除。
+_RE_STALE_FROZEN_ANY = re.compile(r"冻结阈值\s*\+?\d+(?:\.\d+)?\s*pp")
+_RE_STALE_TARGET_ANY = re.compile(r"目标\s*\+?\d+(?:\.\d+)?\s*pp\s*仅展示[^。]*。?")
+
+
+def human_view_effect(text, method, by_method) -> str:
+    """把「效果」列里的**旧口径措辞**归一为现行口径（展示层专用）。
+
+    - 现行通过线文本逐字取自 `by_method[<算法>].pass_line_text`（唯一真相源）；
+    - 数值/读数/结论⛔ 一字不改，只改**已作废的说法**；
+    - `method` / `by_method` 缺失时仍然清除旧措辞（fail-safe，⛔ 不因读不到就把旧口径放行）。
+    """
+    line = str(((by_method or {}).get(str(method or "").lower()) or {}).get("pass_line_text") or "")
+    name = str(method or "").upper() or "本算法"
+    cur = f"（判据② {name} 通过线：{line}）" if line else f"（判据② {name} 通过线，见第 2 节）"
+    cur_missed = (f"（未达判据② {name} 通过线：{line}）" if line
+                  else f"（未达判据② {name} 通过线）")
+    t = str(text)
+    t = _RE_STALE_CALIBER_PAREN.sub(cur, t)
+    t = _RE_STALE_FROZEN_CLAUSE.sub(cur_missed, t)
+    t = _RE_STALE_TARGET_SENTENCE.sub("。", t)
+    t = _RE_STALE_FROZEN_ANY.sub("判据② 通过线", t)
+    t = _RE_STALE_TARGET_ANY.sub("", t)
+    return re.sub(r"\s{2,}", " ", t).strip()
+
+
 def build_matrix_table(data):
     cols = data["columns"]
     rows = data["rows"]
     groups = data["groups"]
+    # ★ 展示层归一用的现行通过线（唯一真相源；⛔ 渲染层不写死任何阈值数值）。
+    by_method = (((data.get("meta") or {}).get("criteria_caliber") or {})
+                 .get("threshold") or {}).get("by_method") or {}
 
     # 列组按出现顺序聚合（仅用于第一行表头的 colspan）
     order, spans = [], {}
@@ -108,34 +177,29 @@ def build_matrix_table(data):
     out.append("</thead>")
     out.append("<tbody>")
     for r in rows:
-        out.append("<tr>" + "".join(cell_html(c, r) for c in cols) + "</tr>")
+        out.append("<tr>" + "".join(cell_html(c, r, by_method) for c in cols) + "</tr>")
     out.append("</tbody>")
     out.append("</table>")
     return "\n".join(out)
 
 
 def build_uniform_block(data):
-    """渲染 §1「统一口径」块：对全部档位相同的参数（数据文件 uniform 字段）。
+    """渲染 §3「统一超参」块：只列**复现需要的**统一取值（白名单 `UNIFORM_VIEW`）。
 
-    覆盖列 coverage 形如 'config-51/54' / 'rule-54/54'，逐行如实标注；空 note 不显示。
+    ★ 数据驱动：取值一律从 `uniform.items` 现取，⛔ 不在渲染层写死任何数值。
+    ★ 输出 = 一个列表（⛔ 不再是三列表格，也⛔ 不再带 coverage / note 这些机读口径）。
     """
     uni = data.get("uniform") or {}
-    items = uni.get("items") or []
-    out = ['<table class="plain uniform">',
-           '<colgroup><col class="k"><col><col class="u"></colgroup>',
-           '<thead><tr><th>参数</th><th>统一取值</th><th>覆盖 / 说明</th></tr></thead>',
-           '<tbody>']
-    for it in items:
-        note = it.get("note") or ""
-        cov = it.get("coverage") or ""
-        tail = "；".join(x for x in (cov, note) if x)
-        out.append(
-            f'<tr><td><b>{html.escape(it["label"])}</b><br>'
-            f'<span class="u-key"><code>{html.escape(it["key"])}</code></span></td>'
-            f'<td><code>{html.escape(it["value"])}</code></td>'
-            f'<td>{html.escape(tail)}</td></tr>')
-    out.append("</tbody>")
-    out.append("</table>")
+    by_key = {it.get("key"): it for it in (uni.get("items") or [])}
+    out = ['<ul class="uniform">']
+    for key, label in UNIFORM_VIEW:
+        it = by_key.get(key)
+        if not it:
+            continue
+        out.append(f'<li data-uniform-key="{html.escape(str(key))}">'
+                   f'{html.escape(label)}：'
+                   f'<code>{html.escape(str(it.get("value", "")))}</code></li>')
+    out.append("</ul>")
     return "\n".join(out)
 
 
@@ -181,13 +245,11 @@ def build_coverage_warning(data):
     _total = len(data.get("rows") or [])
     return (
         f'<div class="warnbox" id="coverage-warning" data-row-count="{_total}">'
-        '<b>覆盖度警示（结论尚未齐备）。</b>'
-        f'本矩阵共 <b>{_total}</b> 个档位，当前结论分布为：{cnt}。'
-        '<b>尚有档位没有明确结论</b>（状态为「尚未验证」）⇒ <b>本矩阵此时不得被读作'
-        '「所列举的能力组合都可用」</b>，标题与摘要也不作能力承诺；'
-        '「尚未验证」<b>不计入</b>可用档位数量。'
+        f'<b>覆盖度警示：</b>本矩阵共 <b>{_total}</b> 档，当前结论分布为 {cnt}。'
+        f'尚有 <b>{len(unverified)}</b> 档没有结论（「尚未验证」）⇒ '
+        '<b>不得被读作</b>「所列举的组合都可用」；「尚未验证」不计入可用档位数量。'
         f'<br><b>尚未验证的档位（{len(unverified)} 档）</b>：'
-        + "、".join(f"<code>{html.escape(t)}</code>" for t in unverified) + "。</div>")
+        + "、".join(f"<code>{html.escape(t)}</code>" for t in unverified) + "</div>")
 
 
 def build_venue(data):
@@ -205,134 +267,90 @@ def build_code_version(data):
 
 
 def build_boundary(data):
-    """★ 承诺边界声明（§17.7）。措辞**逐字**取自宪法 §17.7 的引文（不得弱于），
-    另加一行**覆盖度门槛注**：本矩阵的「整体能力承诺」以覆盖度门槛为前提，
-    当前是否已达成由「覆盖度警示」块给出（⛔ 断言的目标不是覆盖度必须达标，
-    而是**不得在未达标时读作已完成承诺**）。
+    """★ 承诺边界声明（§17.7）：**两句话说完**（数据侧 `boundary_declaration.text` 已覆盖三个要件），
+    外加一行**覆盖度门槛注**（未达门槛 ⇒ 整体承诺尚未生效）。⛔ 不再逐条展开 points / 旧注。
     """
     b = data["meta"].get("boundary_declaration", {})
-    pts = "".join(f"<li>{html.escape(x)}</li>" for x in b.get("points", []))
     n_pending = count_statuses(data).get("尚未验证", 0)
-    gate = (f'<p class="note"><b>覆盖度门槛（本矩阵整体承诺的生效前提）：</b>'
-            f'只有当全部档位都已有明确结论（不是「尚未验证」）时，才在文档任何位置宣称项目整体能力承诺。'
-            f'当前尚有 {n_pending} 档为「尚未验证」⇒ <b>上述整体承诺尚未生效</b>；'
-            f'本矩阵此时只呈现<b>逐档状态</b>，不把「未验证」读作「可用」。</p>') if n_pending else ""
-    caveat = html.escape(b.get("coverage_caveat", ""))
+    gate = (f'<li><b>覆盖度门槛：</b>当前尚有 {n_pending} 档为「尚未验证」⇒ 上述整体承诺尚未生效；'
+            f'「尚未验证」不计入可用档位数量。</li>') if n_pending else ""
     return (f'<div class="hint"><b>承诺边界声明。</b>{html.escape(b.get("text", ""))}'
-            f'<ul>{pts}</ul>{gate}'
-            + (f'<p class="note">{caveat}</p>' if caveat else "") + '</div>')
+            f'<ul>{gate}</ul></div>')
 
 
-def threshold_html(th):
-    """★ 判据②（效果）口径渲染：**逐算法分列**（SFT / GRASPO / CPT / OPD）。
+_METHOD_NAMES = (("sft", "SFT（监督微调）"), ("graspo", "GRASPO（强化）"),
+                 ("cpt", "CPT（继续预训练）"), ("opd", "OPD（蒸馏）"))
 
-    ★ 数据驱动：一律从 `threshold.by_method` 取值，⛔ 不在渲染层写死任何阈值。
-    ★ 向后兼容：无 `by_method` 时回退旧的单一 `value` 形态。
+
+def _threshold_plain(key, v):
+    """判据② 的逐算法通过线：**大白话 + 逐字数值/方向**（数值一律取自 `threshold.by_method`）。
+
+    ★ epoch 不在本条重复（它属训练超参，第 3 节「实验条件」列一次）。
     """
-    bm = th.get("by_method") or {}
-    if not bm:
-        return (f'{html.escape(str(th.get("name", "")))} = {th.get("value")} {html.escape(str(th.get("unit", "")))}；'
-                f'{html.escape(str(th.get("applies_to", "")))}；{html.escape(str(th.get("status", "")))}')
-    names = {"sft": "SFT", "graspo": "GRASPO（RL）", "cpt": "CPT", "opd": "OPD"}
-    rows = []
-    for k in ("sft", "graspo", "cpt", "opd"):
-        v = bm.get(k)
-        if not v:
-            continue
-        extra = ""
-        if v.get("also"):
-            extra += f'；并须：{html.escape(str(v["also"]))}'
-        if v.get("teacher"):
-            extra += f'；教师 = {html.escape(str(v["teacher"]))}'
-        ep = v.get("epoch")
-        if ep is not None and v.get("epoch_previous") is not None and v.get("epoch_previous") != ep:
-            # ★ 修正包 🔴-2：不得写「本轮/本次」这类**相对时间指代**（开发过程措辞）
-            #   ⇒ 只陈述**现行取值**（数值逐字不变），变更史不进人读件。
-            ep_txt = f'epoch={ep}（现行口径）'
-        elif ep is not None:
-            ep_txt = f'epoch={ep}（不变）'
-        else:
-            ep_txt = "—"
-        rows.append(
-            f'<tr><td><b>{names[k]}</b></td>'
-            f'<td>{html.escape(str(v.get("pass_line_text", "")))}</td>'
-            f'<td>主线 = {html.escape(str(v.get("criterion", "")))} {html.escape(str(v.get("op", "")))} '
-            f'{v.get("value")} {html.escape(str(v.get("unit", "")))}'
-            f'（{html.escape(str(v.get("metric", "")))}）{extra}</td>'
-            f'<td>{html.escape(ep_txt)}</td></tr>')
-    return ('<table class="plain"><thead><tr><th>算法</th><th>判据② 通过线（点估计 Δ）</th>'
-            '<th>口径</th><th>epoch</th></tr></thead><tbody>'
-            + "".join(rows) + '</tbody></table>'
-            + f'<p class="note">{html.escape(str(th.get("status", "")))}</p>'
-            + f'<p class="note">旧口径留痕：{html.escape(str(th.get("historical_note", "")))}</p>')
-            # ★ 「by_method 是跑次阈值判定的唯一真相源」= **内部回填机制说明** ⇒ 不进人读视图。
+    name = dict(_METHOD_NAMES)[key]
+    line = html.escape(str(v.get("pass_line_text", "")))
+    if v.get("also"):
+        return f"{name}：{html.escape(str(v['also']))}、准确率不下降，判据 {line}"
+    if key in ("sft", "graspo") and v.get("value") is not None:
+        return (f"{name}：训练后工具调用准确率提升至少 {v.get('value')} 个百分点"
+                f"，判据 {line}")
+    return f"{name}：学生准确率不下降，判据 {line}"
 
 
-def caliber_change_html(c):
-    ch = c.get("caliber_change") or {}
-    if not ch:
-        return "—"
-    out = (f'<b>{html.escape(str(ch.get("effective", "")))}</b>｜来源：{html.escape(str(ch.get("source", "")))}<br>'
-           f'<b>改动</b>：{html.escape(str(ch.get("changed", "")))}<br>'
-           f'<b>未动</b>：{html.escape(str(ch.get("unchanged", "")))}<br>'
-           f'<b>被取代</b>：{html.escape(str(ch.get("superseded", "")))}')
-    # ★★ 「读数变化登记」= 内部跑次史（逐档旧读数作废 / 归因更正的经过）⇒ **不进人读视图**
-    #    （宪法 §17.7：矩阵只承载判据 / 口径 / 实验条件 / 逐档结论；过程迁 `.local/`）。
-    #    ★ 仍进人读视图的是上文的「改动 / 未动 / 被取代」三行——它们是**口径**，不是过程。
-    return out
+def build_criteria(data):
+    """★ §2「通过标准」= **一个列表**（有几条写几条，每条一句大白话）。
 
-
-def _measured_authority_short(c):
-    """★ 精简轮 2：把「步数对账」压成一句话——只留**实测权威 + 以实跑为准 + 结论**。
-
-    ⛔ 不改数值：`measured_authority` 逐字保留；⛔ 不渲染内部概念对账过程。
+    ★ 判据文本的唯一真相源 = `meta.criteria_caliber.pass_criteria`（由生成端
+      `build_official.criteria_caliber()` 产出）；判据② 的逐算法通过线由
+      `threshold.by_method` **现算**（⛔ 不另写一份数值 ⇒ 数值与方向一字不错）。
     """
-    sr = c.get("step_reconciliation") or {}
-    ma = str(sr.get("measured_authority") or "—").strip()
-    return (f"{ma}"
-            "（**以实跑累计步数为准**：该组合的优化步数由运行期触发次数决定，"
-            "无法从配置先验算出；表中「步数」列为按推导式的**上限**。）")
-
-
-def build_caliber(data):
     c = data["meta"].get("criteria_caliber", {})
-    d, th, bl = c.get("dataset", {}), c.get("threshold", {}), c.get("baseline", {})
-    crit = "".join(f"<li>{html.escape(x)}</li>" for x in c.get("availability_criteria", []))
-    return ('<table class="plain"><tbody>'
-            f'<tr><th>判据（四条）</th><td><ul>{crit}</ul></td></tr>'
-            # ★ 精简轮 2：内部口径迭代史（改动一/二/三、来源、未动项）已移出 ⇒ 归档件 §1.3 逐字保留；
-            #   此处只留**访客需要的一句**：判据口径变更过、旧读数作废、只以现行口径结论为准。
-            '<tr><th>判据口径（现行）</th><td>'
-            '<b>本页结论一律以现行判据口径为准</b>（判据口径本身经过变更，变更明细不进本页面）；'
-            '旧口径下的读数一律作废、<b>不得引用</b>（历史读数仅作为留痕保留在数据文件里）。变更明细不进本页面。</td></tr>'
-            f'<tr><th>评测数据集</th><td>{html.escape(d.get("id", ""))}；'
-            f'{html.escape(d.get("availability", ""))}；版本锚点 sha256 <code>{html.escape(d.get("version_anchor_sha256", ""))}</code>；'
-            f'样本量 {d.get("sample_count")}；评测方法 {html.escape(d.get("method", ""))}'
-            # ★ 「是否同分布」口径（诉求 5）：数据驱动 —— 数据里没写就渲染空串（⛔ 不写死文本）
-            f'{"<br><b>训练/评测是否同分布</b>：" + html.escape(str(d.get("train_eval_relation"))) if d.get("train_eval_relation") else ""}'
-            f'{"<br>" + html.escape(str(d.get("train_eval_relation_role"))) if d.get("train_eval_relation_role") else ""}</td></tr>'
-            f'<tr><th>判据标识</th><td><code>{html.escape(c.get("criteria_id", ""))}</code></td></tr>'
-            f'<tr><th>阈值与目标值（判据②）</th><td>{threshold_html(th)}</td></tr>'
-            f'<tr><th>基线口径</th><td>{html.escape(bl.get("role", ""))}；{html.escape(bl.get("caliber", ""))}</td></tr>'
-            f'<tr><th>结论与参数的对应</th><td>{html.escape((c.get("conclusion_rule") or {}).get("rule", ""))}</td></tr>'
-            f'<tr><th>状态用词</th><td>{html.escape((c.get("conclusion_rule") or {}).get("status_wording", ""))}</td></tr>'
-            f'<tr><th>epoch 口径</th><td>{html.escape((c.get("epoch_policy") or {}).get("by_method", ""))}</td></tr>'
-            f'<tr><th>步数口径（取消上限）</th><td>{html.escape((c.get("epoch_policy") or {}).get("steps", ""))}</td></tr>'
-            f'<tr><th>检查点间隔</th><td>{html.escape((c.get("epoch_policy") or {}).get("checkpoint", ""))}</td></tr>'
-            # ★★ 精简轮 2：移出三段**给自己看的开发过程**（原文进《归档 · 轮 2》§1.3）：
-            #   「口径证据（基准散布）」= 旧口径下的基准散布推算；「已知订正（待跑次侧）」= 空行；
-            #   「已知问题（登记待修）」= 内部缺陷台账（含代码路径与内部推理）。
-            #   ⛔ 不是丢事实：① 该缺陷的**面向使用者结论**已在实验条件「步数口径」里如实披露
-            #      （「GRASPO × native 的推导式不成立 ⇒ 以实跑累计步数为准」）；
-            #   ② 三段原文逐字保留在归档件里。
-            # ★ 保留但重写措辞：「步数对账」只留**访客需要的那一句**（实测权威 + 以实跑为准），
-            #   去掉内部概念对账（三者关系 / 名义 / 对账式 / 双验 = 内部推算过程）。
-            f'<tr><th>步数口径 · 实测权威</th><td>'
-            f'{html.escape(_measured_authority_short(c))}</td></tr>'
-            
-            f'<tr><th>LoRA 目标（按后端分流）</th><td>{_lora_backends_html(data)}</td></tr>'
-            f'<tr><th>ms-swift 正则下发机制</th><td>{_target_regex_html(data)}</td></tr>'
-            '</tbody></table>')
+    th = c.get("threshold", {}) or {}
+    bm = th.get("by_method") or {}
+    items = []
+    for it in (c.get("pass_criteria") or []):
+        title = html.escape(str(it.get("title", "")))
+        text = html.escape(str(it.get("text", "")))
+        if it.get("from_threshold"):
+            subs = "".join(f"<li>{_threshold_plain(k, bm[k])}</li>"
+                           for k, _n in _METHOD_NAMES if k in bm)
+            items.append(f'<li><b>{title}</b>：{text}<ul class="tight">{subs}</ul></li>')
+        else:
+            items.append(f'<li><b>{title}</b>：{text}</li>')
+    rule = html.escape(str((c.get("conclusion_rule") or {}).get("pass_rule", "")))
+    cid = html.escape(str(c.get("criteria_id", "")))
+    return (f'<p class="rule">{rule}</p>'
+            f'<ol class="criteria">{"".join(items)}</ol>'
+            f'<p class="note">判据标识 <code>{cid}</code>。'
+            f'{html.escape(str(th.get("status", "")))}</p>')
+
+
+def build_eval_info(data):
+    """★ §3 实验条件里的「评测集 / 评测方法」口径（§17.7：可复核到数据集标识 / 判据标识 /
+    样本量 / 评测方法 / 版本锚点）。
+
+    ★ 数据集标识**不照抄** `dataset.id`（该串内嵌 45 个档号，属实现细节）——改为
+      「来源 + 版本锚点 + 样本量 + 评测方法 + 判据标识」，口径不缩水。
+    """
+    c = data["meta"].get("criteria_caliber", {})
+    d = c.get("dataset", {}) or {}
+    uni = {it.get("key"): it.get("value")
+           for it in ((data.get("uniform") or {}).get("items") or [])}
+    temp = html.escape(str(uni.get("temperature", "")))
+    seed = html.escape(str(uni.get("seed", "")))
+    parts = [
+        (f"评测集：{html.escape(str(d.get('availability', '')))}。"
+         "100 行档的评测集就是它自己训练用的那份 100 行文件"
+         "（拿训练数据自测，只说明训练生效，不代表它在新数据上的表现）；"
+         "其余档用平台方自有 702 行评测集。"),
+        (f"样本量：{html.escape(str(d.get('sample_count', '')))}；"
+         f"数据版本锚点：{html.escape(str(d.get('version_anchor_sha256', '')))}。"),
+        (f"评测方法：{html.escape(str(d.get('method', '')))}；温度 <code>{temp}</code>；"
+         f"随机种子 <code>{seed}</code>；一律用点估计 Δ 判定，不做假设检验。"),
+        (f"判据标识 <code>{html.escape(str(c.get('criteria_id', '')))}</code>；"
+         "达标阈值见第 2 节「通过标准」。"),
+    ]
+    return '<ul class="tight">' + "".join(f"<li>{x}</li>" for x in parts) + "</ul>"
 
 
 def build_verdicts(data):
@@ -433,7 +451,9 @@ def render(template_text, data):
         "{{DOC_TITLE}}": meta.get("title", ""),
         "{{GEN_BANNER}}": build_gen_banner(data),
         "{{BOUNDARY}}": build_boundary(data),
-        "{{CALIBER}}": build_caliber(data),
+        "{{CALIBER}}": build_criteria(data),
+        "{{CRITERIA}}": build_criteria(data),
+        "{{EVAL_INFO}}": build_eval_info(data),
         "{{VERDICTS}}": build_verdicts(data),
         "{{GENERATOR}}": (meta.get("authority") or {}).get("generator", ""),
         "{{DATA_PATH}}": (meta.get("authority") or {}).get("data_path", ""),

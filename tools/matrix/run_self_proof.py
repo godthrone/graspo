@@ -214,7 +214,7 @@ def main():
         rc, out = run(["tools/matrix/verify_matrix.py", "--template", "tools/matrix/template.html",
                        "--data", str(tmp / "ex.data.json"), "--html", str(tmp / "ex.html")])
         steps.append(("⑩ 表格列数被改后 verify（应 FAIL）", rc, out))
-        checks["⑩ 列定义偏离已定 13 列 ⇒ verify FAIL"] = (rc == 1)
+        checks["⑩ 列定义偏离已定 10 列 ⇒ verify FAIL"] = (rc == 1)
         checks["⑩ FAIL 报出 ④B 列定义"] = ("④B" in out)
 
         # ⑪ ★ 阳性对照（精简轮 2 新增断言 ④P）：把边界声明块里的覆盖度门槛注删掉 ⇒ **必红**
@@ -329,6 +329,27 @@ def main():
         rc, out = run(["tools/matrix/scan_matrix_leaks.py", str(tmp / "inj.data.json")])
         steps.append(("⑰b 数据件注入过程词后 scan（应 FAIL）", rc, out))
         checks["⑰b 数据件注入过程词 ⇒ 扫描 FAIL"] = (rc == 1 and "本轮" in out)
+
+        # ⑱ ★ 阳性对照（修正轮 1，全局审查 B2）：把**已作废的旧口径措辞**塞回渲染后的正文
+        #    ⇒ 新增的 ④H 禁止措辞断言**必红**（与 ⑫ 同法：注入在 HTML 层，绕过展示层归一）。
+        #    ★ 展示层归一（`render_matrix.human_view_effect`）负责从**数据**侧清掉旧措辞；
+        #      本对照证明「若有人把它塞回成品」仍会被机检拦住。
+        c18 = json.loads(json.dumps(data, ensure_ascii=False))
+        (tmp / "c18.data.json").write_text(json.dumps(c18, ensure_ascii=False, indent=1), encoding="utf-8")
+        run(["tools/matrix/render_matrix.py", "--template", "tools/matrix/template.html",
+             "--data", str(tmp / "c18.data.json"), "--out", str(tmp / "c18.html")])
+        _cp18 = tmp / "c18.html"
+        if _cp18.exists():
+            _ch18 = _cp18.read_text(encoding="utf-8")
+            _ch18 = _ch18.replace(
+                "</h1>", "</h1><p>旧口径：冻结阈值 +5.0 pp；目标 +10.0 pp 仅展示。</p>", 1)
+            _cp18.write_text(_ch18, encoding="utf-8")
+        rc, out = run(["tools/matrix/verify_matrix.py", "--template", "tools/matrix/template.html",
+                       "--data", str(tmp / "c18.data.json"), "--html", str(_cp18)])
+        steps.append(("⑱ 正文塞回旧口径措辞后 verify（应 FAIL）", rc, out))
+        checks["⑱ 旧口径措辞塞回 ⇒ verify FAIL"] = (rc == 1)
+        checks["⑱ FAIL 报出 ④H 旧口径措辞"] = (
+            "④H" in out and "仅展示" in out and "目标 +10.0 pp" in out)
 
         print("=" * 70)
         for name, rc, out in steps:
