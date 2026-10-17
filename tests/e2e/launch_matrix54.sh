@@ -32,7 +32,7 @@ say "  ASSERT_OK_CODE_IDENTITY（HEAD a674b4f tree + manifest 两档对齐生成
 
 say "--- [assert 1] 卡实测（★ 逐卡循环：每张卡各自校验 剩余≥头寸 ∧ util 连续 3 帧 0）---"
 export GRASPO_ALLOWED_GPU_INDICES="0,1,2,3,4,5,6,7"
-PYTHONPATH="$PYTHONPATH" python3 "$TREE/scripts/gpu_lock_guard.py" --visible "$GPU" 2>&1 | tee -a "$LOG"
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PYTHONPATH" python3 "$TREE/scripts/gpu_lock_guard.py" --visible "$GPU" 2>&1 | tee -a "$LOG"
 [ "${PIPESTATUS[0]}" -eq 0 ] || die "gpu_lock_guard 拒绝"
 # ★ 逐卡断言：交给仓内**已固化且有单测**的实现 scripts/gpu_idle_assert.py
 #   （默认连续采样 3 帧、间隔 12 s、帧帧满足；**任一**目标卡 剩余 < 本档头寸 或 util != 0 ⇒ rc=1 ⇒ 拒跑）。
@@ -40,7 +40,7 @@ PYTHONPATH="$PYTHONPATH" python3 "$TREE/scripts/gpu_lock_guard.py" --visible "$G
 #      `[: 81153\n81153: integer expression expected` ⇒ FATAL（228 实测）；
 #      而绕法"只传一张卡做预检"会让**多卡档只验一张卡**，与"当场复测每张卡"的纪律不符。
 #   头寸默认 48 GiB（与旧硬编码值一致），可用 GRASPO_GPU_POSITION_MIB 覆盖 —— 语义未变。
-"$PYBIN_OR_PYTHON" "$TREE/scripts/gpu_idle_assert.py" --visible "$GPU" 2>&1 | tee -a "$LOG"
+PYTHONDONTWRITEBYTECODE=1 "$PYBIN_OR_PYTHON" "$TREE/scripts/gpu_idle_assert.py" --visible "$GPU" 2>&1 | tee -a "$LOG"
 [ "${PIPESTATUS[0]}" -eq 0 ] || die "目标卡实测空闲断言拒绝（逐卡：剩余 ≥ 头寸 ∧ util 连续 3 帧 0）"
 say "  ASSERT_OK_GPU_IDLE_PER_CARD（GPU=$GPU；逐卡 3 帧）"
 
@@ -58,7 +58,7 @@ if [ "${GRASPO_SCHED_WINDOW_DISABLED:-}" = "1" ]; then
     say "  ★ 恢复条件：若日后重新启用自动更新，必须立即恢复 06:00–07:00 UTC 禁窗"
     say "  ASSERT_OK_SCHED_WINDOW_DISABLED_BY_RULING"
 else
-    python3 "$STAGE/sched_window_guard.py" --duration-sec "$SCHED_SEC" --label "$TIER" 2>&1 | tee -a "$LOG"
+    PYTHONDONTWRITEBYTECODE=1 python3 "$STAGE/sched_window_guard.py" --duration-sec "$SCHED_SEC" --label "$TIER" 2>&1 | tee -a "$LOG"
     [ "${PIPESTATUS[0]}" -eq 0 ] || die "排期守卫拒跑"
     say "  ASSERT_OK_SCHED_WINDOW"
 fi

@@ -69,6 +69,8 @@ fi
 MANIFEST="${GRASPO_RUNNER_MANIFEST:-$ROOT_DIR/tests/e2e/matrix54_manifest_source.json}"
 
 # 需要 python3 解析 JSON；没有就退回 runner 默认源（与直跑同行为）
+# ⚠ 宿主侧 python 一律带 PYTHONDONTWRITEBYTECODE=1：装配树纪律 = 与基准 commit 逐字节等价，
+#   在树内写 __pycache__/*.pyc 会让 `git ls-tree -r <commit>` 逐文件比对（873 文件）失效。
 PYBIN="${PYTHON:-python3}"
 if ! command -v "$PYBIN" >/dev/null 2>&1; then
     echo "WARN(v2source): 找不到 $PYBIN ⇒ 不覆盖读取源，按 runner 既有默认源继续" >&2
@@ -77,7 +79,7 @@ fi
 
 # ── 解析该档的 data.source_jsonl + data.subset_size（stdout 单行，第三个 token = rc）──
 PARSED="$(
-"$PYBIN" - "$MANIFEST" "$TIER" <<'PY' 2>/dev/null
+PYTHONDONTWRITEBYTECODE=1 "$PYBIN" - "$MANIFEST" "$TIER" <<'PY' 2>/dev/null
 import json, os, re, sys
 try:
     with open(sys.argv[1], encoding="utf-8") as handle:

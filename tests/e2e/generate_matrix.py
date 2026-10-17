@@ -3741,7 +3741,7 @@ print_cache_roots() {{
 # 0) 从运行清单取出该档的 GPU / 配置 / 卡数 / 子集大小 / 容器内模型路径。
 # 交接格式是**单行 JSON**：旧的"read 多个变量 < <(python …)"在 stdout 是管道时
 # 会受 Python 块缓冲影响，字段可能错位（潜在隐患，本轮改为显式 JSON 交接）。
-TIER_JSON=$("$PYBIN" - "$MANIFEST" "$TIER" <<'PY'
+TIER_JSON=$(PYTHONDONTWRITEBYTECODE=1 "$PYBIN" - "$MANIFEST" "$TIER" <<'PY'
 import json, sys
 manifest = json.load(open(sys.argv[1], encoding="utf-8"))
 tier = next(t for t in manifest["tiers"] if t["tier_id"] == sys.argv[2])
@@ -3761,7 +3761,7 @@ PY
 ) || exit 5
 
 read -r GPUS CONFIG_STATUS NPROC SUBSET TRAINPATH MODEL_PATH MODEL_ENV VERDICT \\
-  < <("$PYBIN" - "$TIER_JSON" <<'PY'
+  < <(PYTHONDONTWRITEBYTECODE=1 "$PYBIN" - "$TIER_JSON" <<'PY'
 import json, sys
 data = json.loads(sys.argv[1])
 print(
@@ -3903,7 +3903,10 @@ if [ -z "$MODELS_ROOT" ]; then
 fi
 
 # 2) 宿主侧锁卡守卫（fail-closed；与容器内 train_worker 是同一实现）
-"$PYBIN" "$ROOT_DIR/scripts/gpu_lock_guard.py" --visible "$GPUS" || exit 1
+# ⚠ 宿主侧 python 一律带 PYTHONDONTWRITEBYTECODE=1（本节 + 上面的档解析）：装配树纪律 =
+#   与基准 commit 逐字节等价，在树内写 __pycache__/*.pyc 会让 `git ls-tree -r <commit>`
+#   逐文件比对（873 文件）失效。本变量只影响字节码落盘，不改任何命令行/退出码/fail-closed 语义。
+PYTHONDONTWRITEBYTECODE=1 "$PYBIN" "$ROOT_DIR/scripts/gpu_lock_guard.py" --visible "$GPUS" || exit 1
 
 # 2a) 宿主侧**目标卡实测空闲断言**（F-10，fail-closed）：逐卡实测
 #     memory.used ≤64 MiB 且 utilization.gpu ≤5%；任一卡被占即拒绝启动。
@@ -3912,7 +3915,7 @@ fi
 #     GRASPO_SKIP_IDLE_ASSERT=1 仅供无 GPU 的脚手架自检（如假 docker 的 dry-run 回归），
 #     真实上机**不得**设置——跳过即失去这道防线，属显式降级。
 if [ "${{GRASPO_SKIP_IDLE_ASSERT:-0}}" != "1" ]; then
-    "$PYBIN" "$ROOT_DIR/scripts/gpu_idle_assert.py" --visible "$GPUS" || exit 1
+    PYTHONDONTWRITEBYTECODE=1 "$PYBIN" "$ROOT_DIR/scripts/gpu_idle_assert.py" --visible "$GPUS" || exit 1
 else
     # 透明退路（宪法 §3.2）：跳过防线必须留痕，不能只在日志里"没有输出"。
     # 两处痕迹：① stderr 的显式 WARNING；② **环境指纹/产物** `skipped_guards.log`，
