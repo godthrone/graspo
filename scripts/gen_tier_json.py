@@ -15,10 +15,90 @@
 """
 from __future__ import annotations
 
-import argparse, collections, hashlib, json, os, re, sys
+import argparse, collections, hashlib, importlib.util, json, os, re, sys
+from pathlib import Path
+from types import ModuleType
 
 FAIL = "失败（效果）"
 PASS = "通过（已验证可用）"
+
+# ── 判据② 通过线的**唯一读取通道**（宪法 §1.4 单一真相源） ────────────────────
+# ★ 2026-10-17 修正轮 1（全局审查 B1）：本脚本此前对所有算法一律写死 `>= 5.0`，
+#   是**第二份阈值副本**：SFT 档 Δ=+7.3 pp 会被判成「通过（已验证可用）」，而冻结
+#   口径 SFT 线 = +10.0 pp ⇒ 结论错；且回填器 `backfill_matrix.run_claimed_pp` 会从
+#   `effect` 抽出该自述阈值与矩阵冻结口径交叉核对 ⇒ SFT / CPT / OPD 三档会被直接拒绝。
+# ★ 修法：阈值**现读**唯一真相源（`docs/capability-matrix.data.json →
+#   meta.criteria_caliber.threshold.by_method`），本文件**不定义任何阈值数值**。
+_SRC = Path(__file__).resolve().parents[1] / "src"
+
+#: `--label`（人读算法名）→ 冻结口径 `by_method` 的键（★ 只是名字映射，⛔ 不含任何阈值数值）。
+METHOD_BY_LABEL = {"SFT": "sft", "GRASPO": "graspo", "CPT": "cpt", "OPD": "opd"}
+
+
+def _load_thresholds() -> ModuleType:
+    """按**文件路径**加载 `src/graspo/eval/thresholds.py`（阈值唯一读取通道）。
+
+    ★ 与 `scripts/collect_results.py` / `scripts/gpu_lock_guard.py` 同一手法：走文件路径
+      可绕开 `graspo/__init__.py` 对 torch / pydantic 的拉取（本脚本只需要纯标准库的
+      阈值读取逻辑）。★ 装好的包存在时回退到常规 import。
+    """
+    source = _SRC / "graspo" / "eval" / "thresholds.py"
+    if source.is_file():
+        spec = importlib.util.spec_from_file_location("_graspo_eval_thresholds", source)
+        if spec is not None and spec.loader is not None:
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = module      # dataclass 装饰器依赖 __module__ 可解析
+            spec.loader.exec_module(module)
+            return module
+    import graspo.eval.thresholds as installed  # noqa: PLC0415
+
+    return installed
+
+
+def method_from_label(label: str) -> str:
+    """`--label` ⇒ 冻结口径的算法键；不认识 ⇒ FAIL-CLOSED（⛔ 不猜、⛔ 不回落默认线）。"""
+    key = str(label or "").strip().upper()
+    if key in METHOD_BY_LABEL:
+        return METHOD_BY_LABEL[key]
+    raise SystemExit(
+        f"★ --label={label!r} 不在冻结口径的算法集合 {sorted(METHOD_BY_LABEL)} 内 ⇒ FAIL-CLOSED"
+        "（判据② 逐算法分列，⛔ 不得用某条线套所有算法）"
+    )
+
+
+def frozen_judgement(label: str, delta_pp: float) -> tuple[bool, object]:
+    """按**该算法**的冻结通过线判定 `delta_pp`；返回 `(是否通过, MethodThreshold)`。
+
+    Raises:
+        FrozenCaliberError（来自 thresholds）：真相源读不到 / 形状不对（fail-closed）。
+    """
+    threshold = _load_thresholds().frozen_method_threshold(method_from_label(label))
+    return threshold.judge(delta_pp), threshold
+
+#: `--host`（运行环境宿主标签）的环境变量名：`--host` 未显式提供时从中读取。
+#: ★ 为什么必须有它（2026-10-17 去内部化）：本参数的 argparse 默认值原先是
+#: 「机器号 + 真内网主机名」——运行环境信息按宪法 §16.2 **只许进 `.local/`**，
+#: 不得出现在已跟踪文件里（门禁 gate_content 当时不覆盖该形态，属盲区）。
+#: 现默认 None ⇒ 缺失即 FAIL-CLOSED，⛔ 不静默回落到任何内部值。
+HOST_LABEL_ENV = "GRASPO_HOST_LABEL"
+
+
+def resolve_host_label(args) -> None:
+    """定 `args.host`：显式 `--host` > `GRASPO_HOST_LABEL` 环境变量；都没有 ⇒ FAIL-CLOSED。
+
+    ⛔ 不提供任何内部默认值（旧默认值是真实机器号 + 内网主机名）。CLI 表面不变
+    （`--host` 仍是可选字符串参数），只是"什么都没给"从"静默用内部值"改成"明确报错"。
+    """
+    if (getattr(args, "host", None) or "").strip():
+        return
+    from_env = (os.environ.get(HOST_LABEL_ENV) or "").strip()
+    if not from_env:
+        raise SystemExit(
+            "★ --host 未提供且环境变量 "
+            f"{HOST_LABEL_ENV} 为空 ⇒ FAIL-CLOSED（运行环境信息不得有内部默认值，"
+            f"宪法 §16.2）。用法：--host '<宿主标签>' 或 export {HOST_LABEL_ENV}='<宿主标签>'"
+        )
+    args.host = from_env
 
 
 def load_report(path: str) -> dict:
@@ -140,7 +220,9 @@ def build(args) -> collections.OrderedDict:
         assert abs(delta_reported - delta_field) < 1e-3, \
             f"delta 不同源（报告 {delta_reported} vs 精确 {delta_field}）⇒ 超出舍入容差"
         delta_pp = delta_field
-        status = PASS if delta_pp >= 5.0 else FAIL
+        # ★ 判据② 逐算法：通过线从唯一真相源现读（⛔ 本文件不写死任何阈值数值）。
+        passed, threshold = frozen_judgement(args.label, delta_pp)
+        status = PASS if passed else FAIL
     d = collections.OrderedDict()
     d["schema"] = "matrix-run/v1"
     d["tier"] = args.tier
@@ -167,7 +249,7 @@ def build(args) -> collections.OrderedDict:
     d["effect"] = ("★ 不可评（见 not_evaluable_reason）；⛔ 本档不可评与达标与否无关。"
                    if args.no_eval else
                    f"after acc={ap:.4f}%（{ac}/{at}）；base acc={bp:.4f}%（{bc}/{bt}）；"
-                   f"★ Δ = {delta_pp:+.4f} pp（冻结阈值 +5.0 pp；目标 +10.0 pp 仅展示）。口径："
+                   f"★ Δ = {delta_pp:+.4f} pp（判据② {args.label} 通过线：{threshold.pass_line_text}）。口径："
                    f"criteria {args.criteria}、温度 {args.temp}、{at}/{at}、0 error；base/after 独立 output_dir + fail-closed + stdout 双份。"
                    + (f" ★ 服务档参数：{args.serving_note}" if args.serving_note else ""))
     d["inference"] = args.inference
@@ -288,12 +370,14 @@ def main(argv=None) -> int:
     ap.add_argument("--not-evaluable-reason", default="")
     ap.add_argument("--nproc", type=int, required=True); ap.add_argument("--steps", type=int, required=True)
     ap.add_argument("--recon", required=True)
+    # ★ `host` 默认 None（无内部默认值）：由 resolve_host_label() 解析 `--host` /
+    #   GRASPO_HOST_LABEL，缺失即 FAIL-CLOSED（2026-10-17 去内部化）。
     for k, dv in (("model", "9B"), ("label", "CPT"), ("mode", ""), ("backend", "ms-swift"),
                   ("parallel", ""), ("hparams", ""), ("lora_target", "★ 不适用（非 LoRA 档）"),
                   ("runs", ""), ("inference", ""), ("algo_checks", ""), ("throughput", ""),
                   ("peak_mem", ""), ("run_path", ""), ("produced_by", "BADGE 会话 20261008-105451 · 评测执行者（subagent）"),
                   ("command", ""), ("tree_fp", ""), ("yaml", ""), ("yaml_sha", ""),
-                  ("img_run", ""), ("img_base", ""), ("host", "228 / rephy-10-1-251-228"),
+                  ("img_run", ""), ("img_base", ""), ("host", None),
                   ("gpu", ""), ("epochs", "2"), ("exit_code", "0"), ("criteria", "elam-v3-allright-1"),
                   ("temp", "0"), ("serving_note", ""), ("p5p6", "")):
         ap.add_argument("--" + k.replace("_", "-"), default=dv, dest=k)
@@ -304,6 +388,7 @@ def main(argv=None) -> int:
     # ★ 身份同源：该档配置/manifest 路径（提供则做身份断言）
     ap.add_argument("--identity-from-config", default=None, dest="identity_from_config")
     args = ap.parse_args(argv)
+    resolve_host_label(args)
     d = build(args)
     selfcheck(d)
     out = args.out or (args.tier + ".json")

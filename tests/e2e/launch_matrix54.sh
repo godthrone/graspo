@@ -6,7 +6,12 @@ TREE="${GRASPO_TREE:?need GRASPO_TREE}"
 ENVF="${GRASPO_ENVF:?need GRASPO_ENVF}"
 TIER="${GRASPO_TIER:?need GRASPO_TIER}"
 GPU="${GRASPO_GPU:?need GRASPO_GPU}"
-STAGE="${GRASPO_STAGE:-/data/remote/batch2-staging}"
+# ★ 暂存根（内含 sched_window_guard.py）：**由环境变量驱动，无内部默认值**。
+#   2026-10-17 去内部化：原先回落到宿主内部绝对路径（含真实账号段）⇒ 违反 §15.1
+#   「内网路径 / 真实账号不得出现在已跟踪文件里」，且门禁 gate_content 恒红。
+#   现与上方 TREE/ENVF/TIER/GPU/FP_EXPECT **同一 fail-closed 形态**：未设即明确
+#   报错退出，⛔ 不静默回落到任何内部值。
+STAGE="${GRASPO_STAGE:?need GRASPO_STAGE}"
 IMG=${GRASPO_IMG:-graspo:v0.28.11-cu130fix-v2-deepspeed-20261012-run}
 IMGFP=${GRASPO_IMGFP:-f83c67d24ba1}
 BASEIMG=${GRASPO_BASEIMG:-graspo:v0.28.11-cu130fix-v2-deepspeed-20261012}

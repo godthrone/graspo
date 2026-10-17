@@ -5,6 +5,7 @@
 （与矩阵侧 `backfill_matrix.py::not_evaluable_ok` 同判据）。
 """
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -12,14 +13,16 @@ from pathlib import Path
 GEN = "scripts/gen_tier_json.py"
 BASE = [sys.executable, GEN, "--tier", "T999", "--mode", "full", "--parallel",
         "TP=1 PP=1 DP=1", "--model", "9B", "--label", "SFT", "--nproc", "1",
-        "--steps", "1", "--recon", "1", "--backend", "native", "--host", "228",
+        "--steps", "1", "--recon", "1", "--backend", "native", "--host", "example-host",
         "--gpu", "0", "--exit-code", "1", "--non-graspo",
         "--evidence", "e.txt", "--command", "x", "--out", "/tmp/_ne_test.json"]
 
 
-def _run(extra):
+def _run(extra, env_extra=None):
+    env = {k: v for k, v in os.environ.items() if k != "GRASPO_HOST_LABEL"}
+    env.update(env_extra or {})
     return subprocess.run(BASE + extra, capture_output=True, text=True,
-                          cwd=Path(__file__).resolve().parents[2])
+                          cwd=Path(__file__).resolve().parents[2], env=env)
 
 
 def test_no_eval_reason_accepted():
@@ -80,3 +83,57 @@ def test_identity_accepts_matching_model_scale():
               "--model", "27B", "--mode", "LoRA", "--backend", "native",
               "--parallel", "TP=1 PP=1 DP=4", "--nproc", "4"])
     assert r.returncode == 0, r.stderr[-400:]
+
+
+# ---------- 去内部化（2026-10-17）：`--host` 无内部默认值 ----------
+# 背景：`--host` 的 argparse 默认值原先写死「机器号 + 真内网主机名」——运行环境
+# 信息按宪法 §16.2 只许进 `.local/`。现改为 `--host` / `GRASPO_HOST_LABEL` 二者
+# 之一，都没有即 FAIL-CLOSED。★ 下面三条是**能失败对照**：把"缺失"钉成必红。
+_HOST_ENV = "GRASPO_HOST_LABEL"
+
+
+def _base_without_host() -> list[str]:
+    """BASE 去掉 `--host <value>` 两枚 token（用于验证缺失时的 fail-closed）。"""
+    out, it = [], iter(BASE)
+    for tok in it:
+        if tok == "--host":
+            next(it)  # 丢弃它的值
+            continue
+        out.append(tok)
+    return out
+
+
+def _run_bare(extra, env_extra=None):
+    env = {k: v for k, v in os.environ.items() if k != _HOST_ENV}
+    env.update(env_extra or {})
+    return subprocess.run(_base_without_host() + extra, capture_output=True, text=True,
+                          cwd=Path(__file__).resolve().parents[2], env=env)
+
+
+def test_host_missing_and_env_missing_fails_closed():
+    """★ 负例：`--host` 未给且 `GRASPO_HOST_LABEL` 未设 ⇒ 必须明确报错退出。
+
+    ⛔ 不得静默回落到任何内部默认值（旧行为：机器号 + 真内网主机名）。
+    """
+    r = _run_bare(["--no-eval", "--not-evaluable-reason", "不可评：测试用"])
+    assert r.returncode != 0, "★ 应 fail-closed 却放行"
+    out = r.stderr + r.stdout
+    assert "FAIL-CLOSED" in out and _HOST_ENV in out, out[-400:]
+
+
+def test_host_from_env_is_accepted_and_recorded():
+    """★ 正例：`--host` 缺省时由 `GRASPO_HOST_LABEL` 供给 ⇒ 放行且落盘同值。"""
+    r = _run_bare(["--no-eval", "--not-evaluable-reason", "不可评：测试用"],
+                  env_extra={_HOST_ENV: "example-host"})
+    assert r.returncode == 0, r.stderr[-400:]
+    d = json.load(open("/tmp/_ne_test.json", encoding="utf-8"))
+    assert d["provenance"]["run_environment"]["host"] == "example-host"
+
+
+def test_explicit_host_wins_over_env():
+    """★ 优先级：显式 `--host` > env（CLI 语义不变，env 只是缺失时的兜底源）。"""
+    r = _run(["--no-eval", "--not-evaluable-reason", "不可评：测试用"],
+             env_extra={_HOST_ENV: "env-host"})
+    assert r.returncode == 0, r.stderr[-400:]
+    d = json.load(open("/tmp/_ne_test.json", encoding="utf-8"))
+    assert d["provenance"]["run_environment"]["host"] == "example-host"
