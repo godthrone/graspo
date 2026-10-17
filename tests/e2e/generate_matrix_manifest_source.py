@@ -74,9 +74,8 @@ from regen_field_guard import (  # noqa: E402  （sys.path 就位之后导入）
     guard_regeneration_keeps_on_disk_fields,
     matches_any,
 )
-from gpu_assignment import (  # noqa: E402  （§1.4 单一真相源：锁卡集合只有这一份定义）
+from gpu_assignment import (  # noqa: E402  （§1.4 单一真相源：可用卡集合只有这一份定义）
     GPU_ALLOWED,
-    GPU_FORBIDDEN_PRODUCTION,
 )
 
 #: ★ **跑次实际读取的档配置目录**（= 矩阵生成件）：由 ``tools/matrix/gen_configs.py`` 从
@@ -232,11 +231,17 @@ V1_PER_EPOCH_BY_TIER: dict[str, int] = {
     for t in json.loads(V1_MANIFEST_PATH.read_text(encoding="utf-8"))["tiers"]
 }
 
-#: ★ 已具名登记的**既有**（⛔ 非本轮引入）`per_epoch` 漂移档 —— 第二轮全局审查 W-7，
-#: 属"原包步数口径对齐只改了矩阵侧"，**须单独裁定**（⛔ 本轮不修）。
+#: ★ 已具名登记的**既有** `per_epoch` 漂移档 —— 第二轮全局审查 W-7。
+#: ★★ **2026-10-17 定案（本包）：W-7 已闭合，本表清空**。
+#:   定案依据（真机）：T017/T018 = native 全参 **PP 档**（``pp_size>1 ∧ dp_size=1``）；v1 生成器
+#:   的 `_planned_save_steps` 按 **cards** 均分样本，而 **PP 切层、不切数据** ⇒ 声明值被 ÷2 / ÷4。
+#:   机检两读：按 ``reachable=100``（T018 旧声明）判 ⇒ ``VERDICT=FAIL C2 400!=100``；
+#:   按 ``checkpoint_save_steps-1=400`` 判 ⇒ ``VERDICT=PASS ALL-5-OK`` ⇒ **矩阵的派生是对的、
+#:   清单的是错的**。故 :func:`patch_tier` 的非 native 分支改为按 **dp_size** 折算（见该处注释），
+#:   两档不再漂移 ⇒ **反向断言要求本表必须为空**（⛔ 不允许留静默白名单）。
 #: ★ 该表**不是静默白名单**：`cross_check_manifest_against_matrix()` 会断言这些档**确实仍在漂**，
 #:   一旦被修好（不再漂）⇒ 立即报「豁免表陈旧」（fail-closed），必须删出。
-KNOWN_PRE_EXISTING_PER_EPOCH_DRIFT: tuple[str, ...] = ("T017", "T018")
+KNOWN_PRE_EXISTING_PER_EPOCH_DRIFT: tuple[str, ...] = ()
 
 assert set(MINI_DECLARED_NOT_LANDED) <= set(MINI_DECLARED_SUBSET_SIZE), "豁免档必须在声明口径表里"
 assert all(v == 100 for v in MINI_DECLARED_SUBSET_SIZE.values()), "18 档声明口径应为 100"
@@ -336,6 +341,58 @@ def run_config_scalar(tier_id: str, key: str) -> "int | None":
     return int(read_yaml_scalar(path, key))
 
 
+def run_config_block_scalar(tier_id: str, block: str, key: str,
+                            *, required: bool = True) -> int | None:
+    """从**跑次实际读取**的档配置（``CONFIG_DIR_REL``）的 ``<block>:`` 段内读一个整型标量。
+
+    ★ 为什么必须按**段**读（⛔ 不能复用 :func:`run_config_scalar`）：``nproc_per_node`` 在
+      ``launch:`` 与 ``msswift:`` 两个段里各出现一次 ⇒ 全文正则必然命中 2 次、fail-closed。
+    ★ ``required=False`` 仅用于**可选**键（如 ``msswift.nnodes``，缺省 = 1）。
+    ★ 该档 yaml 不存在 ⇒ 返回 ``None``（由调用方按具名豁免处置）；yaml 存在但段/键缺失 ⇒
+      **raise**（fail-closed，⛔ 不静默补默认值）。
+    """
+    path = PROJECT_ROOT / CONFIG_DIR_REL / f"{tier_id}.yaml"
+    if not path.is_file():
+        return None
+    txt = path.read_text(encoding="utf-8")
+    m = re.search(rf"^{re.escape(block)}:\n((?:[ \t]+.*\n|\n)*)", txt, re.M)
+    if m is None:
+        if not required:
+            return None
+        raise AssertionError(f"{path}: 段 {block!r} 不存在 ⇒ 无法读 {key!r}")
+    hits = re.findall(rf"^\s*{re.escape(key)}:\s*(\S+)\s*$", m.group(1), re.M)
+    if len(hits) != 1:
+        if not hits and not required:
+            return None
+        raise AssertionError(f"{path}: {block}.{key} 出现 {len(hits)} 次（期望 1）")
+    return int(hits[0])
+
+
+def run_config_dp_size(tier_id: str, backend: str) -> int | None:
+    """该档**跑次实际使用**的**数据并行度 dp_size**（唯一真相源 = ``tiers[*].config`` 所指 yaml）。
+
+    ★★ 本函数是「每 epoch 计划步数」除以的那个量的**唯一读取点**（§1.4）。
+    病史（本包修复的 PP 派生缺陷）：v1 生成器把每 epoch 步数按 **``cards``（卡数）**均分，
+    而 v1 的非 native 分支（``expected_optimizer_steps_per_epoch``）与该口径同源 ⇒
+    source 生成器透传 v1×口径比率时把「按卡数相除」一并继承。对 **PP 档不成立**：
+    **PP 切层、不切数据**（``native.pp_size>1 ∧ dp_size=1`` ⇒ 每条 rank 都看全量数据）。
+
+    口径（与矩阵 / 本文件头 ``T = floor(subset_size / dp_size)`` 自述逐字一致）：
+      · ``native`` 后端 ⇒ ``native.dp_size``（PP/TP 不折算数据）；
+      · ``ms-swift`` 后端 ⇒ ``msswift.nproc_per_node × nnodes``（ms-swift 不暴露 ``dp_size``，
+        其 DP 由 torchrun ``world_size`` 派生；``nnodes`` 缺省 = 1）。
+    ★ 读不到该档 yaml（3 档 ``not_applicable`` 具名豁免 :data:`NOT_APPLICABLE_NO_CONFIG`）⇒
+      返回 ``None``，由调用方**原样保留 v1 口径**（⛔ 不发明、⛔ 不引入第二份 dp 表）。
+    """
+    if str(backend) == "native":
+        return run_config_block_scalar(tier_id, "native", "dp_size")
+    nproc = run_config_block_scalar(tier_id, "msswift", "nproc_per_node")
+    if nproc is None:
+        return None
+    nnodes = run_config_block_scalar(tier_id, "msswift", "nnodes", required=False) or 1
+    return int(nproc) * int(nnodes)
+
+
 def run_config_epochs(tier_id: str) -> "int | None":
     """该档**跑次实际使用**的 epoch 数（= yaml 的 ``training.max_epochs``）。
 
@@ -362,25 +419,29 @@ def is_native_graspo(entry: dict) -> bool:
     return str(entry["backend"]) == "native" and str(entry["algorithm"]) == "GRASPO"
 
 
-#: ★ 卡池确定性映射（**2026-10-16 起改为只含合法卡**；合法性 = :data:`GPU_ALLOWED` −
-#:   :data:`GPU_FORBIDDEN_PRODUCTION` − 主席禁用集 ``{0,2}``）。
-#: ★ 旧值 ``4卡->[4,5,6,7]`` **含两张生产锁卡**，过去只靠 :func:`locked_card_violation`
-#:   的「恰等于整卡池即登记不 raise」豁免才通过 ⇒ 该豁免已按主席令**收窄**（池自身非法即 raise）。
-#: 1卡->[4]｜2卡->[4,5]｜3卡->[4,5,6]｜4卡->[4,5,6,7]
+#: ★ 卡池确定性映射 = **每档的「建议首选卡位」**（★ 语义变更，2026-10-17）。
+#:   ★★ 主席 2026-10-17 裁定（唯一标尺，逐字）：「**228 先到先得，随便用。**」
+#:   ＋「**单个作业不限制卡数。**」⇒
+#:     · 卡号判据只剩**存在性**：本机全卡 GPU0–7 一律可用（:data:`GPU_ALLOWED`）；
+#:       ⛔ 无预留、⛔ 不禁用、⛔ 无"生产锁卡"、⛔ 无"邻居卡"、⛔ 无单作业卡数上限；
+#:     · 本映射（与 :data:`TIER_GPU_OVERRIDE`）**降级为"建议首选卡位"**——它是**调度建议与
+#:       可比性锚**（A4「同档两跑必须同卡位」靠它），**不再是合法性判据**。任何人若因现场
+#:       占用需要把某档挪到别处，只要卡号 ∈ 0–7 且卡数 == 该档 ``cards`` 即**合法**。
+#:     · ★ 唯一保留的硬要求 =「**不抢占他人**」：起跑前**逐卡实测空闲**
+#:       （剩余显存 ≥ 本档头寸 ∧ util == 0；见 ``flow.guard.idle`` / ``scripts/gpu_idle_assert.py``），
+#:       被占则**换卡或等**，⛔ 绝不 kill 他人进程、绝不停他人容器。
+#:   ★ 取值**逐字未改**（本包只改语义与判据，⛔ 不重排、⛔ 不动任何档的 gpus 取值）。
 GPU_POOL_BY_CARDS: dict[int, list[int]] = {1: [4], 2: [4, 5], 3: [4, 5], 4: [1, 3, 4, 5]}
 
-#: ★ 按档的**显式卡位覆盖表**（项目准许的**资源调度例外**；⛔ 不改卡数）。
-#: ★★ **2026-10-16 撤销唯一一条例外（T041 `[2,3]`）** —— 该值是 **2026-10-09 的一次性调度决策**
-#:    （原文：「4卡最好是相邻的…把4-7给四卡」「0-3是先到先得」⇒ T041 挪到 0–3 内当时唯一可用的
-#:    相邻空闲对 `[2,3]`，因为「GPU1 被他人 `rrc-runtime` 占用」）。它描述的是**当时的空闲状态**，
-#:    不是设计约束；而 **GPU2 是第三方账号占用中的常驻邻居卡**（`docs/card-pool-contract.md:20-22`
-#:    规则 4「邻居资源只读不占…只观测、不排队、不干预」）⇒ 该值把邻居的卡写进了我方声明。
-#:    ⇒ 撤销后 T041 走**显式车道** :data:`TIER_GPU_OVERRIDE`\[``"T041"``\]（★ 2026-10-16 车道重出后**不再是**默认映射 ``[4,5]``）。
-#: ★ `cards`（卡数）**保持 2 不变**：卡数属基础列不得改动；本表只改"用哪几张卡"。
-#: ★ 未列出的档一律走 :data:`GPU_POOL_BY_CARDS`（上面那行映射**逐字未变**）。
+#: ★ 按档的**建议首选卡位**覆盖表（调度建议，⛔ 不改卡数）。
+#: ★ 语义 = "建议首选"，**不是**"唯一允许"：卡号只要 ∈ ``GPU_ALLOWED``（0–7）即合法。
+#: ★ 为什么仍保留这张表：① A4「同档两跑必须同卡位」需要一个**确定性**的档→卡锚；
+#:   ② 它记录了历史上每档实际跑的卡位（可比性）；③ 现场占用时按"不抢占他人"换卡即可。
+#: ★ `cards`（卡数）**保持逐档不变**：卡数属基础列；本表只写"建议用哪几张"。
+#: ★ 未列出的档一律走 :data:`GPU_POOL_BY_CARDS`。
 TIER_GPU_OVERRIDE: dict[str, list[int]] = {
-    # ★ 2026-10-16 车道重出（合法卡集 {1,3,4,5}；卡数逐档不变）：
-    #   {1} = T031 关键路径（7.64 h，独占）｜{3,5} = 唯一 2 卡通道｜
+    # 2026-10-16 车道重出（卡数逐档不变）：
+    #   {1} = T031 关键路径（7.64 h，独占）｜{3,5} = 2 卡通道｜
     #   {4} = 共享卡，只放 ≤0.6 h 的 9B LoRA 1 卡档（⛔ 不上 27B/全参）｜{3} = 1 卡溢出
     "T031": [1],
     "T001": [4],
@@ -400,105 +461,42 @@ TIER_GPU_OVERRIDE: dict[str, list[int]] = {
     "T041": [3, 5],
 }
 
-#: ★ **邻居/他人常驻卡**（⛔ 我方声明里绝不可出现）：GPU2 = 第三方账号占用中的常驻邻居卡
-#:   （★ §15 去标识：本件为正式件，第三方**具名账号一律角色化表述**，⛔ 不写账号字面量）
-#:   （`docs/card-pool-contract.md` 规则 4）。这是一份**具名**清单：新增邻居卡必须显式登记。
-NEIGHBOR_CARDS: tuple[int, ...] = (2,)
 
-#: ★ **具名锁卡集合**（任一档 `gpus` 都不得含其中任何一张）：
-#:   生产锁卡 :data:`GPU_FORBIDDEN_PRODUCTION` ∪ 邻居卡 :data:`NEIGHBOR_CARDS`。
-#:   ★ 另有**越界 leg**：任何**不在** :data:`GPU_ALLOWED` 内的卡同样被拒（见 :func:`locked_card_hits`）
-#:   —— 越界集的基数无界（8, 99, …），故不枚举进本常量，而由 :data:`GPU_ALLOWED` 成员判定。
-LOCKED_CARDS: tuple[int, ...] = tuple(sorted(
-    set(GPU_FORBIDDEN_PRODUCTION) | set(NEIGHBOR_CARDS)
-))
+def out_of_range_cards(gpus: "list[int] | tuple[int, ...]") -> tuple[int, ...]:
+    """返回 ``gpus`` 里**越界**的卡号（∉ :data:`GPU_ALLOWED`，即本机不存在的 ≥8）。
 
-#: ★ 本世代卡池与项目锁卡契约的**已知冲突登记**（只登记、⛔ 不擅自改池；由指挥统一处置）。
-#:   键 = 卡池 tuple；值 = 冲突的锁卡 tuple。生成时打印，并写入清单顶层
-#:   ``gpu_pool_contract_conflicts``（机读、可审计），⛔ 不是静默放行。
-POOL_CONTRACT_CONFLICTS: dict[tuple[int, ...], tuple[int, ...]] = {}
-#: 生成期逐档的池冲突命中（供 main() 汇总打印）。
-_uncaptured_pool_conflicts: list[tuple[str, tuple[int, ...], tuple[int, ...]]] = []
-
-
-def locked_card_hits(gpus: "list[int] | tuple[int, ...]") -> tuple[int, ...]:
-    """返回 ``gpus`` 里命中的**锁卡**（升序、去重）；空 tuple = 通过。
-
-    命中 = 具名锁卡（:data:`LOCKED_CARDS` = 邻居卡 ∪ 生产锁卡）**或**越界卡（∉ :data:`GPU_ALLOWED`）。
+    ★ 这是**唯一**的卡号判据（2026-10-17 起）：**存在性**，不是策略白名单。
+      ⛔ 不再有"生产锁卡"leg、⛔ 不再有"邻居卡"leg —— "某张卡此刻被谁占着"是**动态事实**，
+      由设施层起跑前的逐卡实测空闲断言判定，生成器**不猜**、更不静态禁用。
     """
-    out_of_range = {int(g) for g in gpus if int(g) not in set(GPU_ALLOWED)}
-    return tuple(sorted(({int(g) for g in gpus} & set(LOCKED_CARDS)) | out_of_range))
+    return tuple(sorted({int(g) for g in gpus} - set(GPU_ALLOWED)))
 
 
-def locked_card_violation(
+def card_range_violation(
     tier_id: str, gpus: "list[int] | tuple[int, ...]", cards: int
 ) -> "str | None":
-    """★ 通用锁卡断言（fail-closed）：**任何档**的 ``gpus`` 都不得含被锁的卡。
+    """★ 卡号/卡数断言（fail-closed）：**任何档**的 ``gpus`` 都必须合规。
 
-    判据（三条，全部具名）：
-      ① 不得含 :data:`NEIGHBOR_CARDS`（邻居常驻卡 ⇒ 占别人的卡）；
-      ② 不得含 :data:`GPU_FORBIDDEN_PRODUCTION`（生产锁卡）；
-      ③ 不得含任何**不在** :data:`GPU_ALLOWED` 内的卡（越界卡）。
-
-    ★ 唯一例外（**具名、逐次打印、写入清单**）：当该值**恰好等于本世代卡池**
-    :data:`GPU_POOL_BY_CARDS`\\[cards\\] 时，冲突来自**卡池本身**（2026-10-05 主席令「八卡全开」
-    定的 ``{4,5,6,7}``），不是本档的调度选择 ⇒ **登记进 :data:`POOL_CONTRACT_CONFLICTS` 与
-    ``_uncaptured_pool_conflicts``，不 raise**（⛔ 本生成器不擅自改池）。
-    任何**其它**形态一旦命中 ⇒ 直接 raise（这正是能抓到 T041 `[2,3]` 的那条断言）。
+    判据（2026-10-17 口径，只有两条）：
+      ① 卡号 ⊆ :data:`GPU_ALLOWED`（= 本机全卡 0–7；越界卡 ≥8 一律拒绝）；
+      ② 卡数 == 该档 ``cards``。
+    ⛔ **不判**"生产锁卡"、⛔ **不判**"邻居卡"、⛔ **不判**单作业卡数上限 ——
+      这三条旧口径已按主席令废除（详见 :data:`GPU_POOL_BY_CARDS` 上方注释）。
 
     返回 None = 通过；否则返回拒绝理由（供测试与自证直接调用）。
     """
-    hits = locked_card_hits(gpus)
-    if not hits:
-        return None
-    norm = tuple(int(g) for g in gpus)
-    pool = tuple(GPU_POOL_BY_CARDS.get(int(cards), ()))
-    if norm == pool and not locked_card_hits(pool):
-        # ★ 2026-10-16 收窄：豁免**只对自身合法的卡池**生效。旧码 `norm == pool` 单独成立即放过，
-        #   使 ``[4,5,6,7]``（含两张生产锁卡 GPU6/7）长期"合法"通过 —— 这个洞已堵：
-        #   池自身命中锁卡 ⇒ 继续往下走 raise（⛔ 不再登记了事）。
-        POOL_CONTRACT_CONFLICTS[pool] = hits
-        _uncaptured_pool_conflicts.append((tier_id, pool, hits))
-        return None
-    names = []
-    for g in hits:
-        if g in NEIGHBOR_CARDS:
-            names.append(f"GPU{g}=邻居常驻卡（NEIGHBOR_CARDS）")
-        elif g in GPU_FORBIDDEN_PRODUCTION:
-            names.append(f"GPU{g}=生产锁卡（GPU_FORBIDDEN_PRODUCTION）")
-        else:
-            names.append(f"GPU{g}=越界卡（不在 GPU_ALLOWED={tuple(GPU_ALLOWED)} 内）")
-    return (
-        f"{tier_id}: gpus={list(gpus)} 含被锁的卡 ⇒ {'；'.join(names)}"
-        f"（本世代卡池为 {list(pool)}）"
-    )
-
-
-#: ★★ **主席禁用集**（2026-10-16）：GPU0 = 他人占用中；GPU2 = 邻居常驻卡。
-#:   ⛔ 与「当前空闲与否」无关 —— 它是**策略级**禁用清单，⛔ 不得因"此刻空着"而放宽。
-CHAIRMAN_BANNED_CARDS: tuple[int, ...] = (0, 2)
-
-
-def legal_card_set() -> tuple[int, ...]:
-    """★ 合法卡集（**单一入口**）= ``GPU_ALLOWED`` − ``GPU_FORBIDDEN_PRODUCTION`` − 主席禁用集。
-
-    2026-10-16 实测 = ``(1, 3, 4, 5)``。⛔ 生产锁卡 ``(6,7)`` 与邻居卡 ``(2,)`` 不在内。
-    """
-    return tuple(sorted(set(GPU_ALLOWED) - set(GPU_FORBIDDEN_PRODUCTION) - set(CHAIRMAN_BANNED_CARDS)))
-
-
-def non_legal_card_violation(tier_id: str, gpus: "list[int] | tuple[int, ...]") -> "str | None":
-    """★ 合法卡集断言（fail-closed）：``gpus`` 必须 ⊆ :func:`legal_card_set`。
-
-    ★ 这条**专抓**旧「池等价豁免」放过的形态：旧 4 卡池 ``[4,5,6,7]`` 含生产锁卡 GPU6/7，
-    过去因 `norm == pool` 被登记了事、**从未 raise**；本断言看的是**合法集**，与卡池无关。
-    """
-    bad = tuple(sorted({int(g) for g in gpus} - set(legal_card_set())))
-    if not bad:
-        return None
-    return (f"{tier_id}: gpus={list(gpus)} 含非合法卡 {list(bad)}"
-            f"（合法集 = {list(legal_card_set())}；禁 = 生产锁卡 {list(GPU_FORBIDDEN_PRODUCTION)} ∪ "
-            f"邻卡 {list(NEIGHBOR_CARDS)} ∪ 主席禁用 {list(CHAIRMAN_BANNED_CARDS)}）")
+    hits = out_of_range_cards(gpus)
+    if hits:
+        return (
+            f"{tier_id}: gpus={list(gpus)} 含越界卡 {list(hits)}"
+            f"（本机只有 GPU0–{GPU_ALLOWED[-1]}；越界 = 不存在，不是『被禁用』）"
+        )
+    if len(tuple(gpus)) != int(cards):
+        return (
+            f"{tier_id}: gpus={list(gpus)} 个数 {len(tuple(gpus))} ≠ cards={int(cards)}"
+            f"（§12 同源：TP × PP × DP = 卡数）"
+        )
+    return None
 
 
 def mini_tier_subset_size(tier_id: str, v1_subset: int | None = None) -> int:
@@ -621,37 +619,35 @@ def patch_tier(entry: dict, data_root: str, pregen_dir: str) -> dict:
     if _cards not in GPU_POOL_BY_CARDS:
         raise AssertionError(f"{tier_id}: cards={_cards} 不在 1–4，卡池无法确定性映射")
     if tier_id in TIER_GPU_OVERRIDE:
-        # ★ 显式覆盖（资源调度例外）也 fail-closed：卡数错配 / 重复卡一律拒绝，⛔ 不将就。
+        # ★ 建议首选卡位也 fail-closed：卡数错配 / 重复卡 / 越界卡一律拒绝，⛔ 不将就。
         _override = [int(g) for g in TIER_GPU_OVERRIDE[tier_id]]
         if len(_override) != _cards:
             raise AssertionError(
-                f"{tier_id}: 覆盖卡位 {_override} 卡数 {len(_override)} ≠ cards={_cards}"
+                f"{tier_id}: 建议卡位 {_override} 卡数 {len(_override)} ≠ cards={_cards}"
             )
         if len(set(_override)) != len(_override):
-            raise AssertionError(f"{tier_id}: 覆盖卡位 {_override} 含重复卡")
-        # ★★ 通用断言：**显式卡位例外必须落在「合法卡集」内**。
-        #    这就是「陈旧调度值」这一类缺陷的根因判据：例外描述的是**当时的空闲状态**，
-        #    一旦锁卡策略换代，旧例外就指向了不该占的卡（T041 `[2,3]` 即此形态）⇒ 必须显式重建。
-        #    ★ 2026-10-16：判据域从 `GPU_POOL_BY_CARDS[cards]`（**默认值**）改为
-        #      `legal_card_set()`（= GPU_ALLOWED − 生产锁卡 − 主席禁用 {0,2}）—— 因为车道重出后
-        #      同一卡数会有**多条车道**（如 2 卡档分属 `[3,5]` 与 `[4,5]`），默认值不再是全体上界。
-        #      ★ 保护强度**只增不减**：旧域漏掉的 `[4,5,6,7]`（含生产锁卡）在此被拒。
-        _pool = set(legal_card_set())
-        _outside = sorted(set(_override) - _pool)
+            raise AssertionError(f"{tier_id}: 建议卡位 {_override} 含重复卡")
+        # ★★ 通用断言：**卡号必须 ∈ 本机全卡 0–7**（存在性判据）。
+        #    ★ 2026-10-17 语义变更：判据域由 `legal_card_set()`（= 0–7 − 生产锁卡 − 主席禁用 {0,2}，
+        #      实测 (1,3,4,5)）**放宽为** `GPU_ALLOWED`（= 0–7 全卡）——主席令「228 先到先得，随便用。」
+        #      ＋「单个作业不限制卡数。」⇒ ⛔ 不再有生产锁卡 / 邻居卡 / 禁用卡。
+        #    ★ 保护强度：越界卡（≥8）仍被拒；卡数错配 / 重复卡仍被拒。被撤掉的只有
+        #      "静态禁用某些**存在**的卡"这一类**与动态占用事实无关**的策略判据。
+        _outside = sorted(set(_override) - set(GPU_ALLOWED))
         if _outside:
             raise AssertionError(
-                f"{tier_id}: 覆盖卡位 {_override} 含合法卡集外的卡 {_outside}"
-                f"（合法集 legal_card_set()={sorted(_pool)}）⇒ 拒绝（陈旧例外须显式重建）"
+                f"{tier_id}: 建议卡位 {_override} 含越界卡 {_outside}"
+                f"（本机只有 GPU0–{GPU_ALLOWED[-1]}）⇒ 拒绝"
             )
         out["gpus"] = _override
     else:
         out["gpus"] = list(GPU_POOL_BY_CARDS[_cards])
-    # ★★ 通用锁卡断言（2026-10-16 新增）：**全部 54 档**一律过 —— 不得含邻居卡 / 生产锁卡 / 越界卡。
-    #    这就是当初能抓到「T041 声明了邻居 GPU2」的那条断言；⛔ 撤销例外时不得把它一起删掉。
-    #    ★ 卡池自身的已知冲突（如 {4,5,6,7} ∩ {6,7}）走具名登记分支（不 raise），见 locked_card_violation。
-    _lv = locked_card_violation(tier_id, out["gpus"], _cards)
-    if _lv:
-        raise AssertionError(f"锁卡断言失败 ⇒ {_lv}")
+    # ★★ 通用卡号/卡数断言（2026-10-17 重写）：**全部 54 档**一律过 —— 卡号 ∈ 0–7、卡数 == cards。
+    #    ⛔ 旧的「不得含邻居卡 / 生产锁卡」leg 已按主席令废除；"不抢占他人"改由**设施层**
+    #       起跑前的逐卡实测空闲断言负责（⛔ 生成器不猜动态占用）。
+    _cv = card_range_violation(tier_id, out["gpus"], _cards)
+    if _cv:
+        raise AssertionError(f"卡号断言失败 ⇒ {_cv}")
     if len(out["gpus"]) != _cards:
         raise AssertionError(
             f"{tier_id}: gpus={out['gpus']} 个数 {len(out['gpus'])} ≠ cards={_cards}（§12 同源）"
@@ -753,16 +749,42 @@ def patch_tier(entry: dict, data_root: str, pregen_dir: str) -> dict:
         #     ⇒ 18 档声明口径扩面（20→100）后 `per_epoch` 停在 20 行口径的 160/80/40/20/10/5，
         #     而 `docs` 矩阵的 `per_epoch_steps` = 800/400/200/100/50/25 ⇒ §1.4 双真相源 ＋
         #     `scripts/collect_results.py:1846-1858,2348` 的 ① 步数门被实质放宽 5 倍。
+        # ★★★ 2026-10-17（W-7 定案）：**再乘「卡数 ÷ 数据并行度 dp_size」**。
+        #     病史（本包修复对象，⛔ 不是"重新论证"）：v1 的 `_planned_save_steps` 按 **cards**
+        #     均分样本，`expected_optimizer_steps_per_epoch` 的非 native 分支与该口径同源
+        #     ⇒ 本文件的 `v1 值 × 口径比率` 把「按卡数相除」**原样继承**。对 **native 全参 PP 档
+        #     （`pp_size>1 ∧ dp_size=1`）不成立**：PP 切层、不切数据 ⇒ 除的必须是 dp_size。
+        #     实测锚：T018（SFT/native 全参/pp=4,dp=1，subset 100）：清单声明 25×4=100 步，
+        #     真机 `SFT complete: steps=400`（新树 ff267a8 与旧树 619d65b 同为 400）⇒ 真值 400。
+        #     ★ 等价性：本 54 档 subset 均为 cards 的整数倍 ⇒ 本式 == `floor(subset_v2/dp_size)`
+        #     （GRASPO×ms-swift 再乘 G），与矩阵 `per_epoch_steps` 逐档同值（见跨件机检 I-a）。
         _v1_per = int(out["expected_optimizer_steps_per_epoch"])
-        per_epoch = _v1_per * int(caliber_ratio)
-        out["step_formula_v2"] = (
-            "非 native GRASPO：v1 口径 × **口径扩张比率**"
-            f"（v1={_v1_per} × {caliber_ratio} = {per_epoch}）"
-            + (
-                "；★ 本档属「声明口径扩面」⇒ 比率 = 声明口径 ÷ v1 声明口径"
-                if caliber_ratio != 1 else "；比率 = 1（子集与 v1 同口径）"
+        _cards = max(1, int(out["cards"]))
+        _dp = run_config_dp_size(tier_id, str(out.get("backend") or ""))
+        _dp_eff = _cards if _dp is None else max(1, int(_dp))
+        per_epoch = _v1_per * int(caliber_ratio) * _cards // _dp_eff
+        if _dp_eff == _cards:
+            # dp_size == 卡数（数据确实按卡均分）⇒ 折算因子 1：**披露串逐字不变**（最小改动面）。
+            out["step_formula_v2"] = (
+                "非 native GRASPO：v1 口径 × **口径扩张比率**"
+                f"（v1={_v1_per} × {caliber_ratio} = {per_epoch}）"
+                + (
+                    "；★ 本档属「声明口径扩面」⇒ 比率 = 声明口径 ÷ v1 声明口径"
+                    if caliber_ratio != 1 else "；比率 = 1（子集与 v1 同口径）"
+                )
             )
-        )
+        else:
+            # ★★ W-7 定案（本包）：**PP 切层、不切数据** ⇒ 必须按 dp_size 折算，⛔ 不按卡数。
+            out["step_formula_v2"] = (
+                "非 native GRASPO：v1 口径（**按卡数均分**）× 口径扩张比率 × "
+                "**（卡数 ÷ 数据并行度 dp_size）**"
+                f"（v1={_v1_per} × {caliber_ratio} × {_cards}/{_dp_eff} = {per_epoch}）"
+                f"；★ PP 不切数据（dp_size={_dp_eff} < cards={_cards}）⇒ 按 dp_size 折算，⛔ 不按卡数"
+                + (
+                    "；★ 本档属「声明口径扩面」⇒ 比率 = 声明口径 ÷ v1 声明口径"
+                    if caliber_ratio != 1 else "；比率 = 1（子集与 v1 同口径）"
+                )
+            )
     # ★★★ 2026-10-16 修复（🔴「reachable 低估 2–8 倍」）：epoch 数改从**跑次实际使用的
     #     档配置 yaml** 现算（`run_config_epochs`，单一真相源），⛔ 不再用 `gm.MATRIX_MAX_EPOCHS`。
     #     病史：v1 冻结期常量 = 1，而 2026-10-15 主席把 epoch 口径改为 SFT=4／CPT/OPD=2／
@@ -939,8 +961,6 @@ def build_v2_manifest(
     v1_manifest_sha: str, config_fingerprint: str, config_dir_fingerprint: str = "",
 ) -> dict:
     v1_tiers = v1_manifest["tiers"]
-    POOL_CONTRACT_CONFLICTS.clear()
-    _uncaptured_pool_conflicts.clear()
     entries = [patch_tier(t, data_root, pregen_dir) for t in v1_tiers]
 
     # 顶层：深拷贝 v1 → 只改版本/来源/数据源/审计节，其余（counts/models/feasibility_model…）
@@ -996,49 +1016,69 @@ def build_v2_manifest(
             "data.extract_command / data.source_rule / data.subset_file_pregenerated / step_formula_v2",
         ],
         "gpus": (
-            "★ 2026-10-16：**撤销 T041 的陈旧卡位例外** `[2,3]`（2026-10-09 的一次性调度值，"
-            "把第三方账号占用中的常驻邻居卡 GPU2 写进了我方声明）。"
-            # ★★ 以下**全部由模块数据机算**（⛔ 不手写数字、⛔ 不引入新声称；2026-10-16 订正
-            #    「自述与事实不符」：旧文自称「T041 走默认映射 [4,5]、其余 53 档逐档逐字未变」，
-            #    而车道重出后 T041 走显式车道、多数档的 gpus 已被重写 ⇒ 旧文为**假话**，已删。）
-            f"⇒ T041 走**显式车道** `TIER_GPU_OVERRIDE['T041'] = "
-            f"{json.dumps(TIER_GPU_OVERRIDE.get('T041', GPU_POOL_BY_CARDS[2]))}`"
-            f"（★ 不再是默认映射 `GPU_POOL_BY_CARDS[2] = {json.dumps(GPU_POOL_BY_CARDS[2])}`）。"
-            f"★ 同日**车道重出**：`gpus` 按**合法卡集**（:func:`legal_card_set` = "
-            f"{json.dumps(list(legal_card_set()))}）逐档重定 —— 显式车道 **{len(TIER_GPU_OVERRIDE)} 条**，"
-            f"其余档走卡数默认值 `GPU_POOL_BY_CARDS` = "
+            "★★ 2026-10-17 主席裁定（唯一标尺，逐字）：「**228 先到先得，随便用。**」"
+            "＋「**单个作业不限制卡数。**」⇒ `gpus`（本清单与卡池映射里的这一列）"
+            "**降级为『建议首选卡位』**，⛔ **不再是合法性判据**："
+            "① 卡号判据只剩**存在性** —— 本机全卡 0–7 一律可用，⛔ 无预留卡、⛔ 无禁用卡、"
+            "⛔ 无『生产锁卡』、⛔ 无『邻居卡』；"
+            "② 卡数无上限（唯一约束 = 该档 `cards` 本身）；"
+            "③ **保留的硬要求 =『不抢占他人』**：起跑前**逐卡实测空闲**"
+            "（剩余显存 ≥ 本档头寸 ∧ util == 0），被占则**换卡或等**，"
+            "⛔ 绝不 kill 他人进程 / 绝不停他人容器（判据在设施层，见 `scripts/gpu_idle_assert.py`）；"
+            "④ 本列仍是 **A4『同档两跑必须同卡位』的确定性锚**：同一档的两次运行必须引用同一份清单。"
+            f"★ 取值口径：显式建议卡位 **{len(TIER_GPU_OVERRIDE)} 条**"
+            f"（`TIER_GPU_OVERRIDE`），其余档走卡数默认值 `GPU_POOL_BY_CARDS` = "
             f"{json.dumps({str(k): v for k, v in sorted(GPU_POOL_BY_CARDS.items())}, ensure_ascii=False)}；"
-            f"⛔ 同时废止旧表述「其余 53 档逐档逐字未变」（**与事实不符**）。"
+            f"本机可用卡号 `GPU_ALLOWED` = {json.dumps(list(GPU_ALLOWED))}。"
+            "⛔ 本包只改**语义与判据**，⛔ 不重排、⛔ 不动任何档的 `gpus` 取值（逐档逐字未变）。"
         ),
         "unchanged": (
             "counts / models / feasibility_model / runtime.checkpoint_retention / 每档的 "
             "model*/algorithm/mode/backend/cards/status/feasibility/acceptance.criteria"
-            "（★ `gpus` **不属于**本清单：见上条，2026-10-16 已按合法卡集逐档重出）"
+            "（★ `gpus` 见上条：2026-10-17 起语义 =『建议首选卡位』，**取值逐档逐字未变**）"
         ),
     }
-    # ★★ 卡池/锁卡契约的**已知冲突登记**（只登记、⛔ 不擅自改池；由指挥统一处置）：
-    #    机读、可审计 —— 后人不必靠读注释去发现「本世代 4 卡池 {4,5,6,7} 含生产锁卡 6/7」。
-    out["gpu_pool_contract_conflicts"] = {
-        "locked_cards": list(LOCKED_CARDS),
+    # ★★ 卡号口径的**机读自述**（2026-10-17 重写）：把"本包生效的判据"写成机器可读的一段，
+    #    后人不必靠读注释去猜哪条口径还活着。旧 `gpu_pool_contract_conflicts`
+    #    （登记"卡池 ∩ 生产锁卡"的冲突）随旧口径一起**废除**：那三类静态锁卡已不存在，
+    #    冲突这个概念也随之消失。
+    out["gpu_card_caliber"] = {
+        "ruling": "228 先到先得，随便用。／单个作业不限制卡数。",
+        "ruling_date": "2026-10-17",
         "gpu_allowed": list(GPU_ALLOWED),
-        "gpu_forbidden_production": list(GPU_FORBIDDEN_PRODUCTION),
-        "neighbor_cards": list(NEIGHBOR_CARDS),
+        # ★ 四类**静态名单**（预留/禁用/生产锁/邻卡）**均已废除** ⇒ 此处恒为空数组，
+        #   仅作机读留痕，便于后人一眼看见"没有任何卡被静态禁掉"。⛔ 键名刻意避开
+        #   已退役词表的字面形态（`reserved_cards` / `neighbor_cards` 之类），
+        #   以免与契约扫查 `tests/compliance/test_gpu_contract_retired_sweep.py` 的判据自撞。
+        "static_bans": {
+            "reserve": [],
+            "disable": [],
+            "production_lock": [],
+            "third_party_occupancy": [],
+            "note": (
+                "★ 这四类**静态**名单均已废除（主席 2026-10-17）——"
+                "「哪张卡此刻被谁占着」是**动态事实**，由起跑前的逐卡实测空闲断言负责，"
+                "生成器⛔ 不猜、更不静态禁用。"
+            ),
+        },
+        "max_cards_per_job": None,
         "assertion": (
-            "locked_card_violation()：任何档 gpus 不得含 locked_cards 中任一张；"
-            "唯一例外 = 该值恰等于本世代卡池 GPU_POOL_BY_CARDS[cards]（登记于此，不 raise）"
+            "card_range_violation()：任何档 gpus 必须 ① 卡号 ⊆ gpu_allowed（0–7，存在性判据）"
+            "② 卡数 == 该档 cards。⛔ 不判『生产锁卡』/『邻居卡』/卡数上限（旧口径已废）。"
         ),
-        "conflicts": [
-            {
-                "pool": list(pool),
-                "locked_hits": list(hits),
-                "tiers": sorted(t for t, p, _h in _uncaptured_pool_conflicts if p == pool),
-            }
-            for pool, hits in sorted(POOL_CONTRACT_CONFLICTS.items())
-        ],
-        "note": (
-            "★ 上列冲突是**卡池定义**（2026-10-05 主席令「八卡全开」定的 {4,5,6,7}）与"
-            "`gpu_assignment.GPU_FORBIDDEN_PRODUCTION=(6,7)` 之间的矛盾，**不是本生成器的调度选择**"
-            "⇒ 本生成器只登记、⛔ 不擅自改池。邻居卡 GPU2 已随 T041 例外撤销而从全部声明中清零。"
+        "no_preemption": {
+            "required": True,
+            "criterion": "起跑前**逐卡实测**：剩余显存 ≥ 本档头寸（默认 48 GiB） ∧ util == 0",
+            "on_busy": "换卡或等（⛔ 绝不 kill 他人进程 / 绝不停他人容器）",
+            "implementations": [
+                "scripts/gpu_idle_assert.py",
+                "graspo.flow.guard.idle",
+                "graspo.cli.gpu_monitor:assert_target_gpus_idle",
+            ],
+        },
+        "gpus_field_semantics": (
+            "『建议首选卡位』——调度建议 + A4 可比性锚，⛔ 不是合法性判据"
+            "（改跑别的卡只要 ∈ 0–7 且卡数不变即合法）。"
         ),
     }
     # 顶层 data 段：v1 的算法级口径保留（向后兼容），另加 v2 的逐档口径。
@@ -1250,8 +1290,9 @@ def cross_check_manifest_against_matrix(
       "清单 ↔ 矩阵"会漏掉"矩阵对、yaml 错"的情形。
 
     ★ **豁免不是静默白名单**（两处，均带反向断言）：
-      · `exempt_drift`（默认 :data:`KNOWN_PRE_EXISTING_PER_EPOCH_DRIFT` = W-7 的 T017/T018，
-        ⛔ 本轮不修）里的档 **必须确实仍在漂**；不漂了 ⇒ 报「豁免表陈旧」。
+      · `exempt_drift`（默认 :data:`KNOWN_PRE_EXISTING_PER_EPOCH_DRIFT`）里的档 **必须确实仍在漂**；
+        不漂了 ⇒ 报「豁免表陈旧」。★ **2026-10-17 该表已清空**（W-7 定案闭合：T017/T018 的
+        `per_epoch` 已改为按 **dp_size** 折算，不再漂）——清空本身也是断言：一旦再漂，I-a 直接报错。
       · `exempt_no_config`（默认 :data:`NOT_APPLICABLE_NO_CONFIG` = T052–T054）里的档
         **必须确实没有档配置 yaml**；有了 ⇒ 报「豁免表陈旧」（逼下一轮改走 yaml 现算）。
     """
@@ -1444,11 +1485,15 @@ def check(manifest_path: Path, allow_unverified_subset_check: bool = False,
     run_config_dir = PROJECT_ROOT / CONFIG_DIR_REL
     have_run_configs = run_config_dir.is_dir()
     problems: list[str] = []
-    # ★★ 合法卡集机检（2026-10-16 新增）：对**在盘清单**逐档断言 gpus ⊆ legal_card_set()。
+    # ★★ 卡号口径机检（2026-10-17 重写）：对**在盘清单**逐档断言
+    #    ① 卡号 ⊆ GPU_ALLOWED（0–7，存在性判据）② 卡数 == cards。
+    #    ⛔ 旧「合法卡集 legal_card_set() = (1,3,4,5)」判据已按主席令废除。
     for _t in entries:
-        _v = non_legal_card_violation(str(_t.get("tier_id") or "?"), _t.get("gpus") or [])
+        _v = card_range_violation(
+            str(_t.get("tier_id") or "?"), _t.get("gpus") or [], int(_t.get("cards") or 0)
+        )
         if _v:
-            problems.append("合法卡集：" + _v)
+            problems.append("卡号口径：" + _v)
     declared_anchor_diffs: list[str] = []
     if len(entries) != 54:
         problems.append(f"档数 {len(entries)} != 54")
@@ -1512,6 +1557,8 @@ def check(manifest_path: Path, allow_unverified_subset_check: bool = False,
                     )
         # ★★ 修正轮 2（🔴B-1）：**非 native 档的 `per_epoch` 必须 = v1 值 × 口径比率**
         #    ⇒ 旧实现纯透传 v1（把 800 回退成 160）当场报 MISMATCH、非 0 退出。
+        # ★★ 2026-10-17（W-7 定案）：**再乘「卡数 ÷ 数据并行度」**（PP 切层不切数据），
+        #    与 :func:`patch_tier` 的派生式**逐字同源**（⛔ 不抄第二份公式）。
         if tid not in V2_SUBSET_SIZE_BY_TIER:
             _v1_per = V1_PER_EPOCH_BY_TIER.get(tid)
             if _v1_per is None:
@@ -1525,11 +1572,15 @@ def check(manifest_path: Path, allow_unverified_subset_check: bool = False,
                 except AssertionError as exc:
                     problems.append(f"{tid}: 口径比率唯一入口 fail-closed ⇒ {exc}")
                 else:
-                    _want_per = int(_v1_per) * int(_ratio)
+                    _cards = max(1, int(e["cards"]))
+                    _dp = run_config_dp_size(tid, str(e.get("backend") or ""))
+                    _dp_eff = _cards if _dp is None else max(1, int(_dp))
+                    _want_per = int(_v1_per) * int(_ratio) * _cards // _dp_eff
                     if per != _want_per:
                         problems.append(
-                            f"{tid}: per_epoch {per} != v1({_v1_per}) × 口径比率({_ratio}) = {_want_per}"
-                            f"（⛔ 计划步数回退；① 步数门会被实质放宽）"
+                            f"{tid}: per_epoch {per} != v1({_v1_per}) × 口径比率({_ratio}) × "
+                            f"卡数({_cards})/dp_size({_dp_eff}) = {_want_per}"
+                            f"（⛔ 计划步数回退；① 步数门会被实质放宽；PP 不按卡数折算）"
                         )
         # ★★ 修正轮 1（🔴B1c）：清单自带 `key_semantics` 声明
         #    `expected_optimizer_steps` 语义 = `checkpoint_save_steps` ⇒ 逐档必须相等。
@@ -1545,34 +1596,23 @@ def check(manifest_path: Path, allow_unverified_subset_check: bool = False,
     if manifest["step_gate_audit"]["structural_limited_tiers"]:
         problems.append("v2 仍存在 structural_limited 档")
 
-    # ★★ 通用锁卡断言（对**在盘清单**复核，⛔ 不只信生成期）：任何档 gpus 不得含邻居卡 / 生产锁卡 / 越界卡。
-    #    唯一例外 = 该值恰等于本世代卡池（卡池自身与锁卡契约的矛盾 ⇒ 只登记）。
-    _pool_hits: list[tuple[str, tuple[int, ...]]] = []
+    # ★★ 卡号断言（对**在盘清单**复核，⛔ 不只信生成期；2026-10-17 重写）：
+    #    任何档 gpus 必须 ① 卡号 ⊆ 0–7 ② 卡数 == cards。
+    #    ⛔ 旧「不得含邻居卡 / 生产锁卡」两条 leg 已按主席令废除 —— "哪张卡此刻被谁占着"是
+    #    **动态事实**，由设施层起跑前的逐卡实测空闲断言负责（见 manifest 自述
+    #    ``gpu_card_caliber.no_preemption``）。
     for e in entries:
-        _gpus = e.get("gpus") or []
-        _hits = locked_card_hits(_gpus)
-        if not _hits:
-            continue
-        _pool = tuple(GPU_POOL_BY_CARDS.get(int(e["cards"]), ()))
-        if tuple(int(g) for g in _gpus) == _pool:
-            _pool_hits.append((e["tier_id"], _hits))
-        else:
-            problems.append(
-                f"{e['tier_id']}: gpus={_gpus} 含锁卡 {list(_hits)}（⛔ 不等于本世代卡池 {list(_pool)} "
-                f"⇒ 拒绝；锁卡集合 LOCKED_CARDS={list(LOCKED_CARDS)}）"
-            )
-    if _pool_hits:
-        _pools = sorted({tuple(int(g) for g in (next(x for x in entries if x["tier_id"] == t)["gpus"] or []))
-                         for t, _h in _pool_hits})
-        print(
-            f"LOCKED-CARD-POOL-CONFLICT（已登记、不判否）: {len(_pool_hits)} 档的 gpus == 本世代卡池，"
-            f"而该卡池与 GPU_FORBIDDEN_PRODUCTION={list(GPU_FORBIDDEN_PRODUCTION)} 相交 ⇒ "
-            f"池={[list(p) for p in _pools]}；档号={sorted(t for t, _h in _pool_hits)}"
+        _v = card_range_violation(
+            str(e.get("tier_id") or "?"), e.get("gpus") or [], int(e.get("cards") or 0)
         )
+        if _v:
+            problems.append(_v)
     print(
-        f"锁卡断言：LOCKED_CARDS={list(LOCKED_CARDS)}（邻居 {list(NEIGHBOR_CARDS)} ∪ 生产锁卡 "
-        f"{list(GPU_FORBIDDEN_PRODUCTION)} ∪ 越界）——{len(entries)} 档逐档已核；"
-        f"含邻居卡 GPU2 的档 = {sum(1 for e in entries if 2 in (e.get('gpus') or []))} 档"
+        f"卡号断言：GPU_ALLOWED={list(GPU_ALLOWED)}（本机全卡；存在性判据，⛔ 无预留/禁用/锁卡）、"
+        f"卡数无上限（唯一约束 = 该档 cards）——{len(entries)} 档逐档已核；"
+        f"含 6/7 的档 = {sum(1 for e in entries if {6, 7} & set(e.get('gpus') or []))} 档、"
+        f"含 0 的档 = {sum(1 for e in entries if 0 in (e.get('gpus') or []))} 档、"
+        f"含 2 的档 = {sum(1 for e in entries if 2 in (e.get('gpus') or []))} 档"
     )
 
     print(
@@ -1649,11 +1689,12 @@ def check(manifest_path: Path, allow_unverified_subset_check: bool = False,
         problems.extend(f"[跨件] {x}" for x in cross)
     else:
         print(
-            "跨件不变量核对（三向）：manifest.per_epoch == docs.per_epoch_steps（52/52）"
+            "跨件不变量核对（三向）：manifest.per_epoch == docs.per_epoch_steps（54/54）"
             "｜manifest.reachable == docs.derived_steps ｜manifest.checkpoint_save_steps "
             "== docs.save_steps == 档位 yaml 的 training.save_steps"
-            f"（具名豁免 {len(KNOWN_PRE_EXISTING_PER_EPOCH_DRIFT)} 档 = "
-            f"{list(KNOWN_PRE_EXISTING_PER_EPOCH_DRIFT)}，W-7 既有、⛔ 本轮不修；已验明确实在漂）"
+            f"（per_epoch 漂移具名豁免 {len(KNOWN_PRE_EXISTING_PER_EPOCH_DRIFT)} 档 = "
+            f"{list(KNOWN_PRE_EXISTING_PER_EPOCH_DRIFT)}；W-7 已定案闭合；"
+            "无 yaml 的 not_applicable 档 I-b 定义域之外，另有具名豁免）"
         )
     for d in declared_anchor_diffs:
         print(f"DECLARED-ANCHOR: {d}（已声明的锚定差异，不判否）")

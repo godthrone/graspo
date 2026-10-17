@@ -1,30 +1,29 @@
-"""matrix54 v2 清单生成器：卡位覆盖 + **通用锁卡断言**的回归覆盖。
+"""matrix54 v2 清单生成器：卡位覆盖 + **卡号口径断言**的回归覆盖。
 
 **为什么必须有这个文件**：运行清单 `matrix54_manifest_source.json` 是**生成物**。
 只手改清单文件的话，下次重生成会按 `GPU_POOL_BY_CARDS` 把卡位静默改回（回退陷阱），
-而当时的测试**不会报警**（既有 `test_generate_matrix.py` 断言的是 **v1 生成器**的产物，
-不校 v2 清单文件本身）。
+而当时的测试**不会报警**。
+
+## 现行口径（唯一标尺，2026-10-17 主席裁定，逐字）
+
+> 「**228 先到先得，随便用。**」 ＋ 「**单个作业不限制卡数。**」
+
+⇒ 卡号判据只剩**存在性**：本机全卡 **0–7 一律可用**（⛔ 无预留/禁用/生产锁卡/邻居卡），
+⛔ 无单作业卡数上限；唯一硬要求 =「**不抢占他人**」（起跑前逐卡实测：剩余 ≥ 头寸 ∧ util == 0）。
+★ **每档的 `gpus` 降级为「建议首选卡位」**（调度建议 + A4 可比性锚，⛔ 不是合法性判据）；
+★ 本包只改**语义与判据**，⛔ 不重排、⛔ 不动任何档的 `gpus` 取值。
 
 本文件把三件事固化成断言：
-  ① 2026-10-05 主席令的默认映射 `GPU_POOL_BY_CARDS` **逐字未变**；
-  ② **2026-10-16 撤销的陈旧例外**：`TIER_GPU_OVERRIDE` 现为**车道表**（非空）；T041 走显式车道
-     （★ 2026-10-16 车道重出后**不再**走默认映射 `[4,5]`）。
-  ③ ★ **通用锁卡断言**（`locked_card_violation` + 「例外必须落在本世代卡池内」）：
-     **任何档**的 `gpus` 都不得含邻居常驻卡（GPU2）/ 生产锁卡（GPU6/7）/ 越界卡。
+  ① 默认映射 `GPU_POOL_BY_CARDS` 的**取值逐字未变**，且各项过"卡号 ∈ 0–7 ∧ 卡数 == cards"；
+  ② `TIER_GPU_OVERRIDE` 现为**车道表**（非空）；T041 走显式车道、`cards` 不变；
+  ③ ★ **通用卡号断言**（`card_range_violation`）：任何档的 `gpus` 必须
+     ① 卡号 ⊆ 本机全卡 0–7 ② 卡数 == 该档 `cards`；
+     ⛔ 不判"生产锁卡"/"邻居卡"/卡数上限（旧口径已废）。
 
-★ 病史（为什么 ③ 不能只写成"把 `[2,3]` 改成 `[4,5]`"）：只改期望值 = 把**能抓到这条缺陷的
-  能力**一起删掉。2026-10-09 的例外 `[2,3]` 把第三方账号占用中的常驻邻居卡 GPU2 写进了我方声明
-  （`docs/card-pool-contract.md` 规则 4「邻居资源只读不占…只观测、不排队、不干预」），
-  而当时的断言只锁「覆盖表 == {T041: [2,3]}」⇒ **只固化了错误，抓不到错误**。
-  ⇒ 现在：既断言新权威值，也断言**判据本身**（阳性对照 =
-  `test_locked_card_assertion_rejects_the_stale_override` /
-  `test_override_outside_generation_pool_is_fail_closed`）。
-
-★ 另一条已知冲突（**只登记、⛔ 不擅自改池**，由指挥统一处置）：本世代 4 卡池
-  `[4,5,6,7]` 与 `gpu_assignment.GPU_FORBIDDEN_PRODUCTION = (6,7)` 相交 ⇒
-  `locked_card_violation` 对"恰等于卡池"的值**不 raise**，但会登记进
-  `POOL_CONTRACT_CONFLICTS` 并写入清单 `gpu_pool_contract_conflicts`
-  （见 `test_pool_contract_conflict_is_registered_not_silently_allowed`）。
+★ **为什么"撤销静态禁用"没有削弱保护**：本文件**补上**了旧判据没有的阳性对照 ——
+  旧口径拒的三类输入（GPU2 / GPU6/7 / 5 张卡）现在**必须放行**，
+  而越界卡（≥8）、卡数不符、重复卡**仍然必须被拒**；
+  动态占用由**设施层**的逐卡实测空闲断言负责（⛔ 生成器不猜谁占着卡）。
 """
 
 from __future__ import annotations
@@ -55,25 +54,33 @@ def _patched(tier_id: str) -> dict:
 
 
 def test_default_pool_map_is_verbatim():
-    """★ 2026-10-16 修订（**前提已消失**）：卡数→卡位映射的 4 卡项由 `[4,5,6,7]` 改为**合法卡集**
-    `[1,3,4,5]` —— 旧值含两张**生产锁卡** GPU6/7，过去只靠「恰等于整卡池即登记不 raise」的豁免通过。
-    ★ 断言**只增不减**：逐档默认值一律过「合法卡集」与「锁卡」两道判据，且旧值必须**被拒**。"""
+    """★ 卡数→**建议首选卡位**映射的**取值逐字未变**（2026-10-17 只改语义与判据，⛔ 不动取值）。
+
+    现行判据 = 卡号 ⊆ 本机全卡 0–7 ∧ 卡数 == ``cards``。
+    ★ 反向断言：**越界卡（≥8）** 仍必须红（否则本用例形同虚设）。
+    ★ 同时钉住"旧口径的静态禁用确实解除了"：``[4,5,6,7]`` 这种旧形态**不再**被拒
+      —— 它不是"合法卡集外"，它只是**另一套建议卡位**。
+    """
     assert gmv2.GPU_POOL_BY_CARDS == {1: [4], 2: [4, 5], 3: [4, 5], 4: [1, 3, 4, 5]}
     for cards, gpus in gmv2.GPU_POOL_BY_CARDS.items():
-        # ★ 不校验 len == cards：卡池是"允许域"，3 卡档本世代不存在（其项仅登记合法性）
-        assert gmv2.non_legal_card_violation(f"pool{cards}", gpus) is None
-        assert gmv2.locked_card_violation(f"pool{cards}", gpus, cards) is None
-    # ★ 反向断言：旧 4 卡池与新判据下必须红（否则本用例形同虚设）
-    assert gmv2.non_legal_card_violation("old", [4, 5, 6, 7]) is not None
-    assert gmv2.locked_card_violation("old", [4, 5, 6, 7], 4) is not None
+        assert gmv2.card_range_violation(f"pool{cards}", gpus, len(gpus)) is None
+    # ★ 反向断言：越界卡必须被拒（唯一卡号判据 = 存在性）
+    assert gmv2.card_range_violation("old", [4, 5, 6, 8], 4) is not None
+    assert gmv2.card_range_violation("old", [8], 1) is not None
+    # ★ 旧"生产锁卡"形态现在合法（卡号 6/7 存在于本机）
+    assert gmv2.card_range_violation("legacy-pool", [4, 5, 6, 7], 4) is None
 
 
 # ── ② 陈旧例外已撤销 ────────────────────────────────────────────────────────
 
 
 def test_tier_gpu_override_is_the_lane_table():
-    """★ 2026-10-16 修订：覆盖表**不再是空表** —— 它是**车道表**（合法卡集 `{1,3,4,5}` 内重出）。
-    陈旧例外（T041 `[2,3]`）仍必须被拒，见 `test_override_outside_generation_pool_is_fail_closed`。"""
+    """★ 车道表**取值逐字未变**；每项过"卡号 ∈ 0–7 ∧ 卡数 == cards"。
+
+    ★ 2026-10-17：旧用例的反向断言「车道里一张 0/2/6/7 都不许有」**已删除** ——
+      那正是被主席令废除的**静态禁用**判据（"哪些卡不许出现"）。
+      现行反向断言改为"越界卡不许出现"（见下）。
+    """
     L = gmv2.TIER_GPU_OVERRIDE
     assert set(L) == {"T031", "T001", "T010", "T013", "T028", "T016", "T022", "T040",
                       "T002", "T011", "T014", "T017", "T023", "T029", "T032", "T041"}
@@ -82,36 +89,52 @@ def test_tier_gpu_override_is_the_lane_table():
         out = _patched(tid)
         assert out["gpus"] == g, tid
         assert out["cards"] == len(g), tid
-        assert gmv2.non_legal_card_violation(tid, g) is None, tid
-    # ★ 反向断言：车道里**一张**禁用卡都不许有（0/2/6/7）
-    assert not ({0, 2, 6, 7} & {x for g in L.values() for x in g})
+        assert gmv2.card_range_violation(tid, g, len(g)) is None, tid
+    # ★ 反向断言（现行唯一卡号判据）：车道里**一张越界卡**都不许有
+    assert not ({x for g in L.values() for x in g} - set(gmv2.GPU_ALLOWED))
+    assert tuple(gmv2.GPU_ALLOWED) == tuple(range(8))
 
 
 def test_t041_lane_and_cards_unchanged():
-    """★ 核心断言：T041 走**车道表** `[3,5]`（合法集内），而 `cards`（卡数）**仍为 2**。"""
+    """★ 核心断言：T041 的**建议卡位取值**仍为 `[3,5]`，而 `cards`（卡数）**仍为 2**（本包未改取值）。
+
+    ★ 2026-10-17 语义变更：`gpus` = **建议首选卡位**（⛔ 不是合法性判据）⇒
+      历史值 `[2,3]`（含 GPU2）现在是一套**合法**的建议卡位；本用例把它**放行**钉住
+      —— 这正是"⛔ 不设邻居卡"这条主席令的能失败对照。
+    """
     out = _patched("T041")
     assert out["gpus"] == [3, 5]
     assert out["cards"] == 2
     assert len(out["gpus"]) == out["cards"]
-    # ★ 反向断言：历史陈旧例外 `[2,3]`（含邻居卡）**仍必须被拒**
     saved = dict(gmv2.TIER_GPU_OVERRIDE)
     try:
-        gmv2.TIER_GPU_OVERRIDE = {**saved, "T041": [2, 3]}
+        gmv2.TIER_GPU_OVERRIDE = {**saved, "T041": [2, 3]}   # 旧"邻居卡例外"
+        assert _patched("T041")["gpus"] == [2, 3]            # ⇒ 现在**必须放行**
+        gmv2.TIER_GPU_OVERRIDE = {**saved, "T041": [6, 7]}   # 旧"生产锁卡"
+        assert _patched("T041")["gpus"] == [6, 7]            # ⇒ 现在**必须放行**
+        gmv2.TIER_GPU_OVERRIDE = {**saved, "T041": [7, 8]}   # 越界卡 ⇒ 仍必须拒
         with pytest.raises(AssertionError):
             _patched("T041")
     finally:
         gmv2.TIER_GPU_OVERRIDE = saved
 
 
-def test_t041_revocation_reason_is_written_down():
-    """⛔ 撤销必须连同**理由**一起写清（否则下一个人会以为是漏改）。"""
+def test_card_pool_caliber_is_written_down_in_the_generator():
+    """现行口径必须连同**裁定逐字**与**保留的硬要求**一起写清（否则下一个人会以为是漏改）。
+
+    ★ 与旧用例 `test_t041_revocation_reason_is_written_down` 的关系：该用例钉的是
+      "2026-10-16 撤销邻居卡例外"这一**已被 2026-10-17 主席令超越**的中间口径 ⇒ 已废。
+      本用例改为钉**现行口径**：裁定逐字 ＋ "建议首选卡位"语义 ＋ "不抢占他人"（含实现指向）。
+    ★ §15 去标识：生成器源码不得含第三方具名账号（当前口径下**连"邻居卡"都不再是判据**，
+      故源码里也不应再有具名/角色化的第三方卡归属描述）。
+    """
     src = (_HERE.parent / "generate_matrix_manifest_source.py").read_text(encoding="utf-8")
-    assert "2026-10-16 撤销" in src
-    assert "邻居" in src
-    # ★ §15 去标识（修正轮 1 / W4）：正式件里第三方账号**一律角色化** ⇒ 生成器源码亦不得含账号字面量。
-    assert "第三方账号占用" in src
+    assert "228 先到先得，随便用。" in src          # 裁定逐字
+    assert "单个作业不限制卡数。" in src            # 裁定逐字
+    assert "建议首选卡位" in src                    # gpus 的现行语义
+    assert "不抢占他人" in src                      # 保留的硬要求
+    assert "gpu_idle_assert" in src or "flow.guard.idle" in src   # 判据指向实现
     assert "remote" not in src
-    assert "docs/card-pool-contract.md" in src
 
 
 def test_override_only_changes_gpus():
@@ -146,71 +169,52 @@ def test_all_other_tiers_follow_the_default_map():
 # ── ③ ★ 通用锁卡断言（判据本身，不只是期望值）────────────────────────────────
 
 
-def test_locked_cards_come_from_a_single_source():
-    """具名锁卡 = 生产锁卡 ∪ 邻居卡，且**取自** `gpu_assignment`（§1.4 单一真相源）；
-    越界卡不枚举、由 `GPU_ALLOWED` 成员判定（见 `test_locked_card_assertion_rejects_each_locked_class`）。"""
-    assert gmv2.NEIGHBOR_CARDS == (2,)                 # GPU2 = 第三方账号占用中的常驻邻居卡
-    assert tuple(gmv2.GPU_FORBIDDEN_PRODUCTION) == (6, 7)
-    assert tuple(gmv2.GPU_ALLOWED) == (0, 1, 2, 3, 4, 5)
-    assert gmv2.LOCKED_CARDS == (2, 6, 7)
-    assert gmv2.locked_card_hits([8]) == (8,)           # 越界 leg 生效
-    assert gmv2.locked_card_hits([0]) == ()             # 合法卡不误伤
+def test_card_pool_caliber_comes_from_a_single_source():
+    """★ 卡号允许集合源自 `gpu_assignment`（§1.4 单一真相源），且**旧静态禁用符号已不存在**。
+
+    用 ``hasattr`` 断言"符号不存在"是最强的能失败对照：一旦有人把
+    ``NEIGHBOR_CARDS`` / ``LOCKED_CARDS`` / ``GPU_FORBIDDEN_PRODUCTION`` /
+    ``legal_card_set`` / ``locked_card_violation`` 加回来（= 静态禁用复活），本用例当场红。
+    """
+    assert tuple(gmv2.GPU_ALLOWED) == (0, 1, 2, 3, 4, 5, 6, 7)
+    assert gmv2.out_of_range_cards([7, 8]) == (8,)          # 越界判据生效
+    assert gmv2.out_of_range_cards([0, 2, 6, 7]) == ()      # 旧"禁用卡"全部合法
+    for retired in ("NEIGHBOR_CARDS", "LOCKED_CARDS", "GPU_FORBIDDEN_PRODUCTION",
+                    "legal_card_set", "non_legal_card_violation", "locked_card_violation",
+                    "locked_card_hits", "CHAIRMAN_BANNED_CARDS", "POOL_CONTRACT_CONFLICTS"):
+        assert not hasattr(gmv2, retired), (
+            f"旧口径符号 {retired} 复活了 ⇒ 静态禁用卡/锁卡语义回来了，必须按主席令改写"
+        )
 
 
-def test_no_tier_declares_a_locked_card():
-    """★ 全 54 档：`gpus` 不得含邻居卡 / 生产锁卡 / 越界卡（本世代卡池自身的冲突除外）。"""
+def test_no_tier_declares_an_out_of_range_card():
+    """★ 全 54 档：`gpus` 必须 ① 卡号 ⊆ 0–7 ② 卡数 == 该档 `cards`。
+
+    ⛔ 不再判"邻居卡 / 生产锁卡"（旧口径已废）——那两条现在**合法**，由
+    ``test_t041_lane_and_cards_unchanged`` 正向钉住。
+    """
     offenders = []
     for tier in _V1_TIERS:
         out = _patched(tier["tier_id"])
-        hits = gmv2.locked_card_hits(out["gpus"])
-        if not hits:
-            continue
-        pool = tuple(gmv2.GPU_POOL_BY_CARDS[int(out["cards"])])
-        if tuple(out["gpus"]) == pool:
-            continue                                    # 卡池自身冲突 ⇒ 已登记分支
-        offenders.append((tier["tier_id"], out["gpus"], hits))
-    assert offenders == [], f"以下档声明了被锁的卡：{offenders}"
+        bad = gmv2.card_range_violation(tier["tier_id"], out["gpus"], int(out["cards"]))
+        if bad:
+            offenders.append(bad)
+    assert offenders == [], f"以下档的卡号/卡数不合规：{offenders}"
 
 
-def test_no_tier_declares_the_neighbour_card():
-    """★ 邻居卡 GPU2 在我方**全部 54 档**声明里必须是 **0 次**（本包的核心修复目标）。"""
-    with_gpu2 = [t["tier_id"] for t in _V1_TIERS if 2 in _patched(t["tier_id"])["gpus"]]
-    assert with_gpu2 == [], f"仍声明了邻居 GPU2 的档：{with_gpu2}"
+def test_formerly_banned_cards_are_now_accepted_at_generation_time():
+    """★ 旧口径拒的三类输入在生成期**必须放行**（本包的核心口径变更，能失败对照）。
 
-
-def test_locked_card_assertion_rejects_the_stale_override():
-    """★ **阳性对照固化**：把改前的陈旧例外 `[2,3]` 放回去，断言**必须**拒（否则断言是假的）。"""
-    reason = gmv2.locked_card_violation("T041", [2, 3], 2)
-    assert reason is not None
-    assert "GPU2" in reason and "邻居" in reason
-
-
-def test_locked_card_assertion_rejects_each_locked_class():
-    """三类锁卡各自必须被拒（逐类阳性对照）。"""
-    assert gmv2.locked_card_violation("X", [4, 2], 2) is not None      # 邻居卡
-    assert gmv2.locked_card_violation("X", [6, 7], 2) is not None      # 生产锁卡
-    assert gmv2.locked_card_violation("X", [4, 8], 2) is not None      # 越界卡（∉ GPU_ALLOWED）
-
-
-def test_locked_card_assertion_passes_for_a_clean_set():
-    assert gmv2.locked_card_violation("X", [4, 5], 2) is None
-    assert gmv2.locked_card_hits([4, 5]) == ()
-
-
-def test_pool_contract_conflict_is_now_fail_closed():
-    """★ 2026-10-16 修订（**前提已消失**）：豁免条件由 `norm == pool` **收窄**为
-    `norm == pool and not locked_card_hits(pool)` ⇒ **池自身含锁卡即 raise**，不再"登记了事"。"""
-    gmv2.POOL_CONTRACT_CONFLICTS.clear()
-    gmv2._uncaptured_pool_conflicts.clear()
-    # ★ 契约：本函数**返回**违规串（由调用方 raise），⛔ 不是自己抛
-    assert gmv2.locked_card_violation("T003", [4, 5, 6, 7], 4) is not None   # 旧池形态 ⇒ 必红
-    assert gmv2.POOL_CONTRACT_CONFLICTS == {}               # ⛔ 不再登记后放过
-    assert gmv2._uncaptured_pool_conflicts == []
-    # ★ 反向断言（更强）：所有在册卡池**自身合法** ⇒ 上述豁免分支对合法池**不可达**
-    for cards, gpus in gmv2.GPU_POOL_BY_CARDS.items():
-        assert gmv2.locked_card_hits(gpus) == (), cards
-    gmv2.POOL_CONTRACT_CONFLICTS.clear()
-    gmv2._uncaptured_pool_conflicts.clear()
+    ① GPU2（旧"邻居卡"）② GPU6/7（旧"生产锁卡"）③ 含 0 的声明（旧"主席禁用"）。
+    ★ 卡数仍必须 == 该档 `cards`（覆盖只改"用哪几张"）。
+    """
+    saved = dict(gmv2.TIER_GPU_OVERRIDE)
+    try:
+        gmv2.TIER_GPU_OVERRIDE = {**saved, "T041": [2, 0], "T002": [6, 7]}
+        assert _patched("T041")["gpus"] == [2, 0]
+        assert _patched("T002")["gpus"] == [6, 7]
+    finally:
+        gmv2.TIER_GPU_OVERRIDE = saved
 
 
 # ── 覆盖表本身的 fail-closed ────────────────────────────────────────────────
@@ -238,19 +242,21 @@ def test_override_duplicate_gpus_is_fail_closed():
         gmv2.TIER_GPU_OVERRIDE = saved
 
 
-def test_override_outside_legal_card_set_is_fail_closed():
-    """★ 2026-10-16 修订：显式例外的判据域由 `GPU_POOL_BY_CARDS[cards]`（**默认值**）改为
-    `legal_card_set()`（= GPU_ALLOWED − 生产锁卡 − 主席禁用 {0,2}）—— 车道重出后同一卡数有多条车道。
-    ★ 保护**只增不减**：旧域漏掉的 `[4,5,6,7]` 在此必红。"""
+def test_override_with_an_out_of_range_card_is_fail_closed():
+    """★ 现行判据（唯一一条卡号判据）= **卡号 ⊆ 本机全卡 0–7**：越界卡（≥8）必红。
+
+    ★ 反向断言：**旧口径拒的三类**（GPU2 / GPU6/7 / GPU0）现在**必须被接受**
+      —— 判据不是"与某个静态名单逐字相等"。
+    """
     saved = dict(gmv2.TIER_GPU_OVERRIDE)
     try:
-        for bad in ([2, 3], [0, 1], [4, 6], [6, 7], [5, 7]):   # ★ 卡数一律 2（否则先撞卡数断言）
+        for bad in ([8, 9], [2, 8], [7, 8]):   # ★ 卡数一律 2（否则先撞卡数断言）
             gmv2.TIER_GPU_OVERRIDE = {**saved, "T041": list(bad)}
-            with pytest.raises(AssertionError, match="合法卡集外"):
+            with pytest.raises(AssertionError, match="越界卡"):
                 _patched("T041")
-        # ★ 反向断言：合法集内的车道**必须被接受**（判据不是"与默认值逐字相等"）
-        gmv2.TIER_GPU_OVERRIDE = {**saved, "T041": [3, 5]}
-        assert _patched("T041")["gpus"] == [3, 5]
+        for good in ([2, 3], [0, 1], [4, 6], [6, 7], [5, 7], [3, 5]):
+            gmv2.TIER_GPU_OVERRIDE = {**saved, "T041": list(good)}
+            assert _patched("T041")["gpus"] == list(good), good
     finally:
         gmv2.TIER_GPU_OVERRIDE = saved
 
@@ -267,21 +273,31 @@ def test_override_inside_generation_pool_is_accepted():
 # ── 在盘清单的一致性（产物侧，若存在）────────────────────────────────────────
 
 
-def test_on_disk_manifest_has_no_locked_card_declaration():
-    """在盘 v2 清单：⛔ 不得声明邻居卡；生产锁卡只允许出现在"等于本世代卡池"的形态里。"""
+def test_on_disk_manifest_declares_the_new_caliber():
+    """在盘 v2 清单：① 逐档卡号 ⊆ 0–7 且卡数 == cards；② **自述块 = 新口径**。
+
+    ★ 机读自述（`gpu_card_caliber`）必须存在且**恒空**地登记四类静态名单
+      （预留/禁用/生产锁/第三方占用）—— 这是"⛔ 不预留、⛔ 不禁用、⛔ 无生产锁卡、
+      ⛔ 无邻居卡"的**机读留痕**，⛔ 不是散文承诺。
+    ★ 旧自述块 `gpu_pool_contract_conflicts`（登记"卡池 ∩ 生产锁卡"的旧口径冲突）
+      **必须已消失** —— 那三类静态锁卡不存在了，冲突这个概念也随之消失。
+    """
     p = gmv2.V2_MANIFEST_PATH
     if not p.is_file():
         pytest.skip("v2 清单不在盘")
     manifest = json.loads(p.read_text(encoding="utf-8"))
-    assert [t["tier_id"] for t in manifest["tiers"] if 2 in (t.get("gpus") or [])] == []
-    non_pool = []
-    for t in manifest["tiers"]:
-        hits = gmv2.locked_card_hits(t.get("gpus") or [])
-        if not hits:
-            continue
-        if tuple(t["gpus"]) != tuple(gmv2.GPU_POOL_BY_CARDS[int(t["cards"])]):
-            non_pool.append((t["tier_id"], t["gpus"], hits))
-    assert non_pool == [], f"在盘清单含非卡池形态的锁卡声明：{non_pool}"
+    bad = [gmv2.card_range_violation(str(t["tier_id"]), t.get("gpus") or [], int(t["cards"]))
+           for t in manifest["tiers"]]
+    assert [b for b in bad if b] == [], [b for b in bad if b]
+    assert "gpu_pool_contract_conflicts" not in manifest
+    cal = manifest["gpu_card_caliber"]
+    assert cal["gpu_allowed"] == list(range(8))
+    assert cal["max_cards_per_job"] is None
+    assert list(cal["static_bans"][k] for k in
+                ("reserve", "disable", "production_lock", "third_party_occupancy")) == [[], [], [], []]
+    assert cal["no_preemption"]["required"] is True
+    assert "util == 0" in cal["no_preemption"]["criterion"]
+    assert "建议首选卡位" in cal["gpus_field_semantics"]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -526,9 +542,15 @@ def _regen_doc():
 
 
 def test_generator_non_native_per_epoch_scales_by_caliber_ratio():
-    """★ B-1 根因回归：生成器非 native 档 `per_epoch` 必须 = v1 值 × 口径比率（⛔ 不得透传）。"""
+    """★ B-1 根因回归：生成器非 native 档 `per_epoch` 必须 = v1 值 × 口径比率
+    × **（卡数 ÷ 数据并行度 dp_size）**（⛔ 不得透传；⛔ 不得按卡数折算 PP 档）。
+
+    ★ 2026-10-17 W-7 定案补充：v1 的基准是「**按卡数均分**」的每 epoch 步数，而 **PP 切层不切数据**
+      ⇒ `pp_size>1 ∧ dp_size=1` 的档（T017/T018）必须再按 `cards/dp_size` 折算回数据并行度口径。
+      本式对 `dp_size == cards` 的档退化为原来的「v1 × 比率」（⛔ 未顺手改到其它 43 档）。
+    """
     doc = _regen_doc()
-    bad = []
+    bad, pp_seen = [], []
     for e in doc["tiers"]:
         tid = e["tier_id"]
         if tid in gmv2.V2_SUBSET_SIZE_BY_TIER:
@@ -537,18 +559,65 @@ def test_generator_non_native_per_epoch_scales_by_caliber_ratio():
         ratio = gmv2.caliber_subset_ratio(
             tid, gmv2.V1_SUBSET_SIZE_BY_TIER[tid], int(e["data"]["subset_size"]),
             tid in gmv2.NOT_APPLICABLE_TIERS)
-        if int(e["expected_optimizer_steps_per_epoch"]) != int(v1_per) * int(ratio):
-            bad.append((tid, v1_per, ratio, e["expected_optimizer_steps_per_epoch"]))
-    assert bad == [], f"非 native 档 per_epoch 未按口径比率放大：{bad[:5]}"
+        cards = max(1, int(e["cards"]))
+        dp = gmv2.run_config_dp_size(tid, str(e.get("backend") or ""))
+        dp_eff = cards if dp is None else max(1, int(dp))
+        want = int(v1_per) * int(ratio) * cards // dp_eff
+        if int(e["expected_optimizer_steps_per_epoch"]) != want:
+            bad.append((tid, v1_per, ratio, cards, dp_eff,
+                        e["expected_optimizer_steps_per_epoch"], want))
+        if dp_eff != cards:
+            pp_seen.append(tid)
+    assert bad == [], f"非 native 档 per_epoch 未按口径比率 × (卡数/dp_size) 放大：{bad[:5]}"
+    # ★ 反向：PP 档（dp_size < cards）**确实**被折算过（⛔ 不是"没改到"）
+    assert sorted(pp_seen) == ["T017", "T018"], pp_seen
+
+
+def test_pp_tiers_planned_steps_are_not_divided_by_cards():
+    """★★ **W-7 定案的能失败断言**：native 全参 **PP 档**（``pp_size>1 ∧ dp_size=1``）的
+    每 epoch 计划步数 **⛔ 不得按卡数相除** —— 真机锚 = `SFT complete: steps=400`。
+
+    真机读数（两树一致，见 task-run-batch3 / task-run-ff267a8 证据）：
+      · 新树 `ff267a8` 的 T018 = **400/400** 步（`elapsed=915.6s`，墙钟 1086 s）；
+      · 旧树 `619d65b` 的 T018 = **400/400** 步（1081 s）⇒ 真值 = **400**，与代码树无关。
+    ⇒ `subset(100) ÷ dp_size(1) × epochs(4) = 400` 才是声明真值；
+      修前的「÷ cards」式给出 `100÷4×4 = 100`（T017 给出 200）⇒ **必红**。
+    """
+    doc = _regen_doc()
+    by = {t["tier_id"]: t for t in doc["tiers"]}
+    real_steps = {"T017": 400, "T018": 400}   # 真机实测（两树一致）
+    for tid, real in real_steps.items():
+        e = by[tid]
+        cards = int(e["cards"])
+        dp = gmv2.run_config_dp_size(tid, "native")
+        epochs = gmv2.run_config_epochs(tid)
+        assert dp == 1 and cards > 1 and epochs is not None, (tid, cards, dp, epochs)
+        # ① 修后声明 == 真机实测
+        assert int(e["expected_optimizer_steps_reachable"]) == real, (
+            tid, e["expected_optimizer_steps_reachable"], real)
+        # ② 修前式（按卡数）**必须 != 真值** —— 否则本断言无鉴别力（红不了）
+        old = int(gmv2.V1_PER_EPOCH_BY_TIER[tid]) * int(epochs)
+        assert old != real, (tid, old, real)
+        # ③ 修后式（按 dp_size）== 真值
+        subset = int(e["data"]["subset_size"])
+        assert subset // dp * int(epochs) == real, (tid, subset, dp, epochs, real)
+        # ④ 折算因子 == cards/dp（本 54 档 dp=1 ⇒ == cards）；⛔ 不得为 1（那就是没折算）
+        assert int(e["expected_optimizer_steps_per_epoch"]) == subset // dp
+        assert int(e["expected_optimizer_steps_per_epoch"]) != int(gmv2.V1_PER_EPOCH_BY_TIER[tid])
 
 
 def test_cross_check_manifest_against_matrix_passes():
-    """★ 跨件不变量：全 54 档 `manifest.per_epoch == docs.per_epoch_steps`（豁免 T017/T018 = W-7）。"""
+    """★ 跨件不变量：全 54 档 `manifest.per_epoch == docs.per_epoch_steps`。"""
+    # ★ W-7 已定案闭合（零豁免；`KNOWN_PRE_EXISTING_PER_EPOCH_DRIFT` 已清空）。
     assert gmv2.cross_check_manifest_against_matrix() == []
 
 
 def test_on_disk_per_epoch_matches_matrix_for_all_but_w7_tiers():
-    """★ 独立（不复用被测函数）复核：不齐的档**必须恰等于** W-7 具名豁免集。"""
+    """★ 独立（不复用被测函数）复核：不齐的档**必须恰等于** W-7 具名豁免集。
+
+    ★ 2026-10-17 W-7 定案后该豁免集**已空** ⇒ 本断言升级为更强的「**全 54 档逐档相等**」：
+      `drift` 必须恰等于空集（若再出现任何漂移档，当场红）。⛔ 用例名保留以维持既有引用。
+    """
     man = json.loads(gmv2.V2_MANIFEST_PATH.read_text(encoding="utf-8"))
     rows = {r["tier"]: r for r in json.loads(
         (gmv2.PROJECT_ROOT / "docs" / "capability-matrix.data.json").read_text(encoding="utf-8"))["rows"]}
@@ -575,17 +644,22 @@ def test_cross_check_turns_red_when_the_ratio_is_removed(monkeypatch):
 
 
 def test_cross_check_exemption_is_not_a_silent_whitelist():
-    """★ 豁免表**反向断言**：把 T017 人为修好 ⇒ 必须报「豁免表陈旧」（逼下一轮删出）。"""
+    """★ 豁免表**反向断言**（W-7 定案后仍必须有效）：登记的档必须**确实仍在漂**。
+
+    ★ 2026-10-17 更新：`KNOWN_PRE_EXISTING_PER_EPOCH_DRIFT` 已清空（T017/T018 的 per_epoch
+      已按 dp_size 修正 ⇒ 不再漂；默认豁免下同一份 doc 必须全绿）。⇒ 本用例改为**构造**一个
+      「陈旧豁免」（把**已不再漂**的 T017 塞回豁免表）⇒ 跨件机检必须报「豁免表陈旧」（fail-closed），
+      证明该反向断言**没有被删掉**、机制仍活。
+    """
     import tempfile
-    doc = _regen_doc()
-    for e in doc["tiers"]:
-        if e["tier_id"] == "T017":
-            e["expected_optimizer_steps_per_epoch"] = 100
-            e["expected_optimizer_steps_reachable"] = 100
+    doc = _regen_doc()   # W-7 定案后：T017 已是正确值（100/400），**不再漂**
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / "fixed.json"
         p.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
-        bad = gmv2.cross_check_manifest_against_matrix(p)
+        # ★ 默认（空豁免表）：T017 已真的不漂 ⇒ 全绿
+        assert gmv2.cross_check_manifest_against_matrix(p) == []
+        # ★ 构造陈旧豁免 ⇒ 必须报出
+        bad = gmv2.cross_check_manifest_against_matrix(p, exempt_drift=("T017",))
     assert any("豁免表陈旧" in x and "T017" in x for x in bad), bad
 
 

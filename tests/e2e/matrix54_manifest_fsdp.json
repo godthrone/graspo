@@ -1528,8 +1528,8 @@
       },
       "expected_optimizer_steps": 401,
       "checkpoint_save_steps": 401,
-      "expected_optimizer_steps_per_epoch": 50,
-      "expected_optimizer_steps_reachable": 200,
+      "expected_optimizer_steps_per_epoch": 100,
+      "expected_optimizer_steps_reachable": 400,
       "feasibility": {
         "verdict": "feasible",
         "feasible": true,
@@ -1550,7 +1550,7 @@
           "min_optimizer_steps": 5,
           "min_train_samples": 100,
           "step_gate_applicability": "applicable",
-          "step_gate_basis": "expected_optimizer_steps_reachable=200；per_epoch=50；max_epochs=4；可产出步数上限=200 ≥ 门槛 5 ⇒ 门槛照常判"
+          "step_gate_basis": "expected_optimizer_steps_reachable=400；per_epoch=100；max_epochs=4；可产出步数上限=400 ≥ 门槛 5 ⇒ 门槛照常判"
         },
         "criteria": [
           "A1",
@@ -1561,7 +1561,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=50 × 1 = 50）；比率 = 1（子集与 v1 同口径）",
+      "step_formula_v2": "非 native GRASPO：v1 口径（**按卡数均分**）× 口径扩张比率 × **（卡数 ÷ 数据并行度 dp_size）**（v1=50 × 1 × 2/1 = 100）；★ PP 不切数据（dp_size=1 < cards=2）⇒ 按 dp_size 折算，⛔ 不按卡数；比率 = 1（子集与 v1 同口径）",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = `expected_optimizer_steps_per_epoch` × **该档跑次档配置 yaml 的 `training.max_epochs`**（= 该键的唯一真相源，见 `step_gate_basis` 与本档 `config` 所指文件；⛔ 不再用 v1 冻结期常量）。当前值见本键本身（⛔ 此处不写死数字：写死的例子会随 epoch 口径变更而变成假话）。",
@@ -1607,8 +1607,8 @@
       },
       "expected_optimizer_steps": 401,
       "checkpoint_save_steps": 401,
-      "expected_optimizer_steps_per_epoch": 25,
-      "expected_optimizer_steps_reachable": 100,
+      "expected_optimizer_steps_per_epoch": 100,
+      "expected_optimizer_steps_reachable": 400,
       "feasibility": {
         "verdict": "feasible",
         "feasible": true,
@@ -1629,7 +1629,7 @@
           "min_optimizer_steps": 5,
           "min_train_samples": 100,
           "step_gate_applicability": "applicable",
-          "step_gate_basis": "expected_optimizer_steps_reachable=100；per_epoch=25；max_epochs=4；可产出步数上限=100 ≥ 门槛 5 ⇒ 门槛照常判"
+          "step_gate_basis": "expected_optimizer_steps_reachable=400；per_epoch=100；max_epochs=4；可产出步数上限=400 ≥ 门槛 5 ⇒ 门槛照常判"
         },
         "criteria": [
           "A1",
@@ -1640,7 +1640,7 @@
           "A6"
         ]
       },
-      "step_formula_v2": "非 native GRASPO：v1 口径 × **口径扩张比率**（v1=25 × 1 = 25）；比率 = 1（子集与 v1 同口径）",
+      "step_formula_v2": "非 native GRASPO：v1 口径（**按卡数均分**）× 口径扩张比率 × **（卡数 ÷ 数据并行度 dp_size）**（v1=25 × 1 × 4/1 = 100）；★ PP 不切数据（dp_size=1 < cards=4）⇒ 按 dp_size 折算，⛔ 不按卡数；比率 = 1（子集与 v1 同口径）",
       "key_semantics": {
         "expected_optimizer_steps_per_epoch": "每 epoch 的**计划优化步数**（① 的比较基准）。本轮 T040/T041/T042 = 6（锚定覆盖，不随子集放大而变；未锚定的公式值为 9，见 step_formula_v2 的【★ 锚定覆盖…】尾注）。",
         "expected_optimizer_steps_reachable": "整个 run 的可达步数上限 = `expected_optimizer_steps_per_epoch` × **该档跑次档配置 yaml 的 `training.max_epochs`**（= 该键的唯一真相源，见 `step_gate_basis` 与本档 `config` 所指文件；⛔ 不再用 v1 冻结期常量）。当前值见本键本身（⛔ 此处不写死数字：写死的例子会随 epoch 口径变更而变成假话）。",
@@ -4443,7 +4443,7 @@
   "supersedes": {
     "relationship": "v2 清单（matrix54_manifest_source.json）**未被改动**；本文件是它的 FSDP 变体派生版",
     "base_manifest": "tests/e2e/matrix54_manifest_source.json",
-    "base_manifest_sha256": "d157b951125ee80a6d72c050dee05ff2cf857ab7ceb3dca5f11735a790c20c8c",
+    "base_manifest_sha256": "c2db2beadbde7a66ec832379b81ea36f41888d44bf14f36e7c8c3c9be79ad360",
     "note": "v2 的 v1 关系（supersedes.base_manifest）予以保留，不覆盖",
     "base_supersedes_kept": {
       "relationship": "v1 清单（matrix54_manifest.json）**未被改动**；本文件是它的 v2 派生版",
@@ -4474,8 +4474,8 @@
       "checkpoint_retention_v2",
       "per-tier data.source / data.source_jsonl / data.source_jsonl_container / data.extract_command / data.source_rule / data.subset_file_pregenerated / step_formula_v2"
     ],
-    "gpus": "★ 2026-10-16：**撤销 T041 的陈旧卡位例外** `[2,3]`（2026-10-09 的一次性调度值，把第三方账号占用中的常驻邻居卡 GPU2 写进了我方声明）。⇒ T041 走**显式车道** `TIER_GPU_OVERRIDE['T041'] = [3, 5]`（★ 不再是默认映射 `GPU_POOL_BY_CARDS[2] = [4, 5]`）。★ 同日**车道重出**：`gpus` 按**合法卡集**（:func:`legal_card_set` = [1, 3, 4, 5]）逐档重定 —— 显式车道 **16 条**，其余档走卡数默认值 `GPU_POOL_BY_CARDS` = {\"1\": [4], \"2\": [4, 5], \"3\": [4, 5], \"4\": [1, 3, 4, 5]}；⛔ 同时废止旧表述「其余 53 档逐档逐字未变」（**与事实不符**）。",
-    "unchanged": "counts / models / feasibility_model / runtime.checkpoint_retention / 每档的 model*/algorithm/mode/backend/cards/status/feasibility/acceptance.criteria（★ `gpus` **不属于**本清单：见上条，2026-10-16 已按合法卡集逐档重出）"
+    "gpus": "★★ 2026-10-17 主席裁定（唯一标尺，逐字）：「**228 先到先得，随便用。**」＋「**单个作业不限制卡数。**」⇒ `gpus`（本清单与卡池映射里的这一列）**降级为『建议首选卡位』**，⛔ **不再是合法性判据**：① 卡号判据只剩**存在性** —— 本机全卡 0–7 一律可用，⛔ 无预留卡、⛔ 无禁用卡、⛔ 无『生产锁卡』、⛔ 无『邻居卡』；② 卡数无上限（唯一约束 = 该档 `cards` 本身）；③ **保留的硬要求 =『不抢占他人』**：起跑前**逐卡实测空闲**（剩余显存 ≥ 本档头寸 ∧ util == 0），被占则**换卡或等**，⛔ 绝不 kill 他人进程 / 绝不停他人容器（判据在设施层，见 `scripts/gpu_idle_assert.py`）；④ 本列仍是 **A4『同档两跑必须同卡位』的确定性锚**：同一档的两次运行必须引用同一份清单。★ 取值口径：显式建议卡位 **16 条**（`TIER_GPU_OVERRIDE`），其余档走卡数默认值 `GPU_POOL_BY_CARDS` = {\"1\": [4], \"2\": [4, 5], \"3\": [4, 5], \"4\": [1, 3, 4, 5]}；本机可用卡号 `GPU_ALLOWED` = [0, 1, 2, 3, 4, 5, 6, 7]。⛔ 本包只改**语义与判据**，⛔ 不重排、⛔ 不动任何档的 `gpus` 取值（逐档逐字未变）。",
+    "unchanged": "counts / models / feasibility_model / runtime.checkpoint_retention / 每档的 model*/algorithm/mode/backend/cards/status/feasibility/acceptance.criteria（★ `gpus` 见上条：2026-10-17 起语义 =『建议首选卡位』，**取值逐档逐字未变**）"
   },
   "data_sources": {
     "rule": "★ 逐档、**进程作用域**切换：不得用全局 export 一次性切源（mini 集不是正式集头部，全局切换会让 45 档拿到错的 100 条）。用法见 launcher",
@@ -4596,63 +4596,39 @@
       "other_45_tiers": "与 v1 逐值相同（未改子集/卡数/epoch）"
     }
   },
-  "gpu_pool_contract_conflicts": {
-    "locked_cards": [
-      2,
-      6,
-      7
-    ],
+  "gpu_card_caliber": {
+    "ruling": "228 先到先得，随便用。／单个作业不限制卡数。",
+    "ruling_date": "2026-10-17",
     "gpu_allowed": [
       0,
       1,
       2,
       3,
       4,
-      5
-    ],
-    "gpu_forbidden_production": [
+      5,
       6,
       7
     ],
-    "neighbor_cards": [
-      2
-    ],
-    "assertion": "locked_card_violation()：任何档 gpus 不得含 locked_cards 中任一张；唯一例外 = 该值恰等于本世代卡池 GPU_POOL_BY_CARDS[cards]（登记于此，不 raise）",
-    "conflicts": [
-      {
-        "pool": [
-          4,
-          5,
-          6,
-          7
-        ],
-        "locked_hits": [
-          6,
-          7
-        ],
-        "tiers": [
-          "T003",
-          "T006",
-          "T009",
-          "T012",
-          "T015",
-          "T018",
-          "T021",
-          "T024",
-          "T027",
-          "T030",
-          "T033",
-          "T036",
-          "T039",
-          "T042",
-          "T045",
-          "T048",
-          "T051",
-          "T054"
-        ]
-      }
-    ],
-    "note": "★ 上列冲突是**卡池定义**（2026-10-05 主席令「八卡全开」定的 {4,5,6,7}）与`gpu_assignment.GPU_FORBIDDEN_PRODUCTION=(6,7)` 之间的矛盾，**不是生成器的调度选择**⇒ 生成器只登记、⛔ 不擅自改池。★ 邻居卡 GPU2 已随 T041 例外撤销而从**全部声明中清零**。"
+    "static_bans": {
+      "reserve": [],
+      "disable": [],
+      "production_lock": [],
+      "third_party_occupancy": [],
+      "note": "★ 这四类**静态**名单均已废除（主席 2026-10-17）——「哪张卡此刻被谁占着」是**动态事实**，由起跑前的逐卡实测空闲断言负责，生成器⛔ 不猜、更不静态禁用。"
+    },
+    "max_cards_per_job": null,
+    "assertion": "card_range_violation()：任何档 gpus 必须 ① 卡号 ⊆ gpu_allowed（0–7，存在性判据）② 卡数 == 该档 cards。⛔ 不判『生产锁卡』/『邻居卡』/卡数上限（旧口径已废）。",
+    "no_preemption": {
+      "required": true,
+      "criterion": "起跑前**逐卡实测**：剩余显存 ≥ 本档头寸（默认 48 GiB） ∧ util == 0",
+      "on_busy": "换卡或等（⛔ 绝不 kill 他人进程 / 绝不停他人容器）",
+      "implementations": [
+        "scripts/gpu_idle_assert.py",
+        "graspo.flow.guard.idle",
+        "graspo.cli.gpu_monitor:assert_target_gpus_idle"
+      ]
+    },
+    "gpus_field_semantics": "『建议首选卡位』——调度建议 + A4 可比性锚，⛔ 不是合法性判据（改跑别的卡只要 ∈ 0–7 且卡数不变即合法）。"
   },
   "fsdp_migration": {
     "round": "fsdp-phase1+2",
