@@ -2265,12 +2265,13 @@ def run(args: argparse.Namespace) -> int:
         tier_caliber_note = _judge.peak_memory_unavailable_note(tier_caliber)
         first_dir = Path(args.run_root) / tier_id
         if not first_dir.is_dir():
-            # ── ★ 六态口径（2026-09-22 指挥官裁定）────────────────────────────
-            # 旧实现把三种"没跑"一律写成 `— 未测` ⇒ 丢掉用户明确关心过的区分
-            # （"口径不可测是什么意思？无配方不适用呢？"）。三段必须分开：
-            #   · `<T>.blocked.md`         ⇒ ⛔ 无配方（当前无配方、**将来可能做得了**）
-            #   · `<T>.not_applicable.md`  ⇒ ⛔ 不适用（**逻辑上不适用**）
-            #   · 其余（清单 ready 但未跑） ⇒ — 未测（尚未纳入跑批）
+            # ── ★ 台账状态词 = 冻结四态（旧「六态/三态标签」已作废，2026-10-17）─────
+            # ⛔ 值域由 `_judge.LEDGER_STATUS_PHRASES` 唯一定义（4 个：
+            #    已验证可用／已验证不可用／尚未验证／未纳入验收）。下面三条"没跑"在
+            #    四态下**塌成两个值**，但区分不丢 —— 逐条写进 `_why` / `status_provenance`：
+            #      · `<T>.blocked.md`        ⇒ 未纳入验收（当前无配方、**将来可能做得了**）
+            #      · `<T>.not_applicable.md` ⇒ 未纳入验收（**逻辑上不适用**）
+            #      · 其余（清单 ready 但未跑）⇒ 尚未验证（尚未纳入跑批）
             # 出处写进 `status_provenance`（§2.2 显式即防呆：读者能查到依据文件）。
             _cfg_dir = (
                 Path(getattr(args, "repo_root", None) or Path.cwd())
@@ -2447,7 +2448,7 @@ def run(args: argparse.Namespace) -> int:
             row["a4_independence_detail"] = _independence_detail
         records.append(row)
 
-    # ★ 六态白名单断言（§2.2 显式即防呆）：产出里出现第 7 种状态词即 fail-closed。
+    # ★ 冻结四态白名单断言（§2.2 显式即防呆）：产出里出现白名单外的状态词即 fail-closed。
     _allowed = set(_judge.LEDGER_STATUS_PHRASES)
     _bad = sorted({str(r.get("status")) for r in records} - _allowed)
     if _bad:

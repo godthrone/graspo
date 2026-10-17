@@ -1,4 +1,4 @@
-"""A1–A7 + U2/U4 验收判据与失败分类 —— 纯计算层，零设施依赖。
+"""A1–A7 + CPT_LOSS + U4 验收判据与失败分类 —— 纯计算层，零设施依赖。
 
 职责：把一次训练运行抽出的**证据**（退出码、日志、步数、权重变化、产物清单、
 loss / grad_norm 序列、双跑对照）判成验收判据的通过与否，并给出
@@ -12,17 +12,19 @@ loss / grad_norm 序列、双跑对照）判成验收判据的通过与否，并
 - **A1** 进程成功（exit=0）；
 - **A2** 训练步真推进且权重真变化（LoRA / 全参两套判据）；
 - **A3** checkpoint 可被重新加载；
-- **A4** 同 config 同 seed 双跑一致（**诊断**，不参与 ✅/❌）；
+- **A4** 同 config 同 seed 双跑一致（⭐ **诊断项，⛔ 不是判据**：其容差体系
+  ``A4_TIER_CALIBRATIONS`` / ``calibrated_tolerance`` 自 2026-10-10 目标锚点起
+  **退役「判据」身份、降级为开发期内部工具**（k/ε/cap 只作开发期对照），
+  ⛔ 不参与 ✅/❌。计算逐字保留，见 :data:`A4_TOLERANCE_RETIRED_NOTE`）；
 - **A5** 四件套产物落盘；
 - **A6** 数值健康（loss 与 grad_norm 全程 finite，NaN/Inf 即不通过；loss 首末走向
   只作**记录项** ``loss_trend``，不作阻断——见 :data:`A6_LOSS_TREND_BLOCKS`）；
 - **A7** 训练真推进（没有任何一步因非有限梯度被跳过）；
-- **U2** loss 正常下降 / reward 正常上升（**诊断轴**：2026-10-17 已按**文档化口径**对齐
-  实现 —— 主判据 = **终点窗口达到/超过基线同口径终点窗口**，起点窗口**仅作归因诊断**；
-  但「是否接回 ✅/❌ 阻断轴」**待裁**，且基线证据的采集落点在 ``scripts/collect_results.py``
-  （本层边界外、须另批）⇒ 现在仍只计算、只记录。窗口口径见 :func:`judge_u2`，
-  接线状态登记见 :data:`U2_WIRING_PENDING_NOTE`；⛔ 与 A6 的「首末两点」**不同源**，
-  不得互相顶替）；
+- **CPT_LOSS**（判据② 的 **CPT 支**，**只对 CPT 生效**）：**训练 loss 正常下降**
+  = 「**终窗均值 < 起窗均值**」（窗口 ``k = max(3, round(n × 0.10))``；
+  ⛔ 与 A6 的「首末两点」**不同源**，不得互相顶替）。★ **退出基线依赖**
+  （⛔ 不再与"未训练底座 loss 终窗"比较——单卡曲线基线已作废）；缺数据 ⇒
+  **fail-closed**（⛔ 不得默认通过）；NaN/Inf ⇒ **fail-loud**。见 :func:`judge_cpt_loss`）；
 - **U4** 产物可推理（**诊断轴**：已实现并逐次记录，但暂未接入阻断轴——理由见
   :data:`U4_WIRING_PENDING_NOTE`）。
 
@@ -308,6 +310,27 @@ ORPHAN_FORMAL_GATE_FIELDS: tuple[str, ...] = ("min_epochs", "min_train_samples")
 #: 为什么用 ``None`` 而不是 0/-1（§2.2）：0 与负数在"最少步数"这个语义里**没有合法
 #: 解释**，拿它们当"未提供"会把非法输入静默变成合法缺省 ⇒ 判定器必须把它们
 #: **判否**（fail-closed），而不是回落到 5。两者语义必须能分开。
+
+#: ★★ **A4 容差体系 = 诊断项，⛔ 不是判据**（2026-10-17 主席裁定，本包
+#: `task-judge-retire` 落地；依据 = 2026-10-10 目标锚点逐字：「**废弃 A4 容差体系与
+#: "非有限静默跳过"判据（k/ε/cap 降级为开发期内部工具）**」）。
+#:
+#: ⇒ 冻结口径的判据只有**四条**（① 跑通/工程合规 ② 效果 ③ 算法正确性检查 ④ 推理），
+#: **A4 不在其中**。本常量登记的就是这次"身份退役"：
+#:   * ``A4_TIER_CALIBRATIONS`` / :func:`calibrated_tolerance` / :func:`judge_a4` 的
+#:     **计算逐字保留**（降级为**开发期内部工具**，k/ε/cap 只作开发期对照）；
+#:   * ``A4`` 仍在 :data:`DIAGNOSTIC_CRITERIA`，**逐次计算并记录**；
+#:   * ⛔ **A4（含其容差）绝不参与 ✅/❌** —— :func:`judge_tier` 的 ``primary_status``
+#:     里没有 ``"A4"``，且 :attr:`TierJudgement.primary_evidence_gap` 只遍历主判据。
+#:
+#: ★ **防后来者再接回去**：任何把 ``"A4"`` 加进 :data:`PRIMARY_CRITERIA` /
+#: ``judge_tier.primary_status`` 的改动，都必须先推翻 2026-10-10 目标锚点，
+#: 并同步本常量与 :data:`DIAGNOSTIC_CRITERIA` 的注释——⛔ 不得静默接线。
+A4_TOLERANCE_RETIRED_NOTE = (
+    "A4 容差体系已退役「判据」身份、降级为开发期内部工具（k/ε/cap 只作开发期对照）；"
+    "A4 是诊断项，⛔ 不参与 ✅/❌（依据：2026-10-10 目标锚点「废弃 A4 容差体系…"
+    "降级为开发期内部工具」）。"
+)
 
 #: ── A4（同 config 同 seed 双跑一致）的两个容差口径：**由实测推导，不拍脑袋** ──
 #:
@@ -1116,7 +1139,9 @@ A6_LOSS_TREND_FIELD = "loss_trend"
 #: 在判据里却当阻断，是双口径（违反 §1.4）。
 #:
 #: **语义依据**：A6 的 docstring 自称「**数值健康**」判据；"loss 是否真下降"是
-#: **效果**信号，应由**准确率**类指标回答（能力矩阵 §8：SFT ≥50% / GRASPO Δ≥20pp），
+#: **效果**信号，应由**准确率**类指标回答（冻结口径 = `docs/capability-matrix.data.json`
+#: 的 `meta.criteria_caliber.threshold.by_method`：SFT Δ≥+10.0 pp / GRASPO Δ≥+5.0 pp /
+#: CPT·OPD after ≥ base；点估计，不做假设检验），
 #: 不该由单点 loss 比较承担。
 #:
 #: **为什么保留为记录项而不是删除**（§2.2 显式即防呆）：降级 ≠ 静默丢弃。
@@ -1419,22 +1444,10 @@ class RunEvidence:
     #: loss 字段**无值**（``loss: null`` / 缺失）⇒ 证据缺口，判"未分类"而非
     #: "数值异常"。断言后者是假陈述（我们根本没读到数），会把排查引向数值问题。
     losses_unavailable: bool | None = None
-    # ── U2 的比较基准：**基线同口径终点窗口**（口径见 :func:`judge_u2` 上方注释块）──
-    #: ★ **基线**（``meta.criteria_caliber.baseline``：role =「同档位未训练底座
-    #: （role=base）」）的**同口径终点窗口**：loss 口径填 loss 窗、GRASPO 支路填 reward
-    #: 窗（**必须与 U2 判定的方向同向**；方向由本类的 :attr:`algorithm` 经
-    #: :func:`u2_higher_is_better_from_algorithm` 导出 —— ⛔ 不再是调用方的缺省开关，
-    #: 见 :func:`judge_u2` 与 :data:`U2_REWARD_ALGORITHMS`）。
-    #: 口径原文 = ``docs/capability-matrix.data.json:189-191``（生成处
-    #: ``tools/matrix/build_official.py:1549-1550``）；完整比较口径原文 =
-    #: ``docs/capability-matrix-milestone-20261014.html:280``：「**主判据 = 终点窗口
-    #: 达到 / 超过基线同口径的终点窗口**；起点窗口仅作**归因诊断**」。
-    #: ``None`` = **未取到基线证据** ⇒ :func:`judge_u2` 落「**取证缺口**」（fail-closed：
-    #: ⛔ 不得默认通过、⛔ 也不得降格为「训练失败」）。
-    #: ★ 采集落点 = ``scripts/collect_results.py``（本层读不到，故现盘一律为 ``None``）。
-    #: ⛔ **不得**由判定层用本跑自身的任何读数（起点窗 / 首末两点 / 末步 loss）顶替它
-    #: —— 那正是 2026-10-17 被独立复核 v14 判 🔴 的「自比」偏离。
-    baseline_end_window: float | None = None
+    # ★ 旧字段 ``baseline_end_window``（U2 的「基线同口径终点窗口」）**已随 U2 判据
+    #   体系一并退役**（2026-10-17，本包 `task-judge-retire`）：单卡曲线基线与
+    #   「未训练底座 loss 终窗」比较口径已作废 ⇒ CPT 的 loss 判据改为
+    #   **本跑自身「终窗 < 起窗」**（见 :func:`judge_cpt_loss`），**不再读任何基线**。
     #: 本次运行**计划**跑完的 optimizer step 数（ms-swift ``logging.jsonl`` 的
     #: ``global_step/max_steps`` 分母；native 侧无此读数 ⇒ ``None``）。
     #: A2 用它做"训练步真推进"的后端无关断言：实际步数必须达到计划步数。
@@ -1546,72 +1559,78 @@ class RunEvidence:
     inference_error: str = ""
 
 
-#: 台账状态（唯一真相源）。三态而非两态的理由见 :class:`FailureClass` 的
-#: ``EVIDENCE_GAP`` 条目与 :func:`judge_tier`：取证缺口既不是通过，也不是训练失败。
+#: ★ **CPT 的 loss 判据名**（判据② 的 **CPT 支**；⛔ **只对** ``algorithm == "CPT"``
+#: **生效**，非 CPT 档本判据恒「不适用」⇒ 不改变 SFT / GRASPO / OPD 的任何结论）。
+#:
+#: 为什么必须有它（2026-10-17 主席裁定）：CPT 的效果判据 = 「**训练 loss 正常下降**」
+#: **且** ``after ≥ base``。在此之前，``result_judge`` 里这条**没有任何强制点** ——
+#: 旧的 ``U2`` 只落在诊断轴、且今天已**整体退役** ⇒ 必须给它一个真能判 ✅/❌ 的落点。
+CPT_LOSS_CRITERION = "CPT_LOSS"
+
 #: ★ **主判据**（决定 ✅/❌，2026-09-22 用户口径 = "能不能拿来训练"）：
 #: `A1`=进程正常退出、`A2`=跑满预定步数/epoch 且权重确实被更新、
 #: `A3`=checkpoint 可重载、`A5`=训练产物齐全、`A6`=数值健康（无 NaN/Inf）、
-#: **`A7`=训练真推进（没有任何一步因非有限梯度被跳过）**。
-#: ⛔ **`U2` 不在本元组内**：自 2026-10-17 起 U2 的**算法口径已按文档对齐**
-#: （主判据 = 终窗 对 基线同口径终点窗；见 :func:`judge_u2`），但**「是否接线」待上级裁定**，
-#: 且**基线证据的采集落点在 ``scripts/collect_results.py``（本层边界外）** ⇒ 现盘
-#: ``baseline_end_window`` 一律为 ``None`` ⇒ 若此刻接入，会把全部档从「已判」刷成
-#: 「⚠ 口径不可测」（⛔ 未测 ≠ 失败）⇒ 仍列 :data:`DIAGNOSTIC_CRITERIA`。
-#: 理由逐字见 :data:`U2_WIRING_PENDING_NOTE`。
-#: ⛔ 顺序即"台账自述"：本元组与 :func:`judge_tier` 的 ``primary_status`` 必须一致。
-PRIMARY_CRITERIA: tuple[str, ...] = ("A1", "A2", "A3", "A5", "A6", "A7")
+#: **`A7`=训练真推进（没有任何一步因非有限梯度被跳过）**、
+#: **`CPT_LOSS`=CPT 的训练 loss 正常下降**（判据② 的 CPT 支；⛔ 只对 CPT 生效）。
+#: ⛔ **顺序即"台账自述"**：本元组与 :func:`judge_tier` 的 ``primary_status`` 必须一致。
+PRIMARY_CRITERIA: tuple[str, ...] = (
+    "A1",
+    "A2",
+    "A3",
+    "A5",
+    "A6",
+    "A7",
+    CPT_LOSS_CRITERION,
+)
 
 #: ★ **诊断判据**（**保留计算与记录，但不参与 ✅/❌**）：
-#: `A4`=同配置双跑一致性（含首步零容差 / 终态容差 / 档族标定 / 运行独立性四个子检查）。
-#: 为什么降级 A4（2026-09-22 用户纠正）：用户原话"你的判定标准应该是**能顺利跑完一个
-#: epoch**……我们现在看的**不是效果，是训练可用**"——双跑一致性是**可复现性**信号，
-#: 不是"能不能训练"。它仍是有价值的诊断数据（例如"这个族在硬件上的正常漂移有多大"）。
-#: `U2`=loss 正常下降 / reward 正常上升：**已按文档口径实现**
-#: （主判据 = 终窗 对 基线同口径终点窗；起点窗仅归因诊断）并逐次记录，但
-#: **接线待裁**、且**基线证据的采集落点在 ``scripts/collect_results.py``**
-#: （本层边界外、须另批）⇒ 暂不接入阻断轴。理由逐字见
-#: :data:`U2_WIRING_PENDING_NOTE`。
+#: `A4`=同配置双跑一致性。⭐ **A4 容差体系**（``A4_TIER_CALIBRATIONS`` /
+#: ``calibrated_tolerance``，即 k/ε/cap）**已退役「判据」身份、降级为开发期内部工具**
+#: （2026-10-10 目标锚点逐字：「废弃 A4 容差体系与"非有限静默跳过"判据
+#: （k/ε/cap 降级为开发期内部工具）」）—— ⛔ 不参与 ✅/❌，⛔ 但**计算逐字保留**，
+#: 见 :data:`A4_TOLERANCE_RETIRED_NOTE`。
 #: `U4`=产物可推理：**已实现并逐次记录**，但证据字段的**采集落点在
 #: ``scripts/collect_results.py``**（超出本包改动面）⇒ 采集面落地前不接入阻断轴，
-#: 否则会把全部档从「未测」刷成「⚠ 口径不可测」。理由逐字见
+#: 否则会把全部档从「未测」刷成「尚未验证」。理由逐字见
 #: :data:`U4_WIRING_PENDING_NOTE`（§2.2 显式即防呆）。
-DIAGNOSTIC_CRITERIA: tuple[str, ...] = ("A4", "U2", "U4")
+#: ⛔ **`U2` 已整体退役**（2026-10-17，本包 `task-judge-retire`）：窗口 / 基线 / 方向
+#: 机制删净。CPT 的 loss 判据改由 :data:`CPT_LOSS_CRITERION` 在**主判据轴**承担。
+DIAGNOSTIC_CRITERIA: tuple[str, ...] = ("A4", "U4")
 
 
-#: ★ **2026-09-22 用户纠正口径后的状态词**（唯一的两个结论态）：
-#: 用户原话："你的判定标准应该是**能顺利跑完一个 epoch**……我们现在看的**不是效果，是训练可用**。"
-#: ⇒ `✅ 可用` = 能拿来训练（跑完预定步数/epoch + 正常退出 + 产物齐全 + 数值健康）；
-#:    `❌ 不可用` = 跑不完（崩 / 挂死 / 环境缺陷 / 数值崩坏）。
-LEDGER_PASS = "✅ 可用"
-LEDGER_FAIL = "❌ 不可用"
-#: `⚠ 口径不可测` **只在真正"跑不完或跑不了"时使用**（结构性步数上限 < 门槛、缺配方、
-#: 取证缺口导致主判据无法判定）——**不再用于"A4 没标定"**（A4 已降级为诊断字段）。
-LEDGER_INDETERMINATE = "⚠ 口径不可测"
-#: ★ **第四态**（AF1/指挥官裁定，2026-09-21）：该档的 step 门槛**结构上不可测**——
-#: 不是通过、不是训练失败、也不是取证缺口。
-#: 为什么必须与 :data:`LEDGER_FAIL` 分开：AF1 诊断的 9 档 native GRASPO 里，
-#: ``T030``/``T036``/``T042`` 用这个 config **无论跑多久都最多 1 步**（阈值
-#: ``queue×group`` 在 4 卡下永不可触发）；把它们的"步数 < 门槛"记成「❌ 失败」，
-#: 读者会读成"这档能力不行"，而事实是"**这档压根没被真正测过**"。
-#: 方向不变：它**不是** ✅，也**不放宽**门槛（``min_optimizer_steps`` 一个字没动）。
-LEDGER_GATE_NOT_APPLICABLE = "⚠ 口径不可测"   # 与 LEDGER_INDETERMINATE 同字：都是"测不了"，理由写在 note
-#: ★ **当前无配方、将来可能做得了**（blocked）——**不得**与"逻辑上不适用"或"还没跑"混同
-#: （2026-09-22 指挥官裁定：用户专门问过这几个词的区别，塌成一个词是信息量倒退）。
-#: 判据来源必须可查：`samples/configs/matrix54/<T>.blocked.md`。
-LEDGER_NO_RECIPE = "⛔ 无配方"
-#: ★ **逻辑上不适用**（not_applicable）。判据来源：`samples/configs/matrix54/<T>.not_applicable.md`。
-LEDGER_NOT_APPLICABLE = "⛔ 不适用"
+#: ★ **台账状态词 = 冻结四态**（唯一真相源，2026-10-17 起）：
+#: ``已验证可用`` / ``已验证不可用`` / ``尚未验证`` / ``未纳入验收``。
+#: 为什么是四态（旧的"六态/三态标签"体系**已作废**）：四态与矩阵对外件
+#: （``docs/capability-matrix.data.json`` → ``rows[*].status``）**同一套词**，
+#: 消除"台账一套词、发布件另一套词"的双口径（§1.4）。
+#: ⛔ 常量名保持不变（``LEDGER_*``）以免下游大面积改名；变的只是**取值**。
+#: 语义映射（⛔ 不改任何档位的结论，只改词的写法）：
+#: ``✅ 可用`` → :data:`LEDGER_PASS`；``❌ 不可用`` → :data:`LEDGER_FAIL`；
+#: ``⚠ 口径不可测`` / ``— 未测`` → :data:`LEDGER_INDETERMINATE`；
+#: ``⛔ 无配方`` / ``⛔ 不适用`` → :data:`LEDGER_NO_RECIPE`。
+LEDGER_PASS = "已验证可用"
+LEDGER_FAIL = "已验证不可用"
+#: 取证缺口 / 结构性不可测 / 尚未纳入跑批 —— 三者**同为"未验证"**（四态合并）。
+LEDGER_INDETERMINATE = "尚未验证"
+#: ★ **结构上不可测**（AF1/指挥官裁定，2026-09-21）：该档的 step 门槛**结构上不可测**
+#: —— 不是通过、不是训练失败、也不是取证缺口。四态下与 :data:`LEDGER_INDETERMINATE`
+#: **同字**（理由写在 note），⛔ 但**不放宽**门槛（``min_optimizer_steps`` 一个字没动）。
+LEDGER_GATE_NOT_APPLICABLE = "尚未验证"
+#: ★ **当前无配方、将来可能做得了**（blocked）与 **逻辑上不适用**（not_applicable）
+#: —— 四态下合并为「未纳入验收」；两者区别仍逐字写在 note 里（§2.2 显式即防呆）。
+LEDGER_NO_RECIPE = "未纳入验收"
+LEDGER_NOT_APPLICABLE = "未纳入验收"
 #: **尚未纳入跑批**。
-LEDGER_UNTESTED = "— 未测"
+LEDGER_UNTESTED = "尚未验证"
 
-#: ★ **状态词全集（6 个，唯一真相源）**：任何产出都不得出现第 7 种白名单外的词。
+#: ★ **状态词全集（4 个，唯一真相源）**：任何产出都不得出现第 5 种白名单外的词。
+#: （``LEDGER_INDETERMINATE`` / ``LEDGER_GATE_NOT_APPLICABLE`` / ``LEDGER_UNTESTED``
+#: 同字，``LEDGER_NO_RECIPE`` / ``LEDGER_NOT_APPLICABLE`` 同字 ⇒ 去重后恰 4 个。）
 LEDGER_STATUS_PHRASES: tuple[str, ...] = (
     LEDGER_PASS,
     LEDGER_FAIL,
     LEDGER_INDETERMINATE,
     LEDGER_NO_RECIPE,
-    LEDGER_NOT_APPLICABLE,
-    LEDGER_UNTESTED,
 )
 
 
@@ -2400,7 +2419,7 @@ def judge_a6(evidence: RunEvidence) -> CriterionResult:
     :data:`A6_LOSS_TREND_BLOCKS` 的完整裁定依据）：首末两点的走向**不再**使 A6 判否，
     但仍以 ``loss_trend=decreased|increased`` 写进明细文本（§2.2 显式即可见），
     由采集层带进台账。判据自称「数值健康」，而"loss 是否真下降"属**效果**信号，
-    应由准确率类指标（能力矩阵 §8）回答。
+    应由准确率类指标（冻结口径 = `meta.criteria_caliber.threshold.by_method`）回答。
     """
     if not evidence.losses:
         return CriterionResult(
@@ -2473,197 +2492,79 @@ def judge_a6(evidence: RunEvidence) -> CriterionResult:
     return CriterionResult("A6", True, f"数值健康：{trend_note}{grad_note}")
 
 
-# ── U2「loss 正常下降 / reward 正常上升」（在役窗口口径）──────────────────────
+# ── CPT_LOSS「训练 loss 正常下降」（判据② 的 CPT 支）──────────────────────────
 #
-# ★ 口径的**在役定义原文**（⛔ 本段是执行层，不是口径的第二真相源；改口径必须改原文）：
-#   `docs/capability-matrix.data.json` → `meta.criteria_caliber.baseline.caliber`（:191）：
-#     「U2 终点窗口 = 末段 max(3, 10% 步数) 步的均值；
-#       该档的 epoch 数与推导步数见档位「步数/epoch」子项。」
-#   其生成处 = `tools/matrix/build_official.py:1550`；**完整比较口径原文**见
-#   `docs/capability-matrix-milestone-20261014.html:280`（=`-v2.html:280`，冻结快照）：
-#     「每条曲线取起点窗口与终点窗口（窗口 = 首尾各 max(3, 10% 步数) 的均值）；
-#      loss 越低越好、reward 越高越好；
-#      **主判据 = 终点窗口达到 / 超过基线同口径的终点窗口**；
-#      起点窗口仅作归因诊断；不要求单调、不设噪声阈值；
-#      质量门槛由判据 U4 与效果基准承担。出现 NaN / Inf 一律 fail-loud。」
-#   **唯一现存的窗口实现** = `.local/hb-workspace/.../task-run-T028/evidence/u2_window.py:27`：
-#     `k = max(3, int(round(len(vals) * 0.10)))`；
-#     `start = mean(vals[:k])`；`end = mean(vals[-k:])`。
-#   ⇒ 本模块的 :func:`u2_window_size` **逐字复刻该实现的窗口算法**（`10% × 记录点数`）；
-#     它与「`max(3, 10% × 步数)`」的**字面读法**在「一点一步」时相同、在「点多步稠密」时不同，
-#     两读法在既有 9 档 CPT 补录中结论一致（`.local/.../task-matrix-hygiene/report.md` §35）。
+# ★★ **U2 已整体退役**（2026-10-17，本包 `task-judge-retire`）：
+#   * 旧 U2（``judge_u2`` / ``u2_higher_is_better_from_algorithm`` / ``u2_direction_label`` /
+#     ``U2_REWARD_ALGORITHMS`` / ``U2_LOSS_ALGORITHMS`` / ``U2_WIRING_PENDING_NOTE`` /
+#     ``U2_BASELINE_MISSING_DETAIL`` / ``RunEvidence.baseline_end_window`` / 窗口常量）
+#     **删净**；
+#   * 退役依据（⛔ 不论证、不改）：冻结口径把判据收成**四条**，且明确作废
+#     「U1–U4 判据体系 / U2 窗口 / 终点窗口 / 起点窗口 / 基线同口径终窗 / 单卡曲线基线」；
+#   * 「唯一现存的窗口实现」这条引用及其指向的冻结快照 HTML 一并**摘掉**
+#     （⛔ 本层不碰 ``docs/**``；冻结快照由文档面 P5 加历史声明）。
 #
-# ══════════════════════════════════════════════════════════════════════════════
-# ★★ **2026-10-17 口径对齐（工作包 `task-u2-align`，路径 α）** ★★
+# ★ **保留下来的是 CPT 的 loss 判据**（判据② 的 CPT 支；主席裁定「CPT 的『训练 loss
+#   正常下降』必须保留」）——它今天必须是一个**真实强制点**（旧 U2 只在诊断轴 ⇒
+#   "保留"这句落不到任何 ✅/❌ 上；``CPT_LOSS`` 现在就在 :data:`PRIMARY_CRITERIA` 里）。
 #
-# 上面这段原文的**主判据 = 「终点窗口 达到 / 超过 基线同口径的终点窗口」**；
-# 本模块 :func:`judge_u2` 的判定式**现在与之逐字一致**。
-#
-# ★ **被替换的旧实现（两造并列登记，⛔ 原文不得删）**：上一批（`task-judge-b1`，
-#   HEAD=01dd220）判的是「**终点窗口 对 自身起点窗口**」——**自比**读法，与上引
-#   文档化主判据**不是等价读法**；独立复核 v14 判词原文：
-#     「**判词①：U2 主判据 = 与文档化口径相悖的自行取舍 ⇒ 🔴（本批最关键，能翻转
-#       档位结论）**」（`review-narrow/freeze-note-13.md` §2）
-#   ⇒ 主席 2026-10-17 定调：**文档口径是唯一真相源 ⇒ 要改的是代码、不是策略**。
-#
-# 本包据此把口径改对（⛔ **未改 `docs/**`**，也⛔ 未改任何策略）：
-#   * **起点窗口** ⇒ **只作归因诊断**（口径原文逐字），⛔ 不参与判定；
-#   * **基线同口径终点窗口** ⇒ **独立入参** :attr:`RunEvidence.baseline_end_window`
-#     （``None`` = 未取到 ⇒ 落**取证缺口**，fail-closed）；
-#   * ⛔ 本层**不得**用本跑自身的任何读数（起点窗 / 首末两点 / 末步 loss）顶替基线窗
-#     —— 那正是「自比」偏离复辟的通道，已由
-#     ``tests/core/test_result_judge_u2_u4.py::test_u2_caliber_is_locked_against_self_comparison``
-#     **双向锁死**（改回自比 ⇒ 必红）。
-#
-# ★ **是否接回 ✅/❌ 阻断轴 = 上级另行裁定，⛔ 本包不夹带**（保持不变：仍在诊断轴）。
-#   接线前置两条（缺一不可）：
-#   ① **基线证据到达**：采集落点 = ``scripts/collect_results.py``（= 采集面，
-#      **本包边界外**，须另批）。★ 本包已核**：基线窗数据既不在仓内、也不在现行
-#      采集面**（矩阵数据无任何 loss/基线字段；9 档 CPT 的在盘 U2 读数只有本档窗口；
-#      T028 的基线窗口取自**同档历史基线跑次**、其原始序列在 228、不在仓内）
-#      ⇒ 现盘 ``baseline_end_window`` 一律为 ``None`` ⇒ 接线的即时后果见本包报告 §④；
-#   ② 上级裁定「接线」。
-# ══════════════════════════════════════════════════════════════════════════════
+# **操作定义**（登记为实现细节，⛔ 非口径变更）：
+#   * 窗口 = ``min(max(3, round(n × 0.10)), n)``（沿用现行 ``k = max(3, int(round(n*0.10)))``）；
+#   * 判定式 = **终窗均值 < 起窗均值**（loss 越低越好；**严格**小于）；
+#   * ★ **退出基线依赖**：⛔ 不再与「未训练底座 loss 终窗」比较（单卡曲线基线已作废）
+#     ⇒ 本判据**没有任何**基线入参，只比本跑自身两窗；
+#   * 缺数据（空序列 / ``loss: null`` / 字段缺失）⇒ **fail-closed**（⛔ 不得默认通过）；
+#   * NaN/Inf ⇒ **fail-loud**（窗口均值对非有限值无定义）；
+#   * ⛔ **只对** ``algorithm == "CPT"`` **生效**：非 CPT 档恒「不适用」（不改变其结论）；
+#   * ⛔ 不碰 :data:`A6_LOSS_TREND_BLOCKS`：A6 用**首末两点**、自称「数值健康」，
+#     CPT_LOSS 用**首尾窗口均值**。两者**不同源**，混用会把「判据债」写成「数值异常」。
 
-#: U2 判据名（唯一真相源：判定器 / 台账 / 采集层共用同一个字符串）。
-U2_CRITERION = "U2"
+#: CPT loss 判据的窗口下界（``max(3, 10% 序列长度)`` 的 ``3``）。
+CPT_LOSS_WINDOW_MIN = 3
 
-#: 窗口下界（在役口径 `max(3, 10% 步数)` 的 `3`）。
-U2_WINDOW_MIN = 3
+#: CPT loss 判据的窗口比例（``max(3, 10% 序列长度)`` 的 ``10%``）。
+CPT_LOSS_WINDOW_FRACTION = 0.10
 
-#: 窗口比例（在役口径 `max(3, 10% 步数)` 的 `10%`）。
-U2_WINDOW_FRACTION = 0.10
+#: 本判据只对哪个算法生效（**精确串**匹配；⛔ 大小写归一 / 前缀匹配一律不做）。
+CPT_LOSS_ALGORITHM = "CPT"
 
-#: U2 明细里的**证据缺口**前缀（§1.4：判定器与测试共用，不得各自拼字符串）。
-U2_EVIDENCE_MISSING_DETAIL = (
-    "缺少 loss 序列证据（fail-closed）：未抽取到逐步 loss / 序列为空 / loss: null "
-    "⇒ 判**不通过**并记「取证缺口」，不得当成「训练失败」、更不得默认通过"
+#: CPT_LOSS 明细里的**证据缺口**前缀（§1.4：判定器与测试共用，不得各自拼字符串）。
+CPT_LOSS_EVIDENCE_MISSING_DETAIL = (
+    "缺少 CPT 的 loss 序列证据（fail-closed）：未抽取到逐步 loss / 序列为空 / "
+    "loss: null ⇒ 判**不通过**并记「取证缺口」，不得当成「训练失败」、更不得默认通过"
 )
 
-#: U2 明细里的**非有限值**前缀（fail-loud，**不降格**为取证缺口）。
-U2_NONFINITE_DETAIL = "出现 NaN/Inf（fail-loud）"
+#: CPT_LOSS 明细里的**非有限值**前缀（fail-loud，**不降格**为取证缺口）。
+CPT_LOSS_NONFINITE_DETAIL = "出现 NaN/Inf（fail-loud）"
 
-#: U2 明细里的**基线证据缺口**前缀（§1.4：判定器 / 台账 / 测试共用同一个字符串）。
-#: ★ 与 :data:`U2_EVIDENCE_MISSING_DETAIL` **分开**：前者缺的是**本跑序列**、
-#: 后者缺的是**基线窗**；两者都是取证缺口（fail-closed），但混成一句会让排查
-#: 找错方向（"序列没读到" vs "基线没采到"）。
-U2_BASELINE_MISSING_DETAIL = (
-    "缺少「基线同口径终点窗口」证据（fail-closed）：采集面未落 "
-    "`baseline_end_window`（口径见 `meta.criteria_caliber.baseline`，落点 "
-    "`scripts/collect_results.py`）⇒ 判**不通过**并记「取证缺口」，"
-    "不得当成「训练失败」、更不得默认通过"
-)
-
-#: ★ **U2 曲线方向 = 该次运行的算法**（唯一真相源；§1.4）。
-#:
-#: 口径原文（`docs/capability-matrix-milestone-20261014.html:280`，逐字）：
-#: 「**loss 正常下降（SFT / CPT / OPD）或 reward 正常上升（GRASPO）**」
-#: ⇒ 方向**不是调用方的缺省约定**，而是「**这一次跑的是哪个算法**」这个事实的函数。
-#:
-#: ★ 机械缺陷登记（2026-10-17，本包 `task-u2-direction`）：此前 :func:`judge_u2` 的
-#: ``higher_is_better`` **缺省写死 `False`**，而 :func:`judge_tier` 的调用处
-#: （``u2 = judge_u2(first)``）**不传该开关** ⇒ **GRASPO 档一律按 loss 方向判**
-#: （reward 上升被判成「未正常下降」、台账把 reward 曲线记成 loss）。★ 它当时落在
-#: **诊断轴**（未接线）才没有翻结论 —— **一旦接线就会判错**。本包把方向改为**由证据导出**。
-#:
-#: ★ 取值域 = 清单 `tests/e2e/matrix54_manifest.json` 的 ``tiers[*].algorithm``，
-#: 实测恰为 ``SFT×18 / CPT×9 / OPD×9 / GRASPO×18``（无第五种、无大小写变体）；
-#: `RunEvidence` 里**没有** curve-kind / train_method 字段 ⇒ ``algorithm`` 是唯一可核来源。
-#: ⛔ **只做精确串匹配**：不大小写归一、不去空白、不做前缀匹配、**不猜**（§2.2）——
-#: 未登记的串（含 ``None``）一律 **fail-closed**，⛔ 不得回落到「按 loss 判」的旧缺省。
-U2_REWARD_ALGORITHMS: frozenset[str] = frozenset({"GRASPO"})
-U2_LOSS_ALGORITHMS: frozenset[str] = frozenset({"SFT", "CPT", "OPD"})
-
-#: U2 明细里的**方向不可判定**前缀（fail-closed，**不降格**为「训练失败」、⛔ 也不默认按 loss）。
-#: ★ 与 :data:`U2_EVIDENCE_MISSING_DETAIL` / :data:`U2_BASELINE_MISSING_DETAIL` **分开**：
-#: 前两者缺的是**读数**、本条缺的是**读数的解释方向**；混成一句会让排查找错方向。
-U2_DIRECTION_UNKNOWN_DETAIL = (
-    "无法确定 U2 曲线方向（fail-closed）：证据字段 `RunEvidence.algorithm` 为 None / "
-    "未登记方向（已登记：reward 类 = GRASPO；loss 类 = SFT / CPT / OPD）⇒ "
-    "判**不通过**并记「取证缺口」；⛔ 不猜方向、⛔ 不默认按 loss 判，"
-    "更⛔ 不得当成「训练失败」"
-)
-
-#: U2 **暂不接入 ✅/❌ 阻断轴**的状态登记（**显式**，§2.2 显式即防呆；与
-#: :data:`U4_WIRING_PENDING_NOTE` 同一条纪律）。
-#:
-#: ★ 2026-10-17 状态已变（**新状态**）：**算法口径已按文档对齐**（主判据 = 终窗 对
-#: 基线同口径终点窗；起点窗仅归因诊断）——上一批那条「实现与文档口径不是等价读法」
-#: 的偏离**已消除**；**剩下的是接线裁定与采集面两条前置**，不再是口径分歧。
-#: ⇒ U2 现在只**计算并逐次记录**、不参与 :attr:`TierJudgement.passed`；
-#: ⛔ 接线前必须先满足：① 基线证据到达（落点 `scripts/collect_results.py`，本包边界外）
-#: ② 上级裁定接线。
-U2_WIRING_PENDING_NOTE = (
-    "★ **口径已对齐文档**（2026-10-17）：主判据 = **终点窗口达到/超过基线同口径终点"
-    "窗口**（`docs/capability-matrix-milestone-20261014.html:280` 逐字），起点窗口"
-    "**仅作归因诊断**；基线 = `meta.criteria_caliber.baseline`"
-    "（`docs/capability-matrix.data.json:189-191`：role =「同档位未训练底座（role=base）」）。"
-    "★ **是否接回 ✅/❌ 阻断轴 = 待上级裁定，本包未接**：前置 ① 基线证据到达"
-    "（采集落点 `scripts/collect_results.py`，本层边界外、须另批；★ 本包已核：基线窗"
-    "数据**既不在仓内、也不在现行采集面**）② 上级裁定接线。"
-    "★ **被替换的旧实现（两造并列，⛔ 原文保留）**：旧实现判「**终窗 对 自身起点窗**"
-    "（**自比**）」，与上引文档化主判据**不是等价读法**；独立复核 v14 判词原文："
-    "「**判词①：U2 主判据 = 与文档化口径相悖的自行取舍 ⇒ 🔴（本批最关键，能翻转档位"
-    "结论）**」（`review-narrow/freeze-note-13.md` §2 ⇒ 要改的是代码、不是策略）"
+#: CPT_LOSS 对**非 CPT 档**的「不适用」登记（⛔ 不得静默通过；必须逐次记录）。
+CPT_LOSS_NOT_APPLICABLE_DETAIL = (
+    '本判据只对 CPT 生效（`RunEvidence.algorithm == "CPT"`）；'
+    "本次算法不是 CPT ⇒ **不适用**，⛔ 不参与也⛔ 不影响本档 ✅/❌"
 )
 
 
-def u2_higher_is_better_from_algorithm(algorithm: str | None) -> bool | None:
-    """由**算法名**导出 U2 的方向（唯一来源 = :attr:`RunEvidence.algorithm`，见上方常量块）。
+def cpt_loss_window_size(point_count: int) -> int:
+    """CPT loss 判据的在役窗口大小：``min(max(3, round(n * 0.10)), n)``。
 
-    返回值**三态**（§2.2：不知道就说不知道，⛔ 不拿缺省值充数）：
-
-    - ``True`` = **reward 类**（越高越好，「正常上升」）：:data:`U2_REWARD_ALGORITHMS`；
-    - ``False`` = **loss 类**（越低越好，「正常下降」）：:data:`U2_LOSS_ALGORITHMS`；
-    - ``None`` = **无法确定**（``None`` / 空串 / 未登记串）⇒ 调用方必须 **fail-closed**。
-
-    ⛔ 只做**精确串**匹配：不大小写归一、不去空白、不做前缀匹配、**不猜**
-    （与 :func:`normalize_a4_algorithm` 同一条纪律）。为什么这么严：方向一旦猜错，
-    U2 的判词与结论会**整体反向**——那正是本函数要堵住的那个缺陷。
-    """
-    if algorithm in U2_REWARD_ALGORITHMS:
-        return True
-    if algorithm in U2_LOSS_ALGORITHMS:
-        return False
-    return None
-
-
-def u2_direction_label(evidence: RunEvidence, *, higher_is_better: bool | None = None) -> str:
-    """U2 的**人读方向标签**（供 :func:`judge_u2` / :func:`judge_tier` 共用，§1.4 单一真相源）。
-
-    例：``"reward 正常上升"`` / ``"loss 正常下降"`` / ``"曲线方向不可判定"``。
-    方向解析规则与 :func:`judge_u2` **逐字一致**（未传时由证据导出）。
-    """
-    if higher_is_better is None:
-        higher_is_better = u2_higher_is_better_from_algorithm(evidence.algorithm)
-    if higher_is_better is None:
-        return "曲线方向不可判定"
-    return "reward 正常上升" if higher_is_better else "loss 正常下降"
-
-
-def u2_window_size(point_count: int) -> int:
-    """在役 U2 窗口大小：``min(max(3, round(n * 0.10)), n)``。
-
-    为什么用**记录点数**而不是**步数**：唯一现存的窗口实现
-    （``.local/.../task-run-T028/evidence/u2_window.py``）就是这么算的，且
-    ``task-matrix-hygiene/u2_backfill.py`` 把它定为**主判据读法 A**（口径字面读法 B
-    只作交叉核对）。本函数逐字复刻 A；⛔ 不在这里另立一套。
+    为什么用**记录点数**而不是**步数**：这与现行窗口算法（``10% × 记录点数``）逐字一致；
+    ⛔ 不在这里另立一套，也⛔ 不引入任何基线读法。
     """
     if point_count <= 0:
         return 0
-    k = max(U2_WINDOW_MIN, int(round(point_count * U2_WINDOW_FRACTION)))
+    k = max(CPT_LOSS_WINDOW_MIN, int(round(point_count * CPT_LOSS_WINDOW_FRACTION)))
     return min(k, point_count)
 
 
-def u2_window_means(values: Sequence[float]) -> tuple[float, float, int] | None:
+def cpt_loss_window_means(values: Sequence[float]) -> tuple[float, float, int] | None:
     """返回 ``(起点窗均值, 终点窗均值, k)``；序列为空 ⇒ ``None``（§2.2，不猜 0.0）。
 
-    **不做任何过滤**：调用方必须先保证序列全程 finite（NaN/Inf 由 :func:`judge_u2`
+    **不做任何过滤**：调用方必须先保证序列全程 finite（NaN/Inf 由 :func:`judge_cpt_loss`
     在更早的分支 fail-loud 拦下），否则一个 NaN 会静默把均值变成 NaN —— 那正是 F-4
     的教训。
     """
     series = [float(value) for value in values]
-    k = u2_window_size(len(series))
+    k = cpt_loss_window_size(len(series))
     if k == 0:
         return None
     head = series[:k]
@@ -2671,136 +2572,74 @@ def u2_window_means(values: Sequence[float]) -> tuple[float, float, int] | None:
     return sum(head) / len(head), sum(tail) / len(tail), k
 
 
-def judge_u2(
-    evidence: RunEvidence, *, higher_is_better: bool | None = None
-) -> CriterionResult:
-    """**U2**：loss 正常下降（SFT / CPT / OPD）或 reward 正常上升（GRASPO）。
+def judge_cpt_loss(evidence: RunEvidence) -> CriterionResult:
+    """**CPT_LOSS**（判据② 的 CPT 支）：训练 loss 正常下降 = **终窗均值 < 起窗均值**。
 
-    判定式（**文档化口径**，见本段上方注释块）：
-    **``终点窗口`` 达到 / 超过 ``基线同口径终点窗口`` ⇒ 通过**；否则不通过。
+    ⛔ **只对** ``algorithm == "CPT"`` **生效**（其余算法恒「不适用」⇒ 它们的 ✅/❌ 一个字不变）。
 
-    ★ **方向由该次运行的算法导出**（本包 `task-u2-direction` 修掉的机械缺陷）：
-    ``higher_is_better`` 缺省 ``None`` ⇒ 走 :func:`u2_higher_is_better_from_algorithm`
-    读 :attr:`RunEvidence.algorithm`（``GRASPO`` ⇒ reward 越高越好；``SFT`` / ``CPT`` /
-    ``OPD`` ⇒ loss 越低越好）；⛔ **不再有「缺省 False」**——那个缺省会让 GRASPO 档
-    按 loss 方向判（reward 上升被判成「未正常下降」）。传 ``True`` / ``False`` 则视为
-    **调用方显式指定**，并在判词里如实登记来源。
-    ★ **方向无法确定**（``algorithm`` 为 ``None`` / 未登记串）⇒ **fail-closed**：
-    判不通过 + ``evidence_missing=True``（:data:`U2_DIRECTION_UNKNOWN_DETAIL`），
-    ⛔ 不猜方向、⛔ 不回落成「按 loss 判」、⛔ 不降格为「训练失败」。
-    ★ **起点窗口只作归因诊断**（口径原文逐字），⛔ 不参与判定。
+    判定式（登记为实现细节，⛔ 非口径变更）：
+    **``终点窗口均值 < 起点窗口均值`` ⇒ 通过**；否则不通过。
 
-    五态边界（与 A6 的分野是刻意的，§1.4）：
+    四态边界（与 A6 的分野是刻意的，§1.4）：
 
-    - **方向无法确定** ⇒ 不通过且 ``evidence_missing=True``（取证缺口；**先于**
-      任何按方向解释读数的分支，因为"这条曲线该往哪边看"是读数的前置）；
-    - **真读到 NaN/Inf**（序列或基线窗读数）⇒ 不通过且 ``evidence_missing=False``
-      —— 这是关于证据的**事实**，且窗口均值对非有限值无定义 ⇒ fail-loud；
+    - **非 CPT** ⇒ 通过（``not_applicable=True``），明细逐字登记「不适用」；
     - **读不到序列**（空 / ``loss: null`` / 字段缺失）⇒ 不通过且 ``evidence_missing=True``
-      —— 台账记「⚠ 不可判定（取证缺口）」，**不得**记成「❌ 训练失败」；
-    - **读不到基线窗**（:attr:`RunEvidence.baseline_end_window` 为 ``None``）⇒
-      不通过且 ``evidence_missing=True``（:data:`U2_BASELINE_MISSING_DETAIL`）；
-      ★ 此时只要序列可算，**终点窗/起点窗读数仍写进 detail**（归因诊断记录不丢）；
-    - **序列与基线都在** ⇒ 按「终点窗 对 基线窗」比大小（``达到 / 超过`` = **非严格**）。
+      —— 台账记「尚未验证」，**不得**记成「已验证不可用」（取证缺口 ≠ 训练失败）；
+    - **真读到 NaN/Inf** ⇒ 不通过且 ``evidence_missing=False``（fail-loud，不降格为取证缺口）；
+    - **序列可算** ⇒ 按「终窗 < 起窗」比大小（**严格**小于）。
 
-    ⛔ **不得**用起点窗顶替基线窗（自比）：本函数**没有任何**"本跑自身两窗相比"的
-    判定分支，该锁在 ``tests/core/test_result_judge_u2_u4.py`` 里双向钉死。
-    ⛔ **不碰** :data:`A6_LOSS_TREND_BLOCKS`：A6 用**首末两点**且自称「数值健康」，
-    U2 用**首尾窗口均值**。两者**不同源**，混用会把「口径债」写成「数值异常」。
+    ★ **退出基线依赖**：本函数**没有**基线入参、**没有**与「未训练底座 loss 终窗」的比较
+    （单卡曲线基线已作废）—— 只比本跑自身的首尾两窗。
+    ⛔ **不得**改成"首末两点"（那是 A6 的记录项，见 :data:`A6_LOSS_TREND_BLOCKS`）。
     """
-    # ── 方向解析（先于一切按方向解释读数的分支）─────────────────────────────
-    if higher_is_better is None:
-        resolved = u2_higher_is_better_from_algorithm(evidence.algorithm)
-        direction_source = f"由证据 `RunEvidence.algorithm` = {evidence.algorithm!r} 导出"
-    else:
-        resolved = higher_is_better
-        direction_source = f"调用方显式指定（evidence.algorithm = {evidence.algorithm!r}）"
-    if resolved is None:
+    algorithm = evidence.algorithm
+    if algorithm != CPT_LOSS_ALGORITHM:
         return CriterionResult(
-            U2_CRITERION,
-            False,
-            f"{U2_DIRECTION_UNKNOWN_DETAIL}；算法串 = {evidence.algorithm!r}"
-            "；★ 方向来源本应是 `RunEvidence.algorithm`（本模块判据层的唯一可核字段）",
-            evidence_missing=True,
+            CPT_LOSS_CRITERION,
+            True,
+            f"{CPT_LOSS_NOT_APPLICABLE_DETAIL}（本次 algorithm = {algorithm!r}）",
+            not_applicable=True,
         )
     values = tuple(evidence.losses)
     if not values:
         return CriterionResult(
-            U2_CRITERION, False, U2_EVIDENCE_MISSING_DETAIL, evidence_missing=True
+            CPT_LOSS_CRITERION, False, CPT_LOSS_EVIDENCE_MISSING_DETAIL, evidence_missing=True
         )
     if evidence.losses_unavailable or any(
         value is NAN_SENTINEL or value is MISSING_SENTINEL for value in values
     ):
         return CriterionResult(
-            U2_CRITERION,
+            CPT_LOSS_CRITERION,
             False,
-            f"{U2_EVIDENCE_MISSING_DETAIL}（loss: null / 字段缺失）",
+            f"{CPT_LOSS_EVIDENCE_MISSING_DETAIL}（loss: null / 字段缺失）",
             evidence_missing=True,
         )
     nonfinite = [value for value in values if isinstance(value, float) and not math.isfinite(value)]
     if evidence.losses_nonfinite or nonfinite:
         return CriterionResult(
-            U2_CRITERION,
+            CPT_LOSS_CRITERION,
             False,
-            f"{U2_NONFINITE_DETAIL}：loss 序列含 {len(nonfinite) or 1} 个非有限值"
+            f"{CPT_LOSS_NONFINITE_DETAIL}：loss 序列含 {len(nonfinite) or 1} 个非有限值"
             " ⇒ 窗口均值无定义、fail-loud 判否（不降格为取证缺口）",
         )
-    windows = u2_window_means(values)
+    windows = cpt_loss_window_means(values)
     if windows is None:  # pragma: no cover - 空序列已在上面拦下
         return CriterionResult(
-            U2_CRITERION, False, U2_EVIDENCE_MISSING_DETAIL, evidence_missing=True
+            CPT_LOSS_CRITERION, False, CPT_LOSS_EVIDENCE_MISSING_DETAIL, evidence_missing=True
         )
     start, end, k = windows
-    quantity = "reward" if resolved else "loss"
-    better = "越高越好" if resolved else "越低越好"
-    direction = "上升" if resolved else "下降"
-    # ★ 起点窗 = **归因诊断**（口径原文逐字：「起点窗口仅作归因诊断」）⇒ ⛔ 不参与判定，
-    #   只如实登记。★ `k == n`（n ≤ 3）时起点窗与终点窗同集合 ⇒ 这里**只登记该退化**，
-    #   既不把它当缺口、也不把它当判据：口径给的是「末段 k 个点的均值」，对任何
-    #   ``n ≥ 1`` 都可算，**文档没有**把"序列长度"设为判定前置（⛔ 本层不自造附加条件）。
-    diagnostic = f"★ 归因诊断（⛔ 不参与判定）：起点窗 {start:.6g}"
-    if k >= len(values):
-        diagnostic += (
-            f"（k={k} 覆盖整条序列 {len(values)} 点 ⇒ 起点窗与终点窗同集合、"
-            "归因诊断零鉴别力）"
-        )
-    else:
-        diagnostic += f"（k={k}）"
-    baseline = evidence.baseline_end_window
-    if baseline is None:
-        # ★ 取证缺口（fail-closed）：⛔ 不得默认通过、⛔ 也不得降格为「训练失败」。
-        return CriterionResult(
-            U2_CRITERION,
-            False,
-            f"{U2_BASELINE_MISSING_DETAIL}；"
-            "本条已算出的窗口读数（窗口 = 首尾各 max(3, 10% 记录点数) 的均值）："
-            f"终点窗 {end:.6g}（{quantity} {better}）；{diagnostic}"
-            f"；★ 方向来源 = {direction_source}",
-            evidence_missing=True,
-        )
-    if isinstance(baseline, bool) or not isinstance(baseline, (int, float)) or not math.isfinite(
-        float(baseline)
-    ):
-        return CriterionResult(
-            U2_CRITERION,
-            False,
-            f"{U2_NONFINITE_DETAIL}：基线终点窗读数不可用（{baseline!r}）"
-            " ⇒ 无从比较、fail-loud 判否（不降格为取证缺口）",
-        )
-    baseline_value = float(baseline)
-    improved = end >= baseline_value if resolved else end <= baseline_value
-    verdict = f"正常{direction}成立" if improved else f"未正常{direction}"
-    return CriterionResult(
-        U2_CRITERION,
-        improved,
-        "U2 窗口均值（窗口 = 首尾各 max(3, 10% 记录点数) 的均值）："
-        f"终点窗 {end:.6g} vs **基线同口径终点窗** {baseline_value:.6g}"
-        f"（{quantity} {better}；达到/超过 = 非严格）⇒ {verdict}；{diagnostic}"
-        f"；★ 方向来源 = {direction_source}"
-        "；★ 判定式 = 文档化主判据「终点窗口达到/超过基线同口径的终点窗口」，"
-        "起点窗口仅作归因诊断（⛔ 不再是「自比」）"
-        "；本条是否参与 ✅/❌ 见 U2_WIRING_PENDING_NOTE",
+    # ★ ``k >= n``（n ≤ 3）时起点窗与终点窗同集合 ⇒ 「终窗 < 起窗」恒不成立 ⇒ 判否。
+    #   口径给的操作定义就是「终窗均值 < 起窗均值」，⛔ 本层不自造"短序列豁免"。
+    declined = end < start
+    degenerate = "；★ k = n ⇒ 起窗与终窗同集合、无从建立下降" if k >= len(values) else ""
+    detail = (
+        "CPT 训练 loss 正常下降（窗口 = 首尾各 min(max(3, round(n × 0.10)), n) 的均值）："
+        f"起窗 {start:.6g} → 终窗 {end:.6g}（k={k}）"
+        f" ⇒ {'下降成立' if declined else '未下降'}{degenerate}"
+        "；★ 判定式 = 终窗均值 < 起窗均值（严格；loss 越低越好）"
+        "；★ 退出基线依赖（⛔ 不与任何「未训练底座 loss 终窗」比较）"
     )
+    return CriterionResult(CPT_LOSS_CRITERION, declined, detail)
 
 
 # ── U4「产物可推理」（在役口径）──────────────────────────────────────────────
@@ -3114,19 +2953,21 @@ def judge_tier(
     context_length: int | None = None,
     require_dual_channel: bool = False,
 ) -> TierJudgement:
-    """对一档做 A1–A7 + U2 + U4 总判定，产出可直接落台账的记录。
+    """对一档做 A1–A7 + CPT_LOSS + U4 总判定，产出可直接落台账的记录。
 
     ``require_dual_channel``：矩阵采集口径 —— **两跑 loss 逐位相同而独立通道无证据**
     时判「不可判定」（见 :func:`judge_a4` 子检查④形态②）。纯逻辑调用方可以不开，
     但**能力矩阵的采集必须开**，否则 AD1 §④ 的退化通过会静默通过。此开关会被记进
     :class:`TierJudgement` 并由 :func:`ledger_row` 落盘（"这一档按哪套口径判的"可审计）。
 
-    **U2（loss 正常下降 / reward 正常上升）**：**计算并记录**在 ``criteria`` 里，
-    但**不**参与 ``passed``：**口径自 2026-10-17 起已按文档对齐**（主判据 = 终窗 对
-    基线同口径终点窗；起点窗仅归因诊断），但**接线待上级裁定**、且**基线证据的采集
-    落点在 ``scripts/collect_results.py``（本层边界外）** ⇒ 现盘一律「基线证据未到」
-    ⇒ 若此刻接入会把全部档刷成「⚠ 口径不可测」。理由逐字见
-    :data:`U2_WIRING_PENDING_NOTE`。
+    **CPT_LOSS（训练 loss 正常下降，判据② 的 CPT 支）**：**参与** ``passed``，
+    但⛔ **只对** ``algorithm == "CPT"`` **生效** —— 非 CPT 档本判据恒「不适用」
+    （`passed=True`）⇒ 不改变 SFT / GRASPO / OPD 的任何结论。判定式 =
+    **终窗均值 < 起窗均值**（⛔ 已退出基线依赖），见 :func:`judge_cpt_loss`。
+
+    **A4（同 config 同 seed 双跑一致）**：**计算并记录**在 ``criteria`` 里，但
+    ⛔ **不**参与 ``passed`` —— A4 容差体系已退役「判据」身份、降级为开发期内部工具，
+    见 :data:`A4_TOLERANCE_RETIRED_NOTE`。
 
     **U4（产物可推理）**：**计算并记录**在 ``criteria`` 里，但**不**参与 ``passed``
     ——理由逐字见 :data:`U4_WIRING_PENDING_NOTE`（证据采集落点在本包改动面之外）。
@@ -3138,13 +2979,9 @@ def judge_tier(
     a5 = judge_a5(first)
     a6 = judge_a6(first)
     a7 = judge_a7(first)
-    u2 = judge_u2(first)
+    cpt_loss = judge_cpt_loss(first)
     u4 = judge_u4(first)
-    criteria = (a1, a2, a3, a4, a5, a6, a7, u2, u4)
-    # ★ U2 的**人读方向标签**（`reward 正常上升` / `loss 正常下降` / `曲线方向不可判定`）
-    #   与判据层**同源**（:func:`u2_direction_label`，§1.4）：⛔ 不得在这里写死 "loss" ——
-    #   写死会把 GRASPO 档的 reward 曲线在台账里记成 loss（本包修掉的方向缺陷之一）。
-    u2_label = u2_direction_label(first)
+    criteria = (a1, a2, a3, a4, a5, a6, a7, cpt_loss, u4)
 
     # ══ 新口径（2026-09-22 用户纠正；本函数的判定轴）══════════════════════════
     #   用户原话："你的判定标准应该是**能顺利跑完一个 epoch**……我们现在看的
@@ -3160,18 +2997,20 @@ def judge_tier(
         "A5": a5.passed,
         "A6": a6.passed,
         "A7": a7.passed,
-        # ⛔ **U2 不在主判据轴**（口径已对齐文档、但**接线待裁**；见 U2_WIRING_PENDING_NOTE）：
-        #    基线证据的采集落点在 `scripts/collect_results.py`（本层边界外）⇒ 现盘一律
-        #    「基线证据未到」⇒ 此刻接入会把全部档刷成「⚠ 口径不可测」（⛔ 未测 ≠ 失败）。
-        #    只在诊断轴逐次记录（见下方 diagnostics_note）。
-        #    ★ 不要在这里加回 "U2"：加回前必须先落「基线证据到达 + 上级裁定接线」两条，
-        #      并同步 U2_WIRING_PENDING_NOTE。
+        # ★ **CPT 的 loss 判据 = 判据② 的 CPT 支**（2026-10-17 主席裁定：这条必须保留，
+        #   且必须落到一个**真能判 ✅/❌ 的强制点**上 —— 旧 U2 落在诊断轴时"保留"落空）。
+        #   ⛔ **只对 CPT 生效**：非 CPT 档 ``judge_cpt_loss`` 返回「不适用」且
+        #   ``passed=True`` ⇒ 这一行的加入**不改变 SFT / GRASPO / OPD 的任何结论**。
+        #   ⛔ 不得改成对所有算法判 loss（那会越权把效果判据强加到非 CPT 档）。
+        CPT_LOSS_CRITERION: cpt_loss.passed,
+        # ⛔ **A4（含其容差体系）绝不在主判据轴**：它已退役「判据」身份、降级为开发期
+        #   内部工具（见 :data:`A4_TOLERANCE_RETIRED_NOTE`）⇒ 只作诊断逐次记录。
+        #   任何把 "A4" 加回此字典的改动，都必须先推翻 2026-10-10 目标锚点并同步注释。
     }
     passed = all(primary_status.values())
     diagnostics_note = (
         "【诊断字段·不参与判定】"
-        f"A4 双跑一致性 = {a4.passed}（{a4.detail[:240]}）；"
-        f"U2 {u2_label} = {u2.passed}（{u2.detail[:160]}；{U2_WIRING_PENDING_NOTE}）；"
+        f"A4 双跑一致性 = {a4.passed}（{a4.detail[:240]}；{A4_TOLERANCE_RETIRED_NOTE}）；"
         f"U4 产物可推理 = {u4.passed}（{u4.detail[:160]}；{U4_WIRING_PENDING_NOTE}）"
     )
 
@@ -3182,9 +3021,10 @@ def judge_tier(
     others_ok = True
     if passed:
         note = (
-            "✅ 可用（主判据 = 训练可用性）："
+            f"{LEDGER_PASS}（主判据 = 训练可用性）："
             f"{steps_detail}；进程正常退出；权重已更新；checkpoint 可重载；产物齐全；"
-            "数值健康；训练真推进（无 nonfinite 跳过）。"
+            "数值健康；训练真推进（无 nonfinite 跳过）；CPT loss 判据"
+            f"（{cpt_loss.detail[:120]}）。"
             f"｜{diagnostics_note}"
         )
     else:
@@ -3198,6 +3038,7 @@ def judge_tier(
             "A5": bool(a5.evidence_missing),
             "A6": bool(a6.evidence_missing),
             "A7": bool(a7.evidence_missing),
+            CPT_LOSS_CRITERION: bool(cpt_loss.evidence_missing),
         }
         primary_evidence_gap = all(primary_gap_flags[name] for name in failing_primary)
         substantive = classify_failure(first, a6)
@@ -3231,14 +3072,16 @@ def judge_tier(
             # 结构性不可测（口径层，不是能力层）：仅当其余主判据都过时落此态。
             failure_class = FailureClass.GATE_NOT_APPLICABLE
             note = (
-                f"⚠ 口径不可测：{steps_detail}——该档用本 config 无论跑多久都达不到门槛"
+                f"{LEDGER_GATE_NOT_APPLICABLE}：{steps_detail}——该档用本 config "
+                "无论跑多久都达不到门槛"
                 " ⇒ **不是训练失败**：能力**未被本次取数证伪**，门槛值一个字未放宽。"
                 f"｜{diagnostics_note}"
             )
         elif primary_evidence_gap and substantive is None:
             failure_class = FailureClass.EVIDENCE_GAP
             note = (
-                f"⚠ 口径不可测（取证缺口）：主判据读不到证据（{', '.join(failing_primary)}）"
+                f"{LEDGER_INDETERMINATE}（取证缺口）：主判据读不到证据"
+                f"（{', '.join(failing_primary)}）"
                 " ⇒ 既不算可用、也不算不可用（fail-closed）。"
                 "（注：A3/A4 已降级为诊断，**不**再制造此态。）"
                 f"{note_log_signal}"
@@ -3247,7 +3090,7 @@ def judge_tier(
         else:
             failure_class = substantive if substantive is not None else FailureClass.UNCLASSIFIED
             note = (
-                f"❌ 不可用：未满足主判据 {', '.join(failing_primary)}；"
+                f"{LEDGER_FAIL}：未满足主判据 {', '.join(failing_primary)}；"
                 f"失败类型：{failure_class}；{steps_detail}"
             )
             if not counts_toward_max_context(failure_class):

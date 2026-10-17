@@ -304,7 +304,7 @@ def test_judge_tier_passes_when_all_criteria_pass():
     judgement = judge_tier(make_evidence(), make_evidence())
 
     assert judgement.passed
-    assert judgement.ledger_status == "✅ 可用"
+    assert judgement.ledger_status == "已验证可用"
     assert judgement.failure_class is None
     assert not judgement.counts_toward_max_context
 
@@ -324,7 +324,7 @@ def test_usability_passes_when_epoch_completed_even_if_a4_disagrees():
     judgement = judge_tier(first, second)
 
     assert judgement.passed, judgement.note
-    assert judgement.ledger_status == "✅ 可用"
+    assert judgement.ledger_status == "已验证可用"
     assert "诊断" in judgement.note and "A4" in judgement.note
     # 降级 ≠ 删除：A4 仍被计算且记录它自己的结论（此例为不一致）。
     assert judgement.criterion("A4").passed is False
@@ -336,13 +336,13 @@ def test_usability_fails_when_epoch_not_completed():
     short = make_evidence(exit_code=0, optimizer_steps=2)
     judgement = judge_tier(short)
     assert not judgement.passed
-    assert judgement.ledger_status == "❌ 不可用"
+    assert judgement.ledger_status == "已验证不可用"
     assert "A2" in judgement.note
 
     killed = make_evidence(exit_code=137, optimizer_steps=100)
     killed_judgement = judge_tier(killed)
     assert not killed_judgement.passed
-    assert killed_judgement.ledger_status == "❌ 不可用"
+    assert killed_judgement.ledger_status == "已验证不可用"
 
 
 def test_usability_fails_on_nan_inf():
@@ -357,7 +357,7 @@ def test_usability_fails_on_nan_inf():
     )
     judgement = judge_tier(nan_run)
     assert not judgement.passed
-    assert judgement.ledger_status == "❌ 不可用"
+    assert judgement.ledger_status == "已验证不可用"
     assert "NaN" in judgement.note or "数值" in judgement.note
 
 
@@ -375,7 +375,7 @@ def test_gate_not_applicable_never_masks_a_real_failure():
     )
     judgement = judge_tier(crashed_with_unreachable_steps)
     assert judgement.step_gate_not_applicable is True
-    assert judgement.ledger_status == "❌ 不可用", judgement.note
+    assert judgement.ledger_status == "已验证不可用", judgement.note
     assert not judgement.passed
 
 
@@ -384,7 +384,7 @@ def test_missing_a4_evidence_no_longer_makes_tier_indeterminate():
     single = make_evidence(exit_code=0, optimizer_steps=100)   # 无指纹、无第二跑
     judgement = judge_tier(single, None)
     assert judgement.passed, judgement.note
-    assert judgement.ledger_status == "✅ 可用"
+    assert judgement.ledger_status == "已验证可用"
     # 诊断字段仍如实记录"没取到证据"
     assert judgement.criterion("A4").passed is False
 
@@ -394,7 +394,7 @@ def test_judge_tier_marks_oom_as_context_candidate():
     judgement = judge_tier(oom, context_length=65536)
 
     assert not judgement.passed
-    assert judgement.ledger_status == "❌ 不可用"
+    assert judgement.ledger_status == "已验证不可用"
     assert judgement.failure_class is FailureClass.REAL_OOM
     assert judgement.counts_toward_max_context
     assert "65536" in judgement.note
@@ -528,7 +528,7 @@ def test_ledger_row_real_oom_writes_boundary_candidate():
     row = _row(judgement, 65536)
 
     assert not judgement.passed  # 判定语义不变：坏 run 仍判失败
-    assert row["status"] == "❌ 不可用"
+    assert row["status"] == "已验证不可用"
     assert row["max_context"] == 65536
     assert row["max_context_kind"] == MAX_CONTEXT_KIND_OOM_BOUNDARY
 

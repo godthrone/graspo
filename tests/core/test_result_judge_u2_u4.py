@@ -1,48 +1,91 @@
-"""U2（loss 正常下降 / reward 正常上升）与 U4（产物可推理）的判据单测。
+"""CPT_LOSS（判据② 的 CPT 支）与 U4（产物可推理）的判据单测。
 
-★ 本文件的四条纪律（对应工作包 `task-u2-align` 的 ②③⑤⑥；2026-10-17 起 U2 口径按
-**文档原文**对齐）：
+★ **本文件的历史与退役登记**（2026-10-17，工作包 `task-judge-retire`，P3 判据体系面）：
 
-1. **窗口算法与唯一现存实现同源**：U2 的窗口 = `min(max(3, round(n*0.10)), n)`，逐字复刻
-   `.local/.../task-run-T028/evidence/u2_window.py:27`（该脚本是**基线对照工具**：
-   给 CUR/BASE 各打一组窗口，自身不做比较判定）；
-2. ★★ **U2 主判据 = 文档化口径「终点窗口达到/超过基线同口径终点窗口」**，起点窗口
-   **仅作归因诊断**；⛔ **不得**改回「终窗 对 起窗」的**自比**读法
-   （`test_u2_caliber_is_locked_against_self_comparison` **双向**钉死：两个方向的用例
-   在自比实现下都会红）；
-3. **每条判据都必须能被反例判红**（"恒 PASS"禁令）：终窗劣于基线必须红、前向抛异常
-   必须红、输出空/不可解析必须红、缺序列/缺基线/无 GPU 必须 fail-closed 且**显式**
-   `evidence_missing`（"未测" ≠ "失败"）；U2/U4 都只在**诊断轴**（判据层该红就红，
-   ⛔ 不得翻转整档 ✅/❌），且「为什么没接线」必须**逐字登记**在代码常量与档位备注里；
-4. ⛔ **不碰** `A6_LOSS_TREND_BLOCKS`。
+  旧 ``U2``（"loss 正常下降 / reward 正常上升"、窗口 + 基线同口径终窗 + 方向开关）
+  整套机制**已随判据体系收口为四条而整体退役**：它既不在冻结口径的四条判据里，
+  又被逐字点名为作废（U1–U4 判据体系 / U2 窗口 / 终点窗口 / 起点窗口 /
+  "基线同口径终窗" / 单卡曲线基线）。⇒ ``judge_u2`` / ``u2_window_*`` /
+  ``U2_*`` 常量 / ``RunEvidence.baseline_end_window`` **删净**，其单测**逐条具名删除**。
+
+  **保留下来并升级为真实强制点的是 CPT 的 loss 判据**：
+  ``judge_cpt_loss``（= :data:`CPT_LOSS_CRITERION`）现列在 :data:`PRIMARY_CRITERIA`
+  里 —— 主席裁定「CPT 的『训练 loss 正常下降』必须保留」，而旧 U2 落在诊断轴时
+  这句话落不到任何 ✅/❌ 上。它**只对** ``algorithm == "CPT"`` 生效。
+
+★ 本文件的纪律（对应工作包 ②③⑤⑥）：
+
+1. **窗口算法沿用现行口径**：``min(max(3, round(n*0.10)), n)``；
+2. ★★ **CPT_LOSS 的判定式 = 「终窗均值 < 起窗均值」**（严格、loss 越低越好）；
+   ⛔ **退出基线依赖**（不再与"未训练底座 loss 终窗"比较，单卡曲线基线已作废）；
+3. **每条判据都必须能被反例判红**（"恒 PASS"禁令）：loss 未下降必须红、缺序列
+   fail-closed 且**显式** ``evidence_missing``（"未测" ≠ "失败"）、NaN/Inf fail-loud、
+   ⛔ **只对 CPT 生效**（SFT/GRASPO/OPD 判 loss ⇒ 必红）；
+4. ⛔ **不碰** ``A6_LOSS_TREND_BLOCKS``；CPT_LOSS（首尾窗口均值）与 A6（首末两点）
+   **不同源**，两个方向各有一例钉死。
+
+★ **逐条具名删除的旧 U2 用例**（每条的理由一律 =「对应判据已不存在」；⛔ 未用
+  skip/xfail，⛔ 未删断言凑绿）：
+
+  1. ``test_u2_window_size_matches_the_in_force_implementation``
+  2. ``test_u2_window_means_is_first_and_last_k``
+  3. ``test_u2_window_means_on_empty_series_is_none_never_zero``
+  4. ``test_u2_short_series_is_judged_against_the_baseline_like_the_caliber_says``
+  5. ``test_u2_fails_when_the_terminal_window_is_higher``
+  6. ``test_u2_red_control_is_red_at_judge_level_but_not_on_the_blocking_axis``
+  7. ``test_u2_caliber_is_locked_against_self_comparison``
+  8. ``test_u2_nonfinite_series_is_a_fact_failure_not_an_evidence_gap``
+  9. ``test_u2_nonfinite_or_unusable_baseline_is_fail_loud_not_an_evidence_gap``
+  10. ``test_u2_passes_on_normal_decline``
+  11. ``test_u2_attaining_the_baseline_exactly_passes``
+  12. ``test_u2_fails_when_the_end_window_is_worse_than_the_baseline``
+  13. ``test_u2_missing_baseline_is_an_evidence_gap_not_a_pass``
+  14. ``test_u2_keeps_the_start_window_as_attribution_diagnostic_only``
+  15. ``test_u2_passes_for_rising_reward``
+  16. ``test_u2_fail_closed_and_explicitly_marked_evidence_missing``
+  17. ``test_u2_missing_series_keeps_the_tier_indeterminate_not_failed``
+  18. ``test_u2_window_and_a6_endpoints_are_different_sources_both_ways``
+  19. ``test_u2_does_not_disturb_the_a6_trend_record``
+  20. ``test_u2_direction_mapping_is_explicit_exact_and_fail_closed``
+  21. ``test_u2_reward_evidence_is_judged_by_reward_direction_both_ways``
+  22. ``test_u2_loss_evidence_keeps_the_mirror_direction``
+  23. ``test_u2_direction_unknown_is_fail_closed_and_never_defaults_to_loss``
+  24. ``test_u2_direction_unknown_keeps_the_tier_indeterminate_in_the_note_not_silent``
+  25. ``test_u2_judge_tier_call_site_derives_the_direction_from_the_algorithm``
+  26. ``test_u2_explicit_direction_argument_is_an_explicit_override_never_a_silent_default``
+  27. ``test_u2_is_computed_and_recorded_by_judge_tier``
+  28. ``test_u2_not_being_wired_is_explicit_in_the_tier_note_not_silent``
+  29. ``test_u2_wiring_pending_note_records_the_new_state_and_both_readings``
+
+  ``test_u2_and_u4_are_in_the_declared_criteria_tuples`` **未删**，按其新语义改写为
+  ``test_cpt_loss_is_primary_and_u4_is_diagnostic``。
 """
 
 import pytest
 
 from graspo.core.result_judge import (
+    CPT_LOSS_ALGORITHM,
+    CPT_LOSS_CRITERION,
+    CPT_LOSS_EVIDENCE_MISSING_DETAIL,
+    CPT_LOSS_NONFINITE_DETAIL,
+    CPT_LOSS_NOT_APPLICABLE_DETAIL,
     DIAGNOSTIC_CRITERIA,
+    LEDGER_FAIL,
+    LEDGER_INDETERMINATE,
+    LEDGER_PASS,
+    LEDGER_STATUS_PHRASES,
     MISSING_SENTINEL,
     PRIMARY_CRITERIA,
-    U2_BASELINE_MISSING_DETAIL,
-    U2_CRITERION,
-    U2_DIRECTION_UNKNOWN_DETAIL,
-    U2_EVIDENCE_MISSING_DETAIL,
-    U2_LOSS_ALGORITHMS,
-    U2_NONFINITE_DETAIL,
-    U2_REWARD_ALGORITHMS,
-    U2_WIRING_PENDING_NOTE,
     U4_CRITERION,
     U4_WIRING_PENDING_NOTE,
     RunEvidence,
     a6_loss_trend,
+    cpt_loss_window_means,
+    cpt_loss_window_size,
     judge_a6,
+    judge_cpt_loss,
     judge_tier,
-    judge_u2,
     judge_u4,
-    u2_direction_label,
-    u2_higher_is_better_from_algorithm,
-    u2_window_means,
-    u2_window_size,
 )
 
 
@@ -65,17 +108,11 @@ def make_evidence(**overrides) -> RunEvidence:
         },
         losses=(1.0, 0.8, 0.6, 0.5, 0.4, 0.3),
         grad_norms=(1.0, 0.9, 0.8),
-        # ★ U2 的**方向来源**（2026-10-17 本包修掉方向缺陷后，方向不再是缺省开关而是
-        #   证据字段）：缺省给 loss 类算法 `SFT`，使本夹具老用例的"loss 越低越好"
-        #   口径**逐字不变**（⛔ 未改任何期望值，只是把方向输入显式化）。
-        #   缺方向 / 未登记算法串的 fail-closed 有专门用例（★ 锁：⛔ 不得默认按 loss 判）。
+        # ★ 缺省算法 = `SFT`：CPT_LOSS **不适用**于它（⛔ 不得让 SFT 去判 loss）。
+        #   CPT 支的用例一律**显式**给 ``algorithm="CPT"``。
         algorithm="SFT",
-        # ★ U2 的比较基准（口径 = `meta.criteria_caliber.baseline`）。
-        #   缺省给一个"本跑终窗（0.4）达到/超过它"的基线 ⇒ 缺省夹具在 U2 上判绿，
-        #   免得 U2/U4 的对照被"基线证据未到"淹没。缺基线那一态有专门用例。
-        baseline_end_window=0.5,
         # A7 要"训练真推进"的正面读数；不给 ⇒ A7 落取证缺口、整档就判不了通过，
-        # 那会把 U2/U4 的对照淹没在 A7 的缺证据里。
+        # 那会把 CPT_LOSS/U4 的对照淹没在 A7 的缺证据里。
         nonfinite_skips=0,
         nonfinite_skips_source="unit_test",
     )
@@ -83,7 +120,14 @@ def make_evidence(**overrides) -> RunEvidence:
     return RunEvidence(**base)
 
 
-# ── U2 · 窗口口径 ───────────────────────────────────────────────────────────
+#: 一条"明显下降"的 CPT loss 序列（n=20 ⇒ k=3）。
+CPT_DECLINING = tuple(1.0 - 0.04 * index for index in range(20))
+
+#: 一条"未下降（反而上升）"的 CPT loss 序列（n=20 ⇒ k=3）。
+CPT_NOT_DECLINING = tuple(0.5 + 0.03 * index for index in range(20))
+
+
+# ── CPT_LOSS · 窗口口径 ─────────────────────────────────────────────────────
 
 
 @pytest.mark.parametrize(
@@ -101,295 +145,158 @@ def make_evidence(**overrides) -> RunEvidence:
         (200, 20),  # ★ 与 228 实测 CPT 档 k=20 一致
     ],
 )
-def test_u2_window_size_matches_the_in_force_implementation(point_count, expected):
-    assert u2_window_size(point_count) == expected
+def test_cpt_loss_window_size_matches_the_caliber(point_count, expected):
+    assert cpt_loss_window_size(point_count) == expected
 
 
-def test_u2_window_means_is_first_and_last_k():
-    start, end, k = u2_window_means((1.0, 2.0, 3.0, 4.0, 5.0))
+def test_cpt_loss_window_means_is_first_and_last_k():
+    start, end, k = cpt_loss_window_means((1.0, 2.0, 3.0, 4.0, 5.0))
 
     assert k == 3
     assert start == pytest.approx(2.0)  # mean(1,2,3)
     assert end == pytest.approx(4.0)  # mean(3,4,5)
 
 
-def test_u2_window_means_on_empty_series_is_none_never_zero():
+def test_cpt_loss_window_means_on_empty_series_is_none_never_zero():
     """§2.2：读不到就返回 None，**不得**猜 0.0（0.0 会伪装成一个真实读数）。"""
-    assert u2_window_means(()) is None
+    assert cpt_loss_window_means(()) is None
 
 
-def test_u2_short_series_is_judged_against_the_baseline_like_the_caliber_says():
-    """★ 退化边界（**口径对齐后的归因更正**，2026-10-17）：``k == len(values)`` 的短序列
-    **不再**因为"首窗 == 终窗、无从自比"落取证缺口 —— 那个理由属于**自比**读法。
+# ── CPT_LOSS · 能失败对照（红色路径）────────────────────────────────────────
 
-    口径原文（`docs/capability-matrix-milestone-20261014.html:280`）给的是
-    「**末段** max(3, 10% 步数) 的均值」与「终点窗口 达到/超过**基线**同口径终点窗口」：
-    末段窗对任何 ``n ≥ 1`` 都可算，文档**没有**把"序列长度"设为判定前置 ⇒ 本层
-    ⛔ 不自造附加条件。但**放行方向不变**：短序列照样要能判红（见本用例的两条断言）。
 
-    ★ 变更登记（⛔ 不是顺手改）：本用例替换旧用例
-    `test_u2_series_too_short_for_two_windows_is_an_evidence_gap_not_a_failure`
-    （旧的"取证缺口"结论在自比口径下成立、在文档口径下不成立）。同时**加强**：
-    ① 缺基线 ⇒ 仍是 fail-closed 取证缺口；② 短序列劣于基线 ⇒ **必红**（绝不放行）。
+def test_cpt_loss_fails_when_the_terminal_window_is_not_lower():
+    """★能失败对照①：loss **未下降**（上升）⇒ CPT_LOSS 必须红。
+
+    这不是"均值巧合"——反例被构造成终窗均值严格高于起窗均值；
+    并且它**不是**取证缺口（序列读到了），必须记成**事实判否**。
     """
-    # ① 短序列 + 基线在 ⇒ 按「终点窗 对 基线窗」判：末段窗 = 全序列均值 0.333… ≤ 0.4 ⇒ 绿
-    short_ok = judge_u2(make_evidence(losses=(0.5, 0.3, 0.2), baseline_end_window=0.4))
-    assert short_ok.passed, short_ok.detail
-    assert short_ok.evidence_missing is False
+    rising = judge_cpt_loss(make_evidence(algorithm="CPT", losses=CPT_NOT_DECLINING))
 
-    # ② 短序列劣于基线 ⇒ **必红**（事实判否）：均值 0.566… > 0.3
-    short_bad = judge_u2(make_evidence(losses=(0.5, 0.3, 0.9), baseline_end_window=0.3))
-    assert not short_bad.passed
-    assert short_bad.evidence_missing is False
-    assert "未正常下降" in short_bad.detail
-
-    # ③ 短序列 + **缺基线** ⇒ 仍 fail-closed（取证缺口，⛔ 不得降格为通过）
-    for losses in ((0.5,), (0.5, 0.3), (0.5, 0.3, 0.1)):
-        result = judge_u2(make_evidence(losses=losses, baseline_end_window=None))
-
-        assert not result.passed, "缺基线 ⇒ fail-closed，绝不放行"
-        assert result.evidence_missing is True, "这是取证缺口，不是训练失败"
-        assert U2_BASELINE_MISSING_DETAIL in result.detail
+    assert not rising.passed, rising.detail
+    assert rising.evidence_missing is False, "读全了序列 ⇒ 这是事实判否，不是取证缺口"
+    assert rising.criterion == CPT_LOSS_CRITERION
+    assert "起窗" in rising.detail and "终窗" in rising.detail
+    assert "未下降" in rising.detail
 
 
-# ── U2 · 能失败对照（红色路径）────────────────────────────────────────────
+def test_cpt_loss_is_strict_equality_does_not_pass():
+    """操作定义 = 「终窗均值 **<** 起窗均值」⇒ 持平（逐位相等）**不通过**（严格小于）。"""
+    flat = judge_cpt_loss(make_evidence(algorithm="CPT", losses=(0.5,) * 10))
+
+    assert not flat.passed, "起窗 == 终窗 ⇒ 不构成下降，必须红"
+    assert flat.evidence_missing is False
 
 
-def test_u2_fails_when_the_terminal_window_is_higher():
-    """★能失败对照①：正常下降后**末段反弹更高** ⇒ U2 必须红。
-
-    这不是"均值巧合"——反例被构造成末段窗（3.0）严格劣于基线窗（0.5）；
-    并且它**不是**取证缺口（序列与基线都读到了），必须记成**事实判否**。
-    """
-    result = judge_u2(make_evidence(losses=(1.0, 0.8, 0.5, 0.2, 0.1, 2.0, 3.0, 4.0)))
-
-    assert not result.passed
-    assert result.evidence_missing is False, "读全了序列与基线 ⇒ 这是事实判否，不是取证缺口"
-    assert result.criterion == U2_CRITERION
-    assert "起点窗" in result.detail and "终点窗" in result.detail
-    assert "未正常下降" in result.detail
-
-
-def test_u2_red_control_is_red_at_judge_level_but_not_on_the_blocking_axis():
-    """★ 诊断轴锁：U2 判红 **不得**翻转整档结论，但必须**逐次记录**。
-
-    背景：U2 的口径已按文档对齐（终窗 对 基线同口径终点窗），但**接线待裁**、
-    且基线证据的采集落点在本层边界外 ⇒ U2 落在**诊断轴**。本用例把该状态锁死：
-      * 判据层：这条序列必须**红**（上一条红色对照不变）；
-      * 整档层：**不许**因为 U2 红而判 ❌（`passed` 仍为 True、状态仍 ✅）；
-      * 记录层：U2 必须出现在 `criteria` 与档位备注里（不是静默丢弃）。
-    """
-    judgement = judge_tier(make_evidence(losses=(1.0, 0.8, 0.5, 0.2, 0.1, 2.0, 3.0, 4.0)))
-
-    assert judgement.criterion(U2_CRITERION).passed is False, "判据层该红还得红"
-    assert judgement.passed, "U2 未接入阻断轴 ⇒ 不得因它翻转整档结论"
-    assert judgement.ledger_status == "✅ 可用"
-    assert "U2 loss 正常下降 = False" in judgement.note, "U2 的结论必须写进档位备注"
-    assert U2_WIRING_PENDING_NOTE in judgement.note, "接线状态必须显式可见"
-
-
-def test_u2_caliber_is_locked_against_self_comparison():
-    """★★ **口径锁（本包最关键的新增用例）**：把 U2 改回「终窗 对 起窗」（自比）⇒ **必红**。
-
-    两个方向各构造一例，使「自比读法」与「文档口径（对基线）**结论相反**」：
-      ① **终窗优于起点窗**（自比 ⇒ 绿）但 **终窗劣于基线窗**（文档口径 ⇒ 红）
-         ⇒ 必须 **红**；
-      ② **终窗劣于起点窗**（自比 ⇒ 红）但 **终窗达到/超过基线窗**（文档口径 ⇒ 绿）
-         ⇒ 必须 **绿**。
-    任一条只要有人把主判据换回起点窗（或拿起点窗顶替基线窗），本用例必红。
-    """
-    # ① k=3：起窗 (1.0,0.9,0.8)=0.9 → 终窗 (0.2,0.15,0.1)=0.15（自比=降）；基线窗 0.05
-    case_self_green_baseline_red = make_evidence(
-        losses=(1.0, 0.9, 0.8, 0.7, 0.4, 0.2, 0.15, 0.1), baseline_end_window=0.05
-    )
-    result_a = judge_u2(case_self_green_baseline_red)
-    assert not result_a.passed, "终窗劣于基线 ⇒ 必红（自比读法会误判为绿）"
-    assert result_a.evidence_missing is False
-
-    # ② k=3：起窗 (0.1,0.1,0.1)=0.1 → 终窗 (0.6,0.6,0.6)=0.6（自比=升）；基线窗 0.7
-    case_self_red_baseline_green = make_evidence(
-        losses=(0.1, 0.1, 0.1, 0.2, 0.3, 0.6, 0.6, 0.6), baseline_end_window=0.7
-    )
-    result_b = judge_u2(case_self_red_baseline_green)
-    assert result_b.passed, "终窗达到/超过基线 ⇒ 必绿（自比读法会误判为红）"
-    assert "正常下降成立" in result_b.detail
-
-
-def test_u2_nonfinite_series_is_a_fact_failure_not_an_evidence_gap():
+def test_cpt_loss_nonfinite_series_is_a_fact_failure_not_an_evidence_gap():
     """真读到 NaN/Inf ⇒ fail-loud 判否，**不**降格为取证缺口。"""
     for losses in (
-        (1.0, float("nan"), 0.5),
-        (1.0, float("inf"), 0.5),
-        (1.0, 0.5, float("-inf")),
+        (1.0, float("nan"), 0.5, 0.2),
+        (1.0, float("inf"), 0.5, 0.2),
+        (1.0, 0.5, float("-inf"), 0.2),
     ):
-        result = judge_u2(make_evidence(losses=losses))
+        result = judge_cpt_loss(make_evidence(algorithm="CPT", losses=losses))
 
         assert not result.passed
         assert result.evidence_missing is False
-        assert U2_NONFINITE_DETAIL in result.detail
+        assert CPT_LOSS_NONFINITE_DETAIL in result.detail
 
 
-def test_u2_nonfinite_or_unusable_baseline_is_fail_loud_not_an_evidence_gap():
-    """基线窗读数本身不可用（NaN/Inf/非数值）⇒ fail-loud 判否，**不**降格为取证缺口。
-
-    为什么与"缺基线"（取证缺口）分开：这是**读到了、但读到的是坏数**——关于证据的
-    事实，与「没读到」不同（§2.2 三态语义）。
-    """
-    for baseline in (float("nan"), float("inf"), float("-inf"), "n/a"):
-        result = judge_u2(make_evidence(baseline_end_window=baseline))
-
-        assert not result.passed
-        assert result.evidence_missing is False, "坏数 ≠ 没读到"
-        assert U2_NONFINITE_DETAIL in result.detail
+# ── CPT_LOSS · 绿色路径 ─────────────────────────────────────────────────────
 
 
-# ── U2 · 绿色路径 ───────────────────────────────────────────────────────────
-
-
-def test_u2_passes_on_normal_decline():
-    result = judge_u2(make_evidence(losses=(1.0, 0.9, 0.8, 0.7, 0.6), baseline_end_window=0.75))
+def test_cpt_loss_passes_on_normal_decline():
+    result = judge_cpt_loss(make_evidence(algorithm="CPT", losses=CPT_DECLINING))
 
     assert result.passed, result.detail
     assert result.evidence_missing is False
-    assert "正常下降成立" in result.detail
+    assert "下降成立" in result.detail
 
 
-def test_u2_attaining_the_baseline_exactly_passes():
-    """口径原文「终点窗口 **达到** / 超过基线同口径的终点窗口」⇒ 相等 = **通过**（非严格）。
+def test_cpt_loss_has_no_baseline_dependency_at_all():
+    """★★ **退出基线依赖的机核证明**：判定式只比本跑自身两窗。
 
-    ★ 用**二进制可精确表示**的值（0.5）构造"逐位相等"，⛔ 不用 0.4 这类十进制近似值
-    （那会在非严格比较的另一侧因浮点尾巴翻出假红，与口径无关）。
+    ① ``RunEvidence`` **不再有** ``baseline_end_window`` 字段（旧基线通道已删）；
+    ② 两条除"起窗 → 终窗走向"外**完全相同**的序列给出相反结论 —— 若实现偷偷
+       依赖任何外部基线，两者会得到同一结论。
     """
-    # k=3：终窗 = mean(0.5, 0.5, 0.5) = 0.5，与基线窗**逐位相等**
-    result = judge_u2(
-        make_evidence(losses=(1.0, 0.75, 0.5, 0.5, 0.5, 0.5), baseline_end_window=0.5)
+    assert not hasattr(RunEvidence, "baseline_end_window"), (
+        "旧 U2 的基线字段必须已删净（单卡曲线基线已作废）"
     )
 
-    assert result.passed, result.detail
+    declining = make_evidence(
+        algorithm="CPT", losses=(0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.05)
+    )
+    not_declining = make_evidence(
+        algorithm="CPT", losses=(0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
+    )
+
+    assert judge_cpt_loss(declining).passed
+    assert not judge_cpt_loss(not_declining).passed
+
+
+@pytest.mark.parametrize("algorithm", ["SFT", "GRASPO", "OPD", None, "", "cpt", "GRPO"])
+def test_cpt_loss_only_applies_to_cpt(algorithm):
+    """⛔ **只对 CPT 生效**：其余任何算法串 ⇒ 「不适用」（通过且**显式**登记）。
+
+    关键反例保护：若有人把本判据做成"对所有算法判 loss"，则上表里的 SFT/GRASPO
+    档会因 loss 未下降被判红 —— 那正是本用例要拦下的越权。
+    """
+    result = judge_cpt_loss(make_evidence(algorithm=algorithm, losses=CPT_NOT_DECLINING))
+
+    assert result.passed, f"algorithm={algorithm!r} 不是 CPT ⇒ 必须判「不适用」而不是红"
+    assert result.not_applicable is True
     assert result.evidence_missing is False
+    assert "不适用" in result.detail
+    assert CPT_LOSS_NOT_APPLICABLE_DETAIL in result.detail
+    assert CPT_LOSS_ALGORITHM == "CPT", "适用算法串必须逐字 = CPT（精确匹配，⛔ 不猜）"
 
 
-def test_u2_fails_when_the_end_window_is_worse_than_the_baseline():
-    """★能失败对照①（口径对齐后）：终窗**劣于**基线同口径终点窗 ⇒ 必红（事实判否）。"""
-    # k=3：起窗 0.9 → 终窗 0.15（相对自身起点在降），但基线窗 0.05 ⇒ 未达到 ⇒ 红
-    result = judge_u2(
-        make_evidence(losses=(1.0, 0.9, 0.8, 0.7, 0.4, 0.2, 0.15, 0.1), baseline_end_window=0.05)
-    )
-
-    assert not result.passed
-    assert result.evidence_missing is False, "序列与基线都读到了 ⇒ 事实判否"
-    assert "未正常下降" in result.detail
-    assert "基线同口径终点窗" in result.detail
+# ── CPT_LOSS · fail-closed（未测 ≠ 失败）────────────────────────────────────
 
 
-def test_u2_missing_baseline_is_an_evidence_gap_not_a_pass():
-    """★能失败对照②（口径对齐后）：缺基线窗 ⇒ `evidence_missing=True` 且 fail-closed。
-
-    ★ 关键：本条用的序列**相对自身起点是在下降的**（自比读法会给绿）——它必须仍然
-    **不放行**，这正是「基线证据未到 ⇒ 不可判」而非「默认通过」。
-    """
-    result = judge_u2(
-        make_evidence(losses=(1.0, 0.9, 0.8, 0.7, 0.6), baseline_end_window=None)
-    )
-
-    assert not result.passed, "缺基线绝不放行"
-    assert result.evidence_missing is True, "未测必须记成取证缺口，不是训练失败"
-    assert U2_BASELINE_MISSING_DETAIL in result.detail
-    assert "fail-closed" in result.detail
-    # ★ 读数不丢：起点窗/终点窗仍写进明细（归因诊断）
-    assert "终点窗" in result.detail and "起点窗" in result.detail
-
-
-def test_u2_keeps_the_start_window_as_attribution_diagnostic_only():
-    """口径原文「起点窗口仅作**归因诊断**」⇒ 它必须**被记录**、且**不被当判据**。
-
-    反例保护：若有人把起点窗接回判定式（自比复辟），`test_u2_caliber_is_locked_...`
-    与本用例必红。
-    """
-    # 起窗 0.1 → 终窗 0.6（相对自身起点在**升**），但基线窗 0.7 ⇒ 达标 ⇒ 绿
-    rising_but_ok = judge_u2(
-        make_evidence(losses=(0.1, 0.1, 0.1, 0.2, 0.3, 0.6, 0.6, 0.6), baseline_end_window=0.7)
-    )
-
-    assert rising_but_ok.passed, "主判据只对基线 ⇒ 起点窗上升不构成判否"
-    assert "归因诊断" in rising_but_ok.detail
-    assert "起点窗" in rising_but_ok.detail
-
-
-def test_u2_passes_for_rising_reward():
-    """GRASPO 支路：reward 越高越好，同样对**基线**比。
-
-    ★ 输入口径已改（2026-10-17，本包 `task-u2-direction`）：方向**不再由开关传入**，
-    而是由证据字段 ``RunEvidence.algorithm="GRASPO"`` **导出**（这正是本包要钉死的修法）。
-    ★ 期望值**逐字未变**：reward 升 ⇒ 绿；reward 降 ⇒ 红。
-    """
-    rising = judge_u2(
-        make_evidence(
-            losses=(0.1, 0.2, 0.3, 0.4, 0.5), baseline_end_window=0.39, algorithm="GRASPO"
-        )
-    )
-    falling = judge_u2(
-        make_evidence(
-            losses=(0.5, 0.4, 0.3, 0.2, 0.1), baseline_end_window=0.39, algorithm="GRASPO"
-        )
-    )
-
-    assert rising.passed, "终窗 reward 0.4 ≥ 基线窗 0.39"
-    assert not falling.passed, "reward 终窗 0.2 < 基线窗 0.39 ⇒ 必须红（方向不能被忽略）"
-
-
-# ── U2 · fail-closed（未测 ≠ 失败）────────────────────────────────────────
-
-
-def test_u2_fail_closed_and_explicitly_marked_evidence_missing():
-    """★能失败对照③：缺序列 ⇒ fail-closed，且**显式**标 `evidence_missing`。"""
+def test_cpt_loss_fail_closed_and_explicitly_marked_evidence_missing():
+    """★能失败对照③：缺序列 ⇒ fail-closed（**绝不放行**），且**显式**标 `evidence_missing`。"""
     for evidence in (
-        make_evidence(losses=()),
-        make_evidence(losses_unavailable=True, losses=(1.0, 0.5)),
-        make_evidence(losses=(1.0, MISSING_SENTINEL, 0.5)),
+        make_evidence(algorithm="CPT", losses=()),
+        make_evidence(algorithm="CPT", losses_unavailable=True, losses=(1.0, 0.5)),
+        make_evidence(algorithm="CPT", losses=(1.0, MISSING_SENTINEL, 0.5)),
     ):
-        result = judge_u2(evidence)
+        result = judge_cpt_loss(evidence)
 
-        assert not result.passed, "读不到序列绝不放行"
+        assert not result.passed, "读不到序列绝不放行（缺数据 ⇒ fail-closed）"
         assert result.evidence_missing is True, "未测必须记成取证缺口，不是训练失败"
-        assert U2_EVIDENCE_MISSING_DETAIL in result.detail
+        assert CPT_LOSS_EVIDENCE_MISSING_DETAIL in result.detail
         assert "fail-closed" in result.detail
 
 
-def test_u2_missing_series_keeps_the_tier_indeterminate_not_failed():
-    """整档视角：缺 loss 序列 ⇒ 「⚠ 口径不可测（取证缺口）」，⛔ 不是 ❌。"""
-    judgement = judge_tier(make_evidence(losses=()))
-
-    assert not judgement.passed
-    assert judgement.ledger_status == "⚠ 口径不可测"
-    assert judgement.failure_class is not None
-    assert judgement.criterion(U2_CRITERION).evidence_missing is True
+# ── CPT_LOSS · 与 A6「首末两点」不同源（单一真相源守卫）─────────────────────
 
 
-# ── U2 · 与 A6「首末两点」不同源（单一真相源守卫）─────────────────────────
+def test_cpt_loss_window_and_a6_endpoints_are_different_sources_both_ways():
+    """★证明 CPT_LOSS（窗口均值）与 A6 记录项（首末两点）**不同源**——两个方向各一例。
 
-
-def test_u2_window_and_a6_endpoints_are_different_sources_both_ways():
-    """★证明 U2（窗口均值）与 A6 记录项（首末两点）**不同源**——两个方向各一例。
-
-    两例都被构造成"首末两点说一套、窗口均值说另一套"（基线窗由夹具给，两例同值）：
-    ⇒ 若哪天有人把 U2 实现成首末两点（或把 A6 那条记录项拿去顶 U2），
-    本用例必红。
+    两例都被构造成"首末两点说一套、窗口均值说另一套"：
+    ⇒ 若哪天有人把 CPT_LOSS 实现成首末两点（或把 A6 那条记录项拿去顶它），本用例必红。
     """
-    # ① 首末两点 = increased（A6 记记录项），窗口均值下降 ⇒ 终窗 0.15 ≤ 基线窗 0.5（U2 绿）
-    case_a = make_evidence(losses=(0.05, 5.0, 5.0, 1.0, 0.5, 0.3, 0.2, 0.1, 0.05, 0.30))
+    # ① 首末两点 = increased（A6 记记录项），窗口均值下降 ⇒ CPT_LOSS 绿
+    case_a = make_evidence(
+        algorithm="CPT", losses=(0.05, 5.0, 5.0, 1.0, 0.5, 0.3, 0.2, 0.1, 0.05, 0.30)
+    )
     assert a6_loss_trend(judge_a6(case_a)) == "increased"
-    assert judge_u2(case_a).passed, "窗口均值下降 ⇒ U2 必须绿（首末两点不是 U2 的口径）"
+    assert judge_cpt_loss(case_a).passed, "窗口均值下降 ⇒ CPT_LOSS 必须绿（首末两点不是它的口径）"
 
-    # ② 首末两点 = decreased（A6 记记录项），窗口均值上升 ⇒ 终窗 1.713 > 基线窗 0.5（U2 红）
-    case_b = make_evidence(losses=(0.10, 0.10, 0.10, 0.05, 0.05, 0.05, 0.05, 0.05, 5.0, 0.09))
+    # ② 首末两点 = decreased（A6 记记录项），窗口均值上升 ⇒ CPT_LOSS 红
+    case_b = make_evidence(
+        algorithm="CPT", losses=(0.10, 0.10, 0.10, 0.05, 0.05, 0.05, 0.05, 0.05, 5.0, 0.09)
+    )
     assert a6_loss_trend(judge_a6(case_b)) == "decreased"
-    assert not judge_u2(case_b).passed, "窗口均值上升 ⇒ U2 必须红（不得用首末两点顶替）"
+    assert not judge_cpt_loss(case_b).passed, "窗口均值上升 ⇒ CPT_LOSS 必须红（不得用首末两点顶替）"
 
 
-def test_u2_does_not_disturb_the_a6_trend_record():
-    """⛔ 不碰 A6：接入 U2 **没有**改变 A6 的「首末走向只记录不阻断」裁定。"""
-    evidence = make_evidence(losses=(0.5, 0.42, 0.7))
+def test_cpt_loss_does_not_disturb_the_a6_trend_record():
+    """⛔ 不碰 A6：接入 CPT_LOSS **没有**改变 A6 的「首末走向只记录不阻断」裁定。"""
+    evidence = make_evidence(algorithm="CPT", losses=(0.5, 0.42, 0.7))
 
     a6 = judge_a6(evidence)
 
@@ -397,197 +304,107 @@ def test_u2_does_not_disturb_the_a6_trend_record():
     assert a6_loss_trend(a6) == "increased"
 
 
-# ── U2 · 方向由证据导出（2026-10-17 本包 `task-u2-direction` 修的方向缺陷）──
-#
-# ★ 被修掉的缺陷：`judge_u2` 的 `higher_is_better` **缺省写死 False**，而 `judge_tier`
-#   的调用处 `u2 = judge_u2(first)` 不传该开关 ⇒ **GRASPO 档按 loss 方向判**
-#   （reward 明显上升、且终窗高于基线终窗，却被判「未正常下降」，台账把它记成 loss）。
-#   ★ 当时的后果被"U2 在诊断轴、未接线"掩盖；**一旦接线就会判错**。
-# ★ 修法：方向由**证据里已有的、可核的字段** `RunEvidence.algorithm` 导出
-#   （口径原文 `docs/capability-matrix-milestone-20261014.html:280` 逐字把方向绑在算法上：
-#   「loss 正常下降（SFT / CPT / OPD）或 reward 正常上升（GRASPO）」）；
-#   ⛔ 未登记 / 缺方向 ⇒ **fail-closed**（⛔ 不得默认按 loss 判）。
-# ⛔ 本包**不接线**：`PRIMARY_CRITERIA` / `DIAGNOSTIC_CRITERIA` 一个字没动。
+# ── CPT_LOSS · 真实强制点（判据② 的 CPT 支）与整档判定 ──────────────────────
 
 
-def test_u2_direction_mapping_is_explicit_exact_and_fail_closed():
-    """★方向映射是**显式登记表** + **精确串**匹配：未登记串一律 ``None``（fail-closed）。
+def test_cpt_loss_is_primary_and_u4_is_diagnostic():
+    """★台账自述（§1.4）：判据清单元组必须与 `judge_tier` 的实际判定轴一致。
 
-    反例保护：若有人把方向改回"缺省 False"、或加了大小写归一 / 前缀匹配去"猜"方向，
-    本用例必红（``None`` 与 ``False`` 是**不同**的三态取值，⛔ 不得混同）。
+    ★ 2026-10-17 状态：``CPT_LOSS`` 是**主判据**（判据② 的 CPT 支，**真能判 ✅/❌**）；
+    ``A4`` 与 ``U4`` 是**诊断项**（⛔ 不参与 ✅/❌）；旧 ``U2`` 名**不再存在**。
     """
-    # ★ 已登记的两类（唯一真相源 = 本模块常量）
-    assert U2_REWARD_ALGORITHMS == frozenset({"GRASPO"})
-    assert U2_LOSS_ALGORITHMS == frozenset({"SFT", "CPT", "OPD"})
-    for algorithm in ("GRASPO",):
-        assert u2_higher_is_better_from_algorithm(algorithm) is True
-    for algorithm in ("SFT", "CPT", "OPD"):
-        assert u2_higher_is_better_from_algorithm(algorithm) is False
-
-    # ★ 未登记 / 缺方向 ⇒ **None**（= 不可判定），⛔ 不是 False（= "按 loss 判"）
-    for algorithm in (None, "", "graspo", "GRPO", "PPO", " SFT", "SFT "):
-        assert u2_higher_is_better_from_algorithm(algorithm) is None, (
-            f"算法串 {algorithm!r} 未登记 ⇒ 必须返回 None（不可判定），"
-            "⛔ 不得回落成 False（那正是被修掉的旧缺省）"
-        )
-
-    # ★ 人读标签与判据层同源
-    assert u2_direction_label(make_evidence(algorithm="GRASPO")) == "reward 正常上升"
-    assert u2_direction_label(make_evidence(algorithm="CPT")) == "loss 正常下降"
-    assert u2_direction_label(make_evidence(algorithm=None)) == "曲线方向不可判定"
+    assert CPT_LOSS_CRITERION in PRIMARY_CRITERIA, "CPT 的 loss 判据必须是真实强制点"
+    assert U4_CRITERION in DIAGNOSTIC_CRITERIA
+    assert U4_CRITERION not in PRIMARY_CRITERIA
+    assert "A4" in DIAGNOSTIC_CRITERIA
+    assert "A4" not in PRIMARY_CRITERIA, "A4 容差体系已退役「判据」身份、降级为内部工具"
+    assert "U2" not in DIAGNOSTIC_CRITERIA and "U2" not in PRIMARY_CRITERIA
 
 
-def test_u2_reward_evidence_is_judged_by_reward_direction_both_ways():
-    """★★**能失败对照①（本包主对照）**：reward 类证据必须按 **reward 方向**判。
+def test_retired_u2_symbols_are_gone():
+    """★★ 退役自证：旧 U2 机制的符号**一个都不在**模块命名空间里。"""
+    import graspo.core.result_judge as module
 
-    证据 = `algorithm="GRASPO"`、曲线是 reward（越高越好）、基线给同口径终点窗：
-      * **上升且高于基线** ⇒ **通过**，判词必须用 **reward / 越高越好 / 上升**；
-      * **下降且低于基线** ⇒ **不通过**，判词必须是 **「未正常上升」（reward 口径）**。
-    ⛔ 两个方向都不得出现 loss 口径的判词（``loss 越低越好`` / ``未正常下降``）——
-    那正是修复前 GRASPO 档的错判词。
+    for name in (
+        "judge_u2",
+        "u2_higher_is_better_from_algorithm",
+        "u2_direction_label",
+        "u2_window_size",
+        "u2_window_means",
+        "U2_CRITERION",
+        "U2_REWARD_ALGORITHMS",
+        "U2_LOSS_ALGORITHMS",
+        "U2_WIRING_PENDING_NOTE",
+        "U2_BASELINE_MISSING_DETAIL",
+        "U2_EVIDENCE_MISSING_DETAIL",
+        "U2_NONFINITE_DETAIL",
+        "U2_DIRECTION_UNKNOWN_DETAIL",
+        "U2_WINDOW_MIN",
+        "U2_WINDOW_FRACTION",
+    ):
+        assert not hasattr(module, name), f"已退役的 U2 符号 {name} 不得残留"
+    assert not hasattr(module.RunEvidence, "baseline_end_window")
+
+
+def test_cpt_loss_is_a_real_blocking_point_on_the_tier_axis():
+    """★★**本包最重要的断言**：CPT 的 loss 未下降 ⇒ **整档必须判不通过**。
+
+    构造：除 CPT_LOSS 外全部主判据都过（exit=0 / 步数达标 / 权重变化 / ckpt 可重载 /
+    产物齐全 / 数值 finite / 无 nonfinite 跳过），唯独 loss 上升。
+    ⇒ 旧口径下这是「✅ 可用」；接上真实强制点后必须翻成「已验证不可用」。
     """
-    # k=3：终窗 = mean(0.45, 0.48, 0.50) = 0.4766667 > 基线窗 0.30 ⇒ 达标
-    rising = judge_u2(
-        make_evidence(
-            algorithm="GRASPO",
-            losses=(0.10, 0.20, 0.30, 0.35, 0.40, 0.45, 0.48, 0.50),
-            baseline_end_window=0.30,
-        )
+    judgement = judge_tier(make_evidence(algorithm="CPT", losses=CPT_NOT_DECLINING))
+
+    assert judgement.criterion(CPT_LOSS_CRITERION).passed is False
+    assert judgement.passed is False, "CPT 的 loss 判据必须是真强制点，不得只记录"
+    assert judgement.ledger_status == LEDGER_FAIL
+
+
+def test_cpt_loss_passing_keeps_the_tier_passing():
+    """镜像（正向）：同一档只把 loss 换成明显下降 ⇒ 整档恢复「已验证可用」。"""
+    judgement = judge_tier(make_evidence(algorithm="CPT", losses=CPT_DECLINING))
+
+    assert judgement.criterion(CPT_LOSS_CRITERION).passed is True
+    assert judgement.passed is True
+    assert judgement.ledger_status == LEDGER_PASS
+
+
+def test_cpt_loss_missing_series_keeps_the_tier_unverified_not_failed():
+    """★整档视角：CPT 缺 loss 序列 ⇒ 「尚未验证」（取证缺口），⛔ **不是**「已验证不可用」。"""
+    judgement = judge_tier(make_evidence(algorithm="CPT", losses=()))
+
+    assert not judgement.passed
+    assert judgement.ledger_status == LEDGER_INDETERMINATE
+    assert judgement.failure_class is not None
+    assert judgement.criterion(CPT_LOSS_CRITERION).evidence_missing is True
+
+
+def test_cpt_loss_does_not_apply_to_non_cpt_tiers_on_the_tier_axis():
+    """⛔ **不得让 SFT / GRASPO / OPD 也去判 loss**：同一份"未下降"的序列，
+    在非 CPT 档上**不得**翻转整档结论。"""
+    for algorithm in ("SFT", "GRASPO", "OPD"):
+        judgement = judge_tier(make_evidence(algorithm=algorithm, losses=CPT_NOT_DECLINING))
+
+        assert judgement.criterion(CPT_LOSS_CRITERION).passed is True, algorithm
+        assert judgement.criterion(CPT_LOSS_CRITERION).not_applicable is True, algorithm
+        assert judgement.passed is True, f"{algorithm} 档不判 loss ⇒ 结论不得被翻转"
+
+
+# ── 台账状态词 = 冻结四态（六态/三态标签已作废）────────────────────────────
+
+
+def test_ledger_status_vocabulary_is_the_frozen_four_states():
+    """★台账状态词 = 冻结四态；⛔ 旧的六态/三态标签不得再出现。"""
+    assert LEDGER_STATUS_PHRASES == (
+        "已验证可用",
+        "已验证不可用",
+        "尚未验证",
+        "未纳入验收",
     )
-    assert rising.passed, f"reward 明显上升且终窗高于基线窗 ⇒ 必须通过；判词 = {rising.detail}"
-    assert rising.evidence_missing is False
-    assert "reward" in rising.detail and "越高越好" in rising.detail
-    assert "正常上升成立" in rising.detail
-    assert "loss 越低越好" not in rising.detail
-    assert "未正常下降" not in rising.detail
-    # ★ 方向来源必须**可核**（判词里点名算法字段与取值）
-    assert "RunEvidence.algorithm" in rising.detail and "'GRASPO'" in rising.detail
-
-    # k=3：终窗 = mean(0.12, 0.11, 0.10) = 0.11 < 基线窗 0.30 ⇒ 未达标 ⇒ 必红
-    falling = judge_u2(
-        make_evidence(
-            algorithm="GRASPO",
-            losses=(0.50, 0.48, 0.45, 0.40, 0.20, 0.12, 0.11, 0.10),
-            baseline_end_window=0.30,
-        )
-    )
-    assert not falling.passed, "reward 终窗 0.11 < 基线窗 0.30 ⇒ 必须红"
-    assert falling.evidence_missing is False, "读全了序列与基线 ⇒ 事实判否，不是取证缺口"
-    assert "未正常上升" in falling.detail
-    assert "越高越好" in falling.detail
-    assert "未正常下降" not in falling.detail
-
-
-def test_u2_loss_evidence_keeps_the_mirror_direction():
-    """★对照（镜像）：loss 类（SFT / CPT / OPD）仍按 **loss 方向**判——⛔ 没有被整体反向。
-
-    两个方向各一例：loss 降到基线窗之下 ⇒ 绿（「正常下降成立」）；升到基线窗之上 ⇒ 红
-    （「未正常下降」）。若有人把方向写成"恒 reward"（另一种写死），本用例必红。
-    """
-    for algorithm in ("SFT", "CPT", "OPD"):
-        falling = judge_u2(
-            make_evidence(
-                algorithm=algorithm,
-                losses=(1.0, 0.9, 0.8, 0.7, 0.6, 0.5),
-                baseline_end_window=0.75,
-            )
-        )
-        assert falling.passed, f"{algorithm}：终窗 0.5 ≤ 基线窗 0.75 ⇒ 必须绿"
-        assert "loss" in falling.detail and "越低越好" in falling.detail
-        assert "正常下降成立" in falling.detail
-        assert "reward" not in falling.detail
-
-        rising = judge_u2(
-            make_evidence(
-                algorithm=algorithm,
-                losses=(0.2, 0.3, 0.4, 0.5, 0.9, 0.9),
-                baseline_end_window=0.75,
-            )
-        )
-        assert not rising.passed, f"{algorithm}：终窗 0.7667 > 基线窗 0.75 ⇒ 必须红"
-        assert "未正常下降" in rising.detail
-
-
-def test_u2_direction_unknown_is_fail_closed_and_never_defaults_to_loss():
-    """★★**能失败对照③**：方向不可判定 ⇒ fail-closed，⛔ **不得默认按 loss 判**。
-
-    关键构造（这条是"不得默认按 loss"的**判据级**证明）：序列**下降**且**终窗低于基线窗**
-    —— 在旧的"缺省 False（按 loss 判）"实现下，它会被判 **通过**（绿）。修后必须
-    **不通过 + `evidence_missing=True`（取证缺口）**，且判词**不得**出现任何按方向下的结论。
-    """
-    # ★ 只在 loss 口径下会判绿的序列（终窗 0.2333 ≤ 基线窗 0.3；
-    #   在 reward 口径下 0.2333 < 0.3 ⇒ 判红）⇒ 用它证明"没有回落成按 loss 判"。
-    would_pass_under_loss_default = dict(
-        losses=(1.0, 0.8, 0.6, 0.4, 0.2, 0.1), baseline_end_window=0.3
-    )
-
-    for algorithm in (None, "", "graspo", "PPO"):
-        result = judge_u2(make_evidence(algorithm=algorithm, **would_pass_under_loss_default))
-
-        assert not result.passed, (
-            f"algorithm={algorithm!r} 无法定方向 ⇒ 绝不放行（⛔ 不得默认按 loss 判成绿）"
-        )
-        assert result.evidence_missing is True, "「方向不知道」是取证缺口，⛔ 不是训练失败"
-        assert U2_DIRECTION_UNKNOWN_DETAIL in result.detail
-        assert "fail-closed" in result.detail
-        assert "RunEvidence.algorithm" in result.detail
-        # ⛔ 不得给出按某一方向的结论
-        assert "正常下降成立" not in result.detail
-        assert "正常上升成立" not in result.detail
-
-
-def test_u2_direction_unknown_keeps_the_tier_indeterminate_in_the_note_not_silent():
-    """整档视角：方向不可判定时必须**写进台账备注**（⛔ 不得静默按 loss 记）。
-
-    ★ 同时锁死"未接线"：U2 仍是诊断项 ⇒ 整档结论**不因它翻转**（本次⛔ 不接线）。
-    """
-    judgement = judge_tier(make_evidence(algorithm=None))
-
-    assert judgement.criterion(U2_CRITERION).passed is False
-    assert judgement.criterion(U2_CRITERION).evidence_missing is True
-    assert "U2 曲线方向不可判定 = False" in judgement.note
-    assert "U2 loss 正常下降" not in judgement.note, "⛔ 不得把方向未知的档记成 loss 口径"
-    assert judgement.passed, "U2 未接线 ⇒ 不得因它翻转整档结论"
-    assert U2_WIRING_PENDING_NOTE in judgement.note
-
-
-def test_u2_judge_tier_call_site_derives_the_direction_from_the_algorithm():
-    """★★**调用处锁**（原缺陷就在调用处：``u2 = judge_u2(first)`` 不传方向开关）。
-
-    同一个 ``judge_tier`` 入口，只换 ``algorithm``：
-      * ``GRASPO`` ⇒ 台账备注写 **「U2 reward 正常上升」**；
-      * ``SFT``/``CPT``/``OPD`` ⇒ 写 **「U2 loss 正常下降」**。
-    ⛔ 若调用处退回"不传/写死 loss"，第一条断言必红。
-    """
-    reward_evidence = make_evidence(
-        algorithm="GRASPO",
-        losses=(0.10, 0.20, 0.30, 0.35, 0.40, 0.45, 0.48, 0.50),
-        baseline_end_window=0.30,
-    )
-    reward_note = judge_tier(reward_evidence).note
-    assert "U2 reward 正常上升 = True" in reward_note
-    assert "U2 loss 正常下降" not in reward_note
-
-    for algorithm in ("SFT", "CPT", "OPD"):
-        loss_note = judge_tier(make_evidence(algorithm=algorithm)).note
-        assert "U2 loss 正常下降 = True" in loss_note
-        assert "reward" not in loss_note.split("U4 产物可推理")[0]
-
-
-def test_u2_explicit_direction_argument_is_an_explicit_override_never_a_silent_default():
-    """显式传 ``higher_is_better`` = **调用方的显式断言**（并在判词里登记来源）。
-
-    为什么保留这个入参：非矩阵档可能拿不到 ``algorithm``，此时调用方可以**显式**断言方向。
-    ⛔ 但它**不是缺省路径**：缺省 ``None`` 时方向只能来自证据，且缺方向即 fail-closed
-    （见上一条用例）。
-    """
-    explicit_reward = judge_u2(
-        make_evidence(algorithm=None, losses=(0.1, 0.2, 0.3, 0.4, 0.5), baseline_end_window=0.39),
-        higher_is_better=True,
-    )
-    assert explicit_reward.passed
-    assert "reward" in explicit_reward.detail and "正常上升成立" in explicit_reward.detail
-    assert "调用方显式指定" in explicit_reward.detail
+    assert len(set(LEDGER_STATUS_PHRASES)) == 4
+    assert LEDGER_PASS == "已验证可用"
+    assert LEDGER_FAIL == "已验证不可用"
+    assert LEDGER_INDETERMINATE == "尚未验证"
 
 
 # ── U4 · 能失败对照 ─────────────────────────────────────────────────────────
@@ -680,55 +497,3 @@ def test_u4_not_being_wired_is_explicit_in_the_tier_note_not_silent():
     assert judgement.passed, "U4 未接入阻断轴 ⇒ 本档仍可判通过"
     assert U4_WIRING_PENDING_NOTE in judgement.note
     assert "U4 产物可推理 = False" in judgement.note
-
-
-def test_u2_and_u4_are_in_the_declared_criteria_tuples():
-    """台账自述（§1.4）：判据清单元组必须与 judge_tier 的实际判定轴一致。
-
-    ★ 2026-10-17 状态：`U2` 口径已按文档对齐、但**接线待裁** ⇒ `U2` 与 `U4`
-    **都在诊断轴、都不在阻断轴**（`U2_WIRING_PENDING_NOTE` 逐字登记）。
-    """
-    assert U2_CRITERION in DIAGNOSTIC_CRITERIA
-    assert U2_CRITERION not in PRIMARY_CRITERIA, "U2 未接线 ⇒ 不得出现在阻断轴"
-    assert U4_CRITERION in DIAGNOSTIC_CRITERIA
-    assert U4_CRITERION not in PRIMARY_CRITERIA
-
-
-# ── U2 · 接线状态自证（口径已对齐 ＋ 未接线显式登记 ＋ 测试锁死）────────────
-
-
-def test_u2_is_computed_and_recorded_by_judge_tier():
-    """U2 不在阻断轴 ≠ 删除：仍必须逐次计算并记录在 `criteria` 里。"""
-    judgement = judge_tier(make_evidence())
-
-    assert judgement.criterion(U2_CRITERION).passed is True  # 0.4 ≤ 基线窗 0.5
-    assert U2_CRITERION in {c.criterion for c in judgement.criteria}
-
-
-def test_u2_not_being_wired_is_explicit_in_the_tier_note_not_silent():
-    """★锁：U2 **未接线** ＋「口径已对齐文档」这条新状态，必须**写在台账备注里**。
-
-    反例保护：若有人悄悄把 U2 接回 `primary_status`（或悄悄删掉 `U2_WIRING_PENDING_NOTE`
-    这段登记），本用例必红。
-    """
-    judgement = judge_tier(make_evidence())
-
-    assert judgement.passed, "U2 未接入阻断轴 ⇒ 本档仍可判通过"
-    assert U2_WIRING_PENDING_NOTE in judgement.note
-    assert "U2 loss 正常下降 = True" in judgement.note
-
-
-def test_u2_wiring_pending_note_records_the_new_state_and_both_readings():
-    """★锁：登记文本必须写明**新状态**（口径已对齐 / 接线待裁 / 采集落点），
-    并**两造并列**保留被替换的旧读法与 v14 的 🔴 判词原文（⛔ 不得只剩一句"暂不接入"）。
-    """
-    note = U2_WIRING_PENDING_NOTE
-
-    assert "口径已对齐" in note, "必须写明新状态：口径已按文档对齐"
-    assert "基线" in note, "必须写明主判据 = 对基线同口径终点窗"
-    assert "待上级裁定" in note and "本包未接" in note, "必须写明接线待裁、本包未接"
-    assert "scripts/collect_results.py" in note, "必须写明基线证据的采集落点"
-    assert "自比" in note, "必须两造并列保留被替换的旧读法（自比）"
-    assert "🔴" in note and "判词①" in note, "必须保留 v14 的 🔴 判词原文引用"
-    assert "docs/capability-matrix-milestone-20261014.html:280" in note, "必须点名文档口径原文落点"
-    assert "docs/capability-matrix.data.json:189-191" in note, "必须点名基线定义的机读落点"
