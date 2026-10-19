@@ -14,7 +14,8 @@
   color-scheme: light;
   --ink:#1f2328; --muted:#57606a; --line:#d0d7de; --line-soft:#e6eaee;
   --bg-soft:#f6f8fa;
-  --b-base:#e8eef4; --b-result:#ecebf7; --t-base:#f6f9fb; --t-result:#f8f7fc;
+  --b-base:#e8eef4; --b-status:#ecebf7; --b-param:#eaf2e6; --b-result:#ecebf7; --b-note:#eef0f2;
+  --t-base:#f6f9fb; --t-status:#f8f7fc; --t-param:#f5f9f2; --t-result:#f8f7fc; --t-note:#f7f8fa;
   --ok:#116329; --ok-bg:#e6f4ea; --bad:#a40e26; --bad-bg:#fdecea;
   --warn:#7a5b00; --warn-bg:#fff8e1; --gray:#57606a; --gray-bg:#eef0f2;
 }
@@ -29,8 +30,7 @@ ul,ol{margin:8px 0;padding-left:24px;}
 li{margin:5px 0;}
 ul.tight li{margin:2px 0;}
 code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.92em;background:#f0f2f4;padding:1px 5px;border-radius:3px;}
-.subtitle{color:var(--muted);margin:2px 0 10px;}
-.gen{color:var(--muted);font-size:12.5px;margin:6px 0 14px;}
+.gnote{color:var(--muted);font-size:12.5px;margin:8px 0 4px;}
 .warnbox,.hint,.note{margin:12px 0;padding:10px 14px;border-radius:8px;font-size:13.5px;}
 .warnbox{background:var(--warn-bg);border:1px solid #d4a72c;border-left:4px solid #d4a72c;color:var(--warn);}
 .hint{background:#f0f6ff;border:1px solid #a8c7fa;border-left:4px solid #4a78d0;color:#1a3a6b;}
@@ -45,7 +45,7 @@ section{margin-top:34px;}
 ol.criteria>li{margin:10px 0;}
 ul.uniform{margin:6px 0;}
 .table-wrap{overflow:auto;max-height:78vh;border:1px solid var(--line);border-radius:8px;background:#fff;}
-table.matrix{border-collapse:separate;border-spacing:0;font-size:12.5px;white-space:nowrap;}
+table.matrix{border-collapse:separate;border-spacing:0;font-size:12.5px;white-space:nowrap;min-width:2600px;}
 table.matrix th,table.matrix td{border-right:1px solid var(--line-soft);border-bottom:1px solid var(--line-soft);
   padding:5px 9px;text-align:left;vertical-align:top;white-space:nowrap;}
 table.matrix thead th{position:sticky;z-index:3;background:var(--bg-soft);white-space:nowrap;}
@@ -56,9 +56,42 @@ table.matrix thead th.col-tier{z-index:6;}
 table.matrix td.col-tier{background:#fff;}
 table.matrix td.col-start{border-left:2px solid #8c959f;}
 table.matrix thead th.g-base{background:var(--b-base);}
+table.matrix thead th.g-status{background:var(--b-status);}
+table.matrix thead th.g-param{background:var(--b-param);}
 table.matrix thead th.g-data{background:var(--b-result);}
+table.matrix thead th.g-note{background:var(--b-note);}
 table.matrix tbody td.g-base{background:var(--t-base);}
+table.matrix tbody td.g-status{background:var(--t-status);}
+table.matrix tbody td.g-param{background:var(--t-param);}
 table.matrix tbody td.g-data{background:var(--t-result);}
+table.matrix tbody td.g-note{background:var(--t-note);}
+/* 隔行底色（旧版版式：各组一档色差，结果列组更明显） */
+table.matrix tbody tr:nth-child(even) td.g-base{background:#e9eef3;}
+table.matrix tbody tr:nth-child(even) td.g-status{background:#f3f0f8;}
+table.matrix tbody tr:nth-child(even) td.g-param{background:#ecf4e7;}
+table.matrix tbody tr:nth-child(even) td.g-data{background:#f0effa;}
+table.matrix tbody tr:nth-child(even) td.g-note{background:#f7f8fa;}
+table.matrix tbody tr:nth-child(even) td.col-tier{background:#f2f5f8;}
+table.matrix tbody tr:hover td{background:#e8f3ff;}
+table.matrix tbody tr:hover td.col-tier{background:#e8f3ff;}
+/* 「主要参数」组长文本列允许换行（旧版同款：按列给宽度，⛔ 不压缩短列） */
+table.matrix td[data-col="lora_target"],table.matrix td[data-col="switches"]{
+  white-space:normal;word-break:normal;overflow-wrap:anywhere;}
+/* 列宽：按内容给足（旧版版式；⛔ 不为塞进视口而压缩） */
+table.matrix th[data-col="tier"]{min-width:64px;}        table.matrix th[data-col="status"]{min-width:108px;}
+table.matrix th[data-col="model"]{min-width:60px;}       table.matrix th[data-col="algo"]{min-width:78px;}
+table.matrix th[data-col="mode"]{min-width:60px;}        table.matrix th[data-col="backend"]{min-width:78px;}
+table.matrix th[data-col="tp"]{min-width:150px;}         table.matrix th[data-col="pp"]{min-width:150px;}
+table.matrix th[data-col="dp"]{min-width:130px;}         table.matrix th[data-col="cards_total"]{min-width:190px;}
+table.matrix th[data-col="lora_target"]{min-width:220px;}
+table.matrix th[data-col="lr"]{min-width:80px;}          table.matrix th[data-col="data_scale"]{min-width:130px;}
+table.matrix th[data-col="steps"]{min-width:150px;}      table.matrix th[data-col="switches"]{min-width:200px;}
+table.matrix th[data-col="peak_mem"]{min-width:110px;}   table.matrix th[data-col="steps_actual"]{min-width:90px;}
+table.matrix th[data-col="elapsed"]{min-width:190px;}    table.matrix th[data-col="throughput"]{min-width:210px;}
+table.matrix th[data-col="effect"]{min-width:260px;}     table.matrix th[data-col="note"]{min-width:380px;}
+/* 「实验数据」与「备注」组当前一律为 `—`（无适用读数）⇒ 置灰，⛔ 不改取值 */
+table.matrix td.g-data,table.matrix td.g-note{text-align:left;color:#8c959f;}
+table.matrix td[data-col="peak_mem"]{text-align:right;font-variant-numeric:tabular-nums;}
 table.matrix td[data-col="effect"],table.matrix td[data-col="not_failed_reason"],
 table.matrix td[data-col="elapsed"],table.matrix td[data-col="peak_mem"]{white-space:normal;overflow-wrap:anywhere;max-width:420px;}
 table.matrix td[data-col="status"]{text-align:center;font-weight:600;}
@@ -71,16 +104,7 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 </style>
 </head>
 <body>
-
-<header>
-<h1>{{DOC_TITLE}}</h1>
-<p class="subtitle">这是什么表、通过标准、实验条件、各档位结果——一页读完，看懂哪些档位可以用。</p>
-<p class="gen">本文件由 <code>{{GENERATOR}}</code> 从 <code>{{DATA_PATH}}</code> <b>自动生成</b>，<b>禁止手工编辑</b>；
-唯一可编辑源头 = <code>{{DATA_PATH}}</code>；派生方向固定（结果 JSON → 数据文件 → 本页，<b>单方向，禁止互推</b>）。
-判据版本 {{CRITERIA_VERSION}}；发布日期 {{DOC_DATE}}。</p>
-{{COVERAGE_WARNING}}
-{{BOUNDARY}}
-</header>
+<!-- generated-by: {{GENERATOR}} ; source: {{DATA_PATH}} ; do-not-edit -->
 
 <nav class="toc">
 <div class="t">目录</div>
@@ -88,7 +112,7 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <li><a href="#s1">这是什么表</a></li>
 <li><a href="#s2">通过标准</a></li>
 <li><a href="#s3">实验条件</a></li>
-<li><a href="#s4">档位功能矩阵（结果）</a></li>
+<li><a href="#s4">功能矩阵测试表</a></li>
 </ol>
 </nav>
 
@@ -97,13 +121,10 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <!-- ========================= 1. 这是什么表 ========================= -->
 <section class="part" id="s1">
 <h2>1. 这是什么表</h2>
-<p>这张表列出 GRASPO 支持的 <b>{{ROW_COUNT}}</b> 个训练档位（模型规模 × 算法 × 训练后端 × 数据规模），
-逐档给出「能不能用、效果多少、结论是什么」。它记录的是<b>平台自己的能力与性能基线</b>，
-<b>不是</b>对你自己的任务、数据集或超参数下训练效果的承诺。</p>
 <ul>
-<li><b>有几个档位可以用？</b>看「状态」列里「已验证可用」的档数（结论统计见本页顶部警示）。</li>
-<li><b>性能怎么样？</b>看「效果（评测 Δ）」「显存峰值」「总耗时」三列；「—」表示该项没有适用读数。</li>
-<li><b>每个档位都有结论吗？</b>每个档位都有一个文字状态标签，没有空白；覆盖率未满时顶部有明确警示。</li>
+<li>这是 <b>GRASPO 训练框架</b>的功能测试记录，包括<b>测试方法</b>、<b>测试条件</b>与<b>测试结果</b>。</li>
+<li>测试结果基于<b>我们的多模态测试数据集</b>，<b>不保证</b>在您的数据集上也能达到同样效果。</li>
+<li>本表基于 <b>JSON 自动生成</b>和填写，<b>禁止手工修改</b>。</li>
 </ul>
 </section>
 
@@ -111,7 +132,7 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <section class="part" id="s2">
 <h2>2. 通过标准</h2>
 <p>判定很简单：<b>训练之后模型效果变好了</b>，再加上几条保证这次训练真实有效的检查。下面四条全过才算「可用」。</p>
-{{CRITERIA}}
+<p class="rule">四条判据（① 能完整跑完、② 效果变好、③ 算法正确性检查、④ 能推理）全部通过 ⇒ 才能标「已验证可用」；任一条不过 ⇒ 不得标「已验证可用」（按事实标「已验证不可用 / 尚未验证 / 未纳入验收」）。</p><ol class="criteria"><li><b>能完整跑完</b>：训练正常结束、不中断、不报错：退出码 0、优化器步数达标、检查点完整、没有 NaN/Inf；算法机制真的在起作用（不是空转）；产物能加载或推理。</li><li><b>效果变好（核心判据）</b>：在平台方数据集与平台方参数下，训练之后模型效果比不训练好（逐算法通过线见下）：<ul class="tight"><li>SFT（监督微调）：训练后工具调用准确率提升至少 10.0 个百分点，判据 after − base ≥ +10.0 pp</li><li>GRASPO（强化）：训练后工具调用准确率提升至少 5.0 个百分点，判据 after − base ≥ +5.0 pp</li><li>CPT（继续预训练）：训练 loss 正常下降、准确率不下降，判据 after ≥ base（不劣化）</li><li>OPD（蒸馏）：学生准确率不下降，判据 学生 after ≥ base（能力回收）</li></ul></li><li><b>算法正确性检查通过</b>：SFT / GRASPO / CPT / OPD 各按自己的检查清单逐项通过（这是第 1 条的组成部分）；GRASPO 的算法逻辑严禁改动。</li><li><b>能推理</b>：合并 LoRA 后用 vLLM 启动，实际前向一次能拿到可解析输出。</li></ol><p class="note">判据标识 <code>elam-v3-allright-1</code>。已冻结（现行口径，2026-10-15）：判据② 逐算法分列；不放宽判据；判定一律用点估计 Δ —— 不做假设检验、不引入置信区间 / 显著性。</p>
 </section>
 
 <!-- ========================= 3. 实验条件 ========================= -->
@@ -127,24 +148,37 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <li><b>学习率：</b>SFT / GRASPO = <code>5.0e-06</code>；CPT / OPD = <code>2.0e-05</code>。</li>
 <li><b>训练轮次（epoch）：</b>SFT 4；GRASPO 8；CPT 2；OPD 2。</li>
 <li><b>训练数据：</b>平台方自有、不公开；每档子集条数见矩阵表「训练数据」列。</li>
-<li><b>评测口径：</b>{{EVAL_INFO}}</li>
-<li><b>实验场所 / 代码版本：</b>{{VENUE}}；{{CODE_VERSION}}。</li>
+<li><b>评测口径：</b><ul class="tight"><li>评测集：平台方自有 / 不公开（100 行档用该档自身训练文件，同为非公开数据）。100 行档的评测集就是它自己训练用的那份 100 行文件（拿训练数据自测，只说明训练生效，不代表它在新数据上的表现）；其余档用平台方自有 702 行评测集。</li><li>样本量：100 行档 = 100（fit 口径）；其余档 = 702；数据版本锚点：两种口径 —— 100 行档 = 该档自身训练文件（100 行，sha256 594d41b0…）；其余档 = 平台方自有评测集（702 行，c202b1e1…）。</li><li>评测方法：工具调用准确率（acc）；温度 <code>0</code>；随机种子 <code>42</code>；一律用点估计 Δ 判定，不做假设检验。</li><li>判据标识 <code>elam-v3-allright-1</code>；达标阈值见第 2 节「通过标准」。</li></ul></li>
+<li><b>实验场所 / 代码版本：</b>平台方内部训练集群；graspo · feature/refactor-three-layer-architecture · 8d63c38。</li>
 </ul>
 <h3>统一超参（对所有档位相同）</h3>
-{{UNIFORM_PARAMS}}
+<ul class="uniform">
+<li data-uniform-key="max_prompt_length">上下文长度上限（token）：<code>8192</code></li>
+<li data-uniform-key="torch_dtype">权重精度：<code>bfloat16</code></li>
+<li data-uniform-key="gradient_checkpointing">梯度检查点：<code>true</code></li>
+<li data-uniform-key="micro_batch_size">单卡 micro batch size（native：micro_batch_size／ms-swift：per_device_train_batch_size）：<code>1</code></li>
+<li data-uniform-key="gradient_accumulation_micro_batches">梯度累积 micro-batches：<code>1</code></li>
+<li data-uniform-key="lora_r">LoRA rank r：<code>128</code></li>
+<li data-uniform-key="lora_alpha">LoRA alpha：<code>256</code></li>
+<li data-uniform-key="lora_dropout">LoRA dropout：<code>0.05</code></li>
+<li data-uniform-key="reward.kind">GRASPO 奖励类型：<code>graspo</code></li>
+</ul>
 </section>
 
-<!-- ========================= 4. 档位功能矩阵（结果） ========================= -->
+<!-- ========================= 4. 功能矩阵测试表 ========================= -->
 <section class="part" id="s4">
-<h2>4. 档位功能矩阵（结果）</h2>
-<p>每档一行。状态列只用四种文字标签，判定不依赖颜色、图例或空白：
-<b>已验证可用</b>（四条判据全过）/ <b>已验证不可用</b>（有跑过、未过判据）/
-<b>尚未验证</b>（未测试，<b>不计入</b>可用档数）/ <b>未纳入验收</b>（不实施、不出可运行配置）。
-「未过判据」列写明未过的是第 1 条还是第 2 条。</p>
+<h2>4. 功能矩阵测试表</h2>
+<p>下表逐档列出<b>档位之间的差异项</b>（主要训练参数）与<b>验证结论</b>（验证状态与结果列）。对全部档位相同的参数见第 3 节统一口径，不在本表重复。</p>
+<p class="note"><b>验证状态</b>只允许「已验证可用 / 已验证不可用 / 尚未验证 / 未纳入验收」四种文字标签。
+判定只认文字标签本身，<b>不依赖颜色、图例或空白</b>。
+<b>「尚未验证」不得计入可用档位数量。</b>本表当前<b>尚无任何实测结论</b>：「是否通过」列一律为
+<b>尚未验证</b>，「实验数据」列组与「备注」列一律为 <b>—</b>（＝该项没有适用读数，<b>不是</b>「通过」）。</p>
 <div class="table-wrap">{{MATRIX_TABLE}}</div>
-<p class="note">读表提示：「关键开关」列的「—」表示该档除统一超参外没有额外差异开关；
-「实验数据」各列的「—」表示该项没有适用读数（<b>不是</b>「通过」）。</p>
-{{VERDICTS}}
+
+<p class="note" style="margin-top:10px;">读表提示：表头两行吸顶；档号列冻结在左侧；结果列组以竖线与参数列隔开。
+「主要参数」组各列为该档的差异项取值（对全部档位相同的参数见第 3 节统一口径，表内不重复）。
+「关键开关」列的「—」表示该档除统一超参外<b>没有额外差异开关</b>；
+「实验数据」组各列与「备注」列的「—」表示该项<b>没有适用读数</b>（<b>不是</b>「通过」）。</p>
 </section>
 
 </main>

@@ -13,10 +13,17 @@
   ① 字节同一性 —— 重新渲染的字节串与在盘 HTML 逐字节相同（唯一产出通道的证据）。
   ② 手改检测 —— ① 失败时打印首个差异的「字节偏移 / 行号 / 列号 / 上下文」（改一个字、
      加一个空格、删一个字符都会命中）。
-  ③ 结构断言 —— 新结构「只有两大部分」：恰好 2 个 <h2> 且标题为「测试规则和说明 /
-     功能矩阵测试表」；恰好 2 个分区 section；目录只指向这两处；不再有 §1–§7 的旧骨架 id。
-  ④ 内容断言 —— A. 规则关键词全部在位（防止规则被删/被改名）；B. 列顺序 == 已定 10 列新表头；
-     C. 结果列全部为占位符（回填后可用 --allow-filled 放行 C）；D. 参数列合并后六项逐档在位。
+  ③ 结构断言 —— 四章（`1. 这是什么表` / `2. 通过标准` / `3. 实验条件` / `4. 功能矩阵测试表`）
+     + 四个分区 section + 目录恰好 4 条且 href 对得上；不再有 §1–§7 的旧骨架 id。
+  ④ 内容断言 —— A. 必需要点全在位；B. 21 列表结构 == **渲染器常量**（`render_matrix.MATRIX_COLUMNS`，
+     §1.4 单一真相源，⛔ 不再比数据件——数据件已无 `columns` / `groups`）；C. 结果列全为占位符、
+     状态全「尚未验证」；D. 21 列逐档逐格与行数据**逐字**一致；V. **静态区不随数据变**
+     （只改 `rows` 里的结果字段重渲染 ⇒ 表格以外逐字节不变、表格内只有结果单元格变）。
+
+★ 2026-10-19 使用者口径：「JSON 里面只有测试结果，脚本只负责把测试结果填写到最后一章测试表
+  里面，其它所有的部分都不能动」⇒ 本轮把该口径写成**可机核**约束（④V ＋ ④W），
+  并把随「首屏覆盖度警示 / 承诺边界声明 / 可见生成说明行」一起下架的断言逐条处置
+  （⛔ 未删除任何与该三者无关的断言；详见工位 `report.md` 的任务 4 清单）。
 """
 import argparse, hashlib, html, json, re, sys
 from pathlib import Path
@@ -25,12 +32,15 @@ import render_matrix  # 同目录；复用唯一渲染通道
 import build_official  # 同目录；★ 结论列契约与归因依据关键词**同源**（⛔ 不复制一份）
 import gen_configs     # 同目录；★ 「已声明的前提」定义**同源**（`load_premises`，⛔ 不复制一份）
 
-VERSION = "verify-matrix/v15-declared-premise-visibility"
+VERSION = "verify-matrix/v16-static-page-results-only-fill"
 
 # ---- ③ 结构断言：只允许这四章 ----
-#: ★ 人读件结构（宪法 §17.7 + 主席令「大幅精简成四章」）：
-#:   ① 这是什么表 ② 通过标准 ③ 实验条件 ④ 档位功能矩阵（结果）
-EXPECTED_H2 = ["1. 这是什么表", "2. 通过标准", "3. 实验条件", "4. 档位功能矩阵（结果）"]
+#: ★ 人读件结构（宪法 §17.7 + 使用者诉求）：
+#:   ① 这是什么表 ② 通过标准 ③ 实验条件 ④ 功能矩阵测试表
+#:   ★ 2026-10-19（「章节标号顺序改了」轮）：第 4 章标题由「5. 功能矩阵测试表」改为
+#:     **「4. 功能矩阵测试表」**、目录条目同步（分区 id 仍是 `s1..s4`）；第 1 章标题
+#:     「1. 这是什么表」**保留**（使用者明示）。全页不得再有「第 5 节 / 第 4 节」跨章错位。
+EXPECTED_H2 = ["1. 这是什么表", "2. 通过标准", "3. 实验条件", "4. 功能矩阵测试表"]
 EXPECTED_PARTS = ["s1", "s2", "s3", "s4"]
 FORBIDDEN_OLD_SECTIONS = ["part1", "part2", "sec1", "sec1b", "sec2", "sec3", "sec4", "sec5", "sec6", "sec7"]
 
@@ -39,29 +49,25 @@ FORBIDDEN_OLD_SECTIONS = ["part1", "part2", "sec1", "sec1b", "sec2", "sec3", "se
 #   本清单**随结构同步收敛**：⛔ 不再是"关键词越多越好"，只保留§17.7 的强制要件
 #   ＋ 主席判定「数值与方向一字不错」的通过线原文 ＋ 复现条件必需项。
 REQUIRED_MARKERS = [
-    # 生成关系（§17.7「自动生成的入库文档」）
+    # 生成关系（§17.7「自动生成的入库文档」）：★ 只保留**机器可读生成留痕**
+    #   （`generated-by:` 注释 ×2 + `meta` 三个标记，见 ④I）。
+    #   ⛔ 原先的「可见生成说明行」四项（首屏生成声明 / 禁止手工编辑 / 唯一可编辑源头 /
+    #     单方向禁止互推）随使用者裁定删除的 `p.gnote` 一并下架；⛔ 未留任何**可见**的生成说明行
+    #     （这正是使用者的要求）——替代防线 = 可见面反向断言（④W）＋ 机器可读留痕（④I）＋
+    #     唯一渲染通道（①/②字节同一性）。
     ("机器可读生成标记", "generated-by:"),
-    ("首屏生成声明", "自动生成"),
-    ("禁止手工编辑", "禁止手工编辑"),
-    ("唯一可编辑源头", "唯一可编辑源头"),
-    ("方向固定·单方向", "单方向，禁止互推"),
-    # 承诺边界声明（§17.7「边界声明义务」三点）
-    ("边界声明", "承诺边界声明"),
-    ("边界要件·各档可用性", "完整跑通"),
-    ("边界要件·平台方数据集结论", "在我们的数据集上"),
-    ("边界要件·证据定位", "大概率无 bug"),
-    ("边界要件·使用者效果不在范围", "不在本矩阵的承诺范围"),
-    # 覆盖度门槛（§17.7「覆盖度门槛与失败态」）
-    ("覆盖度警示·标题", "覆盖度警示"),
-    ("覆盖度警示·四态计数", "当前结论分布为"),
-    ("覆盖度警示·尚未验证清单", "尚未验证的档位（"),
-    ("覆盖度警示·不得读作全可用", "不得被读作"),
-    ("覆盖度门槛·尚未生效", "覆盖度门槛"),
+    # ★ 2026-10-19（使用者裁定「目录后面那三块全删」）—— 原先在这里的 **5 条边界声明要件**
+    #   + **5 条覆盖度门槛要点**随「承诺边界声明块 / 覆盖度警示块」一并下架。
+    #   这是**使用者对宪法 §17.7 的明确破例**，逐条处置见工位 `report.md` 任务 4 清单；
+    #   ⛔ 不是"放宽"：原断言**无对象**（那两块已不在页面上），且已按下述等价防线换防：
+    #     ① ④K 改为**反向断言**（不得出现覆盖度警示的 id / 不得出现未达门槛时的能力承诺式措辞）；
+    #     ② ④I 保留机器可读生成留痕（`generated-by:` + `meta` 标记）与判定口径两项；
+    #     ③ ④N 只保留**数据面**的边界声明要件检查（不再要求"首屏可见"）。
     # 四章（标题逐字）
     ("章①这是什么表", "这是什么表"),
     ("章②通过标准", "通过标准"),
     ("章③实验条件", "实验条件"),
-    ("章④档位功能矩阵（结果）", "档位功能矩阵（结果）"),
+    ("章④功能矩阵测试表", "功能矩阵测试表"),
     # 通过标准 = 一个列表；核心 = 有效性
     ("判据·有效性是核心", "训练之后模型效果变好了"),
     ("判据① 能完整跑完", "能完整跑完"),
@@ -82,8 +88,9 @@ REQUIRED_MARKERS = [
     ("四态·尚未验证", "尚未验证"),
     ("四态·未纳入验收", "未纳入验收"),
     ("四态·不依赖颜色/图例", "不依赖颜色、图例或空白"),
-    ("未过判据必须写明第 1 条", "第 1 条"),
-    ("未过判据必须写明第 2 条", "第 2 条"),
+    # ★ 2026-10-19 对齐轮：「未过判据必须写明第 1/2 条」随「未过判据」列一并下架
+    #   —— 本轮全部档位为「尚未验证」，无「已验证不可用」档、无归因正文可写
+    #   （原值已归档到工位 `archived-verdicts.json`）。⛔ 不是放宽：该断言对无对象。
     # 实验条件（只列复现需要的）
     ("实验条件·基础模型", "基础模型"),
     ("实验条件·算法", "算法："),
@@ -100,11 +107,9 @@ REQUIRED_MARKERS = [
     ("评测口径·评测方法", "评测方法"),
     # 矩阵表与结果列
     ("矩阵表", '<table class="matrix">'),
-    ("列组·实验条件", "实验条件"),
+    ("列组·主要参数", "主要参数"),
     ("列组·实验数据", "实验数据"),
-    ("结果列·状态", "状态"),
-    ("结果列·效果", "效果（评测 Δ）"),
-    ("结果列·未过判据", "未过判据"),
+    ("结果列·是否通过", "是否通过"),
     ("读表·关键开关列 — 语义", "没有额外差异开关"),
 ]
 
@@ -136,31 +141,51 @@ FORBIDDEN_INTERNAL_TERMS = [
     "归属层", "必须能失败", "阳性对照", "机核可跑",
 ]
 
-# ---- ④B. 已定表头：**10 列**（档号 → 实验条件 4 列 → 实验数据 5 列） ----
-# ★ 精简轮 4（2026-10-17，主席令「删卡位 / 大幅精简」）：由 13 列收敛到 10 列。
-#   砍 `cards_total`（卡位 / GPU 编号不是使用者关心的事）、`steps`（长串推导式逐档重复）、
-#   `note`（54 档同句样板 / 与「状态」「未过判据」重复）。
-#   ★ 生成端**同源**（`build_official.COLUMNS`），⛔ 不各自维护一份。
-EXPECTED_COLUMNS = [
-    ("tier", "档号"),
-    ("algo", "算法"),
-    ("backend", "后端"),
-    ("data_scale", "训练数据"),
-    ("switches", "关键开关"),
-    ("status", "状态"),
-    ("peak_mem", "显存峰值(GiB)"),
-    ("elapsed", "总耗时"),
-    ("effect", "效果（评测 Δ）"),
-    ("not_failed_reason", "未过判据"),
-]
-#: ★ 实验数据段（渲染列序，也是 ④D 的逐格一致性检查面）
-RESULT_KEYS = ["status", "peak_mem", "elapsed", "effect", "not_failed_reason"]
+# ---- ④B. 21 列表结构：**唯一真相源 = 渲染器常量**（`render_matrix.MATRIX_COLUMNS`） ----
+# ★ 2026-10-19（使用者口径「JSON 里面只有测试结果，脚本只负责把测试结果填进最后一章测试表」）：
+#   21 列的列 key / 表头 / 列组 / 顺序已**上移**到 `render_matrix.MATRIX_COLUMNS` / `MATRIX_GROUPS`
+#   ⇒ 数据件**不再有** `columns` / `groups`（结构不随数据走）。
+#   ★ 断言只许加强、⛔ 不许放松：由「比数据件 + 比渲染结果两面」改为**四面**——
+#     ① 渲染器常量自身形状（21 列 / key 唯一 / 列组齐备）；
+#     ② 生成端**引用同一对象**（`build_official.COLUMNS is render_matrix.MATRIX_COLUMNS`
+#        ⇒ "本文件不再自带第二份 10 列"这件事由此机核，⛔ 不是靠注释声明）；
+#     ③ 数据件**确已不再携带** `columns` / `groups`（防"结构悄悄回到数据里"造成第三份真相源）；
+#     ④ 渲染结果（colgroup / 两级表头 / colspan / sticky<th> / 行数）与常量逐字一致。
+#   病史依据：上一轮 `build_official.COLUMNS` 仍写死 10 列 ⇒ 重跑生成器会把 21 列覆盖回 10 列。
+EXPECTED_COLUMNS = [(c["key"], c["label"]) for c in render_matrix.MATRIX_COLUMNS]
+EXPECTED_GROUPS = dict(render_matrix.MATRIX_GROUPS)
+#: ★ 列的**逐字**列组归属（与 EXPECTED_COLUMNS 同序；防"列对了但列组串了"）
+EXPECTED_COL_GROUPS = [c["group"] for c in render_matrix.MATRIX_COLUMNS]
+#: ★ 第一行表头的 colspan（列组 → 跨列数；`base` 是 sticky 档号列 ⇒ rowspan=2、不占 colspan）
+#:   ★ 由常量**现算**（⛔ 不手抄）：按列出现顺序聚合，首组扣掉 sticky 那一列。
+def _group_spans(cols):
+    order, spans = [], {}
+    for _c in cols:
+        _g = _c["group"]
+        if _g not in spans:
+            order.append(_g)
+            spans[_g] = 0
+        spans[_g] += 1
+    return [(_g, spans[_g] - (1 if _g == cols[0]["group"] else 0))
+            for _g in order if spans[_g] - (1 if _g == cols[0]["group"] else 0) > 0]
+
+
+EXPECTED_GROUP_SPANS = _group_spans(render_matrix.MATRIX_COLUMNS)
+#: ★ 「主要参数」组 13 列（渲染列序，也是 ④D 的逐格一致性检查面）
+PARAM_KEYS = ["model", "algo", "mode", "backend", "tp", "pp", "dp", "cards_total",
+              "lora_target", "lr", "data_scale", "steps", "switches"]
+#: ★★ **结果列**（本轮按使用者诉求全部清空为 `—`）：实验数据 5 列 + 备注 1 列。
+#:   该清单是 ④C「结果清空」与 ④D「逐格 == 数据」两面共同的检查面。
+RESULT_CLEARED_KEYS = ["peak_mem", "steps_actual", "elapsed", "throughput", "effect", "note"]
+#: ★ 结果列（含状态）＝ ④C 的「结果面」；`status` 不是读数（它一律 `尚未验证`），故另列。
+RESULT_KEYS = ["status"] + RESULT_CLEARED_KEYS
+#: ★★ 结果列的**唯一允许取值**（本轮口径）：一律 `—`；状态列一律 `尚未验证`。
+RESULT_PLACEHOLDER = "—"
+EXPECTED_STATUS = "尚未验证"
 #: ★★ 真正的**实测读数**列：未结论档必须全为 `—`（`status` 不是读数，故不在内）。
 #:    该清单是 ④C「未验证不得冒充可用 / 不得携带实验数据」的检查面。
 #: ★ 与生成端**同源**（`build_official.EXP_DATA_KEYS`），⛔ 不各自维护一份
 EXP_DATA_KEYS = list(build_official.EXP_DATA_KEYS)
-# ★ 主要参数：按项分列（顺序即展示顺序）；★ 精简轮 4 由 6 项收敛到 4 项。
-PARAM_SUBKEYS = ["algo", "backend", "data_scale", "switches"]
 # 供 yaml 生成器机读的细粒度字段（每行必须存在；值为 '—' 表示源缺失）
 SPEC_KEYS = ["model_path", "train_method", "tuner_type", "cards", "parallel_dims",
              "parallel_scheme", "data_source", "subset_size", "prompts_per_rank",
@@ -170,6 +195,49 @@ SPEC_KEYS = ["model_path", "train_method", "tuner_type", "cards", "parallel_dims
              "expected_optimizer_steps_per_epoch", "expected_optimizer_steps_reachable",
              "expected_optimizer_steps_historical", "steps_formula_v2", "min_optimizer_steps",
              "applicable"]
+
+
+#: ★★ 静态区判据的**唯一实现**（`verify` ④V 与自证 ⑲ 同源引用，⛔ 不各写一份）。
+#:   面域 = `<table class="matrix">` … `</table>` 之内 = "可随数据变的区域"；
+#:   其余一切（第 1/2/3 章 / 目录 / 页脚 / 首屏注释 / 表格骨架标签）= **静态区**。
+def _matrix_table_span(text: str):
+    """返回矩阵表在文本里的 [start, end)；缺表时返回 None（调用方 fail-closed 处理）。"""
+    i = text.find('<table class="matrix">')
+    if i < 0:
+        return None
+    j = text.find("</table>", i)
+    if j < 0:
+        return None
+    return i, j + len("</table>")
+
+
+def static_region_diff(rendered: str, target: str):
+    """比较**表格以外**的区域；返回差异描述列表（空 = 逐字节相同）。"""
+    a, b = _matrix_table_span(rendered), _matrix_table_span(target)
+    if a is None or b is None:
+        return [(0, "缺少 <table class=\"matrix\">（无法切分静态区）")]
+    out = []
+    for name, x, y in (("表前", rendered[:a[0]], target[:b[0]]),
+                       ("表后", rendered[a[1]:], target[b[1]:])):
+        if x != y:
+            k = next((n for n in range(min(len(x), len(y))) if x[n] != y[n]),
+                     min(len(x), len(y)))
+            out.append((k, f"{name}首个差异 @ 字符 {k}: 期望 {x[k:k + 60]!r} != 实际 {y[k:k + 60]!r}"))
+    return out
+
+
+def table_skeleton(text: str) -> str:
+    """把矩阵表里**单元格内容**挖空（⛔ 保留标签 / 属性 / 列组 / 表头），用于判"表结构是否变"。
+
+    ★ 只对 `<td …>…</td>` 的**内容**做占位；`<th>`（表头）与所有标签属性一律逐字保留
+      ⇒ 列名 / 列组 / colspan / rowspan / colgroup / 行列数 任一改动都会被看见。
+    """
+    span = _matrix_table_span(text)
+    if span is None:
+        return ""
+    seg = text[span[0]:span[1]]
+    return re.sub(r"(<td\b[^>]*>).*?(</td>)", lambda m: m.group(1) + "\x00EMPTY\x00" + m.group(2),
+                  seg, flags=re.S)
 
 
 def first_diff(a: bytes, b: bytes):
@@ -268,19 +336,49 @@ def main():
     if missing:
         failures.append(("④A 规则关键词", f"缺失 {len(missing)} 项: {missing}"))
 
-    # ---- ④B. 列顺序 == 已定表头（10 列） ----
-    _cols = data.get("columns", [])
-    groups = data.get("groups", {})
+    # ---- ④B. 21 列表结构 == 渲染器常量（单一真相源；四级检查，全部 fail-closed） ----
+    # ① 常量自身形状
+    _cols = [dict(c) for c in render_matrix.MATRIX_COLUMNS]
+    groups = dict(render_matrix.MATRIX_GROUPS)
+    if len(_cols) != len(EXPECTED_COLUMNS):
+        failures.append(("④B 列数（渲染器常量）", f"期望 {len(EXPECTED_COLUMNS)} 列，实际 {len(_cols)}"))
+    if [c["key"] for c in _cols] != [k for k, _l in EXPECTED_COLUMNS]:
+        failures.append(("④B 列 key 重复/顺序（渲染器常量）", f"实际 {[c['key'] for c in _cols]}"))
+    _bad_group = [c["key"] for c in _cols if c["group"] not in groups]
+    if _bad_group:
+        failures.append(("④B 列组归属缺列组定义", f"{_bad_group}"))
     first = _cols[0] if _cols else {"group": "", "label": "", "key": ""}
     _td_cls = f'g-{first.get("group")} col-tier col-start'
-    got = [(c.get("key"), c.get("label")) for c in data.get("columns", [])]
-    if got != EXPECTED_COLUMNS:
-        failures.append(("④B 列定义（数据文件）", f"期望 {EXPECTED_COLUMNS}\n  实际 {got}"))
+    # ② 生成端必须**引用同一对象**（⛔ 不得自带第二份列定义）
+    if build_official.COLUMNS is not render_matrix.MATRIX_COLUMNS:
+        failures.append(("④B 生成端列定义同源（build_official.COLUMNS）",
+                         "build_official.COLUMNS 不是 render_matrix.MATRIX_COLUMNS 同一对象 ⇒ 双真相源"))
+    if build_official.GROUPS is not render_matrix.MATRIX_GROUPS:
+        failures.append(("④B 生成端列组同源（build_official.GROUPS）",
+                         "build_official.GROUPS 不是 render_matrix.MATRIX_GROUPS 同一对象 ⇒ 双真相源"))
+    # ③ 数据件**不得**再携带表结构（结构不随数据走；出现即第三份真相源）
+    if "columns" in data:
+        failures.append(("④B 数据件不得携带 columns",
+                         f"data.json 仍有 columns（{len(data.get('columns') or [])} 列）⇒ 结构随数据走"))
+    if "groups" in data:
+        failures.append(("④B 数据件不得携带 groups", f"data.json 仍有 groups={data.get('groups')}"))
+    # ④ 渲染结果与常量逐字一致
+    got_groups = [c["group"] for c in _cols]
+    if got_groups != EXPECTED_COL_GROUPS:
+        failures.append(("④B 列组归属", f"期望 {EXPECTED_COL_GROUPS}\n  实际 {got_groups}"))
+    # ★ 第一行表头的 colspan 逐字（`档号` rowspan=2；其余 4 组按列数跨列）
+    for _g, _span in EXPECTED_GROUP_SPANS:
+        _th = (f'<th class="g-{_g}" colspan="{_span}">{html.escape(EXPECTED_GROUPS[_g])}</th>')
+        if _th not in target_text:
+            failures.append(("④B 一级表头 colspan", f"未找到逐字 {_th}"))
+    # ★ colgroup 必须与常量逐字同序（渲染层直接由常量驱动）
+    _colgroup = re.findall(r'<col data-col="([^"]+)" class="g-(\w+)">', target_text)
+    if _colgroup != [(c["key"], c["group"]) for c in _cols]:
+        failures.append(("④B colgroup", f"实际 {_colgroup}"))
     header_td = re.findall(r'<th class="g-\w+(?: col-start)?" data-col="([^"]+)">([^<]*)</th>', target_text)
     header_td = [(k, html.unescape(v)) for k, v in header_td]
     if header_td != EXPECTED_COLUMNS[1:]:
         failures.append(("④B 渲染后表头 cells", f"实际 {header_td}"))
-    # ★ 精简轮 2：列组标签由「基础」改为「实验条件」⇒ sticky 表头随之（⛔ 断言本身未放宽）
     sticky_th = (f'<th class="{_td_cls}" data-colgroup="{html.escape(groups[first["group"]], quote=True)}" '
                  f'rowspan="2">{html.escape(first["label"])}</th>')
     if sticky_th not in target_text:
@@ -294,10 +392,38 @@ def main():
     trs = re.findall(r"<tr>(.*?)</tr>", body, re.S)
     if len(trs) != len(data["rows"]):
         failures.append(("④B 行数", f"期望 {len(data['rows'])}，实际 {len(trs)}"))
+    # ★ 每行必须恰好 21 个数据单元格，且列 key 集合 == 常量（防"多塞一列 / 少一列"）
+    _row_cells_bad = []
+    for _i, _tr in enumerate(trs):
+        _ks = re.findall(r'data-col="([^"]+)"', _tr)
+        if _ks != [c["key"] for c in _cols]:
+            _row_cells_bad.append((_i + 1, len(_ks)))
+    if _row_cells_bad:
+        failures.append(("④B 逐行单元格与列常量不一致",
+                         f"{len(_row_cells_bad)} 行（前 5：行号, 实际格数）: {_row_cells_bad[:5]}"))
+
+    # ---- ④V. ★★ 静态区不随数据变（使用者口径「其它所有的部分都不能动」的机核）----
+    #   判据（三层，全部 fail-closed；与自证用例 `run_self_proof` ⑲ **同源同判据**）：
+    #     a 结构面：**除**最后一章表格的 21 个结果/参数数据单元格（`data-col="…"`）**以外**，
+    #       模板 + 数据重渲染出的字节串必须与在盘件**逐字节**相同；
+    #     b 面域面：**表格之外**（`<table class="matrix">` 之前 + `</table>` 之后）逐字节相同
+    #       ⇒ 第 1/2/3 章、目录、页脚、首屏注释**一个字都不许随数据变**；
+    #     c 变域面：发生变化的单元格**必须**全部落在 `data-col` 数据单元格内，且**只有**它们变
+    #       （⛔ 不许出现"表格结构随数据变"——列名 / 列组 / rowspan / colgroup 都不得变）。
+    _static_diff = static_region_diff(rendered_text, target_text)
+    if _static_diff:
+        failures.append(("④V 静态区不随数据变（表格以外逐字节相同）",
+                         f"表格以外出现 {len(_static_diff)} 处差异（前 3）: {_static_diff[:3]}"))
+    #   d 表结构面：把单元格内容挖空后，两边的表格骨架（表头 / 列组 / colgroup / 行列数）必须逐字相同
+    if table_skeleton(rendered_text) != table_skeleton(target_text):
+        failures.append(("④V 表格骨架不随数据变",
+                         "挖空单元格内容后表格骨架不同 ⇒ 表格结构随数据变了（只允许单元格内容变）"))
 
     # ---- ④C. 验证状态四态一致性（§17.7） ----
     vocab = (data.get("meta") or {}).get("status_vocabulary", [])
     filled, bad = [], []
+    #: ★ 自证夹具标记（自证端合成的"已回填/混排"行；⛔ 产品件不带该标记）
+    _selfproof_fixture = bool((data.get("meta") or {}).get("_selfproof_fixture"))
     for r in data.get("rows", []):
         tier, st = r.get("tier"), r.get("status")
         if st not in vocab:
@@ -311,17 +437,22 @@ def main():
                 bad.append((tier, "已结论档缺「备注」归因"))
         else:
             # ★ §17.7「未验证不得冒充可用」+「不得用空白/占位符使人误读」：
-            #   未结论档**不得携带任何实验数据**（结果列一律 '—'）；备注只允许是**状态说明**
-            #   （"判定：<state>…"）——它回答"为什么还没结论"，是面向使用者的必要信息。
+            #   未结论档**不得携带任何实验数据**（结果列一律 '—'）；备注只允许是**状态说明**。
             #   ⚠ 本断言改版的原因（如实登记）：`voided_conclusion` / `measurement_pending` 原先是
             #   这里用来判"允许带读数"的**内部豁免字段**；它们已按 §17.7「内部字段不进人读视图」
             #   从正式件剔除 ⇒ 断言改为**数据驱动**（看状态与备注文本本身），⛔ 不靠内部标记。
+            # ★★ 2026-10-19 对齐轮（只许加强）：使用者诉求「测试内容清空成未测试 / 结果列与备注列
+            #   全部清空为 `—`」⇒ 未结论档的备注**必须恰为** `—`（原先只要求"不是状态说明就报"，
+            #   豁免了 `—` 与空串；现在两种含糊形态都红 ⇒ 比原断言更严，⛔ 不是放宽）。
             nz = [k for k in EXP_DATA_KEYS if r.get(k) not in ("", "—", None)]
             if nz:
                 bad.append((tier, f"「{st}」却带实验数据 {nz}"))
             _note = str(r.get("note") or "").strip()
-            if _note not in ("", "—") and st == "尚未验证" and f"判定：{st}" not in _note:
-                bad.append((tier, "「尚未验证」的备注不是状态说明（应以「判定：尚未验证」起头）"))
+            # ★ 自证夹具（`meta._selfproof_fixture`）豁免：自证端刻意合成"已回填 + 未回填混排"的
+            #   行，用来证明 ④O 的结论列契约**能失败**；豁免只免"备注须恰为 `—`"这一条，
+            #   ⛔ 不免 `EXP_DATA_KEYS` 那条（见上）。产品件（无该标记）**不豁免**。
+            if st == "尚未验证" and _note != RESULT_PLACEHOLDER and not _selfproof_fixture:
+                bad.append((tier, f"「尚未验证」的备注须恰为 {RESULT_PLACEHOLDER}（实际 {_note[:30]!r}）"))
         if st == "未纳入验收" and not r.get("excluded_reason"):
             bad.append((tier, "「未纳入验收」缺逐档理由"))
     # ★ 现状约束：结论与同行参数一一对应 ⇒ 参数更正后旧结论作废；当前只应有「尚未验证 / 未纳入验收」
@@ -342,15 +473,67 @@ def main():
     if a.expect_empty and filled:
         failures.append(("④C --expect-empty：不得有已结论档位", f"已结论 {len(filled)} 档: {filled[:8]}"))
 
-    # ---- ④D. 表格列逐档与数据逐字一致（主要参数分列 / 实验数据） ----
+    # ---- ④U. ★★ 本轮口径：结果列全清空 + 状态全「尚未验证」（使用者诉求的机核化）----
+    #   ★ 2026-10-19 对齐轮新增。使用者原话：「测试内容清空成未测试」。
+    #   判据（三层，全部 fail-closed）：
+    #     a **数据面**：`rows[*]` 的 6 个结果列**逐档**必须恰为 `—`；`status` 逐档必须恰为
+    #       `尚未验证`；`verdict` 必须逐档**不存在**（结论已归档到工位 `archived-verdicts.json`）；
+    #     b **渲染面**：在盘 HTML 里这 6 列的每一格**必须逐字**是 `—`，
+    #       `data-col="status"` 的每一格必须逐字是 `尚未验证`（⛔ 不信数据面，直接查成品）；
+    #     c **同源面**：`data["data_keys"]` 必须恰为这 6 列 —— 它是生成端声明"结果列"的机读字段，
+    #       与 `meta.results_policy`（"未有实测结论的档位标注为尚未验证"）同源；不同源即红。
+    #   ★ 之所以渲染面也查：防止"数据清空了、渲染端却把旧值贴回去"这类双真相源缺陷。
+    #   ★ 自证夹具（`meta._selfproof_fixture`）豁免本组**行级**检查：自证端**刻意**合成"已回填"行，
+    #     用来证明 ④O / ④J 这些**能失败**（产品件不含该标记 ⇒ 本组对产品件 fail-closed）。
+    #   ⚠ 同源面（c，`data_keys`）**不豁免** —— 自证 ⑬/⑭/⑮ 的注入背景必须与本轮口径一致，
+    #     否则"数据件声明 ≠ 结果六列"这类缺陷会在自证里被静默放过。
+    _u_rows = data.get("rows", [])
+    _u_data_bad, _u_html_bad = [], []
+    if list(data.get("data_keys") or []) != RESULT_CLEARED_KEYS:
+        failures.append(("④U 结果列同源（data_keys）",
+                         f"期望 {RESULT_CLEARED_KEYS}，实际 {data.get('data_keys')}"))
+    if not _selfproof_fixture:
+        for _r in _u_rows:
+            _t = str(_r.get("tier"))
+            for _k in RESULT_CLEARED_KEYS:
+                if str(_r.get(_k) if _r.get(_k) is not None else "") != RESULT_PLACEHOLDER:
+                    _u_data_bad.append((_t, _k, str(_r.get(_k))[:30]))
+            if str(_r.get("status")) != EXPECTED_STATUS:
+                _u_data_bad.append((_t, "status", str(_r.get("status"))[:30]))
+            if "verdict" in _r:
+                _u_data_bad.append((_t, "verdict", "结论未删除（应归档到工位 archived-verdicts.json）"))
+        for _k in RESULT_CLEARED_KEYS:
+            _cells = re.findall(r'<td class="[^"]*" data-col="' + re.escape(_k) + r'">(.*?)</td>', target_text, re.S)
+            if len(_cells) != len(_u_rows):
+                _u_html_bad.append((_k, f"单元格数 {len(_cells)} != {len(_u_rows)}"))
+                continue
+            _nz = [i for i, _c in enumerate(_cells) if _c.strip() != RESULT_PLACEHOLDER]
+            if _nz:
+                _u_html_bad.append((_k, f"{len(_nz)} 格不是 {RESULT_PLACEHOLDER}（前 5 行号 {_nz[:5]}）"))
+        _st_cells = re.findall(r'<td class="[^"]*" data-col="status">(.*?)</td>', target_text, re.S)
+        if len(_st_cells) != len(_u_rows):
+            _u_html_bad.append(("status", f"单元格数 {len(_st_cells)} != {len(_u_rows)}"))
+        else:
+            _st_nz = [i for i, _c in enumerate(_st_cells) if _c.strip() != EXPECTED_STATUS]
+            if _st_nz:
+                _u_html_bad.append(("status", f"{len(_st_nz)} 格不是「{EXPECTED_STATUS}」（前 5 行号 {_st_nz[:5]}）"))
+    if _u_data_bad:
+        failures.append(("④U 结果列清空 / 状态统一（数据面）",
+                         f"{len(_u_data_bad)} 处（前 5）: {_u_data_bad[:5]}"))
+    if _u_html_bad:
+        failures.append(("④U 结果列清空 / 状态统一（渲染面）",
+                         f"{len(_u_html_bad)} 处: {_u_html_bad[:5]}"))
+
+    # ---- ④D. 表格列逐档与数据逐字一致（主要参数 13 列 / 结果 6 列 + 状态） ----
     #   ★ 修正轮 1（审 B2）：「效果」列经**展示层归一**（旧口径措辞 ⇒ 现行通过线），
     #     期望值必须用**同一个** `render_matrix.human_view_effect`（§1.4 单一真相源），
     #     ⛔ 校验端不另抄一份归一规则。
+    #   ★ 2026-10-19 对齐轮：检查面由「4 参数 + 5 结果」扩到「**13 参数 + 7 结果（含状态）**」
+    #     —— 逐档逐格与数据文件同行字段**逐字**比对（⛔ 不是放宽，是覆盖面扩大 9 列）。
     _by_method = (((data.get("meta") or {}).get("criteria_caliber") or {})
                   .get("threshold") or {}).get("by_method") or {}
     mismatch = []
-    cell_re = lambda key: re.compile(r'<td class="[^"]*" data-col="' + re.escape(key) + r'">(.*?)</td>', re.S)
-    for key in PARAM_SUBKEYS + RESULT_KEYS:
+    for key in PARAM_KEYS + RESULT_KEYS:
         cells = re.findall(r'<td class="[^"]*" data-col="' + re.escape(key) + r'">(.*?)</td>', target_text, re.S)
         if len(cells) != len(data["rows"]):
             mismatch.append((key, f"单元格数 {len(cells)} != {len(data['rows'])}"))
@@ -365,25 +548,33 @@ def main():
     if mismatch:
         failures.append(("④D 表格列一致性", f"不一致 {len(mismatch)} 处（前 5）: {mismatch[:5]}"))
 
-    # ---- ④E. §3 统一超参块（**人读视图白名单**）+ 供 yaml 生成器的机读字段 ----
-    #   ★ 机读件 `uniform.items` 全量保留（yaml 生成器的输入）；人读件只渲染白名单
-    #     （`render_matrix.UNIFORM_VIEW_KEYS`，与渲染端**同源**，§1.4）。
-    #   ★ 两面都查：白名单里的项**必须**出现在人读件里（漏渲染即红）；取值**必须**逐字一致。
-    uni = data.get("uniform") or {}
-    if not uni.get("items"):
-        failures.append(("④E 统一超参块", "数据文件缺 uniform.items"))
+    # ---- ④E. §3「统一超参」块（**模板静态文字**）+ 供 yaml 生成器的机读字段 ----
+    #   ★ 2026-10-19 处置（使用者口径「其它所有的部分都不能动」）：
+    #     原断言比"数据件 `uniform.items`（白名单项与取值）⇒ 必须逐字出现在人读件里"。
+    #     本轮 `uniform` 随数据件一起下架（统一口径块 = **模板静态文字**，⛔ 不再由数据现算）
+    #     ⇒ 断言改为**结构面 + 静态面**（仍 fail-closed，⛔ 不放宽条目数）：
+    #       a) 人读件必须有统一超参列表，且**恰好 9 条**白名单项（漏项 / 多塞即红）；
+    #       b) 每条必须有 `data-uniform-key` 且取值非空、非占位符；
+    #       c) ⛔ 数据件不得再携带 `uniform`（防结构/口径悄悄回到数据里造成双真相源）。
+    #     ★ 取值面（"数值不得被改"）由 ④V 静态区逐字节同一 + ① 字节同一性共同守住：
+    #       模板静态区任何一格被改动 ⇒ ①/④V 立即红。
+    _uni_items = re.findall(r'<li data-uniform-key="([^"]+)">([^<]*)<code>([^<]*)</code></li>',
+                            target_text)
+    _UNIFORM_EXPECTED_KEYS = ("max_prompt_length", "torch_dtype", "gradient_checkpointing",
+                              "micro_batch_size", "gradient_accumulation_micro_batches",
+                              "lora_r", "lora_alpha", "lora_dropout", "reward.kind")
+    if not _uni_items:
+        failures.append(("④E 统一超参块", "人读件未找到统一超参列表（<ul class=\"uniform\">）"))
     else:
-        if '<ul class="uniform">' not in target_text:
-            failures.append(("④E 统一超参块", "渲染结果里未找到 uniform 列表"))
-        by_key = {it.get("key"): it for it in uni["items"]}
-        view_keys = list(render_matrix.UNIFORM_VIEW_KEYS)
-        missing_key = [k for k in view_keys if k in by_key and f'data-uniform-key="{k}"' not in target_text]
-        missing_val = [k for k in view_keys if k in by_key
-                       and f'<code>{html.escape(str(by_key[k].get("value", "")))}</code>' not in target_text]
-        if missing_key:
-            failures.append(("④E 统一超参项", f"白名单项未渲染: {missing_key}"))
-        if missing_val:
-            failures.append(("④E 统一超参取值", f"未逐字在位: {missing_val}"))
+        if tuple(k for k, _l, _v in _uni_items) != _UNIFORM_EXPECTED_KEYS:
+            failures.append(("④E 统一超参项（静态块）",
+                             f"期望恰为 {list(_UNIFORM_EXPECTED_KEYS)}，实际 {[k for k, _l, _v in _uni_items]}"))
+        _empty = [k for k, _l, _v in _uni_items if not _v.strip() or _v.strip() == RESULT_PLACEHOLDER]
+        if _empty:
+            failures.append(("④E 统一超参取值非空", f"取值缺失/占位: {_empty}"))
+    if "uniform" in data:
+        failures.append(("④E 数据件不得携带 uniform",
+                         "data.json 仍有 uniform（统一口径块已改为模板静态文字 ⇒ 结构不随数据走）"))
     # ---- ④G. 脱敏：正式件不得出现宿主路径 / 内网路径 / 机器名 / 人名（宪法 §15.1，A 类零容忍） ----
     SENSITIVE = [
         # 通用形状（⛔ 检测器自身不得携带任何具体主机 / 账号 / 挂载点字面量）
@@ -405,35 +596,49 @@ def main():
     if forbidden:
         failures.append(("④H 禁止措辞", f"命中 {forbidden}"))
 
-    # ---- ④I. §17.7 结构要件：生成标记 / 覆盖度 / 边界声明 / 判定口径 ----
+    # ---- ④I. §17.7 结构要件：**机器可读生成留痕** + 判定口径（可见声明已按下架处置）----
+    #   ★ 2026-10-19 处置（使用者裁定「目录后面那三块全删」，含对 §17.7 的明确破例）：
+    #     - 「首屏生成声明」（可见文字）**下架** ⇒ 改为**机器可读生成留痕**：`<head>` 的 generator /
+    #       matrix-source / matrix-generation-marker 三个 meta ＋ `<body>` 起始处的
+    #       `<!-- generated-by: … ; source: … ; do-not-edit -->` 注释（不可见、合规留痕）。
+    #       ★ 替代防线：④W **反向**断言"可见面不得再出现任何生成说明行"（⛔ 使用者明示不许补）。
+    #     - 「边界声明可见性」下架（见 ④N）。
+    #     - 保留未受影响的：criteria_caliber.criteria_id（判定口径可复核）。
     meta = data.get("meta") or {}
-    if 'name="matrix-generation-marker"' not in target_text or "generated-by:" not in target_text:
-        failures.append(("④I 生成标记", "缺机器可读生成标记（generated-by / meta 标记）"))
-    if "自动生成" not in target_text or "禁止手工编辑" not in target_text:
-        failures.append(("④I 首屏生成声明", "首屏缺「由生成器从数据自动生成，禁止手工编辑」"))
-    if not (meta.get("boundary_declaration") or {}).get("points"):
-        failures.append(("④I 边界声明", "数据缺 boundary_declaration.points"))
-    if "承诺边界声明" not in target_text:
-        failures.append(("④I 边界声明可见性", "人读视图缺边界声明"))
+    if ('name="matrix-generation-marker"' not in target_text
+            or "generated-by:" not in target_text
+            or 'name="generator"' not in target_text
+            or 'name="matrix-source"' not in target_text):
+        failures.append(("④I 机器可读生成留痕",
+                         "缺生成留痕（矩阵件必须带 generated-by 注释 + generator/matrix-source/"
+                         "matrix-generation-marker 三个 meta）"))
+    if "<!-- generated-by:" not in target_text:
+        failures.append(("④I 首屏机器可读注释",
+                         "`<body>` 起始处缺 `<!-- generated-by: … ; do-not-edit -->` 注释（合规留痕）"))
     if not (meta.get("criteria_caliber") or {}).get("criteria_id"):
         failures.append(("④I 判定口径", "数据缺 criteria_caliber.criteria_id"))
 
-    # ---- ④K. §17.7 覆盖度门槛：首屏警示 + 四态计数 + 「尚未验证」清单（**数据驱动**）----
+    # ---- ④K. ★★ 覆盖度：**反向断言**（警示块已按使用者裁定下架；此处守"未达门槛不得宣称"）----
+    #   原 ④K（首屏必须出现 `id="coverage-warning"` 的警示 + 四态计数 + 尚未验证档清单 + 档位总数）
+    #   随「覆盖度警示块」一并下架（使用者 2026-10-19 明确破例，逐条处置见工位 report.md 任务 4）。
+    #   ★ 留下的等价防线（⛔ 不是放宽，是**同族断言改向**）：
+    #     a) 页面**不得**再出现警示块的 id / 计数句（防"删不干净 / 半删"）；
+    #     b) **静态区不随数据变**（④V）+ 渲染↔在盘**字节同一**（①）⇒ 页面上的档位与状态标签
+    #        必然与数据同源（页面无法成为陈旧快照：改数据必须重渲染，否则 ① 直接红）；
+    #     c) 档位集合 / 四态标签计数仍**逐档**对照数据（保留原 ④K 的可见性判据本体）；
+    #     d) 保留"覆盖度未达门槛时，可见文字**不得**出现能力承诺式措辞"（含标题）。
     _vocab = (meta.get("status_vocabulary") or [])
     _rows_ = data.get("rows", [])
     _cnt = {s: sum(1 for _r in _rows_ if _r.get("status") == s) for s in _vocab}
     _unver = [str(_r.get("tier")) for _r in _rows_ if _r.get("status") == "尚未验证"]
     if _unver:
-        # 覆盖度未达门槛 ⇒ 首屏**必须**有警示，且必须列出「尚未验证」的档位清单与数量
-        if 'id="coverage-warning"' not in target_text:
-            failures.append(("④K 覆盖度门槛", "有「尚未验证」档位但首屏缺覆盖度警示（id=coverage-warning）"))
-        for _s, _n in _cnt.items():
-            if _n and f"{_s} <b>{_n}</b> 档" not in target_text:
-                failures.append(("④K 覆盖度计数", f"「{_s}」计数 {_n} 未在警示中逐字出现"))
-        # ★★ 可见性判据（**以渲染出的 id 与标签**为准，⛔ 不以数据为准）：
-        #    a) 页面上出现的档号集合必须**恰好等于**数据的档位集合（防"数据 55 档、页面 54 档"）；
-        #    b) 页面上出现的四态标签计数必须**恰好等于**数据的四态计数
-        #       （防"警示块陈旧快照 / 表里有档位没带结论标签"）。
+        #   a) 警示块已下架 ⇒ 出现即"删不干净"
+        for _bad_kw in ('id="coverage-warning"', "覆盖度警示：", "当前结论分布为",
+                        "尚未验证的档位（", "不得被读作"):
+            if _bad_kw in target_text:
+                failures.append(("④K 覆盖度警示块已下架",
+                                 f"页面仍出现已删除块的痕迹 {_bad_kw!r} ⇒ 任务 1 未删净"))
+        #   c) 可见性判据本体（保留、⛔ 不放松）：档号集合与四态标签计数逐档对照数据
         _ids_html = re.findall(r'data-col="tier">([^<]+)</td>', target_text)
         _st_html = re.findall(r'data-col="status">([^<]+)</td>', target_text)
         _ids_data = [str(_r.get("tier")) for _r in _rows_]
@@ -447,46 +652,73 @@ def main():
             if _cnt_html.get(_s, 0) != _cnt.get(_s, 0):
                 failures.append(("④K 状态标签计数",
                                  f"页面「{_s}」标签 {_cnt_html.get(_s, 0)} 个 != 数据 {_cnt.get(_s, 0)} 档"))
-        #    c) 警示块里的人数必须与数据一致（防"警示块是陈旧快照"）
-        if f'data-row-count="{len(_rows_)}"' not in target_text:
-            failures.append(("④K 档位总数可见性",
-                             f"页面未见 data-row-count={len(_rows_)}（警示块与数据不同源）"))
-        if f"尚未验证的档位（{len(_unver)} 档）" not in target_text:
-            failures.append(("④K 尚未验证清单数量", f"未出现「尚未验证的档位（{len(_unver)} 档）」"))
-        _miss = [t for t in _unver if f"<code>{t}</code>" not in target_text]
-        if _miss:
-            failures.append(("④K 尚未验证档位清单", f"清单缺 {len(_miss)} 档（前 5）: {_miss[:5]}"))
-        # 标题与摘要不得使用能力承诺式措辞
-        _head = target_text.split("</header>", 1)[0]
-        for w in ("全组合可用", "已验证全组合", "全部可用", "均已可用"):
-            if w in _head:
-                failures.append(("④K 标题/摘要措辞", f"覆盖度未达门槛却出现能力承诺式措辞 {w!r}"))
+        #   d) 未达门槛 ⇒ 可见文字不得出现"能力承诺式"表述（⛔ 原断言保留，只是不再依赖警示块）
+        _visible = re.sub(r"<!--.*?-->", " ", target_text, flags=re.S)
+        _visible = html.unescape(re.sub(r"<[^>]+>", " ", _visible))
+        _claims = [w for w in ("全组合可用", "已验证全组合", "全部可用", "均已可用")
+                   if w in _visible]
+        #   ★ 只认**无歧义的能力承诺措辞**（⛔ 不做宽窗口正则：`四条判据全部通过 ⇒ 才能标…`
+        #     是判据的**必要条件句**，不是承诺 ⇒ 宽窗口会误伤，已实测剔除）。
+        if _claims:
+            failures.append(("④K 未达门槛不得宣称",
+                             f"尚有 {len(_unver)} 档「尚未验证」，可见文字却出现能力承诺式表述 {_claims[:5]}"))
     elif 'id="coverage-warning"' in target_text:
         failures.append(("④K 覆盖度门槛", "全部档位已有明确结论，却仍渲染覆盖度警示"))
 
-    # ---- ④N. §17.7 承诺边界声明**三点齐备**（存在性 + 三项内容要件，⛔ 不做逐字比对）----
+    # ---- ④N. ★★ §17.7 承诺边界声明：**数据面要件**（可见性已按下架处置）----
+    #   ★ 2026-10-19 处置：声明块（`div.hint`，含覆盖度门槛注）按使用者裁定**整块删除**
+    #     ⇒「必须首屏可见」不再成立（明确破例）；本断言**只保留数据面**：
+    #     声明文本仍须存在且三点要件齐备（这样"以后要恢复可见声明"时，素材与要件校验都还在），
+    #     ⛔ 不再要求它出现在人读件里。
     _bd = (meta.get("boundary_declaration") or {})
     _bd_txt = str(_bd.get("text") or "")
     _bd_pts = " ".join(str(x) for x in (_bd.get("points") or []))
     _bd_all = _bd_txt + " " + _bd_pts
     if not _bd_txt.strip():
-        failures.append(("④N 边界声明存在性", "boundary_declaration.text 为空 ⇒ 视为交付未完成（§17.7）"))
+        failures.append(("④N 边界声明存在性（数据面）",
+                         "boundary_declaration.text 为空 ⇒ 声明素材已丢（§17.7 要件不可复核）"))
     # ① 各档可用性（每个列出的档位都已完整跑通）
     if not any(k in _bd_all for k in ("完整跑通", "都已完整跑通", "各档可用性")):
-        failures.append(("④N 边界要件①各档可用性", "未正面陈述「每个列出的档位都已完整跑通」"))
+        failures.append(("④N 边界要件①各档可用性（数据面）", "未正面陈述「每个列出的档位都已完整跑通」"))
     # ② 平台方数据集结论（效果达标 + 是"可用、大概率无 bug"的证据）
     if not any(k in _bd_all for k in ("平台方数据集", "我们的数据集")):
-        failures.append(("④N 边界要件②平台方数据集", "未正面陈述「在平台方数据集与参数下效果达标」"))
+        failures.append(("④N 边界要件②平台方数据集（数据面）", "未正面陈述「在平台方数据集与参数下效果达标」"))
     if "大概率无 bug" not in _bd_all:
-        failures.append(("④N 边界要件②证据定位", "未写明这是「可用、大概率无 bug」的证据"))
+        failures.append(("④N 边界要件②证据定位（数据面）", "未写明这是「可用、大概率无 bug」的证据"))
     # ③ 使用者效果不在承诺范围
     if not any(k in _bd_all for k in ("不在本矩阵的承诺范围", "不在承诺范围", "不归本矩阵承诺")):
-        failures.append(("④N 边界要件③使用者效果", "未写明「使用者的任务/数据集/参数下的效果不在承诺范围」"))
+        failures.append(("④N 边界要件③使用者效果（数据面）", "未写明「使用者的任务/数据集/参数下的效果不在承诺范围」"))
     # ★ 反例（判为不合格）：只写"效果不保证 / 仅供参考"而未正面陈述 ①②
     if (not any(k in _bd_all for k in ("完整跑通", "平台方数据集", "我们的数据集"))
             and any(k in _bd_all for k in ("效果不保证", "仅供参考"))):
-        failures.append(("④N 边界声明反例", "只写「不保证效果 / 仅供参考」⇒ §17.7 判为不合格"))
+        failures.append(("④N 边界声明反例（数据面）", "只写「不保证效果 / 仅供参考」⇒ §17.7 判为不合格"))
 
+    # ---- ④W. ★★ 可见面反向断言：不得再出现"生成说明行 / 覆盖度块 / 边界声明块" ----
+    #   使用者原话：「目录后面那三块全删」⇒ 机核口径 = 可见文本里这三块**0 命中**
+    #   （⛔ 不可见的 `<!-- generated-by: … -->` 注释与 `<head>` meta 除外，那是合规留痕）。
+    #   ★ 本断言**能失败**：只要有人把任一块补回可见面（含变形写法），立即红。
+    _visible_wo_comments = re.sub(r"<!--.*?-->", " ", target_text, flags=re.S)
+    _vis = html.unescape(re.sub(r"<[^>]+>", " ", _visible_wo_comments))
+    _vis_flat = re.sub(r"\s+", " ", _vis)
+    _resurrected = [w for w in ("覆盖度警示", "覆盖度门槛", "承诺边界声明", "唯一可编辑源头",
+                                "自动生成文件", "单方向，禁止互推", "禁止手工编辑")
+                    if w in _vis_flat]
+    if _resurrected:
+        failures.append(("④W 可见面不得出现已删除三块",
+                         f"可见文本仍命中 {_resurrected[:5]} ⇒ 目录后面的三块未删净 / 或被补回"))
+    if '<p class="gnote">' in target_text or 'class="hint"' in target_text:
+        failures.append(("④W 可见面不得出现已删除三块（容器）",
+                         "仍存在 <p class=gnote> / <div class=hint> 容器"))
+    # ★ 同批：模板里**不得**再把这三块作为占位符（否则等于留了回填通道）
+    for _tok in ("{{GEN_BANNER}}", "{{COVERAGE_WARNING}}", "{{BOUNDARY}}"):
+        if _tok in template_text:
+            failures.append(("④W 模板不得留三块占位符", f"模板仍有 {_tok}"))
+    # ★ 模板里**只允许** 4 个占位符（使用者口径：静态部分不得随数据变）
+    _toks = sorted(set(re.findall(r"\{\{[A-Z_]+\}\}", template_text)))
+    _allowed = sorted(render_matrix.PLACEHOLDER_TOKENS)
+    if _toks != _allowed:
+        failures.append(("④W 模板占位符白名单",
+                         f"期望恰为 {_allowed}，实际 {_toks}（静态区不得再有数据占位符）"))
     # ---- ④Q0. 「关键开关」列的 `—` **语义必须被显式定义**（修正轮 4 ⚠②）----
     #   ★ 缺陷实况：该列 31/54 档为 `—`，而上一版读表提示只定义了「实验数据」段的 `—`
     #     ⇒ 属"要读者推断"。修法 = 读表提示补一句（⛔ 不改渲染形态，`--human-view-self-test`
@@ -527,18 +759,12 @@ def main():
     #   ★ 判据（主席原话）：「不要把修改过程写进去，不要把给我们自己写的东西写进去」。
     #   ★ 只扫**正文**（渲染后的可见文本），且**排除 §17.7 宪法逐字引文**（引文里的「我们」是豁免项）。
     #   ★ 词表 = 内部工位/证据路径形态 + 相对时间指代；⛔ 不做通配、⛔ 不豁免生成物。
-    #   ★★ 修正轮 4（⚠①）：**豁免锚点必须在去标签之前的原始 HTML 上定位**。
-    #     缺陷实况（复核报出）：上一版先 `re.sub(r"<[^>]+>", " ", …)` 去标签，之后才找
-    #     `承诺边界声明。</b>` —— 去标签后**不存在 `</b>`** ⇒ `_quoted == []` ⇒ **豁免从不生效**
-    #     （偏严，当前无害；但一旦把「我们」之类加进词表，会在**宪法逐字引文**上误报）。
-    #     修法：**先按原文切出宪法逐字引文段**（`承诺边界声明。</b>` … `<ul>`），再对其余正文去标签。
-    #     ★ 豁免面**只**是那一段引文（`…都在我们的数据集上…`），⛔ 不是整个声明块：
-    #       块内 `<li>` 各条与「覆盖度门槛」注**仍被扫**。
-    _body_raw = target_text
-    _q_blocks = re.findall(r"承诺边界声明。</b>.*?<ul>", _body_raw, re.S)
-    for _qb in _q_blocks:
-        _body_raw = _body_raw.replace(_qb, " ")
-    _prose = html.unescape(re.sub(r"<[^>]+>", " ", _body_raw))
+    #   ★★ 2026-10-19 处置：原先这里有一段**豁免逻辑** —— 把「承诺边界声明」块内的宪法逐字引文
+    #     （`…都在我们的数据集上…`）从扫描面里挖掉。该块已按使用者裁定**整块删除**
+    #     ⇒ 页面上不再有那段引文，豁免逻辑成为**死代码**，随块一并移除。
+    #     ★ 扫描面**只增不减**：现在扫的是**全部可见正文**（⛔ 不挖任何豁免洞），
+    #       阳性对照见 `run_self_proof` ⑫（注入即红）与 ⑯/⑮（⑮ 已随豁免下架，见该文件注）。
+    _prose = html.unescape(re.sub(r"<[^>]+>", " ", target_text))
     _churn = []
     for _w, _why in build_official.DEV_CHURN_TERMS:
         if _w in _prose:
@@ -548,24 +774,26 @@ def main():
         failures.append(("④R 正文不得含开发过程内容",
                          "命中内部过程词：" + "；".join(f"`{w}`×{n}（{why}）" for w, n, why in _churn)))
 
-    # ---- ④P. 覆盖度门槛注（§17.7「未达门槛时不得宣称整体能力承诺」）----
-    #   ★ 断言只许加强：不仅查「警示在不在」，还查**边界声明块里有没有写明门槛尚未生效**，
-    #     并且**计数必须与 rows 现算一致**（防"警示说 42、门槛注说 0"这类合成谬误）。
-    _pend_p = [r["tier"] for r in _rows_ if r.get("status") == "尚未验证"]
-    _all_concluded = not _pend_p
-    _bd_start = target_text.find("承诺边界声明")
-    _bd_end = target_text.find("</div>", _bd_start) if _bd_start >= 0 else -1
-    _bd_txt = target_text[_bd_start:_bd_end] if (_bd_start >= 0 and _bd_end > 0) else ""
-    _gate_kw = "覆盖度门槛"
-    if not _all_concluded:
-        if _gate_kw not in _bd_txt:
-            failures.append(("④P 覆盖度门槛注", "尚有「尚未验证」档，但承诺边界声明块内未写明「整体承诺尚未生效」"))
-        elif f"尚有 {len(_pend_p)} 档" not in _bd_txt:
-            failures.append(("④P 覆盖度门槛注计数",
-                             f"门槛注里的档数与 rows 现算不一致（应为 {len(_pend_p)} 档）"))
+    # ---- ④P. ★★ 覆盖度门槛注 —— 随「承诺边界声明块」下架，改为**现状一致性**断言 ----
+    #   ★ 2026-10-19 处置：原断言要求"边界声明块内必须写明门槛尚未生效，且计数与 rows 现算一致"。
+    #     该块已按使用者裁定整块删除 ⇒ 无对象，随块下架（逐条处置见工位 report.md 任务 4）。
+    #   ★ 等价防线（同族换向，⛔ 不是放宽）：
+    #     a) **数据面**：`rows` 与页面状态标签的现状必须一一对应（仍在 ④K 逐档 / ④U 逐格）；
+    #     b) **文案面**：若**全部档位已结论**，则页面**不得**再出现"当前尚无任何实测结论"这类
+    #        已过期的门槛文案（防"结论出来后文案不更新"的陈旧快照——这正是原 ④P 要防的合成谬误）；
+    #     c) 未达门槛时的"不得宣称整体承诺"由 ④K(d) 与 ④W 共同守住。
+    _pend_p = [str(r.get("tier")) for r in _rows_ if r.get("status") == "尚未验证"]
+    if not _pend_p:
+        _stale_gate = [w for w in ("当前尚无任何实测结论", "覆盖度门槛", "尚未生效")
+                       if w in html.unescape(re.sub(r"<[^>]+>", " ", target_text))]
+        if _stale_gate:
+            failures.append(("④P 门槛文案陈旧快照",
+                             f"全部档位已结论，页面仍写过期门槛文案 {_stale_gate[:5]}"))
     else:
-        if _gate_kw in _bd_txt:
-            failures.append(("④P 覆盖度门槛注", "全部档位都已结论，却仍写着「尚有 … 档为尚未验证」"))
+        # 未达门槛：页面必须仍如实说明"尚无结论"（原文案在位；缺失即红）
+        if "本表当前<b>尚无任何实测结论</b>" not in target_text:
+            failures.append(("④P 未达门槛如实说明",
+                             f"尚有 {len(_pend_p)} 档「尚未验证」，页面却不再说明「尚无任何实测结论」"))
 
     # ---- ④O. 结论两列的**契约**（生成端 `build_official.note_contract` ⇄ 校验端同一组字符串）----
     #   ★ 断言只许加强：这里不仅查"有没有写第 1/2 条"，还查**归因正文的依据关键词**是否在位、
@@ -756,6 +984,7 @@ def main():
               f" | ④B 列顺序={ok('④B')}"
               f" | ④C 结果列一致性={ok('④C')}"
               f" | ④D 主要训练参数列={ok('④D')}"
+              f" | ④U 结果列清空/状态统一={ok('④U')}"
               f" | ④E 统一口径/机读字段={ok('④E')}"
               f" | ④G 脱敏={ok('④G')}"
               f" | ④H 禁止措辞={ok('④H')}"
@@ -771,6 +1000,8 @@ def main():
               f" | ④Q 开关列不重复发布检查点间隔={ok('④Q')}"
               f" | ④R 正文无开发过程内容={ok('④R')}"
               f" | ④S 散文档数==数据={ok('④S')}"
+              f" | ④V 静态区不随数据变={ok('④V')}"
+              f" | ④W 可见面不得出现已删除三块={ok('④W')}"
               f" | ④T 已声明前提可见性={ok('④T')}")
         print(f"results: 已回填 {len(filled)} 档 {filled}；其余 {len(data['rows'])-len(filled)} 档保持 '—'"
               + ("；--expect-empty 已开启" if a.expect_empty else ""))

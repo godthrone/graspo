@@ -27,6 +27,14 @@ from pathlib import Path
 #   ⛔ 不在本文件里再抄一份取值表（§1.4 单一真相源；否则改口径要改两处、必然漂移）。
 import extract_spec as _spec
 
+# ★★ 表格结构的**唯一真相源**（`render_matrix.py` 与本脚本同目录；宪法 §1.4）：
+#   21 列的列 key / 表头 / 列组 / 顺序由渲染器**引用**而来，⛔ 本文件不再自带第二份
+#   （病史：本文件原先写死一份 10 列 `COLUMNS`，与在盘 21 列不一致 ⇒ 重跑会把表头覆盖回 10 列）。
+#   ★ 2026-10-19（使用者口径「脚本只负责把测试结果填进最后一章测试表」）同批：
+#     正式机读件**不再落 `columns` / `groups`**（表结构不随数据走）⇒ 这两个常量只在
+#     本文件的自检里被引用，不再写进 `docs/capability-matrix.data.json`。
+import render_matrix as _render
+
 # 脱敏映射（顺序敏感：先长后短）
 # 通用形状（⛔ 不写任何具体内网主机 / 账号 / 挂载点字面量）：
 #   顺序敏感 —— 先处理带尾段的规则，再用通用二级/三级路径兜底。
@@ -447,14 +455,29 @@ _DETAIL_EVIDENCE = {
 
 
 def note_contract(state, has_verdict=False, has_excluded=False, raw_note=""):
-    """备注列的**唯一**取值来源（生成端与校验端共用）。"""
+    """备注列的**唯一**取值来源（生成端与校验端共用）。
+
+    ★★ 2026-10-19 对齐轮（**最小订正**，工作包 task-matrix-table-align）：
+      使用者诉求「把『5. 功能矩阵测试表』的格式和测试条目对齐旧版，测试内容清空成未测试」
+      ⇒ 「备注」列**一律清空为 `—`**（它是结果面 6 列之一，与 `peak_mem` / `elapsed` /
+      `effect` / `steps_actual` / `throughput` 同批清空）。
+      ⚠ 缺陷实况：原实现对「尚未验证」档**总是**返回 `NOTE_CONTRACT["无结论"]`
+      （"判定：尚未验证 —— 尚无实测结论，不计入可用档位。"）⇒ 数据件里 `note='—'` 与
+      契约文本**必然对不上**（54/54 档），`verify_matrix` ④O 必红。
+      修法 = 让"未结论"这一支与"未过"/"不纳入"两支**同构**：返回**逐档已清空的备注值**本身
+      （`raw_note`，即生成端写下的 `—`），⛔ 不新增文案、⛔ 不改任何数值与四态取值。
+      ★ 生成端 `compose_short_note`（本文件）与校验端 `verify_matrix` ④O **同源引用本函数**，
+        故生成件与校验件仍**逐字一致**；`NOTE_CONTRACT` / `_DETAIL_EVIDENCE` 字表**一字未删**
+        （「已验证可用/不可用」两支的契约文本原样保留 ⇒ 自证夹具仍能证明 ④O **能失败**）。
+    """
     if state == S_AVAILABLE:
         return NOTE_CONTRACT["已结论"]
     if state == S_UNAVAILABLE:
         return NOTE_CONTRACT["未过"] if has_verdict else (raw_note or "—")
     if state == S_EXCLUDED:
         return NOTE_CONTRACT["不纳入"] if has_excluded else (raw_note or "—")
-    return NOTE_CONTRACT["无结论作废"] if "作废" in str(raw_note) else NOTE_CONTRACT["无结论"]
+    # 未结论（尚未验证）：备注列已按本轮口径清空 ⇒ 契约值 = 逐档清空值本身（缺省 `—`）
+    return raw_note or "—"
 
 
 def compose_short_note(r):
@@ -929,6 +952,43 @@ def _not_executable_count_self_test():
     return ok
 
 
+def _table_structure_single_source_self_test():
+    """★ 阳性对照（2026-10-19，能失败）：证明**表格结构只有一份**（§1.4 单一真相源）。
+
+    病史：本文件原先自带一份**10 列**的 `COLUMNS`/`GROUPS`，与在盘 21 列不一致
+    ⇒ 重跑生成器会把表头悄悄覆盖回 10 列（双真相源缺陷）。本对照把这件事实变成机核：
+      ① `COLUMNS` / `GROUPS` 必须**就是** `render_matrix` 的常量对象（`is` 判同一对象，
+         ⛔ 不是"内容相等"——内容相等仍会在两处各自演化）；
+      ② 21 列，且列 key 无重复、列组标签齐备、首列 sticky（渲染器的硬前提）。
+      ③ 反向断言：本文件里**不得**再出现一份写死的 10 列清单（`"训练数据"` 这类旧表头
+         不得作为 `COLUMNS` 的字面量出现）。
+    """
+    ok = True
+
+    def chk(name, cond):
+        nonlocal ok
+        print(f"  [{'PASS' if cond else 'FAIL'}] {name}")
+        ok = ok and bool(cond)
+
+    chk("① COLUMNS 就是 render_matrix.MATRIX_COLUMNS（同一对象）", COLUMNS is _render.MATRIX_COLUMNS)
+    chk("② GROUPS 就是 render_matrix.MATRIX_GROUPS（同一对象）", GROUPS is _render.MATRIX_GROUPS)
+    chk("③ 恰为 21 列", len(COLUMNS) == 21)
+    _keys = [c["key"] for c in COLUMNS]
+    chk("④ 列 key 无重复且均属常量", len(set(_keys)) == len(_keys))
+    chk("⑤ 首列 sticky 且为档号列",
+        COLUMNS[0].get("sticky") is True and COLUMNS[0]["key"] == "tier")
+    chk("⑥ 每列的列组都在 GROUPS 里",
+        all(c["group"] in GROUPS for c in COLUMNS))
+    # ★ 反向断言：旧 10 列形态的列已被彻底取代 —— 旧表头「训练数据 / 未过判据」不在新列定义里，
+    #   而 21 列才有的列（TP / PP / DP / 总卡数 / LoRA 目标 / 关键开关）必须在（⛔ 防"悄悄退回 10 列"）。
+    _labels = [c["label"] for c in COLUMNS]
+    chk("⑦ 旧 10 列表头（训练数据 / 未过判据）已不在列定义中",
+        "训练数据" not in _labels and "未过判据" not in _labels)
+    chk("⑧ 21 列才有的列齐备（TP / PP / DP / 总卡数 / LoRA 目标 / 关键开关）",
+        all(x in _labels for x in ("TP", "PP", "DP", "总卡数", "LoRA 目标", "关键开关")))
+    return ok
+
+
 def _row_normalize_self_test():
     """★ 阳性对照（对抗性输入）：逐条证明本区四件**会失败**，⛔ 不是「扫过了」。"""
     ok = True
@@ -1002,30 +1062,16 @@ GENERATOR = "tools/matrix/render_matrix.py"
 SOURCE = "docs/capability-matrix.data.json"
 HUMAN_VIEW = "docs/capability-matrix.html"
 
-#: ★★ 精简轮 2：**分组只保留两段**——「实验条件」＝逐档需要抄的配置；
-#: 「实验数据」＝逐档结论与读数。⛔ 不再有「主要参数 / 备注」等给自己看的分段。
-GROUPS = {"base": "实验条件", "data": "实验数据"}
-
-#: ★★ 列序（**精简轮 4**，2026-10-17，主席令「大幅精简 / 删卡位」）：`档号 → 实验条件（算法 / 后端 /
-#: 训练数据 / 关键开关）→ 实验数据（状态 / 显存峰值 / 总耗时 / 效果 / 未过判据）`，共 **10 列**（原 13 列）。
-#: 逐列都有「访客问题」依据，答不出的列已砍：
-#:   - 砍 `卡数`：**卡位 / GPU 编号不是使用者关心的事**（主席原话）⇒ 整列删除；
-#:   - 砍 `步数`：长串推导式逐档重复，且由「epoch × 数据量」在实验条件里给出口径；
-#:   - 砍 `备注`：54 档为同一句样板 / 与「状态」「未过判据」两列重复
-#:     ⇒ 已通过项与未纳入验收理由另在表下逐档列出（§17.7 要求的事实不丢）；
-#:   - 状态列**上移到实验数据段首**（它是"这一档的结论"，不是训练条件）⇒ 表头只剩两个列组。
-COLUMNS = [
-    {"key": "tier", "label": "档号", "group": "base", "sticky": True},
-    {"key": "algo", "label": "算法", "group": "base", "group_start": True},
-    {"key": "backend", "label": "后端", "group": "base"},
-    {"key": "data_scale", "label": "训练数据", "group": "base"},
-    {"key": "switches", "label": "关键开关", "group": "base"},
-    {"key": "status", "label": "状态", "group": "data", "group_start": True},
-    {"key": "peak_mem", "label": "显存峰值(GiB)", "group": "data"},
-    {"key": "elapsed", "label": "总耗时", "group": "data"},
-    {"key": "effect", "label": "效果（评测 Δ）", "group": "data"},
-    {"key": "not_failed_reason", "label": "未过判据", "group": "data"},
-]
+#: ★★ 表格结构（列组 + 21 列）＝ **从渲染器引用**（`render_matrix.MATRIX_GROUPS` / `MATRIX_COLUMNS`），
+#:   ⛔ 本文件不再自带第二份（§1.4 单一真相源）。
+#:   ★ 病史与修法（2026-10-19）：本文件原先写死一份**10 列**的 `COLUMNS`/`GROUPS`
+#:     （精简轮 4 的旧形态），而在盘数据件 / 人读件已是**21 列** ⇒ 一旦重跑本生成器，
+#:     表头会被悄悄覆盖回 10 列（双真相源缺陷）。现改为**引用同一个常量对象**，
+#:     并由 `--human-view-self-test` 增加"两个名字必须是同一对象"的阳性对照。
+#:   ★ 同批：正式机读件**不再落 `columns` / `groups`**（使用者口径「脚本只负责把测试结果填进
+#:     最后一章测试表」）⇒ 表结构不进数据件，数据件只有行数据。
+GROUPS = _render.MATRIX_GROUPS
+COLUMNS = _render.MATRIX_COLUMNS
 
 DATA_KEYS = ["peak_mem", "steps_actual", "elapsed", "throughput", "effect", "note"]
 
@@ -2405,6 +2451,8 @@ def main():
         _ok = _not_executable_count_self_test() and _ok
         print("★ 检查点间隔令牌移除（修正包 🔴-1）阳性对照：")
         _ok = _save_steps_token_self_test() and _ok
+        print("★ 表格结构单一真相源（2026-10-19：本文件不再自带第二份列定义）阳性对照：")
+        _ok = _table_structure_single_source_self_test() and _ok
         return 0 if _ok else 1
 
     src = json.loads(Path(a.inp).read_text(encoding="utf-8"))
@@ -2811,11 +2859,14 @@ def main():
             "result_placeholder": meta.get("result_placeholder", "—"),
             "results_policy": "结果列由跑次记录回填；未有实测结论的档位标注为「尚未验证」；不得手工填写。",
         },
-        "groups": GROUPS,
-        "columns": COLUMNS,
-        "uniform": {"rule": (src.get("uniform") or {}).get("rule", ""),
-                    "items": _uniform_items(src) + PARALLEL_UNIFORM
-                             + EXTRA_UNIFORM + [LORA_TARGET_UNIFORM]},
+        # ★★ 2026-10-19（使用者口径「JSON 里面只有测试结果，脚本只负责把测试结果填写到最后一章
+        #   测试表里面，其它所有的部分都不能动」）：正式机读件**不再落** `columns` / `groups`
+        #   （表结构 = `render_matrix.MATRIX_COLUMNS` / `MATRIX_GROUPS` 常量，⛔ 不随数据走）
+        #   与 `uniform`（统一口径块 = 模板静态文字）。
+        #   ⇒ 数据件只剩：`meta.*`（判据/口径留痕，供生成端与机检消费）+ `rows[*]`（逐档参数 13 列
+        #     + 结果 6 列 + 四态结论列）+ `data_keys`（结果列名，机读声明）。
+        #   内部权威件的统一口径项仍由 `_uniform_items()` 归一（供生成端 fail-closed 检查），
+        #   ⛔ 只是不再进正式件。
         "rows": rows,
         "data_keys": DATA_KEYS,
     }
