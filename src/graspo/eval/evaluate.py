@@ -18,7 +18,7 @@
 - SFT    ⇒ ``Δ ≥ +10.0 pp``（epoch=4）
 - GRASPO ⇒ ``Δ ≥ +5.0 pp``（epoch=8）
 - CPT    ⇒ ``after ≥ base``（不劣化，non-inferiority；epoch=2）
-- OPD    ⇒ 学生 ``after ≥ base``（能力回收，non-inferiority；epoch=2）
+- OPD    ⇒ ``Δ ≥ +5.0 pp``（criterion = ``delta_pp``；epoch=2）——★ 2026-10-19 口径变更（原为不劣化）
 
 ★ 通过线**不在本模块**、也不在任何配置里：唯一真相源 =
 ``docs/capability-matrix.data.json`` 的 ``meta.criteria_caliber.threshold.by_method``，
@@ -67,9 +67,9 @@ class DeltaResult:
     delta_percentage_points: float
     #: 判据② 用的算法（``sft`` / ``graspo`` / ``cpt`` / ``opd``）——决定用哪条通过线。
     method: str
-    #: 冻结口径登记的判据类型：``delta_pp``（SFT / GRASPO）或 ``non_inferiority``（CPT / OPD）。
+    #: 冻结口径登记的判据类型：``delta_pp``（SFT / GRASPO / OPD）或 ``non_inferiority``（CPT）。
     criterion: str
-    #: 该通过线的数值（百分点），逐字来自真相源（SFT 10.0 / GRASPO 5.0 / CPT·OPD 0.0）。
+    #: 该通过线的数值（百分点），逐字来自真相源（SFT 10.0 / GRASPO 5.0 / OPD 5.0 / CPT 0.0）。
     threshold_pp: float
     #: 真相源里那条通过线的原文（如 ``after − base ≥ +5.0 pp``），便于人读核对。
     pass_line_text: str

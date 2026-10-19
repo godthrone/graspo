@@ -24,6 +24,7 @@ PY = sys.executable
 import build_official as _bo   # ★ 结论列契约与生成端**同源**（⛔ 不复制一份字符串）
 # ★★ 静态区判据**同源**（⛔ 本文件不另写一份）：verify ④V 与自证 ⑲ 用同一个实现。
 import verify_matrix as _vm
+import render_matrix as _render   # ★ 列结构/分区常量**同源**（⛔ 不手抄列数）
 import gen_configs          # ★ 统一口径回落表（㉑ 与生成端**同源**，⛔ 不复制一份）
 RESULT_KEYS = list(_bo.EXP_DATA_KEYS)   # ★ 精简轮 2：实测读数列由生成端定义（⛔ 不再手抄）
 FAKE = {
@@ -84,7 +85,10 @@ def cells_that_differ(a: str, b: str):
         if ka != kb:
             out.add((f"<列序@行{i}>", f"{ka} vs {kb}"))
         elif va != vb:
-            tier = _tiers[i // 21] if _tiers and i // 21 < len(_tiers) else f"<第{i // 21 + 1}行>"
+            # ★ 病史（2026-10-19 分区轮抓到）：这里原先写死 `i // 21` —— 列数一变（21→14）
+            #   ⇒ 行号算错、差异格会被归到错误档号（认定集合随之错）。改为**由渲染器常量现算**。
+            _row_i = i // CELLS_PER_ROW
+            tier = _tiers[_row_i] if _tiers and _row_i < len(_tiers) else f"<第{_row_i + 1}行>"
             out.add((tier, ka))
     return out
 
@@ -98,6 +102,44 @@ def _cell_rows(h: str):
     for tr in rows:
         tier = re.search(r'data-col="tier">([^<]*)</td>', tr)
         out.append((tier.group(1) if tier else "", re.findall(r"<td\b.*?</td>", tr, re.S), tr))
+    return out
+
+
+#: ★ 每行**渲染出的数据单元格数**（= 渲染列数）——由渲染器常量现算，⛔ 不写死（病史：曾写死 21）。
+CELLS_PER_ROW = len(_render.RENDERED_COLUMNS)
+
+#: ★★ 条件/结果分区（2026-10-19 分区轮）的**故意做错**夹具：逐条证明三条判据**能失败**。
+#:   ⛔ 只在本文件内存里构造，⛔ 不落仓库、⛔ 不动正式件。
+PARTITION_FIXTURES = (
+    # ① 交集不为空：把 `lr` **同时**放回表格列（取值逐档相同）⇒ 交集断言必红
+    ("把 lr 同时放回表格列（交集不为空）", {"dup_key": "lr"}, "交集为空"),
+    # ② 并集不覆盖：把 `dp` **从表格列删掉**且**不加进第 3 章** ⇒ 并集断言必红
+    ("把 dp 从表里删掉且不加进条件（并集漏项）", {"drop_col": "dp"}, "并集覆盖"),
+    # ③ 基数不足：把某表列的取值压成 1 种 ⇒ 基数断言必红
+    ("把表列取值压成 1 种（基数 < 5）", {"flatten_col": "dp"}, "基数规则"),
+)
+
+
+def _fixture_cols(mut, base_cols=None):
+    """按夹具说明改一份**列常量**（返回新的 tuple，⛔ 不改模块常量）。"""
+    cols = [dict(c) for c in (base_cols if base_cols is not None else _render.MATRIX_COLUMNS)]
+    if mut.get("dup_key"):
+        k = mut["dup_key"]
+        src = next(c for c in cols if c["key"] == k)          # 条件参数列（into=conditions）
+        cols.insert(next(i for i, c in enumerate(cols) if c["key"] == "dp"),
+                    {"key": src["key"], "label": src["label"], "group": "param"})
+    if mut.get("drop_col"):
+        cols = [c for c in cols if c["key"] != mut["drop_col"]]
+    return tuple(cols)
+
+
+def _fixture_rows(mut, rows):
+    """按夹具说明改一份**行数据**（返回新列表，⛔ 不改原数据）。"""
+    out = [dict(r) for r in rows]
+    if mut.get("flatten_col"):
+        k = mut["flatten_col"]
+        for r in out:
+            r[k] = "同一取值"
     return out
 
 
@@ -607,6 +649,45 @@ def main():
         _opd_li_cur = _m24.group(1) if _m24 else ""
         checks["㉔c 在盘模板 OPD 子项含「教师」＋本条通过线"] = (
             all(_w in _opd_li_cur for _w in ("教师", "高于学生未训练模型", "after − base ≥ +5.0 pp")))
+
+        # ㉕ ★★ 条件/结果**分区**的自证（2026-10-19 分区轮，使用者原话的机核化）：
+        #    a 在生产件上，三条分区判据**必须全过**（并集覆盖 / 交集为空 / 基数规则）；
+        #    b 三条判据**各自能失败** —— 把 `verify_matrix.partition_failures`（判据的**唯一实现**）
+        #      直接喂"故意做错"的夹具（列常量 / 行数据可注入）：
+        #        ① `lr` 同时放回表格列 ⇒ 交集断言必红（⛔ 不是靠打印文本）；
+        #        ② `dp` 从表里删掉且不加进第 3 章 ⇒ 并集断言必红（使用者点名的「两边都不写」）；
+        #        ③ 某表列取值压成 1 种 ⇒ 基数断言必红。
+        #    c 逐列**打印取值基数**（H1/H2 的逐列读数留证）。
+        _tpl25 = (SM / "template.html").read_text(encoding="utf-8")
+        _real_fail = _vm.partition_failures(data["rows"], _tpl25,
+                                            _render.MATRIX_COLUMNS, _render.CONDITION_PARAMS)
+        checks["㉕a 生产件：分区三条判据全过（并集覆盖／交集为空／基数规则）"] = (not _real_fail)
+        if _real_fail:
+            print(f"  [debug] ㉕a 分区判据报红: {_real_fail}")
+        #   ★ 渲染列数由常量现算（⛔ 不写死）：**13 列** = 档号 1 + 状态 1 + 参数 5 + 实验数据 5 + 备注 1
+        #     （简报 H1 写"14 或 15 列"，而其自身逐列枚举 = 1+1+5+6+1 = 13 ⇒ 以**逐列枚举**为准，
+        #      口径差已在工位 report.md 点名：多出来的 1 是"若不减去上提的 8 列"的算术残留）。
+        checks["㉕a2 渲染列数 = 13 列（1+1+5+5+1，且参数 5 / 条件 9）"] = (
+            CELLS_PER_ROW == 13
+            and len(_render.TABLE_PARAM_COLUMNS) == 5
+            and len([c for c in _render.RENDERED_COLUMNS if c["group"] == "data"]) == 5
+            and len(_render.CONDITION_PARAMS) == 9)
+        _card_table = [(k, _vm.partition_cardinality(data["rows"], k)[0])
+                       for k in _render.TABLE_PARAM_KEYS]
+        _card_cond = [(k, _vm.partition_cardinality(data["rows"], k)[0])
+                      for k, _l in _render.CONDITION_PARAMS]
+        print(f"  [分区·逐列基数] 表格 param 列: {_card_table}")
+        print(f"  [分区·逐列基数] 条件参数: {_card_cond}")
+        checks["㉕a3 逐列基数符合规则（表 ≥ 5／条件 < 5）"] = (
+            all(n >= 5 for _k, n in _card_table) and all(n < 5 for _k, n in _card_cond))
+        for _nm, _mut, _want in PARTITION_FIXTURES:
+            _fx_cols = _fixture_cols(_mut)
+            _fx_rows = _fixture_rows(_mut, data["rows"])
+            _fx_fail = _vm.partition_failures(_fx_rows, _tpl25, _fx_cols, _render.CONDITION_PARAMS)
+            _hit = [n for n, _d in _fx_fail if _want in n]
+            checks[f"㉕b 阳性对照能失败：{_nm}"] = bool(_hit)
+            if not _hit:
+                print(f"  [debug] ㉕b 夹具未触发「{_want}」：{_fx_fail}")
 
         print("=" * 70)
         for name, rc, out in steps:

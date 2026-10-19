@@ -215,7 +215,7 @@
       "teacher": "教师在训练数据集上的完全正确率需高于学生未训练模型 10 个百分点",
       "epoch": 2,
       "epoch_previous": 2,
-      "epoch_note": "epoch=2 不变；教师改为 SFT 之后的 27B 产物。"
+      "epoch_note": "epoch=2 不变；教师 = Qwen3.8-27B（原教师说明「SFT 之后的 27B 产物」已作废，见 caliber_change.caliber_change_20261019）。"
      }
     },
     "by_method_single_source": "本 by_method 是跑次阈值判定的唯一真相源：跑次 json 自述阈值必须与之逐算法一致，否则回填 fail-closed。"

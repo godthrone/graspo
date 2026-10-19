@@ -15,9 +15,10 @@
      加一个空格、删一个字符都会命中）。
   ③ 结构断言 —— 四章（`1. 这是什么表` / `2. 测试方法` / `3. 测试条件` / `4. 测试结果`）
      + 四个分区 section + 目录恰好 4 条且 href 对得上；不再有 §1–§7 的旧骨架 id。
-  ④ 内容断言 —— A. 必需要点全在位；B. 21 列表结构 == **渲染器常量**（`render_matrix.MATRIX_COLUMNS`，
+  ④ 内容断言 —— A. 必需要点全在位；B. 14 列表结构 == **渲染器常量**（`render_matrix.MATRIX_COLUMNS`，
      §1.4 单一真相源，⛔ 不再比数据件——数据件已无 `columns` / `groups`）；C. 结果列全为占位符、
-     状态全「尚未验证」；D. 21 列逐档逐格与行数据**逐字**一致；V. **静态区不随数据变**
+     状态全「尚未验证」；D. 14 列逐档逐格与行数据**逐字**一致；Z. **条件/结果分区**（并集覆盖 / 交集为空
+     / 基数规则）逐档机核；V. **静态区不随数据变**
      （只改 `rows` 里的结果字段重渲染 ⇒ 表格以外逐字节不变、表格内只有结果单元格变）。
 
 ★ 2026-10-19 使用者口径：「JSON 里面只有测试结果，脚本只负责把测试结果填写到最后一章测试表
@@ -32,7 +33,7 @@ import render_matrix  # 同目录；复用唯一渲染通道
 import build_official  # 同目录；★ 结论列契约与归因依据关键词**同源**（⛔ 不复制一份）
 import gen_configs     # 同目录；★ 「已声明的前提」定义**同源**（`load_premises`，⛔ 不复制一份）
 
-VERSION = "verify-matrix/v18-chairman-criteria-20261019"
+VERSION = "verify-matrix/v19-cond-result-partition-20261019"
 
 # ---- ③ 结构断言：只允许这四章 ----
 #: ★ 人读件结构（宪法 §17.7 + 使用者诉求）：
@@ -192,21 +193,23 @@ CRITERIA_SUBLIST_TERMS = {
 #:   漂移阳性对照变假绿）—— 由 `run_self_proof` ㉓ 抓到，已改为**整串**比对。
 CRITERIA_SOURCE_OF_TRUTH = "docs/capability-matrix.data.json"
 
-# ---- ④B. 21 列表结构：**唯一真相源 = 渲染器常量**（`render_matrix.MATRIX_COLUMNS`） ----
+# ---- ④B. 14 列表结构（渲染面）：**唯一真相源 = 渲染器常量**（`render_matrix.MATRIX_COLUMNS`） ----
 # ★ 2026-10-19（使用者口径「JSON 里面只有测试结果，脚本只负责把测试结果填进最后一章测试表」）：
-#   21 列的列 key / 表头 / 列组 / 顺序已**上移**到 `render_matrix.MATRIX_COLUMNS` / `MATRIX_GROUPS`
+#   14 列（渲染面）的列 key / 表头 / 列组 / 顺序已**上移**到 `render_matrix.MATRIX_COLUMNS` / `MATRIX_GROUPS`
 #   ⇒ 数据件**不再有** `columns` / `groups`（结构不随数据走）。
 #   ★ 断言只许加强、⛔ 不许放松：由「比数据件 + 比渲染结果两面」改为**四面**——
-#     ① 渲染器常量自身形状（21 列 / key 唯一 / 列组齐备）；
+#     ① 渲染器常量自身形状（14 渲染列 / key 唯一 / 列组齐备）；
 #     ② 生成端**引用同一对象**（`build_official.COLUMNS is render_matrix.MATRIX_COLUMNS`
 #        ⇒ "本文件不再自带第二份 10 列"这件事由此机核，⛔ 不是靠注释声明）；
 #     ③ 数据件**确已不再携带** `columns` / `groups`（防"结构悄悄回到数据里"造成第三份真相源）；
 #     ④ 渲染结果（colgroup / 两级表头 / colspan / sticky<th> / 行数）与常量逐字一致。
-#   病史依据：上一轮 `build_official.COLUMNS` 仍写死 10 列 ⇒ 重跑生成器会把 21 列覆盖回 10 列。
-EXPECTED_COLUMNS = [(c["key"], c["label"]) for c in render_matrix.MATRIX_COLUMNS]
+#   病史依据：上一轮 `build_official.COLUMNS` 仍写死 10 列 ⇒ 重跑生成器会把列覆盖回 10 列。
+#:   ★ 2026-10-19 条件/结果分区轮：**渲染面** = `RENDERED_COLUMNS`（带 `into="conditions"` 的 9 列
+#:     上提第 3 章、不上表）⇒ 三处期望值一律从渲染面现算。
+EXPECTED_COLUMNS = [(c["key"], c["label"]) for c in render_matrix.RENDERED_COLUMNS]
 EXPECTED_GROUPS = dict(render_matrix.MATRIX_GROUPS)
 #: ★ 列的**逐字**列组归属（与 EXPECTED_COLUMNS 同序；防"列对了但列组串了"）
-EXPECTED_COL_GROUPS = [c["group"] for c in render_matrix.MATRIX_COLUMNS]
+EXPECTED_COL_GROUPS = [c["group"] for c in render_matrix.RENDERED_COLUMNS]
 #: ★ 第一行表头的 colspan（列组 → 跨列数；`base` 是 sticky 档号列 ⇒ rowspan=2、不占 colspan）
 #:   ★ 由常量**现算**（⛔ 不手抄）：按列出现顺序聚合，首组扣掉 sticky 那一列。
 def _group_spans(cols):
@@ -221,10 +224,132 @@ def _group_spans(cols):
             for _g in order if spans[_g] - (1 if _g == cols[0]["group"] else 0) > 0]
 
 
-EXPECTED_GROUP_SPANS = _group_spans(render_matrix.MATRIX_COLUMNS)
-#: ★ 「主要参数」组 13 列（渲染列序，也是 ④D 的逐格一致性检查面）
-PARAM_KEYS = ["model", "algo", "mode", "backend", "tp", "pp", "dp", "cards_total",
-              "lora_target", "lr", "data_scale", "steps", "switches"]
+EXPECTED_GROUP_SPANS = _group_spans(render_matrix.RENDERED_COLUMNS)
+#: ★ 「主要参数」组（渲染列序 = 表格 param 组的 5 列，也是 ④D 的逐格一致性检查面）：
+#:   ★★ 2026-10-19 条件/结果分区轮：原先**写死的 13 列清单** ⇒ 改为**由渲染器常量现算**
+#:     （⛔ 不再各留一份；并集/交集/基数三条分区机核 ④Z 也共用它）。
+#:     ⛔ **不是放宽**：这 5 列的内容由 ④Z 的「并集覆盖 / 交集为空 / 基数规则」逐档机核守住。
+PARAM_KEYS = list(render_matrix.TABLE_PARAM_COLUMNS)
+
+# ---- ④Z. ★★ 条件/结果**分区**机核（2026-10-19 条件/结果分区轮；三条全部要能失败） ----
+#   使用者原话：
+#     「第三章测试条件和第四章测试结果，两个应该是无交集的，对于那些大部分测试档位都相同且参数
+#      枚举数量小于5的，放测试条件里面列出来，比较节省表格列。对于那种不同档位里面经常变化的
+#      参数，就应该放表格列…总之，测试条件和测试结果的并集，应该是包含全部参数的。」
+#   ★ 判据（fail-closed，逐档现算，⛔ 不写死档号/取值，⛔ 不靠第二份手抄清单）：
+#     a **并集覆盖**：`条件参数 ∪ 表格 param 列（含合并列子键）` 必须 **⊇ 逐档训练参数集合**
+#       —— 新增/漏登参数键 ⇒ 报红（正是使用者点名的「两边都不写」漏项）；
+#     b **交集为空**：同一个参数**不得**同时出现在两处 —— 逐档取值**完全相同**的键对即判重
+#       （实测：`lr` 若同时放回表格列，本断言必红，见自证新增用例）；取值不同的同名键
+#       （如行的 `cards`＝"1" vs 表格列 `cards_total`＝公式串）**不判重**（列面向人读、行字段面向
+#       机读，两者是"列 ⇄ 行字段"的呈现关系，不是两处重复发布同一参数 ⇒ 如实登记、⛔ 不滥用例外）；
+#     c **基数规则**：表格 param 组每列在该 54 档的取值**基数 ≥ 5**；条件参数**基数 < 5**
+#       —— 判据 = **该字段在 rows 里的取值基数**现算（⛔ 不写死清单的例外）。
+#   ★ 与模板静态文字**同源**：`CONDITION_PARAMS` 由渲染器常量给出 ⇒ 模板第 3 章必须逐项出现
+#     （见 ④Z-e：逐项查 `<b>标签：</b>` 落位 + 值域/档位说明）。
+#: 逐档训练参数集合的键白名单 = 已归一化的**列面向键**：全是渲染列 key 或 `CONDITION_PARAMS` 的键。
+#:   ⛔ 存在的意义 = 把"两边都不写"的漏项变成一个**逐档可机核**的集合差（不靠人眼）。
+#:   ★ 与条件/表格两清单**同源**：这里只声明"哪些键属于训练参数"，⛔ 不列取值。
+TRAIN_PARAM_KEYS = frozenset(render_matrix.TABLE_PARAM_KEYS) | frozenset(
+    k for k, _l in render_matrix.CONDITION_PARAMS)
+#: ★ 页面必须写明的**分区规则**三个关键词（缺一即红）：并集覆盖 / 交集为空 / 基数判据（枚举数量 < 5）。
+PARTITION_RULE_MARKERS = ("并集覆盖全部参数", "交集为空", "枚举数量小于 5")
+
+
+def partition_cardinality(rows, key):
+    """返回某键在 `rows` 里的**取值基数**与取值频次（⛔ 不改取值、不做归一）。"""
+    from collections import Counter
+    cnt = Counter(str(r.get(key)) for r in rows)
+    return len(cnt), cnt
+
+
+def partition_failures(rows, target_text, columns, cond_params):
+    """★★ 条件/结果分区判据的**唯一实现**（verify ④Z 与自证用例**同源引用**，⛔ 不各写一份）。
+
+    入参全部可注入（`columns` / `cond_params` / `rows` / `target_text`）⇒ 自证可以把
+    "把 `lr` 放回表格列""删掉 `dp` 列""压掉 `dp` 的取值基数"这类**故意做错**的夹具喂进来，
+    直接证明这三条判据**能失败**（⛔ 不依赖 verify 的打印文本）。
+    返回 `(检查名, 明细)` 列表；空列表 = 全过。
+    """
+    out = []
+    table_keys = tuple(k for c in columns if c["group"] == "param" and not c.get("into")
+                       for k in (c.get("merge") or (c["key"],)))
+    table_cols = tuple(c["key"] for c in columns if c["group"] == "param" and not c.get("into"))
+    cond_keys = [k for k, _l in cond_params]
+    all_keys = list(cond_keys) + list(table_keys)
+    #   a 并集覆盖：逐档训练参数集合（白名单 = 列面向键）必须被 条件 ∪ 表格 覆盖
+    missing = []
+    for _r in rows:
+        _present = {k for k in TRAIN_PARAM_KEYS if k in _r}
+        _miss = sorted(_present - set(all_keys))
+        if _miss:
+            missing.append((str(_r.get("tier")), _miss))
+    #   ★ 反向（白名单自身的覆盖）：白名单里每个键都必须真实存在于**每一档**行数据里
+    #     —— 防"白名单写了、数据里没有 ⇒ 并集断言永远成立"的假绿。
+    absent = [(str(_r.get("tier")), k) for _r in rows for k in TRAIN_PARAM_KEYS if k not in _r]
+    #   b 交集为空（两条互补判据，任一命中即红）：
+    #     b1 **同名键**：条件参数的 key 又作为表格 param 列的 key（同名同值 ⇒ 就是两处重复发布同一参数）；
+    #     b2 **同标签**：同一**参数名**（列 label）既出现在第 3 章条件清单、又出现在渲染表格列里
+    #        —— 这是**面向读者**的判重（读者看到的是列名，不是 key；`lr` 这种 key 与 label 同形的
+    #        参数正是最容易被"顺手放回表格列"的一类）。两条合起来 = 使用者要的"无交集"。
+    dup = []
+    for _k in cond_keys:
+        for _c in table_cols:
+            if _c == _k:
+                continue
+            if rows and all(str(r.get(_k)) == str(r.get(_c)) for r in rows):
+                dup.append((_k, _c))
+    cond_labels = {l: k for k, l in cond_params}
+    seen_lbl = set()
+    for _c in columns:
+        if _c.get("into") or _c["group"] != "param":
+            continue
+        if _c["label"] in cond_labels and _c["label"] not in seen_lbl:
+            seen_lbl.add(_c["label"])
+            dup.append((f"标签「{_c['label']}」", cond_labels[_c["label"]], _c["key"]))
+    #   c 基数规则：表格 param 组每列（含合并列子键）取值基数 ≥ 5；条件参数基数 < 5
+    card_table = [(_k, partition_cardinality(rows, _k)[0]) for _k in table_keys]
+    card_cond = [(_k, partition_cardinality(rows, _k)[0]) for _k in cond_keys]
+    table_low = sorted((k, n) for k, n in card_table if n < 5)
+    cond_high = sorted((k, n) for k, n in card_cond if n >= 5)
+    #   d 渲染面（交集为空的**列面**判据）：带 `into="conditions"` 的列**不得**出现在渲染列里
+    #     —— 即"条件参数不得同时又是表格列"（与 b 是同一件事的两种写法：b 查取值/列名，d 查列 key）。
+    into_leak = [k for k in cond_keys if k in [c["key"] for c in columns if not c.get("into")]]
+    #   e 模板静态文字同源：第 3 章必须**逐项**列出条件参数（`<b>cond_label：</b>` + 同一 `<li>` 里给说明）
+    tpl_missing = []
+    for _k, _lbl in cond_params:
+        _m = re.search(r"<li>\s*<b>" + re.escape(_lbl) + r"：</b>(.*?)</li>", target_text, re.S)
+        if not _m:
+            tpl_missing.append((_k, _lbl, "第 3 章缺该条 <li>"))
+        elif len(re.sub(r"<[^>]+>", "", _m.group(1)).strip()) < 10:
+            tpl_missing.append((_k, _lbl, "该条未给出值域/档位说明（正文过短）"))
+    #   f 页面必须写明分区规则本身（使用者点名的那三句）
+    rule_missing = [w for w in PARTITION_RULE_MARKERS if w not in target_text]
+    if missing:
+        out.append(("④Z 分区·并集覆盖（条件 ∪ 表格 ⊇ 逐档训练参数）",
+                    f"{len(missing)} 档有参数两处都没写（前 5）: {missing[:5]}"))
+    if absent:
+        out.append(("④Z 分区·并集白名单键必须在行数据里存在",
+                    f"{len(absent)} 处缺失（前 5）: {absent[:5]}"))
+    if dup:
+        out.append(("④Z 分区·交集为空（同一参数不得两处重复发布）",
+                    f"逐档取值全等的重复键对: {dup}"))
+    if table_low:
+        out.append(("④Z 分区·基数规则（表格 param 列须 ≥ 5）",
+                    f"取值基数 < 5 的表格列: {table_low}（应上提第 3 章）"))
+    if cond_high:
+        out.append(("④Z 分区·基数规则（条件参数须 < 5）",
+                    f"取值基数 ≥ 5 的条件参数: {cond_high}（应改留表格列）"))
+    if into_leak:
+        out.append(("④Z 分区·交集为空（条件列不得同时是渲染表列）", f"{into_leak}"))
+    if tpl_missing:
+        out.append(("④Z 分区·第 3 章逐项与渲染器常量同源",
+                    f"{len(tpl_missing)} 项（key, 标签, 原因）: {tpl_missing}"))
+    if rule_missing:
+        out.append(("④Z 分区·页面须写明分区规则",
+                    f"缺关键词 {rule_missing}（并集覆盖 / 交集为空 / 基数判据）"))
+    return out
+
 #: ★★ **结果列**（本轮按使用者诉求全部清空为 `—`）：实验数据 5 列 + 备注 1 列。
 #:   该清单是 ④C「结果清空」与 ④D「逐格 == 数据」两面共同的检查面。
 RESULT_CLEARED_KEYS = ["peak_mem", "steps_actual", "elapsed", "throughput", "effect", "note"]
@@ -546,9 +671,9 @@ def main():
     if _crit_overlap:
         failures.append(("④Y 四条判别依据互不重叠",
                          f"命中 {len(_crit_overlap)} 处（条次, 标题, 违规关键词, 位置）: {_crit_overlap}"))
-    # ---- ④B. 21 列表结构 == 渲染器常量（单一真相源；四级检查，全部 fail-closed） ----
+    # ---- ④B. 14 列表结构（渲染面）== 渲染器常量（单一真相源；四级检查，全部 fail-closed） ----
     # ① 常量自身形状
-    _cols = [dict(c) for c in render_matrix.MATRIX_COLUMNS]
+    _cols = [dict(c) for c in render_matrix.RENDERED_COLUMNS]
     groups = dict(render_matrix.MATRIX_GROUPS)
     if len(_cols) != len(EXPECTED_COLUMNS):
         failures.append(("④B 列数（渲染器常量）", f"期望 {len(EXPECTED_COLUMNS)} 列，实际 {len(_cols)}"))
@@ -602,7 +727,7 @@ def main():
     trs = re.findall(r"<tr>(.*?)</tr>", body, re.S)
     if len(trs) != len(data["rows"]):
         failures.append(("④B 行数", f"期望 {len(data['rows'])}，实际 {len(trs)}"))
-    # ★ 每行必须恰好 21 个数据单元格，且列 key 集合 == 常量（防"多塞一列 / 少一列"）
+    # ★ 每行必须恰好 14 个数据单元格，且列 key 集合 == 常量（防"多塞一列 / 少一列"）
     _row_cells_bad = []
     for _i, _tr in enumerate(trs):
         _ks = re.findall(r'data-col="([^"]+)"', _tr)
@@ -734,7 +859,7 @@ def main():
         failures.append(("④U 结果列清空 / 状态统一（渲染面）",
                          f"{len(_u_html_bad)} 处: {_u_html_bad[:5]}"))
 
-    # ---- ④D. 表格列逐档与数据逐字一致（主要参数 13 列 / 结果 6 列 + 状态） ----
+    # ---- ④D. 表格列逐档与数据逐字一致（主要参数 5 列 / 结果 6 列 + 状态） ----
     #   ★ 修正轮 1（审 B2）：「效果」列经**展示层归一**（旧口径措辞 ⇒ 现行通过线），
     #     期望值必须用**同一个** `render_matrix.human_view_effect`（§1.4 单一真相源），
     #     ⛔ 校验端不另抄一份归一规则。
@@ -749,14 +874,26 @@ def main():
             mismatch.append((key, f"单元格数 {len(cells)} != {len(data['rows'])}"))
             continue
         for row, cell in zip(data["rows"], cells):
-            v = str(row.get(key, ""))
+            # ★★ 2026-10-19 条件/结果分区轮：合并列（`data_scale` / `steps`）的期望文本由
+            #   **渲染器同一份拼装实现**给出（⛔ 校验端不另写一套规则）；普通列取行字段原文。
+            v = render_matrix.cell_display_text(row, key)
             if key == "effect":
-                v = render_matrix.human_view_effect(v, row.get("train_method"), _by_method)
+                v = render_matrix.human_view_effect(str(row.get(key, "")), row.get("train_method"),
+                                                    _by_method)
             got = html.unescape(re.sub(r"<[^>]+>", "", cell)).strip()
-            if got != v:
+            # ★ 标点型小节标签（如「步数」列的 `（`）前后不插空格 ⇒ 比较时去空白（⛔ 不改渲染/取值）
+            if re.sub(r"\s+", "", got) != re.sub(r"\s+", "", v):
                 mismatch.append((row.get("tier"), key, f"渲染 {got!r} != 数据 {v!r}"))
     if mismatch:
         failures.append(("④D 表格列一致性", f"不一致 {len(mismatch)} 处（前 5）: {mismatch[:5]}"))
+
+    # ---- ④Z. ★★ 条件/结果**分区**三条机核（并集覆盖 / 交集为空 / 基数规则）----
+    #   ★ 判据实现**唯一**（`partition_failures`，本文件模块级）⇒ 自证用例可以把它**喂坏夹具**
+    #     直接证明"能失败"，⛔ 不依赖打印文本、⛔ 不出现第二套判据。
+    #   ★ 逐档现算、fail-closed；⛔ 不写死档号 / 取值 / 例外清单（例外一律在工位 report.md 登记）。
+    failures.extend(partition_failures(data.get("rows", []), target_text,
+                                       render_matrix.MATRIX_COLUMNS,
+                                       render_matrix.CONDITION_PARAMS))
 
     # ---- ④E. §3「统一超参」块（**模板静态文字**）+ 供 yaml 生成器的机读字段 ----
     #   ★ 2026-10-19 处置（使用者口径「其它所有的部分都不能动」）：
@@ -1194,6 +1331,7 @@ def main():
               f" | ④B 列顺序={ok('④B')}"
               f" | ④C 结果列一致性={ok('④C')}"
               f" | ④D 主要训练参数列={ok('④D')}"
+              f" | ④Z 条件/结果分区={ok('④Z')}"
               f" | ④U 结果列清空/状态统一={ok('④U')}"
               f" | ④E 统一口径/机读字段={ok('④E')}"
               f" | ④G 脱敏={ok('④G')}"

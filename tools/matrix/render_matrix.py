@@ -33,30 +33,57 @@ from pathlib import Path
 #:     `{{GEN_BANNER}}` 等占位符一律下架（⛔ 不留"静态区仍由数据现算"的通道）。
 PLACEHOLDER_TOKENS = ("{{DOC_TITLE}}", "{{GENERATOR}}", "{{DATA_PATH}}", "{{MATRIX_TABLE}}")
 
-#: ★★ 21 列的功能矩阵表结构（**单一真相源**，宪法 §1.4）：
-#:   档号 → 状态 → 主要参数 13 列 → 实验数据 5 列 → 备注 1 列；两级表头 + 5 个列组。
-#:   ★ 2026-10-19 对齐轮由旧版 `65ac5e7` 的 21 列逐字恢复；**本轮**这 21 列的结构（列 key /
-#:     表头 / 列组归属 / 出现顺序 / sticky / group_start）从数据件 `columns` 上移到这里
+#: ★★ 14 列的功能矩阵表结构（**单一真相源**，宪法 §1.4）：
+#:   档号 → 状态 → 主要参数 5 列 → 实验数据 5 列 → 备注 1 列；两级表头 + 5 个列组。
+#:   ★ 2026-10-19 对齐轮由旧版 `65ac5e7` 的 21 列逐字恢复；**本轮（条件/结果分区轮）**这 14 列的结构
+#:     （列 key / 表头 / 列组归属 / 出现顺序 / sticky / group_start）从数据件 `columns` 上移到这里
 #:     —— 数据件从此**只有行数据**（逐档参数 + 结果），结构不再随数据走。
+#:   ★★ 2026-10-19 条件/结果**分区轮**（主席原话：两张表的并集须覆盖全部参数、交集为空）：
+#:     「大多数档位都相同且参数枚举数量 < 5」的参数**上提到第 3 章「测试条件」列出**
+#:     ⇒ 由本常量里带 `into="conditions"` 的列标记；`cond_label` **逐字**给出该参数在第 3 章
+#:     那一条 `<li>` 里的前缀（`<b>cond_label：</b>`）—— 它是"渲染器常量 ⇄ 模板静态文字"的**唯一
+#:     同源锚点**（校验端 ④Z-e 按它逐项查第 3 章，⛔ 不另抄一份模板清单）。
+#:     「不同档位之间经常变化」（取值基数 ≥ 5）的参数**留在表格列**（本常量里 group="param"
+#:     且**不带** `into` 的列，见 `TABLE_PARAM_KEYS`）。两条清单由**同一个常量**现算
+#:     —— 校验端（`verify_matrix` ④Z）与自证端（`run_self_proof`）都从这里取，⛔ 不各留一份。
 #:   ★ 消费方（⛔ 不得各留一份）：
 #:       `build_official.COLUMNS` / `build_official.GROUPS`（生成端）＝ 直接引用本常量；
-#:       `verify_matrix.EXPECTED_COLUMNS` / `verify_matrix.EXPECTED_GROUPS`（校验端）＝ 由本常量现算。
-#:   ★ 合并列（`merge`）保留同一套编码：`sub_labels` 给出"小节名"，取值一律取自行数据。
+#:       `verify_matrix.EXPECTED_COLUMNS` / `EXPECTED_GROUPS`（校验端）＝ 由本常量现算。
+#:   ★ 合并列（`merge`）：把若干字段按 `sub_labels` 组装成一格（`data_scale` 承载数据规模 +
+#:     训练数据版本；`steps` 承载逐档总步数 + epoch 分解）。
 MATRIX_COLUMNS = (
     {"key": "tier", "label": "档号", "group": "base", "sticky": True},
     {"key": "status", "label": "是否通过", "group": "status", "group_start": True},
-    {"key": "model", "label": "模型", "group": "param", "group_start": True},
-    {"key": "algo", "label": "算法", "group": "param"},
-    {"key": "mode", "label": "模式", "group": "param"},
-    {"key": "backend", "label": "后端", "group": "param"},
-    {"key": "tp", "label": "TP", "group": "param"},
-    {"key": "pp", "label": "PP", "group": "param"},
-    {"key": "dp", "label": "DP", "group": "param"},
+    # ── 以下 9 列（`into="conditions"`）**上提第 3 章「测试条件」**：54 档取值基数 < 5 ──
+    #    （`epoch`/轮次本来就只在第 3 章有 ⇒ 本轮把它**登记成列的形态**并入分区常量，⛔ 不新造渲染列）
+    {"key": "model", "label": "模型", "group": "param", "into": "conditions",
+     "cond_label": "基础模型"},
+    {"key": "algo", "label": "算法", "group": "param", "into": "conditions",
+     "cond_label": "算法"},
+    {"key": "mode", "label": "模式", "group": "param", "into": "conditions",
+     "cond_label": "可训练参数（模式）"},
+    {"key": "backend", "label": "后端", "group": "param", "into": "conditions",
+     "cond_label": "训练后端"},
+    {"key": "tp", "label": "TP", "group": "param", "into": "conditions",
+     "cond_label": "并行维度"},
+    {"key": "pp", "label": "PP", "group": "param", "into": "conditions",
+     "cond_label": "并行维度"},
+    {"key": "lora_target", "label": "LoRA 目标", "group": "param", "into": "conditions",
+     "cond_label": "LoRA 目标"},
+    {"key": "lr", "label": "lr", "group": "param", "into": "conditions",
+     "cond_label": "学习率"},
+    {"key": "max_epochs", "label": "轮次（epoch）", "group": "param", "into": "conditions",
+     "cond_label": "训练轮次（epoch）"},
+    # ── 以下 5 列**留在表格**：逐档差异项（取值基数 ≥ 5）──
+    {"key": "dp", "label": "DP", "group": "param", "group_start": True},
     {"key": "cards_total", "label": "总卡数", "group": "param"},
-    {"key": "lora_target", "label": "LoRA 目标", "group": "param"},
-    {"key": "lr", "label": "lr", "group": "param"},
-    {"key": "data_scale", "label": "数据规模", "group": "param"},
-    {"key": "steps", "label": "步数/epoch", "group": "param"},
+    {"key": "data_scale", "label": "数据规模（数据版本）", "group": "param",
+     "merge": ("data_scale", "data_subset"), "merge_sep": " <br>",
+     "sub_labels": {"data_subset": "训练数据版本："}},
+    {"key": "steps", "label": "步数", "group": "param",
+     "merge": ("derived_steps", "steps"), "merge_sep": "",
+     "derived": {"derived_steps": "推导 {v} 步"},
+     "sub_labels": {"steps": "（"}, "merge_close": "）"},
     {"key": "switches", "label": "关键开关", "group": "param"},
     {"key": "peak_mem", "label": "显存峰值(GiB)", "group": "data", "group_start": True},
     {"key": "steps_actual", "label": "实跑步数", "group": "data"},
@@ -68,6 +95,73 @@ MATRIX_COLUMNS = (
 #: ★★ 列组的**逐字**定义（第一行表头 colspan 由它给出）：列组顺序 == 列出现顺序。
 MATRIX_GROUPS = {"base": "基础", "status": "状态", "param": "主要参数",
                  "data": "实验数据", "note": "备注"}
+
+#: ★★ 条件/结果分区（2026-10-19「条件/结果分区轮」）的**分区常量** —— 全部由 `MATRIX_COLUMNS`
+#:   **现算**（§1.4 单一真相源；⛔ 不许在下游各留一份清单，⛔ 不许写死档号或取值）：
+#:   ① `CONDITION_PARAMS`：**上提第 3 章「测试条件」**列出的参数（列标记 `into="conditions"`）；
+#:   ② `TABLE_PARAM_KEYS`：**留在表格**「主要参数」组的列 key（含合并列的**全部**子键）；
+#:   ③ 两者**并集 ⊇ 该档全部训练参数**、**交集 = ∅** —— 由 `verify_matrix` ④Z 逐档机核。
+#:   ★ 归一化键：表格列 key 与数据行字段**同名**（如列 `data_scale` ⇄ 行 `data_scale`）；
+#:     唯一例外是"轮次"——数据行里的权威字段是 `max_epochs`，故列 key 直接用 `max_epochs`
+#:     （⛔ 不新造 `epoch` 别名：行里那个 `epoch` 字段是历史遗留、54/54 为 `None`）。
+#:   ★ `into` 列**不出现在渲染结果里**（`build_matrix_table` 只渲染不带 `into` 的列）
+#:     ⇒ 第 3 章的清单在页面上是**模板静态文字**，它的"列了哪几项"由本常量 → 模板一致性机核守住。
+CONDITION_PARAMS = tuple((c["key"], c.get("cond_label", c["label"])) for c in MATRIX_COLUMNS
+                         if c.get("into") == "conditions")
+TABLE_PARAM_KEYS = tuple(k for c in MATRIX_COLUMNS
+                         if c["group"] == "param" and not c.get("into")
+                         for k in (c.get("merge") or (c["key"],)))
+TABLE_PARAM_COLUMNS = tuple(c["key"] for c in MATRIX_COLUMNS
+                            if c["group"] == "param" and not c.get("into"))
+RENDERED_COLUMNS = tuple(c for c in MATRIX_COLUMNS if not c.get("into"))
+
+
+def merge_cell_inner(col, row):
+    """★ 合并列的**唯一拼装实现**（渲染 HTML ⇄ 校验端期望文本**同一份代码**，§1.4 单一真相源）。
+
+    - 槽位顺序 = `col["merge"]`；分隔符 = `col["merge_sep"]`（含 `<br>` 时逐字插入，供换行）；
+    - `col["derived"][sub]` = 展示层模板（如 `推导 {v} 步`）：⛔ 只改**呈现**、不改数值；
+    - `col["sub_labels"][sub]` = 小节名（如 `训练数据版本：`）；标点型标签（`（`）由
+      `merge_close` 收尾（如 `）`）。
+    """
+    labels, derived = col.get("sub_labels", {}), col.get("derived", {})
+    close = col.get("merge_close") or ""
+    sep = col.get("merge_sep", " ／ ")
+    sep_html = sep if "<" in sep else html.escape(sep)
+    parts = []
+    for sub in col["merge"]:
+        v = row.get(sub)
+        v = "" if v is None else str(v)
+        if sub in derived:                       # 展示层模板（如 `推导 {v} 步`）
+            v = derived[sub].format(v=v)
+        lbl = labels.get(sub)
+        if lbl:
+            cls = "hp" if sub in ("hparams",) else "f"
+            parts.append(f'<span class="{cls}" data-f="{html.escape(sub)}">{html.escape(lbl)}</span>'
+                         f'<span data-v="{html.escape(sub)}">{html.escape(v)}'
+                         f'{html.escape(close) if close else ""}</span>')
+        else:
+            parts.append(f'<span data-v="{html.escape(sub)}">{html.escape(v)}</span>')
+    return sep_html.join(parts)
+
+
+def merge_cell_text(col, row):
+    """与 `merge_cell_inner` **逐字同源**的纯文本形态（去标签，供校验端比对期望值）。"""
+    return html.unescape(re.sub(r"<[^>]+>", "", merge_cell_inner(col, row)))
+
+
+def cell_display_text(row, key):
+    """★ **展示层**的单元格文字（供校验端算"该格应该是什么"；⛔ 不读渲染结果反推）。
+
+    - 普通列：行里同名字段的原文（`effect` 列另经 `human_view_effect` 归一，见调用方）；
+    - 合并列：与渲染**同一份**拼装实现（`merge_cell_text`）⇒ 校验端不会出现第二套规则。
+    """
+    col = next((c for c in MATRIX_COLUMNS if c["key"] == key), None)
+    if not col:
+        return "" if row.get(key) is None else str(row.get(key))
+    if col.get("merge"):
+        return merge_cell_text(col, row)
+    return "" if row.get(key) is None else str(row.get(key))
 
 # 结果列着色用的四态映射（与模板内联脚本同一口径；此处只用于生成带 class 的单元格）
 STATUS_CLASS = {
@@ -90,23 +184,8 @@ def cell_html(col, row, by_method=None):
         classes.append("col-start")
 
     if col.get("merge"):
-        subs = col["merge"]
-        labels = col.get("sub_labels", {})
-        sep = col.get("merge_sep", " ／ ")
-        parts = []
-        for sub in subs:
-            v = row.get(sub)
-            v = "" if v is None else str(v)
-            label = labels.get(sub)
-            if label:
-                cls = "hp" if sub in ("hparams",) else "f"
-                parts.append(f'<span class="{cls}" data-f="{html.escape(sub)}">{html.escape(label)}</span> '
-                             f'<span data-v="{html.escape(sub)}">{html.escape(v)}</span>')
-            else:
-                parts.append(f'<span data-v="{html.escape(sub)}">{html.escape(v)}</span>')
-        inner = f'<span class="sep">{html.escape(sep.strip())}</span>'.join(parts)
-        classes.append("param")
-        return f'<td class="{" ".join(classes)}" data-col="{key}">{inner}</td>'
+        return (f'<td class="{" ".join(classes + ["param"])}" data-col="{key}">'
+                f'{merge_cell_inner(col, row)}</td>')
 
     val = "" if row.get(key) is None else str(row[key])
     if key == "effect":
@@ -156,7 +235,10 @@ def build_matrix_table(data):
     # ★★ 表结构来自**本模块常量**（⛔ 不再读 `data["columns"]` / `data["groups"]`）：
     #   使用者的口径是「JSON 里面只有测试结果，脚本只负责把测试结果填进最后一章测试表」
     #   ⇒ 列 key / 表头 / 列组 / 顺序属于**渲染器的静态结构**，不随数据走（§1.4 单一真相源）。
-    cols = [dict(c) for c in MATRIX_COLUMNS]
+    #   ★★ 条件/结果分区轮：带 `into="conditions"` 的 9 列**不上表**（它们在第 3 章静态文字里列出）
+    #      ⇒ 渲染面 = `RENDERED_COLUMNS`（= 14 列）；`MATRIX_COLUMNS` 仍是**唯一真相源**
+    #      （第 3 章清单 ↔ 表格列清单由 ④Z 从它现算比对，⛔ 不靠第二份手抄清单）。
+    cols = [dict(c) for c in RENDERED_COLUMNS]
     groups = dict(MATRIX_GROUPS)
     rows = data["rows"]
     # ★ 展示层归一用的现行通过线（唯一真相源；⛔ 渲染层不写死任何阈值数值）。

@@ -175,12 +175,24 @@ def test_graspo_line_is_five(tmp_path: Path):
     assert _build_with_delta(tmp_path, "GRASPO", 4.9)["status"] == g.FAIL
 
 
-@pytest.mark.parametrize("label", ["CPT", "OPD"])
-def test_cpt_opd_use_non_inferiority_zero(tmp_path: Path, label: str):
-    """CPT / OPD 走「不劣化线」（真相源 value = 0.0 pp）⇒ `Δ ≥ 0` 通过、`Δ < 0` 不过。"""
-    assert _build_with_delta(tmp_path, label, 0.0)["status"] == g.PASS
-    assert _build_with_delta(tmp_path, label, 7.3)["status"] == g.PASS
-    assert _build_with_delta(tmp_path, label, -0.1)["status"] == g.FAIL
+def test_cpt_uses_non_inferiority_zero(tmp_path: Path):
+    """CPT 走「不劣化线」（真相源 value = 0.0 pp）⇒ `Δ ≥ 0` 通过、`Δ < 0` 不过。"""
+    assert _build_with_delta(tmp_path, "CPT", 0.0)["status"] == g.PASS
+    assert _build_with_delta(tmp_path, "CPT", 7.3)["status"] == g.PASS
+    assert _build_with_delta(tmp_path, "CPT", -0.1)["status"] == g.FAIL
+
+
+def test_opd_uses_delta_plus_five(tmp_path: Path):
+    """OPD 走 Δ 通过线（真相源 value = 5.0 pp）⇒ `Δ ≥ +5.0` 通过、`Δ < +5.0` 不过。
+
+    ★ 2026-10-19 口径变更（原为不劣化线）：原先那条把 CPT/OPD 参数化的用例**按新语义拆成两条**
+    （⛔ 不删用例、⛔ 不放宽断言：OPD 这边比原来**更严** —— 旧口径下 `Δ=+0.0` 算通过，现在必须判否）。
+    """
+    assert _build_with_delta(tmp_path, "OPD", 5.0)["status"] == g.PASS
+    assert _build_with_delta(tmp_path, "OPD", 7.3)["status"] == g.PASS
+    assert _build_with_delta(tmp_path, "OPD", 4.9)["status"] == g.FAIL
+    assert _build_with_delta(tmp_path, "OPD", 0.0)["status"] == g.FAIL
+    assert _build_with_delta(tmp_path, "OPD", -0.1)["status"] == g.FAIL
 
 
 def test_effect_renders_current_pass_line_and_no_stale_wording(tmp_path: Path):

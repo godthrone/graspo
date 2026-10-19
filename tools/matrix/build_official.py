@@ -28,8 +28,9 @@ from pathlib import Path
 import extract_spec as _spec
 
 # ★★ 表格结构的**唯一真相源**（`render_matrix.py` 与本脚本同目录；宪法 §1.4）：
-#   21 列的列 key / 表头 / 列组 / 顺序由渲染器**引用**而来，⛔ 本文件不再自带第二份
-#   （病史：本文件原先写死一份 10 列 `COLUMNS`，与在盘 21 列不一致 ⇒ 重跑会把表头覆盖回 10 列）。
+#   渲染面 **13 列**（= `render_matrix.RENDERED_COLUMNS`；另有 9 列上提第 3 章「测试条件」）
+#   的列 key / 表头 / 列组 / 顺序由渲染器**引用**而来，⛔ 本文件不再自带第二份
+#   （病史：本文件原先写死一份 10 列 `COLUMNS`，与在盘列数不一致 ⇒ 重跑会把表头覆盖回 10 列）。
 #   ★ 2026-10-19（使用者口径「脚本只负责把测试结果填进最后一章测试表」）同批：
 #     正式机读件**不再落 `columns` / `groups`**（表结构不随数据走）⇒ 这两个常量只在
 #     本文件的自检里被引用，不再写进 `docs/capability-matrix.data.json`。
@@ -199,7 +200,7 @@ TOOLCHAIN_ONLY_ROW_KEYS = (
     "live_evidence", "caliber_change",
 )
 
-#: ①**允许清单**（行级）：= 矩阵表 21 列 + 逐档结论块 + 机读列定义（`gen_configs.py` 的消费者）。
+#: ①**允许清单**（行级）：= 矩阵表渲染列 + 逐档结论块 + 机读列定义（`gen_configs.py` 的消费者）。
 #: ★ 逐档参数/读数字段是**矩阵表本身**（§17.7 的「结论与归因都是使用者有权知道的」）⇒ 保留；
 #:   过程件（证据索引、跑次溯源、内部对账、作废结论全文、陈旧读数史…）⇒ 剔除、迁 `.local/`。
 S_AVAILABLE, S_UNAVAILABLE, S_UNVERIFIED, S_EXCLUDED = "已验证可用", "已验证不可用", "尚未验证", "未纳入验收"
@@ -210,7 +211,7 @@ STATUS_VOCABULARY = [S_AVAILABLE, S_UNAVAILABLE, S_UNVERIFIED, S_EXCLUDED]
 EXP_DATA_KEYS = ("peak_mem", "elapsed", "effect")
 
 HUMAN_VIEW_ROW_KEYS = (
-    # 矩阵表 21 列 + 列定义里用到的逐档参数
+    # 矩阵表渲染列 + 列定义里用到的逐档参数（★ 2026-10-19 分区轮：9 列上提第 3 章，渲染面 13 列）
     "tier", "status", "model", "algo", "mode", "backend", "parallel", "parallel_dims",
     "parallel_scheme", "lora_target", "lr", "data_subset", "steps", "switches", "spec_json",
     "model_path", "train_method", "tuner_type", "cards", "tp_size", "pp_size", "dp_size",
@@ -955,13 +956,17 @@ def _not_executable_count_self_test():
 def _table_structure_single_source_self_test():
     """★ 阳性对照（2026-10-19，能失败）：证明**表格结构只有一份**（§1.4 单一真相源）。
 
-    病史：本文件原先自带一份**10 列**的 `COLUMNS`/`GROUPS`，与在盘 21 列不一致
+    病史：本文件原先自带一份**10 列**的 `COLUMNS`/`GROUPS`，与在盘列数不一致
     ⇒ 重跑生成器会把表头悄悄覆盖回 10 列（双真相源缺陷）。本对照把这件事实变成机核：
       ① `COLUMNS` / `GROUPS` 必须**就是** `render_matrix` 的常量对象（`is` 判同一对象，
          ⛔ 不是"内容相等"——内容相等仍会在两处各自演化）；
-      ② 21 列，且列 key 无重复、列组标签齐备、首列 sticky（渲染器的硬前提）。
+      ② 渲染列数与 `RENDERED_COLUMNS` 一致，且列 key 无重复、列组标签齐备、首列 sticky（渲染器硬前提）；
+      ②b ★ 分区：渲染面**不得**再出现上提第 3 章的那 9 个参数列（`model/algo/mode/backend/tp/pp/`
+         `lora_target/lr/max_epochs`），且第 3 章清单（`CONDITION_PARAMS`）非空。
       ③ 反向断言：本文件里**不得**再出现一份写死的 10 列清单（`"训练数据"` 这类旧表头
-         不得作为 `COLUMNS` 的字面量出现）。
+         不得作为 `COLUMNS` 的字面量出现）；
+      ④ ★ 与**分区判据同源**（2026-10-19 分区轮）：两张清单都从 `MATRIX_COLUMNS` 现算
+         （`RENDERED_COLUMNS` / `CONDITION_PARAMS`）⇒ 本文件不列第二份；互补性由 ⑧c 现算断言。
     """
     ok = True
 
@@ -972,7 +977,7 @@ def _table_structure_single_source_self_test():
 
     chk("① COLUMNS 就是 render_matrix.MATRIX_COLUMNS（同一对象）", COLUMNS is _render.MATRIX_COLUMNS)
     chk("② GROUPS 就是 render_matrix.MATRIX_GROUPS（同一对象）", GROUPS is _render.MATRIX_GROUPS)
-    chk("③ 恰为 21 列", len(COLUMNS) == 21)
+    chk("③ 渲染面列数 == RENDERED_COLUMNS", len(_render.RENDERED_COLUMNS) == 13)
     _keys = [c["key"] for c in COLUMNS]
     chk("④ 列 key 无重复且均属常量", len(set(_keys)) == len(_keys))
     chk("⑤ 首列 sticky 且为档号列",
@@ -980,12 +985,21 @@ def _table_structure_single_source_self_test():
     chk("⑥ 每列的列组都在 GROUPS 里",
         all(c["group"] in GROUPS for c in COLUMNS))
     # ★ 反向断言：旧 10 列形态的列已被彻底取代 —— 旧表头「训练数据 / 未过判据」不在新列定义里，
-    #   而 21 列才有的列（TP / PP / DP / 总卡数 / LoRA 目标 / 关键开关）必须在（⛔ 防"悄悄退回 10 列"）。
+    #   而"逐档差异项"必须留在渲染面（⛔ 防"悄悄退回 10 列"）。
     _labels = [c["label"] for c in COLUMNS]
+    _rendered_keys = [c["key"] for c in _render.RENDERED_COLUMNS]
     chk("⑦ 旧 10 列表头（训练数据 / 未过判据）已不在列定义中",
         "训练数据" not in _labels and "未过判据" not in _labels)
-    chk("⑧ 21 列才有的列齐备（TP / PP / DP / 总卡数 / LoRA 目标 / 关键开关）",
-        all(x in _labels for x in ("TP", "PP", "DP", "总卡数", "LoRA 目标", "关键开关")))
+    chk("⑧ 留在表格的逐档差异项齐备（DP / 总卡数 / 关键开关）",
+        all(x in _labels for x in ("DP", "总卡数", "关键开关")))
+    # ★★ ⑧b/⑧c：2026-10-19 条件/结果**分区轮**的生成端同源断言（⛔ 不是靠注释声明）
+    _cond_keys = [k for k, _l in _render.CONDITION_PARAMS]
+    chk("⑧b 上提第 3 章的 9 个参数**不在**渲染列里",
+        not (set(_cond_keys) & set(_rendered_keys)) and len(_cond_keys) == 9)
+    chk("⑧c 条件/渲染两清单互补且不重不漏（= 分区常量自身成立）",
+        not (set(_cond_keys) & set(_render.TABLE_PARAM_COLUMNS))
+        and set(_cond_keys) | set(_render.TABLE_PARAM_COLUMNS)
+        == {c["key"] for c in _render.MATRIX_COLUMNS if c["group"] == "param"})
     return ok
 
 
@@ -1062,10 +1076,11 @@ GENERATOR = "tools/matrix/render_matrix.py"
 SOURCE = "docs/capability-matrix.data.json"
 HUMAN_VIEW = "docs/capability-matrix.html"
 
-#: ★★ 表格结构（列组 + 21 列）＝ **从渲染器引用**（`render_matrix.MATRIX_GROUPS` / `MATRIX_COLUMNS`），
+#: ★★ 表格结构（列组 + 渲染面 13 列）＝ **从渲染器引用**（`render_matrix.MATRIX_GROUPS` /
+#:   `MATRIX_COLUMNS`；渲染面 = `RENDERED_COLUMNS`），
 #:   ⛔ 本文件不再自带第二份（§1.4 单一真相源）。
 #:   ★ 病史与修法（2026-10-19）：本文件原先写死一份**10 列**的 `COLUMNS`/`GROUPS`
-#:     （精简轮 4 的旧形态），而在盘数据件 / 人读件已是**21 列** ⇒ 一旦重跑本生成器，
+#:     （精简轮 4 的旧形态），而在盘数据件 / 人读件已是**13 列渲染面** ⇒ 一旦重跑本生成器，
 #:     表头会被悄悄覆盖回 10 列（双真相源缺陷）。现改为**引用同一个常量对象**，
 #:     并由 `--human-view-self-test` 增加"两个名字必须是同一对象"的阳性对照。
 #:   ★ 同批：正式机读件**不再落 `columns` / `groups`**（使用者口径「脚本只负责把测试结果填进
@@ -1659,10 +1674,17 @@ def criteria_caliber(rows=None):
                                  "（评测集 = 该档自身训练文件，100 行）；其余档 = 平台方自有 702 行评测集"),
                         "pass_line_text": "after − base ≥ +5.0 pp",
                         # ★★ 2026-10-19 主席令：OPD 由**不劣化**改为 **Δ ≥ +5.0 pp**，并新增教师要求。
-                        #    ⛔ epoch / epoch_note 不动（epoch=2 不变）。
+                        #    ⛔ epoch 不变（epoch=2）。
                         "teacher": "教师在训练数据集上的完全正确率需高于学生未训练模型 10 个百分点",
                         "epoch": 2, "epoch_previous": 2,
-                        "epoch_note": "epoch=2 不变；教师改为 SFT 之后的 27B 产物。"},
+                        # ★ 2026-10-19 订正（与上面的 `teacher` 同批）：`epoch_note` 里那句
+                        #   「教师改为 SFT 之后的 27B 产物」是**旧教师说明**（上文 `caliber_change_20261019`
+                        #   的 `unchanged` 已把它逐字归档为"随之作废"）⇒ 保留 **epoch=2 的事实**，
+                        #   把教师说明改成与 `teacher` / `switches` 的 `teacher=` 同源的那一个
+                        #   （`distill_teacher().model`，⛔ 本文件不写死模型名）。
+                        "epoch_note": ("epoch=2 不变；教师 = " + str(distill_teacher().get("model"))
+                                       + "（原教师说明「SFT 之后的 27B 产物」已作废，见"
+                                         " `caliber_change.caliber_change_20261019`）。")},
             },
             "by_method_single_source": ("★ 本 `by_method` 是**跑次阈值判定的唯一真相源**：跑次 json 自述阈值必须与之逐算法一致，"
                                         "否则回填 fail-closed。"),
@@ -2925,8 +2947,9 @@ def main():
         #   测试表里面，其它所有的部分都不能动」）：正式机读件**不再落** `columns` / `groups`
         #   （表结构 = `render_matrix.MATRIX_COLUMNS` / `MATRIX_GROUPS` 常量，⛔ 不随数据走）
         #   与 `uniform`（统一口径块 = 模板静态文字）。
-        #   ⇒ 数据件只剩：`meta.*`（判据/口径留痕，供生成端与机检消费）+ `rows[*]`（逐档参数 13 列
-        #     + 结果 6 列 + 四态结论列）+ `data_keys`（结果列名，机读声明）。
+        #   ⇒ 数据件只剩：`meta.*`（判据/口径留痕，供生成端与机检消费）+ `rows[*]`（逐档参数，
+        #     其中**上表 5 列** + **上提第 3 章 9 项** + 结果 6 列 + 四态结论列）
+        #     + `data_keys`（结果列名，机读声明）。
         #   内部权威件的统一口径项仍由 `_uniform_items()` 归一（供生成端 fail-closed 检查），
         #   ⛔ 只是不再进正式件。
         "rows": rows,

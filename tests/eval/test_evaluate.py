@@ -230,17 +230,32 @@ def test_compute_delta_sft_role_applies_delta_threshold(tmp_path):
     assert compute_delta(before, below).passed is False  # Δ = +9.0
 
 
-def test_compute_delta_cpt_opd_methods_apply_non_inferiority(tmp_path):
-    """CPT / OPD：non_inferiority，after ≥ base（Δ ≥ 0.0）——role 推断不出来，必须显式给。"""
+def test_compute_delta_cpt_applies_non_inferiority(tmp_path):
+    """CPT：non_inferiority，after ≥ base（Δ ≥ 0.0）——role 推断不出来，必须显式给。"""
     before = _make_report(tmp_path, role="base", accuracy_percent=50.0)
-    for method in ("cpt", "opd"):
-        flat = _make_report(tmp_path, role="after", accuracy_percent=50.0)
-        ok = compute_delta(before, flat, method=method)
-        assert (ok.criterion, ok.threshold_pp, ok.passed) == ("non_inferiority", 0.0, True)
+    flat = _make_report(tmp_path, role="after", accuracy_percent=50.0)
+    ok = compute_delta(before, flat, method="cpt")
+    assert (ok.criterion, ok.threshold_pp, ok.passed) == ("non_inferiority", 0.0, True)
 
-        worse = _make_report(tmp_path, role="after", accuracy_percent=49.9)
-        assert compute_delta(before, worse, method=method).passed is False
+    worse = _make_report(tmp_path, role="after", accuracy_percent=49.9)
+    assert compute_delta(before, worse, method="cpt").passed is False
 
+
+def test_compute_delta_opd_applies_delta_plus_five(tmp_path):
+    """OPD：criterion = `delta_pp`、线 = +5.0 pp（2026-10-19 口径变更；原为不劣化）。
+
+    ★ 原用例把 CPT/OPD 合并成"不劣化线" ⇒ 按新语义**拆成两条**（⛔ 不删用例、⛔ 不放宽断言：
+    OPD 这边比原来**更严** —— `Δ=+0.0` 这类旧口径下的"通过"现在必须判**否**）。
+    """
+    before = _make_report(tmp_path, role="base", accuracy_percent=50.0)
+    at_line = _make_report(tmp_path, role="after", accuracy_percent=55.0)
+    ok = compute_delta(before, at_line, method="opd")
+    assert (ok.criterion, ok.threshold_pp, ok.passed) == ("delta_pp", 5.0, True)
+
+    flat = _make_report(tmp_path, role="after", accuracy_percent=50.0)      # Δ = 0.0（旧口径「通过」）
+    assert compute_delta(before, flat, method="opd").passed is False
+    below = _make_report(tmp_path, role="after", accuracy_percent=54.9)     # Δ = +4.9 < +5.0
+    assert compute_delta(before, below, method="opd").passed is False
 
 def test_compute_delta_rejects_unknown_method(tmp_path):
     before = _make_report(tmp_path, role="base", accuracy_percent=30.0)
