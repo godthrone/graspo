@@ -451,7 +451,10 @@ def main():
             print(f"  [debug] ⑲ 实际变化单元格: {sorted(_diff_cells)}（期望 {sorted(_allowed_cells)}）")
         # ⑳ ★★ 反向：⑲ 的判据**能失败** —— 往**静态区**注入一处改动（复制件）即必须报错
         _tp2 = tmp / "static_tamper.html"
-        _tampered = base_html2.replace("<h2>2. 通过标准</h2>", "<h2>2. 通过标准（改）</h2>", 1)
+        # ★ 2026-10-19（章节改名轮）：第 2 章标题由「2. 通过标准」改为「2. 测试方法」
+        #   ⇒ 原锚点失效（静默不生效 ⇒ ⑳ 变假绿）。改用**未受改名影响**的静态锚点（第 1 章标题），
+        #   判据不变：往静态区注入一处改动 ⇒ ① 字节同一性 / ④V 必红。
+        _tampered = base_html2.replace("<h2>1. 这是什么表</h2>", "<h2>1. 这是什么表（改）</h2>", 1)
         checks["⑳ 静态区注入改动确实改变了字节（注入生效）"] = (_tampered != base_html2)
         _tp2.write_text(_tampered, encoding="utf-8")
         rc, out = run(["tools/matrix/verify_matrix.py", "--template", "tools/matrix/template.html",
