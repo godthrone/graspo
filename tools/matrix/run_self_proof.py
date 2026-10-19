@@ -489,6 +489,77 @@ def main():
         finally:
             gen_configs.UNIFORM_FALLBACK.update(_save)
 
+        # ㉒ ★★ 阳性对照（2026-10-17 去重轮新增断言 ④Y，**用户点名要求**）：
+        #    把①文本塞回「算法机制真的在起作用」（= ① 重新侵入 ③ 的判据面）⇒ **必红**。
+        #    ★ 注入面**必须是模板**（第 2 章 = 模板静态文字；`pass_criteria` 不进渲染）——
+        #      实测：只改数据件的 `pass_criteria[0].text` 重渲染后页面字节不变（注入会**静默失效**，
+        #      变成假绿）⇒ 本对照改 `template.html` 的 ① 这一条，其余三条与②小列表一字不动。
+        #    ★ 为什么不是"只改在盘页面"：那样红的是 ① 字节同一性，**证明不了 ④Y 能失败**。
+        #      本对照让**页面与数据件同时**含该句 ⇒ 唯一被触发的语义断言就是 ④X（页/数据不一致）
+        #      ＋ ④Y（① 侵入 ③ 的关键词面），两者都点名打印。
+        tpl_txt = (SM / "template.html").read_text(encoding="utf-8")
+        _li_old22 = "<b>能完整跑完</b>：训练正常结束、不中断、不报错：退出码 0、优化器步数达标、检查点完整、没有 NaN/Inf；产物可加载。"
+        _li_new22 = ("<b>能完整跑完</b>：训练正常结束、不中断、不报错：退出码 0、优化器步数达标、"
+                     "检查点完整、没有 NaN/Inf；算法机制真的在起作用（不是空转）；产物可加载。")
+        checks["㉒ 注入生效（模板 ① 这一条确实被改）"] = (tpl_txt.count(_li_old22) == 1)
+        (tmp / "c22.template.html").write_text(tpl_txt.replace(_li_old22, _li_new22, 1), encoding="utf-8")
+        rc, out = run(["tools/matrix/render_matrix.py", "--template", str(tmp / "c22.template.html"),
+                       "--data", "docs/capability-matrix.data.json", "--out", str(tmp / "c22.html")])
+        steps.append(("㉒ 模板 ① 塞回「算法机制」后重渲染（应 rc=0）", rc, out))
+        checks["㉒ 重渲染 rc=0"] = (rc == 0)
+        _html22 = (tmp / "c22.html").read_text(encoding="utf-8")
+        checks["㉒ 注入进的渲染页（防注入静默失效）"] = (
+            rc == 0 and "没有 NaN/Inf；算法机制真的在起作用（不是空转）；产物可加载。" in _html22)
+        rc, out = run(["tools/matrix/verify_matrix.py", "--template", str(tmp / "c22.template.html"),
+                       "--data", "docs/capability-matrix.data.json", "--html", str(tmp / "c22.html")])
+        steps.append(("㉒ ① 重新侵入 ③ 的判据面后 verify（应 FAIL）", rc, out))
+        checks["㉒ ① 侵入 ③ 判据面 ⇒ verify FAIL"] = (rc == 1)
+        checks["㉒ FAIL 报出 ④Y 互不重叠"] = ("④Y" in out and "互不重叠" in out and "算法机制" in out)
+        checks["㉒ FAIL 报出 ④X 页/数据不一致"] = ("④X" in out and "逐字一致" in out)
+        # ㉒b ★ 同一判据在**自证内部**也能失败（不依赖 verify 的打印文本）
+        _li22 = _html22.split('<ol class="criteria">', 1)[1].split("</li>", 1)[0]
+        checks["㉒b 自证内部判据（① 含「算法机制」）能失败"] = (
+            "算法机制" in re.sub(r"<[^>]+>", "", _li22))
+
+        # ㉓ ★★ 阳性对照（2026-10-17 去重轮新增断言 ④X）：**页面为旧措辞、数据件为新措辞**
+        #    （＝真实漂移：用"旧模板"渲染出"旧页面"，而数据件已是新文本）⇒
+        #    「页面四条 ↔ 数据件 pass_criteria 逐字一致（防两份漂移）」**必红**，
+        #      且**只**该断言红（旧页面自身四条仍独立协调 ⇒ 不牵连 ④Y；页面元数据由真数据件提供
+        #      ⇒ ① 字节同一性以**同源**为准，本对照测的是 ④X 而非"手改检测"）。
+        #    ★ 该对照正是"页面对、数据件旧/新不一致"这种漂移的能失败证明（用户点名要防的那一类）。
+        tpl23 = (SM / "template.html").read_text(encoding="utf-8")
+        _old23 = ("<b>能完整跑完</b>：训练正常结束、不中断、不报错：退出码 0、优化器步数达标、"
+                  "检查点完整、没有 NaN/Inf；产物可加载。")
+        # ★ 夹具必须**自身仍满足 ④Y**（否则"只红 ④X"不可判）—— 实测：旧措辞「产物能加载或推理。」
+        #   里的「推理」会被 ④Y 抓到（1 条命中）⇒ 用一条"字数不同但关键词面干净"的等价旧文本。
+        _stale23 = ("<b>能完整跑完</b>：训练正常结束、不中断、不报错：退出码 0、优化器步数达标、"
+                    "检查点完整、没有 NaN/Inf；产物的完整性另行确认。")
+        checks["㉓ 漂移夹具生效（旧模板 ① 已改）"] = (tpl23.count(_old23) == 1)
+        (tmp / "drift.template.html").write_text(tpl23.replace(_old23, _stale23, 1), encoding="utf-8")
+        rc, out = run(["tools/matrix/render_matrix.py", "--template", str(tmp / "drift.template.html"),
+                       "--data", "docs/capability-matrix.data.json", "--out", str(tmp / "drift.html")])
+        steps.append(("㉓ 用旧模板 + 真数据件渲染出「旧页面」", rc, out))
+        checks["㉓ 旧页面已生成且含旧措辞"] = (
+            rc == 0 and "产物的完整性另行确认。" in (tmp / "drift.html").read_text(encoding="utf-8"))
+        rc, out = run(["tools/matrix/verify_matrix.py", "--template", "tools/matrix/template.html",
+                       "--data", "docs/capability-matrix.data.json", "--html", str(tmp / "drift.html")])
+        steps.append(("㉓ 页面文本 ≠ 数据件文本 时 verify（应 FAIL）", rc, out))
+        checks["㉓ 页/数据漂移 ⇒ verify FAIL"] = (rc == 1)
+        checks["㉓ FAIL 报出 ④X 页/数据逐字一致"] = (
+            "④X" in out and "逐字一致" in out and "产物的完整性另行确认" in out)
+        # ★ 只看「FAIL [ … ]」块名（⛔ 不能整体 `in out`：末尾那行 checks 汇总会把 ④Y=PASS 也打进去，
+        #   实测过一次假红）⇒ 判据 = FAIL 块里**只有** ④X、不含 ④Y。
+        #   ★ 逐字名单断言（⛔ 不用前缀通配防假绿）：漂移页必然同时红 ① 字节同一性与 ④V 静态区
+        #     （它**按定义**就是"静态区被改过的页面"）；本对照要证的是 **④X 能失败、④Y 不被误伤**。
+        _fail_blocks = re.findall(r"FAIL \[(.*?)\]", out)
+        checks["㉓ ④X 在 FAIL 名单里"] = any(b.startswith("④X") for b in _fail_blocks)
+        checks["㉓ 不误伤 ④Y（FAIL 名单里无 ④Y）"] = not any(b.startswith("④Y") for b in _fail_blocks)
+        checks["㉓ FAIL 名单恰为 ①/④V/④X（漂移页的定义使然）"] = (
+            len(_fail_blocks) == 3
+            and sum(b.startswith("① 字节同一性") for b in _fail_blocks) == 1
+            and sum(b.startswith("④V") for b in _fail_blocks) == 1
+            and sum(b.startswith("④X") for b in _fail_blocks) == 1)
+
         print("=" * 70)
         for name, rc, out in steps:
             print(f"[rc={rc}] {name}")

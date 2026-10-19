@@ -32,7 +32,7 @@ import render_matrix  # 同目录；复用唯一渲染通道
 import build_official  # 同目录；★ 结论列契约与归因依据关键词**同源**（⛔ 不复制一份）
 import gen_configs     # 同目录；★ 「已声明的前提」定义**同源**（`load_premises`，⛔ 不复制一份）
 
-VERSION = "verify-matrix/v16-static-page-results-only-fill"
+VERSION = "verify-matrix/v17-criteria-dedup"
 
 # ---- ③ 结构断言：只允许这四章 ----
 #: ★ 人读件结构（宪法 §17.7 + 使用者诉求）：
@@ -73,7 +73,12 @@ REQUIRED_MARKERS = [
     ("判别依据① 能完整跑完", "能完整跑完"),
     ("判别依据③ 算法正确性检查", "算法正确性检查通过"),
     ("判别依据④ 能推理", "能推理"),
-    ("判别依据·合并规则", "任一条不过"),
+    # ★★ 2026-10-17 去重轮：原条目 `("判别依据·合并规则", "任一条不过")` 随使用者裁定删除的
+    #   第 2 章 `<p class="rule">` 合并规则段**一并下架**——该段已整段删除（`任一条不过` 在成品页
+    #   0 命中，F1 由工位 report.md 的 grep 证据守住），原关键词在成品页已无对象 ⇒ 断言失效。
+    #   ⛔ 不是"放宽"：**该段承载的行为后果一条没丢**，改由导语承载「四条全部通过才算「可用」」
+    #   ⇒ 本条目**同族换防**为对这句的断言（⛔ 仍 fail-closed：该句被删即红）。
+    ("判别依据·四条全过规则", "四条全部通过"),
     # 判据② 逐算法通过线（数值与方向逐字）
     ("判据②·SFT 通过线", "after − base ≥ +10.0 pp"),
     ("判据②·GRASPO 通过线", "after − base ≥ +5.0 pp"),
@@ -140,6 +145,34 @@ FORBIDDEN_INTERNAL_TERMS = [
     "第 4 批", "第 5 批", "第 6 批", "第 7 批", "工位", "work_log", "跑次根目录",
     "归属层", "必须能失败", "阳性对照", "机核可跑",
 ]
+
+# ---- ④X / ④Y. ★★ 2026-10-17 去重轮：四条判别依据「互不重叠」+「页面 ↔ 数据件逐字一致」 ----
+#   使用者原话（两句，本轮唯一验收标尺）：
+#     ①「这一段删掉：四条判别依据（…）全部通过 ⇒ …；任一条不过 ⇒ …」（第 2 章 `<p class="rule">`）；
+#     ②「四条判据好像有重叠呢，整理一下措辞和分工，判据要相互独立，不能重复。」
+#   ★ 落地口径（工作包定稿）：① 只判「跑完 + 产物完整可加载」；② 只判效果读数；
+#     ③ 只判算法机制本身对不对；④ 只判产物真的能推理出可解析输出。
+#   ★ 本组是这两句话的**能失败**机核（阳性对照见 `run_self_proof` ㉒）：
+#     ④X = 页面四条 `<li>` 的 `title` + `text` 与默认数据件 `pass_criteria` **逐字一致**
+#          （防"页面对、数据件旧"两份漂移；⛔ 不受数据件路径影响的那一半另有 ④Y 兜底）；
+#     ④Y = 四条**互不重叠**：逐条列出"本条不得出现的关键词"，任一命中即红
+#          （⛔ 不是"关键词越多越好"：只列该条**必然**会与本条它条重叠的词）。
+#: (标题, 独立判什么, 本条不得出现的重叠关键词)
+CRITERIA_INDEPENDENCE = (
+    ("能完整跑完", "只判「跑完 + 产物完整可加载」", ("算法机制", "正确性", "推理")),
+    ("效果变好（核心判据）", "只判效果读数", ()),
+    ("算法正确性检查通过", "只判算法机制本身对不对", ("退出码", "NaN", "检查点")),
+    ("能推理", "只判产物真的能推理出可解析输出", ("加载",)),
+)
+#: ★ 判据② 的逐算法通过线**只允许**取自 `criteria_caliber.threshold.by_method[*].pass_line_text`
+#:   （§1.4 单一真相源；页面第 2 章的 `<ul class="tight">` 小列表必须逐条含它们）。
+CRITERIA_SUBLIST_METHODS = ("sft", "graspo", "cpt", "opd")
+#: 官方（可编辑源头）数据件路径 —— 只有 `--data` **恰好**是它时，`pass_criteria` 才是
+#: 页面同源的真相源；自证夹具（临时路径 / 变体路径）按"路径不同"跳过 ④X-b，
+#: ⛔ 不因此放过固定关键词面（④X-a / ④X-c / ④Y 对夹具同样 fail-closed）。
+#: ⚠ 病史自证：这里原先写成比 `basename` == 全路径常量（恒不相等 ⇒ ④X-b 静默死掉、
+#:   漂移阳性对照变假绿）—— 由 `run_self_proof` ㉓ 抓到，已改为**整串**比对。
+CRITERIA_SOURCE_OF_TRUTH = "docs/capability-matrix.data.json"
 
 # ---- ④B. 21 列表结构：**唯一真相源 = 渲染器常量**（`render_matrix.MATRIX_COLUMNS`） ----
 # ★ 2026-10-19（使用者口径「JSON 里面只有测试结果，脚本只负责把测试结果填进最后一章测试表」）：
@@ -336,6 +369,118 @@ def main():
     if missing:
         failures.append(("④A 规则关键词", f"缺失 {len(missing)} 项: {missing}"))
 
+    # ---- ④X / ④Y. ★★ 本轮核心：四条判别依据「互不重叠」+「页面 ↔ 数据件逐字一致」 ----
+    #   判据与常量集中在模块头 `CRITERIA_INDEPENDENCE` / `CRITERIA_SUBLIST_METHODS`
+    #   （⛔ 本断言不另写一份判据文本；文本真相源 = 页面 `<ol class="criteria">` 与数据件 `pass_criteria`）。
+    #   为什么查**在盘页面**的文本：`pass_criteria` 不进渲染（第 1/2/3 章 = 模板静态文字）⇒
+    #   「页面对、数据件旧」这种漂移只有把两边的字面各解析一次才抓得住（⛔ 不能只比 ① 字节同一性）。
+    _crit_seg_m = re.search(r'<ol class="criteria">(.*?)</ol>', target_text, re.S)
+    if not _crit_seg_m:
+        failures.append(("④X 四条判别依据块", '未找到 <ol class="criteria">（判据文本的唯一可见载体）'))
+        _crit_seg = ""
+    else:
+        _crit_seg = _crit_seg_m.group(1)
+    # ★ 逐条切分 `<li>`：**只取顶层 4 条**，每条只取**本条自身的文本**——
+    #   ⛔ 判据② 的逐算法小列表是**嵌套 `<ul><li>`**，若用"贪婪/前瞻"式正则会把内层 4 条也算进来
+    #      （实测：按 `(?=<li>|$)` 切会得到 8 条，且条次错位 ⇒ 断言假红）。
+    #   本实现用**显式扫描 + 标签嵌套计数**，不依赖正则的贪婪性；未闭合即 fail-closed。
+    def _split_top_li(html_seg: str):
+        """把 `<ol class="criteria">` 的内容切成**顶层** `<li>` 片段；标签嵌套不平衡 ⇒ 抛 ValueError。"""
+        out, i, n = [], 0, len(html_seg)
+        while True:
+            j = html_seg.find("<li>", i)
+            if j < 0:
+                return out
+            k, depth, opened = j + 4, 0, False
+            while k < n:
+                if html_seg.startswith("<ul", k):
+                    depth += 1
+                    opened = True
+                elif html_seg.startswith("</ul>", k):
+                    depth -= 1
+                elif html_seg.startswith("</li>", k) and depth == 0:
+                    break
+                k += 1
+            if k >= n:
+                raise ValueError("未闭合的 <li>/<ul>（判据块标签不平衡）")
+            out.append(html_seg[j + 4:k])
+            i = k + len("</li>")
+
+    try:
+        _crit_items = _split_top_li(_crit_seg)
+    except ValueError as _e:
+        failures.append(("④X 四条判别依据块（标签嵌套）", str(_e)))
+        _crit_items = []
+    if len(_crit_items) != len(CRITERIA_INDEPENDENCE):
+        failures.append(("④X 四条判别依据块",
+                         f"期望恰 {len(CRITERIA_INDEPENDENCE)} 条 <li>，实际 {len(_crit_items)} 条"))
+
+    def _crit_top_text(li_html: str) -> str:
+        """取 `li` 的**本条文本**：挖掉嵌套 `<ul>`（判据② 的逐算法小列表）后去标签。"""
+        return html.unescape(re.sub(r"<[^>]+>", "", re.sub(r"<ul\b.*?</ul>", "", li_html, flags=re.S))).strip()
+
+    _crit_page = []
+    for _li in _crit_items:
+        _t = _crit_top_text(_li)
+        _title = _t.split("：", 1)[0]
+        _text = _t.split("：", 1)[1] if "：" in _t else ""
+        _sub = re.search(r"<ul\b[^>]*>(.*?)</ul>", _li, re.S)
+        _sub_items = re.findall(r"<li>(.*?)</li>", _sub.group(1), re.S) if _sub else []
+        _crit_page.append((_title, _text,
+                           [html.unescape(re.sub(r"<[^>]+>", "", x)).strip() for x in _sub_items]))
+    _crit_data = list(((data.get("meta") or {}).get("criteria_caliber") or {}).get("pass_criteria") or [])
+
+    # ④X-a 标题逐字 + 顺序（四个短名 ⛔ 不得改）
+    _bad_titles = [(i + 1, _want, _crit_page[i][0] if i < len(_crit_page) else "<缺失>")
+                   for i, (_want, _why, _kw) in enumerate(CRITERIA_INDEPENDENCE)
+                   if i >= len(_crit_page) or _crit_page[i][0] != _want]
+    if _bad_titles:
+        failures.append(("④X 四条判据标题逐字/顺序（四个短名不得改）",
+                         f"不符（条次, 期望, 实际）: {_bad_titles}"))
+
+    # ④X-b 页面 `title`+`text` == 数据件 `pass_criteria` 的 `title`+`text`（逐字；防两份漂移）
+    _bad_same_src = []
+    if str(a.data) == CRITERIA_SOURCE_OF_TRUTH:
+        if len(_crit_data) != len(CRITERIA_INDEPENDENCE):
+            _bad_same_src.append((0, f"数据件 pass_criteria 条数 {len(_crit_data)} "
+                                     f"!= {len(CRITERIA_INDEPENDENCE)}"))
+        for _i, _page in enumerate(_crit_page):
+            _d = _crit_data[_i] if _i < len(_crit_data) else {}
+            if _page[0] != str(_d.get("title", "")):
+                _bad_same_src.append((_i + 1, f"title 页面 {_page[0]!r} != 数据 {_d.get('title')!r}"))
+            if _page[1] != str(_d.get("text", "")):
+                _bad_same_src.append((_i + 1, f"text 页面 {_page[1]!r} != 数据 {str(_d.get('text'))!r}"))
+    if _bad_same_src:
+        failures.append(("④X 页面四条 ↔ 数据件 pass_criteria 逐字一致（防两份漂移）",
+                         f"不一致 {len(_bad_same_src)} 处（条次/说明）: {_bad_same_src[:6]}"))
+
+    # ④X-c 判据② 的逐算法小列表**必须保留**，且逐条含 `threshold.by_method[*].pass_line_text`
+    #      （数值/方向的**唯一真相源**＝数据件；⛔ 本断言不写死任何阈值字面量）
+    _by_method_c = (((data.get("meta") or {}).get("criteria_caliber") or {})
+                    .get("threshold") or {}).get("by_method") or {}
+    _sub_idx = next((i for i, (_t, _x, _kw) in enumerate(CRITERIA_INDEPENDENCE) if _t == "效果变好（核心判据）"), 1)
+    _sub_items = _crit_page[_sub_idx][2] if _sub_idx < len(_crit_page) else []
+    _blob = " ｜ ".join(_sub_items)
+    _miss_lines = [str(_by_method_c.get(_m, {}).get("pass_line_text") or f"<数据件缺 {_m}>")
+                   for _m in CRITERIA_SUBLIST_METHODS
+                   if str(_by_method_c.get(_m, {}).get("pass_line_text") or "") not in _blob]
+    if _miss_lines:
+        failures.append(("④X 判据②逐算法通过线（保留 + 与 threshold.by_method 同源）",
+                         f"小列表缺通过线 {_miss_lines}；实际小列表 {_sub_items}"))
+
+    # ④Y 四条互不重叠：逐条列"本条不得出现的重叠关键词"，任一命中即红
+    _crit_overlap = []
+    for _i, (_title, _why, _kw) in enumerate(CRITERIA_INDEPENDENCE):
+        if _i >= len(_crit_page):
+            continue
+        _tt, _tx = _crit_page[_i][0], _crit_page[_i][1]
+        for _w in _kw:
+            if _w in _tt or _w in _tx:
+                _crit_overlap.append((_i + 1, _title, _w,
+                                      f"命中于{'标题' if _w in _tt else '正文'}（本条判：{_why}）"))
+    if _crit_overlap:
+        failures.append(("④Y 四条判别依据互不重叠",
+                         f"命中 {len(_crit_overlap)} 处（条次, 标题, 违规关键词, 位置）: {_crit_overlap}"))
     # ---- ④B. 21 列表结构 == 渲染器常量（单一真相源；四级检查，全部 fail-closed） ----
     # ① 常量自身形状
     _cols = [dict(c) for c in render_matrix.MATRIX_COLUMNS]
@@ -1002,7 +1147,9 @@ def main():
               f" | ④S 散文档数==数据={ok('④S')}"
               f" | ④V 静态区不随数据变={ok('④V')}"
               f" | ④W 可见面不得出现已删除三块={ok('④W')}"
-              f" | ④T 已声明前提可见性={ok('④T')}")
+              f" | ④T 已声明前提可见性={ok('④T')}"
+              f" | ④X 判据页/数据逐字一致={ok('④X')}"
+              f" | ④Y 判据互不重叠={ok('④Y')}")
         print(f"results: 已回填 {len(filled)} 档 {filled}；其余 {len(data['rows'])-len(filled)} 档保持 '—'"
               + ("；--expect-empty 已开启" if a.expect_empty else ""))
         print(f"elapsed: 有值 {len(el_filled)} 档"
