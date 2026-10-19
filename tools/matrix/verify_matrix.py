@@ -15,9 +15,9 @@
      加一个空格、删一个字符都会命中）。
   ③ 结构断言 —— 四章（`1. 这是什么表` / `2. 测试方法` / `3. 测试条件` / `4. 测试结果`）
      + 四个分区 section + 目录恰好 4 条且 href 对得上；不再有 §1–§7 的旧骨架 id。
-  ④ 内容断言 —— A. 必需要点全在位；B. 14 列表结构 == **渲染器常量**（`render_matrix.MATRIX_COLUMNS`，
+  ④ 内容断言 —— A. 必需要点全在位；B. 21 列表结构 == **渲染器常量**（`render_matrix.MATRIX_COLUMNS`，
      §1.4 单一真相源，⛔ 不再比数据件——数据件已无 `columns` / `groups`）；C. 结果列全为占位符、
-     状态全「尚未验证」；D. 14 列逐档逐格与行数据**逐字**一致；Z. **条件/结果分区**（并集覆盖 / 交集为空
+     状态全「尚未验证」；D. 21 列逐档逐格与行数据**逐字**一致；Z. **条件/结果分区**（并集覆盖 / 交集为空
      / 基数规则）逐档机核；V. **静态区不随数据变**
      （只改 `rows` 里的结果字段重渲染 ⇒ 表格以外逐字节不变、表格内只有结果单元格变）。
 
@@ -33,7 +33,7 @@ import render_matrix  # 同目录；复用唯一渲染通道
 import build_official  # 同目录；★ 结论列契约与归因依据关键词**同源**（⛔ 不复制一份）
 import gen_configs     # 同目录；★ 「已声明的前提」定义**同源**（`load_premises`，⛔ 不复制一份）
 
-VERSION = "verify-matrix/v19-cond-result-partition-20261019"
+VERSION = "verify-matrix/v20-partition-le2-20261019"
 
 # ---- ③ 结构断言：只允许这四章 ----
 #: ★ 人读件结构（宪法 §17.7 + 使用者诉求）：
@@ -44,6 +44,13 @@ VERSION = "verify-matrix/v19-cond-result-partition-20261019"
 EXPECTED_H2 = ["1. 这是什么表", "2. 测试方法", "3. 测试条件", "4. 测试结果"]
 EXPECTED_PARTS = ["s1", "s2", "s3", "s4"]
 FORBIDDEN_OLD_SECTIONS = ["part1", "part2", "sec1", "sec1b", "sec2", "sec3", "sec4", "sec5", "sec6", "sec7"]
+
+#: ★★ 2026-10-19 阈值 ≤2/≥3 轮：`REQUIRED_MARKERS` 里两条"表格列表头"关键词的**取值来源**
+#:   —— 由渲染器常量现算列标（§1.4 单一真相源），⛔ 本文件不写死列名。
+#:   （`lr` 列 = 学习率；`max_epochs` 列 = 训练轮次。列标一改 ⇒ 这两条断言立刻红。）
+_LR_COL = [(i, c) for i, c in enumerate(render_matrix.MATRIX_COLUMNS) if c["key"] == "lr"]
+_EPOCH_COL = [(i, c) for i, c in enumerate(render_matrix.MATRIX_COLUMNS) if c["key"] == "max_epochs"]
+assert len(_LR_COL) == 1 and len(_EPOCH_COL) == 1, "REQUIRED_MARKERS 依赖的 lr / max_epochs 列缺失"
 
 # ---- ④A. 必须出现的规则关键词（缺一即 FAIL） ----
 # ★ 精简轮 4（2026-10-17 主席令）：人读件只留四章（这是什么表 / 通过标准 / 实验条件 / 结果矩阵）。
@@ -105,12 +112,18 @@ REQUIRED_MARKERS = [
     #   —— 本轮全部档位为「尚未验证」，无「已验证不可用」档、无归因正文可写
     #   （原值已归档到工位 `archived-verdicts.json`）。⛔ 不是放宽：该断言对无对象。
     # 实验条件（只列复现需要的）
-    ("实验条件·基础模型", "基础模型"),
-    ("实验条件·算法", "算法："),
+    #   ★ 2026-10-19 **阈值 ≤2/≥3 轮**（分区规则改为「枚举 ≤ 2 ⇒ 第 3 章；≥ 3 ⇒ 表格列」）：
+    #     原先在这里的 4 项关键词「算法：/ 学习率 / 训练轮次」承载的那三条 `<li>` 已按新规则
+    #     **整条移出第 3 章**（它们的枚举数量是 4 / 3 / 3 ⇒ 归表格列）⇒ ⛔ 原关键词在页面上**已无对象**。
+    #     ⛔ **不是删断言、不是放宽**：改为断言"该信息在页面上**仍然发布**"——
+    #       `算法` 仍是第 4 章表格列**表头逐字**（且第 3 章导语点名"算法"见第 4 章）；
+    #       `学习率`（表格列 `lr`）与 `训练轮次` 的表头逐字取自渲染器常量（§1.4 单一真相源），
+    #       ⛔ 本文件不写死列名 —— 列名一改，这条断言立刻红。
+    ("实验条件·算法", "算法"),
     ("实验条件·训练后端", "训练后端"),
     ("实验条件·可训练参数", "可训练参数"),
-    ("实验条件·学习率", "学习率"),
-    ("实验条件·训练轮次", "训练轮次"),
+    ("实验条件·学习率（表格列 lr）", _LR_COL[0][1]["label"]),
+    ("实验条件·训练轮次（表格列）", _EPOCH_COL[0][1]["label"]),
     ("实验条件·训练数据", "训练数据"),
     ("实验条件·统一超参", "统一超参"),
     # 评测口径可复核（§17.7「基线值与判据口径必须带口径」）
@@ -193,9 +206,9 @@ CRITERIA_SUBLIST_TERMS = {
 #:   漂移阳性对照变假绿）—— 由 `run_self_proof` ㉓ 抓到，已改为**整串**比对。
 CRITERIA_SOURCE_OF_TRUTH = "docs/capability-matrix.data.json"
 
-# ---- ④B. 14 列表结构（渲染面）：**唯一真相源 = 渲染器常量**（`render_matrix.MATRIX_COLUMNS`） ----
+# ---- ④B. 21 列表结构（渲染面）：**唯一真相源 = 渲染器常量**（`render_matrix.MATRIX_COLUMNS`） ----
 # ★ 2026-10-19（使用者口径「JSON 里面只有测试结果，脚本只负责把测试结果填进最后一章测试表」）：
-#   14 列（渲染面）的列 key / 表头 / 列组 / 顺序已**上移**到 `render_matrix.MATRIX_COLUMNS` / `MATRIX_GROUPS`
+#   21 列（渲染面）的列 key / 表头 / 列组 / 顺序已**上移**到 `render_matrix.MATRIX_COLUMNS` / `MATRIX_GROUPS`
 #   ⇒ 数据件**不再有** `columns` / `groups`（结构不随数据走）。
 #   ★ 断言只许加强、⛔ 不许放松：由「比数据件 + 比渲染结果两面」改为**四面**——
 #     ① 渲染器常量自身形状（14 渲染列 / key 唯一 / 列组齐备）；
@@ -204,8 +217,10 @@ CRITERIA_SOURCE_OF_TRUTH = "docs/capability-matrix.data.json"
 #     ③ 数据件**确已不再携带** `columns` / `groups`（防"结构悄悄回到数据里"造成第三份真相源）；
 #     ④ 渲染结果（colgroup / 两级表头 / colspan / sticky<th> / 行数）与常量逐字一致。
 #   病史依据：上一轮 `build_official.COLUMNS` 仍写死 10 列 ⇒ 重跑生成器会把列覆盖回 10 列。
-#:   ★ 2026-10-19 条件/结果分区轮：**渲染面** = `RENDERED_COLUMNS`（带 `into="conditions"` 的 9 列
+#:   ★ 2026-10-19 条件/结果分区轮：**渲染面** = `RENDERED_COLUMNS`（带 `into="conditions"` 的列
 #:     上提第 3 章、不上表）⇒ 三处期望值一律从渲染面现算。
+#:   ★ 2026-10-19 **阈值 ≤2/≥3 轮**：条件列由 9 列收敛到 **3 列**（模型 / 模式 / 后端），
+#:     渲染面由 13 列扩到 **21 列**——⛔ 仍是"从常量现算"，字数一处未写死。
 EXPECTED_COLUMNS = [(c["key"], c["label"]) for c in render_matrix.RENDERED_COLUMNS]
 EXPECTED_GROUPS = dict(render_matrix.MATRIX_GROUPS)
 #: ★ 列的**逐字**列组归属（与 EXPECTED_COLUMNS 同序；防"列对了但列组串了"）
@@ -225,35 +240,57 @@ def _group_spans(cols):
 
 
 EXPECTED_GROUP_SPANS = _group_spans(render_matrix.RENDERED_COLUMNS)
-#: ★ 「主要参数」组（渲染列序 = 表格 param 组的 5 列，也是 ④D 的逐格一致性检查面）：
+#: ★ 「主要参数」组（渲染列序 = 表格 param 组的 13 列，也是 ④D 的逐格一致性检查面）：
 #:   ★★ 2026-10-19 条件/结果分区轮：原先**写死的 13 列清单** ⇒ 改为**由渲染器常量现算**
 #:     （⛔ 不再各留一份；并集/交集/基数三条分区机核 ④Z 也共用它）。
-#:     ⛔ **不是放宽**：这 5 列的内容由 ④Z 的「并集覆盖 / 交集为空 / 基数规则」逐档机核守住。
+#:     ⛔ **不是放宽**：这 13 列的内容由 ④Z 的「并集覆盖 / 交集为空 / 基数规则」逐档机核守住。
+#:   ★ 2026-10-19 **阈值 ≤2/≥3 轮**：渲染面由 13 列扩回 **21 列**（参数 13 / 结果 5 / 状态 1 /
+#:     档号 1 / 备注 1），`PARAM_KEYS` 随之由 5 列扩到 **13 列**（⛔ 仍是现算，不写死清单）。
 PARAM_KEYS = list(render_matrix.TABLE_PARAM_COLUMNS)
 
 # ---- ④Z. ★★ 条件/结果**分区**机核（2026-10-19 条件/结果分区轮；三条全部要能失败） ----
-#   使用者原话：
+#   使用者原话（分区轮）：
 #     「第三章测试条件和第四章测试结果，两个应该是无交集的，对于那些大部分测试档位都相同且参数
 #      枚举数量小于5的，放测试条件里面列出来，比较节省表格列。对于那种不同档位里面经常变化的
 #      参数，就应该放表格列…总之，测试条件和测试结果的并集，应该是包含全部参数的。」
+#   ★★ 2026-10-19 **阈值 ≤2/≥3 轮**（主席改口径，原话）：
+#     「枚举数量小于等于 2 的，放测试条件，剩下的都作为测试结果表的列」——动机是这张表的**用途**
+#     是"我有多少卡 / 多少显存 / 多大模型 ⇒ 能选哪些并行方案（如 dp2tp2 / pp4tp1dp1）与后端、速度
+#     与显存各是多少"的**查表** ⇒ 只要档位之间可能变（枚举 ≥ 3）的参数就必须在**表格列里可见**
+#     （上一版把 TP 这类并行方案组成项放进了第 3 章 = 放错位置，本轮纠正）。
 #   ★ 判据（fail-closed，逐档现算，⛔ 不写死档号/取值，⛔ 不靠第二份手抄清单）：
-#     a **并集覆盖**：`条件参数 ∪ 表格 param 列（含合并列子键）` 必须 **⊇ 逐档训练参数集合**
-#       —— 新增/漏登参数键 ⇒ 报红（正是使用者点名的「两边都不写」漏项）；
+#     a **并集覆盖**：`条件参数 ∪ 表格 param 列（含合并列子键；取列的 `source` 行字段名）`
+#       必须 **⊇ 逐档训练参数集合** —— 新增/漏登参数键 ⇒ 报红（正是使用者点名的「两边都不写」漏项）；
 #     b **交集为空**：同一个参数**不得**同时出现在两处 —— 逐档取值**完全相同**的键对即判重
-#       （实测：`lr` 若同时放回表格列，本断言必红，见自证新增用例）；取值不同的同名键
+#       （实测：`lr` 若同时放回表格列，本断言必红，见自证用例）；取值不同的同名键
 #       （如行的 `cards`＝"1" vs 表格列 `cards_total`＝公式串）**不判重**（列面向人读、行字段面向
 #       机读，两者是"列 ⇄ 行字段"的呈现关系，不是两处重复发布同一参数 ⇒ 如实登记、⛔ 不滥用例外）；
-#     c **基数规则**：表格 param 组每列在该 54 档的取值**基数 ≥ 5**；条件参数**基数 < 5**
+#       ★ 列面判重按**列 key**（表头身份）：`mode_tbl` / `backend_tbl` 是刻意起的内部别名，
+#         其 label（模式 / 后端）虽与第 3 章条件项同名，但两处内容一个是"逐档取值"、
+#         一个是"分档值域说明"（两个不同读者的东西）⇒ 不是重复发布（键不同名、正文不同）。
+#     c **基数规则**：表格 param 组每列在该 54 档的取值**枚举数量 ≥ 3**；条件参数**≤ 2**
 #       —— 判据 = **该字段在 rows 里的取值基数**现算（⛔ 不写死清单的例外）。
 #   ★ 与模板静态文字**同源**：`CONDITION_PARAMS` 由渲染器常量给出 ⇒ 模板第 3 章必须逐项出现
 #     （见 ④Z-e：逐项查 `<b>标签：</b>` 落位 + 值域/档位说明）。
-#: 逐档训练参数集合的键白名单 = 已归一化的**列面向键**：全是渲染列 key 或 `CONDITION_PARAMS` 的键。
+#: ★★ 第 3 章「测试条件」逐项登记表 —— **同源引用**渲染器常量（⛔ 本文件不另留一份清单）。
+#:   每一项声明该条 `<li>` 是"哪个行字段的取值发布处"（`row_field`）；
+#:   说明式条目（caliber，`row_field=None`）只解释口径、不在本页发布取值。
+CONDITION_ITEMS = tuple(render_matrix.CHAPTER3_CONDITION_ITEMS)
+#: 第 3 章条目**名**（面向读者；机核按它逐条比对模板）。
+CONDITION_ITEM_LABELS = tuple(i["label"] for i in CONDITION_ITEMS)
+#: 第 3 章**已登记在案**的行字段集合（含说明式条目，如 `TP 口径` → `tp`）——
+#:   基数判据 ④Z-c1 据此做"同一参数不重复计数"，⛔ 不写死清单。
+CONDITION_FIELDS = frozenset(render_matrix.CHAPTER3_FIELDS)
+#: 逐档训练参数集合的键白名单 = 已归一化的**行字段面向键**：`CONDITION_PARAMS` 的列 key
+#:   ＋ 表格 param 各列真正读取的行字段名（`source`；合并列取全部子键）。
 #:   ⛔ 存在的意义 = 把"两边都不写"的漏项变成一个**逐档可机核**的集合差（不靠人眼）。
 #:   ★ 与条件/表格两清单**同源**：这里只声明"哪些键属于训练参数"，⛔ 不列取值。
 TRAIN_PARAM_KEYS = frozenset(render_matrix.TABLE_PARAM_KEYS) | frozenset(
     k for k, _l in render_matrix.CONDITION_PARAMS)
-#: ★ 页面必须写明的**分区规则**三个关键词（缺一即红）：并集覆盖 / 交集为空 / 基数判据（枚举数量 < 5）。
-PARTITION_RULE_MARKERS = ("并集覆盖全部参数", "交集为空", "枚举数量小于 5")
+#: ★ 页面必须写明的**分区规则**三个关键词（缺一即红）：并集覆盖 / 交集为空 / 基数判据
+#:   （★ 2026-10-19 阈值 ≤2/≥3 轮：判据关键词由「枚举数量小于 5」改为「**枚举数量不超过 2**」
+#:    —— ⛔ 阈值本身改了（主席明令），但这三项要件一件不少：并集覆盖 / 交集为空 / 基数判据。）
+PARTITION_RULE_MARKERS = ("并集覆盖全部参数", "交集为空", "枚举数量不超过 2")
 
 
 def partition_cardinality(rows, key):
@@ -272,8 +309,11 @@ def partition_failures(rows, target_text, columns, cond_params):
     返回 `(检查名, 明细)` 列表；空列表 = 全过。
     """
     out = []
-    table_keys = tuple(k for c in columns if c["group"] == "param" and not c.get("into")
-                       for k in (c.get("merge") or (c["key"],)))
+    #   ★ 表格侧的两个清单，**用途不同 ⇒ 取键不同**（⛔ 不混用）：
+    #     - `table_keys`：并集判据比的是**数据身份** ⇒ 取列的 `source`（缺省 = 列 key 同名）；
+    #     - `table_cols`：列面判重比的是**表头身份** ⇒ 取列 key（如 `mode_tbl` / `backend_tbl`）。
+    table_keys = tuple(src for c in columns if c["group"] == "param" and not c.get("into")
+                       for src in (c.get("merge") or (c.get("source", c["key"]),)))
     table_cols = tuple(c["key"] for c in columns if c["group"] == "param" and not c.get("into"))
     cond_keys = [k for k, _l in cond_params]
     all_keys = list(cond_keys) + list(table_keys)
@@ -300,18 +340,54 @@ def partition_failures(rows, target_text, columns, cond_params):
             if rows and all(str(r.get(_k)) == str(r.get(_c)) for r in rows):
                 dup.append((_k, _c))
     cond_labels = {l: k for k, l in cond_params}
-    seen_lbl = set()
     for _c in columns:
         if _c.get("into") or _c["group"] != "param":
             continue
-        if _c["label"] in cond_labels and _c["label"] not in seen_lbl:
-            seen_lbl.add(_c["label"])
+        # b2-a ★ 第 3 章条目名不得再出现在渲染表头（面向读者的**同名列**判重）：
+        #   第 3 章条目名 = 其"参数名"（如 `基础模型`），一旦同名又进表头 ⇒ 同一参数两处发布。
+        if _c["label"] in CONDITION_ITEM_LABELS:
+            dup.append((f"标签「{_c['label']}」", "第 3 章条目", _c["key"]))
+        # b2-b 未登记条件项的 `cond_label` 也不得进表头（防"漏登记还能上表"）。
+        if _c["label"] in cond_labels:
             dup.append((f"标签「{_c['label']}」", cond_labels[_c["label"]], _c["key"]))
-    #   c 基数规则：表格 param 组每列（含合并列子键）取值基数 ≥ 5；条件参数基数 < 5
-    card_table = [(_k, partition_cardinality(rows, _k)[0]) for _k in table_keys]
-    card_cond = [(_k, partition_cardinality(rows, _k)[0]) for _k in cond_keys]
-    table_low = sorted((k, n) for k, n in card_table if n < 5)
-    cond_high = sorted((k, n) for k, n in card_cond if n >= 5)
+        # b2-c ★ 已登记的口径说明条目标签（如 `TP 口径`）不得作为渲染列标签 ——
+        #   正是"TP 口径被改成表格列"这类误改的能失败判据。
+        if _c["label"] in CONDITION_ITEM_LABELS:
+            dup.append((f"口径说明「{_c['label']}」", "第 3 章口径说明", _c["key"]))
+    #   b3 ★★ 取值发布面判重（**参数身份 = 行字段**，⛔ 不靠列名字面串）：
+    #     同一个行字段**只能有一列**承载它的取值 —— 两列读同一字段即"两处发布同一参数"（必红）。
+    _src_used = {}
+    for _c in columns:
+        for _f in ([] if _c.get("into") else list(_c.get("merge") or (_c.get("source", _c["key"]),))):
+            _src_used.setdefault(_f, []).append(_c["key"])
+    for _f, _ks in sorted(_src_used.items()):
+        if len(_ks) > 1:
+            dup.append((f"行字段「{_f}」被多列承载", tuple(_ks), "两处发布同一参数"))
+    #   c 基数规则（★ 2026-10-19 阈值 ≤2/≥3 轮：阈值由 5 改为 2；⛔ 判据结构未变，
+    #     仍为"逐列现算基数 + 越界即红"；⛔ 不写死任何档号/取值/例外清单）：
+    #     c1 **表格 param 列**：取值枚举数量 ≥ 3；但"**第 3 章条目 = 对同一行字段的分档口径说明**"
+    #        的那些字段**不重复计数**（同一条参数不在两个清单里各算一次）。
+    #        ★ 该豁免是**窄条件**：豁免的键必须（i）是渲染器里登记过的条件参数 key，
+    #          （ii）其值已由表格列逐档发布 —— 即"确有对应表格列"，否则照常判红。
+    #          ⛔ 不是"把表格列门槛降到 2"：只放行"同一参数的两处呈现"，其它任何低基数表格列必红。
+    #     c2 **条件条目**：其**承载取值的行字段**枚举数量 ≤ 2（说明式 caliber 条目无行字段 ⇒ 不适用）。
+    #     c3 **登记完整性**：渲染器里每个带 `cond_label` 的条件列都必须在
+    #        `CHAPTER3_CONDITION_ITEMS` 登记；且第 3 章每个**带字段**的条件条目都必须是
+    #        `cond_params` 里的一项（⛔ 防"新增条件列忘了登记 / 登记表与常量漂移 ⇒ 判据静默放行"）。
+    card_table = [(_k, partition_cardinality(rows, _k)[0]) for _k in table_keys
+                  if _k not in CONDITION_FIELDS]
+    card_cond = []
+    for _k, _l in cond_params:
+        _f = render_matrix.condition_field(_l, items=CONDITION_ITEMS)
+        if _f is None:               # caliber 条目：只说明口径、不发布取值 ⇒ 基数规则不适用
+            continue
+        card_cond.append((_f, partition_cardinality(rows, _f)[0]))
+    _declared_labels = {i["label"] for i in CONDITION_ITEMS}
+    undeclared = [(_k, _l) for _k, _l in cond_params if _l not in _declared_labels]
+    _field_labels = {i["label"] for i in CONDITION_ITEMS if i.get("row_field")}
+    notin_const = sorted(_field_labels - {_l for _k, _l in cond_params})
+    table_low = sorted((k, n) for k, n in card_table if n < 3)
+    cond_high = sorted((k, n) for k, n in card_cond if n > 2)
     #   d 渲染面（交集为空的**列面**判据）：带 `into="conditions"` 的列**不得**出现在渲染列里
     #     —— 即"条件参数不得同时又是表格列"（与 b 是同一件事的两种写法：b 查取值/列名，d 查列 key）。
     into_leak = [k for k in cond_keys if k in [c["key"] for c in columns if not c.get("into")]]
@@ -335,11 +411,11 @@ def partition_failures(rows, target_text, columns, cond_params):
         out.append(("④Z 分区·交集为空（同一参数不得两处重复发布）",
                     f"逐档取值全等的重复键对: {dup}"))
     if table_low:
-        out.append(("④Z 分区·基数规则（表格 param 列须 ≥ 5）",
-                    f"取值基数 < 5 的表格列: {table_low}（应上提第 3 章）"))
+        out.append(("④Z 分区·基数规则（表格 param 列须 ≥ 3）",
+                    f"取值枚举数量 < 3 的表格列: {table_low}（应上提第 3 章）"))
     if cond_high:
-        out.append(("④Z 分区·基数规则（条件参数须 < 5）",
-                    f"取值基数 ≥ 5 的条件参数: {cond_high}（应改留表格列）"))
+        out.append(("④Z 分区·基数规则（条件参数须 ≤ 2）",
+                    f"取值枚举数量 > 2 的条件参数: {cond_high}（应改留表格列）"))
     if into_leak:
         out.append(("④Z 分区·交集为空（条件列不得同时是渲染表列）", f"{into_leak}"))
     if tpl_missing:
@@ -671,7 +747,7 @@ def main():
     if _crit_overlap:
         failures.append(("④Y 四条判别依据互不重叠",
                          f"命中 {len(_crit_overlap)} 处（条次, 标题, 违规关键词, 位置）: {_crit_overlap}"))
-    # ---- ④B. 14 列表结构（渲染面）== 渲染器常量（单一真相源；四级检查，全部 fail-closed） ----
+    # ---- ④B. 21 列表结构（渲染面）== 渲染器常量（单一真相源；四级检查，全部 fail-closed） ----
     # ① 常量自身形状
     _cols = [dict(c) for c in render_matrix.RENDERED_COLUMNS]
     groups = dict(render_matrix.MATRIX_GROUPS)
@@ -859,12 +935,15 @@ def main():
         failures.append(("④U 结果列清空 / 状态统一（渲染面）",
                          f"{len(_u_html_bad)} 处: {_u_html_bad[:5]}"))
 
-    # ---- ④D. 表格列逐档与数据逐字一致（主要参数 5 列 / 结果 6 列 + 状态） ----
+    # ---- ④D. 表格列逐档与数据逐字一致（主要参数 13 列 / 结果 6 列 + 状态） ----
     #   ★ 修正轮 1（审 B2）：「效果」列经**展示层归一**（旧口径措辞 ⇒ 现行通过线），
     #     期望值必须用**同一个** `render_matrix.human_view_effect`（§1.4 单一真相源），
     #     ⛔ 校验端不另抄一份归一规则。
-    #   ★ 2026-10-19 对齐轮：检查面由「4 参数 + 5 结果」扩到「**13 参数 + 7 结果（含状态）**」
-    #     —— 逐档逐格与数据文件同行字段**逐字**比对（⛔ 不是放宽，是覆盖面扩大 9 列）。
+    #   ★ 2026-10-19 对齐轮：检查面由「4 参数 + 5 结果」扩到「13 参数 + 7 结果（含状态）」。
+    #     ★ 2026-10-19 阈值 ≤2/≥3 轮：检查面再由「13 列渲染面的 5 个参数列」扩到**全部 13 个
+    #       参数列**（TP / PP / DP / 总卡数 / 算法 / 模式 / 后端 / lr / 训练轮次 / LoRA 目标 /
+    #       数据规模（数据版本） / 步数 / 关键开关）—— `PARAM_KEYS` 由常量现算 ⇒ 列一增，
+    #       检查面自动跟上（⛔ 不写死清单、⛔ 不是放宽）。
     _by_method = (((data.get("meta") or {}).get("criteria_caliber") or {})
                   .get("threshold") or {}).get("by_method") or {}
     mismatch = []

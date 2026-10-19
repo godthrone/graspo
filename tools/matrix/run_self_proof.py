@@ -108,15 +108,22 @@ def _cell_rows(h: str):
 #: ★ 每行**渲染出的数据单元格数**（= 渲染列数）——由渲染器常量现算，⛔ 不写死（病史：曾写死 21）。
 CELLS_PER_ROW = len(_render.RENDERED_COLUMNS)
 
-#: ★★ 条件/结果分区（2026-10-19 分区轮）的**故意做错**夹具：逐条证明三条判据**能失败**。
-#:   ⛔ 只在本文件内存里构造，⛔ 不落仓库、⛔ 不动正式件。
+#: ★★ 条件/结果分区（2026-10-19 分区轮；**阈值 ≤2/≥3 轮**更新）的**故意做错**夹具：
+#:   逐条证明三条判据**能失败**。⛔ 只在本文件内存里构造，⛔ 不落仓库、⛔ 不动正式件。
 PARTITION_FIXTURES = (
-    # ① 交集不为空：把 `lr` **同时**放回表格列（取值逐档相同）⇒ 交集断言必红
-    ("把 lr 同时放回表格列（交集不为空）", {"dup_key": "lr"}, "交集为空"),
-    # ② 并集不覆盖：把 `dp` **从表格列删掉**且**不加进第 3 章** ⇒ 并集断言必红
-    ("把 dp 从表里删掉且不加进条件（并集漏项）", {"drop_col": "dp"}, "并集覆盖"),
+    # ① 交集不为空：把 `lr`（枚举数量 3 ⇒ 按新阈值**应当**在表格列）**同时**塞回第 3 章条件，
+    #    使同一参数两处发布（逐档取值相同）⇒ 交集断言必红
+    ("把 lr 同时塞回条件项（交集不为空）", {"dup_key": "lr",
+                                            "dup_cond": {"key": "lr", "label": "lr",
+                                                         "cond_label": "学习率"}},
+     "交集为空"),
+    # ② 并集不覆盖：把 `tp` **从表格列删掉**且**不加进第 3 章** ⇒ 并集断言必红
+    #    （★ 用 `tp` 而不是 `dp`：TP 正是本轮"回归表格列"的那个参数 ⇒ 对它的漏项最该被抓）
+    ("把 tp 从表里删掉且不加进条件（并集漏项）", {"drop_col": "tp"}, "并集覆盖"),
     # ③ 基数不足：把某表列的取值压成 1 种 ⇒ 基数断言必红
-    ("把表列取值压成 1 种（基数 < 5）", {"flatten_col": "dp"}, "基数规则"),
+    #    ★ 压 `pp`（**未**在第 3 章登记表在案的一个表列）：它的"表格列须 ≥ 3"判据照常生效；
+    #    ⛔ 若压 `tp`，判据会正确地"同一参数不重复计数"（`tp` 已在第 3 章登记表在案）⇒ 不再能证明该判据会失败。
+    ("把表列取值压成 1 种（枚举数量 < 3）", {"flatten_col": "pp"}, "基数规则"),
 )
 
 
@@ -125,9 +132,13 @@ def _fixture_cols(mut, base_cols=None):
     cols = [dict(c) for c in (base_cols if base_cols is not None else _render.MATRIX_COLUMNS)]
     if mut.get("dup_key"):
         k = mut["dup_key"]
-        src = next(c for c in cols if c["key"] == k)          # 条件参数列（into=conditions）
-        cols.insert(next(i for i, c in enumerate(cols) if c["key"] == "dp"),
-                    {"key": src["key"], "label": src["label"], "group": "param"})
+        # ★ 阈值 ≤2/≥3 轮：`lr` 已**不是**条件参数 ⇒ 夹具不再"找现成的条件列"，
+        #   而是把 `lr` **标本式地塞成条件项**（`into="conditions"`）+ **同时**保留表格列。
+        #   两张清单都从传入的 `cols` 现算 ⇒ 判据自己就会算出"同名同值 ⇒ 两处发布"。
+        cols.insert(1, {"key": k, "label": mut.get("dup_cond", {}).get("label", k),
+                        "group": "param", "into": "conditions",
+                        "cond_label": mut.get("dup_cond", {}).get("cond_label", k)})
+        cols.append({"key": k, "label": mut.get("dup_cond", {}).get("label", k), "group": "param"})
     if mut.get("drop_col"):
         cols = [c for c in cols if c["key"] != mut["drop_col"]]
     return tuple(cols)
@@ -650,12 +661,14 @@ def main():
         checks["㉔c 在盘模板 OPD 子项含「教师」＋本条通过线"] = (
             all(_w in _opd_li_cur for _w in ("教师", "高于学生未训练模型", "after − base ≥ +5.0 pp")))
 
-        # ㉕ ★★ 条件/结果**分区**的自证（2026-10-19 分区轮，使用者原话的机核化）：
+        # ㉕ ★★ 条件/结果**分区**的自证（2026-10-19 分区轮；**阈值 ≤2/≥3 轮**更新，
+        #    主席原话「枚举数量小于等于 2 的，放测试条件，剩下的都作为测试结果表的列」）：
         #    a 在生产件上，三条分区判据**必须全过**（并集覆盖 / 交集为空 / 基数规则）；
         #    b 三条判据**各自能失败** —— 把 `verify_matrix.partition_failures`（判据的**唯一实现**）
         #      直接喂"故意做错"的夹具（列常量 / 行数据可注入）：
-        #        ① `lr` 同时放回表格列 ⇒ 交集断言必红（⛔ 不是靠打印文本）；
-        #        ② `dp` 从表里删掉且不加进第 3 章 ⇒ 并集断言必红（使用者点名的「两边都不写」）；
+        #        ① `lr` 同时塞回条件项与表格列 ⇒ 交集断言必红（⛔ 不是靠打印文本）；
+        #        ② `tp` 从表里删掉且不加进第 3 章 ⇒ 并集断言必红（使用者点名的「两边都不写」；
+        #           ★ 用 `tp` 而不是 `dp`：TP 正是本轮"回归表格列"的参数，对它的漏项最该被抓）；
         #        ③ 某表列取值压成 1 种 ⇒ 基数断言必红。
         #    c 逐列**打印取值基数**（H1/H2 的逐列读数留证）。
         _tpl25 = (SM / "template.html").read_text(encoding="utf-8")
@@ -664,22 +677,34 @@ def main():
         checks["㉕a 生产件：分区三条判据全过（并集覆盖／交集为空／基数规则）"] = (not _real_fail)
         if _real_fail:
             print(f"  [debug] ㉕a 分区判据报红: {_real_fail}")
-        #   ★ 渲染列数由常量现算（⛔ 不写死）：**13 列** = 档号 1 + 状态 1 + 参数 5 + 实验数据 5 + 备注 1
-        #     （简报 H1 写"14 或 15 列"，而其自身逐列枚举 = 1+1+5+6+1 = 13 ⇒ 以**逐列枚举**为准，
-        #      口径差已在工位 report.md 点名：多出来的 1 是"若不减去上提的 8 列"的算术残留）。
-        checks["㉕a2 渲染列数 = 13 列（1+1+5+5+1，且参数 5 / 条件 9）"] = (
-            CELLS_PER_ROW == 13
-            and len(_render.TABLE_PARAM_COLUMNS) == 5
+        #   ★ 渲染列数由常量现算（⛔ 不写死）：**21 列** = 档号 1 + 状态 1 + 参数 13 + 实验数据 5
+        #     + 备注 1；条件项 **3**（模型 / 模式 / 后端）—— 与主席的 21 列定稿逐列对齐：
+        #     `档号｜状态｜TP PP DP 总卡数 算法 模式 后端 lr 训练轮次 LoRA 目标 数据规模（数据版本）
+        #      步数 关键开关｜实验数据 5 列｜备注`。
+        checks["㉕a2 渲染列数 = 21 列（1+1+13+5+1，且参数 13 / 条件 3）"] = (
+            CELLS_PER_ROW == 21
+            and len(_render.TABLE_PARAM_COLUMNS) == 13
             and len([c for c in _render.RENDERED_COLUMNS if c["group"] == "data"]) == 5
-            and len(_render.CONDITION_PARAMS) == 9)
+            and len(_render.CONDITION_PARAMS) == 3)
+        # ★ 第 3 章登记表**在案**的行字段（`tp`/`mode`/`backend`）—— 基数判据对它们不重复计数；
+        #   ⛔ 判据实现在 `verify_matrix`（唯一一份），此处只取同源常量用于打印留痕。
+        _cond_fields = set(_render.CHAPTER3_FIELDS)
         _card_table = [(k, _vm.partition_cardinality(data["rows"], k)[0])
                        for k in _render.TABLE_PARAM_KEYS]
         _card_cond = [(k, _vm.partition_cardinality(data["rows"], k)[0])
                       for k, _l in _render.CONDITION_PARAMS]
-        print(f"  [分区·逐列基数] 表格 param 列: {_card_table}")
-        print(f"  [分区·逐列基数] 条件参数: {_card_cond}")
-        checks["㉕a3 逐列基数符合规则（表 ≥ 5／条件 < 5）"] = (
-            all(n >= 5 for _k, n in _card_table) and all(n < 5 for _k, n in _card_cond))
+        print(f"  [分区·逐列基数] 表格 param 列（全部 14 个行字段，含第 3 章在案项）: {_card_table}")
+        print(f"  [分区·逐列基数] 条件参数（行字段，说明式 caliber 条目不计入）: {_card_cond}")
+        print(f"  [分区·逐列基数] 受「表格列须 ≥ 3」约束者: "
+              f"{[(k, n) for k, n in _card_table if k not in _cond_fields]}")
+        print(f"  [分区·逐列基数] 第 3 章登记表在案 ⇒ 不重复计数者 | 未离线表内: "
+              f"{[(k, n) for k, n in _card_table if k in _cond_fields]}")
+        #   ★ 与 `verify_matrix` ④Z-c1 **同判据**：表格 param 列的取值枚举数量 ≥ 3；但
+        #     **第 3 章登记表在案**的行字段（`tp`/`mode`/`backend`）不重复计数（同一参数两处呈现）。
+        #     ⛔ 判据实现在 verify（唯一一份）；此处只是把同一读数再取一遍用于自证留痕。
+        checks["㉕a3 逐列基数符合规则（表 ≥ 3／条件 ≤ 2；登记在案项不重复计数）"] = (
+            all(n >= 3 for _k, n in _card_table if _k not in _cond_fields)
+            and all(n <= 2 for _k, n in _card_cond))
         for _nm, _mut, _want in PARTITION_FIXTURES:
             _fx_cols = _fixture_cols(_mut)
             _fx_rows = _fixture_rows(_mut, data["rows"])
