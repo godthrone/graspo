@@ -385,7 +385,48 @@ def _load_scalars(path):
 
 
 def uniform_map(data):
-    return {it["key"]: it["value"] for it in (data.get("uniform") or {}).get("items", [])}
+    """统一口径取值表：`key → value`。
+
+    ★★ 2026-10-19（「脚本只负责把测试结果填进最后一章测试表」轮）：
+      正式机读件 `docs/capability-matrix.data.json` 已**不再携带 `uniform`**
+      （统一口径块改由人读件模板静态文字承载；数据件只剩逐档参数 + 结果）。
+      ⇒ 本函数改为**先读数据、读不到则回落到 `UNIFORM_FALLBACK`**：
+        · 内部权威件仍带 `uniform` 时，行为与原先**逐字相同**（⛔ 不放宽）；
+        · 正式件（无 `uniform`）时**不再静默产出 `None`** —— 病史实况：本轮删除后实测
+          `torch_dtype: None / seed: None / lora.r: None …`（生成器会把 20+ 个字段写成 None
+          而不报错 ⇒ 隐患是"静默产出错配置"，比崩溃更坏）。
+      ★ 回落表 = 本轮在盘人读件静态块里的**同类 9 项**（逐字取自删除前的数据件 `uniform.items`），
+        仅覆盖生成 yaml 直接消费的键；其余键（`sequence_parallel_size` / `use_vllm` /
+        `save_checkpoint_every_epoch` / `gpu_monitor.interval_sec` 等）仍**只**来自数据件
+        ⇒ 用不带 `uniform` 的正式件生成时会在 `--verify-loadable` / 断言处暴露，⛔ 不伪造。
+    """
+    got = {it["key"]: it["value"] for it in (data.get("uniform") or {}).get("items", [])}
+    return {**UNIFORM_FALLBACK, **got}
+
+
+#: ★ 统一口径的**回落取值**（仅 `uniform_map` 用；见其 docstring 的处置说明）。
+#:   ⛔ 不是新的真相源：数据件/内部权威件里有 `uniform` 时一律以数据为准（`got` 覆盖本表）。
+#:   ★ 覆盖面 = `yaml_of()` **实际消费**的全部键（逐键实测，⛔ 不多抄）：
+#:     上下文/精度/梯度检查点/单卡 batch/梯度累积/每 epoch 存 ckpt/LoRA 三参/奖励类型/
+#:     序列并行尺寸/训练期 vLLM/GPU 巡检间隔 ⇒ 14 键。
+#:   ★ 取值逐字取自删除前的在盘数据件 `uniform.items`（⛔ 未改任何数值）。
+UNIFORM_FALLBACK = {
+    "max_prompt_length": "8192",
+    "torch_dtype": "bfloat16",
+    "gradient_checkpointing": "true",
+    "micro_batch_size": "1",
+    "gradient_accumulation_micro_batches": "1",
+    "save_checkpoint_every_epoch": "false",
+    "lora_r": "128",
+    "lora_alpha": "256",
+    "lora_dropout": "0.05",
+    "reward.kind": "graspo",
+    "sequence_parallel_size": "1",
+    "use_vllm": "false",
+    "gpu_monitor.interval_sec": "2.0",
+    "temperature": "0",
+    "seed": "42",
+}
 
 
 def declared_switch_gaps(cfg_dir, declared_by_tier, tiers) -> list:
