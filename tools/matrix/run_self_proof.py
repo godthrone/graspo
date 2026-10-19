@@ -498,9 +498,10 @@ def main():
         #      本对照让**页面与数据件同时**含该句 ⇒ 唯一被触发的语义断言就是 ④X（页/数据不一致）
         #      ＋ ④Y（① 侵入 ③ 的关键词面），两者都点名打印。
         tpl_txt = (SM / "template.html").read_text(encoding="utf-8")
-        _li_old22 = "<b>能完整跑完</b>：训练正常结束、不中断、不报错：退出码 0、优化器步数达标、检查点完整、没有 NaN/Inf；产物可加载。"
-        _li_new22 = ("<b>能完整跑完</b>：训练正常结束、不中断、不报错：退出码 0、优化器步数达标、"
-                     "检查点完整、没有 NaN/Inf；算法机制真的在起作用（不是空转）；产物可加载。")
+        _li_old22 = ("<b>能完整跑完</b>：训练正常结束、无中断、无报错、退出码 0、优化器步数达标、"
+                     "检查点完整、没有 NaN/Inf。")
+        _li_new22 = ("<b>能完整跑完</b>：训练正常结束、无中断、无报错、退出码 0、优化器步数达标、"
+                     "检查点完整、没有 NaN/Inf；算法机制真的在起作用（不是空转）。")
         checks["㉒ 注入生效（模板 ① 这一条确实被改）"] = (tpl_txt.count(_li_old22) == 1)
         (tmp / "c22.template.html").write_text(tpl_txt.replace(_li_old22, _li_new22, 1), encoding="utf-8")
         rc, out = run(["tools/matrix/render_matrix.py", "--template", str(tmp / "c22.template.html"),
@@ -509,7 +510,7 @@ def main():
         checks["㉒ 重渲染 rc=0"] = (rc == 0)
         _html22 = (tmp / "c22.html").read_text(encoding="utf-8")
         checks["㉒ 注入进的渲染页（防注入静默失效）"] = (
-            rc == 0 and "没有 NaN/Inf；算法机制真的在起作用（不是空转）；产物可加载。" in _html22)
+            rc == 0 and "没有 NaN/Inf；算法机制真的在起作用（不是空转）。" in _html22)
         rc, out = run(["tools/matrix/verify_matrix.py", "--template", str(tmp / "c22.template.html"),
                        "--data", "docs/capability-matrix.data.json", "--html", str(tmp / "c22.html")])
         steps.append(("㉒ ① 重新侵入 ③ 的判据面后 verify（应 FAIL）", rc, out))
@@ -528,11 +529,11 @@ def main():
         #      ⇒ ① 字节同一性以**同源**为准，本对照测的是 ④X 而非"手改检测"）。
         #    ★ 该对照正是"页面对、数据件旧/新不一致"这种漂移的能失败证明（用户点名要防的那一类）。
         tpl23 = (SM / "template.html").read_text(encoding="utf-8")
-        _old23 = ("<b>能完整跑完</b>：训练正常结束、不中断、不报错：退出码 0、优化器步数达标、"
-                  "检查点完整、没有 NaN/Inf；产物可加载。")
+        _old23 = ("<b>能完整跑完</b>：训练正常结束、无中断、无报错、退出码 0、优化器步数达标、"
+                  "检查点完整、没有 NaN/Inf。")
         # ★ 夹具必须**自身仍满足 ④Y**（否则"只红 ④X"不可判）—— 实测：旧措辞「产物能加载或推理。」
         #   里的「推理」会被 ④Y 抓到（1 条命中）⇒ 用一条"字数不同但关键词面干净"的等价旧文本。
-        _stale23 = ("<b>能完整跑完</b>：训练正常结束、不中断、不报错：退出码 0、优化器步数达标、"
+        _stale23 = ("<b>能完整跑完</b>：训练正常结束、无中断、无报错、退出码 0、优化器步数达标、"
                     "检查点完整、没有 NaN/Inf；产物的完整性另行确认。")
         checks["㉓ 漂移夹具生效（旧模板 ① 已改）"] = (tpl23.count(_old23) == 1)
         (tmp / "drift.template.html").write_text(tpl23.replace(_old23, _stale23, 1), encoding="utf-8")
@@ -559,6 +560,53 @@ def main():
             and sum(b.startswith("① 字节同一性") for b in _fail_blocks) == 1
             and sum(b.startswith("④V") for b in _fail_blocks) == 1
             and sum(b.startswith("④X") for b in _fail_blocks) == 1)
+
+        # ㉔ ★★ 阳性对照（2026-10-19 主席令**新增/加强**断言 ④X-c，主席点名要求）：
+        #    **把 OPD 子项改回旧文案**（「学生准确率不下降，判据 学生 after ≥ base（能力回收）」）
+        #    —— 它既不点明教师、也不含**本条**通过线 ⇒ 「④X 判据②子项 A/B 逐条一致（opd）」**必红**。
+        #    ★ 注入面必须是**模板**：判据② 的逐算法小列表 = 第 2 章**静态文字**，数据件的
+        #      `pass_criteria` 只存四条**顶层**文本（⛔ 不含子项）⇒ 只改数据件不会进页面（假绿）。
+        #    ★ 为什么这条对照**不可省**：原 ④X-c 的"拼 blob 再各查一次"实现**抓不住**它 ——
+        #      GRASPO 与 OPD 的 `pass_line_text` 是**同一字面**「after − base ≥ +5.0 pp」
+        #      ⇒ 旧实现下 blob 里仍然命中、断言假绿；只有**逐条绑定**才抓得住。
+        tpl24 = (SM / "template.html").read_text(encoding="utf-8")
+        _opd24_new = ("<li>OPD（蒸馏）：教师在训练数据集上的完全正确率，高于学生未训练模型 10 个百分点，"
+                      "学生训练后，训练数据集完全正确率提升至少 5.0 个百分点，"
+                      "判据 after − base ≥ +5.0 pp</li>")
+        _opd24_old = "<li>OPD（蒸馏）：学生准确率不下降，判据 学生 after ≥ base（能力回收）</li>"
+        checks["㉔ OPD 旧文案夹具生效（模板 OPD 子项确实被改回旧文案）"] = (tpl24.count(_opd24_new) == 1)
+        (tmp / "opdold.template.html").write_text(tpl24.replace(_opd24_new, _opd24_old, 1),
+                                                  encoding="utf-8")
+        rc, out = run(["tools/matrix/render_matrix.py", "--template", str(tmp / "opdold.template.html"),
+                       "--data", "docs/capability-matrix.data.json", "--out", str(tmp / "opdold.html")])
+        steps.append(("㉔ 用「OPD 旧文案」模板渲染（应 rc=0）", rc, out))
+        _html24 = (tmp / "opdold.html").read_text(encoding="utf-8")
+        checks["㉔ 注入进的渲染页（防注入静默失效）"] = (rc == 0 and "能力回收" in _html24)
+        rc, out = run(["tools/matrix/verify_matrix.py", "--template", "tools/matrix/template.html",
+                       "--data", "docs/capability-matrix.data.json", "--html", str(tmp / "opdold.html")])
+        steps.append(("㉔ OPD 子项改回旧文案后 verify（应 FAIL）", rc, out))
+        checks["㉔ OPD 旧文案 ⇒ verify FAIL"] = (rc == 1)
+        _fail_blocks24 = re.findall(r"FAIL \[(.*?)\]", out)
+        checks["㉔ ④X 在 FAIL 名单里"] = any(b.startswith("④X") for b in _fail_blocks24)
+        checks["㉔ FAIL 点名「④X 判据②子项 A/B 逐条一致（opd）」"] = (
+            "④X 判据②子项 A/B 逐条一致（opd）" in out)
+        checks["㉔ FAIL 点名缺「教师」（= 主席点名的『只写结果不写教师』）"] = (
+            "A 组缺口径词 '教师'" in out)
+        checks["㉔ FAIL 点名缺本条通过线（B 组）"] = ("B 组缺本条通过线" in out)
+        checks["㉔ FAIL 点名缺 A 组百分点"] = ("A 组缺百分点" in out)
+        checks["㉔ 不误伤 ④Y（FAIL 名单里无 ④Y）"] = not any(b.startswith("④Y") for b in _fail_blocks24)
+        # ㉔b ★ 同一判据在**自证内部**也能失败（不依赖 verify 的打印文本）
+        _sub24 = re.search(r'<ul class="tight">(.*?)</ul>', _html24, re.S)
+        _opd_li24 = ([x for x in re.findall(r"<li>(.*?)</li>", _sub24.group(1), re.S)
+                      if "OPD" in x] or [""])[0]
+        checks["㉔b 自证内部：OPD 子项同时缺「教师」与**本条**通过线"] = (
+            "教师" not in _opd_li24 and "after − base ≥ +5.0 pp" not in _opd_li24)
+        # ㉔c ★ 反向自证：**当前在盘**模板的 OPD 子项**必须**同时含教师要求与**本条**通过线
+        #     （⛔ 防"夹具锚点失效"或"断言永远红"造成假绿）
+        _m24 = re.search(r"<li>OPD（蒸馏）：(.*?)</li>", tpl24, re.S)
+        _opd_li_cur = _m24.group(1) if _m24 else ""
+        checks["㉔c 在盘模板 OPD 子项含「教师」＋本条通过线"] = (
+            all(_w in _opd_li_cur for _w in ("教师", "高于学生未训练模型", "after − base ≥ +5.0 pp")))
 
         print("=" * 70)
         for name, rc, out in steps:

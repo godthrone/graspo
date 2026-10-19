@@ -32,7 +32,7 @@ import render_matrix  # 同目录；复用唯一渲染通道
 import build_official  # 同目录；★ 结论列契约与归因依据关键词**同源**（⛔ 不复制一份）
 import gen_configs     # 同目录；★ 「已声明的前提」定义**同源**（`load_premises`，⛔ 不复制一份）
 
-VERSION = "verify-matrix/v17-criteria-dedup"
+VERSION = "verify-matrix/v18-chairman-criteria-20261019"
 
 # ---- ③ 结构断言：只允许这四章 ----
 #: ★ 人读件结构（宪法 §17.7 + 使用者诉求）：
@@ -69,7 +69,9 @@ REQUIRED_MARKERS = [
     ("章③测试条件", "测试条件"),
     ("章④测试结果", "测试结果"),
     # 通过标准 = 一个列表；核心 = 有效性
-    ("判据·有效性是核心", "训练之后模型效果变好了"),
+    # ★★ 2026-10-19 主席令：导语逐字改为「原则：训练之后效果变好，才算「可用」。」
+    #    ⇒ 本条目**同族换防**（原关键词「训练之后模型效果变好了」随旧导语下架，新句被删即红）。
+    ("判据·有效性是核心", "训练之后效果变好"),
     ("判别依据① 能完整跑完", "能完整跑完"),
     ("判别依据③ 算法正确性检查", "算法正确性检查通过"),
     ("判别依据④ 能推理", "能推理"),
@@ -78,13 +80,18 @@ REQUIRED_MARKERS = [
     #   0 命中，F1 由工位 report.md 的 grep 证据守住），原关键词在成品页已无对象 ⇒ 断言失效。
     #   ⛔ 不是"放宽"：**该段承载的行为后果一条没丢**，改由导语承载「四条全部通过才算「可用」」
     #   ⇒ 本条目**同族换防**为对这句的断言（⛔ 仍 fail-closed：该句被删即红）。
-    ("判别依据·四条全过规则", "四条全部通过"),
+    # ★★ 2026-10-19 主席令：导语按主席原文改为「原则：训练之后效果变好，才算「可用」。」
+    #    （「四条全部通过」这句话**按主席令不再出现**，其含义由「才算「可用」」＋四条本身承载）。
+    #    ⇒ 本条目**同族换防**为对「才算「可用」」的断言：⛔ 该句被删即红（⛔ 不是放宽、⛔ 不是删断言）。
+    ("判别依据·可用原则（训后变好才算「可用」）", "才算「可用」"),
     # 判据② 逐算法通过线（数值与方向逐字）
     ("判据②·SFT 通过线", "after − base ≥ +10.0 pp"),
     ("判据②·GRASPO 通过线", "after − base ≥ +5.0 pp"),
     ("判据②·CPT 训练 loss", "训练 loss 正常下降"),
     ("判据②·CPT 不劣化", "after ≥ base（不劣化）"),
-    ("判据②·OPD 能力回收", "学生 after ≥ base（能力回收）"),
+    # ★★ 2026-10-19 主席令：OPD 由「不劣化（能力回收）」改为 Δ ≥ +5.0 pp，**并新增教师要求**
+    #    ⇒ 本条目同族换防为对**教师要求**的断言（⛔ 正是主席点名的那一项：只写结果不写教师即红）。
+    ("判据②·OPD 教师要求", "教师在训练数据集上的完全正确率"),
     ("判据②·不做假设检验", "不做假设检验"),
     ("判据标识", "elam-v3-allright-1"),
     # 四态（§17.7「四种状态必须有可区分的文字标签」）
@@ -167,6 +174,17 @@ CRITERIA_INDEPENDENCE = (
 #: ★ 判据② 的逐算法通过线**只允许**取自 `criteria_caliber.threshold.by_method[*].pass_line_text`
 #:   （§1.4 单一真相源；页面第 2 章的 `<ul class="tight">` 小列表必须逐条含它们）。
 CRITERIA_SUBLIST_METHODS = ("sft", "graspo", "cpt", "opd")
+#: ★★ 2026-10-19 主席令新增断言（④X-c）用的**A 组口径词**：判据② 的每个子项必须
+#:   **在本条 `<li>` 内**点明该算法自己的效果口径词（「数据集完全正确率」/ CPT 的 loss 与准确率 /
+#:   OPD 的教师要求）。⛔ 这里只收**主席原文点名的口径词**；**数值一律不在此写死**——
+#:   百分点由 `threshold.by_method[<m>].value` 现算、教师的 10 个百分点由
+#:   `threshold.by_method.opd.teacher` 现解析（§1.4 单一真相源）。
+CRITERIA_SUBLIST_TERMS = {
+    "sft": ("数据集完全正确率",),
+    "graspo": ("数据集完全正确率",),
+    "cpt": ("训练 loss 正常下降", "准确率不下降"),
+    "opd": ("数据集完全正确率", "教师", "高于学生未训练模型"),
+}
 #: 官方（可编辑源头）数据件路径 —— 只有 `--data` **恰好**是它时，`pass_criteria` 才是
 #: 页面同源的真相源；自证夹具（临时路径 / 变体路径）按"路径不同"跳过 ④X-b，
 #: ⛔ 不因此放过固定关键词面（④X-a / ④X-c / ④Y 对夹具同样 fail-closed）。
@@ -454,19 +472,66 @@ def main():
         failures.append(("④X 页面四条 ↔ 数据件 pass_criteria 逐字一致（防两份漂移）",
                          f"不一致 {len(_bad_same_src)} 处（条次/说明）: {_bad_same_src[:6]}"))
 
-    # ④X-c 判据② 的逐算法小列表**必须保留**，且逐条含 `threshold.by_method[*].pass_line_text`
-    #      （数值/方向的**唯一真相源**＝数据件；⛔ 本断言不写死任何阈值字面量）
+    # ④X-c 判据② 的逐算法小列表**必须保留**，且 **A 组（口径词 + 百分点）↔ B 组（pass_line_text）
+    #      **逐条**一致**（数值/方向的**唯一真相源**＝数据件；⛔ 本断言不写死任何阈值字面量）。
+    #   ★★ 2026-10-19 主席令加强（原实现只把 4 条 `<li>` **拼成一个 blob** 再各查一次 ⇒
+    #      "A 组在①条、B 组在④条"这种**条次错位**抓不住）。现改为：
+    #      ① 小列表条数 == `CRITERIA_SUBLIST_METHODS` 条数（⛔ 少一条即红）；
+    #      ② **逐条**（第 k 条 ↔ 第 k 个算法）在**本条 `<li>` 内**同时命中：
+    #         A 组口径词（`CRITERIA_SUBLIST_TERMS`，取自主席原文）＋
+    #         A 组百分点（`delta_pp` 时由 `by_method[m].value` **现算**，⛔ 不写死）＋
+    #         B 组 `by_method[m].pass_line_text`（逐字取自数据件）；
+    #      ③ OPD 行**必须点明教师要求**：`教师` ＋ `高于学生未训练模型` ＋ 其百分点
+    #         （百分点由 `by_method.opd.teacher` **现解析**，⛔ 不另写一份数值）
+    #         ⇒ ⛔ "只写结果不写教师"即红（正是主席点名要防的那一种）。
     _by_method_c = (((data.get("meta") or {}).get("criteria_caliber") or {})
                     .get("threshold") or {}).get("by_method") or {}
     _sub_idx = next((i for i, (_t, _x, _kw) in enumerate(CRITERIA_INDEPENDENCE) if _t == "效果变好（核心判据）"), 1)
     _sub_items = _crit_page[_sub_idx][2] if _sub_idx < len(_crit_page) else []
     _blob = " ｜ ".join(_sub_items)
+    if len(_sub_items) != len(CRITERIA_SUBLIST_METHODS):
+        failures.append(("④X 判据②逐算法小列表条数",
+                         f"期望恰 {len(CRITERIA_SUBLIST_METHODS)} 条 <li>，实际 {len(_sub_items)} 条：{_sub_items}"))
     _miss_lines = [str(_by_method_c.get(_m, {}).get("pass_line_text") or f"<数据件缺 {_m}>")
                    for _m in CRITERIA_SUBLIST_METHODS
                    if str(_by_method_c.get(_m, {}).get("pass_line_text") or "") not in _blob]
     if _miss_lines:
         failures.append(("④X 判据②逐算法通过线（保留 + 与 threshold.by_method 同源）",
                          f"小列表缺通过线 {_miss_lines}；实际小列表 {_sub_items}"))
+    # ★★ 逐条绑定（A 组 ↔ B 组）—— 上述 blob 检查保留（防"整块缺失"），本组防"条次错位"。
+    for _k, _m in enumerate(CRITERIA_SUBLIST_METHODS):
+        _rule = _by_method_c.get(_m) or {}
+        _item = _sub_items[_k] if _k < len(_sub_items) else ""
+        _miss = []
+        _line = str(_rule.get("pass_line_text") or "")
+        if not _line:
+            _miss.append(f"<数据件缺 threshold.by_method.{_m}.pass_line_text>")
+        elif _line not in _item:
+            _miss.append(f"B 组缺本条通过线 {_line!r}")
+        for _w in CRITERIA_SUBLIST_TERMS.get(_m, ()):        # A 组口径词（主席原文点名）
+            if _w not in _item:
+                _miss.append(f"A 组缺口径词 {_w!r}")
+        if str(_rule.get("criterion")) == "delta_pp":        # A 组百分点：由 value 现算，⛔ 不写死
+            try:
+                _want_pp = f"{float(_rule.get('value')):.1f} 个百分点"
+            except (TypeError, ValueError):
+                _want_pp = ""
+            if not _want_pp:
+                _miss.append(f"<数据件 by_method.{_m}.value 不是数 ⇒ 百分点无法现算>")
+            elif _want_pp not in _item:
+                _miss.append(f"A 组缺百分点 {_want_pp!r}（应与 by_method.{_m}.value 同源）")
+        if _m == "opd":                                      # ★ 教师要求：⛔ 只写结果不写教师即红
+            _tpp = re.search(r"(\d+(?:\.\d+)?)\s*个百分点", str(_rule.get("teacher") or ""))
+            if not _tpp:
+                _miss.append("<数据件缺 threshold.by_method.opd.teacher 的百分点要求>")
+            else:
+                _tv = float(_tpp.group(1))
+                _forms = {f"{_tv:g} 个百分点", f"{_tv:.1f} 个百分点"}
+                if not any(_f in _item for _f in _forms):
+                    _miss.append(f"A 组缺教师要求百分点 {sorted(_forms)}")
+        if _miss:
+            failures.append((f"④X 判据②子项 A/B 逐条一致（{_m}）",
+                             "；".join(_miss) + f"；本条实际 {_item!r}"))
 
     # ④Y 四条互不重叠：逐条列"本条不得出现的重叠关键词"，任一命中即红
     _crit_overlap = []

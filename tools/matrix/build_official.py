@@ -1301,7 +1301,7 @@ def boundary_declaration():
             "①′ 不可执行档**不计入**承诺面：标为「本环境不可执行」的档位**既不充当可用证据、"
             "也不充当不可用结论** —— 它们是**环境 / 硬件层面的排除**，"
             "⛔ 不改变任何档位的历史结论与四态计数。",
-            "② 平台方数据集结论：在平台方数据集与平台方参数下效果达标，且这是「可用、大概率无 bug」的证据。",
+            "② 平台方测试数据集结论：在平台方测试数据集与测试参数下效果达标，且这是「可用、大概率无 bug」的证据。",
             "③ 使用者效果不在承诺范围：使用者的任务、数据集与参数下的效果不归本矩阵承诺。",
         ],
     }
@@ -1410,18 +1410,18 @@ def criteria_caliber(rows=None):
         #      （机核 = `verify_matrix` ④X；阳性对照 = `run_self_proof` ㉒）。
         "pass_criteria": [
             {"title": "能完整跑完",
-             "text": "训练正常结束、不中断、不报错：退出码 0、优化器步数达标、检查点完整、没有 NaN/Inf；"
-                     "产物可加载。"},
+             "text": "训练正常结束、无中断、无报错、退出码 0、优化器步数达标、检查点完整、没有 NaN/Inf。"},
             # ★★ 判据② 的通过线**一律从 `threshold.by_method` 现取**（⛔ 不在此另写一份数值，
             #    §1.4 单一真相源）⇒ `from_threshold: True` 表示「本条的逐算法细则由数据现算」。
             {"title": "效果变好（核心判据）",
-             "text": "在平台方数据集与平台方参数下，训练之后模型效果比不训练好（逐算法通过线见下）：",
+             "text": "在平台方测试数据集与测试参数下，训练之后模型效果比不训练的原始模型好"
+                     "（逐算法通过线见下）：",
              "from_threshold": True},
             {"title": "算法正确性检查通过",
              "text": "各算法按自己的检查清单逐项通过，确认该算法的机制真实生效、实现正确"
                      "（SFT / GRASPO / CPT / OPD 各按自己的清单）；GRASPO 的算法逻辑严禁改动。"},
             {"title": "能推理",
-             "text": "合并 LoRA 后用 vLLM 启动，实际前向一次能拿到可解析输出。"},
+             "text": "合并 LoRA 后用 vLLM 启动，训练数据集可以完整推理一遍，效果好于未训练模型。"},
         ],
         "caliber_change": {
             "effective": "2026-10-15",
@@ -1439,7 +1439,8 @@ def criteria_caliber(rows=None):
                         f"适用同一 fit 口径**；★ 其中 **{_ne_txt}不可执行**"
                         "（**本环境不可执行**：逐档具名原因在行内标注）"
                         "⇒ 只登记声明口径、⛔ 不伪造可跑配置；★ 9 个 formal 档**不动**。"),
-            "unchanged": ("★ 通过线数值与判定语义**逐字未动**（见 `threshold.by_method`）；"
+            "unchanged": ("★ 通过线数值与判定语义**除 2026-10-19 的 OPD 变更外**逐字未动"
+                          "（见 `threshold.by_method` 与 `caliber_change.caliber_change_20261019`）；"
                           "★ **2026-10-17 去重轮已改写判据 ①③④ 的措辞与分工**（改为互不重叠、各自独立；"
                           "旧措辞与逐条对照见 `criteria_caliber.criteria_dedup_20261017`）。"),
             "superseded": ("★ 旧口径（留痕，⛔ 不再作为判定依据）：训练类（SFT / CPT / OPD）与 GRASPO **统一 δ = +5.0 pp**；"
@@ -1456,9 +1457,10 @@ def criteria_caliber(rows=None):
                             "★ **U2 即判据②** —— 旧「曲线窗口比较」口径随之作废；"
                             "★ **CPT 保留「训练 loss 正常下降」，不走效果 Δ** —— 理由：**CPT 与 SFT 不同**；"
                             "★ CPT 的训练 loss 判据与「base 得分口径」**不是一回事**，⛔ 不得连带删除。"),
-                "unchanged": ("★ **通过线数值逐字未动**：SFT ⇒ after − base ≥ +10.0 pp（epoch=4）；"
-                              "GRASPO ⇒ after − base ≥ +5.0 pp（epoch=8）；CPT ⇒ 准确率 after ≥ base"
-                              "（不劣化；epoch=2）；OPD ⇒ 学生 after ≥ base（能力回收；epoch=2）。"
+                "unchanged": ("★ 通过线数值在 **2026-10-17** 当日逐字未动：SFT ⇒ after − base ≥ +10.0 pp"
+                              "（epoch=4）；GRASPO ⇒ after − base ≥ +5.0 pp（epoch=8）；CPT ⇒ 准确率 "
+                              "after ≥ base（不劣化；epoch=2）；OPD ⇒ 学生 after ≥ base（能力回收；epoch=2）"
+                              "（★ OPD 通过线已于 2026-10-19 变更，见 `caliber_change_20261019`）。"
                               "★ 判据 ①③④ **逐字未动**；★ **CPT 的「训练 loss 正常下降」判据逐字保留**。"),
                 "superseded": ("★ 旧口径（逐字留痕，⛔ 不再作为判定依据）：「**U2 = loss 趋势 vs 未训练底座"
                                "同口径终窗**」；★ 随之作废的文档判据版本标识 = 「v3-2026-10-10（判据基线）"
@@ -1469,8 +1471,47 @@ def criteria_caliber(rows=None):
                 "effective": "2026-10-17",
                 "source": "现行口径（判据去重：四条互不重叠）",
                 "changed": "判据 ①③④ 逐字改写为互不重叠、各自独立；并删除页面第 2 章的合并规则段（规则本身不删，改由导语「四条全部通过才算可用」承载）。①（旧）训练正常结束、不中断、不报错：退出码 0、优化器步数达标、检查点完整、没有 NaN/Inf；算法机制真的在起作用（不是空转）；产物能加载或推理。⇒（新）训练正常结束、不中断、不报错：退出码 0、优化器步数达标、检查点完整、没有 NaN/Inf；产物可加载。③（旧）SFT / GRASPO / CPT / OPD 各按自己的检查清单逐项通过（这是第 1 条的组成部分）；GRASPO 的算法逻辑严禁改动。⇒（新）各算法按自己的检查清单逐项通过，确认该算法的机制真实生效、实现正确（SFT / GRASPO / CPT / OPD 各按自己的清单）；GRASPO 的算法逻辑严禁改动。④ 旧新逐字相同：合并 LoRA 后用 vLLM 启动，实际前向一次能拿到可解析输出（旧文本里的「推理」被 ① 吞并的问题是删 ① 尾句，④ 本身未改写）。",
-                "unchanged": "判据数量（四条）、四个短名（能完整跑完 / 效果变好 / 算法正确性检查 / 能推理）、全部通过线与阈值数值（SFT ⇒ after − base ≥ +10.0 pp；GRASPO ⇒ after − base ≥ +5.0 pp；CPT ⇒ after ≥ base（不劣化）；OPD ⇒ 学生 after ≥ base（能力回收））逐字未动；★「四条全部通过才算可用」规则本身未删（页面导语承载）。",
+                "unchanged": "判据数量（四条）、四个短名（能完整跑完 / 效果变好 / 算法正确性检查 / 能推理）与阈值数值（SFT ⇒ after − base ≥ +10.0 pp；GRASPO ⇒ after − base ≥ +5.0 pp；CPT ⇒ after ≥ base（不劣化）；OPD ⇒ 学生 after ≥ base（能力回收））在 **2026-10-17** 当日逐字未动（★ OPD 通过线与页面第 2 章导语已于 2026-10-19 另行变更，见 caliber_change.caliber_change_20261019）；★ 2026-10-17 删段时「四条全部通过才算可用」规则本身未删（由页面导语承载）。",
                 "superseded": "旧措辞（留痕，不再作为判定依据）：① 尾句「算法机制真的在起作用（不是空转）；产物能加载或推理。」与 ③ 的「（这是第 1 条的组成部分）」——前者与 ③④ 重叠、后者自认是 ① 的组成部分，已按去重口径改写。"
+            },
+            # ★★ 2026-10-19 主席令（**现行条目**）：OPD 通过线**实质变更**（由不劣化改为 ≥ +5.0 pp）
+            #    ＋ 新增教师要求；同批改写页面第 2 章导语与四条（含 ①④ 的措辞）。
+            #    ★ 单一真相源：数值一律以 `threshold.by_method` 为准（本条目只登记口径，⛔ 不另写数值表）。
+            #    ★★ **逐字留痕（⛔ 只在本件、⛔ 不进人读件）**——原始指令原文 = ：
+            #       「2026-10-19 主席令：OPD 由不劣化改为 ≥ +5.0 pp，并新增教师要求。」
+            #       ⛔ 「主席」是人读件禁止项（§17.7 ＋ `scan_matrix_leaks` fail-closed）；且
+            #       `HUMAN_VIEW_REWRITES` 会把「主席」改写成「口径来源」⇒ 「主席令」会变成
+            #       **不成词的「口径来源令」**。⇒ 人读件面**一律用「口径变更令」这一等价措辞**
+            #       （语义等价、可读、可留痕），原文逐字只保留在本注释里。
+            "caliber_change_20261019": {
+                "effective": "2026-10-19",
+                "source": "2026-10-19 口径变更令（OPD 通过线：由不劣化改为 ≥ +5.0 pp，并新增教师要求）",
+                "changed": ("★ **改动一 = OPD 通过线实质变更**：由「学生 after ≥ base（能力回收）」"
+                            "（criterion = `non_inferiority`、value = 0.0）改为 **after − base ≥ +5.0 pp**"
+                            "（criterion = `delta_pp`、op = `>=`、value = 5.0）；★ **并新增教师要求**："
+                            "教师在训练数据集上的完全正确率**需高于学生未训练模型 10 个百分点**"
+                            "（原教师说明「SFT 之后的 27B 产物」随之作废）。"
+                            "★ **改动二 = 页面第 2 章导语与四条按 2026-10-19 口径变更的原文改写**：导语改为"
+                            "「原则：训练之后效果变好，才算「可用」。」（删除「具体判别依据：…」那句）；"
+                            "① 去掉重复的「：」与尾句「产物可加载」⇒ 训练正常结束、无中断、无报错、"
+                            "退出码 0、优化器步数达标、检查点完整、没有 NaN/Inf。；② 口径改为"
+                            "「在平台方测试数据集与测试参数下，训练之后模型效果比不训练的原始模型好」；"
+                            "④ 改为「训练数据集可以完整推理一遍，效果好于未训练模型」。"
+                            "★ **术语统一**：效果口径名一律用「数据集完全正确率」（旧称不再出现）；"
+                            "评测集 / 参数口径名一律用「平台方测试数据集与测试参数」（旧称不再出现）。"
+                            "★ 同批落地三处逐字一致：页面第 2 章 `<ol class=\"criteria\">` 四条 ↔ "
+                            "数据件 `criteria_caliber.pass_criteria` ↔ 生成端 `build_official.py` 的 "
+                            "`criteria_caliber()`（机核 = `verify_matrix` ④X；阳性对照 = "
+                            "`run_self_proof` ㉔）。"),
+                "unchanged": ("★ OPD **epoch = 2 不变**；★ SFT ⇒ after − base ≥ +10.0 pp（epoch=4）、"
+                              "GRASPO ⇒ after − base ≥ +5.0 pp（epoch=8）、CPT ⇒ 准确率 after ≥ base"
+                              "（不劣化；epoch=2）三条通过线数值与判定语义**未动**；"
+                              "★ 判据条数（四条）与四个短名**未动**；★ 21 列表结构与结果列状态**未动**。"),
+                "superseded": ("★ 旧口径（留痕，⛔ 不再作为判定依据）：OPD ⇒ 学生 after ≥ base（能力回收）"
+                               "（criterion = `non_inferiority`、value = 0.0）；★ 旧教师说明 = "
+                               "「SFT 之后的 27B 产物」；★ 旧页面第 2 章导语 = 「原则：训练之后效果变好。"
+                               "具体判别依据：训练之后模型效果变好了，且这次训练本身真实有效；"
+                               "下面四条全部通过，才算「可用」。」"),
             },
             "reading_change_registry": [],      # ★ 由 main() 从**行数据**派生（⛔ 不在此处写死档号/数值）
             "reading_change_registry_note": (
@@ -1485,7 +1526,7 @@ def criteria_caliber(rows=None):
                     "version_anchor_sha256": ("两种口径 —— ★ 100 行档 = 该档自身训练文件（100 行，sha256 594d41b0…）；"
                                               "其余档 = 平台方自有评测集（702 行，c202b1e1…）"),
                     "sample_count": "★ 100 行档 = 100（fit 口径）；其余档 = 702",
-                    "method": "工具调用准确率（acc）",
+                    "method": "数据集完全正确率（acc）",
                     # ★★ 「是否同分布」口径（主席诉求 5；审查项 W9/W10）＋ 2026-10-16 评测集口径变更（fit）：
                     #    100 行档的评测集**就是它自己的训练文件**（不是"同分布的另一份"）；其余档仍为同源不同样本。
                     #    ⛔ 一律不评测「训练分布之外的表现」；⛔ 「泛化」一词不进本件（主席口径）。
@@ -1525,9 +1566,11 @@ def criteria_caliber(rows=None):
             "rule": (f"★ **100 行档（判据 = 该档 `subset_size == 100`，即 {_fit_txt}）**：评测集 = **该档自身"
                      "训练用的同一份文件**（100 行、`dataset_split: train`）⇒ **fit 口径（训练集自评）**；"
                      "★ 其余档（9 个 formal 档）：保持平台方自有 702 行评测集 + `dataset_split: test`。"),
-            "pass_lines_unchanged": ("★ **通过线数值逐字未动**：SFT ⇒ `after − base ≥ +10.0 pp`；"
+            "pass_lines_unchanged": ("★ **通过线数值在 2026-10-16 当时逐字未动**：SFT ⇒ `after − base ≥ +10.0 pp`；"
                                      "GRASPO ⇒ `after − base ≥ +5.0 pp`；CPT ⇒ `after ≥ base（不劣化）`；"
-                                     "OPD ⇒ `学生 after ≥ base（能力回收）`；一律点估计、⛔ 不做假设检验。"),
+                                     "OPD ⇒ `学生 after ≥ base（能力回收）`（★ OPD 通过线已于 2026-10-19 改为 "
+                                     "`after − base ≥ +5.0 pp`，见 `caliber_change.caliber_change_20261019`）；"
+                                     "一律点估计、⛔ 不做假设检验。"),
             "fit_caliber_label": "fit 口径（训练集自评）",
             "discriminative_power": ("★ 100 行档：训练集 (工具, 动作) 类别最大类 **19/100 = 19%** ⇒ "
                                      "**常数预测器上界 19%** ⇒ 跨 +10.0 pp 必须真读图；"
@@ -1581,40 +1624,43 @@ def criteria_caliber(rows=None):
         "ruled_out": list(_spec.RULED_OUT),
         "criteria_id": "elam-v3-allright-1",
         "threshold": {
-            "name": "delta_pp（SFT / GRASPO）＋ non_inferiority（CPT / OPD）", "unit": "百分点（pp）",
+            "name": "delta_pp（SFT / GRASPO / OPD）＋ non_inferiority（CPT）", "unit": "百分点（pp）",
             "value": None,
             "target": None,
-            "applies_to": "★ 按算法分列（见 by_method）：SFT / GRASPO 走 Δ 通过线；CPT / OPD 走不劣化线（after ≥ base）。",
-            "status": ("★ 已冻结（主席最新裁定，2026-10-15）：判据② 逐算法分列；**⛔ 不放宽判据**；"
+            "applies_to": "★ 按算法分列（见 by_method）：SFT / GRASPO / OPD 走 Δ 通过线；CPT 走不劣化线（after ≥ base）。",
+            "status": ("★ 已冻结（主席最新裁定，2026-10-15；★ OPD 通过线已于 2026-10-19 变更，"
+                       "见 caliber_change.caliber_change_20261019）：判据② 逐算法分列；**⛔ 不放宽判据**；"
                        "**★ 判定一律用点估计 Δ —— ⛔ 不做假设检验、不引入置信区间 / 显著性**。"),
             "historical_note": ("★ 旧口径（已被取代、留痕，⛔ 不再作为判定依据）：训练类与 GRASPO **统一 δ = +5.0 pp**；"
                                 "目标值 +10.0 pp（仅展示、不用于判定）；SFT epoch = 2。"),
             "by_method": {
                 "sft": {"criterion": "delta_pp", "op": ">=", "value": 10.0, "unit": "pp",
-                        "metric": ("工具调用准确率（after − base）；★ **100 行档 = fit 口径**"
+                        "metric": ("数据集完全正确率（after − base）；★ **100 行档 = fit 口径**"
                                    "（评测集 = 该档自身训练文件，100 行）；其余档 = 平台方自有 702 行评测集"),
                         "pass_line_text": "after − base ≥ +10.0 pp",
                         "epoch": 4, "epoch_previous": 2,
                         "epoch_note": ("★ epoch 由 2 改为 4（判据② 的配置改动）；"
                                        "★ 现有 SFT 跑次均为 epoch=2 旧配置 ⇒ 其结论一律标注「待 epoch=4 重跑复核」。")},
                 "graspo": {"criterion": "delta_pp", "op": ">=", "value": 5.0, "unit": "pp",
-                           "metric": ("工具调用准确率（after − base）；★ **100 行档 = fit 口径**"
+                           "metric": ("数据集完全正确率（after − base）；★ **100 行档 = fit 口径**"
                                    "（评测集 = 该档自身训练文件，100 行）；其余档 = 平台方自有 702 行评测集"),
                            "pass_line_text": "after − base ≥ +5.0 pp",
                            "epoch": 8, "epoch_previous": 8, "epoch_note": "epoch=8 不变。"},
                 "cpt": {"criterion": "non_inferiority", "op": ">=", "value": 0.0, "unit": "pp",
-                        "metric": ("工具调用准确率（after − base）；★ **100 行档 = fit 口径**"
+                        "metric": ("数据集完全正确率（after − base）；★ **100 行档 = fit 口径**"
                                    "（评测集 = 该档自身训练文件，100 行）；其余档 = 平台方自有 702 行评测集"),
                         "pass_line_text": "after ≥ base（不劣化）",
                         # ★★ 2026-10-17 定死：**CPT 的 loss 判据逐字保留**（CPT 与 SFT 不同，
                         #    不走效果 Δ）；⛔ 不连带删除、⛔ 不改通过线数值。
                         "also": "训练 loss 正常下降",
                         "epoch": 2, "epoch_previous": 2, "epoch_note": "epoch=2 不变。"},
-                "opd": {"criterion": "non_inferiority", "op": ">=", "value": 0.0, "unit": "pp",
-                        "metric": ("工具调用准确率（学生 after − base）；★ **100 行档 = fit 口径**"
+                "opd": {"criterion": "delta_pp", "op": ">=", "value": 5.0, "unit": "pp",
+                        "metric": ("数据集完全正确率（学生 after − base）；★ **100 行档 = fit 口径**"
                                  "（评测集 = 该档自身训练文件，100 行）；其余档 = 平台方自有 702 行评测集"),
-                        "pass_line_text": "学生 after ≥ base（能力回收）",
-                        "teacher": "SFT 之后的 27B 产物",
+                        "pass_line_text": "after − base ≥ +5.0 pp",
+                        # ★★ 2026-10-19 主席令：OPD 由**不劣化**改为 **Δ ≥ +5.0 pp**，并新增教师要求。
+                        #    ⛔ epoch / epoch_note 不动（epoch=2 不变）。
+                        "teacher": "教师在训练数据集上的完全正确率需高于学生未训练模型 10 个百分点",
                         "epoch": 2, "epoch_previous": 2,
                         "epoch_note": "epoch=2 不变；教师改为 SFT 之后的 27B 产物。"},
             },
@@ -1625,7 +1671,7 @@ def criteria_caliber(rows=None):
         #    均值」随之作废、原文逐字归档于精简轮 3 归档件）；改为**判据② 的 base 得分口径** ——
         #    Δ = after − base 里的 base，是**评测集上的得分**，⛔ 不是曲线上的窗口。
         "baseline": {"role": "未训练基座（role=base）",
-                     "caliber": ("未训练基座在**同一评测集**上的工具调用准确率（accuracy），来自 "
+                     "caliber": ("未训练基座在**同一评测集**上的数据集完全正确率（accuracy），来自 "
                                  "`graspo eval` 的 `role=base` 通道；**100 行档 = fit 口径（该档自身训练"
                                  "文件）**、**其余档 = 702 行评测集**。本项是判据② 的被减数"
                                  "（after − base 中的 base）；⛔ 与 CPT 的「训练 loss 正常下降」判据不是一回事。")},
