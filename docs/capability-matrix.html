@@ -143,60 +143,47 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <!-- ========================= 3. 测试条件 ========================= -->
 <section class="part" id="s3">
 <h2>3. 测试条件</h2>
-<p>本章给的是「我有多少卡、多大显存、多大的模型、用哪个后端、数据与评测怎么算」这类<b>选型条件</b>与<b>口径说明</b>——它们<b>不随档位变化</b>（或只分两档），所以集中列在这里、不必逐档重复；<b>逐档会变的参数</b>（并行方案 TP/PP/DP、算法、学习率、训练轮次、LoRA 目标、数据规模、步数、关键开关）与<b>速度/显存等实测读数</b>见第 4 章「测试结果」表。</p>
-<p>本章只分两部分：<b>条件说明</b>（数据集说明 / 模型说明 / LoRA 说明 / 训练集群）与<b>统一超参</b>。</p>
-<p class="note" style="margin-top:10px;"><b>条件说明与第 4 章「测试结果」表是一套<b>划分</b>：</b>两处的<b>并集覆盖全部参数</b>（每个参数要么在本章说清、要么在表内逐档给值，<b>不会两边都不写</b>），两处的<b>交集为空</b>（同一个参数只出现在一处、<b>不在两处重复发布</b>）。<br>
-分区规则：<b>取值枚举数量不超过 2 的参数</b> ⇒ 归本章（按值域说明，省表格列）；<b>取值枚举数量 ≥ 3（不同档位之间会变）的参数</b> ⇒ 归第 4 章表格列（便于逐档比对差异）。</p>
 <h3>条件说明</h3>
 <h4>数据集说明</h4>
 <ul class="tight">
-<li>训练数据：平台方自有、不公开的多模态训练集（图像 + 文本）。训练子集按档切分，逐档命名形如 <code>subsets-v2/T###.jsonl</code>；训练数据在各档之间的名称与条数见矩阵表「数据规模（数据版本）」列（内含<b>训练数据版本锚点</b>）。</li>
-<li>每档条目数：100 条 × 45 档、48 条 × 2 档、96 条 × 2 档、192 条 × 2 档、72 条 × 1 档、144 条 × 1 档、288 条 × 1 档；逐档并发切分（每卡条数）同见上列。</li>
-<li>评测口径 —— <b>评测集</b>：平台方自有 / 不公开。100 行档用该档自身训练用的同一份 100 行文件（fit 口径：拿训练数据自测，只说明训练生效，不代表它在新数据上的表现）；其余档用平台方自有 702 行评测集（与各档训练数据同源、样本 id 不重叠、<code>dataset_split: test</code>）。</li>
-<li><b>样本量</b>：100 行档 = 100（fit 口径）；其余档 = 702。数据<b>版本锚点</b>：两种口径 —— 100 行档 = 该档自身训练文件（100 行，sha256 <code>594d41b0…</code>）；其余档 = 平台方自有评测集（702 行，sha256 <code>c202b1e1…</code>）。</li>
-<li><b>评测方法</b>：数据集完全正确率（acc）；温度 <code>0</code>；随机种子 <code>42</code>；一律用点估计 Δ 判定，不做假设检验。判据标识 <code>elam-v3-allright-1</code>；达标阈值见第 2 节「测试方法」。</li>
+<li>训练数据：平台方自有、不公开的多模态训练集（图像 + 文本）。</li>
+<li>评测集与训练集相同。本测试不关注泛化性能，只关注训练框架本身的训练效果和正确性。</li>
 </ul>
 <h4>模型说明</h4>
 <ul class="tight">
-<li><b>基础模型：</b>两个基础模型，一律写裸 id。<code>Qwen3.5-9B</code>：36 档（T001–T006、T010–T021、T028–T039、T046–T051）。<code>Qwen3.8-27B</code>：18 档（T007–T009、T022–T027、T040–T045、T052–T054），其中 15 档可执行（T007–T009、T022–T027、T040–T045）、3 档登记为 <code>applicable:false</code>（T052–T054，无配置）。</li>
-<li>OPD 教师：<code>Qwen3.8-27B</code>。仅对 OPD 生效，实际落入 6 档（T046–T051）；这 6 档是 <b>9B 学生 + 27B 教师</b>（学生 = <code>Qwen3.5-9B</code>）。其余算法档一律不带教师。</li>
-<li><code>native</code> 后端各档按 1 张卡配置；<code>ms-swift</code> 后端不按卡拆分、显式给出 <code>nnodes</code> 与 <code>nproc_per_node</code>；两个后端的逐档并行拆分见矩阵表「TP ／ PP ／ DP ／ 总卡数」列。</li>
+<li>基础模型：<code>Qwen3.5-9B</code>、<code>Qwen3.8-27B</code>。</li>
+<li>OPD 教师：<code>Qwen3.8-27B</code>。</li>
 </ul>
 <h4>LoRA 说明</h4>
 <ul class="tight">
-<li><b>可训练参数（模式）：</b>LoRA（36 档：T001–T003、T007–T015、T022–T033、T040–T048、T052–T054）／ 全参（18 档：T004–T006、T016–T021、T034–T039、T049–T051）；同一档位在同屏表格「模式」列也能看到该档取值。</li>
-<li>生效层按后端分列，两套不同，<b>不可互相替代</b>。<code>native</code>：配置里 <code>lora.target_modules</code> 声明的是两个 preset 名 —— <code>language_all_linear</code>、<code>vision_common</code>（preset 名不是层名、不是模块名单），由本仓解析器按模型真实模块名逐 pattern 匹配后展开为三组：<code>full_attn</code> 的 <code>q_proj</code>／<code>k_proj</code>／<code>v_proj</code>／<code>o_proj</code>（4 条）、<code>linear_attn</code> 的 <code>q_proj</code>／<code>k_proj</code>／<code>v_proj</code>／<code>in_proj_z</code>／<code>out_proj</code>（5 条）、<code>mlp</code> 的 <code>gate_proj</code>／<code>up_proj</code>／<code>down_proj</code>（3 条）⇒ <b>语言 12 条</b>；视觉 <b>110 条</b> —— <code>merger.linear_fc1</code>／<code>merger.linear_fc2</code>（2 条）＋ <code>blocks.0–26</code> 逐层 <code>attn.qkv</code>／<code>attn.proj</code>／<code>mlp.linear_fc1</code>／<code>mlp.linear_fc2</code>（27 层 × 4 条 = 108 条）。合计 <b>122 条签名条目</b>，覆盖 <b>358 个实例</b>，可训练参数 <b>409,923,584</b>；该展开清单与计数在 9B 档上实测。</li>
-<li><code>ms-swift</code>：配置里 <code>lora.target_modules</code> 是一条真实 HF 模块名正则（覆盖 <code>language_model</code> 侧与视觉侧 blocks / merger 的 Linear），本仓按官方 <code>--target_regex</code> 下发；<b>不展开成逐层名单</b>（仓内无逐层名单，只有实测计数）。实测同样覆盖 <b>358 个实例</b>（语言 <b>248</b> + 视觉 <b>110</b>），均为 <code>nn.Linear</code>，可训练参数 <b>410,120,192</b>。</li>
-<li><b>两后端不等价：</b>实例数同为 358，但命中的模块集合不同（<code>native</code> 落在内部键名 <code>token_mixer.*</code>，<code>ms-swift</code> 落在 <code>language_model.layers.N.linear_attn.*</code> ／ <code>full_attn.*</code>）⇒ <b>跨后端的效果 / 性能读数不直接可比</b>，跨后端比较必须注明。</li>
-<li>逐层清单与计数在 9B 档上实测；<b>27B 档的生效层未核实</b>——仓内没有 27B 的逐层清单或等价计数，<b>不得据此推定为与 9B 相同</b>。</li>
-<li>全参 18 档（T004–T006、T016–T021、T034–T039、T049–T051）不适用本段：其配置无 <code>lora</code> 段，可训练范围由后端框架决定。</li>
-<li>LoRA 参数（仅 LoRA 的 33 档适用）：
+<li><code>native</code>：配置里 <code>lora.target_modules</code> 声明的是两个 preset 名 —— <code>language_all_linear</code>、<code>vision_common</code>（preset 名不是层名、不是模块名单），由本仓解析器按<b>规范目标名</b>逐 pattern 匹配（glob，<code>*</code> 可跨 <code>.</code>）后展开为三组：<code>full_attn</code> 的 <code>q_proj</code>／<code>k_proj</code>／<code>v_proj</code>／<code>o_proj</code>、<code>linear_attn</code> 的 <code>q_proj</code>／<code>k_proj</code>／<code>v_proj</code>／<code>in_proj_z</code>／<code>out_proj</code>、<code>mlp</code> 的 <code>gate_proj</code>／<code>up_proj</code>／<code>down_proj</code>；视觉 —— <code>merger.linear_fc1</code>／<code>merger.linear_fc2</code> ＋ <code>blocks.attn.qkv</code>／<code>attn.proj</code>／<code>mlp.linear_fc1</code>／<code>mlp.linear_fc2</code>。</li>
+<li><code>ms-swift</code>：配置里 <code>lora.target_modules</code> 是一条真实 HF 模块名正则（覆盖 <code>language_model</code> 侧与视觉侧 blocks／merger 的 Linear），本仓按官方 <code>--target_regex</code> 下发；不展开成逐层名单（仓内无逐层名单，只有实测计数）。</li>
+<li><b>两后端不等价：</b>命中的模块集合不同（<code>native</code> 落在内部键名 <code>token_mixer.*</code>，<code>ms-swift</code> 落在 <code>language_model.layers.N.linear_attn.*</code>／<code>self_attn.*</code>）⇒ <b>跨后端的效果／性能读数不直接可比</b>，跨后端比较必须注明。</li>
+<li><b><code>Qwen3.8-27B</code> 的生效层（已核实）：</b>与 9B 同族，但为 <b>64 层</b>（<code>linear_attn</code> 48 层 ＋ <code>full_attn</code> 16 层；9B 为 32 层 ＝ 24 ＋ 8），视觉侧深度同为 <b>27</b>。<b>两条后端都命中注意力层</b>，不存在「注意力层整类不命中」：preset 的 pattern 形如 <code>language.*.q_proj</code>（<code>*</code> 可跨 <code>.</code>），匹配对象是<b>规范目标名</b>（<code>language.full_attn.*</code>／<code>language.linear_attn.*</code>），由模型族与视觉深度生成，与真实模块命名无关；<code>full_attn</code> 只是本仓的规范目标名，两个基础模型在 HF 侧的真实模块名都是 <code>self_attn</code>。按层展开：<code>native</code> 的 27B ＝ 语言 <b>496</b> 个实例（<code>full_attn</code> 4×16 ＋ <code>linear_attn</code> 5×48 ＋ <code>mlp</code> 3×64）＋ 视觉 <b>110</b>；<code>ms-swift</code> 正则实测覆盖 27B 语言侧 <b>496</b> 条真实模块（<code>self_attn</code> 的 <code>q_proj</code>／<code>k_proj</code>／<code>v_proj</code>／<code>o_proj</code>，<code>linear_attn</code> 的 <code>in_proj_qkv</code>／<code>in_proj_z</code>／<code>in_proj_a</code>／<code>in_proj_b</code>／<code>out_proj</code>，<code>mlp</code> 的 <code>gate_proj</code>／<code>up_proj</code>／<code>down_proj</code>）＋ 视觉 <b>110</b>。两者实例数相同，但<b>真实模块集合不同</b>：<code>ms-swift</code> 多覆盖 <code>in_proj_a</code>／<code>in_proj_b</code>（各 48 条），<code>native</code> 的 <code>linear_attn</code> <code>q_proj</code>／<code>k_proj</code>／<code>v_proj</code> 三条落在同一个真实模块 <code>in_proj_qkv</code> 上 ⇒ 可训练参数量不同。视觉侧逐条清单与 9B 相同（同一代码路径 ＋ 同一深度 27；9B 侧有实测清单，27B 侧为同路径推断）；27B 的可训练参数量未核实。</li>
+<li>LoRA 参数（仅 LoRA 适用）：
 <ul class="tight">
-<li data-uniform-key="lora_r">LoRA rank r：<code>128</code></li>
-<li data-uniform-key="lora_alpha">LoRA alpha：<code>256</code></li>
-<li data-uniform-key="lora_dropout">LoRA dropout：<code>0.05</code></li>
+<li>LoRA rank r：<code>32</code></li>
+<li>LoRA alpha：<code>64</code></li>
+<li>LoRA dropout：<code>0.05</code></li>
 </ul></li>
 </ul>
 <h4>训练集群</h4>
 <ul class="tight">
-<li><b>训练后端：</b><code>native</code>（18 档：T010–T012、T016–T018、T022–T024、T028–T030、T034–T036、T040–T042）／ <code>ms-swift</code>（36 档，其余）；两者配置面不同，字段不可互换。</li>
-<li>实验场所：平台方内部训练集群 —— A800，单机 8 卡（卡号 0–7），单卡 80 GB；机器拓扑为 A800 PCIe：GPU 以 NVLink 成对相连、对与对之间走 PCIe bridge。这是平台方环境描述，不是逐档实测机器规格。</li>
-<li>代码版本：graspo · feature/refactor-three-layer-architecture · 8d63c38。</li>
-<li><b>TP 口径：</b><code>native</code> 档显式给出 <code>tp_size</code>，一律为 <code>1</code>；<code>ms-swift</code> 档不暴露该字段，记「—（框架内部决定）」。本项只说明「这个值是怎么来的」；TP 的逐档取值在表格「TP」列（与 PP / DP 相邻）。</li>
+<li>A800，单机 8 卡，机器拓扑为 A800 PCIe：GPU 以 NVLink 成对相连、对与对之间走 PCIe bridge。</li>
 </ul>
 <h3>统一超参（对所有档位相同）</h3>
 <ul class="uniform">
-<li data-uniform-key="max_prompt_length">上下文长度上限（token）：<code>8192</code></li>
-<li data-uniform-key="torch_dtype">权重精度：<code>bfloat16</code></li>
-<li data-uniform-key="gradient_checkpointing">梯度检查点：<code>true</code></li>
-<li data-uniform-key="micro_batch_size">单卡 micro batch size（native：micro_batch_size／ms-swift：per_device_train_batch_size）：<code>1</code></li>
-<li data-uniform-key="gradient_accumulation_micro_batches">梯度累积 micro-batches：<code>1</code></li>
-<li data-uniform-key="save_checkpoint_every_epoch">每轮保存检查点（训练过程控制，训练循环直接消费）：<code>false</code></li>
-<li data-uniform-key="reward.kind">GRASPO 奖励类型：<code>graspo</code></li>
-<li data-uniform-key="sequence_parallel_size">序列并行度（只对 ms-swift 档生效）：<code>1</code></li>
-<li data-uniform-key="use_vllm">ms-swift 档是否用 vLLM 推理（只对 ms-swift 档生效）：<code>false</code></li>
-<li data-uniform-key="gpu_monitor.interval_sec">运行期显存监控采样间隔（秒，运行期设施参数）：<code>2.0</code></li>
-<li data-uniform-key="seed">训练随机种子（训练过程控制；与「数据集说明」里的评测随机种子 42 是两回事，勿混读）：<code>42</code></li>
+<li>上下文长度上限（token）：<code>8192</code></li>
+<li>权重精度：<code>bfloat16</code></li>
+<li>梯度检查点：<code>true</code></li>
+<li>单卡 micro batch size（native：micro_batch_size／ms-swift：per_device_train_batch_size）：<code>1</code></li>
+<li>梯度累积 micro-batches：<code>1</code></li>
+<li>每轮保存检查点（训练过程控制，训练循环直接消费）：<code>false</code></li>
+<li>GRASPO 奖励类型：<code>graspo</code></li>
+<li>序列并行度（只对 ms-swift 档生效）：<code>1</code></li>
+<li>ms-swift 档是否用 vLLM 推理（只对 ms-swift 档生效）：<code>false</code></li>
+<li>运行期显存监控采样间隔（秒）：<code>2.0</code></li>
+<li>训练随机种子：<code>42</code></li>
 </ul>
 </section>
 
