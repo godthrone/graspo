@@ -519,20 +519,27 @@ def main():
         checks["⑳b 静态区判据在自证内部能失败"] = bool(
             _vm.static_region_diff(_tampered, base_html2))
 
-        # ㉑ ★★ 统一口径的**无口径丢失**自证（2026-10-19 新增）：
+        # ㉑ ★★ 统一口径的**无口径丢失**自证（2026-10-19 新增；2026-10-20 随 ④E 同步加严）：
         #    `uniform` 从数据件下架后，yaml 生成器（`gen_configs.uniform_map`）的回落表
-        #    必须与**人读件静态块里的那 9 项**逐字一致 —— 否则同一次删除就会让生成器
+        #    必须与**页面受展示的统一超参项**逐字一致 —— 否则同一次删除就会让生成器
         #    静默写出 `torch_dtype: None / seed: None / lora.r: None …`（实测过的隐患）。
+        #    ★★ 2026-10-20：LoRA 三参移入「LoRA 说明」后，判据由"那个块恰好 9 条"改为
+        #       **并集不变量**（与 ④E **同源同一份实现**：`verify_matrix.uniform_invariant_failures`）：
+        #       页面键集合 == 生成器现算的受展示键 − 显式排除面；两块不重叠且各自非空；
+        #       取值逐字等于回落值；块内顺序与统一键序一致；形状不变。
+        #       ⛔ 只把 9 改成 6 = 放宽（会造成"模板少了、生成器还在写"的静默漂移），本自证继续拦。
         _tpl = (SM / "template.html").read_text(encoding="utf-8")
-        _static_uni = dict(re.findall(
-            r'<li data-uniform-key="([^"]+)">[^<]*<code>([^<]*)</code></li>', _tpl))
-        _fb = gen_configs.UNIFORM_FALLBACK
-        _mismatch = [(k, _static_uni.get(k), _fb.get(k)) for k in _static_uni
-                     if _fb.get(k) != _static_uni[k]]
-        checks["㉑ yaml 生成器回落表 == 静态统一口径块（9 项逐字一致）"] = (
-            len(_static_uni) == 9 and not _mismatch)
-        if _mismatch:
-            print(f"  [debug] ㉑ 不一致（键, 静态块, 回落表）: {_mismatch}")
+        _uni_fails = _vm.uniform_invariant_failures(_tpl, _tpl, data)
+        checks["㉑ 统一超参并集不变量（页面键集合 == 生成器现算 − 排除面／两块非空不重叠／值逐字）"] = (
+            not _uni_fails)
+        if _uni_fails:
+            print(f"  [debug] ㉑ 统一超参并集不变量报红: {_uni_fails}")
+        # ㉑c ★ 同一判据对**在盘 HTML** 也要全过（⛔ 不是只看模板）
+        _html_txt = (ROOT / "docs" / "capability-matrix.html").read_text(encoding="utf-8")
+        _uni_fails_html = _vm.uniform_invariant_failures(_html_txt, _tpl, data)
+        checks["㉑c 同一并集不变量对在盘 HTML 全过"] = (not _uni_fails_html)
+        if _uni_fails_html:
+            print(f"  [debug] ㉑c 在盘 HTML 报红: {_uni_fails_html}")
         # ㉑b 反向：不改数据、只把回落表打空 ⇒ 生成器确实会产出 None（证明本自证**能失败**）
         _save = dict(gen_configs.UNIFORM_FALLBACK)
         try:
@@ -541,6 +548,67 @@ def main():
             checks["㉑b 回落表为空时确实取不到值（本自证能失败）"] = (_empty == {})
         finally:
             gen_configs.UNIFORM_FALLBACK.update(_save)
+
+        # ㉑c2 ★★（2026-10-20 第三轮）生成器统一键序 == 静态登记产出顺序（防生成器改序）＋
+        #      反向：把静态登记顺序调换一位 ⇒ 该判据确实能失败（本自证能失败）。
+        _live_order = _vm.generator_displayed_uniform_keys(data["rows"])[0]
+        checks["㉑c2 生成器统一键序 == 静态登记产出顺序"] = (
+            tuple(_live_order) == tuple(_vm._GENERATOR_UNIFORM_ORDER))
+        _save_order = _vm._GENERATOR_UNIFORM_ORDER
+        try:
+            _vm._GENERATOR_UNIFORM_ORDER = tuple(reversed(_save_order))
+            _rev = _vm.uniform_invariant_failures(_tpl, _tpl, data)
+            checks["㉑c3 静态登记顺序被调换后确实变红（本自证能失败）"] = bool(_rev)
+            if not _rev:
+                print("  [debug] ㉑c3 期望报红但没有")
+        finally:
+            _vm._GENERATOR_UNIFORM_ORDER = _save_order
+        # ㉑c4 ★ 反向：把页面里一条统一超参挪到块首（键集合不变、只动顺序）⇒
+        #      "④E 统一超参块内顺序" 判据确实能失败（★ 用键集合不变的变体，确保红的是顺序而非别条）
+        _seed_li = next(li for li in re.findall(r'<li data-uniform-key="seed">.*?</li>', _tpl, re.S))
+        _swap = _tpl.replace(_seed_li + "\n", "", 1).replace(
+            '<li data-uniform-key="max_prompt_length">', _seed_li + '\n<li data-uniform-key="max_prompt_length">', 1)
+        _swap_fails = _vm.uniform_invariant_failures(_swap, _swap, data)
+        #      ★ 挪到块首会同时触发"块内顺序"与"非 LoRA 键恰在该块"两条（两条都是顺序语义）⇒
+        #        判据 = 确实报红 **且** 其中含"块内顺序"这一条。
+        _order_hit = any("块内顺序" in n for n, _d in _swap_fails)
+        checks["㉑c4 页面块内顺序被调换后确实变红（含块内顺序判据）"] = bool(_swap_fails) and _order_hit
+        if not (bool(_swap_fails) and _order_hit):
+            print(f"  [debug] ㉑c4 报红 = {_swap_fails}")
+
+        # ㉑d ★★（2026-10-20 复核轮新增）生成器回落表"**孤儿键 == 已登记死键**"精确等号：
+        #    表里多一个 `yaml_of` 从不消费的键（生成器漂移的第二个失败模式）⇒ 必红。
+        _orph = _vm._fallback_orphan_keys()
+        _decl = _vm._declared_unused_keys()
+        checks["㉑d 回落表孤儿键 == 已登记死键（精确等号）"] = (sorted(_orph) == sorted(_decl))
+        if sorted(_orph) != sorted(_decl):
+            print(f"  [debug] ㉑d 孤儿键 = {_orph}；已登记 = {_decl}")
+        # ㉑d2 反向：临时往回落表塞一个新键（且**不**接线）⇒ 该判据确实会红（本自证能失败）
+        _save2 = dict(gen_configs.UNIFORM_FALLBACK)
+        try:
+            gen_configs.UNIFORM_FALLBACK["__selfproof_new_key__"] = "x"
+            _orph2 = _vm._fallback_orphan_keys()
+            checks["㉑d2 塞入新键后孤儿键判据确实变红（本自证能失败）"] = (
+                sorted(_orph2) != sorted(_decl) and "__selfproof_new_key__" in _orph2)
+        finally:
+            gen_configs.UNIFORM_FALLBACK.clear()
+            gen_configs.UNIFORM_FALLBACK.update(_save2)
+
+        # ㉑e ★★（2026-10-20 复核轮新增）LoRA 说明里**自报的计数与枚举**必须与数据件现算一致：
+        #    五个计数（语言/视觉/签名条目/实例/可训练参数）逐一对等 + 语言模块集合 ==
+        #    `language_targets`（多一个红、少一个红）+ 分组条数 + 视觉层数×组内条数。
+        _lora_fails = _vm.lora_claim_failures(_tpl, data)
+        checks["㉑e LoRA 自报计数与枚举 == 数据件现算（模板面）"] = (not _lora_fails)
+        if _lora_fails:
+            print(f"  [debug] ㉑e 模板面报红: {_lora_fails}")
+        _lora_fails_html = _vm.lora_claim_failures(
+            (ROOT / "docs" / "capability-matrix.html").read_text(encoding="utf-8"), data)
+        checks["㉑e2 同一 LoRA 判据对在盘 HTML 全过"] = (not _lora_fails_html)
+        if _lora_fails_html:
+            print(f"  [debug] ㉑e2 在盘 HTML 报红: {_lora_fails_html}")
+        # ㉑e3 反向：把页面自报的语言条数改一个数字 ⇒ 必红（本自证能失败）
+        checks["㉑e3 改一个自报数字后确实变红（本自证能失败）"] = bool(
+            _vm.lora_claim_failures(_tpl.replace("<b>语言 12 条</b>", "<b>语言 13 条</b>", 1), data))
 
         # ㉒ ★★ 阳性对照（2026-10-17 去重轮新增断言 ④Y，**用户点名要求**）：
         #    把①文本塞回「算法机制真的在起作用」（= ① 重新侵入 ③ 的判据面）⇒ **必红**。

@@ -300,6 +300,422 @@ def partition_cardinality(rows, key):
     return len(cnt), cnt
 
 
+#: 生成器现算"受展示键集合"时用的探针值（⛔ 只用于探测"这个键会不会落进配置"，
+#:  **不**代表任何对外取值；页面值另由第 (3) 条逐字比对回落值守住）。
+_UNIFORM_PROBE = "\ue000UNIFORMKEYPROBE\ue001"
+
+#: ★★（2026-10-20 第三轮）**排除面必须为空** —— 页面已发布生成器消费的**全部**统一超参键，
+#:   ⇒ "没有藏键的地方"。本常量保留为**空元组**，并由下面的断言强制"非空即红"
+#:   （⛔ 不是靠删代码变绿：只要有人往这里加回一项，`④E 排除面必须为空` 立刻报红）。
+UNIFORM_KEYS_NOT_ON_PAGE = ()
+
+#: ★★ 生成器"统一超参"键的**产出顺序**（静态登记，供顺序不变量用）。
+#:   ⛔ 这不是第二份真值清单：真值由 `generator_displayed_uniform_keys()` 现算；
+#:   本元组只是把"生成器写进 yaml 的先后"钉住 —— 判据要求
+#:   `现算键序 == 本元组` **且** `页面键序 == 现算键序`，
+#:   ⇒ 生成器哪天调换了写入顺序、或页面顺序跟生成器不一致，都会**立即报红**。
+_GENERATOR_UNIFORM_ORDER = (
+    "max_prompt_length",                 # yaml_of:550  data.max_prompt_length
+    "torch_dtype",                       # yaml_of:545  model.torch_dtype
+    "gradient_checkpointing",            # yaml_of:546  model.gradient_checkpointing
+    "micro_batch_size",                  # yaml_of:620/639
+    "gradient_accumulation_micro_batches",  # yaml_of:559  training.*
+    "save_checkpoint_every_epoch",       # yaml_of:560  training.*
+    "lora_r",                            # yaml_of:604  lora.r（仅 LoRA 档）
+    "lora_alpha",                        # yaml_of:605  lora.alpha
+    "lora_dropout",                      # yaml_of:606  lora.dropout
+    "reward.kind",                       # yaml_of:590-592  reward.*（graspo 档）
+    "sequence_parallel_size",            # yaml_of:640  msswift.*
+    "use_vllm",                          # yaml_of:641  msswift.*
+    "gpu_monitor.interval_sec",          # yaml_of:644-648
+    "seed",                              # yaml_of:556  training.seed
+)
+
+
+#: ★★ 生成器回落表里**已登记、且已确认对任何档都不落进配置**的键（死键）。
+#:   ⛔ 这不是"允许表里放死键"：判据要求 `孤儿键集合 == 本清单`（**精确等号、两个方向**）
+#:     ⇒ 表里**新增**任一个 `yaml_of` 不消费的键 ⇒ 立即红；本清单里任一项被修好（= 变成会被消费）
+#:     ⇒ 也红（要求同步删掉本清单项）。每项必须带一行理由。
+UNIFORM_FALLBACK_DECLARED_UNUSED = (
+    ("temperature",
+     "`gen_configs.yaml_of` 从不消费它（实测任何档的 yaml 都不落）⇒ 死键；"
+     "评测温度 0 只出现在第 3 章「数据集说明」的评测口径里，不是统一超参。"),
+)
+
+
+def _fallback_orphan_keys() -> tuple:
+    """★★ `UNIFORM_FALLBACK` 里**没被 `yaml_of()` 消费**的键（= 孤儿/死键，如 `temperature`）。
+
+    派生方式（两条独立通道，都必须为空才放行）：
+      ① **源码面**：静态读取 `gen_configs.yaml_of` 的源码，取全部 `uni.get("K")` 的 K；
+      ② **行为面**：探针替换后逐档渲染，看探针是否出现在产物里（见
+         `generator_displayed_uniform_keys`）。
+    ① 能抓「表里多了一个键但 generator 从不读它」；② 能抓「读了但任何档都不落」。
+    两条都要求为空才放行 ⇒ 生成器回落表必须「键键有消费、消费键键在表里」。
+    """
+    import inspect
+    src = inspect.getsource(gen_configs.yaml_of)
+    consumed = set(re.findall(r'uni\.get\(\s*["\']([^"\']+)["\']', src))
+    return tuple(k for k in gen_configs.UNIFORM_FALLBACK if k not in consumed)
+
+
+def _declared_unused_keys() -> tuple:
+    """已登记的"表里有、`yaml_of` 不消费"的键（死键）。"""
+    return tuple(k for k, _why in UNIFORM_FALLBACK_DECLARED_UNUSED)
+
+
+def generator_displayed_uniform_keys(rows) -> tuple:
+    """★★ 「生成器**现算**的统一超参受展示键」= 从生成器**实际消费关系**派生
+    （⛔ 不手写第二份字面量清单 —— 那正是本不变量要防的静默漂移）。
+
+    派生方式（纯函数、不写盘、不读时钟）：对 `gen_configs.UNIFORM_FALLBACK` 里的**每一个键**
+    单独替换为互不相同的探针值，再对全部 `applicable` 档渲染 `yaml_of()`；**探针在产物里出现过**
+    ⇒ 该键确实被生成器消费（⇒ 是"会落进逐档配置、因而必须在页面上有交代"的键）；
+    **从未出现** ⇒ 该键对配置无贡献（死键，或在任何档都不写）。
+
+    ★（2026-10-20 第三轮起）**排除面已取消**：页面发布生成器消费的全部键，
+      判据为 `页面键集合 == 生成器现算键集合`（**14 键**，精确等号、两个方向）
+      ＋ `生成器现算键序 == _GENERATOR_UNIFORM_ORDER`（静态登记产出序）＋ 逐块块内相对序一致。    """
+    probes = {k: f"{_UNIFORM_PROBE}{i}{_UNIFORM_PROBE}"
+              for i, k in enumerate(gen_configs.UNIFORM_FALLBACK)}
+    seen = set()
+    for row in rows:
+        # ★ 覆盖**全部**行（含 `applicable:false`）：本判据要的是"这个键会不会被生成器消费"，
+        #   而不是"现行 51 档里会不会落" ⇒ 逐行全跑，避免把"只在非适用档才写"的键误判为死键。
+        try:
+            _cfg = gen_configs.yaml_of(row, probes, "/models", "/work/elam-v5")
+        except Exception:                                    # 探针不得让派生本身崩掉
+            continue
+        for k, v in probes.items():
+            if v in _cfg:
+                seen.add(k)
+    keys = tuple(k for k in gen_configs.UNIFORM_FALLBACK if k in seen)
+    return keys, probes
+
+
+def uniform_invariant_failures(target_text: str, template_text: str, data) -> list:
+    """④E / ㉑ 的**统一超参并集不变量**（唯一实现；verify 与自证阳性对照**同源引用**）。
+
+    各条（每条都能失败，见本包 `evidence/positive-controls.txt`）：
+      (a) 键集合面：页面全部 `data-uniform-key` 键 ⊆ 生成器现算的受展示键集合，
+          且 `页面键集合 == 生成器现算键集合`（**无排除面**：页面之外不存在被消费却不发布的键）
+          —— 漏项 / 多塞 / 生成器新消费一个没人处置的键，三者都红；
+      (b) 分块面：两块（`<ul class="uniform">` 与 LoRA 说明里的那个列表）**不重叠**且**各自非空**；
+      (c) 取值面：每项取值**逐字等于** `gen_configs.UNIFORM_FALLBACK` 的对应回落值；
+      (d) 顺序面：每一块**内部**的相对顺序 == 统一键序（`UNIFORM_FALLBACK` 的键序）；
+      (e) 形状面：单行、`<li data-uniform-key="K">标签<code>值</code></li>`、标签内**不嵌标签**；
+          且 `<ul class="uniform">` 块仍恰好含统一块那一组键（防"把 LoRA 三参挪回统一超参"）。
+
+    ★ 分块规则同样**不写死键名**：判据 = 该条的键在渲染后它所属的 `<h3>` 标题里出现即可。
+    """
+    out = []
+    items = re.findall(r'<li data-uniform-key="([^"]+)">([^<]*)<code>([^<]*)</code></li>',
+                       target_text)
+    if not items:
+        out.append(("④E 统一超参块", "人读件未找到任何受展示统一超参项"
+                                    "（`<li data-uniform-key=…>` 形状）"))
+        return out
+    keys = [k for k, _l, _v in items]
+    if len(keys) != len(set(keys)):
+        dup = sorted({k for k in keys if keys.count(k) > 1})
+        out.append(("④E 统一超参项重复", f"同一键在页面上出现多次: {dup}（应各发布一处）"))
+    strict = set(re.findall(r'<li data-uniform-key="([^"]+)">[^<]*<code>[^<]*</code></li>',
+                            target_text))
+    if strict != set(keys):
+        out.append(("④E 统一超参项形状",
+                    "存在标签内嵌标签的条目（正则不命中）: "
+                    f"{sorted(set(keys) - strict)}"))
+    _empty = [k for k, _l, _v in items
+              if not _v.strip() or _v.strip() == RESULT_PLACEHOLDER]
+    if _empty:
+        out.append(("④E 统一超参取值非空", f"取值缺失/占位: {_empty}"))
+
+    rows = data.get("rows", [])
+    consumed, _probes = generator_displayed_uniform_keys(rows)
+    consumed = tuple(consumed)
+    # (a) ★★（2026-10-20 第三轮）**无排除面的精确等号**：页面键集合 == 生成器现算键集合。
+    #     排除面恒为空，且"非空即红" —— ⛔ 谁也不能靠往排除面里塞键来放宽判据。
+    if tuple(UNIFORM_KEYS_NOT_ON_PAGE):
+        out.append(("④E 排除面必须为空（页面须发布生成器消费的全部键）",
+                    f"排除面非空 = {list(UNIFORM_KEYS_NOT_ON_PAGE)}"
+                    f"（⛔ 本轮起不允许存在「页面不发布的生成器消费键」）"))
+    _want = tuple(consumed)
+    #   ★ 键集合比**集合**（页面文档序见下）；**顺序**由 (a-2) 生成器序与 (d) 逐块序守。
+    if sorted(keys) != sorted(_want) or len(keys) != len(set(keys)):
+        out.append(("④E 统一超参并集（页面键集合 == 生成器现算键集合，无排除面）",
+                    f"生成器现算的受展示键（由 `UNIFORM_FALLBACK` × `yaml_of` 的**实际消费关系**"
+                    f"派生，⛔ 非手抄清单）= {list(consumed)}；"
+                    f"页面实际 = {keys}；"
+                    f"页面缺 = {sorted(set(_want) - set(keys))}；"
+                    f"页面多 = {sorted(set(keys) - set(_want))}"))
+    # (a-2) ★★ 顺序不变量：静态登记的生成器产出顺序 == 现算顺序 == 页面文档序
+    #       （⛔ 三者必须同时相等；生成器改序、或页面把条目调换位置，都会立即报红）
+    if tuple(consumed) != tuple(_GENERATOR_UNIFORM_ORDER):
+        out.append(("④E 生成器统一键序 == 静态登记产出顺序",
+                    f"现算 = {list(consumed)}；静态登记 = {list(_GENERATOR_UNIFORM_ORDER)}"))
+    #   ★ 页面"文档序"天然是「LoRA 说明块在前、统一超参块在后」⇒ ⛔ 不做"页面全序 == 生成器全序"
+    #     （那会把正确结构判红）；**块内顺序**由下面 (d) 逐块与生成器顺序比对守住。
+    # (a-4) ★★ 生成器回落表本身不得有**孤儿/死键**（表里多一个键但 `yaml_of` 从不读它，
+    #       例如 `temperature`）—— 这是"生成器漂移"的第二个失败模式（复核裁定点名必测）。
+    _orphans = _fallback_orphan_keys()
+    _declared = _declared_unused_keys()
+    _bad_decl = [k for k, why in UNIFORM_FALLBACK_DECLARED_UNUSED if not str(why).strip()]
+    if _bad_decl:
+        out.append(("④E 已登记死键每项须带理由", f"缺理由的键: {_bad_decl}"))
+    if sorted(_orphans) != sorted(_declared):
+        out.append(("④E 生成器回落表孤儿键 == 已登记死键（精确等号）",
+                    f"`gen_configs.UNIFORM_FALLBACK` 里 `yaml_of()` **不消费**的键 = {list(_orphans)}；"
+                    f"已登记死键 = {list(_declared)}（每项带理由）；"
+                    f"未登记的新增孤儿键 = {sorted(set(_orphans) - set(_declared))}；"
+                    f"已登记但已不再孤儿 = {sorted(set(_declared) - set(_orphans))}"))
+    _fb = gen_configs.UNIFORM_FALLBACK
+    _badval = [(k, v, _fb.get(k)) for k, _l, v in items if _fb.get(k) != v]
+    if _badval:
+        out.append(("④E 统一超参取值须逐字等于生成器回落值",
+                    f"（键, 页面值, 回落值）= {_badval}"))
+    # (a-5) ★ 收紧后的等号判据下，"被排除的键偷偷出现在页面"已由 (a)/(a-3b) 覆盖；
+    #       取值面不再另设"取值串不得复用"的断言（`micro_batch_size` 与
+    #       `gradient_accumulation_micro_batches` 同为 `1` 是**合法**的，设了会误伤）。
+
+
+    # 分块：每条取渲染后**离它最近的** `<h3>` 标题（标题里含该键名 ⇒ 该键属于这一块）
+    _heads = [(m.start(), re.sub(r"<[^>]+>", "", m.group(1)).strip())
+              for m in re.finditer(r"<h3>(.*?)</h3>", target_text, re.S)]
+    block_of = {}
+    for m in re.finditer(r'<li data-uniform-key="([^"]+)">', target_text):
+        _key = m.group(1)
+        _t = [t for pos, t in _heads if pos < m.start()]
+        block_of.setdefault(_t[-1] if _t else "(h3 之前)", []).append(_key)
+    blocks = {t: ks for t, ks in block_of.items()}
+    if not all(ks for ks in blocks.values()):
+        out.append(("④E 统一超参分块", "存在空块（某标题下没有任何统一超参项）"))
+    _uni = next((t for t in blocks if "统一超参" in t), None)
+    if _uni is None:
+        out.append(("④E 统一超参块", "渲染页里找不到含「统一超参」的 <h3> 块"))
+    else:
+        # 无排除面：统一超参块 = 生成器消费键里的**非 LoRA** 键，逐位同序
+        _base = [k for k in consumed if not k.startswith("lora_")]
+        _lora_ks = [k for k in consumed if k.startswith("lora_")]
+        _got = blocks[_uni]
+        if _got != _base:
+            out.append(("④E 统一超参块（非 LoRA 键恰在该块）",
+                        f"期望 {_base}，实际 {_got}（⛔ 不许把 LoRA 三参挪回统一超参块）"))
+        _other = [k for t, ks in blocks.items() if t != _uni for k in ks]
+        if _other != _lora_ks:
+            out.append(("④E LoRA 三参须在 LoRA 说明块",
+                        f"期望 {_lora_ks}，实际 {_other}"))
+    # (d) 每一块**内部**顺序 == 统一顺序（并集顺序）
+    for t, ks in blocks.items():
+        if len(ks) > 1:
+            _pos = [consumed.index(k) for k in ks if k in consumed]
+            if _pos != sorted(_pos):
+                out.append(("④E 统一超参块内顺序",
+                            f"块「{t}」内相对顺序 {ks} 与统一顺序 {list(consumed)} 不一致"))
+    # 模板面：同一组不变量必须也成立（防"HTML 对了、模板已漂移"⇒ 重跑渲染即变红却无人知）
+    _tpl_items = re.findall(r'<li data-uniform-key="([^"]+)">([^<]*)<code>([^<]*)</code></li>',
+                            template_text)
+    if [k for k, _l, _v in _tpl_items] != keys:
+        out.append(("④E 模板与在盘 HTML 的受展示键不一致",
+                    f"模板 {[k for k, _l, _v in _tpl_items]}；HTML {keys}"))
+    return out
+
+
+#: LoRA 说明里**自报的计数与枚举**的抓取式样（页面文字一律 ASCII 字符/全角斜杠与顿号，
+#:  ⛔ 不依赖任何 HTML 标签 ⇒ 改措辞也不会让判据静默失真）。分组只**按数据件现算的分组**校验。
+_RE_LORA_NATIVE = re.compile(
+    r"语言\s*(?P<lang>\d+)\s*条.+?视觉\s*(?P<vis>\d+)\s*条.+?"
+    r"合计\s*(?P<sig>\d+)\s*条签名条目[，,]\s*覆盖\s*(?P<inst>[\d,]+)\s*个实例[，,]\s*"
+    r"可训练参数\s*(?P<param>[\d,]+)")
+_RE_LORA_MS = re.compile(
+    r"覆盖\s*(?P<inst>[\d,]+)\s*个实例\s*（语言\s*(?P<lang>[\d,]+)\s*\+\s*视觉\s*"
+    r"(?P<vis>[\d,]+)\s*）[^。]*?可训练参数\s*(?P<param>[\d,]+)")
+_RE_LORA_GROUP = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\s*的\s*"
+                            r"([A-Za-z_][A-Za-z0-9_.]*(?:\s*[／/]\s*[A-Za-z_][A-Za-z0-9_.]*)*)\s*"
+                            r"（\s*(\d+)\s*条\s*）")
+
+
+def lora_claim_failures(target_text: str, data) -> list:
+    """★★ LoRA 说明里**自报的计数与枚举**必须与数据件现算一致（复核新增，唯一实现）。
+
+    数据件真值（现取，⛔ 不写死任何数字）：
+      · `meta.lora_target_backends.native.resolved` 按 `language.` / `visual.` 分类计数；
+      · `meta.lora_target_backends.native.language_targets`（语言模块集合真值）；
+      · `native.coverage.total / language / visual`（实例数与分解）；
+      · `native.signature_evidence.parameter_count`（可训练参数）、
+        `msswift.coverage.total / language / visual / param_count`。
+
+    判据（各条都能失败）：
+      (a) 五个计数：语言条数 / 视觉条数 / 合计签名条目 / 实例数 / 可训练参数 —— 逐一对等于数据件现算；
+      (b) 页面**列举的语言模块集合 == `language_targets`**（多一个红、少一个红）；
+      (c) 页面对**每组**自报的组内条数 == 数据件里该组的实际条数（防"4+5+3"这类分组数字写错）；
+      (d) 视觉侧"组内条数 × 层数 == 视觉条数"且逐层模块名齐全；
+      (e) 数据件自身跨字段自洽（`coverage.signature_entries == len(resolved)`、
+          `coverage.language == len(language_targets)`、`native.coverage.total == msswift.coverage.total`）。
+    """
+    out = []
+    # ★ 抓取面 = 渲染页**去标签后的平面文本**（并压掉换行/多余空白）：页面为排版把数字包在
+    #   `<b>`／`<code>` 里是常态，⛔ 判据因此不依赖任何标签，改措辞/改强调都不会让它静默失真。
+    flat = re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", "", target_text)))
+    lb = ((data.get("meta") or {}).get("lora_target_backends") or {})
+    nat = lb.get("native") or {}
+    ms = lb.get("msswift") or {}
+    resolved = list(nat.get("resolved") or [])
+    lang_targets = list(nat.get("language_targets") or [])
+    if not resolved or not lang_targets:
+        return [("④Z2 LoRA 自报计数/枚举", "数据件缺 `native.resolved` / `native.language_targets` ⇒ fail-closed")]
+    res_lang = sorted(x for x in resolved if x.startswith("language."))
+    res_vis = sorted(x for x in resolved if x.startswith("visual."))
+    nat_cov = nat.get("coverage") or {}
+    # ---- (e) 数据件自洽（先自洽，再比页面） ----
+    bad = []
+    if nat_cov.get("signature_entries") != len(resolved):
+        bad.append(("coverage.signature_entries", nat_cov.get("signature_entries"), len(resolved)))
+    #   ★ `coverage.language/visual/total` 是**实例数**（语言 12 条模式逐层展开为 248 个实例），
+    #     不是条目数；条目数由 `resolved` 分类计数 / `language_targets` 现算（两者必须相等）。
+    if nat_cov.get("total") != (nat_cov.get("language", 0) + nat_cov.get("visual", 0)):
+        bad.append(("coverage.total == language + visual（实例数）", nat_cov.get("total"),
+                    f'{nat_cov.get("language")}+{nat_cov.get("visual")}'))
+    if len(res_vis) and nat_cov.get("language") == len(res_lang):
+        bad.append(("coverage.language 不应等于语言**条目数**（它是实例数）",
+                    nat_cov.get("language"), f"条目数 {len(res_lang)}"))
+    if sorted(lang_targets) != res_lang:
+        bad.append(("language_targets == resolved 的语言子集", sorted(lang_targets), res_lang))
+    if nat_cov.get("total") != (nat_cov.get("language", 0) + nat_cov.get("visual", 0)):
+        bad.append(("coverage.total", nat_cov.get("total"),
+                    f'{nat_cov.get("language")}+{nat_cov.get("visual")}'))
+    if ms:
+        if ms.get("coverage", {}).get("total") != nat_cov.get("total"):
+            bad.append(("native/msswift 实例总数应一致", nat_cov.get("total"),
+                        ms.get("coverage", {}).get("total")))
+    if bad:
+        out.append(("④Z2 数据件 LoRA 字段自洽", f"（字段, 实际, 期望）= {bad}"))
+
+    # ---- 取出页面自报（LoRA 说明两段） ----
+    m_nat = _RE_LORA_NATIVE.search(flat)
+    m_ms = _RE_LORA_MS.search(flat)
+    if not m_nat:
+        out.append(("④Z2 LoRA 自报计数", "页面找不到 native 段的自报式样"
+                                        "「语言 N 条…视觉 N 条…合计 N 条签名条目，覆盖 N 个实例，可训练参数 N」"))
+    else:
+        got = {"lang": int(m_nat.group("lang")), "vis": int(m_nat.group("vis")),
+               "sig": int(m_nat.group("sig")), "inst": int(m_nat.group("inst").replace(",", "")),
+               "param": int(m_nat.group("param").replace(",", ""))}
+        exp = {"lang": len(res_lang), "vis": len(res_vis), "sig": len(resolved),
+               "inst": nat_cov.get("total"), "param": (nat.get("signature_evidence") or {}).get("parameter_count")}
+        _wrong = {k: (got[k], exp[k]) for k in got if got[k] != exp[k]}
+        if _wrong:
+            out.append(("④Z2 LoRA 自报计数（native）须逐一对等于数据件现算",
+                        f"（项, 页面, 数据件）= {_wrong}"))
+    if not m_ms:
+        out.append(("④Z2 LoRA 自报计数（ms-swift）", "页面找不到 ms-swift 段的自报式样"
+                                                    "「覆盖 N 个实例（语言 N + 视觉 N）…可训练参数 N」"))
+    else:
+        got = {"inst": int(m_ms.group("inst").replace(",", "")),
+               "lang": int(m_ms.group("lang").replace(",", "")),
+               "vis": int(m_ms.group("vis").replace(",", "")),
+               "param": int(m_ms.group("param").replace(",", ""))}
+        msc = ms.get("coverage") or {}
+        exp = {"inst": msc.get("total"), "lang": msc.get("language"),
+               "vis": msc.get("visual"), "param": msc.get("param_count")}
+        _wrong = {k: (got[k], exp[k]) for k in got if got[k] != exp[k]}
+        if _wrong:
+            out.append(("④Z2 LoRA 自报计数（ms-swift）须逐一对等于数据件现算",
+                        f"（项, 页面, 数据件）= {_wrong}"))
+
+    # ---- (b)(c) 语言分组枚举与组内条数 ----
+    #   ★ 定位：紧邻「语言 N 条」标记**之前**、且其间只有「组×N 条 + 顿号 + ⇒」的那一段枚举。
+    #     （枚举在计数之前，是整个渲染页里唯一满足该形状的一段 ⇒ ⛔ 不用任何行号/标签定位。）
+    _m_langmark = re.search(r"(?P<enums>[A-Za-z_][A-Za-z0-9_]*\s*的\s*[^；;]{0,400}?)"
+                            r"⇒\s*语言\s*\d+\s*条", flat)
+    seg = _m_langmark.group("enums") if _m_langmark else ""
+    groups = _RE_LORA_GROUP.findall(seg)
+    if not groups:
+        out.append(("④Z2 语言生效层枚举", "页面找不到「<组> 的 <模块…>（N 条）」式样的分组枚举"
+                                        "（应紧邻「⇒ 语言 N 条」标记之前）"))
+    else:
+        _exp_by_group = {}
+        for t in lang_targets:
+            _p = t.split(".")
+            _exp_by_group.setdefault(_p[1], set()).add(_p[2])
+        _seen = {}
+        for gname, parts_raw, n_raw in groups:
+            parts = [x.strip() for x in re.split(r"[／/]", parts_raw) if x.strip()]
+            if len(parts) != int(n_raw):
+                out.append(("④Z2 语言分组自报条数须等于该组枚举项数",
+                            f"组 {gname}: 自报 {n_raw} 条，实际枚举 {len(parts)} 项 {parts}"))
+            if gname not in _exp_by_group:
+                out.append(("④Z2 语言分组名须在数据件里存在", f"页面组名 {gname} 不在 language_targets 的分组里"))
+                continue
+            _seen[gname] = set(parts)
+            if set(parts) != _exp_by_group[gname]:
+                out.append((f"④Z2 语言分组 {gname} 的模块集合须等于数据件",
+                            f"页面 = {sorted(parts)}；数据件 = {sorted(_exp_by_group[gname])}；"
+                            f"页面多 = {sorted(set(parts) - _exp_by_group[gname])}；"
+                            f"页面少 = {sorted(_exp_by_group[gname] - set(parts))}"))
+        if set(_seen) != set(_exp_by_group):
+            out.append(("④Z2 语言分组须齐全", f"页面组 = {sorted(_seen)}；数据件组 = {sorted(_exp_by_group)}"))
+        page_lang = {"language." + g + "." + p for g, ps in _seen.items() for p in ps}
+        if page_lang != set(lang_targets):
+            out.append(("④Z2 语言生效层集合须等于 language_targets（多一个红、少一个红）",
+                        f"页面多 = {sorted(page_lang - set(lang_targets))}；"
+                        f"页面少 = {sorted(set(lang_targets) - page_lang)}"))
+
+    # ---- (d) 视觉：组内条数 × 层数 == 视觉条数（层数由页面层号区间现算） ----
+    #   ★ `visual.blocks.<layer>.<m1>.<m2>` ⇒ 取「去掉层号」的模块名，再核层号集合
+    _vis_parts = [x.split(".") for x in res_vis if x.startswith("visual.blocks.")]
+    #   ★ `visual.blocks.<layer>.<m1>.<m2>`：层号 = pt[2]，逐层模块名 = pt[3:]
+    vis_layers = sorted({int(pt[2]) for pt in _vis_parts})
+    vis_per = sorted({".".join(pt[3:]) for pt in _vis_parts})
+    _vis_pair = sorted({(int(pt[2]), ".".join(pt[3:])) for pt in _vis_parts})
+    vis_dirs = set(vis_per)
+    #   ★ 「逐层」枚举里的模块名是**相对于该层的前缀**（`attn.qkv`），而数据件里是
+    #     `visual.blocks.<layer>.attn.qkv` ⇒ 比较时用 pt[3:] 的同一语汇。
+    _vis_expected_total = len(vis_per) * len(vis_layers)
+    vis_merger = {tuple(x.split(".")[1:]) for x in res_vis if x.startswith("visual.merger.")}
+    #   ★ vis_merger 元素 = ("merger", "<name>") ⇒ 页面比较时用 <name>（页面写作 merger.<name>）
+    if not vis_dirs or not vis_merger:
+        out.append(("④Z2 视觉生效层", "数据件视觉侧缺 blocks / merger 条目 ⇒ fail-closed"))
+    else:
+        if len(vis_dirs) != len(vis_per):
+            out.append(("④Z2 视觉逐层模块名应一致",
+                        f"逐层模块名应同一组: {vis_per}（去重后 {len(vis_dirs)} 组 ≠ 逐层数 {len(vis_per)}）"))
+        if vis_layers != list(range(len(vis_layers))):
+            out.append(("④Z2 视觉层号应为 0..N-1 连续", f"实际层号 {vis_layers}"))
+        if _vis_pair != sorted({(ly, p) for ly in vis_layers for p in vis_per}):
+            out.append(("④Z2 视觉「层 × 模块」应恰为笛卡尔积",
+                        f"数据件实际缺项/多项: {sorted(set((ly, p) for ly in vis_layers for p in vis_per) - set(_vis_pair))}"))
+        m = re.search(r"merger\.([A-Za-z0-9_.／/]+)\s*（\s*(\d+)\s*条\s*）", flat)
+        m2 = re.search(r"(?:merger\.)?blocks\.(\d+)\s*[–\-—~]\s*(\d+)\s*逐层\s*"
+                       r"([A-Za-z0-9_.／/]+)\s*（\s*(\d+)\s*层\s*×\s*(\d+)\s*条", flat)
+        if not m or not m2:
+            out.append(("④Z2 视觉枚举式样", "页面找不到「merger.…（N 条）」或「blocks.A–B 逐层 …（M 层 × N 条」"))
+        else:
+            _merger_parts = [re.sub(r"^merger\.", "", x.strip())
+                             for x in re.split(r"[／/]", m.group(1)) if x.strip()]
+            _exp_merger = sorted(x[1] for x in vis_merger)   # vis_merger 元素 = ("merger", <name>)
+            if sorted(_merger_parts) != _exp_merger or int(m.group(2)) != len(_exp_merger):
+                out.append(("④Z2 视觉 merger 组须等于数据件",
+                            f"页面 = {sorted(_merger_parts)}（自报 {m.group(2)} 条）；数据件 = {_exp_merger}"))
+            _a, _b, _parts_raw, _layers, _per = (int(m2.group(1)), int(m2.group(2)), m2.group(3),
+                                                 int(m2.group(4)), int(m2.group(5)))
+            _dir_parts = sorted(vis_per)   # 与页面同为"去掉层号"的语汇
+            _page_parts = sorted(x.strip() for x in re.split(r"[／/]", _parts_raw) if x.strip())
+            if _page_parts != _dir_parts:
+                out.append(("④Z2 视觉逐层模块名须等于数据件",
+                            f"页面 = {_page_parts}；数据件 = {_dir_parts}"))
+            if _layers != _b - _a + 1 or _a != vis_layers[0] or _b != vis_layers[-1]:
+                out.append(("④Z2 视觉层号区间须与数据件一致",
+                            f"页面区间 {_a}–{_b}（自报 {_layers} 层）；数据件 {vis_layers[0]}–{vis_layers[-1]}（{len(vis_layers)} 层）"))
+            if _layers * _per != _vis_expected_total:
+                out.append(("④Z2 视觉条数 == 层数 × 组内条数",
+                            f"自报 {_layers}×{_per}={_layers*_per}；数据件逐层部分 {_vis_expected_total}"
+                            f"（层 {len(vis_layers)} × 每层 {len(vis_per)}）"))
+            if _per != len(vis_per) or _layers != len(vis_layers):
+                out.append(("④Z2 视觉组内条数/层数须等于数据件",
+                            f"页面 {_layers} 层 × {_per} 条；数据件 {len(vis_layers)} 层 × {len(vis_per)} 条"))
+    return out
+
+
 def partition_failures(rows, target_text, columns, cond_params):
     """★★ 条件/结果分区判据的**唯一实现**（verify ④Z 与自证用例**同源引用**，⛔ 不各写一份）。
 
@@ -974,30 +1390,27 @@ def main():
                                        render_matrix.MATRIX_COLUMNS,
                                        render_matrix.CONDITION_PARAMS))
 
-    # ---- ④E. §3「统一超参」块（**模板静态文字**）+ 供 yaml 生成器的机读字段 ----
+    # ---- ④E. §3 受展示的统一超参项（**模板静态文字**）+ 供 yaml 生成器的机读字段 ----
     #   ★ 2026-10-19 处置（使用者口径「其它所有的部分都不能动」）：
     #     原断言比"数据件 `uniform.items`（白名单项与取值）⇒ 必须逐字出现在人读件里"。
-    #     本轮 `uniform` 随数据件一起下架（统一口径块 = **模板静态文字**，⛔ 不再由数据现算）
-    #     ⇒ 断言改为**结构面 + 静态面**（仍 fail-closed，⛔ 不放宽条目数）：
-    #       a) 人读件必须有统一超参列表，且**恰好 9 条**白名单项（漏项 / 多塞即红）；
-    #       b) 每条必须有 `data-uniform-key` 且取值非空、非占位符；
-    #       c) ⛔ 数据件不得再携带 `uniform`（防结构/口径悄悄回到数据里造成双真相源）。
-    #     ★ 取值面（"数值不得被改"）由 ④V 静态区逐字节同一 + ① 字节同一性共同守住：
-    #       模板静态区任何一格被改动 ⇒ ①/④V 立即红。
-    _uni_items = re.findall(r'<li data-uniform-key="([^"]+)">([^<]*)<code>([^<]*)</code></li>',
-                            target_text)
-    _UNIFORM_EXPECTED_KEYS = ("max_prompt_length", "torch_dtype", "gradient_checkpointing",
-                              "micro_batch_size", "gradient_accumulation_micro_batches",
-                              "lora_r", "lora_alpha", "lora_dropout", "reward.kind")
-    if not _uni_items:
-        failures.append(("④E 统一超参块", "人读件未找到统一超参列表（<ul class=\"uniform\">）"))
-    else:
-        if tuple(k for k, _l, _v in _uni_items) != _UNIFORM_EXPECTED_KEYS:
-            failures.append(("④E 统一超参项（静态块）",
-                             f"期望恰为 {list(_UNIFORM_EXPECTED_KEYS)}，实际 {[k for k, _l, _v in _uni_items]}"))
-        _empty = [k for k, _l, _v in _uni_items if not _v.strip() or _v.strip() == RESULT_PLACEHOLDER]
-        if _empty:
-            failures.append(("④E 统一超参取值非空", f"取值缺失/占位: {_empty}"))
+    #     该轮 `uniform` 随数据件一起下架（统一口径块 = **模板静态文字**，⛔ 不再由数据现算）
+    #     ⇒ 断言改为**结构面 + 静态面**（仍 fail-closed）。
+    #   ★★ 2026-10-20 处置（第 3 章改为「条件说明 + 统一超参」，LoRA 三参移入「LoRA 说明」）：
+    #     旧口径「那个块**恰好 9 条**、顺序固定」不再成立（页面受展示项现在分两块、合计 9 条）
+    #     ⇒ 改为**并集不变量**（判据见 `uniform_invariant_failures`，⛔ 未放宽任何一条）：
+    #       a) 页面上**全部** `data-uniform-key` 项的**键集合 == 生成器现算的"受展示键集合"**
+    #          （由 `gen_configs.UNIFORM_FALLBACK` × `yaml_of()` 的**实际消费关系**现算派生，
+    #           ⛔ 不手写第二份字面量清单）；
+    #       b) 两块（`<ul class="uniform">` 与 LoRA 说明里的那个列表）键集合**不重叠且各自非空**；
+    #       c) 每项取值的**逐字等于**生成器回落值（⛔ 值面不再是"仅靠 ④V 守着"）；
+    #       d) 每一块**内部**的相对顺序 == 统一顺序（并集顺序）；
+    #       e) 仍保留单行、`<li data-uniform-key="K">标签<code>值</code></li>`、标签内不嵌标签。
+    #     ★ 取值面另由 ④V 静态区逐字节同一 + ① 字节同一性共同守住（两层并存，⛔ 不是替代）。
+    failures.extend(uniform_invariant_failures(target_text, template_text, data))
+    # ---- ④L. LoRA 说明里自报的**计数与枚举**必须与数据件现算一致（复核新增）----
+    failures.extend(lora_claim_failures(target_text, data))
+    if template_text != target_text:
+        failures.extend(("④Z2 模板面 " + n, d) for n, d in lora_claim_failures(template_text, data))
     if "uniform" in data:
         failures.append(("④E 数据件不得携带 uniform",
                          "data.json 仍有 uniform（统一口径块已改为模板静态文字 ⇒ 结构不随数据走）"))
@@ -1419,6 +1832,7 @@ def main():
               f" | ④J 耗时列={ok('④J')}"
               f" | ④K 覆盖度门槛={ok('④K')}"
               f" | ④L 逐档条次/理由={ok('④L')}"
+              f" | ④Z2 LoRA 自报计数/枚举==数据件={ok('④Z2')}"
               f" | ④M 内部术语={ok('④M')}"
               f" | ④N 边界声明三点={ok('④N')}"
               f" | ④O 结论列契约={ok('④O')}"
