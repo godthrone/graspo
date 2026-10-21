@@ -686,6 +686,27 @@ def eval_backend(
         return {"backend": backend, "eligible": False,
                 "why": "全部配方都被实测证据否掉", "variants": all_variants}
 
+    # ── 产物可推理（裁定 2026-10-21 ②）：native 的导出层只认 dp=tp=pp=1 ──────
+    #   `export/exporters/native_full_param.py:462-471` 逐字：DP replica reconciliation /
+    #   TP row reassembly / PP layer assembly are NOT implemented, MUST stay fail-closed；
+    #   `export/exporters/native_lora.py:455-476` 要求同 (tp,pp) 副本 Tensor.equal 位等价，
+    #   T023/T024 实测 `lora_a` 606/606 全不同 ⇒ 导出 fail-closed。
+    #   ⇒ `native + LoRA + tp=pp=1 + dp>1`：**训练能跑、产物交不出** ⇒ 同等条件下让 ms-swift 上位。
+    #      （tp>1/pp>1 的 LoRA 档不参与此判据：那些形状 ms-swift 根本没通道，仍选 native，只写卡点。）
+    deliverable, delivery_gap, delivery_gap_short = True, None, None
+    if backend == "native" and mode == "LoRA" and dp > 1 and tp == 1 and pp == 1:
+        deliverable = False
+        delivery_gap_short = (
+            "native 导出层只认 dp=tp=pp=1（`native_full_param.py:462-471` 逐字 DP/TP/PP 合并均未实现、"
+            "MUST stay fail-closed；`native_lora.py:455-476` 要求副本位等价，T023/T024 实测 `lora_a` 606/606 全不同）"
+        )
+        delivery_gap = (
+            "native 导出层只认 dp=tp=pp=1（`export/exporters/native_full_param.py:462-471` 逐字"
+            "「DP replica reconciliation / TP row reassembly / PP layer assembly are NOT implemented, "
+            "MUST stay fail-closed」；`native_lora.py:455-476` 要求同 (tp,pp) 副本位等价，"
+            "T023/T024 实测 `lora_a` 606/606 全不同 ⇒ 导出 fail-closed）⇒ 训练能跑、产物交不出"
+        )
+
     cap_fact = BACKEND_PARALLEL_FACT[(backend, mode)]
     fits_shape = (
         (tp == 1 or cap_fact["supports_tp"])
@@ -709,6 +730,9 @@ def eval_backend(
         "success_evidence": [e["id"] for e in success_evs],
         "warn_evidence": [e["id"] for e in warn_evs],
         "fits_shape": fits_shape,
+        "deliverable": deliverable,
+        "delivery_gap": delivery_gap,
+        "delivery_gap_short": delivery_gap_short,
         "capability_tier": 0 if fits_shape else 2,   # 0 = 该形状真被后端消费；2 = 形状要靠别的载体兜
         "fact": cap_fact["fact"],
         "source": cap_fact["source"],
@@ -723,8 +747,9 @@ def select_backend(
         ① 实测成功证据（有 > 无）
         ② 该形状是否被后端真消费（是 > 否：TP/PP 在 native 真接线；ms-swift 无通道）
         ③ 分片载体是否已实现且已实测（FSDP2 接点齐但零实测 ⇒ 排后）
-        ④ 估算峰值（更小者优先，等价于"能用更少卡/更省显存"）
-        ⑤ 后端名（native < ms-swift，确定性尾键）
+        ④ 产物可推理（是 > 否：native 导出层只认 dp=tp=pp=1 ⇒ LoRA 的 dp>1 档交不出东西）
+        ⑤ 估算峰值（更小者优先，等价于"能用更少卡/更省显存"）
+        ⑥ 后端名（native < ms-swift，确定性尾键）
 
     理由必须可判真假 ⇒ 每个候选都带 `fact` + `source`，不写"更方便"。
     """
@@ -742,8 +767,9 @@ def select_backend(
         key=lambda c: (
             0 if c["success_evidence"] else 1,          # ①
             c["capability_tier"],                        # ② + ③
-            round(c["peak_gib"], 3),                     # ④
-            BACKENDS.index(c["backend"]),                # ⑤
+            0 if c.get("deliverable", True) else 1,      # ④ 产物可推理
+            round(c["peak_gib"], 3),                     # ⑤
+            BACKENDS.index(c["backend"]),                # ⑥
         ),
     )
     for i, c in enumerate(ranked):
@@ -772,6 +798,11 @@ REASON_CODES: dict[str, dict[str, Any]] = {
     },
     "ALGO_BACKEND": {
         "desc": "某算法在某后端缺实现 —— ★ 主笔裁定：**不算剔除**，保留为待测试并写清卡点",
+        "excludes": False,
+    },
+    "MISSING_CHANNEL": {
+        "desc": ("**唯一能装下的后端缺该算法通道**（物理组合成立、拦住它的是我们自己的欠账）"
+                 "⇒ ★ 裁定 2026-10-21：**不算剔除**，保留为待测试，按补齐通道后的配方估算"),
         "excludes": False,
     },
     "UNSUPPORTED_MODE": {
@@ -856,6 +887,9 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
 
     # ── 卡点（缺实现 ≠ 不合理）：逐条写清卡在哪一层 ────────────────────────
     gaps: list[str] = []
+    if sel.get("missing_channel"):
+        gaps.append(f"native 侧无 {algo} 通道（Ripple 算法层未接线，`core/schema.py:29-34`）；"
+                    f"补齐后按 native 配方估算 {peak:.2f} GiB 可行")
     if backend == "ms-swift":
         if mode == "全参":
             gaps.append("FSDP2 分片载体零 rc=0 实测")
@@ -868,7 +902,12 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
         if algo == "GRASPO" and pp > 1:
             gaps.append("native PP+rollout 须 `allow_unverified_pp_rollout=true`（`native/runtime.py:507-522`）")
     if backend == "native" and mode == "LoRA" and dp > 1:
-        gaps.append("native LoRA DP>1 导出要求副本位等价（`native_lora.py:455-476`），实测 27B 副本不一致")
+        gaps.append("训练可跑、产物需补导出层：native 导出层只认 dp=tp=pp=1"
+                    "（`native_full_param.py:462-471` 逐字 DP/TP/PP 合并均未实现、MUST stay fail-closed；"
+                    "`native_lora.py:455-476` 要求副本位等价，实测 27B `lora_a` 606/606 全不同）")
+    elif backend == "native" and mode == "LoRA" and (tp > 1 or pp > 1):
+        gaps.append("训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，"
+                    "`native_full_param.py:462-471`）")
     if chosen["recipe"] == "offload":
         gaps.append("需 `native.offload_optimizer_state=true`（实测 35.19 GB）")
         if algo == "GRASPO":
@@ -980,6 +1019,12 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
         "data_subset": "待生成（本轮只出设计矩阵）",
         "lora_target": "真实 HF 名正则（两后端统一；唯一真相源 src/graspo/core/lora.py:30-34）" if mode == "LoRA" else "—",
         "applicable": True,
+        # `runnable`：**今天**这个后端能不能起跑该算法（⛔ 与 `status` 正交：status 是"测没测过"，
+        #   runnable 是"通道在不在"）。MISSING_CHANNEL 档 = 通道缺 ⇒ false，配置装载期会被
+        #   `core/schema.py:29-34` 拒绝；下游生成配置时应按此跳过（见 meta.enumeration.known_gaps）。
+        "runnable": not bool(sel.get("missing_channel")),
+        "blocked_on": (f"{backend} 侧缺 {algo} 通道（Ripple 算法层未接线，`core/schema.py:29-34`）"
+                       if sel.get("missing_channel") else "—"),
         "status": "待测试",               # ★ 主笔要求：每一个档位都是待测试
         # ── 渲染需要的实验数据字段：全部置 "—"（§17.7：未验证不得携带读数） ──
         "runs": "—",
@@ -992,7 +1037,8 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
         "note": note,
         "backend_reason": {
             "selected": backend,
-            "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④估算峰值 ⑤后端名",
+            "sort_key": ("①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 "
+                         "④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名"),
             "rule": _reason_rule(sel, backend),
             "peak_gib": round(peak, 4),
             "budget_gib": budget,
@@ -1002,6 +1048,9 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
             "components_gib": chosen["components_gib"],
             "recipe": chosen["recipe"],
             "teacher_variant": chosen["teacher_variant"],
+            "backend_implemented": not bool(sel.get("missing_channel")),
+            "deliverable": bool(chosen.get("deliverable", True)),
+            "delivery_gap": chosen.get("delivery_gap"),
             "evidence": chosen["evidence"],
             "candidates": [
                 {
@@ -1036,7 +1085,20 @@ def _reason_line(chosen, sel, backend, mode, tp, pp, dp, band, budget, peak, alg
     others = [c for c in sel["candidates"] if c["backend"] != backend]
     other = others[0] if others else None
     ev = _labels(chosen["success_evidence"]) or "无"
-    if other is None:
+    if sel.get("missing_channel"):
+        # ★ 裁定 1：唯一能装下的是缺通道的那个后端 ⇒ 保留待测试，理由写清"是欠账不是不合理"
+        over = [c for c in sel["candidates"] if c["backend"] != backend and c.get("peak_gib") is not None]
+        over_txt = "、".join(f"{c['backend']} 最佳情形 {c['peak_gib']:.2f} GiB 超预算" for c in over) \
+            or "其余后端均不可行"
+        return (f"选 {backend}：{over_txt}；只有 {backend} 补齐 {algo} 通道后能装下"
+                f"（按补齐后的配方估算 {peak:.2f}/{budget:.1f} GiB，{band}）"
+                "⇒ 缺实现≠档位不合理，保留待测试")
+    if (other is not None and other["eligible"] and chosen.get("deliverable", True)
+            and not other.get("deliverable", True)):
+        core = (f"选 {backend}：两者训练都能跑，但 {other['backend']} 交不出产物"
+                f"（{other.get('delivery_gap_short') or other.get('delivery_gap') or '导出 fail-closed'}）"
+                f"⇒ 按「产物可推理」取 {backend}")
+    elif other is None:
         if sel["missing_backends"]:
             core = (f"选 {backend}：{algo} 只有 {backend} 通道 —— {sel['missing_backends'][0]}；"
                     "缺实现≠档位不合理 ⇒ 保留待测试")
@@ -1068,7 +1130,7 @@ def _reason_line(chosen, sel, backend, mode, tp, pp, dp, band, budget, peak, alg
 def _reason_rule(sel, backend) -> str:
     """结构化理由里的"为什么是它" —— 与 `backend_rank_sort` 一一对应。"""
     ranked = sorted([c for c in sel["candidates"] if c["eligible"]],
-                    key=lambda c: c["rank_key"] if c["rank_key"] is not None else 99)
+                    key=lambda c: c.get("rank_key") if c.get("rank_key") is not None else 99)
     if not ranked:
         return "无可行候选"
     top = ranked[0]
@@ -1076,10 +1138,12 @@ def _reason_rule(sel, backend) -> str:
     why.append(f"排序键第 1 位 = 实测成功证据：{backend} {'有' if top['success_evidence'] else '无'}"
                f"（{','.join(top['success_evidence']) if top['success_evidence'] else '—'}）")
     why.append(f"第 2 位 = 形状是否被后端真消费：{'是' if top['fits_shape'] else '否'}")
+    why.append(f"第 4 位 = 产物可推理：{'是' if top.get('deliverable', True) else '否（' + str(top.get('delivery_gap')) + '）'}")
     for other in ranked[1:]:
         why.append(f"次优 {other['backend']}：峰值 {other['peak_gib']:.2f} GiB、"
                    f"实测成功 {','.join(other['success_evidence']) if other['success_evidence'] else '无'}、"
-                   f"形状真消费 {'是' if other['fits_shape'] else '否'}")
+                   f"形状真消费 {'是' if other['fits_shape'] else '否'}、"
+                   f"产物可推理 {'是' if other.get('deliverable', True) else '否'}")
     for c in sel["candidates"]:
         if not c["eligible"]:
             why.append(f"落选 {c['backend']}：{c['why']}")
@@ -1125,6 +1189,33 @@ def _est(algo, model, mode, backend, shape, budget, recipe=None, teacher_variant
     comp = estimate_components(model=model, mode=mode, backend=backend, tp=tp, pp=pp, dp=dp,
                                algo=algo, recipe=recipe, teacher_variant=teacher_variant)
     return peak_gib(comp)
+
+
+def _v11_lora_dp_deliverable(rows, budget: float) -> bool:
+    """裁定 2026-10-21 ②：LoRA ∧ dp>1 ∧ tp=pp=1 一律 ms-swift，除非 ms-swift 在该形状实测不可行。"""
+    for r in rows:
+        if r["mode"] != "LoRA" or int(r["tp"]) != 1 or int(r["pp"]) != 1 or int(r["dp"]) <= 1:
+            continue
+        if r["backend"] == "ms-swift":
+            continue
+        ms = next((c for c in r["backend_reason"]["candidates"] if c["backend"] == "ms-swift"), None)
+        if ms is None or ms["eligible"] or "实测不可行" not in (ms.get("why") or ""):
+            return False
+    return True
+
+
+def _v12_missing_channel(rows, budget: float) -> bool:
+    """裁定 2026-10-21 ①：MISSING_CHANNEL 档必须保留为待测试，且 note 写清卡点与复活估算。"""
+    mc = [r for r in rows if r["backend_reason"].get("backend_implemented") is False]
+    if not mc:
+        return False
+    for r in mc:
+        note = r["note"]
+        if r["status"] != "待测试" or "卡点" not in note:
+            return False
+        if f"native 侧无 {r['algo']} 通道" not in note or "补齐后按 native 配方估算" not in note:
+            return False
+    return True
 
 
 VERIFICATION_CASES: tuple[dict[str, Any], ...] = (
@@ -1173,11 +1264,14 @@ VERIFICATION_CASES: tuple[dict[str, Any], ...] = (
     },
     {
         "id": "V6",
-        "claim": "CPT 无 native 实现 ⇒ 必须保留为待测试（不许剔除），且后端只能是 ms-swift",
+        "claim": ("CPT 无 native 实现 ⇒ 必须保留为待测试（不许剔除）：能装下的档后端 = ms-swift；"
+                  "只有 native 能装下的档以 MISSING_CHANNEL 保留（backend=native 但 backend_implemented=false）"),
         "check": lambda rows, budget: (
             sum(1 for r in rows if r["algo"] == "CPT") > 0
-            and all(r["backend"] != "native" for r in rows if r["algo"] == "CPT")
-            and all("native 侧无 CPT 通道" in r["note"] for r in rows if r["algo"] == "CPT")),
+            and all("native 侧无 CPT 通道" in r["note"] for r in rows if r["algo"] == "CPT")
+            and all((r["backend"] == "ms-swift")
+                    or (r["backend_reason"].get("backend_implemented") is False)
+                    for r in rows if r["algo"] == "CPT")),
     },
     {
         "id": "V7",
@@ -1204,8 +1298,19 @@ VERIFICATION_CASES: tuple[dict[str, Any], ...] = (
     },
     {
         "id": "V10",
-        "claim": "计数守恒：raw_cube = exceed_cards + enumerated；enumerated = kept + Σ剔除",
+        "claim": "计数守恒：raw_cube = exceed_cards + enumerated；enumerated = kept + Σ剔除；kept = direct + missing_channel",
         "check": lambda rows, budget: True,   # 由 `run_self_check` 外层的守恒断言单独核（见下）
+    },
+    {
+        "id": "V11",
+        "claim": ("LoRA ∧ dp>1 ∧ tp=pp=1 ⇒ backend 必须是 ms-swift（native 训练能跑但产物交不出）；"
+                  "唯一例外 = ms-swift 在该形状有**实测不可行**证据（此时必须选 native 并在 note 写明该实测）"),
+        "check": _v11_lora_dp_deliverable,
+    },
+    {
+        "id": "V12",
+        "claim": "MISSING_CHANNEL 档必须 status=待测试、note 含「卡点」且写明缺哪条通道与补齐后的估算",
+        "check": _v12_missing_channel,
     },
 )
 
@@ -1227,14 +1332,19 @@ def run_self_check(rows, budget: float, counts: dict[str, Any] | None = None,
             # EXCEED_CARDS 发生在枚举之前 ⇒ 不进"枚举候选的剔除"合计（否则重复计数）
             excl_total = sum(v for k, v in counts["excluded"].items()
                              if k != "EXCEED_CARDS" and REASON_CODES.get(k, {}).get("excludes"))
+            kb = counts.get("kept_breakdown", {})
+            mc_n = sum(1 for r in rows if r["backend_reason"].get("backend_implemented") is False)
             ok = (counts["raw_cube"] == counts["exceed_cards"] + counts["enumerated"]
                   and counts["excluded"].get("EXCEED_CARDS") == counts["exceed_cards"]
                   and counts["enumerated"] == counts["kept"] + excl_total
-                  and counts["kept"] == len(rows))
+                  and counts["kept"] == len(rows)
+                  and kb.get("direct", 0) + kb.get("missing_channel", 0) == counts["kept"]
+                  and counts["excluded"].get("MISSING_CHANNEL", 0) == mc_n == kb.get("missing_channel", 0))
             out.append({"id": "V10", "claim": case["claim"], "ok": bool(ok),
                         "detail": {"raw": counts["raw_cube"], "exceed": counts["exceed_cards"],
                                    "enumerated": counts["enumerated"], "kept": counts["kept"],
-                                   "excluded_total": excl_total}})
+                                   "kept_breakdown": counts.get("kept_breakdown"),
+                                   "missing_channel": mc_n, "excluded_total": excl_total}})
             continue
         try:
             ok = bool(case["check"](rows, budget))
@@ -1487,6 +1597,21 @@ def apply_meta_sync(meta: dict[str, Any], *, card_limit: int, budget: float,
         "evidence_index": [
             {"id": e["id"], "label": e["label"], "kind": e["kind"]} for e in MEASURED_EVIDENCE
         ],
+        "recipe_not_modeled": [
+            "fsdp2_full_state_dict_offload（`samples/configs/fsdp/fsdp2_full_state_dict_offload.json` 存在、"
+            "cpu_offload=true 会把参数/梯度/优化器态全放 CPU，但**零 rc=0 实测**）⇒ ⛔ 未计入显存估算；"
+            "受此影响的被剔档在剔除清单里带 `if_recipe_measured` 标注（若该配方实测可行则可能复活）",
+        ],
+        "known_gaps": [
+            "配置生成侧待补：`tools/matrix/gen_configs.py` 全场不出现 `fsdp` ⇒ 本表里 ms-swift 全参档生成的 yaml "
+            "只会下发 `deepspeed: —`，**FSDP2 配方缺**（`switches` 里的 fsdp2 只是提示串）。⛔ 本轮不动生成器。",
+            "MISSING_CHANNEL 档与配置生成：`gen_configs.py:690` 只按 `applicable` 过滤 ⇒ 本表 4 档 "
+            "`runnable=false`（backend=native 但缺 CPT/OPD 通道）仍会被它生成 yaml，而那套 `train_method`+`backend` "
+            "组合在装载期会被 `core/schema.py:29-34` 拒绝。配置生成侧应改为按 `runnable` 跳过。⛔ 本轮不动生成器。",
+            "交付侧待补：native 的导出层只认 dp=tp=pp=1（`export/exporters/native_full_param.py:462-471` 逐字 "
+            "DP/TP/PP 合并均未实现、MUST stay fail-closed）⇒ native 的 LoRA/全参 TP·PP·DP 档「训练能跑、产物交不出」，"
+            "须补 flow 层 export 子系统。",
+        ],
         "status": "全部档位 status = 「待测试」，结果列全为「—」",
         "generated_at": generated_at,
         "rule": "★ 本脚本是档位表的唯一生成入口，⛔ 不许手改 data.json 的 rows[]",
@@ -1507,8 +1632,12 @@ def build(
 
     rows: list[dict[str, Any]] = []
     excluded: list[dict[str, Any]] = []
-    counts = {"raw_cube": len(enumerated) + len(exceeded), "exceed_cards": len(exceeded),
-              "enumerated": len(enumerated), "kept": 0, "excluded": {"EXCEED_CARDS": len(exceeded)}}
+    counts: dict[str, Any] = {
+        "raw_cube": len(enumerated) + len(exceeded), "exceed_cards": len(exceeded),
+        "enumerated": len(enumerated), "kept": 0,
+        "kept_breakdown": {"direct": 0, "missing_channel": 0},
+        "excluded": {"EXCEED_CARDS": len(exceeded)},
+    }
 
     for rec in enumerated:
         algo, model, mode, shape = rec["algo"], rec["model"], rec["mode"], rec["shape"]
@@ -1518,30 +1647,48 @@ def build(
         cands = sel["candidates"]
 
         if chosen is None:
-            # 全部候选都不行 ⇒ 分原因码：有实测不可行证据 = KNOWN_OOM；否则 = OOM_UNFIT
+            # ★ 主笔裁定「缺实现 ≠ 不合理」的落地：该算法在某后端**缺实现**因而没进候选，
+            #   但若补齐实现本档就能装下 ⇒ 该档**不是不合理**，而是我们自己的欠账：
+            #   保留为待测试（新原因码 MISSING_CHANNEL），按补齐通道后的配方登记估算。
+            hyp_all = [eval_backend(algo=algo, model=model, mode=mode, backend=be,
+                                    shape=shape, budget=budget)
+                       for be in BACKENDS if be not in ALGO_BACKEND_SUPPORT[algo]]
+            fittable = [h for h in hyp_all if h["eligible"]]
+            if fittable:
+                pick = min(fittable, key=lambda h: (round(h["peak_gib"], 3), BACKENDS.index(h["backend"])))
+                sel = {
+                    "candidates": cands + fittable,
+                    "chosen": pick,
+                    "missing_backends": [ALGO_BACKEND_NOTE[(algo, be)] for be in BACKENDS
+                                         if be not in ALGO_BACKEND_SUPPORT[algo] and (algo, be) in ALGO_BACKEND_NOTE],
+                    "missing_channel": True,
+                }
+                counts["kept_breakdown"]["missing_channel"] += 1
+                rows.append(row_of(f"M{len(rows) + 1:03d}", rec, sel, budget))
+                continue
+
+            # 真正装不下 ⇒ 分原因码：有实测不可行证据 = KNOWN_OOM；否则 = OOM_UNFIT
             known = [c for c in cands if "evidence" in c]
             code = "KNOWN_OOM" if known else "OOM_UNFIT"
             counts["excluded"][code] = counts["excluded"].get(code, 0) + 1
-            # ★ 主笔裁定「缺实现 ≠ 不合理」的落地：该算法在某后端**缺实现**因而没进候选，
-            #   但若补齐实现本档就能装下 ⇒ 逐条登记"复活路径"（⛔ 不把缺实现偷偷算成内存不足）。
-            revive = []
-            for be in BACKENDS:
-                if be in ALGO_BACKEND_SUPPORT[algo]:
-                    continue
-                hyp = eval_backend(algo=algo, model=model, mode=mode, backend=be,
-                                   shape=shape, budget=budget)
-                revive.append({"backend": be, "eligible": hyp["eligible"],
-                               "peak_gib": hyp.get("peak_gib"), "band": hyp.get("band"),
-                               "gap": ALGO_BACKEND_NOTE.get((algo, be))})
+            revive = [{"backend": h["backend"], "eligible": h["eligible"],
+                       "peak_gib": h.get("peak_gib"), "band": h.get("band"),
+                       "gap": ALGO_BACKEND_NOTE.get((algo, h["backend"]))} for h in hyp_all]
             detail = "；".join(f"{c['backend']}: {c['why']}" for c in cands)
             for rv in revive:
                 if rv["eligible"]:
                     detail += (f"；★ 复活路径：{rv['backend']} 补齐 {algo} 通道后估算 "
                                f"{rv['peak_gib']:.2f} GiB（{rv['band']}）⇒ 本档届时可复活")
+            if_recipe = None
+            if mode == "全参" and any(c["backend"] == "ms-swift" and not c["eligible"] for c in cands):
+                if_recipe = ("若 `samples/configs/fsdp/fsdp2_full_state_dict_offload.json` 的 cpu_offload 配方"
+                             "实测可行则本档可能复活（该配方把参数/梯度/优化器态都放 CPU ⇒ 每卡常住接近激活项；"
+                             "⛔ 零 rc=0 实测 ⇒ 未计入显存估算）")
             excluded.append({
                 "key": {"algo": algo, "model": model, "mode": mode,
                         "shape": {"tp": tp, "pp": pp, "dp": dp}, "total_cards": tp * pp * dp},
                 "reason_code": code,
+                "if_recipe_measured": if_recipe,
                 "detail": detail[:1200],
                 "revive_if_implemented": revive,
                 "candidates": [
@@ -1552,13 +1699,16 @@ def build(
             })
             continue
 
+        counts["kept_breakdown"]["direct"] += 1
         rows.append(row_of(f"M{len(rows) + 1:03d}", rec, sel, budget))
 
     counts["kept"] = len(rows)
     for code in REASON_CODES:
         if REASON_CODES[code]["excludes"]:
             counts["excluded"].setdefault(code, 0)
-    counts["excluded"].setdefault("ALGO_BACKEND", 0)   # 非剔除：保留档位数
+    # 非剔除原因码：计的是"保留档位数"，⛔ 不与剔除混算
+    counts["excluded"].setdefault("ALGO_BACKEND", 0)
+    counts["excluded"].setdefault("MISSING_CHANNEL", counts["kept_breakdown"]["missing_channel"])
     counts["exceed_cards"] = len(exceeded)
 
     doc = {
@@ -1637,7 +1787,9 @@ def summarize(doc: dict[str, Any], report: dict[str, Any]) -> str:
         n = counts["excluded"].get(code, 0)
         tag = "剔除" if REASON_CODES[code]["excludes"] else "不剔除（保留待测试并记卡点）"
         lines.append(f"  − {code:<22} : {n} 档（{tag}）")
-    lines.append(f"  = 最终保留               : {counts['kept']} 档（全部 status=待测试）")
+    kb = counts.get("kept_breakdown", {})
+    lines.append(f"  = 最终保留               : {counts['kept']} 档（全部 status=待测试；"
+                 f"其中常规 {kb.get('direct', 0)} + MISSING_CHANNEL {kb.get('missing_channel', 0)}）")
     lines.append("─" * 78)
     dist: dict[tuple[str, str, str, str], int] = {}
     for r in rows:
