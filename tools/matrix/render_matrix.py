@@ -7,8 +7,8 @@
   python3 render_matrix.py --template template.html --data matrix-data.json --stdout
 
 设计要点（对应主席硬要求 ★★）：
-- HTML 的一切内容 = template.html（骨架 / 版式 / 第 1/2/3 章静态文字 / 第 4 章读表提示）+ 数据件
-  （逐档参数 13 列 + 结果 6 列的**行数据**）。
+- HTML 的一切内容 = template.html（骨架 / 版式 / 第 1/2/3 章静态文字 / 第 4 章三态图例列表）+ 数据件
+  （逐档参数 11 列 + 结果 6 列的**行数据**）。
 - ★★ 使用者口径（2026-10-19 裁定）：「JSON 里面只有测试结果，脚本只负责把测试结果填写到最后一章
   测试表里面，其它所有的部分都不能动」。落地为三条：
     ① 表格结构（列 key / 表头 / 列组 / 顺序）= **本文件模块级常量**（`MATRIX_COLUMNS` / `MATRIX_GROUPS`），
@@ -18,9 +18,10 @@
 - 结果列禁止手工回填：本脚本是唯一写入 HTML 的通道；verify_matrix.py 会重新渲染并逐字节比对。
 - 渲染确定性：不读时钟、不读环境、不读网络；同一 (template, data) ⇒ 同一字节串。
 - 支持两类列：
-    * 普通列：一个数据字段一格；
-    * 合并列（列定义里带 "merge"）：把若干字段按 "sub_labels" 组装成「小节 + 值」的一格，
-      用于满足主席「参数（模型/方法/模式/backend/并行维度/关键超参）」合并成一列的要求。
+    * 普通列：一个数据字段一格（当前 19 列**全部**是普通列）；
+    * 合并列（列定义里带 "merge"）：把若干字段按 "sub_labels" 组装成「小节 + 值」的一格。
+      ★ 2026-10-21「第 4 章重构」轮后**已无列使用**它（原 `data_scale` / `steps` 两列按主席令删除）
+        —— 实现保留、供后续需要时复用，⛔ 不是死码（`merge_cell_inner` / `cell_display_text` 同源引用）。
 """
 import argparse, html, json, re, sys
 from pathlib import Path
@@ -33,8 +34,11 @@ from pathlib import Path
 #:     `{{GEN_BANNER}}` 等占位符一律下架（⛔ 不留"静态区仍由数据现算"的通道）。
 PLACEHOLDER_TOKENS = ("{{DOC_TITLE}}", "{{GENERATOR}}", "{{DATA_PATH}}", "{{MATRIX_TABLE}}")
 
-#: ★★ 21 列的功能矩阵表结构（**单一真相源**，宪法 §1.4）：
-#:   档号 → 状态 → 主要参数 13 列 → 实验数据 5 列 → 备注 1 列；两级表头 + 5 个列组。
+#: ★★ 19 列的功能矩阵表结构（**单一真相源**，宪法 §1.4）：
+#:   档号 → 是否通过 → 主要参数 11 列 → 实验数据 5 列 → 备注 1 列；两级表头 + 5 个列组。
+#:   ★ 2026-10-21「第 4 章重构」轮（主席口头指令）：渲染面由 21 列收敛为 **19 列** ——
+#:     删 `lora_target` / `data_scale` / `steps` 三列；新增渲染列 `model_tbl`（模型，值只 `9B`/`27B`）；
+#:     `lr` / `max_epochs` 两列**按主席给的删除条件实测不成立而保留**（第 3 章无 lr/epoch）。
 #:   ★ 2026-10-19 对齐轮曾由旧版 `65ac5e7` 的 21 列逐字恢复；**本轮（分区阈值 ≤2/≥3 轮）**再把
 #:     分区阈值由「< 5」改为「**≤ 2**」⇒ 表格列从 13 列扩回 **21 列**（13 参数 + 6 结果 + 档号/状态）。
 #:     （列 key / 表头 / 列组归属 / 出现顺序 / sticky / group_start）从数据件 `columns` 上移到这里
@@ -54,56 +58,47 @@ PLACEHOLDER_TOKENS = ("{{DOC_TITLE}}", "{{GENERATOR}}", "{{DATA_PATH}}", "{{MATR
 #:   ★ 消费方（⛔ 不得各留一份）：
 #:       `build_official.COLUMNS` / `build_official.GROUPS`（生成端）＝ 直接引用本常量；
 #:       `verify_matrix.EXPECTED_COLUMNS` / `EXPECTED_GROUPS`（校验端）＝ 由本常量现算。
-#:   ★ 合并列（`merge`）：把若干字段按 `sub_labels` 组装成一格（`data_scale` 承载数据规模 +
-#:     训练数据版本；`steps` 承载逐档总步数 + epoch 分解）。
+#:   ★ 合并列（`merge`）：把若干字段按 `sub_labels` 组装成一格（机制保留，本轮后无列使用）。
 MATRIX_COLUMNS = (
     {"key": "tier", "label": "档号", "group": "base", "sticky": True},
     {"key": "status", "label": "是否通过", "group": "status", "group_start": True},
-    # ── 以下 4 列（`into="conditions"`）**上提第 3 章「测试条件」**：54 档取值枚举数量 ≤ 2 ──
-    #    （★ 第 3 章的"TP 口径"不是本清单的一项：TP 的**取值**已回归表格列（见下），
-    #     第 3 章只写"口径说明"——两处文本不同、⛔ 不构成同一参数重复发布，见 ④Z-b 判据。）
+    # ── 以下 3 条（`into="conditions"`）是**第 3 章「测试条件」的登记项**：54 档取值枚举数量 ≤ 2 ──
+    #    ★ 2026-10-21「第 4 章重构」轮（主席口头指令）：模型 / 模式 / 后端 **同时**在表格里逐档给出
+    #      （`model_tbl` / `mode_tbl` / `backend_tbl`，均带 `source` 指回同一行字段）。
+    #      主席原话「模型写 9B 和 27B 就行了，因为前面已经写的很清楚了」⇒ 表格侧只给短值
+    #      （`9B` / `27B`），第 3 章保留全名（`Qwen3.5-9B` / `Qwen3.8-27B`）。
+    #      ⚠ 代价如实登记：这三项因此成为"同一参数两处发布"，与 ④Z「交集为空 / 条件参数在表格
+    #      ≥ 3 个不同取值」两条字面判据相抵 —— 取舍以主席原话为先（`verify_matrix` 已于
+    #      2026-10-20 退役、不再作为交付门禁，见其文件头退役说明）。
     {"key": "model", "label": "模型", "group": "param", "into": "conditions",
      "cond_label": "基础模型"},
     {"key": "mode", "label": "模式", "group": "param", "into": "conditions",
      "cond_label": "可训练参数（模式）", "source": "mode"},
     {"key": "backend", "label": "后端", "group": "param", "into": "conditions",
      "cond_label": "训练后端", "source": "backend"},
-    # ── 以下 13 列**留在表格**：逐档差异项 ──
-    #    ★ 并行方案三列（TP / PP / DP）必须在表内相邻给出：读者按"卡数 × 显存 × 模型"查表时，
-    #      先看的就是这一组（`dp2tp2` / `pp4tp1dp1` 这类档位对比）。
-    #    ★ 其中「模式」「后端」两列的回填值枚举数量是 2（**不是** ≥ 3）—— 它们留在表内是
-    #      主席查表口径的**显式例外**（登记见下方 `mode_tbl` / `backend_tbl` 注释与 ④Z-c1）。
-    {"key": "tp", "label": "TP", "group": "param", "group_start": True},
+    # ── 以下 **11 列**留在表格「主要参数」组：逐档差异项（前 4 项顺序 = 主席 2026-10-21 指定的 ③–⑪）──
+    #    ★ 并行方案三列（TP / PP / DP）必须相邻给出：读者按"卡数 × 显存 × 模型"查表时先看这一组。
+    #    ★ 单元格取值规范（2026-10-21 轮）：TP / PP / DP / 总卡数 **只写数字或 `—`**；
+    #      数据件里 `—（框架内部决定）` / `N（派生）` / `nproc_per_node×nnodes = N 卡` 这类
+    #      说明性文字已在外科清理中归一（查不到真值的档位记 `—`，逐档清单见工位 report.md）。
+    #    ★ 表格列 key 必须唯一，而 `model` / `mode` / `backend` 已被上面的条件登记占用
+    #      ⇒ 表格侧用 `model_tbl` / `mode_tbl` / `backend_tbl` 作内部别名，`source` 指回行字段。
+    {"key": "model_tbl", "label": "模型", "group": "param", "group_start": True,
+     "source": "model"},
+    {"key": "algo", "label": "算法", "group": "param"},
+    {"key": "mode_tbl", "label": "模式", "group": "param", "source": "mode"},
+    {"key": "backend_tbl", "label": "后端", "group": "param", "source": "backend"},
+    {"key": "tp", "label": "TP", "group": "param"},
     {"key": "pp", "label": "PP", "group": "param"},
     {"key": "dp", "label": "DP", "group": "param"},
     {"key": "cards_total", "label": "总卡数", "group": "param"},
-    {"key": "algo", "label": "算法", "group": "param"},
-    # ★ 「模式」「后端」两列是**唯一的两处例外**（如实登记、并由机核守住，⛔ 不滥用）：
-    #   它们在第 3 章以"不随档位变化的选型条件"出现（`cond_label` = 可训练参数（模式）/ 训练后端），
-    #   同时主席的**查表**用途要求"这一档能选哪些并行与后端"必须**同屏可比** ⇒ 两列也留在表格里。
-    #   为避免渲染器常量里出现两个同名 key（列 key 必须唯一），表格列用 `mode_tbl` / `backend_tbl`
-    #   作 **key（内部别名）**，`source` 指明它读的行字段仍是 `mode` / `backend`（**值同源**）。
-    #   ★ 这不是"放宽"（④Z 的三条判据一条未删）：
-    #     - 交集判据（④Z-b1/b2/d）对"key 不同名"的键对**不判重**——两处内容一个是**逐档取值**
-    #       （表格格），一个是**分档口径说明**（值域 + 档号范围），面向的是两个不同的读者；
-    #     - 基数判据（④Z-c1）对**行字段身份**判：`mode` / `backend` 这两个字段既然**已在表格列
-    #       逐档发布**，就不再要求第 3 章那条也满足"表格列须 ≥ 3"（同一条参数不重复计数）；
-    #     - 其它任何参数的重复发布、漏项、越界基数**仍然必红**（见 ④Z 的阳性对照自证）。
-    #   ★ TP 相反：它的**取值**回到表格列（枚举 2，但表格是唯一的取值发布处），
-    #     第 3 章只留一条"TP 口径"**说明式**条目（标签 `TP 口径`，⛔ 与表头 "TP" 不同名）。
-    {"key": "mode_tbl", "label": "模式", "group": "param", "source": "mode"},
-    {"key": "backend_tbl", "label": "后端", "group": "param", "source": "backend"},
+    # ★ `lr` / `训练轮次` **保留**：主席给的删除条件是"第 3 章「统一超参」已逐算法写明 lr 与 epoch"。
+    #   实测第 3 章那 11 条统一超参里**既无 lr 也无 epoch**（template.html:173-189）⇒ 按主席条件分支
+    #   保留该两列；取值已在数据件里为纯数字（lr: 5.0e-06 / 2.0e-05 / —；轮次: 2 / 4 / 8）。
     {"key": "lr", "label": "lr", "group": "param"},
     {"key": "max_epochs", "label": "训练轮次", "group": "param"},
-    {"key": "lora_target", "label": "LoRA 目标", "group": "param"},
-    {"key": "data_scale", "label": "数据规模（数据版本）", "group": "param",
-     "merge": ("data_scale", "data_subset"), "merge_sep": " <br>",
-     "sub_labels": {"data_subset": "训练数据版本："}},
-    # ★ `步数` 列 = **完整推导文本**（逐档逐字取自数据件 `steps` 字段，如
-    #   `2 epoch × 100 步/epoch = 推导 200 步`）⇒ 它同时承载"轮次 × 每 epoch 步数 = 总步数"
-    #   三样信息，⛔ 不再另加"推导 …"前缀、⛔ 不再另加括号包一层 epoch 分解（那是重复发布）。
-    {"key": "steps", "label": "步数", "group": "param"},
     {"key": "switches", "label": "关键开关", "group": "param"},
+    # ── 实验数据 5 列 + 备注：2026-10-21 轮**原样不动** ──
     {"key": "peak_mem", "label": "显存峰值(GiB)", "group": "data", "group_start": True},
     {"key": "steps_actual", "label": "实跑步数", "group": "data"},
     {"key": "elapsed", "label": "耗时（每步/总时长）", "group": "data"},
@@ -121,8 +116,8 @@ MATRIX_GROUPS = {"base": "基础", "status": "状态", "param": "主要参数",
 #:   ② `TABLE_PARAM_KEYS`：**留在表格**「主要参数」组的列 key（含合并列的**全部**子键）；
 #:   ③ 两者**并集 ⊇ 该档全部训练参数**、**交集 = ∅** —— 由 `verify_matrix` ④Z 逐档机核。
 #:   ★ 归一化键：表格列 **⇄ 行字段**的对应关系由列的 `source` 给出（缺省 = 列 key 同名）；
-#:     唯一需要显式 `source` 的两列是 `mode_tbl` / `backend_tbl`（见上方注释：同一分类参数既要
-#:     在第 3 章列条件、又要在表格里逐档可比 ⇒ 表格侧用内部别名 key，⛔ 行字段名不变）；
+#:     需要显式 `source` 的三列是 `model_tbl` / `mode_tbl` / `backend_tbl`（见上方注释：同一分类参数
+#:     既要第 3 章给全名/全义、又要表格里逐档可比 ⇒ 表格侧用内部别名 key，⛔ 行字段名不变）；
 #:     "轮次"列的 key 直接用数据行的权威字段 `max_epochs`
 #:     （⛔ 不新造 `epoch` 别名：行里那个 `epoch` 字段是历史遗留、54/54 为 `None`）。
 #:   ★ **`步数` 列是单字段列（⛔ 不是合并列）**：主席要求"保留完整推导文本"，而数据行 `steps`
@@ -242,10 +237,14 @@ def cell_display_text(row, key):
     src = col.get("source", key)
     return "" if row.get(src) is None else str(row.get(src))
 
-# 结果列着色用的四态映射（与模板内联脚本同一口径；此处只用于生成带 class 的单元格）
+# 结果列着色映射（此处只用于生成带 class 的单元格；绿/红/黄与第 4 章三态图例同源）
+#: ★ 2026-10-21「第 4 章重构」轮：人读件的「是否通过」列只允许**三值** `通过` / `未通过` /
+#:   `尚未验证`（见模板第 4 章图例）⇒ 前三条即本轮三态；后三条是 2026-10-20 之前的旧四态，
+#:   仅为历史行数据（里程碑页等）仍能着色而**保留**，⛔ 当前 54 档无一命中。
 STATUS_CLASS = {
+    "通过": "st-pass", "未通过": "st-fail", "尚未验证": "st-pending",
     "已验证可用": "st-pass", "已验证不可用": "st-fail",
-    "尚未验证": "st-pending", "未纳入验收": "st-illegal",
+    "未纳入验收": "st-illegal",
 }
 
 

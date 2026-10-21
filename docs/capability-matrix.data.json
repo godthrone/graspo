@@ -531,10 +531,10 @@
    "save_steps_basis": "= 推导步数 200 + 1（不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "100 条（每卡 100）",
-   "tp": "—（框架内部决定）",
-   "pp": "—（框架内部决定）",
-   "dp": "1（派生）",
-   "cards_total": "nproc_per_node×nnodes = 1 卡",
+   "tp": "—",
+   "pp": "—",
+   "dp": "1",
+   "cards_total": "1",
    "not_failed_reason": "—"
   },
   {
@@ -597,10 +597,10 @@
    "save_steps_basis": "= 推导步数 100 + 1（不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "100 条（每卡 50）",
-   "tp": "—（框架内部决定）",
-   "pp": "—（框架内部决定）",
-   "dp": "2（派生）",
-   "cards_total": "nproc_per_node×nnodes = 2 卡",
+   "tp": "—",
+   "pp": "—",
+   "dp": "2",
+   "cards_total": "2",
    "not_failed_reason": "—"
   },
   {
@@ -663,10 +663,10 @@
    "save_steps_basis": "= 推导步数 50 + 1（不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "100 条（每卡 25）",
-   "tp": "—（框架内部决定）",
-   "pp": "—（框架内部决定）",
-   "dp": "4（派生）",
-   "cards_total": "nproc_per_node×nnodes = 4 卡",
+   "tp": "—",
+   "pp": "—",
+   "dp": "4",
+   "cards_total": "4",
    "not_failed_reason": "—"
   },
   {
@@ -732,10 +732,10 @@
    "save_steps_basis": "= 推导步数 200 + 1（不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "100 条（每卡 100）",
-   "tp": "—（框架内部决定）",
-   "pp": "—（框架内部决定）",
-   "dp": "1（派生）",
-   "cards_total": "nproc_per_node×nnodes = 1 卡",
+   "tp": "—",
+   "pp": "—",
+   "dp": "1",
+   "cards_total": "1",
    "not_failed_reason": "—"
   },
   {
@@ -801,10 +801,10 @@
    "save_steps_basis": "= 推导步数 100 + 1（不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "100 条（每卡 50）",
-   "tp": "—（框架内部决定）",
-   "pp": "—（框架内部决定）",
-   "dp": "2（派生）",
-   "cards_total": "nproc_per_node×nnodes = 2 卡",
+   "tp": "—",
+   "pp": "—",
+   "dp": "2",
+   "cards_total": "2",
    "not_failed_reason": "—"
   },
   {
@@ -870,10 +870,10 @@
    "save_steps_basis": "= 推导步数 50 + 1（不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "100 条（每卡 25）",
-   "tp": "—（框架内部决定）",
-   "pp": "—（框架内部决定）",
-   "dp": "4（派生）",
-   "cards_total": "nproc_per_node×nnodes = 4 卡",
+   "tp": "—",
+   "pp": "—",
+   "dp": "4",
+   "cards_total": "4",
    "not_failed_reason": "—"
   },
   {
@@ -939,10 +939,10 @@
    "save_steps_basis": "= 推导步数 200 + 1（不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "100 条（每卡 100）",
-   "tp": "—（框架内部决定）",
-   "pp": "—（框架内部决定）",
-   "dp": "1（派生）",
-   "cards_total": "nproc_per_node×nnodes = 1 卡",
+   "tp": "—",
+   "pp": "—",
+   "dp": "1",
+   "cards_total": "1",
    "not_failed_reason": "—"
   },
   {
@@ -1008,10 +1008,10 @@
    "save_steps_basis": "= 推导步数 100 + 1（不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "100 条（每卡 50）",
-   "tp": "—（框架内部决定）",
-   "pp": "—（框架内部决定）",
-   "dp": "2（派生）",
-   "cards_total": "nproc_per_node×nnodes = 2 卡",
+   "tp": "—",
+   "pp": "—",
+   "dp": "2",
+   "cards_total": "2",
    "not_failed_reason": "—"
   },
   {
@@ -1077,10 +1077,10 @@
    "save_steps_basis": "= 推导步数 50 + 1（不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "100 条（每卡 25）",
-   "tp": "—（框架内部决定）",
-   "pp": "—（框架内部决定）",
-   "dp": "4（派生）",
-   "cards_total": "nproc_per_node×nnodes = 4 卡",
+   "tp": "—",
+   "pp": "—",
+   "dp": "4",
+   "cards_total": "4",
    "not_failed_reason": "—"
   },
   {
@@ -1146,7 +1146,7 @@
    "tp": "1",
    "pp": "1",
    "dp": "1",
-   "cards_total": "1×1×1×1 = 1 卡",
+   "cards_total": "1",
    "not_failed_reason": "—"
   },
   {
@@ -1246,7 +1246,7 @@
    "tp": "1",
    "pp": "1",
    "dp": "2",
-   "cards_total": "1×1×1×2 = 2 卡",
+   "cards_total": "2",
    "not_failed_reason": "—"
   },
   {
@@ -1339,7 +1339,7 @@
    "tp": "1",
    "pp": "1",
    "dp": "4",
-   "cards_total": "1×1×1×4 = 4 卡",
+   "cards_total": "4",
    "not_failed_reason": "—"
   },
   {
@@ -1402,10 +1402,10 @@
    "save_steps_basis": "= 推导步数 400 + 1（不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "100 条（每卡 100）",
-   "tp": "—（框架内部决定）",
-   "pp": "—（框架内部决定）",
-   "dp": "1（派生）",
-   "cards_total": "nproc_per_node×nnodes = 1 卡",
+   "tp": "—",
+   "pp": "—",
+   "dp": "1",
+   "cards_total": "1",
    "not_failed_reason": "—"
   },
   {
@@ -1468,10 +1468,10 @@
    "save_steps_basis": "= 推导步数 200 + 1（不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "100 条（每卡 50）",
-   "tp": "—（框架内部决定）",
-   "pp": "—（框架内部决定）",
-   "dp": "2（派生）",
-   "cards_total": "nproc_per_node×nnodes = 2 卡",
+   "tp": "—",
+   "pp": "—",
+   "dp": "2",
+   "cards_total": "2",
    "not_failed_reason": "—"
   },
   {
@@ -1534,10 +1534,10 @@
    "save_steps_basis": "= 推导步数 100 + 1（不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "100 条（每卡 25）",
-   "tp": "—（框架内部决定）",
-   "pp": "—（框架内部决定）",
-   "dp": "4（派生）",
-   "cards_total": "nproc_per_node×nnodes = 4 卡",
+   "tp": "—",
+   "pp": "—",
+   "dp": "4",
+   "cards_total": "4",
    "not_failed_reason": "—"
   },
   {
@@ -1605,7 +1605,7 @@
    "tp": "1",
    "pp": "1",
    "dp": "1",
-   "cards_total": "1×1×1×1 = 1 卡",
+   "cards_total": "1",
    "not_failed_reason": "—"
   },
   {
@@ -1672,7 +1672,7 @@
    "tp": "1",
    "pp": "2",
    "dp": "1",
-   "cards_total": "1×2×1×1 = 2 卡",
+   "cards_total": "2",
    "not_failed_reason": "—"
   },
   {
@@ -1741,7 +1741,7 @@
    "tp": "1",
    "pp": "4",
    "dp": "1",
-   "cards_total": "1×4×1×1 = 4 卡",
+   "cards_total": "4",
    "not_failed_reason": "—"
   },
   {
@@ -1807,10 +1807,10 @@
    "save_steps_basis": "= 推导步数 400 + 1（不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "100 条（每卡 100）",
-   "tp": "—（框架内部决定）",
-   "pp": "—（框架内部决定）",
-   "dp": "1（派生）",
-   "cards_total": "nproc_per_node×nnodes = 1 卡",
+   "tp": "—",
+   "pp": "—",
+   "dp": "1",
+   "cards_total": "1",
    "not_failed_reason": "—"
   },
   {
@@ -1876,10 +1876,10 @@
    "save_steps_basis": "= 推导步数 200 + 1（不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "100 条（每卡 50）",
-   "tp": "—（框架内部决定）",
-   "pp": "—（框架内部决定）",
-   "dp": "2（派生）",
-   "cards_total": "nproc_per_node×nnodes = 2 卡",
+   "tp": "—",
+   "pp": "—",
+   "dp": "2",
+   "cards_total": "2",
    "not_failed_reason": "—"
   },
   {
@@ -1945,10 +1945,10 @@
    "save_steps_basis": "= 推导步数 100 + 1（不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "100 条（每卡 25）",
-   "tp": "—（框架内部决定）",
-   "pp": "—（框架内部决定）",
-   "dp": "4（派生）",
-   "cards_total": "nproc_per_node×nnodes = 4 卡",
+   "tp": "—",
+   "pp": "—",
+   "dp": "4",
+   "cards_total": "4",
    "not_failed_reason": "—"
   },
   {
@@ -2014,7 +2014,7 @@
    "tp": "1",
    "pp": "1",
    "dp": "1",
-   "cards_total": "1×1×1×1 = 1 卡",
+   "cards_total": "1",
    "not_failed_reason": "—"
   },
   {
@@ -2110,7 +2110,7 @@
    "tp": "1",
    "pp": "1",
    "dp": "2",
-   "cards_total": "1×1×1×2 = 2 卡",
+   "cards_total": "2",
    "not_failed_reason": "—"
   },
   {
@@ -2203,7 +2203,7 @@
    "tp": "1",
    "pp": "1",
    "dp": "4",
-   "cards_total": "1×1×1×4 = 4 卡",
+   "cards_total": "4",
    "not_failed_reason": "—"
   },
   {
@@ -2269,10 +2269,10 @@
    "save_steps_basis": "= 推导步数 400 + 1（不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "100 条（每卡 100）",
-   "tp": "—（框架内部决定）",
-   "pp": "—（框架内部决定）",
-   "dp": "1（派生）",
-   "cards_total": "nproc_per_node×nnodes = 1 卡",
+   "tp": "—",
+   "pp": "—",
+   "dp": "1",
+   "cards_total": "1",
    "not_failed_reason": "—"
   },
   {
@@ -2338,10 +2338,10 @@
    "save_steps_basis": "= 推导步数 200 + 1（不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "100 条（每卡 50）",
-   "tp": "—（框架内部决定）",
-   "pp": "—（框架内部决定）",
-   "dp": "2（派生）",
-   "cards_total": "nproc_per_node×nnodes = 2 卡",
+   "tp": "—",
+   "pp": "—",
+   "dp": "2",
+   "cards_total": "2",
    "not_failed_reason": "—"
   },
   {
@@ -2407,10 +2407,10 @@
    "save_steps_basis": "= 推导步数 100 + 1（不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "100 条（每卡 25）",
-   "tp": "—（框架内部决定）",
-   "pp": "—（框架内部决定）",
-   "dp": "4（派生）",
-   "cards_total": "nproc_per_node×nnodes = 4 卡",
+   "tp": "—",
+   "pp": "—",
+   "dp": "4",
+   "cards_total": "4",
    "not_failed_reason": "—"
   },
   {
@@ -2476,7 +2476,7 @@
    "tp": "1",
    "pp": "1",
    "dp": "1",
-   "cards_total": "1×1×1×1 = 1 卡",
+   "cards_total": "1",
    "not_failed_reason": "—"
   },
   {
@@ -2542,7 +2542,7 @@
    "tp": "1",
    "pp": "1",
    "dp": "2",
-   "cards_total": "1×1×1×2 = 2 卡",
+   "cards_total": "2",
    "not_failed_reason": "—"
   },
   {
@@ -2611,7 +2611,7 @@
    "tp": "1",
    "pp": "1",
    "dp": "4",
-   "cards_total": "1×1×1×4 = 4 卡",
+   "cards_total": "4",
    "not_failed_reason": "—"
   },
   {
@@ -2675,10 +2675,10 @@
    "save_steps_basis": "= 推导步数 6400 + 1（不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "100 条（每卡 100）",
-   "tp": "—（框架内部决定）",
-   "pp": "—（框架内部决定）",
-   "dp": "1（派生）",
-   "cards_total": "nproc_per_node×nnodes = 1 卡",
+   "tp": "—",
+   "pp": "—",
+   "dp": "1",
+   "cards_total": "1",
    "not_failed_reason": "—"
   },
   {
@@ -2742,10 +2742,10 @@
    "save_steps_basis": "= 推导步数 3200 + 1（不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "100 条（每卡 50）",
-   "tp": "—（框架内部决定）",
-   "pp": "—（框架内部决定）",
-   "dp": "2（派生）",
-   "cards_total": "nproc_per_node×nnodes = 2 卡",
+   "tp": "—",
+   "pp": "—",
+   "dp": "2",
+   "cards_total": "2",
    "not_failed_reason": "—"
   },
   {
@@ -2809,10 +2809,10 @@
    "save_steps_basis": "= 推导步数 1600 + 1（不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "100 条（每卡 25）",
-   "tp": "—（框架内部决定）",
-   "pp": "—（框架内部决定）",
-   "dp": "4（派生）",
-   "cards_total": "nproc_per_node×nnodes = 4 卡",
+   "tp": "—",
+   "pp": "—",
+   "dp": "4",
+   "cards_total": "4",
    "not_failed_reason": "—"
   },
   {
@@ -2885,7 +2885,7 @@
    "tp": "1",
    "pp": "1",
    "dp": "1",
-   "cards_total": "1×1×1×1 = 1 卡",
+   "cards_total": "1",
    "not_failed_reason": "—"
   },
   {
@@ -2959,7 +2959,7 @@
    "tp": "1",
    "pp": "2",
    "dp": "1",
-   "cards_total": "1×2×1×1 = 2 卡",
+   "cards_total": "2",
    "not_failed_reason": "—"
   },
   {
@@ -3028,7 +3028,7 @@
    "tp": "1",
    "pp": "4",
    "dp": "1",
-   "cards_total": "1×4×1×1 = 4 卡",
+   "cards_total": "4",
    "not_failed_reason": "—"
   },
   {
@@ -3095,10 +3095,10 @@
    "save_steps_basis": "= 推导步数 6400 + 1（不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "100 条（每卡 100）",
-   "tp": "—（框架内部决定）",
-   "pp": "—（框架内部决定）",
-   "dp": "1（派生）",
-   "cards_total": "nproc_per_node×nnodes = 1 卡",
+   "tp": "—",
+   "pp": "—",
+   "dp": "1",
+   "cards_total": "1",
    "not_failed_reason": "—"
   },
   {
@@ -3164,10 +3164,10 @@
    "save_steps_basis": "= 推导步数 3200 + 1（不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "100 条（每卡 50）",
-   "tp": "—（框架内部决定）",
-   "pp": "—（框架内部决定）",
-   "dp": "2（派生）",
-   "cards_total": "nproc_per_node×nnodes = 2 卡",
+   "tp": "—",
+   "pp": "—",
+   "dp": "2",
+   "cards_total": "2",
    "not_failed_reason": "—"
   },
   {
@@ -3233,10 +3233,10 @@
    "save_steps_basis": "= 推导步数 1600 + 1（不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "100 条（每卡 25）",
-   "tp": "—（框架内部决定）",
-   "pp": "—（框架内部决定）",
-   "dp": "4（派生）",
-   "cards_total": "nproc_per_node×nnodes = 4 卡",
+   "tp": "—",
+   "pp": "—",
+   "dp": "4",
+   "cards_total": "4",
    "not_failed_reason": "—"
   },
   {
@@ -3305,7 +3305,7 @@
    "tp": "1",
    "pp": "1",
    "dp": "1",
-   "cards_total": "1×1×1×1 = 1 卡",
+   "cards_total": "1",
    "not_failed_reason": "—"
   },
   {
@@ -3372,7 +3372,7 @@
    "tp": "1",
    "pp": "1",
    "dp": "2",
-   "cards_total": "1×1×1×2 = 2 卡",
+   "cards_total": "2",
    "not_failed_reason": "—"
   },
   {
@@ -3442,7 +3442,7 @@
    "tp": "1",
    "pp": "1",
    "dp": "4",
-   "cards_total": "1×1×1×4 = 4 卡",
+   "cards_total": "4",
    "not_failed_reason": "—"
   },
   {
@@ -3510,10 +3510,10 @@
    "save_steps_basis": "= 推导步数 6400 + 1（不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "100 条（每卡 100）",
-   "tp": "—（框架内部决定）",
-   "pp": "—（框架内部决定）",
-   "dp": "1（派生）",
-   "cards_total": "nproc_per_node×nnodes = 1 卡",
+   "tp": "—",
+   "pp": "—",
+   "dp": "1",
+   "cards_total": "1",
    "not_failed_reason": "—"
   },
   {
@@ -3580,10 +3580,10 @@
    "steps_actual": "—",
    "data_scale": "100 条（每卡 50）",
    "note": "—",
-   "tp": "—（框架内部决定）",
-   "pp": "—（框架内部决定）",
-   "dp": "2（派生）",
-   "cards_total": "nproc_per_node×nnodes = 2 卡",
+   "tp": "—",
+   "pp": "—",
+   "dp": "2",
+   "cards_total": "2",
    "not_failed_reason": "—"
   },
   {
@@ -3650,10 +3650,10 @@
    "save_steps_basis": "= 推导步数 1600 + 1（不设人为步数上限；save_steps 大于总步数 ⇒ 只留最终检查点）",
    "steps_actual": "—",
    "data_scale": "100 条（每卡 25）",
-   "tp": "—（框架内部决定）",
-   "pp": "—（框架内部决定）",
-   "dp": "4（派生）",
-   "cards_total": "nproc_per_node×nnodes = 4 卡",
+   "tp": "—",
+   "pp": "—",
+   "dp": "4",
+   "cards_total": "4",
    "not_failed_reason": "—"
   },
   {
@@ -3720,10 +3720,10 @@
    "steps_actual": "—",
    "data_scale": "100 条（每卡 100）",
    "note": "—",
-   "tp": "—（框架内部决定）",
-   "pp": "—（框架内部决定）",
-   "dp": "1（派生）",
-   "cards_total": "nproc_per_node×nnodes = 1 卡",
+   "tp": "—",
+   "pp": "—",
+   "dp": "1",
+   "cards_total": "1",
    "not_failed_reason": "—"
   },
   {
@@ -3790,10 +3790,10 @@
    "steps_actual": "—",
    "data_scale": "100 条（每卡 50）",
    "note": "—",
-   "tp": "—（框架内部决定）",
-   "pp": "—（框架内部决定）",
-   "dp": "2（派生）",
-   "cards_total": "nproc_per_node×nnodes = 2 卡",
+   "tp": "—",
+   "pp": "—",
+   "dp": "2",
+   "cards_total": "2",
    "not_failed_reason": "—"
   },
   {
@@ -3860,10 +3860,10 @@
    "steps_actual": "—",
    "data_scale": "100 条（每卡 25）",
    "note": "—",
-   "tp": "—（框架内部决定）",
-   "pp": "—（框架内部决定）",
-   "dp": "4（派生）",
-   "cards_total": "nproc_per_node×nnodes = 4 卡",
+   "tp": "—",
+   "pp": "—",
+   "dp": "4",
+   "cards_total": "4",
    "not_failed_reason": "—"
   },
   {
@@ -3935,10 +3935,10 @@
    "steps_actual": "—",
    "data_scale": "100 条（每卡 100）",
    "note": "—",
-   "tp": "—（框架内部决定）",
-   "pp": "—（框架内部决定）",
-   "dp": "1（派生）",
-   "cards_total": "nproc_per_node×nnodes = 1 卡",
+   "tp": "—",
+   "pp": "—",
+   "dp": "1",
+   "cards_total": "1",
    "not_failed_reason": "—"
   },
   {
@@ -4010,10 +4010,10 @@
    "steps_actual": "—",
    "data_scale": "100 条（每卡 50）",
    "note": "—",
-   "tp": "—（框架内部决定）",
-   "pp": "—（框架内部决定）",
-   "dp": "2（派生）",
-   "cards_total": "nproc_per_node×nnodes = 2 卡",
+   "tp": "—",
+   "pp": "—",
+   "dp": "2",
+   "cards_total": "2",
    "not_failed_reason": "—"
   },
   {
@@ -4085,10 +4085,10 @@
    "steps_actual": "—",
    "data_scale": "100 条（每卡 25）",
    "note": "—",
-   "tp": "—（框架内部决定）",
-   "pp": "—（框架内部决定）",
-   "dp": "4（派生）",
-   "cards_total": "nproc_per_node×nnodes = 4 卡",
+   "tp": "—",
+   "pp": "—",
+   "dp": "4",
+   "cards_total": "4",
    "not_failed_reason": "—"
   },
   {
@@ -4160,10 +4160,10 @@
    "steps_actual": "—",
    "data_scale": "100 条（每卡 100）",
    "note": "—",
-   "tp": "—（框架内部决定）",
-   "pp": "—（框架内部决定）",
-   "dp": "—（框架内部决定）",
-   "cards_total": "—（1 卡）",
+   "tp": "—",
+   "pp": "—",
+   "dp": "—",
+   "cards_total": "1",
    "not_failed_reason": "—"
   },
   {
@@ -4235,10 +4235,10 @@
    "steps_actual": "—",
    "data_scale": "100 条（每卡 50）",
    "note": "—",
-   "tp": "—（框架内部决定）",
-   "pp": "—（框架内部决定）",
-   "dp": "—（框架内部决定）",
-   "cards_total": "—（2 卡）",
+   "tp": "—",
+   "pp": "—",
+   "dp": "—",
+   "cards_total": "2",
    "not_failed_reason": "—"
   },
   {
@@ -4310,10 +4310,10 @@
    "steps_actual": "—",
    "data_scale": "100 条（每卡 25）",
    "note": "—",
-   "tp": "—（框架内部决定）",
-   "pp": "—（框架内部决定）",
-   "dp": "—（框架内部决定）",
-   "cards_total": "—（4 卡）",
+   "tp": "—",
+   "pp": "—",
+   "dp": "—",
+   "cards_total": "4",
    "not_failed_reason": "—"
   }
  ],
