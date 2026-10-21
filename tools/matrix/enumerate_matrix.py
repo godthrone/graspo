@@ -328,7 +328,7 @@ MEASURED_EVIDENCE: tuple[dict[str, Any], ...] = (
         "effect": "backend_infeasible",
     },
     {
-        "id": "EV07", "label": "27B GRASPO LoRA native dp2 实测异常退出（T041，未定性）", "kind": "runtime_failure",
+        "id": "EV07", "label": "27B GRASPO LoRA native dp2 实测异常退出且异常类型未落盘（未定性）", "kind": "runtime_failure",
         "scope": ("GRASPO", "27B", "LoRA", "native", ((1, 1, 2),)),
         "reading": ("T041：僵持 51+ min；逐字 `exception-path teardown: aborted=True … WITHOUT a rendezvous "
                     "(no WORLD barrier on the failure path)`；卡侧 `73.65 GiB in use` ⇒ **异常类型未落盘、原文明确禁止据此判 OOM**"),
@@ -718,7 +718,7 @@ def eval_backend(
     elif backend == "native" and mode == "LoRA" and tp == 1 and pp == 1 and dp > 1:
         deliverable = False
         delivery_gap_short = ("native LoRA 的 DP 合并依赖「副本位等价」窄口前置：`native_lora.py:455-476` "
-                              "分歧即 fail-closed；T011/T012/T023/T024 实测副本逐元素相等、可合并，"
+                              "分歧即 fail-closed；既有 9B/27B 的 LoRA dp2/dp4 跑次实测副本逐元素相等、可合并，"
                               "epoch=2 旧 dp4 跑次曾分歧")
         delivery_gap = delivery_gap_short
 
@@ -1051,7 +1051,7 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
         "planned_steps": str(per_epoch),
         "train_path": f"subsets-v2/{tier}.jsonl",
         "data_source": "ELAM V5 mini 冒烟集（按算法子集条数）",
-        "data_subset": "待生成（本轮只出设计矩阵）",
+        "data_subset": "待生成",
         "lora_target": "真实 HF 名正则（两后端统一；唯一真相源 src/graspo/core/lora.py:30-34）" if mode == "LoRA" else "—",
         "applicable": True,
         # `runnable`：**今天**这个后端能不能起跑该算法（⛔ 与 `status` 正交：status 是"测没测过"，
@@ -1260,6 +1260,50 @@ def _v12_missing_channel(rows, budget: float) -> bool:
     return True
 
 
+#: 旧 54 档档号形态（V14 机核）：发布件（`docs/capability-matrix.data.json`）里必须为 0。
+#:   ★ 溯源（档号 + 路径 + 行号）只留在本脚本证据表的 `reading`/`source` 与 `.local` 工位报告里；
+#:     ⛔ 发布件里的人读文案一律用描述性指代（"既有 9B/27B LoRA dp2/dp4 跑次"）。
+TIER_ID_RE = re.compile(r"T\d{3}")
+
+
+def serialize_doc(doc: dict[str, Any]) -> str:
+    """发布件落盘字节的唯一产生点（V14 与写盘共用，⛔ 两处各 dumps 一次会漂移）。"""
+    return json.dumps(doc, ensure_ascii=False, indent=2) + "\n"
+
+
+def leak_hits_in_text(text: str) -> list[str]:
+    """**写盘前 fail-closed**：用 `scan_matrix_leaks.py` 的同一套禁词与规则扫发布件全文。
+
+    ★ §1.4 单一真相源：⛔ 不在这里另抄一份禁词表 —— 直接 import 同目录扫描器的
+      `PATTERNS`（其中已同源引用 `build_official.DEV_CHURN_TERMS`／`EVIDENCE_PATH_PATTERN`）
+      与可选外部清单 `load_denylist()`。生成端与校验端因此**不会漂移**。
+    """
+    try:
+        import scan_matrix_leaks as _leaks  # 同目录，纯常量与纯函数，⛔ 无副作用
+    except Exception as exc:  # 扫描器不可用 ⇒ 失败即拒写（⛔ 不许"扫不了就放行"）
+        return [f"扫描器不可用（{exc}）⇒ 无法完成脱敏机核"]
+    rules = list(_leaks.PATTERNS) + list(_leaks.load_denylist())
+    hits: list[str] = []
+    for i, line in enumerate(text.splitlines(), 1):
+        for pat, why in rules:
+            m = re.search(pat, line)
+            if m:
+                hits.append(f"第 {i} 行：{why} ⇒ {m.group(0)!r}")
+                break
+    return hits
+
+
+def _v14_no_tier_ids(data_text: str | None) -> tuple[bool, str]:
+    """V14：发布件里旧档号（`T` + 三位数字）命中数必须为 0。"""
+    if data_text is None:
+        return False, "数据件文本未提供"
+    hits = TIER_ID_RE.findall(data_text)
+    if hits:
+        uniq = sorted(set(hits))
+        return False, f"命中 {len(hits)} 处（{', '.join(uniq)}）"
+    return True, "0 处"
+
+
 #: note 里**只有**拿到具名 success 跑次才允许出现的断言词（V13 机核）。
 CLAIM_WORDS: tuple[str, ...] = ("训练可跑", "训练能跑", "训练跑通")
 #: note 里**只有**拿到实测证据才允许出现的断言词（V13 反方向机核）；纯算式的只能写「估算超预算」。
@@ -1399,17 +1443,28 @@ VERIFICATION_CASES: tuple[dict[str, Any], ...] = (
                   "反方向「不可行/必然失败/交不出」需 backend_infeasible/recipe_forbid 证据，纯算式只能写「估算超预算」"),
         "check": _v13_claims_backed_by_runs,
     },
+    {
+        "id": "V14",
+        "claim": ("发布件（docs/capability-matrix.data.json）里旧档号形态 `T` + 三位数字的命中数必须为 0；"
+                  "人读文案一律用描述性指代，完整溯源只留在工位件"),
+        "check": None,   # 由 `run_self_check` 单独核（需要发布件序列化文本，见下）
+    },
 )
 
 
 def run_self_check(rows, budget: float, counts: dict[str, Any] | None = None,
-                   card_limit: int | None = None) -> list[dict[str, Any]]:
+                   card_limit: int | None = None,
+                   data_text: str | None = None) -> list[dict[str, Any]]:
     out = []
     for case in VERIFICATION_CASES:
         need = case.get("min_card_limit")
         if need is not None and card_limit is not None and card_limit < need:
             out.append({"id": case["id"], "claim": case["claim"], "ok": True, "skipped": True,
                         "reason": f"min_card_limit={need} 而 card_limit={card_limit} ⇒ 该形状不在枚举域，本回验不适用"})
+            continue
+        if case["id"] == "V14":
+            ok, detail = _v14_no_tier_ids(data_text)
+            out.append({"id": "V14", "claim": case["claim"], "ok": ok, "reading": detail})
             continue
         if case["id"] == "V10":
             if counts is None:
@@ -1692,8 +1747,8 @@ def apply_meta_sync(meta: dict[str, Any], *, card_limit: int, budget: float,
             "exception_rule": (
                 "排序键只允许被**唯一一种**例外推翻：被选方（本应排第一的一方）在该形状有**实测不可行证据**时，"
                 "可让「有实测成功证据 / 失败更可诊断」的一方上位；⛔ 不许出现第二种未登记的例外。"
-                "当前唯一实例：M093（27B GRASPO LoRA dp2）—— native 实测异常退出（T041，未定性）、"
-                "ms-swift 实测 OOM（T044）⇒ 保留 native（对方有实测 OOM 死刑、本方是通信异常可诊断）。"
+                "当前唯一实例：M093（27B GRASPO LoRA dp2）—— native 实测异常退出且异常类型未落盘（未定性）、"
+                "ms-swift 实测 OOM（78.01 GiB）⇒ 保留 native（对方有实测 OOM 死刑、本方是通信异常可诊断）。"
             ),
             "note_claim_policy": (
                 "「训练可跑 / 训练能跑 / 训练跑通」只允许出现在证据表里有具名 `success` 跑次的档上；"
@@ -1716,10 +1771,10 @@ def apply_meta_sync(meta: dict[str, Any], *, card_limit: int, budget: float,
         ],
         "known_gaps": [
             "配置生成侧待补：`tools/matrix/gen_configs.py` 全场不出现 `fsdp` ⇒ 本表里 ms-swift 全参档生成的 yaml "
-            "只会下发 `deepspeed: —`，**FSDP2 配方缺**（`switches` 里的 fsdp2 只是提示串）。⛔ 本轮不动生成器。",
+            "只会下发 `deepspeed: —`，**FSDP2 配方缺**（`switches` 里的 fsdp2 只是提示串）。（生成器侧待补，不在本表改造范围内）",
             "MISSING_CHANNEL 档与配置生成：`gen_configs.py:690` 只按 `applicable` 过滤 ⇒ 本表 4 档 "
             "`runnable=false`（backend=native 但缺 CPT/OPD 通道）仍会被它生成 yaml，而那套 `train_method`+`backend` "
-            "组合在装载期会被 `core/schema.py:29-34` 拒绝。配置生成侧应改为按 `runnable` 跳过。⛔ 本轮不动生成器。",
+            "组合在装载期会被 `core/schema.py:29-34` 拒绝。配置生成侧应改为按 `runnable` 跳过。（生成器侧待补，不在本表改造范围内）",
             "交付侧待补：native 的导出层只认 dp=tp=pp=1（`export/exporters/native_full_param.py:462-471` 逐字 "
             "DP/TP/PP 合并均未实现、MUST stay fail-closed）⇒ native 的 LoRA/全参 TP·PP·DP 档「训练能跑、产物交不出」，"
             "须补 flow 层 export 子系统。",
@@ -1838,7 +1893,11 @@ def build(
         "card_capacity_gib": CARD_CAPACITY_GIB,
         "counts": counts,
         "excluded": excluded,
-        "verification_cases": run_self_check(rows, budget, counts, card_limit),
+        "verification_cases": run_self_check(
+            rows, budget, counts, card_limit,
+            # ★ V14 要的是**发布件序列化文本**（= 落盘那一刻的字节）⇒ 与写盘共用 `serialize_doc`
+            data_text=serialize_doc(doc),
+        ),
         "rows_diag": [
             {
                 "tier": r["tier"], "model": r["model"], "algo": r["algo"], "mode": r["mode"],
@@ -1960,6 +2019,16 @@ def main(argv: list[str] | None = None) -> int:
     doc, report = build(card_limit=a.card_limit, budget=a.budget_gib,
                         generated_at=generated_at, script_sha=script_sha, base_doc=base_doc)
 
+    # ⓪ 写盘前 fail-closed：用 `scan_matrix_leaks` 的同一套规则扫发布件全文
+    data_text = serialize_doc(doc)
+    leaks = leak_hits_in_text(data_text)
+    if leaks:
+        print(f"\nFATAL: 发布件脱敏机核命中 {len(leaks)} 处 ⇒ ⛔ 拒绝写盘（⛔ 不放宽禁词、不加白名单）：",
+              file=sys.stderr)
+        for h in leaks[:20]:
+            print(f"  ✗ {h}", file=sys.stderr)
+        return 2
+
     print(summarize(doc, report))
     failed = [c for c in report["verification_cases"] if not c["ok"]]
     if failed:
@@ -1986,7 +2055,7 @@ def main(argv: list[str] | None = None) -> int:
         encoding="utf-8")
 
     # ② 写数据件与剔除清单（确定性：固定键序、无时钟；generated_at 由 CLI 固定）
-    out_path.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    out_path.write_text(data_text, encoding="utf-8")
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
