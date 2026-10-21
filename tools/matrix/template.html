@@ -159,7 +159,7 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <li><b>更新的是哪几块权重：</b>两个后端的目标都是<b>模型自身的线性投影权重</b>，共四类 —— 语言主干每层的注意力投影（<code>q_proj</code>／<code>k_proj</code>／<code>v_proj</code>／<code>o_proj</code>）、线性注意力层的输入输出投影（<code>in_proj_qkv</code>／<code>in_proj_z</code>／<code>out_proj</code>）、每层 MLP 的三个线性层（<code>gate_proj</code>／<code>up_proj</code>／<code>down_proj</code>），以及视觉侧 merger 与每个视觉块的注意力／MLP 线性层；其余权重（词嵌入、各类归一化、卷积等）保持原值。</li>
 <li><code>native</code>：配置里 <code>lora.target_modules</code> 声明的是两个 preset 名 —— <code>language_all_linear</code>、<code>vision_common</code>，由本仓解析器按这两个 preset 展开成上面这批权重。</li>
 <li><code>ms-swift</code>：配置里 <code>lora.target_modules</code> 是一条真实 HF 模块名正则（一条表达式同时覆盖语言侧与视觉侧），本仓按官方 <code>--target_regex</code> 原样下发，不展开成逐层名单。</li>
-<li><b>两后端目前有一处差异：</b>线性注意力层里的衰减与写入门控这两块投影权重，只有 <code>ms-swift</code> 侧被更新，<code>native</code> 侧保持原值 ⇒ <b>现状两者更新的权重矩阵清单并不完全相同</b>；把 <code>ms-swift</code> 正则里的这两项去掉，两者即完全一致（该调整尚未执行）。此外，Q／K／V 融合投影那一块 <code>native</code> 拆成三段分别低秩更新、<code>ms-swift</code> 整块低秩更新 —— 属同一块权重上的覆盖方式差异，不增删权重矩阵。</li>
+<li><b>两个后端完全一致：</b>更新的权重矩阵清单相同，且对每个权重矩阵施加一份低秩更新（融合的 <code>Q</code>／<code>K</code>／<code>V</code> 投影按<b>整块</b>处理）；<code>r</code>／<code>alpha</code>／<code>dropout</code> 也相同。</li>
 <li>LoRA 参数（仅 LoRA 适用）：
 <ul class="tight">
 <li>LoRA rank r：<code>32</code></li>
