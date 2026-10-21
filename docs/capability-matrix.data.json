@@ -448,7 +448,7 @@
     "results_policy": "结果列由跑次记录回填；尚无实测结论的档位状态为「待测试」，结果列一律「—」；不得手工填写。",
     "enumeration": {
       "script": "tools/matrix/enumerate_matrix.py",
-      "script_sha256": "76d10dc85a7764229867774b145e532b56b7a45d1b1268b5aa30d4f1aa471998",
+      "script_sha256": "947311b8e991ed9752f599679df5273ee942863d117f6b431a28af179d4573f4",
       "criteria_version": "enum-v1-2026-10-21",
       "card_limit": 4,
       "budget_gib": 78.0,
@@ -474,6 +474,17 @@
         "opd_teacher": "教师不计入卡数（主笔原文「不包括 OPD 的教师」）；教师常驻另计 50.10 GiB/卡"
       },
       "sort_key": "model(9B<27B) → algo(SFT<GRASPO<CPT<OPD) → mode(LoRA<全参) → tp(升序) → pp(升序) → dp(升序) → backend(仅作尾键，rows 里已唯一) → 档号 M001.. 按此顺序连续编号",
+      "backend_selection": {
+        "sort_keys": [
+          "①实测成功证据（该算法×模型×模式×后端×形状有判据① 通过的跑次）",
+          "②该形状是否被后端真消费（native 的 TP/PP 真接线；ms-swift 的 TP/PP 只在未接线的 Megatron 段）",
+          "③分片载体是否已实现且已实测（FSDP2 接点齐但零 rc=0 ⇒ 排后）",
+          "④产物可推理（native LoRA：tp>1 无合并实现；dp>1 的 DP 合并依赖「副本位等价」窄口前置）",
+          "⑤估算峰值　⑥后端名（确定性尾键）"
+        ],
+        "exception_rule": "排序键只允许被**唯一一种**例外推翻：被选方（本应排第一的一方）在该形状有**实测不可行证据**时，可让「有实测成功证据 / 失败更可诊断」的一方上位；⛔ 不许出现第二种未登记的例外。当前唯一实例：M093（27B GRASPO LoRA dp2）—— native 实测异常退出（T041，未定性）、ms-swift 实测 OOM（T044）⇒ 保留 native（对方有实测 OOM 死刑、本方是通信异常可诊断）。",
+        "note_claim_policy": "「训练可跑 / 训练能跑 / 训练跑通」只允许出现在证据表里有具名 `success` 跑次的档上；无跑次的形状只能写「从未实跑 ⇒ 训练可行性未建立（产物侧另需补导出层）」。反方向同理：「不可行 / 必然失败 / 交不出」必须有实测证据，纯算式的只能写「估算超预算」。自检 V13 机核。"
+      },
       "counts": {
         "raw_cube": 432,
         "exceed_cards": 272,
@@ -552,7 +563,7 @@
         },
         {
           "id": "EV07",
-          "label": "27B GRASPO LoRA native dp2 异常退出（未定性）",
+          "label": "27B GRASPO LoRA native dp2 实测异常退出（T041，未定性）",
           "kind": "runtime_failure"
         },
         {
@@ -582,8 +593,8 @@
         },
         {
           "id": "EV13",
-          "label": "27B SFT LoRA native dp2/dp4 训练跑通但导出 fail-closed",
-          "kind": "warn"
+          "label": "27B SFT LoRA native dp2/dp4 判据① 通过且 DP 副本逐元素相等（可合并）",
+          "kind": "success"
         },
         {
           "id": "EV14",
@@ -650,7 +661,7 @@
         "交付侧待补：native 的导出层只认 dp=tp=pp=1（`export/exporters/native_full_param.py:462-471` 逐字 DP/TP/PP 合并均未实现、MUST stay fail-closed）⇒ native 的 LoRA/全参 TP·PP·DP 档「训练能跑、产物交不出」，须补 flow 层 export 子系统。"
       ],
       "status": "全部档位 status = 「待测试」，结果列全为「—」",
-      "generated_at": "2026-10-21T23:48:10+08:00",
+      "generated_at": "2026-10-21T23:52:11+08:00",
       "rule": "★ 本脚本是档位表的唯一生成入口，⛔ 不许手改 data.json 的 rows[]"
     }
   },
@@ -829,7 +840,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：两者训练都能跑，但 native 交不出产物（native 导出层只认 dp=tp=pp=1（`native_full_param.py:462-471` 逐字 DP/TP/PP 合并均未实现、MUST stay fail-closed；`native_lora.py:455-476` 要求副本位等价，T023/T024 实测 `lora_a` 606/606 全不同））⇒ 按「产物可推理」取 ms-swift；估算 33.24/78.0 GiB（可行）",
+      "note": "选 ms-swift：两者都有实测成功跑次（ms-swift 9B SFT LoRA ms-swift dp1/2/4 判据① 通过；native 9B SFT LoRA native dp1/2/4 判据① 通过），但 native 的产物口径带未闭合前置 —— native LoRA 的 DP 合并依赖「副本位等价」窄口前置：`native_lora.py:455-476` 分歧即 fail-closed；T011/T012/T023/T024 实测副本逐元素相等、可合并，epoch=2 旧 dp4 跑次曾分歧 ⇒ 按裁定「产物可推理」取 ms-swift；估算 33.24/78.0 GiB（可行）",
       "backend_reason": {
         "selected": "ms-swift",
         "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名",
@@ -946,7 +957,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：两者训练都能跑，但 native 交不出产物（native 导出层只认 dp=tp=pp=1（`native_full_param.py:462-471` 逐字 DP/TP/PP 合并均未实现、MUST stay fail-closed；`native_lora.py:455-476` 要求副本位等价，T023/T024 实测 `lora_a` 606/606 全不同））⇒ 按「产物可推理」取 ms-swift；估算 33.24/78.0 GiB（可行）",
+      "note": "选 ms-swift：两者都有实测成功跑次（ms-swift 9B SFT LoRA ms-swift dp1/2/4 判据① 通过；native 9B SFT LoRA native dp1/2/4 判据① 通过），但 native 的产物口径带未闭合前置 —— native LoRA 的 DP 合并依赖「副本位等价」窄口前置：`native_lora.py:455-476` 分歧即 fail-closed；T011/T012/T023/T024 实测副本逐元素相等、可合并，epoch=2 旧 dp4 跑次曾分歧 ⇒ 按裁定「产物可推理」取 ms-swift；估算 33.24/78.0 GiB（可行）",
       "backend_reason": {
         "selected": "ms-swift",
         "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名",
@@ -1063,7 +1074,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 22.71/78.0 GiB（可行）；卡点：训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 22.71/78.0 GiB（可行）；卡点：该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧 PP 覆盖校验已实现（`native_lora.py:256-300`）但无实跑验证",
       "backend_reason": {
         "selected": "native",
         "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名",
@@ -1112,7 +1123,7 @@
           }
         ],
         "gaps": [
-          "训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）"
+          "该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧 PP 覆盖校验已实现（`native_lora.py:256-300`）但无实跑验证"
         ]
       },
       "spec_json": "—"
@@ -1175,7 +1186,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 22.71/78.0 GiB（可行）；卡点：训练可跑、产物需补导出层：native 导出层只认 dp=tp=pp=1（`native_full_param.py:462-471` 逐字 DP/TP/PP 合并均未实现、MUST stay fail-closed；`native_lora.py:455-476` 要求副本位等价，实测 27B `lora_a` 606/606 全不同）",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 22.71/78.0 GiB（可行）；卡点：该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧 PP 覆盖校验已实现（`native_lora.py:256-300`）但无实跑验证",
       "backend_reason": {
         "selected": "native",
         "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名",
@@ -1224,7 +1235,7 @@
           }
         ],
         "gaps": [
-          "训练可跑、产物需补导出层：native 导出层只认 dp=tp=pp=1（`native_full_param.py:462-471` 逐字 DP/TP/PP 合并均未实现、MUST stay fail-closed；`native_lora.py:455-476` 要求副本位等价，实测 27B `lora_a` 606/606 全不同）"
+          "该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧 PP 覆盖校验已实现（`native_lora.py:256-300`）但无实跑验证"
         ]
       },
       "spec_json": "—"
@@ -1287,7 +1298,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 17.45/78.0 GiB（可行）；卡点：训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 17.45/78.0 GiB（可行）；卡点：该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧 PP 覆盖校验已实现（`native_lora.py:256-300`）但无实跑验证",
       "backend_reason": {
         "selected": "native",
         "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名",
@@ -1336,7 +1347,7 @@
           }
         ],
         "gaps": [
-          "训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）"
+          "该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧 PP 覆盖校验已实现（`native_lora.py:256-300`）但无实跑验证"
         ]
       },
       "spec_json": "—"
@@ -1399,11 +1410,11 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 22.71/78.0 GiB（可行）；卡点：训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 22.71/78.0 GiB（可行）；卡点：该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧另需补导出层：仓内 LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）",
       "backend_reason": {
         "selected": "native",
         "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名",
-        "rule": "排序键第 1 位 = 实测成功证据：native 无（—）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：是；次优 ms-swift：峰值 22.71 GiB、实测成功 无、形状真消费 否、产物可推理 是",
+        "rule": "排序键第 1 位 = 实测成功证据：native 无（—）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：否（native LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现））；次优 ms-swift：峰值 22.71 GiB、实测成功 无、形状真消费 否、产物可推理 是",
         "peak_gib": 22.7119,
         "budget_gib": 78.0,
         "band": "可行",
@@ -1420,8 +1431,8 @@
         "recipe": "standard",
         "teacher_variant": "none",
         "backend_implemented": true,
-        "deliverable": true,
-        "delivery_gap": null,
+        "deliverable": false,
+        "delivery_gap": "native LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）",
         "evidence": [],
         "candidates": [
           {
@@ -1448,7 +1459,7 @@
           }
         ],
         "gaps": [
-          "训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）"
+          "该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧另需补导出层：仓内 LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）"
         ]
       },
       "spec_json": "—"
@@ -1511,11 +1522,11 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 22.71/78.0 GiB（可行）；卡点：训练可跑、产物需补导出层：native 导出层只认 dp=tp=pp=1（`native_full_param.py:462-471` 逐字 DP/TP/PP 合并均未实现、MUST stay fail-closed；`native_lora.py:455-476` 要求副本位等价，实测 27B `lora_a` 606/606 全不同）",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 22.71/78.0 GiB（可行）；卡点：该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧另需补导出层：仓内 LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）",
       "backend_reason": {
         "selected": "native",
         "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名",
-        "rule": "排序键第 1 位 = 实测成功证据：native 无（—）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：是；次优 ms-swift：峰值 22.71 GiB、实测成功 无、形状真消费 否、产物可推理 是",
+        "rule": "排序键第 1 位 = 实测成功证据：native 无（—）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：否（native LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现））；次优 ms-swift：峰值 22.71 GiB、实测成功 无、形状真消费 否、产物可推理 是",
         "peak_gib": 22.7119,
         "budget_gib": 78.0,
         "band": "可行",
@@ -1532,8 +1543,8 @@
         "recipe": "standard",
         "teacher_variant": "none",
         "backend_implemented": true,
-        "deliverable": true,
-        "delivery_gap": null,
+        "deliverable": false,
+        "delivery_gap": "native LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）",
         "evidence": [],
         "candidates": [
           {
@@ -1560,7 +1571,7 @@
           }
         ],
         "gaps": [
-          "训练可跑、产物需补导出层：native 导出层只认 dp=tp=pp=1（`native_full_param.py:462-471` 逐字 DP/TP/PP 合并均未实现、MUST stay fail-closed；`native_lora.py:455-476` 要求副本位等价，实测 27B `lora_a` 606/606 全不同）"
+          "该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧另需补导出层：仓内 LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）"
         ]
       },
       "spec_json": "—"
@@ -1623,11 +1634,11 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 17.45/78.0 GiB（可行）；卡点：训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 17.45/78.0 GiB（可行）；卡点：该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧另需补导出层：仓内 LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）",
       "backend_reason": {
         "selected": "native",
         "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名",
-        "rule": "排序键第 1 位 = 实测成功证据：native 无（—）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：是；次优 ms-swift：峰值 17.45 GiB、实测成功 无、形状真消费 否、产物可推理 是",
+        "rule": "排序键第 1 位 = 实测成功证据：native 无（—）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：否（native LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现））；次优 ms-swift：峰值 17.45 GiB、实测成功 无、形状真消费 否、产物可推理 是",
         "peak_gib": 17.446,
         "budget_gib": 78.0,
         "band": "可行",
@@ -1644,8 +1655,8 @@
         "recipe": "standard",
         "teacher_variant": "none",
         "backend_implemented": true,
-        "deliverable": true,
-        "delivery_gap": null,
+        "deliverable": false,
+        "delivery_gap": "native LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）",
         "evidence": [],
         "candidates": [
           {
@@ -1672,7 +1683,7 @@
           }
         ],
         "gaps": [
-          "训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）"
+          "该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧另需补导出层：仓内 LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）"
         ]
       },
       "spec_json": "—"
@@ -1735,11 +1746,11 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 17.45/78.0 GiB（可行）；卡点：训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 17.45/78.0 GiB（可行）；卡点：该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧另需补导出层：仓内 LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）",
       "backend_reason": {
         "selected": "native",
         "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名",
-        "rule": "排序键第 1 位 = 实测成功证据：native 无（—）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：是；次优 ms-swift：峰值 17.45 GiB、实测成功 无、形状真消费 否、产物可推理 是",
+        "rule": "排序键第 1 位 = 实测成功证据：native 无（—）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：否（native LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现））；次优 ms-swift：峰值 17.45 GiB、实测成功 无、形状真消费 否、产物可推理 是",
         "peak_gib": 17.446,
         "budget_gib": 78.0,
         "band": "可行",
@@ -1756,8 +1767,8 @@
         "recipe": "standard",
         "teacher_variant": "none",
         "backend_implemented": true,
-        "deliverable": true,
-        "delivery_gap": null,
+        "deliverable": false,
+        "delivery_gap": "native LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）",
         "evidence": [],
         "candidates": [
           {
@@ -1784,7 +1795,7 @@
           }
         ],
         "gaps": [
-          "训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）"
+          "该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧另需补导出层：仓内 LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）"
         ]
       },
       "spec_json": "—"
@@ -3116,7 +3127,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：两者训练都能跑，但 native 交不出产物（native 导出层只认 dp=tp=pp=1（`native_full_param.py:462-471` 逐字 DP/TP/PP 合并均未实现、MUST stay fail-closed；`native_lora.py:455-476` 要求副本位等价，T023/T024 实测 `lora_a` 606/606 全不同））⇒ 按「产物可推理」取 ms-swift；估算 33.24/78.0 GiB（可行）",
+      "note": "选 ms-swift：native 的产物口径带未闭合前置 —— native LoRA 的 DP 合并依赖「副本位等价」窄口前置：`native_lora.py:455-476` 分歧即 fail-closed；T011/T012/T023/T024 实测副本逐元素相等、可合并，epoch=2 旧 dp4 跑次曾分歧；且 native 在该形状无成功跑次 ⇒ 按裁定「产物可推理」取 ms-swift；估算 33.24/78.0 GiB（可行）",
       "backend_reason": {
         "selected": "ms-swift",
         "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名",
@@ -3231,7 +3242,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：两者训练都能跑，但 native 交不出产物（native 导出层只认 dp=tp=pp=1（`native_full_param.py:462-471` 逐字 DP/TP/PP 合并均未实现、MUST stay fail-closed；`native_lora.py:455-476` 要求副本位等价，T023/T024 实测 `lora_a` 606/606 全不同））⇒ 按「产物可推理」取 ms-swift；估算 33.24/78.0 GiB（可行）",
+      "note": "选 ms-swift：native 的产物口径带未闭合前置 —— native LoRA 的 DP 合并依赖「副本位等价」窄口前置：`native_lora.py:455-476` 分歧即 fail-closed；T011/T012/T023/T024 实测副本逐元素相等、可合并，epoch=2 旧 dp4 跑次曾分歧；且 native 在该形状无成功跑次 ⇒ 按裁定「产物可推理」取 ms-swift；估算 33.24/78.0 GiB（可行）",
       "backend_reason": {
         "selected": "ms-swift",
         "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名",
@@ -3346,7 +3357,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 22.71/78.0 GiB（可行）；卡点：训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 22.71/78.0 GiB（可行）；卡点：该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧 PP 覆盖校验已实现（`native_lora.py:256-300`）但无实跑验证",
       "backend_reason": {
         "selected": "native",
         "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名",
@@ -3395,7 +3406,7 @@
           }
         ],
         "gaps": [
-          "训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）"
+          "该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧 PP 覆盖校验已实现（`native_lora.py:256-300`）但无实跑验证"
         ]
       },
       "spec_json": "—"
@@ -3458,7 +3469,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 22.71/78.0 GiB（可行）；卡点：训练可跑、产物需补导出层：native 导出层只认 dp=tp=pp=1（`native_full_param.py:462-471` 逐字 DP/TP/PP 合并均未实现、MUST stay fail-closed；`native_lora.py:455-476` 要求副本位等价，实测 27B `lora_a` 606/606 全不同）",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 22.71/78.0 GiB（可行）；卡点：该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧 PP 覆盖校验已实现（`native_lora.py:256-300`）但无实跑验证",
       "backend_reason": {
         "selected": "native",
         "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名",
@@ -3507,7 +3518,7 @@
           }
         ],
         "gaps": [
-          "训练可跑、产物需补导出层：native 导出层只认 dp=tp=pp=1（`native_full_param.py:462-471` 逐字 DP/TP/PP 合并均未实现、MUST stay fail-closed；`native_lora.py:455-476` 要求副本位等价，实测 27B `lora_a` 606/606 全不同）"
+          "该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧 PP 覆盖校验已实现（`native_lora.py:256-300`）但无实跑验证"
         ]
       },
       "spec_json": "—"
@@ -3570,7 +3581,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 17.45/78.0 GiB（可行）；卡点：训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 17.45/78.0 GiB（可行）；卡点：该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧 PP 覆盖校验已实现（`native_lora.py:256-300`）但无实跑验证",
       "backend_reason": {
         "selected": "native",
         "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名",
@@ -3619,7 +3630,7 @@
           }
         ],
         "gaps": [
-          "训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）"
+          "该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧 PP 覆盖校验已实现（`native_lora.py:256-300`）但无实跑验证"
         ]
       },
       "spec_json": "—"
@@ -3682,11 +3693,11 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 22.71/78.0 GiB（可行）；卡点：训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 22.71/78.0 GiB（可行）；卡点：该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧另需补导出层：仓内 LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）",
       "backend_reason": {
         "selected": "native",
         "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名",
-        "rule": "排序键第 1 位 = 实测成功证据：native 无（—）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：是；次优 ms-swift：峰值 22.71 GiB、实测成功 无、形状真消费 否、产物可推理 是",
+        "rule": "排序键第 1 位 = 实测成功证据：native 无（—）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：否（native LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现））；次优 ms-swift：峰值 22.71 GiB、实测成功 无、形状真消费 否、产物可推理 是",
         "peak_gib": 22.7119,
         "budget_gib": 78.0,
         "band": "可行",
@@ -3703,8 +3714,8 @@
         "recipe": "standard",
         "teacher_variant": "none",
         "backend_implemented": true,
-        "deliverable": true,
-        "delivery_gap": null,
+        "deliverable": false,
+        "delivery_gap": "native LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）",
         "evidence": [],
         "candidates": [
           {
@@ -3731,7 +3742,7 @@
           }
         ],
         "gaps": [
-          "训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）"
+          "该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧另需补导出层：仓内 LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）"
         ]
       },
       "spec_json": "—"
@@ -3794,11 +3805,11 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 22.71/78.0 GiB（可行）；卡点：训练可跑、产物需补导出层：native 导出层只认 dp=tp=pp=1（`native_full_param.py:462-471` 逐字 DP/TP/PP 合并均未实现、MUST stay fail-closed；`native_lora.py:455-476` 要求副本位等价，实测 27B `lora_a` 606/606 全不同）",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 22.71/78.0 GiB（可行）；卡点：该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧另需补导出层：仓内 LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）",
       "backend_reason": {
         "selected": "native",
         "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名",
-        "rule": "排序键第 1 位 = 实测成功证据：native 无（—）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：是；次优 ms-swift：峰值 22.71 GiB、实测成功 无、形状真消费 否、产物可推理 是",
+        "rule": "排序键第 1 位 = 实测成功证据：native 无（—）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：否（native LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现））；次优 ms-swift：峰值 22.71 GiB、实测成功 无、形状真消费 否、产物可推理 是",
         "peak_gib": 22.7119,
         "budget_gib": 78.0,
         "band": "可行",
@@ -3815,8 +3826,8 @@
         "recipe": "standard",
         "teacher_variant": "none",
         "backend_implemented": true,
-        "deliverable": true,
-        "delivery_gap": null,
+        "deliverable": false,
+        "delivery_gap": "native LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）",
         "evidence": [],
         "candidates": [
           {
@@ -3843,7 +3854,7 @@
           }
         ],
         "gaps": [
-          "训练可跑、产物需补导出层：native 导出层只认 dp=tp=pp=1（`native_full_param.py:462-471` 逐字 DP/TP/PP 合并均未实现、MUST stay fail-closed；`native_lora.py:455-476` 要求副本位等价，实测 27B `lora_a` 606/606 全不同）"
+          "该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧另需补导出层：仓内 LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）"
         ]
       },
       "spec_json": "—"
@@ -3906,11 +3917,11 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 17.45/78.0 GiB（可行）；卡点：训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 17.45/78.0 GiB（可行）；卡点：该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧另需补导出层：仓内 LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）",
       "backend_reason": {
         "selected": "native",
         "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名",
-        "rule": "排序键第 1 位 = 实测成功证据：native 无（—）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：是；次优 ms-swift：峰值 17.45 GiB、实测成功 无、形状真消费 否、产物可推理 是",
+        "rule": "排序键第 1 位 = 实测成功证据：native 无（—）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：否（native LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现））；次优 ms-swift：峰值 17.45 GiB、实测成功 无、形状真消费 否、产物可推理 是",
         "peak_gib": 17.446,
         "budget_gib": 78.0,
         "band": "可行",
@@ -3927,8 +3938,8 @@
         "recipe": "standard",
         "teacher_variant": "none",
         "backend_implemented": true,
-        "deliverable": true,
-        "delivery_gap": null,
+        "deliverable": false,
+        "delivery_gap": "native LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）",
         "evidence": [],
         "candidates": [
           {
@@ -3955,7 +3966,7 @@
           }
         ],
         "gaps": [
-          "训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）"
+          "该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧另需补导出层：仓内 LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）"
         ]
       },
       "spec_json": "—"
@@ -4018,11 +4029,11 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 17.45/78.0 GiB（可行）；卡点：训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 17.45/78.0 GiB（可行）；卡点：该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧另需补导出层：仓内 LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）",
       "backend_reason": {
         "selected": "native",
         "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名",
-        "rule": "排序键第 1 位 = 实测成功证据：native 无（—）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：是；次优 ms-swift：峰值 17.45 GiB、实测成功 无、形状真消费 否、产物可推理 是",
+        "rule": "排序键第 1 位 = 实测成功证据：native 无（—）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：否（native LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现））；次优 ms-swift：峰值 17.45 GiB、实测成功 无、形状真消费 否、产物可推理 是",
         "peak_gib": 17.446,
         "budget_gib": 78.0,
         "band": "可行",
@@ -4039,8 +4050,8 @@
         "recipe": "standard",
         "teacher_variant": "none",
         "backend_implemented": true,
-        "deliverable": true,
-        "delivery_gap": null,
+        "deliverable": false,
+        "delivery_gap": "native LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）",
         "evidence": [],
         "candidates": [
           {
@@ -4067,7 +4078,7 @@
           }
         ],
         "gaps": [
-          "训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）"
+          "该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧另需补导出层：仓内 LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）"
         ]
       },
       "spec_json": "—"
@@ -9627,11 +9638,11 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：两者训练都能跑，但 native 交不出产物（native 导出层只认 dp=tp=pp=1（`native_full_param.py:462-471` 逐字 DP/TP/PP 合并均未实现、MUST stay fail-closed；`native_lora.py:455-476` 要求副本位等价，T023/T024 实测 `lora_a` 606/606 全不同））⇒ 按「产物可推理」取 ms-swift；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该形状实测跑通过（27B SFT LoRA ms-swift dp1/2/4 判据① 通过）⇒ 证据优先），需实测确认",
+      "note": "选 ms-swift：两者都有实测成功跑次（ms-swift 27B SFT LoRA ms-swift dp1/2/4 判据① 通过；native 27B SFT LoRA native dp2/dp4 判据① 通过且 DP 副本逐元素相等（可合并）），但 native 的产物口径带未闭合前置 —— native LoRA 的 DP 合并依赖「副本位等价」窄口前置：`native_lora.py:455-476` 分歧即 fail-closed；T011/T012/T023/T024 实测副本逐元素相等、可合并，epoch=2 旧 dp4 跑次曾分歧 ⇒ 按裁定「产物可推理」取 ms-swift；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该形状实测跑通过（27B SFT LoRA ms-swift dp1/2/4 判据① 通过）⇒ 证据优先），需实测确认",
       "backend_reason": {
         "selected": "ms-swift",
         "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名",
-        "rule": "排序键第 1 位 = 实测成功证据：ms-swift 有（EV10）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：是；次优 native：峰值 78.64 GiB、实测成功 无、形状真消费 是、产物可推理 否",
+        "rule": "排序键第 1 位 = 实测成功证据：ms-swift 有（EV10）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：是；次优 native：峰值 78.64 GiB、实测成功 EV13、形状真消费 是、产物可推理 否",
         "peak_gib": 78.64,
         "budget_gib": 78.0,
         "band": "余量紧",
@@ -9663,7 +9674,9 @@
             "peak_gib": 78.64,
             "band": "余量紧",
             "recipe": "standard",
-            "success_evidence": [],
+            "success_evidence": [
+              "EV13"
+            ],
             "rank_key": 1
           },
           {
@@ -9742,11 +9755,11 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：两者训练都能跑，但 native 交不出产物（native 导出层只认 dp=tp=pp=1（`native_full_param.py:462-471` 逐字 DP/TP/PP 合并均未实现、MUST stay fail-closed；`native_lora.py:455-476` 要求副本位等价，T023/T024 实测 `lora_a` 606/606 全不同））⇒ 按「产物可推理」取 ms-swift；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该形状实测跑通过（27B SFT LoRA ms-swift dp1/2/4 判据① 通过）⇒ 证据优先），需实测确认",
+      "note": "选 ms-swift：两者都有实测成功跑次（ms-swift 27B SFT LoRA ms-swift dp1/2/4 判据① 通过；native 27B SFT LoRA native dp2/dp4 判据① 通过且 DP 副本逐元素相等（可合并）），但 native 的产物口径带未闭合前置 —— native LoRA 的 DP 合并依赖「副本位等价」窄口前置：`native_lora.py:455-476` 分歧即 fail-closed；T011/T012/T023/T024 实测副本逐元素相等、可合并，epoch=2 旧 dp4 跑次曾分歧 ⇒ 按裁定「产物可推理」取 ms-swift；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该形状实测跑通过（27B SFT LoRA ms-swift dp1/2/4 判据① 通过）⇒ 证据优先），需实测确认",
       "backend_reason": {
         "selected": "ms-swift",
         "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名",
-        "rule": "排序键第 1 位 = 实测成功证据：ms-swift 有（EV10）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：是；次优 native：峰值 78.64 GiB、实测成功 无、形状真消费 是、产物可推理 否",
+        "rule": "排序键第 1 位 = 实测成功证据：ms-swift 有（EV10）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：是；次优 native：峰值 78.64 GiB、实测成功 EV13、形状真消费 是、产物可推理 否",
         "peak_gib": 78.64,
         "budget_gib": 78.0,
         "band": "余量紧",
@@ -9778,7 +9791,9 @@
             "peak_gib": 78.64,
             "band": "余量紧",
             "recipe": "standard",
-            "success_evidence": [],
+            "success_evidence": [
+              "EV13"
+            ],
             "rank_key": 1
           },
           {
@@ -9857,7 +9872,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 47.17/78.0 GiB（可行）；卡点：训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 47.17/78.0 GiB（可行）；卡点：该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧 PP 覆盖校验已实现（`native_lora.py:256-300`）但无实跑验证",
       "backend_reason": {
         "selected": "native",
         "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名",
@@ -9906,7 +9921,7 @@
           }
         ],
         "gaps": [
-          "训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）"
+          "该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧 PP 覆盖校验已实现（`native_lora.py:256-300`）但无实跑验证"
         ]
       },
       "spec_json": "—"
@@ -9969,7 +9984,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 47.17/78.0 GiB（可行）；卡点：训练可跑、产物需补导出层：native 导出层只认 dp=tp=pp=1（`native_full_param.py:462-471` 逐字 DP/TP/PP 合并均未实现、MUST stay fail-closed；`native_lora.py:455-476` 要求副本位等价，实测 27B `lora_a` 606/606 全不同）",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 47.17/78.0 GiB（可行）；卡点：该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧 PP 覆盖校验已实现（`native_lora.py:256-300`）但无实跑验证",
       "backend_reason": {
         "selected": "native",
         "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名",
@@ -10018,7 +10033,7 @@
           }
         ],
         "gaps": [
-          "训练可跑、产物需补导出层：native 导出层只认 dp=tp=pp=1（`native_full_param.py:462-471` 逐字 DP/TP/PP 合并均未实现、MUST stay fail-closed；`native_lora.py:455-476` 要求副本位等价，实测 27B `lora_a` 606/606 全不同）"
+          "该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧 PP 覆盖校验已实现（`native_lora.py:256-300`）但无实跑验证"
         ]
       },
       "spec_json": "—"
@@ -10081,7 +10096,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 31.43/78.0 GiB（可行）；卡点：训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 31.43/78.0 GiB（可行）；卡点：该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧 PP 覆盖校验已实现（`native_lora.py:256-300`）但无实跑验证",
       "backend_reason": {
         "selected": "native",
         "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名",
@@ -10130,7 +10145,7 @@
           }
         ],
         "gaps": [
-          "训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）"
+          "该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧 PP 覆盖校验已实现（`native_lora.py:256-300`）但无实跑验证"
         ]
       },
       "spec_json": "—"
@@ -10193,11 +10208,11 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 47.17/78.0 GiB（可行）；卡点：训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 47.17/78.0 GiB（可行）；卡点：该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧另需补导出层：仓内 LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）",
       "backend_reason": {
         "selected": "native",
         "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名",
-        "rule": "排序键第 1 位 = 实测成功证据：native 无（—）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：是；次优 ms-swift：峰值 47.17 GiB、实测成功 无、形状真消费 否、产物可推理 是",
+        "rule": "排序键第 1 位 = 实测成功证据：native 无（—）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：否（native LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现））；次优 ms-swift：峰值 47.17 GiB、实测成功 无、形状真消费 否、产物可推理 是",
         "peak_gib": 47.166,
         "budget_gib": 78.0,
         "band": "可行",
@@ -10214,8 +10229,8 @@
         "recipe": "standard",
         "teacher_variant": "none",
         "backend_implemented": true,
-        "deliverable": true,
-        "delivery_gap": null,
+        "deliverable": false,
+        "delivery_gap": "native LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）",
         "evidence": [],
         "candidates": [
           {
@@ -10242,7 +10257,7 @@
           }
         ],
         "gaps": [
-          "训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）"
+          "该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧另需补导出层：仓内 LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）"
         ]
       },
       "spec_json": "—"
@@ -10305,11 +10320,11 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 47.17/78.0 GiB（可行）；卡点：训练可跑、产物需补导出层：native 导出层只认 dp=tp=pp=1（`native_full_param.py:462-471` 逐字 DP/TP/PP 合并均未实现、MUST stay fail-closed；`native_lora.py:455-476` 要求副本位等价，实测 27B `lora_a` 606/606 全不同）",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 47.17/78.0 GiB（可行）；卡点：该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧另需补导出层：仓内 LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）",
       "backend_reason": {
         "selected": "native",
         "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名",
-        "rule": "排序键第 1 位 = 实测成功证据：native 无（—）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：是；次优 ms-swift：峰值 47.17 GiB、实测成功 无、形状真消费 否、产物可推理 是",
+        "rule": "排序键第 1 位 = 实测成功证据：native 无（—）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：否（native LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现））；次优 ms-swift：峰值 47.17 GiB、实测成功 无、形状真消费 否、产物可推理 是",
         "peak_gib": 47.166,
         "budget_gib": 78.0,
         "band": "可行",
@@ -10326,8 +10341,8 @@
         "recipe": "standard",
         "teacher_variant": "none",
         "backend_implemented": true,
-        "deliverable": true,
-        "delivery_gap": null,
+        "deliverable": false,
+        "delivery_gap": "native LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）",
         "evidence": [],
         "candidates": [
           {
@@ -10354,7 +10369,7 @@
           }
         ],
         "gaps": [
-          "训练可跑、产物需补导出层：native 导出层只认 dp=tp=pp=1（`native_full_param.py:462-471` 逐字 DP/TP/PP 合并均未实现、MUST stay fail-closed；`native_lora.py:455-476` 要求副本位等价，实测 27B `lora_a` 606/606 全不同）"
+          "该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧另需补导出层：仓内 LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）"
         ]
       },
       "spec_json": "—"
@@ -10417,11 +10432,11 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 31.43/78.0 GiB（可行）；卡点：训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 31.43/78.0 GiB（可行）；卡点：该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧另需补导出层：仓内 LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）",
       "backend_reason": {
         "selected": "native",
         "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名",
-        "rule": "排序键第 1 位 = 实测成功证据：native 无（—）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：是；次优 ms-swift：峰值 31.43 GiB、实测成功 无、形状真消费 否、产物可推理 是",
+        "rule": "排序键第 1 位 = 实测成功证据：native 无（—）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：否（native LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现））；次优 ms-swift：峰值 31.43 GiB、实测成功 无、形状真消费 否、产物可推理 是",
         "peak_gib": 31.429,
         "budget_gib": 78.0,
         "band": "可行",
@@ -10438,8 +10453,8 @@
         "recipe": "standard",
         "teacher_variant": "none",
         "backend_implemented": true,
-        "deliverable": true,
-        "delivery_gap": null,
+        "deliverable": false,
+        "delivery_gap": "native LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）",
         "evidence": [],
         "candidates": [
           {
@@ -10466,7 +10481,7 @@
           }
         ],
         "gaps": [
-          "训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）"
+          "该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧另需补导出层：仓内 LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）"
         ]
       },
       "spec_json": "—"
@@ -10529,11 +10544,11 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 31.43/78.0 GiB（可行）；卡点：训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 31.43/78.0 GiB（可行）；卡点：该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧另需补导出层：仓内 LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）",
       "backend_reason": {
         "selected": "native",
         "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名",
-        "rule": "排序键第 1 位 = 实测成功证据：native 无（—）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：是；次优 ms-swift：峰值 31.43 GiB、实测成功 无、形状真消费 否、产物可推理 是",
+        "rule": "排序键第 1 位 = 实测成功证据：native 无（—）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：否（native LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现））；次优 ms-swift：峰值 31.43 GiB、实测成功 无、形状真消费 否、产物可推理 是",
         "peak_gib": 31.429,
         "budget_gib": 78.0,
         "band": "可行",
@@ -10550,8 +10565,8 @@
         "recipe": "standard",
         "teacher_variant": "none",
         "backend_implemented": true,
-        "deliverable": true,
-        "delivery_gap": null,
+        "deliverable": false,
+        "delivery_gap": "native LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）",
         "evidence": [],
         "candidates": [
           {
@@ -10578,7 +10593,7 @@
           }
         ],
         "gaps": [
-          "训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）"
+          "该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧另需补导出层：仓内 LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）"
         ]
       },
       "spec_json": "—"
@@ -10868,11 +10883,11 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：ms-swift 出局 —— 实测不可行（27B GRASPO LoRA ms-swift dp2 实测 OOM 78.01 GiB）；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 78.64 GiB、余 0.61 GiB）），需实测确认；该形状 native 曾异常退出（未定性为 OOM）、ms-swift 实测 OOM；卡点：训练可跑、产物需补导出层：native 导出层只认 dp=tp=pp=1（`native_full_param.py:462-471` 逐字 DP/TP/PP 合并均未实现、MUST stay fail-closed；`native_lora.py:455-476` 要求副本位等价，实测 27B `lora_a` 606/606 全不同）",
+      "note": "两者在该形状均无成功跑次：native —— 27B GRASPO LoRA native dp2 实测异常退出（T041，未定性）；ms-swift —— 27B GRASPO LoRA ms-swift dp2 实测 OOM 78.01 GiB。选 native 的唯一理由 = 对方有实测 OOM、本方是通信/teardown 异常（可诊断、可重试），⛔ 不表示该形状可行。估算 78.64/78.0 GiB（余量紧）⇒ 测试前须先解决显存余量与通信稳定性。卡点：产物侧另需补导出层 —— native LoRA 的 DP 合并依赖「副本位等价」窄口前置：`native_lora.py:455-476` 分歧即 fail-closed；T011/T012/T023/T024 实测副本逐元素相等、可合并，epoch=2 旧 dp4 跑次曾分歧",
       "backend_reason": {
         "selected": "native",
         "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名",
-        "rule": "排序键第 1 位 = 实测成功证据：native 无（—）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：否（native 导出层只认 dp=tp=pp=1（`export/exporters/native_full_param.py:462-471` 逐字「DP replica reconciliation / TP row reassembly / PP layer assembly are NOT implemented, MUST stay fail-closed」；`native_lora.py:455-476` 要求同 (tp,pp) 副本位等价，T023/T024 实测 `lora_a` 606/606 全不同 ⇒ 导出 fail-closed）⇒ 训练能跑、产物交不出）；落选 ms-swift：实测不可行证据优先于算式：「Tried to allocate 1.89 GiB … 1.23 GiB free … 78.01 GiB in use」exitcode=1",
+        "rule": "排序键第 1 位 = 实测成功证据：native 无（—）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：否（native LoRA 的 DP 合并依赖「副本位等价」窄口前置：`native_lora.py:455-476` 分歧即 fail-closed；T011/T012/T023/T024 实测副本逐元素相等、可合并，epoch=2 旧 dp4 跑次曾分歧）；落选 ms-swift：实测不可行证据优先于算式：「Tried to allocate 1.89 GiB … 1.23 GiB free … 78.01 GiB in use」exitcode=1",
         "peak_gib": 78.64,
         "budget_gib": 78.0,
         "band": "余量紧",
@@ -10890,7 +10905,7 @@
         "teacher_variant": "none",
         "backend_implemented": true,
         "deliverable": false,
-        "delivery_gap": "native 导出层只认 dp=tp=pp=1（`export/exporters/native_full_param.py:462-471` 逐字「DP replica reconciliation / TP row reassembly / PP layer assembly are NOT implemented, MUST stay fail-closed」；`native_lora.py:455-476` 要求同 (tp,pp) 副本位等价，T023/T024 实测 `lora_a` 606/606 全不同 ⇒ 导出 fail-closed）⇒ 训练能跑、产物交不出",
+        "delivery_gap": "native LoRA 的 DP 合并依赖「副本位等价」窄口前置：`native_lora.py:455-476` 分歧即 fail-closed；T011/T012/T023/T024 实测副本逐元素相等、可合并，epoch=2 旧 dp4 跑次曾分歧",
         "evidence": [
           "EV07"
         ],
@@ -10918,9 +10933,7 @@
             "rank_key": null
           }
         ],
-        "gaps": [
-          "训练可跑、产物需补导出层：native 导出层只认 dp=tp=pp=1（`native_full_param.py:462-471` 逐字 DP/TP/PP 合并均未实现、MUST stay fail-closed；`native_lora.py:455-476` 要求副本位等价，实测 27B `lora_a` 606/606 全不同）"
-        ]
+        "gaps": []
       },
       "spec_json": "—"
     },
@@ -10982,7 +10995,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：两者训练都能跑，但 native 交不出产物（native 导出层只认 dp=tp=pp=1（`native_full_param.py:462-471` 逐字 DP/TP/PP 合并均未实现、MUST stay fail-closed；`native_lora.py:455-476` 要求副本位等价，T023/T024 实测 `lora_a` 606/606 全不同））⇒ 按「产物可推理」取 ms-swift；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该形状实测跑通过（27B GRASPO LoRA ms-swift dp1/dp4 判据① 通过）⇒ 证据优先），需实测确认",
+      "note": "选 ms-swift：native 的产物口径带未闭合前置 —— native LoRA 的 DP 合并依赖「副本位等价」窄口前置：`native_lora.py:455-476` 分歧即 fail-closed；T011/T012/T023/T024 实测副本逐元素相等、可合并，epoch=2 旧 dp4 跑次曾分歧；且 native 在该形状无成功跑次 ⇒ 按裁定「产物可推理」取 ms-swift；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该形状实测跑通过（27B GRASPO LoRA ms-swift dp1/dp4 判据① 通过）⇒ 证据优先），需实测确认",
       "backend_reason": {
         "selected": "ms-swift",
         "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名",
@@ -11097,7 +11110,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 47.17/78.0 GiB（可行）；卡点：训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 47.17/78.0 GiB（可行）；卡点：该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧 PP 覆盖校验已实现（`native_lora.py:256-300`）但无实跑验证",
       "backend_reason": {
         "selected": "native",
         "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名",
@@ -11146,7 +11159,7 @@
           }
         ],
         "gaps": [
-          "训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）"
+          "该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧 PP 覆盖校验已实现（`native_lora.py:256-300`）但无实跑验证"
         ]
       },
       "spec_json": "—"
@@ -11209,7 +11222,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 47.17/78.0 GiB（可行）；卡点：训练可跑、产物需补导出层：native 导出层只认 dp=tp=pp=1（`native_full_param.py:462-471` 逐字 DP/TP/PP 合并均未实现、MUST stay fail-closed；`native_lora.py:455-476` 要求副本位等价，实测 27B `lora_a` 606/606 全不同）",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 47.17/78.0 GiB（可行）；卡点：该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧 PP 覆盖校验已实现（`native_lora.py:256-300`）但无实跑验证",
       "backend_reason": {
         "selected": "native",
         "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名",
@@ -11258,7 +11271,7 @@
           }
         ],
         "gaps": [
-          "训练可跑、产物需补导出层：native 导出层只认 dp=tp=pp=1（`native_full_param.py:462-471` 逐字 DP/TP/PP 合并均未实现、MUST stay fail-closed；`native_lora.py:455-476` 要求副本位等价，实测 27B `lora_a` 606/606 全不同）"
+          "该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧 PP 覆盖校验已实现（`native_lora.py:256-300`）但无实跑验证"
         ]
       },
       "spec_json": "—"
@@ -11321,7 +11334,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 31.43/78.0 GiB（可行）；卡点：训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 31.43/78.0 GiB（可行）；卡点：该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧 PP 覆盖校验已实现（`native_lora.py:256-300`）但无实跑验证",
       "backend_reason": {
         "selected": "native",
         "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名",
@@ -11370,7 +11383,7 @@
           }
         ],
         "gaps": [
-          "训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）"
+          "该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧 PP 覆盖校验已实现（`native_lora.py:256-300`）但无实跑验证"
         ]
       },
       "spec_json": "—"
@@ -11433,11 +11446,11 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 47.17/78.0 GiB（可行）；卡点：训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 47.17/78.0 GiB（可行）；卡点：该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧另需补导出层：仓内 LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）",
       "backend_reason": {
         "selected": "native",
         "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名",
-        "rule": "排序键第 1 位 = 实测成功证据：native 无（—）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：是；次优 ms-swift：峰值 47.17 GiB、实测成功 无、形状真消费 否、产物可推理 是",
+        "rule": "排序键第 1 位 = 实测成功证据：native 无（—）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：否（native LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现））；次优 ms-swift：峰值 47.17 GiB、实测成功 无、形状真消费 否、产物可推理 是",
         "peak_gib": 47.166,
         "budget_gib": 78.0,
         "band": "可行",
@@ -11454,8 +11467,8 @@
         "recipe": "standard",
         "teacher_variant": "none",
         "backend_implemented": true,
-        "deliverable": true,
-        "delivery_gap": null,
+        "deliverable": false,
+        "delivery_gap": "native LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）",
         "evidence": [],
         "candidates": [
           {
@@ -11482,7 +11495,7 @@
           }
         ],
         "gaps": [
-          "训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）"
+          "该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧另需补导出层：仓内 LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）"
         ]
       },
       "spec_json": "—"
@@ -11545,11 +11558,11 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 47.17/78.0 GiB（可行）；卡点：训练可跑、产物需补导出层：native 导出层只认 dp=tp=pp=1（`native_full_param.py:462-471` 逐字 DP/TP/PP 合并均未实现、MUST stay fail-closed；`native_lora.py:455-476` 要求副本位等价，实测 27B `lora_a` 606/606 全不同）",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 47.17/78.0 GiB（可行）；卡点：该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧另需补导出层：仓内 LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）",
       "backend_reason": {
         "selected": "native",
         "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名",
-        "rule": "排序键第 1 位 = 实测成功证据：native 无（—）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：是；次优 ms-swift：峰值 47.17 GiB、实测成功 无、形状真消费 否、产物可推理 是",
+        "rule": "排序键第 1 位 = 实测成功证据：native 无（—）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：否（native LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现））；次优 ms-swift：峰值 47.17 GiB、实测成功 无、形状真消费 否、产物可推理 是",
         "peak_gib": 47.166,
         "budget_gib": 78.0,
         "band": "可行",
@@ -11566,8 +11579,8 @@
         "recipe": "standard",
         "teacher_variant": "none",
         "backend_implemented": true,
-        "deliverable": true,
-        "delivery_gap": null,
+        "deliverable": false,
+        "delivery_gap": "native LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）",
         "evidence": [],
         "candidates": [
           {
@@ -11594,7 +11607,7 @@
           }
         ],
         "gaps": [
-          "训练可跑、产物需补导出层：native 导出层只认 dp=tp=pp=1（`native_full_param.py:462-471` 逐字 DP/TP/PP 合并均未实现、MUST stay fail-closed；`native_lora.py:455-476` 要求副本位等价，实测 27B `lora_a` 606/606 全不同）"
+          "该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧另需补导出层：仓内 LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）"
         ]
       },
       "spec_json": "—"
@@ -11657,11 +11670,11 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 31.43/78.0 GiB（可行）；卡点：训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 31.43/78.0 GiB（可行）；卡点：该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧另需补导出层：仓内 LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）",
       "backend_reason": {
         "selected": "native",
         "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名",
-        "rule": "排序键第 1 位 = 实测成功证据：native 无（—）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：是；次优 ms-swift：峰值 31.43 GiB、实测成功 无、形状真消费 否、产物可推理 是",
+        "rule": "排序键第 1 位 = 实测成功证据：native 无（—）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：否（native LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现））；次优 ms-swift：峰值 31.43 GiB、实测成功 无、形状真消费 否、产物可推理 是",
         "peak_gib": 31.429,
         "budget_gib": 78.0,
         "band": "可行",
@@ -11678,8 +11691,8 @@
         "recipe": "standard",
         "teacher_variant": "none",
         "backend_implemented": true,
-        "deliverable": true,
-        "delivery_gap": null,
+        "deliverable": false,
+        "delivery_gap": "native LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）",
         "evidence": [],
         "candidates": [
           {
@@ -11706,7 +11719,7 @@
           }
         ],
         "gaps": [
-          "训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）"
+          "该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧另需补导出层：仓内 LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）"
         ]
       },
       "spec_json": "—"
@@ -11769,11 +11782,11 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 31.43/78.0 GiB（可行）；卡点：训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 的形状要靠别的载体兜）；估算 31.43/78.0 GiB（可行）；卡点：该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧另需补导出层：仓内 LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）",
       "backend_reason": {
         "selected": "native",
         "sort_key": "①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 ④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名",
-        "rule": "排序键第 1 位 = 实测成功证据：native 无（—）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：是；次优 ms-swift：峰值 31.43 GiB、实测成功 无、形状真消费 否、产物可推理 是",
+        "rule": "排序键第 1 位 = 实测成功证据：native 无（—）；第 2 位 = 形状是否被后端真消费：是；第 4 位 = 产物可推理：否（native LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现））；次优 ms-swift：峰值 31.43 GiB、实测成功 无、形状真消费 否、产物可推理 是",
         "peak_gib": 31.429,
         "budget_gib": 78.0,
         "band": "可行",
@@ -11790,8 +11803,8 @@
         "recipe": "standard",
         "teacher_variant": "none",
         "backend_implemented": true,
-        "deliverable": true,
-        "delivery_gap": null,
+        "deliverable": false,
+        "delivery_gap": "native LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）",
         "evidence": [],
         "candidates": [
           {
@@ -11818,7 +11831,7 @@
           }
         ],
         "gaps": [
-          "训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，`native_full_param.py:462-471`）"
+          "该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧另需补导出层：仓内 LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）"
         ]
       },
       "spec_json": "—"

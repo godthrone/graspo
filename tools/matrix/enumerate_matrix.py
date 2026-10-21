@@ -269,6 +269,11 @@ def _weights_gib(model: str) -> float:
 #              success             判据①（训练跑通/产物完整）实测通过 ⇒ 选型排序加分
 #              warn_only           只写进备注，不改判定（定性冲突/未定性异常/交付层缺口）
 #
+# ★ 断言口径（裁定 2026-10-21 后补，由自检 V13 机核）：
+#   「训练可跑 / 训练能跑 / 训练跑通」**只允许**出现在证据表里有具名 `success` 类跑次的档上；
+#   没有跑次的形状只能写「从未实跑 ⇒ 训练可行性未建立（产物侧另需补导出层）」。⛔ 不许用形状推断代替跑次。
+#   反方向同理：note 里的「不可行 / 必然失败」必须有实测证据兜底，纯算式的只能写「估算超预算」。
+#
 # ★ 口径纪律（`scripts/collect_results.py:2032-2071`）：native = `max_allocated`，
 #   ms-swift = `max_memory_reserved`（保守上界）；两者不可直接互比。
 
@@ -323,9 +328,10 @@ MEASURED_EVIDENCE: tuple[dict[str, Any], ...] = (
         "effect": "backend_infeasible",
     },
     {
-        "id": "EV07", "label": "27B GRASPO LoRA native dp2 异常退出（未定性）", "kind": "runtime_failure",
+        "id": "EV07", "label": "27B GRASPO LoRA native dp2 实测异常退出（T041，未定性）", "kind": "runtime_failure",
         "scope": ("GRASPO", "27B", "LoRA", "native", ((1, 1, 2),)),
-        "reading": "僵持 51+ min；逐字 `exception-path teardown: aborted=True … WITHOUT a rendezvous`；卡侧 `73.65 GiB in use` ⇒ **不构成 OOM 定性**",
+        "reading": ("T041：僵持 51+ min；逐字 `exception-path teardown: aborted=True … WITHOUT a rendezvous "
+                    "(no WORLD barrier on the failure path)`；卡侧 `73.65 GiB in use` ⇒ **异常类型未落盘、原文明确禁止据此判 OOM**"),
         "source": "归档 .local/T041-evidence-20261014.md:16,22",
         "effect": "warn_only",   # 未定性 ⇒ 不据此剔除（主笔：宁可留待测试，不误删）
     },
@@ -365,18 +371,20 @@ MEASURED_EVIDENCE: tuple[dict[str, Any], ...] = (
         "effect": "warn_only",
     },
     {
-        "id": "EV13", "label": "27B SFT LoRA native dp2/dp4 训练跑通但导出 fail-closed", "kind": "warn",
+        "id": "EV13", "label": "27B SFT LoRA native dp2/dp4 判据① 通过且 DP 副本逐元素相等（可合并）", "kind": "success",
         "scope": ("SFT", "27B", "LoRA", "native", ((1, 1, 2), (1, 1, 4))),
-        "reading": "T023/T024 训练跑通，但导出 fail-closed：DP 副本不一致（`lora_a` 606/606 全不同、`lora_b` 全同）",
-        "source": "归档 .local/capability-baseline-milestone-20261014-v2.md:57-58；缺口代码 src/graspo/export/exporters/native_lora.py:455-476（要求副本 Tensor.equal 位等价）",
-        "effect": "warn_only",
-        "delivery_gap": "native LoRA 的 DP>1 导出要求同 (tp,pp) 副本位等价，实测不一致 ⇒ 交付层缺实现",
+        "reading": ("T023/T024（epoch=4 新跑次）：判据① 通过；DP 副本唯一性已逐键证明（`lora_a` 606/606、"
+                    "`lora_b` 606/606 逐元素相等、不等 0 ⇒ 产物唯一、可合并）；T024 明写「旧依据 = epoch=2 旧 dp4 "
+                    "跑次的副本分歧，已被本跑次推翻」⇒ **旧归档件 `:57-58` 的「副本不一致、导出 fail-closed」是 epoch=2 旧读数，已作废**"),
+        "source": "`docs/capability-matrix.data.json`（54 档归档件）rows[T023/T024].runs；实现 src/graspo/export/exporters/native_lora.py:455-476（`_dedupe_dp_replicas`：以 `Tensor.equal` 证明副本一致后才化简）",
+        "effect": "success",
+        "delivery_gap": "native LoRA 的 DP 合并**已实现**，但依赖「DP 副本位等价」这一窄口前置（分歧即 fail-closed）",
     },
     # ── C. 9B LoRA / 全参 成功与失败 ───────────────────────────────────────
     {
         "id": "EV14", "label": "9B SFT LoRA native dp1/2/4 判据① 通过", "kind": "success",
         "scope": ("SFT", "9B", "LoRA", "native", ((1, 1, 1), (1, 1, 2), (1, 1, 4))),
-        "reading": "T010/T011 判据①② 全过（Δ=+13.39/+5.98 pp）；T012（dp4）判据① 通过（判据② 未过）",
+        "reading": "T010/T011/T012 判据①② 全过（Δ=+13.39 / +11.25 / +11.40 pp；T011/T012 另证 DP 副本逐元素相等 ⇒ 可合并）",
         "source": "归档 .local/capability-baseline-milestone-20261014-v2.md:44-46",
         "effect": "success",
     },
@@ -693,19 +701,26 @@ def eval_backend(
     #   T023/T024 实测 `lora_a` 606/606 全不同 ⇒ 导出 fail-closed。
     #   ⇒ `native + LoRA + tp=pp=1 + dp>1`：**训练能跑、产物交不出** ⇒ 同等条件下让 ms-swift 上位。
     #      （tp>1/pp>1 的 LoRA 档不参与此判据：那些形状 ms-swift 根本没通道，仍选 native，只写卡点。）
+    # ★ 判据④ 的**准确**语义（裁定后复核更正）：
+    #   · native LoRA + **tp>1**：仓内**没有 TP 合并实现**（`native_lora.py` 只做 DP 副本化简 `_dedupe_dp_replicas`
+    #     与 PP 覆盖校验 `_assert_pp_coverage`；`native_full_param.py:462-471` 亦逐字标注 TP row reassembly 未实现）
+    #     ⇒ 产物真的交不出。
+    #   · native LoRA + **dp>1（tp=pp=1）**：DP 副本化简**已实现**（以 `Tensor.equal` 证明副本一致后才化简），
+    #     且 T011/T012/T023/T024 实测副本逐元素相等 ⇒ 该形状产物**可合并**；但该实现把"副本位等价"当硬前置，
+    #     历史上同形状 epoch=2 旧跑次曾分歧 ⇒ 按裁定② 的口径（同等条件下产标准 HF checkpoint 的一方更稳）不首选。
+    #   ⛔ 因此 note 里**不许**把 dp>1 写成"交不出产物"。
     deliverable, delivery_gap, delivery_gap_short = True, None, None
-    if backend == "native" and mode == "LoRA" and dp > 1 and tp == 1 and pp == 1:
+    if backend == "native" and mode == "LoRA" and tp > 1:
         deliverable = False
-        delivery_gap_short = (
-            "native 导出层只认 dp=tp=pp=1（`native_full_param.py:462-471` 逐字 DP/TP/PP 合并均未实现、"
-            "MUST stay fail-closed；`native_lora.py:455-476` 要求副本位等价，T023/T024 实测 `lora_a` 606/606 全不同）"
-        )
-        delivery_gap = (
-            "native 导出层只认 dp=tp=pp=1（`export/exporters/native_full_param.py:462-471` 逐字"
-            "「DP replica reconciliation / TP row reassembly / PP layer assembly are NOT implemented, "
-            "MUST stay fail-closed」；`native_lora.py:455-476` 要求同 (tp,pp) 副本位等价，"
-            "T023/T024 实测 `lora_a` 606/606 全不同 ⇒ 导出 fail-closed）⇒ 训练能跑、产物交不出"
-        )
+        delivery_gap_short = ("native LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；"
+                              "`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）")
+        delivery_gap = delivery_gap_short
+    elif backend == "native" and mode == "LoRA" and tp == 1 and pp == 1 and dp > 1:
+        deliverable = False
+        delivery_gap_short = ("native LoRA 的 DP 合并依赖「副本位等价」窄口前置：`native_lora.py:455-476` "
+                              "分歧即 fail-closed；T011/T012/T023/T024 实测副本逐元素相等、可合并，"
+                              "epoch=2 旧 dp4 跑次曾分歧")
+        delivery_gap = delivery_gap_short
 
     cap_fact = BACKEND_PARALLEL_FACT[(backend, mode)]
     fits_shape = (
@@ -901,13 +916,16 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
             gaps.append("native 全参 PP 导出未实现（`native_full_param.py:462-471` 只认 dp=tp=pp=1）")
         if algo == "GRASPO" and pp > 1:
             gaps.append("native PP+rollout 须 `allow_unverified_pp_rollout=true`（`native/runtime.py:507-522`）")
-    if backend == "native" and mode == "LoRA" and dp > 1:
-        gaps.append("训练可跑、产物需补导出层：native 导出层只认 dp=tp=pp=1"
-                    "（`native_full_param.py:462-471` 逐字 DP/TP/PP 合并均未实现、MUST stay fail-closed；"
-                    "`native_lora.py:455-476` 要求副本位等价，实测 27B `lora_a` 606/606 全不同）")
-    elif backend == "native" and mode == "LoRA" and (tp > 1 or pp > 1):
-        gaps.append("训练可跑、产物需补导出层（flow 层 export 子系统未实现 DP/TP/PP 合并，"
-                    "`native_full_param.py:462-471`）")
+    if backend == "native" and mode == "LoRA" and (tp > 1 or pp > 1):
+        # ★ 必修（裁定后补）：历史 54 档里 LoRA 的 tp=pp=1 恒成立（TP/PP 只出现在全参档）
+        #   ⇒ 这些形状**从未实跑**，⛔ 不许写"训练可跑/能跑"。
+        if tp > 1:
+            gaps.append("该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）"
+                        "⇒ 训练可行性未建立；产物侧另需补导出层：仓内 LoRA 导出无 TP 合并实现"
+                        "（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）")
+        else:
+            gaps.append("该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）"
+                        "⇒ 训练可行性未建立；产物侧 PP 覆盖校验已实现（`native_lora.py:256-300`）但无实跑验证")
     if chosen["recipe"] == "offload":
         gaps.append("需 `native.offload_optimizer_state=true`（实测 35.19 GB）")
         if algo == "GRASPO":
@@ -958,6 +976,23 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
     if gaps:
         note_parts.append("卡点：" + "；".join(gaps))
     note = "；".join(p for p in note_parts if p)
+
+    # ── 专用：native LoRA 的 dp>1 档（双方都无成功跑次）—— 必修（裁定后补）
+    #    要素：① 两方均无成功跑次（各带具名跑次）② 选 native 的唯一理由 = 对方有实测 OOM、
+    #    本方是通信/teardown 异常（可诊断）③ 余量紧 ⇒ 先解决余量与通信稳定性 ④ 产物另需补导出层。
+    #    ⛔ 一个字都不许写"训练可跑/能跑"。
+    if backend == "native" and mode == "LoRA" and tp == 1 and pp == 1 and dp > 1 \
+            and not chosen["success_evidence"]:
+        ms = next((c for c in sel["candidates"] if c["backend"] == "ms-swift"), None)
+        native_fail = (f"native —— {_labels(chosen['warn_evidence'])}" if chosen.get("warn_evidence")
+                       else "native —— 无成功跑次记录")
+        ms_fail = (f"ms-swift —— {_labels(ms['evidence'])}" if (ms and ms.get("evidence"))
+                   else "ms-swift —— 无成功跑次记录")
+        note = (f"两者在该形状均无成功跑次：{native_fail}；{ms_fail}。"
+                f"选 native 的唯一理由 = 对方有实测 OOM、本方是通信/teardown 异常（可诊断、可重试），"
+                f"⛔ 不表示该形状可行。估算 {peak:.2f}/{budget:.1f} GiB（{band}）⇒ "
+                "测试前须先解决显存余量与通信稳定性。"
+                f"卡点：产物侧另需补导出层 —— {chosen.get('delivery_gap_short') or 'DP 合并依赖副本位等价'}")
 
     # ── 步数推导（沿用旧口径：子集条数 ÷ 每 epoch 卡数 × epochs；本轮不跑批次） ──
     subset = SUBSET_SIZE_BY_ALGO[algo]
@@ -1095,9 +1130,16 @@ def _reason_line(chosen, sel, backend, mode, tp, pp, dp, band, budget, peak, alg
                 "⇒ 缺实现≠档位不合理，保留待测试")
     if (other is not None and other["eligible"] and chosen.get("deliverable", True)
             and not other.get("deliverable", True)):
-        core = (f"选 {backend}：两者训练都能跑，但 {other['backend']} 交不出产物"
-                f"（{other.get('delivery_gap_short') or other.get('delivery_gap') or '导出 fail-closed'}）"
-                f"⇒ 按「产物可推理」取 {backend}")
+        # ⚠ 只在"双方都有实测成功跑次"时才敢这么写；否则走下面的通用分支
+        if chosen["success_evidence"] and other["success_evidence"]:
+            core = (f"选 {backend}：两者都有实测成功跑次（{backend} {_labels(chosen['success_evidence'])}；"
+                    f"{other['backend']} {_labels(other['success_evidence'])}），但 {other['backend']} 的产物口径"
+                    f"带未闭合前置 —— {other.get('delivery_gap_short') or other.get('delivery_gap')} "
+                    f"⇒ 按裁定「产物可推理」取 {backend}")
+        else:
+            core = (f"选 {backend}：{other['backend']} 的产物口径带未闭合前置 —— "
+                    f"{other.get('delivery_gap_short') or other.get('delivery_gap')}；"
+                    f"且 {other['backend']} 在该形状无成功跑次 ⇒ 按裁定「产物可推理」取 {backend}")
     elif other is None:
         if sel["missing_backends"]:
             core = (f"选 {backend}：{algo} 只有 {backend} 通道 —— {sel['missing_backends'][0]}；"
@@ -1218,6 +1260,43 @@ def _v12_missing_channel(rows, budget: float) -> bool:
     return True
 
 
+#: note 里**只有**拿到具名 success 跑次才允许出现的断言词（V13 机核）。
+CLAIM_WORDS: tuple[str, ...] = ("训练可跑", "训练能跑", "训练跑通")
+#: note 里**只有**拿到实测证据才允许出现的断言词（V13 反方向机核）；纯算式的只能写「估算超预算」。
+NEGATIVE_CLAIM_WORDS: tuple[str, ...] = ("不可行", "必然失败", "交不出")
+
+
+def _any_backend_evidence(algo, model, mode, shape, effects) -> bool:
+    """不看后端，只看 (算法,模型,模式,形状) 是否有该类证据（供"某后端出局"类断言兜底）。"""
+    for ev in MEASURED_EVIDENCE:
+        a, m, md, _be, sh = ev["scope"]
+        if (a in ("*", algo) and m in ("*", model) and md in ("*", mode)
+                and _shape_match(sh, shape) and ev["effect"] in effects):
+            return True
+    return False
+
+
+def _v13_claims_backed_by_runs(rows, budget: float) -> bool:
+    """裁定后补（必修 2）：note 的成败断言必须有实测跑次兜底 —— 正反两个方向都机核。
+
+    正向：「训练可跑/能跑/跑通」⇒ 该档（算法,模型,模式,后端,形状）必须有 `success` 类证据。
+    反向：「不可行/必然失败/交不出」⇒ 该档（不限后端）必须有 `backend_infeasible`/`recipe_forbid` 证据，
+          纯算式结论只能写「估算超预算」。
+    """
+    for r in rows:
+        note = r["note"]
+        shape = (int(r["tp"]), int(r["pp"]), int(r["dp"]))
+        if any(w in note for w in CLAIM_WORDS):
+            if not evidence_for(r["algo"], r["model"], r["mode"], r["backend"], shape,
+                                effects=("success",)):
+                return False
+        if any(w in note for w in NEGATIVE_CLAIM_WORDS):
+            if not _any_backend_evidence(r["algo"], r["model"], r["mode"], shape,
+                                         ("backend_infeasible", "recipe_forbid")):
+                return False
+    return True
+
+
 VERIFICATION_CASES: tuple[dict[str, Any], ...] = (
     {
         "id": "V1",
@@ -1303,14 +1382,22 @@ VERIFICATION_CASES: tuple[dict[str, Any], ...] = (
     },
     {
         "id": "V11",
-        "claim": ("LoRA ∧ dp>1 ∧ tp=pp=1 ⇒ backend 必须是 ms-swift（native 训练能跑但产物交不出）；"
-                  "唯一例外 = ms-swift 在该形状有**实测不可行**证据（此时必须选 native 并在 note 写明该实测）"),
+        "claim": ("LoRA ∧ dp>1 ∧ tp=pp=1 ⇒ backend 取 ms-swift（native 的 DP 产物口径带未闭合前置："
+                  "副本位等价窄口，`native_lora.py:455-476`；ms-swift 走 FSDP2 full_state_dict 产标准 HF checkpoint）；"
+                  "唯一例外 = ms-swift 在该形状有**实测不可行**证据（此时选 native 并在 note 写明该实测）"),
         "check": _v11_lora_dp_deliverable,
     },
     {
         "id": "V12",
         "claim": "MISSING_CHANNEL 档必须 status=待测试、note 含「卡点」且写明缺哪条通道与补齐后的估算",
         "check": _v12_missing_channel,
+    },
+    {
+        "id": "V13",
+        "claim": ("note 的成败断言必须有实测跑次兜底：「训练可跑/能跑/跑通」需具名 success 证据"
+                  "（历史 54 档里 LoRA 恒为 tp=pp=1 ⇒ tp>1/pp>1 的 LoRA 档只能写「从未实跑」）；"
+                  "反方向「不可行/必然失败/交不出」需 backend_infeasible/recipe_forbid 证据，纯算式只能写「估算超预算」"),
+        "check": _v13_claims_backed_by_runs,
     },
 )
 
@@ -1556,6 +1643,11 @@ def apply_meta_sync(meta: dict[str, Any], *, card_limit: int, budget: float,
     leftovers: list[str] = []
 
     def _scan(node: Any, path: str) -> None:
+        # ★ 兜底扫描的**适用面**：只扫"从旧 meta 继承下来的字段"。
+        #   本脚本自己写的 `enumeration` 块必须能引用具名跑次（T041/T044…）与证据表标签，
+        #   否则无法把"实测 > 算式"写清；这些内容是本轮新生成、已逐条可核，不是旧档遗留。
+        if path.startswith("meta.enumeration"):
+            return
         if isinstance(node, dict):
             for k, v in node.items():
                 _scan(v, f"{path}.{k}")
@@ -1589,6 +1681,26 @@ def apply_meta_sync(meta: dict[str, Any], *, card_limit: int, budget: float,
             "opd_teacher": "教师不计入卡数（主笔原文「不包括 OPD 的教师」）；教师常驻另计 50.10 GiB/卡",
         },
         "sort_key": SORT_KEY_DOC,
+        "backend_selection": {
+            "sort_keys": [
+                "①实测成功证据（该算法×模型×模式×后端×形状有判据① 通过的跑次）",
+                "②该形状是否被后端真消费（native 的 TP/PP 真接线；ms-swift 的 TP/PP 只在未接线的 Megatron 段）",
+                "③分片载体是否已实现且已实测（FSDP2 接点齐但零 rc=0 ⇒ 排后）",
+                "④产物可推理（native LoRA：tp>1 无合并实现；dp>1 的 DP 合并依赖「副本位等价」窄口前置）",
+                "⑤估算峰值　⑥后端名（确定性尾键）",
+            ],
+            "exception_rule": (
+                "排序键只允许被**唯一一种**例外推翻：被选方（本应排第一的一方）在该形状有**实测不可行证据**时，"
+                "可让「有实测成功证据 / 失败更可诊断」的一方上位；⛔ 不许出现第二种未登记的例外。"
+                "当前唯一实例：M093（27B GRASPO LoRA dp2）—— native 实测异常退出（T041，未定性）、"
+                "ms-swift 实测 OOM（T044）⇒ 保留 native（对方有实测 OOM 死刑、本方是通信异常可诊断）。"
+            ),
+            "note_claim_policy": (
+                "「训练可跑 / 训练能跑 / 训练跑通」只允许出现在证据表里有具名 `success` 跑次的档上；"
+                "无跑次的形状只能写「从未实跑 ⇒ 训练可行性未建立（产物侧另需补导出层）」。"
+                "反方向同理：「不可行 / 必然失败 / 交不出」必须有实测证据，纯算式的只能写「估算超预算」。自检 V13 机核。"
+            ),
+        },
         "counts": counts,
         "reason_codes": {k: {"desc": v["desc"], "excludes": v["excludes"]} for k, v in REASON_CODES.items()},
         "evidence_policy": ("证据优先级 = 实测（跑次记录里的 OOM / 峰值）> 算式；算式判「可行」而有实测不可行证据的档，"
