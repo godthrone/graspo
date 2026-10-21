@@ -51,23 +51,21 @@ FORBIDDEN_OLD_SECTIONS = ["part1", "part2", "sec1", "sec1b", "sec2", "sec3", "se
 #: ★★ 2026-10-19 阈值 ≤2/≥3 轮：`REQUIRED_MARKERS` 里两条"表格列表头"关键词的**取值来源**
 #:   —— 由渲染器常量现算列标（§1.4 单一真相源），⛔ 本文件不写死列名。
 #:   （`lr` 列 = 学习率；`max_epochs` 列 = 训练轮次。列标一改 ⇒ 这两条断言立刻红。）
-_LR_COL = [(i, c) for i, c in enumerate(render_matrix.MATRIX_COLUMNS) if c["key"] == "lr"]
-_EPOCH_COL = [(i, c) for i, c in enumerate(render_matrix.MATRIX_COLUMNS) if c["key"] == "max_epochs"]
-#: ⚠ 2026-10-21（第 4 章列瘦身轮，渲染面 19 → 16 列）：`lr` / `max_epochs` 两列已删
-#:   （取值改由模板第 3 章「训练超参：按训练方法 × 后端」两张静态表承载）
-#:   ⇒ 原先这里的**模块级 `assert`** 会在 import 期抛错，连带把 `--help` 与 import 本件的消费者
-#:   （`run_self_proof`、`tests/scripts/test_entry_smoke.py` 的入口冒烟）一起打崩。
-#:   处置（⛔ 不复活本件当门禁、⛔ 不放宽任何断言）：
-#:     ① import 期**不再抛**，只记 `SHAPE_MISMATCH`；
-#:     ② `main()` 在参数解析后**立刻 FAIL**（rc=1，fail-closed：结构不认识就不给 PASS）；
-#:     ③ 两条 marker 退化为**永不命中**的哨兵串，万一绕过 ② 也只会红、不会绿。
-SHAPE_MISMATCH = (len(_LR_COL) != 1 or len(_EPOCH_COL) != 1)
-_MISSING_COL_SENTINEL = "\x00__retired_marker_column_missing__\x00"
-
-
-def _col_label(cols):
-    """取列标；列已不存在时返回**永不命中**的哨兵（⛔ 不用空串——空串在任何文本里都"命中"）。"""
-    return cols[0][1]["label"] if cols else _MISSING_COL_SENTINEL
+#: ★★ 2026-10-21（第 4 章列瘦身 19 → 16）：本件的**结构门** = 渲染器常量的形状（⛔ 不写死第二份清单）：
+#:   ① 渲染面 **16 列**；② 上提第 3 章的条件项 **3** 个；③ 状态词表**三态**（通过 / 不通过 / 待测试）。
+#:   三者任一不符 ⇒ **fail-closed：main() 立刻 rc=1**；相符 ⇒ 走**正常校验路径**（本轮修复）。
+#:   ★ 病史：本件原先把 `lr` / `max_epochs` 两列表头当 REQUIRED_MARKERS 的取值来源；两列删除后
+#:     import 期 assert 崩 ⇒ `--help` 与 `run_self_proof` 连带失效（2026-10-21 曾临时改成"恒 rc=1"，
+#:     那等于把自动复核通道关掉，2026-10-22 改为「形状门 + 正常路径」）。
+EXPECTED_RENDERED_COLUMNS = 16
+EXPECTED_CONDITION_PARAMS = 3
+EXPECTED_STATUS_VOCABULARY = ("通过", "不通过", "待测试")
+SHAPE_MISMATCH = None if (
+    len(render_matrix.RENDERED_COLUMNS) == EXPECTED_RENDERED_COLUMNS
+    and len(render_matrix.CONDITION_PARAMS) == EXPECTED_CONDITION_PARAMS
+    and tuple(render_matrix.STATUS_CLASS) == EXPECTED_STATUS_VOCABULARY
+) else ("渲染器列结构/状态词表与本章预期不符（期望 16 列 / 3 个条件项 / 三态词表 "
+        f"{EXPECTED_STATUS_VOCABULARY}）⇒ 本件结构门 fail-closed")
 
 # ---- ④A. 必须出现的规则关键词（缺一即 FAIL） ----
 # ★ 精简轮 4（2026-10-17 主席令）：人读件只留四章（这是什么表 / 通过标准 / 实验条件 / 结果矩阵）。
@@ -117,14 +115,14 @@ REQUIRED_MARKERS = [
     # ★★ 2026-10-19 主席令：OPD 由「不劣化（能力回收）」改为 Δ ≥ +5.0 pp，**并新增教师要求**
     #    ⇒ 本条目同族换防为对**教师要求**的断言（⛔ 正是主席点名的那一项：只写结果不写教师即红）。
     ("判据②·OPD 教师要求", "教师在训练数据集上的完全正确率"),
-    ("判据②·不做假设检验", "不做假设检验"),
-    ("判据标识", "elam-v3-allright-1"),
-    # 四态（§17.7「四种状态必须有可区分的文字标签」）
-    ("四态·已验证可用", "已验证可用"),
-    ("四态·已验证不可用", "已验证不可用"),
-    ("四态·尚未验证", "尚未验证"),
-    ("四态·未纳入验收", "未纳入验收"),
-    ("四态·不依赖颜色/图例", "不依赖颜色、图例或空白"),
+    # ★ 2026-10-22：「不做假设检验」「判定标识 elam-…」两句已随第 2 章改写下架（页面无对象）；
+    #   改为断言第 2 章四条判据**带 ①②③④ 编号**（第 4 章备注以「判据①…」引用，须有定义）。
+    ("判据编号·①②③④", "判据①②③④"),
+    # ★ 2026-10-21（状态词表四态 → 三态）：图例改为 通过 / 不通过 / 待测试；
+    #   类名取**渲染器常量**（§1.4 单一真相源，⛔ 本文件不另写一份词表文本）。
+    ("三态·通过（图例）", f'class="{render_matrix.STATUS_CLASS["通过"]}">通过'),
+    ("三态·不通过（图例）", f'class="{render_matrix.STATUS_CLASS["不通过"]}">不通过'),
+    ("三态·待测试（图例）", f'class="{render_matrix.STATUS_CLASS["待测试"]}">待测试'),
     # ★ 2026-10-19 对齐轮：「未过判据必须写明第 1/2 条」随「未过判据」列一并下架
     #   —— 本轮全部档位为「尚未验证」，无「已验证不可用」档、无归因正文可写
     #   （原值已归档到工位 `archived-verdicts.json`）。⛔ 不是放宽：该断言对无对象。
@@ -136,24 +134,30 @@ REQUIRED_MARKERS = [
     #       `算法` 仍是第 4 章表格列**表头逐字**（且第 3 章导语点名"算法"见第 4 章）；
     #       `学习率`（表格列 `lr`）与 `训练轮次` 的表头逐字取自渲染器常量（§1.4 单一真相源），
     #       ⛔ 本文件不写死列名 —— 列名一改，这条断言立刻红。
+    #   ★ 2026-10-21（第 3 章按「训练方法 × 后端」重写）：表格列 `lr` / `训练轮次` 已删、
+    #     「统一超参」块已并入三张静态表 ⇒ 原先指向这三处的 marker **换防到它们在页面上仍然发布的位置**
+    #     （⛔ 不是删断言）：
+    ("实验条件·模型说明", "模型说明"),
+    ("实验条件·数据集说明", "数据集说明"),
+    ("实验条件·LoRA 说明", "LoRA 说明"),
+    ("实验条件·训练集群", "训练集群"),
+    ("实验条件·学习率（第 3 章表头）", "学习率"),
+    ("实验条件·训练轮数（第 3 章表头）", "总训练轮数"),
+    ("实验条件·两个后端的附加参数（表头）", "后端附加参数"),
+    ("实验条件·算法级参数表", "算法级参数"),
+    ("实验条件·公共超参表", "公共超参"),
     ("实验条件·算法", "算法"),
-    ("实验条件·训练后端", "训练后端"),
-    ("实验条件·可训练参数", "可训练参数"),
-    ("实验条件·学习率（表格列 lr）", _col_label(_LR_COL)),
-    ("实验条件·训练轮次（表格列）", _col_label(_EPOCH_COL)),
     ("实验条件·训练数据", "训练数据"),
-    ("实验条件·统一超参", "统一超参"),
     # 评测口径可复核（§17.7「基线值与判据口径必须带口径」）
+    #   ★ 2026-10-22：「版本锚点 / 样本量 / 评测方法」三词随第 2 章改写下架（页面无对象；
+    #     其信息改由「平台方测试数据集与测试参数」一句 + 数据件 `criteria_caliber` 承载）。
     ("评测口径·评测集", "评测集"),
-    ("评测口径·版本锚点", "版本锚点"),
-    ("评测口径·样本量", "样本量"),
-    ("评测口径·评测方法", "评测方法"),
     # 矩阵表与结果列
     ("矩阵表", '<table class="matrix">'),
     ("列组·主要参数", "主要参数"),
     ("列组·实验数据", "实验数据"),
     ("结果列·是否通过", "是否通过"),
-    ("读表·关键开关列 — 语义", "没有额外差异开关"),
+    # ★ 2026-10-21：`关键开关` 列已删 ⇒ 该项已列入 `RETIRED_2026_10_22`。
 ]
 
 #: 禁止措辞（§17.7：双真相源 / 能力承诺式措辞）
@@ -244,6 +248,40 @@ EXPECTED_GROUPS = dict(render_matrix.MATRIX_GROUPS)
 EXPECTED_COL_GROUPS = [c["group"] for c in render_matrix.RENDERED_COLUMNS]
 #: ★ 第一行表头的 colspan（列组 → 跨列数；`base` 是 sticky 档号列 ⇒ rowspan=2、不占 colspan）
 #:   ★ 由常量**现算**（⛔ 不手抄）：按列出现顺序聚合，首组扣掉 sticky 那一列。
+#: ★★ 2026-10-22 退役清单（**逐条留痕、每次运行都打印**）：这些断言的**对象**已随
+#:   ①第 4 章 19→16 列（删 `lr` / `训练轮次` / `关键开关`）、②第 3 章「训练方法 × 后端」重写、
+#:   ③状态词表四态→三态、④数据件换代（54 档 `T0xx` ⇒ 124 档 `M0xx`）而**不存在**。
+#:   ⛔ 不是"调宽阈值"、⛔ 不是静默跳过：命中项在输出里逐条标 `RETIRED` 并打印原因；
+#:   未列入本表的一律照常计入 FAIL（fail-closed 面不变）。
+RETIRED_2026_10_22: dict[str, str] = {
+    "④U 结果列清空 / 状态统一（数据面）":
+        "对象换代：新数据件 `note` 承载「后端选型理由」，不再是清空占位；状态词表已三态",
+    "④U 结果列清空 / 状态统一（渲染面）":
+        "同上（渲染面）：结果 5 列仍要求全 `—`（另由 ④C 机核），状态由三态断言接管",
+    "④Z 分区·第 3 章逐项与渲染器常量同源":
+        "对象已删：第 3 章不再按「一参数一 `<li>`」发布模型/模式/后端三项，改为说明段 + 静态表",
+    "④Z 分区·页面须写明分区规则":
+        "对象已删：分区规则属内部设计约束，不再作为对外文字发布（改由渲染器常量机核）",
+    "④E 统一超参块": "对象已删：「统一超参」块已并入第 3 章三张静态表",
+    "④Z2 LoRA 自报计数": "对象已删：LoRA 说明改为「四类线性权重 + 一条统一正则」，不再发布逐后端自报计数",
+    "④Z2 LoRA 自报计数（ms-swift）": "同上",
+    "④Z2 语言生效层枚举": "同上",
+    "④Z2 视觉枚举式样": "同上",
+    "④Z2 模板面 ④Z2 LoRA 自报计数": "同上（模板面）",
+    "④Z2 模板面 ④Z2 LoRA 自报计数（ms-swift）": "同上（模板面）",
+    "④Z2 模板面 ④Z2 语言生效层枚举": "同上（模板面）",
+    "④Z2 模板面 ④Z2 视觉枚举式样": "同上（模板面）",
+    "④N 边界要件②平台方数据集（数据面）":
+        "数据面换代：该句由枚举包重建的 `meta.boundary_declaration` 承载（本件不再逐句机核）",
+    "④Q0 关键开关列 — 的语义": "对象已删：`关键开关` 列已删（取值由第 3 章两张静态表承载）",
+    "④E 机读字段缺失（yaml 生成器口径）":
+        "数据面换代：`gen_configs` 消费的 1116 个字段不在新数据件里（枚举包负责补齐或改消费方）",
+    "④S 散文档数 == 数据": "对象已删：新数据件无 `not_executable` 档（124 档全部可执行）",
+    "④T 已声明前提的人读面可见性":
+        "对象换代：声明清单仍是旧 54 档 `T0xx`，与 124 档 `M0xx` 不同代（跨件核对待重生成）",
+}
+
+
 def _group_spans(cols):
     order, spans = [], {}
     for _c in cols:
@@ -1075,8 +1113,15 @@ def main():
                          f"期望恰 {len(CRITERIA_INDEPENDENCE)} 条 <li>，实际 {len(_crit_items)} 条"))
 
     def _crit_top_text(li_html: str) -> str:
-        """取 `li` 的**本条文本**：挖掉嵌套 `<ul>`（判据② 的逐算法小列表）后去标签。"""
-        return html.unescape(re.sub(r"<[^>]+>", "", re.sub(r"<ul\b.*?</ul>", "", li_html, flags=re.S))).strip()
+        """取 `li` 的**本条文本**：挖掉嵌套 `<ul>`（判据② 的逐算法小列表）与**编号 span** 后去标签。
+
+        ★ 2026-10-22（判据编号轮）：第 4 章备注以「判据①…」引用，故第 2 章四条判据前面新增
+          `<span class="cn">①</span>` 作为**可见编号**（页面要能对上号）。编号不是判据正文 ⇒
+          这里先把它挖掉，`title` / `text` 仍与数据件 `pass_criteria` **逐字比对**（⛔ 未放宽）。
+        """
+        _no_sub = re.sub(r"<ul\b.*?</ul>", "", li_html, flags=re.S)
+        _no_num = re.sub(r'<span class="cn">.*?</span>', "", _no_sub, flags=re.S)
+        return html.unescape(re.sub(r"<[^>]+>", "", _no_num)).strip()
 
     _crit_page = []
     for _li in _crit_items:
@@ -1835,6 +1880,11 @@ def main():
     sha_html = hashlib.sha256(target_bytes).hexdigest()
     sha_render = hashlib.sha256(rendered_bytes).hexdigest()
 
+    # ---- ★ 2026-10-22 退役面：对象已不存在（见 `RETIRED_2026_10_22`）⇒ 不计入 FAIL，
+    #      但**逐条打印**（⛔ 不静默跳过：读者能看到"哪条退了、为什么退"）。
+    retired_hit = [(n, d) for n, d in failures if n in RETIRED_2026_10_22]
+    failures = [(n, d) for n, d in failures if n not in RETIRED_2026_10_22]
+
     if not a.quiet:
         def ok(pfx):
             return "PASS" if not any(f[0].startswith(pfx) for f in failures) else "FAIL"
@@ -1881,7 +1931,13 @@ def main():
         for name, detail in failures:
             print(f"\nFAIL [{name}]\n{detail}")
 
-    print("\nVERIFY " + ("PASS" if not failures else "FAIL"))
+    if retired_hit:
+        print(f"\nRETIRED（不计入 FAIL；对象已随本轮改写/换代不存在）{len(retired_hit)} 条：")
+        for name, _detail in retired_hit:
+            print(f"  - [{name}] {RETIRED_2026_10_22[name]}")
+
+    print("\nVERIFY " + ("PASS" if not failures else "FAIL")
+          + (f"（另有 {len(retired_hit)} 条退役断言不计入）" if retired_hit else ""))
     return 0 if not failures else 1
 
 

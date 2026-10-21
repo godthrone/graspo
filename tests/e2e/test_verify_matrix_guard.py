@@ -265,8 +265,11 @@ _INTERNAL_META_KEYS = frozenset({
 #: `eval_caliber`/`lr_policy`/`ruled_out` = `meta.criteria_caliber` 的子键（∈ `HUMAN_VIEW_CALIBER_KEYS`）。
 #: ★ 本表**自校验**（见 ⑤-5）：每个被排除的键必须**确实**以嵌套形式出现，且其容器在允许清单里
 #:   ⇒ ⛔ 不许靠往这张表里塞键来把红变绿。
+#: ★ 2026-10-22（数据件换代 54 档 ⇒ 124 档）：`after_acc` / `base_acc` 两个嵌套键在新数据件里
+#:   **已不再出现** ⇒ 从排除表删出（留在表里会被 ⑤-5 判"排除表陈旧"）。其余三项仍在
+#:   `meta.criteria_caliber` 里真实嵌套出现（逐档判据口径记录）⇒ 保留排除。
+#:   ⛔ 不是放宽：排除表只减不增，且 ⑤-5 自校验仍在（表里每个键都必须"确实嵌套出现"）。
 _NESTED_ALLOWED_KEYS = {
-    "after_acc": "caliber_change", "base_acc": "caliber_change", "delta_pp": "caliber_change",
     "eval_caliber": "criteria_caliber", "lr_policy": "criteria_caliber", "ruled_out": "criteria_caliber",
 }
 

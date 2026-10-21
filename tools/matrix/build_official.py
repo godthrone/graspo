@@ -192,6 +192,11 @@ HUMAN_VIEW_META_KEYS = (
     "title", "version", "doc_date", "scope", "venue", "code_version", "authority",
     "status_vocabulary", "boundary_declaration", "criteria_caliber", "criteria_version",
     "results_policy", "distill_teacher", "lora_target_backends",
+    # ★ 2026-10-22（枚举轮）：`enumeration` = **档位是怎么枚举出来的**的对外留痕
+    #   （生成脚本与其 sha256、判据版本、卡数上限与显存预算、保留/剔除计数、剔除原因码与规则）。
+    #   用途：使用者据此复核"这 124 档从哪来、36 档为什么被剔除"，属 §17.7「结论与依据是使用者
+    #   有权知道的」⇒ 进允许清单。⛔ 它不含宿主路径/内网/机器名/内部称谓（由 `scan_matrix_leaks` 机核）。
+    "enumeration",
 )
 
 #: ★★ **机读消费者字段（不进人读视图）**：`gen_configs.py` 的 fail-closed 检查要读它们

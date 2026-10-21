@@ -28,6 +28,38 @@ import verify_matrix as _vm
 import render_matrix as _render   # ★ 列结构/分区常量**同源**（⛔ 不手抄列数）
 import gen_configs          # ★ 统一口径回落表（㉑ 与生成端**同源**，⛔ 不复制一份）
 RESULT_KEYS = list(_bo.EXP_DATA_KEYS)   # ★ 精简轮 2：实测读数列由生成端定义（⛔ 不再手抄）
+
+#: ★★ 2026-10-22 退役清单（**逐条留痕、每次运行都打印**）：这些自证项的**对象**已随
+#:   ①第 4 章 19→16 列（删 `lr` / `训练轮次` / `关键开关`）、②第 3 章「训练方法 × 后端」重写
+#:   （「统一超参」块并入三张静态表、LoRA 不再发布逐后端自报计数）、③状态词表四态→三态、
+#:   ④数据件换代（54 档 `T0xx` ⇒ 124 档 `M0xx`）而不存在。
+#:   ⛔ 不是"调宽阈值"、⛔ 不是静默跳过：命中项在输出里逐条标 `RETIRED` 并打印原因；
+#:   未列入本表的一律照常计入 PASS/FAIL（fail-closed 面不变）。
+RETIRED_2026_10_22: dict[str, str] = {
+    "⑥ 四态与页面标签不同源 ⇒ verify FAIL": "状态词表四态→三态：④K 的旧词表断言已随换代重写",
+    "⑥ FAIL 报出 ④K 状态标签计数": "同上",
+    "⑧ 归因依据缺失 ⇒ verify FAIL": "对象换代：新数据件无 `verdict`/`_DETAIL_EVIDENCE` 逐档归因面",
+    "⑧ FAIL 报出 ④O 依据关键词": "同上",
+    "⑨ 备注非契约文本 ⇒ verify FAIL": "对象换代：`note` 已改由枚举包生成（不再走 `note_contract`）",
+    "⑨ FAIL 报出 ④O 备注契约": "同上",
+    "⑬ 开关列重复发布检查点间隔 ⇒ verify FAIL": "对象已删：`关键开关` 列已删",
+    "⑬ FAIL 报出 ④Q": "同上",
+    "⑭ 取值 ≠推导步数+1 ⇒ verify FAIL": "对象已删：`关键开关` 列已删（步数改从数据件读）",
+    "⑭ FAIL 报出 ④Q 取值": "同上",
+    "⑤ 同输入两次渲染逐字节相同": "（保留）",
+    "㉑ 统一超参并集不变量（页面键集合 == 生成器现算 − 排除面／两块非空不重叠／值逐字）": "对象已删：「统一超参」块并入第 3 章静态表",
+    "㉑b 回落表为空时确实取不到值（本自证能失败）": "同上",
+    "㉑c 同一并集不变量对在盘 HTML 全过": "同上",
+    "㉑c2 生成器统一键序 == 静态登记产出顺序": "同上",
+    "㉑c3 静态登记顺序被调换后确实变红（本自证能失败）": "同上",
+    "㉑c4 页面块内顺序被调换后确实变红（含块内顺序判据）": "同上",
+    "㉑d 回落表孤儿键 == 已登记死键（精确等号）": "同上",
+    "㉑d2 塞入新键后孤儿键判据确实变红（本自证能失败）": "同上",
+    "㉑e LoRA 自报计数与枚举 == 数据件现算（模板面）": "对象已删：LoRA 说明不再发布逐后端自报计数",
+    "㉑e2 同一 LoRA 判据对在盘 HTML 全过": "同上",
+    "㉑e3 改一个自报数字后确实变红（本自证能失败）": "同上",
+}
+
 FAKE = {
     # ★ 与 verify ④J（耗时列 fail-closed：跑次输入域有墙钟 ⇒ 列不得为空）**同批更新**：
     #   示意档必须自带 `throughput_detail` 的墙钟，否则「列有值、输入域无读数」会被判为疑编造。
@@ -112,11 +144,14 @@ CELLS_PER_ROW = len(_render.RENDERED_COLUMNS)
 #: ★★ 条件/结果分区（2026-10-19 分区轮；**阈值 ≤2/≥3 轮**更新）的**故意做错**夹具：
 #:   逐条证明三条判据**能失败**。⛔ 只在本文件内存里构造，⛔ 不落仓库、⛔ 不动正式件。
 PARTITION_FIXTURES = (
-    # ① 交集不为空：把 `lr`（枚举数量 3 ⇒ 按新阈值**应当**在表格列）**同时**塞回第 3 章条件，
-    #    使同一参数两处发布（逐档取值相同）⇒ 交集断言必红
-    ("把 lr 同时塞回条件项（交集不为空）", {"dup_key": "lr",
-                                            "dup_cond": {"key": "lr", "label": "lr",
-                                                         "cond_label": "学习率"}},
+    # ① 交集不为空：把 `tp`（表格列）**同时**塞回第 3 章条件项，使同一参数两处发布
+    #    ⇒ 交集断言必红。
+    #    ★ 2026-10-22：原夹具用 `lr`；`lr` 已不再是表格列（19→16 轮删除、取值改由第 3 章静态表
+    #      承载）⇒ 夹具在现行列结构下**无对象**（造不出"两处发布"）。改用 `tp`：它仍是表格列、
+    #      且未在第 3 章登记为条件项 ⇒ 交集判据照常能被证明会失败（⛔ 不是放宽判据）。
+    ("把 tp 同时塞回条件项（交集不为空）", {"dup_key": "tp",
+                                            "dup_cond": {"key": "tp", "label": "TP",
+                                                         "cond_label": "张量并行度"}},
      "交集为空"),
     # ② 并集不覆盖：把 `tp` **从表格列删掉**且**不加进第 3 章** ⇒ 并集断言必红
     #    （★ 用 `tp` 而不是 `dp`：TP 正是本轮"回归表格列"的那个参数 ⇒ 对它的漏项最该被抓）
@@ -178,7 +213,7 @@ def main():
             for k in RESULT_KEYS + ["note", "not_failed_reason", "runs", "inference", "algo_checks",
                                    "run_path", "steps_actual", "throughput"]:
                 r[k] = "—"
-            r["status"] = "尚未验证"
+            r["status"] = _bo.S_UNVERIFIED      # ★ 三态词表：待测试（⛔ 不写死旧词）
             for k in ("verdict", "excluded_reason", "conclusion_annotation", "measurement_pending"):
                 r.pop(k, None)
         ep = tmp / "empty.data.json"
@@ -215,8 +250,14 @@ def main():
 
         # ③ 手改 1 个字符（复制件）
         html = (DOCS / "capability-matrix.html").read_text(encoding="utf-8")
-        tampered = html.replace('data-col="tier">T001</td>', 'data-col="tier">T00l</td>', 1)
-        assert tampered != html, "篡改锚点未命中"
+        # ★ 2026-10-22：锚点改为**不依赖具体档号**（病史：写死 `T001` ⇒ 数据件换代成 `M0xx` 后
+        #   锚点静默不命中、自证直接崩）。取数据件**首行档号**现算，并把最后一个字符改成同长异字符
+        #   ⇒ 改的永远只是 1 个字符、且一定落在表格里。
+        _first_tier = str(data["rows"][0]["tier"])
+        _anchor = f'data-col="tier">{_first_tier}</td>'
+        _mutant = f'data-col="tier">{_first_tier[:-1]}X</td>'
+        tampered = html.replace(_anchor, _mutant, 1)
+        assert tampered != html, f"篡改锚点未命中（锚点 = {_anchor!r}）"
         tp = tmp / "tampered.html"
         tp.write_text(tampered, encoding="utf-8")
         rc, out = run(["tools/matrix/verify_matrix.py", "--template", "tools/matrix/template.html",
@@ -229,8 +270,9 @@ def main():
         base_html = (DOCS / "capability-matrix.html").read_text(encoding="utf-8")
         mut = json.loads(json.dumps(data, ensure_ascii=False))
         changed = 0
+        _mut_tier = str(data["rows"][0]["tier"])      # ★ 同上：不写死档号
         for r in mut["rows"]:
-            if r["tier"] == "T028":
+            if r["tier"] == _mut_tier:
                 r["peak_mem"] = "99.9"
                 r["effect"] = str(r.get("effect", "")) + "【仅改动表格数值】"
                 changed += 1
@@ -479,11 +521,11 @@ def main():
         #      a 表格以外（第 1/2/3 章 + 目录 + 页脚 + 首屏注释）**逐字节**相同；
         #      b 表格骨架（表头 / 列组 / colgroup / 行列数）**逐字节**相同；
         #      c 两边的差异**只允许**出现在 `data-col="…"` 数据单元格的**内容**里，
-        #        且**只能**是"只改结果字段"所对应的那几格（本用例改 T028 的 peak_mem / effect）。
+        #        且**只能**是"只改结果字段"所对应的那几格（本用例改数据件首行的 peak_mem / effect）。
         mut2 = json.loads(json.dumps(data, ensure_ascii=False))
         _chg = {"peak_mem": "99.9", "effect": str(FAKE_NOTE_MARKER)}
         for r in mut2["rows"]:
-            if r["tier"] == "T028":
+            if r["tier"] == _mut_tier:      # ★ 2026-10-22：档号不再写死（取数据件首行）
                 for _k, _v in _chg.items():
                     r[_k] = _v
         (tmp / "mut2.data.json").write_text(json.dumps(mut2, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -496,7 +538,7 @@ def main():
         checks["⑲a 表格以外逐字节不变（静态区）"] = (not _sd)
         checks["⑲b 表格骨架逐字节不变"] = (_vm.table_skeleton(mut2_html) == _vm.table_skeleton(base_html2))
         _diff_cells = cells_that_differ(mut2_html, base_html2)
-        _allowed_cells = {("T028", "peak_mem"), ("T028", "effect")}
+        _allowed_cells = {(_mut_tier, "peak_mem"), (_mut_tier, "effect")}
         checks["⑲c 差异只落在 data-col 结果单元格内（且恰为改动的那两格）"] = (
             set(_diff_cells) == _allowed_cells)
         if _sd:
@@ -566,7 +608,9 @@ def main():
             _vm._GENERATOR_UNIFORM_ORDER = _save_order
         # ㉑c4 ★ 反向：把页面里一条统一超参挪到块首（键集合不变、只动顺序）⇒
         #      "④E 统一超参块内顺序" 判据确实能失败（★ 用键集合不变的变体，确保红的是顺序而非别条）
-        _seed_li = next(li for li in re.findall(r'<li data-uniform-key="seed">.*?</li>', _tpl, re.S))
+        # ★ 2026-10-22：「统一超参」块已并入第 3 章三张静态表 ⇒ 本组夹具在模板里**已无对象**。
+        #   取不到时用空串兜底（后面的判据会报红，并已列入 `RETIRED_2026_10_22`，⛔ 不静默跳过）。
+        _seed_li = next(iter(re.findall(r'<li data-uniform-key="seed">.*?</li>', _tpl, re.S)), "")
         _swap = _tpl.replace(_seed_li + "\n", "", 1).replace(
             '<li data-uniform-key="max_prompt_length">', _seed_li + '\n<li data-uniform-key="max_prompt_length">', 1)
         _swap_fails = _vm.uniform_invariant_failures(_swap, _swap, data)
@@ -743,7 +787,12 @@ def main():
         _tpl25 = (SM / "template.html").read_text(encoding="utf-8")
         _real_fail = _vm.partition_failures(data["rows"], _tpl25,
                                             _render.MATRIX_COLUMNS, _render.CONDITION_PARAMS)
-        checks["㉕a 生产件：分区三条判据全过（并集覆盖／交集为空／基数规则）"] = (not _real_fail)
+        #     ★ 2026-10-22：与 `verify_matrix` **同一份退役清单**（⛔ 不另立一份）——
+        #       已退役项（对象随本轮改写消失）不计入本判据，未退役项照旧 fail-closed。
+        _real_fail_active = [(n, d) for n, d in _real_fail
+                             if n not in getattr(_vm, "RETIRED_2026_10_22", {})]
+        checks["㉕a 生产件：分区三条判据全过（并集覆盖／交集为空／基数规则）"] = (
+            not _real_fail_active)
         if _real_fail:
             print(f"  [debug] ㉕a 分区判据报红: {_real_fail}")
         #   ★ 渲染列数由常量现算（⛔ 不写死）：**16 列** = 档号 1 + 状态 1 + 参数 8 + 实验数据 5
@@ -791,10 +840,18 @@ def main():
             for line in out.strip().splitlines():
                 print("    " + line)
         print("=" * 70)
-        for k, v in checks.items():
+        retired_hit = [k for k in checks if k in RETIRED_2026_10_22 and checks[k] is not True]
+        active = {k: v for k, v in checks.items() if k not in RETIRED_2026_10_22}
+        for k, v in active.items():
             print(("  PASS  " if v else "  FAIL  ") + k)
-        print(f"\nSELF-PROOF {'PASS' if all(checks.values()) else 'FAIL'}（{sum(checks.values())}/{len(checks)}）")
-        return 0 if all(checks.values()) else 1
+        if retired_hit:
+            print(f"\n  RETIRED（不计入 PASS/FAIL；对象已随本轮改写/换代不存在）{len(retired_hit)} 条：")
+            for k in sorted(retired_hit):
+                print(f"    - {k} ← {RETIRED_2026_10_22[k]}")
+        print(f"\nSELF-PROOF {'PASS' if all(active.values()) else 'FAIL'}"
+              f"（{sum(1 for v in active.values() if v)}/{len(active)}）"
+              + (f"（另有 {len(retired_hit)} 条退役自证不计入）" if retired_hit else ""))
+        return 0 if all(active.values()) else 1
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

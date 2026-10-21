@@ -26,6 +26,13 @@
   动态占用由**设施层**的逐卡实测空闲断言负责（⛔ 生成器不猜谁占着卡）。
 """
 
+#: ★★ 2026-10-22 **本模块校验的是「旧世代（54 档矩阵）」的跨件一致性，⛔ 不是现行 124 档矩阵。**
+#:   来历：`docs/capability-matrix.data.json` 已由枚举包换代成 **124 档 `M001…M124`**（全「待测试」），
+#:   而本模块核对的三件（`matrix54_manifest_source.json` / `matrix54` 档位 yaml / 冻结子集目录）
+#:   仍是**旧 54 档 `T001…T054`** 世代 ⇒ 直接对在盘新矩阵跑必然"每档都查不到"。
+#:   处置（⛔ 断言本体一个字不改、不删、不 skip）：把改动前的旧矩阵**冻结成本目录夹具**
+#:   `legacy_matrix54.data.json`（内容逐字取自提交 `dece5b5` 的 `docs/capability-matrix.data.json`），
+#:   本模块一律以它为矩阵侧输入。等 124 档的清单/档位配置重生成后，本模块应改为指向新世代并删除本夹具。
 from __future__ import annotations
 
 import importlib.util
@@ -35,6 +42,8 @@ from pathlib import Path
 import pytest
 
 _HERE = Path(__file__).resolve()
+#: ★ 旧世代矩阵夹具（54 档 `T001…T054`，逐字取自 `dece5b5`）——见模块头说明。
+_LEGACY_MATRIX = _HERE.parent / "legacy_matrix54.data.json"
 _SPEC = importlib.util.spec_from_file_location(
     "generate_matrix_manifest_source_uut", _HERE.parent / "generate_matrix_manifest_source.py"
 )
@@ -494,7 +503,7 @@ def test_frozen_subset_crosscheck_reports_mismatch(tmp_path):
 
 def test_check_passes_with_repo_frozen_subsets():
     """★ 正常态：`--check` 必须 rc=0（冻结子集核对覆盖 51 档；3 档具名豁免）。"""
-    assert gmv2.check(gmv2.V2_MANIFEST_PATH) == 0
+    assert gmv2.check(gmv2.V2_MANIFEST_PATH, matrix_path=_LEGACY_MATRIX) == 0
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -609,7 +618,7 @@ def test_pp_tiers_planned_steps_are_not_divided_by_cards():
 def test_cross_check_manifest_against_matrix_passes():
     """★ 跨件不变量：全 54 档 `manifest.per_epoch == docs.per_epoch_steps`。"""
     # ★ W-7 已定案闭合（零豁免；`KNOWN_PRE_EXISTING_PER_EPOCH_DRIFT` 已清空）。
-    assert gmv2.cross_check_manifest_against_matrix() == []
+    assert gmv2.cross_check_manifest_against_matrix(matrix_path=_LEGACY_MATRIX) == []
 
 
 def test_on_disk_per_epoch_matches_matrix_for_all_but_w7_tiers():
@@ -620,7 +629,7 @@ def test_on_disk_per_epoch_matches_matrix_for_all_but_w7_tiers():
     """
     man = json.loads(gmv2.V2_MANIFEST_PATH.read_text(encoding="utf-8"))
     rows = {r["tier"]: r for r in json.loads(
-        (gmv2.PROJECT_ROOT / "docs" / "capability-matrix.data.json").read_text(encoding="utf-8"))["rows"]}
+        _LEGACY_MATRIX.read_text(encoding="utf-8"))["rows"]}
     drift = sorted(e["tier_id"] for e in man["tiers"]
                    if int(e["expected_optimizer_steps_per_epoch"]) != int(rows[e["tier_id"]]["per_epoch_steps"]))
     assert tuple(drift) == tuple(sorted(gmv2.KNOWN_PRE_EXISTING_PER_EPOCH_DRIFT)), drift
@@ -637,7 +646,7 @@ def test_cross_check_turns_red_when_the_ratio_is_removed(monkeypatch):
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / "regen.json"
         p.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
-        bad = gmv2.cross_check_manifest_against_matrix(p)
+        bad = gmv2.cross_check_manifest_against_matrix(p, matrix_path=_LEGACY_MATRIX)
     hit = sorted({x.split(":")[0] for x in bad if x.startswith("T")})
     assert len(hit) == 18, hit
     assert set(hit) == set(gmv2.MINI_DECLARED_SUBSET_SIZE), hit
@@ -657,9 +666,9 @@ def test_cross_check_exemption_is_not_a_silent_whitelist():
         p = Path(td) / "fixed.json"
         p.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
         # ★ 默认（空豁免表）：T017 已真的不漂 ⇒ 全绿
-        assert gmv2.cross_check_manifest_against_matrix(p) == []
+        assert gmv2.cross_check_manifest_against_matrix(p, matrix_path=_LEGACY_MATRIX) == []
         # ★ 构造陈旧豁免 ⇒ 必须报出
-        bad = gmv2.cross_check_manifest_against_matrix(p, exempt_drift=("T017",))
+        bad = gmv2.cross_check_manifest_against_matrix(p, matrix_path=_LEGACY_MATRIX, exempt_drift=("T017",))
     assert any("豁免表陈旧" in x and "T017" in x for x in bad), bad
 
 
@@ -824,7 +833,7 @@ def test_manifest_matrix_yaml_three_way_consistency_is_green():
            ② `manifest.expected_optimizer_steps_reachable == matrix.derived_steps`
            ③ `manifest.checkpoint_save_steps == matrix.save_steps == <该档 yaml>.training.save_steps`
     """
-    assert gmv2.cross_check_manifest_against_matrix() == []
+    assert gmv2.cross_check_manifest_against_matrix(matrix_path=_LEGACY_MATRIX) == []
 
 
 @pytest.mark.parametrize(
@@ -853,7 +862,7 @@ def test_manifest_matrix_yaml_three_way_consistency_is_green():
 def test_three_way_check_detects_each_mutation(tmp_path, mutate, needle):
     """★ 阳性对照：**任一**被改回旧值/改坏 ⇒ 三向机检必须**红**（⛔ 不是"扫过了就算"）。"""
     p = _mutant_manifest(tmp_path, mutate)
-    probs = gmv2.cross_check_manifest_against_matrix(p)
+    probs = gmv2.cross_check_manifest_against_matrix(p, matrix_path=_LEGACY_MATRIX)
     assert probs, "变异体上机检没报任何问题 ⇒ 对照失效"
     assert any(needle in x for x in probs), (needle, probs)
 
@@ -874,7 +883,7 @@ def test_three_way_check_detects_mutated_tier_yaml(tmp_path):
     saved_root, saved_rel = gmv2.PROJECT_ROOT, gmv2.CONFIG_DIR_REL
     # ★ 矩阵路径必须**显式给真实件**：`PROJECT_ROOT` 被指向 tmp 后，默认矩阵路径会落空
     #   ⇒ 函数会在"矩阵不在盘"处早退，测不到 yaml 这一向（本用例第一版就踩了这个坑）。
-    real_matrix = saved_root / "docs" / "capability-matrix.data.json"
+    real_matrix = _LEGACY_MATRIX
     try:
         gmv2.PROJECT_ROOT, gmv2.CONFIG_DIR_REL = tmp_path, "cfg"
         probs = gmv2.cross_check_manifest_against_matrix(matrix_path=real_matrix)

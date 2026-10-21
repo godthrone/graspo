@@ -1520,7 +1520,8 @@ def v1_entries_for_probe(manifest_path: Path) -> list[dict]:
 
 
 def check(manifest_path: Path, allow_unverified_subset_check: bool = False,
-          subset_dir_override: "str | Path | None" = None) -> int:
+          subset_dir_override: "str | Path | None" = None,
+          matrix_path: "Path | str | None" = None) -> int:
     """只读校验：v2 清单的字段自洽性（不依赖网络/服务器）。
 
     配置 v2 目录、冻结子集目录都是**可选**交叉核对：本机看不到就**打印跳过原因**
@@ -1728,7 +1729,10 @@ def check(manifest_path: Path, allow_unverified_subset_check: bool = False,
     # ★★ 修正轮 2（🔴B-1 ＋ 审查建议 S2）：**跨件不变量机检** ——
     #    `manifest.per_epoch == docs.per_epoch_steps`（全 54 档；具名豁免 T017/T018 = W-7 既有，
     #    且豁免必须"确实仍在漂"，否则报陈旧 ⇒ 逼下一轮删出）。
-    cross = cross_check_manifest_against_matrix(manifest_path)
+    # ★ 2026-10-22：允许显式指定**矩阵侧输入**（缺省仍读 `docs/capability-matrix.data.json`）。
+    #   用途：本模块校验的是旧 54 档世代，矩阵侧改读冻结夹具 `tests/e2e/legacy_matrix54.data.json`；
+    #   ⛔ 判据本体与返回值语义一字未改（多一个可选入参，缺省行为不变）。
+    cross = cross_check_manifest_against_matrix(manifest_path, matrix_path=matrix_path)
     # ★★ epoch 单真相源（2026-10-16）：扰动 v1 常量 ⇒ 除具名豁免档外不得有任何变化。
     cross = list(cross) + epoch_single_source_probe(
         v1_entries_for_probe(manifest_path), "", ""

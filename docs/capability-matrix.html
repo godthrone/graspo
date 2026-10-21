@@ -152,7 +152,8 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <section class="part" id="s2">
 <h2>2. 测试方法</h2>
 <p><b>原则：</b>训练之后效果变好，才算「可用」。</p>
-<ol class="criteria"><li><b>能完整跑完</b>：训练正常结束、无中断、无报错、退出码 0、优化器步数达标、检查点完整、没有 NaN/Inf。</li><li><b>效果变好（核心判据）</b>：在平台方测试数据集与测试参数下，训练之后模型效果比不训练的原始模型好（逐算法通过线见下）：<ul class="tight"><li>SFT（监督微调）：训练后数据集完全正确率提升至少 10.0 个百分点，判据 after − base ≥ +10.0 pp</li><li>GRASPO（强化）：训练后数据集完全正确率提升至少 5.0 个百分点，判据 after − base ≥ +5.0 pp</li><li>CPT（继续预训练）：训练 loss 正常下降、训练数据集准确率不下降，判据 after ≥ base（不劣化）</li><li>OPD（蒸馏）：教师在训练数据集上的完全正确率，高于学生未训练模型 10 个百分点，学生训练后，训练数据集完全正确率提升至少 5.0 个百分点，判据 after − base ≥ +5.0 pp</li></ul></li><li><b>算法正确性检查通过</b>：各算法按自己的检查清单逐项通过，确认该算法的机制真实生效、实现正确（SFT / GRASPO / CPT / OPD 各按自己的清单）；GRASPO 的算法逻辑严禁改动。</li><li><b>能推理</b>：合并 LoRA 后用 vLLM 启动，训练数据集可以完整推理一遍，效果好于未训练模型。</li></ol>
+<p class="criteria-label">下面四条就是第 4 章备注里<b>判据①②③④</b>的定义，按顺序编号。</p>
+<ol class="criteria"><li><span class="cn">①</span> <b>能完整跑完</b>：训练正常结束、无中断、无报错、退出码 0、优化器步数达标、检查点完整、没有 NaN/Inf。</li><li><span class="cn">②</span> <b>效果变好（核心判据）</b>：在平台方测试数据集与测试参数下，训练之后模型效果比不训练的原始模型好（逐算法通过线见下）：<ul class="tight"><li>SFT（监督微调）：训练后数据集完全正确率提升至少 10.0 个百分点，判据 after − base ≥ +10.0 pp</li><li>GRASPO（强化）：训练后数据集完全正确率提升至少 5.0 个百分点，判据 after − base ≥ +5.0 pp</li><li>CPT（继续预训练）：训练 loss 正常下降、训练数据集准确率不下降，判据 after ≥ base（不劣化）</li><li>OPD（蒸馏）：教师在训练数据集上的完全正确率，高于学生未训练模型 10 个百分点，学生训练后，训练数据集完全正确率提升至少 5.0 个百分点，判据 after − base ≥ +5.0 pp</li></ul></li><li><span class="cn">③</span> <b>算法正确性检查通过</b>：各算法按自己的检查清单逐项通过，确认该算法的机制真实生效、实现正确（SFT / GRASPO / CPT / OPD 各按自己的清单）；GRASPO 的算法逻辑严禁改动。</li><li><span class="cn">④</span> <b>能推理</b>：合并 LoRA 后用 vLLM 启动，训练数据集可以完整推理一遍，效果好于未训练模型。</li></ol>
 </section>
 
 <!-- ========================= 3. 测试条件 ========================= -->
@@ -168,6 +169,7 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <ul class="tight">
 <li>基础模型：<code>Qwen3.5-9B</code>、<code>Qwen3.8-27B</code>。</li>
 <li>OPD 教师：<code>Qwen3.8-27B</code>。</li>
+<li><b>显存边界（区分两种模式）：</b>单卡放不下的是 <b>27B 全参</b>（即使把优化器态整体挪到 CPU 也需 <code>115.89 GiB</code>）；27B <b>LoRA</b> 单卡能跑、但<b>零余量</b>（估算 <code>78.64 GiB</code>，卡容量 <code>79.25 GiB</code>，仅余 <code>0.61 GiB</code>）。</li>
 </ul>
 <h4>LoRA 说明</h4>
 <ul class="tight">
@@ -180,6 +182,7 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <li>LoRA alpha：<code>64</code></li>
 <li>LoRA dropout：<code>0.05</code></li>
 </ul></li>
+<li><b>以本表取值为准：</b><code>r</code> = <code>32</code>、<code>alpha</code> = <code>64</code>、<code>dropout</code> = <code>0.05</code>；配置侧现存的其它取值属待对齐项。</li>
 </ul>
 <h4>训练集群</h4>
 <ul class="tight">
@@ -253,8 +256,9 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <ol class="notes">
 <li><b>DeepSpeed 已停用</b>：优化器步长之前的梯度范数在其下不可信，不能作为判据读数。早期按卡数选 ZeRO 档的规则（≤2 卡 <code>zero2_offload</code>、4 卡 <code>zero2</code>）随之<b>作废</b>——本页的分片与 offload 取值一律按上表<b>两个后端各自的路径</b>读，不再按卡数推。</li>
 <li><b>native 全参的两条硬限制</b>：<code>tp_size&gt;1</code> 或 <code>dp_size&gt;1</code> 会被配置校验直接拒绝（全参的 DP 副本基座梯度不做 all-reduce，会静默训错），只能靠 <code>pp_size</code> 摊层；上表 native 列的优化器态 CPU offload <b>以「全参 + 单卡（<code>tp=dp=pp=1</code>）」为触发条件</b>，它是 1 卡显存不足时的预置退路：只把优化器态搬到 CPU、不减少 GPU 上的权重与梯度 ⇒ 救不回 27B 全参在 ≤4 卡上的显存；且该开关的消费实现目前只覆盖 SFT 训练通道（GRASPO 档按同一条件打开，是否真正生效未获确认）。</li>
-<li><b>native 流水并行 + rollout 的预授权闸门</b>：native 后端在 <code>pp_size&gt;1</code> 且训练方法带 rollout（GRASPO / OPD）时，启动期默认拒绝运行，必须显式预授权。这是<b>对未验证组合的预授权闸门，不是性能开关</b>：默认拒绝是为了不把未验证的组合当成可用；打开它只表示允许尝试，不等于该组合已验证通过。</li>
+<li><b>native 流水并行 + rollout 的预授权闸门</b>：native 后端在 <code>pp_size&gt;1</code> 且训练方法是 <b>GRASPO</b>（带 rollout 的训练方法当前只有它；OPD 不走这条闸门，上表 OPD 档也不出现该字段）时，启动期默认拒绝运行，必须显式预授权。这是<b>对未验证组合的预授权闸门，不是性能开关</b>：默认拒绝是为了不把未验证的组合当成可用；打开它只表示允许尝试，不等于该组合已验证通过。</li>
 <li><b>不适用记 <code>—</code></b>：CPT / OPD 没有 native 后端通道，上表相应格记 <code>—</code>，不写推测值，也不按别的后端类推。</li>
+<li><b>本表列的是目标配置，配置生成侧尚未下发</b>：FSDP2 配方、优化器态 offload 字段与 TP/PP 并行度目前都不写进生成出来的配置（生成的 ms-swift 全参档仍按纯数据并行、native 全参档没有 offload 字段）⇒ 实际生成配置前须先补齐，否则上表这些附加参数不会被真正应用。</li>
 <li><b>算法级开关不在后端列</b>：CPT 的 <code>loss_scale</code> / <code>use_chat_template</code>、GRASPO 的奖励与采样参数、OPD 的教师权重换出（<code>offload_teacher_model</code>）都是<b>算法级、与后端无关</b>，只在下一节「算法级参数」发布，不在两个后端列重复。</li>
 <li><b>ms-swift 全参为什么必须分片优化器态</b>：纯数据并行会把整份优化器态留在每张卡上；FSDP2（<code>fsdp</code>）是当前唯一的可用载体，已入库两份配方（完整状态字典 / 叠加 CPU offload）。Megatron 通道（TP / PP / CP）在本项目生产路径未接线，<b>当前不可用，不作为可选方案</b>。</li>
 </ol>
