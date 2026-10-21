@@ -130,6 +130,9 @@ def _graspo_modules():
 
     with _no_torch_reward_stub():
         _LAZY["schema"] = importlib.import_module("graspo.core.schema")
+        # ★ LoRA 目标的唯一真相源（一条 HF 模块名正则）：本文件刻意不在收集期 import
+        #   graspo（无 torch 的环境也要能跑），故与 schema 同为运行时导入。
+        _LAZY["lora"] = importlib.import_module("graspo.core.lora")
 
     # `_config_mapping` 内部会 `from graspo.flow.backend.msswift._rope_compat import ...`：
     # 因此**只在加载 `_config_mapping` 期间**临时登记 `_rope_compat`，随后立刻摘掉。
@@ -191,7 +194,8 @@ def test_full_param_maps_to_tuner_type_full(stage):
 
 
 @pytest.mark.parametrize(
-    "flag", ["--lora_rank", "--lora_alpha", "--lora_dropout", "--target_modules", "--adapters"]
+    "flag",
+    ["--lora_rank", "--lora_alpha", "--lora_dropout", "--target_regex", "--adapters"],
 )
 def test_full_param_does_not_emit_lora_only_flags(flag):
     argv = _argv(_config(tuner_type="full"))
@@ -243,16 +247,26 @@ def test_lora_path_is_unchanged_when_tuner_type_is_unset_or_lora(raw):
     assert _value_of(argv, "--lora_dropout") == "0.1"
 
 
-def test_lora_path_still_emits_target_modules_and_adapters():
+def test_lora_path_still_emits_target_regex_and_adapters():
+    """★ 2026-10-21：LoRA 目标一律走官方 ``--target_regex``（⛔ 不再有 ``--target_modules`` 通道）。
+
+    形态由 ``LoRAConfig`` 收窄为一条 HF 模块名正则（``str | None``，加载期校验）；
+    list 通道已删除（走 list 会被 PEFT 变成 set ⇒ 正则永不命中，见 E2b 实测）。
+    """
     argv = _argv(
         _config(
             tuner_type="lora",
-            lora={"target_modules": ["q_proj", "v_proj"], "adapter_path": "adapters/x"},
+            lora={
+                "target_modules": _graspo_modules()["lora"].LORA_TARGET_MODULES_REGEX,
+                "adapter_path": "adapters/x",
+            },
         )
     )
+    regex = _graspo_modules()["lora"].LORA_TARGET_MODULES_REGEX
 
     assert _value_of(argv, "--tuner_type") == "lora"
-    assert "q_proj" in argv and "v_proj" in argv
+    assert _value_of(argv, "--target_regex") == regex
+    assert "--target_modules" not in argv
     assert "adapters/x" in argv
 
 

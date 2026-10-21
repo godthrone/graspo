@@ -162,11 +162,37 @@ class GraspoFlowCausalLMBase(nn.Module):
         return grad_finiteness_report(self.named_parameters(), with_max_abs=with_max_abs)
 
     def enabled_lora_target_names(self) -> tuple[str, ...]:
+        """已启用 LoRA 的 **native 规范名**集合（= ``lora_target_signature`` 的取值域）。
+
+        ★ 保持规范名（``language.linear_attn.q_proj``…）是**兼容性要求**：已训 checkpoint
+        的 ``lora_target_signature`` 按它做 resume 比对，换域会让存量 adapter 无法 resume
+        （见 ``transformer_model_adapter.py`` 的签名比对）。
+        """
         names: set[str] = set()
         for _, module in self.named_modules():
             if isinstance(module, LoRALinear) and module.lora_enabled:
                 names.add(str(module.lora_target_name))
         return tuple(sorted(names))
+
+    def enabled_lora_hf_module_paths(self) -> tuple[str, ...]:
+        """已启用 LoRA 的**真实 HF 模块名**集合（= ``lora.target_modules`` 正则的匹配域）。
+
+        ★ 与 :meth:`enabled_lora_target_names` 是**同一批模块的两个域**：本方法是
+        "正则选中的目标是否真的建出来了"的判据（``model_adapter`` 的 fail-closed 差集），
+        规范名那支只服务 checkpoint 签名。⚠ 一个 HF 模块可能对应**多个** ``LoRALinear``
+        （融合 ``in_proj_qkv`` 被切成 q/k/v 三片 ⇒ 3 个实例共享 1 个模块名）——这里按
+        模块名去重，正因如此它才等于"被更新的**权重矩阵**集合"。
+        """
+        paths: set[str] = set()
+        for _, module in self.named_modules():
+            if isinstance(module, LoRALinear) and module.lora_enabled:
+                if module.hf_module_path is None:
+                    raise RuntimeError(
+                        f"Enabled LoRA module {module.lora_target_name!r} has no "
+                        "hf_module_path; cannot verify it against lora.target_modules."
+                    )
+                paths.add(str(module.hf_module_path))
+        return tuple(sorted(paths))
 
     def lora_target_signature(self) -> dict[str, object]:
         return {

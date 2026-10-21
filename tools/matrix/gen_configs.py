@@ -20,6 +20,11 @@ import re
 import sys
 from pathlib import Path
 
+# ★★ LoRA 目标的**唯一真相源**来自生产代码（宪法 §1.4）：两个后端共用同一条真实
+#    HF 模块名正则。⛔ 本生成器**不得**再抄一份字面量、也不再按后端分流
+#    （旧版从数据件 `meta.lora_target_backends.{native,msswift}.expression` 各取一份）。
+from graspo.core.lora import LORA_TARGET_MODULES_REGEX
+
 HEADER = ("# 本文件由 tools/matrix/gen_configs.py 从 docs/capability-matrix.data.json 自动生成，"
           "⛔ 禁止手工编辑；请改数据后重新生成。\n")
 
@@ -364,23 +369,33 @@ def _gen_self_test():
     return 0 if ok else 1
 
 
+def _unquote_scalar(v):
+    """剥引号（单引号=字面量 ``'' -> '``；双引号=转义；plain=字面量）。"""
+    if v.startswith("'") and v.endswith("'"):
+        return v[1:-1].replace("''", "'")
+    if v.startswith('"') and v.endswith('"'):
+        return v[1:-1].encode().decode("unicode_escape")
+    return v
+
+
 def _load_scalars(path):
     """极简 YAML 标量加载（覆盖本生成器输出的形态）：单引号=字面量（'' -> '），双引号=转义，plain=字面量。
 
     ★ 验收以**加载值**为准（⛔ 不看文件文本写了几个反斜杠）。
+
+    ★★ 2026-10-21：``lora.target_modules`` 改为**单条字符串标量**（不再是单元素列表）
+    ⇒ 这里必须同时取 ``key: value`` 形态里的 ``target_modules`` 值，否则
+    ``--verify-loadable`` 会**静默失去覆盖**（正则那条判据变成"不能失败的检查"）。
     """
     out = []
     for line in Path(path).read_text(encoding="utf-8").splitlines():
         m = re.match(r"^\s*-\s+(.*\S)\s*$", line)
-        if not m:
+        if m:
+            out.append(_unquote_scalar(m.group(1)))
             continue
-        v = m.group(1)
-        if v.startswith("'") and v.endswith("'"):
-            out.append(v[1:-1].replace("''", "'"))
-        elif v.startswith('"') and v.endswith('"'):
-            out.append(v[1:-1].encode().decode("unicode_escape"))
-        else:
-            out.append(v)
+        m = re.match(r"^\s*target_modules:\s+(.*\S)\s*$", line)
+        if m:
+            out.append(_unquote_scalar(m.group(1)))
     return out
 
 
@@ -529,9 +544,13 @@ def load_premises(path) -> dict:
     return premises_by_tier(json.loads(p.read_text(encoding="utf-8")))
 
 
-def yaml_of(row, uni, model_root, data_root, lora_backends=None, teacher=None,
+def yaml_of(row, uni, model_root, data_root, teacher=None,
             declared=None):
-    """渲染一个档位的 yaml 文本（确定性：固定键序、无时钟/环境）。"""
+    """渲染一个档位的 yaml 文本（确定性：固定键序、无时钟/环境）。
+
+    ★ 2026-10-21：入参去掉 `lora_backends`——LoRA 目标不再按后端取两套语汇，两个
+    后端都用 `graspo.core.lora.LORA_TARGET_MODULES_REGEX` 这一条（唯一真相源）。
+    """
     tier = row["tier"]
     tuner = row.get("tuner_type")
     backend = row.get("backend")
@@ -592,24 +611,18 @@ def yaml_of(row, uni, model_root, data_root, lora_backends=None, teacher=None,
         L.append(f"  kind: {uni.get('reward.kind')}\n")
 
     if tuner == "lora":
-        # ★ 按 backend 分流：native 用 preset 名；ms-swift 不认 preset 名（另一套语汇）⇒ 用同覆盖集的显式模块名列表
-        lb = (lora_backends or {})
-        if backend == "ms-swift":
-            expr = (lb.get("msswift") or {}).get("expression") or []
-        else:
-            expr = (lb.get("native") or {}).get("expression") or []
-        if not expr:
-            expr = json.loads(row.get("target_modules") or "null") or []
+        # ★★ 两个后端**同一条**真实 HF 模块名正则（唯一真相源 = 生产代码的
+        #    `graspo.core.lora.LORA_TARGET_MODULES_REGEX`）。⛔ 不再按 backend 分流：
+        #    旧版 native 写 preset 名列表、ms-swift 写另一份正则列表，两个后端的目标
+        #    语汇不同、集合也不可比（本轮整改的正是这一点）。
+        #    形态是**字符串标量**（不是单元素列表）：与 schema 的 `str | None` 一致，
+        #    ms-swift 侧据此发官方 `--target_regex`（list 会被 PEFT 变成 set ⇒ 正则永不命中）。
         L.append("lora:\n")
         L.append(f"  r: {uni.get('lora_r')}\n")
         L.append(f"  alpha: {uni.get('lora_alpha')}\n")
         L.append(f"  dropout: {uni.get('lora_dropout')}\n")
-        L.append("  target_modules:\n")
-        for t in expr:
-            ent = str(t)
-            # 正则/含特殊字符的条目加单引号，避免 YAML 误读（内部无单引号）
-            ent = f"'{ent}'" if any(c in ent for c in "^|*\\:") else ent
-            L.append(f"    - {ent}\n")
+        # 单引号 = YAML 字面量（反斜杠不转义）；正则内部无单引号 ⇒ 无需 '' 转义。
+        L.append(f"  target_modules: '{LORA_TARGET_MODULES_REGEX}'\n")
 
     if backend == "native":
         L.append("native:\n")
@@ -673,7 +686,6 @@ def main():
     data = json.loads(Path(a.data).read_text(encoding="utf-8"))
     uni = uniform_map(data)
     teacher = (data.get("meta") or {}).get("distill_teacher")
-    lora_backends = (data.get("meta") or {}).get("lora_target_backends") or {}
     only = set(x.strip() for x in a.only.split(",")) if a.only else None
     rows = [r for r in data["rows"] if r.get("applicable") and (only is None or r["tier"] in only)]
     declared_by_tier = load_declared(a.manifest)
@@ -702,7 +714,7 @@ def main():
 
     written = {}
     for r in rows:
-        text = yaml_of(r, uni, a.model_root, a.data_root, lora_backends, teacher,
+        text = yaml_of(r, uni, a.model_root, a.data_root, teacher,
                        declared_by_tier.get(r["tier"]))
         p = out / f"{r['tier']}.yaml"
         p.write_text(text, encoding="utf-8")
@@ -809,7 +821,7 @@ def main():
             #    「已声明的前提」开关，而写盘版本含 ⇒ T016/T034 的两份重渲染**必不相等**，
             #    该「幂等自证」自第 4 批接线起**永远 FAIL**（「不能通过的检查」；
             #    与 `--check-dir` 那条「不能失败的检查」同族）。
-            again = yaml_of(r, uni, a.model_root, a.data_root, lora_backends, teacher,
+            again = yaml_of(r, uni, a.model_root, a.data_root, teacher,
                             declared_by_tier.get(r["tier"]))
             if again != written[r["tier"]].read_text(encoding="utf-8"):
                 bad.append(r["tier"])
@@ -863,8 +875,14 @@ def flatten(text):
 
 #: 差异归因表（逐条对应已登记的口径变更）
 ATTRIBUTION = [
-    ("lora.target_modules", "LoRA 恢复口径：单 preset → 列表 [language_all_linear, vision_common]（358 实例；122 为签名/模式条目数）"),
-    ("lora.target_preset", "LoRA 恢复口径：旧单 preset 已被 target_modules 列表取代"),
+    ("lora.target_modules",
+     "LoRA 目标口径（主席 2026-10-21）：两个后端统一为**同一条真实 HF 模块名正则**"
+     "（= graspo.core.lora.LORA_TARGET_MODULES_REGEX，字符串标量）。此前是本列表"
+     "（native preset 名 / ms-swift 另一份正则），且含 in_proj_a|in_proj_b ⇒ 两后端"
+     "权重矩阵集合 310 vs 358；去掉那两项后两侧同为 310"),
+    ("lora.target_preset",
+     "LoRA 目标口径：target_preset 不再选择目标（遗留键，仅为让旧配置可加载）；"
+     "目标只由 lora.target_modules 决定"),
     ("lora.r", "LoRA 恢复口径：r 8 → 128"),
     ("lora.alpha", "LoRA 恢复口径：alpha 16 → 256"),
     ("lora.dropout", "LoRA 恢复口径：dropout 0.0 → 0.05"),

@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pytest
 
+from graspo.core.lora import LORA_TARGET_MODULES_REGEX
 from graspo.core.schema import GraspoConfig
 
 swift = pytest.importorskip("swift", reason="ms-swift is required for the argument contract test")
@@ -29,7 +30,9 @@ _ALL_SHARDING_CONFIG = {
     "backend": "msswift",
     "model": {"model_path": "m", "attn_implementation": "flash_attn"},
     "data": {"train_path": "d", "max_prompt_length": 4096},
-    "lora": {"target_modules": ["q_proj", "v_proj"]},
+    # ★ 目标口径（主席 2026-10-21）：两个后端统一用**同一条真实 HF 模块名正则**，
+    #   list / preset 形态已 fail-closed（`core/lora.py:114`）。
+    "lora": {"target_modules": LORA_TARGET_MODULES_REGEX},
     "msswift": {
         "sequence_parallel_size": 2,
         "deepspeed": "zero3",
@@ -240,17 +243,24 @@ def _value_of(argv: list[str], flag: str) -> str | None:
     return argv[argv.index(flag) + 1] if flag in argv else None
 
 
-# ── 多值参数的**语义**契约（E2b 实测缺陷 2）──────────────────────────────────
+# ── 目标口径的**取值形态**契约（E2b 实测缺陷 2 的后续形态）────────────────────
 
 
-def test_multi_value_flags_are_parsed_by_ms_swift_as_multiple_values():
-    """list 型参数必须被 ms-swift 的 **List[str]** 字段解析成多个值。
+def test_target_regex_is_passed_as_one_token_and_fills_peft_target_modules():
+    """目标只走 ``--target_regex``，且必须是**单 token**（形态错误同样致命）。
 
-    上一条测试只断言"flag 是合法字段"——字段合法但**取值形态**错误同样致命：
-    E2b 实测 ``--target_modules '["all-linear"]'`` 让 ms-swift 得到
-    单元素 ``['["all-linear"]']``，报 ``Target modules {'["all-linear"]'} not found``。
-    因此本测试把映射产出的 argv 交给 **ms-swift 自己的** ``swift.utils.parse_args``，
-    断言 ``List[str]`` 字段真的拿到多个元素。无 ms-swift 的环境 skip（不静默通过）。
+    E2b 实测过 ``--target_modules '["all-linear"]'``：JSON 字面量被 ``nargs='+'`` 当成
+    单个元素，ms-swift 得到 ``['["all-linear"]']`` ⇒ ``Target modules … not found``。
+    主席 2026-10-21 的口径变更把目标通道收敛为**一条真实 HF 模块名正则**，因此本测试
+    把映射产出的 argv 交给 **ms-swift 自己的** ``swift.utils.parse_args``，断言：
+
+    ① 有且只有一条 ``--target_regex <正则>``（正则内无空格 ⇒ 不会被拆成多 token）；
+    ② 绝不出现 ``--target_modules``（旧 list 通道已删除，⛔ 不留隐式兼容）；
+    ③ 解析后 ``target_regex`` = 该常量，且 ``target_modules`` 被它填成同一串
+       （`swift/arguments/tuner_args.py:126-127` 的 ``__post_init__`` 行为 =
+       ms-swift 官方正则入口）。
+
+    无 ms-swift / 模型目录不在本机时 skip（不静默通过）。
     """
     from swift.arguments import SftArguments
     from swift.utils import parse_args
@@ -268,7 +278,7 @@ def test_multi_value_flags_are_parsed_by_ms_swift_as_multiple_values():
             "backend": "msswift",
             "model": {"model_path": _qwen_path},
             "data": {"train_path": "/tmp/ds.jsonl", "max_prompt_length": 4096},
-            "lora": {"target_modules": ["q_proj", "v_proj", "all-linear"]},
+            "lora": {"target_modules": LORA_TARGET_MODULES_REGEX},
             "training": {"output_dir": "/tmp/out"},
         }
     )
@@ -276,17 +286,27 @@ def test_multi_value_flags_are_parsed_by_ms_swift_as_multiple_values():
         config, stage="sft", dataset_path="/tmp/ds.jsonl", output_dir="/tmp/out"
     )
 
+    assert " " not in LORA_TARGET_MODULES_REGEX, "正则含空格 ⇒ 会被 nargs='+' 拆成多 token"
+    assert argv.count("--target_regex") == 1, argv
+    assert argv[argv.index("--target_regex") + 1] == LORA_TARGET_MODULES_REGEX
+    assert "--target_modules" not in argv, "旧 list 通道必须已删除（⛔ 不留隐式兼容）"
+
     parsed, remaining = parse_args(SftArguments, argv)
 
     assert remaining == [], f"ms-swift rejected {remaining}"
-    assert list(parsed.target_modules) == ["q_proj", "v_proj", "all-linear"], (
-        "list 型参数必须按空格分隔透传；JSON 字面量会被 nargs='+' 当成单个元素"
+    assert parsed.target_regex == LORA_TARGET_MODULES_REGEX
+    assert parsed.target_modules == LORA_TARGET_MODULES_REGEX, (
+        "ms-swift 的 target_regex 必须落成 PEFT 的正则分支（str，而不是 list）"
     )
 
 
 def test_multi_value_parsing_matches_the_three_observed_forms():
     """把"哪种形态能过"写成可执行证据（三种形态由本测试直接调用 ms-swift 的
     ``swift.utils.parse_args`` 复现，不依赖任何仓库外的探针脚本）。
+
+    ★ 存档性质：这是 **ms-swift 自身**对 ``--target_modules`` 三种形态的解析行为
+    （2026-10 实测）。本轮口径变更后 Graspo 已不再发 ``--target_modules``
+    （目标只走 ``--target_regex``，见上一条测试）；本表留作上游行为存档。
 
     ==============================  =================================
     argv 片段                        ms-swift 解析结果

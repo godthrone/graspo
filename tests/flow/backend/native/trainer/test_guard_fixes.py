@@ -19,6 +19,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from graspo.core.lora import LORA_TARGET_MODULES_REGEX
 from graspo.core.schema import TunerType, resolve_tuner_type
 from graspo.flow.backend.native.trainer.preflight import (
     assert_lora_vision_targets_trainable,
@@ -216,7 +217,6 @@ class TestVisionTowerTrainable:
         """
         kwargs = {
             "lora_target_modules": None,
-            "lora_target_preset": "language_safe",
             "image_token_id": 151655,
             "model_name": "Qwen3.5-9B",
             "has_vision_config": True,
@@ -253,7 +253,6 @@ class TestVisionTokenConsistency:
         """★ 不放松也不改变既有语义：不传 `has_vision_config` 时，无视觉 token ⇒ 放行。"""
         assert_lora_vision_targets_trainable(
             lora_target_modules=None,
-            lora_target_preset="language_safe",
             image_token_id=None,
             model_name="Qwen3-8B",
         )
@@ -262,8 +261,7 @@ class TestVisionTokenConsistency:
         """★ 负向（修复后必须报错）：声明了视觉塔却没有可用视觉占位 token。"""
         with pytest.raises(ValueError, match="no usable image token id"):
             assert_lora_vision_targets_trainable(
-                lora_target_modules=None,
-                lora_target_preset="vision_common",
+                lora_target_modules=LORA_TARGET_MODULES_REGEX,
                 image_token_id=None,
                 model_name="Qwen3.5-9B",
                 has_vision_config=True,
@@ -274,7 +272,6 @@ class TestVisionTokenConsistency:
         with pytest.raises(ValueError, match="select no visual module"):
             assert_lora_vision_targets_trainable(
                 lora_target_modules=None,
-                lora_target_preset="language_safe",
                 image_token_id=151655,
                 model_name="Qwen3.5-9B",
                 has_vision_config=True,
@@ -282,8 +279,7 @@ class TestVisionTokenConsistency:
 
     def test_b9_vision_preset_on_vision_model_passes(self) -> None:
         assert_lora_vision_targets_trainable(
-            lora_target_modules=None,
-            lora_target_preset="vision_common",
+            lora_target_modules=LORA_TARGET_MODULES_REGEX,
             image_token_id=151655,
             model_name="Qwen3.5-9B",
             has_vision_config=True,
@@ -295,12 +291,11 @@ class TestVisionTokenConsistency:
         """★ 正向（修复前必失败，正是 T017 的失败态）：全参 + 语言-only 预设 ⇒ 放行。
 
         全参档按生成器设计**不写** ``lora`` 段（``generate_matrix.py``），
-        ``target_preset='language_safe'`` 只是 ``core/schema.py`` 的默认值——
+        ``lora.target_modules`` 未提供（``target_preset`` 只是遗留键、不选目标）——
         它不产生任何 LoRA 矩阵，判"LoRA 目标未覆盖视觉塔"无对象可判。
         """
         assert_lora_vision_targets_trainable(
             lora_target_modules=None,
-            lora_target_preset="language_safe",
             image_token_id=151655,
             model_name="Qwen3.5-9B",
             has_vision_config=True,
@@ -312,7 +307,6 @@ class TestVisionTokenConsistency:
         with pytest.raises(ValueError, match="no usable image token id"):
             assert_lora_vision_targets_trainable(
                 lora_target_modules=None,
-                lora_target_preset="language_safe",
                 image_token_id=None,
                 model_name="Qwen3.5-9B",
                 has_vision_config=True,
@@ -324,7 +318,6 @@ class TestVisionTokenConsistency:
         for tuner_type in (None, "lora", "full"):
             assert_lora_vision_targets_trainable(
                 lora_target_modules=None,
-                lora_target_preset="language_safe",
                 image_token_id=None,
                 model_name="Qwen3-8B",
                 tuner_type=tuner_type,
@@ -338,11 +331,14 @@ class _FakeSFTConfig:
     def __init__(
         self,
         *,
-        target_preset: str | None,
-        target_modules: list[str] | None,
+        target_modules: str | None,
         tuner_type: TunerType | None = None,
     ) -> None:
-        self.lora = SimpleNamespace(target_modules=target_modules, target_preset=target_preset)
+        # ★ target_preset 仍挂在配置对象上（真配置里就存在，冻结 yaml 依赖它可加载），
+        #   但防线**不再读它**：目标只认 target_modules（本轮统一口径）。
+        self.lora = SimpleNamespace(
+            target_modules=target_modules, target_preset="language_safe"
+        )
         self.model = SimpleNamespace(model_path="/models/Qwen3.5-9B")
         self.tuner_type = tuner_type
 
@@ -367,14 +363,12 @@ class _FakeAdapter:
 def _make_sft_trainer(
     *,
     model: object,
-    target_preset: str | None,
+    target_modules: str | None,
     tuner_type: TunerType | None = None,
     pp_rank: int = 0,
 ) -> SFTTrainer:
     trainer = SFTTrainer.__new__(SFTTrainer)  # 绕过 __init__（避免构造 runtime）
-    trainer.config = _FakeSFTConfig(
-        target_preset=target_preset, target_modules=None, tuner_type=tuner_type
-    )
+    trainer.config = _FakeSFTConfig(target_modules=target_modules, tuner_type=tuner_type)
     trainer.runtime = _FakeRuntime(_FakeAdapter(model, pp_rank=pp_rank))
     return trainer
 
@@ -393,7 +387,7 @@ class TestSFTPreflightWiring:
     def test_c3_frozen_vision_tower_now_raises(self) -> None:
         """★ 核心负向：视觉塔不可训 + 配置声明要训视觉 ⇒ 修复前静默、修复后报错。"""
         model = _FakeVisionModel(has_visual_tower=True, enabled_visual_targets=())
-        trainer = _make_sft_trainer(model=model, target_preset="language_safe")
+        trainer = _make_sft_trainer(model=model, target_modules=None)
         with pytest.raises(ValueError, match="select no visual module"):
             trainer._preflight_multimodal()
 
@@ -415,34 +409,34 @@ class TestSFTPreflightWiring:
 
     def test_c4_text_only_model_is_not_harmed(self) -> None:
         """放行：纯文本模型（has_vision_config=False）零误伤、零开销。"""
-        trainer = _make_sft_trainer(model=_FakeTextModel(), target_preset="language_safe")
+        trainer = _make_sft_trainer(model=_FakeTextModel(), target_modules=None)
         trainer._preflight_multimodal()  # 不抛异常
 
     def test_c5_vision_model_with_vision_preset_passes(self) -> None:
         model = _FakeVisionModel(has_visual_tower=True)
-        trainer = _make_sft_trainer(model=model, target_preset="vision_common")
+        trainer = _make_sft_trainer(model=model, target_modules=LORA_TARGET_MODULES_REGEX)
         trainer._preflight_multimodal()  # 不抛异常
 
     def test_c6_declared_vision_without_image_token_raises(self) -> None:
         model = _FakeVisionModel(has_visual_tower=True)
         model.config.image_token_id = None  # 配置不一致
-        trainer = _make_sft_trainer(model=model, target_preset="vision_common")
+        trainer = _make_sft_trainer(model=model, target_modules=LORA_TARGET_MODULES_REGEX)
         with pytest.raises(ValueError, match="no usable image token id"):
             trainer._preflight_multimodal()
 
     def test_c7_missing_visual_tower_raises(self) -> None:
         model = _FakeVisionModel(has_visual_tower=False)
-        trainer = _make_sft_trainer(model=model, target_preset="vision_common")
+        trainer = _make_sft_trainer(model=model, target_modules=LORA_TARGET_MODULES_REGEX)
         with pytest.raises(RuntimeError, match="visual tower was not built"):
             trainer._preflight_multimodal()
 
     def test_c8_non_native_model_is_not_harmed(self) -> None:
         """放行：非原生 LoRA 模型（无 model.config）不受这条判据影响。"""
-        trainer = _make_sft_trainer(model=SimpleNamespace(), target_preset="language_safe")
+        trainer = _make_sft_trainer(model=SimpleNamespace(), target_modules=None)
         trainer._preflight_multimodal()  # 不抛异常
 
     def test_c9_adapter_not_loaded_raises(self) -> None:
-        trainer = _make_sft_trainer(model=_FakeTextModel(), target_preset="language_safe")
+        trainer = _make_sft_trainer(model=_FakeTextModel(), target_modules=None)
         trainer.runtime = _FakeRuntime(None)
         with pytest.raises(RuntimeError, match="adapter not loaded"):
             trainer._preflight_multimodal()
@@ -455,7 +449,7 @@ class TestSFTPreflightWiring:
             has_visual_tower=True, enabled_visual_targets=(), visual_trainable=(True,)
         )
         trainer = _make_sft_trainer(
-            model=model, target_preset="language_safe", tuner_type="full", pp_rank=0
+            model=model, target_modules=None, tuner_type="full", pp_rank=0
         )
         trainer._preflight_multimodal()  # 不抛异常
 
@@ -467,7 +461,7 @@ class TestSFTPreflightWiring:
         """
         model = _FakeVisionModel(has_visual_tower=False)
         trainer = _make_sft_trainer(
-            model=model, target_preset="language_safe", tuner_type="full", pp_rank=1
+            model=model, target_modules=None, tuner_type="full", pp_rank=1
         )
         trainer._preflight_multimodal()  # 不抛异常
 
@@ -477,7 +471,7 @@ class TestSFTPreflightWiring:
             has_visual_tower=True, enabled_visual_targets=(), visual_trainable=(False,)
         )
         trainer = _make_sft_trainer(
-            model=model, target_preset="language_safe", tuner_type="full", pp_rank=0
+            model=model, target_modules=None, tuner_type="full", pp_rank=0
         )
         with pytest.raises(RuntimeError, match="no trainable parameter under tuner_type='full'"):
             trainer._preflight_multimodal()
@@ -487,7 +481,7 @@ class TestSFTPreflightWiring:
         for tuner_type in (None, "lora"):
             model = _FakeVisionModel(has_visual_tower=True, enabled_visual_targets=())
             trainer = _make_sft_trainer(
-                model=model, target_preset="language_safe", tuner_type=tuner_type
+                model=model, target_modules=None, tuner_type=tuner_type
             )
             with pytest.raises(ValueError, match="select no visual module"):
                 trainer._preflight_multimodal()

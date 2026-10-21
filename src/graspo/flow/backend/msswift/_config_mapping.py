@@ -158,19 +158,10 @@ def _extend(argv: list[str], name: str, value: Any) -> None:
     argv.extend(_flag(name, value))
 
 
-#: 正则目标判定字符集：模块名 / 预设名里都不会出现的正则元字符。
-_REGEX_TARGET_CHARS = frozenset("^$()[]{}|*+?\\")
-
-
-def _looks_like_regex_target(value: str) -> bool:
-    """该字符串是否"形如正则"（含模块名不会出现的正则元字符）。"""
-    return any(ch in _REGEX_TARGET_CHARS for ch in value)
-
-
 def _regex_target_of(target_modules: Any) -> str | None:
-    """LoRA 目标是**单个正则串**时返回它，否则 ``None``（§1.4 单一真相源）。
+    """LoRA 目标正则串（**唯一合法形态**）原样返回，其它一律 ``None``。
 
-    **为什么必须这样路由**（E2b 实测，2026-10-12）：
+    **为什么必须发 ``--target_regex`` 而不是 ``--target_modules``**（E2b 实测，2026-10-12）：
 
     - ms-swift 的 ``target_modules`` 声明为 ``List[str]``
       （``swift/arguments/tuner_args.py:126``）⇒ argparse 解析 ``--target_modules X``
@@ -184,21 +175,19 @@ def _regex_target_of(target_modules: Any) -> str | None:
       （``swift/arguments/tuner_args.py:127``），其 ``__post_init__`` 用它覆盖
       ``target_modules``（``:201-202``）⇒ **PEFT 最终收到 ``str``、走正则分支**。
 
-    ⇒ 本函数把"形如正则的**单元素**列表（或单个 str）"识别出来，由调用方改发官方
-    ``--target_regex``；**非正则的预设名 / 后缀名列表仍走 ``--target_modules``**。
+    ★ 形态由 ``LoRAConfig`` 收窄为 ``str | None``（一条 HF 模块名正则，加载期即校验，
+    见 ``core/schema.py::LoRAConfig``）⇒ 旧版"单元素**列表**里的正则"与"非正则的
+    预设名 / 后缀名列表走 ``--target_modules``"两条分支**都已删除**：⛔ 不留别名、
+    不做隐式兼容。这不是放松——非 ``str`` 在配置加载期就被拒了，走不到这里。
 
     Args:
-        target_modules: ``lora.target_modules`` 原值（``list[str] | str | None``）。
+        target_modules: ``lora.target_modules`` 原值（配置层保证 ``str | None``）。
 
     Returns:
-        需要路由到 ``--target_regex`` 的字符串；不需要则 ``None``。
+        需要路由到 ``--target_regex`` 的字符串；非 ``str`` / 空则 ``None``。
     """
-    if isinstance(target_modules, str):
-        return target_modules if _looks_like_regex_target(target_modules) else None
-    if isinstance(target_modules, (list, tuple)) and len(target_modules) == 1:
-        only = target_modules[0]
-        if isinstance(only, str) and _looks_like_regex_target(only):
-            return only
+    if isinstance(target_modules, str) and target_modules:
+        return target_modules
     return None
 
 
@@ -521,13 +510,13 @@ def graspo_to_ms_swift_argv(
         _extend(argv, "lora_alpha", lora.alpha)
         _extend(argv, "lora_dropout", lora.dropout)
         if lora.target_modules is not None:
-            # 正则串走官方 --target_regex（否则 list 会被 PEFT 变成 set 而退化为
-            # 字面/后缀匹配 ⇒ 正则永不命中）；非正则仍走 --target_modules。
+            # ★ 唯一形态：一条 HF 模块名正则 ⇒ 一律走官方 --target_regex（走
+            #   --target_modules 会落 list/set 分支，正则永不命中）。
+            #   ⛔ 不再有"非正则列表走 --target_modules"的备用通道：非 str 在配置
+            #   加载期已被 LoRAConfig 拒绝（fail-closed，不留别名）。
             regex_target = _regex_target_of(lora.target_modules)
             if regex_target is not None:
                 _extend(argv, "target_regex", regex_target)
-            else:
-                _extend(argv, "target_modules", list(lora.target_modules))
         if lora.adapter_path:
             _extend(argv, "adapters", [str(lora.adapter_path)])
     else:
@@ -706,9 +695,10 @@ _NATIVE_ONLY_FIELDS: tuple[tuple[str, str], ...] = (
     ),
     (
         "lora.target_preset",
-        "graspo's target_preset is a native-side module-name preset (core/lora.py); ms-swift "
-        "`target_modules` uses regex / 'all-linear'. Set lora.target_modules explicitly to "
-        "control LoRA targets on the msswift backend.",
+        "graspo's target_preset is a legacy native-side preset name; it no longer selects "
+        "LoRA targets on either backend (both use the single lora.target_modules HF module-name "
+        "regex — ms-swift receives it via the official --target_regex). It is kept only so "
+        "pre-existing config files keep parsing.",
     ),
 )
 
@@ -718,6 +708,10 @@ def native_only_fields(config: Any) -> list[str]:
 
     调用方（``sft_trainer`` / ``trainer`` 门面）据此记录 WARNING，让用户知道哪些
     配置在 msswift 后端不生效——**透明退路**（宪法 §3.2），不是静默忽略。
+
+    ★ ``lora.target_preset`` 现在**在哪个后端都不生效**（目标只由 ``target_modules``
+    决定）；仅当配置里**没给** ``target_modules`` 时点名它——那种配置在 ms-swift 侧会
+    落回上游默认目标集（与 native 的 fail-closed 报错不对称，属已登记待对齐项）。
     """
     active: list[str] = ["model.trust_remote_code"]
     if config.lora.target_modules is None:

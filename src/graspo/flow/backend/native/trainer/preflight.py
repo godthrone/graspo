@@ -17,7 +17,11 @@
 import logging
 from typing import Any
 
-from graspo.core.lora import LORA_TARGET_PRESETS
+from graspo.core.lora import (
+    LORA_TARGET_MODULES_REGEX,
+    VISUAL_MODULE_PROBES,
+    lora_target_modules_cover_visual,
+)
 from graspo.core.schema import TunerType, resolve_tuner_type
 from graspo.ripple.multimodal.rows import (
     MULTIMODAL_ROWS_KEY,
@@ -125,21 +129,25 @@ def assert_vision_tower_trainable(
     enabled_target_names = getattr(model, "enabled_lora_target_names", None)
     if enabled_target_names is None:
         return  # 非原生 LoRA 模型（无该接口）：不适用
+    # ★ 判据域 = ``enabled_lora_target_names()`` 的**native 规范名**（视觉侧仍以
+    #   ``visual.`` 开头）；与 ``lora.target_modules`` 正则的匹配域（真实 HF 名
+    #   ``model.visual.*``）**不是同一个域**——这里查的是"模型里到底注册了哪些视觉
+    #   LoRA 目标"，不是"配置选了哪些"，两者各自内部同域即正确（不混用）。
     visual_enabled = [name for name in enabled_target_names() if str(name).startswith("visual.")]
     if not visual_enabled:
         raise RuntimeError(
             f"model {model_name!r} declares vision and owns the embedding stage, but no "
             "trainable visual LoRA target is registered (enabled visual targets: []). "
             "Refusing to start: the visual tower would be frozen while the run trains. "
-            "Fix: set lora.target_preset to a vision preset (e.g. 'vision_common') or set "
-            "lora.target_modules to explicit visual.* module names."
+            "Fix: set lora.target_modules to the shared regex "
+            f"({LORA_TARGET_MODULES_REGEX!r}, covers the real HF visual module names "
+            "model.visual.*) or to another regex that matches them."
         )
 
 
 def assert_lora_vision_targets_trainable(
     *,
-    lora_target_modules: list[str] | None,
-    lora_target_preset: str | None,
+    lora_target_modules: str | None,
     image_token_id: int | None,
     model_name: str,
     has_vision_config: bool | None = None,
@@ -147,17 +155,19 @@ def assert_lora_vision_targets_trainable(
 ) -> None:
     """纯逻辑校验：**LoRA 模式下**多模态训练时 LoRA 目标必须真的包含视觉塔（可单测，不触 GPU）。
 
-    **为什么需要它（实测 T028，2026-09-19）**：``lora.target_preset`` 默认
-    ``language_safe``（``core/lora.py`` 只含 ``language.*`` 模式），于是
-    ``build_qwen35_visual_tower`` 先把视觉塔全部参数 ``requires_grad=False``
-    再做 LoRA 替换时**没有任何 visual target 命中** ⇒ 视觉塔零可训参数。
+    **为什么需要它（实测 T028，2026-09-19）**：目标只覆盖语言侧时
+    ``build_qwen35_visual_tower`` 先把视觉塔全部参数 ``requires_grad=False``，
+    再做 LoRA 替换时**没有任何视觉模块命中** ⇒ 视觉塔零可训参数。
     原防线（``run_multimodal_preflight`` 第 3 步）能拦，但它要等模型加载完、
     起好分布式之后才执行（T028 实测在加载后才炸）；本函数把同一判据提前到
     **配置期**判定，不需要 GPU、不需要权重，报错直接给出该改哪个键。
 
-    判据与运行期防线**同源**：预设/精确名是否解析出视觉目标，用的就是
-    ``core/lora.py::LORA_TARGET_PRESETS`` 与 ``_match_lora_pattern``——不另立
-    一套"这里认得、那边不认得"的规则（宪法 §1.4）。
+    判据与运行期防线**同源**（宪法 §1.4）：用的就是
+    ``core/lora.py::lora_target_modules_cover_visual``——它拿
+    ``VISUAL_MODULE_PROBES``（真实 ``model.visual.*`` 模块名）对**同一条**
+    ``lora.target_modules`` 正则做 ``re.fullmatch``，与 native 建模时对
+    ``hf_module_path`` 的判定、以及 ms-swift/PEFT 的判定是**同一语义**。
+    不另立一套"这里认得、那边不认得"的规则。
 
     **适用范围按训练模式收窄（宪法 §2.3，修 2026-09-22 的 T017/T018/T035/T036）**：
     本判据的前提是"视觉塔的可训载体 = LoRA 矩阵"。``tuner_type="full"`` 下
@@ -165,8 +175,7 @@ def assert_lora_vision_targets_trainable(
     （``lora_linear.py:123`` ``lora_enabled = lora_enabled and r > 0``），视觉塔是
     由 ``model_builders.py:173-177`` **直接解开 ``requires_grad``** 的：
     "LoRA 目标是否覆盖视觉塔"在全参下**无对象可判**，照判必误报（全参档
-    按生成器设计不写 ``lora`` 段，``target_preset`` 只是 schema 默认值
-    ``core/schema.py:240``）。因此非 ``lora`` 模式在此直接返回——**这不是放松，
+    按生成器设计不写 ``lora`` 段）。因此非 ``lora`` 模式在此直接返回——**这不是放松，
     是同一风险点换判据**：全参的等价判据在
     :func:`assert_vision_tower_trainable`（``tuner_type="full"`` 分支：
     塔内至少一个 ``requires_grad=True`` 的参数）；GRASPO 路径另有
@@ -174,9 +183,8 @@ def assert_lora_vision_targets_trainable(
     运行期防线兜底。**"声明了视觉塔却没有可用视觉占位 token"这条与模式无关的
     配置不一致校验保留在最前面**，不被模式分支跳过。
 
-    :param lora_target_modules: 显式目标名列表（``lora.target_modules``），
-        非 None 时优先于预设（与 ``resolve_lora_target_modules`` 同语义）
-    :param lora_target_preset: ``lora.target_preset``（None ⇒ 走默认预设）
+    :param lora_target_modules: ``lora.target_modules``（**一条**真实 HF 模块名正则）。
+        ``None`` = 未提供 ⇒ 本判据判否（fail-closed：没有任何目标能覆盖视觉塔）。
     :param image_token_id: 模型视觉占位 token id；None = 模型无视觉塔（不判）
     :param model_name: 模型名（错误消息用）
     :param has_vision_config: 模型是否**声明**视觉塔（``config.has_vision_config``）。
@@ -187,8 +195,9 @@ def assert_lora_vision_targets_trainable(
     :param tuner_type: ``config.effective_tuner_type``。缺省 ``None`` ⇒ ``lora``
         （``resolve_tuner_type`` 归一，缺省调用行为逐字不变）；非 ``lora`` ⇒
         本判据不适用，直接返回。
-    :raises ValueError: 模型有视觉塔、且 **LoRA 模式**下 LoRA 目标里没有一个视觉
-        模块；或声明了视觉塔却没有可用的视觉占位 token（配置不一致）
+    :raises ValueError: 模型有视觉塔、且 **LoRA 模式**下 ``lora.target_modules``
+        这条正则命中不了任何视觉模块；或声明了视觉塔却没有可用的视觉占位 token
+        （配置不一致）
     """
     if has_vision_config is True and image_token_id is None:
         raise ValueError(
@@ -204,31 +213,21 @@ def assert_lora_vision_targets_trainable(
         # 同一风险点的覆盖者见 docstring（assert_vision_tower_trainable 的 full 分支
         # + run_multimodal_preflight 的运行期梯度防线）。
         return
-    requested = tuple(lora_target_modules) if lora_target_modules else (lora_target_preset,)
-    patterns: list[str] = []
-    for item in requested:
-        preset = LORA_TARGET_PRESETS.get(str(item)) if item is not None else None
-        if preset is not None:
-            patterns.extend(preset)
-        elif item is not None:
-            patterns.append(str(item))
-    if not patterns:
-        patterns.extend(LORA_TARGET_PRESETS["language_safe"])  # 与 core/lora.py 默认一致
-    visual_patterns = [pattern for pattern in patterns if pattern.startswith("visual.")]
-    if visual_patterns:
+    if lora_target_modules_cover_visual(lora_target_modules):
         return
-    suggestions = sorted(name for name in LORA_TARGET_PRESETS if name.startswith("vision"))
     raise ValueError(
         f"multimodal training with model {model_name!r} but the LoRA targets select no "
-        f"visual module: lora.target_modules={lora_target_modules!r}, "
-        f"lora.target_preset={lora_target_preset!r}, resolved patterns={patterns!r}. "
+        f"visual module: lora.target_modules={lora_target_modules!r} matched none of "
+        f"{list(VISUAL_MODULE_PROBES)}. "
         "The visual tower would be frozen (all its params are set requires_grad=False "
         "before LoRA replacement), then the run dies at multimodal preflight with "
         "`RuntimeError: multimodal preflight failed: no trainable visual parameters found`. "
-        "Refusing to start training. Fix: set lora.target_preset to one of "
-        f"{suggestions}, or set lora.target_modules to explicit visual.* module names. "
-        "A preset that only names language modules (e.g. 'language_safe' / "
-        "'language_all_linear', the default) can never make the visual tower trainable."
+        "Refusing to start training. Fix: use lora.target_modules = "
+        f"{LORA_TARGET_MODULES_REGEX!r} (the shared regex, covers both language and visual "
+        "sides), or write a regex that also matches the real HF visual module names "
+        "(model.visual.merger.linear_fc*, model.visual.blocks.N.attn.{qkv,proj}, "
+        "model.visual.blocks.N.mlp.linear_fc*). A language-only regex can never make the "
+        "visual tower trainable."
     )
 
 

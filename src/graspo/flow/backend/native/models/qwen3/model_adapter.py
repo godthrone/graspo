@@ -45,7 +45,7 @@ class Qwen3ModelAdapter(TransformerModelAdapter):
         torch_dtype = _resolve_dtype(self.config.model.torch_dtype)
         loader = SafetensorIndex(model_path)
         lora_targets = resolve_lora_target_modules(
-            self.config.lora.target_modules or (self.config.lora.target_preset,),
+            self.config.lora.target_modules,
             available=native_qwen_lora_available_targets(hf_config),
         )
         self.placement = build_placement_plan(
@@ -80,10 +80,13 @@ class Qwen3ModelAdapter(TransformerModelAdapter):
         if self.model is None:
             raise RuntimeError("model not loaded; call setup() first")
         if not full_param:
+            # ★ 差集必须在**同一个字符串域**里做（真实 HF 模块名）：
+            #   `lora_targets.resolved` 是正则命中的 HF 模块名，模型侧也必须回 HF 模块名
+            #   （旧版拿 native 规范名 `enabled_lora_target_names()` 相减 ⇒ 两个域不同⇒
+            #    差集恒等于全部目标 ⇒ 每次都误报 ValueError）。
             missing_lora_targets = sorted(
-                target
-                for target in set(lora_targets.resolved)
-                - set(self.model.enabled_lora_target_names())
+                set(lora_targets.resolved)
+                - set(self.model.enabled_lora_hf_module_paths())
             )
             if missing_lora_targets:
                 raise ValueError(

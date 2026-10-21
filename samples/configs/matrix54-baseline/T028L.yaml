@@ -35,20 +35,10 @@ lora:
   r: 8
   alpha: 16
   dropout: 0.0
-  # ★ 多模式显式列表（官方支持；优先于 target_preset；⛔ 未动 preset 表）
-  #   = language_safe/language_all_linear 的语言层 9 项 + vision_merger 的 2 项
-  target_modules:
-    - "language.*.q_proj"
-    - "language.*.k_proj"
-    - "language.*.v_proj"
-    - "language.*.o_proj"
-    - "language.*.in_proj_z"
-    - "language.*.out_proj"
-    - "language.*.gate_proj"
-    - "language.*.up_proj"
-    - "language.*.down_proj"
-    - "visual.merger.linear_fc1"
-    - "visual.merger.linear_fc2"
+  # ★ 目标口径（主席 2026-10-21）：两个后端统一为**一条真实 HF 模块名正则**。
+  #   本档是 T028 的**窄口径对照**：语言分支（与共享正则同款，含 in_proj_qkv 整块）
+  #   + 仅 merger 两项；**不含**视觉塔 blocks。
+  target_modules: '^(?:model\.)?language_model\..*\.(q_proj|k_proj|v_proj|o_proj|in_proj_z|out_proj|in_proj_qkv|gate_proj|up_proj|down_proj)$|^(?:model\.)?visual\.merger\.linear_fc(1|2)$'
 native:
   tp_size: 1
   dp_size: 1

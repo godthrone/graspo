@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from graspo.core.lora import LORA_TARGET_MODULES_REGEX
 from graspo.eval.merged_export import (
     CheckpointKind,
     ExportError,
@@ -554,13 +555,10 @@ def test_merge_detects_shape_before_importing_heavy_deps(tmp_path):
         merge_peft_checkpoint(adapter, bare_base, tmp_path / "out")
 
 
-#: ms-swift 档实际使用的 LoRA 目标正则（matrix54-generated，含语言 + 视觉两支）。
-_MS_SWIFT_REGEX = (
-    r"^(?:model\.)?language_model\..*\.(q_proj|k_proj|v_proj|o_proj|in_proj_z|out_proj|"
-    r"in_proj_qkv|in_proj_a|in_proj_b|gate_proj|up_proj|down_proj)$"
-    r"|^(?:model\.)?visual\.(blocks\.\d+\.(attn\.(qkv|proj)|mlp\.linear_fc1|mlp\.linear_fc2)"
-    r"|merger\.linear_fc1|merger\.linear_fc2)$"
-)
+#: ms-swift 档实际使用的 LoRA 目标正则 —— ★ 直接引用**唯一真相源**（宪法 §1.4）：
+#: 本轮起两个后端与生成件共用 `graspo.core.lora.LORA_TARGET_MODULES_REGEX`，
+#: ⛔ 本文件不再抄一份字面量（抄一份就会与代码各自漂移）。
+_MS_SWIFT_REGEX = LORA_TARGET_MODULES_REGEX
 
 
 def test_namespace_guard_accepts_regex_with_optional_model_group():

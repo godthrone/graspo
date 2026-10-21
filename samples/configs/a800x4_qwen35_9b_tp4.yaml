@@ -26,7 +26,7 @@ lora:
   r: 128
   alpha: 256
   dropout: 0.05
-  target_modules: [language_all_linear, vision_common]
+  target_modules: '^(?:model\.)?language_model\..*\.(q_proj|k_proj|v_proj|o_proj|in_proj_z|out_proj|in_proj_qkv|gate_proj|up_proj|down_proj)$|^(?:model\.)?visual\.(blocks\.\d+\.(attn\.(qkv|proj)|mlp\.linear_fc1|mlp\.linear_fc2)|merger\.linear_fc1|merger\.linear_fc2)$'
 
 native:
   tp_size: 4

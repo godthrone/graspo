@@ -17,7 +17,10 @@ from graspo.flow.backend.native.models.qwen35_36.pipeline_forward import _Qwen35
 from graspo.flow.backend.native.models.qwen35_36.training import _Qwen35TrainingMethods
 from graspo.flow.backend.native.models.qwen35_36.training_sft import _Qwen35SFTTrainingMethods
 from graspo.flow.backend.native.transformer_model_adapter import TransformerModelAdapter
-from graspo.flow.backend.native.lora.lora_helpers import native_qwen_lora_available_targets
+from graspo.flow.backend.native.lora.lora_helpers import (
+    VISUAL_HF_PREFIX,
+    native_qwen_lora_available_targets,
+)
 from graspo.flow.backend.native.lora.lora_io import load_peft_adapter_into_native_model
 from graspo.flow.backend.native.parallel.placement_plan import (
     build_placement_plan,
@@ -56,7 +59,7 @@ class Qwen35ModelAdapter(  # type: ignore[misc]  # mixin 组合点的多基类�
         torch_dtype = _resolve_dtype(self.config.model.torch_dtype)
         loader = SafetensorIndex(model_path)
         lora_targets = resolve_lora_target_modules(
-            self.config.lora.target_modules or (self.config.lora.target_preset,),
+            self.config.lora.target_modules,
             available=native_qwen_lora_available_targets(hf_config),
         )
         self.placement = build_placement_plan(
@@ -103,16 +106,19 @@ class Qwen35ModelAdapter(  # type: ignore[misc]  # mixin 组合点的多基类�
             owns_embeddings = (
                 bool(self.placement.include_embeddings) if self.placement is not None else True
             )
-            # 非 embedding stage 上没有视觉塔，其 visual.* target 不适用，
+            # 非 embedding stage 上没有视觉塔，其 `model.visual.*` 目标不适用，
             # 不得混进"未实现 target"的报错里。
+            # ★ 判据与解析结果**同域**（真实 HF 模块名 `model.visual.…`）：正则的匹配域
+            #   就是 HF 名，故必须按 `model.visual.` 判；旧版按 native 规范名 `visual.`
+            #   判 ⇒ 恒不匹配 ⇒ 非 embedding stage 上视觉目标被误判为"未实现"。
             exempted_visual_targets = (
-                {t for t in resolved_lora_targets if str(t).startswith("visual.")}
+                {t for t in resolved_lora_targets if str(t).startswith(VISUAL_HF_PREFIX)}
                 if not owns_embeddings
                 else set()
             )
             missing_lora_targets = sorted(
                 resolved_lora_targets
-                - set(self.model.enabled_lora_target_names())
+                - set(self.model.enabled_lora_hf_module_paths())
                 - exempted_visual_targets
             )
             if missing_lora_targets:

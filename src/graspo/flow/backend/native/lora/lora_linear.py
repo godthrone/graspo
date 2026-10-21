@@ -12,6 +12,7 @@ from torch import nn
 from torch.nn import functional as F  # noqa: N812
 
 from graspo.flow.backend.native.lora.lora_helpers import (
+    VISUAL_HF_PREFIX,
     _lora_target_enabled,
 )
 from graspo.flow.backend.native.parallel.tensor_utils import _shard_bounds, _shard_tensor
@@ -42,7 +43,11 @@ def _replace_visual_lora_modules(
             }
         )
     for target_name, module_path in target_to_path.items():
-        if not _lora_target_enabled(lora_targets, target_name):
+        # ★ 判据用**真实 HF 模块名**（`model.visual.*`）——与 ms-swift/peft 侧同一匹配域，
+        #   同一条 `lora.target_modules` 正则 ⇒ 同一集合（旧版拿 native 规范名
+        #   `visual.*` 判，与正则的域不是同一个，故此处换域）。
+        hf_module_path = f"{VISUAL_HF_PREFIX}{module_path}"
+        if not _lora_target_enabled(lora_targets, hf_module_path):
             continue
         parent, attr = _module_parent_and_attr(visual, module_path)
         linear = getattr(parent, attr)
@@ -53,7 +58,7 @@ def _replace_visual_lora_modules(
             linear.bias.detach() if linear.bias is not None else None,
             lora_enabled=True,
             target_name=target_name,
-            hf_module_path=f"model.visual.{module_path}",
+            hf_module_path=hf_module_path,
             r=lora_r,
             alpha=lora_alpha,
             dropout=lora_dropout,

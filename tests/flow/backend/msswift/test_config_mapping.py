@@ -13,7 +13,9 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from pydantic import ValidationError
 
+from graspo.core.lora import LORA_TARGET_MODULES_REGEX
 from graspo.core.schema import GraspoConfig
 from graspo.flow.backend.msswift._config_mapping import (
     graspo_to_ms_swift_argv,
@@ -372,24 +374,46 @@ def test_empty_list_is_treated_as_not_provided():
     assert _flag("target_modules", []) == []
 
 
-def test_lora_target_modules_round_trips_as_multi_value():
-    """``lora.target_modules`` 真值透传：list → 空格分隔，不再是单元素 JSON 串。"""
+# ── ★ 阳性对照 ④（生成件与代码同源：落盘 yaml 里的正则 == 代码常量）──────────
+# 能让本测试变红的精确读法：在 `tools/matrix/gen_configs.py` 里另写一条正则字面量
+# （而不是 import `graspo.core.lora.LORA_TARGET_MODULES_REGEX`）并只改其中一处字符，
+# 然后重新生成 `samples/configs/matrix54-generated/` ⇒ 下面第一条断言立刻红。
+def test_generated_matrix_config_carries_the_shared_regex_and_routes_to_target_regex():
+    """落盘的 ms-swift 档 yaml：``lora.target_modules`` 就是**代码里那一条**正则。
+
+    三重锁：① 生成件 == 代码常量（防"两处字面量各自漂移"）；② 该档发的是官方
+    ``--target_regex``、**不发** ``--target_modules``（list 通道已废除）；
+    ③ 取值逐字透传（⛔ 不做任何形态改写）。
+    """
+    from pathlib import Path
+
+    import yaml
+
+    repo = Path(__file__).resolve().parents[4]  # <repo>/tests/flow/backend/msswift/…
+    raw = yaml.safe_load(
+        (repo / "samples" / "configs" / "matrix54-generated" / "T001.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert raw["lora"]["target_modules"] == LORA_TARGET_MODULES_REGEX
+
     argv = graspo_to_ms_swift_argv(
         GraspoConfig.model_validate(
             {
                 "backend": "msswift",
                 "model": {"model_path": "m"},
                 "data": {"train_path": "d", "max_prompt_length": 2048},
-                "lora": {"target_modules": ["all-linear"]},
+                "lora": {"target_modules": LORA_TARGET_MODULES_REGEX},
             }
         ),
         stage="sft",
         dataset_path="/tmp/ds.jsonl",
         output_dir="/tmp/out",
     )
-    index = argv.index("--target_modules")
+    index = argv.index("--target_regex")
 
-    assert argv[index + 1] == "all-linear"
+    assert argv[index + 1] == LORA_TARGET_MODULES_REGEX
+    assert "--target_modules" not in argv
     # 紧跟其后的下一个 token 必须是另一个 flag（说明没有多吞参数）
     assert argv[index + 2].startswith("--")
 
@@ -498,7 +522,8 @@ def test_rope_compatibility_context_restores_from_pretrained():
     )
 
 
-#: E2b 实测（2026-10-12）用的**真实正则**形态（取自 matrix54-generated 的 ms-swift 档）。
+#: 一条**自定义**正则（故意不等于共享常量：证明路由看的是"形态是 str"，
+#: 而不是"恰好等于某条硬编码常量"）。形态沿用 E2b 实测（2026-10-12）的真实正则。
 _REGEX_TARGET = (
     r"^(?:model\.)?language_model\..*\.(q_proj|k_proj|gate_proj)$"
     r"|^(?:model\.)?visual\.(attn\.qkv|mlp\.linear_fc1)$"
@@ -530,7 +555,7 @@ def test_regex_target_modules_routes_to_target_regex():
     ⇒ 正则串作为 list 传入时 **0 命中**。ms-swift 官方 ``target_regex: Optional[str]``
     （``:127`` + ``:201-202`` 覆盖 target_modules）是唯一不改上游源码的通道。
     """
-    argv = _argv_for([_REGEX_TARGET])
+    argv = _argv_for(_REGEX_TARGET)
 
     assert "--target_regex" in argv, "正则串必须发 --target_regex"
     assert "--target_modules" not in argv, "正则串不得再发 --target_modules（会落 list/set 分支）"
@@ -539,17 +564,24 @@ def test_regex_target_modules_routes_to_target_regex():
     assert argv[argv.index("--target_regex") + 2].startswith("--")
 
 
-def test_non_regex_target_modules_keeps_target_modules():
-    """非正则（预设名 / 后缀名列表）**必须仍走** ``--target_modules``，不得误路由。"""
+def test_old_target_modules_forms_are_rejected_at_config_load():
+    """★ 阳性对照 ⑤（fail-closed：旧形态**到不了**映射层）。
+
+    list（旧 preset 名 / 后缀名列表 / ``all-linear``）与裸名字都在
+    ``LoRAConfig`` 加载期被拒 —— 因此"非正则仍走 ``--target_modules``"这条旧通道
+    **已不存在**，⛔ 不留别名、不做隐式兼容。
+
+    能让本测试变红的精确读法：把 ``core/schema.py::LoRAConfig`` 的
+    ``target_modules`` 类型改回 ``list[str] | None`` 并去掉 ``field_validator``
+    ⇒ 下面第一个 case 立刻红（不再抛 ValidationError）。
+    """
     for value in (
         ["all-linear"],
         ["q_proj", "v_proj"],
         ["q_proj", "k_proj", "attn.qkv"],  # 后缀名列表（含点，但不是正则）
         ["language_all_linear", "vision_common"],
+        "language_all_linear",  # 旧 preset 名（裸名字，无正则元字符）
+        "q_proj",
     ):
-        argv = _argv_for(value)
-        assert "--target_modules" in argv, f"{value!r} 应仍走 --target_modules"
-        assert "--target_regex" not in argv, f"{value!r} 不应被误判为正则"
-        index = argv.index("--target_modules")
-        assert argv[index + 1] == value[0]
-        assert argv[index + 1 + len(value)].startswith("--")
+        with pytest.raises(ValidationError):
+            _argv_for(value)

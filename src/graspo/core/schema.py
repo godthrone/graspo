@@ -295,7 +295,16 @@ class RewardConfig(BaseModel):
 
 
 class LoRAConfig(BaseModel):
-    """LoRA 微调配置。"""
+    """LoRA 微调配置。
+
+    **目标写法（两个后端统一）**：``target_modules`` 是**一条真实 HF 模块名正则**
+    （``graspo.core.lora.LORA_TARGET_MODULES_REGEX`` 是仓内默认那条），native 与
+    ms-swift 都按这同一条表达式确定更新哪些权重（ms-swift 走官方
+    ``--target_regex``）。**不认识的形式在加载期即拒绝**（fail-closed）：
+    旧的 ``[language_all_linear, vision_common]`` 这类 preset 名列表、以及不含任何
+    正则元字符的裸名字（旧 preset 名 / 漏写锚点的单模块名）都会报错——⛔ 不留别名、
+    不做隐式兼容（校验收在 :func:`_validate_lora_target_modules`）。
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -303,10 +312,32 @@ class LoRAConfig(BaseModel):
     alpha: int = 32
     dropout: float = 0.1
     adapter_path: str | None = None
+    #: ⚠ **遗留字段**（不再选择 LoRA 目标）：本轮起目标只由 ``target_modules`` 决定；
+    #: 该键保留**仅为让既有（已冻结、本轮不动）的配置文件继续可加载**
+    #: （``samples/configs/matrix54{,-v2}/*.yaml`` 写的是 ``target_preset: vision_common``；
+    #: 删键会让它们 ``extra="forbid"`` 直接加载失败，而那些文件本轮不许改）。
+    #: 消费侧不再读它——不写 ``target_modules`` 就 fail-closed 报错，⛔ 不回退到它。
     target_preset: str = "language_safe"
-    target_modules: list[str] | None = None
+    target_modules: str | None = None
     bias: str = "none"
     task_type: str = "CAUSAL_LM"
+
+    @field_validator("target_modules", mode="before")
+    @classmethod
+    def _validate_lora_target_modules(cls, value: Any) -> Any:
+        """加载即校验目标写法（§2.1 契约即防呆）：只接受一条"形如正则"的 HF 模块名串。
+
+        判据与消费侧**同源**（``core/lora.py::compile_lora_target_regex``，§1.4）——
+        这里不另写一套"配置层觉得像、解析层不认"的规则。
+        """
+        if value is None:
+            return None
+        from graspo.core.lora import (
+            compile_lora_target_regex,  # noqa: PLC0415 避免 core 包内循环导入
+        )
+
+        compile_lora_target_regex(value)  # 非法 ⇒ ValueError（pydantic 转成校验错误）
+        return value
 
 
 class ModelConfig(BaseModel):

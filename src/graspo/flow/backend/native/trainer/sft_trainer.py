@@ -112,7 +112,6 @@ class SFTTrainer:
         tuner_type = self.config.effective_tuner_type
         assert_lora_vision_targets_trainable(
             lora_target_modules=self.config.lora.target_modules,
-            lora_target_preset=self.config.lora.target_preset,
             image_token_id=getattr(model_config, "image_token_id", None),
             model_name=str(self.config.model.model_path),
             # 模型声明了视觉 ⇒ 占位 token 缺失属配置不一致，fail-closed。

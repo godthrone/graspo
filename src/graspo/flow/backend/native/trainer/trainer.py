@@ -724,7 +724,6 @@ class GraspoFlowTrainer(RolloutMixin, OptimizeMixin, CheckpointMixin):
         #   同一风险点由下方 run_multimodal_preflight 的可训视觉参数/梯度判据覆盖）。
         assert_lora_vision_targets_trainable(
             lora_target_modules=self.config.lora.target_modules,
-            lora_target_preset=self.config.lora.target_preset,
             image_token_id=image_token_id,
             model_name=str(self.config.model.model_path),
             tuner_type=self.config.effective_tuner_type,

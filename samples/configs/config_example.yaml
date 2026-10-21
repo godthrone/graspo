@@ -62,8 +62,9 @@ lora:
   alpha: 32
   dropout: 0.05
   adapter_path: null             # null=从头训练；否则指向已导出 LoRA
-  target_preset: language_safe
-  target_modules: null           # null=用 target_preset 推断
+  # ★ 两个后端统一为一条真实 HF 模块名正则（native / ms-swift 同款；唯一真相源 = src/graspo/core/lora.py）
+  target_modules: '^(?:model\.)?language_model\..*\.(q_proj|k_proj|v_proj|o_proj|in_proj_z|out_proj|in_proj_qkv|gate_proj|up_proj|down_proj)$|^(?:model\.)?visual\.(blocks\.\d+\.(attn\.(qkv|proj)|mlp\.linear_fc1|mlp\.linear_fc2)|merger\.linear_fc1|merger\.linear_fc2)$'
+  target_preset: language_safe     # 遗留键：不再选择目标（解析器不消费；仅为兼容 matrix54/ 等冻结产物）
   bias: none
   task_type: CAUSAL_LM
 
