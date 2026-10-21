@@ -1326,8 +1326,22 @@ PUBLISH_ROW_KEYS: frozenset[str] = frozenset({
 PUBLISH_META_KEYS: frozenset[str] = frozenset({
     "title", "version", "doc_date", "scope", "venue", "code_version", "authority",
     "status_vocabulary", "boundary_declaration", "criteria_caliber", "criteria_version",
-    "results_policy", "distill_teacher", "lora_target_backends",
+    "results_policy", "distill_teacher", "lora_target_backends", "enumeration",
 })
+
+#: ★ 发布件 `meta.enumeration` 的**精确键集合**（V16：多一个键就拒写）。
+#:   只许「结论级计数」；排序键/原因码说明/证据索引/已知缺口/后端选择规则 ⛔ 一律在审计件。
+ENUMERATION_KEYS: frozenset[str] = frozenset({
+    "criteria_version", "card_limit", "budget_gib", "counts", "script", "script_sha256", "audit_ref",
+})
+ENUMERATION_COUNT_KEYS: frozenset[str] = frozenset({
+    "raw_cube", "exceed_cards", "enumerated", "kept", "excluded", "kept_split", "tiers",
+})
+ENUMERATION_SUBKEYS: dict[str, frozenset[str]] = {
+    "excluded": frozenset({"EXCEED_CARDS", "OOM_UNFIT", "KNOWN_OOM", "UNSUPPORTED_MODE", "ALGO_BACKEND"}),
+    "kept_split": frozenset({"direct", "missing_channel"}),
+    "tiers": frozenset({"feasible", "tight", "over_budget"}),
+}
 
 #: ★ 发布件里**不得出现**的内部审计线索形态（V16 机核）。
 AUDIT_ONLY_PATTERNS = (
@@ -1410,6 +1424,22 @@ def _v16_publish_vs_audit(data_text: str | None) -> tuple[bool, str]:
     bad_meta = sorted(set(meta) - PUBLISH_META_KEYS)
     if bad_meta:
         return False, f"② 发布件 meta 键越界：{bad_meta}"
+    # ④ `meta.enumeration` 只许「结论级计数」：键集合必须**恰好**等于契约（多一个就拒写）
+    enum = meta.get("enumeration")
+    if enum is not None:
+        if not isinstance(enum, dict):
+            return False, "④ meta.enumeration 不是对象"
+        if sorted(set(enum)) != sorted(ENUMERATION_KEYS):
+            return False, (f"④ meta.enumeration 键集合不符（多：{sorted(set(enum) - ENUMERATION_KEYS)}；"
+                           f"缺：{sorted(ENUMERATION_KEYS - set(enum))}）")
+        cnt = enum.get("counts") or {}
+        if set(cnt) != ENUMERATION_COUNT_KEYS:
+            return False, f"④ meta.enumeration.counts 键集合不符：{sorted(set(cnt) ^ ENUMERATION_COUNT_KEYS)}"
+        for sub, keys in ENUMERATION_SUBKEYS.items():
+            got = set(cnt.get(sub) or {})
+            if got != keys:
+                return False, f"④ meta.enumeration.counts.{sub} 键集合不符：{sorted(got ^ keys)}"
+
     leaks: list[str] = []
     for pat, why in AUDIT_ONLY_PATTERNS:
         m = pat.search(data_text)
@@ -1607,8 +1637,9 @@ VERIFICATION_CASES: tuple[dict[str, Any], ...] = (
     },
     {
         "id": "V16",
-        "claim": ("发布件/审计件分离：行键 ⊆ 允许清单、meta 键 ⊆ 允许清单，且发布件里 "
-                  "`src/graspo/`、`EV` + 两位数字、file:line 溯源、审计键名命中数 = 0"),
+        "claim": ("发布件/审计件分离：行键 ⊆ 允许清单、meta 键 ⊆ 允许清单、`meta.enumeration` 键集合"
+                  "恰好 = 结论级计数契约（多一键即拒写），且发布件里 `src/graspo/`、`EV` + 两位数字、"
+                  "file:line 溯源、审计键名命中数 = 0"),
         "check": None,
     },
     {
@@ -1865,7 +1896,30 @@ def apply_meta_sync(meta: dict[str, Any], *, card_limit: int, budget: float,
     """
     new = json.loads(json.dumps(meta))  # 深拷贝（⛔ 不改输入）
 
-    new.pop("enumeration", None)     # ★ 枚举块整体进审计件（V16：meta 键必须 ⊆ 允许清单）
+    # ★ 发布件只放**结论级计数**（第 4 章章首「保留 124 档、剔除 36 档」由数据渲染，⛔ 不手填数字）；
+    #   排序键 / 原因码说明 / 证据索引 / 已知缺口 / 后端选择规则等明细⛔ 不进发布件 ⇒ 在审计件。
+    _ex = counts.get("excluded", {})
+    _kb = counts.get("kept_breakdown", {})
+    _bd = counts.get("bands", {})
+    new["enumeration"] = {
+        "criteria_version": CRITERIA_VERSION,
+        "card_limit": card_limit,
+        "budget_gib": budget,
+        "counts": {
+            "raw_cube": counts["raw_cube"],
+            "exceed_cards": counts["exceed_cards"],
+            "enumerated": counts["enumerated"],
+            "kept": counts["kept"],
+            "excluded": {k: _ex.get(k, 0) for k in
+                         ("EXCEED_CARDS", "OOM_UNFIT", "KNOWN_OOM", "UNSUPPORTED_MODE", "ALGO_BACKEND")},
+            "kept_split": {"direct": _kb.get("direct", 0), "missing_channel": _kb.get("missing_channel", 0)},
+            "tiers": {"feasible": _bd.get("可行", 0), "tight": _bd.get("余量紧", 0),
+                      "over_budget": _bd.get("超预算", 0)},
+        },
+        "script": "tools/matrix/enumerate_matrix.py",
+        "script_sha256": script_sha,
+        "audit_ref": "审计明细在枚举脚本的 --audit-out 输出中（不入库）",
+    }
 
     for drop in META_DROPS:
         _del_path(new, drop["path"])   # 不存在也不算错（幂等）

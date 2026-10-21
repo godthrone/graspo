@@ -445,7 +445,37 @@
       }
     },
     "criteria_version": "v4-2026-10-17（判据② 定死；四条判据 + 算法正确性检查全过 ⇒ 才可标「通过」）",
-    "results_policy": "结果列由跑次记录回填；尚无实测结论的档位状态为「待测试」，结果列一律「—」；不得手工填写。"
+    "results_policy": "结果列由跑次记录回填；尚无实测结论的档位状态为「待测试」，结果列一律「—」；不得手工填写。",
+    "enumeration": {
+      "criteria_version": "enum-v1-2026-10-21",
+      "card_limit": 4,
+      "budget_gib": 78.0,
+      "counts": {
+        "raw_cube": 432,
+        "exceed_cards": 272,
+        "enumerated": 160,
+        "kept": 124,
+        "excluded": {
+          "EXCEED_CARDS": 272,
+          "OOM_UNFIT": 36,
+          "KNOWN_OOM": 0,
+          "UNSUPPORTED_MODE": 0,
+          "ALGO_BACKEND": 0
+        },
+        "kept_split": {
+          "direct": 120,
+          "missing_channel": 4
+        },
+        "tiers": {
+          "feasible": 112,
+          "tight": 12,
+          "over_budget": 0
+        }
+      },
+      "script": "tools/matrix/enumerate_matrix.py",
+      "script_sha256": "245ffa9849fc36cfef1a074d24467a5a7cc960ef0e690396d52ff10841840f77",
+      "audit_ref": "审计明细在枚举脚本的 --audit-out 输出中（不入库）"
+    }
   },
   "rows": [
     {
