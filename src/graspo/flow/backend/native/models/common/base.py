@@ -164,9 +164,11 @@ class GraspoFlowCausalLMBase(nn.Module):
     def enabled_lora_target_names(self) -> tuple[str, ...]:
         """已启用 LoRA 的 **native 规范名**集合（= ``lora_target_signature`` 的取值域）。
 
-        ★ 保持规范名（``language.linear_attn.q_proj``…）是**兼容性要求**：已训 checkpoint
-        的 ``lora_target_signature`` 按它做 resume 比对，换域会让存量 adapter 无法 resume
-        （见 ``transformer_model_adapter.py`` 的签名比对）。
+        ★ 命名粒度 = **一个权重矩阵一个名**：融合 ``in_proj_qkv`` 自 2026-10-21 起按整块
+        一份低秩处理，规范名随之由三片 ``language.linear_attn.{q,k,v}_proj`` 合并为一条
+        ``language.linear_attn.qkv_proj``。⚠ 这是**有意的签名变更**（主席已接受）：旧 adapter
+        的 ``lora_target_signature`` 不再匹配 ⇒ 旧 adapter 不可续训（比对见
+        ``transformer_model_adapter.py`` 的签名比对）。
         """
         names: set[str] = set()
         for _, module in self.named_modules():
@@ -179,9 +181,9 @@ class GraspoFlowCausalLMBase(nn.Module):
 
         ★ 与 :meth:`enabled_lora_target_names` 是**同一批模块的两个域**：本方法是
         "正则选中的目标是否真的建出来了"的判据（``model_adapter`` 的 fail-closed 差集），
-        规范名那支只服务 checkpoint 签名。⚠ 一个 HF 模块可能对应**多个** ``LoRALinear``
-        （融合 ``in_proj_qkv`` 被切成 q/k/v 三片 ⇒ 3 个实例共享 1 个模块名）——这里按
-        模块名去重，正因如此它才等于"被更新的**权重矩阵**集合"。
+        规范名那支只服务 checkpoint 签名。⚠ 一个 HF 模块名对应**恰好一个** ``LoRALinear``
+        （融合 ``in_proj_qkv`` 自 2026-10-21 起按**整块一份低秩**处理，与 ms-swift/PEFT
+        逐项同构）——按模块名去重后即等于"被更新的**权重矩阵**集合"。
         """
         paths: set[str] = set()
         for _, module in self.named_modules():

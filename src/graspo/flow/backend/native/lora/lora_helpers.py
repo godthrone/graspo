@@ -31,7 +31,8 @@ def native_qwen_lora_available_targets(
       ``language.full_attn.*``，但 **hf 路径**与 HF 一致用 ``self_attn``）；
     - 线性注意力层 ``layers.N.linear_attn.{in_proj_qkv,in_proj_z,out_proj,in_proj_b,in_proj_a}``
       （``modeling_qwen3_5.py:433-436`` 恰好这 5 个 ``nn.Linear``；其中
-      ``in_proj_qkv`` 在 native 侧被切成 q/k/v **三片**，但**模块名只有一个**）；
+      ``in_proj_qkv`` 在 native 侧是**一个**权重矩阵 ⇒ **一个** ``LoRALinear``
+      ——整块一份低秩，2026-10-21 起不再切成 q/k/v 三片各配一份）；
     - ``layers.N.mlp.{gate,up,down}_proj``；视觉侧 ``model.visual.merger.linear_fc{1,2}``
       + 每个 block 的 ``attn.{qkv,proj}`` / ``mlp.linear_fc{1,2}``。
 

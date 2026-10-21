@@ -493,65 +493,38 @@ class TensorParallelQwen35LinearAttention(nn.Module):
         key_dim = self.num_k_heads * self.head_k_dim
 
         qkv_weight = loader.get(f"{prefix}.in_proj_qkv.weight")
-        self.q_proj = LoRALinear(
-            qkv_weight[self.local_k_start : self.local_k_stop],
+        # ★ 融合 QKV 按**整块一份低秩更新**（主席 2026-10-21：对齐 ms-Swift / PEFT）：
+        #   HF 侧 ``in_proj_qkv`` 是**一个** ``nn.Linear`` ⇒ PEFT 给**一个**
+        #   ``(lora_A, lora_B)`` 对（``lora_A: r×hidden``、``lora_B: out_qkv×r``）。
+        #   融合顺序恒为 ``[q | k | v]``（``out_qkv = 2*key_dim + value_dim``，与
+        #   ``modeling_qwen3_5`` / 导出侧的融合顺序一致）；本 rank 只持有整块的行子集
+        #   ``[q_local | k_local | v_local]``——三段**各自连续、跨段不连续**，故用
+        #   ``row_indices`` 表达（与全注意力 q/k/v 同一机制），⛔ 不用 ``row_start/row_stop``
+        #   （那两个字段只能表达一段连续行，tp>1 时会把 q 的残余行也吞进来）。
+        #   同一份低秩对的 ``lora_B`` 行序即 ``[q_local | k_local | v_local]``。
+        #   ⛔ 不得再切成三段各配一份低秩（那会让实例数比 ms-swift 多 2×线性层数）。
+        qkv_row_indices = [
+            *range(self.local_k_start, self.local_k_stop),
+            *range(key_dim + self.local_k_start, key_dim + self.local_k_stop),
+            *range(2 * key_dim + self.local_v_start, 2 * key_dim + self.local_v_stop),
+        ]
+        self.in_proj_qkv = LoRALinear(
+            qkv_weight.index_select(0, torch.tensor(qkv_row_indices, dtype=torch.long)),
             None,
             lora_enabled=_lora_target_enabled(lora_targets, f"{prefix}.in_proj_qkv"),
-            target_name="language.linear_attn.q_proj",
+            target_name="language.linear_attn.qkv_proj",
             hf_module_path=f"{prefix}.in_proj_qkv",
             base_weight_name=f"{prefix}.in_proj_qkv.weight",
             shard_kind="rows",
-            row_start=self.local_k_start,
-            row_stop=self.local_k_stop,
-            peft_exportable=False,
+            row_indices=qkv_row_indices,
             r=lora_r,
             alpha=lora_alpha,
             dropout=lora_dropout,
             device=device,
             dtype=torch_dtype,
         )
-        self.k_proj = LoRALinear(
-            qkv_weight[key_dim + self.local_k_start : key_dim + self.local_k_stop],
-            None,
-            lora_enabled=_lora_target_enabled(lora_targets, f"{prefix}.in_proj_qkv"),
-            target_name="language.linear_attn.k_proj",
-            hf_module_path=f"{prefix}.in_proj_qkv",
-            base_weight_name=f"{prefix}.in_proj_qkv.weight",
-            shard_kind="rows",
-            row_start=key_dim + self.local_k_start,
-            row_stop=key_dim + self.local_k_stop,
-            peft_exportable=False,
-            r=lora_r,
-            alpha=lora_alpha,
-            dropout=lora_dropout,
-            device=device,
-            dtype=torch_dtype,
-        )
-        self.v_proj = LoRALinear(
-            qkv_weight[2 * key_dim + self.local_v_start : 2 * key_dim + self.local_v_stop],
-            None,
-            lora_enabled=_lora_target_enabled(lora_targets, f"{prefix}.in_proj_qkv"),
-            target_name="language.linear_attn.v_proj",
-            hf_module_path=f"{prefix}.in_proj_qkv",
-            base_weight_name=f"{prefix}.in_proj_qkv.weight",
-            shard_kind="rows",
-            row_start=2 * key_dim + self.local_v_start,
-            row_stop=2 * key_dim + self.local_v_stop,
-            peft_exportable=False,
-            r=lora_r,
-            alpha=lora_alpha,
-            dropout=lora_dropout,
-            device=device,
-            dtype=torch_dtype,
-        )
-        conv_indices = torch.tensor(
-            [
-                *range(self.local_k_start, self.local_k_stop),
-                *range(key_dim + self.local_k_start, key_dim + self.local_k_stop),
-                *range(2 * key_dim + self.local_v_start, 2 * key_dim + self.local_v_stop),
-            ],
-            dtype=torch.long,
-        )
+        # conv1d 与本 rank 的融合 QKV 权重**同一份行序**（共用 ``qkv_row_indices``）。
+        conv_indices = torch.tensor(qkv_row_indices, dtype=torch.long)
         self.conv1d_weight = nn.Parameter(
             loader.get(f"{prefix}.conv1d.weight")
             .index_select(0, conv_indices)
@@ -584,7 +557,7 @@ class TensorParallelQwen35LinearAttention(nn.Module):
             hf_module_path=f"{prefix}.in_proj_b",
             # ★ 与其它注入点同源：r/alpha/dropout 一律用调用方真值——
             #   ``lora_a/lora_b`` 只在命中正则时才真的建出来（``r>0`` 且
-            #   ``lora_enabled``）。共享本模块的 in_proj_qkv 三片同理。
+            #   ``lora_enabled``）。同模块的 in_proj_qkv 整块同理。
             r=lora_r,
             alpha=lora_alpha,
             dropout=lora_dropout,
@@ -602,7 +575,7 @@ class TensorParallelQwen35LinearAttention(nn.Module):
             hf_module_path=f"{prefix}.in_proj_a",
             # ★ 与其它注入点同源：r/alpha/dropout 一律用调用方真值——
             #   ``lora_a/lora_b`` 只在命中正则时才真的建出来（``r>0`` 且
-            #   ``lora_enabled``）。共享本模块的 in_proj_qkv 三片同理。
+            #   ``lora_enabled``）。同模块的 in_proj_qkv 整块同理。
             r=lora_r,
             alpha=lora_alpha,
             dropout=lora_dropout,
@@ -655,10 +628,10 @@ class TensorParallelQwen35LinearAttention(nn.Module):
         del position_ids
         hidden_states = _apply_mask_to_padding_states(hidden_states, attention_mask)
         batch, seq_len, _ = hidden_states.shape
-        q = self.q_proj(hidden_states)
-        k = self.k_proj(hidden_states)
-        v = self.v_proj(hidden_states)
-        mixed_qkv = torch.cat([q, k, v], dim=-1).transpose(1, 2)
+        # ★ 融合 QKV **整块一次前向**（一份低秩对作用于整块融合权重）：
+        #   输出行序 = ``[q_local | k_local | v_local]``（与 ``qkv_row_indices`` /
+        #   ``conv1d`` 同序），故 conv1d 之后仍按同一顺序切出 q/k/v（见下方 ``torch.split``）。
+        mixed_qkv = self.in_proj_qkv(hidden_states).transpose(1, 2)
         conv_state = past_key_value[0] if past_key_value is not None else None
         recurrent_state = past_key_value[1] if past_key_value is not None else None
         if conv_state is not None and seq_len == 1:
