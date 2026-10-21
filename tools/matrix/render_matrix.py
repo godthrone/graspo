@@ -103,7 +103,7 @@ MATRIX_COLUMNS = (
     {"key": "steps_actual", "label": "实跑步数", "group": "data"},
     {"key": "elapsed", "label": "耗时（每步/总时长）", "group": "data"},
     {"key": "throughput", "label": "吞吐", "group": "data"},
-    {"key": "effect", "label": "效果（评测 Δ / loss·reward 窗口）", "group": "data"},
+    {"key": "effect", "label": "效果（评测 Δ）", "group": "data"},
     {"key": "note", "label": "备注（条件 / 限制 / 失败归因）", "group": "note", "group_start": True},
 )
 #: ★★ 列组的**逐字**定义（第一行表头 colspan 由它给出）：列组顺序 == 列出现顺序。

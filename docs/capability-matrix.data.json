@@ -12,19 +12,18 @@
    "commit": "8d63c38"
   },
   "authority": {
-   "editable_source": "docs/capability-matrix.data.json（唯一可编辑源头）",
-   "human_view": "docs/capability-matrix.html（由生成器确定性产出，禁止手工编辑）",
+   "editable_source": "docs/capability-matrix.html（唯一真相源 / 权威；结论以人读件为准）",
+   "human_view": "docs/capability-matrix.html（本页即测试结论本身；人读件为唯一真相源，可逐字节重建）",
    "generator": "tools/matrix/render_matrix.py",
    "data_path": "docs/capability-matrix.data.json",
    "human_view_path": "docs/capability-matrix.html",
    "generation_marker": "generated",
-   "direction": "结果 JSON → capability-matrix.data.json → 人读视图（单方向，禁止互推）"
+   "direction": "结果 JSON → capability-matrix.data.json（仅本页的渲染输入，非权威）→ 人读视图 docs/capability-matrix.html（唯一真相源；单方向，禁止互推）"
   },
   "status_vocabulary": [
-   "已验证可用",
-   "已验证不可用",
-   "尚未验证",
-   "未纳入验收"
+   "通过",
+   "未通过",
+   "尚未验证"
   ],
   "boundary_declaration": {
    "required": true,
@@ -261,9 +260,7 @@
      "language.full_attn.k_proj",
      "language.full_attn.v_proj",
      "language.full_attn.o_proj",
-     "language.linear_attn.q_proj",
-     "language.linear_attn.k_proj",
-     "language.linear_attn.v_proj",
+     "language.linear_attn.qkv_proj",
      "language.linear_attn.in_proj_z",
      "language.linear_attn.out_proj",
      "language.mlp.gate_proj",
@@ -380,23 +377,21 @@
      "visual.blocks.26.mlp.linear_fc1",
      "visual.blocks.26.mlp.linear_fc2"
     ],
-    "resolved_count": 122,
+    "resolved_count": 120,
     "resolved_count_meaning": "签名/模式条目数（不是实例数）；实例数见 coverage.total",
     "coverage": {
-     "language": 248,
+     "language": 200,
      "visual": 110,
-     "total": 358,
-     "signature_entries": 122,
-     "basis": "口径订正（2026-10-12）：LoRA 目标的签名条目数 = 122 是签名/模式条目数（12 条「无 layer 索引的语言模式」+ 110 条视觉实例），不是件数；12 条语言模式逐层展开为 248 个实例 ⇒ 与 ms-swift 同为 358 个实例（张量键数同为 716）。可复核锚点：该计数由本矩阵的数据文件与抽取工具链（tools/matrix/）逐档现算、可重跑复现；不指向任何内部过程记录。"
+     "total": 310,
+     "signature_entries": 120,
+     "basis": "口径订正（2026-10-12；2026-10-21 融合 QKV 后重算）：LoRA 目标的签名条目数 = 120 是签名/模式条目数（10 条「无 layer 索引的语言模式」+ 110 条视觉实例），不是件数；10 条语言模式逐层展开为 200 个实例（融合的 QKV 按整块一份低秩 ⇒ 原 q/k/v 三片规范名合并为 language.linear_attn.qkv_proj，语言侧实例数 248 → 200）⇒ native 合计 310 个实例（张量键数 620）。native 310 与 ms-swift 358（language 248 + visual 110）不再相等。可复核锚点：该计数由本矩阵的数据文件与抽取工具链（tools/matrix/）逐档现算、可重跑复现；不指向任何内部过程记录。"
     },
     "language_targets": [
      "language.full_attn.q_proj",
      "language.full_attn.k_proj",
      "language.full_attn.v_proj",
      "language.full_attn.o_proj",
-     "language.linear_attn.q_proj",
-     "language.linear_attn.k_proj",
-     "language.linear_attn.v_proj",
+     "language.linear_attn.qkv_proj",
      "language.linear_attn.in_proj_z",
      "language.linear_attn.out_proj",
      "language.mlp.gate_proj",
@@ -406,11 +401,11 @@
     "signature_evidence": {
      "field": "lora_target_signature.resolved / parameter_count",
      "runs": "T010（1 卡）与 T011（2 卡）签名完全相同",
-     "parameter_count": 409923584,
-     "note": "该值即字段 parameter_count 的原值，语义按字段名判（不推测）。"
+     "parameter_count": 384757760,
+     "note": "该值即字段 parameter_count 的现行值（08a5654 融合 QKV 后按形状表：409,923,584 − 24 × 8192 × 128 = 384,757,760）；T010 / T011 两份融合前 checkpoint 的 manifest 原值为 409923584（与旧形状表逐位相等，可作交叉验证）—— 旧 adapter 与现行签名不再同构，不得混用。语义按字段名判（不推测）。"
     },
     "namespace": "language.* / visual.*（native canonical，公开签名）",
-    "note": "native 侧支持 preset 名（glob），由本仓 lora 模块解析。实测证明 language_all_linear 确实命中语言层 12 项、不是空转（与 T010 实测 Δ=+13.39 pp 互证：语言层空转不可能有该增益）。"
+    "note": "native 侧支持 preset 名（glob），由本仓 lora 模块解析。实测证明 language_all_linear 确实命中语言层 10 项、不是空转（与 T010 实测 Δ=+13.39 pp 互证：语言层空转不可能有该增益）。"
    },
    "msswift": {
     "kind": "hf_regex",
@@ -428,7 +423,7 @@
      "basis": "探针实测（依据：内部验收底稿（不随发布件提供） sha 1c3830b119946946fcfbbae0aa8e29ea6e1184c4c99b434e83ce8e4deeef34e5）。语言 248 分解：q/k/v/o_proj 各 8｜in_proj_qkv 24、in_proj_a/b 各 24｜in_proj_z 24｜out_proj 24｜gate/up/down_proj 各 32。收紧版视觉侧显式枚举 ⇒ 命中 358 全为 nn.Linear（Conv3d 0）；旧过宽版 visual\\..* 实测 528 命中（含 170 非 Linear）⇒ 已弃用。"
     },
     "escape_note": "转义：正则含反斜杠，YAML 出参用单引号标量（字面量）⇒ 加载值应为单反斜杠。验收以加载值为准（GraspoConfig 加载后 repr），不看文件文本。",
-    "comparability_note": "两后端 LoRA 实例数同为 358（language 248 + visual 110），但命中的模块集合不同（native token_mixer.* vs ms-swift linear_attn.*/full_attn.*）⇒ 两后端的效果/性能读数不直接可比，跨后端比较须注明。",
+    "comparability_note": "两后端 LoRA 实例数不再相等（native 310 = language 200 + visual 110；ms-swift 358 = language 248 + visual 110），且命中的模块集合不同（native token_mixer.qkv_proj 等 vs ms-swift linear_attn.*/full_attn.*）⇒ 两后端的效果/性能读数不直接可比，跨后端比较须注明。",
     "target_regex_mechanism": {
      "field": "lora.target_regex（ms-swift 官方字段 swift/arguments/tuner_args.py:127；:201-202 覆盖 target_modules）",
      "shape_chain": "仓内 lora.target_modules 是 list → graspo_to_ms_swift_argv() 出口是 str → PEFT LoraConfig.__post_init__ 把 list 变 set → swift/tuners_utils.py:34 的 isinstance(..., str) 判否 ⇒ 落「字面/点后缀」分支 ⇒ 正则永不命中",
@@ -458,7 +453,7 @@
      "T010 实测 Δ=+13.39 pp（与 native 签名互证）"
     ],
     "namespace": "language_model.layers.N.* / visual.*（HF 真实名）",
-    "note": "ms-swift 不认 native preset 名（另一套语汇 ⇒ ValueError: Target modules not found）⇒ 用真实 HF 名正则（仓内 13 份曾训练成功的 adapter 的既有形态 ∪ 视觉）。两后端不等价（结论不变，依据订正）： 实例数同为 358（language 248 + visual 110；张量键数同为 716），参数量 native 409,923,584 vs ms-swift 410,120,192（差 196,608 ≈0.048%）—— 不得再写「122 件 vs 358 件」；不等价的依据 = 命中的模块集合不同：native layers.N.token_mixer.{k,q,v,in_proj_z,out_proj} + mlp.*；ms-swift language_model.layers.N.linear_attn.{in_proj_a,in_proj_b,in_proj_qkv,in_proj_z,out_proj} + full_attn.{q,k,v,o} + mlp.* ⇒ 跨后端读数不直接可比。"
+    "note": "ms-swift 不认 native preset 名（另一套语汇 ⇒ ValueError: Target modules not found）⇒ 用真实 HF 名正则（仓内 13 份曾训练成功的 adapter 的既有形态 ∪ 视觉）。两后端不等价（结论不变，依据订正）： 实例数 native 310（language 200 + visual 110）vs ms-swift 358（language 248 + visual 110；张量键数 716），参数量 native 384,757,760 vs ms-swift 410,120,192（差 25,362,432 ≈6.18%）—— 不得再写「120 件 vs 358 件」；不等价的依据 = 命中的模块集合不同（且实例数也不再相等）：native layers.N.token_mixer.{qkv_proj,in_proj_z,out_proj} + mlp.*；ms-swift language_model.layers.N.linear_attn.{in_proj_a,in_proj_b,in_proj_qkv,in_proj_z,out_proj} + full_attn.{q,k,v,o} + mlp.* ⇒ 跨后端读数不直接可比。"
    },
    "namespaces": {
     "native_public": "language.* / visual.*（checkpoint 签名）",
