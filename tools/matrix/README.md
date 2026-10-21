@@ -188,6 +188,34 @@ docs/capability-matrix.data.json（机读数据：列定义 + 统一口径 + 逐
 只渲染复现需要的几项；机读件 `uniform.items`（yaml 生成器输入）**一字不动**。
 `VENUE` 去 GPU / 卡数字样；`docs/capability-matrix.md` 指针同步。
 
+### ★ 列瘦身轮（2026-10-21）：第 4 章渲染面 19 → 16 列
+
+判据 = **同一事实只发布一次**：`lr` 与训练轮数只由「训练方法 × 模式」决定、附加参数只由
+「训练方法 × 模式 × 后端」决定 ⇒ 这三列改由页面第 3 章两张静态表
+（`template.html` 的「训练超参：按训练方法 × 后端」＋「算法级参数」）逐行发布，表格侧不再逐档重复。
+
+**本小节写的 16 列是现行形态**；上面「精简轮 2 / 修正包 / 修正轮 4 / 精简轮 4」几节是**历史留痕**
+（各自写的是当时的列数，⛔ 不要按它们数现在的列）。
+
+| 段（列组 `MATRIX_GROUPS`） | 列（渲染面 `RENDERED_COLUMNS`，共 **16**） |
+|---|---|
+| 基础 1 | `tier` 档号（sticky） |
+| 状态 1 | `status` 是否通过（三态：`通过` / `不通过` / `待测试`） |
+| 主要参数 8 | `model_tbl` 模型 ／ `algo` 算法 ／ `mode_tbl` 模式 ／ `backend_tbl` 后端 ／ `tp` TP ／ `pp` PP ／ `dp` DP ／ `cards_total` 总卡数 |
+| 实验数据 5 | `peak_mem` 显存峰值 ／ `steps_actual` 实跑步数 ／ `elapsed` 耗时 ／ `throughput` 吞吐 ／ `effect` 效果 |
+| 备注 1 | `note` 备注（条件 / 限制 / 失败归因） |
+
+- `MATRIX_COLUMNS` 里另有 3 个**非渲染**字段（`model` / `mode` / `backend`，带 `into="conditions"`）
+  由第 3 章承载 ⇒ 渲染面 = `RENDERED_COLUMNS` = **16** 列（列组 1 + 1 + 8 + 5 + 1）。
+- 数据件仍保留 `lr` / `max_epochs` / `switches` 三字段（配置生成链路消费）⇒ **只是不渲染**，⛔ 不是删字段。
+- 状态词表同步收敛为**三态**：`通过` / `不通过` / `待测试`（`build_official.STATUS_VOCABULARY`、
+  `render_matrix.STATUS_CLASS`、页面第 4 章图例**同一份**；原第四态「未纳入验收」并入「不通过」，
+  其"不纳入"措辞仍可由 `note_contract(..., has_excluded=True)` 取到）。
+- 机核同源（⛔ 不写死第二份清单）：`build_official._table_structure_single_source_self_test` 的
+  ③ / ③b / ⑧ 与 `run_self_proof` ㉕a2 都按 `RENDERED_COLUMNS` 现算，并**精确钉住** 16 列 / 参数 8 列
+  （⛔ 不是"至少 N 列"）；`verify_matrix` 已于 2026-10-20 退役为非门禁，其 `REQUIRED_MARKERS`
+  依赖的 `lr` / `max_epochs` 两列已不存在 ⇒ **运行期 fail-closed**（import 期不再抛，⛔ 不复活当门禁）。
+
 ## 设计规则：表格之外一切写死不变，变量全在数据
 
 ★ **全文确保只有矩阵随测试与 debug 变化，其他部分写死不变**（主席裁决）。

@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # ⚠ 退役说明（2026-10-20 起）：人读件 docs/capability-matrix.html 自此为**手写真相源**（写好了就不动，脚本只负责把第 4 章表格数字从数据件填进去）；本文件**不再作为交付门禁**，不再要求 PASS，也不为它调整文档文字。保留仅供参考。
+# ⚠ 追加（2026-10-21）：第 4 章已改 **16 列**（删 `lr` / `max_epochs` / `switches`）⇒ 本文件模块级 `REQUIRED_MARKERS`
+#   依赖这两列，import 期即 AssertionError。此属**退役件的预期失效**，⛔ 不据此改文档文字、⛔ 不复活本文件当门禁。
 """verify_matrix.py — 机核执法：把「模板 + 数据」重新渲染，与在盘 HTML 比对并做结构断言。
 
 一条命令即判定「HTML 是否被手工改动过 / 结构是否符合新两大部分」：
@@ -51,7 +53,21 @@ FORBIDDEN_OLD_SECTIONS = ["part1", "part2", "sec1", "sec1b", "sec2", "sec3", "se
 #:   （`lr` 列 = 学习率；`max_epochs` 列 = 训练轮次。列标一改 ⇒ 这两条断言立刻红。）
 _LR_COL = [(i, c) for i, c in enumerate(render_matrix.MATRIX_COLUMNS) if c["key"] == "lr"]
 _EPOCH_COL = [(i, c) for i, c in enumerate(render_matrix.MATRIX_COLUMNS) if c["key"] == "max_epochs"]
-assert len(_LR_COL) == 1 and len(_EPOCH_COL) == 1, "REQUIRED_MARKERS 依赖的 lr / max_epochs 列缺失"
+#: ⚠ 2026-10-21（第 4 章列瘦身轮，渲染面 19 → 16 列）：`lr` / `max_epochs` 两列已删
+#:   （取值改由模板第 3 章「训练超参：按训练方法 × 后端」两张静态表承载）
+#:   ⇒ 原先这里的**模块级 `assert`** 会在 import 期抛错，连带把 `--help` 与 import 本件的消费者
+#:   （`run_self_proof`、`tests/scripts/test_entry_smoke.py` 的入口冒烟）一起打崩。
+#:   处置（⛔ 不复活本件当门禁、⛔ 不放宽任何断言）：
+#:     ① import 期**不再抛**，只记 `SHAPE_MISMATCH`；
+#:     ② `main()` 在参数解析后**立刻 FAIL**（rc=1，fail-closed：结构不认识就不给 PASS）；
+#:     ③ 两条 marker 退化为**永不命中**的哨兵串，万一绕过 ② 也只会红、不会绿。
+SHAPE_MISMATCH = (len(_LR_COL) != 1 or len(_EPOCH_COL) != 1)
+_MISSING_COL_SENTINEL = "\x00__retired_marker_column_missing__\x00"
+
+
+def _col_label(cols):
+    """取列标；列已不存在时返回**永不命中**的哨兵（⛔ 不用空串——空串在任何文本里都"命中"）。"""
+    return cols[0][1]["label"] if cols else _MISSING_COL_SENTINEL
 
 # ---- ④A. 必须出现的规则关键词（缺一即 FAIL） ----
 # ★ 精简轮 4（2026-10-17 主席令）：人读件只留四章（这是什么表 / 通过标准 / 实验条件 / 结果矩阵）。
@@ -123,8 +139,8 @@ REQUIRED_MARKERS = [
     ("实验条件·算法", "算法"),
     ("实验条件·训练后端", "训练后端"),
     ("实验条件·可训练参数", "可训练参数"),
-    ("实验条件·学习率（表格列 lr）", _LR_COL[0][1]["label"]),
-    ("实验条件·训练轮次（表格列）", _EPOCH_COL[0][1]["label"]),
+    ("实验条件·学习率（表格列 lr）", _col_label(_LR_COL)),
+    ("实验条件·训练轮次（表格列）", _col_label(_EPOCH_COL)),
     ("实验条件·训练数据", "训练数据"),
     ("实验条件·统一超参", "统一超参"),
     # 评测口径可复核（§17.7「基线值与判据口径必须带口径」）
@@ -951,6 +967,13 @@ def main():
                          gen_configs.DEFAULT_DECLARED_MANIFEST + "）")
     ap.add_argument("--quiet", action="store_true")
     a = ap.parse_args()
+
+    if SHAPE_MISMATCH:
+        # ★ fail-closed：列结构不认识就不给 PASS（⛔ 不静默跳过断言）。本件已于 2026-10-20 退役为非门禁。
+        print("FAIL [③ 结构] 第 4 章已改 16 列（删 lr / max_epochs / switches）：本件 REQUIRED_MARKERS "
+              "依赖的两列表头已不存在 ⇒ **退役件的预期失效**（2026-10-20 退役，⛔ 非交付门禁、"
+              "⛔ 不据此回改文档文字）。")
+        return 1
 
     template_text = Path(a.template).read_text(encoding="utf-8")
     data = json.loads(Path(a.data).read_text(encoding="utf-8"))

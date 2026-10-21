@@ -44,6 +44,16 @@ section{margin-top:34px;}
 .rule{font-weight:600;}
 ol.criteria>li{margin:10px 0;}
 ul.uniform{margin:6px 0;}
+/* 第 3 章「按训练方法 × 后端」「按训练方法」两张参数表：允许换行，短值列不折行
+   （⛔ 与第 4 章 table.matrix 的版式无关：那张表由渲染器逐列现算） */
+#s3 table.cfg{border-collapse:collapse;width:100%;margin:10px 0 8px;font-size:13px;line-height:1.6;}
+#s3 table.cfg th,#s3 table.cfg td{border:1px solid var(--line);padding:6px 9px;text-align:left;
+  vertical-align:top;white-space:normal;word-break:normal;overflow-wrap:anywhere;}
+#s3 table.cfg thead th{background:var(--bg-soft);font-weight:600;white-space:nowrap;}
+#s3 table.cfg tbody td:first-child{white-space:nowrap;font-weight:600;}
+#s3 table.cfg td.v{white-space:nowrap;font-variant-numeric:tabular-nums;}
+#s3 ol.notes{margin:8px 0 0;padding-left:24px;}
+#s3 ol.notes li{margin:6px 0;}
 .table-wrap{overflow:auto;max-height:78vh;border:1px solid var(--line);border-radius:8px;background:#fff;}
 table.matrix{border-collapse:separate;border-spacing:0;font-size:12.5px;white-space:nowrap;min-width:2600px;}
 table.matrix th,table.matrix td{border-right:1px solid var(--line-soft);border-bottom:1px solid var(--line-soft);
@@ -74,23 +84,19 @@ table.matrix tbody tr:nth-child(even) td.g-note{background:#f7f8fa;}
 table.matrix tbody tr:nth-child(even) td.col-tier{background:#f2f5f8;}
 table.matrix tbody tr:hover td{background:#e8f3ff;}
 table.matrix tbody tr:hover td.col-tier{background:#e8f3ff;}
-/* 「主要参数」组的长文本列允许换行（旧版同款：按列给宽度，⛔ 不压缩短列）
-   ★ 2026-10-21 第 4 章重构轮：`lora_target` / `data_scale` / `steps` 三列已删除
-     ⇒ 可换行集合只剩 `switches`（其余参数列一律为短值：9B/27B、1/2/4、5.0e-06、2/4/8…）。 */
-table.matrix td[data-col="switches"]{
-  white-space:normal;word-break:normal;overflow-wrap:anywhere;}
-/* 列宽：按内容给足（旧版版式；⛔ 不为塞进视口而压缩） */
+/* 列宽：按内容给足（旧版版式；⛔ 不为塞进视口而压缩）
+   ★ 2026-10-21 第 4 章列瘦身：`lr` / `max_epochs` / `switches` 三列已删除（取值改由第 3 章
+     「按训练方法 × 后端」两张表承载）⇒ 「主要参数」组不再有长文本列，本组列一律为短值
+     （9B/27B、1/2/4、TP/PP/DP…），换行规则只剩「实验数据」「备注」两组各列。 */
 table.matrix th[data-col="tier"]{min-width:64px;}        table.matrix th[data-col="status"]{min-width:108px;}
 table.matrix th[data-col="model_tbl"]{min-width:56px;}   table.matrix th[data-col="algo"]{min-width:78px;}
 table.matrix th[data-col="mode_tbl"]{min-width:64px;}    table.matrix th[data-col="backend_tbl"]{min-width:78px;}
 table.matrix th[data-col="tp"]{min-width:52px;}          table.matrix th[data-col="pp"]{min-width:52px;}
 table.matrix th[data-col="dp"]{min-width:52px;}          table.matrix th[data-col="cards_total"]{min-width:76px;}
-table.matrix th[data-col="lr"]{min-width:84px;}          table.matrix th[data-col="max_epochs"]{min-width:88px;}
-table.matrix th[data-col="switches"]{min-width:200px;}
-/* 2026-10-21（第 4 章重构）：模型 / TP / PP / DP / 总卡数 / lr / 轮次 一律为短值 ⇒ 居中 + 等宽数字 */
+/* 2026-10-21（第 4 章列瘦身）：模型 / TP / PP / DP / 总卡数 一律为短值 ⇒ 居中 + 等宽数字 */
 table.matrix td[data-col="model_tbl"],table.matrix td[data-col="tp"],table.matrix td[data-col="pp"],
-table.matrix td[data-col="dp"],table.matrix td[data-col="cards_total"],table.matrix td[data-col="lr"],
-table.matrix td[data-col="max_epochs"]{text-align:center;font-variant-numeric:tabular-nums;}
+table.matrix td[data-col="dp"],table.matrix td[data-col="cards_total"]
+{text-align:center;font-variant-numeric:tabular-nums;}
 /* 第 4 章「是否通过」三态图例：绿 / 红 / 黄，与状态单元格同一批 CSS 变量（⛔ 不引入外部资源） */
 #s4 ul.status-legend{margin:10px 0 14px;padding-left:22px;}
 #s4 ul.status-legend li{margin:3px 0;}
@@ -179,29 +185,115 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <ul class="tight">
 <li>A800，单机 8 卡，机器拓扑为 A800 PCIe：GPU 以 NVLink 成对相连、对与对之间走 PCIe bridge。</li>
 </ul>
-<h3>统一超参（对所有档位相同）</h3>
+<h3>训练超参：按训练方法 × 后端</h3>
+<p>学习率（lr）只由<b>训练方法与模式</b>决定、总训练轮数只由<b>训练方法</b>决定，两者在两个后端上<b>来自同一份配置（同一来源）</b>，不随卡数与并行的分法变化。两个后端的差别集中在后两列：<b>同一个训练方法，在两个后端上各自真实下发的字段</b>。单卡 micro batch 是两份独立配置、同值 1（ms-swift 侧 <code>per_device_train_batch_size=1</code>、native 侧 <code>micro_batch_size=1</code>，不是同一个字段）⇒ 两列各写一次。不适用的组合记 <code>—</code>。</p>
+<table class="cfg">
+<thead>
+<tr><th>训练方法 · 模式</th><th>学习率 lr</th><th>总训练轮数</th><th>ms-swift 后端附加参数</th><th>native 后端附加参数</th></tr>
+</thead>
+<tbody>
+<tr>
+<td>SFT · LoRA</td>
+<td class="v"><code>2.0e-05</code></td>
+<td class="v"><code>4</code></td>
+<td><code>per_device_train_batch_size=1</code>；<code>sequence_parallel_size=1</code>（关闭）；<code>use_vllm=false</code>；<code>nproc_per_node=总卡数</code>（纯数据并行）；LoRA 档不开分片引擎（优化器态只覆盖适配器参数）。</td>
+<td><code>micro_batch_size=1</code>；<code>tp_size</code> / <code>dp_size</code> 可大于 1（LoRA 支持张量并行与数据并行）；<code>sequence_parallel</code> 默认关闭，且要求 <code>tp_size≥2</code>。</td>
+</tr>
+<tr>
+<td>SFT · 全参</td>
+<td class="v"><code>5.0e-06</code></td>
+<td class="v"><code>4</code></td>
+<td><code>per_device_train_batch_size=1</code>；<code>sequence_parallel_size=1</code>（关闭）；<code>use_vllm=false</code>；<code>nproc_per_node=总卡数</code>（纯数据并行）；全参必须分片优化器态 ⇒ 走 FSDP2（<code>fsdp</code> 字段透传，见注 6）。</td>
+<td><code>micro_batch_size=1</code>；全参只能用流水并行（<code>pp_size</code> 可大于 1，<code>tp_size</code> / <code>dp_size</code> 固定 1，见注 2）；<code>sequence_parallel</code> 要求 <code>tp_size≥2</code>；优化器态可整体放 CPU（<code>offload_optimizer_state=true</code>，触发条件见注 2）。</td>
+</tr>
+<tr>
+<td>GRASPO · LoRA</td>
+<td class="v"><code>5.0e-06</code></td>
+<td class="v"><code>8</code></td>
+<td><code>per_device_train_batch_size=1</code>；<code>sequence_parallel_size=1</code>（关闭）；<code>use_vllm=false</code>；<code>nproc_per_node=总卡数</code>（纯数据并行）；LoRA 档不开分片引擎（优化器态只覆盖适配器参数）。</td>
+<td><code>micro_batch_size=1</code>；<code>tp_size</code> / <code>dp_size</code> 可大于 1（LoRA 支持张量并行与数据并行）；<code>sequence_parallel</code> 默认关闭，且要求 <code>tp_size≥2</code>。</td>
+</tr>
+<tr>
+<td>GRASPO · 全参</td>
+<td class="v"><code>5.0e-06</code></td>
+<td class="v"><code>8</code></td>
+<td><code>per_device_train_batch_size=1</code>；<code>sequence_parallel_size=1</code>（关闭）；<code>use_vllm=false</code>；<code>nproc_per_node=总卡数</code>（纯数据并行）；全参必须分片优化器态 ⇒ 走 FSDP2（<code>fsdp</code> 字段透传，见注 6）。</td>
+<td><code>micro_batch_size=1</code>；全参只能用流水并行（<code>pp_size</code> 可大于 1，<code>tp_size</code> / <code>dp_size</code> 固定 1，见注 2）；<code>sequence_parallel</code> 要求 <code>tp_size≥2</code>；优化器态可整体放 CPU（<code>offload_optimizer_state=true</code>，触发条件见注 2）；<code>pp_size&gt;1</code> 时须显式预授权（<code>allow_unverified_pp_rollout=true</code>，性质见注 3）。</td>
+</tr>
+<tr>
+<td>CPT · LoRA</td>
+<td class="v"><code>5.0e-06</code></td>
+<td class="v"><code>2</code></td>
+<td><code>per_device_train_batch_size=1</code>；<code>sequence_parallel_size=1</code>（关闭）；<code>use_vllm=false</code>；<code>nproc_per_node=总卡数</code>（纯数据并行）；LoRA 档不开分片引擎（优化器态只覆盖适配器参数）。</td>
+<td>—（该后端不提供 CPT 通道，见注 4）</td>
+</tr>
+<tr>
+<td>CPT · 全参</td>
+<td class="v"><code>5.0e-06</code></td>
+<td class="v"><code>2</code></td>
+<td><code>per_device_train_batch_size=1</code>；<code>sequence_parallel_size=1</code>（关闭）；<code>use_vllm=false</code>；<code>nproc_per_node=总卡数</code>（纯数据并行）；全参必须分片优化器态 ⇒ 走 FSDP2（<code>fsdp</code> 字段透传，见注 6）。</td>
+<td>—（该后端不提供 CPT 通道，见注 4）</td>
+</tr>
+<tr>
+<td>OPD · LoRA</td>
+<td class="v"><code>2.0e-05</code></td>
+<td class="v"><code>2</code></td>
+<td><code>per_device_train_batch_size=1</code>；<code>sequence_parallel_size=1</code>（关闭）；<code>use_vllm=false</code>；<code>nproc_per_node=总卡数</code>（纯数据并行）；LoRA 档不开分片引擎（优化器态只覆盖适配器参数）。</td>
+<td>—（该后端不提供 OPD 通道，见注 4）</td>
+</tr>
+<tr>
+<td>OPD · 全参</td>
+<td class="v"><code>5.0e-06</code></td>
+<td class="v"><code>2</code></td>
+<td><code>per_device_train_batch_size=1</code>；<code>sequence_parallel_size=1</code>（关闭）；<code>use_vllm=false</code>；<code>nproc_per_node=总卡数</code>（纯数据并行）；全参必须分片优化器态 ⇒ 走 FSDP2（<code>fsdp</code> 字段透传，见注 6）。</td>
+<td>—（该后端不提供 OPD 通道，见注 4）</td>
+</tr>
+</tbody>
+</table>
+<ol class="notes">
+<li><b>DeepSpeed 已停用</b>：优化器步长之前的梯度范数在其下不可信，不能作为判据读数。早期按卡数选 ZeRO 档的规则（≤2 卡 <code>zero2_offload</code>、4 卡 <code>zero2</code>）随之<b>作废</b>——本页的分片与 offload 取值一律按上表<b>两个后端各自的路径</b>读，不再按卡数推。</li>
+<li><b>native 全参的两条硬限制</b>：<code>tp_size&gt;1</code> 或 <code>dp_size&gt;1</code> 会被配置校验直接拒绝（全参的 DP 副本基座梯度不做 all-reduce，会静默训错），只能靠 <code>pp_size</code> 摊层；上表 native 列的优化器态 CPU offload <b>以「全参 + 单卡（<code>tp=dp=pp=1</code>）」为触发条件</b>，它是 1 卡显存不足时的预置退路：只把优化器态搬到 CPU、不减少 GPU 上的权重与梯度 ⇒ 救不回 27B 全参在 ≤4 卡上的显存；且该开关的消费实现目前只覆盖 SFT 训练通道（GRASPO 档按同一条件打开，是否真正生效未获确认）。</li>
+<li><b>native 流水并行 + rollout 的预授权闸门</b>：native 后端在 <code>pp_size&gt;1</code> 且训练方法带 rollout（GRASPO / OPD）时，启动期默认拒绝运行，必须显式预授权。这是<b>对未验证组合的预授权闸门，不是性能开关</b>：默认拒绝是为了不把未验证的组合当成可用；打开它只表示允许尝试，不等于该组合已验证通过。</li>
+<li><b>不适用记 <code>—</code></b>：CPT / OPD 没有 native 后端通道，上表相应格记 <code>—</code>，不写推测值，也不按别的后端类推。</li>
+<li><b>算法级开关不在后端列</b>：CPT 的 <code>loss_scale</code> / <code>use_chat_template</code>、GRASPO 的奖励与采样参数、OPD 的教师权重换出（<code>offload_teacher_model</code>）都是<b>算法级、与后端无关</b>，只在下一节「算法级参数」发布，不在两个后端列重复。</li>
+<li><b>ms-swift 全参为什么必须分片优化器态</b>：纯数据并行会把整份优化器态留在每张卡上；FSDP2（<code>fsdp</code>）是当前唯一的可用载体，已入库两份配方（完整状态字典 / 叠加 CPU offload）。Megatron 通道（TP / PP / CP）在本项目生产路径未接线，<b>当前不可用，不作为可选方案</b>。</li>
+</ol>
+<h3>算法级参数（按训练方法，两个后端相同）</h3>
+<table class="cfg">
+<thead>
+<tr><th>训练方法</th><th>算法级参数</th></tr>
+</thead>
+<tbody>
+<tr><td>SFT</td><td>无额外算法级开关（只用监督信号训练）。</td></tr>
+<tr><td>GRASPO</td><td>奖励类型 <code>reward.kind=graspo</code>；每个提示的 rollout 组大小 <code>rollout_group_size=8</code>（一次采 8 条）；rollout 队列批 <code>rollout_queue_batch_size=8</code>；rollout 采样温度 <code>temperature=1.0</code>（评测时的温度另由评测条件固定）；策略比裁剪 <code>policy_ratio_clip_eps=0.2</code>。</td></tr>
+<tr><td>CPT</td><td>对整条序列计算 loss（<code>pretrain.loss_scale=all</code>）；不套对话模板（<code>pretrain.use_chat_template=false</code>）。</td></tr>
+<tr><td>OPD</td><td>教师模型权重在使用间隙换出到 CPU（<code>offload_teacher_model=true</code>）；教师模型身份见上节「模型说明」。</td></tr>
+</tbody>
+</table>
+<h3>公共超参（所有训练方法、两个后端相同）</h3>
 <ul class="uniform">
 <li>上下文长度上限（token）：<code>8192</code></li>
-<li>权重精度：<code>bfloat16</code></li>
-<li>梯度检查点：<code>true</code></li>
-<li>单卡 micro batch size（native：micro_batch_size／ms-swift：per_device_train_batch_size）：<code>1</code></li>
-<li>梯度累积 micro-batches：<code>1</code></li>
-<li>每轮保存检查点（训练过程控制，训练循环直接消费）：<code>false</code></li>
-<li>GRASPO 奖励类型：<code>graspo</code></li>
-<li>序列并行度（只对 ms-swift 档生效）：<code>1</code></li>
-<li>ms-swift 档是否用 vLLM 推理（只对 ms-swift 档生效）：<code>false</code></li>
-<li>运行期显存监控采样间隔（秒）：<code>2.0</code></li>
+<li>权重精度（两个后端读同一字段 <code>model.torch_dtype</code>）：<code>bfloat16</code></li>
+<li>梯度检查点（两个后端读同一字段 <code>model.gradient_checkpointing</code>）：<code>true</code></li>
+<li>梯度累积 micro-batches（两个后端读同一字段 <code>training.gradient_accumulation_micro_batches</code>）：<code>1</code></li>
+<li>每轮保存检查点（两个后端读同一字段 <code>training.save_checkpoint_every_epoch</code>，训练循环直接消费）：<code>false</code></li>
+<li>学习率调度（<code>lr_scheduler</code>）：<code>constant</code>（恒定学习率，不做衰减）</li>
+<li>预热步数（<code>warmup_steps</code>，仅 cosine / linear 调度器使用）：<code>0</code></li>
+<li>梯度范数裁剪阈值（<code>max_grad_norm</code>）：<code>1.0</code></li>
+<li>权重衰减（<code>weight_decay</code>）：<code>0.01</code></li>
 <li>训练随机种子：<code>42</code></li>
+<li>运行期显存监控采样间隔（秒）：<code>2.0</code></li>
 </ul>
 </section>
 
 <!-- ========================= 4. 测试结果 ========================= -->
 <section class="part" id="s4">
 <h2>4. 测试结果</h2>
+<p>本表 = 训练算法 × 模型 × 模式 × TP × PP × DP 的全量组合（总卡数 ≤ 4，不含 OPD 教师）经显存可行性筛选后的结果：保留 124 档、剔除 36 档；剔除判据与逐档剔除清单由仓内 <code>tools/matrix/enumerate_matrix.py</code> 生成。</p>
 <ul class="status-legend">
-<li><b class="st-pass">通过</b>（绿色）：已实跑并达到判据要求。</li>
-<li><b class="st-fail">未通过</b>（红色）：已实跑但未达到判据要求，或该档在当前环境无法运行。</li>
-<li><b class="st-pending">尚未验证</b>（黄色）：尚未实跑验证。</li>
+<li><b class="st-pass">通过</b>（绿色）：已实跑，且判据全部满足。</li>
+<li><b class="st-fail">不通过</b>（红色）：已实跑，但至少一条判据不满足（含该档在当前环境无法运行）。</li>
+<li><b class="st-pending">待测试</b>（黄色）：尚未实跑，没有任何结论。</li>
 </ul>
 <div class="table-wrap">{{MATRIX_TABLE}}</div>
 </section>

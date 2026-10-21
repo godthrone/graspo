@@ -18,7 +18,7 @@
 - 结果列禁止手工回填：本脚本是唯一写入 HTML 的通道；verify_matrix.py 会重新渲染并逐字节比对。
 - 渲染确定性：不读时钟、不读环境、不读网络；同一 (template, data) ⇒ 同一字节串。
 - 支持两类列：
-    * 普通列：一个数据字段一格（当前 19 列**全部**是普通列）；
+    * 普通列：一个数据字段一格（当前 16 列**全部**是普通列）；
     * 合并列（列定义里带 "merge"）：把若干字段按 "sub_labels" 组装成「小节 + 值」的一格。
       ★ 2026-10-21「第 4 章重构」轮后**已无列使用**它（原 `data_scale` / `steps` 两列按主席令删除）
         —— 实现保留、供后续需要时复用，⛔ 不是死码（`merge_cell_inner` / `cell_display_text` 同源引用）。
@@ -34,11 +34,17 @@ from pathlib import Path
 #:     `{{GEN_BANNER}}` 等占位符一律下架（⛔ 不留"静态区仍由数据现算"的通道）。
 PLACEHOLDER_TOKENS = ("{{DOC_TITLE}}", "{{GENERATOR}}", "{{DATA_PATH}}", "{{MATRIX_TABLE}}")
 
-#: ★★ 19 列的功能矩阵表结构（**单一真相源**，宪法 §1.4）：
-#:   档号 → 是否通过 → 主要参数 11 列 → 实验数据 5 列 → 备注 1 列；两级表头 + 5 个列组。
-#:   ★ 2026-10-21「第 4 章重构」轮（主席口头指令）：渲染面由 21 列收敛为 **19 列** ——
-#:     删 `lora_target` / `data_scale` / `steps` 三列；新增渲染列 `model_tbl`（模型，值只 `9B`/`27B`）；
-#:     `lr` / `max_epochs` 两列**按主席给的删除条件实测不成立而保留**（第 3 章无 lr/epoch）。
+#: ★★ 16 列的功能矩阵表结构（**单一真相源**，宪法 §1.4）：
+#:   档号 → 是否通过 → 主要参数 8 列 → 实验数据 5 列 → 备注 1 列；两级表头 + 5 个列组。
+#:   ★ 2026-10-21「第 4 章重构」轮：渲染面由 21 列收敛为 **19 列** ——
+#:     删 `lora_target` / `data_scale` / `steps` 三列；新增渲染列 `model_tbl`（模型，值只 `9B`/`27B`）。
+#:   ★ 2026-10-21「第 4 章列瘦身」轮：渲染面再由 19 列收敛为 **16 列** ——
+#:     删 `lr` / `max_epochs` / `switches` 三列。删除条件已成立：这三项的取值改由
+#:     模板第 3 章「训练超参：按训练方法 × 后端」与「算法级参数」两张静态表承载
+#:     （lr / 轮次 = f(训练方法, 模式)，与后端、卡数无关；附加参数 = f(训练方法, 模式, 后端)）
+#:     ⇒ 逐档取值可由第 3 章规则完整重建，表格里不再重复发布。
+#:     ⚠ 数据件的 `lr` / `max_epochs` / `switches` 字段**一字未删**（生成配置的那条链路仍消费它们，
+#:     见 `gen_configs.py`）；本常量只决定"渲染哪些列"，不决定"数据件留哪些字段"。
 #:   ★ 2026-10-19 对齐轮曾由旧版 `65ac5e7` 的 21 列逐字恢复；**本轮（分区阈值 ≤2/≥3 轮）**再把
 #:     分区阈值由「< 5」改为「**≤ 2**」⇒ 表格列从 13 列扩回 **21 列**（13 参数 + 6 结果 + 档号/状态）。
 #:     （列 key / 表头 / 列组归属 / 出现顺序 / sticky / group_start）从数据件 `columns` 上移到这里
@@ -92,12 +98,12 @@ MATRIX_COLUMNS = (
     {"key": "pp", "label": "PP", "group": "param"},
     {"key": "dp", "label": "DP", "group": "param"},
     {"key": "cards_total", "label": "总卡数", "group": "param"},
-    # ★ `lr` / `训练轮次` **保留**：主席给的删除条件是"第 3 章「统一超参」已逐算法写明 lr 与 epoch"。
-    #   实测第 3 章那 11 条统一超参里**既无 lr 也无 epoch**（template.html:173-189）⇒ 按主席条件分支
-    #   保留该两列；取值已在数据件里为纯数字（lr: 5.0e-06 / 2.0e-05 / —；轮次: 2 / 4 / 8）。
-    {"key": "lr", "label": "lr", "group": "param"},
-    {"key": "max_epochs", "label": "训练轮次", "group": "param"},
-    {"key": "switches", "label": "关键开关", "group": "param"},
+    # ── 以下 0 列：`lr` / `训练轮次` / `关键开关` 三列已在 2026-10-21「列瘦身」轮删除 ──
+    #   ★ 删除条件 = "第 3 章已按训练方法×后端写明 lr / 轮次 / 附加参数"，本轮已把第 3 章改成
+    #     两张静态表（`template.html` 的「训练超参：按训练方法 × 后端」与「算法级参数」）⇒ 条件成立：
+    #       · lr 与轮次 = f(训练方法, 模式)，两个后端同一来源；
+    #       · 附加参数 = f(训练方法, 模式, 后端)，逐后端分列写实值。
+    #   ⛔ 修法只动"渲染哪些列"：数据件的 `lr` / `max_epochs` / `switches` 字段仍在（生成链路消费）。
     # ── 实验数据 5 列 + 备注：2026-10-21 轮**原样不动** ──
     {"key": "peak_mem", "label": "显存峰值(GiB)", "group": "data", "group_start": True},
     {"key": "steps_actual", "label": "实跑步数", "group": "data"},
@@ -148,7 +154,12 @@ for _c in MATRIX_COLUMNS:
     for _f in COLUMN_SOURCES[_c["key"]]:
         SOURCE_OWNERS.setdefault(_f, []).append(_c["key"])
 
-#: ★★ **第 3 章「测试条件」逐项登记表**（`CHAPTER3_CONDITION_ITEMS`）—— 模板第 3 章里每一条
+#: ⚠ 状态注明（2026-10-21「第 4 章列瘦身」轮）：模板第 3 章已改写为**按训练方法 × 后端的两张
+#:   参数表**（lr / 轮次 / 两个后端的附加参数 + 算法级参数 + 公共超参），不再是一串
+#:   `<li><b>条目名：</b>…</li>` ⇒ 下表**不再描述第 3 章的结构**。保留它的唯一原因是仍有消费者
+#:   从它现算（退役件 `verify_matrix` 的 ④Z 与 `run_self_proof` ㉕）；⛔ 它不是"第 3 章清单"的第二份。
+
+#: ★★ **第 3 章「测试条件」逐项登记表**（`CHAPTER3_CONDITION_ITEMS`）—— 原设计：模板第 3 章里每一条
 #:   `<li><b>条目名：</b>…</li>` 都必须在下面**登记**，并声明该条是"哪个参数的取值发布处"：
 #:     - `row_field`：该条**承载其取值**的行字段（⇒ 这条在第 3 章发布该参数的值）；
 #:     - `row_field=None`：**说明式条目**（caliber 条目）—— 只解释某参数的取值是**怎么来的**，
@@ -237,12 +248,19 @@ def cell_display_text(row, key):
     src = col.get("source", key)
     return "" if row.get(src) is None else str(row.get(src))
 
-# 结果列着色映射（此处只用于生成带 class 的单元格；绿/红/黄与第 4 章三态图例同源）
-#: ★ 2026-10-21「第 4 章重构」轮：人读件的「是否通过」列只允许**三值** `通过` / `未通过` /
-#:   `尚未验证`（见模板第 4 章图例）⇒ 前三条即本轮三态；后三条是 2026-10-20 之前的旧四态，
-#:   仅为历史行数据（里程碑页等）仍能着色而**保留**，⛔ 当前 54 档无一命中。
+# 结果列着色映射（此处只用于生成带 class 的单元格；黄/绿/红与第 4 章三态图例同源）
+#: ★★ 状态词表 = **三态**（唯一词表，与模板第 4 章图例逐字同一份）：
+#:   `待测试`（黄，st-pending）／ `通过`（绿，st-pass）／ `不通过`（红，st-fail）。
+#:   一条状态一句话可判：实跑且判据全满足 ⇒ 通过；实跑但至少一条判据不满足 ⇒ 不通过；
+#:   尚未实跑 ⇒ 待测试。
 STATUS_CLASS = {
-    "通过": "st-pass", "未通过": "st-fail", "尚未验证": "st-pending",
+    "通过": "st-pass", "不通过": "st-fail", "待测试": "st-pending",
+}
+#: ★ 旧词兼容着色（⛔ **不是**词表的一部分、**不**进图例、**不**写进任何静态文字）：
+#:   只为"行数据尚未迁移到三态词"的历史渲染仍按同色显示，避免把状态列渲染成无色。
+#:   三态词在数据件里全覆盖之后，本字典应整块删除（⛔ 不得反向由它推出词表）。
+STATUS_CLASS_LEGACY = {
+    "未通过": "st-fail", "尚未验证": "st-pending",
     "已验证可用": "st-pass", "已验证不可用": "st-fail",
     "未纳入验收": "st-illegal",
 }
@@ -269,7 +287,8 @@ def cell_html(col, row, by_method=None):
     if key == "effect":
         val = human_view_effect(val, row.get("train_method"), by_method)
     if key == "status":
-        cls = STATUS_CLASS.get(val.strip(), "st-dash")
+        _v = val.strip()
+        cls = STATUS_CLASS.get(_v) or STATUS_CLASS_LEGACY.get(_v, "st-dash")
         classes.append(cls)
     return f'<td class="{" ".join(classes)}" data-col="{key}">{html.escape(val)}</td>'
 
@@ -315,7 +334,7 @@ def build_matrix_table(data):
     #   ⇒ 列 key / 表头 / 列组 / 顺序属于**渲染器的静态结构**，不随数据走（§1.4 单一真相源）。
     #   ★★ 条件/结果分区轮：带 `into="conditions"` 的列**不上表**（它们在第 3 章静态文字里列出）；
     #      ★ 阈值 ≤2/≥3 轮：这样的条件列收敛到 **3 列**（`model` / `mode` / `backend`）
-    #      ⇒ 渲染面 = `RENDERED_COLUMNS` = **21 列**（档号 1 + 状态 1 + 参数 13 + 实验数据 5 + 备注 1）；
+    #      ⇒ 渲染面 = `RENDERED_COLUMNS` = **16 列**（档号 1 + 状态 1 + 参数 8 + 实验数据 5 + 备注 1）；
     #      `MATRIX_COLUMNS` 仍是**唯一真相源**
     #      （第 3 章清单 ↔ 表格列清单由 ④Z 从它现算比对，⛔ 不靠第二份手抄清单）。
     cols = [dict(c) for c in RENDERED_COLUMNS]

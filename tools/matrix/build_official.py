@@ -28,8 +28,12 @@ from pathlib import Path
 import extract_spec as _spec
 
 # ★★ 表格结构的**唯一真相源**（`render_matrix.py` 与本脚本同目录；宪法 §1.4）：
-#   渲染面 **21 列**（= `render_matrix.RENDERED_COLUMNS`；另有 3 列上提第 3 章「测试条件」，
+#   渲染面 **16 列**（= `render_matrix.RENDERED_COLUMNS`；另有 3 列上提第 3 章「测试条件」，
 #   第 3 章另有一条"TP 口径"**说明式**条目）
+#   ★ 2026-10-21「第 4 章列瘦身」轮：渲染面 21 列 → 19 列 → **16 列**（删 `lr` / `max_epochs` /
+#     `switches` 三列）—— lr 与训练轮数是 f(训练方法, 模式)、附加参数是 f(训练方法, 模式, 后端)，
+#     三者已由模板第 3 章「训练超参：按训练方法 × 后端」+「算法级参数」两张静态表逐行发布
+#     ⇒ 表格侧不再逐档重复（§1.4 单一真相源）。
 #   的列 key / 表头 / 列组 / 顺序由渲染器**引用**而来，⛔ 本文件不再自带第二份
 #   （病史：本文件原先写死一份 10 列 `COLUMNS`，与在盘列数不一致 ⇒ 重跑会把表头覆盖回 10 列）。
 #   ★ 2026-10-19（使用者口径「脚本只负责把测试结果填进最后一章测试表」）同批：
@@ -170,7 +174,7 @@ def matrix_text_sanitize(t: str) -> str:
 
 def official_run_path(row, state):
     """跑次列 = 不透明跑次 ID + 日期（不含任何文件系统路径）。"""
-    if state in ("尚未验证", "未纳入验收"):
+    if state in (S_UNVERIFIED, S_EXCLUDED):      # ★ 2026-10-21：三态词表下的「无结论 / 不实施」
         return "—"
     rid, date = OPAQUE_RUN.get(row.get("tier"), (f"RUN-{row.get('tier')}", ""))
     return f"{rid}（{date}）" if date else rid
@@ -204,8 +208,24 @@ TOOLCHAIN_ONLY_ROW_KEYS = (
 #: ①**允许清单**（行级）：= 矩阵表渲染列 + 逐档结论块 + 机读列定义（`gen_configs.py` 的消费者）。
 #: ★ 逐档参数/读数字段是**矩阵表本身**（§17.7 的「结论与归因都是使用者有权知道的」）⇒ 保留；
 #:   过程件（证据索引、跑次溯源、内部对账、作废结论全文、陈旧读数史…）⇒ 剔除、迁 `.local/`。
-S_AVAILABLE, S_UNAVAILABLE, S_UNVERIFIED, S_EXCLUDED = "已验证可用", "已验证不可用", "尚未验证", "未纳入验收"
-STATUS_VOCABULARY = [S_AVAILABLE, S_UNAVAILABLE, S_UNVERIFIED, S_EXCLUDED]
+#: ★★ 2026-10-21（状态词表收敛轮）：状态由**四态收敛为三态** —— `通过` / `不通过` / `待测试`
+#:   （与模板第 4 章图例、渲染器 `render_matrix.STATUS_CLASS` **同一份词表**，一条状态一句话可判：
+#:   实跑且判据全满足 ⇒ 通过；实跑但至少一条不满足（含该档在本环境跑不起来）⇒ 不通过；
+#:   尚未实跑 ⇒ 待测试）。
+#:   ★ 原第四态「未纳入验收」**并入「不通过」**（不实施 / 不适用 = 判据未全满足），⛔ 不再作为
+#:     独立状态发布；其"不纳入"措辞仍可由 `note_contract(..., has_excluded=True)` 取到（语义未丢）。
+#:   ★ 旧四态字面只作**入参别名**（见 `LEGACY_STATUS_ALIASES`，历史数据仍可读），⛔ 不进 `STATUS_VOCABULARY`。
+S_AVAILABLE, S_UNAVAILABLE, S_UNVERIFIED = "通过", "不通过", "待测试"
+S_EXCLUDED = S_UNAVAILABLE                     # 第四态并入「不通过」
+STATUS_VOCABULARY = [S_AVAILABLE, S_UNAVAILABLE, S_UNVERIFIED]
+#: 旧四态（2026-10-21 之前的词表）→ 新三态的入参别名表；⛔ 不出现在发布件里。
+LEGACY_STATUS_ALIASES = {
+    "已验证可用": S_AVAILABLE,
+    "已验证不可用": S_UNAVAILABLE,
+    "尚未验证": S_UNVERIFIED,
+    "未纳入验收": S_UNAVAILABLE,
+    "未通过": S_UNAVAILABLE,
+}
 
 #: ★★ **实测读数列**（单一真相源）：未结论档必须全为 `—`（§17.7「未验证不得冒充可用」）。
 #:   校验端（`verify_matrix` ④C）与自证端（`run_self_proof`）都从这里取，⛔ 不各自手抄一份。
@@ -214,7 +234,9 @@ EXP_DATA_KEYS = ("peak_mem", "elapsed", "effect")
 HUMAN_VIEW_ROW_KEYS = (
     # 矩阵表渲染列 + 列定义里用到的逐档参数
     #   （★ 2026-10-19 分区轮：9 列上提第 3 章、渲染面 13 列；
-    #    ★ 2026-10-19 阈值 ≤2/≥3 轮：3 列上提第 3 章、渲染面 21 列 —— TP 等并行列回归表格）
+    #    ★ 2026-10-19 阈值 ≤2/≥3 轮：3 列上提第 3 章、渲染面 21 列 —— TP 等并行列回归表格；
+    #    ★ 2026-10-21 列瘦身轮：删 `lr` / `max_epochs` / `switches` ⇒ 渲染面 **16 列**。
+    #      ⚠ 这三个字段**仍在允许清单里**：它们是数据件字段（配置生成链路仍消费），只是不渲染）
     "tier", "status", "model", "algo", "mode", "backend", "parallel", "parallel_dims",
     "parallel_scheme", "lora_target", "lr", "data_subset", "steps", "switches", "spec_json",
     "model_path", "train_method", "tuner_type", "cards", "tp_size", "pp_size", "dp_size",
@@ -430,9 +452,10 @@ def _context_ok(s):
 #:   设计依据（§17.7）：① 访客必须一眼看出"这档为什么不能用"，且**不得只写「失败」**；
 #:   ② 原先的「备注」列与它高度重复 ⇒ 合并为一列，表宽立刻减一列。
 _NOT_FAILED = {
-    "已验证可用": "—",
-    "尚未验证": "—",
-    "未纳入验收": "—",
+    S_AVAILABLE: "—",
+    S_UNVERIFIED: "—",
+    # ★ 2026-10-21 三态收敛：原「未纳入验收」并入 `S_UNAVAILABLE` ⇒ 该态**不再**在这里统一给 `—`
+    #   （它的结论由 `verdict` 决定；无 verdict 时由 `derive_not_failed_reason` 回落 `—`）。
 }
 
 
@@ -477,9 +500,11 @@ def note_contract(state, has_verdict=False, has_excluded=False, raw_note=""):
     if state == S_AVAILABLE:
         return NOTE_CONTRACT["已结论"]
     if state == S_UNAVAILABLE:
+        # ★ 2026-10-21 三态收敛：原「未纳入验收」并入「不通过」⇒ 用 `has_excluded` 区分文案，
+        #   ⛔ 两支措辞一字未改（「不纳入」在合并后仍可取到）。
+        if has_excluded:
+            return NOTE_CONTRACT["不纳入"]
         return NOTE_CONTRACT["未过"] if has_verdict else (raw_note or "—")
-    if state == S_EXCLUDED:
-        return NOTE_CONTRACT["不纳入"] if has_excluded else (raw_note or "—")
     # 未结论（尚未验证）：备注列已按本轮口径清空 ⇒ 契约值 = 逐档清空值本身（缺省 `—`）
     return raw_note or "—"
 
@@ -982,7 +1007,15 @@ def _table_structure_single_source_self_test():
 
     chk("① COLUMNS 就是 render_matrix.MATRIX_COLUMNS（同一对象）", COLUMNS is _render.MATRIX_COLUMNS)
     chk("② GROUPS 就是 render_matrix.MATRIX_GROUPS（同一对象）", GROUPS is _render.MATRIX_GROUPS)
-    chk("③ 渲染面列数 == RENDERED_COLUMNS（21 列）", len(_render.RENDERED_COLUMNS) == 21)
+    #   ★ 2026-10-21 列瘦身轮：渲染面 21 → 19 → **16 列**（删 `lr` / `max_epochs` / `switches`；
+    #     取值改由模板第 3 章「训练超参：按训练方法 × 后端」+「算法级参数」两张静态表承载）。
+    #     ⛔ 这里**不放宽成"至少 N 列"**：③ 精确 16，③b 再逐字按序钉住 16 个列 key。
+    chk("③ 渲染面列数 == RENDERED_COLUMNS（16 列）", len(_render.RENDERED_COLUMNS) == 16)
+    _RENDERED_KEY_ORDER = ("tier", "status", "model_tbl", "algo", "mode_tbl", "backend_tbl",
+                           "tp", "pp", "dp", "cards_total",
+                           "peak_mem", "steps_actual", "elapsed", "throughput", "effect", "note")
+    chk("③b 渲染面 16 列 key **逐字、按序** == 定稿清单（多一列/少一列/换序都红）",
+        tuple(c["key"] for c in _render.RENDERED_COLUMNS) == _RENDERED_KEY_ORDER)
     _keys = [c["key"] for c in COLUMNS]
     chk("④ 列 key 无重复且均属常量", len(set(_keys)) == len(_keys))
     chk("⑤ 首列 sticky 且为档号列",
@@ -996,9 +1029,12 @@ def _table_structure_single_source_self_test():
     chk("⑦ 旧 10 列表头（训练数据 / 未过判据）已不在列定义中",
         "训练数据" not in _labels and "未过判据" not in _labels)
     #   ★ 2026-10-19 阈值 ≤2/≥3 轮：并行方案三列（TP / PP / DP）必须都在表里 ——
-    #     主席查表口径的第一等公民（"dp2tp2 / pp4tp1dp1 哪个更快"），缺 TP 即红。
-    chk("⑧ 留在表格的逐档差异项齐备（TP / PP / DP / 总卡数 / 算法 / 关键开关）",
-        all(x in _labels for x in ("TP", "PP", "DP", "总卡数", "算法", "关键开关")))
+    #     查表口径的第一等公民（"dp2tp2 / pp4tp1dp1 哪个更快"），缺 TP 即红。
+    #   ★ 2026-10-21 列瘦身轮：`关键开关` 列已删 ⇒ 本断言由"包含若干表头"**升级**为
+    #     "渲染面 param 组的表头**逐字、按序** == 定稿清单"（⛔ 不是放宽：多/少/换序都红）。
+    _rendered_param_labels = [c["label"] for c in _render.RENDERED_COLUMNS if c["group"] == "param"]
+    chk("⑧ 留在表格的逐档差异项**逐字按序**齐备（模型 / 算法 / 模式 / 后端 / TP / PP / DP / 总卡数）",
+        _rendered_param_labels == ["模型", "算法", "模式", "后端", "TP", "PP", "DP", "总卡数"])
     # ★★ ⑧b/⑧c：2026-10-19 条件/结果**分区轮**的生成端同源断言（⛔ 不是靠注释声明）
     _cond_keys = [k for k, _l in _render.CONDITION_PARAMS]
     chk("⑧b 上提第 3 章的 3 个参数**不在**渲染列里",
@@ -1083,11 +1119,12 @@ GENERATOR = "tools/matrix/render_matrix.py"
 SOURCE = "docs/capability-matrix.data.json"
 HUMAN_VIEW = "docs/capability-matrix.html"
 
-#: ★★ 表格结构（列组 + 渲染面 21 列）＝ **从渲染器引用**（`render_matrix.MATRIX_GROUPS` /
+#: ★★ 表格结构（列组 + 渲染面 **16 列**）＝ **从渲染器引用**（`render_matrix.MATRIX_GROUPS` /
 #:   `MATRIX_COLUMNS`；渲染面 = `RENDERED_COLUMNS`），
 #:   ⛔ 本文件不再自带第二份（§1.4 单一真相源）。
 #:   ★ 病史与修法（2026-10-19）：本文件原先写死一份**10 列**的 `COLUMNS`/`GROUPS`
-#:     （精简轮 4 的旧形态），而在盘数据件 / 人读件已是 13 / 21 列渲染面 ⇒ 一旦重跑本生成器，
+#:     （精简轮 4 的旧形态），而在盘数据件 / 人读件已是 13 / 21 列渲染面（现行 **16 列**，
+#:     见 2026-10-21 列瘦身轮）⇒ 一旦重跑本生成器，
 #:     表头会被悄悄覆盖回 10 列（双真相源缺陷）。现改为**引用同一个常量对象**，
 #:     并由 `--human-view-self-test` 增加"两个名字必须是同一对象"的阳性对照。
 #:   ★ 同批：正式机读件**不再落 `columns` / `groups`**（使用者口径「脚本只负责把测试结果填进
@@ -2298,6 +2335,8 @@ def _state_literal(text: str) -> str:
     """
     if text in STATUS_VOCABULARY:
         return text
+    if text in LEGACY_STATUS_ALIASES:      # ★ 旧四态字面（历史数据）⇒ 新三态
+        return LEGACY_STATUS_ALIASES[text]
     if text.startswith("通过"):
         return S_AVAILABLE
     if text.startswith("失败"):

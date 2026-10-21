@@ -51,8 +51,14 @@ def test_guard_passes_when_status_after_matches():
 
 def test_guard_flags_contradicting_status_after():
     """★ W1 的**阳性对照**：`status_after` 与最终 `status` 相反 ⇒ 必须报出（复核报告点名的形态）。"""
-    for after, status in (("尚未验证", "未纳入验收"), ("尚未验证", "已验证不可用"),
-                          ("已验证不可用", "尚未验证"), ("未纳入验收", "已验证不可用")):
+    # ★ 2026-10-21（状态词表四态 → 三态：通过 / 不通过 / 待测试）：原四处夹具里
+    #   ("未纳入验收", "已验证不可用") 这一对在新词表下**归一到同一态**（都 ⇒ 不通过）
+    #   ⇒ 按定义**不再构成矛盾**（⛔ 不是把断言放宽：仍要求"相反必报出"）。
+    #   处置 = 把夹具换成三态下的**相反对**（三个方向齐备），并保留一对"旧字面 × 新状态"的相反组合
+    #   （旧四态字面仍可读入，⛔ 不再要求它们在彼此之间可分）。
+    for after, status in (("待测试", "通过"), ("待测试", "不通过"),
+                          ("通过", "待测试"), ("不通过", "待测试"),
+                          ("已验证不可用", "待测试")):
         probs = bo.caliber_field_guard([_row("T0XX", status, status_after=after)])
         assert probs, (after, status)
         assert "status_after" in probs[0]
