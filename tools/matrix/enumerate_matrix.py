@@ -52,6 +52,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 WORK_DIR_REL = ".local/hb-workspace/20261017-matrix-realign/task-enum-matrix"
 DEFAULT_REPORT_JSON = f"{WORK_DIR_REL}/excluded-report.json"
 DEFAULT_ARCHIVE_DIR = f"{WORK_DIR_REL}/archive-54"
+DEFAULT_AUDIT_JSON = f"{WORK_DIR_REL}/enumerate_audit.json"
 CRITERIA_VERSION = "enum-v1-2026-10-21"
 
 #: 单卡总容量（**实测**）：OOM 原文逐字 "GPU 0 has a total capacity of 79.25 GiB"
@@ -1052,7 +1053,7 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
         "train_path": f"subsets-v2/{tier}.jsonl",
         "data_source": "ELAM V5 mini 冒烟集（按算法子集条数）",
         "data_subset": "待生成",
-        "lora_target": "真实 HF 名正则（两后端统一；唯一真相源 src/graspo/core/lora.py:30-34）" if mode == "LoRA" else "—",
+        "lora_target": "真实 HF 名正则（两后端共用同一条；取值以核心 LoRA 配置的 target 名单为准）" if mode == "LoRA" else "—",
         "applicable": True,
         # `runnable`：**今天**这个后端能不能起跑该算法（⛔ 与 `status` 正交：status 是"测没测过"，
         #   runnable 是"通道在不在"）。MISSING_CHANNEL 档 = 通道缺 ⇒ false，配置装载期会被
@@ -1113,6 +1114,17 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
         #   标了 measured 但 `min_cards` 未定 ⇒ OPD 档必须带 `cards_pending` 标记，
         #   否则「教师卡数未定」会被静默当已定。本矩阵的教师不计入卡数（主笔原文）⇒ 恰属未定态。
         row["cards_pending"] = True
+    # ── 发布件 / 审计件分离（阻断修复）：内部审计字段收进 `_audit`，发布件只留渲染+消费字段 ──
+    #   ★ 发布件行键必须 ⊆ `build_official.HUMAN_VIEW_ROW_KEYS`（机核见 V16）；
+    #     审计字段（候选排序/落选原文/证据号/源码路径/生成依据全文）只进 `.local` 审计件。
+    blocked_on = row.get("blocked_on") or "—"
+    row["blocked_reason"] = blocked_on          # 人读卡点（允许清单内的既有字段）
+    audit: dict[str, Any] = {}
+    for k in ("id", "native_tp", "native_pp", "native_dp", "total_cards",
+              "runnable", "blocked_on", "steps_basis", "backend_reason"):
+        if k in row:
+            audit[k] = row.pop(k)
+    row["_audit"] = audit
     return row
 
 
@@ -1288,8 +1300,46 @@ PUBLISH_WORD_REWRITES: tuple[tuple[str, str], ...] = (
     ("口径", "判据"),
 )
 
+#: ★ 发布件**行键契约**（V16 机核）：必须 ⊆ 本表；对齐 `build_official.HUMAN_VIEW_ROW_KEYS`。
+#:   ⛔ 审计字段（backend_reason / steps_basis / id / native_tp,dp / total_cards / runnable /
+#:   blocked_on）不在本表 ⇒ 只进 `.local` 审计件。
+PUBLISH_ROW_KEYS: frozenset[str] = frozenset({
+    "tier", "status", "model", "algo", "mode", "backend", "parallel", "parallel_dims",
+    "parallel_scheme", "lora_target", "lr", "data_subset", "steps", "switches", "spec_json",
+    "model_path", "train_method", "tuner_type", "cards", "tp_size", "pp_size", "dp_size",
+    "nproc_per_node", "nnodes", "cp_size", "sp_size", "gpus", "target_modules",
+    "target_modules_mode", "deepspeed", "allow_unverified_pp_rollout", "subset_generation",
+    "subset_r3_historical", "expected_optimizer_steps_historical", "steps_formula_v2",
+    "min_optimizer_steps", "data_source", "subset_size", "prompts_per_rank", "train_path",
+    "planned_steps", "save_steps", "expected_optimizer_steps_per_epoch",
+    "expected_optimizer_steps_reachable", "applicable", "max_epochs", "derived_steps",
+    "per_epoch_steps", "save_steps_basis", "data_scale", "tp", "pp", "dp", "cards_total",
+    "peak_mem", "steps_actual", "elapsed", "throughput", "effect", "note", "runs",
+    "inference", "algo_checks", "verdict", "excluded_reason", "availability",
+    "not_failed_reason", "executability", "blocked_reason",
+    "final_formats", "family", "family_min_cards", "cards_pending", "live_evidence",
+    "caliber_change",
+})
+
+#: ★ 发布件 **meta 键契约**（V16 机核）：必须 ⊆ 本表；对齐 `build_official.HUMAN_VIEW_META_KEYS`。
+#:   ⛔ `enumeration`（计数/排序键/证据索引/已知缺口/原因码说明）整体进 `.local` 审计件。
+PUBLISH_META_KEYS: frozenset[str] = frozenset({
+    "title", "version", "doc_date", "scope", "venue", "code_version", "authority",
+    "status_vocabulary", "boundary_declaration", "criteria_caliber", "criteria_version",
+    "results_policy", "distill_teacher", "lora_target_backends",
+})
+
+#: ★ 发布件里**不得出现**的内部审计线索形态（V16 机核）。
+AUDIT_ONLY_PATTERNS = (
+    (re.compile(r"src/graspo/"), "内部源码路径"),
+    (re.compile(r"\bEV\d{2}\b"), "内部证据号"),
+    (re.compile(r"\.[A-Za-z]{2,4}:\d+"), "file:line 溯源"),
+    (re.compile(r"backend_reason|steps_basis|native_tp|total_cards|\brunnable\b"), "内部审计键名"),
+)
+
+
 #: 进页面的字段（档一：⛔ 不许出现 file:line 与内部符号名）。
-RENDER_FIELDS: tuple[str, ...] = ("note", "blocked_on", "delivery_gap_short")
+RENDER_FIELDS: tuple[str, ...] = ("note", "blocked_reason")
 #: 档一字段里禁止的形态：源码行号 + 内部模块/函数名 + 内部目录名。
 RENDER_FIELD_BANNED = re.compile(
     r"\.py:\d+|_dedupe_dp_replicas|native_lora|native_full_param|_config_mapping"
@@ -1339,6 +1389,35 @@ def leak_hits_in_text(text: str) -> list[str]:
                 hits.append(f"第 {i} 行：{why} ⇒ {m.group(0)!r}")
                 break
     return hits
+
+
+def _v16_publish_vs_audit(data_text: str | None) -> tuple[bool, str]:
+    r"""V16（阻断修复）：**发布件 / 审计件分离**四条机核 ——
+    ① 行键 ⊆ `PUBLISH_ROW_KEYS`；② meta 键 ⊆ `PUBLISH_META_KEYS`；
+    ③ 全文不含 `src/graspo/`、`EV\d{2}`、file:line 溯源、审计键名；
+    ④ 审计字段确实进了审计件（由调用方另行核对行数）。"""
+    if data_text is None:
+        return False, "数据件文本未提供"
+    try:
+        doc = json.loads(data_text)
+    except Exception as exc:
+        return False, f"数据件不可解析（{exc}）"
+    rows = doc.get("rows") or []
+    meta = doc.get("meta") or {}
+    bad_row = sorted({k for r in rows for k in r} - PUBLISH_ROW_KEYS)
+    if bad_row:
+        return False, f"① 发布件行键越界：{bad_row}"
+    bad_meta = sorted(set(meta) - PUBLISH_META_KEYS)
+    if bad_meta:
+        return False, f"② 发布件 meta 键越界：{bad_meta}"
+    leaks: list[str] = []
+    for pat, why in AUDIT_ONLY_PATTERNS:
+        m = pat.search(data_text)
+        if m:
+            leaks.append(f"{why} ⇒ {m.group(0)!r}")
+    if leaks:
+        return False, f"③ 发布件里出现审计线索 {len(leaks)} 类：" + "；".join(leaks[:4])
+    return True, "①②③ 全部合规（行键/meta 键均 ⊆ 允许清单，无源码路径·证据号·file:line）"
 
 
 def _v15_publish_clean(data_text: str | None) -> tuple[bool, str]:
@@ -1527,9 +1606,15 @@ VERIFICATION_CASES: tuple[dict[str, Any], ...] = (
         "check": None,   # 由 `run_self_check` 单独核（需要发布件序列化文本，见下）
     },
     {
+        "id": "V16",
+        "claim": ("发布件/审计件分离：行键 ⊆ 允许清单、meta 键 ⊆ 允许清单，且发布件里 "
+                  "`src/graspo/`、`EV` + 两位数字、file:line 溯源、审计键名命中数 = 0"),
+        "check": None,
+    },
+    {
         "id": "V15",
         "claim": ("发布件三条硬断言：①脱敏扫描器词表命中 = 0（含「裁定/口径」等过程用语）；"
-                  "②进页面字段（note/blocked_on/delivery_gap_short）里源码行号与内部符号名命中 = 0；"
+                  "②进页面字段（note/blocked_reason）里源码行号与内部符号名命中 = 0；"
                   "③旧档号 T+三位数字 = 0"),
         "check": None,
     },
@@ -1545,6 +1630,10 @@ def run_self_check(rows, budget: float, counts: dict[str, Any] | None = None,
         if need is not None and card_limit is not None and card_limit < need:
             out.append({"id": case["id"], "claim": case["claim"], "ok": True, "skipped": True,
                         "reason": f"min_card_limit={need} 而 card_limit={card_limit} ⇒ 该形状不在枚举域，本回验不适用"})
+            continue
+        if case["id"] == "V16":
+            ok, detail = _v16_publish_vs_audit(data_text)
+            out.append({"id": "V16", "claim": case["claim"], "ok": ok, "reading": detail})
             continue
         if case["id"] == "V15":
             ok, detail = _v15_publish_clean(data_text)
@@ -1767,9 +1856,16 @@ def _del_path(doc: dict[str, Any], path: str) -> bool:
 
 
 def apply_meta_sync(meta: dict[str, Any], *, card_limit: int, budget: float,
-                    counts: dict[str, Any], script_sha: str, generated_at: str) -> dict[str, Any]:
-    """同步 meta：三态词表、`enumeration` 块、旧 54 档遗留措辞清理。返回新的 meta。"""
+                    counts: dict[str, Any], script_sha: str, generated_at: str
+                    ) -> tuple[dict[str, Any], dict[str, Any]]:
+    """同步 meta：三态词表 + 旧 54 档遗留措辞清理。
+
+    ★ 返回 `(发布 meta, 枚举审计块)`：**发布 meta 只含 `HUMAN_VIEW_META_KEYS` 允许的键**
+      （⛔ 不许把内部审计明细塞进发布件）；枚举/证据/缺口等明细全部进审计件（`.local`）。
+    """
     new = json.loads(json.dumps(meta))  # 深拷贝（⛔ 不改输入）
+
+    new.pop("enumeration", None)     # ★ 枚举块整体进审计件（V16：meta 键必须 ⊆ 允许清单）
 
     for drop in META_DROPS:
         _del_path(new, drop["path"])   # 不存在也不算错（幂等）
@@ -1809,7 +1905,7 @@ def apply_meta_sync(meta: dict[str, Any], *, card_limit: int, budget: float,
         joined = "\n  ".join(leftovers[:40])
         raise SystemExit("FATAL: meta 仍含旧 54 档遗留措辞/档号 ⇒ 补 META_OVERRIDES 后重跑：\n  " + joined)
 
-    new["enumeration"] = {
+    enumeration = {
         "script": "tools/matrix/enumerate_matrix.py",
         "script_sha256": script_sha,
         "criteria_version": CRITERIA_VERSION,
@@ -1871,7 +1967,45 @@ def apply_meta_sync(meta: dict[str, Any], *, card_limit: int, budget: float,
         "generated_at": generated_at,
         "rule": "★ 本脚本是档位表的唯一生成入口，⛔ 不许手改 data.json 的 rows[]",
     }
-    return new
+    # ★ 渲染型 meta 子树（lora_target_backends / criteria_caliber）里剥掉审计线索：
+    #   它们是**人读视图**的一部分 ⇒ ⛔ 不携带 `src/graspo/**`、`*.py:NNN`、`EV##`。
+    for sub in ("lora_target_backends", "criteria_caliber"):
+        if sub in new:
+            new[sub] = _strip_audit_refs(new[sub])
+
+    return new, enumeration
+
+
+#: 渲染型 meta 子树里的审计线索 → 面向使用者的落点（顺序敏感）。
+_AUDIT_REF_REWRITES: tuple[tuple[str, str], ...] = (
+    (r"core/schema\.py:\d+(?:-\d+)?\s*/\s*ripple/group_decision\.py:\d+",
+     "rollout 队列表与 rollout 组规模两个开关"),
+    (r"src/graspo/core/lora\.py", "核心 LoRA 配置"),
+    (r"swift/arguments/tuner_args\.py:\d+(?:-\d+)?", "ms-swift 侧"),
+    (r"swift/tuners_utils\.py:\d+", "ms-swift 侧"),
+    (r"[A-Za-z0-9_./-]+\.py:\d+(?:-\d+)?", ""),
+    (r"src/graspo/[A-Za-z0-9_./-]+", ""),
+    (r"\bEV\d{2}\b", "实测台账"),
+    # 收尾：替换后残留的空格与指代不顺
+    ("核心 LoRA 配置 的", "核心 LoRA 配置里的"),
+    ("ms-swift 侧 的", "ms-swift 侧的"),
+    ("（ms-swift 官方字段 ms-swift 侧；:201-202 覆盖 target_modules）",
+     "（ms-swift 官方字段，覆盖其 target_modules）"),
+)
+
+
+def _strip_audit_refs(node: Any) -> Any:
+    """深拷贝后把字符串值里的源码路径 / file:line / 证据号换成面向使用者的落点。"""
+    if isinstance(node, dict):
+        return {k: _strip_audit_refs(v) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_strip_audit_refs(v) for v in node]
+    if isinstance(node, str):
+        text = node
+        for pat, repl in _AUDIT_REF_REWRITES:
+            text = re.sub(pat, repl, text)
+        return text
+    return node
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -1881,8 +2015,14 @@ def apply_meta_sync(meta: dict[str, Any], *, card_limit: int, budget: float,
 
 def build(
     *, card_limit: int, budget: float, generated_at: str, script_sha: str, base_doc: dict[str, Any],
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """核心：枚举 → 剔除 → 选型 → 行 + meta + 剔除清单。纯函数（无 IO、无时钟）。"""
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """核心：枚举 → 剔除 → 选型 → **发布件** + **审计件** + 剔除清单。纯函数（无 IO、无时钟）。
+
+    ★ 发布件（`docs/capability-matrix.data.json`）：只含渲染字段 + 生成器消费字段 + 人读 `note`，
+      行键 ⊆ `PUBLISH_ROW_KEYS`、meta 键 ⊆ `PUBLISH_META_KEYS`（V16 机核）。
+    ★ 审计件（`.local/…/enumerate_audit.json`，⛔ 不入库）：`backend_reason`（候选排序/落选原文/
+      证据号/源码路径）、`steps_basis`、枚举块、证据表、已知缺口。
+    """
     enumerated, exceeded = build_candidates(card_limit)
 
     rows: list[dict[str, Any]] = []
@@ -1965,17 +2105,54 @@ def build(
     counts["excluded"].setdefault("ALGO_BACKEND", 0)
     counts["excluded"].setdefault("MISSING_CHANNEL", counts["kept_breakdown"]["missing_channel"])
     counts["exceed_cards"] = len(exceeded)
+    _bands: dict[str, int] = {}
+    for _r in rows:
+        _b = ((_r.get("_audit") or {}).get("backend_reason") or {}).get("band")
+        if _b:
+            _bands[_b] = _bands.get(_b, 0) + 1
+    counts["bands"] = _bands
+
+    pub_meta, enumeration = apply_meta_sync(
+        base_doc.get("meta", {}), card_limit=card_limit, budget=budget,
+        counts=counts, script_sha=script_sha, generated_at=generated_at)
+
+    # ★ 发布/审计分离：`_audit` 摘出行外；自检与 report 用**合并后的完整行**（含 backend_reason 等）
+    checks_rows = [dict(r, **(r.get("_audit") or {})) for r in rows]
+    audit_rows = [(r["tier"], r.pop("_audit")) for r in rows]
 
     doc = {
         "schema": base_doc.get("schema", "capability-matrix/v3-official"),
-        "meta": apply_meta_sync(base_doc.get("meta", {}), card_limit=card_limit, budget=budget,
-                                counts=counts, script_sha=script_sha, generated_at=generated_at),
+        "meta": pub_meta,
         "rows": rows,
         "data_keys": base_doc.get("data_keys", ["peak_mem", "steps_actual", "elapsed", "throughput", "effect", "note"]),
     }
 
-    # ★ 发布件专用：过程用语中性化（⛔ 只动字符串值；report 仍用原始 rows，溯源留在 .local）
+    # ★ 发布件专用：过程用语中性化（⛔ 只动字符串值；审计件与 report 保留原始溯源）
     doc = _polish_doc(doc)
+
+    audit = {
+        "schema": "capability-matrix/audit-v1",
+        "note": ("内部审计件（⛔ 不随发布件提供）：发布件里被摘出的逐档审计线索 —— 后端候选与落选原文、"
+                 "估算分项、证据号与源码路径、生成依据；另有枚举块（计数/排序键/原因码/证据索引/已知缺口）。"),
+        "generated_at": generated_at,
+        "script_sha256": script_sha,
+        "criteria_version": CRITERIA_VERSION,
+        "card_limit": card_limit,
+        "budget_gib": budget,
+        "counts": counts,
+        "enumeration": enumeration,
+        "evidence_table": [
+            {"id": e["id"], "label": e["label"], "kind": e["kind"], "effect": e["effect"],
+             "scope": {"algo": e["scope"][0], "model": e["scope"][1], "mode": e["scope"][2],
+                       "backend": e["scope"][3],
+                       "shapes": e["scope"][4] if e["scope"][4] == "*" else [list(x) for x in e["scope"][4]]},
+             "reading": e["reading"], "source": e["source"],
+             "delivery_gap": e.get("delivery_gap")}
+            for e in MEASURED_EVIDENCE
+        ],
+        "rows": [{"tier": tier, **a} for tier, a in audit_rows],
+        "excluded": excluded,
+    }
 
     report = {
         "criteria_version": CRITERIA_VERSION,
@@ -1985,7 +2162,7 @@ def build(
         "counts": counts,
         "excluded": excluded,
         "verification_cases": run_self_check(
-            rows, budget, counts, card_limit,
+            checks_rows, budget, counts, card_limit,
             # ★ V14 要的是**发布件序列化文本**（= 落盘那一刻的字节）⇒ 与写盘共用 `serialize_doc`
             data_text=serialize_doc(doc),
         ),
@@ -2002,15 +2179,9 @@ def build(
                 "evidence": r["backend_reason"]["evidence"],
                 "gaps": r["backend_reason"]["gaps"],
             }
-            for r in rows
+            for r in checks_rows
         ],
-        "evidence_table": [
-            {"id": e["id"], "kind": e["kind"], "effect": e["effect"],
-             "scope": {"algo": e["scope"][0], "model": e["scope"][1], "mode": e["scope"][2],
-                       "backend": e["scope"][3], "shapes": e["scope"][4] if e["scope"][4] == "*" else [list(s) for s in e["scope"][4]]},
-             "reading": e["reading"], "source": e["source"]}
-            for e in MEASURED_EVIDENCE
-        ],
+        "evidence_table": audit["evidence_table"],
         "constants": {
             "CARD_CAPACITY_GIB": {"value": CARD_CAPACITY_GIB, "level": "【实测】OOM 原文 79.25 GiB"},
             "budget_gib": {"value": budget, "level": "设计选择（tests/e2e/generate_matrix.py:1355 默认 78.0）"},
@@ -2027,7 +2198,7 @@ def build(
             "teacher_weight_gib": {"value": TEACHER_WEIGHT_GIB, "level": "【实测】matrix54_manifest.json:128"},
         },
     }
-    return doc, report
+    return doc, report, audit
 
 
 def summarize(doc: dict[str, Any], report: dict[str, Any]) -> str:
@@ -2065,9 +2236,7 @@ def summarize(doc: dict[str, Any], report: dict[str, Any]) -> str:
                          if (model, algo, mode, be) in dist]
                 if cells:
                     lines.append(f"  {model:<3} {algo:<6} {mode:<3} : " + "，".join(cells))
-    bands: dict[str, int] = {}
-    for r in rows:
-        bands[r["backend_reason"]["band"]] = bands.get(r["backend_reason"]["band"], 0) + 1
+    bands: dict[str, int] = dict(counts.get("bands") or {})
     lines.append(f"三档判定：可行 {bands.get('可行', 0)}，余量紧 {bands.get('余量紧', 0)}，超预算 {bands.get('超预算', 0)}")
     lines.append("─" * 78)
     lines.append("自检（报告里的回验表 = 可执行断言）:")
@@ -2095,10 +2264,13 @@ def main(argv: list[str] | None = None) -> int:
                     help="固定 meta.enumeration.generated_at（确定性：同输入同输出）")
     ap.add_argument("--archive-dir", default=DEFAULT_ARCHIVE_DIR,
                     help="旧矩阵 meta/rows 归档目录（默认 .local 工位）")
+    ap.add_argument("--audit-out", default=DEFAULT_AUDIT_JSON,
+                    help="审计件输出路径（内部审计线索；默认 .local 工位，⛔ 不入库）")
     a = ap.parse_args(argv)
 
     out_path = (REPO_ROOT / a.out).resolve()
     report_path = (REPO_ROOT / a.report_json).resolve()
+    audit_path = (REPO_ROOT / a.audit_out).resolve()
     archive_dir = (REPO_ROOT / a.archive_dir).resolve()
     script_sha = _sha256_of(Path(__file__).resolve())
     generated_at = a.generated_at or datetime.now().astimezone().isoformat(timespec="seconds")
@@ -2107,7 +2279,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"FATAL: 输出数据件不存在：{out_path}（本脚本只增量更新既有数据件，不凭空造目录）")
     base_doc = json.loads(out_path.read_text(encoding="utf-8"))
 
-    doc, report = build(card_limit=a.card_limit, budget=a.budget_gib,
+    doc, report, audit = build(card_limit=a.card_limit, budget=a.budget_gib,
                         generated_at=generated_at, script_sha=script_sha, base_doc=base_doc)
 
     # ⓪ 写盘前 fail-closed：用 `scan_matrix_leaks` 的同一套规则扫发布件全文
@@ -2149,6 +2321,10 @@ def main(argv: list[str] | None = None) -> int:
     out_path.write_text(data_text, encoding="utf-8")
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    # ★ 审计件（内部线索：backend_reason / steps_basis / 枚举块 / 证据表 / 已知缺口）⇒ .local，⛔ 不入库
+    audit_path.parent.mkdir(parents=True, exist_ok=True)
+    audit_text = json.dumps(audit, ensure_ascii=False, indent=2) + "\n"
+    audit_path.write_text(audit_text, encoding="utf-8")
 
     def _rel(p: Path) -> str:
         try:
@@ -2158,6 +2334,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"\n已写：{_rel(out_path)}（{len(doc['rows'])} 行）")
     print(f"已写：{_rel(report_path)}（剔除清单）")
+    print(f"已写：{_rel(audit_path)}（审计件：backend_reason/steps_basis/枚举块/证据表）")
     print(f"已归档：{_rel(archive_dir)}/（旧 meta + 旧 rows）")
     return 0
 
