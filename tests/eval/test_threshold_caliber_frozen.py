@@ -13,7 +13,7 @@
 - SFT ⇒ Δ ≥ +10.0 pp（epoch=4）
 - GRASPO ⇒ Δ ≥ +5.0 pp（epoch=8）
 - CPT ⇒ non-inferiority：`after ≥ base`（Δ ≥ 0.0 pp；epoch=2）
-- OPD ⇒ Δ ≥ +5.0 pp（criterion = `delta_pp`；epoch=2）—— ★ 2026-10-19 口径变更（原为不劣化）
+- OPD ⇒ Δ ≥ +5.0 pp（criterion = `gain_pp`；epoch=2）—— ★ 2026-10-19 口径变更（原为不劣化）
 
 一律**点估计**，⛔ 不做假设检验、不引置信区间 / 显著性。
 
@@ -97,12 +97,12 @@ def test_pass_lines_come_from_the_frozen_single_source():
     by_method = th.load_frozen_method_thresholds()
     assert set(by_method) == {"sft", "graspo", "cpt", "opd"}
 
-    assert (by_method["sft"].criterion, by_method["sft"].value_pp) == ("delta_pp", 10.0)
-    assert (by_method["graspo"].criterion, by_method["graspo"].value_pp) == ("delta_pp", 5.0)
+    assert (by_method["sft"].criterion, by_method["sft"].value_pp) == ("gain_pp", 10.0)
+    assert (by_method["graspo"].criterion, by_method["graspo"].value_pp) == ("gain_pp", 5.0)
     assert (by_method["cpt"].criterion, by_method["cpt"].value_pp) == ("non_inferiority", 0.0)
     # ★ 2026-10-19 口径变更（OPD：不劣化 ⇒ Δ ≥ +5.0 pp）⇒ 本断言按**新口径**改期望值；
     #   ⛔ 不是放宽、⛔ 不是删断言：负向用例（下列分别验 CPT 不劣化 / OPD Δ 线）强度不变。
-    assert (by_method["opd"].criterion, by_method["opd"].value_pp) == ("delta_pp", 5.0)
+    assert (by_method["opd"].criterion, by_method["opd"].value_pp) == ("gain_pp", 5.0)
 
 
 def test_no_second_threshold_copy_survives_in_src():
@@ -145,7 +145,7 @@ def test_sft_compares_delta_not_absolute_accuracy():
 
     flat = compute_delta(base50, _report("sft", 52.0), method="sft")
     assert flat.delta_percentage_points == pytest.approx(2.0)
-    assert flat.criterion == "delta_pp"
+    assert flat.criterion == "gain_pp"
     assert flat.threshold_pp == pytest.approx(10.0)
     assert flat.passed is False, "Δ=+2.0 竟按旧的『绝对准确率 ≥50%』判通过 = 量纲错配"
 
@@ -173,14 +173,14 @@ def test_sft_role_suffix_is_inferred_without_the_flag():
 def test_graspo_line_is_five_pp_not_twenty(tmp_path):
     """base=50, after=55 ⇒ Δ=+5.0 ⇒ 通过；旧副本 20.0 会把它判否。"""
     result = compute_delta(_report("base", 50.0), _report("after", 55.0))
-    assert (result.method, result.criterion, result.threshold_pp) == ("graspo", "delta_pp", 5.0)
+    assert (result.method, result.criterion, result.threshold_pp) == ("graspo", "gain_pp", 5.0)
     assert result.passed is True
 
     assert compute_delta(_report("base", 50.0), _report("after", 54.9)).passed is False
 
 
 # ── ④ CPT：non-inferiority（after ≥ base）／OPD：Δ ≥ +5.0 pp，都必须显式给 method ──
-#   ★ 2026-10-19 口径变更：OPD 由「不劣化」改为 **Δ ≥ +5.0 pp**（criterion = `delta_pp`、value = 5.0）
+#   ★ 2026-10-19 口径变更：OPD 由「不劣化」改为 **Δ ≥ +5.0 pp**（criterion = `gain_pp`、value = 5.0）
 #     ⇒ 原先那条把 CPT/OPD 合并成"不劣化线"的用例**按新语义拆成两条**（⛔ 不删用例、⛔ 不放宽断言：
 #     CPT 仍验 Δ ≥ 0（`Δ=0` 过 / `Δ<0` 不过），OPD 改验 Δ ≥ +5.0（`+5.0` 过 / `+4.9`、`<0` 不过）。
 
@@ -198,9 +198,9 @@ def test_cpt_stays_non_inferiority():
 
 
 def test_opd_applies_delta_plus_five():
-    """OPD：criterion = `delta_pp`、线 = +5.0 pp ⇒ `Δ=+5.0` 过、`Δ=+4.9` 不过、`Δ<0` 不过。"""
+    """OPD：criterion = `gain_pp`、线 = +5.0 pp ⇒ `Δ=+5.0` 过、`Δ=+4.9` 不过、`Δ<0` 不过。"""
     at_line = compute_delta(_report("base", 50.0), _report("after", 55.0), method="opd")
-    assert at_line.criterion == "delta_pp"
+    assert at_line.criterion == "gain_pp"
     assert at_line.threshold_pp == pytest.approx(5.0)
     assert at_line.passed is True
     # 边界：恰好 +5.0 ⇒ 通过（算子 `>=`，逐字取自真相源）
@@ -220,8 +220,8 @@ def test_cpt_opd_cannot_be_inferred_from_role():
     inferred = compute_delta(_report("base", 50.0), _report("after", 50.0))
     # ★ 新口径：CPT 走不劣化、OPD 走 Δ 线、不传 method 走 GRASPO 的 Δ 线 ⇒ 三者互不可推断。
     assert cpt.criterion == "non_inferiority"
-    assert opd.criterion == "delta_pp" and opd.threshold_pp == pytest.approx(5.0)
-    assert inferred.criterion == "delta_pp"
+    assert opd.criterion == "gain_pp" and opd.threshold_pp == pytest.approx(5.0)
+    assert inferred.criterion == "gain_pp"
 
 
 # ── ⑤ 参数防呆 ────────────────────────────────────────────────────────────────

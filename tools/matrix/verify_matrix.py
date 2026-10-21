@@ -1197,7 +1197,8 @@ def main():
         for _w in CRITERIA_SUBLIST_TERMS.get(_m, ()):        # A 组口径词（主席原文点名）
             if _w not in _item:
                 _miss.append(f"A 组缺口径词 {_w!r}")
-        if str(_rule.get("criterion")) == "delta_pp":        # A 组百分点：由 value 现算，⛔ 不写死
+        # ★ 2026-10-22：判据类型名改名 delta_pp → gain_pp；旧名保留兼容（历史数据件/跑次 json）。
+        if str(_rule.get("criterion")) in ("gain_pp", "delta_pp"):   # A 组百分点：由 value 现算，⛔ 不写死
             try:
                 _want_pp = f"{float(_rule.get('value')):.1f} 个百分点"
             except (TypeError, ValueError):

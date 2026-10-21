@@ -1572,7 +1572,7 @@ def criteria_caliber(rows=None):
                 "source": "2026-10-19 口径变更令（OPD 通过线：由不劣化改为 ≥ +5.0 pp，并新增教师要求）",
                 "changed": ("★ **改动一 = OPD 通过线实质变更**：由「学生 after ≥ base（能力回收）」"
                             "（criterion = `non_inferiority`、value = 0.0）改为 **after − base ≥ +5.0 pp**"
-                            "（criterion = `delta_pp`、op = `>=`、value = 5.0）；★ **并新增教师要求**："
+                            "（criterion = `gain_pp`、op = `>=`、value = 5.0）；★ **并新增教师要求**："
                             "教师在训练数据集上的完全正确率**需高于学生未训练模型 10 个百分点**"
                             "（原教师说明「SFT 之后的 27B 产物」随之作废）。"
                             "★ **改动二 = 页面第 2 章导语与四条按 2026-10-19 口径变更的原文改写**：导语改为"
@@ -1708,7 +1708,7 @@ def criteria_caliber(rows=None):
         "ruled_out": list(_spec.RULED_OUT),
         "criteria_id": "elam-v3-allright-1",
         "threshold": {
-            "name": "delta_pp（SFT / GRASPO / OPD）＋ non_inferiority（CPT）", "unit": "百分点（pp）",
+            "name": "Δ（百分点；SFT / GRASPO / OPD）＋ non_inferiority（CPT）", "unit": "百分点（pp）",
             "value": None,
             "target": None,
             "applies_to": "★ 按算法分列（见 by_method）：SFT / GRASPO / OPD 走 Δ 通过线；CPT 走不劣化线（after ≥ base）。",
@@ -1717,15 +1717,19 @@ def criteria_caliber(rows=None):
                        "**★ 判定一律用点估计 Δ —— ⛔ 不做假设检验、不引入置信区间 / 显著性**。"),
             "historical_note": ("★ 旧口径（已被取代、留痕，⛔ 不再作为判定依据）：训练类与 GRASPO **统一 δ = +5.0 pp**；"
                                 "目标值 +10.0 pp（仅展示、不用于判定）；SFT epoch = 2。"),
+            # ★ 2026-10-22：判据类型名 `delta_pp` → **`gain_pp`**（`non_inferiority` 不变）——
+            #   原先把内部**字段名** `delta_pp` 当作取值发布（数据件字节面出现内部键名，
+            #   机核 = `test_release_carries_no_internal_source_key_name`）。判定式不变：
+            #   两者都归结为「Δ ≥ 下限」点估计（见 `src/graspo/eval/thresholds.py` 的 KNOWN_CRITERIA）。
             "by_method": {
-                "sft": {"criterion": "delta_pp", "op": ">=", "value": 10.0, "unit": "pp",
+                "sft": {"criterion": "gain_pp", "op": ">=", "value": 10.0, "unit": "pp",
                         "metric": ("数据集完全正确率（after − base）；★ **100 行档 = fit 口径**"
                                    "（评测集 = 该档自身训练文件，100 行）；其余档 = 平台方自有 702 行评测集"),
                         "pass_line_text": "after − base ≥ +10.0 pp",
                         "epoch": 4, "epoch_previous": 2,
                         "epoch_note": ("★ epoch 由 2 改为 4（判据② 的配置改动）；"
                                        "★ 现有 SFT 跑次均为 epoch=2 旧配置 ⇒ 其结论一律标注「待 epoch=4 重跑复核」。")},
-                "graspo": {"criterion": "delta_pp", "op": ">=", "value": 5.0, "unit": "pp",
+                "graspo": {"criterion": "gain_pp", "op": ">=", "value": 5.0, "unit": "pp",
                            "metric": ("数据集完全正确率（after − base）；★ **100 行档 = fit 口径**"
                                    "（评测集 = 该档自身训练文件，100 行）；其余档 = 平台方自有 702 行评测集"),
                            "pass_line_text": "after − base ≥ +5.0 pp",
@@ -1738,7 +1742,7 @@ def criteria_caliber(rows=None):
                         #    不走效果 Δ）；⛔ 不连带删除、⛔ 不改通过线数值。
                         "also": "训练 loss 正常下降",
                         "epoch": 2, "epoch_previous": 2, "epoch_note": "epoch=2 不变。"},
-                "opd": {"criterion": "delta_pp", "op": ">=", "value": 5.0, "unit": "pp",
+                "opd": {"criterion": "gain_pp", "op": ">=", "value": 5.0, "unit": "pp",
                         "metric": ("数据集完全正确率（学生 after − base）；★ **100 行档 = fit 口径**"
                                  "（评测集 = 该档自身训练文件，100 行）；其余档 = 平台方自有 702 行评测集"),
                         "pass_line_text": "after − base ≥ +5.0 pp",

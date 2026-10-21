@@ -93,7 +93,7 @@
         "caliber_change_20261019": {
           "effective": "2026-10-19",
           "source": "2026-10-19 判据变更令（OPD 通过线：由不劣化改为 ≥ +5.0 pp，并新增教师要求）",
-          "changed": "改动一 = OPD 通过线实质变更：由「学生 after ≥ base（能力回收）」（criterion = non_inferiority、value = 0.0）改为 after − base ≥ +5.0 pp（criterion = delta_pp、op = >=、value = 5.0）；并新增教师要求：教师在训练数据集上的完全正确率需高于学生未训练模型 10 个百分点（原教师说明「SFT 之后的 27B 产物」随之作废）。改动二 = 页面第 2 章导语与四条按 2026-10-19 判据变更的原文改写：导语改为「原则：训练之后效果变好，才算「可用」。」（删除「具体判别依据：…」那句）；① 去掉重复的「：」与尾句「产物可加载」⇒ 训练正常结束、无中断、无报错、退出码 0、优化器步数达标、检查点完整、没有 NaN/Inf。；② 判据改为「在平台方测试数据集与测试参数下，训练之后模型效果比不训练的原始模型好」；④ 改为「训练数据集可以完整推理一遍，效果好于未训练模型」。术语统一：效果判据名一律用「数据集完全正确率」（旧称不再出现）；评测集 / 参数判据名一律用「平台方测试数据集与测试参数」（旧称不再出现）。同批落地三处逐字一致：页面第 2 章 <ol class=\"criteria\"> 四条 ↔ 数据件 criteria_caliber.pass_criteria ↔ 生成端 build_official.py 的 criteria_caliber()（机核 = verify_matrix ④X；阳性对照 = run_self_proof ㉔）。",
+          "changed": "改动一 = OPD 通过线实质变更：由「学生 after ≥ base（能力回收）」（criterion = non_inferiority、value = 0.0）改为 after − base ≥ +5.0 pp（criterion = gain_pp、op = >=、value = 5.0）；并新增教师要求：教师在训练数据集上的完全正确率需高于学生未训练模型 10 个百分点（原教师说明「SFT 之后的 27B 产物」随之作废）。改动二 = 页面第 2 章导语与四条按 2026-10-19 判据变更的原文改写：导语改为「原则：训练之后效果变好，才算「可用」。」（删除「具体判别依据：…」那句）；① 去掉重复的「：」与尾句「产物可加载」⇒ 训练正常结束、无中断、无报错、退出码 0、优化器步数达标、检查点完整、没有 NaN/Inf。；② 判据改为「在平台方测试数据集与测试参数下，训练之后模型效果比不训练的原始模型好」；④ 改为「训练数据集可以完整推理一遍，效果好于未训练模型」。术语统一：效果判据名一律用「数据集完全正确率」（旧称不再出现）；评测集 / 参数判据名一律用「平台方测试数据集与测试参数」（旧称不再出现）。同批落地三处逐字一致：页面第 2 章 <ol class=\"criteria\"> 四条 ↔ 数据件 criteria_caliber.pass_criteria ↔ 生成端 build_official.py 的 criteria_caliber()（机核 = verify_matrix ④X；阳性对照 = run_self_proof ㉔）。",
           "unchanged": "OPD epoch = 2 不变；SFT ⇒ after − base ≥ +10.0 pp（epoch=4）、GRASPO ⇒ after − base ≥ +5.0 pp（epoch=8）、CPT ⇒ 准确率 after ≥ base（不劣化；epoch=2）三条通过线数值与判定语义未动；判据条数（四条）与四个短名未动；21 列表结构与结果列状态未动。",
           "superseded": "旧判据（留痕，不再作为判定依据）：OPD ⇒ 学生 after ≥ base（能力回收）（criterion = non_inferiority、value = 0.0）；旧教师说明 = 「SFT 之后的 27B 产物」；旧页面第 2 章导语 = 「原则：训练之后效果变好。具体判别依据：训练之后模型效果变好了，且这次训练本身真实有效；下面四条全部通过，才算「可用」。」"
         }
@@ -153,7 +153,7 @@
       ],
       "criteria_id": "elam-v3-allright-1",
       "threshold": {
-        "name": "delta_pp（SFT / GRASPO / OPD）＋ non_inferiority（CPT）",
+        "name": "Δ（百分点；SFT / GRASPO / OPD）＋ non_inferiority（CPT）",
         "unit": "百分点（pp）",
         "value": null,
         "target": null,
@@ -162,7 +162,7 @@
         "historical_note": "旧判据（已被取代、留痕，不再作为判定依据）：训练类与 GRASPO 统一 δ = +5.0 pp；目标值 +10.0 pp（仅展示、不用于判定）；SFT epoch = 2。",
         "by_method": {
           "sft": {
-            "criterion": "delta_pp",
+            "criterion": "gain_pp",
             "op": ">=",
             "value": 10.0,
             "unit": "pp",
@@ -173,7 +173,7 @@
             "epoch_note": "epoch 由 2 改为 4（判据② 的配置改动）；现有 SFT 跑次均为 epoch=2 旧配置 ⇒ 其结论一律标注「待 epoch=4 重跑复核」。"
           },
           "graspo": {
-            "criterion": "delta_pp",
+            "criterion": "gain_pp",
             "op": ">=",
             "value": 5.0,
             "unit": "pp",
@@ -196,7 +196,7 @@
             "epoch_note": "epoch=2 不变。"
           },
           "opd": {
-            "criterion": "delta_pp",
+            "criterion": "gain_pp",
             "op": ">=",
             "value": 5.0,
             "unit": "pp",

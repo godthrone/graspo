@@ -32,7 +32,11 @@ from pathlib import Path
 #:     文字 ⇒ 原 `{{CRITERIA}}` / `{{EVAL_INFO}}` / `{{VENUE}}` / `{{CODE_VERSION}}` /
 #:     `{{UNIFORM_PARAMS}}` / `{{VERDICTS}}` / `{{COVERAGE_WARNING}}` / `{{BOUNDARY}}` /
 #:     `{{GEN_BANNER}}` 等占位符一律下架（⛔ 不留"静态区仍由数据现算"的通道）。
-PLACEHOLDER_TOKENS = ("{{DOC_TITLE}}", "{{GENERATOR}}", "{{DATA_PATH}}", "{{MATRIX_TABLE}}")
+#: ★ 2026-10-22（章首数字去硬编码轮）：新增 `{{ENUM_COUNTS}}` —— 第 4 章章首那句"保留 N 档、
+#:   剔除 M 档"原先在模板里写死，口径一变（54→124 档）文档就说假话。现由
+#:   `data.meta.enumeration.counts` 现算（单一真相源 = 枚举脚本产出的审计计数）。
+PLACEHOLDER_TOKENS = ("{{DOC_TITLE}}", "{{GENERATOR}}", "{{DATA_PATH}}", "{{MATRIX_TABLE}}",
+                      "{{ENUM_COUNTS}}")
 
 #: ★★ 16 列的功能矩阵表结构（**单一真相源**，宪法 §1.4）：
 #:   档号 → 是否通过 → 主要参数 8 列 → 实验数据 5 列 → 备注 1 列；两级表头 + 5 个列组。
@@ -184,6 +188,36 @@ CHAPTER3_ITEM_LABELS = tuple(i["label"] for i in CHAPTER3_CONDITION_ITEMS)
 #: 第 3 章**已登记在案**的行字段集合（含说明式条目：如 `TP 口径` → `tp`）——
 #:   基数判据（④Z-c1）据此判断"这条参数是否已由第 3 章登记过"，⛔ 不写死清单、⛔ 不看列名字面串。
 CHAPTER3_FIELDS = frozenset(i["row_field"] for i in CHAPTER3_CONDITION_ITEMS if i.get("row_field"))
+
+
+def enum_counts_text(meta: dict) -> str:
+    """第 4 章章首的「保留 N 档、剔除 M 档」——**一律由数据现算**（⛔ 模板里不写死数字）。
+
+    取值：`meta.enumeration.counts.kept` 与 `meta.enumeration.counts.excluded.OOM_UNFIT`。
+
+    ★ fail-closed（2026-10-22）：`meta.enumeration` 缺失、或上述任一键缺失 ⇒ **直接 `SystemExit`**
+      并指明缺哪个键。⛔ 不许回退到默认数字（回退 = 文档说假话且无人察觉）。
+    """
+    def _need(path: str, obj, key):
+        if not isinstance(obj, dict):
+            raise SystemExit(f"渲染失败：{path} 不是对象（拿不到 {key}）⇒ fail-closed，"
+                             "⛔ 不回落到默认数字")
+        if key not in obj:
+            raise SystemExit(f"渲染失败：数据件缺 `{path}.{key}` ⇒ fail-closed，"
+                             "⛔ 不回落到默认数字")
+        return obj[key]
+
+    enum = _need("meta", meta, "enumeration") if "enumeration" not in meta else meta["enumeration"]
+    if not isinstance(enum, dict):
+        raise SystemExit("渲染失败：`meta.enumeration` 不是对象 ⇒ fail-closed，⛔ 不回落到默认数字")
+    counts = _need("meta.enumeration", enum, "counts")
+    kept = _need("meta.enumeration.counts", counts, "kept")
+    excluded = _need("meta.enumeration.counts", counts, "excluded")
+    oom = _need("meta.enumeration.counts.excluded", excluded, "OOM_UNFIT")
+    for _v, _n in ((kept, "counts.kept"), (oom, "counts.excluded.OOM_UNFIT")):
+        if isinstance(_v, bool) or not isinstance(_v, int):
+            raise SystemExit(f"渲染失败：`meta.enumeration.{_n}` 不是整数（{_v!r}）⇒ fail-closed")
+    return f"保留 {kept} 档、剔除 {oom} 档"
 
 
 def condition_field(label, items=None):
@@ -404,10 +438,11 @@ def build_matrix_table(data):
 def render(template_text, data):
     meta = data["meta"]
     table = build_matrix_table(data)
-    # ★★ 只保留模板里**真实存在**的 4 个占位符（见 `PLACEHOLDER_TOKENS`）：
+    # ★★ 只保留模板里**真实存在**的 5 个占位符（见 `PLACEHOLDER_TOKENS`）：
     #   第 1/2/3 章、目录、页脚、首屏注释已是模板静态文字 ⇒ ⛔ 不再从数据现算
     #   （使用者口径：脚本只负责把测试结果填进最后一章测试表）。
     repl = {
+        "{{ENUM_COUNTS}}": enum_counts_text(meta),
         "{{DOC_TITLE}}": meta.get("title", ""),
         "{{GENERATOR}}": (meta.get("authority") or {}).get("generator", ""),
         "{{DATA_PATH}}": (meta.get("authority") or {}).get("data_path", ""),

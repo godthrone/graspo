@@ -101,6 +101,11 @@ POLICY: dict[str, Spec] = {
     "tools/matrix/backfill_matrix.py": Spec(HELP, "跑次结果回填入口（增量/fail-closed）"),
     "tools/matrix/run_self_proof.py": Spec(HELP, "三组自证入口（空数据/假数据/手改 1 字符）"),
     "tools/matrix/scan_matrix_leaks.py": Spec(HELP, "矩阵脱敏扫描（§17.7 禁止项：宿主路径/内网/机器名/人名/账号）"),
+    "tools/matrix/enumerate_matrix.py": Spec(
+        HELP,
+        "档位枚举脚本：全量组合 → 按显存可行性剔除 → 生成 124 档矩阵数据件；确定性可复跑。"
+        "★ 本件不是渲染链入口（渲染 = render_matrix.py），此处只做语法/CLI 冒烟（--help ⇒ rc=0）",
+    ),
     "tools/matrix/gen_configs.py": Spec(HELP, "矩阵数据 → 测试 yaml 生成器（确定性；禁手改 yaml）"),
     # ── shell 工具/运维入口 ────────────────────────────────────────────────
     "scripts/eval_cleanup.sh": Spec(SH_HELP, "评测清理入口；支持 -h/--help ⇒ rc=0"),

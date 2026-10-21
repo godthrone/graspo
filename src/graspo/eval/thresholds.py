@@ -40,7 +40,9 @@ KNOWN_METHODS: tuple[str, ...] = ("sft", "graspo", "cpt", "opd")
 #: 认得的判据类型 → 判定式。两者都归结为「``Δ ≥ 下限``」（点估计）：
 #: ``delta_pp`` 的下限 = 该算法的 Δ 通过线；``non_inferiority`` 的下限 = 0.0 pp
 #: （即 ``after ≥ base``，真相源就是按 0.0 登记的）。
-KNOWN_CRITERIA: tuple[str, ...] = ("delta_pp", "non_inferiority")
+#: ★ 2026-10-22：Δ 判据的类型名由 `delta_pp` 改为 **`gain_pp`**（数据件不再把内部字段名
+#:   当作取值发布）；旧名 `delta_pp` 仍接受，兼容历史数据件/跑次 json。两者判定式相同。
+KNOWN_CRITERIA: tuple[str, ...] = ("gain_pp", "delta_pp", "non_inferiority")
 
 #: 唯一支持的比较算子。真相源登记为 ``">="``；出现别的算子即 fail-closed
 #: （不猜、不静默放宽）。比较用 ``>=`` 且判定一律**点估计**，不做假设检验。
@@ -67,7 +69,7 @@ class MethodThreshold:
     def judge(self, delta_pp: float) -> bool:
         """按 ``criterion`` 判定点估计 ``Δ``（百分点）。
 
-        - ``delta_pp`` ⇒ ``Δ ≥ value_pp``（该算法的 Δ 通过线）；
+        - ``gain_pp``（旧名 ``delta_pp``）⇒ ``Δ ≥ value_pp``（该算法的 Δ 通过线）；
         - ``non_inferiority`` ⇒ ``Δ ≥ value_pp``（真相源登记 ``value_pp = 0.0``，
           等价于 ``after ≥ base``）。
 

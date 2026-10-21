@@ -293,7 +293,7 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <!-- ========================= 4. 测试结果 ========================= -->
 <section class="part" id="s4">
 <h2>4. 测试结果</h2>
-<p>本表 = 训练算法 × 模型 × 模式 × TP × PP × DP 的全量组合（总卡数 ≤ 4，不含 OPD 教师）经显存可行性筛选后的结果：保留 124 档、剔除 36 档；剔除判据与逐档剔除清单由仓内 <code>tools/matrix/enumerate_matrix.py</code> 生成。</p>
+<p>本表 = 训练算法 × 模型 × 模式 × TP × PP × DP 的全量组合（总卡数 ≤ 4，不含 OPD 教师）经显存可行性筛选后的结果：{{ENUM_COUNTS}}；剔除判据与逐档剔除清单由仓内 <code>tools/matrix/enumerate_matrix.py</code> 生成。</p>
 <ul class="status-legend">
 <li><b class="st-pass">通过</b>（绿色）：已实跑，且判据全部满足。</li>
 <li><b class="st-fail">不通过</b>（红色）：已实跑，但至少一条判据不满足（含该档在当前环境无法运行）。</li>
