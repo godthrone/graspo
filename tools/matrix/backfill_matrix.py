@@ -35,6 +35,71 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
+#: ★★ 2026-10-22（复核 B2）：判据类型名的**唯一真相源** = `src/graspo/eval/thresholds.KNOWN_CRITERIA`
+#:   —— 本文件⛔ 不再抄第三份名字表（病史：`delta_pp → gain_pp` 改名时本文件漏改，导致
+#:   `frozen_map_from_caliber()` 把 sft/opd/graspo 判成 `None`，**合法跑次被判「未冻结却自述阈值」而拒收**）。
+#:   取法：直接 import 该模块（同仓、同解释器；`src/` 不在 sys.path 时按路径载入）。
+def _load_known_criteria() -> tuple[str, ...]:
+    """读 `graspo.eval.thresholds.KNOWN_CRITERIA`；取不到 ⇒ **fail-closed**（⛔ 不回落本地常量）。"""
+    import importlib.util as _ilu
+
+    _root = Path(__file__).resolve().parents[2]
+    _path = _root / "src" / "graspo" / "eval" / "thresholds.py"
+    if not _path.is_file():
+        raise SystemExit(f"FATAL: 找不到判据真相源 {_path} ⇒ backfill 的判据白名单无法确定（fail-closed）")
+    _spec = _ilu.spec_from_file_location("_graspo_thresholds_for_backfill", _path)
+    if _spec is None or _spec.loader is None:
+        raise SystemExit(f"FATAL: 载入 {_path} 失败 ⇒ 判据白名单无法确定（fail-closed）")
+    _mod = _ilu.module_from_spec(_spec)
+    # ★ dataclasses 需要 `sys.modules[cls.__module__]` 存在 ⇒ 先登记再 exec（否则 exec 期抛
+    #   AttributeError: 'NoneType' object has no attribute '__dict__'）
+    sys.modules[_spec.name] = _mod
+    _spec.loader.exec_module(_mod)
+    _known = tuple(getattr(_mod, "KNOWN_CRITERIA", ()) or ())
+    if not _known:
+        raise SystemExit(f"FATAL: {_path} 的 KNOWN_CRITERIA 为空 ⇒ fail-closed")
+    return _known
+
+
+#: 本文件认得的判据名 = 真相源**原样**（⛔ 不增不减；自检见 `_known_criteria_selfcheck()`）。
+KNOWN_CRITERIA: tuple[str, ...] = _load_known_criteria()
+
+
+def _known_criteria_selfcheck() -> None:
+    """★ 防第四份副本：本文件用到的判据名集合必须与 `KNOWN_CRITERIA` **完全相等**。
+
+    `extract` 侧（`th.bin` 类前导）与 `frozen_map_from_caliber` 侧都只从本常量取名字；
+    一旦有人再写死一份字面表，本函数在 `--self-test` 与正式跑里都会 fail-closed。
+    """
+    _lines = Path(__file__).read_text(encoding="utf-8").splitlines()
+    # `--self-test` 的夹具**必须**构造判据名（那是它的被测输入）⇒ 该函数体豁免于本扫描
+    _st_lo = next((i for i, _l in enumerate(_lines, 1) if _l.startswith("def _self_test(")), 0)
+    _st_hi = len(_lines) + 1
+    for _i in range(_st_lo + 1, len(_lines) + 1):
+        _l = _lines[_i - 1]
+        if _l.startswith("def ") or _l.startswith("class "):
+            _st_hi = _i
+            break
+    _hits = []
+    for _i, _line in enumerate(_lines, 1):
+        if _st_lo <= _i < _st_hi:
+            continue                      # 自证夹具（见上）
+
+        _t = _line.lstrip()
+        if _t.startswith("#") or _t[:1] in ('"', "'"):
+            continue                      # 注释 / 文档行不算（允许记录改名病史）
+        # 只盯「判据名」这一用法：**同一行出现 `criterion`** 才算副本（`delta_pp` 同时是
+        # 跑次/档位表的**数值字段名**，出现在 `after_acc / base_acc / delta_pp` 里属正常用法）。
+        if "criterion" not in _line:
+            continue
+        for _c in KNOWN_CRITERIA:
+            if ('"' + _c + '"') in _line or ("'" + _c + "'") in _line:
+                _hits.append((_i, _c))
+    if _hits:
+        raise SystemExit(f"FATAL: backfill 源码出现判据名字面量 {_hits[:5]} "
+                         "⇒ 又抄了第四份副本（fail-closed）")
+
+
 SCHEMA = "matrix-run/v1"
 REQUIRED_TOP = ["schema", "tier", "params", "status", "runs", "effect",
                 "inference", "algo_checks", "throughput", "peak_mem",
@@ -192,7 +257,8 @@ def frozen_map_from_caliber(th):
             if v is None:
                 continue
             # ★ 只认判据② 的两类通过线；其余判据类型 ⇒ 不据此判定（fail-closed）
-            if str(e.get("criterion", "")) not in ("delta_pp", "non_inferiority"):
+            # ★ 判据名一律取真相源（⛔ 不再写字面元组）
+            if str(e.get("criterion", "")) not in KNOWN_CRITERIA:
                 continue
             if _frozen_text(th.get("status")) or _frozen_text(e.get("status")):
                 out[m] = float(v)
@@ -943,6 +1009,29 @@ def main():
 
 def _self_test():
     """★ 四条正/反向用例（⛔ 不依赖外部文件、不写任何东西）。"""
+    # ★★ 2026-10-22（复核 B2）：**真实路径**探针 —— 用仓内在盘数据件的 `criteria_caliber.threshold`
+    #   走一遍 `frozen_map_from_caliber()` → `_threshold_errs()`。病史：判据名改名时本文件漏改，
+    #   合成字典看不见，而真实数据下 sft/graspo/opd 会全被读成 None ⇒ 合法跑次被判
+    #   「未冻结却自述阈值」而拒收（假 FAIL）。此探针就是那类漏改的机核。
+    _probe_errs = []
+    _probe_names_ok = True
+    try:
+        _official = Path(__file__).resolve().parents[2] / "docs" / "capability-matrix.data.json"
+        _real_th = (json.loads(_official.read_text(encoding="utf-8"))
+                    .get("meta", {}).get("criteria_caliber", {}).get("threshold", {}))
+        _real_bm = _real_th.get("by_method") or {}
+        _probe_names_ok = all(str(e.get("criterion")) in KNOWN_CRITERIA
+                              for e in _real_bm.values() if isinstance(e, dict))
+        _real_fm = frozen_map_from_caliber(_real_th)
+        for _m, _pp in _real_fm.items():
+            if _pp is None:
+                _probe_errs.append((_m, "读成 None（判据名不认识/未冻结）"))
+                continue
+            _d = {"runs": f"判据② 通过线 Δ ≥ +{_pp} pp", "effect": f"Δ=+{_pp} pp（≥ {_pp} pp）"}
+            _probe_errs.extend((_m, e) for e in _threshold_errs(_d, _real_fm, _m))
+    except Exception as _exc:                      # noqa: BLE001 —— 取不到真实件也算不通过
+        _probe_errs.append(("<读取>", repr(_exc)))
+
     fm = {"sft": 10.0, "cpt": 0.0, "opd": 0.0, "graspo": 5.0}
     base_doc = {"runs": "判据② 达标（SFT 通过线 Δ ≥ +10.0 pp）", "effect": "Δ=+13.5 pp（≥ +10.0 pp 新判据② SFT 通过线）"}
     cases = [
@@ -984,15 +1073,19 @@ def _self_test():
         ("②d ★ 逐算法分列：CPT 自述旧值 5.0 pp ≠ 矩阵 CPT 0.0 pp ⇒ FAIL（防旧口径偷偷生效）",
          bool(_threshold_errs({"runs": "训练类 Δ ≥ +5.0 pp（已冻结）", "effect": "Δ=+3.8 pp（≥ +5.0 pp 冻结阈值）"},
                               fm, "cpt"))),
+        ("★ 真实 caliber 路径：四算法都能读出冻结阈值、自述阈值与矩阵一致 ⇒ 无错（⛔ 不再是假 FAIL）",
+         not _probe_errs and all(v is not None for v in frozen_map_from_caliber(_real_th).values())),
+        ("★ 真实 caliber 的判据名 ⊆ 真相源 KNOWN_CRITERIA（第四份副本会在此报红）",
+         _probe_names_ok and _known_criteria_selfcheck() is None),
         ("★ by_method 解析：逐算法取值（sft10 / graspo5 / cpt0 / opd0）",
          frozen_map_from_caliber({"status": "★ 已冻结（主席最新裁定）", "by_method": {
-             "sft": {"criterion": "delta_pp", "value": 10.0},
-             "graspo": {"criterion": "delta_pp", "value": 5.0},
+             "sft": {"criterion": "gain_pp", "value": 10.0},
+             "graspo": {"criterion": "gain_pp", "value": 5.0},
              "cpt": {"criterion": "non_inferiority", "value": 0.0},
              "opd": {"criterion": "non_inferiority", "value": 0.0}}})
          == {"sft": 10.0, "graspo": 5.0, "cpt": 0.0, "opd": 0.0}),
         ("★ by_method 未冻结 ⇒ 全 None（⛔ 不据此判定）",
-         frozen_map_from_caliber({"status": "未冻结", "by_method": {"sft": {"criterion": "delta_pp", "value": 10.0}}})
+         frozen_map_from_caliber({"status": "未冻结", "by_method": {"sft": {"criterion": "gain_pp", "value": 10.0}}})
          == {"sft": None, "graspo": None, "cpt": None, "opd": None}),
         ("★ by_method 缺失 ⇒ 回退旧单一 value（兼容旧代际正式件）",
          frozen_map_from_caliber({"value": 5.0, "applies_to": "训练类与 GRASPO", "status": "已冻结"})

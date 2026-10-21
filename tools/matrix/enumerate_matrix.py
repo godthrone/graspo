@@ -38,6 +38,7 @@ import hashlib
 import json
 import math
 import re
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -51,11 +52,15 @@ GIB = float(2 ** 30)
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORK_DIR_REL = ".local/hb-workspace/20261017-matrix-realign/task-enum-matrix"
 DEFAULT_REPORT_JSON = f"{WORK_DIR_REL}/excluded-report.json"
-DEFAULT_ARCHIVE_DIR = f"{WORK_DIR_REL}/archive-54"
+#: ★ W8-②（2026-10-22）：原先默认固定写到 `archive-54/`（而且写死了**他人工位**）⇒ 复核者用默认参数
+#:   复跑会**覆盖**上一次的 `meta.before.json` / `rows.before.json`（退路自毁）。现改为
+#:   **默认带时间戳**（`archive-<YYYYmmdd-HHMMSS>/`），复跑只会新增目录，⛔ 不再覆盖；
+#:   需要指定固定位置时用 `--archive-dir` 显式给出。
+DEFAULT_ARCHIVE_DIR = ""      # 空 = 运行时按时间戳现算（见 main）
 DEFAULT_AUDIT_JSON = f"{WORK_DIR_REL}/enumerate_audit.json"
 CRITERIA_VERSION = "enum-v1-2026-10-21"
 
-#: 单卡总容量（**实测**）：OOM 原文逐字 "GPU 0 has a total capacity of 79.25 GiB"
+#: 单卡总容量（**实测**）：显存不足 原文逐字 "GPU 0 has a total capacity of 79.25 GiB"
 #:   —— `.local/hb-workspace/20260921-150941/fix-native-fullparam-numerics/pp1-control-report.md:45`
 #:   交叉印证：宿主 `81153 MiB = 79.25 GiB`（`.local/opd-teacher-evidence-20261014.md` §⑥）。
 CARD_CAPACITY_GIB = 79.25
@@ -139,7 +144,7 @@ ALGO_BACKEND_NOTE: dict[tuple[str, str], str] = {
 #       DP AVG 同步 `:262-282`）⇒ 基座与适配器按 `tp*pp` 摊；**DP 不摊基座**（冻结权重每 rank 一份）。
 #     - ms-swift 全参：走 FSDP2 ⇒ 可按 `tp*pp*dp` 摊（`msswift.fsdp` 真透传：
 #       `src/graspo/flow/backend/msswift/_config_mapping.py:206-213,353-362`；配方
-#       `samples/configs/fsdp/fsdp2_full_state_dict.json`）。★ FSDP2 **零 rc=0 实测**（见证据表 EV20）。
+#       `samples/configs/fsdp/fsdp2_full_state_dict.json`）。★ FSDP2 **零 退出码 0 实测**（见证据表 EV20）。
 #     - ms-swift LoRA：标准通道只有 DDP+SP（`_config_mapping.py:409-436`）；Megatron 段未接线
 #       （`_config_mapping.py:682` 写死 `include_megatron=False`）⇒ 基座与适配器按 `tp*pp` 摊、DP 不摊。
 #       ★ `tp>1/pp>1` 在 ms-swift 上的"分摊"实际只能靠 FSDP2 全分片承载，属**待实测卡点**。
@@ -153,7 +158,7 @@ ALGO_BACKEND_NOTE: dict[tuple[str, str], str] = {
 #         的顺序落地（结果：27B LoRA tp1pp1dp1 = 50.10+12.85+15.69 = 78.64，与实测逐位吻合）。
 #         不确定性：适配器参数估算 ±30% ⇒ 激活项同幅反向漂移，**总占用不变**（总占用锚在实测值上）。
 #     - 激活项**不按 tp/pp 再摊**（与 `generate_matrix.py:1465-1555` 现行算式同口径，保守）：
-#       依据 T035（9B 全参 native PP2）算式 45.53 却实测 OOM 的冲突（recon §3.6 ⑥）——
+#       依据 T035（9B 全参 native PP2）算式 45.53 却实测 显存不足 的冲突（recon §3.6 ⑥）——
 #       native PP 是否真摊掉优化器态/激活，仓内无证据 ⇒ 宁可保守。
 #
 # ▸ LoRA 可训练参数量 P_lora：
@@ -171,7 +176,7 @@ ALGO_BACKEND_NOTE: dict[tuple[str, str], str] = {
 #       机理逐字"teacher 每 rank 各持一份（非分片）⇒ 加卡只增总显存、不降单卡占用" `:152`）
 #     - offload 情形：`distill.offload_teacher_model=true` 真透传
 #       （`src/graspo/core/schema.py:666-668`；`_config_mapping.py:663`）⇒ GPU 侧不计教师常驻。
-#       ★ 该路径**零 rc=0 实测**（证据表 EV16）⇒ 选它必须写进备注卡点。
+#       ★ 该路径**零 退出码 0 实测**（证据表 EV16）⇒ 选它必须写进备注卡点。
 #     - 每档按**两种情形分别估算**，取更优者作为该档的判定；恶劣情形写入备注与剔除清单。
 
 #: 模型参数量与激活常数（逐项标证据等级）。
@@ -182,7 +187,7 @@ MODEL_SPEC: dict[str, dict[str, Any]] = {
         "params_level": "【推断】估算常量（`tests/e2e/generate_matrix.py:1332`）；docstring 另提 9.41B 但无出处 ⇒ 待实测",
         "weights_gib_level": "【推断】由 9.0e9 × 2 B 推出（与 9B 实测峰值口径自洽，见激活项反推）",
         "act_gib": 12.18,
-        "act_level": "【实测反推】79.24 − 67.06（OOM 原文 `pp1-control-report.md:44-46,63`）",
+        "act_level": "【实测反推】79.24 − 67.06（显存不足 原文 `pp1-control-report.md:44-46,63`）",
         "lora_trainable": 384_757_760,
         "lora_trainable_level": "【实测】meta.lora_target_backends.native.signature_evidence（2026-10-12 探针）",
     },
@@ -258,7 +263,7 @@ def _weights_gib(model: str) -> float:
 #
 # 每条记录的字段：
 #   id       唯一编号
-#   kind     oom（逐字 OOM 原文）/ runtime_failure（非 OOM 的运行期失败）/ success（判据① 通过）
+#   kind     oom（逐字 显存不足 原文）/ runtime_failure（非 显存不足 的运行期失败）/ success（判据① 通过）
 #            / peak_calibration（族级实测峰值，用于标定常数）/ contested（互斥记载，采信不足）/ warn（其它实测事实）
 #   scope    (algo|"*", model|"*", mode|"*", backend|"*", shapes|"*" 或 [(tp,pp,dp), ...])
 #   reading  读数原文（逐字或近逐字）
@@ -283,9 +288,9 @@ Shape = tuple[int, int, int]
 MEASURED_EVIDENCE: tuple[dict[str, Any], ...] = (
     # ── A. 9B 全参 × native ────────────────────────────────────────────────
     {
-        "id": "EV01", "label": "9B 全参 1 卡无 offload 实测 OOM 79.24 GiB", "kind": "oom",
+        "id": "EV01", "label": "9B 全参 1 卡无 offload 实测 显存不足 79.24 GiB", "kind": "oom",
         "scope": ("SFT", "9B", "全参", "native", ((1, 1, 1),)),
-        "reading": "峰值 79.24 GiB ⇒ OOM（卡容量 79.25 GiB，`optimizer.step()` 处爆）；估算 67.06+12.18=79.24 逐位吻合",
+        "reading": "峰值 79.24 GiB ⇒ 显存不足（卡容量 79.25 GiB，`optimizer.step()` 处爆）；估算 67.06+12.18=79.24 逐位吻合",
         "source": "归档 .local/hb-workspace/20260921-150941/fix-native-fullparam-numerics/pp1-control-report.md:44-46,63",
         "effect": "recipe_forbid",
         "recipe": "no_offload",
@@ -315,14 +320,14 @@ MEASURED_EVIDENCE: tuple[dict[str, Any], ...] = (
         "effect": "calibrate",
     },
     {
-        "id": "EV05", "label": "27B GRASPO LoRA native 1 卡实测 OOM 78.77 GiB", "kind": "oom",
+        "id": "EV05", "label": "27B GRASPO LoRA native 1 卡实测 显存不足 78.77 GiB", "kind": "oom",
         "scope": ("GRASPO", "27B", "LoRA", "native", ((1, 1, 1),)),
         "reading": "「Tried to allocate 572.00 MiB … 485.88 MiB is free … 78.77 GiB in use」exit_code=1",
         "source": "归档 .local/capability-baseline-milestone-20261014-v2.md:72；tests/e2e/matrix54_manifest.json `graspo_lora_27b_cards.by_backend.native`",
         "effect": "backend_infeasible",
     },
     {
-        "id": "EV06", "label": "27B GRASPO LoRA ms-swift dp2 实测 OOM 78.01 GiB", "kind": "oom",
+        "id": "EV06", "label": "27B GRASPO LoRA ms-swift dp2 实测 显存不足 78.01 GiB", "kind": "oom",
         "scope": ("GRASPO", "27B", "LoRA", "ms-swift", ((1, 1, 2),)),
         "reading": "「Tried to allocate 1.89 GiB … 1.23 GiB free … 78.01 GiB in use」exitcode=1",
         "source": "归档 .local/capability-baseline-milestone-20261014-v2.md:76",
@@ -332,7 +337,7 @@ MEASURED_EVIDENCE: tuple[dict[str, Any], ...] = (
         "id": "EV07", "label": "27B GRASPO LoRA native dp2 实测异常退出且异常类型未落盘（未定性）", "kind": "runtime_failure",
         "scope": ("GRASPO", "27B", "LoRA", "native", ((1, 1, 2),)),
         "reading": ("T041：僵持 51+ min；逐字 `exception-path teardown: aborted=True … WITHOUT a rendezvous "
-                    "(no WORLD barrier on the failure path)`；卡侧 `73.65 GiB in use` ⇒ **异常类型未落盘、原文明确禁止据此判 OOM**"),
+                    "(no WORLD barrier on the failure path)`；卡侧 `73.65 GiB in use` ⇒ **异常类型未落盘、原文明确禁止据此判 显存不足**"),
         "source": "归档 .local/T041-evidence-20261014.md:16,22",
         "effect": "warn_only",   # 未定性 ⇒ 不据此剔除（主笔：宁可留待测试，不误删）
     },
@@ -399,7 +404,7 @@ MEASURED_EVIDENCE: tuple[dict[str, Any], ...] = (
     {
         "id": "EV16", "label": "9B GRASPO LoRA native dp2/dp4 NCCL 看门狗超时", "kind": "runtime_failure",
         "scope": ("GRASPO", "9B", "LoRA", "native", ((1, 1, 2), (1, 1, 4))),
-        "reading": "T029/T030：NCCL 看门狗超时 600 s ⇒ Signal 6 (SIGABRT)；原文「★ 非 OOM」",
+        "reading": "T029/T030：NCCL 看门狗超时 600 s ⇒ Signal 6 (SIGABRT)；原文「★ 非 显存不足」",
         "source": "归档 .local/capability-baseline-milestone-20261014-v2.md:63-64",
         "effect": "warn_only",
     },
@@ -411,7 +416,7 @@ MEASURED_EVIDENCE: tuple[dict[str, Any], ...] = (
         "effect": "success",
     },
     {
-        "id": "EV18", "label": "9B GRASPO 全参 native 1/2 卡 OOM 记载互斥", "kind": "contested",
+        "id": "EV18", "label": "9B GRASPO 全参 native 1/2 卡 显存不足 记载互斥", "kind": "contested",
         "scope": ("GRASPO", "9B", "全参", "native", ((1, 1, 1), (1, 2, 1))),
         "reading": "一处记 `torch.OutOfMemoryError … Tried to allocate 96.00 MiB`（T034/T035）；另一处记这两档「从未上机」⇒ **互斥记载**",
         "source": "归档 .local/capability-baseline-milestone-20261014-v2.md:68-69 vs .local/本期工程跟踪.md:418-419",
@@ -420,7 +425,7 @@ MEASURED_EVIDENCE: tuple[dict[str, Any], ...] = (
     {
         "id": "EV19", "label": "9B GRASPO 全参 native pp4 pp-watchdog 强退", "kind": "runtime_failure",
         "scope": ("GRASPO", "9B", "全参", "native", ((1, 4, 1),)),
-        "reading": "T036：`pp-watchdog` 判 PP rendezvous 停滞 300 s ⇒ force-exit 86；**非 OOM**",
+        "reading": "T036：`pp-watchdog` 判 PP rendezvous 停滞 300 s ⇒ force-exit 86；**非 显存不足**",
         "source": "归档 .local/capability-baseline-milestone-20261014-v2.md:70",
         "effect": "warn_only",
     },
@@ -428,24 +433,24 @@ MEASURED_EVIDENCE: tuple[dict[str, Any], ...] = (
     {
         "id": "EV20", "label": "ms-swift 全参的正面证据只带 DeepSpeed；FSDP2 零实测", "kind": "warn",
         "scope": ("*", "*", "全参", "ms-swift", "*"),
-        "reading": "ms-swift 全参的历史正面证据全部带 DeepSpeed（T004 `zero2_offload` Δ=+8.55 pp、T006 `zero2` Δ=+7.55 pp）⇒ **DS 禁用后该证据作废**；替代载体 FSDP2 接点齐（字段+配方+12 档派生清单）但 **0 档 rc=0 实测**",
+        "reading": "ms-swift 全参的历史正面证据全部带 DeepSpeed（T004 `zero2_offload` Δ=+8.55 pp、T006 `zero2` Δ=+7.55 pp）⇒ **DS 禁用后该证据作废**；替代载体 FSDP2 接点齐（字段+配方+12 档派生清单）但 **0 档 退出码 0 实测**",
         "source": "归档 .local/capability-baseline-milestone-20261014-v2.md:38,40；tests/e2e/matrix54_manifest_fsdp.json；src/graspo/flow/backend/msswift/_config_mapping.py:206-213",
         "effect": "warn_only",
         "delivery_gap": "FSDP2 零实测；且 `use_vllm=false` 的纯 generate rollout 在 FSDP 下的支持（上游只对 vLLM 分支做 FSDP 适配）未验证",
     },
     # ── E. OPD 教师 ───────────────────────────────────────────────────────
     {
-        "id": "EV21", "label": "OPD 教师不换出 1/2/4 卡实测全 OOM", "kind": "oom",
+        "id": "EV21", "label": "OPD 教师不换出 1/2/4 卡实测全 显存不足", "kind": "oom",
         "scope": ("OPD", "9B", "*", "ms-swift", ((1, 1, 1), (1, 1, 2), (1, 1, 4))),
-        "reading": "教师不换出：1 卡 OOM@1/40 步（峰值 78.06 GiB）；2 卡 79.06/79.08 GiB；4 卡四 rank 各 79.08 GiB（余 15.88 MiB）⇒ 加卡不降单卡占用",
+        "reading": "教师不换出：1 卡 显存不足@1/40 步（峰值 78.06 GiB）；2 卡 79.06/79.08 GiB；4 卡四 rank 各 79.08 GiB（余 15.88 MiB）⇒ 加卡不降单卡占用",
         "source": "tests/e2e/matrix54_manifest.json:152",
         "effect": "recipe_forbid",
         "recipe": "teacher_resident",
     },
     {
-        "id": "EV22", "label": "教师 offload 真透传但零 rc=0 实测", "kind": "warn",
+        "id": "EV22", "label": "教师 offload 真透传但零 退出码 0 实测", "kind": "warn",
         "scope": ("OPD", "*", "*", "*", "*"),
-        "reading": "`offload_teacher_model=true` 是真透传，但**无 rc=0 实测**；27B×OPD 历史上「主席 2026-10-14 裁定不做」",
+        "reading": "`offload_teacher_model=true` 是真透传，但**无 退出码 0 实测**；27B×OPD 历史上「主席 2026-10-14 裁定不做」",
         "source": "src/graspo/flow/backend/msswift/_config_mapping.py:663；src/graspo/core/schema.py:666-668；归档 .local/capability-baseline-milestone-20261014-v2.md:86-88",
         "effect": "warn_only",
         "delivery_gap": "教师 offload 路径未实测（student 侧可行 ≠ 端到端可跑）",
@@ -808,7 +813,7 @@ REASON_CODES: dict[str, dict[str, Any]] = {
         "excludes": True,
     },
     "KNOWN_OOM": {
-        "desc": "该档所有可选后端都有**实测** OOM/不可用证据 ⇒ 不合理（证据优先于算式）",
+        "desc": "该档所有可选后端都有**实测** 显存不足/不可用证据 ⇒ 不合理（证据优先于算式）",
         "excludes": True,
     },
     "ALGO_BACKEND": {
@@ -907,7 +912,7 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
                     f"补齐后按 native 配方估算 {peak:.2f} GiB 可行")
     if backend == "ms-swift":
         if mode == "全参":
-            gaps.append("FSDP2 分片载体零 rc=0 实测")
+            gaps.append("FSDP2 分片载体零 退出码 0 实测")
         if tp > 1 or pp > 1:
             gaps.append("ms-swift 的 TP/PP 无通道（并行实现尚未接入，标准通道只覆盖 DDP+SP）"
                         "⇒ 该形状的分摊只能靠 FSDP2 全分片，语义待实测")
@@ -932,7 +937,7 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
         if algo == "GRASPO":
             gaps.append("offload 目前只在 SFT 通道生效，RL 通道尚未接入")
     if algo == "OPD" and chosen["teacher_variant"] == "offload":
-        gaps.append("需 `offload_teacher_model=true`（该路径零 rc=0 实测）")
+        gaps.append("需 `offload_teacher_model=true`（该路径零 退出码 0 实测）")
     gaps = gaps[:4]
 
     # ── 边缘/冲突提示（实测 vs 算式） ─────────────────────────────────────
@@ -951,7 +956,7 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
         else:
             notes_extra.append(f"余量紧：估算 {peak:.2f}/{budget:.1f} GiB，需实测确认")
     if rec["algo"] == "GRASPO" and model == "27B" and mode == "LoRA" and (tp, pp) == (1, 1) and backend == "native":
-        notes_extra.append("该形状 native 曾异常退出（未定性为 OOM）、ms-swift 实测 OOM")
+        notes_extra.append("该形状 native 曾异常退出（未定性为 显存不足）、ms-swift 实测 显存不足")
     contested = [e for e in MEASURED_EVIDENCE
                  if e["kind"] == "contested"
                  and e["scope"][0] in ("*", algo) and e["scope"][1] in ("*", model)
@@ -964,9 +969,9 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
         if chosen["teacher_variant"] == "offload" and gpu_variant is not None:
             notes_extra.append(
                 f"教师必须 offload：GPU 常驻情形估算 {gpu_variant['peak_gib']:.2f} GiB（超预算，"
-                "实测 1/2/4 卡全 OOM）；offload 路径零 rc=0 实测")
+                "实测 1/2/4 卡全 显存不足）；offload 路径零 退出码 0 实测")
         elif chosen["teacher_variant"] == "gpu":
-            notes_extra.append("教师 GPU 常驻：实测 1/2/4 卡全 OOM")
+            notes_extra.append("教师 GPU 常驻：实测 1/2/4 卡全 显存不足")
 
     # ── 选型理由（一句话，可判真假） ─────────────────────────────────────
     reason_line = _reason_line(chosen, sel, backend, mode, tp, pp, dp, band, budget, peak, algo)
@@ -979,7 +984,7 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
     note = "；".join(p for p in note_parts if p)
 
     # ── 专用：native LoRA 的 dp>1 档（双方都无成功跑次）—— 必修（裁定后补）
-    #    要素：① 两方均无成功跑次（各带具名跑次）② 选 native 的唯一理由 = 对方有实测 OOM、
+    #    要素：① 两方均无成功跑次（各带具名跑次）② 选 native 的唯一理由 = 对方有实测 显存不足、
     #    本方是通信/teardown 异常（可诊断）③ 余量紧 ⇒ 先解决余量与通信稳定性 ④ 产物另需补导出层。
     #    ⛔ 一个字都不许写"训练可跑/能跑"。
     if backend == "native" and mode == "LoRA" and tp == 1 and pp == 1 and dp > 1 \
@@ -990,7 +995,7 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
         ms_fail = (f"ms-swift —— {_labels(ms['evidence'])}" if (ms and ms.get("evidence"))
                    else "ms-swift —— 无成功跑次记录")
         note = (f"两者在该形状均无成功跑次：{native_fail}；{ms_fail}。"
-                f"选 native 的唯一理由 = 对方有实测 OOM、本方是通信/teardown 异常（可诊断、可重试），"
+                f"选 native 的唯一理由 = 对方有实测 显存不足、本方是通信/teardown 异常（可诊断、可重试），"
                 f"⛔ 不表示该形状可行。估算 {peak:.2f}/{budget:.1f} GiB（{band}）⇒ "
                 "测试前须先解决显存余量与通信稳定性。"
                 f"卡点：产物侧另需补导出层 —— {chosen.get('delivery_gap_short') or 'DP 合并依赖副本位等价'}")
@@ -1564,7 +1569,7 @@ VERIFICATION_CASES: tuple[dict[str, Any], ...] = (
     },
     {
         "id": "V5",
-        "claim": "OPD 1 卡教师常驻必须判不可行（估算 83.34 > 78.0，实测 78.06 OOM）；仅 teacher offload 情形可留待测试",
+        "claim": "OPD 1 卡教师常驻必须判不可行（估算 83.34 > 78.0，实测 78.06 显存不足）；仅 teacher offload 情形可留待测试",
         "check": lambda rows, budget: (
             _est("OPD", "9B", "LoRA", "ms-swift", (1, 1, 1), budget, teacher_variant="gpu") > budget
             and _est("OPD", "9B", "LoRA", "ms-swift", (1, 1, 1), budget, teacher_variant="offload") <= budget
@@ -1721,8 +1726,12 @@ LEGACY_TIER_RE = re.compile(r"T\d{3}")
 #:   - 承诺面措辞必须与「全部档位 = 待测试」一致（否则发布件自相矛盾）；
 #:   - 旧 54 档的档号清单与逐档读数史**一律移除**（归档见 `archive-54/`）。
 META_OVERRIDES: tuple[dict[str, Any], ...] = (
-    {"path": "doc_date", "value": "2026-10-21",
+    {"path": "doc_date", "value": "2026-10-22",
      "why": "档位表整体重生成，发布日期随生成日"},
+    # ★ 2026-10-22（复核 W7）：`code_version.commit` 落后 HEAD 61 个提交 ⇒ 由**生成时的
+    #   `git rev-parse --short HEAD`**（可用 `--code-commit` 显式覆盖）写入，⛔ 不留手写常量。
+    {"path": "code_version.commit", "value": "COMMIT",
+     "why": "本件是就本 commit 的代码生成的 ⇒ 记录生成基线，避免读成旧代码的产物"},
     {"path": "status_vocabulary", "value": ["待测试", "通过", "不通过"],
      "why": "主笔要求：三态词表（旧四态作废）"},
     {"path": "boundary_declaration.text",
@@ -1886,8 +1895,26 @@ def _del_path(doc: dict[str, Any], path: str) -> bool:
     return True
 
 
+def _git_short_head() -> str:
+    """当前 HEAD 的短 sha（⭐ W7：`meta.code_version.commit` 由它现算，⛔ 不再手写常量）。
+
+    拿不到（无 git / 非仓）时 fail-closed：记录一个错误的基线 commit 比留空更有害。
+    """
+    try:
+        p = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=str(REPO_ROOT),
+                           capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise SystemExit(f"FATAL: 取不到 HEAD commit（{exc}）⇒ 请用 --code-commit 显式指定")
+    sha = (p.stdout or "").strip()
+    if p.returncode != 0 or not sha:
+        raise SystemExit(f"FATAL: `git rev-parse --short HEAD` 失败（rc={p.returncode}）"
+                         f"⇒ 请用 --code-commit 显式指定")
+    return sha
+
+
 def apply_meta_sync(meta: dict[str, Any], *, card_limit: int, budget: float,
-                    counts: dict[str, Any], script_sha: str, generated_at: str
+                    counts: dict[str, Any], script_sha: str, generated_at: str,
+                    code_commit: str = ""
                     ) -> tuple[dict[str, Any], dict[str, Any]]:
     """同步 meta：三态词表 + 旧 54 档遗留措辞清理。
 
@@ -1926,11 +1953,14 @@ def apply_meta_sync(meta: dict[str, Any], *, card_limit: int, budget: float,
 
     for ov in META_OVERRIDES:
         path = ov["path"][5:] if ov["path"].startswith("meta.") else ov["path"]
+        _val = ov["value"]
+        if _val == "\x01COMMIT\x01":          # ★ 生成基线 commit：调用方现算后传进来
+            _val = code_commit
         try:
             _get_path(new, path)
         except (KeyError, IndexError, TypeError):
             raise SystemExit(f"FATAL: meta 覆写路径不存在：{path}（meta 结构变了 ⇒ 必须同步本脚本）")
-        _set_path(new, path, ov["value"])
+        _set_path(new, path, _val)
 
     # 兜底扫描：⛔ 旧档号 / 旧状态词不得留在发布件 meta（fail-closed）
     leftovers: list[str] = []
@@ -1978,7 +2008,7 @@ def apply_meta_sync(meta: dict[str, Any], *, card_limit: int, budget: float,
             "sort_keys": [
                 "①实测成功证据（该算法×模型×模式×后端×形状有判据① 通过的跑次）",
                 "②该形状是否被后端真消费（native 的 TP/PP 真接线；ms-swift 的 TP/PP 只在未接线的 Megatron 段）",
-                "③分片载体是否已实现且已实测（FSDP2 接点齐但零 rc=0 ⇒ 排后）",
+                "③分片载体是否已实现且已实测（FSDP2 接点齐但零 退出码 0 ⇒ 排后）",
                 "④产物可推理（native LoRA：tp>1 无合并实现；dp>1 的 DP 合并依赖「副本位等价」窄口前置）",
                 "⑤估算峰值　⑥后端名（确定性尾键）",
             ],
@@ -1986,7 +2016,7 @@ def apply_meta_sync(meta: dict[str, Any], *, card_limit: int, budget: float,
                 "排序键只允许被**唯一一种**例外推翻：被选方（本应排第一的一方）在该形状有**实测不可行证据**时，"
                 "可让「有实测成功证据 / 失败更可诊断」的一方上位；⛔ 不许出现第二种未登记的例外。"
                 "当前唯一实例：M093（27B GRASPO LoRA dp2）—— native 实测异常退出且异常类型未落盘（未定性）、"
-                "ms-swift 实测 OOM（78.01 GiB）⇒ 保留 native（对方有实测 OOM 死刑、本方是通信异常可诊断）。"
+                "ms-swift 实测 显存不足（78.01 GiB）⇒ 保留 native（对方有实测 显存不足 死刑、本方是通信异常可诊断）。"
             ),
             "note_claim_policy": (
                 "「训练可跑 / 训练能跑 / 训练跑通」只允许出现在证据表里有具名 `success` 跑次的档上；"
@@ -1996,7 +2026,7 @@ def apply_meta_sync(meta: dict[str, Any], *, card_limit: int, budget: float,
         },
         "counts": counts,
         "reason_codes": {k: {"desc": v["desc"], "excludes": v["excludes"]} for k, v in REASON_CODES.items()},
-        "evidence_policy": ("证据优先级 = 实测（跑次记录里的 OOM / 峰值）> 算式；算式判「可行」而有实测不可行证据的档，"
+        "evidence_policy": ("证据优先级 = 实测（跑次记录里的 显存不足 / 峰值）> 算式；算式判「可行」而有实测不可行证据的档，"
                            "以实测为准并在备注写明冲突。实测证据表逐条登记在脚本 `MEASURED_EVIDENCE`（含出处），"
                            "不随发布件发布。"),
         "evidence_index": [
@@ -2004,7 +2034,7 @@ def apply_meta_sync(meta: dict[str, Any], *, card_limit: int, budget: float,
         ],
         "recipe_not_modeled": [
             "fsdp2_full_state_dict_offload（`samples/configs/fsdp/fsdp2_full_state_dict_offload.json` 存在、"
-            "cpu_offload=true 会把参数/梯度/优化器态全放 CPU，但**零 rc=0 实测**）⇒ ⛔ 未计入显存估算；"
+            "cpu_offload=true 会把参数/梯度/优化器态全放 CPU，但**零 退出码 0 实测**）⇒ ⛔ 未计入显存估算；"
             "受此影响的被剔档在剔除清单里带 `if_recipe_measured` 标注（若该配方实测可行则可能复活）",
         ],
         "known_gaps": [
@@ -2068,7 +2098,7 @@ def _strip_audit_refs(node: Any) -> Any:
 
 
 def build(
-    *, card_limit: int, budget: float, generated_at: str, script_sha: str, base_doc: dict[str, Any],
+    *, card_limit: int, budget: float, generated_at: str, code_commit: str = "", script_sha: str, base_doc: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     """核心：枚举 → 剔除 → 选型 → **发布件** + **审计件** + 剔除清单。纯函数（无 IO、无时钟）。
 
@@ -2132,7 +2162,7 @@ def build(
             if mode == "全参" and any(c["backend"] == "ms-swift" and not c["eligible"] for c in cands):
                 if_recipe = ("若 `samples/configs/fsdp/fsdp2_full_state_dict_offload.json` 的 cpu_offload 配方"
                              "实测可行则本档可能复活（该配方把参数/梯度/优化器态都放 CPU ⇒ 每卡常住接近激活项；"
-                             "⛔ 零 rc=0 实测 ⇒ 未计入显存估算）")
+                             "⛔ 零 退出码 0 实测 ⇒ 未计入显存估算）")
             excluded.append({
                 "key": {"algo": algo, "model": model, "mode": mode,
                         "shape": {"tp": tp, "pp": pp, "dp": dp}, "total_cards": tp * pp * dp},
@@ -2168,7 +2198,8 @@ def build(
 
     pub_meta, enumeration = apply_meta_sync(
         base_doc.get("meta", {}), card_limit=card_limit, budget=budget,
-        counts=counts, script_sha=script_sha, generated_at=generated_at)
+        counts=counts, script_sha=script_sha, generated_at=generated_at,
+        code_commit=code_commit)
 
     # ★ 发布/审计分离：`_audit` 摘出行外；自检与 report 用**合并后的完整行**（含 backend_reason 等）
     checks_rows = [dict(r, **(r.get("_audit") or {})) for r in rows]
@@ -2237,7 +2268,7 @@ def build(
         ],
         "evidence_table": audit["evidence_table"],
         "constants": {
-            "CARD_CAPACITY_GIB": {"value": CARD_CAPACITY_GIB, "level": "【实测】OOM 原文 79.25 GiB"},
+            "CARD_CAPACITY_GIB": {"value": CARD_CAPACITY_GIB, "level": "【实测】显存不足 原文 79.25 GiB"},
             "budget_gib": {"value": budget, "level": "设计选择（tests/e2e/generate_matrix.py:1355 默认 78.0）"},
             "FULL_K_BYTES": {"value": FULL_K_BYTES, "level": "【推断】generate_matrix.py:1347-1352（自述「都是假设」）"},
             "LORA_STATE_BYTES_PER_PARAM": {"value": LORA_STATE_BYTES_PER_PARAM, "level": "【推断】2+2+8"},
@@ -2316,8 +2347,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--dry-run", action="store_true", help="不写任何文件，只打印汇总")
     ap.add_argument("--generated-at", default=None,
                     help="固定 meta.enumeration.generated_at（确定性：同输入同输出）")
+    ap.add_argument("--overwrite-archive", action="store_true",
+                    help="允许写入已存在且非空的归档目录（默认拒绝：归档是退路，⛔ 不覆盖）")
     ap.add_argument("--archive-dir", default=DEFAULT_ARCHIVE_DIR,
                     help="旧矩阵 meta/rows 归档目录（默认 .local 工位）")
+    ap.add_argument("--code-commit", default=None,
+                    help="写入 meta.code_version.commit 的生成基线（默认取 `git rev-parse --short HEAD`）")
     ap.add_argument("--audit-out", default=DEFAULT_AUDIT_JSON,
                     help="审计件输出路径（内部审计线索；默认 .local 工位，⛔ 不入库）")
     a = ap.parse_args(argv)
@@ -2325,16 +2360,35 @@ def main(argv: list[str] | None = None) -> int:
     out_path = (REPO_ROOT / a.out).resolve()
     report_path = (REPO_ROOT / a.report_json).resolve()
     audit_path = (REPO_ROOT / a.audit_out).resolve()
-    archive_dir = (REPO_ROOT / a.archive_dir).resolve()
+    _archive_rel = a.archive_dir or (
+        f"{WORK_DIR_REL}/archive-" + datetime.now().strftime("%Y%m%d-%H%M%S"))
+    archive_dir = (REPO_ROOT / _archive_rel).resolve()
+    # ⛔ 防呆：归档目录若已存在且非空 ⇒ 拒绝覆盖（退路必须是**只增不减**的）
+    if archive_dir.exists() and any(archive_dir.iterdir()) and not a.overwrite_archive:
+        raise SystemExit(
+            f"FATAL: 归档目录已存在且非空：{archive_dir}\n"
+            "  ⛔ 归档是退路，⛔ 不得覆盖（默认已带时间戳；如确要覆盖请显式加 --overwrite-archive）"
+        )
     script_sha = _sha256_of(Path(__file__).resolve())
     generated_at = a.generated_at or datetime.now().astimezone().isoformat(timespec="seconds")
+    # ★ W7：生成基线 commit（默认取当前 HEAD 短 sha；可用 `--code-commit` 显式覆盖）
+    code_commit = a.code_commit or _git_short_head()
 
+    # ★ W8-①（2026-10-22）：父目录缺失时**创建**（⛔ 不再一上来 FATAL）；数据件本身缺失才拒绝，
+    #   且文案写清"怎么才能有它"。
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     if not out_path.exists():
-        raise SystemExit(f"FATAL: 输出数据件不存在：{out_path}（本脚本只增量更新既有数据件，不凭空造目录）")
+        raise SystemExit(
+            f"FATAL: 输出数据件不存在：{out_path}\n"
+            "  本脚本是**增量更新**：它以在盘数据件的 meta 为基线重算 rows[]，不凭空造基线。\n"
+            f"  要首次生成：先建基线（`tools/matrix/build_data.py` / `backfill_matrix.py`），"
+            f"或用 `--out` 指向已有数据件。已确保父目录存在：{out_path.parent}"
+        )
     base_doc = json.loads(out_path.read_text(encoding="utf-8"))
 
     doc, report, audit = build(card_limit=a.card_limit, budget=a.budget_gib,
-                        generated_at=generated_at, script_sha=script_sha, base_doc=base_doc)
+                        generated_at=generated_at, script_sha=script_sha, base_doc=base_doc,
+                        code_commit=code_commit)
 
     # ⓪ 写盘前 fail-closed：用 `scan_matrix_leaks` 的同一套规则扫发布件全文
     data_text = serialize_doc(doc)

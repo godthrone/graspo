@@ -202,7 +202,7 @@ def test_compute_delta_uses_absolute_percentage_points(tmp_path):
     result = compute_delta(before, after)
     assert result.delta_percentage_points == pytest.approx(22.0)
     assert result.method == "graspo"
-    assert result.criterion == "delta_pp"
+    assert result.criterion == "gain_pp"
     assert result.threshold_pp == pytest.approx(5.0)  # 唯一真相源，不是旧副本 20.0
     assert result.passed is True
 
@@ -222,7 +222,7 @@ def test_compute_delta_sft_role_applies_delta_threshold(tmp_path):
     after = _make_report(tmp_path, role="sft", accuracy_percent=52.0)
     result = compute_delta(before, after)
     assert result.method == "sft"
-    assert result.criterion == "delta_pp"
+    assert result.criterion == "gain_pp"
     assert result.threshold_pp == pytest.approx(10.0)
     assert result.passed is True  # Δ = +12.0
 
@@ -242,7 +242,7 @@ def test_compute_delta_cpt_applies_non_inferiority(tmp_path):
 
 
 def test_compute_delta_opd_applies_delta_plus_five(tmp_path):
-    """OPD：criterion = `delta_pp`、线 = +5.0 pp（2026-10-19 口径变更；原为不劣化）。
+    """OPD：criterion = `gain_pp`、线 = +5.0 pp（2026-10-19 口径变更；原为不劣化）。
 
     ★ 原用例把 CPT/OPD 合并成"不劣化线" ⇒ 按新语义**拆成两条**（⛔ 不删用例、⛔ 不放宽断言：
     OPD 这边比原来**更严** —— `Δ=+0.0` 这类旧口径下的"通过"现在必须判**否**）。
@@ -250,7 +250,7 @@ def test_compute_delta_opd_applies_delta_plus_five(tmp_path):
     before = _make_report(tmp_path, role="base", accuracy_percent=50.0)
     at_line = _make_report(tmp_path, role="after", accuracy_percent=55.0)
     ok = compute_delta(before, at_line, method="opd")
-    assert (ok.criterion, ok.threshold_pp, ok.passed) == ("delta_pp", 5.0, True)
+    assert (ok.criterion, ok.threshold_pp, ok.passed) == ("gain_pp", 5.0, True)
 
     flat = _make_report(tmp_path, role="after", accuracy_percent=50.0)      # Δ = 0.0（旧口径「通过」）
     assert compute_delta(before, flat, method="opd").passed is False

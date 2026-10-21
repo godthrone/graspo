@@ -189,7 +189,7 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <li>A800，单机 8 卡，机器拓扑为 A800 PCIe：GPU 以 NVLink 成对相连、对与对之间走 PCIe bridge。</li>
 </ul>
 <h3>训练超参：按训练方法 × 后端</h3>
-<p>学习率（lr）只由<b>训练方法与模式</b>决定、总训练轮数只由<b>训练方法</b>决定，两者在两个后端上<b>来自同一份配置（同一来源）</b>，不随卡数与并行的分法变化。两个后端的差别集中在后两列：<b>同一个训练方法，在两个后端上各自真实下发的字段</b>。单卡 micro batch 是两份独立配置、同值 1（ms-swift 侧 <code>per_device_train_batch_size=1</code>、native 侧 <code>micro_batch_size=1</code>，不是同一个字段）⇒ 两列各写一次。不适用的组合记 <code>—</code>。</p>
+<p>学习率（lr）只由<b>训练方法与模式</b>决定、总训练轮数只由<b>训练方法</b>决定，两者在两个后端上<b>来自同一份配置（同一来源）</b>，不随卡数与并行的分法变化。两个后端的差别集中在后两列：<b>同一个训练方法在两个后端上各自的附加参数</b>（这些参数目前是否已写进生成出来的配置，见注 5）。单卡 micro batch 是两份独立配置、同值 1（ms-swift 侧 <code>per_device_train_batch_size=1</code>、native 侧 <code>micro_batch_size=1</code>，不是同一个字段）⇒ 两列各写一次。不适用的组合记 <code>—</code>。</p>
 <table class="cfg">
 <thead>
 <tr><th>训练方法 · 模式</th><th>学习率 lr</th><th>总训练轮数</th><th>ms-swift 后端附加参数</th><th>native 后端附加参数</th></tr>
@@ -206,7 +206,7 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <td>SFT · 全参</td>
 <td class="v"><code>5.0e-06</code></td>
 <td class="v"><code>4</code></td>
-<td><code>per_device_train_batch_size=1</code>；<code>sequence_parallel_size=1</code>（关闭）；<code>use_vllm=false</code>；<code>nproc_per_node=总卡数</code>（纯数据并行）；全参必须分片优化器态 ⇒ 走 FSDP2（<code>fsdp</code> 字段透传，见注 6）。</td>
+<td><code>per_device_train_batch_size=1</code>；<code>sequence_parallel_size=1</code>（关闭）；<code>use_vllm=false</code>；<code>nproc_per_node=总卡数</code>（纯数据并行）；全参必须分片优化器态 ⇒ 走 FSDP2（<code>fsdp</code> 字段透传，见注 7）。</td>
 <td><code>micro_batch_size=1</code>；全参只能用流水并行（<code>pp_size</code> 可大于 1，<code>tp_size</code> / <code>dp_size</code> 固定 1，见注 2）；<code>sequence_parallel</code> 要求 <code>tp_size≥2</code>；优化器态可整体放 CPU（<code>offload_optimizer_state=true</code>，触发条件见注 2）。</td>
 </tr>
 <tr>
@@ -220,7 +220,7 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <td>GRASPO · 全参</td>
 <td class="v"><code>5.0e-06</code></td>
 <td class="v"><code>8</code></td>
-<td><code>per_device_train_batch_size=1</code>；<code>sequence_parallel_size=1</code>（关闭）；<code>use_vllm=false</code>；<code>nproc_per_node=总卡数</code>（纯数据并行）；全参必须分片优化器态 ⇒ 走 FSDP2（<code>fsdp</code> 字段透传，见注 6）。</td>
+<td><code>per_device_train_batch_size=1</code>；<code>sequence_parallel_size=1</code>（关闭）；<code>use_vllm=false</code>；<code>nproc_per_node=总卡数</code>（纯数据并行）；全参必须分片优化器态 ⇒ 走 FSDP2（<code>fsdp</code> 字段透传，见注 7）。</td>
 <td><code>micro_batch_size=1</code>；全参只能用流水并行（<code>pp_size</code> 可大于 1，<code>tp_size</code> / <code>dp_size</code> 固定 1，见注 2）；<code>sequence_parallel</code> 要求 <code>tp_size≥2</code>；优化器态可整体放 CPU（<code>offload_optimizer_state=true</code>，触发条件见注 2）；<code>pp_size&gt;1</code> 时须显式预授权（<code>allow_unverified_pp_rollout=true</code>，性质见注 3）。</td>
 </tr>
 <tr>
@@ -234,7 +234,7 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <td>CPT · 全参</td>
 <td class="v"><code>5.0e-06</code></td>
 <td class="v"><code>2</code></td>
-<td><code>per_device_train_batch_size=1</code>；<code>sequence_parallel_size=1</code>（关闭）；<code>use_vllm=false</code>；<code>nproc_per_node=总卡数</code>（纯数据并行）；全参必须分片优化器态 ⇒ 走 FSDP2（<code>fsdp</code> 字段透传，见注 6）。</td>
+<td><code>per_device_train_batch_size=1</code>；<code>sequence_parallel_size=1</code>（关闭）；<code>use_vllm=false</code>；<code>nproc_per_node=总卡数</code>（纯数据并行）；全参必须分片优化器态 ⇒ 走 FSDP2（<code>fsdp</code> 字段透传，见注 7）。</td>
 <td>—（该后端不提供 CPT 通道，见注 4）</td>
 </tr>
 <tr>
@@ -248,7 +248,7 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <td>OPD · 全参</td>
 <td class="v"><code>5.0e-06</code></td>
 <td class="v"><code>2</code></td>
-<td><code>per_device_train_batch_size=1</code>；<code>sequence_parallel_size=1</code>（关闭）；<code>use_vllm=false</code>；<code>nproc_per_node=总卡数</code>（纯数据并行）；全参必须分片优化器态 ⇒ 走 FSDP2（<code>fsdp</code> 字段透传，见注 6）。</td>
+<td><code>per_device_train_batch_size=1</code>；<code>sequence_parallel_size=1</code>（关闭）；<code>use_vllm=false</code>；<code>nproc_per_node=总卡数</code>（纯数据并行）；全参必须分片优化器态 ⇒ 走 FSDP2（<code>fsdp</code> 字段透传，见注 7）。</td>
 <td>—（该后端不提供 OPD 通道，见注 4）</td>
 </tr>
 </tbody>
@@ -293,10 +293,10 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <!-- ========================= 4. 测试结果 ========================= -->
 <section class="part" id="s4">
 <h2>4. 测试结果</h2>
-<p>本表 = 训练算法 × 模型 × 模式 × TP × PP × DP 的全量组合（总卡数 ≤ 4，不含 OPD 教师）经显存可行性筛选后的结果：{{ENUM_COUNTS}}；剔除判据与逐档剔除清单由仓内 <code>tools/matrix/enumerate_matrix.py</code> 生成。</p>
+<p>本表 = 训练算法 × 模型 × 模式 × TP × PP × DP 的全量组合（总卡数 ≤ 4，不含 OPD 教师）经显存可行性筛选后的结果：{{ENUM_COUNTS}}；<b>36 档的剔除是保守结论</b>：判定所依据的 offload 配方目前尚未实测，不代表这些组合在物理上不可能。剔除判据与逐档剔除清单由仓内 <code>tools/matrix/enumerate_matrix.py</code> 生成。</p>
 <ul class="status-legend">
 <li><b class="st-pass">通过</b>（绿色）：已实跑，且判据全部满足。</li>
-<li><b class="st-fail">不通过</b>（红色）：已实跑，但至少一条判据不满足（含该档在当前环境无法运行）。</li>
+<li><b class="st-fail">不通过</b>（红色）：已实跑，但至少一条判据不满足。</li>
 <li><b class="st-pending">待测试</b>（黄色）：尚未实跑，没有任何结论。</li>
 </ul>
 <div class="table-wrap">{{MATRIX_TABLE}}</div>

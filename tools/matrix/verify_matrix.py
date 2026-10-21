@@ -1628,6 +1628,42 @@ def main():
     if _toks != _allowed:
         failures.append(("④W 模板占位符白名单",
                          f"期望恰为 {_allowed}，实际 {_toks}（静态区不得再有数据占位符）"))
+    # ---- ④N<注>. 「见注 N」引用必须**指对**（2026-10-22 复核 W1）----
+    #   病史：注列表在 19→16 列轮里从 6 条变 7 条（FSDP2 挪到注 7），但表格里 4 处仍写「见注 6」
+    #   （注 6 = 算法级开关，与 FSDP2 无关）⇒ 引用指向了错误的对象。
+    #   判据：① 每个 `见注 N` 的 N 必须落在现有注数范围内；② 被引那条必须含该引用的关键词
+    #   （⛔ 只查"N ≤ 注数"不够：指错条同样会通过 ⇒ 必须逐条对关键词）。
+    _notes_m = re.search(r'<ol class="notes">(.*?)</ol>', target_text, re.S)
+    _note_items = re.findall(r"<li>(.*?)</li>", _notes_m.group(1), re.S) if _notes_m else []
+    #: 每个被引注号「必须含」的关键词（⛔ 不写整句：只写该注的判别性词）
+    _NOTE_REF_KEYWORD = {2: "pp_size", 3: "预授权", 4: "通道", 5: "尚未下发", 7: "FSDP2"}
+    _refs = sorted({int(x) for x in re.findall(r"见注 (\d+)", target_text)})
+    _note_count = len(_note_items)
+    _bad_ref = [_n for _n in _refs if not 1 <= _n <= _note_count]
+    if _bad_ref:
+        failures.append(("④N<注> 见注 N 越界",
+                         f"页面引用了不存在的注 {_bad_ref}（现有注数 {_note_count}）"))
+    _bad_ref_kw = []
+    for _n in _refs:
+        if not 1 <= _n <= _note_count:
+            continue
+        _kw = _NOTE_REF_KEYWORD.get(_n)
+        if _kw is None:
+            continue
+        _plain = html.unescape(re.sub(r"<[^>]+>", "", _note_items[_n - 1]))
+        if _kw not in _plain:
+            _bad_ref_kw.append((_n, _kw, _plain[:60]))
+    if _bad_ref_kw:
+        failures.append(("④N<注> 见注 N 指错条",
+                         f"（注号, 该注应含关键词, 实际开头）: {_bad_ref_kw}"))
+
+    # ---- ④P<注>. 「配置生成侧尚未下发」必须在位（2026-10-22 复核 W3）----
+    #   病史：第 3 章导语称两个后端列是「各自真实下发的字段」，与注 5「尚未下发」互斥；
+    #   修法 = 导语改口径 + 注 5 保留该句。本断言守住「这句不许被删/被弱化」。
+    if "配置生成侧尚未下发" not in target_text:
+        failures.append(("④P<注> 尚未下发声明在位",
+                         "页面缺「配置生成侧尚未下发」一句（注 5 的核心事实）⇒ 达标面会被读成已下发"))
+
     # ---- ④Q0. 「关键开关」列的 `—` **语义必须被显式定义**（修正轮 4 ⚠②）----
     #   ★ 缺陷实况：该列 31/54 档为 `—`，而上一版读表提示只定义了「实验数据」段的 `—`
     #     ⇒ 属"要读者推断"。修法 = 读表提示补一句（⛔ 不改渲染形态，`--human-view-self-test`

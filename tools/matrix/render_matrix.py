@@ -190,7 +190,7 @@ CHAPTER3_ITEM_LABELS = tuple(i["label"] for i in CHAPTER3_CONDITION_ITEMS)
 CHAPTER3_FIELDS = frozenset(i["row_field"] for i in CHAPTER3_CONDITION_ITEMS if i.get("row_field"))
 
 
-def enum_counts_text(meta: dict) -> str:
+def enum_counts_text(meta: dict, rows: "list[dict] | None" = None) -> str:
     """第 4 章章首的「保留 N 档、剔除 M 档」——**一律由数据现算**（⛔ 模板里不写死数字）。
 
     取值：`meta.enumeration.counts.kept` 与 `meta.enumeration.counts.excluded.OOM_UNFIT`。
@@ -217,6 +217,11 @@ def enum_counts_text(meta: dict) -> str:
     for _v, _n in ((kept, "counts.kept"), (oom, "counts.excluded.OOM_UNFIT")):
         if isinstance(_v, bool) or not isinstance(_v, int):
             raise SystemExit(f"渲染失败：`meta.enumeration.{_n}` 不是整数（{_v!r}）⇒ fail-closed")
+    # ★★ W2（2026-10-22）：章首「保留 N 档」必须与**实际渲染的行数**相等，否则删一行/多一行时
+    #   文档会静默说假话（页面上仍写「保留 124 档」）⇒ 此处 fail-closed（⛔ 不警告、不改正、不回退）。
+    if rows is not None and kept != len(rows):
+        raise SystemExit(f"渲染失败：`meta.enumeration.counts.kept`={kept} != 实际行数 {len(rows)} "
+                         "⇒ 章首数字与表格不符（fail-closed，⛔ 不回落、不自动改正）")
     return f"保留 {kept} 档、剔除 {oom} 档"
 
 
@@ -437,12 +442,13 @@ def build_matrix_table(data):
 
 def render(template_text, data):
     meta = data["meta"]
+    rows = data.get("rows") or []      # ★ W2：章首「保留 N 档」要与**实际行数**相等（机核见 enum_counts_text）
     table = build_matrix_table(data)
     # ★★ 只保留模板里**真实存在**的 5 个占位符（见 `PLACEHOLDER_TOKENS`）：
     #   第 1/2/3 章、目录、页脚、首屏注释已是模板静态文字 ⇒ ⛔ 不再从数据现算
     #   （使用者口径：脚本只负责把测试结果填进最后一章测试表）。
     repl = {
-        "{{ENUM_COUNTS}}": enum_counts_text(meta),
+        "{{ENUM_COUNTS}}": enum_counts_text(meta, rows),
         "{{DOC_TITLE}}": meta.get("title", ""),
         "{{GENERATOR}}": (meta.get("authority") or {}).get("generator", ""),
         "{{DATA_PATH}}": (meta.get("authority") or {}).get("data_path", ""),

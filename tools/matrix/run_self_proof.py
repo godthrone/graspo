@@ -834,6 +834,19 @@ def main():
             if not _hit:
                 print(f"  [debug] ㉕b 夹具未触发「{_want}」：{_fx_fail}")
 
+        # ㉖ ★★ 2026-10-22（复核 W2）反向自证：章首「保留 N 档」与表格行数**必须相等**。
+        #   做法：把 `meta.enumeration.counts.kept` 改成 123（数据仍 124 行）⇒ 渲染必须
+        #   **fail-closed（rc != 0）**，且报错要点名 kept 与实际行数。⛔ 不许"渲染成功但数字错"。
+        _w2 = json.loads(json.dumps(data, ensure_ascii=False))
+        _w2["meta"]["enumeration"]["counts"]["kept"] = 123
+        (tmp / "kept123.data.json").write_text(
+            json.dumps(_w2, ensure_ascii=False, indent=1), encoding="utf-8")
+        rc, out = run(["tools/matrix/render_matrix.py", "--template", "tools/matrix/template.html",
+                       "--data", str(tmp / "kept123.data.json"), "--out", str(tmp / "kept123.html")])
+        steps.append(("㉖ kept=123 时渲染（应 FAIL）", rc, out))
+        checks["㉖ 章首 kept ≠ 行数 ⇒ 渲染 fail-closed"] = (rc != 0)
+        checks["㉖ 报错点名 kept 与实际行数"] = ("counts.kept" in out and "实际行数" in out)
+
         print("=" * 70)
         for name, rc, out in steps:
             print(f"[rc={rc}] {name}")
