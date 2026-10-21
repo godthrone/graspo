@@ -45,7 +45,7 @@ section{margin-top:34px;}
 ol.criteria>li{margin:10px 0;}
 ul.uniform{margin:6px 0;}
 /* 第 3 章「按训练方法 × 后端」「按训练方法」两张参数表：允许换行，短值列不折行
-   （⛔ 与第 4 章 table.matrix 的版式无关：那张表由渲染器逐列现算） */
+   （与第 4 章 table.matrix 的版式无关：那张表由渲染器逐列现算） */
 #s3 table.cfg{border-collapse:collapse;width:100%;margin:10px 0 8px;font-size:13px;line-height:1.6;}
 #s3 table.cfg th,#s3 table.cfg td{border:1px solid var(--line);padding:6px 9px;text-align:left;
   vertical-align:top;white-space:normal;word-break:normal;overflow-wrap:anywhere;}
@@ -84,8 +84,8 @@ table.matrix tbody tr:nth-child(even) td.g-note{background:#f7f8fa;}
 table.matrix tbody tr:nth-child(even) td.col-tier{background:#f2f5f8;}
 table.matrix tbody tr:hover td{background:#e8f3ff;}
 table.matrix tbody tr:hover td.col-tier{background:#e8f3ff;}
-/* 列宽：按内容给足（旧版版式；⛔ 不为塞进视口而压缩）
-   ★ 2026-10-21 第 4 章列瘦身：`lr` / `max_epochs` / `switches` 三列已删除（取值改由第 3 章
+/* 列宽：按内容给足（旧版版式；不为塞进视口而压缩）
+   第 4 章列瘦身：`lr` / `max_epochs` / `switches` 三列已删除（取值改由第 3 章
      「按训练方法 × 后端」两张表承载）⇒ 「主要参数」组不再有长文本列，本组列一律为短值
      （9B/27B、1/2/4、TP/PP/DP…），换行规则只剩「实验数据」「备注」两组各列。 */
 table.matrix th[data-col="tier"]{min-width:64px;}        table.matrix th[data-col="status"]{min-width:108px;}
@@ -97,7 +97,7 @@ table.matrix th[data-col="dp"]{min-width:52px;}          table.matrix th[data-co
 table.matrix td[data-col="model_tbl"],table.matrix td[data-col="tp"],table.matrix td[data-col="pp"],
 table.matrix td[data-col="dp"],table.matrix td[data-col="cards_total"]
 {text-align:center;font-variant-numeric:tabular-nums;}
-/* 第 4 章「是否通过」三态图例：绿 / 红 / 黄，与状态单元格同一批 CSS 变量（⛔ 不引入外部资源） */
+/* 第 4 章「是否通过」三态图例：绿 / 红 / 黄，与状态单元格同一批 CSS 变量（不引入外部资源） */
 #s4 ul.status-legend{margin:10px 0 14px;padding-left:22px;}
 #s4 ul.status-legend li{margin:3px 0;}
 #s4 ul.status-legend b{padding:0 4px;border-radius:3px;}
@@ -107,7 +107,7 @@ table.matrix td[data-col="dp"],table.matrix td[data-col="cards_total"]
 table.matrix th[data-col="peak_mem"]{min-width:110px;}   table.matrix th[data-col="steps_actual"]{min-width:90px;}
 table.matrix th[data-col="elapsed"]{min-width:190px;}    table.matrix th[data-col="throughput"]{min-width:210px;}
 table.matrix th[data-col="effect"]{min-width:260px;}     table.matrix th[data-col="note"]{min-width:380px;}
-/* 「实验数据」与「备注」组当前一律为 `—`（无适用读数）⇒ 置灰，⛔ 不改取值 */
+/* 「实验数据」与「备注」组当前一律为 `—`（无适用读数）⇒ 置灰，不改取值 */
 table.matrix td.g-data,table.matrix td.g-note{text-align:left;color:#8c959f;}
 table.matrix td[data-col="peak_mem"]{text-align:right;font-variant-numeric:tabular-nums;}
 table.matrix td[data-col="effect"],table.matrix td[data-col="not_failed_reason"],

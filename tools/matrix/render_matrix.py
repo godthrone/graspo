@@ -193,7 +193,7 @@ CHAPTER3_FIELDS = frozenset(i["row_field"] for i in CHAPTER3_CONDITION_ITEMS if 
 def enum_counts_text(meta: dict, rows: "list[dict] | None" = None) -> str:
     """第 4 章章首的「保留 N 档、剔除 M 档」——**一律由数据现算**（⛔ 模板里不写死数字）。
 
-    取值：`meta.enumeration.counts.kept` 与 `meta.enumeration.counts.excluded.OOM_UNFIT`。
+    取值：`meta.enumeration.counts.kept` 与 `meta.enumeration.counts.excluded.MEMORY_UNFIT`。
 
     ★ fail-closed（2026-10-22）：`meta.enumeration` 缺失、或上述任一键缺失 ⇒ **直接 `SystemExit`**
       并指明缺哪个键。⛔ 不许回退到默认数字（回退 = 文档说假话且无人察觉）。
@@ -213,8 +213,8 @@ def enum_counts_text(meta: dict, rows: "list[dict] | None" = None) -> str:
     counts = _need("meta.enumeration", enum, "counts")
     kept = _need("meta.enumeration.counts", counts, "kept")
     excluded = _need("meta.enumeration.counts", counts, "excluded")
-    oom = _need("meta.enumeration.counts.excluded", excluded, "OOM_UNFIT")
-    for _v, _n in ((kept, "counts.kept"), (oom, "counts.excluded.OOM_UNFIT")):
+    oom = _need("meta.enumeration.counts.excluded", excluded, "MEMORY_UNFIT")
+    for _v, _n in ((kept, "counts.kept"), (oom, "counts.excluded.MEMORY_UNFIT")):
         if isinstance(_v, bool) or not isinstance(_v, int):
             raise SystemExit(f"渲染失败：`meta.enumeration.{_n}` 不是整数（{_v!r}）⇒ fail-closed")
     # ★★ W2（2026-10-22）：章首「保留 N 档」必须与**实际渲染的行数**相等，否则删一行/多一行时

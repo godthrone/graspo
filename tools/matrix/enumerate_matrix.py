@@ -808,11 +808,11 @@ REASON_CODES: dict[str, dict[str, Any]] = {
         "desc": "tp*pp*dp > card_limit ⇒ 枚举阶段就不生成档位",
         "excludes": True,
     },
-    "OOM_UNFIT": {
+    "MEMORY_UNFIT": {
         "desc": "按显存模型估算，**所有**可选后端的最佳情形仍超预算 ⇒ 不合理",
         "excludes": True,
     },
-    "KNOWN_OOM": {
+    "KNOWN_MEMORY_FAIL": {
         "desc": "该档所有可选后端都有**实测** 显存不足/不可用证据 ⇒ 不合理（证据优先于算式）",
         "excludes": True,
     },
@@ -1343,7 +1343,7 @@ ENUMERATION_COUNT_KEYS: frozenset[str] = frozenset({
     "raw_cube", "exceed_cards", "enumerated", "kept", "excluded", "kept_split", "tiers",
 })
 ENUMERATION_SUBKEYS: dict[str, frozenset[str]] = {
-    "excluded": frozenset({"EXCEED_CARDS", "OOM_UNFIT", "KNOWN_OOM", "UNSUPPORTED_MODE", "ALGO_BACKEND"}),
+    "excluded": frozenset({"EXCEED_CARDS", "MEMORY_UNFIT", "KNOWN_MEMORY_FAIL", "UNSUPPORTED_MODE", "ALGO_BACKEND"}),
     "kept_split": frozenset({"direct", "missing_channel"}),
     "tiers": frozenset({"feasible", "tight", "over_budget"}),
 }
@@ -1364,6 +1364,21 @@ RENDER_FIELD_BANNED = re.compile(
     r"\.py:\d+|_dedupe_dp_replicas|native_lora|native_full_param|_config_mapping"
     r"|lora_linear|pipeline_comm|gen_configs|core/schema|Ripple|flow 层"
 )
+
+
+#: 人读字段名（发布前必须过 `build_official.human_view_notation()`）—— 按键名判定，⛔ 不按位置写死。
+HUMAN_TEXT_KEYS = frozenset({"note", "blocked_reason"})
+
+
+def _human_view(text: str) -> str:
+    """人读字段的**唯一**清理器 = `build_official.human_view_notation()`（⛔ 不另写一份剥离逻辑）。
+
+    病史（第四轮复核）：本脚本落盘发布件时**没有**调用该清理器，只走脱敏扫描器的禁词表；
+    而禁词表当时不含 `★` / `⛔` ⇒ M093 的备注正文里漏出一个 `⛔`（页面可见）。
+    现改为：发布前对 `note` / `blocked_reason` 逐字段复用同一函数。
+    """
+    import build_official as _bo      # 同目录；纯函数，无副作用
+    return _bo.human_view_notation(text)
 
 
 def _publish_words(text: str) -> str:
@@ -1938,7 +1953,7 @@ def apply_meta_sync(meta: dict[str, Any], *, card_limit: int, budget: float,
             "enumerated": counts["enumerated"],
             "kept": counts["kept"],
             "excluded": {k: _ex.get(k, 0) for k in
-                         ("EXCEED_CARDS", "OOM_UNFIT", "KNOWN_OOM", "UNSUPPORTED_MODE", "ALGO_BACKEND")},
+                         ("EXCEED_CARDS", "MEMORY_UNFIT", "KNOWN_MEMORY_FAIL", "UNSUPPORTED_MODE", "ALGO_BACKEND")},
             "kept_split": {"direct": _kb.get("direct", 0), "missing_channel": _kb.get("missing_channel", 0)},
             "tiers": {"feasible": _bd.get("可行", 0), "tight": _bd.get("余量紧", 0),
                       "over_budget": _bd.get("超预算", 0)},
@@ -1947,6 +1962,16 @@ def apply_meta_sync(meta: dict[str, Any], *, card_limit: int, budget: float,
         "script_sha256": script_sha,
         "audit_ref": "逐档审计明细见枚举脚本 --audit-out 输出（随工作区，不入库）",
     }
+
+    # ★★ 2026-10-22（第四轮复核 W7）：`code_version.commit` 记录**生成基线**（提交时 HEAD）。
+    #   自引用限制：数据件记录不了"自己所在的那个提交"（内容含该值 ⇒ sha 变化 ⇒ 鸡生蛋）。
+    #   ⇒ 语义写进 `code_version.note`：commit = 生成基线；**脚本 sha256 以
+    #   `meta.enumeration.script_sha256` 为准**（它在同一提交里与脚本逐字节对应）。
+    _cv = new.get("code_version")
+    if isinstance(_cv, dict):
+        _cv["note"] = ("commit = 本件的生成基线（生成时的 HEAD）；脚本以 "
+                       "meta.enumeration.script_sha256 为准 —— 该 sha256 与同提交内的 "
+                       "tools/matrix/enumerate_matrix.py 逐字节一致。")
 
     for drop in META_DROPS:
         _del_path(new, drop["path"])   # 不存在也不算错（幂等）
@@ -2146,9 +2171,9 @@ def build(
                 rows.append(row_of(f"M{len(rows) + 1:03d}", rec, sel, budget))
                 continue
 
-            # 真正装不下 ⇒ 分原因码：有实测不可行证据 = KNOWN_OOM；否则 = OOM_UNFIT
+            # 真正装不下 ⇒ 分原因码：有实测不可行证据 = KNOWN_MEMORY_FAIL；否则 = MEMORY_UNFIT
             known = [c for c in cands if "evidence" in c]
-            code = "KNOWN_OOM" if known else "OOM_UNFIT"
+            code = "KNOWN_MEMORY_FAIL" if known else "MEMORY_UNFIT"
             counts["excluded"][code] = counts["excluded"].get(code, 0) + 1
             revive = [{"backend": h["backend"], "eligible": h["eligible"],
                        "peak_gib": h.get("peak_gib"), "band": h.get("band"),
@@ -2200,10 +2225,35 @@ def build(
         base_doc.get("meta", {}), card_limit=card_limit, budget=budget,
         counts=counts, script_sha=script_sha, generated_at=generated_at,
         code_commit=code_commit)
+    # ★ meta 里的人读字段同样过唯一清理器（如 `lora_target_backends.*.note`）
+    def _clean_meta_human(node):
+        if isinstance(node, dict):
+            return {k: (_human_view(v) if k in HUMAN_TEXT_KEYS and isinstance(v, str)
+                        else _clean_meta_human(v))
+                    for k, v in node.items()}
+        if isinstance(node, list):
+            return [_clean_meta_human(v) for v in node]
+        return node
+
+    pub_meta = _clean_meta_human(pub_meta)
 
     # ★ 发布/审计分离：`_audit` 摘出行外；自检与 report 用**合并后的完整行**（含 backend_reason 等）
     checks_rows = [dict(r, **(r.get("_audit") or {})) for r in rows]
     audit_rows = [(r["tier"], r.pop("_audit")) for r in rows]
+
+    # ★★ 2026-10-22（第四轮复核）：**人读字段**过唯一清理器（★/⛔ 等内部记号一律不发布）。
+    #   覆盖 `rows[*].note` / `rows[*].blocked_reason` 与 `meta` 里同名的说明字段
+    #   （如 `meta.lora_target_backends.msswift.note`）——递归按**键名**判定，⛔ 不按位置写死。
+    def _clean_human(node):
+        if isinstance(node, dict):
+            return {k: (_human_view(v) if k in HUMAN_TEXT_KEYS and isinstance(v, str)
+                        else _clean_human(v))
+                    for k, v in node.items()}
+        if isinstance(node, list):
+            return [_clean_human(v) for v in node]
+        return node
+
+    rows = _clean_human(rows)
 
     doc = {
         "schema": base_doc.get("schema", "capability-matrix/v3-official"),
