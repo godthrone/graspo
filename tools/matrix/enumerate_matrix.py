@@ -1918,7 +1918,7 @@ def apply_meta_sync(meta: dict[str, Any], *, card_limit: int, budget: float,
         },
         "script": "tools/matrix/enumerate_matrix.py",
         "script_sha256": script_sha,
-        "audit_ref": "审计明细在枚举脚本的 --audit-out 输出中（不入库）",
+        "audit_ref": "逐档审计明细见枚举脚本 --audit-out 输出（随工作区，不入库）",
     }
 
     for drop in META_DROPS:

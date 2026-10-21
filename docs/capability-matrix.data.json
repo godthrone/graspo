@@ -473,8 +473,8 @@
         }
       },
       "script": "tools/matrix/enumerate_matrix.py",
-      "script_sha256": "245ffa9849fc36cfef1a074d24467a5a7cc960ef0e690396d52ff10841840f77",
-      "audit_ref": "审计明细在枚举脚本的 --audit-out 输出中（不入库）"
+      "script_sha256": "5cb179fcea71aa4679f9f4b7dabf178362cc8f85e6d1e9ed1a678b2935fe373b",
+      "audit_ref": "逐档审计明细见枚举脚本 --audit-out 输出（随工作区，不入库）"
     }
   },
   "rows": [
