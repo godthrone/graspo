@@ -102,8 +102,8 @@ ALGO_BACKEND_SUPPORT: dict[str, tuple[str, ...]] = {
 
 #: 「某算法在某后端缺实现」的**卡点描述**（缺实现 ≠ 不合理；只写清卡在哪一层）。
 ALGO_BACKEND_NOTE: dict[tuple[str, str], str] = {
-    ("CPT", "native"): "native 侧无 CPT 通道（Ripple 算法层未接线：core/schema.py:29-34 只给 cpt 列 msswift）",
-    ("OPD", "native"): "native 侧无 OPD 通道（Ripple 算法层未接线：core/schema.py:29-34 只给 opd 列 msswift）",
+    ("CPT", "native"): "native 侧尚无 CPT 训练通道（算法层未提供该训练方法在 native 后端的实现）",
+    ("OPD", "native"): "native 侧尚无 OPD 训练通道（算法层未提供该训练方法在 native 后端的实现）",
 }
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -584,7 +584,7 @@ BACKEND_PARALLEL_FACT: dict[tuple[str, str], dict[str, Any]] = {
     ("native", "LoRA"): {
         "supports_tp": True, "supports_pp": True, "supports_dp": True,
         "fact": "native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）",
-        "short_fact": "native LoRA 的 TP/PP/DP 三维原生接线（`lora_linear.py:223-282`）",
+        "short_fact": "native LoRA 的 TP/PP/DP 三维原生接线",
         "source": "src/graspo/flow/backend/native/lora/lora_linear.py:223-282；native/parallel/pipeline_comm.py",
         "tier": 0,
     },
@@ -597,7 +597,7 @@ BACKEND_PARALLEL_FACT: dict[tuple[str, str], dict[str, Any]] = {
     ("ms-swift", "LoRA"): {
         "supports_tp": False, "supports_pp": False, "supports_dp": True,
         "fact": "ms-swift 标准通道只有 DDP+SP（无 tp/pp 字段；Megatron 未接线）",
-        "short_fact": "ms-swift 标准通道只有 DDP+SP（`_config_mapping.py:409-436`）",
+        "short_fact": "ms-swift 标准通道只有 DDP+SP",
         "source": "src/graspo/flow/backend/msswift/_config_mapping.py:409-436,682",
         "tier": 1,
     },
@@ -610,7 +610,7 @@ def backend_legal(backend: str, mode: str, tp: int, pp: int, dp: int) -> tuple[b
         if mode == "全参" and (tp > 1 or dp > 1):
             return False, (
                 "native 全参不支持 tp>1/dp>1：加载期校验直接拒绝"
-                "（src/graspo/core/schema.py:171-188，理由逐字「native 的梯度同步实现只覆盖 LoRA 参数」）"
+                "（原因：native 的梯度同步实现只覆盖 LoRA 参数）"
             )
         return True, ""
     return True, ""
@@ -625,7 +625,7 @@ def eval_backend(
     legal, illegal_why = backend_legal(backend, mode, tp, pp, dp)
     if not legal:
         return {"backend": backend, "eligible": False, "why": illegal_why,
-                "why_short": "语义被拒（native 全参只支持 PP 分片，`core/schema.py:171-188`）"}
+                "why_short": "语义被拒（native 全参只支持 PP 分片）"}
 
     # ① 实测证据：该后端在该档"实测不可行" ⇒ 直接出局（证据 > 算式）
     infeasible_evs = evidence_for(algo, model, mode, backend, shape, effects=("backend_infeasible",))
@@ -712,14 +712,13 @@ def eval_backend(
     deliverable, delivery_gap, delivery_gap_short = True, None, None
     if backend == "native" and mode == "LoRA" and tp > 1:
         deliverable = False
-        delivery_gap_short = ("native LoRA 导出无 TP 合并实现（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；"
-                              "`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）")
+        delivery_gap_short = ("native 的多卡产物导出只覆盖数据并行的副本合并，张量并行的结果拼接尚未实现")
         delivery_gap = delivery_gap_short
     elif backend == "native" and mode == "LoRA" and tp == 1 and pp == 1 and dp > 1:
         deliverable = False
-        delivery_gap_short = ("native LoRA 的 DP 合并依赖「副本位等价」窄口前置：`native_lora.py:455-476` "
-                              "分歧即 fail-closed；既有 9B/27B 的 LoRA dp2/dp4 跑次实测副本逐元素相等、可合并，"
-                              "epoch=2 旧 dp4 跑次曾分歧")
+        delivery_gap_short = ("native 的 DP 产物合并要求各卡副本逐元素相等，否则拒绝导出；"
+                              "既有 9B/27B 的 LoRA dp2/dp4 跑次实测副本相等、可合并，"
+                              "epoch=2 旧 dp4 跑次曾出现分歧")
         delivery_gap = delivery_gap_short
 
     cap_fact = BACKEND_PARALLEL_FACT[(backend, mode)]
@@ -812,12 +811,12 @@ REASON_CODES: dict[str, dict[str, Any]] = {
         "excludes": True,
     },
     "ALGO_BACKEND": {
-        "desc": "某算法在某后端缺实现 —— ★ 主笔裁定：**不算剔除**，保留为待测试并写清卡点",
+        "desc": "某算法在某后端缺实现 —— ★ 定稿判据：**不算剔除**，保留为待测试并写清卡点",
         "excludes": False,
     },
     "MISSING_CHANNEL": {
         "desc": ("**唯一能装下的后端缺该算法通道**（物理组合成立、拦住它的是我们自己的欠账）"
-                 "⇒ ★ 裁定 2026-10-21：**不算剔除**，保留为待测试，按补齐通道后的配方估算"),
+                 "⇒ ★ 定稿判据 2026-10-21：**不算剔除**，保留为待测试，按补齐通道后的配方估算"),
         "excludes": False,
     },
     "UNSUPPORTED_MODE": {
@@ -903,33 +902,34 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
     # ── 卡点（缺实现 ≠ 不合理）：逐条写清卡在哪一层 ────────────────────────
     gaps: list[str] = []
     if sel.get("missing_channel"):
-        gaps.append(f"native 侧无 {algo} 通道（Ripple 算法层未接线，`core/schema.py:29-34`）；"
+        gaps.append(f"native 侧尚无 {algo} 训练通道（算法层未提供该训练方法在 native 后端的实现）；"
                     f"补齐后按 native 配方估算 {peak:.2f} GiB 可行")
     if backend == "ms-swift":
         if mode == "全参":
             gaps.append("FSDP2 分片载体零 rc=0 实测")
         if tp > 1 or pp > 1:
-            gaps.append("ms-swift 的 TP/PP 无通道（Megatron 未接线，`_config_mapping.py:682`）"
+            gaps.append("ms-swift 的 TP/PP 无通道（并行实现尚未接入，标准通道只覆盖 DDP+SP）"
                         "⇒ 该形状的分摊只能靠 FSDP2 全分片，语义待实测")
     if backend == "native" and mode == "全参":
         if pp > 1:
-            gaps.append("native 全参 PP 导出未实现（`native_full_param.py:462-471` 只认 dp=tp=pp=1）")
+            gaps.append("native 全参的流水线并行产物导出尚未实现（目前只支持单卡单机导出）")
         if algo == "GRASPO" and pp > 1:
-            gaps.append("native PP+rollout 须 `allow_unverified_pp_rollout=true`（`native/runtime.py:507-522`）")
+            gaps.append("native 的流水线并行 + rollout 组合须显式解除未验证保护"
+                        "（`native.allow_unverified_pp_rollout=true`）")
     if backend == "native" and mode == "LoRA" and (tp > 1 or pp > 1):
         # ★ 必修（裁定后补）：历史 54 档里 LoRA 的 tp=pp=1 恒成立（TP/PP 只出现在全参档）
         #   ⇒ 这些形状**从未实跑**，⛔ 不许写"训练可跑/能跑"。
         if tp > 1:
-            gaps.append("该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）"
-                        "⇒ 训练可行性未建立；产物侧另需补导出层：仓内 LoRA 导出无 TP 合并实现"
-                        "（`native_lora.py` 只有 DP 副本化简与 PP 覆盖校验；`native_full_param.py:462-471` 逐字 TP row reassembly 未实现）")
+            gaps.append("该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）"
+                        "⇒ 训练可行性未建立；产物侧另需补导出层：多卡导出仅覆盖数据并行的副本合并，"
+                        "张量并行的结果拼接尚未实现")
         else:
-            gaps.append("该形状从未实跑（历史 54 档里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）"
-                        "⇒ 训练可行性未建立；产物侧 PP 覆盖校验已实现（`native_lora.py:256-300`）但无实跑验证")
+            gaps.append("该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）"
+                        "⇒ 训练可行性未建立；产物侧流水线并行分片的覆盖校验已实现，但无实跑验证")
     if chosen["recipe"] == "offload":
         gaps.append("需 `native.offload_optimizer_state=true`（实测 35.19 GB）")
         if algo == "GRASPO":
-            gaps.append("offload 只在 SFT 通道接线（`training_sft.py:136-148`），RL 通道未接")
+            gaps.append("offload 目前只在 SFT 通道生效，RL 通道尚未接入")
     if algo == "OPD" and chosen["teacher_variant"] == "offload":
         gaps.append("需 `offload_teacher_model=true`（该路径零 rc=0 实测）")
     gaps = gaps[:4]
@@ -943,7 +943,7 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
             elif chosen.get("measured_anchor"):
                 basis = f"该值锚在实测族级峰值（27B LoRA 78.64 GiB、余 0.61 GiB）"
             else:
-                basis = "算式口径"
+                basis = "算式估算"
             notes_extra.append(
                 f"余量紧：估算 {peak:.2f} GiB 越过 {budget:.1f} 设计预算 {peak - budget:.2f} GiB、"
                 f"卡容量内余量仅 {CARD_CAPACITY_GIB - peak:.2f} GiB（{basis}），需实测确认")
@@ -1038,7 +1038,7 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
         "max_epochs": epochs,
         "save_steps": derived + 1,
         "steps": f"{epochs} epoch × {per_epoch} 步/epoch = 推导 {derived} 步",
-        "steps_basis": "沿用旧生成器口径（子集条数 ÷ 卡数 × epochs）；GRASPO 的 rollout 组口径待生成侧重算",
+        "steps_basis": "沿用旧生成规则的换算（子集条数 ÷ 卡数 × epochs）；GRASPO 的 rollout 组规模待生成侧统一",
         "switches": switches,
         "deepspeed": "—",                 # DeepSpeed 已禁用：任何档都不再以 DS 为配方
         "allow_unverified_pp_rollout": allow_pp_rollout,
@@ -1058,7 +1058,8 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
         #   runnable 是"通道在不在"）。MISSING_CHANNEL 档 = 通道缺 ⇒ false，配置装载期会被
         #   `core/schema.py:29-34` 拒绝；下游生成配置时应按此跳过（见 meta.enumeration.known_gaps）。
         "runnable": not bool(sel.get("missing_channel")),
-        "blocked_on": (f"{backend} 侧缺 {algo} 通道（Ripple 算法层未接线，`core/schema.py:29-34`）"
+        "blocked_on": (f"{backend} 侧尚无 {algo} 训练通道"
+                       f"（算法层未提供该训练方法在 {backend} 后端的实现）"
                        if sel.get("missing_channel") else "—"),
         "status": "待测试",               # ★ 主笔要求：每一个档位都是待测试
         # ── 渲染需要的实验数据字段：全部置 "—"（§17.7：未验证不得携带读数） ──
@@ -1133,13 +1134,13 @@ def _reason_line(chosen, sel, backend, mode, tp, pp, dp, band, budget, peak, alg
         # ⚠ 只在"双方都有实测成功跑次"时才敢这么写；否则走下面的通用分支
         if chosen["success_evidence"] and other["success_evidence"]:
             core = (f"选 {backend}：两者都有实测成功跑次（{backend} {_labels(chosen['success_evidence'])}；"
-                    f"{other['backend']} {_labels(other['success_evidence'])}），但 {other['backend']} 的产物口径"
-                    f"带未闭合前置 —— {other.get('delivery_gap_short') or other.get('delivery_gap')} "
-                    f"⇒ 按裁定「产物可推理」取 {backend}")
+                    f"{other['backend']} {_labels(other['success_evidence'])}），但 {other['backend']} 的产物交付"
+                    f"带一道未闭合前置 —— {other.get('delivery_gap_short') or other.get('delivery_gap')} "
+                    f"⇒ 按「产物可推理」这一判据取 {backend}")
         else:
-            core = (f"选 {backend}：{other['backend']} 的产物口径带未闭合前置 —— "
+            core = (f"选 {backend}：{other['backend']} 的产物交付带一道未闭合前置 —— "
                     f"{other.get('delivery_gap_short') or other.get('delivery_gap')}；"
-                    f"且 {other['backend']} 在该形状无成功跑次 ⇒ 按裁定「产物可推理」取 {backend}")
+                    f"且 {other['backend']} 在该形状无成功跑次 ⇒ 按「产物可推理」这一判据取 {backend}")
     elif other is None:
         if sel["missing_backends"]:
             core = (f"选 {backend}：{algo} 只有 {backend} 通道 —— {sel['missing_backends'][0]}；"
@@ -1255,7 +1256,7 @@ def _v12_missing_channel(rows, budget: float) -> bool:
         note = r["note"]
         if r["status"] != "待测试" or "卡点" not in note:
             return False
-        if f"native 侧无 {r['algo']} 通道" not in note or "补齐后按 native 配方估算" not in note:
+        if f"native 侧尚无 {r['algo']} 训练通道" not in note or "补齐后按 native 配方估算" not in note:
             return False
     return True
 
@@ -1264,6 +1265,53 @@ def _v12_missing_channel(rows, budget: float) -> bool:
 #:   ★ 溯源（档号 + 路径 + 行号）只留在本脚本证据表的 `reading`/`source` 与 `.local` 工位报告里；
 #:     ⛔ 发布件里的人读文案一律用描述性指代（"既有 9B/27B LoRA dp2/dp4 跑次"）。
 TIER_ID_RE = re.compile(r"T\d{3}")
+
+
+#: 发布件用词中性化（**顺序敏感**：先短语、后兜底）。
+#:   ★ 只换过程用语，⛔ 不改结论、⛔ 不动数值、⛔ 不动 file:line 溯源（机读台账的审计线索要留）。
+PUBLISH_WORD_REWRITES: tuple[tuple[str, str], ...] = (
+    ("评测集口径", "评测集定义"),
+    ("fit 口径", "fit 判定标准"),
+    ("lr 口径", "lr 规则"),
+    ("参数口径名", "参数判据名"),
+    ("效果口径名", "效果判据名"),
+    ("口径变更", "判据变更"),
+    ("口径理由", "判据理由"),
+    ("口径订正", "判据订正"),
+    ("现行口径", "现行判据"),
+    ("旧口径", "旧判据"),
+    ("完整正确口径", "完整正确判据"),
+    ("主笔裁定", "定稿判据"),
+    ("★ 裁定", "★ 规则"),
+    ("按裁定", "按判据"),
+    ("裁定", "规则"),
+    ("口径", "判据"),
+)
+
+#: 进页面的字段（档一：⛔ 不许出现 file:line 与内部符号名）。
+RENDER_FIELDS: tuple[str, ...] = ("note", "blocked_on", "delivery_gap_short")
+#: 档一字段里禁止的形态：源码行号 + 内部模块/函数名 + 内部目录名。
+RENDER_FIELD_BANNED = re.compile(
+    r"\.py:\d+|_dedupe_dp_replicas|native_lora|native_full_param|_config_mapping"
+    r"|lora_linear|pipeline_comm|gen_configs|core/schema|Ripple|flow 层"
+)
+
+
+def _publish_words(text: str) -> str:
+    for old, new in PUBLISH_WORD_REWRITES:
+        text = text.replace(old, new)
+    return text
+
+
+def _polish_doc(node: Any) -> Any:
+    """深拷贝并把**所有字符串值**过一遍发布用词中性化（键名⛔ 不动）。"""
+    if isinstance(node, dict):
+        return {k: _polish_doc(v) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_polish_doc(v) for v in node]
+    if isinstance(node, str):
+        return _publish_words(node)
+    return node
 
 
 def serialize_doc(doc: dict[str, Any]) -> str:
@@ -1291,6 +1339,35 @@ def leak_hits_in_text(text: str) -> list[str]:
                 hits.append(f"第 {i} 行：{why} ⇒ {m.group(0)!r}")
                 break
     return hits
+
+
+def _v15_publish_clean(data_text: str | None) -> tuple[bool, str]:
+    """V15（三条硬断言）：① 脱敏扫描器词表命中 = 0；② 进页面字段里 file:line/内部符号 = 0；
+    ③ 旧档号 `T` + 三位数字 = 0。命中 ⇒ rc=2 且 ⛔ 不写盘。"""
+    if data_text is None:
+        return False, "数据件文本未提供"
+    hits = leak_hits_in_text(data_text)
+    if hits:
+        return False, f"① 脱敏词表命中 {len(hits)} 处：" + "；".join(hits[:5])
+    try:
+        doc = json.loads(data_text)
+        rows = doc.get("rows") or []
+    except Exception as exc:
+        return False, f"数据件不可解析（{exc}）"
+    bad: list[str] = []
+    for r in rows:
+        for field in RENDER_FIELDS:
+            val = r.get(field)
+            if isinstance(val, str):
+                m = RENDER_FIELD_BANNED.search(val)
+                if m:
+                    bad.append(f"{r.get('tier')}.{field} ⇒ {m.group(0)!r}")
+    if bad:
+        return False, f"② 进页面字段含开发过程细节 {len(bad)} 处：" + "；".join(bad[:5])
+    tier_ids = TIER_ID_RE.findall(data_text)
+    if tier_ids:
+        return False, f"③ 旧档号命中 {len(tier_ids)} 处（{', '.join(sorted(set(tier_ids)))}）"
+    return True, "①②③ 全部 0 处"
 
 
 def _v14_no_tier_ids(data_text: str | None) -> tuple[bool, str]:
@@ -1391,7 +1468,7 @@ VERIFICATION_CASES: tuple[dict[str, Any], ...] = (
                   "只有 native 能装下的档以 MISSING_CHANNEL 保留（backend=native 但 backend_implemented=false）"),
         "check": lambda rows, budget: (
             sum(1 for r in rows if r["algo"] == "CPT") > 0
-            and all("native 侧无 CPT 通道" in r["note"] for r in rows if r["algo"] == "CPT")
+            and all("尚无 CPT 训练通道" in r["note"] for r in rows if r["algo"] == "CPT")
             and all((r["backend"] == "ms-swift")
                     or (r["backend_reason"].get("backend_implemented") is False)
                     for r in rows if r["algo"] == "CPT")),
@@ -1426,7 +1503,7 @@ VERIFICATION_CASES: tuple[dict[str, Any], ...] = (
     },
     {
         "id": "V11",
-        "claim": ("LoRA ∧ dp>1 ∧ tp=pp=1 ⇒ backend 取 ms-swift（native 的 DP 产物口径带未闭合前置："
+        "claim": ("LoRA ∧ dp>1 ∧ tp=pp=1 ⇒ backend 取 ms-swift（native 的 DP 产物交付带一道未闭合前置："
                   "副本位等价窄口，`native_lora.py:455-476`；ms-swift 走 FSDP2 full_state_dict 产标准 HF checkpoint）；"
                   "唯一例外 = ms-swift 在该形状有**实测不可行**证据（此时选 native 并在 note 写明该实测）"),
         "check": _v11_lora_dp_deliverable,
@@ -1449,6 +1526,13 @@ VERIFICATION_CASES: tuple[dict[str, Any], ...] = (
                   "人读文案一律用描述性指代，完整溯源只留在工位件"),
         "check": None,   # 由 `run_self_check` 单独核（需要发布件序列化文本，见下）
     },
+    {
+        "id": "V15",
+        "claim": ("发布件三条硬断言：①脱敏扫描器词表命中 = 0（含「裁定/口径」等过程用语）；"
+                  "②进页面字段（note/blocked_on/delivery_gap_short）里源码行号与内部符号名命中 = 0；"
+                  "③旧档号 T+三位数字 = 0"),
+        "check": None,
+    },
 )
 
 
@@ -1461,6 +1545,10 @@ def run_self_check(rows, budget: float, counts: dict[str, Any] | None = None,
         if need is not None and card_limit is not None and card_limit < need:
             out.append({"id": case["id"], "claim": case["claim"], "ok": True, "skipped": True,
                         "reason": f"min_card_limit={need} 而 card_limit={card_limit} ⇒ 该形状不在枚举域，本回验不适用"})
+            continue
+        if case["id"] == "V15":
+            ok, detail = _v15_publish_clean(data_text)
+            out.append({"id": "V15", "claim": case["claim"], "ok": ok, "reading": detail})
             continue
         if case["id"] == "V14":
             ok, detail = _v14_no_tier_ids(data_text)
@@ -1885,6 +1973,9 @@ def build(
         "rows": rows,
         "data_keys": base_doc.get("data_keys", ["peak_mem", "steps_actual", "elapsed", "throughput", "effect", "note"]),
     }
+
+    # ★ 发布件专用：过程用语中性化（⛔ 只动字符串值；report 仍用原始 rows，溯源留在 .local）
+    doc = _polish_doc(doc)
 
     report = {
         "criteria_version": CRITERIA_VERSION,
