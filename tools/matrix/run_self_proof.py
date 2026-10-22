@@ -664,9 +664,11 @@ def main():
         #      本对照让**页面与数据件同时**含该句 ⇒ 唯一被触发的语义断言就是 ④X（页/数据不一致）
         #      ＋ ④Y（① 侵入 ③ 的关键词面），两者都点名打印。
         tpl_txt = (SM / "template.html").read_text(encoding="utf-8")
-        _li_old22 = ("<b>能完整跑完</b>：训练正常结束、无中断、无报错、退出码 0、优化器步数达标、"
+        _li_old22 = ("<b>能完整跑完</b>：训练正常结束、无中断、无报错、退出码 0、"
+                     "优化器步数达到该档计划步数（总训练轮数 × 每 epoch 步数）、"
                      "检查点完整、没有 NaN/Inf。")
-        _li_new22 = ("<b>能完整跑完</b>：训练正常结束、无中断、无报错、退出码 0、优化器步数达标、"
+        _li_new22 = ("<b>能完整跑完</b>：训练正常结束、无中断、无报错、退出码 0、"
+                     "优化器步数达到该档计划步数（总训练轮数 × 每 epoch 步数）、"
                      "检查点完整、没有 NaN/Inf；算法机制真的在起作用（不是空转）。")
         checks["㉒ 注入生效（模板 ① 这一条确实被改）"] = (tpl_txt.count(_li_old22) == 1)
         (tmp / "c22.template.html").write_text(tpl_txt.replace(_li_old22, _li_new22, 1), encoding="utf-8")
@@ -695,11 +697,13 @@ def main():
         #      ⇒ ① 字节同一性以**同源**为准，本对照测的是 ④X 而非"手改检测"）。
         #    ★ 该对照正是"页面对、数据件旧/新不一致"这种漂移的能失败证明（用户点名要防的那一类）。
         tpl23 = (SM / "template.html").read_text(encoding="utf-8")
-        _old23 = ("<b>能完整跑完</b>：训练正常结束、无中断、无报错、退出码 0、优化器步数达标、"
+        _old23 = ("<b>能完整跑完</b>：训练正常结束、无中断、无报错、退出码 0、"
+                  "优化器步数达到该档计划步数（总训练轮数 × 每 epoch 步数）、"
                   "检查点完整、没有 NaN/Inf。")
         # ★ 夹具必须**自身仍满足 ④Y**（否则"只红 ④X"不可判）—— 实测：旧措辞「产物能加载或推理。」
         #   里的「推理」会被 ④Y 抓到（1 条命中）⇒ 用一条"字数不同但关键词面干净"的等价旧文本。
-        _stale23 = ("<b>能完整跑完</b>：训练正常结束、无中断、无报错、退出码 0、优化器步数达标、"
+        _stale23 = ("<b>能完整跑完</b>：训练正常结束、无中断、无报错、退出码 0、"
+                    "优化器步数达到该档计划步数（总训练轮数 × 每 epoch 步数）、"
                     "检查点完整、没有 NaN/Inf；产物的完整性另行确认。")
         checks["㉓ 漂移夹具生效（旧模板 ① 已改）"] = (tpl23.count(_old23) == 1)
         (tmp / "drift.template.html").write_text(tpl23.replace(_old23, _stale23, 1), encoding="utf-8")
@@ -929,6 +933,65 @@ def main():
             else:
                 checks[_tag + " ⇒ verify 变红"] = False
                 checks[_tag + " ⇒ 报红点提到档数/计数"] = False
+
+        # ㉛–㉞ ★★ 2026-10-22（本轮新增断言的**反向自证**：每条都要求"塞回/删掉 ⇒ 机核当场红"）
+        #   ㉛ 页面塞回「实测跑通过」（现状语）⇒ ④P 词族扩容必须抓到（旧 14 词表抓不到）。
+        #   ㉜ 判据④ 的**模板与数据件同时**改回旧句（只写合并 LoRA）⇒ ④F4 必须红；
+        #      且 ④X **不得**红 —— 证明抓到它的是「判据④ 必须覆盖两种模式」这条语义断言，
+        #      而不是"页面/数据不一致"（后者只证明两份漂移）。
+        #   ㉝ 删掉第 3 章「档位形状取值规则」⇒ ④SH 必须红（1／2／4、≤ 4、不对称 三件套缺一即红）。
+        #   ㉞ 删掉判据③ 的清单表 ⇒ ④CL 必须红（四个算法各 ≥ 2 条、GRASPO 须含既有约束）。
+        _page = (DOCS / "capability-matrix.html").read_text(encoding="utf-8")
+        _muts31 = [
+            ("㉛ 塞回「实测跑通过」",
+             _page.replace("估算 33.24/78.0 GiB（可行）", "估算 33.24/78.0 GiB（可行，实测跑通过）", 1),
+             "④P"),
+            ("㉝ 删掉第 3 章形状取值规则",
+             re.sub(r"<li><b>档位形状取值规则：.*?</li>\n", "", _page, count=1, flags=re.S), "④SH"),
+            ("㉞ 删掉判据③ 清单表",
+             re.sub(r'<h3>算法正确性检查清单（判据③）</h3>.*?</table>\n', "", _page, count=1, flags=re.S),
+             "④CL"),
+        ]
+        for _tag, _mut, _want in _muts31:
+            checks[_tag + " 夹具确实改动了页面"] = (_mut != _page)
+            _mp31 = tmp / f"b31_{abs(hash(_tag)) % 10000}.html"
+            _mp31.write_text(_mut, encoding="utf-8")
+            rc, out = run(["tools/matrix/verify_matrix.py", "--template", "tools/matrix/template.html",
+                           "--data", "docs/capability-matrix.data.json", "--html", str(_mp31)])
+            steps.append((_tag + "（应 FAIL）", rc, out))
+            checks[_tag + " ⇒ verify 变红"] = (rc == 1)
+            checks[_tag + " ⇒ 报红点提到 " + _want] = (_want in out)
+            checks[_tag + " ⇒ 自证内置判据也能失败"] = (_want in out)
+
+        # ㉜ 判据④ 旧句（只写「合并 LoRA」）—— 模板与数据件同时改，验的才是语义断言
+        _old4_html = "<li><span class=\"cn\">④</span> <b>能推理</b>：合并 LoRA 后用 vLLM 启动，训练数据集可以完整推理一遍，效果好于未训练模型。</li>"
+        _new4_html = ("<li><span class=\"cn\">④</span> <b>能推理</b>：LoRA 档合并后、全参档直接，"
+                      "用 vLLM 启动，在训练数据集上完整推理一遍，效果好于未训练模型。</li>")
+        _old4_text = "合并 LoRA 后用 vLLM 启动，训练数据集可以完整推理一遍，效果好于未训练模型。"
+        _new4_text = ("LoRA 档合并后、全参档直接，用 vLLM 启动，在训练数据集上完整推理一遍，"
+                      "效果好于未训练模型。")
+        _tpl32 = (SM / "template.html").read_text(encoding="utf-8")
+        checks["㉜ 判据④ 旧句夹具生效（模板确实被改回旧句）"] = (_tpl32.count(_new4_html) == 1)
+        (tmp / "old4.template.html").write_text(_tpl32.replace(_new4_html, _old4_html, 1), encoding="utf-8")
+        _d32 = json.loads(json.dumps(data, ensure_ascii=False))
+        for _pc in _d32["meta"]["criteria_caliber"]["pass_criteria"]:
+            if _pc.get("title") == "能推理":
+                _pc["text"] = _pc["text"].replace(_new4_text, _old4_text)
+        (tmp / "old4.data.json").write_text(json.dumps(_d32, ensure_ascii=False, indent=2) + "\n",
+                                            encoding="utf-8")
+        rc, out = run(["tools/matrix/render_matrix.py", "--template", str(tmp / "old4.template.html"),
+                       "--data", str(tmp / "old4.data.json"), "--out", str(tmp / "old4.html")])
+        steps.append(("㉜ 用「判据④ 旧句」模板 + 数据件渲染（应 rc=0）", rc, out))
+        _html32 = (tmp / "old4.html").read_text(encoding="utf-8")
+        checks["㉜ 注入进的渲染页（防注入静默失效）"] = (
+            rc == 0 and "合并 LoRA 后用 vLLM 启动" in _html32)
+        rc, out = run(["tools/matrix/verify_matrix.py", "--template", str(tmp / "old4.template.html"),
+                       "--data", str(tmp / "old4.data.json"), "--html", str(tmp / "old4.html")])
+        steps.append(("㉜ 判据④ 改回旧句后 verify（应 FAIL）", rc, out))
+        checks["㉜ 判据④ 旧句 ⇒ verify 变红"] = (rc == 1)
+        _fb32 = re.findall(r"FAIL \[(.*?)\]", out)
+        checks["㉜ FAIL 点名 ④F4（判据④ 覆盖两种模式）"] = any(b.startswith("④F4") for b in _fb32)
+        checks["㉜ 不误伤 ④X（证明抓到的是语义断言，不是漂移）"] = not any(b.startswith("④X") for b in _fb32)
 
         print("=" * 70)
         for name, rc, out in steps:

@@ -275,10 +275,11 @@ def _weights_gib(model: str) -> float:
 #              success             判据①（训练跑通/产物完整）实测通过 ⇒ 选型排序加分
 #              warn_only           只写进备注，不改判定（定性冲突/未定性异常/交付层缺口）
 #
-# ★ 断言口径（裁定 2026-10-21 后补，由自检 V13 机核）：
-#   「训练可跑 / 训练能跑 / 训练跑通」**只允许**出现在证据表里有具名 `success` 类跑次的档上；
-#   没有跑次的形状只能写「从未实跑 ⇒ 训练可行性未建立（产物侧另需补导出层）」。⛔ 不许用形状推断代替跑次。
-#   反方向同理：note 里的「不可行 / 必然失败」必须有实测证据兜底，纯算式的只能写「估算超预算」。
+# ★ 蓝图口径（2026-10-22 用户拍板）：第 4 章备注**只写前提 / 条件 / 边界**，
+#   ⛔ 不写「我们跑过 / 没跑过」这类现状叙述（也不拿历史跑次当选型依据）。
+#   由自检 V13 机核的等价防线：万一备注里出现成败断言，必须有具名证据兜底
+#   ——「训练可跑 / 能跑 / 跑通」需 `success` 证据；「不可行 / 必然失败」需
+#   `backend_infeasible` / `recipe_forbid` 证据；纯算式只能写「估算超预算」。
 #
 # ★ 口径纪律（`scripts/collect_results.py:2032-2071`）：native = `max_allocated`，
 #   ms-swift = `max_memory_reserved`（保守上界）；两者不可直接互比。
@@ -589,7 +590,7 @@ BACKEND_PARALLEL_FACT: dict[tuple[str, str], dict[str, Any]] = {
     },
     ("native", "LoRA"): {
         "supports_tp": True, "supports_pp": True, "supports_dp": True,
-        "fact": "native LoRA 的 TP/PP/DP 三维都支持（TP SUM 同步、DP AVG 同步、PP 1F1B）",
+        "fact": "native LoRA 的 TP/PP/DP 三维都支持（TP SUM 同步、DP AVG 同步、PP 按层切分流水）",
         "short_fact": "native LoRA 的 TP/PP/DP 三维原生支持",
         "source": "src/graspo/flow/backend/native/lora/lora_linear.py:223-282；native/parallel/pipeline_comm.py",
         "tier": 0,
@@ -631,17 +632,13 @@ def eval_backend(
     legal, illegal_why = backend_legal(backend, mode, tp, pp, dp)
     if not legal:
         return {"backend": backend, "eligible": False, "why": illegal_why,
-                "why_short": "语义被拒（native 全参只支持 PP 分片）"}
+                "why_short": "native 全参只支持 PP 分片"
+                           "（full 档 tp>1／dp>1 在加载期即不允许）"}
 
-    # ① 实测证据：该后端在该档"实测不可行" ⇒ 直接出局（证据 > 算式）
-    infeasible_evs = evidence_for(algo, model, mode, backend, shape, effects=("backend_infeasible",))
-    if infeasible_evs:
-        return {
-            "backend": backend, "eligible": False,
-            "why": "实测不可行证据优先于算式：" + infeasible_evs[0]["reading"],
-            "why_short": f"实测不可行（{','.join(e['id'] for e in infeasible_evs)}）",
-            "evidence": [e["id"] for e in infeasible_evs],
-        }
+    # ① ★ 2026-10-22（用户拍板：选型**只按能力驱动**）：原「该后端在该档有历史跑次 ⇒ 直接出局」
+    #   分支已删除 —— 选型不再拿任何历史跑次当选型依据，只看「后端能否承载该形状 + 估算是否装得下」。
+    #   证据仍留在 `backend_reason.candidates[].gaps` 与审计件里（⛔ 不抹事实），但**不参与选型**。
+    #   受影响档：27B GRASPO LoRA dp2（两个后端都能吃该形状 ⇒ 按优先级取 ms-swift）。
 
     # ② 配方：全参 native 的两种配方（标准 k=8 / offload k=4）；被实测否掉的配方不进候选
     recipes = [("standard", "no_offload")]
@@ -930,17 +927,17 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
     train_method = ALGO_TO_TRAIN_METHOD[algo]
     tuner_type = MODE_TO_TUNER_TYPE[mode]
 
-    # ── 卡点（缺实现 ≠ 不合理）：逐条写清卡在哪一层 ────────────────────────
+    # ── 前提 / 边界：逐条写清"这档要跑成需要什么条件、有什么边界"（⛔ 不写"我们做过/没做过什么"）
     gaps: list[str] = []
     if sel.get("missing_channel"):
         gaps.append(f"native 后端无 {algo} 训练通道（能力边界）；"
-                    f"补齐后按 native 配方估算 {peak:.2f} GiB 可行")
+                    f"按 native 配方估算 {peak:.2f} GiB 可行")
     if backend == "ms-swift":
         if mode == "全参":
-            gaps.append("FSDP2 分片载体零 退出码 0 实测")
+            gaps.append("优化器态须走 FSDP2 全分片载体（全参档在 ms-swift 上的分片方式）")
         if tp > 1 or pp > 1:
             gaps.append("ms-swift 的 TP/PP 无通道（标准通道只覆盖 DDP+SP）"
-                        "⇒ 该形状的分摊只能靠 FSDP2 全分片，语义待实测")
+                        "⇒ 该形状的分摊只能靠 FSDP2 全分片来承载")
     if backend == "native" and mode == "全参":
         if pp > 1:
             # ★ 2026-10-22（用户拍板 C 留）：这 6 档**保留、状态仍待测试**，理由写清是"待实现"。
@@ -950,22 +947,22 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
             gaps.append("native 的流水线并行 + rollout 组合须显式解除未验证保护"
                         "（`native.allow_unverified_pp_rollout=true`）")
     if backend == "native" and mode == "LoRA" and (tp > 1 or pp > 1):
-        # ★ 必修（裁定后补）：历史 54 档里 LoRA 的 tp=pp=1 恒成立（TP/PP 只出现在全参档）
-        #   ⇒ 这些形状**从未实跑**，⛔ 不许写"训练可跑/能跑"。
-        gaps.append("该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）"
-                    "⇒ 训练可行性未建立；产物侧合并**已实现**（三维都有合并路径），真机未验证")
+        # ★ 2026-10-22（蓝图口径）：只写**前提**——该形状的训练可行性由本档测试建立；
+        #   ⛔ 不写"从未实跑 / 真机未验证"这类叙述我们做过什么的话。
+        gaps.append("LoRA 的 TP/PP 组合是本矩阵新增形状 ⇒ 训练可行性由本档测试建立；"
+                    "产物侧合并路径覆盖 TP/PP/DP 三维")
     if chosen["recipe"] == "offload" and mode == "全参" and tp * pp * dp == 1:
         # ★ 2026-10-22（用户拍板）：保留档里"必须开优化器态 offload 才装得下"的只有 1 卡全参档，
         #   在备注里写清（⛔ 不新增列；`switches` 已按同一配方写 `offload_optimizer_state=true`）。
         gaps.insert(0, "1 卡全参必须开优化器态 offload 才能装下（否则估算 79.24 GiB 超预算，"
                        "开 offload 后 45.71 GiB）")
     if chosen["recipe"] == "offload":
-        gaps.append("需 `native.offload_optimizer_state=true`（实测 35.19 GB）")
+        gaps.append("需 `native.offload_optimizer_state=true`（优化器态换出后单卡 35.19 GB）")
         # ★ 2026-10-22 更正（侦察已推翻旧陈述"只在 SFT 通道生效、GRASPO 是否生效未确认"）：
         #   该开关是**后端级单一钩子**，SFT / RL 两条 trainer 共用同一 override。
         gaps.append("offload 是后端级单一钩子，SFT / RL 两条 trainer 共用")
     if algo == "OPD" and chosen["teacher_variant"] == "offload":
-        gaps.append("需 `offload_teacher_model=true`（该路径零 退出码 0 实测）")
+        gaps.append("需 `offload_teacher_model=true`")
     gaps = gaps[:4]
 
     # ── 边缘/冲突提示（实测 vs 算式） ─────────────────────────────────────
@@ -985,23 +982,25 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
                 f"卡容量内余量仅 {CARD_CAPACITY_GIB - peak:.2f} GiB（{basis}），需实测确认")
         else:
             notes_extra.append(f"余量紧：估算 {peak:.2f}/{budget:.1f} GiB，需实测确认")
-    if rec["algo"] == "GRASPO" and model == "27B" and mode == "LoRA" and (tp, pp) == (1, 1) and backend == "native":
-        notes_extra.append("该形状 native 曾异常退出（未定性为 显存不足）、ms-swift 实测 显存不足")
     contested = [e for e in MEASURED_EVIDENCE
                  if e["kind"] == "contested"
                  and e["scope"][0] in ("*", algo) and e["scope"][1] in ("*", model)
                  and e["scope"][2] in ("*", mode) and _shape_match(e["scope"][4], (tp, pp, dp))]
     for ev in contested:
-        notes_extra.append(f"该形状历史记载互斥（{ev['label']}）⇒ 须实测确认")
+        # ★ 2026-10-22（蓝图口径）：只留**显存前提**（估算可行但同族形态紧贴上限），
+        #   ⛔ 不写"历史记载互斥"这类叙述跑次冲突的话；数字一字不动。
+        notes_extra.append(
+            f"前提：显存须按本档读数确认 —— 估算 {peak:.2f}/{budget:.1f} GiB 可行，"
+            "而 1／2 卡同族形态处在显存不足一侧")
     if algo == "OPD":
         gpu_variant = next((v for v in chosen.get("variants", [])
                             if v.get("teacher") == "gpu" and v.get("peak_gib") is not None), None)
         if chosen["teacher_variant"] == "offload" and gpu_variant is not None:
             notes_extra.append(
-                f"教师必须 offload：GPU 常驻情形估算 {gpu_variant['peak_gib']:.2f} GiB（超预算，"
-                "实测 1/2/4 卡全 显存不足）；offload 路径零 退出码 0 实测")
+                f"教师须 offload：GPU 常驻情形估算 {gpu_variant['peak_gib']:.2f} GiB（超预算）；"
+                "offload 下教师权重在使用间隙换出到 CPU")
         elif chosen["teacher_variant"] == "gpu":
-            notes_extra.append("教师 GPU 常驻：实测 1/2/4 卡全 显存不足")
+            notes_extra.append("教师 GPU 常驻：估算超预算 ⇒ 须开 offload")
 
     # ── 选型理由（一句话，可判真假） ─────────────────────────────────────
     reason_line = _reason_line(chosen, sel, backend, mode, tp, pp, dp, band, budget, peak, algo)
@@ -1010,25 +1009,8 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
     if notes_extra:
         note_parts.extend(notes_extra)
     if gaps:
-        note_parts.append("卡点：" + "；".join(gaps))
+        note_parts.append("前提 / 边界：" + "；".join(gaps))
     note = "；".join(p for p in note_parts if p)
-
-    # ── 专用：native LoRA 的 dp>1 档（双方都无成功跑次）—— 必修（裁定后补）
-    #    要素：① 两方均无成功跑次（各带具名跑次）② 选 native 的唯一理由 = 对方有实测 显存不足、
-    #    本方是通信/teardown 异常（可诊断）③ 余量紧 ⇒ 先解决余量与通信稳定性 ④ 产物另需补导出层。
-    #    ⛔ 一个字都不许写"训练可跑/能跑"。
-    if backend == "native" and mode == "LoRA" and tp == 1 and pp == 1 and dp > 1 \
-            and not chosen["success_evidence"]:
-        ms = next((c for c in sel["candidates"] if c["backend"] == "ms-swift"), None)
-        native_fail = (f"native —— {_labels(chosen['warn_evidence'])}" if chosen.get("warn_evidence")
-                       else "native —— 无成功跑次记录")
-        ms_fail = (f"ms-swift —— {_labels(ms['evidence'])}" if (ms and ms.get("evidence"))
-                   else "ms-swift —— 无成功跑次记录")
-        note = (f"两者在该形状均无成功跑次：{native_fail}；{ms_fail}。"
-                f"选 native 的唯一理由 = 对方有实测 显存不足、本方是通信/teardown 异常（可诊断、可重试），"
-                f"⛔ 不表示该形状可行。估算 {peak:.2f}/{budget:.1f} GiB（{band}）⇒ "
-                "测试前须先解决显存余量与通信稳定性。"
-                f"卡点：产物侧另需补导出层 —— {chosen.get('delivery_gap_short') or 'DP 合并依赖副本位等价'}")
 
     # ── 步数推导（沿用旧口径：子集条数 ÷ 每 epoch 卡数 × epochs；本轮不跑批次） ──
     subset = SUBSET_SIZE_BY_ALGO[algo]
@@ -1109,8 +1091,9 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
         "note": note,
         "backend_reason": {
             "selected": backend,
-            "sort_key": ("①实测成功证据 ②形状是否被后端真消费 ③分片载体已实现且已实测 "
-                         "④产物可推理（native 导出只认 dp=tp=pp=1） ⑤估算峰值 ⑥后端名"),
+            # ★ 2026-10-22（用户拍板：选型只按能力驱动）：排序键重写 —— ⛔ 不再以历史跑次排序。
+            "sort_key": ("①后端能否承载该形状（能力表） ②估算峰值是否装得下（≤ 设计预算） "
+                         "③固定优先级（LoRA ⇒ ms-swift；全参 dp>1 ⇒ ms-swift；全参 dp==1 ⇒ native）"),
             "rule": _reason_rule(sel, backend),
             "peak_gib": round(peak, 4),
             "budget_gib": budget,
@@ -1164,81 +1147,64 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
 
 
 def _reason_line(chosen, sel, backend, mode, tp, pp, dp, band, budget, peak, algo: str) -> str:
-    """一句话选型理由（可判真假：每个分句都能用候选的实测/代码事实反驳或印证）。"""
+    """一句话选型理由（**只写能力面 / 预算面**）。
+
+    ★ 2026-10-22（用户拍板：本文档是蓝图、选型只按能力驱动）：
+      理由的每个分句都必须能被「后端能力表 / 并行形状 / 显存估算」直接反驳或印证 ——
+      ⛔ 任何「我们跑过 / 没跑过」的历史叙述都不进第 4 章备注（旧跑次不当选型依据）。
+    """
     others = [c for c in sel["candidates"] if c["backend"] != backend]
     other = others[0] if others else None
-    ev = _labels(chosen["success_evidence"]) or "无"
     if sel.get("missing_channel"):
-        # ★ 裁定 1：唯一能装下的是缺通道的那个后端 ⇒ 保留待测试，理由写清"是欠账不是不合理"
+        # 唯一能装下的是缺通道的那个后端 ⇒ 保留待测试，理由写清"是能力边界不是档位不合理"
         over = [c for c in sel["candidates"] if c["backend"] != backend and c.get("peak_gib") is not None]
         over_txt = "、".join(f"{c['backend']} 最佳情形 {c['peak_gib']:.2f} GiB 超预算" for c in over) \
             or "其余后端均不可行"
-        return (f"选 {backend}：{over_txt}；只有 {backend} 补齐 {algo} 通道后能装下"
-                f"（按补齐后的配方估算 {peak:.2f}/{budget:.1f} GiB，{band}）"
-                "⇒ 缺实现≠档位不合理，保留待测试")
-    if (other is not None and other["eligible"] and chosen.get("deliverable", True)
-            and not other.get("deliverable", True)):
-        # ⚠ 只在"双方都有实测成功跑次"时才敢这么写；否则走下面的通用分支
-        if chosen["success_evidence"] and other["success_evidence"]:
-            core = (f"选 {backend}：两者都有实测成功跑次（{backend} {_labels(chosen['success_evidence'])}；"
-                    f"{other['backend']} {_labels(other['success_evidence'])}），但 {other['backend']} 的产物交付"
-                    f"带一道未闭合前置 —— {other.get('delivery_gap_short') or other.get('delivery_gap')} "
-                    f"⇒ 按「产物可推理」这一判据取 {backend}")
-        else:
-            core = (f"选 {backend}：{other['backend']} 的产物交付带一道未闭合前置 —— "
-                    f"{other.get('delivery_gap_short') or other.get('delivery_gap')}；"
-                    f"且 {other['backend']} 在该形状无成功跑次 ⇒ 按「产物可推理」这一判据取 {backend}")
-    elif other is None:
-        if sel["missing_backends"]:
-            core = (f"选 {backend}：{algo} 只有 {backend} 通道 —— {sel['missing_backends'][0]}；"
-                    "缺实现≠档位不合理 ⇒ 保留待测试")
+        return (f"选 {backend}：{over_txt}；{backend} 是唯一具备 {algo} 训练通道的后端"
+                f"（按 {backend} 配方估算 {peak:.2f}/{budget:.1f} GiB，{band}）")
+    if other is None:
+        if sel.get("missing_backends"):
+            core = f"选 {backend}：{algo} 只有 {backend} 通道 —— {sel['missing_backends'][0]}"
         else:
             core = f"选 {backend}：该档只有这一个候选后端"
-    elif other["eligible"]:
-        if chosen["success_evidence"] and other["success_evidence"]:
-            # ★ 2026-10-22 用户裁定「已有跑次不管、全部重跑；选型只按能力驱动」：
-            #   原由「两个后端都有实测成功证据（…判据① 通过…）」= 拿历史跑次当选型依据 ⇒ 作废。
-            #   选型依据只留**能力面**：两后端都能吃该形状 ⇒ 按固定优先级取更简单路径的那个。
-            #   ⛔ 不是放宽：仍点名两端都能承载该形状（能力句，可被后端能力表反驳）。
-            core = (f"选 {backend}：{mode} 档两个后端都能吃该形状 ⇒ 按「更简单路径」取 {backend}"
-                    f"（{chosen.get('short_fact') or chosen['fact']}）")
-        elif chosen["success_evidence"]:
-            why_other = ("实测记录只有：" + _labels([e for e in MEASURED_EVIDENCE
-                                                    if e["id"] in other["warn_evidence"]])
-                         if other.get("warn_evidence") else "无实测跑次")
-            core = (f"选 {backend}：{backend} 有实测成功证据（{ev}），"
-                    f"{other['backend']} 无实测成功证据（{why_other}）")
-        else:
-            _other_fact = ("ms-swift 在该项目里只能纯数据并行（张量/流水并行要走 Megatron 通道）"
-                           if other["backend"] == "ms-swift" else other["fact"])
-            core = (f"选 {backend}：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 {backend}"
-                    f"（{chosen['fact']}；{_other_fact}）")
+    elif other["eligible"] and other.get("shape_capable", True):
+        # 两个后端都能吃该形状且都装得下 ⇒ 按固定优先级取更简单路径的那个（能力句，可被能力表反驳）
+        core = (f"选 {backend}：{mode} 档两个后端都能吃该形状 ⇒ 按「更简单路径」取 {backend}"
+                f"（{chosen.get('short_fact') or chosen['fact']}）")
+    elif not other["eligible"]:
+        # 对方后端装不下该形状（显存边界）⇒ 只剩本方
+        short = other.get("why_short") or other.get("why") or "该形状不可承载"
+        core = f"选 {backend}：{other['backend']} 承载不了该形状 —— {short} ⇒ 只有 {backend} 能承载"
     else:
-        short = other.get("why_short") or other.get("why") or ""
-        if other.get("evidence"):
-            short = f"实测不可行（{_labels(other['evidence'])}）"
-        core = f"选 {backend}：{other['backend']} 出局 —— {short}"
+        # 对方后端在语义上不消费该形状（能力边界）⇒ 只剩本方
+        other_fact = other.get("short_fact") or other.get("fact") or "该后端不消费该形状"
+        core = (f"选 {backend}：{other['backend']} 承载不了该形状（{other_fact}）"
+                f"⇒ 该形状只有 {backend} 能承载（{chosen['fact']}）")
     tail = f"估算 {peak:.2f}/{budget:.1f} GiB（{band}）"
     return f"{core}；{tail}"
 
 
 def _reason_rule(sel, backend) -> str:
-    """结构化理由里的"为什么是它" —— 与 `backend_rank_sort` 一一对应。"""
+    """结构化理由里的"为什么是它" —— **只按能力面排序**（⛔ 不以历史跑次排序）。
+
+    ★ 2026-10-22（用户拍板：选型只按能力驱动）：排序键改为
+      ① 后端能否承载该形状（能力表 `BACKEND_PARALLEL_FACT`）② 估算峰值是否装得下
+      ③ 固定优先级（`BACKEND_PRIORITY`）。历史跑次只作为审计线索留在 `candidates[].why` 里，
+      ⛔ 不参与排序、⛔ 不进人读件。
+    """
     ranked = sorted([c for c in sel["candidates"] if c["eligible"]],
                     key=lambda c: c.get("rank_key") if c.get("rank_key") is not None else 99)
     if not ranked:
         return "无可行候选"
     top = ranked[0]
     why = []
-    why.append(f"排序键第 1 位 = 实测成功证据：{backend} {'有' if top['success_evidence'] else '无'}"
-               f"（{','.join(top['success_evidence']) if top['success_evidence'] else '—'}）")
-    why.append(f"第 2 位 = 形状是否被后端真消费：{'是' if top['fits_shape'] else '否'}")
-    why.append(f"第 4 位 = 产物可推理：{'是' if top.get('deliverable', True) else '否（' + str(top.get('delivery_gap')) + '）'}")
+    why.append(f"选型 = 能承载该形状的后端里按固定优先级取：{backend}"
+               f"（优先级 {sel.get('priority')}）")
+    why.append(f"形状是否被后端真消费：{'是' if top['fits_shape'] else '否'}")
+    why.append(f"估算峰值 {top['peak_gib']:.2f} GiB（判定 {top['band']}）")
     for other in ranked[1:]:
         why.append(f"次优 {other['backend']}：峰值 {other['peak_gib']:.2f} GiB、"
-                   f"实测成功 {','.join(other['success_evidence']) if other['success_evidence'] else '无'}、"
-                   f"形状真消费 {'是' if other['fits_shape'] else '否'}、"
-                   f"产物可推理 {'是' if other.get('deliverable', True) else '否'}")
+                   f"形状真消费 {'是' if other['fits_shape'] else '否'}")
     for c in sel["candidates"]:
         if not c["eligible"]:
             why.append(f"落选 {c['backend']}：{c['why']}")
@@ -1580,9 +1546,11 @@ def _any_backend_evidence(algo, model, mode, shape, effects) -> bool:
     return False
 
 
-#: native 全参 PP>1 的**产物卡点句**（逐字，⛔ 不许改写成"别的载体"这类悬空说法）。
-NATIVE_FULL_PP_GAP = ("产物交付边界：native 全参的 PP>1 档需跨层分片合并才能导出，"
-                      "当前能力只到单卡单机 ⇒ 本档保留并按待测试推进")
+#: native 全参 PP>1 的**产物交付边界句**（逐字，⛔ 不许改写成"别的载体"这类悬空说法）。
+#: ★ 2026-10-22（蓝图口径）：删掉尾句「本档保留并按待测试推进」——它与第 4 章状态列重复；
+#:   边界事实（需跨层分片合并才能导出、导出能力只到单卡单机）一字不动。
+NATIVE_FULL_PP_GAP = ("native 全参的 PP>1 档要交付产物，须跨层分片合并导出"
+                      "（当前导出能力只到单卡单机）")
 
 
 def _v17_native_full_pp_gap_disclosed(rows, budget: float) -> bool:
@@ -1719,14 +1687,14 @@ VERIFICATION_CASES: tuple[dict[str, Any], ...] = (
     },
     {
         "id": "V13",
-        "claim": ("note 的成败断言必须有实测跑次兜底：「训练可跑/能跑/跑通」需具名 success 证据"
-                  "（历史 54 档里 LoRA 恒为 tp=pp=1 ⇒ tp>1/pp>1 的 LoRA 档只能写「从未实跑」）；"
-                  "反方向「不可行/必然失败/交不出」需 backend_infeasible/recipe_forbid 证据，纯算式只能写「估算超预算」"),
+        "claim": ("备注只写「前提 / 边界」，不写「我们跑过 / 没跑过」；万一写了成败断言，"
+                  "「训练可跑/能跑/跑通」必须有具名 success 证据、「不可行/必然失败/交不出」必须有"
+                  "backend_infeasible/recipe_forbid 证据（纯算式只能写「估算超预算」）"),
         "check": _v13_claims_backed_by_runs,
     },
     {
         "id": "V17",
-        "claim": ("`全参 ∧ pp>1 ∧ native` 的**每一档**都必须逐字披露产物卡点句"
+        "claim": ("`全参 ∧ pp>1 ∧ native` 的**每一档**都必须逐字披露产物交付边界句"
                   "（「" + NATIVE_FULL_PP_GAP + "」）—— 该组档现在交不出产物，少写一档即隐瞒"),
         "check": _v17_native_full_pp_gap_disclosed,
     },
@@ -1856,6 +1824,15 @@ META_OVERRIDES: tuple[dict[str, Any], ...] = (
     {"path": "criteria_version",
      "value": "v4-2026-10-17（判据② 定死；四条判据 + 算法正确性检查全过 ⇒ 才可标「通过」）",
      "why": "三态词表同步"},
+    # ★ 2026-10-22（判据 ①④ 改写）：页面第 2 章四条 `<li>` ↔ 数据件 `pass_criteria` 必须**逐字一致**
+    #   （机核 = verify_matrix ④X-b）。此处按同一份文本覆盖 ⇒ ⛔ 不允许页面改了、数据件留在旧句上。
+    {"path": "criteria_caliber.pass_criteria[0].text",
+     "value": ("训练正常结束、无中断、无报错、退出码 0、优化器步数达到该档计划步数"
+               "（总训练轮数 × 每 epoch 步数）、检查点完整、没有 NaN/Inf。"),
+     "why": "判据① 补「优化器步数达标」的可判定定义（不再只写四个字，读者无从照做）"},
+    {"path": "criteria_caliber.pass_criteria[3].text",
+     "value": ("LoRA 档合并后、全参档直接，用 vLLM 启动，在训练数据集上完整推理一遍，效果好于未训练模型。"),
+     "why": "判据④ 同时覆盖两种模式（全参档同样用 vLLM 测，只是不用合并 LoRA）"},
     {"path": "criteria_caliber.conclusion_rule.rule",
      "value": ("结论必须与同一行的参数一一对应。若一行的参数已被更正，而结论来自旧参数下的跑次 ⇒ 该结论作废、"
                "该档回退为「待测试」；仅在参数冻定后重跑，才可给出「通过 / 不通过」判定。"),

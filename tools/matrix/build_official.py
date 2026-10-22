@@ -1500,7 +1500,7 @@ def criteria_caliber(rows=None):
         #      （机核 = `verify_matrix` ④X；阳性对照 = `run_self_proof` ㉒）。
         "pass_criteria": [
             {"title": "能完整跑完",
-             "text": "训练正常结束、无中断、无报错、退出码 0、优化器步数达标、检查点完整、没有 NaN/Inf。"},
+             "text": "训练正常结束、无中断、无报错、退出码 0、优化器步数达到该档计划步数（总训练轮数 × 每 epoch 步数）、检查点完整、没有 NaN/Inf。"},
             # ★★ 判据② 的通过线**一律从 `threshold.by_method` 现取**（⛔ 不在此另写一份数值，
             #    §1.4 单一真相源）⇒ `from_threshold: True` 表示「本条的逐算法细则由数据现算」。
             {"title": "效果变好（核心判据）",
@@ -1511,7 +1511,7 @@ def criteria_caliber(rows=None):
              "text": "各算法按自己的检查清单逐项通过，确认该算法的机制真实生效、实现正确"
                      "（SFT / GRASPO / CPT / OPD 各按自己的清单）；GRASPO 的算法逻辑严禁改动。"},
             {"title": "能推理",
-             "text": "合并 LoRA 后用 vLLM 启动，训练数据集可以完整推理一遍，效果好于未训练模型。"},
+             "text": "LoRA 档合并后、全参档直接，用 vLLM 启动，在训练数据集上完整推理一遍，效果好于未训练模型。"},
         ],
         "caliber_change": {
             "effective": "2026-10-15",

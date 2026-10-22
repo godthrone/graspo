@@ -1728,12 +1728,75 @@ def main():
     _ENG_STATE_WORDS = ("尚未下发", "未下发", "未接线", "未接入", "尚未接入", "待实现",
                         "未实现", "尚未实现", "待补", "还没实现", "透传", "未透传",
                         "未生效", "尚未生效")
-    _eng_hits = {w: target_text.count(w) for w in _ENG_STATE_WORDS if w in target_text}
+    # ★★ 2026-10-22（本轮扩容）：④P 从「工程实现状态语」扩到**整族现状语** —— 判据 = 一句
+    #   写的是「我们做过什么 / 还没做什么」⇒ 删或改写成「前提 / 条件 / 边界」。
+    #   ⛔ 只收**短语**，⛔ 不收单词「实测」：`实测峰值 78.64` / `实测族级峰值（27B LoRA 78.64
+    #   GiB、余 0.61 GiB）` 是**数字来路**（说明这个数从哪来），必须允许出现。
+    _RUN_STATE_PHRASES = (
+        "实测跑通过", "实测跑通", "实测成功", "实测不可行", "实测显存不足", "实测 显存不足",
+        "零退出码 0", "零 退出码 0", "卡点", "真机未验证", "训练可行性未建立", "从未实跑",
+        "缺实现", "出局", "尚未实跑", "1F1B", "历史记载互斥", "本档保留并按待测试推进",
+    )
+    #: 显式允许的「数字来路」名词短语：扫描前先整段替换成占位（⛔ 不是整句豁免）
+    _ALLOWED_MEASURED = ("实测族级峰值", "实测峰值")
+    _scan_text = target_text
+    for _allow in _ALLOWED_MEASURED:
+        _scan_text = _scan_text.replace(_allow, "（峰值来路）")
+    _eng_hits = {w: _scan_text.count(w) for w in _ENG_STATE_WORDS + _RUN_STATE_PHRASES
+                 if w in _scan_text}
     if _eng_hits:
         failures.append(("④P 页面无工程实现状态语（白名单为空）",
                          f"命中 {_eng_hits} ⇒ 本文档是蓝图（给用户照着做的），"
-                         "此类「谁还没实现 / 还没接线 / 还没下发」的表述一律不进页面；"
-                         "能力缺失请用「无该通道」这类能力表述"))
+                         "「谁还没实现 / 还没接线 / 还没下发 / 我们跑过没跑过」这类表述一律不进页面；"
+                         "能力缺失请用「无该通道」这类能力表述，条件请写「前提 / 边界」"))
+
+    # ---- ★★ E4（2026-10-22）：本轮新增内容的**正向断言**（少一项即红）--------------------
+    #   ① ④EV：第 2 章必须有「评测条件」小节，且六项口径齐备（评测集 / 解码 / 完全正确率 /
+    #      base / 评测次数 / 评测对象）；
+    #   ② ④F4：判据④ 必须**同时覆盖两种模式**（LoRA 合并 / 全参直接），且旧句（只写合并 LoRA）
+    #      不得残留 —— ⛔ 只改页面不改数据件会先被 ④X-b 抓住，这里再守一层「语义」；
+    #   ③ ④SH：第 3 章必须写明形状取值规则（1／2／4、总卡数 ≤ 4、不对称组合不纳入）；
+    #   ④ ④CL：判据③ 的「算法正确性检查清单」表必须存在，四个算法各 ≥ 2 条，GRASPO 那条必须
+    #      含既有约束「算法逻辑严禁改动」。
+    _plain = re.sub(r"<[^>]+>", "", target_text)
+    _need_ev = {
+        "「评测条件」小节": "<h3>评测条件</h3>",
+        "评测集 = 同一份 100 条": "同一份 100 条",
+        "解码 = 温度 0（贪心）": "温度 0（贪心",
+        "完全正确率定义": "工具名与动作方向同时精确匹配",
+        "base = 未训练基座模型": "未训练基座模型",
+        "每档评测一次": "每档评测一次",
+    }
+    _miss_ev = [k for k, v in _need_ev.items() if (v not in target_text if v.startswith("<") else v not in _plain)]
+    if _miss_ev:
+        failures.append(("④EV 第 2 章「评测条件」小节齐备",
+                         f"缺 {_miss_ev} ⇒ 评测集 / 解码 / 完全正确率 / base / 评测次数 的口径"
+                         "必须逐项写清（读者要照着做）"))
+    if "LoRA 档合并后、全参档直接" not in _plain or "合并 LoRA 后用 vLLM 启动" in _plain:
+        failures.append(("④F4 判据④ 覆盖两种模式",
+                         "判据④ 必须写成「LoRA 档合并后、全参档直接，用 vLLM 启动…」；"
+                         "旧句「合并 LoRA 后用 vLLM 启动…」只覆盖 LoRA 档 ⇒ 不得残留"))
+    _miss_sh = [w for w in ("1／2／4", "≤ 4", "不对称", "不纳入本矩阵") if w not in _plain]
+    if _miss_sh:
+        failures.append(("④SH 第 3 章形状取值规则",
+                         f"缺 {_miss_sh} ⇒ 第 3 章必须写明「每一维只取 1／2／4、总卡数 ≤ 4、"
+                         "不对称的组合不纳入本矩阵」"))
+    _cl_m = re.search(r'<table class="checklist"[^>]*>(.*?)</table>', target_text, re.S)
+    if not _cl_m:
+        failures.append(("④CL 判据③ 算法正确性检查清单",
+                         "页面上找不到 `<table class=\"checklist\">`（判据③ 说的「各算法自己的清单」"
+                         "必须作为表发布，读者才能逐条打勾）"))
+    else:
+        _rows_cl = re.findall(r'<tr data-algo="([^"]+)">(.*?)</tr>', _cl_m.group(1), re.S)
+        _by_algo = {a: b for a, b in _rows_cl}
+        _bad_algo = [a for a in ("SFT", "GRASPO", "CPT", "OPD") if a not in _by_algo]
+        _few = [(a, _by_algo[a].count("<li>")) for a in _by_algo if _by_algo[a].count("<li>") < 2]
+        if _bad_algo or _few:
+            failures.append(("④CL 判据③ 清单表四算法各 ≥ 2 条",
+                             f"缺算法 {_bad_algo}；条目不足 {_few}"))
+        if "算法逻辑严禁改动" not in _by_algo.get("GRASPO", ""):
+            failures.append(("④CL 判据③ GRASPO 既有约束",
+                             "GRASPO 行必须含既有约束「算法逻辑严禁改动」"))
 
     # ---- ④Q0. 「关键开关」列的 `—` **语义必须被显式定义**（修正轮 4 ⚠②）----
     #   ★ 缺陷实况：该列 31/54 档为 `—`，而上一版读表提示只定义了「实验数据」段的 `—`
@@ -2020,6 +2083,10 @@ def main():
               f" | ④N 边界声明三点={ok('④N')}"
               f" | ④O 结论列契约={ok('④O')}"
               f" | ④P 覆盖度门槛注={ok('④P')}"
+              f" | ④EV 第2章评测条件={ok('④EV')}"
+              f" | ④F4 判据④双模式={ok('④F4')}"
+              f" | ④SH 第3章形状规则={ok('④SH')}"
+              f" | ④CL 判据③清单表={ok('④CL')}"
               f" | ④Q0 关键开关列—语义={ok('④Q0')}"
               f" | ④Q 开关列不重复发布检查点间隔={ok('④Q')}"
               f" | ④R 正文无开发过程内容={ok('④R')}"
