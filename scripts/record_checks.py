@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
-"""判据③④ 的证据产出者（**唯一**）—— 把实测证据折算成 `checks{}` 写进 `readings.json`。
+"""判据②③④ 的证据产出者（**唯一**）—— 把实测证据折算成 `checks{}` 与 `teacher_after_acc`
+写进 `readings.json`。
+
+★ 判据②（**仅 OPD 档**）的教师读数 `teacher_after_acc`：
+  来源 = `<EVAL_DIR>/.local/reports/teacher/eval_report.json`（`scripts/gen_eval.py --role teacher`
+  生成脚本跑出来的报告）；口径与学生侧**同一份**（同一份 100 条 / 温度 0 / 同一判分函数），
+  本文件另用 `dataset.sha256 ==` 清单该档 `data.subset_sha256` 当场证一遍。
+  ⇒ 缺报告 / 不合口径（温度≠0、条数≠100、数据 sha 不同、role≠other、准确率读不到）⇒ **不写该键**
+  ⇒ 回填器 `judge_effect` 判 `unknown` ⇒ fail-closed（该档保持「待测试」）。
+  ⛔ 不填默认值、不拿学生读数冒充教师读数。成文口径见 `docs/run-discipline.md` §20。
 
 为什么需要本文件（审查报告第 2 轮 🟡-A）：
   `tools/matrix/backfill_matrix.py::judge_algo_checks / judge_inference` 只认结果 json 的
@@ -45,11 +54,16 @@
         --eval-dir <EVAL_DIR> [--algo-checks-dir <DIR>] \\
         [--manifest tests/e2e/matrix68_manifest.json]
 
+    # OPD 档另需教师侧报告（缺省 <EVAL_DIR>/.local/reports/teacher/eval_report.json；
+    # 8 个 OPD 档共用一份时用 --teacher-report 指同一份，或 $GRASPO_TEACHER_REPORT）
+    python3 scripts/record_checks.py --tier M068 --run-dir <RUN_DIR> \\
+        --eval-dir <EVAL_DIR> --teacher-report <教师报告路径>
+
     # 再复跑适配器 ⇒ 结果 json 带上 checks{} ⇒ 回填
     python3 scripts/make_result_json.py --tier M001 --run-dir <RUN_DIR> \\
         --eval-dir <EVAL_DIR> --out <RUN_DIR>/M001.json --collect-dir <RUN_ROOT>/collect
 
-退出码：0 = ③④ 两个键都已写入（true / false 都有据）；
+退出码：0 = 必需键都已写入（非 OPD 档 = ③④；OPD 档 = ③④ + 教师读数）；
         4 = 至少一条缺证据（缺的那条不写键，回填器会 fail-closed 保持「待测试」）；
         2 = 用法/输入错误（run-dir / manifest / readings 不可读）。
 """
@@ -67,6 +81,12 @@ MANIFEST = ROOT / "tests" / "e2e" / "matrix68_manifest.json"
 
 #: 评测产物在 `<EVAL_DIR>` 下的相对路径（与 `scripts/gen_eval.py` 的 `output_dir` 同源）。
 AFTER_REPORT_REL = Path(".local") / "reports" / "after" / "eval_report.json"
+
+#: ★ OPD **教师侧**评测报告的相对路径 = 判据② 的 `eval.teacher_after_acc` 唯一来源。
+#:   ★★ 本常量是**唯一真相源**：`scripts/gen_eval.py` 渲染教师侧 yaml 时直接 import 本值当
+#:   `output_dir`（⛔ 不在产出端另写一份路径）⇒ 产出端与消费端不可能错位。
+#:   口径 = 定稿报告第 2 章判据②「教师在训练数据集上的完全正确率」+ 第 3 章「OPD 教师」。
+TEACHER_REPORT_REL = Path(".local") / "reports" / "teacher" / "eval_report.json"
 
 #: 非 GRASPO 算法（文档口径：按公开标准实现判断，可结构化置位）及其依据串。
 PUBLIC_ALGO_BASIS = "public_algorithm_per_doc_2_3"
@@ -118,6 +138,19 @@ def resolve_eval_dir(arg: str | None) -> Path | None:
 def resolve_algo_checks_dir(arg: str | None, run_dir: Path) -> Path:
     raw = (arg or os.environ.get("GRASPO_ALGO_CHECKS_DIR") or "").strip()
     return Path(raw).expanduser() if raw else run_dir / "algo-checks"
+
+
+def resolve_teacher_report(arg: str | None, eval_dir: Path | None) -> Path | None:
+    """教师侧报告路径：显式 `--teacher-report` > `$GRASPO_TEACHER_REPORT` > `<eval-dir>/TEACHER_REPORT_REL`。"""
+    raw = (arg or os.environ.get("GRASPO_TEACHER_REPORT") or "").strip()
+    if raw:
+        return Path(raw).expanduser()
+    return (eval_dir / TEACHER_REPORT_REL) if eval_dir else None
+
+
+def is_opd(algo: str) -> bool:
+    """判据② 是否要求教师读数（文档第 2 章判据② 只有 OPD 一条带教师要求）。"""
+    return str(algo or "").strip().upper() == "OPD"
 
 
 # ── 判据④：能推理（自动，判据来自评测报告实测）──────────────────────────────────
@@ -179,6 +212,94 @@ def judge_inference(report, expected: int, report_path: Path) -> dict:
             "why": (f"判据④ 通过：训练数据集 {parse_ok}/{expected} 条输出可解析，"
                     f"评测温度 {temp}、请求级失败 0 条"),
             "evidence": ev}
+
+
+# ── 判据②（OPD）：教师侧读数 `teacher_after_acc` ─────────────────────────────────
+def read_accuracy(report: dict) -> float | None:
+    """取聚合准确率**比例**（0–1）。★ 与 `scripts/make_result_json.py::_acc` 同一读法：
+    `graspo-eval-report-1` 的聚合结论在 `summary{}` 下（`EvalSummary.accuracy`），
+    顶层形态只留给 `gen_tier_json` 那类扁平产物。⛔ 缺形态 ⇒ None（不估算）。"""
+    if isinstance(report.get("summary"), dict):
+        report = report["summary"]
+    for key in ("accuracy", "accuracy_percent", "acc"):
+        v = report.get(key)
+        if isinstance(v, (int, float)):
+            v = float(v)
+            return v / 100.0 if key == "accuracy_percent" or v > 1.0 else v
+    n_correct, n_total = report.get("n_correct"), report.get("n_total")
+    if isinstance(n_correct, int) and isinstance(n_total, int) and n_total > 0:
+        return n_correct / n_total
+    return None
+
+
+def judge_teacher(report, expected: int, subset_sha: str | None, report_path: Path,
+                  after_report=None) -> dict:
+    """OPD 教师侧读数：`teacher_after_acc`（教师在**训练数据集**上的完全正确率，比例）。
+
+    口径（与学生侧同一份，缺一条 ⇒ 不写键 ⇒ 回填器 fail-closed）：
+      ① 报告可读 ∧ `model.role == "other"`（教师侧通道的标识，与 after/base 报告区分）；
+      ② `decoding.temperature == 0.0`（`EvalDecoding` 强制；教师/学生必须同温）；
+      ③ `summary.sample_count_total == 清单该档 data.subset_size` ∧ `sample_count_error == 0`
+         （同一份 100 条、无请求失败）；
+      ④ `dataset.sha256 == 清单该档 data.subset_sha256`（★ 同一份文件才算同一口径；若学生 after
+         报告在，还须与它的 `dataset.sha256` 一致）；
+      ⑤ 聚合准确率可读（`summary.accuracy`，逐条 = 1 pp）。
+    ★ 判分函数本身不是参数：两侧都走 `graspo eval run` → `src/graspo/eval/criteria.py`
+      的逐字段完全一致比对，教师与学生同一条码。
+    """
+    ev: dict = {"criterion": "② 效果（OPD 教师读数 teacher_after_acc）", "source": str(report_path),
+                "expected": expected, "expected_subset_sha256": subset_sha}
+    if not isinstance(report, dict):
+        return {"ok": None,
+                "why": (f"缺教师评测报告（{report_path} 不存在或不可解析）⇒ 判据② 的 "
+                        "teacher_after_acc 无实测证据；⛔ 不得填默认值、不得跳过"),
+                "evidence": ev}
+
+    model = report.get("model") if isinstance(report.get("model"), dict) else {}
+    decoding = report.get("decoding") if isinstance(report.get("decoding"), dict) else {}
+    summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
+    dataset = report.get("dataset") if isinstance(report.get("dataset"), dict) else {}
+    acc = read_accuracy(report)
+    ev.update({"role": model.get("role"), "temperature": decoding.get("temperature"),
+               "total": summary.get("sample_count_total"), "error": summary.get("sample_count_error"),
+               "correct": summary.get("correct"), "valid": summary.get("sample_count_valid"),
+               "dataset_sha256": dataset.get("sha256"), "accuracy": acc,
+               "report_schema_version": report.get("schema_version")})
+
+    problems = []
+    if str(model.get("role") or "") != "other":
+        problems.append(f"报告 role={model.get('role')!r} ≠ 'other'（不是教师侧通道产出的报告）")
+    if decoding.get("temperature") != 0.0:
+        problems.append(f"评测温度 decoding.temperature={decoding.get('temperature')!r} ≠ 0 "
+                        "（教师与学生必须同温；算法说明 §9 第 4 条）")
+    if summary.get("sample_count_total") != expected:
+        problems.append(f"教师评测样本数 {summary.get('sample_count_total')!r} ≠ 期望 {expected}"
+                        "（未在与学生同一份训练数据集上完整评测）")
+    if summary.get("sample_count_error") != 0:
+        problems.append(f"教师评测请求级失败 {summary.get('sample_count_error')!r} 条（读数不可用）")
+    sha = str(dataset.get("sha256") or "")
+    if not subset_sha:
+        problems.append("清单该档缺 data.subset_sha256 ⇒ 无法证明与学生同一份数据（不改用猜测）")
+    elif sha != subset_sha:
+        problems.append(f"教师评测数据 sha256={sha[:12] or '<空>'}… ≠ 清单该档 subset_sha256="
+                        f"{subset_sha[:12]}…（不是同一份数据 ⇒ 与学生不同口径）")
+    a_sha = (""
+             if not isinstance(after_report, dict)
+             else str((after_report.get("dataset") or {}).get("sha256") or ""))
+    if a_sha and subset_sha and a_sha != subset_sha:
+        problems.append(f"学生 after 报告的数据 sha256={a_sha[:12]}… 与清单该档不一致 ⇒ 学生侧读数本身不可比")
+    if acc is None:
+        problems.append("报告读不到聚合准确率（summary.accuracy 缺失/非数值）")
+
+    ev["problems"] = problems
+    if problems:
+        return {"ok": False, "why": "教师侧读数不合口径 ⇒ 不写 teacher_after_acc：" + "；".join(problems),
+                "evidence": ev}
+    return {"ok": True,
+            "why": (f"教师侧评测读数可用：训练数据集 {summary.get('sample_count_total')}/{expected} 条、"
+                    f"温度 {decoding.get('temperature')}、请求失败 0、数据 sha256 与学生侧同一份；"
+                    f"教师完全正确率 = {acc * 100:.4f}%"),
+            "evidence": ev, "acc": round(float(acc), 6)}
 
 
 # ── 判据③：算法正确性检查（分级：GRASPO 须签署，SFT/CPT/OPD 结构化置位）─────────────
@@ -271,13 +392,20 @@ def judge_algo(algo: str, tier: str, algo_dir: Path) -> dict:
 
 # ── 写回 readings.json（唯一渠道）──────────────────────────────────────────────
 def write_back(run_dir: Path, results: dict) -> list[str]:
-    """把本次结论写进 `<run-dir>/readings.json`（先清旧键：⛔ 不留陈旧通过）。"""
+    """把本次结论写进 `<run-dir>/readings.json`（先清旧键：⛔ 不留陈旧通过）。
+
+    写两类键：
+      · `checks{algo_checks_passed, inference_parseable}`（判据③④，布尔）
+      · `teacher_after_acc`（判据② 的 OPD 教师读数，比例；只在**证据合规**时才写）
+    两类都进 `checks_evidence`（判定条件 + 实测数 + 证据原件路径，审计用）。
+    """
     path = run_dir / "readings.json"
     doc = read_json(path)
     if not isinstance(doc, dict):
         raise SystemExit(f"FATAL: readings.json 缺失或不可解析：{path}（先跑 runner 落读数）")
     doc.pop("checks", None)
     doc.pop("checks_evidence", None)
+    doc.pop("teacher_after_acc", None)          # ★ 先清旧读数：⛔ 不留上一次的教师读数
     checks, evidence, wrote = {}, {}, []
     for key, name in (("algo_checks_passed", "algo"), ("inference_parseable", "inference")):
         r = results.get(name) or {}
@@ -286,6 +414,15 @@ def write_back(run_dir: Path, results: dict) -> list[str]:
             wrote.append(key)
         evidence[key] = {"ok": r.get("ok"), "why": r.get("why"), **({"detail": r["evidence"]}
                                                                    if "evidence" in r else {})}
+    # 判据② 的教师读数：★ 只有「证据合规且算出数值」才写（缺/不合口径 ⇒ 不写键）
+    t = results.get("teacher")
+    if isinstance(t, dict):
+        acc = t.get("acc")
+        if t.get("ok") is True and isinstance(acc, (int, float)):
+            doc["teacher_after_acc"] = round(float(acc), 6)
+            wrote.append("teacher_after_acc")
+        evidence["teacher_after_acc"] = {"ok": t.get("ok"), "why": t.get("why"),
+                                         **({"detail": t["evidence"]} if "evidence" in t else {})}
     if checks:
         doc["checks"] = checks
     doc["checks_evidence"] = evidence
@@ -296,19 +433,26 @@ def write_back(run_dir: Path, results: dict) -> list[str]:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
-        description="判据③④ 证据产出者：从评测报告/算法检查证据现算 checks{} 并写进 readings.json",
-        epilog=("⛔ 不得为凑通过手填 true；GRASPO 档必须有人工/脚本签署的算法检查证据；"
+        description="判据②③④ 证据产出者：从评测报告/算法检查证据现算 check 结论与 OPD 教师读数，"
+                    "写进 readings.json",
+        epilog=("⛔ 不得为凑通过手填 true / 填默认读数；GRASPO 档必须有人工/脚本签署的算法检查证据；"
+                "OPD 档必须有教师侧评测报告（判据② 的 teacher_after_acc）；"
                 "缺证据 ⇒ 不写键 ⇒ 回填器 fail-closed（该档保持「待测试」）"))
     ap.add_argument("--tier", required=True, help="档号（M0nn）")
     ap.add_argument("--run-dir", required=True, help="跑次目录（内含 readings.json）")
     ap.add_argument("--eval-dir", default=None,
                     help=f"评测根（含 {AFTER_REPORT_REL}；"
+                         "OPD 档还须含教师侧报告 " + str(TEACHER_REPORT_REL) + "；"
                          "也可用环境变量 GRASPO_EVAL_DIR）")
+    ap.add_argument("--teacher-report", default=None,
+                    help="教师侧评测报告路径（缺省 <eval-dir>/" + str(TEACHER_REPORT_REL) +
+                         "；也可用 GRASPO_TEACHER_REPORT）")
     ap.add_argument("--algo-checks-dir", default=None,
                     help="GRASPO 算法检查证据目录（内含 <tier>.json；"
                          "也可用 GRASPO_ALGO_CHECKS_DIR；缺省 <run-dir>/algo-checks）")
     ap.add_argument("--manifest", default=str(MANIFEST),
-                    help="跑次侧清单（取该档 algorithm 与 subset_size；判据④ 的期望条数由此现读）")
+                    help="跑次侧清单（取该档 algorithm / subset_size / subset_sha256；"
+                         "判据④ 的期望条数与判据② 的同口径校验由此现读）")
     args = ap.parse_args(argv)
 
     run_dir = Path(args.run_dir)
@@ -324,7 +468,9 @@ def main(argv=None) -> int:
         print(f"FAIL: 清单里没有档号 {args.tier}")
         return 2
     algo = str(mt.get("algorithm") or "")
-    expected = int((mt.get("data") or {}).get("subset_size") or 0)
+    data = mt.get("data") or {}
+    expected = int(data.get("subset_size") or 0)
+    subset_sha = str(data.get("subset_sha256") or "")
     if expected <= 0:
         print(f"FAIL: 清单该档 data.subset_size 不可用：{mt.get('data')!r}")
         return 2
@@ -332,28 +478,41 @@ def main(argv=None) -> int:
     eval_dir = resolve_eval_dir(args.eval_dir)
     algo_dir = resolve_algo_checks_dir(args.algo_checks_dir, run_dir)
     report_path = (eval_dir / AFTER_REPORT_REL) if eval_dir else None
+    teacher_path = resolve_teacher_report(args.teacher_report, eval_dir)
 
     print(f"tier={args.tier} algorithm={algo} 期望评测条数={expected}")
     print(f"评测报告 = {report_path if report_path else '<未指定 --eval-dir / GRASPO_EVAL_DIR>'}")
     print(f"算法检查证据目录 = {algo_dir}")
+    print(f"教师评测报告 = {teacher_path if is_opd(algo) else '<非 OPD 档：判据② 不要求教师读数>'}")
 
-    inf = judge_inference(read_json(report_path) if report_path else None, expected,
+    after_report = read_json(report_path) if report_path else None
+    inf = judge_inference(after_report, expected,
                           report_path or Path("<未指定>"))
     alg = judge_algo(algo, args.tier, algo_dir)
+    results = {"algo": alg, "inference": inf}
     for tag, r in (("③ algo_checks_passed", alg), ("④ inference_parseable", inf)):
         state = "缺证据（不写键）" if r.get("ok") is None else ("true" if r["ok"] else "false")
         print(f"[{tag}] {state} — {r.get('why')}")
 
-    results = {"algo": alg, "inference": inf}
+    required = ["algo_checks_passed", "inference_parseable"]
+    if is_opd(algo):
+        tch = judge_teacher(read_json(teacher_path) if teacher_path else None, expected,
+                            subset_sha or None, teacher_path or Path("<未指定>"), after_report)
+        results["teacher"] = tch
+        state = "缺证据（不写键）" if tch.get("ok") is None else (
+            f"teacher_after_acc={tch.get('acc')}" if tch["ok"] else "不合口径（不写键）")
+        print(f"[② teacher_after_acc] {state} — {tch.get('why')}")
+        required.append("teacher_after_acc")
+
     wrote = write_back(run_dir, results)
-    print(f"wrote {run_dir / 'readings.json'}：checks={wrote}")
-    if len(wrote) < 2:
-        missing = [k for k in ("algo_checks_passed", "inference_parseable") if k not in wrote]
+    print(f"wrote {run_dir / 'readings.json'}：keys={wrote}")
+    if not all(k in wrote for k in required):
+        missing = [k for k in required if k not in wrote]
         print("WARN: 以下判据缺证据 ⇒ 未写键 ⇒ 回填器会 fail-closed（该档保持「待测试」）："
               + "、".join(missing))
-        print("  ⇒ 补齐证据后重跑本文件；⛔ 不得手填 true 让流程变绿。")
+        print("  ⇒ 补齐证据后重跑本文件；⛔ 不得手填 true / 不得填默认读数让流程变绿。")
         return 4
-    print("OK: 判据③④ 均有实测证据并已落进 readings.json；"
+    print(f"OK: {'、'.join(required)} 均有实测证据并已落进 readings.json；"
           "下一步复跑 scripts/make_result_json.py 生成可回填的结果 json。")
     return 0
 

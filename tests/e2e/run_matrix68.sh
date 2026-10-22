@@ -265,6 +265,13 @@ TIERFIELDS
         echo "[dry-run]     · ④ 取 ${EVAL_DIR:-<EVAL_DIR>}/.local/reports/after/eval_report.json 实测：样本数==$SUBSET、请求失败 0、逐样本可解析条数==$SUBSET、温度 0"
         echo "[dry-run]     · ③ GRASPO 档必须 $ALGO_CHECKS_DIR/$TIER.json（第 9 节 8 条不变式逐条 + 检查人/时间签署）；SFT/CPT/OPD 按报告第 2 章判据③ 结构化置位并带依据串"
         echo "[dry-run]     · 缺 ③④ 证据 ⇒ 不写该键 ⇒ 回填器 fail-closed（保持「待测试」）；⛔ 不得手填 true 凑通过"
+        if [ "$ALGO" = "OPD" ]; then
+            echo "[dry-run]   判据② OPD 教师读数（需前置：教师侧评测报告）：${EVAL_DIR:-<EVAL_DIR>}/.local/reports/teacher/eval_report.json"
+            echo "[dry-run]     · 前提：教师档（27B / SFT / LoRA / dp=1，本矩阵 M041）先训练完成并导出 merged-hf；缺 ⇒ 本档判据② 不可判定（⛔ 不填默认值）"
+            echo "[dry-run]     · 产出：$PYBIN scripts/gen_eval.py --tier $TIER --role teacher --gpu <评测卡> --port <端口> [--blocks <实测>]  ⇒ 教师侧评测脚本（与两侧同一份 $SUBSET 条 / 温度 0 / 同一判分函数）"
+            echo "[dry-run]     · 取数：上述教师报告 summary.accuracy ⇒ readings.json 的 teacher_after_acc ⇒ 结果 json 的 eval.teacher_after_acc ⇒ 判据②（教师 − 学生未训练 ≥ 教师线，阈值由数据件现读）"
+            echo "[dry-run]     · 缺教师报告 ⇒ 不写 teacher_after_acc ⇒ 回填 rc=1「判据② 缺证据」⇒ 该档保持「待测试」"
+        fi
         # ★ 闸门：**命令 + 判据都打印，但一条都不执行**（dry-run 必须零副作用、零训练启动）
         echo "[dry-run]   闸门 1/3: $PYBIN scripts/run_guards.py cards-busy --ps-file $RUN_DIR/gpu/ps.txt --inspect-file $RUN_DIR/gpu/ins.txt   # 判据：我方容器已占/已预约的卡（含 created/restarting）必须排除"
         echo "[dry-run]   闸门 2/3: $PYBIN scripts/gpu_lock_guard.py --visible <本档实取 $CARDS 张>   # 判据：卡号 ⊆ 0–7、无重复、非空"
@@ -621,18 +628,24 @@ READINGS
     #     ⛔ 绝不伪造证据、⛔ 绝不手填 true（审查第 2 轮 🟡-A 的落点）。
     if [ -n "$EVAL_DIR" ] && [ -f "$EVAL_DIR/.local/reports/after/eval_report.json" ]; then
         say "[checks] $TIER 评测报告已就位 ⇒ 产出判据③④ 证据（写 readings.json 的 checks）"
+        # ★ OPD 档另有判据② 的教师读数前提（唯一来源 = 教师侧评测报告；缺 ⇒ 不写键 ⇒ fail-closed）
+        if [ "$ALGO" = "OPD" ] && [ ! -f "$EVAL_DIR/.local/reports/teacher/eval_report.json" ]; then
+            say "[checks] $TIER 是 OPD 档但缺教师侧评测报告（$EVAL_DIR/.local/reports/teacher/eval_report.json）⇒ 判据② 的 teacher_after_acc 无实测证据（⛔ 不填默认值）"
+            say "[checks] $TIER 补法：$PYBIN scripts/gen_eval.py --tier $TIER --role teacher --gpu <评测卡> --port <端口>；顺序约束：教师档（27B / SFT / LoRA / dp=1，本矩阵 M041）必须先于 OPD 档完成并导出 merged-hf"
+        fi
         local CHECKS_RC=0
         "$PYBIN" "$ROOT_DIR/scripts/record_checks.py" --tier "$TIER" --run-dir "$RUN_DIR" \
             --eval-dir "$EVAL_DIR" --algo-checks-dir "$ALGO_CHECKS_DIR" --manifest "$MANIFEST" \
             || CHECKS_RC=$?
         if [ "$CHECKS_RC" -ne 0 ]; then
-            say "[checks] $TIER 判据③④ 证据不全（rc=$CHECKS_RC）⇒ 回填时该档 fail-closed；补齐证据后重跑 record_checks"
+            say "[checks] $TIER 判据②③④ 证据不全（rc=$CHECKS_RC）⇒ 回填时该档 fail-closed；补齐证据后重跑 record_checks"
         fi
         RESULT_RC=0
         "$PYBIN" "$ROOT_DIR/scripts/make_result_json.py" "${RESULT_ARGS[@]}" || RESULT_RC=$?
-        say "[checks] $TIER 结果 json 已按判据③④ 证据复算（rc=$RESULT_RC）"
+        say "[checks] $TIER 结果 json 已按判据②（教师）③④ 证据复算（rc=$RESULT_RC）"
     else
         say "[checks] $TIER 判据③④ 待评测后执行：$PYBIN scripts/record_checks.py --tier $TIER --run-dir $RUN_DIR --eval-dir <EVAL_DIR> [--algo-checks-dir $ALGO_CHECKS_DIR]，再复跑 make_result_json（缺证据 ⇒ 回填器 fail-closed）"
+        [ "$ALGO" = "OPD" ] && say "[checks] $TIER 另需教师侧评测报告（判据②）：$PYBIN scripts/gen_eval.py --tier $TIER --role teacher …（教师档先于 OPD 档完成；缺 ⇒ 判据② 不可判定）"
     fi
     # 该档"成功"= 训练退出码 0（判据① 的部分事实）；四条判据的合取由回填器现算，⛔ 本脚本不下结论
     if [ "$RC" -ne 0 ]; then

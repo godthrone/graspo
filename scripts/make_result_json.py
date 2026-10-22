@@ -28,6 +28,10 @@
   `checks` 与 `checks_evidence`。本文件只**消费**那份结论（读 `readings.json`），⛔ 不自己判、
   ⛔ 不补 true。缺键时本文件判 rc=4（结构合法但证据不全），回填器保持「待测试」。
   成文渠道与字段格式见 `docs/run-discipline.md` 的「判据③④ 的判定与证据」一节。
+  ★ 判据②（**仅 OPD 档**）的教师读数 `eval.teacher_after_acc`：唯一渠道 = `<run-dir>/readings.json`
+  的顶层 `teacher_after_acc`（产出者同上，从 `<EVAL_DIR>/.local/reports/teacher/eval_report.json`
+  按与学生侧同一口径实测）。本文件只**透传**，⛔ 不自己算、⛔ 缺就不写（OPD 档缺 ⇒ rc=4，
+  回填器 `judge_effect` 判 unknown ⇒ fail-closed 保持「待测试」）。见 `docs/run-discipline.md` §20。
 
 落盘前**必经回填器自己的校验器**（动态 import `backfill_matrix.validate_run`）自检：
 字段/身份/口径任何一条不过 ⇒ **不宣告成功**，rc 非 0，并在 stdout 逐条列出问题。
@@ -348,6 +352,24 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
     if ev is None:
         gaps.append(f"effect/判据②：{ev_why}")
 
+    # ── 判据②（OPD）：教师读数 `eval.teacher_after_acc`（★ 唯一渠道 = readings.json）─────────
+    #   ★ 产出者 = `scripts/record_checks.py`（从 `<EVAL_DIR>/.local/reports/teacher/eval_report.json`
+    #     按与学生侧同一口径实测：同一份 100 条 / 温度 0 / 同一判分函数；见
+    #     `docs/run-discipline.md` 的「OPD 教师侧评测」一节）。
+    #   ⛔ 缺读数就**不写**这个键（回填器 judge_effect 判 unknown ⇒ fail-closed 保持「待测试」），
+    #     绝不填 0、绝不拿学生读数冒充教师读数、绝不因为"非 OPD 档"给默认值。
+    algo = str(row.get("algo") or "").upper()
+    teacher_acc = readings.get("teacher_after_acc")
+    if not isinstance(teacher_acc, (int, float)) or not (0.0 <= float(teacher_acc) <= 1.0):
+        teacher_acc = None
+    if algo == "OPD":
+        if teacher_acc is None:
+            gaps.append("判据② 缺证据：OPD 需教师在训练数据集上的完全正确率"
+                        "（eval.teacher_after_acc；先跑教师侧评测，见 run-discipline「OPD 教师侧评测」）"
+                        " ⇒ 不作通过判定")
+        elif ev is not None:
+            ev["teacher_after_acc"] = round(float(teacher_acc), 6)
+
     # ── 判据③④ 的结构化结论（★ 唯一渠道：`<run-dir>/readings.json` 的 `checks`）──────────
     #   ★ 产出者 = `scripts/record_checks.py`（评测跑完后一条命令，从评测报告与算法检查证据现算；
     #     见 `docs/run-discipline.md` 的「判据③④ 的判定与证据」一节）。
@@ -386,6 +408,7 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
     note_parts.append(f"数值异常：{naninf_why}")
     note_parts.append(f"峰值显存：{peak_why}")
     note_parts.append(f"效果读数：{ev_why}")
+    note_parts.extend(_teacher_note(algo, ev))
     note_parts.extend(_checks_note(checks, checks_ev, row))
     comparable = readings.get("comparable")
     if comparable is False:
@@ -447,6 +470,24 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
     return doc, {"evidence_gaps": gaps}
 
 
+def _teacher_note(algo: str, ev: dict | None) -> list[str]:
+    """判据② 的 OPD 教师读数**备注列**文字（中性措辞：⛔ 无内部路径/工位名/过程行话）。
+
+    只写"规则 + 可核数"：教师 = 27B / SFT / LoRA / dp=1 档产物，教师线由回填器按数据件现算
+    （⛔ 本文件不写阈值数值）。
+    """
+    if algo != "OPD":
+        return []
+    t = (ev or {}).get("teacher_after_acc")
+    b = (ev or {}).get("base_acc")
+    if not isinstance(t, (int, float)):
+        return ["判据②：教师侧读数缺（未跑教师侧评测）⇒ 判据② 不可判定"]
+    txt = f"判据②：教师在训练数据集上的完全正确率 {float(t) * 100:.2f}%"
+    if isinstance(b, (int, float)):
+        txt += f"；教师 − 学生未训练模型 = {(float(t) - float(b)) * 100:+.2f} pp"
+    return [txt]
+
+
 def _checks_note(checks: dict, checks_ev: dict, row: dict) -> list[str]:
     """判据③④ 的**备注列**文字（中性措辞：⛔ 无内部路径/工位名/过程行话）。
 
@@ -483,7 +524,7 @@ def _evidence_paths(run_dir: Path, ckpt_path: str | None,
     if ckpt_path:
         out.append(Path(ckpt_path))
     # 判据③④ 的证据原件（评测报告 / 算法检查签署件）—— 存在于盘才登记
-    for key in ("algo_checks_passed", "inference_parseable"):
+    for key in ("algo_checks_passed", "inference_parseable", "teacher_after_acc"):
         src = ((checks_ev or {}).get(key) or {}).get("detail", {}).get("source")
         if isinstance(src, str) and Path(src).exists() and Path(src) not in out:
             out.append(Path(src))

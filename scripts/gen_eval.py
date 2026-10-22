@@ -28,6 +28,14 @@
     python3 scripts/gen_eval.py --tier M001 --gpu 4 --port 18889
     python3 scripts/gen_eval.py --tier M041 --gpu 4,5 --port 18889 --blocks 232
     python3 scripts/gen_eval.py --tier M041 --gpu 4 --port 18889 --dry-run --no-ssh --tmp-dir /tmp/x
+
+    # ★ OPD 教师侧（判据② 的 `eval.teacher_after_acc` 唯一来源；见 docs/run-discipline.md §20）
+    python3 scripts/gen_eval.py --tier M068 --role teacher --gpu 4,5 --port 18889 --blocks 232
+    #   ⇒ 生成 run-m068-teacher-eval.sh + eval-m068-teacher.yaml（`role: other`）
+    #   ⇒ 报告落 <EVAL_DIR>/.local/reports/teacher/eval_report.json
+    #   ★ 口径与学生侧**同一份**（compute_caliber 同一函数 + 温度 0 + 同一判分函数），⛔ 不另立参数；
+    #   ★ 教师档按文档第 3 章口径（SFT / 27B / LoRA / dp=1）从清单现算，⛔ 不写死档号；
+    #   ★ 顺序约束：教师档必须先于 OPD 档训练完成（教师产物是 OPD 档判据② 的前置证据）。
 """
 from __future__ import annotations
 
@@ -57,6 +65,16 @@ FULL_TRAIN_JSONL = "/work/elam-v5/data/train.jsonl"
 #: 算法（清单 `algorithm`）⇒ 判据② 冻结口径键。只是名字映射，⛔ 不含阈值数值。
 ALGO_METHOD = {"SFT": "sft", "GRASPO": "graspo", "CPT": "cpt", "OPD": "opd"}
 
+#: ── OPD 教师档的形态键（★ 文档口径，⛔ 本文件不写死档号）────────────────────────────
+#: 唯一真相源：定稿报告**第 3 章「模型说明 · OPD 教师」** = 「Qwen3.8-27B 在 **SFT / LoRA /
+#: dp=1** 这一档训练完成后的产物（不是基座权重本身）」；数据件
+#: `meta.criteria_caliber.threshold.by_method.opd.epoch_note` 是同口径的第二处逐字
+#: （2026-10-22 判据变更）。
+#: ⚠ 「dp=1」散文**单独不唯一**（M041/M044/M046/M047/M049/M050 的 dp 都是 1）⇒ 判别键取**单卡档**
+#: 的完整并行形态 TP=PP=DP=1；本矩阵 68 档里唯一命中 M041。命中数 ≠ 1 即 fail-closed（⛔ 不猜）。
+TEACHER_FORM = {"algorithm": "SFT", "model": "27B", "tuner_type": "lora",
+                "tp": 1, "pp": 1, "dp": 1}
+
 IMG = os.environ.get("GRASPO_EVAL_IMG", "graspo:v0.28.11-cu130fix-v2-msgspec-20261012-run")
 BASEIMG = os.environ.get("GRASPO_EVAL_BASEIMG", "graspo:v0.28.11-cu130fix-v2-msgspec-20261012")
 VLLM_IMG = os.environ.get("GRASPO_EVAL_VLLM_IMG", "vllm-openai:v0.22.0")
@@ -81,6 +99,30 @@ def tier_of(manifest: dict, tier: str) -> dict:
     if not hit:
         die(f"清单里没有档号 {tier!r}（本件只认 {MANIFEST.name} 的 M 档号）")
     return hit[0]
+
+
+def find_teacher_tier(manifest: dict) -> dict:
+    """按 `TEACHER_FORM`（= 文档第 3 章 OPD 教师口径）从清单现算教师档，⛔ 不写死档号。
+
+    命中数必须**恰好 1**：0 ⇒ 清单里没有这一档（教师还不存在）；>1 ⇒ 口径有歧义（先修清单/文档，
+    ⛔ 不取第一个凑数）。
+    """
+    hits = []
+    for t in manifest["tiers"]:
+        pc = t.get("parallel_components") or {}
+        if (str(t.get("algorithm")).upper() != TEACHER_FORM["algorithm"]
+                or str(t.get("model")) != TEACHER_FORM["model"]
+                or str(t.get("tuner_type")) != TEACHER_FORM["tuner_type"]):
+            continue
+        try:
+            if all(int(pc.get(k)) == TEACHER_FORM[k] for k in ("tp", "pp", "dp")):
+                hits.append(t)
+        except (TypeError, ValueError):
+            continue
+    if len(hits) != 1:
+        die(f"OPD 教师档按文档口径 {TEACHER_FORM} 命中 {len(hits)} 个"
+            f"{[h.get('tier_id') for h in hits]} ≠ 1 ⇒ 不生成（⛔ 不猜，先对齐清单与文档）", 1)
+    return hits[0]
 
 
 # ── ① 评测集口径：按清单该行的 subset_size 现算（替代 T 档号清单）──────────────────
@@ -240,7 +282,12 @@ say "delta rc=$?"; say "=== {tier} EVAL DONE ==="; echo done > "$EV/EVAL-DONE"
 
 
 def render_yaml(*, role: str, cal: dict, mp: str, ckpt: str, port: str, gpu: str,
-                judge_method: str) -> str:
+                judge_method: str, out_dir_rel: str | None = None) -> str:
+    """`out_dir_rel` = 评测产物在容器 `/evalout` 下的相对目录（缺省按 role 命名）。
+
+    ★ 教师侧的落点**只能来自** `scripts/record_checks.py::TEACHER_REPORT_REL`（本文件从那里 import），
+      ⛔ 不在这里另写一份路径字面量 —— 产出端与消费端必须同一份口径。
+    """
     return f"""dataset_path: {cal["dataset_path"]}
 train_dataset_path: {cal["train_dataset_path"]}
 train_limit: {cal["train_limit"]}
@@ -250,7 +297,7 @@ checkpoint_path: {ckpt}
 role: {role}
 export_format: null
 merged_output_dir: null
-output_dir: /evalout/.local/reports/{role}
+output_dir: /evalout/{out_dir_rel or f'.local/reports/{role}'}
 endpoint: http://127.0.0.1:{port}
 served_model_name: graspo-eval
 gpus: "{gpu}"
@@ -258,6 +305,195 @@ max_workers: 8
 seed: 42
 judge_method: {judge_method}
 """
+
+
+def render_teacher_script(*, opd_tier: str, teacher_tier: str, gpu: str, port: str, tree: str,
+                          ev: str, lower: str, mode: str, form: str, ck: str, cp: str,
+                          md: str, mdhost: str, mp: str, hostmp: str, maxseqs: str, cal: dict,
+                          hostmodels_mount: str, elam_host: str, serving_basis: str,
+                          needs_limit: bool, report_rel: str) -> str:
+    """OPD **教师侧**评测脚本（判据② 的教师读数唯一产出件）。
+
+    ★ 与两侧（after/base）评测**同一份口径**：`cal` 来自同一个 `compute_caliber(mt)`、
+      同一份 100 条、同一个 vLLM 贪心温度 0（`EvalDecoding` 强制）、同一份逐样本判分函数
+      （`src/graspo/eval/criteria.py`，与 rank_method 无关）⇒ ⛔ 本模板不含任何口径参数。
+    ★ 只跑一侧：教师没有 base/after/delta 三件套（判据② 的 Δ 由回填器用学生报告现算）。
+    """
+    return f"""#!/usr/bin/env bash
+set -uo pipefail
+# ★ 中途退出（INT/TERM）【不做清理】：拆掉 vLLM 会让失败原因不可见、也无法重试
+trap 'say "★ 脚本中途退出 ⇒ 保留 vLLM 服务以便排查/重试"; exit 12' INT TERM
+T={tree}; EV={ev}; IMG={IMG}; BASEIMG={BASEIMG}
+G={gpu}; PORT={port}; TS=$(date -u +%s); MODE={mode}; TIER={opd_tier}; TEACHER_TIER={teacher_tier}
+CK={ck}; CP={cp}; MD={md}; MDHOST={mdhost}; MP={mp}; HOSTMP={hostmp}
+MAXSEQS="{maxseqs}"   # ★ §10 现算（按**教师档**形态）：{serving_basis}
+TREPORT="$EV/{report_rel}"
+EVLOG=$EV/evidence; LOG=$EV/eval.log
+say(){{ printf '%s %s\\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" | tee -a "$LOG"; }}
+say "TEACHER eval START opd_tier={opd_tier} teacher_tier={teacher_tier} GPU=$G port=$PORT form={form} mode=$MODE"
+say "§10 teacher caliber: {serving_basis}（needs_limit={str(needs_limit).lower()}）"
+say "教师报告落点 = $TREPORT（判据② 的 eval.teacher_after_acc 只认这份）"
+wait_ready(){{ for i in $(seq 1 240); do curl -s -m 3 http://127.0.0.1:$PORT/v1/models 2>/dev/null | grep -q graspo-eval && return 0; sleep 15; done; return 1; }}
+if [ "$MODE" = "merge" ]; then
+  python3 $T/scripts/run_guards.py fresh --dir "$MDHOST" --phase pre | tee -a "$LOG" || {{ say "§8(pre) 失败 ⇒ fail-closed"; echo stale > "$EV/EVAL-ABORTED"; exit 6; }}
+  cat > $EV/export-teacher.yaml <<YEOF
+dataset_path: {cal["dataset_path"]}
+output_dir: /evalout/{report_rel.rsplit('/', 1)[0]}
+base_model_path: $MP
+checkpoint_path: $CP
+merged_output_dir: $MD
+gpus: "$G"
+role: other
+YEOF
+  docker run --rm --name teacher-export-$TS --network=none --runtime=nvidia --gpus "\\"device=$G\\"" -e NVIDIA_VISIBLE_DEVICES=$G \\
+    -e GRASPO_IMG=$IMG -e GRASPO_BASEIMG=$BASEIMG \\
+    -v $T:/workspace/graspo:ro -v {hostmodels_mount}:/models:ro -v $T/runs:/runs:ro -v $EV:/evalout \\
+    -v {elam_host}:/work/elam-v5:ro -w /workspace/graspo -e PYTHONPATH=/workspace/graspo/src $IMG \\
+    graspo eval export --eval-config /evalout/export-teacher.yaml > "$EVLOG/06-teacher-export.txt" 2>&1
+  say "teacher export rc=$?"
+  python3 $T/scripts/run_guards.py fresh --dir "$MDHOST" --phase post --since $TS | tee -a "$LOG" || {{ say "§8(post) 失败"; echo export-failed > "$EV/EVAL-ABORTED"; exit 6; }}
+  SERVE=$MDHOST
+else
+  say "form={form} ⇒ 零 merge（vLLM 直指教师 checkpoint）"
+  SERVE=$CK
+fi
+say "--- vLLM teacher ---"
+nohup docker run --rm --name teacher-vllm-$TS --runtime=nvidia --gpus "\\"device=$G\\"" -e NVIDIA_VISIBLE_DEVICES=$G \\
+  -v $SERVE:/model:ro -p $PORT:8000 --ipc=host --shm-size=16g {VLLM_IMG} --model /model --served-model-name graspo-eval \\
+  --port 8000 --max-model-len 8192 --gpu-memory-utilization 0.85 $MAXSEQS --trust-remote-code \\
+  --enable-auto-tool-choice --tool-call-parser qwen3_xml > "$EVLOG/vllm-teacher.log" 2>&1 &
+wait_ready || {{ say "★ vLLM teacher 未就绪"; docker stop teacher-vllm-$TS >/dev/null 2>&1; echo vllm-teacher-not-ready > "$EV/EVAL-ABORTED"; exit 8; }}
+say "vLLM teacher READY"; say "--- eval teacher（与两侧同一份 100 条 / 温度 0 / 同一判分函数）---"
+docker run --rm --network=host -e GRASPO_IMG=$IMG -e GRASPO_BASEIMG=$BASEIMG \\
+  -v $T:/workspace/graspo:ro -v $EV:/evalout -v {elam_host}:/work/elam-v5:ro \\
+  -w /workspace/graspo -e PYTHONPATH=/workspace/graspo/src $IMG \\
+  graspo eval run --eval-config /evalout/eval-{lower}-teacher.yaml > "$EVLOG/07-eval-teacher.txt" 2>&1
+say "eval teacher rc=$?"
+# ★ 缺报告 ⇒ 不 stop（保留服务以便重试）；静默拆服务会让失败原因不可见
+if [ -f "$TREPORT" ]; then
+  docker stop teacher-vllm-$TS >/dev/null 2>&1
+  say "=== TEACHER EVAL DONE（$TREPORT）==="; echo done > "$EV/TEACHER-DONE"
+else
+  say "★ 教师报告缺失 ⇒ **不 stop**（保留服务以便重试）"; exit 11
+fi
+"""
+
+
+def gen_teacher_eval(*, args, manifest: dict, mt: dict, cal: dict, offline: bool, remote,
+                     tree: str, ev: str, lower: str, hostmodels: str,
+                     hostmodels_mount: str, elam_host: str) -> int:
+    """OPD **教师侧**评测的产出者（判据② 的 `eval.teacher_after_acc` 唯一来源）。
+
+    口径（三条，⛔ 全部复用学生侧同一份，不另立）：
+      ① 数据集 = `compute_caliber(mt)`（与该 OPD 档学生侧 after/base **同一个**函数、同一份 100 条、
+         `dataset_split: train`）；
+      ② 解码温度 = 0（`EvalDecoding.model_post_init` 强制，入口不提供覆盖参数）；
+      ③ 判分函数 = `src/graspo/eval/criteria.py` 的逐字段完全一致比对（与算法/rank_method 无关）。
+    教师制品 = 清单里按文档口径（`TEACHER_FORM`）现算出的那一档训练完成后的产物；
+    LoRA 形态 ⇒ 必须 merge 成 merged-hf 才能被 vLLM 加载（走与学生档**同一条** `graspo eval export`）。
+    """
+    if str(mt.get("algorithm") or "").upper() != "OPD":
+        die(f"--role teacher 只用于 OPD 档（判据② 的教师要求只存在于 OPD）；"
+            f"清单里 {args.tier} 的 algorithm={mt.get('algorithm')!r} ⇒ 拒绝生成", 1)
+    tm = find_teacher_tier(manifest)
+    ttier = str(tm["tier_id"])
+
+    # ── §10：按**教师档**形态现算（教师是 27B(Mamba)，与学生档是不是 9B 无关）──────────
+    mn = compute_max_num_seqs(tm, args.blocks)
+    assert_mamba(mn["needed"], mn["value"], args.blocks)
+
+    # ── §7 形态 + 教师 checkpoint（离线按显式入参/形态推定，并显式标注）─────────────────
+    ck, form, form_why = args.checkpoint, args.form, ""
+    if not offline:
+        ck = ck or remote.run(f"ls -d {tree}/runs/{ttier}/{ttier}/v*/checkpoint-* 2>/dev/null | tail -1")
+        if not ck:
+            ck = remote.run(f"ls -d {tree}/runs/{ttier}/{ttier}/final 2>/dev/null | tail -1")
+        if not ck:
+            die(f"教师档 {ttier} 无可加载 checkpoint（§7 前置：教师档必须先于 OPD 档跑完）", 1)
+        out = remote.run(f"PYTHONPATH={tree}.hostdeps python3 {tree}/scripts/run_guards.py form "
+                         f"--checkpoint {ck}")
+        form = (out.split("]")[0].strip("[") if out else "")
+        form_why = f"run_guards form ← {out}"
+    if not ck:
+        ck = "<未探测：dry-run/--no-ssh>"
+    if not form:
+        form = "full" if str(tm.get("tuner_type")) == "full" else "adapter"
+        form_why = (f"未做 §7 实测探测（dry-run/--no-ssh）⇒ 按教师档形态推定 "
+                    f"tuner_type={tm.get('tuner_type')!r} ⇒ {form}")
+
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import launch_pipeline as lp                                    # noqa: PLC0415
+    import record_checks as rc                                      # noqa: PLC0415
+
+    if offline:
+        mode = "zero-merge" if form == "full" else "merge"
+        mode_why = f"按推定形态 {form} ⇒ {mode}（dry-run：⛔ 未对真实 checkpoint 做 §7 探测）"
+    else:
+        mode, mode_why = lp.decide_eval_mode(form)
+        if mode == "unknown":
+            die(f"形态未知（{form!r}）⇒ ⛔ 不得凭惯性选路径（§7）", 1)
+
+    mp = str(tm.get("model_path") or "")
+    if not mp:
+        die(f"教师档 {ttier}: 清单缺 model_path")
+    hostmp = mp.replace("/models/", hostmodels + "/", 1) if mp.startswith("/models/") else mp
+    cp = "/runs" + ck[len(tree + "/runs"):] if ck.startswith(tree + "/runs") else ck
+    md = "/evalout/merged-hf-teacher" if mode == "merge" else ck
+    mdhost = f"{ev}/merged-hf-teacher" if mode == "merge" else ck
+    report_rel = rc.TEACHER_REPORT_REL.as_posix()
+
+    tmp_dir = Path(args.tmp_dir)
+    try:
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        die(f"--tmp-dir 不可用：{tmp_dir}（{exc}）—— 用 --tmp-dir 指一个可写目录", 2)
+
+    print(f"TEACHER opd_tier={args.tier} teacher_tier={ttier}"
+          f"（文档第 3 章口径：{TEACHER_FORM['model']} / {TEACHER_FORM['algorithm']} / LoRA / dp=1）")
+    print(f"CALIBER 与学生侧同一份：fit={cal['fit']} dataset_path={cal['dataset_path']} "
+          f"dataset_split={cal['dataset_split']} train_limit={cal['train_limit']}（{cal['why']}）")
+    print(f"§10 teacher model={tm.get('model')} needs_limit={mn['needed']} "
+          f"max_num_seqs={mn['value']}　（{mn['basis']}）")
+    print(f"§7  teacher form={form} mode={mode}　（{form_why}；{mode_why}）")
+    print(f"TEACHER_TIER={ttier} MP={mp} HOSTMP={hostmp} CK={ck} CP={cp} MD={md}")
+    print(f"教师报告落点 = {ev}/{report_rel}"
+          "　（判据② 的 eval.teacher_after_acc 只从这份报告现算）")
+
+    script = render_teacher_script(opd_tier=args.tier, teacher_tier=ttier, gpu=args.gpu,
+                                   port=args.port, tree=tree, ev=ev, lower=lower, mode=mode,
+                                   form=form, ck=ck, cp=cp, md=md, mdhost=mdhost, mp=mp,
+                                   hostmp=hostmp, maxseqs=mn["text"], cal=cal,
+                                   hostmodels_mount=hostmodels_mount, elam_host=elam_host,
+                                   serving_basis=mn["basis"], needs_limit=mn["needed"],
+                                   report_rel=report_rel)
+
+    # ── 产物级 §10 断言：纪律必须落在**将被执行的那份脚本**上（不是函数返回值上）────────
+    probs = lp.check_max_num_seqs_in_script(script, mn["needed"],
+                                            safe=mn["value"] or _mamba_safe_default())
+    if probs:
+        die("§10 产物级断言未过：" + "；".join(probs), 1)
+
+    script_path = tmp_dir / f"run-{lower}-teacher-eval.sh"
+    script_path.write_text(script, encoding="utf-8")
+    script_path.chmod(0o755)
+    yaml_path = tmp_dir / f"eval-{lower}-teacher.yaml"
+    yaml_path.write_text(
+        render_yaml(role="other", cal=cal, mp=mp,
+                    ckpt=(md if mode == "merge" else cp), port=args.port, gpu=args.gpu,
+                    judge_method="null", out_dir_rel=report_rel.rsplit("/", 1)[0]),
+        encoding="utf-8")
+    print("WROTE", str(yaml_path), str(script_path))
+
+    if args.dry_run:
+        print("[dry-run] 将执行的教师侧评测脚本（节选，完整见上面 WROTE 的路径）：")
+        for line in script.splitlines():
+            if any(k in line for k in ("vllm-teacher", "MAXSEQS=", "graspo eval export",
+                                       "graspo eval run", "run_guards fresh", "TREPORT=")):
+                print("  " + line.strip()[:200])
+        print(f"[dry-run] 顺序约束：教师档 {ttier}（{TEACHER_FORM['algorithm']} / LoRA / dp=1）"
+              "必须先训练完成并有可加载 checkpoint；⛔ 教师报告缺失时 OPD 档判据② 不可判定")
+        print(f"[dry-run] §10：needs_limit={mn['needed']} → {mn['text'] or '<不加该参数>'}")
+    return 0
 
 
 def main(argv=None) -> int:
@@ -270,11 +506,18 @@ def main(argv=None) -> int:
                     help="脚本与 yaml 的落点（缺省 $GRASPO_EVAL_TMP_DIR → /data/remote）")
     ap.add_argument("--blocks", type=int, default=None,
                     help="§10 实测可用 Mamba cache blocks（27B 档给则做 ≤blocks 断言并取 min）")
-    ap.add_argument("--checkpoint", default=None, help="最终检查点（`--no-ssh` 时必给；否则由 ssh 探测）")
+    ap.add_argument("--checkpoint", default=None,
+                    help="最终检查点（`--no-ssh` 时必给；否则由 ssh 探测）；"
+                         "--role teacher 时指**教师档**的检查点")
     ap.add_argument("--form", default=None, choices=["full", "adapter", "native_rank"],
-                    help="§7 形态（`--no-ssh` 时可显式给；缺省按 tuner_type 推定并标注）")
+                    help="§7 形态（`--no-ssh` 时可显式给；缺省按 tuner_type 推定并标注）；"
+                         "--role teacher 时指**教师档**的形态")
     ap.add_argument("--no-ssh", action="store_true", help="关闭远端探测（离线自检/干跑；⛔ 不用于真实评测）")
     ap.add_argument("--dry-run", action="store_true", help="只生成命令与判据，不探测远端、不启动 vLLM")
+    ap.add_argument("--role", default="student", choices=["student", "teacher"],
+                    help="student（缺省）= 本档学生侧 after/base 两侧评测；"
+                         "teacher = OPD 教师侧评测（只对 OPD 档；教师档按文档口径从清单现算，"
+                         "产物落 <EVAL_DIR>/.local/reports/teacher/eval_report.json）")
     args = ap.parse_args(argv)
 
     tree = os.environ.get("GRASPO_EVAL_TREE") or str(ROOT)
@@ -302,6 +545,13 @@ def main(argv=None) -> int:
     remote = Remote(enabled=not offline, port=os.environ.get("GRASPO_EVAL_SSH_PORT", "22"),
                     user=os.environ.get("GRASPO_EVAL_SSH_USER"),
                     host=os.environ.get("GRASPO_EVAL_SSH_HOST"))
+
+    # ── 教师侧：判据② 的 OPD 教师读数（与两侧同一份口径，⛔ 不另立参数）────────────────
+    if args.role == "teacher":
+        return gen_teacher_eval(args=args, manifest=manifest, mt=mt, cal=cal, offline=offline,
+                                remote=remote, tree=tree, ev=ev, lower=lower,
+                                hostmodels=hostmodels, hostmodels_mount=hostmodels_mount,
+                                elam_host=elam_host)
 
     # ── §7 形态 + checkpoint（离线时按显式入参/形态推定，并**显式标注**）──────────────
     ck, form, form_why = args.checkpoint, args.form, ""

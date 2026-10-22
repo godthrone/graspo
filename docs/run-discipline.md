@@ -426,3 +426,87 @@ python3 $TREE/scripts/run_guards.py cards-busy --ps-file /tmp/ps.txt --inspect-f
 - ⛔ 不得放宽 19.1 的条件、不得减少 19.2 的 8 条、不得把"缺证据"改成"通过"。
 - ⛔ 判据③④ 的结论**只落 `readings.json`**（及其派生结果 json）；人读件只由回填链写入，
   ⛔ 不得绕过回填直接改数据件/人读件（见本文件 §19 与 `tools/matrix/backfill_dated.sh` 的落点闸门）。
+
+## 20. OPD 教师侧评测（判据② 的教师读数：谁跑、跑什么、放哪、缺了会怎样）
+
+**依据（唯一真相源，⛔ 本文件不另立判据与阈值）**：
+- 判据② 原文（`docs/GRASPO 训练框架功能测试报告.html` **第 2 章**）：
+  「OPD（蒸馏）：教师在训练数据集上的完全正确率，与学生未训练模型相比 ≥ +10.0 个百分点
+  （教师 − 学生未训练模型 ≥ +10.0 pp）；学生训练后，训练数据集完全正确率提升至少 5.0 个百分点」。
+- 教师身份（同一文档 **第 3 章「模型说明 · OPD 教师」**）：教师 = **27B 在 SFT / LoRA / dp=1
+  这一档训练完成后的产物**（⛔ 不是基座权重本身）。数据件
+  `meta.criteria_caliber.threshold.by_method.opd` 的 `teacher` / `epoch_note` 是同口径的第二处逐字。
+- 阈值数值（教师线 +10.0 pp、学生线 +5.0 pp）**只在数据件里**：回填器
+  `tools/matrix/backfill_matrix.py::teacher_line_pp()` / `judge_effect()` 现读现算，⛔ 本文件与代码都不抄数值。
+
+**口径三条（与学生侧**完全相同**，⛔ 不另立第二份）**：
+
+| # | 口径 | 落点（唯一来源） |
+|---|---|---|
+| 1 | 数据集 = **该 OPD 档自身训练用的同一份 100 条**（`dataset_split: train`） | `scripts/gen_eval.py::compute_caliber()`（与学生侧 after/base 同一个函数、同一份清单读数） |
+| 2 | 解码温度 **恒 0**（贪心），入口不提供覆盖参数 | `src/graspo/eval/schema.py::EvalDecoding`（非 0 直接拒绝）+ vLLM 调用侧 |
+| 3 | 判分函数 = 逐字段**完全一致**比对（与学生同一条码） | `src/graspo/eval/criteria.py`（与算法、rank_method、`judge_method` 无关） |
+
+⇒ 教师读数与 `eval.after_acc` / `eval.base_acc` **必然同口径**；`record_checks.py` 还会用
+`dataset.sha256 ==` 清单该档 `data.subset_sha256`（并等于学生 after 报告的数据 sha）当场证一遍。
+
+**谁跑（顺序约束 ⛔ 不可调）**：
+
+```
+① 教师档训练完成（27B / SFT / LoRA / dp=1；本矩阵按清单现算 = M041）
+     ⇐ 教师档必须先于全部 OPD 档完成：教师产物是 OPD 档判据② 的前置证据
+② 导出可推理形态：LoRA ⇒ 必须 merge 成 merged-hf 才能被 vLLM 加载
+     （由生成的教师侧脚本内 `graspo eval export` 完成，与学生 LoRA 档**同一条**路径）
+③ 教师侧评测（一次即可，8 个 OPD 档共用；它们共用同一份 100 条，sha256 相同）
+     python3 scripts/gen_eval.py --tier M068 --role teacher --gpu <评测卡> --port <端口> [--blocks <实测>]
+        ⇒ 产出 <tmp-dir>/run-m068-teacher-eval.sh + eval-m068-teacher.yaml（`role: other`）
+        ⇒ 跑完落 <EVAL_DIR>/.local/reports/teacher/eval_report.json
+④ 折算成读数：
+     python3 scripts/record_checks.py --tier M0nn --run-dir <run-dir> --eval-dir <EVAL_DIR> \
+         [--teacher-report <path>] [--algo-checks-dir <DIR>]
+        ⇒ 写 <run-dir>/readings.json 的 `teacher_after_acc`（比例）+ `checks_evidence.teacher_after_acc`
+⑤ 透传进结果 json（字段名以回填器实际要求为准 = `eval.teacher_after_acc`）：
+     python3 scripts/make_result_json.py … --eval-dir <EVAL_DIR> …
+⑥ 回填：判据② 由 `judge_effect()` 现算 ——
+     学生线：`(after_acc − base_acc) × 100 ≥ 5.0 pp`；
+     OPD 另加教师线：`(teacher_after_acc − base_acc) × 100 ≥ 10.0 pp`（⛔ 是 **base_acc**，不是 after）。
+```
+
+- `--role teacher` 只接受 **OPD 档**的 `--tier`（判据② 只有 OPD 一条带教师要求）；教师档本身按
+  文档口径从清单**现算**（SFT ∧ 27B ∧ LoRA ∧ TP=PP=DP=1），命中数 ≠ 1 即 fail-closed，⛔ 不写死档号。
+  ⚠ 文档散文「dp=1」单独不唯一（本矩阵有 6 档 dp=1）⇒ 判别键含 `nproc_per_node=1`（单卡）。
+- 教师侧评测**只跑一侧**（没有 base/after/delta 三件套）：教师的 Δ 由回填器用**学生**的 base 现算。
+- 教师侧 `max-num-seqs` 按**教师档**形态算（27B ⇒ 需 §10 限流），与学生档是不是 9B 无关。
+
+**产物与字段（唯一通道，⛔ 没有第二个入口）**：
+
+| 环节 | 产物 | 字段 |
+|---|---|---|
+| 教师侧评测 | `<EVAL_DIR>/.local/reports/teacher/eval_report.json` | `model.role == "other"`、`decoding.temperature == 0.0`、`summary.sample_count_total == 100`、`summary.sample_count_error == 0`、`dataset.sha256`、`summary.accuracy` |
+| 折算 | `<run-dir>/readings.json` | 顶层 `teacher_after_acc`（0–1 比例）+ `checks_evidence.teacher_after_acc`（条件、实测数、报告路径） |
+| 适配 | `<run-dir>/<档号>.json` → `collect/<档号>.json` | `eval.teacher_after_acc`（与 `after_acc`/`base_acc`/`delta_pp` 同级） |
+| 回填 | 数据件该档「是否通过」+ 备注列 | 回填器现算；备注列写「教师在训练数据集上的完全正确率 X%；教师 − 学生未训练模型 = +Y pp」 |
+
+**缺证据的后果（⛔ 不许绕）**：
+
+| 情形 | readings.json | 适配器 | 回填器 | 该档状态 |
+|---|---|---|---|---|
+| 教师报告齐且合规 | 写 `teacher_after_acc` | `eval.teacher_after_acc` 落盘 | 判据② 现算（可能 pass / fail） | 可「通过」（还要 ①③④ 过）或「不通过」 |
+| 缺教师报告 / 不合口径（温度≠0、条数≠100、数据 sha 不同、role≠other、准确率读不到） | **不写该键** | 不写 `teacher_after_acc` + `gaps` 点名 | `judge_effect` 判 `unknown` ⇒ fail-closed，本批不写任何文件 | 保持「待测试」 |
+| 教师读数在但教师线没过 | `teacher_after_acc` 已写 | 已透传 | 判据② `fail` | 「不通过」（⚠ 这是**有据的不通过**，与学生线是否过无关） |
+
+- `record_checks.py` 对 OPD 档把教师读数计入**必需证据**：缺 ⇒ rc=4（非 OPD 档不受影响，仍 rc=0）。
+- `make_result_json.py` 对 OPD 档缺 `teacher_after_acc` 时进 `gaps` ⇒ rc=4（结构合法、证据不全）。
+- ⛔ **不得**给回填器或适配器开"缺教师读数也算通过"的口子；⛔ 不得填默认值
+  （0 / base 读数 / 学生 after 读数冒充教师读数）；⛔ 不得改 `tools/matrix/backfill_matrix.py`
+  的判定或数据件口径来让流程变绿。
+
+**8 个 OPD 档共用一份教师报告**：报告落点默认挂在 `<EVAL_DIR>` 下，而 runner/gen_eval 的
+`EVAL_DIR` 是**逐档**的（`eval-<档号>-recon`）⇒ 两种做法二选一，都合法：
+① 让 8 个 OPD 档共用同一个 `EVAL_DIR`；② 教师报告放一处，各档折算时用
+`--teacher-report <同一份路径>`（或 `$GRASPO_TEACHER_REPORT`）指过去。⛔ 不要为每档重跑一遍教师评测
+（教师模型与数据都没变，重跑只会引入新的读数分叉；报告本身已带 `dataset.sha256` 与温度可核）。
+
+**复跑与防污染**：教师报告是**幂等**输入（同一份报告可被 8 个 OPD 档反复折算）；
+教师档重训 ⇒ 教师报告必须重跑（`run_guards fresh` 已内建在教师侧脚本的 export 前后），
+⛔ 不得拿旧教师报告配新教师产物。
