@@ -101,7 +101,7 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <li>组完整性：同一提示的 N 条 rollout 必须同批、同版产出，缺一条或跨版混组即不可用于训练。</li>
 <li>奖励与样本一一对齐：每条 completion 恰好一条奖励、一份字符标注、一组 token 级 advantage，且 advantage 长度等于该条生成 token 数。</li>
 <li>算法逻辑严禁改动：标注、奖励、advantage、组决策与裁剪 loss 的算式以本文为准，要改先改本文。</li>
-<li>温度互不覆盖：rollout 采样温度标准取值 1.0，评测温度恒为 0，评测入口不提供覆盖参数。</li>
+<li>温度互不覆盖：rollout 采样温度恒为 1.0，评测温度恒为 0，评测入口不提供覆盖参数。</li>
 <li>标注长度不变式：字符标记长度等于 completion 字符数，token 标记长度等于生成 token 数。</li>
 <li>采样与训练同源：rollout 由当前策略在线采样，旧对数概率即采样时的策略输出，不做多轮陈旧迭代。</li>
 <li>裁剪区间恒定：ratio 的有效区间为 [1−eps, 1+eps]（eps=0.2），不被隐式改写或逐样本缩放。</li>

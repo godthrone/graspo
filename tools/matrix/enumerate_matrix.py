@@ -973,8 +973,11 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
             #   原由「该形状实测跑通过（…）⇒ 证据优先」= 拿历史跑次当**接受理由** ⇒ 作废。
             #   余量紧只陈述**形状事实**（估算值 / 越预算多少 / 卡容量内余量 / 该数字的来路）＋需实测确认。
             #   ⛔ 27B 的 78.64 GiB / 0.61 GiB 等数字一字不动（可行性与边界不随跑次变）。
+            # ★★ 2026-10-22（复核警告-3）：同一格内同一读数只留一次 —— 读数（78.64 / 78.0 / 0.64 /
+            #   0.61）由本段这**一处**承载（信息最全），选型理由行与来路括注不再重复该读数。
+            #   ⛔ 只删重复的读数，⛔ 不改任何数字、⛔ 不删结论与「越过 78.0 设计预算」边界句。
             if chosen.get("measured_anchor"):
-                basis = "该值锚在实测族级峰值（27B LoRA 78.64 GiB、余 0.61 GiB）"
+                basis = "该值锚在实测族级峰值（27B LoRA 族）"
             else:
                 basis = "算式估算"
             notes_extra.append(
@@ -1179,8 +1182,13 @@ def _reason_line(chosen, sel, backend, mode, tp, pp, dp, band, budget, peak, alg
         other_fact = other.get("short_fact") or other.get("fact") or "该后端不消费该形状"
         core = (f"选 {backend}：{other['backend']} 承载不了该形状（{other_fact}）"
                 f"⇒ 该形状只有 {backend} 能承载（{chosen['fact']}）")
-    tail = f"估算 {peak:.2f}/{budget:.1f} GiB（{band}）"
-    return f"{core}；{tail}"
+    # ★★ 2026-10-22（复核警告-3）：越预算的「余量紧」档，估算读数与判定档位由备注里的
+    #   「余量紧：估算 … 越过 … 设计预算 …、卡容量内余量仅 …（来路）」分段承载（信息最全）
+    #   ⇒ 选型理由行**不再重复该读数**（同一格同一读数只留一次）。
+    #   ⛔ 只删重复的读数，⛔ 不改任何数字、⛔ 不删「越过 78.0 设计预算」这类边界句。
+    if band == "余量紧" and peak > budget:
+        return core
+    return f"{core}；估算 {peak:.2f}/{budget:.1f} GiB（{band}）"
 
 
 def _reason_rule(sel, backend) -> str:
@@ -1827,12 +1835,15 @@ META_OVERRIDES: tuple[dict[str, Any], ...] = (
     #   （机核 = verify_matrix ④X-b）。此处按同一份文本覆盖 ⇒ ⛔ 不允许页面改了、数据件留在旧句上。
     {"path": "criteria_caliber.pass_criteria[0].text",
      "value": ("训练正常结束、无中断、无报错、退出码 0、优化器步数达到该档总训练步数"
-               "（总训练步数 = 总训练轮数 × 每 epoch 步数，每 epoch 步数 = ⌈100 ÷ 总卡数⌉）、"
+               "（总训练步数 = 总训练轮数 × 每 epoch 步数，每 epoch 步数 = ⌈训练样本数 ÷ 总卡数⌉；"
+               "本矩阵各档训练样本数统一为 100 条）、"
                "最终检查点完整可加载、没有 NaN/Inf。"),
-     "why": ("判据① 补「优化器步数达标」的可判定定义；★ 复核条目 6：①「检查点完整」与"
+     "why": ("判据① 补「优化器步数达标」的可判定定义；①「检查点完整」与"
              "「每轮保存检查点 = false」冲突 ⇒ 明确为**最终**检查点完整可加载；"
-             "「每 epoch 步数」按 ⌈100 ÷ 总卡数⌉ 定义，并与「总训练步数」分用两个词"
-             "（⛔ 不复用同一个词指两个意思）")},
+             "「每 epoch 步数」按 ⌈训练样本数 ÷ 总卡数⌉ 定义（⛔ 不把训练样本数写死成常量："
+             "并非所有算法都按 100 条跑，写死会让通用公式对一部分档算错），并与「总训练步数」"
+             "分用两个词（⛔ 不复用同一个词指两个意思）；同句补「各档训练样本数统一为 100 条」"
+             "⇒ 公式与既有数值（100 条时二者结果完全相同）都能读通")},
     # ★ 2026-10-22（复核条目 2 / 5）：判据② 正文补「CPT 允许持平」与评测条件（训练集=评测集、
     #   贪心温度 0、每档评一次），并去掉与 CPT「≥」冲突的「效果比未训练模型好」这一强口径。
     {"path": "criteria_caliber.pass_criteria[1].text",
@@ -1894,9 +1905,11 @@ META_OVERRIDES: tuple[dict[str, Any], ...] = (
      "why": "移除旧档号清单与四态措辞；保留口径与判别力事实"},
     {"path": "criteria_caliber.eval_caliber.rule",
      "value": ("100 行档（判据 = 该档 subset_size == 100）：评测集 = 该档自身训练用的同一份文件"
-               "（100 行、dataset_split: train）⇒ fit 口径（训练集自评）；其余档：平台方自有 702 行评测集 "
-               "+ dataset_split: test。"),
-     "why": "移除旧 54 档的 45 档档号清单"},
+               "（100 行、dataset_split: train）⇒ fit 口径（训练集自评）；"
+               "不分档：评测集一律 = 该档自身训练用的同一份文件（训练集自评），不另设平台方评测集分支。"),
+     "why": ("移除旧 54 档的 45 档档号清单；★ 2026-10-22 复核阻断-2：删掉与页面相反的"
+             "「其余档 = 平台方自有 702 行评测集 + dataset_split: test」分支 ⇒ 与页面判据②"
+             "「训练数据集即评测集（同一份 100 条）」一致（⛔ 不改任何数值）")},
     {"path": "criteria_caliber.eval_caliber.not_applicable",
      "value": ("本矩阵所有档位状态一律为「待测试」，不存在「不适用」档。旧 54 档矩阵的 20 行档 / 不可执行档"
                "清单已作为历史留痕随旧矩阵归档，不随本发布件发布（口径理由保留：n=20 时每样本 5.00 pp，"
@@ -1950,6 +1963,52 @@ META_OVERRIDES: tuple[dict[str, Any], ...] = (
     {"path": "meta.lora_target_backends.msswift.evidence[7]",
      "value": "旧矩阵 1 卡 SFT 档实测 Δ=+13.39 pp（与 native 签名互证）",
      "why": "移除旧档号"},
+    # ════════════════════════════════════════════════════════════════════════
+    # ★★ 2026-10-22（复核收口 · 阻断-2 / 警告 1-2）：数据件的**当前判据字段**必须与页面一致。
+    #   页面判据② 已写「训练数据集即评测集（同一份 100 条）」；数据件里凡仍带
+    #   「其余档 = 平台方 702 行评测集」的**当前判据**字段一律删掉该分支（⛔ 不改任何数值）。
+    #   历史留痕字段（caliber_change.* / eval_caliber.untouched / eval_caliber.consequence /
+    #   dataset.train_eval_relation 的「旧矩阵 702 行读数已归档」句 / caliber_evidence 的
+    #   噪声底证据）**保留** 702 —— 那是历史事实，⛔ 不抹。
+    # ════════════════════════════════════════════════════════════════════════
+    {"path": "criteria_caliber.threshold.by_method.sft.metric",
+     "value": "数据集完全正确率（after − base）；评测集 = 该档自身训练用的同一份文件（fit 判定标准，100 行）",
+     "why": "当前判据字段：删掉与页面相反的「其余档 = 平台方自有 702 行评测集」分支（⛔ 数值不动）"},
+    {"path": "criteria_caliber.threshold.by_method.graspo.metric",
+     "value": "数据集完全正确率（after − base）；评测集 = 该档自身训练用的同一份文件（fit 判定标准，100 行）",
+     "why": "同上（GRASPO 与 SFT 同式；通过线数值不在此字段）"},
+    {"path": "criteria_caliber.threshold.by_method.cpt.metric",
+     "value": "数据集完全正确率（after − base）；评测集 = 该档自身训练用的同一份文件（fit 判定标准，100 行）",
+     "why": "同上（CPT 走不劣化线，数值在 op/value 上，本字段只描述度量）"},
+    {"path": "criteria_caliber.threshold.by_method.opd.metric",
+     "value": "数据集完全正确率（学生 after − base）；评测集 = 该档自身训练用的同一份文件（fit 判定标准，100 行）",
+     "why": "同上（OPD 度量的是学生 Δ；⛔ 不改 +5.0 / +10.0 两个数值）"},
+    {"path": "criteria_caliber.dataset.sample_count",
+     "value": "评测集 = 该档自身训练文件（100 行档 = 100；fit 判定标准）",
+     "why": "当前判据字段：删掉「其余档 = 702」分支（⛔ 100 一字不动）"},
+    {"path": "criteria_caliber.dataset.version_anchor_sha256",
+     "value": "评测集 = 该档自身训练文件（100 行，sha256 594d41b0…）",
+     "why": "当前判据字段：删掉「其余档 = 平台方自有评测集（702 行，c202b1e1…）」分支（⛔ 100 / sha256 不动）"},
+    {"path": "criteria_caliber.baseline.caliber",
+     "value": ("未训练基座在同一评测集上的数据集完全正确率（accuracy），来自 graspo eval 的 role=base 通道；"
+               "评测集 = 该档自身训练用的同一份文件（fit 判定标准）。"
+               "本项是判据② 的被减数（after − base 中的 base）；与 CPT 的「训练 loss 正常下降」判据不是一回事。"),
+     "why": "当前判据字段：删掉「其余档 = 702 行评测集」分支（⛔ 不改任何数值与减法关系）"},
+    # ★★ 2026-10-22（警告-1）：当前判据字段不得把页面现在采用的说法称作「已作废」。
+    #   ⛔ 两个数值（+10.0 / +5.0）与 epoch=2 一个都不动。
+    {"path": "criteria_caliber.threshold.by_method.opd.epoch_note",
+     "value": ("epoch=2 不变；教师 = Qwen3.8-27B 在 SFT / LoRA / dp=1 这一档训练完成后的产物"
+               "（不是基座权重本身）；教师线：教师 − 学生未训练模型 ≥ +10.0 pp。"),
+     "why": ("改写「教师说明已作废」的旧措辞：页面现行说法（教师 = 27B 的 SFT / LoRA / dp=1 档产物）"
+             "就是当前判据；教师线按 ≥ 表达。⛔ 数值 +10.0 pp / epoch=2 不动")},
+    # ★★ 2026-10-22（警告-2）：status 只追加当日两条，⛔ 不改写旧记录（逐字留痕）。
+    {"path": "criteria_caliber.threshold.status",
+     "value": ("已冻结（现行判据，2026-10-15；OPD 通过线已于 2026-10-19 变更，见 "
+               "caliber_change.caliber_change_20261019；2026-10-22：教师身份已指定为"
+               "「27B / SFT / LoRA / dp=1」档产物，教师线已明确为 ≥）：判据② 逐算法分列；不放宽判据；"
+               "判定一律用点估计 Δ —— 不做假设检验、不引入置信区间 / 显著性。"),
+     "why": ("补 2026-10-22 两条（教师身份指定到档位 / 教师线定 ≥）；旧记录保留、只追加；"
+             "「已冻结」前缀保留（回填侧按「含冻结且不含未冻结」判冻结，⛔ 不解除 fail-closed）")},
 )
 
 #: 直接**移除**的 meta 键（旧 54 档逐档读数史 ⇒ 归档，不随发布件发布）。

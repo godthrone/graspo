@@ -9,7 +9,7 @@
     "code_version": {
       "repo": "graspo",
       "branch": "feature/refactor-three-layer-architecture",
-      "commit": "0820743",
+      "commit": "f31ee3e",
       "note": "commit = 本件的生成基线（生成时的 HEAD）；脚本以 meta.enumeration.script_sha256 为准 —— 该 sha256 与同提交内的 tools/matrix/enumerate_matrix.py 逐字节一致。"
     },
     "authority": {
@@ -55,7 +55,7 @@
       "pass_criteria": [
         {
           "title": "能完整跑完",
-          "text": "训练正常结束、无中断、无报错、退出码 0、优化器步数达到该档总训练步数（总训练步数 = 总训练轮数 × 每 epoch 步数，每 epoch 步数 = ⌈100 ÷ 总卡数⌉）、最终检查点完整可加载、没有 NaN/Inf。"
+          "text": "训练正常结束、无中断、无报错、退出码 0、优化器步数达到该档总训练步数（总训练步数 = 总训练轮数 × 每 epoch 步数，每 epoch 步数 = ⌈训练样本数 ÷ 总卡数⌉；本矩阵各档训练样本数统一为 100 条）、最终检查点完整可加载、没有 NaN/Inf。"
         },
         {
           "title": "效果变好（核心判据）",
@@ -109,8 +109,8 @@
       "dataset": {
         "id": "平台方自有评测集（名称平台方自有数据集（不公开））＋ 100 行档（判据 = 该档 subset_size == 100）的评测集 = 该档自身训练用的同一份文件（fit 判定标准：训练集自评）",
         "availability": "平台方自有 / 不公开（100 行档用该档自身训练文件，同为非公开数据）",
-        "version_anchor_sha256": "两种判据 —— 100 行档 = 该档自身训练文件（100 行，sha256 594d41b0…）；其余档 = 平台方自有评测集（702 行，c202b1e1…）",
-        "sample_count": "100 行档 = 100（fit 判定标准）；其余档 = 702",
+        "version_anchor_sha256": "评测集 = 该档自身训练文件（100 行，sha256 594d41b0…）",
+        "sample_count": "评测集 = 该档自身训练文件（100 行档 = 100；fit 判定标准）",
         "method": "数据集完全正确率（acc）",
         "train_eval_relation": "评测集定义：100 行档 = fit 判定标准（训练集自评）—— 评测集 = 该档自身训练用的同一份文件（100 行、dataset_split: train）⇒ 读数回答的是「该档训练是否生效」；不得读作训练分布之外的表现（本矩阵不评测该问题）。档位清单一律从行数据现算（判据 = subset_size == 100）。判别力（100 行档）：该 100 行的 (工具, 动作) 类别最大类占 19%（19/100）⇒ 常数预测器上界 19%；而通过线 = after − base ≥ +10.0 pp（点估计）⇒ 跨过它必须真的读图，任何常数输出都拿不到。旧 54 档矩阵的 702 行判据读数与「重叠剔除」次级读数已随旧矩阵归档（不得引用）：mini 档实测 mini100 × 702 图像交集 = 0 ⇒ 702 行判据对 mini 档自始不成立；100 行档下评测集 ≡ 训练集 ⇒ 重叠剔除类次级读数按定义退化、不构成次级读数。",
         "train_eval_relation_role": "本条是评测集定义（不是能力承诺）：矩阵只声明「已在本判据下完整跑通并取数」，使用者自身任务/数据集/参数下的效果不在承诺范围（见边界声明）。100 行档为 fit 判定标准（训练集自评）：其读数只证明该档在其自身训练数据上的拟合与训练有效性，不得据此外推到其他数据上的表现。"
@@ -118,7 +118,7 @@
       "eval_caliber": {
         "effective": "2026-10-16",
         "source": "2026-10-16 判据变更（判据：训练用什么数据、评测就用什么数据）",
-        "rule": "100 行档（判据 = 该档 subset_size == 100）：评测集 = 该档自身训练用的同一份文件（100 行、dataset_split: train）⇒ fit 判定标准（训练集自评）；其余档：平台方自有 702 行评测集 + dataset_split: test。",
+        "rule": "100 行档（判据 = 该档 subset_size == 100）：评测集 = 该档自身训练用的同一份文件（100 行、dataset_split: train）⇒ fit 判定标准（训练集自评）；不分档：评测集一律 = 该档自身训练用的同一份文件（训练集自评），不另设平台方评测集分支。",
         "pass_lines_unchanged": "通过线数值在 2026-10-16 当时逐字未动：SFT ⇒ after − base ≥ +10.0 pp；GRASPO ⇒ after − base ≥ +5.0 pp；CPT ⇒ after ≥ base（不劣化）；OPD ⇒ 学生 after ≥ base（能力回收）（OPD 通过线已于 2026-10-19 改为 after − base ≥ +5.0 pp，见 caliber_change.caliber_change_20261019）；一律点估计、不做假设检验。",
         "fit_caliber_label": "fit 判定标准（训练集自评）",
         "discriminative_power": "100 行档：训练集 (工具, 动作) 类别最大类 19/100 = 19% ⇒ 常数预测器上界 19% ⇒ 跨 +10.0 pp 必须真读图；每样本粒度 1.00 pp（达线需净跳 ≥10 条）。",
@@ -166,7 +166,7 @@
         "value": null,
         "target": null,
         "applies_to": "按算法分列（见 by_method）：SFT / GRASPO / OPD 走 Δ 通过线；CPT 走不劣化线（after ≥ base）。",
-        "status": "已冻结（现行判据，2026-10-15；OPD 通过线已于 2026-10-19 变更，见 caliber_change.caliber_change_20261019）：判据② 逐算法分列；不放宽判据；判定一律用点估计 Δ —— 不做假设检验、不引入置信区间 / 显著性。",
+        "status": "已冻结（现行判据，2026-10-15；OPD 通过线已于 2026-10-19 变更，见 caliber_change.caliber_change_20261019；2026-10-22：教师身份已指定为「27B / SFT / LoRA / dp=1」档产物，教师线已明确为 ≥）：判据② 逐算法分列；不放宽判据；判定一律用点估计 Δ —— 不做假设检验、不引入置信区间 / 显著性。",
         "historical_note": "旧判据（已被取代、留痕，不再作为判定依据）：训练类与 GRASPO 统一 δ = +5.0 pp；目标值 +10.0 pp（仅展示、不用于判定）；SFT epoch = 2。",
         "by_method": {
           "sft": {
@@ -174,7 +174,7 @@
             "op": ">=",
             "value": 10.0,
             "unit": "pp",
-            "metric": "数据集完全正确率（after − base）；100 行档 = fit 判定标准（评测集 = 该档自身训练文件，100 行）；其余档 = 平台方自有 702 行评测集",
+            "metric": "数据集完全正确率（after − base）；评测集 = 该档自身训练用的同一份文件（fit 判定标准，100 行）",
             "pass_line_text": "after − base ≥ +10.0 pp",
             "epoch": 4,
             "epoch_previous": 2,
@@ -185,7 +185,7 @@
             "op": ">=",
             "value": 5.0,
             "unit": "pp",
-            "metric": "数据集完全正确率（after − base）；100 行档 = fit 判定标准（评测集 = 该档自身训练文件，100 行）；其余档 = 平台方自有 702 行评测集",
+            "metric": "数据集完全正确率（after − base）；评测集 = 该档自身训练用的同一份文件（fit 判定标准，100 行）",
             "pass_line_text": "after − base ≥ +5.0 pp",
             "epoch": 8,
             "epoch_previous": 8,
@@ -196,7 +196,7 @@
             "op": ">=",
             "value": 0.0,
             "unit": "pp",
-            "metric": "数据集完全正确率（after − base）；100 行档 = fit 判定标准（评测集 = 该档自身训练文件，100 行）；其余档 = 平台方自有 702 行评测集",
+            "metric": "数据集完全正确率（after − base）；评测集 = 该档自身训练用的同一份文件（fit 判定标准，100 行）",
             "pass_line_text": "after ≥ base（不劣化）",
             "also": "训练 loss 正常下降",
             "epoch": 2,
@@ -208,19 +208,19 @@
             "op": ">=",
             "value": 5.0,
             "unit": "pp",
-            "metric": "数据集完全正确率（学生 after − base）；100 行档 = fit 判定标准（评测集 = 该档自身训练文件，100 行）；其余档 = 平台方自有 702 行评测集",
+            "metric": "数据集完全正确率（学生 after − base）；评测集 = 该档自身训练用的同一份文件（fit 判定标准，100 行）",
             "pass_line_text": "after − base ≥ +5.0 pp",
             "teacher": "教师 − 学生未训练模型 ≥ +10.0 个百分点（教师在训练数据集上的完全正确率）",
             "epoch": 2,
             "epoch_previous": 2,
-            "epoch_note": "epoch=2 不变；教师 = Qwen3.8-27B（原教师说明「SFT 之后的 27B 产物」已作废，见 caliber_change.caliber_change_20261019）。"
+            "epoch_note": "epoch=2 不变；教师 = Qwen3.8-27B 在 SFT / LoRA / dp=1 这一档训练完成后的产物（不是基座权重本身）；教师线：教师 − 学生未训练模型 ≥ +10.0 pp。"
           }
         },
         "by_method_single_source": "本 by_method 是跑次阈值判定的唯一真相源：跑次 json 自述阈值必须与之逐算法一致，否则回填 fail-closed。"
       },
       "baseline": {
         "role": "未训练基座（role=base）",
-        "caliber": "未训练基座在同一评测集上的数据集完全正确率（accuracy），来自 graspo eval 的 role=base 通道；100 行档 = fit 判定标准（该档自身训练文件）、其余档 = 702 行评测集。本项是判据② 的被减数（after − base 中的 base）；与 CPT 的「训练 loss 正常下降」判据不是一回事。"
+        "caliber": "未训练基座在同一评测集上的数据集完全正确率（accuracy），来自 graspo eval 的 role=base 通道；评测集 = 该档自身训练用的同一份文件（fit 判定标准）。本项是判据② 的被减数（after − base 中的 base）；与 CPT 的「训练 loss 正常下降」判据不是一回事。"
       },
       "epoch_policy": {
         "by_method": "SFT = 4 epoch（现行判据）；CPT = 2 epoch（不动）；OPD = 2 epoch（不动）；GRASPO(RL) = 8 epoch（不动；若 8 仍不过线则升 10 为后备；理由：RL 耗时长、5 epoch 下效果仅差 0.44 pp 未过线）。理由：跨 epoch 容易出问题（循环结构决定）；RL 需要更多 epoch 才能看到效果。",
@@ -483,7 +483,7 @@
         }
       },
       "script": "tools/matrix/enumerate_matrix.py",
-      "script_sha256": "d78f489511aa32b7e1dda8c7630a7c227ca45d0de5c5bc36f01e10d09ff6bf64",
+      "script_sha256": "0f3926bb3647a4ff642d9eac9d375c92abb438af84ac95e346385e673cb8bb5d",
       "audit_ref": "逐档审计明细见枚举脚本 --audit-out 输出（随工作区，不入库）"
     }
   },
@@ -2703,7 +2703,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：LoRA 档两个后端都能吃该形状 ⇒ 按「更简单路径」取 ms-swift（ms-swift 标准通道只做纯数据并行（无 tp/pp 字段：tp 恒为 1 ⇒ SP 恒关闭；TP/PP 要走 Megatron 段））；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 78.64 GiB、余 0.61 GiB）），需实测确认",
+      "note": "选 ms-swift：LoRA 档两个后端都能吃该形状 ⇒ 按「更简单路径」取 ms-swift（ms-swift 标准通道只做纯数据并行（无 tp/pp 字段：tp 恒为 1 ⇒ SP 恒关闭；TP/PP 要走 Megatron 段））；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 族）），需实测确认",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -2757,7 +2757,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：LoRA 档两个后端都能吃该形状 ⇒ 按「更简单路径」取 ms-swift（ms-swift 标准通道只做纯数据并行（无 tp/pp 字段：tp 恒为 1 ⇒ SP 恒关闭；TP/PP 要走 Megatron 段））；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 78.64 GiB、余 0.61 GiB）），需实测确认",
+      "note": "选 ms-swift：LoRA 档两个后端都能吃该形状 ⇒ 按「更简单路径」取 ms-swift（ms-swift 标准通道只做纯数据并行（无 tp/pp 字段：tp 恒为 1 ⇒ SP 恒关闭；TP/PP 要走 Megatron 段））；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 族）），需实测确认",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -2811,7 +2811,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：LoRA 档两个后端都能吃该形状 ⇒ 按「更简单路径」取 ms-swift（ms-swift 标准通道只做纯数据并行（无 tp/pp 字段：tp 恒为 1 ⇒ SP 恒关闭；TP/PP 要走 Megatron 段））；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 78.64 GiB、余 0.61 GiB）），需实测确认",
+      "note": "选 ms-swift：LoRA 档两个后端都能吃该形状 ⇒ 按「更简单路径」取 ms-swift（ms-swift 标准通道只做纯数据并行（无 tp/pp 字段：tp 恒为 1 ⇒ SP 恒关闭；TP/PP 要走 Megatron 段））；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 族）），需实测确认",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -3297,7 +3297,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：LoRA 档两个后端都能吃该形状 ⇒ 按「更简单路径」取 ms-swift（ms-swift 标准通道只做纯数据并行（无 tp/pp 字段：tp 恒为 1 ⇒ SP 恒关闭；TP/PP 要走 Megatron 段））；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 78.64 GiB、余 0.61 GiB）），需实测确认",
+      "note": "选 ms-swift：LoRA 档两个后端都能吃该形状 ⇒ 按「更简单路径」取 ms-swift（ms-swift 标准通道只做纯数据并行（无 tp/pp 字段：tp 恒为 1 ⇒ SP 恒关闭；TP/PP 要走 Megatron 段））；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 族）），需实测确认",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -3351,7 +3351,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：LoRA 档两个后端都能吃该形状 ⇒ 按「更简单路径」取 ms-swift（ms-swift 标准通道只做纯数据并行（无 tp/pp 字段：tp 恒为 1 ⇒ SP 恒关闭；TP/PP 要走 Megatron 段））；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 78.64 GiB、余 0.61 GiB）），需实测确认",
+      "note": "选 ms-swift：LoRA 档两个后端都能吃该形状 ⇒ 按「更简单路径」取 ms-swift（ms-swift 标准通道只做纯数据并行（无 tp/pp 字段：tp 恒为 1 ⇒ SP 恒关闭；TP/PP 要走 Megatron 段））；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 族）），需实测确认",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -3405,7 +3405,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：LoRA 档两个后端都能吃该形状 ⇒ 按「更简单路径」取 ms-swift（ms-swift 标准通道只做纯数据并行（无 tp/pp 字段：tp 恒为 1 ⇒ SP 恒关闭；TP/PP 要走 Megatron 段））；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 78.64 GiB、余 0.61 GiB）），需实测确认",
+      "note": "选 ms-swift：LoRA 档两个后端都能吃该形状 ⇒ 按「更简单路径」取 ms-swift（ms-swift 标准通道只做纯数据并行（无 tp/pp 字段：tp 恒为 1 ⇒ SP 恒关闭；TP/PP 要走 Megatron 段））；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 族）），需实测确认",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -3891,7 +3891,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：CPT 只有 ms-swift 通道 —— native 后端无 CPT 训练通道（能力边界：该后端不提供 CPT 训练方法）；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 78.64 GiB、余 0.61 GiB）），需实测确认",
+      "note": "选 ms-swift：CPT 只有 ms-swift 通道 —— native 后端无 CPT 训练通道（能力边界：该后端不提供 CPT 训练方法）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 族）），需实测确认",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -3945,7 +3945,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：CPT 只有 ms-swift 通道 —— native 后端无 CPT 训练通道（能力边界：该后端不提供 CPT 训练方法）；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 78.64 GiB、余 0.61 GiB）），需实测确认",
+      "note": "选 ms-swift：CPT 只有 ms-swift 通道 —— native 后端无 CPT 训练通道（能力边界：该后端不提供 CPT 训练方法）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 族）），需实测确认",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -3999,7 +3999,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：CPT 只有 ms-swift 通道 —— native 后端无 CPT 训练通道（能力边界：该后端不提供 CPT 训练方法）；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 78.64 GiB、余 0.61 GiB）），需实测确认",
+      "note": "选 ms-swift：CPT 只有 ms-swift 通道 —— native 后端无 CPT 训练通道（能力边界：该后端不提供 CPT 训练方法）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 族）），需实测确认",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -4053,7 +4053,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：OPD 只有 ms-swift 通道 —— native 后端无 OPD 训练通道（能力边界：该后端不提供 OPD 训练方法）；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 78.64 GiB、余 0.61 GiB）），需实测确认；教师须 offload：GPU 常驻情形估算 128.74 GiB（超预算）；offload 下教师权重在使用间隙换出到 CPU；前提 / 边界：需 offload_teacher_model=true",
+      "note": "选 ms-swift：OPD 只有 ms-swift 通道 —— native 后端无 OPD 训练通道（能力边界：该后端不提供 OPD 训练方法）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 族）），需实测确认；教师须 offload：GPU 常驻情形估算 128.74 GiB（超预算）；offload 下教师权重在使用间隙换出到 CPU；前提 / 边界：需 offload_teacher_model=true",
       "spec_json": "—",
       "cards_pending": true,
       "blocked_reason": "—"
@@ -4108,7 +4108,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：OPD 只有 ms-swift 通道 —— native 后端无 OPD 训练通道（能力边界：该后端不提供 OPD 训练方法）；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 78.64 GiB、余 0.61 GiB）），需实测确认；教师须 offload：GPU 常驻情形估算 128.74 GiB（超预算）；offload 下教师权重在使用间隙换出到 CPU；前提 / 边界：需 offload_teacher_model=true",
+      "note": "选 ms-swift：OPD 只有 ms-swift 通道 —— native 后端无 OPD 训练通道（能力边界：该后端不提供 OPD 训练方法）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 族）），需实测确认；教师须 offload：GPU 常驻情形估算 128.74 GiB（超预算）；offload 下教师权重在使用间隙换出到 CPU；前提 / 边界：需 offload_teacher_model=true",
       "spec_json": "—",
       "cards_pending": true,
       "blocked_reason": "—"
@@ -4163,7 +4163,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：OPD 只有 ms-swift 通道 —— native 后端无 OPD 训练通道（能力边界：该后端不提供 OPD 训练方法）；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 78.64 GiB、余 0.61 GiB）），需实测确认；教师须 offload：GPU 常驻情形估算 128.74 GiB（超预算）；offload 下教师权重在使用间隙换出到 CPU；前提 / 边界：需 offload_teacher_model=true",
+      "note": "选 ms-swift：OPD 只有 ms-swift 通道 —— native 后端无 OPD 训练通道（能力边界：该后端不提供 OPD 训练方法）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 族）），需实测确认；教师须 offload：GPU 常驻情形估算 128.74 GiB（超预算）；offload 下教师权重在使用间隙换出到 CPU；前提 / 边界：需 offload_teacher_model=true",
       "spec_json": "—",
       "cards_pending": true,
       "blocked_reason": "—"
