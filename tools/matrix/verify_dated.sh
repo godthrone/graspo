@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# verify_dated.sh — 2026-10-22 基线轮「结果只进带日期副本」收尾自检（7 步，可复跑）。
+# verify_dated.sh — 2026-10-22 基线轮「结果只进带日期副本」收尾自检（8 步，可复跑）。
 # 只读：不写 docs/、不改数据件、不跑训练、不连服务器、不动 git 历史。
 # 只写：.local/hb-workspace/20261022-baseline-r1/verify-dated-last.txt（本次读数台账）。
 # 退出码：0 = 全部通过（"未回填"与"已回填"两态都应 rc=0）；1 = 有步骤失败。
@@ -91,7 +91,7 @@ if git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1; then
     case "$p" in
       "docs/capability-matrix-20261022.data.json"|"docs/GRASPO 训练框架功能测试报告-20261022.html")
         ok "[预期·本工作包副本] $line" ;;
-      "tools/matrix/backfill_dated.sh"|"tools/matrix/verify_dated.sh")
+      "tools/matrix/backfill_dated.sh"|"tools/matrix/verify_dated.sh"|"tools/matrix/backfill_matrix.py")
         ok "[预期·本工作包新增脚本] $line" ;;
       "docs/capability-matrix.data.json")
         say "  [允许·工作包 A 的官方数据件改动] $line（本工作包从不写它）" ;;
@@ -125,5 +125,12 @@ say ""; say "⑦ docs/.backfill-tmp-* 残留"
 leftover="$(ls -d "$REPO"/docs/.backfill-tmp-* 2>/dev/null | tr '\n' ' ')"
 [[ -z "$leftover" ]] && ok "无残留" || bad "存在残留：$leftover"
 
+# ⑧ 原版两件必须是物理只读（chmod 444） ----------------------------------------
+say ""; say "⑧ 原版两件权限（期望 444；加固脚本 tools/matrix/freeze_originals.sh）"
+for f in "$ORIG_HTML" "$ORIG_DATA"; do
+  perm="$(stat -c%a -- "$f" 2>/dev/null)"
+  [[ "$perm" == "444" ]] && ok "$perm  $(basename "$f")" \
+    || bad "权限为 ${perm:-?}，期望 444（原版须物理只读；bash $M/freeze_originals.sh 可复原）"
+done
 say ""; say "# 结论：$([[ $fail -eq 0 ]] && echo 'ALL PASS（rc=0）' || echo 'FAIL（rc=1）')；读数已存 $OUT"
 exit "$fail"

@@ -118,11 +118,13 @@ POLICY: dict[str, Spec] = {
         "★ 本件不是渲染链入口（渲染 = render_matrix.py），此处只做语法/CLI 冒烟（--help ⇒ rc=0）",
     ),
     "tools/matrix/gen_configs.py": Spec(HELP, "矩阵数据 → 测试 yaml 生成器（确定性；禁手改 yaml）"),
-    # ★ 补登记（2026-10-22 基线轮）：68 档开跑前就绪闸门 —— 六条口径（档号集合 / LoRA 三参+目标整块 /
-    #   子集 size 与在盘 sha / 全参必分片 / native 开关 / DeepSpeed 禁用）；argparse CLI ⇒ --help 冒烟。
+    # ★ 补登记（2026-10-22 基线轮）：68 档开跑前就绪闸门 —— **十条**口径（档号集合 / LoRA 三参+目标整块 /
+    #   子集 size 与在盘 sha / 全参必分片 / native 开关 / DeepSpeed 禁用 + R1-3 交叉断言 ⑦身份同源 /
+    #   ⑧并行形状×卡数 / ⑨全参真分片 / ⑩步数子集不滞后）；argparse CLI ⇒ --help 冒烟。
     "tools/matrix/check_68_readiness.py": Spec(
         HELP,
-        "68 档开跑前就绪闸门（六条口径，全 fail-closed）；argparse CLI（--config-dir/--data/--manifest/--subset-dir）",
+        "68 档开跑前就绪闸门（十条口径，全 fail-closed；⑦–⑩ 为配置↔数据件/派生件交叉断言）；"
+        "argparse CLI（--config-dir/--data/--manifest/--subset-dir/--runner-manifest）",
     ),
     # ★ 补登记（2026-10-22 基线轮）：回填防呆 wrapper —— 钉死「带日期副本对」与 .local 台账，指向仓内
     #   原版（数据件或人读件）一律 rc=2 拒起。跑一次会真回填（写数据件/HTML）⇒ 冒烟只做 --help 与 bash -n。
@@ -131,18 +133,25 @@ POLICY: dict[str, Spec] = {
         "回填防呆 wrapper：--data-in/--html-out/--template/--ledger-out 钉死为带日期副本对与 .local 台账；"
         "指向仓内原版（数据件或人读件）rc=2 拒起。跑一次会真回填 ⇒ 冒烟只做 --help（打印用法、rc=0）",
     ),
-    # ★ 补登记（2026-10-22 基线轮）：回填隔离的收尾自检（7 步，只读）。**无 --help、不解析参数**：
-    #   无参运行即真跑 7 步（原版 sha 复验 → 原版对/副本对两次 verify → 两态 sha 判定 → docs/ 面
-    #   git status 核对 → 泄漏扫描 → 临时件残留），只写 .local 读数台账，rc=0 = ALL PASS。
+    # ★ 补登记（2026-10-22 基线轮）：回填隔离的收尾自检（**8 步**，只读）。**无 --help、不解析参数**：
+    #   无参运行即真跑 8 步（原版 sha 复验 → 原版对/副本对两次 verify → 两态 sha 判定 → docs/ 面
+    #   git status 核对 → 泄漏扫描 → 临时件残留 → 原版两件权限 444），只写 .local 读数台账，
+    #   rc=0 = ALL PASS。⑧ 是 R1-4 新增的物理只读闸门（实测 644 ⇒ rc=1，444 ⇒ rc=0）。
     #   故按「真实无参行为」登记：argv=() 且期望 rc=0 + 输出含 ALL PASS（⛔ 不接受 fail-closed）。
     "tools/matrix/verify_dated.sh": Spec(
         SH_FAILCLOSED,
-        "回填隔离收尾自检（7 步只读：原版 sha 复验→原版对/副本对两次 verify→两态 sha 判定→"
-        "docs/ 面 git status→泄漏扫描→临时件残留）；无 --help 与参数解析 ⇒ 无参真跑一次，"
+        "回填隔离收尾自检（8 步只读：原版 sha 复验→原版对/副本对两次 verify→两态 sha 判定→"
+        "docs/ 面 git status→泄漏扫描→临时件残留→原版两件权限 444）；无 --help 与参数解析 ⇒ 无参真跑一次，"
         "期望 rc=0 且输出 ALL PASS（只写 .local 读数台账，不写 docs/）",
         argv=(),
         expect_rc=(0,),
         expect_in="ALL PASS",
+    ),
+    # ★ 补登记（2026-10-22 基线轮 R1-4）：原版两件的**物理只读**加固（对应 19:20 事故：无 --dry-run 的
+    #   直调回填改写了冻结件）。幂等、只做 chmod 444 + 打印 sha；跑一次会改权限位 ⇒ 冒烟只做 bash -n，
+    #   不实际改权限（权限是否 444 由 verify_dated.sh ⑧ 在常设自检里查）。
+    "tools/matrix/freeze_originals.sh": Spec(
+        SH_SYNTAX, "原版两件 chmod 444 幂等加固脚本（只改权限位 + 打印 sha）；冒烟只做 bash -n"
     ),
     # ── shell 工具/运维入口 ────────────────────────────────────────────────
     "scripts/eval_cleanup.sh": Spec(SH_HELP, "评测清理入口；支持 -h/--help ⇒ rc=0"),

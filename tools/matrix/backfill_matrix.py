@@ -692,7 +692,11 @@ def default_html_out(data_path: Path, matrix) -> Path:
 
 
 def main():
-    ap = argparse.ArgumentParser(description="跑次 json ⇒ 数据件（原地回填）⇒ 重渲染 ⇒ 机核 ⇒ 落盘")
+    # ★ allow_abbrev=False（R1-2，对应审查 🔴-2 的根治）：关掉 argparse 缩写 ⇒ `--html`/`--data-i`/
+    #   `--le` 之类前缀不再被当成 `--html-out`/`--data-in`/`--ledger-out`，绕过 wrapper 直调本脚本也
+    #   绕不过落点闸门（⛔ 不加任何"跳过校验"的豁免开关；本处只改这一行/一处，其余逻辑不动）。
+    ap = argparse.ArgumentParser(description="跑次 json ⇒ 数据件（原地回填）⇒ 重渲染 ⇒ 机核 ⇒ 落盘",
+                                 allow_abbrev=False)
     ap.add_argument("--runs-dir", default=None, help="跑次 json 目录（唯一输入格式：<档号>.json）")
     ap.add_argument("--data-in", default=str(ROOT / "docs" / "capability-matrix.data.json"),
                     help="矩阵数据件（默认 = 正式数据件）")

@@ -31,7 +31,18 @@
     python3 scripts/make_result_json.py --tier M001 --run-dir <run-root>/M001 \\
         --out <run-root>/M001/M001.json [--eval-dir <EV>] [--tier-json <gen_tier_json 产物>] \\
         [--manifest tests/e2e/matrix68_manifest.json] [--data docs/capability-matrix.data.json] \\
-        [--collect-dir <扁平目录>]
+        --collect-dir <run-root>/collect
+
+★ **回填入口 = `<run-root>/collect`**（扁平 `<档号>.json`）：`--runs-dir` 只吃扁平目录，
+  而 runner 的跑次归档在 `<run-root>/<档号>/<档号>.json`（嵌套，回填器不认）。
+  ⇒ runner 每档都带 `--collect-dir <run-root>/collect`；回填命令：
+        bash tools/matrix/backfill_dated.sh --runs-dir <run-root>/collect
+  `--collect-dir` 的落盘时机：结构校验通过后（含"证据不全"的 rc=4 件）才写扁平副本，
+  结构不合法（rc=1）不写 —— ⛔ 不让不合契约的件进回填目录。
+
+★ **6 个实验数据列只放"读数/结论"，不放过程说明**：`peak_mem` 列只有 `<数值> GiB`（或
+  `null`）；测量方式、证据来源一律写进 `note` 列，且用中性措辞 —— 该列会随回填进入人读件，
+  ⛔ 不得出现内部路径、内部工位名、内部行话（人读件的脱敏/禁词由机核现验）。
 
 退出码：0 = 已通过回填器校验器（可回填）；4 = 结构合法但**证据不全**（已落盘、供审计，
         回填器会拒收）；2 = 用法/输入错误；1 = 校验器判不通过（字段/身份口径错）。
@@ -141,7 +152,7 @@ def ckpt_loadable(run_dir: Path) -> tuple[bool | None, str, str | None]:
 def parse_steps(stdout_log: Path) -> tuple[int | None, str]:
     """实跑优化步数：日志里 `global_step` 的**最大值**（与台账同一口径）。"""
     if not stdout_log.is_file():
-        return None, "stdout.log 不存在 ⇒ 无法取实跑步数"
+        return None, "训练日志缺失 ⇒ 无法取实跑步数"
     best = None
     text = stdout_log.read_text(encoding="utf-8", errors="replace")
     for m in GLOBAL_STEP_RE.finditer(text):
@@ -151,13 +162,13 @@ def parse_steps(stdout_log: Path) -> tuple[int | None, str]:
         v = int(m.group(1))
         best = v if best is None else max(best, v)
     if best is None:
-        return None, "stdout.log 里没有 global_step 读数（后端未打印/训练未进入优化循环）"
-    return best, f"stdout.log 的 global_step 最大值 = {best}"
+        return None, "训练日志里没有步数读数（后端未打印/训练未进入优化循环）"
+    return best, f"训练日志的最大步数读数 = {best}"
 
 
 def detect_nan_inf(stdout_log: Path) -> tuple[bool | None, str]:
     if not stdout_log.is_file():
-        return None, "stdout.log 不存在 ⇒ 无法判 NaN/Inf"
+        return None, "训练日志缺失 ⇒ 无法判 NaN/Inf"
     hit = NANINF_RE.search(stdout_log.read_text(encoding="utf-8", errors="replace"))
     if hit:
         return True, f"日志出现异常数值：{hit.group(0)[:60]!r}"
@@ -182,30 +193,29 @@ def ledger_record(ledger: Path | None, tier: str) -> dict | None:
 
 
 def peak_mem_text(run_dir: Path, ledger: Path | None = None, tier: str = "") -> tuple[str | None, str]:
-    """峰值显存列。**口径优先级**（§1.4 单一真相源）：
+    """峰值显存列。**列值只写数值读数**（`<数值> GiB`；无读数 ⇒ None），⛔ 不写任何解释性文字。
 
-    ① `collect_results.py` 台账的 `peak_memory_gib`（该列的口径由
+    为什么（修正包 R1-1，审查 🔴-1）：本列会随回填落进人读件的「实验数据」表，机核会扫正文
+    —— 解释性文字（测量方式/来源/内部路径）一旦写进本列就会被人读件闸门拒收。
+    ⇒ 测量方式与来源作为**第二个返回值**由调用方写进 `note` 列（中性措辞）。
+
+    取值优先级（§1.4 单一真相源）：
+    ① `collect_results.py` 台账的 `peak_memory_gib`（该列测量方式由
        `graspo.core.result_judge.PEAK_MEMORY_CALIBER_BY_BACKEND` 按后端唯一决定，
        ⛔ 本文件不另立口径）；
-    ② 否则退回 runner 的**宿主侧采样**（`<run-dir>/gpu/peak_mem.json`），并在文本里**显式写明
-       口径是"宿主 nvidia-smi memory.used 峰值"**（⛔ 不当成训练侧 allocator 读数）。
+    ② 否则退回 runner 的**宿主侧采样**（`<run-dir>/gpu/peak_mem.json`）。
     """
     rec = ledger_record(ledger, tier) if ledger else None
     if rec:
         gib = rec.get("peak_memory_gib")
         if isinstance(gib, (int, float)):
-            caliber = str(rec.get("peak_memory_caliber") or "见 result_judge 的分后端口径")
-            return (f"{float(gib):.2f} GiB（口径：{caliber}；来源 collect_results 台账 "
-                    f"peak_memory_gib）"), f"台账 peak_memory_gib = {gib}"
+            return f"{float(gib):.2f} GiB", "矩阵台账的峰值显存读数（测量方式按后端唯一确定）"
     doc = read_json(run_dir / "gpu" / "peak_mem.json", {}) or {}
     used = doc.get("peak_used_mib")
     if used is None:
-        return None, ("宿主侧显存采样无读数（gpu/peak_mem.json 的 peak_used_mib 为 null），"
-                      "且未提供 --ledger")
+        return None, "宿主侧显存采样无读数"
     gpus = ",".join(str(g) for g in doc.get("gpus") or [])
-    return (f"{float(used) / 1024.0:.2f} GiB（GPU {gpus} 的宿主 nvidia-smi memory.used 峰值；"
-            f"★ 口径：宿主采样，非训练侧 allocator；要换成矩阵冻结口径请用 --ledger）"), \
-           f"max memory.used = {used} MiB"
+    return f"{float(used) / 1024.0:.2f} GiB", f"宿主侧采样的显存占用峰值 = {used} MiB（GPU {gpus}）"
 
 
 # ── 评测读数（判据②）────────────────────────────────────────────────────────
@@ -220,17 +230,19 @@ def eval_block(eval_dir: Path | None, tier_json: Path | None) -> tuple[dict | No
             if a is not None and b is not None:
                 ev = {"after_acc": round(a, 6), "base_acc": round(b, 6),
                       "delta_pp": round((a - b) * 100, 4)}
-                return ev, (f"after acc={a * 100:.4f}%；base acc={b * 100:.4f}%；"
-                            f"Δ = {(a - b) * 100:+.4f} pp"), f"取自 {eval_dir}/.local/reports/*/eval_report.json"
+                return (ev,
+                        (f"after acc={a * 100:.4f}%；base acc={b * 100:.4f}%；"
+                         f"Δ = {(a - b) * 100:+.4f} pp"),
+                        "取自评测报告（eval_report.json）的 after / base 准确率")
     if tier_json:
         doc = read_json(tier_json, {}) or {}
         a, b = doc.get("after_acc"), doc.get("base_acc")
         if isinstance(a, (int, float)) and isinstance(b, (int, float)):
             ev = {"after_acc": float(a), "base_acc": float(b),
                   "delta_pp": round((float(a) - float(b)) * 100, 4)}
-            return ev, str(doc.get("effect") or ""), f"取自 {tier_json}"
-    return None, None, ("没有评测读数：未给 --eval-dir / --tier-json，或两侧 eval_report.json 不齐"
-                        "（判据② 不可判定，回填器会 fail-closed）")
+            return ev, str(doc.get("effect") or ""), "取自评测汇总产物的 after / base 准确率"
+    return None, None, ("本档没有评测读数（未运行评测，或 after / base 两侧评测报告不齐；"
+                        "判据② 不可判定，回填器会 fail-closed）")
 
 
 def _acc(report: dict) -> float | None:
@@ -279,30 +291,30 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
     if exit_code is None:
         exit_code = read_int_file(run_dir / "exit_code")
     if isinstance(exit_code, bool) or not isinstance(exit_code, int):
-        gaps.append("缺 run_result.exit_code（<run-dir>/exit_code 或 readings.json）")
+        gaps.append("缺跑次退出码（跑次目录下无退出码读数）")
         exit_code = None
 
     steps_actual = readings.get("steps_actual")
-    steps_why = "取自 readings.json"
+    steps_why = "读自跑次读数文件"
     if not isinstance(steps_actual, int) or isinstance(steps_actual, bool):
         steps_actual, steps_why = parse_steps(run_dir / "stdout.log")
         if steps_actual is None:
-            gaps.append(f"缺 steps_actual（{steps_why}）")
+            gaps.append(f"缺实跑步数（{steps_why}）")
 
     loadable, loadable_why, ckpt_path = ckpt_loadable(run_dir)
     if loadable is None:
-        gaps.append(f"缺 run_result.final_ckpt_loadable（{loadable_why}）")
+        gaps.append(f"缺最终检查点可加载性结论（{loadable_why}）")
 
     nan_inf, naninf_why = detect_nan_inf(run_dir / "stdout.log")
     if nan_inf is None:
-        gaps.append(f"缺 run_result.nan_or_inf_detected（{naninf_why}）")
+        gaps.append(f"缺 NaN/Inf 检测结论（{naninf_why}）")
 
     # ── 三个数值/文本列 ───────────────────────────────────────────────────
     elapsed = readings.get("elapsed_sec")
     if elapsed is None:
         elapsed = read_float_file(run_dir / "elapsed_sec")
     if elapsed is None:
-        gaps.append("缺 elapsed（runner 未落 elapsed_sec）")
+        gaps.append("缺训练墙钟秒数（跑次未落墙钟读数）")
     peak_mem, peak_why = peak_mem_text(run_dir, ledger, tier)
     if peak_mem is None:
         gaps.append(f"缺 peak_mem（{peak_why}）")
@@ -319,31 +331,31 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
     if ev is None:
         gaps.append(f"effect/判据②：{ev_why}")
 
-    # ── 6 个数据列（未取到 ⇒ null，⛔ 不估算）───────────────────────────────
+    # ── ★ 以下 6 列会随回填进入人读件的「实验数据」表 ⇒ 只放读数/结论，措辞必须中性 ────
+    #   （⛔ 内部路径 / 内部工位名 / 内部行话一律不进这 6 列；证据路径留在 provenance 里供审计，
+    #    provenance 不进人读件。）
     # ★ `effect` 特例：回填器要求"6 列写满"（空/null 一律拒收），而"本档未跑评测"是一个
     #   **有据的结论**（不是缺数据）⇒ 按既有 `gen_tier_json --no-eval` 的同一写法如实声明
     #   "不可评"，⛔ 不填任何效果数字。数值类列（elapsed/throughput/peak_mem/steps_actual）
     #   缺读数时仍写 null —— 那些是**实测值**，编不出来。
-    effect = ev_effect if ev_effect else ("不可评：本档没有评测读数（未跑评测或两侧 eval_report.json "
-                                         "不齐，见 note）；⛔ 本列不得读作效果结论")
+    effect = ev_effect if ev_effect else ("不可评：本档没有评测读数（未运行评测，或 after / base "
+                                         "两侧评测报告不齐）")
     note_parts = []
     if note_extra:
         note_parts.append(note_extra)
-    note_parts.append(f"判据① 证据：exit_code={exit_code}" if exit_code is not None else
-                      "判据① 证据：exit_code 缺")
-    note_parts.append(f"steps_actual={steps_actual}（{steps_why}；计划 {mt['expected_optimizer_steps']} 步）"
+    note_parts.append(f"退出码 {exit_code}" if exit_code is not None else "退出码缺（未取到跑次退出码）")
+    note_parts.append(f"实跑步数 {steps_actual}（{steps_why}；计划 {mt['expected_optimizer_steps']} 步）"
                       if isinstance(steps_actual, int) else
                       f"计划 {mt['expected_optimizer_steps']} 步，实跑未知")
     note_parts.append(f"检查点：{loadable_why}")
-    note_parts.append(f"NaN/Inf：{naninf_why}")
+    note_parts.append(f"数值异常：{naninf_why}")
     note_parts.append(f"峰值显存：{peak_why}")
-    note_parts.append(f"评测：{ev_why}")
+    note_parts.append(f"效果读数：{ev_why}")
     comparable = readings.get("comparable")
     if comparable is False:
-        note_parts.append("★ 环境快照冻结维度发生变化 ⇒ 本档读数**不可比**（⛔ 不得悄悄重跑）")
+        note_parts.append("环境快照冻结维度发生变化 ⇒ 本档读数不可比（不得悄悄重跑）")
     if gaps:
-        note_parts.append("★ 证据缺口（本 json 会被回填器 fail-closed 拒收，⛔ 不得补数）："
-                          + "；".join(gaps))
+        note_parts.append("证据缺口（不满足回填条件，不补数）：" + "；".join(gaps))
 
     doc = {
         "schema": SCHEMA,
@@ -429,7 +441,8 @@ def main(argv=None) -> int:
                          "peak_memory_gib，否则用宿主侧采样并显式标注口径）")
     ap.add_argument("--note", default="", help="附加备注（写进 note 列）")
     ap.add_argument("--collect-dir", default=None,
-                    help="额外落一份扁平副本 <dir>/<tier>.json（回填器 `--runs-dir` 只吃扁平目录、且拒 stray）")
+                    help="回填入口：额外落一份扁平副本 <dir>/<tier>.json（runner 传 <run-root>/collect；"
+                         "回填器 `--runs-dir` 只吃扁平目录、且拒 stray）")
     args = ap.parse_args(argv)
 
     run_dir = Path(args.run_dir)

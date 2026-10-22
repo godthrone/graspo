@@ -6,6 +6,7 @@
 #   bash tests/e2e/run_matrix68.sh --only M001                      # 只跑一档
 #   bash tests/e2e/run_matrix68.sh --only M001,M011,M031 --dry-run   # 逐档只打印命令/闸门/判据
 #   bash tests/e2e/run_matrix68.sh --run-root /data/…/r1 --dry-run
+#   bash tools/matrix/backfill_dated.sh --runs-dir <run-root>/collect   # 结果回填入口（扁平目录）
 #
 # 与 `run_matrix54.sh` 的关系（⛔ 本文件不修改 T 版 runner）：
 #   · 结构照搬（宿主 uid 运行 / 挂载不变量断言 / 三闸门 / 子集落地 / entry.sh / exit_code 落盘）；
@@ -30,6 +31,7 @@
 #   readings.json             **原始实测读数**（墙钟/退出码/峰值显存/证据路径；缺项写 null）
 #   env-snapshot-{before,after}.json / env-diff.json   环境快照与冻结维度比对
 #   <档号>.json               回填器口径的结果 json（`status` 由回填器现算，本链不写）
+#   collect/<档号>.json       同上结果的**扁平副本**（= 回填入口；回填器 `--runs-dir` 只吃扁平目录）
 #
 # 环境（都在宿主侧、属环境信息 §16，⛔ 不写进 tracked 文件）：
 #   export GRASPO_ELAM_HOST_ROOT=<宿主 ELAM V5 数据根>     （必需：图像根从这里挂）
@@ -253,7 +255,8 @@ TIERFIELDS
         echo "[dry-run]   闸门 3/3: $PYBIN scripts/gpu_idle_assert.py --visible <同上> --position-mib $POSITION_MIB   # 判据：剩额 ≥ $POSITION_MIB MiB ∧ util==0，连续 3 帧"
         echo "[dry-run]   环境快照: $PYBIN scripts/env_snapshot.py --run-root $RUN_ROOT --out $RUN_DIR/env-snapshot-before.json --phase before --config-dir $CONFIG_DIR_REL --image $IMAGE"
         echo "[dry-run]   训练: docker run --rm --runtime=nvidia --user $RUN_USER_DESC --ipc=host --shm-size=16g -e NVIDIA_VISIBLE_DEVICES=<同上> … $IMAGE bash /entry.sh（timeout ${TIMEOUT_SEC}s）"
-        echo "[dry-run]   结果: $PYBIN scripts/make_result_json.py --tier $TIER --run-dir $RUN_DIR --manifest tests/e2e/matrix68_manifest.json --out $RUN_DIR/$TIER.json"
+        echo "[dry-run]   结果: $PYBIN scripts/make_result_json.py --tier $TIER --run-dir $RUN_DIR --manifest tests/e2e/matrix68_manifest.json --out $RUN_DIR/$TIER.json --collect-dir $RUN_ROOT/collect"
+        echo "[dry-run]   回填入口: bash tools/matrix/backfill_dated.sh --runs-dir $RUN_ROOT/collect   # 扁平 <档号>.json；⛔ 不要指 $RUN_ROOT 本身（嵌套目录回填器不认）"
         return 0
     fi
 
@@ -585,9 +588,12 @@ READINGS
 
     # ── 13) 原始读数 → 回填口径结果 json（adapter 内跑回填器校验器自检）──────────────
     local RESULT_RC=0
+    #   ★ 同时落一份**扁平副本**到 <run-root>/collect/（= 回填入口）：回填器 `--runs-dir` 只吃
+    #     扁平目录，嵌套的 <run-root>/<档号>/<档号>.json 它不认（审查 🟡-3）。结构校验不过（rc=1）
+    #     时 adapter 不写扁平副本 —— ⛔ 不让不合契约的件进回填目录。
     "$PYBIN" "$ROOT_DIR/scripts/make_result_json.py" \
         --tier "$TIER" --run-dir "$RUN_DIR" --manifest "$MANIFEST" \
-        --out "$RUN_DIR/$TIER.json" || RESULT_RC=$?
+        --out "$RUN_DIR/$TIER.json" --collect-dir "$RUN_ROOT/collect" || RESULT_RC=$?
     if [ "$RESULT_RC" -ne 0 ]; then
         say "[result-json] $TIER 结果 json 未达回填口径（rc=$RESULT_RC）—— 见 $RUN_DIR/$TIER.json 的 note"
     fi
