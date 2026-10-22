@@ -33,10 +33,10 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <p class="note">本文是 GRASPO 算法定义的对照文本：按本文逐条核对，即可判断实现对不对。算法逻辑严禁改动。</p>
 
 <h2>1. 一句话总述</h2>
-<p>GRASPO 是面向多模态工具调用的组相对策略优化：一个提示采一组 rollout，逐字符标注结构，据此给出结构化奖励与 token 级 advantage，再做裁剪后的策略梯度更新。</p>
+<p>GRASPO 是面向多模态工具调用的组相对策略优化：一个提示采一组 rollout，逐字符标注结构，另路解析打分给出结构化奖励，标注用于算 token 级 advantage，最后做裁剪后的策略梯度更新。</p>
 
 <h2>2. 字符级标注</h2>
-<p>对每条 completion 逐字符打角色标记，标记长度恒等于字符数；标注只标角色、不打分，是奖励与 advantage 的唯一输入。</p>
+<p>对每条 completion 逐字符打角色标记，标记长度恒等于字符数；标注只标角色、不打分。标注是 <b>token 级 advantage</b> 的唯一输入；奖励不走标注：它由独立的解析与打分链路直接读 completion 文本（或其解析结果）算出，两者互不引用。</p>
 <table>
 <thead><tr><th>标记</th><th>含义</th><th>标注边界</th></tr></thead>
 <tbody>
@@ -48,7 +48,7 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <tr><td>D</td><td>截断区</td><td>E 之后的所有字符，不训练</td></tr>
 </tbody>
 </table>
-<p>边界规则：值错误不置 E（交由相似度打分）；结构不完整（即无闭合标签，或 JSON 去掉围栏后不可解析）且非长度硬截断时，末尾非空白字符置 E。字符标记经 offset_mapping 派生 token 标记，一个 token 覆盖多字符时按「E 优先、其次 V、再次 S」合并。</p>
+<p>边界规则：值错误不置 E（交由相似度打分）；结构不完整（即无闭合标签，或 JSON 去掉围栏后不可解析）时，<b>「末尾非空白字符置 E」不在标注阶段做</b>，它是 advantage 计算前的一步后处理，见第 5 节。字符标记经 offset_mapping 派生 token 标记；一个 token 覆盖多字符时按「E 优先，其次 V，再次 S，再次 T，再次 D，其余 W」逐级取第一个命中的角色合并——只要其中有一个字符是 E，整个 token 就记 E，错误因此传导到整个 token。</p>
 
 <h2>3. 结构化奖励</h2>
 <p>单条 completion 的 reward 由三项相加后除以满分得到，满分由同一组检查项现算：</p>
@@ -89,23 +89,47 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 
 <h2>5. token 级 advantage</h2>
 <p>字符标记映射到 token 标记后，advantage 按 token 逐位分配：S 记 +1.0，E 记 −1.0，T / W / D 记 0（不训练），V 记「该字段相似度 − 该字段组内均值」。</p>
-<p>归一化是字段级组内相对化：<code>μ_f</code> 取该字段在全组同名字段值段上的均值，<code>adv(V) = 相似度 − μ_f</code>；不再做整组再加权归一化。组内仅一条样本发出该字段时 advantage 为 0。对齐到策略张量时，提示位与填充位恒为 0。</p>
+<p>归一化是字段级组内相对化：<code>μ_f</code> 取该字段在全组同名字段<b>值段</b>上的均值，<code>adv(V) = 相似度 − μ_f</code>；不再做整组再加权归一化。计数单位是<b>值段</b>而不是样本：一条 completion 里同一字段出现多个值段，每个值段各计一份、各自打分。因此组内该字段只出现<b>一个值段</b>时，μ_f 恰等于该段的相似度，adv(V) = 0。对齐到策略张量时，提示位与填充位恒为 0。</p>
+<p>末尾 EOS（advantage 的前置后处理）：结构不完整（无闭合标签，或 JSON 去掉围栏后不可解析）且不是被最大生成长度硬截断的样本，在算 advantage 之前把 completion 的末尾非空白字符置 E（该位 advantage 记 −1.0），其后的尾随空白不置 D、仍是 W；completion 为空、或标注里已有 E 时不施加。该步只作用于 advantage 计算，标注产物里不含这个 E。</p>
 
 <h2>6. PPO 裁剪 loss</h2>
-<p>策略比 <code>ratio = exp(logπ_new − logπ_old)</code> 先在 [0.1, 10] 内截断，再按 <code>policy_ratio_clip_eps=0.2</code> 在 [1−eps, 1+eps] 即 [0.8, 1.2] 内裁剪，损失取 <code>−min(ratio·A, clip(ratio)·A)</code> 的掩码均值。</p>
+<p>策略比 <code>ratio = exp(logπ_new − logπ_old)</code> 先在 [0.1, 10] 内截断，再按 <code>policy_ratio_clip_eps=0.2</code> 在 [1−eps, 1+eps] 即 [0.8, 1.2] 内裁剪，损失取 <code>−min(ratio·A, clip(ratio)·A)</code>。聚合是两级平均：先每条序列在自己的动作掩码内平均（分母是该条被训练的 token 数），再对 batch 取算术平均（每条样本等权，不按 token 总数加权）。</p>
 <p>作用：区间内梯度正常回传；越界一侧被截平，单步更新幅度受限。</p>
 
-<h2>7. 不变式清单</h2>
+<h2>7. 低秩适配（LoRA）</h2>
+<p>更新范围由一条模块名正则决定：配置项 <code>lora.target_modules</code> 给出这条正则，命中它的线性层各挂一份低秩更新，未命中的权重全部冻结。覆盖语言塔与视觉塔两处——语言塔的注意力投影（<code>q_proj</code> / <code>k_proj</code> / <code>v_proj</code> / <code>o_proj</code>，线性注意力另有 <code>in_proj_qkv</code> / <code>in_proj_z</code> / <code>out_proj</code>）与 MLP 三投影（<code>gate_proj</code> / <code>up_proj</code> / <code>down_proj</code>）；视觉塔的 merger 两个线性层，以及每个 block 的注意力与 MLP 投影。具体落点以正则命中的模块名为准，不逐个层号罗列。</p>
+<p>融合 Q/K/V 按<b>整块一份低秩</b>处理：<code>in_proj_qkv</code> 是一个整体模块，只配一份低秩（一对 <code>A: r×hidden</code>、<code>B: out_qkv×r</code> 因子），不拆成 q / k / v 三段各配一份。三点理由：参数更省（一份低秩而不是三份）；低秩因子可跨 Q/K/V 混合，不必按段各学一份；与上游 PEFT 的语义一致（一个线性层一份 adapter，按模块名逐个匹配）。融合块内部的顺序恒为 <code>[q | k | v]</code>。</p>
+<p>超参：<code>r=32</code>、<code>alpha=64</code>、<code>dropout=0.05</code>。低秩分支的输出按 <code>alpha/r = 2</code> 缩放后加回原层输出；<code>dropout</code> 作用在低秩分支的输入上，推理时关闭。<code>B</code> 因子零初始化，因此训练起点与原模型逐位相同。</p>
+
+<h2>8. 训练指标</h2>
+<p>指标只用于观察训练是否健康：它不参与第 4 节的决策，也不进入 loss。均值类指标的分母只算<b>终结组</b>（决策不是「重试」的组），重试的中间态只进计数、不进均值。</p>
+<table>
+<thead><tr><th>指标</th><th>含义</th><th>看什么</th></tr></thead>
+<tbody>
+<tr><td><code>decision_counts</code></td><td>每组落在第 4 节哪一档的组数（完美跳过 / 可训练·最优正确 / 可训练·最优不完美 / 重试 / 丢弃）</td><td>数据难度与丢弃、重试的占比</td></tr>
+<tr><td><code>retry_rate</code></td><td>重试组数 ÷ 尝试组数</td><td>采样效率与重试压力</td></tr>
+<tr><td><code>reward_min</code>、<code>reward_median</code>、<code>reward_mean</code>、<code>reward_max</code></td><td>终结组 reward 的最小值、下中位数、均值、最大值</td><td>整体水位；最大值能否到 1（对应 ②）</td></tr>
+<tr><td><code>reward_nonzero_range_rate</code></td><td>reward 组内极差 &gt; 0 的组占终结组的比例</td><td>还有多少组带偏好信号（极差为 0 时：全部达到或超过满分的组按 ① 跳过；其余按 ⑥ 丢弃，重试次数没用尽时先按 ⑤ 重采）</td></tr>
+<tr><td><code>reward_max_median_gap_mean</code></td><td>每组「最大值 − 下中位数」的平均</td><td>第 ④ 档的可训练幅度有多大</td></tr>
+<tr><td><code>content_mean</code>、<code>base_content_mean</code></td><td>内容项归一分的均值 / 剥掉数值叶子后的基础内容分均值</td><td>内容对了多少；两者差距即数值叶子错的代价</td></tr>
+<tr><td><code>content_all_zero_group_count</code>、<code>content_all_one_group_count</code></td><td>组内内容分全为 0 / 全为 1 的组数</td><td>全 0 组提示内容普遍全错（常因无偏好信号在 ⑥ 丢弃）；全 1 组多为 ① 完美跳过。两者都不等于 ⑥ 的「内容分一致且不满」，后者要求内容分严格介于 0 与 1 之间且组内一致</td></tr>
+<tr><td><code>missing_json_marker_count</code>、<code>unclosed_json_fence_count</code>、<code>invalid_extracted_json_count</code>、<code>likely_truncated_json_count</code></td><td>缺 JSON 围栏、围栏未闭合、抽出的 JSON 不可解析、疑似被最大长度截断的 completion 计数</td><td>格式类失败出在哪一环</td></tr>
+<tr><td><code>tool_call_parse_error_count</code>、<code>tool_call_count_mismatch_count</code></td><td>工具调用解析报错、调用条数与目标不符的 completion 计数</td><td>工具调用形态错的比例</td></tr>
+</tbody>
+</table>
+<p>计数单位：<code>attempt_group_count</code> 是尝试过的组数，<code>completion_count</code> = 尝试组数 × N（N 为组大小，见第 4 节），<code>observed_completion_count</code> 是实际收上来、打过分的条数；三者不等即说明有组没凑齐或被拒。</p>
+
+<h2>9. 不变式清单</h2>
 <p>下列判断句应当成立；任一条不成立，即说明实现与本文不一致。</p>
 <ol>
 <li>组完整性：同一提示的 N 条 rollout 必须同批、同版产出，缺一条或跨版混组即不可用于训练。</li>
 <li>奖励与样本一一对齐：每条 completion 恰好一条奖励、一份字符标注、一组 token 级 advantage，且 advantage 长度等于该条生成 token 数。</li>
 <li>算法逻辑严禁改动：标注、奖励、advantage、组决策与裁剪 loss 的算式以本文为准，要改先改本文。</li>
-<li>温度互不覆盖：rollout 采样温度恒为 1.0，评测温度恒为 0，评测入口不提供覆盖参数。</li>
+<li>温度互不覆盖：rollout 采样温度取 <code>training.temperature</code>，默认 1.0（该值按配置生效，不被隐式改写、也不由评测侧改写）；评测温度恒为 0，评测入口不提供覆盖参数。</li>
 <li>标注长度不变式：字符标记长度等于 completion 字符数，token 标记长度等于生成 token 数。</li>
 <li>采样与训练同源：rollout 由当前策略在线采样，旧对数概率即采样时的策略输出，不做多轮陈旧迭代。</li>
 <li>裁剪区间恒定：ratio 的有效区间为 [1−eps, 1+eps]（eps=0.2），不被隐式改写或逐样本缩放。</li>
-<li>值错误不截断：值错误只影响相似度打分，只有结构 / 类型错误才置 E 并截断其后。</li>
+<li>值错误不截断：值错误只影响相似度打分，只有结构 / 类型错误才置 E 并在其后标 D；末尾 EOS 是唯一例外——只把末尾非空白字符置 E，其后的尾随空白保持 W。</li>
 </ol>
 
 <footer>本文只描述算法本身。</footer>
