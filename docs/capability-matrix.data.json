@@ -55,7 +55,7 @@
       "pass_criteria": [
         {
           "title": "能完整跑完",
-          "text": "训练正常结束、无中断、无报错、退出码 0、优化器步数达到该档总训练步数（总训练步数 = 总训练轮数 × 每 epoch 步数，每 epoch 步数 = ⌈训练样本数 ÷ 总卡数⌉；本矩阵各档训练样本数统一为 100 条）、最终检查点完整可加载、没有 NaN/Inf。"
+          "text": "训练正常结束、无中断、无报错、退出码 0、实跑步数达到该档总训练步数（总训练步数 = 总训练轮数 × 每 epoch 步数，每 epoch 步数 = ⌈训练样本数 ÷ 总卡数⌉；本报告各档训练样本数统一为 100 条）、最终检查点完整可加载、没有 NaN/Inf。"
         },
         {
           "title": "效果变好（核心判据）",
@@ -483,7 +483,7 @@
         }
       },
       "script": "tools/matrix/enumerate_matrix.py",
-      "script_sha256": "7018d5adc71b4cb80acbdc5a4efec92f297cae35bba94e5d44e90f66e5f399af",
+      "script_sha256": "9926431ac7bc10c5186d6bc2b9cce2fa57e10a415bff0a0d73876fdceed0c4df",
       "audit_ref": "逐档审计明细见枚举脚本 --audit-out 输出（随工作区，不入库）"
     }
   },

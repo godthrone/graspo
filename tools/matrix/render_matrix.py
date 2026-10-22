@@ -285,12 +285,25 @@ def merge_cell_text(col, row):
     return html.unescape(re.sub(r"<[^>]+>", "", merge_cell_inner(col, row)))
 
 
+#: ★ 2026-10-22（复核条目 5）：备注列**空值**的展示占位符 —— 与「显存峰值 / 实跑步数 / 耗时 /
+#:   吞吐 / 效果」五列的无数据占位符统一成同一个 `—`（五个数据列在数据件里本来就是 `—`）。
+#:   ⛔ 只改**展示层**：数据件 `rows[].note` 仍是空串（主席令「备注为空」；机核 = 枚举自检 V13）。
+NOTE_EMPTY_PLACEHOLDER = "—"
+
+
+def note_placeholder(val):
+    """`note` 列的展示值：空 / 纯空白 ⇒ 占位符；有内容一律原样（⛔ 不碰任何有内容的情况）。"""
+    return NOTE_EMPTY_PLACEHOLDER if not str(val).strip() else val
+
+
 def cell_display_text(row, key):
     """★ **展示层**的单元格文字（供校验端算"该格应该是什么"；⛔ 不读渲染结果反推）。
 
     - 普通列：行里同名字段的原文（★ 列带 `source` 时读 `row[source]`，见 `mode_tbl` / `backend_tbl`；
       `effect` 列另经 `human_view_effect` 归一，见调用方）；
     - 合并列：与渲染**同一份**拼装实现（`merge_cell_text`）⇒ 校验端不会出现第二套规则。
+    - ★ 2026-10-22（复核条目 5）：`note` 列空值按 `NOTE_EMPTY_PLACEHOLDER` 渲染（与「实验数据」
+      其余 5 列的无数据占位符一致）；⛔ 数据件 `rows[].note` 一字不动（仍是空串）。
     """
     col = next((c for c in RENDERED_COLUMNS if c["key"] == key), None)
     if not col:
@@ -298,7 +311,8 @@ def cell_display_text(row, key):
     if col.get("merge"):
         return merge_cell_text(col, row)
     src = col.get("source", key)
-    return "" if row.get(src) is None else str(row.get(src))
+    val = "" if row.get(src) is None else str(row.get(src))
+    return note_placeholder(val) if key == "note" else val
 
 # 结果列着色映射（此处只用于生成带 class 的单元格；黄/绿/红与第 4 章三态图例同源）
 #: ★★ 状态词表 = **三态**（唯一词表，与模板第 4 章图例逐字同一份）：
@@ -336,6 +350,8 @@ def cell_html(col, row, by_method=None):
                 f'{merge_cell_inner(col, row)}</td>')
 
     val = "" if row.get(col.get("source", key)) is None else str(row[col.get("source", key)])
+    if key == "note":
+        val = note_placeholder(val)
     if key == "effect":
         val = human_view_effect(val, row.get("train_method"), by_method)
     if key == "status":
