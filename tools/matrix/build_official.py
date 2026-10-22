@@ -32,7 +32,7 @@ import extract_spec as _spec
 #   第 3 章另有一条"TP 口径"**说明式**条目）
 #   ★ 2026-10-21「第 4 章列瘦身」轮：渲染面 21 列 → 19 列 → **16 列**（删 `lr` / `max_epochs` /
 #     `switches` 三列）—— lr 与训练轮数是 f(训练方法, 模式)、附加参数是 f(训练方法, 模式, 后端)，
-#     三者已由模板第 3 章「训练超参：按训练方法 × 后端」+「算法级参数」两张静态表逐行发布
+#     三者已由模板第 3 章「训练超参」+「算法级参数」两张静态表逐行发布
 #     ⇒ 表格侧不再逐档重复（§1.4 单一真相源）。
 #   的列 key / 表头 / 列组 / 顺序由渲染器**引用**而来，⛔ 本文件不再自带第二份
 #   （病史：本文件原先写死一份 10 列 `COLUMNS`，与在盘列数不一致 ⇒ 重跑会把表头覆盖回 10 列）。
@@ -1026,7 +1026,7 @@ def _table_structure_single_source_self_test():
     chk("① COLUMNS 就是 render_matrix.MATRIX_COLUMNS（同一对象）", COLUMNS is _render.MATRIX_COLUMNS)
     chk("② GROUPS 就是 render_matrix.MATRIX_GROUPS（同一对象）", GROUPS is _render.MATRIX_GROUPS)
     #   ★ 2026-10-21 列瘦身轮：渲染面 21 → 19 → **16 列**（删 `lr` / `max_epochs` / `switches`；
-    #     取值改由模板第 3 章「训练超参：按训练方法 × 后端」+「算法级参数」两张静态表承载）。
+    #     取值改由模板第 3 章「训练超参」+「算法级参数」两张静态表承载）。
     #     ⛔ 这里**不放宽成"至少 N 列"**：③ 精确 16，③b 再逐字按序钉住 16 个列 key。
     chk("③ 渲染面列数 == RENDERED_COLUMNS（16 列）", len(_render.RENDERED_COLUMNS) == 16)
     _RENDERED_KEY_ORDER = ("tier", "status", "model_tbl", "algo", "mode_tbl", "backend_tbl",

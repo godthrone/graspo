@@ -798,7 +798,7 @@ def main():
         #   ★ 渲染列数由常量现算（⛔ 不写死）：**16 列** = 档号 1 + 状态 1 + 参数 8 + 实验数据 5
         #     + 备注 1；条件项 **3**（模型 / 模式 / 后端）。
         #     ★ 2026-10-21「第 4 章列瘦身」轮：删 `lr` / `训练轮次` / `关键开关` 三列（21 → 19 → 16），
-        #       三者取值改由模板第 3 章「训练超参：按训练方法 × 后端」+「算法级参数」两张静态表承载
+        #       三者取值改由模板第 3 章「训练超参」+「算法级参数」两张静态表承载
         #       ⇒ 定稿列序：`档号｜状态｜模型 算法 模式 后端 TP PP DP 总卡数｜实验数据 5 列｜备注`。
         #     ⛔ 不放宽成"至少 N 列"：四个读数逐项精确。
         checks["㉕a2 渲染列数 = 16 列（1+1+8+5+1，且参数 8 / 条件 3）"] = (
@@ -846,6 +846,24 @@ def main():
         steps.append(("㉖ kept=123 时渲染（应 FAIL）", rc, out))
         checks["㉖ 章首 kept ≠ 行数 ⇒ 渲染 fail-closed"] = (rc != 0)
         checks["㉖ 报错点名 kept 与实际行数"] = ("counts.kept" in out and "实际行数" in out)
+
+        # ㉗ ★★ 2026-10-22（用户口径：第 3 章注全删、披露搬进列头括注）反向自证：
+        #   ① 把页面里两处「（配置侧尚未下发）」**删掉** ⇒ `verify_matrix` 必须变红
+        #      （证明「披露被静默删除」这条防线真的会失败，不是写了个恒真断言）；
+        #   ② 往第 3 章塞一句「见注 7」⇒ 也必须变红（注块已删，「见注」出现即红）。
+        _ch3_orig = (DOCS / "capability-matrix.html").read_text(encoding="utf-8")
+        for _tag, _mut, _want in (
+                ("㉗a 删掉列头披露", _ch3_orig.replace("（配置侧尚未下发）", ""), "配置侧尚未下发"),
+                ("㉗b 第 3 章塞「见注 7」", _ch3_orig.replace(
+                    "<h3>训练超参</h3>", "<h3>训练超参</h3><p>见注 7</p>", 1), "见注"),
+        ):
+            _mp = tmp / f"ch3mut_{_tag[1:3]}.html"
+            _mp.write_text(_mut, encoding="utf-8")
+            rc, out = run(["tools/matrix/verify_matrix.py", "--template", "tools/matrix/template.html",
+                           "--data", "docs/capability-matrix.data.json", "--html", str(_mp)])
+            steps.append((_tag + "（应 FAIL）", rc, out))
+            checks[_tag + " ⇒ verify 变红"] = (rc != 0)
+            checks[_tag + " ⇒ 报红点提到该对象"] = (_want in out)
 
         print("=" * 70)
         for name, rc, out in steps:
