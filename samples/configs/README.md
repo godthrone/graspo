@@ -30,7 +30,7 @@ bash run.sh samples/configs/a800x8_qwen35_9b_tp1_dp8_pp1.yaml --gpus 0,1,2,3,4,5
 ```
 
 - 配置字段的完整定义见 `src/graspo/core/schema.py`（**唯一真相源**，§1.4）；
-- **判定口径（"通过标准"）见 `docs/capability-matrix.html` §2「通过标准」**，唯一真相源是
+- **判定口径（"通过标准"）见 `docs/GRASPO 训练框架功能测试报告.html` §2「通过标准」**，唯一真相源是
   `docs/capability-matrix.data.json`；⛔ 本目录的 YAML 只是样例，**不承载取数/判定口径**；
 - 框架总览与安装见仓库根 `README.md` / `README.zh-CN.md`；
 - 架构与分层见 `docs/architecture.md`；算法层见 `docs/ripple.md`；设施层见 `docs/flow.md`。

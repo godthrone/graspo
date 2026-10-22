@@ -28,7 +28,7 @@
          供 ``tests/e2e/run_matrix54_source.sh`` 做**单档进程作用域**的读取源切换。
          既有字段一个都没删、没改语义 ⇒ 老消费者（``collect_results.py``）不受影响。
 
-★ 步数真值（逐条有代码依据，见 ``docs/capability-matrix.html`` §1 与
+★ 步数真值（逐条有代码依据，见 ``docs/GRASPO 训练框架功能测试报告.html`` §1 与
   ``.local/hb-workspace/20260923-analysis/task-config-freeze-v2/changes.md`` §1）::
 
       ★★ 2026-10-17（M12/M13）：口径改为**运行期切片语义**（⛔ 旧式已废）::
@@ -987,7 +987,7 @@ def build_v2_audit(entries: list[dict]) -> dict:
             )
     return {
         "threshold": MIN_OPTIMIZER_STEPS,
-        "threshold_source": "docs/capability-matrix.html §1「正式记录的硬前提」（v2 不放宽）",
+        "threshold_source": "docs/GRASPO 训练框架功能测试报告.html §1「正式记录的硬前提」（v2 不放宽）",
         "rule": (
             "reachable >= threshold ⇒ 门槛照常判；reachable < threshold ⇒ 判「⚠ 口径不可测」"
             "（不是 ❌ 失败，也不是 ✅ 通过）"
@@ -1012,7 +1012,7 @@ def build_v2_manifest(
     # 顶层：深拷贝 v1 → 只改版本/来源/数据源/审计节，其余（counts/models/feasibility_model…）
     # 逐字节保留（counts 不随 v2 变：档数、算法、卡数、后端、模式、适用性都没变）。
     out = copy.deepcopy(v1_manifest)
-    out["source"] = "docs/capability-matrix.html §1/§6/§7（v2 定稿；配置列/数据列 = HTML）"
+    out["source"] = "docs/GRASPO 训练框架功能测试报告.html §1/§6/§7（v2 定稿；配置列/数据列 = HTML）"
     out["config_version"] = "v2"
     out["supersedes"] = {
         "relationship": "v1 清单（matrix54_manifest.json）**未被改动**；本文件是它的 v2 派生版",

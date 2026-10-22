@@ -18,7 +18,7 @@ RULE = ("★ **本节由 `tools/matrix/freeze_table.py` 生成，⛔ 不得手�
         "（★ 值一律来自实物：`sha256sum` ＋ `wc -c`）。")
 ITEMS = (
     ("数据", "docs/capability-matrix.data.json"),
-    ("矩阵 HTML", "docs/capability-matrix.html"),
+    ("矩阵 HTML", "docs/GRASPO 训练框架功能测试报告.html"),
     ("里程碑快照", "docs/capability-matrix-milestone-20261014-v2.html"),
 )
 

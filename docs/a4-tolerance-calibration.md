@@ -2,7 +2,7 @@
 
 > ⛔ **A4 容差体系已整体作废**（2026-10-17 冻结口径）⇒ 本文档**仅作历史方法论记录**：
 > 其中一切"在役 / 正式口径 / 不受影响"表述**均已不成立**。
-> 现行判据以唯一真相源 `docs/capability-matrix.data.json`（人读件 `docs/capability-matrix.html`）为准；
+> 现行判据以唯一真相源 `docs/capability-matrix.data.json`（人读件 `docs/GRASPO 训练框架功能测试报告.html`）为准；
 > A4 容差体系（k / ε / cap 与档族容差表）**不再参与任何通过 / 不通过判定**，
 > ⛔ 本文任何结论不得作为判据引用。
 >

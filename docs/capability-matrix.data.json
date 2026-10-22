@@ -1,7 +1,7 @@
 {
   "schema": "capability-matrix/v3-official",
   "meta": {
-    "title": "GRASPO 能力与可用档位矩阵",
+    "title": "GRASPO 训练框架功能测试报告",
     "version": "2026-10-11",
     "doc_date": "2026-10-22",
     "scope": "GRASPO 训练框架的能力与可用档位：逐档可用性、性能基线与验收结论",
@@ -9,17 +9,17 @@
     "code_version": {
       "repo": "graspo",
       "branch": "feature/refactor-three-layer-architecture",
-      "commit": "cab68d8",
+      "commit": "53b0c24",
       "note": "commit = 本件的生成基线（生成时的 HEAD）；脚本以 meta.enumeration.script_sha256 为准 —— 该 sha256 与同提交内的 tools/matrix/enumerate_matrix.py 逐字节一致。"
     },
     "authority": {
-      "editable_source": "docs/capability-matrix.html（唯一真相源 / 权威；结论以人读件为准）",
-      "human_view": "docs/capability-matrix.html（本页即测试结论本身；人读件为唯一真相源，可逐字节重建）",
+      "editable_source": "docs/GRASPO 训练框架功能测试报告.html（唯一真相源 / 权威；结论以人读件为准）",
+      "human_view": "docs/GRASPO 训练框架功能测试报告.html（本页即测试结论本身；人读件为唯一真相源，可逐字节重建）",
       "generator": "tools/matrix/render_matrix.py",
       "data_path": "docs/capability-matrix.data.json",
-      "human_view_path": "docs/capability-matrix.html",
+      "human_view_path": "docs/GRASPO 训练框架功能测试报告.html",
       "generation_marker": "generated",
-      "direction": "结果 JSON → capability-matrix.data.json（仅本页的渲染输入，非权威）→ 人读视图 docs/capability-matrix.html（唯一真相源；单方向，禁止互推）"
+      "direction": "结果 JSON → capability-matrix.data.json（仅本页的渲染输入，非权威）→ 人读视图 docs/GRASPO 训练框架功能测试报告.html（唯一真相源；单方向，禁止互推）"
     },
     "status_vocabulary": [
       "待测试",
@@ -483,7 +483,7 @@
         }
       },
       "script": "tools/matrix/enumerate_matrix.py",
-      "script_sha256": "944e26472638cd7b371316aff63f7c2baf2aea633ebbbf75f178712a68b2cf08",
+      "script_sha256": "91f4f66de5aeb62edb8624e516e0e334aed64f2172de5a6ecb21b05b2467bd06",
       "audit_ref": "逐档审计明细见枚举脚本 --audit-out 输出（随工作区，不入库）"
     }
   },

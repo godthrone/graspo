@@ -1,7 +1,7 @@
 # GRASPO 能力与可用档位矩阵（已迁移）
 
 > ★ **数据文件是唯一真相源**：`docs/capability-matrix.data.json`（唯一可编辑的源头）。
-> 人读件 `docs/capability-matrix.html` 由「该数据 + 固定生成器 `tools/matrix/render_matrix.py`」
+> 人读件 `docs/GRASPO 训练框架功能测试报告.html` 由「该数据 + 固定生成器 `tools/matrix/render_matrix.py`」
 > **确定性生成**，是**只读派生视图**、**禁止手工编辑**；派生方向唯一且固定
 > （结果 JSON → 数据文件 → 人读视图，单方向、禁止互推）。
 > 工具链与命令见 `tools/matrix/README.md`。
@@ -10,7 +10,7 @@
 
 ## 人读件里有什么（一句话）
 
-`docs/capability-matrix.html` = **首屏三块**（自动生成声明 / 覆盖度警示 / 承诺边界声明）
+`docs/GRASPO 训练框架功能测试报告.html` = **首屏三块**（自动生成声明 / 覆盖度警示 / 承诺边界声明）
 ＋ **① 这是什么表 ② 通过标准 ③ 实验条件 ④ 档位功能矩阵（结果）**；
 「通过标准」= 一个列表（四条判据，逐条一句大白话）；
 矩阵表 **10 列**（档号 → 实验条件 4 列 → 实验数据 5 列），**只列档位之间的差异项**，

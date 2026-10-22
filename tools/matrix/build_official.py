@@ -2,7 +2,7 @@
 """build_official.py — 由内部 matrix-data.json 生成正式机读数据 docs/capability-matrix.data.json。
 
 ★ 定位（宪法 §17.7「同源生成」第 1 款）：**数据文件 docs/capability-matrix.data.json 是矩阵唯一
-   可编辑的源头**；人读视图 docs/capability-matrix.html 由「本数据 + 固定生成器
+   可编辑的源头**；人读视图 docs/GRASPO 训练框架功能测试报告.html 由「本数据 + 固定生成器
    tools/matrix/render_matrix.py」**确定性产出**，是**只读派生视图**、**禁止手工编辑**。
    派生方向唯一且固定：结果 JSON → capability-matrix.data.json → 人读视图（⛔ 禁止互推）。
 ★ 脱敏（宪法 §15.1／§17.7「矩阵数据与合规底线」；矩阵落点**不适用** §15.4 的放宽）：宿主路径 /
@@ -181,7 +181,7 @@ def official_run_path(row, state):
 
 
 # ============================================================================
-# ★★ 人读视图（`docs/capability-matrix.html` 及其机读源 data 件）的**可见面**
+# ★★ 人读视图（`docs/GRASPO 训练框架功能测试报告.html` 及其机读源 data 件）的**可见面**
 #    宪法 §17.7：矩阵是**面向使用者**的文档 ⇒ 只承载「判据 / 口径 / 实验条件 / 逐档结论」，
 #    过程、日志、决策、证据、内部编排与人称**一律不进人读视图**（迁 `.local/`）。
 #    本区四件（允许清单 / 术语兜底 / 术语改写 / 表格格归一）**同源同处**，⛔ 不设第二家。
@@ -1135,7 +1135,7 @@ EXCLUDED_REASON = ("设计上不成立：师生权重常驻合计约 100 GiB，�
 
 GENERATOR = "tools/matrix/render_matrix.py"
 SOURCE = "docs/capability-matrix.data.json"
-HUMAN_VIEW = "docs/capability-matrix.html"
+HUMAN_VIEW = "docs/GRASPO 训练框架功能测试报告.html"
 
 #: ★★ 表格结构（列组 + 渲染面 **16 列**）＝ **从渲染器引用**（`render_matrix.MATRIX_GROUPS` /
 #:   `MATRIX_COLUMNS`；渲染面 = `RENDERED_COLUMNS`），

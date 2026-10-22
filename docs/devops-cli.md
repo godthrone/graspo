@@ -39,5 +39,5 @@
 
 | 对象 | 处置 | 依据 |
 |---|---|---|
-| `scripts/a4_calibrate.py` | **⛔ 已作废 / 已退役**：移入 `.local/repo-moved-out/scripts/a4_calibrate.py` 后 `git rm` | **A4 容差体系已整体作废**（2026-10-17 冻结口径；`docs/a4-tolerance-calibration.md` 已同步标为历史件）⇒ 标定工具随之作废，该体系**不再参与任何通过 / 不通过判定**。现行判据以唯一真相源 `docs/capability-matrix.data.json`（人读件 `docs/capability-matrix.html`）为准。其契约测试 `tests/core/test_a4_calibrate.py` 同批退役（移入 `.local/repo-moved-out/tests/core/`），否则会按路径加载已不存在的被测件 |
+| `scripts/a4_calibrate.py` | **⛔ 已作废 / 已退役**：移入 `.local/repo-moved-out/scripts/a4_calibrate.py` 后 `git rm` | **A4 容差体系已整体作废**（2026-10-17 冻结口径；`docs/a4-tolerance-calibration.md` 已同步标为历史件）⇒ 标定工具随之作废，该体系**不再参与任何通过 / 不通过判定**。现行判据以唯一真相源 `docs/capability-matrix.data.json`（人读件 `docs/GRASPO 训练框架功能测试报告.html`）为准。其契约测试 `tests/core/test_a4_calibrate.py` 同批退役（移入 `.local/repo-moved-out/tests/core/`），否则会按路径加载已不存在的被测件 |
 | `scripts/measure_elam_seq_len.py` | **保留**（未制度化：无测试固化、无 README/docs 引用、非工作流常驻） | §10.2 仅约束制度化脚本；本件不属本批升级/退役清单 |

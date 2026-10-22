@@ -2646,7 +2646,7 @@ def judge_cpt_loss(evidence: RunEvidence) -> CriterionResult:
 #
 # ★ 口径的**在役定义原文**：
 #   `docs/capability-matrix.data.json` → `meta.criteria_caliber.availability_criteria[3]`（:59），
-#   生成处 `tools/matrix/build_official.py:1381`，发布件 `docs/capability-matrix.html:238`：
+#   生成处 `tools/matrix/build_official.py:1381`，发布件 `docs/GRASPO 训练框架功能测试报告.html:238`：
 #     「④ 推理验证（逐字未动）：产物可正常推理
 #       （合并 LoRA + vLLM 启动、实际前向一次拿到可解析输出）。」
 

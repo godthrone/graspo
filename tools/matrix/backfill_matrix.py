@@ -670,7 +670,7 @@ def main():
     ap.add_argument("--only", default=None, help="只回填这些档号，逗号分隔（增量）")
     ap.add_argument("--official-data", default="docs/capability-matrix.data.json",
                     help="正式机读件（由 build_official.py 从内部数据派生）")
-    ap.add_argument("--official-html", default="docs/capability-matrix.html",
+    ap.add_argument("--official-html", default="docs/GRASPO 训练框架功能测试报告.html",
                     help="正式人读视图（由 render_matrix.py 派生）")
     ap.add_argument("--version", default=None)
     ap.add_argument("--date", default=None)

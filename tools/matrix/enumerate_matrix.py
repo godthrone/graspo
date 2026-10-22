@@ -1805,6 +1805,27 @@ LEGACY_TIER_RE = re.compile(r"T\d{3}")
 #:   - 承诺面措辞必须与「全部档位 = 待测试」一致（否则发布件自相矛盾）；
 #:   - 旧 54 档的档号清单与逐档读数史**一律移除**（归档见 `archive-54/`）。
 META_OVERRIDES: tuple[dict[str, Any], ...] = (
+    # ★★ 2026-10-22（主席第 2/3 条指令）：人读件改名 ⇒ **文档名与 `authority` 里的路径**由生成器注入。
+    #   病史：`title` 与 `authority.*` 原先只从在盘数据件**继承**（本脚本从不写这两处），
+    #   改名后旧路径会原样留在数据件里 ⇒ 页面 meta 与数据件不同源、`human_view_path` 指向不存在的文件。
+    #   ⇒ 逐条显式覆写（⛔ 不靠正则替换，⛔ 不手改数据件）。
+    {"path": "title", "value": "GRASPO 训练框架功能测试报告",
+     "why": "人读件改名：页面 <title> 由本字段渲染，须与 <h1> 同名"},
+    {"path": "authority.editable_source",
+     "value": ("docs/GRASPO 训练框架功能测试报告.html"
+               "（唯一真相源 / 权威；结论以人读件为准）"),
+     "why": "人读件改名：authority 里的旧路径会把人指到不存在的文件"},
+    {"path": "authority.human_view",
+     "value": ("docs/GRASPO 训练框架功能测试报告.html"
+               "（本页即测试结论本身；人读件为唯一真相源，可逐字节重建）"),
+     "why": "同上"},
+    {"path": "authority.human_view_path",
+     "value": "docs/GRASPO 训练框架功能测试报告.html",
+     "why": "同上（本字段就是机核用来比对页面路径的那一个）"},
+    {"path": "authority.direction",
+     "value": ("结果 JSON → capability-matrix.data.json（仅本页的渲染输入，非权威）→ "
+               "人读视图 docs/GRASPO 训练框架功能测试报告.html（唯一真相源；单方向，禁止互推）"),
+     "why": "同上"},
     {"path": "doc_date", "value": "2026-10-22",
      "why": "档位表整体重生成，发布日期随生成日"},
     # ★ 2026-10-22（复核 W7）：`code_version.commit` 落后 HEAD 61 个提交 ⇒ 由**生成时的
