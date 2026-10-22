@@ -243,7 +243,7 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <li>序列并行 <code>sequence_parallel_size=1</code>：ms-swift 只做纯数据并行（<code>tp</code> 恒为 1），故 SP 恒关闭</li>
 <li>采样后端 <code>use_vllm=false</code>（不走 vLLM 采样）</li>
 <li>进程数 <code>nproc_per_node=总卡数</code>（只做纯数据并行）</li>
-<li>LoRA 档不开分片引擎：优化器态只覆盖适配器参数</li>
+<li>LoRA 档在数据并行下不做参数分片：基座权重与适配器在每张卡上各存一份完整副本，优化器态只算适配器。</li>
 <li>全参档必须分片优化器态 ⇒ 走 FSDP2</li>
 </ul>
 <h4>native</h4>
