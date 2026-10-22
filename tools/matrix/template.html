@@ -44,13 +44,6 @@ section{margin-top:34px;}
 .rule{font-weight:600;}
 ol.criteria>li{margin:10px 0;}
 ul.uniform{margin:6px 0;}
-/* 第 2 章「算法正确性检查清单（判据③）」表：读者逐条打勾用 */
-#s2 table.checklist{border-collapse:collapse;width:100%;margin:10px 0 8px;font-size:13px;line-height:1.6;}
-#s2 table.checklist th,#s2 table.checklist td{border:1px solid var(--line);padding:6px 9px;text-align:left;vertical-align:top;}
-#s2 table.checklist thead th{background:var(--bg-soft);font-weight:600;white-space:nowrap;}
-#s2 table.checklist tbody td:first-child{white-space:nowrap;font-weight:600;}
-#s2 table.checklist ul.tight{margin:2px 0;padding-left:20px;}
-#s2 table.checklist ul.tight li{margin:2px 0;}
 /* 第 3 章「按训练方法 × 后端」「按训练方法」两张参数表：允许换行，短值列不折行
    （与第 4 章 table.matrix 的版式无关：那张表由渲染器逐列现算） */
 #s3 table.cfg{border-collapse:collapse;width:100%;margin:10px 0 8px;font-size:13px;line-height:1.6;}
@@ -161,46 +154,6 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <p><b>原则：</b>训练之后效果变好，才算「可用」。</p>
 <p class="criteria-label">下面四条就是第 4 章备注里<b>判据①②③④</b>的定义，按顺序编号。</p>
 <ol class="criteria"><li><span class="cn">①</span> <b>能完整跑完</b>：训练正常结束、无中断、无报错、退出码 0、优化器步数达到该档计划步数（总训练轮数 × 每 epoch 步数）、检查点完整、没有 NaN/Inf。</li><li><span class="cn">②</span> <b>效果变好（核心判据）</b>：在平台方测试数据集与测试参数下，训练之后模型效果比不训练的原始模型好（逐算法通过线见下）：<ul class="tight"><li>SFT（监督微调）：训练后数据集完全正确率提升至少 10.0 个百分点，判据 after − base ≥ +10.0 pp</li><li>GRASPO（强化）：训练后数据集完全正确率提升至少 5.0 个百分点，判据 after − base ≥ +5.0 pp</li><li>CPT（继续预训练）：训练 loss 正常下降、训练数据集准确率不下降，判据 after ≥ base（不劣化）</li><li>OPD（蒸馏）：教师在训练数据集上的完全正确率，高于学生未训练模型 10 个百分点，学生训练后，训练数据集完全正确率提升至少 5.0 个百分点，判据 after − base ≥ +5.0 pp</li></ul></li><li><span class="cn">③</span> <b>算法正确性检查通过</b>：各算法按自己的检查清单逐项通过，确认该算法的机制真实生效、实现正确（SFT / GRASPO / CPT / OPD 各按自己的清单）；GRASPO 的算法逻辑严禁改动。</li><li><span class="cn">④</span> <b>能推理</b>：LoRA 档合并后、全参档直接，用 vLLM 启动，在训练数据集上完整推理一遍，效果好于未训练模型。</li></ol>
-<h3>算法正确性检查清单（判据③）</h3>
-<p>下表就是判据③ 说的「各算法自己的清单」：逐条打勾，四条判据里的③ 才算通过。</p>
-<table class="checklist" data-checklist="algo-correctness">
-<thead>
-<tr><th>算法</th><th>检查项（逐条打勾）</th><th>依据</th></tr>
-</thead>
-<tbody>
-<tr data-algo="SFT"><td>SFT</td><td><ul class="tight">
-<li>□ 训练目标文本由 <code>build_sft_target_text</code> 直接生成 XML，<b>不经过</b> chat template（与 RL 推理侧字符级一致）</li>
-<li>□ 与 RL 共用同一套 JSONL 数据、模型加载与检查点格式（换 <code>train_method</code> 即可切换）</li>
-<li>□ LoRA 只更新第 3 章「LoRA 说明」列出的四类线性投影权重；词嵌入、归一化、卷积保持原值</li>
-</ul></td><td><code>docs/architecture.md</code>「RL+SFT 同构」「SFT 格式对齐（关键不变式）」；<code>src/graspo/ripple/parsing/xml.py</code></td></tr>
-<tr data-algo="GRASPO"><td>GRASPO</td><td><ul class="tight">
-<li>□ <b>算法逻辑严禁改动</b>（既有约束，逐字保留）</li>
-<li>□ 奖励链路逐段在位：字符级标注（S／V／T／W／E／D）→ 结构化奖励 → group 决策 → token 级 advantage → PPO 裁剪 loss（<code>policy_ratio_clip_eps=0.2</code>）</li>
-<li>□ group 决策防线在位：不可解析的 group 被拒在训练边界之外，rollout 失败最多重试 5 次</li>
-<li>□ rollout 采样温度 <code>1.0</code> 与评测温度 <code>0</code> 各自固定，不互相覆盖</li>
-</ul></td><td><code>docs/ripple.md</code>「字符级标注」「Token 级 Advantage」「Group 决策体系」「PPO Loss」；<code>src/graspo/ripple/algorithm_core.py</code></td></tr>
-<tr data-algo="CPT"><td>CPT</td><td><ul class="tight">
-<li>□ 对整条序列计算 loss（<code>pretrain.loss_scale=all</code>）</li>
-<li>□ 不套对话模板（<code>pretrain.use_chat_template=false</code>），与 <code>swift pt</code> 的语义一致</li>
-<li>□ 训练 loss 正常下降、训练数据集准确率不下降（判据② 的 CPT 通过线）</li>
-</ul></td><td><code>src/graspo/core/schema.py</code>（PretrainConfig）；<code>src/graspo/flow/backend/msswift/_config_mapping.py</code></td></tr>
-<tr data-algo="OPD"><td>OPD</td><td><ul class="tight">
-<li>□ 教师 = <code>Qwen3.8-27B</code>：本地冻结教师（<code>distill.teacher_model_path</code>）或外部教师服务（<code>teacher_model_server</code>）二选一，同设即拒绝启动</li>
-<li>□ 走 GKD 通路：教师散度直接作为 loss（全词表或 top-k），教师 logits 由训练进程内的教师前向得到</li>
-<li>□ 教师在训练数据集上的完全正确率，高于学生未训练模型 10 个百分点（判据② 的 OPD 前置）</li>
-<li>□ 教师权重在使用间隙换出到 CPU（<code>offload_teacher_model=true</code>）</li>
-</ul></td><td><code>src/graspo/flow/backend/msswift/opd_trainer.py</code>；<code>src/graspo/core/schema.py</code>（DistillConfig）</td></tr>
-</tbody>
-</table>
-<h3>评测条件</h3>
-<ul class="tight">
-<li><b>评测集：</b>该档训练用的<b>同一份 100 条</b>（从 V5 语料随机采样，<b>全部档位共用同一份</b>）⇒ 这是 <b>fit 判定</b>（训练集自评）：读数只回答「该档训练是否生效」，不外推到其它数据。</li>
-<li><b>解码：</b>温度 <code>0</code>（贪心，全部档位一律，不接受按档覆盖）、<code>top_p=0.9</code>、<code>max_tokens=128</code>、不开启 thinking。</li>
-<li><b>完全正确率：</b>工具名<b>与</b>动作方向<b>同时精确匹配</b>才算对；推理报错的样本既不计分子也不计分母。</li>
-<li><b>base：</b><b>未训练基座模型</b>在同一评测集上的完全正确率（判据② 的被减数）。</li>
-<li><b>评测次数：</b><b>每档评测一次</b>，取点估计（不做假设检验、不加置信区间）。</li>
-<li><b>评测对象：</b>LoRA 档用<b>合并后</b>的权重、全参档用<b>训练直接产出</b>的权重，都以 vLLM 启动（判据④）。</li>
-</ul>
 </section>
 
 <!-- ========================= 3. 测试条件 ========================= -->
@@ -317,7 +270,7 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 </thead>
 <tbody>
 <tr><td>SFT</td><td>无额外算法级开关（只用监督信号训练）。</td></tr>
-<tr><td>GRASPO</td><td>奖励类型 <code>reward.kind=graspo</code>；每个提示的 rollout 组大小 <code>rollout_group_size=8</code>（一次采 8 条）；rollout 队列批 <code>rollout_queue_batch_size=8</code>；rollout 采样温度 <code>temperature=1.0</code>（评测温度另由第 2 章「评测条件」固定）；策略比裁剪 <code>policy_ratio_clip_eps=0.2</code>。</td></tr>
+<tr><td>GRASPO</td><td>奖励类型 <code>reward.kind=graspo</code>；每个提示的 rollout 组大小 <code>rollout_group_size=8</code>（一次采 8 条）；rollout 队列批 <code>rollout_queue_batch_size=8</code>；rollout 采样温度 <code>temperature=1.0</code>（评测温度固定为 0，见「公共超参」）；策略比裁剪 <code>policy_ratio_clip_eps=0.2</code>。</td></tr>
 <tr><td>CPT</td><td>对整条序列计算 loss（<code>pretrain.loss_scale=all</code>）；不套对话模板（<code>pretrain.use_chat_template=false</code>）。</td></tr>
 <tr><td>OPD</td><td>教师模型权重在使用间隙换出到 CPU（<code>offload_teacher_model=true</code>）；教师模型身份见本章「模型说明」。</td></tr>
 </tbody>
@@ -335,6 +288,7 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <li>权重衰减（<code>weight_decay</code>）：<code>0.01</code></li>
 <li>训练随机种子：<code>42</code></li>
 <li>运行期显存监控采样间隔（秒）：<code>2.0</code></li>
+<li>评测温度（vLLM 解码）：<code>0</code>（贪心）</li>
 </ul>
 </section>
 
