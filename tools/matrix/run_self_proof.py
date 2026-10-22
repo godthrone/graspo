@@ -847,17 +847,22 @@ def main():
         checks["㉖ 章首 kept ≠ 行数 ⇒ 渲染 fail-closed"] = (rc != 0)
         checks["㉖ 报错点名 kept 与实际行数"] = ("counts.kept" in out and "实际行数" in out)
 
-        # ㉗ ★★ 2026-10-22（用户口径：第 3 章注全删、披露搬进列头括注）反向自证：
-        #   ① 把页面里两处「（配置侧尚未下发）」**删掉** ⇒ `verify_matrix` 必须变红
-        #      （证明「披露被静默删除」这条防线真的会失败，不是写了个恒真断言）；
-        #   ② 往第 3 章塞一句「见注 7」⇒ 也必须变红（注块已删，「见注」出现即红）。
+        # ㉗/㉙ ★★ 2026-10-22（用户口径翻转：文档是**蓝图**，⛔ 不写工程实现状态）反向自证：
+        #   ①**塞**一句「（配置侧尚未下发）」回第 3 章 ⇒ `verify_matrix` 必须变红（④P 零命中）；
+        #   ②**塞**一句「尚未实现」⇒ 也必须变红（词表整族都守，不是只守一个词）；
+        #   ③ 往第 3 章塞一句「见注 7」⇒ 必须变红（注块已删，「见注」出现即红）。
+        #   ⚠ 上一轮这条是"删掉列头披露 ⇒ 红"（守披露在位）；方向随用户口径整体翻转后，
+        #     守的是"这类话不许出现"，故自证同步改成"塞进去 ⇒ 红"。
         _ch3_orig = (DOCS / "capability-matrix.html").read_text(encoding="utf-8")
         for _tag, _mut, _want in (
-                ("㉗a 删掉列头披露", _ch3_orig.replace("（配置侧尚未下发）", ""), "配置侧尚未下发"),
+                ("㉙a 塞回「（配置侧尚未下发）」", _ch3_orig.replace(
+                    "<h3>训练超参</h3>", "<h3>训练超参（配置侧尚未下发）</h3>", 1), "④P"),
+                ("㉙b 塞「尚未实现」", _ch3_orig.replace(
+                    "<h3>训练超参</h3>", "<h3>训练超参</h3><p>该参数尚未实现</p>", 1), "④P"),
                 ("㉗b 第 3 章塞「见注 7」", _ch3_orig.replace(
                     "<h3>训练超参</h3>", "<h3>训练超参</h3><p>见注 7</p>", 1), "见注"),
         ):
-            _mp = tmp / f"ch3mut_{_tag[1:3]}.html"
+            _mp = tmp / f"ch3mut_{abs(hash(_tag)) % 10000}.html"
             _mp.write_text(_mut, encoding="utf-8")
             rc, out = run(["tools/matrix/verify_matrix.py", "--template", "tools/matrix/template.html",
                            "--data", "docs/capability-matrix.data.json", "--html", str(_mp)])

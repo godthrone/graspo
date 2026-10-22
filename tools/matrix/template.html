@@ -182,7 +182,7 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <li>LoRA alpha：<code>64</code></li>
 <li>LoRA dropout：<code>0.05</code></li>
 </ul></li>
-<li><b>以本表取值为准：</b><code>r</code> = <code>32</code>、<code>alpha</code> = <code>64</code>、<code>dropout</code> = <code>0.05</code>；配置侧现存的其它取值属待对齐项。</li>
+<li><b>以本表取值为准：</b><code>r</code> = <code>32</code>、<code>alpha</code> = <code>64</code>、<code>dropout</code> = <code>0.05</code>。</li>
 </ul>
 <h4>训练集群</h4>
 <ul class="tight">
@@ -191,67 +191,75 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <h3>训练超参</h3>
 <table class="cfg">
 <thead>
-<tr><th>训练方法 · 模式</th><th>学习率 lr</th><th>总训练轮数</th><th>ms-swift 附加参数（配置侧尚未下发）</th><th>native 附加参数（配置侧尚未下发）</th></tr>
+<tr><th>训练方法 · 模式</th><th>学习率 lr</th><th>总训练轮数</th></tr>
 </thead>
 <tbody>
 <tr>
 <td>SFT · LoRA</td>
 <td class="v"><code>2.0e-05</code></td>
 <td class="v"><code>4</code></td>
-<td><code>per_device_train_batch_size=1</code>；<code>sequence_parallel_size=1</code>（关闭）；<code>use_vllm=false</code>；<code>nproc_per_node=总卡数</code>（纯数据并行）；LoRA 档不开分片引擎（优化器态只覆盖适配器参数）。</td>
-<td><code>micro_batch_size=1</code>；<code>tp_size</code> / <code>dp_size</code> 可大于 1（LoRA 支持张量并行与数据并行）；<code>sequence_parallel</code> 默认关闭，且要求 <code>tp_size≥2</code>。</td>
 </tr>
 <tr>
 <td>SFT · 全参</td>
 <td class="v"><code>5.0e-06</code></td>
 <td class="v"><code>4</code></td>
-<td><code>per_device_train_batch_size=1</code>；<code>sequence_parallel_size=1</code>（关闭）；<code>use_vllm=false</code>；<code>nproc_per_node=总卡数</code>（纯数据并行）；全参必须分片优化器态 ⇒ 走 FSDP2（<code>fsdp</code> 字段透传）。</td>
-<td><code>micro_batch_size=1</code>；全参只能用流水并行摊层（<code>pp_size</code> 可大于 1，<code>tp_size</code> / <code>dp_size</code> 固定 1）；<code>sequence_parallel</code> 要求 <code>tp_size≥2</code>；优化器态可整体放 CPU（<code>offload_optimizer_state=true</code>，1 卡全参时必开）。</td>
 </tr>
 <tr>
 <td>GRASPO · LoRA</td>
 <td class="v"><code>5.0e-06</code></td>
 <td class="v"><code>8</code></td>
-<td><code>per_device_train_batch_size=1</code>；<code>sequence_parallel_size=1</code>（关闭）；<code>use_vllm=false</code>；<code>nproc_per_node=总卡数</code>（纯数据并行）；LoRA 档不开分片引擎（优化器态只覆盖适配器参数）。</td>
-<td><code>micro_batch_size=1</code>；<code>tp_size</code> / <code>dp_size</code> 可大于 1（LoRA 支持张量并行与数据并行）；<code>sequence_parallel</code> 默认关闭，且要求 <code>tp_size≥2</code>。</td>
 </tr>
 <tr>
 <td>GRASPO · 全参</td>
 <td class="v"><code>5.0e-06</code></td>
 <td class="v"><code>8</code></td>
-<td><code>per_device_train_batch_size=1</code>；<code>sequence_parallel_size=1</code>（关闭）；<code>use_vllm=false</code>；<code>nproc_per_node=总卡数</code>（纯数据并行）；全参必须分片优化器态 ⇒ 走 FSDP2（<code>fsdp</code> 字段透传）。</td>
-<td><code>micro_batch_size=1</code>；全参只能用流水并行摊层（<code>pp_size</code> 可大于 1，<code>tp_size</code> / <code>dp_size</code> 固定 1）；<code>sequence_parallel</code> 要求 <code>tp_size≥2</code>；优化器态可整体放 CPU（<code>offload_optimizer_state=true</code>，仅「全参 + 单卡」时生效）；<code>pp_size&gt;1</code> 时须显式预授权（<code>allow_unverified_pp_rollout=true</code>，未验证组合，默认拒绝启动）。</td>
 </tr>
 <tr>
 <td>CPT · LoRA</td>
 <td class="v"><code>5.0e-06</code></td>
 <td class="v"><code>2</code></td>
-<td><code>per_device_train_batch_size=1</code>；<code>sequence_parallel_size=1</code>（关闭）；<code>use_vllm=false</code>；<code>nproc_per_node=总卡数</code>（纯数据并行）；LoRA 档不开分片引擎（优化器态只覆盖适配器参数）。</td>
-<td>—（该后端无 CPT 通道）</td>
 </tr>
 <tr>
 <td>CPT · 全参</td>
 <td class="v"><code>5.0e-06</code></td>
 <td class="v"><code>2</code></td>
-<td><code>per_device_train_batch_size=1</code>；<code>sequence_parallel_size=1</code>（关闭）；<code>use_vllm=false</code>；<code>nproc_per_node=总卡数</code>（纯数据并行）；全参必须分片优化器态 ⇒ 走 FSDP2（<code>fsdp</code> 字段透传）。</td>
-<td>—（该后端无 CPT 通道）</td>
 </tr>
 <tr>
 <td>OPD · LoRA</td>
 <td class="v"><code>2.0e-05</code></td>
 <td class="v"><code>2</code></td>
-<td><code>per_device_train_batch_size=1</code>；<code>sequence_parallel_size=1</code>（关闭）；<code>use_vllm=false</code>；<code>nproc_per_node=总卡数</code>（纯数据并行）；LoRA 档不开分片引擎（优化器态只覆盖适配器参数）。</td>
-<td>—（该后端无 OPD 通道）</td>
 </tr>
 <tr>
 <td>OPD · 全参</td>
 <td class="v"><code>5.0e-06</code></td>
 <td class="v"><code>2</code></td>
-<td><code>per_device_train_batch_size=1</code>；<code>sequence_parallel_size=1</code>（关闭）；<code>use_vllm=false</code>；<code>nproc_per_node=总卡数</code>（纯数据并行）；全参必须分片优化器态 ⇒ 走 FSDP2（<code>fsdp</code> 字段透传）。</td>
-<td>—（该后端无 OPD 通道）</td>
 </tr>
 </tbody>
 </table>
+<h3>后端独有参数</h3>
+<p>下面这些参数<b>在每个后端的所有档位上都取同一个值</b>，因此只在这里说一次，第 4 章矩阵不再逐档重复。</p>
+<h4>ms-swift</h4>
+<ul class="tight">
+<li>每卡批大小 <code>per_device_train_batch_size=1</code></li>
+<li>序列并行 <code>sequence_parallel_size=1</code>（关闭）</li>
+<li>采样后端 <code>use_vllm=false</code>（不走 vLLM 采样）</li>
+<li>进程数 <code>nproc_per_node=总卡数</code>（只做纯数据并行）</li>
+<li>LoRA 档不开分片引擎：优化器态只覆盖适配器参数</li>
+<li>全参档必须分片优化器态 ⇒ 走 FSDP2</li>
+</ul>
+<h4>native</h4>
+<ul class="tight">
+<li>每卡批大小 <code>micro_batch_size=1</code></li>
+<li>序列并行 <code>sequence_parallel</code> 默认关闭（要求 <code>tp_size≥2</code>）</li>
+<li>全参只能用流水并行摊层（<code>pp_size</code> 可大于 1，<code>tp_size</code> / <code>dp_size</code> 固定 1）；LoRA 的 <code>tp_size</code> / <code>dp_size</code> 可大于 1（张量并行与数据并行都支持）</li>
+<li>1 卡全参必须开优化器态 offload（<code>offload_optimizer_state=true</code>），否则装不下</li>
+<li><code>pp_size&gt;1</code> 且算法是 GRASPO 时，须显式开 <code>allow_unverified_pp_rollout=true</code>（默认拒绝启动）</li>
+<li><b>CPT / OPD 没有 native 通道</b>：这两个训练方法只能走 ms-swift</li>
+</ul>
+<h4>序列并行（SP）为什么不进第 4 章矩阵</h4>
+<ul class="tight">
+<li>SP 是 TP 的省显存子开关（把非 TP 区的激活沿序列维切给各 TP rank，通信换成 reduce-scatter / all-gather），<code>tp=1</code> 时无意义；当前所有档位都关闭，而矩阵每加一维档位数翻倍、SP 既不改变并行形状也不改判据 ⇒ 本矩阵不单列。（将来要测超长序列，那是上下文并行 CP，属另一个能力，届时单列。）</li>
+</ul>
 <h3>算法级参数</h3>
 <table class="cfg">
 <thead>

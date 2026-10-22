@@ -9,7 +9,7 @@
     "code_version": {
       "repo": "graspo",
       "branch": "feature/refactor-three-layer-architecture",
-      "commit": "917818e",
+      "commit": "86ce413",
       "note": "commit = 本件的生成基线（生成时的 HEAD）；脚本以 meta.enumeration.script_sha256 为准 —— 该 sha256 与同提交内的 tools/matrix/enumerate_matrix.py 逐字节一致。"
     },
     "authority": {
@@ -476,7 +476,7 @@
         }
       },
       "script": "tools/matrix/enumerate_matrix.py",
-      "script_sha256": "6dc353e13292f996432e855b82ed89c5e6e221d66c4a5213b020379c93cbb5f1",
+      "script_sha256": "d04a3f5742ed6cd568a2b18947434a7af7d401532ec635633e4a4be9e72bcf14",
       "audit_ref": "逐档审计明细见枚举脚本 --audit-out 输出（随工作区，不入库）"
     }
   },
@@ -531,7 +531,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：两个后端都有实测成功证据（ms-swift 9B SFT LoRA ms-swift dp1/2/4 判据① 通过；native 9B SFT LoRA native dp1/2/4 判据① 通过）⇒ 按「更简单路径」取 ms-swift（ms-swift 标准通道只有 DDP+SP（无 tp/pp 字段；Megatron 未接线））；估算 33.24/78.0 GiB（可行）",
+      "note": "选 ms-swift：两个后端都有实测成功证据（ms-swift 9B SFT LoRA ms-swift dp1/2/4 判据① 通过；native 9B SFT LoRA native dp1/2/4 判据① 通过）⇒ 按「更简单路径」取 ms-swift（ms-swift 标准通道只有 DDP+SP（无 tp/pp 字段；TP/PP 要走 Megatron 段））；估算 33.24/78.0 GiB（可行）",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -585,7 +585,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：两个后端都有实测成功证据（ms-swift 9B SFT LoRA ms-swift dp1/2/4 判据① 通过；native 9B SFT LoRA native dp1/2/4 判据① 通过）⇒ 按「更简单路径」取 ms-swift（ms-swift 标准通道只有 DDP+SP（无 tp/pp 字段；Megatron 未接线））；估算 33.24/78.0 GiB（可行）",
+      "note": "选 ms-swift：两个后端都有实测成功证据（ms-swift 9B SFT LoRA ms-swift dp1/2/4 判据① 通过；native 9B SFT LoRA native dp1/2/4 判据① 通过）⇒ 按「更简单路径」取 ms-swift（ms-swift 标准通道只有 DDP+SP（无 tp/pp 字段；TP/PP 要走 Megatron 段））；估算 33.24/78.0 GiB（可行）",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -639,7 +639,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：两个后端都有实测成功证据（ms-swift 9B SFT LoRA ms-swift dp1/2/4 判据① 通过；native 9B SFT LoRA native dp1/2/4 判据① 通过）⇒ 按「更简单路径」取 ms-swift（ms-swift 标准通道只有 DDP+SP（无 tp/pp 字段；Megatron 未接线））；估算 33.24/78.0 GiB（可行）",
+      "note": "选 ms-swift：两个后端都有实测成功证据（ms-swift 9B SFT LoRA ms-swift dp1/2/4 判据① 通过；native 9B SFT LoRA native dp1/2/4 判据① 通过）⇒ 按「更简单路径」取 ms-swift（ms-swift 标准通道只有 DDP+SP（无 tp/pp 字段；TP/PP 要走 Megatron 段））；估算 33.24/78.0 GiB（可行）",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -693,7 +693,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行需 Megatron 通道，当前未接线））；估算 22.71/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都支持（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行要走 Megatron 通道））；估算 22.71/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -747,7 +747,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行需 Megatron 通道，当前未接线））；估算 22.71/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都支持（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行要走 Megatron 通道））；估算 22.71/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -801,7 +801,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行需 Megatron 通道，当前未接线））；估算 17.45/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都支持（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行要走 Megatron 通道））；估算 17.45/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -855,7 +855,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行需 Megatron 通道，当前未接线））；估算 22.71/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都支持（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行要走 Megatron 通道））；估算 22.71/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -909,7 +909,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行需 Megatron 通道，当前未接线））；估算 22.71/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都支持（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行要走 Megatron 通道））；估算 22.71/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -963,7 +963,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行需 Megatron 通道，当前未接线））；估算 17.45/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都支持（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行要走 Megatron 通道））；估算 17.45/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -1017,7 +1017,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行需 Megatron 通道，当前未接线））；估算 17.45/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都支持（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行要走 Megatron 通道））；估算 17.45/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -1233,7 +1233,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native 全参只支持 PP 分片：full + tp>1/dp>1 被加载期校验拒绝；ms-swift 在该项目里只能纯数据并行（张量/流水并行需 Megatron 通道，当前未接线））；估算 45.71/78.0 GiB（可行）；卡点：native 全参的流水线并行产物导出/合并尚未实现（产物侧待实现，属欠账）⇒ 本档是待实现、不是档位不合理",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native 全参只支持 PP 分片：full + tp>1/dp>1 被加载期校验拒绝；ms-swift 在该项目里只能纯数据并行（张量/流水并行要走 Megatron 通道））；估算 45.71/78.0 GiB（可行）；卡点：产物交付边界：native 全参的 PP>1 档需跨层分片合并才能导出，当前能力只到单卡单机 ⇒ 本档保留并按待测试推进",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -1287,7 +1287,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native 全参只支持 PP 分片：full + tp>1/dp>1 被加载期校验拒绝；ms-swift 在该项目里只能纯数据并行（张量/流水并行需 Megatron 通道，当前未接线））；估算 28.94/78.0 GiB（可行）；卡点：native 全参的流水线并行产物导出/合并尚未实现（产物侧待实现，属欠账）⇒ 本档是待实现、不是档位不合理",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native 全参只支持 PP 分片：full + tp>1/dp>1 被加载期校验拒绝；ms-swift 在该项目里只能纯数据并行（张量/流水并行要走 Megatron 通道））；估算 28.94/78.0 GiB（可行）；卡点：产物交付边界：native 全参的 PP>1 档需跨层分片合并才能导出，当前能力只到单卡单机 ⇒ 本档保留并按待测试推进",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -1503,7 +1503,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行需 Megatron 通道，当前未接线））；估算 22.71/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都支持（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行要走 Megatron 通道））；估算 22.71/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -1557,7 +1557,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行需 Megatron 通道，当前未接线））；估算 22.71/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都支持（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行要走 Megatron 通道））；估算 22.71/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -1611,7 +1611,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行需 Megatron 通道，当前未接线））；估算 17.45/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都支持（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行要走 Megatron 通道））；估算 17.45/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -1665,7 +1665,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行需 Megatron 通道，当前未接线））；估算 22.71/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都支持（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行要走 Megatron 通道））；估算 22.71/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -1719,7 +1719,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行需 Megatron 通道，当前未接线））；估算 22.71/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都支持（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行要走 Megatron 通道））；估算 22.71/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -1773,7 +1773,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行需 Megatron 通道，当前未接线））；估算 17.45/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都支持（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行要走 Megatron 通道））；估算 17.45/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -1827,7 +1827,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行需 Megatron 通道，当前未接线））；估算 17.45/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都支持（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行要走 Megatron 通道））；估算 17.45/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -2043,7 +2043,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native 全参只支持 PP 分片：full + tp>1/dp>1 被加载期校验拒绝；ms-swift 在该项目里只能纯数据并行（张量/流水并行需 Megatron 通道，当前未接线））；估算 45.71/78.0 GiB（可行）；该形状历史记载互斥（9B GRASPO 全参 native 1/2 卡显存不足记载互斥）⇒ 须实测确认；卡点：native 全参的流水线并行产物导出/合并尚未实现（产物侧待实现，属欠账）⇒ 本档是待实现、不是档位不合理；native 的流水线并行 + rollout 组合须显式解除未验证保护（native.allow_unverified_pp_rollout=true）",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native 全参只支持 PP 分片：full + tp>1/dp>1 被加载期校验拒绝；ms-swift 在该项目里只能纯数据并行（张量/流水并行要走 Megatron 通道））；估算 45.71/78.0 GiB（可行）；该形状历史记载互斥（9B GRASPO 全参 native 1/2 卡显存不足记载互斥）⇒ 须实测确认；卡点：产物交付边界：native 全参的 PP>1 档需跨层分片合并才能导出，当前能力只到单卡单机 ⇒ 本档保留并按待测试推进；native 的流水线并行 + rollout 组合须显式解除未验证保护（native.allow_unverified_pp_rollout=true）",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -2097,7 +2097,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native 全参只支持 PP 分片：full + tp>1/dp>1 被加载期校验拒绝；ms-swift 在该项目里只能纯数据并行（张量/流水并行需 Megatron 通道，当前未接线））；估算 28.94/78.0 GiB（可行）；卡点：native 全参的流水线并行产物导出/合并尚未实现（产物侧待实现，属欠账）⇒ 本档是待实现、不是档位不合理；native 的流水线并行 + rollout 组合须显式解除未验证保护（native.allow_unverified_pp_rollout=true）",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native 全参只支持 PP 分片：full + tp>1/dp>1 被加载期校验拒绝；ms-swift 在该项目里只能纯数据并行（张量/流水并行要走 Megatron 通道））；估算 28.94/78.0 GiB（可行）；卡点：产物交付边界：native 全参的 PP>1 档需跨层分片合并才能导出，当前能力只到单卡单机 ⇒ 本档保留并按待测试推进；native 的流水线并行 + rollout 组合须显式解除未验证保护（native.allow_unverified_pp_rollout=true）",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -2151,7 +2151,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：CPT 只有 ms-swift 通道 —— native 侧尚无 CPT 训练通道（算法层未提供该训练方法在 native 后端的实现）；缺实现≠档位不合理 ⇒ 保留待测试；估算 33.24/78.0 GiB（可行）",
+      "note": "选 ms-swift：CPT 只有 ms-swift 通道 —— native 后端无 CPT 训练通道（能力边界：该后端不提供 CPT 训练方法）；缺实现≠档位不合理 ⇒ 保留待测试；估算 33.24/78.0 GiB（可行）",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -2205,7 +2205,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：CPT 只有 ms-swift 通道 —— native 侧尚无 CPT 训练通道（算法层未提供该训练方法在 native 后端的实现）；缺实现≠档位不合理 ⇒ 保留待测试；估算 33.24/78.0 GiB（可行）",
+      "note": "选 ms-swift：CPT 只有 ms-swift 通道 —— native 后端无 CPT 训练通道（能力边界：该后端不提供 CPT 训练方法）；缺实现≠档位不合理 ⇒ 保留待测试；估算 33.24/78.0 GiB（可行）",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -2259,7 +2259,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：CPT 只有 ms-swift 通道 —— native 侧尚无 CPT 训练通道（算法层未提供该训练方法在 native 后端的实现）；缺实现≠档位不合理 ⇒ 保留待测试；估算 33.24/78.0 GiB（可行）",
+      "note": "选 ms-swift：CPT 只有 ms-swift 通道 —— native 后端无 CPT 训练通道（能力边界：该后端不提供 CPT 训练方法）；缺实现≠档位不合理 ⇒ 保留待测试；估算 33.24/78.0 GiB（可行）",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -2313,7 +2313,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：CPT 只有 ms-swift 通道 —— native 侧尚无 CPT 训练通道（算法层未提供该训练方法在 native 后端的实现）；缺实现≠档位不合理 ⇒ 保留待测试；估算 62.47/78.0 GiB（可行）；卡点：FSDP2 分片载体零退出码 0 实测",
+      "note": "选 ms-swift：CPT 只有 ms-swift 通道 —— native 后端无 CPT 训练通道（能力边界：该后端不提供 CPT 训练方法）；缺实现≠档位不合理 ⇒ 保留待测试；估算 62.47/78.0 GiB（可行）；卡点：FSDP2 分片载体零退出码 0 实测",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -2367,7 +2367,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：CPT 只有 ms-swift 通道 —— native 侧尚无 CPT 训练通道（算法层未提供该训练方法在 native 后端的实现）；缺实现≠档位不合理 ⇒ 保留待测试；估算 37.33/78.0 GiB（可行）；卡点：FSDP2 分片载体零退出码 0 实测",
+      "note": "选 ms-swift：CPT 只有 ms-swift 通道 —— native 后端无 CPT 训练通道（能力边界：该后端不提供 CPT 训练方法）；缺实现≠档位不合理 ⇒ 保留待测试；估算 37.33/78.0 GiB（可行）；卡点：FSDP2 分片载体零退出码 0 实测",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -2421,7 +2421,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：OPD 只有 ms-swift 通道 —— native 侧尚无 OPD 训练通道（算法层未提供该训练方法在 native 后端的实现）；缺实现≠档位不合理 ⇒ 保留待测试；估算 33.24/78.0 GiB（可行）；卡点：需 offload_teacher_model=true（该路径零退出码 0 实测）",
+      "note": "选 ms-swift：OPD 只有 ms-swift 通道 —— native 后端无 OPD 训练通道（能力边界：该后端不提供 OPD 训练方法）；缺实现≠档位不合理 ⇒ 保留待测试；估算 33.24/78.0 GiB（可行）；卡点：需 offload_teacher_model=true（该路径零退出码 0 实测）",
       "spec_json": "—",
       "cards_pending": true,
       "blocked_reason": "—"
@@ -2476,7 +2476,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：OPD 只有 ms-swift 通道 —— native 侧尚无 OPD 训练通道（算法层未提供该训练方法在 native 后端的实现）；缺实现≠档位不合理 ⇒ 保留待测试；估算 33.24/78.0 GiB（可行）；卡点：需 offload_teacher_model=true（该路径零退出码 0 实测）",
+      "note": "选 ms-swift：OPD 只有 ms-swift 通道 —— native 后端无 OPD 训练通道（能力边界：该后端不提供 OPD 训练方法）；缺实现≠档位不合理 ⇒ 保留待测试；估算 33.24/78.0 GiB（可行）；卡点：需 offload_teacher_model=true（该路径零退出码 0 实测）",
       "spec_json": "—",
       "cards_pending": true,
       "blocked_reason": "—"
@@ -2531,7 +2531,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：OPD 只有 ms-swift 通道 —— native 侧尚无 OPD 训练通道（算法层未提供该训练方法在 native 后端的实现）；缺实现≠档位不合理 ⇒ 保留待测试；估算 33.24/78.0 GiB（可行）；卡点：需 offload_teacher_model=true（该路径零退出码 0 实测）",
+      "note": "选 ms-swift：OPD 只有 ms-swift 通道 —— native 后端无 OPD 训练通道（能力边界：该后端不提供 OPD 训练方法）；缺实现≠档位不合理 ⇒ 保留待测试；估算 33.24/78.0 GiB（可行）；卡点：需 offload_teacher_model=true（该路径零退出码 0 实测）",
       "spec_json": "—",
       "cards_pending": true,
       "blocked_reason": "—"
@@ -2586,7 +2586,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：OPD 只有 ms-swift 通道 —— native 侧尚无 OPD 训练通道（算法层未提供该训练方法在 native 后端的实现）；缺实现≠档位不合理 ⇒ 保留待测试；估算 62.47/78.0 GiB（可行）；卡点：FSDP2 分片载体零退出码 0 实测；需 offload_teacher_model=true（该路径零退出码 0 实测）",
+      "note": "选 ms-swift：OPD 只有 ms-swift 通道 —— native 后端无 OPD 训练通道（能力边界：该后端不提供 OPD 训练方法）；缺实现≠档位不合理 ⇒ 保留待测试；估算 62.47/78.0 GiB（可行）；卡点：FSDP2 分片载体零退出码 0 实测；需 offload_teacher_model=true（该路径零退出码 0 实测）",
       "spec_json": "—",
       "cards_pending": true,
       "blocked_reason": "—"
@@ -2641,7 +2641,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：OPD 只有 ms-swift 通道 —— native 侧尚无 OPD 训练通道（算法层未提供该训练方法在 native 后端的实现）；缺实现≠档位不合理 ⇒ 保留待测试；估算 37.33/78.0 GiB（可行）；卡点：FSDP2 分片载体零退出码 0 实测；需 offload_teacher_model=true（该路径零退出码 0 实测）",
+      "note": "选 ms-swift：OPD 只有 ms-swift 通道 —— native 后端无 OPD 训练通道（能力边界：该后端不提供 OPD 训练方法）；缺实现≠档位不合理 ⇒ 保留待测试；估算 37.33/78.0 GiB（可行）；卡点：FSDP2 分片载体零退出码 0 实测；需 offload_teacher_model=true（该路径零退出码 0 实测）",
       "spec_json": "—",
       "cards_pending": true,
       "blocked_reason": "—"
@@ -2750,7 +2750,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：两个后端都有实测成功证据（ms-swift 27B SFT LoRA ms-swift dp1/2/4 判据① 通过；native 27B SFT LoRA native dp2/dp4 判据① 通过且 DP 副本逐元素相等（可合并））⇒ 按「更简单路径」取 ms-swift（ms-swift 标准通道只有 DDP+SP（无 tp/pp 字段；Megatron 未接线））；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该形状实测跑通过（27B SFT LoRA ms-swift dp1/2/4 判据① 通过）⇒ 证据优先），需实测确认",
+      "note": "选 ms-swift：两个后端都有实测成功证据（ms-swift 27B SFT LoRA ms-swift dp1/2/4 判据① 通过；native 27B SFT LoRA native dp2/dp4 判据① 通过且 DP 副本逐元素相等（可合并））⇒ 按「更简单路径」取 ms-swift（ms-swift 标准通道只有 DDP+SP（无 tp/pp 字段；TP/PP 要走 Megatron 段））；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该形状实测跑通过（27B SFT LoRA ms-swift dp1/2/4 判据① 通过）⇒ 证据优先），需实测确认",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -2804,7 +2804,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：两个后端都有实测成功证据（ms-swift 27B SFT LoRA ms-swift dp1/2/4 判据① 通过；native 27B SFT LoRA native dp2/dp4 判据① 通过且 DP 副本逐元素相等（可合并））⇒ 按「更简单路径」取 ms-swift（ms-swift 标准通道只有 DDP+SP（无 tp/pp 字段；Megatron 未接线））；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该形状实测跑通过（27B SFT LoRA ms-swift dp1/2/4 判据① 通过）⇒ 证据优先），需实测确认",
+      "note": "选 ms-swift：两个后端都有实测成功证据（ms-swift 27B SFT LoRA ms-swift dp1/2/4 判据① 通过；native 27B SFT LoRA native dp2/dp4 判据① 通过且 DP 副本逐元素相等（可合并））⇒ 按「更简单路径」取 ms-swift（ms-swift 标准通道只有 DDP+SP（无 tp/pp 字段；TP/PP 要走 Megatron 段））；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该形状实测跑通过（27B SFT LoRA ms-swift dp1/2/4 判据① 通过）⇒ 证据优先），需实测确认",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -2858,7 +2858,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行需 Megatron 通道，当前未接线））；估算 47.17/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都支持（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行要走 Megatron 通道））；估算 47.17/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -2912,7 +2912,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行需 Megatron 通道，当前未接线））；估算 47.17/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都支持（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行要走 Megatron 通道））；估算 47.17/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -2966,7 +2966,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行需 Megatron 通道，当前未接线））；估算 31.43/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都支持（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行要走 Megatron 通道））；估算 31.43/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -3020,7 +3020,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行需 Megatron 通道，当前未接线））；估算 47.17/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都支持（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行要走 Megatron 通道））；估算 47.17/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -3074,7 +3074,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行需 Megatron 通道，当前未接线））；估算 47.17/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都支持（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行要走 Megatron 通道））；估算 47.17/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -3128,7 +3128,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行需 Megatron 通道，当前未接线））；估算 31.43/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都支持（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行要走 Megatron 通道））；估算 31.43/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -3182,7 +3182,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行需 Megatron 通道，当前未接线））；估算 31.43/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都支持（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行要走 Megatron 通道））；估算 31.43/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -3236,7 +3236,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：ms-swift 出局 —— 最佳情形仍超预算 90.84 > 78.0 GiB；估算 65.79/78.0 GiB（可行）；卡点：native 全参的流水线并行产物导出/合并尚未实现（产物侧待实现，属欠账）⇒ 本档是待实现、不是档位不合理",
+      "note": "选 native：ms-swift 出局 —— 最佳情形仍超预算 90.84 > 78.0 GiB；估算 65.79/78.0 GiB（可行）；卡点：产物交付边界：native 全参的 PP>1 档需跨层分片合并才能导出，当前能力只到单卡单机 ⇒ 本档保留并按待测试推进",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -3452,7 +3452,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行需 Megatron 通道，当前未接线））；估算 47.17/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都支持（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行要走 Megatron 通道））；估算 47.17/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -3506,7 +3506,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行需 Megatron 通道，当前未接线））；估算 47.17/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都支持（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行要走 Megatron 通道））；估算 47.17/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -3560,7 +3560,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行需 Megatron 通道，当前未接线））；估算 31.43/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都支持（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行要走 Megatron 通道））；估算 31.43/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -3614,7 +3614,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行需 Megatron 通道，当前未接线））；估算 47.17/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都支持（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行要走 Megatron 通道））；估算 47.17/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -3668,7 +3668,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行需 Megatron 通道，当前未接线））；估算 47.17/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都支持（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行要走 Megatron 通道））；估算 47.17/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -3722,7 +3722,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行需 Megatron 通道，当前未接线））；估算 31.43/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都支持（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行要走 Megatron 通道））；估算 31.43/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -3776,7 +3776,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行需 Megatron 通道，当前未接线））；估算 31.43/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
+      "note": "选 native：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 native（native LoRA 的 TP/PP/DP 三维都支持（TP SUM 同步、DP AVG 同步、PP 1F1B）；ms-swift 在该项目里只能纯数据并行（张量/流水并行要走 Megatron 通道））；估算 31.43/78.0 GiB（可行）；卡点：该形状从未实跑（既有档位里 LoRA 恒为 tp=pp=1，TP/PP 只出现在全参档）⇒ 训练可行性未建立；产物侧合并已实现（三维都有合并路径），真机未验证",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -3830,7 +3830,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：ms-swift 出局 —— 最佳情形仍超预算 90.84 > 78.0 GiB；估算 65.79/78.0 GiB（可行）；卡点：native 全参的流水线并行产物导出/合并尚未实现（产物侧待实现，属欠账）⇒ 本档是待实现、不是档位不合理；native 的流水线并行 + rollout 组合须显式解除未验证保护（native.allow_unverified_pp_rollout=true）",
+      "note": "选 native：ms-swift 出局 —— 最佳情形仍超预算 90.84 > 78.0 GiB；估算 65.79/78.0 GiB（可行）；卡点：产物交付边界：native 全参的 PP>1 档需跨层分片合并才能导出，当前能力只到单卡单机 ⇒ 本档保留并按待测试推进；native 的流水线并行 + rollout 组合须显式解除未验证保护（native.allow_unverified_pp_rollout=true）",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -3884,7 +3884,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：CPT 只有 ms-swift 通道 —— native 侧尚无 CPT 训练通道（算法层未提供该训练方法在 native 后端的实现）；缺实现≠档位不合理 ⇒ 保留待测试；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该形状实测跑通过（27B CPT LoRA ms-swift dp1/2/4 判据① 通过）⇒ 证据优先），需实测确认",
+      "note": "选 ms-swift：CPT 只有 ms-swift 通道 —— native 后端无 CPT 训练通道（能力边界：该后端不提供 CPT 训练方法）；缺实现≠档位不合理 ⇒ 保留待测试；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该形状实测跑通过（27B CPT LoRA ms-swift dp1/2/4 判据① 通过）⇒ 证据优先），需实测确认",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -3938,7 +3938,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：CPT 只有 ms-swift 通道 —— native 侧尚无 CPT 训练通道（算法层未提供该训练方法在 native 后端的实现）；缺实现≠档位不合理 ⇒ 保留待测试；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该形状实测跑通过（27B CPT LoRA ms-swift dp1/2/4 判据① 通过）⇒ 证据优先），需实测确认",
+      "note": "选 ms-swift：CPT 只有 ms-swift 通道 —— native 后端无 CPT 训练通道（能力边界：该后端不提供 CPT 训练方法）；缺实现≠档位不合理 ⇒ 保留待测试；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该形状实测跑通过（27B CPT LoRA ms-swift dp1/2/4 判据① 通过）⇒ 证据优先），需实测确认",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -3992,7 +3992,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：CPT 只有 ms-swift 通道 —— native 侧尚无 CPT 训练通道（算法层未提供该训练方法在 native 后端的实现）；缺实现≠档位不合理 ⇒ 保留待测试；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该形状实测跑通过（27B CPT LoRA ms-swift dp1/2/4 判据① 通过）⇒ 证据优先），需实测确认",
+      "note": "选 ms-swift：CPT 只有 ms-swift 通道 —— native 后端无 CPT 训练通道（能力边界：该后端不提供 CPT 训练方法）；缺实现≠档位不合理 ⇒ 保留待测试；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该形状实测跑通过（27B CPT LoRA ms-swift dp1/2/4 判据① 通过）⇒ 证据优先），需实测确认",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -4046,7 +4046,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：OPD 只有 ms-swift 通道 —— native 侧尚无 OPD 训练通道（算法层未提供该训练方法在 native 后端的实现）；缺实现≠档位不合理 ⇒ 保留待测试；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 78.64 GiB、余 0.61 GiB）），需实测确认；教师必须 offload：GPU 常驻情形估算 128.74 GiB（超预算，实测 1/2/4 卡全显存不足）；offload 路径零退出码 0 实测；卡点：需 offload_teacher_model=true（该路径零退出码 0 实测）",
+      "note": "选 ms-swift：OPD 只有 ms-swift 通道 —— native 后端无 OPD 训练通道（能力边界：该后端不提供 OPD 训练方法）；缺实现≠档位不合理 ⇒ 保留待测试；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 78.64 GiB、余 0.61 GiB）），需实测确认；教师必须 offload：GPU 常驻情形估算 128.74 GiB（超预算，实测 1/2/4 卡全显存不足）；offload 路径零退出码 0 实测；卡点：需 offload_teacher_model=true（该路径零退出码 0 实测）",
       "spec_json": "—",
       "cards_pending": true,
       "blocked_reason": "—"
@@ -4101,7 +4101,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：OPD 只有 ms-swift 通道 —— native 侧尚无 OPD 训练通道（算法层未提供该训练方法在 native 后端的实现）；缺实现≠档位不合理 ⇒ 保留待测试；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 78.64 GiB、余 0.61 GiB）），需实测确认；教师必须 offload：GPU 常驻情形估算 128.74 GiB（超预算，实测 1/2/4 卡全显存不足）；offload 路径零退出码 0 实测；卡点：需 offload_teacher_model=true（该路径零退出码 0 实测）",
+      "note": "选 ms-swift：OPD 只有 ms-swift 通道 —— native 后端无 OPD 训练通道（能力边界：该后端不提供 OPD 训练方法）；缺实现≠档位不合理 ⇒ 保留待测试；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 78.64 GiB、余 0.61 GiB）），需实测确认；教师必须 offload：GPU 常驻情形估算 128.74 GiB（超预算，实测 1/2/4 卡全显存不足）；offload 路径零退出码 0 实测；卡点：需 offload_teacher_model=true（该路径零退出码 0 实测）",
       "spec_json": "—",
       "cards_pending": true,
       "blocked_reason": "—"
@@ -4156,7 +4156,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：OPD 只有 ms-swift 通道 —— native 侧尚无 OPD 训练通道（算法层未提供该训练方法在 native 后端的实现）；缺实现≠档位不合理 ⇒ 保留待测试；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 78.64 GiB、余 0.61 GiB）），需实测确认；教师必须 offload：GPU 常驻情形估算 128.74 GiB（超预算，实测 1/2/4 卡全显存不足）；offload 路径零退出码 0 实测；卡点：需 offload_teacher_model=true（该路径零退出码 0 实测）",
+      "note": "选 ms-swift：OPD 只有 ms-swift 通道 —— native 后端无 OPD 训练通道（能力边界：该后端不提供 OPD 训练方法）；缺实现≠档位不合理 ⇒ 保留待测试；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 78.64 GiB、余 0.61 GiB）），需实测确认；教师必须 offload：GPU 常驻情形估算 128.74 GiB（超预算，实测 1/2/4 卡全显存不足）；offload 路径零退出码 0 实测；卡点：需 offload_teacher_model=true（该路径零退出码 0 实测）",
       "spec_json": "—",
       "cards_pending": true,
       "blocked_reason": "—"

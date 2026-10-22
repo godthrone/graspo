@@ -108,8 +108,8 @@ ALGO_BACKEND_SUPPORT: dict[str, tuple[str, ...]] = {
 
 #: 「某算法在某后端缺实现」的**卡点描述**（缺实现 ≠ 不合理；只写清卡在哪一层）。
 ALGO_BACKEND_NOTE: dict[tuple[str, str], str] = {
-    ("CPT", "native"): "native 侧尚无 CPT 训练通道（算法层未提供该训练方法在 native 后端的实现）",
-    ("OPD", "native"): "native 侧尚无 OPD 训练通道（算法层未提供该训练方法在 native 后端的实现）",
+    ("CPT", "native"): "native 后端无 CPT 训练通道（能力边界：该后端不提供 CPT 训练方法）",
+    ("OPD", "native"): "native 后端无 OPD 训练通道（能力边界：该后端不提供 OPD 训练方法）",
 }
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -589,20 +589,20 @@ BACKEND_PARALLEL_FACT: dict[tuple[str, str], dict[str, Any]] = {
     },
     ("native", "LoRA"): {
         "supports_tp": True, "supports_pp": True, "supports_dp": True,
-        "fact": "native LoRA 的 TP/PP/DP 三维都接线（TP SUM 同步、DP AVG 同步、PP 1F1B）",
-        "short_fact": "native LoRA 的 TP/PP/DP 三维原生接线",
+        "fact": "native LoRA 的 TP/PP/DP 三维都支持（TP SUM 同步、DP AVG 同步、PP 1F1B）",
+        "short_fact": "native LoRA 的 TP/PP/DP 三维原生支持",
         "source": "src/graspo/flow/backend/native/lora/lora_linear.py:223-282；native/parallel/pipeline_comm.py",
         "tier": 0,
     },
     ("ms-swift", "全参"): {
         "supports_tp": False, "supports_pp": False, "supports_dp": True,
-        "fact": "ms-swift 全参只能靠 FSDP2 摊（Megatron 段未接线 ⇒ TP/PP 无通道；DeepSpeed 已禁用）",
+        "fact": "ms-swift 全参只能靠 FSDP2 摊（TP/PP 要走 Megatron 段；DeepSpeed 已禁用）",
         "source": "src/graspo/flow/backend/msswift/_config_mapping.py:206-213,682",
         "tier": 1,
     },
     ("ms-swift", "LoRA"): {
         "supports_tp": False, "supports_pp": False, "supports_dp": True,
-        "fact": "ms-swift 标准通道只有 DDP+SP（无 tp/pp 字段；Megatron 未接线）",
+        "fact": "ms-swift 标准通道只有 DDP+SP（无 tp/pp 字段；TP/PP 要走 Megatron 段）",
         "short_fact": "ms-swift 标准通道只有 DDP+SP",
         "source": "src/graspo/flow/backend/msswift/_config_mapping.py:409-436,682",
         "tier": 1,
@@ -933,19 +933,19 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
     # ── 卡点（缺实现 ≠ 不合理）：逐条写清卡在哪一层 ────────────────────────
     gaps: list[str] = []
     if sel.get("missing_channel"):
-        gaps.append(f"native 侧尚无 {algo} 训练通道（算法层未提供该训练方法在 native 后端的实现）；"
+        gaps.append(f"native 后端无 {algo} 训练通道（能力边界）；"
                     f"补齐后按 native 配方估算 {peak:.2f} GiB 可行")
     if backend == "ms-swift":
         if mode == "全参":
             gaps.append("FSDP2 分片载体零 退出码 0 实测")
         if tp > 1 or pp > 1:
-            gaps.append("ms-swift 的 TP/PP 无通道（并行实现尚未接入，标准通道只覆盖 DDP+SP）"
+            gaps.append("ms-swift 的 TP/PP 无通道（标准通道只覆盖 DDP+SP）"
                         "⇒ 该形状的分摊只能靠 FSDP2 全分片，语义待实测")
     if backend == "native" and mode == "全参":
         if pp > 1:
             # ★ 2026-10-22（用户拍板 C 留）：这 6 档**保留、状态仍待测试**，理由写清是"待实现"。
-            gaps.append("native 全参的流水线并行产物导出/合并尚未实现（产物侧待实现，属欠账）"
-                        "⇒ 本档是待实现、不是档位不合理")
+            # ★ 与 V17 机核同源（单一真相源）：⛔ 别在这里另写一份措辞
+            gaps.append(NATIVE_FULL_PP_GAP)
         if algo == "GRASPO" and pp > 1:
             gaps.append("native 的流水线并行 + rollout 组合须显式解除未验证保护"
                         "（`native.allow_unverified_pp_rollout=true`）")
@@ -1204,7 +1204,7 @@ def _reason_line(chosen, sel, backend, mode, tp, pp, dp, band, budget, peak, alg
             core = (f"选 {backend}：{backend} 有实测成功证据（{ev}），"
                     f"{other['backend']} 无实测成功证据（{why_other}）")
         else:
-            _other_fact = ("ms-swift 在该项目里只能纯数据并行（张量/流水并行需 Megatron 通道，当前未接线）"
+            _other_fact = ("ms-swift 在该项目里只能纯数据并行（张量/流水并行要走 Megatron 通道）"
                            if other["backend"] == "ms-swift" else other["fact"])
             core = (f"选 {backend}：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 {backend}"
                     f"（{chosen['fact']}；{_other_fact}）")
@@ -1576,8 +1576,8 @@ def _any_backend_evidence(algo, model, mode, shape, effects) -> bool:
 
 
 #: native 全参 PP>1 的**产物卡点句**（逐字，⛔ 不许改写成"别的载体"这类悬空说法）。
-NATIVE_FULL_PP_GAP = ("native 全参的流水线并行产物导出/合并尚未实现（产物侧待实现，属欠账）"
-                      "⇒ 本档是待实现、不是档位不合理")
+NATIVE_FULL_PP_GAP = ("产物交付边界：native 全参的 PP>1 档需跨层分片合并才能导出，"
+                      "当前能力只到单卡单机 ⇒ 本档保留并按待测试推进")
 
 
 def _v17_native_full_pp_gap_disclosed(rows, budget: float) -> bool:
@@ -1677,13 +1677,15 @@ VERIFICATION_CASES: tuple[dict[str, Any], ...] = (
     },
     {
         "id": "V8",
-        "claim": "任何档位都不以 DeepSpeed 为选型/配方（DS 已禁用）；Megatron 只以「未接线卡点」出现",
+        "claim": ("任何档位都不以 DeepSpeed 为选型/配方（DS 已禁用）；Megatron 只以**能力边界**出现"
+                  "（「TP/PP 要走 Megatron 段／通道」），⛔ 不作为配方、⛔ 不以工程状态语出现"),
         "check": lambda rows, budget: all(
             r["deepspeed"] == "—" and "deepspeed" not in r["switches"].lower() for r in rows)
-        and all("Megatron 段未接线" in json.dumps(r["backend_reason"], ensure_ascii=False)
-                or "Megatron 未接线" in json.dumps(r["backend_reason"], ensure_ascii=False)
-                or r["backend"] == "native"
-                for r in rows),
+        # 页面（note）里 Megatron 只许出现在能力边界句里
+        and all(("Megatron" not in r["note"])
+                or ("Megatron 通道" in r["note"] or "Megatron 段" in r["note"]) for r in rows)
+        # 审计件里仍必须留下这条能力边界的原文（⛔ 不是"删了就当没有"）
+        and any("Megatron" in json.dumps(r["backend_reason"], ensure_ascii=False) for r in rows),
     },
     {
         "id": "V9",
