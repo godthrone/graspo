@@ -145,6 +145,7 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <li>这是 <b>GRASPO 训练框架</b>的功能测试基准（蓝图），包括<b>测试方法</b>、<b>测试条件</b>与<b>测试结果</b>。</li>
 <li>测试结果基于<b>我们的多模态测试数据集</b>，<b>不保证</b>在您的数据集上也能达到同样效果。</li>
 <li>表内数字由<b>脚本</b>从数据文件填入；<b>结论与判据以本表为准</b>。</li>
+<li>当前 68 档全部为「待测试」，实验数据列尚无读数。</li>
 </ul>
 </section>
 
@@ -152,8 +153,8 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <section class="part" id="s2">
 <h2>2. 测试方法</h2>
 <p><b>原则：</b>训练之后效果变好，才算「可用」。</p>
-<p class="criteria-label">下面四条就是第 4 章备注里<b>判据①②③④</b>的定义，按顺序编号。</p>
-<ol class="criteria"><li><span class="cn">①</span> <b>能完整跑完</b>：训练正常结束、无中断、无报错、退出码 0、优化器步数达到该档计划步数（总训练轮数 × 每 epoch 步数）、检查点完整、没有 NaN/Inf。</li><li><span class="cn">②</span> <b>效果变好（核心判据）</b>：在平台方测试数据集与测试参数下，训练之后模型效果比不训练的原始模型好（逐算法通过线见下）：<ul class="tight"><li>SFT（监督微调）：训练后数据集完全正确率提升至少 10.0 个百分点，判据 after − base ≥ +10.0 pp</li><li>GRASPO（强化）：训练后数据集完全正确率提升至少 5.0 个百分点，判据 after − base ≥ +5.0 pp</li><li>CPT（继续预训练）：训练 loss 正常下降、训练数据集准确率不下降，判据 after ≥ base（不劣化）</li><li>OPD（蒸馏）：教师在训练数据集上的完全正确率，高于学生未训练模型 10 个百分点，学生训练后，训练数据集完全正确率提升至少 5.0 个百分点，判据 after − base ≥ +5.0 pp</li></ul></li><li><span class="cn">③</span> <b>算法正确性检查通过</b>：SFT / CPT / OPD 按各自公开的标准实现逻辑判断；GRASPO 按《<a href="graspo-algorithm.html">GRASPO 算法说明</a>》逐条判断（算法逻辑严禁改动）。</li><li><span class="cn">④</span> <b>能推理</b>：LoRA 档合并后、全参档直接，用 vLLM 启动，在训练数据集上完整推理一遍，效果好于未训练模型。</li></ol>
+<p class="criteria-label">下面四条是判定依据：第 4 章「是否通过」列按这四条合取判定，未满足项写入备注。</p>
+<ol class="criteria"><li><span class="cn">①</span> <b>能完整跑完</b>：训练正常结束、无中断、无报错、退出码 0、优化器步数达到该档总训练步数（总训练步数 = 总训练轮数 × 每 epoch 步数，每 epoch 步数 = ⌈100 ÷ 总卡数⌉）、最终检查点完整可加载、没有 NaN/Inf。</li><li><span class="cn">②</span> <b>效果变好（核心判据）</b>：在平台方测试数据集与测试参数下，训练之后模型效果变好（CPT 判不劣化、允许与未训练模型持平；训练数据集即评测集（同一份 100 条）、vLLM 贪心温度 0、每档评一次；逐算法通过线见下）：<ul class="tight"><li>SFT（监督微调）：训练后数据集完全正确率（= 与参考答案逐字段完全一致的样本数 ÷ 100）提升至少 10.0 个百分点，判据 after − base ≥ +10.0 pp</li><li>GRASPO（强化）：训练后数据集完全正确率提升至少 5.0 个百分点，判据 after − base ≥ +5.0 pp</li><li>CPT（继续预训练）：训练 loss 正常下降、训练数据集准确率不下降，判据 after ≥ base（不劣化）；允许 after == base</li><li>OPD（蒸馏）：教师在训练数据集上的完全正确率，与学生未训练模型相比 ≥ +10.0 个百分点（教师 − 学生未训练模型 ≥ +10.0 pp）；学生训练后，训练数据集完全正确率提升至少 5.0 个百分点，判据 after − base ≥ +5.0 pp</li></ul></li><li><span class="cn">③</span> <b>算法正确性检查通过</b>：SFT / CPT / OPD 按各自公开的标准实现逻辑判断；GRASPO 按《<a href="graspo-algorithm.html">GRASPO 算法说明</a>》逐条判断（算法逻辑严禁改动）。SFT / CPT / OPD 另按公开标准核对损失函数与标签掩码的处理规则（OPD 另含教师信号的处理规则）。</li><li><span class="cn">④</span> <b>能推理</b>：LoRA 档合并后、全参档直接，用 vLLM 启动，在训练数据集上完整推理一遍，能完整产出可解析的推理结果（效果是否变好由判据② 判定，本条只判能否推理）。</li></ol>
 </section>
 
 <!-- ========================= 3. 测试条件 ========================= -->
@@ -168,8 +169,8 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <h4>模型说明</h4>
 <ul class="tight">
 <li>基础模型：<code>Qwen3.5-9B</code>、<code>Qwen3.8-27B</code>。</li>
-<li>OPD 教师：<code>Qwen3.8-27B</code> 完成 SFT 之后的产物（不是基座权重本身）。</li>
-<li><b>显存边界（区分两种模式）：</b>单卡放不下的是 <b>27B 全参</b>（即使把优化器态整体挪到 CPU 也需 <code>115.89 GiB</code>）；27B <b>LoRA</b> 单卡能跑、但<b>零余量</b>（估算 <code>78.64 GiB</code>，卡容量 <code>79.25 GiB</code>，仅余 <code>0.61 GiB</code>）。</li>
+<li>OPD 教师：<code>Qwen3.8-27B</code> 在 <b>SFT / LoRA / dp=1</b> 这一档训练完成后的产物（不是基座权重本身）。</li>
+<li><b>显存边界（区分两种模式）：</b>本表以 <code>78.0 GiB</code> 作为单卡设计预算（卡容量 <code>79.25 GiB</code>，预算为卡容量留出余量）。单卡放不下的是 <b>27B 全参</b>（即使把优化器态整体挪到 CPU，估算也需 <code>115.89 GiB</code>）；27B <b>LoRA</b> 单卡能跑 —— 装得下卡容量，但越过设计预算（估算 <code>78.64 GiB</code>，卡容量 <code>79.25 GiB</code>，仅余 <code>0.61 GiB</code>）。</li>
 </ul>
 <h4>LoRA 说明</h4>
 <ul class="tight">

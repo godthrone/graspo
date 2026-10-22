@@ -9,7 +9,7 @@
     "code_version": {
       "repo": "graspo",
       "branch": "feature/refactor-three-layer-architecture",
-      "commit": "e2d34f9",
+      "commit": "0820743",
       "note": "commit = 本件的生成基线（生成时的 HEAD）；脚本以 meta.enumeration.script_sha256 为准 —— 该 sha256 与同提交内的 tools/matrix/enumerate_matrix.py 逐字节一致。"
     },
     "authority": {
@@ -55,20 +55,20 @@
       "pass_criteria": [
         {
           "title": "能完整跑完",
-          "text": "训练正常结束、无中断、无报错、退出码 0、优化器步数达到该档计划步数（总训练轮数 × 每 epoch 步数）、检查点完整、没有 NaN/Inf。"
+          "text": "训练正常结束、无中断、无报错、退出码 0、优化器步数达到该档总训练步数（总训练步数 = 总训练轮数 × 每 epoch 步数，每 epoch 步数 = ⌈100 ÷ 总卡数⌉）、最终检查点完整可加载、没有 NaN/Inf。"
         },
         {
           "title": "效果变好（核心判据）",
-          "text": "在平台方测试数据集与测试参数下，训练之后模型效果比不训练的原始模型好（逐算法通过线见下）：",
+          "text": "在平台方测试数据集与测试参数下，训练之后模型效果变好（CPT 判不劣化、允许与未训练模型持平；训练数据集即评测集（同一份 100 条）、vLLM 贪心温度 0、每档评一次；逐算法通过线见下）：",
           "from_threshold": true
         },
         {
           "title": "算法正确性检查通过",
-          "text": "SFT / CPT / OPD 按各自公开的标准实现逻辑判断；GRASPO 按《GRASPO 算法说明》逐条判断（算法逻辑严禁改动）。"
+          "text": "SFT / CPT / OPD 按各自公开的标准实现逻辑判断；GRASPO 按《<a href=\"graspo-algorithm.html\">GRASPO 算法说明</a>》逐条判断（算法逻辑严禁改动）。SFT / CPT / OPD 另按公开标准核对损失函数与标签掩码的处理规则（OPD 另含教师信号的处理规则）。"
         },
         {
           "title": "能推理",
-          "text": "LoRA 档合并后、全参档直接，用 vLLM 启动，在训练数据集上完整推理一遍，效果好于未训练模型。"
+          "text": "LoRA 档合并后、全参档直接，用 vLLM 启动，在训练数据集上完整推理一遍，能完整产出可解析的推理结果（效果是否变好由判据② 判定，本条只判能否推理）。"
         }
       ],
       "caliber_change": {
@@ -97,6 +97,13 @@
           "changed": "改动一 = OPD 通过线实质变更：由「学生 after ≥ base（能力回收）」（criterion = non_inferiority、value = 0.0）改为 after − base ≥ +5.0 pp（criterion = gain_pp、op = >=、value = 5.0）；并新增教师要求：教师在训练数据集上的完全正确率需高于学生未训练模型 10 个百分点（原教师说明「SFT 之后的 27B 产物」随之作废）。改动二 = 页面第 2 章导语与四条按 2026-10-19 判据变更的原文改写：导语改为「原则：训练之后效果变好，才算「可用」。」（删除「具体判别依据：…」那句）；① 去掉重复的「：」与尾句「产物可加载」⇒ 训练正常结束、无中断、无报错、退出码 0、优化器步数达标、检查点完整、没有 NaN/Inf。；② 判据改为「在平台方测试数据集与测试参数下，训练之后模型效果比不训练的原始模型好」；④ 改为「训练数据集可以完整推理一遍，效果好于未训练模型」。术语统一：效果判据名一律用「数据集完全正确率」（旧称不再出现）；评测集 / 参数判据名一律用「平台方测试数据集与测试参数」（旧称不再出现）。同批落地三处逐字一致：页面第 2 章 <ol class=\"criteria\"> 四条 ↔ 数据件 criteria_caliber.pass_criteria ↔ 生成端 build_official.py 的 criteria_caliber()（机核 = verify_matrix ④X；阳性对照 = run_self_proof ㉔）。",
           "unchanged": "OPD epoch = 2 不变；SFT ⇒ after − base ≥ +10.0 pp（epoch=4）、GRASPO ⇒ after − base ≥ +5.0 pp（epoch=8）、CPT ⇒ 准确率 after ≥ base（不劣化；epoch=2）三条通过线数值与判定语义未动；判据条数（四条）与四个短名未动；21 列表结构与结果列状态未动。",
           "superseded": "旧判据（留痕，不再作为判定依据）：OPD ⇒ 学生 after ≥ base（能力回收）（criterion = non_inferiority、value = 0.0）；旧教师说明 = 「SFT 之后的 27B 产物」；旧页面第 2 章导语 = 「原则：训练之后效果变好。具体判别依据：训练之后模型效果变好了，且这次训练本身真实有效；下面四条全部通过，才算「可用」。」"
+        },
+        "caliber_change_20261022": {
+          "effective": "2026-10-22",
+          "source": "2026-10-22 判据变更记录（OPD 教师身份指定到档位；教师线改用 ≥ 表达）",
+          "changed": "改动一 = OPD 教师身份指定到可复现的具体档位：教师 = Qwen3.8-27B 在 SFT / LoRA / dp=1 这一档训练完成后的产物（不是基座权重本身）—— 目的是让各 OPD 档的教师取值可复现。改动二 = OPD 教师线改用「≥」表达：教师 − 学生未训练模型 ≥ +10.0 pp（数值 +10.0 pp 不动，仅把「高于」改为允许相等的「≥」）。",
+          "unchanged": "OPD 学生线 after − base ≥ +5.0 pp 一字未动；+10.0 pp 这一数值未动；OPD epoch = 2 未动；SFT / GRASPO / CPT 三条通过线与判定语义未动；判据条数（四条）与四个短名未动。",
+          "superseded": "旧教师说明「SFT 之后的 27B 产物」现精确到档位（SFT / LoRA / dp=1）；旧教师线表述「高于学生未训练模型 10 个百分点」改由「≥」表达，数值不变。"
         }
       },
       "dataset": {
@@ -203,7 +210,7 @@
             "unit": "pp",
             "metric": "数据集完全正确率（学生 after − base）；100 行档 = fit 判定标准（评测集 = 该档自身训练文件，100 行）；其余档 = 平台方自有 702 行评测集",
             "pass_line_text": "after − base ≥ +5.0 pp",
-            "teacher": "教师在训练数据集上的完全正确率需高于学生未训练模型 10 个百分点",
+            "teacher": "教师 − 学生未训练模型 ≥ +10.0 个百分点（教师在训练数据集上的完全正确率）",
             "epoch": 2,
             "epoch_previous": 2,
             "epoch_note": "epoch=2 不变；教师 = Qwen3.8-27B（原教师说明「SFT 之后的 27B 产物」已作废，见 caliber_change.caliber_change_20261019）。"
@@ -476,7 +483,7 @@
         }
       },
       "script": "tools/matrix/enumerate_matrix.py",
-      "script_sha256": "b9333ed636ad7284ff3c5ac4983834c79d6a7ccc4029f8444968aec6109d25eb",
+      "script_sha256": "d78f489511aa32b7e1dda8c7630a7c227ca45d0de5c5bc36f01e10d09ff6bf64",
       "audit_ref": "逐档审计明细见枚举脚本 --audit-out 输出（随工作区，不入库）"
     }
   },
@@ -1071,7 +1078,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：ms-swift 承载不了该形状 —— 最佳情形仍超预算 112.76 > 78.0 GiB ⇒ 只有 native 能承载；估算 45.71/78.0 GiB（可行）；前提 / 边界：1 卡全参必须开优化器态 offload 才能装下（否则估算 79.24 GiB 超预算，开 offload 后 45.71 GiB）；需 native.offload_optimizer_state=true（优化器态换出后单卡 35.19 GB）；offload 是后端级单一钩子，SFT / RL 两条 trainer 共用",
+      "note": "选 native：ms-swift 承载不了该形状 —— 最佳情形仍超预算 112.76 > 78.0 GiB ⇒ 只有 native 能承载；估算 45.71/78.0 GiB（可行）；前提 / 边界：1 卡全参必须开优化器态 offload 才能装下（否则估算 79.24 GiB 超预算，开 offload 后 45.71 GiB）；需 native.offload_optimizer_state=true；offload 是后端级单一钩子，SFT / RL 两条 trainer 共用",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -1881,7 +1888,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：ms-swift 承载不了该形状 —— 最佳情形仍超预算 112.76 > 78.0 GiB ⇒ 只有 native 能承载；估算 45.71/78.0 GiB（可行）；前提：显存须按本档读数确认 —— 估算 45.71/78.0 GiB 可行，而 1／2 卡同族形态处在显存不足一侧；前提 / 边界：1 卡全参必须开优化器态 offload 才能装下（否则估算 79.24 GiB 超预算，开 offload 后 45.71 GiB）；需 native.offload_optimizer_state=true（优化器态换出后单卡 35.19 GB）；offload 是后端级单一钩子，SFT / RL 两条 trainer 共用",
+      "note": "选 native：ms-swift 承载不了该形状 —— 最佳情形仍超预算 112.76 > 78.0 GiB ⇒ 只有 native 能承载；估算 45.71/78.0 GiB（可行）；前提 / 边界：1 卡全参必须开优化器态 offload 才能装下（否则估算 79.24 GiB 超预算，开 offload 后 45.71 GiB）；需 native.offload_optimizer_state=true；offload 是后端级单一钩子，SFT / RL 两条 trainer 共用",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -2043,7 +2050,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 native：ms-swift 承载不了该形状（ms-swift 全参只能靠 FSDP2 摊（TP/PP 要走 Megatron 段；DeepSpeed 已禁用））⇒ 该形状只有 native 能承载（native 全参只支持 PP 分片：full + tp>1/dp>1 被加载期校验拒绝）；估算 45.71/78.0 GiB（可行）；前提：显存须按本档读数确认 —— 估算 45.71/78.0 GiB 可行，而 1／2 卡同族形态处在显存不足一侧；前提 / 边界：native 全参的 PP>1 档要交付产物，须跨层分片合并导出（当前导出能力只到单卡单机）；native 的流水线并行 + rollout 组合须显式解除未验证保护（native.allow_unverified_pp_rollout=true）",
+      "note": "选 native：ms-swift 承载不了该形状（ms-swift 全参只能靠 FSDP2 摊（TP/PP 要走 Megatron 段；DeepSpeed 已禁用））⇒ 该形状只有 native 能承载（native 全参只支持 PP 分片：full + tp>1/dp>1 被加载期校验拒绝）；估算 45.71/78.0 GiB（可行）；前提 / 边界：native 全参的 PP>1 档要交付产物，须跨层分片合并导出（当前导出能力只到单卡单机）；native 的流水线并行 + rollout 组合须显式解除未验证保护（native.allow_unverified_pp_rollout=true）",
       "spec_json": "—",
       "blocked_reason": "—"
     },

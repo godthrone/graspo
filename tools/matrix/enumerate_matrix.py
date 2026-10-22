@@ -957,7 +957,7 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
         gaps.insert(0, "1 卡全参必须开优化器态 offload 才能装下（否则估算 79.24 GiB 超预算，"
                        "开 offload 后 45.71 GiB）")
     if chosen["recipe"] == "offload":
-        gaps.append("需 `native.offload_optimizer_state=true`（优化器态换出后单卡 35.19 GB）")
+        gaps.append("需 `native.offload_optimizer_state=true`")
         # ★ 2026-10-22 更正（侦察已推翻旧陈述"只在 SFT 通道生效、GRASPO 是否生效未确认"）：
         #   该开关是**后端级单一钩子**，SFT / RL 两条 trainer 共用同一 override。
         gaps.append("offload 是后端级单一钩子，SFT / RL 两条 trainer 共用")
@@ -982,16 +982,12 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
                 f"卡容量内余量仅 {CARD_CAPACITY_GIB - peak:.2f} GiB（{basis}），需实测确认")
         else:
             notes_extra.append(f"余量紧：估算 {peak:.2f}/{budget:.1f} GiB，需实测确认")
-    contested = [e for e in MEASURED_EVIDENCE
-                 if e["kind"] == "contested"
-                 and e["scope"][0] in ("*", algo) and e["scope"][1] in ("*", model)
-                 and e["scope"][2] in ("*", mode) and _shape_match(e["scope"][4], (tp, pp, dp))]
-    for ev in contested:
-        # ★ 2026-10-22（蓝图口径）：只留**显存前提**（估算可行但同族形态紧贴上限），
-        #   ⛔ 不写"历史记载互斥"这类叙述跑次冲突的话；数字一字不动。
-        notes_extra.append(
-            f"前提：显存须按本档读数确认 —— 估算 {peak:.2f}/{budget:.1f} GiB 可行，"
-            "而 1／2 卡同族形态处在显存不足一侧")
+    # ★★ 2026-10-22（蓝图口径 · 复核条目 12）：原先此处按 `contested` 证据追加一句
+    #   「前提：显存须按本档读数确认 —— 估算 X/Y GiB 可行，而 1／2 卡同族形态处在显存不足一侧」。
+    #   该句与**本档**「估算 …（可行）」自相矛盾（同一格里先说可行、再说同族在显存不足一侧），
+    #   且把同一组读数在同一格里写了两遍 ⇒ 整句删除（⛔ 不是改数字，数字一个没动）。
+    #   显存可行性与预算边界由选型理由行（「估算 45.71/78.0 GiB（可行）」）与
+    #   「前提 / 边界」段承载，能力边界信息一条不丢。
     if algo == "OPD":
         gpu_variant = next((v for v in chosen.get("variants", [])
                             if v.get("teacher") == "gpu" and v.get("peak_gib") is not None), None)
@@ -1066,6 +1062,9 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
         "prompts_per_rank": str(max(1, math.ceil(subset / cards))),
         "per_epoch_steps": str(per_epoch),
         "derived_steps": str(derived),
+        # ★ 2026-10-22（复核条目 6）：⚠ 本字段的唯一含义 = **每 epoch 步数**；
+        #   判据① 里说的「总训练步数」= 总轮数 × 每 epoch 步数 = `derived_steps`，
+        #   两个意思⛔ 不复用同一个词（页面与数据件的判据① 正文按此措辞）。
         "planned_steps": str(per_epoch),
         "train_path": f"subsets-v2/{tier}.jsonl",
         "data_source": "ELAM V5 mini 冒烟集（按算法子集条数）",
@@ -1827,19 +1826,46 @@ META_OVERRIDES: tuple[dict[str, Any], ...] = (
     # ★ 2026-10-22（判据 ①④ 改写）：页面第 2 章四条 `<li>` ↔ 数据件 `pass_criteria` 必须**逐字一致**
     #   （机核 = verify_matrix ④X-b）。此处按同一份文本覆盖 ⇒ ⛔ 不允许页面改了、数据件留在旧句上。
     {"path": "criteria_caliber.pass_criteria[0].text",
-     "value": ("训练正常结束、无中断、无报错、退出码 0、优化器步数达到该档计划步数"
-               "（总训练轮数 × 每 epoch 步数）、检查点完整、没有 NaN/Inf。"),
-     "why": "判据① 补「优化器步数达标」的可判定定义（不再只写四个字，读者无从照做）"},
+     "value": ("训练正常结束、无中断、无报错、退出码 0、优化器步数达到该档总训练步数"
+               "（总训练步数 = 总训练轮数 × 每 epoch 步数，每 epoch 步数 = ⌈100 ÷ 总卡数⌉）、"
+               "最终检查点完整可加载、没有 NaN/Inf。"),
+     "why": ("判据① 补「优化器步数达标」的可判定定义；★ 复核条目 6：①「检查点完整」与"
+             "「每轮保存检查点 = false」冲突 ⇒ 明确为**最终**检查点完整可加载；"
+             "「每 epoch 步数」按 ⌈100 ÷ 总卡数⌉ 定义，并与「总训练步数」分用两个词"
+             "（⛔ 不复用同一个词指两个意思）")},
+    # ★ 2026-10-22（复核条目 2 / 5）：判据② 正文补「CPT 允许持平」与评测条件（训练集=评测集、
+    #   贪心温度 0、每档评一次），并去掉与 CPT「≥」冲突的「效果比未训练模型好」这一强口径。
+    {"path": "criteria_caliber.pass_criteria[1].text",
+     "value": ("在平台方测试数据集与测试参数下，训练之后模型效果变好（CPT 判不劣化、"
+               "允许与未训练模型持平；训练数据集即评测集（同一份 100 条）、"
+               "vLLM 贪心温度 0、每档评一次；逐算法通过线见下）："),
+     "why": "判据② 补评测条件（不另开小节）；CPT 的「≥」允许 after == base，与判据④ 的效果口径解耦"},
     # ★ 2026-10-22（判据③ 改写）：页面第 2 章判据③ 的那一句话 ↔ 数据件同一条文本必须逐字一致。
     #   GRASPO 一侧改指**人读口径件**《GRASPO 算法说明》（docs/graspo-algorithm.html，页面相对链接）；
     #   机核 = verify_matrix ④ALG（句子恰 1 次 + 链接在盘 + 新文档 7 锚点齐备）。
+    # ★★ 2026-10-22（复核条目 3 / 14）：判据③ 补 SFT / CPT / OPD 的可执行对照项；
+    #   **并把链接标记写进数据件**（人读件里的 `<a href="graspo-algorithm.html">` 必须与
+    #   数据件同句同源，否则重生成 / 回填链路会把链接丢掉）。
+    #   机核：`verify_matrix` ④X-b（按**原文含标签**逐字比对）+ ④X-d（链接标记恰 1 次、
+    #   去标签后与 `ALGO_CRITERION_TEXT` 逐字一致）；阳性对照：`run_self_proof` ㊱。
     {"path": "criteria_caliber.pass_criteria[2].text",
      "value": ("SFT / CPT / OPD 按各自公开的标准实现逻辑判断；"
-               "GRASPO 按《GRASPO 算法说明》逐条判断（算法逻辑严禁改动）。"),
-     "why": "判据③ 由「各按自己的清单」改为可判定的一句：GRASPO 以独立人读件逐条对照（算法逻辑不改）"},
+               "GRASPO 按《<a href=\"graspo-algorithm.html\">GRASPO 算法说明</a>》逐条判断"
+               "（算法逻辑严禁改动）。SFT / CPT / OPD 另按公开标准核对损失函数与标签掩码"
+               "的处理规则（OPD 另含教师信号的处理规则）。"),
+     "why": ("判据③ 由「各按自己的清单」改为可判定的一句：GRASPO 以独立人读件逐条对照"
+             "（算法逻辑不改）；并补 SFT / CPT / OPD 的可执行对照项")},
     {"path": "criteria_caliber.pass_criteria[3].text",
-     "value": ("LoRA 档合并后、全参档直接，用 vLLM 启动，在训练数据集上完整推理一遍，效果好于未训练模型。"),
-     "why": "判据④ 同时覆盖两种模式（全参档同样用 vLLM 测，只是不用合并 LoRA）"},
+     "value": ("LoRA 档合并后、全参档直接，用 vLLM 启动，在训练数据集上完整推理一遍，"
+               "能完整产出可解析的推理结果（效果是否变好由判据② 判定，本条只判能否推理）。"),
+     "why": ("判据④ 同时覆盖两种模式（全参档同样用 vLLM 测，只是不用合并 LoRA）；"
+             "★ 复核条目 2：④ 只判「能否推理」，去掉「效果好于未训练模型」这一效果口径"
+             "（否则与 CPT 判据② 的「≥（允许 after == base）」冲突）")},
+    # ★ 2026-10-22（复核条目 8）：OPD 教师线由「高于」改为「≥」表达（数值 +10.0 pp 不动）。
+    #   学生线 after − base ≥ +5.0 pp 一字不动。
+    {"path": "criteria_caliber.threshold.by_method.opd.teacher",
+     "value": "教师 − 学生未训练模型 ≥ +10.0 个百分点（教师在训练数据集上的完全正确率）",
+     "why": "OPD 教师线改用 ≥ 表达（允许相等）；数值 10.0 不变；学生线不变"},
     {"path": "criteria_caliber.conclusion_rule.rule",
      "value": ("结论必须与同一行的参数一一对应。若一行的参数已被更正，而结论来自旧参数下的跑次 ⇒ 该结论作废、"
                "该档回退为「待测试」；仅在参数冻定后重跑，才可给出「通过 / 不通过」判定。"),
@@ -2049,6 +2075,32 @@ def apply_meta_sync(meta: dict[str, Any], *, card_limit: int, budget: float,
 
     for drop in META_DROPS:
         _del_path(new, drop["path"])   # 不存在也不算错（幂等）
+
+    # ★★ 2026-10-22（复核条目 15）：OPD 教师身份与教师线的**判据变更记录**。
+    #   病史：数据件里 `threshold.by_method.opd.epoch_note` 与
+    #   `caliber_change.caliber_change_20261019.changed` 仍写「原教师说明『SFT 之后的 27B 产物』
+    #   已作废」，与人读件的新句（教师 = 27B 在 SFT / LoRA / dp=1 这一档训练完成后的产物）相反。
+    #   ⇒ ⛔ 不改写历史条目（逐字留痕），而是**追加一条当日变更记录**说明：
+    #     ① 教师已指定到可复现的具体档位；② 教师线已定为 ≥（数值 +10.0 pp 不变）。
+    #   ★ 走生成器注入（本函数是发布 meta 的唯一出口）⇒ 数据件仍可由本脚本逐字节重建。
+    new.setdefault("criteria_caliber", {}).setdefault("caliber_change", {})[
+        "caliber_change_20261022"] = {
+        "effective": "2026-10-22",
+        "source": "2026-10-22 判据变更记录（OPD 教师身份指定到档位；教师线改用 ≥ 表达）",
+        "changed": (
+            "改动一 = OPD 教师身份指定到可复现的具体档位：教师 = Qwen3.8-27B 在 "
+            "SFT / LoRA / dp=1 这一档训练完成后的产物（不是基座权重本身）"
+            "—— 目的是让各 OPD 档的教师取值可复现。"
+            "改动二 = OPD 教师线改用「≥」表达：教师 − 学生未训练模型 ≥ +10.0 pp"
+            "（数值 +10.0 pp 不动，仅把「高于」改为允许相等的「≥」）。"),
+        "unchanged": (
+            "OPD 学生线 after − base ≥ +5.0 pp 一字未动；+10.0 pp 这一数值未动；"
+            "OPD epoch = 2 未动；SFT / GRASPO / CPT 三条通过线与判定语义未动；"
+            "判据条数（四条）与四个短名未动。"),
+        "superseded": (
+            "旧教师说明「SFT 之后的 27B 产物」现精确到档位（SFT / LoRA / dp=1）；"
+            "旧教师线表述「高于学生未训练模型 10 个百分点」改由「≥」表达，数值不变。"),
+    }
 
     for ov in META_OVERRIDES:
         path = ov["path"][5:] if ov["path"].startswith("meta.") else ov["path"]

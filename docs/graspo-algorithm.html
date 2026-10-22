@@ -48,29 +48,42 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <tr><td>D</td><td>截断区</td><td>E 之后的所有字符，不训练</td></tr>
 </tbody>
 </table>
-<p>边界规则：值错误不置 E（交由相似度打分）；结构不完整且非长度硬截断时，末尾非空白字符置 E。字符标记经 offset_mapping 派生 token 标记，一个 token 覆盖多字符时按「E 优先、其次 V、再次 S」合并。</p>
+<p>边界规则：值错误不置 E（交由相似度打分）；结构不完整（即无闭合标签，或 JSON 去掉围栏后不可解析）且非长度硬截断时，末尾非空白字符置 E。字符标记经 offset_mapping 派生 token 标记，一个 token 覆盖多字符时按「E 优先、其次 V、再次 S」合并。</p>
 
 <h2>3. 结构化奖励</h2>
 <p>单条 completion 的 reward 由三项相加后除以满分得到，满分由同一组检查项现算：</p>
 <ol>
 <li>结构标记项：每命中一个期望标记（JSON 围栏、think 标签、工具调用结构）计 10 分；格式对而内容错的样本也能拿到基础分。</li>
-<li>内容项：payload 与目标按结构递归比较（数值容差 0.2），多目标取最佳匹配；动作类型全对按内容分 ×100 计入、完全正确再加 100；动作类型有错只计动作匹配分 ×100。</li>
+<li>内容项：payload 与目标按结构递归比较（数值容差 0.2），多目标取最佳匹配；动作类型全对按内容分 ×100 计入，非数值字段全对（数值叶子被剥离后再比较）才算完全正确、再加 100；动作类型有错只计动作匹配分 ×100。填充文本超过 100 字符时，内容项整段不计。</li>
 <li>反冗余项：非结构化填充文本按长度指数衰减计入，每 100 字符减半，最多约 1 分。</li>
 </ol>
 <p>归一化：reward = 三项之和 ÷ 满分（满分 = 标记数上限 ×10 + 210）。因此完全正确的样本可以略高于 1。</p>
+<p>上式里的固定部分即「满分基数」，它随取样情形取三种值，读者不必自己折算：</p>
+<table>
+<thead><tr><th>情形</th><th>满分基数</th><th>构成</th></tr></thead>
+<tbody>
+<tr><td>默认</td><td>230</td><td>内容项上限 210 + 开、闭两个 JSON 围栏标记</td></tr>
+<tr><td>默认 + think</td><td>250</td><td>内容项上限 210 + 四个标记（JSON 围栏两个 + think 标签两个）</td></tr>
+<tr><td>工具调用</td><td>210</td><td>内容项上限 210，不计标记数</td></tr>
+<tr><td>工具调用 + think</td><td>230</td><td>内容项上限 210 + 开、闭两个 think 标签标记</td></tr>
+</tbody>
+</table>
 
 <h2>4. group 决策</h2>
 <p>一个提示一次采 N 条 rollout（<code>rollout_group_size=8</code>），决策只看整组 reward 的分布：</p>
 <table>
-<thead><tr><th>决策</th><th>条件</th><th>处理</th></tr></thead>
+<thead><tr><th>顺序</th><th>决策</th><th>条件</th><th>处理</th></tr></thead>
 <tbody>
-<tr><td>完美跳过</td><td>组内中位数 ≥ 1</td><td>不训练</td></tr>
-<tr><td>可训练·最优正确</td><td>组内最大值 ≥ 1</td><td>正常训练</td></tr>
-<tr><td>可训练·最优不完美</td><td>最大值 &gt; 中位数</td><td>正常训练</td></tr>
-<tr><td>重试</td><td>最优样本不可解析，或最大值 &lt; 1 且未达重试上限</td><td>重采一组，上限 5 次（<code>rollout_max_retries</code>）</td></tr>
-<tr><td>丢弃</td><td>组内无方差，或内容分一致且不满</td><td>不训练（无偏好信号）</td></tr>
+<tr><td>①</td><td>完美跳过</td><td>组内中位数 ≥ 1</td><td>不训练</td></tr>
+<tr><td>②</td><td>可训练·最优正确</td><td>组内最大值 ≥ 1</td><td>正常训练</td></tr>
+<tr><td>③</td><td>重试</td><td>最优样本不可解析</td><td>重采一组，上限 5 次（<code>rollout_max_retries</code>）；达上限即丢弃</td></tr>
+<tr><td>④</td><td>可训练·最优不完美</td><td>最大值 &gt; 中位数</td><td>正常训练</td></tr>
+<tr><td>⑤</td><td>重试</td><td>最大值 &lt; 1 且未达重试上限</td><td>重采一组，上限 5 次（<code>rollout_max_retries</code>）</td></tr>
+<tr><td>⑥</td><td>丢弃</td><td>组内无方差，或内容分一致且不满</td><td>不训练（无偏好信号）</td></tr>
+<tr><td>⑦</td><td>丢弃</td><td>最大值 == 中位数</td><td>不训练（无偏好信号）</td></tr>
 </tbody>
 </table>
+<p>判定自 ① 向下短路：命中即停，后续条件不再参与。因此「最优不可解析 ⇒ 重试」（③）先于「最大值 &gt; 中位数 ⇒ 可训练」（④）。中位数一律取下中位数：组内 reward 升序排列后取偏小的一侧，偶数条时也不是两侧平均。</p>
 <p>不可解析的组默认拒在训练边界之外（<code>reject_unparseable_groups</code> 默认开启）：不进训练、不污染梯度。</p>
 <p>组完整性：同一提示的 N 条必须同批、同权重版本；按数据并行切片时要求 N 可被切片数整除，否则拒绝启动——决策输入永远是整组。</p>
 
@@ -88,7 +101,7 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <li>组完整性：同一提示的 N 条 rollout 必须同批、同版产出，缺一条或跨版混组即不可用于训练。</li>
 <li>奖励与样本一一对齐：每条 completion 恰好一条奖励、一份字符标注、一组 token 级 advantage，且 advantage 长度等于该条生成 token 数。</li>
 <li>算法逻辑严禁改动：标注、奖励、advantage、组决策与裁剪 loss 的算式以本文为准，要改先改本文。</li>
-<li>温度互不覆盖：rollout 采样温度恒为 1.0，评测温度恒为 0，评测入口不提供覆盖参数。</li>
+<li>温度互不覆盖：rollout 采样温度标准取值 1.0，评测温度恒为 0，评测入口不提供覆盖参数。</li>
 <li>标注长度不变式：字符标记长度等于 completion 字符数，token 标记长度等于生成 token 数。</li>
 <li>采样与训练同源：rollout 由当前策略在线采样，旧对数概率即采样时的策略输出，不做多轮陈旧迭代。</li>
 <li>裁剪区间恒定：ratio 的有效区间为 [1−eps, 1+eps]（eps=0.2），不被隐式改写或逐样本缩放。</li>

@@ -134,9 +134,13 @@ REQUIRED_MARKERS = [
     # ★★ 2026-10-19 主席令：OPD 由「不劣化（能力回收）」改为 Δ ≥ +5.0 pp，**并新增教师要求**
     #    ⇒ 本条目同族换防为对**教师要求**的断言（⛔ 正是主席点名的那一项：只写结果不写教师即红）。
     ("判据②·OPD 教师要求", "教师在训练数据集上的完全正确率"),
-    # ★ 2026-10-22：「不做假设检验」「判定标识 elam-…」两句已随第 2 章改写下架（页面无对象）；
-    #   改为断言第 2 章四条判据**带 ①②③④ 编号**（第 4 章备注以「判据①…」引用，须有定义）。
-    ("判据编号·①②③④", "判据①②③④"),
+    # ★ 2026-10-22：「不做假设检验」「判定标识 elam-…」两句已随第 2 章改写下架（页面无对象）。
+    # ★★ 2026-10-22（复核条目 4）：原条目 ("判据编号·①②③④", "判据①②③④") 随第 2 章导语改写
+    #   **同族换防**——旧导语「下面四条就是第 4 章备注里判据①②③④ 的定义」是**悬空引用**
+    #   （第 4 章 0 处出现这些符号），按用户口径改为直述
+    #   「第 4 章「是否通过」列按这四条合取判定，未满足项写入备注」。
+    #   ⛔ 不是删断言、⛔ 不是放宽：新句被删即红（对象由此句承载，旧句在页面上已无对象）。
+    ("判据·第 4 章是否通过列按四条合取判定", "第 4 章「是否通过」列按这四条合取判定"),
     # ★ 2026-10-21（状态词表四态 → 三态）：图例改为 通过 / 不通过 / 待测试；
     #   类名取**渲染器常量**（§1.4 单一真相源，⛔ 本文件不另写一份词表文本）。
     ("三态·通过（图例）", f'class="{render_matrix.STATUS_CLASS["通过"]}">通过'),
@@ -248,7 +252,11 @@ CRITERIA_SUBLIST_TERMS = {
     "sft": ("数据集完全正确率",),
     "graspo": ("数据集完全正确率",),
     "cpt": ("训练 loss 正常下降", "准确率不下降"),
-    "opd": ("数据集完全正确率", "教师", "高于学生未训练模型"),
+    # ★ 2026-10-22（复核条目 8）：OPD 教师线由「高于」改为「≥」表达 ⇒ 口径词同族换防为
+    #   「学生未训练模型」（仍要求本条同时点明教师与学生未训练模型两个对象）；
+    #   比较方向不在此写死，另有 ④X-c 从数据件 `threshold.by_method.opd.teacher` **现解析**
+    #   （⛔ 不是删断言：只写结果不写教师、或方向与数据件不符，仍然红）。
+    "opd": ("数据集完全正确率", "教师", "学生未训练模型"),
 }
 #: 官方（可编辑源头）数据件路径 —— 只有 `--data` **恰好**是它时，`pass_criteria` 才是
 #: 页面同源的真相源；自证夹具（临时路径 / 变体路径）按"路径不同"跳过 ④X-b，
@@ -1047,6 +1055,35 @@ def cell_text(cell_html: str) -> str:
     return html.unescape(re.sub(r"<[^>]+>", "", cell_html)).strip()
 
 
+def criteria_data_algo_failures(crit_data: list) -> list[tuple[str, str]]:
+    """④X-d 的**唯一实现**（`verify_matrix` 与 `run_self_proof` 同源引用，⛔ 不各写一份）。
+
+    判什么（两条，任一不成立即红）：
+      ① 数据件判据③ 的文本**恰含**链接标记 `ALGO_CRITERION_LINK` 一次
+         —— 页面判据③ 的 `<a href="graspo-algorithm.html">` 必须在数据件里**同句同源**；
+         数据件缺链接 ⇒ 任意一次重生成 / 回填都会把页面链接抹掉（读者点不开算法对照件）。
+      ② 该文本**去标签后逐字含** `ALGO_CRITERION_TEXT`（句子本体一字不差）。
+
+    参数是**纯数据**（`pass_criteria` 列表），⛔ 不读盘、⛔ 不做 IO ⇒ 自证可直接复用。
+    """
+    out: list[tuple[str, str]] = []
+    _d3 = str((crit_data[2] or {}).get("text", "")) if len(crit_data) > 2 else ""
+    if not _d3:
+        out.append(("④X 判据③ 数据件同句同源（含链接标记）",
+                    "数据件缺 criteria_caliber.pass_criteria[2].text ⇒ 页面判据③ 的链接无同源数据"))
+        return out
+    _n = _d3.count(ALGO_CRITERION_LINK)
+    if _n != 1:
+        out.append(("④X 判据③ 数据件同句同源（含链接标记）",
+                    f"数据件判据③ 须恰含链接标记 {ALGO_CRITERION_LINK!r} 一次（实际 {_n} 次）"
+                    "⇒ 重生成会把页面链接抹掉"))
+    _plain = html.unescape(re.sub(r"<[^>]+>", "", _d3))
+    if ALGO_CRITERION_TEXT not in _plain:
+        out.append(("④X 判据③ 数据件同句同源（含链接标记）",
+                    f"数据件判据③ 去标签后须逐字含 {ALGO_CRITERION_TEXT!r}（实际 {_plain!r}）"))
+    return out
+
+
 def algo_artifact_failures(
     target_text: str,
     crit_items: list[str],
@@ -1258,6 +1295,18 @@ def main():
         _no_num = re.sub(r'<span class="cn">.*?</span>', "", _no_sub, flags=re.S)
         return html.unescape(re.sub(r"<[^>]+>", "", _no_num)).strip()
 
+    def _crit_top_raw(li_html: str) -> str:
+        """取 `li` 的**本条原文**（保留行内标签，如判据③ 的 `<a href=…>`）。
+
+        ★ 2026-10-22（复核条目 14）：④X-b 原实现只比**去标签纯文本** ⇒ 数据件里少一个
+          `<a href="graspo-algorithm.html">` 也能"逐字一致"（假绿）。改为按**原文含标签**比对：
+          页面有链接、数据件无链接 ⇒ 当场红（重生成会把链接抹掉的那一类漂移由此可查）。
+        """
+        _no_sub = re.sub(r"<ul\b.*?</ul>", "", li_html, flags=re.S)
+        _no_num = re.sub(r'<span class="cn">.*?</span>', "", _no_sub, flags=re.S)
+        _raw = _no_num.strip()
+        return _raw.split("：", 1)[1].strip() if "：" in _raw else ""
+
     _crit_page = []
     for _li in _crit_items:
         _t = _crit_top_text(_li)
@@ -1266,7 +1315,8 @@ def main():
         _sub = re.search(r"<ul\b[^>]*>(.*?)</ul>", _li, re.S)
         _sub_items = re.findall(r"<li>(.*?)</li>", _sub.group(1), re.S) if _sub else []
         _crit_page.append((_title, _text,
-                           [html.unescape(re.sub(r"<[^>]+>", "", x)).strip() for x in _sub_items]))
+                           [html.unescape(re.sub(r"<[^>]+>", "", x)).strip() for x in _sub_items],
+                           _crit_top_raw(_li)))
     _crit_data = list(((data.get("meta") or {}).get("criteria_caliber") or {}).get("pass_criteria") or [])
 
     # ④X-a 标题逐字 + 顺序（四个短名 ⛔ 不得改）
@@ -1287,11 +1337,20 @@ def main():
             _d = _crit_data[_i] if _i < len(_crit_data) else {}
             if _page[0] != str(_d.get("title", "")):
                 _bad_same_src.append((_i + 1, f"title 页面 {_page[0]!r} != 数据 {_d.get('title')!r}"))
-            if _page[1] != str(_d.get("text", "")):
-                _bad_same_src.append((_i + 1, f"text 页面 {_page[1]!r} != 数据 {str(_d.get('text'))!r}"))
+            # ★ 2026-10-22（复核条目 14）：比对**原文含标签**（`_page[3]`），⛔ 不再只比去标签文本
+            if _page[3] != str(_d.get("text", "")):
+                _bad_same_src.append((_i + 1, f"text 页面 {_page[3]!r} != 数据 {str(_d.get('text'))!r}"))
     if _bad_same_src:
         failures.append(("④X 页面四条 ↔ 数据件 pass_criteria 逐字一致（防两份漂移）",
                          f"不一致 {len(_bad_same_src)} 处（条次/说明）: {_bad_same_src[:6]}"))
+
+    # ④X-d ★★ 2026-10-22（复核条目 14）：判据③ 的**数据件**必须与页面**同句同源（含链接标记）**。
+    #   病史：数据件那一句是无链接版本，而页面判据③ 带 `<a href="graspo-algorithm.html">`；
+    #   一旦下游按数据件重生成 / 回填，页面链接会被抹掉（读者点不开算法对照件）。
+    #   ⇒ 判据（两条，任一不成立即红）：① 数据件判据③ 文本**恰含**链接标记一次；
+    #     ② 去标签后**逐字含** `ALGO_CRITERION_TEXT`（句子本体一字不差）。
+    #   ⛔ 不写死第二份句子：文本常量与 ④ALG 共用 `ALGO_CRITERION_TEXT` / `ALGO_CRITERION_LINK`。
+    failures.extend(criteria_data_algo_failures(_crit_data))
 
     # ④X-c 判据② 的逐算法小列表**必须保留**，且 **A 组（口径词 + 百分点）↔ B 组（pass_line_text）
     #      **逐条**一致**（数值/方向的**唯一真相源**＝数据件；⛔ 本断言不写死任何阈值字面量）。
@@ -1343,7 +1402,8 @@ def main():
             elif _want_pp not in _item:
                 _miss.append(f"A 组缺百分点 {_want_pp!r}（应与 by_method.{_m}.value 同源）")
         if _m == "opd":                                      # ★ 教师要求：⛔ 只写结果不写教师即红
-            _tpp = re.search(r"(\d+(?:\.\d+)?)\s*个百分点", str(_rule.get("teacher") or ""))
+            _teacher = str(_rule.get("teacher") or "")
+            _tpp = re.search(r"(\d+(?:\.\d+)?)\s*个百分点", _teacher)
             if not _tpp:
                 _miss.append("<数据件缺 threshold.by_method.opd.teacher 的百分点要求>")
             else:
@@ -1351,6 +1411,11 @@ def main():
                 _forms = {f"{_tv:g} 个百分点", f"{_tv:.1f} 个百分点"}
                 if not any(_f in _item for _f in _forms):
                     _miss.append(f"A 组缺教师要求百分点 {sorted(_forms)}")
+            # ★ 2026-10-22（复核条目 8）：比较方向**从数据件现解析**（⛔ 不在本文件写死「≥」）——
+            #   数据件说 ≥，页面却写「高于」⇒ 红（等号方向不一致正是本轮要修的那一类）。
+            _tcmp = next((_c for _c in ("≥", "高于") if _c in _teacher), "")
+            if _tcmp and _tcmp not in _item:
+                _miss.append(f"A 组缺教师要求比较方向 {_tcmp!r}（应与 by_method.opd.teacher 同源）")
         if _miss:
             failures.append((f"④X 判据②子项 A/B 逐条一致（{_m}）",
                              "；".join(_miss) + f"；本条实际 {_item!r}"))

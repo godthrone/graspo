@@ -664,12 +664,15 @@ def main():
         #      本对照让**页面与数据件同时**含该句 ⇒ 唯一被触发的语义断言就是 ④X（页/数据不一致）
         #      ＋ ④Y（① 侵入 ③ 的关键词面），两者都点名打印。
         tpl_txt = (SM / "template.html").read_text(encoding="utf-8")
+        # ★ 2026-10-22（复核条目 6）：判据① 正文改为「总训练步数 / 每 epoch 步数 = ⌈100 ÷ 总卡数⌉ /
+        #   最终检查点完整可加载」 ⇒ 本对照的夹具锚点**随模板同步**（⛔ 不另写一份判据文本）。
         _li_old22 = ("<b>能完整跑完</b>：训练正常结束、无中断、无报错、退出码 0、"
-                     "优化器步数达到该档计划步数（总训练轮数 × 每 epoch 步数）、"
-                     "检查点完整、没有 NaN/Inf。")
+                     "优化器步数达到该档总训练步数（总训练步数 = 总训练轮数 × 每 epoch 步数，"
+                     "每 epoch 步数 = ⌈100 ÷ 总卡数⌉）、最终检查点完整可加载、没有 NaN/Inf。")
         _li_new22 = ("<b>能完整跑完</b>：训练正常结束、无中断、无报错、退出码 0、"
-                     "优化器步数达到该档计划步数（总训练轮数 × 每 epoch 步数）、"
-                     "检查点完整、没有 NaN/Inf；算法机制真的在起作用（不是空转）。")
+                     "优化器步数达到该档总训练步数（总训练步数 = 总训练轮数 × 每 epoch 步数，"
+                     "每 epoch 步数 = ⌈100 ÷ 总卡数⌉）、最终检查点完整可加载、没有 NaN/Inf；"
+                     "算法机制真的在起作用（不是空转）。")
         checks["㉒ 注入生效（模板 ① 这一条确实被改）"] = (tpl_txt.count(_li_old22) == 1)
         (tmp / "c22.template.html").write_text(tpl_txt.replace(_li_old22, _li_new22, 1), encoding="utf-8")
         rc, out = run(["tools/matrix/render_matrix.py", "--template", str(tmp / "c22.template.html"),
@@ -698,13 +701,14 @@ def main():
         #    ★ 该对照正是"页面对、数据件旧/新不一致"这种漂移的能失败证明（用户点名要防的那一类）。
         tpl23 = (SM / "template.html").read_text(encoding="utf-8")
         _old23 = ("<b>能完整跑完</b>：训练正常结束、无中断、无报错、退出码 0、"
-                  "优化器步数达到该档计划步数（总训练轮数 × 每 epoch 步数）、"
-                  "检查点完整、没有 NaN/Inf。")
+                  "优化器步数达到该档总训练步数（总训练步数 = 总训练轮数 × 每 epoch 步数，"
+                  "每 epoch 步数 = ⌈100 ÷ 总卡数⌉）、最终检查点完整可加载、没有 NaN/Inf。")
         # ★ 夹具必须**自身仍满足 ④Y**（否则"只红 ④X"不可判）—— 实测：旧措辞「产物能加载或推理。」
         #   里的「推理」会被 ④Y 抓到（1 条命中）⇒ 用一条"字数不同但关键词面干净"的等价旧文本。
         _stale23 = ("<b>能完整跑完</b>：训练正常结束、无中断、无报错、退出码 0、"
-                    "优化器步数达到该档计划步数（总训练轮数 × 每 epoch 步数）、"
-                    "检查点完整、没有 NaN/Inf；产物的完整性另行确认。")
+                    "优化器步数达到该档总训练步数（总训练步数 = 总训练轮数 × 每 epoch 步数，"
+                    "每 epoch 步数 = ⌈100 ÷ 总卡数⌉）、最终检查点完整可加载、没有 NaN/Inf；"
+                    "产物的完整性另行确认。")
         checks["㉓ 漂移夹具生效（旧模板 ① 已改）"] = (tpl23.count(_old23) == 1)
         (tmp / "drift.template.html").write_text(tpl23.replace(_old23, _stale23, 1), encoding="utf-8")
         rc, out = run(["tools/matrix/render_matrix.py", "--template", str(tmp / "drift.template.html"),
@@ -740,8 +744,11 @@ def main():
         #      GRASPO 与 OPD 的 `pass_line_text` 是**同一字面**「after − base ≥ +5.0 pp」
         #      ⇒ 旧实现下 blob 里仍然命中、断言假绿；只有**逐条绑定**才抓得住。
         tpl24 = (SM / "template.html").read_text(encoding="utf-8")
-        _opd24_new = ("<li>OPD（蒸馏）：教师在训练数据集上的完全正确率，高于学生未训练模型 10 个百分点，"
-                      "学生训练后，训练数据集完全正确率提升至少 5.0 个百分点，"
+        # ★ 2026-10-22（复核条目 8）：OPD 教师线由「高于」改为「≥」表达 ⇒ 夹具锚点随模板同步；
+        #   旧文案夹具（`_opd24_old`）一字不动 —— 它仍必须被判红。
+        _opd24_new = ("<li>OPD（蒸馏）：教师在训练数据集上的完全正确率，与学生未训练模型相比 "
+                      "≥ +10.0 个百分点（教师 − 学生未训练模型 ≥ +10.0 pp）；学生训练后，"
+                      "训练数据集完全正确率提升至少 5.0 个百分点，"
                       "判据 after − base ≥ +5.0 pp</li>")
         _opd24_old = "<li>OPD（蒸馏）：学生准确率不下降，判据 学生 after ≥ base（能力回收）</li>"
         checks["㉔ OPD 旧文案夹具生效（模板 OPD 子项确实被改回旧文案）"] = (tpl24.count(_opd24_new) == 1)
@@ -775,8 +782,11 @@ def main():
         #     （⛔ 防"夹具锚点失效"或"断言永远红"造成假绿）
         _m24 = re.search(r"<li>OPD（蒸馏）：(.*?)</li>", tpl24, re.S)
         _opd_li_cur = _m24.group(1) if _m24 else ""
+        #   ★ 2026-10-22（复核条目 8）：教师线的**比较方向**已由「高于」改为「≥」⇒ 本断言同族换防
+        #     （仍要求同时点明教师、学生未训练模型、教师线数值方向与本条学生通过线）。
         checks["㉔c 在盘模板 OPD 子项含「教师」＋本条通过线"] = (
-            all(_w in _opd_li_cur for _w in ("教师", "高于学生未训练模型", "after − base ≥ +5.0 pp")))
+            all(_w in _opd_li_cur for _w in ("教师", "学生未训练模型", "≥ +10.0 个百分点",
+                                             "after − base ≥ +5.0 pp")))
 
         # ㉕ ★★ 条件/结果**分区**的自证（2026-10-19 分区轮；**阈值 ≤2/≥3 轮**更新，
         #    主席原话「枚举数量小于等于 2 的，放测试条件，剩下的都作为测试结果表的列」）：
@@ -967,11 +977,14 @@ def main():
 
         # ㉜ 判据④ 旧句（只写「合并 LoRA」）—— 模板与数据件同时改，验的才是语义断言
         _old4_html = "<li><span class=\"cn\">④</span> <b>能推理</b>：合并 LoRA 后用 vLLM 启动，训练数据集可以完整推理一遍，效果好于未训练模型。</li>"
+        # ★ 2026-10-22（复核条目 2）：判据④ 只判「能否推理」（去掉「效果好于未训练模型」
+        #   这一效果口径）⇒ 本对照的新句锚点**随模板同步**；旧句（只写合并 LoRA）一字不动。
         _new4_html = ("<li><span class=\"cn\">④</span> <b>能推理</b>：LoRA 档合并后、全参档直接，"
-                      "用 vLLM 启动，在训练数据集上完整推理一遍，效果好于未训练模型。</li>")
+                      "用 vLLM 启动，在训练数据集上完整推理一遍，能完整产出可解析的推理结果"
+                      "（效果是否变好由判据② 判定，本条只判能否推理）。</li>")
         _old4_text = "合并 LoRA 后用 vLLM 启动，训练数据集可以完整推理一遍，效果好于未训练模型。"
         _new4_text = ("LoRA 档合并后、全参档直接，用 vLLM 启动，在训练数据集上完整推理一遍，"
-                      "效果好于未训练模型。")
+                      "能完整产出可解析的推理结果（效果是否变好由判据② 判定，本条只判能否推理）。")
         _tpl32 = (SM / "template.html").read_text(encoding="utf-8")
         checks["㉜ 判据④ 旧句夹具生效（模板确实被改回旧句）"] = (_tpl32.count(_new4_html) == 1)
         (tmp / "old4.template.html").write_text(_tpl32.replace(_new4_html, _old4_html, 1), encoding="utf-8")
@@ -1041,6 +1054,32 @@ def main():
             algo_doc_path=str(tmp / "algo35_nogroup.html"))
         checks["㉟c 自证内部判据（删锚点例）能红且点名「组完整性」"] = any(
             "组完整性" in _d for _n, _d in _bad35)
+
+        # ㊱ ★★ 2026-10-22（复核条目 14）：断言 ④X-d 的阳性对照 —— **数据件判据③ 去掉链接标记**
+        #   ⇒ 必红（页面链接失去同源数据；任意一次重生成/回填都会把它抹掉）。
+        #   ① 自证内部：同源调用唯一实现（⛔ 不另写一份判据）；
+        #   ② 端到端：用篡改后的数据件渲染 + verify ⇒ rc=1 且 FAIL 点名 ④X 判据③。
+        _d36 = json.loads(json.dumps(data, ensure_ascii=False))
+        _pc36 = ((_d36.get("meta") or {}).get("criteria_caliber") or {}).get("pass_criteria") or []
+        checks["㊱ 夹具前置：在盘数据件判据③ 同句同源（含链接标记）"] = (
+            not _vm.criteria_data_algo_failures(_pc36))
+        _plain36 = str((_pc36[2] or {}).get("text", "")).replace(_vm.ALGO_CRITERION_LINK, "GRASPO 算法说明")
+        checks["㊱a 夹具确实删掉了链接标记"] = (_plain36 != str((_pc36[2] or {}).get("text", ""))
+                                              and _vm.ALGO_CRITERION_LINK not in _plain36)
+        _pc36[2]["text"] = _plain36
+        checks["㊱b 自证内部判据（数据件缺链接标记）能红且点名 ④X 判据③"] = any(
+            _n.startswith("④X 判据③") for _n, _dd in _vm.criteria_data_algo_failures(_pc36))
+        (tmp / "nolink.data.json").write_text(
+            json.dumps(_d36, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        rc, out = run(["tools/matrix/render_matrix.py", "--template", "tools/matrix/template.html",
+                       "--data", str(tmp / "nolink.data.json"), "--out", str(tmp / "nolink.html")])
+        steps.append(("㊱ 数据件判据③ 去掉链接标记后渲染（应 rc=0）", rc, out))
+        rc, out = run(["tools/matrix/verify_matrix.py", "--template", "tools/matrix/template.html",
+                       "--data", str(tmp / "nolink.data.json"), "--html", str(tmp / "nolink.html")])
+        steps.append(("㊱ 数据件判据③ 去掉链接标记后 verify（应 FAIL）", rc, out))
+        checks["㊱c 数据件缺链接标记 ⇒ verify 变红"] = (rc == 1)
+        checks["㊱d FAIL 点名「④X 判据③ 数据件同句同源（含链接标记）」"] = (
+            "④X 判据③ 数据件同句同源（含链接标记）" in out)
 
         print("=" * 70)
         for name, rc, out in steps:
