@@ -949,7 +949,10 @@ def main():
         #   ㉜ 判据④ 的**模板与数据件同时**改回旧句（只写合并 LoRA）⇒ ④F4 必须红；
         #      且 ④X **不得**红 —— 证明抓到它的是「判据④ 必须覆盖两种模式」这条语义断言，
         #      而不是"页面/数据不一致"（后者只证明两份漂移）。
-        #   ㉝ 删掉第 3 章「档位形状取值规则」⇒ ④SH 必须红（1／2／4、≤ 4、不对称 三件套缺一即红）。
+        #   ㉝ ★ 2026-10-22（主席令删「档位形状取值规则」整段）⇒ ④SH **已正式退役**，自证方向
+        #      随之翻转（⛔ 不是删用例：旧方向「删掉该句 ⇒ ④SH 必红」的对象已被主席令删干净，
+        #      页面上没有东西可再删了）—— 改守"**退役面本身成立 + 其它断言照旧有效**"，见下方
+        #      ㉝a–㉝c 三段。
         #   ㉞ 塞回「<h3>评测条件</h3>」小节标题 ⇒ ④TEMP 必须红（第 2 章两块已按用户口径
         #      整块删除，页面「评测条件」命中数须为 0；⛔ 原「删清单表 ⇒ ④CL 报红」随对象
         #      已不存在一并删除 —— 不是放宽：删掉的对象改为「不得复活」这一条正向守）。
@@ -958,8 +961,6 @@ def main():
             ("㉛ 塞回「实测跑通过」",
              _page.replace("估算 33.24/78.0 GiB（可行）", "估算 33.24/78.0 GiB（可行，实测跑通过）", 1),
              "④P"),
-            ("㉝ 删掉第 3 章形状取值规则",
-             re.sub(r"<li><b>档位形状取值规则：.*?</li>\n", "", _page, count=1, flags=re.S), "④SH"),
             ("㉞ 塞回「评测条件」小节标题",
              _page.replace("</ol>\n</section>", "</ol>\n<h3>评测条件</h3>\n</section>", 1),
              "④TEMP"),
@@ -974,6 +975,67 @@ def main():
             checks[_tag + " ⇒ verify 变红"] = (rc == 1)
             checks[_tag + " ⇒ 报红点提到 " + _want] = (_want in out)
             checks[_tag + " ⇒ 自证内置判据也能失败"] = (_want in out)
+
+        # ㉝ ★★ 2026-10-22（主席令：删掉第 3 章「训练集群」那条「档位形状取值规则」整段）
+        #   ⇒ ④SH（1／2／4、≤ 4、不对称、不纳入本矩阵 四件套缺一即红）**正式退役**。
+        #   自证因此翻转：旧方向「删掉该句 ⇒ ④SH 必红」的对象已被主席令删干净（页面上已无该句，
+        #   ⛔ 不是删用例）⇒ 改为守三件事：
+        #     ㉝a 页面上四件套确实**零命中**（旧判据的失败条件成立）但 verify 仍 **rc=0**
+        #         ⇒ 证明挡住这条必然失败的是**退役面**，而不是"词还在、判据没触发"；
+        #     ㉝b 把该句**塞回模板**并重新渲染（字节同一性成立）⇒ verify **仍 rc=0**
+        #         ⇒ 证明退役后的 ④SH 既不误报、也不因"塞回"变红；
+        #     ㉝c 同一页再叠一处**别的**篡改（塞回「实测跑通过」）⇒ verify **rc=1** 且 FAIL 点名
+        #         ④P、FAIL 清单里没有 ④SH ⇒ 证明退役只退这一条，其余断言照旧 fail-closed。
+        def _fail_names(text: str) -> list[str]:
+            return re.findall(r"FAIL \[(.*?)\]", text)
+
+        _sh_words = ("1／2／4", "≤ 4", "不对称", "不纳入本矩阵")
+        _sh_miss = [w for w in _sh_words if w in re.sub(r"<[^>]+>", "", _page)]
+        checks["㉝a 在盘页面确无形状取值规则四件套（旧判据失败条件成立）"] = (_sh_miss == [])
+        checks["㉝a ④SH 退役登记在位（理由点名主席令）"] = (
+            "④SH 第 3 章形状取值规则" in _vm.RETIRED_2026_10_22
+            and "主席 2026-10-22" in _vm.RETIRED_2026_10_22.get("④SH 第 3 章形状取值规则", ""))
+        rc, out = run(["tools/matrix/verify_matrix.py", "--template", "tools/matrix/template.html",
+                       "--data", "docs/capability-matrix.data.json",
+                       "--html", "docs/GRASPO 训练框架功能测试报告.html"])
+        steps.append(("㉝a 在盘件（四件套已按令删除）⇒ verify（应 PASS）", rc, out))
+        checks["㉝a 词已删而 verify 仍 rc=0（退役面挡住必然失败，不误报）"] = (rc == 0)
+        checks["㉝a 即便 rc=0，FAIL 清单里也没有 ④SH"] = (
+            not any(n.startswith("④SH") for n in _fail_names(out)))
+
+        _sh_li = ('<li><b>档位形状取值规则：</b>TP / PP / DP 每一维只取 <b>1／2／4</b>；'
+                  '<b>总卡数 = TP × PP × DP ≤ 4</b>；<b>不对称</b>的组合（例如 dp=3）'
+                  '<b>不纳入本矩阵</b>。</li>\n')
+        _tpl_sh = (SM / "template.html").read_text(encoding="utf-8")
+        _sh_anchor = "</ul>\n<h3>训练超参</h3>"
+        checks["㉝b 塞回锚点（</ul>+训练超参）在模板里唯一"] = (_tpl_sh.count(_sh_anchor) == 1)
+        (tmp / "sh.template.html").write_text(
+            _tpl_sh.replace(_sh_anchor, _sh_li + _sh_anchor, 1), encoding="utf-8")
+        rc, out = run(["tools/matrix/render_matrix.py", "--template", str(tmp / "sh.template.html"),
+                       "--data", "docs/capability-matrix.data.json", "--out", str(tmp / "sh.html")])
+        steps.append(("㉝b 用「塞回旧句」模板渲染（应 rc=0）", rc, out))
+        _sh_html = (tmp / "sh.html").read_text(encoding="utf-8") if (tmp / "sh.html").exists() else ""
+        checks["㉝b 塞回确实进了渲染页（防注入静默失效）"] = (
+            rc == 0 and "档位形状取值规则" in _sh_html)
+        rc, out = run(["tools/matrix/verify_matrix.py", "--template", str(tmp / "sh.template.html"),
+                       "--data", "docs/capability-matrix.data.json", "--html", str(tmp / "sh.html")])
+        steps.append(("㉝b 塞回旧句后 verify（应 PASS：退役后不误报）", rc, out))
+        checks["㉝b 塞回旧句 ⇒ verify 仍 rc=0（④SH 退役后不误报）"] = (rc == 0)
+        checks["㉝b FAIL 清单里没有 ④SH"] = (
+            not any(n.startswith("④SH") for n in _fail_names(out)))
+
+        _sh_tampered = _sh_html.replace("估算 33.24/78.0 GiB（可行）",
+                                        "估算 33.24/78.0 GiB（可行，实测跑通过）", 1)
+        checks["㉝c 叠加篡改夹具确实生效"] = (_sh_tampered != _sh_html)
+        (tmp / "sh.tampered.html").write_text(_sh_tampered, encoding="utf-8")
+        rc, out = run(["tools/matrix/verify_matrix.py", "--template", str(tmp / "sh.template.html"),
+                       "--data", "docs/capability-matrix.data.json", "--html", str(tmp / "sh.tampered.html")])
+        steps.append(("㉝c 塞回旧句 + 塞「实测跑通过」（应 FAIL）", rc, out))
+        _fb_sh = _fail_names(out)
+        checks["㉝c 叠加篡改 ⇒ verify rc=1"] = (rc == 1)
+        checks["㉝c FAIL 点名 ④P（退役后其它断言照旧抓到）"] = any(n.startswith("④P") for n in _fb_sh)
+        checks["㉝c FAIL 清单里没有 ④SH（退役只退这一条）"] = (
+            not any(n.startswith("④SH") for n in _fb_sh))
 
         # ㉜ 判据④ 旧句（只写「合并 LoRA」）—— 模板与数据件同时改，验的才是语义断言
         _old4_html = "<li><span class=\"cn\">④</span> <b>能推理</b>：合并 LoRA 后用 vLLM 启动，训练数据集可以完整推理一遍，效果好于未训练模型。</li>"

@@ -169,7 +169,6 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <ul class="tight">
 <li>基础模型：<code>Qwen3.5-9B</code>、<code>Qwen3.8-27B</code>。</li>
 <li>OPD 教师：<code>Qwen3.8-27B</code> 在 <b>SFT / LoRA / dp=1</b> 这一档训练完成后的产物（不是基座权重本身）。</li>
-<li><b>显存边界（区分两种模式）：</b>本表以 <code>78.0 GiB</code> 作为单卡设计预算（卡容量 <code>79.25 GiB</code>，预算为卡容量留出余量）。单卡放不下的是 <b>27B 全参</b>（即使把优化器态整体挪到 CPU，估算也需 <code>115.89 GiB</code>）；27B <b>LoRA</b> 单卡能跑 —— 装得下卡容量，但越过设计预算（估算 <code>78.64 GiB</code>，卡容量 <code>79.25 GiB</code>，仅余 <code>0.61 GiB</code>）。</li>
 </ul>
 <h4>LoRA 说明</h4>
 <ul class="tight">
@@ -187,7 +186,6 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <h4>训练集群</h4>
 <ul class="tight">
 <li>A800，单机 8 卡，机器拓扑为 A800 PCIe：GPU 以 NVLink 成对相连、对与对之间走 PCIe bridge。</li>
-<li><b>档位形状取值规则：</b>TP / PP / DP 每一维只取 <b>1／2／4</b>；<b>总卡数 = TP × PP × DP ≤ 4</b>；<b>不对称</b>的组合（例如 dp=3）<b>不纳入本矩阵</b>。</li>
 </ul>
 <h3>训练超参</h3>
 <table class="cfg">
