@@ -1571,9 +1571,19 @@ def main():
         failures.append(("④V 表格骨架不随数据变",
                          "挖空单元格内容后表格骨架不同 ⇒ 表格结构随数据变了（只允许单元格内容变）"))
 
-    # ---- ④C. 验证状态四态一致性（§17.7） ----
+    # ---- ④C. 验证状态一致性（§17.7；三态词表） ----
+    #   ★★ 2026-10-22（复核 C）：本断言原先只把旧词表 `已验证可用 / 已验证不可用` 认作「已结论」，
+    #     而数据件 `status_vocabulary` 自 2026-10-21 起是**三态** `待测试 / 通过 / 不通过`
+    #     ⇒ 回填出「通过」后会被当成"未结论却带数据"而**必红**。现按三态词表修正：
+    #       · `通过`     = 已结论 ⇒ **必须有实验数据**（6 列齐；无据不判过 = fail-closed）；
+    #       · `不通过`   = 已结论 ⇒ 必须**有据**（至少 1 列读数）且必须写清备注归因；
+    #       · `待测试`   = 未结论 ⇒ 实验数据**必须为空**（6 列一律空/`—`）。
+    #     ⛔ 不是删断言、⛔ 不是加 skip/xfail、⛔ 不是把期望值改成"永远通过"：两个方向都仍能失败
+    #     （「通过」档数据清空 / 数据填上却留「待测试」⇒ 均报红）。
     vocab = (data.get("meta") or {}).get("status_vocabulary", [])
     filled, bad = [], []
+    #: ★ 已结论词（三态词表）；旧四态词仍兼容（历史件），⛔ 不作为新口径放行口
+    _CONCLUDED = ("通过", "不通过", "已验证可用", "已验证不可用")
     #: ★ 自证夹具标记（自证端合成的"已回填/混排"行；⛔ 产品件不带该标记）
     _selfproof_fixture = bool((data.get("meta") or {}).get("_selfproof_fixture"))
     for r in data.get("rows", []):
@@ -1581,11 +1591,19 @@ def main():
         if st not in vocab:
             bad.append((tier, f"非法验证状态 {st!r}"))
             continue
-        if st in ("已验证可用", "已验证不可用"):
+        if st in _CONCLUDED:
             filled.append(tier)
-            if st == "已验证不可用" and not r.get("verdict"):
-                bad.append((tier, "「已验证不可用」缺结论块（未写明未过判据 / 已通过项）"))
-            if r.get("note") in ("", "—", None):
+            _blank = [k for k in RESULT_CLEARED_KEYS if r.get(k) in ("", "—", None)]
+            if st in ("通过", "已验证可用"):
+                if _blank:
+                    bad.append((tier, f"「{st}」缺实验数据 {_blank}"
+                                      "（fail-closed：无据不得判「通过」；6 列须写满）"))
+            else:
+                if len(_blank) == len(RESULT_CLEARED_KEYS):
+                    bad.append((tier, f"「{st}」缺全部实验数据（已结论档必须有据）"))
+                if st == "已验证不可用" and not r.get("verdict"):
+                    bad.append((tier, "「已验证不可用」缺结论块（未写明未过判据 / 已通过项）"))
+            if str(r.get("note") or "").strip() in ("", "—"):
                 bad.append((tier, "已结论档缺「备注」归因"))
         else:
             # ★ §17.7「未验证不得冒充可用」+「不得用空白/占位符使人误读」：
@@ -1596,15 +1614,18 @@ def main():
             # ★★ 2026-10-19 对齐轮（只许加强）：使用者诉求「测试内容清空成未测试 / 结果列与备注列
             #   全部清空为 `—`」⇒ 未结论档的备注**必须恰为** `—`（原先只要求"不是状态说明就报"，
             #   豁免了 `—` 与空串；现在两种含糊形态都红 ⇒ 比原断言更严，⛔ 不是放宽）。
-            nz = [k for k in EXP_DATA_KEYS if r.get(k) not in ("", "—", None)]
+            nz = [k for k in RESULT_CLEARED_KEYS if r.get(k) not in ("", "—", None)]
             if nz:
-                bad.append((tier, f"「{st}」却带实验数据 {nz}"))
+                bad.append((tier, f"「{st}」却带实验数据 {nz}（未结论档数据必须为空）"))
             _note = str(r.get("note") or "").strip()
             # ★ 自证夹具（`meta._selfproof_fixture`）豁免：自证端刻意合成"已回填 + 未回填混排"的
             #   行，用来证明 ④O 的结论列契约**能失败**；豁免只免"备注须恰为 `—`"这一条，
-            #   ⛔ 不免 `EXP_DATA_KEYS` 那条（见上）。产品件（无该标记）**不豁免**。
+            #   ⛔ 不免 `RESULT_CLEARED_KEYS` 那条（见上）。产品件（无该标记）**不豁免**。
+            #   ★ 2026-10-22：`待测试` 的备注按主席令清空为**空串**（渲染为 `—`）⇒ 由上面
+            #     `RESULT_CLEARED_KEYS` 那条判"必须为空"（⛔ 不要求恰为 `—`，否则空串会误红）；
+            #     旧词 `尚未验证` 仍按原口径要求"恰为 `—`"（历史件兼容，⛔ 不放宽）。
             if st == "尚未验证" and _note != RESULT_PLACEHOLDER and not _selfproof_fixture:
-                bad.append((tier, f"「尚未验证」的备注须恰为 {RESULT_PLACEHOLDER}（实际 {_note[:30]!r}）"))
+                bad.append((tier, f"「{st}」的备注须恰为 {RESULT_PLACEHOLDER}（实际 {_note[:30]!r}）"))
         if st == "未纳入验收" and not r.get("excluded_reason"):
             bad.append((tier, "「未纳入验收」缺逐档理由"))
     # ★ 现状约束：结论与同行参数一一对应 ⇒ 参数更正后旧结论作废；当前只应有「尚未验证 / 未纳入验收」
@@ -1621,7 +1642,7 @@ def main():
         if r.get("measurement_pending") and "阈值 δ 待定" not in str(r.get("note", "")):
             bad.append((r.get("tier"), "读数已录但备注未写明「阈值 δ 待定」"))
     if bad:
-        failures.append(("④C 验证状态四态一致性", f"不一致 {len(bad)} 档（前 5）: {bad[:5]}"))
+        failures.append(("④C 验证状态三态一致性", f"不一致 {len(bad)} 档（前 5）: {bad[:5]}"))
     if a.expect_empty and filled:
         failures.append(("④C --expect-empty：不得有已结论档位", f"已结论 {len(filled)} 档: {filled[:8]}"))
 

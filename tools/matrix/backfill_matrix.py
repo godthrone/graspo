@@ -1,30 +1,46 @@
 #!/usr/bin/env python3
-"""backfill_matrix.py — 跑次 json ⇒ matrix-data.json ⇒ 重渲染 ⇒ 逐字节校验（唯一回填通道）。
+"""backfill_matrix.py — 跑次 json ⇒ 数据件（原地回填）⇒ 重渲染 ⇒ 逐字节校验 ⇒ 落盘（唯一回填通道）。
 
-★ 唯一输入格式：`<runs-dir>/<档号>.json`（schema = `matrix-run/v1`）。
-  字段与矩阵 10 列一一对应；另带 `provenance`（谁产出 / 哪条命令 / 原始证据路径）。
-  格式与示例见 `matrix-schema.md` §3。
+★★ 口径（2026-10-22 对齐；本文件此前"回填即崩 / 写了不该写的列"的病史见工位 work_log）：
 
-★ 流程（全部经脚本，⛔ 任何人不得手改 HTML / 不得手编辑结果字段）：
-  ① 逐个读 `<档号>.json` 并**严格校验**（缺字段 / 空值 / 非法状态 / 档号与文件名不符 /
-     自报参数与档位表不符 ⇒ 该批 **fail-closed**，一个字节都不写）；
-  ② 合并进 `matrix-data.json`（**未跑档位保持 `—`**；同一 json sha 已回填则跳过，可反复运行）；
-  ③ `render_matrix.py` 重渲染 `capability-matrix-new.html`（先写临时件）；
-  ④ `verify_matrix.py --allow-filled` 逐字节校验临时件；PASS 才落盘，FAIL 即原样不动；
-  ⑤ 追加一行「回填台账」（哪档何时回填、来自哪个 json、verify 结果）。
+  结果 JSON **只承载「实验数据 + 检查结果」**。⛔ 不再接受人工指定「是否通过」：
+  顶层出现 `status` 字段 ⇒ **报错拒绝**（不静默忽略、不悄悄采纳）——通过与否不能由填写者说了，
+  必须由回填器按第 2 章四条判据**从数据算出**。
 
-★ 增量语义：跑完一个档 ⇒ 回填一个档（不必等全量）。重复运行安全。
-★ 旁路/演示：给 `--data-out` / `--html-out` / `--ledger-out` 指定别处路径，
-  即可在不碰真交付件的前提下演练（evidence/backfill-demo-* 就是这么来的）。
+  ① 回填写满第 4 章「实验数据」组**6 列**（与数据件 `data_keys` 同源）：
+       显存峰值 `peak_mem`／实跑步数 `steps_actual`／耗时 `elapsed`／吞吐 `throughput`／
+       效果（评测 Δ）`effect`／备注 `note`。
+       ★ `steps_actual`（整数步）与 `elapsed`（秒）由本脚本**直接写**（⛔ 不再依赖下游派生），
+         并按固定形态格式化（`N 步` / `总时长 N s（约 X h）`）。
+  ② 状态列按四条判据**自动计算**（阈值一律从数据件 `meta.criteria_caliber.threshold` **现读**，
+     ⛔ 本文件不写任何阈值常量）：
+       判据① 跑完：退出码 0 ∧ 实跑步数 == 该档总训练步数（行 `derived_steps`）∧ 最终检查点可加载 ∧ 无 NaN/Inf
+       判据② 效果：`threshold.by_method[<方法>]` 的通过线（Δ ≥ 通过线）；OPD 另需
+              「教师 − 学生未训练 ≥ 教师线」（教师线从 `by_method.opd.teacher` 现解析）
+       判据③ 算法正确性检查
+       判据④ 能完整产出可解析的推理结果（只判能否推理）
+  ③ **fail-closed 铁律**：
+       · 任一条判据「有据且不过」⇒ 判「不通过」（合取已假），未过项与未判定项写入备注；
+       · 四条全「有据且过」⇒ 判「通过」；
+       · 否则（存在缺证且无任一判据失败）⇒ **整批拒收、一个字节都不写**，档位**保持「待测试」**，
+         报错逐条点名缺哪条证据。
+       ★ 之所以"保持"而不是"写待测试 + 读数"：数据件词表把「待测试」定义为**未结论（数据必须为空）**，
+         回填成「待测试 + 带数据」会让机核 ④C 必红（详见 verify_matrix.py ④C）。
+  ④ 渲染**只走 `render_matrix.py`**（与现役生成链一致）；⛔ 不走 `build_official.py` 的重渲染路径
+     （其产物的 meta 不含 `enumeration`，而渲染器对该键 fail-closed）。
 
-用法：
-  python3 backfill_matrix.py --runs-dir .local/hb-workspace/<会话>/task-matrix-runs
-  python3 backfill_matrix.py --runs-dir <dir> --only T001,T010 --dry-run
-  python3 backfill_matrix.py --runs-dir <demo-runs> \
-      --data-in matrix-data.json --data-out evidence/backfill-demo-data.json \
-      --html-out evidence/backfill-demo.html --ledger-out evidence/backfill-demo-ledger.md
+★ 唯一输入格式：`<runs-dir>/<档号>.json`（schema = `matrix-run/v1`）；字段说明见下方 `REQUIRED_*`。
+
+★ 用法（默认 = 原地回填正式数据件 + 渲染正式人读件）：
+    python3 tools/matrix/backfill_matrix.py --runs-dir <dir>
+    python3 tools/matrix/backfill_matrix.py --runs-dir <dir> --only M001,M002 --dry-run
+  旁路演练（⛔ 不碰正式件）：
+    python3 tools/matrix/backfill_matrix.py --runs-dir <demo-runs> --data-in <副本>.json [--html-out <副本>.html]
+  ★ `--html-out` 缺省 = 数据件同目录下 `meta.authority.human_view_path` 的 basename
+    ⇒ 数据件副本在别处时，产物也落在别处（不会写回 docs/）。
 """
 import argparse
+import copy
 import hashlib
 import json
 import re
@@ -35,24 +51,26 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
-#: ★★ 2026-10-22（复核 B2）：判据类型名的**唯一真相源** = `src/graspo/eval/thresholds.KNOWN_CRITERIA`
-#:   —— 本文件⛔ 不再抄第三份名字表（病史：`delta_pp → gain_pp` 改名时本文件漏改，导致
-#:   `frozen_map_from_caliber()` 把 sft/opd/graspo 判成 `None`，**合法跑次被判「未冻结却自述阈值」而拒收**）。
+TOOL_DIR = Path(__file__).resolve().parent
+ROOT = TOOL_DIR.parents[1]
+
+
+#: ★★ 判据类型名的**唯一真相源** = `src/graspo/eval/thresholds.KNOWN_CRITERIA`
+#:   —— 本文件⛔ 不再抄第三份名字表（病史：`delta_pp → gain_pp` 改名时本文件漏改，
+#:   导致 `frozen_map_from_caliber()` 把 sft/opd/graspo 判成 `None`，**合法跑次被判「未冻结却自述阈值」而拒收**）。
 #:   取法：直接 import 该模块（同仓、同解释器；`src/` 不在 sys.path 时按路径载入）。
 def _load_known_criteria() -> tuple[str, ...]:
     """读 `graspo.eval.thresholds.KNOWN_CRITERIA`；取不到 ⇒ **fail-closed**（⛔ 不回落本地常量）。"""
     import importlib.util as _ilu
 
-    _root = Path(__file__).resolve().parents[2]
-    _path = _root / "src" / "graspo" / "eval" / "thresholds.py"
+    _path = ROOT / "src" / "graspo" / "eval" / "thresholds.py"
     if not _path.is_file():
         raise SystemExit(f"FATAL: 找不到判据真相源 {_path} ⇒ backfill 的判据白名单无法确定（fail-closed）")
     _spec = _ilu.spec_from_file_location("_graspo_thresholds_for_backfill", _path)
     if _spec is None or _spec.loader is None:
         raise SystemExit(f"FATAL: 载入 {_path} 失败 ⇒ 判据白名单无法确定（fail-closed）")
     _mod = _ilu.module_from_spec(_spec)
-    # ★ dataclasses 需要 `sys.modules[cls.__module__]` 存在 ⇒ 先登记再 exec（否则 exec 期抛
-    #   AttributeError: 'NoneType' object has no attribute '__dict__'）
+    # ★ dataclasses 需要 `sys.modules[cls.__module__]` 存在 ⇒ 先登记再 exec
     sys.modules[_spec.name] = _mod
     _spec.loader.exec_module(_mod)
     _known = tuple(getattr(_mod, "KNOWN_CRITERIA", ()) or ())
@@ -68,8 +86,8 @@ KNOWN_CRITERIA: tuple[str, ...] = _load_known_criteria()
 def _known_criteria_selfcheck() -> None:
     """★ 防第四份副本：本文件用到的判据名集合必须与 `KNOWN_CRITERIA` **完全相等**。
 
-    `extract` 侧（`th.bin` 类前导）与 `frozen_map_from_caliber` 侧都只从本常量取名字；
-    一旦有人再写死一份字面表，本函数在 `--self-test` 与正式跑里都会 fail-closed。
+    `frozen_map_from_caliber` 只从本常量取名字；一旦有人在别处再写死一份字面表，
+    本函数在 `--self-test` 与正式跑里都会 fail-closed。
     """
     _lines = Path(__file__).read_text(encoding="utf-8").splitlines()
     # `--self-test` 的夹具**必须**构造判据名（那是它的被测输入）⇒ 该函数体豁免于本扫描
@@ -84,12 +102,9 @@ def _known_criteria_selfcheck() -> None:
     for _i, _line in enumerate(_lines, 1):
         if _st_lo <= _i < _st_hi:
             continue                      # 自证夹具（见上）
-
         _t = _line.lstrip()
         if _t.startswith("#") or _t[:1] in ('"', "'"):
             continue                      # 注释 / 文档行不算（允许记录改名病史）
-        # 只盯「判据名」这一用法：**同一行出现 `criterion`** 才算副本（`delta_pp` 同时是
-        # 跑次/档位表的**数值字段名**，出现在 `after_acc / base_acc / delta_pp` 里属正常用法）。
         if "criterion" not in _line:
             continue
         for _c in KNOWN_CRITERIA:
@@ -101,28 +116,64 @@ def _known_criteria_selfcheck() -> None:
 
 
 SCHEMA = "matrix-run/v1"
-REQUIRED_TOP = ["schema", "tier", "params", "status", "runs", "effect",
-                "inference", "algo_checks", "throughput", "peak_mem",
-                "run_path", "provenance"]
-# ★ v3 同步（2026-10-11）：matrix-data/v3 把参数列拆成逐字段命名键，`hparams` 合并串已移除。
-#   - IDENTITY_KEYS：跑次 json 必须自报且必须与档位表逐字一致（防「跑 A 填 B」错位）；
-#   - 其余键：json 若提供，则与档位表比对；json 未提供不报错（档位表是参数真相源）；
-#   - 表里已不存在的键（如 legacy `hparams`）：登记为 legacy，**忽略**而不 fail-closed（兼容旧 json）。
+
+#: 第 4 章「实验数据」组 6 列（= 数据件 `data_keys`；回填器必须**写满**）
+DATA_COLUMNS = ("peak_mem", "steps_actual", "elapsed", "throughput", "effect", "note")
+
+#: 顶层必填键。★ `steps_actual` / `elapsed` 在必填之列（缺了报错，⛔ 不静默补空）。
+#: ⛔ `status` **不在**其中，且出现即拒收（见 `validate_run`）。
+REQUIRED_TOP = ["schema", "tier", "params", "run_result", "steps_actual", "elapsed",
+                "peak_mem", "throughput", "effect", "note", "run_path", "provenance"]
+
+#: 判据① 的结构化检查结果（可机判；缺键 ⇒ 校验失败，⛔ 不猜）
+REQUIRED_RUN_RESULT = ["exit_code", "final_ckpt_loadable", "nan_or_inf_detected"]
+
+# ★ 参数身份（防「跑 A 填 B」错位）：身份键必须自报且与档位表逐项一致。
 PARAM_IDENTITY_KEYS = ["model", "algo", "mode", "backend", "parallel"]
-#: ★ 严格比对集（防「跑 A 填 B」的身份事实）：身份键 + 并行维度 + lr
+#: ★ 严格比对集：身份键 + 并行维度 + lr
 PARAM_KEYS_V3 = ["model", "algo", "mode", "backend", "parallel", "lr"]
-#: ★ "训练身份"字段：**比归一化后的语义值**（⛔ 不比展示串/散文）
-# ★ `steps` 不列入严格比对：它是**名义/派生值**且正在被公式纠正（json 可能仍带旧推导）⇒ 其核算由 step_count_reconciliation 负责
-# ★ `steps_derived`（名义/派生）**可宽松**；★ `steps_actual`（实跑步数）是**训练身份** ⇒ 留在严格比对
-PARAM_SEMANTIC_KEYS = ["lora_target", "target_modules", "data_subset", "switches", "steps_actual"]
-#: ★ 仅登记不判错（纯散文/口径说明）
-PARAM_INFO_KEYS = []
+#: ★ "训练身份"语义键：按归一化后的语义值比对（⛔ 不比展示串/散文）
+#:   ★★ 2026-10-22：`steps_actual` 已从本表移除 —— 它现在是**结果列**（回填器写），
+#:      不再属于参数身份；留在表里会让"同档重测、步数变了"被误判成错位。
+PARAM_SEMANTIC_KEYS = ["lora_target", "target_modules", "data_subset", "switches"]
+LEGACY_PARAM_KEYS = ["hparams"]
+
+#: 占位符 / 空值集（「写满 6 列」的反面：这些值一律视为"没填"）
+EMPTY_VALUES = ("", "—", None)
+
+LEDGER_HEADER = """# 回填台账 — `backfill-ledger.md`
+
+> **唯一回填通道**：`backfill_matrix.py` 消费 `<runs-dir>/<档号>.json` ⇒ 原地更新
+> `capability-matrix.data.json` ⇒ `render_matrix.py` 重渲染 ⇒ `verify_matrix.py` 逐字节校验。
+> **增量**：跑完一个档 ⇒ 回填一个档；**未跑/未判定的档位保持「待测试」**；**缺字段/缺判据证据 ⇒ 整批 fail-closed**。
+> 「是否通过」由脚本按四条判据从数据算出，⛔ 结果 json 不得自带 `status`。
+> 每次回填写一行；`verify` 列 = 该次回填后端到端校验结果（render + 逐字节比对 + 结构/内容断言）。
+
+| 回填时间 | 档号 | 来源 json | json sha256 | 状态 | verify | 备注 |
+|:--:|---|---|---|---|:--:|---|
+"""
+
+
+def sha256_file(p: Path) -> str:
+    return hashlib.sha256(Path(p).read_bytes()).hexdigest()
+
+
+def _s(v):
+    return v.strip() if isinstance(v, str) else v
+
+
+def _num(v):
+    """数值化（bool 是 int 子类 ⇒ 必须排除，§2.4 防呆）；非数 ⇒ None。"""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    return float(v)
 
 
 def _ints(v):
     return [int(x) for x in re.findall(r"\d+", str(v))]
 
 
+# ---- 身份归一化（⛔ 不做任何可能"合并真实不同值"的归一） ----
 def norm_ident(v):
     """★ 身份字符串规范化：去括注（全/半角）、去首尾空白、去 markdown 强调符。
 
@@ -131,7 +182,6 @@ def norm_ident(v):
     """
     t = str(v or "").replace("*", "").strip()
     t = re.sub(r"[（(][^）)]*[）)]\s*$", "", t).strip().lower()
-    # ★ 已登记的**同义写法**（⛔ 只收已知别名，不合并真实不同值）：配置侧与档位表用词不同但同义。
     return _IDENT_ALIASES.get(t, t)
 
 
@@ -151,39 +201,24 @@ def norm_param(key, v):
 
     · lora_target / target_modules ⇒ **解析/实测件数**（native 122 / ms-swift 358），⛔ 不比展示串；
     · data_subset ⇒ 子集规模（首个整数）；
-    · steps ⇒ 步数（取最大整数，即推导/实跑总数）；
     · switches ⇒ `k=v` 键值对集合（⛔ 不比顺序/措辞）。
     """
     if v is None or str(v).strip() in ("", "—"):
         return None
     t = str(v).replace("*", "")          # 去 markdown 强调符（否则 **358** 件 解析不到）
     if key in ("lora_target", "target_modules"):
-        # ★★ 2026-10-15 修（与「逐键取同类参照」同批）：**优先取「实例数」**。
-        #   现行档位表文本形如「language_all_linear + vision_common（**122 件**：language 12 + visual 110）
-        #   ｜native：canonical preset 名（**358 实例**；122 为签名/模式条目数）」
-        #   —— **122 = 模式/签名条目数**、**358 = 模块实例数**（README 已登记该区分）；
-        #   跑次 json 写的是「358 个 LoRA 模块实例 = language 248 + visual 110」。
-        #   ⇒ 若仍按第一个「N 件」取值，会把**同一事实的两种计数**判成"错位"（实证：T022/T024/T028/T029
-        #     4 档全被误判）⇒ 必须先认「N 个?…实例」，再退到「N 件」。
+        # ★ 优先取「实例数」：档位表文本形如「…（**122 件**）｜native：canonical preset 名（**358 实例**…）」
+        #   —— 358 = 模块实例数（跑次 json 写的也是实例数）；按第一个"N 件"取值会把同一事实的两种计数判成错位。
         m = re.search(r"(\d+)\s*(?:个)?\s*(?:LoRA\s*)?(?:模块\s*)?实例", t)
         if m:
             return int(m.group(1))
-        m = re.search(r"(\d+)\s*件", t)                       # 「122 件」/「358 件」
+        m = re.search(r"(\d+)\s*件", t)
         if m:
             return int(m.group(1))
         if "language_all_linear" in t or "vision_common" in t:
             return 122
         if "language_model" in t or "visual" in t:
             return 358
-        return None
-    if key == "steps_actual":
-        # 实跑步数：优先取"数字/数字"或"实测 19 步"等形态的数值
-        if isinstance(v, dict):
-            a = v.get("actual_steps")
-            return int(a) if a is not None else None
-        m2 = re.search(r"(?:实测|实际|actual)[^0-9]{0,8}(\d+)", t) or re.search(r"^(\d+)", t.strip())
-        if m2:
-            return int(m2.group(1))
         return None
     if key == "data_subset":
         ns = _ints(t)
@@ -199,280 +234,10 @@ def norm_param(key, v):
                 pairs.add(k.strip().lower() + "=" + val.strip())
         return frozenset(pairs) if pairs else None
     return None
-LEGACY_PARAM_KEYS = ["hparams"]
-RESULT_KEYS = ["status", "runs", "effect", "inference", "algo_checks",
-               "throughput", "peak_mem", "run_path"]
-STATUSES = ["通过", "失败", "失败（效果）", "条件不合逻辑", "未完成测试"]
-PLACEHOLDER = "—"
-
-LEDGER_HEADER = """# 回填台账 — `backfill-ledger.md`
-
-> **唯一回填通道**：`backfill_matrix.py` 消费 `task-matrix-runs/<档号>.json` ⇒ 更新 `matrix-data.json`
-> ⇒ `render_matrix.py` 重渲染 ⇒ `verify_matrix.py --allow-filled` 逐字节校验。
-> **增量**：跑完一个档 ⇒ 回填一个档；**未跑档位保持 `—`**；**缺字段 fail-closed**（整批一个字节都不写）。
-> 每次回填写一行；`verify` 列 = 该次回填后端到端校验结果（render + 逐字节比对 + 结构/内容断言）。
-> 演示（假数据）记录在 `evidence/backfill-demo-ledger.md`，⛔ 不进本台账。
-
-| 回填时间 | 档号 | 来源 json | json sha256 | 状态 | verify | 备注 |
-|:--:|---|---|---|---|:--:|---|
-"""
-
-
-def sha256_file(p: Path) -> str:
-    return hashlib.sha256(p.read_bytes()).hexdigest()
-
-
-def _s(v):
-    return v.strip() if isinstance(v, str) else v
-
-
-TRAINING_CLASSES = {"sft", "cpt", "opd"}
-
-
-#: ★ 判据②（效果）逐算法通过线的方法键（顺序即文档展示顺序）
-CALIBER_METHODS = ("sft", "graspo", "cpt", "opd")
-
-
-def _frozen_text(s):
-    """★ 「已冻结」判定：含「冻结」且**不含「未冻结」**（⛔ 子串误判会解除 fail-closed）。"""
-    t = str(s or "")
-    return "冻结" in t and "未冻结" not in t
-
-
-def frozen_map_from_caliber(th):
-    """★ 纯函数：`meta.criteria_caliber.threshold` ⇒ 方法→冻结阈值(pp) 映射（便于自检，不读文件）。
-
-    ★ 唯一真相源 = `threshold.by_method`（逐算法）；未冻结 ⇒ None。
-    ★ 回退（**仅当** `by_method` 缺失，如旧代际正式件）：用旧的单一 `value` —— 该值已被取代，
-      只为兼容旧数据而保留，⛔ 不得据此声称"当前口径仍是统一阈值"。
-    """
-    out = {m: None for m in TRAINING_CLASSES}      # sft / cpt / opd
-    out["graspo"] = None
-    th = th if isinstance(th, dict) else {}
-    bm = th.get("by_method") or {}
-    if bm:
-        for m in CALIBER_METHODS:
-            e = bm.get(m) or {}
-            v = e.get("value")
-            if v is None:
-                continue
-            # ★ 只认判据② 的两类通过线；其余判据类型 ⇒ 不据此判定（fail-closed）
-            # ★ 判据名一律取真相源（⛔ 不再写字面元组）
-            if str(e.get("criterion", "")) not in KNOWN_CRITERIA:
-                continue
-            if _frozen_text(th.get("status")) or _frozen_text(e.get("status")):
-                out[m] = float(v)
-        return out
-    val, applies = th.get("value"), str(th.get("applies_to", ""))
-    status = str(th.get("status", ""))
-    if val is not None and ("训练类" in applies or "冻结" in status):
-        for m in TRAINING_CLASSES:
-            out[m] = float(val)
-    if val is not None and "GRASPO" in applies:
-        out["graspo"] = float(val)
-    return out
-
-
-def matrix_frozen_pp(official_path, train_method):
-    """★ 阈值只能来自**矩阵自身的冻结口径**（`meta.criteria_caliber.threshold.by_method`）。
-
-    返回该档类别适用的冻结阈值（pp）；**未冻结 ⇒ None**（跑次无论自报什么都不得据此判定）。
-    ★ 新口径（2026-10-15）：判据② **逐算法分列** ⇒ 一律读 `by_method[<方法>].value`；
-      CPT / OPD 走「不劣化线 after ≥ base」⇒ 其数值等价于 `value = 0.0`（**不是**放宽，是换判据）。
-    """
-    return matrix_frozen_map(official_path).get(str(train_method).lower())
-
-
-def matrix_frozen_map(official_path):
-    """从**矩阵自身冻结口径**导出 方法→冻结阈值(pp) 的映射；未冻结 ⇒ 该方法映射为 None。"""
-    try:
-        d = json.loads(Path(official_path).read_text(encoding="utf-8"))
-        th = (((d.get("meta") or {}).get("criteria_caliber") or {}).get("threshold")) or {}
-        return frozen_map_from_caliber(th)
-    except Exception:
-        return frozen_map_from_caliber(None)
-
-
-LEDGER_ROW = re.compile(
-    r"^\|\s*(?P<time>[^|]+?)\s*\|\s*`(?P<tier>[^`]+)`\s*\|\s*`(?P<file>[^`]+)`\s*\|\s*`(?P<sha>[^`]+)`\s*\|"
-    r"\s*(?P<status>[^|]*?)\s*\|\s*(?P<verdict>[^|]*?)\s*\|\s*(?P<note>[^|]*?)\s*\|\s*$")
-
-
-def dedup_ledger(text):
-    """★ 台账按 `(档号, json sha)` 去重：同键合并为一行，保留次数与原因（审计痕迹）。
-
-    ★ 硬要求：**不同 sha ⇒ 必须保留两行**（那才是真增量，⛔ 不得被去重吞掉）。
-    ★ 行序保持：非数据行（表头/分隔线等）**留在原位置**（用槽位占位，不搬动）。
-    """
-    slots, bykey = [], {}          # slots: (kind, payload)
-    for ln in text.splitlines():
-        m = LEDGER_ROW.match(ln)
-        if not m:
-            slots.append(("raw", ln))
-            continue
-        key = (m.group("tier"), m.group("sha"))
-        row = ("| %s | `%s` | `%s` | `%s` | %s | %s | %s |"
-               % (m.group("time"), m.group("tier"), m.group("file"), m.group("sha"),
-                  m.group("status"), m.group("verdict"), m.group("note").strip()))
-        if key in bykey:
-            k, cnt, forced = bykey[key]
-            cnt += 1
-            forced += 1 if "--force" in ln else 0
-            bykey[key] = (k, cnt, forced)
-            slots[k] = ("row", row[:-1] + " ×%d（含 %d 次 --force 重跑） |" % (cnt, forced))
-        else:
-            bykey[key] = (len(slots), 1, 1 if "--force" in ln else 0)
-            slots.append(("row", row))
-    out = [payload for _kind, payload in slots]
-    return "\n".join(out) + "\n"
-
-
-def ledger_covers(rows, filled_tiers):
-    """★ 断言辅助（可单测）：本次处理的每一档是否都在台账行里。返回缺失的档号列表。"""
-    return [t for t in filled_tiers if not any(f"`{t}`" in r for r in rows)]
-
-
-def _sanitize_paths(t: str) -> str:
-    """★ 命令链脱敏：抹除宿主家目录残形（与导出器/校验器同一纪律）。"""
-    return re.sub(r"/home/[^\s/]+(/[^\s]*)?", "<HOST>", str(t or ""))
-
-
-#: ★ 不可评档**允许为空**的结果字段（★ 仅当 `not_evaluable_reason` 非空且不含"效果"）
-NOT_EVALUABLE_MAY_BE_EMPTY = ("inference", "algo_checks", "throughput", "peak_mem", "run_path", "runs")
-
-def matrix_sanitize_probe(t: str) -> str:
-    """★ 与构建层同规则的脱敏探针（供用例断言；★ 单一真源在 `build_official.matrix_text_sanitize`）。"""
-    import re as _re
-    t = str(t or "").replace("/homedata/test.jsonl", "平台方自有数据集（不公开）")
-    t = _re.sub(r"/homedata/[^\s，。；]*", "平台方自有数据集（不公开）", t)
-    t = t.replace("test.jsonl", "平台方自有数据集（不公开）")
-    return _re.sub(r"(?<![0-9A-Za-z])228(?![0-9A-Za-z])", "<HOST>", t)
-
-
-NON_EVALUABLE_HINTS = ("冒烟", "超时", "未实现", "不可合并", "异常退出", "不可评")
-
-
-def not_evaluable_ok(row: dict) -> bool:
-    """★ "不可评（工程缺口）"分支校验：
-
-    · 评测三件（`after_acc`/`base_acc`/`delta_pp`）为空 ⇒ ★ **必须**给出非空 `not_evaluable_reason`；
-      ★ **反之（空评测＋空 reason）⇒ 判不合规**（防"悄悄把不可评写成失败而不说原因"）；
-    · ★ `not_evaluable_reason` **不得出现"效果"字样**（防误标为效果失败）；★ 并须含非空真因
-      （★ 建议含 `冒烟/超时/未实现/不可合并/异常退出/不可评` 之一）。
-    """
-    ev = [row.get(k) for k in ("after_acc", "base_acc", "delta_pp")]
-    empty = all(v in (None, "", "—", "不适用") for v in ev)
-    reason = str(row.get("not_evaluable_reason") or "").strip()
-    if reason and "效果" in reason:
-        return False                      # ★ 误标：不可评 ⛔ 不得写成效果失败
-    if not empty:
-        return True                       # ★ 正常评测档 ⇒ 无需 reason
-    return bool(reason)                   # ★ 空评测 ⇒ 必须给非空 reason
-
-
-def copy_result_field(doc: dict, key: str):
-    """★ 结果字段拷贝口径：**仅跳过 `None` 与空容器** ⇒ ⛔ 不得用真值判断（`0`/`0.0`/空串是合法实测值）。"""
-    v = doc.get(key)
-    if v is None:
-        return None
-    if isinstance(v, (list, dict, str)) and len(v) == 0:
-        return None
-    return v
-
-
-def evidence_chain_ok(row: dict) -> bool:
-    """★ 断言：矩阵行的证据链必须非空（`evidence_paths` 非空 且 `provenance_command` 非空）。"""
-    ev = row.get("evidence_paths")
-    cmd = str(row.get("provenance_command") or "").strip()
-    placeholder = ("", "未记录")
-    if ev in (None,) or (isinstance(ev, str) and ev.strip() in placeholder) or (isinstance(ev, list) and not ev):
-        return False
-    return cmd not in placeholder
-
-
-def verdict_transition(already_judged: bool, status_before: str, status_after: str) -> int:
-    """★ "重测 vs 新判定"计数断言：返回**四态总判定数**的期望变化。
-
-    · 该档**已在四态内**（already_judged=True）⇒ 走"更新"路径 ⇒ ★ **期望变化 = 0**（总数不变）
-    · 该档**不在四态内** ⇒ 走"新增判定"路径 ⇒ ★ 期望变化 = +1（且 status_before 应为"—"/尚未验证）
-    ★ 用途：机器拦住"计数漂移"（人工算术今日已两次出偏差）。
-    """
-    if already_judged:
-        return 0
-    return 1 if status_after in ("已验证可用", "已验证不可用") else 0
-
-
-def conclusion_of(raw):
-    """把跑次 `status` 规范化为 'pass' / 'fail' / 'other'。
-
-    ★ 状态字符串**一律走规范化匹配，⛔ 不用精确相等**：跑次可能写「通过（已验证可用）」这类**带括注**形态。
-    ★ 负例安全性：`未通过` / `非通过` / `不通过` **不以**「通过」开头 ⇒ 归 'other'，⛔ 不会被误判为 pass。
-    """
-    t = str(raw or "").strip()
-    if t.startswith("通过"):
-        return "pass"
-    if t.startswith("失败"):
-        return "fail"
-    return "other"
-
-
-def correction_texts(doc, _path=""):
-    """递归找出跑次 json 中所有"订正/口径更正"类字段（键名含 correct/订正/口径更正），返回文本列表。
-
-    ★ 目的：跑次侧的**依据/来源订正**必须如实进入备注与证据链（⛔ 不吞）。
-    """
-    out = []
-    if isinstance(doc, dict):
-        for k, v in doc.items():
-            _k_hit = any(t in str(k).lower() for t in ("correct", "订正", "口径更正"))
-            if _k_hit and v:
-                out.append(f"{k}：{v}" if not isinstance(v, str) else v)
-            elif isinstance(v, str) and "订正" in v:
-                out.append(f"{k}：{v}")     # ★ 值里声明式订正（如 run_path / guard_assertions）
-            out.extend(correction_texts(v, _path + "." + str(k)))
-    elif isinstance(doc, list):
-        for x in doc:
-            out.extend(correction_texts(x, _path))
-    return out
-
-
-def run_claimed_pp(doc):
-    """从跑次自述里抽其**自报**的阈值（pp）；抽不到 ⇒ None。
-
-    只在**阈值语境**下取值（`≥ N pp` / `阈值 N pp`），⛔ 不把"达标差 Δ"当成阈值。
-    """
-    mp = ((doc.get("provenance") or {}).get("measurement_pending") or {})
-    blob = " ".join([str(doc.get("runs", "")), str(doc.get("effect", "")),
-                     str(mp.get("threshold_delta", ""))])
-    pats = [r"(?:≥|>=)\s*\+?\s*([0-9]+(?:\.[0-9]+)?)\s*pp",
-            r"阈值\s*[Δdelta]*\s*(?:为|=|≥|>=)?\s*\+?\s*([0-9]+(?:\.[0-9]+)?)\s*pp"]
-    for pat in pats:
-        m = re.search(pat, blob)
-        if m:
-            return float(m.group(1))
-    return None
-
-
-def is_frozen(doc):
-    """判据② 的阈值是否已冻结（正式判定 vs 仅录读数）。
-
-    顶层 `threshold_frozen: true` 优先；否则回退到跑次自报的
-    `provenance.measurement_pending` 声明（含「已冻结」即视为冻结）。
-    """
-    if doc.get("threshold_frozen") is True:
-        return True
-    mp = ((doc.get("provenance") or {}).get("measurement_pending") or {})
-    txt = str(mp.get("threshold_delta", "")) + str(mp.get("verdict", ""))
-    # ★ 收紧后：这里只表示"跑次自述声称阈值已冻结"；**能否据此判定以矩阵口径为准**（见 main）。
-    return "冻结" in txt or "冻结阈值" in (str(doc.get("runs", "")) + str(doc.get("effect", "")))
 
 
 def norm_parallel(s):
-    """归一化为 (总卡数, 世界大小, 维度字典)，用于语义身份比对。
-
-    ★ 加固：canonical 相等**且双方都声明了同名字段时，维度必须逐项一致**
-      （⛔ 不因表达面不同而丢掉「跑 A 填 B」的检出能力）。
-    """
+    """归一化为 (总卡数, 世界大小, 维度字典)，用于语义身份比对。"""
     if not isinstance(s, str):
         return None
 
@@ -506,27 +271,165 @@ def compare_parallel(js, ts):
     errs = []
     if nj[:2] != nt[:2]:
         errs.append(f"params.parallel 语义不一致（防错位）：json={js!r}->{nj[:2]} 表={ts!r}->{nt[:2]}")
-    # ★ 双方都声明的维度必须逐项一致
     for k in sorted(set(nj[2]) & set(nt[2])):
         if nj[2][k] != nt[2][k]:
             errs.append(f"params.parallel 维度 {k} 不一致（防错位）：json={nj[2][k]} 表={nt[2][k]}")
     return errs
 
 
-def validate_run(doc, tier_from_file, tier_rows, frozen_map=None, ref_rows_official=None, void_tiers=None):
+# ---- 判据② 的阈值：一律从数据件现读（⛔ 本文件无阈值常量） ----
+#: ★ 判据②（效果）逐算法通过线的方法键（顺序即文档展示顺序）
+CALIBER_METHODS = ("sft", "graspo", "cpt", "opd")
+TRAINING_CLASSES = {"sft", "cpt", "opd"}
+
+
+def _frozen_text(s):
+    """★ 「已冻结」判定：含「冻结」且**不含「未冻结」**（⛔ 子串误判会解除 fail-closed）。"""
+    t = str(s or "")
+    return "冻结" in t and "未冻结" not in t
+
+
+def frozen_map_from_caliber(th):
+    """★ 纯函数：数据件 `meta.criteria_caliber.threshold` ⇒ 方法→冻结阈值(pp) 映射。
+
+    ★ 唯一真相源 = `threshold.by_method`（逐算法）；未冻结 ⇒ None。
+    ★ 回退（**仅当** `by_method` 缺失，如旧代际正式件）：用旧的单一 `value` —— 该值已被取代，
+      只为兼容旧数据而保留，⛔ 不得据此声称"当前口径仍是统一阈值"。
+    """
+    out = {m: None for m in CALIBER_METHODS}
+    th = th if isinstance(th, dict) else {}
+    bm = th.get("by_method") or {}
+    if bm:
+        for m in CALIBER_METHODS:
+            e = bm.get(m) or {}
+            v = e.get("value")
+            if v is None:
+                continue
+            # ★ 只认判据② 的两类通过线；其余判据类型 ⇒ 不据此判定（fail-closed）
+            # ★ 判据名一律取真相源（⛔ 不写字面元组）
+            if str(e.get("criterion", "")) not in KNOWN_CRITERIA:
+                continue
+            if _frozen_text(th.get("status")) or _frozen_text(e.get("status")):
+                out[m] = float(v)
+        return out
+    val, applies = th.get("value"), str(th.get("applies_to", ""))
+    status = str(th.get("status", ""))
+    if val is not None and ("训练类" in applies or "冻结" in status):
+        for m in TRAINING_CLASSES:
+            out[m] = float(val)
+    if val is not None and "GRASPO" in applies:
+        out["graspo"] = float(val)
+    return out
+
+
+#: OPD 教师线的可解析形态（散文里的「≥ +10.0 个百分点」；⛔ 不在本文件写死数值）
+RE_TEACHER_LINE = re.compile(r"≥\s*\+?\s*([0-9]+(?:\.[0-9]+)?)\s*个?百分点")
+
+
+def teacher_line_pp(th):
+    """从数据件现解析 OPD 教师线（教师 − 学生未训练 的 pp 下限）；缺 ⇒ None（判据② 不可判定）。"""
+    bm = (th if isinstance(th, dict) else {}).get("by_method") or {}
+    m = RE_TEACHER_LINE.search(str((bm.get("opd") or {}).get("teacher") or ""))
+    return float(m.group(1)) if m else None
+
+
+# ---- 台账 ----
+LEDGER_ROW = re.compile(
+    r"^\|\s*(?P<time>[^|]+?)\s*\|\s*`(?P<tier>[^`]+)`\s*\|\s*`(?P<file>[^`]+)`\s*\|\s*`(?P<sha>[^`]+)`\s*\|"
+    r"\s*(?P<status>[^|]*?)\s*\|\s*(?P<verdict>[^|]*?)\s*\|\s*(?P<note>[^|]*?)\s*\|\s*$")
+
+
+def dedup_ledger(text):
+    """★ 台账按 `(档号, json sha)` 去重：同键合并为一行，保留次数（审计痕迹）。
+
+    ★ 硬要求：**不同 sha ⇒ 必须保留两行**（那才是真增量，⛔ 不得被去重吞掉）。
+    ★ 行序保持：非数据行（表头/分隔线等）**留在原位置**（用槽位占位，不搬动）。
+    """
+    slots, bykey = [], {}          # slots: (kind, payload)
+    for ln in text.splitlines():
+        m = LEDGER_ROW.match(ln)
+        if not m:
+            slots.append(("raw", ln))
+            continue
+        key = (m.group("tier"), m.group("sha"))
+        row = ("| %s | `%s` | `%s` | `%s` | %s | %s | %s |"
+               % (m.group("time"), m.group("tier"), m.group("file"), m.group("sha"),
+                  m.group("status"), m.group("verdict"), m.group("note").strip()))
+        if key in bykey:
+            k, cnt = bykey[key]
+            cnt += 1
+            bykey[key] = (k, cnt)
+            slots[k] = ("row", row[:-1] + " ×%d（同源重复回填） |" % cnt)
+        else:
+            bykey[key] = (len(slots), 1)
+            slots.append(("row", row))
+    out = [payload for _kind, payload in slots]
+    return "\n".join(out) + "\n"
+
+
+def ledger_covers(rows, filled_tiers):
+    """★ 断言辅助（可单测）：本次处理的每一档是否都在台账行里。返回缺失的档号列表。"""
+    return [t for t in filled_tiers if not any(f"`{t}`" in r for r in rows)]
+
+
+def append_ledger(path: Path, rows):
+    text = path.read_text(encoding="utf-8") if path.exists() else LEDGER_HEADER
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text.rstrip("\n") + "\n" + "\n".join(rows) + "\n", encoding="utf-8")
+    path.write_text(dedup_ledger(path.read_text(encoding="utf-8")), encoding="utf-8")
+
+
+# ---- 防呆辅助（可单测） ----
+def unknown_tier_stems(stems, tier_rows) -> list[str]:
+    """结果目录里**不属于本矩阵**的档号（排序返回；非空 ⇒ 报错退出）。"""
+    return sorted({str(s) for s in stems} - set(tier_rows))
+
+
+def resolve_only(only_csv, tier_rows, stems):
+    """解析 `--only`：返回 (档号集合 或 None, 错误列表)。
+
+    ★ 防呆：档号必须存在于本矩阵（`M777` ⇒ 报错）；且结果目录里必须有对应 json
+      （否则"什么都没回填却 rc=0"会把「漏跑 / 打错档号」藏起来）。
+    """
+    if not only_csv:
+        return None, []
+    only = {x.strip() for x in only_csv.split(",") if x.strip()}
+    if not only:
+        return None, ["--only 为空（逗号分隔的档号列表）"]
+    errs = []
+    bad = sorted(only - set(tier_rows))
+    if bad:
+        errs.append(f"--only 指定了不存在的档号 {bad}（本矩阵档号范围 {min(tier_rows)}…{max(tier_rows)}）")
+    no_file = sorted(only - {str(s) for s in stems})
+    if no_file:
+        errs.append(f"--only 指定的档号在结果目录内无对应 json：{no_file}")
+    return only, errs
+
+
+def untouched_drift(orig_rows, new_rows, processed) -> list[str]:
+    """★ 部分回填的保真断言：**未处理的档必须与原件逐字段相等**。返回漂移档号列表。"""
+    return [t for t, r in orig_rows.items() if t not in processed and new_rows.get(t) != r]
+
+
+# ---- 校验：跑次 json 结构 + 身份 + 「不许人工指定 status」 ----
+def validate_run(doc, tier_from_file, tier_rows):
     """严格校验一份跑次 json。返回错误列表（空 = 合法）。"""
     if not isinstance(doc, dict):
         return ["顶层不是 JSON 对象"]
-    # ★ 显式作废档：参数已更正 ⇒ **跳过"参数/阈值对应"校验**（只保留结构校验），
-    #   其结论按"参考记录"留存（§结论与参数一一对应：不对应 ⇒ 作废，而非报错）。
-    _voided = bool(void_tiers) and tier_from_file in void_tiers
-    errs = [f"缺字段 {k!r}" for k in REQUIRED_TOP if k not in doc]
+    errs = []
+    # ★★ 口径：状态由回填器按判据算出 ⇒ 结果 json 不得自带 `status`（不静默忽略、不悄悄采纳）
+    if "status" in doc:
+        errs.append("结果 json 不得含 `status` 字段：是否通过由回填器按第 2 章四条判据从数据算出，"
+                    "⛔ 不接受人工指定（删掉该字段后重跑）")
+    errs += [f"缺字段 {k!r}" for k in REQUIRED_TOP if k not in doc]
     if errs:
         return errs
 
     if doc.get("schema") != SCHEMA:
         errs.append(f"schema 必须是 {SCHEMA!r}，实际 {doc.get('schema')!r}")
 
+    # --- tier：必须与文件名一致、且在本矩阵档位表内 ---
     tier = _s(doc["tier"])
     if not isinstance(tier, str) or not tier:
         errs.append("tier 为空或非字符串")
@@ -536,84 +439,99 @@ def validate_run(doc, tier_from_file, tier_rows, frozen_map=None, ref_rows_offic
         if tier not in tier_rows:
             errs.append(f"档号 {tier!r} 不在矩阵档位表内")
 
-    # --- params：身份键必须齐全且与 v3 档位表逐字一致（防「跑 A 填 B」错位） ---
-    #     v3 同步：矩阵参数列已拆为逐字段键；json 里提供的键逐项比对，
-    #     未提供不报错（档位表是参数真相源），legacy 键（hparams）忽略并登记。
+    # --- params：身份键必须齐全且与档位表逐项一致（防「跑 A 填 B」错位） ---
     p = doc["params"]
     if not isinstance(p, dict):
         errs.append("params 不是 JSON 对象")
-    else:
+    elif tier in tier_rows:
+        ref = tier_rows[tier]
         for k in PARAM_IDENTITY_KEYS:
             v = _s(p.get(k))
             if k not in p:
                 errs.append(f"params 缺身份键 {k!r}")
             elif not isinstance(v, str) or not v:
                 errs.append(f"params.{k} 为空")
-        if tier in tier_rows and not _voided:
-            ref = tier_rows[tier]
-            for k in PARAM_KEYS_V3:
-                if k not in p or _s(p.get(k)) is None:
-                    continue
-                j, r_ = _s(p.get(k)), _s(ref.get(k, ""))
-                if k == "parallel":
-                    errs.extend(compare_parallel(j, r_))     # ★ canonical + 维度逐项一致
-                elif norm_ident(r_) != norm_ident(j):
-                    errs.append(f"params.{k} 与档位表不一致（防错位）：json={j!r} 表={r_!r}")
-            # ★ "训练身份"字段：比**归一化语义值**（LoRA 目标件数 / 数据规模 / 步数 / 开关集合）
-            ref_sem = (ref_rows_official or {}).get(tier, ref)      # ★ 语义参照取正式件（含当期派生值）
-            for k in PARAM_SEMANTIC_KEYS:
-                if k not in p:
-                    continue
-                _jv = p.get(k)
-                if k == "steps_actual" and _jv is None:
-                    _jv = ((doc.get("step_count_reconciliation") or {}).get("actual_steps"))
-                # ★★ 逐键比**同类**的语义值。2026-10-15 修：原写法对**所有** k 都取
-                #    `ref_sem["steps_actual"]`（只有 k == "steps_actual" 时才是对的）⇒
-                #    `switches`/`data_subset`/`lora_target` 的"防错位"检查**形同虚设**；
-                #    且当行内 `steps_actual` 变化时会**误报**别的键不一致（实证：T011 二次回填
-                #    报 `params.data_subset 语义不一致：json=100 表=200` —— 表取的是 steps_actual）。
-                nj, nt = norm_param(k, _jv), norm_param(k, ref_sem.get(k, ""))
-                if nj is not None and nt is not None and nj != nt:
-                    errs.append(f"params.{k} 语义不一致（训练身份，防错位）：json={nj} 表={nt}")
-            # 纯散文字段：只登记，不判错
-            doc.setdefault("_param_info_diffs", [])
-            for k in PARAM_INFO_KEYS:
-                if k in p and _s(p.get(k)) is not None and _s(ref.get(k, "")) != _s(p.get(k)):
-                    doc["_param_info_diffs"].append(k)
-            doc.setdefault("_legacy_params_ignored", [])
-            for k in LEGACY_PARAM_KEYS:
-                if k in p and k not in ref:
-                    doc["_legacy_params_ignored"].append(k)
+        for k in PARAM_KEYS_V3:
+            if k not in p or _s(p.get(k)) is None:
+                continue
+            j, r_ = _s(p.get(k)), _s(ref.get(k, ""))
+            if k == "parallel":
+                errs.extend(compare_parallel(j, r_))
+            elif norm_ident(r_) != norm_ident(j):
+                errs.append(f"params.{k} 与档位表不一致（防错位）：json={j!r} 表={r_!r}")
+        for k in PARAM_SEMANTIC_KEYS:
+            if k not in p:
+                continue
+            nj, nt = norm_param(k, p.get(k)), norm_param(k, ref.get(k, ""))
+            if nj is not None and nt is not None and nj != nt:
+                errs.append(f"params.{k} 语义不一致（训练身份，防错位）：json={nj} 表={nt}")
+        for k in LEGACY_PARAM_KEYS:
+            if k in p and k not in ref:
+                doc.setdefault("_legacy_params_ignored", []).append(k)
 
-    # --- 结果列：8 项必须存在且非空；status=通过 时不得用占位符 '—' ---
-    st = _s(doc["status"])
-    if st not in STATUSES and not (isinstance(st, str) and (st.startswith("失败") or st.startswith("通过"))):
-        errs.append(f"status {st!r} 非法（须为 {' / '.join(STATUSES)} 之一）")
-    # ★★ "不可评（工程缺口）"例外（2026-10-14 主席口径下必需）：★ `not_evaluable_reason` 非空
-    #    且**不含"效果"** ⇒ ★ **评测相关的结果字段允许为空/"不适用"**（★ 因该档产物不可评，
-    #    ⛔ 不是漏填）；★ 反之（空评测＋无 reason）由 `not_evaluable_ok()` 兜住。
-    _ner = str(doc.get("not_evaluable_reason") or "").strip()
-    _not_evaluable = bool(_ner) and "效果" not in _ner
-    for k in RESULT_KEYS[1:]:
-        v = _s(doc[k])
-        if _not_evaluable and k in NOT_EVALUABLE_MAY_BE_EMPTY:
-            continue
-        if not isinstance(v, str) or not v:
-            errs.append(f"结果字段 {k!r} 为空 / 非字符串")
-        elif v == PLACEHOLDER and conclusion_of(st) == "pass":
-            errs.append(f"status=通过 但 {k!r} 仍是占位符 '—'（不许半填）")
+    # --- 判据① 的结构化检查结果（可机判；缺键/类型不对 ⇒ 报错，⛔ 不猜） ---
+    rr = doc["run_result"]
+    if not isinstance(rr, dict):
+        errs.append("run_result 不是 JSON 对象")
+    else:
+        for k in REQUIRED_RUN_RESULT:
+            if k not in rr:
+                errs.append(f"run_result 缺 {k!r}")
+        ex = rr.get("exit_code")
+        if "exit_code" in rr and (isinstance(ex, bool) or not isinstance(ex, int)):
+            errs.append(f"run_result.exit_code 必须是整数，实际 {ex!r}")
+        for k in ("final_ckpt_loadable", "nan_or_inf_detected"):
+            if k in rr and not isinstance(rr.get(k), bool):
+                errs.append(f"run_result.{k} 必须是布尔值，实际 {rr.get(k)!r}")
 
-    # --- ★ 阈值信任边界：阈值只能来自矩阵冻结口径；跑次自述仅作交叉核对，不一致即拒绝 ---
-    if tier in tier_rows and frozen_map is not None and not _voided:
-        method = str(tier_rows[tier].get("train_method", "")).lower()
-        frozen_pp = frozen_map.get(method)
-        claimed = run_claimed_pp(doc)
-        if frozen_pp is None and claimed is not None:
-            errs.append(f"矩阵侧 {method!r} 类阈值**尚未冻结**，跑次却自述阈值 {claimed} pp "
-                        f"⇒ 拒绝（⛔ 跑次不得自定阈值）")
-        elif frozen_pp is not None and claimed is not None and claimed != frozen_pp:
-            errs.append(f"跑次自述阈值 {claimed} pp ≠ 矩阵冻结口径 {frozen_pp} pp ⇒ 拒绝"
-                        f"（阈值只能来自矩阵）")
+    # --- 必填数值列：实跑步数 / 耗时（⛔ 不许缺、不许用占位符糊过去） ---
+    st = doc["steps_actual"]
+    if isinstance(st, bool) or not isinstance(st, int):
+        errs.append(f"steps_actual 必须是整数（实跑步数），实际 {st!r}")
+    elif st < 0:
+        errs.append(f"steps_actual 不得为负，实际 {st}")
+    el = _num(doc["elapsed"])
+    if el is None:
+        errs.append(f"elapsed 必须是数值（训练墙钟秒数），实际 {doc['elapsed']!r}")
+    elif el < 0:
+        errs.append(f"elapsed 不得为负，实际 {el}")
+
+    # --- 其余 4 列：必须是非空文本（⛔ 不用占位符冒充"写满"） ---
+    for k in ("peak_mem", "throughput", "effect", "note"):
+        v = doc[k]
+        if not isinstance(v, str) or v.strip() in EMPTY_VALUES:
+            errs.append(f"结果列 {k!r} 必须是非空文本（实际 {v!r}）；缺数据请写清原因，⛔ 不许留空/占位符")
+
+    # --- 可选：判据② 的评测读数（缺 ⇒ 判据② 不可判定，由 judge 层 fail-closed） ---
+    ev = doc.get("eval")
+    if ev is not None:
+        if not isinstance(ev, dict):
+            errs.append("eval 不是 JSON 对象")
+        else:
+            for k in ("after_acc", "base_acc", "teacher_after_acc"):
+                if k in ev:
+                    v = ev[k]
+                    n = _num(v)
+                    if n is None or not (0.0 <= n <= 1.0):
+                        errs.append(f"eval.{k} 必须是 0–1 的比例（数据集完全正确率），实际 {v!r}")
+            if "delta_pp" in ev and _num(ev["delta_pp"]) is None:
+                errs.append(f"eval.delta_pp 必须是数值（pp），实际 {ev['delta_pp']!r}")
+            a, b = _num(ev.get("after_acc")), _num(ev.get("base_acc"))
+            d = _num(ev.get("delta_pp"))
+            if a is not None and b is not None and d is not None:
+                if abs((a - b) * 100.0 - d) > 1e-6:
+                    errs.append(f"eval.delta_pp={d} 与 (after_acc - base_acc)×100 = {(a - b) * 100.0:.6f} 不符"
+                                "（前后矛盾 ⇒ 拒收）")
+
+    # --- 可选：判据③④ 的检查结果（缺 ⇒ 对应判据不可判定，由 judge 层 fail-closed） ---
+    ck = doc.get("checks")
+    if ck is not None:
+        if not isinstance(ck, dict):
+            errs.append("checks 不是 JSON 对象")
+        else:
+            for k in ("algo_checks_passed", "inference_parseable"):
+                if k in ck and not isinstance(ck[k], bool):
+                    errs.append(f"checks.{k} 必须是布尔值，实际 {ck[k]!r}")
 
     # --- provenance：谁产出 / 哪条命令 / 原始证据路径 ---
     prov = doc["provenance"]
@@ -627,17 +545,131 @@ def validate_run(doc, tier_from_file, tier_rows, frozen_map=None, ref_rows_offic
             v = _s(prov.get(k))
             if not isinstance(v, str) or not v:
                 errs.append(f"provenance.{k} 为空")
-        ev = prov.get("evidence_paths")
-        if not isinstance(ev, list) or not ev or not all(isinstance(x, str) and x.strip() for x in ev):
+        evp = prov.get("evidence_paths")
+        if not isinstance(evp, list) or not evp or not all(isinstance(x, str) and x.strip() for x in evp):
             errs.append("provenance.evidence_paths 必须是非空字符串数组（原始证据路径）")
     return errs
 
 
-TOOL_DIR = Path(__file__).resolve().parent
+# ---- 四条判据：逐条给出 pass / fail / unknown（⛔ unknown 不得被当成 pass） ----
+PASS, FAIL, UNKNOWN = "pass", "fail", "unknown"
 
 
+def judge_run_complete(doc, row):
+    """判据① 跑完：退出码 0 ∧ 实跑步数 == 总训练步数 ∧ 最终检查点可加载 ∧ 无 NaN/Inf。"""
+    rr = doc.get("run_result") if isinstance(doc.get("run_result"), dict) else {}
+    ex = rr.get("exit_code")
+    if isinstance(ex, bool) or not isinstance(ex, int):
+        return UNKNOWN, "判据① 缺证据：run_result.exit_code"
+    steps, total = doc.get("steps_actual"), _ints(row.get("derived_steps"))
+    if not total:
+        return UNKNOWN, "判据① 缺证据：数据件该档无总训练步数（derived_steps）"
+    fails = []
+    if ex != 0:
+        fails.append(f"退出码 {ex} ≠ 0")
+    if not isinstance(steps, int) or steps != total[0]:
+        fails.append(f"实跑 {steps} 步 ≠ 总训练步数 {total[0]}")
+    if rr.get("final_ckpt_loadable") is not True:
+        fails.append("最终检查点不可加载")
+    if rr.get("nan_or_inf_detected") is not False:
+        fails.append("检测到 NaN/Inf")
+    if fails:
+        return FAIL, "判据① 未过：" + "；".join(fails)
+    return PASS, f"判据① 跑完（{steps}/{total[0]} 步，检查点可加载，无 NaN/Inf）"
+
+
+def judge_effect(doc, row, frozen_map, teacher_pp):
+    """判据② 效果：按该算法冻结通过线判 Δ；OPD 另判「教师 − 学生未训练 ≥ 教师线」。"""
+    method = str(row.get("train_method") or "").lower()
+    line = frozen_map.get(method)
+    if line is None:
+        return UNKNOWN, (f"判据② 缺证据：{method or '未知算法'} 的通过线未冻结/取不到"
+                         "（数据件 meta.criteria_caliber.threshold.by_method）")
+    ev = doc.get("eval") if isinstance(doc.get("eval"), dict) else {}
+    a, b = _num(ev.get("after_acc")), _num(ev.get("base_acc"))
+    if a is None or b is None:
+        return UNKNOWN, "判据② 缺证据：eval.after_acc / eval.base_acc（评测读数）"
+    delta = (a - b) * 100.0
+    fails = []
+    if delta < line - 1e-9:
+        fails.append(f"{method} Δ = {delta:+.2f} pp 未达通过线 {line:+.1f} pp")
+    if method == "opd":
+        if teacher_pp is None:
+            return UNKNOWN, ("判据② 缺证据：数据件未给出 OPD 教师线"
+                             "（threshold.by_method.opd.teacher 无可解析数值）")
+        t = _num(ev.get("teacher_after_acc"))
+        if t is None:
+            return UNKNOWN, "判据② 缺证据：OPD 需 eval.teacher_after_acc（教师在训练数据集上的完全正确率）"
+        td = (t - b) * 100.0
+        if td < teacher_pp - 1e-9:
+            fails.append(f"OPD 教师 − 学生未训练 = {td:+.2f} pp 未达教师线 {teacher_pp:+.1f} pp")
+    if fails:
+        return FAIL, "判据② 未过：" + "；".join(fails)
+    extra = ""
+    if method == "opd":
+        extra = (f"，教师 − 学生未训练 = {(_num(ev.get('teacher_after_acc')) - b) * 100.0:+.2f} pp"
+                 f" ≥ {teacher_pp:+.1f} pp")
+    return PASS, f"判据② {method} Δ = {delta:+.2f} pp ≥ {line:+.1f} pp{extra}"
+
+
+def judge_algo_checks(doc):
+    """判据③ 算法正确性检查（只判机制本身对不对）。"""
+    ck = doc.get("checks") if isinstance(doc.get("checks"), dict) else {}
+    v = ck.get("algo_checks_passed")
+    if not isinstance(v, bool):
+        return UNKNOWN, "判据③ 缺证据：checks.algo_checks_passed（算法正确性检查结果）"
+    return (PASS, "判据③ 算法正确性检查通过") if v else (FAIL, "判据③ 未过：算法正确性检查未通过")
+
+
+def judge_inference(doc):
+    """判据④ 能推理（只判能否完整产出可解析的推理结果；效果已由判据② 判）。"""
+    ck = doc.get("checks") if isinstance(doc.get("checks"), dict) else {}
+    v = ck.get("inference_parseable")
+    if not isinstance(v, bool):
+        return UNKNOWN, "判据④ 缺证据：checks.inference_parseable（推理结果是否可解析）"
+    return (PASS, "判据④ 可完整推理") if v else (FAIL, "判据④ 未过：推理结果不可解析")
+
+
+def judge_row(doc, row, frozen_map, teacher_pp):
+    """四条判据的合取。返回 (status|None, fails, unknowns)。
+
+    status = `通过`（四条全过）／`不通过`（任一有据且不过）／None（缺证且无失败 ⇒ ⛔ 不得判定）。
+    """
+    verdicts = [judge_run_complete(doc, row),
+                judge_effect(doc, row, frozen_map, teacher_pp),
+                judge_algo_checks(doc),
+                judge_inference(doc)]
+    fails = [detail for verdict, detail in verdicts if verdict == FAIL]
+    unks = [detail for verdict, detail in verdicts if verdict == UNKNOWN]
+    if fails:
+        return "不通过", fails, unks
+    if unks:
+        return None, [], unks
+    return "通过", [], []
+
+
+def compose_note(base, status, fails, unks):
+    """备注列 = 跑次自报的条件/限制 ＋（不通过时）未过判据与未判定项。"""
+    note = str(base or "").strip()
+    if status == "不通过":
+        note += "；未过判据：" + "；".join(fails)
+        if unks:
+            note += "；未判定项（无实测证据）：" + "；".join(unks)
+    return note
+
+
+def fmt_steps(n: int) -> str:
+    return f"{n} 步"
+
+
+def fmt_elapsed(seconds) -> str:
+    """「耗时」列展示形态（与生成链同一形态：总时长 N s（约 X h））。"""
+    sec = float(seconds)
+    return f"总时长 {int(round(sec))} s（约 {sec / 3600.0:.2f} h）"
+
+
+# ---- 工具脚本调用（脚本名按本文件所在目录解析，可从仓库根调用） ----
 def run_cmd(args):
-    """运行同目录工具脚本；脚本名按本文件所在目录解析（可从仓库根调用）。"""
     argv = [sys.executable]
     for i, x in enumerate(args):
         if i < 2 and x.endswith(".py") and not Path(x).is_absolute() and (TOOL_DIR / x).exists():
@@ -648,113 +680,105 @@ def run_cmd(args):
     return p.returncode, (p.stdout or "") + (p.stderr or "")
 
 
-def append_ledger(path: Path, rows):
-    text = path.read_text(encoding="utf-8") if path.exists() else LEDGER_HEADER
-    if not path.exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
-    lines = [r for r in rows]
-    path.write_text(text.rstrip("\n") + "\n" + "\n".join(lines) + "\n", encoding="utf-8")
-    # ★ 写后台账按 (档号, json sha) 去重（保留次数与原因；不同 sha 仍两行）
-    if path.exists():
-        path.write_text(dedup_ledger(path.read_text(encoding="utf-8")), encoding="utf-8")
+def default_html_out(data_path: Path, matrix) -> Path:
+    """`--html-out` 缺省：数据件同目录下 `meta.authority.human_view_path` 的 basename。
+
+    ⇒ 正式数据件 → `docs/GRASPO 训练框架功能测试报告.html`；数据件副本在 /tmp → 产物也在 /tmp
+    （⛔ 不会把演练产物写回 docs/）。
+    """
+    hv = (((matrix.get("meta") or {}).get("authority") or {}).get("human_view_path") or "")
+    name = Path(str(hv)).name or "GRASPO 训练框架功能测试报告.html"
+    return Path(data_path).parent / name
+
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--runs-dir", required=True, help="跑次 json 目录（唯一输入格式：<档号>.json）")
-    ap.add_argument("--data-in", default="matrix-data.json")
+    ap = argparse.ArgumentParser(description="跑次 json ⇒ 数据件（原地回填）⇒ 重渲染 ⇒ 机核 ⇒ 落盘")
+    ap.add_argument("--runs-dir", default=None, help="跑次 json 目录（唯一输入格式：<档号>.json）")
+    ap.add_argument("--data-in", default=str(ROOT / "docs" / "capability-matrix.data.json"),
+                    help="矩阵数据件（默认 = 正式数据件）")
     ap.add_argument("--data-out", default=None, help="默认 = --data-in（原地回填）")
-    ap.add_argument("--template", default="template.html")
-    ap.add_argument("--html-out", default="capability-matrix-new.html")
+    ap.add_argument("--template", default=str(TOOL_DIR / "template.html"))
+    ap.add_argument("--html-out", default=None,
+                    help="人读件输出路径（默认 = 数据件同目录下的正式人读件 basename）")
     ap.add_argument("--ledger-out", default=None,
-                    help="台账路径（缺省 = 数据目录下的 backfill-ledger.md，⛔ 不用相对 CWD 以免 stray）")
+                    help="台账路径（缺省 = 数据件同目录下的 backfill-ledger.md；⛔ 不用相对 CWD 以免 stray）")
     ap.add_argument("--only", default=None, help="只回填这些档号，逗号分隔（增量）")
-    ap.add_argument("--official-data", default="docs/capability-matrix.data.json",
-                    help="正式机读件（由 build_official.py 从内部数据派生）")
-    ap.add_argument("--official-html", default="docs/GRASPO 训练框架功能测试报告.html",
-                    help="正式人读视图（由 render_matrix.py 派生）")
-    ap.add_argument("--version", default=None)
-    ap.add_argument("--date", default=None)
-    ap.add_argument("--void", action="append", default=[],
-                    help='显式声明"该跑次结论作废、仅作参考"，格式 档号:理由（可重复）。'
-                         '用于"参数已更正 ⇒ 结论不对应当前行参数"（§结论与参数一一对应）')
-    ap.add_argument("--self-test", action="store_true",
-                    help="跑校验器的正/反向用例（阈值信任边界 + 并行维度逐项），不读跑次目录")
+    ap.add_argument("--self-test", action="store_true", help="跑校验器的正/反向用例，不读跑次目录")
     ap.add_argument("--dry-run", action="store_true", help="只校验与报告，不写任何文件")
-    ap.add_argument("--unvoid", action="append", default=[], metavar="TIER",
-                    help="解除指定档的作废态：该档已有新跑次且与当前口径对应 ⇒ 按常规落判定")
-    ap.add_argument("--force", action="store_true",
-                    help="跳过幂等判定强制重处理（用于「渲染/备注口径升级」后回灌既有档）")
     a = ap.parse_args()
 
     if a.self_test:
         return _self_test()
+    if not a.runs_dir:
+        ap.error("--runs-dir 必填（或改用 --self-test）")
+
+    _known_criteria_selfcheck()
 
     data_in = Path(a.data_in)
-    data_out = Path(a.data_out) if a.data_out else data_in
-    html_out = Path(a.html_out)
-    # 相对路径的台账落在"矩阵数据所在目录"（工作区），⛔ 不再落进仓库根造成 stray 文件
-    ledger_out = (Path(a.ledger_out) if a.ledger_out
-                  else Path(a.data_out).parent / "backfill-ledger.md")   # ★ 锚定数据目录
-    if not ledger_out.is_absolute() and not ledger_out.exists():
-        ledger_out = data_in.parent / ledger_out.name
-    runs_dir = Path(a.runs_dir)
-
-    if not data_in.exists():
+    if not data_in.is_file():
         print(f"FAIL: 数据文件不存在: {data_in}")
         return 1
-    if not Path(a.template).exists():
-        print(f"FAIL: 模板不存在: {a.template}")
+    template = Path(a.template)
+    if not template.is_file():
+        print(f"FAIL: 模板不存在: {template}")
         return 1
+    runs_dir = Path(a.runs_dir)
     if not runs_dir.is_dir():
         print(f"FAIL: 跑次目录不存在: {runs_dir}")
         return 1
 
-    frozen_map = matrix_frozen_map(a.official_data)
-    ref_rows_official = {}
-    try:
-        _d = json.loads(Path(a.official_data).read_text(encoding="utf-8"))
-        ref_rows_official = {x["tier"]: x for x in _d.get("rows", [])}
-    except Exception:
-        ref_rows_official = {}
-    matrix = json.loads(data_in.read_text(encoding="utf-8"))
-    tier_rows = {r["tier"]: r for r in matrix["rows"]}
+    # ★ 缺陷 1 的修法：默认值**先解析**成 data_out / html_out / ledger_out，下游一律只用解析后的值
+    data_out = Path(a.data_out) if a.data_out else data_in
+    ledger_out = Path(a.ledger_out) if a.ledger_out else data_out.parent / "backfill-ledger.md"
 
-    only = set(x.strip() for x in a.only.split(",") if x.strip()) if a.only else None
-    void_map = {}
-    for spec in a.void:
-        t, _, why = spec.partition(":")
-        if not t.strip() or not why.strip():
-            print(f"FAIL: --void 格式必须是 档号:理由，实际 {spec!r}")
-            return 1
-        void_map[t.strip()] = why.strip()
-    # ★ 已作废档的"重跑回填"（如跑次侧订正了依据/来源）自动走作废路径，
-    #   避免其"参数已更正"的既成事实被参数对应校验拦下（作废前提本就是参数不对应）。
-    _unvoid = set(a.unvoid)
-    for _r in matrix.get("rows", []):
-        _ann = _r.get("conclusion_annotation") or {}
-        if _ann.get("conclusion_valid") is False and _r.get("tier") not in void_map and _r.get("tier") not in _unvoid:
-            void_map[_r["tier"]] = _ann.get("reason", "既有作废记录：结论不对应当前行参数")
-    _anchor_corr_tiers: set[str] = set()
+    matrix = json.loads(data_in.read_text(encoding="utf-8"))
+    html_out = Path(a.html_out) if a.html_out else default_html_out(data_out, matrix)
+    rows = matrix.get("rows") or []
+    if not isinstance(rows, list) or not rows:
+        print(f"FAIL: 数据件没有 rows: {data_in}")
+        return 1
+    tier_rows = {r["tier"]: r for r in rows}
+    orig_rows = copy.deepcopy(tier_rows)
+
+    threshold = (((matrix.get("meta") or {}).get("criteria_caliber") or {}).get("threshold")) or {}
+    frozen_map = frozen_map_from_caliber(threshold)
+    teacher_pp = teacher_line_pp(threshold)
+
     files = sorted(runs_dir.glob("*.json"))
+    stems = [f.stem for f in files]
+    # ★ 防呆：结果目录里不得混入不属于本矩阵的档号
+    stray = unknown_tier_stems(stems, tier_rows)
+    if stray:
+        print(f"FAIL: 结果目录 {runs_dir} 含不属于本矩阵的档号 {stray} ⇒ 拒收（未写任何文件）")
+        return 1
+
+    only, only_errs = resolve_only(a.only, tier_rows, stems)
+    if only_errs:
+        print("FAIL: " + "；".join(only_errs) + " ⇒ 未写任何文件")
+        return 1
     if only:
         files = [f for f in files if f.stem in only]
     if not files:
         print(f"无待回填的 json（目录 {runs_dir}" + (f"，--only {sorted(only)}" if only else "") + "）")
         return 0
 
-    # ---- ① 严格校验（fail-closed：先全验，再统一写） ----
-    valid, all_errs = [], []
+    # ---- ① 严格校验 + 四条判据（fail-closed：先全验，再统一写） ----
+    valid, all_errs, refusals = [], [], []
     for f in files:
         try:
             doc = json.loads(f.read_text(encoding="utf-8"))
         except json.JSONDecodeError as e:
             all_errs.append((f, [f"JSON 解析失败: {e}"]))
             continue
-        errs = validate_run(doc, f.stem, tier_rows, frozen_map, ref_rows_official, set(void_map))
+        errs = validate_run(doc, f.stem, tier_rows)
         if errs:
             all_errs.append((f, errs))
-        else:
-            valid.append((f, doc))
+            continue
+        status, fails, unks = judge_row(doc, tier_rows[doc["tier"]], frozen_map, teacher_pp)
+        if status is None:
+            refusals.append((f, doc["tier"], unks))
+            continue
+        valid.append((f, doc, status, fails, unks))
 
     if all_errs:
         print("FAIL-CLOSED：以下跑次 json 不合法，本批**未写任何文件**：")
@@ -763,384 +787,274 @@ def main():
             for e in errs:
                 print(f"      - {e}")
         return 1
+    if refusals:
+        print("FAIL-CLOSED：以下跑次**缺判据所需证据**，无法判定 ⇒ 本批**未写任何文件**，"
+              "相关档位保持「待测试」：")
+        for f, tier, unks in refusals:
+            print(f"  ✗ {f}（{tier}）")
+            for u in unks:
+                print(f"      - {u}")
+        print("  （补齐上述证据后重跑；⛔ 不得以缺数据判「通过」）")
+        return 1
 
-    # ---- ② 合并（未跑档位保持 '—'；同源 sha 已回填则跳过） ----
+    # ---- ② 合并（整表深拷贝；只覆盖处理集；未处理档原样保留） ----
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    new_matrix = json.loads(json.dumps(matrix, ensure_ascii=False))  # 深拷贝
+    new_matrix = copy.deepcopy(matrix)
     new_rows = {r["tier"]: r for r in new_matrix["rows"]}
-    ledger_rows, skipped, filled = [], [], []
-    for f, doc in valid:
+    filled, ledger_rows = [], []
+    for f, doc, status, fails, unks in valid:
         tier = doc["tier"]
         src_sha = sha256_file(f)
-        prev = new_rows[tier].get("run_provenance") or {}
-        # 幂等判据：只比"读数"；★ status 不由跑次 json 直接决定（阈值未冻结时保持「尚未验证」），故排除
-        changed = {k: new_rows[tier].get(k) != _s(doc[k]) for k in RESULT_KEYS if k != "status"}
-        _corr = (doc.get("provenance") or {}).get("eval_dataset_anchor_correction")
-        if _corr:
-            _anchor_corr_tiers.add(tier)
-        _corrs_now = correction_texts(doc)
-        _corr_changed = bool(_corrs_now) and new_rows[tier].get("corrections") != _corrs_now
-        _missing_new = (bool(_corr) and not new_rows[tier].get("eval_dataset_anchor_correction")) or any(
-            doc.get(_k) and not new_rows[tier].get(_k)
-            for _k in ("p5p6_readings", "anomalies", "step_count_reconciliation"))
-        if (not a.force and tier not in void_map and prev.get("source_sha256") == src_sha
-                and not any(changed.values()) and not _missing_new and not _corr_changed):
-            skipped.append(tier)
-            ledger_rows.append(f"| {now} | `{tier}` | `{f.name}` | `{src_sha[:12]}` | "
-                               f"{doc['status']} | — | 跳过：同源 sha（`{src_sha[:12]}`）已回填，幂等 |")
-            continue
-        for k in RESULT_KEYS:
-            new_rows[tier][k] = _s(doc[k])
-        # ★ 显式作废（参数已更正 ⇒ 结论不对应当前行参数）：作为"参考记录"留存，不作判定
-        if tier in void_map and tier not in set(a.unvoid):
-            ref = "；".join(x for x in (_s(doc.get("runs")), _s(doc.get("effect"))) if x)
-            new_rows[tier]["conclusion_annotation"] = {
-                "conclusion_valid": False, "reason": void_map[tier], "reference_record": ref,
-            }
-            new_rows[tier]["status"] = "尚未验证"
-            new_rows[tier].pop("measurement_pending", None)
-            _corrs_v = correction_texts(doc)
-            _vnote = "参考记录（" + void_map[tier] + "）：" + (ref or "—")
-            if _corrs_v:
-                new_rows[tier]["corrections"] = _corrs_v
-                _vnote += " ★ 订正说明（跑次侧）：" + "；".join(_corrs_v[:3])
-            new_rows[tier]["note"] = _vnote
-            new_rows[tier]["run_provenance"] = {
-                "produced_by": doc["provenance"]["produced_by"],
-                "command": doc["provenance"]["command"],
-                "evidence_paths": list(doc["provenance"]["evidence_paths"]),
-                "source_json": str(f), "source_sha256": src_sha, "backfilled_at": now,
-                "voided": True,
-            }
-            filled.append(tier)
-            ledger_rows.append(f"| {now} | `{tier}` | `{f.name}` | `{src_sha[:12]}` | "
-                               f"作废（仅参考） | 见下 | 参数已更正 ⇒ 判定作废 |")
-            continue
-        # ★ 状态规则（§17.7：「已验证可用」须两条判据同时满足）：
-        #   跑次 json 未声明「阈值已冻结」⇒ 判据②无法判定 ⇒ 状态保持「尚未验证」，只录读数。
-        frozen = frozen_map.get(str(new_rows[tier].get("train_method", "")).lower()) is not None
-        if not frozen:
-            new_rows[tier]["status"] = "尚未验证"
-            new_rows[tier]["measurement_pending"] = True   # ★ 读数已录、阈值待定（不作判定）
-            new_rows[tier].pop("conclusion_annotation", None)   # 新读数取代旧「作废参考记录」注记
-            passed1 = conclusion_of(doc.get("status")) == "pass"
-            new_rows[tier]["note"] = ("读数为实测记录，⛔ 暂不作判定：" +
-                                      ("①「能完整跑完」已通过；" if passed1 else "") +
-                                      "②「平台方数据集效果达标」读数已录，★ 阈值 δ 待定 ⇒ 状态暂保持「尚未验证」。")
-        else:
-            ok = _s(doc.get("status")).startswith("通过")   # ★ 支持「通过（已验证可用）」等带括注形态
-            new_rows[tier]["status"] = "通过" if ok else "失败"
-            new_rows[tier]["measurement_pending"] = False
-            new_rows[tier].pop("conclusion_annotation", None)   # 新的有效跑次取代旧的「作废参考记录」
-            mp = ((doc.get("provenance") or {}).get("measurement_pending") or {})
-            basis = str(mp.get("threshold_delta", "阈值已冻结"))
-            if ok:
-                note = _s(doc.get("note")) or f"判据① ∧ 判据② 均达（{basis}）⇒ 已验证可用。"
-            elif str(doc.get("not_evaluable_reason") or "").strip():
-                # ★★ 不可评档（2026-10-14 裁定统一口径）：⛔ 不得写"第 2 条判据/效果不足/效果未达标"
-                note = ("★ 未过**不可评（工程缺口）—— 依主席 2026-10-14 口径记入失败**："
-                        + _s(doc.get("not_evaluable_reason")))
-            elif str(new_rows[tier].get("caliber_cause") or "").strip():
-                # ★★ §17.7 第①项同族：数据级 `caliber_cause` 已把该档归因到**判据①（跑通/工程合规）**
-                #    （如"产物不具备唯一性／DP 副本分歧"、"OOM／看门狗超时／未实现／硬件不可行"）
-                #    ⇒ ⛔ 不得兜底写成"未过第 2 条（效果不足）"（那是效果层否定，与真因冲突）。
-                note = ("★ 未过第 1 条判据（跑通/工程合规，★ 非效果结论）——"
-                        + _s(new_rows[tier].get("caliber_cause"))
-                        + " ★ 已通过项（事实保留）：" + _s(doc.get("algo_checks")))
-                _rv = str(new_rows[tier].get("reading_validity") or "").strip()
-                if _rv:
-                    note += " ★ " + _rv
-            else:
-                note = ("★ 未过第 2 条判据（效果不足）——" + _s(doc.get("effect"))
-                        + " ★ 已通过项（事实保留）：" + _s(doc.get("algo_checks"))
-                        + " ★ 判据① 依据：" + _s(doc.get("runs")))
-            # ★ 跑次自报的如实说明（caveat_*）必须原样保留，⛔ 不抹掉
-            cav = [str(v) for k, v in (doc.get("provenance") or {}).items()
-                   if k.startswith("caveat") and v]
-            if cav:
-                note += " 如实说明：" + "；".join(cav)
-            # ★ 结构化"标准交付项"：P5/P6 六项 / 异常（非字符串 ⇒ 不塞 RESULT_KEYS，单独随件入库）
-            for _k in ("p5p6_readings", "anomalies",
-                       "after_acc", "base_acc", "delta_pp", "n_correct", "n_total",
-                       # ★ "不可评"真因：**必须随行**（否则关键信息丢失 —— 与"结论字段必须落在回填会搬移的区域"同族）
-                       "not_evaluable_reason"):
-                _v = doc.get(_k)
-                # ★ 值等于 0/0.0 是**合法实测值**（如 `after_acc=0.0`）⇒ ⛔ 不得用真值判断吞掉；
-                #   仅跳过 None 与空容器。
-                if _v is not None and (not isinstance(_v, (list, dict, str)) or len(_v) > 0):
-                    new_rows[tier][_k] = _v
-            # ★★ 证据链随行（2026-10-14 批准）：矩阵是唯一真相源 ⇒ 证据必须落在会被搬的区域。
-            _prov = doc.get("provenance") or {}
-            _cmd = _sanitize_paths(str(_prov.get("command") or "")).strip()
-            _ev = [_sanitize_paths(str(x)) for x in (_prov.get("evidence_paths") or []) if str(x).strip()]
-            new_rows[tier]["provenance_command"] = _cmd if _cmd else "未记录"
-            new_rows[tier]["evidence_paths"] = _ev if _ev else "未记录"
-
-            scr = doc.get("step_count_reconciliation")
-            if not ok and scr:
-                new_rows[tier]["step_count_reconciliation"] = scr
-                note += (" ★ 步数对账（如实登记）：推导 %s vs 实际 %s；%s"
-                         % (scr.get("derived_steps"), scr.get("actual_steps"), scr.get("verdict", "")))
-                # ★★ 该"待修公式"仅对 **native GRASPO** 成立 ⇒ ⛔ 不得贴到别的算法档上
-                #    （2026-10-15 实证：SFT 档 T011/T025/T026 因判据② 翻为不可用而命中此分支 ⇒
-                #     曾被贴上"对 native GRASPO 档不成立"的错误表述）
-                if str(new_rows[tier].get("train_method", "")).lower() == "graspo":
-                    new_rows[tier]["note_extra_steps_formula_issue"] = (
-                        "★ 登记待修：'推导步数公式'对 native GRASPO 档不成立（推导 %s vs 实际 %s）"
-                        "—— 本轮不顺手改公式，后续单独修。" % (scr.get("derived_steps"), scr.get("actual_steps")))
-                else:
-                    new_rows[tier].pop("note_extra_steps_formula_issue", None)
-            # ★ 树指纹：**取起跑断言值**；若当场重算不同 ⇒ 如实登记漂移（⛔ 不抹）
-            ci = ((doc.get("provenance") or {}).get("code_identity") or {})
-            if ci:
-                new_rows[tier]["code_identity"] = ci          # ★ 双锚/镜像摘要来源（供备注渲染）
-            if ci.get("tree_fingerprint"):
-                new_rows[tier]["tree_fingerprint"] = ci["tree_fingerprint"]
-                new_rows[tier]["tree_fingerprint_role"] = ci.get("tree_fingerprint_role", "起跑断言值")
-            if ci.get("tree_fingerprint_remeasured") and ci["tree_fingerprint_remeasured"] != ci.get("tree_fingerprint"):
-                new_rows[tier]["tree_fingerprint_remeasured"] = ci["tree_fingerprint_remeasured"]
-                new_rows[tier]["tree_fingerprint_drift"] = ci.get("tree_fingerprint_drift", "起跑值与当场重算不同")
-                note += (" ★ 树指纹（取起跑断言值）：%s…；当场重算 %s…；差异原因见 provenance.code_identity.tree_fingerprint_drift（已如实登记）。"
-                         % (str(ci["tree_fingerprint"])[:8], str(ci["tree_fingerprint_remeasured"])[:8]))
-            # ★ 一切"订正/更正"类字段（跑次侧依据/来源订正）⇒ 如实并入备注与数据（通用扫描）
-            _corrs = correction_texts(doc)
-            if _corrs:
-                new_rows[tier]["corrections"] = _corrs
-                note += " ★ 订正说明（跑次侧）：" + "；".join(_corrs[:3])
-            # ★ 评测集锚订正（跑次侧当场实测更正）⇒ 如实并入备注与数据
-            corr = (doc.get("provenance") or {}).get("eval_dataset_anchor_correction")
-            ed = ((doc.get("provenance") or {}).get("run_environment") or {}).get("eval_dataset")
-            if corr:
-                new_rows[tier]["eval_dataset_anchor_correction"] = corr
-                note += " ★ 评测集锚订正（跑次侧当场实测）：" + str(corr)
-            if ed:
-                new_rows[tier]["eval_dataset"] = ed
-            # ★ 重复测量：早前读数**保留为参考**（⛔ 不覆盖历史、不混为一谈）
-            _prev_eff, _prev_sha = prev.get("effect"), prev.get("source_sha256")
-            if (_prev_eff and _prev_sha and _prev_sha != src_sha
-                    and str(_prev_eff) != str(doc.get("effect"))):
-                note += " ★ 早前读数（参考，同口径重复测量，来源 sha " + str(_prev_sha)[:12] + "…）：" + str(_prev_eff)
-            # ★ anomalies 如实并入备注
-            for _a in (doc.get("anomalies") or []) if isinstance(doc.get("anomalies"), list) else ([doc["anomalies"]] if doc.get("anomalies") else []):
-                note += " ★ 异常登记：" + str(_a)
-            new_rows[tier]["note"] = note
-        new_rows[tier]["run_provenance"] = {
-            "produced_by": doc["provenance"]["produced_by"],
-            "command": doc["provenance"]["command"],
-            "evidence_paths": list(doc["provenance"]["evidence_paths"]),
-            "source_json": str(f),
-            "source_sha256": src_sha,
-            "backfilled_at": now,
-        }
+        row = new_rows[tier]
+        row["status"] = status
+        row["peak_mem"] = _s(doc["peak_mem"])
+        row["steps_actual"] = fmt_steps(int(doc["steps_actual"]))
+        row["elapsed"] = fmt_elapsed(doc["elapsed"])
+        row["throughput"] = _s(doc["throughput"])
+        row["effect"] = _s(doc["effect"])
+        row["note"] = compose_note(doc["note"], status, fails, unks)
         filled.append(tier)
-        ledger_rows.append(f"| {now} | `{tier}` | `{f.name}` | `{src_sha[:12]}` | "
-                           f"{doc['status']} | 见下 | 增量回填 1 档 |")
+        ledger_rows.append(f"| {now} | `{tier}` | `{f.name}` | `{src_sha[:12]}` | {status} | 见下 | "
+                           f"回填 6 列 + 状态（按四条判据现算） |")
+
+    # ★ 保真断言：未处理的档必须与原材料逐字段相等（部分回填不得污染其它档）
+    drift = untouched_drift(orig_rows, new_rows, set(filled))
+    if drift:
+        print(f"FAIL-CLOSED：未回填档出现漂移 {drift[:10]} ⇒ 拒绝落盘（本次处理集 {sorted(filled)}）")
+        return 1
 
     unfilled = [t for t, r in new_rows.items()
-                if all(r.get(k) in ("", PLACEHOLDER) for k in RESULT_KEYS)]
+                if all(r.get(k) in EMPTY_VALUES for k in DATA_COLUMNS)]
     new_matrix["meta"]["backfill"] = {
         "last_run": now,
         "filled_tiers": sorted(filled),
-        "skipped_tiers": sorted(skipped),
         "unfilled_count": len(unfilled),
-        "note": "仅脚本回填；未跑档位保持 '—'；缺字段 fail-closed",
+        "note": "仅脚本回填；未判定档位保持「待测试」；结果 json 不得自带 status；缺字段/缺判据证据 fail-closed",
     }
 
     print(f"待回填 {len(files)} 份；本次写入 {len(filled)} 档 {sorted(filled)}；"
-          f"跳过（幂等）{len(skipped)} 档；仍未回填 {len(unfilled)} 档（保持 '—'）")
+          f"状态 {sorted({s for _f, _d, s, _a, _b in valid})}；仍未回填 {len(unfilled)} 档（保持「待测试」）")
 
     if a.dry_run:
         print("--dry-run：未写任何文件。")
         return 0
 
-    # ---- ③④ 先写临时件 ⇒ 渲染 ⇒ 逐字节校验 ⇒ PASS 才落盘 ----
-    tmp = Path(tempfile.mkdtemp(prefix=".backfill-tmp-", dir=str(data_out.parent or Path("."))))
+    # ---- ③④ 先写临时件 ⇒ render_matrix 渲染 ⇒ verify 逐字节校验 ⇒ PASS 才落盘 ----
+    tmp = Path(tempfile.mkdtemp(prefix=".backfill-tmp-", dir=str(data_out.parent)))
     try:
-        tmp_data, tmp_off, tmp_html = tmp / "internal.json", tmp / "official.json", tmp / "out.html"
-        tmp_data.write_text(json.dumps(new_matrix, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
-        # 内部数据 ⇒ 正式机读件（四态 / epoch / 派生步数 等派生逻辑在 build_official 内）
-        bo = ["build_official.py", "--in", str(tmp_data), "--out", str(tmp_off)]
-        if a.version:
-            bo += ["--version", a.version]
-        date = a.date or (matrix.get("meta") or {}).get("backfill", {}).get("last_run", "")[:10] or None
-        if date:
-            bo += ["--date", date]
-        rc, out = run_cmd(bo)
-        if rc != 0:
-            print(f"FAIL: 正式机读件生成失败\n{out}")
-            return 1
-        rc, out = run_cmd(["render_matrix.py", "--template", str(a.template),
-                           "--data", str(tmp_off), "--out", str(tmp_html)])
+        tmp_data, tmp_html = tmp / "data.json", tmp / "out.html"
+        tmp_data.write_text(json.dumps(new_matrix, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        # ★ 缺陷 2 的修法：回填后**直接用 render_matrix.py** 渲染（与现役生成链一致），
+        #   ⛔ 不走 build_official 的重渲染路径（其产物 meta 无 enumeration ⇒ 渲染 fail-closed）。
+        rc, out = run_cmd(["render_matrix.py", "--template", str(template),
+                           "--data", str(tmp_data), "--out", str(tmp_html)])
         if rc != 0:
             print(f"FAIL: 渲染失败\n{out}")
             return 1
-        rc, out = run_cmd(["verify_matrix.py", "--template", str(a.template),
-                           "--data", str(tmp_off), "--html", str(tmp_html)])
+        rc, out = run_cmd(["verify_matrix.py", "--template", str(template),
+                           "--data", str(tmp_data), "--html", str(tmp_html)])
         print(out.strip())
         if rc != 0:
             print("FAIL: 校验未通过 ⇒ **不落盘**（交付件与数据保持原样）")
             return 1
 
         # ★★ 落盘前断言：**本次处理的每一档必须出现在台账中**（⛔ 不再静默漏行）
-        _missing_rows = [t for t in filled if not any(f"`{t}`" in r for r in ledger_rows)]
+        _missing_rows = ledger_covers(ledger_rows, filled)
         if _missing_rows:
             print(f"FAIL-CLOSED：以下档已处理但**未生成台账行** ⇒ 拒绝落盘：{_missing_rows}")
             return 1
-        for f in (data_out, Path(a.official_data), Path(a.official_html)):
-            f.parent.mkdir(parents=True, exist_ok=True)
+
+        for p in (data_out, html_out, ledger_out):
+            p.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(tmp_data, data_out)
-        shutil.copyfile(tmp_off, Path(a.official_data))
-        shutil.copyfile(tmp_html, Path(a.official_html))
-        ledger_rows = [r.replace("| 见下 |", "| ✅ PASS |") for r in ledger_rows]
-        # ★ 触发方式显式写进行内标记（审计件：`×N（含 M 次 --force 重跑）` 必须准）
-        _mode = ("--force" if a.force else
-                 ("--unvoid" if a.unvoid else
-                  ("锚点订正" if _anchor_corr_tiers else "增量")))
-        ledger_rows = [(_r[:-2] + f" [{_mode}] |") if _r.endswith(" |") else _r for _r in ledger_rows]
-        append_ledger(ledger_out, ledger_rows)
-        print(f"OK: 回填 {len(filled)} 档 ⇒ {data_out}（内部）/ {a.official_data} / {a.official_html}；"
-              f"台账 +{len(ledger_rows)} 行 ⇒ {ledger_out}")
-        print(f"    official data sha256 = {sha256_file(Path(a.official_data))}")
-        print(f"    official html sha256 = {sha256_file(Path(a.official_html))}")
+        shutil.copyfile(tmp_html, html_out)
+        ledger_rows = [r.replace("| 见下 |", "| PASS |") for r in ledger_rows]
+        try:
+            append_ledger(ledger_out, ledger_rows)
+        except Exception as exc:                       # noqa: BLE001 —— 审计件写失败不得静默
+            print(f"FAIL: 数据/人读件已落盘，但台账写入失败 {ledger_out}：{exc!r} ⇒ 请修复后重跑"
+                  "（重跑幂等，会补齐台账并去重）")
+            return 1
+        print(f"OK: 回填 {len(filled)} 档 ⇒ {data_out} / {html_out}；台账 +{len(ledger_rows)} 行 ⇒ {ledger_out}")
+        print(f"    data sha256 = {sha256_file(data_out)}")
+        print(f"    html sha256 = {sha256_file(html_out)}")
         return 0
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
 def _self_test():
-    """★ 四条正/反向用例（⛔ 不依赖外部文件、不写任何东西）。"""
-    # ★★ 2026-10-22（复核 B2）：**真实路径**探针 —— 用仓内在盘数据件的 `criteria_caliber.threshold`
-    #   走一遍 `frozen_map_from_caliber()` → `_threshold_errs()`。病史：判据名改名时本文件漏改，
-    #   合成字典看不见，而真实数据下 sft/graspo/opd 会全被读成 None ⇒ 合法跑次被判
-    #   「未冻结却自述阈值」而拒收（假 FAIL）。此探针就是那类漏改的机核。
-    _probe_errs = []
-    _probe_names_ok = True
+    """★ 正/反向用例（⛔ 不依赖外部文件、不写任何东西）。"""
+    # ★ 真实路径探针：用仓内在盘数据件的 `criteria_caliber.threshold` 走一遍
+    #   `frozen_map_from_caliber()` / `teacher_line_pp()` —— 判据改名/散文改写时，合成字典看不见，
+    #   而真实数据下四算法会全被读成 None ⇒ 合法跑次被判「不可判定」而拒收。此探针就是那类漏改的机核。
+    probe_errs = []
+    names_ok = False
     try:
-        _official = Path(__file__).resolve().parents[2] / "docs" / "capability-matrix.data.json"
-        _real_th = (json.loads(_official.read_text(encoding="utf-8"))
-                    .get("meta", {}).get("criteria_caliber", {}).get("threshold", {}))
-        _real_bm = _real_th.get("by_method") or {}
-        _probe_names_ok = all(str(e.get("criterion")) in KNOWN_CRITERIA
-                              for e in _real_bm.values() if isinstance(e, dict))
-        _real_fm = frozen_map_from_caliber(_real_th)
-        for _m, _pp in _real_fm.items():
-            if _pp is None:
-                _probe_errs.append((_m, "读成 None（判据名不认识/未冻结）"))
-                continue
-            _d = {"runs": f"判据② 通过线 Δ ≥ +{_pp} pp", "effect": f"Δ=+{_pp} pp（≥ {_pp} pp）"}
-            _probe_errs.extend((_m, e) for e in _threshold_errs(_d, _real_fm, _m))
-    except Exception as _exc:                      # noqa: BLE001 —— 取不到真实件也算不通过
-        _probe_errs.append(("<读取>", repr(_exc)))
+        official = ROOT / "docs" / "capability-matrix.data.json"
+        real_th = (json.loads(official.read_text(encoding="utf-8"))
+                   .get("meta", {}).get("criteria_caliber", {}).get("threshold", {}))
+        real_bm = real_th.get("by_method") or {}
+        names_ok = all(str(e.get("criterion")) in KNOWN_CRITERIA
+                       for e in real_bm.values() if isinstance(e, dict))
+        for m, pp in frozen_map_from_caliber(real_th).items():
+            if pp is None:
+                probe_errs.append((m, "读成 None（判据名不认识/未冻结）"))
+        if teacher_line_pp(real_th) is None:
+            probe_errs.append(("opd.teacher", "教师线解析不到"))
+    except Exception as exc:                      # noqa: BLE001 —— 取不到真实件也算不通过
+        probe_errs.append(("<读取>", repr(exc)))
 
-    fm = {"sft": 10.0, "cpt": 0.0, "opd": 0.0, "graspo": 5.0}
-    base_doc = {"runs": "判据② 达标（SFT 通过线 Δ ≥ +10.0 pp）", "effect": "Δ=+13.5 pp（≥ +10.0 pp 新判据② SFT 通过线）"}
+    fm = {"sft": 10.0, "cpt": 0.0, "opd": 5.0, "graspo": 5.0}
+    th_fixture = {"status": "已冻结", "by_method": {
+        "sft": {"criterion": "gain_pp", "value": 10.0},
+        "graspo": {"criterion": "gain_pp", "value": 5.0},
+        "cpt": {"criterion": "non_inferiority", "value": 0.0},
+        "opd": {"criterion": "gain_pp", "value": 5.0,
+                "teacher": "教师 − 学生未训练模型 ≥ +10.0 个百分点"}}}
+    rows = {"M001": {"tier": "M001", "model": "9B", "algo": "SFT", "mode": "LoRA",
+                     "backend": "ms-swift", "parallel": "nproc_per_node=1（1 卡）",
+                     "lr": "2.0e-05", "derived_steps": "400", "train_method": "sft"},
+            "M068": {"tier": "M068", "model": "27B", "algo": "OPD", "mode": "LoRA",
+                     "backend": "ms-swift", "parallel": "nproc_per_node=4（4 卡）",
+                     "lr": "2.0e-05", "derived_steps": "10", "train_method": "opd"}}
+
+    def doc_fixture(**over):
+        d = {
+            "schema": "matrix-run/v1", "tier": "M001",
+            "params": {"model": "9B", "algo": "SFT", "mode": "LoRA", "backend": "ms-swift",
+                       "parallel": "nproc_per_node=1（1 卡）", "lr": "2.0e-05"},
+            "run_result": {"exit_code": 0, "final_ckpt_loadable": True, "nan_or_inf_detected": False},
+            "steps_actual": 400, "elapsed": 3720,
+            "peak_mem": "42.1 GiB（rank0 max_allocated）",
+            "throughput": "3.2 samples/s", "effect": "after 27.00% / base 15.00%；Δ = +12.00 pp",
+            "note": "单卡复现；数据版本 v1",
+            "run_path": "runs/M001/v0-20261022-101010/checkpoint-400",
+            "provenance": {"produced_by": "self-test", "command": "self-test",
+                           "evidence_paths": ["runs/M001/stdout.log"]},
+            "eval": {"after_acc": 0.27, "base_acc": 0.15},
+            "checks": {"algo_checks_passed": True, "inference_parseable": True},
+        }
+        d.update(over)
+        return d
+
+    def j(doc, tier="M001"):
+        return judge_row(doc, rows[tier], fm, teacher_line_pp(th_fixture))
+
+    base = doc_fixture()
     cases = [
-        ("㉓① ★ 不可评档 note_full 不得含「效果未达标」（对外陈述正确性）",
-         all(x not in "不可评（工程缺口）—— 依主席 2026-10-14 口径记入失败"
-             for x in ("效果未达标", "判据① 通过", "第 2 条判据", "效果不足")) is True),
-        ("㉓② ★ 矩阵文本脱敏：数据集路径与机器号必须被抹除",
-         ("平台方自有数据集（不公开）" in matrix_sanitize_probe("/homedata/test.jsonl")
-          and "228" not in matrix_sanitize_probe("机器 228 上")) is True),
-        ("㉒① ★ 不可评分支：非空 reason ＋ 空评测 ⇒ 放行",
-         not_evaluable_ok({"not_evaluable_reason": "PP 分片拼接未实现（pp_size=4）", "after_acc": None}) is True),
-        ("㉒② ★ 不可评分支：空评测 ＋ 空 reason ⇒ **必须拒**",
-         not_evaluable_ok({"after_acc": None, "base_acc": None, "delta_pp": None}) is False),
-        ("㉒③ ★ 不可评分支：reason 写成「效果未达标」⇒ **必须拒**（防误标）",
-         not_evaluable_ok({"not_evaluable_reason": "效果未达标", "after_acc": None}) is False),
-        ("㉑① ★ 零值回归：`after_acc = 0.0` ⇒ **必须留下 `0.0`**（⛔ 不得变 None）",
-         copy_result_field({"after_acc": 0.0}, "after_acc") == 0.0),
-        ("㉑② 零值回归：`n_correct = 0` ⇒ **必须留下 `0`**",
-         copy_result_field({"n_correct": 0}, "n_correct") == 0),
-        ("㉑③ 缺失值不编造：`after_acc` 不存在 ⇒ None",
-         copy_result_field({}, "after_acc") is None),
-        ("㉑④ 空容器跳过：`anomalies = []` ⇒ None",
-         copy_result_field({"anomalies": []}, "anomalies") is None),
-        ("㉑⑤ ★ 证据链：`evidence_paths` 为「未记录」 ⇒ **必须判不合规**",
-         evidence_chain_ok({"evidence_paths": "未记录", "provenance_command": "x"}) is False),
-        ("㉑⑥ 证据链：两者齐 ⇒ 合规",
-         evidence_chain_ok({"evidence_paths": ["x"], "provenance_command": "graspo export"} ) is True),
-        ("① 阈值：跑次自述 10 pp == 矩阵 SFT 10 pp ⇒ 放行",
-         not _threshold_errs(dict(base_doc), fm, "sft")),
-        ("② 阈值：跑次自述 3 pp ≠ 矩阵 SFT 10 pp ⇒ FAIL",
-         bool(_threshold_errs(dict(base_doc, runs="判据② 达标（SFT 通过线 Δ ≥ 3 pp）", effect="Δ=+13.5 pp（≥ 3 pp）"),
-                              fm, "sft"))),
-        ("②b ★ 旧口径残留：SFT 自述 +5.0 pp ≠ 新 SFT 10.0 pp ⇒ FAIL",
-         bool(_threshold_errs({"runs": "训练类冻结阈值 Δ ≥ +5.0 pp", "effect": "Δ=+13.5 pp（≥ +5.0 pp 冻结阈值）"},
-                              fm, "sft"))),
-        ("②c ★ 逐算法分列：CPT 自述 0.0 pp == 矩阵 CPT 0.0 pp ⇒ 放行",
-         not _threshold_errs({"runs": "判据② CPT 不劣化线 Δ ≥ +0.0 pp", "effect": "Δ=+3.8 pp（≥ 0.0 pp）"},
-                             fm, "cpt")),
-        ("②d ★ 逐算法分列：CPT 自述旧值 5.0 pp ≠ 矩阵 CPT 0.0 pp ⇒ FAIL（防旧口径偷偷生效）",
-         bool(_threshold_errs({"runs": "训练类 Δ ≥ +5.0 pp（已冻结）", "effect": "Δ=+3.8 pp（≥ +5.0 pp 冻结阈值）"},
-                              fm, "cpt"))),
-        ("★ 真实 caliber 路径：四算法都能读出冻结阈值、自述阈值与矩阵一致 ⇒ 无错（⛔ 不再是假 FAIL）",
-         not _probe_errs and all(v is not None for v in frozen_map_from_caliber(_real_th).values())),
-        ("★ 真实 caliber 的判据名 ⊆ 真相源 KNOWN_CRITERIA（第四份副本会在此报红）",
-         _probe_names_ok and _known_criteria_selfcheck() is None),
-        ("★ by_method 解析：逐算法取值（sft10 / graspo5 / cpt0 / opd0）",
-         frozen_map_from_caliber({"status": "★ 已冻结（主席最新裁定）", "by_method": {
-             "sft": {"criterion": "gain_pp", "value": 10.0},
-             "graspo": {"criterion": "gain_pp", "value": 5.0},
-             "cpt": {"criterion": "non_inferiority", "value": 0.0},
-             "opd": {"criterion": "non_inferiority", "value": 0.0}}})
-         == {"sft": 10.0, "graspo": 5.0, "cpt": 0.0, "opd": 0.0}),
-        ("★ by_method 未冻结 ⇒ 全 None（⛔ 不据此判定）",
-         frozen_map_from_caliber({"status": "未冻结", "by_method": {"sft": {"criterion": "gain_pp", "value": 10.0}}})
-         == {"sft": None, "graspo": None, "cpt": None, "opd": None}),
-        ("★ by_method 缺失 ⇒ 回退旧单一 value（兼容旧代际正式件）",
-         frozen_map_from_caliber({"value": 5.0, "applies_to": "训练类与 GRASPO", "status": "已冻结"})
-         == {"sft": 5.0, "graspo": 5.0, "cpt": 5.0, "opd": 5.0}),
-        ("③ 并行：表达面不同但维度等价 ⇒ 放行",
+        ("★ 真实数据件：四算法通过线 + OPD 教师线都能现读（⛔ 不是假 FAIL）",
+         not probe_errs and all(v is not None for v in frozen_map_from_caliber(real_th_raw()).values())),
+        ("★ 真实数据件的判据名 ⊆ 真相源 KNOWN_CRITERIA（第四份副本会在此报红）",
+         names_ok and _known_criteria_selfcheck() is None),
+        ("① 结果 json 自带 status ⇒ **必须拒收**（不静默忽略、不悄悄采纳）",
+         any("不得含 `status`" in e for e in validate_run(dict(doc_fixture(), status="通过"), "M001", rows))),
+        ("② 缺 steps_actual ⇒ **必须拒收**（该列必填）",
+         any("steps_actual" in e for e in validate_run(
+             {k: v for k, v in base.items() if k != "steps_actual"}, "M001", rows))),
+        ("③ 缺 elapsed ⇒ **必须拒收**（该列必填）",
+         any("elapsed" in e for e in validate_run(
+             {k: v for k, v in base.items() if k != "elapsed"}, "M001", rows))),
+        ("④ 某列写成占位符 `—` ⇒ **必须拒收**（⛔ 不许静默补空 / 半填）",
+         any("peak_mem" in e for e in validate_run(dict(base, peak_mem="—"), "M001", rows))),
+        ("⑤ 身份错位（model 不符）⇒ **必须拒收**",
+         any("params.model" in e for e in validate_run(
+             dict(base, params=dict(base["params"], model="27B")), "M001", rows))),
+        ("⑥ 四条全过 ⇒ 判「通过」", j(base)[0] == "通过"),
+        ("⑦ 效果未达线 ⇒ 判「不通过」且点名判据②",
+         (lambda r: r[0] == "不通过" and any("判据②" in x for x in r[1]))(
+             j(dict(base, eval={"after_acc": 0.18, "base_acc": 0.15})))),
+        ("⑧ 缺 inference 证据 ⇒ **不得判通过**（判据④ 不可判定 ⇒ judge 返回 None）",
+         (lambda r: r[0] is None and any("判据④" in x for x in r[2]))(j(
+             dict(base, checks={"algo_checks_passed": True})))),
+        ("⑨ 缺 eval 读数（且无其它失败）⇒ **不得判通过**",
+         (lambda r: r[0] is None and any("判据②" in x for x in r[2]))(
+             j({k: v for k, v in base.items() if k != "eval"}))),
+        ("⑩ 退出码 ≠ 0 ⇒ 判「不通过」（即使评测读数缺失，合取已假）",
+         (lambda r: r[0] == "不通过" and any("退出码" in x for x in r[1]))(
+             j(dict({k: v for k, v in base.items() if k != "eval"},
+                    run_result={"exit_code": 1, "final_ckpt_loadable": False,
+                                "nan_or_inf_detected": False})))),
+        ("⑪ 实跑步数 ≠ 总训练步数 ⇒ 判「不通过」且点名判据①",
+         (lambda r: r[0] == "不通过" and any("总训练步数" in x for x in r[1]))(
+             j(dict(base, steps_actual=399)))),
+        ("⑫ CPT 不劣化线：after == base ⇒ 通过（Δ = +0.00 pp ≥ +0.0 pp）",
+         judge_effect(dict(base, eval={"after_acc": 0.20, "base_acc": 0.20}),
+                      {"train_method": "cpt"}, fm, None)[0] == "pass"),
+        ("⑬ CPT 低于 base ⇒ 不通过",
+         judge_effect(dict(base, eval={"after_acc": 0.19, "base_acc": 0.20}),
+                      {"train_method": "cpt"}, fm, None)[0] == "fail"),
+        ("⑭ OPD 学生线达标但教师 − 学生未训练不足 ⇒ 不通过且点名教师线",
+         (lambda d: judge_effect(d, rows["M068"], fm, teacher_line_pp(th_fixture))[0] == "fail"
+          and "教师线" in judge_effect(d, rows["M068"], fm, teacher_line_pp(th_fixture))[1])(
+             dict(base, tier="M068", steps_actual=10,
+                  eval={"after_acc": 0.30, "base_acc": 0.20, "teacher_after_acc": 0.25}))),
+        ("⑮ OPD 学生线与教师线双达标 ⇒ 通过",
+         judge_effect(dict(base, tier="M068", steps_actual=10,
+                           eval={"after_acc": 0.30, "base_acc": 0.20, "teacher_after_acc": 0.35}),
+                      rows["M068"], fm, teacher_line_pp(th_fixture))[0] == "pass"),
+        ("⑯ OPD 缺 teacher_after_acc ⇒ 不得判定（unknown）",
+         judge_effect(dict(base, eval={"after_acc": 0.30, "base_acc": 0.20}),
+                      rows["M068"], fm, teacher_line_pp(th_fixture))[0] == "unknown"),
+        ("⑰ 教师线数值**从数据件现解析**（散文 ≥ +10.0 个百分点 ⇒ 10.0）",
+         teacher_line_pp(th_fixture) == 10.0),
+        ("⑱ 教师线散文缺失 ⇒ None（⛔ 不回落常量）", teacher_line_pp({"by_method": {"opd": {}}}) is None),
+        ("⑲ 未冻结的通过线 ⇒ 判据② 不可判定（⛔ 不据此判过）",
+         judge_effect(base, rows["M001"], frozen_map_from_caliber({"status": "未冻结", "by_method": {
+             "sft": {"criterion": "gain_pp", "value": 10.0}}}), None)[0] == "unknown"),
+        ("⑳ 备注：不通过时未过项与未判定项必须写进备注",
+         "判据① 未过" in compose_note("条件 X", "不通过", ["判据① 未过：退出码 1 ≠ 0"], ["判据② 缺证据：x"])),
+        ("㉑ 备注：通过时只保留跑次自报条件（不追加判据结论）",
+         compose_note("条件 X", "通过", [], []) == "条件 X"),
+        ("㉒ 耗时列形态：`总时长 N s（约 X h）`",
+         fmt_elapsed(3720) == "总时长 3720 s（约 1.03 h）"),
+        ("㉓ 实跑步数列形态：`N 步`", fmt_steps(400) == "400 步"),
+        ("㉔ `--only M777` ⇒ **必须报错**（非本矩阵档号）",
+         bool(resolve_only("M777", rows, ["M001"])[1])),
+        ("㉕ `--only M001` 但结果目录无该档 json ⇒ **必须报错**（⛔ 静默 rc=0）",
+         bool(resolve_only("M001", rows, ["M068"])[1])),
+        ("㉖ 结果目录含非本矩阵档号 ⇒ **必须报错**",
+         unknown_tier_stems(["M001", "M777"], rows) == ["M777"]),
+        ("㉗ 未回填档漂移检测：**未处理**的档被改动即被点名", untouched_drift(
+            {"M001": {"a": 1}, "M002": {"b": 2}},
+            {"M001": {"a": 9}, "M002": {"b": 9}}, {"M001"}) == ["M002"]),
+        ("㉘ 未回填档保真：只覆盖处理集 ⇒ 0 漂移", untouched_drift(
+            {"M001": {"a": 1}, "M002": {"b": 2}},
+            {"M001": {"a": 9}, "M002": {"b": 2}}, {"M001"}) == []),
+        ("㉙ 幂等：同一份 doc 判两次，结论一致（状态列不受时钟/顺序影响）",
+         j(base)[0] == j(base)[0] == "通过" and compose_note("x", "通过", [], []) == compose_note("x", "通过", [], [])),
+        ("㉚ 身份规范化：「全参（full-parameter）」≡「全参」", norm_ident("全参（full-parameter）") == norm_ident("全参")),
+        ("㉛ ★ 负例：「仅视觉」/「LoRA」**不得**等同于「全参」",
+         all(norm_ident(x) != norm_ident("全参") for x in ("仅视觉", "LoRA"))),
+        ("㉜ ★ 负例：`native` ≠ `ms-swift`；`dp_size=2` ≠ `dp_size=1`",
+         all(norm_ident(a) != norm_ident(b) for a, b in (("native", "ms-swift"), ("dp_size=2", "dp_size=1")))),
+        ("㉝ 并行：表达面不同但维度等价 ⇒ 放行",
          not compare_parallel("TP=1 PP=1 DP=1（1 卡；总卡数 1）", "nproc_per_node=1（1 卡）")),
-        ("④ 并行：TP/PP 不符 ⇒ FAIL",
+        ("㉞ 并行：TP/PP 不符 ⇒ FAIL",
          bool(compare_parallel("TP=2 PP=1 DP=1（2 卡）", "TP=1 PP=2 DP=1（2 卡）"))),
-        ("⑤ LoRA 目标语义不同（122 vs 358）⇒ FAIL",
+        ("㉟ LoRA 目标语义不同（122 vs 358）⇒ FAIL",
          norm_param("lora_target", "language_all_linear + vision_common（122 件）") !=
          norm_param("lora_target", "ms-swift 实测 358 件（语言 248 + 视觉 110）")),
-        ("⑤b ★ 实例数优先：档位表「（122 件：…）｜（358 实例；122 为签名/模式条目数）」⇒ 取 358（与跑次 json 同事实）",
+        ("㊱ 实例数优先：表「（122 件：…）｜（358 实例；122 为签名/模式条目数）」⇒ 取 358",
          norm_param("lora_target",
                     "language_all_linear + vision_common（122 件：language 12 + visual 110）｜native："
                     "canonical preset 名（358 实例；122 为签名/模式条目数）") == 358),
-        ("⑤c ★ 实例数优先仍能拦真错位：json「358 个 LoRA 模块实例」 vs 表「100 实例」⇒ FAIL",
-         norm_param("lora_target", "★★ 实测：358 个 LoRA 模块实例 = language 248 + visual 110") !=
-         norm_param("lora_target", "canonical preset 名（100 实例）")),
-        ("⑥ 数据子集规模不同（100 vs 200）⇒ FAIL",
+        ("㊲ 数据子集规模不同（100 vs 200）⇒ FAIL",
          norm_param("data_subset", "前 100 条") != norm_param("data_subset", "前 200 条")),
-        ("⑦ 步数不同（800 vs 801）⇒ FAIL",
-         norm_param("steps", "推导 800 步") != norm_param("steps", "推导步数 801")),
-        ("⑨ 状态：带括注「通过（已验证可用）」⇒ pass", conclusion_of("通过（已验证可用）") == "pass"),
-        ("⑩ 状态：带括注「失败（效果）」⇒ fail", conclusion_of("失败（效果）") == "fail"),
-        ("⑪ 状态：「尚未验证」⇒ other（不判过）", conclusion_of("尚未验证") == "other"),
-        ("⑫ ★ 负例：「未通过」/「非通过」/「不通过」**不得**判 pass",
-         all(conclusion_of(x) != "pass" for x in ("未通过", "非通过", "不通过"))),
-        ("⑬ 身份规范化：「全参（full-parameter）」≡「全参」", norm_ident("全参（full-parameter）") == norm_ident("全参")),
-        ("⑭ ★ 负例：「仅视觉」/「LoRA」**不得**等同于「全参」",
-         all(norm_ident(x) != norm_ident("全参") for x in ("仅视觉", "LoRA"))),
-        ("⑮ ★ 负例：`native` ≠ `ms-swift`；`dp_size=2` ≠ `dp_size=1`",
-         all(norm_ident(a) != norm_ident(b) for a, b in (("native", "ms-swift"), ("dp_size=2", "dp_size=1")))),
-        ("⑯ 台账去重：同 (档号, sha) 两次 ⇒ 1 行 + ×2",
-         dedup_ledger("| t1 | `T1` | `a.json` | `aaaa` | 通过 | ✅ | n |\n"
-                      "| t2 | `T1` | `a.json` | `aaaa` | 通过 | ✅ | n |").count("`T1`") == 1
-         and "×2" in dedup_ledger("| t1 | `T1` | `a.json` | `aaaa` | 通过 | ✅ | n |\n"
-                                  "| t2 | `T1` | `a.json` | `aaaa` | 通过 | ✅ | n |")),
-        ("⑰ ★ 台账去重：**不同 sha ⇒ 必须 2 行**（真增量不得被吞）",
-         dedup_ledger("| t1 | `T1` | `a.json` | `aaaa` | 通过 | ✅ | n |\n"
-                      "| t2 | `T1` | `a.json` | `bbbb` | 通过 | ✅ | n |").count("`T1`") == 2),
-        ("⑱ ★ 台账：一次 --force 重跑 ⇒ 计数必须为 **1**（⛔ 不是 0）",
-         "含 1 次 --force 重跑" in dedup_ledger(
-             "| t1 | `T1` | `a.json` | `aaaa` | 通过 | ✅ | n [增量] |\n"
-             "| t2 | `T1` | `a.json` | `aaaa` | 通过 | ✅ | n [--force] |")),
-        ("⑲ ★ 台账覆盖率：处理了但未落行 ⇒ **必须拒**（fail-closed）",
-         ledger_covers(["| t | `T1` | `a.json` | `sha` | 通过 | ✅ | n |"], ["T1", "T2"]) == ["T2"]),
-        ("⑲a ★ 计数：已判定档重测 ⇒ 期望变化 **0**",
-         verdict_transition(True, "已验证不可用", "已验证不可用") == 0),
-        ("⑲b ★ 计数：新判定档 ⇒ 期望变化 **+1**",
-         verdict_transition(False, "—", "已验证可用") == 1),
-        ("⑲c ★ 计数：未判定档仍无结论 ⇒ 变化 0",
-         verdict_transition(False, "—", "尚未验证") == 0),
-        ("⑧ 仅措辞/格式不同、语义相同 ⇒ 放行",
-         norm_param("switches", "save_steps=31;loss_scale=all") ==
-         norm_param("switches", "loss_scale=all; save_steps=31")),
+        ("㊳ 台账去重：同 (档号, sha) 两次 ⇒ 1 行 + ×2",
+         "×2" in dedup_ledger("| t1 | `M001` | `a.json` | `aaaa` | 通过 | PASS | n |\n"
+                              "| t2 | `M001` | `a.json` | `aaaa` | 通过 | PASS | n |")),
+        ("㊴ ★ 台账去重：**不同 sha ⇒ 必须 2 行**（真增量不得被吞）",
+         dedup_ledger("| t1 | `M001` | `a.json` | `aaaa` | 通过 | PASS | n |\n"
+                      "| t2 | `M001` | `a.json` | `bbbb` | 通过 | PASS | n |").count("`M001`") == 2),
+        ("㊵ ★ 台账覆盖率：处理了但未落行 ⇒ **必须拒**（fail-closed）",
+         ledger_covers(["| t | `M001` | `a.json` | `sha` | 通过 | PASS | n |"], ["M001", "M002"]) == ["M002"]),
+        ("㊶ by_method 未冻结 ⇒ 全 None（⛔ 不据此判定）",
+         frozen_map_from_caliber({"status": "未冻结", "by_method": {
+             "sft": {"criterion": "gain_pp", "value": 10.0}}})
+         == {"sft": None, "graspo": None, "cpt": None, "opd": None}),
+        ("㊷ by_method 解析：逐算法取值（sft10 / graspo5 / cpt0 / opd5）",
+         frozen_map_from_caliber(th_fixture) == {"sft": 10.0, "graspo": 5.0, "cpt": 0.0, "opd": 5.0}),
     ]
     ok = True
     for name, passed in cases:
@@ -1150,14 +1064,13 @@ def _self_test():
     return 0 if ok else 1
 
 
-def _threshold_errs(doc, frozen_map, method):
-    frozen_pp = frozen_map.get(method)
-    claimed = run_claimed_pp(doc)
-    if frozen_pp is None and claimed is not None:
-        return ["未冻结却自述阈值"]
-    if frozen_pp is not None and claimed is not None and claimed != frozen_pp:
-        return [f"自述 {claimed} ≠ 矩阵 {frozen_pp}"]
-    return []
+def real_th_raw():
+    """测试辅助：真实数据件的 threshold 段（取不到 ⇒ 空字典，让自证用例报红）。"""
+    try:
+        return (json.loads((ROOT / "docs" / "capability-matrix.data.json").read_text(encoding="utf-8"))
+                .get("meta", {}).get("criteria_caliber", {}).get("threshold", {}))
+    except Exception:          # noqa: BLE001
+        return {}
 
 
 if __name__ == "__main__":
