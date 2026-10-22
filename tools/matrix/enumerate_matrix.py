@@ -1204,8 +1204,10 @@ def _reason_line(chosen, sel, backend, mode, tp, pp, dp, band, budget, peak, alg
             core = (f"选 {backend}：{backend} 有实测成功证据（{ev}），"
                     f"{other['backend']} 无实测成功证据（{why_other}）")
         else:
+            _other_fact = ("ms-swift 在该项目里只能纯数据并行（张量/流水并行需 Megatron 通道，当前未接线）"
+                           if other["backend"] == "ms-swift" else other["fact"])
             core = (f"选 {backend}：两者都无实测成功证据 ⇒ 按「形状是否被后端真消费」取 {backend}"
-                    f"（{chosen['fact']}；{other['backend']} 的形状要靠别的载体兜）")
+                    f"（{chosen['fact']}；{_other_fact}）")
     else:
         short = other.get("why_short") or other.get("why") or ""
         if other.get("evidence"):
@@ -1573,6 +1575,24 @@ def _any_backend_evidence(algo, model, mode, shape, effects) -> bool:
     return False
 
 
+#: native 全参 PP>1 的**产物卡点句**（逐字，⛔ 不许改写成"别的载体"这类悬空说法）。
+NATIVE_FULL_PP_GAP = ("native 全参的流水线并行产物导出/合并尚未实现（产物侧待实现，属欠账）"
+                      "⇒ 本档是待实现、不是档位不合理")
+
+
+def _v17_native_full_pp_gap_disclosed(rows, budget: float) -> bool:
+    """★ 2026-10-22：`全参 ∧ pp>1 ∧ native` 的**每一档**都必须逐字披露产物卡点。
+
+    理由：这组档现在交不出产物（同一段 ExportError 代码路径）⇒ 少写一档就等于对用户隐瞒。
+    ⛔ 无白名单、无"例外档"：判据只认形状（不是档号），新增一档自动纳入。
+    """
+    hit = [r for r in rows
+           if r["mode"] == "全参" and r["backend"] == "native" and int(r["pp"]) > 1]
+    if not hit:
+        return False                      # 该形状消失 ⇒ 断言失去对象，直接红（⛔ 不做恒真）
+    return all(NATIVE_FULL_PP_GAP in r["note"] for r in hit)
+
+
 def _v13_claims_backed_by_runs(rows, budget: float) -> bool:
     """裁定后补（必修 2）：note 的成败断言必须有实测跑次兜底 —— 正反两个方向都机核。
 
@@ -1696,6 +1716,12 @@ VERIFICATION_CASES: tuple[dict[str, Any], ...] = (
                   "（历史 54 档里 LoRA 恒为 tp=pp=1 ⇒ tp>1/pp>1 的 LoRA 档只能写「从未实跑」）；"
                   "反方向「不可行/必然失败/交不出」需 backend_infeasible/recipe_forbid 证据，纯算式只能写「估算超预算」"),
         "check": _v13_claims_backed_by_runs,
+    },
+    {
+        "id": "V17",
+        "claim": ("`全参 ∧ pp>1 ∧ native` 的**每一档**都必须逐字披露产物卡点句"
+                  "（「" + NATIVE_FULL_PP_GAP + "」）—— 该组档现在交不出产物，少写一档即隐瞒"),
+        "check": _v17_native_full_pp_gap_disclosed,
     },
     {
         "id": "V14",
