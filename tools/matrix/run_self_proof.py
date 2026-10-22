@@ -40,8 +40,6 @@ RETIRED_2026_10_22: dict[str, str] = {
     "⑥ FAIL 报出 ④K 状态标签计数": "同上",
     "⑧ 归因依据缺失 ⇒ verify FAIL": "对象换代：新数据件无 `verdict`/`_DETAIL_EVIDENCE` 逐档归因面",
     "⑧ FAIL 报出 ④O 依据关键词": "同上",
-    "⑨ 备注非契约文本 ⇒ verify FAIL": "对象换代：`note` 已改由枚举包生成（不再走 `note_contract`）",
-    "⑨ FAIL 报出 ④O 备注契约": "同上",
     "⑬ 开关列重复发布检查点间隔 ⇒ verify FAIL": "对象已删：`关键开关` 列已删",
     "⑬ FAIL 报出 ④Q": "同上",
     "⑭ 取值 ≠推导步数+1 ⇒ verify FAIL": "对象已删：`关键开关` 列已删（步数改从数据件读）",
@@ -360,19 +358,24 @@ def main():
             checks["⑧ 归因依据缺失 ⇒ verify FAIL"] = (rc == 1)
             checks["⑧ FAIL 报出 ④O 依据关键词"] = ("④O" in out and "依据关键词" in out)
 
-        # ⑨ ★ 阳性对照（精简轮 2 新增断言 ④O）：备注被写成空 ⇒ **必红**
-        nb = json.loads(json.dumps(data, ensure_ascii=False))
-        nb["meta"]["_selfproof_fixture"] = True     # 同 ⑧：夹具豁免 ④U 行级清空断言
-        nb["rows"][0]["status"] = "已验证可用"       # 已结论档 ⇒ 备注必须逐字等于契约文本
-        nb["rows"][0]["note"] = "—"
-        (tmp / "nb.data.json").write_text(json.dumps(nb, ensure_ascii=False, indent=1), encoding="utf-8")
-        run(["tools/matrix/render_matrix.py", "--template", "tools/matrix/template.html",
-             "--data", str(tmp / "nb.data.json"), "--out", str(tmp / "nb.html")])
+        # ⑨ ★ 阳性对照（2026-10-22 备注口径轮，替代原「备注非契约文本 ⇒ verify FAIL」）：
+        #   备注列的**内容契约**已按主席令退役（备注在测试完成后回填，枚举阶段为空），但备注格
+        #   仍受 ④D「逐格 == 数据件」机核（数据件 `rows[].note` 全为空串）。
+        #   做法 = **只把页面**第一格备注改成有内容、数据件一个字不动 ⇒ verify 必红且点名 ④D；
+        #   ⛔ 这证明的是「备注格不能手改」这条仍在生效的机核，不是旧契约文本。
+        nb_html = (DOCS / "GRASPO 训练框架功能测试报告.html").read_text(encoding="utf-8")
+        _note_cell = '<td class="g-data" data-col="note"></td>'
+        _note_cells = nb_html.count('data-col="note"')
+        assert _note_cell in nb_html, (
+            f"备注空单元格锚点未命中（列结构变了？）：{_note_cell!r}（页面 note 格数 = {_note_cells}）")
+        nb_html = nb_html.replace(_note_cell,
+                                  '<td class="g-data" data-col="note">手改备注</td>', 1)
+        (tmp / "nb.html").write_text(nb_html, encoding="utf-8")
         rc, out = run(["tools/matrix/verify_matrix.py", "--template", "tools/matrix/template.html",
-                       "--data", str(tmp / "nb.data.json"), "--html", str(tmp / "nb.html")])
-        steps.append(("⑨ 备注被写空后 verify（应 FAIL）", rc, out))
-        checks["⑨ 备注非契约文本 ⇒ verify FAIL"] = (rc == 1)
-        checks["⑨ FAIL 报出 ④O 备注契约"] = ("④O" in out and "契约文本" in out)
+                       "--data", "docs/capability-matrix.data.json", "--html", str(tmp / "nb.html")])
+        steps.append(("⑨ 页面备注格被手改后 verify（应 FAIL）", rc, out))
+        checks["⑨ 页面备注格被手改 ⇒ verify FAIL"] = (rc == 1)
+        checks["⑨ FAIL 报出 ④D 备注格不一致"] = ("④D" in out and "note" in out)
 
         # ⑩ ★ 阳性对照（2026-10-19 改向，对应 verify ④B）：给**数据件**塞回一份 `columns`
         #    ⇒ 「数据件不得携带表结构（防第三份真相源）」断言**必红**。
@@ -809,16 +812,18 @@ def main():
             not _real_fail_active)
         if _real_fail:
             print(f"  [debug] ㉕a 分区判据报红: {_real_fail}")
-        #   ★ 渲染列数由常量现算（⛔ 不写死）：**16 列** = 档号 1 + 状态 1 + 参数 8 + 实验数据 5
-        #     + 备注 1；条件项 **3**（模型 / 模式 / 后端）。
+        #   ★ 渲染列数由常量现算（⛔ 不写死）：**16 列** = 档号 1 + 状态 1 + 参数 8 + 实验数据 6
+        #     （含备注）；条件项 **3**（模型 / 模式 / 后端）。
         #     ★ 2026-10-21「第 4 章列瘦身」轮：删 `lr` / `训练轮次` / `关键开关` 三列（21 → 19 → 16），
         #       三者取值改由模板第 3 章「训练超参」+「算法级参数」两张静态表承载
-        #       ⇒ 定稿列序：`档号｜状态｜模型 算法 模式 后端 TP PP DP 总卡数｜实验数据 5 列｜备注`。
+        #       ⇒ 定稿列序：`档号｜状态｜模型 算法 模式 后端 TP PP DP 总卡数｜实验数据 5 列 + 备注`。
+        #     ★ 2026-10-22（主席令）：备注并入「实验数据」组 ⇒ data 组由 5 列变 **6 列**（列数不变）。
         #     ⛔ 不放宽成"至少 N 列"：四个读数逐项精确。
-        checks["㉕a2 渲染列数 = 16 列（1+1+8+5+1，且参数 8 / 条件 3）"] = (
+        checks["㉕a2 渲染列数 = 16 列（1+1+8+6，且参数 8 / 条件 3；备注并入实验数据组）"] = (
             CELLS_PER_ROW == 16
             and len(_render.TABLE_PARAM_COLUMNS) == 8
-            and len([c for c in _render.RENDERED_COLUMNS if c["group"] == "data"]) == 5
+            and len([c for c in _render.RENDERED_COLUMNS if c["group"] == "data"]) == 6
+            and len(_render.MATRIX_GROUPS) == 4
             and len(_render.CONDITION_PARAMS) == 3)
         # ★ 第 3 章登记表**在案**的行字段（`tp`/`mode`/`backend`）—— 基数判据对它们不重复计数；
         #   ⛔ 判据实现在 `verify_matrix`（唯一一份），此处只取同源常量用于打印留痕。
@@ -958,8 +963,12 @@ def main():
         #      已不存在一并删除 —— 不是放宽：删掉的对象改为「不得复活」这一条正向守）。
         _page = (DOCS / "GRASPO 训练框架功能测试报告.html").read_text(encoding="utf-8")
         _muts31 = [
+            # ★ 2026-10-22（备注清空轮）：原注入锚点「估算 33.24/78.0 GiB（可行）」在**备注列**里，
+            #   备注按主席令清空后该串已不在页面 ⇒ 改用 `inject_markup` 的稳定锚点链
+            #   （`</h1>`/`</nav>`/`<main>`/`<body>` 第一个命中），把现状语塞进可见正文。
+            #   ⛔ 不放宽：④P「页面零命中」判据与词表一字未动，注入不生效会由"夹具确实改动"当场红。
             ("㉛ 塞回「实测跑通过」",
-             _page.replace("估算 33.24/78.0 GiB（可行）", "估算 33.24/78.0 GiB（可行，实测跑通过）", 1),
+             inject_markup(_page, "<p>实测跑通过</p>"),
              "④P"),
             ("㉞ 塞回「评测条件」小节标题",
              _page.replace("</ol>\n</section>", "</ol>\n<h3>评测条件</h3>\n</section>", 1),
@@ -1024,8 +1033,8 @@ def main():
         checks["㉝b FAIL 清单里没有 ④SH"] = (
             not any(n.startswith("④SH") for n in _fail_names(out)))
 
-        _sh_tampered = _sh_html.replace("估算 33.24/78.0 GiB（可行）",
-                                        "估算 33.24/78.0 GiB（可行，实测跑通过）", 1)
+        #   ★ 2026-10-22（备注清空轮）：同 ㉛ —— 旧锚点在备注列里、已随主席令清空 ⇒ 改用锚点链注入。
+        _sh_tampered = inject_markup(_sh_html, "<p>实测跑通过</p>")
         checks["㉝c 叠加篡改夹具确实生效"] = (_sh_tampered != _sh_html)
         (tmp / "sh.tampered.html").write_text(_sh_tampered, encoding="utf-8")
         rc, out = run(["tools/matrix/verify_matrix.py", "--template", str(tmp / "sh.template.html"),

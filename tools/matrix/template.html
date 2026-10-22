@@ -14,8 +14,8 @@
   color-scheme: light;
   --ink:#1f2328; --muted:#57606a; --line:#d0d7de; --line-soft:#e6eaee;
   --bg-soft:#f6f8fa;
-  --b-base:#e8eef4; --b-status:#ecebf7; --b-param:#eaf2e6; --b-result:#ecebf7; --b-note:#eef0f2;
-  --t-base:#f6f9fb; --t-status:#f8f7fc; --t-param:#f5f9f2; --t-result:#f8f7fc; --t-note:#f7f8fa;
+  --b-base:#e8eef4; --b-status:#ecebf7; --b-param:#eaf2e6; --b-result:#ecebf7;
+  --t-base:#f6f9fb; --t-status:#f8f7fc; --t-param:#f5f9f2; --t-result:#f8f7fc;
   --ok:#116329; --ok-bg:#e6f4ea; --bad:#a40e26; --bad-bg:#fdecea;
   --warn:#7a5b00; --warn-bg:#fff8e1; --gray:#57606a; --gray-bg:#eef0f2;
 }
@@ -69,25 +69,22 @@ table.matrix thead th.g-base{background:var(--b-base);}
 table.matrix thead th.g-status{background:var(--b-status);}
 table.matrix thead th.g-param{background:var(--b-param);}
 table.matrix thead th.g-data{background:var(--b-result);}
-table.matrix thead th.g-note{background:var(--b-note);}
 table.matrix tbody td.g-base{background:var(--t-base);}
 table.matrix tbody td.g-status{background:var(--t-status);}
 table.matrix tbody td.g-param{background:var(--t-param);}
 table.matrix tbody td.g-data{background:var(--t-result);}
-table.matrix tbody td.g-note{background:var(--t-note);}
 /* 隔行底色（旧版版式：各组一档色差，结果列组更明显） */
 table.matrix tbody tr:nth-child(even) td.g-base{background:#e9eef3;}
 table.matrix tbody tr:nth-child(even) td.g-status{background:#f3f0f8;}
 table.matrix tbody tr:nth-child(even) td.g-param{background:#ecf4e7;}
 table.matrix tbody tr:nth-child(even) td.g-data{background:#f0effa;}
-table.matrix tbody tr:nth-child(even) td.g-note{background:#f7f8fa;}
 table.matrix tbody tr:nth-child(even) td.col-tier{background:#f2f5f8;}
 table.matrix tbody tr:hover td{background:#e8f3ff;}
 table.matrix tbody tr:hover td.col-tier{background:#e8f3ff;}
 /* 列宽：按内容给足（旧版版式；不为塞进视口而压缩）
    第 4 章列瘦身：`lr` / `max_epochs` / `switches` 三列已删除（取值改由第 3 章
      「按训练方法 × 后端」两张表承载）⇒ 「主要参数」组不再有长文本列，本组列一律为短值
-     （9B/27B、1/2/4、TP/PP/DP…），换行规则只剩「实验数据」「备注」两组各列。 */
+     （9B/27B、1/2/4、TP/PP/DP…），换行规则只剩「实验数据」组各列（备注列已并入本组）。 */
 table.matrix th[data-col="tier"]{min-width:64px;}        table.matrix th[data-col="status"]{min-width:108px;}
 table.matrix th[data-col="model_tbl"]{min-width:56px;}   table.matrix th[data-col="algo"]{min-width:78px;}
 table.matrix th[data-col="mode_tbl"]{min-width:64px;}    table.matrix th[data-col="backend_tbl"]{min-width:78px;}
@@ -107,8 +104,8 @@ table.matrix td[data-col="dp"],table.matrix td[data-col="cards_total"]
 table.matrix th[data-col="peak_mem"]{min-width:110px;}   table.matrix th[data-col="steps_actual"]{min-width:90px;}
 table.matrix th[data-col="elapsed"]{min-width:190px;}    table.matrix th[data-col="throughput"]{min-width:210px;}
 table.matrix th[data-col="effect"]{min-width:260px;}     table.matrix th[data-col="note"]{min-width:380px;}
-/* 「实验数据」与「备注」组当前一律为 `—`（无适用读数）⇒ 置灰，不改取值 */
-table.matrix td.g-data,table.matrix td.g-note{text-align:left;color:#8c959f;}
+/* 「实验数据」组（含备注列）当前一律为 `—` / 空（无适用读数）⇒ 置灰，不改取值 */
+table.matrix td.g-data{text-align:left;color:#8c959f;}
 table.matrix td[data-col="peak_mem"]{text-align:right;font-variant-numeric:tabular-nums;}
 table.matrix td[data-col="effect"],table.matrix td[data-col="not_failed_reason"],
 table.matrix td[data-col="elapsed"],table.matrix td[data-col="peak_mem"]{white-space:normal;overflow-wrap:anywhere;max-width:420px;}

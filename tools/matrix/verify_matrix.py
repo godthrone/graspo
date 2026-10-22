@@ -319,9 +319,14 @@ EXPECTED_COL_GROUPS = [c["group"] for c in render_matrix.RENDERED_COLUMNS]
 #:   未列入本表的一律照常计入 FAIL（fail-closed 面不变）。
 RETIRED_2026_10_22: dict[str, str] = {
     "④U 结果列清空 / 状态统一（数据面）":
-        "对象换代：新数据件 `note` 承载「后端选型理由」，不再是清空占位；状态词表已三态",
+        "对象换代：状态词表已三态、`note` 现为**待回填空值**（主席 2026-10-22 指令清空备注内容）"
+        "⇒ 旧「结果列与备注一律 `—`」的清空占位断言不适用",
+    "④O 备注列契约":
+        "主席 2026-10-22 指令清空备注内容（备注改为测试完成后回填的自由文本）"
+        "⇒ 旧 `note == note_contract` 契约文本的对象不存在；备注格页面 ⇄ 数据同源仍由 ④D 逐格机核",
     "④U 结果列清空 / 状态统一（渲染面）":
-        "同上（渲染面）：结果 5 列仍要求全 `—`（另由 ④C 机核），状态由三态断言接管",
+        "同上（渲染面）：结果 5 列仍要求全 `—`（另由 ④C 机核）；备注格按主席令为空、"
+        "页面 ⇄ 数据同源另由 ④D 逐格机核 ⇒ 旧「备注格须恰为 `—`」不适用",
     "④Z 分区·第 3 章逐项与渲染器常量同源":
         "对象已删：第 3 章不再按「一参数一 `<li>`」发布模型/模式/后端三项，改为说明段 + 静态表",
     "④Z 分区·页面须写明分区规则":
@@ -968,8 +973,8 @@ def partition_failures(rows, target_text, columns, cond_params):
                     f"缺关键词 {rule_missing}（并集覆盖 / 交集为空 / 基数判据）"))
     return out
 
-#: ★★ **结果列**（本轮按使用者诉求全部清空为 `—`）：实验数据 5 列 + 备注 1 列。
-#:   该清单是 ④C「结果清空」与 ④D「逐格 == 数据」两面共同的检查面。
+#: ★★ **结果列**（本轮按使用者诉求全部清空为 `—`；备注按主席 2026-10-22 指令清空为空）：
+#:   实验数据 6 列（含备注）。该清单是 ④C「结果清空」与 ④D「逐格 == 数据」两面共同的检查面。
 RESULT_CLEARED_KEYS = ["peak_mem", "steps_actual", "elapsed", "throughput", "effect", "note"]
 #: ★ 结果列（含状态）＝ ④C 的「结果面」；`status` 不是读数（它一律 `尚未验证`），故另列。
 RESULT_KEYS = ["status"] + RESULT_CLEARED_KEYS
@@ -2044,15 +2049,21 @@ def main():
     # ---- ④O. 结论两列的**契约**（生成端 `build_official.note_contract` ⇄ 校验端同一组字符串）----
     #   ★ 断言只许加强：这里不仅查"有没有写第 1/2 条"，还查**归因正文的依据关键词**是否在位、
     #     备注列是否**恰好**是契约文本（防"一句话被删空"或"塞回长文"）。
+    #   ★★ 2026-10-22（主席令「备注内容全清空 · 测试完成后再写」）：备注列不再是「四态契约文本」的
+    #     载体（生成端已把 `rows[].note` 清空、字段保留）⇒ 旧 `note == note_contract` 这条子断言
+    #     **正式退役**（登记进 `RETIRED_2026_10_22`），与「未过判据」列（`not_failed_reason`）的
+    #     断言分开挂名：退役只退备注那一条，结论列其余判据照旧 fail-closed。
+    #     ⛔ 不是改期望值变绿：备注格「页面 ⇄ 数据件同源」仍由 ④D 逐格机核（空串也必须一致）。
     _DETAIL_EVIDENCE_GUARD = build_official._DETAIL_EVIDENCE
     _bad_o = []
+    _bad_o_note = []
     for _r in _rows_:
         _t, _st = str(_r.get("tier")), _r.get("status")
         _want = build_official.note_contract(_st, has_verdict=bool(_r.get("verdict")),
                                   has_excluded=bool(str(_r.get("excluded_reason") or "").strip()),
                                   raw_note=str(_r.get("note") or ""))
         if str(_r.get("note") or "").strip() != _want:
-            _bad_o.append((_t, f"备注 != 契约文本：实际 {str(_r.get('note'))[:40]!r}"))
+            _bad_o_note.append((_t, f"备注 != 契约文本：实际 {str(_r.get('note'))[:40]!r}"))
         _nr = str(_r.get("not_failed_reason") or "").strip()
         if _st == "已验证不可用":
             _v = _r.get("verdict") or {}
@@ -2070,6 +2081,9 @@ def main():
         elif _st in ("尚未验证", "未纳入验收"):
             if _nr not in ("", "—"):
                 _bad_o.append((_t, f"「{_st}」不得有「未过判据」（实际 {_nr[:30]!r}）"))
+    if _bad_o_note:
+        failures.append(("④O 备注列契约",
+                         f"不一致 {len(_bad_o_note)} 档（前 5）: {_bad_o_note[:5]}"))
     if _bad_o:
         failures.append(("④O 结论列契约", f"不一致 {len(_bad_o)} 档（前 5）: {_bad_o[:5]}"))
 

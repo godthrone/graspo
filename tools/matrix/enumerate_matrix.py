@@ -941,7 +941,9 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
     if backend == "native" and mode == "全参":
         if pp > 1:
             # ★ 2026-10-22（用户拍板 C 留）：这 6 档**保留、状态仍待测试**，理由写清是"待实现"。
-            # ★ 与 V17 机核同源（单一真相源）：⛔ 别在这里另写一份措辞
+            # ★ 边界句的**唯一措辞** = 本模块常量 `NATIVE_FULL_PP_GAP`（⛔ 别在这里另写一份）。
+            #   2026-10-22 主席令清空备注后，该句只进 `.local` 审计件的 `backend_reason.gaps`
+            #   （页面备注为空）⇒ 原 V17「必须出现在备注里」随之退役（见 `VERIFICATION_CASES`）。
             gaps.append(NATIVE_FULL_PP_GAP)
         if algo == "GRASPO" and pp > 1:
             gaps.append("native 的流水线并行 + rollout 组合须显式解除未验证保护"
@@ -953,7 +955,8 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
                     "产物侧合并路径覆盖 TP/PP/DP 三维")
     if chosen["recipe"] == "offload" and mode == "全参" and tp * pp * dp == 1:
         # ★ 2026-10-22（用户拍板）：保留档里"必须开优化器态 offload 才装得下"的只有 1 卡全参档，
-        #   在备注里写清（⛔ 不新增列；`switches` 已按同一配方写 `offload_optimizer_state=true`）。
+        #   在审计件的 `backend_reason.gaps` 里写清（⛔ 不新增列；`switches` 已按同一配方写
+        #   `offload_optimizer_state=true`）。页面备注按主席令清空，⛔ 不再承载该句。
         gaps.insert(0, "1 卡全参必须开优化器态 offload 才能装下（否则估算 79.24 GiB 超预算，"
                        "开 offload 后 45.71 GiB）")
     if chosen["recipe"] == "offload":
@@ -965,51 +968,13 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
         gaps.append("需 `offload_teacher_model=true`")
     gaps = gaps[:4]
 
-    # ── 边缘/冲突提示（实测 vs 算式） ─────────────────────────────────────
-    notes_extra: list[str] = []
-    if band == "余量紧":
-        if peak > budget:
-            # ★ 2026-10-22 用户裁定「已有跑次不管、全部重跑；选型只按能力驱动」：
-            #   原由「该形状实测跑通过（…）⇒ 证据优先」= 拿历史跑次当**接受理由** ⇒ 作废。
-            #   余量紧只陈述**形状事实**（估算值 / 越预算多少 / 卡容量内余量 / 该数字的来路）＋需实测确认。
-            #   ⛔ 27B 的 78.64 GiB / 0.61 GiB 等数字一字不动（可行性与边界不随跑次变）。
-            # ★★ 2026-10-22（复核警告-3）：同一格内同一读数只留一次 —— 读数（78.64 / 78.0 / 0.64 /
-            #   0.61）由本段这**一处**承载（信息最全），选型理由行与来路括注不再重复该读数。
-            #   ⛔ 只删重复的读数，⛔ 不改任何数字、⛔ 不删结论与「越过 78.0 设计预算」边界句。
-            if chosen.get("measured_anchor"):
-                basis = "该值锚在实测族级峰值（27B LoRA 族）"
-            else:
-                basis = "算式估算"
-            notes_extra.append(
-                f"余量紧：估算 {peak:.2f} GiB 越过 {budget:.1f} 设计预算 {peak - budget:.2f} GiB、"
-                f"卡容量内余量仅 {CARD_CAPACITY_GIB - peak:.2f} GiB（{basis}），需实测确认")
-        else:
-            notes_extra.append(f"余量紧：估算 {peak:.2f}/{budget:.1f} GiB，需实测确认")
-    # ★★ 2026-10-22（蓝图口径 · 复核条目 12）：原先此处按 `contested` 证据追加一句
-    #   「前提：显存须按本档读数确认 —— 估算 X/Y GiB 可行，而 1／2 卡同族形态处在显存不足一侧」。
-    #   该句与**本档**「估算 …（可行）」自相矛盾（同一格里先说可行、再说同族在显存不足一侧），
-    #   且把同一组读数在同一格里写了两遍 ⇒ 整句删除（⛔ 不是改数字，数字一个没动）。
-    #   显存可行性与预算边界由选型理由行（「估算 45.71/78.0 GiB（可行）」）与
-    #   「前提 / 边界」段承载，能力边界信息一条不丢。
-    if algo == "OPD":
-        gpu_variant = next((v for v in chosen.get("variants", [])
-                            if v.get("teacher") == "gpu" and v.get("peak_gib") is not None), None)
-        if chosen["teacher_variant"] == "offload" and gpu_variant is not None:
-            notes_extra.append(
-                f"教师须 offload：GPU 常驻情形估算 {gpu_variant['peak_gib']:.2f} GiB（超预算）；"
-                "offload 下教师权重在使用间隙换出到 CPU")
-        elif chosen["teacher_variant"] == "gpu":
-            notes_extra.append("教师 GPU 常驻：估算超预算 ⇒ 须开 offload")
-
-    # ── 选型理由（一句话，可判真假） ─────────────────────────────────────
-    reason_line = _reason_line(chosen, sel, backend, mode, tp, pp, dp, band, budget, peak, algo)
-
-    note_parts = [reason_line]
-    if notes_extra:
-        note_parts.extend(notes_extra)
-    if gaps:
-        note_parts.append("前提 / 边界：" + "；".join(gaps))
-    note = "；".join(p for p in note_parts if p)
+    # ── 备注列：**按主席 2026-10-22 指令清空**（备注在测试完成后回填，枚举阶段⛔ 不写任何内容）──
+    #   主席原话：「备注本来就是测试完成之后写的，现在什么都没测，当然不应该有内容。」
+    #   ⇒ `rows[].note` 保留字段、值为空串（页面渲染出空 `<td>`；字段契约不变，供回填脚本使用）。
+    #   ★ 选型理由 / 前提边界仍在 `backend_reason`（含 `gaps`）里，落 `.local` 审计件；
+    #     ⛔ 不再合成进发布件的 `rows[].note`（旧 `notes_extra` / `_reason_line` 只喂这一处 ⇒ 同批删除，
+    #     ⛔ 不留只写不读的死代码）。
+    note = ""
 
     # ── 步数推导（沿用旧口径：子集条数 ÷ 每 epoch 卡数 × epochs；本轮不跑批次） ──
     subset = SUBSET_SIZE_BY_ALGO[algo]
@@ -1146,49 +1111,6 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
             audit[k] = row.pop(k)
     row["_audit"] = audit
     return row
-
-
-def _reason_line(chosen, sel, backend, mode, tp, pp, dp, band, budget, peak, algo: str) -> str:
-    """一句话选型理由（**只写能力面 / 预算面**）。
-
-    ★ 2026-10-22（用户拍板：本文档是蓝图、选型只按能力驱动）：
-      理由的每个分句都必须能被「后端能力表 / 并行形状 / 显存估算」直接反驳或印证 ——
-      ⛔ 任何「我们跑过 / 没跑过」的历史叙述都不进第 4 章备注（旧跑次不当选型依据）。
-    """
-    others = [c for c in sel["candidates"] if c["backend"] != backend]
-    other = others[0] if others else None
-    if sel.get("missing_channel"):
-        # 唯一能装下的是缺通道的那个后端 ⇒ 保留待测试，理由写清"是能力边界不是档位不合理"
-        over = [c for c in sel["candidates"] if c["backend"] != backend and c.get("peak_gib") is not None]
-        over_txt = "、".join(f"{c['backend']} 最佳情形 {c['peak_gib']:.2f} GiB 超预算" for c in over) \
-            or "其余后端均不可行"
-        return (f"选 {backend}：{over_txt}；{backend} 是唯一具备 {algo} 训练通道的后端"
-                f"（按 {backend} 配方估算 {peak:.2f}/{budget:.1f} GiB，{band}）")
-    if other is None:
-        if sel.get("missing_backends"):
-            core = f"选 {backend}：{algo} 只有 {backend} 通道 —— {sel['missing_backends'][0]}"
-        else:
-            core = f"选 {backend}：该档只有这一个候选后端"
-    elif other["eligible"] and other.get("shape_capable", True):
-        # 两个后端都能吃该形状且都装得下 ⇒ 按固定优先级取更简单路径的那个（能力句，可被能力表反驳）
-        core = (f"选 {backend}：{mode} 档两个后端都能吃该形状 ⇒ 按「更简单路径」取 {backend}"
-                f"（{chosen.get('short_fact') or chosen['fact']}）")
-    elif not other["eligible"]:
-        # 对方后端装不下该形状（显存边界）⇒ 只剩本方
-        short = other.get("why_short") or other.get("why") or "该形状不可承载"
-        core = f"选 {backend}：{other['backend']} 承载不了该形状 —— {short} ⇒ 只有 {backend} 能承载"
-    else:
-        # 对方后端在语义上不消费该形状（能力边界）⇒ 只剩本方
-        other_fact = other.get("short_fact") or other.get("fact") or "该后端不消费该形状"
-        core = (f"选 {backend}：{other['backend']} 承载不了该形状（{other_fact}）"
-                f"⇒ 该形状只有 {backend} 能承载（{chosen['fact']}）")
-    # ★★ 2026-10-22（复核警告-3）：越预算的「余量紧」档，估算读数与判定档位由备注里的
-    #   「余量紧：估算 … 越过 … 设计预算 …、卡容量内余量仅 …（来路）」分段承载（信息最全）
-    #   ⇒ 选型理由行**不再重复该读数**（同一格同一读数只留一次）。
-    #   ⛔ 只删重复的读数，⛔ 不改任何数字、⛔ 不删「越过 78.0 设计预算」这类边界句。
-    if band == "余量紧" and peak > budget:
-        return core
-    return f"{core}；估算 {peak:.2f}/{budget:.1f} GiB（{band}）"
 
 
 def _reason_rule(sel, backend) -> str:
@@ -1537,22 +1459,10 @@ def _v14_no_tier_ids(data_text: str | None) -> tuple[bool, str]:
     return True, "0 处"
 
 
-#: note 里**只有**拿到具名 success 跑次才允许出现的断言词（V13 机核）。
-CLAIM_WORDS: tuple[str, ...] = ("训练可跑", "训练能跑", "训练跑通")
-#: note 里**只有**拿到实测证据才允许出现的断言词（V13 反方向机核）；纯算式的只能写「估算超预算」。
-NEGATIVE_CLAIM_WORDS: tuple[str, ...] = ("不可行", "必然失败", "交不出")
-
-
-def _any_backend_evidence(algo, model, mode, shape, effects) -> bool:
-    """不看后端，只看 (算法,模型,模式,形状) 是否有该类证据（供"某后端出局"类断言兜底）。"""
-    for ev in MEASURED_EVIDENCE:
-        a, m, md, _be, sh = ev["scope"]
-        if (a in ("*", algo) and m in ("*", model) and md in ("*", mode)
-                and _shape_match(sh, shape) and ev["effect"] in effects):
-            return True
-    return False
-
-
+#: ★ 2026-10-22（主席令：清空备注内容）—— `NATIVE_FULL_PP_GAP` 的**页面载体已不存在**
+#:   （备注列按令清空，备注在测试完成后才回填）⇒ 该句只留在 `.local` 审计件的
+#:   `backend_reason.gaps` 里；原 V17「每档必须逐字出现在备注里」随之**正式退役**
+#:   （退役登记见 `VERIFICATION_CASES` 的 `retired` 字段 + `run_self_check` 的 `[RETIRED]` 打印）。
 #: native 全参 PP>1 的**产物交付边界句**（逐字，⛔ 不许改写成"别的载体"这类悬空说法）。
 #: ★ 2026-10-22（蓝图口径）：删掉尾句「本档保留并按待测试推进」——它与第 4 章状态列重复；
 #:   边界事实（需跨层分片合并才能导出、导出能力只到单卡单机）一字不动。
@@ -1560,38 +1470,15 @@ NATIVE_FULL_PP_GAP = ("native 全参的 PP>1 档要交付产物，须跨层分�
                       "（当前导出能力只到单卡单机）")
 
 
-def _v17_native_full_pp_gap_disclosed(rows, budget: float) -> bool:
-    """★ 2026-10-22：`全参 ∧ pp>1 ∧ native` 的**每一档**都必须逐字披露产物卡点。
+def _v13_notes_cleared(rows, budget: float) -> bool:
+    """V13（2026-10-22 主席令清空备注）：全部档位的 `rows[].note` 必须是**空串**。
 
-    理由：这组档现在交不出产物（同一段 ExportError 代码路径）⇒ 少写一档就等于对用户隐瞒。
-    ⛔ 无白名单、无"例外档"：判据只认形状（不是档号），新增一档自动纳入。
+    主席原话：「备注本来就是测试完成之后写的，现在什么都没测，当然不应该有内容。」
+    ⇒ 枚举阶段⛔ 不写备注；字段**保留**、值为空串（供测试完成后的回填脚本写入）。
+    ★ 该断言仍**能失败**（⛔ 不是恒真）：任何档位被写进内容（含 `—` 占位）即红；
+      它只判"是否为空"，⛔ 不判内容语义（内容语义属将来的回填侧）。
     """
-    hit = [r for r in rows
-           if r["mode"] == "全参" and r["backend"] == "native" and int(r["pp"]) > 1]
-    if not hit:
-        return False                      # 该形状消失 ⇒ 断言失去对象，直接红（⛔ 不做恒真）
-    return all(NATIVE_FULL_PP_GAP in r["note"] for r in hit)
-
-
-def _v13_claims_backed_by_runs(rows, budget: float) -> bool:
-    """裁定后补（必修 2）：note 的成败断言必须有实测跑次兜底 —— 正反两个方向都机核。
-
-    正向：「训练可跑/能跑/跑通」⇒ 该档（算法,模型,模式,后端,形状）必须有 `success` 类证据。
-    反向：「不可行/必然失败/交不出」⇒ 该档（不限后端）必须有 `backend_infeasible`/`recipe_forbid` 证据，
-          纯算式结论只能写「估算超预算」。
-    """
-    for r in rows:
-        note = r["note"]
-        shape = (int(r["tp"]), int(r["pp"]), int(r["dp"]))
-        if any(w in note for w in CLAIM_WORDS):
-            if not evidence_for(r["algo"], r["model"], r["mode"], r["backend"], shape,
-                                effects=("success",)):
-                return False
-        if any(w in note for w in NEGATIVE_CLAIM_WORDS):
-            if not _any_backend_evidence(r["algo"], r["model"], r["mode"], shape,
-                                         ("backend_infeasible", "recipe_forbid")):
-                return False
-    return True
+    return all(r.get("note") == "" for r in rows)
 
 
 VERIFICATION_CASES: tuple[dict[str, Any], ...] = (
@@ -1658,12 +1545,10 @@ VERIFICATION_CASES: tuple[dict[str, Any], ...] = (
     {
         "id": "V8",
         "claim": ("任何档位都不以 DeepSpeed 为选型/配方（DS 已禁用）；Megatron 只以**能力边界**出现"
-                  "（「TP/PP 要走 Megatron 段／通道」），⛔ 不作为配方、⛔ 不以工程状态语出现"),
+                  "—— 页面备注已按主席 2026-10-22 指令清空（见 V13），故页面侧不发布任何工程叙述；"
+                  "能力边界原文仍留在 `.local` 审计件（`backend_reason` 里的「TP/PP 要走 Megatron 段／通道」）"),
         "check": lambda rows, budget: all(
             r["deepspeed"] == "—" and "deepspeed" not in r["switches"].lower() for r in rows)
-        # 页面（note）里 Megatron 只许出现在能力边界句里
-        and all(("Megatron" not in r["note"])
-                or ("Megatron 通道" in r["note"] or "Megatron 段" in r["note"]) for r in rows)
         # 审计件里仍必须留下这条能力边界的原文（⛔ 不是"删了就当没有"）
         and any("Megatron" in json.dumps(r["backend_reason"], ensure_ascii=False) for r in rows),
     },
@@ -1694,16 +1579,20 @@ VERIFICATION_CASES: tuple[dict[str, Any], ...] = (
     },
     {
         "id": "V13",
-        "claim": ("备注只写「前提 / 边界」，不写「我们跑过 / 没跑过」；万一写了成败断言，"
-                  "「训练可跑/能跑/跑通」必须有具名 success 证据、「不可行/必然失败/交不出」必须有"
-                  "backend_infeasible/recipe_forbid 证据（纯算式只能写「估算超预算」）"),
-        "check": _v13_claims_backed_by_runs,
+        "claim": ("备注内容一律为空（主席 2026-10-22 指令：备注在测试完成后回填，枚举阶段⛔ 不写任何内容）"
+                  "—— `rows[].note` 字段保留、值为空串；页面备注单元格因此也为空"),
+        "check": _v13_notes_cleared,
     },
     {
         "id": "V17",
         "claim": ("`全参 ∧ pp>1 ∧ native` 的**每一档**都必须逐字披露产物交付边界句"
                   "（「" + NATIVE_FULL_PP_GAP + "」）—— 该组档现在交不出产物，少写一档即隐瞒"),
-        "check": _v17_native_full_pp_gap_disclosed,
+        # ★ 正式退役（2026-10-22 主席令「备注内容全清空」）：该断言的**载体** = 第 4 章备注列，
+        #   备注按令为空 ⇒ 页面不再发布该句（边界原文仍在 `.local` 审计件 `backend_reason.gaps`）。
+        #   ⛔ 不是改期望值变绿、⛔ 不是静默跳过：命中后由 `run_self_check` 逐条打 `[RETIRED]` + 理由。
+        #   若将来备注回填重新承载该句，删掉本 `retired` 键即可恢复机核（判据函数仍在 git 历史里）。
+        "retired": ("主席 2026-10-22 指令清空备注内容 ⇒ 该断言的载体（备注列里的产物交付边界句）"
+                    "不再发布；边界原文保留在审计件 backend_reason.gaps"),
     },
     {
         "id": "V14",
@@ -1734,6 +1623,13 @@ def run_self_check(rows, budget: float, counts: dict[str, Any] | None = None,
                    excluded: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     out = []
     for case in VERIFICATION_CASES:
+        # ★ 正式退役面（2026-10-22）：断言的**对象**已随主席令/换代不存在 ⇒ 不吞掉、不静默跳过：
+        #   仍逐条登记 `retired` + 理由，由 `summarize` 打 `[RETIRED]`；`ok=True` 故不阻断写盘。
+        #   ⛔ 未登记的判据照旧 fail-closed（`failed` 过滤只认 `ok`）。
+        if case.get("retired"):
+            out.append({"id": case["id"], "claim": case["claim"], "ok": True,
+                        "retired": True, "reason": case["retired"]})
+            continue
         need = case.get("min_card_limit")
         if need is not None and card_limit is not None and card_limit < need:
             out.append({"id": case["id"], "claim": case["claim"], "ok": True, "skipped": True,
@@ -2599,7 +2495,10 @@ def summarize(doc: dict[str, Any], report: dict[str, Any]) -> str:
     lines.append("─" * 78)
     lines.append("自检（报告里的回验表 = 可执行断言）:")
     for case in report["verification_cases"]:
-        lines.append(f"  [{'PASS' if case['ok'] else 'FAIL'}] {case['id']} {case['claim']}")
+        if case.get("retired"):
+            lines.append(f"  [RETIRED] {case['id']} {case['claim']}（{case.get('reason', '')}）")
+        else:
+            lines.append(f"  [{'PASS' if case['ok'] else 'FAIL'}] {case['id']} {case['claim']}")
     lines.append("═" * 78)
     return "\n".join(lines)
 

@@ -202,11 +202,13 @@ docs/capability-matrix.data.json（机读数据：列定义 + 统一口径 + 逐
 | 基础 1 | `tier` 档号（sticky） |
 | 状态 1 | `status` 是否通过（三态：`通过` / `不通过` / `待测试`） |
 | 主要参数 8 | `model_tbl` 模型 ／ `algo` 算法 ／ `mode_tbl` 模式 ／ `backend_tbl` 后端 ／ `tp` TP ／ `pp` PP ／ `dp` DP ／ `cards_total` 总卡数 |
-| 实验数据 5 | `peak_mem` 显存峰值 ／ `steps_actual` 实跑步数 ／ `elapsed` 耗时 ／ `throughput` 吞吐 ／ `effect` 效果 |
-| 备注 1 | `note` 备注（条件 / 限制 / 失败归因） |
+| 实验数据 6（含备注） | `peak_mem` 显存峰值 ／ `steps_actual` 实跑步数 ／ `elapsed` 耗时 ／ `throughput` 吞吐 ／ `effect` 效果 ／ `note` 备注（条件 / 限制 / 失败归因） |
 
 - `MATRIX_COLUMNS` 里另有 3 个**非渲染**字段（`model` / `mode` / `backend`，带 `into="conditions"`）
-  由第 3 章承载 ⇒ 渲染面 = `RENDERED_COLUMNS` = **16** 列（列组 1 + 1 + 8 + 5 + 1）。
+  由第 3 章承载 ⇒ 渲染面 = `RENDERED_COLUMNS` = **16** 列（列组 1 + 1 + 8 + 6，共 **4** 个列组）。
+- ★ 2026-10-22（主席令）：备注列**保留**（表头与列宽不动），但 ① 列组由 `note` 并入 `data`
+  （一级表头只剩「实验数据」一组、跨 6 列，独立「备注」组头与 `.g-note` 样式下架）；
+  ② 内容由生成端清空（`rows[].note = ""`，字段保留）—— 备注在测试完成后回填，枚举阶段不写内容。
 - 数据件仍保留 `lr` / `max_epochs` / `switches` 三字段（配置生成链路消费）⇒ **只是不渲染**，⛔ 不是删字段。
 - 状态词表同步收敛为**三态**：`通过` / `不通过` / `待测试`（`build_official.STATUS_VOCABULARY`、
   `render_matrix.STATUS_CLASS`、页面第 4 章图例**同一份**；原第四态「未纳入验收」并入「不通过」，
