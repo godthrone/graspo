@@ -602,8 +602,8 @@ BACKEND_PARALLEL_FACT: dict[tuple[str, str], dict[str, Any]] = {
     },
     ("ms-swift", "LoRA"): {
         "supports_tp": False, "supports_pp": False, "supports_dp": True,
-        "fact": "ms-swift 标准通道只有 DDP+SP（无 tp/pp 字段；TP/PP 要走 Megatron 段）",
-        "short_fact": "ms-swift 标准通道只有 DDP+SP",
+        "fact": "ms-swift 标准通道只做纯数据并行（无 tp/pp 字段：tp 恒为 1 ⇒ SP 恒关闭；TP/PP 要走 Megatron 段）",
+        "short_fact": "ms-swift 标准通道只做纯数据并行",
         "source": "src/graspo/flow/backend/msswift/_config_mapping.py:409-436,682",
         "tier": 1,
     },
@@ -972,10 +972,12 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
     notes_extra: list[str] = []
     if band == "余量紧":
         if peak > budget:
-            if chosen["success_evidence"]:
-                basis = f"该形状实测跑通过（{_labels(chosen['success_evidence'])}）⇒ 证据优先"
-            elif chosen.get("measured_anchor"):
-                basis = f"该值锚在实测族级峰值（27B LoRA 78.64 GiB、余 0.61 GiB）"
+            # ★ 2026-10-22 用户裁定「已有跑次不管、全部重跑；选型只按能力驱动」：
+            #   原由「该形状实测跑通过（…）⇒ 证据优先」= 拿历史跑次当**接受理由** ⇒ 作废。
+            #   余量紧只陈述**形状事实**（估算值 / 越预算多少 / 卡容量内余量 / 该数字的来路）＋需实测确认。
+            #   ⛔ 27B 的 78.64 GiB / 0.61 GiB 等数字一字不动（可行性与边界不随跑次变）。
+            if chosen.get("measured_anchor"):
+                basis = "该值锚在实测族级峰值（27B LoRA 78.64 GiB、余 0.61 GiB）"
             else:
                 basis = "算式估算"
             notes_extra.append(
@@ -1194,8 +1196,11 @@ def _reason_line(chosen, sel, backend, mode, tp, pp, dp, band, budget, peak, alg
             core = f"选 {backend}：该档只有这一个候选后端"
     elif other["eligible"]:
         if chosen["success_evidence"] and other["success_evidence"]:
-            core = (f"选 {backend}：两个后端都有实测成功证据（{backend} {ev}；"
-                    f"{other['backend']} {_labels(other['success_evidence'])}）⇒ 按「更简单路径」取 {backend}"
+            # ★ 2026-10-22 用户裁定「已有跑次不管、全部重跑；选型只按能力驱动」：
+            #   原由「两个后端都有实测成功证据（…判据① 通过…）」= 拿历史跑次当选型依据 ⇒ 作废。
+            #   选型依据只留**能力面**：两后端都能吃该形状 ⇒ 按固定优先级取更简单路径的那个。
+            #   ⛔ 不是放宽：仍点名两端都能承载该形状（能力句，可被后端能力表反驳）。
+            core = (f"选 {backend}：{mode} 档两个后端都能吃该形状 ⇒ 按「更简单路径」取 {backend}"
                     f"（{chosen.get('short_fact') or chosen['fact']}）")
         elif chosen["success_evidence"]:
             why_other = ("实测记录只有：" + _labels([e for e in MEASURED_EVIDENCE

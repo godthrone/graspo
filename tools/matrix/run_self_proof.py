@@ -870,6 +870,34 @@ def main():
             checks[_tag + " ⇒ verify 变红"] = (rc != 0)
             checks[_tag + " ⇒ 报红点提到该对象"] = (_want in out)
 
+        # ㉚ ★★ 2026-10-22（SP 口径：**随 TP 一起测**；CP 不进本文档）三条反向自证：
+        #   ① 从页面上**删掉** SP 派生规则句 ⇒ `verify_matrix` 必须变红（④SP1「恰好 1 次」被破）；
+        #   ② 往第 3 章**塞**一句「上下文并行 CP」⇒ 必须变红（④SP2 零命中）；
+        #   ③ 把已作废的旧结论「本矩阵不单列」**塞回去** ⇒ 必须变红（④SP3 零命中）。
+        #   为什么必须有：④SP1 若写成"≥1"、④SP2/④SP3 若漏写，页面就能同时出现新旧两套 SP 口径
+        #   而机核全绿 —— 这三条就是让那三种走法各自当场红掉（⛔ 断言可失败是硬要求）。
+        #   规则句文本**取自 verify 常量**（§1.4 单一真相源，⛔ 本文件不手抄一份）。
+        _sp_rule = _vm.SP_RULE_SENTENCE
+        checks["㉚ 页面上确有 SP 派生规则句（夹具前置）"] = (_ch3_orig.count(_sp_rule) == 1)
+        for _tag, _mut, _want in (
+                ("㉚a 删掉 SP 派生规则句",
+                 _ch3_orig.replace(_sp_rule, "SP 的开法见各处说明", 1), "④SP1"),
+                ("㉚b 塞「上下文并行 CP」",
+                 _ch3_orig.replace("<h3>训练超参</h3>",
+                                   "<h3>训练超参</h3><p>超长序列另走上下文并行 CP</p>", 1), "④SP2"),
+                ("㉚c 塞回旧结论「本矩阵不单列」",
+                 _ch3_orig.replace("<h3>训练超参</h3>",
+                                   "<h3>训练超参</h3><p>SP 本矩阵不单列</p>", 1), "④SP3"),
+        ):
+            checks[_tag + " 夹具确实改动了页面"] = (_mut != _ch3_orig)
+            _sp_mp = tmp / f"spmut_{abs(hash(_tag)) % 10000}.html"
+            _sp_mp.write_text(_mut, encoding="utf-8")
+            rc, out = run(["tools/matrix/verify_matrix.py", "--template", "tools/matrix/template.html",
+                           "--data", "docs/capability-matrix.data.json", "--html", str(_sp_mp)])
+            steps.append((_tag + "（应 FAIL）", rc, out))
+            checks[_tag + " ⇒ verify 变红"] = (rc != 0)
+            checks[_tag + " ⇒ 报红点提到该对象"] = (_want in out)
+
         # ㉘ ★★ 2026-10-22（用户拍板 124 → 68）：**档数被偷偷改大/改小 ⇒ 机核必须变红**。
         #   ①删一行且把 `counts.kept` 一起改成 67（"看起来自洽"的偷删）⇒ `verify_matrix` 必须红
         #     （④C 计数守恒：enumerated 160 ≠ kept 67 + Σ剔除 92）；

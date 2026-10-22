@@ -9,7 +9,7 @@
     "code_version": {
       "repo": "graspo",
       "branch": "feature/refactor-three-layer-architecture",
-      "commit": "86ce413",
+      "commit": "fc135a0",
       "note": "commit = 本件的生成基线（生成时的 HEAD）；脚本以 meta.enumeration.script_sha256 为准 —— 该 sha256 与同提交内的 tools/matrix/enumerate_matrix.py 逐字节一致。"
     },
     "authority": {
@@ -476,7 +476,7 @@
         }
       },
       "script": "tools/matrix/enumerate_matrix.py",
-      "script_sha256": "d04a3f5742ed6cd568a2b18947434a7af7d401532ec635633e4a4be9e72bcf14",
+      "script_sha256": "4a67524d53aba84036f1baa3fb4ffddf480a52786dec97991a510cea14f0425f",
       "audit_ref": "逐档审计明细见枚举脚本 --audit-out 输出（随工作区，不入库）"
     }
   },
@@ -531,7 +531,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：两个后端都有实测成功证据（ms-swift 9B SFT LoRA ms-swift dp1/2/4 判据① 通过；native 9B SFT LoRA native dp1/2/4 判据① 通过）⇒ 按「更简单路径」取 ms-swift（ms-swift 标准通道只有 DDP+SP（无 tp/pp 字段；TP/PP 要走 Megatron 段））；估算 33.24/78.0 GiB（可行）",
+      "note": "选 ms-swift：LoRA 档两个后端都能吃该形状 ⇒ 按「更简单路径」取 ms-swift（ms-swift 标准通道只做纯数据并行（无 tp/pp 字段：tp 恒为 1 ⇒ SP 恒关闭；TP/PP 要走 Megatron 段））；估算 33.24/78.0 GiB（可行）",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -585,7 +585,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：两个后端都有实测成功证据（ms-swift 9B SFT LoRA ms-swift dp1/2/4 判据① 通过；native 9B SFT LoRA native dp1/2/4 判据① 通过）⇒ 按「更简单路径」取 ms-swift（ms-swift 标准通道只有 DDP+SP（无 tp/pp 字段；TP/PP 要走 Megatron 段））；估算 33.24/78.0 GiB（可行）",
+      "note": "选 ms-swift：LoRA 档两个后端都能吃该形状 ⇒ 按「更简单路径」取 ms-swift（ms-swift 标准通道只做纯数据并行（无 tp/pp 字段：tp 恒为 1 ⇒ SP 恒关闭；TP/PP 要走 Megatron 段））；估算 33.24/78.0 GiB（可行）",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -639,7 +639,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：两个后端都有实测成功证据（ms-swift 9B SFT LoRA ms-swift dp1/2/4 判据① 通过；native 9B SFT LoRA native dp1/2/4 判据① 通过）⇒ 按「更简单路径」取 ms-swift（ms-swift 标准通道只有 DDP+SP（无 tp/pp 字段；TP/PP 要走 Megatron 段））；估算 33.24/78.0 GiB（可行）",
+      "note": "选 ms-swift：LoRA 档两个后端都能吃该形状 ⇒ 按「更简单路径」取 ms-swift（ms-swift 标准通道只做纯数据并行（无 tp/pp 字段：tp 恒为 1 ⇒ SP 恒关闭；TP/PP 要走 Megatron 段））；估算 33.24/78.0 GiB（可行）",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -2696,7 +2696,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：ms-swift 有实测成功证据（27B SFT LoRA ms-swift dp1/2/4 判据① 通过），native 无实测成功证据（实测记录只有：27B SFT LoRA native dp1 曾因显存被移卡）；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该形状实测跑通过（27B SFT LoRA ms-swift dp1/2/4 判据① 通过）⇒ 证据优先），需实测确认",
+      "note": "选 ms-swift：ms-swift 有实测成功证据（27B SFT LoRA ms-swift dp1/2/4 判据① 通过），native 无实测成功证据（实测记录只有：27B SFT LoRA native dp1 曾因显存被移卡）；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 78.64 GiB、余 0.61 GiB）），需实测确认",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -2750,7 +2750,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：两个后端都有实测成功证据（ms-swift 27B SFT LoRA ms-swift dp1/2/4 判据① 通过；native 27B SFT LoRA native dp2/dp4 判据① 通过且 DP 副本逐元素相等（可合并））⇒ 按「更简单路径」取 ms-swift（ms-swift 标准通道只有 DDP+SP（无 tp/pp 字段；TP/PP 要走 Megatron 段））；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该形状实测跑通过（27B SFT LoRA ms-swift dp1/2/4 判据① 通过）⇒ 证据优先），需实测确认",
+      "note": "选 ms-swift：LoRA 档两个后端都能吃该形状 ⇒ 按「更简单路径」取 ms-swift（ms-swift 标准通道只做纯数据并行（无 tp/pp 字段：tp 恒为 1 ⇒ SP 恒关闭；TP/PP 要走 Megatron 段））；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 78.64 GiB、余 0.61 GiB）），需实测确认",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -2804,7 +2804,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：两个后端都有实测成功证据（ms-swift 27B SFT LoRA ms-swift dp1/2/4 判据① 通过；native 27B SFT LoRA native dp2/dp4 判据① 通过且 DP 副本逐元素相等（可合并））⇒ 按「更简单路径」取 ms-swift（ms-swift 标准通道只有 DDP+SP（无 tp/pp 字段；TP/PP 要走 Megatron 段））；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该形状实测跑通过（27B SFT LoRA ms-swift dp1/2/4 判据① 通过）⇒ 证据优先），需实测确认",
+      "note": "选 ms-swift：LoRA 档两个后端都能吃该形状 ⇒ 按「更简单路径」取 ms-swift（ms-swift 标准通道只做纯数据并行（无 tp/pp 字段：tp 恒为 1 ⇒ SP 恒关闭；TP/PP 要走 Megatron 段））；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 78.64 GiB、余 0.61 GiB）），需实测确认",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -3290,7 +3290,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：native 出局 —— 实测不可行（27B GRASPO LoRA native 1 卡实测显存不足 78.77 GiB）；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该形状实测跑通过（27B GRASPO LoRA ms-swift dp1/dp4 判据① 通过）⇒ 证据优先），需实测确认",
+      "note": "选 ms-swift：native 出局 —— 实测不可行（27B GRASPO LoRA native 1 卡实测显存不足 78.77 GiB）；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 78.64 GiB、余 0.61 GiB）），需实测确认",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -3398,7 +3398,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：ms-swift 有实测成功证据（27B GRASPO LoRA ms-swift dp1/dp4 判据① 通过），native 无实测成功证据（实测记录只有：27B GRASPO LoRA native dp4 NCCL 报错）；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该形状实测跑通过（27B GRASPO LoRA ms-swift dp1/dp4 判据① 通过）⇒ 证据优先），需实测确认",
+      "note": "选 ms-swift：ms-swift 有实测成功证据（27B GRASPO LoRA ms-swift dp1/dp4 判据① 通过），native 无实测成功证据（实测记录只有：27B GRASPO LoRA native dp4 NCCL 报错）；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 78.64 GiB、余 0.61 GiB）），需实测确认",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -3884,7 +3884,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：CPT 只有 ms-swift 通道 —— native 后端无 CPT 训练通道（能力边界：该后端不提供 CPT 训练方法）；缺实现≠档位不合理 ⇒ 保留待测试；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该形状实测跑通过（27B CPT LoRA ms-swift dp1/2/4 判据① 通过）⇒ 证据优先），需实测确认",
+      "note": "选 ms-swift：CPT 只有 ms-swift 通道 —— native 后端无 CPT 训练通道（能力边界：该后端不提供 CPT 训练方法）；缺实现≠档位不合理 ⇒ 保留待测试；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 78.64 GiB、余 0.61 GiB）），需实测确认",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -3938,7 +3938,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：CPT 只有 ms-swift 通道 —— native 后端无 CPT 训练通道（能力边界：该后端不提供 CPT 训练方法）；缺实现≠档位不合理 ⇒ 保留待测试；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该形状实测跑通过（27B CPT LoRA ms-swift dp1/2/4 判据① 通过）⇒ 证据优先），需实测确认",
+      "note": "选 ms-swift：CPT 只有 ms-swift 通道 —— native 后端无 CPT 训练通道（能力边界：该后端不提供 CPT 训练方法）；缺实现≠档位不合理 ⇒ 保留待测试；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 78.64 GiB、余 0.61 GiB）），需实测确认",
       "spec_json": "—",
       "blocked_reason": "—"
     },
@@ -3992,7 +3992,7 @@
       "throughput": "—",
       "effect": "—",
       "not_failed_reason": "—",
-      "note": "选 ms-swift：CPT 只有 ms-swift 通道 —— native 后端无 CPT 训练通道（能力边界：该后端不提供 CPT 训练方法）；缺实现≠档位不合理 ⇒ 保留待测试；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该形状实测跑通过（27B CPT LoRA ms-swift dp1/2/4 判据① 通过）⇒ 证据优先），需实测确认",
+      "note": "选 ms-swift：CPT 只有 ms-swift 通道 —— native 后端无 CPT 训练通道（能力边界：该后端不提供 CPT 训练方法）；缺实现≠档位不合理 ⇒ 保留待测试；估算 78.64/78.0 GiB（余量紧）；余量紧：估算 78.64 GiB 越过 78.0 设计预算 0.64 GiB、卡容量内余量仅 0.61 GiB（该值锚在实测族级峰值（27B LoRA 78.64 GiB、余 0.61 GiB）），需实测确认",
       "spec_json": "—",
       "blocked_reason": "—"
     },

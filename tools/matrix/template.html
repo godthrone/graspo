@@ -241,7 +241,7 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <h4>ms-swift</h4>
 <ul class="tight">
 <li>每卡批大小 <code>per_device_train_batch_size=1</code></li>
-<li>序列并行 <code>sequence_parallel_size=1</code>（关闭）</li>
+<li>序列并行 <code>sequence_parallel_size=1</code>：ms-swift 只做纯数据并行（<code>tp</code> 恒为 1），故 SP 恒关闭</li>
 <li>采样后端 <code>use_vllm=false</code>（不走 vLLM 采样）</li>
 <li>进程数 <code>nproc_per_node=总卡数</code>（只做纯数据并行）</li>
 <li>LoRA 档不开分片引擎：优化器态只覆盖适配器参数</li>
@@ -250,15 +250,17 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <h4>native</h4>
 <ul class="tight">
 <li>每卡批大小 <code>micro_batch_size=1</code></li>
-<li>序列并行 <code>sequence_parallel</code> 默认关闭（要求 <code>tp_size≥2</code>）</li>
+<li>序列并行 <code>sequence_parallel</code>：<code>tp_size&gt;1</code> 时开启，且 SP 尺寸 = <code>tp_size</code>；<code>tp_size=1</code> 时关闭（该能力要求 <code>tp_size≥2</code>）</li>
 <li>全参只能用流水并行摊层（<code>pp_size</code> 可大于 1，<code>tp_size</code> / <code>dp_size</code> 固定 1）；LoRA 的 <code>tp_size</code> / <code>dp_size</code> 可大于 1（张量并行与数据并行都支持）</li>
 <li>1 卡全参必须开优化器态 offload（<code>offload_optimizer_state=true</code>），否则装不下</li>
 <li><code>pp_size&gt;1</code> 且算法是 GRASPO 时，须显式开 <code>allow_unverified_pp_rollout=true</code>（默认拒绝启动）</li>
 <li><b>CPT / OPD 没有 native 通道</b>：这两个训练方法只能走 ms-swift</li>
 </ul>
-<h4>序列并行（SP）为什么不进第 4 章矩阵</h4>
+<h3>序列并行（SP）如何随 TP 一起测</h3>
 <ul class="tight">
-<li>SP 是 TP 的省显存子开关（把非 TP 区的激活沿序列维切给各 TP rank，通信换成 reduce-scatter / all-gather），<code>tp=1</code> 时无意义；当前所有档位都关闭，而矩阵每加一维档位数翻倍、SP 既不改变并行形状也不改判据 ⇒ 本矩阵不单列。（将来要测超长序列，那是上下文并行 CP，属另一个能力，届时单列。）</li>
+<li>SP 是 TP 的省显存子开关：把非 TP 区的激活沿序列维切给各 TP rank，通信换成 reduce-scatter / all-gather。</li>
+<li>规则：凡 tp>1 的档位一律开启 SP，且 SP 尺寸 = TP 尺寸；tp=1 的档位 SP 无意义，保持关闭。</li>
+<li>因为 SP 尺寸由 TP 尺寸派生，它不引入新的档位：矩阵里每加一维档位数翻倍，SP 搭 TP 的车测掉即可。</li>
 </ul>
 <h3>算法级参数</h3>
 <table class="cfg">
