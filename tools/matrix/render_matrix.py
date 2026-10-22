@@ -32,11 +32,11 @@ from pathlib import Path
 #:     文字 ⇒ 原 `{{CRITERIA}}` / `{{EVAL_INFO}}` / `{{VENUE}}` / `{{CODE_VERSION}}` /
 #:     `{{UNIFORM_PARAMS}}` / `{{VERDICTS}}` / `{{COVERAGE_WARNING}}` / `{{BOUNDARY}}` /
 #:     `{{GEN_BANNER}}` 等占位符一律下架（⛔ 不留"静态区仍由数据现算"的通道）。
-#: ★ 2026-10-22（章首数字去硬编码轮）：新增 `{{ENUM_COUNTS}}` —— 第 4 章章首那句"保留 N 档、
-#:   剔除 M 档"原先在模板里写死，口径一变（54→124 档）文档就说假话。现由
-#:   `data.meta.enumeration.counts` 现算（单一真相源 = 枚举脚本产出的审计计数）。
-PLACEHOLDER_TOKENS = ("{{DOC_TITLE}}", "{{GENERATOR}}", "{{DATA_PATH}}", "{{MATRIX_TABLE}}",
-                      "{{ENUM_COUNTS}}")
+#: ★ 2026-10-22（用户口径：第 4 章章首那句整段删除）：`{{ENUM_COUNTS}}` 随之**下架**
+#:   —— 页面上不再出现"保留 N 档 / 剔除 M 档"这类数字（⛔ 别留死占位符）。
+#:   ★ 但 `counts.kept == len(rows)` 这条**等式机核保留**，改为**渲染期无条件执行**
+#:   （见 `check_enum_counts`，不再依赖任何占位符）。
+PLACEHOLDER_TOKENS = ("{{DOC_TITLE}}", "{{GENERATOR}}", "{{DATA_PATH}}", "{{MATRIX_TABLE}}")
 
 #: ★★ 16 列的功能矩阵表结构（**单一真相源**，宪法 §1.4）：
 #:   档号 → 是否通过 → 主要参数 8 列 → 实验数据 5 列 → 备注 1 列；两级表头 + 5 个列组。
@@ -190,13 +190,14 @@ CHAPTER3_ITEM_LABELS = tuple(i["label"] for i in CHAPTER3_CONDITION_ITEMS)
 CHAPTER3_FIELDS = frozenset(i["row_field"] for i in CHAPTER3_CONDITION_ITEMS if i.get("row_field"))
 
 
-def enum_counts_text(meta: dict, rows: "list[dict] | None" = None) -> str:
+def check_enum_counts(meta: dict, rows: "list[dict]") -> None:
     """第 4 章章首的「保留 N 档、剔除 M 档」——**一律由数据现算**（⛔ 模板里不写死数字）。
 
     取值：`meta.enumeration.counts.kept` 与 `meta.enumeration.counts.excluded.MEMORY_UNFIT`。
 
     ★ fail-closed（2026-10-22）：`meta.enumeration` 缺失、或上述任一键缺失 ⇒ **直接 `SystemExit`**
       并指明缺哪个键。⛔ 不许回退到默认数字（回退 = 文档说假话且无人察觉）。
+    ★ 2026-10-22（章首句删除轮）：本函数**不再产出任何页面文字**，只做等式机核（无返回值）。
     """
     def _need(path: str, obj, key):
         if not isinstance(obj, dict):
@@ -218,11 +219,11 @@ def enum_counts_text(meta: dict, rows: "list[dict] | None" = None) -> str:
         if isinstance(_v, bool) or not isinstance(_v, int):
             raise SystemExit(f"渲染失败：`meta.enumeration.{_n}` 不是整数（{_v!r}）⇒ fail-closed")
     # ★★ W2（2026-10-22）：章首「保留 N 档」必须与**实际渲染的行数**相等，否则删一行/多一行时
-    #   文档会静默说假话（页面上仍写「保留 124 档」）⇒ 此处 fail-closed（⛔ 不警告、不改正、不回退）。
-    if rows is not None and kept != len(rows):
+    #   文档会静默说假话（页面上仍写「保留 68 档」）⇒ 此处 fail-closed（⛔ 不警告、不改正、不回退）。
+    if kept != len(rows):
         raise SystemExit(f"渲染失败：`meta.enumeration.counts.kept`={kept} != 实际行数 {len(rows)} "
-                         "⇒ 章首数字与表格不符（fail-closed，⛔ 不回落、不自动改正）")
-    return f"保留 {kept} 档、剔除 {oom} 档"
+                         "⇒ 计数与表格不符（fail-closed，⛔ 不回落、不自动改正）")
+    return None
 
 
 def condition_field(label, items=None):
@@ -442,13 +443,13 @@ def build_matrix_table(data):
 
 def render(template_text, data):
     meta = data["meta"]
-    rows = data.get("rows") or []      # ★ W2：章首「保留 N 档」要与**实际行数**相等（机核见 enum_counts_text）
+    rows = data.get("rows") or []      # ★ 计数等式机核（页面上已无「保留 N 档」，但等式照旧必须成立）
     table = build_matrix_table(data)
-    # ★★ 只保留模板里**真实存在**的 5 个占位符（见 `PLACEHOLDER_TOKENS`）：
+    # ★★ 只保留模板里**真实存在**的 4 个占位符（见 `PLACEHOLDER_TOKENS`）：
     #   第 1/2/3 章、目录、页脚、首屏注释已是模板静态文字 ⇒ ⛔ 不再从数据现算
     #   （使用者口径：脚本只负责把测试结果填进最后一章测试表）。
+    check_enum_counts(meta, rows)      # ★ 无条件机核：counts.kept 必须 == 实际行数
     repl = {
-        "{{ENUM_COUNTS}}": enum_counts_text(meta, rows),
         "{{DOC_TITLE}}": meta.get("title", ""),
         "{{GENERATOR}}": (meta.get("authority") or {}).get("generator", ""),
         "{{DATA_PATH}}": (meta.get("authority") or {}).get("data_path", ""),

@@ -32,7 +32,7 @@ RESULT_KEYS = list(_bo.EXP_DATA_KEYS)   # ★ 精简轮 2：实测读数列由�
 #: ★★ 2026-10-22 退役清单（**逐条留痕、每次运行都打印**）：这些自证项的**对象**已随
 #:   ①第 4 章 19→16 列（删 `lr` / `训练轮次` / `关键开关`）、②第 3 章「训练方法 × 后端」重写
 #:   （「统一超参」块并入三张静态表、LoRA 不再发布逐后端自报计数）、③状态词表四态→三态、
-#:   ④数据件换代（54 档 `T0xx` ⇒ 124 档 `M0xx`）而不存在。
+#:   ④数据件换代（54 档 `T0xx` ⇒ 68 档 `M0xx`）而不存在。
 #:   ⛔ 不是"调宽阈值"、⛔ 不是静默跳过：命中项在输出里逐条标 `RETIRED` 并打印原因；
 #:   未列入本表的一律照常计入 PASS/FAIL（fail-closed 面不变）。
 RETIRED_2026_10_22: dict[str, str] = {
@@ -835,7 +835,7 @@ def main():
                 print(f"  [debug] ㉕b 夹具未触发「{_want}」：{_fx_fail}")
 
         # ㉖ ★★ 2026-10-22（复核 W2）反向自证：章首「保留 N 档」与表格行数**必须相等**。
-        #   做法：把 `meta.enumeration.counts.kept` 改成 123（数据仍 124 行）⇒ 渲染必须
+        #   做法：把 `meta.enumeration.counts.kept` 改成 123（数据仍 68 行）⇒ 渲染必须
         #   **fail-closed（rc != 0）**，且报错要点名 kept 与实际行数。⛔ 不许"渲染成功但数字错"。
         _w2 = json.loads(json.dumps(data, ensure_ascii=False))
         _w2["meta"]["enumeration"]["counts"]["kept"] = 123
@@ -864,6 +864,38 @@ def main():
             steps.append((_tag + "（应 FAIL）", rc, out))
             checks[_tag + " ⇒ verify 变红"] = (rc != 0)
             checks[_tag + " ⇒ 报红点提到该对象"] = (_want in out)
+
+        # ㉘ ★★ 2026-10-22（用户拍板 124 → 68）：**档数被偷偷改大/改小 ⇒ 机核必须变红**。
+        #   ①删一行且把 `counts.kept` 一起改成 67（"看起来自洽"的偷删）⇒ `verify_matrix` 必须红
+        #     （④C 计数守恒：enumerated 160 ≠ kept 67 + Σ剔除 92）；
+        #   ②追加一行重复档号且 `counts.kept` 改成 69 ⇒ 也必须红（④C 档号连续）。
+        #   ⛔ 这两条就是"删档必须走脚本、不许手改数据件"的反向证明。
+        for _tag, _mut in (
+                ("㉘a 偷删一档且同步改 kept", "drop"),
+                ("㉘b 偷加一档且同步改 kept", "add"),
+        ):
+            _md = json.loads(json.dumps(data, ensure_ascii=False))
+            if _mut == "drop":
+                _md["rows"] = _md["rows"][:-1]
+                _md["meta"]["enumeration"]["counts"]["kept"] -= 1
+            else:
+                _md["rows"] = _md["rows"] + [_md["rows"][-1]]
+                _md["meta"]["enumeration"]["counts"]["kept"] += 1
+            _dp = tmp / f"count_{_mut}.data.json"
+            _dp.write_text(json.dumps(_md, ensure_ascii=False, indent=1), encoding="utf-8")
+            rc, out = run(["tools/matrix/render_matrix.py", "--template", "tools/matrix/template.html",
+                           "--data", str(_dp), "--out", str(tmp / f"count_{_mut}.html")])
+            steps.append((_tag + "：渲染（前一步，允许通过）", rc, out))
+            if rc == 0:
+                rc2, out2 = run(["tools/matrix/verify_matrix.py", "--template",
+                                 "tools/matrix/template.html", "--data", str(_dp),
+                                 "--html", str(tmp / f"count_{_mut}.html")])
+                steps.append((_tag + " ⇒ verify（应 FAIL）", rc2, out2))
+                checks[_tag + " ⇒ verify 变红"] = (rc2 != 0)
+                checks[_tag + " ⇒ 报红点提到档数/计数"] = ("④C" in out2)
+            else:
+                checks[_tag + " ⇒ verify 变红"] = False
+                checks[_tag + " ⇒ 报红点提到档数/计数"] = False
 
         print("=" * 70)
         for name, rc, out in steps:

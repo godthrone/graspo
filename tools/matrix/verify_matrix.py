@@ -35,6 +35,7 @@ from pathlib import Path
 import render_matrix  # 同目录；复用唯一渲染通道
 import build_official  # 同目录；★ 结论列契约与归因依据关键词**同源**（⛔ 不复制一份）
 import gen_configs     # 同目录；★ 「已声明的前提」定义**同源**（`load_premises`，⛔ 不复制一份）
+import enumerate_matrix  # 同目录；★ 原因码的「剔除/不剔除」分类**同源**（⛔ 不复制一份）
 
 VERSION = "verify-matrix/v20-partition-le2-20261019"
 
@@ -255,7 +256,7 @@ EXPECTED_COL_GROUPS = [c["group"] for c in render_matrix.RENDERED_COLUMNS]
 #:   ★ 由常量**现算**（⛔ 不手抄）：按列出现顺序聚合，首组扣掉 sticky 那一列。
 #: ★★ 2026-10-22 退役清单（**逐条留痕、每次运行都打印**）：这些断言的**对象**已随
 #:   ①第 4 章 19→16 列（删 `lr` / `训练轮次` / `关键开关`）、②第 3 章「训练方法 × 后端」重写、
-#:   ③状态词表四态→三态、④数据件换代（54 档 `T0xx` ⇒ 124 档 `M0xx`）而**不存在**。
+#:   ③状态词表四态→三态、④数据件换代（54 档 `T0xx` ⇒ 68 档 `M0xx`）而**不存在**。
 #:   ⛔ 不是"调宽阈值"、⛔ 不是静默跳过：命中项在输出里逐条标 `RETIRED` 并打印原因；
 #:   未列入本表的一律照常计入 FAIL（fail-closed 面不变）。
 RETIRED_2026_10_22: dict[str, str] = {
@@ -1294,6 +1295,36 @@ def main():
     trs = re.findall(r"<tr>(.*?)</tr>", body, re.S)
     if len(trs) != len(data["rows"]):
         failures.append(("④B 行数", f"期望 {len(data['rows'])}，实际 {len(trs)}"))
+    # ---- ④C 档数守恒 + 档号连续（2026-10-22：第 4 章章首那句「保留 N 档」已删，等式机核搬到这里）----
+    #   病史：页面上原先有「保留 68 档、剔除 56 档」这类数字，删掉后**页面上再也看不出档数对不对**。
+    #   判据三条（任一不成立即红，⛔ 不是恒真）：①`counts.kept` == 数据行数；
+    #   ②档号必须恰好 `M001…M{len(rows)}`（连续、无空洞、无重号）；
+    #   ③计数守恒：`raw_cube == exceed_cards + enumerated` 且 `enumerated == kept + Σ剔除`。
+    _enum = (data.get("meta") or {}).get("enumeration") or {}
+    _cnt = _enum.get("counts") or {}
+    _rows_all = data.get("rows") or []
+    if _cnt.get("kept") != len(_rows_all):
+        failures.append(("④C 档数 == counts.kept",
+                         f"counts.kept={_cnt.get('kept')!r} 而数据行数={len(_rows_all)}"
+                         "（页面已无「保留 N 档」，等式机核只剩这一处）"))
+    _tiers = [str(r.get("tier")) for r in _rows_all]
+    _want_tiers = [f"M{i:03d}" for i in range(1, len(_rows_all) + 1)]
+    if _tiers != _want_tiers:
+        _bad = [(i + 1, t, w) for i, (t, w) in enumerate(zip(_tiers, _want_tiers)) if t != w][:5]
+        failures.append(("④C 档号连续 M001…M0NN",
+                         f"档号与顺序不符（前 5 处：位置/实际/期望 = {_bad}）"
+                         "⇒ 有人偷偷增删档位或改了顺序"))
+    # EXCEED_CARDS 发生在枚举之前（不进"枚举候选的剔除"合计，否则重复计数）
+    _excl_like = {k for k, v in enumerate_matrix.REASON_CODES.items()
+                  if v.get("excludes") and k != "EXCEED_CARDS"}
+    _sum_excl = sum(int(_cnt.get("excluded", {}).get(k, 0)) for k in _excl_like)
+    if not (_cnt.get("raw_cube") == _cnt.get("exceed_cards", 0) + _cnt.get("enumerated", 0)
+            and _cnt.get("enumerated") == _cnt.get("kept", 0) + _sum_excl):
+        failures.append(("④C 计数守恒",
+                         f"raw_cube={_cnt.get('raw_cube')} / exceed_cards={_cnt.get('exceed_cards')} / "
+                         f"enumerated={_cnt.get('enumerated')} / kept={_cnt.get('kept')} / Σ剔除={_sum_excl}"
+                         "⇒ 三式必须同时成立（改大/改小档数会先在这里破）"))
+
     # ★ 每行必须恰好 14 个数据单元格，且列 key 集合 == 常量（防"多塞一列 / 少一列"）
     _row_cells_bad = []
     for _i, _tr in enumerate(trs):

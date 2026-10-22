@@ -206,7 +206,7 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <td class="v"><code>5.0e-06</code></td>
 <td class="v"><code>4</code></td>
 <td><code>per_device_train_batch_size=1</code>；<code>sequence_parallel_size=1</code>（关闭）；<code>use_vllm=false</code>；<code>nproc_per_node=总卡数</code>（纯数据并行）；全参必须分片优化器态 ⇒ 走 FSDP2（<code>fsdp</code> 字段透传）。</td>
-<td><code>micro_batch_size=1</code>；全参只能用流水并行摊层（<code>pp_size</code> 可大于 1，<code>tp_size</code> / <code>dp_size</code> 固定 1）；<code>sequence_parallel</code> 要求 <code>tp_size≥2</code>；优化器态可整体放 CPU（<code>offload_optimizer_state=true</code>，仅「全参 + 单卡」时生效）。</td>
+<td><code>micro_batch_size=1</code>；全参只能用流水并行摊层（<code>pp_size</code> 可大于 1，<code>tp_size</code> / <code>dp_size</code> 固定 1）；<code>sequence_parallel</code> 要求 <code>tp_size≥2</code>；优化器态可整体放 CPU（<code>offload_optimizer_state=true</code>，1 卡全参时必开）。</td>
 </tr>
 <tr>
 <td>GRASPO · LoRA</td>
@@ -283,7 +283,6 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <!-- ========================= 4. 测试结果 ========================= -->
 <section class="part" id="s4">
 <h2>4. 测试结果</h2>
-<p>本表 = 训练算法 × 模型 × 模式 × TP × PP × DP 的全量组合（总卡数 ≤ 4，不含 OPD 教师）经显存可行性筛选后的结果：{{ENUM_COUNTS}}；<b>36 档的剔除是保守结论</b>：判定所依据的 offload 配方目前尚未实测，不代表这些组合在物理上不可能。剔除判据与逐档剔除清单由仓内 <code>tools/matrix/enumerate_matrix.py</code> 生成。</p>
 <ul class="status-legend">
 <li><b class="st-pass">通过</b>（绿色）：已实跑，且判据全部满足。</li>
 <li><b class="st-fail">不通过</b>（红色）：已实跑，但至少一条判据不满足。</li>
