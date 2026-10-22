@@ -132,6 +132,14 @@ POLICY: dict[str, Spec] = {
         "68 档开跑前就绪闸门（十条口径，全 fail-closed；⑦–⑩ 为配置↔数据件/派生件交叉断言）；"
         "argparse CLI（--config-dir/--data/--manifest/--subset-dir/--runner-manifest）",
     ),
+    # ★ 补登记（2026-10-22 基线轮）：68 档语料切换工具 —— argparse CLI，--source-jsonl/--expect-sha256
+    #   必填且无默认值（无参不可能误落盘）；默认 --dry-run 只出计划不写盘，--apply 才写（带备份/四道自检/
+    #   失败回滚）。入库前本件是 `??` 未跟踪，由本检查器的「未跟踪段」发现 ⇒ 提交前即拦下未登记。
+    #   跑一次 --apply 会真改语料 ⇒ 冒烟只做 --help（rc=0，不落盘）。
+    "tools/matrix/switch_corpus.py": Spec(
+        HELP,
+        "语料切换工具：默认 --dry-run 只出计划不写盘，--apply 才落盘且带备份/自检/回滚",
+    ),
     # ★ 补登记（2026-10-22 基线轮）：回填防呆 wrapper —— 钉死「带日期副本对」与 .local 台账，指向仓内
     #   原版（数据件或人读件）一律 rc=2 拒起。跑一次会真回填（写数据件/HTML）⇒ 冒烟只做 --help 与 bash -n。
     "tools/matrix/backfill_dated.sh": Spec(
