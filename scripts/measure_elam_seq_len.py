@@ -38,13 +38,15 @@
     python3 scripts/measure_elam_seq_len.py --jsonl <jsonl> --model-dir <dir> --limit 3
 
     # 把输入钉死到确切的字节（推荐；见下方"已知的 hash 争议"）
-    ... --expect-sha256 594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad
+    ... --expect-sha256 5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d
 
-**已知的 hash 争议（务必按实测值，不要照抄历史数字）**：mini 数据集
-（`.local/mini-dataset/mini/mini-short-mm-train.jsonl`，100 行 / 208822 B）的
-**权威 sha256 = `594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad`**
-（两个独立来源一致：① 磁盘文件 `sha256sum`；② `task-d2-token-measure` 的机器产物
-`artifacts/measure_result.json` 的 `mini_sha256_actual`）。
+**已知的 hash 争议（务必按实测值，不要照抄历史数字）**：现行 100 条训练语料
+（`subsets-v2/balanced-100-seed20261022-sha5ad2d7cc588b.jsonl`，100 行 / 237565 B；2026-10-22 语料切换后取代旧 mini 100 条）的
+**权威 sha256 = `5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d`**
+（旧 mini 数据集 `.local/mini-dataset/mini/mini-short-mm-train.jsonl`，100 行 / 208822 B，
+其 sha256 = `594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad`；旧 sha 的两个独立来源一致：
+① 磁盘文件 `sha256sum`；② `task-d2-token-measure` 的机器产物 `artifacts/measure_result.json`
+的 `mini_sha256_actual`）。
 历史文档/工作包里流传的 `...cfdc...` 是**被误抄的 `expected` 值**——该包的产物
 `mini_sha256_expected` 恰为 `...cfdc...`，而其 `notes` 里逐字记着
 `SHA256_MISMATCH: actual != expected given in briefing`。用 `--expect-sha256` 钉住

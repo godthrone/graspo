@@ -4,12 +4,12 @@
  "source": "docs/capability-matrix.data.json（唯一真相源：档号/算法/形态/卡数/并行/subset_size/步数三件/lr/四条判据与阈值）+ samples/configs/matrix68/*.yaml（现读 max_epochs/save_steps/模型与并行）+ subsets-v2/M###.jsonl（现读行数）",
  "generator": "tests/e2e/generate_matrix68_manifest_source.py",
  "input_fingerprints": {
-  "data_sha256": "6111078843b703158aa152e5b95d6b2837216862126e895077f66932c8540363",
+  "data_sha256": "77f63213a12f2b263a54b2a0c750f8f3495cd7b38ce669baf5b5f5945cb63796",
   "data_path": "docs/capability-matrix.data.json",
   "config_dir": "samples/configs/matrix68",
   "config_dir_fingerprint_sha256": "31d2a5a682b8f55f801cd64ec60684af5b28eb9ad0b65fd579c5f78ec36ceb30",
   "subset_dir": "subsets-v2",
-  "subset_dir_fingerprint_sha256": "da843d27d3c20506766fbc4f8999ddb1ae49f6ea9bfef3072958e4b6a396c62b"
+  "subset_dir_fingerprint_sha256": "8fab7dce377e49f6103845732b2a85d6ec9c4d044014cb8e8873afd10afc54e1"
  },
  "counts": {
   "total": 68,
@@ -171,7 +171,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M001.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M001.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -275,7 +275,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M002.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M002.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -381,7 +381,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M003.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M003.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -485,7 +485,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M004.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M004.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -589,7 +589,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M005.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M005.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -693,7 +693,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M006.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M006.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -795,7 +795,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M007.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M007.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -901,7 +901,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M008.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M008.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -1007,7 +1007,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M009.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M009.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -1113,7 +1113,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M010.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M010.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -1216,7 +1216,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M011.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M011.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -1314,7 +1314,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M012.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M012.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -1416,7 +1416,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M013.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M013.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -1516,7 +1516,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M014.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M014.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -1614,7 +1614,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M015.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M015.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -1709,7 +1709,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M016.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M016.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -1813,7 +1813,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M017.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M017.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -1919,7 +1919,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M018.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M018.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -2023,7 +2023,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M019.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M019.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -2128,7 +2128,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M020.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M020.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -2233,7 +2233,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M021.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M021.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -2336,7 +2336,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M022.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M022.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -2442,7 +2442,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M023.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M023.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -2548,7 +2548,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M024.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M024.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -2655,7 +2655,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M025.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M025.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -2758,7 +2758,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M026.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M026.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -2856,7 +2856,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M027.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M027.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -2958,7 +2958,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M028.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M028.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -3058,7 +3058,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M029.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M029.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -3157,7 +3157,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M030.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M030.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -3253,7 +3253,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M031.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M031.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -3357,7 +3357,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M032.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M032.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -3463,7 +3463,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M033.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M033.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -3567,7 +3567,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M034.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M034.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -3669,7 +3669,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M035.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M035.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -3768,7 +3768,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M036.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M036.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -3872,7 +3872,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M037.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M037.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -3978,7 +3978,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M038.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M038.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -4082,7 +4082,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M039.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M039.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -4184,7 +4184,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M040.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M040.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -4283,7 +4283,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M041.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M041.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -4387,7 +4387,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M042.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M042.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -4493,7 +4493,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M043.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M043.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -4597,7 +4597,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M044.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M044.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -4701,7 +4701,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M045.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M045.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -4805,7 +4805,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M046.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M046.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -4907,7 +4907,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M047.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M047.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -5013,7 +5013,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M048.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M048.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -5119,7 +5119,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M049.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M049.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -5225,7 +5225,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M050.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M050.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -5331,7 +5331,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M051.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M051.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -5426,7 +5426,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M052.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M052.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -5530,7 +5530,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M053.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M053.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -5636,7 +5636,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M054.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M054.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -5740,7 +5740,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M055.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M055.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -5845,7 +5845,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M056.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M056.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -5950,7 +5950,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M057.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M057.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -6053,7 +6053,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M058.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M058.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -6159,7 +6159,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M059.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M059.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -6265,7 +6265,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M060.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M060.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -6372,7 +6372,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M061.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M061.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -6478,7 +6478,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M062.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M062.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -6574,7 +6574,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M063.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M063.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -6678,7 +6678,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M064.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M064.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -6784,7 +6784,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M065.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M065.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -6887,7 +6887,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M066.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M066.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -6991,7 +6991,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M067.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M067.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"
@@ -7097,7 +7097,7 @@
     "train_path": "/work/elam-v5/subsets-v2/M068.jsonl",
     "subset_size": 100,
     "host_relative_path": "subsets-v2/M068.jsonl",
-    "subset_sha256": "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad",
+    "subset_sha256": "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d",
     "subset_lines": 100,
     "full_train_jsonl": "/work/elam-v5/data/train.jsonl",
     "caveat": "数据集级图像层重叠口径见顶层 data.dataset_caveat（本档不另抄）"

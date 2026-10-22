@@ -156,11 +156,11 @@ MINI_TRAIN_REL = "mini-dataset/mini-short-mm-train.jsonl"
 #   口径（数据件 `meta.criteria` 改动三 + 人读件第 2/3 章）：
 #     · 68 档（M001–M068）**全部**训练样本数 = 100 条；
 #     · 68 档**共用同一份**文件（内容层面逐字节相同），sha256 = :data:`M68_SOURCE_SHA256`；
-#     · 该 sha 同时是数据件判据锚点（100 行 / `594d41b0…`）与
-#       `subsets-v2.manifest.json::source_files.mini.sha256`。
-#   ⇒ 因此**不需要重新造数据**：M 档产物 = 仓内既有 100 条冻结实体的逐档副本
-#     （`subsets-v2/T001.jsonl` 就是该实体；`mini-dataset/mini-short-mm-train.jsonl` 内容相同，
-#      但它**不在仓库里**、住在 `${GRASPO_ELAM_DATA_ROOT}` 下 ⇒ 只作次选）。
+#     · 该 sha 同时是数据件判据锚点（100 行 / `5ad2d7cc…`）与
+#       `subsets-v2.manifest.json::source_files.m68_frozen.sha256`。
+#   ⇒ 因此**不需要重新造数据**：M 档产物 = 仓内 100 条冻结实体的逐档副本
+#     （`subsets-v2/balanced-100-seed20261022-sha5ad2d7cc588b.jsonl` 就是该实体 —— 2026-10-22 语料切换后取代
+#      旧 `subsets-v2/T001.jsonl`（= mini 100 条）；旧件保留作历史，不再被 M 档引用）。
 #     ⛔ 不依赖 228 / 不依赖宿主数据根即可在本仓生成与复核。
 #
 #   ★ T 档行为**逐字保持**：`--tier-set v2`（默认）走原 54 档通路，代码路径未改。
@@ -171,11 +171,12 @@ M68_TIER_IDS: tuple[str, ...] = tuple(f"M{i:03d}" for i in range(1, 69))
 #: 每档训练样本数（68 档一律 100，逐档显式）。
 M68_TIERS: dict[str, int] = {tid: 100 for tid in M68_TIER_IDS}
 
-#: 100 条共用语料的**冻结 sha256**（= mini 源 sha = 数据件判据锚点）。
-M68_SOURCE_SHA256 = "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad"
+#: 100 条共用语料的**冻结 sha256**（= 均衡子集 sha = 数据件判据锚点）。
+M68_SOURCE_SHA256 = "5ad2d7cc588bab7b1b72750b3070d3c3f2de1690e105d46e541ca333566d3a6d"
 
-#: 仓内既有实体（按优先级）：先 `subsets-v2/T001.jsonl`（在仓里），再 mini 源（宿主数据根下）。
-M68_REPO_SOURCE_CANDIDATES: tuple[str, ...] = ("subsets-v2/T001.jsonl", MINI_TRAIN_REL)
+#: 仓内实体（唯一；2026-10-22 语料切换后）：`subsets-v2/balanced-100-seed20261022-sha5ad2d7cc588b.jsonl`。
+#: 历史：切换前为 `subsets-v2/T001.jsonl`（在仓里）→ mini 源（宿主数据根下）。
+M68_REPO_SOURCE_CANDIDATES: tuple[str, ...] = ("subsets-v2/balanced-100-seed20261022-sha5ad2d7cc588b.jsonl",)
 
 assert len(M68_TIERS) == 68, f"M 档表应恰 68 档，实为 {len(M68_TIERS)}"
 assert sorted(M68_TIERS) == [f"M{i:03d}" for i in range(1, 69)], "M 档号必须恰为 M001–M068"

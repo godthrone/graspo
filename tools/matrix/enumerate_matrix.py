@@ -1035,7 +1035,7 @@ def row_of(tier: str, rec: dict[str, Any], sel: dict[str, Any], budget: float) -
         #   两个意思⛔ 不复用同一个词（页面与数据件的判据① 正文按此措辞）。
         "planned_steps": str(per_epoch),
         "train_path": f"subsets-v2/{tier}.jsonl",
-        "data_source": "ELAM V5 mini 冒烟集（按算法子集条数）",
+        "data_source": "ELAM V5 均衡子集（12 格分层 · seed 20261022 · 100 条）",
         "data_subset": "待生成",
         "lora_target": "真实 HF 名正则（两后端共用同一条；取值以核心 LoRA 配置的 target 名单为准）" if mode == "LoRA" else "—",
         "applicable": True,
@@ -1908,7 +1908,7 @@ META_OVERRIDES: tuple[dict[str, Any], ...] = (
      "why": ("当前判据字段：删掉「其余档 = 702」分支（⛔ 100 一字不动）；"
              "★ 复核第 2 轮：再删残句「100 行档 = 100」⇒ 不分档（⛔ 不改任何数值）")},
     {"path": "criteria_caliber.dataset.version_anchor_sha256",
-     "value": "评测集 = 该档自身训练文件（100 行，sha256 594d41b0…）",
+     "value": "评测集 = 该档自身训练文件（100 行，sha256 5ad2d7cc…）",
      "why": "当前判据字段：删掉「其余档 = 平台方自有评测集（702 行，c202b1e1…）」分支（⛔ 100 / sha256 不动）"},
     {"path": "criteria_caliber.dataset.availability",
      "value": "平台方自有 / 不公开（评测集用该档自身训练文件，同为非公开数据）",

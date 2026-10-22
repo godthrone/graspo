@@ -1613,7 +1613,7 @@ def criteria_caliber(rows=None):
         "dataset": {"id": (f"平台方自有评测集（名称 test.jsonl）＋ ★ **100 行档（{_fit_txt}）的评测集 = "
                            "该档自身训练用的同一份文件**（fit 口径：训练集自评）"),
                     "availability": "平台方自有 / 不公开（100 行档用该档自身训练文件，同为非公开数据）",
-                    "version_anchor_sha256": ("两种口径 —— ★ 100 行档 = 该档自身训练文件（100 行，sha256 594d41b0…）；"
+                    "version_anchor_sha256": ("两种口径 —— ★ 100 行档 = 该档自身训练文件（100 行，sha256 5ad2d7cc…）；"
                                               "其余档 = 平台方自有评测集（702 行，c202b1e1…）"),
                     "sample_count": "★ 100 行档 = 100（fit 口径）；其余档 = 702",
                     "method": "数据集完全正确率（acc）",
