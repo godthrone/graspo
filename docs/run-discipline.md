@@ -325,3 +325,104 @@ python3 $TREE/scripts/run_guards.py cards-busy --ps-file /tmp/ps.txt --inspect-f
   在别的机器上直接跑生成脚本**不报错**，而是**静默产出指向本机路径的脚本**（`$T`/`$EV`/`-v …:/models`/
   `-v …:/work/elam-v5` 全落在本机）⇒ 起跑前必须逐条核对生成脚本里的宿主路径。
 - `scripts/launch_pipeline.py` 侧同族变量为 `GRASPO_MODEL_HOST_ROOT` / `GRASPO_ELAM_V5_DIR`。
+
+## 19. 判据③④ 的判定与证据（谁产出、放哪、缺了会怎样）
+
+**依据（唯一真相源，⛔ 本文件不另立判据）**：判据③④ 原文见
+`docs/GRASPO 训练框架功能测试报告.html` **第 2 章**；GRASPO 的"逐条判断"清单 = 
+`docs/graspo-algorithm.html` **第 9 节 不变式清单**（共 8 条）。判据② 的评测读数仍看第 2 章与
+`docs/capability-matrix.data.json` 的 `meta.criteria_caliber`。
+
+**通道（只有这一条，⛔ 没有第二个入口）**：
+
+```
+评测跑完（scripts/gen_eval.py）
+  → scripts/record_checks.py --tier M0nn --run-dir <run-dir> --eval-dir <EVAL_DIR>
+        ⇒ 写 <run-dir>/readings.json 的 checks{algo_checks_passed, inference_parseable}
+          （附 checks_evidence：判定条件、实测数、证据原件路径）
+  → scripts/make_result_json.py …（只消费上面那两个布尔，⛔ 不自己判、⛔ 不补 true）
+        ⇒ 结果 json 的 checks{} ⇒ 回填器 translate 成判据③④ 的 pass/fail/unknown
+```
+
+- `--tier-json`（`scripts/gen_tier_json.py` 的产物）**只提供判据② 的 after/base 读数**，
+  ⛔ 不提供③④；`readings.json` 里没有 `checks` 就是"没有证据"。
+- 回填器 `tools/matrix/backfill_matrix.py` 对缺键一律判 `unknown` ⇒ **fail-closed**：
+  本批不写任何文件、该档保持「待测试」。⛔ **不许**为让流程变绿给回填器开"缺③④也算通过"的口子。
+
+### 19.1 判据④「能推理」= 自动判定（数据源：评测报告）
+
+数据源：`<EVAL_DIR>/.local/reports/after/eval_report.json`（`graspo-eval-report-1` 契约，
+见 `src/graspo/eval/schema.py`）。判据④ 的四个条件**同时**成立才算通过：
+
+| # | 条件 | 字段（证据） |
+|---|---|---|
+| 1 | 报告可读 ∧ 有逐样本明细 | `samples[]` 非空（报告即"最小充分信息"，缺它无从判可解析） |
+| 2 | 评测温度为 0 | `decoding.temperature == 0.0`（算法说明 §9 第 4 条：评测温度恒 0、入口不提供覆盖参数） |
+| 3 | 在训练数据集上完整推理一遍 | `summary.sample_count_total ==` 清单该档 `data.subset_size`（本矩阵 100）∧ `dataset.sample_count_requested` 同值 ∧ `total == len(samples)` |
+| 4 | 无请求级失败 ∧ 输出可解析 | `summary.sample_count_error == 0` ∧ 逐样本「无 `error` ∧ 无 `parse_error` ∧ `pred_name` 非空」的条数 == 期望条数 |
+
+- `parse_error` = 有输出但 `arguments` 串解析不出（`src/graspo/eval/criteria.py::extract_prediction`）；
+  `pred_name` 空 = 没产出结构化工具调用 —— 两者都算"不可解析"。
+- 条件 1–2 缺 ⇒ **不写该键**（没有证据，不是"不通过"）；条件齐但 3–4 不成立 ⇒ 写 `false`
+  （**有据的不通过**，备注列会写可解析条数）。
+- 本判定与 `gen_tier_json.py` 的效果口径**互不替代**：④ 只判"能否产出可解析结果"，
+  "效果是否变好"是判据②（`eval.after_acc/base_acc`）。
+
+### 19.2 判据③「算法正确性检查通过」= 分级
+
+**SFT / CPT / OPD（结构化置位，必须带依据串）**：文档口径 = 这三种算法"按各自公开的标准实现
+逻辑判断"（第 2 章判据③），不作逐条清单要求 ⇒ 由 `record_checks.py` 置位 `true`，并把依据串
+`public_algorithm_per_doc_2_3`（含章节号与算法名）落进 `checks_evidence`。
+⛔ 置位**不是无条件**：算法必须从清单该档读到且 ∈ {SFT, CPT, OPD}，依据串必须随结论一起落盘。
+
+**GRASPO（⛔ 不许自动置位，必须签署）**：证据文件 `<algo-checks-dir>/<tier>.json`
+（runner 缺省 `<run-root>/algo-checks/`；也可用 `GRASPO_ALGO_CHECKS_DIR` 或
+`--algo-checks-dir` 指向别处，例如 `.local/hb-workspace/<会话时间戳>/algo-checks/`）：
+
+```json
+{
+  "tier": "M018",
+  "algorithm": "GRASPO",
+  "checker": "<检查人（姓名或角色）>",
+  "checked_at": "2026-10-22T20:00:00+00:00",
+  "items": [
+    {"id": "group_integrity",           "pass": true, "evidence": "<怎么核的：命令/读数/结论>"},
+    {"id": "reward_sample_alignment",   "pass": true, "evidence": "…"},
+    {"id": "algo_logic_unchanged",      "pass": true, "evidence": "…"},
+    {"id": "temperature_not_overridden","pass": true, "evidence": "…"},
+    {"id": "label_length_invariant",    "pass": true, "evidence": "…"},
+    {"id": "sampling_train_same_policy","pass": true, "evidence": "…"},
+    {"id": "ratio_interval_constant",   "pass": true, "evidence": "…"},
+    {"id": "value_error_not_truncated", "pass": true, "evidence": "…"}
+  ]
+}
+```
+
+`items[].id` 的 8 个取值**逐条对应**《算法说明》第 9 节（顺序同上，⛔ 不许自造 id、不许少条）：
+组完整性 / 奖励与样本一一对齐 / 算法逻辑严禁改动 / 温度互不覆盖 / 标注长度不变式 /
+采样与训练同源 / 裁剪区间恒定 / 值错误不截断。
+
+校验规则（`scripts/record_checks.py::judge_graspo_algo`，全 fail-closed）：`algorithm=="GRASPO"`
+∧ `tier` 相符 ∧ `checker`/`checked_at` 非空 ∧ 8 个 id **恰好全覆盖**（无缺、无重、无未知）∧
+每条 `pass` 是布尔且 `evidence` 非空。不合契约 ⇒ **不写该键**；8 条里有 `pass=false` ⇒ 写 `false`。
+人工签署只写"逐条结论 + 依据"，⛔ **不得**改成"看着像过了就写 true"。
+
+### 19.3 缺证据的后果（⛔ 不许绕）
+
+| 情形 | `checks` | 回填器 | 该档状态 |
+|---|---|---|---|
+| ③④ 都有据且真 | 两键都在 | 判 pass | 可「通过」（还要 ①② 同时过）|
+| ③ 或 ④ 缺证据 | **缺对应键** | 判 `unknown` ⇒ fail-closed，本批不写任何文件 | 保持「待测试」 |
+| ③ 或 ④ 有据但假 | 写 `false` | 判 fail | 「不通过」并落盘（备注列点名未过判据）|
+
+`make_result_json.py` 在缺 ③④ 时判 **rc=4**（结构合法但证据不全）：结果 json 照落盘供审计、
+也进 `collect/`，但**不会**被判成通过。补齐证据后复跑 `record_checks.py` → `make_result_json.py`
+即可（幂等；`record_checks.py` 每次先清旧结论再按本次证据重写，⛔ 不留陈旧通过）。
+
+### 19.4 ⛔ 红线
+
+- ⛔ **不得为凑通过手填 `true`**：`readings.json.checks` 只能来自 `record_checks.py` 的实测/签署证据；
+  发现手填即视为伪造读数，同批记录并回退。
+- ⛔ 不得放宽 19.1 的条件、不得减少 19.2 的 8 条、不得把"缺证据"改成"通过"。
+- ⛔ 判据③④ 的结论**只落 `readings.json`**（及其派生结果 json）；人读件只由回填链写入，
+  ⛔ 不得绕过回填直接改数据件/人读件（见本文件 §19 与 `tools/matrix/backfill_dated.sh` 的落点闸门）。

@@ -89,6 +89,12 @@ POLICY: dict[str, Spec] = {
         "跑次读数 ⇒ 回填口径结果 json（matrix-run/v1）的**唯一产出者**；落盘前调"
         "`tools/matrix/backfill_matrix.py::validate_run` 自检",
     ),
+    "scripts/record_checks.py": Spec(
+        HELP,
+        "判据③④ 的证据产出者（审查第 2 轮 🟡-A）：从评测报告实测算 ④、按算法分级产出 ③"
+        "（GRASPO 须签署逐条不变式证据），写进 `<run-dir>/readings.json` 的 checks{}；"
+        "缺证据不写键（回填器 fail-closed）；argparse CLI ⇒ --help 冒烟",
+    ),
     # ── 仓库根 / 宿主启动链 ────────────────────────────────────────────────
     "run.sh": Spec(SH_HELP, "训练启动主入口；支持 --help（宿主引导层稳定契约）"),
     # ── scripts/*.py（§10.2 制度化脚本，B3 已登记稳定子命令）────────────────

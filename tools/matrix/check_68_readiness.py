@@ -34,8 +34,12 @@
      `offload_optimizer_state`，>1 卡则 `tp_size` 或 `pp_size` 必须 >1（纯 DP 复制 = 未分片）。
   ⑩ **步数 / 子集口径不滞后**：数据件该档行 `subset_size` 与 `--manifest` 登记、在盘行数一致；
      `planned_steps / derived_steps` 与**跑次侧 runner 清单**（`--runner-manifest`，
-     `tests/e2e/matrix68_manifest.json`）的 `planned_steps / expected_optimizer_steps` 一致
-     （⛔ 不在此另立 `⌈100÷cards⌉` 公式；数值口径一律以数据件为准）。
+     `tests/e2e/matrix68_manifest.json`）的 `planned_steps / expected_optimizer_steps` 一致；
+     ★ R2（审查 🟡-B）：并核 **`expected_optimizer_steps_reachable`**（= runner 判据① 的实际门槛）
+     与数据件 `derived_steps` 一致，且 runner 清单自述的 `step_gate.reachable` 与它同值
+     （生成器侧已按 `manifest.expected_optimizer_steps_reachable == matrix.derived_steps` 建单，
+     ⛔ 本闸门不另立公式；两值漂移会造成"跑够的档被判不够"）。
+     数值口径一律以数据件为准。
 
 阳性对照（必须实测，⛔ 不是"看着像会失败"）::
 
@@ -379,6 +383,26 @@ def check(config_dir: Path, data_path: Path, manifest_path: Path, subset_dir: Pa
                 elif _i(dv) != _i(rv):
                     failures.append(("⑩步数子集", f"{tier}: 数据件 {field}={dv!r} != runner 清单 "
                                                     f"{rv!r}（派生件滞后 ⇒ 须重新生成 runner 清单）"))
+            # ★ R2（审查 🟡-B）：`expected_optimizer_steps_reachable` 是 runner 判据① 的**实际门槛**
+            #   （健身器侧口径 = `manifest.expected_optimizer_steps_reachable == matrix.derived_steps`，
+            #   见 tests/e2e/test_generate_matrix_manifest_source.py 的 I-b 断言），而回填器按数据件
+            #   `derived_steps` 判 ⇒ 两值漂移会造成"跑够的档被判不够" ⇒ ⑩ 必须一并核（⛔ 不猜字段名）。
+            reach = _i(rm.get("expected_optimizer_steps_reachable"))
+            if reach is None:
+                failures.append(("⑩步数子集", f"{tier}: runner 清单 expected_optimizer_steps_reachable="
+                                                f"{rm.get('expected_optimizer_steps_reachable')!r} 不可解析"
+                                                f"（判据① 的实际门槛无从核对）"))
+            elif _i(row.get("derived_steps")) != reach:
+                failures.append(("⑩步数子集", f"{tier}: runner 清单 expected_optimizer_steps_reachable="
+                                                f"{reach} != 数据件 derived_steps="
+                                                f"{row.get('derived_steps')!r}（门槛与判据① 不同源 ⇒ "
+                                                f"跑够的档会被判不够）"))
+            gate = rm.get("step_gate") if isinstance(rm.get("step_gate"), dict) else {}
+            if "reachable" in gate and _i(gate.get("reachable")) != reach:
+                failures.append(("⑩步数子集", f"{tier}: runner 清单 step_gate.reachable="
+                                                f"{gate.get('reachable')!r} != "
+                                                f"expected_optimizer_steps_reachable={reach!r}"
+                                                f"（清单自述自相矛盾）"))
         if ent is not None and row_sub is not None:
             if _i(ent.get("subset_size")) != row_sub:
                 failures.append(("⑩步数子集", f"{tier}: 数据件 subset_size={row_sub} != 登记清单 "
@@ -417,7 +441,8 @@ def check(config_dir: Path, data_path: Path, manifest_path: Path, subset_dir: Pa
         "⑦身份同源": "配置 backend/tuner_type/train_method == 数据件该档行",
         "⑧并行形状": f"{n_shape} 档：数据件 tp×pp×dp==cards，配置并行/nproc 逐值对齐",
         "⑨全参必分片": f"{n_full} 档全参（native 1 卡 offload / >1 卡 tp|pp 真分片；msswift 必带 fsdp）",
-        "⑩步数子集": "数据件 subset_size/planned_steps/derived_steps == 登记清单与 runner 清单",
+        "⑩步数子集": "数据件 subset_size/planned_steps/derived_steps == 登记清单与 runner 清单；"
+                      "expected_optimizer_steps_reachable == derived_steps（且 step_gate.reachable 同值）",
     }
     print("=== 68 档就绪闸门（check_68_readiness）===")
     print(f"  config-dir = {config_dir}")
@@ -454,7 +479,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--subset-dir", default=DEFAULTS["subset_dir"], type=Path,
                     help="宿主侧子集实体目录（对应容器内 <data_root>/subsets-v2）")
     ap.add_argument("--runner-manifest", default=DEFAULTS["runner_manifest"], type=Path,
-                    help="跑次侧 runner 清单（⑩ 核 planned_steps/derived_steps 是否滞后于数据件）")
+                    help="跑次侧 runner 清单（⑩ 核 planned_steps/derived_steps 是否滞后于数据件，"
+                         "并核 expected_optimizer_steps_reachable 与数据件 derived_steps 同值）")
     a = ap.parse_args(argv)
     return check(a.config_dir, a.data, a.manifest, a.subset_dir, a.runner_manifest)
 

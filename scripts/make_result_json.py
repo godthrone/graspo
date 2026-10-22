@@ -21,6 +21,13 @@
   `checks{algo_checks_passed:bool, inference_parseable:bool}`（判据③④）——
   **缺证据就不写这两个键**（⛔ 不用 false/null 冒充"判过了"），回填器会把对应判据判成
   `unknown` 并 fail-closed。
+  ★ 判据③④ 的**唯一产出者与渠道**（审查第 2 轮 🟡-A 的落点）：评测跑完后先执行
+  `scripts/record_checks.py`，它从 `<EVAL_DIR>/.local/reports/after/eval_report.json` 实测计算
+  ④（样本数/请求失败数/逐样本可解析条数/温度 0），并按算法分级产出 ③（SFT/CPT/OPD 结构化置位 +
+  依据串；GRASPO 必须有签署的逐条不变式证据）⇒ 写进 `<run-dir>/readings.json` 的
+  `checks` 与 `checks_evidence`。本文件只**消费**那份结论（读 `readings.json`），⛔ 不自己判、
+  ⛔ 不补 true。缺键时本文件判 rc=4（结构合法但证据不全），回填器保持「待测试」。
+  成文渠道与字段格式见 `docs/run-discipline.md` 的「判据③④ 的判定与证据」一节。
 
 落盘前**必经回填器自己的校验器**（动态 import `backfill_matrix.validate_run`）自检：
 字段/身份/口径任何一条不过 ⇒ **不宣告成功**，rc 非 0，并在 stdout 逐条列出问题。
@@ -28,10 +35,15 @@
 （⛔ 不估算、不填充数）；这种 json 会被回填器拒收 —— 这是**设计如此**（fail-closed）。
 
 用法：
+    # ① 评测跑完 ⇒ 先产出判据③④ 证据（唯一产出者；写 <run-root>/M001/readings.json）
+    python3 scripts/record_checks.py --tier M001 --run-dir <run-root>/M001 \\
+        --eval-dir <EV> [--algo-checks-dir <DIR>]
+    # ② 再生成回填口径的结果 json（本文件只消费 readings.json 的 checks{}）
     python3 scripts/make_result_json.py --tier M001 --run-dir <run-root>/M001 \\
         --out <run-root>/M001/M001.json [--eval-dir <EV>] [--tier-json <gen_tier_json 产物>] \\
         [--manifest tests/e2e/matrix68_manifest.json] [--data docs/capability-matrix.data.json] \\
         --collect-dir <run-root>/collect
+    # ⇒ 缺 ③④ 证据时 rc=4（结果 json 照落盘供审计，但回填器会 fail-closed 保持「待测试」）
 
 ★ **回填入口 = `<run-root>/collect`**（扁平 `<档号>.json`）：`--runs-dir` 只吃扁平目录，
   而 runner 的跑次归档在 `<run-root>/<档号>/<档号>.json`（嵌套，回填器不认）。
@@ -246,6 +258,11 @@ def eval_block(eval_dir: Path | None, tier_json: Path | None) -> tuple[dict | No
 
 
 def _acc(report: dict) -> float | None:
+    """取准确率比例。★ 兼容评测产物契约：`eval_report.json` 的聚合结论在 `summary{}` 下
+    （`src/graspo/eval/schema.py::EvalSummary`），不是顶层；顶层形态留给 `gen_tier_json` 那类
+    扁平产物。⛔ 缺这两种形态之一 ⇒ 返回 None（判据② 由回填器 fail-closed，⛔ 不估算）。"""
+    if isinstance(report.get("summary"), dict):
+        report = report["summary"]
     for key in ("accuracy", "accuracy_percent", "acc"):
         v = report.get(key)
         if isinstance(v, (int, float)):
@@ -331,6 +348,24 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
     if ev is None:
         gaps.append(f"effect/判据②：{ev_why}")
 
+    # ── 判据③④ 的结构化结论（★ 唯一渠道：`<run-dir>/readings.json` 的 `checks`）──────────
+    #   ★ 产出者 = `scripts/record_checks.py`（评测跑完后一条命令，从评测报告与算法检查证据现算；
+    #     见 `docs/run-discipline.md` 的「判据③④ 的判定与证据」一节）。
+    #   ⛔ 缺键就**不写**这两个键（回填器据此判 unknown ⇒ fail-closed 保持「待测试」），
+    #     绝不写 false/null 冒充"判过了"，更不硬编 true。
+    checks: dict[str, bool] = {}
+    checks_ev = readings.get("checks_evidence") if isinstance(readings.get("checks_evidence"), dict) else {}
+    raw_checks = readings.get("checks")
+    if isinstance(raw_checks, dict):
+        checks = {k: raw_checks[k] for k in ("algo_checks_passed", "inference_parseable")
+                  if isinstance(raw_checks.get(k), bool)}
+    for key, cid, why in (
+        ("algo_checks_passed", "判据③", "算法正确性检查缺证据（GRASPO 档须人工/脚本签署逐条不变式）"),
+        ("inference_parseable", "判据④", "评测报告缺证据（未跑评测或报告不齐）"),
+    ):
+        if key not in checks:
+            gaps.append(f"{cid} 缺证据：{why} ⇒ 不作通过判定")
+
     # ── ★ 以下 6 列会随回填进入人读件的「实验数据」表 ⇒ 只放读数/结论，措辞必须中性 ────
     #   （⛔ 内部路径 / 内部工位名 / 内部行话一律不进这 6 列；证据路径留在 provenance 里供审计，
     #    provenance 不进人读件。）
@@ -351,6 +386,7 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
     note_parts.append(f"数值异常：{naninf_why}")
     note_parts.append(f"峰值显存：{peak_why}")
     note_parts.append(f"效果读数：{ev_why}")
+    note_parts.extend(_checks_note(checks, checks_ev, row))
     comparable = readings.get("comparable")
     if comparable is False:
         note_parts.append("环境快照冻结维度发生变化 ⇒ 本档读数不可比（不得悄悄重跑）")
@@ -396,7 +432,9 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
         "provenance": {
             "produced_by": "scripts/make_result_json.py（工作包 B / task-manifest）",
             "command": readings.get("command") or f"bash tests/e2e/run_matrix68.sh --only {tier}",
-            "evidence_paths": [str(p) for p in _evidence_paths(run_dir, ckpt_path)],
+            "evidence_paths": [str(p) for p in _evidence_paths(run_dir, ckpt_path, checks_ev)],
+            # 判据③④ 的证据链（有据才落；审计用，不进人读件）
+            "checks_evidence": checks_ev,
         },
     }
     if str(row.get("target_modules") or "").strip():
@@ -404,16 +442,38 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
     if ev is not None:
         doc["eval"] = ev
     # 判据③④：只有真的有结构化结论时才写（⛔ 不写 false/null 冒充"判过了"）
-    checks = readings.get("checks")
-    if isinstance(checks, dict):
-        ck = {k: checks[k] for k in ("algo_checks_passed", "inference_parseable")
-              if isinstance(checks.get(k), bool)}
-        if ck:
-            doc["checks"] = ck
+    if checks:
+        doc["checks"] = checks
     return doc, {"evidence_gaps": gaps}
 
 
-def _evidence_paths(run_dir: Path, ckpt_path: str | None) -> list[Path]:
+def _checks_note(checks: dict, checks_ev: dict, row: dict) -> list[str]:
+    """判据③④ 的**备注列**文字（中性措辞：⛔ 无内部路径/工位名/过程行话）。
+
+    只写"结论 + 可核数"，不写证据路径（路径在 `provenance.checks_evidence` 里供审计）。
+    """
+    out: list[str] = []
+    if checks.get("algo_checks_passed") is True:
+        if str(row.get("algo") or "").upper() == "GRASPO":
+            out.append("判据③：按《GRASPO 算法说明》第 9 节逐条算法检查，全部不变式通过")
+        else:
+            out.append(f"判据③：{row.get('algo') or '本算法'} 按报告第 2 章判据③ 的公开标准实现判定通过")
+    elif checks.get("algo_checks_passed") is False:
+        out.append("判据③：算法正确性检查未通过")
+    inf_ev = (checks_ev.get("inference_parseable")
+              if isinstance(checks_ev.get("inference_parseable"), dict) else {})
+    inf = inf_ev.get("detail") if isinstance(inf_ev.get("detail"), dict) else {}
+    if checks.get("inference_parseable") is True:
+        out.append(f"判据④：训练数据集 {inf.get('parse_ok')}/{inf.get('expected')} 条推理输出可解析"
+                   f"（vLLM 温度 {inf.get('temperature')}）")
+    elif checks.get("inference_parseable") is False:
+        out.append(f"判据④：推理结果不满足可解析要求"
+                   f"（可解析 {inf.get('parse_ok')}/{inf.get('expected')} 条）")
+    return out
+
+
+def _evidence_paths(run_dir: Path, ckpt_path: str | None,
+                    checks_ev: dict | None = None) -> list[Path]:
     out = []
     for rel in ("stdout.log", "exit_code", "gpu/peak_mem.json", "tier.json",
                 "env-snapshot-before.json", "env-snapshot-after.json", "env-diff.txt"):
@@ -422,6 +482,11 @@ def _evidence_paths(run_dir: Path, ckpt_path: str | None) -> list[Path]:
             out.append(p)
     if ckpt_path:
         out.append(Path(ckpt_path))
+    # 判据③④ 的证据原件（评测报告 / 算法检查签署件）—— 存在于盘才登记
+    for key in ("algo_checks_passed", "inference_parseable"):
+        src = ((checks_ev or {}).get(key) or {}).get("detail", {}).get("source")
+        if isinstance(src, str) and Path(src).exists() and Path(src) not in out:
+            out.append(Path(src))
     if not out:
         out = [run_dir]
     return out
@@ -430,7 +495,9 @@ def _evidence_paths(run_dir: Path, ckpt_path: str | None) -> list[Path]:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="跑次读数 ⇒ 回填口径结果 json（matrix-run/v1）")
     ap.add_argument("--tier", required=True)
-    ap.add_argument("--run-dir", required=True)
+    ap.add_argument("--run-dir", required=True,
+                    help="跑次目录（内含 readings.json / stdout.log / gpu/…；判据③④ 结论取自 "
+                         "readings.json 的 checks{} —— 由 scripts/record_checks.py 产出）")
     ap.add_argument("--out", default=None, help="默认 <run-dir>/<tier>.json")
     ap.add_argument("--manifest", default=str(ROOT / "tests" / "e2e" / "matrix68_manifest.json"))
     ap.add_argument("--data", default=str(ROOT / "docs" / "capability-matrix.data.json"))

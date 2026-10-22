@@ -29,6 +29,8 @@
 #   gpu/peak_mem.json         宿主侧显存采样峰值（拿不到 ⇒ 如实写 null）
 #   exit_code                 容器退出码（**原样**，不解释）
 #   readings.json             **原始实测读数**（墙钟/退出码/峰值显存/证据路径；缺项写 null）
+#                             ★ 判据③④ 的结论也落在这里的 `checks{}`（唯一产出者 =
+#                               `scripts/record_checks.py`，评测后执行；缺证据则不写该键）
 #   env-snapshot-{before,after}.json / env-diff.json   环境快照与冻结维度比对
 #   <档号>.json               回填器口径的结果 json（`status` 由回填器现算，本链不写）
 #   collect/<档号>.json       同上结果的**扁平副本**（= 回填入口；回填器 `--runs-dir` 只吃扁平目录）
@@ -39,9 +41,15 @@
 #   export GRASPO_IMAGE=<训练镜像 tag>                    （默认见 IMAGE 行）
 #   GRASPO_GPU_POSITION_MIB  本档每卡头寸（默认 49152 = 48 GiB）
 #   GRASPO_RUN_TIMEOUT       单档训练墙钟上限（秒；默认 7200）
+#   GRASPO_EVAL_DIR          评测根（可选）：若其下已有 `.local/reports/after/eval_report.json`，
+#                            本档跑完就当场产出判据③④ 证据并复跑适配器；未跑评测则只打印后续命令
+#   GRASPO_ALGO_CHECKS_DIR   GRASPO 算法检查签署件目录（默认 <run-root>/algo-checks，内含 <档号>.json）
 #
 # 红线：卡 0–7 先到先得、⛔ 不预留/不抢占他人（被占即顺延，⛔ 绝不 kill 他人进程/停他人容器）；
 #       评测与训练分卡；本脚本**不自动跑评测**（评测链见 `scripts/gen_eval.py`）。
+#       判据③④ 的证据**只能来自实测/签署**：缺证据 ⇒ 不写 `readings.json.checks` ⇒ 回填器
+#       fail-closed（该档保持「待测试」）；⛔ 不许手填 true 让流程变绿（见
+#       `docs/run-discipline.md` 的「判据③④ 的判定与证据」一节）。
 set -uo pipefail
 
 # ══ 挂载结构不变量（fail-closed，纯 argv 分析，不需要 docker）══════════════════════
@@ -90,7 +98,9 @@ while [ $# -gt 0 ]; do
         --run-root=*)  RUN_ROOT="${1#*=}"; shift ;;
         --manifest)    MANIFEST="${2:?--manifest 需要路径}"; shift 2 ;;
         --manifest=*)  MANIFEST="${1#*=}"; shift ;;
-        -h|--help)     sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        # ★ --help 打印**整个文件头**（到 `set -uo pipefail` 为止）：原先写死 `2,40p`，
+        #   头部一长（如新增判据③④ 渠道说明）就会把「环境」段截断。
+        -h|--help)     awk 'NR>1 && /^set -uo pipefail$/{exit} NR>1' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "FATAL: 未知参数 $1（见 --help）" >&2; exit 2 ;;
     esac
 done
@@ -107,7 +117,9 @@ POSITION_MIB="${GRASPO_GPU_POSITION_MIB:-49152}"
 TIMEOUT_SEC="${GRASPO_RUN_TIMEOUT:-7200}"
 ELAM_HOST="${GRASPO_ELAM_HOST_ROOT:-}"
 MODELS_ROOT="${GRASPO_MODELS_HOST_ROOT:-}"
+EVAL_DIR="${GRASPO_EVAL_DIR:-}"
 GPU_POOL_CSV="0,1,2,3,4,5,6,7"
+ALGO_CHECKS_DIR="${GRASPO_ALGO_CHECKS_DIR:-$RUN_ROOT/algo-checks}"
 export PYTHONDONTWRITEBYTECODE=1
 
 say() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
@@ -248,7 +260,11 @@ TIERFIELDS
         echo "[dry-run]   并行=$PARALLEL；tp/pp/dp 与 nproc=$NPROC 已由清单断言（A6）"
         echo "[dry-run]   判据①：exit_code==0 ∧ steps_actual==$DERIVED（= max_epochs $MAX_EPOCHS × per_epoch $PER_EPOCH）∧ 检查点可加载 ∧ 无 NaN/Inf"
         echo "[dry-run]   步数门槛：threshold=$GATE reachable=$DERIVED planned=$PLANNED per_epoch=$PER_EPOCH"
-        echo "[dry-run]   判据②③④：由 tools/matrix/backfill_matrix.py 按数据件现算（⛔ 本链不写 status）"
+        echo "[dry-run]   判据②：由 tools/matrix/backfill_matrix.py 按数据件现算（⛔ 本链不写 status）"
+        echo "[dry-run]   判据③④ 渠道：评测后跑 $PYBIN scripts/record_checks.py --tier $TIER --run-dir $RUN_DIR --eval-dir ${EVAL_DIR:-<EVAL_DIR>} --algo-checks-dir $ALGO_CHECKS_DIR  ⇒ 写 readings.json 的 checks{真/假}"
+        echo "[dry-run]     · ④ 取 ${EVAL_DIR:-<EVAL_DIR>}/.local/reports/after/eval_report.json 实测：样本数==$SUBSET、请求失败 0、逐样本可解析条数==$SUBSET、温度 0"
+        echo "[dry-run]     · ③ GRASPO 档必须 $ALGO_CHECKS_DIR/$TIER.json（第 9 节 8 条不变式逐条 + 检查人/时间签署）；SFT/CPT/OPD 按报告第 2 章判据③ 结构化置位并带依据串"
+        echo "[dry-run]     · 缺 ③④ 证据 ⇒ 不写该键 ⇒ 回填器 fail-closed（保持「待测试」）；⛔ 不得手填 true 凑通过"
         # ★ 闸门：**命令 + 判据都打印，但一条都不执行**（dry-run 必须零副作用、零训练启动）
         echo "[dry-run]   闸门 1/3: $PYBIN scripts/run_guards.py cards-busy --ps-file $RUN_DIR/gpu/ps.txt --inspect-file $RUN_DIR/gpu/ins.txt   # 判据：我方容器已占/已预约的卡（含 created/restarting）必须排除"
         echo "[dry-run]   闸门 2/3: $PYBIN scripts/gpu_lock_guard.py --visible <本档实取 $CARDS 张>   # 判据：卡号 ⊆ 0–7、无重复、非空"
@@ -591,11 +607,32 @@ READINGS
     #   ★ 同时落一份**扁平副本**到 <run-root>/collect/（= 回填入口）：回填器 `--runs-dir` 只吃
     #     扁平目录，嵌套的 <run-root>/<档号>/<档号>.json 它不认（审查 🟡-3）。结构校验不过（rc=1）
     #     时 adapter 不写扁平副本 —— ⛔ 不让不合契约的件进回填目录。
-    "$PYBIN" "$ROOT_DIR/scripts/make_result_json.py" \
-        --tier "$TIER" --run-dir "$RUN_DIR" --manifest "$MANIFEST" \
-        --out "$RUN_DIR/$TIER.json" --collect-dir "$RUN_ROOT/collect" || RESULT_RC=$?
+    local RESULT_ARGS=(--tier "$TIER" --run-dir "$RUN_DIR" --manifest "$MANIFEST"
+                       --out "$RUN_DIR/$TIER.json" --collect-dir "$RUN_ROOT/collect")
+    [ -n "$EVAL_DIR" ] && RESULT_ARGS+=(--eval-dir "$EVAL_DIR")
+    "$PYBIN" "$ROOT_DIR/scripts/make_result_json.py" "${RESULT_ARGS[@]}" || RESULT_RC=$?
     if [ "$RESULT_RC" -ne 0 ]; then
         say "[result-json] $TIER 结果 json 未达回填口径（rc=$RESULT_RC）—— 见 $RUN_DIR/$TIER.json 的 note"
+    fi
+
+    # ── 13.5) 判据③④：评测产物已就位 ⇒ 当场产出证据并复跑适配器（唯一渠道）──────────
+    #   ★ 为什么必须在这里补：runner **不自动跑评测**（评测链 = `scripts/gen_eval.py`），而判据③④
+    #     的证据只能用评测报告/算法检查签署件算出来 ⇒ 已有报告就当场算；没有就只打印后续命令，
+    #     ⛔ 绝不伪造证据、⛔ 绝不手填 true（审查第 2 轮 🟡-A 的落点）。
+    if [ -n "$EVAL_DIR" ] && [ -f "$EVAL_DIR/.local/reports/after/eval_report.json" ]; then
+        say "[checks] $TIER 评测报告已就位 ⇒ 产出判据③④ 证据（写 readings.json 的 checks）"
+        local CHECKS_RC=0
+        "$PYBIN" "$ROOT_DIR/scripts/record_checks.py" --tier "$TIER" --run-dir "$RUN_DIR" \
+            --eval-dir "$EVAL_DIR" --algo-checks-dir "$ALGO_CHECKS_DIR" --manifest "$MANIFEST" \
+            || CHECKS_RC=$?
+        if [ "$CHECKS_RC" -ne 0 ]; then
+            say "[checks] $TIER 判据③④ 证据不全（rc=$CHECKS_RC）⇒ 回填时该档 fail-closed；补齐证据后重跑 record_checks"
+        fi
+        RESULT_RC=0
+        "$PYBIN" "$ROOT_DIR/scripts/make_result_json.py" "${RESULT_ARGS[@]}" || RESULT_RC=$?
+        say "[checks] $TIER 结果 json 已按判据③④ 证据复算（rc=$RESULT_RC）"
+    else
+        say "[checks] $TIER 判据③④ 待评测后执行：$PYBIN scripts/record_checks.py --tier $TIER --run-dir $RUN_DIR --eval-dir <EVAL_DIR> [--algo-checks-dir $ALGO_CHECKS_DIR]，再复跑 make_result_json（缺证据 ⇒ 回填器 fail-closed）"
     fi
     # 该档"成功"= 训练退出码 0（判据① 的部分事实）；四条判据的合取由回填器现算，⛔ 本脚本不下结论
     if [ "$RC" -ne 0 ]; then
