@@ -44,6 +44,8 @@
 #   GRASPO_EVAL_DIR          评测根（可选）：若其下已有 `.local/reports/after/eval_report.json`，
 #                            本档跑完就当场产出判据③④ 证据并复跑适配器；未跑评测则只打印后续命令
 #   GRASPO_ALGO_CHECKS_DIR   GRASPO 算法检查签署件目录（默认 <run-root>/algo-checks，内含 <档号>.json）
+#   GRASPO_PUBLIC_ALGOS      SFT/CPT/OPD 判据③ 的公开算法签署件（默认仓内
+#                            samples/configs/matrix68-checks/public-algos.json；缺件 ⇒ 不写该键）
 #
 # 红线：卡 0–7 先到先得、⛔ 不预留/不抢占他人（被占即顺延，⛔ 绝不 kill 他人进程/停他人容器）；
 #       评测与训练分卡；本脚本**不自动跑评测**（评测链见 `scripts/gen_eval.py`）。
@@ -263,8 +265,9 @@ TIERFIELDS
         echo "[dry-run]   判据②：由 tools/matrix/backfill_matrix.py 按数据件现算（⛔ 本链不写 status）"
         echo "[dry-run]   判据③④ 渠道：评测后跑 $PYBIN scripts/record_checks.py --tier $TIER --run-dir $RUN_DIR --eval-dir ${EVAL_DIR:-<EVAL_DIR>} --algo-checks-dir $ALGO_CHECKS_DIR  ⇒ 写 readings.json 的 checks{真/假}"
         echo "[dry-run]     · ④ 取 ${EVAL_DIR:-<EVAL_DIR>}/.local/reports/after/eval_report.json 实测：样本数==$SUBSET、请求失败 0、逐样本可解析条数==$SUBSET、温度 0"
-        echo "[dry-run]     · ③ GRASPO 档必须 $ALGO_CHECKS_DIR/$TIER.json（第 9 节 8 条不变式逐条 + 检查人/时间签署）；SFT/CPT/OPD 按报告第 2 章判据③ 结构化置位并带依据串"
+        echo "[dry-run]     · ③ GRASPO 档必须 $ALGO_CHECKS_DIR/$TIER.json（第 9 节 8 条不变式逐条 + 检查人/时间签署）；SFT/CPT/OPD 必须有公开算法签署件 samples/configs/matrix68-checks/public-algos.json（损失/标签掩码规则及 OPD 教师信号规则，带 file:line + 签署人/时间）"
         echo "[dry-run]     · 缺 ③④ 证据 ⇒ 不写该键 ⇒ 回填器 fail-closed（保持「待测试」）；⛔ 不得手填 true 凑通过"
+        echo "[dry-run]     · 档号护栏：readings.json 的 tier 必须 == --tier（record_checks / make_result_json 各自核，不符 rc=2）"
         if [ "$ALGO" = "OPD" ]; then
             echo "[dry-run]   判据② OPD 教师读数（需前置：教师侧评测报告）：${EVAL_DIR:-<EVAL_DIR>}/.local/reports/teacher/eval_report.json"
             echo "[dry-run]     · 前提：教师档（27B / SFT / LoRA / dp=1，本矩阵 M041）先训练完成并导出 merged-hf；缺 ⇒ 本档判据② 不可判定（⛔ 不填默认值）"

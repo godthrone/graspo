@@ -1,0 +1,151 @@
+{
+ "$schema_version": "graspo-public-algos-signature/1",
+ "doc": "判据③ 公开算法（SFT/CPT/OPD）的签署件——损失函数与标签掩码处理规则的逐条核对结论。判据原文见 docs/GRASPO 训练框架功能测试报告.html 第 2 章判据③：「SFT / CPT / OPD 按各自公开的标准实现逻辑判断；…另按公开标准核对损失函数与标签掩码的处理规则（OPD 另含教师信号的处理规则）」",
+ "why_here": "本件与档号无关（一套损失/掩码规则覆盖该算法的全部档）⇒ 放仓内 samples/configs/matrix68-checks/ 而不是某个跑次目录，⛔ 也不放进 samples/configs/matrix68/（该目录被就绪闸门约束为「只放 M###.yaml 档号配置」，混入非 yaml 会让 check_68_readiness 报错）；GRASPO 的逐档签署件仍走 <algo-checks-dir>/<tier>.json（第 9 节 8 条不变式、与档号绑定），两套不混。",
+ "how_to_change": "⛔ 不得手填 pass：verdict 只能来自真读过被引代码后的结论；改相关代码后必须重核并更新 checked_at/checker。缺件/不合契约时 record_checks.py 不写 algo_checks_passed 键（fail-closed，回填器保持「待测试」）。",
+ "signer": "executor-r4",
+ "checked_at": "2026-10-22T12:15:00+00:00",
+ "method_source": "tests/e2e/matrix68_manifest.json counts.by_algorithm（SFT 26 / CPT 8 / OPD 8）",
+ "upstream_ref": "ms-swift 4.5.3 参照源 = .local/refs/ms-swift-4.5.3/src（wheel 从 228 镜像解包，见该目录 PROVENANCE.md；不入 git）。所引行号对应该 pin，换上游版本必须重核。",
+ "methods": [
+  {
+   "method": "sft",
+   "verdict": "pass",
+   "checker": "executor-r4",
+   "checked_at": "2026-10-22T12:15:00+00:00",
+   "public_standard": "公开标准 SFT：因果语言模型交叉熵，只在 response/assistant 段计损；prompt 段、pad 位、图像占位符以 -100 忽略；损失按有效 token 数取均值。",
+   "implementations": "native（18 档：M004–M011、M014/M015、M044–M051）+ ms-swift（8 档）",
+   "loss_rule": "因果 LM 交叉熵：norm→lm_head 后按区间分块算 logsumexp 得逐 token log-prob，labels[:,1:] 做因果 shift，仅对 != -100 的位置求和，再除以本 micro-batch 有效 token 数（等价于 F.cross_entropy(ignore_index=-100, reduction='mean')）；多 micro-batch 时按各块有效 token 数占比加权 ⇒ 与整批 token 均值逐位等价。实现位置：src/graspo/flow/backend/native/models/qwen35_36/training_sft.py:170-180（分块 logprob：src/graspo/ripple/loss.py:43-58；累积权重：src/graspo/flow/backend/native/models/qwen35_36/training_sft.py:65-100,415-427,472-480）。ms-swift 档：graspo 不自定义 loss，只透传数据与超参；上游 SftArguments.loss_scale 默认 'default' ⇒ 仅 assistant/response token 计损，CE 由基座 ForCausalLM 在 labels!=-100 位上取均值并按 num_items_in_batch 还原 token 均值——引用 .local/refs/ms-swift-4.5.3/src/swift/arguments/base_args/template_args.py:140、swift/loss_scale/base.py:121-128、swift/template/base.py:828-838；graspo 侧映射 src/graspo/flow/backend/msswift/_config_mapping.py:488-493（不覆写 loss_scale）。",
+   "label_mask_rule": "只监督 response：纯文本路径把 prompt 段 labels 置 -100、response 段（含追加的 EOS）赋真 token（src/graspo/ripple/data.py:397-410）；pad 位 labels=-100（src/graspo/flow/backend/native/models/qwen35_36/helpers.py:154）；多模态路径 prompt 段（含图像/视频占位符）整体 -100、只有 response 段赋真值，且截断若切断图像占位符则硬失败（同文件 helpers.py:264-282,290-302）⇒ 图像 token 与 pad token 都不进损失。ms-swift 档：上游按 loss_scale 权重决定 labels 是否置 -100（swift/template/base.py:1176-1183），graspo 只把 target 作为末尾 assistant 消息附上、不改 mask（src/graspo/flow/backend/msswift/dataset.py:408-414）。",
+   "evidence": [
+    {
+     "item": "loss = token 级 CE + ignore_index=-100",
+     "path": "src/graspo/flow/backend/native/models/qwen35_36/training_sft.py:171-180",
+     "conclusion": "shift 后 mask = shift_labels != -100，loss = -(log_probs*mask).sum()/mask.sum().clamp_min(1) ⇒ 公开标准 CE。"
+    },
+    {
+     "item": "分块 logprob 的 masked 位返回 0（不污染分子）",
+     "path": "src/graspo/ripple/loss.py:43-58",
+     "conclusion": "valid = token_ids != ignore_index，末尾 log_probs.masked_fill(~valid, 0.0) ⇒ 忽略位既不计分子也不计分母。"
+    },
+    {
+     "item": "prompt 段被 mask、response 段（含 EOS）计损",
+     "path": "src/graspo/ripple/data.py:397-410",
+     "conclusion": "labels[:prompt_len] = [-100]*prompt_len，prompt_len 与编码用同一份 chat template 文本 ⇒ 生成提示与工具 schema 段也不计损。"
+    },
+    {
+     "item": "多模态图像占位符与 pad 位不计损",
+     "path": "src/graspo/flow/backend/native/models/qwen35_36/helpers.py:264-302",
+     "conclusion": "labels 先全置 -100、只对 response 段赋真 token；视觉占位符落在 prompt 段 ⇒ 天然 -100。"
+    },
+    {
+     "item": "多 micro-batch 的归一不改变 token 均值语义",
+     "path": "src/graspo/flow/backend/native/models/qwen35_36/training_sft.py:65-110",
+     "conclusion": "权重 = 该块有效 token 数 / 全批有效 token 数，Σw_i·(块内 token 均值) = 整批 token 均值（⛔ 不用样本数加权）。"
+    },
+    {
+     "item": "ms-swift 档的 SFT 掩码语义 = 仅 assistant/response 计损",
+     "path": ".local/refs/ms-swift-4.5.3/src/swift/loss_scale/base.py:121-128",
+     "conclusion": "base_strategy=='default' 且 is_assistant 才给 >0 权重，其余权重 0 ⇒ labels 全 -100。"
+    }
+   ],
+   "caveats": [
+    "纯文本路径若 max_prompt_length 短到把 response 全部截掉，该样本退化为全 -100（分母只算其他样本的 token）；PP 路径对整批全 -100 硬失败（training_sft.py:584-589），非 PP 路径靠 _normalized_accumulation_weights 给 0 权重（training_sft.py:94-100）。这是截断参数选择问题，不改变「只在 response 计损」的规则。",
+    "ms-swift 档的 CE 实现在上游（HF ForCausalLM），本仓核对的对象是「是否按公开标准语义调用」：不覆写 loss_scale + 数据只把 target 放末尾 assistant 消息。"
+   ]
+  },
+  {
+   "method": "cpt",
+   "verdict": "pass",
+   "checker": "executor-r4",
+   "checked_at": "2026-10-22T12:15:00+00:00",
+   "public_standard": "公开标准 CPT（继续预训练）：在纯文本上做 next-token 续训，整条序列每个 token 都计损，不套对话模板、不做 prompt/response 掩码。",
+   "implementations": "ms-swift（8 档，全量；native 无 CPT 实现）",
+   "loss_rule": "全序列 next-token 交叉熵（每个 token 都计损）：graspo 显式下发 --loss_scale all（src/graspo/flow/backend/msswift/_config_mapping.py:555-568；默认值唯一来源 src/graspo/flow/backend/msswift/_config_mapping.py:78 DEFAULT_CPT_LOSS_SCALE='all'）；上游 'all' 策略对所有上下文给 >0 权重（.local/refs/ms-swift-4.5.3/src/swift/loss_scale/base.py:121-128），loss = HF CE 在 labels!=-100 位上取均值（swift/template/base.py:828-838）；训练入口 = swift.pipelines.pretrain_main（≡ swift pt，src/graspo/flow/backend/msswift/cpt_trainer.py:11-32）。",
+   "label_mask_rule": "CPT 不套对话模板且整条序列监督：graspo 下发 --use_chat_template false（src/graspo/flow/backend/msswift/_config_mapping.py:561-565）⇒ 无 prompt/response 之分；上游 PretrainArguments 的定义即 use_chat_template=False / loss_scale='all'（.local/refs/ms-swift-4.5.3/src/swift/arguments/pretrain_args.py:7-10），labels 全序列 = input_ids，仅首个 token 置 -100（swift/template/base.py:1485）。数据侧把样本摊平成一条纯文本续训行（src/graspo/flow/backend/msswift/dataset.py:503-546）。",
+   "evidence": [
+    {
+     "item": "「每个 token 都计损」由 --loss_scale all 显式下发，不靠上游默认碰巧",
+     "path": "src/graspo/flow/backend/msswift/_config_mapping.py:555-568",
+     "conclusion": "loss_scale 只从 config.pretrain（后端中立段）取，None ⇒ 'all'；单一真相源常量在同文件 :78。"
+    },
+    {
+     "item": "上游 'all' 语义 = 所有上下文权重 1（无 prompt 掩码）",
+     "path": ".local/refs/ms-swift-4.5.3/src/swift/loss_scale/base.py:121-128",
+     "conclusion": "base_strategy=='all' ⇒ 每个 context 都给 loss_scale>0 ⇒ labels 保留真 token。"
+    },
+    {
+     "item": "不套对话模板 ⇒ 无 assistant/prompt 区分",
+     "path": "src/graspo/flow/backend/msswift/_config_mapping.py:561-565",
+     "conclusion": "显式下发 --use_chat_template false（pretrain.use_chat_template 为 None ⇒ false），与 swift pt 定义一致。"
+    },
+    {
+     "item": "上游 CPT 参数类默认值与 graspo 下发值一致",
+     "path": ".local/refs/ms-swift-4.5.3/src/swift/arguments/pretrain_args.py:7-10",
+     "conclusion": "PretrainArguments(SftArguments): use_chat_template=False, loss_scale='all' ⇒ 与映射层逐字一致。"
+    },
+    {
+     "item": "labels 的 -100 只来自首个 token（因果模型无前驱）",
+     "path": ".local/refs/ms-swift-4.5.3/src/swift/template/base.py:1485",
+     "conclusion": "encoded['labels'][0] = -100 是唯一掩码 ⇒ 其余全序列都监督。"
+    },
+    {
+     "item": "数据形态 = 一条纯文本续训行（非对话）",
+     "path": "src/graspo/flow/backend/msswift/dataset.py:503-546",
+     "conclusion": "build_cpt_rows 把样本摊平为单条 content（全部消息文本 + target 文本）⇒ 整行都是可监督文本。"
+    }
+   ],
+   "caveats": [
+    "CPT 的 CE 实现在上游（HF ForCausalLM），本仓核对的对象是 graspo 侧语义参数（loss_scale/use_chat_template）与数据形态。",
+    "本签署件只覆盖判据③ 的损失/掩码规则；「CPT 训练 loss 正常下降」是判据② 的读数缺口（本矩阵无该读数渠道），不在本件范围。"
+   ]
+  },
+  {
+   "method": "opd",
+   "verdict": "pass",
+   "checker": "executor-r4",
+   "checked_at": "2026-10-22T12:15:00+00:00",
+   "public_standard": "公开标准 OPD（on-policy 蒸馏 / GKD）：学生现场采样 → 冻结教师对同一批 token 现场打分 → 逐 token 稠密散度损失（JSD/KL），只在 response token 上计损；教师 logits 现场前向得到，不从数据集携带。",
+   "implementations": "ms-swift（8 档，全量；native 无 OPD 实现）",
+   "loss_rule": "蒸馏损失 = 学生与教师在该批 token 上的广义 JSD：graspo 下发 --rlhf_type gkd（src/graspo/flow/backend/msswift/_config_mapping.py:643-651）；beta 不发明默认值、None ⇒ 上游 0.5（.local/refs/ms-swift-4.5.3/src/swift/arguments/rlhf_args.py:513-517）；逐位置 KL 经温度缩放后合成 JSD 并按有效 token 数归一（swift/rlhf_trainers/gkd_loss.py:255-270、swift/rlhf_trainers/gkd_trainer.py:105-115）。",
+   "label_mask_rule": "只有 response（学生现场生成）token 参与蒸馏损失：上游按 labels != -100 取有效位（.local/refs/ms-swift-4.5.3/src/swift/rlhf_trainers/gkd_loss.py:175-205），prompt 段不计；graspo 的数据集只喂提示词、⛔ 不带 targets 列（src/graspo/flow/backend/msswift/dataset.py:549-570）⇒ 监督 token 全部来自现场采样。",
+   "teacher_signal_rule": "教师信号 = 独立冻结教师模型的现场 logits，不在数据集里携带：graspo 只透传 --teacher_model（进程内冻结教师）或 --teacher_model_server（外挂服务），二者互斥且至少给一个由配置层 fail-closed（src/graspo/core/schema.py:118-131；映射 src/graspo/flow/backend/msswift/_config_mapping.py:653-664）；--lmbda 显式下发 1.0（定义 src/graspo/flow/backend/msswift/_config_mapping.py:80-99，下发 :670；上游用它选 STUDENT/DATASET 分支 .local/refs/ms-swift-4.5.3/src/swift/rlhf_trainers/gkd_trainer.py:293-298）⇒ 恒走学生现场采样（on-policy），且 λ<1.0 在启动前即 fail-closed（_config_mapping.py:831-849）。",
+   "evidence": [
+    {
+     "item": "蒸馏路径 = GKD（教师散度直接作为 loss），非 GRPO+teacher",
+     "path": "src/graspo/flow/backend/msswift/_config_mapping.py:643-651",
+     "conclusion": "显式下发 --rlhf_type gkd ⇒ 上游 GKDTrainer，教师 logits 进程内前向，无需教师 logprob 数据契约。"
+    },
+    {
+     "item": "教师来源必须具体且二选一（fail-closed）",
+     "path": "src/graspo/core/schema.py:118-131",
+     "conclusion": "teacher_model_path 或 teacher_model_server 至少给一个，空值直接拒绝（不当作「待定」）。"
+    },
+    {
+     "item": "λ 恒为 1.0 ⇒ 不存在 off-policy(DATASET) 分支",
+     "path": "src/graspo/flow/backend/msswift/_config_mapping.py:831-849",
+     "conclusion": "prompt-only 数据 + λ<1.0 会在启动前抛错说明原因；默认下发 1.0 ⇒ 每一步都学生采样。"
+    },
+    {
+     "item": "上游 λ 分支确实是 STUDENT/DATASET 二选一",
+     "path": ".local/refs/ms-swift-4.5.3/src/swift/rlhf_trainers/gkd_trainer.py:293-298",
+     "conclusion": "_get_random_num() <= lmbda ⇒ DataSource.STUDENT，否则 DATASET ⇒ λ=1.0 等价恒 on-policy。"
+    },
+    {
+     "item": "损失只在有效（response）token 上算",
+     "path": ".local/refs/ms-swift-4.5.3/src/swift/rlhf_trainers/gkd_loss.py:175-205",
+     "conclusion": "extract_active 用 labels != -100 取学生有效位并与教师 mask 对齐 ⇒ prompt 段不进损失。"
+    },
+    {
+     "item": "教师信号是现场 logits 的散度，不是数据列",
+     "path": "src/graspo/flow/backend/msswift/dataset.py:549-570",
+     "conclusion": "build_opd_rows 只产出提示词行、不带 targets ⇒ 监督信号只能来自教师现场打分。"
+    }
+   ],
+   "caveats": [
+    "GKD 的 JSD/KL 数值实现在上游（swift/rlhf_trainers/gkd_loss.py），本仓核对的是 graspo 侧的路径选择（gkd）、教师来源与 λ 语义。",
+    "教师权重（27B / SFT / LoRA / dp=1 档产物）的身份核验是判据② 的事（record_checks.py::judge_teacher 现核报告路径），不在本件范围。"
+   ]
+  }
+ ]
+}

@@ -368,14 +368,54 @@ python3 $TREE/scripts/run_guards.py cards-busy --ps-file /tmp/ps.txt --inspect-f
 - 本判定与 `gen_tier_json.py` 的效果口径**互不替代**：④ 只判"能否产出可解析结果"，
   "效果是否变好"是判据②（`eval.after_acc/base_acc`）。
 
-### 19.2 判据③「算法正确性检查通过」= 分级
+### 19.2 判据③「算法正确性检查通过」= 分级（两套签署件，⛔ 不混）
 
-**SFT / CPT / OPD（结构化置位，必须带依据串）**：文档口径 = 这三种算法"按各自公开的标准实现
-逻辑判断"（第 2 章判据③），不作逐条清单要求 ⇒ 由 `record_checks.py` 置位 `true`，并把依据串
-`public_algorithm_per_doc_2_3`（含章节号与算法名）落进 `checks_evidence`。
-⛔ 置位**不是无条件**：算法必须从清单该档读到且 ∈ {SFT, CPT, OPD}，依据串必须随结论一起落盘。
+判据③ 原文（第 2 章）＝「SFT / CPT / OPD 按各自公开的标准实现逻辑判断；GRASPO 按《算法说明》
+逐条判断。**SFT / CPT / OPD 另按公开标准核对损失函数与标签掩码的处理规则（OPD 另含教师信号
+的处理规则）**」。后半句是一个**动作**，所以三类公开算法同样要**签署件**——只是清单不同：
 
-**GRASPO（⛔ 不许自动置位，必须签署）**：证据文件 `<algo-checks-dir>/<tier>.json`
+| 算法 | 签署件（唯一位置） | 清单 | 与档号的绑定 |
+|---|---|---|---|
+| SFT / CPT / OPD | `samples/configs/matrix68-checks/public-algos.json` | 损失规则 + 标签掩码规则（OPD 另加教师信号规则） | **不绑定**（一套规则覆盖该算法全部档） |
+| GRASPO | `<algo-checks-dir>/<tier>.json` | 《算法说明》第 9 节 8 条不变式 | **绑定**（逐档签） |
+
+#### 19.2.1 SFT / CPT / OPD：公开算法签署件（`public-algos.json`）
+
+```json
+{
+  "$schema_version": "graspo-public-algos-signature/1",
+  "signer": "executor-r4", "checked_at": "2026-10-22T12:15:00+00:00",
+  "methods": [
+    {
+      "method": "sft",                      // sft | cpt | opd（小写，逐类一条）
+      "verdict": "pass",                    // ⛔ 只有真核过才写 pass；fail ⇒ 该算法全部档保持「待测试」
+      "checker": "executor-r4",             // 核对人（必需）
+      "checked_at": "2026-10-22T12:15:00+00:00",   // 核对时间（必需）
+      "loss_rule": "…实现位置 src/…/training_sft.py:170-180",          // 必需，须带 file:line
+      "label_mask_rule": "…实现位置 src/graspo/ripple/data.py:397-410", // 必需，须带 file:line
+      "teacher_signal_rule": "…（仅 opd 必需，须带 file:line）",
+      "evidence": [{"item": "…", "path": "…:行", "conclusion": "…"}]   // 必需，逐条核对项
+    }
+  ]
+}
+```
+
+校验规则（`scripts/record_checks.py::judge_public_algo`，全 fail-closed）：缺件 / 无该 `method`
+条目 / `verdict != "pass"` / `checker` 或 `checked_at` 为空 / 缺 `loss_rule` 或 `label_mask_rule`
+（OPD 另缺 `teacher_signal_rule`）/ 规则里**没有 `file:line` 代码坐标** / `evidence` 为空
+⇒ **不写 `algo_checks_passed` 键** ⇒ 回填器判 `unknown` ⇒ 该档保持「待测试」。
+`basis_id` 落 `public_algorithm_signed_public_algos_json`（人读件的备注列据此写签署人与时间）。
+
+- **为什么放仓内而不是跑次目录**：损失/掩码规则是**算法级**的，与档号无关；放进 `<run-dir>`
+  会在 68 档里产生 68 份必须同步的副本（单一真相源 §1.4）。`--public-algos` / `$GRASPO_PUBLIC_ALGOS`
+  只是**指向**另一份（演练/回归用），不是第二份口径。
+- ⛔ **不得手填 `pass`**：`verdict` 只能来自真读过被引代码后的结论；相关代码一改，必须重核并
+  更新 `checked_at`/`checker`（本件引用的行号对的是当次 HEAD）。
+- ⛔ 缺件即不写键：**没有签署件 = 没核过 = 不许说通过**（不是"缺数据"，是"没人做"）。
+
+#### 19.2.2 GRASPO：逐档签署件（第 9 节 8 条不变式）
+
+**GRASPO（⛔ 不许自动置位，必须逐档签署）**：证据文件 `<algo-checks-dir>/<tier>.json`
 （runner 缺省 `<run-root>/algo-checks/`；也可用 `GRASPO_ALGO_CHECKS_DIR` 或
 `--algo-checks-dir` 指向别处，例如 `.local/hb-workspace/<会话时间戳>/algo-checks/`）：
 
@@ -419,11 +459,42 @@ python3 $TREE/scripts/run_guards.py cards-busy --ps-file /tmp/ps.txt --inspect-f
 也进 `collect/`，但**不会**被判成通过。补齐证据后复跑 `record_checks.py` → `make_result_json.py`
 即可（幂等；`record_checks.py` 每次先清旧结论再按本次证据重写，⛔ 不留陈旧通过）。
 
+#### 19.3.1 档号护栏：`--tier` 必须与 `readings.json.tier` 一致（⛔ 不自动纠正）
+
+`scripts/record_checks.py` 与 `scripts/make_result_json.py` **各自**先核
+`readings.json["tier"]`：**缺该字段**或 **`!= --tier`** ⇒ **rc=2 并打印两个档号**，拒跑。
+
+为什么必须有（实测事故，审查第 3 轮 🔴-2）：68 档是**人工分档补跑**的场景，`--tier M001` 与
+`--run-dir …/run/M018` 这类手滑极易发生。此前两个脚本都不核，于是
+`--tier M001 --run-dir <M018 的跑次>` 会把 SFT 的 `algo_checks_passed=true` 写进 GRASPO 档
+（`readings.json` 自带的 `tier:"M018"` 被无视）⇒ 适配器按 M018 出件 ⇒ 回填 **rc=0、状态「通过」**，
+备注列还印出「按《GRASPO 算法说明》第 9 节逐条算法检查，全部不变式通过」——**一份签署件都没有**。
+
+⛔ 护栏只**拒绝**，不做任何"纠正"：不按目录名改写 `--tier`、不改写 `readings.json.tier`、
+不"取两者的公共前缀"。配错就重跑，读数不动。
+
+#### 19.3.2 备注列文案只能由证据生成（⛔ 不得只凭布尔）
+
+人读件的备注列进发布件，因此判据③ 的措辞**只能从 `checks_evidence.algo.detail` 里的
+`basis_id` + `checker` + `checked_at` 现读**：
+
+| 证据声明 | 备注列措辞 |
+|---|---|
+| `graspo_algorithm_section9_signed` ∧ 有签署人/时间 | 「按《GRASPO 算法说明》第 9 节逐条算法检查，全部不变式通过（签署人 X，时间）」 |
+| `public_algorithm_signed_public_algos_json` ∧ 有签署人/时间 | 「按 public-algos 签署件核对损失函数与标签掩码处理规则（OPD 另含教师信号），结论通过（签署人 X，时间）」 |
+| 有布尔但**无**上述签署留痕 | 「算法正确性检查证据缺签署人/时间，本节不作结论陈述」 |
+
+⛔ 任何情形都不得在**缺签署**时输出"已通过检查/逐条通过"一类字样（这就是第 3 轮的
+"发布件不实陈述"）。
+
 ### 19.4 ⛔ 红线
 
 - ⛔ **不得为凑通过手填 `true`**：`readings.json.checks` 只能来自 `record_checks.py` 的实测/签署证据；
   发现手填即视为伪造读数，同批记录并回退。
 - ⛔ 不得放宽 19.1 的条件、不得减少 19.2 的 8 条、不得把"缺证据"改成"通过"。
+- ⛔ **不得手填公开算法签署件的 `verdict: pass`**：缺件/`fail`/缺规则/规则无 `file:line`
+  ⇒ 一律不写 `algo_checks_passed` 键（§19.2.1）。"公开算法不作逐条清单要求"**不是**置位理由。
+- ⛔ 不得绕过档号护栏（§19.3.1）：`--tier` 与 `readings.json.tier` 不一致就修命令，不许改读数。
 - ⛔ 判据③④ 的结论**只落 `readings.json`**（及其派生结果 json）；人读件只由回填链写入，
   ⛔ 不得绕过回填直接改数据件/人读件（见本文件 §19 与 `tools/matrix/backfill_dated.sh` 的落点闸门）。
 
@@ -482,7 +553,7 @@ python3 $TREE/scripts/run_guards.py cards-busy --ps-file /tmp/ps.txt --inspect-f
 
 | 环节 | 产物 | 字段 |
 |---|---|---|
-| 教师侧评测 | `<EVAL_DIR>/.local/reports/teacher/eval_report.json` | `model.role == "other"`、`decoding.temperature == 0.0`、`summary.sample_count_total == 100`、`summary.sample_count_error == 0`、`dataset.sha256`、`summary.accuracy` |
+| 教师侧评测 | `<EVAL_DIR>/.local/reports/teacher/eval_report.json` | `model.role == "other"`、`decoding.temperature == 0.0`、`summary.sample_count_total == 100`、`summary.sample_count_error == 0`、`dataset.sha256`、`summary.accuracy`、`model.checkpoint_path`、`model.base_model_path` |
 | 折算 | `<run-dir>/readings.json` | 顶层 `teacher_after_acc`（0–1 比例）+ `checks_evidence.teacher_after_acc`（条件、实测数、报告路径） |
 | 适配 | `<run-dir>/<档号>.json` → `collect/<档号>.json` | `eval.teacher_after_acc`（与 `after_acc`/`base_acc`/`delta_pp` 同级） |
 | 回填 | 数据件该档「是否通过」+ 备注列 | 回填器现算；备注列写「教师在训练数据集上的完全正确率 X%；教师 − 学生未训练模型 = +Y pp」 |
@@ -496,6 +567,12 @@ python3 $TREE/scripts/run_guards.py cards-busy --ps-file /tmp/ps.txt --inspect-f
 | 教师读数在但教师线没过 | `teacher_after_acc` 已写 | 已透传 | 判据② `fail` | 「不通过」（⚠ 这是**有据的不通过**，与学生线是否过无关） |
 
 - `record_checks.py` 对 OPD 档把教师读数计入**必需证据**：缺 ⇒ rc=4（非 OPD 档不受影响，仍 rc=0）。
+- ★ **教师身份是真的核过的**（不只是 `role=other`）：`judge_teacher` 另外核
+  ① `model.checkpoint_path` 必须落在**清单现算的教师档**（本矩阵 `M041`）产物目录下
+  （按路径分段比对，不是子串匹配）；② `model.base_model_path` 必须等于该档的 `model_path`
+  （本矩阵 `/models/Qwen3.8-27B`）。两条都从清单现读，⛔ 不写死第二份路径；不符 ⇒ **不写键**。
+  ⇒ `gen_eval --role teacher` 的现算 + 本核对一起构成"评的确实是那个教师"的证据链，
+  报告的 `role` 字段本身**不**证明模型身份。
 - `make_result_json.py` 对 OPD 档缺 `teacher_after_acc` 时进 `gaps` ⇒ rc=4（结构合法、证据不全）。
 - ⛔ **不得**给回填器或适配器开"缺教师读数也算通过"的口子；⛔ 不得填默认值
   （0 / base 读数 / 学生 after 读数冒充教师读数）；⛔ 不得改 `tools/matrix/backfill_matrix.py`

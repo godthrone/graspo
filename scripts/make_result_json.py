@@ -111,6 +111,23 @@ def read_json(path: Path, default=None):
         return default
 
 
+def _basis_ids() -> tuple[str, str]:
+    """判据③ 两个**依据标识**的唯一真相源 = `scripts/record_checks.py`。
+
+    ⛔ 不在此另写一份字符串：产出端（record_checks）与消费端（本文件的备注列）认的必须是
+    同一个 id，否则"有没有签署"两边会不一致。导入失败 ⇒ 返回空串 ⇒ 备注列按
+    "证据不完整"处理（fail-safe，⛔ 不猜成"已通过"）。
+    """
+    try:
+        if str(ROOT / "scripts") not in sys.path:
+            sys.path.insert(0, str(ROOT / "scripts"))
+        import record_checks  # noqa: PLC0415
+
+        return record_checks.GRASPO_ALGO_BASIS, record_checks.PUBLIC_ALGO_BASIS
+    except Exception:  # noqa: BLE001 - 任何导入失败都退化为"认不出签署"
+        return "", ""
+
+
 def read_int_file(path: Path) -> int | None:
     try:
         return int(path.read_text(encoding="utf-8").strip())
@@ -382,7 +399,9 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
         checks = {k: raw_checks[k] for k in ("algo_checks_passed", "inference_parseable")
                   if isinstance(raw_checks.get(k), bool)}
     for key, cid, why in (
-        ("algo_checks_passed", "判据③", "算法正确性检查缺证据（GRASPO 档须人工/脚本签署逐条不变式）"),
+        ("algo_checks_passed", "判据③",
+         "算法正确性检查缺证据（GRASPO 档须逐档签署第 9 节 8 条不变式；"
+         "SFT/CPT/OPD 须逐类公开算法签署件（损失/标签掩码规则））"),
         ("inference_parseable", "判据④", "评测报告缺证据（未跑评测或报告不齐）"),
     ):
         if key not in checks:
@@ -488,17 +507,52 @@ def _teacher_note(algo: str, ev: dict | None) -> list[str]:
     return [txt]
 
 
+def _algo_signing(row_algo: str, detail: dict) -> dict:
+    """判据③ 的**签署信息**（从 `checks_evidence.algo.detail` 现读，⛔ 不由布尔反推）。
+
+    为什么必须看证据：备注列会进人读发布件。此前只要 `algo_checks_passed is True` 就印
+    「按《GRASPO 算法说明》第 9 节逐条算法检查，全部不变式通过」——档号错配时**一份签署件都
+    没有**也照印（审查第 3 轮 🔴-2 的不实陈述）。⇒ 现在只把证据自己声明的
+    `basis_id` + `checker` + `checked_at` 搬进文案；三者不齐 ⇒ 只写"证据不完整"，
+    ⛔ 不出现任何"已通过检查"字样。
+    """
+    basis = str(detail.get("basis_id") or "")
+    checker = str(detail.get("checker") or "").strip()
+    at = str(detail.get("checked_at") or "").strip()
+    graspo_basis, public_basis = _basis_ids()
+    if graspo_basis and basis == graspo_basis and checker and at:
+        return {"kind": "graspo", "checker": checker, "checked_at": at}
+    if public_basis and basis == public_basis and checker and at:
+        return {"kind": "public", "checker": checker, "checked_at": at,
+                "method": str(detail.get("method") or row_algo or "").lower()}
+    return {"kind": None, "basis_id": basis or None, "checker": checker or None,
+            "checked_at": at or None}
+
+
 def _checks_note(checks: dict, checks_ev: dict, row: dict) -> list[str]:
     """判据③④ 的**备注列**文字（中性措辞：⛔ 无内部路径/工位名/过程行话）。
 
-    只写"结论 + 可核数"，不写证据路径（路径在 `provenance.checks_evidence` 里供审计）。
+    只写"结论 + 可核数 + 签署人/时间"，不写证据路径（路径在 `provenance.checks_evidence`
+    里供审计）。★ 判据③ 的措辞**只能**由证据自身的声明生成（见 :func:`_algo_signing`）。
     """
     out: list[str] = []
+    algo = str(row.get("algo") or "").upper()
+    alg_ev = (checks_ev.get("algo_checks_passed")
+              if isinstance(checks_ev.get("algo_checks_passed"), dict) else {})
+    detail = alg_ev.get("detail") if isinstance(alg_ev.get("detail"), dict) else {}
     if checks.get("algo_checks_passed") is True:
-        if str(row.get("algo") or "").upper() == "GRASPO":
-            out.append("判据③：按《GRASPO 算法说明》第 9 节逐条算法检查，全部不变式通过")
+        sign = _algo_signing(algo, detail)
+        if sign["kind"] == "graspo":
+            out.append(f"判据③：按《GRASPO 算法说明》第 9 节逐条算法检查，全部不变式通过"
+                       f"（签署人 {sign['checker']}，{sign['checked_at']}）")
+        elif sign["kind"] == "public":
+            out.append(f"判据③：{row.get('algo') or '本算法'} 按 public-algos 签署件核对损失函数与"
+                       f"标签掩码处理规则"
+                       f"{'（含教师信号规则）' if sign.get('method') == 'opd' else ''}"
+                       f"，结论通过（签署人 {sign['checker']}，{sign['checked_at']}）")
         else:
-            out.append(f"判据③：{row.get('algo') or '本算法'} 按报告第 2 章判据③ 的公开标准实现判定通过")
+            # ★ 没有签署留痕 ⇒ 不作"已通过检查"的陈述（⛔ 发布件不得自证）
+            out.append("判据③：算法正确性检查证据缺签署人/时间，本节不作结论陈述")
     elif checks.get("algo_checks_passed") is False:
         out.append("判据③：算法正确性检查未通过")
     inf_ev = (checks_ev.get("inference_parseable")
@@ -556,6 +610,20 @@ def main(argv=None) -> int:
     run_dir = Path(args.run_dir)
     if not run_dir.is_dir():
         print(f"FAIL: --run-dir 不存在：{run_dir}")
+        return 2
+    # ── ★ 档号护栏（审查第 3 轮 🔴-2）──────────────────────────────────────────
+    #   `--tier` 与 `--run-dir` 错配时，本文件会把**别的档**的读数与 checks 装进本档的结果 json，
+    #   回填器照判「通过」、备注列还会印出不实的"逐条检查通过"。⇒ readings.json 的 `tier`
+    #   必须存在且与 `--tier` 逐字相同；⛔ 不自动纠正、不覆盖、不"取跑次目录名兜底"。
+    readings = read_json(run_dir / "readings.json", {}) or {}
+    rtier = readings.get("tier")
+    if not isinstance(rtier, str) or not rtier.strip():
+        print(f"FAIL: readings.json 缺 tier 字段（--tier={args.tier}，readings.tier={rtier!r}）"
+              "⇒ 无法证明该跑次目录属于本档；⛔ 不自动纠正、不覆盖")
+        return 2
+    if rtier.strip() != args.tier.strip():
+        print(f"FAIL: 档号错配：readings.json tier={rtier.strip()} ≠ --tier={args.tier.strip()}"
+              "（⛔ 不自动纠正/不覆盖；请改用与该跑次一致的 --tier，或换 --run-dir）")
         return 2
     manifest = read_json(Path(args.manifest))
     if not isinstance(manifest, dict) or not manifest.get("tiers"):

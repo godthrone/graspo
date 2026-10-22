@@ -35,10 +35,15 @@
      报告缺失 / 不可解析 / 无 samples ⇒ **不写该键**（fail-closed，回填器不判通过）。
 
   ③ **算法正确性检查通过**（同一章判据③），按算法分级：
-     · **SFT / CPT / OPD**：文档口径 = 「按各自公开的标准实现逻辑判断」＋另核损失函数/标签掩码
-       （OPD 另含教师信号）—— 即**公开标准实现**一层，文档不作逐条清单要求。⇒ 本文件按
-       **结构化置位**（`public_algorithm_per_doc_2_3`），依据串逐次落进 `checks_evidence`，
-       ⛔ 不是无条件 `true`：算法必须是三者之一，且必须能从清单该档读到 `algorithm`。
+     · **SFT / CPT / OPD**：文档口径 = 「按各自公开的标准实现逻辑判断」＋**另按公开标准核对
+       损失函数与标签掩码的处理规则**（OPD 另含教师信号的处理规则）—— 后半句是**动作**，
+       因此本文件只认「真核过并留痕」的**签署件**
+       `samples/configs/matrix68-checks/public-algos.json`（一套规则覆盖该算法的**全部**档，与档号无关；
+       可用 `--public-algos` 或 `$GRASPO_PUBLIC_ALGOS` 指别处）。每条规则必须带实现位置 `file:line`。
+       缺件 / 方法不匹配 / `verdict != pass` / 缺 `checker` 或 `checked_at` / 缺 loss 或 mask 规则
+       （OPD 另缺 teacher_signal 规则）/ 规则里没有代码坐标 ⇒ **不写该键**（fail-closed）。
+       ⛔ 不因「公开算法不作逐条清单要求」就置位（审查第 3 轮 🔴-1 的根因正是这个）。
+       成文格式见 `docs/run-discipline.md` §19.2。
      · **GRASPO**：⛔ **不许自动置位**。必须有一份**显式签署**的算法检查证据
        `<algo-checks-dir>/<tier>.json`，逐条覆盖《docs/graspo-algorithm.html》**第 9 节**
        的 8 条不变式（本节是"逐条判断"的唯一清单），每条 `{id, pass, evidence}`，并含
@@ -51,8 +56,11 @@
 用法：
     # 评测跑完之后（一次即可；重跑幂等：先清旧结论再按本次证据重写，⛔ 不留陈旧通过）
     python3 scripts/record_checks.py --tier M001 --run-dir <RUN_DIR> \\
-        --eval-dir <EVAL_DIR> [--algo-checks-dir <DIR>] \\
+        --eval-dir <EVAL_DIR> [--algo-checks-dir <DIR>] [--public-algos <FILE>] \\
         [--manifest tests/e2e/matrix68_manifest.json]
+
+    # ⚠ SFT/CPT/OPD 档的判据③ 认的是**公开算法签署件**（缺省
+    #   samples/configs/matrix68-checks/public-algos.json）；GRASPO 档认 <algo-checks-dir>/<tier>.json。
 
     # OPD 档另需教师侧报告（缺省 <EVAL_DIR>/.local/reports/teacher/eval_report.json；
     # 8 个 OPD 档共用一份时用 --teacher-report 指同一份，或 $GRASPO_TEACHER_REPORT）
@@ -73,6 +81,7 @@ import argparse
 import datetime
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -88,9 +97,23 @@ AFTER_REPORT_REL = Path(".local") / "reports" / "after" / "eval_report.json"
 #:   口径 = 定稿报告第 2 章判据②「教师在训练数据集上的完全正确率」+ 第 3 章「OPD 教师」。
 TEACHER_REPORT_REL = Path(".local") / "reports" / "teacher" / "eval_report.json"
 
-#: 非 GRASPO 算法（文档口径：按公开标准实现判断，可结构化置位）及其依据串。
-PUBLIC_ALGO_BASIS = "public_algorithm_per_doc_2_3"
+#: 非 GRASPO 算法（SFT/CPT/OPD）判据③ 的依据标识 = **签署件**（不是"文档说无需逐条"）。
+PUBLIC_ALGO_BASIS = "public_algorithm_signed_public_algos_json"
 PUBLIC_ALGOS = ("SFT", "CPT", "OPD")
+
+#: ★ 公开算法签署件在仓内的**唯一**位置（与档号无关）。放在 `samples/configs/matrix68-checks/` 的理由：
+#:   ① 损失/掩码规则是**算法级**的（一套规则覆盖该算法全部档），不属于某个跑次 ⇒ 不进 `<run-dir>`；
+#:   ② ⛔ 不放进 `samples/configs/matrix68/`：该目录被就绪闸门约束为"只放 M###.yaml 档号配置"，
+#:      混入非 yaml 会让 `tools/matrix/check_68_readiness.py` 判 FAIL（实测）；
+#:   ③ GRASPO 的逐档签署件仍走 `<algo-checks-dir>/<tier>.json`（与档号绑定），两套不混。
+PUBLIC_ALGOS_SIG = ROOT / "samples" / "configs" / "matrix68-checks" / "public-algos.json"
+
+#: GRASPO 签署件的依据标识（让 `make_result_json.py` 的备注列能分辨"签署类证据"）。
+GRASPO_ALGO_BASIS = "graspo_algorithm_section9_signed"
+
+#: 规则串里必须有实现坐标（`path/to/file.py:123`）：判据③ 要求的是「核对处理规则」，
+#: 一句没有代码坐标的结论不可核 ⇒ 缺坐标按"缺规则"处理（不写键）。
+RE_CODE_POINTER = re.compile(r"[\w./\\-]+\.py:\d+")
 
 #: GRASPO 判据③ 的逐条清单 =《docs/graspo-algorithm.html》**第 9 节 不变式清单**（逐字对齐，8 条）。
 #: ⛔ 不在此另立清单：文档改条数/改措辞时这里必须同步改（本条即"单一真相源"的落地）。
@@ -146,6 +169,12 @@ def resolve_teacher_report(arg: str | None, eval_dir: Path | None) -> Path | Non
     if raw:
         return Path(raw).expanduser()
     return (eval_dir / TEACHER_REPORT_REL) if eval_dir else None
+
+
+def resolve_public_algos_sig(arg: str | None) -> Path:
+    """公开算法签署件路径：显式 `--public-algos` > `$GRASPO_PUBLIC_ALGOS` > 仓内唯一位置。"""
+    raw = (arg or os.environ.get("GRASPO_PUBLIC_ALGOS") or "").strip()
+    return Path(raw).expanduser() if raw else PUBLIC_ALGOS_SIG
 
 
 def is_opd(algo: str) -> bool:
@@ -232,8 +261,33 @@ def read_accuracy(report: dict) -> float | None:
     return None
 
 
+def teacher_tier_of(manifest) -> tuple[str, str] | None:
+    """从清单**现算**教师档（口径唯一真相源 = `scripts/gen_eval.py::TEACHER_FORM`）。
+
+    返回 `(档号, 该档 model_path)`；算不出（清单不可用 / 命中 ≠ 1）⇒ `None`（⛔ 不猜、不写死档号）。
+    复用 `gen_eval.find_teacher_tier`：两处各写一份口径就会分叉（§1.4）。它用 `die()` 退出进程
+    ⇒ 这里捕获 `SystemExit` 转成 None（判据② 会因此 fail-closed，而不是带着猜出来的身份放行）。
+    """
+    if not isinstance(manifest, dict) or not manifest.get("tiers"):
+        return None
+    try:
+        if str(ROOT / "scripts") not in sys.path:
+            sys.path.insert(0, str(ROOT / "scripts"))
+        import gen_eval  # noqa: PLC0415
+
+        tm = gen_eval.find_teacher_tier(manifest)
+    except SystemExit:
+        return None
+    except Exception:  # noqa: BLE001 - 任何导入/计算失败都按"算不出"处理（⛔ 不猜）
+        return None
+    tier_id = str(tm.get("tier_id") or "").strip()
+    if not tier_id:
+        return None
+    return tier_id, str(tm.get("model_path") or "").strip()
+
+
 def judge_teacher(report, expected: int, subset_sha: str | None, report_path: Path,
-                  after_report=None) -> dict:
+                  after_report=None, manifest=None) -> dict:
     """OPD 教师侧读数：`teacher_after_acc`（教师在**训练数据集**上的完全正确率，比例）。
 
     口径（与学生侧同一份，缺一条 ⇒ 不写键 ⇒ 回填器 fail-closed）：
@@ -243,7 +297,11 @@ def judge_teacher(report, expected: int, subset_sha: str | None, report_path: Pa
          （同一份 100 条、无请求失败）；
       ④ `dataset.sha256 == 清单该档 data.subset_sha256`（★ 同一份文件才算同一口径；若学生 after
          报告在，还须与它的 `dataset.sha256` 一致）；
-      ⑤ 聚合准确率可读（`summary.accuracy`，逐条 = 1 pp）。
+      ⑤ 聚合准确率可读（`summary.accuracy`，逐条 = 1 pp）；
+      ⑥ ★ **教师身份**：`checkpoint_path` 必须落在清单现算的教师档（本矩阵 = M041）产物的
+         目录下，且 `base_model_path` == 该档 `model_path`（文档第 3 章：教师 = 27B 在
+         SFT / LoRA / dp=1 这一档训练完成后的**产物**，不是基座权重本身）。`role=other`
+         只证明"这是教师通道产出的报告"，不证明"评的是那个教师"——审查第 3 轮 🟡-D。
     ★ 判分函数本身不是参数：两侧都走 `graspo eval run` → `src/graspo/eval/criteria.py`
       的逐字段完全一致比对，教师与学生同一条码。
     """
@@ -269,6 +327,24 @@ def judge_teacher(report, expected: int, subset_sha: str | None, report_path: Pa
     problems = []
     if str(model.get("role") or "") != "other":
         problems.append(f"报告 role={model.get('role')!r} ≠ 'other'（不是教师侧通道产出的报告）")
+    # ★ ⑥ 教师身份（审查第 3 轮 🟡-D）：role=other 只说明"走的是教师通道"，不说明"评的是哪个模型"。
+    teacher = teacher_tier_of(manifest)
+    ck_path = str(model.get("checkpoint_path") or "").strip()
+    base_path = str(model.get("base_model_path") or "").strip()
+    ev.update({"checkpoint_path": ck_path or None, "base_model_path": base_path or None,
+               "teacher_tier": (teacher[0] if teacher else None),
+               "teacher_tier_model_path": (teacher[1] if teacher else None)})
+    if teacher is None:
+        problems.append("清单算不出教师档（TEACHER_FORM 命中 ≠ 1 或清单不可用）"
+                        "⇒ 无法核教师身份（⛔ 不猜档号、不写 teacher_after_acc）")
+    else:
+        t_tier, t_model = teacher
+        if not ck_path or t_tier not in Path(ck_path).parts:
+            problems.append(f"教师身份不符：报告 checkpoint_path={ck_path or '<空>'!r} 不在 {t_tier} "
+                            f"档产物目录下（判据② 的教师必须是 {t_tier} 档训练完成的产物）")
+        if t_model and base_path != t_model:
+            problems.append(f"教师身份不符：报告 base_model_path={base_path or '<空>'!r} ≠ 清单 "
+                            f"{t_tier} 档 model_path={t_model!r}（不是该教师的底座）")
     if decoding.get("temperature") != 0.0:
         problems.append(f"评测温度 decoding.temperature={decoding.get('temperature')!r} ≠ 0 "
                         "（教师与学生必须同温；算法说明 §9 第 4 条）")
@@ -302,11 +378,12 @@ def judge_teacher(report, expected: int, subset_sha: str | None, report_path: Pa
             "evidence": ev, "acc": round(float(acc), 6)}
 
 
-# ── 判据③：算法正确性检查（分级：GRASPO 须签署，SFT/CPT/OPD 结构化置位）─────────────
+# ── 判据③：算法正确性检查（分级：GRASPO / 公开算法都要签署件，清单不同）──────────────
 def judge_graspo_algo(tier: str, algo_dir: Path) -> dict:
     """GRASPO：必须有一份显式签署的算法检查证据；缺件/不合契约 ⇒ ok=None（不写键）。"""
     path = algo_dir / f"{tier}.json"
     ev: dict = {"criterion": "③ 算法正确性检查（GRASPO 逐条不变式）", "source": str(path),
+                "basis_id": GRASPO_ALGO_BASIS,
                 "required_items": list(GRASPO_ITEM_IDS)}
     doc = read_json(path)
     if not isinstance(doc, dict):
@@ -368,21 +445,102 @@ def judge_graspo_algo(tier: str, algo_dir: Path) -> dict:
             "evidence": ev}
 
 
-def judge_public_algo(algo: str) -> dict:
-    """SFT / CPT / OPD：文档口径 = 按公开标准实现判断（结构化置位，带依据串）。"""
-    basis = (f"{PUBLIC_ALGO_BASIS}（定稿报告第 2 章判据③：{algo} 按各自公开的标准实现逻辑判断，"
-             f"另核损失函数与标签掩码处理规则{'，OPD 另含教师信号' if algo == 'OPD' else ''}）")
+def _rule_ok(entry: dict, key: str, label: str) -> str:
+    """规则字段是否"可核"：非空 ∧ 带实现坐标 `file:line`。返回空串 = 通过，否则是错误描述。"""
+    text = str(entry.get(key) or "").strip()
+    if not text:
+        return f"缺 {label}（{key} 为空）"
+    if not RE_CODE_POINTER.search(text):
+        return f"{label}（{key}）没有实现位置 file:line ⇒ 结论不可核"
+    return ""
+
+
+def judge_public_algo(algo: str, sig_doc, sig_path: Path) -> dict:
+    """SFT / CPT / OPD：必须有**签署件**（损失/掩码规则的核对留痕）。缺件 ⇒ `ok=None`。
+
+    判据③ 原文（定稿报告第 2 章）＝「按各自公开的标准实现逻辑判断；…**另按公开标准核对损失函数
+    与标签掩码的处理规则**（OPD 另含教师信号的处理规则）」。后半句是一个**动作**，所以本函数
+    ⛔ 不因"公开算法不作逐条清单要求"就置位，只认签过字的核对结论：
+      文件：`samples/configs/matrix68-checks/public-algos.json`（`methods[]` 里 `method` = sft/cpt/opd）
+      必需：`verdict == "pass"` ∧ `checker`/`checked_at` 非空 ∧ `loss_rule`/`label_mask_rule`
+            非空且带 `file:line`（OPD 另需 `teacher_signal_rule`）∧ `evidence` 非空。
+    任一不满足 ⇒ **不写 `algo_checks_passed` 键**（回填器 fail-closed 保持「待测试」）。
+    ⚠ `verdict != "pass"`（含 fail）⇒ 同样不写键：签署件说的是"这套规则不成立"，
+      那是"不能判"，不是"这一档算法错"（该档要等规则修好再签）。
+    """
+    method = str(algo or "").strip().lower()
+    ev: dict = {"criterion": f"③ 算法正确性检查（{algo} 签署件）", "source": str(sig_path),
+                "basis_id": PUBLIC_ALGO_BASIS, "method": method}
+    if not isinstance(sig_doc, dict):
+        return {"ok": None,
+                "why": (f"缺公开算法签署件（{sig_path} 不存在或不是 JSON 对象）⇒ 判据③ 的"
+                        "「按公开标准核对损失函数与标签掩码处理规则」无核对留痕；"
+                        "⛔ 不得自动置位、不得手填 true"),
+                "evidence": ev}
+
+    methods = sig_doc.get("methods")
+    if not isinstance(methods, list) or not methods:
+        return {"ok": None, "why": f"签署件 {sig_path} 缺 methods[] 数组 ⇒ 不合契约",
+                "evidence": ev}
+    entry = next((m for m in methods if isinstance(m, dict)
+                  and str(m.get("method") or "").strip().lower() == method), None)
+    if entry is None:
+        return {"ok": None,
+                "why": (f"签署件里没有 method={method!r} 的条目"
+                        f"（现有 {[str(m.get('method')) for m in methods if isinstance(m, dict)]}）"
+                        "⇒ 方法不匹配，判据③ 不置位"),
+                "evidence": ev}
+
+    checker = str(entry.get("checker") or "").strip()
+    checked_at = str(entry.get("checked_at") or "").strip()
+    verdict = str(entry.get("verdict") or "").strip().lower()
+    evidence_items = entry.get("evidence")
+    ev.update({"checker": checker or None, "checked_at": checked_at or None,
+               "verdict": verdict or None,
+               "signed_loss_rule": str(entry.get("loss_rule") or ""),
+               "signed_label_mask_rule": str(entry.get("label_mask_rule") or ""),
+               "signed_teacher_signal_rule": str(entry.get("teacher_signal_rule") or "") or None,
+               "evidence_items": (len(evidence_items) if isinstance(evidence_items, list)
+                                  else None)})
+
+    errs: list[str] = []
+    if verdict != "pass":
+        return {"ok": None,
+                "why": (f"签署件 verdict={verdict or '<缺失>'!r} ≠ 'pass' ⇒ 判据③ 不置位"
+                        "（⛔ 不写 algo_checks_passed 键；规则不成立时该档保持「待测试」）"),
+                "evidence": ev}
+    if not checker:
+        errs.append("缺签名：checker（核对人）为空")
+    if not checked_at:
+        errs.append("缺签名：checked_at（核对时间）为空")
+    for key, label in (("loss_rule", "损失函数处理规则"),
+                       ("label_mask_rule", "标签掩码处理规则")):
+        bad = _rule_ok(entry, key, label)
+        if bad:
+            errs.append(bad)
+    if method == "opd":
+        bad = _rule_ok(entry, "teacher_signal_rule", "教师信号处理规则")
+        if bad:
+            errs.append(bad)
+    if not isinstance(evidence_items, list) or not evidence_items:
+        errs.append("缺 evidence（逐条核对项为空）")
+
+    if errs:
+        return {"ok": None,
+                "why": f"公开算法签署件不合契约 ⇒ 判据③ 不置位：{'；'.join(errs)}",
+                "evidence": ev}
     return {"ok": True,
-            "why": f"判据③ 通过：{algo} 按报告第 2 章判据③ 的公开标准实现判定",
-            "evidence": {"criterion": f"③ 算法正确性检查（{algo}）", "basis": basis,
-                         "source": "docs/GRASPO 训练框架功能测试报告.html · 第 2 章判据③",
-                         "basis_id": PUBLIC_ALGO_BASIS}}
+            "why": (f"判据③ 通过：{algo} 损失函数与标签掩码规则已按公开标准逐条核对并签署"
+                    f"（签署人 {checker}，{checked_at}"
+                    f"{'；含教师信号规则' if method == 'opd' else ''}）"),
+            "evidence": ev}
 
 
-def judge_algo(algo: str, tier: str, algo_dir: Path) -> dict:
+def judge_algo(algo: str, tier: str, algo_dir: Path,
+               sig_doc=None, sig_path: Path | None = None) -> dict:
     a = str(algo or "").strip().upper()
     if a in PUBLIC_ALGOS:
-        return judge_public_algo(a)
+        return judge_public_algo(a, sig_doc, sig_path or PUBLIC_ALGOS_SIG)
     if a == "GRASPO":
         return judge_graspo_algo(tier, algo_dir)
     return {"ok": None,
@@ -436,6 +594,7 @@ def main(argv=None) -> int:
         description="判据②③④ 证据产出者：从评测报告/算法检查证据现算 check 结论与 OPD 教师读数，"
                     "写进 readings.json",
         epilog=("⛔ 不得为凑通过手填 true / 填默认读数；GRASPO 档必须有人工/脚本签署的算法检查证据；"
+                "SFT/CPT/OPD 档必须有公开算法签署件（损失/掩码规则核对留痕）；"
                 "OPD 档必须有教师侧评测报告（判据② 的 teacher_after_acc）；"
                 "缺证据 ⇒ 不写键 ⇒ 回填器 fail-closed（该档保持「待测试」）"))
     ap.add_argument("--tier", required=True, help="档号（M0nn）")
@@ -450,6 +609,9 @@ def main(argv=None) -> int:
     ap.add_argument("--algo-checks-dir", default=None,
                     help="GRASPO 算法检查证据目录（内含 <tier>.json；"
                          "也可用 GRASPO_ALGO_CHECKS_DIR；缺省 <run-dir>/algo-checks）")
+    ap.add_argument("--public-algos", default=None,
+                    help="SFT/CPT/OPD 判据③ 的公开算法签署件（损失/掩码规则核对留痕）；"
+                         "也可用 GRASPO_PUBLIC_ALGOS；缺省 " + str(PUBLIC_ALGOS_SIG.relative_to(ROOT)))
     ap.add_argument("--manifest", default=str(MANIFEST),
                     help="跑次侧清单（取该档 algorithm / subset_size / subset_sha256；"
                          "判据④ 的期望条数与判据② 的同口径校验由此现读）")
@@ -458,6 +620,25 @@ def main(argv=None) -> int:
     run_dir = Path(args.run_dir)
     if not run_dir.is_dir():
         print(f"FAIL: --run-dir 不存在：{run_dir}")
+        return 2
+    # ── ★ 档号护栏（审查第 3 轮 🔴-2）──────────────────────────────────────────
+    #   为什么必须有：68 档是人工分档补跑的场景，`--tier` 与 `--run-dir` 数量多、格式相近
+    #   （`M001` / `run/M018`），错配一次就会把**别的算法**的结论写进本档的跑次
+    #   （实测：`--tier M001` + M018 的跑次 ⇒ SFT 的 algo_checks_passed 写进 GRASPO 档）。
+    #   ⇒ `readings.json.tier` 必须存在且与 `--tier` 逐字相同；⛔ 不自动纠正、不覆盖。
+    readings_doc = read_json(run_dir / "readings.json")
+    if not isinstance(readings_doc, dict):
+        print(f"FAIL: readings.json 缺失或不可解析：{run_dir / 'readings.json'}"
+              f"（--tier={args.tier}；先跑 runner 落读数）")
+        return 2
+    rtier = readings_doc.get("tier")
+    if not isinstance(rtier, str) or not rtier.strip():
+        print(f"FAIL: readings.json 缺 tier 字段（--tier={args.tier}，readings.tier={rtier!r}）"
+              "⇒ 无法证明该跑次目录属于本档；⛔ 不自动纠正、不覆盖")
+        return 2
+    if rtier.strip() != args.tier.strip():
+        print(f"FAIL: 档号错配：readings.json tier={rtier.strip()} ≠ --tier={args.tier.strip()}"
+              "（⛔ 不自动纠正/不覆盖；请改用与该跑次一致的 --tier，或换 --run-dir）")
         return 2
     manifest = read_json(Path(args.manifest))
     if not isinstance(manifest, dict) or not manifest.get("tiers"):
@@ -477,18 +658,22 @@ def main(argv=None) -> int:
 
     eval_dir = resolve_eval_dir(args.eval_dir)
     algo_dir = resolve_algo_checks_dir(args.algo_checks_dir, run_dir)
+    sig_path = resolve_public_algos_sig(args.public_algos)
     report_path = (eval_dir / AFTER_REPORT_REL) if eval_dir else None
     teacher_path = resolve_teacher_report(args.teacher_report, eval_dir)
 
     print(f"tier={args.tier} algorithm={algo} 期望评测条数={expected}")
     print(f"评测报告 = {report_path if report_path else '<未指定 --eval-dir / GRASPO_EVAL_DIR>'}")
     print(f"算法检查证据目录 = {algo_dir}")
+    print(f"公开算法签署件 = {sig_path}"
+          f"{'' if str(algo).upper() in PUBLIC_ALGOS else '（本档不是公开算法档 ⇒ 不用它）'}")
     print(f"教师评测报告 = {teacher_path if is_opd(algo) else '<非 OPD 档：判据② 不要求教师读数>'}")
 
     after_report = read_json(report_path) if report_path else None
     inf = judge_inference(after_report, expected,
                           report_path or Path("<未指定>"))
-    alg = judge_algo(algo, args.tier, algo_dir)
+    sig_doc = read_json(sig_path) if str(algo).upper() in PUBLIC_ALGOS else None
+    alg = judge_algo(algo, args.tier, algo_dir, sig_doc, sig_path)
     results = {"algo": alg, "inference": inf}
     for tag, r in (("③ algo_checks_passed", alg), ("④ inference_parseable", inf)):
         state = "缺证据（不写键）" if r.get("ok") is None else ("true" if r["ok"] else "false")
@@ -497,7 +682,8 @@ def main(argv=None) -> int:
     required = ["algo_checks_passed", "inference_parseable"]
     if is_opd(algo):
         tch = judge_teacher(read_json(teacher_path) if teacher_path else None, expected,
-                            subset_sha or None, teacher_path or Path("<未指定>"), after_report)
+                            subset_sha or None, teacher_path or Path("<未指定>"), after_report,
+                            manifest)
         results["teacher"] = tch
         state = "缺证据（不写键）" if tch.get("ok") is None else (
             f"teacher_after_acc={tch.get('acc')}" if tch["ok"] else "不合口径（不写键）")
