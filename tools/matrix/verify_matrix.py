@@ -38,6 +38,8 @@ import gen_configs     # 同目录；★ 「已声明的前提」定义**同源*
 import enumerate_matrix  # 同目录；★ 原因码的「剔除/不剔除」分类**同源**（⛔ 不复制一份）
 
 VERSION = "verify-matrix/v20-partition-le2-20261019"
+#: 仓根（④ALG 的算法说明件按**仓根**解析：夹具页面写在 /tmp 时也不随 `--html` 漂移）
+ROOT = Path(__file__).resolve().parents[2]
 
 # ---- ③ 结构断言：只允许这四章 ----
 #: ★ 人读件结构（宪法 §17.7 + 使用者诉求）：
@@ -254,6 +256,32 @@ CRITERIA_SUBLIST_TERMS = {
 #: ⚠ 病史自证：这里原先写成比 `basename` == 全路径常量（恒不相等 ⇒ ④X-b 静默死掉、
 #:   漂移阳性对照变假绿）—— 由 `run_self_proof` ㉓ 抓到，已改为**整串**比对。
 CRITERIA_SOURCE_OF_TRUTH = "docs/capability-matrix.data.json"
+
+# ---- ④ALG. ★★ 2026-10-22（判据③ 指向「GRASPO 算法说明」）：算法定义的对照文本独立成人读件 ----
+#   使用者诉求：判据③ 不再写「各算法按自己的检查清单」，改为一句**可判定**的话 ——
+#     SFT / CPT / OPD 按各自公开的标准实现逻辑判断；GRASPO 按《GRASPO 算法说明》逐条判断。
+#   ⇒ `docs/graspo-algorithm.html` 成为 GRASPO 算法定义的**唯一人读对照件**，本组断言守住三件事：
+#     ① 页面上那句话**逐字在位且恰 1 次**（少了读者无从判断实现对不对，多了＝两处口径并存）；
+#     ② 那句话里的**链接指得出去、点得开**（`href` 在页面在位 + 目标文件在盘存在）；
+#     ③ 目标文件**七个小节锚点齐备**（字符级标注 / 结构化奖励 / group 决策 /
+#        token 级 advantage / PPO 裁剪 / 组完整性 / 严禁改动），缺一即红。
+#   ★ 旧句（「各算法按自己的检查清单」/「清单」）在判据③ 内**零命中**：用户点名删掉的表述
+#     ⛔ 不得复活；★ 新文档另过脱敏与「无开发过程内容」两条（与矩阵件同一套规则，⛔ 不豁免）。
+#   ★ 反向自证见 `run_self_proof` ㉟（删链接 / 删「组完整性」小节 ⇒ rc=1 且点名 ④ALG）。
+ALGO_DOC_REL = "docs/graspo-algorithm.html"
+ALGO_CRITERION_TEXT = ("SFT / CPT / OPD 按各自公开的标准实现逻辑判断；"
+                       "GRASPO 按《GRASPO 算法说明》逐条判断（算法逻辑严禁改动）。")
+ALGO_DOC_LINK_HREF = 'href="graspo-algorithm.html"'
+ALGO_CRITERION_LINK = '<a href="graspo-algorithm.html">GRASPO 算法说明</a>'
+#: 新文档必须齐备的小节锚点（词面即用户点名的那七项）
+ALGO_DOC_ANCHORS = ("字符级标注", "结构化奖励", "group 决策", "token 级 advantage",
+                    "PPO 裁剪", "组完整性", "严禁改动")
+#: 判据③ 内**不得再出现**的旧表述（用户点名删掉的那一条）
+ALGO_CRITERION_FORBIDDEN = ("各算法按自己的检查清单", "清单")
+#: 新文档里**不得出现**的工程状态词（本文档只讲算法，不讲实现进度 / 排期）
+ALGO_DOC_BANNED_WORDS = ("未下发", "待实现", "未实现", "尚未", "待补", "透传", "未生效")
+#: 新文档里**不得出现**的源码路径与行号形态（脱敏红线：页面不指向源码行）
+ALGO_DOC_BANNED_RE = (re.compile(r"src/"), re.compile(r"\.(?:py|md|json|html|yaml|yml):\d+"))
 
 # ---- ④B. 21 列表结构（渲染面）：**唯一真相源 = 渲染器常量**（`render_matrix.MATRIX_COLUMNS`） ----
 # ★ 2026-10-19（使用者口径「JSON 里面只有测试结果，脚本只负责把测试结果填进最后一章测试表」）：
@@ -1019,6 +1047,67 @@ def cell_text(cell_html: str) -> str:
     return html.unescape(re.sub(r"<[^>]+>", "", cell_html)).strip()
 
 
+def algo_artifact_failures(
+    target_text: str,
+    crit_items: list[str],
+    crit_texts: list[str],
+    *,
+    algo_doc_text: str | None,
+    algo_doc_path: str,
+) -> list[tuple[str, str]]:
+    """④ALG 的**唯一实现**（`verify_matrix` 与 `run_self_proof` 同源引用，⛔ 不各写一份）。
+
+    判什么（三个方向都守，任一不满足即红）：
+      ① 判据③ 那一句**逐字恰 1 次**（页面整体与判据③ 内各 1 次 —— 多了即两处口径并存）；
+      ② 那句话里的链接**指得出去**（判据③ 内恰含 `<a href="graspo-algorithm.html">…</a>` 一次，
+         页面含该 `href`，且目标文件在盘存在）；
+      ③ 目标文件**七个小节锚点齐备**，且不含工程状态词 / 源码路径与行号 / 脱敏禁词
+         （与矩阵件同一套扫描规则：`enumerate_matrix.leak_hits_in_text`，⛔ 不另抄一份词表）。
+
+    参数都是**纯数据**（页面文本 / 判据块 / 文件文本），⛔ 不读盘、⛔ 不做 IO ⇒ 自证可直接复用。
+    """
+    out: list[tuple[str, str]] = []
+    _plain_page = html.unescape(re.sub(r"<[^>]+>", "", target_text))
+    _c3_html = crit_items[2] if len(crit_items) > 2 else ""
+    _c3_text = crit_texts[2] if len(crit_texts) > 2 else ""
+    if not _c3_text:
+        out.append(("④ALG 判据③ 块", '未取到判据③ 的正文（`<ol class="criteria">` 第 3 条）'))
+    else:
+        _n_page = _plain_page.count(ALGO_CRITERION_TEXT)
+        _n_c3 = _c3_text.count(ALGO_CRITERION_TEXT)
+        if _n_page != 1 or _n_c3 != 1:
+            out.append(("④ALG 判据③ 新句逐字恰 1 次",
+                        f"页面命中 {_n_page} 次、判据③ 内命中 {_n_c3} 次（各须 = 1）："
+                        f"{ALGO_CRITERION_TEXT!r}"))
+        _n_link = _c3_html.count(ALGO_CRITERION_LINK)
+        _n_href = target_text.count(ALGO_DOC_LINK_HREF)
+        if _n_link != 1 or _n_href < 1:
+            out.append(("④ALG 判据③ 链接指向算法说明",
+                        f"判据③ 内须恰含 {ALGO_CRITERION_LINK!r} 一次、页面须含 "
+                        f"{ALGO_DOC_LINK_HREF!r}（实际 {_n_link} / {_n_href}）"))
+        _old = [w for w in ALGO_CRITERION_FORBIDDEN if w in _c3_text]
+        if _old:
+            out.append(("④ALG 判据③ 旧表述零命中",
+                        f"判据③ 仍含 {_old}（该表述已按用户口径删除 ⇒ ⛔ 不得复活）"))
+    if algo_doc_text is None:
+        out.append(("④ALG 算法说明件在盘存在",
+                    f"未找到 {algo_doc_path}（判据③ 的链接必须点得开）"))
+        return out
+    _missing = [a for a in ALGO_DOC_ANCHORS if a not in algo_doc_text]
+    if _missing:
+        out.append(("④ALG 算法说明件七锚点齐备", f"缺 {_missing}（七项缺一即红）"))
+    _banned = [w for w in ALGO_DOC_BANNED_WORDS if w in algo_doc_text]
+    _banned += [r.pattern for r in ALGO_DOC_BANNED_RE if r.search(algo_doc_text)]
+    if _banned:
+        out.append(("④ALG 算法说明件无工程状态与源码指向",
+                    f"命中 {_banned} ⇒ 本文档只讲算法，⛔ 不写实现状态 / 不指向源码行"))
+    _leaks = enumerate_matrix.leak_hits_in_text(algo_doc_text)
+    if _leaks:
+        out.append(("④ALG 算法说明件脱敏 / 无开发过程内容",
+                    f"命中 {len(_leaks)} 处（前 5）：{_leaks[:5]}"))
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--template", required=True)
@@ -1031,6 +1120,9 @@ def main():
     ap.add_argument("--manifest", default=gen_configs.DEFAULT_DECLARED_MANIFEST,
                     help="跑次侧口径权威清单（★ 「已声明的前提」的唯一真相源；缺省 " +
                          gen_configs.DEFAULT_DECLARED_MANIFEST + "）")
+    ap.add_argument("--algo-doc", default=ALGO_DOC_REL,
+                    help="GRASPO 算法说明件（判据③ 链接目标；默认 " + ALGO_DOC_REL
+                         + "，按仓根解析）")
     ap.add_argument("--quiet", action="store_true")
     a = ap.parse_args()
 
@@ -1276,6 +1368,17 @@ def main():
     if _crit_overlap:
         failures.append(("④Y 四条判别依据互不重叠",
                          f"命中 {len(_crit_overlap)} 处（条次, 标题, 违规关键词, 位置）: {_crit_overlap}"))
+
+    # ---- ④ALG. ★★ 2026-10-22（判据③ → 《GRASPO 算法说明》）----
+    #   检查实现在 `algo_artifact_failures`（**唯一一份**，`run_self_proof` 同源引用）；
+    #   这里只做两件 IO：解析算法说明件的路径（按仓根，⛔ 不随 `--html` 漂移）＋读盘。
+    _algo_path = Path(a.algo_doc)
+    if not _algo_path.is_absolute():
+        _algo_path = ROOT / _algo_path
+    _algo_text = _algo_path.read_text(encoding="utf-8") if _algo_path.exists() else None
+    failures.extend(algo_artifact_failures(
+        target_text, _crit_items, [_c[1] for _c in _crit_page],
+        algo_doc_text=_algo_text, algo_doc_path=a.algo_doc))
     # ---- ④B. 21 列表结构（渲染面）== 渲染器常量（单一真相源；四级检查，全部 fail-closed） ----
     # ① 常量自身形状
     _cols = [dict(c) for c in render_matrix.RENDERED_COLUMNS]
@@ -2081,7 +2184,8 @@ def main():
               f" | ④W 可见面不得出现已删除三块={ok('④W')}"
               f" | ④T 已声明前提可见性={ok('④T')}"
               f" | ④X 判据页/数据逐字一致={ok('④X')}"
-              f" | ④Y 判据互不重叠={ok('④Y')}")
+              f" | ④Y 判据互不重叠={ok('④Y')}"
+              f" | ④ALG 判据③→《GRASPO 算法说明》={ok('④ALG')}")
         print(f"results: 已回填 {len(filled)} 档 {filled}；其余 {len(data['rows'])-len(filled)} 档保持 '—'"
               + ("；--expect-empty 已开启" if a.expect_empty else ""))
         print(f"elapsed: 有值 {len(el_filled)} 档"

@@ -16,7 +16,7 @@
   - 生成物与手写文档同等扫描（§17.7「扫描不豁免」）。
 
 用法：
-  python3 tools/matrix/scan_matrix_leaks.py            # 扫默认两件
+  python3 tools/matrix/scan_matrix_leaks.py            # 扫默认三件
   python3 tools/matrix/scan_matrix_leaks.py <path>...  # 扫指定文件
 退出码：0 = 无命中；1 = 有命中。
 """
@@ -34,6 +34,10 @@ import build_official as _bo    # noqa: E402  （同目录，纯常量与纯函�
 
 REPO = Path(__file__).resolve().parents[2]
 DEFAULT_TARGETS = ["docs/capability-matrix.data.json", "docs/capability-matrix.html"]
+#: ★ 2026-10-22（判据③ 指向算法说明）：`docs/graspo-algorithm.html` 是**手写人读件**，
+#:   判据③ 的链接目标 ⇒ 与另外两件**同等扫描**（§17.7「扫描不豁免」）。
+#:   机核 = 本脚本默认三件全扫；`verify_matrix` ④ALG 另有同源一道（算法说明件全文过同一套规则）。
+DEFAULT_TARGETS.append("docs/graspo-algorithm.html")
 DENYLIST = REPO / ".local" / "matrix-leak-denylist.txt"
 
 # 通用形状（⛔ 无具体内部字面量）

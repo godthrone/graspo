@@ -1830,6 +1830,13 @@ META_OVERRIDES: tuple[dict[str, Any], ...] = (
      "value": ("训练正常结束、无中断、无报错、退出码 0、优化器步数达到该档计划步数"
                "（总训练轮数 × 每 epoch 步数）、检查点完整、没有 NaN/Inf。"),
      "why": "判据① 补「优化器步数达标」的可判定定义（不再只写四个字，读者无从照做）"},
+    # ★ 2026-10-22（判据③ 改写）：页面第 2 章判据③ 的那一句话 ↔ 数据件同一条文本必须逐字一致。
+    #   GRASPO 一侧改指**人读口径件**《GRASPO 算法说明》（docs/graspo-algorithm.html，页面相对链接）；
+    #   机核 = verify_matrix ④ALG（句子恰 1 次 + 链接在盘 + 新文档 7 锚点齐备）。
+    {"path": "criteria_caliber.pass_criteria[2].text",
+     "value": ("SFT / CPT / OPD 按各自公开的标准实现逻辑判断；"
+               "GRASPO 按《GRASPO 算法说明》逐条判断（算法逻辑严禁改动）。"),
+     "why": "判据③ 由「各按自己的清单」改为可判定的一句：GRASPO 以独立人读件逐条对照（算法逻辑不改）"},
     {"path": "criteria_caliber.pass_criteria[3].text",
      "value": ("LoRA 档合并后、全参档直接，用 vLLM 启动，在训练数据集上完整推理一遍，效果好于未训练模型。"),
      "why": "判据④ 同时覆盖两种模式（全参档同样用 vLLM 测，只是不用合并 LoRA）"},

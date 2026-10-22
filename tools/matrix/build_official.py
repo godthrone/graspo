@@ -1508,8 +1508,8 @@ def criteria_caliber(rows=None):
                      "（逐算法通过线见下）：",
              "from_threshold": True},
             {"title": "算法正确性检查通过",
-             "text": "各算法按自己的检查清单逐项通过，确认该算法的机制真实生效、实现正确"
-                     "（SFT / GRASPO / CPT / OPD 各按自己的清单）；GRASPO 的算法逻辑严禁改动。"},
+             "text": "SFT / CPT / OPD 按各自公开的标准实现逻辑判断；"
+                     "GRASPO 按《GRASPO 算法说明》逐条判断（算法逻辑严禁改动）。"},
             {"title": "能推理",
              "text": "LoRA 档合并后、全参档直接，用 vLLM 启动，在训练数据集上完整推理一遍，效果好于未训练模型。"},
         ],

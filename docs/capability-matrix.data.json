@@ -9,7 +9,7 @@
     "code_version": {
       "repo": "graspo",
       "branch": "feature/refactor-three-layer-architecture",
-      "commit": "13ea9fd",
+      "commit": "e2d34f9",
       "note": "commit = 本件的生成基线（生成时的 HEAD）；脚本以 meta.enumeration.script_sha256 为准 —— 该 sha256 与同提交内的 tools/matrix/enumerate_matrix.py 逐字节一致。"
     },
     "authority": {
@@ -64,7 +64,7 @@
         },
         {
           "title": "算法正确性检查通过",
-          "text": "各算法按自己的检查清单逐项通过，确认该算法的机制真实生效、实现正确（SFT / GRASPO / CPT / OPD 各按自己的清单）；GRASPO 的算法逻辑严禁改动。"
+          "text": "SFT / CPT / OPD 按各自公开的标准实现逻辑判断；GRASPO 按《GRASPO 算法说明》逐条判断（算法逻辑严禁改动）。"
         },
         {
           "title": "能推理",
@@ -476,7 +476,7 @@
         }
       },
       "script": "tools/matrix/enumerate_matrix.py",
-      "script_sha256": "0b0400a2dc43230f2f52f4066b9bbe57a48890319c7c592b1f312711ec26a9c4",
+      "script_sha256": "b9333ed636ad7284ff3c5ac4983834c79d6a7ccc4029f8444968aec6109d25eb",
       "audit_ref": "逐档审计明细见枚举脚本 --audit-out 输出（随工作区，不入库）"
     }
   },

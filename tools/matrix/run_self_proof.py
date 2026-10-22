@@ -995,6 +995,53 @@ def main():
         checks["㉜ FAIL 点名 ④F4（判据④ 覆盖两种模式）"] = any(b.startswith("④F4") for b in _fb32)
         checks["㉜ 不误伤 ④X（证明抓到的是语义断言，不是漂移）"] = not any(b.startswith("④X") for b in _fb32)
 
+        # ㉟ ★★ 2026-10-22（判据③ → 《GRASPO 算法说明》）：两条反向自证，每条都要求"删掉 ⇒ 当场红"。
+        #   ① 删掉判据③ 的链接（只删 `<a …>…</a>`，句子文字仍在）⇒ ④ALG 必红（链接指不出去）；
+        #      为什么要有：只删链接时页面的**文字**仍逐字正确 ⇒ 「逐字一致」那半边全绿，
+        #      唯有 ④ALG 的 href/链接断言能抓到它（否则读者点不开说明件，判据③ 落不了地）。
+        #   ② 从算法说明件里删掉「组完整性」小节 ⇒ ④ALG 必红（七锚点缺一）；
+        #      为什么要有：锚点是"读者照此逐条判断"的骨架，缺一条却仍 PASS ⇒ 说明件名存实亡。
+        #   ⛔ 判据实现不在这里另写一份：`verify` 侧唯一实现在 `algo_artifact_failures`
+        #     （本文件**同源引用** `_vm.ALGO_*` 常量与 `_vm.algo_artifact_failures`）。
+        _algo_path35 = ROOT / _vm.ALGO_DOC_REL
+        checks["㉟ 算法说明件在盘（夹具前置）"] = _algo_path35.exists()
+        _algo_txt35 = _algo_path35.read_text(encoding="utf-8") if _algo_path35.exists() else ""
+        _page35 = (DOCS / "capability-matrix.html").read_text(encoding="utf-8")
+        _link35 = _vm.ALGO_CRITERION_LINK
+        checks["㉟ 判据③ 链接在位（夹具前置）"] = (_page35.count(_link35) == 1)
+        _nolink35 = _page35.replace(_link35, "GRASPO 算法说明", 1)
+        checks["㉟a 夹具确实删掉了链接"] = (_nolink35 != _page35 and "href=\"graspo-algorithm.html\"" not in _nolink35)
+        (tmp / "c35_nolink.html").write_text(_nolink35, encoding="utf-8")
+        rc, out = run(["tools/matrix/verify_matrix.py", "--template", "tools/matrix/template.html",
+                       "--data", "docs/capability-matrix.data.json",
+                       "--html", str(tmp / "c35_nolink.html")])
+        steps.append(("㉟a 删掉判据③ 的链接后 verify（应 FAIL）", rc, out))
+        checks["㉟a 删链接 ⇒ verify 变红"] = (rc == 1)
+        checks["㉟a FAIL 点名 ④ALG"] = any(
+            b.startswith("④ALG") for b in re.findall(r"FAIL \[(.*?)\]", out))
+        # ② 删「组完整性」小节（§4 的形体段落 + §7 的不变式条目，两处都删 ⇒ 锚点面归零）
+        _lines35 = _algo_txt35.splitlines(keepends=True)
+        _kept35 = [ln for ln in _lines35 if "组完整性" not in ln]
+        checks["㉟b 夹具确实删掉了「组完整性」小节"] = (
+            len(_lines35) - len(_kept35) >= 2 and not any("组完整性" in ln for ln in _kept35))
+        (tmp / "algo35_nogroup.html").write_text("".join(_kept35), encoding="utf-8")
+        rc, out = run(["tools/matrix/verify_matrix.py", "--template", "tools/matrix/template.html",
+                       "--data", "docs/capability-matrix.data.json",
+                       "--html", "docs/capability-matrix.html",
+                       "--algo-doc", str(tmp / "algo35_nogroup.html")])
+        steps.append(("㉟b 删掉算法说明件「组完整性」小节后 verify（应 FAIL）", rc, out))
+        checks["㉟b 删「组完整性」小节 ⇒ verify 变红"] = (rc == 1)
+        _fb35b = re.findall(r"FAIL \[(.*?)\]", out)
+        checks["㉟b FAIL 点名 ④ALG"] = any(b.startswith("④ALG") for b in _fb35b)
+        checks["㉟b FAIL 点名缺失锚点「组完整性」"] = ("组完整性" in out)
+        # ㉟c ★ 同一判据在**自证内部**也能失败（不依赖子进程打印文本；同源调用唯一实现）。
+        #   正例方向由 ①b（在盘正式件 verify PASS ⇒ ④ALG PASS）覆盖，这里只证"能失败"。
+        _bad35 = _vm.algo_artifact_failures(
+            _page35, [], [], algo_doc_text="".join(_kept35),
+            algo_doc_path=str(tmp / "algo35_nogroup.html"))
+        checks["㉟c 自证内部判据（删锚点例）能红且点名「组完整性」"] = any(
+            "组完整性" in _d for _n, _d in _bad35)
+
         print("=" * 70)
         for name, rc, out in steps:
             print(f"[rc={rc}] {name}")
