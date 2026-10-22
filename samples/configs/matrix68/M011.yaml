@@ -1,0 +1,33 @@
+# 本文件由 tools/matrix/gen_configs.py 从 docs/capability-matrix.data.json 自动生成，⛔ 禁止手工编辑；请改数据后重新生成。
+train_method: sft
+backend: native
+tuner_type: full
+model:
+  model_path: /models/Qwen3.5-9B
+  torch_dtype: bfloat16
+  gradient_checkpointing: true
+data:
+  train_path: /work/elam-v5/subsets-v2/M011.jsonl
+  max_prompt_length: 8192
+training:
+  output_dir: /out/M011
+  run_name: M011
+  overwrite_output_dir: true
+  seed: 42
+  max_epochs: 4
+  learning_rate: 5.0e-06
+  gradient_accumulation_micro_batches: 1
+  save_checkpoint_every_epoch: false
+  save_steps: 401
+launch:
+  nproc_per_node: 1   # ★ 由 cards=1 推导（§12 同源：卡数与进程数不得各改一半）
+native:
+  tp_size: 1
+  dp_size: 1
+  pp_size: 1
+  micro_batch_size: 1
+  offload_optimizer_state: true
+gpu_monitor:
+  output_dir: /out/gpu
+  tag: M011
+  interval_sec: 2.0

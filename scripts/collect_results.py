@@ -2248,7 +2248,15 @@ def run(args: argparse.Namespace) -> int:
     records: list[dict[str, Any]] = []
     for tier in manifest.get("tiers", []):
         tier_id = str(tier["tier_id"])
-        tuner_type = "full" if tier.get("mode") == "全量" else "lora"
+        # ★ 2026-10-22（68 档 M 档清单接入，最小适配）：**优先读清单的结构化 `tuner_type`**
+        #   （枚举 `full` / `lora`，见 `tests/e2e/matrix68_manifest.json`），回退旧的展示串判断，
+        #   并兼容数据件的 `"全参"` 写法。三种说法指向同一件事，⛔ 不再只认 `"全量"` 一种拼写
+        #   （旧写法会把 M 档的 16 个全参档读成 lora ⇒ 检查点/峰值显存口径整档判错）。
+        _tuner_declared = str(tier.get("tuner_type") or "").strip().lower()
+        if _tuner_declared in ("full", "lora"):
+            tuner_type = _tuner_declared
+        else:
+            tuner_type = "full" if str(tier.get("mode") or "").strip() in ("全量", "全参") else "lora"
         # 本档 §7 峰值列的口径**由后端唯一决定**（§1.4 单一真相源）。
         # ★ 必须在"没跑过"分支也用它：否则下游会把该格读成"可以用宿主采样补上"。
         backend = str(tier.get("backend"))

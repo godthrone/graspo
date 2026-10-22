@@ -1,0 +1,35 @@
+# 本文件由 tools/matrix/gen_configs.py 从 docs/capability-matrix.data.json 自动生成，⛔ 禁止手工编辑；请改数据后重新生成。
+train_method: graspo
+backend: native
+tuner_type: full
+model:
+  model_path: /models/Qwen3.5-9B
+  torch_dtype: bfloat16
+  gradient_checkpointing: true
+data:
+  train_path: /work/elam-v5/subsets-v2/M029.jsonl
+  max_prompt_length: 8192
+training:
+  output_dir: /out/M029
+  run_name: M029
+  overwrite_output_dir: true
+  seed: 42
+  max_epochs: 8
+  learning_rate: 5.0e-06
+  gradient_accumulation_micro_batches: 1
+  save_checkpoint_every_epoch: false
+  save_steps: 401
+launch:
+  nproc_per_node: 2   # ★ 由 cards=2 推导（§12 同源：卡数与进程数不得各改一半）
+reward:
+  kind: graspo
+native:
+  tp_size: 1
+  dp_size: 1
+  pp_size: 2
+  micro_batch_size: 1
+  allow_unverified_pp_rollout: true
+gpu_monitor:
+  output_dir: /out/gpu
+  tag: M029
+  interval_sec: 2.0

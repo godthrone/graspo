@@ -36,6 +36,10 @@
         --out-dir    <产物根，如 <实验根>/subsets-v2> \
         [--dry-run]
 
+★ M 档（v3「68 档」世代，2026-10-22）另走一条通路，**不需要 `--data-root`**（源在仓里）::
+
+    python3 tests/e2e/make_subsets.py --tier-set m68 --out-dir subsets-v2 [--dry-run]
+
 ``--data-root`` / ``--out-dir`` 都是**运行时环境信息**，不写死在脚本里（宪法 §15.1/§16）。
 """
 
@@ -146,6 +150,37 @@ assert all(MINI_TIERS[t] == MINI_SUBSET_TIERS_DECLARED[t]
 FORMAL_TRAIN_REL = "data/train.jsonl"
 MINI_TRAIN_REL = "mini-dataset/mini-short-mm-train.jsonl"
 
+# ══════════════════════════════════════════════════════════════════════════════════════
+# ★★ M 档（能力矩阵 v3「68 档」世代，2026-10-22 第一轮基线）
+#
+#   口径（数据件 `meta.criteria` 改动三 + 人读件第 2/3 章）：
+#     · 68 档（M001–M068）**全部**训练样本数 = 100 条；
+#     · 68 档**共用同一份**文件（内容层面逐字节相同），sha256 = :data:`M68_SOURCE_SHA256`；
+#     · 该 sha 同时是数据件判据锚点（100 行 / `594d41b0…`）与
+#       `subsets-v2.manifest.json::source_files.mini.sha256`。
+#   ⇒ 因此**不需要重新造数据**：M 档产物 = 仓内既有 100 条冻结实体的逐档副本
+#     （`subsets-v2/T001.jsonl` 就是该实体；`mini-dataset/mini-short-mm-train.jsonl` 内容相同，
+#      但它**不在仓库里**、住在 `${GRASPO_ELAM_DATA_ROOT}` 下 ⇒ 只作次选）。
+#     ⛔ 不依赖 228 / 不依赖宿主数据根即可在本仓生成与复核。
+#
+#   ★ T 档行为**逐字保持**：`--tier-set v2`（默认）走原 54 档通路，代码路径未改。
+# ══════════════════════════════════════════════════════════════════════════════════════
+#: 68 个 M 档号（**逐档具名**：少一个档号即被下面的集合断言当场抓住，⛔ 不用通配符静默跳过）。
+M68_TIER_IDS: tuple[str, ...] = tuple(f"M{i:03d}" for i in range(1, 69))
+
+#: 每档训练样本数（68 档一律 100，逐档显式）。
+M68_TIERS: dict[str, int] = {tid: 100 for tid in M68_TIER_IDS}
+
+#: 100 条共用语料的**冻结 sha256**（= mini 源 sha = 数据件判据锚点）。
+M68_SOURCE_SHA256 = "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad"
+
+#: 仓内既有实体（按优先级）：先 `subsets-v2/T001.jsonl`（在仓里），再 mini 源（宿主数据根下）。
+M68_REPO_SOURCE_CANDIDATES: tuple[str, ...] = ("subsets-v2/T001.jsonl", MINI_TRAIN_REL)
+
+assert len(M68_TIERS) == 68, f"M 档表应恰 68 档，实为 {len(M68_TIERS)}"
+assert sorted(M68_TIERS) == [f"M{i:03d}" for i in range(1, 69)], "M 档号必须恰为 M001–M068"
+assert set(M68_TIERS.values()) == {100}, "M 档口径：68 档训练样本数一律 100"
+
 
 def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
@@ -195,9 +230,166 @@ def build_manifest(out_dir: Path, data_root: Path, records: list[dict], source_h
     }
 
 
+def resolve_m68_source(args) -> tuple[Path | None, str | None]:
+    """m68 通路：定位 100 条共用语料源。返回 ``(path, why_not)``（二者互斥）。"""
+    if args.m68_source is not None:
+        p = Path(args.m68_source)
+        return (p, None) if p.is_file() else (None, f"--m68-source 不存在：{p}")
+    repo = Path(args.repo_root)
+    tried = []
+    for rel in M68_REPO_SOURCE_CANDIDATES:
+        p = repo / rel
+        if p.is_file():
+            return p, None
+        tried.append(rel)
+    return None, ("仓内 100 条共用语料实体未找到（试过："
+                  + "、".join(tried) + "）；可用 --m68-source 显式指定")
+
+
+def extend_manifest_with_m68(manifest: dict, records: list[dict],
+                             source_path: Path, source_sha: str) -> dict:
+    """把 68 个 M 档**追加**进既有清单：T 档历史条目与全部既有键**逐字保留不动**。"""
+    out = dict(manifest)                       # ★ 浅拷贝：既有键原样带过去（不重算、不重排）
+    others = [t for t in (manifest.get("tiers") or [])
+              if str(t.get("tier_id") or "") not in M68_TIERS]
+    dropped = len(manifest.get("tiers") or []) - len(others)
+    if dropped:                                # 幂等重跑：旧 M 条目先剔除再加，避免重复登记
+        print(f"[manifest] 已存在 {dropped} 条 M 档旧登记 ⇒ 以本次在盘事实替换（T 档不受影响）")
+    out["tiers"] = others + records
+    sf = dict(manifest.get("source_files") or {})
+    sf["m68_frozen"] = {"relative_path": str(source_path), "sha256": source_sha}
+    out["source_files"] = sf
+    rules = dict(manifest.get("rules") or {})
+    rules["m68_tiers"] = {k: M68_TIERS[k] for k in sorted(M68_TIERS)}
+    rules["m68_rule"] = ("68 档训练样本数一律 100，且 68 档共用同一份 100 行冻结语料"
+                         "（内容逐字节相同，sha256 = M68_SOURCE_SHA256）")
+    out["rules"] = rules
+    out["m68"] = {
+        "generated_by": "tests/e2e/make_subsets.py --tier-set m68",
+        "subset_size": 100,
+        "tier_count": len(M68_TIERS),
+        "source_sha256": source_sha,
+        "path_convention": ("`tiers[].path` 为**仓根相对路径**（M 档条目），"
+                            "可与 `docs/capability-matrix.data.json::rows[].train_path` 逐字比对；"
+                            "T 档历史条目仍用 `${GRASPO_PREGEN_SUBSET_DIR}/…` 符号路径，未改动"),
+        "read_contract": ("逐档登记 {subset_size, lines, sha256, path}；"
+                          "校验入口 `tools/matrix/check_68_readiness.py`（③）逐档复核在盘 sha256 与登记值"),
+    }
+    return out
+
+
+def run_m68(args) -> int:
+    """m68 通路：产出 ``M0nn.jsonl`` ×68（只新增/等价覆盖），并扩登记清单。"""
+    out_dir: Path = args.out_dir
+    src_path, why_not = resolve_m68_source(args)
+    if src_path is None:
+        print(f"FATAL: {why_not}", file=sys.stderr)
+        return 2
+    src_bytes = src_path.read_bytes()
+    src_sha = sha256_bytes(src_bytes)
+    src_lines = src_bytes.count(b"\n")
+    print(f"[source] m68 ={src_path} 行数={src_lines} sha256={src_sha}")
+    # ★ fail-closed：源必须**就是**那份 100 条共用语料（sha 锚定），否则它不能代表 68 档的同一份数据
+    if src_sha != M68_SOURCE_SHA256:
+        print(f"FATAL: 源 sha256={src_sha} != 冻结口径 {M68_SOURCE_SHA256}"
+              f"（该档子集必须与数据件判据锚点是同一份文件）", file=sys.stderr)
+        return 2
+    if src_lines < 100:
+        print(f"FATAL: 源只有 {src_lines} 行（需 ≥100）", file=sys.stderr)
+        return 2
+
+    if not args.dry_run:
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+    records: list[dict] = []
+    failures: list[str] = []
+    for tier_id in M68_TIER_IDS:                     # ★ 逐档具名（⛔ 不靠通配符）
+        size = M68_TIERS[tier_id]
+        expected = head_lines(src_path, size)
+        expected_lines = expected.count(b"\n")
+        if expected_lines != size:
+            failures.append(f"{tier_id}: 源行数不足：{expected_lines} < {size}")
+            continue
+        # (c) 逐行 JSON 可解析 —— 不静默放过坏行
+        bad = []
+        for i, line in enumerate(expected.splitlines(), start=1):
+            if not line.strip():
+                bad.append(i)
+                continue
+            try:
+                json.loads(line)
+            except Exception as exc:  # noqa: BLE001 - 逐档如实报告
+                bad.append((i, str(exc)[:80]))
+        if bad:
+            failures.append(f"{tier_id}: 源前 {size} 行里有不可解析 JSON：{bad[:3]}")
+            continue
+
+        digest = sha256_bytes(expected)
+        out_path = out_dir / f"{tier_id}.jsonl"
+        status = "dry-run"
+        if not args.dry_run:
+            if out_path.exists():
+                existing = out_path.read_bytes()
+                if existing != expected:
+                    # ★ 只新增/等价覆盖（§2.4）：内容不同即拒绝，不静默改写既有产物
+                    failures.append(f"{tier_id}: {out_path} 已存在且内容与预期不同 —— 拒绝覆盖（§2.4）")
+                    continue
+                status = "unchanged"
+            else:
+                status = "written"
+            out_path.write_bytes(expected)
+            # (a)(b) 落盘后**再核一次**（磁盘事实，不是内存事实）
+            on_disk = out_path.read_bytes()
+            if sha256_bytes(on_disk) != digest or on_disk.count(b"\n") != size:
+                failures.append(f"{tier_id}: 落盘校验失败（{out_path}）")
+                continue
+            if status == "written":
+                status = "written"
+
+        records.append({
+            "tier_id": tier_id,
+            "tier_set": "m68",
+            "source": "m68_frozen",
+            "source_jsonl": str(src_path),
+            "subset_size": size,
+            "lines": expected_lines,
+            "sha256": digest,
+            "path": f"subsets-v2/{tier_id}.jsonl",     # ★ 仓根相对路径（与数据件 train_path 同字面）
+            "status": status,
+            "not_applicable": False,
+        })
+        print(f"[{status:9s}] {tier_id}  lines={expected_lines:4d}  sha256={digest[:16]}…  -> {out_path}")
+
+    if failures:
+        print("\nFATAL: 以下 M 档未通过校验（未产出清单）:", file=sys.stderr)
+        for f in failures:
+            print(f"  - {f}", file=sys.stderr)
+        return 3
+    if len(records) != 68:
+        print(f"FATAL: M 档产物记录数 {len(records)} != 68", file=sys.stderr)
+        return 3
+
+    manifest_path = out_dir / "subsets-v2.manifest.json"
+    if not manifest_path.is_file():
+        print(f"FATAL: 既有清单不存在：{manifest_path}"
+              f"（T 档历史条目必须保留 ⇒ ⛔ 不从零重建清单）", file=sys.stderr)
+        return 2
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    new_manifest = extend_manifest_with_m68(manifest, records, src_path, src_sha)
+    if not args.dry_run:
+        manifest_path.write_text(
+            json.dumps(new_manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(f"\nOK: {len(records)} 个 M 档子集已逐档校验并落盘")
+    print(f"清单: {manifest_path}（tiers 条目 {len(new_manifest['tiers'])} 条 = "
+          f"T 档 {len(new_manifest['tiers']) - len(records)} + M 档 {len(records)}）")
+    print(f"分组摘要: {json.dumps({'m68:100': len(records)}, ensure_ascii=False)}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="生成 v2 逐档数据子集（只新增，不删改）")
-    parser.add_argument("--data-root", required=True, type=Path, help="ELAM V5 宿主数据根")
+    parser.add_argument("--data-root", default=None, type=Path,
+                        help="ELAM V5 宿主数据根（v2 通路必需；m68 通路不需要——源在仓内）")
     parser.add_argument("--out-dir", required=True, type=Path, help="产物根（其下写 T0NN.jsonl）")
     parser.add_argument("--dry-run", action="store_true", help="只打印将写什么，不落盘")
     parser.add_argument(
@@ -205,8 +397,23 @@ def main(argv: list[str] | None = None) -> int:
         help="★ 具名覆盖授权（逗号分隔档号）。仅这些档允许覆盖内容不同的既有子集；"
         "未点名档一律维持「不静默改写」防呆。前像 sha256 逐件记入 同名 .overwrite-log.jsonl",
     )
+    parser.add_argument(
+        "--tier-set", default="v2", choices=("v2", "m68"),
+        help="v2（默认）= 原 54 档 T0nn 通路，行为逐字不变；"
+             "m68 = 68 档 M0nn 通路（100 条共用语料，源取仓内冻结实体，⛔ 不依赖宿主数据根）",
+    )
+    parser.add_argument("--repo-root", default=".", type=Path,
+                        help="仓根（m68 通路用它在仓内定位 100 条共用语料的冻结实体）")
+    parser.add_argument("--m68-source", default=None, type=Path,
+                        help="m68 通路：显式指定 100 条共用语料源（缺省按 M68_REPO_SOURCE_CANDIDATES 现找）")
     args = parser.parse_args(argv)
 
+    if args.tier_set == "m68":
+        return run_m68(args)
+
+    if args.data_root is None:
+        print("FATAL: v2 通路必须给 --data-root（m68 通路不需要）", file=sys.stderr)
+        return 2
     data_root: Path = args.data_root
     out_dir: Path = args.out_dir
     formal_path = data_root / FORMAL_TRAIN_REL

@@ -425,6 +425,11 @@ def uniform_map(data):
 #:     上下文/精度/梯度检查点/单卡 batch/梯度累积/每 epoch 存 ckpt/LoRA 三参/奖励类型/
 #:     序列并行尺寸/训练期 vLLM/GPU 巡检间隔 ⇒ 14 键。
 #:   ★ 取值逐字取自删除前的在盘数据件 `uniform.items`（⛔ 未改任何数值）。
+#:   ★★ 2026-10-22（第一轮基线口径对齐，六项必改之一）：**LoRA 三参回到定稿文档口径**
+#:     `r=32 / alpha=64 / dropout=0.05`（人读件 `docs/GRASPO 训练框架功能测试报告.html` 第 3 章
+#:     「LoRA 恢复」行）。此前本回落表是 `128 / 256`（比文档大 4 倍），影响 52 档 LoRA。
+#:     ⚠ 三处历史数字互不相同 —— 旧世代在盘配置 `samples/configs/matrix54-v2/T028.yaml` 是 `r=8/alpha=16`，
+#:       本表曾是 `128/256`，文档是 `32/64` ⇒ **本批读数与旧世代读数不可比**（这本来就是重跑批）。
 UNIFORM_FALLBACK = {
     "max_prompt_length": "8192",
     "torch_dtype": "bfloat16",
@@ -432,8 +437,8 @@ UNIFORM_FALLBACK = {
     "micro_batch_size": "1",
     "gradient_accumulation_micro_batches": "1",
     "save_checkpoint_every_epoch": "false",
-    "lora_r": "128",
-    "lora_alpha": "256",
+    "lora_r": "32",
+    "lora_alpha": "64",
     "lora_dropout": "0.05",
     "reward.kind": "graspo",
     "sequence_parallel_size": "1",
@@ -442,6 +447,72 @@ UNIFORM_FALLBACK = {
     "temperature": "0",
     "seed": "42",
 }
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════
+# ★★ 2026-10-22 第一轮基线：**分片/并行/CPT 三条口径**由「逐档手写表」改为「规则现算」
+#
+#   为什么是规则而不是清单里逐档声明：声明清单（`tests/e2e/matrix54_manifest_source.json`）
+#   仍是旧 54 档 `T0xx` 世代、键 = T 档号 ⇒ 68 档 `M0nn` 查不到任何声明（`load_declared` 丢键）。
+#   ⇒ 本轮把这三条**只依赖行数据几何**的口径写成生成器规则（确定性、可机核、⛔ 无逐档手写表）：
+#     ① ms-swift 全参必须走 FSDP2（DeepSpeed 已于 2026-09-27 被主席裁定禁用）：
+#        卡数 ≤ 2 ⇒ `fsdp2_full_state_dict_offload.json`（1/2 卡分片面不够，必须 CPU offload）；
+#        卡数 = 4 ⇒ `fsdp2_full_state_dict.json`。
+#        依据：`samples/configs/fsdp/*` 的 `_phase2_only` 分工说明 + 人读件第 3 章「全参档必须分片优化器态」。
+#     ② native `tp_size > 1` ⇒ `native.sequence_parallel: true`（尺寸推导交运行时，⛔ 不在配置里编数字）。
+#     ③ native 全参 ∧ 卡数 == 1 ⇒ `native.offload_optimizer_state: true`
+#        （人读件第 3 章：1 卡全参不开 offload 单卡显存放不下；历史事故 T016 无 offload ⇒ 79.24 GiB OOM）。
+#     ④ CPT 8 档显式写 `pretrain.loss_scale: all` / `use_chat_template: false`
+#        （语义默认本就对齐，显式写出 = §2.2 显式即防呆 + 可机检）。
+# ══════════════════════════════════════════════════════════════════════════════════════
+FSDP_RECIPE_DIR = "samples/configs/fsdp"
+FSDP_RECIPE_MULTI = f"{FSDP_RECIPE_DIR}/fsdp2_full_state_dict.json"
+FSDP_RECIPE_OFFLOAD = f"{FSDP_RECIPE_DIR}/fsdp2_full_state_dict_offload.json"
+
+
+def _cards_of(row):
+    """行卡数（`cards` 优先，回落 `cards_total`）；不可解析 ⇒ None（调用方据此跳过规则）。"""
+    v = row.get("cards") or row.get("cards_total")
+    try:
+        return int(v)
+    except Exception:
+        return None
+
+
+def fsdp_recipe_of(row):
+    """★ 规则①：ms-swift 全参档的 FSDP2 配方路径；不适用 ⇒ None。
+
+    卡数 ≤ 2 ⇒ `_offload` 变体；4 卡 ⇒ 无 offload 变体（两者语义不同，⛔ 不互相替换）。
+    """
+    if row.get("tuner_type") != "full" or row.get("backend") != "ms-swift":
+        return None
+    cards = _cards_of(row)
+    if cards is None:
+        return None
+    return FSDP_RECIPE_OFFLOAD if cards <= 2 else FSDP_RECIPE_MULTI
+
+
+def native_sequence_parallel_of(row):
+    """★ 规则②：native 且 `tp_size > 1` ⇒ 必须开序列并行；返回 True / None。"""
+    if row.get("backend") != "native":
+        return None
+    try:
+        tp = int(row.get("tp_size"))
+    except Exception:
+        return None
+    return True if tp > 1 else None
+
+
+def native_offload_needed(row):
+    """★ 规则③：native 全参 ∧ 卡数 == 1 ⇒ 必须开优化器态 offload；返回 True / None。"""
+    if row.get("backend") != "native" or row.get("tuner_type") != "full":
+        return None
+    return True if _cards_of(row) == 1 else None
+
+
+def is_cpt(row):
+    """★ 规则④：CPT 档（`train_method == cpt`）⇒ 显式下发 `pretrain.*` 两个语义开关。"""
+    return str(row.get("train_method") or "").lower() == "cpt"
 
 
 def declared_switch_gaps(cfg_dir, declared_by_tier, tiers) -> list:
@@ -635,6 +706,14 @@ def yaml_of(row, uni, model_root, data_root, teacher=None,
         if row.get("allow_unverified_pp_rollout") not in (None, "", "—"):
             L.append(f"  allow_unverified_pp_rollout: {row.get('allow_unverified_pp_rollout')}\n")
             _emitted.add("allow_unverified_pp_rollout")
+        # ★★ 规则②（2026-10-22）：`tp_size > 1` ⇒ 必须开序列并行（人读件第 3 章；运行时要求 tp≥2，
+        #    见 `src/graspo/flow/backend/native/runtime.py:415-416`）。尺寸推导交运行时，⛔ 不在配置里编数字。
+        if native_sequence_parallel_of(row):
+            L.append("  sequence_parallel: true\n"); _emitted.add("sequence_parallel")
+        # ★★ 规则③（2026-10-22）：native 全参 ∧ 卡数 == 1 ⇒ 必须开优化器态 offload
+        #    （不开则单卡显存放不下；历史事故 T016 无该键 ⇒ 79.24 GiB OOM）。
+        if native_offload_needed(row):
+            L.append("  offload_optimizer_state: true\n"); _emitted.add("offload_optimizer_state")
         # ★★ 通用规则（第 4 批）：**清单里已声明**、且本段尚未写出的开关 ⇒ **一律写出**。
         #    ⛔ 无按档手写表；⛔ 不改任何对外宣称参数（卡数/步数/epoch/方法/超参）；
         #    只把**已声明的前提**落进配置。由来：现行生成器重写时**丢了**旧世代
@@ -647,13 +726,33 @@ def yaml_of(row, uni, model_root, data_root, teacher=None,
         nn = row.get("nnodes")
         nn = 1 if nn in (None, "", "—") else nn
         L.append("msswift:\n")
+        _emitted = set()
         L.append(f"  nproc_per_node: {row.get('nproc_per_node')}\n")
         L.append(f"  nnodes: {nn}\n")
         L.append(f"  per_device_train_batch_size: {uni.get('micro_batch_size')}\n")
         L.append(f"  sequence_parallel_size: {uni.get('sequence_parallel_size')}\n")
         L.append(f"  use_vllm: {uni.get('use_vllm')}\n")
+        # ★★ 规则①（2026-10-22，六项必改之一）：ms-swift **全参**档必须落 FSDP2 配方
+        #    （DeepSpeed 已于 2026-09-27 被主席裁定禁用；此前本分支只有 deepspeed 落点、
+        #     从不消费 `msswift.*` 声明 ⇒ 8 档全参无任何分片载体）。
+        _fsdp = fsdp_recipe_of(row)
+        if _fsdp:
+            L.append(f"  fsdp: {_fsdp}\n"); _emitted.add("fsdp")
+        # ★ 通用规则（与 native 段同一条口径）：清单已声明的 `ms-swift` 前提也要落进配置。
+        #   ⚠ 旧 T 档清单的 `recipe.msswift.*` 与上面已写出的键重名 ⇒ 用 `_emitted` 去重。
+        for _k, _v in iter_declared(declared, backend):
+            if _k not in _emitted:
+                L.append(f"  {_k}: {_yaml_scalar(_v)}\n"); _emitted.add(_k)
         if row.get("deepspeed") not in (None, "", "—"):
+            # ⚠ 照抄（不加益处、不加宽）：DeepSpeed 已被禁用 ⇒ 由 main() 的 fail-closed 闸门拒绝产出。
             L.append(f"  deepspeed: {row.get('deepspeed')}\n")
+    # ★★ 规则④（2026-10-22）：CPT 档**显式**写出两个语义开关（默认本就对齐 ⇒ 写了更防呆、且可机检）。
+    #    语义：每个 token 都计损（`loss_scale: all`）+ 不套对话模板（`use_chat_template: false`）。
+    #    落点是**后端中立**段 `pretrain.*`（schema `PretrainConfig`），映射层只从这一处取值。
+    if is_cpt(row):
+        L.append("pretrain:\n")
+        L.append("  loss_scale: all\n")
+        L.append("  use_chat_template: false\n")
     if uni.get("gpu_monitor.interval_sec"):
         L.append("gpu_monitor:\n")
         L.append("  output_dir: /out/gpu\n")
@@ -742,6 +841,16 @@ def main():
     _pin = [t for t, pth in sorted(written.items()) if config_pins_gpus(Path(pth).read_text(encoding="utf-8"))]
     if _pin:
         print(f"FAIL-CLOSED：以下配置 pin 了物理卡号 `gpus`（⛔ 卡号不进配置，§12 一族）⇒ 拒绝产出：{_pin}")
+        return 1
+
+    # ★★ 2026-10-22（六项必改附条 / 建议 fail-closed）：**DeepSpeed 已被禁用**（主席 2026-09-27 裁定、
+    #    用户 2026-09-22 拍板彻底废弃），但此前配置生成侧**没有任何闸门** ⇒ 数据件一旦被回填
+    #    `deepspeed`，生成器会静默下发 DS 配方。⇒ 产物里只要出现 `deepspeed:` 即拒绝产出（rc=1）。
+    _ds = [t for t, pth in sorted(written.items())
+           if re.search(r"^\s*deepspeed\s*:", Path(pth).read_text(encoding="utf-8"), re.M)]
+    if _ds:
+        print(f"FAIL-CLOSED：以下产物含 `deepspeed:`（DeepSpeed 已于 2026-09-27 禁用，"
+              f"⛔ 任一档都不得以 DS 为配方；全参档走 FSDP2）⇒ 拒绝产出：{_ds}")
         return 1
 
     _mm = [(r["tier"], why) for r in rows if (why := cards_procs_mismatch(r))]
@@ -883,8 +992,10 @@ ATTRIBUTION = [
     ("lora.target_preset",
      "LoRA 目标口径：target_preset 不再选择目标（遗留键，仅为让旧配置可加载）；"
      "目标只由 lora.target_modules 决定"),
-    ("lora.r", "LoRA 恢复口径：r 8 → 128"),
-    ("lora.alpha", "LoRA 恢复口径：alpha 16 → 256"),
+    ("lora.r", "LoRA 恢复口径（2026-10-22 对齐定稿文档）：旧世代 8 → **32**"
+               "（曾一度下发 128，比文档 r=32 大 4 倍）"),
+    ("lora.alpha", "LoRA 恢复口径（2026-10-22 对齐定稿文档）：旧世代 16 → **64**"
+                   "（曾一度下发 256）"),
     ("lora.dropout", "LoRA 恢复口径：dropout 0.0 → 0.05"),
     ("training.learning_rate", "lr 口径（主席 2026-10-15）：一个方法一个值（SFT 2e-05(LoRA)/5e-06(全参)、"
                                "GRASPO(RL) 5e-06、CPT 5e-06、OPD 2e-05(LoRA)/5e-06(全参)）；⛔ 不按卡数缩放"),

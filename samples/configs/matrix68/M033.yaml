@@ -1,0 +1,41 @@
+# 本文件由 tools/matrix/gen_configs.py 从 docs/capability-matrix.data.json 自动生成，⛔ 禁止手工编辑；请改数据后重新生成。
+train_method: cpt
+backend: msswift
+tuner_type: lora
+model:
+  model_path: /models/Qwen3.5-9B
+  torch_dtype: bfloat16
+  gradient_checkpointing: true
+data:
+  train_path: /work/elam-v5/subsets-v2/M033.jsonl
+  max_prompt_length: 8192
+training:
+  output_dir: /out/M033
+  run_name: M033
+  overwrite_output_dir: true
+  seed: 42
+  max_epochs: 2
+  learning_rate: 5.0e-06
+  gradient_accumulation_micro_batches: 1
+  save_checkpoint_every_epoch: false
+  save_steps: 51
+launch:
+  nproc_per_node: 4   # ★ 由 cards=4 推导（§12 同源：卡数与进程数不得各改一半）
+lora:
+  r: 32
+  alpha: 64
+  dropout: 0.05
+  target_modules: '^(?:model\.)?language_model\..*\.(q_proj|k_proj|v_proj|o_proj|in_proj_z|out_proj|in_proj_qkv|gate_proj|up_proj|down_proj)$|^(?:model\.)?visual\.(blocks\.\d+\.(attn\.(qkv|proj)|mlp\.linear_fc1|mlp\.linear_fc2)|merger\.linear_fc1|merger\.linear_fc2)$'
+msswift:
+  nproc_per_node: 4
+  nnodes: 1
+  per_device_train_batch_size: 1
+  sequence_parallel_size: 1
+  use_vllm: false
+pretrain:
+  loss_scale: all
+  use_chat_template: false
+gpu_monitor:
+  output_dir: /out/gpu
+  tag: M033
+  interval_sec: 2.0

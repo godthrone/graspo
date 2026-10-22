@@ -78,6 +78,17 @@ class Spec:
 POLICY: dict[str, Spec] = {
     "scripts/run_guards.py": Spec(HELP, "起跑/评测护栏 CLI（§7 形态谓词 / §8 新鲜度 / §10 Mamba），argparse 子命令"),
     "scripts/gen_tier_json.py": Spec(HELP, "由两侧 eval_report 生成 task-matrix-runs/<TIER>.json（落盘自检：delta_pp 同源 / evidence_paths 非空）"),
+    "scripts/gen_eval.py": Spec(
+        HELP,
+        "M 档评测脚本生成器（2026-10-22 起 argparse：--tier/--gpu/--port/--blocks/--no-ssh/--dry-run；"
+        "真实渲染需活 checkpoint 与空闲卡，故常设冒烟只做 --help；形态现算的行为由"
+        "`--dry-run --no-ssh` 自检覆盖，见工作包 B 报告 T4-5）",
+    ),
+    "scripts/make_result_json.py": Spec(
+        HELP,
+        "跑次读数 ⇒ 回填口径结果 json（matrix-run/v1）的**唯一产出者**；落盘前调"
+        "`tools/matrix/backfill_matrix.py::validate_run` 自检",
+    ),
     # ── 仓库根 / 宿主启动链 ────────────────────────────────────────────────
     "run.sh": Spec(SH_HELP, "训练启动主入口；支持 --help（宿主引导层稳定契约）"),
     # ── scripts/*.py（§10.2 制度化脚本，B3 已登记稳定子命令）────────────────
@@ -107,6 +118,32 @@ POLICY: dict[str, Spec] = {
         "★ 本件不是渲染链入口（渲染 = render_matrix.py），此处只做语法/CLI 冒烟（--help ⇒ rc=0）",
     ),
     "tools/matrix/gen_configs.py": Spec(HELP, "矩阵数据 → 测试 yaml 生成器（确定性；禁手改 yaml）"),
+    # ★ 补登记（2026-10-22 基线轮）：68 档开跑前就绪闸门 —— 六条口径（档号集合 / LoRA 三参+目标整块 /
+    #   子集 size 与在盘 sha / 全参必分片 / native 开关 / DeepSpeed 禁用）；argparse CLI ⇒ --help 冒烟。
+    "tools/matrix/check_68_readiness.py": Spec(
+        HELP,
+        "68 档开跑前就绪闸门（六条口径，全 fail-closed）；argparse CLI（--config-dir/--data/--manifest/--subset-dir）",
+    ),
+    # ★ 补登记（2026-10-22 基线轮）：回填防呆 wrapper —— 钉死「带日期副本对」与 .local 台账，指向仓内
+    #   原版（数据件或人读件）一律 rc=2 拒起。跑一次会真回填（写数据件/HTML）⇒ 冒烟只做 --help 与 bash -n。
+    "tools/matrix/backfill_dated.sh": Spec(
+        SH_HELP,
+        "回填防呆 wrapper：--data-in/--html-out/--template/--ledger-out 钉死为带日期副本对与 .local 台账；"
+        "指向仓内原版（数据件或人读件）rc=2 拒起。跑一次会真回填 ⇒ 冒烟只做 --help（打印用法、rc=0）",
+    ),
+    # ★ 补登记（2026-10-22 基线轮）：回填隔离的收尾自检（7 步，只读）。**无 --help、不解析参数**：
+    #   无参运行即真跑 7 步（原版 sha 复验 → 原版对/副本对两次 verify → 两态 sha 判定 → docs/ 面
+    #   git status 核对 → 泄漏扫描 → 临时件残留），只写 .local 读数台账，rc=0 = ALL PASS。
+    #   故按「真实无参行为」登记：argv=() 且期望 rc=0 + 输出含 ALL PASS（⛔ 不接受 fail-closed）。
+    "tools/matrix/verify_dated.sh": Spec(
+        SH_FAILCLOSED,
+        "回填隔离收尾自检（7 步只读：原版 sha 复验→原版对/副本对两次 verify→两态 sha 判定→"
+        "docs/ 面 git status→泄漏扫描→临时件残留）；无 --help 与参数解析 ⇒ 无参真跑一次，"
+        "期望 rc=0 且输出 ALL PASS（只写 .local 读数台账，不写 docs/）",
+        argv=(),
+        expect_rc=(0,),
+        expect_in="ALL PASS",
+    ),
     # ── shell 工具/运维入口 ────────────────────────────────────────────────
     "scripts/eval_cleanup.sh": Spec(SH_HELP, "评测清理入口；支持 -h/--help ⇒ rc=0"),
     "scripts/sync_deploy_tree.sh": Spec(SH_HELP, "§11：仓内 scripts/*.py 幂等同步到部署树 + 逐件冒烟（失败即非零退出）"),
@@ -157,6 +194,16 @@ POLICY: dict[str, Spec] = {
         expect_rc=None,
         expect_in="GRASPO_ELAM_HOST_ROOT",
     ),
+    "tests/e2e/generate_matrix68_manifest_source.py": Spec(
+        HELP, "68 档（M001–M068）运行清单生成器：数据件 + 68 份 yaml + 子集现读；含 --verify 在盘自证入口"
+    ),
+    "tests/e2e/run_matrix68.sh": Spec(
+        SH_FAILCLOSED,
+        "68 档 M 档 runner；`--dry-run` 只打印命令与判据、⛔ 不启动 docker/torchrun（无需注入环境根 ⇒ rc=0）",
+        argv=("--only", "M001", "--dry-run"),
+        expect_rc=(0,),
+        expect_in="\\[dry-run\\] M001",
+    ),
     "tests/e2e/run_matrix54_source.sh": Spec(
         SH_FAILCLOSED,
         "v2source 逐档 launcher；--dry-run 同样要求宿主根注入，缺失即拒起",
@@ -198,7 +245,6 @@ POLICY: dict[str, Spec] = {
 
 #: 具名排除（附理由；自动发现到的、落在此表的路径不参与冒烟）。
 EXCLUSIONS: dict[str, str] = {
-    "scripts/gen_eval.py": "会话级评测脚本生成器：需活的 tier 与空闲卡才能渲染/执行，不适合常设冒烟",
     "scripts/launch_pipeline.py": "纯模块（无 CLI/无 __main__ 入口），被单测 import；启动链的判定函数由 launcher/评测脚本调用",
     "scripts/errors.py": "纯模块（无 __main__/无 CLI），被单测 import，不是启动脚本",
     "tools/check_env.py": "★ 依赖校验入口：自身即门禁脚本，缺依赖时非零退出（不易做常设冒烟）",
