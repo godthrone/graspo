@@ -424,9 +424,10 @@ def semantic_followups() -> list[dict]:
     return [
         {"path": DATA_JSON,
          "locator": "meta.criteria_caliber.dataset.train_eval_relation / eval_caliber.discriminative_power",
-         "issue": ("文中「该 100 行 (工具,动作) 最大类占 19%（19/100）⇒ 常数预测器上界 19%」是对**旧 mini 100 行**"
-                   "的实测：新样本实测最大类 = 17/100 = 17%（6 类 16–17 条）⇒ 切换后这处数值断言变旧"),
-         "action": "需裁定：改为 17%（叙述随之改）或改写成不依赖具体语料的比例表述；本工具⛔ 不自动改数值断言"},
+         "issue": ("文中「该 100 行 (工具,动作) 最大类占 17%（17/100）⇒ 常数预测器上界 17%」已按均衡语料"
+                   "（12 格 · 68 档通用）实测**订正**（2026-10-22：6 类 16–17 条 ⇒ 最大类 17/100 = 17%）；"
+                   "该断言随语料变化 ⇒ 再次换语料后会重新变旧"),
+         "action": "无（2026-10-22 已订正为 17%）；换语料后需重新实测并同步；本工具⛔ 不自动改数值断言"},
         {"path": "subsets-v2/mini 源（仓外：${GRASPO_ELAM_DATA_ROOT}/mini-dataset/mini-short-mm-train.jsonl）",
          "locator": "(整文件)",
          "issue": "旧 100 条仍是该文件的实体；本次**不覆盖、不删除**（历史证据 + T 档 42 件仍引用它）",
