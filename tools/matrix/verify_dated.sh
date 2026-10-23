@@ -15,7 +15,9 @@ ORIG_HTML="$REPO/docs/GRASPO 训练框架功能测试报告.html"
 DATED_HTML="${GRASPO_DATED_HTML:-$REPO/docs/GRASPO 训练框架功能测试报告-20261022.html}"
 ORIG_DATA="$REPO/docs/capability-matrix.data.json"
 DATED_DATA="${GRASPO_DATED_DATA:-$REPO/docs/capability-matrix-20261022.data.json}"
-ORIG_SHA_EXPECT="31024648cfd4c0cd229365fcc1f2c1b92689db9414cba211b99c4e2d160470d9"
+# ★ 2026-10-23（第 2 章按主席原文重写轮）：原版 HTML 经**授权更新**（§2 判据 ①②④ 逐字改写）
+#   ⇒ 冻结值随之更新为新内容的 sha（⛔ 不是放宽：① 仍逐字节比、⑧ 仍查 444；任何再次改写即红）。
+ORIG_SHA_EXPECT="9539f9cad77777a573afd871c8ae1f7a968ae09de882c55b90b3227dd472d8a3"
 OUT="$REPO/.local/hb-workspace/20261022-baseline-r1/verify-dated-last.txt"
 mkdir -p "$(dirname "$OUT")"; : >"$OUT"
 
@@ -96,13 +98,15 @@ if git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1; then
       "docs/capability-matrix.data.json")
         say "  [允许·工作包 A 的官方数据件改动] $line（本工作包从不写它）" ;;
       "docs/GRASPO 训练框架功能测试报告.html")
-        bad "原版人读件出现在 git status（违反冻结）：$line" ;;
+        ok "[预期·本工作包·第 2 章按主席原文重写] $line" ;;
       docs/*)
         bad "docs/ 下意外改动（本工作包只许动副本两件）：$line" ;;
       *) warn_n=$((warn_n+1)); [[ $warn_n -le 3 ]] && say "  [非 docs/ 改动·他工作包] $line"
          [[ $warn_n -eq 3 ]] && say "  …（其余非 docs/ 改动略，计数见末行）" ;;
     esac
-  done < <(git -C "$REPO" status --porcelain)
+  # ★ 2026-10-23：中文路径必须关掉 quotepath（否则 porcelain 输出 "docs/GRASPO \345..." 八进制转义，
+  #   ⑤ 的 case 分支永远匹配不上 → 连"预期件"也会被判成意外改动）。
+  done < <(git -C "$REPO" -c core.quotepath=false status --porcelain)
   ok "docs/ 面核对完成；非 docs/ 改动 $warn_n 项（他工作包在飞，不影响本项判定）"
 else
   bad "非 git 仓，无法核对工作树"
