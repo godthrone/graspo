@@ -56,9 +56,9 @@ REL_ROUND_HTML_FMT = f"docs/{ROUND_HTML_TMPL}"
 REL_ROUND_DATA_FMT = f"docs/{ROUND_DATA_TMPL}"
 REL_TEMPLATE = f"tools/matrix/{TEMPLATE_NAME}"
 
-#: 基准人读件的**冻结 sha256**（2026-10-24 第 3 章 OPD 行改「本地教师 / 27B 外置 vLLM 服务」口径后的定稿内容）。
+#: 基准人读件的**冻结 sha256**（2026-10-24 第 3 章 OPD 行改「本地教师 / 27B 外置 vLLM 服务」口径后的定稿内容；2026-10-25 删「框架版本」行的提交号后更新）。
 #: 机核：`verify_dated.sh` ①、`new_round.sh` ①。任何再次改写基准件 ⇒ 立刻对不上 ⇒ 红。
-BASELINE_HTML_SHA256 = "92248c52a41c1e472d8378d3a824138f1075da27522786c49cc9f59e635c3fce"
+BASELINE_HTML_SHA256 = "b8ed080dd80edd04dee735af59788ebaa6e297107509f363c520e38e4b986f30"
 #: 基准件权限（物理只读）
 FROZEN_MODE = "444"
 #: 副本权限（可写；由脚本回填）
