@@ -1,0 +1,204 @@
+{
+ "$schema_version": "graspo-graspo-invariants-evidence/1",
+ "doc": "判据③ GRASPO 的**逐条不变式证据**（《GRASPO 算法说明》第 9 节 8 条）。本件是 `tools/matrix/sign_graspo_invariants.py --evidence` 的输入：它只被校验、不被改写；签署件里的条文由算法说明现解析，id/名称由 scripts/record_checks.py::GRASPO_INVARIANTS 现取（⛔ 三处都不另抄一份口径）。",
+ "how_to_change": "⛔ 不得为了让门禁变绿而把 verdict 改成 true：每条 verdict 只能来自真读过被引代码、跑过被引单测后的结论；被引代码一改必须重核并更新 checked_at/checker。该条核不过 ⇒ 保持 out（本件里就不出现该条）并在报告里写「未签署清单 + 缺什么证据」。",
+ "signer": "executor-graspo-sign",
+ "checked_at": "2026-10-24T02:40:00+00:00",
+ "verified_at_head": "876b8f1",
+ "verification_run": {
+  "mechanical_script": "/tmp/graspo_inv_check.py（一次性，不入仓）",
+  "command": ".venv/bin/python /tmp/graspo_inv_check.py",
+  "result": "8/8 条通过（每条均为「能失败的断言」，见各条 evidence 的机核项）",
+  "unit_tests": [
+   ".venv/bin/python -m pytest tests/ripple tests/flow/backend/native/test_assignment.py tests/flow/backend/native/trainer/test_rollout_sharding.py -q ⇒ 606 passed, 2 failed（test_data.py 两条读 samples/data/sample_tool_call.jsonl，该夹具在 HEAD 就不在盘上 ⇒ 与本包无关的既有失败）",
+   ".venv/bin/python -m pytest tests/eval/test_vllm_client.py tests/eval/test_evaluate.py tests/flow/backend/msswift/test_config_mapping.py tests/ripple/test_loss.py tests/ripple/test_parity_core.py tests/ripple/test_parity.py -q ⇒ 120 passed"
+  ]
+ },
+ "invariants": [
+  {
+   "invariant": "group_integrity",
+   "ordinal": 1,
+   "verdict": true,
+   "checker": "executor-graspo-sign",
+   "checked_at": "2026-10-24T02:40:00+00:00",
+   "how": "组完整性 = ①切片不切组（每卡拿到的槽位并集恰是整组）②整组配额（不足一组不训练）③启动前 fail-closed ④同批同版（rollout 生成与 old_log_probs 在同一批权重上，优化后清 buffer，ms-swift 侧 num_iterations=1）",
+   "evidence": [
+    "src/graspo/flow/backend/native/assignment.py:243",
+    "src/graspo/flow/backend/native/assignment.py:310",
+    "src/graspo/flow/backend/native/assignment.py:93",
+    "src/graspo/flow/backend/native/trainer/optimize.py:158",
+    "src/graspo/flow/backend/native/trainer/optimize.py:187",
+    "src/graspo/flow/backend/native/trainer/rollout.py:585",
+    "src/graspo/core/schema.py:510",
+    "src/graspo/flow/backend/msswift/group_sharding.py:42",
+    "src/graspo/flow/backend/msswift/_config_mapping.py:611",
+    "src/graspo/flow/backend/msswift/_config_mapping.py:619",
+    "src/graspo/flow/backend/msswift/_config_mapping.py:374",
+    "tests/flow/backend/native/test_assignment.py::test_validate_rollout_slicing_rejects_non_divisible_group_size",
+    "tests/flow/backend/native/test_assignment.py::test_rollout_slices_satisfy_four_invariants",
+    "tests/flow/backend/native/test_assignment.py::test_positive_control_whole_group_per_rank_must_fail",
+    "tests/flow/backend/native/trainer/test_rollout_sharding.py::test_decision_input_must_be_the_whole_group_positive_control"
+   ],
+   "mechanical": "机核：G∈{8}, dp∈{1,2,4,8} 时各卡槽位并集 == 0..G-1（不丢不重）；G=8/dp=3、G=6/dp=4、dp>G 均抛 AssignmentError；whole_group_count(10,8)=8（尾巴不训练）；TrainingConfig(G=6).rollout_slice_quantum(4) 启动前 ValueError"
+  },
+  {
+   "invariant": "reward_sample_alignment",
+   "ordinal": 2,
+   "verdict": true,
+   "checker": "executor-graspo-sign",
+   "checked_at": "2026-10-24T02:40:00+00:00",
+   "how": "每条 completion 恰一条 reward（reward.score 单条入口逐条调用）+ 一份字符标注 + 一组 advantage；advantage 由该条的 token 标注逐位生成，长度恒等于该条生成 token 数；落 replay buffer 时五元组（sequences/old_log_probs/advantages/attention_mask/action_mask/rewards）按同一 idx 配对",
+   "evidence": [
+    "src/graspo/flow/backend/native/trainer/rollout.py:681",
+    "src/graspo/flow/backend/native/trainer/rollout.py:722",
+    "src/graspo/ripple/annotation/advantages.py:332",
+    "src/graspo/ripple/annotation/advantages.py:344",
+    "src/graspo/flow/backend/msswift/trainer.py:353",
+    "tests/ripple/annotation/test_advantage_determinism.py::test_advantage_length_matches_completion_tokens",
+    "tests/ripple/annotation/test_advantages.py::test_output_length_matches_tokens",
+    "tests/ripple/annotation/test_advantages.py::test_testset_advantages"
+   ],
+   "mechanical": "机核：3 条 completion ⇒ 3 条 reward / 3 组 advantage，且 len(adv[i]) == tokenizer(completion_i) 的 token 数（逐条相等）；AST/源码断言 Experience(...) 六个字段全部用同一个 idx 取"
+  },
+  {
+   "invariant": "algo_logic_unchanged",
+   "ordinal": 3,
+   "verdict": true,
+   "checker": "executor-graspo-sign",
+   "checked_at": "2026-10-24T02:40:00+00:00",
+   "how": "逐算式对照《算法说明》§2/§3/§4/§5/§6：标注枚举与合并优先级（§2）、奖励三项与满分基数（§3：10/100 权重 ⇒ 210/230/250）、组决策 ①→⑦ 短路序与下中位数（§4）、advantage 四个取值与字段级 μ_f（§5）、裁剪 loss 与两级平均（§6）——文档条文与代码算式逐条对齐，并由 65 条基准标注集 + 手算对拍锁定",
+   "evidence": [
+    "src/graspo/ripple/annotation/char_tag.py:13",
+    "src/graspo/ripple/annotation/tokenize.py:27",
+    "src/graspo/ripple/annotation/json_labeler.py:115",
+    "src/graspo/ripple/annotation/tool_call_labeler.py:196",
+    "src/graspo/ripple/annotation/advantages.py:240",
+    "src/graspo/ripple/annotation/advantages.py:344",
+    "src/graspo/ripple/group_decision.py:121",
+    "src/graspo/ripple/reward/reward.py:291",
+    "src/graspo/ripple/reward/reward.py:330",
+    "src/graspo/core/schema.py:273",
+    "src/graspo/ripple/loss.py:112",
+    "tests/ripple/annotation/test_annotation_testset.py::test_annotation_matches_testset",
+    "tests/ripple/annotation/test_annotation_testset.py::test_error_pos_matches_first_e",
+    "tests/ripple/test_parity_core.py::test_first_group_perfect_skip_uses_lower_median",
+    "tests/ripple/test_parity_core.py::test_lower_median_matches_original_even_group_rule",
+    "tests/ripple/test_loss.py::test_ppo_clip_loss_matches_original_formula",
+    "tests/ripple/reward/test_reward.py::test_reward_perfect_json_fence"
+   ],
+   "mechanical": "机核：§3 满分基数四值（230/250/210/230）与文档表格**逐值相等**（由 RewardConfig 权重现算）；§2 合并序 E>V>S>T>D>W 逐对断言；§4 决策短路序 ①③④⑤⑥ 逐档复现；§6 loss 与手写 -min(r·A, clip(r)·A) 两级平均逐位一致（1e-6 内）"
+  },
+  {
+   "invariant": "temperature_not_overridden",
+   "ordinal": 4,
+   "verdict": true,
+   "checker": "executor-graspo-sign",
+   "checked_at": "2026-10-24T02:40:00+00:00",
+   "how": "rollout 采样温度只从 training.temperature 读（默认 1.0），全仓无对 temperature 的赋值语句（AST 扫描 src/）；ms-swift 侧原样透传 --temperature；评测温度恒 0：EvalDecoding 校验器只接受 0.0、请求体常量 EVAL_TEMPERATURE=0.0、嵌套后门被拒、EvalConfig 根本没有 temperature 字段（入口不提供覆盖参数）",
+   "evidence": [
+    "src/graspo/flow/backend/native/trainer/rollout.py:110",
+    "src/graspo/flow/backend/native/trainer/rollout.py:141",
+    "src/graspo/core/schema.py:409",
+    "src/graspo/core/schema.py:1070",
+    "src/graspo/flow/backend/msswift/_config_mapping.py:577",
+    "src/graspo/eval/schema.py:60",
+    "src/graspo/eval/schema.py:68",
+    "src/graspo/eval/vllm_client.py:51",
+    "src/graspo/eval/vllm_client.py:224",
+    "tests/eval/test_vllm_client.py::test_temperature_constant_is_zero",
+    "tests/eval/test_vllm_client.py::test_build_request_body_pins_temperature_zero",
+    "tests/eval/test_vllm_client.py::test_temperature_lock_catches_nested_temperature",
+    "tests/eval/test_evaluate.py::test_nonzero_temperature_report_cannot_even_be_constructed"
+   ],
+   "mechanical": "机核：默认 training.temperature==1.0 且 msswift argv --temperature=1.0；配置写 0.7 ⇒ argv 原样 0.7（不被改写）；AST 全仓扫描「对 .temperature 的赋值」= 0 处；EvalDecoding(temperature=0.3) 被拒；assert_request_body_locked({'extra_body':{'temperature':0.5}}) 抛 TemperatureLockError；'temperature' 不在 EvalConfig.model_fields"
+  },
+  {
+   "invariant": "label_length_invariant",
+   "ordinal": 5,
+   "verdict": true,
+   "checker": "executor-graspo-sign",
+   "checked_at": "2026-10-24T02:40:00+00:00",
+   "how": "字符标记数组在 JSON/tool_call 两条标注器里都以 len(text) 初始化并原地打标 ⇒ 长度恒等于 completion 字符数；token 标记由 offset_mapping 派生，逐 token 追加（end>start）⇒ 长度等于生成 token 数；65 条基准标注集逐字符对拍",
+   "evidence": [
+    "src/graspo/ripple/annotation/json_labeler.py:121",
+    "src/graspo/ripple/annotation/tool_call_labeler.py:111",
+    "src/graspo/ripple/annotation/labeler.py:26",
+    "src/graspo/ripple/annotation/tokenize.py:42",
+    "src/graspo/ripple/annotation/tokenize.py:71",
+    "tests/ripple/annotation/test_annotation_testset.py::test_annotation_matches_testset",
+    "tests/ripple/annotation/test_advantages.py::test_output_length_matches_tokens",
+    "tests/ripple/annotation/test_advantage_determinism.py::test_advantage_length_matches_completion_tokens"
+   ],
+   "mechanical": "机核：65 条基准标注集逐条 len(tags)==len(completion) 且与基准标注逐字符相等；token 标记数 == 生成 token 数（151==151）"
+  },
+  {
+   "invariant": "sampling_train_same_policy",
+   "ordinal": 6,
+   "verdict": true,
+   "checker": "executor-graspo-sign",
+   "checked_at": "2026-10-24T02:40:00+00:00",
+   "how": "native：rollout 由当前策略在线采样（runtime.generate_groups），old_log_probs 在**同一批权重**上当场前向得到（生成→old_log_probs→入 buffer 的代码顺序），每次优化后清空 replay buffer、optimize_iterations_per_step=1 ⇒ 不做多轮陈旧迭代；ms-swift：--num_iterations 缺省即下发 1（μ=1），loss 用当前前向 logp 与采样时的 old logp 现算 ratio（不再恒 1）",
+   "evidence": [
+    "src/graspo/flow/backend/native/trainer/rollout.py:110",
+    "src/graspo/flow/backend/native/trainer/rollout.py:585",
+    "src/graspo/flow/backend/native/trainer/optimize.py:185",
+    "src/graspo/flow/backend/native/trainer/optimize.py:187",
+    "src/graspo/flow/backend/msswift/_config_mapping.py:374",
+    "src/graspo/flow/backend/msswift/trainer.py:210",
+    "tests/trainmethod/test_cpt_opd_channels.py::test_existing_channels_unbroken",
+    "tests/ripple/annotation/test_advantage_determinism.py::test_advantage_computation_is_deterministic"
+   ],
+   "mechanical": "机核：msswift argv --num_iterations=1；源码顺序断言 i(generate_groups) < i(sequence_log_probs) < i(_append_experiences)；optmize 里 take→train_batch→clear 的顺序断言；metrics['optimize_iterations_per_step']=1 字面存在"
+  },
+  {
+   "invariant": "ratio_interval_constant",
+   "ordinal": 7,
+   "verdict": true,
+   "checker": "executor-graspo-sign",
+   "checked_at": "2026-10-24T02:40:00+00:00",
+   "how": "ratio = exp(logp−logp_old) 先 clamp 到 [0.1,10]，再用 policy_ratio_clip_eps clamp 到 [1−eps,1+eps]（eps 默认 0.2，来自 training.policy_ratio_clip_eps）；eps 在整个 loss 里逐字读取，无逐样本缩放；两个后端都走同一个 GRASPORippleLoss（native 经 runtime.train_batch、ms-swift 经 GraspoAlgorithmCore.compute_loss）",
+   "evidence": [
+    "src/graspo/ripple/loss.py:70",
+    "src/graspo/ripple/loss.py:113",
+    "src/graspo/ripple/loss.py:116",
+    "src/graspo/core/schema.py:404",
+    "src/graspo/flow/backend/native/trainer/optimize.py:163",
+    "src/graspo/ripple/algorithm_core.py:155",
+    "src/graspo/flow/backend/msswift/trainer.py:228",
+    "tests/ripple/test_loss.py::test_ppo_clip_loss_matches_original_formula",
+    "tests/ripple/test_loss_gradcheck.py::test_ppo_loss_gradcheck_partial_mask"
+   ],
+   "mechanical": "机核：TrainingConfig().policy_ratio_clip_eps==0.2；源码含 ratio.clamp(0.1,10) 与 ratio.clamp(1-eps, 1+eps) 两处逐字；两后端均 import 同一个 GRASPORippleLoss（native/ms-swift 各一条调用点）；实算 loss 与手算逐位一致"
+  },
+  {
+   "invariant": "value_error_not_truncated",
+   "ordinal": 8,
+   "verdict": true,
+   "checker": "executor-graspo-sign",
+   "checked_at": "2026-10-24T02:40:00+00:00",
+   "how": "值错误（数值不等/内容不符）不置 E：标注器只做结构/类型判定，值字符一律标 V 交由相似度打分（JSON: GT 为数字而模型给带引号字符串才 E；tool_call: GT 为数字而值文本 float() 不成立才 E）；E 之后一律 D；末尾 EOS 是唯一例外——只在结构不完整且非 max_len 硬截断时把**末尾非空白字符**置 E，其后尾随空白仍 W，已有 E/空串不施加",
+   "evidence": [
+    "src/graspo/ripple/annotation/json_labeler.py:18",
+    "src/graspo/ripple/annotation/json_labeler.py:246",
+    "src/graspo/ripple/annotation/json_labeler.py:258",
+    "src/graspo/ripple/annotation/tool_call_labeler.py:332",
+    "src/graspo/ripple/annotation/tool_call_labeler.py:336",
+    "src/graspo/ripple/annotation/advantages.py:66",
+    "src/graspo/ripple/annotation/advantages.py:86",
+    "tests/ripple/annotation/test_advantages.py::test_tail_eos_incomplete_tool_call",
+    "tests/ripple/annotation/test_advantages.py::test_tail_eos_truncated_by_max_skipped",
+    "tests/ripple/annotation/test_advantages.py::test_tail_eos_complete_no_penalty",
+    "tests/ripple/annotation/test_advantages.py::test_tail_eos_already_has_error_skipped",
+    "tests/ripple/annotation/test_annotation_testset.py::test_error_then_dropped_invariant"
+   ],
+   "mechanical": "机核：GT=40.0 而 completion 写 99.0 ⇒ 无 E 且有 V；GT 数字而 completion 写 \"40.0\"（带引号）⇒ E 且其后全 D；不完整 tool_call 的末尾 1 个非空白字符 E、其后空格/制表符仍 W、E 总数=1；truncated_by_max=True 与空串均不施加"
+  }
+ ],
+ "caveats": [
+  "「算法逻辑严禁改动」的可核形式 = 文档算式 ↔ 代码算式对拍 + 65 条基准标注集 + 损失手算对拍；本仓**没有**算式哈希/字节冻结机制 ⇒ 改算式不会被独立闸门拦下（只能靠这些对拍变红），这是既存缺口，不属本签署件能补的范围。",
+  "ms-swift 档的「采样与训练同源」有一处透明退路：若上游 old_per_token_logps 为 None，trainer.py:211-218 会退回当前前向并打 WARNING ⇒ 该步 ratio≡1、裁剪不生效（不是静默，但也不是「有真 ratio」）。本矩阵 8 个 ms-swift GRASPO 档是否有 rollout logprob 源取决于上游 use_vllm 配置，**本轮未在真实跑次中实测**（⛔ 不开跑）。",
+  "组完整性在 dp>1 时还依赖三条前提（离散决策逐卡同判 / 无本地 drop / ReplayBuffer.limit==0，见 optimize.py:150-157 注释与启动期校验）；本轮机核了切片合法性与整组配额两条，**未在真实多卡跑次中**验证这三条前提同时成立。",
+  "「温度不被隐式改写」的证明面止于本仓：src/ 无对 temperature 的赋值 + msswift argv 原样透传；上游 ms-swift 内部是否改写 temperature 不在本仓可控面内。",
+  "本签署件只覆盖判据③（算法正确性检查）；判据①②④ 的证据在本件之外（② 看评测读数、④ 看评测报告，见 scripts/record_checks.py）。"
+ ]
+}
