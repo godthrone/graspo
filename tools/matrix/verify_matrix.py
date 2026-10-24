@@ -281,7 +281,8 @@ CRITERIA_SOURCE_OF_TRUTH = "docs/capability-matrix.data.json"
 #     ⛔ 不得复活；★ 新文档另过脱敏与「无开发过程内容」两条（与矩阵件同一套规则，⛔ 不豁免）。
 #   ★ 反向自证见 `run_self_proof` ㉟（删链接 / 删「组完整性」小节 ⇒ rc=1 且点名 ④ALG）。
 ALGO_DOC_REL = "docs/graspo-algorithm.html"
-ALGO_CRITERION_TEXT = ("SFT / CPT / OPD 按各自公开的标准实现逻辑判断；"
+ALGO_CRITERION_TEXT = ("SFT / CPT / OPD 按各自公开的标准实现逻辑判断"
+                       "（以 HuggingFace Transformers 与 ms-swift 官方实现为准）；"
                        "GRASPO 按《GRASPO 算法说明》逐条判断（算法逻辑严禁改动）。")
 ALGO_DOC_LINK_HREF = 'href="graspo-algorithm.html"'
 ALGO_CRITERION_LINK = '<a href="graspo-algorithm.html">GRASPO 算法说明</a>'
@@ -2040,7 +2041,11 @@ def main():
     #     ⇒ 页面上不再有那段引文，豁免逻辑成为**死代码**，随块一并移除。
     #     ★ 扫描面**只增不减**：现在扫的是**全部可见正文**（⛔ 不挖任何豁免洞），
     #       阳性对照见 `run_self_proof` ⑫（注入即红）与 ⑯/⑮（⑮ 已随豁免下架，见该文件注）。
-    _prose = html.unescape(re.sub(r"<[^>]+>", " ", target_text))
+    # ★ 2026-10-24：主席逐字钉死的判据② 正文含「同口径读数」×2（授权摘句，见
+    #   `build_official.SANCTIONED_PHRASES`）；只挖该短语，词表与扫描面其余部分不动
+    #   （阳性对照：塞「旧口径：…」仍红）。
+    _prose = build_official.strip_sanctioned(
+        html.unescape(re.sub(r"<[^>]+>", " ", target_text)))
     _churn = []
     for _w, _why in build_official.DEV_CHURN_TERMS:
         if _w in _prose:

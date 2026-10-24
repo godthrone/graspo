@@ -4,7 +4,7 @@
  "source": "docs/capability-matrix.data.json（唯一真相源：档号/算法/形态/卡数/并行/subset_size/步数三件/lr/四条判据与阈值）+ samples/configs/matrix68/*.yaml（现读 max_epochs/save_steps/模型与并行）+ subsets-v2/M###.jsonl（现读行数）",
  "generator": "tests/e2e/generate_matrix68_manifest_source.py",
  "input_fingerprints": {
-  "data_sha256": "b2989b54dec525b2ca16fae9ce39f2e3a5324c1c610852eba63c83dbf2ac5598",
+  "data_sha256": "952c4716769d41e8c35e65d273894e4dd571f760ec0647c3e032510d1164bc8d",
   "data_path": "docs/capability-matrix.data.json",
   "config_dir": "samples/configs/matrix68",
   "config_dir_fingerprint_sha256": "31d2a5a682b8f55f801cd64ec60684af5b28eb9ad0b65fd579c5f78ec36ceb30",
@@ -63,13 +63,13 @@
    {
     "id": "C2",
     "title": "效果变好",
-    "text": "",
+    "text": "数据集完全正确率 = 与参考答案逐字段一致的样本数 ÷ 100；base = 同一基座未训练时的同口径读数，after = 训练后的同口径读数，每档训练前后各评一次。",
     "from_threshold": true
    },
    {
     "id": "C3",
     "title": "算法正确性检查通过",
-    "text": "SFT / CPT / OPD 按各自公开的标准实现逻辑判断；GRASPO 按《<a href=\"graspo-algorithm.html\">GRASPO 算法说明</a>》逐条判断（算法逻辑严禁改动）。SFT / CPT / OPD 另按公开标准核对损失函数与标签掩码的处理规则（OPD 另含教师信号的处理规则）。",
+    "text": "SFT / CPT / OPD 按各自公开的标准实现逻辑判断（以 HuggingFace Transformers 与 ms-swift 官方实现为准）；GRASPO 按《<a href=\"graspo-algorithm.html\">GRASPO 算法说明</a>》逐条判断（算法逻辑严禁改动）。SFT / CPT / OPD 另按公开标准核对损失函数与标签掩码的处理规则（OPD 另含教师信号的处理规则）。",
     "from_threshold": false
    },
    {

@@ -1772,10 +1772,12 @@ META_OVERRIDES: tuple[dict[str, Any], ...] = (
     #   平台方评测条件长括号与 SFT 的「与参考答案逐字段完全一致」括注按主席原文删除
     #   （评测口径改由数据件 `threshold` / `eval_caliber` 承载，判据文本不再重复）。
     {"path": "criteria_caliber.pass_criteria[1].text",
-     "value": "",
-     "why": ("★ 2026-10-23 主席原文重写：判据② 正文只剩「效果变好：」+ 四个算法小项；"
-             "删除平台方评测条件长括号与 SFT 的「与参考答案逐字段完全一致」括注"
-             "（数值与逐算法通过线一字未动，由页面小列表 + `threshold.by_method` 承载）")},
+     "value": ("数据集完全正确率 = 与参考答案逐字段一致的样本数 ÷ 100；"
+               "base = 同一基座未训练时的同口径读数，after = 训练后的同口径读数，"
+               "每档训练前后各评一次。"),
+     "why": ("★ 2026-10-24 主席原文：判据② 正文补「完全正确率与 base 定义」一句"
+             "（判定口径，⛔ 不提温度——温度由判据④ 与「公共超参」承载）；"
+             "四个算法小项与其数值/通过线一字未动")},
     # ★ 2026-10-22（判据③ 改写）：页面第 2 章判据③ 的那一句话 ↔ 数据件同一条文本必须逐字一致。
     #   GRASPO 一侧改指**人读口径件**《GRASPO 算法说明》（docs/graspo-algorithm.html，页面相对链接）；
     #   机核 = verify_matrix ④ALG（句子恰 1 次 + 链接在盘 + 新文档 7 锚点齐备）。
@@ -1785,7 +1787,8 @@ META_OVERRIDES: tuple[dict[str, Any], ...] = (
     #   机核：`verify_matrix` ④X-b（按**原文含标签**逐字比对）+ ④X-d（链接标记恰 1 次、
     #   去标签后与 `ALGO_CRITERION_TEXT` 逐字一致）；阳性对照：`run_self_proof` ㊱。
     {"path": "criteria_caliber.pass_criteria[2].text",
-     "value": ("SFT / CPT / OPD 按各自公开的标准实现逻辑判断；"
+     "value": ("SFT / CPT / OPD 按各自公开的标准实现逻辑判断"
+               "（以 HuggingFace Transformers 与 ms-swift 官方实现为准）；"
                "GRASPO 按《<a href=\"graspo-algorithm.html\">GRASPO 算法说明</a>》逐条判断"
                "（算法逻辑严禁改动）。SFT / CPT / OPD 另按公开标准核对损失函数与标签掩码"
                "的处理规则（OPD 另含教师信号的处理规则）。"),

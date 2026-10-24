@@ -59,12 +59,12 @@
         },
         {
           "title": "效果变好",
-          "text": "",
+          "text": "数据集完全正确率 = 与参考答案逐字段一致的样本数 ÷ 100；base = 同一基座未训练时的同口径读数，after = 训练后的同口径读数，每档训练前后各评一次。",
           "from_threshold": true
         },
         {
           "title": "算法正确性检查通过",
-          "text": "SFT / CPT / OPD 按各自公开的标准实现逻辑判断；GRASPO 按《<a href=\"graspo-algorithm.html\">GRASPO 算法说明</a>》逐条判断（算法逻辑严禁改动）。SFT / CPT / OPD 另按公开标准核对损失函数与标签掩码的处理规则（OPD 另含教师信号的处理规则）。"
+          "text": "SFT / CPT / OPD 按各自公开的标准实现逻辑判断（以 HuggingFace Transformers 与 ms-swift 官方实现为准）；GRASPO 按《<a href=\"graspo-algorithm.html\">GRASPO 算法说明</a>》逐条判断（算法逻辑严禁改动）。SFT / CPT / OPD 另按公开标准核对损失函数与标签掩码的处理规则（OPD 另含教师信号的处理规则）。"
         },
         {
           "title": "能推理",

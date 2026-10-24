@@ -579,6 +579,21 @@ DEV_CHURN_TERMS = (
     ("OOM", "内核术语（人话：「显存不足」）"),
 )
 
+#: ★★ 2026-10-24：**授权摘句**（与上述词表冲突时的唯一窄出口，⛔ 不是删词、⛔ 不是通配）。
+#:   病史/缘由：判据② 正文由主席逐字钉死（「…同口径读数…」×2，统计意义的合法用法），
+#:   而 `DEV_CHURN_TERMS` 把「口径」列为内部行话（含技术语境的「统计口径」）。
+#:   两条要求正面相撞 ⇒ 处置 = 只把这**一个短语**从扫描面挖掉：
+#:   词表一项未删、扫描照跑，任何其它语境（如「旧口径：…」）仍然红。
+#:   ★ 消费方（⛔ 不各写一份）：`verify_matrix` ④R、`scan_matrix_leaks` 两处同源引用本常量。
+SANCTIONED_PHRASES = ("同口径读数",)
+
+
+def strip_sanctioned(text: str) -> str:
+    """把**授权摘句**从扫描面挖掉（顺序替换；⛔ 不做正则/通配，避免扩大豁免面）。"""
+    for _p in SANCTIONED_PHRASES:
+        text = text.replace(_p, "")
+    return text
+
 
 #: ★ 修正轮 4（⚠③）：**内部证据路径形态**（数据件面）。
 #:   ★ 与 `scan_matrix_leaks.py` **同源引用本常量**（§1.4 单一真相源，⛔ 不另抄一份正则）。
@@ -1516,11 +1531,15 @@ def criteria_caliber(rows=None):
                       "最终检查点完整可加载、没有 NaN/Inf。")},
             # ★★ 判据② 的通过线**一律从 `threshold.by_method` 现取**（⛔ 不在此另写一份数值，
             #    §1.4 单一真相源）⇒ `from_threshold: True` 表示「本条的逐算法细则由数据现算」。
+            # ★ 2026-10-24：② 正文补「完全正确率与 base 定义」一句（判定口径，非阈值；⛔ 不提温度）。
             {"title": "效果变好",
-             "text": "",
+             "text": ("数据集完全正确率 = 与参考答案逐字段一致的样本数 ÷ 100；"
+                      "base = 同一基座未训练时的同口径读数，after = 训练后的同口径读数，"
+                      "每档训练前后各评一次。"),
              "from_threshold": True},
             {"title": "算法正确性检查通过",
-             "text": ("SFT / CPT / OPD 按各自公开的标准实现逻辑判断；"
+             "text": ("SFT / CPT / OPD 按各自公开的标准实现逻辑判断"
+                      "（以 HuggingFace Transformers 与 ms-swift 官方实现为准）；"
                       "GRASPO 按《<a href=\"graspo-algorithm.html\">GRASPO 算法说明</a>》"
                       "逐条判断（算法逻辑严禁改动）。SFT / CPT / OPD 另按公开标准核对损失函数与"
                       "标签掩码的处理规则（OPD 另含教师信号的处理规则）。")},

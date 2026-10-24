@@ -100,6 +100,9 @@ def scan(paths, denylist):
             hits.append((str(p), 0, "目标文件不存在"))
             continue
         for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+            # ★ 2026-10-24：授权摘句（主席逐字钉死的判据② 正文「同口径读数」×2）先挖掉，
+            #   词表与其余扫描面一字不动（同源常量，见 `build_official.SANCTIONED_PHRASES`）。
+            line = _bo.strip_sanctioned(line)
             for pat, why in PATTERNS + denylist:
                 m = re.search(pat, line)
                 if m:

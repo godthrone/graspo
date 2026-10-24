@@ -139,9 +139,9 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <section class="part" id="s1">
 <h2>1. 这是什么表</h2>
 <ul>
-<li>这是 <b>GRASPO 训练框架</b>的功能测试基准（蓝图），包括<b>测试方法</b>、<b>测试条件</b>与<b>测试结果</b>。</li>
-<li>测试结果基于<b>我们的多模态测试数据集</b>，<b>不保证</b>在您的数据集上也能达到同样效果。</li>
-<li>表内数字由<b>脚本</b>从数据文件填入；<b>结论与判据以本报告为准</b>。</li>
+<li>这是 <b>GRASPO 训练框架</b>的功能测试报告，包括<b>测试方法</b>、<b>测试条件</b>与<b>测试结果</b>。</li>
+<li>测试结果基于<b>平台方自有的多模态测试数据集</b>，<b>不保证</b>在您的数据集上也能达到同样效果。</li>
+<li>表内数字由<b>脚本</b>填入；<b>结论与判据以本报告为准</b>。</li>
 </ul>
 </section>
 
@@ -150,7 +150,7 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <h2>2. 测试方法</h2>
 <p><b>原则：</b>训练之后效果变好，才算「可用」。</p>
 <p class="criteria-label">下面四条是判定依据：第 4 章「是否通过」列按这四条合取判定。</p>
-<ol class="criteria"><li><span class="cn">①</span> <b>能完整跑完</b>：训练正常结束、无中断、无报错、退出码 0、跑完总训练轮数（Epoch）、最终检查点完整可加载、没有 NaN/Inf。</li><li><span class="cn">②</span> <b>效果变好</b>：<ul class="tight"><li>SFT（监督微调）：训练后数据集完全正确率提升至少 10.0 个百分点，判据 after − base ≥ +10.0 pp</li><li>GRASPO（强化）：训练后数据集完全正确率提升至少 5.0 个百分点，判据 after − base ≥ +5.0 pp</li><li>CPT（继续预训练）：训练 loss 正常下降、训练数据集完全正确率不下降，判据 after ≥ base（不劣化）；允许 after == base</li><li>OPD（蒸馏）：教师在训练数据集上的完全正确率，与学生未训练模型相比 ≥ +10.0 个百分点（教师 − 学生未训练模型 ≥ +10.0 pp）；学生训练后，训练数据集完全正确率提升至少 5.0 个百分点，判据 after − base ≥ +5.0 pp</li></ul></li><li><span class="cn">③</span> <b>算法正确性检查通过</b>：SFT / CPT / OPD 按各自公开的标准实现逻辑判断；GRASPO 按《<a href="graspo-algorithm.html">GRASPO 算法说明</a>》逐条判断（算法逻辑严禁改动）。SFT / CPT / OPD 另按公开标准核对损失函数与标签掩码的处理规则（OPD 另含教师信号的处理规则）。</li><li><span class="cn">④</span> <b>能推理</b>：LoRA 档合并后、全参档直接，用 vLLM 启动（温度=0），在训练数据集上完整推理一遍，能完整产出可解析的推理结果。</li></ol>
+<ol class="criteria"><li><span class="cn">①</span> <b>能完整跑完</b>：训练正常结束、无中断、无报错、退出码 0、跑完总训练轮数（Epoch）、最终检查点完整可加载、没有 NaN/Inf。</li><li><span class="cn">②</span> <b>效果变好</b>：数据集完全正确率 = 与参考答案逐字段一致的样本数 ÷ 100；base = 同一基座未训练时的同口径读数，after = 训练后的同口径读数，每档训练前后各评一次。<ul class="tight"><li>SFT（监督微调）：训练后数据集完全正确率提升至少 10.0 个百分点，判据 after − base ≥ +10.0 pp</li><li>GRASPO（强化）：训练后数据集完全正确率提升至少 5.0 个百分点，判据 after − base ≥ +5.0 pp</li><li>CPT（继续预训练）：训练 loss 正常下降、训练数据集完全正确率不下降，判据 after ≥ base（不劣化）；允许 after == base</li><li>OPD（蒸馏）：教师在训练数据集上的完全正确率，与学生未训练模型相比 ≥ +10.0 个百分点（教师 − 学生未训练模型 ≥ +10.0 pp）；学生训练后，训练数据集完全正确率提升至少 5.0 个百分点，判据 after − base ≥ +5.0 pp</li></ul></li><li><span class="cn">③</span> <b>算法正确性检查通过</b>：SFT / CPT / OPD 按各自公开的标准实现逻辑判断（以 HuggingFace Transformers 与 ms-swift 官方实现为准）；GRASPO 按《<a href="graspo-algorithm.html">GRASPO 算法说明</a>》逐条判断（算法逻辑严禁改动）。SFT / CPT / OPD 另按公开标准核对损失函数与标签掩码的处理规则（OPD 另含教师信号的处理规则）。</li><li><span class="cn">④</span> <b>能推理</b>：LoRA 档合并后、全参档直接，用 vLLM 启动（温度=0），在训练数据集上完整推理一遍，能完整产出可解析的推理结果。</li></ol>
 </section>
 
 <!-- ========================= 3. 测试条件 ========================= -->
@@ -159,13 +159,13 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <h3>条件说明</h3>
 <h4>数据集说明</h4>
 <ul class="tight">
-<li>训练数据：平台方自有、不公开的多模态训练集（图像 + 文本）；从 V5 语料中随机采样 100 条作为训练语料，<b>全部档位共用同一份</b>。</li>
-<li>评测集与训练集相同（即上述同一份 100 条）。本报告不关注泛化性能，只关注训练框架本身的训练效果和正确性。</li>
+<li>训练数据：平台方自有、不公开的 <b>100 条</b>多模态训练语料（图像 + 文本），<b>全部档位共用同一份</b>。</li>
+<li>评测集与训练集相同（即上述同一份语料）。本报告不关注泛化性能，只关注训练框架本身的训练效果和正确性。</li>
 </ul>
 <h4>模型说明</h4>
 <ul class="tight">
 <li>基础模型：<code>Qwen3.5-9B</code>、<code>Qwen3.8-27B</code>。</li>
-<li>OPD 教师：<code>Qwen3.8-27B</code> 在 <b>SFT / LoRA / dp=1</b> 这一档训练完成后的产物（不是基座权重本身）。</li>
+<li>OPD 教师：<code>Qwen3.8-27B</code> 在 <b>SFT / LoRA / dp=1</b> 这一档训练完成后的产物（不是基座权重本身）；教师模型以 vLLM 服务方式单独部署在测试卡之外的卡上，<b>不占用表中「卡数」</b>，表中卡数只计被训练的学生模型。</li>
 </ul>
 <h4>LoRA 说明</h4>
 <ul class="tight">
@@ -283,6 +283,14 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <li>训练随机种子：<code>42</code></li>
 <li>运行期显存监控采样间隔（秒）：<code>2.0</code></li>
 <li>评测温度（vLLM 解码）：<code>0</code>（贪心）</li>
+</ul>
+<h4>运行环境</h4>
+<ul class="tight">
+<li>框架版本：0.28.11（本报告实测对应提交 <code>e020460</code>）</li>
+<li>ms-swift：<code>4.5.3</code></li>
+<li>vLLM：<code>0.22.0</code></li>
+<li>CUDA：<code>13.2</code></li>
+<li>NVIDIA 驱动：<code>595.91</code></li>
 </ul>
 </section>
 
