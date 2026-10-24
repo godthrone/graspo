@@ -72,6 +72,12 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+# ★ 2026-10-23（基准件唯一 + 按轮副本）：路径常量的**唯一真相源**是同目录 `paths.py`
+#   （§1.4：⛔ 不在本文件再写一份「基准件文件名 / 副本命名模板」字面量）。
+#   本文件其余常量是**仓根相对**字符串（与 `DATA_JSON` 等同表），此处取的也是相对形态。
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import paths as _paths  # noqa: E402
+
 # ── 事实常量（唯一来源：本包输入）─────────────────────────────────────────────
 #: 切换前的 100 条冻结语料 sha256（mini 冒烟集 100 条；68 个 M 档在盘实体的现值）。
 OLD_SOURCE_SHA256 = "594d41b0b8af3dc77cfad45768eca116c3eb1e2314ce33b19ac3e12052669cad"
@@ -92,8 +98,8 @@ assert len(M_TIERS) == 68
 #: 顶层事实件（只读判定用；人读件本工具**不改**）。
 DATA_JSON = "docs/capability-matrix.data.json"
 DATA_JSON_DATED = "docs/capability-matrix-20261022.data.json"
-HTML_FROZEN = "docs/GRASPO 训练框架功能测试报告.html"
-HTML_DATED_TMPL = "docs/GRASPO 训练框架功能测试报告-{date}.html"
+HTML_FROZEN = _paths.REL_BASELINE_HTML            # 基准人读件（无空格 · 444 · 结果永不写入）
+HTML_DATED_TMPL = _paths.REL_ROUND_HTML_FMT        # 按轮副本（每轮新建；改名只改 paths.py 一处）
 MANIFEST = "subsets-v2/subsets-v2.manifest.json"
 OVERWRITE_LOG = "subsets-v2/subsets-v2.overwrite-log.jsonl"
 MAKE_SUBSETS = "tests/e2e/make_subsets.py"
@@ -441,12 +447,12 @@ def semantic_followups() -> list[dict]:
          "locator": "各 1 处旧 sha",
          "issue": "旧 54 档世代的历史留痕，与 68 档无关",
          "action": "⛔ 不改（改了会伪造历史）"},
-        {"path": "docs/GRASPO 训练框架功能测试报告.html",
+        {"path": _paths.REL_BASELINE_HTML,
          "locator": "(整文件)",
          "issue": ("实测 data_source / version_anchor_sha256 **都不在渲染字段里** ⇒ 用新数据件重渲染，"
                    "副本与原版**逐字节相同**（本包演练已实证）"),
          "action": "无需改人读件；带日期副本可由 render_matrix 重渲染"},
-        {"path": "docs/GRASPO 训练框架功能测试报告.html",
+        {"path": _paths.REL_BASELINE_HTML,
          "locator": "(未决)",
          "issue": "chain_dec / chain_err 的真实语义仍未证（corpus-report ⑤.1）⇒ D1 分层的解释口径需另行裁定",
          "action": "与语料切换解耦；本工具不触碰"},

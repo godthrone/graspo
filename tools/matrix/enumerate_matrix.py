@@ -44,6 +44,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+# ★ 2026-10-23（基准件唯一 + 按轮副本）：路径的**唯一真相源** = 同目录 `paths.py`（宪法 §1.4）。
+#   ⛔ 本文件不再自写「基准件文件名 / 副本命名模板」字面量（病史：主席改名去空格后，生成端仍注入
+#   带空格的旧名 ⇒ 重跑本脚本会把数据件的 `human_view_path` 悄悄改回一个不存在的路径）。
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import paths as _PATHS  # noqa: E402
+
 # ════════════════════════════════════════════════════════════════════════════
 # §0 · 路径与常量
 # ════════════════════════════════════════════════════════════════════════════
@@ -1717,7 +1723,12 @@ META_OVERRIDES: tuple[dict[str, Any], ...] = (
                "（本页即测试结论本身；人读件为唯一真相源，可逐字节重建）"),
      "why": "同上"},
     {"path": "authority.human_view_path",
-     "value": "docs/GRASPO 训练框架功能测试报告.html",
+     # ★ 2026-10-23（基准件唯一 + 按轮副本）：本字段是**路径**、且就是机核用来比对页面路径的那一个
+     #   ⇒ 取值一律取 `paths.py` 的基准件常量（宪法 §1.4 唯一真相源；⛔ 本文件不再抄一份路径字面量）。
+     #   ★ 其余三条 `authority.*` 是**人读散文**（含「（唯一真相源 / 权威…）」等说明文字），
+     #     其旧名残留属本包**保留项**（见交付报告 ⑦）：散文改字要连带重渲染基准件，
+     #     而基准件已 444 冻结（sha 见 `paths.py`）⇒ 属「基准件内容改写」授权面，不在本包。
+     "value": _PATHS.REL_BASELINE_HTML,
      "why": "同上（本字段就是机核用来比对页面路径的那一个）"},
     {"path": "authority.direction",
      "value": ("结果 JSON → capability-matrix.data.json（仅本页的渲染输入，非权威）→ "

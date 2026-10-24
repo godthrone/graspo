@@ -17,7 +17,7 @@
       "human_view": "docs/GRASPO 训练框架功能测试报告.html（本页即测试结论本身；人读件为唯一真相源，可逐字节重建）",
       "generator": "tools/matrix/render_matrix.py",
       "data_path": "docs/capability-matrix.data.json",
-      "human_view_path": "docs/GRASPO 训练框架功能测试报告-20261022.html",
+      "human_view_path": "docs/GRASPO训练框架功能测试报告-20261022.html",
       "generation_marker": "generated",
       "direction": "结果 JSON → capability-matrix.data.json（仅本页的渲染输入，非权威）→ 人读视图 docs/GRASPO 训练框架功能测试报告.html（唯一真相源；单方向，禁止互推）"
     },

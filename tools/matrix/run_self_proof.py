@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# ⚠ 退役说明（2026-10-20 起）：人读件 docs/GRASPO 训练框架功能测试报告.html 自此为**手写真相源**（写好了就不动，脚本只负责把第 4 章表格数字从数据件填进去）；本文件**不再作为交付门禁**，不再要求 PASS，也不为它调整文档文字。保留仅供参考。
+# ⚠ 退役说明（2026-10-20 起）：人读件 docs/GRASPO训练框架功能测试报告.html（现为**基准件**，2026-10-23 改名）自此为**手写真相源**（写好了就不动，脚本只负责把第 4 章表格数字从数据件填进去）；本文件**不再作为交付门禁**，不再要求 PASS，也不为它调整文档文字。保留仅供参考。
 """run_self_proof.py — 功能矩阵正式件的自证（全组 `PASS` 才算通过）。
 
 ① 空数据（结果列全空）渲染 + 校验（--expect-empty）  期望 PASS
@@ -27,6 +27,9 @@ import build_official as _bo   # ★ 结论列契约与生成端**同源**（⛔
 import verify_matrix as _vm
 import render_matrix as _render   # ★ 列结构/分区常量**同源**（⛔ 不手抄列数）
 import gen_configs          # ★ 统一口径回落表（㉑ 与生成端**同源**，⛔ 不复制一份）
+# ★ 2026-10-23（基准件唯一 + 按轮副本）：基准件路径的**唯一真相源**是同目录 `paths.py`
+#   （§1.4：⛔ 本文件不再写「基准人读件文件名」字面量）。
+import paths as _paths      # noqa: E402
 RESULT_KEYS = list(_bo.EXP_DATA_KEYS)   # ★ 精简轮 2：实测读数列由生成端定义（⛔ 不再手抄）
 
 #: ★★ 2026-10-22 退役清单（**逐条留痕、每次运行都打印**）：这些自证项的**对象**已随
@@ -226,7 +229,7 @@ def main():
 
         # ①b 在盘正式件
         rc, out = run(["tools/matrix/verify_matrix.py", "--template", "tools/matrix/template.html",
-                       "--data", "docs/capability-matrix.data.json", "--html", "docs/GRASPO 训练框架功能测试报告.html"])
+                       "--data", "docs/capability-matrix.data.json", "--html", _paths.REL_BASELINE_HTML])
         steps.append(("①b 在盘正式件 verify", rc, out))
         checks["①b 在盘正式件 verify PASS"] = rc == 0
 
@@ -247,7 +250,7 @@ def main():
         checks["② 假数据 verify PASS"] = rc == 0
 
         # ③ 手改 1 个字符（复制件）
-        html = (DOCS / "GRASPO 训练框架功能测试报告.html").read_text(encoding="utf-8")
+        html = _paths.BASELINE_HTML.read_text(encoding="utf-8")
         # ★ 2026-10-22：锚点改为**不依赖具体档号**（病史：写死 `T001` ⇒ 数据件换代成 `M0xx` 后
         #   锚点静默不命中、自证直接崩）。取数据件**首行档号**现算，并把最后一个字符改成同长异字符
         #   ⇒ 改的永远只是 1 个字符、且一定落在表格里。
@@ -265,7 +268,7 @@ def main():
         checks["③ FAIL 报出字节偏移/行/列"] = ("字节偏移" in out and "行 " in out)
 
         # ④ 表格之外逐字节不变：只改 rows 里的数值 ⇒ diff 必须完全落在矩阵表内
-        base_html = (DOCS / "GRASPO 训练框架功能测试报告.html").read_text(encoding="utf-8")
+        base_html = _paths.BASELINE_HTML.read_text(encoding="utf-8")
         mut = json.loads(json.dumps(data, ensure_ascii=False))
         changed = 0
         _mut_tier = str(data["rows"][0]["tier"])      # ★ 同上：不写死档号
@@ -363,7 +366,7 @@ def main():
         #   仍受 ④D「逐格 == 数据件」机核（数据件 `rows[].note` 全为空串 ⇒ 页面按空值占位符渲染）。
         #   做法 = **只把页面**第一格备注改成有内容、数据件一个字不动 ⇒ verify 必红且点名 ④D；
         #   ⛔ 这证明的是「备注格不能手改」这条仍在生效的机核，不是旧契约文本。
-        nb_html = (DOCS / "GRASPO 训练框架功能测试报告.html").read_text(encoding="utf-8")
+        nb_html = _paths.BASELINE_HTML.read_text(encoding="utf-8")
         # ★ 2026-10-22（复核条目 5）：空备注单元格统一渲染为占位符 `—`（与其余数据列一致）
         #   ⇒ 锚点随渲染形态同步（⛔ 不是放宽：手改一格仍会让 ④D 逐格比对失败）。
         _note_cell = '<td class="g-data" data-col="note">—</td>'
@@ -537,7 +540,7 @@ def main():
         rc, out = run(["tools/matrix/render_matrix.py", "--template", "tools/matrix/template.html",
                        "--data", str(tmp / "mut2.data.json"), "--out", str(tmp / "mut2.html")])
         steps.append(("⑲ 只改结果字段后重渲染", rc, out))
-        base_html2 = (DOCS / "GRASPO 训练框架功能测试报告.html").read_text(encoding="utf-8")
+        base_html2 = _paths.BASELINE_HTML.read_text(encoding="utf-8")
         mut2_html = (tmp / "mut2.html").read_text(encoding="utf-8")
         _sd = _vm.static_region_diff(mut2_html, base_html2)
         checks["⑲a 表格以外逐字节不变（静态区）"] = (not _sd)
@@ -583,7 +586,7 @@ def main():
         if _uni_fails:
             print(f"  [debug] ㉑ 统一超参并集不变量报红: {_uni_fails}")
         # ㉑c ★ 同一判据对**在盘 HTML** 也要全过（⛔ 不是只看模板）
-        _html_txt = (ROOT / "docs" / "GRASPO 训练框架功能测试报告.html").read_text(encoding="utf-8")
+        _html_txt = _paths.BASELINE_HTML.read_text(encoding="utf-8")
         _uni_fails_html = _vm.uniform_invariant_failures(_html_txt, _tpl, data)
         checks["㉑c 同一并集不变量对在盘 HTML 全过"] = (not _uni_fails_html)
         if _uni_fails_html:
@@ -652,7 +655,7 @@ def main():
         if _lora_fails:
             print(f"  [debug] ㉑e 模板面报红: {_lora_fails}")
         _lora_fails_html = _vm.lora_claim_failures(
-            (ROOT / "docs" / "GRASPO 训练框架功能测试报告.html").read_text(encoding="utf-8"), data)
+            _paths.BASELINE_HTML.read_text(encoding="utf-8"), data)
         checks["㉑e2 同一 LoRA 判据对在盘 HTML 全过"] = (not _lora_fails_html)
         if _lora_fails_html:
             print(f"  [debug] ㉑e2 在盘 HTML 报红: {_lora_fails_html}")
@@ -870,7 +873,7 @@ def main():
         #   ③ 往第 3 章塞一句「见注 7」⇒ 必须变红（注块已删，「见注」出现即红）。
         #   ⚠ 上一轮这条是"删掉列头披露 ⇒ 红"（守披露在位）；方向随用户口径整体翻转后，
         #     守的是"这类话不许出现"，故自证同步改成"塞进去 ⇒ 红"。
-        _ch3_orig = (DOCS / "GRASPO 训练框架功能测试报告.html").read_text(encoding="utf-8")
+        _ch3_orig = _paths.BASELINE_HTML.read_text(encoding="utf-8")
         for _tag, _mut, _want in (
                 ("㉙a 塞回「（配置侧尚未下发）」", _ch3_orig.replace(
                     "<h3>训练超参</h3>", "<h3>训练超参（配置侧尚未下发）</h3>", 1), "④P"),
@@ -959,7 +962,7 @@ def main():
         #   ㉞ 塞回「<h3>评测条件</h3>」小节标题 ⇒ ④TEMP 必须红（第 2 章两块已按用户口径
         #      整块删除，页面「评测条件」命中数须为 0；⛔ 原「删清单表 ⇒ ④CL 报红」随对象
         #      已不存在一并删除 —— 不是放宽：删掉的对象改为「不得复活」这一条正向守）。
-        _page = (DOCS / "GRASPO 训练框架功能测试报告.html").read_text(encoding="utf-8")
+        _page = _paths.BASELINE_HTML.read_text(encoding="utf-8")
         _muts31 = [
             # ★ 2026-10-22（备注清空轮）：原注入锚点「估算 33.24/78.0 GiB（可行）」在**备注列**里，
             #   备注按主席令清空后该串已不在页面 ⇒ 改用 `inject_markup` 的稳定锚点链
@@ -1004,7 +1007,7 @@ def main():
             and "主席 2026-10-22" in _vm.RETIRED_2026_10_22.get("④SH 第 3 章形状取值规则", ""))
         rc, out = run(["tools/matrix/verify_matrix.py", "--template", "tools/matrix/template.html",
                        "--data", "docs/capability-matrix.data.json",
-                       "--html", "docs/GRASPO 训练框架功能测试报告.html"])
+                       "--html", _paths.REL_BASELINE_HTML])
         steps.append(("㉝a 在盘件（四件套已按令删除）⇒ verify（应 PASS）", rc, out))
         checks["㉝a 词已删而 verify 仍 rc=0（退役面挡住必然失败，不误报）"] = (rc == 0)
         checks["㉝a 即便 rc=0，FAIL 清单里也没有 ④SH"] = (
@@ -1088,7 +1091,7 @@ def main():
         _algo_path35 = ROOT / _vm.ALGO_DOC_REL
         checks["㉟ 算法说明件在盘（夹具前置）"] = _algo_path35.exists()
         _algo_txt35 = _algo_path35.read_text(encoding="utf-8") if _algo_path35.exists() else ""
-        _page35 = (DOCS / "GRASPO 训练框架功能测试报告.html").read_text(encoding="utf-8")
+        _page35 = _paths.BASELINE_HTML.read_text(encoding="utf-8")
         _link35 = _vm.ALGO_CRITERION_LINK
         checks["㉟ 判据③ 链接在位（夹具前置）"] = (_page35.count(_link35) == 1)
         _nolink35 = _page35.replace(_link35, "GRASPO 算法说明", 1)
@@ -1109,7 +1112,7 @@ def main():
         (tmp / "algo35_nogroup.html").write_text("".join(_kept35), encoding="utf-8")
         rc, out = run(["tools/matrix/verify_matrix.py", "--template", "tools/matrix/template.html",
                        "--data", "docs/capability-matrix.data.json",
-                       "--html", "docs/GRASPO 训练框架功能测试报告.html",
+                       "--html", _paths.REL_BASELINE_HTML,
                        "--algo-doc", str(tmp / "algo35_nogroup.html")])
         steps.append(("㉟b 删掉算法说明件「组完整性」小节后 verify（应 FAIL）", rc, out))
         checks["㉟b 删「组完整性」小节 ⇒ verify 变红"] = (rc == 1)

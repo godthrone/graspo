@@ -31,9 +31,12 @@ from pathlib import Path
 #      而 ④R 只扫渲染后正文 ⇒ `docs/capability-matrix.data.json`（**发布件**）这一面无机检。
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import build_official as _bo    # noqa: E402  （同目录，纯常量与纯函数，⛔ 无副作用）
+import paths as _paths          # noqa: E402  （同目录；★ 基准件/副本路径的唯一真相源，§1.4）
 
 REPO = Path(__file__).resolve().parents[2]
-DEFAULT_TARGETS = ["docs/capability-matrix.data.json", "docs/GRASPO 训练框架功能测试报告.html"]
+# ★ 2026-10-23（基准件唯一 + 按轮副本）：默认扫描面里的「人读件」取 `paths.py` 的基准件常量
+#   （⛔ 不再在本脚本写一份路径字面量；基准件改名只需改 paths.py 一处）。
+DEFAULT_TARGETS = [_paths.REL_BASELINE_DATA, _paths.REL_BASELINE_HTML]
 #: ★ 2026-10-22（判据③ 指向算法说明）：`docs/graspo-algorithm.html` 是**手写人读件**，
 #:   判据③ 的链接目标 ⇒ 与另外两件**同等扫描**（§17.7「扫描不豁免」）。
 #:   机核 = 本脚本默认三件全扫；`verify_matrix` ④ALG 另有同源一道（算法说明件全文过同一套规则）。

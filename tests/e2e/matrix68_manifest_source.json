@@ -4,7 +4,7 @@
  "source": "docs/capability-matrix.data.json（唯一真相源：档号/算法/形态/卡数/并行/subset_size/步数三件/lr/四条判据与阈值）+ samples/configs/matrix68/*.yaml（现读 max_epochs/save_steps/模型与并行）+ subsets-v2/M###.jsonl（现读行数）",
  "generator": "tests/e2e/generate_matrix68_manifest_source.py",
  "input_fingerprints": {
-  "data_sha256": "512204f901b9a1172345f7e82d5329dab0967692a438b8350e60900331dbdde2",
+  "data_sha256": "b2989b54dec525b2ca16fae9ce39f2e3a5324c1c610852eba63c83dbf2ac5598",
   "data_path": "docs/capability-matrix.data.json",
   "config_dir": "samples/configs/matrix68",
   "config_dir_fingerprint_sha256": "31d2a5a682b8f55f801cd64ec60684af5b28eb9ad0b65fd579c5f78ec36ceb30",

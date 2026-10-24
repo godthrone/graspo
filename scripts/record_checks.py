@@ -20,7 +20,7 @@
 
 判据③④ 的语义与数据来源（定稿文档为唯一真相源，⛔ 本文件不另立口径）：
 
-  ④ **能推理**（`docs/GRASPO 训练框架功能测试报告.html` 第 2 章判据④）：
+  ④ **能推理**（`docs/GRASPO训练框架功能测试报告.html` 第 2 章判据④）：
      「LoRA 档合并后、全参档直接，用 vLLM 启动（温度=0），在训练数据集上完整推理一遍，能完整产出可解析的
      推理结果」。⇒ 数据源 = 评测产物 `<EVAL_DIR>/.local/reports/after/eval_report.json`
      （`src/graspo/eval/schema.py` 的 `graspo-eval-report-1` 契约）。逐条判：

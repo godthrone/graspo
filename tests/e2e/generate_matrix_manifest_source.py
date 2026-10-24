@@ -28,7 +28,7 @@
          供 ``tests/e2e/run_matrix54_source.sh`` 做**单档进程作用域**的读取源切换。
          既有字段一个都没删、没改语义 ⇒ 老消费者（``collect_results.py``）不受影响。
 
-★ 步数真值（逐条有代码依据，见 ``docs/GRASPO 训练框架功能测试报告.html`` §1 与
+★ 步数真值（逐条有代码依据，见 ``docs/GRASPO训练框架功能测试报告.html`` §1 与
   ``.local/hb-workspace/20260923-analysis/task-config-freeze-v2/changes.md`` §1）::
 
       ★★ 2026-10-17（M12/M13）：口径改为**运行期切片语义**（⛔ 旧式已废）::

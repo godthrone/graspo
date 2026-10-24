@@ -124,6 +124,25 @@ POLICY: dict[str, Spec] = {
         "★ 本件不是渲染链入口（渲染 = render_matrix.py），此处只做语法/CLI 冒烟（--help ⇒ rc=0）",
     ),
     "tools/matrix/gen_configs.py": Spec(HELP, "矩阵数据 → 测试 yaml 生成器（确定性；禁手改 yaml）"),
+    # ★ 补登记（2026-10-23「基准件唯一 + 按轮副本」轮）：矩阵链**路径唯一真相源**（宪法 §1.4）——
+    #   基准件 / 按轮副本的命名与路径、基准件冻结 sha、权限约定，并 `--sh` 导出一组 `PATHS_*` 赋值供 bash
+    #   侧 `eval`（各脚本 ⛔ 不再各写一份路径字面量）。**纯读**：`--help` / 人读一览 / `--sh` 均零写入；
+    #   唯一写面是显式 `--set-human-view-path`（只改**副本**数据件 `meta.authority.human_view_path` 那一行）。
+    "tools/matrix/paths.py": Spec(
+        HELP,
+        "矩阵链路径唯一真相源（基准件/按轮副本命名与路径 + 基准件冻结 sha + 权限约定 + `--sh` 导出）；"
+        "纯读，唯一写面是显式 `--set-human-view-path`（只改副本数据件一行）",
+    ),
+    # ★ 补登记（2026-10-23 同批）：**开新一轮**入口（非交互 · 幂等）—— ① 校验基准件 sha256 与 444
+    #   ⇒ ② `cp -p` 建当日人读副本 644 ⇒ ③ 建当日数据副本 644 且 `human_view_path` 指向该副本 ⇒
+    #   ④ 打印下一步命令；副本已存在则**只校验不覆盖**（同参重跑 rc=0、零字节变化）。
+    #   ⛔ 永不写基准件、⛔ 不做任何 git 操作、⛔ 不跑训练不占卡。跑一次会真建副本（写 docs/）⇒
+    #   冒烟只做 `bash -n` + `--help`（打印用法、rc=0、零写入）。
+    "tools/matrix/new_round.sh": Spec(
+        SH_HELP,
+        "开新一轮入口（非交互·幂等）：校验基准件 sha+权限 ⇒ 派生当日副本对（人读件/数据件 644，"
+        "数据件 human_view_path 指向副本）；⛔ 不写基准件、⛔ 无 git 操作。跑一次会真建副本 ⇒ 冒烟只做 --help",
+    ),
     # ★ 补登记（2026-10-22 基线轮）：68 档开跑前就绪闸门 —— **十条**口径（档号集合 / LoRA 三参+目标整块 /
     #   子集 size 与在盘 sha / 全参必分片 / native 开关 / DeepSpeed 禁用 + R1-3 交叉断言 ⑦身份同源 /
     #   ⑧并行形状×卡数 / ⑨全参真分片 / ⑩步数子集不滞后）；argparse CLI ⇒ --help 冒烟。
@@ -139,6 +158,14 @@ POLICY: dict[str, Spec] = {
     "tools/matrix/switch_corpus.py": Spec(
         HELP,
         "语料切换工具：默认 --dry-run 只出计划不写盘，--apply 才落盘且带备份/自检/回滚",
+    ),
+    # ★ 补登记（2026-10-24 判据③ 轮）：GRASPO 逐档签署件生成器 —— 判据③「按《算法说明》逐条判断」
+    #   的**唯一产出者**（8 条条文从算法说明第 9 节现解析 / 档集合从 matrix68 清单现算 / 证据必须外部给）。
+    #   默认只出计划不写盘，--apply 才落盘；缺证据、有条目 verdict=false、档号不属于 GRASPO 集合、
+    #   证据坐标不可核 ⇒ rc=2 且**零写入**。跑一次 --apply 会写 samples/configs/matrix68-checks/ ⇒ 冒烟只做 --help。
+    "tools/matrix/sign_graspo_invariants.py": Spec(
+        HELP,
+        "GRASPO 判据③ 签署件生成器（第 9 节 8 条不变式逐条取证；缺证据即拒签 rc=2、零写入）",
     ),
     # ★ 补登记（2026-10-22 基线轮）：回填防呆 wrapper —— 钉死「带日期副本对」与 .local 台账，指向仓内
     #   原版（数据件或人读件）一律 rc=2 拒起。跑一次会真回填（写数据件/HTML）⇒ 冒烟只做 --help 与 bash -n。

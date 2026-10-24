@@ -60,6 +60,10 @@ from pathlib import Path
 TOOL_DIR = Path(__file__).resolve().parent
 ROOT = TOOL_DIR.parents[1]
 
+# ★ 2026-10-23（基准件唯一 + 按轮副本）：人读件文件名/路径的唯一真相源 = 同目录 `paths.py`（宪法 §1.4）。
+sys.path.insert(0, str(TOOL_DIR))
+import paths as _paths  # noqa: E402
+
 
 #: ★★ 判据类型名的**唯一真相源** = `src/graspo/eval/thresholds.KNOWN_CRITERIA`
 #:   —— 本文件⛔ 不再抄第三份名字表（病史：`delta_pp → gain_pp` 改名时本文件漏改，
@@ -834,11 +838,12 @@ def run_cmd(args):
 def default_html_out(data_path: Path, matrix) -> Path:
     """`--html-out` 缺省：数据件同目录下 `meta.authority.human_view_path` 的 basename。
 
-    ⇒ 正式数据件 → `docs/GRASPO 训练框架功能测试报告.html`；数据件副本在 /tmp → 产物也在 /tmp
-    （⛔ 不会把演练产物写回 docs/）。
+    ⇒ 正式数据件 → `docs/GRASPO训练框架功能测试报告.html`；数据件副本在 /tmp → 产物也在 /tmp
+    （⛔ 不会把演练产物写回 docs/）。缺 `human_view_path` 时的兜底名取 `paths.py` 的基准件常量
+    （宪法 §1.4：⛔ 本文件不再自写一份基准件文件名）。
     """
     hv = (((matrix.get("meta") or {}).get("authority") or {}).get("human_view_path") or "")
-    name = Path(str(hv)).name or "GRASPO 训练框架功能测试报告.html"
+    name = Path(str(hv)).name or _paths.BASELINE_HTML_NAME
     return Path(data_path).parent / name
 
 

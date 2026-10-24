@@ -13,12 +13,18 @@ import re
 import sys
 from pathlib import Path
 
+# ★ 2026-10-23（基准件唯一 + 按轮副本）：人读件路径的唯一真相源 = 同目录 `paths.py`（宪法 §1.4），
+#   ⛔ 本文件不再自写「基准件文件名」字面量。病史：主席把基准件改名去空格后，本处仍指向带空格的旧名
+#   ⇒ 无参运行 `build()` 现读实物时直接 FileNotFoundError（`--help` 冒烟抓不到，只有真跑才炸）。
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import paths as _paths  # noqa: E402
+
 MARK = "## 冻结件"
 RULE = ("★ **本节由 `tools/matrix/freeze_table.py` 生成，⛔ 不得手工编辑**"
         "（★ 值一律来自实物：`sha256sum` ＋ `wc -c`）。")
 ITEMS = (
-    ("数据", "docs/capability-matrix.data.json"),
-    ("矩阵 HTML", "docs/GRASPO 训练框架功能测试报告.html"),
+    ("数据", _paths.REL_BASELINE_DATA),
+    ("矩阵 HTML", _paths.REL_BASELINE_HTML),
     ("里程碑快照", "docs/capability-matrix-milestone-20261014-v2.html"),
 )
 

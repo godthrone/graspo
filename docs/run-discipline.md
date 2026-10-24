@@ -329,9 +329,19 @@ python3 $TREE/scripts/run_guards.py cards-busy --ps-file /tmp/ps.txt --inspect-f
 ## 19. 判据③④ 的判定与证据（谁产出、放哪、缺了会怎样）
 
 **依据（唯一真相源，⛔ 本文件不另立判据）**：判据③④ 原文见
-`docs/GRASPO 训练框架功能测试报告.html` **第 2 章**；GRASPO 的"逐条判断"清单 = 
+`docs/GRASPO训练框架功能测试报告.html` **第 2 章**；GRASPO 的"逐条判断"清单 = 
 `docs/graspo-algorithm.html` **第 9 节 不变式清单**（共 8 条）。判据② 的评测读数仍看第 2 章与
 `docs/capability-matrix.data.json` 的 `meta.criteria_caliber`。
+
+### 19.0 判据①「跑完」= 跑满 Epoch（2026-10-23 对齐第 2 章原文）
+
+**判据① = 跑满 Epoch；步数仅作台账。** 通过条件 =
+`run_result.exit_code == 0` ∧ `run_result.epochs_completed ≥ run_result.epochs_planned`
+（`epochs_planned` = 清单该档 `max_epochs`）∧ `run_result.final_ckpt_loadable == true`
+∧ `run_result.nan_or_inf_detected == false`。`steps_actual` 仍必填并回填进「实验数据·实跑步数」列，
+但**不参与**通过判定。epoch 读数来源 = `<run-dir>` 下的 `trainer_state.json`（native / ms-swift 同形）
+或 `events.jsonl` 的 `epoch_summary`（native）；读不到 ⇒ 结果 json 写 `null` ⇒ 回填器判 `unknown`
+（fail-closed，⛔ 不许回落成"实跑步数 == 计划步数"比较）。
 
 **通道（只有这一条，⛔ 没有第二个入口）**：
 
@@ -352,7 +362,7 @@ python3 $TREE/scripts/run_guards.py cards-busy --ps-file /tmp/ps.txt --inspect-f
 ### 19.1 判据④「能推理」= 自动判定（数据源：评测报告）
 
 数据源：`<EVAL_DIR>/.local/reports/after/eval_report.json`（`graspo-eval-report-1` 契约，
-见 `src/graspo/eval/schema.py`）。判据④ 的四个条件**同时**成立才算通过：
+见 `src/graspo/eval/schema.py`）。判据④ 的六个条件**同时**成立才算通过：
 
 | # | 条件 | 字段（证据） |
 |---|---|---|
@@ -360,6 +370,8 @@ python3 $TREE/scripts/run_guards.py cards-busy --ps-file /tmp/ps.txt --inspect-f
 | 2 | 评测温度为 0 | `decoding.temperature == 0.0`（算法说明 §9 第 4 条：评测温度恒 0、入口不提供覆盖参数） |
 | 3 | 在训练数据集上完整推理一遍 | `summary.sample_count_total ==` 清单该档 `data.subset_size`（本矩阵 100）∧ `dataset.sample_count_requested` 同值 ∧ `total == len(samples)` |
 | 4 | 无请求级失败 ∧ 输出可解析 | `summary.sample_count_error == 0` ∧ 逐样本「无 `error` ∧ 无 `parse_error` ∧ `pred_name` 非空」的条数 == 期望条数 |
+| 5 | LoRA 档必须是**合并后**的产物 | `model.export_format ∈ {peft-adapter, graspo-native, native-rank}` ∧ `model.path ≠ model.checkpoint_path`，或目录名命中合并落点 `merged-hf-*`；全参档不适用（记通过并注明）。缺证据 ⇒ **不写该键** |
+| 6 | 必须**用 vLLM 启动** | 报告 `engine`（含 vllm）或 `model.served_name` 非空（= vLLM `--served-model-name`）。缺两者 ⇒ **不写该键**；`engine` 明确非 vLLM ⇒ 写 `false` |
 
 - `parse_error` = 有输出但 `arguments` 串解析不出（`src/graspo/eval/criteria.py::extract_prediction`）；
   `pred_name` 空 = 没产出结构化工具调用 —— 两者都算"不可解析"。
@@ -498,10 +510,20 @@ python3 $TREE/scripts/run_guards.py cards-busy --ps-file /tmp/ps.txt --inspect-f
 - ⛔ 判据③④ 的结论**只落 `readings.json`**（及其派生结果 json）；人读件只由回填链写入，
   ⛔ 不得绕过回填直接改数据件/人读件（见本文件 §19 与 `tools/matrix/backfill_dated.sh` 的落点闸门）。
 
+### 19.5 CPT 的判据② = 「训练 loss 正常下降」∧「after ≥ base」
+
+loss 读数由 `scripts/make_result_json.py` 从 `trainer_state.json` 的 `log_history[*].loss`
+（ms-swift/HF）或 `events.jsonl` 的 `train_step.optimize.loss_mean`（native）抽成
+`eval.loss_curve{n, first, last, min, series, …}`；回填器用
+`src/graspo/core/result_judge.judge_cpt_loss` 的**同一口径**判定（窗口 =
+`min(max(3, round(n × 0.10)), n)`，判定式 = **终窗均值 < 起窗均值**，严格小于）。
+缺 `eval.loss_curve.series` ⇒ `unknown`（fail-closed）；loss 未下降 ⇒ `fail`。
+⛔ 不得另立阈值、不得把"缺 loss 读数"当成通过。
+
 ## 20. OPD 教师侧评测（判据② 的教师读数：谁跑、跑什么、放哪、缺了会怎样）
 
 **依据（唯一真相源，⛔ 本文件不另立判据与阈值）**：
-- 判据② 原文（`docs/GRASPO 训练框架功能测试报告.html` **第 2 章**）：
+- 判据② 原文（`docs/GRASPO训练框架功能测试报告.html` **第 2 章**）：
   「OPD（蒸馏）：教师在训练数据集上的完全正确率，与学生未训练模型相比 ≥ +10.0 个百分点
   （教师 − 学生未训练模型 ≥ +10.0 pp）；学生训练后，训练数据集完全正确率提升至少 5.0 个百分点」。
 - 教师身份（同一文档 **第 3 章「模型说明 · OPD 教师」**）：教师 = **27B 在 SFT / LoRA / dp=1
