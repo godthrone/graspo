@@ -266,7 +266,7 @@ footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:v
 <tr><td>SFT</td><td>无额外算法级开关（只用监督信号训练）。</td></tr>
 <tr><td>GRASPO</td><td>奖励类型 <code>reward.kind=graspo</code>；每个提示的 rollout 组大小 <code>rollout_group_size=8</code>（一次采 8 条）；rollout 队列批 <code>rollout_queue_batch_size=8</code>；rollout 采样温度 <code>temperature=1.0</code>（评测温度固定为 0，见「公共超参」）；策略比裁剪 <code>policy_ratio_clip_eps=0.2</code>。</td></tr>
 <tr><td>CPT</td><td>对整条序列计算 loss（<code>pretrain.loss_scale=all</code>）；不套对话模板（<code>pretrain.use_chat_template=false</code>）。</td></tr>
-<tr><td>OPD</td><td>教师模型权重在使用间隙换出到 CPU（<code>offload_teacher_model=true</code>）；教师模型身份见本章「模型说明」。</td></tr>
+<tr><td>OPD</td><td>教师模型在本地加载时，权重在使用间隙换出到 CPU（<code>offload_teacher_model=true</code>）；27B 教师改为 vLLM 服务方式独立部署、不占表中卡数（见本章「模型说明」）。</td></tr>
 </tbody>
 </table>
 <h3>公共超参</h3>
