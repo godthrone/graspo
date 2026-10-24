@@ -4,10 +4,10 @@
  "source": "docs/capability-matrix.data.json（唯一真相源：档号/算法/形态/卡数/并行/subset_size/步数三件/lr/四条判据与阈值）+ samples/configs/matrix68/*.yaml（现读 max_epochs/save_steps/模型与并行）+ subsets-v2/M###.jsonl（现读行数）",
  "generator": "tests/e2e/generate_matrix68_manifest_source.py",
  "input_fingerprints": {
-  "data_sha256": "952c4716769d41e8c35e65d273894e4dd571f760ec0647c3e032510d1164bc8d",
+  "data_sha256": "9ac58fc1fa93102c56bdc10a0c28a6deeff16642273990c57040fae1afbd50a7",
   "data_path": "docs/capability-matrix.data.json",
   "config_dir": "samples/configs/matrix68",
-  "config_dir_fingerprint_sha256": "31d2a5a682b8f55f801cd64ec60684af5b28eb9ad0b65fd579c5f78ec36ceb30",
+  "config_dir_fingerprint_sha256": "7bf12e74cb2b497003110ed7a7d1dcbe80177c4a235c5129a06ea8a8e59989c4",
   "subset_dir": "subsets-v2",
   "subset_dir_fingerprint_sha256": "8fab7dce377e49f6103845732b2a85d6ec9c4d044014cb8e8873afd10afc54e1"
  },
@@ -6962,7 +6962,7 @@
     "sequence_parallel_size": 1,
     "use_vllm": false
    },
-   "switches": "teacher=Qwen3.8-27B;offload_teacher=true",
+   "switches": "teacher=Qwen3.8-27B@external-vllm;offload_teacher=false",
    "deepspeed": "—"
   },
   {
@@ -7066,7 +7066,7 @@
     "sequence_parallel_size": 1,
     "use_vllm": false
    },
-   "switches": "teacher=Qwen3.8-27B;offload_teacher=true",
+   "switches": "teacher=Qwen3.8-27B@external-vllm;offload_teacher=false",
    "deepspeed": "—"
   },
   {
@@ -7172,7 +7172,7 @@
     "sequence_parallel_size": 1,
     "use_vllm": false
    },
-   "switches": "teacher=Qwen3.8-27B;offload_teacher=true",
+   "switches": "teacher=Qwen3.8-27B@external-vllm;offload_teacher=false",
    "deepspeed": "—"
   }
  ],

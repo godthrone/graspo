@@ -609,3 +609,52 @@ loss 读数由 `scripts/make_result_json.py` 从 `trainer_state.json` 的 `log_h
 **复跑与防污染**：教师报告是**幂等**输入（同一份报告可被 8 个 OPD 档反复折算）；
 教师档重训 ⇒ 教师报告必须重跑（`run_guards fresh` 已内建在教师侧脚本的 export 前后），
 ⛔ 不得拿旧教师报告配新教师产物。
+
+## 21. OPD 档教师走**外部 vLLM 服务**（教师占卡**不计入**矩阵卡数，2026-10-24 主席裁定）
+
+**依据（主席原话，逐字）**：
+
+> 「OPD×27B 三档（M066–M068），教师用 vLLM 部署，单独弄别的卡，不算在测试表的卡数里面，
+> 测试表那个卡数是针对被训练的模型的。」
+
+- **受影响档**：数据件 `rows[].tier ∈ {M066, M067, M068}`（27B × OPD × LoRA）。接入方式是**行级**字段
+  `distill_teacher_server`（= 外部教师服务端点），重生成的 yaml 里 `distill.teacher_model_server` 生效、
+  `teacher_model_path` **不写**（= 未提供）、`offload_teacher_model` **不再出现**（本地教师不加载 ⇒ 换出无意义；
+  二者与外部服务**互斥**，见 `src/graspo/core/schema.py::DistillConfig`）。
+  ⛔ 数据件是唯一可编辑源头，yaml 一律由 `tools/matrix/gen_configs.py` 重生成（见 yaml 文件头）。
+- **9B×OPD 五档（M036–M040）不变**：仍走本地冻结教师（`teacher_model_path` + `offload_teacher_model: true`）。
+  教师**来源**是逐档的接入方式，⛔ 不是全矩阵一刀切。
+- ★ **卡数口径**：矩阵第 4 章 `cards` 只算**被训练的模型**（学生侧）；教师服务独占的卡**不计入** `cards`，
+  也不进 `check_68_readiness` / 运行清单的卡数断言。⇒ 教师卡是**额外**的一组卡，起服与训练**分别取卡**。
+- **起服前必须取卡**（顺序固定，⛔ 不可跳）：
+
+  ```bash
+  docker ps --format '{{.Names}}' > /tmp/ps.txt
+  docker inspect $(docker ps -q) > /tmp/ins.txt 2>/dev/null
+  python3 scripts/run_guards.py cards-busy --ps-file /tmp/ps.txt --inspect-file /tmp/ins.txt   # §17.2
+  python3 scripts/gpu_idle_assert.py --visible <教师卡列表> --position-mib <头寸>              # 逐卡实测空闲
+  ```
+
+  `cards-busy` 命中 / `gpu_idle_assert` 判不空闲 ⇒ **换卡或等**；⛔ 不 kill 他人进程、⛔ 不停他人容器（§3）。
+- **起服（默认 dry-run；`--apply` 才真起）**：
+
+  ```bash
+  bash tools/matrix/serve_teacher.sh --gpus 3 --model <教师 merged-hf 目录> --port 18901          # 只打印命令
+  bash tools/matrix/serve_teacher.sh --gpus 3 --model <同上>            --port 18901 --apply        # 真起容器
+  ```
+
+  脚本**不自动选卡**、**不判卡是否空闲**（那是设施层判据的单一真相源）、不写死宿主内网地址；
+  无 `--apply` 时**不做任何外部调用**（不起容器、不探网、不查卡）。
+- **就绪判据**（⛔ 「容器起来了」不算就绪）：`curl -s http://127.0.0.1:<port>/v1/models` 返回该 `served-model-name`。
+- ⚠ **可达性**：yaml 里的端点值是**默认占位**（`http://127.0.0.1:18901`）。训练跑在容器内 ⇒ 容器内的
+  `127.0.0.1` 是**它自己**：起跑时按**实际可达地址**（宿主网关 / 服务名）注入/对齐，⛔ 不要假定占位值直接可用。
+- **失败处置**：服务不可达 ⇒ **该档不得起跑**（fail-closed；⛔ 不许让训练进程"等教师"，⛔ 不许静默回退成本地教师）。
+  容器异常 ⇒ `docker ps --filter publish=<port>` 找到本脚本起的容器，用 `docker logs` / `docker stop` 精确处理
+  （§9：⛔ 禁 `pkill -f`）。
+- **`gkd_logits_topk` 是外部服务的硬前置**（⛔ 不是可选优化）：ms-swift 走 `--teacher_model_server` 时要求
+  `--gkd_logits_topk` 非空（服务端只回 top-k logprobs，`swift/arguments/rlhf_args.py:762-765`）；
+  配置层已 fail-closed（`src/graspo/core/schema.py::DistillConfig._validate_external_teacher_requires_topk`）。
+  ⇒ 三档 yaml 的 `distill.gkd_logits_topk` = **64**（取值来自数据件行字段 `distill_gkd_logits_topk`，
+  ⛔ 生成器不写死超参），起服脚本相应传 `--max-logprobs 65`（= topk + 1，服务侧低于它请求会被拒）。
+  ⚠ 该 top-k 取值是**本包取的默认**（上游契约要求非空，仓内既有示例/测试同为 64）；若要改，改数据件行字段后
+  重生成 + 重起服务，⛔ 不要只改 yaml。

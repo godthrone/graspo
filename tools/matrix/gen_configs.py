@@ -44,6 +44,36 @@ def opd_teacher_missing(text):
     return not (ok_path or ok_srv)
 
 
+def teacher_server_of(row):
+    """★ 行级「外部教师服务」端点：非空 ⇒ 该档教师走外部服务；空/缺省 ⇒ 本地冻结教师。
+
+    ★ 为什么是**行级**而不是 `meta.distill_teacher`：教师来源是**逐档**的接入方式 ——
+      27B×OPD 三档（M066–M068）改走外部 vLLM 服务（教师占卡不计入矩阵卡数），
+      9B×OPD 五档（M036–M040）仍走本地冻结教师 ⇒ 共用一个 meta 会让 8 档无法分叉
+      （同一语义只能有一个取值处，宪法 §1.4）。
+    ★ 纯函数（零 IO）⇒ 可单测；⛔ 不读环境变量（生成器不读时钟/环境/网络 ⇒ 同一数据 ⇒ 同一 yaml 字节）。
+    """
+    v = row.get("distill_teacher_server")
+    if v is None:
+        return ""
+    return str(v).strip()
+
+
+def row_topk_invalid(v):
+    """★ 外部教师服务的 `gkd_logits_topk` 取值校验：必须是正整数（⛔ 不猜默认值）。
+
+    ★ 为什么由**数据件行字段**给出而不是生成器写死：top-k 是**超参**（影响蒸馏保真度与显存），
+      不是生成规则；生成器只负责**校验并落进 yaml**（宪法 §2.2 显式即防呆）。
+    """
+    if v is None:
+        return True
+    try:
+        n = int(str(v).strip())
+    except Exception:
+        return True
+    return n <= 0
+
+
 def opd_cards_shortfall(teacher, cards):
     """★ OPD 卡数断言（**数据驱动**）：manifest 若声明了 `min_cards`（P-25 实测回填后），则 `cards` 不得低于它。
 
@@ -360,6 +390,17 @@ def _gen_self_test():
          blocked_unmarked({"availability": "blocked", "blocked_reason": "P-25 实测不可行"}) is False),
         ("⑨ 未定态：带 `cards_pending` ⇒ 放行",
          opd_pending_unmarked({"measured": "partial", "min_cards": None}, {"cards": 4, "cards_pending": True}) is False),
+        ("㉑① ★ 教师来源行级覆盖：行带 `distill_teacher_server` ⇒ 取该端点（外部服务形态）",
+         teacher_server_of({"distill_teacher_server": " http://127.0.0.1:18901 "}) == "http://127.0.0.1:18901"),
+        ("㉑② 教师来源行级覆盖：行无该键 ⇒ 空串（沿用 `meta.distill_teacher` 的本地冻结教师）",
+         teacher_server_of({"tier": "M036"}) == ""),
+        ("㉑③ ★ 教师来源行级覆盖：空/纯空白 ⇒ **按未覆盖处理**（⛔ 不许回退成外部服务）",
+         teacher_server_of({"distill_teacher_server": "   "}) == ""),
+        ("㉑④ ★ topk 校验：缺 ⇒ **必须判非法**（外部服务形态缺该键 ⇒ 上游 raise）",
+         row_topk_invalid(None) is True),
+        ("㉑⑤ topk 校验：`64` ⇒ 合法", row_topk_invalid(64) is False),
+        ("㉑⑥ ★ topk 校验：`0` / `abc` ⇒ **必须判非法**",
+         row_topk_invalid(0) is True and row_topk_invalid("abc") is True),
     ]
     ok = True
     for name, good in cases:
@@ -670,13 +711,33 @@ def yaml_of(row, uni, model_root, data_root, teacher=None,
 
     # ★ OPD：教师身份是**已 pin 的事实**（manifest `feasibility_model.opd_teacher`）⇒ 必须落进 yaml。
     #   ★ 配置值 = **容器内路径**（`/models/Qwen3.8-27B`）；**挂载源用宿主路径**（起跑侧决定）——两者别混。
+    #   ★★ 2026-10-24 主席裁定：27B×OPD 三档（M066–M068）教师改走**外部 vLLM 服务**（教师另卡部署，
+    #      **教师占卡不计入本档 cards** —— 矩阵卡数只算被训练的模型）。接入方式由**行级**字段
+    #      `distill_teacher_server` 决定：非空 ⇒ 服务形态（不写 teacher_model_path、不写
+    #      offload_teacher_model，二者与外部服务互斥，见 `core/schema.py::DistillConfig`）；
+    #      空/缺省 ⇒ 沿用 `meta.distill_teacher` 的本地冻结教师形态（M036–M040 不受影响）。
     if str(row.get("train_method") or "").lower() == "opd" and teacher:
         L.append("distill:\n")
-        _parts = teacher.get("path_parts") or []
-        _cp = "/" + "/".join(str(x) for x in _parts if x) if _parts else ""
-        L.append(f"  teacher_model_path: {_cp}\n")
-        if teacher.get("offload"):
-            L.append("  offload_teacher_model: true\n")
+        _srv = teacher_server_of(row)
+        if _srv:
+            # ★ 注释单独成行：`opd_teacher_missing()` 按「`teacher_model_server: <非空>`」这一行判来源
+            #   是否存在 —— 行尾挂注释会让它判"缺教师"而 fail-closed（⛔ 不放宽断言，改本处写法）。
+            L.append(f"  # ★ 外部教师服务：教师 = {teacher.get('model')} 的 SFT/LoRA/dp1 产物，vLLM 另卡部署"
+                     " ⇒ 教师占卡**不计入本档 cards**（矩阵卡数只算被训练的模型）\n")
+            L.append("  # ★ 本地教师不加载 ⇒ 不写 teacher_model_path / offload_teacher_model；"
+                     "端点由起服脚本 tools/matrix/serve_teacher.sh 注入/对齐\n")
+            L.append(f"  teacher_model_server: {_srv}\n")
+            # ★ 外部服务只回 top-k logprobs ⇒ 上游强制 `--gkd_logits_topk` 非空
+            #   （`core/schema.py::DistillConfig._validate_external_teacher_requires_topk`）。
+            #   取值逐档来自数据件行字段，⛔ 生成器不写死超参。
+            L.append("  # ★ 外部服务只回 top-k logprobs ⇒ 上游强制非空（起服侧 --max-logprobs >= topk+1）\n")
+            L.append(f"  gkd_logits_topk: {row.get('distill_gkd_logits_topk')}\n")
+        else:
+            _parts = teacher.get("path_parts") or []
+            _cp = "/" + "/".join(str(x) for x in _parts if x) if _parts else ""
+            L.append(f"  teacher_model_path: {_cp}\n")
+            if teacher.get("offload"):
+                L.append("  offload_teacher_model: true\n")
     if row.get("train_method") == "graspo" and uni.get("reward.kind"):
         L.append("reward:\n")
         L.append(f"  kind: {uni.get('reward.kind')}\n")
@@ -917,6 +978,13 @@ def main():
         print(f"FAIL-CLOSED：OPD 卡数低于 manifest 声明 ⇒ 拒绝产出：{_short}")
         return 1
 
+    _no_topk = [r["tier"] for r in rows
+                if teacher_server_of(r) and row_topk_invalid(r.get("distill_gkd_logits_topk"))]
+    if _no_topk:
+        print(f"FAIL-CLOSED：以下档走外部教师服务但缺/非法 `distill_gkd_logits_topk`"
+              f"（上游强制非空、且须为正整数）⇒ 拒绝产出：{_no_topk}")
+        return 1
+
     _no_teacher = [t for t, pth in sorted(written.items()) if opd_teacher_missing(Path(pth).read_text(encoding="utf-8"))]
     if _no_teacher:
         print(f"FAIL-CLOSED：以下 OPD 档缺教师（teacher_model_path 空 且无 teacher_model_server）⇒ 拒绝产出：{_no_teacher}")
@@ -1001,6 +1069,11 @@ ATTRIBUTION = [
                                "GRASPO(RL) 5e-06、CPT 5e-06、OPD 2e-05(LoRA)/5e-06(全参)）；⛔ 不按卡数缩放"),
     ("training.max_epochs", "epoch 口径（主席最新裁定，2026-10-15）：SFT=4（★ 由 2 改为 4）；CPT/OPD=2；GRASPO(RL)=8"),
     ("training.save_steps", "save_steps 重算：= 推导步数 + 1（取消人为步数上限）"),
+    ("distill",
+     "教师接入形态口径（主席 2026-10-24）：27B×OPD 三档（M066–M068）的教师改走**外部 vLLM 服务**"
+     "（`teacher_model_server`，教师另卡部署 ⇒ 教师占卡**不计入**矩阵 cards）；本地冻结教师随之删除"
+     "（`teacher_model_path` / `offload_teacher_model` 与外部服务互斥）。9B×OPD 五档（M036–M040）不变。"
+     "★ 外部服务的上游硬前置 `gkd_logits_topk` 必须非空（服务端只回 top-k logprobs）⇒ 同步落进 yaml"),
     ("gpu_monitor", "生成器未覆盖的既有字段（gpu_monitor.*）：矩阵数据未收录 ⇒ 本次生成不含"),
     ("reward", "内容不变（kind=graspo），仅块序前移（生成器固定键序）"),
 ]

@@ -22,8 +22,11 @@ training:
 launch:
   nproc_per_node: 4   # ★ 由 cards=4 推导（§12 同源：卡数与进程数不得各改一半）
 distill:
-  teacher_model_path: /models/Qwen3.8-27B
-  offload_teacher_model: true
+  # ★ 外部教师服务：教师 = Qwen3.8-27B 的 SFT/LoRA/dp1 产物，vLLM 另卡部署 ⇒ 教师占卡**不计入本档 cards**（矩阵卡数只算被训练的模型）
+  # ★ 本地教师不加载 ⇒ 不写 teacher_model_path / offload_teacher_model；端点由起服脚本 tools/matrix/serve_teacher.sh 注入/对齐
+  teacher_model_server: http://127.0.0.1:18901
+  # ★ 外部服务只回 top-k logprobs ⇒ 上游强制非空（起服侧 --max-logprobs >= topk+1）
+  gkd_logits_topk: 64
 lora:
   r: 32
   alpha: 64
