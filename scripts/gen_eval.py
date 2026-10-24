@@ -496,6 +496,29 @@ def gen_teacher_eval(*, args, manifest: dict, mt: dict, cal: dict, offline: bool
     return 0
 
 
+def _ensure_eval_runner(ev: str) -> None:
+    """评测前置：把 `<EVAL_DIR>/run-eval.sh` 幂等装到位（唯一产出者 = `scripts/eval_runner.py`）。
+
+    为什么在这里：调用方（本文件 `render_script()` 的两处 `bash "$EV/run-eval.sh" …`、
+    `scripts/launch_pipeline.py` 的同名两处）都假定该件已存在；而它此前**没有产出者**
+    ⇒ 评测步 `rc=127`（No such file），判据④ 无从取证。故"生成评测脚本之前"先补齐入口。
+    幂等：同内容 ⇒ 不动；异内容 ⇒ **拒写**（fail-closed，⛔ 不静默覆盖唯一评测入口）。
+    """
+    if str(ROOT / "scripts") not in sys.path:
+        sys.path.insert(0, str(ROOT / "scripts"))
+    import eval_runner as er                                            # noqa: PLC0415
+
+    try:
+        res = er.install(ev, apply=True)
+    except FileNotFoundError as exc:
+        die(f"{exc} —— EVAL_DIR 必须先存在（mkdir -p {ev}，或用 GRASPO_EVAL_DIR 指定）", 2)
+    print(f"[eval-prep] run-eval.sh {res.status} sha256={res.sha256[:16]}… → {res.path}")
+    if res.status == "blocked":
+        die(f"评测入口未就位：{res.message}", 1)
+    print(f"[eval-prep] 自检：bash {res.path} --check-only --self ；"
+          f"验 sha：python3 scripts/eval_runner.py check --eval-dir {ev}")
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="M 档评测脚本 + 两侧 yaml 生成器（形态现算，无 T 档硬编码）")
     ap.add_argument("--tier", required=True, help="M 档号（M001–M068）")
@@ -524,6 +547,13 @@ def main(argv=None) -> int:
     lower = args.tier.lower()
     ev = os.environ.get("GRASPO_EVAL_DIR") or os.path.join(
         os.path.dirname(tree.rstrip("/")), f"eval-{lower}-recon")
+    # ── 评测前置（唯一真相源）：$EVAL_DIR/run-eval.sh 就位 ──────────────────────────
+    #   本文件渲染出的 run-<tier>-eval.sh 在评测步以
+    #     `bash "$EV/run-eval.sh" "$T" "$EV" <TIER> after|base "$EV/eval-<tier>-<role>.yaml"`
+    #   调用它（`render_script()` 内两处）；该件缺 ⇒ 评测步 rc=127、判据④（vLLM 推理）无法取证。
+    #   ⛔ 仓内不另存第二份实现：唯一产出者 = `scripts/eval_runner.py`（本处只调它，幂等 + sha 记录）。
+    #   ★ 位置有意在**生成之前**：脚本一旦生成就默认"评测入口可用"，缺件不能等到真跑才暴露。
+    _ensure_eval_runner(ev)
     hostmodels = (os.environ.get("GRASPO_MODEL_HOST_ROOT")
                   or os.path.join(os.path.expanduser("~"), "models")).rstrip("/")
     hostmodels_mount = hostmodels

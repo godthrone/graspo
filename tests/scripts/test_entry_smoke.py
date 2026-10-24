@@ -84,6 +84,18 @@ POLICY: dict[str, Spec] = {
         "真实渲染需活 checkpoint 与空闲卡，故常设冒烟只做 --help；形态现算的行为由"
         "`--dry-run --no-ssh` 自检覆盖，见工作包 B 报告 T4-5）",
     ),
+    # ★ 补登记（2026-10-25 评测入口缺件轮）：`$EVAL_DIR/run-eval.sh` 的**唯一产出者** ——
+    #   编排链在评测步以 `bash "$EV/run-eval.sh" "$T" "$EV" <TIER> after|base <cfg>`
+    #   调用它（`scripts/gen_eval.py` 两处 / `scripts/launch_pipeline.py` 两处），而此前**没有产出者**
+    #   ⇒ 评测步 rc=127、判据④ 无法取证。本件 = 模板 + 幂等安装（sha 记录）+ check；
+    #   `install` 缺省只打印计划（零写入），`--apply` 才落盘；跑一次会写 `$EVAL_DIR` ⇒
+    #   常设冒烟只做 `--help`（rc=0、零写入）。落位件本身的行为由
+    #   `tests/scripts/test_eval_runner_install.py` 覆盖（幂等/不覆盖异内容/缺产物 fail-closed）。
+    "scripts/eval_runner.py": Spec(
+        HELP,
+        "评测入口 `$EVAL_DIR/run-eval.sh` 的唯一产出者（模板渲染 + 幂等安装 + sha 记录 + check）；"
+        "install 缺省只打印计划、--apply 才写 → 冒烟只做 --help",
+    ),
     "scripts/make_result_json.py": Spec(
         HELP,
         "跑次读数 ⇒ 回填口径结果 json（matrix-run/v1）的**唯一产出者**；落盘前调"
