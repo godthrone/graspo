@@ -16,6 +16,15 @@
     python3 scripts/run_guards.py form   --checkpoint <dir>                 # §7
     python3 scripts/run_guards.py fresh  --dir <dir> --phase pre|post --since <epoch>
     python3 scripts/run_guards.py mamba  --max-num-seqs 192 --blocks 232
+    # ★ 占卡台账（cards-busy）：**两份等价输入取并集**
+    #   容器面（docker ps/inspect）+ 宿主进程面（nvidia-smi compute-apps）
+    nvidia-smi --query-gpu=index,uuid --format=csv,noheader             > /tmp/uuid.txt
+    nvidia-smi --query-compute-apps=gpu_uuid,pid,used_memory,process_name \
+        --format=csv,noheader,nounits                                   > /tmp/apps.txt
+    docker ps --format '{{.Names}}' > /tmp/ps.txt
+    docker inspect $(cat /tmp/ps.txt) > /tmp/ins.txt
+    python3 scripts/run_guards.py cards-busy --ps-file /tmp/ps.txt --inspect-file /tmp/ins.txt \
+        --compute-apps-file /tmp/apps.txt --uuid-map-file /tmp/uuid.txt
 退出码：0 通过；1 失败（fail-closed）；2 用法错误。
 """
 
@@ -236,11 +245,97 @@ def parse_docker_inspect_stream(text: str) -> list[dict]:
     return objs
 
 
-def busy_cards_cli(docker_ps_text: str = "", docker_inspect_text: str = "") -> tuple[set[str], str]:
-    """给 CLI 用：由 `docker ps --format '{{.Names}}'` 与 `docker inspect <names>` 的原始输出算出禁用卡集。"""
+def _split_row(line: str) -> list[str]:
+    """按逗号切一行（剥空白）；无逗号时按空白切（兼容带表头/单位的手抄快照）。"""
+    if "," in line:
+        return [part.strip() for part in line.split(",")]
+    return line.split()
+
+
+def busy_cards_from_compute_apps(
+    apps_text: str = "", uuid_map_text: str = ""
+) -> tuple[set[str], list[str]]:
+    """★ 三判据并取（2026-10-25）：把 **nvidia-smi 的 compute 进程快照**接成
+    ``cards-busy`` 的**等价输入**——宿主进程占卡从此能判 busy。
+
+    为什么必须补这条：``cards-busy`` 此前只有 ``docker ps/inspect`` 一条输入 ⇒
+    **永远漏宿主进程**。228 实测：GPU2 上有他人在宿主直接起的 ``lightnav-serve``
+    （13.3 GiB、util 采样 0 %）而**没有任何容器** ⇒ 台账判它"空闲"，
+    ``gpu_idle_assert``（旧判据）也放行 ⇒ 起服必撞 OOM。
+
+    输入两份快照（均为**只读**查询的输出，⛔ 不 kill、⛔ 不 stop 容器）：
+
+    - ``apps_text``：``nvidia-smi --query-compute-apps=gpu_uuid,pid,used_memory,process_name
+      --format=csv,noheader,nounits``（该子命令**不支持** ``-i``，返回全机进程）；
+    - ``uuid_map_text``：``nvidia-smi --query-gpu=index,uuid --format=csv,noheader``
+      ——compute-apps 只给 ``gpu_uuid``，没有这份映射就无法把进程归到卡号上。
+
+    返回 ``(禁用卡集, 说明列表)``。fail-closed：``apps_text`` 非空而映射缺该 uuid、
+    或任一行既不是表头也解析不出 pid ⇒ 抛 ``ValueError``（调用方 rc≠0），
+    ⛔ 绝不"解析失败就当没有进程"。
+    """
+    apps_text = apps_text or ""
+    busy: set[str] = set()
+    notes: list[str] = []
+    if not apps_text.strip():
+        return (busy, notes)
+
+    uuid_to_card: dict[str, str] = {}
+    for line in (uuid_map_text or "").splitlines():
+        if not line.strip():
+            continue
+        parts = _split_row(line)
+        if not parts[0].lstrip("-").isdigit():
+            continue  # 表头（index, uuid）
+        if len(parts) < 2 or not parts[1]:
+            raise ValueError(f"uuid 映射行无法解析：{line!r}")
+        uuid_to_card[parts[1].strip()] = str(int(parts[0]))
+    if not uuid_to_card:
+        raise ValueError(
+            "给了 compute 进程快照却没有可用的 uuid→卡号映射（--uuid-map-file）："
+            "该子命令只返回 gpu_uuid，缺映射就无法判断是哪张卡"
+        )
+
+    for line in apps_text.splitlines():
+        if not line.strip():
+            continue
+        parts = _split_row(line)
+        pid_text = parts[1].strip() if len(parts) > 1 else ""
+        if not pid_text.lstrip("-").isdigit():
+            if "gpu_uuid" in line.lower() or pid_text.lower() == "pid":
+                continue  # 表头
+            raise ValueError(f"compute 进程行无法解析（pid 非数字）：{line!r}")
+        uuid = parts[0].strip()
+        card = uuid_to_card.get(uuid)
+        if card is None:
+            raise ValueError(
+                f"compute 进程快照里的 gpu_uuid={uuid!r} 不在 uuid 映射里 ⇒ 无法判断占用哪张卡"
+                "（fail-closed：⛔ 不当成『没有进程』）"
+            )
+        used = parts[2] if len(parts) > 2 else "?"
+        name = parts[3] if len(parts) > 3 else "?"
+        busy.add(card)
+        notes.append(f"host-proc GPU{card} pid {pid_text} {name} ({used} MiB)")
+    return (busy, notes)
+
+
+def busy_cards_cli(
+    docker_ps_text: str = "",
+    docker_inspect_text: str = "",
+    compute_apps_text: str = "",
+    uuid_map_text: str = "",
+) -> tuple[set[str], str]:
+    """给 CLI 用：把 **docker 占卡台账** 与 **nvidia-smi 进程快照** 两份输入并成禁用卡集。
+
+    ★ 两类输入是**等价输入**（都是"这张卡已经有人在用"的证据），取并集：
+    容器输入覆盖"我方/他人容器已占/已预约"，进程快照覆盖"**宿主进程**直接占卡"
+    （后者正是 228 上 GPU2 的形态，docker 面完全看不见）。
+    """
     names = [l.strip() for l in (docker_ps_text or "").splitlines() if l.strip()]
     items = parse_docker_inspect_stream(docker_inspect_text)
     busy, _ = busy_cards_from_docker(names=names, docker_json=__import__("json").dumps(items))
+    proc_busy, _proc_notes = busy_cards_from_compute_apps(compute_apps_text, uuid_map_text)
+    busy |= proc_busy
     return (busy, ",".join(sorted(busy, key=lambda x: int(x) if x.isdigit() else 99)))
 
 
@@ -260,9 +355,26 @@ def main(argv: list[str] | None = None) -> int:
     p_mamba.add_argument("--max-num-seqs", type=int, required=True)
     p_mamba.add_argument("--blocks", type=int, required=True)
 
-    p_busy = sub.add_parser("cards-busy", help="§17 占卡台账（我方容器占用的卡，含加载期）")
+    p_busy = sub.add_parser(
+        "cards-busy",
+        help="§17 占卡台账（docker 容器 + nvidia-smi compute 进程，两份等价输入取并集）",
+    )
     p_busy.add_argument("--ps-file", default="-", help="docker ps --format {{.Names}} 的输出文件（- = 读 stdin 的 ps 段）")
     p_busy.add_argument("--inspect-file", default=None, help="docker inspect 的输出文件（多对象流）")
+    p_busy.add_argument(
+        "--compute-apps-file",
+        default=None,
+        help=(
+            "nvidia-smi --query-compute-apps=gpu_uuid,pid,used_memory,process_name "
+            "--format=csv,noheader,nounits 的输出文件（★ 宿主进程占卡的唯一来源；"
+            "给了它就必须同时给 --uuid-map-file）"
+        ),
+    )
+    p_busy.add_argument(
+        "--uuid-map-file",
+        default=None,
+        help="nvidia-smi --query-gpu=index,uuid --format=csv,noheader 的输出文件（uuid→卡号）",
+    )
 
     args = parser.parse_args(argv)
     if args.cmd == "form":
@@ -271,7 +383,26 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "cards-busy":
         ps_text = sys.stdin.read() if args.ps_file == "-" else open(args.ps_file, encoding="utf-8").read()
         ins_text = open(args.inspect_file, encoding="utf-8").read() if args.inspect_file else ""
-        busy, csv = busy_cards_cli(ps_text, ins_text)
+        apps_text = (
+            open(args.compute_apps_file, encoding="utf-8").read()
+            if args.compute_apps_file
+            else ""
+        )
+        uuid_text = (
+            open(args.uuid_map_file, encoding="utf-8").read() if args.uuid_map_file else ""
+        )
+        if apps_text and not uuid_text:
+            print(
+                "cards-busy: 给了 --compute-apps-file 就必须同时给 --uuid-map-file"
+                "（compute-apps 只返回 gpu_uuid，缺映射无法归卡）",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            busy, csv = busy_cards_cli(ps_text, ins_text, apps_text, uuid_text)
+        except ValueError as exc:
+            print(f"cards-busy: {exc}", file=sys.stderr)
+            return 2
         print(f"BUSY_CARDS={csv}")
         ok = True
     elif args.cmd == "fresh":

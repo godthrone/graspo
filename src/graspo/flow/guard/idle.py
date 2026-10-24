@@ -1,30 +1,39 @@
-"""flow.guard.idle — 目标卡**起跑前可用**断言（设施操作，B10 口径）。
+"""flow.guard.idle — 目标卡**起跑前可用**断言（设施操作，三判据并取）。
 
 ★ 判据（唯一真相源 = ``graspo.core.gpu_guard``）：
-    **可用 ⟺ 该卡剩余显存 ≥ 本档头寸 ∧ util == 0**
-旧的绝对占用阈值（``IDLE_MEMORY_TOLERANCE_MIB = 64``）**已作废**：它把"卡上有他人
-常驻但不在算（util=0%）"误判为不可用，与"先到先得"冲突。
+    **可用 ⟺ ① 已用显存 ≤ 空闲上限 ∧ 剩余显存 ≥ 本档头寸
+             ∧ ② 卡上无 compute 进程 ∧ ③ 卡未被容器声明 ∧ util == 0**
+★★ 2026-10-25 起由「剩余 ≥ 头寸 ∧ util == 0」两条升为**三条并取**（util 仍须为 0）：
+    只看剩余/util 会在 228 上把"被人常驻占着 13–16 GiB、但 util 采样为 0"的卡
+    （GPU0/1/4/5）与"卡上有宿主 compute 进程"的卡（GPU2）全部放行 ⇒ 起服/起训撞 OOM。
+    ⛔ 旧的「64 MiB 绝对阈值」形态没有复活：显存面是"已用 ≤ 上限"与"剩余 ≥ 头寸"
+    两条**合取**；服务档头寸按 ``0.85 × 总显存`` 解析
+    （见 ``DEFAULT_MAX_USED_MIB`` / ``DEFAULT_SERVICE_POSITION_RATIO``）。
 
-★ 起跑前必须**连续采样**（默认 3 帧、间隔 12 s）且**帧帧满足**——单帧会把
+★ 起跑前必须**连续采样**（默认 3 帧、间隔 10 s）且**帧帧满足**——单帧会把
 "邻居正好落在两次 kernel 之间"误判为空闲。
 
 ★ 运行期判据不同（我们自己的进程会让 util>0）⇒ 见 ``flow.guard.runtime_yield``。
 
-本模块是**设施层**：真读 ``nvidia-smi``、真等待；纯判据住在 ``core``。
+本模块是**设施层**：真读 ``nvidia-smi`` / ``docker``、真等待；纯判据住在 ``core``。
 """
 
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 
 from graspo.core.gpu_guard import (
     DEFAULT_GPU_POSITION_MIB,
     DEFAULT_IDLE_SAMPLES,
     DEFAULT_IDLE_SAMPLE_INTERVAL_S,
     CardAvailability,
+    CardFrame,
+    CardVerdict,
     assert_card_available,
     assert_samples_all_idle,
+    judge_card_frames,
+    reject_unavailable,
     resolve_gpu_position_mib,
 )
 
@@ -94,11 +103,62 @@ def assert_gpu_idle_sampled(
     )
 
 
+def judge_gpu_frames(
+    gpu_index: int | str,
+    frames: Sequence[CardFrame],
+    *,
+    position_mib: float | None = None,
+    position_ratio: float | None = None,
+    max_used_mib: float | None = None,
+    env: Mapping[str, str] | None = None,
+) -> CardVerdict:
+    """**多帧三判据**判定单卡（不抛错；抛错在 :func:`assert_gpu_frames`）。
+
+    判据本体在 ``core.gpu_guard.judge_card_frames``——本函数只是本层的统一入口，
+    让"起跑前可用"这一件事在设施层只有一个调用点。
+    """
+    return judge_card_frames(
+        gpu_index,
+        frames,
+        position_mib=position_mib,
+        position_ratio=position_ratio,
+        max_used_mib=max_used_mib,
+        env=env,
+    )
+
+
+def assert_gpu_frames(
+    gpu_index: int | str,
+    frames: Sequence[CardFrame],
+    *,
+    position_mib: float | None = None,
+    position_ratio: float | None = None,
+    max_used_mib: float | None = None,
+    env: Mapping[str, str] | None = None,
+) -> CardVerdict:
+    """**多帧三判据**可用断言：任一帧不满足即抛 :class:`GpuLockError`。"""
+    verdict = judge_gpu_frames(
+        gpu_index,
+        frames,
+        position_mib=position_mib,
+        position_ratio=position_ratio,
+        max_used_mib=max_used_mib,
+        env=env,
+    )
+    if not verdict.available:
+        raise reject_unavailable([verdict])
+    return verdict
+
+
 __all__ = [
     "DEFAULT_GPU_POSITION_MIB",
     "DEFAULT_IDLE_SAMPLES",
     "DEFAULT_IDLE_SAMPLE_INTERVAL_S",
+    "CardFrame",
+    "CardVerdict",
     "Frame",
+    "assert_gpu_frames",
     "assert_gpu_idle",
     "assert_gpu_idle_sampled",
+    "judge_gpu_frames",
 ]

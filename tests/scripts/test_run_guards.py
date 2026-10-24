@@ -163,3 +163,56 @@ def test_busy_cards_from_nvidia_visible_devices_env():
             "Config": {"Env": ["NVIDIA_VISIBLE_DEVICES=1,3,6,7", "PATH=/usr/bin"]}}
     busy, notes = rg.busy_cards_from_docker(names=["t045"], docker_json=_json.dumps([item]))
     assert busy == {"1", "3", "6", "7"}, (busy, notes)
+
+
+# ---------- ★ 三判据并取（2026-10-25）：compute 进程快照 = cards-busy 的等价输入 ----------
+def test_busy_cards_from_compute_apps_catches_host_processes():
+    """★ 缺陷回归：**宿主进程占卡** docker 面看不见 ⇒ 必须由 compute-apps 快照判 busy。
+
+    228 实测：GPU2 上有他人在宿主直接起的推理进程（13.3 GiB、util 0 %）而无任何容器。
+    """
+    apps = "GPU-cbefcbab-7651-516c-da18-797296a24902, 3912182, 13326, python\n"
+    umap = (
+        "0, GPU-6b18a0f1-01f5-c1e3-3233-f5b31a7eb108\n"
+        "2, GPU-cbefcbab-7651-516c-da18-797296a24902\n"
+    )
+    busy, notes = rg.busy_cards_from_compute_apps(apps, umap)
+    assert busy == {"2"}, (busy, notes)
+    assert any("3912182" in n and "GPU2" in n for n in notes), notes
+
+
+def test_busy_cards_cli_unions_docker_and_compute_apps():
+    """★ 两类输入是**等价输入**，取并集：docker 的卡 + 宿主进程的卡都要判 busy。"""
+    ps = "our-vllm\n"
+    ins = (
+        '[{"Name":"/our-vllm","State":{"Status":"running"},'
+        '"HostConfig":{"DeviceRequests":[{"DeviceIDs":["7"]}]}}]'
+    )
+    apps = "GPU-fake2, 3912182, 13326, python\n"
+    umap = "2, GPU-fake2\n"
+    busy, csv = rg.busy_cards_cli(ps, ins, apps, umap)
+    assert csv == "2,7", (busy, csv)
+
+
+def test_busy_cards_from_compute_apps_is_fail_closed_on_unmapped_uuid():
+    """★ fail-closed：进程快照里有 uuid 不在映射里 ⇒ 必须报错（⛔ 不当成"没有进程"）。"""
+    apps = "GPU-unknown-uuid, 3912182, 13326, python\n"
+    with pytest.raises(ValueError):
+        rg.busy_cards_from_compute_apps(apps, "2, GPU-fake2\n")
+
+
+def test_busy_cards_from_compute_apps_requires_the_uuid_map():
+    """★ fail-closed：只给进程快照、不给 uuid 映射 ⇒ 报错（无法归卡）。"""
+    with pytest.raises(ValueError):
+        rg.busy_cards_from_compute_apps("GPU-fake2, 3912182, 13326, python\n", "")
+
+
+def test_busy_cards_cli_without_compute_apps_keeps_old_behavior():
+    """兼容：不给 ``--compute-apps-file`` 时行为与旧版逐字一致。"""
+    ps = "a\n"
+    ins = (
+        '[{"Name":"/a","State":{"Status":"running"},'
+        '"HostConfig":{"DeviceRequests":[{"DeviceIDs":["1,3"]}]}}]'
+    )
+    busy, csv = rg.busy_cards_cli(ps, ins)
+    assert csv == "1,3", (busy, csv)

@@ -81,7 +81,7 @@ CONFIG_ABS="$(realpath "$CONFIG")"
 
 # ── 防呆 1: 自动选择空闲 GPU（--gpus 未指定时）──────────────────────────────
 # ★ 2026-10-17 主席令：「228 先到先得，随便用。」⇒ 本机全卡 **0–7 一律可用**：⛔ 无预留卡、⛔ 无禁用卡、⛔ 无"生产锁卡"；⛔ 也不再按张数截断（「单个作业不限制卡数」）。
-# ★ 不抢占他人：只挑 **memory.used == 0（当前无人在用）** 的卡；权威判据在设施层 `scripts/gpu_idle_assert.py`（**剩余显存 ≥ 本档头寸 ∧ util == 0**）；被占则换卡或等。
+# ★ 不抢占他人：只挑 **memory.used == 0（当前无人在用）** 的卡；权威判据在设施层 `scripts/gpu_idle_assert.py`（**三判据并取：已用显存 ≤ 上限 ∧ 剩余 ≥ 本档头寸 ∧ 卡上无 compute 进程 ∧ 未被容器声明**，且 util == 0、帧帧满足）；被占则换卡或等。
 MAX_INDEX=7
 if [ -z "$GPU_IDS" ]; then
     if ! command -v nvidia-smi >/dev/null 2>&1; then

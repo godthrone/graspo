@@ -40,12 +40,17 @@ GPU6/7 与他人并发作业，显存数据不可作依据。本工具现在三�
 解析。宿主侧采样路径**不变**（宿主侧 ``NVIDIA_VISIBLE_DEVICES`` 就是真实卡号，
 仍是"只采目标卡 + 命令必带 ``-i``"）。
 
-**本次新增**：:func:`probe_gpu_inventory`（F-1/F-2 所需的"实测可见卡"）与
-:func:`assert_target_gpus_idle`（F-10 目标卡实测空闲断言，判据 = **B10**：
-**剩余显存 ≥ 本档头寸（默认 48 GiB）∧ util == 0** 才算可用，连续 3 帧帧帧满足；
-★ 2026-10-17 主席令「228 先到先得，随便用。」⇒ 邻居的常驻占用只要不吃掉我们的头寸
-就算可用。⛔ 旧口径「占用 ≤64 MiB / util ≤5%」**已作废**（它不是现行判据）。
-**宁等不抢**：被占则换卡或等，⛔ 绝不 kill 他人进程 / 绝不停他人容器）。
+**起跑前逐卡可用断言**（:func:`assert_target_gpus_idle` / :func:`sample_card_frames`）：
+判据 = **三判据并取**（2026-10-25 起；任一不过即不可用）：
+① 显存：**已用** ≤ 空闲上限（默认 2 GiB，``--max-used-mib``）**且** 剩余 ≥ 本档头寸
+（训练档默认 48 GiB；服务档按 ``0.85 × 总显存``）；② 进程：该卡**没有任何**
+``--query-compute-apps`` 里的 compute 进程（有则点名 pid/名/占用）；③ 容器：该卡未被
+任何容器经 ``DeviceRequests`` / ``NVIDIA_VISIBLE_DEVICES`` 声明；＋连续 ``frames`` 帧
+（默认 3 帧、间隔 10 s）**帧帧**满足。
+★ 为什么必须三条：228 实测里 GPU0/1/4/5 被他人的常驻推理服务占着 13–16 GiB、GPU2 被
+宿主 compute 进程占 13.3 GiB，而 util 采样**全是 0** ⇒ 只看「剩余 ≥ 头寸 ∧ util == 0」
+会把它们**全部放行**，起服/起训必撞 OOM。
+**宁等不抢**：被占则换卡或等，⛔ 绝不 kill 他人进程 / 绝不停他人容器。
 """
 
 import argparse
@@ -63,17 +68,21 @@ from pathlib import Path
 from typing import Any
 
 from graspo.core.gpu_guard import (
-    DEFAULT_IDLE_SAMPLES,
-    DEFAULT_IDLE_SAMPLE_INTERVAL_S,
+    ComputeProcess,
     GpuInventory,
     assert_gpu_lock,
     resolve_device_source,
+    judge_card_frames,
+    reject_unavailable,
     resolve_idle_interval_s,
     resolve_idle_samples,
 )
 from graspo.flow.guard import (
+    CardFrame,
+    CardVerdict,
     assert_gpu_idle,
     is_runtime_managed,
+    read_container_declarations,
     select_sample_targets,
     select_sample_targets_for_inventory,
 )
@@ -102,8 +111,8 @@ PROCESS_FIELDS = ("gpu_uuid", "pid", "process_name", "used_memory")
 #: ``memory.used,utilization.gpu``，输出就是 ``0, 0``（2 字段），解析器拿不到卡号，
 #: 也失去了"这一行到底是哪张卡"的校验锚点。曾因漏掉 index 导致真机上
 #: ``无法解析 ...（字段数 2）：'0, 0'``，使 F-10 的空闲断言在真机路径上不可用。
-#: ★ B10：判据由"绝对占用阈值"改为"**剩余显存 ≥ 本档头寸** ∧ **util == 0**"，
-#: 因此必须一起查 ``memory.total``（只查 used 算不出剩余）。
+#: ★ 三判据：显存面同时判"**已用** ≤ 空闲上限"与"**剩余** ≥ 本档头寸"，
+#: 因此必须一起查 ``memory.used`` 与 ``memory.total``。
 IDLE_FIELDS = ("index", "memory.used", "memory.total", "utilization.gpu")
 
 #: 单个数值字段的严格形状（剥单位后必须整串就是一个数）。
@@ -242,8 +251,42 @@ def _idle_value(
     return None
 
 
+def parse_idle_rows(text: str) -> list[dict[str, Any]]:
+    """解析空闲查询行 → **逐卡明细**（含已用/总数/剩余/利用率），供三判据判定。
+
+    返回 ``[{"gpu_index", "used_mib", "total_mib", "free_mib", "utilization_pct"}]``。
+    解析规则与失败语义（任何坏行 ⇒ ``RuntimeError`` fail-closed）见
+    :func:`parse_idle_query` 的说明——两者共用同一份实现，⛔ 不各写一份。
+    """
+    rows: list[dict[str, Any]] = []
+    header: list[str] | None = None
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        fields = _csv_fields(line)
+        if _is_header_row(fields):
+            header = _header_field_names(fields)
+            continue
+        index = _numeric(fields[0]) if fields else None
+        memory_used = _idle_value(fields, 1, "memory.used", header=header)
+        memory_total = _idle_value(fields, 2, "memory.total", header=header)
+        utilization = _idle_value(fields, 3, "utilization.gpu", header=header)
+        if index is None or memory_used is None or memory_total is None or utilization is None:
+            raise RuntimeError(f"无法解析 nvidia-smi 空闲查询行（字段数 {len(fields)}）：{line!r}")
+        rows.append(
+            {
+                "gpu_index": int(index),
+                "used_mib": float(memory_used),
+                "total_mib": float(memory_total),
+                "free_mib": float(memory_total) - float(memory_used),
+                "utilization_pct": float(utilization),
+            }
+        )
+    return rows
+
+
 def parse_idle_query(text: str) -> list[tuple[int, float, float]]:
-    """解析空闲断言查询行 → ``(index, free_mib, utilization_pct)``。
+    """解析空闲断言查询行 → ``(index, free_mib, utilization_pct)``（兼容视图）。
 
     ★ B10：返回的是**剩余显存** ``free = memory.total - memory.used``（判据是
     "剩余 ≥ 头寸"，不再是"占用 ≤ 64 MiB"）。
@@ -270,24 +313,14 @@ def parse_idle_query(text: str) -> list[tuple[int, float, float]]:
       不猜位置（防"改了查询列顺序 ⇒ 静默错读"，例如把 ``memory.total`` 当利用率）；
     - **任何一行非法 ⇒ 抛 :class:`RuntimeError`（fail-closed）**：空闲断言拿不到
       可信读数时必须**拒绝**，绝不能"解析失败却当空闲通过"（那会去抢别人的卡）。
+
+    本函数是 :func:`parse_idle_rows` 的**兼容视图**（旧调用方按三元组解包）；
+    判据侧请用明细版（三判据要看"已用显存"）。
     """
-    rows: list[tuple[int, float, float]] = []
-    header: list[str] | None = None
-    for line in text.splitlines():
-        if not line.strip():
-            continue
-        fields = _csv_fields(line)
-        if _is_header_row(fields):
-            header = _header_field_names(fields)
-            continue
-        index = _numeric(fields[0]) if fields else None
-        memory_used = _idle_value(fields, 1, "memory.used", header=header)
-        memory_total = _idle_value(fields, 2, "memory.total", header=header)
-        utilization = _idle_value(fields, 3, "utilization.gpu", header=header)
-        if index is None or memory_used is None or memory_total is None or utilization is None:
-            raise RuntimeError(f"无法解析 nvidia-smi 空闲查询行（字段数 {len(fields)}）：{line!r}")
-        rows.append((int(index), memory_total - memory_used, utilization))
-    return rows
+    return [
+        (row["gpu_index"], row["free_mib"], row["utilization_pct"])
+        for row in parse_idle_rows(text)
+    ]
 
 
 def parse_process_query(text: str) -> list[dict[str, Any]]:
@@ -448,56 +481,382 @@ def _assert_idle_rows(
         )
 
 
+#: 计算进程字段（``--query-compute-apps`` 支持的列；⛔ 该子命令**不支持** ``-i``）。
+COMPUTE_APP_FIELDS = ("gpu_uuid", "pid", "used_memory", "process_name")
+#: uuid → 卡号映射的查询列（compute-apps 只给 uuid，必须另查一次映射）。
+UUID_MAP_FIELDS = ("index", "uuid")
+
+#: 进错误消息 / JSON 的进程名最长长度（``/proc/<pid>/cmdline`` 可能很长）。
+_PROCESS_NAME_LIMIT = 120
+
+
+def parse_compute_apps(text: str) -> list[dict[str, Any]]:
+    """解析 ``nvidia-smi --query-compute-apps=gpu_uuid,pid,used_memory,process_name``。
+
+    行形态（``--format=csv,noheader,nounits``）::
+
+        GPU-cbefcbab-7651-516c-da18-797296a24902, 3912182, 13326, python
+
+    - 跳过表头行（``pid`` 列不是数字且首列看着像列名）；
+    - ``used_memory`` 为 ``[N/A]``/``N/A`` ⇒ 记 0（有些驱动不给 compute 进程显存）；
+    - **任何其它无法解析的行 ⇒ ``RuntimeError``（fail-closed）**：读不出进程表就等于
+      "不知道有没有人在这张卡上算"，⛔ 不能当成"没人算"。
+    """
+    rows: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        fields = _csv_fields(line)
+        if len(fields) < 2:
+            raise RuntimeError(f"无法解析 nvidia-smi 进程查询行（字段数 {len(fields)}）：{line!r}")
+        pid_text = fields[1].strip()
+        if not pid_text.lstrip("-").isdigit():
+            if _is_compute_header(fields):
+                continue
+            raise RuntimeError(f"无法解析 nvidia-smi 进程查询行（pid 非数字）：{line!r}")
+        used_text = fields[2] if len(fields) > 2 else ""
+        name = fields[3] if len(fields) > 3 else ""
+        rows.append(
+            {
+                "gpu_uuid": fields[0].strip(),
+                "pid": int(pid_text),
+                "used_mib": parse_float(used_text),
+                "process_name": name.strip(),
+            }
+        )
+    return rows
+
+
+def _is_compute_header(fields: Sequence[str]) -> bool:
+    """``--query-compute-apps`` 的表头行判定（列名而非数值）。"""
+    joined = ",".join(fields).lower()
+    return "gpu_uuid" in joined or "pid" in joined.split(",")[:2]
+
+
+def parse_gpu_uuid_map(text: str) -> dict[str, int]:
+    """解析 ``nvidia-smi --query-gpu=index,uuid`` → ``{uuid: 卡号}``。
+
+    表头行跳过；其它无法解析的行 ⇒ ``RuntimeError``（拿不到映射就无法把进程归到卡上）。
+    """
+    mapping: dict[str, int] = {}
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        fields = _csv_fields(line)
+        index = _numeric(fields[0]) if fields else None
+        if index is None:
+            continue  # 表头行（``index, uuid``）
+        if len(fields) < 2 or not fields[1].strip():
+            raise RuntimeError(f"无法解析 nvidia-smi uuid 映射行：{line!r}")
+        mapping[fields[1].strip()] = int(index)
+    return mapping
+
+
+def query_compute_apps(
+    *,
+    runner: Callable[[list[str]], str] | None = None,
+) -> list[dict[str, Any]]:
+    """查全机 compute 进程表（**不带** ``-i``：该子命令不支持，按 uuid 过滤）。"""
+    command = [
+        "nvidia-smi",
+        f"--query-compute-apps={','.join(COMPUTE_APP_FIELDS)}",
+        "--format=csv,noheader,nounits",
+    ]
+    return parse_compute_apps(_run_query(command, runner))
+
+
+def query_gpu_uuid_map(
+    gpu_indices: Sequence[str],
+    *,
+    runner: Callable[[list[str]], str] | None = None,
+) -> dict[str, int]:
+    """查目标卡的 ``index → uuid`` 映射（命令必带 ``-i``，与其它查询同一条铁律）。"""
+    if not gpu_indices:
+        raise ValueError("query_gpu_uuid_map 需要至少一个卡号")
+    command = [
+        "nvidia-smi",
+        f"--query-gpu={','.join(UUID_MAP_FIELDS)}",
+        "--format=csv,noheader",
+        "-i",
+        ",".join(str(item) for item in gpu_indices),
+    ]
+    return parse_gpu_uuid_map(_run_query(command, runner))
+
+
+def read_process_display_name(
+    pid: int,
+    fallback: str = "",
+    *,
+    cmdline_reader: Callable[[int], str] | None = None,
+) -> str:
+    """补全进程名：``/proc/<pid>/cmdline`` 优先，``ps`` 兜底，⛔ 不用 sudo。
+
+    两类都属于**只读观测**（红线：⛔ 不 kill / 不 stop 任何进程/容器）。
+    读不到就回落 ``nvidia-smi`` 给的名字（进程名只为"点名谁占着卡"，不参与判断）。
+    """
+    reader = cmdline_reader or _read_proc_cmdline
+    for candidate in (lambda: reader(pid), lambda: _ps_args(pid)):
+        try:
+            text = candidate()
+        except Exception:  # noqa: BLE001 —— 补名失败绝不能让断言本身失败
+            text = ""
+        text = " ".join(str(text or "").split())
+        if text:
+            return text[:_PROCESS_NAME_LIMIT]
+    return (fallback or "<名字读不到>")[:_PROCESS_NAME_LIMIT]
+
+
+def _read_proc_cmdline(pid: int) -> str:
+    """读 ``/proc/<pid>/cmdline``（argv 以 NUL 分隔）；无权限/进程已退 ⇒ 空串。"""
+    try:
+        raw = Path(f"/proc/{int(pid)}/cmdline").read_bytes()
+    except OSError:
+        return ""
+    return raw.replace(b"\x00", b" ").decode("utf-8", "replace").strip()
+
+
+def _ps_args(pid: int) -> str:
+    """``ps -p <pid> -o args=`` 兜底（只读；失败返回空串，由调用方回落）。"""
+    try:
+        completed = subprocess.run(
+            ["ps", "-p", str(int(pid)), "-o", "args="],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, ValueError):
+        return ""
+    return completed.stdout.strip() if completed.returncode == 0 else ""
+
+
+def sample_card_frames(
+    gpu_indices: Sequence[str],
+    *,
+    runner: Callable[[list[str]], str] | None = None,
+    container_reader: Callable[[], dict[str, list[str]]] | None = None,
+    process_name_reader: Callable[[int, str], str] | None = None,
+) -> dict[str, CardFrame]:
+    """**采一帧**三判据输入：显存行 + compute 进程表 + 容器声明 ⇒ 逐卡 :class:`CardFrame`。
+
+    :param runner: ``nvidia-smi`` 执行器（注入点；同一注入点覆盖本帧的三条 nvidia-smi 查询）。
+    :param container_reader: 容器声明读取器（注入点；默认真读 ``docker ps/inspect``）。
+    :param process_name_reader: 进程补名器（注入点；默认 ``/proc`` → ``ps``）。
+    :raises RuntimeError: 任何读数缺失/命令失败 ⇒ fail-closed（"测不到"≠"可用"）。
+    """
+    targets = [str(item) for item in gpu_indices]
+    if not targets:
+        raise RuntimeError("sample_card_frames 需要至少一个目标卡号")
+    rows = parse_idle_rows(
+        _run_query(
+            [
+                "nvidia-smi",
+                f"--query-gpu={','.join(IDLE_FIELDS)}",
+                "--format=csv,noheader,nounits",
+                "-i",
+                ",".join(targets),
+            ],
+            runner,
+        )
+    )
+    if not rows:
+        raise RuntimeError(f"nvidia-smi 未返回任何读数（目标卡 {targets}）——拒绝启动")
+    reported = {str(row["gpu_index"]) for row in rows}
+    missing = sorted(set(targets) - reported, key=_card_sort_key)
+    if missing:
+        # 少一张卡的读数 = 有一张没验过（fail-closed）。
+        raise RuntimeError(f"nvidia-smi 未返回这些目标卡的读数：{missing}——拒绝启动")
+
+    uuid_to_index = query_gpu_uuid_map(targets, runner=runner)
+    apps = query_compute_apps(runner=runner)
+    processes: dict[str, list[ComputeProcess]] = {card: [] for card in targets}
+    for app in apps:
+        card = uuid_to_index.get(str(app.get("gpu_uuid")))
+        if card is None or str(card) not in processes:
+            # 不在目标卡上的进程与本帧判定无关（compute-apps 不支持 -i，必带全机进程）。
+            continue
+        name = (process_name_reader or read_process_display_name)(
+            int(app["pid"]), str(app.get("process_name") or "")
+        )
+        processes[str(card)].append(
+            ComputeProcess(
+                pid=int(app["pid"]), name=name, used_mib=float(app.get("used_mib") or 0.0)
+            )
+        )
+
+    reader = container_reader or read_container_declarations
+    declared = reader()
+    frames: dict[str, CardFrame] = {}
+    for row in rows:
+        card = str(row["gpu_index"])
+        frames[card] = CardFrame(
+            used_mib=float(row["used_mib"]),
+            total_mib=float(row["total_mib"]),
+            utilization_pct=float(row["utilization_pct"]),
+            compute_processes=tuple(processes.get(card, ())),
+            containers=tuple(declared.get(card, ())),
+        )
+    return frames
+
+
+def _card_sort_key(card: str) -> tuple[int, str]:
+    return (0, f"{int(card):08d}") if str(card).isdigit() else (1, str(card))
+
+
+def evaluate_target_gpus_idle(
+    gpu_indices: Sequence[int | str],
+    *,
+    runner: Callable[[list[str]], str] | None = None,
+    container_reader: Callable[[], dict[str, list[str]]] | None = None,
+    process_name_reader: Callable[[int, str], str] | None = None,
+    position_mib: float | None = None,
+    position_ratio: float | None = None,
+    max_used_mib: float | None = None,
+    samples: int | None = None,
+    interval_s: float | None = None,
+    sleeper: Callable[[float], None] = time.sleep,
+) -> list[CardVerdict]:
+    """逐卡**三判据 + 多帧**判定，返回结论列表（**不抛错**，供 ``--json`` 消费）。
+
+    判据（唯一真相源 ``core.gpu_guard.judge_card_frames``）：
+    ① 已用显存 ≤ ``max_used_mib``（默认 2 GiB）**且** 剩余 ≥ 本档头寸
+    ② 卡上无 compute 进程 ③ 卡未被容器声明；且 **每帧**都满足。
+
+    :param position_mib: 训练档头寸（MiB）；None ⇒ env / 默认 48 GiB。
+    :param position_ratio: 服务档比例（如 ``0.85`` ⇒ 头寸 = 0.85 × 该卡总显存）。
+        ⛔ 与 ``position_mib`` 互斥。
+    :param samples: 采样帧数（None ⇒ env / 默认 3）。
+    :param interval_s: 帧间隔秒数（None ⇒ env / 默认 10）。
+    :raises RuntimeError: 任何一帧读数缺失/命令失败（拿不到读数 ⇒ fail-closed）。
+    """
+    targets = [str(item) for item in gpu_indices]
+    if not targets:
+        raise RuntimeError("evaluate_target_gpus_idle 需要至少一个目标卡号")
+    frames_n = resolve_idle_samples() if samples is None else int(samples)
+    gap = resolve_idle_interval_s() if interval_s is None else float(interval_s)
+    per_card: dict[str, list[CardFrame]] = {card: [] for card in targets}
+    for frame_no in range(max(frames_n, 1)):
+        if frame_no:
+            sleeper(gap)
+        frame_map = sample_card_frames(
+            targets,
+            runner=runner,
+            container_reader=container_reader,
+            process_name_reader=process_name_reader,
+        )
+        for card in targets:
+            per_card[card].append(frame_map[card])
+    return [
+        judge_card_frames(
+            card,
+            per_card[card],
+            position_mib=position_mib,
+            position_ratio=position_ratio,
+            max_used_mib=max_used_mib,
+        )
+        for card in targets
+    ]
+
+
 def assert_target_gpus_idle(
     gpu_indices: Sequence[int | str],
     *,
     runner: Callable[[list[str]], str] | None = None,
+    container_reader: Callable[[], dict[str, list[str]]] | None = None,
+    process_name_reader: Callable[[int, str], str] | None = None,
     position_mib: float | None = None,
+    position_ratio: float | None = None,
+    max_used_mib: float | None = None,
     samples: int | None = None,
     interval_s: float | None = None,
     sleeper: Callable[[float], None] = time.sleep,
-) -> None:
-    """断言目标卡**起跑前可用**（B10）：剩余显存 ≥ 本档头寸 ∧ util == 0。
+) -> list[CardVerdict]:
+    """断言目标卡**起跑前可用**（三判据并取）——任一卡不满足即抛 :class:`GpuLockError`。
 
-    ★ 判据已由"绝对占用阈值（>64 MiB）"改为"**剩余 ≥ 头寸**"：邻居的常驻占用只要
-    不吃掉我们的头寸就算可用（先到先得）。
-    ★ **连续采样**：默认 3 帧、间隔 12 s，**帧帧满足**才算可用（防"邻居正好落在两次
-    kernel 之间"）；帧数/间隔可用 ``GRASPO_GPU_IDLE_SAMPLES`` / ``GRASPO_GPU_IDLE_INTERVAL_S``
-    覆盖。
+    ★ 判据（2026-10-25 起）：① 已用显存 ≤ 空闲上限 ∧ 剩余 ≥ 本档头寸
+    ② 卡上无 compute 进程 ③ 卡未被容器声明；且**连续采样帧帧满足**。
+    只看"剩余 ≥ 头寸 ∧ util == 0"会把"他人常驻服务占着 13–16 GiB"（228 GPU0/1/4/5）
+    与"有宿主 compute 进程"（GPU2）的卡全部放行 —— 那正是本判据要堵的漏。
+    **宁等不抢**：不 kill 他人进程、不停他人容器。
 
-    逐卡只查该卡（命令必带 ``-i``），任一卡任一帧不满足即抛 :class:`GpuLockError`。
-    **宁等不抢**：不 kill 他人进程。
-
-    :param gpu_indices: 目标卡号（宿主侧为宿主卡号，容器内为本地序号）。
-    :param runner: 命令执行器（注入点，便于负向测试构造"卡被占"场景）。
-    :param position_mib: 本档头寸（MiB）；None ⇒ 走 env/默认（48 GiB）。
-    :param samples: 采样帧数（≥2）；None ⇒ 走 env/默认。
-    :param interval_s: 帧间隔秒数；None ⇒ 走 env/默认。
-    :raises GpuLockError: 任一目标卡任一帧不满足双判据。
+    :param runner: ``nvidia-smi`` 执行器注入点（本帧三条查询共用）。
+    :param container_reader: 容器声明读取器注入点（默认真读 docker）。
+    :param position_ratio: 服务档头寸比例（``0.85``）；⛔ 与 ``position_mib`` 互斥。
+    :param max_used_mib: 允许的已用显存上限（默认 2048 MiB）。
+    :raises GpuLockError: 任一目标卡任一帧不满足三判据。
     :raises RuntimeError: 查询命令失败/读数不完整——拿不到读数时 fail-closed。
     """
-    targets = [str(item) for item in gpu_indices]
-    if not targets:
-        raise RuntimeError("assert_target_gpus_idle 需要至少一个目标卡号")
-    frames = DEFAULT_IDLE_SAMPLES if samples is None else samples
-    gap = DEFAULT_IDLE_SAMPLE_INTERVAL_S if interval_s is None else interval_s
-    if samples is None:
-        frames = resolve_idle_samples()
-    if interval_s is None:
-        gap = resolve_idle_interval_s()
-    requested = {int(item) for item in targets}
-    for frame_no in range(max(frames, 1)):
-        if frame_no:
-            sleeper(gap)
-        rows = query_idle_rows(targets, runner=runner)
-        if not rows:
-            raise RuntimeError(f"nvidia-smi 未返回任何读数（目标卡 {targets}）——拒绝启动")
-        # 读数必须覆盖每一个目标卡：少一张就等于有一张没验过（fail-closed）。
-        reported = {index for index, _, _ in rows}
-        missing = sorted(requested - reported)
-        if missing:
-            raise RuntimeError(f"nvidia-smi 未返回这些目标卡的读数：{missing}——拒绝启动")
-        _assert_idle_rows(rows, position_mib=position_mib)
+    verdicts = evaluate_target_gpus_idle(
+        gpu_indices,
+        runner=runner,
+        container_reader=container_reader,
+        process_name_reader=process_name_reader,
+        position_mib=position_mib,
+        position_ratio=position_ratio,
+        max_used_mib=max_used_mib,
+        samples=samples,
+        interval_s=interval_s,
+        sleeper=sleeper,
+    )
+    failed = [verdict for verdict in verdicts if not verdict.available]
+    if failed:
+        raise reject_unavailable(failed)
+    return verdicts
+
+
+def resolve_visible_gpu_targets(
+    visible: str | None = None,
+    *,
+    inventory_probe: Callable[[], GpuInventory] | None = None,
+) -> list[str]:
+    """解析"本进程该断言哪些卡"：宿主显式卡号 或 容器内实测可见卡的**本地序号**。
+
+    - ``NVIDIA_VISIBLE_DEVICES`` 是显式卡号 ⇒ 逐张断言这些宿主卡（非法取值由
+      ``assert_gpu_lock`` fail-closed）；
+    - 是 runtime 哨兵（``void``/``none``）⇒ 先实测可见卡拿本地序号（容器内按宿主
+      卡号查必然失败，见 F-2）。
+
+    :raises GpuLockError: 设备边界不满足。
+    :raises RuntimeError: 实测可见卡探测失败。
+    """
+    raw = os.environ.get("NVIDIA_VISIBLE_DEVICES") if visible is None else visible
+    if not is_runtime_managed(raw):
+        return [str(item) for item in assert_gpu_lock(raw)]
+    probe = inventory_probe or probe_gpu_inventory
+    inventory = probe()
+    source = resolve_device_source(raw, inventory)
+    return [
+        str(item) for item in (source.inventory.indices if source.inventory is not None else ())
+    ]
+
+
+def evaluate_visible_gpus_idle(
+    *,
+    visible: str | None = None,
+    inventory_probe: Callable[[], GpuInventory] | None = None,
+    runner: Callable[[list[str]], str] | None = None,
+    container_reader: Callable[[], dict[str, list[str]]] | None = None,
+    process_name_reader: Callable[[int, str], str] | None = None,
+    position_mib: float | None = None,
+    position_ratio: float | None = None,
+    max_used_mib: float | None = None,
+    samples: int | None = None,
+    interval_s: float | None = None,
+    sleeper: Callable[[float], None] = time.sleep,
+) -> list[CardVerdict]:
+    """按当前设备来源**逐卡判定**（不抛错）——CLI ``--json`` 的取数入口。"""
+    targets = resolve_visible_gpu_targets(visible, inventory_probe=inventory_probe)
+    return evaluate_target_gpus_idle(
+        targets,
+        runner=runner,
+        container_reader=container_reader,
+        process_name_reader=process_name_reader,
+        position_mib=position_mib,
+        position_ratio=position_ratio,
+        max_used_mib=max_used_mib,
+        samples=samples,
+        interval_s=interval_s,
+        sleeper=sleeper,
+    )
 
 
 def assert_visible_gpus_idle(
@@ -505,34 +864,29 @@ def assert_visible_gpus_idle(
     visible: str | None = None,
     inventory_probe: Callable[[], GpuInventory] | None = None,
     runner: Callable[[list[str]], str] | None = None,
+    container_reader: Callable[[], dict[str, list[str]]] | None = None,
+    process_name_reader: Callable[[int, str], str] | None = None,
     position_mib: float | None = None,
+    position_ratio: float | None = None,
+    max_used_mib: float | None = None,
     samples: int | None = None,
     interval_s: float | None = None,
     sleeper: Callable[[float], None] = time.sleep,
-) -> None:
-    """按当前设备来源断言目标卡空闲（宿主侧卡号 / 容器内实测可见卡都支持）。
+) -> list[CardVerdict]:
+    """按当前设备来源断言目标卡可用（三判据并取；宿主卡号 / 容器内本地序号都支持）。
 
-    - ``NVIDIA_VISIBLE_DEVICES`` 是显式卡号 → 逐张断言这些宿主卡；
-    - 是 runtime 哨兵（``void``）→ 先实测可见卡拿到容器内本地序号，再逐张断言
-      （重编号后按宿主卡号查必然失败，见 F-2）。
-
-    :raises GpuLockError: 设备边界不满足，或任一目标卡非空闲。
+    :raises GpuLockError: 设备边界不满足，或任一目标卡不满足三判据。
     :raises RuntimeError: 实测可见卡探测失败/读数不完整。
     """
-    raw = os.environ.get("NVIDIA_VISIBLE_DEVICES") if visible is None else visible
-    if not is_runtime_managed(raw):
-        # 显式宿主卡号通道：非法取值由 assert_gpu_lock 抛错（原样上抛）。
-        targets: Sequence[int | str] = assert_gpu_lock(raw)
-    else:
-        # runtime 收窄 + 重编号：只能用容器内本地序号（F-2）。只探测一次，
-        # 断言与后续查询共用同一份实测结果（避免两次探测之间卡集变化）。
-        inventory = (inventory_probe or probe_gpu_inventory)()
-        source = resolve_device_source(raw, inventory)
-        targets = source.inventory.indices if source.inventory is not None else ()
-    assert_target_gpus_idle(
+    targets = resolve_visible_gpu_targets(visible, inventory_probe=inventory_probe)
+    return assert_target_gpus_idle(
         targets,
         runner=runner,
+        container_reader=container_reader,
+        process_name_reader=process_name_reader,
         position_mib=position_mib,
+        position_ratio=position_ratio,
+        max_used_mib=max_used_mib,
         samples=samples,
         interval_s=interval_s,
         sleeper=sleeper,

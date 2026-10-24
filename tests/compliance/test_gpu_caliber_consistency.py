@@ -6,7 +6,8 @@
 ★★ 主席 **2026-10-17** 裁定，逐字：「**228 先到先得，随便用。**」
 ＋「**单个作业不限制卡数。**」
 ⇒ 本机全卡 0–7 一律可用（⛔ 无预留/禁用/生产锁卡/邻居卡、⛔ 无卡数上限）；
-唯一保留的硬要求 =「**不抢占他人**」（起跑前逐卡实测：**剩余 ≥ 本档头寸 ∧ util == 0**）。
+唯一保留的硬要求 =「**不抢占他人**」（起跑前逐卡实测**三判据并取**：**已用显存 ≤ 空闲
+上限 ∧ 剩余 ≥ 本档头寸 ∧ 卡上无 compute 进程 ∧ 未被容器声明**，且 util == 0、帧帧满足）。
 
 ## 为什么需要这个文件（与姊妹机核的分工，§1.4 不重复）
 
@@ -21,10 +22,16 @@
 2. **卡数上限是派生量、不是阈值**：`MAX_CARDS == len(ALLOWED_INDICES)`；
    且 `assert_gpu_lock` 的**默认**路径不判卡数（5 张、8 张都放行）。
    ★ 阳性对照：显式传 `max_cards` 时仍收窄（保留给"确实要自限"的调用方）。
-3. **空闲判据 = B10**：`scripts/gpu_idle_assert.py` / `flow.guard.idle` 生效判据是
-   「剩余 ≥ 本档头寸 ∧ util == 0」；旧绝对阈值（`used > 64 MiB`）**不得**再是判据。
-   ★ 阳性对照：伪造 `nvidia-smi` 让目标卡被占（剩余 < 头寸 或 util != 0）⇒ **必须拒**；
-     让邻居**常驻但不在算**（剩余充足 ∧ util == 0）⇒ **必须放行**（"先到先得"的直接体现）。
+3. **起跑前可用判据 = 三判据并取**（2026-10-25 起；`scripts/gpu_idle_assert.py` /
+   `flow.guard.idle` / `core.gpu_guard.judge_card_frames` 同一实现）：
+   ① 已用显存 ≤ 空闲上限（默认 2 GiB）**且** 剩余 ≥ 本档头寸（训练档 48 GiB /
+   服务档 `0.85 × 总显存`）；② 卡上无 compute 进程；③ 卡未被容器声明；且 util == 0、
+   帧帧满足。⛔ 旧的「64 MiB 绝对阈值 + util ≤ 5%」形态仍**不得**复活（它是另一回事）；
+   但也**不再**接受"邻居常驻占着 13–16 GiB、util=0 ⇒ 照样共用"——228 实测证明那样起服/
+   起训必撞 OOM（GPU0/1/4/5 形态）。
+   ★ 阳性对照：伪造 `nvidia-smi` 让目标卡被占（剩余 < 头寸 / util != 0 / 已用超上限）⇒
+     **必须拒**；伪造 compute 进程或容器声明 ⇒ **必须拒**；真全空（0 MiB、无进程、
+     无容器）⇒ **必须放行**。
 4. **「不抢占他人」没有退化成"杀别人"**：空闲/守卫面**不得含** kill/pkill/killall/
    `docker stop|kill|rm`/`--gpu-reset` 这类"对他人动手"的能力（本进程自有信号处理器除外）。
 5. **清单自述与代码一致**：`matrix54_manifest_source.json::gpu_card_caliber` 的
@@ -153,10 +160,19 @@ def _load_gpu_monitor():
     return _load_by_path("graspo.cli._caliber_monitor", "src/graspo/cli/gpu_monitor.py")
 
 
-def _nvidia_smi_stub(used_mib: float, util_pct: float):
-    """伪 `nvidia-smi`：IDLE_FIELDS = (index, memory.used, memory.total, utilization.gpu)。"""
+def _nvidia_smi_stub(used_mib: float, util_pct: float, apps: str = ""):
+    """伪 `nvidia-smi`（同一个注入点应答三判据所需的三类查询）。
+
+    IDLE_FIELDS = (index, memory.used, memory.total, utilization.gpu)；
+    ``apps`` 为 ``--query-compute-apps`` 的输出（默认空 = 卡上没有 compute 进程）。
+    """
 
     def runner(argv):
+        joined = " ".join(argv)
+        if "--query-compute-apps" in joined:
+            return apps
+        if "--query-gpu=index,uuid" in joined:
+            return "3, GPU-stub3\n"
         idx = "0"
         for i, a in enumerate(argv):
             if a == "-i":
@@ -166,36 +182,78 @@ def _nvidia_smi_stub(used_mib: float, util_pct: float):
     return runner
 
 
+def _assert_idle(gm, used_mib: float, util_pct: float, apps: str = "", **kwargs):
+    """跑一次起跑前可用断言：容器面注入"无声明"（⛔ 单测不连真 docker）。"""
+    return gm.assert_target_gpus_idle(
+        [3],
+        runner=_nvidia_smi_stub(used_mib, util_pct, apps),
+        container_reader=lambda: {},
+        samples=1,
+        interval_s=0,
+        sleeper=lambda _s: None,
+        **kwargs,
+    )
+
+
 def test_idle_criterion_is_free_memory_vs_position_and_util_zero():
-    """★ 生效判据 = B10：剩余 ≥ 本档头寸 ∧ util == 0。"""
+    """★ 判据面之一：剩余 ≥ 本档头寸 ∧ util == 0（缺一即拒）。"""
     gm = _load_gpu_monitor()
     # 邻居**常驻但不在算**（used 64 GiB、util=0，剩余 16 GiB < 48 GiB 头寸）⇒ **必须拒**
     with pytest.raises(Exception) as exc:
-        gm.assert_target_gpus_idle(
-            [3], runner=_nvidia_smi_stub(65536, 0), samples=1, interval_s=0, sleeper=lambda _s: None
-        )
+        _assert_idle(gm, 65536, 0)
     assert "头寸" in str(exc.value), str(exc.value)
 
 
-def test_neighbour_resident_but_not_computing_is_accepted():
-    """★「先到先得」的直接体现：剩余 ≥ 头寸 ∧ util == 0 ⇒ 占用多少都放行。
+def test_neighbour_resident_but_not_computing_is_rejected_by_used_ceiling():
+    """★三判据 ①（2026-10-25 换代）：邻居常驻占 20 GiB、util=0 ⇒ **仍须拒**（已用超上限）。
 
-    （这与旧口径「`memory.used > 64 MiB` 即拒」**直接冲突** —— 旧口径已作废。）
+    ★ 诊断（228 实测）：GPU0/1/4/5 被他人的**常驻推理服务**占着 13–16 GiB，而 util
+    采样全是 0 %。旧口径「剩余 ≥ 头寸 ⇒ 占用多少都放行」把这些卡全部放行 ⇒ 起服/起训
+    撞 OOM。现行口径 = 「已用 ≤ 空闲上限（默认 2 GiB）」与「剩余 ≥ 头寸」**合取**。
     """
     gm = _load_gpu_monitor()
-    # used = 20 GiB、util = 0 ⇒ 剩余 ≈ 60 GiB ≥ 48 GiB 头寸 ⇒ 放行（旧口径下会被误拒）
-    gm.assert_target_gpus_idle(
-        [3], runner=_nvidia_smi_stub(20 * 1024, 0), samples=1, interval_s=0, sleeper=lambda _s: None
-    )
+    with pytest.raises(Exception) as exc:
+        _assert_idle(gm, 20 * 1024, 0)
+    assert "空闲上限" in str(exc.value), str(exc.value)
+
+
+def test_resident_card_is_accepted_only_when_the_ceiling_is_explicitly_raised():
+    """★阳性对照：显式放宽已用上限（确实要与某个已知常驻服务共用卡）⇒ 放行。
+
+    口径没变，只是把"允许的已用上界"显式写出来——⛔ 默认值不可被环境悄悄放宽。
+    """
+    gm = _load_gpu_monitor()
+    _assert_idle(gm, 20 * 1024, 0, max_used_mib=20 * 1024)
+
+
+def test_compute_process_on_the_card_is_rejected():
+    """★三判据 ②：卡上有 compute 进程（宿主进程占卡，228 GPU2 形态）⇒ 必须拒。"""
+    gm = _load_gpu_monitor()
+    with pytest.raises(Exception) as exc:
+        _assert_idle(gm, 0, 0, apps="GPU-stub3, 3912182, 13326, python3\n")
+    assert "3912182" in str(exc.value), str(exc.value)
+
+
+def test_container_declaration_on_the_card_is_rejected():
+    """★三判据 ③：卡被容器声明（228 GPU7 形态：显存 0 MiB、util 0）⇒ 必须拒。"""
+    gm = _load_gpu_monitor()
+    with pytest.raises(Exception) as exc:
+        gm.assert_target_gpus_idle(
+            [3],
+            runner=_nvidia_smi_stub(0, 0),
+            container_reader=lambda: {"3": ["pf228-transform-worker-1"]},
+            samples=1,
+            interval_s=0,
+            sleeper=lambda _s: None,
+        )
+    assert "pf228-transform-worker-1" in str(exc.value), str(exc.value)
 
 
 def test_occupied_card_is_rejected_by_the_idle_assertion():
     """★ 阳性对照：目标卡被他人**在算**（util != 0）⇒ 必须拒（这是"不抢占他人"的判据面）。"""
     gm = _load_gpu_monitor()
     with pytest.raises(Exception) as exc:
-        gm.assert_target_gpus_idle(
-            [3], runner=_nvidia_smi_stub(64, 95), samples=1, interval_s=0, sleeper=lambda _s: None
-        )
+        _assert_idle(gm, 64, 95)
     msg = str(exc.value)
     assert "util" in msg and "绝不 kill" in msg, msg
 
@@ -229,9 +287,7 @@ def test_idle_assertion_message_points_at_yield_or_wait_never_kill():
     """★ 守卫文案本身必须指向"换卡或等"，并**明写**"绝不 kill 他人"（可读性即防线）。"""
     gm = _load_gpu_monitor()
     with pytest.raises(Exception) as exc:
-        gm.assert_target_gpus_idle(
-            [3], runner=_nvidia_smi_stub(70000, 95), samples=1, interval_s=0, sleeper=lambda _s: None
-        )
+        _assert_idle(gm, 70000, 95)
     msg = str(exc.value)
     assert "先到先得" in msg and "绝不 kill" in msg, msg
 

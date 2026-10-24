@@ -295,11 +295,19 @@
 ```bash
 docker ps --format '{{.Names}}' > /tmp/ps.txt
 docker inspect $(docker ps -q) > /tmp/ins.txt 2>/dev/null
-python3 $TREE/scripts/run_guards.py cards-busy --ps-file /tmp/ps.txt --inspect-file /tmp/ins.txt
+# ★ 2026-10-25 起：**必须**再加宿主进程面（否则永远漏宿主进程，228 的 GPU2 就是这种形态）
+nvidia-smi --query-gpu=index,uuid --format=csv,noheader > /tmp/uuid.txt
+nvidia-smi --query-compute-apps=gpu_uuid,pid,used_memory,process_name \
+  --format=csv,noheader,nounits > /tmp/apps.txt
+python3 $TREE/scripts/run_guards.py cards-busy --ps-file /tmp/ps.txt --inspect-file /tmp/ins.txt \
+  --compute-apps-file /tmp/apps.txt --uuid-map-file /tmp/uuid.txt
 # ⇒ BUSY_CARDS=0,1,3,4,5,6,7
 ```
 - 判读：★ **禁用集非空 ⇒ 这些卡一律排除**（含 `created`/`restarting` 的"已预约未加载"态）；
   择卡把该集合作为 `plan_full_cards(..., reserved=…)` 的**硬排除**参数。
+- ★ **两份输入等价取并集**（2026-10-25）：容器面（`docker ps/inspect`）覆盖容器占卡，
+  进程面（`nvidia-smi --query-compute-apps`）覆盖**宿主进程**直接占卡 —— 只读前者会
+  把"宿主进程占着 13 GiB"的卡判成空闲（228 实测缺陷）。
 - ★ 采集口径：★ 卡可能来自 **`HostConfig.DeviceRequests`** 或 **`Config.Env` 的 `NVIDIA_VISIBLE_DEVICES`**
   （228 实测为后者）⇒ 台账**两者都读**。
 
@@ -631,11 +639,17 @@ loss 读数由 `scripts/make_result_json.py` 从 `trainer_state.json` 的 `log_h
   ```bash
   docker ps --format '{{.Names}}' > /tmp/ps.txt
   docker inspect $(docker ps -q) > /tmp/ins.txt 2>/dev/null
-  python3 scripts/run_guards.py cards-busy --ps-file /tmp/ps.txt --inspect-file /tmp/ins.txt   # §17.2
-  python3 scripts/gpu_idle_assert.py --visible <教师卡列表> --position-mib <头寸>              # 逐卡实测空闲
+  nvidia-smi --query-gpu=index,uuid --format=csv,noheader > /tmp/uuid.txt
+  nvidia-smi --query-compute-apps=gpu_uuid,pid,used_memory,process_name \
+    --format=csv,noheader,nounits > /tmp/apps.txt
+  python3 scripts/run_guards.py cards-busy --ps-file /tmp/ps.txt --inspect-file /tmp/ins.txt \
+    --compute-apps-file /tmp/apps.txt --uuid-map-file /tmp/uuid.txt                          # §17.2
+  # ★ 服务档（vLLM 等）头寸按 0.85 × 总显存算，⛔ 48 GiB 远远不够：
+  python3 scripts/gpu_idle_assert.py --visible <教师卡列表> --position-ratio 0.85 --json     # 逐卡实测可用
   ```
 
-  `cards-busy` 命中 / `gpu_idle_assert` 判不空闲 ⇒ **换卡或等**；⛔ 不 kill 他人进程、⛔ 不停他人容器（§3）。
+  `cards-busy` 命中 / `gpu_idle_assert` 判不可用（显存 / compute 进程 / 容器声明任一不过）⇒
+  **换卡或等**；⛔ 不 kill 他人进程、⛔ 不停他人容器（§3）。
 - **起服（默认 dry-run；`--apply` 才真起）**：
 
   ```bash

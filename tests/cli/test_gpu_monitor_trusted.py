@@ -31,9 +31,17 @@ from graspo.core.gpu_guard import GpuInventory, GpuLockError
 
 @pytest.fixture(autouse=True)
 def _fast_idle_sampling(monkeypatch):
-    """B10：默认 3 帧 × 12 s 会让单测真等 24 s ⇒ 统一注入 2 帧 × 0 s（判据语义不变）。"""
+    """默认 3 帧 × 10 s 会让单测真等 20 s ⇒ 统一注入 2 帧 × 0 s（判据语义不变）。"""
     monkeypatch.setenv("GRASPO_GPU_IDLE_SAMPLES", "2")
     monkeypatch.setenv("GRASPO_GPU_IDLE_INTERVAL_S", "0")
+
+
+@pytest.fixture(autouse=True)
+def _no_container_declarations(monkeypatch):
+    """三判据的 ③ 面在单测里注入"无容器声明"（⛔ 不让单测去连真 docker）。"""
+    import graspo.cli.gpu_monitor as monitor
+
+    monkeypatch.setattr(monitor, "read_container_declarations", lambda: {})
 
 
 #: 机上 8 卡（含 0–3；B10 起全卡均在允许集合内）的 nvidia-smi 输出：index,uuid,used,free,total,util,temp,power
@@ -194,12 +202,24 @@ class _IdleRunner:
 
     TOTAL = 81920.0
 
-    def __init__(self, busy: dict[int, tuple[float, float]] | None = None) -> None:
+    def __init__(
+        self,
+        busy: dict[int, tuple[float, float]] | None = None,
+        apps: str = "",
+    ) -> None:
         self.busy = busy or {}
+        self.apps = apps
         self.commands: list[list[str]] = []
 
     def __call__(self, command: list[str]) -> str:
         self.commands.append(command)
+        joined = " ".join(command)
+        # 三判据（2026-10-25）后同一注入点要应答三类查询：
+        if "--query-compute-apps" in joined:
+            return self.apps       # 默认空 = 卡上没有 compute 进程
+        if "--query-gpu=index,uuid" in joined:
+            selected = command[command.index("-i") + 1].split(",")
+            return "".join(f"{int(idx)}, GPU-fake{int(idx)}\n" for idx in selected)
         selected = command[command.index("-i") + 1].split(",")
         return "".join(
             f"{int(idx)}, {self.busy.get(int(idx), (4.0, 0.0))[0]}, "
@@ -237,6 +257,28 @@ def test_assert_target_gpus_idle_rejects_busy_utilization():
 
     with pytest.raises(GpuLockError):
         assert_target_gpus_idle([0, 1], runner=runner)
+
+
+def test_assert_target_gpus_idle_rejects_card_with_compute_process():
+    """★三判据 ②（2026-10-25）：卡上有 compute 进程 ⇒ 拒绝，即使显存/util/剩余都正常。"""
+    runner = _IdleRunner(apps="GPU-fake1, 3912182, 13326, python3\n")
+
+    with pytest.raises(GpuLockError) as exc:
+        assert_target_gpus_idle([0, 1], runner=runner)
+
+    assert "GPU1" in str(exc.value)
+    assert "3912182" in str(exc.value)
+
+
+def test_assert_target_gpus_idle_rejects_resident_memory_even_if_util_zero():
+    """★三判据 ①（2026-10-25）：邻居常驻占 16 GiB、util=0 ⇒ 已用显存超上限 ⇒ 拒绝。"""
+    runner = _IdleRunner(busy={1: (16 * 1024, 0.0)})
+
+    with pytest.raises(GpuLockError) as exc:
+        assert_target_gpus_idle([1], runner=runner)
+
+    assert "GPU1" in str(exc.value)
+    assert "空闲上限" in str(exc.value)
 
 
 def test_assert_target_gpus_idle_is_fail_closed_on_incomplete_readings():

@@ -522,7 +522,11 @@ def test_idle_requires_at_least_two_consecutive_frames():
 
 
 def test_idle_sampled_accepts_when_every_frame_is_ok():
-    """连续采样全部满足 → 通过（注入 sleeper，免真等待）。"""
+    """连续采样全部满足 → 通过（注入 sleeper，免真等待）。
+
+    ★ 2026-10-25：默认帧间隔由 12 s 改为 10 s（`--interval` 默认值同源），
+    断言跟着口径走；帧数仍是 3（"连续采样"语义不变）。
+    """
     frames = iter([(80000.0, 0.0), (79000.0, 0.0), (78500.0, 0.0)])
     slept: list[float] = []
     assert_gpu_idle_sampled(
@@ -532,7 +536,7 @@ def test_idle_sampled_accepts_when_every_frame_is_ok():
         position_mib=48 * 1024,
         sleeper=slept.append,
     )
-    assert slept == [12.0, 12.0]
+    assert slept == [10.0, 10.0]
 
 
 def test_idle_sampled_rejects_when_any_frame_is_busy():

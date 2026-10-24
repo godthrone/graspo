@@ -62,18 +62,32 @@ PREFERRED_FOUR: tuple[int, ...] = (0, 1, 2, 3)
 
 _ENV_KEY = "NVIDIA_VISIBLE_DEVICES"
 
-# ── B10 空闲判据：头寸（position）+ util 双判据 ─────────────────────────────
-# ★ 旧的绝对占用阈值 ``IDLE_MEMORY_TOLERANCE_MIB = 64`` **已作废**：它把"卡上有他人
-#   常驻但不在算（util=0%）"误判为不可用，与"先到先得"口径冲突。
-# ★ 新判据（**起跑前**）：可用 ⟺ 该卡**剩余显存 ≥ 本档头寸** ∧ **util == 0**。
+# ── 起跑前「逐卡可用」判据：显存 + compute 进程 + 容器声明（三并取）─────────────
+# ★★ 2026-10-25（取卡闸门补漏工作包）：判据由**两条**升为**三条并取**。
+#   旧两条（剩余显存 ≥ 头寸 ∧ util == 0）在 228 真机上**全部漏判**：GPU0/1/4/5 被
+#   他人常驻推理服务占着 13–16 GiB、GPU2 被**宿主** compute 进程占 13.3 GiB，而
+#   util 采样全为 0 ⇒ 旧判据对 ``--visible 0,1,2,4,5`` **全 rc=0 放行**，起服/起训必撞 OOM。
+#   现行三条（任一不满足即不可用）：
+#     ① 显存：**已用** ≤ 空闲上限（默认 2 GiB）**且** 剩余 ≥ 本档头寸；
+#     ② 进程：该卡**没有任何** compute 进程（有则点名 pid / 进程名 / 占用）；
+#     ③ 容器：该卡未被任何容器经 ``DeviceRequests`` / ``NVIDIA_VISIBLE_DEVICES`` 声明。
+#   ＋采样稳定：``frames`` 帧内**每帧**都满足 ①②③ 才算可用。
+#   ⛔ 「64 MiB 绝对阈值」那套旧形态**没有**复活：本判据与"剩余 ≥ 头寸"**并用**，
+#     且服务档头寸可按 ``0.85 × 该卡总显存`` 解析（对齐 vLLM 的 gpu_memory_utilization）。
 #: 本档头寸的配置来源（MiB）：该档实测/声明需要占用的显存上界。
 GPU_POSITION_MIB_ENV = "GRASPO_GPU_POSITION_MIB"
-#: 默认头寸（MiB）= 48 GiB 级（9B LoRA native 实测锚 ≈36 GiB）。
+#: 默认头寸（MiB）= 48 GiB 级（9B LoRA native 实测锚 ≈36 GiB）——**训练档**口径。
 DEFAULT_GPU_POSITION_MIB = 48.0 * 1024.0
-#: 起跑前 util 判定的**连续采样**口径：默认 3 次、间隔 12 s，**全部为 0** 才算空闲
+#: 起跑前**允许的已用显存上限**（MiB，默认 2 GiB）：超过即视为"卡上有人占着"。
+#: 只看 util==0 不够——常驻服务/进程不占算力，只占显存。
+DEFAULT_MAX_USED_MIB = 2.0 * 1024.0
+#: **服务档**（vLLM 等）头寸比例：需 ``0.85 × 该卡总显存``（80 GiB 卡 ≈ 69 632 MiB）。
+#: 起服前若仍按 48 GiB 头寸放行，vLLM 会在加载期直接 OOM。
+DEFAULT_SERVICE_POSITION_RATIO = 0.85
+#: 起跑前「逐卡可用」的**连续采样**口径：默认 3 帧、间隔 10 s，**帧帧满足**才算可用
 #: （防"邻居正好落在两次 kernel 之间"）。两者都可用 env 覆盖（运维/测试注入点）。
 DEFAULT_IDLE_SAMPLES = 3
-DEFAULT_IDLE_SAMPLE_INTERVAL_S = 12.0
+DEFAULT_IDLE_SAMPLE_INTERVAL_S = 10.0
 #: 采样帧数 / 帧间隔的配置来源（默认 = 上面两个常量）。
 GPU_IDLE_SAMPLES_ENV = "GRASPO_GPU_IDLE_SAMPLES"
 GPU_IDLE_INTERVAL_S_ENV = "GRASPO_GPU_IDLE_INTERVAL_S"
@@ -97,9 +111,9 @@ _USAGE_HINT = (
     "    run.sh <config.yaml> --gpus 0,1\n"
     "    docker run --gpus '\"device=0,1\"' ...\n"
     "  默认允许集合 = 全卡 0–7（先到先得；⛔ 无预留/禁用/生产锁卡，⛔ 无卡数上限）；\n"
-    "  唯一硬要求 =「不抢占他人」：起跑前逐卡实测空闲（剩余 ≥ 本档头寸 ∧ util == 0），\n"
-    "  被占则换卡或等，⛔ 绝不 kill 他人进程 / 绝不停他人容器。\n"
-    "  卡是否真能用另由 **头寸 + util** 双判据把关（见 gpu_idle_assert）。"
+    "  唯一硬要求 =「不抢占他人」：起跑前逐卡实测可用（已用显存 ≤ 空闲上限 ∧ 剩余 ≥ 本档头寸\n"
+    "  ∧ 卡上无 compute 进程 ∧ 未被容器声明），被占则换卡或等，⛔ 绝不 kill 他人进程 /\n"
+    "  ⛔ 绝不停他人容器。判据唯一实现见 `gpu_idle_assert`（三判据并取）。"
 )
 
 
@@ -229,32 +243,109 @@ def resolve_idle_interval_s(env: Mapping[str, str] | None = None) -> float:
 
 
 @dataclass(frozen=True)
-class CardAvailability:
-    """单卡**起跑前可用性**判定结果（纯数据，无设施依赖）。
+class ComputeProcess:
+    """卡上的一个 compute 进程（``nvidia-smi --query-compute-apps`` 的一行 + 补名）。
 
-    判据（B10）：可用 ⟺ ``free_mib >= position_mib`` ∧ ``utilization_pct == 0``。
+    进程名由设施层补全（``/proc/<pid>/cmdline`` 优先、``ps`` 兜底，⛔ 不用 sudo）；
+    读不到就留 ``nvidia-smi`` 给的名字。只用于**报告**（点名谁占着卡），不参与判断。
+    """
+
+    pid: int
+    name: str = ""
+    used_mib: float = 0.0
+
+
+@dataclass(frozen=True)
+class CardFrame:
+    """**单帧**逐卡读数——三判据的输入（纯数据，零设施依赖）。
+
+    设施层（``gpu_monitor``）每帧采一份；判据只看这一份，便于注入测试。
+    """
+
+    used_mib: float
+    total_mib: float
+    utilization_pct: float
+    compute_processes: tuple[ComputeProcess, ...] = ()
+    containers: tuple[str, ...] = ()
+
+    @property
+    def free_mib(self) -> float:
+        """剩余显存（MiB）= 总数 − 已用。"""
+        return float(self.total_mib) - float(self.used_mib)
+
+
+@dataclass(frozen=True)
+class CardAvailability:
+    """单卡**单帧**可用性判定结果（纯数据，无设施依赖）。
+
+    判据（三并取）：可用 ⟺ ① ``used_mib <= max_used_mib`` ∧ ``free_mib >= position_mib``
+    ∧ ② ``compute_processes`` 为空 ∧ ③ ``containers`` 为空，且 ``utilization_pct == 0``。
     """
 
     gpu_index: int | str
     free_mib: float
     utilization_pct: float
     position_mib: float
+    used_mib: float | None = None
+    max_used_mib: float | None = None
+    compute_processes: tuple[ComputeProcess, ...] = ()
+    containers: tuple[str, ...] = ()
 
     @property
     def reasons(self) -> list[str]:
         """不满足的原因（空列表 = 可用）。"""
         reasons: list[str] = []
+        if (
+            self.max_used_mib is not None
+            and self.used_mib is not None
+            and self.used_mib > self.max_used_mib
+        ):
+            reasons.append(
+                f"已用显存 {self.used_mib:.0f} MiB > 空闲上限 {self.max_used_mib:.0f} MiB"
+                "（卡上有人占着显存）"
+            )
         if self.free_mib < self.position_mib:
             reasons.append(
                 f"剩余显存 {self.free_mib:.0f} MiB < 本档头寸 {self.position_mib:.0f} MiB"
             )
         if self.utilization_pct != 0:
             reasons.append(f"利用率 {self.utilization_pct:.1f}% != 0")
+        if self.compute_processes:
+            listed = "、".join(_describe_process(p) for p in self.compute_processes)
+            reasons.append(f"卡上有 {len(self.compute_processes)} 个 compute 进程：{listed}")
+        if self.containers:
+            reasons.append(f"卡被容器声明占用：{'、'.join(self.containers)}")
         return reasons
 
     @property
     def usable(self) -> bool:
         return not self.reasons
+
+
+def _describe_process(process: ComputeProcess) -> str:
+    """一行式进程描述（pid/名/占用）——报告与错误消息共用，不另写一份格式。"""
+    name = process.name or "<名字读不到>"
+    return f"pid {process.pid}（{name}，{process.used_mib:.0f} MiB）"
+
+
+def evaluate_card(
+    gpu_index: int | str,
+    frame: CardFrame,
+    *,
+    position_mib: float,
+    max_used_mib: float | None = None,
+) -> CardAvailability:
+    """按三判据判**单帧**单卡（不抛错，返回结论；抛错在 :func:`assert_card_available`）。"""
+    return CardAvailability(
+        gpu_index,
+        free_mib=frame.free_mib,
+        utilization_pct=frame.utilization_pct,
+        position_mib=float(position_mib),
+        used_mib=frame.used_mib,
+        max_used_mib=None if max_used_mib is None else float(max_used_mib),
+        compute_processes=tuple(frame.compute_processes),
+        containers=tuple(frame.containers),
+    )
 
 
 def assert_card_available(
@@ -263,19 +354,157 @@ def assert_card_available(
     free_mib: float,
     utilization_pct: float,
     position_mib: float,
+    used_mib: float | None = None,
+    max_used_mib: float | None = None,
+    compute_processes: Sequence[ComputeProcess] = (),
+    containers: Sequence[str] = (),
 ) -> CardAvailability:
-    """起跑前**可用**断言：剩余显存 ≥ 头寸 且 util == 0（B10 双判据）。
+    """起跑前**单帧**可用断言（三判据并取）；不满足即抛 :class:`GpuLockError`。
 
-    ★ 判据里**没有**"绝对占用阈值"：邻居的常驻占用只要不吃掉我们的头寸就算可用
-    （"先到先得"）；一旦剩余显存不够或邻居在算（util != 0），才拒绝。
+    ★ 判据里**没有**"绝对占用阈值"这一条独立判据：显存面是"已用 ≤ 空闲上限**且**
+    剩余 ≥ 本档头寸"两条的合取（先到先得 ⇒ 邻居只要没占住我们的头寸、也没在算，
+    才谈得上共用；口径见 :data:`DEFAULT_MAX_USED_MIB`）。
     """
-    verdict = CardAvailability(gpu_index, free_mib, utilization_pct, position_mib)
+    verdict = CardAvailability(
+        gpu_index,
+        free_mib=float(free_mib),
+        utilization_pct=float(utilization_pct),
+        position_mib=float(position_mib),
+        used_mib=None if used_mib is None else float(used_mib),
+        max_used_mib=None if max_used_mib is None else float(max_used_mib),
+        compute_processes=tuple(compute_processes),
+        containers=tuple(containers),
+    )
     if verdict.usable:
         return verdict
-    raise _reject(
-        f"目标卡 GPU{gpu_index} 起跑前不可用：{'；'.join(verdict.reasons)}",
-        "先到先得、不破坏别人的服务：换一张满足头寸且 util==0 的卡，或等它空下来"
-        "——绝不 kill 他人进程、绝不与正在计算的邻居混跑。",
+    raise reject_unavailable([verdict])
+
+
+@dataclass(frozen=True)
+class CardVerdict:
+    """单卡**多帧**判定结论（供 CLI ``--json`` 与编排脚本消费）。"""
+
+    gpu_index: int | str
+    available: bool
+    reasons: tuple[str, ...]
+    position_mib: float
+    max_used_mib: float | None
+    frames: int
+    frame: CardFrame | None
+    compute_processes: tuple[ComputeProcess, ...] = ()
+    containers: tuple[str, ...] = ()
+
+    def as_dict(self) -> dict[str, object]:
+        """机读形态（字段名即 CLI ``--json`` 契约，⛔ 不随意改名）。"""
+        return {
+            "card": int(self.gpu_index) if str(self.gpu_index).isdigit() else str(self.gpu_index),
+            "available": self.available,
+            "reasons": list(self.reasons),
+            "frames": self.frames,
+            "position_mib": round(self.position_mib, 3),
+            "max_used_mib": None if self.max_used_mib is None else round(self.max_used_mib, 3),
+            "used_mib": None if self.frame is None else round(self.frame.used_mib, 3),
+            "total_mib": None if self.frame is None else round(self.frame.total_mib, 3),
+            "free_mib": None if self.frame is None else round(self.frame.free_mib, 3),
+            "utilization_pct": None if self.frame is None else round(self.frame.utilization_pct, 3),
+            "processes": [
+                {"pid": p.pid, "name": p.name, "used_mib": round(p.used_mib, 3)}
+                for p in self.compute_processes
+            ],
+            "containers": list(self.containers),
+        }
+
+
+def judge_card_frames(
+    gpu_index: int | str,
+    frames: Sequence[CardFrame],
+    *,
+    position_mib: float | None = None,
+    position_ratio: float | None = None,
+    max_used_mib: float | None = None,
+    env: Mapping[str, str] | None = None,
+) -> CardVerdict:
+    """**多帧**判定单卡：每一帧都必须满足三判据（帧帧满足才算可用）。
+
+    :param position_mib: 本档头寸（MiB）；None ⇒ 走 env / 默认 48 GiB（训练档口径）。
+    :param position_ratio: **服务档**比例（如 ``0.85``）⇒ 头寸 = ``ratio × 该帧总显存``。
+        ⛔ 与 ``position_mib`` 互斥（调用方负责判；此处同时给出即抛错）。
+    :param max_used_mib: 允许的已用显存上限；None ⇒ :data:`DEFAULT_MAX_USED_MIB`。
+    :raises GpuLockError: 帧数为 0 或 ``position_mib`` 与 ``position_ratio`` 同时给出。
+    """
+    if not frames:
+        raise _reject(
+            f"GPU{gpu_index} 一帧读数都没拿到",
+            "拿不到读数就必须拒绝——「测不到」绝不当「可用」。",
+        )
+    if position_mib is not None and position_ratio is not None:
+        raise _reject(
+            "position_mib 与 position_ratio 同时给出",
+            "头寸只能有一个来源：显式 MiB（训练档）或按总显存的比例（服务档）。",
+        )
+    if position_ratio is not None and not 0 < float(position_ratio) <= 1:
+        raise _reject(
+            f"position_ratio={position_ratio!r} 不在 (0, 1] 内",
+            "服务档比例是「该卡总显存里本档能用的份额」，1 = 整卡；越界即无法判定。",
+        )
+    base_position = (
+        resolve_gpu_position_mib(env) if position_mib is None else float(position_mib)
+    )
+    max_used = DEFAULT_MAX_USED_MIB if max_used_mib is None else float(max_used_mib)
+    if max_used < 0:
+        raise _reject(
+            f"空闲上限 {max_used:.0f} MiB 为负",
+            "已用显存上限不能为负；0 表示「卡上不许有任何占用」。",
+        )
+
+    reasons: list[str] = []
+    processes: dict[int, ComputeProcess] = {}
+    containers: dict[str, None] = {}
+    last_position = base_position
+    for frame_no, frame in enumerate(frames, start=1):
+        position = base_position if position_ratio is None else float(position_ratio) * float(
+            frame.total_mib
+        )
+        last_position = position
+        verdict = evaluate_card(
+            gpu_index, frame, position_mib=position, max_used_mib=max_used
+        )
+        prefix = "" if len(frames) == 1 else f"第 {frame_no}/{len(frames)} 帧："
+        reasons.extend(prefix + reason for reason in verdict.reasons)
+        for process in frame.compute_processes:
+            processes.setdefault(process.pid, process)
+        for name in frame.containers:
+            containers.setdefault(name, None)
+
+    return CardVerdict(
+        gpu_index=gpu_index,
+        available=not reasons,
+        reasons=tuple(reasons),
+        position_mib=last_position,
+        max_used_mib=max_used,
+        frames=len(frames),
+        frame=frames[-1],
+        compute_processes=tuple(processes.values()),
+        containers=tuple(containers),
+    )
+
+
+def reject_unavailable(
+    verdicts: Sequence[CardVerdict] | Sequence[CardAvailability],
+) -> GpuLockError:
+    """把不可用的逐卡结论组装成**可操作**的 fail-closed 错误（点名卡号与原因）。"""
+    lines: list[str] = []
+    for verdict in verdicts:
+        ok = verdict.available if isinstance(verdict, CardVerdict) else verdict.usable
+        if ok:
+            continue
+        lines.append(
+            f"目标卡 GPU{verdict.gpu_index} 起跑前不可用：{'；'.join(verdict.reasons)}"
+        )
+    return _reject(
+        "\n  ".join(lines) if lines else "目标卡起跑前不可用",
+        "先到先得、不破坏别人的服务：换一张三判据都满足（util 也须 == 0）的卡，"
+        "或等它空下来——绝不 kill 他人进程、绝不与别人的进程/容器混跑。",
     )
 
 
