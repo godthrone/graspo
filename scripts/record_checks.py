@@ -50,11 +50,14 @@
        （OPD 另缺 teacher_signal 规则）/ 规则里没有代码坐标 ⇒ **不写该键**（fail-closed）。
        ⛔ 不因「公开算法不作逐条清单要求」就置位（审查第 3 轮 🔴-1 的根因正是这个）。
        成文格式见 `docs/run-discipline.md` §19.2。
-     · **GRASPO**：⛔ **不许自动置位**。必须有一份**显式签署**的算法检查证据
-       `<algo-checks-dir>/<tier>.json`，逐条覆盖《docs/graspo-algorithm.html》**第 9 节**
-       的 8 条不变式（本节是"逐条判断"的唯一清单），每条 `{id, pass, evidence}`，并含
-       `checker`（检查人）与 `checked_at`（检查时间）。缺件/不合契约 ⇒ **不写该键**；
-       8 条里有 `pass=false` ⇒ 写 `false`（有据的不通过）。
+     · **GRASPO**：⛔ **不许自动置位**。必须有一份**显式签署**的算法检查证据，逐条覆盖
+       《docs/graspo-algorithm.html》**第 9 节**的 8 条不变式（本节是"逐条判断"的唯一清单），
+       每条 `{id, pass, evidence}`，并含 `checker`（检查人）与 `checked_at`（检查时间）。
+       找件顺序：目录 = `<algo-checks-dir>`（缺省 `<run-dir>/algo-checks`）→ 仅缺省时回退仓内
+       `samples/configs/matrix68-checks/`；目录内 = `<tier>.json` → `graspo-<tier>.json` → `*-<tier>.json`。
+       同档多份不同内容 ⇒ 歧义 ⇒ 不写键（⛔ 不猜）。字段兼容：`items[]` 优先、缺失回退
+       `invariants[]`（`pass`←`verdict`）；`algorithm` 缺失回退 `algo`。
+       缺件/不合契约 ⇒ **不写该键**；8 条里有 `pass=false` ⇒ 写 `false`（有据的不通过）。
 
 ⛔ 红线：不得为凑「通过」手填 `true`；不得放宽本文件的判定；不得让回填器在缺③④时判通过。
    本文件只**写实测结论**，`status` 仍由回填器按四条判据现算。
@@ -66,7 +69,8 @@
         [--manifest tests/e2e/matrix68_manifest.json]
 
     # ⚠ SFT/CPT/OPD 档的判据③ 认的是**公开算法签署件**（缺省
-    #   samples/configs/matrix68-checks/public-algos.json）；GRASPO 档认 <algo-checks-dir>/<tier>.json。
+    #   samples/configs/matrix68-checks/public-algos.json）；GRASPO 档认 <algo-checks-dir>/<tier>.json
+    #   或 graspo-<tier>.json（缺省目录没件时回退仓内 samples/configs/matrix68-checks/）。
 
     # OPD 档另需教师侧报告（缺省 <EVAL_DIR>/.local/reports/teacher/eval_report.json；
     # 8 个 OPD 档共用一份时用 --teacher-report 指同一份，或 $GRASPO_TEACHER_REPORT）
@@ -111,8 +115,14 @@ PUBLIC_ALGOS = ("SFT", "CPT", "OPD")
 #:   ① 损失/掩码规则是**算法级**的（一套规则覆盖该算法全部档），不属于某个跑次 ⇒ 不进 `<run-dir>`；
 #:   ② ⛔ 不放进 `samples/configs/matrix68/`：该目录被就绪闸门约束为"只放 M###.yaml 档号配置"，
 #:      混入非 yaml 会让 `tools/matrix/check_68_readiness.py` 判 FAIL（实测）；
-#:   ③ GRASPO 的逐档签署件仍走 `<algo-checks-dir>/<tier>.json`（与档号绑定），两套不混。
+#:   ③ GRASPO 的逐档签署件与档号绑定（`<algo-checks-dir>/<tier>.json` / `graspo-<tier>.json`），两套不混。
 PUBLIC_ALGOS_SIG = ROOT / "samples" / "configs" / "matrix68-checks" / "public-algos.json"
+
+#: ★ GRASPO 逐档签署件在**仓内**的唯一位置（与 `--algo-checks-dir` 缺省时的回退目录同址）。
+#:   理由：签署件是**仓内文件**（26 份 `graspo-<tier>.json`），跑次目录里通常没有 ⇒
+#:   只用 `<run-dir>/algo-checks` 会"仓内有件却判不出"。显式 `--algo-checks-dir` 仍**优先且不回退**
+#:   （见 `main()` 的 `algo_dir_explicit`）。
+GRASPO_SIG_DIR = ROOT / "samples" / "configs" / "matrix68-checks"
 
 #: GRASPO 签署件的依据标识（让 `make_result_json.py` 的备注列能分辨"签署类证据"）。
 GRASPO_ALGO_BASIS = "graspo_algorithm_section9_signed"
@@ -475,12 +485,97 @@ def judge_teacher(report, expected: int, subset_sha: str | None, report_path: Pa
 
 
 # ── 判据③：算法正确性检查（分级：GRASPO / 公开算法都要签署件，清单不同）──────────────
-def judge_graspo_algo(tier: str, algo_dir: Path) -> dict:
-    """GRASPO：必须有一份显式签署的算法检查证据；缺件/不合契约 ⇒ ok=None（不写键）。"""
-    path = algo_dir / f"{tier}.json"
-    ev: dict = {"criterion": "③ 算法正确性检查（GRASPO 逐条不变式）", "source": str(path),
+def _evidence_text(raw) -> str:
+    """签署件的 `evidence` 两种形态：`items[]` 里是字符串，`invariants[]` 里是字符串数组。"""
+    if isinstance(raw, str):
+        return raw.strip()
+    if isinstance(raw, list):
+        return "；".join(str(x).strip() for x in raw if str(x).strip())
+    return "" if raw is None else str(raw).strip()
+
+
+def _same_bytes(a: Path, b: Path) -> bool:
+    try:
+        return a.read_bytes() == b.read_bytes()
+    except OSError:
+        return False
+
+
+def _sig_candidates(tier: str, one_dir: Path) -> tuple[list[Path], list[Path]]:
+    """在**一个**目录里按 ①`<tier>.json` → ②`graspo-<tier>.json` → ③`*-<tier>.json` 找件。
+
+    返回 `(命中, 歧义)`：
+      · 命中 = 1 份 ⇒ 用它；命中为空 ⇒ 本目录无件（交给下一个目录）；
+      · 歧义非空 ⇒ 同档撞了**不同内容**的多份签署件 ⇒ 调用方 fail-closed（⛔ 不猜）。
+    ①②同时存在时：**字节相同**视为无歧义（生成器 `--algo-checks-dir` 就是字节相同的铺法），
+    字节不同才判歧义——否则"仓内一份 + 跑次侧一份"这种正当场景会被错杀。
+    """
+    canonical = [p for p in (one_dir / f"{tier}.json", one_dir / f"graspo-{tier}.json")
+                 if p.is_file()]
+    if len(canonical) > 1:
+        if all(_same_bytes(canonical[0], p) for p in canonical[1:]):
+            return canonical[:1], []
+        return [], canonical
+    if canonical:
+        return canonical, []
+    others = sorted(p for p in one_dir.glob(f"*-{tier}.json") if p.is_file())
+    if len(others) > 1:
+        return [], others
+    return others, []
+
+
+def find_graspo_sig(tier: str, dirs) -> dict:
+    """按**目录优先级 + 目录内 ①②③** 找该档签署件；返回 `{path, found_dir, searched, ambiguous}`。
+
+    目录优先级 = `dirs` 的顺序（① 显式/缺省 algo-checks 目录 → ② 缺省时的仓内默认目录）；
+    第一个命中即用（"显式目录优先"），**首个目录里有歧义就立即 fail-closed**（不降级到下一个目录）。
+    """
+    searched: list[str] = []
+    for d in dirs:
+        searched.append(str(d))
+        hits, amb = _sig_candidates(tier, Path(d))
+        if amb:
+            return {"path": None, "found_dir": str(d), "searched": searched, "ambiguous": amb}
+        if hits:
+            return {"path": hits[0], "found_dir": str(d), "searched": searched, "ambiguous": []}
+    return {"path": None, "found_dir": None, "searched": searched, "ambiguous": []}
+
+
+def judge_graspo_algo(tier: str, algo_dir: Path, fallback_dir: Path | None = None) -> dict:
+    """GRASPO：必须有一份显式签署的算法检查证据；缺件/不合契约 ⇒ ok=None（不写键）。
+
+    找件（★ 仓内签署件必须能被直接找到，不再要求跑次侧手铺一份）：
+      · 目录：`<algo_dir>` → （仅在它**不是显式指定**时）`fallback_dir`（仓内默认
+        `samples/configs/matrix68-checks/`）；显式指定目录**不回退**（保持"显式优先"）。
+      · 目录内：① `<dir>/<tier>.json` → ② `<dir>/graspo-<tier>.json` → ③ `<dir>/*-<tier>.json`。
+      · ①②字节相同或③只命中一份 ⇒ 用它；命中多份不同内容 ⇒ **fail-closed**（列出候选，⛔ 不猜）。
+      · 全部目录都没找到 ⇒ `ok=None`（⛔ 不得自动置位）。
+    字段兼容（⛔ 门槛不变：第 9 节 8 条齐全且全 `true`）：
+      · `items[{id,pass,evidence}]` 优先；缺失则回退 `invariants[{id,verdict,evidence}]`（`pass` ← `verdict`）；
+      · `algorithm` 缺失则回退 `algo`。
+    """
+    dirs = [Path(algo_dir)]
+    if fallback_dir is not None and Path(fallback_dir) not in dirs:
+        dirs.append(Path(fallback_dir))
+    found = find_graspo_sig(tier, dirs)
+    ev: dict = {"criterion": "③ 算法正确性检查（GRASPO 逐条不变式）",
+                "source": str(found["path"] or dirs[0]),
+                "found_dir": found["found_dir"], "searched_dirs": found["searched"],
                 "basis_id": GRASPO_ALGO_BASIS,
                 "required_items": list(GRASPO_ITEM_IDS)}
+    if found["ambiguous"]:
+        cands = [str(p) for p in found["ambiguous"]]
+        ev["candidates"] = cands
+        return {"ok": None,
+                "why": (f"GRASPO 算法检查证据在同一目录有 {len(cands)} 份**内容不同**的签署件："
+                        f"{'、'.join(cands)} ⇒ 判据③ 不置位（⛔ 不猜用哪份；先删掉/合并成一份）"),
+                "evidence": ev}
+    path = found["path"]
+    if path is None:
+        return {"ok": None,
+                "why": (f"缺 GRASPO 算法检查证据（已按 ①②③ 找遍 {'、'.join(found['searched'])}）"
+                        "⇒ 判据③ 无签署证据；⛔ 不得自动置位、不得手填 true"),
+                "evidence": ev}
     doc = read_json(path)
     if not isinstance(doc, dict):
         return {"ok": None,
@@ -489,8 +584,9 @@ def judge_graspo_algo(tier: str, algo_dir: Path) -> dict:
                 "evidence": ev}
 
     errs = []
-    if str(doc.get("algorithm") or "").upper() != "GRASPO":
-        errs.append(f"algorithm={doc.get('algorithm')!r} ≠ 'GRASPO'")
+    algo_v = doc["algorithm"] if str(doc.get("algorithm") or "").strip() else doc.get("algo")
+    if str(algo_v or "").upper() != "GRASPO":
+        errs.append(f"algorithm/algo={algo_v!r} ≠ 'GRASPO'")
     if str(doc.get("tier") or "") != tier:
         errs.append(f"tier={doc.get('tier')!r} ≠ {tier!r}")
     checker = str(doc.get("checker") or "").strip()
@@ -499,14 +595,23 @@ def judge_graspo_algo(tier: str, algo_dir: Path) -> dict:
         errs.append("缺签名：checker（检查人）为空")
     if not checked_at:
         errs.append("缺签名：checked_at（检查时间）为空")
+    # ★ 字段兼容：`items[]`（第 9 节 id/pass）优先，缺失回退 `invariants[]`（id/verdict）
+    items_src = "items"
     items = doc.get("items")
     if not isinstance(items, list):
-        errs.append("items 不是数组（须逐条列出第 9 节 8 条不变式）")
-        items = []
+        inv = doc.get("invariants")
+        if isinstance(inv, list):
+            items_src = "invariants"
+            items = [({"id": it.get("id"), "pass": it.get("verdict"),
+                       "evidence": it.get("evidence")} if isinstance(it, dict) else it)
+                     for it in inv]
+        else:
+            errs.append("items 与 invariants 都不是数组（须逐条列出第 9 节 8 条不变式）")
+            items = []
     got = {}
     for it in items:
         if not isinstance(it, dict):
-            errs.append(f"items 含非对象项：{it!r}")
+            errs.append(f"{items_src} 含非对象项：{it!r}")
             continue
         iid = str(it.get("id") or "").strip()
         if iid not in GRASPO_ITEM_IDS:
@@ -516,15 +621,17 @@ def judge_graspo_algo(tier: str, algo_dir: Path) -> dict:
             errs.append(f"不变式 id 重复：{iid!r}")
             continue
         if not isinstance(it.get("pass"), bool):
-            errs.append(f"{iid}: pass 必须是布尔值，实际 {it.get('pass')!r}")
-        if not str(it.get("evidence") or "").strip():
+            key = "pass" if items_src == "items" else "verdict"
+            errs.append(f"{iid}: {key} 必须是布尔值，实际 {it.get('pass')!r}")
+        if not _evidence_text(it.get("evidence")):
             errs.append(f"{iid}: evidence 为空（每条须写明判定依据）")
         got[iid] = it
     missing = [i for i in GRASPO_ITEM_IDS if i not in got]
     if missing:
         errs.append(f"未覆盖的不变式 {len(missing)} 条：{missing}")
 
-    ev.update({"checker": checker or None, "checked_at": checked_at or None,
+    ev.update({"items_source": items_src,
+               "checker": checker or None, "checked_at": checked_at or None,
                "items_covered": sorted(got), "samples": {k: v.get("pass") for k, v in got.items()}})
     if errs:
         return {"ok": None, "why": "GRASPO 算法检查证据不合契约 ⇒ 判据③ 不置位：" + "；".join(errs),
@@ -537,7 +644,8 @@ def judge_graspo_algo(tier: str, algo_dir: Path) -> dict:
                 "evidence": ev}
     return {"ok": True,
             "why": (f"判据③ 通过：GRASPO《算法说明》第 9 节 {len(GRASPO_ITEM_IDS)} 条不变式逐条检查"
-                    f"全部通过（检查人 {checker}，{checked_at}）"),
+                    f"全部通过（检查人 {checker}，{checked_at}；签署件 {path}"
+                    f"{'，' + ev['found_dir'] if ev['found_dir'] else ''}）"),
             "evidence": ev}
 
 
@@ -633,12 +741,13 @@ def judge_public_algo(algo: str, sig_doc, sig_path: Path) -> dict:
 
 
 def judge_algo(algo: str, tier: str, algo_dir: Path,
-               sig_doc=None, sig_path: Path | None = None) -> dict:
+               sig_doc=None, sig_path: Path | None = None,
+               fallback_dir: Path | None = None) -> dict:
     a = str(algo or "").strip().upper()
     if a in PUBLIC_ALGOS:
         return judge_public_algo(a, sig_doc, sig_path or PUBLIC_ALGOS_SIG)
     if a == "GRASPO":
-        return judge_graspo_algo(tier, algo_dir)
+        return judge_graspo_algo(tier, algo_dir, fallback_dir)
     return {"ok": None,
             "why": f"清单该档 algorithm={algo!r} 不是 SFT/GRASPO/CPT/OPD 之一 ⇒ 判据③ 无判定渠道",
             "evidence": {"criterion": "③ 算法正确性检查", "algorithm": algo}}
@@ -703,8 +812,9 @@ def main(argv=None) -> int:
                     help="教师侧评测报告路径（缺省 <eval-dir>/" + str(TEACHER_REPORT_REL) +
                          "；也可用 GRASPO_TEACHER_REPORT）")
     ap.add_argument("--algo-checks-dir", default=None,
-                    help="GRASPO 算法检查证据目录（内含 <tier>.json；"
-                         "也可用 GRASPO_ALGO_CHECKS_DIR；缺省 <run-dir>/algo-checks）")
+                    help="GRASPO 算法检查证据目录（内含 <tier>.json 或 graspo-<tier>.json；"
+                         "也可用 GRASPO_ALGO_CHECKS_DIR；缺省 <run-dir>/algo-checks，"
+                         "缺件时回退仓内 samples/configs/matrix68-checks/；显式指定则不回退）")
     ap.add_argument("--public-algos", default=None,
                     help="SFT/CPT/OPD 判据③ 的公开算法签署件（损失/掩码规则核对留痕）；"
                          "也可用 GRASPO_PUBLIC_ALGOS；缺省 " + str(PUBLIC_ALGOS_SIG.relative_to(ROOT)))
@@ -754,13 +864,18 @@ def main(argv=None) -> int:
 
     eval_dir = resolve_eval_dir(args.eval_dir)
     algo_dir = resolve_algo_checks_dir(args.algo_checks_dir, run_dir)
+    # ★ 仓内默认签署件目录：**只在没有显式指定目录时**才作为回退（显式 ≠ 空目录也回退）
+    algo_dir_explicit = bool((args.algo_checks_dir
+                              or os.environ.get("GRASPO_ALGO_CHECKS_DIR") or "").strip())
+    graspo_fallback_dir = None if algo_dir_explicit else GRASPO_SIG_DIR
     sig_path = resolve_public_algos_sig(args.public_algos)
     report_path = (eval_dir / AFTER_REPORT_REL) if eval_dir else None
     teacher_path = resolve_teacher_report(args.teacher_report, eval_dir)
 
     print(f"tier={args.tier} algorithm={algo} 期望评测条数={expected}")
     print(f"评测报告 = {report_path if report_path else '<未指定 --eval-dir / GRASPO_EVAL_DIR>'}")
-    print(f"算法检查证据目录 = {algo_dir}")
+    print(f"算法检查证据目录 = {algo_dir}"
+          + (f"（缺件时回退仓内默认 {GRASPO_SIG_DIR}）" if graspo_fallback_dir else "（显式指定 ⇒ 不回退）"))
     print(f"公开算法签署件 = {sig_path}"
           f"{'' if str(algo).upper() in PUBLIC_ALGOS else '（本档不是公开算法档 ⇒ 不用它）'}")
     print(f"教师评测报告 = {teacher_path if is_opd(algo) else '<非 OPD 档：判据② 不要求教师读数>'}")
@@ -770,7 +885,7 @@ def main(argv=None) -> int:
                           report_path or Path("<未指定>"),
                           tuner_type=str(mt.get("tuner_type") or ""))
     sig_doc = read_json(sig_path) if str(algo).upper() in PUBLIC_ALGOS else None
-    alg = judge_algo(algo, args.tier, algo_dir, sig_doc, sig_path)
+    alg = judge_algo(algo, args.tier, algo_dir, sig_doc, sig_path, graspo_fallback_dir)
     results = {"algo": alg, "inference": inf}
     for tag, r in (("③ algo_checks_passed", alg), ("④ inference_parseable", inf)):
         state = "缺证据（不写键）" if r.get("ok") is None else ("true" if r["ok"] else "false")
