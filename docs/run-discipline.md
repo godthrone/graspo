@@ -740,3 +740,85 @@ loss 读数由 `scripts/make_result_json.py` 从 `trainer_state.json` 的 `log_h
 - **改报告的唯一通道**：`tools/matrix/template.html` + `docs/capability-matrix.data.json` +
   `render_matrix.py` 重渲染（**需主席批准**，`--allow-baseline-write` 才可写回基准件）。
   ⛔ 不许手改 HTML 正文、⛔ 不许在回填器里"顺带"改章节文字。
+
+## 23. 评测入口 = `<EVAL_DIR>/run-eval.sh`（唯一路径 + 失败语义，2026-10-25 补）
+
+### 23.1 唯一路径与唯一产出者
+
+- 落点：`<EVAL_DIR>/run-eval.sh`（宿主 0755）＋同目录 `<EVAL_DIR>/run-eval.sh.meta.json`
+  （记录模板版本 / sha256 / 字节数 / 安装时刻 ⇒ **落位记 sha**）。
+- **唯一产出者 = `scripts/eval_runner.py`**；⛔ 仓内不另存第二份实现，⛔ 不许手改落位件
+  （`check` 会因 sha 不符判红）。
+
+  | 动作 | 命令 | 语义 |
+  |---|---|---|
+  | 安装 | `python3 scripts/eval_runner.py install --eval-dir <EVAL_DIR> [--apply] [--force]` | 缺省只打印计划（**零写入**）；`--apply` 落位；**同内容幂等不动**、**异内容拒写 rc=2**（须 `--force`，旧件自动备份） |
+  | 校验 | `python3 scripts/eval_runner.py check --eval-dir <EVAL_DIR>` | 验 sha / meta / 权限 / `bash -n` / `--check-only --self`；**rc=0 = 就绪** |
+  | 自检 | `bash <EVAL_DIR>/run-eval.sh --check-only [--self] [--no-endpoint] <5 参>` | 静态自检 + 打印将执行的命令行；不碰模型 / 卡 / 端点 |
+
+- 评测前置由 `scripts/gen_eval.py`（`_ensure_eval_runner()`，唯一调用点）自动调同一份 `install()`。
+- ⛔ **禁止按档各写一份同名脚本**（把档号内联进 `run-eval.sh`）：三处调用方
+  （`scripts/gen_eval.py:252/267`、`scripts/launch_pipeline.py:299/308`）**始终显式传档号**，
+  每档一份只会让 `<EVAL_DIR>` 里的同名件互相覆盖 —— 那正是「评测入口缺件」事故的形态。
+  **档号是入参，不是文件内容。**
+
+### 23.2 契约（参数序固定，三处调用方一致）
+
+```bash
+bash "$EVAL_DIR/run-eval.sh" "$TREE" "$EVAL_DIR" <TIER> after|base "$EVAL_DIR/eval-<tier>-<role>.yaml"
+```
+
+- `TREE` = 部署树根；`EVAL_DIR` = 评测根（`GRASPO_EVAL_DIR`）；`TIER` = M 档号
+  （只用于容器名与日志，口径由 EVALCFG 决定）；`ROLE ∈ {after, base, teacher}` = 报告子目录口径；
+  `EVALCFG` **必须位于 `EVAL_DIR` 内**（容器里按 `/evalout/<basename>` 引用）。
+- **四个挂载**（三个只读；`/evalout` 是**唯一可写面**——报告必须落在那里）：
+
+  | 宿主 | 容器内 | 权限 |
+  |---|---|---|
+  | `$TREE` | `/workspace/graspo` | ro |
+  | `$TREE/runs` | `/runs` | ro |
+  | `$EVAL_DIR` | `/evalout` | **rw**（报告 / 证据落点） |
+  | `$GRASPO_ELAM_V5_DIR`（缺省 `$HOME/elam-v5-balanced`） | `/work/elam-v5` | ro |
+
+- 容器内客户端命令**只有一条**：`graspo eval run --eval-config /evalout/<basename>.yaml`
+  ——本脚本只做「参数 / 落点 / 产物」三件事，⛔ 不重算判据、⛔ 不碰阈值。
+- 产物（消费端已固定，⛔ 不另立落点）：
+  - `<EVAL_DIR>/.local/reports/<role>/eval_report.json`（`graspo eval run` 写；`after` / `base`
+    供判据② 与 Δ，`teacher` 供判据② 教师线）；
+  - `<EVAL_DIR>/evidence/eval-<role>-stdout.log`（stdout 双份留证）。
+- 配置口径（不符 ⇒ **rc=5 拒跑**）：`output_dir` 必须 = `/evalout/.local/reports/<ROLE>`；
+  报告目录已存在且非空 ⇒ 拒跑（防覆盖上一轮证据）。
+
+### 23.3 前置：`gen_eval.py --tmp-dir` **必须显式 = `$EVAL_DIR`**
+
+```bash
+python3 scripts/gen_eval.py --tier M001 --gpu <评测卡> --port <端口> --tmp-dir "$EVAL_DIR"
+```
+
+- `--tmp-dir` 的缺省值是 `$GRASPO_EVAL_TMP_DIR` → `/data/remote`，**缺省 ≠ `$EVAL_DIR`、两者不等价**：
+  yaml 与 `run-<tier>-eval.sh` 会落到别处，而 `run-eval.sh` 只认 `EVAL_DIR` 内的 yaml
+  ⇒ **rc=5 fail-closed**（"评测配置必须在 EVALDIR 之内"）。
+- `eval_runner.py check` 通过 ≠ 可跑：**开跑前还要**
+  `bash <EVAL_DIR>/run-eval.sh --check-only --no-endpoint <TREE> <EVAL_DIR> <TIER> <ROLE> <EVALCFG>`
+  （静态自检 + 打印将执行的命令行）⇒ **落位件的 rc=5 是前置的兜底**，⛔ 不许绕过。
+
+### 23.4 失败语义（⛔ 不静默跳过、⛔ 不换状态）
+
+| rc | 含义 | 处置 |
+|---|---|---|
+| 4 | **待训练产物缺失**（模型 / 检查点目录不在盘） | fail-closed，**点名 `checkpoint_path`**（容器路径 + 映射后的宿主路径）；⛔ 不用空目录糊过去 |
+| 6 | **vLLM 端点未就绪** | 起服不归本脚本；按提示用 `scripts/eval_serve_vllm.sh` 起服后重跑 |
+| 5 | 配置 / 落点口径不符（见 23.2 / 23.3） | 修落点或配置，⛔ 不改判据 |
+| 7 | 命令 rc=0 但报告未产出 | 无证据的成功 ⇒ **不算成功** |
+| 其他 | `graspo eval run` 的真实 rc | **原样上报**，⛔ 吞掉 / ⛔ 改写 |
+
+- ⛔ **不许静默跳过**：任何 rc≠0 必须上报，并留 `evidence/eval-<role>-stdout.log`；
+  ⛔ 不许用「没跑到就继续回填」把档位糊过去。
+- ⛔ **不许把失败记成「待测试」以外的状态**：失败 / 缺证据 ⇒ 该档保持**「待测试」**
+  （§19.3 / §22），⛔ 不许写成通过或失败，⛔ 不许手填 `checks{}` 凑绿。
+
+### 23.5 起服归 `scripts/eval_serve_vllm.sh`
+
+- vLLM 起服（占卡）**唯一入口 = `scripts/eval_serve_vllm.sh`**；`run-eval.sh` 只**指向**它
+  （端点未就绪 ⇒ rc=6 并打印调用配方）：⛔ 不复制评测逻辑、⛔ 不自己起容器、⛔ 不抢卡。
+- 训练 / 评测的卡排他（§17：评测预约卡与训练择卡互斥）仍由调用方 `run-<tier>-eval.sh` 负责。
