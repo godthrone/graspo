@@ -194,6 +194,18 @@ POLICY: dict[str, Spec] = {
     "tools/matrix/freeze_originals.sh": Spec(
         SH_SYNTAX, "原版两件 chmod 444 幂等加固脚本（只改权限位 + 打印 sha）；冒烟只做 bash -n"
     ),
+    # ★ 补登记（2026-10-25，随 `a7a5690` 入库时漏登记，由本检查器的「未跟踪段」在提交前拦下）：
+    #   OPD 档**外部教师服务**起服脚本 —— 把 27B 的 SFT/LoRA/dp1 产物以 vLLM 起成 OpenAI 兼容服务，
+    #   供训练侧 `distill.teacher_model_server` 指向（教师**另卡**部署 ⇒ 教师占卡**不计入**矩阵该档
+    #   `cards`：矩阵卡数只算被训练的模型，见 docs/run-discipline.md §21）。
+    #   ⛔ 默认 dry-run：只打印将要执行的 docker 命令（零外部调用、不起容器、不探网、不查卡）；
+    #   `--apply` 才真起容器（会占教师卡 ⇒ 红线：不占 GPU）⇒ 常设冒烟只做 `bash -n` + `--help`
+    #   （打印用法、rc=0、零写入）。
+    "tools/matrix/serve_teacher.sh": Spec(
+        SH_HELP,
+        "OPD 外部教师起服脚本（27B SFT/LoRA/dp1 产物 → vLLM/OpenAI 兼容服务；教师占卡不计入该档 cards）："
+        "默认 dry-run 只打印 docker 命令，`--apply` 才真起容器并占教师卡（红线：不占 GPU）⇒ 冒烟只做 bash -n + --help",
+    ),
     # ── shell 工具/运维入口 ────────────────────────────────────────────────
     "scripts/eval_cleanup.sh": Spec(SH_HELP, "评测清理入口；支持 -h/--help ⇒ rc=0"),
     "scripts/sync_deploy_tree.sh": Spec(SH_HELP, "§11：仓内 scripts/*.py 幂等同步到部署树 + 逐件冒烟（失败即非零退出）"),
