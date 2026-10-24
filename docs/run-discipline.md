@@ -658,3 +658,71 @@ loss 读数由 `scripts/make_result_json.py` 从 `trainer_state.json` 的 `log_h
   ⛔ 生成器不写死超参），起服脚本相应传 `--max-logprobs 65`（= topk + 1，服务侧低于它请求会被拒）。
   ⚠ 该 top-k 取值是**本包取的默认**（上游契约要求非空，仓内既有示例/测试同为 64）；若要改，改数据件行字段后
   重生成 + 重起服务，⛔ 不要只改 yaml。
+
+## 22. 报告**定稿冻结** + 按轮副本 + 「只许填第 4 章实验数据」写范围闸门（2026-10-25 主席令）
+
+**依据（主席原话，逐字）**：
+
+> ①「这个报告就定稿冻结了，没有我的允许，不能修改报告。」
+> ②「填写报告的脚本只能填写第四章表格里面的实验内容数据，不能修改其它任何地方。」
+> ③「把报告复制一份，后缀是今天的日期。」
+
+### 22.1 基准件冻结（对应主席令 ①）
+
+- **基准件**（`tools/matrix/paths.py` 是路径与冻结值的**唯一真相源**，⛔ 别处不再写第二份）：
+
+  | 件 | 路径 | 冻结事实 |
+  |---|---|---|
+  | 人读基准件 | `docs/GRASPO训练框架功能测试报告.html` | `sha256 = b8ed080dd80edd04…`（`BASELINE_HTML_SHA256`）· **77,079 B**（`BASELINE_HTML_BYTES`）· 权限 **444**（`FROZEN_MODE`） |
+  | 机读基准数据件 | `docs/capability-matrix.data.json` | 权限 **444**（内容随生成链变，不冻结 sha） |
+
+  冻结日 `FROZEN_DATE = 2026-10-25`，依据摘要 `FROZEN_AUTHORITY`（= 上面三条原话）同在上述模块里。
+- ⛔ **无主席许可，不得修改基准件**。指针：`python3 tools/matrix/paths.py --verify-frozen`
+  （sha + 字节 + 权限 **三断言**；任一不符 ⇒ rc=1）。
+- **写保护断言**（`paths.assert_not_baseline_write()`，**唯一实现**）：
+  - `render_matrix.py --out` 指向基准两件 ⇒ **拒绝写**；唯一放行 = 显式 `--allow-baseline-write`
+    （= 主席批准的重渲染；⛔ 回填链不得使用该开关）。
+  - `new_round.sh` / `backfill_matrix.py` / `backfill_dated.sh` ⛔ **永不写基准件**（回填器写前先拒；
+    wrapper 另按 realpath/inode 再拒一层）。
+- **常设红线断言**：`verify_dated.sh` ① 与 `tests/scripts/test_entry_smoke.py::test_report_baseline_is_frozen`
+  —— sha / 字节 / 权限 **任一**不符 ⇒ **红**（实测：改 1 字节 + `chmod 644` ⇒ 两处同时红，见工作包
+  `task-freeze-guard` 报告的「红→绿证据」）。
+
+### 22.2 结果只写**当日副本**（对应主席令 ③）
+
+- 每轮开跑前：`bash tools/matrix/new_round.sh --date YYYYMMDD`
+  ⇒ 派生 `docs/GRASPO训练框架功能测试报告-<YYYYMMDD>.html` + `docs/capability-matrix-<YYYYMMDD>.data.json`
+  （`cp -p` + `chmod 644` + 副本数据件 `human_view_path` 指向副本；**幂等、已存在只校验不覆盖**）。
+- 副本是**唯一**可写面：配额、回填、核对都发生在副本上；基准件在此过程中只被读。
+- 收尾自检：`bash tools/matrix/verify_dated.sh --date YYYYMMDD`（有副本对态 = 全 8 项；无副本 = 正常态跳过）。
+
+### 22.3 填表只许填第 4 章实验数据（对应主席令 ②）—— 硬闸门
+
+- **闸门**：`tools/matrix/check_fill_scope.py --base <原版> --filled <填表后> [--data <数据件>]`
+  （纯读，不写任何文件）。两份 HTML 做**纯结构 diff**，每一处差异必须**同时**满足：
+
+  ① 差异只在 `<table class="matrix">` 的 `<tbody>` 内（⛔ 第 1/2/3 章正文、`<colgroup>`、表头 `<thead>`、
+     样式、脚本、注释、页脚：**一字不许动**）；
+  ② 所在行是矩阵档位行（档号 = 该行首个 `data-col="tier"` 单元格，须匹配 `^M\d{3}$`；⛔ 档号不许改）；
+  ③ 所在单元格 `data-col` ∈ **实验结果列白名单** —— 白名单 = 数据件 `data_keys`（**现读**，⛔ 不写死）：
+     `peak_mem` / `steps_actual` / `elapsed` / `throughput` / `effect` / `note`；外加**机算结论列** `status`；
+  ④ 差异只是**单元格文本**变化：标签结构 / 属性 / 样式 / 脚本 / 注释 ⛔ 零变化；单元格内出现任何 `<…>`
+     标记（例如塞 `<script>`）⇒ 违规。
+
+  不满足任一条 ⇒ **rc=2** 并列违规清单（`文件:行:列` + 该处文本片段 + 上下文 60 字）。
+  rc=1 = 用法级错误（参数/读文件/结构不可判），⛔ 与"违规"分开、便于调用方区分。
+
+- **`status` 例外（唯一一处，已收窄）**：状态是**由数据算出的结论列**，`render_matrix.py` 同时写它的文本
+  与配色类名（`st-pending` / `st-pass` / `st-fail` / `st-illegal` / `st-dash`），两者不可分割（只改文本会让
+  绿/黄/红说假话）。故 `status` 只放开两件事：① 文本 ∈ 数据件 `meta.status_vocabulary`（⛔ 词表外散文一律红）；
+  ② 该 `<td>` 的 `st-*` 配色类名可随之替换（其它 class / 属性 / 位置一字不许动）。
+  ⇒ 若要求「连 status 也不许动」，需先改渲染器（状态不落 HTML），那是另一个工作包。
+
+- **接进回填链**（⛔ 闸门不是可选的旁路）：`backfill_matrix.py` 落盘后**立即**跑闸门
+  （比「本轮副本 vs **基准件**」，⛔ 不与"上一版副本"比 —— 否则连续两轮会把上轮越界当新基线放行）；
+  不过 ⇒ **回滚本次写入**（数据件与人读件恢复写前字节与权限，本次新建的删掉；台账不追加）⇒ rc≠0，
+  **不留半写状态**。回填的唯一日常入口仍是 `backfill_dated.sh --date`（落点钉死为副本对）。
+
+- **改报告的唯一通道**：`tools/matrix/template.html` + `docs/capability-matrix.data.json` +
+  `render_matrix.py` 重渲染（**需主席批准**，`--allow-baseline-write` 才可写回基准件）。
+  ⛔ 不许手改 HTML 正文、⛔ 不许在回填器里"顺带"改章节文字。

@@ -58,11 +58,21 @@ fi
 
 say "# verify_dated.sh 读数 — $(date '+%Y-%m-%d %H:%M:%S')（仓根 $REPO · 轮次 $PATHS_ROUND_DATE）"
 
-# ① 基准人读件逐字节未变 -------------------------------------------------------
-say ""; say "① 基准人读件 sha256（期望 ${ORIG_SHA_EXPECT:0:12}…）"
+# ① 报告冻结断言（sha + 字节 + 权限 444；唯一实现 = paths.py --verify-frozen）--------
+#   ★ 2026-10-25 主席令「这个报告就定稿冻结了，没有我的允许，不能修改报告」（§22）：
+#     三项**任一**不符即红 —— sha 抓"内容变了"，字节抓"换个等长内容"，权限抓"还能不能被就地改写"。
+say ""; say "① 报告冻结断言（sha256 + 字节 + 权限 ${PATHS_FROZEN_MODE}；冻结日 ${PATHS_FROZEN_DATE} · §22）"
+if out_frozen="$("$PY" "$M/paths.py" --verify-frozen 2>&1)"; then
+  printf '%s\n' "$out_frozen" >>"$OUT"
+  grep -E '^  (sha256|字节|权限)' <<<"$out_frozen" | sed 's/^/  /'
+  ok "基准件冻结完好（sha256 / 字节 ${PATHS_BASELINE_HTML_BYTES} B / 权限 ${PATHS_FROZEN_MODE} 三项全符）"
+else
+  printf '%s\n' "$out_frozen" >>"$OUT"
+  grep -E '^  (sha256|字节|权限|✗)' <<<"$out_frozen" | sed 's/^/  /'
+  bad "报告冻结断言不符（sha/字节/权限任一）⇒ 基准件被改写过或权限被放开（⛔ 无主席许可不得修）"
+fi
 orig_sha="$(sha256sum "$ORIG_HTML" | awk '{print $1}')"; orig_size="$(stat -c%s "$ORIG_HTML")"
 say "  $orig_sha  ${orig_size} B  $(basename "$ORIG_HTML")"
-[[ "$orig_sha" == "$ORIG_SHA_EXPECT" ]] && ok "基准件未变" || bad "基准件 sha 与冻结值不符（基准件被写过）"
 
 # ② 基准件 + 基准数据件 ⇒ verify PASS（④X-b 生效，最强那道机核） ------------------
 say ""; say "② verify（基准对：基准数据件 + 基准人读件）"

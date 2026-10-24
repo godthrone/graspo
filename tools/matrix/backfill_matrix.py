@@ -893,6 +893,18 @@ def main():
 
     matrix = json.loads(data_in.read_text(encoding="utf-8"))
     html_out = Path(a.html_out) if a.html_out else default_html_out(data_out, matrix)
+
+    # ★★ §22 写前闸门（2026-10-25 主席令「这个报告就定稿冻结了，没有我的允许，不能修改报告」）：
+    #   回填器**只**写按轮副本；落点若规范化后（含软链/硬链接/相对路径）指向**基准两件**
+    #   ⇒ 拒起、**零写入**。基准件只经 `render_matrix.py --allow-baseline-write` 由主席批准改。
+    for _tag, _dest in (("--data-out", data_out), ("--html-out", html_out)):
+        try:
+            _paths.assert_not_baseline_write(_dest, who=f"backfill_matrix.py {_tag}")
+        except SystemExit as _exc:
+            print(f"FAIL-CLOSED：{_exc}\n"
+                  f"   ⇒ 正确用法：bash tools/matrix/backfill_dated.sh --date YYYYMMDD --runs-dir <dir>"
+                  f"（副本由 new_round.sh 派生；结果只落副本）")
+            return 1
     rows = matrix.get("rows") or []
     if not isinstance(rows, list) or not rows:
         print(f"FAIL: 数据件没有 rows: {data_in}")
@@ -1026,8 +1038,13 @@ def main():
 
         for p in (data_out, html_out, ledger_out):
             p.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(tmp_data, data_out)
-        shutil.copyfile(tmp_html, html_out)
+        # ★★ §22 落盘 + 写范围硬闸门：写完后**立刻**比「本轮副本 vs 基准件」，
+        #    任何差异越出「第 4 章实验数据单元格文本」面 ⇒ **回滚本次写入**并 rc≠0。
+        gate_rc, gate_out = apply_with_scope_gate(
+            tmp_data=tmp_data, tmp_html=tmp_html, data_out=data_out, html_out=html_out)
+        print(gate_out.strip())
+        if gate_rc != 0:
+            return gate_rc
         ledger_rows = [r.replace("| 见下 |", "| PASS |") for r in ledger_rows]
         try:
             append_ledger(ledger_out, ledger_rows)
@@ -1041,6 +1058,43 @@ def main():
         return 0
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ---- §22 落盘 + 写范围闸门 + 回滚（唯一实现）----------------------------------
+def apply_with_scope_gate(*, tmp_data: Path, tmp_html: Path, data_out: Path, html_out: Path) -> tuple[int, str]:
+    """把临时产物落盘，并用 `check_fill_scope.py` 机核「**只许改第 4 章实验数据单元格文本**」。
+
+    ★ 事务语义（⛔ 不留半写状态）：先记两件在盘原状（字节 + 权限；不存在记 None）⇒ 落盘
+      ⇒ 跑闸门 ⇒ 闸门 rc≠0 ⇒ **原样回滚**（恢复字节与权限；本次新建的则删掉）⇒ 返回 rc=1。
+    ★ 闸门的基准永远是**基准件**（`paths.baseline_html()`），⛔ 不是"上一版副本"：
+      否则连续两轮填表会把上一轮的越界当成新基线悄悄放行。
+    返回 `(rc, 输出文本)`；rc=0 = 已落盘且闸门通过。
+    """
+    prev: dict[Path, tuple[bytes | None, int | None]] = {}
+    for p in (data_out, html_out):
+        _paths.assert_not_baseline_write(p, who="backfill_matrix.py")   # 防御纵深（main 已先拒）
+        prev[p] = (p.read_bytes(), p.stat().st_mode & 0o777) if p.exists() else (None, None)
+
+    def _restore() -> None:
+        for p, (blob, mode) in prev.items():
+            if blob is None:
+                p.unlink(missing_ok=True)
+                continue
+            p.write_bytes(blob)
+            if mode is not None:
+                p.chmod(mode)
+
+    for _src, _dst in ((tmp_data, data_out), (tmp_html, html_out)):
+        if Path(_src).resolve() != Path(_dst).resolve():        # 同路径 = 已在位（演练/幂等）
+            shutil.copyfile(_src, _dst)
+    rc, out = run_cmd(["check_fill_scope.py", "--base", str(_paths.baseline_html()),
+                       "--filled", str(html_out), "--data", str(data_out)])
+    out = out.strip()
+    if rc == 0:
+        return 0, out + f"\nOK: §22 写范围闸门通过 ⇒ {data_out} / {html_out}"
+    _restore()
+    return 1, (out + f"\nFAIL-CLOSED：§22 写范围闸门 rc={rc} ⇒ **已回滚本次写入**"
+                    f"（{data_out} / {html_out} 恢复为写前状态，未留半写；台账未追加）")
 
 
 def _self_test():
@@ -1250,6 +1304,11 @@ def _self_test():
          == {"sft": None, "graspo": None, "cpt": None, "opd": None}),
         ("㊷ by_method 解析：逐算法取值（sft10 / graspo5 / cpt0 / opd5）",
          frozen_map_from_caliber(th_fixture) == {"sft": 10.0, "graspo": 5.0, "cpt": 0.0, "opd": 5.0}),
+        # ★ 2026-10-25 §22 写范围闸门（主席令「填写报告的脚本只能填写第四章表格里面的实验内容数据」）
+        ("㊸ 填表白名单与回填器 6 列**同源**（数据件 data_keys ⇒ ⛔ 不写死第二份列名）",
+         _fill_scope_columns() == DATA_COLUMNS),
+        ("㊹ ★ 写范围闸门：改第 3 章文字 ⇒ **必须判违规**（同一切面内，只改结果单元格文本 ⇒ 放行）",
+         _fill_scope_probe() == (True, True)),
     ]
     ok = True
     for name, passed in cases:
@@ -1257,6 +1316,51 @@ def _self_test():
         ok = ok and passed
     print(f"SELF-TEST {'PASS' if ok else 'FAIL'}（{sum(1 for _, x in cases if x)}/{len(cases)}）")
     return 0 if ok else 1
+
+
+def _fill_scope_columns() -> tuple[str, ...]:
+    """自证辅助：`check_fill_scope.py` 从数据件 `data_keys` 现读的列白名单（⛔ 不写死）。"""
+    import importlib.util as _ilu
+
+    _path = TOOL_DIR / "check_fill_scope.py"
+    _spec = _ilu.spec_from_file_location("_fill_scope_for_selftest", _path)
+    _mod = _ilu.module_from_spec(_spec)
+    sys.modules[_spec.name] = _mod
+    _spec.loader.exec_module(_mod)
+    return tuple(_mod.load_result_columns(ROOT / "docs" / "capability-matrix.data.json"))
+
+
+def _fill_scope_probe() -> tuple[bool, bool]:
+    """自证辅助（**纯内存**，零文件写入）：返回 (改章节文字被判违规, 只改结果单元格文本被放行)。
+
+    夹具是一个最小矩阵表骨架 —— 闸门的判定逻辑与真实报告同一条代码路径。
+    """
+    head = ('<table class="matrix"><thead>'
+            '<tr><th class="g-base col-tier col-start" data-col="tier">档号</th>'
+            '<th class="g-data" data-col="peak_mem">显存峰值(GiB)</th></tr></thead><tbody>\n')
+    row = ('<tr><td class="g-base col-tier" data-col="tier">M001</td>'
+           '<td class="g-data col-start" data-col="peak_mem">—</td></tr>\n')
+    tail = "</tbody></table>\n</body>\n"
+    base_text = "<h3>第 3 章</h3>\n" + head + row + tail
+    ok_text = "<h3>第 3 章</h3>\n" + head + row.replace(">—<", ">63.4<") + tail
+    bad_text = "<h3>第 3 章（改）</h3>\n" + head + row + tail
+    kw = dict(result_columns=DATA_COLUMNS, status_vocab=frozenset({"待测试", "通过", "不通过"}))
+    bad_hit = bool(check_scope_fn(base_text, bad_text, **kw))
+    ok_clean = check_scope_fn(base_text, ok_text, **kw) == []
+    return bad_hit, ok_clean
+
+
+def check_scope_fn(*args, **kwargs):
+    """自证辅助：`check_fill_scope.check_scope` 的惰性取用（⛔ 不在模块顶层 import 造环）。"""
+    import importlib.util as _ilu
+
+    _path = TOOL_DIR / "check_fill_scope.py"
+    if "_fill_scope_for_selftest" not in sys.modules:
+        _spec = _ilu.spec_from_file_location("_fill_scope_for_selftest", _path)
+        _mod = _ilu.module_from_spec(_spec)
+        sys.modules[_spec.name] = _mod
+        _spec.loader.exec_module(_mod)
+    return sys.modules["_fill_scope_for_selftest"].check_scope(*args, **kwargs)
 
 
 def real_th_raw():

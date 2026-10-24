@@ -143,6 +143,16 @@ POLICY: dict[str, Spec] = {
         "开新一轮入口（非交互·幂等）：校验基准件 sha+权限 ⇒ 派生当日副本对（人读件/数据件 644，"
         "数据件 human_view_path 指向副本）；⛔ 不写基准件、⛔ 无 git 操作。跑一次会真建副本 ⇒ 冒烟只做 --help",
     ),
+    # ★ 补登记（2026-10-25 报告定稿冻结轮）：**填表写范围硬闸门**（主席令「填写报告的脚本只能填写
+    #   第四章表格里面的实验内容数据，不能修改其它任何地方」）。两份 HTML（原版 vs 填表后）做纯结构
+    #   diff：任何差异必须落在「第 4 章矩阵表 tbody · M 档行 · 实验结果列（= 数据件 data_keys 现读）
+    #   · 纯文本」面内，否则 rc=2 并列违规清单；已接进回填链（不过即回滚本次写入，§22）。
+    #   **纯读**（不写任何文件）⇒ 冒烟跑 `--help`（打印用法、rc=0）。
+    "tools/matrix/check_fill_scope.py": Spec(
+        HELP,
+        "填表写范围硬闸门（§22）：原版 vs 填表后两份 HTML 纯结构 diff，差异只许落在第 4 章实验数据"
+        "单元格文本；否则 rc=2 + 违规清单（文件:行:列 + 片段）；纯读，已接进回填链（不过即回滚）",
+    ),
     # ★ 补登记（2026-10-22 基线轮）：68 档开跑前就绪闸门 —— **十条**口径（档号集合 / LoRA 三参+目标整块 /
     #   子集 size 与在盘 sha / 全参必分片 / native 开关 / DeepSpeed 禁用 + R1-3 交叉断言 ⑦身份同源 /
     #   ⑧并行形状×卡数 / ⑨全参真分片 / ⑩步数子集不滞后）；argparse CLI ⇒ --help 冒烟。
@@ -466,6 +476,27 @@ def main() -> int:
     text, bad = render(results, uncovered)
     print(text)
     return 1 if bad else 0
+
+
+def test_report_baseline_is_frozen() -> None:
+    """★ §22 报告冻结断言（2026-10-25 主席令）：基准件 sha256 / 字节 / 权限 444 **任一**不符 ⇒ 红。
+
+    为什么放在"入口脚本"闸门里：改报告的**唯一**合法通道是「模板 + 数据件 + 渲染」（`render_matrix.py`，
+    需主席批准），其余一切写基准件的路都是违规 —— 这条断言是那条通道之外的兜底（物理只读 + 内容指纹）。
+    ★ 唯一实现在 `tools/matrix/paths.py::check_baseline_frozen()`（⛔ 本文件不抄 sha/字节/权限字面量）。
+    """
+    sys.path.insert(0, str(REPO / "tools" / "matrix"))
+    import paths as matrix_paths
+
+    bad = matrix_paths.check_baseline_frozen()
+    assert bad == [], (
+        f"报告基准件冻结被破坏（冻结日 {matrix_paths.FROZEN_DATE}）：{bad}\n"
+        f"  依据：{matrix_paths.FROZEN_AUTHORITY}\n"
+        "  ⇒ ⛔ 无主席许可不得修改报告；结果只写当日副本（new_round.sh --date YYYYMMDD）。"
+    )
+    # 一次性把"三条判据各自能红"的判据也钉住：任一不符都必须进 bad 清单（⛔ 不是"看着像对"）
+    facts = matrix_paths.baseline_freeze_facts()
+    assert set(facts["expect"]) == {"sha256", "bytes", "mode"}, "冻结三断言的键集合被改（⛔ 少一条就不再能红）"
 
 
 def test_entry_scripts_smoke_all_covered_and_broken_zero() -> None:

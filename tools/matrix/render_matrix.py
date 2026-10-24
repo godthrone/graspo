@@ -6,6 +6,11 @@
                            --out capability-matrix-new.html
   python3 render_matrix.py --template template.html --data matrix-data.json --stdout
 
+  ★★ 报告定稿冻结（2026-10-25 主席令 · docs/run-discipline.md §22）：
+    `--out` 指向**基准件**（`docs/GRASPO训练框架功能测试报告.html` / `docs/capability-matrix.data.json`）
+    ⇒ **拒绝写**（rc≠0），除非显式 `--allow-baseline-write`（只有主席批准的重渲染才可用；
+    该开关**不**是回填链的通道 —— 结果只许写当日副本）。判据用 `paths.assert_not_baseline_write`。
+
 设计要点（对应主席硬要求 ★★）：
 - HTML 的一切内容 = template.html（骨架 / 版式 / 第 1/2/3 章静态文字 / 第 4 章三态图例列表）+ 数据件
   （逐档参数 11 列 + 结果 6 列的**行数据**）。
@@ -25,6 +30,9 @@
 """
 import argparse, html, json, re, sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import paths as _paths  # noqa: E402  —— 冻结判据的唯一真相源（sha/字节/权限/基准两件身份，§22）
 
 #: ★★ 模板占位符白名单（**只列模板里真实存在的**）：`render()` 逐个替换，替换后若仍见 `{{`
 #:   ⇒ 直接 SystemExit（防"占位符漏配 ⇒ 静默把 `{{X}}` 发出去"）。
@@ -506,6 +514,9 @@ def main():
     ap.add_argument("--data", required=True)
     ap.add_argument("--out")
     ap.add_argument("--stdout", action="store_true")
+    ap.add_argument("--allow-baseline-write", action="store_true",
+                    help="★ §22：明确允许把渲染结果写回**基准件**（仅主席批准的重渲染可用；"
+                         "回填链 ⛔ 不得使用 —— 结果只写当日副本）")
     a = ap.parse_args()
 
     template_text = Path(a.template).read_text(encoding="utf-8")
@@ -518,6 +529,9 @@ def main():
     if not a.out:
         raise SystemExit("ERROR: 需要 --out 或 --stdout")
     p = Path(a.out)
+    # ★★ §22 写保护断言：基准件**不许**被就地改写（默认拒绝；唯一放行 = 显式 --allow-baseline-write）
+    _paths.assert_not_baseline_write(p, allow_baseline_write=a.allow_baseline_write,
+                                     who="render_matrix.py --out")
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(out, encoding="utf-8")
     print(f"rendered {len(out.encode('utf-8'))} bytes -> {p}")
