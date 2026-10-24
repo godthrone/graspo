@@ -151,6 +151,9 @@ def check(config_dir: Path, data_path: Path, manifest_path: Path, subset_dir: Pa
           runner_manifest_path: Path | None = None) -> int:
     failures: list[tuple[str, str]] = []          # (判据编号, 说明)
     notes: list[str] = []
+    #: ★ 信息项（不阻断起跑）：判据① 改「跑满 Epoch」后，按步数口径派生的
+    #: `expected_optimizer_steps_reachable` 不再是否决条件（见 ⑩ 的实现处理由）。
+    infos: list[str] = []
 
     # ── 前置：数据件 ──────────────────────────────────────────────────────
     if not data_path.is_file():
@@ -383,26 +386,28 @@ def check(config_dir: Path, data_path: Path, manifest_path: Path, subset_dir: Pa
                 elif _i(dv) != _i(rv):
                     failures.append(("⑩步数子集", f"{tier}: 数据件 {field}={dv!r} != runner 清单 "
                                                     f"{rv!r}（派生件滞后 ⇒ 须重新生成 runner 清单）"))
-            # ★ R2（审查 🟡-B）：`expected_optimizer_steps_reachable` 是 runner 判据① 的**实际门槛**
-            #   （健身器侧口径 = `manifest.expected_optimizer_steps_reachable == matrix.derived_steps`，
-            #   见 tests/e2e/test_generate_matrix_manifest_source.py 的 I-b 断言），而回填器按数据件
-            #   `derived_steps` 判 ⇒ 两值漂移会造成"跑够的档被判不够" ⇒ ⑩ 必须一并核（⛔ 不猜字段名）。
+            # ★ R3（2026-10-23 判据① 改「跑满 Epoch」）：`expected_optimizer_steps_reachable`
+            #   **不再阻断起跑**，降为**信息项（INFO）**。理由（逐条）：
+            #     · 判据① 的通过条件已改成 `epochs_completed ≥ epochs_planned`，
+            #       实跑步数只回填进「实验数据」台账、不参与判定
+            #       （`backfill_matrix.judge_run_complete`）；
+            #     · 于是"结构可达步数 < 某门槛"不再意味着该档跑不完 —— 把按步数口径派生的
+            #       reachable 当起跑闸门，会把"能跑满 epoch 的档"误挡在起跑之前；
+            #     · 但"派生件滞后/自述矛盾"仍是**真问题时**的线索 ⇒ 保留打印，不静默丢弃。
             reach = _i(rm.get("expected_optimizer_steps_reachable"))
             if reach is None:
-                failures.append(("⑩步数子集", f"{tier}: runner 清单 expected_optimizer_steps_reachable="
-                                                f"{rm.get('expected_optimizer_steps_reachable')!r} 不可解析"
-                                                f"（判据① 的实际门槛无从核对）"))
+                infos.append(f"{tier}: runner 清单 expected_optimizer_steps_reachable="
+                             f"{rm.get('expected_optimizer_steps_reachable')!r} 不可解析"
+                             f"（信息项：判据① 已不看步数门槛，⛔ 不阻断起跑）")
             elif _i(row.get("derived_steps")) != reach:
-                failures.append(("⑩步数子集", f"{tier}: runner 清单 expected_optimizer_steps_reachable="
-                                                f"{reach} != 数据件 derived_steps="
-                                                f"{row.get('derived_steps')!r}（门槛与判据① 不同源 ⇒ "
-                                                f"跑够的档会被判不够）"))
+                infos.append(f"{tier}: runner 清单 expected_optimizer_steps_reachable={reach} "
+                             f"!= 数据件 derived_steps={row.get('derived_steps')!r}"
+                             f"（信息项：步数只作台账；派生件滞后请另行修，⛔ 不阻断起跑）")
             gate = rm.get("step_gate") if isinstance(rm.get("step_gate"), dict) else {}
             if "reachable" in gate and _i(gate.get("reachable")) != reach:
-                failures.append(("⑩步数子集", f"{tier}: runner 清单 step_gate.reachable="
-                                                f"{gate.get('reachable')!r} != "
-                                                f"expected_optimizer_steps_reachable={reach!r}"
-                                                f"（清单自述自相矛盾）"))
+                infos.append(f"{tier}: runner 清单 step_gate.reachable={gate.get('reachable')!r} "
+                             f"!= expected_optimizer_steps_reachable={reach!r}"
+                             f"（信息项：清单自述不一致；⛔ 不阻断起跑）")
         if ent is not None and row_sub is not None:
             if _i(ent.get("subset_size")) != row_sub:
                 failures.append(("⑩步数子集", f"{tier}: 数据件 subset_size={row_sub} != 登记清单 "
@@ -442,7 +447,8 @@ def check(config_dir: Path, data_path: Path, manifest_path: Path, subset_dir: Pa
         "⑧并行形状": f"{n_shape} 档：数据件 tp×pp×dp==cards，配置并行/nproc 逐值对齐",
         "⑨全参必分片": f"{n_full} 档全参（native 1 卡 offload / >1 卡 tp|pp 真分片；msswift 必带 fsdp）",
         "⑩步数子集": "数据件 subset_size/planned_steps/derived_steps == 登记清单与 runner 清单；"
-                      "expected_optimizer_steps_reachable == derived_steps（且 step_gate.reachable 同值）",
+                      "expected_optimizer_steps_reachable == derived_steps **仅作 INFO**"
+                      "（判据① = 跑满 Epoch，步数不参与判定 ⇒ 不阻断起跑）",
     }
     print("=== 68 档就绪闸门（check_68_readiness）===")
     print(f"  config-dir = {config_dir}")
@@ -459,6 +465,11 @@ def check(config_dir: Path, data_path: Path, manifest_path: Path, subset_dir: Pa
                        ("native 1卡全参 offload", noff_tiers), ("CPT", cpt_tiers)):
         notes.append(f"    {label}: {lst}")
     print("\n".join(notes))
+
+    if infos:
+        print(f"\nINFO（{len(infos)} 条信息项，⛔ 不阻断起跑）：")
+        for line in infos:
+            print(f"  - [⑩步数子集·INFO] {line}")
 
     if failures:
         print(f"\nREADINESS FAIL：{len(failures)} 处不符定稿口径")

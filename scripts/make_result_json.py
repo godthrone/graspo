@@ -15,7 +15,17 @@
 契约（逐字段对照 `tools/matrix/backfill_matrix.py`）：
   顶层必填 `schema/tier/params/run_result/steps_actual/elapsed/peak_mem/throughput/effect/note/run_path/provenance`；
   ⛔ **绝对不写 `status`**（是否通过由回填器按四条判据现算）；
-  `run_result{exit_code:int, final_ckpt_loadable:bool, nan_or_inf_detected:bool}`；
+  `run_result{exit_code:int, epochs_completed:int|null, epochs_planned:int|null,
+  final_ckpt_loadable:bool|null, nan_or_inf_detected:bool|null}`；
+  ★ 判据①（2026-10-23 对齐第 2 章「跑满 Epoch」）= 退出码 0 ∧ `epochs_completed ≥ epochs_planned`
+  ∧ 检查点**真可加载** ∧ 无 NaN/Inf；`steps_actual` 仍必填但**只作台账**，⛔ 不作通过条件。
+    · `epochs_*` 取自实测：`trainer_state.json` 的 `epoch` / `events.jsonl`(epoch_summary) /
+      `logging.jsonl`；**取不到写 `null`**（回填器判 unknown ⇒ fail-closed），⛔ 不用步数换算。
+    · `final_ckpt_loadable` = **真加载校验**（safetensors 头逐张量偏移 / `.bin`·`.pt` 的
+      `torch.load(map_location="meta")` 元数据 / 权重索引逐分片 / LoRA adapter 齐件）；
+      某格式无法安全校验 ⇒ `null` + 原因（⛔ 不当 True）。
+    · `nan_or_inf_detected` = stdout ＋ 全部 `*.jsonl` 旁路 ＋ `trainer_state` 三处证据源里
+      命中 metric 非有限值或 `skipped_nonfinite > 0`；三处都读不到 ⇒ `null`。
   6 个数据列必须"写满"（⛔ 空/`—`/null 会被拒收）；
   `eval{after_acc,base_acc,delta_pp[,teacher_after_acc]}`（判据②）、
   `checks{algo_checks_passed:bool, inference_parseable:bool}`（判据③④）——
@@ -68,8 +78,10 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import math
 import re
 import sys
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -87,8 +99,19 @@ CKPT_WEIGHT_GLOBS = ("model-*.safetensors", "rank_*.pt", "*.safetensors")
 #: 「实跑步数」的唯一读取口径（与 `scripts/collect_results.py::_GLOBAL_STEP` 同一正则语义）。
 GLOBAL_STEP_RE = re.compile(r"['\"]?global_step['\"]?\s*[:=]\s*(\d+)")
 GLOBAL_STEP_SLASH_RE = re.compile(r"global_step/max_steps['\"]?\s*[:=]\s*(\d+)")
+#: ★ NaN/Inf 的唯一判定正则（判据① 的第四项）：**metric 字段取非有限值**才算命中。
+#:   `loss` / `grad_norm` / `reward` / `logits` × `nan|-inf|inf|infinity`（大小写不敏感）。
+#:   ⛔ 不裸扫 `nan`/`inf` 单词：日志里的 "infinite"、路径名会假阳性。
 NANINF_RE = re.compile(r"(?i)['\"]?(loss|grad_norm|reward|logits)['\"]?\s*[:=]\s*"
                        r"(nan|-?inf(?:inity)?)\b")
+#: ★ 被跳过的非有限梯度步数（native 旁路 `skipped_nonfinite` / ms-swift
+#:   `nonfinite_grad_step_count`）：**> 0 才算命中**（字段出现在盘上且为 0 是"正面证据"，
+#:   ⛔ 不得按"字段出现过"判异常）。
+NANINF_SKIP_RE = re.compile(
+    r"['\"]?(skipped_nonfinite|nonfinite_grad_step_count)['\"]?\s*[:=]\s*(-?\d+)")
+
+#: ★ 判据① 的 epoch 读数容差（进度读数是浮点，"8.0 epoch 完成"不能因 7.999999 判成 7）。
+EPOCH_TOL = 1e-9
 
 DATA_COLUMNS = ("peak_mem", "steps_actual", "elapsed", "throughput", "effect", "note")
 
@@ -142,6 +165,24 @@ def read_float_file(path: Path) -> float | None:
         return None
 
 
+def _iter_jsonl(path: Path):
+    """逐行读 jsonl（生成 `(行号, 对象)`）：**行号是证据坐标**（报告要能指到哪一行）。"""
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as fh:
+            for lineno, line in enumerate(fh, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(obj, dict):
+                    yield lineno, obj
+    except OSError:                                           # pragma: no cover - 权限/竞态
+        return
+
+
 # ── 证据抽取（全部来自**实测**产物；抽不到 ⇒ None + 原因）───────────────────────
 def find_checkpoint_dirs(run_dir: Path) -> list[Path]:
     """发现本档的检查点目录（`checkpoint-*` / `final`），按步号降序。"""
@@ -155,31 +196,205 @@ def find_checkpoint_dirs(run_dir: Path) -> list[Path]:
     return sorted(set(found), key=step_of, reverse=True)
 
 
-def ckpt_has_weights(path: Path) -> bool:
-    for name in CKPT_WEIGHT_NAMES:
-        p = path / name
-        if p.is_file() and p.stat().st_size > 0:
-            return True
+def _safetensors_probe(path: Path) -> tuple[bool | None, str, list[str]]:
+    """**真解析** safetensors 头（⛔ 不读权重数据、⛔ 不依赖 safetensors/torch 库）。
+
+    格式 = `[8 B 小端头长度 N][N B JSON 头][权重数据区]`；头里每个张量带 `data_offsets`。
+    据此可判"这个文件是不是一份完整的 safetensors"：头长度自洽 ∧ 头是 JSON ∧ 有张量 ∧
+    每个张量的偏移都落在数据区内。7 字节的垃圾文件在这里第一道就判 False。
+    """
+    try:
+        size = path.stat().st_size
+    except OSError as exc:                                    # pragma: no cover - 权限/竞态
+        return False, f"{path.name} 不可读：{exc!r}", []
+    if size < 9:
+        return False, (f"{path.name} 只有 {size} 字节"
+                       "（装不下头长度 + JSON 头 ⇒ 不是合法 safetensors）"), []
+    try:
+        with path.open("rb") as fh:
+            n = int.from_bytes(fh.read(8), "little")
+            if n <= 0 or 8 + n > size:
+                return False, f"{path.name} 头长度 {n} 与文件大小 {size} 不符", []
+            raw = fh.read(n)
+    except OSError as exc:                                    # pragma: no cover
+        return False, f"{path.name} 不可读：{exc!r}", []
+    try:
+        hdr = json.loads(raw)
+    except json.JSONDecodeError:
+        return False, f"{path.name} 的 safetensors 头不是 JSON", []
+    if not isinstance(hdr, dict):
+        return False, f"{path.name} 的 safetensors 头不是对象", []
+    tensors = {k: v for k, v in hdr.items() if k != "__metadata__"}
+    if not tensors:
+        return False, f"{path.name} 的 safetensors 头里没有任何张量", []
+    body = size - 8 - n
+    for name, meta in tensors.items():
+        off = meta.get("data_offsets") if isinstance(meta, dict) else None
+        if (not isinstance(off, list) or len(off) != 2
+                or not all(isinstance(x, int) and not isinstance(x, bool) for x in off)):
+            return False, f"{path.name} 张量 {name} 的 data_offsets 不合法：{off!r}", list(tensors)
+        b, e = off
+        if not (0 <= b <= e <= body):
+            return False, (f"{path.name} 张量 {name} 的偏移 [{b},{e}] 越出数据区"
+                           f"（{body} B）"), list(tensors)
+    return (True, f"{path.name}：{len(tensors)} 个张量 / 头 {n} B / 数据区 {body} B 全部自洽",
+            list(tensors))
+
+
+def _torch_meta_probe(path: Path) -> tuple[bool | None, str, list[str]]:
+    """`.bin` / `.pt` 分片的元数据校验（⛔ 不物化权重、⛔ 不上 GPU）。
+
+    两道：① `torch.save` 的 zip 归档结构（`data.pkl` 存在）；② 有 torch 时再
+    `torch.load(map_location="meta", weights_only=True, mmap=True)` 把元数据解析出来。
+    ② 因为 `weights_only=True` ⇒ 只还原张量/基础类型，不执行 pickle 任意代码；
+    `map_location="meta"` ⇒ 只建元数据、不分配存储。取不到 torch ⇒ **null**（fail-closed）。
+    """
+    try:
+        size = path.stat().st_size
+    except OSError as exc:                                    # pragma: no cover
+        return False, f"{path.name} 不可读：{exc!r}", []
+    if size < 8:
+        return False, f"{path.name} 只有 {size} 字节（装不下 torch.save 归档头）", []
+    zip_why = None
+    try:
+        with zipfile.ZipFile(path) as zf:
+            names = zf.namelist()
+        if not any(n == "data.pkl" or n.endswith("/data.pkl") for n in names):
+            zip_why = f"{path.name} 是 zip 归档但缺 data.pkl（不是 torch.save 产物）"
+    except zipfile.BadZipFile as exc:
+        zip_why = f"{path.name} 不是 zip 归档（{exc}）"
+    except OSError as exc:                                    # pragma: no cover
+        return False, f"{path.name} 不可读：{exc!r}", []
+    try:
+        import torch  # noqa: PLC0415 - 可选依赖，缺则 fail-closed
+    except Exception:                                         # noqa: BLE001
+        return None, (f"{path.name}：torch 不可用 ⇒ 无法解析元数据"
+                      + (f"（{zip_why}）" if zip_why else "")), []
+    try:
+        obj = torch.load(str(path), map_location="meta", weights_only=True, mmap=True)
+    except Exception as exc:                                  # noqa: BLE001
+        # 旧版（非 zip）序列化不支持 mmap ⇒ 只在这一种情况下退一步再试一次（仍不物化权重）
+        if "mmap" not in str(exc):
+            return False, f"{path.name} 元数据解析失败：{exc!r}", []
+        try:
+            obj = torch.load(str(path), map_location="meta", weights_only=True)
+        except Exception as exc2:                             # noqa: BLE001
+            return False, f"{path.name} 元数据解析失败：{exc2!r}", []
+    if not isinstance(obj, dict) or not obj:
+        return False, f"{path.name} 的元数据不是非空字典（实际 {type(obj).__name__}）", []
+    return True, (f"{path.name}：元数据 {len(obj)} 项可解析（meta 加载，未物化权重"
+                  + ("；非 zip 旧序列化" if zip_why else "") + "）"), list(obj)
+
+
+def _probe_weight_file(path: Path) -> tuple[bool | None, str, list[str]]:
+    low = path.name.lower()
+    if low.endswith(".safetensors"):
+        return _safetensors_probe(path)
+    if low.endswith((".bin", ".pt", ".pth")):
+        return _torch_meta_probe(path)
+    return None, f"{path.name}：未知权重格式（无法安全校验）", []
+
+
+def _probe_index(index: Path) -> tuple[bool | None, str]:
+    """权重索引（`*.index.json`）⇒ 逐分片**打开并解析**（⛔ 不整模型加载）。"""
+    doc = read_json(index, None)
+    if not isinstance(doc, dict):
+        return False, f"{index.name} 不可解析或不是 JSON 对象"
+    weight_map = doc.get("weight_map")
+    if not isinstance(weight_map, dict) or not weight_map:
+        return False, f"{index.name} 缺 weight_map（权重索引不完整）"
+    shards = sorted({str(v) for v in weight_map.values()})
+    if not shards:
+        return False, f"{index.name} 的 weight_map 里没有任何分片"
+    verdicts: list[bool | None] = []
+    notes: list[str] = []
+    for shard in shards:
+        sp = index.parent / shard
+        if not sp.is_file():
+            return False, f"{index.name} 引用的分片 {shard} 不存在"
+        if sp.stat().st_size <= 0:
+            return False, f"分片 {shard} 是空文件"
+        ok, why, _keys = _probe_weight_file(sp)
+        verdicts.append(ok)
+        notes.append(why)
+        if ok is False:
+            return False, why
+    if any(v is None for v in verdicts):
+        return None, "；".join(n for v, n in zip(verdicts, notes) if v is None)
+    return True, (f"{index.name}：weight_map {len(weight_map)} 项 ⇒ {len(shards)} 个分片逐一可解析"
+                  f"（{notes[0]}）")
+
+
+def inspect_checkpoint(path: Path) -> tuple[bool | None, str]:
+    """检查点"**真可加载**"的唯一判定（判据① 第三项）。
+
+    口径（2026-10-23 收紧，取代旧的"目录里有非空文件即 True"）：
+      · PEFT/LoRA adapter 布局 ⇒ `adapter_config.json` 可解析 ＋ adapter 权重可解析且
+        **含 LoRA 张量名**；
+      · 有 `*.index.json` ⇒ 读 `weight_map`，逐分片真解析（分片缺失/空/头坏 ⇒ False）；
+      · 直接权重件（HF 单件 / native `rank_*.pt` / `model-*.safetensors` 分片）⇒ 逐件真解析；
+      · 某格式无法安全校验（未知后缀 / 无 torch）⇒ **None**（fail-closed，⛔ 不许当 True）。
+    ⛔ 不下载/不加载整模型到显存：safetensors 只读头，`.bin`/`.pt` 走 meta 加载。
+    """
+    # ── ① PEFT/LoRA adapter 布局 ──────────────────────────────────────────
+    cfg = path / "adapter_config.json"
+    adapter_weights = [path / n for n in ("adapter_model.safetensors", "adapter_model.bin")
+                       if (path / n).is_file() and (path / n).stat().st_size > 0]
+    if cfg.is_file() or adapter_weights:
+        conf = read_json(cfg, None)
+        if not isinstance(conf, dict) or not conf:
+            return False, ("adapter_config.json " +
+                           ("不可解析" if conf is None else "为空") + "（LoRA adapter 不合契约）")
+        if not adapter_weights:
+            return False, ("有 adapter_config.json 但缺 adapter 权重"
+                           "（adapter_model.safetensors/.bin）")
+        keys: list[str] = []
+        for w in adapter_weights:
+            ok, why, ks = _probe_weight_file(w)
+            if ok is not True:
+                return (False if ok is False else None), why
+            keys.extend(ks)
+        if not any("lora" in k.lower() for k in keys):
+            return False, f"adapter 权重里没有 LoRA 张量名（实测 {len(keys)} 个张量名）"
+        return True, (f"PEFT adapter：adapter_config.json 可解析（r={conf.get('r')}）＋ "
+                      f"{adapter_weights[0].name} 的 {len(keys)} 个张量名可解析且含 LoRA 权重")
+
+    # ── ② 权重索引：分片齐不齐由 weight_map 说了算 ─────────────────────────
+    for name in ("model.safetensors.index.json", "pytorch_model.bin.index.json"):
+        idx = path / name
+        if idx.is_file():
+            return _probe_index(idx)
+
+    # ── ③ 直接权重件（HF 单件 / native 分片）：文件名表与 glob 一律取本文件顶部的
+    #       `CKPT_WEIGHT_NAMES` / `CKPT_WEIGHT_GLOBS`（§1.4：⛔ 不在函数里另抄一份）
+    files: list[Path] = [path / n for n in CKPT_WEIGHT_NAMES
+                         if not n.endswith(".index.json") and (path / n).is_file()]
     for pattern in CKPT_WEIGHT_GLOBS:
-        for p in path.glob(pattern):
-            if p.is_file() and p.stat().st_size > 0:
-                return True
-    return False
+        files += sorted(p for p in path.glob(pattern) if p.is_file())
+    files = [p for p in dict.fromkeys(files) if p.stat().st_size > 0]
+    if not files:
+        return False, ("检查点目录内没有非空权重文件"
+                       "（model.safetensors / *.index.json / rank_*.pt 皆无）")
+    unknown: list[str] = []
+    for f in files:
+        ok, why, _keys = _probe_weight_file(f)
+        if ok is False:
+            return False, why
+        if ok is None:
+            unknown.append(why)
+    if unknown:
+        return None, "；".join(unknown)
+    return True, f"{len(files)} 个权重文件逐一可解析（{files[0].name}：头/元数据自洽）"
 
 
 def ckpt_loadable(run_dir: Path) -> tuple[bool | None, str, str | None]:
-    """最终检查点是否**完整可加载**（此处口径：找到最终目录 ∧ 有权重文件且非空）。
-
-    ⛔ 这是"形态/完整性"判据，不是"真的 reload 一遍"—— 真 reload 由 `run_guards form` 与
-    评测导出阶段承担；本函数只保证**不许在没有任何权重的情况下宣告可加载**。
-    """
+    """最终检查点是否**真可加载**（= :func:`inspect_checkpoint` 的结论 + 定位结果）。"""
     dirs = find_checkpoint_dirs(run_dir)
     if not dirs:
         return None, "未找到任何 checkpoint-*/ 或 final/ 目录（证据缺失）", None
     latest = dirs[0]
-    if not ckpt_has_weights(latest):
-        return False, f"最新检查点 {latest.name} 内没有非空权重文件", str(latest)
-    return True, f"最新检查点 {latest.name} 内有非空权重", str(latest)
+    ok, why = inspect_checkpoint(latest)
+    return ok, f"最新检查点 {latest.name}：{why}", str(latest)
 
 
 def parse_steps(stdout_log: Path) -> tuple[int | None, str]:
@@ -199,13 +414,205 @@ def parse_steps(stdout_log: Path) -> tuple[int | None, str]:
     return best, f"训练日志的最大步数读数 = {best}"
 
 
-def detect_nan_inf(stdout_log: Path) -> tuple[bool | None, str]:
-    if not stdout_log.is_file():
-        return None, "训练日志缺失 ⇒ 无法判 NaN/Inf"
-    hit = NANINF_RE.search(stdout_log.read_text(encoding="utf-8", errors="replace"))
-    if hit:
-        return True, f"日志出现异常数值：{hit.group(0)[:60]!r}"
-    return False, "日志（loss/grad_norm/reward/logits 字段）未出现 NaN/Inf"
+def _naninf_sources(run_dir: Path) -> list[Path]:
+    """NaN/Inf 的**全部证据源**（判据① 第四项）：stdout + 所有 jsonl 旁路 + trainer_state。
+
+    为什么不再只看 stdout（2026-10-23 断点）：native/ms-swift 的数值异常会先落进
+    `events.jsonl` / `rank_metrics*.jsonl` 的 metric 字段与 `skipped_nonfinite`，
+    stdout 只是人读摘要；只扫 stdout 会把"已经发生过非有限跳步"判成"无异常"。
+    """
+    out: list[Path] = []
+    stdout_log = run_dir / "stdout.log"
+    if stdout_log.is_file():
+        out.append(stdout_log)
+    out += sorted(p for p in run_dir.rglob("*.jsonl") if p.is_file())
+    out += sorted(p for p in run_dir.rglob("trainer_state.json") if p.is_file())
+    return out
+
+
+def detect_nan_inf(run_dir: Path) -> tuple[bool | None, str, list[Path]]:
+    """NaN/Inf = 「events/日志里出现 nan/inf/skipped_nonfinite 三者任一」。
+
+    证据源与正则（⛔ 不裸扫单词，避免 "infinite"/路径名假阳性）：
+      · `NANINF_RE`：metric 字段（loss/grad_norm/reward/logits）取 nan/±inf；
+      · `NANINF_SKIP_RE`：`skipped_nonfinite` / `nonfinite_grad_step_count` **> 0**。
+    三处（stdout / jsonl 旁路 / trainer_state）**都读不到** ⇒ `None`（fail-closed）；
+    读得到且零命中 ⇒ `False`（有据的"无异常"）。
+    """
+    sources = _naninf_sources(run_dir)
+    if not sources:
+        return None, ("训练目录下读不到任何数值证据"
+                      "（stdout.log / *.jsonl / trainer_state.json 均缺失）⇒ 无法判 NaN/Inf"), []
+    hits: list[str] = []
+    skip_seen = 0
+    for p in sources:
+        try:
+            with p.open("r", encoding="utf-8", errors="replace") as fh:
+                for lineno, line in enumerate(fh, 1):
+                    m = NANINF_RE.search(line)
+                    if m:
+                        hits.append(f"{p.name}:{lineno} {m.group(0)[:40]!r}")
+                        break
+                    m2 = NANINF_SKIP_RE.search(line)
+                    if m2:
+                        skip_seen += 1
+                        if int(m2.group(2)) > 0:
+                            hits.append(f"{p.name}:{lineno} {m2.group(0)[:40]!r}")
+                            break
+        except OSError:                                       # pragma: no cover - 权限/竞态
+            continue
+    if hits:
+        return True, f"数值异常命中：{hits[0]}（共 {len(hits)} 处）", sources
+    return False, (f"扫描 {len(sources)} 个证据源（stdout / jsonl 旁路 / trainer_state）未出现 "
+                   f"NaN/Inf；非有限跳步计数字段出现 {skip_seen} 次且均 ≤ 0"), sources
+
+
+def epochs_from_run(run_dir: Path) -> tuple[int | None, str, dict | None]:
+    """判据① 的 **epoch 读数**（跑完了几轮）。
+
+    取值优先级（逐条给"哪一行/哪个字段"的依据；⛔ 取不到就 None，⛔ 不拿步数换算）：
+      ① `trainer_state.json`（native/HF/ms-swift 同形）的 `epoch` 浮点 × `global_step` 定序；
+      ② `events.jsonl` 的 `epoch_summary`：`epoch`（0 起） + `epoch_cumulative.progress`；
+      ③ ms-swift `logging.jsonl` 的 `epoch` 字段。
+    完成轮数 = `floor(读数 + EPOCH_TOL)`（进度是浮点，满轮不能因 7.999999 判成 7）。
+    """
+    best = None
+    for p in sorted(run_dir.rglob("trainer_state.json")):
+        doc = read_json(p, None)
+        if not isinstance(doc, dict):
+            continue
+        ep = doc.get("epoch")
+        if isinstance(ep, bool) or not isinstance(ep, (int, float)):
+            continue
+        gs = doc.get("global_step")
+        gs = gs if isinstance(gs, int) and not isinstance(gs, bool) else -1
+        cand = (float(ep), gs, p, doc.get("num_train_epochs"))
+        if best is None or (cand[1], cand[0]) > (best[1], best[0]):
+            best = cand                      # ★ 取"步号最大"的那份状态（多 checkpoint 时）
+    if best is not None:
+        ep, gs, p, nte = best
+        done = int(math.floor(ep + EPOCH_TOL))
+        why = (f"trainer_state.json 的 epoch={ep:g}（global_step={gs}"
+               f"{f'，num_train_epochs={nte}' if isinstance(nte, (int, float)) else ''}）"
+               f" ⇒ 已完成 {done} 个 epoch")
+        return done, why, {"source": str(p), "field": "epoch", "line": None,
+                           "raw": ep, "num_train_epochs": nte}
+
+    best_ev = None
+    for p in sorted(run_dir.rglob("events.jsonl")):
+        for lineno, obj in _iter_jsonl(p):
+            if obj.get("event") != "epoch_summary":
+                continue
+            ep = obj.get("epoch")
+            prog = (obj.get("epoch_cumulative") or {}).get("progress")
+            if isinstance(ep, bool) or not isinstance(ep, int):
+                continue
+            if isinstance(prog, bool) or not isinstance(prog, (int, float)):
+                continue
+            v = float(ep) + float(prog)
+            if best_ev is None or v > best_ev[0]:
+                best_ev = (v, p, lineno, ep, float(prog))
+    if best_ev is not None:
+        v, p, lineno, ep, prog = best_ev
+        done = int(math.floor(v + EPOCH_TOL))
+        why = (f"events.jsonl 第 {lineno} 行 epoch_summary：epoch={ep} + progress={prog:g}"
+               f" ⇒ 已完成 {done} 个 epoch")
+        return done, why, {"source": str(p), "field": "epoch_summary", "line": lineno,
+                           "raw": v, "epoch_index": ep, "progress": prog}
+
+    best_lg = None
+    for p in sorted(run_dir.rglob("logging.jsonl")):
+        for lineno, obj in _iter_jsonl(p):
+            ep = obj.get("epoch")
+            if isinstance(ep, bool) or not isinstance(ep, (int, float)):
+                continue
+            if best_lg is None or float(ep) > best_lg[0]:
+                best_lg = (float(ep), p, lineno)
+    if best_lg is not None:
+        ep, p, lineno = best_lg
+        done = int(math.floor(ep + EPOCH_TOL))
+        why = f"logging.jsonl 第 {lineno} 行 epoch={ep:g} ⇒ 已完成 {done} 个 epoch"
+        return done, why, {"source": str(p), "field": "epoch", "line": lineno, "raw": ep}
+
+    return None, ("训练目录下读不到 epoch 读数（无 trainer_state.json 的 epoch / 无 "
+                  "events.jsonl 的 epoch_summary / 无 logging.jsonl 的 epoch 字段）"), None
+
+
+def loss_series_from_run(run_dir: Path) -> tuple[list[float], str, dict | None]:
+    """训练 loss 序列（判据② 的 CPT 支：**唯一**取法）。
+
+    来源与 native/ms-swift 的实际落点一一对应：
+      · `trainer_state.json` 的 `log_history[*].loss`（ms-swift/HF 同形 ⇒ CPT 主源）；
+      · `events.jsonl` 的 `train_step` 的 `optimize.loss_mean`（native）；
+      · ms-swift `logging.jsonl` 的 `loss`。
+    ⛔ 取不到 ⇒ 空序列（调用方写 null ⇒ 回填器判 unknown，fail-closed）。
+    """
+    best = None
+    for p in sorted(run_dir.rglob("trainer_state.json")):
+        doc = read_json(p, None)
+        if not isinstance(doc, dict):
+            continue
+        hist = doc.get("log_history")
+        if not isinstance(hist, list):
+            continue
+        series = [float(r["loss"]) for r in hist
+                  if isinstance(r, dict) and isinstance(r.get("loss"), (int, float))
+                  and not isinstance(r.get("loss"), bool)]
+        gs = doc.get("global_step")
+        gs = gs if isinstance(gs, int) and not isinstance(gs, bool) else -1
+        if series and (best is None or gs > best[0]):
+            best = (gs, series, p, "trainer_state.json 的 log_history[*].loss")
+    if best is not None:
+        _gs, series, p, field = best
+        return series, f"{field}（{len(series)} 个点）", {"source": str(p), "field": field}
+
+    series, p = [], None
+    for q in sorted(run_dir.rglob("events.jsonl")):
+        cur = []
+        for _lineno, obj in _iter_jsonl(q):
+            if obj.get("event") != "train_step":
+                continue
+            v = (obj.get("optimize") or {}).get("loss_mean")
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                cur.append(float(v))
+        if len(cur) > len(series):
+            series, p = cur, q
+    if series and p is not None:
+        return series, f"events.jsonl 的 train_step.optimize.loss_mean（{len(series)} 个点）", {
+            "source": str(p), "field": "train_step.optimize.loss_mean"}
+
+    series, p = [], None
+    for q in sorted(run_dir.rglob("logging.jsonl")):
+        cur = []
+        for _lineno, obj in _iter_jsonl(q):
+            v = obj.get("loss")
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                cur.append(float(v))
+        if len(cur) > len(series):
+            series, p = cur, q
+    if series and p is not None:
+        return (series, f"logging.jsonl 的 loss（{len(series)} 个点）",
+                {"source": str(p), "field": "loss"})
+
+    return [], ("训练目录下读不到 loss 序列（trainer_state.log_history / "
+                "events.train_step.optimize / logging.jsonl 均无）"), None
+
+
+def loss_curve(series: list[float], why: str, evidence: dict | None) -> dict | None:
+    """`eval.loss_curve` 的结构（判据② CPT 支的唯一载体）：首/末/最小 + **逐步序列**。
+
+    为什么带 `series`：CPT 的判定口径（`result_judge.judge_cpt_loss`）= **首尾窗口均值**
+    严格下降，"只给首末两点"无法复算该口径。⛔ 本文件不另立阈值 ⇒ 必须把序列交给判定器。
+    """
+    if not series:
+        return None
+    return {"n": len(series),
+            "first": series[0],
+            "last": series[-1],
+            "min": min(series),
+            "series": series,
+            "source": why,
+            "evidence": evidence or {}}
 
 
 def ledger_record(ledger: Path | None, tier: str) -> dict | None:
@@ -339,11 +746,24 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
         if steps_actual is None:
             gaps.append(f"缺实跑步数（{steps_why}）")
 
+    # ── 判据① 的 **Epoch 口径**（2026-10-23：跑满 epoch 才叫"跑完"，步数只作台账）────
+    #   `epochs_planned` = 清单该档 `max_epochs`（配置真相源）；`epochs_completed` 只从
+    #   trainer_state.json / events.jsonl(epoch_summary) / logging.jsonl 的**实测**读数取。
+    #   ⛔ 取不到 ⇒ 写 null（回填器判 unknown ⇒ fail-closed），⛔ 绝不用步数换算。
+    epochs_planned = mt.get("max_epochs")
+    epochs_planned = int(epochs_planned) if isinstance(epochs_planned, int) and not isinstance(
+        epochs_planned, bool) else None
+    if epochs_planned is None:
+        gaps.append(f"缺计划轮数（清单该档 max_epochs={mt.get('max_epochs')!r} 不是整数）")
+    epochs_done, epochs_why, epochs_ev = epochs_from_run(run_dir)
+    if epochs_done is None:
+        gaps.append(f"缺 epoch 读数（{epochs_why}）⇒ 判据① 不作通过判定（⛔ 不回落步数）")
+
     loadable, loadable_why, ckpt_path = ckpt_loadable(run_dir)
     if loadable is None:
         gaps.append(f"缺最终检查点可加载性结论（{loadable_why}）")
 
-    nan_inf, naninf_why = detect_nan_inf(run_dir / "stdout.log")
+    nan_inf, naninf_why, naninf_sources = detect_nan_inf(run_dir)
     if nan_inf is None:
         gaps.append(f"缺 NaN/Inf 检测结论（{naninf_why}）")
 
@@ -407,6 +827,23 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
         if key not in checks:
             gaps.append(f"{cid} 缺证据：{why} ⇒ 不作通过判定")
 
+    # ── 判据②（**CPT 支**）：训练 loss 正常下降（★ 判定器在回填器，本文件只产证据）──────
+    #   ★ 为什么 CPT 必须另有 loss 证据：第 2 章判据② 对 CPT 的定义是「训练 loss 正常下降」
+    #     （SFT/GRASPO/OPD 看 Δ）。⛔ 此前这条**没有任何判定代码**，"无 loss 读数 + after=base"
+    #     会被静默判通过。⇒ 本文件产出 `eval.loss_curve`（首/末/最小 + 逐步序列），回填器
+    #     `judge_effect` 用 `result_judge.judge_cpt_loss` 的同一口径（首尾窗口均值严格下降）判定；
+    #     取不到序列 ⇒ 不写键 ⇒ 回填器判 unknown（fail-closed）。
+    loss_curve_doc = None
+    loss_curve_why = ""
+    if algo == "CPT":
+        _series, loss_curve_why, _series_ev = loss_series_from_run(run_dir)
+        loss_curve_doc = loss_curve(_series, loss_curve_why, _series_ev)
+        if loss_curve_doc is None:
+            gaps.append(f"判据② 缺证据：CPT 需训练 loss 序列（{loss_curve_why}）⇒ 不作通过判定")
+        else:
+            ev = ev if ev is not None else {}
+            ev["loss_curve"] = loss_curve_doc
+
     # ── ★ 以下 6 列会随回填进入人读件的「实验数据」表 ⇒ 只放读数/结论，措辞必须中性 ────
     #   （⛔ 内部路径 / 内部工位名 / 内部行话一律不进这 6 列；证据路径留在 provenance 里供审计，
     #    provenance 不进人读件。）
@@ -416,6 +853,9 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
     #   缺读数时仍写 null —— 那些是**实测值**，编不出来。
     effect = ev_effect if ev_effect else ("不可评：本档没有评测读数（未运行评测，或 after / base "
                                          "两侧评测报告不齐）")
+    if loss_curve_doc is not None:
+        effect += (f"；训练 loss {loss_curve_doc['first']:.4g} → {loss_curve_doc['last']:.4g}"
+                   f"（最小 {loss_curve_doc['min']:.4g}，共 {loss_curve_doc['n']} 个点）")
     note_parts = []
     if note_extra:
         note_parts.append(note_extra)
@@ -423,10 +863,19 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
     note_parts.append(f"实跑步数 {steps_actual}（{steps_why}；计划 {mt['expected_optimizer_steps']} 步）"
                       if isinstance(steps_actual, int) else
                       f"计划 {mt['expected_optimizer_steps']} 步，实跑未知")
+    note_parts.append(
+        f"完成轮数 {epochs_done}/{epochs_planned} 个 epoch（{epochs_why}）"
+        if isinstance(epochs_done, int) and epochs_planned is not None else
+        f"计划 {epochs_planned if epochs_planned is not None else '未知'} 个 epoch，实跑轮数未知"
+        f"（{epochs_why}）")
     note_parts.append(f"检查点：{loadable_why}")
     note_parts.append(f"数值异常：{naninf_why}")
     note_parts.append(f"峰值显存：{peak_why}")
     note_parts.append(f"效果读数：{ev_why}")
+    if algo == "CPT":
+        note_parts.append(f"训练 loss 序列：{loss_curve_why}"
+                          if loss_curve_doc is not None
+                          else f"训练 loss 序列缺（{loss_curve_why}）")
     note_parts.extend(_teacher_note(algo, ev))
     note_parts.extend(_checks_note(checks, checks_ev, row))
     comparable = readings.get("comparable")
@@ -461,6 +910,9 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
         },
         "run_result": {
             "exit_code": exit_code,
+            # ★ 判据① 的**新口径分母/分子**（Epoch）：缺读数写 null（回填器判 unknown，fail-closed）
+            "epochs_completed": epochs_done,
+            "epochs_planned": epochs_planned,
             "final_ckpt_loadable": loadable,
             "nan_or_inf_detected": nan_inf,
         },
@@ -474,7 +926,11 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
         "provenance": {
             "produced_by": "scripts/make_result_json.py（工作包 B / task-manifest）",
             "command": readings.get("command") or f"bash tests/e2e/run_matrix68.sh --only {tier}",
-            "evidence_paths": [str(p) for p in _evidence_paths(run_dir, ckpt_path, checks_ev)],
+            "evidence_paths": [str(p) for p in _evidence_paths(
+                run_dir, ckpt_path, checks_ev, _extra_evidence(epochs_ev, naninf_sources,
+                                                              loss_curve_doc))],
+            # 判据① 的 epoch 读数坐标（哪个文件、哪个字段、第几行；审计用，不进人读件）
+            "epoch_evidence": epochs_ev,
             # 判据③④ 的证据链（有据才落；审计用，不进人读件）
             "checks_evidence": checks_ev,
         },
@@ -567,8 +1023,23 @@ def _checks_note(checks: dict, checks_ev: dict, row: dict) -> list[str]:
     return out
 
 
+def _extra_evidence(epochs_ev: dict | None, naninf_sources: list[Path] | None,
+                    loss_curve_doc: dict | None) -> list[Path]:
+    """判据①（epoch / NaN 证据源）与判据② CPT（loss 序列）的证据原件 —— 在盘才登记。"""
+    out: list[Path] = []
+    for ev in (epochs_ev, (loss_curve_doc or {}).get("evidence")):
+        src = (ev or {}).get("source") if isinstance(ev, dict) else None
+        if isinstance(src, str) and Path(src).is_file():
+            out.append(Path(src))
+    for p in naninf_sources or []:
+        if Path(p).is_file():
+            out.append(Path(p))
+    return out
+
+
 def _evidence_paths(run_dir: Path, ckpt_path: str | None,
-                    checks_ev: dict | None = None) -> list[Path]:
+                    checks_ev: dict | None = None,
+                    extra: list[Path] | None = None) -> list[Path]:
     out = []
     for rel in ("stdout.log", "exit_code", "gpu/peak_mem.json", "tier.json",
                 "env-snapshot-before.json", "env-snapshot-after.json", "env-diff.txt"):
@@ -582,6 +1053,9 @@ def _evidence_paths(run_dir: Path, ckpt_path: str | None,
         src = ((checks_ev or {}).get(key) or {}).get("detail", {}).get("source")
         if isinstance(src, str) and Path(src).exists() and Path(src) not in out:
             out.append(Path(src))
+    for p in extra or []:                     # 判据①（epoch / NaN）/ 判据② CPT（loss）的原件
+        if p.exists() and p not in out:
+            out.append(p)
     if not out:
         out = [run_dir]
     return out

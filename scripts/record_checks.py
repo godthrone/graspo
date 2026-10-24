@@ -30,9 +30,15 @@
        ④ `summary.sample_count_error == 0`（无请求级失败：缺条 = 没跑完整）；
        ⑤ 逐样本「可解析」条数 == 期望条数：无 `error` ∧ 无 `parse_error` ∧ `pred_name` 非空
           （`vllm_client.SampleRecord.to_dict()` 的字段；`parse_error` = 有输出但 arguments 串
-          解析不出，`pred_name` 空 = 没产出结构化工具调用）。
+          解析不出，`pred_name` 空 = 没产出结构化工具调用）；
+       ⑥ **「LoRA 档合并后」**（2026-10-23 补）：LoRA 档的报告必须能证明服务的是**合并产物**
+          （`model.export_format ∈ MERGE_EVIDENCE_FORMATS` 且 `model.path ≠ checkpoint_path`，
+          或目录名命中 `merged-hf-*` 合并落点）；全参档不适用 ⇒ 记 `true` 并注明；
+       ⑦ **「用 vLLM 启动」**（2026-10-23 补）：报告登记了 `engine`（含 vllm ⇒ true）或
+          `model.served_name`（= vLLM `--served-model-name`，`orchestrator.py:384`）。
      ①②③④ 任一不成立 ⇒ 判 `false`（**有据的不通过**，照实写键）；
-     报告缺失 / 不可解析 / 无 samples ⇒ **不写该键**（fail-closed，回填器不判通过）。
+     ⑥⑦ 有据不成立（评测的是未合并 adapter / engine 明确不是 vLLM）⇒ 判 `false`；
+     报告缺失 / 不可解析 / 无 samples / ⑥⑦**缺字段** ⇒ **不写该键**（fail-closed，回填器不判通过）。
 
   ③ **算法正确性检查通过**（同一章判据③），按算法分级：
      · **SFT / CPT / OPD**：文档口径 = 「按各自公开的标准实现逻辑判断」＋**另按公开标准核对
@@ -182,8 +188,74 @@ def is_opd(algo: str) -> bool:
     return str(algo or "").strip().upper() == "OPD"
 
 
+#: ★ 判据④ 第 2 章五要素里"**LoRA 档合并后**"的报告侧证据 = 这几种产物形态。
+#: 依据（同仓唯一实现）：
+#:   · `src/graspo/eval/merged_export.py:336-351` 的 `CheckpointKind`（`peft-adapter` /
+#:     `graspo-native` / `native-rank` = **需要合并**进入服务的形态）；
+#:   · `src/graspo/eval/orchestrator.py:220-263`：这两种形态必须给 `merged_output_dir`，
+#:     合并产物的落点 = `EvalModel.path`，且**与训练产物 `checkpoint_path` 不同**；
+#:   · `scripts/gen_eval.py:590-591`：LoRA 档的合并落点固定命名 `/evalout/merged-hf-<档号>`。
+MERGE_EVIDENCE_FORMATS = ("peft-adapter", "graspo-native", "native-rank")
+MERGE_DIR_PREFIX = "merged-hf"
+
+#: 判据④ 第 2 章五要素里"**用 vLLM 启动**"的报告侧证据：
+#:   · `src/graspo/eval/orchestrator.py:384`：`served_model_name=model.served_name`
+#:     ⇒ 报告里的 `model.served_name` 就是 vLLM 的 `--served-model-name`；
+#:   · 若报告里出现 `engine` / `model.engine` 字段，则以它为准（`vllm` 命中即 True）。
+ENGINE_VLLM_RE = re.compile(r"(?i)vllm")
+
+
+def _engine_of(report: dict) -> str:
+    """取报告声明的推理引擎（`engine` 或 `model.engine`；无此字段 ⇒ 空串 = 缺证据）。"""
+    model = report.get("model") if isinstance(report.get("model"), dict) else {}
+    for v in (report.get("engine"), model.get("engine")):
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return ""
+
+
+def _judge_lora_merged(model: dict, tuner_type: str) -> tuple[bool | None, str]:
+    """判据④「LoRA 档合并后」：返回 (结论, 依据串)。`None` = 缺证据（不写键 = fail-closed）。"""
+    tuner = str(tuner_type or "").strip().lower()
+    served_path = str(model.get("path") or "").strip()
+    ckpt_path = str(model.get("checkpoint_path") or "").strip()
+    fmt = str(model.get("export_format") or "").strip()
+    if tuner == "full":
+        return True, ("全参档 ⇒ 不适用「合并 LoRA」，按第 2 章判据④ 记 true"
+                      "（全参产物直接服务，无需合并）")
+    if tuner != "lora":
+        return None, (f"清单该档 tuner_type={tuner_type!r} 不是 lora/full ⇒ "
+                      "不知道适不适用「合并 LoRA」⇒ 判据④ 缺证据")
+    if not served_path:
+        return None, "评测报告缺 model.path（不知道服务的是哪个目录）⇒ 判据④ 缺证据"
+    if fmt in MERGE_EVIDENCE_FORMATS and ckpt_path and served_path != ckpt_path:
+        return True, (f"报告登记的产物形态 export_format={fmt!r} 且服务目录与训练产物不同"
+                      f"（orchestrator.py:220-263 的合并落点）⇒ 已合并")
+    base = Path(served_path).name
+    ckpt_base = Path(ckpt_path).name if ckpt_path else ""
+    if base.startswith(MERGE_DIR_PREFIX) or ckpt_base.startswith(MERGE_DIR_PREFIX):
+        return True, (f"服务目录名 {base or ckpt_base!r} 命中合并落点命名（gen_eval.py:590"
+                      f" 的 `merged-hf-<档号>`）⇒ 已合并")
+    return None, (f"评测报告缺「合并后」证据：export_format={fmt!r}、model.path={served_path!r}、"
+                  f"checkpoint_path={ckpt_path!r} 都看不出是合并产物 ⇒ 判据④ 缺证据")
+
+
+def _judge_served_by_vllm(report: dict, model: dict) -> tuple[bool | None, str, str]:
+    """判据④「用 vLLM 启动」：返回 (结论, 依据串, served_name)。`None` = 缺证据。"""
+    served = str(model.get("served_name") or "").strip()
+    engine = _engine_of(report)
+    if engine:
+        kind = "vLLM" if ENGINE_VLLM_RE.search(engine) else "非 vLLM"
+        return bool(ENGINE_VLLM_RE.search(engine)), f"报告 engine={engine!r}（{kind}）", served
+    if served:
+        return True, (f"报告 model.served_name={served!r} = vLLM 的 --served-model-name"
+                      f"（orchestrator.py:384）⇒ 由 vLLM 起服务"), served
+    return None, ("评测报告缺 model.served_name（也无 engine 字段）⇒ "
+                  "无法证明「用 vLLM 启动」⇒ 判据④ 缺证据"), served
+
+
 # ── 判据④：能推理（自动，判据来自评测报告实测）──────────────────────────────────
-def judge_inference(report, expected: int, report_path: Path) -> dict:
+def judge_inference(report, expected: int, report_path: Path, tuner_type: str = "") -> dict:
     """返回 `{ok: bool|None, why: str, evidence: {...}}`。`ok=None` = 缺证据（不写键）。"""
     ev: dict = {"criterion": "④ 能推理", "source": str(report_path), "expected": expected}
     if not isinstance(report, dict):
@@ -219,6 +291,18 @@ def judge_inference(report, expected: int, report_path: Path) -> dict:
     ev["parse_ok"] = parse_ok
     ev["samples_len"] = len(samples)
 
+    # ── ★ 第 2 章判据④ 五要素里此前**没有判定位**的两条（2026-10-23 断点 T4）────────
+    #   ①「LoRA 档合并后」：报告必须能证明服务的是**合并产物**（否则评的是未合并 adapter）；
+    #   ②「用 vLLM 启动」：报告必须登记 vLLM 服务名（`--served-model-name`）或 engine=vllm。
+    #   缺任一证据 ⇒ **不写该键**（`ok=None`，fail-closed），⛔ 不因"其它条件都过"就置位。
+    model = report.get("model") if isinstance(report.get("model"), dict) else {}
+    merged, merged_why = _judge_lora_merged(model, tuner_type)
+    served_ok, served_why, served_name = _judge_served_by_vllm(report, model)
+    ev.update({"tuner_type": tuner_type, "lora_merged": merged, "lora_merged_why": merged_why,
+               "served_by_vllm": served_ok, "served_by_vllm_why": served_why,
+               "served_name": served_name or None, "engine": _engine_of(report) or None,
+               "export_format": model.get("export_format"), "model_path": model.get("path")})
+
     problems = []
     if temp != 0.0:
         problems.append(f"评测温度 decoding.temperature={temp!r} ≠ 0（算法说明 §9 第 4 条）")
@@ -233,13 +317,25 @@ def judge_inference(report, expected: int, report_path: Path) -> dict:
     if parse_ok != expected:
         problems.append(f"可解析输出 {parse_ok}/{expected} 条"
                         "（无 error ∧ 无 parse_error ∧ 有结构化工具名）")
+    # 有据的不通过：证据自己说"没合并"/"不是 vLLM" ⇒ 记 false（不是"缺证据"）
+    if merged is False:
+        problems.append(f"LoRA 未合并即评测：{merged_why}")
+    if served_ok is False:
+        problems.append(f"不是 vLLM 起服务：{served_why}")
 
     ev["problems"] = problems
     if problems:
         return {"ok": False, "why": "判据④ 未过：" + "；".join(problems), "evidence": ev}
+    missing = []
+    if merged is None:
+        missing.append(merged_why)
+    if served_ok is None:
+        missing.append(served_why)
+    if missing:
+        return {"ok": None, "why": "判据④ 缺证据：" + "；".join(missing), "evidence": ev}
     return {"ok": True,
             "why": (f"判据④ 通过：训练数据集 {parse_ok}/{expected} 条输出可解析，"
-                    f"评测温度 {temp}、请求级失败 0 条"),
+                    f"评测温度 {temp}、请求级失败 0 条；{merged_why}；{served_why}"),
             "evidence": ev}
 
 
@@ -671,7 +767,8 @@ def main(argv=None) -> int:
 
     after_report = read_json(report_path) if report_path else None
     inf = judge_inference(after_report, expected,
-                          report_path or Path("<未指定>"))
+                          report_path or Path("<未指定>"),
+                          tuner_type=str(mt.get("tuner_type") or ""))
     sig_doc = read_json(sig_path) if str(algo).upper() in PUBLIC_ALGOS else None
     alg = judge_algo(algo, args.tier, algo_dir, sig_doc, sig_path)
     results = {"algo": alg, "inference": inf}

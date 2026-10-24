@@ -14,9 +14,15 @@
          并按固定形态格式化（`N 步` / `总时长 N s（约 X h）`）。
   ② 状态列按四条判据**自动计算**（阈值一律从数据件 `meta.criteria_caliber.threshold` **现读**，
      ⛔ 本文件不写任何阈值常量）：
-       判据① 跑完：退出码 0 ∧ 实跑步数 == 该档总训练步数（行 `derived_steps`）∧ 最终检查点可加载 ∧ 无 NaN/Inf
+       判据① 跑完（★ 2026-10-23 对齐第 2 章「跑完总训练轮数（Epoch）」）：退出码 0 ∧
+              **`epochs_completed ≥ epochs_planned`** ∧ 最终检查点**真可加载** ∧ 无 NaN/Inf；
+              实跑步数（数据件 `derived_steps`）**只作台账**（`steps_actual` 仍必填写进表格），
+              ⛔ 不作通过条件；缺 `epochs_completed` ⇒ `unknown`（fail-closed，⛔ 不回落步数）
        判据② 效果：`threshold.by_method[<方法>]` 的通过线（Δ ≥ 通过线）；OPD 另需
-              「教师 − 学生未训练 ≥ 教师线」（教师线从 `by_method.opd.teacher` 现解析）
+              「教师 − 学生未训练 ≥ 教师线」（教师线从 `by_method.opd.teacher` 现解析）；
+              **CPT 另有 loss 支**：「训练 loss 正常下降」⇒ 复用
+              `src/graspo/core/result_judge.judge_cpt_loss`（首尾窗口均值严格下降）；
+              缺 `eval.loss_curve.series` ⇒ `unknown`（fail-closed，⛔ 不静默跳过）
        判据③ 算法正确性检查
        判据④ 能完整产出可解析的推理结果（只判能否推理）
   ③ **fail-closed 铁律**：
@@ -125,8 +131,12 @@ DATA_COLUMNS = ("peak_mem", "steps_actual", "elapsed", "throughput", "effect", "
 REQUIRED_TOP = ["schema", "tier", "params", "run_result", "steps_actual", "elapsed",
                 "peak_mem", "throughput", "effect", "note", "run_path", "provenance"]
 
-#: 判据① 的结构化检查结果（可机判；缺键 ⇒ 校验失败，⛔ 不猜）
-REQUIRED_RUN_RESULT = ["exit_code", "final_ckpt_loadable", "nan_or_inf_detected"]
+#: 判据① 的结构化检查结果（可机判；缺键 ⇒ 校验失败，⛔ 不猜）。
+#: ★ 2026-10-23：判据① 改为「**跑满 Epoch**」（第 2 章原文），⇒ `epochs_completed` 进必填；
+#:   `epochs_planned`（配置 `max_epochs`）与其余键允许 `null` —— `null` = 缺证据 ⇒ judge 判
+#:   `unknown`（fail-closed），⛔ 不得判成 pass，也⛔ 不得回落成步数比较。
+REQUIRED_RUN_RESULT = ["exit_code", "epochs_completed", "final_ckpt_loadable",
+                       "nan_or_inf_detected"]
 
 # ★ 参数身份（防「跑 A 填 B」错位）：身份键必须自报且与档位表逐项一致。
 PARAM_IDENTITY_KEYS = ["model", "algo", "mode", "backend", "parallel"]
@@ -480,9 +490,25 @@ def validate_run(doc, tier_from_file, tier_rows):
         ex = rr.get("exit_code")
         if "exit_code" in rr and (isinstance(ex, bool) or not isinstance(ex, int)):
             errs.append(f"run_result.exit_code 必须是整数，实际 {ex!r}")
+        # ★ 判据① 的 epoch 键：整数或 null（null = 缺读数 ⇒ judge 判 unknown，fail-closed）
+        for k in ("epochs_completed", "epochs_planned"):
+            if k not in rr:
+                continue
+            v = rr.get(k)
+            if v is None:
+                continue
+            if isinstance(v, bool) or not isinstance(v, int):
+                errs.append(f"run_result.{k} 必须是整数或 null（null = 缺读数），实际 {v!r}")
+            elif v < 0:
+                errs.append(f"run_result.{k} 不得为负，实际 {v}")
+        # ★ 两个布尔项：null = 缺证据（判 unknown，⛔ 不是"不通过"）；其它类型一律拒收
         for k in ("final_ckpt_loadable", "nan_or_inf_detected"):
-            if k in rr and not isinstance(rr.get(k), bool):
-                errs.append(f"run_result.{k} 必须是布尔值，实际 {rr.get(k)!r}")
+            if k not in rr:
+                continue
+            v = rr.get(k)
+            if v is None or isinstance(v, bool):
+                continue
+            errs.append(f"run_result.{k} 必须是布尔值或 null（null = 缺证据），实际 {v!r}")
 
     # --- 必填数值列：实跑步数 / 耗时（⛔ 不许缺、不许用占位符糊过去） ---
     st = doc["steps_actual"]
@@ -556,26 +582,140 @@ PASS, FAIL, UNKNOWN = "pass", "fail", "unknown"
 
 
 def judge_run_complete(doc, row):
-    """判据① 跑完：退出码 0 ∧ 实跑步数 == 总训练步数 ∧ 最终检查点可加载 ∧ 无 NaN/Inf。"""
+    """判据① 跑完：**跑满 Epoch** ∧ 退出码 0 ∧ 最终检查点真可加载 ∧ 无 NaN/Inf。
+
+    ★ 2026-10-23 口径对齐（第 2 章原文 =「跑完总训练轮数（Epoch）」）：
+      · **通过条件 = `epochs_completed >= epochs_planned`**（`epochs_planned` = 清单 `max_epochs`，
+        缺则回落同一真相源 `params.max_epochs`）；
+      · `steps_actual` 仍必填并回填进「实跑步数」列，但**不再参与判定**（它只是台账：
+        判分/取数粒度变了就会与 `derived_steps` 漂移，拿它当门槛会把"跑满 8 轮"判成失败）；
+      · 缺 `epochs_completed` ⇒ **UNKNOWN**（fail-closed；⛔ 不回落步数比较）；
+      · `final_ckpt_loadable` / `nan_or_inf_detected` 为 `null` ⇒ **UNKNOWN**（缺证据 ≠ 失败）。
+    """
     rr = doc.get("run_result") if isinstance(doc.get("run_result"), dict) else {}
     ex = rr.get("exit_code")
     if isinstance(ex, bool) or not isinstance(ex, int):
         return UNKNOWN, "判据① 缺证据：run_result.exit_code"
-    steps, total = doc.get("steps_actual"), _ints(row.get("derived_steps"))
-    if not total:
-        return UNKNOWN, "判据① 缺证据：数据件该档无总训练步数（derived_steps）"
+    epochs_done = rr.get("epochs_completed")
+    epochs_planned = rr.get("epochs_planned")
+    if epochs_planned is None:
+        planned = (doc.get("params") or {}).get("max_epochs")
+        epochs_planned = (planned if isinstance(planned, int)
+                          and not isinstance(planned, bool) else None)
+    if epochs_done is None or isinstance(epochs_done, bool) or not isinstance(epochs_done, int):
+        return UNKNOWN, ("判据① 缺证据：run_result.epochs_completed（Epoch 读数；"
+                         "⛔ 不回落实跑步数比较）")
+    if (epochs_planned is None or isinstance(epochs_planned, bool)
+            or not isinstance(epochs_planned, int)):
+        return UNKNOWN, ("判据① 缺证据：计划轮数（run_result.epochs_planned / params.max_epochs）")
     fails = []
     if ex != 0:
         fails.append(f"退出码 {ex} ≠ 0")
-    if not isinstance(steps, int) or steps != total[0]:
-        fails.append(f"实跑 {steps} 步 ≠ 总训练步数 {total[0]}")
-    if rr.get("final_ckpt_loadable") is not True:
+    if epochs_done < epochs_planned:
+        fails.append(f"跑满 {epochs_done}/{epochs_planned} epoch（未跑满总训练轮数）")
+    loadable, nan_inf = rr.get("final_ckpt_loadable"), rr.get("nan_or_inf_detected")
+    if loadable is False:
         fails.append("最终检查点不可加载")
-    if rr.get("nan_or_inf_detected") is not False:
-        fails.append("检测到 NaN/Inf")
+    elif loadable is None:
+        return UNKNOWN, "判据① 缺证据：run_result.final_ckpt_loadable（检查点真加载校验未做）"
+    if nan_inf is True:
+        fails.append("检测到 NaN/Inf（含被跳过的非有限梯度步）")
+    elif nan_inf is None:
+        return UNKNOWN, "判据① 缺证据：run_result.nan_or_inf_detected（三处证据源都读不到）"
+    steps, total = doc.get("steps_actual"), _ints(row.get("derived_steps"))
+    ledger = f"；台账：实跑 {steps} 步（计划 {total[0] if total else '未知'} 步，⛔ 不作通过条件）"
     if fails:
-        return FAIL, "判据① 未过：" + "；".join(fails)
-    return PASS, f"判据① 跑完（{steps}/{total[0]} 步，检查点可加载，无 NaN/Inf）"
+        return FAIL, "判据① 未过：" + "；".join(fails) + ledger
+    return PASS, (f"判据① 跑完（{epochs_done}/{epochs_planned} epoch，检查点可加载，"
+                  f"无 NaN/Inf{ledger}）")
+
+
+#: ★ 判据② 的 **CPT 支**（"训练 loss 正常下降"）—— 复用 `src/graspo/core/result_judge.py`
+#: 的**同一个判定函数** `judge_cpt_loss`（⛔ 不另写阈值：窗口 = 首尾各
+#: `min(max(3, round(n × 0.10)), n)` 的均值，判定式 = **终窗均值 < 起窗均值**，严格小于；
+#: 口径与该文件 `CPT_LOSS_WINDOW_MIN/CPT_LOSS_WINDOW_FRACTION/judge_cpt_loss` 逐字一致）。
+_RESULT_JUDGE = None
+
+
+def result_judge_module():
+    """按路径载入判据真相源 `src/graspo/core/result_judge.py`（同仓、同解释器）。
+
+    为什么不在本文件重抄阈值：CPT 的 loss 口径只能有一份（§1.4）。载入失败 ⇒ fail-closed
+    （判据② 判 unknown），⛔ 不回落任何本地常量。
+    """
+    global _RESULT_JUDGE
+    if _RESULT_JUDGE is not None:
+        return _RESULT_JUDGE
+    import importlib.util as _ilu
+
+    path = ROOT / "src" / "graspo" / "core" / "result_judge.py"
+    if not path.is_file():
+        raise SystemExit(f"FATAL: 找不到判据真相源 {path} ⇒ CPT loss 口径无法确定（fail-closed）")
+    spec = _ilu.spec_from_file_location("_graspo_result_judge_for_backfill", path)
+    if spec is None or spec.loader is None:
+        raise SystemExit(f"FATAL: 载入 {path} 失败 ⇒ CPT loss 口径无法确定（fail-closed）")
+    mod = _ilu.module_from_spec(spec)
+    sys.modules[spec.name] = mod          # ★ dataclasses 需要模块已登记
+    spec.loader.exec_module(mod)
+    _RESULT_JUDGE = mod
+    return mod
+
+
+def loss_series_from_doc(doc):
+    """取 CPT 的训练 loss **逐步序列**（唯一载体：`eval.loss_curve.series`）。
+
+    返回 `(series|None, why)`。★ 只给首/末两点**不可**判定：`judge_cpt_loss` 的口径是
+    首尾**窗口**均值，⛔ 本层不自造"首末两点"的替代阈值。
+    """
+    ev = doc.get("eval") if isinstance(doc.get("eval"), dict) else {}
+    curve = ev.get("loss_curve")
+    where = "eval.loss_curve"
+    if not isinstance(curve, dict):
+        detail = doc.get("effect_detail") if isinstance(doc.get("effect_detail"), dict) else {}
+        curve = detail.get("loss_curve")
+        where = "effect_detail.loss_curve"
+    if isinstance(doc.get("effect"), dict):        # 兼容旧/未来形态（effect 若为结构化对象）
+        curve = doc["effect"].get("loss_curve")
+        where = "effect.loss_curve"
+    if not isinstance(curve, dict):
+        return None, "缺 eval.loss_curve（CPT 的训练 loss 读数未产出）"
+    series = curve.get("series")
+    if not isinstance(series, list) or not series:
+        return None, f"{where} 只有首/末读数、没有逐步序列（无法按首尾窗口均值口径复算）"
+    out = []
+    for v in series:
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            return None, f"{where}.series 含非数值项 {v!r}（读数不干净）"
+        out.append(float(v))
+    return out, f"{where}（{len(out)} 个逐步 loss 点）"
+
+
+def judge_cpt_loss_evidence(doc):
+    """判据② 的 **CPT 支**：训练 loss 正常下降（缺读数 ⇒ UNKNOWN，未下降 ⇒ FAIL）。"""
+    series, why = loss_series_from_doc(doc)
+    if series is None:
+        return UNKNOWN, f"判据② 缺证据（CPT）：{why}"
+    rj = result_judge_module()
+    evidence = rj.RunEvidence(
+        tier_id=str(doc.get("tier") or ""),
+        exit_code=(doc.get("run_result") or {}).get("exit_code"),
+        timed_out=False,
+        log_text="",
+        tuner_type=str((doc.get("params") or {}).get("tuner_type") or ""),
+        optimizer_steps=(doc.get("steps_actual")
+                         if isinstance(doc.get("steps_actual"), int) else None),
+        epochs_completed=(doc.get("run_result") or {}).get("epochs_completed"),
+        weight_changed=None,
+        checkpoint_reloadable=None,
+        artifacts_present={},
+        losses=tuple(series),
+        grad_norms=(),
+        algorithm="CPT",
+    )
+    res = rj.judge_cpt_loss(evidence)
+    if res.evidence_missing:
+        return UNKNOWN, f"判据② 缺证据（CPT）：{res.detail}"
+    return (PASS if res.passed else FAIL), res.detail
 
 
 def judge_effect(doc, row, frozen_map, teacher_pp):
@@ -585,12 +725,19 @@ def judge_effect(doc, row, frozen_map, teacher_pp):
     if line is None:
         return UNKNOWN, (f"判据② 缺证据：{method or '未知算法'} 的通过线未冻结/取不到"
                          "（数据件 meta.criteria_caliber.threshold.by_method）")
+    # ★ CPT：判据② 的定义是「**训练 loss 正常下降**（且 after ≥ base）」⇒ 先判 loss 支。
+    #   ⛔ 缺 loss 读数不得被静默跳过（此前"无 loss 读数 + after=base"会返回通过）。
+    cpt_verdict, cpt_detail = (PASS, "")
+    if method == "cpt":
+        cpt_verdict, cpt_detail = judge_cpt_loss_evidence(doc)
     ev = doc.get("eval") if isinstance(doc.get("eval"), dict) else {}
     a, b = _num(ev.get("after_acc")), _num(ev.get("base_acc"))
     if a is None or b is None:
         return UNKNOWN, "判据② 缺证据：eval.after_acc / eval.base_acc（评测读数）"
     delta = (a - b) * 100.0
     fails = []
+    if cpt_verdict == FAIL:
+        fails.append(cpt_detail)
     if delta < line - 1e-9:
         fails.append(f"{method} Δ = {delta:+.2f} pp 未达通过线 {line:+.1f} pp")
     if method == "opd":
@@ -605,11 +752,15 @@ def judge_effect(doc, row, frozen_map, teacher_pp):
             fails.append(f"OPD 教师 − 学生未训练 = {td:+.2f} pp 未达教师线 {teacher_pp:+.1f} pp")
     if fails:
         return FAIL, "判据② 未过：" + "；".join(fails)
+    # ★ 合取已真 ⇒ 缺证据才判 unknown（缺证据 ⛔ 不得越过"有据且不过"）
+    if cpt_verdict == UNKNOWN:
+        return UNKNOWN, cpt_detail
     extra = ""
     if method == "opd":
         extra = (f"，教师 − 学生未训练 = {(_num(ev.get('teacher_after_acc')) - b) * 100.0:+.2f} pp"
                  f" ≥ {teacher_pp:+.1f} pp")
-    return PASS, f"判据② {method} Δ = {delta:+.2f} pp ≥ {line:+.1f} pp{extra}"
+    cpt_extra = f"；{cpt_detail}" if method == "cpt" else ""
+    return PASS, f"判据② {method} Δ = {delta:+.2f} pp ≥ {line:+.1f} pp{extra}{cpt_extra}"
 
 
 def judge_algo_checks(doc):
@@ -928,7 +1079,8 @@ def _self_test():
             "schema": "matrix-run/v1", "tier": "M001",
             "params": {"model": "9B", "algo": "SFT", "mode": "LoRA", "backend": "ms-swift",
                        "parallel": "nproc_per_node=1（1 卡）", "lr": "2.0e-05"},
-            "run_result": {"exit_code": 0, "final_ckpt_loadable": True, "nan_or_inf_detected": False},
+            "run_result": {"exit_code": 0, "epochs_completed": 4, "epochs_planned": 4,
+                           "final_ckpt_loadable": True, "nan_or_inf_detected": False},
             "steps_actual": 400, "elapsed": 3720,
             "peak_mem": "42.1 GiB（rank0 max_allocated）",
             "throughput": "3.2 samples/s", "effect": "after 27.00% / base 15.00%；Δ = +12.00 pp",
@@ -944,6 +1096,16 @@ def _self_test():
 
     def j(doc, tier="M001"):
         return judge_row(doc, rows[tier], fm, teacher_line_pp(th_fixture))
+
+    # ★ CPT 的 loss 夹具：DECLINE = 正常下降（首尾窗口均值严格下降）／RISE = 反向（阳性对照）
+    decline = [2.0, 1.9, 1.8, 1.7, 1.6, 1.5, 1.4, 1.3, 1.2, 1.1]
+    rise = list(reversed(decline))
+
+    def cpt_ev(series):
+        """CPT 档的评测读数（`eval.loss_curve` 的唯一形态：首/末/最小 + **逐步序列**）。"""
+        return {"after_acc": 0.20, "base_acc": 0.20,
+                "loss_curve": {"n": len(series), "first": series[0], "last": series[-1],
+                               "min": min(series), "series": list(series)}}
 
     base = doc_fixture()
     cases = [
@@ -977,16 +1139,40 @@ def _self_test():
         ("⑩ 退出码 ≠ 0 ⇒ 判「不通过」（即使评测读数缺失，合取已假）",
          (lambda r: r[0] == "不通过" and any("退出码" in x for x in r[1]))(
              j(dict({k: v for k, v in base.items() if k != "eval"},
-                    run_result={"exit_code": 1, "final_ckpt_loadable": False,
+                    run_result={"exit_code": 1, "epochs_completed": 4, "epochs_planned": 4,
+                                "final_ckpt_loadable": False,
                                 "nan_or_inf_detected": False})))),
-        ("⑪ 实跑步数 ≠ 总训练步数 ⇒ 判「不通过」且点名判据①",
-         (lambda r: r[0] == "不通过" and any("总训练步数" in x for x in r[1]))(
-             j(dict(base, steps_actual=399)))),
-        ("⑫ CPT 不劣化线：after == base ⇒ 通过（Δ = +0.00 pp ≥ +0.0 pp）",
-         judge_effect(dict(base, eval={"after_acc": 0.20, "base_acc": 0.20}),
+        ("⑪ ★ 实跑步数 ≠ 计划步数**但 epoch 跑满** ⇒ 仍判「通过」（步数只作台账，⛔ 不作门槛）",
+         (lambda d: judge_run_complete(d, rows["M001"])[0] == "pass"
+          and "台账" in judge_run_complete(d, rows["M001"])[1])(dict(base, steps_actual=399))),
+        ("⑪b ★ 阳性对照：epoch 未跑满（3/4）⇒ 判「不通过」且点名 epoch",
+         (lambda r: r[0] == "不通过" and any("epoch" in x for x in r[1]))(
+             j(dict(base, run_result=dict(base["run_result"], epochs_completed=3))))),
+        ("⑪c 缺 epochs_completed ⇒ **不得判定**（unknown；⛔ 不回落步数——步数相等也不行）",
+         (lambda r: r[0] is None and any("epochs_completed" in x for x in r[2]))(
+             j(dict(base, run_result={k: v for k, v in base["run_result"].items()
+                                      if k != "epochs_completed"})))),
+        ("⑪d final_ckpt_loadable = null ⇒ **不得判定**（unknown；缺证据 ≠ 失败）",
+         (lambda r: r[0] is None and any("final_ckpt_loadable" in x for x in r[2]))(
+             j(dict(base, run_result=dict(base["run_result"], final_ckpt_loadable=None))))),
+        ("⑪e nan_or_inf_detected = null ⇒ **不得判定**（unknown，fail-closed）",
+         (lambda r: r[0] is None and any("nan_or_inf_detected" in x for x in r[2]))(
+             j(dict(base, run_result=dict(base["run_result"], nan_or_inf_detected=None))))),
+        ("⑪f 校验器：run_result 缺 epochs_completed ⇒ **必须拒收**",
+         any("epochs_completed" in e for e in validate_run(
+             dict(base, run_result={k: v for k, v in base["run_result"].items()
+                                    if k != "epochs_completed"}), "M001", rows))),
+        ("⑫ CPT：loss 正常下降 ∧ after == base ⇒ 通过（Δ = +0.00 pp ≥ +0.0 pp）",
+         judge_effect(dict(base, eval=cpt_ev(decline)),
                       {"train_method": "cpt"}, fm, None)[0] == "pass"),
-        ("⑬ CPT 低于 base ⇒ 不通过",
-         judge_effect(dict(base, eval={"after_acc": 0.19, "base_acc": 0.20}),
+        ("⑬ ★ 阳性对照：CPT 的 loss **未下降** ⇒ 不通过",
+         judge_effect(dict(base, eval=cpt_ev(rise)),
+                      {"train_method": "cpt"}, fm, None)[0] == "fail"),
+        ("⑬b CPT：缺 loss 读数（无 loss_curve）⇒ **不得判定**（unknown，⛔ 不静默跳过）",
+         judge_effect(dict(base, eval={"after_acc": 0.20, "base_acc": 0.20}),
+                      {"train_method": "cpt"}, fm, None)[0] == "unknown"),
+        ("⑬c CPT：loss 下降但 Δ 低于通过线 ⇒ 不通过（loss 支不得覆盖 Δ 支）",
+         judge_effect(dict(base, eval=dict(cpt_ev(decline), after_acc=0.19, base_acc=0.20)),
                       {"train_method": "cpt"}, fm, None)[0] == "fail"),
         ("⑭ OPD 学生线达标但教师 − 学生未训练不足 ⇒ 不通过且点名教师线",
          (lambda d: judge_effect(d, rows["M068"], fm, teacher_line_pp(th_fixture))[0] == "fail"
