@@ -82,6 +82,7 @@ import math
 import re
 import sys
 import zipfile
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -96,9 +97,34 @@ CKPT_WEIGHT_NAMES = (
 )
 CKPT_WEIGHT_GLOBS = ("model-*.safetensors", "rank_*.pt", "*.safetensors")
 
-#: 「实跑步数」的唯一读取口径（与 `scripts/collect_results.py::_GLOBAL_STEP` 同一正则语义）。
-GLOBAL_STEP_RE = re.compile(r"['\"]?global_step['\"]?\s*[:=]\s*(\d+)")
-GLOBAL_STEP_SLASH_RE = re.compile(r"global_step/max_steps['\"]?\s*[:=]\s*(\d+)")
+#: 「实跑步数」的读取口径 —— **四种实盘形态**（2026-10-26 修 D2；M016 真实日志驱动，
+#: fixture 见 `tests/scripts/fixtures/m016_stdout_excerpt.log`）：
+#:   ① `'global_step/max_steps': '6400/6400'` —— ms-swift 指标 dict。**值是带引号的字符串**
+#:      （单/双引号皆可）；旧正则 `[:=]\s*(\d+)` 卡在值前面那个 `'` 上 ⇒ M016 的
+#:      stdout.log 里 1282 行**一条都认不出** ⇒ `steps_actual=None` ⇒ 回填器 fail-closed，
+#:      训练已成功的档进不了表。
+#:   ② tqdm 进度行 `Train: 100%|██████████| 6400/6400 [14:27:53<00:00, 4.95s/it]`
+#:      （锚成"竖线 + 计数 + 方括号"的形状：⛔ 不裸扫 `\d+/\d+`，否则日期/速率会假阳性）。
+#:   ③ `'global_step': '200'` / `"global_step": 200` —— 同一 dict 家族 / JSON 家族
+#:      （值同样是"字符串或数字"；`logging.jsonl` 末行即 `"global_step": 6400`）。
+#:   ④ `trainer_state.json` 的 `"global_step": 6400`（由 :func:`parse_steps_evidence`
+#:      在跑次目录里逐件读取 —— 与 ③ 共用 `GLOBAL_STEP_RE`）。
+#:   ★ 既有语义不变：`global_step/max_steps` 取**分子**（= 当前步）；多源并存时取**最大**。
+GLOBAL_STEP_RE = re.compile(r"['\"]?global_step['\"]?\s*[:=]\s*['\"]?(\d+)")
+GLOBAL_STEP_SLASH_RE = re.compile(
+    r"global_step\s*/\s*max_steps['\"]?\s*[:=]\s*['\"]?(\d+)(?:\s*/\s*(\d+))?")
+#: ② tqdm 进度条里的「已跑/总数」。**必须锚住训练条**（`Train:` 标签 + `|计数 [` 框线）：
+#:   日志里还有下载/存盘等**无关进度条**（M016 实测 stdout.log 里有 7724 处 `|N/M [`，
+#:   其中绝大多数来自 `Train:` 之外）——裸扫 `|\s*\d+/\d+\s*\[` 会把无关计数当步数，
+#:   而口径是"多源取最大" ⇒ 一个偏大的假读数会**静默污染** steps_actual。
+#:   ⛔ 无标签的 HF 风格条（`  5%|▌ | 320/6400 [`）不取：那种情形有 ①②③④ 里的
+#:   `global_step` / `trainer_state.json` 兜底，宁缺勿错（fail-closed）。
+TQDM_STEP_RE = re.compile(
+    r"(?:^|[\r\n])\s*(?:Train|Training):[^\r\n]*?\|\s*(\d+)\s*/\s*(\d+)\s*\[")
+#: 同一读数出现在多处（且数值相等）时，**取更权威的形态**记 provenance：
+#: 显式 `global_step/max_steps` dict > `trainer_state.json` 的 `global_step` > tqdm 进度条。
+_STEP_KIND_RANK = {"global_step/max_steps": 3, "trainer_state.global_step": 2,
+                   "global_step": 2, "tqdm_progress": 1}
 #: ★ NaN/Inf 的唯一判定正则（判据① 的第四项）：**metric 字段取非有限值**才算命中。
 #:   `loss` / `grad_norm` / `reward` / `logits` × `nan|-inf|inf|infinity`（大小写不敏感）。
 #:   ⛔ 不裸扫 `nan`/`inf` 单词：日志里的 "infinite"、路径名会假阳性。
@@ -397,21 +423,88 @@ def ckpt_loadable(run_dir: Path) -> tuple[bool | None, str, str | None]:
     return ok, f"最新检查点 {latest.name}：{why}", str(latest)
 
 
-def parse_steps(stdout_log: Path) -> tuple[int | None, str]:
-    """实跑优化步数：日志里 `global_step` 的**最大值**（与台账同一口径）。"""
+def _scan_steps_text(text: str, source: str) -> list[dict]:
+    """在一段文本里逐行找步数读数 ⇒ 候选列表（`value` / `line` / `kind` / `raw`）。
+
+    逐行（而不是整篇 `finditer`）的唯一原因：provenance 要报**哪一行**（审计可复现）。
+    三种形态共用一条"预筛"（行里既没有 `global_step` 也没有 tqdm 竖线就跳过），
+    否则 19 MB / 19 万行的真日志会被三份正则各扫一遍。
+    """
+    out: list[dict] = []
+    # ⚠ 只按 `\n` 切行（⛔ `splitlines()`）：tqdm 用 `\r` 刷新进度帧，`splitlines()` 会把
+    #   同一**物理行**切成几十份 ⇒ provenance 行号与 grep/sed 口径不符、肉眼复核不到。
+    for lineno, line in enumerate(text.split("\n"), 1):
+        if "global_step" in line:
+            for m in GLOBAL_STEP_SLASH_RE.finditer(line):
+                out.append({"value": int(m.group(1)), "line": lineno,
+                            "kind": "global_step/max_steps", "raw": m.group(0)[:60],
+                            "max_steps": int(m.group(2)) if m.group(2) else None,
+                            "source": source})
+            for m in GLOBAL_STEP_RE.finditer(line):
+                out.append({"value": int(m.group(1)), "line": lineno,
+                            "kind": "global_step", "raw": m.group(0)[:60],
+                            "source": source})
+        elif "Train:" in line or "Training:" in line:
+            for m in TQDM_STEP_RE.finditer(line):
+                out.append({"value": int(m.group(1)), "line": lineno,
+                            "kind": "tqdm_progress", "raw": m.group(0)[:60],
+                            "source": source})
+    return out
+
+
+def _steps_from_stdout(stdout_log: Path) -> tuple[int | None, str, list[dict]]:
+    """:func:`parse_steps` 的实现体（带 provenance）。"""
     if not stdout_log.is_file():
-        return None, "训练日志缺失 ⇒ 无法取实跑步数"
-    best = None
-    text = stdout_log.read_text(encoding="utf-8", errors="replace")
-    for m in GLOBAL_STEP_RE.finditer(text):
-        v = int(m.group(1))
-        best = v if best is None else max(best, v)
-    for m in GLOBAL_STEP_SLASH_RE.finditer(text):
-        v = int(m.group(1))
-        best = v if best is None else max(best, v)
-    if best is None:
-        return None, "训练日志里没有步数读数（后端未打印/训练未进入优化循环）"
-    return best, f"训练日志的最大步数读数 = {best}"
+        return None, "训练日志缺失 ⇒ 无法取实跑步数", []
+    # ⚠ 按**字节**读再解码（⛔ `read_text()`）：文本模式会把 `\r` 规范化成 `\n`，
+    #   行号就与 grep/sed 口径不符（provenance 里的行号必须能被人直接复核）。
+    text = stdout_log.read_bytes().decode("utf-8", "replace")
+    found = _scan_steps_text(text, stdout_log.name)
+    if not found:
+        return None, "训练日志里没有步数读数（后端未打印/训练未进入优化循环）", []
+    best = max(found, key=lambda c: (c["value"], _STEP_KIND_RANK.get(c["kind"], 0)))
+    origin = f"{best['source']}:{best['line']}（形态 {best['kind']}，原文 {best['raw'].strip()!r}）"
+    return best["value"], f"训练日志的最大步数读数 = {best['value']}（取自 {origin}）", [best]
+
+
+def parse_steps(stdout_log: Path) -> tuple[int | None, str]:
+    """实跑优化步数：日志里 `global_step` 的**最大值**（与台账同一口径）。
+
+    认四种实盘形态（见 `GLOBAL_STEP_*` / `TQDM_STEP_*` 的注释）。返回值里的 `why`
+    **带 provenance**（哪个文件第几行、哪个形态、原文），审计不必再翻日志。
+    """
+    value, why, _prov = _steps_from_stdout(stdout_log)
+    return value, why
+
+
+def parse_steps_evidence(run_dir: Path) -> tuple[int | None, str, list[dict]]:
+    """实跑步数 + **多源 provenance**：`stdout.log` ∪ 跑次目录下全部 `trainer_state.json`。
+
+    ★ 为什么多源（2026-10-26 D2）：ms-swift/HF 的 `trainer_state.json` 末态就有
+      `"global_step": 6400`（M016 实证），而 stdout 只打印 `'global_step/max_steps': '6400/6400'`；
+      单看 stdout 会在"日志被截断/后端不打印指标 dict"时判 None。多源并存时取**最大**，
+      并把每个候选的坐标写进 `provenance.steps_evidence`（⛔ 不取第一个、不猜）。
+    """
+    candidates: list[dict] = []
+    value, why, prov = _steps_from_stdout(run_dir / "stdout.log")
+    candidates += prov
+    for state in sorted(run_dir.rglob("trainer_state.json")):
+        try:
+            doc = json.loads(state.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        gs = doc.get("global_step") if isinstance(doc, dict) else None
+        if isinstance(gs, int) and not isinstance(gs, bool):
+            candidates.append({"value": gs, "line": None, "kind": "trainer_state.global_step",
+                               "raw": f"global_step={gs}",
+                               "source": str(state.relative_to(run_dir))})
+    if not candidates:
+        return value, why, []
+    best = max(candidates, key=lambda c: (c["value"], _STEP_KIND_RANK.get(c["kind"], 0)))
+    where = (f"{best['source']}:{best['line']}" if best.get("line") is not None
+             else f"{best['source']}")
+    return best["value"], (f"实跑步数 = {best['value']}（多源取最大，取自 {where}，"
+                           f"形态 {best['kind']}）"), candidates
 
 
 def _naninf_sources(run_dir: Path) -> list[Path]:
@@ -702,10 +795,177 @@ def _acc(report: dict) -> float | None:
     return None
 
 
+# ── D1 超时伪影的**证据化重派生**（2026-10-26；显式开关，默认关）──────────────────
+#: 训练**真的跑完**的正面证据：ms-swift 在 main 返回时打印的那一行（M016 实测逐字）。
+FINISH_MARKER_RE = re.compile(
+    r"End time of running main:\s*(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})")
+#: trainer 自报的墙钟（`'train_runtime': '5.207e+04'`）—— 只作**交叉校验**，不作 elapsed 口径。
+TRAIN_RUNTIME_RE = re.compile(r"['\"]train_runtime['\"]\s*:\s*['\"]?([0-9.eE+-]+)")
+#: runner 自己的起跑时刻（`2026-10-25T09:41:51Z [start] …`，写在 `<run-root>/<档号>.console.log`）。
+RUNNER_START_RE = re.compile(r"^\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})Z\s+\[start\]")
+#: 「被外层 timeout 杀掉」的两个退出码（124 = TERM 生效；137 = 128+9 = kill-after 的 SIGKILL）。
+TIMEOUT_EXIT_CODES = (124, 137)
+
+
+def timeout_artifact_evidence(*, run_dir: Path, exit_code: int | None,
+                              elapsed_raw: float | None, steps_actual: int | None,
+                              steps_planned: int | None, epochs_done: int | None,
+                              epochs_planned: int | None, loadable: bool | None,
+                              nan_inf: bool | None) -> dict:
+    """D1 的**事后取证**：判断 `exit_code∈{124,137}` 是"训练失败"还是"外层超时伪影"。
+
+    ★ 为什么需要（M016 实证）：D1 的挂死让容器活到外层 `timeout` 上限才被杀 ⇒ 训练**已经**
+      按 main 正常返回，台账里却是 `exit_code=137 / elapsed=57720`（超时 57600+kill-after 120）。
+      旧链没有任何"重派生"通道，于是这一档永远进不了表。
+    ★ 判据（**全部**满足才算伪影；任一不满足 ⇒ `applies=False`，一个字段都不动）：
+      ① 退出码 ∈ {124, 137} **且** 墙钟 ≥ 该档 timeout（两者都读自 readings.json）；
+      ② stdout.log 有 `End time of running main:` —— torchrun 的主函数**已返回**；
+      ③ 步数跑满：最后一次 `global_step/max_steps` 读数 n/n，或实跑步数 ≥ 清单计划步数；
+      ④ `epochs_completed ≥ epochs_planned`（既有 epoch 证据）；
+      ⑤ `final_ckpt_loadable is True`；⑥ `nan_or_inf_detected is False`。
+      ⇒ 训练真实状态 = 成功（`exit_code=0`），`elapsed` 改取"runner 起跑 → main 返回"的
+      墙钟差（**排除 D1 的空等**），并用 trainer 自报 `train_runtime` 做交叉校验
+      （torchrun 起得比 runner 晚 ⇒ `train_runtime ≤ 派生 elapsed ≤ 原始 elapsed`）。
+    ★ ⛔ 不是"手改成 0"：每个条件都在返回值里带坐标（文件:行 + 原文），
+      审计可以逐条复核；条件不全 ⇒ `applies=False` + `why`（fail-closed，不改任何字段）。
+    """
+    ev: dict = {
+        "applies": False,
+        "rule": ("exit_code∈{124,137} ∧ elapsed≥timeout ∧ stdout 有 End time of running main "
+                 "∧ 步数跑满 ∧ epochs_completed≥planned ∧ ckpt 可加载 ∧ 无 NaN/Inf"),
+        "exit_code_raw": exit_code,
+        "exit_code_derived": None,
+        "elapsed_raw": elapsed_raw,
+        "elapsed_derived": None,
+        "conditions": {},
+        "why": "",
+    }
+    cond = ev["conditions"]
+
+    readings = read_json(run_dir / "readings.json", {}) or {}
+    timeout_sec = readings.get("timeout_sec")
+    timeout_sec = float(timeout_sec) if isinstance(timeout_sec, (int, float)) else None
+    cond["raw_is_timeout_code"] = {
+        "ok": exit_code in TIMEOUT_EXIT_CODES,
+        "detail": f"readings.json/exit_code 的原始退出码 = {exit_code}"
+                  f"（外层 timeout 的产物形如 {list(TIMEOUT_EXIT_CODES)}）"}
+    cond["elapsed_reached_timeout"] = {
+        "ok": (timeout_sec is not None and elapsed_raw is not None
+               and float(elapsed_raw) >= timeout_sec),
+        "detail": f"elapsed={elapsed_raw} timeout_sec={timeout_sec}"}
+
+    # ② ③ 同一次扫描 stdout.log（20 MB 真日志只读一遍）
+    finish: dict | None = None
+    last_slash: dict | None = None
+    train_runtime: float | None = None
+    stdout_log = run_dir / "stdout.log"
+    if stdout_log.is_file():
+        for lineno, line in enumerate(
+                stdout_log.read_bytes().decode("utf-8", "replace").split("\n"), 1):
+            # ⚠ 三个判据必须**各自独立**地看同一行：ms-swift 把 `train_runtime` 与
+            #   `global_step/max_steps` 打在**同一个物理行**里（M016 stdout.log:190379），
+            #   用 elif 会把后者吞掉 ⇒ 交叉校验拿不到 trainer 自报墙钟。
+            if "End time of running main" in line:
+                m = FINISH_MARKER_RE.search(line)
+                if m:
+                    finish = {"line": lineno, "timestamp": m.group(1), "raw": line.strip()[:120]}
+            if "global_step/max_steps" in line:
+                m = GLOBAL_STEP_SLASH_RE.search(line)
+                if m:
+                    last_slash = {"line": lineno,
+                                  "pair": [int(m.group(1)),
+                                           int(m.group(2)) if m.group(2) else None]}
+            if "train_runtime" in line:
+                m = TRAIN_RUNTIME_RE.search(line)
+                if m:
+                    try:
+                        train_runtime = float(m.group(1))
+                    except ValueError:
+                        pass
+    cond["trainer_main_returned"] = {
+        "ok": finish is not None,
+        "detail": (f"stdout.log:{finish['line']} {finish['raw']!r}" if finish
+                   else "stdout.log 里没有 `End time of running main`（主函数没返回）")}
+    steps_full = bool(
+        (last_slash and last_slash["pair"][1] is not None
+         and last_slash["pair"][0] == last_slash["pair"][1])
+        or (isinstance(steps_actual, int) and isinstance(steps_planned, int)
+            and steps_actual >= steps_planned))
+    cond["steps_completed"] = {
+        "ok": steps_full,
+        "detail": (f"stdout.log:{last_slash['line']} 末次读数 {last_slash['pair'][0]}/"
+                   f"{last_slash['pair'][1]}" if last_slash else "stdout.log 无步数读数")
+                  + f"；steps_actual={steps_actual} planned={steps_planned}"}
+    cond["epochs_completed"] = {
+        "ok": (epochs_done is not None and epochs_planned is not None
+               and epochs_done >= epochs_planned),
+        "detail": f"epochs_completed={epochs_done} epochs_planned={epochs_planned}"}
+    cond["final_ckpt_loadable"] = {"ok": loadable is True,
+                                   "detail": f"final_ckpt_loadable={loadable!r}"}
+    cond["nan_or_inf_free"] = {"ok": nan_inf is False,
+                               "detail": f"nan_or_inf_detected={nan_inf!r}"}
+    if finish is not None:
+        ev["finish_marker"] = {"source": "stdout.log", **finish}
+    if last_slash is not None:
+        ev["last_step_reading"] = {"source": "stdout.log", **last_slash}
+    ev["train_runtime_sec"] = train_runtime
+
+    if not all(c["ok"] for c in cond.values()):
+        ev["why"] = ("不构成超时伪影（条件不全 ⇒ 一个字段都不改，fail-closed）："
+                     + "；".join(k for k, c in cond.items() if not c["ok"]))
+        return ev
+
+    # ── 派生 elapsed：runner 起跑 → main 返回（= 训练真实墙钟，排除 D1 的空等）──────────
+    start_ts = None
+    console = run_dir.parent / f"{run_dir.name}.console.log"
+    if console.is_file():
+        for line in console.read_text(encoding="utf-8", errors="replace").splitlines():
+            m = RUNNER_START_RE.match(line)
+            if m:
+                start_ts = m.group(1)
+                ev["runner_start"] = {"source": console.name, "timestamp": m.group(1),
+                                      "raw": line.strip()[:120]}
+                break
+    if start_ts is None:
+        ev["why"] = ("超时伪影成立，但缺 runner 起跑时刻（<run-root>/<档号>.console.log 的 "
+                     "`[start]` 行）⇒ elapsed 不予派生（fail-closed 保留原值读数），退出码照派生")
+        ev["exit_code_derived"] = 0
+        ev["applies"] = True
+        return ev
+    try:
+        t0 = datetime.strptime(start_ts, "%Y-%m-%dT%H:%M:%S")
+        t1 = datetime.strptime(finish["timestamp"], "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        ev["why"] = "起跑/结束时刻解析失败 ⇒ elapsed 不予派生（保留原值读数）"
+        ev["exit_code_derived"] = 0
+        ev["applies"] = True
+        return ev
+    derived = (t1 - t0).total_seconds()
+    # 交叉校验：容器的本地时间 = UTC（M016 实证：console.log 的 Z 时刻与 stdout.log 的
+    # End time / 宿主 mtime 同一坐标），再叠一条与 trainer 自报墙钟的上下界校验。
+    sane = 0 < derived <= float(elapsed_raw)
+    if train_runtime is not None:
+        sane = sane and train_runtime <= derived + 1.0
+    ev["elapsed_derived"] = round(derived, 1) if sane else None
+    ev["elapsed_cross_check"] = {
+        "t_start": start_ts, "t_trainer_end": finish["timestamp"],
+        "train_runtime_sec": train_runtime,
+        "detail": (f"{finish['timestamp']} − {start_ts} = {derived:.0f}s；"
+                   + (f"trainer 自报 train_runtime={train_runtime:.0f}s（须 ≤ 派生值）；"
+                      if train_runtime is not None else "trainer 自报 train_runtime 读不到；")
+                   + f"原始 elapsed={elapsed_raw}s（含 D1 空等）")}
+    if not sane:
+        ev["why"] = "派生 elapsed 未通过交叉校验 ⇒ 不采用（保留原值），退出码照派生"
+    ev["exit_code_derived"] = 0
+    ev["applies"] = True
+    return ev
+
+
 # ── 组装 ─────────────────────────────────────────────────────────────────────
 def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
               eval_dir: Path | None, tier_json: Path | None, note_extra: str,
-              ledger: Path | None = None) -> tuple[dict, dict]:
+              ledger: Path | None = None,
+              recover_timeout_artifact: bool = False) -> tuple[dict, dict]:
     """返回 (结果 json, 诊断信息{schema_errors, evidence_gaps})。"""
     mt = next((t for t in manifest["tiers"] if t["tier_id"] == tier), None)
     if mt is None:
@@ -741,8 +1001,9 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
 
     steps_actual = readings.get("steps_actual")
     steps_why = "读自跑次读数文件"
+    steps_prov: list[dict] = []
     if not isinstance(steps_actual, int) or isinstance(steps_actual, bool):
-        steps_actual, steps_why = parse_steps(run_dir / "stdout.log")
+        steps_actual, steps_why, steps_prov = parse_steps_evidence(run_dir)
         if steps_actual is None:
             gaps.append(f"缺实跑步数（{steps_why}）")
 
@@ -767,10 +1028,29 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
     if nan_inf is None:
         gaps.append(f"缺 NaN/Inf 检测结论（{naninf_why}）")
 
+    # ── D1 超时伪影的**事后取证**（2026-10-26）：只在显式开关下生效，默认路径逐字不变 ─────
+    #   ⛔ 默认关的理由：D1 修好后新跑次不该再出现"训练跑完却被超时杀掉"，本通道只用于
+    #      **已落盘的老跑次**（如 M016）按证据重派生；不设开关 ⇒ 行为与修复前完全一致。
+    artifact: dict | None = None
+    if recover_timeout_artifact:
+        artifact = timeout_artifact_evidence(
+            run_dir=run_dir, exit_code=exit_code,
+            elapsed_raw=(readings.get("elapsed_sec")
+                         if readings.get("elapsed_sec") is not None
+                         else read_float_file(run_dir / "elapsed_sec")),
+            steps_actual=steps_actual,
+            steps_planned=mt.get("expected_optimizer_steps", mt.get("planned_steps")),
+            epochs_done=epochs_done, epochs_planned=epochs_planned,
+            loadable=loadable, nan_inf=nan_inf)
+        if artifact["applies"] and artifact.get("exit_code_derived") is not None:
+            exit_code = artifact["exit_code_derived"]
+
     # ── 三个数值/文本列 ───────────────────────────────────────────────────
     elapsed = readings.get("elapsed_sec")
     if elapsed is None:
         elapsed = read_float_file(run_dir / "elapsed_sec")
+    if artifact is not None and artifact.get("elapsed_derived") is not None:
+        elapsed = artifact["elapsed_derived"]
     if elapsed is None:
         gaps.append("缺训练墙钟秒数（跑次未落墙钟读数）")
     peak_mem, peak_why = peak_mem_text(run_dir, ledger, tier)
@@ -878,6 +1158,17 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
                           else f"训练 loss 序列缺（{loss_curve_why}）")
     note_parts.extend(_teacher_note(algo, ev))
     note_parts.extend(_checks_note(checks, checks_ev, row))
+    if artifact is not None:
+        if artifact["applies"]:
+            _d = artifact.get("elapsed_derived")
+            note_parts.append(
+                f"退出码按证据重派生：原始 {artifact['exit_code_raw']} → "
+                f"{artifact.get('exit_code_derived')}（训练已按主流程返回：见步骤跑满、"
+                f"轮数跑满、检查点可加载、无 NaN/Inf 四项实测）"
+                + (f"；墙钟改取「起跑 → 主流程返回」= {_d} s"
+                   f"（原始 {artifact.get('elapsed_raw')} s 含收尾空等）" if _d else ""))
+        else:
+            note_parts.append(f"退出码按证据重派生未成立（保留原始读数）：{artifact['why']}")
     comparable = readings.get("comparable")
     if comparable is False:
         note_parts.append("环境快照冻结维度发生变化 ⇒ 本档读数不可比（不得悄悄重跑）")
@@ -931,10 +1222,15 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
                                                               loss_curve_doc))],
             # 判据① 的 epoch 读数坐标（哪个文件、哪个字段、第几行；审计用，不进人读件）
             "epoch_evidence": epochs_ev,
+            # 实跑步数的读数坐标（哪个文件第几行、哪种形态、多源取最大的依据；审计用）
+            "steps_evidence": steps_prov,
             # 判据③④ 的证据链（有据才落；审计用，不进人读件）
             "checks_evidence": checks_ev,
         },
     }
+    # D1 超时伪影的重派生取证（只在显式开关下出现；审计用，不进人读件）
+    if artifact is not None:
+        doc["provenance"]["timeout_artifact_evidence"] = artifact
     if str(row.get("target_modules") or "").strip():
         doc["params"]["target_modules"] = str(row["target_modules"])
     if ev is not None:
@@ -1076,6 +1372,11 @@ def main(argv=None) -> int:
                     help="collect_results.py 的 ledger.jsonl（提供则峰值显存用矩阵冻结口径 "
                          "peak_memory_gib，否则用宿主侧采样并显式标注口径）")
     ap.add_argument("--note", default="", help="附加备注（写进 note 列）")
+    ap.add_argument("--recover-timeout-artifact", action="store_true",
+                    help="D1 事后取证（默认关）：把「训练已按主流程返回、却被外层 timeout 杀掉」"
+                         "的老跑次按证据重派生 exit_code/elapsed（判据见 "
+                         "timeout_artifact_evidence 的 docstring；条件不全 ⇒ 一个字段都不改）。"
+                         "⛔ 不用它替代正常跑次，也不手改任何读数。")
     ap.add_argument("--collect-dir", default=None,
                     help="回填入口：额外落一份扁平副本 <dir>/<tier>.json（runner 传 <run-root>/collect；"
                          "回填器 `--runs-dir` 只吃扁平目录、且拒 stray）")
@@ -1113,7 +1414,8 @@ def main(argv=None) -> int:
                           data_rows=data_rows, eval_dir=Path(args.eval_dir) if args.eval_dir else None,
                           tier_json=Path(args.tier_json) if args.tier_json else None,
                           note_extra=args.note,
-                          ledger=Path(args.ledger) if args.ledger else None)
+                          ledger=Path(args.ledger) if args.ledger else None,
+                          recover_timeout_artifact=args.recover_timeout_artifact)
 
     out = Path(args.out) if args.out else run_dir / f"{args.tier}.json"
     text = json.dumps(doc, ensure_ascii=False, indent=1) + "\n"

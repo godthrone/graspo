@@ -41,6 +41,9 @@
 #   export GRASPO_IMAGE=<训练镜像 tag>                    （默认见 IMAGE 行）
 #   GRASPO_GPU_POSITION_MIB  本档每卡头寸（默认 49152 = 48 GiB）
 #   GRASPO_RUN_TIMEOUT       单档训练墙钟上限（秒；默认 7200）
+#   GRASPO_GPU_SAMPLER_GRACE_SEC  训练进程返回后**等显存采样器收尾**的上限（秒；默认 30）。
+#                            到点仍在跑 ⇒ SIGTERM/SIGKILL 后强回收（⛔ 不改 exit_code）。
+#                            与上面那些"环境信息"不同，它**不改变任何读数口径**，只改收尾代价。
 #   GRASPO_EVAL_DIR          评测根（可选）：若其下已有 `.local/reports/after/eval_report.json`，
 #                            本档跑完就当场产出判据③④ 证据并复跑适配器；未跑评测则只打印后续命令
 #   GRASPO_ALGO_CHECKS_DIR   GRASPO 算法检查签署件目录（默认 <run-root>/algo-checks，内含 <档号>.json）
@@ -126,6 +129,38 @@ export PYTHONDONTWRITEBYTECODE=1
 
 say() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 fatal() { echo "FATAL: $*" >&2; }
+
+# ══ 宿主侧显存采样器的**有界回收**（2026-10-26 修 D1 的宿主半边）════════════════════
+# 为什么必须有：宿主采样器是 `while :; do nvidia-smi …; sleep 2; done` 的**无界**子 shell，
+# 旧代码 `kill "$SAMPLER_PID"; wait "$SAMPLER_PID"` 里的 `wait` 没有上限 —— 采样器一旦
+# 卡在 nvidia-smi 上（驱动忙/被复位），runner 就与「容器内采样器挂死」一样停不下来，
+# 最后被外层超时记成整档失败。M016 的 exit_code=137 是**容器内**那一半造成的（见
+# entry.sh 收口段的注释），这里是**同一缺陷的宿主半边**：两半都无界，任何一半卡住都够呛。
+# 口径：SIGTERM ⇒ 以 GRASPO_GPU_SAMPLER_GRACE_SEC 为上限等它自己退 ⇒ 到点 SIGKILL ⇒
+#       wait 回收。★ 只对本脚本自己起的那个 pid 动手（⛔ 不 pkill、⛔ 不碰他人进程）：
+#       卡号台账里的他人进程由闸门 B/C 判，**不在这里杀**。
+# ★ 实现要点：用"看门狗 + `wait`"而不是轮询 `kill -0`——子进程退出后会短暂处于僵尸态，
+#   `kill -0` 对僵尸**仍然成功**，轮询法会把每档都拖满整个 grace 才返回。
+reap_sampler_pid() {
+    local pid="${1:-}" grace="${GRASPO_GPU_SAMPLER_GRACE_SEC:-30}" watchdog
+    if [ -z "$pid" ]; then
+        return 0
+    fi
+    kill -0 "$pid" 2>/dev/null || { wait "$pid" 2>/dev/null || true; return 0; }
+    case "$grace" in ''|*[!0-9]*) grace=30 ;; esac
+    [ "$grace" -gt 0 ] || grace=30
+    kill -TERM "$pid" 2>/dev/null || true
+    (
+        sleep "$grace"
+        echo "[gpu-summary] WARN: 宿主采样器 ${grace}s 内未退出（pid=$pid）⇒ SIGKILL（只改代价，不改判定）" >&2
+        kill -KILL "$pid" 2>/dev/null || true
+    ) &
+    watchdog=$!
+    wait "$pid" 2>/dev/null || true
+    kill -TERM "$watchdog" 2>/dev/null || true
+    wait "$watchdog" 2>/dev/null || true
+    return 0
+}
 
 [ -f "$MANIFEST" ] || { fatal "清单不存在：$MANIFEST（先跑 tests/e2e/generate_matrix68_manifest_source.py）"; exit 2; }
 
@@ -459,12 +494,53 @@ PY
 [ \$? -eq 0 ] || exit 3
 ENTRY_PREFLIGHT
         cat <<ENTRY_TAIL
+# ══ 收口①：训练进程一返回就**有界**回收容器内的显存采样器（2026-10-26 修 D1）══
+#   缺陷（M016 实证）：采样器 graspo record-gpu-memory 是**无界循环**（训练多长采多长），
+#   旧代码这里是 wait "\$SAMPLER" —— 无上限地等它 ⇒ entry.sh 永不返回 ⇒ 容器不退出 ⇒
+#   外层 timeout 57600s 把 docker CLI 杀掉。runs/M016 因此记 exit_code=137、
+#   elapsed=57720（= 57600 + kill-after 120），而 stdout.log 末行是
+#   End time of running main: 2026-10-26 00:10:10、步数 6400/6400、8/8 epoch
+#   —— 训练**已经**按主流程正常返回，成功被记成超时失败（外层超时本该只保护训练）。
+#   ⚠ 比台账更糟（2026-10-26 实测）：被杀的只是 docker CLI，**容器没退** ——
+#   docker ps 里 graspo-M016-… 至今 Up 18h、采样器进程仍在跑；泄漏的容器一直占着
+#   那张卡的「容器声明」，后续档位的闸门 A 会把它判成 BUSY（M052 因此只能换卡）。
+#   所以本段的收口不是"省几秒"，是让容器真的能退出。
+#   口径（只动代价、不动判定）：
+#     · SIGTERM 是 record_gpu_memory 的**优雅停止**信号（它在 finally 里落
+#       gpu_memory_summary.json），所以先 TERM 再等，摘要不丢；
+#     · 上限 = GRASPO_GPU_SAMPLER_GRACE_SEC（默认 30s，⛔ 不进任何判据），到点 SIGKILL；
+#     · 最后 wait 回收，容器退出时不留孤儿；
+#     · ★ 退出码**只取 torchrun 的 RC**：采样器死不死、摘要落没落盘都不许改变训练结论
+#       （摘要缺失只登记 EVIDENCE_GAP，见下一条 if）。
+#   ★ 只对自己起的那个 pid（SAMPLER=\$!）动手：⛔ 不 pkill、⛔ 不碰他人进程/容器。
+#   ★ 实现用「看门狗 + wait」而不是轮询 kill -0：子进程退出后会短暂是僵尸态，
+#     kill -0 对僵尸**仍然成功**，轮询法会把每一档都拖满整个 grace 才返回。
+wait_for_gpu_summary() {
+    local pid="\${1:-}" grace="\${GRASPO_GPU_SAMPLER_GRACE_SEC:-30}" watchdog
+    if [ -z "\$pid" ]; then
+        echo "[gpu-summary] WARN: 采样器 pid 为空 —— 无法等待，取证可能不完整" >&2
+        return 0
+    fi
+    case "\$grace" in ''|*[!0-9]*) grace=30 ;; esac
+    [ "\$grace" -gt 0 ] || grace=30
+    kill -TERM "\$pid" 2>/dev/null || true
+    (
+        sleep "\$grace"
+        echo "[gpu-summary] WARN: 采样器 \${grace}s 内未退出（pid=\$pid）⇒ SIGKILL（只改代价，不改判定）" >&2
+        kill -KILL "\$pid" 2>/dev/null || true
+    ) &
+    watchdog=\$!
+    wait "\$pid" 2>/dev/null || true
+    kill -TERM "\$watchdog" 2>/dev/null || true
+    wait "\$watchdog" 2>/dev/null || true
+    return 0
+}
 "$CONTAINER_PY" -m graspo record-gpu-memory --config "/workspace/graspo/$CONFIG" &
 SAMPLER=\$!
 torchrun --standalone --nproc_per_node="$NPROC" --master_port="$PORT" \\
   -m graspo.cli.train_worker --config "/workspace/graspo/$CONFIG" > /out/stdout.log 2>&1
 RC=\$?
-wait "\$SAMPLER" 2>/dev/null || true
+wait_for_gpu_summary "\$SAMPLER"
 if [ -f "\$GPU_EVIDENCE_DIR/gpu_memory_summary.json" ]; then
     printf '%s\n' present > "\$GPU_EVIDENCE_DIR/gpu_summary.state"
 else
@@ -533,7 +609,9 @@ ENTRY_TAIL
         docker run "${DOCKER_ARGS[@]}" -w /workspace/graspo "$IMAGE" bash /entry.sh
     RC=$?
     T_END=$(date +%s)
-    [ -n "$SAMPLER_PID" ] && { kill "$SAMPLER_PID" 2>/dev/null || true; wait "$SAMPLER_PID" 2>/dev/null || true; }
+    # 训练 docker 进程一返回就**有界**回收宿主采样器（D1 的宿主半边；⛔ 不改 RC，
+    # 也⛔ 不把这段耗时算进 elapsed —— elapsed 的起止在上一行已经定死）。
+    reap_sampler_pid "$SAMPLER_PID"
     echo "$RC" > "$RUN_DIR/exit_code"
     say "[end] $TIER exit_code=$RC elapsed=$((T_END - T_START))s"
 
