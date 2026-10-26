@@ -25,6 +25,12 @@
   「该档行现值 == 排练产物」且「当轮副本 HTML 与排练渲染逐字节相等」⇒ **不写盘**、直接 rc=0，
   于是同一档重复跑 sha256 必不变（现有通道每次会重写 `meta.backfill.last_run`，故必须短路）。
 
+★ 可选开关（缺省关，未设时行为逐字节不变）：`GRASPO_FILL_RECOVER_TIMEOUT_ARTIFACT=1`
+  ⇒ 读数派生加 `--recover-timeout-artifact`：对「训练已按主流程返回、却被外层 timeout 记成
+  exit_code∈{124,137}」的跑次，按 `make_result_json.py` 的七条带坐标判据**证据化重派生**
+  exit_code/elapsed（provenance 同时留 `exit_code_raw`）。⛔ 不放宽判据、不填任何数值：
+  任一条不成立 ⇒ 一个字段都不改。用于 D1（训练跑完却不收尾）污染过的老跑次。
+
 ★ 退出码：0 = 成功（写入 / dry-run / 幂等短路）；2 = 用法或档号非法；
   3 = **证据不足**（该档保持「待测试」，⛔ 未写任何字节）；4 = 机核/范围闸门失败（已回滚或未落盘）；
   5 = 基准件三锁不成立（⛔ 拒起）；9 = 解释器环境不足（缺 pydantic/graspo ⇒ 需在容器内跑）。
@@ -329,8 +335,18 @@ def main(argv: list[str]) -> int:
                "--manifest", str(manifest)]
         if ev_dir is not None:
             cmd += ["--eval-dir", str(ev_dir)]
+        # ★ D1 的超时伪影重派生：显式 opt-in（缺省关 ⇒ 未设该变量时行为逐字节不变）。
+        #   为什么需要这条：D1（训练跑完却不收尾）会把**已经跑完**的档记成 exit_code=137 /
+        #   elapsed 含收尾空等；`make_result_json.py --recover-timeout-artifact` 按七条带坐标的
+        #   判据（超时码 ∧ elapsed≥timeout ∧ End time 标记 ∧ 步数跑满 ∧ 轮数跑满 ∧ ckpt 可加载
+        #   ∧ 无 NaN/Inf）**证据化**地重派生，并在 provenance 里同时留 exit_code_raw。
+        #   ⛔ 本开关不填任何数值、不放宽判据：任一条不成立 ⇒ 一个字段都不改（fail-closed）。
+        recover = os.environ.get("GRASPO_FILL_RECOVER_TIMEOUT_ARTIFACT", "").strip() == "1"
+        if recover:
+            cmd += ["--recover-timeout-artifact"]
         rc_c, out_c = run(cmd)
-        print(f"→ 读数派生 make_result_json.py rc={rc_c}")
+        print(f"→ 读数派生 make_result_json.py rc={rc_c}"
+              + ("（含 D1 超时伪影重派生：GRASPO_FILL_RECOVER_TIMEOUT_ARTIFACT=1）" if recover else ""))
         if ev_dir is not None:
             print(f"  评测证据（按档归档）{ev_dir}")
         for why in ev_problems:
