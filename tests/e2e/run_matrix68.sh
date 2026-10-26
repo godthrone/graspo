@@ -46,7 +46,11 @@
 #                            与上面那些"环境信息"不同，它**不改变任何读数口径**，只改收尾代价。
 #   GRASPO_EVAL_DIR          评测根（可选）：若其下已有 `.local/reports/after/eval_report.json`，
 #                            本档跑完就当场产出判据③④ 证据并复跑适配器；未跑评测则只打印后续命令
-#   GRASPO_ALGO_CHECKS_DIR   GRASPO 算法检查签署件目录（默认 <run-root>/algo-checks，内含 <档号>.json）
+#   GRASPO_ALGO_CHECKS_DIR   GRASPO 算法检查签署件目录。**只有显式设了才生效**：非空 ⇒ 作为
+#                            `--algo-checks-dir` 传给 record_checks（显式目录**不回退**）；
+#                            未设 ⇒ 不传该参数，record_checks 按缺省查 <run-dir>/algo-checks、
+#                            缺件回退仓内 samples/configs/matrix68-checks/（⛔ 不再默认传一个
+#                            从不存在的 <run-root>/algo-checks，那会把回退关掉 ⇒ 判据③ 恒待测试）
 #   GRASPO_PUBLIC_ALGOS      SFT/CPT/OPD 判据③ 的公开算法签署件（默认仓内
 #                            samples/configs/matrix68-checks/public-algos.json；缺件 ⇒ 不写该键）
 #
@@ -124,7 +128,11 @@ ELAM_HOST="${GRASPO_ELAM_HOST_ROOT:-}"
 MODELS_ROOT="${GRASPO_MODELS_HOST_ROOT:-}"
 EVAL_DIR="${GRASPO_EVAL_DIR:-}"
 GPU_POOL_CSV="0,1,2,3,4,5,6,7"
-ALGO_CHECKS_DIR="${GRASPO_ALGO_CHECKS_DIR:-$RUN_ROOT/algo-checks}"
+# ★ 只有**显式**设了 GRASPO_ALGO_CHECKS_DIR 才把 `--algo-checks-dir` 传给 record_checks：
+#   record_checks 的语义是"显式给 ⇒ 只认该目录、不回退"，而 `<run-root>/algo-checks` 从来不存在
+#   ⇒ 旧默认值等于把回退关掉，判据③ 每档都缺证据（M016/M052 都是事后手工重跑救回来的）。
+#   缺省留空 ⇒ record_checks 走既有回退（仓内 samples/configs/matrix68-checks/）。
+ALGO_CHECKS_DIR="${GRASPO_ALGO_CHECKS_DIR:-}"
 export PYTHONDONTWRITEBYTECODE=1
 
 say() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
@@ -298,9 +306,9 @@ TIERFIELDS
         echo "[dry-run]   判据①：exit_code==0 ∧ steps_actual==$DERIVED（= max_epochs $MAX_EPOCHS × per_epoch $PER_EPOCH）∧ 检查点可加载 ∧ 无 NaN/Inf"
         echo "[dry-run]   步数门槛：threshold=$GATE reachable=$DERIVED planned=$PLANNED per_epoch=$PER_EPOCH"
         echo "[dry-run]   判据②：由 tools/matrix/backfill_matrix.py 按数据件现算（⛔ 本链不写 status）"
-        echo "[dry-run]   判据③④ 渠道：评测后跑 $PYBIN scripts/record_checks.py --tier $TIER --run-dir $RUN_DIR --eval-dir ${EVAL_DIR:-<EVAL_DIR>} --algo-checks-dir $ALGO_CHECKS_DIR  ⇒ 写 readings.json 的 checks{真/假}"
+        echo "[dry-run]   判据③④ 渠道：评测后跑 $PYBIN scripts/record_checks.py --tier $TIER --run-dir $RUN_DIR --eval-dir ${EVAL_DIR:-<EVAL_DIR>}${ALGO_CHECKS_DIR:+ --algo-checks-dir $ALGO_CHECKS_DIR}  ⇒ 写 readings.json 的 checks{真/假}"
         echo "[dry-run]     · ④ 取 ${EVAL_DIR:-<EVAL_DIR>}/.local/reports/after/eval_report.json 实测：样本数==$SUBSET、请求失败 0、逐样本可解析条数==$SUBSET、温度 0"
-        echo "[dry-run]     · ③ GRASPO 档必须 $ALGO_CHECKS_DIR/$TIER.json（第 9 节 8 条不变式逐条 + 检查人/时间签署）；SFT/CPT/OPD 必须有公开算法签署件 samples/configs/matrix68-checks/public-algos.json（损失/标签掩码规则及 OPD 教师信号规则，带 file:line + 签署人/时间）"
+        echo "[dry-run]     · ③ GRASPO 档须有 $TIER.json：缺省查 <run-dir>/algo-checks，缺件回退仓内 samples/configs/matrix68-checks/（<档号>.json / graspo-<档号>.json）；仅当显式设了 GRASPO_ALGO_CHECKS_DIR 才传 --algo-checks-dir，显式目录**不回退**。第 9 节 8 条不变式须逐条 + 检查人/时间签署；SFT/CPT/OPD 必须有公开算法签署件 samples/configs/matrix68-checks/public-algos.json（损失/标签掩码规则及 OPD 教师信号规则，带 file:line + 签署人/时间）"
         echo "[dry-run]     · 缺 ③④ 证据 ⇒ 不写该键 ⇒ 回填器 fail-closed（保持「待测试」）；⛔ 不得手填 true 凑通过"
         echo "[dry-run]     · 档号护栏：readings.json 的 tier 必须 == --tier（record_checks / make_result_json 各自核，不符 rc=2）"
         if [ "$ALGO" = "OPD" ]; then
@@ -715,9 +723,15 @@ READINGS
             say "[checks] $TIER 补法：$PYBIN scripts/gen_eval.py --tier $TIER --role teacher --gpu <评测卡> --port <端口>；顺序约束：教师档（27B / SFT / LoRA / dp=1，本矩阵 M041）必须先于 OPD 档完成并导出 merged-hf"
         fi
         local CHECKS_RC=0
-        "$PYBIN" "$ROOT_DIR/scripts/record_checks.py" --tier "$TIER" --run-dir "$RUN_DIR" \
-            --eval-dir "$EVAL_DIR" --algo-checks-dir "$ALGO_CHECKS_DIR" --manifest "$MANIFEST" \
-            || CHECKS_RC=$?
+        # ★ 缺省**不传** `--algo-checks-dir`（缺陷根因：旧代码恒传 `<run-root>/algo-checks`，而该目录
+        #   从来不存在；record_checks 对显式目录"只认不存在的目录、不回退仓内签署件" ⇒ 判据③ 每档
+        #   都缺证据 ⇒ 每档事后手工重跑才能救回）。不传 ⇒ record_checks 走既有回退（仓内
+        #   samples/configs/matrix68-checks/）。显式设了 GRASPO_ALGO_CHECKS_DIR 才传：显式即不回退
+        #   （⛔ 防止偷偷用仓内旧签署件顶替跑次侧**已存在**的签署件）。
+        local CHECKS_ARGS=(--tier "$TIER" --run-dir "$RUN_DIR" --eval-dir "$EVAL_DIR"
+                           --manifest "$MANIFEST")
+        [ -n "$ALGO_CHECKS_DIR" ] && CHECKS_ARGS+=(--algo-checks-dir "$ALGO_CHECKS_DIR")
+        "$PYBIN" "$ROOT_DIR/scripts/record_checks.py" "${CHECKS_ARGS[@]}" || CHECKS_RC=$?
         if [ "$CHECKS_RC" -ne 0 ]; then
             say "[checks] $TIER 判据②③④ 证据不全（rc=$CHECKS_RC）⇒ 回填时该档 fail-closed；补齐证据后重跑 record_checks"
         fi
@@ -725,7 +739,7 @@ READINGS
         "$PYBIN" "$ROOT_DIR/scripts/make_result_json.py" "${RESULT_ARGS[@]}" || RESULT_RC=$?
         say "[checks] $TIER 结果 json 已按判据②（教师）③④ 证据复算（rc=$RESULT_RC）"
     else
-        say "[checks] $TIER 判据③④ 待评测后执行：$PYBIN scripts/record_checks.py --tier $TIER --run-dir $RUN_DIR --eval-dir <EVAL_DIR> [--algo-checks-dir $ALGO_CHECKS_DIR]，再复跑 make_result_json（缺证据 ⇒ 回填器 fail-closed）"
+        say "[checks] $TIER 判据③④ 待评测后执行：$PYBIN scripts/record_checks.py --tier $TIER --run-dir $RUN_DIR --eval-dir <EVAL_DIR>${ALGO_CHECKS_DIR:+ --algo-checks-dir $ALGO_CHECKS_DIR}，再复跑 make_result_json（缺证据 ⇒ 回填器 fail-closed）"
         [ "$ALGO" = "OPD" ] && say "[checks] $TIER 另需教师侧评测报告（判据②）：$PYBIN scripts/gen_eval.py --tier $TIER --role teacher …（教师档先于 OPD 档完成；缺 ⇒ 判据② 不可判定）"
     fi
     # 该档"成功"= 训练退出码 0（判据① 的部分事实）；四条判据的合取由回填器现算，⛔ 本脚本不下结论

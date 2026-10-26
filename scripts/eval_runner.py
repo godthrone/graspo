@@ -21,7 +21,7 @@
 | 调用 | `bash run-eval.sh <TREE> <EVALDIR> <TIER> <ROLE> <EVALCFG>` |
 | 入参语义 | `TREE` 部署树根（挂 `/workspace/graspo:ro`，另 `$TREE/runs → /runs:ro`）；`EVALDIR` 评测根（挂 `/evalout`）；`TIER` M 档号（只做容器名/日志）；`ROLE` ∈ `after|base|teacher`（= 报告子目录口径，与 `scripts/record_checks.py:102/108` 同源）；`EVALCFG` 评测 yaml（必须位于 `EVALDIR` 内，容器内以 `/evalout/<basename>` 引用） |
 | 产物 | `<EVALDIR>/.local/reports/<ROLE>/eval_report.json`（`graspo eval run` 写）+ `<EVALDIR>/evidence/eval-<ROLE>-stdout.log`（本脚本 tee） |
-| 退出码 | 0 成功/自检通过；1 用法错；4 **待训练产物缺失**（模型/检查点目录不在盘，fail-closed）；5 配置/落点口径不符（`output_dir` 不是本 role 的独立目录、报告目录非空、`EVALCFG` 不在 `EVALDIR` 内）；6 vLLM 端点未就绪；7 评测命令 rc=0 但报告未产出；其他 = `graspo eval run` 的真实 rc 原样透传 |
+| 退出码 | 0 成功/自检通过；1 用法错；3 **评测数据集缺失/sha256 不符**（`$GRASPO_ELAM_V5_DIR/subsets-v2/<TIER>.jsonl` 不在盘或与 `tier.json` 的 `subset_sha256` 不同，fail-closed；⛔ 不等评测容器起来才 `DatasetError`）；4 **待训练产物缺失**（模型/检查点目录不在盘，fail-closed）；5 配置/落点口径不符（`output_dir` 不是本 role 的独立目录、报告目录非空、`EVALCFG` 不在 `EVALDIR` 内）；6 vLLM 端点未就绪；7 评测命令 rc=0 但报告未产出；其他 = `graspo eval run` 的真实 rc 原样透传 |
 | 自检 | `run-eval.sh -h`|`--help`（用法，rc 0）；`--check-only [--self] [--no-endpoint] <5 参>`（静态自检 + 打印将执行的命令行，rc 0 = 可跑） |
 
 ## 单一真相源（⛔ 不复制评测逻辑）
@@ -81,7 +81,7 @@ RUNNER_NAME = "run-eval.sh"
 #: sha 记录的落点（与脚本同目录，机器可读：模板版本 + sha256 + 字节数 + 安装时刻）。
 META_NAME = "run-eval.sh.meta.json"
 #: 模板版本：模板有语义改动时必须 +1（`check()` 会把版本不符算作"需重新安装"）。
-TEMPLATE_VERSION = "1"
+TEMPLATE_VERSION = "2"
 #: CLI 允许的 role（= 报告子目录口径；与 `scripts/record_checks.py:102/108` 的
 #: `AFTER_REPORT_REL` / `TEACHER_REPORT_REL` 同一族，⛔ 不另立命名）。
 ROLES = ("after", "base", "teacher")
@@ -91,6 +91,7 @@ RC = {
     "ok": 0,
     "usage": 1,
     "blocked": 2,          # 安装被拒（异内容 / sha 不符）—— 只在 install/check 侧用
+    "elam": 3,             # 评测数据集缺失 / sha256 不符（fail-closed；⛔ 不等评测容器起来才 DatasetError）
     "no_artifact": 4,      # 待训练产物缺失（fail-closed）
     "cfg": 5,              # 配置 / 落点口径不符 / 报告目录非空
     "endpoint": 6,         # vLLM 端点未就绪
@@ -134,6 +135,8 @@ TEMPLATE = r"""#!/usr/bin/env bash
 # 退出码：
 #   0  成功 / 自检通过
 #   1  用法错误
+#   3  评测数据集缺失 / sha256 不符（$GRASPO_ELAM_V5_DIR/subsets-v2/<TIER>.jsonl）—— fail-closed，
+#      ⛔ 不许等评测容器起来才在加载数据时 DatasetError（白等一次 vLLM 加载）
 #   4  待训练产物缺失（模型或检查点目录不在盘）—— fail-closed，⛔ 不用空目录糊过去
 #   5  配置/落点口径不符（output_dir 不是本 ROLE 的独立目录、报告目录非空、EVALCFG 不在 EVALDIR 内）
 #   6  vLLM 端点未就绪（起服归 scripts/eval_serve_vllm.sh；本脚本不自己起容器）
@@ -148,6 +151,7 @@ GENERATOR="scripts/eval_runner.py"
 TEMPLATE_VERSION="%%TEMPLATE_VERSION%%"
 
 RC_USAGE=1
+RC_ELAM=3
 RC_NO_ARTIFACT=4
 RC_CFG=5
 RC_ENDPOINT=6
@@ -170,8 +174,8 @@ ROLE     after | base | teacher（= 报告子目录口径）
 EVALCFG  评测 yaml（宿主路径，必须位于 EVALDIR 内）
 
 产物：<EVALDIR>/.local/reports/<ROLE>/eval_report.json ＋ <EVALDIR>/evidence/eval-<ROLE>-stdout.log
-退出码：0 成功/自检通过；1 用法；4 待训练产物缺失；5 配置/落点不符；6 vLLM 未就绪；
-        7 报告未产出；其他 = grasp eval run 的真实 rc
+退出码：0 成功/自检通过；1 用法；3 评测数据集缺失/sha256 不符；4 待训练产物缺失；
+        5 配置/落点不符；6 vLLM 未就绪；7 报告未产出；其他 = grasp eval run 的真实 rc
 USAGE
 }
 
@@ -285,16 +289,56 @@ check_artifact checkpoint_path "$CKPT"
 check_artifact base_model_path "$BASEM"
 
 # 报告目录：防覆盖（真跑前必须空/不存在）
+say "--- 2.3 报告目录（防覆盖）---"
 OUT_HOST="$EV_ABS/.local/reports/$ROLE"
 if [ -n "$(ls -A "$OUT_HOST" 2>/dev/null)" ]; then
   die "$RC_CFG" "报告目录已存在且非空 ⇒ 拒跑（防覆盖上一轮证据）：$OUT_HOST（如需重跑请先归档/移走该目录）"
 fi
+say "  $OUT_HOST [空/不存在 ✓]"
+
+# ── 2.4 评测数据集（ELAM subsets-v2；fail-closed：⛔ 不许等评测容器起来才报 DatasetError）──
+#   为什么在这里（实测缺陷）：数据根由**树外 sidecar** `GRASPO_ELAM_V5_DIR` 给，值一错
+#   （指向一个没有 `subsets-v2/` 的目录）⇒ 评测容器要先把引擎/vLLM 拉起来，处理数据时才抛
+#   `DatasetError: dataset not found: /work/elam-v5/subsets-v2/<档>.jsonl`（白等一次加载）。
+#   此处**纯静态**可判、代价近零：
+#     ① `$GRASPO_ELAM_V5_DIR/subsets-v2/<TIER>.jsonl` 必须在盘；
+#     ② 其 sha256 必须 = 该档 `tier.json` 的 `subset_sha256`（tier.json = runner 从清单现读的
+#        跑次件 `<TREE>/runs/<TIER>/tier.json`；缺 ⇒ 回退 `<TREE>/tests/e2e/matrix68_manifest.json`
+#        的该档 `data.subset_sha256`；两者都读不到 ⇒ 无法证明"跑的是本档数据" ⇒ fail-closed）。
+ELAM_HOST="${GRASPO_ELAM_V5_DIR:-$HOME/elam-v5-balanced}"
+SUBSET_HOST="$ELAM_HOST/subsets-v2/$TIER.jsonl"
+TIER_JSON_HOST="$T/runs/$TIER/tier.json"
+MANIFEST_HOST="$T/tests/e2e/matrix68_manifest.json"
+say "--- 2.4 评测数据集（fail-closed：缺/不符 ⇒ rc=$RC_ELAM）---"
+say "  GRASPO_ELAM_V5_DIR = $ELAM_HOST（容器内 /work/elam-v5）"
+[ -f "$SUBSET_HOST" ] \
+  || die "$RC_ELAM" "评测数据集缺失：$SUBSET_HOST（容器内 /work/elam-v5/subsets-v2/$TIER.jsonl）⇒ 立即退出，⛔ 不起评测容器（否则只会在加载数据时 DatasetError，白等一次 vLLM 加载）；修 GRASPO_ELAM_V5_DIR 指向**含 subsets-v2/ 的数据根**"
+EXPECT_SHA=""
+SHA_SRC=""
+if [ -f "$TIER_JSON_HOST" ]; then
+  EXPECT_SHA="$(python3 -c 'import json,sys;print((json.load(open(sys.argv[1],encoding="utf-8")) or {}).get("subset_sha256") or "")' "$TIER_JSON_HOST" 2>/dev/null)"
+  SHA_SRC="$TIER_JSON_HOST"
+fi
+if [ -z "$EXPECT_SHA" ] && [ -f "$MANIFEST_HOST" ]; then
+  EXPECT_SHA="$(python3 -c 'import json,sys
+m=json.load(open(sys.argv[1],encoding="utf-8"))
+t=next((x for x in m.get("tiers",[]) if str(x.get("tier_id"))==sys.argv[2]),{})
+print((t.get("data") or {}).get("subset_sha256") or "")' "$MANIFEST_HOST" "$TIER" 2>/dev/null)"
+  SHA_SRC="$MANIFEST_HOST"
+fi
+[ -n "$EXPECT_SHA" ] \
+  || die "$RC_ELAM" "读不到本档期望 subset_sha256（$TIER_JSON_HOST 与 $MANIFEST_HOST 都不在盘/读不出）⇒ 无法证明数据集即本档数据，fail-closed（⛔ 不跳过校验）"
+ACTUAL_SHA="$(python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$SUBSET_HOST" 2>/dev/null)"
+[ -n "$ACTUAL_SHA" ] || die "$RC_ELAM" "算不出数据集 sha256：$SUBSET_HOST ⇒ fail-closed"
+[ "$ACTUAL_SHA" = "$EXPECT_SHA" ] \
+  || die "$RC_ELAM" "评测数据集 sha256 不符：$SUBSET_HOST 实际 $ACTUAL_SHA ≠ 期望 $EXPECT_SHA（来源 $SHA_SRC）⇒ 拒跑（⛔ 不拿错数据充本档）"
+say "  dataset = $SUBSET_HOST ✓"
+say "  sha256 = $ACTUAL_SHA == 期望（$SHA_SRC）✓"
 
 # ── 3. 命令行（打印 + 执行）──────────────────────────────────────────────────
 mkdir -p "$EV_ABS/evidence"
 STDOUT_LOG="$EV_ABS/evidence/eval-$ROLE-stdout.log"
 TS="$(date -u +%s)"
-ELAM_HOST="${GRASPO_ELAM_V5_DIR:-$HOME/elam-v5-balanced}"
 CMD=(docker run --rm --network=host --name "${TIER,,}-eval-$ROLE-$TS"
      -e "GRASPO_IMG=$IMAGE_RUN" -e "GRASPO_BASEIMG=$IMAGE_BASE"
      -v "$T:/workspace/graspo:ro" -v "$T/runs:/runs:ro" -v "$EV_ABS:/evalout"

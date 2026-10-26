@@ -436,8 +436,12 @@ python3 $TREE/scripts/run_guards.py cards-busy --ps-file /tmp/ps.txt --inspect-f
 #### 19.2.2 GRASPO：逐档签署件（第 9 节 8 条不变式）
 
 **GRASPO（⛔ 不许自动置位，必须逐档签署）**：证据文件 `<algo-checks-dir>/<tier>.json`
-（runner 缺省 `<run-root>/algo-checks/`；也可用 `GRASPO_ALGO_CHECKS_DIR` 或
-`--algo-checks-dir` 指向别处，例如 `.local/hb-workspace/<会话时间戳>/algo-checks/`）：
+（`record_checks.py` **缺省**查 `<run-dir>/algo-checks/`，**缺件时回退仓内**
+`samples/configs/matrix68-checks/`；`--algo-checks-dir` / `GRASPO_ALGO_CHECKS_DIR` 是**显式**指定，
+只认该目录、**不回退**——目录不存在或为空 ⇒ fail-closed（不写键）⇒ 该档保持「待测试」）。
+`tests/e2e/run_matrix68.sh` 缺省**不传**该参数，只有显式设了 `GRASPO_ALGO_CHECKS_DIR` 才传
+（2026-10-26 修：旧代码恒传一个从不存在的 `<run-root>/algo-checks`，等于把回退关掉，
+判据③ 每一档都要事后手工重跑才救得回来）：
 
 ```json
 {
@@ -788,6 +792,13 @@ bash "$EVAL_DIR/run-eval.sh" "$TREE" "$EVAL_DIR" <TIER> after|base "$EVAL_DIR/ev
   - `<EVAL_DIR>/evidence/eval-<role>-stdout.log`（stdout 双份留证）。
 - 配置口径（不符 ⇒ **rc=5 拒跑**）：`output_dir` 必须 = `/evalout/.local/reports/<ROLE>`；
   报告目录已存在且非空 ⇒ 拒跑（防覆盖上一轮证据）。
+- **评测数据集前置（2026-10-26 补；不符 ⇒ rc=3 拒跑）**：`$GRASPO_ELAM_V5_DIR/subsets-v2/<TIER>.jsonl`
+  必须在盘，且 sha256 = 该档 `tier.json` 的 `subset_sha256`（`tier.json` 缺 ⇒ 回退
+  `<TREE>/tests/e2e/matrix68_manifest.json` 的 `data.subset_sha256`；两者都读不到 ⇒ fail-closed）。
+  ⛔ 不许等评测容器起来、加载数据时才 `DatasetError: dataset not found: /work/elam-v5/subsets-v2/<档>.jsonl`
+  （那会白等一次 vLLM 加载）。**`GRASPO_ELAM_V5_DIR` 的真口径 = 部署树下的 `runs/.eval-elam`**
+  （含 `subsets-v2/` 与 `images/`）；`$HOME/elam-v5-balanced` 只有 `data/ images/ mini-dataset/`，
+  **没有 `subsets-v2/`** ⇒ 指向它会必然 rc=3。
 
 ### 23.3 前置：`gen_eval.py --tmp-dir` **必须显式 = `$EVAL_DIR`**
 
@@ -806,6 +817,7 @@ python3 scripts/gen_eval.py --tier M001 --gpu <评测卡> --port <端口> --tmp-
 
 | rc | 含义 | 处置 |
 |---|---|---|
+| 3 | **评测数据集缺失 / sha256 不符**（见 23.2 的数据集前置） | fail-closed，**点名 `subsets-v2/<TIER>.jsonl`** 与期望 sha 的来源（`tier.json` / 清单）；⛔ 不起评测容器白等加载 |
 | 4 | **待训练产物缺失**（模型 / 检查点目录不在盘） | fail-closed，**点名 `checkpoint_path`**（容器路径 + 映射后的宿主路径）；⛔ 不用空目录糊过去 |
 | 6 | **vLLM 端点未就绪** | 起服不归本脚本；按提示用 `scripts/eval_serve_vllm.sh` 起服后重跑 |
 | 5 | 配置 / 落点口径不符（见 23.2 / 23.3） | 修落点或配置，⛔ 不改判据 |

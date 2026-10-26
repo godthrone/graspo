@@ -1,6 +1,6 @@
 """`scripts/eval_runner.py`（`$EVAL_DIR/run-eval.sh` 的唯一产出者）的回归用例。
 
-覆盖本包六条判据（每条都能失败，⛔ 不是"看着像会失败"）：
+覆盖本包七条判据（每条都能失败，⛔ 不是"看着像会失败"）：
 
 1. **幂等安装**：同内容重装 ⇒ 字节不变、状态 `unchanged`、sha 记录一致；
 2. **不覆盖异内容**：目标已有异内容 ⇒ 拒写（rc=2）、文件保持原样；`--force` 才覆盖且**留备份**；
@@ -9,12 +9,16 @@
 4. **路径不写死**：渲染产物与生成器源码都不得出现宿主路径/内网地址/账号名（§15.1）；
 5. **落点/口径**：`output_dir` 不是本 role 独立目录 ⇒ rc=5；报告目录非空 ⇒ rc=5；报告缺失 ⇒ rc=7；
 6. **接进编排链**：`scripts/gen_eval.py --dry-run` 会在生成前把入口落到 `$EVAL_DIR`，
-   且生成的 `run-<tier>-eval.sh` 里两处调用（after/base）指向 `$EV/run-eval.sh`。
+   且生成的 `run-<tier>-eval.sh` 里两处调用（after/base）指向 `$EV/run-eval.sh`；
+7. **评测数据集 fail-closed（2026-10-26 修）**：`$GRASPO_ELAM_V5_DIR/subsets-v2/<TIER>.jsonl`
+   缺失或 sha256 ≠ `tier.json.subset_sha256` ⇒ rc=3 且**不触 docker**（⛔ 不许等评测容器起来才
+   `DatasetError`）；齐备时 `--check-only` 打印实测 sha 并 rc=0。
 
 运行：`.venv/bin/python -m pytest tests/scripts/test_eval_runner_install.py -q`
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -79,13 +83,33 @@ def _stub_docker(tmp_path: Path, *, report: Path | None = None, rc: int = 0) -> 
 
 
 @pytest.fixture()
-def ev(tmp_path: Path) -> Path:
-    """已落位 run-eval.sh 的 EVAL_DIR（+ 一个可跑的 TREE）。"""
+def ev(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """已落位 run-eval.sh 的 EVAL_DIR（+ 一个可跑的 TREE + 真口径 ELAM 数据根）。
+
+    ★ 2026-10-26：`run-eval.sh` 起跑前要核 `subsets-v2/<TIER>.jsonl` 的存在与 sha，故夹具
+      必须同时给出 ELAM 数据根与其 `tier.json`（缺 ⇒ 会以 rc=3 fail-closed，测试就不该绕开它）。
+    """
     d = tmp_path / "EV"
     d.mkdir()
     assert _install(d, "--apply").returncode == 0
-    (tmp_path / "tree" / "runs").mkdir(parents=True)
+    monkeypatch.setenv("GRASPO_ELAM_V5_DIR", str(_seed_elam(tmp_path)))
     return d
+
+
+def _seed_elam(tmp_path: Path, *, tier: str = "M001", sha: str | None = None) -> Path:
+    """造"真口径"ELAM 数据根：`<root>/subsets-v2/<tier>.jsonl` + `<tree>/runs/<tier>/tier.json`。
+
+    `sha` 缺省 = 子集文件的真实 sha256（阳性用例）；给了别的值即"sha 不符"的阴性用例。
+    """
+    root = tmp_path / "elam"
+    (root / "subsets-v2").mkdir(parents=True, exist_ok=True)
+    subset = root / "subsets-v2" / f"{tier}.jsonl"
+    subset.write_text('{"messages": []}\n', encoding="utf-8")
+    real = hashlib.sha256(subset.read_bytes()).hexdigest()
+    tdir = tmp_path / "tree" / "runs" / tier
+    tdir.mkdir(parents=True, exist_ok=True)
+    (tdir / "tier.json").write_text(json.dumps({"subset_sha256": sha or real}), encoding="utf-8")
+    return root
 
 
 # ── 1. 幂等 + sha 记录 ──────────────────────────────────────────────────────
@@ -177,7 +201,61 @@ def test_check_only_self_passes_and_help_works(ev: Path) -> None:
     assert s.returncode == 0 and "SELF-CHECK PASS" in s.stdout
 
 
-# ── 4. 落点/口径 + 报告闸门 ─────────────────────────────────────────────────
+# ── 3.5 评测数据集（ELAM subsets-v2）fail-closed ────────────────────────────
+def test_elam_subset_missing_fails_closed_without_docker(tmp_path: Path, ev: Path) -> None:
+    """★ 阴性：`subsets-v2/M001.jsonl` 不在盘 ⇒ rc=3、点名路径、**不触 docker**。
+
+    这是实测缺陷的复现形态：sidecar 的 `GRASPO_ELAM_V5_DIR` 指向一个没有 `subsets-v2/`
+    的目录时，旧脚本会把评测容器拉起来，跑到加载数据才
+    `DatasetError: dataset not found: /work/elam-v5/subsets-v2/M001.jsonl`（白等一次 vLLM 加载）。
+    """
+    models = tmp_path / "models"
+    (models / "OK").mkdir(parents=True)
+    cfg = _write_cfg(ev, ckpt="/models/OK", basem="/models/OK")
+    (tmp_path / "elam" / "subsets-v2" / "M001.jsonl").unlink()
+    bin_dir, marker = _stub_docker(tmp_path)
+
+    p = _run_script(ev, tmp_path / "tree", [str(tmp_path / "tree"), str(ev), "M001", "after", str(cfg)],
+                    env={"GRASPO_MODEL_HOST_ROOT": str(models), "PATH": f"{bin_dir}:{os.environ['PATH']}"})
+    out = p.stdout + p.stderr
+    assert p.returncode == er.RC["elam"], out
+    assert "评测数据集缺失" in out, out
+    assert "subsets-v2/M001.jsonl" in out, "错误信息必须点名缺的那个数据集文件"
+    assert not marker.exists(), "缺数据集时⛔不得调用 docker（不许起评测容器白等加载）"
+
+
+def test_elam_subset_sha_mismatch_fails_closed(tmp_path: Path, ev: Path) -> None:
+    """★ 阴性：子集在盘但 sha256 ≠ `tier.json.subset_sha256` ⇒ rc=3（⛔ 不拿错数据充本档）。"""
+    models = tmp_path / "models"
+    (models / "OK").mkdir(parents=True)
+    cfg = _write_cfg(ev, ckpt="/models/OK", basem="/models/OK")
+    (tmp_path / "tree" / "runs" / "M001" / "tier.json").write_text(
+        json.dumps({"subset_sha256": "0" * 64}), encoding="utf-8")
+    bin_dir, marker = _stub_docker(tmp_path)
+
+    p = _run_script(ev, tmp_path / "tree", [str(tmp_path / "tree"), str(ev), "M001", "after", str(cfg)],
+                    env={"GRASPO_MODEL_HOST_ROOT": str(models), "PATH": f"{bin_dir}:{os.environ['PATH']}"})
+    out = p.stdout + p.stderr
+    assert p.returncode == er.RC["elam"], out
+    assert "sha256 不符" in out, out
+    assert not marker.exists(), "sha 不符时⛔不得调用 docker"
+
+
+def test_elam_subset_ok_passes_and_prints_sha(tmp_path: Path, ev: Path) -> None:
+    """★ 阳性：数据根真口径 ⇒ `--check-only --no-endpoint` rc=0，并打印实测 sha 与来源。"""
+    models = tmp_path / "models"
+    (models / "OK").mkdir(parents=True)
+    cfg = _write_cfg(ev, ckpt="/models/OK", basem="/models/OK")
+
+    p = _run_script(ev, tmp_path / "tree", ["--check-only", "--no-endpoint", str(tmp_path / "tree"),
+                                            str(ev), "M001", "after", str(cfg)],
+                    env={"GRASPO_MODEL_HOST_ROOT": str(models)})
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "sha256" in p.stdout and "== 期望" in p.stdout, p.stdout
+    assert "tier.json" in p.stdout, "期望 sha 的来源必须写进日志（可审计）"
+
+
+
 def test_output_dir_mismatch_rejected(tmp_path: Path, ev: Path) -> None:
     cfg = _write_cfg(ev, role="after", out_dir="/evalout/.local/reports/base")
     p = _run_script(ev, tmp_path / "tree", [str(tmp_path / "tree"), str(ev), "M001", "after", str(cfg)],
@@ -268,11 +346,12 @@ def test_host_map_matches_launch_pipeline(tmp_path: Path) -> None:
     ev = tmp_path / "EV"
     ev.mkdir()
     assert _install(ev, "--apply").returncode == 0
-    (tmp_path / "tree" / "runs").mkdir(parents=True)
+    elam = _seed_elam(tmp_path)                    # 起跑前要核 subsets-v2/<TIER>.jsonl 的存在与 sha
     cfg = _write_cfg(ev, ckpt="/models/Qwen3.5-9B", basem="/models/Qwen3.5-9B")
     p = _run_script(ev, tmp_path / "tree", ["--check-only", "--no-endpoint", str(tmp_path / "tree"),
                                             str(ev), "M001", "after", str(cfg)],
-                    env={"GRASPO_MODEL_HOST_ROOT": str(tmp_path / "models")})
+                    env={"GRASPO_MODEL_HOST_ROOT": str(tmp_path / "models"),
+                         "GRASPO_ELAM_V5_DIR": str(elam)})
     assert p.returncode == 0, p.stdout + p.stderr
     assert f"宿主 {src} [在盘]" in p.stdout
 
