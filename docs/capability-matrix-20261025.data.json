@@ -487,11 +487,11 @@
       "audit_ref": "逐档审计明细见枚举脚本 --audit-out 输出（随工作区，不入库）"
     },
     "backfill": {
-      "last_run": "2026-10-26 18:50",
+      "last_run": "2026-10-26 19:25",
       "filled_tiers": [
-        "M052"
+        "M032"
       ],
-      "unfilled_count": 62,
+      "unfilled_count": 61,
       "note": "仅脚本回填；未判定档位保持「待测试」；结果 json 不得自带 status；缺字段/缺判据证据 fail-closed"
     }
   },
@@ -2212,15 +2212,15 @@
       "data_subset": "subsets-v2/M032.jsonl",
       "lora_target": "真实 HF 名正则（两后端共用同一条；取值以核心 LoRA 配置的 target 名单为准）",
       "applicable": true,
-      "status": "待测试",
+      "status": "不通过",
       "runs": "—",
-      "peak_mem": "—",
-      "steps_actual": "—",
-      "elapsed": "—",
-      "throughput": "—",
-      "effect": "—",
+      "peak_mem": "41.93 GiB",
+      "steps_actual": "100 步",
+      "elapsed": "总时长 624 s（约 0.17 h）",
+      "throughput": "0.160 步/s（100 步 / 624.0 s；样本吞吐 0.321 样本/s）",
+      "effect": "after acc=18.0000%；base acc=19.0000%；Δ = -1.0000 pp；训练 loss 2.631 → 1.101（最小 1.078，共 21 个点）",
       "not_failed_reason": "—",
-      "note": "",
+      "note": "退出码 0；实跑步数 100（实跑步数 = 100（多源取最大，取自 stdout.log:2452，形态 global_step/max_steps）；计划 100 步）；完成轮数 2/2 个 epoch（trainer_state.json 的 epoch=2（global_step=100，num_train_epochs=2） ⇒ 已完成 2 个 epoch）；检查点：最新检查点 checkpoint-100：PEFT adapter：adapter_config.json 可解析（r=32）＋ adapter_model.safetensors 的 620 个张量名可解析且含 LoRA 权重；数值异常：扫描 7 个证据源（stdout / jsonl 旁路 / trainer_state）未出现 NaN/Inf；非有限跳步计数字段出现 0 次且均 ≤ 0；峰值显存：宿主侧采样的显存占用峰值 = 42939.0 MiB（GPU 2,3）；效果读数：取自评测报告（eval_report.json）的 after / base 准确率；训练 loss 序列：trainer_state.json 的 log_history[*].loss（21 个点）；判据③：CPT 按 public-algos 签署件核对损失函数与标签掩码处理规则，结论通过（签署人 executor-r4，2026-10-22T12:15:00+00:00）；判据④：训练数据集 100/100 条推理输出可解析（vLLM 温度 0.0）；未过判据：判据② 未过：cpt Δ = -1.00 pp 未达通过线 +0.0 pp",
       "spec_json": "—",
       "blocked_reason": "—"
     },
