@@ -730,9 +730,12 @@ class MsSwiftRlTrainer:
             native_only_fields,
             validate_combinations,
         )
+        from graspo.flow.backend.msswift.resume import validate_resume_checkpoint
 
         # 前置校验（E2b 缺陷 3/4 的防御性报错改进，**非能力修复**）。
         validate_combinations(self.config)
+        # 续训 fail-closed 守卫（路径／组合不成立 ⇒ 启动前报错，⛔ 不退回从头训练）。
+        validate_resume_checkpoint(self.config)
         register_graspo_reward()
         notes = native_only_field_notes()
         for field in native_only_fields(self.config):

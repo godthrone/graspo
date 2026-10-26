@@ -121,8 +121,11 @@ class MsSwiftOpdTrainer:
         from graspo.flow.backend.msswift._rollout_seed import rollout_seeding
         from graspo.flow.backend.msswift._rope_compat import rope_parameters_compatible
         from graspo.flow.backend.msswift.dataset import prepare_ms_swift_dataset
+        from graspo.flow.backend.msswift.resume import validate_resume_checkpoint
 
         validate_combinations(self.config)
+        # 续训 fail-closed 守卫（路径／组合不成立 ⇒ 启动前报错，⛔ 不退回从头训练）。
+        validate_resume_checkpoint(self.config)
         notes = native_only_field_notes()
         for field in native_only_fields(self.config):
             logger.warning(

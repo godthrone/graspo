@@ -539,6 +539,13 @@ def graspo_to_ms_swift_argv(
 
     # ── 训练超参（graspo training 段）───────────────────────────────────
     _extend(argv, "output_dir", output_dir)
+    # 从 checkpoint 续训：**只在配置给了路径时**产出（``_extend`` 的 None 语义），
+    # 因此不设续训时 argv 与引入本行之前**逐字节相同**（回归测试锁定）。
+    # ⛔ 这一行缺失的后果不是报错而是**静默从头重跑**（实测：ms-swift 收到
+    # ``resume_from_checkpoint=None``，从 ``global_step=0`` 起，长档位白跑）。
+    # 路径／非法组合的 fail-closed 校验不在本模块（本模块零 IO）：见
+    # ``msswift/resume.py::validate_resume_checkpoint``。
+    _extend(argv, "resume_from_checkpoint", training.resume_from_checkpoint)
     _extend(argv, "run_name", training.run_name or None)
     _extend(argv, "seed", training.seed)
     _extend(argv, "num_train_epochs", training.max_epochs)

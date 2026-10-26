@@ -298,6 +298,10 @@ def test_mapping_is_pure_attribute_access_and_imports_nothing_heavy(monkeypatch)
             rollout_group_size=2,
             temperature=1.0,
             top_p=1.0,
+            # 映射层现在也读 ``training.resume_from_checkpoint``（续训开关接线）：
+            # ``None`` = 未配置 ⇒ 不产出 ``--resume_from_checkpoint``（本用例的哑桩
+            # 只需给出这个契约字段，不涉及任何 IO）。
+            resume_from_checkpoint=None,
         ),
         msswift=SimpleNamespace(
             device_map=None,
