@@ -222,49 +222,112 @@ def find_checkpoint_dirs(run_dir: Path) -> list[Path]:
     return sorted(set(found), key=step_of, reverse=True)
 
 
-def _safetensors_probe(path: Path) -> tuple[bool | None, str, list[str]]:
-    """**真解析** safetensors 头（⛔ 不读权重数据、⛔ 不依赖 safetensors/torch 库）。
+class _LayoutError(Exception):
+    """safetensors 头部不可用（异常消息即人读原因）。"""
+
+
+def _safetensors_layout(path: Path) -> tuple[dict[str, tuple[int, int]], int, int]:
+    """**纯 stdlib** 解析 safetensors 布局 ⇒ `({张量名: (绝对起, 绝对止)}, 数据区起点, 文件大小)`。
 
     格式 = `[8 B 小端头长度 N][N B JSON 头][权重数据区]`；头里每个张量带 `data_offsets`。
-    据此可判"这个文件是不是一份完整的 safetensors"：头长度自洽 ∧ 头是 JSON ∧ 有张量 ∧
-    每个张量的偏移都落在数据区内。7 字节的垃圾文件在这里第一道就判 False。
+    逐张量校验"偏移落在数据区内"，越界 ⇒ :class:`_LayoutError`。⛔ 不读权重数据。
+    **解析只此一处**（§1.4）：`_safetensors_probe`（结构自洽）与 `_lora_nonzero_probe`
+    （内容非零）都从这里取偏移，⛔ 不各抄一份。
     """
     try:
         size = path.stat().st_size
     except OSError as exc:                                    # pragma: no cover - 权限/竞态
-        return False, f"{path.name} 不可读：{exc!r}", []
+        raise _LayoutError(f"{path.name} 不可读：{exc!r}") from exc
     if size < 9:
-        return False, (f"{path.name} 只有 {size} 字节"
-                       "（装不下头长度 + JSON 头 ⇒ 不是合法 safetensors）"), []
+        raise _LayoutError(f"{path.name} 只有 {size} 字节"
+                           "（装不下头长度 + JSON 头 ⇒ 不是合法 safetensors）")
     try:
         with path.open("rb") as fh:
             n = int.from_bytes(fh.read(8), "little")
             if n <= 0 or 8 + n > size:
-                return False, f"{path.name} 头长度 {n} 与文件大小 {size} 不符", []
+                raise _LayoutError(f"{path.name} 头长度 {n} 与文件大小 {size} 不符")
             raw = fh.read(n)
     except OSError as exc:                                    # pragma: no cover
-        return False, f"{path.name} 不可读：{exc!r}", []
+        raise _LayoutError(f"{path.name} 不可读：{exc!r}") from exc
     try:
         hdr = json.loads(raw)
-    except json.JSONDecodeError:
-        return False, f"{path.name} 的 safetensors 头不是 JSON", []
+    except json.JSONDecodeError as exc:
+        raise _LayoutError(f"{path.name} 的 safetensors 头不是 JSON") from exc
     if not isinstance(hdr, dict):
-        return False, f"{path.name} 的 safetensors 头不是对象", []
+        raise _LayoutError(f"{path.name} 的 safetensors 头不是对象")
     tensors = {k: v for k, v in hdr.items() if k != "__metadata__"}
     if not tensors:
-        return False, f"{path.name} 的 safetensors 头里没有任何张量", []
-    body = size - 8 - n
+        raise _LayoutError(f"{path.name} 的 safetensors 头里没有任何张量")
+    data_start = 8 + n
+    body = size - data_start
+    index: dict[str, tuple[int, int]] = {}
     for name, meta in tensors.items():
         off = meta.get("data_offsets") if isinstance(meta, dict) else None
         if (not isinstance(off, list) or len(off) != 2
                 or not all(isinstance(x, int) and not isinstance(x, bool) for x in off)):
-            return False, f"{path.name} 张量 {name} 的 data_offsets 不合法：{off!r}", list(tensors)
+            raise _LayoutError(f"{path.name} 张量 {name} 的 data_offsets 不合法：{off!r}")
         b, e = off
         if not (0 <= b <= e <= body):
-            return False, (f"{path.name} 张量 {name} 的偏移 [{b},{e}] 越出数据区"
-                           f"（{body} B）"), list(tensors)
-    return (True, f"{path.name}：{len(tensors)} 个张量 / 头 {n} B / 数据区 {body} B 全部自洽",
-            list(tensors))
+            raise _LayoutError(f"{path.name} 张量 {name} 的偏移 [{b},{e}] 越出数据区"
+                               f"（{body} B）")
+        index[name] = (data_start + b, data_start + e)
+    return index, data_start, size
+
+
+def _safetensors_probe(path: Path) -> tuple[bool | None, str, list[str]]:
+    """**真解析** safetensors 头（⛔ 不读权重数据、⛔ 不依赖 safetensors/torch 库）。
+
+    据此可判"这个文件是不是一份完整的 safetensors"：头长度自洽 ∧ 头是 JSON ∧ 有张量 ∧
+    每个张量的偏移都落在数据区内。7 字节的垃圾文件在这里第一道就判 False。
+    """
+    try:
+        index, data_start, size = _safetensors_layout(path)
+    except _LayoutError as exc:
+        return False, str(exc), []
+    return (True, f"{path.name}：{len(index)} 个张量 / 头 {data_start - 8} B / "
+                  f"数据区 {size - data_start} B 全部自洽", list(index))
+
+
+def _lora_nonzero_probe(path: Path) -> tuple[bool | None, str]:
+    """LoRA 权重是否**真被更新**：`adapter_model.safetensors` 里 `lora_B` 张量有非零字节。
+
+    为什么口径如此：peft / ms-swift 的 `lora_B` 初值**恒为 0**（初始化即零矩阵），训练一步
+    没走则整个 `lora_B` 逐字节全零。⇒ "存在非零字节"即"优化器真的写过权重"，是**内容级**
+    证据（判据① 要求"算法机制真实生效、不是空转"），⛔ 不用文件大小/时间戳这类弱指纹顶替。
+    按偏移分块读、**命中即停**。返回 `None` = 读不到 / 无 lora_B 张量（取证缺口，⛔ 不当 False）。
+    """
+    try:
+        index, _start, _size = _safetensors_layout(path)
+    except _LayoutError as exc:
+        return None, f"{path.name} 布局不可解析 ⇒ 无法核 lora_B 非零（{exc}）"
+    keys = [k for k in index if "lora_b" in k.lower()]
+    if not keys:
+        return None, f"{path.name} 里没有 lora_B 张量（实测 {len(index)} 个张量名）"
+    chunk = 1 << 20
+    seen_nonzero = False
+    try:
+        with path.open("rb") as fh:
+            for key in keys:
+                begin, end = index[key]
+                fh.seek(begin)
+                remaining = end - begin
+                while remaining > 0:
+                    buf = fh.read(min(chunk, remaining))
+                    if not buf:
+                        return None, f"{path.name} 的 {key} 读数提前结束（文件被截断？）"
+                    if buf != b"\x00" * len(buf):
+                        seen_nonzero = True
+                        break
+                    remaining -= len(buf)
+                if seen_nonzero:
+                    break
+    except OSError as exc:                                    # pragma: no cover
+        return None, f"{path.name} 不可读：{exc!r}"
+    if seen_nonzero:
+        return True, (f"{path.name}：{len(keys)} 个 lora_B 张量里实测到非零权重"
+                      "（LoRA B 初值恒为 0 ⇒ 权重真被优化器写过）")
+    return False, (f"{path.name}：{len(keys)} 个 lora_B 张量**逐字节全零**"
+                   "⇒ 训练未真正更新权重（机制未生效）")
 
 
 def _torch_meta_probe(path: Path) -> tuple[bool | None, str, list[str]]:
@@ -961,11 +1024,231 @@ def timeout_artifact_evidence(*, run_dir: Path, exit_code: int | None,
     return ev
 
 
+#: 「运维按授权停掉僵尸容器」的退出码（128+SIGTERM=143 / 128+SIGKILL=137）。
+OPERATOR_STOP_EXIT_CODES = (137, 143)
+
+#: 人工停容器的事实留痕文件名（跑次目录下；唯一名字，⛔ 不另设目录）。
+OPERATOR_STOP_ATTESTATION = "operator-stop.json"
+
+#: 墙钟与 trainer 自报 `train_runtime` 的允许相对差（两条独立读数互校；超出即不认）。
+OPERATOR_STOP_WALLCLOCK_TOLERANCE = 0.01
+
+
+def read_operator_stop_attestation(run_dir: Path, tier: str, exit_code: int | None) -> dict:
+    """读并校验"人工停容器"的事实留痕 ⇒ `{ok, detail, raw}`。
+
+    留痕必须**可机器核对**（⛔ 不接受自由文本）：容器名须是 `graspo-<档号>-<id>` 形态、
+    `docker stop` 的 rc 须为 0、`finished_at` 须可解析、容器观测到的 `ExitCode` 须等于
+    本跑次记录的退出码 —— 否则"人工停"这件事在本档不成立。
+    """
+    path = run_dir / OPERATOR_STOP_ATTESTATION
+    doc = read_json(path, None)
+    if not isinstance(doc, dict):
+        return {"ok": False, "raw": None,
+                "detail": f"缺人工停容器留痕（{path.name} 不存在或不是 JSON 对象）"}
+    raw = {
+        "source": str(path), "container": doc.get("container"),
+        "stop_command": doc.get("stop_command"), "stop_rc": doc.get("stop_rc"),
+        "started_at_utc": doc.get("started_at_utc"),
+        "stopped_at_utc": doc.get("stopped_at_utc"),
+        "finished_at_utc": doc.get("finished_at_utc"),
+        "state_exit_code": doc.get("state_exit_code"),
+        "state_status": doc.get("state_status"), "state_running": doc.get("state_running"),
+        "oom_killed": doc.get("oom_killed"), "error": doc.get("error"),
+        "recorded_at_utc": doc.get("recorded_at_utc"),
+        "authorization": doc.get("authorization"),
+        "raw_inspect": doc.get("raw_inspect"),
+    }
+    problems = []
+    name = doc.get("container")
+    if not isinstance(name, str) or not name.startswith(f"graspo-{tier}-"):
+        problems.append(f"container={name!r} 不是本档容器（须 graspo-{tier}-<id>）")
+    if doc.get("stop_rc") != 0:
+        problems.append(f"stop_rc={doc.get('stop_rc')!r}（docker stop 必须 rc=0）")
+    if not isinstance(doc.get("finished_at_utc"), str) or not doc["finished_at_utc"].strip():
+        problems.append("缺 finished_at_utc（容器终止时刻）")
+    if doc.get("state_exit_code") != exit_code:
+        problems.append(f"留痕里 state_exit_code={doc.get('state_exit_code')!r} ≠ 跑次退出码 "
+                        f"{exit_code!r}")
+    if doc.get("state_running") is not False:
+        problems.append(f"state_running={doc.get('state_running')!r}（须为 false）")
+    if not problems:
+        try:
+            datetime.fromisoformat(str(doc["finished_at_utc"]).replace("Z", "+00:00"))
+        except ValueError:
+            problems.append(f"finished_at_utc 不可解析：{doc['finished_at_utc']!r}")
+    if problems:
+        return {"ok": False, "raw": raw, "detail": "；".join(problems)}
+    return {"ok": True, "raw": raw,
+            "detail": (f"{name}：docker stop rc=0，容器 {doc['finished_at_utc']} 终止"
+                       f"（ExitCode={exit_code}）")}
+
+
+def operator_stop_evidence(*, run_dir: Path, tier: str, exit_code: int | None,
+                           elapsed_raw: float | None, steps_actual: int | None,
+                           steps_planned: int | None, epochs_done: int | None,
+                           epochs_planned: int | None, loadable: bool | None,
+                           ckpt_path: str | None, nan_inf: bool | None) -> dict:
+    """D1 的**第二种**事后取证：容器由运维按授权停止（而非被外层 timeout 杀掉）。
+
+    ★ 与 :func:`timeout_artifact_evidence`（`--recover-timeout-artifact`）**并列、互不影响**：
+      那条通道的判据一个字节都没改；本函数只处理"墙钟没到外层 timeout、人主动停了僵尸容器"
+      这一种形态（M052 实证：主流程 18:22:30 返回，容器挂在 `wait "$SAMPLER"` 上，运维
+      18:27:46 停掉）。两条通道都默认关，各自**全部**条件成立才动，任一不成立 ⇒ `applies=False`。
+
+    ★ 判据（**全部**满足才算伪影；每条都带坐标，审计可逐条复核）：
+      ① 原始退出码 ∈ {137, 143}（SIGKILL / SIGTERM）；
+      ② stdout.log 有 `End time of running main:`（主流程已返回）；
+      ③ 步数跑满：末次读数 n/n 或实跑步数 ≥ 计划步数；
+      ④ `epochs_completed ≥ epochs_planned`；
+      ⑤ `final_ckpt_loadable is True`；
+      ⑥ LoRA 权重**内容级**非全零（`lora_B` 逐字节扫描；⛔ 不用大小/时间戳）；
+      ⑦ `nan_or_inf_detected is False`；
+      ⑧ 墙钟与 trainer 自报 `train_runtime` 相对差 ≤ 1%（两条独立读数互校）；
+      ⑨ **有人工停容器的事实留痕**（见 :func:`read_operator_stop_attestation`）。
+      ⇒ 训练真实状态 = 成功（`exit_code` 派 0），`elapsed` **原样保留**（本条通道不假定
+      墙钟被空等污染；`train_runtime` 互校保证它就是真实训练墙钟）。
+    """
+    ev: dict = {
+        "applies": False,
+        "rule": ("exit_code∈{137,143} ∧ 主流程已返回 ∧ 步数跑满 ∧ epoch 跑满 ∧ ckpt 可加载 "
+                 "∧ LoRA 权重非全零 ∧ 无 NaN/Inf ∧ |墙钟−train_runtime|/train_runtime ≤ 1% "
+                 "∧ 有人工停容器留痕"),
+        "exit_code_raw": exit_code,
+        "exit_code_derived": None,
+        "elapsed_raw": elapsed_raw,
+        "conditions": {},
+        "why": "",
+    }
+    cond = ev["conditions"]
+    cond["raw_is_operator_stop_code"] = {
+        "ok": exit_code in OPERATOR_STOP_EXIT_CODES,
+        "detail": f"readings.json/exit_code 的原始退出码 = {exit_code}（人工 docker stop 的产物"
+                  f"形如 {list(OPERATOR_STOP_EXIT_CODES)}）"}
+
+    finish: dict | None = None
+    last_slash: dict | None = None
+    train_runtime: float | None = None
+    stdout_log = run_dir / "stdout.log"
+    if stdout_log.is_file():
+        for lineno, line in enumerate(
+                stdout_log.read_bytes().decode("utf-8", "replace").split("\n"), 1):
+            if "End time of running main" in line:
+                m = FINISH_MARKER_RE.search(line)
+                if m:
+                    finish = {"line": lineno, "timestamp": m.group(1), "raw": line.strip()[:120]}
+            if "global_step/max_steps" in line:
+                m = GLOBAL_STEP_SLASH_RE.search(line)
+                if m:
+                    last_slash = {"line": lineno,
+                                  "pair": [int(m.group(1)),
+                                           int(m.group(2)) if m.group(2) else None]}
+            if "train_runtime" in line:
+                m = TRAIN_RUNTIME_RE.search(line)
+                if m:
+                    try:
+                        train_runtime = float(m.group(1))
+                    except ValueError:
+                        pass
+    cond["trainer_main_returned"] = {
+        "ok": finish is not None,
+        "detail": (f"stdout.log:{finish['line']} {finish['raw']!r}" if finish
+                   else "stdout.log 里没有 `End time of running main`（主函数没返回）")}
+    steps_full = bool(
+        (last_slash and last_slash["pair"][1] is not None
+         and last_slash["pair"][0] == last_slash["pair"][1])
+        or (isinstance(steps_actual, int) and isinstance(steps_planned, int)
+            and steps_actual >= steps_planned))
+    cond["steps_completed"] = {
+        "ok": steps_full,
+        "detail": (f"stdout.log:{last_slash['line']} 末次读数 {last_slash['pair'][0]}/"
+                   f"{last_slash['pair'][1]}" if last_slash else "stdout.log 无步数读数")
+                  + f"；steps_actual={steps_actual} planned={steps_planned}"}
+    cond["epochs_completed"] = {
+        "ok": (epochs_done is not None and epochs_planned is not None
+               and epochs_done >= epochs_planned),
+        "detail": f"epochs_completed={epochs_done} epochs_planned={epochs_planned}"}
+    cond["final_ckpt_loadable"] = {"ok": loadable is True,
+                                   "detail": f"final_ckpt_loadable={loadable!r}"}
+
+    lora_ok: bool | None = None
+    lora_why = "缺检查点路径 ⇒ 无法核 LoRA 权重内容"
+    if ckpt_path:
+        weights = Path(ckpt_path) / "adapter_model.safetensors"
+        if weights.is_file():
+            lora_ok, lora_why = _lora_nonzero_probe(weights)
+        else:
+            lora_why = f"{weights} 不存在（非 PEFT adapter 布局）"
+    cond["lora_weights_nonzero"] = {"ok": lora_ok is True, "detail": lora_why}
+
+    cond["nan_or_inf_free"] = {"ok": nan_inf is False,
+                               "detail": f"nan_or_inf_detected={nan_inf!r}"}
+
+    rel_diff: float | None = None
+    if (isinstance(elapsed_raw, (int, float)) and isinstance(train_runtime, (int, float))
+            and float(train_runtime) > 0):
+        rel_diff = abs(float(elapsed_raw) - float(train_runtime)) / float(train_runtime)
+    cond["wallclock_matches_train_runtime"] = {
+        "ok": rel_diff is not None and rel_diff <= OPERATOR_STOP_WALLCLOCK_TOLERANCE,
+        "detail": (f"elapsed={elapsed_raw} 与 trainer 自报 train_runtime={train_runtime} 的"
+                   f"相对差 = {(rel_diff * 100 if rel_diff is not None else float('nan')):.2f}%"
+                   f"（阈值 {OPERATOR_STOP_WALLCLOCK_TOLERANCE:.0%}）")}
+
+    att = read_operator_stop_attestation(run_dir, tier, exit_code)
+    cond["operator_stop_attested"] = {"ok": att["ok"], "detail": att["detail"]}
+    if att["raw"] is not None:
+        ev["operator_stop"] = att["raw"]
+    if finish is not None:
+        ev["finish_marker"] = {"source": "stdout.log", **finish}
+    if last_slash is not None:
+        ev["last_step_reading"] = {"source": "stdout.log", **last_slash}
+    ev["train_runtime_sec"] = train_runtime
+    ev["wallclock_rel_diff"] = None if rel_diff is None else round(rel_diff, 6)
+
+    if not all(c["ok"] for c in cond.values()):
+        ev["why"] = ("不构成「运维按授权停容器」伪影（条件不全 ⇒ 一个字段都不改，fail-closed）："
+                     + "；".join(k for k, c in cond.items() if not c["ok"]))
+        return ev
+    ev["exit_code_derived"] = 0
+    ev["applies"] = True
+    return ev
+
+
+def _operator_stop_note(ev: dict) -> str:
+    """note 列的人读句（⛔ 不含内部路径；数值全部取自证据）。
+
+    「原始退出码 X；主流程于 <时刻> 返回后容器挂起（D1，entry.sh 无界等待采样器），
+      由运维按授权于 <时刻> 停止；墙钟 N s 与 trainer 自报 M s 差 K%；步数/epoch/ckpt/NaN 证据全过」
+    """
+    finish = (ev.get("finish_marker") or {}).get("timestamp")
+    att = ev.get("operator_stop") or {}
+    stopped = att.get("finished_at_utc")
+    if isinstance(stopped, str) and "T" in stopped:
+        stopped = stopped.replace("T", " ")[:19]
+    elapsed = ev.get("elapsed_raw")
+    runtime = ev.get("train_runtime_sec")
+    rel = ev.get("wallclock_rel_diff")
+
+    def _sci(sec: float) -> str:
+        """109100.0 → '1.091e5'（与 trainer 自报同量级的紧凑写法）。"""
+        return f"{float(sec):.4g}".replace("e+0", "e").replace("e+", "e")
+
+    bits = [f"原始退出码 {ev.get('exit_code_raw')}",
+            f"主流程于 {finish} 返回后容器挂起（D1，entry.sh 无界等待采样器）",
+            f"由运维按授权于 {stopped} 停止"]
+    if isinstance(elapsed, (int, float)) and isinstance(runtime, (int, float)):
+        bits.append(f"墙钟 {float(elapsed):.0f} s 与 trainer 自报 {_sci(runtime)} s "
+                    f"差 {(rel or 0) * 100:.1f}%")
+    bits.append("步数/epoch/ckpt/NaN 证据全过")
+    return "退出码按证据重派生（运维按授权停容器）：" + "；".join(bits)
+
+
 # ── 组装 ─────────────────────────────────────────────────────────────────────
 def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
               eval_dir: Path | None, tier_json: Path | None, note_extra: str,
               ledger: Path | None = None,
-              recover_timeout_artifact: bool = False) -> tuple[dict, dict]:
+              recover_timeout_artifact: bool = False,
+              recover_operator_stop: bool = False) -> tuple[dict, dict]:
     """返回 (结果 json, 诊断信息{schema_errors, evidence_gaps})。"""
     mt = next((t for t in manifest["tiers"] if t["tier_id"] == tier), None)
     if mt is None:
@@ -1044,6 +1327,24 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
             loadable=loadable, nan_inf=nan_inf)
         if artifact["applies"] and artifact.get("exit_code_derived") is not None:
             exit_code = artifact["exit_code_derived"]
+
+    # ── D1 伪影的**第二种**事后取证（2026-10-26）：容器由运维按授权停止 ─────────────────
+    #   与上一条**并列**、互不影响：判据各自独立、都从**原始** exit_code 起算（⛔ 不拿上一条的
+    #   派升值当输入）。两条通道的条件互斥（上一条要求 elapsed ≥ 外层 timeout，本条要求
+    #   墙钟与 trainer 自报 train_runtime 相差 ≤1%）⇒ 同一跑次最多只有一条成立。
+    operator_stop: dict | None = None
+    if recover_operator_stop:
+        operator_stop = operator_stop_evidence(
+            run_dir=run_dir, tier=tier, exit_code=exit_code,
+            elapsed_raw=(readings.get("elapsed_sec")
+                         if readings.get("elapsed_sec") is not None
+                         else read_float_file(run_dir / "elapsed_sec")),
+            steps_actual=steps_actual,
+            steps_planned=mt.get("expected_optimizer_steps", mt.get("planned_steps")),
+            epochs_done=epochs_done, epochs_planned=epochs_planned,
+            loadable=loadable, ckpt_path=ckpt_path, nan_inf=nan_inf)
+        if operator_stop["applies"] and operator_stop.get("exit_code_derived") is not None:
+            exit_code = operator_stop["exit_code_derived"]
 
     # ── 三个数值/文本列 ───────────────────────────────────────────────────
     elapsed = readings.get("elapsed_sec")
@@ -1169,6 +1470,12 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
                    f"（原始 {artifact.get('elapsed_raw')} s 含收尾空等）" if _d else ""))
         else:
             note_parts.append(f"退出码按证据重派生未成立（保留原始读数）：{artifact['why']}")
+    if operator_stop is not None:
+        if operator_stop["applies"]:
+            note_parts.append(_operator_stop_note(operator_stop))
+        else:
+            note_parts.append(f"退出码按「运维停容器」证据重派生未成立（保留原始读数）："
+                              f"{operator_stop['why']}")
     comparable = readings.get("comparable")
     if comparable is False:
         note_parts.append("环境快照冻结维度发生变化 ⇒ 本档读数不可比（不得悄悄重跑）")
@@ -1231,6 +1538,9 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
     # D1 超时伪影的重派生取证（只在显式开关下出现；审计用，不进人读件）
     if artifact is not None:
         doc["provenance"]["timeout_artifact_evidence"] = artifact
+    # D1 的第二条通道（人工按授权停僵尸容器）的取证；同样只在显式开关下出现、审计用
+    if operator_stop is not None:
+        doc["provenance"]["operator_stop_evidence"] = operator_stop
     if str(row.get("target_modules") or "").strip():
         doc["params"]["target_modules"] = str(row["target_modules"])
     if ev is not None:
@@ -1372,6 +1682,11 @@ def main(argv=None) -> int:
                     help="collect_results.py 的 ledger.jsonl（提供则峰值显存用矩阵冻结口径 "
                          "peak_memory_gib，否则用宿主侧采样并显式标注口径）")
     ap.add_argument("--note", default="", help="附加备注（写进 note 列）")
+    ap.add_argument("--recover-operator-stopped-container", action="store_true",
+                    help="D1 事后取证之二（默认关）：把「训练已按主流程返回、容器却挂在收尾等待上、"
+                         "由运维按授权 docker stop」的老跑次按证据重派生 exit_code（判据见 "
+                         "operator_stop_evidence 的 docstring；条件不全 ⇒ 一个字段都不改）。"
+                         "⛔ 与 --recover-timeout-artifact 并列、互不影响，两条都默认关。")
     ap.add_argument("--recover-timeout-artifact", action="store_true",
                     help="D1 事后取证（默认关）：把「训练已按主流程返回、却被外层 timeout 杀掉」"
                          "的老跑次按证据重派生 exit_code/elapsed（判据见 "
@@ -1415,7 +1730,8 @@ def main(argv=None) -> int:
                           tier_json=Path(args.tier_json) if args.tier_json else None,
                           note_extra=args.note,
                           ledger=Path(args.ledger) if args.ledger else None,
-                          recover_timeout_artifact=args.recover_timeout_artifact)
+                          recover_timeout_artifact=args.recover_timeout_artifact,
+                          recover_operator_stop=args.recover_operator_stopped_container)
 
     out = Path(args.out) if args.out else run_dir / f"{args.tier}.json"
     text = json.dumps(doc, ensure_ascii=False, indent=1) + "\n"

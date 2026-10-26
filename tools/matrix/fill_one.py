@@ -344,9 +344,18 @@ def main(argv: list[str]) -> int:
         recover = os.environ.get("GRASPO_FILL_RECOVER_TIMEOUT_ARTIFACT", "").strip() == "1"
         if recover:
             cmd += ["--recover-timeout-artifact"]
+        # ★ D1 的**第二种**伪影重派生：容器由运维按授权 docker stop（与上面那条并列、互不影响）。
+        #   同样显式 opt-in、默认关；判据见 `operator_stop_evidence`（含"有人工停容器留痕"
+        #   与"墙钟 ≈ trainer 自报 train_runtime ≤1%"两条），任一条不成立 ⇒ 一个字段都不改。
+        recover_op = os.environ.get("GRASPO_FILL_RECOVER_OPERATOR_STOP", "").strip() == "1"
+        if recover_op:
+            cmd += ["--recover-operator-stopped-container"]
         rc_c, out_c = run(cmd)
-        print(f"→ 读数派生 make_result_json.py rc={rc_c}"
-              + ("（含 D1 超时伪影重派生：GRASPO_FILL_RECOVER_TIMEOUT_ARTIFACT=1）" if recover else ""))
+        _recover_note = ("（含 D1 超时伪影重派生：GRASPO_FILL_RECOVER_TIMEOUT_ARTIFACT=1）"
+                         if recover else "") + (
+            "（含 D1 运维停容器重派生：GRASPO_FILL_RECOVER_OPERATOR_STOP=1）"
+            if recover_op else "")
+        print(f"→ 读数派生 make_result_json.py rc={rc_c}" + _recover_note)
         if ev_dir is not None:
             print(f"  评测证据（按档归档）{ev_dir}")
         for why in ev_problems:
