@@ -1243,12 +1243,158 @@ def _operator_stop_note(ev: dict) -> str:
     return "退出码按证据重派生（运维按授权停容器）：" + "；".join(bits)
 
 
+# ── D9 崩溃档的**证据化入表**（2026-10-27；显式开关，默认关）──────────────────────
+#: 异常行：**行首无缩进**的 `<名字>Error: <消息>`（Python traceback 的末行形态）。
+#: ⛔ 不匹配缩进的续行（`    ^^^^`）与 `Traceback (most recent call last):`。
+CRASH_EXC_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception|Interrupt|Fault))\s*:(.*)$")
+#: traceback 帧：`  File "<文件>", line <行号>, in <函数>`
+CRASH_FRAME_RE = re.compile(r'^\s*File "([^"]+)", line (\d+)')
+
+
+def crashed_tier_evidence(*, run_dir: Path, tier: str, exit_code: int | None,
+                          steps_actual: int | None, ckpt_dirs: list[Path],
+                          readings: dict) -> dict:
+    """D9 的**事后取证**：这档是不是「起跑即崩、一步优化都没跑」⇒ 可以按崩溃如实入表。
+
+    ★ 为什么需要（M011 实证，228 实测 2026-10-25）：native 全参档在 `_load_model` 就崩
+      （`model_adapter.py:61` → `core/lora.py:170`），`exit_code=1`、`stdout.log` 有逐字的
+      `ValueError: lora.target_modules is required…`、无任何 checkpoint、无 `trainer_state.json`。
+      旧链的三条「仅失败」通道全不通（回填器无开关 / `gen_tier_json` 取值域自相矛盾 /
+      本文件缺 `steps_actual`/`throughput` 即判 rc=4）⇒ **实测崩溃、证据齐全的档一格写不进去**，
+      台账永远显示"待测试"、误导决策。
+    ★ 判据（**四条全部**成立才算；任一不成立 ⇒ `applies=False` + `why`，一个字段都不改）：
+      ① 退出码是整数、**≠ 0**、且 **∉ {124,137}**（超时/被外层杀掉属 D1 的两条既有通道，
+         ⛔ 不许抢它们的活）；
+      ② `stdout.log` 里能**定位到报错原文**：末条"消息非空"的异常行 + 它上面最近的
+         `File "…", line N` 帧 ⇒ 记下日志行号与源码 file:line（审计可逐条复核）；
+      ③ **没有任何有效训练产物**：无 `checkpoint-*`/`final` 目录、无 `trainer_state.json`
+         （或有但 `global_step == 0`）、且**没有**任何步数读数（`steps_actual` 为 None 或 0）；
+         ⛔ 「跑了一半 / 超时但已训练若干步」一律不成立 —— 那属另一条通道；
+      ④ 该档 `tier.json` 在且能解析、`readings.json` 的 `tier` 与本档一致 ⇒ 能证明"跑的是这个档"。
+    ★ ⛔ 本函数**不派生任何读数、不放宽任何判据**：它只把「退出码≠0 且一步没跑」这件已经发生
+      的事实变成可入表的证据；最终状态仍由回填器按第 2 章四条判据算出（必然是 `不通过`）。
+    """
+    ev: dict = {
+        "applies": False,
+        "rule": ("exit_code≠0 且 ∉{124,137} ∧ stdout.log 可定位报错原文与行号 ∧ "
+                 "无任何训练产物（无 ckpt / 无 trainer_state 或 global_step==0 / 无步数读数）∧ "
+                 "tier.json 在且 readings.tier 一致"),
+        "exit_code_raw": exit_code,
+        "error": None,
+        "artifact_probe": {},
+        "tier_proof": {},
+        "conditions": {},
+        "explained_gaps": [],
+        "why": "",
+    }
+    cond = ev["conditions"]
+
+    cond["exit_code_is_error"] = {
+        "ok": (isinstance(exit_code, int) and not isinstance(exit_code, bool)
+               and exit_code != 0 and exit_code not in TIMEOUT_EXIT_CODES),
+        "detail": (f"exit_code={exit_code!r}（崩溃档要求：整数、≠0、且不是外层超时的 "
+                   f"{list(TIMEOUT_EXIT_CODES)} —— 那两个码属 D1 的超时/停容器通道）"),
+    }
+
+    # ② 同一遍扫描 stdout.log，取**末条消息非空的异常行** + 它上面最近的 traceback 帧
+    error: dict | None = None
+    stdout_log = run_dir / "stdout.log"
+    if stdout_log.is_file():
+        lines = stdout_log.read_bytes().decode("utf-8", "replace").split("\n")
+        for idx, line in enumerate(lines):
+            mo = CRASH_EXC_RE.match(line)
+            if not mo or not mo.group(2).strip():
+                continue                     # 空消息的包装异常（`ChildFailedError:`）不作报错原文
+            frame = None
+            for j in range(idx - 1, -1, -1):
+                mf = CRASH_FRAME_RE.match(lines[j])
+                if mf:
+                    frame = {"file": mf.group(1), "line": int(mf.group(2)), "log_line": j + 1}
+                    break
+                if CRASH_EXC_RE.match(lines[j]):
+                    break                    # 撞上上一条异常 ⇒ 不在同一个 traceback 块里
+            error = {"log_line": idx + 1, "text": line.rstrip(),
+                     "exception": mo.group(1), "frame": frame}
+    cond["error_located"] = {
+        "ok": bool(error and error.get("frame")),
+        "detail": (f"stdout.log:{error['log_line']} {error['text'][:120]!r}；"
+                   f"帧 = {error['frame']['file']}:{error['frame']['line']}"
+                   if error and error.get("frame") else
+                   ("stdout.log 里没有可定位的异常行+行号（缺 `File \"…\", line N` 帧）"
+                    if error else "stdout.log 里没有 `<异常名>: <消息>` 形态的报错行")),
+    }
+    if error is not None:
+        ev["error"] = error
+
+    # ③ 没有任何有效训练产物
+    state_steps: list[dict] = []
+    for p in sorted(run_dir.rglob("trainer_state.json")):
+        doc = read_json(p, None)
+        if isinstance(doc, dict) and isinstance(doc.get("global_step"), int) \
+                and not isinstance(doc.get("global_step"), bool):
+            state_steps.append({"source": str(p), "global_step": doc["global_step"]})
+    zero_or_none = (steps_actual is None
+                    or (isinstance(steps_actual, int) and not isinstance(steps_actual, bool)
+                        and steps_actual == 0))
+    no_training = (not ckpt_dirs) and all(s["global_step"] == 0 for s in state_steps) and zero_or_none
+    ev["artifact_probe"] = {
+        "checkpoint_dirs": [str(p) for p in ckpt_dirs],
+        "trainer_state_global_steps": state_steps,
+        "steps_actual": steps_actual,
+    }
+    cond["no_training_artifact"] = {
+        "ok": no_training,
+        "detail": (f"checkpoint/final 目录 {len(ckpt_dirs)} 个；trainer_state 的 global_step="
+                   f"{[s['global_step'] for s in state_steps] or '无 trainer_state.json'}；"
+                   f"steps_actual={steps_actual!r}（崩溃档要求：三者都指向「一步没跑」）"),
+    }
+
+    # ④ 能证明"跑的是这个档"
+    tj = run_dir / "tier.json"
+    tj_doc = read_json(tj, None) if tj.is_file() else None
+    identity_keys = ("config", "algorithm", "tuner_type", "backend", "nproc", "max_epochs")
+    tj_ok = isinstance(tj_doc, dict) and any(k in tj_doc for k in identity_keys)
+    rtier = readings.get("tier")
+    ev["tier_proof"] = {"tier_json": str(tj) if tj.is_file() else None,
+                        "tier_json_keys": sorted(k for k in identity_keys if isinstance(tj_doc, dict)
+                                                 and k in tj_doc),
+                        "readings_tier": rtier}
+    cond["tier_proven"] = {
+        "ok": bool(tj_ok and str(rtier or "").strip() == tier),
+        "detail": (f"tier.json {'在' if tj.is_file() else '缺'}"
+                   f"（身份键 {ev['tier_proof']['tier_json_keys']}）；"
+                   f"readings.tier={rtier!r} / 本档 {tier!r}"),
+    }
+
+    if not all(c["ok"] for c in cond.values()):
+        ev["why"] = ("不构成证据齐全的崩溃档（条件不全 ⇒ 一个字段都不改，fail-closed）："
+                     + "；".join(f"{k}（{c['detail']}）" for k, c in cond.items() if not c["ok"]))
+        return ev
+
+    ev["applies"] = True
+    return ev
+
+
+def _crash_note(ev: dict, exit_code: int) -> str:
+    """note 列首句（**逐字**模板，D9 的验收句）。
+
+    「训练崩溃，未产生有效训练：exit_code=<原值>，<报错首行原文>（stdout.log:<行号>）」
+    """
+    err = ev.get("error") or {}
+    frame = err.get("frame") or {}
+    return (f"训练崩溃，未产生有效训练：exit_code={exit_code}，{err.get('text')}"
+            f"（stdout.log:{err.get('log_line')}）"
+            + (f"；同一条 traceback 的源码帧 = {frame.get('file')}:{frame.get('line')}"
+               if frame else ""))
+
+
 # ── 组装 ─────────────────────────────────────────────────────────────────────
 def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
               eval_dir: Path | None, tier_json: Path | None, note_extra: str,
               ledger: Path | None = None,
               recover_timeout_artifact: bool = False,
-              recover_operator_stop: bool = False) -> tuple[dict, dict]:
+              recover_operator_stop: bool = False,
+              recover_crashed_tier: bool = False) -> tuple[dict, dict]:
     """返回 (结果 json, 诊断信息{schema_errors, evidence_gaps})。"""
     mt = next((t for t in manifest["tiers"] if t["tier_id"] == tier), None)
     if mt is None:
@@ -1346,6 +1492,35 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
         if operator_stop["applies"] and operator_stop.get("exit_code_derived") is not None:
             exit_code = operator_stop["exit_code_derived"]
 
+    # ── D9 崩溃档的**事后取证**（2026-10-27）：只在显式开关下生效，默认路径逐字不变 ─────
+    #   ★ 与上面两条 D1 通道**并列**、互不影响：这条只认「退出码≠0 且一步没跑」的档
+    #     （exit_code ∉ {124,137}，见 crashed_tier_evidence 的条件①）；D1 的两条通道各自
+    #     要求"训练真的跑完了"的正面证据 ⇒ 同一跑次不可能同时成立。
+    #   ★ 为什么需要它：实测崩溃、证据齐全的档此前一格写不进去（缺 steps/throughput 即 rc=4），
+    #     台账只能显示"待测试"。本通道**不改判据**：它只把「一步没跑」这件事写成 0 步 / 0 轮 /
+    #     无检查点，最终状态由回填器按判据① 算出（退出码≠0 ⇒ `不通过`）。
+    crash: dict | None = None
+    if recover_crashed_tier:
+        crash = crashed_tier_evidence(
+            run_dir=run_dir, tier=tier, exit_code=exit_code, steps_actual=steps_actual,
+            ckpt_dirs=find_checkpoint_dirs(run_dir), readings=readings)
+        if crash["applies"]:
+            # ⛔ 退出码保持**原值**（判据① 靠它判"有据且不过"）；只把"一步没跑"写成 0。
+            steps_actual, steps_why = 0, (
+                f"崩溃前未进入优化循环（stdout.log:{crash['error']['log_line']} 的报错先于"
+                "任何步数读数；无 checkpoint / 无 trainer_state 的 global_step 读数）")
+            steps_prov = [{"source": "stdout.log", "kind": "no_step_reading",
+                           "line": crash["error"]["log_line"], "value": 0,
+                           "raw": crash["error"]["text"][:120]}]
+            epochs_done, epochs_why = 0, (
+                "训练崩溃于第 0 步（无 trainer_state.json 的 epoch 读数、无 events/logging 的 "
+                "epoch 字段）⇒ 完成 0 轮")
+            epochs_ev = {"source": "crashed_tier_evidence", "field": "none", "line": None,
+                         "raw": 0}
+            loadable, loadable_why = False, (
+                "无任何 checkpoint-*/ 或 final/ 目录（崩溃发生在产出检查点之前）⇒ "
+                "不存在可加载的最终检查点")
+
     # ── 三个数值/文本列 ───────────────────────────────────────────────────
     elapsed = readings.get("elapsed_sec")
     if elapsed is None:
@@ -1359,7 +1534,11 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
         gaps.append(f"缺 peak_mem（{peak_why}）")
 
     throughput = None
-    if isinstance(steps_actual, int) and elapsed:
+    if crash is not None and crash["applies"]:
+        throughput = (f"不适用（训练崩溃，未进入优化循环：{steps_actual} 步 / "
+                      f"{float(elapsed):.1f} s 墙钟）" if elapsed else
+                      "不适用（训练崩溃，未进入优化循环）")
+    elif isinstance(steps_actual, int) and elapsed:
         throughput = (f"{steps_actual / float(elapsed):.3f} 步/s"
                       f"（{steps_actual} 步 / {float(elapsed):.1f} s；样本吞吐 "
                       f"{mt['data']['subset_size'] * mt['max_epochs'] / float(elapsed):.3f} 样本/s）")
@@ -1434,10 +1613,17 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
     #   缺读数时仍写 null —— 那些是**实测值**，编不出来。
     effect = ev_effect if ev_effect else ("不可评：本档没有评测读数（未运行评测，或 after / base "
                                          "两侧评测报告不齐）")
+    if crash is not None and crash["applies"]:
+        # ★ 崩溃档的"不可评"真因 = 训练崩溃（不是"忘了跑评测"），如实写清；⛔ 不填任何效果数字。
+        effect = ("不可评：训练崩溃，未产生任何训练产物与评测读数（崩溃归因见 note 列首句）")
     if loss_curve_doc is not None:
         effect += (f"；训练 loss {loss_curve_doc['first']:.4g} → {loss_curve_doc['last']:.4g}"
                    f"（最小 {loss_curve_doc['min']:.4g}，共 {loss_curve_doc['n']} 个点）")
     note_parts = []
+    if crash is not None and crash["applies"]:
+        # ★ D9 的验收句（逐字模板）：「训练崩溃，未产生有效训练：exit_code=<原值>，<报错首行原文>
+        #   （stdout.log:<行号>）」—— 放在 note 首位，人读件一眼看到真因。
+        note_parts.append(_crash_note(crash, exit_code))
     if note_extra:
         note_parts.append(note_extra)
     note_parts.append(f"退出码 {exit_code}" if exit_code is not None else "退出码缺（未取到跑次退出码）")
@@ -1479,6 +1665,12 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
     comparable = readings.get("comparable")
     if comparable is False:
         note_parts.append("环境快照冻结维度发生变化 ⇒ 本档读数不可比（不得悄悄重跑）")
+    if crash is not None and crash["applies"]:
+        # ★ 每一条"缺 XX 读数"都是"训练崩溃"的直接后果 ⇒ 收进证据里留痕，不再让本文件自判
+        #   "证据不全"（rc=4）。⛔ 这不是放宽门槛：放行后回填器按判据① 判的是"退出码≠0 +
+        #   0/N 轮 + 检查点不可加载" ⇒ 状态必然是 `不通过`，不可能变成 `通过`。
+        crash["explained_gaps"] = list(gaps)
+        gaps = []
     if gaps:
         note_parts.append("证据缺口（不满足回填条件，不补数）：" + "；".join(gaps))
 
@@ -1541,6 +1733,9 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
     # D1 的第二条通道（人工按授权停僵尸容器）的取证；同样只在显式开关下出现、审计用
     if operator_stop is not None:
         doc["provenance"]["operator_stop_evidence"] = operator_stop
+    # D9 崩溃档的取证（只在显式开关下出现；含四条判据的 file:line 坐标 + 被解释掉的证据缺口）
+    if crash is not None:
+        doc["provenance"]["crashed_tier_evidence"] = crash
     if str(row.get("target_modules") or "").strip():
         doc["params"]["target_modules"] = str(row["target_modules"])
     if ev is not None:
@@ -1692,6 +1887,12 @@ def main(argv=None) -> int:
                          "的老跑次按证据重派生 exit_code/elapsed（判据见 "
                          "timeout_artifact_evidence 的 docstring；条件不全 ⇒ 一个字段都不改）。"
                          "⛔ 不用它替代正常跑次，也不手改任何读数。")
+    ap.add_argument("--recover-crashed-tier", action="store_true",
+                    help="D9 崩溃档入表（默认关）：把「实测崩溃、一步优化都没跑、证据齐全」的老跑次"
+                         "按证据如实入表（判据见 crashed_tier_evidence 的 docstring：退出码≠0 且 "
+                         "∉{124,137} ∧ stdout.log 可定位报错原文与行号 ∧ 无任何训练产物 ∧ "
+                         "tier.json 在）。⛔ 不改判据、不改读数：只把「一步没跑」写成 0 步/0 轮/"
+                         "无检查点，最终状态由回填器算出（必然是「不通过」）；条件不全 ⇒ 一个字段都不改。")
     ap.add_argument("--collect-dir", default=None,
                     help="回填入口：额外落一份扁平副本 <dir>/<tier>.json（runner 传 <run-root>/collect；"
                          "回填器 `--runs-dir` 只吃扁平目录、且拒 stray）")
@@ -1731,7 +1932,8 @@ def main(argv=None) -> int:
                           note_extra=args.note,
                           ledger=Path(args.ledger) if args.ledger else None,
                           recover_timeout_artifact=args.recover_timeout_artifact,
-                          recover_operator_stop=args.recover_operator_stopped_container)
+                          recover_operator_stop=args.recover_operator_stopped_container,
+                          recover_crashed_tier=args.recover_crashed_tier)
 
     out = Path(args.out) if args.out else run_dir / f"{args.tier}.json"
     text = json.dumps(doc, ensure_ascii=False, indent=1) + "\n"

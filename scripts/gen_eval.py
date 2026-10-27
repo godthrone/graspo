@@ -438,8 +438,11 @@ def gen_teacher_eval(*, args, manifest: dict, mt: dict, cal: dict, offline: bool
         die(f"教师档 {ttier}: 清单缺 model_path")
     hostmp = mp.replace("/models/", hostmodels + "/", 1) if mp.startswith("/models/") else mp
     cp = "/runs" + ck[len(tree + "/runs"):] if ck.startswith(tree + "/runs") else ck
-    md = "/evalout/merged-hf-teacher" if mode == "merge" else ck
-    mdhost = f"{ev}/merged-hf-teacher" if mode == "merge" else ck
+    # ★ D6（2026-10-27）：教师合并落点**带上教师档号**，否则报告里 `checkpoint_path` 看不出
+    #   "评的是哪个教师" ⇒ `record_checks.py` 的身份门槛 fail-closed ⇒ 判据② 永远落不了结论。
+    #   ★ 目录名只从消费端那一个函数取（`record_checks.teacher_merge_dirname`），⛔ 不另写字面量。
+    md = f"/evalout/{rc.teacher_merge_dirname(ttier)}" if mode == "merge" else ck
+    mdhost = f"{ev}/{rc.teacher_merge_dirname(ttier)}" if mode == "merge" else ck
     report_rel = rc.TEACHER_REPORT_REL.as_posix()
 
     tmp_dir = Path(args.tmp_dir)

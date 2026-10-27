@@ -227,3 +227,27 @@ def test_unknown_label_fails_closed():
 def test_method_from_label_maps_the_four_frozen_methods():
     assert {g.method_from_label(k) for k in ("SFT", "GRASPO", "CPT", "OPD")} == \
         {"sft", "graspo", "cpt", "opd"}
+
+
+# ── D9 附带：`MODE_ALLOWED` 与 `MODE_BY_TUNER` 的取值域必须自洽（2026-10-27 实测驱动）──
+def test_mode_allowed_covers_every_mode_by_tuner_value():
+    """★ 同文件里「必须等于 全参」与「只许是 {LoRA, full, CPT, SFT}」此前互相打架：
+
+    实测驱动 = 228 在役树 `runs/M011/tier.json` 的 `tuner_type: "full"` + 矩阵数据件里
+    16 档 `mode="全参"`。`MODE_BY_TUNER` 能产出的取值**必须**都在 `MODE_ALLOWED` 里，
+    否则全参档按 `--identity-from-config` 一律 FAIL-CLOSED（台账一格写不进去）。
+    """
+    assert set(g.MODE_BY_TUNER.values()) <= g.MODE_ALLOWED, (
+        f"MODE_BY_TUNER 产出 {sorted(set(g.MODE_BY_TUNER.values()) - g.MODE_ALLOWED)} "
+        f"但 MODE_ALLOWED={sorted(g.MODE_ALLOWED)} 不收 ⇒ 自相矛盾")
+
+
+def test_full_param_tier_identity_passes_with_real_config(tmp_path: Path):
+    """★ 全参档（tuner_type=full）走身份同源断言 + 结构化断言**必须放行**（修复前必红）。"""
+    cfg = tmp_path / "M011.yaml"
+    cfg.write_text("tp_size: 1\npp_size: 1\ndp_size: 1\ntuner_type: full\n"
+                   "backend: native\nmodel_name: Qwen3.5-9B\n", encoding="utf-8")
+    args = SimpleNamespace(parallel="TP=1 PP=1 DP=1", mode="全参", backend="native",
+                           model="9B", nproc=1, identity_from_config=str(cfg))
+    g.assert_structured_params(args)          # 修复前：mode=全参 不在 MODE_ALLOWED ⇒ SystemExit
+    g.assert_identity_consistent(args)        # 修复前：断言 mode 应为 全参、却又被上一条拒收

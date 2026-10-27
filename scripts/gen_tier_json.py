@@ -117,7 +117,13 @@ def summarise(report: dict) -> tuple[int, int, float]:
 #: ★ `params.mode` 是**结构化字段**（训练器/适配器类型），⛔ 不得填叙述长文本。
 #: 2026-10-13 事故：T022 首版把"native final/ ⇒ 转 PEFT adapter ⇒ merge…"塞进 mode，
 #: 被矩阵侧判"语义不一致"退回。教训固化为此断言。
-MODE_ALLOWED = {"LoRA", "full", "CPT", "SFT"}
+#: ★ 2026-10-27 修 D9（取值域自相矛盾）：本集合此前**漏了 `全参`**，而下面
+#:   `MODE_BY_TUNER["full"] = "全参"` 会把 `tuner_type: full` 的档断言成 `全参`
+#:   ⇒ 同一份文件里"必须等于 全参"和"只许是 {LoRA, full, CPT, SFT}"互相打架，
+#:   全参档（native 全参 8 档 / 矩阵 68 档里 16 档 `mode=全参`）按 `--identity-from-config`
+#:   一律 FAIL-CLOSED。以**矩阵数据件的真值**为准补进来（`docs/capability-matrix.data.json`
+#:   的 mode 取值只有两种：`LoRA` 52 档 / `全参` 16 档）；`full` 保留为旧别名（历史产物兼容）。
+MODE_ALLOWED = {"LoRA", "全参", "full", "CPT", "SFT"}
 
 #: ★ `params.parallel` 必须形如 `TP=.. PP=.. DP=..`（与档位表逐字一致）。
 PARALLEL_RE = re.compile(r"^TP=\d+ PP=\d+ DP=\d+")

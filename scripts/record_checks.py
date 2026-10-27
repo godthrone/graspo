@@ -107,6 +107,37 @@ AFTER_REPORT_REL = Path(".local") / "reports" / "after" / "eval_report.json"
 #:   口径 = 定稿报告第 2 章判据②「教师在训练数据集上的完全正确率」+ 第 3 章「OPD 教师」。
 TEACHER_REPORT_REL = Path(".local") / "reports" / "teacher" / "eval_report.json"
 
+#: ★ OPD **教师合并落点**的目录名模板（D6 的修法，2026-10-27）。
+#:   ★★ 本常量是**唯一真相源**：`scripts/gen_eval.py` 渲染教师侧 merge 落点时直接调本文件的
+#:   `teacher_merge_dirname()`（⛔ 不在产出端另写一份字符串）⇒ 产出端与消费端不可能错位。
+#:   ★ 为什么要有它（实测驱动，M036）：教师侧合并落点此前**写死** `<EVAL_DIR>/merged-hf-teacher`，
+#:     路径里没有教师档号 ⇒ 下面 `teacher_tier_in_checkpoint_path()` 核不出"评的是哪个教师"
+#:     ⇒ 教师读数入不了证 ⇒ 判据② 永远落不了结论（M036 已有实测读数：学生 after 19% /
+#:     base 22%、教师 48%，只因身份校验卡住）。修法 = **落点带上教师档号**（与学生侧
+#:     `merged-hf-<档号>` 同一套命名惯例），教师身份于是可**机核**、且判据语义一字不动。
+TEACHER_MERGE_DIR_PREFIX = "merged-hf-teacher-"
+
+
+def teacher_merge_dirname(t_tier: str) -> str:
+    """教师合并落点的**目录名**（`merged-hf-teacher-<教师档号>`）；产出端/消费端唯一来源。"""
+    return f"{TEACHER_MERGE_DIR_PREFIX}{str(t_tier).strip()}"
+
+
+def teacher_tier_in_checkpoint_path(ck_path: str, t_tier: str) -> bool:
+    """报告 `model.checkpoint_path` 是否**确实指向该教师档的产物**（判据② 的身份门槛）。
+
+    ★ 认可的两种形态（都是"目录级组件"命中，⛔ 不做子串匹配 —— `M03` 不得命中 `M039`）：
+      ① 路径里有**正好等于**档号的目录组件：`…/runs/M039/…`（训练产物直服，`mode != merge`）；
+      ② 路径里有**正好等于** `merged-hf-teacher-<档号>` 的目录组件（LoRA 合并后服务，
+         落点由 `gen_eval.py` 按本文件 `teacher_merge_dirname()` 生成）。
+    ★ ⛔ 缺登记（路径里没有档号，如旧写死的 `…/merged-hf-teacher`）⇒ False（fail-closed）。
+    """
+    t_tier = str(t_tier or "").strip()
+    if not t_tier or not ck_path:
+        return False
+    parts = Path(str(ck_path)).parts
+    return t_tier in parts or teacher_merge_dirname(t_tier) in parts
+
 #: 非 GRASPO 算法（SFT/CPT/OPD）判据③ 的依据标识 = **签署件**（不是"文档说无需逐条"）。
 PUBLIC_ALGO_BASIS = "public_algorithm_signed_public_algos_json"
 PUBLIC_ALGOS = ("SFT", "CPT", "OPD")
@@ -445,9 +476,11 @@ def judge_teacher(report, expected: int, subset_sha: str | None, report_path: Pa
                         "⇒ 无法核教师身份（⛔ 不猜档号、不写 teacher_after_acc）")
     else:
         t_tier, t_model = teacher
-        if not ck_path or t_tier not in Path(ck_path).parts:
-            problems.append(f"教师身份不符：报告 checkpoint_path={ck_path or '<空>'!r} 不在 {t_tier} "
-                            f"档产物目录下（判据② 的教师必须是 {t_tier} 档训练完成的产物）")
+        if not teacher_tier_in_checkpoint_path(ck_path, t_tier):
+            problems.append(
+                f"教师身份不符：报告 checkpoint_path={ck_path or '<空>'!r} 不在 {t_tier} 档产物目录下"
+                f"（判据② 的教师必须是 {t_tier} 档训练完成的产物；认可形态 = 目录里有 `{t_tier}` 或 "
+                f"`{teacher_merge_dirname(t_tier)}` 这一级 —— 后者是 LoRA 档合并后的落点）")
         if t_model and base_path != t_model:
             problems.append(f"教师身份不符：报告 base_model_path={base_path or '<空>'!r} ≠ 清单 "
                             f"{t_tier} 档 model_path={t_model!r}（不是该教师的底座）")

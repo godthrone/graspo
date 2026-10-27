@@ -30,6 +30,11 @@
   exit_code∈{124,137}」的跑次，按 `make_result_json.py` 的七条带坐标判据**证据化重派生**
   exit_code/elapsed（provenance 同时留 `exit_code_raw`）。⛔ 不放宽判据、不填任何数值：
   任一条不成立 ⇒ 一个字段都不改。用于 D1（训练跑完却不收尾）污染过的老跑次。
+  `GRASPO_FILL_RECOVER_OPERATOR_STOP=1` ⇒ 加 `--recover-operator-stopped-container`
+  （D1 的第二条并列通道：容器由运维按授权 `docker stop`）。
+  `GRASPO_FILL_RECOVER_CRASHED_TIER=1`（D9）⇒ 加 `--recover-crashed-tier`：把
+  「实测崩溃、一步优化都没跑、证据齐全」的档按证据如实入表（0 步 / 0 轮 / 无检查点 ⇒
+  回填器判据① 判 `不通过`）。⛔ 不改判据、不改读数、不给"跑了一半/超时"的档用。
 
 ★ 退出码：0 = 成功（写入 / dry-run / 幂等短路）；2 = 用法或档号非法；
   3 = **证据不足**（该档保持「待测试」，⛔ 未写任何字节）；4 = 机核/范围闸门失败（已回滚或未落盘）；
@@ -350,11 +355,21 @@ def main(argv: list[str]) -> int:
         recover_op = os.environ.get("GRASPO_FILL_RECOVER_OPERATOR_STOP", "").strip() == "1"
         if recover_op:
             cmd += ["--recover-operator-stopped-container"]
+        # ★ D9 崩溃档入表：显式 opt-in（缺省关 ⇒ 未设该变量时行为逐字节不变）。
+        #   为什么需要这条：实测崩溃、证据齐全的档（退出码≠0 / stdout.log 有逐字报错与行号 /
+        #   无任何训练产物 / tier.json 在）此前一格写不进去（缺 steps/throughput 即 rc=4），
+        #   台账只能显示"待测试"。开关打开后按证据写成 0 步 / 0 轮 / 无检查点 ⇒ 回填器判据①
+        #   必然判 `不通过`；⛔ 不改判据、不改读数，条件不全 ⇒ 一个字段都不改。
+        recover_crash = os.environ.get("GRASPO_FILL_RECOVER_CRASHED_TIER", "").strip() == "1"
+        if recover_crash:
+            cmd += ["--recover-crashed-tier"]
         rc_c, out_c = run(cmd)
         _recover_note = ("（含 D1 超时伪影重派生：GRASPO_FILL_RECOVER_TIMEOUT_ARTIFACT=1）"
                          if recover else "") + (
             "（含 D1 运维停容器重派生：GRASPO_FILL_RECOVER_OPERATOR_STOP=1）"
-            if recover_op else "")
+            if recover_op else "") + (
+            "（含 D9 崩溃档入表：GRASPO_FILL_RECOVER_CRASHED_TIER=1）"
+            if recover_crash else "")
         print(f"→ 读数派生 make_result_json.py rc={rc_c}" + _recover_note)
         if ev_dir is not None:
             print(f"  评测证据（按档归档）{ev_dir}")
