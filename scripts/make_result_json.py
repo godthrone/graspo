@@ -86,6 +86,13 @@ from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+#: 本文件可能被 `python3 scripts/make_result_json.py` 跑（此时 scripts/ 已在 sys.path），
+#: 也可能被测试按路径 importlib 加载（scripts/ 不在 sys.path）⇒ 显式补一次，**不靠运气**。
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+import step_readings  # noqa: E402  —— 步数读数的唯一真相源（§1.4；⛔ 不在本文件里再抄一份正则）
+
 SCHEMA = "matrix-run/v1"
 
 #: 检查点权重文件名（与 `scripts/collect_results.py::FINAL_CKPT_WEIGHT_FILENAMES` 同一张表：
@@ -97,34 +104,20 @@ CKPT_WEIGHT_NAMES = (
 )
 CKPT_WEIGHT_GLOBS = ("model-*.safetensors", "rank_*.pt", "*.safetensors")
 
-#: 「实跑步数」的读取口径 —— **四种实盘形态**（2026-10-26 修 D2；M016 真实日志驱动，
-#: fixture 见 `tests/scripts/fixtures/m016_stdout_excerpt.log`）：
-#:   ① `'global_step/max_steps': '6400/6400'` —— ms-swift 指标 dict。**值是带引号的字符串**
-#:      （单/双引号皆可）；旧正则 `[:=]\s*(\d+)` 卡在值前面那个 `'` 上 ⇒ M016 的
-#:      stdout.log 里 1282 行**一条都认不出** ⇒ `steps_actual=None` ⇒ 回填器 fail-closed，
-#:      训练已成功的档进不了表。
-#:   ② tqdm 进度行 `Train: 100%|██████████| 6400/6400 [14:27:53<00:00, 4.95s/it]`
-#:      （锚成"竖线 + 计数 + 方括号"的形状：⛔ 不裸扫 `\d+/\d+`，否则日期/速率会假阳性）。
-#:   ③ `'global_step': '200'` / `"global_step": 200` —— 同一 dict 家族 / JSON 家族
-#:      （值同样是"字符串或数字"；`logging.jsonl` 末行即 `"global_step": 6400`）。
-#:   ④ `trainer_state.json` 的 `"global_step": 6400`（由 :func:`parse_steps_evidence`
-#:      在跑次目录里逐件读取 —— 与 ③ 共用 `GLOBAL_STEP_RE`）。
+#: 「实跑步数」的读取口径 —— **五种实盘形态**（①–④ = 2026-10-26 修 D2；
+#: ⑤ = 2026-10-28 修 N3b）。★ 正则与"挑候选"的实现**只有一份**：`scripts/step_readings.py`
+#: （本文件与 `scripts/collect_results.py` 共用 —— 同一份日志两个消费者不许给出两个答案）。
+#:   ① `'global_step/max_steps': '6400/6400'`（ms-swift 指标 dict，值是带引号字符串）
+#:   ② `Train: 100%|███| 6400/6400 [`（tqdm，锚住训练条才认）
+#:   ③ `'global_step': '200'` / `"global_step": 200`（同一 dict / JSON 家族）
+#:   ④ `trainer_state.json` 的 `"global_step": 6400`（与 ③ 共用 `GLOBAL_STEP_RE`）
+#:   ⑤ `"step": N`（**native 后端**逐字；单进程语义、非 global —— 见 step_readings 的语义登记）
 #:   ★ 既有语义不变：`global_step/max_steps` 取**分子**（= 当前步）；多源并存时取**最大**。
-GLOBAL_STEP_RE = re.compile(r"['\"]?global_step['\"]?\s*[:=]\s*['\"]?(\d+)")
-GLOBAL_STEP_SLASH_RE = re.compile(
-    r"global_step\s*/\s*max_steps['\"]?\s*[:=]\s*['\"]?(\d+)(?:\s*/\s*(\d+))?")
-#: ② tqdm 进度条里的「已跑/总数」。**必须锚住训练条**（`Train:` 标签 + `|计数 [` 框线）：
-#:   日志里还有下载/存盘等**无关进度条**（M016 实测 stdout.log 里有 7724 处 `|N/M [`，
-#:   其中绝大多数来自 `Train:` 之外）——裸扫 `|\s*\d+/\d+\s*\[` 会把无关计数当步数，
-#:   而口径是"多源取最大" ⇒ 一个偏大的假读数会**静默污染** steps_actual。
-#:   ⛔ 无标签的 HF 风格条（`  5%|▌ | 320/6400 [`）不取：那种情形有 ①②③④ 里的
-#:   `global_step` / `trainer_state.json` 兜底，宁缺勿错（fail-closed）。
-TQDM_STEP_RE = re.compile(
-    r"(?:^|[\r\n])\s*(?:Train|Training):[^\r\n]*?\|\s*(\d+)\s*/\s*(\d+)\s*\[")
-#: 同一读数出现在多处（且数值相等）时，**取更权威的形态**记 provenance：
-#: 显式 `global_step/max_steps` dict > `trainer_state.json` 的 `global_step` > tqdm 进度条。
-_STEP_KIND_RANK = {"global_step/max_steps": 3, "trainer_state.global_step": 2,
-                   "global_step": 2, "tqdm_progress": 1}
+#:   ⛔ fail-closed：一个读数都没有 ⇒ None（不猜、不 0 兜底、不把"末条"当总步数）。
+GLOBAL_STEP_RE = step_readings.GLOBAL_STEP_RE
+GLOBAL_STEP_SLASH_RE = step_readings.GLOBAL_STEP_SLASH_RE
+TQDM_STEP_RE = step_readings.TQDM_STEP_RE
+_STEP_KIND_RANK = step_readings.STEP_KIND_RANK
 #: ★ NaN/Inf 的唯一判定正则（判据① 的第四项）：**metric 字段取非有限值**才算命中。
 #:   `loss` / `grad_norm` / `reward` / `logits` × `nan|-inf|inf|infinity`（大小写不敏感）。
 #:   ⛔ 不裸扫 `nan`/`inf` 单词：日志里的 "infinite"、路径名会假阳性。
@@ -486,55 +479,25 @@ def ckpt_loadable(run_dir: Path) -> tuple[bool | None, str, str | None]:
     return ok, f"最新检查点 {latest.name}：{why}", str(latest)
 
 
-def _scan_steps_text(text: str, source: str) -> list[dict]:
-    """在一段文本里逐行找步数读数 ⇒ 候选列表（`value` / `line` / `kind` / `raw`）。
-
-    逐行（而不是整篇 `finditer`）的唯一原因：provenance 要报**哪一行**（审计可复现）。
-    三种形态共用一条"预筛"（行里既没有 `global_step` 也没有 tqdm 竖线就跳过），
-    否则 19 MB / 19 万行的真日志会被三份正则各扫一遍。
-    """
-    out: list[dict] = []
-    # ⚠ 只按 `\n` 切行（⛔ `splitlines()`）：tqdm 用 `\r` 刷新进度帧，`splitlines()` 会把
-    #   同一**物理行**切成几十份 ⇒ provenance 行号与 grep/sed 口径不符、肉眼复核不到。
-    for lineno, line in enumerate(text.split("\n"), 1):
-        if "global_step" in line:
-            for m in GLOBAL_STEP_SLASH_RE.finditer(line):
-                out.append({"value": int(m.group(1)), "line": lineno,
-                            "kind": "global_step/max_steps", "raw": m.group(0)[:60],
-                            "max_steps": int(m.group(2)) if m.group(2) else None,
-                            "source": source})
-            for m in GLOBAL_STEP_RE.finditer(line):
-                out.append({"value": int(m.group(1)), "line": lineno,
-                            "kind": "global_step", "raw": m.group(0)[:60],
-                            "source": source})
-        elif "Train:" in line or "Training:" in line:
-            for m in TQDM_STEP_RE.finditer(line):
-                out.append({"value": int(m.group(1)), "line": lineno,
-                            "kind": "tqdm_progress", "raw": m.group(0)[:60],
-                            "source": source})
-    return out
-
-
 def _steps_from_stdout(stdout_log: Path) -> tuple[int | None, str, list[dict]]:
     """:func:`parse_steps` 的实现体（带 provenance）。"""
     if not stdout_log.is_file():
         return None, "训练日志缺失 ⇒ 无法取实跑步数", []
     # ⚠ 按**字节**读再解码（⛔ `read_text()`）：文本模式会把 `\r` 规范化成 `\n`，
     #   行号就与 grep/sed 口径不符（provenance 里的行号必须能被人直接复核）。
-    text = stdout_log.read_bytes().decode("utf-8", "replace")
-    found = _scan_steps_text(text, stdout_log.name)
+    found = step_readings.scan_file(stdout_log)
     if not found:
         return None, "训练日志里没有步数读数（后端未打印/训练未进入优化循环）", []
-    best = max(found, key=lambda c: (c["value"], _STEP_KIND_RANK.get(c["kind"], 0)))
-    origin = f"{best['source']}:{best['line']}（形态 {best['kind']}，原文 {best['raw'].strip()!r}）"
+    best = step_readings.best_of(found)
+    origin = step_readings.origin_of(best)
     return best["value"], f"训练日志的最大步数读数 = {best['value']}（取自 {origin}）", [best]
 
 
 def parse_steps(stdout_log: Path) -> tuple[int | None, str]:
     """实跑优化步数：日志里 `global_step` 的**最大值**（与台账同一口径）。
 
-    认四种实盘形态（见 `GLOBAL_STEP_*` / `TQDM_STEP_*` 的注释）。返回值里的 `why`
-    **带 provenance**（哪个文件第几行、哪个形态、原文），审计不必再翻日志。
+    认五种实盘形态（见 `scripts/step_readings.py` 的形态表；其中 ⑤ = native 的 `"step": N`）。
+    返回值里的 `why` **带 provenance**（哪个文件第几行、哪个形态、原文），审计不必再翻日志。
     """
     value, why, _prov = _steps_from_stdout(stdout_log)
     return value, why
@@ -563,7 +526,7 @@ def parse_steps_evidence(run_dir: Path) -> tuple[int | None, str, list[dict]]:
                                "source": str(state.relative_to(run_dir))})
     if not candidates:
         return value, why, []
-    best = max(candidates, key=lambda c: (c["value"], _STEP_KIND_RANK.get(c["kind"], 0)))
+    best = step_readings.best_of(candidates)
     where = (f"{best['source']}:{best['line']}" if best.get("line") is not None
              else f"{best['source']}")
     return best["value"], (f"实跑步数 = {best['value']}（多源取最大，取自 {where}，"

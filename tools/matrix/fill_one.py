@@ -5,7 +5,9 @@
   「单条更新测试结果数据，每完成一条就更新一条，以便随时看见进度。」
   ⇒ 本文件只做一件事：**一条命令把 <档号> 那一行写进当轮日期副本，其它档/其它章节一字不动。**
 
-★★ 不新造回填通道，只把现役两件**封装**成一条命令（宪法 §1.4 单一真相源）：
+★★ 不新造回填通道，只把现役三件**封装**成一条命令（宪法 §1.4 单一真相源）：
+   ⓪ 读数件合成 = `scripts/mk_readings.py`（D23：`readings.raw.json` + `exit_code` / `elapsed_sec`
+      ⇒ `readings.json`，**幂等**；此前是手工步 ⇒ 漏补即 `mk_evidence` rc=2，M013/M018 人工补过）
    ① 读数派生 = `scripts/make_result_json.py`（从 `runs/<档号>/` 的机器可读证据实测派生；
       缺证据 ⇒ rc≠0，⛔ 不用 false/null 冒充"判过了"）
    ② 落盘 = `tools/matrix/backfill_matrix.py`（四条判据现算 status ⇒ 渲染 ⇒
@@ -145,6 +147,34 @@ def print_locks(baseline: Path, *, before: dict[str, str] | None = None) -> int:
 def run_dir_of(tier: str) -> Path:
     root = Path(os.environ.get("GRASPO_RUN_ROOT") or (ROOT / "runs"))
     return root / tier
+
+
+def ensure_readings(rdir: Path, *, dry_run: bool = False,
+                    py: str = PY, runner=None) -> tuple[int, str]:
+    """D23 前置步：把 `<run-dir>/readings.json` 按输入证据合成好（**幂等**，链里自动调用）。
+
+    为什么要有这一步：`readings.json` 是 `make_result_json.py` / `record_checks.py` 的**唯一读数
+    入口**（缺它 ⇒ `FAIL: readings.json 缺失或不可解析`），而它的合成此前是**手工步** ——
+    编排层只落 `readings.raw.json` + `exit_code` / `elapsed_sec`，合成那一步没人调用 ⇒
+    漏补一次就卡住整条取证链（M013 / M018 均人工补过；M008 盘上那份更糟：全 null + exit_code=99，
+    与 `readings.raw.json` 的 exit_code=0 直接矛盾）。
+
+    边界（⛔ 不许扩）：
+      · **只有 `readings.raw.json` 在盘上才动**（那是本步的输入证据）。没有 raw 的跑次
+        （228 那类由 runner 自写 `readings.json`）⇒ 明确跳过，⛔ 不重写、⛔ 不覆盖别人的件。
+      · 幂等由 `scripts/mk_readings.py` 保证（先算字节再比，重复跑 `unchanged` 不写盘）。
+      · `dry_run=True` ⇒ 传 `--check`（只算不写），让 `--dry-run` 全程**不落盘**。
+      · 该步失败（raw 不可解析 / 档号错配 / 解释器报错）⇒ 返回 rc≠0 与**原样输出**，
+        ⛔ 不静默吞（调用方会拒绝回填并贴出输出）。
+    """
+    call = runner or run                     # 默认走本文件的子进程封装（可注入以便单测）
+    if not (rdir / "readings.raw.json").is_file():
+        return 0, (f"跳过：{rdir} 无 readings.raw.json"
+                   "（readings.json 由 runner 自写，⛔ 本步不覆盖）")
+    cmd = [py, str(ROOT / "scripts" / "mk_readings.py"), "--run-dir", str(rdir)]
+    if dry_run:
+        cmd.append("--check")
+    return call(cmd)
 
 
 def eval_archive_of(tier: str) -> tuple[Path | None, str]:
@@ -330,6 +360,22 @@ def main(argv: list[str]) -> int:
 
     tmp = Path(tempfile.mkdtemp(prefix="fill-one-"))
     try:
+        # ②′ 读数件合成（D23：链里自动调用，⛔ 不再是手工步）
+        #   为什么在 make_result_json 之前：`readings.json` 是它的**输入**（判据① 的 exit_code /
+        #   elapsed、判据③④ 的 checks{} 都从这份件读）。漏这步 ⇒ 下游 `FAIL: readings.json 缺失
+        #   或不可解析`（M013/M018 就是这么卡住的）。
+        mk_rc, mk_out = ensure_readings(rdir, dry_run=a.dry_run)
+        print(f"→ 读数件合成 mk_readings.py rc={mk_rc}")
+        if mk_out.strip():
+            for line in mk_out.rstrip().splitlines():
+                print(f"  {line}")
+        if mk_rc != 0:
+            print(f"⛔ 拒绝写入：{tier} 的读数件合成失败（mk_readings rc={mk_rc}）"
+                  f"⇒ 该档保持「待测试」，**未写任何文件**（rc=3）")
+            print_locks(baseline)
+            print_progress(rows)
+            return 3
+
         # ② 读数派生（唯一产出者；缺证据 ⇒ rc≠0，⛔ 不填数）
         ev_dir, ev_problems = stage_eval_dir(tmp, tier)
         collect_dir = tmp / "collect"

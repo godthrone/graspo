@@ -51,6 +51,15 @@ from typing import Any
 # ── 纯逻辑模块按文件路径加载，避免经 graspo/__init__ 拉入 torch/pydantic ──────
 _SRC = Path(__file__).resolve().parents[1] / "src"
 
+#: 步数读数的**唯一真相源**（`scripts/step_readings.py`，本文件与 `make_result_json.py` 共用）。
+#: 本文件既会被 `python3 scripts/collect_results.py` 跑（scripts/ 已在 sys.path），也会被
+#: `graspo collect-results`（`src/graspo/cli/devops.py`）与测试用 `spec_from_file_location`
+#: 按路径加载（此时 scripts/ **不在** sys.path）⇒ 显式补一次，⛔ 不靠运气、⛔ 不抄第二份正则。
+_SCRIPTS = Path(__file__).resolve().parent
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
+import step_readings  # noqa: E402  —— N3b：native `"step": N` 与 ms-swift 四形态同一口径
+
 
 def _load_result_judge() -> ModuleType:
     source = _SRC / "graspo" / "core" / "result_judge.py"
@@ -75,7 +84,9 @@ _LOSS_DICT = re.compile(
 )
 _LOSS_ANY = re.compile(r"['\"]loss['\"]\s*:\s*([-\d.eE+naif]+)")
 _GRAD_ANY = re.compile(r"['\"]grad_norm['\"]\s*:\s*([-\d.eE+naif]+)")
-_GLOBAL_STEP = re.compile(r"['\"]?global_step['\"]?\s*[:=]\s*(\d+)")
+#: ⛔ 这里**不再**自带一份 `global_step` 正则（N3b 前的 `_GLOBAL_STEP` 就是
+#: `make_result_json.py` 那份的第二副本：D2 只扩了那一份 ⇒ 同一份日志两个答案）。
+#: 步数读数一律走 `step_readings.scan_text` / `best_of`（§1.4 单一真相源）。
 
 #: 显式数值语法：只承认十进制/科学计数法/NaN/Inf 字面量。
 #: 为什么不复用 ``_LOSS_ANY`` 的 ``[-\d.eE+naif]+``：那个字符类**包含 ``n``**，
@@ -698,9 +709,18 @@ def extract_steps_and_series(output_dirs: Sequence[Path], log_text: str) -> Seri
             result.source = "stdout"
 
     if result.steps is None:
-        matches = _GLOBAL_STEP.findall(log_text)
-        if matches:
-            result.steps = int(matches[-1])
+        # ★ N3b（2026-10-28）：native 后端的日志里**没有** `global_step`，逐字打的是
+        #   `{"event": "sft_step", "step": N, …}`（`flow/backend/native/trainer/*.py`）。
+        #   老实现只扫 `global_step` ⇒ native 档 steps=None ⇒ ① 步数门判不通过（M007/M008 实证）。
+        #   现改为与 `make_result_json.py` **同一个**解析器，口径 = 多源取**最大**
+        #   （⛔ 不是"末条"：日志截断/交错时末条未必最大 ⇒ 会把偏小的读数记成实跑步数）。
+        best_step = step_readings.best_of(step_readings.scan_text(log_text, "stdout.log"))
+        if best_step is not None:
+            result.steps = best_step["value"]
+            result.notes.append(
+                f"optimizer step 取自 stdout 日志读数 {best_step['value']}"
+                f"（{step_readings.origin_of(best_step)}）"
+            )
     if result.steps is None and result.losses:
         result.steps = len(result.losses)
     # ── ★ A7 取证公平性（2026-09-22 指挥官裁定，C）───────────────────────────

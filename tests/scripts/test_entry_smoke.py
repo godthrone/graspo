@@ -96,6 +96,14 @@ POLICY: dict[str, Spec] = {
         "评测入口 `$EVAL_DIR/run-eval.sh` 的唯一产出者（模板渲染 + 幂等安装 + sha 记录 + check）；"
         "install 缺省只打印计划、--apply 才写 → 冒烟只做 --help",
     ),
+    # ★ 新增（2026-10-28 · D23/N3b）：读数件合成步 —— 此前是**编排层手工步**（漏补即后续
+    #   取证链 `FAIL: readings.json 缺失或不可解析`，M013/M018 人工补过）；现在由
+    #   `tools/matrix/fill_one.py` 在读数派生之前自动调用。无参数只打印用法（rc=2），
+    #   故常设冒烟只做 `--help`（rc=0、零写入）。
+    "scripts/mk_readings.py": Spec(
+        HELP,
+        "readings.raw.json + exit_code/elapsed_sec ⇒ readings.json 的唯一合成步（幂等；D23）",
+    ),
     "scripts/make_result_json.py": Spec(
         HELP,
         "跑次读数 ⇒ 回填口径结果 json（matrix-run/v1）的**唯一产出者**；落盘前调"
@@ -331,6 +339,7 @@ POLICY: dict[str, Spec] = {
 EXCLUSIONS: dict[str, str] = {
     "scripts/launch_pipeline.py": "纯模块（无 CLI/无 __main__ 入口），被单测 import；启动链的判定函数由 launcher/评测脚本调用",
     "scripts/errors.py": "纯模块（无 __main__/无 CLI），被单测 import，不是启动脚本",
+    "scripts/step_readings.py": "纯模块（无 __main__/无 CLI）：步数读数的唯一真相源，被 make_result_json/collect_results import",
     "tools/check_env.py": "★ 依赖校验入口：自身即门禁脚本，缺依赖时非零退出（不易做常设冒烟）",
     "tools/gate_common.py": "门禁库（无 __main__），由 6 个 gate 入口间接覆盖",
 }
