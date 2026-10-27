@@ -1410,7 +1410,7 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
         gaps.append(f"缺计划轮数（清单该档 max_epochs={mt.get('max_epochs')!r} 不是整数）")
     epochs_done, epochs_why, epochs_ev = epochs_from_run(run_dir)
     if epochs_done is None:
-        gaps.append(f"缺 epoch 读数（{epochs_why}）⇒ 判据① 不作通过判定（⛔ 不回落步数）")
+        gaps.append(f"缺 epoch 读数（{epochs_why}）⇒ 判据① 不作通过判定（不回落步数）")
 
     loadable, loadable_why, ckpt_path = ckpt_loadable(run_dir)
     if loadable is None:
@@ -1590,9 +1590,15 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
     if note_extra:
         note_parts.append(note_extra)
     note_parts.append(f"退出码 {exit_code}" if exit_code is not None else "退出码缺（未取到跑次退出码）")
-    note_parts.append(f"实跑步数 {steps_actual}（{steps_why}；计划 {mt['expected_optimizer_steps']} 步）"
+    # ★ D29（2026-10-27 主席裁定）：备注列**只写实跑步数与读数来源**，⛔ 不再并排写「计划 N 步」。
+    #   理由：矩阵是给人读的唯一真相源，一格内并排「实跑 400 / 计划 200」两个打架的数会被误读成
+    #   "计划口径错了"；而清单侧每 epoch 步数按**总卡数**折算（真机只随 dp 变）本就是错的，
+    #   正确口径要重生成数据件（须先呈报）⇒ 这一步**只做展示层**，⛔ 不动生成器公式、⛔ 不动数据件。
+    #   本行也不再读 `mt['expected_optimizer_steps']`：缺该键/为 null 的清单不会在此抛错，
+    #   也不会写出「计划 None 步」或空括号/孤立分隔符。
+    note_parts.append(f"实跑步数 {steps_actual}（{steps_why}）"
                       if isinstance(steps_actual, int) else
-                      f"计划 {mt['expected_optimizer_steps']} 步，实跑未知")
+                      f"实跑步数未知（{steps_why}）")
     note_parts.append(
         f"完成轮数 {epochs_done}/{epochs_planned} 个 epoch（{epochs_why}）"
         if isinstance(epochs_done, int) and epochs_planned is not None else

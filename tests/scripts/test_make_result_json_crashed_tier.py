@@ -225,6 +225,9 @@ def test_timeout_exit_codes_never_use_crash_channel(tmp_path, code):
 
 
 # ── ⑦ 开关默认关 ⇒ 结果 json 与**修复前**逐字节相同（golden 由修复前代码产出） ────
+#   ★ 2026-10-27 D29 重基线：主席裁定备注列删掉「计划 N 步」从句、并清掉内部记号（`⛔`），
+#     这两处**只改人读文案**（`note` 一个字段）；golden 随之更新，**除 note 外逐字节未动**
+#     （前后 diff 与原因见工位 `.local/hb-workspace/20261022-baseline-r1/task-fix-mkevidence/DELIVERY.md`）。
 def _normalised_json(doc, run):
     text = json.dumps(doc, ensure_ascii=False, indent=1) + "\n"
     return text.replace(str(run), _RUNDIR_PLACEHOLDER)

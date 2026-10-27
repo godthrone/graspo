@@ -607,8 +607,9 @@ def judge_run_complete(doc, row):
         epochs_planned = (planned if isinstance(planned, int)
                           and not isinstance(planned, bool) else None)
     if epochs_done is None or isinstance(epochs_done, bool) or not isinstance(epochs_done, int):
+        # D29：这句会经 `compose_note` 进**备注列**（人读件）⇒ ⛔ 不写内部记号（`⛔`）。
         return UNKNOWN, ("判据① 缺证据：run_result.epochs_completed（Epoch 读数；"
-                         "⛔ 不回落实跑步数比较）")
+                         "不回落实跑步数比较）")
     if (epochs_planned is None or isinstance(epochs_planned, bool)
             or not isinstance(epochs_planned, int)):
         return UNKNOWN, ("判据① 缺证据：计划轮数（run_result.epochs_planned / params.max_epochs）")
@@ -626,8 +627,13 @@ def judge_run_complete(doc, row):
         fails.append("检测到 NaN/Inf（含被跳过的非有限梯度步）")
     elif nan_inf is None:
         return UNKNOWN, "判据① 缺证据：run_result.nan_or_inf_detected（三处证据源都读不到）"
-    steps, total = doc.get("steps_actual"), _ints(row.get("derived_steps"))
-    ledger = f"；台账：实跑 {steps} 步（计划 {total[0] if total else '未知'} 步，⛔ 不作通过条件）"
+    # ★ D29（2026-10-27 主席裁定）：台账句会经 `compose_note` 进**备注列**（人读件）⇒
+    #   ① ⛔ 不写「计划 N 步」：清单侧每 epoch 步数按**总卡数**折算，与真机（只随 dp 变）差 2~8 倍，
+    #      两个数并排会让人误读成"计划口径错了"；正确口径须重生成数据件（另案呈报）⇒ 只动文案。
+    #   ② ⛔ 不写内部记号（`⛔` 属内部写作记号；矩阵是给人看的唯一真相源）。
+    #   ⛔ 判据不变：判据① 认的仍是 `epochs_completed ≥ epochs_planned`（见本函数 docstring）。
+    steps = doc.get("steps_actual")
+    ledger = f"；台账：实跑 {steps} 步（不作通过条件）"
     if fails:
         return FAIL, "判据① 未过：" + "；".join(fails) + ledger
     return PASS, (f"判据① 跑完（{epochs_done}/{epochs_planned} epoch，检查点可加载，"
