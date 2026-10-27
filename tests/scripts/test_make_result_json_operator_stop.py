@@ -245,7 +245,10 @@ def test_switch_on_derives_zero_and_keeps_evidence(tmp_path):
     assert doc["run_result"]["exit_code"] == 0, doc["run_result"]
     ev = doc["provenance"]["operator_stop_evidence"]
     assert ev["applies"] is True and ev["exit_code_raw"] == 137
-    assert "运维按授权" in doc["note"] and "1.091e5" in doc["note"]
+    # ★ E1：备注只说结论（「退出码 0（按证据重派生，原始 137）」），
+    #   "运维按授权停容器 / 墙钟互校"的细节留在证据件里（`_operator_stop_note` 仍逐字保留该文案）
+    assert "退出码 0（按证据重派生，原始 137）" in doc["note"], doc["note"]
+    assert doc["provenance"]["operator_stop_evidence"]["applies"] is True
     # 墙钟不改：本条通道的 elapsed 就是真实训练墙钟
     assert doc["elapsed"] == pytest.approx(109451.0)
 

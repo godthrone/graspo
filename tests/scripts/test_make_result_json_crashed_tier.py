@@ -39,6 +39,7 @@ _ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT / "scripts"))
 sys.path.insert(0, str(_ROOT / "tools" / "matrix"))
 import make_result_json as m  # noqa: E402
+import note_style  # noqa: E402
 import backfill_matrix as bf  # noqa: E402
 
 _MANIFEST = _ROOT / "tests" / "e2e" / "matrix68_manifest.json"
@@ -156,10 +157,19 @@ def test_crash_tier_admitted_with_full_evidence(tmp_path):
     # 证据缺口全部由"训练崩溃"这件事实解释 ⇒ 不再自判"证据不全"（rc=4）
     assert diag["evidence_gaps"] == [], diag["evidence_gaps"]
 
-    # note 里逐字：模板句 + 原退出码 + 报错首行原文 + 日志 file:line
-    assert "训练崩溃，未产生有效训练：exit_code=1，" in doc["note"], doc["note"]
-    assert M011_ERROR in doc["note"], "note 里没有逐字的报错原文"
-    assert "（stdout.log:20）" in doc["note"], "note 里没有报错所在的日志坐标"
+    # ★ E1（2026-10-27 主席裁定）改了**展示口径**：备注列只说人话 —— 报错只留
+    #   「异常类名 ＋ 正文前 ≤40 字…」，⛔ 不再把整段报错原文/正则/路径/日志坐标抄进表格。
+    note = doc["note"]
+    assert note.startswith("训练崩溃，未产生有效训练：ValueError: lora.target_modules is required"), note
+    assert "…" in note, f"超长报错必须截断并留省略号：{note}"
+    assert "由于" not in note and "(" not in note, f"报错摘要里不得带英文帮助/括号原文：{note}"
+    # ⛔ 备注里不许出现工程日志形态（坐标 / 绝对路径 / file:line / 正则原文）
+    assert not note_style.has_noise(note), note
+    assert len(note) <= note_style.NOTE_LIMIT, f"{len(note)} 字超上限：{note}"
+    # ★ 诚实没有丢：**完整报错原文与日志行号仍在证据件里**（句句可核）
+    assert M011_ERROR in ev["error"]["text"], "证据件里没有逐字的报错原文"
+    assert ev["error"]["log_line"] == 20, ev["error"]
+    assert "stdout.log:20" not in note, "日志坐标不该进备注"
     # 证据坐标：日志行号 + 源码帧（lora.py:170）
     assert ev["error"]["log_line"] == 20
     assert ev["error"]["frame"]["file"].endswith("core/lora.py")

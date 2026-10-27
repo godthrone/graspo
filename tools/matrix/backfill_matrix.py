@@ -62,7 +62,9 @@ ROOT = TOOL_DIR.parents[1]
 
 # ★ 2026-10-23（基准件唯一 + 按轮副本）：人读件文件名/路径的唯一真相源 = 同目录 `paths.py`（宪法 §1.4）。
 sys.path.insert(0, str(TOOL_DIR))
+sys.path.insert(0, str(TOOL_DIR.parents[1] / "scripts"))   # ← `<repo>/scripts`（note_style 所在）
 import paths as _paths  # noqa: E402
+import note_style  # noqa: E402  —— 备注列「说人话」口径（唯一真相源，⛔ 不另抄一套规则）
 
 
 #: ★★ 判据类型名的**唯一真相源** = `src/graspo/eval/thresholds.KNOWN_CRITERIA`
@@ -810,13 +812,22 @@ def judge_row(doc, row, frozen_map, teacher_pp):
 
 
 def compose_note(base, status, fails, unks):
-    """备注列 = 跑次自报的条件/限制 ＋（不通过时）未过判据与未判定项。"""
+    """备注列 = 跑次自报的结论 ＋ **一句**判据结论（`判据结论：①③④ 过，② 未过`）。
+
+    ★ E1（2026-10-27 主席裁定）：此前把判据原因串**原样**拼进备注（含「台账：实跑 N 步」、
+    退出码比较等内部措辞，M011 曾达 1324 字）⇒ 人读件被写成工程日志。现在：
+      · 只留编号级的结论（过 / 未过 / 未判定），明细仍在 stdout 日志、台账文件与结果 json 的
+        `fails`/`unknowns` 里（⛔ 没有删证据）；
+      · 拼装走**唯一**渲染器 `scripts/note_style.py::render`（与存量规范化同一个），并受
+        200 字上限约束。
+    """
     note = str(base or "").strip()
-    if status == "不通过":
-        note += "；未过判据：" + "；".join(fails)
-        if unks:
-            note += "；未判定项（无实测证据）：" + "；".join(unks)
-    return note
+    if status not in ("通过", "不通过"):
+        return note
+    f_ids, u_ids = note_style.criteria_ids(fails, unks)
+    facts = note_style.parse_legacy(note)
+    facts["fail_ids"], facts["unk_ids"], facts["judged"] = f_ids, u_ids, True
+    return note_style.render(facts)
 
 
 def fmt_steps(n: int) -> str:

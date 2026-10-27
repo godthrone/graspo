@@ -114,10 +114,8 @@ def test_note_drops_planned_steps_clause(tmp_path):
     assert not _PLANNED_STEPS_RE.search(note), f"备注里还留着「计划 N 步」从句：{note}"
     # 判据① 的 epoch 口径文案**照旧保留**（D29 只动步数，⛔ 不动 judge 口径）
     assert "epoch" in note or "轮" in note, note
-    # D29 补丁：实跑步数/轮数这两处短语，原因串自带括号时**不得**叠出「））」这种排版瑕疵
-    # （证据缺口段里的嵌套括号是**合法嵌套**，不在此列）
-    assert not re.search(r"实跑步数[^；]*[）)]）", note), note
-    assert not re.search(r"实跑轮数未知[^；]*[）)]）", note), note
+    # E1：备注里不出现「））」这类叠括号（模板不再用「（原因）」包法）
+    assert "））" not in note, note
 
 
 def test_judge_ledger_text_drops_planned_steps_and_marker():
@@ -169,7 +167,7 @@ def test_note_without_plan_numbers_has_no_empty_parens(tmp_path, how):
     run = _run_dir(tmp_path, steps=None)          # 实跑未知 ⇒ 走 else 分支（改前是「计划 N 步，实跑未知」）
     doc, _diag = _build(run, manifest=mf, rows=rows)
     note = doc["note"]
-    assert re.search(r"实跑步数未知[（：]", note), note   # 括号或冒号引导（D29 补丁：原因自带括号用冒号）
+    assert "实跑步数未知" in note, note
     assert not _PLANNED_STEPS_RE.search(note), note
     for bad in ("None", "（）", "(）", "（；", "；）", "；；", "()"):
         assert bad not in note, f"备注里出现 {bad!r}：{note}"
@@ -187,8 +185,9 @@ def test_composed_note_passes_the_leak_scanner(tmp_path):
     doc["run_result"].update({"exit_code": 1, "epochs_completed": 0, "epochs_planned": 8,
                               "final_ckpt_loadable": False, "nan_or_inf_detected": False})
     note = _compose_like_backfiller(doc, rows["M018"])
-    assert "未过判据：判据① 未过：退出码 1 ≠ 0" in note, note   # 台账句确实拼进来了（不是空转）
-    assert "台账：实跑 0 步（不作通过条件）" in note, note
+    # ★ E1：判据结论现在只写编号级（过 / 未过 / 未判定），明细留证据件
+    assert "判据结论：" in note and "① 未过" in note, note
+    assert "台账" not in note, f"内部台账措辞不该进人读件：{note}"
     assert not any(ch in note for ch in _MARKERS), f"备注里有内部记号：{note}"
     assert _leak_hits(note, tmp_path) == [], _leak_hits(note, tmp_path)
 

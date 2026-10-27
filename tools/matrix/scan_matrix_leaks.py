@@ -21,6 +21,7 @@
 退出码：0 = 无命中；1 = 有命中。
 """
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
@@ -80,6 +81,69 @@ PATTERNS = [
 ]
 
 
+#: ★★ 2026-10-27（任务 E）备注列**专用**禁入形态 —— 日志坐标 / 绝对路径 / `file:line` /
+#: 正则原文。为什么单列一套而⛔ 不塞进 :data:`PATTERNS`：一是长度/正则这类**单元格级**口径
+#: 逐行正则量不出来；二是 `(?:` 在规格面（如 `spec.lora_targets` 的正则值）里是**合法内容**，
+#: 文件级匹配会误伤 ⇒ 只扫 `rows[*].note`。病史：M011 备注曾 1324 字，含整段 traceback、
+#: 正则原文、`/workspace/…/lora.py:170`、`stdout.log:20` ⇒ 用户看到的是日志而不是结论。
+NOTE_NOISE_PATTERNS = (
+    (r"stdout\.log:\d+", "日志坐标（对人不表达的定位符）"),
+    (r"[A-Za-z0-9_./-]+\.py:\d+", "源码 file:line 坐标（对人不表达的定位符）"),
+    (r"/workspace/", "容器内绝对路径"),
+    (r"/data/", "宿主/容器绝对路径"),
+    (r"\(\?:", "正则原文（非人读）"),
+)
+
+
+def scan_notes(paths) -> list[tuple[str, int, str]]:
+    """扫**备注列**（`rows[*].note`）里的工程日志形态（失败级）。
+
+    只对 `.json` 数据件生效；解析不了就当没扫到（结构不合法由 verify 那边管）。
+    """
+    hits = []
+    for p in paths:
+        f = Path(p)
+        if not f.is_file() or f.suffix != ".json":
+            continue
+        try:
+            doc = json.loads(f.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            continue
+        for r in doc.get("rows") or ():
+            note = _bo.strip_sanctioned(str(r.get("note") or ""))
+            for pat, why in NOTE_NOISE_PATTERNS:
+                for m in re.finditer(pat, note):
+                    hits.append((str(p), 0, f"{why} ⇒ {m.group(0)!r}（{r.get('tier')}.note）"))
+    return hits
+
+
+#: 备注列长度上限的**告警**阈值（字）。超了只提醒、不判 FAIL（人读质量红线在 200 字，
+#: 这里留一档余量，避免把「略长但清楚」的备注卡成失败）。
+NOTE_LEN_WARN = 400
+
+
+def note_length_warnings(paths, limit: int = NOTE_LEN_WARN) -> list[tuple[str, int, str]]:
+    """备注列过长的**告警**（⛔ 不判 FAIL）：只对 JSON 数据件的 `rows[*].note` 计长度。
+
+    ★ 为什么单列一条而不是塞进 PATTERNS：`PATTERNS` 是正则逐行匹配，量不出「一格多长」；
+    长度是**单元格级**的口径，必须按 JSON 结构量。
+    """
+    out = []
+    for p in paths:
+        f = Path(p)
+        if not f.is_file() or f.suffix != ".json":
+            continue
+        try:
+            doc = json.loads(f.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            continue
+        for r in doc.get("rows") or ():
+            note = str(r.get("note") or "")
+            if len(note) > limit:
+                out.append((str(p), 0, f"备注过长 {len(note)} 字（>{limit}）：{r.get('tier')}"))
+    return out
+
+
 def load_denylist() -> list[tuple[str, str]]:
     """可选外部禁词清单（`.local/`，不入库）；缺失或含 # 注释行均安全跳过。"""
     if not DENYLIST.exists():
@@ -117,11 +181,19 @@ def main():
     a = ap.parse_args()
 
     targets = a.targets or DEFAULT_TARGETS
-    hits = scan(targets, load_denylist())
+    hits = scan(targets, load_denylist()) + scan_notes(targets)
     if not a.quiet:
-        print(f"scan_matrix_leaks: 目标 {len(targets)} 件；禁止项命中 {len(hits)} 处")
+        print(f"scan_matrix_leaks: 目标 {len(targets)} 件；禁止项命中 {len(hits)} 处"
+              f"（含备注列专用词表）")
         for p, i, why in hits:
             print(f"  ✗ {p}:{i}: {why}")
+    warns = note_length_warnings(targets)
+    if not a.quiet:
+        for p, i, why in warns:
+            print(f"  ⚠ {p}: {why}（告警，不计入 FAIL）")
+        if warns:
+            print(f"scan_matrix_leaks: 备注长度告警 {len(warns)} 处（阈值 {NOTE_LEN_WARN} 字；"
+                  f"人读上限见 scripts/note_style.py::NOTE_LIMIT）")
     print("LEAK-SCAN " + ("CLEAN" if not hits else "FAIL"))
     return 0 if not hits else 1
 

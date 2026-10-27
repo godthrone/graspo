@@ -91,6 +91,7 @@ ROOT = Path(__file__).resolve().parents[1]
 _SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
+import note_style  # noqa: E402  —— 备注列的「说人话」口径（唯一真相源）
 import step_readings  # noqa: E402  —— 步数读数的唯一真相源（§1.4；⛔ 不在本文件里再抄一份正则）
 
 SCHEMA = "matrix-run/v1"
@@ -1607,66 +1608,60 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
     if loss_curve_doc is not None:
         effect += (f"；训练 loss {loss_curve_doc['first']:.4g} → {loss_curve_doc['last']:.4g}"
                    f"（最小 {loss_curve_doc['min']:.4g}，共 {loss_curve_doc['n']} 个点）")
-    note_parts = []
-    if crash is not None and crash["applies"]:
-        # ★ D9 的验收句（逐字模板）：「训练崩溃，未产生有效训练：exit_code=<原值>，<报错首行原文>
-        #   （stdout.log:<行号>）」—— 放在 note 首位，人读件一眼看到真因。
-        note_parts.append(_crash_note(crash, exit_code))
-    if note_extra:
-        note_parts.append(note_extra)
-    note_parts.append(f"退出码 {exit_code}" if exit_code is not None else "退出码缺（未取到跑次退出码）")
-    # ★ D29（2026-10-27 主席裁定）：备注列**只写实跑步数与读数来源**，⛔ 不再并排写「计划 N 步」。
-    #   理由：矩阵是给人读的唯一真相源，一格内并排「实跑 400 / 计划 200」两个打架的数会被误读成
-    #   "计划口径错了"；而清单侧每 epoch 步数按**总卡数**折算（真机只随 dp 变）本就是错的，
-    #   正确口径要重生成数据件（须先呈报）⇒ 这一步**只做展示层**，⛔ 不动生成器公式、⛔ 不动数据件。
-    #   本行也不再读 `mt['expected_optimizer_steps']`：缺该键/为 null 的清单不会在此抛错，
-    #   也不会写出「计划 None 步」或空括号/孤立分隔符。
-    note_parts.append(steps_phrase(steps_actual, steps_why))
-    # ★ 同上（排版防呆）：epoch 读数的原因串也常自带括号（「…无 logging.jsonl 的 epoch 字段）」）
-    #   ⇒ 与实跑步数同一包法，⛔ 不再叠出「））」。判据口径未动（仍看 epochs_completed/planned）。
-    note_parts.append(
-        why_phrase(f"完成轮数 {epochs_done}/{epochs_planned} 个 epoch", epochs_why)
-        if isinstance(epochs_done, int) and epochs_planned is not None else
-        why_phrase(f"计划 {epochs_planned if epochs_planned is not None else '未知'} 个 epoch，"
-                   f"实跑轮数未知", epochs_why))
-    note_parts.append(f"检查点：{loadable_why}")
-    note_parts.append(f"数值异常：{naninf_why}")
-    note_parts.append(f"峰值显存：{peak_why}")
-    note_parts.append(f"效果读数：{ev_why}")
-    if algo == "CPT":
-        note_parts.append(f"训练 loss 序列：{loss_curve_why}"
-                          if loss_curve_doc is not None
-                          else f"训练 loss 序列缺（{loss_curve_why}）")
-    note_parts.extend(_teacher_note(algo, ev))
-    note_parts.extend(_checks_note(checks, checks_ev, row))
-    if artifact is not None:
-        if artifact["applies"]:
-            _d = artifact.get("elapsed_derived")
-            note_parts.append(
-                f"退出码按证据重派生：原始 {artifact['exit_code_raw']} → "
-                f"{artifact.get('exit_code_derived')}（训练已按主流程返回：见步骤跑满、"
-                f"轮数跑满、检查点可加载、无 NaN/Inf 四项实测）"
-                + (f"；墙钟改取「起跑 → 主流程返回」= {_d} s"
-                   f"（原始 {artifact.get('elapsed_raw')} s 含收尾空等）" if _d else ""))
-        else:
-            note_parts.append(f"退出码按证据重派生未成立（保留原始读数）：{artifact['why']}")
-    if operator_stop is not None:
-        if operator_stop["applies"]:
-            note_parts.append(_operator_stop_note(operator_stop))
-        else:
-            note_parts.append(f"退出码按「运维停容器」证据重派生未成立（保留原始读数）："
-                              f"{operator_stop['why']}")
+    # ── ★ E1（2026-10-27 主席裁定）：备注列**说人话** ───────────────────────────
+    #   此前它被写成「工程日志」：整段 traceback、正则原文、容器内绝对路径 ＋ file:line、
+    #   `stdout.log:20` 坐标、`GPU 3` 硬件细节全被抄进用户要看的那张表（M011 曾达 1324 字）。
+    #   口径（唯一真相源 = `scripts/note_style.py`）：
+    #     · ⛔ 不写日志坐标 / 绝对路径 / file:line / 正则原文 / 英文帮助长句；
+    #     · 只写结论：退出码、实跑步数、完成 X/Y 个 epoch、检查点有无、数值异常、峰值显存、
+    #       效果读数（after/base/Δ）、判据①②③④ 结论（判据部分由回填器在 `compose_note` 追加）；
+    #     · 报错只留「异常类名 ＋ 正文前 ≤40 字」＋「详见跑次证据」；单档 ≤ 200 字。
+    #   ★ 诚实不靠备注：完整报错原文/行号/路径仍在 `provenance` 与跑次证据件里（⛔ 没有删证据）。
     comparable = readings.get("comparable")
+    facts: dict = {}
+    if note_extra:
+        facts["extra"] = note_extra
+    if crash is not None and crash["applies"]:
+        facts["crash"] = note_style.clip_error(crash["error"]["text"])
+    if artifact is not None and artifact.get("applies") and artifact.get("exit_code_derived") is not None:
+        facts["exit_derived"] = (artifact.get("exit_code_raw"), exit_code)
+    elif (operator_stop is not None and operator_stop.get("applies")
+          and operator_stop.get("exit_code_derived") is not None):
+        facts["exit_derived"] = (operator_stop.get("exit_code_raw"), exit_code)
+    else:
+        facts["exit_code"] = exit_code
+    facts["steps"] = steps_actual if isinstance(steps_actual, int) else None
+    if isinstance(steps_actual, int):
+        _src = note_style.strip_noise(str(steps_why or "")).strip()
+        # ★ 来源只留「短且干净」的那些（如「读自跑次读数文件」）；长原因串留在证据里
+        if _src and "；" not in _src and len(_src) <= 16 and not note_style.has_noise(_src):
+            facts["steps_src"] = _src
+    if isinstance(epochs_done, int) and isinstance(epochs_planned, int):
+        facts["epochs_done"], facts["epochs_planned"] = epochs_done, epochs_planned
+    elif epochs_planned is not None:
+        facts["epochs_planned"] = epochs_planned
+    facts["ckpt"] = "可加载" if loadable is True else ("不可加载" if loadable is False else "未取证")
+    facts["naninf"] = "无" if nan_inf is False else ("有 NaN/Inf" if nan_inf is True else "未取证")
+    _peak = re.search(r"([0-9][0-9.]*\s*(?:MiB|GiB))", str(peak_mem or peak_why or ""))
+    if _peak:
+        facts["peak"] = _peak.group(1)
+    if isinstance(ev, dict):
+        facts.update({k: ev.get(k) for k in ("after_acc", "base_acc", "delta_pp")
+                      if ev.get(k) is not None})
+    if algo == "CPT" and loss_curve_doc is not None:
+        facts["loss"] = (f"训练 loss {loss_curve_doc['first']:.4g} → "
+                         f"{loss_curve_doc['last']:.4g}（{loss_curve_doc['n']} 点）")
     if comparable is False:
-        note_parts.append("环境快照冻结维度发生变化 ⇒ 本档读数不可比（不得悄悄重跑）")
+        facts["warns"] = ["读数不可比（环境快照冻结维度变化）"]
     if crash is not None and crash["applies"]:
         # ★ 每一条"缺 XX 读数"都是"训练崩溃"的直接后果 ⇒ 收进证据里留痕，不再让本文件自判
         #   "证据不全"（rc=4）。⛔ 这不是放宽门槛：放行后回填器按判据① 判的是"退出码≠0 +
         #   0/N 轮 + 检查点不可加载" ⇒ 状态必然是 `不通过`，不可能变成 `通过`。
         crash["explained_gaps"] = list(gaps)
         gaps = []
-    if gaps:
-        note_parts.append("证据缺口（不满足回填条件，不补数）：" + "；".join(gaps))
+    facts["gaps"] = len(gaps)
+    note = note_style.render(facts)
+    assert len(note) <= note_style.NOTE_LIMIT, f"备注超长（{len(note)} > {note_style.NOTE_LIMIT}）：{note}"
 
     doc = {
         "schema": SCHEMA,
@@ -1705,7 +1700,7 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
         "peak_mem": peak_mem,
         "throughput": throughput,
         "effect": effect,
-        "note": "；".join(note_parts),
+        "note": note,
         "run_path": str(ckpt_path or run_dir),
         "provenance": {
             "produced_by": "scripts/make_result_json.py（工作包 B / task-manifest）",
