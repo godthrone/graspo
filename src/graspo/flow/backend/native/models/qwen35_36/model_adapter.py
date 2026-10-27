@@ -20,6 +20,7 @@ from graspo.flow.backend.native.transformer_model_adapter import TransformerMode
 from graspo.flow.backend.native.lora.lora_helpers import (
     VISUAL_HF_PREFIX,
     native_qwen_lora_available_targets,
+    stage_exempt_lora_targets,
 )
 from graspo.flow.backend.native.lora.lora_io import load_peft_adapter_into_native_model
 from graspo.flow.backend.native.parallel.placement_plan import (
@@ -58,9 +59,19 @@ class Qwen35ModelAdapter(  # type: ignore[misc]  # mixin 组合点的多基类�
     def _load_model(self, hf_config: Any, model_path: Path) -> None:
         torch_dtype = _resolve_dtype(self.config.model.torch_dtype)
         loader = SafetensorIndex(model_path)
-        lora_targets = resolve_lora_target_modules(
-            self.config.lora.target_modules,
-            available=native_qwen_lora_available_targets(hf_config),
+        full_param = self.config.effective_tuner_type == "full"
+        # ★ 全参档**不解析** LoRA 正则（缺陷 N1）：``lora.target_modules`` 是 LoRA 专用键，
+        #   全参档既不需要也不得要求它。旧实现在 tuner 模式分支之外无条件解析 ⇒ 全参档报
+        #   ``ValueError: lora.target_modules is required``（``core/lora.py:170``；228 实测
+        #   M011：9B/SFT/全参/native/1 卡，334 s 崩溃）。LoRA 档逐字不变：同一正则、
+        #   同一可用域、同一 ``resolved`` 集合。
+        lora_targets = (
+            None
+            if full_param
+            else resolve_lora_target_modules(
+                self.config.lora.target_modules,
+                available=native_qwen_lora_available_targets(hf_config),
+            )
         )
         self.placement = build_placement_plan(
             strategy=self.config.native.placement_strategy,
@@ -75,7 +86,6 @@ class Qwen35ModelAdapter(  # type: ignore[misc]  # mixin 组合点的多基类�
             if self.config.native.layer_ranges is not None
             else None,
         )
-        full_param = self.config.effective_tuner_type == "full"
         self.model = build_native_qwen_model(
             hf_config=hf_config,
             loader=loader,
@@ -86,7 +96,7 @@ class Qwen35ModelAdapter(  # type: ignore[misc]  # mixin 组合点的多基类�
             lora_r=self.config.lora.r,
             lora_alpha=self.config.lora.alpha,
             lora_dropout=self.config.lora.dropout,
-            lora_targets=set(lora_targets.resolved),
+            lora_targets=set(lora_targets.resolved) if lora_targets is not None else set(),
             gradient_checkpointing=bool(self.config.model.gradient_checkpointing),
             torch_dtype=torch_dtype,
             device=self.device,
@@ -94,8 +104,8 @@ class Qwen35ModelAdapter(  # type: ignore[misc]  # mixin 组合点的多基类�
         )
         if self.model is None:
             raise RuntimeError("model not loaded; call setup() first")
-        resolved_lora_targets = set(lora_targets.resolved)
         if not full_param:
+            resolved_lora_targets = set(lora_targets.resolved)
             # 视觉塔防线（fail-closed）：原来的豁免把"本 rank 没有视觉塔"与
             # "模型没有视觉"混为一谈，会在"声明了视觉、本 rank 又持有 embedding"
             # 时静默放过视觉 target ⇒ 视觉塔无声退回语言-only。
@@ -116,10 +126,24 @@ class Qwen35ModelAdapter(  # type: ignore[misc]  # mixin 组合点的多基类�
                 if not owns_embeddings
                 else set()
             )
+            # ★ PP stage 归属豁免（缺陷 N2）：``resolved`` 是**整模型**的命中集合（正则的
+            #   匹配域，与 ms-swift/PEFT 逐字相同），而本 stage 只构造
+            #   ``placement.local_layer_indices`` 里的层 ⇒ 别的 stage 的层不在此处建，
+            #   不得算作"本机未实现"。判据见 ``lora_helpers.stage_exempt_lora_targets``：
+            #   **只**剔除有层号且不在本 stage 的目标；本 stage 该建的层缺失照旧报错，
+            #   ``pp_size==1`` 恒不豁免（不放宽成"空集都放过"）。
+            exempted_stage_targets = stage_exempt_lora_targets(
+                resolved_lora_targets,
+                local_layer_indices=(
+                    self.placement.local_layer_indices if self.placement is not None else None
+                ),
+                is_pipeline=bool(self.placement is not None and self.placement.is_pipeline),
+            )
             missing_lora_targets = sorted(
                 resolved_lora_targets
                 - set(self.model.enabled_lora_hf_module_paths())
                 - exempted_visual_targets
+                - exempted_stage_targets
             )
             if missing_lora_targets:
                 raise ValueError(

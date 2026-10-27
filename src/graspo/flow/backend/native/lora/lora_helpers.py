@@ -6,6 +6,8 @@ these functions don't depend on ``LoRALinear``'s state and are independently tes
 
 from __future__ import annotations
 
+import re
+from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -15,6 +17,57 @@ if TYPE_CHECKING:
 #: native 与 ms-swift 都用它——native 的视觉 ``LoRALinear`` 记的就是
 #: ``lora_linear.py::_replace_visual_lora_modules`` 里的 ``f"model.visual.{module_path}"``。
 VISUAL_HF_PREFIX = "model.visual."
+
+#: 真实 HF 模块名里的**解码层号**段（``model.language_model.layers.12.…`` /
+#: ``model.layers.12.…``）；视觉塔走 ``model.visual.blocks.N.…``，不含 ``layers.``。
+_LAYER_HF_PATH_RE = re.compile(r"\.layers\.(\d+)\.")
+
+
+def lora_target_layer_index(hf_module_path: str) -> int | None:
+    """该目标属于**第几层**解码器；不含层号（embeddings / lm_head / 视觉塔）返回 ``None``。"""
+    match = _LAYER_HF_PATH_RE.search(str(hf_module_path))
+    return int(match.group(1)) if match is not None else None
+
+
+def stage_exempt_lora_targets(
+    targets: Iterable[str],
+    *,
+    local_layer_indices: Iterable[int] | None,
+    is_pipeline: bool,
+) -> frozenset[str]:
+    """PP（``pp_size>1``）下把**本 stage 不持有**的那些层的 target 从判据域里剔除。
+
+    **为什么需要（缺陷 N2 真因）**：``native_qwen_lora_available_targets`` 枚举的是
+    **整模型**的 LoRA 可命中模块（正则的匹配域，与 ms-swift/PEFT 逐字相同），而
+    pipeline 的每个 stage 只构造 ``placement.local_layer_indices`` 里的层
+    （``model.py`` 只按这些下标建 ``TensorParallelQwen35DecoderLayer``）。于是
+    ``enabled_lora_hf_module_paths()`` 在 stage k 上**结构性**只含本 stage 的层，
+    拿它与整模型的 ``resolved`` 相减，必然把**别的 stage 的层**误报成"本机未实现"
+    ⇒ ``pp_size>1`` 的档一律在建模型后崩（228 实测 22 档 native+pp>1）。
+
+    **判据（不得放宽）**：只剔除**有层号且该层号不在本 stage** 的目标。
+    - 有层号且在本 stage ⇒ 留在"必须命中"域（真该建的没建，照旧 fail-closed）；
+    - 无层号（embeddings / lm_head / ``model.visual.*``）⇒ 一律**不**剔除
+      （视觉塔由 ``exempted_visual_targets`` 那套 ``include_embeddings`` 判据管，
+      两者各自同域、互不替代）；
+    - ``pp_size==1`` ⇒ 恒空集（本 rank 持有全部层，什么都不豁免）。
+
+    因此"空集/漏配"不会因本函数而静默通过：每条 target 恰好归属某一个层，也就恰好
+    由某一个 stage 负责建成——豁免只把"**谁**该建"摊销到正确的 stage。
+
+    :param targets: 一次解析得到的真实 HF 模块名集合（``ResolvedLoRATargets.resolved``）。
+    :param local_layer_indices: 本 stage 持有的层号（``NativePlacementPlan.local_layer_indices``）。
+    :param is_pipeline: 是否 ``pp_size>1``（``NativePlacementPlan.is_pipeline``）。
+    """
+    if not is_pipeline:
+        return frozenset()
+    owned = {int(idx) for idx in (local_layer_indices or ())}
+    exempted: set[str] = set()
+    for target in targets:
+        layer_index = lora_target_layer_index(str(target))
+        if layer_index is not None and layer_index not in owned:
+            exempted.add(str(target))
+    return frozenset(exempted)
 
 
 def native_qwen_lora_available_targets(

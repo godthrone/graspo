@@ -13,7 +13,10 @@ from torch.nn.utils.rnn import pad_sequence
 from graspo.core.lora import resolve_lora_target_modules
 from graspo.flow.backend.native.models.common.model_builders import build_native_qwen_model
 from graspo.flow.backend.native.transformer_model_adapter import TransformerModelAdapter
-from graspo.flow.backend.native.lora.lora_helpers import native_qwen_lora_available_targets
+from graspo.flow.backend.native.lora.lora_helpers import (
+    native_qwen_lora_available_targets,
+    stage_exempt_lora_targets,
+)
 from graspo.flow.backend.native.lora.lora_io import load_peft_adapter_into_native_model
 from graspo.flow.backend.native.parallel.placement_plan import (
     build_placement_plan,
@@ -44,9 +47,19 @@ class Qwen3ModelAdapter(TransformerModelAdapter):
     def _load_model(self, hf_config: Any, model_path: Path) -> None:
         torch_dtype = _resolve_dtype(self.config.model.torch_dtype)
         loader = SafetensorIndex(model_path)
-        lora_targets = resolve_lora_target_modules(
-            self.config.lora.target_modules,
-            available=native_qwen_lora_available_targets(hf_config),
+        full_param = self.config.effective_tuner_type == "full"
+        # ★ 全参档**不解析** LoRA 正则（缺陷 N1）：``lora.target_modules`` 是 LoRA 专用键，
+        #   全参档既不需要也不得要求它。旧实现在 tuner 模式分支之外无条件解析 ⇒ 全参档报
+        #   ``ValueError: lora.target_modules is required``（``core/lora.py:170``）。
+        #   本适配器与 ``qwen35_36/model_adapter.py`` 是同一处缺陷（同族同判据），一并修。
+        #   LoRA 档逐字不变：同一正则、同一可用域、同一 ``resolved`` 集合。
+        lora_targets = (
+            None
+            if full_param
+            else resolve_lora_target_modules(
+                self.config.lora.target_modules,
+                available=native_qwen_lora_available_targets(hf_config),
+            )
         )
         self.placement = build_placement_plan(
             strategy=self.config.native.placement_strategy,
@@ -61,7 +74,6 @@ class Qwen3ModelAdapter(TransformerModelAdapter):
             if self.config.native.layer_ranges is not None
             else None,
         )
-        full_param = self.config.effective_tuner_type == "full"
         self.model = build_native_qwen_model(
             hf_config=hf_config,
             loader=loader,
@@ -71,7 +83,7 @@ class Qwen3ModelAdapter(TransformerModelAdapter):
             lora_r=self.config.lora.r,
             lora_alpha=self.config.lora.alpha,
             lora_dropout=self.config.lora.dropout,
-            lora_targets=set(lora_targets.resolved),
+            lora_targets=set(lora_targets.resolved) if lora_targets is not None else set(),
             gradient_checkpointing=bool(self.config.model.gradient_checkpointing),
             torch_dtype=torch_dtype,
             device=self.device,
@@ -84,9 +96,23 @@ class Qwen3ModelAdapter(TransformerModelAdapter):
             #   `lora_targets.resolved` 是正则命中的 HF 模块名，模型侧也必须回 HF 模块名
             #   （旧版拿 native 规范名 `enabled_lora_target_names()` 相减 ⇒ 两个域不同⇒
             #    差集恒等于全部目标 ⇒ 每次都误报 ValueError）。
+            # ★ PP stage 归属豁免（缺陷 N2）：``resolved`` 是**整模型**的命中集合（正则的
+            #   匹配域，与 ms-swift/PEFT 逐字相同），而本 stage 只构造
+            #   ``placement.local_layer_indices`` 里的层 ⇒ 别的 stage 的层不在此处建，
+            #   不得算作"本机未实现"。判据见 ``lora_helpers.stage_exempt_lora_targets``：
+            #   **只**剔除有层号且不在本 stage 的目标；本 stage 该建的层缺失照旧报错，
+            #   ``pp_size==1`` 恒不豁免（不放宽成"空集都放过"）。
+            exempted_stage_targets = stage_exempt_lora_targets(
+                set(lora_targets.resolved),
+                local_layer_indices=(
+                    self.placement.local_layer_indices if self.placement is not None else None
+                ),
+                is_pipeline=bool(self.placement is not None and self.placement.is_pipeline),
+            )
             missing_lora_targets = sorted(
                 set(lora_targets.resolved)
                 - set(self.model.enabled_lora_hf_module_paths())
+                - exempted_stage_targets
             )
             if missing_lora_targets:
                 raise ValueError(
