@@ -197,6 +197,18 @@ POLICY: dict[str, Spec] = {
         HELP,
         "GRASPO 判据③ 签署件生成器（第 9 节 8 条不变式逐条取证；缺证据即拒签 rc=2、零写入）",
     ),
+    # ★ 新增（2026-10-27 · D23）：**取证/回填链的唯一入口**（收编 A800 侧在版控之外的
+    #   `work/b09/mk_evidence.sh`）。原来那份不在版控里的脚本直连 `record_checks.py` +
+    #   `make_result_json.py`，**绕过 fill_one** ⇒ 链首「读数件合成」被漏 ⇒ M013/M018 人工补、
+    #   M008 盘上 `readings.json` 是空壳（`exit_code=99`）把**跑成功**的档判失败（实测三例）。
+    #   收编后链 = ⓪ `fill_one.py::ensure_readings`（单一真相源）→ ① `record_checks.py` → ② `fill_one.sh`。
+    #   常设冒烟只做 `bash -n` + `--help`（rc=0、零写入）：真跑需要跑次目录与当轮副本；
+    #   链序/幂等/失败可见/`--dry-run` 不落盘由 `tests/tools/test_mk_evidence_single_chain.py` 覆盖。
+    "tools/matrix/mk_evidence.sh": Spec(
+        SH_HELP,
+        "取证/回填链唯一入口（⓪读数件合成 → ①record_checks → ②fill_one.sh，⛔ 无第二份派生调用）；"
+        "--help 打印用法 rc=0、零写入；真跑需跑次目录 ⇒ 冒烟只做 --help",
+    ),
     # ★ 补登记（2026-10-22 基线轮）：回填防呆 wrapper —— 钉死「带日期副本对」与 .local 台账，指向仓内
     #   原版（数据件或人读件）一律 rc=2 拒起。跑一次会真回填（写数据件/HTML）⇒ 冒烟只做 --help 与 bash -n。
     "tools/matrix/backfill_dated.sh": Spec(
