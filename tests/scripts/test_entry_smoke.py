@@ -273,6 +273,10 @@ POLICY: dict[str, Spec] = {
     ),
     # ★ 补登记（2026-10-14）：里程碑记录「冻结件」节的**机读生成器**（只读打印 / `--inject` 注入）。
     #   无参运行 ⇒ rc==0 且输出含三件 sha 行 ⇒ 用 HELP 模式做常设冒烟（⛔ 不注入任何文件）。
+    # ★ 2026-10-27（任务 E）：存量备注列纯文本规范化脚本（dry-run 默认；`--write` 才落盘）
+    "tools/matrix/normalize_notes.py": Spec(
+        HELP, "存量备注列纯文本规范化（⛔ 不重新回填；dry-run 默认，--write 才写）"
+    ),
     "tools/matrix/freeze_table.py": Spec(
         HELP, "里程碑「冻结件」节机读生成器（值来自实物 sha256＋字节；支持 --inject）"
     ),
