@@ -44,6 +44,8 @@ import backfill_matrix as bf  # noqa: E402
 _MANIFEST = _ROOT / "tests" / "e2e" / "matrix68_manifest.json"
 _DATA = _ROOT / "docs" / "capability-matrix.data.json"
 _GOLDEN = _ROOT / "tests" / "scripts" / "fixtures" / "m011_crash_default_doc.json"
+#: ★ D29 重基线前的同一 golden（修复前代码产出、原样留档）—— 机核「只许 note 一段变」的对照件
+_BEFORE = _ROOT / "tests" / "scripts" / "fixtures" / "m011_crash_default_doc.BEFORE-D29.json"
 _RUNDIR_PLACEHOLDER = "<RUNDIR>"
 
 #: M011 的 `runs/M011/stdout.log` **逐字**原文（228 在役树，52 行；此处保留前 20 行 +
@@ -244,6 +246,25 @@ def test_default_off_is_byte_identical_to_pre_fix_output(tmp_path):
         pytest.skip(f"缺 golden：{_GOLDEN}")
     assert _normalised_json(doc, run) == _GOLDEN.read_text(encoding="utf-8"), \
         "默认关时结果 json 与修复前不是逐字节相同 ⇒ 破坏了『未设开关时行为不变』的承诺"
+
+
+# ── ⑦b D29 重基线**只许** note 一段变（主席 D3 机核：防止顺手放宽别处）──────────────
+def test_golden_differs_from_pre_d29_baseline_only_in_note():
+    """golden 与「D29 前基线」（`…BEFORE-D29.json`，修复前代码产出并留档）除 note 行外逐字节相同。"""
+    before = _BEFORE.read_text(encoding="utf-8")
+    now = _GOLDEN.read_text(encoding="utf-8")
+
+    def note_line(text):
+        found = [ln for ln in text.splitlines() if ln.lstrip().startswith('"note"')]
+        assert len(found) == 1, found
+        return found[0]
+
+    lines = now.splitlines()
+    idx = next(i for i, ln in enumerate(lines) if ln.lstrip().startswith('"note"'))
+    lines[idx] = note_line(before)
+    rebuilt = "\n".join(lines) + ("\n" if now.endswith("\n") else "")
+    assert rebuilt == before, "golden 与 D29 前基线**除 note 行外**出现了字节差异（⛔ 不许顺手放宽别处）"
+    assert note_line(now) != note_line(before), "note 应当随 D29 变化（否则重基线是空操作）"
 
 
 # ── ⑧ 命令行入口：带开关 rc=0（可入表）；不带开关 rc=4（证据不全，保持待测试） ────

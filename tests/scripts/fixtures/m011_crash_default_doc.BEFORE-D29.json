@@ -1,0 +1,49 @@
+{
+ "schema": "matrix-run/v1",
+ "tier": "M011",
+ "params": {
+  "model": "9B",
+  "algo": "SFT",
+  "mode": "全参",
+  "backend": "native",
+  "parallel": "tp=1 pp=1 dp=1（1 卡）",
+  "lr": "5.0e-06",
+  "lora_target": "—",
+  "data_subset": "subsets-v2/M011.jsonl",
+  "switches": "offload_optimizer_state=true",
+  "data_subset_detail": "100 条（subsets-v2/M011.jsonl）",
+  "tuner_type": "full",
+  "nproc_per_node": 1,
+  "tp": 1,
+  "pp": 1,
+  "dp": 1,
+  "max_epochs": 4
+ },
+ "run_result": {
+  "exit_code": 1,
+  "epochs_completed": null,
+  "epochs_planned": 4,
+  "final_ckpt_loadable": null,
+  "nan_or_inf_detected": false
+ },
+ "steps_actual": null,
+ "elapsed": 334.0,
+ "peak_mem": "0.42 GiB",
+ "throughput": null,
+ "effect": "不可评：本档没有评测读数（未运行评测，或 after / base 两侧评测报告不齐）",
+ "note": "退出码 1；计划 400 步，实跑未知；计划 4 个 epoch，实跑轮数未知（训练目录下读不到 epoch 读数（无 trainer_state.json 的 epoch / 无 events.jsonl 的 epoch_summary / 无 logging.jsonl 的 epoch 字段））；检查点：未找到任何 checkpoint-*/ 或 final/ 目录（证据缺失）；数值异常：扫描 1 个证据源（stdout / jsonl 旁路 / trainer_state）未出现 NaN/Inf；非有限跳步计数字段出现 0 次且均 ≤ 0；峰值显存：宿主侧采样的显存占用峰值 = 425.0 MiB（GPU 3）；效果读数：本档没有评测读数（未运行评测，或 after / base 两侧评测报告不齐；判据② 不可判定，回填器会 fail-closed）；证据缺口（不满足回填条件，不补数）：缺实跑步数（训练日志里没有步数读数（后端未打印/训练未进入优化循环））；缺 epoch 读数（训练目录下读不到 epoch 读数（无 trainer_state.json 的 epoch / 无 events.jsonl 的 epoch_summary / 无 logging.jsonl 的 epoch 字段））⇒ 判据① 不作通过判定（⛔ 不回落步数）；缺最终检查点可加载性结论（未找到任何 checkpoint-*/ 或 final/ 目录（证据缺失））；缺 throughput（步数与墙钟不齐）；effect/判据②：本档没有评测读数（未运行评测，或 after / base 两侧评测报告不齐；判据② 不可判定，回填器会 fail-closed）；判据③ 缺证据：算法正确性检查缺证据（GRASPO 档须逐档签署第 9 节 8 条不变式；SFT/CPT/OPD 须逐类公开算法签署件（损失/标签掩码规则）） ⇒ 不作通过判定；判据④ 缺证据：评测报告缺证据（未跑评测或报告不齐） ⇒ 不作通过判定",
+ "run_path": "<RUNDIR>",
+ "provenance": {
+  "produced_by": "scripts/make_result_json.py（工作包 B / task-manifest）",
+  "command": "bash tests/e2e/run_matrix68.sh --only M011",
+  "evidence_paths": [
+   "<RUNDIR>/stdout.log",
+   "<RUNDIR>/exit_code",
+   "<RUNDIR>/gpu/peak_mem.json",
+   "<RUNDIR>/tier.json"
+  ],
+  "epoch_evidence": null,
+  "steps_evidence": [],
+  "checks_evidence": {}
+ }
+}

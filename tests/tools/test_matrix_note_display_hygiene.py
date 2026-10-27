@@ -114,6 +114,10 @@ def test_note_drops_planned_steps_clause(tmp_path):
     assert not _PLANNED_STEPS_RE.search(note), f"备注里还留着「计划 N 步」从句：{note}"
     # 判据① 的 epoch 口径文案**照旧保留**（D29 只动步数，⛔ 不动 judge 口径）
     assert "epoch" in note or "轮" in note, note
+    # D29 补丁：实跑步数/轮数这两处短语，原因串自带括号时**不得**叠出「））」这种排版瑕疵
+    # （证据缺口段里的嵌套括号是**合法嵌套**，不在此列）
+    assert not re.search(r"实跑步数[^；]*[）)]）", note), note
+    assert not re.search(r"实跑轮数未知[^；]*[）)]）", note), note
 
 
 def test_judge_ledger_text_drops_planned_steps_and_marker():
@@ -136,6 +140,22 @@ def test_judge_ledger_text_drops_planned_steps_and_marker():
     assert not any(ch in why_b for ch in _MARKERS), why_b
 
 
+# ── D29 补丁：原因串自带括号 ⇒ 冒号引导，⛔ 不叠括号（两个分支各两例）──────────
+@pytest.mark.parametrize("steps,why,expect", [
+    (400, "读自跑次读数文件", "实跑步数 400（读自跑次读数文件）"),
+    (0, "崩溃前未进入优化循环（stdout.log:20 的报错先于任何步数读数）",
+     "实跑步数 0：崩溃前未进入优化循环（stdout.log:20 的报错先于任何步数读数）"),
+    (None, "训练日志里没有步数读数（后端未打印/训练未进入优化循环）",
+     "实跑步数未知：训练日志里没有步数读数（后端未打印/训练未进入优化循环）"),
+    (None, "训练目录下读不到读数", "实跑步数未知（训练目录下读不到读数）"),
+])
+def test_steps_phrase_never_doubles_the_closing_paren(steps, why, expect):
+    text = m.steps_phrase(steps, why)
+    assert text == expect, text
+    assert "））" not in text and "))" not in text, text
+    assert text.count("（") == text.count("）"), f"括号不配对：{text}"
+
+
 # ── D29-① 无计划数时：不得出现空括号 / 孤立分隔符 / 字面 None ────────────────
 @pytest.mark.parametrize("how", ["null", "missing"])
 def test_note_without_plan_numbers_has_no_empty_parens(tmp_path, how):
@@ -149,7 +169,7 @@ def test_note_without_plan_numbers_has_no_empty_parens(tmp_path, how):
     run = _run_dir(tmp_path, steps=None)          # 实跑未知 ⇒ 走 else 分支（改前是「计划 N 步，实跑未知」）
     doc, _diag = _build(run, manifest=mf, rows=rows)
     note = doc["note"]
-    assert "实跑步数未知（" in note, note
+    assert re.search(r"实跑步数未知[（：]", note), note   # 括号或冒号引导（D29 补丁：原因自带括号用冒号）
     assert not _PLANNED_STEPS_RE.search(note), note
     for bad in ("None", "（）", "(）", "（；", "；）", "；；", "()"):
         assert bad not in note, f"备注里出现 {bad!r}：{note}"

@@ -1351,6 +1351,31 @@ def _crash_note(ev: dict, exit_code: int) -> str:
                if frame else ""))
 
 
+def why_phrase(label: str, why) -> str:
+    """备注列「<项> + 原因」的**统一包法**（D29 定稿）：原因串自带括号时改用冒号引导。
+
+    「<项>（<原因>）」／「<项>：<原因>」。
+
+    ★ 排版防呆（2026-10-27 主席点名）：原因串**自带括号**时（如崩溃档的「崩溃前未进入优化
+    循环（stdout.log:20 的报错先于任何步数读数；无 checkpoint …）」，或 epoch 读数的
+    「…无 logging.jsonl 的 epoch 字段）」），再套一层模板括号会叠出「））」这种用户可见的
+    排版瑕疵 ⇒ 此时改用**冒号引导**：语义不变、括号单层。
+    """
+    why = str(why or "").strip()
+    if why.endswith(("）", ")")):
+        return f"{label}：{why}"
+    return f"{label}（{why}）"
+
+
+def steps_phrase(steps_actual, steps_why) -> str:
+    """备注列的「实跑步数」短语（D29）：**只写实跑步数与读数来源**，⛔ 不写「计划 N 步」。
+
+    「实跑步数 <N>（<来源>）」／「实跑步数未知（<原因>）」；括号叠层由 :func:`why_phrase` 处理。
+    """
+    body = f"实跑步数 {steps_actual}" if isinstance(steps_actual, int) else "实跑步数未知"
+    return why_phrase(body, steps_why)
+
+
 # ── 组装 ─────────────────────────────────────────────────────────────────────
 def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
               eval_dir: Path | None, tier_json: Path | None, note_extra: str,
@@ -1596,14 +1621,14 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
     #   正确口径要重生成数据件（须先呈报）⇒ 这一步**只做展示层**，⛔ 不动生成器公式、⛔ 不动数据件。
     #   本行也不再读 `mt['expected_optimizer_steps']`：缺该键/为 null 的清单不会在此抛错，
     #   也不会写出「计划 None 步」或空括号/孤立分隔符。
-    note_parts.append(f"实跑步数 {steps_actual}（{steps_why}）"
-                      if isinstance(steps_actual, int) else
-                      f"实跑步数未知（{steps_why}）")
+    note_parts.append(steps_phrase(steps_actual, steps_why))
+    # ★ 同上（排版防呆）：epoch 读数的原因串也常自带括号（「…无 logging.jsonl 的 epoch 字段）」）
+    #   ⇒ 与实跑步数同一包法，⛔ 不再叠出「））」。判据口径未动（仍看 epochs_completed/planned）。
     note_parts.append(
-        f"完成轮数 {epochs_done}/{epochs_planned} 个 epoch（{epochs_why}）"
+        why_phrase(f"完成轮数 {epochs_done}/{epochs_planned} 个 epoch", epochs_why)
         if isinstance(epochs_done, int) and epochs_planned is not None else
-        f"计划 {epochs_planned if epochs_planned is not None else '未知'} 个 epoch，实跑轮数未知"
-        f"（{epochs_why}）")
+        why_phrase(f"计划 {epochs_planned if epochs_planned is not None else '未知'} 个 epoch，"
+                   f"实跑轮数未知", epochs_why))
     note_parts.append(f"检查点：{loadable_why}")
     note_parts.append(f"数值异常：{naninf_why}")
     note_parts.append(f"峰值显存：{peak_why}")
