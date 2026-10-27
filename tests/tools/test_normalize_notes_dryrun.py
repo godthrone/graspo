@@ -56,3 +56,31 @@ def test_guard_accepts_the_normalised_form():
            "实跑步数 0；判据结论：① 未过，②③④ 未判定")
     new = ns.normalize_legacy(old)
     assert nn.guard("M011", old, new) == [], (new, nn.guard("M011", old, new))
+
+
+# ── 机核「除 note 外逐字段相同」必须**能失败**（⛔ 不是空转断言）────────────────
+def _doc(note="退出码 0；判据结论：①②③④ 过"):
+    return {"schema": "capability-matrix/v3-official",
+            "meta": {"verdict": "PASS"},
+            "rows": [{"tier": "M001", "status": "通过", "note": note, "effect": "after acc=46%"},
+                     {"tier": "M002", "status": "待测试", "note": "", "effect": "—"}]}
+
+
+def test_differences_outside_note_is_empty_when_only_note_changes():
+    assert nn.differences_outside_note(_doc(), _doc(note="新的短句")) == []
+
+
+def test_differences_outside_note_names_a_changed_status():
+    new = _doc()
+    new["rows"][0]["status"] = "不通过"
+    drift = nn.differences_outside_note(_doc(), new)
+    assert drift and "status" in drift[0], drift
+
+
+def test_differences_outside_note_names_a_changed_meta_or_effect():
+    new = _doc()
+    new["meta"]["verdict"] = "FAIL"
+    new["rows"][0]["effect"] = "after acc=99%"
+    drift = nn.differences_outside_note(_doc(), new)
+    assert any("meta.verdict" in d for d in drift), drift
+    assert any("effect" in d for d in drift), drift

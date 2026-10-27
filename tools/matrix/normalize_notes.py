@@ -99,6 +99,34 @@ def guard(tier: str, old: str, new: str) -> list[str]:
     return problems
 
 
+def differences_outside_note(old, new, _path: str = "") -> list[str]:
+    """机核：两份数据件**除 note 外**逐字段相同 ⇒ 返回差异路径列表（空 = 相同）。
+
+    ★ 「能失败」是这个函数存在的意义：落盘后用它复核，任何越出 note 的字节漂移都会被点名
+    （`rows[3].status` / `meta.verdict` / `rows[7].effect` …），并触发**回滚原字节**。
+    """
+    if isinstance(old, dict) and isinstance(new, dict):
+        out: list[str] = []
+        for k in sorted(set(old) | set(new)):
+            if k == "note":
+                continue
+            if k not in old or k not in new:
+                out.append(f"{_path}.{k}（缺失/新增）")
+                continue
+            out += differences_outside_note(old[k], new[k], f"{_path}.{k}")
+        return out
+    if isinstance(old, list) and isinstance(new, list):
+        if len(old) != len(new):
+            return [f"{_path}（长度 {len(old)} → {len(new)}）"]
+        out = []
+        for i, (a, b) in enumerate(zip(old, new)):
+            out += differences_outside_note(a, b, f"{_path}[{i}]")
+        return out
+    if old != new:
+        return [f"{_path or '<root>'}: {old!r} → {new!r}"]
+    return []
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="存量备注列纯文本规范化（⛔ 不重新回填）")
     ap.add_argument("--data", default=None, help="数据件路径（缺省 = paths.py 的当轮副本）")
@@ -197,19 +225,17 @@ def main(argv=None) -> int:
         # ── 落盘：数据件 + 人读件（⛔ 基准件永不涉及：path 来自 PATHS_ROUND_*）─────────
         data.write_text(new_text, encoding="utf-8")
         html_out.write_bytes(html_after)
-        # 自证：重读后「除 note 外」与原数据件逐字段相同
+        # 自证：重读后「除 note 外」与原数据件逐字段相同（机核；不符 ⇒ 回滚原字节）
         back = json.loads(data.read_text(encoding="utf-8"))
-        cmp_old, cmp_new = json.loads(original), json.loads(json.dumps(back))
-        for d in (cmp_old, cmp_new):
-            for r in d["rows"]:
-                r.pop("note", None)
-        if json.dumps(cmp_old, ensure_ascii=False, sort_keys=True) != \
-                json.dumps(cmp_new, ensure_ascii=False, sort_keys=True):
+        drift = differences_outside_note(json.loads(original), back)
+        if drift:
             data.write_text(original, encoding="utf-8")
             print("FAIL：落盘后「除 note 外」出现差异 ⇒ 已回滚原字节", file=sys.stderr)
+            for d in drift[:20]:
+                print(f"  ✗ {d}", file=sys.stderr)
             return 4
         print(f"\n✅ 已落盘：{data}（{len(changes)} 档备注规范化）与 {html_out}")
-        print(f"   机核：除 note 外逐字段相同；已回填 {len(filled)} 档不变")
+        print(f"   机核：除 note 外 **0 处**差异；已回填 {len(filled)} 档不变")
         return 0
     finally:
         for p in tmp.glob("*"):
