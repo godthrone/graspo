@@ -487,11 +487,11 @@
       "audit_ref": "逐档审计明细见枚举脚本 --audit-out 输出（随工作区，不入库）"
     },
     "backfill": {
-      "last_run": "2026-10-28 17:32",
+      "last_run": "2026-10-28 17:35",
       "filled_tiers": [
-        "M007"
+        "M040"
       ],
-      "unfilled_count": 37,
+      "unfilled_count": 36,
       "note": "仅脚本回填；未判定档位保持「待测试」；结果 json 不得自带 status；缺字段/缺判据证据 fail-closed"
     }
   },
@@ -2648,15 +2648,15 @@
       "data_subset": "subsets-v2/M040.jsonl",
       "lora_target": "—",
       "applicable": true,
-      "status": "待测试",
+      "status": "不通过",
       "runs": "—",
-      "peak_mem": "—",
-      "steps_actual": "—",
-      "elapsed": "—",
-      "throughput": "—",
-      "effect": "—",
+      "peak_mem": "18.75 GiB",
+      "steps_actual": "0 步",
+      "elapsed": "总时长 126 s（约 0.04 h）",
+      "throughput": "不适用（训练崩溃，未进入优化循环：0 步 / 126.0 s 墙钟）",
+      "effect": "不可评：训练崩溃，未产生任何训练产物与评测读数（崩溃归因见 note 列首句）",
       "not_failed_reason": "—",
-      "note": "",
+      "note": "训练崩溃，未产生有效训练：RuntimeError: Inference tensors cannot be saved for…；退出码 1；实跑步数 0；完成 0/2 个 epoch；检查点：不可加载；数值异常：无；峰值显存：18.75 GiB；效果读数：不可评；判据结论：① 未过，②③④ 未判定（详见跑次证据）",
       "spec_json": "—",
       "cards_pending": true,
       "blocked_reason": "—"
