@@ -92,6 +92,33 @@ placement.local_layer_indices = [17 … 31]
 **模块身份一律取 `hf_module_path`**；无它时退化为 `f"{stage偏移}:{module_name}"`，
 ⛔ 绝不用裸名当键；并校验 `stage偏移 + 局部层号 == hf_module_path 的全局层号`，不符即 fail-closed。
 
+### 3.2 ★ (B) 同运行时配对 harness：模型级等价的**正判据**（底噪严格为 0）
+
+跨运行时前向对比不可用（底噪 1.125，见 §6.2）。改用**配对设计**：两侧都跑在**同一个
+native 运行时、同一位置编码、同一 dtype**，唯一变量是 LoRA 权重从哪来 ——
+
+| 侧 | LoRA 来源 |
+|---|---|
+| A | `load_checkpoint(真分片)`：各 rank 的原分片 |
+| B | 同一个模型，再用**产品加载器** `load_peft_adapter_into_native_model()` 把**合并产物**重新切片灌回去 |
+
+⇒ B 与 A 的前向差 = "分片 → 合并 → 导出 PEFT → 加载回运行时"整条闭环的误差。
+
+真件实测（1 步 `tp=2`，2 进程，固定 12 token 输入）：
+
+| 口径 | `max\|Δ\|` | `mean\|Δ\|` | 逐位相同比例 | 判定 |
+|---|---|---|---|---|
+| **底噪 N1**：同一模型重复前向 | **0.0** | 0.0 | 100% | 确定性成立 |
+| **对照组**：先把 420 个复制张量按 canonical 对齐，再走完整闭环 | **0.0** | 0.0 | **100%** | ★ **`BITWISE_EQUAL`** ⇒ 闭环无损、harness 灵敏 |
+| **待判**：真实未对齐分片走同一闭环 | **1.5** | 0.0212 | 11.1% | 相对信号 1.7%、≈151 ulp，**显著** |
+
+三条结论：
+1. **闭环无损已被证明**（对照组逐位相同）：合并 + 导出 + 重灌回运行时**不引入任何误差**。
+2. **底噪严格为 0** ⇒ 任何非零差异都只能是权重差异，判据可判定（区别于跨运行时的 1.125）。
+3. ★ **1 ulp 容差并不等于"模型可忽略"**：复制张量上 4.0e-05 的漂移（亚 ulp~个位 ulp）
+   经 32 层网络被放大到 hidden 的 **1.7%**、`max\|Δ\|=1.5`。⇒ **`--require-bitwise` 才是
+   唯一可辩护的验收口径**；1 ulp 过渡口径只能用来"继续做诊断"，不能用来"放行产物"。
+
 ---
 
 ## 4. 复制张量为什么拼不了：两个训练侧缺陷（本次实测定位）
@@ -169,4 +196,16 @@ placement.local_layer_indices = [17 … 31]
    故不给结论。
 7. **`docs/GRASPO训练框架功能测试报告.html` 未改动**：sha256 `b8ed080d…`、77,079 字节，
    与冻结值一致（改动前后各验一次）。
-8. `gate_content` 报 6 条阻断项，**全部来自 HEAD 既有文件**（我新增/修改的文件 0 违规）。
+8. **影响面核查（两个导出 bug 是否波及已入表档）—— 可自证的三条判据**：
+   1. 旧通道 `convert_native_rank_to_peft` 的**唯一可达路径**是
+      `graspo eval export` → `convert_native_checkpoint_to_peft`（`src/graspo/eval/merged_export.py:974`、
+      `src/graspo/cli/eval_commands.py:114`），输入必须是 `CheckpointKind.NATIVE_RANK` 分片。
+   2. ms-swift 后端目录 `src/graspo/flow/backend/msswift/` 内对该通道的引用数 = **0**：
+      `grep -rn "convert_native_rank_to_peft\|convert_native_checkpoint_to_peft\|NATIVE_RANK" \
+        --include=*.py src/graspo/flow/backend/msswift/ | wc -l` ⇒ `0`。
+      ms-swift 的产物由 ms-swift 自己写进 `output_dir/msswift`（标准 HF/PEFT），不经过分片通道。
+   3. `docs/capability-matrix-20261025.data.json` 里已出结论的 **21** 档 =
+      **20 个 `backend="ms-swift"` + 1 个 `native`（M011）**；M011 训练即崩
+      （`ValueError: lora.target_modules is required`，实跑 0 步、未产出 checkpoint）⇒ 没走到导出。
+      ⇒ **两个 bug 的影响面 = 0 档**（它们只作用于 native 分片通道，而 native 档至今无一带结论）。
+9. `gate_content` 报 6 条阻断项，**全部来自 HEAD 既有文件**（我新增/修改的文件 0 违规）。
