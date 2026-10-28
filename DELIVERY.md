@@ -49,7 +49,8 @@
 | `tp=2 dp=1 pp=1` | ✅ | 结构✅ / **放行❌** | 620 键里 174 个复制张量漂移超限 ⇒ fail-closed |
 | `tp=4 dp=1 pp=1` | ✅ | 同上 | 同上（真件 4 分片） |
 | `tp=2 dp=2 pp=1` | ✅ | 同上 | 同上（DP 副本**逐位相同**✅，卡在视觉塔） |
-| `pp=2 / tp=2+pp=2`（LoRA） | ❌ **起不来** | 结构✅（单测+重切分） | 训练侧 `pp>1 + LoRA` 在 LoRA 注入阶段就报 `Resolved LoRA target(s) are not implemented`（本机实测 2/4 rank 均复现）⇒ **无真件可测** |
+| **`tp=1 pp=2`（LoRA）** | ✅ | ✅ | ★ **真件端到端跑通**：2 分片 → 310 模块 / 620 键，两 stage `placement_cross_check=ok`、复制张量 `max=0 ulp`；`transformers` + `peft` 加载后 **620 个 LoRA 模块全部挂上**（= 620 键，无静默丢键），前向 `logits[1,12,248320]` 正常、无 NaN；并写出可发布的完整 HF 目录（18 GB） |
+| `tp=2 pp=2`（LoRA） | ✅ | 结构✅ / **放行❌** | 真件 4 分片：层归属与本契约全过，最后卡在视觉塔复制漂移（`max\|Δ\|=4.029e-05`、78687/110592 元素超限）⇒ fail-closed（缺陷①） |
 | `pp>1`（全参） | ✅ 有真件 | ❌ **显式拒绝** | 全参分片**不带** `lora_tensor_metadata`，拼回需第二套布局推断 → 天然违反"不许推断" |
 
 ---
@@ -75,6 +76,21 @@ adapter）与 native 分片模型的前向本身**就差 `max|Δ|=1.125`（`mean
 - 切片/复制的正确性 → 用**参数级逐位回环**证（上表）；
 - 前向级等价 → 记为**未达成**（见第 6 节），并给出底噪实测值，供后续用"同运行时配对"
   的 harness 继续做。
+
+### 3.1 ★ `pp>1` 分片的命名契约（真件实测，容易踩的坑）
+
+`pp_rank=1` 的分片里 **`module_name` 用的是本 stage 内的局部编号**：
+
+```
+module_name      = "layers.0.mlp.gate_proj"                       ← 局部：本 stage 第 0 层
+hf_module_path   = "model.language_model.layers.17.mlp.gate_proj"  ← 全局：模型第 17 层
+placement.local_layer_indices = [17 … 31]
+```
+
+⇒ 两个 stage 都会出现 `layers.0.mlp.down_proj` 这种**同名不同层**。若按下标名聚合，
+会把 layer 0 与 layer 17 静默并成一个（比崩溃更糟）。合并器因此：
+**模块身份一律取 `hf_module_path`**；无它时退化为 `f"{stage偏移}:{module_name}"`，
+⛔ 绝不用裸名当键；并校验 `stage偏移 + 局部层号 == hf_module_path 的全局层号`，不符即 fail-closed。
 
 ---
 
@@ -125,17 +141,22 @@ adapter）与 native 分片模型的前向本身**就差 `max|Δ|=1.125`（`mean
 
 ## 7. 未做与已知限制（**请连同第 4 节一起读**）
 
-1. **未达成：真件端到端导出（导出→transformers 加载→vLLM 起服→推理）**。
-   原因不是合并器，而是**没有任何 `tp>1` 真件能通过"复制张量唯一性"这一关**：视觉塔 LoRA
-   从第 1 步起就各 rank 不同（缺陷①）。按主席裁定，此情形**必须拒收**，⛔ 不做"挑一个
-   rank"的合并。已验证的部分：合并产物能被 `peft` 加载进
-   `AutoModelForImageTextToText` 并完成前向（`hidden [1,12,4096]`），即**管道是通的**，
-   缺的是"可放行的权重"。
+1. **部分达成：真件端到端导出**。
+   - ✅ **`tp=1 pp=2` 真件已走通**：合并 → `peft` 加载（**620/620 模块全部挂上**）→
+     前向正常 → 写出 18 GB 完整 HF 目录，可交付。
+   - ❌ **`tp>1` 真件仍导不出**：视觉塔 LoRA 从第 1 步起各 rank 不同（缺陷①），
+     按主席裁定**必须拒收**，⛔ 不做"挑一个 rank"的合并。
+   - ❌ **vLLM 起服未做**：训练侧 rootfs 与 A800 宿主机**均未安装 vLLM**
+     （`ModuleNotFoundError: No module named 'vllm'`），vLLM 只在 228 的镜像里；
+     A800 与 228 之间无可写共享卷（`/data/remote` 在 A800 上不存在），
+     19 GB 产物跨机搬运需要单独的窗口。⇒ **环境限制，非代码问题**，请安排。
 2. **未达成：前向级 `max|Δ|` 数值等价**。底噪实测 `max|Δ|=1.125`（HF 基座 vs native，
    同输入同 dtype，无 adapter），比待判定的效应大两个数量级。要做成，需要"同运行时配对"
    的 harness（两侧都走同一份位置编码/注意力实现），本次未做。
-3. **未做：`pp>1` 的模型级等价**。`pp>1 + LoRA` 训练侧**起不来**（LoRA 注入即报错），
-   无真件；我用真实训练张量按 `placement_plan` 重切分只做了**结构测试**（单测
+3. **未做：`pp>1` 的模型级等价**。`pp>1 + LoRA` 早先"起不来"是**用错了树**（缺陷 N2 在
+   `85dcab8` 已修）；换到修复后的树后 `tp=1 pp=2` 与 `tp=2 pp=2` **都能正常产出真件**
+   （已实测 rc=0）。模型级等价仍缺"同运行时配对"harness（见第 2 条）。我用真实训练张量
+   按 `placement_plan` 重切分只做了**结构测试**（单测
    `test_pp_stage_layers_concatenated` / `test_tp_and_pp_combined_restored_exactly`），
    ⛔ 不当作等价证明。
 4. **未支持：全参（`native-full-param`）分片合并**——分片不带 LoRA 元数据，拼回需要第二套
