@@ -2083,8 +2083,8 @@ def apply_meta_sync(meta: dict[str, Any], *, card_limit: int, budget: float,
         _enum["script_commit"] = _git_short_head()
         _enum["note"] = ("script_sha256 = 实际跑枚举的 tools/matrix/enumerate_matrix.py 的 sha256；"
                          "它与 script_commit 内的同名文件逐字节一致。"
-                         "⛔ 该提交与 meta.code_version.commit（本件生成基线）不是同一个提交——"
-                         "枚举早于本件基线，两个提交不同属正常，⛔ 不得据此推断脚本被改过。")
+                         "该提交与 meta.code_version.commit（本件生成基线）不是同一个提交——"
+                         "枚举早于本件基线，两个提交不同属正常，不得据此推断脚本被改过。")
     _cv = new.get("code_version")
     if isinstance(_cv, dict):
         _cv["note"] = ("commit = 本件的生成基线（生成时的 HEAD），与枚举脚本版本无关；"

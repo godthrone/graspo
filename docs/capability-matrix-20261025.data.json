@@ -486,7 +486,7 @@
    "script_sha256": "9926431ac7bc10c5186d6bc2b9cce2fa57e10a415bff0a0d73876fdceed0c4df",
    "audit_ref": "逐档审计明细见枚举脚本 --audit-out 输出（随工作区，不入库）",
    "script_commit": "ef0a9f3",
-   "note": "script_sha256 = 实际跑枚举的 tools/matrix/enumerate_matrix.py 的 sha256；它与 script_commit（ef0a9f3）内的同名文件逐字节一致。⛔ 该提交与 meta.code_version.commit（本件生成基线 53b0c24）不是同一个提交——枚举早于本件基线，两个提交不同属正常，⛔ 不得据此推断脚本被改过。"
+   "note": "script_sha256 = 实际跑枚举的 tools/matrix/enumerate_matrix.py 的 sha256；它与 script_commit（ef0a9f3）内的同名文件逐字节一致。该提交与 meta.code_version.commit（本件生成基线 53b0c24）不是同一个提交——枚举早于本件基线，两个提交不同属正常，不得据此推断脚本被改过。"
   },
   "backfill": {
    "last_run": "2026-10-28 18:30",
