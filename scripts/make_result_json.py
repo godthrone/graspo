@@ -20,7 +20,9 @@
   ★ 判据①（2026-10-23 对齐第 2 章「跑满 Epoch」）= 退出码 0 ∧ `epochs_completed ≥ epochs_planned`
   ∧ 检查点**真可加载** ∧ 无 NaN/Inf；`steps_actual` 仍必填但**只作台账**，⛔ 不作通过条件。
     · `epochs_*` 取自实测：`trainer_state.json` 的 `epoch` / `events.jsonl`(epoch_summary) /
-      `logging.jsonl`；**取不到写 `null`**（回填器判 unknown ⇒ fail-closed），⛔ 不用步数换算。
+      `logging.jsonl` / **native 分片 `.pt` 内嵌的 `trainer_state`**（native SFT **不落**
+      `trainer_state.json`；该源另做三条交叉校验，见 `epochs_from_run` ④）；
+      **取不到写 `null`**（回填器判 unknown ⇒ fail-closed），⛔ 不用步数换算。
     · `final_ckpt_loadable` = **真加载校验**（safetensors 头逐张量偏移 / `.bin`·`.pt` 的
       `torch.load(map_location="meta")` 元数据 / 权重索引逐分片 / LoRA adapter 齐件）；
       某格式无法安全校验 ⇒ `null` + 原因（⛔ 不当 True）。
@@ -593,7 +595,9 @@ def epochs_from_run(run_dir: Path) -> tuple[int | None, str, dict | None]:
     取值优先级（逐条给"哪一行/哪个字段"的依据；⛔ 取不到就 None，⛔ 不拿步数换算）：
       ① `trainer_state.json`（native/HF/ms-swift 同形）的 `epoch` 浮点 × `global_step` 定序；
       ② `events.jsonl` 的 `epoch_summary`：`epoch`（0 起） + `epoch_cumulative.progress`；
-      ③ ms-swift `logging.jsonl` 的 `epoch` 字段。
+      ③ ms-swift `logging.jsonl` 的 `epoch` 字段；
+      ④ native 分片 `.pt` 内嵌的 `trainer_state`（`epoch` 为 **0 基** ⇒ 完成轮数 = `epoch + 1`，
+        且必须 `is_epoch_end=true` + `global_step` 与「每 epoch 步数」自洽，否则不采信）。
     完成轮数 = `floor(读数 + EPOCH_TOL)`（进度是浮点，满轮不能因 7.999999 判成 7）。
     """
     best = None
@@ -654,8 +658,133 @@ def epochs_from_run(run_dir: Path) -> tuple[int | None, str, dict | None]:
         why = f"logging.jsonl 第 {lineno} 行 epoch={ep:g} ⇒ 已完成 {done} 个 epoch"
         return done, why, {"source": str(p), "field": "epoch", "line": lineno, "raw": ep}
 
+    # ④ native SFT：`trainer_state` **只内嵌在分片权重里**（native 从不落 `trainer_state.json`）。
+    #    实测（M005，2026-10-28 首次有 native SFT 真跑完才暴露）：
+    #      `runs/M005/M005/final/rank_00000_tp_00_pp_00.pt` →
+    #      {'format': 'native-sft-trainer-state', 'global_step': 200, 'epoch': 3,
+    #       'batch_idx': 0, 'total_samples': 50, 'is_epoch_end': True}
+    #    ⚠ 语义：`epoch` 是 **0 基索引**，200 步 / 50 步每轮 = 4 轮 ⇒ `epochs_completed = epoch + 1`
+    #       （仅当 `is_epoch_end` 为真；否则本源不可用）。
+    #    ⚠ 三条交叉校验全过才采信（任一不成立 ⇒ 本源不可用 ⇒ 返回 None 走 fail-closed，
+    #       ⛔ 不猜、⛔ 不拿步数换算）：① `is_epoch_end` 为真；② 每 epoch 步数可由
+    #       dp/子集/微批推出；③ `global_step` 整除每 epoch 步数，且商 = `epoch + 1`。
+    native = _native_shard_trainer_state(run_dir)
+    if native is not None:
+        ts, shard, why_bad = native
+        if why_bad:
+            return None, f"native 分片 trainer_state 不可采信：{why_bad}", {
+                "source": str(shard), "field": "trainer_state", "line": None}
+        per_epoch, why_pe = _native_steps_per_epoch(run_dir)
+        gs, ep = int(ts["global_step"]), int(ts["epoch"])
+        if per_epoch is None:
+            return None, (f"native 分片 trainer_state 有 epoch={ep}/global_step={gs}，但{why_pe}"
+                          "⇒ 判据① 交叉校验做不了（不采信）"), {
+                "source": str(shard), "field": "trainer_state", "line": None, "raw": ts}
+        if gs % per_epoch != 0 or gs // per_epoch != ep + 1:
+            return None, (f"native 分片 trainer_state 不自洽：global_step={gs} 与 epoch={ep}"
+                          f"（每 epoch {per_epoch} 步）⇒ 商 {gs // per_epoch} ≠ {ep + 1}"
+                          "（不采信）"), {
+                "source": str(shard), "field": "trainer_state", "line": None, "raw": ts}
+        done = ep + 1
+        why = (f"native 分片 trainer_state（{shard.name}）：epoch={ep}（0 基）+ "
+               f"is_epoch_end=true + global_step={gs} = {done} × {per_epoch} 步/epoch "
+               f"⇒ 已完成 {done} 个 epoch")
+        return done, why, {"source": str(shard), "field": "trainer_state", "line": None,
+                           "raw": ts, "steps_per_epoch": per_epoch}
+
     return None, ("训练目录下读不到 epoch 读数（无 trainer_state.json 的 epoch / 无 "
-                  "events.jsonl 的 epoch_summary / 无 logging.jsonl 的 epoch 字段）"), None
+                  "events.jsonl 的 epoch_summary / 无 logging.jsonl 的 epoch 字段 / 无 "
+                  "native 分片 trainer_state）"), None
+
+
+#: native SFT 检查点里 `trainer_state` 的 format 标记（唯一写入者
+#: `flow/backend/native/trainer/sft_trainer.py::_sft_trainer_state`）。
+NATIVE_SFT_TRAINER_STATE_FORMAT = "native-sft-trainer-state"
+
+
+def _native_shard_trainer_state(run_dir: Path):
+    """native 分片 `.pt` 里内嵌的 `trainer_state`（判据① 的第 4 源）。
+
+    返回 `(trainer_state, 分片路径, 不可采信原因)`；无 native 分片 ⇒ `None`。
+    ★ 只读：`map_location="meta"` ⇒ 只解 pickle、**不读权重数据**（实测 0.11 s/分片），
+      ⛔ 不落任何派生文件、⛔ 不改分片。
+    ★ 多检查点时取 `global_step` 最大（与 `trainer_state.json` 分支同一取舍口径）。
+    """
+    best = None
+    for p in sorted(run_dir.rglob("rank_*_tp_*_pp_*.pt")):
+        doc = _torch_load_meta(p)
+        ts = doc.get("trainer_state") if isinstance(doc, dict) else None
+        if not isinstance(ts, dict) or ts.get("format") != NATIVE_SFT_TRAINER_STATE_FORMAT:
+            continue
+        gs, ep = ts.get("global_step"), ts.get("epoch")
+        if isinstance(gs, bool) or not isinstance(gs, int):
+            continue
+        if isinstance(ep, bool) or not isinstance(ep, int):
+            continue
+        if best is None or (gs, ep) > (best[0]["global_step"], best[0]["epoch"]):
+            best = (ts, p)
+    if best is None:
+        return None
+    ts, p = best
+    if ts.get("is_epoch_end") is not True:
+        return ts, p, (f"分片内 is_epoch_end={ts.get('is_epoch_end')!r}"
+                       "（不是 epoch 末态 ⇒ 无整轮读数）")
+    if int(ts["epoch"]) < 0 or int(ts["global_step"]) <= 0:
+        return ts, p, f"分片内 epoch={ts['epoch']} / global_step={ts['global_step']} 不是正数"
+    return ts, p, ""
+
+
+def _torch_load_meta(path: Path) -> dict | None:
+    """`torch.load(map_location="meta")` 的薄封装：缺 torch / 非 torch 件 ⇒ `None`（不抛）。"""
+    try:
+        import torch  # noqa: PLC0415  —— 可选依赖：只有 native 分片取证才需要
+    except Exception:
+        return None
+    try:
+        doc = torch.load(path, map_location="meta", weights_only=False)
+    except Exception:
+        return None
+    return doc if isinstance(doc, dict) else None
+
+
+def _native_steps_per_epoch(run_dir: Path) -> tuple[int | None, str]:
+    """native 的「每 epoch 优化步数」（判据① 交叉校验的第三条腿）。
+
+    口径与 `src/graspo/flow/backend/native/trainer/sft_trainer.py` 的数据分片**逐条对齐**
+    （⛔ 不另立公式）：`samples[dp_rank::dp_size]` ⇒ 每 rank 样本 = ceil(子集行数 / dp)；
+    每 epoch 步数 = ceil(每 rank 样本 / (micro_batch × grad_accum))。
+    证据源 = run 内 config 快照（`<run-dir>/<tier>/config.yaml`）+ 落盘子集
+    （`<run-dir>/subsets/<tier>.jsonl`）。任一项取不到 ⇒ `(None, 原因)` ⇒ 调用方 fail-closed。
+    """
+    cfgs = [p for p in sorted(run_dir.rglob("config.yaml"))
+            if "native:" in p.read_text(encoding="utf-8", errors="replace")]
+    if not cfgs:
+        return None, "run 内没有含 `native:` 段的 config 快照"
+    text = cfgs[0].read_text(encoding="utf-8", errors="replace")
+
+    def num(key: str) -> int | None:
+        m = re.search(rf"^\s*{key}:\s*(\d+)\s*$", text, re.M)
+        return int(m.group(1)) if m else None
+
+    dp = num("dp_size")
+    mb = num("micro_batch_size")
+    ga = num("gradient_accumulation_micro_batches")
+    m = re.search(r"^\s*train_path:\s*(\S+)\s*$", text, re.M)
+    if dp is None or mb is None or ga is None or not m:
+        return None, (f"config 快照缺推导要素（dp_size={dp} micro_batch_size={mb} "
+                      f"gradient_accumulation_micro_batches={ga}）")
+    if dp < 1 or mb < 1 or ga < 1:
+        return None, f"config 快照的并行/批参数非正数（dp={dp} mb={mb} ga={ga}）"
+    name = Path(m.group(1)).name
+    subsets = [p for p in sorted(run_dir.rglob(name)) if p.is_file()]
+    if not subsets:
+        return None, f"run 内找不到落盘子集 {name}"
+    lines = sum(1 for ln in subsets[0].read_text(encoding="utf-8", errors="replace").splitlines()
+                if ln.strip())
+    if lines <= 0:
+        return None, f"落盘子集 {name} 为空"
+    per_rank = math.ceil(lines / dp)
+    return max(1, math.ceil(per_rank / (mb * ga))), ""
 
 
 def loss_series_from_run(run_dir: Path) -> tuple[list[float], str, dict | None]:

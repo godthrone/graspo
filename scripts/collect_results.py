@@ -443,8 +443,10 @@ def _msswift_state_from_logging(swift_dir: Path) -> dict[str, Any] | None:
 def _trainer_state_candidates(output_dirs: Sequence[Path]) -> list[tuple[str, dict[str, Any]]]:
     """列出全部 trainer_state 等价物，``(source_name, state)``。
 
-    - ``trainer_state.json``：native 与 ms-swift（HF Trainer 在每个 checkpoint 里都写）
-      共用同一文件名与结构 ⇒ 一条读取路径覆盖两者；
+    - ``trainer_state.json``：**ms-swift**（HF Trainer 在每个 checkpoint 里都写）；
+      ⚠ native **不落**这个文件（实测 2026-10-28 / M005 首次有 native SFT 真跑完才暴露：
+      native 把 ``trainer_state`` **内嵌在分片 ``.pt`` 的 ``trainer_state`` 字段**里，
+      读法见 ``scripts/make_result_json.py::_native_shard_trainer_state``）；
     - ``logging.jsonl``：ms-swift 的等价旁路（checkpoint 被清掉时仍可取证）。
 
     ⚠ **必须收集全部再挑最优**：ms-swift 的 ``save_steps=1`` 会在每个 checkpoint 里
@@ -572,10 +574,11 @@ def extract_steps_and_series(output_dirs: Sequence[Path], log_text: str) -> Seri
 
     来源优先级（**与后端无关**，只与证据质量有关）：
       1. ``rank_metrics.rank_*.jsonl`` 旁路的**全局**逐步指标（native PP 唯一可信口径）；
-      2. ``trainer_state.json``（native RL/SFT 与 ms-swift 每个 checkpoint 共用；
-         ms-swift 无 checkpoint 时由 ``logging.jsonl`` 归一同形，见
-         :func:`_msswift_state_from_logging`）——**按 ``global_step`` 取最大者**，
-         否则会取到 ``checkpoint-1`` 那份只有 1 步的历史；
+      2. ``trainer_state.json``（**ms-swift** 每个 checkpoint 都写；native **不写**这个文件，
+         它的 ``trainer_state`` 内嵌在分片 ``.pt`` 里 —— 读法见
+         ``scripts/make_result_json.py::_native_shard_trainer_state``。ms-swift 无 checkpoint
+         时由 ``logging.jsonl`` 归一同形，见 :func:`_msswift_state_from_logging`）——
+         **按 ``global_step`` 取最大者**，否则会取到 ``checkpoint-1`` 那份只有 1 步的历史；
       3. 日志中的 dict 行（stdout 兜底，口径为 rank0 局部，显式标注）。
     """
     result = SeriesEvidence()
