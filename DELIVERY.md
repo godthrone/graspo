@@ -125,6 +125,23 @@ native 运行时、同一位置编码、同一 dtype**，唯一变量是 LoRA �
 > 代码层面已落地：`ReplicaPolicy.require_bitwise` **默认 True**；1 ulp 口径降级为
 > `--diagnose-only` 的**只读诊断**，⛔ 该模式产物不得进矩阵、不得作为判据④依据。
 
+### 3.3 ★ 判据④ 真件实测：合并产物被 vLLM 起服并完成一次推理（`tp=1 pp=2`）
+
+**拓扑**：`tp=1 dp=1 pp=2`（2 分片）。**合并口径**：`require_bitwise=True`（新的**默认**口径）
+⇒ 复制张量 `max=0 ulp`、非逐位 0 个**通过**。
+
+| 环节 | 实测 |
+|---|---|
+| 分片传输 | A800 → 本机中转 → 评测机；**三端 sha256 逐一相同**（`manifest.json` + 2 个 `rank_*.pt`） |
+| 合并（评测机上重跑） | `channel=sharded-merge`，310 模块 / **620 键**，`口径=require_bitwise`，复制张量 `max=0 ulp` |
+| 合成完整 HF 目录 | 18 GB，`merge_rc=0` |
+| **vLLM 起服** | 镜像 `vllm-openai:v0.22.0`，`system_fingerprint=vllm-0.22.0-9e33be81`，**就绪 210 s** |
+| `served_model_path` | `/models/M004/merged_hf`（容器内路径；宿主 `…/n3c/M004/merged_hf`） |
+| **温度 0 推理** | `id=chatcmpl-bb872b59ded8507f`，`finish_reason=length`，`prompt_tokens=19`、`completion_tokens=64`，返回真实中文生成（推理型模型先输出思考过程） |
+| 收尾 | 容器已删、GPU 回落到起服前的 5555 MiB 基线、18 GB 中间产物已删（可重建） |
+
+⇒ **判据④ 对 `tp=1 pp=2` 成立**，且是**在逐位口径下**成立的（不是诊断口径）。
+
 ---
 
 ## 4. 复制张量为什么拼不了：两个训练侧缺陷（本次实测定位）
@@ -179,10 +196,9 @@ native 运行时、同一位置编码、同一 dtype**，唯一变量是 LoRA �
      前向正常 → 写出 18 GB 完整 HF 目录，可交付。
    - ❌ **`tp>1` 真件仍导不出**：视觉塔 LoRA 从第 1 步起各 rank 不同（缺陷①），
      按主席裁定**必须拒收**，⛔ 不做"挑一个 rank"的合并。
-   - ❌ **vLLM 起服未做**：训练侧 rootfs 与 A800 宿主机**均未安装 vLLM**
-     （`ModuleNotFoundError: No module named 'vllm'`），vLLM 只在 228 的镜像里；
-     A800 与 228 之间无可写共享卷（`/data/remote` 在 A800 上不存在），
-     19 GB 产物跨机搬运需要单独的窗口。⇒ **环境限制，非代码问题**，请安排。
+   - ✅ **vLLM 起服已做（`tp=1 pp=2`）**：见 §3.3——搬 553 MB 分片到评测机**就地生产**
+     （不搬 18 GB 成品），三端 sha256 对账一致，合并走 `require_bitwise`，起服 + 温度 0
+     推理成功。⛔ A800 上未为装 vLLM 改任何环境。
 2. **未达成：前向级 `max|Δ|` 数值等价**。底噪实测 `max|Δ|=1.125`（HF 基座 vs native，
    同输入同 dtype，无 adapter），比待判定的效应大两个数量级。要做成，需要"同运行时配对"
    的 harness（两侧都走同一份位置编码/注意力实现），本次未做。
