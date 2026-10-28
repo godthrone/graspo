@@ -22,7 +22,7 @@ training:
 launch:
   nproc_per_node: 2   # ★ 由 cards=2 推导（§12 同源：卡数与进程数不得各改一半）
 distill:
-  teacher_model_path: /models/teacher-m041-merged
+  teacher_model_path: /models/teacher-m041/Qwen3.8-27B
   offload_teacher_model: true
 lora:
   r: 32
