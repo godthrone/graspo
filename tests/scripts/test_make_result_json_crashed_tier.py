@@ -287,3 +287,74 @@ def test_main_exit_codes(tmp_path, capsys):
     capsys.readouterr()
     # 不传开关 ⇒ 旧链照旧拒收（本 fixture 缺 steps_actual/throughput ⇒ 校验器 rc=1）；总之 ≠ 0
     assert m.main(["--tier", "M011", "--run-dir", str(run), "--out", str(out)]) != 0
+
+
+# ── ⑨ `[rankN]: ` 前缀形态（torchrun `--tee` ⇒ 每个 worker 的每一行都带前缀）──────────
+# ★ 为什么要这一组：**同样的事实，只因日志形态不同就入不了表**。实测 11 档（M004 / M044 / M066
+#   与 A800 的 M005 / M006 / M009 / M015 / M028 / M045 / M046 / M051）的报错原文**只出现在**
+#   `[rank0]: XxxError: …` 这种行里（`--tee` 前缀），而定位器原先锚定行首 `^` ⇒ 全部定位失败
+#   ⇒ fill_one 一律 rc=3、台账只能显示"待测试"。下面这份 fixture 照 M066 真件的形态写：
+#   先一段带前缀的 rank 侧 traceback（末行 ImportError），后面是 torchrun launcher 自己的
+#   **不带前缀**的 traceback（末行 `ChildFailedError:` 消息为空 ⇒ 不得当作报错原文）。
+M066_STDOUT_RANK_PREFIXED = """[rank0]: Traceback (most recent call last):
+[rank0]:   File "/workspace/graspo/src/graspo/cli/train_worker.py", line 147, in <module>
+[rank0]:     main()
+[rank0]:   File "/workspace/graspo/src/graspo/flow/backend/ms_swift/opd_teacher.py", line 88, in build_teacher
+[rank0]:     import vllm
+[rank0]:   File "/workspace/graspo/src/graspo/flow/backend/ms_swift/vllm_utils.py", line 41, in <module>
+[rank0]:     raise ImportError('vLLM is not installed. Please install it with `pip install vllm`.')
+[rank0]: ImportError: vLLM is not installed. Please install it with `pip install vllm`.
+[rank1]: Traceback (most recent call last):
+[rank1]:   File "/workspace/graspo/src/graspo/flow/backend/ms_swift/vllm_utils.py", line 41, in <module>
+[rank1]: ImportError: vLLM is not installed. Please install it with `pip install vllm`.
+E1025 09:35:14.884000 10 torch/distributed/elastic/multiprocessing/api.py:1012] Sending process 145 closing signal SIGTERM
+Traceback (most recent call last):
+  File "/usr/local/bin/torchrun", line 6, in <module>
+    sys.exit(main())
+  File "/usr/local/lib/python3.12/dist-packages/torch/distributed/elastic/multiprocessing/api.py", line 86, in _terminate_process_handler
+    raise SignalException(f"Process {os.getpid()} got signal: {sigval}", sigval=sigval)
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError:
+"""
+
+
+def test_rank_prefixed_traceback_is_located(tmp_path):
+    """`[rankN]: XxxError: …` 形态必须与不带前缀的形态**同等**可定位（否则 11 档入不了表）。"""
+    run = _fake_crash_run(tmp_path, stdout=M066_STDOUT_RANK_PREFIXED, elapsed=374.0)
+    doc, diag = _build(run, recover_crashed_tier=True)
+    ev = doc["provenance"]["crashed_tier_evidence"]
+    assert ev["applies"] is True, ev["why"]
+    # 认的是**最后一条消息非空的**异常行：前缀行里的 ImportError（⛔ 不是空消息的 ChildFailedError）。
+    # 本 fixture 有 rank0/rank1 两条同样的 ImportError ⇒ 末条 = 第 11 行（rank1），口径与不带前缀时一致。
+    assert ev["error"]["exception"] == "ImportError", ev["error"]
+    assert ev["error"]["log_line"] == 11, ev["error"]
+    assert ev["error"]["frame"]["file"].endswith("vllm_utils.py"), ev["error"]
+    assert ev["error"]["frame"]["line"] == 41, ev["error"]
+    # 前缀只是日志形态，**不得**进人读件的备注
+    assert doc["steps_actual"] == 0 and doc["run_result"]["epochs_completed"] == 0
+    note = doc["note"]
+    assert note.startswith("训练崩溃，未产生有效训练：ImportError: vLLM is not installed"), note
+    assert "[rank" not in note, f"rank 前缀不该进备注：{note}"
+    assert not note_style.has_noise(note), note
+    assert len(note) <= note_style.NOTE_LIMIT, f"{len(note)} 字超上限：{note}"
+    assert diag["evidence_gaps"] == [], diag["evidence_gaps"]
+
+
+def test_rank_prefix_alone_does_not_admit_without_evidence(tmp_path):
+    """只加前缀容忍**不放松门槛**：有产物（跑到第 200 步）⇒ 依然拒收（⛔ 不给"跑了一半"用）。"""
+    run = _fake_crash_run(tmp_path, stdout=M066_STDOUT_RANK_PREFIXED, checkpoint=True)
+    doc, _ = _build(run, recover_crashed_tier=True)
+    ev = doc["provenance"]["crashed_tier_evidence"]
+    assert ev["applies"] is False, ev
+    assert "no_training_artifact" in ev["why"], ev["why"]
+
+
+def test_unprefixed_form_unchanged_by_prefix_tolerance():
+    """不带前缀的原有形态逐条不变（M011 那条 must-not-break 的底线）。"""
+    lines = M011_STDOUT.split("\n")
+    hit = [ln for ln in lines if m.CRASH_EXC_RE.match(ln)]
+    assert hit and hit[-1].startswith("ValueError:"), hit
+    frame = [ln for ln in lines if m.CRASH_FRAME_RE.match(ln)]
+    assert frame and frame[-1].strip().startswith('File "/workspace/graspo/src/graspo/core/lora.py"'), frame
+    # 缩进续行 / `Traceback …` 仍不得被当异常行
+    assert not m.CRASH_EXC_RE.match("    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^")
+    assert not m.CRASH_EXC_RE.match("Traceback (most recent call last):")

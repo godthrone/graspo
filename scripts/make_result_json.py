@@ -1208,11 +1208,23 @@ def _operator_stop_note(ev: dict) -> str:
 
 
 # ── D9 崩溃档的**证据化入表**（2026-10-27；显式开关，默认关）──────────────────────
-#: 异常行：**行首无缩进**的 `<名字>Error: <消息>`（Python traceback 的末行形态）。
+#: torchrun `--tee` 给**每个 worker 的每一行**加的行首前缀（`[rank0]: ` / `[rank12]:   `）。
+#: 同一条报错，开了 tee 的跑次写作 `[rank0]: ValueError: …`，没开的写作 `ValueError: …`
+#: ⇒ 定位器必须两种形态**同样认**，否则「同样的事实」只因日志形态不同就入不了表
+#: （实测：M004 / M044 / M066 与 A800 的 M005 / M006 / M009 / M015 / M028 / M045 / M046 / M051
+#:  报错原文全部只在带前缀的行里，D9 一律定位失败 ⇒ 这些档只能显示"待测试"）。
+#: ⛔ 只吞这一个已知前缀，不做"任意前缀"的宽松匹配（防把缩进续行/普通正文当报错）。
+_RANK_PREFIX = r"(?:\[rank[0-9]+\]:[ \t]*)?"
+
+#: 异常行：**行首无缩进**的 `<名字>Error: <消息>`（Python traceback 的末行形态），
+#: 前缀可为可选的 torchrun `[rankN]: `。
 #: ⛔ 不匹配缩进的续行（`    ^^^^`）与 `Traceback (most recent call last):`。
-CRASH_EXC_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception|Interrupt|Fault))\s*:(.*)$")
-#: traceback 帧：`  File "<文件>", line <行号>, in <函数>`
-CRASH_FRAME_RE = re.compile(r'^\s*File "([^"]+)", line (\d+)')
+CRASH_EXC_RE = re.compile(
+    r"^" + _RANK_PREFIX
+    + r"([A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception|Interrupt|Fault))\s*:(.*)$")
+#: traceback 帧：`  File "<文件>", line <行号>, in <函数>`（前缀同上，可选 `[rankN]: `）。
+#: ★ 前缀只允许出现在**行首**（`^(?:\[rankN\]:[ \t]*)?`），原形态的 `^\s*File` 保持可匹配。
+CRASH_FRAME_RE = re.compile(r"^" + _RANK_PREFIX + r'\s*File "([^"]+)", line (\d+)')
 
 
 def crashed_tier_evidence(*, run_dir: Path, tier: str, exit_code: int | None,
@@ -1277,7 +1289,10 @@ def crashed_tier_evidence(*, run_dir: Path, tier: str, exit_code: int | None,
                     break
                 if CRASH_EXC_RE.match(lines[j]):
                     break                    # 撞上上一条异常 ⇒ 不在同一个 traceback 块里
-            error = {"log_line": idx + 1, "text": line.rstrip(),
+            # ★ `[rankN]: ` 是 torchrun 的**行前缀**，不是报错正文：证据里按正则分组还原成
+            #   不带前缀的原文 ⇒ 与没开 tee 的跑次**逐字同形**，人读件备注里也不会出现日志形态。
+            #   （不带前缀时 `f"{g1}:{g2}"` 与整行逐字相等 ⇒ 老形态的证据一字不变。）
+            error = {"log_line": idx + 1, "text": f"{mo.group(1)}:{mo.group(2)}".rstrip(),
                      "exception": mo.group(1), "frame": frame}
     cond["error_located"] = {
         "ok": bool(error and error.get("frame")),
