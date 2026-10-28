@@ -27,6 +27,23 @@ while (($#)); do
   esac
 done
 [[ -n "$date_arg" ]] && export GRASPO_ROUND_DATE="$date_arg"
+
+# ★ 2026-10-28（审查警告 7）：轮次缺省值 = 今天，会把**实际存在的副本**（如 -20261025）判成"本轮无副本"
+#   而静默跳过 ③④⑥ 三项（实测 17:54 那次就是这样漏掉的）。⇒ 未显式指定轮次时，**按仓内实际副本**定位：
+#     唯一副本 ⇒ 用它；多份 ⇒ 取最新并打印全部候选（⛔ 不静默挑一个）；一份都没有 ⇒ 维持"今天 = 未开跑"。
+ROUND_AUTO_NOTE=""
+if [[ -z "${GRASPO_ROUND_DATE:-}" ]]; then
+  mapfile -t _rounds < <(ls -1 "$REPO/docs/" 2>/dev/null \
+    | sed -nE 's/^GRASPO.*报告-([0-9]{8})\.html$/\1/p' | sort -u)
+  if (( ${#_rounds[@]} == 1 )); then
+    export GRASPO_ROUND_DATE="${_rounds[0]}"
+    ROUND_AUTO_NOTE="（自动识别轮次：仓内唯一副本 ${_rounds[0]}）"
+  elif (( ${#_rounds[@]} > 1 )); then
+    export GRASPO_ROUND_DATE="${_rounds[-1]}"
+    ROUND_AUTO_NOTE="（自动识别轮次：仓内 ${#_rounds[@]} 份副本，取最新 ${_rounds[-1]}；候选 ${_rounds[*]}）"
+  fi
+fi
+
 eval "$("$PY" "$M/paths.py" --sh)" || { printf '⛔ paths.py 取路径失败\n' >&2; exit 1; }
 
 ORIG_HTML="$PATHS_BASELINE_HTML"
@@ -56,7 +73,7 @@ elif [[ -f "$DATED_HTML" && ! -e "$DATED_DATA" ]]; then
   HAS_ROUND=-1
 fi
 
-say "# verify_dated.sh 读数 — $(date '+%Y-%m-%d %H:%M:%S')（仓根 $REPO · 轮次 $PATHS_ROUND_DATE）"
+say "# verify_dated.sh 读数 — $(date '+%Y-%m-%d %H:%M:%S')（仓根 $REPO · 轮次 $PATHS_ROUND_DATE）${ROUND_AUTO_NOTE}"
 
 # ① 报告冻结断言（sha + 字节 + 权限 444；唯一实现 = paths.py --verify-frozen）--------
 #   ★ 2026-10-25 主席令「这个报告就定稿冻结了，没有我的允许，不能修改报告」（§22）：
