@@ -773,3 +773,39 @@ def test_ms_swift_backend_never_touches_the_native_shard_channel():
         "ms-swift 后端引用了 native 分片导出通道 ⇒ N3c 的『影响面 0 档』不再成立，"
         f"请重新评估已入表档位的判据④来源。违规位置：\n{hits}"
     )
+
+
+def test_mixed_dtype_across_shards_fails_closed(tmp_path):
+    """★ 同一逻辑矩阵各分片 dtype 不一致 ⇒ fail-closed（防"看着像 bf16 的 fp32"悄悄改值）。
+
+    真件故障注入时发现：单条 `lora_a` 从 bf16 转 fp32 曾被静默合并（值恰好可精确表示，
+    于是"没报错也没变值"）。这类静默不是可接受行为——分片契约要求同一存储精度。
+    """
+
+    def corrupt(module, a, b, meta, tp_rank):
+        if module.endswith("gate_proj") and tp_rank == 1:
+            a = a.to(torch.float32)
+        return a, b, meta
+
+    full = _full_lora(1)
+    _write_shards(tmp_path, full, tp_size=2, corrupt=corrupt)
+    with pytest.raises(ShardMergeError, match="dtype 不一致"):
+        merge_lora_shards(tmp_path)
+
+
+def test_single_shard_mixed_dtype_against_global_fails_closed(tmp_path):
+    """★ 单 stage/单 rank 时没有"兄弟分片"可比：dtype 必须跟**整份 checkpoint** 比。
+
+    故障注入里抓到过：`tp=1 pp=2` 真件只改**一条** `lora_a` 为 fp32，曾静默合并成功
+    （值恰可精确表示 ⇒ 既不报错也不变值）。这种静默不可接受。
+    """
+
+    def corrupt(module, a, b, meta, tp_rank):
+        if module.endswith("gate_proj"):
+            a = a.to(torch.float32)
+        return a, b, meta
+
+    full = _full_lora(1)
+    _write_shards(tmp_path, full, tp_size=1, corrupt=corrupt)  # 单分片：没有兄弟可比
+    with pytest.raises(ShardMergeError, match="dtype 不一致"):
+        merge_lora_shards(tmp_path)

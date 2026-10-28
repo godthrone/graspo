@@ -959,6 +959,7 @@ def merge_lora_shards(
             f" ⇒ fail-closed：合并器只认 {sorted(known_kinds)}"
         )
 
+    checkpoint_dtypes: dict[str, str] = {}
     for module, kind in kinds.items():
         per_module[module] = {"a": [], "b": []}
         hf_path = hf_paths.get(module)
@@ -998,7 +999,9 @@ def merge_lora_shards(
                     key = f"{native_name}{_MATRIX_SUFFIX[role]}"
                     if key not in state:
                         raise ShardMergeError(f"pp{pp_rank}/tp{tp_rank} 缺张量 {key}（{module}）")
-                    per_module[module][role].append((pp_rank, tp_rank, state[key], meta))
+                    tensor = state[key]
+                    checkpoint_dtypes.setdefault(str(tensor.dtype), f"{module}.lora_{role}")
+                    per_module[module][role].append((pp_rank, tp_rank, tensor, meta))
         for role in ("a", "b"):
             pieces = per_module[module][role]
             if not pieces:
@@ -1012,6 +1015,21 @@ def merge_lora_shards(
                     f"{module}.lora_{role} 只在 tp rank {sorted(tp_ranks)} 上出现"
                     f"（应覆盖 0..{layout.tp_size - 1}）⇒ 分片缺失"
                 )
+            dtypes = {t.dtype for _, _, t, _ in pieces}
+            if len(dtypes) > 1:
+                # ★ 同一逻辑矩阵的各分片必须同一 dtype：混 dtype 会被静默提升/降级，
+                #   一旦输入是"看起来像 bf16 的 fp32"就会悄悄改值而不报错。
+                raise ShardMergeError(
+                    f"{module}.lora_{role} 各分片 dtype 不一致：{sorted(str(d) for d in dtypes)}"
+                    f" ⇒ fail-closed（分片契约要求同一存储精度）"
+                )
+            if len(tp_ranks) > 1:
+                dtypes_seen = {str(t.dtype) for _, _, t, _ in pieces}
+                if len(dtypes_seen) > 1:
+                    raise ShardMergeError(
+                        f"{module}.lora_{role} 跨 tp rank 的 dtype 不一致：{sorted(dtypes_seen)}"
+                        f" ⇒ fail-closed"
+                    )
             if len(stages_present) > 1 and role in SLICED_MATRIX[kind]:
                 raise ShardMergeError(
                     f"{module}.lora_{role}: shard_kind={kind} 声明为切片，却出现在多个 pp stage "
@@ -1055,6 +1073,13 @@ def merge_lora_shards(
         merged[native_module_to_peft_key(native_name, "b", hf_paths.get(module))] = b
         del per_module[module]
 
+    if len(checkpoint_dtypes) > 1:
+        example = sorted(checkpoint_dtypes.items())
+        raise ShardMergeError(
+            "整份 checkpoint 的 LoRA 张量 dtype 不一致："
+            + ", ".join(f"{d}（例 {k}）" for d, k in example)
+            + " ⇒ fail-closed（同一 checkpoint 必须同一存储精度；混 dtype 会被静默升降级）"
+        )
     receipt.modules = len(order)
     receipt.keys = len(merged)
     return merged, receipt
