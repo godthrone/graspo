@@ -125,6 +125,21 @@ native 运行时、同一位置编码、同一 dtype**，唯一变量是 LoRA �
 > 代码层面已落地：`ReplicaPolicy.require_bitwise` **默认 True**；1 ulp 口径降级为
 > `--diagnose-only` 的**只读诊断**，⛔ 该模式产物不得进矩阵、不得作为判据④依据。
 
+### 3.2.1 ★ `pp>1` 的模型级等价：已测（复用产品自己的 PP 生成驱动）
+
+`pp=2` 的跨 stage 前向必须驱动 `PipelineComm`；**不另造**，直接复用
+`Qwen35HybridTextModel._pipeline_generate_batch`（prefill + decode + 会合）。
+两侧仍是"同一运行时、同一位置编码、同一 dtype"，`temperature=0` 贪心：
+
+| 口径（`tp=1 pp=2` 真件，真 chat 模板，prompt 19 token，生成 32 token） | 结果 |
+|---|---|
+| A = `load_checkpoint(真分片)` 生成 | ✓ |
+| B = 同一模型再灌入**合并产物**后生成 | ✓ |
+| **生成 token 序列** | **逐 token 相同（`n_diff_positions=0`）⇒ `BITWISE_EQUAL`** |
+| 生成文本（A/B 相同） | "Thinking Process: … Topic: LoRA (Low-Rank Adaptation) fine-tuning." |
+
+⇒ `pp>1` 的模型级等价**已成立**（真件、逐位口径合并、产品自己的 PP 驱动）。
+
 ### 3.3 ★ 判据④ 真件实测：合并产物被 vLLM 起服并完成一次推理（`tp=1 pp=2`）
 
 **拓扑**：`tp=1 dp=1 pp=2`（2 分片）。**合并口径**：`require_bitwise=True`（新的**默认**口径）
