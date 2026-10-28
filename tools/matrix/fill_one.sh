@@ -44,7 +44,7 @@ if ! "$PY" -c 'import pydantic' >/dev/null 2>&1; then
   #   （见 fill_one.py 的同名开关；缺这条转发 ⇒ 开关在宿主设了、容器里却看不到）。
   for v in GRASPO_ROUND_DATE GRASPO_RUN_ROOT GRASPO_EVAL_ROOT GRASPO_FILL_LEDGER \
            GRASPO_FILL_RECOVER_TIMEOUT_ARTIFACT GRASPO_FILL_RECOVER_OPERATOR_STOP \
-           GRASPO_FILL_RECOVER_CRASHED_TIER; do
+           GRASPO_FILL_RECOVER_CRASHED_TIER GRASPO_FILL_NOTE_EXTRA; do
     [[ -n "${!v:-}" ]] && DOCKER_CMD+=(-e "$v=${!v}")
   done
   DOCKER_CMD+=("$IMAGE" $ENTRY "$@")

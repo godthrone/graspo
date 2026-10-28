@@ -37,6 +37,10 @@
   `GRASPO_FILL_RECOVER_CRASHED_TIER=1`（D9）⇒ 加 `--recover-crashed-tier`：把
   「实测崩溃、一步优化都没跑、证据齐全」的档按证据如实入表（0 步 / 0 轮 / 无检查点 ⇒
   回填器判据① 判 `不通过`）。⛔ 不改判据、不改读数、不给"跑了一半/超时"的档用。
+  `GRASPO_FILL_NOTE_EXTRA="<一句话>"` ⇒ 读数派生加 `--note`：把这一句挂进 note 列
+  （`note_style.render` 的 `extra` 槽位；只加人话，仍受 200 字上限与同一套口径约束）。
+  用于"数字诚实"类补充（如墙钟被外层计时器截断、台账值另有出处）——此前这类补充只能手改
+  数据件（⛔ 禁止）。⛔ 不改任何判据/读数/阈值；未设该变量 ⇒ 行为逐字节不变。
 
 ★ 退出码：0 = 成功（写入 / dry-run / 幂等短路）；2 = 用法或档号非法；
   3 = **证据不足**（该档保持「待测试」，⛔ 未写任何字节）；4 = 机核/范围闸门失败（已回滚或未落盘）；
@@ -409,13 +413,21 @@ def main(argv: list[str]) -> int:
         recover_crash = os.environ.get("GRASPO_FILL_RECOVER_CRASHED_TIER", "").strip() == "1"
         if recover_crash:
             cmd += ["--recover-crashed-tier"]
+        # ★ 备注附注：显式 opt-in（缺省关 ⇒ 未设该变量时行为逐字节不变）。
+        #   为什么需要这条：像「墙钟被拆掉外层计时器截断、台账 1580 s 不代表训练时长」这种
+        #   数字诚实补充，此前只能手改数据件（⛔ 禁止）。本通道把它挂进 note 的 `extra` 槽位，
+        #   ⛔ 不改判据/读数/阈值，只多一句人话；仍受 note_style 的 200 字与去噪口径约束。
+        note_extra = os.environ.get("GRASPO_FILL_NOTE_EXTRA", "").strip()
+        if note_extra:
+            cmd += ["--note", note_extra]
         rc_c, out_c = run(cmd)
         _recover_note = ("（含 D1 超时伪影重派生：GRASPO_FILL_RECOVER_TIMEOUT_ARTIFACT=1）"
                          if recover else "") + (
             "（含 D1 运维停容器重派生：GRASPO_FILL_RECOVER_OPERATOR_STOP=1）"
             if recover_op else "") + (
             "（含 D9 崩溃档入表：GRASPO_FILL_RECOVER_CRASHED_TIER=1）"
-            if recover_crash else "")
+            if recover_crash else "") + (
+            "（含备注附注：GRASPO_FILL_NOTE_EXTRA）" if note_extra else "")
         print(f"→ 读数派生 make_result_json.py rc={rc_c}" + _recover_note)
         if ev_dir is not None:
             print(f"  评测证据（按档归档）{ev_dir}")

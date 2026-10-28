@@ -12,7 +12,8 @@
 1. **删**：日志坐标（`stdout.log:N`）、宿主机/容器绝对路径（`/workspace/…`、`/data/…`）、
    `file:line`、正则原文、英文帮助长句；
 2. **留**：退出码、实跑步数、完成 X/Y 个 epoch、峰值显存、效果读数（after/base/Δ）、
-   检查点有无、判据①②③④ 的过/未过结论；
+   检查点有无、判据①②③④ 的过/未过结论；必要时可加**一句**「附注：…」（数字诚实类补充，
+   如墙钟口径另有出处；由 `GRASPO_FILL_NOTE_EXTRA` 注入，仍受同一套去噪与字数口径）；
 3. **报错只留摘要**：异常类名 ＋ 正文前 ≤40 字，后接「详见跑次证据」；单档备注 **≤ 200 字**。
 
 模块同时提供两条路的**同一个渲染器**：
@@ -143,7 +144,9 @@ def render(facts: dict) -> str:
     """
     clauses: list[str] = []
     if facts.get("extra"):
-        clauses.append(str(facts["extra"]))
+        # 附注带显式前缀：本列是人读件，读者要能一眼看出「这句是补充说明」而不是读数；
+        # 同时让 `parse_legacy` 能把它**往返解析**回来（否则 `compose_note` 重渲染会把它丢掉）。
+        clauses.append(f"附注：{facts['extra']}")
     if facts.get("crash"):
         clauses.append(f"训练崩溃，未产生有效训练：{facts['crash']}")
     if facts.get("exit_derived"):
@@ -232,7 +235,9 @@ def parse_legacy(note: str) -> dict:
     unk_from_terse: list[str] = []
     clauses = split_clauses(text)
     for c in clauses:
-        if c.startswith("训练崩溃，未产生有效训练"):
+        if c.startswith("附注"):
+            facts["extra"] = c.split("：", 1)[-1].strip()
+        elif c.startswith("训练崩溃，未产生有效训练"):
             body = c.split("：", 1)[1] if "：" in c else ""
             body = body.split("exit_code=", 1)[-1]
             body = re.sub(r"^[0-9]+，", "", body)          # 去掉 "exit_code=1，" 的后半
