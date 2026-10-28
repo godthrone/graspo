@@ -332,15 +332,9 @@ def native_module_to_peft_key(
         raise ShardMergeError(f"矩阵角色只允许 a/b，收到 {matrix!r}")
     if hf_module_path:
         path = str(hf_module_path)
-        # ★ 两道自检（不要求字面相同：native 模块名有内部别名，
-        #   如 `layers.0.token_mixer.in_proj_qkv` 对应 `…layers.0.linear_attn.in_proj_qkv`）：
-        #   ① 层号必须落在路径里；② 末段模块名必须与 native 名同尾。
-        layer = module_layer_index(module_name)
-        if layer is not None and f"layers.{layer}." not in path:
-            raise ShardMergeError(
-                f"元数据 hf_module_path={path!r} 里没有层号 layers.{layer}.（module={module_name}）"
-                f" ⇒ fail-closed"
-            )
+        # ★ 末段模块名必须与 native 名同尾（不要求字面相同：native 有内部别名，
+        #   如 `layers.0.token_mixer.in_proj_qkv` ↔ `…layers.0.linear_attn.in_proj_qkv`）。
+        #   层号一致性已由 `resolve_module_identity` 结合 stage 偏移校验过。
         tail = str(module_name).rsplit(".", 1)[-1]
         if not path.endswith("." + tail) and not path.endswith(tail):
             raise ShardMergeError(
@@ -370,14 +364,50 @@ def module_layer_index(module_name: str) -> int | None:
     return None
 
 
+def resolve_module_identity(
+    module_name: str,
+    hf_module_path: str | None,
+    local_layer_indices: tuple[int, ...],
+) -> tuple[str, int | None]:
+    """给出模块的**全局唯一身份**与**全局层号**。
+
+    ★ 真件实测（pp=2, tp=1）：``pp_rank=1`` 的分片里 ``module_name`` 用的是**本 stage 内
+    的局部编号**（``layers.0.…``…``layers.14.…``），而 ``hf_module_path`` 是**全局**的
+    （``model.language_model.layers.17.…``…``layers.31.…``）。两个 stage 因此会出现
+    **同名不同层**的 `layers.0.mlp.down_proj`，若按下标名聚合会把它们并成一个 ⇒ 静默拼错。
+    故：
+      - 身份（键）= ``hf_module_path``（全局、唯一）；缺它时退化为
+        ``f"{offset}:{module_name}"``（offset=本 stage 最小全局层号），⛔ 绝不用裸名当键；
+      - 全局层号 = ``hf_module_path`` 里的 ``layers.<N>.``；缺它时 = ``offset + 局部编号``。
+    """
+    offset = min(local_layer_indices) if local_layer_indices else 0
+    local = module_layer_index(module_name)
+    if hf_module_path:
+        path = str(hf_module_path)
+        identity = path
+        match = re.search(r"(?:^|\.)layers\.(\d+)\.", path)
+        if match is not None:
+            global_layer = int(match.group(1))
+            if local is not None and global_layer != offset + local:
+                raise ShardMergeError(
+                    f"模块 {module_name} 的局部层号 {local} + stage 偏移 {offset} "
+                    f"≠ hf_module_path 的全局层号 {global_layer}（{path}）⇒ 元数据自相矛盾"
+                )
+            return identity, global_layer
+        # 无层号的模块（视觉塔等）：用路径当身份、层号留空
+        return identity, None
+    return f"{offset}:{module_name}", (offset + local if local is not None else None)
+
+
 def assert_layer_ownership(
     stage_layers: dict[int, tuple[int, ...]],
-    module_names: dict[int, tuple[str, ...]],
+    module_layers: dict[int, tuple[int | None, ...]],
 ) -> None:
     """PP 各 stage 的层归属必须①铺满 ②无重叠 ③模块落在本 stage 的层里。
 
     ``stage_layers``: ``pp_rank -> local_layer_indices``（分片自带 placement 记录）。
-    ``module_names``: ``pp_rank -> 该 stage 实际出现的模块名``。
+    ``module_layers``: ``pp_rank -> 该 stage 实际出现模块的**全局**层号``（见
+    :func:`resolve_module_identity`；``None`` = 无层号模块如视觉塔）。
     """
     if not stage_layers:
         raise ShardMergeError("没有任何 pp stage 的 placement 记录 ⇒ 无法判定层归属")
@@ -395,17 +425,14 @@ def assert_layer_ownership(
     missing = sorted(set(range(n_layers)) - set(seen))
     if missing:
         raise ShardMergeError(f"层归属有空洞：缺层 {missing[:8]}（共 {n_layers} 层）")
-    for pp_rank, names in sorted(module_names.items()):
+    for pp_rank, layers_present in sorted(module_layers.items()):
         allowed = set(stage_layers.get(pp_rank, ()))
-        stray = sorted(
-            name
-            for name in names
-            if (idx := module_layer_index(name)) is not None and idx not in allowed
-        )
+        stray = sorted(idx for idx in layers_present if idx is not None and idx not in allowed)
         if stray:
             raise ShardMergeError(
-                f"pp stage {pp_rank} 带着不属于它的层 {sorted({module_layer_index(n) for n in stray})[:8]}"
-                f" 的模块（该 stage 声明持有层 {sorted(allowed)[:8]}…）⇒ 分片与 placement 不符"
+                f"pp stage {pp_rank} 带着不属于它的层 {stray[:8]} 的模块"
+                f"（该 stage 声明持有层 {sorted(allowed)[:8]}…，共 {len(allowed)} 层）"
+                f" ⇒ 分片与 placement 不符"
             )
 
 
@@ -795,7 +822,7 @@ def merge_lora_shards(
     from graspo.flow.backend.native.parallel.placement_plan import build_placement_plan
 
     stage_layers: dict[int, tuple[int, ...]] = {}
-    module_names: dict[int, tuple[str, ...]] = {}
+    module_layers: dict[int, tuple[int | None, ...]] = {}
     for pp_rank, slot in sorted(canonical.items()):
         base_payload = slot[0]
         placement = base_payload.get("placement")
@@ -808,8 +835,15 @@ def merge_lora_shards(
         metas = base_payload.get("lora_tensor_metadata")
         if not isinstance(metas, list) or not metas:
             raise ShardMergeError(f"pp{pp_rank} 的分片缺 lora_tensor_metadata ⇒ 无法按元数据拼回")
-        names = tuple(sorted({str(m["module_name"]) for m in metas}))
-        module_names[pp_rank] = names
+        identities = {
+            resolve_module_identity(str(m["module_name"]), m.get("hf_module_path"), layers)[0]
+            for m in metas
+        }
+        module_layers[pp_rank] = tuple(
+            resolve_module_identity(str(m["module_name"]), m.get("hf_module_path"), layers)[1]
+            for m in metas
+        )
+        names = tuple(sorted(identities))
         receipt.stages.append(
             {
                 "pp_rank": pp_rank,
@@ -820,7 +854,7 @@ def merge_lora_shards(
                 "strategy": placement.get("placement_strategy"),
             }
         )
-    assert_layer_ownership(stage_layers, module_names)
+    assert_layer_ownership(stage_layers, module_layers)
 
     num_hidden_layers = 1 + max(max(v) for v in stage_layers.values())
     for pp_rank, slot in sorted(canonical.items()):
@@ -859,21 +893,39 @@ def merge_lora_shards(
     per_module: dict[str, dict[str, list[tuple[int, Any, dict[str, Any]]]]] = {}
     kinds: dict[str, str] = {}
     hf_paths: dict[str, str | None] = {}
+    native_names: dict[str, str] = {}
     order: list[str] = []
+    stage_offsets = {pp: (min(v) if v else 0) for pp, v in stage_layers.items()}
     for pp_rank in sorted(canonical):
         first = canonical[pp_rank][0]
-        meta_by_name = {str(m["module_name"]): m for m in first["lora_tensor_metadata"]}
+        offset = stage_offsets[pp_rank]
+        meta_by_name = {
+            str(m["module_name"]): m for m in first["lora_tensor_metadata"]
+        }
         for key in first["lora_state_dict"]:
             module = _module_of(key)
             if module not in meta_by_name:
                 raise ShardMergeError(
                     f"{module} 在 lora_state_dict 里有张量但元数据里没有 ⇒ fail-closed"
                 )
-            if module in kinds:
+            meta = meta_by_name[module]
+            identity = resolve_module_identity(
+                module, meta.get("hf_module_path"), stage_layers[pp_rank]
+            )[0]
+            if identity in kinds:
+                # 同一模块的 lora_a / lora_b 两个键 ⇒ 正常；但同一身份对应两个不同
+                # native 名说明元数据自相矛盾，必须拒。
+                if native_names.get(identity) != module:
+                    raise ShardMergeError(
+                        f"模块身份 {identity} 对应了多个 native 名："
+                        f"{native_names.get(identity)!r} vs {module!r} ⇒ fail-closed"
+                    )
                 continue
-            kinds[module] = str(meta_by_name[module]["shard_kind"])
-            hf_paths[module] = meta_by_name[module].get("hf_module_path")
-            order.append(module)
+            native_names[identity] = module
+            kinds[identity] = str(meta["shard_kind"])
+            hf_paths[identity] = meta.get("hf_module_path")
+            order.append(identity)
+        del offset
     ranks_seen: set[int] = set()
     alphas_seen: set[int] = set()
     for pp_rank in sorted(canonical):
@@ -900,12 +952,19 @@ def merge_lora_shards(
 
     for module, kind in kinds.items():
         per_module[module] = {"a": [], "b": []}
-        layer = module_layer_index(module)
+        hf_path = hf_paths.get(module)
+        layer_match = re.search(r"(?:^|\.)layers\.(\d+)\.", hf_path or "")
+        layer = int(layer_match.group(1)) if layer_match else None
         for pp_rank, slot in canonical.items():
             if layer is not None and layer not in stage_layers[pp_rank]:
                 continue
             for tp_rank, payload in sorted(slot.items()):
-                metas = {str(m["module_name"]): m for m in payload["lora_tensor_metadata"]}
+                metas = {}
+                for m in payload["lora_tensor_metadata"]:
+                    ident = resolve_module_identity(
+                        str(m["module_name"]), m.get("hf_module_path"), stage_layers[pp_rank]
+                    )[0]
+                    metas[ident] = m
                 meta = metas.get(module)
                 if meta is None:
                     if layer is not None:
@@ -918,6 +977,7 @@ def merge_lora_shards(
                     # embedding stage 建塔）——但出现几次就必须几份都相同，见 _replicated。
                     continue
                 state = payload["lora_state_dict"]
+                native_name = str(meta["module_name"])
                 path_here = meta.get("hf_module_path")
                 if path_here is not None and hf_paths.get(module) not in (None, path_here):
                     raise ShardMergeError(
@@ -926,9 +986,9 @@ def merge_lora_shards(
                     )
                 hf_paths.setdefault(module, path_here)
                 for role in ("a", "b"):
-                    key = f"{module}{_MATRIX_SUFFIX[role]}"
+                    key = f"{native_name}{_MATRIX_SUFFIX[role]}"
                     if key not in state:
-                        raise ShardMergeError(f"pp{pp_rank}/tp{tp_rank} 缺张量 {key}")
+                        raise ShardMergeError(f"pp{pp_rank}/tp{tp_rank} 缺张量 {key}（{module}）")
                     per_module[module][role].append((pp_rank, tp_rank, state[key], meta))
         for role in ("a", "b"):
             pieces = per_module[module][role]
@@ -981,8 +1041,9 @@ def merge_lora_shards(
             raise ShardMergeError(
                 f"{module}: lora_a 的 r={a.shape[0]} 与 lora_b 的 r={b.shape[1]} 不符 ⇒ fail-closed"
             )
-        merged[native_module_to_peft_key(module, "a", hf_paths.get(module))] = a
-        merged[native_module_to_peft_key(module, "b", hf_paths.get(module))] = b
+        native_name = native_names[module]
+        merged[native_module_to_peft_key(native_name, "a", hf_paths.get(module))] = a
+        merged[native_module_to_peft_key(native_name, "b", hf_paths.get(module))] = b
         del per_module[module]
 
     receipt.modules = len(order)

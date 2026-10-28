@@ -143,18 +143,31 @@ def _write_shards(
                     continue
                 state: dict[str, torch.Tensor] = {}
                 metadata: list[dict] = []
+                offset = min(layers) if layers else 0
                 for module, entry in full.items():
                     if module.startswith("layers.") and int(module.split(".")[1]) not in layers:
                         continue
+                    # ★ 训练器真实约定（真件实测）：`module_name` 用**本 stage 局部**层号，
+                    #   `hf_module_path` 用**全局**层号；pp=1 时两者相同。
+                    local_module = module
+                    hf_path = None
+                    if module.startswith("layers."):
+                        global_idx = int(module.split(".")[1])
+                        local_module = f"layers.{global_idx - offset}." + module.split(".", 2)[2]
+                        hf_path = (
+                            "model.language_model.layers."
+                            f"{global_idx}." + module.split(".", 2)[2]
+                        )
+                    elif module.startswith("visual."):
+                        hf_path = f"model.{module}"
                     a, b, meta = _slice_entry(entry, str(entry["kind"]), tp_rank, tp_size)
                     if corrupt is not None:
                         a, b, meta = corrupt(module, a, b, meta, tp_rank)
-                    module_name = module
-                    state[f"{module_name}.lora_a"] = a
-                    state[f"{module_name}.lora_b"] = b
+                    state[f"{local_module}.lora_a"] = a
+                    state[f"{local_module}.lora_b"] = b
                     metadata.append(
-                        {"module_name": module_name, "r": 2, "alpha": 4,
-                         "hf_module_path": None, **meta}
+                        {"module_name": local_module, "r": 2, "alpha": 4,
+                         "hf_module_path": hf_path, **meta}
                     )
                 payload = {
                     "adapter": "native",
@@ -311,12 +324,12 @@ def test_embeddings_and_lm_head_ownership_mismatch_fails_closed(tmp_path):
     full = _full_lora(4)
     ranges = {0: (0, 1), 1: (2, 3)}
     _write_shards(tmp_path, full, pp_size=2, layer_ranges=ranges, strategy="manual")
-    # 篡改 lm_head 归属 ⇒ 必须拒（手工 strategy 不比对 placement_plan，但占用/归属仍被读）
+    # 篡改层归属 ⇒ 必须拒（stage1 声明持有 stage0 的层，层归属重叠）
     victim = tmp_path / "rank_00001_tp_00_pp_01.pt"
     payload = torch.load(victim, map_location="cpu", weights_only=False)
     payload["placement"]["local_layer_indices"] = [0, 1]  # 与 stage0 重叠
     torch.save(payload, victim)
-    with pytest.raises(ShardMergeError, match="重叠|层归属"):
+    with pytest.raises(ShardMergeError, match="重叠|层归属|自相矛盾"):
         merge_lora_shards(tmp_path)
 
 
@@ -458,11 +471,13 @@ def test_module_on_wrong_stage_fails_closed(tmp_path):
     victim = tmp_path / "rank_00001_tp_00_pp_01.pt"
     payload = torch.load(victim, map_location="cpu", weights_only=False)
     entry = full["layers.0.mlp.gate_proj"]
+    # stage1 的局部编号 0 会经 offset=2 映射到全局层 2 ⇒ 不属于它的层（它声明持 2..3）
     payload["lora_state_dict"]["layers.0.mlp.gate_proj.lora_a"] = entry["a"].clone()
     payload["lora_state_dict"]["layers.0.mlp.gate_proj.lora_b"] = entry["b"].clone()
     payload["lora_tensor_metadata"].append(
         {
             "module_name": "layers.0.mlp.gate_proj",
+            "hf_module_path": "model.language_model.layers.0.mlp.gate_proj",
             "shard_kind": "out",
             "row_start": 0,
             "row_stop": INTER,
@@ -472,7 +487,7 @@ def test_module_on_wrong_stage_fails_closed(tmp_path):
         }
     )
     torch.save(payload, victim)
-    with pytest.raises(ShardMergeError, match="不属于它的层"):
+    with pytest.raises(ShardMergeError, match="不属于它的层|自相矛盾"):
         merge_lora_shards(tmp_path)
 
 
@@ -696,10 +711,17 @@ def test_hf_module_path_wins_over_native_alias_names():
     assert key == (
         "base_model.model.model.language_model.layers.0.linear_attn.in_proj_qkv.lora_B.weight"
     )
-    with pytest.raises(ShardMergeError, match="没有层号"):
-        native_module_to_peft_key(
-            "layers.7.mlp.up_proj", "a", "model.language_model.layers.3.mlp.up_proj"
+    from graspo.eval.sharded_merge import resolve_module_identity
+
+    with pytest.raises(ShardMergeError, match="自相矛盾"):
+        resolve_module_identity(
+            "layers.7.mlp.up_proj", "model.language_model.layers.3.mlp.up_proj", tuple(range(32))
         )
+    # pp=2 的真实约定：stage 局部 0 → 全局 17（offset=17）
+    ident, layer = resolve_module_identity(
+        "layers.0.mlp.up_proj", "model.language_model.layers.17.mlp.up_proj", tuple(range(17, 32))
+    )
+    assert ident == "model.language_model.layers.17.mlp.up_proj" and layer == 17
 
 
 def test_alpha_comes_from_metadata_not_derived_from_r(tmp_path):
