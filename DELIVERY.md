@@ -140,7 +140,9 @@ native 运行时、同一位置编码、同一 dtype**，唯一变量是 LoRA �
 | **温度 0 推理** | `id=chatcmpl-bb872b59ded8507f`，`finish_reason=length`，`prompt_tokens=19`、`completion_tokens=64`，返回真实中文生成（推理型模型先输出思考过程） |
 | 收尾 | 容器已删、GPU 回落到起服前的 5555 MiB 基线、18 GB 中间产物已删（可重建） |
 
-⇒ **判据④ 对 `tp=1 pp=2` 成立**，且是**在逐位口径下**成立的（不是诊断口径）。
+⇒ **判据④「可行性」已在 `tp=1 pp=2` 形状上验证（逐位口径）**；该产物来自**冒烟 run**
+（`max_epochs=1`，非矩阵要求的 4 epoch），**不构成任何档位的判定结论**，⛔ 不得据此说
+"M004 这一档通过"——档位结论要等正式档跑完并统一回填。
 
 ---
 
@@ -196,7 +198,7 @@ native 运行时、同一位置编码、同一 dtype**，唯一变量是 LoRA �
      前向正常 → 写出 18 GB 完整 HF 目录，可交付。
    - ❌ **`tp>1` 真件仍导不出**：视觉塔 LoRA 从第 1 步起各 rank 不同（缺陷①），
      按主席裁定**必须拒收**，⛔ 不做"挑一个 rank"的合并。
-   - ✅ **vLLM 起服已做（`tp=1 pp=2`）**：见 §3.3——搬 553 MB 分片到评测机**就地生产**
+   - ✅ **vLLM 起服的「可行性」已验（`tp=1 pp=2` 冒烟真件，⛔ 非档位结论）**：见 §3.3——搬 553 MB 分片到评测机**就地生产**
      （不搬 18 GB 成品），三端 sha256 对账一致，合并走 `require_bitwise`，起服 + 温度 0
      推理成功。⛔ A800 上未为装 vLLM 改任何环境。
 2. **未达成：前向级 `max|Δ|` 数值等价**。底噪实测 `max|Δ|=1.125`（HF 基座 vs native，
@@ -230,4 +232,8 @@ native 运行时、同一位置编码、同一 dtype**，唯一变量是 LoRA �
       **20 个 `backend="ms-swift"` + 1 个 `native`（M011）**；M011 训练即崩
       （`ValueError: lora.target_modules is required`，实跑 0 步、未产出 checkpoint）⇒ 没走到导出。
       ⇒ **两个 bug 的影响面 = 0 档**（它们只作用于 native 分片通道，而 native 档至今无一带结论）。
-9. `gate_content` 报 6 条阻断项，**全部来自 HEAD 既有文件**（我新增/修改的文件 0 违规）。
+9. **`gate_content` 的 6 条阻断项已登记、本轮不处理**：5 条来自
+   `history:docs/native-lora-targets-fix.md`（已撤出 `docs/` 但仍留在 git 历史里的 blob）、
+   1 条来自既有 `docs/licensing-exceptions.md`；本次新增/修改的文件 **0 违规**。
+   历史重写与既有文件清理均已列入「开源前清理清单」，**前置条件是单独获批**。
+10. `gate_content` 报 6 条阻断项，**全部来自 HEAD 既有文件**（我新增/修改的文件 0 违规）。
