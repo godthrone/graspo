@@ -218,12 +218,35 @@ def _snippet(text: str, off: int, width: int = 60) -> str:
 
 
 # ---- 判定核心 ----------------------------------------------------------------
+#: ★ 2026-10-28：**生成关系标记行**（渲染器按 `meta.authority.data_path` 派生，不是人写的正文）。
+#:   副本 `-20261025` 现在自指自己的数据件（审查警告 5 的修法）⇒ 它与基准件的这 4 行必然不同，
+#:   但那是**渲染器确定性产出**、不是越界手改 ⇒ 比对前把其中的「数据件路径」归一成占位符。
+#:   ⛔ 只归一这四种形态里的路径；其余字节仍逐字比，⛔ 不放过任何真实改动。
+_MARKER_PATH = r"[^\s`<>\"']*capability-matrix[^\s`<>\"']*\.data\.json"
+_GENERATED_MARKERS = (
+    re.compile(r"(<!--\s*generated-by:\s*tools/matrix/render_matrix\.py\s*;\s*source:\s*)"
+               + _MARKER_PATH + r"(\s*;\s*do-not-edit\s*-->)"),
+    re.compile(r'(<meta\s+name="matrix-source"\s+content=")' + _MARKER_PATH + r'(">)'),
+    re.compile(r"(表内数字由脚本从数据文件\s*<code>)" + _MARKER_PATH + r"(</code>)"),
+)
+
+
+def canonicalize_generated_markers(text: str) -> str:
+    """把「生成关系标记行」里的数据件路径归一成 `«DATA_PATH»`（只动这四种形态）。"""
+    out = text
+    for rx in _GENERATED_MARKERS:
+        out = rx.sub(lambda m: m.group(1) + "«DATA_PATH»" + m.group(2), out)
+    return out
+
+
 def check_scope(base_text: str, filled_text: str, *, result_columns, status_vocab,
                 base_path: str = "base", filled_path: str = "filled") -> list[str]:
     """返回违规清单（空 = 通过）。逐条含 `文件:行:列` + 片段。"""
     allowed = tuple(result_columns) + (MACHINE_STATUS_COL,)
-    a = parse_doc(base_text, base_path)
-    b = parse_doc(filled_text, filled_path)
+    # ★ 比对前先归一「生成关系标记行」里的数据件路径（见 canonicalize_generated_markers 的说明）：
+    #   规范化只作用在那四种由渲染器派生的形态上，其余字节仍逐字比。
+    a = parse_doc(canonicalize_generated_markers(base_text), base_path)
+    b = parse_doc(canonicalize_generated_markers(filled_text), filled_path)
     bad: list[str] = []
 
     def v(msg: str, text: str, off: int, *, where_file: str) -> None:
