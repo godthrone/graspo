@@ -487,9 +487,9 @@
       "audit_ref": "逐档审计明细见枚举脚本 --audit-out 输出（随工作区，不入库）"
     },
     "backfill": {
-      "last_run": "2026-10-28 17:35",
+      "last_run": "2026-10-28 18:29",
       "filled_tiers": [
-        "M040"
+        "M007"
       ],
       "unfilled_count": 36,
       "note": "仅脚本回填；未判定档位保持「待测试」；结果 json 不得自带 status；缺字段/缺判据证据 fail-closed"
@@ -866,11 +866,11 @@
       "runs": "—",
       "peak_mem": "20.60 GiB",
       "steps_actual": "400 步",
-      "elapsed": "总时长 1580 s（约 0.44 h）",
-      "throughput": "0.253 步/s（400 步 / 1580.0 s；样本吞吐 0.253 样本/s）",
+      "elapsed": "总时长 2500.3 s（约 0.69 h）",
+      "throughput": "0.160 步/s（400 步 / 2500.3 s；样本吞吐 0.160 样本/s）",
       "effect": "after acc=29.0000%；base acc=21.0000%；Δ = +8.0000 pp",
       "not_failed_reason": "—",
-      "note": "附注：实际训练 2500.3 s，台账 1580 s 为外层包装截断；退出码 0；实跑步数 400；完成 4/4 个 epoch；检查点：可加载；数值异常：无；峰值显存：20.60 GiB；效果读数：after 29.0% / base 21.0% / Δ+8.0pp；判据结论：①③④ 过，② 未过",
+      "note": "退出码 0；实跑步数 400；完成 4/4 个 epoch；检查点：可加载；数值异常：无；峰值显存：20.60 GiB；效果读数：after 29.0% / base 21.0% / Δ+8.0pp；判据结论：①③④ 过，② 未过",
       "spec_json": "—",
       "blocked_reason": "—"
     },

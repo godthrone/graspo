@@ -875,9 +875,15 @@ def fmt_steps(n: int) -> str:
 
 
 def fmt_elapsed(seconds) -> str:
-    """「耗时」列展示形态（与生成链同一形态：总时长 N s（约 X h））。"""
+    """「耗时」列展示形态（与生成链同一形态：总时长 N s（约 X h））。
+
+    ★ 2026-10-28（审查阻断 1 的修法）：整数秒仍按整数展示（存量 31 档**逐字节不变**）；
+      **非整数秒保留 1 位小数**——否则「耗时 2500 s」与同一行吞吐「400 步 / 2500.3 s」
+      会给出两个不同的时长，读者会以为是两个读数。⛔ 不四舍五入掉证据里的有效位。
+    """
     sec = float(seconds)
-    return f"总时长 {int(round(sec))} s（约 {sec / 3600.0:.2f} h）"
+    shown = f"{sec:.1f}" if abs(sec - round(sec)) > 1e-9 else str(int(round(sec)))
+    return f"总时长 {shown} s（约 {sec / 3600.0:.2f} h）"
 
 
 # ---- 工具脚本调用（脚本名按本文件所在目录解析，可从仓库根调用） ----
