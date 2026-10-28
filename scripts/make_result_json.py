@@ -1375,7 +1375,9 @@ def crashed_tier_evidence(*, run_dir: Path, tier: str, exit_code: int | None,
       ③ **没有任何有效训练产物**：无 `checkpoint-*`/`final` 目录、无 `trainer_state.json`
          （或有但 `global_step == 0`）、且**没有**任何步数读数（`steps_actual` 为 None 或 0）；
          ⛔ 「跑了一半 / 超时但已训练若干步」一律不成立 —— 那属另一条通道；
-      ④ 该档 `tier.json` 在且能解析、`readings.json` 的 `tier` 与本档一致 ⇒ 能证明"跑的是这个档"。
+      ④ 能证明"跑的是这个档"：`readings.json` 的 `tier` 与本档一致 **∧ 有身份件**——
+         `tier.json` 带身份键（顶层或 `params` 内）/ `entry.sh` 内 `--config …/matrix68/<档号>.yaml`
+         / `subsets/<档号>.jsonl`，三者取或（D30：编排层形态不同，判据不变）。
     ★ ⛔ 本函数**不派生任何读数、不放宽任何判据**：它只把「退出码≠0 且一步没跑」这件已经发生
       的事实变成可入表的证据；最终状态仍由回填器按第 2 章四条判据算出（必然是 `不通过`）。
     """
@@ -1383,7 +1385,8 @@ def crashed_tier_evidence(*, run_dir: Path, tier: str, exit_code: int | None,
         "applies": False,
         "rule": ("exit_code≠0 且 ∉{124,137} ∧ stdout.log 可定位报错原文与行号 ∧ "
                  "无任何训练产物（无 ckpt / 无 trainer_state 或 global_step==0 / 无步数读数）∧ "
-                 "tier.json 在且 readings.tier 一致"),
+                 "有身份件（tier.json 身份键 / entry.sh 指向本档 / subsets/<档号>.jsonl）"
+                 " 且 readings.tier 一致"),
         "exit_code_raw": exit_code,
         "error": None,
         "artifact_probe": {},
@@ -1457,20 +1460,36 @@ def crashed_tier_evidence(*, run_dir: Path, tier: str, exit_code: int | None,
                    f"steps_actual={steps_actual!r}（崩溃档要求：三者都指向「一步没跑」）"),
     }
 
-    # ④ 能证明"跑的是这个档"
+    # ④ 能证明"跑的是这个档"（★ 2026-10-28 D30：身份件从"只认 tier.json"改为**三条机核来源取或**，
+    #    "有身份件 ∧ readings.tier == 本档"这一**判据**不变。为什么必须改：A800 那条路的编排层
+    #    （`run_tier_opd.sh` → `gen_entry2.sh`）**不落 tier.json**，它的身份件是 `entry.sh`
+    #    （内含 `--config …/matrix68/<档号>.yaml`）与 `subsets/<档号>.jsonl`；而 `gen_tier_json.py`
+    #    产的 tier.json 把身份键放在 `params` 里。M039/M040 实测：其余三条全成立，
+    #    只因这条卡在"身份件形态"⇒ 该拒的是"拿不出身份件"，不是"身份件没长成某一种样子"。）
     tj = run_dir / "tier.json"
     tj_doc = read_json(tj, None) if tj.is_file() else None
     identity_keys = ("config", "algorithm", "tuner_type", "backend", "nproc", "max_epochs")
-    tj_ok = isinstance(tj_doc, dict) and any(k in tj_doc for k in identity_keys)
+    nested = tj_doc.get("params") if isinstance(tj_doc, dict) else None
+    tj_keys = sorted(k for k in identity_keys if isinstance(tj_doc, dict)
+                     and (k in tj_doc or (isinstance(nested, dict) and k in nested)))
+    entry = run_dir / "entry.sh"
+    entry_txt = entry.read_text(encoding="utf-8", errors="replace") if entry.is_file() else ""
+    entry_hit = bool(entry_txt.strip()) and f"matrix68/{tier}.yaml" in entry_txt
+    subset = run_dir / "subsets" / f"{tier}.jsonl"
+    subset_hit = subset.is_file()
+    sources = ([f"tier.json 身份键 {tj_keys}"] if tj_keys else []) \
+        + ([f"entry.sh 指向 matrix68/{tier}.yaml"] if entry_hit else []) \
+        + ([f"subsets/{tier}.jsonl"] if subset_hit else [])
     rtier = readings.get("tier")
     ev["tier_proof"] = {"tier_json": str(tj) if tj.is_file() else None,
-                        "tier_json_keys": sorted(k for k in identity_keys if isinstance(tj_doc, dict)
-                                                 and k in tj_doc),
+                        "tier_json_keys": tj_keys,
+                        "entry_sh_tier_match": entry_hit,
+                        "subsets_tier_present": subset_hit,
+                        "identity_sources": sources,
                         "readings_tier": rtier}
     cond["tier_proven"] = {
-        "ok": bool(tj_ok and str(rtier or "").strip() == tier),
-        "detail": (f"tier.json {'在' if tj.is_file() else '缺'}"
-                   f"（身份键 {ev['tier_proof']['tier_json_keys']}）；"
+        "ok": bool(sources and str(rtier or "").strip() == tier),
+        "detail": (f"身份件 {sources if sources else '无（tier.json 无身份键 ∧ entry.sh 未指向本档 ∧ 无 subsets/<档号>.jsonl）'}；"
                    f"readings.tier={rtier!r} / 本档 {tier!r}"),
     }
 
@@ -1653,6 +1672,14 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
             loadable, loadable_why = False, (
                 "无任何 checkpoint-*/ 或 final/ 目录（崩溃发生在产出检查点之前）⇒ "
                 "不存在可加载的最终检查点")
+            # ★ D30（2026-10-28）：②③④ 在这条档上**天然没有读数**（崩溃发生在任何评测/推理之前）。
+            #   口径要求"显式标未取得"，⛔ 不许留空、⛔ 不许填 0、⛔ 不许写假值 ⇒ 写成
+            #   `criteria_unavailable`，由回填器原样搬成"判据X 缺证据：未取得（训练崩溃…）"。
+            crash["criteria_unavailable"] = {
+                "②": "未进入优化循环，无学生 after/base 与教师读数",
+                "③": "崩溃发生在算法检查取证之前，本档未产出 ③ 证据",
+                "④": "无合并后推理与评测报告",
+            }
 
     # ── 三个数值/文本列 ───────────────────────────────────────────────────
     elapsed = readings.get("elapsed_sec")

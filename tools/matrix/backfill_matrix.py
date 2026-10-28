@@ -587,6 +587,28 @@ def validate_run(doc, tier_from_file, tier_rows):
 PASS, FAIL, UNKNOWN = "pass", "fail", "unknown"
 
 
+def crash_marker(doc):
+    """崩溃档标记（`scripts/make_result_json.py --recover-crashed-tier` 写进 provenance）。
+
+    ★ D30（2026-10-28 主席口径：崩溃一律记「不通过」，⛔ 不得留「待测试」）：
+      本函数只做**读取**，不判任何东西；`applies is True` 的前提是四条证据门槛全成立
+      （退出码≠0 ∧ stdout 报错原文与帧 ∧ 无任何训练产物 ∧ 身份件 + readings.tier 一致）。
+    ⛔ 绝不因为"缺证据"就置位：置位只能由产出端按证据做，回填器这边不许自我授权。
+    """
+    prov = doc.get("provenance") if isinstance(doc.get("provenance"), dict) else {}
+    crash = prov.get("crashed_tier_evidence")
+    return crash if isinstance(crash, dict) and crash.get("applies") is True else None
+
+
+def crash_unavailable_text(doc, cid: str) -> str | None:
+    """崩溃档上该条判据"为什么没有读数"的**唯一文案**（⛔ 不是"没通过"，也不是留空/填 0）。"""
+    crash = crash_marker(doc)
+    if crash is None:
+        return None
+    detail = (crash.get("criteria_unavailable") or {}).get(cid)
+    return f"判据{cid} 缺证据：未取得（训练崩溃{('；' + detail) if detail else ''}）"
+
+
 def judge_run_complete(doc, row):
     """判据① 跑完：**跑满 Epoch** ∧ 退出码 0 ∧ 最终检查点真可加载 ∧ 无 NaN/Inf。
 
@@ -602,6 +624,15 @@ def judge_run_complete(doc, row):
     ex = rr.get("exit_code")
     if isinstance(ex, bool) or not isinstance(ex, int):
         return UNKNOWN, "判据① 缺证据：run_result.exit_code"
+    # ★ D30（2026-10-28 主席口径：崩溃一律记「不通过」）：崩溃档上"退出码≠0"是**有据且不过**
+    #   —— 合取已假，⛔ 不得再因为"崩溃天然没有 epoch / 没有可加载 checkpoints / 没有 NaN 读数"
+    #   掉进 UNKNOWN（那正是 M039/M040 卡在「待测试」的最后一道口子）。
+    #   ★ 这不是放宽判据：判据① 的结论仍是"未过"，依据仍是退出码（原值，未改写）；
+    #   且这条只在 `crash_marker` 成立（四条证据门槛全过）时生效，⛔ 不是给所有档开后门。
+    if ex != 0 and crash_marker(doc) is not None:
+        steps = doc.get("steps_actual")
+        return FAIL, (f"判据① 未过：退出码 {ex} ≠ 0（起跑即崩，未进入优化循环；"
+                      f"台账：实跑 {steps} 步（不作通过条件））")
     epochs_done = rr.get("epochs_completed")
     epochs_planned = rr.get("epochs_planned")
     if epochs_planned is None:
@@ -732,6 +763,9 @@ def judge_cpt_loss_evidence(doc):
 
 def judge_effect(doc, row, frozen_map, teacher_pp):
     """判据② 效果：按该算法冻结通过线判 Δ；OPD 另判「教师 − 学生未训练 ≥ 教师线」。"""
+    _cu = crash_unavailable_text(doc, "②")
+    if _cu:
+        return UNKNOWN, _cu
     method = str(row.get("train_method") or "").lower()
     line = frozen_map.get(method)
     if line is None:
@@ -780,6 +814,9 @@ def judge_algo_checks(doc):
     ck = doc.get("checks") if isinstance(doc.get("checks"), dict) else {}
     v = ck.get("algo_checks_passed")
     if not isinstance(v, bool):
+        _cu = crash_unavailable_text(doc, "③")
+        if _cu:
+            return UNKNOWN, _cu
         return UNKNOWN, "判据③ 缺证据：checks.algo_checks_passed（算法正确性检查结果）"
     return (PASS, "判据③ 算法正确性检查通过") if v else (FAIL, "判据③ 未过：算法正确性检查未通过")
 
@@ -789,6 +826,9 @@ def judge_inference(doc):
     ck = doc.get("checks") if isinstance(doc.get("checks"), dict) else {}
     v = ck.get("inference_parseable")
     if not isinstance(v, bool):
+        _cu = crash_unavailable_text(doc, "④")
+        if _cu:
+            return UNKNOWN, _cu
         return UNKNOWN, "判据④ 缺证据：checks.inference_parseable（推理结果是否可解析）"
     return (PASS, "判据④ 可完整推理") if v else (FAIL, "判据④ 未过：推理结果不可解析")
 

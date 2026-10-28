@@ -358,3 +358,183 @@ def test_unprefixed_form_unchanged_by_prefix_tolerance():
     # 缩进续行 / `Traceback …` 仍不得被当异常行
     assert not m.CRASH_EXC_RE.match("    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^")
     assert not m.CRASH_EXC_RE.match("Traceback (most recent call last):")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# D30（2026-10-28）：A800 编排层形态（不落 tier.json）+ 崩溃档 ②③④「未取得」标注
+#   ★ 实证来源：M039 / M040（9B / OPD / **全参** / ms-swift，A800-33 实测 2026-10-28）
+#     `exit_code=1`、`stdout.log` 逐字 `RuntimeError: Inference tensors cannot be saved for
+#     backward…`（帧在 `torch/nn/modules/conv.py:718`）、0 步、无 checkpoint；
+#     编排层 `run_tier_opd.sh` **不落 tier.json**，身份件是 `entry.sh`（`--config …/matrix68/
+#     M039.yaml`）与 `subsets/M039.jsonl` ⇒ 旧口径把"身份件形态不同"错判成"没有身份证据"。
+# ══════════════════════════════════════════════════════════════════════════════
+M039_STDOUT = '''\x1b[36m[rank0]: Traceback (most recent call last):\x1b[0m
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/swift/trainers/trainer.py", line 900, in compute_loss
+[rank0]:     loss = self.compute_loss_func(outputs, labels, num_items_in_batch=num_items_in_batch)
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/conv.py", line 718, in _conv_forward
+[rank0]:     return self._conv_forward(input, self.weight, self.bias)
+[rank0]: RuntimeError: Inference tensors cannot be saved for backward. Please do not use Tensors created in inference mode in computation tracked by autograd. To work around this, you can make a clone to get a normal tensor and use it in autograd, or use `torch.no_grad()` instead of `torch.inference_mode()`.
+[rank0]:           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+'''
+
+
+def _a800_crash_run(tmp_path, *, tier="M039", tier_json=None, entry=True, subset=True):
+    """造一个 A800 编排层形态的崩溃跑次：**不落 tier.json**，身份件靠 entry.sh / subsets。"""
+    run = tmp_path / tier
+    run.mkdir()
+    (run / "stdout.log").write_text(M039_STDOUT, encoding="utf-8")
+    (run / "exit_code").write_text("1\n", encoding="utf-8")
+    (run / "elapsed_sec").write_text("218.0\n", encoding="utf-8")
+    (run / "readings.json").write_text(json.dumps({
+        "tier": tier, "exit_code": 1, "elapsed_sec": 218,
+        "gpus": ["6", "7"], "config": f"samples/configs/matrix68/{tier}.yaml",
+        "timeout_sec": 900, "repo": "/data/remote/work/graspo-1b48cd1-opd",
+        "command": f"run_tier_opd.sh {tier} 6,7 900"}, indent=1), encoding="utf-8")
+    gpu = run / "gpu"
+    gpu.mkdir()
+    (gpu / "peak_mem.json").write_text(json.dumps({
+        "caliber": "宿主侧 nvidia-smi memory.used 采样峰值（MiB，每 2 s 一帧）",
+        "gpus": ["6", "7"], "peak_used_mib_by_gpu": {"6": 11135.0, "7": 11135.0},
+        "peak_used_mib": 11135.0, "measured": True}, indent=1), encoding="utf-8")
+    if entry:
+        (run / "entry.sh").write_text(
+            "#!/bin/bash\nexec python3 -m graspo.cli.train_worker \\\n"
+            f"  --config /workspace/graspo/samples/configs/matrix68/{tier}.yaml\n", encoding="utf-8")
+    if subset:
+        (run / "subsets").mkdir()
+        (run / "subsets" / f"{tier}.jsonl").write_text("{}\n", encoding="utf-8")
+    if tier_json is not None:
+        (run / "tier.json").write_text(json.dumps(tier_json, ensure_ascii=False), encoding="utf-8")
+    return run
+
+
+def _build_tier(run, tier, **flags):
+    manifest, rows = _manifest_and_rows()
+    return m.build_doc(tier=tier, run_dir=run, manifest=manifest, data_rows=rows,
+                       eval_dir=None, tier_json=None, note_extra="", **flags)
+
+
+def test_a800_shape_identity_from_entry_sh_without_tier_json(tmp_path):
+    """编排层不落 tier.json ⇒ 身份件取 entry.sh / subsets 这两条机核来源（判据不变）。"""
+    run = _a800_crash_run(tmp_path)
+    doc, diag = _build_tier(run, "M039", recover_crashed_tier=True)
+    ev = doc["provenance"]["crashed_tier_evidence"]
+    assert ev["applies"] is True, ev["why"]
+    assert ev["tier_proof"]["entry_sh_tier_match"] is True
+    assert ev["tier_proof"]["subsets_tier_present"] is True
+    assert ev["tier_proof"]["identity_sources"], ev["tier_proof"]
+    assert diag["evidence_gaps"] == [], diag["evidence_gaps"]
+
+
+def test_gen_tier_json_params_nested_identity(tmp_path):
+    """`gen_tier_json.py` 产的 tier.json 把身份键放 `params` 内 ⇒ 也算身份件（不另立形态）。"""
+    run = _a800_crash_run(tmp_path, entry=False, subset=False, tier_json={
+        "schema": "matrix-run/v1", "tier": "M039", "status": "失败",
+        "params": {"model": "9B", "algo": "OPD", "mode": "全参", "backend": "ms-swift"}})
+    doc, _ = _build_tier(run, "M039", recover_crashed_tier=True)
+    ev = doc["provenance"]["crashed_tier_evidence"]
+    assert ev["applies"] is True, ev["why"]
+    assert ev["tier_proof"]["tier_json_keys"] == ["backend"], ev["tier_proof"]
+
+
+def test_no_identity_artifact_at_all_still_rejected(tmp_path):
+    """三条身份来源全无 ⇒ 仍然拒（⛔ 不许"形态放宽"变成"不要证据"）。"""
+    run = _a800_crash_run(tmp_path, entry=False, subset=False)
+    doc, diag = _build_tier(run, "M039", recover_crashed_tier=True)
+    ev = doc["provenance"]["crashed_tier_evidence"]
+    assert ev["applies"] is False, ev
+    assert "tier_proven" in ev["why"], ev["why"]
+    assert diag["evidence_gaps"], "未成立时仍必须报证据缺口"
+
+
+def test_backfill_marks_criteria_2_3_4_unavailable_on_crash(tmp_path):
+    """崩溃档：判据① 判 `不通过`（依据=退出码原值），②③④ 显式「未取得（训练崩溃）」——
+    ⛔ 不留空、⛔ 不填 0、⛔ 不写成"未通过"。"""
+    run = _a800_crash_run(tmp_path)
+    doc, _ = _build_tier(run, "M039", recover_crashed_tier=True)
+    _manifest, rows = _manifest_and_rows()
+    fm = bf.frozen_map_from_caliber(
+        json.loads(_DATA.read_text(encoding="utf-8"))["meta"]["criteria_caliber"]["threshold"])
+    status, fails, unks = bf.judge_row(doc, rows["M039"], fm, None)
+    assert status == "不通过", (status, fails)
+    assert any("退出码 1 ≠ 0" in f for f in fails), fails
+    # ②③④ 必须**都**有"未取得（训练崩溃…）"的显式标注，且是 unknown 不是 fail
+    for cid in "②③④":
+        hit = [u for u in unks if f"判据{cid}" in u]
+        assert hit, (cid, unks)
+        assert "未取得（训练崩溃" in hit[0], hit[0]
+        assert "未过" not in hit[0], hit[0]
+    for cid in "②③④":
+        assert doc["provenance"]["crashed_tier_evidence"]["criteria_unavailable"][cid]
+    # 备注列只留编号级结论（E1），且 ②③④ 被识别为「未判定」
+    note = bf.compose_note(doc["note"], status, fails, unks)
+    assert "① 未过" in note and "②③④ 未判定" in note, note
+    assert len(note) <= note_style.NOTE_LIMIT, note
+
+
+# ── ★ 反向断言：新通道**不是万能后门** ──────────────────────────────────────
+def test_backdoor_reverse_assertion_finished_tier_without_evidence(tmp_path):
+    """【反向断言】"其实跑完了但缺证据"的档：新通道必须**照旧拒收**（rc≠0 / 不判定）。
+
+    造件：`exit_code=0`（训练正常返回）、无任何 checkpoint、无 trainer_state、无评测 ⇒
+    典型的"跑完了但证据没留"。要求：
+      ① 崩溃通道**不成立**（它不是崩溃）；② 证据缺口非空（⇒ CLI rc=4）；
+      ③ 回填器**不判定**（status=None，保持「待测试」），⛔ 不得被写成不通过/通过。
+    """
+    run = _a800_crash_run(tmp_path)
+    (run / "exit_code").write_text("0\n", encoding="utf-8")
+    rd = json.loads((run / "readings.json").read_text(encoding="utf-8"))
+    rd["exit_code"] = 0
+    (run / "readings.json").write_text(json.dumps(rd, indent=1), encoding="utf-8")
+    doc, diag = _build_tier(run, "M039", recover_crashed_tier=True)
+    ev = doc["provenance"]["crashed_tier_evidence"]
+    assert ev["applies"] is False, ev
+    assert diag["evidence_gaps"], "跑完但缺证据的档仍必须报缺口（rc=4）"
+    _manifest, rows = _manifest_and_rows()
+    fm = bf.frozen_map_from_caliber(
+        json.loads(_DATA.read_text(encoding="utf-8"))["meta"]["criteria_caliber"]["threshold"])
+    status, fails, unks = bf.judge_row(doc, rows["M039"], fm, None)
+    assert status is None, f"⛔ 后门！跑完但缺证据的档被判成了 {status}（fails={fails}）"
+    assert unks, unks
+
+
+def test_backdoor_reverse_assertion_channel_off_by_default(tmp_path):
+    """【反向断言·最关键】同一份崩溃证据，**开关不打开** ⇒ 一个字段都不改、回填器不判定。
+
+    证明这条通道是"显式 opt-in 的取证件"，⛔ 不是"崩溃就自动进表"的万能后门：
+    关掉 `recover_crashed_tier` 后，判据① 因缺 epoch 读数判 UNKNOWN ⇒ status=None（保持待测试）。
+    """
+    run = _a800_crash_run(tmp_path)
+    doc, diag = _build_tier(run, "M039")            # ★ 不传 recover_crashed_tier
+    ev = doc["provenance"].get("crashed_tier_evidence")
+    assert not ev, f"开关关着却出现了崩溃证据件：{ev}"
+    assert doc["steps_actual"] is None, "通道未开却改了实跑步数"
+    assert doc["provenance"]["note"] == "elapsed_sec = runner 起止墙钟差；peak_mem 见 gpu/peak_mem.json" \
+        if isinstance(doc.get("provenance"), dict) and "note" in doc["provenance"] else True
+    _manifest, rows = _manifest_and_rows()
+    fm = bf.frozen_map_from_caliber(
+        json.loads(_DATA.read_text(encoding="utf-8"))["meta"]["criteria_caliber"]["threshold"])
+    status, fails, unks = bf.judge_row(doc, rows["M039"], fm, None)
+    assert status is None, f"⛔ 后门！开关关着仍被判成 {status}（fails={fails}）"
+    assert unks, unks
+
+
+def test_backdoor_reverse_assertion_half_run_uses_ordinary_path(tmp_path):
+    """【反向断言】"跑了一半"（已产出 checkpoint、已训练若干步）不许走崩溃通道；
+    它的结论由**普通证据路径**给出（⛔ 不是"起跑即崩"那句短路文案）。"""
+    run = _a800_crash_run(tmp_path)
+    ck = run / "M039" / "v0-20261028-091508" / "checkpoint-100"
+    ck.mkdir(parents=True)
+    (ck / "trainer_state.json").write_text(
+        json.dumps({"global_step": 100, "epoch": 2.0, "max_steps": 100}), encoding="utf-8")
+    doc, _ = _build_tier(run, "M039", recover_crashed_tier=True)
+    ev = doc["provenance"]["crashed_tier_evidence"]
+    assert ev["applies"] is False, ev
+    assert "no_training_artifact" in ev["why"], ev["why"]
+    _manifest, rows = _manifest_and_rows()
+    fm = bf.frozen_map_from_caliber(
+        json.loads(_DATA.read_text(encoding="utf-8"))["meta"]["criteria_caliber"]["threshold"])
+    status, fails, _unks = bf.judge_row(doc, rows["M039"], fm, None)
+    # 有据且不过（退出码 1、检查点不可加载）⇒ 不通过；但**不许**是崩溃通道的短路文案
+    assert status == "不通过", (status, fails)
+    assert not any("起跑即崩" in f for f in fails), fails
