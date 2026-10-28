@@ -2074,11 +2074,22 @@ def apply_meta_sync(meta: dict[str, Any], *, card_limit: int, budget: float,
     #   自引用限制：数据件记录不了"自己所在的那个提交"（内容含该值 ⇒ sha 变化 ⇒ 鸡生蛋）。
     #   ⇒ 语义写进 `code_version.note`：commit = 生成基线；**脚本 sha256 以
     #   `meta.enumeration.script_sha256` 为准**（它在同一提交里与脚本逐字节对应）。
+    _enum = new.get("enumeration")
+    if isinstance(_enum, dict):
+        # ★ 2026-10-28（审查警告 6）：原口径宣称「script_sha256 与同提交内的脚本逐字节一致」，
+        #   但实测 9926431a… 对应的是 `ef0a9f3`，而 code_version.commit=53b0c24 内是 944e2647…
+        #   ⇒ 两句不能同时为真。改为**如实说明两个提交不同**：枚举脚本的版本单独记 `script_commit`
+        #   （生成时 HEAD；缺省 = 本次生成所在提交），⛔ 不再宣称与 code_version.commit 同一提交。
+        _enum["script_commit"] = _git_short_head()
+        _enum["note"] = ("script_sha256 = 实际跑枚举的 tools/matrix/enumerate_matrix.py 的 sha256；"
+                         "它与 script_commit 内的同名文件逐字节一致。"
+                         "⛔ 该提交与 meta.code_version.commit（本件生成基线）不是同一个提交——"
+                         "枚举早于本件基线，两个提交不同属正常，⛔ 不得据此推断脚本被改过。")
     _cv = new.get("code_version")
     if isinstance(_cv, dict):
-        _cv["note"] = ("commit = 本件的生成基线（生成时的 HEAD）；脚本以 "
-                       "meta.enumeration.script_sha256 为准 —— 该 sha256 与同提交内的 "
-                       "tools/matrix/enumerate_matrix.py 逐字节一致。")
+        _cv["note"] = ("commit = 本件的生成基线（生成时的 HEAD），与枚举脚本版本无关；"
+                       "枚举脚本身份以 meta.enumeration.script_sha256 + "
+                       "meta.enumeration.script_commit 为准。")
 
     for drop in META_DROPS:
         _del_path(new, drop["path"])   # 不存在也不算错（幂等）
