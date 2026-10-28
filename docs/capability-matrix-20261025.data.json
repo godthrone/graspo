@@ -487,11 +487,11 @@
       "audit_ref": "逐档审计明细见枚举脚本 --audit-out 输出（随工作区，不入库）"
     },
     "backfill": {
-      "last_run": "2026-10-28 16:55",
+      "last_run": "2026-10-28 17:21",
       "filled_tiers": [
-        "M037"
+        "M038"
       ],
-      "unfilled_count": 40,
+      "unfilled_count": 39,
       "note": "仅脚本回填；未判定档位保持「待测试」；结果 json 不得自带 status；缺字段/缺判据证据 fail-closed"
     }
   },
@@ -2538,15 +2538,15 @@
       "data_subset": "subsets-v2/M038.jsonl",
       "lora_target": "真实 HF 名正则（两后端共用同一条；取值以核心 LoRA 配置的 target 名单为准）",
       "applicable": true,
-      "status": "待测试",
+      "status": "不通过",
       "runs": "—",
-      "peak_mem": "—",
-      "steps_actual": "—",
-      "elapsed": "—",
-      "throughput": "—",
-      "effect": "—",
+      "peak_mem": "77.92 GiB",
+      "steps_actual": "50 步",
+      "elapsed": "总时长 1103 s（约 0.31 h）",
+      "throughput": "0.045 步/s（50 步 / 1103.0 s；样本吞吐 0.181 样本/s）",
+      "effect": "after acc=18.0000%；base acc=21.0000%；Δ = -3.0000 pp",
       "not_failed_reason": "—",
-      "note": "",
+      "note": "退出码 0；实跑步数 50；完成 2/2 个 epoch；检查点：可加载；数值异常：无；峰值显存：77.92 GiB；效果读数：after 18.0% / base 21.0% / Δ-3.0pp；判据结论：①③④ 过，② 未过",
       "spec_json": "—",
       "cards_pending": true,
       "blocked_reason": "—"
