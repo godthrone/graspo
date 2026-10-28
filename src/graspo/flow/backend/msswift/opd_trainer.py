@@ -118,7 +118,6 @@ class MsSwiftOpdTrainer:
             native_only_fields,
             validate_combinations,
         )
-        from graspo.flow.backend.msswift._inference_mode_compat import graph_safe_encode
         from graspo.flow.backend.msswift._rollout_seed import rollout_seeding
         from graspo.flow.backend.msswift._rope_compat import rope_parameters_compatible
         from graspo.flow.backend.msswift.dataset import prepare_ms_swift_dataset
@@ -183,19 +182,9 @@ class MsSwiftOpdTrainer:
         # ``rollout_seeding`` 是**唯一的播种接线入口**（§1.4）：本通道不再自己拼
         # "装包装 + 退出校验"的组合逻辑，GRPO 通道（``trainer.run_graspo_rlhf``）
         # 用的是同一个入口 —— 播种口径只有一份实现（``_rollout_seed.py``）。
-        # **全参多模态的编码上下文**（M039/M040 真机事故的修法，见下）：
-        # ms-swift 的 ``Template.encode`` 在 ``torch.inference_mode()`` 下产出
-        # ``pixel_values``（swift/template/base.py:652），全参档视觉塔 ``patch_embed``
-        # 的 conv3d 要为 backward 保存它 ⇒ 首步即
-        # ``RuntimeError: Inference tensors cannot be saved for backward``。
-        # ``graph_safe_encode`` 只在 ``tuner_type=full`` 时把该上下文换成
-        # ``torch.no_grad()``（数值逐位不变），LoRA 档不装包装、逐字保持上游行为。
-        # 接线点只在本通道：SFT/GRPO 的全参多模态档走的是同一条"编码产物 → 视觉塔"
-        # 路径（本轮未验证），但不在本工作包范围内。
         with (
             rope_parameters_compatible(self.config.msswift.rope_scaling),
             rollout_seeding(self.config),
-            graph_safe_encode(tuner_type=self.config.effective_tuner_type),
         ):
             rlhf_main(argv)
 
