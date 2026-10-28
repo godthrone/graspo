@@ -30,7 +30,7 @@ from graspo.eval.evaluate import compute_delta, load_report
 from graspo.core.gpu_guard import GpuGuardError, resolve_gpu_plan
 from graspo.eval.guard import repo_relative, sample_device_memory_mib
 from graspo.eval.merged_export import (
-    convert_native_rank_to_peft,
+    convert_native_checkpoint_to_peft,
     CheckpointKind,
     classify_checkpoint,
     existing_merged_output,
@@ -104,18 +104,23 @@ def cmd_export(args: argparse.Namespace) -> int:
     if classification.kind is CheckpointKind.NATIVE_RANK:
         # ★ native 的 `final/`（manifest.json + rank_*.pt）：先转成 PEFT adapter，
         #   再走**既有的** PEFT merge 路径（不重写第二份合并逻辑）。
-        #   ★ dp/pp/tp > 1 时 convert 会 fail-closed（分歧的 lora_a 无唯一正解）。
+        #   ★ dp/pp/tp 任一 >1 时走 `eval/sharded_merge.py`：按分片元数据严格拼回完整 LoRA
+        #     （切片拼接 + 复制张量一致性判定）；单分片仍走原通道，产物逐字节不变。
         if config.merged_output_dir is None:
             raise SystemExit("eval.merged_output_dir is required to convert native rank shards")
         # ★ 落点必须在**输出目录之外**：写进去会让 prepare_output_directory 判"非空"而拒绝合并
         #   （2026-10-13 实测缺陷：T022 首跑即因此失败）。
         adapter_out = Path(str(config.merged_output_dir) + ".adapter")
-        info = convert_native_rank_to_peft(
-            config.checkpoint_path, adapter_out, base_model_path=config.base_model_path
+        info = convert_native_checkpoint_to_peft(
+            config.checkpoint_path,
+            adapter_out,
+            base_model_path=config.base_model_path,
+            require_bitwise=bool(getattr(args, "require_bitwise", False)),
         )
         print(
             json.dumps(
                 {"event": "native_rank_converted", "keys": info["keys"], "shard": info["shard"],
+                 "channel": info["channel"], "summary": info.get("summary"),
                  "adapter_dir": str(adapter_out)},
                 ensure_ascii=False,
             )
@@ -403,6 +408,15 @@ def build_eval_parser(subparsers: argparse._SubParsersAction) -> None:
         help=(
             "Allow replacing a non-empty merged_output_dir. Off by default (pre-authorized "
             "fallback, constitution §3.3). The old contents are listed before removal."
+        ),
+    )
+    export.add_argument(
+        "--require-bitwise",
+        action="store_true",
+        help=(
+            "native 分片合并的终态口径：声明为『复制』的张量必须跨 rank **逐位相同**，"
+            "否则 fail-closed。默认关（过渡口径：同一 dtype 分辨率内视为同一个值）——"
+            "训练侧补齐『复制张量归约逐位一致 / 视觉塔 LoRA 跨 rank 同步』之后应默认打开。"
         ),
     )
     export.set_defaults(func=cmd_export)

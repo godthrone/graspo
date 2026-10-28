@@ -820,7 +820,6 @@ def convert_native_rank_to_peft(checkpoint_dir: str | Path, output_dir: str | Pa
     """
     import json
     import torch
-    from safetensors.torch import save_file
 
     root = Path(checkpoint_dir)
     manifest_path = root / "manifest.json"
@@ -871,32 +870,38 @@ def convert_native_rank_to_peft(checkpoint_dir: str | Path, output_dir: str | Pa
     if len(converted) != len(lora):                       # ★ ⓑ 键集合守恒
         raise ExportError(f"键集合不守恒：源 {len(lora)} ⇒ 目标 {len(converted)}")
 
-    out = Path(output_dir)
+    _write_peft_adapter(converted, Path(output_dir), base_model_path=base_model_path,
+                        note="★ target_modules/r/lora_alpha 均由源 lora_state_dict 键名与形状推导")
+    return {"keys": len(converted), "shard": shards[0].name}
+
+
+def _write_peft_adapter(converted: dict[str, Any], out: Path, *, base_model_path: str,
+                        note: str) -> None:
+    """把"已映射好的 PEFT 键值"写成 adapter 目录（safetensors + adapter_config.json）。
+
+    ★ 单分片通道与分片合并通道**共用这一份**写出逻辑：PEFT 必须拿到 target_modules 与 r，
+    否则加载 adapter 时直接 ValueError（2026-10-13 实测缺陷：T022 首跑即因此失败）。
+    二者都从张量**推导**，不留隐式默认。
+    """
+    import json
+    import torch
+    from safetensors.torch import load_file, save_file
+
     out.mkdir(parents=True, exist_ok=True)
     save_file(converted, str(out / "adapter_model.safetensors"))
-
-    # ★ ⓐ 回读校验
-    from safetensors.torch import load_file
-    back = load_file(str(out / "adapter_model.safetensors"))
+    back = load_file(str(out / "adapter_model.safetensors"))     # ★ ⓐ 回读校验
     if set(back) != set(converted):
         raise ExportError("回读键集合与写出不一致 ⇒ fail-closed")
     for key, tensor in back.items():
         if tuple(tensor.shape) != tuple(converted[key].shape):
             raise ExportError(f"回读形状不一致：{key} ⇒ fail-closed")
 
-    # ★ PEFT 必须拿到 target_modules 与 r，否则加载 adapter 时直接 ValueError
-    #   （2026-10-13 实测缺陷：T022 首跑即因此失败）。二者都从源张量**推导**，不留隐式默认。
     modules: set[str] = set()
     ranks: set[int] = set()
     for key, tensor in converted.items():
-        # ★ 只剥 `base_model.model.`：保留 `model.` ⇒ 得到 `model.language_model.layers.<N>.<mod>`
-        #   （★ 多模态基座的守卫要求 target_modules 引用 `model.language_model.`）
         _p = "base_model.model."
         stem = key[len(_p):-len(".lora_A.weight")] if key.endswith(".lora_A.weight") \
             else key[len(_p):-len(".lora_B.weight")]
-        # ★ 用**完整模块路径**（`model.language_model.layers.<N>.<mod>`）：多模态基座必须带
-        #   `model.language_model.` 命名空间，裸模块名会被 `_resolve_injection_targets` 正确拒绝
-        #   （2026-10-13 实测：T022 第三次重跑即卡在此守卫）。
         modules.add(stem)
         if key.endswith(".lora_A.weight"):
             ranks.add(int(tensor.shape[0]))
@@ -906,10 +911,83 @@ def convert_native_rank_to_peft(checkpoint_dir: str | Path, output_dir: str | Pa
     if not modules:
         raise ExportError("未能从键名推导出任何 target_modules ⇒ fail-closed")
     alpha = r  # ★ 源分片未记 alpha ⇒ 取 r（产物里注明为推导值）
+    del torch
     (out / "adapter_config.json").write_text(
         json.dumps({"peft_type": "LORA", "base_model_name_or_path": base_model_path,
                     "task_type": "CAUSAL_LM",
                     "target_modules": sorted(modules), "r": r, "lora_alpha": alpha,
-                    "_note": "★ target_modules/r/lora_alpha 均由源 lora_state_dict 键名与形状推导"},
+                    "_note": note},
                    ensure_ascii=False, indent=2), encoding="utf-8")
-    return {"keys": len(converted), "shard": shards[0].name}
+
+
+# ── N3c：分片（tp / pp / dp）通道 ────────────────────────────────────────────
+
+
+def convert_native_checkpoint_to_peft(
+    checkpoint_dir: str | Path,
+    output_dir: str | Path,
+    *,
+    base_model_path: str,
+    require_bitwise: bool = False,
+    ulp_tolerance: int = 1,
+) -> dict[str, Any]:
+    """native `final/` → PEFT adapter：**按拓扑自动选通道**。
+
+    - `tp=dp=pp=1` ⇒ 走旧通道 `convert_native_rank_to_peft`（产物**逐字节不变**，golden 锁定）。
+    - 任一分片维 >1 ⇒ 走 `eval/sharded_merge.py`：按分片元数据严格拼回完整 LoRA，
+      再复用同一份 `_write_peft_adapter` 写出（切片拼接 + 复制一致性判定见该模块）。
+
+    Args:
+        require_bitwise: 终态口径——"声明为复制的张量必须跨 rank 逐位相同"。
+            默认 `False` = 过渡口径（同一 dtype 分辨率内即同一值），详见 `ReplicaPolicy`。
+
+    Raises:
+        ExportError: 分片不齐 / 切片不覆盖 / 复制张量漂移超限 / 拓扑未知 ⇒ 一律 fail-closed。
+    """
+    import json
+
+    import torch
+
+    from graspo.eval.sharded_merge import (
+        ParallelLayout,
+        ReplicaPolicy,
+        ShardMergeError,
+        merge_lora_shards,
+        merge_receipt_summary,
+    )
+
+    root = Path(checkpoint_dir)
+    manifest_path = root / "manifest.json"
+    if not manifest_path.is_file():
+        raise ExportError(f"native 分片转换需要 manifest.json：{manifest_path} 不存在")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    layout = ParallelLayout.from_manifest(manifest)
+    if layout.tp_size == 1 and layout.dp_size == 1 and layout.pp_size == 1:
+        info = convert_native_rank_to_peft(root, output_dir, base_model_path=base_model_path)
+        return {**info, "channel": "single-shard", "receipt": None}
+
+    policy = ReplicaPolicy(require_bitwise=require_bitwise, ulp_tolerance=ulp_tolerance)
+    try:
+        merged, receipt = merge_lora_shards(root, policy=policy)
+    except ShardMergeError as exc:
+        raise ExportError(f"native 分片不可合并（{layout}）：{exc}") from exc
+    converted = {key: tensor.detach().to(torch.float32).contiguous() for key, tensor in merged.items()}
+    if not converted:
+        raise ExportError("分片合并后一个键都没有 ⇒ fail-closed")
+    _write_peft_adapter(
+        converted,
+        Path(output_dir),
+        base_model_path=base_model_path,
+        note=(
+            f"★ 由 {layout} 分片合并（切片按元数据严格拼接；复制张量口径={policy.describe()}）；"
+            "target_modules/r/lora_alpha 由键名与形状推导"
+        ),
+    )
+    summary = merge_receipt_summary(receipt)
+    return {
+        "keys": len(converted),
+        "shard": f"{len(receipt.shards)} shards",
+        "channel": "sharded-merge",
+        "receipt": receipt.as_dict(),
+        "summary": summary,
+    }
