@@ -876,7 +876,8 @@ def convert_native_rank_to_peft(checkpoint_dir: str | Path, output_dir: str | Pa
 
 
 def _write_peft_adapter(converted: dict[str, Any], out: Path, *, base_model_path: str,
-                        note: str) -> None:
+                        note: str, lora_r: int | None = None,
+                        lora_alpha: int | None = None) -> None:
     """把"已映射好的 PEFT 键值"写成 adapter 目录（safetensors + adapter_config.json）。
 
     ★ 单分片通道与分片合并通道**共用这一份**写出逻辑：PEFT 必须拿到 target_modules 与 r，
@@ -907,10 +908,17 @@ def _write_peft_adapter(converted: dict[str, Any], out: Path, *, base_model_path
             ranks.add(int(tensor.shape[0]))
     if len(ranks) != 1:
         raise ExportError(f"lora_A 的 r 不一致：{sorted(ranks)} ⇒ fail-closed")
-    r = ranks.pop()
+    derived_r = ranks.pop()
     if not modules:
         raise ExportError("未能从键名推导出任何 target_modules ⇒ fail-closed")
-    alpha = r  # ★ 源分片未记 alpha ⇒ 取 r（产物里注明为推导值）
+    if lora_r is not None and int(lora_r) != int(derived_r):
+        raise ExportError(
+            f"元数据 r={lora_r} 与 lora_A 形状推出的 r={derived_r} 不符 ⇒ fail-closed"
+        )
+    r = int(lora_r) if lora_r is not None else int(derived_r)
+    # ★ alpha 必须取**元数据**里的真值：native 侧 scaling = alpha / r（本仓实测 r=32、alpha=64
+    #   ⇒ scaling=2）。旧通道"取 alpha=r"只是无元数据时的兜底，会让 LoRA 贡献被削半。
+    alpha = int(lora_alpha) if lora_alpha is not None else r
     del torch
     (out / "adapter_config.json").write_text(
         json.dumps({"peft_type": "LORA", "base_model_name_or_path": base_model_path,
@@ -980,8 +988,11 @@ def convert_native_checkpoint_to_peft(
         base_model_path=base_model_path,
         note=(
             f"★ 由 {layout} 分片合并（切片按元数据严格拼接；复制张量口径={policy.describe()}）；"
-            "target_modules/r/lora_alpha 由键名与形状推导"
+            f"r/alpha 取自分片元数据（r={receipt.lora_r}、alpha={receipt.lora_alpha}），"
+            "target_modules 由键名推导"
         ),
+        lora_r=receipt.lora_r,
+        lora_alpha=receipt.lora_alpha,
     )
     summary = merge_receipt_summary(receipt)
     return {

@@ -239,6 +239,9 @@ class ReplicaDrift:
     max_ulp: float
     n_beyond_ulp: int
     n_elements: int
+    ulp_p50: float = 0.0
+    ulp_p90: float = 0.0
+    ulp_p99: float = 0.0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -251,6 +254,9 @@ class ReplicaDrift:
             "max_ulp": self.max_ulp,
             "n_beyond_ulp": self.n_beyond_ulp,
             "n_elements": self.n_elements,
+            "ulp_p50": self.ulp_p50,
+            "ulp_p90": self.ulp_p90,
+            "ulp_p99": self.ulp_p99,
         }
 
 
@@ -266,6 +272,8 @@ class MergeReceipt:
     modules: int = 0
     keys: int = 0
     rank: int = 0
+    lora_r: int | None = None
+    lora_alpha: int | None = None
     replica_drift: list[ReplicaDrift] = field(default_factory=list)
     policy: ReplicaPolicy = field(default_factory=ReplicaPolicy)
 
@@ -291,6 +299,8 @@ class MergeReceipt:
             "stages": self.stages,
             "modules": self.modules,
             "keys": self.keys,
+            "lora_r": self.lora_r,
+            "lora_alpha": self.lora_alpha,
             "rank": self.rank,
             "replica_drift_summary": {
                 "n_replicated_tensors": len(self.replica_drift),
@@ -322,9 +332,19 @@ def native_module_to_peft_key(
         raise ShardMergeError(f"矩阵角色只允许 a/b，收到 {matrix!r}")
     if hf_module_path:
         path = str(hf_module_path)
-        if not path.endswith(str(module_name)):
+        # ★ 两道自检（不要求字面相同：native 模块名有内部别名，
+        #   如 `layers.0.token_mixer.in_proj_qkv` 对应 `…layers.0.linear_attn.in_proj_qkv`）：
+        #   ① 层号必须落在路径里；② 末段模块名必须与 native 名同尾。
+        layer = module_layer_index(module_name)
+        if layer is not None and f"layers.{layer}." not in path:
             raise ShardMergeError(
-                f"元数据 hf_module_path={path!r} 与 module_name={module_name!r} 不一致 ⇒ fail-closed"
+                f"元数据 hf_module_path={path!r} 里没有层号 layers.{layer}.（module={module_name}）"
+                f" ⇒ fail-closed"
+            )
+        tail = str(module_name).rsplit(".", 1)[-1]
+        if not path.endswith("." + tail) and not path.endswith(tail):
+            raise ShardMergeError(
+                f"元数据 hf_module_path={path!r} 末段与 module_name={module_name!r} 不同尾 ⇒ fail-closed"
             )
         return f"{_PEFT_ROOT}{path}{_PEFT_SUFFIX[matrix]}"
     tower = next(
@@ -424,8 +444,16 @@ def dtype_ulp(tensor: Any):
     return spacing * float(torch.finfo(tensor.dtype).eps)
 
 
-def compare_replica(reference: Any, other: Any) -> tuple[float, float, int, bool]:
-    """比较两份"声明为复制"的张量：``(max_abs, max_ulp, n_beyond_ulp, bitwise)``。"""
+def compare_replica(
+    reference: Any, other: Any
+) -> tuple[float, float, int, bool, tuple[float, float, float]]:
+    """比较两份"声明为复制"的张量。
+
+    Returns:
+        ``(max_abs, max_ulp, n_beyond_ulp, bitwise, (ulp_p50, ulp_p90, ulp_p99))``
+        —— ★ 给**逐元素分布**而不是一个 Frobenius 总和：同一条曲线里，1 ulp 级
+        差异与 1e5 ulp 级差异是完全不同的两件事，混成一个数就看不出来了。
+    """
     torch = _torch()
     if tuple(reference.shape) != tuple(other.shape):
         raise ShardMergeError(
@@ -436,11 +464,22 @@ def compare_replica(reference: Any, other: Any) -> tuple[float, float, int, bool
     bitwise = bool(torch.equal(reference, other))
     delta = (a - b).abs()
     ulp = dtype_ulp(reference)
+    units = (delta / ulp).flatten()
+    quantiles = (
+        (0.0, 0.0, 0.0)
+        if not units.numel()
+        else (
+            float(units.quantile(0.5)),
+            float(units.quantile(0.9)),
+            float(units.quantile(0.99)),
+        )
+    )
     return (
         float(delta.max()) if delta.numel() else 0.0,
-        float((delta / ulp).max()) if delta.numel() else 0.0,
+        float(units.max()) if units.numel() else 0.0,
         int((delta > ulp * 1.0000001).sum()),
         bitwise,
+        quantiles,
     )
 
 
@@ -455,7 +494,12 @@ def _module_of(key: str) -> str:
     return key[: -len(_MATRIX_SUFFIX[_matrix_of(key)])]
 
 
+_AUDIT_ONLY = False
+
+
 def _check_policy(drift: ReplicaDrift, policy: ReplicaPolicy) -> None:
+    if _AUDIT_ONLY:
+        return
     if policy.require_bitwise and not drift.bitwise_equal:
         raise ShardMergeError(
             f"复制张量跨 rank 非逐位相同（require_bitwise）：{drift.module}.lora_{drift.matrix}"
@@ -499,8 +543,9 @@ def _replicated(
     worst_abs = worst_ulp = 0.0
     beyond = 0
     all_bitwise = True
+    quantiles = (0.0, 0.0, 0.0)
     for _position, other in copies[1:]:
-        max_abs, max_ulp, n_beyond, bitwise = compare_replica(reference, other)
+        max_abs, max_ulp, n_beyond, bitwise, quantiles = compare_replica(reference, other)
         worst_abs = max(worst_abs, max_abs)
         worst_ulp = max(worst_ulp, max_ulp)
         beyond += n_beyond
@@ -515,6 +560,9 @@ def _replicated(
         max_ulp=worst_ulp,
         n_beyond_ulp=beyond,
         n_elements=int(reference.numel()),
+        ulp_p50=quantiles[0],
+        ulp_p90=quantiles[1],
+        ulp_p99=quantiles[2],
     )
     drift_out.append(drift)
     if len(copies) > 1:
@@ -640,11 +688,17 @@ def merge_lora_shards(
     checkpoint_dir: str | Path,
     *,
     policy: ReplicaPolicy | None = None,
+    audit_only: bool = False,
 ) -> tuple[dict[str, Any], MergeReceipt]:
     """把 ``final/`` 的分片 LoRA 重组成**整模型那一份**，返回 (PEFT 键值字典, 回执)。
 
     键名/形状/dtype 与 ``dp=tp=pp=1`` 通道**完全一致**（``lora_A/B.weight`` 全模块路径），
     因此可直接交给 ``merged_export.merge_peft_checkpoint`` 合到基座。
+
+    Args:
+        audit_only: ★ 仅用于**诊断**：复制张量超限只记录、不抛异常，用于产出
+            "这个分片集到底哪些类漂了多少"的完整报告（见 :func:`audit_shards`）。
+            ⛔ 绝不作为放行开关——``audit_only=True`` 的返回值不得用于导出。
 
     Raises:
         ShardMergeError: 分片不齐 / 切片不铺满 / 复制不一致 / 元数据缺失 / 拓扑不支持。
@@ -656,6 +710,8 @@ def merge_lora_shards(
     layout = ParallelLayout.from_manifest(manifest)
     refs = discover_shards(root)
     assert_shard_set_complete(refs, layout)
+    global _AUDIT_ONLY
+    _AUDIT_ONLY = audit_only
     receipt = MergeReceipt(layout=layout, shards=[r.path.name for r in refs], policy=policy)
 
     fmt = str(manifest.get("format") or "")
@@ -818,6 +874,21 @@ def merge_lora_shards(
             kinds[module] = str(meta_by_name[module]["shard_kind"])
             hf_paths[module] = meta_by_name[module].get("hf_module_path")
             order.append(module)
+    ranks_seen: set[int] = set()
+    alphas_seen: set[int] = set()
+    for pp_rank in sorted(canonical):
+        for meta in canonical[pp_rank][0]["lora_tensor_metadata"]:
+            if meta.get("r") is not None:
+                ranks_seen.add(int(meta["r"]))
+            if meta.get("alpha") is not None:
+                alphas_seen.add(int(meta["alpha"]))
+    if len(ranks_seen) > 1 or len(alphas_seen) > 1:
+        raise ShardMergeError(
+            f"分片元数据里的 r/alpha 不一致：r={sorted(ranks_seen)} alpha={sorted(alphas_seen)}"
+            f" ⇒ fail-closed"
+        )
+    receipt.lora_r = next(iter(ranks_seen), None)
+    receipt.lora_alpha = next(iter(alphas_seen), None)
     known_kinds = set(REPLICATED_MATRIX)
     unknown = {m: k for m, k in kinds.items() if k not in known_kinds}
     if unknown:
@@ -927,3 +998,93 @@ def merge_receipt_summary(receipt: MergeReceipt) -> str:
         f"复制张量 {len(receipt.replica_drift)} 个，非逐位 {receipt.n_replica_tensors_not_bitwise} 个，"
         f"max={receipt.max_replica_ulp:.3g} ulp；口径={receipt.policy.describe()}"
     )
+
+
+def _drift_by_class(receipt: MergeReceipt) -> dict[str, dict[str, Any]]:
+    """把复制张量漂移按 ``(shard_kind, matrix)`` 归类汇总（支持矩阵与定性报告用）。"""
+    buckets: dict[str, dict[str, Any]] = {}
+    for drift in receipt.replica_drift:
+        key = f"{drift.shard_kind}.lora_{drift.matrix}"
+        bucket = buckets.setdefault(
+            key,
+            {
+                "shard_kind": drift.shard_kind,
+                "matrix": drift.matrix,
+                "n_tensors": 0,
+                "n_not_bitwise": 0,
+                "max_abs": 0.0,
+                "max_ulp": 0.0,
+                "ulp_p50_max": 0.0,
+                "ulp_p90_max": 0.0,
+                "ulp_p99_max": 0.0,
+                "n_beyond_ulp": 0,
+                "n_elements": 0,
+            },
+        )
+        bucket["n_tensors"] += 1
+        bucket["n_not_bitwise"] += 0 if drift.bitwise_equal else 1
+        bucket["max_abs"] = max(bucket["max_abs"], drift.max_abs)
+        bucket["max_ulp"] = max(bucket["max_ulp"], drift.max_ulp)
+        bucket["ulp_p50_max"] = max(bucket["ulp_p50_max"], drift.ulp_p50)
+        bucket["ulp_p90_max"] = max(bucket["ulp_p90_max"], drift.ulp_p90)
+        bucket["ulp_p99_max"] = max(bucket["ulp_p99_max"], drift.ulp_p99)
+        bucket["n_beyond_ulp"] += drift.n_beyond_ulp
+        bucket["n_elements"] += drift.n_elements
+    return dict(sorted(buckets.items()))
+
+
+def audit_shards(
+    checkpoint_dir: str | Path, *, policy: ReplicaPolicy | None = None
+) -> dict[str, Any]:
+    """**只读诊断**：给定 native 分片目录，报告拓扑、切片覆盖、复制漂移的完整体检结果。
+
+    ⛔ 本函数**不产出任何权重**，也不代表"可以导出"——它只回答"这套分片到底哪里对不上"。
+    合并放行始终由 :func:`merge_lora_shards`（不加 ``audit_only``）决定。
+    """
+    torch = _torch()
+    receipt: MergeReceipt | None = None
+    error: str | None = None
+    merged: dict[str, Any] = {}
+    try:
+        merged, receipt = merge_lora_shards(
+            checkpoint_dir, policy=policy or ReplicaPolicy(), audit_only=True
+        )
+    except ShardMergeError as exc:
+        error = str(exc)
+    finally:
+        global _AUDIT_ONLY
+        _AUDIT_ONLY = False
+    payload: dict[str, Any] = {"ok": error is None}
+    if error:
+        payload["error"] = error
+    if receipt is not None:
+        effective = policy or ReplicaPolicy()
+        violations = [
+            d
+            for d in receipt.replica_drift
+            if (effective.require_bitwise and not d.bitwise_equal) or d.n_beyond_ulp > 0
+        ]
+        payload["ok"] = error is None and not violations
+        payload["n_tensors_over_tolerance"] = len(violations)
+        payload["first_violation"] = (
+            f"{violations[0].module}.lora_{violations[0].matrix}"
+            f"（max={violations[0].max_ulp:.3g} ulp，超过 {violations[0].n_beyond_ulp} 个元素）"
+            if violations
+            else None
+        )
+        payload.update(
+            layout={
+                "tp_size": receipt.layout.tp_size,
+                "dp_size": receipt.layout.dp_size,
+                "pp_size": receipt.layout.pp_size,
+            },
+            n_shards=len(receipt.shards),
+            modules=receipt.modules,
+            keys=receipt.keys,
+            dp_replicas_bitwise_equal=receipt.dp_replicas_bitwise_equal,
+            policy=receipt.policy.describe(),
+            drift_by_class=_drift_by_class(receipt),
+            drift_summary=receipt.as_dict()["replica_drift_summary"],
+        )
+    del merged, torch
+    return payload

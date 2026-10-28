@@ -152,7 +152,10 @@ def _write_shards(
                     module_name = module
                     state[f"{module_name}.lora_a"] = a
                     state[f"{module_name}.lora_b"] = b
-                    metadata.append({"module_name": module_name, **meta})
+                    metadata.append(
+                        {"module_name": module_name, "r": 2, "alpha": 4,
+                         "hf_module_path": None, **meta}
+                    )
                 payload = {
                     "adapter": "native",
                     "tuner_type": "lora",
@@ -397,11 +400,12 @@ def test_compare_replica_one_ulp_counts_as_same_value():
 
     a = torch.tensor([1.0, 1.5, 1.9375], dtype=torch.bfloat16)
     b = (a.view(torch.int16) + 1).view(torch.bfloat16)  # 恰好 +1 ulp
-    max_abs, max_ulp, n_beyond, bitwise = compare_replica(a, b)
+    max_abs, max_ulp, n_beyond, bitwise, ulp_q = compare_replica(a, b)
     assert bitwise is False
     assert max_ulp == pytest.approx(1.0, rel=1e-6)
     assert n_beyond == 0
     assert max_abs > 0
+    assert ulp_q[2] <= 1.0 + 1e-6  # 逐元素 ulp 分位：p99 也不超过 1 ulp
 
 
 def test_require_bitwise_rejects_one_ulp_difference(tmp_path):
@@ -661,3 +665,52 @@ def test_dispatcher_sharded_channel_fails_closed_as_export_error(tmp_path):
         convert_native_checkpoint_to_peft(
             tmp_path / "ckpt", tmp_path / "adapter", base_model_path="/models/base"
         )
+
+
+def test_audit_reports_drift_by_class_without_producing_weights(tmp_path):
+    """`audit_shards` 只报告、不产出权重；漂移按 (shard_kind, matrix) 归类给分位。"""
+
+    def corrupt(module, a, b, meta, tp_rank):
+        if meta["shard_kind"] == "none" and tp_rank == 1:
+            a = a + 0.5
+        return a, b, meta
+
+    from graspo.eval.sharded_merge import audit_shards
+
+    full = _full_lora(1)
+    _write_shards(tmp_path / "ckpt", full, tp_size=2, corrupt=corrupt)
+    report = audit_shards(tmp_path / "ckpt")
+    assert report["ok"] is False  # 有超限复制张量 ⇒ 这份分片集不可导出
+    bucket = report["drift_by_class"]["none.lora_a"]
+    assert bucket["n_not_bitwise"] >= 1 and bucket["max_ulp"] > 1
+    assert set(report["drift_by_class"]) >= {"none.lora_a", "out.lora_a", "in.lora_b"}
+
+
+def test_hf_module_path_wins_over_native_alias_names():
+    """native 模块名有内部别名（`token_mixer` → HF `linear_attn`）：以 `hf_module_path` 为准。"""
+    key = native_module_to_peft_key(
+        "layers.0.token_mixer.in_proj_qkv",
+        "b",
+        "model.language_model.layers.0.linear_attn.in_proj_qkv",
+    )
+    assert key == (
+        "base_model.model.model.language_model.layers.0.linear_attn.in_proj_qkv.lora_B.weight"
+    )
+    with pytest.raises(ShardMergeError, match="没有层号"):
+        native_module_to_peft_key(
+            "layers.7.mlp.up_proj", "a", "model.language_model.layers.3.mlp.up_proj"
+        )
+
+
+def test_alpha_comes_from_metadata_not_derived_from_r(tmp_path):
+    """★ native scaling = alpha/r（实测 r=32、alpha=64 ⇒ 2）。adapter_config 必须记真 alpha。"""
+    from graspo.eval.merged_export import convert_native_checkpoint_to_peft
+
+    full = _full_lora(1)
+    _write_shards(tmp_path / "ckpt", full, tp_size=2)
+    info = convert_native_checkpoint_to_peft(
+        tmp_path / "ckpt", tmp_path / "adapter", base_model_path="/models/base"
+    )
+    cfg = json.loads((tmp_path / "adapter" / "adapter_config.json").read_text(encoding="utf-8"))
+    assert cfg["r"] == 2 and cfg["lora_alpha"] == 4  # 元数据的 alpha=4 ≠ r=2
+    assert info["receipt"]["lora_alpha"] == 4
