@@ -403,6 +403,7 @@ class _Qwen35TrainingMethods:
         from graspo.flow.backend.native.lora.lora_linear import (
             _sync_dp_lora_grads,
             _sync_nonsharded_lora_grads,
+            clip_grads_tp_invariant,
         )
         from graspo.flow.backend.native.parallel.tensor_utils import (
             _TENSOR_PARALLEL_GROUP,
@@ -437,10 +438,17 @@ class _Qwen35TrainingMethods:
         if _dp_consistent_has_valid_micro_batches(self.tp_state, valid_micro_batches):
             # ★ K-会合条件④：裁剪**只在末段同步之后做一次**（⛔ 绝不每段裁一次——
             #   clip 是非线性的，逐段 clip ≠ 整体 clip，且判据③ 看不见）。
-            grad_norm = torch.nn.utils.clip_grad_norm_(
-                [param for param in self.model.parameters() if param.requires_grad],
-                max_grad_norm,
-            )
+            # ★ TP 域一致（本包修复：缺陷②）：tp>1 时 clip 系数必须按**全模型**范数算
+            #   （复制类只计一次、切片类跨 TP 求和）——否则两 rank 用各自的偏范数得到
+            #   不同标量、乘到同一份已归约的梯度上 ⇒ 静默分叉并逐 step 放大。
+            #   tp=1 保持原 `clip_grad_norm_` ⇒ 单卡产物逐字节不变（0 次新增集合）。
+            _tp_params = [param for param in self.model.parameters() if param.requires_grad]
+            if _tp_params and _TENSOR_PARALLEL_GROUP is not None and _TENSOR_PARALLEL_SIZE > 1:
+                grad_norm = clip_grads_tp_invariant(
+                    self.model, _tp_params, max_grad_norm, _TENSOR_PARALLEL_GROUP
+                )
+            else:
+                grad_norm = torch.nn.utils.clip_grad_norm_(_tp_params, max_grad_norm)
             grad_norm_sum = float(grad_norm.detach().float().cpu())
             self._sync_timing()
             optimizer_started_at = time.monotonic()
@@ -725,6 +733,7 @@ class _Qwen35TrainingMethods:
             from graspo.flow.backend.native.lora.lora_linear import (
                 _sync_dp_lora_grads,
                 _sync_nonsharded_lora_grads,
+                tp_invariant_grad_norm_sq,
             )
             from graspo.flow.backend.native.parallel.tensor_utils import (
                 _TENSOR_PARALLEL_GROUP,
@@ -742,10 +751,19 @@ class _Qwen35TrainingMethods:
             #   作用在两个不同口径的范数上 ⇒ 与 1 卡（全模型范数）语义不一致。
             #   先求本 rank 分片的范数平方 ⇒ 跨 PP rank 归约(SUM) ⇒ 开方得全模型范数。
             #   ★ 集合调用次序保全：下述 all_reduce 无条件执行（各 rank 每轮都跑）。
-            local_sq = torch.zeros(1, device=self.device)
-            for _p in trainable_params:
-                if _p.grad is not None:
-                    local_sq += _p.grad.detach().float().pow(2).sum()
+            #   ★ TP 域一致（本包修复：缺陷②）：tp>1 时 local_sq 也必须换成「全模型不变量
+            #     范数平方」（复制类只计一次 + 切片类跨 TP SUM），再走 PP 归约；
+            #     否则每个 rank 的范数域不同 ⇒ clip 系数逐 rank 不同 ⇒ 归约后逐位相同的
+            #     梯度被乘上不同标量而静默分叉。tp=1 保持原逐参数累加（0 次新增集合）。
+            if _TENSOR_PARALLEL_GROUP is not None and _TENSOR_PARALLEL_SIZE > 1:
+                local_sq = tp_invariant_grad_norm_sq(
+                    self.model, trainable_params, _TENSOR_PARALLEL_GROUP
+                )
+            else:
+                local_sq = torch.zeros(1, device=self.device)
+                for _p in trainable_params:
+                    if _p.grad is not None:
+                        local_sq += _p.grad.detach().float().pow(2).sum()
             _pp_grp = self.tp_state.pp_group if self.tp_state is not None else None
             if _pp_grp is not None and self.pp_size > 1:
                 dist.all_reduce(local_sq, op=dist.ReduceOp.SUM, group=_pp_grp)

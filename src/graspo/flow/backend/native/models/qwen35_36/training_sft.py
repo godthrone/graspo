@@ -197,6 +197,7 @@ class _Qwen35SFTTrainingMethods:
         from graspo.flow.backend.native.lora.lora_linear import (
             _sync_dp_lora_grads,
             _sync_nonsharded_lora_grads,
+            clip_grads_tp_invariant,
         )
         from graspo.flow.backend.native.parallel.tensor_utils import (
             _TENSOR_PARALLEL_GROUP,
@@ -224,11 +225,25 @@ class _Qwen35SFTTrainingMethods:
         #   `dp_size <= 1` 由 helper 短路 ⇒ 单卡 0 次新增集合、行为逐位不变。
         if _dp_consistent_has_valid_micro_batches(self.tp_state, valid_micro_batches):
             trainable_params = [p for p in self.model.parameters() if p.requires_grad]
-            grad_norm = (
-                torch.nn.utils.clip_grad_norm_(trainable_params, max_grad_norm)
-                if trainable_params
-                else torch.tensor(0.0)
-            )
+            # ★ TP 域一致（本包修复：缺陷②）：clip 系数必须与梯度的域同域——TP 下
+            #   `clip_grad_norm_` 只看本 rank 分片（复制类还各算一份、切片类各占一半），
+            #   两 rank 因此得到不同标量并乘到**同一份**（已 SUM 归约、逐位相同的）梯度上
+            #   ⇒ 静默分叉、逐 step 复利放大。tp>1 时改用全模型不变量范数；
+            #   tp=1 保持原 `clip_grad_norm_` 路径 ⇒ 单卡产物逐字节不变（0 次新增集合）。
+            if (
+                trainable_params
+                and _TENSOR_PARALLEL_GROUP is not None
+                and _TENSOR_PARALLEL_SIZE > 1
+            ):
+                grad_norm = clip_grads_tp_invariant(
+                    self.model, trainable_params, max_grad_norm, _TENSOR_PARALLEL_GROUP
+                )
+            else:
+                grad_norm = (
+                    torch.nn.utils.clip_grad_norm_(trainable_params, max_grad_norm)
+                    if trainable_params
+                    else torch.tensor(0.0)
+                )
             grad_norm_sum = float(grad_norm.detach().float().cpu())
             self._sync_timing()
             _log_cuda_mem("before_optimizer_step")
