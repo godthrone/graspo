@@ -205,15 +205,21 @@ def assert_shard_set_complete(refs: tuple[ShardRef, ...], layout: ParallelLayout
 class ReplicaPolicy:
     """「声明为复制」的张量如何判定"是同一个值"。
 
-    ★ 这是**过渡期口径**，不是终态验收标准：训练侧修复"复制张量跨 rank 归约末位
-    不一致 + 视觉塔 LoRA 无同步"（缺陷①②）之后，应切回 ``require_bitwise=True``。
+    ★ **默认逐位**（终态口径）：声明为"复制"的张量必须跨 rank **逐位相同**，否则
+    fail-closed。``ulp_tolerance`` 只服务于 ``--diagnose-only`` 的**只读诊断**。
+
+    ★ 为什么 1 ulp 不能放行（实测，不是估计）：1 步 ``tp=2`` 真件上复制张量的漂移
+    ``max|Δ|=4.0e-05``（亚 ulp~个位 ulp），把合并产物重灌回**同一运行时**后前向差
+    ``max|Δ|=1.5``、``mean|Δ|=0.0212``（信号 `mean|x|=1.27` ⇒ 相对 **1.7%**，≈151 ulp）。
+    对照组（先把复制张量对齐再走同一闭环）**逐位相同**，故这 1.7% 完全由漂移造成。
+    ⇒ "1 ulp 差"在 32 层网络里**不是可忽略量**，只有逐位相同才可放行。
 
     ``ulp_tolerance`` 按**该元素自身量级的 dtype 分辨率**判定（不是全局绝对值/相对值
     阈值）：``|Δ| <= ulp_tolerance × ulp(x)`` 视为"同一存储精度下的同一个值"。
-    bf16 的 ulp = ``2**(exponent(x) - 8)``。
+    bf16 的 ulp = ``eps * 2**exponent(x)``，``eps = 2**-7``。
     """
 
-    require_bitwise: bool = False
+    require_bitwise: bool = True
     ulp_tolerance: int = 1
 
     def __post_init__(self) -> None:
@@ -222,8 +228,11 @@ class ReplicaPolicy:
 
     def describe(self) -> str:
         if self.require_bitwise:
-            return "require_bitwise（逐位相同，训练侧修复后的终态口径）"
-        return f"ulp<={self.ulp_tolerance}（过渡口径：同一 bf16 分辨率下的同一个值）"
+            return "require_bitwise（逐位相同；默认口径，复制张量不逐位即拒）"
+        return (
+            f"ulp<={self.ulp_tolerance}（⛔ 诊断口径 / diagnose-only：仅供分析，"
+            "不得作为放行依据——实测 1 ulp 级漂移可被放大到 hidden 的 1.7%）"
+        )
 
 
 @dataclass(slots=True)

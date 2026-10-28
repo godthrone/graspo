@@ -115,7 +115,7 @@ def cmd_export(args: argparse.Namespace) -> int:
             config.checkpoint_path,
             adapter_out,
             base_model_path=config.base_model_path,
-            require_bitwise=bool(getattr(args, "require_bitwise", False)),
+            require_bitwise=not bool(getattr(args, "diagnose_only", False)),
         )
         print(
             json.dumps(
@@ -411,12 +411,13 @@ def build_eval_parser(subparsers: argparse._SubParsersAction) -> None:
         ),
     )
     export.add_argument(
-        "--require-bitwise",
+        "--diagnose-only",
         action="store_true",
         help=(
-            "native 分片合并的终态口径：声明为『复制』的张量必须跨 rank **逐位相同**，"
-            "否则 fail-closed。默认关（过渡口径：同一 dtype 分辨率内视为同一个值）——"
-            "训练侧补齐『复制张量归约逐位一致 / 视觉塔 LoRA 跨 rank 同步』之后应默认打开。"
+            "把『复制张量』的判定从**逐位相同**降级为**1 ulp 容差**，仅用于诊断。"
+            "⛔ 该模式产出的 adapter **不得**进矩阵、不得作为判据④的依据：实测 4.0e-05 的"
+            "复制张量漂移经 32 层网络会被放大到 hidden 的 1.7%（max|Δ|=1.5，见 N3c 交付说明）。"
+            "默认逐位（终态口径）：复制张量跨 rank 只要不是逐位相同就 fail-closed。"
         ),
     )
     export.set_defaults(func=cmd_export)

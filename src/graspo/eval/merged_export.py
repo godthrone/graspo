@@ -936,7 +936,7 @@ def convert_native_checkpoint_to_peft(
     output_dir: str | Path,
     *,
     base_model_path: str,
-    require_bitwise: bool = False,
+    require_bitwise: bool = True,
     ulp_tolerance: int = 1,
 ) -> dict[str, Any]:
     """native `final/` → PEFT adapter：**按拓扑自动选通道**。
@@ -946,7 +946,8 @@ def convert_native_checkpoint_to_peft(
       再复用同一份 `_write_peft_adapter` 写出（切片拼接 + 复制一致性判定见该模块）。
 
     Args:
-        require_bitwise: 终态口径——"声明为复制的张量必须跨 rank 逐位相同"。
+        require_bitwise: **默认 True**（终态口径）——"声明为复制的张量必须跨 rank 逐位
+            相同"。置 False 等价于 ``--diagnose-only``：只做诊断，⛔ 产物不得进矩阵/判据④。
             默认 `False` = 过渡口径（同一 dtype 分辨率内即同一值），详见 `ReplicaPolicy`。
 
     Raises:

@@ -421,8 +421,12 @@ def test_compare_replica_one_ulp_counts_as_same_value():
     assert ulp_q[2] <= 1.0 + 1e-6  # 逐元素 ulp 分位：p99 也不超过 1 ulp
 
 
-def test_require_bitwise_rejects_one_ulp_difference(tmp_path):
-    """``--require-bitwise``（终态口径）比 1-ulp 口径更严：连 1 ulp 也要拒。"""
+def test_default_policy_rejects_one_ulp_difference(tmp_path):
+    """★ 默认口径 = 逐位：连 **1 ulp** 的复制张量差都必须拒。
+
+    实测依据：复制张量 4.0e-05 的漂移（亚 ulp~个位 ulp）经 32 层网络被放大到 hidden 的
+    1.7%（max|Δ|=1.5）；对照组逐位相同 ⇒ 这 1.7% 全由漂移造成。
+    """
 
     def corrupt(module, a, b, meta, tp_rank):
         if meta["shard_kind"] == "none":
@@ -433,11 +437,18 @@ def test_require_bitwise_rejects_one_ulp_difference(tmp_path):
 
     full = _full_lora(1)
     _write_shards(tmp_path, full, tp_size=2, corrupt=corrupt)
-    _, receipt = merge_lora_shards(tmp_path)
-    assert receipt.n_replica_tensors_not_bitwise >= 1  # 1-ulp 口径下接受
-    assert receipt.max_replica_ulp <= 1.0 + 1e-6
+    # 默认（不传 policy）= 逐位 ⇒ 必须拒
+    with pytest.raises(ShardMergeError, match="非逐位相同"):
+        merge_lora_shards(tmp_path)
     with pytest.raises(ShardMergeError, match="非逐位相同"):
         merge_lora_shards(tmp_path, policy=ReplicaPolicy(require_bitwise=True))
+    # 只有显式诊断口径（1 ulp）才放行，且回执须标明是诊断
+    _, receipt = merge_lora_shards(
+        tmp_path, policy=ReplicaPolicy(require_bitwise=False, ulp_tolerance=1)
+    )
+    assert receipt.n_replica_tensors_not_bitwise >= 1
+    assert receipt.max_replica_ulp <= 1.0 + 1e-6
+    assert "诊断" in receipt.policy.describe()
 
 
 def test_unknown_shard_kind_fails_closed(tmp_path):
@@ -550,7 +561,7 @@ def test_receipt_is_json_serializable(tmp_path):
     _, receipt = merge_lora_shards(tmp_path)
     payload = receipt.as_dict()
     assert json.dumps(payload, ensure_ascii=False)
-    assert "过渡" in payload["policy"] or "ulp" in payload["policy"]
+    assert "逐位" in payload["policy"] or "ulp" in payload["policy"]
     assert merge_receipt_summary(receipt)
 
 
@@ -736,3 +747,29 @@ def test_alpha_comes_from_metadata_not_derived_from_r(tmp_path):
     cfg = json.loads((tmp_path / "adapter" / "adapter_config.json").read_text(encoding="utf-8"))
     assert cfg["r"] == 2 and cfg["lora_alpha"] == 4  # 元数据的 alpha=4 ≠ r=2
     assert info["receipt"]["lora_alpha"] == 4
+
+
+def test_ms_swift_backend_never_touches_the_native_shard_channel():
+    """★ 机核（可复跑，会失败）：ms-swift 后端**不得**引用 native 分片导出通道。
+
+    历史结论"N3c 的 alpha / 视觉塔双前缀两个 bug 影响面 = 0 档"依赖这条不变量：
+    已入表的 20 个 ms-swift 档若开始走 ``convert_native_rank_to_peft``，
+    那两个 bug 就会重新变成"在册档位的产物缺陷"。所以把它钉成检查，而不是留在文档里。
+    """
+    import subprocess
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    msswift = root / "src" / "graspo" / "flow" / "backend" / "msswift"
+    assert msswift.is_dir(), f"ms-swift 后端目录不存在：{msswift}"
+    pattern = "convert_native_rank_to_peft|convert_native_checkpoint_to_peft|NATIVE_RANK"
+    hits = subprocess.run(
+        ["grep", "-rn", "-E", pattern, "--include=*.py", str(msswift)],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.strip()
+    assert hits == "", (
+        "ms-swift 后端引用了 native 分片导出通道 ⇒ N3c 的『影响面 0 档』不再成立，"
+        f"请重新评估已入表档位的判据④来源。违规位置：\n{hits}"
+    )
