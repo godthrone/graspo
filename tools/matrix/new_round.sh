@@ -55,7 +55,11 @@ done
 
 eval "$("$PY" "$M/paths.py" --sh --date "$date_arg")" || { printf '⛔ paths.py 取路径失败\n' >&2; exit 1; }
 
-BASE_HTML="$PATHS_BASELINE_HTML"
+# ★ 2026-10-28：两个角色分开
+#   · FROZEN_HTML = **历史基准件**（三锁仍逐项断言：sha/字节/444；⛔ 不改写）
+#   · BASE_HTML   = **模板基线**（当前模板 + 空白种子渲染）⇒ 新开轮副本的**复制源**
+FROZEN_HTML="$PATHS_BASELINE_HTML"
+BASE_HTML="$PATHS_TEMPLATE_BASELINE_HTML"
 BASE_DATA="$PATHS_BASELINE_DATA"
 R_HTML="$PATHS_ROUND_HTML"
 R_DATA="$PATHS_ROUND_DATA"
@@ -70,13 +74,13 @@ say "# new_round.sh — 轮次 $PATHS_ROUND_DATE（仓根 $PATHS_REPO）$([[ $dr
 
 # ① 基准件校验 ---------------------------------------------------------------
 say ""; say "① 基准件校验（sha256 + 权限 $PATHS_FROZEN_MODE）"
-if [[ ! -f "$BASE_HTML" ]]; then
-  bad "基准人读件不存在：$BASE_HTML"
+if [[ ! -f "$FROZEN_HTML" ]]; then
+  bad "历史基准人读件不存在：$FROZEN_HTML"
 else
-  b_sha="$(sha256sum -- "$BASE_HTML" | awk '{print $1}')"
-  b_perm="$(stat -c%a -- "$BASE_HTML")"
-  b_size="$(stat -c%s -- "$BASE_HTML")"
-  say "  $b_sha  ${b_size} B  $(basename "$BASE_HTML")"
+  b_sha="$(sha256sum -- "$FROZEN_HTML" | awk '{print $1}')"
+  b_perm="$(stat -c%a -- "$FROZEN_HTML")"
+  b_size="$(stat -c%s -- "$FROZEN_HTML")"
+  say "  $b_sha  ${b_size} B  $(basename "$FROZEN_HTML")"
   [[ "$b_sha" == "$PATHS_BASELINE_HTML_SHA256" ]] \
     && ok "sha256 == 冻结值（${PATHS_BASELINE_HTML_SHA256:0:12}…）" \
     || bad "sha256 与冻结值不符 ⇒ 基准件被改写（⛔ 本脚本不修，先查谁写的）"

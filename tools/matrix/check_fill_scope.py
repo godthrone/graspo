@@ -40,6 +40,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import html
 import json
 import re
@@ -373,9 +374,18 @@ def main(argv: list[str] | None = None) -> int:
             continue
         print(f"✗ 未识别参数 {a}（见 --help）\n", file=sys.stderr)
         return 1
-    if not base or not filled:
-        print("✗ --base 与 --filled 都必填（见 --help）\n", file=sys.stderr)
+    if not filled:
+        print("✗ --filled 必填（见 --help）\n", file=sys.stderr)
         return 1
+    # ★ 2026-10-28（主席批准解冻模板、补 §17.7 边界声明）：比对基线由**冻结原件**改为**模板基线**
+    #   （= 当前模板 + 空白种子数据件渲染出的基线人读件）。冻结原件退为历史基准件（三锁仍被
+    #   `verify_dated.sh` ① / `new_round.sh` ① 断言），⛔ 不再当比对基线 —— 否则「边界声明」只存在于
+    #   新模板里，每次回填都会被判"越界"。
+    #   ★ 缺省值同样受指纹保护：比对前核 `paths.TEMPLATE_BASELINE_HTML_SHA256`，不符即 rc=1 fail-closed
+    #     （防"为了让某次回填通过而悄悄改基线"）。显式 --base 时不核指纹（演练/自证指向 /tmp 沙盘）。
+    base_is_default = base is None
+    if base_is_default:
+        base = str(_paths.template_baseline_html())
     data_path = Path(data) if data else _paths.baseline_data()
 
     try:
@@ -383,6 +393,13 @@ def main(argv: list[str] | None = None) -> int:
         for p in (base_p, filled_p, data_path):
             if not p.is_file():
                 raise _UsageError(f"文件不存在：{p}")
+        if base_is_default:
+            _want = _paths.TEMPLATE_BASELINE_HTML_SHA256
+            _got = hashlib.sha256(Path(base).read_bytes()).hexdigest()
+            if _got != _want:
+                raise _UsageError(
+                    f"模板基线指纹不符（base={_paths.rel_of(Path(base))}）："
+                    f"在盘 {_got[:16]}… / 期望 {_want[:16]}… ⇒ 闸门基线被改过，拒绝比对（fail-closed）")
         result_columns = load_result_columns(data_path)
         status_vocab = load_status_vocabulary(data_path)
         base_text = base_p.read_text(encoding="utf-8")

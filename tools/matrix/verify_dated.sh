@@ -46,8 +46,12 @@ fi
 
 eval "$("$PY" "$M/paths.py" --sh)" || { printf '⛔ paths.py 取路径失败\n' >&2; exit 1; }
 
-ORIG_HTML="$PATHS_BASELINE_HTML"
+ORIG_HTML="$PATHS_BASELINE_HTML"          # 历史基准件：只用于 ① 的三锁断言（⛔ 不再当比对基线）
 ORIG_DATA="$PATHS_BASELINE_DATA"
+# ★ 2026-10-28：② 「基准对」的比对基线改为**模板基线**（当前模板 + 空白种子渲染）。
+#   原因：主席批准解冻模板补 §17.7 边界声明后，冻结原件与"当前模板的渲染结果"必然不同
+#   （差一段声明）；若仍拿冻结原件当 ② 的 html，② 会永久红。① 的三锁**不变**。
+TPL_BASE_HTML="$PATHS_TEMPLATE_BASELINE_HTML"
 TEMPLATE="$PATHS_TEMPLATE"
 DATED_HTML="${GRASPO_DATED_HTML:-$PATHS_ROUND_HTML}"
 DATED_DATA="${GRASPO_DATED_DATA:-$PATHS_ROUND_DATA}"
@@ -92,8 +96,8 @@ orig_sha="$(sha256sum "$ORIG_HTML" | awk '{print $1}')"; orig_size="$(stat -c%s 
 say "  $orig_sha  ${orig_size} B  $(basename "$ORIG_HTML")"
 
 # ② 基准件 + 基准数据件 ⇒ verify PASS（④X-b 生效，最强那道机核） ------------------
-say ""; say "② verify（基准对：基准数据件 + 基准人读件）"
-if out="$("$PY" "$M/verify_matrix.py" --template "$TEMPLATE" --data "$ORIG_DATA" --html "$ORIG_HTML" 2>&1)"; then
+say ""; say "② verify（基准对：基准数据件 + **模板基线**人读件）"
+if out="$("$PY" "$M/verify_matrix.py" --template "$TEMPLATE" --data "$ORIG_DATA" --html "$TPL_BASE_HTML" 2>&1)"; then
   printf '%s\n' "$out" >>"$OUT"
   grep -E "^results:" <<<"$out" | sed 's/^/  /' | tee -a "$OUT"
   grep -q "VERIFY PASS" <<<"$out" && ok "rc=0 VERIFY PASS" || bad "rc=0 但输出无 'VERIFY PASS'"

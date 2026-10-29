@@ -1150,7 +1150,9 @@ def apply_with_scope_gate(*, tmp_data: Path, tmp_html: Path, data_out: Path, htm
     for _src, _dst in ((tmp_data, data_out), (tmp_html, html_out)):
         if Path(_src).resolve() != Path(_dst).resolve():        # 同路径 = 已在位（演练/幂等）
             shutil.copyfile(_src, _dst)
-    rc, out = run_cmd(["check_fill_scope.py", "--base", str(_paths.baseline_html()),
+    # ★ 2026-10-28：比对基线 = **模板基线**（当前模板 + 空白种子渲染），不再是冻结原件 ——
+    #   冻结原件退为历史基准件（三锁仍由 verify_dated ① / new_round ① 断言）。
+    rc, out = run_cmd(["check_fill_scope.py", "--base", str(_paths.template_baseline_html()),
                        "--filled", str(html_out), "--data", str(data_out)])
     out = out.strip()
     if rc == 0:

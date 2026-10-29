@@ -61,7 +61,9 @@ done
 [[ -n "$date_arg" ]] && export GRASPO_ROUND_DATE="$date_arg"
 eval "$("$PY" "$M/paths.py" --sh)" || { printf '⛔ paths.py 取路径失败\n' >&2; exit 1; }
 
-BASE_HTML="${GRASPO_BASELINE_HTML:-$PATHS_BASELINE_HTML}"
+# ★ 2026-10-28：写范围闸门的比对基线 = **模板基线**（当前模板 + 空白种子渲染）；
+#   冻结原件退为历史基准件（三锁仍由 verify_dated ① 断言）。GRASPO_BASELINE_HTML 仅演练覆盖用。
+BASE_HTML="${GRASPO_BASELINE_HTML:-$PATHS_TEMPLATE_BASELINE_HTML}"
 ROUND_HTML="$PATHS_ROUND_HTML"
 ROUND_DATA="$PATHS_ROUND_DATA"
 HTML_NAME="$PATHS_ROUND_HTML_NAME"
