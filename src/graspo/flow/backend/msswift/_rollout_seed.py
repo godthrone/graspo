@@ -121,7 +121,9 @@ graspo 的 ``beta`` 是 **KL 惩罚系数** —— 同名不同义。本模块�
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import inspect
+import json
 import logging
 import os
 from collections.abc import Iterator
@@ -146,6 +148,14 @@ _ENGINE_METHOD = "infer"
 #: 选 1000 而不是 10**6 则会在 1000 步以上发生跨 rank 撞车 —— 那是可预见的
 #: 未来回归，不能接受。
 _RANK_STRIDE = 10**6
+
+#: prompt 身份留痕的**开关**（env，默认开）。
+#:
+#: 置 ``0`` / ``false`` / ``off`` / ``no``（大小写不敏感）即关闭；关闭后本模块的
+#: 行为与打这条留痕之前**逐字相同**（少一行 INFO，不碰播种、不碰采样、不碰数据）。
+#: 为什么给开关：留痕是"每次 infer 一行"，某些部署的日志解析脚本只认训练指标行，
+#: 多出来的行会让它们报错 —— 那时可以不改代码、只改环境变量。
+_PROMPT_TRACE_ENV = "GRASPO_ROLLOUT_PROMPT_TRACE"
 
 
 def resolve_rollout_seed(config: Any) -> int:
@@ -262,6 +272,91 @@ def _reseed_before_rollout(seed: int) -> None:
     import torch
 
     torch.manual_seed(seed)
+
+
+def _prompt_trace_enabled() -> bool:
+    """prompt 身份留痕是否开启（默认开；见 :data:`_PROMPT_TRACE_ENV`）。
+
+    每次调用都重新读环境变量（**不缓存**）：缓存会让"进程内改 env 再验证一次"
+    的测试与被测行为不一致，而这是留痕层，一次 ``os.environ.get`` 的开销可以忽略。
+    """
+    raw = os.environ.get(_PROMPT_TRACE_ENV)
+    if raw is None:
+        return True
+    return raw.strip().lower() not in {"0", "false", "off", "no"}
+
+
+def _first_prompt_identity(infer_requests: Any) -> tuple[int | None, str | None, str | None]:
+    """取"本批请求行数"与"首个 prompt 的指纹"（**只读、不抛、不碰 RNG**）。
+
+    **为什么需要这一行**：ms-swift 的 rollout 日志里 prompt 标识恒为占位符
+    ``'prompt_0'``（本轮 RNG 审计实测，见 ``RNG-AUDIT.md`` §6 / §D-2）——
+    于是事后**分不出**"两臂塌缩率不同"是"采样变了"，还是"两臂采的压根不是
+    同一批 prompt"。本函数只补一个事实：这次调用喂进去的第一个 prompt 是哪个。
+
+    指纹来源按优先级取：``input_ids`` / ``prompt_token_ids``（请求已带 token 时）
+    → ``messages``（**本层的常态**：chat template 在引擎内部应用，见
+    ``swift/infer_engine/transformers_engine.py:413``）→ ``prompt``。
+    取到什么就对它的**规范 JSON**（``sort_keys=True``，中文不转义）算
+    ``sha256`` 前 12 位 hex；取不到时指纹为 ``None``，**不编造**。
+
+    Args:
+        infer_requests: ``TransformersEngine.infer`` 的整批请求（list/tuple 或任何对象）。
+
+    Returns:
+        ``(行数, 字段名, 指纹前 12 位 hex)``；取不到的项为 ``None``。
+    """
+    rows: int | None
+    try:
+        rows = len(infer_requests) if infer_requests is not None else None
+    except TypeError:
+        rows = None
+    first: Any = None
+    if isinstance(infer_requests, (list, tuple)) and len(infer_requests) > 0:
+        first = infer_requests[0]
+    if first is None:
+        return rows, None, None
+    for field in ("input_ids", "prompt_token_ids", "messages", "prompt"):
+        value = getattr(first, field, None)
+        if value is None and isinstance(first, dict):
+            value = first.get(field)  # type: ignore[union-attr]
+        if value is None:
+            continue
+        try:
+            payload = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+        except (TypeError, ValueError):  # pragma: no cover - 防御性：不可序列化就退到 repr
+            payload = repr(value)
+        return rows, field, hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
+    return rows, None, None
+
+
+def _emit_prompt_trace(*, rank: int, call_index: int, call_seed: int, infer_requests: Any) -> None:
+    """每 call 打一行 INFO：本批行数 + 首个 prompt 指纹（开关关闭 ⇒ **零输出**）。
+
+    **fail-open 是刻意的**（与本模块别处的 fail-closed 相反，理由写明）：留痕是
+    诊断代码，它自己的故障代价必须小于它保护的东西——绝不能因为一个形状意外的
+    请求对象把训练打断。因此这里吞掉异常并降到 ``debug``，训练照跑。
+    """
+    if not _prompt_trace_enabled():
+        return
+    try:
+        rows, field, fingerprint = _first_prompt_identity(infer_requests)
+    except (AttributeError, KeyError, TypeError, ValueError, RecursionError):  # pragma: no cover
+        logger.debug(
+            "graspo rollout prompt trace: failed to fingerprint the request batch.",
+            exc_info=True,
+        )
+        return
+    logger.info(
+        "graspo rollout prompt trace: rank=%s call_index=%s call_seed=%s rows=%s "
+        "first_prompt_field=%s first_prompt_sha12=%s",
+        rank,
+        call_index,
+        call_seed,
+        rows,
+        field,
+        fingerprint,
+    )
 
 
 def _first_step_probe_active() -> bool:
@@ -402,6 +497,31 @@ def rollout_seed_deterministic(config: Any) -> Iterator[Any]:
         _reseed_before_rollout(call_seed)
         _capture_first_step_probe_generation_inputs(
             rank=rank, call_index=call_index, call_seed=call_seed, args=args, kwargs=kwargs
+        )
+        # SIGTERM 安全的播种凭证（真机教训，必读）：``rollout_seeding`` 退出时那条
+        # WARNING 只有"训练正常结束"才打得出来；而诊断轮两臂都是 ``timeout`` 收口
+        # （rc=124）⇒ 那条 WARNING **永远打不出来**，事后日志里
+        # ``reseed|call_seed`` 零命中，"补丁到底装没装"只能靠读代码相信。
+        # 因此把"第一次 infer 已经在生成之前重播过、重播的是哪个值"当场打一条 INFO：
+        # 即使随后被 TERM 杀掉，这一行也已经落地（§2.2 显式即防呆）。
+        # 只打第一次：每次一行会把诊断日志淹掉，而"首次即证明接线"已经充分。
+        if call_index == 0:
+            logger.info(
+                "graspo rollout seeding: first on-policy rollout re-seeded the global torch RNG "
+                "before generation (base_seed=%s rank=%s rank_source=%s call_index=%s "
+                "applied_seed=%s rank_stride=%s).",
+                base_seed,
+                rank,
+                rank_source,
+                call_index,
+                call_seed,
+                _RANK_STRIDE,
+            )
+        _emit_prompt_trace(
+            rank=rank,
+            call_index=call_index,
+            call_seed=call_seed,
+            infer_requests=args[0] if args else kwargs.get("infer_requests"),
         )
         return original(self, *args, **kwargs)
 

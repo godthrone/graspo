@@ -341,9 +341,9 @@ def test_negative_case_with_patch_two_runs_are_identical(monkeypatch: pytest.Mon
         run_b = _one_run(cls, pre_consume=1)  # 只多消耗 1 个随机数
 
     assert ledger_a["reseed_count"] == 1 and ledger_b["reseed_count"] == 1
-    assert (
-        ledger_a["call_seeds"] == ledger_b["call_seeds"]
-    ), "两跑的派生种子序列不同 —— 说明派生量不是 (seed, rank, call_index) 的确定函数"
+    assert ledger_a["call_seeds"] == ledger_b["call_seeds"], (
+        "两跑的派生种子序列不同 —— 说明派生量不是 (seed, rank, call_index) 的确定函数"
+    )
     assert run_a == run_b, "修复后两跑仍然不同 —— 播种没有覆盖到每次 rollout"
 
 
@@ -426,9 +426,9 @@ def test_negative_control_collapsing_variant_is_caught_by_the_diversity_gate() -
     # 2) 但它过不了多样性判据。
     collapsed_group = _group_of_diverse_samples(fresh_stream_before_each_sample=True)
     assert len(set(collapsed_group)) == 1, "负向对照的替身没有真的塌缩 —— 这条用例本身失效了"
-    assert (
-        _passes_diversity(collapsed_group) is False
-    ), "可复现但塌缩的变体没有被多样性判据判失败 —— 这个测试失去了防回归的意义"
+    assert _passes_diversity(collapsed_group) is False, (
+        "可复现但塌缩的变体没有被多样性判据判失败 —— 这个测试失去了防回归的意义"
+    )
 
     # 3) 本方案（一次 infer 一次播种）同时满足两条判据。
     healthy_group = _group_of_diverse_samples(fresh_stream_before_each_sample=False)
@@ -453,9 +453,9 @@ def test_derived_seed_keeps_the_group_diverse(monkeypatch: pytest.MonkeyPatch) -
             for _ in range(_GROUP_SIZE)
         ]
 
-    assert (
-        _passes_diversity(group) is True
-    ), "补丁只在每次 infer 前重播一次，组内 8 份样本不该完全相同"
+    assert _passes_diversity(group) is True, (
+        "补丁只在每次 infer 前重播一次，组内 8 份样本不该完全相同"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -750,3 +750,147 @@ def test_graspo_channel_seeds_rollout_end_to_end(
     assert rs.derive_rollout_seed(base_seed=base, rank=0, call_index=0) != rs.derive_rollout_seed(
         base_seed=base, rank=1, call_index=0
     )
+
+
+# ---------------------------------------------------------------------------
+# ② 留痕：SIGTERM 安全的播种凭证 + 每 call 的 prompt 身份（本包新增）
+# ---------------------------------------------------------------------------
+#
+# 背景（真机取证）：诊断轮两臂都是 ``timeout`` 收口（rc=124）⇒ ``rollout_seeding``
+# 退出时那条 WARNING **永远打不出来**，事后 ``reseed|call_seed`` 零命中，"补丁装没装"
+# 只能靠读代码相信。这两个留痕点把"证据"从"退出时"挪到"生成之前"。
+
+
+def _prompt_request(text: str = "hi", rows: int = 8) -> list[SimpleNamespace]:
+    """造一批与 ``InferRequest`` 同形的请求（本层只有 ``messages``，没有 token ids）。"""
+    return [SimpleNamespace(messages=[{"role": "user", "content": text}]) for _ in range(rows)]
+
+
+def test_first_infer_logs_sigterm_safe_seed_evidence(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """首次 ``infer`` **在生成之前**就把播种凭证打成 INFO（不等训练结束）。
+
+    判据的关键不是"日志里有这行"，而是**它在 with 块内就已经落地**——rc=124 时
+    with 块的收尾代码根本不会执行，而这条事实必须已经在日志里。
+    """
+    monkeypatch.delenv(rs._PROMPT_TRACE_ENV, raising=False)
+    monkeypatch.setenv("RANK", "1")
+    cls = _make_engine_stub()
+    _install_engine_stub(monkeypatch, cls)
+
+    with caplog.at_level("INFO", logger=rs.__name__):
+        with rs.rollout_seed_deterministic(_config(42)) as ledger:
+            engine = cls()
+            engine.infer(_prompt_request(), None)
+            # ★ 仍在 with 块内：此刻日志里必须已经有凭证（模拟"紧接着被 TERM 杀掉"）
+            seen = [r.getMessage() for r in caplog.records]
+            assert any(
+                "first on-policy rollout re-seeded" in m
+                and "base_seed=42" in m
+                and "rank=1" in m
+                and "call_index=0" in m
+                and "applied_seed=1000042" in m
+                for m in seen
+            ), f"首次 infer 没有在生成之前留下播种凭证（SIGTERM 后即无证可查）：{seen}"
+            engine.infer(_prompt_request(), None)
+            # 只打第一次：第二次不再重复（否则诊断日志会被淹掉）
+            after = [r.getMessage() for r in caplog.records]
+            assert sum("first on-policy rollout re-seeded" in m for m in after) == 1, (
+                "播种凭证应当只在第一次 infer 打一条"
+            )
+        assert ledger["reseed_count"] == 2
+
+
+def test_prompt_trace_logs_rows_and_first_prompt_fingerprint(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """每 call 一行 prompt 身份：行数 + 首个 prompt 指纹 + 调用序号。"""
+    monkeypatch.delenv(rs._PROMPT_TRACE_ENV, raising=False)
+    monkeypatch.setenv("RANK", "0")
+    cls = _make_engine_stub()
+    _install_engine_stub(monkeypatch, cls)
+
+    with caplog.at_level("INFO", logger=rs.__name__):
+        with rs.rollout_seed_deterministic(_config(42)):
+            engine = cls()
+            engine.infer(_prompt_request("alpha", rows=8), None)
+            engine.infer(_prompt_request("beta", rows=8), None)
+            engine.infer(_prompt_request("alpha", rows=8), None)
+
+    traces = [r.getMessage() for r in caplog.records if "prompt trace" in r.getMessage()]
+    assert len(traces) == 3, f"每次 infer 都应有且只有一行 prompt 留痕：{traces}"
+    assert "rows=8" in traces[0] and "first_prompt_field=messages" in traces[0]
+    assert "call_index=0" in traces[0] and "call_seed=42" in traces[0]
+    assert "call_index=1" in traces[1] and "call_seed=43" in traces[1]
+
+    def _sha(line: str) -> str:
+        return line.split("first_prompt_sha12=")[1].split()[0]
+
+    assert _sha(traces[0]) == _sha(traces[2]), "同一 prompt 的指纹必须稳定（否则事后无法比对）"
+    assert _sha(traces[0]) != _sha(traces[1]), "不同 prompt 的指纹必须不同（否则留痕无判别力）"
+    assert len(_sha(traces[0])) == 12
+
+
+def test_prompt_trace_env_switch_off_emits_nothing(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """开关关闭 ⇒ 这条留痕**零输出**（播种凭证不受开关影响，仍在）。"""
+    monkeypatch.setenv(rs._PROMPT_TRACE_ENV, "0")
+    cls = _make_engine_stub()
+    _install_engine_stub(monkeypatch, cls)
+
+    with caplog.at_level("INFO", logger=rs.__name__):
+        with rs.rollout_seed_deterministic(_config(42)):
+            cls().infer(_prompt_request(), None)
+
+    messages = [r.getMessage() for r in caplog.records]
+    assert not any("prompt trace" in m for m in messages), f"开关关闭后仍在输出留痕：{messages}"
+    assert any("first on-policy rollout re-seeded" in m for m in messages), (
+        "开关只该关掉 prompt 留痕，不该把播种凭证一起关掉"
+    )
+
+
+@pytest.mark.parametrize("raw", ["0", "false", "OFF", "no", " False "])
+def test_prompt_trace_switch_values_that_disable_it(
+    monkeypatch: pytest.MonkeyPatch, raw: str
+) -> None:
+    """开关的关闭取值大小写/空白不敏感（部署里写成 ``False`` 也算关）。"""
+    monkeypatch.setenv(rs._PROMPT_TRACE_ENV, raw)
+    assert rs._prompt_trace_enabled() is False
+    monkeypatch.setenv(rs._PROMPT_TRACE_ENV, "1")
+    assert rs._prompt_trace_enabled() is True
+
+
+def test_prompt_trace_helpers_do_not_touch_the_rng(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """留痕是**纯只读**：算指纹、打日志都不消耗全局 torch RNG。
+
+    这条是"只加日志不改行为"的最小可测判据：若留痕内部偷碰了 RNG（例如为了
+    "记录当时的随机状态"去 ``torch.rand``），同一 seed 的两跑会从这里开始分叉。
+    """
+    monkeypatch.delenv(rs._PROMPT_TRACE_ENV, raising=False)
+    torch.manual_seed(20261029)
+    before = torch.random.get_rng_state().clone()
+    with caplog.at_level("INFO", logger=rs.__name__):
+        rs._emit_prompt_trace(rank=0, call_index=3, call_seed=45, infer_requests=_prompt_request())
+    after = torch.random.get_rng_state().clone()
+    assert torch.equal(before, after), "prompt 留痕消耗了全局 torch RNG —— 会改变采样结果"
+
+
+def test_prompt_trace_survives_requests_without_known_fields(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """形状意外的请求**不能打断训练**：留痕 fail-open，指纹写 ``None`` 而不编造。"""
+    monkeypatch.delenv(rs._PROMPT_TRACE_ENV, raising=False)
+    with caplog.at_level("INFO", logger=rs.__name__):
+        rs._emit_prompt_trace(rank=0, call_index=0, call_seed=42, infer_requests=[object()])
+    messages = [r.getMessage() for r in caplog.records]
+    assert any(
+        "prompt trace" in m
+        and "rows=1" in m
+        and "first_prompt_field=None" in m
+        and "first_prompt_sha12=None" in m
+        for m in messages
+    ), f"形状意外的请求没有留下可判别的留痕：{messages}"
