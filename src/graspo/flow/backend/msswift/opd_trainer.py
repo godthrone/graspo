@@ -118,6 +118,7 @@ class MsSwiftOpdTrainer:
             native_only_fields,
             validate_combinations,
         )
+        from graspo.flow.backend.msswift._rollout_no_grad import rollout_no_grad
         from graspo.flow.backend.msswift._rollout_seed import rollout_seeding
         from graspo.flow.backend.msswift._rope_compat import rope_parameters_compatible
         from graspo.flow.backend.msswift.dataset import prepare_ms_swift_dataset
@@ -182,9 +183,18 @@ class MsSwiftOpdTrainer:
         # ``rollout_seeding`` 是**唯一的播种接线入口**（§1.4）：本通道不再自己拼
         # "装包装 + 退出校验"的组合逻辑，GRPO 通道（``trainer.run_graspo_rlhf``）
         # 用的是同一个入口 —— 播种口径只有一份实现（``_rollout_seed.py``）。
+        # ``rollout_no_grad``：同一条 rollout 边界上的**上下文修正**（不是语义修正）。
+        # 真因（D46 探针 2026-10-29，真实 OPD 全链路逐字读数）：训练 forward 里 conv3d
+        # 的 ``weight.is_inference=True``（``input.is_inference=False``）—— 视觉塔
+        # **参数对象**在 rollout 的 ``inference_mode`` 里被 FSDP2 的 all-gather 物化成
+        # inference 张量并被缓存，反向保存 weight 时抛 ``Inference tensors cannot be
+        # saved for backward``（全参档 M039/M040 起跑即崩、LoRA 档不崩）。
+        # 只把该执行体的上下文从 ``inference_mode`` 换成 ``no_grad``：不改张量、
+        # 不改 requires_grad、不碰生成参数/温度/种子（见 ``_rollout_no_grad.py``）。
         with (
             rope_parameters_compatible(self.config.msswift.rope_scaling),
             rollout_seeding(self.config),
+            rollout_no_grad(self.config),
         ):
             rlhf_main(argv)
 
