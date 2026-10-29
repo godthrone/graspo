@@ -31,8 +31,19 @@
 见同目录 `diff-vs-frozen-original.txt`：**1 个 hunk（+145,18）、新增 12 行、删除 0 行**，内容只有「边界声明」小节
 + 两行来源注释，别无其他差异。
 
+## 机核断言（`verify_dated.sh` ②b，⛔ 硬失败、不降级为警告）
+`tools/matrix/check_baseline_declaration.py` 直接比对**冻结原件 ↔ 本基线**，判据：
+1. 必须**恰好 1 个 hunk**、**只有新增、删除 0 行**（用「最长公共前缀/后缀」精确判定，不靠 diff 文本）；
+2. 新增行数 == 模板里「边界声明」块的行数（现为 **10 行**），且**逐行逐字符相同**——期望块从
+   `tools/matrix/template.html` **现抽**，⛔ 不在校验器里复制文案；
+3. 插入位置必须紧跟第 1 章导语列表的 `</ul>`，且到该章 `</section>` 之间不得出现矩阵表。
+失败时打印**逐行差异**（unified diff）并 `rc≠0`；`verify_dated.sh` 记为 `✗ FAIL`（硬失败）。
+⭐ 不依赖 `diff-vs-frozen-original.txt`：那份文件只是给人看的静态证据，删掉它不影响断言成立。
+
 ## 纪律
 - ⛔ 不得手改本文件；只能由上面的渲染命令重生成。
+- ⛔ 不得改本文件的差异面：`verify_dated.sh` ②b 要求「冻结原件 ↔ 本文件」之差**恰为**模板里那块
+  边界声明（1 hunk / 删除 0 行）。多一句、少一句、挪个位置，②b 都会红并打印逐行差异。
 - ⛔ 不得为了让某次回填通过而改本文件 —— 闸门会先核 sha256，改了立即 fail-closed。
 - 改模板后：重渲染本基线 → 更新 `paths.py` 的 `TEMPLATE_BASELINE_HTML_SHA256` → 重渲染当轮副本 → 跑
   `verify_matrix.py` 与 `verify_dated.sh`。

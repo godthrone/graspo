@@ -106,6 +106,18 @@ else
   printf '%s\n' "$out" >>"$OUT"; bad "基准对 verify rc≠0（基准件或基准数据件漂移）"
 fi
 
+# ②b 冻结原件 ↔ 模板基线：差异必须**恰为**边界声明块（机核；⛔ 不看静态证据文件）----
+say ""; say "②b 冻结原件 ↔ 模板基线（差异必须恰为「边界声明」块：1 hunk / 新增 10 行 / 删除 0 行）"
+if out="$("$PY" "$M/check_baseline_declaration.py" 2>&1)"; then
+  printf '%s\n' "$out" >>"$OUT"
+  grep -E "^# 结论：PASS" <<<"$out" | sed 's/^/  /' | tee -a "$OUT"
+  ok "rc=0 差异恰为边界声明块"
+else
+  printf '%s\n' "$out" >>"$OUT"
+  printf '%s\n' "$out" | sed -n '/逐行差异/,$p' | sed 's/^/  /'
+  bad "冻结原件与模板基线的差异不是「恰为边界声明块」（逐行差异见上；⛔ 硬失败，不降级为警告）"
+fi
+
 # ③ 副本 + 副本数据件 ⇒ verify PASS + 打印已回填档号 ---------------------------
 say ""; say "③ verify（副本对：副本数据件 + 副本人读件，$PATHS_ROUND_HTML_NAME）"
 filled="?" ; filled_list=""
