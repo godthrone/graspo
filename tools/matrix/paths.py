@@ -48,6 +48,12 @@ ROUND_HTML_TMPL = "GRASPO训练框架功能测试报告-{date}.html"
 ROUND_DATA_TMPL = "capability-matrix-{date}.data.json"
 #: 共用渲染模板
 TEMPLATE_NAME = "template.html"
+#: **模板基线**（2026-10-28 主席批准解冻模板、补 §17.7 边界声明后新增）：
+#: = 当前模板 + 空白种子数据件渲染出的基线人读件 ⇒ **写范围闸门（§22）的比对基线**。
+#: 冻结原件 `docs/GRASPO训练框架功能测试报告.html` 退为**历史基准件**（三锁仍被 ① 与 new_round ① 断言，
+#: 但它不再当比对基线，否则每次回填都会被判"边界声明越界"）。生成方式见同目录 baseline/README.md。
+BASELINE_DIR_NAME = "baseline"
+TEMPLATE_BASELINE_HTML_NAME = "matrix-template-baseline.html"
 
 #: 仓根相对路径（供只写相对路径的模块复用，如 switch_corpus.py / 数据件 meta）
 REL_BASELINE_HTML = f"docs/{BASELINE_HTML_NAME}"
@@ -55,6 +61,7 @@ REL_BASELINE_DATA = f"docs/{BASELINE_DATA_NAME}"
 REL_ROUND_HTML_FMT = f"docs/{ROUND_HTML_TMPL}"
 REL_ROUND_DATA_FMT = f"docs/{ROUND_DATA_TMPL}"
 REL_TEMPLATE = f"tools/matrix/{TEMPLATE_NAME}"
+REL_TEMPLATE_BASELINE_HTML = f"tools/matrix/{BASELINE_DIR_NAME}/{TEMPLATE_BASELINE_HTML_NAME}"
 
 #: 基准人读件的**冻结 sha256**（2026-10-24 第 3 章 OPD 行改「本地教师 / 27B 外置 vLLM 服务」口径后的定稿内容；2026-10-25 删「框架版本」行的提交号后更新）。
 #: 机核：`verify_dated.sh` ①、`new_round.sh` ①。任何再次改写基准件 ⇒ 立刻对不上 ⇒ 红。
@@ -68,6 +75,10 @@ ROUND_MODE = "644"
 #: 基准人读件的**冻结字节数**（与上面的 sha **同一份真相源**，⛔ 不新造第二份冻结事实）：
 #: sha 抓「内容变了」，字节抓「换个等长的内容也当场红」，权限抓「还能不能被就地改写」。
 BASELINE_HTML_BYTES = 77079
+#: **模板基线的 sha256**（唯一真相源）：`check_fill_scope.py` 每次以 `--base` 缺省值比对前先核这一条，
+#: 不符即 fail-closed —— 防"为了让某次回填通过而悄悄改基线"（改了基线 = 闸门被削弱）。
+#: 改模板 ⇒ 重渲染基线 ⇒ 同步更新本值（见 tools/matrix/baseline/README.md）。
+TEMPLATE_BASELINE_HTML_SHA256 = "454ddd73c0e43498c51b68f8e735a0640cac551901ccc5ad6d4401bb32ac642e"
 #: 报告定稿冻结日（主席原话「这个报告就定稿冻结了，没有我的允许，不能修改报告。」的落款日）
 FROZEN_DATE = "2026-10-25"
 #: 冻结依据（主席三条原话摘要；⛔ 不得改写其含义，机制逐条见 §22）
@@ -99,6 +110,11 @@ def baseline_html() -> Path:
     """基准人读件路径（可被 `$GRASPO_BASELINE_HTML` 覆盖）。"""
     env = os.environ.get(ENV_BASELINE_HTML)
     return Path(env) if env else DOCS / BASELINE_HTML_NAME
+
+
+def template_baseline_html() -> Path:
+    """**模板基线**人读件路径（写范围闸门的比对基线；生成方式见 baseline/README.md）。"""
+    return TOOLS / BASELINE_DIR_NAME / TEMPLATE_BASELINE_HTML_NAME
 
 
 def baseline_data() -> Path:
@@ -252,6 +268,9 @@ def as_dict(date: str | None = None) -> dict[str, str]:
         "PATHS_DOCS": str(DOCS),
         "PATHS_TOOLS": str(TOOLS),
         "PATHS_TEMPLATE": str(TOOLS / TEMPLATE_NAME),
+        "PATHS_TEMPLATE_BASELINE_HTML": str(template_baseline_html()),
+        "PATHS_TEMPLATE_BASELINE_HTML_SHA256": TEMPLATE_BASELINE_HTML_SHA256,
+        "PATHS_REL_TEMPLATE_BASELINE_HTML": REL_TEMPLATE_BASELINE_HTML,
         "PATHS_BASELINE_HTML": str(baseline_html()),
         "PATHS_BASELINE_HTML_NAME": BASELINE_HTML_NAME,
         "PATHS_BASELINE_DATA": str(baseline_data()),
