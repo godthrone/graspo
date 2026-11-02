@@ -81,10 +81,12 @@ _install_no_torch_shim()
 from graspo.flow.backend.msswift.dataset import (  # noqa: E402
     build_grpo_rows,
     build_ms_swift_messages,
+    build_opd_rows,
     build_sft_rows,
     resolve_sample_media_paths,
     write_rows,
 )
+from graspo.flow.backend.msswift.reward import GRASPO_TOOLS_COLUMN  # noqa: E402
 
 
 class _Sample:
@@ -356,6 +358,46 @@ def test_grpo_row_without_targets_is_rejected():
     sample = _Sample([{"role": "user", "content": "问题"}], targets=[])
     with pytest.raises(ValueError, match="has no targets"):
         build_grpo_rows([sample])
+
+
+# ── 4b. OPD 行必须与 SFT/GRPO 同源携带 ``tools`` 列（M039 回归）───────────────
+
+_TOOL_SCHEMA = [
+    {
+        "type": "function",
+        "function": {
+            "name": "extend_arm",
+            "description": "伸长手臂",
+            "parameters": {
+                "type": "object",
+                "properties": {"action_type": {"type": "string"}},
+                "required": ["action_type"],
+            },
+        },
+    }
+]
+
+
+def test_opd_row_carries_tools_column_same_source_as_sft():
+    """带 tools 的样本：OPD 行**有** ``tools`` 键，值与 SFT 行逐字同源。
+
+    缺该列 ⇒ ms-swift 不把工具 schema 渲染进 system 段 ⇒ 学生只回裸工具名
+    （M039 实测 3 token ``'extend_arm<|im_end|>'``），参数永不被监督。
+    """
+    sample = _Sample([{"role": "user", "content": "问题"}], tools=_TOOL_SCHEMA)
+
+    opd_row = build_opd_rows([sample])[0]
+    sft_row = build_sft_rows([sample])[0]
+
+    assert GRASPO_TOOLS_COLUMN in opd_row, "OPD 行丢了 tools 列（回归 M039）"
+    assert opd_row[GRASPO_TOOLS_COLUMN] == sft_row[GRASPO_TOOLS_COLUMN]
+    assert json.loads(opd_row[GRASPO_TOOLS_COLUMN]) == _TOOL_SCHEMA
+
+
+def test_opd_row_without_tools_has_no_tools_key():
+    """不带 tools 的样本：OPD 行**不出现** ``tools`` 键（不凭空造空列）。"""
+    row = build_opd_rows([_Sample([{"role": "user", "content": "问题"}], tools=None)])[0]
+    assert GRASPO_TOOLS_COLUMN not in row
 
 
 # ── 5. 行落盘形态（ms-swift 读的就是这个 JSONL）──────────────────────────────

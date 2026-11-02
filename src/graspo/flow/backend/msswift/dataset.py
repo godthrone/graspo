@@ -550,9 +550,12 @@ def build_opd_rows(samples: list[Any], *, config: Any = None) -> list[dict[str, 
     """graspo 样本 → ms-swift **OPD（on-policy 蒸馏）** 行 = **纯提示词**。
 
     OPD 与 GRPO 同属"completion 由学生现场采样"的一类，因此数据集只喂提示词；
-    与 :func:`build_grpo_rows` 的唯一差别是**不带 ``targets`` 奖励列**——GKD 的
+    与 :func:`build_grpo_rows` 的差别是**不带 ``targets`` 奖励列**——GKD 的
     监督信号来自教师模型的现场 logits，不是 graspo 奖励函数。带一个没人消费的
     ``targets`` 列等于制造"看起来生效、实际被忽略"的假配置（§1.4 / §7.2）。
+    除 ``targets`` 外的列与 GRPO **一致**：带工具的样本照带 ``tools`` 列，列名与
+    ``json.dumps`` 编码逐字复用 SFT/GRPO 行（缺列则工具 schema 不进 system 段，
+    M039 实测：学生只回裸工具名、prompt 1941 vs 2382 token）。
 
     提示词同样过 :func:`build_ms_swift_messages`——相对媒体路径、``content=null``
     配对这两条 4.5.3 实测约束在此**复用同一次修复**（§1.4）。
@@ -562,7 +565,21 @@ def build_opd_rows(samples: list[Any], *, config: Any = None) -> list[dict[str, 
     for index, sample in enumerate(samples):
         if not sample.messages:
             raise ValueError(f"samples[{index}] has no messages; cannot build an OPD prompt")
-        rows.append({MESSAGES_KEY: build_ms_swift_messages(sample.messages), **extra_columns})
+        rows.append(
+            {
+                MESSAGES_KEY: build_ms_swift_messages(sample.messages),
+                # 工具调用样本必须带上 ``tools`` schema：列名与 ``json.dumps`` 编码逐字复用
+                # SFT/GRPO 行（§1.4 单一真相源），取值同源 ``sample.tools``。缺列 ⇒ ms-swift
+                # 不会把工具定义渲染进 system 段（``StdTemplateInputs.from_dict`` →
+                # ``_preprocess_tools`` → ``_get_system``），学生只回裸工具名、参数永不被监督。
+                **(
+                    {GRASPO_TOOLS_COLUMN: json.dumps(sample.tools, ensure_ascii=False)}
+                    if getattr(sample, "tools", None)
+                    else {}
+                ),
+                **extra_columns,
+            }
+        )
     return rows
 
 
