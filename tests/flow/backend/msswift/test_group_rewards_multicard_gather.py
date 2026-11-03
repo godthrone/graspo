@@ -11,8 +11,9 @@
   ``|rank0|=|rank1|=8``、交集 ∅、并集 16 = 表行数）。
 
 修法：新增 :func:`_gather_sample_order`，用 ``all_gather_object`` 把各 rank 的键收齐后
-**保留 gather 的 rank-major 序**（与 ``rewards_per_func`` 的行序同源；⛔ 不再 ``sorted()``：
-排序会让键序与行序不同源，dp≥2 时按键的名次跨组发奖，见
+**保留 gather 的 rank-major 序，且每 rank 块内是本地 rollout 序**
+（与 ``rewards_per_func`` 的行序逐位同源；⛔ 不 ``sorted()``：
+排序会让键序与行序不同源，dp≥2 时按键的名次跨组发奖、dp=1 时组内逐样本错配，见
 ``test_reward_row_order_rank_major.py``）⇒ **"比长度"的两侧都在全局作用域**。
 ⛔ 不恢复按行号配对。
 
@@ -41,9 +42,10 @@ def _smp(request_id: str, **extra) -> types.SimpleNamespace:
 
 
 def _legacy_single_card_mapping(samples, weighted) -> dict[str, float]:
-    """**修复前**的单卡算法（独立重写，用作"逐字不变"的对照基准）。
+    """**修复前**的单卡算法（独立重写，用作**灵敏度对照**：它必须给出不同的结果）。
 
-    旧实现：本地排序 → 与表行**按行号**一一对应。
+    旧实现：本地按 ``request_id`` 字典序排序 → 与表行**按行号**一一对应 ⇒ 插入序 ≠ 字典序
+    时 reward 挂到别的样本上（本文件用它证明断言不是恒真式，⛔ 不再拿它当期望值）。
     """
     ordered = sorted(samples, key=lambda sample: str(sample.request_id))
     return {_sample_key(sample): float(weighted[index]) for index, sample in enumerate(ordered)}
@@ -73,6 +75,9 @@ class _FakeDist:
         monkeypatch.setattr(torch.distributed, "is_available", lambda: True)
         monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
         monkeypatch.setattr(torch.distributed, "get_world_size", lambda: 1 + len(other_ranks))
+        # ★ rank 也是被测代码的输入（`_assert_key_order_matches_rows` 要判断"哪一块是我的"）：
+        #   真实 `dist.get_rank()` 的语义就是这个调用者在组内的 rank。
+        monkeypatch.setattr(torch.distributed, "get_rank", lambda: caller_rank)
         monkeypatch.setattr(torch.distributed, "all_gather_object", self._gather)
 
     def _gather(self, out: list, payload) -> None:
@@ -85,28 +90,41 @@ class _FakeDist:
                 out[rank] = list(self._others[other_index])
 
 
-# ══ ① 单卡：修复前后**逐字不变** ═════════════════════════════════════════════
+# ══ ① 单卡：行序 = 本地 rollout 序（逐样本正确）═══════════════════════════════
 
 
-def test_single_card_is_byte_identical_to_the_pre_fix_mapping():
-    """★单卡逐字不变：新实现的返回值与**修复前算法**在多个样本数/乱序输入上完全相等。"""
+def test_single_card_is_per_sample_correct_in_local_rollout_order():
+    """★单卡：行序 = ``samples`` 的插入序（rollout 序）⇒ 每条键拿**自己**那一行。
+
+    上一版这里断言"与修复前算法逐字相等"……而修复前算法（本地字典序 → 按行号配对）在
+    **插入序 ≠ 字典序**时正是错配本身。该期望值编码的是缺陷，不是契约，故纠正为
+    "逐样本正确 + dict 键序 = 本地 rollout 序"；并保留一条灵敏度对照（字典序映射必须不同），
+    防止再退化成"值对就行/恰好相等"的空转用例。
+    """
     for size in (1, 2, 6):
         samples = [_smp(f"chatcmpl-{i:04d}") for i in range(size)]
         shuffled = list(reversed(samples))
         weighted = [index * 0.5 for index in range(size)]
-        expected = _legacy_single_card_mapping(shuffled, weighted)
+        truth = {_sample_key(sample): weighted[index] for index, sample in enumerate(shuffled)}
 
         got = _group_rewards(shuffled, torch.tensor(weighted).reshape(size, 1), None)
 
-        assert got == expected, f"size={size}"
-        assert list(got) == [_sample_key(s) for s in sorted(shuffled, key=_sample_key)]
+        assert got == truth, f"size={size}"
+        assert list(got) == [_sample_key(sample) for sample in shuffled]
+        if size > 1:
+            # 灵敏度对照：插入序 ≠ 字典序时，修复前的字典序映射**不是**同一个结果
+            assert _legacy_single_card_mapping(shuffled, weighted) != truth
 
 
-def test_single_card_key_order_matches_the_old_helper():
-    """★``_gather_sample_order`` 在单卡下 == ``[_sample_key(s) for s in _global_sample_order(...)]``。"""
+def test_single_card_key_order_is_local_rollout_order():
+    """★``_gather_sample_order`` 单卡下 == 本地 rollout 序（⛔ 不是本地字典序）。
+
+    上一版断言它等于 ``_global_sample_order``（字典序）——那是被裁决否掉的缺陷口径。
+    """
     samples = [_smp("c"), _smp("a"), _smp("b")]
-    assert _gather_sample_order(samples) == [_sample_key(s) for s in _global_sample_order(samples)]
-    assert _gather_sample_order(samples) == ["a", "b", "c"]
+    assert _gather_sample_order(samples) == [_sample_key(s) for s in samples]
+    assert _gather_sample_order(samples) == ["c", "a", "b"]
+    assert _gather_sample_order(samples) != [_sample_key(s) for s in _global_sample_order(samples)]
 
 
 def test_single_card_without_request_id_keeps_original_order():
@@ -137,17 +155,20 @@ def test_multi_rank_each_rank_reads_only_its_own_keys(monkeypatch):
 
 
 def test_multi_rank_key_based_pairing_survives_shuffled_table(monkeypatch):
-    """★按键而非按行号：把本地顺序与行序都打乱，值仍必须跟着键走。"""
+    """★按键而非按行号：本地 rollout 序 ≠ 字典序时，值仍必须跟着**行序**走（逐样本）。"""
     rank0 = [_smp("chatcmpl-c"), _smp("chatcmpl-a")]
     rank1_keys = ["chatcmpl-b", "chatcmpl-d"]
     _FakeDist(monkeypatch, [[(key, True) for key in rank1_keys]])
-    # ★ 行序 = gather 的 **rank-major** 序（rank0 本地序 [a,c] + rank1 本地序 [b,d]）
-    #   ⇒ 行 10,30,20,40 对应键 a,c,b,d（⛔ 不是"全局键名升序"——那正是 E0 直证的缺陷口径）
+    # ★ 行序 = 行序真值（rank-major + 每 rank **本地插入序**）：
+    #   rank0 本地序 [c,a] + rank1 本地序 [b,d] ⇒ 行 10,30,20,40 对应键 c,a,b,d。
+    #   ⛔ 不是"每 rank 的字典序"（[a,c]）——那正是 a1c30b2 残留的块内错配口径。
     weighted = torch.tensor([[10.0], [30.0], [20.0], [40.0]])
 
     got = _group_rewards(rank0, weighted, None)
 
-    assert got == {"chatcmpl-c": 30.0, "chatcmpl-a": 10.0}
+    assert got == {"chatcmpl-c": 10.0, "chatcmpl-a": 30.0}
+    # 灵敏度对照：字典序映射会给出不同的（错的）逐样本归属
+    assert got != {"chatcmpl-c": 30.0, "chatcmpl-a": 10.0}
 
 
 def test_multi_rank_rank1_also_reads_only_its_own_keys(monkeypatch):

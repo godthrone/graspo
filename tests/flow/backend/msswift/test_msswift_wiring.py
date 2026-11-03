@@ -509,19 +509,26 @@ def test_group_decisions_are_reported_as_metrics():
 
 
 def test_group_rewards_are_read_from_rewards_per_func_by_request_id():
-    """分类用的 reward 必须来自 ms-swift 的奖励表（按 request_id 对齐，不按行号猜）。"""
+    """分类用的 reward 必须来自 ms-swift 的奖励表，且**行 ↔ 本地样本逐位对应**。
+
+    ★ 纠正（原断言编码的是缺陷）：本用例原来写"表行序 = request_id 升序，所以行 0 是 r1"。
+    那前提是错的——``request_id`` 是逐样本 ``uuid4``，表行序的真值是
+    "**rank-major + 每 rank 本地 rollout 序**"，即行 i ↔ ``samples[i]``（上游
+    ``score_completions`` 对本地 samples 列表逐条出行）。按 request_id 字典序配对本就是
+    被裁决否掉的错配路径。故这里改成"行序 = 传入 samples 序"的真值口径，并保留一条
+    灵敏度对照（字典序配对会给出不同结果）。
+    """
     from graspo.flow.backend.msswift.trainer import _group_rewards
 
     torch = pytest.importorskip("torch")
-    # 传入顺序与 request_id 顺序**故意不同**：必须按 request_id 对齐而不是按行号。
-    # ms-swift 的奖励表行序 = request_id 升序（`_compute_rewards_per_func` 的 gather 序），
-    # 所以行 0 是 r1、行 1 是 r2。
+    # 传入顺序（r2, r1）与字典序（r1, r2）**故意不同**：行 0 ↔ samples[0] = r2。
     samples = [_sample("r2", "b"), _sample("r1", "a")]
-    table = torch.tensor([[0.75], [0.25]])  # row0 = r1 = 0.75, row1 = r2 = 0.25
+    table = torch.tensor([[0.75], [0.25]])  # row0 ↔ r2 = 0.75, row1 ↔ r1 = 0.25
 
     rewards = _group_rewards(samples, table, torch.ones(1))
 
-    assert rewards == {"r1": 0.75, "r2": 0.25}
+    assert rewards == {"r2": 0.75, "r1": 0.25}
+    assert list(rewards) == ["r2", "r1"]  # dict 键序 = 本地 rollout 序（⛔ 不是字典序）
 
 
 def test_group_rewards_degrade_transparently_when_the_table_is_absent():

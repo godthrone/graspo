@@ -844,8 +844,11 @@ def _group_rewards(
 
     ms-swift 的奖励表是 ``[N_global, num_reward_funcs]``（``_compute_rewards_per_func``
     里 gather 过），而 ``_compute_advantages`` 拿到的是**本进程的样本切片**。对应关系
-    按 ``request_id`` 而不是行号——行号在序列并行/多进程下会被 gather 重排，而
-    ``request_id`` 是随样本一起传递的稳定标识（与 :func:`_sample_key` 同一真相源）。
+    由**行序本身**给出：行 i ↔ 全局样本序（**rank-major + 每 rank 本地 rollout 序**）的第 i 条
+    ——见 :func:`_gather_sample_blocks`；⛔ 不是"按 ``request_id`` 字典序重排"（``request_id``
+    是逐样本 uuid4，与行序无关，排序会把 reward 挂到别的样本上）。
+    绑定前后各有一道**可证伪**校验（:func:`_assert_key_order_matches_rows` 与
+    :func:`_assert_paired_rows_match_source`），键序一旦与行序不同源即 ``AlignmentError``。
 
     Returns:
         ``{sample_key: reward}``；拿不到表或表行数不匹配时返回 ``{}``（调用方按 0.0 处理，
@@ -869,7 +872,10 @@ def _group_rewards(
         return {}
     # ★ G2/I2 的"**同一作用域**"（T032 多卡缺陷修复）：表是 ``[N_global, …]``，而
     #   ``samples`` 只是**本进程的切片** ⇒ 拿来比对的键序也必须是**全局**键序。
-    global_keys = _gather_sample_order(samples)
+    #   键序本身由 :func:`_gather_sample_blocks` 给出：**rank-major + 每 rank 本地 rollout 序**
+    #   （= ``rewards_per_func`` 的行序，见该函数 docstring）。
+    blocks = _gather_sample_blocks(samples)
+    global_keys = [key for block in blocks for key, _stable in block]
     if len(global_keys) != len(weighted):
         # ★ P5/G2（option-a §2.3）：**删掉 positional fallback**。
         #   旧实现在长度不匹配时按行号配对并打 "falling back to positional pairing" 警告
@@ -878,10 +884,19 @@ def _group_rewards(
             f"组奖励表与样本未按键对齐：rewards_per_func 有 {len(weighted)} 行，"
             f"而全局样本键有 {len(global_keys)} 条（I2）。禁止回退为按行号配对。"
         )
+    # ★ 本地键 = **本地样本表的 rollout 序**（``samples`` 的插入序）。
+    #   ⛔ 不要用 ``_global_sample_order``（str(request_id) 字典序）：``request_id`` 是逐样本
+    #   uuid4（上游 ``rollout_mixin.py`` ``chatcmpl-{uuid4().hex}``），"字典序名次"与"行序"
+    #   是**两个独立随机置换**——它正是本缺陷的根：行 i 属于 samples[i]，而键按字典序取
+    #   该行 ⇒ 每行的 reward 挂到别人的样本上（组内亦然）。
+    local_keys = [_sample_key(sample) for sample in samples]
+    if len(set(local_keys)) != len(local_keys):
+        duplicates = sorted({key for key in local_keys if local_keys.count(key) > 1})
+        raise AlignmentError(f"本地样本键重复：{duplicates[:3]}（I2：键必须一一对应）")
     # ★ 诊断列（world>1 才打；单卡零额外开销、零新增日志）：
     #   缺这一行就无法判定"键序 ↔ 行序"到底怎么错配；有了它 ``table`` 的
     #   (键, 行) 配对真相直接可读，本缺陷可逐键定案（§17.5 事件区之外，仅 DEBUG）。
-    world_size = _process_group_world_size()
+    world_size = len(blocks)
     if world_size > 1:
         logger.debug(
             "graspo: reward-table scope — rank=%s world=%d local_samples=%d global_keys=%s "
@@ -892,13 +907,11 @@ def _group_rewards(
             global_keys,
             [round(float(value), 6) for value in weighted],
         )
+    # ★★ 键序契约的**可证伪**校验（放在"按位置绑定行"之前，绑定之后再复核一次）：
+    #   ① 本 rank 的 gather 键块必须**逐位等于**本地 rollout 序（entries 若被排序即红）；
+    #   ② 全局键序里本 rank 的 rank-major 切片必须逐位等于本地序（flatten 后被重排即红）。
+    _assert_key_order_matches_rows(global_keys, local_keys, blocks)
     table = keyed_rows_from_table(weighted, global_keys, what="组奖励表")
-    # ★ 本地键取**旧实现的同一顺序**（``_global_sample_order`` 的结果）⇒ 单卡下返回的
-    #   dict 键序与修复前逐字一致（字典序是可观测行为，不能"值对就行"）。
-    local_keys = [_sample_key(sample) for sample in _global_sample_order(samples)]
-    if len(set(local_keys)) != len(local_keys):
-        duplicates = sorted({key for key in local_keys if local_keys.count(key) > 1})
-        raise AlignmentError(f"本地样本键重复：{duplicates[:3]}（I2：键必须一一对应）")
     # ★ 多卡下 ``table``（全局）**天然比**本地切片**多** ⇒ 这里按键**取本地那几行**，
     #   而不是要求两侧键集相等（后者只对单卡成立，会把多卡误判成错位）。
     #   ⛔ 依然 fail-closed：本地键在全局表里找不到行即抛错，⛔ 不回退按行号配对。
@@ -908,6 +921,10 @@ def _group_rewards(
             f"组奖励表里缺少本地样本键：{missing[:3]}（I2：每个本地 completion 都必须能在"
             "全局奖励表里按 request_id 找到对应行）。禁止回退为按行号配对。"
         )
+    # ★★ 配对后复核：每个键拿到的 reward 必须**逐位等于**它在本 rank 行块里的源行
+    #   （源行 = ``weighted[rank_offset + 本地序号]``，这是"行 ↔ 本地样本"的唯一真值）。
+    #   绑定一旦被任何一层（键序/表实现）打散，这里立即红——不是靠"组内多重集不变"兜着。
+    _assert_paired_rows_match_source(weighted, table, local_keys, blocks)
     return {key: table[key] for key in local_keys}
 
 
@@ -922,7 +939,15 @@ def _ragged_abs_mean(advantages: dict[str, list[float]]) -> float:
 
 
 def _global_sample_order(samples: list[Any]) -> list[Any]:
-    """按 ``request_id`` 排序的样本列表（gather 的顺序即该顺序；缺失时保持原序）。"""
+    """按 ``request_id`` 字典序排序的样本列表（⛔ **不是** gather / 行序）。
+
+    ★ 历史包袱：本函数曾被当作"gather 的顺序"，那是错的——``request_id`` 是逐样本
+    ``uuid4``（上游 ``rollout_mixin.py`` ``chatcmpl-{uuid4().hex}``），"字典序名次"与
+    "rollout 行序"是两个**独立随机置换**。行序的真值是 **rank-major + 每 rank 的本地
+    rollout 序**（上游按位置把 ``local_advantages`` 写回同一份 ``samples`` 列表的连续切片；
+    ``accelerate.gather`` 走 ``all_gather_into_tensor``）。本函数只保留给"按 id 展示/测试"用，
+    ⛔ 任何"键 ↔ 奖励行"的绑定都不得经过它（见 :func:`_gather_sample_blocks`）。
+    """
     if not all(getattr(sample, "request_id", "") for sample in samples):
         return list(samples)
     return sorted(samples, key=lambda sample: str(sample.request_id))
@@ -940,8 +965,24 @@ def _process_group_world_size() -> int:
     return 1
 
 
-def _all_gather_sample_entries(entries: list[tuple[str, bool]]) -> list[tuple[str, bool]]:
-    """把各 rank 的 ``[(key, has_request_id)]`` 收集成**一份扁平列表**。
+def _process_group_rank() -> int:
+    """当前进程在默认进程组里的 rank；未初始化 / 不可用 ⇒ ``0``（单进程语义）。"""
+    try:
+        import torch.distributed as dist
+
+        if dist.is_available() and dist.is_initialized():
+            return int(dist.get_rank())
+    except Exception:  # noqa: BLE001 - 拿不到就当 rank0（与 _process_group_world_size 同口径）
+        logger.debug("graspo: could not read distributed rank", exc_info=True)
+    return 0
+
+
+def _all_gather_sample_blocks(entries: list[tuple[str, bool]]) -> list[list[tuple[str, bool]]]:
+    """把各 rank 的 ``[(key, has_request_id)]`` 收集成**按 rank 分块**的列表。
+
+    真实 ``all_gather_object`` 的语义是 ``out[i] = rank i 的 payload``，而
+    ``rewards_per_func`` 的行表（``accelerate.gather`` → ``all_gather_into_tensor``）
+    也是**同一 rank 序拼接** ⇒ ``blocks[0] + blocks[1] + …`` 就是行序。
 
     只在 world_size > 1 时调用；所有 rank 必须同时进入（``_group_rewards`` 在每个 rank 上
     对称调用，见 ``_compute_advantages``）。
@@ -950,47 +991,55 @@ def _all_gather_sample_entries(entries: list[tuple[str, bool]]) -> list[tuple[st
 
     gathered: list[Any] = [None] * _process_group_world_size()
     dist.all_gather_object(gathered, entries)
-    return [item for part in gathered for item in (part or [])]
+    return [list(part or []) for part in gathered]
 
 
-def _gather_sample_order(samples: list[Any]) -> list[str]:
-    """``rewards_per_func`` **行序**所对应的**全局**样本键序（契约 I2 的"同一作用域"）。
+def _all_gather_sample_entries(entries: list[tuple[str, bool]]) -> list[tuple[str, bool]]:
+    """``_all_gather_sample_blocks`` 的扁平化视图（rank-major，按位置拼接）。"""
+    return [item for block in _all_gather_sample_blocks(entries) for item in block]
 
-    ★ 为什么必须 gather（T032 多卡缺陷的根因修复，探针已定案）：``rewards_per_func`` 是
-    ``[N_global, …]``（其 docstring 与上游 ``_compute_rewards_per_func`` 均表明 gather 过），
-    而 ``samples`` 只是**本进程的切片**。旧实现只对本地列表排序 ⇒ 单卡（本地 == 全局）通过，
-    多卡必抛 I2：实测量级 = 全局 16 行 vs 本地 8 条；两 rank 是**互补切片**
-    （交集 ∅、并集 16 = 表行数）⇒ 缺陷在本函数，与上游 ms-swift 无关。
 
-    ★ **键序必须与 ``rewards_per_func`` 的行序同源（rank-major）**：ms-swift 侧
-    ``_compute_rewards_per_func`` 的行表也是 ``all_gather`` 出来的，而 ``all_gather`` 按
-    **rank 序拼接**（行 0..n₀-1 属 rank0、其后属 rank1）；本函数的 ``flat`` 正是同一
-    rank 序拼接 ⇒ **直接返回 ``flat`` 的键序**，⛔ 不重排。
-    曾经这里 ``return sorted(seen)``（全局字典序）：键序与行序**不同源**，而
-    ``keyed_rows_from_table`` 按**位置**配对 ⇒ 键在字典序里的名次决定它拿到哪个 rank
-    的行 ⇒ dp≥2 时某个键拿到**另一个组**的 reward（假组内方差 → 错误注入优势）。
-    ``seen`` 只保留给上面的重复键防呆，不再参与排序（排序会把"按键对齐"降级成"按名次对齐"）。
+def _local_sample_entries(samples: list[Any]) -> list[tuple[str, bool]]:
+    """本 rank 的键条目，**顺序 = ``samples`` 的插入序（本地 rollout 序）**。
 
-    ★ **单卡逐字不变**：world_size ≤ 1 时返回值 ==
-    ``[_sample_key(s) for s in _global_sample_order(samples)]``（含"缺 request_id 保持原序"）。
+    ⛔ 这里不做任何排序：行 i 属于 ``samples[i]``（上游 ``score_completions`` 对本地
+    ``samples`` 列表逐条出局部行），排序即错配。
+    """
+    return [
+        (_sample_key(sample), bool(getattr(sample, "request_id", "") or ""))
+        for sample in samples
+    ]
 
-    ★ **防呆不放宽**（⛔ 不静默放行、⛔ 不回退按行号配对）：
 
-    - 跨 rank 出现**重复键** ⇒ ``AlignmentError``（上游"复制而非切分"的场景必须显式失败：
-      ``rewards_per_func`` 的行数与样本数在这种情形下也无法一一对应）；
+def _gather_sample_blocks(samples: list[Any]) -> list[list[tuple[str, bool]]]:
+    """``rewards_per_func`` **行序**的**按 rank 分块**键序（契约 I2 的"同一作用域"）。
+
+    ★ 行序真值（两侧都查过）：上游 ``score_completions(samples)`` 对**本地 samples 列表**
+    逐条出行（行 i ↔ ``samples[i]``），再由 ``accelerate.gather``（``all_gather_into_tensor``）
+    按 **rank 序**拼接 ⇒ 全局行序 = **rank-major + 每 rank 本地 rollout 序**。本函数返回的
+    ``blocks`` 与它**逐位同源**：``[local_entries(rank0), local_entries(rank1), …]``。
+
+    ★ 为什么必须 gather（T032）：``rewards_per_func`` 是 ``[N_global, …]``，而 ``samples``
+    只是本进程切片 ⇒ 比对的键序必须是全局的（否则多卡必抛 I2：全局 16 行 vs 本地 8 条）。
+
+    ★ **world ≤ 1 与 world > 1 走同一条构造**（只是不 gather）：`entries` 由
+    :func:`_local_sample_entries` 给出本地 rollout 序 ⇒ dp=1 与 dp≥2 一并修好。
+    曾经的两处病：``entries`` 走 ``_global_sample_order``（字典序，块内错配）、
+    ``world_size <= 1`` 早返回同一份字典序键（dp=1 也错配）。
+
+    ★ 防呆不放宽（⛔ 不静默放行、⛔ 不回退按行号配对）：
+
+    - 跨 rank **重复键** ⇒ ``AlignmentError``（上游"复制而非切分"时表行数与样本数无法一一对应）；
     - 跨 rank 采样**缺 request_id** ⇒ ``AlignmentError``（没有稳定标识就无法确定全局键序）。
 
     :raises AlignmentError: 跨 rank 键重复，或缺少 ``request_id``。
     """
-    ordered = _global_sample_order(samples)
-    entries = [
-        (_sample_key(sample), bool(getattr(sample, "request_id", "") or ""))
-        for sample in ordered
-    ]
+    entries = _local_sample_entries(samples)
     if _process_group_world_size() <= 1:
-        return [key for key, _stable in entries]
+        return [entries]
 
-    flat = _all_gather_sample_entries(entries)
+    blocks = _all_gather_sample_blocks(entries)
+    flat = [item for block in blocks for item in block]
     unstable = [key for key, stable in flat if not stable]
     if unstable:
         raise AlignmentError(
@@ -1007,13 +1056,106 @@ def _gather_sample_order(samples: list[Any]) -> list[str]:
             f"跨 rank 样本键重复：{sorted(set(duplicates))[:3]}（I2：每个 completion 在所有 "
             "rank 上必须恰好出现一次；上游按副本而非切片分发时不得静默放行）。"
         )
-    # ★ 行序同源（E0 直证缺陷的修复点）：``flat`` = ``all_gather_object`` 的 **rank-major**
-    #   拼接，与 ``rewards_per_func`` 的行序同源；``sorted(seen)`` 会把键按字典序整体重排，
-    #   而下游 ``keyed_rows_from_table`` 是按**位置**配对的 ⇒ dp≥2 时键的名次决定它拿哪个
-    #   rank 的行（某个键拿到另一组的 reward）。见 ``tests/flow/backend/msswift/
-    #   test_reward_row_order_rank_major.py``。
-    #   ⛔ 不要"再排一次行序"来凑：键序必须是 gather 拼出来的那个顺序。
-    return [key for key, _stable in flat]
+    return blocks
+
+
+def _gather_sample_order(samples: list[Any]) -> list[str]:
+    """``rewards_per_func`` **行序**所对应的**全局**键序（rank-major，含本地 rollout 序）。
+
+    等于 :func:`_gather_sample_blocks` 的扁平视图：``blocks[0] + blocks[1] + …`` 的键。
+    ⛔ 不排序（理由与红/绿见 ``tests/flow/backend/msswift/test_reward_row_order_rank_major.py``）。
+    """
+    return [key for block in _gather_sample_blocks(samples) for key, _stable in block]
+
+
+def _first_mismatch(
+    actual: list[str], expected: list[str], *, width: int = 3
+) -> list[tuple[int, str, str]]:
+    """两侧键序的前 ``width`` 个逐位差异，形如 ``[(index, 实际, 期望), …]``（报错用）。"""
+    diffs: list[tuple[int, str, str]] = []
+    for index, (left, right) in enumerate(zip(actual, expected, strict=False)):
+        if left != right:
+            diffs.append((index, left, right))
+            if len(diffs) >= width:
+                break
+    return diffs
+
+
+def _assert_key_order_matches_rows(
+    global_keys: list[str],
+    local_keys: list[str],
+    blocks: list[list[tuple[str, bool]]],
+    *,
+    rank: int | None = None,
+) -> None:
+    """★ 键序契约（**可证伪**）：全局键序 == rank-major 行序，且本 rank 块 == 本地 rollout 序。
+
+    这是"键序来源标志"的断言版本——它不依赖"组内奖励多重集不变"这种弱不变量，直接钉
+    逐位次序。会在下列情况**变红**（``AlignmentError``）：
+
+    1. `entries` 由 ``sorted(str(request_id))`` 构造（修复前的路径）⇒ 本 rank 块 ≠ 本地序；
+    2. gather 后的扁平键序被任何一层重排 ⇒ 全局 rank-major 切片 ≠ 本地序；
+    3. 传入的 ``local_keys`` 不是 ``samples`` 的序（例如又有人改回 ``_global_sample_order``）。
+
+    它**不会**红的情形也说明了它的边界：若"字典序"恰好等于"rollout 序"（测试里单调递增
+    的桩数据），它无区分力——所以回归夹具必须让行序 ≠ 字典序（见测试文件）。
+
+    :raises AlignmentError: 键序与行序的 rank-major 契约不一致。
+    """
+    current = _process_group_rank() if rank is None else int(rank)
+    if not 0 <= current < len(blocks):
+        raise AlignmentError(
+            f"rank {current} 不在 gather 结果里（blocks={len(blocks)}）——进程组 rank 与 "
+            "all_gather_object 的分块不一致（I2：键序无法与行序对齐）。"
+        )
+    own_block = [key for key, _stable in blocks[current]]
+    if own_block != list(local_keys):
+        raise AlignmentError(
+            "键序来源不一致：本 rank 的 gather 键块 != 本地样本 rollout 序（I2）。"
+            f"前 3 个不同：{_first_mismatch(own_block, local_keys)}。"
+            "键序必须与 rewards_per_func 的行序同源（rank-major + 本地 rollout 序），"
+            "⛔ 不得按 str(request_id) 字典序重排（request_id 是逐样本 uuid4）。"
+        )
+    offset = sum(len(block) for block in blocks[:current])
+    own_slice = list(global_keys[offset : offset + len(local_keys)])
+    if own_slice != list(local_keys):
+        raise AlignmentError(
+            "键序与行序的 rank-major 契约不一致：全局键序在本 rank 的行块位置上 != 本地 "
+            f"rollout 序（I2）。前 3 个不同：{_first_mismatch(own_slice, local_keys)}。"
+        )
+
+
+def _assert_paired_rows_match_source(
+    weighted: list[float],
+    table: dict[str, float],
+    local_keys: list[str],
+    blocks: list[list[tuple[str, bool]]],
+    *,
+    rank: int | None = None,
+) -> None:
+    """★★ 配对后复核：每个键拿到的 reward 必须等于它在本 rank 行块里的**源行**。
+
+    源行 = ``weighted[rank_offset + 本地序号]``（行 i ↔ ``samples[i]``，这是上游
+    ``score_completions`` 给行、``accelerate.gather`` 拼接后的唯一真值）。本函数把
+    ``table[local_keys[i]]`` 与它逐位比对 ⇒ **逐样本归属**（不只是组内多重集）被钉住。
+
+    会在 ``keyed_rows_from_table`` / ``<local_keys>`` 的任何一层打散绑定后变红
+    （例如键与行错位、键序被排序、表实现改成排序配对）。夹具若用"组内奖励常数"则
+    本函数无区分力——所以回归夹具的组内奖励必须非常数。
+
+    :raises AlignmentError: 键拿到的奖励 != 其源行。
+    """
+    current = _process_group_rank() if rank is None else int(rank)
+    offset = sum(len(block) for block in blocks[:current])
+    source_rows = [float(weighted[offset + index]) for index in range(len(local_keys))]
+    paired_rows = [float(table[key]) for key in local_keys]
+    for index, (paired, source) in enumerate(zip(paired_rows, source_rows, strict=True)):
+        if paired != source:
+            raise AlignmentError(
+                f"配对后校验失败：本地第 {index} 条样本（键 {local_keys[index]!r}）拿到 "
+                f"reward={paired}，而其源行（rank 行块偏移 {offset} + 序号 {index}）是 "
+                f"{source}（I2：逐样本 reward 归属必须与行序一致）。"
+            )
 
 
 def _sample_targets(sample: Any) -> list[dict[str, Any]] | None:
