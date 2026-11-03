@@ -489,9 +489,9 @@
    "note": "script_sha256 = 实际跑枚举的 tools/matrix/enumerate_matrix.py 的 sha256；它与 script_commit（ef0a9f3）内的同名文件逐字节一致。该提交与 meta.code_version.commit（本件生成基线 53b0c24）不是同一个提交——枚举早于本件基线，两个提交不同属正常，不得据此推断脚本被改过。"
   },
   "backfill": {
-   "last_run": "2026-10-28 18:30",
+   "last_run": "2026-11-03 03:38",
    "filled_tiers": [
-    "M006"
+    "M039"
    ],
    "unfilled_count": 36,
    "note": "仅脚本回填；未判定档位保持「待测试」；结果 json 不得自带 status；缺字段/缺判据证据 fail-closed"
@@ -2597,13 +2597,13 @@
    "applicable": true,
    "status": "不通过",
    "runs": "—",
-   "peak_mem": "13.37 GiB",
+   "peak_mem": "13.79 GiB",
    "steps_actual": "100 步",
-   "elapsed": "100 步累计 8991 s（约 2.50 h；首段 1h48m02s + 续训段 41m49s）",
-   "throughput": "89.9 s/步（100 步 / 8991 s；首段 108.0 s/步，续训段 62.7 s/步）",
-   "effect": "判据②不通过：训练集 100 条，训练前 21.0% → 训练后 17.0%（变化 −4.0 个百分点）；判据①通过（崩溃 0 次、100/100 步完成）",
+   "elapsed": "总时长 7611.3 s（约 2.11 h）",
+   "throughput": "0.013 步/s（100 步 / 7611.3 s；样本吞吐 0.026 样本/s）",
+   "effect": "after acc=15.0000%；base acc=21.0000%；Δ = -6.0000 pp",
    "not_failed_reason": "—",
-   "note": "判据②不通过：训练前 21.0% → 训练后 17.0%（变化 −4.0 个百分点，门槛为 +5.0；McNemar 不一致对 10，p=0.34）。100 步后 100/100 条输出同一动作（rotate_arm+逆时针，恰为多数类 17%）；训练只监督 3 个 token（工具名与结束符），参数从未被监督，而效果判定要求工具名与参数均正确，故无法达标。崩溃 0 次。",
+   "note": "退出码 0；实跑步数 100（读自跑次读数文件）；完成 2/2 个 epoch；检查点：可加载；数值异常：无；峰值显存：13.79 GiB；效果读数：after 15.0% / base 21.0% / Δ-6.0pp；判据结论：①③④ 过，② 未过",
    "spec_json": "—",
    "cards_pending": true,
    "blocked_reason": "—"
