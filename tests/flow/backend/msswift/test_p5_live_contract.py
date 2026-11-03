@@ -78,3 +78,49 @@ def test_group_rewards_fails_instead_of_positional_fallback():
 def test_key_alignment_is_fail_closed():
     with pytest.raises(AlignmentError, match="未按键对齐"):
         align_by_key(["a", "b"], {"a": 1.0})
+
+
+# ── 组键语义：批内占位 `prompt_id` ≠ 全局组身份（dp≥2 / 每步多组）───────────────
+# 机制（上游 ms-swift 4.5.3，均只读核过）：
+#   * `rollout_mixin.py:1242-1258`：`prompt_id` 是**每批内从 0 重编号**的占位符
+#     （`prompt_0`…），每次 `_generate_completions` 都从 0 重来；
+#   * `grpo_trainer.py:2270-2286`：DAPO 重采样在 `valid < gbs` 时从 **seed+1 的另一个
+#     迭代器**取新 prompt 批并**追加**到 `valid_samples`（`:666-673`）；
+#   * `grpo_trainer.py:704`：上游按**位置** `rewards.view(-1, num_generations)` 分组。
+# ⇒ 「同键 2G 条」是**两个完整的 G 组**，不是「1 组 2G 条」。我方旧实现把批内占位键
+#   当全局组身份 ⇒ 误报 `IncompleteGroupError`（A3：`prompt_0` 16 条 vs 契约 8 条）。
+def test_rollout_groups_splits_repeated_placeholder_key_into_blocks():
+    """★ 同键 >G 条 ⇒ 按连续 G 块切分（与上游按位置分组一致），不报错。"""
+    samples = [_Sample("prompt_0", f"a#{i}") for i in range(8)] + [
+        _Sample("prompt_0", f"b#{i}") for i in range(8)
+    ]
+    groups = _rollout_groups(samples, 8)
+    assert [len(group) for group in groups] == [8, 8]
+    # 顺序切块：第一块=前 G 条、第二块=后 G 条（**不重排**，与上游位置顺序一致）
+    assert [s.request_id for s in groups[0]] == [f"a#{i}" for i in range(8)]
+    assert [s.request_id for s in groups[1]] == [f"b#{i}" for i in range(8)]
+
+
+def test_rollout_groups_still_fails_on_truly_incomplete_repeated_key():
+    """★ 回归保护：真正的「同键 G-1 / G+1 条」仍必须显式失败（不许把校验改松）。"""
+    short = [_Sample("prompt_0", f"s#{i}") for i in range(7)]
+    with pytest.raises(IncompleteGroupError):
+        _rollout_groups(short, 8)
+    long = [_Sample("prompt_0", f"l#{i}") for i in range(9)]
+    with pytest.raises(IncompleteGroupError):
+        _rollout_groups(long, 8)
+    # 2G+1：末尾余 1 条 ⇒ 仍失败（切块不得掩盖残块）
+    ragged = [_Sample("prompt_0", f"r#{i}") for i in range(17)]
+    with pytest.raises(IncompleteGroupError):
+        _rollout_groups(ragged, 8)
+
+
+def test_rollout_groups_keeps_distinct_keys_as_separate_groups():
+    """★ 合法情形不变：不同键各 G 条 ⇒ 各自成组（顺序与条数逐字不变）。"""
+    samples = [_Sample("prompt_0", f"x#{i}") for i in range(8)] + [
+        _Sample("prompt_1", f"y#{i}") for i in range(8)
+    ]
+    groups = _rollout_groups(samples, 8)
+    assert [len(group) for group in groups] == [8, 8]
+    assert [s.request_id for s in groups[0]] == [f"x#{i}" for i in range(8)]
+    assert [s.request_id for s in groups[1]] == [f"y#{i}" for i in range(8)]

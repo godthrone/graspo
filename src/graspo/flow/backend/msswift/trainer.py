@@ -1057,7 +1057,23 @@ def _rollout_groups(samples: list[Any], num_generations: int) -> list[list[Any]]
         grouped: OrderedDict[str, list[Any]] = OrderedDict()
         for sample in samples:
             grouped.setdefault(str(sample.prompt_id), []).append(sample)
-        groups = list(grouped.values())
+        # ★ 批内占位键 ≠ 全局组身份：``prompt_id`` 由 ms-swift 在**每批内从 0 重编号**
+        #   （``rollout_mixin.py:1242-1258``），而 DAPO 重采样在 ``valid < gbs`` 时会从
+        #   seed+1 的另一个迭代器取新 prompt 批并**追加**（``grpo_trainer.py:666-673`` /
+        #   ``:2270-2286``）⇒ 拼接后同一批里会出现「两个完整 G 组都叫 prompt_0」。
+        #   上游按**位置** ``rewards.view(-1, num_generations)`` 分组（``:704``），自洽；
+        #   故同键 >G 条按**连续 G 块**切分（顺序与上游位置分组一致），而不是当成
+        #   「1 组 2G 条」误报 I1。残块（如 2G+1）仍由下面的 ``assert_complete_group``
+        #   显式失败——切块不放宽校验。
+        groups = []
+        for bucket in grouped.values():
+            if len(bucket) <= num_generations:
+                groups.append(bucket)
+                continue
+            groups.extend(
+                bucket[start : start + num_generations]
+                for start in range(0, len(bucket), num_generations)
+            )
     else:
         groups = [
             list(samples[start : start + num_generations])
