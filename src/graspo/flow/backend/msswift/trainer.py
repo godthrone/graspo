@@ -878,6 +878,20 @@ def _group_rewards(
             f"组奖励表与样本未按键对齐：rewards_per_func 有 {len(weighted)} 行，"
             f"而全局样本键有 {len(global_keys)} 条（I2）。禁止回退为按行号配对。"
         )
+    # ★ 诊断列（world>1 才打；单卡零额外开销、零新增日志）：
+    #   缺这一行就无法判定"键序 ↔ 行序"到底怎么错配；有了它 ``table`` 的
+    #   (键, 行) 配对真相直接可读，本缺陷可逐键定案（§17.5 事件区之外，仅 DEBUG）。
+    world_size = _process_group_world_size()
+    if world_size > 1:
+        logger.debug(
+            "graspo: reward-table scope — rank=%s world=%d local_samples=%d global_keys=%s "
+            "weighted=%s",
+            os.environ.get("RANK", "?"),
+            world_size,
+            len(samples),
+            global_keys,
+            [round(float(value), 6) for value in weighted],
+        )
     table = keyed_rows_from_table(weighted, global_keys, what="组奖励表")
     # ★ 本地键取**旧实现的同一顺序**（``_global_sample_order`` 的结果）⇒ 单卡下返回的
     #   dict 键序与修复前逐字一致（字典序是可观测行为，不能"值对就行"）。
@@ -948,6 +962,15 @@ def _gather_sample_order(samples: list[Any]) -> list[str]:
     多卡必抛 I2：实测量级 = 全局 16 行 vs 本地 8 条；两 rank 是**互补切片**
     （交集 ∅、并集 16 = 表行数）⇒ 缺陷在本函数，与上游 ms-swift 无关。
 
+    ★ **键序必须与 ``rewards_per_func`` 的行序同源（rank-major）**：ms-swift 侧
+    ``_compute_rewards_per_func`` 的行表也是 ``all_gather`` 出来的，而 ``all_gather`` 按
+    **rank 序拼接**（行 0..n₀-1 属 rank0、其后属 rank1）；本函数的 ``flat`` 正是同一
+    rank 序拼接 ⇒ **直接返回 ``flat`` 的键序**，⛔ 不重排。
+    曾经这里 ``return sorted(seen)``（全局字典序）：键序与行序**不同源**，而
+    ``keyed_rows_from_table`` 按**位置**配对 ⇒ 键在字典序里的名次决定它拿到哪个 rank
+    的行 ⇒ dp≥2 时某个键拿到**另一个组**的 reward（假组内方差 → 错误注入优势）。
+    ``seen`` 只保留给上面的重复键防呆，不再参与排序（排序会把"按键对齐"降级成"按名次对齐"）。
+
     ★ **单卡逐字不变**：world_size ≤ 1 时返回值 ==
     ``[_sample_key(s) for s in _global_sample_order(samples)]``（含"缺 request_id 保持原序"）。
 
@@ -984,7 +1007,13 @@ def _gather_sample_order(samples: list[Any]) -> list[str]:
             f"跨 rank 样本键重复：{sorted(set(duplicates))[:3]}（I2：每个 completion 在所有 "
             "rank 上必须恰好出现一次；上游按副本而非切片分发时不得静默放行）。"
         )
-    return sorted(seen)
+    # ★ 行序同源（E0 直证缺陷的修复点）：``flat`` = ``all_gather_object`` 的 **rank-major**
+    #   拼接，与 ``rewards_per_func`` 的行序同源；``sorted(seen)`` 会把键按字典序整体重排，
+    #   而下游 ``keyed_rows_from_table`` 是按**位置**配对的 ⇒ dp≥2 时键的名次决定它拿哪个
+    #   rank 的行（某个键拿到另一组的 reward）。见 ``tests/flow/backend/msswift/
+    #   test_reward_row_order_rank_major.py``。
+    #   ⛔ 不要"再排一次行序"来凑：键序必须是 gather 拼出来的那个顺序。
+    return [key for key, _stable in flat]
 
 
 def _sample_targets(sample: Any) -> list[dict[str, Any]] | None:

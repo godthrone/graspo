@@ -11,7 +11,10 @@
   ``|rank0|=|rank1|=8``、交集 ∅、并集 16 = 表行数）。
 
 修法：新增 :func:`_gather_sample_order`，用 ``all_gather_object`` 把各 rank 的键收齐后
-按同一键序排序 ⇒ **"比长度"的两侧都在全局作用域**。⛔ 不恢复按行号配对。
+**保留 gather 的 rank-major 序**（与 ``rewards_per_func`` 的行序同源；⛔ 不再 ``sorted()``：
+排序会让键序与行序不同源，dp≥2 时按键的名次跨组发奖，见
+``test_reward_row_order_rank_major.py``）⇒ **"比长度"的两侧都在全局作用域**。
+⛔ 不恢复按行号配对。
 
 本文件只测**纯函数 + 注入的分布式缝**（CPU、零 torch 进程组、零 ms-swift）。
 """
@@ -49,23 +52,37 @@ def _legacy_single_card_mapping(samples, weighted) -> dict[str, float]:
 class _FakeDist:
     """把 ``torch.distributed`` 的三个入口换成"每 rank 一份键"的假实现。
 
-    ``other_ranks`` = **其它 rank** 的 payload 列表（不含本 rank）。真实
-    ``all_gather_object`` 的语义是"本 rank 的 payload 也进结果"，所以本 fake 把被测代码
-    传入的 payload 放到 ``out[0]``、其余按 ``other_ranks`` 顺序放到 ``out[1:]``。
-    世界大小 = ``1 + len(other_ranks)``。
+    ``other_ranks`` = **其它 rank** 的 payload 列表（不含本 rank）；``caller_rank`` = 当前
+    被测代码所在的 rank。真实 ``all_gather_object`` 的语义是 **``out[i] = rank i 的 payload``**
+    （与谁调用无关），所以本 fake 按 rank 索引填：本 rank 的位置放被测代码传入的 payload，
+    其余按 ``other_ranks`` 顺序放。世界大小 = ``1 + len(other_ranks)``。
+
+    ★ 这个"按 rank 索引"（而不是"本 rank 永远在 ``out[0]``"）是必须的：行序 = rank-major，
+    而 rank1 调用时它自己的行块在**第二位**。
     """
 
-    def __init__(self, monkeypatch, other_ranks: list[list[tuple[str, bool]]]) -> None:
+    def __init__(
+        self,
+        monkeypatch,
+        other_ranks: list[list[tuple[str, bool]]],
+        *,
+        caller_rank: int = 0,
+    ) -> None:
         self._others = other_ranks
+        self._caller_rank = caller_rank
         monkeypatch.setattr(torch.distributed, "is_available", lambda: True)
         monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
         monkeypatch.setattr(torch.distributed, "get_world_size", lambda: 1 + len(other_ranks))
         monkeypatch.setattr(torch.distributed, "all_gather_object", self._gather)
 
     def _gather(self, out: list, payload) -> None:
-        out[0] = list(payload)
-        for index, part in enumerate(self._others, start=1):
-            out[index] = list(part)
+        world = 1 + len(self._others)
+        for rank in range(world):
+            if rank == self._caller_rank:
+                out[rank] = list(payload)
+            else:
+                other_index = rank if rank < self._caller_rank else rank - 1
+                out[rank] = list(self._others[other_index])
 
 
 # ══ ① 单卡：修复前后**逐字不变** ═════════════════════════════════════════════
@@ -120,12 +137,13 @@ def test_multi_rank_each_rank_reads_only_its_own_keys(monkeypatch):
 
 
 def test_multi_rank_key_based_pairing_survives_shuffled_table(monkeypatch):
-    """★按键而非按行号：把本地顺序与全局键序都打乱，值仍必须跟着键走。"""
+    """★按键而非按行号：把本地顺序与行序都打乱，值仍必须跟着键走。"""
     rank0 = [_smp("chatcmpl-c"), _smp("chatcmpl-a")]
     rank1_keys = ["chatcmpl-b", "chatcmpl-d"]
     _FakeDist(monkeypatch, [[(key, True) for key in rank1_keys]])
-    # 全局键序（升序）= a,b,c,d ⇒ 值 10,20,30,40
-    weighted = torch.tensor([[10.0], [20.0], [30.0], [40.0]])
+    # ★ 行序 = gather 的 **rank-major** 序（rank0 本地序 [a,c] + rank1 本地序 [b,d]）
+    #   ⇒ 行 10,30,20,40 对应键 a,c,b,d（⛔ 不是"全局键名升序"——那正是 E0 直证的缺陷口径）
+    weighted = torch.tensor([[10.0], [30.0], [20.0], [40.0]])
 
     got = _group_rewards(rank0, weighted, None)
 
@@ -136,7 +154,8 @@ def test_multi_rank_rank1_also_reads_only_its_own_keys(monkeypatch):
     """对称性：rank1 视角同样只取自己的键（两 rank 合起来正好覆盖全局表）。"""
     rank1 = [_smp(f"chatcmpl-{i:02d}") for i in range(3, 6)]
     rank0_keys = [f"chatcmpl-{i:02d}" for i in range(3)]
-    _FakeDist(monkeypatch, [[(key, True) for key in rank0_keys]])
+    # rank1 视角调用：行序仍是 rank-major（rank0 的行块在前），故 caller_rank=1
+    _FakeDist(monkeypatch, [[(key, True) for key in rank0_keys]], caller_rank=1)
     weighted = torch.arange(6, dtype=torch.float32).reshape(6, 1)
 
     got = _group_rewards(rank1, weighted, None)
