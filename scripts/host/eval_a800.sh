@@ -33,15 +33,16 @@ VSERVE_BG(){ # $1=模型目录(容器路径)  在 vllm rootfs 里后台起服务
 }
 wait_ready(){ for i in $(seq 1 120); do
     if curl -s -m 3 "http://127.0.0.1:$PORT/v1/models" 2>/dev/null | grep -q graspo-eval; then return 0; fi; sleep 10; done; return 1; }
-stop_vllm(){ # 只停本脚本起的服务：自有 pid/进程组，兜底只认监听本脚本端口 $PORT 的进程
-  local pid=${VLLM_PID:-} holders left p
+stop_vllm(){ # 只停本脚本起的服务（自有 pid/进程组）；停不干净即返回非零，由调用处停手
+  local pid=${VLLM_PID:-} holders
   if [ -n "$pid" ]; then kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true; fi
-  # 兜底：pid 已失效 / 上一跑次遗留时，取该端口的监听者（⛔ 不按命令行子串匹配，不碰他人进程）
-  holders=$(ss -ltnpH "sport = :$PORT" 2>/dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u)
-  for p in $holders; do kill -KILL "$p" 2>/dev/null || true; done
   VLLM_PID=; sleep 3
-  left=$(ss -ltnpH "sport = :$PORT" 2>/dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u)
-  [ -n "$left" ] && say "★ stop_vllm: 端口 $PORT 仍被占用（pid $left），服务可能未被停掉"
+  # 端口只用来判定"能否继续"，⛔ 不用来杀陌生进程（他人的服务一律不碰）
+  if [ -n "$(ss -ltnH "sport = :$PORT" 2>/dev/null)" ]; then
+    holders=$(ss -ltnpH "sport = :$PORT" 2>/dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u | tr '\n' ' ')
+    say "★ stop_vllm: 端口 $PORT 仍是 LISTEN${holders:+（占者 pid: ${holders% }）}，停不干净"
+    return 1
+  fi
   return 0
 }
 
@@ -77,7 +78,7 @@ fi
 [ -f "$EV/export.yaml" ] && LORA_MERGED=true || LORA_MERGED=false
 [ "$FORM" = full ] && LORA_MERGED=na
 # 3) after 服务 + 评测
-stop_vllm; VSERVE_BG "$SERVE" "$EV/evidence/vllm-after.log"
+stop_vllm || { say "✗ 端口 $PORT 停不干净，拒绝继续（避免读到旧服务的假读数）"; exit 3; }; VSERVE_BG "$SERVE" "$EV/evidence/vllm-after.log"
 if wait_ready; then
   say "vLLM after READY"
   CV="$GPUS" TRAIN /usr/local/bin/graspo eval run --eval-config "$AFTER_Y" > "$EV/evidence/03-eval-after.txt" 2>&1
@@ -86,7 +87,7 @@ else
   say "★ vLLM after 未就绪"; tail -5 "$EV/evidence/vllm-after.log" >> "$LOG"; stop_vllm; exit 8
 fi
 [ "$SIDE" = after ] && { stop_vllm; say "=== $TIER AFTER-ONLY DONE"; exit 0; }
-stop_vllm
+stop_vllm || { say "✗ 端口 $PORT 停不干净，拒绝继续（避免读到旧服务的假读数）"; exit 3; }
 # 4) base 服务 + 评测（base 侧 = 底座模型）
 VSERVE_BG "$MP" "$EV/evidence/vllm-base.log"
 if wait_ready; then
