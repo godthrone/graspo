@@ -21,6 +21,7 @@ TRAIN(){  # 在训练 rootfs 里跑
   ROOTFS=$RT MOUNT_SPEC=$MS CUDA_VISIBLE_DEVICES="${CV:-$GPUS}" \
     unshare -r -m -p -f --mount-proc --kill-child python3 $HOST_ROOT/run_in_rootfs.py "$@"
 }
+VLLM_PID=  # 本脚本起的 vLLM 服务 pid（setsid 起 ⇒ 同时是它的进程组 id）；停服务只认它
 VSERVE_BG(){ # $1=模型目录(容器路径)  在 vllm rootfs 里后台起服务
   ROOTFS=$RV MOUNT_SPEC=$MS CUDA_VISIBLE_DEVICES="$GPUS" \
     TRITON_LIBCUDA_PATH=/usr/lib/x86_64-linux-gnu \
@@ -28,11 +29,21 @@ VSERVE_BG(){ # $1=模型目录(容器路径)  在 vllm rootfs 里后台起服务
       python3 -m vllm.entrypoints.openai.api_server --model "$1" --served-model-name graspo-eval \
       --port $PORT --max-model-len 8192 --gpu-memory-utilization 0.85 --trust-remote-code \
       --enable-auto-tool-choice --tool-call-parser qwen3_xml >> "$2" 2>&1 < /dev/null &
-  echo $!
+  VLLM_PID=$!
 }
 wait_ready(){ for i in $(seq 1 120); do
     if curl -s -m 3 "http://127.0.0.1:$PORT/v1/models" 2>/dev/null | grep -q graspo-eval; then return 0; fi; sleep 10; done; return 1; }
-stop_vllm(){ pkill -KILL -f "vllm.entrypoints.openai.api_server --model" 2>/dev/null; sleep 3; }
+stop_vllm(){ # 只停本脚本起的服务：自有 pid/进程组，兜底只认监听本脚本端口 $PORT 的进程
+  local pid=${VLLM_PID:-} holders left p
+  if [ -n "$pid" ]; then kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true; fi
+  # 兜底：pid 已失效 / 上一跑次遗留时，取该端口的监听者（⛔ 不按命令行子串匹配，不碰他人进程）
+  holders=$(ss -ltnpH "sport = :$PORT" 2>/dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u)
+  for p in $holders; do kill -KILL "$p" 2>/dev/null || true; done
+  VLLM_PID=; sleep 3
+  left=$(ss -ltnpH "sport = :$PORT" 2>/dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u)
+  [ -n "$left" ] && say "★ stop_vllm: 端口 $PORT 仍被占用（pid $left），服务可能未被停掉"
+  return 0
+}
 
 rm -rf $HOST_ROOT/eval/.local/reports
 say "=== $TIER eval START form=$FORM ckpt=$CK gpus=$GPUS side=$SIDE"
@@ -66,7 +77,7 @@ fi
 [ -f "$EV/export.yaml" ] && LORA_MERGED=true || LORA_MERGED=false
 [ "$FORM" = full ] && LORA_MERGED=na
 # 3) after 服务 + 评测
-stop_vllm; VSERVE_BG "$SERVE" "$EV/evidence/vllm-after.log" >/dev/null
+stop_vllm; VSERVE_BG "$SERVE" "$EV/evidence/vllm-after.log"
 if wait_ready; then
   say "vLLM after READY"
   CV="$GPUS" TRAIN /usr/local/bin/graspo eval run --eval-config "$AFTER_Y" > "$EV/evidence/03-eval-after.txt" 2>&1
@@ -77,7 +88,7 @@ fi
 [ "$SIDE" = after ] && { stop_vllm; say "=== $TIER AFTER-ONLY DONE"; exit 0; }
 stop_vllm
 # 4) base 服务 + 评测（base 侧 = 底座模型）
-VSERVE_BG "$MP" "$EV/evidence/vllm-base.log" >/dev/null
+VSERVE_BG "$MP" "$EV/evidence/vllm-base.log"
 if wait_ready; then
   say "vLLM base READY"
   CV="$GPUS" TRAIN /usr/local/bin/graspo eval run --eval-config "$BASE_Y" > "$EV/evidence/04-eval-base.txt" 2>&1
