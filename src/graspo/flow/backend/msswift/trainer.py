@@ -686,7 +686,16 @@ def run_graspo_rlhf(argv: list[str], *, graspo_config: Any) -> Any:
     - **调用序号区分** ⇒ 相邻两次 rollout 不复用同一条随机流。
 
     只钉随机性起点，不动温度/top_p/top_k/采样分布，也不强制 greedy。
+
+    **rollout 上下文修正（全参多模态的 inference tensor 崩溃）**
+
+    与 OPD 通道**同一个**入口 ``_rollout_no_grad.rollout_no_grad``（§1.4）：把
+    rollout 执行体的 ``inference_mode`` 在作用域内换成 ``no_grad``。不接这条的后果是
+    全参档在训练 forward 里抛 ``RuntimeError: Inference tensors cannot be saved for
+    backward``（M028 两次崩在同一处，栈从本函数进 ``grpo_trainer`` 的
+    ``_get_logps_via_local_forward`` → 视觉塔 conv3d）；LoRA 档不装本补丁。
     """
+    from graspo.flow.backend.msswift._rollout_no_grad import rollout_no_grad
     from graspo.flow.backend.msswift._rollout_seed import rollout_seeding
     from graspo.flow.backend.msswift._rope_compat import rope_parameters_compatible
 
@@ -694,6 +703,7 @@ def run_graspo_rlhf(argv: list[str], *, graspo_config: Any) -> Any:
     with (
         rope_parameters_compatible(graspo_config.msswift.rope_scaling),
         rollout_seeding(graspo_config),
+        rollout_no_grad(graspo_config),
     ):
         return pipeline_cls(argv, graspo_config=graspo_config).main()
 

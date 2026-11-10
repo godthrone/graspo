@@ -6,7 +6,7 @@
 （rollout 的 ``inference_mode`` 罩住了 FSDP2 的 all-gather 物化，物化出的参数张量带
 inference 标记并被缓存）。本补丁只把那段执行体的上下文换成 ``no_grad``。
 
-**本文件回答四个问题**
+**本文件回答五个问题**
 
 1. **真的换了上下文**：全参 + 多模态 ⇒ 引擎方法内 ``torch.is_inference_mode_enabled()``
    为 ``False``、新建张量 ``is_inference()`` 为 ``False``（这就是崩溃的充分条件）。
@@ -16,6 +16,10 @@ inference 标记并被缓存）。本补丁只把那段执行体的上下文换�
    **安装后被外层 inference_mode 罩回去 ⇒ 抛错点名**（⛔ 不许"看起来修了"）。
 4. **只换上下文、不改数值**：同 seed 下，同一段计算在 ``inference_mode`` 与 ``no_grad``
    里产出的张量**逐位相同**（真实链路的逐位对照在 A800 上另做，见工位报告）。
+5. **GRASPO 分支真的接上了**（⑤）：``trainer.run_graspo_rlhf`` 走同一个入口；
+   不经它的等价路径会抛 ``Inference tensors cannot be saved for backward``（红），
+   经它的同一个流水线体通过（绿）；LoRA / ``use_vllm=true`` 不进入该作用域；
+   作用域结束（含异常路径）``_infer`` 恢复原样。
 
 **为什么不用真 ms-swift**：被测的是 graspo 自己的接线。测试用一个**同形替身类**注册进
 ``sys.modules`` 顶替 ``swift.infer_engine.transformers_engine``（与
@@ -26,7 +30,9 @@ from __future__ import annotations
 
 import sys
 import types
+from collections.abc import Callable
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -310,3 +316,230 @@ def test_no_grad_output_is_bitwise_identical_to_inference_mode() -> None:
     # 两种上下文都不记录梯度，但只有 inference_mode 会让输出带 inference 标记。
     assert out_a.is_inference() is True
     assert out_b.is_inference() is False
+
+
+# ---------------------------------------------------------------------------
+# ⑤ GRASPO 分支的接线（``trainer.run_graspo_rlhf``）：红→绿、不误伤、退出还原
+# ---------------------------------------------------------------------------
+
+
+def _install_swift_with_pipeline(
+    monkeypatch: pytest.MonkeyPatch, engine_cls: Any, main: Callable[[], object]
+) -> None:
+    """注册 ms-swift 替身：引擎模块（同 ``_install_engine_stub``）+ ``SwiftRLHF`` 入口。
+
+    ``SwiftRLHF.main`` 直接调用传入的流水线体——被测的是**作用域接在哪一层**，
+    不是 ms-swift 自己的参数解析（那部分由 ``test_msswift_wiring.py`` 覆盖）。
+    """
+    _install_engine_stub(monkeypatch, engine_cls)
+
+    trainers_mod = types.ModuleType("swift.trainers")
+    trainers_mod.TrainerFactory = SimpleNamespace(TRAINER_MAPPING={})  # type: ignore[attr-defined]
+    pipelines_mod = types.ModuleType("swift.pipelines")
+    pipelines_mod.__path__ = []  # type: ignore[attr-defined]
+    train_mod = types.ModuleType("swift.pipelines.train")
+    train_mod.__path__ = []  # type: ignore[attr-defined]
+    rlhf_mod = types.ModuleType("swift.pipelines.train.rlhf")
+
+    class SwiftRLHF:  # noqa: N801 - 名称必须与上游一致
+        def __init__(self, args: object = None, *, graspo_config: object = None) -> None:
+            self.args = SimpleNamespace(rlhf_type="grpo")
+            self.graspo_config = graspo_config
+
+        def main(self) -> object:
+            return main()
+
+    rlhf_mod.SwiftRLHF = SwiftRLHF  # type: ignore[attr-defined]
+    for name, mod in (
+        ("swift.trainers", trainers_mod),
+        ("swift.pipelines", pipelines_mod),
+        ("swift.pipelines.train", train_mod),
+        ("swift.pipelines.train.rlhf", rlhf_mod),
+    ):
+        monkeypatch.setitem(sys.modules, name, mod)
+
+    from graspo.flow.backend.msswift import trainer as trainer_module
+
+    # 流水线子类按模块级缓存复用；换替身时必须清空，否则拿到上一个用的类。
+    monkeypatch.setattr(trainer_module, "_PIPELINE_CLASS_CACHE", {})
+
+
+def _graspo_config(*, tuner_type: str = "full", use_vllm: bool = False) -> object:
+    """真 ``GraspoConfig``（作用面判据读的就是它的 ``effective_tuner_type``/``use_vllm``）。"""
+    from graspo.core.schema import GraspoConfig
+
+    return GraspoConfig.model_validate(
+        {
+            "backend": "msswift",
+            "train_method": "graspo",
+            "tuner_type": tuner_type,
+            "msswift": {"use_vllm": use_vllm},
+        }
+    )
+
+
+def _make_defect_engine(
+    *, multimodal: bool = True, train_forward: bool = True
+) -> tuple[Any, Callable[[], str]]:
+    """同形替身引擎 + "先 rollout、再训练 forward"的流水线体（复刻 M028 崩溃机理）。
+
+    ``_infer`` 在 ``inference_mode`` 里物化并缓存的那个张量，就是全参档 FSDP2 缓存的
+    视觉塔参数对象的等价物：带 inference 标记。训练 forward 在 autograd 下复用它
+    （``x @ weight``）⇒ 反向为算 ``x`` 的梯度需要保存 ``weight`` ⇒ 抛
+    ``RuntimeError: Inference tensors cannot be saved for backward``（与现场同一条）。
+    换成 ``no_grad`` 后同一段计算产出的 ``weight`` 是普通张量，反向正常。
+
+    Returns:
+        ``(TransformersEngine, main)``。``main`` 把执行期事实记在类属性
+        ``_patch_active`` / ``_graspo_test_calls`` 上供断言。
+    """
+
+    def _infer_body(self):
+        weight = torch.randn(4, 4)
+        type(self)._cached_param = weight
+        type(self)._graspo_test_calls.append(
+            {
+                "inference_mode": torch.is_inference_mode_enabled(),
+                "tensor_is_inference": weight.is_inference(),
+            }
+        )
+        return weight
+
+    class TransformersEngine:  # noqa: N801 - 名称必须与上游一致
+        _cached_param: Any = None
+        _patch_active = False
+        _graspo_test_calls: list[dict] = []
+
+        def __init__(self) -> None:
+            self.model_meta = SimpleNamespace(is_multimodal=multimodal)
+
+        def infer(self, *args: object, **kwargs: object) -> object:
+            """上游 ``infer`` 的替身：真实实现做完请求校验后调 ``_infer``，这里直接转交。
+
+            保留这一层是因为 ``rollout_seeding`` 的接线点在 ``infer`` 上（与上游一致）。
+            """
+            return self._infer()
+
+        _infer = torch.inference_mode()(_infer_body)
+
+    original_infer = TransformersEngine.__dict__["_infer"]
+
+    def main() -> str:
+        # 类属性对象身份是否被换过 = 本补丁是否真的装在这个替身上（作用域内）。
+        TransformersEngine._patch_active = (
+            TransformersEngine.__dict__["_infer"] is not original_infer
+        )
+        engine = TransformersEngine()
+        engine.infer()  # rollout（上游入口：``infer`` → ``_infer``）
+        if not train_forward:
+            return "rollout only"
+        weight = TransformersEngine._cached_param
+        x = torch.randn(4, 4, requires_grad=True)
+        (x @ weight).sum().backward()  # 训练 forward + backward（崩溃点）
+        return "forward+backward ok"
+
+    return TransformersEngine, main
+
+
+def test_graspo_branch_without_the_wiring_reproduces_the_crash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """**红**：不经 ``run_graspo_rlhf`` 的作用域（接线前的等价路径）⇒ 同一崩溃。"""
+    engine_cls, main = _make_defect_engine()
+    _install_swift_with_pipeline(monkeypatch, engine_cls, main)
+
+    from graspo.flow.backend.msswift import trainer as trainer_module
+
+    with pytest.raises(RuntimeError, match="Inference tensors cannot be saved for backward"):
+        trainer_module._graspo_rlhf_pipeline_class()([], graspo_config=_graspo_config()).main()
+
+    assert engine_cls._patch_active is False
+    assert engine_cls._graspo_test_calls[-1] == {
+        "inference_mode": True,
+        "tensor_is_inference": True,
+    }
+
+
+def test_graspo_branch_wiring_makes_the_same_pipeline_body_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """**绿**：经 ``run_graspo_rlhf``（接线后）⇒ 同一个流水线体跑通。"""
+    engine_cls, main = _make_defect_engine()
+    _install_swift_with_pipeline(monkeypatch, engine_cls, main)
+
+    from graspo.flow.backend.msswift.trainer import run_graspo_rlhf
+
+    result = run_graspo_rlhf([], graspo_config=_graspo_config())
+
+    assert result == "forward+backward ok"
+    assert engine_cls._patch_active is True
+    # rollout 里物化出的"参数"是普通张量 ⇒ 训练 forward 复用它能进反向。
+    assert engine_cls._graspo_test_calls[-1] == {
+        "inference_mode": False,
+        "tensor_is_inference": False,
+    }
+    assert engine_cls._cached_param.is_inference() is False
+
+
+@pytest.mark.parametrize(
+    ("tuner_type", "use_vllm"),
+    [("lora", False), ("full", True)],
+    ids=["lora", "use_vllm"],
+)
+def test_graspo_wiring_leaves_matching_out_of_scope_tiers_untouched(
+    monkeypatch: pytest.MonkeyPatch, tuner_type: str, use_vllm: bool
+) -> None:
+    """**不误伤**：LoRA 档与 ``use_vllm=true`` 都不进入该作用域（类属性身份不变）。"""
+    engine_cls, main = _make_defect_engine(train_forward=False)
+    _install_swift_with_pipeline(monkeypatch, engine_cls, main)
+
+    from graspo.flow.backend.msswift.trainer import run_graspo_rlhf
+
+    run_graspo_rlhf([], graspo_config=_graspo_config(tuner_type=tuner_type, use_vllm=use_vllm))
+
+    assert engine_cls._patch_active is False
+    # 上游 inference_mode 原样保留 ⇒ 这两档的行为与接线前逐字相同。
+    assert engine_cls._graspo_test_calls[-1]["inference_mode"] is True
+
+
+def test_graspo_wiring_installs_but_passes_text_only_rollouts_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """**不误伤**：全参 + 文本模型 ⇒ 装了补丁但该次 rollout 仍走上游 ``inference_mode``。"""
+    engine_cls, main = _make_defect_engine(multimodal=False, train_forward=False)
+    _install_swift_with_pipeline(monkeypatch, engine_cls, main)
+
+    from graspo.flow.backend.msswift.trainer import run_graspo_rlhf
+
+    run_graspo_rlhf([], graspo_config=_graspo_config())
+
+    assert engine_cls._patch_active is True
+    assert engine_cls._graspo_test_calls[-1]["inference_mode"] is True
+
+
+def test_graspo_wiring_restores_infer_on_normal_and_exception_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """**退出还原**：作用域结束后（含流水线体抛异常的路径）``_infer`` 恢复原属性。"""
+    engine_cls, main = _make_defect_engine(train_forward=False)
+    original_infer = engine_cls.__dict__["_infer"]
+    _install_swift_with_pipeline(monkeypatch, engine_cls, main)
+
+    from graspo.flow.backend.msswift.trainer import run_graspo_rlhf
+
+    assert run_graspo_rlhf([], graspo_config=_graspo_config()) == "rollout only"
+    assert engine_cls.__dict__["_infer"] is original_infer
+
+    class BoomError(RuntimeError):
+        pass
+
+    def _explode() -> None:
+        main()
+        raise BoomError("training loop failed")
+
+    _install_swift_with_pipeline(monkeypatch, engine_cls, _explode)
+
+    with pytest.raises(BoomError):
+        run_graspo_rlhf([], graspo_config=_graspo_config())
+
+    assert engine_cls.__dict__["_infer"] is original_infer
