@@ -17,8 +17,8 @@ A6「数值健康」也只查 NaN/Inf ⇒ 负读数落在两个检查的口径�
 1. 直接测生产用的累加函数 ``_updated_negative_loss_count``（非 PP 与 PP 两个训练循环
    都调它，累加逻辑本身即生产路径）；
 2. 用**真实** ``_compute_sft_loss`` 的正常 batch 确认它不会误报（正向分支走真前向）。
-未覆盖的是"训练循环把函数返回值接进 metrics"这段接线，由第 3 条用例（``_build_sft_metrics``
-的输出）补上。
+未覆盖的是"训练循环把函数返回值接进 metrics"这段接线，由最后一条用例
+（``test_build_sft_metrics_reports_negative_loss_count``）补上。
 
 依赖：torch。本机（开发机无 torch）不会收集这些用例；须在带 torch 的环境/目标容器内跑：:
 
