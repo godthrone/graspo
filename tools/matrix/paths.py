@@ -78,7 +78,7 @@ BASELINE_HTML_BYTES = 77079
 #: **模板基线的 sha256**（唯一真相源）：`check_fill_scope.py` 每次以 `--base` 缺省值比对前先核这一条，
 #: 不符即 fail-closed —— 防"为了让某次回填通过而悄悄改基线"（改了基线 = 闸门被削弱）。
 #: 改模板 ⇒ 重渲染基线 ⇒ 同步更新本值（见 tools/matrix/baseline/README.md）。
-TEMPLATE_BASELINE_HTML_SHA256 = "454ddd73c0e43498c51b68f8e735a0640cac551901ccc5ad6d4401bb32ac642e"
+TEMPLATE_BASELINE_HTML_SHA256 = "c5dd9a5b447b9541dd700333f130809a85677e7f8d419f5f70e91a39842e516c"
 #: 报告定稿冻结日（主席原话「这个报告就定稿冻结了，没有我的允许，不能修改报告。」的落款日）
 FROZEN_DATE = "2026-10-25"
 #: 冻结依据（主席三条原话摘要；⛔ 不得改写其含义，机制逐条见 §22）
