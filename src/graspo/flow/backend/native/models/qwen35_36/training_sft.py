@@ -110,6 +110,22 @@ def _count_sft_valid_tokens(labels: torch.Tensor) -> int:
     return int((labels[:, 1:] != -100).sum().item())
 
 
+def _updated_negative_loss_count(count: int, loss_value: float) -> int:
+    """``loss_value < 0`` 时计数 +1，否则原样返回（纯 math，§1.3 计算层可单测）。
+
+    为什么负 loss 只计数、不阻断：bf16 下负的 CE 读数是**合法的舍入结果**——同一 logit
+    被手写点积与 cublas matmul 各算一遍，两者的 ±0.5 ULP 相减抵消不掉；真实 CE 降到
+    ULP 量级时符号可翻（成因与实测见 ``ripple/loss.py`` 的
+    ``masked_token_log_probs_from_hidden`` docstring）。把"读数不雅"升级成"训练失败"
+    是错的判据：NaN/Inf 由 ``skipped_nonfinite`` 单独管，本计数只补上"有限但为负"这个
+    落在两者口径之外的读数。
+
+    边界：``-0.0`` 不是负读数（全 -100 的 batch 真实返回 ``-0.0``，不得记成负）；
+    ``-inf`` 也不算——调用方只传**已确认有限**的值（非有限归 ``skipped_nonfinite``）。
+    """
+    return count + 1 if loss_value < 0.0 else count
+
+
 
 #: comm 侧诊断标签 → 读数方向（#1a）。**唯一真相源**：PipelineComm 的 `diag_sample` 用左列，
 #: 本模块的钩子把它映射成语义方向（写进 rank_metrics 的 `pp_exchange`）。
@@ -171,7 +187,7 @@ class _Qwen35SFTTrainingMethods:
         shift_hidden = normalized[:, :-1].contiguous()
         shift_labels = labels[:, 1:].contiguous()
         log_probs = masked_token_log_probs_from_hidden(
-            shift_hidden,  # 保持 bf16，函数内部分块处理，按需转换
+            shift_hidden,  # 保持 bf16：本函数在输入 dtype 下算，内部**不做** fp32 转换
             lm_head.weight,
             shift_labels,
             ignore_index=-100,
@@ -267,6 +283,7 @@ class _Qwen35SFTTrainingMethods:
         sft_batch_count: int,
         optimizer_steps: int,
         skipped_nonfinite: int,
+        negative_loss_count: int,
         loss_sum: float,
         micro_batch_count: int,
         grad_norm_sum: float,
@@ -295,6 +312,9 @@ class _Qwen35SFTTrainingMethods:
             "sft_batch_count": sft_batch_count,
             "optimizer_steps": optimizer_steps,
             "skipped_nonfinite": skipped_nonfinite,
+            # 有限但为负的 loss 读数（bf16 舍入的合法结果，见 ripple/loss.py 的说明）——
+            # 落在「NaN/Inf 检查」与「A6 数值健康」两个口径之外，故单独计数、不阻断。
+            "negative_loss_count": negative_loss_count,
             "loss_mean": loss_sum / micro_batch_count if micro_batch_count else None,
             "grad_norm_mean": grad_norm_sum,
             **grad_count_event(tuner_type, count=nonzero_grad_count),
@@ -410,6 +430,7 @@ class _Qwen35SFTTrainingMethods:
         self.optimizer.zero_grad(set_to_none=True)
         optimizer_steps = 0
         skipped_nonfinite = 0
+        negative_loss_count = 0
         loss_sum = 0.0
         grad_norm_sum = 0.0
         nonzero_grad_count = 0
@@ -483,7 +504,10 @@ class _Qwen35SFTTrainingMethods:
                 continue
             micro_batch_count += 1
             valid_micro_batches += 1
-            loss_sum += float(loss.detach().cpu())
+            loss_value = float(loss.detach().cpu())
+            loss_sum += loss_value
+            # 有限但为负的读数只计数、不阻断（口径见 _updated_negative_loss_count）。
+            negative_loss_count = _updated_negative_loss_count(negative_loss_count, loss_value)
             # 梯度累积：按该 micro-batch 的有效 token 占比加权，使累加梯度与
             # "整批 token 均值"逐位等价（F-13'；此前是 / num_micro_batches，在各
             # micro-batch 有效 token 数不等时不等价）。weight=0（该块无监督 token）
@@ -515,6 +539,7 @@ class _Qwen35SFTTrainingMethods:
             sft_batch_count=len(sft_batches),
             optimizer_steps=optimizer_steps,
             skipped_nonfinite=skipped_nonfinite,
+            negative_loss_count=negative_loss_count,
             loss_sum=loss_sum,
             micro_batch_count=micro_batch_count,
             grad_norm_sum=grad_norm_sum,
@@ -550,6 +575,7 @@ class _Qwen35SFTTrainingMethods:
         self.model.train()
         optimizer_steps = 0
         skipped_nonfinite = 0
+        negative_loss_count = 0
         loss_sum = 0.0
         grad_norm_sum = 0.0
         nonzero_grad_count = 0
@@ -668,7 +694,7 @@ class _Qwen35SFTTrainingMethods:
             self.optimizer.zero_grad(set_to_none=True)
 
         def forward_chunk(chunk_idx: int) -> None:
-            nonlocal micro_batch_forward_sec
+            nonlocal micro_batch_forward_sec, negative_loss_count
             mb = chunk_batches[chunk_idx]
             self._sync_timing()
             t0 = time.monotonic()
@@ -690,13 +716,20 @@ class _Qwen35SFTTrainingMethods:
             if self.pp_rank == self.pp_size - 1:
                 assert stage_output is not None
                 chunk_loss = self._compute_sft_loss(stage_output, mb["labels"])
+                chunk_loss_value = float(chunk_loss.detach().cpu())
                 finite = bool(torch.isfinite(chunk_loss).detach().cpu())
+                # 有限但为负的读数只计数、不阻断（口径见 _updated_negative_loss_count）。
+                # 计数用**未加权**的 chunk loss：weight 是正的累积系数，只改量级不改符号。
+                if finite:
+                    negative_loss_count = _updated_negative_loss_count(
+                        negative_loss_count, chunk_loss_value
+                    )
                 # 梯度累积（F-13'）：该 chunk 的有效 token 数占全批有效 token 数的比例，
                 # 使 Σ_i w_i ·（第 i chunk 的 token 均值）= 整批 token 均值。权重与
                 # loss_value 用同一系数，保证报告口径与反传口径一致。
                 weight = accumulation_weights[chunk_idx]
                 loss = chunk_loss * weight if finite else None
-                loss_value = float(chunk_loss.detach().cpu()) * weight if finite else 0.0
+                loss_value = chunk_loss_value * weight if finite else 0.0
             chunk_ref["idx"] = chunk_idx  # comm 钩子按当前 chunk 标名（#1a）
             records[chunk_idx] = {
                 "stage_output": stage_output,
@@ -941,6 +974,7 @@ class _Qwen35SFTTrainingMethods:
             sft_batch_count=len(sft_batches),
             optimizer_steps=optimizer_steps,
             skipped_nonfinite=skipped_nonfinite,
+            negative_loss_count=negative_loss_count,
             loss_sum=loss_sum,
             micro_batch_count=micro_batch_count,
             grad_norm_sum=grad_norm_sum,

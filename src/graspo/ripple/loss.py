@@ -39,6 +39,18 @@ def masked_token_log_probs_from_hidden(
 
     分块遍历词表累积 logsumexp，峰值张量 = 一块 (B,S,vocab_chunk_size)，与 TP 规模无关；
     切勿改成物化完整 (B,S,V) logits（历史上 SFT 因此 OOM，见 v0.24.0 修复）。
+
+    **计算 dtype = 输入 dtype**（SFT 训练传入 bf16），**函数内部不做任何 fp32 转换**（体内没有
+    ``.float()``）：目标 token 的 logit 走手写点积 ``selected_logits = (hidden_states *
+    selected).sum(dim=-1)``，全词表的 logsumexp 走 cublas ``F.linear`` matmul 再在分块循环
+    里 ``logaddexp`` 累加——**同一个 logit 被两条 bf16 路径各算一遍**，两者各自的
+    ±0.5 ULP 相减时抵消不掉。
+
+    后果（已实测，不是推断）：当真实 CE 降到与 bf16 在该 logit 量级的 ULP 同量级
+    （约 0.01–0.1）时，返回值的标量读数**可以为负**（``runs/diag-lr-L2/M047``：400 步里
+    3 步，step31/225 = −0.008606、step246 = −0.004181）。这是**舍入结果**，不是符号错、
+    也不是累加错：打印与反传用的是同一个张量、同一套算术（PP 路径同）。因此消费方不得
+    据此判训练失败，只做计数（SFT metrics 的 ``negative_loss_count``）。
     """
     valid = token_ids != ignore_index
     ids = token_ids.clamp(min=0)
