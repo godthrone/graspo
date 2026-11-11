@@ -157,7 +157,12 @@ def build_messages(sample: EvalSample) -> list[dict[str, Any]]:
 
     与 v3 ``run_vllm_eval.py:28-43`` 逐项一致：``content`` 为 list 的消息逐项
     转换；``image`` 项转成 ``image_url`` + data URL；``text`` 项转成 ``text``；
-    ``content`` 为 str 的消息原样保留。
+    ``content`` 不是 list（str 或 ``None``）的消息原样保留。
+
+    **除 ``content`` 之外的字段一律原样保留**：历史 assistant 回合的 ``tool_calls``、
+    tool 回合的 ``tool_call_id`` 都是聊天模板的输入。丢掉它们，评测侧渲染出的历史
+    就少了 ``<tool_call>…</tool_call>`` 段，与训练侧（``ripple/data.py`` 深拷贝
+    messages）不再是同一段提示词——两侧数字就此不可比。
 
     **图像路径的唯一真相源是 ``sample.image_paths``**（已由 ``dataset.py`` 按数据文件
     父目录解析为绝对路径），不是 message 里的相对引用。直接拿 ``item["image"]``
@@ -168,7 +173,7 @@ def build_messages(sample: EvalSample) -> list[dict[str, Any]]:
     for message in sample.messages:
         content = message.get("content")
         if not isinstance(content, list):
-            messages.append({"role": message["role"], "content": content})
+            messages.append(dict(message))
             continue
         parts: list[dict[str, Any]] = []
         for item in content:
@@ -177,7 +182,7 @@ def build_messages(sample: EvalSample) -> list[dict[str, Any]]:
                 parts.append({"type": "image_url", "image_url": {"url": ""}})
             else:
                 parts.append({"type": "text", "text": item.get("text", "")})
-        messages.append({"role": message["role"], "content": parts})
+        messages.append({**message, "content": parts})
 
     expected = sum(
         1
@@ -200,6 +205,12 @@ def build_request_body(sample: EvalSample, served_model_name: str) -> dict[str, 
     图像在这里读取并编码为 data URL（每样本一次，4/6 张图分别编码）。
     读取失败会抛 ``DatasetError``，由 :meth:`VllmEvalClient.evaluate_sample` 记成
     无效样本——不会静默跳过（静默跳过会让分母悄悄变小，与历史数字不可比）。
+
+    **格式转换只在这里发生一次（HTTP 边界，§2.3）**：``tool_calls[].function.arguments``
+    内部是 dict（数据集与 chat 模板的真相，模板按 mapping 迭代参数），而 OpenAI 协议
+    要求它是 JSON 字符串——vLLM 的 pydantic 校验会拒绝 dict（``string_type``），再在
+    服务端把字符串还原成 mapping 套模板。两个消费者口径不同，所以只在出网处转换：
+    内部表示保持 dict，线上是字符串，样本数据本身不被改写（§1.4 单一真相源）。
     """
     messages = build_messages(sample)
     data_urls: list[str] = []
@@ -219,7 +230,7 @@ def build_request_body(sample: EvalSample, served_model_name: str) -> dict[str, 
 
     body: dict[str, Any] = {
         "model": served_model_name,
-        "messages": messages,
+        "messages": _wire_messages(messages),
         "max_tokens": EVAL_MAX_TOKENS,
         "temperature": EVAL_TEMPERATURE,
         "top_p": EVAL_TOP_P,
@@ -228,6 +239,29 @@ def build_request_body(sample: EvalSample, served_model_name: str) -> dict[str, 
     if sample.tools:
         body["tools"] = sample.tools
     return body
+
+
+def _wire_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """把消息列表转成**线上形态**：``tool_calls[].function.arguments`` → JSON 字符串。
+
+    逐层拷贝后再改：``dict(message)`` 只浅拷顶层，``tool_calls`` 与其 ``function``
+    仍与样本数据共享，就地改写会把数据集里的 dict 变成字符串（污染真相源）。
+    """
+    wire: list[dict[str, Any]] = []
+    for message in messages:
+        tool_calls = message.get("tool_calls")
+        if not tool_calls:
+            wire.append(message)
+            continue
+        converted: list[dict[str, Any]] = []
+        for tool_call in tool_calls:
+            function = dict(tool_call.get("function") or {})
+            arguments = function.get("arguments")
+            if arguments is not None and not isinstance(arguments, str):
+                function["arguments"] = json.dumps(arguments, ensure_ascii=False)
+            converted.append({**tool_call, "function": function})
+        wire.append({**message, "tool_calls": converted})
+    return wire
 
 
 def _mime_for(suffix: str) -> str:

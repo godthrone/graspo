@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import base64
+import json
 
 import pytest
 
@@ -249,6 +250,84 @@ def test_build_messages_keeps_string_content_and_converts_list_content(tmp_path)
     body = build_request_body(sample, "served")
     url = body["messages"][0]["content"][0]["image_url"]["url"]
     assert url.startswith("data:image/jpeg;base64,")
+
+
+def test_build_messages_keeps_tool_calls_and_tool_call_id():
+    """多轮历史的工具调用必须原样保留，否则两侧提示词不等价。
+
+    回归缺陷：旧实现逐条重建消息时只搬 ``role`` + ``content``，assistant 回合的
+    ``tool_calls`` 与 tool 回合的 ``tool_call_id`` 被整段丢弃 ⇒ 聊天模板渲染不出
+    历史 ``<tool_call>…</tool_call>``，评测侧提示词比训练侧短，两侧不再可比。
+    """
+    from graspo.eval.dataset import EvalSample
+
+    tool_calls = [
+        {
+            "id": "call_4911",
+            "type": "function",
+            "function": {"name": "lift_arm", "arguments": {"action_type": "降低手臂"}},
+        }
+    ]
+    sample = EvalSample(
+        index=0,
+        sample_key="k",
+        messages=[
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "pick"},
+            {"role": "assistant", "content": None, "tool_calls": tool_calls},
+            {"role": "tool", "content": "OK", "tool_call_id": "call_4911"},
+            {"role": "user", "content": "继续"},
+        ],
+        tools=None,
+        targets=[],
+        image_paths=[],
+    )
+    messages = build_messages(sample)
+    assert messages[2] == {"role": "assistant", "content": None, "tool_calls": tool_calls}
+    assert messages[3] == {"role": "tool", "content": "OK", "tool_call_id": "call_4911"}
+
+
+def test_build_request_body_serializes_tool_call_arguments_for_the_wire():
+    """内部表示是 dict（数据的真相），线上必须是 JSON 字符串（OpenAI 协议）。
+
+    格式转换只发生在 HTTP 边界这一处（§2.3）：``build_messages`` 忠实还原数据集形态，
+    ``build_request_body`` 才按协议序列化。vLLM 会把字符串再还原成 mapping 套模板，
+    所以两侧提示词仍然等价。
+    """
+    from graspo.eval.dataset import EvalSample
+
+    arguments = {"action_type": "降低手臂"}
+    tool_calls = [
+        {
+            "id": "call_4911",
+            "type": "function",
+            "function": {"name": "lift_arm", "arguments": arguments},
+        }
+    ]
+    sample = EvalSample(
+        index=0,
+        sample_key="k",
+        messages=[
+            {"role": "user", "content": "pick"},
+            {"role": "assistant", "content": None, "tool_calls": tool_calls},
+        ],
+        tools=None,
+        targets=[],
+        image_paths=[],
+    )
+
+    internal = build_messages(sample)
+    # ① 内部表示不变：仍是 dict（chat 模板按 mapping 迭代参数）
+    assert internal[1]["tool_calls"][0]["function"]["arguments"] == arguments
+
+    wire = build_request_body(sample, "served")["messages"][1]["tool_calls"][0]["function"][
+        "arguments"
+    ]
+    # ② 线上是 JSON 字符串，且能还原回原 dict
+    assert isinstance(wire, str)
+    assert json.loads(wire) == arguments
+    # 边界转换不得就地改写样本数据（单一真相源不是请求体）
+    assert sample.messages[1]["tool_calls"][0]["function"]["arguments"] == arguments
 
 
 def test_decoding_model_rejects_nonzero_temperature():
