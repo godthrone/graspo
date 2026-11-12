@@ -81,6 +81,13 @@ def scan_text(text: str, source: str) -> list[dict]:
     """
     out: list[dict] = []
     for lineno, line in enumerate(text.split("\n"), 1):
+        # ★ 前置过滤（2026-11-10 修）：**rollout 解码探测行不参与步数匹配**。
+        #   native 的 pp-debug 会打 `[pp-debug rank=0] probe=decode_step_enter step=1441 stage=0`——
+        #   这里的 `step=` 是**解码/生成步**，不是训练优化步；不排除的话它会被 NATIVE_STEP_RE
+        #   当成 native 裸步数读数（M019 实证：整档因此得到 steps_actual=1441，而实际一步没跑）。
+        #   只按"整行跳过"排除，⛔ 不改任何正则语义、⛔ 不引入新的步数形态。
+        if "pp-debug" in line or "probe=" in line:
+            continue
         if "global_step" in line:
             for m in GLOBAL_STEP_SLASH_RE.finditer(line):
                 out.append({"value": int(m.group(1)), "line": lineno,
