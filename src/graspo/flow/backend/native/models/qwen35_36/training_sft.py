@@ -113,12 +113,13 @@ def _count_sft_valid_tokens(labels: torch.Tensor) -> int:
 def _updated_negative_loss_count(count: int, loss_value: float) -> int:
     """``loss_value < 0`` 时计数 +1，否则原样返回（纯 math，§1.3 计算层可单测）。
 
-    为什么负 loss 只计数、不阻断：bf16 下负的 CE 读数是**合法的舍入结果**——同一 logit
-    被手写点积与 cublas matmul 各算一遍，两者的 ±0.5 ULP 相减抵消不掉；真实 CE 降到
-    ULP 量级时符号可翻（成因与实测见 ``ripple/loss.py`` 的
-    ``masked_token_log_probs_from_hidden`` docstring）。把"读数不雅"升级成"训练失败"
-    是错的判据：NaN/Inf 由 ``skipped_nonfinite`` 单独管，本计数只补上"有限但为负"这个
-    落在两者口径之外的读数。
+    为什么负 loss 只计数、不阻断：这是**防御性计数**，不是"负读数属正常"的许可。
+    ``ripple/loss.py`` 的 ``masked_token_log_probs_from_hidden`` 已改为**目标 token 的
+    logit 与 logsumexp 同源**（同一个数），因此 ``log_p <= 0`` 由构造保证、SFT loss
+    ``>= 0`` 也是构造保证；本计数留着只为"万一哪天又冒出负读数"时能立刻看见——
+    它一旦非零就说明共享 loss 实现的非负性前提被破坏了，值得查，不是可以忽略的噪声。
+    把"读数不雅"升级成"训练失败"仍然是错的判据：NaN/Inf 由 ``skipped_nonfinite``
+    单独管，本计数只补上"有限但为负"这个落在两者口径之外的读数。
 
     边界：``-0.0`` 不是负读数（全 -100 的 batch 真实返回 ``-0.0``，不得记成负）；
     ``-inf`` 也不算——调用方只传**已确认有限**的值（非有限归 ``skipped_nonfinite``）。
@@ -187,7 +188,7 @@ class _Qwen35SFTTrainingMethods:
         shift_hidden = normalized[:, :-1].contiguous()
         shift_labels = labels[:, 1:].contiguous()
         log_probs = masked_token_log_probs_from_hidden(
-            shift_hidden,  # 保持 bf16：本函数在输入 dtype 下算，内部**不做** fp32 转换
+            shift_hidden,  # 传 bf16 即可：函数内部按 fp32 累加，返回时回转本 dtype
             lm_head.weight,
             shift_labels,
             ignore_index=-100,
