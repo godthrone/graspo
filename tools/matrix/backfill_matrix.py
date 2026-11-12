@@ -870,7 +870,7 @@ def compose_note(base, status, fails, unks):
     facts["fail_ids"], facts["unk_ids"], facts["judged"] = f_ids, u_ids, True
     text, report = note_style.render_with_report(facts)
     if report["dropped"]:
-        # ★ 2026-11-10：超 200 字丢从句必须留痕可见。**M049/M053 两次事故都出在这条路上**
+        # ★ 2026-11-12：超 200 字丢从句必须留痕可见。**M049/M053 两次事故都出在这条路上**
         #   （判据结论句是在这里追加的，也正是旧实现第一个丢掉的），只在 make_result_json 留痕
         #   等于只修一半。本函数没有写结果 json 的位置 ⇒ 只打 WARNING（⛔ 不新造字段/文件）。
         lost = "；".join(f"[{d['label']}] {d['text']}" for d in report["dropped"])

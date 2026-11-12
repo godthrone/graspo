@@ -104,7 +104,7 @@ def test_normalize_legacy_is_idempotent_on_rendered_note():
     assert ns.normalize_legacy(note) == note
 
 
-# ⑥ 超限时丢谁（2026-11-10 缺陷：按输出顺序从尾部丢 ⇒ 尾部追加的判据结论第一个死）──────
+# ⑥ 超限时丢谁（2026-11-12 缺陷：按输出顺序从尾部丢 ⇒ 尾部追加的判据结论第一个死）──────
 def test_overlong_note_drops_machine_readings_not_the_verdict_nor_the_annotation():
     """附注很长顶穿上限时：**判据结论与附注都要保住**，让位的是机器读数，且报告点名到那一句。
 

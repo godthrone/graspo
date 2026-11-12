@@ -1925,7 +1925,7 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
     note, note_report = note_style.render_with_report(facts)
     assert len(note) <= note_style.NOTE_LIMIT, f"备注超长（{len(note)} > {note_style.NOTE_LIMIT}）：{note}"
     if note_report["dropped"]:
-        # ★ 2026-11-10：超限丢从句**必须留痕可见**（此前静默丢，连「判据结论」被丢都无人知）。
+        # ★ 2026-11-12：超限丢从句**必须留痕可见**（此前静默丢，连「判据结论」被丢都无人知）。
         #   ⛔ 不改 note 正文冒充没丢；⛔ 也不因超限让整档失败（已验证的档不能因此全变红）。
         #   两处留痕：① 本行 WARNING 点名丢了哪几句；② 结果 json 的 `note_truncated`。
         lost = "；".join(f"[{d['label']}] {d['text']}" for d in note_report["dropped"])
