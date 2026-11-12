@@ -1436,6 +1436,97 @@ def crashed_tier_evidence(*, run_dir: Path, tier: str, exit_code: int | None,
     }
     if error is not None:
         ev["error"] = error
+    # ── ②-b 等价分支（2026-11-10 指挥官裁定）：「子进程以非超时码硬退出且无 traceback 正文」 ──
+    # ★ 为什么需要：torchrun 在子进程被信号杀死 / 异常退出且**不产出 traceback 正文**时，只在
+    #   Root Cause 段报 `exitcode: <N>` + `error_file: <N/A>`（或 `traceback : To enable traceback see:`），
+    #   全程没有 `<异常名>: <消息>` 行 ⇒ 上面的老分支必然 error_located.ok=False（M019 实证：
+    #   `rank1 exitcode 86`、`error_file: <N/A>`、末条异常行是空消息的 `ChildFailedError:`）。
+    # ★ 这不是放宽：本条同样严格，四条必须同时成立，缺一仍拒：
+    #   ① stdout 含 `torch.distributed.elastic.multiprocessing.errors.ChildFailedError`
+    #   ② 至少一条 `exitcode: <N>`，且 N ∉ TIMEOUT_EXIT_CODES（124/137 = 超时/被杀 ⇒ 仍走「截断」，不算崩溃）
+    #   ③ 出现 `error_file: <N/A>` 或 `traceback : To enable traceback see:`（二者至少其一）
+    #   ④ 该档存在 `why-invalid.md` / `crash-evidence.md`，且含根因段（终止阶段 ∧ 是否进入优化步 ∧ 终止机制）
+    # ★ 老分支优先：只有它 ok=False 时本分支才可能接管。
+    #
+    # ── ④ 的**人工产物契约**（进仓时补记 2026-11-12；此前是一条隐式契约）────────────
+    # ④ 依赖跑次目录（`run_dir`）里的 `why-invalid.md` 或 `crash-evidence.md`，而**仓内没有任何
+    # 脚本产出这两份文件**——全仓仅本文件读它们（`grep -rn why-invalid` 只命中本处）。
+    # 因此这是一条**人对脚本**的输入契约，不是自动链路，必须写明白：
+    #
+    #   · **谁产出**：运维 / 指挥官在**判定该档作废时手工撰写**，落进该档的跑次目录；
+    #     本文件只读、⛔ 不创建、⛔ 不由 `fill_one.sh` / `mk_readings` / `record_checks` 之类自动写。
+    #   · **必须包含什么**：三要素缺一即 `root_ok=False`（判据是**子串**，不是结构化字段）——
+    #       ① 终止阶段：文中出现 `停止位置` / `终止阶段` / `phase` 之一；
+    #       ② 是否进入优化步：文中必须出现 `优化步`（明写"未进入优化步"也算，判的是有没有交代）；
+    #       ③ 终止机制：文中出现 `终止机制` / `终止方式` 之一。
+    #   · **缺了会怎样**：④ 不成立 ⇒ 本等价分支**整体不接管**（哪怕 ①②③ 都齐），
+    #     `error_located` 仍为 False ⇒ 该档照旧入不了表；此时 `error_located.detail` 会追加
+    #     `信号退出等价分支也未成立：... root_cause_doc=False`，照着这条去找缺的是哪一项。
+    #   ⛔ 写这份文档**不放宽任何判据**：它只是把"人已经查清的根因"留成可复核证据；
+    #      没有它，脚本宁可判"无法定位"，也不猜（与 §fail-closed 一致）。
+    sig_cond: dict = {}
+    sig_err: dict | None = None
+    if stdout_log.is_file():
+        _lines = stdout_log.read_bytes().decode("utf-8", "replace").split("\n")
+        has_child_fail = any(
+            "torch.distributed.elastic.multiprocessing.errors.ChildFailedError" in ln for ln in _lines)
+        exits: list = []
+        for _j, _ln in enumerate(_lines):
+            _m = re.search(r"exitcode:\s*(\d+)", _ln)
+            if _m:
+                exits.append((_j + 1, int(_m.group(1))))
+        non_timeout = [(ln_, n) for ln_, n in exits if n not in TIMEOUT_EXIT_CODES and n != 0]
+        has_no_tb_marker = any("error_file: <N/A>" in ln for ln in _lines) or any(
+            "traceback : To enable traceback see:" in ln for ln in _lines)
+        root_doc_name = ""
+        root_doc_text = ""
+        for _name in ("why-invalid.md", "crash-evidence.md"):
+            _p = run_dir / _name
+            if _p.is_file():
+                root_doc_name, root_doc_text = _name, _p.read_text(encoding="utf-8", errors="replace")
+                break
+        root_ok = (bool(root_doc_name)
+                   and any(k in root_doc_text for k in ("停止位置", "终止阶段", "phase"))
+                   and ("优化步" in root_doc_text)
+                   and any(k in root_doc_text for k in ("终止机制", "终止方式")))
+        sig_cond = {
+            "child_failed_reported": {
+                "ok": has_child_fail,
+                "detail": "stdout 含 ChildFailedError"},
+            "non_timeout_exitcode": {
+                "ok": bool(non_timeout),
+                "detail": ("非超时退出码读数 = %s（超时码 %s 不算）"
+                           % (non_timeout or "无", list(TIMEOUT_EXIT_CODES)))},
+            "no_traceback_marker": {
+                "ok": has_no_tb_marker,
+                "detail": "`error_file: <N/A>` 或 `traceback : To enable traceback see:`"},
+            "root_cause_doc": {
+                "ok": root_ok,
+                "detail": ("%s 含根因段（终止阶段 / 是否进入优化步 / 终止机制）"
+                           % (root_doc_name or "why-invalid.md 与 crash-evidence.md 均缺"))},
+        }
+        if all(c["ok"] for c in sig_cond.values()):
+            _ln, _n = non_timeout[-1]
+            sig_err = {
+                "log_line": _ln,
+                "text": "torchrun: 子进程 exitcode %d（error_file <N/A>，无 traceback 正文）" % _n,
+                "exception": "ChildFailedError",
+                "frame": None,
+            }
+    if sig_err is not None and not cond["error_located"]["ok"]:
+        ev["error"] = sig_err
+        cond["error_located"] = {
+            "ok": True,
+            "kind": "signal_exit",
+            "detail": ("stdout.log:%d 信号硬退出等价证据：%s；四条条件 %s"
+                       % (sig_err["log_line"], sig_err["text"],
+                          {k: v["ok"] for k, v in sig_cond.items()})),
+        }
+    elif not cond["error_located"]["ok"] and sig_cond:
+        cond["error_located"]["detail"] = (
+            cond["error_located"]["detail"]
+            + "；信号退出等价分支也未成立：" 
+            + "、".join("%s=%s" % (k, v["ok"]) for k, v in sig_cond.items()))
 
     # ③ 没有任何有效训练产物
     state_steps: list[dict] = []
