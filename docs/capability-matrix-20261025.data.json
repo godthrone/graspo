@@ -489,7 +489,7 @@
       "note": "script_sha256 = 实际跑枚举的 tools/matrix/enumerate_matrix.py 的 sha256；它与 script_commit（ef0a9f3）内的同名文件逐字节一致。该提交与 meta.code_version.commit（本件生成基线 53b0c24）不是同一个提交——枚举早于本件基线，两个提交不同属正常，不得据此推断脚本被改过。"
     },
     "backfill": {
-      "last_run": "2026-11-12 07:08",
+      "last_run": "2026-11-12 07:34",
       "filled_tiers": [
         "M049"
       ],
@@ -3145,7 +3145,7 @@
       "throughput": "0.140 步/s（400 步 / 2867.0 s；样本吞吐 0.140 样本/s）",
       "effect": "after acc=0.0000%；base acc=22.0000%；Δ = -22.0000 pp",
       "not_failed_reason": "—",
-      "note": "附注：训练发散（梯度范数峰值 2.25e11、输出复读与换行混排非解析失败）；退出码 0；实跑步数 400；完成 4/4 个 epoch；检查点：可加载；数值异常：无；峰值显存：24.24 GiB；效果读数：after 0.0% / base 22.0% / Δ-22.0pp；判据结论：①③ 过，②④ 未过",
+      "note": "附注：训练发散（梯度范数峰值 2.25e11、输出复读/换行非解析失败），22 对不一致全在 base 侧，McNemar p=4.77e-07；退出码 0；实跑步数 400；完成 4/4 个 epoch；检查点：可加载；数值异常：无；峰值显存：24.24 GiB；效果读数：after 0.0% / base 22.0% / Δ-22.0pp；判据结论：①③ 过，②④ 未过",
       "spec_json": "—",
       "blocked_reason": "—"
     },
