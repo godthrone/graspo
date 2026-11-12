@@ -105,12 +105,16 @@ def test_normalize_legacy_is_idempotent_on_rendered_note():
 
 
 # ⑥ 超限时丢谁（2026-11-10 缺陷：按输出顺序从尾部丢 ⇒ 尾部追加的判据结论第一个死）──────
-def test_overlong_note_drops_the_annotation_not_the_verdict():
-    """附注很长顶穿上限时：**判据结论必须保住**，长附注被丢，且报告点附注的名。
+def test_overlong_note_drops_machine_readings_not_the_verdict_nor_the_annotation():
+    """附注很长顶穿上限时：**判据结论与附注都要保住**，让位的是机器读数，且报告点名到那一句。
 
     病史（同日两次事故）：旧实现 `while kept: kept.pop()` 从**尾部**丢，而「判据结论」正是
     尾部追加的 ⇒ 最要紧的判据结论第一个被丢，最不要紧的长附注反倒留着（M049 的 McNemar
     从句被附注挤掉、B1 的整句附注被丢）。
+
+    为什么附注也要保住：附注承载的是**判决依据**（McNemar p、Δ 口径、发散归因），机器读数
+    （退出码/步数/epoch/检查点/NaN/峰值显存）只是**判决背景**——丢峰值显存，读者仍知道这档
+    为什么不过；丢 McNemar，读者就不知道那个「不通过」是怎么来的。见 `CLAUSE_PRIORITY`。
     """
     long_extra = "实际训练 2500.3 s，台账 1580 s 为外层包装截断" + "，另有一段很长的补充说明" * 6
     facts = _normal_facts(extra=long_extra)
@@ -118,15 +122,18 @@ def test_overlong_note_drops_the_annotation_not_the_verdict():
     text = ns.render(facts)
     assert len(text) <= ns.NOTE_LIMIT, len(text)
     assert "判据结论：①②③④ 过" in text, f"超限后判据结论被丢（旧缺陷复发）：{text}"
-    assert "附注：" not in text, text
+    assert "附注：" in text, f"超限后判决依据（附注）被丢：{text}"
 
     text2, report = ns.render_with_report(facts)
     assert text2 == text, "render() 必须与 render_with_report()[0] 逐字相同（向后兼容）"
     assert report["truncated"] is True                 # 前提：真的超限并丢了东西
     assert report["dropped"], "丢了从句却给空报告 ＝ 静默丢"
-    assert report["dropped"][0]["kind"] == "extra", report["dropped"]
-    assert report["dropped"][0]["text"].startswith("附注："), report["dropped"]
-    assert "criteria" not in [d["kind"] for d in report["dropped"]], report["dropped"]
+    kinds = [d["kind"] for d in report["dropped"]]
+    assert "criteria" not in kinds and "extra" not in kinds, kinds
+    # 让位的是机器读数，且按优先级从低往高死：峰值显存(40) → 数值异常(45) → 检查点(50)…
+    assert kinds[0] == "peak", kinds
+    assert set(kinds) <= {"peak", "naninf", "ckpt", "epochs", "steps", "exit", "loss", "warn"}, kinds
+    assert any("峰值显存" in d["text"] for d in report["dropped"]), report["dropped"]
 
 
 def test_report_names_the_verdict_when_it_is_the_one_dropped(monkeypatch):

@@ -1930,7 +1930,7 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
         #   两处留痕：① 本行 WARNING 点名丢了哪几句；② 结果 json 的 `note_truncated`。
         lost = "；".join(f"[{d['label']}] {d['text']}" for d in note_report["dropped"])
         print(f"WARNING: 备注超 {note_report['note_limit']} 字上限，已按优先级丢弃 "
-              f"{len(note_report['dropped'])} 个从句（判据结论最后才丢）：{lost}", file=sys.stderr)
+              f"{len(note_report['dropped'])} 个从句（判据结论/附注优先保留）：{lost}", file=sys.stderr)
 
     doc = {
         "schema": SCHEMA,

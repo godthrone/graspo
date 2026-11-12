@@ -859,7 +859,8 @@ def compose_note(base, status, fails, unks):
       · 只留编号级的结论（过 / 未过 / 未判定），明细仍在 stdout 日志、台账文件与结果 json 的
         `fails`/`unknowns` 里（⛔ 没有删证据）；
       · 拼装走**唯一**渲染器 `scripts/note_style.py::render`（与存量规范化同一个），并受
-        200 字上限约束。
+        200 字上限约束；超限丢从句时往 stderr 打一行 WARNING **点名丢了哪几句**
+        （`render_with_report` 的报告；M049/M053 两次事故都出在这条路上）。
     """
     note = str(base or "").strip()
     if status not in ("通过", "不通过"):
@@ -867,7 +868,15 @@ def compose_note(base, status, fails, unks):
     f_ids, u_ids = note_style.criteria_ids(fails, unks)
     facts = note_style.parse_legacy(note)
     facts["fail_ids"], facts["unk_ids"], facts["judged"] = f_ids, u_ids, True
-    return note_style.render(facts)
+    text, report = note_style.render_with_report(facts)
+    if report["dropped"]:
+        # ★ 2026-11-10：超 200 字丢从句必须留痕可见。**M049/M053 两次事故都出在这条路上**
+        #   （判据结论句是在这里追加的，也正是旧实现第一个丢掉的），只在 make_result_json 留痕
+        #   等于只修一半。本函数没有写结果 json 的位置 ⇒ 只打 WARNING（⛔ 不新造字段/文件）。
+        lost = "；".join(f"[{d['label']}] {d['text']}" for d in report["dropped"])
+        print(f"WARNING[backfill]: 备注超 {report['note_limit']} 字上限，已按优先级丢弃 "
+              f"{len(report['dropped'])} 个从句（判据结论/附注优先保留）：{lost}", file=sys.stderr)
+    return text
 
 
 def fmt_steps(n: int) -> str:
