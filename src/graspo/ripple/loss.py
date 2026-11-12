@@ -40,34 +40,50 @@ def masked_token_log_probs_from_hidden(
     分块遍历词表累积 logsumexp，峰值张量 = 一块 (B,S,vocab_chunk_size)，与 TP 规模无关；
     切勿改成物化完整 (B,S,V) logits（历史上 SFT 因此 OOM，见 v0.24.0 修复）。
 
-    **计算 dtype = 输入 dtype**（SFT 训练传入 bf16），**函数内部不做任何 fp32 转换**（体内没有
-    ``.float()``）：目标 token 的 logit 走手写点积 ``selected_logits = (hidden_states *
-    selected).sum(dim=-1)``，全词表的 logsumexp 走 cublas ``F.linear`` matmul 再在分块循环
-    里 ``logaddexp`` 累加——**同一个 logit 被两条 bf16 路径各算一遍**，两者各自的
-    ±0.5 ULP 相减时抵消不掉。
+    **计算走 fp32，返回值回转输入 dtype。** 分块 ``F.linear`` 的输出先按累加精度
+    （``acc_dtype``，见下）转过去，``logsumexp`` 与 ``logaddexp`` 累加都在它上面做；目标
+    token 的 logit **从同一块 logits 里取**（``gather``），不是另算一遍——因此
+    ``log_probs = L_t - logsumexp`` 的两项用的是**同一个数**，``logsumexp ≥ L_t`` 恒成立，
+    ``log_probs ≤ 0`` 由构造保证，不需要任何 ``clamp``。
 
-    后果（已实测，不是推断）：当真实 CE 降到与 bf16 在该 logit 量级的 ULP 同量级
-    （约 0.01–0.1）时，返回值的标量读数**可以为负**（``runs/diag-lr-L2/M047``：400 步里
-    3 步，step31/225 = −0.008606、step246 = −0.004181）。这是**舍入结果**，不是符号错、
-    也不是累加错：打印与反传用的是同一个张量、同一套算术（PP 路径同）。因此消费方不得
-    据此判训练失败，只做计数（SFT metrics 的 ``negative_loss_count``）。
+    返回时 ``.to(hidden_states.dtype)`` 回转输入 dtype（RL/SFT 共用本函数，下游 PPO
+    ratio 等依赖原 dtype）；bf16 舍入把小的非正数舍成更小的非正数或 ``-0.0``，不会翻成
+    正数。
+
+    精度口径：``acc_dtype`` = fp32（输入为 bf16/fp16 时），否则等于输入 dtype —— ⛔ 不能
+    一律写 ``.float()``：那会把 fp64 输入静默降成 fp32，破坏双精度对拍与
+    ``autograd.gradcheck``（实测会打挂仓库里两条 gradcheck）。回转之前的残留误差只有
+    fp32 加法舍入（相对 1e-7）；回转 bf16 之后读数本身带半个 ULP，逐点实测 0.55…1.09 ULP。
+    SFT metrics 的 ``negative_loss_count`` 仍保留作防御性计数（口径见
+    ``_updated_negative_loss_count``）。
     """
     valid = token_ids != ignore_index
     ids = token_ids.clamp(min=0)
-    selected = lm_head_weight.index_select(0, ids.reshape(-1)).view(
-        *ids.shape,
-        hidden_states.shape[-1],
+    # 累加精度：bf16/fp16 输入升到 fp32；fp32/fp64 输入按原精度算（⛔ 不可写成
+    # ``.float()``——那会把 fp64 输入静默降成 fp32，破坏双精度对拍与 gradcheck）。
+    acc_dtype = (
+        torch.float32
+        if hidden_states.dtype in (torch.bfloat16, torch.float16)
+        else hidden_states.dtype
     )
-    selected_logits = (hidden_states * selected).sum(dim=-1)
+    selected_logits: torch.Tensor | None = None
     logsumexp: torch.Tensor | None = None
     for start in range(0, lm_head_weight.shape[0], vocab_chunk_size):
         chunk = lm_head_weight[start : start + vocab_chunk_size]
-        logits = F.linear(hidden_states, chunk)
+        logits = F.linear(hidden_states, chunk).to(acc_dtype)
+        relative = ids - start
+        in_chunk = (relative >= 0) & (relative < logits.shape[-1])
+        picked = logits.gather(
+            -1, relative.clamp(min=0, max=logits.shape[-1] - 1).unsqueeze(-1)
+        ).squeeze(-1)
+        selected_logits = (
+            picked if selected_logits is None else torch.where(in_chunk, picked, selected_logits)
+        )
         chunk_lse = torch.logsumexp(logits, dim=-1)
         logsumexp = chunk_lse if logsumexp is None else torch.logaddexp(logsumexp, chunk_lse)
-    assert logsumexp is not None
+    assert logsumexp is not None and selected_logits is not None
     log_probs = selected_logits - logsumexp
-    return log_probs.masked_fill(~valid, 0.0)
+    return log_probs.masked_fill(~valid, 0.0).to(hidden_states.dtype)
 
 
 #: ★ P6：F-3 诊断插桩的**默认开关** —— 默认「开」与现状逐字一致（行为不变）。
