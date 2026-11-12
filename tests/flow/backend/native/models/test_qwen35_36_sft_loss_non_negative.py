@@ -7,10 +7,11 @@
 这里走的是**生产路径**（``_Qwen35SFTTrainingMethods._compute_sft_loss``：``model.norm`` →
 因果 shift → 共享 loss 实现 → masked 均值），不是手搓的等价式。
 
-**判别力说明（如实记）**：这条断言在 CPU 上对**修复前**的代码不红——CPU 上两条 bf16
-路径对同一个 logit 恰好给出同一个 bf16 值，舍入自行抵消（所以该缺陷长期只在真机出现）。
-它对"只把两条路径升成 fp32、但目标 logit 仍另算一遍"的改法**是红的**（真机实测 47% 的
-位置变成 ``log_p > 0``，见 ``tests/ripple/test_loss_bf16.py`` 模块 docstring）。
+**判别力说明（如实记）**：这条断言**对修复前的代码不红**——不是因为"CPU 上两条 bf16 路径
+给出同一个值"（那是错的，真机形状下 CPU 上两条路径有约 4 成 token 给出不同的 bf16 值），
+而是因为**本用例的 CE ≈ O(1)**，远大于 bf16 的量化步长，读数量化不到塌。真正锁住"读数
+不许塌成 0/不许翻正"的是 ``tests/ripple/test_loss_bf16.py`` 里那条构造到
+``CE ≈ 2e-3`` 的确定性用例（旧实现 4/4 返回 ``0.0``）。
 """
 
 from __future__ import annotations

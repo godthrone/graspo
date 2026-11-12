@@ -3,28 +3,34 @@
 **为什么要这个文件**：这个函数是 RL 与 SFT 共用的唯一实现，训练时输入是 bf16；
 而修复前仓库里的用例全部走 fp32（参考实现显式 ``.float()``），**bf16 路径零覆盖**。
 
-**修的是什么（不是"把 bf16 升成 fp32"）**：修复前目标 token 的 logit 走手写点积
-``(hidden * selected).sum(-1)``，全词表 logsumexp 走分块 ``F.linear`` —— **同一个 logit
-被两条路径各算一遍**，两条路径各自的舍入在相减时抵消不掉。现在的实现把目标 logit
-**从同一块 logits 里 gather**，于是 ``logsumexp ≥ L_t`` 恒成立、``log_p ≤ 0`` 由构造保证。
+**修的是什么（不是"把 bf16 升成 fp32"）**：旧实现把目标 token 的 logit 另算一遍（手写
+点积），并且 ``logsumexp`` 直接在 **bf16 logits** 上求。后者是主导项——``log_p`` 因此被
+量化到 lse 的 bf16 网格上（``|lse| ≈ 12`` 时步长 0.0625），真实 CE 掉到网格以下时**读数
+塌成 ±0**（下面 `test_small_ce_readings_do_not_collapse_to_zero` 把它锁死）。现在的实现
+让目标 logit **与 lse 同源**（从同一块 logits 里 ``gather``），于是 ``logsumexp ≥ L_t``
+恒成立、``log_p ≤ 0`` 由构造保证、且累加在 fp32 上做。
 
-**⚠ 一条实测记录（别再走回头路）**：只把两条路径"升成 fp32"是**不够**的——目标 logit
-若仍另算一遍，lse 那条路径里的 logit 仍是 bf16 舍入值，±0.5 ULP 在 fp32 减法里照样
-抵消不掉。真机实测（卡 2，H=5120/V=151936/bf16，1024 个 token，全 fp32 参考）：
+**四种改法的实测对照**（真机形状、fp64 参考）：**单一真相源是
+``graspo/ripple/loss.py`` 里 ``masked_token_log_probs_from_hidden`` 的 docstring**，
+这里不再抄第二份——要动"再升个 fp32 试试"的念头前先读那一份。
 
-    pre（两条 bf16 路径）      n_pos = 0/1024,   逐点 max|err| 5e-5 … 2.5e-3
-    A（两条都升 fp32 但各算一遍）n_pos = 473…504/1024, 逐点 max_pos 最高 +0.025  ← 更糟
-    B（连 GEMM 都用 fp32）      n_pos = 5…632,   max_pos ≤ 1.5e-4，但 loss 前向 42 ms → 367 ms
-    C（目标 logit 与 lse 同源）  n_pos = 0/1024,   逐点 max|err| 1.3e-4        ← 本实现
+**误差界依据**（下面各用例的 atol）：返回值是 bf16，本身就带半个 ULP 的输出舍入，再叠加
+目标 logit 在 bf16 网格上的半个 ULP；故界取 ``2 ULP(参考值的最大绝对值)``，留一倍余量。
+fp32 累加本身的误差（相对 1e-7）比这更小。
 
-**误差界依据**（下面各用例的 atol）：返回值是 bf16，本就带**半个 ULP 的输出舍入**；
-再加上目标 logit 在 bf16 网格上的半个 ULP。故界取 ``2 ULP(返回值的最大绝对值)``，
-实测落在 0.55…1.09 ULP，界留一倍余量。fp32 累加本身的误差（相对 1e-7）比这更小。
-
-**关于"改前必红"**：本文件的 `test_bf16_log_probs_are_non_positive` 在 **CPU 上对修复前
-的代码无判别力**——CPU 上两条 bf16 路径对同一个 logit 恰好给出同一个 bf16 值，舍入自己
-抵消掉了（这正是该缺陷长期只在真机出现的原因）。它对**上面那条 A 方案**是红的
-（实测 47% 的位置出现 ``log_p > 0``）。
+**"改前红不红"如实记**（都在隔离环境里实测过，别凭印象改）：
+- 改前（旧实现）**红三条**：parity 的**第 1 组参数**（`max|err| = 0.039011 > atol =
+  0.03125`）、`test_small_ce_readings_do_not_collapse_to_zero`（**4/4 返回 `0.0`**）、
+  `test_target_token_in_first_chunk`（`max|err| = 0.033184 > 0.03125`）。这三条在 CPU 与
+  GPU（A800-SXM4-80GB / torch 2.11.0+cu130）上**数值逐位相同**。
+- 非负性用例（本文件那条与 SFT 层那条）**改前不红**，原因**不是**"CPU 上两条路径给出同一个
+  bf16 值"（**那是错的**：真机形状 H=5120/V=151936 下 CPU 上有 **418/1024** 个 token 两条
+  路径给出**不同**的 bf16 值），而是**用例本身的 CE ≈ 7**（`min = -7.219`），远大于 bf16
+  网格步长，读数量化不到塌。梯度对拍对改前也不红。
+- 本文件的**旧用例对"A 只在两条路径上各升 fp32"那种改法全绿**（实测）；真正挡住它的是
+  `test_small_ce_readings_do_not_collapse_to_zero`——A 在那条上给出 `+0.0057` 的正 log_p。
+- ⚠ 验"改前"时**必须把测试文件拷到仓外隔离跑**：仓内 `tests/conftest.py` 会把仓库 `src`
+  注入 `sys.path`，`PYTHONPATH=<旧树>` 指过去也照样被盖掉，结论全是假的。
 """
 
 import math
@@ -160,3 +166,78 @@ def test_bf16_gradient_matches_fp64_reference():
     assert cosine >= 0.999, f"梯度余弦相似度 {cosine:.6f}"
     # 非平凡：梯度不全为 0
     assert float(grad_fp64.abs().max()) > 0.0
+
+
+def _converged_case(seed: int = 3, *, seq: int = 4, hidden_dim: int = 32, vocab: int = 256):
+    """构造"已收敛"的 bf16 输入：目标 token 的 logit ≈ 12，真实 CE 落在 2e-3 一档。
+
+    为什么要专门构造：只有 CE 掉到 **lse 的 bf16 网格步长以下**（``|lse| ≈ 12`` 时 0.0625）
+    才会暴露旧实现"读数塌成 0"的缺陷；普通随机用例的 CE 是 O(1…10)，怎么算都塌不了。
+    """
+    generator = torch.Generator().manual_seed(seed)
+    hidden = torch.randn(1, seq, hidden_dim, generator=generator).to(torch.bfloat16)
+    lm_head = (torch.randn(vocab, hidden_dim, generator=generator) / hidden_dim**0.5).to(
+        torch.bfloat16
+    )
+    token_ids = torch.randint(0, vocab, (1, seq), generator=generator)
+    for position in range(seq):
+        row = hidden[0, position].float()
+        # 让该 token 成为 argmax 且 logit 恰为 12：logit = h·w = 12
+        lm_head[token_ids[0, position]] = (row / row.norm() * (12.0 / row.norm())).to(
+            torch.bfloat16
+        )
+    return hidden, lm_head, token_ids
+
+
+def test_small_ce_readings_do_not_collapse_to_zero():
+    """锁定真实缺陷：CE 小到 bf16 网格以下时，读数**不许塌成 0、更不许翻正**。
+
+    改前（目标 logit 另算 + lse 在 bf16 logits 上求）：四个 token 全返回 ``0.0``（真值
+    0.0022…0.0028 被量化掉了）。改后：``0.002274…0.002777``，误差 ≤ 3.3e-5。
+    """
+    hidden, lm_head, token_ids = _converged_case()
+    log_probs = masked_token_log_probs_from_hidden(hidden, lm_head, token_ids, vocab_chunk_size=64)
+    expected = _reference_log_probs_fp64(hidden, lm_head, token_ids, 64)
+
+    # 真值确实是"小 CE 一档"（不是 0，也不是 O(1)）——断言的前提在这里
+    assert bool((expected < -1e-3).all()) and bool((expected > -1e-2).all())
+    # 读数不许塌成 0（改前 4/4 都返回 0.0）
+    assert bool((log_probs <= -1e-3).all()), f"读数塌了：{log_probs.tolist()}"
+    # 也不许翻正
+    assert bool((log_probs <= 0).all())
+    # 数值上贴着 fp64 参考
+    assert float((log_probs.double() - expected).abs().max()) <= 1e-4
+
+
+def test_target_token_in_first_chunk():
+    """目标 token 全落在**第 0 块**：覆盖 ``selected_logits`` 的初始化分支。
+
+    旧实现没有这个分支（目标 logit 一次算完），新实现是"逐块 where 覆盖"，第 0 块必须能
+    正常初始化；现有用例（gradcheck 的 33/128、parity 的 64/256）都会跨到后面的块。
+    """
+    hidden, lm_head = _make_case(hidden_dim=32, vocab=128, seq=4, scale=1.0, seed=13)[:2]
+    generator = torch.Generator().manual_seed(13)
+    token_ids = torch.randint(0, 64, (2, 4), generator=generator)  # 全 < chunk=64 ⇒ 只在第 0 块
+
+    log_probs = masked_token_log_probs_from_hidden(hidden, lm_head, token_ids, vocab_chunk_size=64)
+    expected = _reference_log_probs_fp64(hidden, lm_head, token_ids, 64)
+
+    assert bool((token_ids < 64).all())
+    atol = 2.0 * _bf16_ulp(float(expected.abs().max()))
+    assert float((log_probs.double() - expected).abs().max()) <= atol
+    assert bool((log_probs <= 0).all())
+
+
+def test_out_of_vocabulary_token_ids_fail_fast():
+    """``token_ids >= V`` 必须立刻报错，而不是被块内下标 clamp 静默掩盖。
+
+    旧实现走 ``index_select`` ⇒ 直接 ``IndexError``；新实现把 id 映射成块内下标，越界会被
+    那个 ``clamp`` 悄悄变成"取到同块内别的 token 的 logit"——非负性质不破，但错输入进来了
+    没人知道，所以显式 fail-fast。
+    """
+    hidden, lm_head, token_ids = _make_case(hidden_dim=8, vocab=16, seq=2, scale=1.0, seed=17)
+    token_ids = token_ids.clone()
+    token_ids[0, 0] = 16  # 恰好等于词表大小 ⇒ 越界
+
+    with pytest.raises(AssertionError, match="token_ids 越界"):
+        masked_token_log_probs_from_hidden(hidden, lm_head, token_ids, vocab_chunk_size=8)
