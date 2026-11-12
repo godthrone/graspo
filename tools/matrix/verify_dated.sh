@@ -107,7 +107,7 @@ else
 fi
 
 # ②b 冻结原件 ↔ 模板基线：差异必须**恰为**边界声明块（机核；⛔ 不看静态证据文件）----
-say ""; say "②b 冻结原件 ↔ 模板基线（差异必须恰为「边界声明」块：1 hunk / 新增 12 行 / 删除 0 行）"
+say ""; say "②b 冻结原件 ↔ 模板基线（差异必须恰为「边界声明」块：1 hunk / 新增 14 行 / 删除 0 行）"
 if out="$("$PY" "$M/check_baseline_declaration.py" 2>&1)"; then
   printf '%s\n' "$out" >>"$OUT"
   grep -E "^# 结论：PASS" <<<"$out" | sed 's/^/  /' | tee -a "$OUT"
