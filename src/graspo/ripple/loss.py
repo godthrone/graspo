@@ -40,22 +40,39 @@ def masked_token_log_probs_from_hidden(
     分块遍历词表累积 logsumexp，峰值张量 = 一块 (B,S,vocab_chunk_size)，与 TP 规模无关；
     切勿改成物化完整 (B,S,V) logits（历史上 SFT 因此 OOM，见 v0.24.0 修复）。
 
+    **为什么这么算（旧实现坏在哪）**：旧实现把目标 token 的 logit 另算一遍（手写点积），
+    并且 ``logsumexp`` 直接在 **bf16 logits** 上求。后者是主导项：``log_p = L_t - lse``
+    因此被量化到 lse 的 bf16 网格上（``|lse| ≈ 12`` 时步长 **0.0625**），真实 CE 掉到网格
+    以下时**读数塌成 ±0**。确定性构造实测（fp64 参考，``tests/ripple/test_loss_bf16.py``
+    里锁死）：真值 CE ``0.0024`` 一档四个 token，旧读数 **4/4 都是 0.0**，现读数
+    ``0.00241 / 0.00264 / 0.00227 / 0.00278``（误差 ≤ 3.3e-5）。
+
+    真机形状下的变化量（H=5120 / V=151936 / seq=1024 / chunk=32768 / bf16 /
+    torch 2.11.0+cu130 / A800-SXM4-80GB，同一输入新旧对比）：``max|Δ| = 0.125``、
+    ``mean|Δ| = 0.0396``、**639/1024** 个 token 的读数发生变化；``max|Δ|`` 正好是
+    ``2 ×`` lse 在该量级的 bf16 步长 ⇒ 量化项主导，不是"半个 ULP 的抵消"那么小。
+
     **计算走 fp32，返回值回转输入 dtype。** 分块 ``F.linear`` 的输出先按累加精度
     （``acc_dtype``，见下）转过去，``logsumexp`` 与 ``logaddexp`` 累加都在它上面做；目标
     token 的 logit **从同一块 logits 里取**（``gather``），不是另算一遍——因此
     ``log_probs = L_t - logsumexp`` 的两项用的是**同一个数**，``logsumexp ≥ L_t`` 恒成立，
     ``log_probs ≤ 0`` 由构造保证，不需要任何 ``clamp``。
 
+    两种"改法"的实测对照（同上真机形状，1024 个 token，fp64 参考）——**只记录在这里，
+    别处只放指针**：旧实现 0 个正 log_p、逐点 max|err| 5e-5…2.5e-3；**只把两条路径升成
+    fp32（目标 logit 仍另算一遍）473…504 个正 log_p、最大 +0.025（更糟）**；连 GEMM 都用
+    fp32 则 5…632 个正 log_p（≤1.5e-4），代价是 loss 前向 42 ms → 367 ms（8.7×）；本实现
+    0 个正 log_p。
+
     返回时 ``.to(hidden_states.dtype)`` 回转输入 dtype（RL/SFT 共用本函数，下游 PPO
-    ratio 等依赖原 dtype）；bf16 舍入把小的非正数舍成更小的非正数或 ``-0.0``，不会翻成
-    正数。
+    ratio 等依赖原 dtype）。bf16 舍入是 round-to-nearest **单调**的，符号因此保持：一个非
+    正数回转后**仍是负数或 ``-0.0``**（可能更靠近 0），不会翻成正数。
 
     精度口径：``acc_dtype`` = fp32（输入为 bf16/fp16 时），否则等于输入 dtype —— ⛔ 不能
     一律写 ``.float()``：那会把 fp64 输入静默降成 fp32，破坏双精度对拍与
-    ``autograd.gradcheck``（实测会打挂仓库里两条 gradcheck）。回转之前的残留误差只有
-    fp32 加法舍入（相对 1e-7）；回转 bf16 之后读数本身带半个 ULP，逐点实测 0.55…1.09 ULP。
-    SFT metrics 的 ``negative_loss_count`` 仍保留作防御性计数（口径见
-    ``_updated_negative_loss_count``）。
+    ``autograd.gradcheck``（实测会打挂仓库里两条 gradcheck）。SFT metrics 的
+    ``negative_loss_count`` 保留作**防御性计数**：它一旦非零，说明这里的非负性前提被破坏
+    了，值得查（口径见 ``_updated_negative_loss_count``）。
     """
     valid = token_ids != ignore_index
     ids = token_ids.clamp(min=0)
