@@ -76,6 +76,12 @@ def masked_token_log_probs_from_hidden(
     """
     valid = token_ids != ignore_index
     ids = token_ids.clamp(min=0)
+    # 防呆（fail-fast）：token_ids 越界时旧实现 `index_select` 会直接 IndexError；本实现把
+    # id 映射成块内下标后，越界会被下面那个 clamp **静默**掩盖成"取到同块内别的 token 的
+    # logit"（头部非负性质不破，但错输入进来了没人知道）。这里把它立刻暴露出来。
+    assert not ids.numel() or int(ids.max()) < lm_head_weight.shape[0], (
+        f"token_ids 越界：max={int(ids.max())} ≥ 词表大小 {lm_head_weight.shape[0]}"
+    )
     # 累加精度：bf16/fp16 输入升到 fp32；fp32/fp64 输入按原精度算（⛔ 不可写成
     # ``.float()``——那会把 fp64 输入静默降成 fp32，破坏双精度对拍与 gradcheck）。
     acc_dtype = (
