@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import re
 
-#: 单档备注上限（字）。超过 ⇒ 丢掉最低优先级的尾巴 ＋ 追加 :data:`TAIL`。
+#: 单档备注上限（字）。超过 ⇒ 按 :data:`CLAUSE_PRIORITY` 丢掉优先级最低的从句 ＋ 追加 :data:`TAIL`。
 NOTE_LIMIT = 200
 #: 被省略时的收口话术（诚实：证据在跑次目录里）
 TAIL = "（详见跑次证据）"
@@ -36,6 +36,37 @@ ERROR_BODY_LIMIT = 40
 
 #: 判据编号（唯一真相源的次序；⛔ 不在别处另抄一份）
 CRITERIA = ("①", "②", "③", "④")
+
+#: 从句种类 ⇒ **丢弃优先级**（数值越大＝越重要＝越晚丢）。
+#:
+#: 为什么要有这张表（病史，2026-11-10 同日两次事故）：此前超限时按**输出顺序从尾部**逐个 `pop()`，
+#: 而「判据结论」恰好是尾部追加的 ⇒ **最要紧的那句第一个被丢**，最不要紧的长附注反倒留着
+#: （一次附注太长把 McNemar 从句挤掉，一次整句附注被丢）。现在丢弃顺序由本表显式裁定，
+#: ⛔ 不再依赖 `_build_clauses()` 里 `append` 的先后碰运气；输出顺序仍按拼装顺序（读者视角不变）。
+CLAUSE_PRIORITY = {
+    "criteria": 100,   # 判据结论：本列唯一的「过/未过」结论 ⇒ ⛔ 最后才丢
+    "crash": 90,       # 崩溃归因：整档没有读数的原因
+    "effect": 80,      # 效果读数 after/base/Δ
+    "exit": 75,        # 退出码（含按证据重派生）
+    "steps": 70,       # 实跑步数
+    "epochs": 65,      # 完成 X/Y 个 epoch
+    "ckpt": 60,        # 检查点有无
+    "naninf": 55,      # 数值异常
+    "peak": 50,        # 峰值显存
+    "loss": 45,        # 训练 loss 序列
+    "warn": 40,        # 读数不可比等告警
+    "gaps": 20,        # 证据缺口：只说明「还缺什么」，低于一切实测读数
+    "extra": 10,       # 附注：模块口径里的「补充说明」（opt-in 注入）⇒ 先让位给结论
+    "effect_missing": 5,  # 「效果读数：不可评」= 没有读数**这件事**，不是一个读数 ⇒ 最先让位
+}
+
+#: 从句种类 ⇒ 人读标签（WARNING 与 run json 里点名用；⛔ 不改备注正文）
+CLAUSE_LABELS = {
+    "criteria": "判据结论", "crash": "崩溃归因", "effect": "效果读数",
+    "effect_missing": "效果读数（不可评）", "exit": "退出码",
+    "steps": "实跑步数", "epochs": "完成轮数", "ckpt": "检查点", "naninf": "数值异常",
+    "peak": "峰值显存", "loss": "训练 loss", "warn": "告警", "gaps": "证据缺口", "extra": "附注",
+}
 
 #: 判据编号提取：`判据① 未过` / `判据③ 缺证据`
 _RE_FAIL_ID = re.compile(r"判据\s*([①②③④])\s*未过")
@@ -137,45 +168,48 @@ def criteria_ids(fails, unks) -> tuple[list[str], list[str]]:
     return f_ids, u_ids
 
 
-def render(facts: dict) -> str:
-    """按**优先级**拼备注，超 :data:`NOTE_LIMIT` 时从尾部丢最低优先级的从句。
+def _build_clauses(facts: dict) -> list[tuple[str, str]]:
+    """`facts` ⇒ `[(从句种类, 从句文本), …]`（**输出顺序**；缺键 = 这一项不写）。
 
-    `facts` 允许缺键（缺 = 这一项不写）。键见模块 docstring 与 `parse_legacy()`。
+    种类名只用于 :data:`CLAUSE_PRIORITY` 查优先级与点名，⛔ 不进文本。
     """
-    clauses: list[str] = []
+    clauses: list[tuple[str, str]] = []
     if facts.get("extra"):
         # 附注带显式前缀：本列是人读件，读者要能一眼看出「这句是补充说明」而不是读数；
         # 同时让 `parse_legacy` 能把它**往返解析**回来（否则 `compose_note` 重渲染会把它丢掉）。
-        clauses.append(f"附注：{facts['extra']}")
+        clauses.append(("extra", f"附注：{facts['extra']}"))
     if facts.get("crash"):
-        clauses.append(f"训练崩溃，未产生有效训练：{facts['crash']}")
+        clauses.append(("crash", f"训练崩溃，未产生有效训练：{facts['crash']}"))
     if facts.get("exit_derived"):
         raw, new = facts["exit_derived"]
-        clauses.append(f"退出码 {new}（按证据重派生，原始 {raw}）")
+        clauses.append(("exit", f"退出码 {new}（按证据重派生，原始 {raw}）"))
     elif facts.get("exit_code") is not None:
-        clauses.append(f"退出码 {facts['exit_code']}")
+        clauses.append(("exit", f"退出码 {facts['exit_code']}"))
     else:
-        clauses.append("退出码缺")
+        clauses.append(("exit", "退出码缺"))
     if isinstance(facts.get("steps"), int):
         src = str(facts.get("steps_src") or "").strip()
-        clauses.append(f"实跑步数 {facts['steps']}（{src}）" if src else f"实跑步数 {facts['steps']}")
+        clauses.append(("steps", f"实跑步数 {facts['steps']}（{src}）" if src
+                        else f"实跑步数 {facts['steps']}"))
     elif "steps" in facts:
-        clauses.append("实跑步数未知")
+        clauses.append(("steps", "实跑步数未知"))
     done, planned = facts.get("epochs_done"), facts.get("epochs_planned")
     if isinstance(done, int) and isinstance(planned, int):
-        clauses.append(f"完成 {done}/{planned} 个 epoch")
+        clauses.append(("epochs", f"完成 {done}/{planned} 个 epoch"))
     elif isinstance(planned, int):
-        clauses.append(f"完成轮数未知（计划 {planned} 个 epoch）")
+        clauses.append(("epochs", f"完成轮数未知（计划 {planned} 个 epoch）"))
     ckpt = facts.get("ckpt")
     if ckpt:
-        clauses.append(f"检查点：{ckpt}")
+        clauses.append(("ckpt", f"检查点：{ckpt}"))
     if facts.get("naninf"):
-        clauses.append(f"数值异常：{facts['naninf']}")
+        clauses.append(("naninf", f"数值异常：{facts['naninf']}"))
     if facts.get("peak"):
-        clauses.append(f"峰值显存：{facts['peak']}")
-    clauses.append(f"效果读数：{effect_phrase(facts)}")
+        clauses.append(("peak", f"峰值显存：{facts['peak']}"))
+    # 「不可评」是「本档没有读数」这件事，不是一个读数 ⇒ 单列一类（见 CLAUSE_PRIORITY）
+    phrase = effect_phrase(facts)
+    clauses.append(("effect_missing" if phrase == "不可评" else "effect", f"效果读数：{phrase}"))
     if facts.get("loss"):
-        clauses.append(facts["loss"])
+        clauses.append(("loss", facts["loss"]))
     fail_s, unk_s = _ids(facts.get("fail_ids")), _ids(facts.get("unk_ids"))
     if facts.get("judged") or fail_s or unk_s:
         parts = []
@@ -186,22 +220,59 @@ def render(facts: dict) -> str:
             parts.append(f"{fail_s} 未过")
         if unk_s:
             parts.append(f"{unk_s} 未判定")
-        clauses.append("判据结论：" + "，".join(parts))
+        clauses.append(("criteria", "判据结论：" + "，".join(parts)))
     for w in facts.get("warns") or ():
-        clauses.append(str(w))
+        clauses.append(("warn", str(w)))
     gaps = facts.get("gaps")
     if isinstance(gaps, int) and gaps > 0:
-        clauses.append(f"证据缺口 {gaps} 项")
+        clauses.append(("gaps", f"证据缺口 {gaps} 项"))
+    return clauses
 
-    # ── 上限控制：超了就从**尾部**丢（尾部 = 优先级最低），并追加收口话术 ─────
-    kept, dropped = list(clauses), False
-    while kept and len("；".join(kept) + TAIL) > NOTE_LIMIT:
-        kept.pop()
-        dropped = True
-    text = strip_noise("；".join(kept))
+
+def render_with_report(facts: dict) -> tuple[str, dict]:
+    """同 :func:`render`，但**并列返回丢弃报告**（调用方要能看见「丢了哪几句」）。
+
+    `report` 字段：
+
+    * ``truncated``（bool）：是否真有从句被丢（False ⇒ ``dropped`` 为空）；
+    * ``note_limit``（int）：本次生效的上限（＝:data:`NOTE_LIMIT`）；
+    * ``final_length``（int）：成稿字数（含 :data:`TAIL`）；
+    * ``dropped``（list[dict]）：被丢的从句，**按被丢的先后**；每条含
+      ``kind``（优先级表键）/ ``label``（人读标签）/ ``text``（从句原文，含「附注：」这类前缀）/
+      ``priority`` / ``reason``（为什么是它）。
+
+    丢谁：每次取 :data:`CLAUSE_PRIORITY` **最低**的那条；同优先级时丢**输出顺序靠后**的那条
+    （最小扰动）。保留的从句仍按输出顺序拼接 ⇒ 不超限时成稿与旧实现逐字相同。
+    """
+    kept = _build_clauses(facts)
+    dropped: list[dict] = []
+    while kept and len("；".join(t for _k, t in kept) + TAIL) > NOTE_LIMIT:
+        # 最低优先级先死；同优先级别时靠后的先死（`-i` ⇒ 取输出顺序最大的下标）
+        idx = min(range(len(kept)), key=lambda i: (CLAUSE_PRIORITY[kept[i][0]], -i))
+        kind, clause = kept.pop(idx)
+        dropped.append({
+            "kind": kind,
+            "label": CLAUSE_LABELS[kind],
+            "text": clause,
+            "priority": CLAUSE_PRIORITY[kind],
+            "reason": f"单档备注上限 {NOTE_LIMIT} 字，本从句优先级 {CLAUSE_PRIORITY[kind]} "
+                      f"（{CLAUSE_LABELS[kind]}）在剩余从句里最低 ⇒ 先省略",
+        })
+    text = strip_noise("；".join(t for _k, t in kept))
     if dropped or facts.get("crash") or facts.get("gaps"):
         text += TAIL
-    return text
+    report = {"truncated": bool(dropped), "note_limit": NOTE_LIMIT,
+              "final_length": len(text), "dropped": dropped}
+    return text, report
+
+
+def render(facts: dict) -> str:
+    """按 :data:`CLAUSE_PRIORITY` 拼备注；超 :data:`NOTE_LIMIT` 时丢**优先级最低**的从句。
+
+    签名与返回类型不变（既有调用方无需改动）；要看得见「丢了什么」请用
+    :func:`render_with_report`。`facts` 允许缺键（缺 = 这一项不写）。
+    """
+    return render_with_report(facts)[0]
 
 
 # ── 存量规范化：老备注（工程日志体）⇒ facts ⇒ render（⛔ 不重新推导读数）───────────

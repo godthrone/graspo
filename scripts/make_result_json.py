@@ -1922,8 +1922,15 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
         crash["explained_gaps"] = list(gaps)
         gaps = []
     facts["gaps"] = len(gaps)
-    note = note_style.render(facts)
+    note, note_report = note_style.render_with_report(facts)
     assert len(note) <= note_style.NOTE_LIMIT, f"备注超长（{len(note)} > {note_style.NOTE_LIMIT}）：{note}"
+    if note_report["dropped"]:
+        # ★ 2026-11-10：超限丢从句**必须留痕可见**（此前静默丢，连「判据结论」被丢都无人知）。
+        #   ⛔ 不改 note 正文冒充没丢；⛔ 也不因超限让整档失败（已验证的档不能因此全变红）。
+        #   两处留痕：① 本行 WARNING 点名丢了哪几句；② 结果 json 的 `note_truncated`。
+        lost = "；".join(f"[{d['label']}] {d['text']}" for d in note_report["dropped"])
+        print(f"WARNING: 备注超 {note_report['note_limit']} 字上限，已按优先级丢弃 "
+              f"{len(note_report['dropped'])} 个从句（判据结论最后才丢）：{lost}", file=sys.stderr)
 
     doc = {
         "schema": SCHEMA,
@@ -1991,6 +1998,15 @@ def build_doc(*, tier: str, run_dir: Path, manifest: dict, data_rows: dict,
         doc["params"]["target_modules"] = str(row["target_modules"])
     if ev is not None:
         doc["eval"] = ev
+    # 备注因 200 字上限丢了从句 ⇒ 清单入档留痕（⛔ 不改 note 正文；无丢弃 ⇒ 本键不出现，
+    #   结果 json 与修复前逐字节相同）
+    if note_report["dropped"]:
+        doc["note_truncated"] = {
+            "note_limit": note_report["note_limit"],
+            "final_length": note_report["final_length"],
+            "dropped": [{"kind": d["kind"], "label": d["label"], "text": d["text"]}
+                        for d in note_report["dropped"]],
+        }
     # 判据③④：只有真的有结构化结论时才写（⛔ 不写 false/null 冒充"判过了"）
     if checks:
         doc["checks"] = checks

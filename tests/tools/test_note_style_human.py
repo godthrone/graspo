@@ -102,3 +102,47 @@ def test_criteria_line_is_id_level_only(fails, unks, expect):
 def test_normalize_legacy_is_idempotent_on_rendered_note():
     note = ns.render(_normal_facts(fail_ids=["②"]))
     assert ns.normalize_legacy(note) == note
+
+
+# ⑥ 超限时丢谁（2026-11-10 缺陷：按输出顺序从尾部丢 ⇒ 尾部追加的判据结论第一个死）──────
+def test_overlong_note_drops_the_annotation_not_the_verdict():
+    """附注很长顶穿上限时：**判据结论必须保住**，长附注被丢，且报告点附注的名。
+
+    病史（同日两次事故）：旧实现 `while kept: kept.pop()` 从**尾部**丢，而「判据结论」正是
+    尾部追加的 ⇒ 最要紧的判据结论第一个被丢，最不要紧的长附注反倒留着（M049 的 McNemar
+    从句被附注挤掉、B1 的整句附注被丢）。
+    """
+    long_extra = "实际训练 2500.3 s，台账 1580 s 为外层包装截断" + "，另有一段很长的补充说明" * 6
+    facts = _normal_facts(extra=long_extra)
+
+    text = ns.render(facts)
+    assert len(text) <= ns.NOTE_LIMIT, len(text)
+    assert "判据结论：①②③④ 过" in text, f"超限后判据结论被丢（旧缺陷复发）：{text}"
+    assert "附注：" not in text, text
+
+    text2, report = ns.render_with_report(facts)
+    assert text2 == text, "render() 必须与 render_with_report()[0] 逐字相同（向后兼容）"
+    assert report["truncated"] is True                 # 前提：真的超限并丢了东西
+    assert report["dropped"], "丢了从句却给空报告 ＝ 静默丢"
+    assert report["dropped"][0]["kind"] == "extra", report["dropped"]
+    assert report["dropped"][0]["text"].startswith("附注："), report["dropped"]
+    assert "criteria" not in [d["kind"] for d in report["dropped"]], report["dropped"]
+
+
+def test_report_names_the_verdict_when_it_is_the_one_dropped(monkeypatch):
+    """负例（判别力）：判据结论**真的**被丢时，报告必须点名它，⛔ 不许只报"有丢失"。
+
+    在 200 字上限内「判据结论」（优先级 100）是最不容易倒的那句——那正是修法的目的所在；
+    所以本负例把上限压到比单条判据结论还小（判据句 11 字 ＋ 收口 8 字），专测最后一层：
+    判据结论倒下时，报告里能不能指名道姓。
+    """
+    monkeypatch.setattr(ns, "NOTE_LIMIT", 15)
+    facts = _normal_facts()
+
+    text, report = ns.render_with_report(facts)
+    assert "判据结论" not in text, text
+    assert report["truncated"] is True
+    assert report["dropped"], "丢了从句却给空报告 ＝ 静默丢"
+    assert [d["kind"] for d in report["dropped"]][-1] == "criteria", report["dropped"]
+    assert report["dropped"][-1]["label"] == "判据结论", report["dropped"]
+    assert report["dropped"][-1]["text"].startswith("判据结论："), report["dropped"]
