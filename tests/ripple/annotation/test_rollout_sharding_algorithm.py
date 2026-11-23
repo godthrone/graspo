@@ -254,8 +254,14 @@ def test_positive_control_unmerged_local_slice_gives_wrong_mu(tokenizer):
     assert local_mu["action_type"] != whole_mu["action_type"]  # ★ 必须不等
 
 
-def test_positive_control_advantage_differs_when_using_local_mu(tokenizer):
-    """★ A-5/(c)：注入**本地切片** μ 时，V token 的 advantage **必须**与整组不同。"""
+def test_field_mean_override_no_longer_changes_advantages(tokenizer):
+    """★ A-5/(c) 的 P2 修订：注入整组 μ 与注入**本地切片** μ，advantage **完全相同**。
+
+    P2（2026-11-18）把值 token 改成逐条闭合的 ±1 ⇒ ``μ_f`` 不再参与 advantage，
+    所以"会合 μ 不可省"这条阳性对照**失去了对象**。本用例原地反转方向但**不放松**：
+    它现在钉的是新契约——不管注入哪个 μ，输出必须逐位相同（若有人把 μ 重新接回
+    advantage，这条会立刻红）。μ 的算术本身仍由上面的用例守着。
+    """
     texts = _group_texts()
     anns = _annotate(texts, tokenizer)
     common = dict(
@@ -277,12 +283,11 @@ def test_positive_control_advantage_differs_when_using_local_mu(tokenizer):
             numeric_tolerance=0.2,
         )
     )
+    assert whole_mu["action_type"] != local_mu["action_type"], "构造前提：两个 μ 确实不同"
     whole_adv = compute_group_advantages(**common, field_mean_override=whole_mu)
     local_adv = compute_group_advantages(**common, field_mean_override=local_mu)
-    assert whole_adv != local_adv  # ★ 会合不可省（阳性对照）
-    # 差值恰为 μ 之差（逐 token 平移）
-    delta = whole_mu["action_type"] - local_mu["action_type"]
-    assert delta == pytest.approx(-0.125)
+    assert whole_adv == local_adv  # ★ P2：μ 已不参与 advantage
+    assert whole_adv == compute_group_advantages(**common)  # 不注入也一样
 
 
 # ══════════════════════════════════════════════════════════════════════════════

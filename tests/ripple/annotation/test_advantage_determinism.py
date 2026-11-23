@@ -3,8 +3,9 @@
 验证目标（C1/C2 验收）：
 1. 已知 rollout-group 的 token advantage 等于期望值（S→+1.0, E→−1.0, T/W/D→0）
 2. 同 seed 两次运行，advantage 结果一致（确定性）
-3. n=1 安全零：单 completion 组内 V token advantage=0
-4. μ_f 组内相对化：V token 的 advantage 是 raw − 组内均值
+3. n=1 单 completion 组：正确的值 token 仍是 +1.0（P2 起没有"安全零"）
+4. 值 token 的优势只看**这条 completion 自己**对不对，与同组其它 completion 无关
+   （旧式 ``raw − μ_f`` 组内相对化已随 P2 删除）
 
 测试策略：
 - 使用 FakeTokenizer（每字符一个 token，offset 一一对应）
@@ -15,6 +16,7 @@
 import pytest
 
 from graspo.ripple.annotation.advantages import compute_group_advantages
+from graspo.ripple.annotation.char_tag import CharTag
 from graspo.ripple.annotation.labeler import AnnotationInput, annotate
 
 # ── FakeTokenizer（与 test_advantages.py 相同模式）───────────────────────────
@@ -85,6 +87,12 @@ def _compute_advantages(
     )
 
 
+def _positions(text: str, literal: str) -> list[int]:
+    """``literal`` 在 ``text`` 里占的字符下标（FakeTokenizer 下 token 下标 == 字符下标）。"""
+    start = text.index(literal)
+    return list(range(start, start + len(literal)))
+
+
 # ── 正确结构：S/V token 分配 ─────────────────────────────────────────────────
 
 
@@ -103,26 +111,38 @@ _PERFECT_TARGETS = _make_targets_tool_call(
 
 
 def test_perfect_completion_structure_tokens_positive():
-    """完美匹配的 completion：所有 S token advantage=+1.0，V token 因 n=1 为 0。"""
+    """完美匹配的 completion：S 与 V token 都是 +1.0，整条无负值。"""
     adv = _compute_advantages([_PERFECT_TOOL_CALL], _PERFECT_TARGETS)
 
     assert len(adv) == 1
-    # 所有 token 的 advantage 应 >= 0（完美匹配：S=+1.0, V=0(n=1), 无 E）
+    # 所有 token 的 advantage 应 >= 0（完美匹配：S=+1.0, 值对 ⇒ V=+1.0, 无 E）
     for a in adv[0]:
         assert a >= 0.0, f"expected non-negative advantage, got {a}"
     # 至少有一个 S token 的 advantage=+1.0
     assert any(a == 1.0 for a in adv[0]), f"expected at least one +1.0 advantage, got {adv[0]}"
 
 
-def test_perfect_completion_n1_safety_zero():
-    """n=1 安全零：单 completion 组内 V token advantage=0（μ_f=raw）。"""
-    adv = _compute_advantages([_PERFECT_TOOL_CALL], _PERFECT_TARGETS)
+def test_perfect_completion_n1_value_tokens_are_plus_one():
+    """★ n=1（组内只有一条）：正确的值 token 是 +1.0，0.0 只出现在 W（值前空白）。
 
-    # 所有 V token 的 advantage 应为 0（n=1 → μ_f = raw → adv = 0）
-    # 在 n=1 情况下，V token advantage 应该为 0
-    non_s_adv = [a for a in adv[0] if a != 1.0]
-    for a in non_s_adv:
-        assert a == 0.0, f"n=1: expected V token advantage=0, got {a}"
+    P2（2026-11-18）口径：值 token 是 ±1，只看它自己对不对 ⇒ 完美 completion 里
+    **没有** 0.0 的值 token。旧 docstring 写的「n=1 安全零（V=0，μ_f=raw）」是 μ_f 时代的
+    结论，已随 P2 删除；原断言实际检查的 4 个 0 是 W token（值前空白），不是值 token。
+    """
+    adv = _compute_advantages([_PERFECT_TOOL_CALL], _PERFECT_TARGETS)[0]
+    tags = _annotate_completion(_PERFECT_TOOL_CALL, _PERFECT_TARGETS).tags
+
+    value_positions = [i for i, tag in enumerate(tags) if tag == CharTag.VALUE]
+    assert len(value_positions) == 9, "构造前提：两个值共 9 个字符标 V"
+    for position in value_positions:
+        assert adv[position] == 1.0, f"正确的值 token@{position} 必须 +1.0，实测 {adv[position]}"
+
+    waste_positions = [i for i, tag in enumerate(tags) if tag == CharTag.WASTE]
+    assert len(waste_positions) == 4, "构造前提：两个值前的空白共 4 个字符标 W"
+    for position in waste_positions:
+        assert adv[position] == 0.0, f"W token@{position} 必须 0.0，实测 {adv[position]}"
+
+    assert -1.0 not in adv
 
 
 # ── 错误结构：E token 分配 ────────────────────────────────────────────────────
@@ -138,26 +158,35 @@ _BROKEN_TOOL_CALL = (
 
 
 def test_broken_completion_has_error_token():
-    """拼写错误的 completion：首个不匹配点标 E（adv=-1.0），后续截断为 D（adv=0）。"""
+    """拼写错误的 completion：首个不匹配点标 E（adv=-1.0），后续截断为 D（adv=0）。
+
+    P2（2026-11-18）口径变更：值 token 的错误现在也是 −1.0，所以**不能**再用
+    "第一个 −1.0 就是 E"来定位错误点——必须按字符标注（``CharTag.ERROR``）定位。
+    """
     adv = _compute_advantages([_BROKEN_TOOL_CALL], _PERFECT_TARGETS)
+    tags = _annotate_completion(_BROKEN_TOOL_CALL, _PERFECT_TARGETS).tags
 
     assert len(adv) == 1
-    # 应有至少一个 E token (adv=-1.0)
-    assert any(a == -1.0 for a in adv[0]), f"expected at least one -1.0 advantage, got {adv[0]}"
-    # E 之后的所有 token 应为 D（adv=0）
-    found_e = False
-    for a in adv[0]:
-        if a == -1.0:
-            found_e = True
-        elif found_e:
-            assert a == 0.0, f"token after E should be DROPPED (adv=0), got {a}"
+    error_positions = [index for index, tag in enumerate(tags) if tag == CharTag.ERROR]
+    assert error_positions, "构造前提：该 completion 必须有 E 定位"
+    error_pos = error_positions[0]
+    assert adv[0][error_pos] == -1.0, f"E 处必须是 −1.0，实测 {adv[0][error_pos]}"
+    # E 之后的所有 token 应为 D（adv=0）——这是「第一个错误之后扔掉」的机核
+    for index in range(error_pos + 1, len(adv[0])):
+        assert adv[0][index] == 0.0, f"E 之后的 token@{index} 应为 D(0)，实测 {adv[0][index]}"
 
 
-# ── 组内相对化 (μ_f) ─────────────────────────────────────────────────────────
+# ── 值 token 只看自己对不对（P2：μ_f 已删）───────────────────────────────────
 
 
-def test_group_mu_f_relative_advantage():
-    """多 completion 组：V token advantage = raw − μ_f（组内相对化）。"""
+def test_group_value_advantage_follows_each_completion():
+    """★ 三条一组：值 token 的 ±1 只看**这条自己**对不对，与同组其它 completion 无关。
+
+    P2（2026-11-18）口径变更：旧式 ``adv(V) = raw − μ_f``（组内均值）已删除。
+    所以这里钉的是**方向**而不是"相对谁更大"：
+    A 完美 ⇒ 值 token 全 +1.0；B 动作错 ⇒ action_type 的 token 全 −1.0（角度对，仍是 +1.0）；
+    C 角度错 ⇒ angle_deg 的 token 全 −1.0（动作对，仍是 +1.0）。
+    """
     # A: 完美匹配 (action_type="逆时针旋转", angle_deg=16.9)
     perfect = _PERFECT_TOOL_CALL
     # B: 动作错，角度对 (action_type="顺时针旋转", angle_deg=16.9)
@@ -165,24 +194,28 @@ def test_group_mu_f_relative_advantage():
     # C: 动作对，角度错 (action_type="逆时针旋转", angle_deg=40)
     wrong_angle = perfect.replace("16.9", "40")
 
-    targets = _PERFECT_TARGETS
-    adv = _compute_advantages([perfect, wrong_action, wrong_angle], targets)
-
+    adv = _compute_advantages([perfect, wrong_action, wrong_angle], _PERFECT_TARGETS)
     assert len(adv) == 3
 
-    # 所有 completion 应有 S token 的 advantage=+1.0
-    for i in range(3):
-        assert any(a == 1.0 for a in adv[i]), f"completion {i}: expected S tokens"
+    # A：值全对 ⇒ 两个字段的 token 都是 +1.0
+    for position in _positions(perfect, "逆时针旋转") + _positions(perfect, "16.9"):
+        assert adv[0][position] == 1.0, f"A 的值 token@{position} 必须 +1.0"
 
-    # 完美 completion 的 V token advantage 应 >= 错误 completion 的 V token advantage
-    # （因为 μ_f 是组内均值，完美的大于均值，错误的小于均值）
-    v_perfect = [a for a in adv[0] if a != 1.0 and a != -1.0 and a != 0.0]
-    v_wrong_action = [a for a in adv[1] if a != 1.0 and a != -1.0 and a != 0.0]
-    if v_perfect and v_wrong_action:
-        # 完美 completion 的 V advantage 应更大
-        assert max(v_perfect) >= max(v_wrong_action), (
-            f"perfect V adv {v_perfect} should >= wrong V adv {v_wrong_action}"
-        )
+    # B：动作错（每个字符 −1.0）＋ 角度对（+1.0）
+    for position in _positions(wrong_action, "顺时针旋转"):
+        assert adv[1][position] == -1.0, f"B 的 action_type@{position} 必须 −1.0"
+    for position in _positions(wrong_action, "16.9"):
+        assert adv[1][position] == 1.0, f"B 的 angle_deg@{position} 必须 +1.0"
+
+    # C：动作对（+1.0）＋ 角度错（40 远超容差 ⇒ −1.0）
+    for position in _positions(wrong_angle, "逆时针旋转"):
+        assert adv[2][position] == 1.0, f"C 的 action_type@{position} 必须 +1.0"
+    for position in _positions(wrong_angle, "40"):
+        assert adv[2][position] == -1.0, f"C 的 angle_deg@{position} 必须 −1.0"
+
+    # 逐条闭合：单条成组算出来的结果与三条成组时**完全一致**（无组内耦合）
+    alone = _compute_advantages([perfect], _PERFECT_TARGETS)[0]
+    assert alone == adv[0], "值 token 的优势不得依赖同组其它 completion"
 
 
 # ── 确定性验证 ────────────────────────────────────────────────────────────────

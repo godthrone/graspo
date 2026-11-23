@@ -129,7 +129,7 @@ class GraspoAlgorithmCore:
 
         Returns:
             ragged per-token advantage，与每条 completion 的生成 token 数对齐：
-            ``S→+1.0 / V→raw−μ_f / T·W·D→0 / E→−1.0``。
+            ``S→+1.0 / V→±1.0 / T·W·D→0 / E→−1.0``（P2 起值 token 逐条闭合，无组内均值）。
         """
         return compute_group_advantages(
             completions=completions,

@@ -75,6 +75,15 @@ from graspo.ripple.annotation.char_tag import CharTag
 
 logger = logging.getLogger(__name__)
 
+#: ★ P0：本 step advantage 掌控状态的三态取值（指标里逐态各占一条序列，一眼可分）。
+#: ``injected_nonzero``：graspo 注入，且有可训练组（优势里有真实信号）；
+#: ``injected_zero``：graspo 注入，但**整批组都被判不该训** ⇒ 显式全 0（不训练）；
+#: ``fallback``：本批**没有任何组可判**（缺标注 / 缺 tokenizer）⇒ 优势清零 + loss 显式置 0。
+#: ⛔ 三种情形都不允许父类的标量 z-score advantage 进入 loss（那正是 P0 的 bug 面）。
+ADVANTAGE_STATE_INJECTED_NONZERO = "injected_nonzero"
+ADVANTAGE_STATE_INJECTED_ZERO = "injected_zero"
+ADVANTAGE_STATE_FALLBACK = "fallback"
+
 #: ms-swift 缺失时的统一提示（单一真相源，不在别处再写一份）。
 MS_SWIFT_RL_PREREQUISITE = (
     "backend='msswift' RL(GRPO) requires the ms-swift package "
@@ -137,6 +146,12 @@ class GraspoMsSwiftGRPOTrainer(_MsSwiftGRPOTrainerBase):  # type: ignore[misc,va
         # 拿到 token id 列表（实测踩过：拿 `str([1,2,3])` 去做字符级标注 → 全 0 优势）。
         self._graspo_completion_text: dict[str, str] = {}
         self._graspo_token_advantages: dict[str, list[float]] = {}
+        #: ★ P0：本 batch 被 ``classify_group`` 判为**不该训**（perfect_skip / retry / invalid）
+        #: 的样本键。这些样本没有训练信号，但优势必须由 graspo **显式写成 0**——改前这里
+        #: 什么都不记，整批被判跳过时 ``_overwrite_advantages`` 直接早退、父类的标量 z-score
+        #: advantage 接管（实测 2000 次 loss 调用里 48 次如此，且是全 run 梯度最大的一批：
+        #: |loss| 最高 2.474，正常路径 0.777）。
+        self._graspo_skipped_keys: set[str] = set()
         #: ★ P5/retry：每条样本的真实重试次数（旧实现硬编码 0）。
         self._graspo_retry_counts: dict[str, int] = {}
         self._graspo_injection_failures: int = 0
@@ -148,6 +163,10 @@ class GraspoMsSwiftGRPOTrainer(_MsSwiftGRPOTrainerBase):  # type: ignore[misc,va
         #: ``graspo/advantage_abs_mean`` 读的是 **ms-swift 的标量 advantage**（回退路径），
         #: 不是 graspo 的值——这个区分必须显式（E3 实测：两者会被混读）。
         self._graspo_advantages_injected: bool = False
+        #: ★ P0：本 step 的优势掌控状态，三态取 ``ADVANTAGE_STATE_*``（指标里逐态可见）。
+        #: 只有 ``fallback`` 意味着"没有任何组可判"（缺标注/缺 tokenizer）——
+        #: 那一步的 loss 会被显式置 0（见 ``_compute_loss_and_metrics``），不回退到父类。
+        self._graspo_advantage_state: str = ADVANTAGE_STATE_FALLBACK
         super().__init__(*args, **kwargs)
 
     # ── 重写 1：评分 ──────────────────────────────────────────────────────
@@ -199,8 +218,11 @@ class GraspoMsSwiftGRPOTrainer(_MsSwiftGRPOTrainerBase):  # type: ignore[misc,va
     ) -> tuple[Any, dict[str, Any]]:
         """用 ``GraspoAlgorithmCore.compute_loss`` 替换 ms-swift 内置 GRPO loss。
 
-        **与父类的唯一区别**：``log_probs`` 取**当前策略前向**（而非旧策略的副本），
+        **与父类的区别**：``log_probs`` 取**当前策略前向**（而非旧策略的副本），
         因此 ``ratio = exp(logp_cur − logp_old)`` 不再恒等于 1。
+
+        ★ P0：graspo 没有掌控本步优势时（``_graspo_advantages_injected=False``），
+        loss 被**显式置 0**——不许"没有 graspo 优势"变成"按父类标量优势训练"。
         """
         per_token_logps, _entropies = self._get_per_token_logps_and_entropies(
             model, model_inputs, grpo_batch, compute_entropy=False
@@ -231,6 +253,11 @@ class GraspoMsSwiftGRPOTrainer(_MsSwiftGRPOTrainerBase):  # type: ignore[misc,va
             advantages,
             completion_mask,
         )
+        # ★ P0：没有任何组可判时**显式跳过这一步**（loss = 0），而不是静默地按父类
+        #   标量 advantage 训练。`loss * 0.0` 保留计算图 ⇒ 反传得到零梯度，
+        #   训练循环（梯度累积 / 除 steps）不会因"没有可反传的 loss"而崩。
+        if not getattr(self, "_graspo_advantages_injected", False):
+            loss = loss * 0.0
         self._record_ratio_metrics(
             per_token_logps, old_per_token_logps, completion_mask, advantages, loss
         )
@@ -311,6 +338,7 @@ class GraspoMsSwiftGRPOTrainer(_MsSwiftGRPOTrainerBase):  # type: ignore[misc,va
         """
         tokenizer = self._resolve_tokenizer()
         self._graspo_token_advantages = {}
+        self._graspo_skipped_keys = set()
         self._graspo_retry_counts = {}
         self._graspo_group_decisions = []
         if tokenizer is None or not self._graspo_annotations:
@@ -398,8 +426,11 @@ class GraspoMsSwiftGRPOTrainer(_MsSwiftGRPOTrainerBase):  # type: ignore[misc,va
             self._graspo_group_decisions.append((keys, group_rewards, content_scores, decision))
             if not decision.should_train:
                 # 组决策生效：整组不进 advantage（native 侧同样不进 replay buffer）。
-                # 不删 ``self._graspo_token_advantages`` 里的键（本来就还没写），
-                # 由 ``_overwrite_advantages`` 的"全有或全无"继续兜住缺失样本。
+                # ★ P0：**必须登记**这些键——`_overwrite_advantages` 据此把它们的优势
+                #   **显式写成 0**。改前什么都不记，于是整批被判跳过时注入器早退、
+                #   父类的标量 z-score advantage 接管照训（实测 2000 次 loss 调用里 48 次，
+                #   且是全 run 梯度最大的一批）。
+                self._graspo_skipped_keys.update(keys)
                 logger.warning(
                     "graspo: rollout group skipped by classify_group (decision=%s, "
                     "rewards=%s, content_scores=%s, keys=%s) — this group produces NO training "
@@ -420,49 +451,74 @@ class GraspoMsSwiftGRPOTrainer(_MsSwiftGRPOTrainerBase):  # type: ignore[misc,va
     ) -> None:
         """把 graspo per-token advantage 写进每个 ``grpo_batch``（全有或全无）。
 
-        全有或全无（§2.3 边界校验）：只要本 micro-batch 里有任何一条样本缺 graspo
-        advantage，就整批保留父类的 advantage 并记警告——绝不把"部分覆盖、部分为零"
-        的半成品送进 loss（那会让某些样本被静默地按 0 优势训练）。
+        ★ P0：**只要 graspo 判得出组决策，父类的标量 advantage 就一定不能进 loss。**
+
+        - 有可训练组 ⇒ 写真实 token 级优势；
+        - 组被判 ``perfect_skip`` / ``retry`` / ``invalid``（``should_train=False``）⇒ 这些样本的
+          优势**显式写 0**（这才叫"不训练"，而不是"改按父类标量优势训练"）；
+        - 整批都没有组可判（缺标注 / 缺 tokenizer）⇒ 优势同样清零，状态记 ``fallback``，
+          由 :meth:`_compute_loss_and_metrics` 把这一步的 loss **显式置 0**。
+
+        改前的缺陷：整批被判跳过时直接 ``return``，``injected=False``，父类标量 z-score
+        advantage 接管——实测 2000 次 loss 调用里 48 次走这条路径，且是全 run 梯度最大的一批。
+
+        全有或全无（§2.3 边界校验）：本 micro-batch 里出现既不"可训练"也不"已判跳过"的样本
+        键，就是对齐被破坏，**显式失败**（契约 I2），绝不静默保留父类 advantage。
         """
         import torch
 
-        if not self._graspo_token_advantages:
-            # 没有任何可训练组：保留父类的标量 advantage（透明退路，§3.2），
-            # 但把"这一批的 advantage 不是 graspo 的"这件事记进指标。
-            self._graspo_advantages_injected = False
-            return
         chunks = self.split_by_mini_batches(samples)
         if len(chunks) != len(batch_encoded_inputs):
             raise RuntimeError(
                 f"graspo advantage injection misaligned: {len(chunks)} sample chunks vs "
                 f"{len(batch_encoded_inputs)} encoded batches"
             )
+        trainable = self._graspo_token_advantages
+        skipped = getattr(self, "_graspo_skipped_keys", set())
+        controlled = bool(trainable or skipped)
         for chunk, encoded in zip(chunks, batch_encoded_inputs):
             keys = [_sample_key(sample) for sample in chunk]
-            missing = [key for key in keys if key not in self._graspo_token_advantages]
-            if missing:
-                # ★ P5/G2：缺键 = 对齐被破坏 ⇒ **显式失败**（契约 I2）。
-                #   旧实现只记警告并 `continue`（保留父类 advantage）⇒ 静默错位面。
-                raise AlignmentError(
-                    f"graspo advantage 注入按键失配：本 chunk 缺 {missing[:3]}（I2）。"
-                    "禁止在缺键时静默保留父类 advantage。"
-                )
+            if controlled:
+                missing = [key for key in keys if key not in trainable and key not in skipped]
+                if missing:
+                    # ★ P5/G2：缺键 = 对齐被破坏 ⇒ **显式失败**（契约 I2）。
+                    #   旧实现只记警告并 `continue`（保留父类 advantage）⇒ 静默错位面。
+                    raise AlignmentError(
+                        f"graspo advantage 注入按键失配：本 chunk 缺 {missing[:3]}（I2）。"
+                        "禁止在缺键时静默保留父类 advantage。"
+                    )
             grpo_batch = encoded["grpo_batch"]
             mask = grpo_batch.completion_mask
             dtype = (
                 grpo_batch.advantages.dtype if grpo_batch.advantages is not None else torch.float32
             )
+            # 起点是**全 0**（不是父类的优势）：被判跳过的样本留在这里就是 0 优势，
+            # 无组可判（fallback）时也同样是全 0 —— 父类标量优势一滴都不许漏进来。
             advantages = torch.zeros(mask.shape, dtype=dtype, device=mask.device)
             for row, key in enumerate(keys):
+                per_token = trainable.get(key) if controlled else None
+                if per_token is None:
+                    continue  # 该组被判不该训（或无组可判）⇒ 该行保持全 0
                 positions = mask[row].nonzero(as_tuple=True)[0]
-                per_token = self._graspo_token_advantages[key]
                 count = min(len(per_token), int(positions.numel()))
                 if count:
                     advantages[row, positions[:count]] = torch.tensor(
                         per_token[:count], dtype=dtype, device=mask.device
                     )
             grpo_batch.advantages = advantages * mask.to(dtype)
+        if not controlled:
+            # 没有任何组可判：优势已清零，loss 由 `_compute_loss_and_metrics` 显式置 0。
+            self._graspo_advantages_injected = False
+            self._graspo_advantage_state = ADVANTAGE_STATE_FALLBACK
+            self._warn_injection(
+                "no rollout group was classifiable (missing annotations or tokenizer) — this "
+                "step's loss is forced to 0 instead of training on ms-swift scalar advantages"
+            )
+            return
         self._graspo_advantages_injected = True
+        self._graspo_advantage_state = (
+            ADVANTAGE_STATE_INJECTED_NONZERO if trainable else ADVANTAGE_STATE_INJECTED_ZERO
+        )
 
     def _record_ratio_metrics(
         self,
@@ -527,6 +583,18 @@ class GraspoMsSwiftGRPOTrainer(_MsSwiftGRPOTrainerBase):  # type: ignore[misc,va
         metrics["graspo/advantages_injected"].append(
             1.0 if getattr(self, "_graspo_advantages_injected", False) else 0.0
         )
+        # ★ P0：三态各一条序列——「注入且非零」/「注入但全 0（组被判跳过）」/「回退」。
+        # 回退次数必须恒为 0（P0 修复前它每条被跳过的组都记一次，而 loss 照训）。
+        # 单看 advantages_injected 分不出前两者，所以必须逐态落成独立序列。
+        state = getattr(self, "_graspo_advantage_state", ADVANTAGE_STATE_FALLBACK)
+        for state_name in (
+            ADVANTAGE_STATE_INJECTED_NONZERO,
+            ADVANTAGE_STATE_INJECTED_ZERO,
+            ADVANTAGE_STATE_FALLBACK,
+        ):
+            metrics[f"graspo/advantage_state_{state_name}"].append(
+                1.0 if state == state_name else 0.0
+            )
         logger.info(
             "graspo ppo ratio: mean=%.10f mean|Δ|=%.6e max|Δ|=%.6e ratio_is_exactly_one=%s "
             "loss=%.6e adv|mean|=%.6e groups=%s",
@@ -541,6 +609,7 @@ class GraspoMsSwiftGRPOTrainer(_MsSwiftGRPOTrainerBase):  # type: ignore[misc,va
                 "trainable": trainable_groups,
                 "decisions": decisions,
                 "injected": bool(getattr(self, "_graspo_advantages_injected", False)),
+                "advantage_state": state,
             },
         )
 

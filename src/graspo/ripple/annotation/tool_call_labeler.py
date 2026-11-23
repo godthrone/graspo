@@ -15,6 +15,34 @@
   与正确标签共享的前缀字符（``</paramet``）标 S，仅首个不匹配字符（``r``）标 E
 - tokenizer 无关：标注定义在字符级，token 由 offset_mapping 派生，
   任何 tokenizer 都不会把纯正确前缀字符标成 E
+
+## ★★ P1（2026-11-18）：工具名（``<function=NAME>`` 的 NAME）是一个**可评分字段**
+
+改前缺陷（真实 rollout 实测）：工具名整段走逐字符比对 ⇒ 只有**首个不匹配字符**标 E(−1.0)，
+其后全 D，而名字**前面**的 22 个结构 token（``<tool_call>`` + 换行 + ``<function=``）都是
++1.0 ⇒ 工具名写错的 completion **净得 +21（正的）**。后果：把工具名叫错反而拿正梯度。
+
+修法：NAME 段不再当"结构字符"逐个比对，而按**身份字段**处理（工具名对就整段对、错就整段
+错，没有"写对前 8 个字母"的部分分）：
+
+- NAME 与 GT 一致 ⇒ 整段 S(+1.0)，与改前逐字符**相同**（既有正确样本的标注一字不变）
+- NAME 写错 ⇒ 从**首个不匹配字符**起整段标 ``VALUE`` + ``field=TOOL_NAME_FIELD``
+  ⇒ :func:`graspo.ripple.annotation.advantages.field_score` 判 0 ⇒ 该段每个 token 拿 −1.0；
+  随后 ``drop_from``（「第一个错误之后扔掉」——工具名错时后面的参数没有训练意义）
+- NAME 比 GT 短（模型在"名字该继续"处写了 ``>``）⇒ 该处标 E + drop（残缺名字，
+  与参数残缺标签同一语义）
+- **名字后缺 ``>``**（名字段里撞见 ``<``，说明找到的 ``>`` 属于后面的标签）⇒ 同上一条：
+  E 标在「应出现 ``>`` 的位置」（即那个 ``<`` 处）+ drop，**不产生 V 段**
+
+最后一条是 B1 修复（2026-11-18 复审）：``_line_local_gt`` 只保证 ``>`` 与本行同名，
+``<function=rotate_arm<parameter=angle_deg>`` 会拿到 ``angle_deg>`` 的 ``>`` ⇒
+名字段成了 ``rotate_arm<parameter=angle_deg``，被当成"写错的值"整段 −1（实测一条 28 个 −1、
+Σadv −4.0），把**写对的工具名**与后面的结构字符一起罚进负分。判据「名字段含 ``<`` ⇒ 缺 ``>``」
+把它拉回既有口径。GT 名自身含 ``<`` 的极端情况不受影响（先比 ``model_name == gt_name``，
+相等即判对）：形如 ``<function=a<b>`` 且 GT 名就是 ``a<b`` 时仍是整段 S。
+
+⛔ 不动「第一个错误之后 drop」这条原则本身（参数/闭合标签拼错仍走它）；
+⛔ 工具名写错**不产生 E 标签**——保住既有跨用例不变式「E 之后必须全部为 D」。
 """
 
 from dataclasses import dataclass
@@ -46,6 +74,11 @@ _PARAMETER_MARK = PARAMETER_OPEN
 _FUNCTION_CLOSE = FUNCTION_CLOSE
 _PARAMETER_CLOSE = PARAMETER_CLOSE
 _TOOL_CALL_CLOSE = TOOL_CALL_CLOSE
+
+#: 工具名字段的 field 名（P1）。``<function=NAME>`` 的 NAME 是可评分的身份字段，
+#: ``advantages.gt_value_for_field`` 见到它时取 ``tool_calls[0].name`` 作 GT。
+#: 双下划线包裹的保留名：参数名来自数据集，不会以 ``__`` 开头，故不会与真实字段撞车。
+TOOL_NAME_FIELD = "__tool_name__"
 
 
 def _blank(text: str, start: int, end: int) -> bool:
@@ -160,6 +193,101 @@ class _Annotator:
             end += 1
         return True, end
 
+    def match_function_name(self, pos: int, gt_name: str | None) -> tuple[bool, int]:
+        """比对 ``<function=NAME>``：``<function=`` 与 ``>`` 是结构，**NAME 是可评分字段**。
+
+        P1 的落点：NAME 若走 ``match_expected``（逐字符），写错时只有首个不匹配字符吃 −1、
+        其后全 D，而名字前面的结构 token 全是 +1 ⇒ 整条 completion 仍是正的（实测 +21）。
+        这里把 NAME 当身份字段：整段对 ⇒ 全 S；写错 ⇒ 写错那段整段 ``VALUE``（−1 每 token）+ drop。
+
+        :param pos: 当前推进位置（``<tool_call>`` 之后）
+        :param gt_name: GT 工具名；``None``（targets 里没有工具名）时退回改前的逐字符比对
+        :return: ``(matched, new_pos)``；``matched=False`` 时已标错并截断，调用方应停止
+        """
+        first = _first_non_blank(self.text, pos, self.n)
+
+        # 1. ``<function=`` 前缀是结构：拼错仍按「首个不匹配 E + 其后 D」
+        for offset, expected_char in enumerate(_FUNCTION_MARK):
+            idx = first + offset
+            if idx >= self.n:
+                # 文本在前缀中途结束：已有字符全正确 → 结构不完整，无 E
+                return True, self.n
+            if self.text[idx] != expected_char:
+                self.tags[idx] = CharTag.ERROR
+                self.drop_from(idx + 1)
+                return False, idx
+            self.tags[idx] = CharTag.STRUCTURE
+        name_start = first + len(_FUNCTION_MARK)
+
+        # 2. 名字段的边界：``>`` 必须与本行同名（跨行 find 会把后面的 ``>`` 误当闭合）
+        name_end = _line_local_gt(self.text, name_start, self.n)
+        if gt_name is None or name_end < 0:
+            # 无 GT 名 / 名字段无法界定 ⇒ 退回改前的逐字符比对（含结构不完整语义）
+            return self.match_expected(name_start, f"{gt_name}>" if gt_name else "?>")
+
+        model_name = self.text[name_start:name_end]
+        if model_name == gt_name:
+            for i in range(name_start, name_end):
+                self.tags[i] = CharTag.STRUCTURE
+            end = name_end + 1
+            self.tags[name_end] = CharTag.STRUCTURE  # '>' 是结构
+        elif "<" in model_name:
+            # 名字段里出现 ``<`` ⇒ 找到的 ``>`` 不是名字的闭合，而是**后面标签**（
+            # ``<parameter=…`` / ``</function>``）的 ``>`` ⇒ 名字后缺 ``>``。
+            # 按既有 T31/T32 口径（`<parameter=` 残缺标签）处理：在应出现 ``>`` 的位置
+            # 标 E + drop，**不产生 V 段**。
+            # 为什么不能走下面的 P1 分支：那会把 ``<parameter=angle_deg`` 这些**结构字符**
+            # 当 ``VALUE(__tool_name__)`` 按「值错」扣 −1（实测一条 28 个 −1、Σadv −4.0），
+            # 而名字本身可能写对了 ⇒ 正确 token 吃负分，正是 P1 要避免的误伤。
+            # 顺序上先比 ``model_name == gt_name``：GT 名字自身含 ``<``（极端情况）时仍按
+            # 「名字写对」处理，不被这条判据误伤。
+            return self.match_expected(name_start, f"{gt_name}>")
+        else:
+            common = _common_prefix_length(model_name, gt_name)
+            for i in range(name_start, name_start + common):
+                self.tags[i] = CharTag.STRUCTURE  # 写对的那部分仍是结构（+1.0）
+            if common < len(model_name):
+                # 从首个不匹配字符起整段是「错的值」：整段吃 −1，随后全 D
+                for i in range(name_start + common, name_end):
+                    self.tags[i] = CharTag.VALUE
+                    self.fields[i] = TOOL_NAME_FIELD
+                self.drop_from(name_end)
+            else:
+                # 名字比 GT 短：模型在"名字该继续"处写了 '>'（残缺名字）⇒ E 于该处 + drop
+                self.tags[name_end] = CharTag.ERROR
+                self.drop_from(name_end + 1)
+            return False, name_end
+        # 3. 匹配成功：吞并紧随换行（与 ``match_expected`` 的既有行为一致）
+        if end < self.n and self.text[end] == "\n":
+            self.tags[end] = CharTag.STRUCTURE
+            end += 1
+        return True, end
+
+
+def _line_local_gt(text: str, start: int, n: int) -> int:
+    """从 start 起**同一行内**首个 ``>`` 的下标；同行无 ``>`` 返回 -1。
+
+    为什么限行内：名字段若跨行 ``find(">")``，会把后面 ``</function>`` 的 ``>`` 当成名字闭合
+    （与 ``_peek_param_chunk`` 同一防呆理由，T32 修复口径）。
+
+    ⚠ 同行也仍可能拿到**后面标签**的 ``>``（``<function=name<parameter=x>``）——这一层由
+    调用方 :meth:`_Annotator.match_function_name` 用「名字段含 ``<``」判据兜住（B1 修复）。
+    """
+    newline = text.find("\n", start)
+    gt = text.find(">", start)
+    if gt < 0 or gt >= n or (newline >= 0 and gt > newline):
+        return -1
+    return gt
+
+
+def _common_prefix_length(left: str, right: str) -> int:
+    """两段文本的公共前缀长度（用于定位「写错的那一段」）。"""
+    limit = min(len(left), len(right))
+    index = 0
+    while index < limit and left[index] == right[index]:
+        index += 1
+    return index
+
 
 @dataclass(frozen=True)
 class _ParamChunk:
@@ -238,9 +366,8 @@ def annotate_tool_call(
     param_types = _target_param_types(targets, fn_name) if fn_name else {}
 
     # ---- 3. 期望 mark 序列逐字符比对 ----
-    # 3.1 <function=NAME>
-    fn_mark = f"{_FUNCTION_MARK}{fn_name}>" if fn_name else f"{_FUNCTION_MARK}?>"
-    ok, pos = a.match_expected(pos, fn_mark)
+    # 3.1 <function=NAME>：NAME 是**可评分字段**（P1，见模块 docstring）
+    ok, pos = a.match_function_name(pos, fn_name)
     if not ok:
         return a.tags, a.fields
 

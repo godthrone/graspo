@@ -4,7 +4,7 @@
 - 标注与期望逐字符一致（S/V/T/W/E/D）
 - 长度与 completion 一致
 - E 之后全部为 D（严格对齐截断）
-- error_pos 等于首个 E 下标
+- error_pos 等于首个 E 下标（无 E 的行为空，见 v3.3）
 
 v3 相对于 v2 的变更（2026-08-07，与 v14 双工具数据同步）：
 - T 系列 33 条换 v14 双工具格式（rotate_arm/extend_arm，按 GT action_type 映射）；
@@ -23,6 +23,27 @@ v3.1 变更（2026-08-08，用户裁定闭合后一刀切规则）：
   T33/T40 从"换行 W + 第二个 <tool_call> 的 < 为 E"改"闭合后换行即 E"）
 - 新增 5 条真实 rollout 形态：T42-T46（间隔杂散标签夹 JSON/自然语言、
   紧邻双调用、截断第二调用、首调用错误+尾部多调用）
+
+v3.3 变更（2026-11-18，P1：工具名是可评分字段）：
+- **工具名写错 ⇒ 名字段整段 VALUE（不是 E）**：``<function=NAME>`` 的 NAME 按身份字段评分，
+  写错时从首个不匹配字符起整段标 V（该段每个 token 拿 −1），其后照旧 drop。
+  改前只把首个不匹配字符标 E（名字前 22 个结构 token 全 +1 ⇒ 整条净得 +21，**正的**）。
+- 受影响的行：T13（``robot_contol`` 拼错）、T34/T46（选错/写坏工具名）⇒
+  annotation 由 ``…E D…`` 改为 ``…V… D…``，``error_pos`` 如实置空（这些行没有 E 标签了）。
+- 不变式随之推广：``test_error_then_dropped_invariant`` → ``test_dropped_tail_invariant``
+  （切点 = 首个 E 或首个 D，其后仍必须全 D）。
+
+v3.3 修正（2026-11-18 复审阻断 B1：工具名后缺 ``>``）：
+- 判据修正：``<function=NAME`` 后面本该是 ``>``。若 NAME 段里撞见 ``<``
+  （形如 ``<function=think</function>`` / ``<function=rotate_arm<parameter=…>``），
+  说明找到的 ``>`` 属于**后面那个标签**，不是名字的闭合 ⇒ 按「缺 ``>``」处理：
+  E 于「应出现 ``>`` 的位置」+ 其后全 D，**不产生 V 段**。
+- 修正对象：T45 原期望是 ``…15 个 V…``，其中 10 个是 ``</function`` 这串**结构字符**
+  被当成"值错"（连它前面写对的工具名一起被罚）⇒ 现恢复为 ``22S + E(22) + D…``
+  （与 HEAD 一致，``error_pos`` 回到 22）。T46 不受影响：它的 ``think>`` 有 ``>``，
+  名字写错仍按 P1 走 V 段。
+- 为什么之前没被抓住：T45/T46 的「名字段 V 到哪为止」完全由实现决定，没有独立断言。
+  现在缺 ``>`` 的形态由 ``test_tool_name_advantage.py``「判据 4」用字面期望钉住。
 """
 
 import json
@@ -104,16 +125,23 @@ def test_all_tags_are_valid_enum() -> None:
             assert ch in "SVTWED", f"{row['id']} 含非法标注字符 {ch!r}"
 
 
-def test_error_then_dropped_invariant() -> None:
-    """E 之后必须全部为 D（严格对齐截断）。"""
+def test_dropped_tail_invariant() -> None:
+    """错误/截断点之后必须全部为 D（严格对齐截断）。
+
+    P1（2026-11-18）把「错误点」的判据从"首个 E"推广为"首个 E **或** 首个 D"：
+    工具名写错的 completion **不产生 E**（名字段是 VALUE，按字段评分拿 −1），
+    其后照旧 drop ⇒ 形态是 ``S…V…D…``。判据本身没放松——切点之后仍必须全是 D，
+    ⛔ 不允许出现 D 之后再冒出一个 S/V/W/T。
+    """
     for row in _load_testset():
         ann = row["annotation"]
-        e = ann.find("E")
-        if e == -1:
-            assert "D" not in ann, f"{row['id']} 无 E 但含 D"
-        else:
-            tail = ann[e + 1 :]
-            assert all(c == "D" for c in tail), f"{row['id']} E 之后存在非 D 字符"
+        cut = next((i for i, char in enumerate(ann) if char in "ED"), -1)
+        if cut == -1:
+            continue
+        tail = ann[cut + 1 :]
+        assert all(c == "D" for c in tail), (
+            f"{row['id']} 错误/截断点（@{cut}={ann[cut]}）之后存在非 D 字符"
+        )
 
 
 def test_error_pos_matches_first_e() -> None:

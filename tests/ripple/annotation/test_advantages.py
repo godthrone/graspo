@@ -2,7 +2,7 @@
 
 覆盖(方案 token-reward-advantage-design-v0.20.md §3):
 - 字段级 raw(数字容差/字符串/JSON 数组存在性)
-- μ_f 组内相对化(合成组精确值 + 全对组零信号 + n=1 安全零)
+- 值 token 逐条闭合(只看自己对不对):合成组精确值 + 全对组 +1 + n=1 仍 +1
 - 标注驱动 broken(T04 拼错:前缀 S +1 / E −1 / D 0)
 - 末尾 EOS 惩罚(乱码/缺闭合/半截 JSON;truncated_by_max 除外;完整无)
 - 参数校验与输出长度
@@ -168,61 +168,55 @@ def test_field_score_missing_gt_zero():
     assert field_score("40.0", None, 0.2) == 0.0
 
 
-# ── 组内相对化(μ_f) ────────────────────────────────────────────────────────────
+# ── 值 token 只看自己对不对（P2：μ_f 已删）────────────────────────────────────
 
 
-def test_synthetic_group_mu_and_adv():
-    """A 完美 / B 容差内 / C 值错+动作错 → μ_f 与 per-token adv 精确值。"""
+def test_synthetic_group_per_token_value_advantage():
+    """A 完美 / B 容差内 / C 值错+动作错 → 每个值 token 只看自己对不对（±1）。
+
+    P2 口径变更（2026-11-18）：旧式 ``adv(V) = raw − μ_f``（组内均值）已删除。
+    同一批构造在旧式下的期望值是 ``1−2/3``、``0−2/3`` 这类**随邻居变化**的数；
+    现在 A/B 的值 token 恒为 ``+1.0``，C 的值 token 恒为 ``−1.0``（容差死区外的
+    ``raw≈0.462`` 按「非满分即错」映射到 −1.0，规则见 ``advantages.value_advantage``）。
+    """
     comps = [
-        ROBOT.format("逆时针旋转", "16.9"),  # A:action 1.0, angle 1.0
-        ROBOT.format("逆时针旋转", "15"),  # B:action 1.0, angle 1.0(容差内)
-        ROBOT.format("顺时针旋转", "40"),  # C:action 0.0, angle ≈0.462
+        ROBOT.format("逆时针旋转", "16.9"),  # A:action 对, angle 满分
+        ROBOT.format("逆时针旋转", "15"),  # B:action 对, angle 容差内 ⇒ 满分
+        ROBOT.format("顺时针旋转", "40"),  # C:action 错, angle raw≈0.462(非满分)
     ]
     adv = _group_adv(comps, "tool_call", GT_ROBOT)
 
-    mu_action = 2.0 / 3.0
-    angle_c = 1.0 / (1.0 + (40 - 16.9) / 16.9 - 0.2)
-    mu_angle = (1.0 + 1.0 + angle_c) / 3.0
-
-    for i, expect_action, expect_angle in [
-        (0, 1.0 - mu_action, 1.0 - mu_angle),
-        (1, 1.0 - mu_action, 1.0 - mu_angle),
-        (2, 0.0 - mu_action, angle_c - mu_angle),
-    ]:
+    for i, expected in [(0, 1.0), (1, 1.0), (2, -1.0)]:
         idx = _v_token_indices(comps[i], "tool_call", GT_ROBOT)
-        for t in idx["action_type"]:
-            assert adv[i][t] == pytest.approx(expect_action)
-        for t in idx["angle_deg"]:
-            assert adv[i][t] == pytest.approx(expect_angle)
-        # S token 全 +1.0(不受相对化影响)
-        assert adv[i][0] == 1.0  # <tool_call> 首字符是 S
-        # 组内含相对化信号,不可能全是 +1
-        assert not all(a == 1.0 for a in adv[i])
+        for token in idx["action_type"]:
+            assert adv[i][token] == pytest.approx(expected), f"completion {i} 的 action_type"
+        for token in idx["angle_deg"]:
+            assert adv[i][token] == pytest.approx(expected), f"completion {i} 的 angle_deg"
+        # S token 一律 +1.0（与值评分无关）
+        assert adv[i][0] == 1.0
 
 
-def test_single_clean_group_v_zero():
-    """n=1:组内只有一条 → μ_f=raw → V adv=0(安全零),S +1。"""
-    comp = ROBOT.format("逆时针旋转", "40.0")
+def test_single_clean_completion_values_are_plus_one():
+    """n=1（组内只有一条）：正确值恒为 +1.0——旧式的"安全零"正是 P2 要删的信号黑洞。"""
+    comp = ROBOT.format("逆时针旋转", "16.9")  # 两个字段都与 GT 一致
     adv = _group_adv([comp], "tool_call", GT_ROBOT)[0]
     idx = _v_token_indices(comp, "tool_call", GT_ROBOT)
-    for t in idx["action_type"] + idx["angle_deg"]:
-        assert adv[t] == 0.0
-    # S token +1.0
+    for token in idx["action_type"] + idx["angle_deg"]:
+        assert adv[token] == 1.0, f"单条组的正确值必须 +1.0，实测 {adv[token]}"
     assert adv[0] == 1.0
-    # 输出长度 == 字符数
     assert len(adv) == len(comp)
 
 
-def test_all_correct_group_zero_content():
-    """组内 8 条全对:μ_f=1 → V adv=0(目标态,不训练)。"""
+def test_all_correct_group_value_tokens_are_plus_one():
+    """组内 8 条全对：值 token 恒 +1.0（旧式 μ_f=1 ⇒ 0，真实数据里 0 组全对时也一直为 0）。"""
     comp = ROBOT.format("逆时针旋转", "16.9")
     comps = [comp] * 8
     adv = _group_adv(comps, "tool_call", GT_ROBOT)
     for i in range(8):
         idx = _v_token_indices(comps[i], "tool_call", GT_ROBOT)
-        for t in idx["action_type"] + idx["angle_deg"]:
-            assert adv[i][t] == pytest.approx(0.0)
-        assert adv[i][0] == 1.0  # 格式仍 +1(收敛后靠 ratio 退场)
+        for token in idx["action_type"] + idx["angle_deg"]:
+            assert adv[i][token] == 1.0, f"全对组里正确 token 必须 +1.0，实测 {adv[i][token]}"
+        assert adv[i][0] == 1.0
 
 
 # ── 标注驱动 broken ────────────────────────────────────────────────────────────
@@ -378,6 +372,72 @@ def test_output_length_matches_tokens():
     assert len(adv) == n_gen
 
 
+# ── 数据集驱动的**字面**期望值（⛔ 不调用被测实现算期望）───────────────────────
+
+#: 非值 token 的期望优势（P2 口径，S/E/T/W/D → 固定值）。
+_NON_VALUE_ADV = {"S": 1.0, "E": -1.0, "T": 0.0, "W": 0.0, "D": 0.0}
+
+#: 数据集每行「值段期望优势」，按出现顺序列出 ``(completion 里的字面值文本, 期望优势)``。
+#: **来源**：人工拿 ``row["ground_truth"]`` 与这些字面值逐字段比对得出（数值按
+#: ``numeric_tolerance=0.2`` 的死区判断对错），不经过 ``value_spans`` / ``field_score`` /
+#: ``gt_value_for_field``——否则就是拿实现验证实现（B3）。
+#: 只登记「完整且无错误定位」的行（else 分支）；带 E / 结构不完整的行走另一支。
+_VALUE_ADV: dict[str, list[tuple[str, float]]] = {
+    # JSON：数组元素没有字段名 ⇒ gt_value_for_field 取不到 GT ⇒ 0.0（无信号，不是"值错"）
+    "J01": [('"9999999000001"', 0.0), ('"999999900000001"', 0.0), ('"EXMPL-APN-00000"', 0.0)],
+    "J02": [('"9999999000001"', 0.0), ('"999999900000001"', 0.0), ('"EXMPL-APN-00000"', 0.0)],
+    "J03": [('"9999999000001"', 0.0), ('"999999900000000"', 0.0), ('"EXMPL-APN-00000"', 0.0)],
+    "J04": [('"9999999000001"', 0.0)],
+    "J08": [('"9999999000001"', 0.0), ('"999999900000001"', 0.0), ('"EXMPL-APN-00000"', 0.0)],
+    "J12": [('"CMIOT"', 0.0), ('"IMS"', 0.0)],
+    "J15": [('"9999999000001"', 0.0), ('"999999900000001"', 0.0), ('"EXMPL-APN-00000"', 0.0)],
+    "J16": [('"Alice"', 0.0), ("30", 0.0)],
+    # ★ JSON 语义：``true``/``false`` 与 GT 的 True/False 只有走 json.loads 才相等 ⇒ +1.0。
+    #   回退掉 JSON 语义（回到"原样字符串比较"）这几项会变 −1.0，本表随即变红。
+    #   ``null`` 是已知边界：GT 为 null 与「无 GT」哨兵撞车 ⇒ 0.0（复审警告 #7，未动口径）。
+    "J17": [("true", 1.0), ("false", 1.0), ("null", 0.0)],
+    "J18": [('"CMIOT"', 0.0), ('"IMS"', 0.0), ('"APN"', 0.0)],
+    # ★ 转义字符串同理：``"hello\\nworld"``（字面反斜杠 n）经 JSON 解码后等于 GT 里的真换行。
+    "J19": [('"hello\\nworld"', 1.0), ('"C:\\\\Users"', 1.0)],
+    "J21": [('"CMIOT"', 0.0), ('"sub1"', 0.0), ('"sub2"', 0.0), ('"APN"', 0.0)],
+    # tool_call：值字面与 GT 一致 ⇒ +1.0（数值在容差死区内也算对）
+    "T01": [("逆时针旋转", 1.0), ("40.0", 1.0)],
+    "T03": [("逆时针旋转", 1.0), ("40.0", 1.0)],
+    "T11": [("顺时针旋转", 1.0), ("30", 1.0)],
+    # 工具名写错（P1）⇒ 名字段整段 VALUE ⇒ 每个字符 −1.0
+    "T13": [("bot_contol", -1.0)],
+    "T15": [("顺时针旋转", 1.0), ("15", 1.0)],
+    "T16": [("40.0", 1.0), ("逆时针旋转", 1.0)],
+    # 两个字段都与 GT 不符 ⇒ 整段 −1.0
+    "T18": [("逆时针旋转", -1.0), ("100", -1.0)],
+    "T19": [("顺时针旋转", 1.0), ("16.9", 1.0)],
+    "T27": [("45.0", 1.0)],
+    "T30": [("Beijing", 1.0)],
+    "T34": [("extend_arm", -1.0)],
+    # 值本身含 '<'：与 GT 不符 ⇒ −1.0（值里的 '<' 不影响名字段的判据）
+    "T39": [("a<b", -1.0), ("40.0", 1.0)],
+    "T41": [("逆时针旋转", 1.0), ("40.0", 1.0)],
+    # 名字写错但 '>' 在位 ⇒ P1 的名字段 V（−1.0），5 个字符
+    "T46": [("think", -1.0)],
+}
+
+
+def _value_runs(annotation: str) -> list[tuple[int, int]]:
+    """从数据集的 ``annotation`` 列取值段的字符区间（连续 V 的一段一个），按出现顺序。"""
+    runs: list[tuple[int, int]] = []
+    index = 0
+    while index < len(annotation):
+        if annotation[index] != "V":
+            index += 1
+            continue
+        end = index
+        while end < len(annotation) and annotation[end] == "V":
+            end += 1
+        runs.append((index, end))
+        index = end
+    return runs
+
+
 # ── 数据集驱动(35 条)───────────────────────────────────────────────────────────
 
 
@@ -388,7 +448,11 @@ def _load_testset() -> list[dict[str, str]]:
 
 @pytest.mark.parametrize("row", _load_testset(), ids=lambda r: r["id"])
 def test_testset_advantages(row: dict[str, str]) -> None:
-    """35 条数据集:adv 长度对齐;完整 case 无 −1;不完整 case 末尾 −1。"""
+    """数据集逐行:adv 长度对齐;带 E/结构不完整 ⇒ 至少一个 −1;完整行 ⇒ 逐字符等于字面期望。
+
+    完整行（else 分支）的期望值**全部预先写死**（tag 取自数据集的 ``annotation`` 列，
+    值段的优势取自 ``_VALUE_ADV``），⛔ 不调用被测实现去算期望——理由见 B3 修复说明。
+    """
     cid = row["id"]
     format_type = row["type"]
     completion = row["completion"]
@@ -414,5 +478,53 @@ def test_testset_advantages(row: dict[str, str]) -> None:
         # 有错误定位或结构不完整(缺闭合/乱码/半截)→ 至少一个 −1(含末尾 EOS)
         assert adv.count(-1.0) >= 1
     else:
-        # 完整且无错误定位:无 −1
-        assert -1.0 not in adv
+        # 完整且无错误定位：**逐字符**断言整条优势等于预先写死的期望值。
+        # 期望的两个来源都不是被测实现（B3 修复：原写法用 value_spans/field_score 现场重算，
+        # 等于拿实现验证实现——把 field_score 换回旧实现后 J17/J19 被算成 −1 仍然全绿）：
+        #   a) tag 序列取自数据集的 ``annotation`` 列（数据集本身就是标注规范）；
+        #   b) 值段的期望优势取自 ``_VALUE_ADV``（人工按 ground_truth 比对写死的字面值）。
+        # V 段先占 0.0 占位，随后整段被 ``_VALUE_ADV`` 覆盖（漏登记 ⇒ 下面的逐字符比对必红）
+        expected = [_NON_VALUE_ADV.get(row["annotation"][i], 0.0) for i in range(len(completion))]
+        runs = _value_runs(row["annotation"])
+        literal_values = [completion[start:end] for start, end in runs]
+        want = _VALUE_ADV.get(cid, [])
+        assert literal_values == [text for text, _ in want], (
+            f"{cid} 值段字面值变了（{literal_values} vs {[t for t, _ in want]}）——"
+            "数据集或标注口径变了，必须同步更新 _VALUE_ADV"
+        )
+        for (start, end), (_, value_adv) in zip(runs, want, strict=True):
+            for position in range(start, end):
+                expected[position] = value_adv
+        mismatch = [i for i, (got, exp) in enumerate(zip(adv, expected, strict=True)) if got != exp]
+        assert not mismatch, (
+            f"{cid} 逐字符优势与字面期望不符："
+            f"{[(i, completion[i], adv[i], expected[i]) for i in mismatch[:5]]}"
+        )
+
+
+# ── 值文本的 JSON 语义（P2 的必要前提：正确输出不得吃 −1）──────────────────────
+
+
+def test_value_tokens_of_json_literals_are_plus_one():
+    """``true`` / ``false`` 与**转义字符串**按 JSON 语义判对 ⇒ 值 token 全是 +1.0。
+
+    为什么必须单独钉这一条：标注是字符级的，值文本原样来自模型输出，所以 ``true`` 与 GT 的
+    ``True``、``"第一行\\n第二行"``（字面反斜杠 n）与 GT 里真正的换行，只有再走一遍
+    ``json.loads`` 才相等（见 ``advantages._json_decoded_value``）。这条语义一旦被回退成
+    "原样字符串比较"，**正确输出**就会被算成"值错"吃 −1——P2 最危险的失效模式。
+
+    已知边界（本测试不覆盖）：GT 值本身是 JSON ``null`` 时 ``gt_value_for_field`` 返回 ``None``，
+    与「没有 GT」的哨兵撞车 ⇒ 该字段的值 token 目前是 0.0 而不是 +1.0（复审警告 #7 的口径问题，
+    改动它属于 P2 语义，本任务未动）。
+    """
+    gt = json.dumps({"ok": True, "flag": False, "text": "第一行\n第二行"}, ensure_ascii=False)
+    completion = '```json\n{"ok": true, "flag": false, "text": "第一行\\n第二行"}\n```'
+    adv = _group_adv([completion], "json", gt)[0]
+
+    for literal in ("true", "false", '"第一行\\n第二行"'):
+        start = completion.index(literal)
+        for position in range(start, start + len(literal)):
+            assert adv[position] == 1.0, (
+                f"字面值 {literal!r} 的 token@{position} 必须 +1.0（JSON 语义判对），实测 "
+                f"{adv[position]}"
+            )
