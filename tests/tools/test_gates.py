@@ -530,7 +530,7 @@ def test_untracked_ignored_file_is_still_out_of_scope(tmp_path: Path) -> None:
 _URL_IP = "http://10.99.88." + "77/v1/models"
 _URL_IP_HTTPS = "https://172.20." + "5.9"
 _URL_IP_CURL = "curl http://192.168." + "1.10/v1/models"
-_LOCVG_PREFIX = "/data/" + "remote"
+_LOCVG_PREFIX = "/data/" + "loc" + "vg"
 _LOCVG_ACCT = _LOCVG_PREFIX + "/" + "sampleacct"
 
 
