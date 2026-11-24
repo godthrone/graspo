@@ -143,7 +143,9 @@ def test_card_pool_caliber_is_written_down_in_the_generator():
     assert "建议首选卡位" in src                    # gpus 的现行语义
     assert "不抢占他人" in src                      # 保留的硬要求
     assert "gpu_idle_assert" in src or "flow.guard.idle" in src   # 判据指向实现
-    assert "remote" not in src
+    # 反向断言：生成器源码不得再出现该第三方卡归属名。字面量同样拆成两段拼接——
+    # 断言本身必须保留（它是防护用例），但测试文件不该成为这个词的泄露源。
+    assert ("phys" + "brain") not in src
 
 
 def test_override_only_changes_gpus():
