@@ -10,7 +10,7 @@
    修复前这里会**无界挂死**，所以父进程设了硬墙钟——超时即判失败并杀进程，
    绝不把 CI 挂住；
 3. 后端参数化：``gloo`` 在**无 GPU 也能跑**（本机即可验证机制），
-   ``nccl`` 在 ≥2 卡时自动启用（228 容器内的真后端覆盖）。**需要 2 卡的用例
+   ``nccl`` 在 ≥2 卡时自动启用（远端机容器内的真后端覆盖）。**需要 2 卡的用例
    已在 skipif 里标清。**
 
 为什么用 ``subprocess`` 而不是 ``multiprocessing.spawn``：本机沙箱禁用
@@ -203,7 +203,7 @@ def test_bounded_wait_turns_unbounded_hang_into_named_error_gloo() -> None:
     assert BOUNDED_TIMEOUT_SEC * 0.8 <= elapsed <= BOUNDED_TIMEOUT_SEC + 20, text
 
 
-# ── nccl：需要 2 卡（228 容器内生效；本机自动跳过）─────────────────────────
+# ── nccl：需要 2 卡（远端机容器内生效；本机自动跳过）─────────────────────────
 
 
 _requires_two_gpus = pytest.mark.skipif(

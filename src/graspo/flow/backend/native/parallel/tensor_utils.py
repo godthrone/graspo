@@ -832,7 +832,7 @@ def _broadcast_and_pad_finished(
     # 组序列长度不同，WORLD 广播会让跨 DP 组 rank 发生 SeqNum 错位死锁
     # （§1.1 模块边界 / §2 防呆）。tp_group 为空（如单卡/pp 路径）时不做广播。
     #
-    # 两个边界（228 实测 `T030` DP=4/TP=1 复现）：
+    # 两个边界（远端机实测 `T030` DP=4/TP=1 复现）：
     # - **TP=1 时根本没有可广播的对端**：tp_group 只含本 rank 一个成员，广播是恒等
     #   操作，直接跳过（省一次集合调用）；
     # - **src 必须用组内 rank0 的全局 rank**，不能写死 `src=0`：DP>1 时每个 DP 副本

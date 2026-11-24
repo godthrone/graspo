@@ -1,6 +1,6 @@
 """TP 复制类 LoRA 的梯度同步 / 范数域（缺陷①②的回归钉子）。
 
-**背景（2026-10-28 实测，228 上 tp=2 单步 smoke）**：
+**背景（2026-10-28 实测，远端机上 tp=2 单步 smoke）**：
 
 * 缺陷①：``shard_kind="none"``（整块复制的视觉塔 LoRA）**没有任何跨 rank 同步**——
   ``_sync_nonsharded_lora_grads`` 只有 ``rows``/``out``（同步 lora_a）与 ``in``

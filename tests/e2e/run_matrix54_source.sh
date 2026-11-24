@@ -27,10 +27,10 @@
 #
 # 用法（与 run_matrix54.sh 同形；env 变量原样透传）
 # -----------------------------
-#     export GRASPO_ELAM_HOST_ROOT=<228 上的 ELAM V5 数据根>
-#     export GRASPO_MODELS_HOST_ROOT=<228 上的模型根>
+#     export GRASPO_ELAM_HOST_ROOT=<远端机上的 ELAM V5 数据根>
+#     export GRASPO_MODELS_HOST_ROOT=<远端机上的模型根>
 #     # ★ §15.1：清单只存 ${VAR} 占位符，不存宿主绝对路径 ⇒ 运行前须设：
-#     export GRASPO_ELAM_DATA_ROOT=<228 上的 ELAM V5 原始数据根>
+#     export GRASPO_ELAM_DATA_ROOT=<远端机上的 ELAM V5 原始数据根>
 #     export GRASPO_PREGEN_SUBSET_DIR=<冻结子集目录>   # 仅清单展示用；本层不读
 #     export GRASPO_ATTEMPT_ROOT=<运行产物根>          # 仅清单展示用；本层不读
 #     export GRASPO_RUNNER_MANIFEST=<清单路径>   # 不设则默认 tests/e2e/matrix54_manifest_source.json

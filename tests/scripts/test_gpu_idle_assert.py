@@ -13,9 +13,9 @@ fail-closed 语义（读不到数 / 卡不满足任一判据 ⇒ rc≠0）必须
   里**不得**出现该卡；
 - ④ 采样：``--frames`` 帧内**帧帧**满足 ①②③。
 
-为什么必须补（228 实测缺陷；旧实现对下列场景 **rc=0** 放行 = 本文件红→绿的证据）：
+为什么必须补（远端机实测缺陷；旧实现对下列场景 **rc=0** 放行 = 本文件红→绿的证据）：
 
-- 旧判据只看 util，而 228 上 GPU0/1/4/5 被他人的**常驻推理服务**占着 13–16 GiB、
+- 旧判据只看 util，而远端机上 GPU0/1/4/5 被他人的**常驻推理服务**占着 13–16 GiB、
   util 采样**全是 0** ⇒ 旧实现对 ``--visible 0,1,2,4,5`` **全部放行**；
 - ``cards-busy`` 只有 docker 面 ⇒ **永远漏宿主进程**（GPU2 上的宿主推理进程）；
 - GPU7 显存 0 MiB、util 0 %，但被他人容器预留 ⇒ 只有读容器面才判得出来；
@@ -131,10 +131,10 @@ def _run(
     )
 
 
-#: 228 实测读数（2026-10-25 00:47–00:48 三帧一致），用于"真机形态"回归：
+#: 远端机实测读数（2026-10-25 00:47–00:48 三帧一致），用于"真机形态"回归：
 #: GPU0 2404 / GPU1 16303 / GPU2 13335(+宿主进程 13.3 GiB) / GPU3 0 /
 #: GPU4 14041 / GPU5 4253 / GPU6 68419(VLLM) / GPU7 0(被容器声明)。
-_228_ROWS = {
+_REMOTE_ROWS = {
     "FAKE_SMI_ROW0": "0, 2404, 81920, 0",
     "FAKE_SMI_ROW1": "1, 16303, 81920, 0",
     "FAKE_SMI_ROW2": "2, 13335, 81920, 0",
@@ -144,10 +144,10 @@ _228_ROWS = {
     "FAKE_SMI_ROW6": "6, 68419, 81920, 0",
     "FAKE_SMI_ROW7": "7, 0, 81920, 0",
 }
-_228_APPS = "GPU-fake2, 3912182, 13326, /srv/example/VLN/LightNav-0/.venv/bin/python\n"
-_228_CONTAINERS = json.dumps(
+_REMOTE_APPS = "GPU-fake2, 3912182, 13326, /srv/example/VLN/LightNav-0/.venv/bin/python\n"
+_REMOTE_CONTAINERS = json.dumps(
     {
-        "Name": "/pf228-transform-worker-1",
+        "Name": "/pf-remote-transform-worker-1",
         "State": {"Status": "running"},
         "HostConfig": {"DeviceRequests": None},
         "Config": {"Env": ["NVIDIA_VISIBLE_DEVICES=7"]},
@@ -164,9 +164,9 @@ def test_scenario1_all_idle_passes(tmp_path: Path):
     assert "GPU3 可用" in completed.stdout
 
 
-def test_scenario1_real_228_idle_card_passes_when_nothing_is_declared(tmp_path: Path):
-    """★真机形态：GPU3 在 228 上确实全空（0 MiB / util 0 / 无进程 / 无容器）⇒ rc=0。"""
-    completed = _run(tmp_path, ["--visible", "3"], dict(_228_ROWS))
+def test_scenario1_real_remote_idle_card_passes_when_nothing_is_declared(tmp_path: Path):
+    """★真机形态：GPU3 在远端机上确实全空（0 MiB / util 0 / 无进程 / 无容器）⇒ rc=0。"""
+    completed = _run(tmp_path, ["--visible", "3"], dict(_REMOTE_ROWS))
 
     assert completed.returncode == 0, completed.stderr
 
@@ -175,12 +175,12 @@ def test_scenario1_real_228_idle_card_passes_when_nothing_is_declared(tmp_path: 
 def test_scenario2_compute_process_rejects_and_names_pid(tmp_path: Path):
     """②卡上有 compute 进程（宿主进程占卡）⇒ rc≠0 且点名 pid。
 
-    ★ 旧实现漏判：显存/剩余都够、util=0 ⇒ 旧实现 **rc=0** 放行（228 GPU2 的形态）。
+    ★ 旧实现漏判：显存/剩余都够、util=0 ⇒ 旧实现 **rc=0** 放行（远端机 GPU2 的形态）。
     """
     completed = _run(
         tmp_path,
         ["--visible", "2"],
-        {"FAKE_SMI_ROW2": "2, 0, 81920, 0", "FAKE_SMI_APPS": _228_APPS},
+        {"FAKE_SMI_ROW2": "2, 0, 81920, 0", "FAKE_SMI_APPS": _REMOTE_APPS},
     )
 
     assert completed.returncode == 1, completed.stdout
@@ -192,20 +192,20 @@ def test_scenario2_compute_process_rejects_and_names_pid(tmp_path: Path):
 def test_scenario3_container_declaration_rejects_and_names_container(tmp_path: Path):
     """③卡被容器声明预留（显存 0 MiB、util 0、无进程）⇒ rc≠0 且点名容器。
 
-    ★ 旧实现漏判：旧实现根本不读 docker 面 ⇒ 旧实现 **rc=0**（228 GPU7 的形态）。
+    ★ 旧实现漏判：旧实现根本不读 docker 面 ⇒ 旧实现 **rc=0**（远端机 GPU7 的形态）。
     """
     completed = _run(
         tmp_path,
         ["--visible", "7"],
         {
             "FAKE_SMI_ROW7": "7, 0, 81920, 0",
-            "FAKE_DOCKER_NAMES": "pf228-transform-worker-1\n",
-            "FAKE_DOCKER_INSPECT": _228_CONTAINERS,
+            "FAKE_DOCKER_NAMES": "pf-remote-transform-worker-1\n",
+            "FAKE_DOCKER_INSPECT": _REMOTE_CONTAINERS,
         },
     )
 
     assert completed.returncode == 1, completed.stdout
-    assert "pf228-transform-worker-1" in completed.stderr
+    assert "pf-remote-transform-worker-1" in completed.stderr
     assert "容器" in completed.stderr
 
 
@@ -243,8 +243,8 @@ def test_container_check_is_fail_closed_when_docker_is_unreadable(tmp_path: Path
 @pytest.mark.parametrize(
     "card,row",
     [
-        (1, "1, 16303, 81920, 0"),  # 228 实测：他人常驻服务占 16 GiB，util 0
-        (0, "0, 2404, 81920, 0"),  # 228 实测：2.4 GiB ⇒ 也超过 2 GiB 默认上限
+        (1, "1, 16303, 81920, 0"),  # 远端机实测：他人常驻服务占 16 GiB，util 0
+        (0, "0, 2404, 81920, 0"),  # 远端机实测：2.4 GiB ⇒ 也超过 2 GiB 默认上限
         (4, "4, 14041, 81920, 0"),
     ],
 )
@@ -398,10 +398,10 @@ def test_json_output_lists_every_card_with_reasons_processes_and_containers(tmp_
         tmp_path,
         ["--visible", "2,7,3", "--json"],
         {
-            **_228_ROWS,
-            "FAKE_SMI_APPS": _228_APPS,
-            "FAKE_DOCKER_NAMES": "pf228-transform-worker-1\n",
-            "FAKE_DOCKER_INSPECT": _228_CONTAINERS,
+            **_REMOTE_ROWS,
+            "FAKE_SMI_APPS": _REMOTE_APPS,
+            "FAKE_DOCKER_NAMES": "pf-remote-transform-worker-1\n",
+            "FAKE_DOCKER_INSPECT": _REMOTE_CONTAINERS,
         },
     )
 
@@ -414,7 +414,7 @@ def test_json_output_lists_every_card_with_reasons_processes_and_containers(tmp_
     assert any("3912182" in reason for reason in by_card[2]["reasons"])
     assert by_card[2]["processes"][0]["pid"] == 3912182
     assert by_card[7]["available"] is False
-    assert by_card[7]["containers"] == ["pf228-transform-worker-1"]
+    assert by_card[7]["containers"] == ["pf-remote-transform-worker-1"]
     assert [card["card"] for card in payload["available"]] == [3]
     assert {card["card"] for card in payload["unavailable"]} == {2, 7}
 

@@ -97,7 +97,7 @@ def rollout_chat_template_kwargs(
     ``'<|im_start|>assistant\\n thinking\\n'`` ⇒ 模型先产出一大段 CoT，在
     ``training.max_new_tokens`` 上限处被生生切断，``<|im_end|>`` 永不出现：
     decode「停不下来」、每条 completion 都被截断、解析失败 ⇒ rollout 空转。
-    （228 实测 T028：11,544 次 forward / 674 s 未走完一个 rollout queue；
+    （远端机实测 T028：11,544 次 forward / 674 s 未走完一个 rollout queue；
     E1 复现：32-token 上限下 completion 全部撞上限、全部判 retry。）
 
     SFT 侧早已如此（``collate_sft_multimodal_batch`` 与 ``sft_tokenize_text``

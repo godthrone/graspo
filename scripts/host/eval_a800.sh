@@ -3,11 +3,12 @@
 # CKPT = 容器内路径（/runs/...）; SERVE_GPUS 如 0,1
 #
 # ⚠️ 主机侧 harness：**只在评测主机上直接执行**（自身不进容器）。
-# 两个主机相关量做成可覆盖，默认值 = 原先硬编码值 ⇒ 行为零变化：
-#   GRASPO_EVAL_HOST_ROOT  主机侧数据根（默认 /data/remote）
+# 两个主机相关量：
+#   GRASPO_EVAL_HOST_ROOT  主机侧数据根（**必填**，无缺省：§15.1 不写宿主路径字面量，
+#                          且错一个字符就是拿错大盘的 rootfs ⇒ 缺省即报错退出）
 #   GRASPO_EVAL_PORT       vLLM 端口（默认 8103，与 gen_eval --port 同源）
 set -uo pipefail
-HOST_ROOT="${GRASPO_EVAL_HOST_ROOT:-/data/remote}"
+HOST_ROOT="${GRASPO_EVAL_HOST_ROOT:?未设置 GRASPO_EVAL_HOST_ROOT：请给出主机侧数据根（其下有 rootfs/、mnt-eval.json、run_in_rootfs.py）}"
 TIER="${1:?}"; FORM="${2:?}"; CK="${3:?}"; GPUS="${4:-0,1}"; SIDE="${5:-both}"
 RT=$HOST_ROOT/rootfs/graspo; RV=$HOST_ROOT/rootfs/vllm
 MS=$HOST_ROOT/mnt-eval.json; EV=$HOST_ROOT/eval/$TIER

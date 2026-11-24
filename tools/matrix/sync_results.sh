@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# sync_results.sh — 把「当轮已回填的两份结果件」从 228 在役树拉回本仓，并在落盘前后各做一遍硬校验。
+# sync_results.sh — 把「当轮已回填的两份结果件」从远端机在役树拉回本仓，并在落盘前后各做一遍硬校验。
 #
-# ★ 一句话：228 那边 `fill_one.sh` 填完一档，就在**本仓**跑一次本脚本 ⇒ 主席在本机直接看见进度。
+# ★ 一句话：远端机那边 `fill_one.sh` 填完一档，就在**本仓**跑一次本脚本 ⇒ 主席在本机直接看见进度。
 #
 # 用法：
 #   bash tools/matrix/sync_results.sh                    # 当轮 = 今天（paths.py 缺省）
@@ -9,8 +9,8 @@
 #   GRASPO_ROUND_DATE=20261025 bash tools/matrix/sync_results.sh
 #
 # 拉什么（<date> = 轮次日期 YYYYMMDD；落点 = 本仓 docs/ 同名文件，即「按轮副本」）：
-#   228:<远端 docs>/GRASPO训练框架功能测试报告-<date>.html   -> docs/GRASPO训练框架功能测试报告-<date>.html
-#   228:<远端 docs>/capability-matrix-<date>.data.json       -> docs/capability-matrix-<date>.data.json
+#   远端机:<远端 docs>/GRASPO训练框架功能测试报告-<date>.html   -> docs/GRASPO训练框架功能测试报告-<date>.html
+#   远端机:<远端 docs>/capability-matrix-<date>.data.json       -> docs/capability-matrix-<date>.data.json
 #   ⛔ 基准件（docs/GRASPO训练框架功能测试报告.html · 444 · 冻结）**只读不写**：脚本落盘前按
 #      realpath/inode 拒写，并前后各查一次「sha / 字节 / 权限」三锁（任一不符 ⇒ rc≠0 且不落盘）。
 #
@@ -24,7 +24,7 @@
 #   rc≠0（暂存区在 .local/tmp/ 下，退出时自动清理）。
 # 幂等：远端 sha 与本仓在位 sha 相同 ⇒ 直接跳过写入（不 cp、不动 mtime），因此同一状态重复跑不产生 diff。
 #
-# 退出码：0 = 校验通过且本仓已与 228 一致（含「本来就已经一致」）；1 = 校验不过 / 拉取失败（本仓未改）；2 = 用法 / 配置错误（必填变量未设置、参数不识别）。
+# 退出码：0 = 校验通过且本仓已与远端机一致（含「本来就已经一致」）；1 = 校验不过 / 拉取失败（本仓未改）；2 = 用法 / 配置错误（必填变量未设置、参数不识别）。
 #
 # 可覆盖的环境变量（⛔ 不增删其它）：
 #   GRASPO_RESULT_HOST   远端 SSH 目标（必填）     形如 <账号>@<主机>；无缺省值，未设置 ⇒ 报错退出 2
@@ -197,7 +197,7 @@ check_baseline "落盘后"
 
 say ''
 if ((fail == 0)); then
-  say "# 结论：SYNC PASS（rc=0）—— 本仓 docs/ 两份结果件已与 228 在役树逐字节一致，基准件三锁完好。"
+  say "# 结论：SYNC PASS（rc=0）—— 本仓 docs/ 两份结果件已与远端机在役树逐字节一致，基准件三锁完好。"
   say "#   台账：$PATHS_REL_ROUND_HTML / $PATHS_REL_ROUND_DATA"
   exit 0
 fi

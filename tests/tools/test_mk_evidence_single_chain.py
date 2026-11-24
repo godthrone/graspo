@@ -8,7 +8,7 @@ A800 侧那份 `mk_evidence.sh` 不在版控里，它自己直连
 ⇒ `fill_one.py` 链首的「读数件合成（`scripts/mk_readings.py`）」这一步在 A800 上
 根本没被调用。后果：
 · M013 / M018：`mk_evidence` 报 `rc=2`、`FAIL: readings.json 缺失或不可解析`，各人工补一次；
-· M008（`/data/remote/runs/M008`）：`readings.json` 是**空壳**（`exit_code=99`、其余全 null），
+· M008（`<主机侧数据根>/runs/M008`）：`readings.json` 是**空壳**（`exit_code=99`、其余全 null），
   而同一目录 `readings.raw.json` 写着 `exit_code=0 / elapsed=1394 / gpus=[4,5,6,7]`
   ⇒ 判据① 会把**跑成功**的档按"退出码 99"判失败。
 
@@ -50,7 +50,7 @@ def _run_dir(tmp: pathlib.Path, name: str = "M018", *, raw: bool = True,
         (run / "readings.raw.json").write_text(json.dumps({
             "tier": name, "exit_code": 0, "elapsed_sec": 1394, "gpus": ["4", "5", "6", "7"],
             "config": f"samples/configs/matrix68/{name}.yaml", "image": "graspo:test",
-            "timeout_sec": 1500, "repo": "/data/remote/work/graspo-baseline-r1-6189bd8",
+            "timeout_sec": 1500, "repo": "/data/eval-host/work/graspo-baseline-r1-6189bd8",
             "command": f"run_tier_b09.sh {name} 4,5,6,7 1500", "note": "elapsed_sec = 外层墙钟",
         }), encoding="utf-8")
     (run / "exit_code").write_text("0\n", encoding="utf-8")

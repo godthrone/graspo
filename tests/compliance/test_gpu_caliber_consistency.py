@@ -3,7 +3,7 @@
 
 ## 现行口径（唯一标尺）
 
-★★ 主席 **2026-10-17** 裁定，逐字：「**228 先到先得，随便用。**」
+★★ 主席 **2026-10-17** 裁定（已脱敏转述）：「**远端机先到先得，随便用。**」
 ＋「**单个作业不限制卡数。**」
 ⇒ 本机全卡 0–7 一律可用（⛔ 无预留/禁用/生产锁卡/邻居卡、⛔ 无卡数上限）；
 唯一保留的硬要求 =「**不抢占他人**」（起跑前逐卡实测**三判据并取**：**已用显存 ≤ 空闲
@@ -27,7 +27,7 @@
    ① 已用显存 ≤ 空闲上限（默认 2 GiB）**且** 剩余 ≥ 本档头寸（训练档 48 GiB /
    服务档 `0.85 × 总显存`）；② 卡上无 compute 进程；③ 卡未被容器声明；且 util == 0、
    帧帧满足。⛔ 旧的「64 MiB 绝对阈值 + util ≤ 5%」形态仍**不得**复活（它是另一回事）；
-   但也**不再**接受"邻居常驻占着 13–16 GiB、util=0 ⇒ 照样共用"——228 实测证明那样起服/
+   但也**不再**接受"邻居常驻占着 13–16 GiB、util=0 ⇒ 照样共用"——远端机实测证明那样起服/
    起训必撞 OOM（GPU0/1/4/5 形态）。
    ★ 阳性对照：伪造 `nvidia-smi` 让目标卡被占（剩余 < 头寸 / util != 0 / 已用超上限）⇒
      **必须拒**；伪造 compute 进程或容器声明 ⇒ **必须拒**；真全空（0 MiB、无进程、
@@ -207,7 +207,7 @@ def test_idle_criterion_is_free_memory_vs_position_and_util_zero():
 def test_neighbour_resident_but_not_computing_is_rejected_by_used_ceiling():
     """★三判据 ①（2026-10-25 换代）：邻居常驻占 20 GiB、util=0 ⇒ **仍须拒**（已用超上限）。
 
-    ★ 诊断（228 实测）：GPU0/1/4/5 被他人的**常驻推理服务**占着 13–16 GiB，而 util
+    ★ 诊断（远端机实测）：GPU0/1/4/5 被他人的**常驻推理服务**占着 13–16 GiB，而 util
     采样全是 0 %。旧口径「剩余 ≥ 头寸 ⇒ 占用多少都放行」把这些卡全部放行 ⇒ 起服/起训
     撞 OOM。现行口径 = 「已用 ≤ 空闲上限（默认 2 GiB）」与「剩余 ≥ 头寸」**合取**。
     """
@@ -227,7 +227,7 @@ def test_resident_card_is_accepted_only_when_the_ceiling_is_explicitly_raised():
 
 
 def test_compute_process_on_the_card_is_rejected():
-    """★三判据 ②：卡上有 compute 进程（宿主进程占卡，228 GPU2 形态）⇒ 必须拒。"""
+    """★三判据 ②：卡上有 compute 进程（宿主进程占卡，远端机 GPU2 形态）⇒ 必须拒。"""
     gm = _load_gpu_monitor()
     with pytest.raises(Exception) as exc:
         _assert_idle(gm, 0, 0, apps="GPU-stub3, 3912182, 13326, python3\n")
@@ -235,18 +235,18 @@ def test_compute_process_on_the_card_is_rejected():
 
 
 def test_container_declaration_on_the_card_is_rejected():
-    """★三判据 ③：卡被容器声明（228 GPU7 形态：显存 0 MiB、util 0）⇒ 必须拒。"""
+    """★三判据 ③：卡被容器声明（远端机 GPU7 形态：显存 0 MiB、util 0）⇒ 必须拒。"""
     gm = _load_gpu_monitor()
     with pytest.raises(Exception) as exc:
         gm.assert_target_gpus_idle(
             [3],
             runner=_nvidia_smi_stub(0, 0),
-            container_reader=lambda: {"3": ["pf228-transform-worker-1"]},
+            container_reader=lambda: {"3": ["pf-remote-transform-worker-1"]},
             samples=1,
             interval_s=0,
             sleeper=lambda _s: None,
         )
-    assert "pf228-transform-worker-1" in str(exc.value), str(exc.value)
+    assert "pf-remote-transform-worker-1" in str(exc.value), str(exc.value)
 
 
 def test_occupied_card_is_rejected_by_the_idle_assertion():
@@ -305,7 +305,7 @@ def test_manifest_self_description_matches_the_code():
     cal = json.loads(p.read_text(encoding="utf-8"))["gpu_card_caliber"]
     assert cal["gpu_allowed"] == list(ALLOWED_INDICES) == list(range(8))
     assert cal["max_cards_per_job"] is None
-    assert cal["ruling"] == "228 先到先得，随便用。／单个作业不限制卡数。"
+    assert cal["ruling"] == "远端机先到先得，随便用。／单个作业不限制卡数。"
     for key in ("reserve", "disable", "production_lock", "third_party_occupancy"):
         assert cal["static_bans"][key] == [], (key, cal["static_bans"][key])
     assert cal["no_preemption"]["required"] is True

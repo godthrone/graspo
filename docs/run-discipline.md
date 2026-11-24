@@ -68,7 +68,7 @@
 
 - ★ **判"未起/已退"必须等容器 `entry.sh` 落地与 stdout 起写，或据 `docker events` 的
   create/start 时序**；⛔ **不得在起跑后 ~20 s 内据"无容器/无 stdout"下"起后即退"结论**。
-- 为什么：228 实测（2026-10-12 T038 冒烟）起跑后 ~20 s 观察 ⇒ "无容器、无 stdout" ⇒ 误判
+- 为什么：远端机实测（2026-10-12 T038 冒烟）起跑后 ~20 s 观察 ⇒ "无容器、无 stdout" ⇒ 误判
   "起后即退"；实际容器 **19:46:41** 才落 `entry.sh`、**19:47** 起写 stdout，随后正常训练
   （DeepSpeed 关全过）。**观测过早 ≠ 失败**，误判会触发一次多余的"真因提取"与一次误报。
 - 可操作判据（任一条满足即可下结论）：
@@ -81,7 +81,7 @@
 
 ## 6. 评测服务档：容器命名与服务余量
 
-两条都是 228 实测踩出来的运行编排缺陷（2026-10-13）。
+两条都是远端机实测踩出来的运行编排缺陷（2026-10-13）。
 
 ### 6.1 服务容器名必须唯一，且**一个档同时只允许一个实例**
 
@@ -90,7 +90,7 @@
 - 为什么：同一条评测脚本被启动两次（第一次撞邻居后未彻底终止，第二次换卡重起）时，
   **两次共用同一个容器名** ⇒ **第一次实例的收尾 `docker stop <名>` 命中了第二次实例的容器**
   ⇒ 服务在评测中途被杀（`exit=137`、`oom=no value`），评测端只看到
-  `http.client.RemoteDisconnected`，**真因离现场很远**（228 实测：T039，停机 01:37:48
+  `http.client.RemoteDisconnected`，**真因离现场很远**（远端机实测：T039，停机 01:37:48
   早于断连 01:37:59，而 `vllm` 日志里**没有任何 OOM/CUDA 错误**、结尾是正常停机序列）。
 - ★ **收尾只停自己这一批的唯一名**；停机前先确认该容器就是本次实例（名字或 `docker inspect` 创建时间）。
 
@@ -100,7 +100,7 @@
   且 **`util == 0` 连续 3 帧**判定；必要时把 `util` 下调到 0.60–0.70 再判。
 - ⛔ **不得沿用训练档的"头寸 48 GiB"判据**：训练档要的是"本档头寸"，而服务档要的是
   `util × 总显存`（KV cache 预占按整卡比例算）。
-- 为什么：228 实测（T004 评测）—— GPU2 有第三方常驻 13,335 MiB ⇒ 仅剩 **67,818 MiB**，
+- 为什么：远端机实测（T004 评测）—— GPU2 有第三方常驻 13,335 MiB ⇒ 仅剩 **67,818 MiB**，
   而 `util=0.85` 需要 ≈68 GB ⇒ vLLM **`RuntimeError: Engine core initialization failed`**，
   起不来。旧判据（剩余 ≥ 48 GiB ∧ util 0）**会放行**这种卡。
 - 同一口径也适用于"卡上有邻居常驻"的一切服务类作业（评测 vLLM、探针服务等）。
@@ -113,7 +113,7 @@
   ⛔ **不得写 vLLM 容器内的 `/model`**（评测容器没有该挂载）。
 - **起跑前置断言（fail-closed）**：解析结果必须 **存在 ∧ 含 `config.json`**，否则拒绝起跑；
   解析一律用 **`v0-*` 通配**，⛔ 不用 `ls … | head -1`（会取到 `msswift/` 之类的目录名）。
-- 为什么：228 实测**三次同类事故**（T039 / T004 / T005）——`checkpoint_path: /model` 让
+- 为什么：远端机实测**三次同类事故**（T039 / T004 / T005）——`checkpoint_path: /model` 让
   `after` 侧 `graspo eval run` 直接抛
   `graspo.eval.error.OrchestrationError: checkpoint directory not found: /model`，
   `after` 报告从未产出，随后 `delta` 又以 `DeltaError: eval report not found` **次生失败**；
@@ -124,7 +124,7 @@
 ## 8. 产物新鲜度断言：⛔ 不得以"存在产物文件"判成功
 
 - 规则：**合并/导出目录必须为空、或由本批新建**；⛔ **不得以"目录里存在产物文件"作为成功判据**。
-- 为什么：228 实测（2026-10-13 T024 评测）——`/evalout/merged-hf-t024` 是**上一轮评测留下的
+- 为什么：远端机实测（2026-10-13 T024 评测）——`/evalout/merged-hf-t024` 是**上一轮评测留下的
   root 属主半成品**（它确实含 `.safetensors`）。启动脚本里的守卫写成"`ls $MD/*.safetensors`
   有结果就算 OK"，于是：① 新 export 因 `FileExistsError: Output directory is not empty`
   **失败**；② 守卫**误判通过**；③ 脚本继续起 vLLM，**服务的其实是上一次跑次的合并权重**
@@ -138,7 +138,7 @@
 ## 9. 收尾进程：⛔ 禁用 `pkill -f`，一律精确 PID
 
 - 规则：停止自己启动的进程**一律用精确 PID**（`kill <pid>`）；⛔ **禁止 `pkill -f <模式>`**。
-- 为什么：228 **两次**实测（2026-10-12 与 2026-10-13）——`pkill -f` 的**模式命中了承载命令的
+- 为什么：远端机 **两次**实测（2026-10-12 与 2026-10-13）——`pkill -f` 的**模式命中了承载命令的
   ssh 外壳进程本身**，导致**当前会话以 255 退出**、后续清理动作被截断。第一次是"教训"，
   第二次仍复现 ⇒ 这**必须是硬纪律**，⛔ 不再靠"重申"。
 - 配套：容器**只具名停**（且只停自己这一批的**唯一名**，见 §6.1）；需要连带停止派生进程时，
@@ -152,7 +152,7 @@
   可能影响吞吐、**不改评测语义**）。
 - **起跑前探针（fail-closed）**：读 vLLM 日志/配置给出的可用 blocks 数，断言
   `max_num_seqs ≤ blocks`，不满足即拒绝起跑。
-- 为什么：228 实测（2026-10-13，T024 27B 评测）——vLLM 缺省 `max_num_seqs = 1024`，而单卡
+- 为什么：远端机实测（2026-10-13，T024 27B 评测）——vLLM 缺省 `max_num_seqs = 1024`，而单卡
   `--gpu-memory-utilization 0.85` 下**可用 Mamba cache blocks 仅 232** ⇒
   `ValueError: max_num_seqs (1024) exceeds available Mamba cache blocks (232). Each decode
   sequence requires one Mamba cache block, so CUDA graph capture cannot proceed.` ⇒
@@ -176,12 +176,12 @@
 - 规则：**仓内新增的护栏/脚本，落仓后必须同批 `scp` 同步到部署树，并在真机上跑一次冒烟**
   （如 `run_guards.py form` / `mamba` 各一条）。**调用方必须先探测依赖脚本存在性，缺失即
   fail-closed**（不要等它 `No such file` 才发现）。
-- 为什么：228 实测（2026-10-13）——护栏脚本 `scripts/run_guards.py` **已提交进仓**，但**没有同步到
+- 为什么：远端机实测（2026-10-13）——护栏脚本 `scripts/run_guards.py` **已提交进仓**，但**没有同步到
   部署树** ⇒ 评测脚本调用 `python3 $TREE/scripts/run_guards.py` 报 `No such file or directory` ⇒
   §7 自检 fail-closed 拒跑（零副作用，但白跑一轮）。
 - 结构性配套：**启动流水线**（生成 → 护栏 → 起跑 → 监控 → 评测 → 落 json）不再每轮临时写，
   而是固化为 `scripts/launch_pipeline.py` ＋ `tests/scripts/test_launch_pipeline.py`。
-  该链在 228 上连踩 5 次坑（§8 断言位置 → §7 谓词过窄 → 护栏件未同步 → 生成顺序错 →
+  该链在远端机上连踩 5 次坑（§8 断言位置 → §7 谓词过窄 → 护栏件未同步 → 生成顺序错 →
   生成链变量为空），根因都是"启动脚本每轮现写"。
 
 ## 12. 起跑卡集必须**从 manifest 读 `cards`**，⛔ 禁止写死
@@ -189,7 +189,7 @@
 - 规则：起跑前**从该档 manifest 读 `cards`**，据此在**实测空闲**卡里取同样多的卡；
   并**断言 `len(卡集) == cards`**（无重复、`cards > 0`）。不匹配即 **fail-closed**；
   实测空闲不足时**顺延**（⛔ 不硬上）。
-- 为什么：228 实测（2026-10-13 T009）—— 起跑脚本**写死 `SEL=7`（1 卡）**，而该档
+- 为什么：远端机实测（2026-10-13 T009）—— 起跑脚本**写死 `SEL=7`（1 卡）**，而该档
   `nproc_per_node=4` ⇒ torchrun 起 4 个 rank，`rank: 3 (local_rank: 3)` **`exitcode: 1`**，
   起跑即失败；而 launcher 的四条前置断言**全部通过**（树指纹/逐卡复测/镜像/dry-run），
   dry-run 行 `[dry-run] T009 gpus=7 nproc=4` 已经把矛盾写在脸上。
@@ -203,7 +203,7 @@
   它**幂等**（可重复跑）、把 `scripts/*.py` 同步到部署树，并**逐件冒烟**：
   ① sha256 与仓内一致；② `python3 -c "import <mod>"` 可导入；③ 带 CLI 的件 `--help` rc=0。
   **任一失败即非零退出**（fail-closed）。
-- 为什么需要它：228 上**两次**都是"起跑时才发现护栏不在部署树"（`ModuleNotFoundError`）——
+- 为什么需要它：远端机上**两次**都是"起跑时才发现护栏不在部署树"（`ModuleNotFoundError`）——
   第一次是 `run_guards.py`，第二次是 `launch_pipeline.py` / `gen_tier_json.py`。
 
 ## 13. 每卡余量按 workload 定，⛔ 不用单一"头寸"量所有档
@@ -231,7 +231,7 @@
 
 - 规则：**脚本必须在起跑前一次性改对**。若起跑后才发现脚本有错，**必须"停旧实例（精确 PID）＋
   用新文件重起"**，⛔ **不是只改文件** —— 改完文件不等于在跑的实例会跟着变。
-- 为什么：228 实测（2026-10-13 T007）—— 我用 `sed -i` 把评测脚本里 base 侧挂载源改成宿主路径，
+- 为什么：远端机实测（2026-10-13 T007）—— 我用 `sed -i` 把评测脚本里 base 侧挂载源改成宿主路径，
   但**该实例已在 05:05 起跑**：`sed -i` 换掉了 inode，**运行中的 bash 仍持有旧内容** ⇒ 其 base 阶段
   （05:21:56）照样用容器内 `/models/...` 起 vLLM ⇒ `/model` 空目录 ⇒
   `ValidationError … ensure the presence of a 'params.json'` ⇒ 脚本在 `wait_ready` **空转 43 分钟**。
@@ -245,7 +245,7 @@
 - 规则：护栏要么**直接嵌入产物**（生成脚本时就把已解析的宿主路径**字面量**写进去），
   要么在起跑前**对"即将执行的脚本实际文本"做断言**（fail-closed）。
   ⛔ **只校验辅助函数的返回值，不等于校验了产物**。
-- 为什么：228 实测（2026-10-13 T009）—— 我**确实调用并核对了**
+- 为什么：远端机实测（2026-10-13 T009）—— 我**确实调用并核对了**
   `render_vllm_base_mount()` 的返回值（正确的宿主路径），**但生成脚本时仍写出 `-v $MPB:/model:ro`**
   （`MPB=/models/…` 容器内路径）⇒ `/model` 空目录 ⇒ `ValidationError … params.json`。
   这是 base 挂载源**同族第四次**：前三次是"写错"，第四次是"**验证了错的层**"。
@@ -263,7 +263,7 @@
   · **`adapter` / `native_rank`** ⇒ ★ 先 `graspo eval export` **合并为 merged-hf** 再服务；
   · **unknown** ⇒ ★ **fail-closed**，⛔ 不得凭惯性选一条路。
   落地件：`launch_pipeline.decide_eval_mode()`。
-- 为什么：228 实测（2026-10-13 T019）—— 我按"LoRA ⇒ 合并"的惯性写了 export 步骤，
+- 为什么：远端机实测（2026-10-13 T019）—— 我按"LoRA ⇒ 合并"的惯性写了 export 步骤，
   而该档实际是**全参/HF**（`form` 已打印 `[full]`）⇒ export 回执
   **`checkpoint is already a servable base model — nothing to merge`** ⇒ **合并目录根本不会生成**
   ⇒ `§8(post)` **正确 fail-closed**（拦下"没有产物的成功"）。护栏救了场，但**惯性本身该改**。
@@ -273,7 +273,7 @@
 - 规则：**择卡不得仅凭 `nvidia-smi` 快照判空闲** —— 必须**同时看 `docker ps` 里"我方容器占用的卡"**
   （`--gpus '"device=N"'` 的参数），把已预约的卡排除。★ **评测 vLLM 的加载期（约 4 min）里卡看起来是空的**
   ⇒ 必须视为**"已预约"**。★ 更稳的做法 = **评测与训练分卡池**。
-- 为什么：228 实测（2026-10-13 T038 评测 / T022 训练）—— 08:11:48 起 T022 训练到 **GPU3**（当时
+- 为什么：远端机实测（2026-10-13 T038 评测 / T022 训练）—— 08:11:48 起 T022 训练到 **GPU3**（当时
   T038 的 vLLM 尚未加载、显存 0 MiB ⇒ §13 整卡判据放行），08:12:30 起 T038 评测到**同一张 GPU3**；
   4 分钟后 vLLM 要显存却只剩 14.48 GiB ⇒
   `ValueError: Free memory on device cuda:0 (14.48/79.25 GiB) on startup is less than desired GPU
@@ -295,7 +295,7 @@
 ```bash
 docker ps --format '{{.Names}}' > /tmp/ps.txt
 docker inspect $(docker ps -q) > /tmp/ins.txt 2>/dev/null
-# ★ 2026-10-25 起：**必须**再加宿主进程面（否则永远漏宿主进程，228 的 GPU2 就是这种形态）
+# ★ 2026-10-25 起：**必须**再加宿主进程面（否则永远漏宿主进程，远端机的 GPU2 就是这种形态）
 nvidia-smi --query-gpu=index,uuid --format=csv,noheader > /tmp/uuid.txt
 nvidia-smi --query-compute-apps=gpu_uuid,pid,used_memory,process_name \
   --format=csv,noheader,nounits > /tmp/apps.txt
@@ -307,9 +307,9 @@ python3 $TREE/scripts/run_guards.py cards-busy --ps-file /tmp/ps.txt --inspect-f
   择卡把该集合作为 `plan_full_cards(..., reserved=…)` 的**硬排除**参数。
 - ★ **两份输入等价取并集**（2026-10-25）：容器面（`docker ps/inspect`）覆盖容器占卡，
   进程面（`nvidia-smi --query-compute-apps`）覆盖**宿主进程**直接占卡 —— 只读前者会
-  把"宿主进程占着 13 GiB"的卡判成空闲（228 实测缺陷）。
+  把"宿主进程占着 13 GiB"的卡判成空闲（远端机实测缺陷）。
 - ★ 采集口径：★ 卡可能来自 **`HostConfig.DeviceRequests`** 或 **`Config.Env` 的 `NVIDIA_VISIBLE_DEVICES`**
-  （228 实测为后者）⇒ 台账**两者都读**。
+  （远端机实测为后者）⇒ 台账**两者都读**。
 
 ### 17.3 禁用集不得复用旧快照（连排必逐档重取 + 起跑后回验）
 
@@ -806,7 +806,7 @@ bash "$EVAL_DIR/run-eval.sh" "$TREE" "$EVAL_DIR" <TIER> after|base "$EVAL_DIR/ev
 python3 scripts/gen_eval.py --tier M001 --gpu <评测卡> --port <端口> --tmp-dir "$EVAL_DIR"
 ```
 
-- `--tmp-dir` 的缺省值是 `$GRASPO_EVAL_TMP_DIR` → `/data/remote`，**缺省 ≠ `$EVAL_DIR`、两者不等价**：
+- `--tmp-dir` 的缺省值是 `$GRASPO_EVAL_TMP_DIR` → `/tmp/graspo-eval`，**缺省 ≠ `$EVAL_DIR`、两者不等价**：
   yaml 与 `run-<tier>-eval.sh` 会落到别处，而 `run-eval.sh` 只认 `EVAL_DIR` 内的 yaml
   ⇒ **rc=5 fail-closed**（"评测配置必须在 EVALDIR 之内"）。
 - `eval_runner.py check` 通过 ≠ 可跑：**开跑前还要**

@@ -88,7 +88,7 @@ if [ "${GRASPO_RUNNER_LIB_ONLY:-0}" = "1" ]; then
 fi
 
 # ══ 执行期自免疫：启动时把**自己**快照到私有副本再 exec（P19/P21 根因修复）══════
-# 缺陷（228 实测，n≥2 且跨后端 T050/T016）：bash 执行脚本是**按字节偏移顺序读**的；
+# 缺陷（远端机实测，n≥2 且跨后端 T050/T016）：bash 执行脚本是**按字节偏移顺序读**的；
 # 脚本在运行中被**就地重写**（生成器的 write_text，或同步时的 cp）⇒ bash 从陈旧偏移
 # 读到**混排内容** ⇒ `line N: 0: command not found` + `syntax error near unexpected token
 # "fi"` ⇒ **bash 自己退 2**；此时 runner 还没走到 `echo $? > exit_code`（它在 docker run
@@ -132,9 +132,9 @@ CONTAINER_PY="${CONTAINER_PYTHON:-python}"
 # ── 产物属主：容器以**宿主跑批用户**运行（唯一真相源，§1.4）──────────────────────
 # 缺陷（PG-13 / U5「产物跑完了测好了就删」执行不了）：镜像**没有 USER 指令** ⇒ 容器默认
 # uid 0 运行 ⇒ 容器写出的产物一律 root:root，而宿主跑批账号对 root 文件**无 unlink 权限**
-# ⇒ `rm` 报 Permission denied、`rmdir` 失败、228 上 `sudo -n` 要密码（228 实测：
+# ⇒ `rm` 报 Permission denied、`rmdir` 失败、远端机上 `sudo -n` 要密码（远端机实测：
 # task-f2-resync-verify §⑨ 共 20 项 / 49,133,569 B ≈ 47 MiB 删不掉；task-e4-reclaim 旧树
-# 522.7 MB 同因整树残留）。共享机上残留只增不减，而 228 磁盘已被顶到 100% 两次。
+# 522.7 MB 同因整树残留）。共享机上残留只增不减，而远端机磁盘已被顶到 100% 两次。
 # ★ 修法是**防呆**（§2），不是"事后提权去删"（那治标不治本，且需 root 权限）：
 #   让产物**从一开始**就归宿主跑批用户 —— 容器进程以宿主 uid:gid 运行。
 # ★ 单一真相源（§1.4）：uid/gid 只在这里解析**一次**，DOCKER_ARGS 只引用 $RUN_UID/$RUN_GID；
@@ -171,7 +171,7 @@ else
 fi
 
 # ── 容器内**可写缓存/状态根**（**单一真相源**，§1.4）────────────────────────────
-# 缺陷（228 实测确证，本包修的回归）：`043c776` 把容器改成以宿主 uid 运行，但只补了
+# 缺陷（远端机实测确证，本包修的回归）：`043c776` 把容器改成以宿主 uid 运行，但只补了
 # HOME/XDG_CACHE_HOME/TORCHINDUCTOR_CACHE_DIR/TRITON_CACHE_DIR，**漏了 MODELSCOPE_CACHE**。
 # 镜像 ENV 把它写死成 `/mnt/workspace/.cache/modelscope/hub`，而 `/mnt` 在镜像里是
 # `root:root 0755`（FHS 标准目录；docker/Dockerfile* 里没有任何 mkdir /mnt/workspace）
@@ -260,7 +260,7 @@ fi
 #      ① 从档配置读出 gpu_monitor.output_dir / tag / interval_sec（单一真相源）；
 #      ② 把它与取证链锚点 /out/gpu（生成期注入，见 generate_matrix.py::
 #         GPU_MONITOR_CONTAINER_DIR）比对，并**反向**断言它**不落在** training.output_dir 之内
-#         —— 落在里面就会被训练侧的 overwrite（shutil.rmtree 整棵目录）删掉（228 实测）；
+#         —— 落在里面就会被训练侧的 overwrite（shutil.rmtree 整棵目录）删掉（远端机实测）；
 #      ③ 校不过就拒绝启动，绝不"先跑起来再说"。
 #    为什么必须从档配置读、而不是在这里另写一份：产物位置与档号标签已经写在
 #    **档配置自身**里；在这里再写一遍，同一条事实就有两份描述，迟早漂移（§1.4）。
@@ -321,7 +321,7 @@ if [ -z "$TRAINING_OUTPUT_DIR" ]; then
 elif [ "$GPU_MONITOR_OUTPUT_DIR" != "/out/gpu" ]; then
     monitor_problems="${monitor_problems}gpu_monitor.output_dir='$GPU_MONITOR_OUTPUT_DIR' 与取证链锚点 /out/gpu 不一致;"
 fi
-# ★ 反向不变量（2026-09-20 真机确证的缺陷，228 两次真跑同一签名）：落点**不得**落在
+# ★ 反向不变量（2026-09-20 真机确证的缺陷，远端机两次真跑同一签名）：落点**不得**落在
 #   training.output_dir 之内 —— 训练侧 `overwrite_output_dir: true` 会对非空的该目录
 #   执行 `shutil.rmtree`，把采样器刚建好的 gpu/ 连 jsonl 一起删掉（首错
 #   `gpu_monitor.py:621 append_jsonl ... '/out/T010/gpu/gpu_memory.jsonl'`）。
@@ -489,7 +489,7 @@ mkdir -p "$RUN_DIR/subsets"
 # ★ B11（2026-10-12，主席批准）：**同一 tier 重跑必须先清场**。
 #   为什么：`exit_code` / `ckpt_retention.state` / `torch_probe.json` / `stdout.log`
 #   都是**跑后**才写的产物。重跑复用同一个 `$RUN_DIR` 而不清理 ⇒ 新跑次**仍在途**时
-#   读到的是**上一轮**的产物 ⇒ **假失败**（228 实测：T033 第二次起跑被第一次尝试
+#   读到的是**上一轮**的产物 ⇒ **假失败**（远端机实测：T033 第二次起跑被第一次尝试
 #   `nostalgic_lederberg` 39 s 退出留下的 `exit_code=1` 误判为失败，详见
 #   `.local/.../task-t033-diagnosis/report.md`）。
 #   语义：把上一轮这些**具名**产物**移入** `$RUN_DIR/attempt-<UTC 时间戳>/`——
@@ -962,7 +962,7 @@ def _audit_state_dict(
 
 # ── P21：布局感知（内容级）＋"不可判定"显式落盘 ────────────────────────────────
 #
-# 缺陷（228 实测，本段要根治）：旧探针只认 native 的 ``final/rank_*.pt``；ms-swift 的
+# 缺陷（远端机实测，本段要根治）：旧探针只认 native 的 ``final/rank_*.pt``；ms-swift 的
 # HF 分片（``model.safetensors.index.json`` + ``model-0000N-of-0000M.safetensors``）与
 # LoRA 的 ``adapter_model.safetensors`` 都进不了探测 ⇒ 打印 SKIP、**不写探测文件**
 # ⇒ 上层退回"读 safetensors 头部"的**头部级**弱证据并把 A3 读成 True
@@ -1575,9 +1575,9 @@ set -o pipefail
 #   tests/e2e/generate_matrix.py::GPU_MONITOR_CONTAINER_DIR，生成期注入下面这一行。
 #   ★ 为什么必须先建出来：收口段的三处写盘点（gpu_summary.state ×2、
 #     EVIDENCE_GAP_gpu_memory_summary）都在这个目录下；目录不存在时那些登记会 ENOENT，
-#     "取证缺口"连痕迹都留不下（228 实测 entry.sh 行 197/200：没有那个文件或目录）。
+#     "取证缺口"连痕迹都留不下（远端机实测 entry.sh 行 197/200：没有那个文件或目录）。
 #   ★ 为什么落点在 RUN_DIR 直下而不在训练输出目录里：训练侧 overwrite_output_dir 会
-#     shutil.rmtree 整棵 training.output_dir（228 实测把采样器刚建好的 gpu/ 删掉）。
+#     shutil.rmtree 整棵 training.output_dir（远端机实测把采样器刚建好的 gpu/ 删掉）。
 #   ⚠ 写法约束：本段是**不加引号的 heredoc 正文** ⇒ 引用内层变量一律写 \$VAR（外层不
 #     展开、留给容器内展开），注释里同样不得出现裸美元符/裸反引号（见下方哨兵测试）。
 GPU_EVIDENCE_DIR="/out/gpu"
@@ -1588,7 +1588,7 @@ mkdir -p "\$GPU_EVIDENCE_DIR"
 #   为什么必须显式建：容器进程以**宿主 uid** 运行（见 runner 的「产物属主」段），
 #   镜像里 root 的 HOME 与镜像 ENV 的 MODELSCOPE_CACHE（=/mnt/workspace/.cache/modelscope/hub，
 #   而 /mnt 是 root:root 0755）对这个 uid 都**不可写** ⇒ HF datasets / modelscope 数据集缓存 /
-#   triton·inductor 编译缓存在**训练开始前**就 PermissionError（228 实测：rank0 exit 1，
+#   triton·inductor 编译缓存在**训练开始前**就 PermissionError（远端机实测：rank0 exit 1，
 #   宿主侧只看到"未找到任何 checkpoint-*"，因为训练一步都没跑）。
 #   ★ 预检的判据（本包要的"具体是哪个路径不可写"）：训练之前就把**变量名 + 路径**指名道姓
 #     地报出来（FATAL(cache-root)），而不是让 dataloader 在深处抛一个不含变量名的
@@ -1655,7 +1655,7 @@ if [ -n "\${GRASPO_FAKE_WORKER_RC:-}" ]; then RC="\$GRASPO_FAKE_WORKER_RC"; fi
 # 产物放开读权限（**保留**；改用宿主 uid 运行后它从"补丁"降级为"兜底"）：
 # 历史缺陷：容器以 root 运行 ⇒ ms-swift/HF 默认落 root:0600 ⇒ 宿主侧的
 # collect_results.py（普通用户）**打不开** checkpoint 权重 ⇒ A2/A3 读不到证据
-# （228 实测踩过：A3 一度被记成"checkpoint 无法重新加载"，属方向性错误）。
+# （远端机实测踩过：A3 一度被记成"checkpoint 无法重新加载"，属方向性错误）。
 # 现在容器以**宿主 uid:gid** 运行（见 runner 的「产物属主」段）⇒ 产物属主已经正确、
 # 读权限也天然成立；本行留着覆盖两类残余情形：① 运行前目录里已有的**他人/root 旧产物**
 # （对它们 chmod 会 EPERM，故只把 stderr 丢弃、不因它们报错）；② umask 偏严的环境。
@@ -1666,10 +1666,10 @@ chmod -R a+rX /out 2>/dev/null || echo "WARN: chmod -R a+rX /out failed — 宿�
 # 且要与训练进程用**同一套** find/mtime 视角（§1.4）。容器以宿主 uid 运行后，
 # 宿主侧其实也删得掉中间段 ckpt；但放在这里仍是"落盘后立即收缩"的唯一窗口。
 # （历史背景：原实现依赖"容器内是 root ⇒ 只有这里删得掉"——宿主普通用户对 root:root
-#   文件无 unlink 权限，228 实测 sudo 需密码。该依赖已随 --user 修复消除，逻辑不变。）
+#   文件无 unlink 权限，远端机实测 sudo 需密码。该依赖已随 --user 修复消除，逻辑不变。）
 # ★ 写法约束（防呆）：本块**只使用内层 shell 自己的变量**（\$1/\$@/函数内局部量），
 #   不读写外层 runner 的任何变量，也不内联任何函数调用。这样"外层展开"与"内层展开"
-#   在语义上重合，不会因为外层 set -u 误判内层变量（228/本机都踩过这个坑）。
+#   在语义上重合，不会因为外层 set -u 误判内层变量（远端机/本机都踩过这个坑）。
 #   ★ 唯一的例外是档号 \$TIER：它由**外层 docker run -e "\$TIER" 显式注入**容器，
 #     不是"恰好未定义⇒空串"的巧合（那种隐性依赖是脆弱设计，§2 显式即防呆）。
 retain_single_checkpoint() {
@@ -1732,7 +1732,7 @@ retain_single_checkpoint() {
     #   （[ "\$step" -gt "\$newest_step" ]，**严格大于**）。同一档**第二次跑**时，
     #   上一轮 v0-*/checkpoint-160 与本轮 v1-*/checkpoint-160 步数相同 ⇒
     #   keeper 完全由 find 的 readdir 顺序决定（ext4 dir_index / overlayfs / tmpfs 各不相同）；
-    #   顺序不利时**本轮最新**被当"中间段"删除（228 实测 T043 run2：v1-*/checkpoint-160
+    #   顺序不利时**本轮最新**被当"中间段"删除（远端机实测 T043 run2：v1-*/checkpoint-160
     #   消失、last-checkpoint 断链 ⇒ 本轮的 A2/A3 证据丢失，而 ckpt_retention.state 仍报 ok）。
     #   本机复现与负向用例见工位 task-retention-xrun/evidence/。
     #   现判据 = **三元全序**，与 find 的输出顺序**无关**（同一份产物在任何文件系统上结论一致）：
@@ -1808,7 +1808,7 @@ else
 fi
 printf '%s\n' "\$CKPT_STATE" > /out/ckpt_retention.state
 # ══ A3 转正：容器内 torch 重载探测落盘（**收口前最后一个接触权重的步骤**）══
-#   背景（本段要根治的环境性伪否）：宿主 228 **没有 torch** ⇒ collector 对 native 档
+#   背景（本段要根治的环境性伪否）：宿主远端机 **没有 torch** ⇒ collector 对 native 档
 #   只能拿弱证据（structural_only:zip_crc），A3「checkpoint 可重载」判取证缺口。
 #   但训练镜像自带 torch（graspo-msswift:4.5.3 实测 torch 2.11.0+cu130）⇒ 证据可得。
 #   ★ 为什么**必须**插在 ckpt 保留块**之后**、收口之前（顺序是判据的一部分）：
@@ -1831,7 +1831,7 @@ printf '%s\n' "\$CKPT_STATE" > /out/ckpt_retention.state
 #     **不得**转义成反斜杠美元符。原因：CONTAINER_PY 的唯一真相源在**宿主侧**
 #     （本脚本第 100 行 = generate_matrix.py::CONTAINER_PY 段），它**不经** docker run 的 -e
 #     注入容器 ⇒ 一旦转义，展开推迟到容器内、变量未定义 ⇒ 空串 ⇒
-#     该行退化成「空命令名 + /out/torch_probe.py 参数」（228 实测 行 229: : 未找到命令）
+#     该行退化成「空命令名 + /out/torch_probe.py 参数」（远端机实测 行 229: : 未找到命令）
 #     ⇒ 被行尾 || true 静默吞掉 ⇒ torch_probe.json **全部从未产出**、stdout [torch-probe] 命中 0。
 #     （仅 \$TIER 这类**由 docker run -e 显式注入**的容器内变量才该转义——见下方收口段。
 #     本段是 heredoc 正文：注释里同样不得出现裸反引号/裸美元符，否则外层会真的执行它们。）
@@ -1857,7 +1857,7 @@ printf '%s\n' "\$CKPT_STATE" > /out/ckpt_retention.state
 #   容器一退出，后台进程**收不到 SIGTERM**（直接随容器消失）⇒ record_gpu_memory 的
 #   finally 块（**摘要的唯一落盘点**，含 memory_used_mib_peak）**从不执行** ⇒
 #   宿主采样摘要（读入 host_sample_peak_gib 旁路——**不是** §7 峰值列的口径，该列自
-#   2026-09-21 起为二分口径、见 §9.1）**取证缺口**：228 实测全批
+#   2026-09-21 起为二分口径、见 §9.1）**取证缺口**：远端机实测全批
 #   <run>/gpu/gpu_memory_summary.json 缺失 ⇒ collect_results._read_host_sample_peak_memory
 #   拿到 None、该旁路缺值（task-r3-bulk §⑦-7）。
 #   修法：**显式** SIGTERM + **有界等待**（只等本次 run 的采样器，零 kill 他人进程）：
@@ -1870,7 +1870,7 @@ printf '%s\n' "\$CKPT_STATE" > /out/ckpt_retention.state
 #     \$GPU_EVIDENCE_DIR（= 档配置 gpu_monitor.output_dir = 生成期注入的
 #     GPU_MONITOR_CONTAINER_DIR）。旧写法把取证目录路径写死 7 处，与档配置分叉：
 #     断言按旧路径永远找不到摘要、且缺口登记自身因目录不存在而 ENOENT
-#     （228 实测 entry.sh 行 197/200），属 §1.4 双真相源缺陷。
+#     （远端机实测 entry.sh 行 197/200），属 §1.4 双真相源缺陷。
 wait_for_gpu_summary() {
     local pid="\${1:-}" waited=0
     if [ -z "\$pid" ]; then
@@ -1913,7 +1913,7 @@ wait_for_gpu_summary "\$SAMPLER"
 # ══ 收口：把容器的退出码**逐字**交还给 torchrun 的退出码（原缺陷的修复点）══
 #   原实现捕获了 RC=\$?（= torchrun 退出码）却**从未 exit "\$RC"**；本脚本最后一条
 #   命令是上面的 printf（成功 ⇒ 0），于是**容器退 0**：worker 真失败（rc=1/137/124）
-#   也被宿主记成 exit_code=0（228 实测：T028/T031 stdout 里 exitcode: 1，宿主记 0）。
+#   也被宿主记成 exit_code=0（远端机实测：T028/T031 stdout 里 exitcode: 1，宿主记 0）。
 #   判据由"最后一条命令是否成功"变成"torchrun 真的成功了吗"（§2.3 边界校验不靠巧合）。
 #   ★ 优先级明确且互不掩盖（三段各自只写自己的失败语义，收口处统一表达）：
 #       1) 训练失败（RC≠0，可能是 OOM=137 / 超时=124 / 预检 rc=1/3）⇒ **原样交还**，
@@ -1952,7 +1952,7 @@ DOCKER_ARGS=(
     "${RUN_USER_ARGS[@]}"
     # 共享内存（**≥2 卡必需**）：torchrun 多 rank 按 fd 共享 CPU 张量，docker 默认
     # /dev/shm 仅 64 MiB ⇒ 多卡启动即 `unable to allocate shared memory(shm)` /
-    # `Resource temporarily unavailable (11)`（228 实测：4 个 rank 同抛，Train: 0%）。
+    # `Resource temporarily unavailable (11)`（远端机实测：4 个 rank 同抛，Train: 0%）。
     # 与 run.sh / tests/e2e/run_matrix.sh 的既有约定逐字一致（§1.4 单一真相源）。
     --ipc=host --shm-size=16g
     -e "NVIDIA_VISIBLE_DEVICES=$GPUS"
@@ -1967,7 +1967,7 @@ DOCKER_ARGS=(
     #   非 root 进程既写不了镜像里 root 的 /root，也写不了镜像 ENV 写死的
     #   MODELSCOPE_CACHE=/mnt/workspace/...（`/mnt` 是 root:root 0755）⇒ 必须逐个显式指到
     #   可写根，否则 modelscope 数据集缓存 / HF 缓存 / triton·inductor 编译缓存在
-    #   **训练开始前**就 PermissionError（228 实测：rank0 exit 1，训练一步没跑）。
+    #   **训练开始前**就 PermissionError（远端机实测：rank0 exit 1，训练一步没跑）。
     #   ★ 逐项由数组展开，本处**不写任何路径字面量** —— 根治"补了三个、漏了第四个"的漂移。
     #   ★ USER/LOGNAME（见 generate_matrix.py::CONTAINER_USER_NAME 的单一真相源）：
     #   镜像 /etc/passwd 里没有宿主的这个 uid ⇒ `getpass.getuser()` 落到 pwd.getpwuid 会

@@ -1,6 +1,6 @@
 """b3（缺陷 P6）：PP rollout 末 stage logits 的**启动期显存预算闸门**。
 
-背景（228 实测，2026-09-22）：末 stage 曾对**整条序列**做 ``norm+lm_head`` ⇒
+背景（远端机实测，2026-09-22）：末 stage 曾对**整条序列**做 ``norm+lm_head`` ⇒
 T035 形状 `(batch=64, seq≈2052) × vocab=248320` 的 logits 要 **60–93 GiB**，
 80GB 卡物理不可能 ⇒ rank1 OOM 死 / 卡在分配器路径，rank0 在下一个会合点上**无界挂死**。
 
@@ -57,7 +57,7 @@ def _validate(config: GraspoConfig) -> None:
     _runtime().validate_native_runtime_config(config)
 
 
-#: 228 上 Qwen3.5-9B 的真实词表（嵌在 `text_config` 下，实测）。
+#: 远端机上 Qwen3.5-9B 的真实词表（嵌在 `text_config` 下，实测）。
 _VOCAB = 248_320
 
 

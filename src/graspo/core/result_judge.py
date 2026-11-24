@@ -168,7 +168,7 @@ PEAK_MEMORY_UNAVAILABLE: str = "未取得（allocator 口径不可得）"
 
 #: 宿主 `nvidia-smi` 采样峰值在台账里的**独立字段名**：**另存，不进 §7 峰值列**
 #: （§9.1 口径分离的机器可核形式）。它回答的是"这张卡实际用了多少" + 取证链锚点。
-#: ★ 为什么它是**必需的诊断项而不是可选装饰**：228 是**共享机**，`task-j1-batch-msswift`
+#: ★ 为什么它是**必需的诊断项而不是可选装饰**：远端机是**共享机**，`task-j1-batch-msswift`
 #: 实测 `T033/run2` 的 GPU2 = 27451 MiB 而 `max_peak_memory_gap_mib = 2388`（采样缺口）
 #: ⇒ 真值应 ≈ 25063 MiB——**他人作业的显存被算到了本档头上**。宿主口径因此不仅
 #: "口径不同"，在共享机上会**系统性高估**本档占用；用户拿 §7 那列判断"我的硬件够不够"
@@ -503,7 +503,7 @@ A4_OUTCOME_DEGENERATE = "degenerate"
 #: 见 ``scripts/collect_results.py`` 由清单逐字透传 algorithm、**不做归一**）。
 #:
 #: 为什么用**显式映射**而不是改生成器：改生成器会连带 rmtree+重写
-#: ``samples/configs/matrix54/`` 与 ``run_matrix54.sh`` ⇒ 228 上已跑批次的清单指纹
+#: ``samples/configs/matrix54/`` 与 ``run_matrix54.sh`` ⇒ 远端机上已跑批次的清单指纹
 #: 全部失效（``task-matrix-driver/run-plan.md`` §⑨ 记录）。改判定器只动取数入口，
 #: **不放宽任何判据**——映射只声明一条已文档化的等价。
 #:
@@ -660,7 +660,7 @@ A4_TIER_CALIBRATIONS: tuple[A4TierCalibration, ...] = (
             "中位数 0.002245885133743285）；1.5 × 最坏对 = 0.006020861864089967；"
             "未触硬上界 ⇒ tol = min(1.5×最坏对, 4.675e-2) = 0.006020861864089967；"
             "隔离带 = 9.35e-2 / 6.020861864089967e-3 = 15.53×（≥ 2.0×，AE1 §③ 锁一）。"
-            "采样日期：228 时钟 2026-09-21 01:25–02:25。"
+            "采样日期：远端机时钟 2026-09-21 01:25–02:25。"
             "出处：.local/hb-workspace/20260915-152747/task-ao1-2card-calibration/report.md "
             "§②（逐跑读数表）/§③（两两差值全表 + 公式推导）/§④（隔离带核算）；"
             "原始读数 evidence/ao1-readings-local.txt、复算 evidence/ao1-calib-derive.txt；"
@@ -679,7 +679,7 @@ A4_TIER_CALIBRATIONS: tuple[A4TierCalibration, ...] = (
         representative_tier="T032",
         card_set=(4, 5),
         model_scope="9B/LoRA（实测 T032）；宽键行覆盖全部 model/mode",
-        sampled_at="228 时钟 2026-09-21 01:25–02:25",
+        sampled_at="远端机时钟 2026-09-21 01:25–02:25",
         split_check=(
             "n=5 全池；第 2 高对 0.003147673607、中位数 0.002245885133743285"
             "（AO1 §③；未做留一）"
@@ -1486,7 +1486,7 @@ class RunEvidence:
     #: A2「权重真变化」这条证据**来自哪里、是哪种等级**（如
     #: ``run_metrics:lora_norm_delta`` / ``checkpoint:torch_load(lora_b)``）。
     #: 为什么必须有它：同一份 run 产物在**有 torch 的宿主**与**无 torch 的宿主**上
-    #: 证据落点不同（228 实测无 torch）。没有这一列，"采集机缺 torch 造成的取证缺口"
+    #: 证据落点不同（远端机实测无 torch）。没有这一列，"采集机缺 torch 造成的取证缺口"
     #: 与"训练真失败"在台账上长得一模一样 —— T010 真机就是这样被记成 ❌ 失败的。
     #: ``None`` = 没有取到任何权重证据（与 ``weight_changed is None`` 同源）。
     weight_evidence_source: str | None = None
@@ -2040,7 +2040,7 @@ def judge_a3(evidence: RunEvidence) -> CriterionResult:
     **证据等级显式化**（§2.2）：明细里必须能看出这条结论来自哪种证据
     （``container_torch_probe`` / ``host_torch_load`` / ``structural_only:zip_crc``）。
     为什么要这样：同一个"缺证据"在台账上可能是**采集机环境**造成的（宿主无 torch），
-    也可能是**训练真的没落盘**。不标来源，两者在台账里长得一样，228 上的 T010 就因此
+    也可能是**训练真的没落盘**。不标来源，两者在台账里长得一样，远端机上的 T010 就因此
     被记成 ❌ 失败。注意方向不变：**弱证据不升格为通过**，``checkpoint_reloadable is
     None`` 仍然是 fail-closed 判否。
     """

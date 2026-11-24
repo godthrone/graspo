@@ -53,7 +53,7 @@
         "同一档内除最新一份以外的 `checkpoint-*/`（逐项具名，不用通配符展开做操作数）"
       ],
       "a3_unaffected": "A3 = checkpoint 能否重载；`scripts/collect_results.py` 的 `find_checkpoint_dirs()` 只要求**存在 ≥1 份**可解析的 `checkpoint-<step>/`，没有份数要求 ⇒ 留一份即满足 A3。",
-      "blocked_by_env": "checkpoint 由容器内 root 落盘，宿主普通用户删不掉（228 实测：`sudo` 需密码）⇒ 删除只能发生在容器内，故实现落在 runner 的 entry.sh。"
+      "blocked_by_env": "checkpoint 由容器内 root 落盘，宿主普通用户删不掉（远端机实测：`sudo` 需密码）⇒ 删除只能发生在容器内，故实现落在 runner 的 entry.sh。"
     }
   },
   "models": {
@@ -4468,7 +4468,7 @@
       "checkpoint_retention_v2",
       "per-tier data.source / data.source_jsonl / data.source_jsonl_container / data.extract_command / data.source_rule / data.subset_file_pregenerated / step_formula_v2"
     ],
-    "gpus": "★★ 2026-10-17 主席裁定（唯一标尺，逐字）：「**228 先到先得，随便用。**」＋「**单个作业不限制卡数。**」⇒ `gpus`（本清单与卡池映射里的这一列）**降级为『建议首选卡位』**，⛔ **不再是合法性判据**：① 卡号判据只剩**存在性** —— 本机全卡 0–7 一律可用，⛔ 无预留卡、⛔ 无禁用卡、⛔ 无『生产锁卡』、⛔ 无『邻居卡』；② 卡数无上限（唯一约束 = 该档 `cards` 本身）；③ **保留的硬要求 =『不抢占他人』**：起跑前**逐卡实测空闲**（剩余显存 ≥ 本档头寸 ∧ util == 0），被占则**换卡或等**，⛔ 绝不 kill 他人进程 / 绝不停他人容器（判据在设施层，见 `scripts/gpu_idle_assert.py`）；④ 本列仍是 **A4『同档两跑必须同卡位』的确定性锚**：同一档的两次运行必须引用同一份清单。★ 取值口径：显式建议卡位 **16 条**（`TIER_GPU_OVERRIDE`），其余档走卡数默认值 `GPU_POOL_BY_CARDS` = {\"1\": [4], \"2\": [4, 5], \"3\": [4, 5], \"4\": [1, 3, 4, 5]}；本机可用卡号 `GPU_ALLOWED` = [0, 1, 2, 3, 4, 5, 6, 7]。⛔ 本包只改**语义与判据**，⛔ 不重排、⛔ 不动任何档的 `gpus` 取值（逐档逐字未变）。",
+    "gpus": "★★ 2026-10-17 主席裁定（唯一标尺，已脱敏转述）：「**远端机先到先得，随便用。**」＋「**单个作业不限制卡数。**」⇒ `gpus`（本清单与卡池映射里的这一列）**降级为『建议首选卡位』**，⛔ **不再是合法性判据**：① 卡号判据只剩**存在性** —— 本机全卡 0–7 一律可用，⛔ 无预留卡、⛔ 无禁用卡、⛔ 无『生产锁卡』、⛔ 无『邻居卡』；② 卡数无上限（唯一约束 = 该档 `cards` 本身）；③ **保留的硬要求 =『不抢占他人』**：起跑前**逐卡实测空闲**（剩余显存 ≥ 本档头寸 ∧ util == 0），被占则**换卡或等**，⛔ 绝不 kill 他人进程 / 绝不停他人容器（判据在设施层，见 `scripts/gpu_idle_assert.py`）；④ 本列仍是 **A4『同档两跑必须同卡位』的确定性锚**：同一档的两次运行必须引用同一份清单。★ 取值口径：显式建议卡位 **16 条**（`TIER_GPU_OVERRIDE`），其余档走卡数默认值 `GPU_POOL_BY_CARDS` = {\"1\": [4], \"2\": [4, 5], \"3\": [4, 5], \"4\": [1, 3, 4, 5]}；本机可用卡号 `GPU_ALLOWED` = [0, 1, 2, 3, 4, 5, 6, 7]。⛔ 本包只改**语义与判据**，⛔ 不重排、⛔ 不动任何档的 `gpus` 取值（逐档逐字未变）。",
     "unchanged": "counts / models / feasibility_model / runtime.checkpoint_retention / 每档的 model*/algorithm/mode/backend/cards/status/feasibility/acceptance.criteria（★ `gpus` 见上条：2026-10-17 起语义 =『建议首选卡位』，**取值逐档逐字未变**）"
   },
   "data_sources": {
@@ -4591,7 +4591,7 @@
     }
   },
   "gpu_card_caliber": {
-    "ruling": "228 先到先得，随便用。／单个作业不限制卡数。",
+    "ruling": "远端机先到先得，随便用。／单个作业不限制卡数。",
     "ruling_date": "2026-10-17",
     "gpu_allowed": [
       0,

@@ -126,7 +126,7 @@ RUN \
 #   不可同时满足。让 pip 参与解析会**降级** transformers 5.12.1→4.57.6、hub 1.32→0.36，
 #   直接打破 `pyproject.toml` 的 pin 与构建期版本门禁。
 #   旧镜像里同时存在 vllm 0.23.0 + transformers 5.12.1 + hub 1.2x，说明当初也是绕过解析装的，
-#   且该组合在 228 上真跑通过 GRASPO 档 ⇒ 本层照此办理，项目 pin 一个都不动。
+#   且该组合在远端机上真跑通过 GRASPO 档 ⇒ 本层照此办理，项目 pin 一个都不动。
 #   下列额外包由 scratch 探针逐一验证得出（"import vllm / vllm --version / import ray"
 #   所需的最小集合），版本对齐旧镜像。
 #   注意：`--no-deps` 只跳过依赖解析，**不改变索引解析** ⇒ cu130 版 torchaudio 必须单独
@@ -182,7 +182,7 @@ RUN \
 # 旧镜像 `graspo-msswift:4.5.3` 的做法就是 apt 装 `libz3-4` + `libz3-dev`
 #   （`/usr/lib/x86_64-linux-gnu/libz3.so -> libz3.so.4`，实测 dpkg 为 4.8.12-1）。
 # 本层同时对齐旧镜像的其它共享库：libsm6 / libice6 / libsndfile1 / libmlx5-1。
-# apt 走 228 默认源（实测 archive.ubuntu.com 可达 200）；代理按既有 ARG 传入。
+# apt 走远端机默认源（实测 archive.ubuntu.com 可达 200）；代理按既有 ARG 传入。
 # 注意：本层虽在第 4 层之后，但 apt 层会使其后所有层重算 —— 这是必要的，因为
 #   libz3.so 必须在**最终镜像**里存在；前面的 pip 层（25/26/27/30）不受影响，仍命中缓存。
 RUN export http_proxy="${HTTP_PROXY:-}" https_proxy="${HTTPS_PROXY:-}" \

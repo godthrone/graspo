@@ -37,8 +37,8 @@
 #   GRASPO_EVIDENCE_STEP_RECORD_CHECKS ① 的产出者（缺省 = 仓内 `scripts/record_checks.py`；单测注入口）
 #   GRASPO_EVIDENCE_ROOTFS / _MOUNT_SPEC / _RUN_IN_ROOTFS / _ROOTFS_WORKDIR
 #       非空 ⇒ 先用 `unshare` 把自身送进 rootfs 再跑（A800 原件的信封，缺省关 ⇒ 就在当前环境跑）
-#       A800 现场取值：/data/remote/rootfs/graspo · /data/remote/work/b09/mnt-verify-b09.json
-#       · /data/remote/run_in_rootfs.py · /workspace/graspo（rootfs 内 `GRASPO_RUN_ROOT=/runs`、
+#       A800 现场取值：`<主机侧数据根>/rootfs/graspo` · `<主机侧数据根>/work/b09/mnt-verify-b09.json`
+#       · `<主机侧数据根>/run_in_rootfs.py` · `/workspace/graspo`（rootfs 内 `GRASPO_RUN_ROOT=/runs`、
 #       `GRASPO_EVAL_ROOT=/evalout` 由调用方按现场给，本文件不硬编码）
 set -uo pipefail
 

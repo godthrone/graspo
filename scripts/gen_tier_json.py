@@ -107,7 +107,7 @@ def load_report(path: str) -> dict:
 
 
 def summarise(report: dict) -> tuple[int, int, float]:
-    """兼容两种 summary 口径：`total` 或 `sample_count_total`（228 实测为后者）。"""
+    """兼容两种 summary 口径：`total` 或 `sample_count_total`（远端机实测为后者）。"""
     s = report["summary"]
     total = s.get("total", s.get("sample_count_total"))
     assert total is not None, f"summary 既无 total 也无 sample_count_total：{list(s)}"
@@ -296,7 +296,7 @@ def build(args) -> collections.OrderedDict:
 
 
 def selfcheck(d: dict) -> None:
-    """落盘前自检（四类，全部来自 228 实测教训）。"""
+    """落盘前自检（四类，全部来自远端机实测教训）。"""
     # ⓪ 不可评分支（2026-10-14，T018 驱动）：与矩阵侧校验器同判据
     if d.get("after_acc") is None:
         reason = (d.get("not_evaluable_reason") or "").strip()

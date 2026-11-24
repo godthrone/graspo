@@ -521,8 +521,9 @@ def test_untracked_ignored_file_is_still_out_of_scope(tmp_path: Path) -> None:
 # review-precommit-batch3/review-report.md:268`）判定「四道具全绿 ≠ 仓内无内网信息」，
 # 因为它实测到两类形态**任何规则都不命中**：
 #   ① `private_ipv4` 漏 URL 形态（URL 形态原先 MISS、裸写 HIT）；
-#   ② `internal_absolute_path` 漏 `/data/remote/<账号>/`（3 样例全 MISS）。
-# 下面 8 条把两个缺口钉成**可失败的断言**，并把"边界外样例"显式写出来
+#   ② `internal_absolute_path` 漏 `/data/remote/<账号>/`（3 样例全 MISS）；
+#   ③（2026-11-23 补）`internal_absolute_path` 漏**无尾斜杠**的宿主路径与 `/data/<账号>`。
+# 下面各条把这些缺口钉成**可失败的断言**，并把"边界外样例"显式写出来
 # （诚实标注覆盖范围，⛔ 不假装规则已覆盖全部内网形态）。
 # 夹具沿用本文件既有纪律：**运行时拼接**，避免把规则要抓的字面量写进测试文件
 # 本身（否则测试文件自己会命中门禁，又得为它加白名单）。
@@ -659,6 +660,82 @@ def test_content_scope_boundary_examples_are_uncovered(tmp_path: Path) -> None:
     payload = json.loads(proc.stdout)
     assert payload["violation_count"] == 0, (
         "边界外样例被命中 ⇒ 规则已超出本轮声明的覆盖范围，需显式裁定：\n" + proc.stdout
+    )
+
+
+# ── 缺口③/④（2026-11-23）：无尾斜杠的宿主绝对路径 + `/data/<账号>` 宿主根 ──────────
+# 背景：代码里写这类路径最自然的落点就是"环境变量兜底 / argparse 缺省值"，那里的路径
+# 后面紧跟引号、`)` 或行尾 ⇒ **没有尾斜杠**。原规则要求「账号段 + `/`」两段俱全，
+# 这类写法整类静默放过（实测：门禁 0 阻断，而两处真实内网路径就在源码里）。
+_NOSLASH_ACCT = _LOCVG_ACCT              # `/data/remote/<合成账号>`，结尾无斜杠
+_DATA_ROOT_ACCT = "/data/" + "sampleacct" + "30"   # `/data/<字母开头+数字后缀>`
+_HOME_ACCT = "/home/" + "sampleacct"     # `/home/<账号>`（同样要求"无尾斜杠也命中"）
+
+
+def test_content_host_path_without_trailing_slash_is_blocked(tmp_path: Path) -> None:
+    """★ 缺口③：宿主绝对路径**结尾不是斜杠**时也必须命中（脚本兜底值 / argparse 缺省值）。"""
+    repo = make_repo(tmp_path)
+    (repo / "deploy.sh").write_text(
+        f'HOST_ROOT="${{GRASPO_EVAL_HOST_ROOT:-{_NOSLASH_ACCT}}}"\n'
+        f'STAGE="{_NOSLASH_ACCT}"\n'
+        f'TMP = os.environ.get("GRASPO_EVAL_TMP_DIR", "{_NOSLASH_ACCT}")\n'
+        f"DATA = {_HOME_ACCT!r}\n",
+        encoding="utf-8",
+    )
+    commit_all(repo)
+    proc = run_gate("content", repo, "-o", "json", "--tracked-only")
+    payload = json.loads(proc.stdout)
+    hits = sorted((v["line"], v["rule"]) for v in payload["violations"])
+    assert proc.returncode == 1, f"无尾斜杠的宿主路径未被拦下：\n{proc.stdout}"
+    assert hits == [(1, "internal_absolute_path"), (2, "internal_absolute_path"),
+                    (3, "internal_absolute_path"), (4, "internal_absolute_path")], (
+        "无尾斜杠形态的命中面与预期不一致：\n" + proc.stdout
+    )
+
+
+def test_content_account_path_in_data_root_is_blocked(tmp_path: Path) -> None:
+    """★ 缺口④：`/data/<账号>`（账号段直接挂在 `/data/` 下的开发机宿主根）必须命中。
+
+    判据收窄为「字母开头 + 数字后缀」——占位段（`/data/train`、`/data/models`…）因此
+    仍不命中，见下一条负例。不收窄的话本仓 396 处 `/data/train.jsonl` 会整类变阻断。
+    """
+    repo = make_repo(tmp_path)
+    (repo / "gen.py").write_text(
+        f'ap.add_argument("--host-root", default="{_DATA_ROOT_ACCT}")\n'
+        f"RUNS = {_DATA_ROOT_ACCT + '/runs/M008'!r}\n",
+        encoding="utf-8",
+    )
+    commit_all(repo)
+    proc = run_gate("content", repo, "-o", "json", "--tracked-only")
+    payload = json.loads(proc.stdout)
+    hits = sorted((v["line"], v["rule"]) for v in payload["violations"])
+    assert proc.returncode == 1, f"`/data/<账号>` 未被拦下：\n{proc.stdout}"
+    assert hits == [(1, "internal_absolute_path"), (2, "internal_absolute_path")], (
+        "`/data/<账号>` 的命中面与预期不一致：\n" + proc.stdout
+    )
+
+
+def test_content_account_shaped_root_keeps_placeholder_paths_clean(tmp_path: Path) -> None:
+    """★ 负向对照：补 `/data/<账号>` 与「无尾斜杠」**没有**把占位段打成误报。
+
+    这是两条新判据各自误报面的钉子：
+      · `/data/<段>` 段内**无数字后缀** ⇒ 不命中（`/data/train`、`/data/models`、
+        `/data/user/models`、`/data/v2` 等，本仓真实存在的占位/示例路径）；
+      · `/home/` 的排除项改成 `(?:user|…)(?![\\w.\\-])` 后，`/home/user`（**无尾斜杠**）
+        与 `/home/runner/x` 仍不命中——排除集逐项未变，只是不再靠"必须有尾斜杠"兜底。
+    """
+    repo = make_repo(tmp_path)
+    (repo / "placeholders.md").write_text(
+        "示例路径：/data/train、/data/models、/data/json_output、/data/test.jsonl、/data/v2\n"
+        "占位账号：/data/user/models、/data/users/vllm、/home/user、/home/runner/x\n"
+        "相对路径：samples/data/train.jsonl\n",
+        encoding="utf-8",
+    )
+    commit_all(repo)
+    proc = run_gate("content", repo, "-o", "json", "--tracked-only")
+    payload = json.loads(proc.stdout)
+    assert payload["violation_count"] == 0, (
+        "占位路径被误伤 ⇒ 新分支的收窄条件（数字后缀 / 排除项边界）失效：\n" + proc.stdout
     )
 
 

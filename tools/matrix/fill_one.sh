@@ -7,7 +7,7 @@
 #
 # ★ 为什么本文件这么短：真正的逻辑在 `tools/matrix/fill_one.py`（同目录），本文件只做两件事：
 #   ① 选解释器；② **容器门槛**——落盘链里 `verify_matrix.py`（它 `import gen_configs.py`）需要
-#      `import graspo`（⇒ pydantic 等）。宿主机（228）**没有**装 graspo/pydantic 包，宿主 python3
+#      `import graspo`（⇒ pydantic 等）。宿主机（远端机）**没有**装 graspo/pydantic 包，宿主 python3
 #      会在 `import` 处 `ModuleNotFoundError` ⇒ 这一步必须进容器跑。
 #      ⇒ 宿主上直接跑本脚本时，若发现缺依赖且 docker 可用，就**自动**把自身送进训练镜像里再跑一遍
 #      （同样的绝对路径挂载，产物仍落宿主同一份树；`--user $(id -u):$(id -g)` ⇒ 不产生 root 文件）。

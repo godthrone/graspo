@@ -42,7 +42,7 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PYTHONPATH" python3 "$TREE/scripts/gpu_lo
 # ★ 逐卡断言：交给仓内**已固化且有单测**的实现 scripts/gpu_idle_assert.py
 #   （默认连续采样 3 帧、间隔 12 s、帧帧满足；**任一**目标卡 剩余 < 本档头寸 或 util != 0 ⇒ rc=1 ⇒ 拒跑）。
 #   ⛔ 不再手写单卡解析：旧写法对 `nvidia-smi -i 3,4` 会拿到两行 ⇒
-#      `[: 81153\n81153: integer expression expected` ⇒ FATAL（228 实测）；
+#      `[: 81153\n81153: integer expression expected` ⇒ FATAL（远端机实测）；
 #      而绕法"只传一张卡做预检"会让**多卡档只验一张卡**，与"当场复测每张卡"的纪律不符。
 #   头寸默认 48 GiB（与旧硬编码值一致），可用 GRASPO_GPU_POSITION_MIB 覆盖 —— 语义未变。
 PYTHONDONTWRITEBYTECODE=1 "$PYBIN_OR_PYTHON" "$TREE/scripts/gpu_idle_assert.py" --visible "$GPU" 2>&1 | tee -a "$LOG"
@@ -70,7 +70,7 @@ fi
 
 say "--- [assert 3] 叠跑闸（并行允许；只挡非我方容器）---"
 # ★ 修正（2026-10-12）：本闸的**唯一目的**是"不与争用资源的他人作业并发"；
-#   而 228 是共享机、第三方容器可能随时存在（如 vla-6dof 系），**其存在本身不等于争用**。
+#   而远端机是共享机、第三方容器可能随时存在（如 vla-6dof 系），**其存在本身不等于争用**。
 #   ⇒ 判据改为：★ 我方(graspo:*)一律允许共存；★ 非我方容器**只警告不拒跑**（真实争用由
 #     卡空闲断言 util==0% + 运行期抽测/退让 覆盖；⛔ 永不 kill/停他人容器）。
 for c in $(docker ps -q); do

@@ -10,8 +10,9 @@ torchrun 在子进程被信号杀死 / 异常退出且**不产出 traceback 正�
 
 ## 实证来源（⛔ 不是凭空造的 fixture）
 
-`_M019_TAIL` 是 A800-33 `runs/M019/stdout.log`（3 731 999 B，2026-11-10）第 `50041–50080` 行的
-**逐字节原文**（40 行；复现：`sed -n '50041,50080p' runs/M019/stdout.log`）。四条条件全部落在这一段里：
+`_M019_TAIL` 是远端机 `runs/M019/stdout.log`（3 731 999 B，2026-11-10）第 `50041–50080` 行的
+**逐字节原文**（40 行；★ 只把主机名脱敏了，其余逐字节未改；
+复现：`sed -n '50041,50080p' runs/M019/stdout.log`）。四条条件全部落在这一段里：
 
 | # | 条件 | 原文位置 |
 |---|------|----------|
@@ -67,7 +68,7 @@ graspo.cli.train_worker FAILED
 Failures:
 [1]:
   time      : 2026-11-10_06:56:06
-  host      : node033
+  host      : remote-node
   rank      : 0 (local_rank: 0)
   exitcode  : -15 (pid: 145)
   error_file: <N/A>
@@ -76,7 +77,7 @@ Failures:
 Root Cause (first observed failure):
 [0]:
   time      : 2026-11-10_06:56:05
-  host      : node033
+  host      : remote-node
   rank      : 1 (local_rank: 1)
   exitcode  : 86 (pid: 146)
   error_file: <N/A>

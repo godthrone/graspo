@@ -7,7 +7,7 @@
 （容器落盘），把这堆合成 `readings.json` 的那一步**没人调用** ⇒ 漏补一次就卡死取证链：
 `mk_evidence` 报 `FAIL: readings.json 缺失或不可解析`（M013、M018 两次人工补过）。
 
-更糟的一份实测（M008，A800-33 `/data/remote/runs/M008`）：`readings.json` 在盘上但**是空壳**
+更糟的一份实测（M008，远端机 `<主机侧数据根>/runs/M008`）：`readings.json` 在盘上但**是空壳**
 ——`exit_code=99`、`elapsed_sec=null`、`gpus=null`、`note=null`，而同一目录的
 `readings.raw.json` 写着 `exit_code=0 / elapsed_sec=1394 / gpus=[4,5,6,7]`
 ⇒ 判据① 会按"退出码 99"把一档**跑成功**的档判成失败。
@@ -21,7 +21,7 @@
    `record_checks.py`，⛔ 不许被洗掉）；
 3. **失败可见**：`readings.raw.json` 不可解析 / 档号错配 ⇒ 非零退出 + 原样输出，
    ⛔ 不静默吞；链里遇到非零 ⇒ 拒绝回填（rc=3，**未写任何文件**）；
-4. **不越界**：没有 `readings.raw.json` 的跑次（228 那类由 runner 自写 `readings.json`）
+4. **不越界**：没有 `readings.raw.json` 的跑次（远端机那类由 runner 自写 `readings.json`）
    ⇒ 明确跳过，⛔ 不重写别人的件。
 """
 
@@ -63,7 +63,7 @@ def _run_dir(tmp_path: pathlib.Path, name: str = "M018", *, raw=True, exit_code=
         (run / "readings.raw.json").write_text(json.dumps({
             "tier": name, "exit_code": 0, "elapsed_sec": 1234, "gpus": ["0", "1"],
             "config": f"samples/configs/matrix68/{name}.yaml", "image": "graspo:test",
-            "timeout_sec": 1500, "repo": "/data/remote/work/graspo-baseline-r1-6189bd8",
+            "timeout_sec": 1500, "repo": "/data/eval-host/work/graspo-baseline-r1-6189bd8",
             "command": f"run_tier_b09.sh {name} 0,1 1500",
             "note": "elapsed_sec = 外层墙钟",
         }), encoding="utf-8")
@@ -122,7 +122,7 @@ def test_chain_hands_the_run_dir_and_honours_dry_run(tmp_path):
 
 
 def test_chain_skips_runner_written_readings(tmp_path):
-    """没有 `readings.raw.json` ⇒ **不调用**（228 那类跑次的 readings.json 由 runner 自写）。"""
+    """没有 `readings.raw.json` ⇒ **不调用**（远端机那类跑次的 readings.json 由 runner 自写）。"""
     run = _run_dir(tmp_path, raw=False)
     calls: list[list[str]] = []
     rc, out = FILL.ensure_readings(run, runner=lambda cmd: calls.append(list(cmd)) or (0, ""))

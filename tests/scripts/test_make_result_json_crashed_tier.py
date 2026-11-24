@@ -2,7 +2,7 @@
 
 ## 为什么有这条通道（实证来源，⛔ 不是凭空造的 fixture）
 
-M011（9B / SFT / 全参 / native / 单卡，228 实测 2026-10-25，在役树
+M011（9B / SFT / 全参 / native / 单卡，远端机实测 2026-10-25，在役树
 `<tree>/runs/M011/`）：
 
 * `exit_code` = `1`（`runs/M011/exit_code` 逐字）、`elapsed_sec` = `334.0`；
@@ -49,7 +49,7 @@ _GOLDEN = _ROOT / "tests" / "scripts" / "fixtures" / "m011_crash_default_doc.jso
 _BEFORE = _ROOT / "tests" / "scripts" / "fixtures" / "m011_crash_default_doc.BEFORE-D29.json"
 _RUNDIR_PLACEHOLDER = "<RUNDIR>"
 
-#: M011 的 `runs/M011/stdout.log` **逐字**原文（228 在役树，52 行；此处保留前 20 行 +
+#: M011 的 `runs/M011/stdout.log` **逐字**原文（远端机在役树，52 行；此处保留前 20 行 +
 #: 收尾的 torchrun 失败块 —— 判据要的"报错原文 + 行号"全部在这 20 行里，行号与真件一致）。
 M011_STDOUT = """[train-worker] GPU lock OK: NVIDIA_VISIBLE_DEVICES=0
 Traceback (most recent call last):
@@ -362,7 +362,7 @@ def test_unprefixed_form_unchanged_by_prefix_tolerance():
 
 # ══════════════════════════════════════════════════════════════════════════════
 # D30（2026-10-28）：A800 编排层形态（不落 tier.json）+ 崩溃档 ②③④「未取得」标注
-#   ★ 实证来源：M039 / M040（9B / OPD / **全参** / ms-swift，A800-33 实测 2026-10-28）
+#   ★ 实证来源：M039 / M040（9B / OPD / **全参** / ms-swift，远端机实测 2026-10-28）
 #     `exit_code=1`、`stdout.log` 逐字 `RuntimeError: Inference tensors cannot be saved for
 #     backward…`（帧在 `torch/nn/modules/conv.py:718`）、0 步、无 checkpoint；
 #     编排层 `run_tier_opd.sh` **不落 tier.json**，身份件是 `entry.sh`（`--config …/matrix68/
@@ -388,7 +388,7 @@ def _a800_crash_run(tmp_path, *, tier="M039", tier_json=None, entry=True, subset
     (run / "readings.json").write_text(json.dumps({
         "tier": tier, "exit_code": 1, "elapsed_sec": 218,
         "gpus": ["6", "7"], "config": f"samples/configs/matrix68/{tier}.yaml",
-        "timeout_sec": 900, "repo": "/data/remote/work/graspo-1b48cd1-opd",
+        "timeout_sec": 900, "repo": "/data/eval-host/work/graspo-1b48cd1-opd",
         "command": f"run_tier_opd.sh {tier} 6,7 900"}, indent=1), encoding="utf-8")
     gpu = run / "gpu"
     gpu.mkdir()

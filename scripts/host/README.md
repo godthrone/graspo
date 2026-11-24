@@ -24,11 +24,11 @@ bash scripts/host/eval_a800.sh M016 adapter /runs/M016-pdb2-diag/v0-XXXX/checkpo
 | `<SERVE_GPUS>` | 给 vLLM 的卡，如 `2,3` |
 | `[SIDE]` | `both`（默认，先 after 再 base，产出 Δ）或 `after`（只评 after） |
 
-**环境变量（可选，默认值 = 原先硬编码值，行为零变化）**
+**环境变量**
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `GRASPO_EVAL_HOST_ROOT` | `/data/remote` | 主机侧数据根（rootfs、eval 目录、mounts 清单都在其下） |
+| `GRASPO_EVAL_HOST_ROOT` | **必填**（无缺省） | 主机侧数据根（rootfs、eval 目录、mounts 清单都在其下）；未设置即报错退出 |
 | `GRASPO_EVAL_PORT` | `8103` | vLLM 端口，须与内部 `gen_eval --port` 同源 |
 
 **产出**：`$GRASPO_EVAL_HOST_ROOT/eval/<TIER>/` 下的 `judge4.json`

@@ -37,7 +37,7 @@
 3. **复核步**：本脚本（默认模式）逐档实测 ``<tier-id>.jsonl``，产出
    ``measured_tokens.json`` —— **这就是"目标长度真的达到了"的判据**。
 
-**用法（容器内；在 228 上经 runner 的镜像跑，或本机有 ms-swift 环境时直接跑）**
+**用法（容器内；在远端机上经 runner 的镜像跑，或本机有 ms-swift 环境时直接跑）**
 
     # ① 找最短基样并标定（含 N=1,2,4 三个实测点）
     python3 measure_synth_tokens.py --source /work/elam-v5/subsets/T013.jsonl \\
@@ -49,7 +49,7 @@
 
 **依赖**：ms-swift（``swift``）+ ``torch`` + 本仓 ``graspo``（即容器内环境）。
 **注意**：``load_model=False`` ⇒ **不加载权重、不占 GPU 显存**；但仍需模型目录含
-tokenizer/processor/template 元信息（228 上 ``/models/Qwen3.5-9B`` 满足）。
+tokenizer/processor/template 元信息（远端机上 ``/models/Qwen3.5-9B`` 满足）。
 """
 
 from __future__ import annotations

@@ -43,7 +43,7 @@ def stage_exempt_lora_targets(
     （``model.py`` 只按这些下标建 ``TensorParallelQwen35DecoderLayer``）。于是
     ``enabled_lora_hf_module_paths()`` 在 stage k 上**结构性**只含本 stage 的层，
     拿它与整模型的 ``resolved`` 相减，必然把**别的 stage 的层**误报成"本机未实现"
-    ⇒ ``pp_size>1`` 的档一律在建模型后崩（228 实测 22 档 native+pp>1）。
+    ⇒ ``pp_size>1`` 的档一律在建模型后崩（远端机实测 22 档 native+pp>1）。
 
     **判据（不得放宽）**：只剔除**有层号且该层号不在本 stage** 的目标。
     - 有层号且在本 stage ⇒ 留在"必须命中"域（真该建的没建，照旧 fail-closed）；

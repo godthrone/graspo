@@ -15,7 +15,7 @@
   本文件**不手填任何数值**：所有数字都从 ① 的产物来；本文件只做「档号/证据定位 + 排练比较 +
   范围断言 + before/after 打印 + 进度行 + 三锁回执」。
 
-★ 证据定位（228 实测定下的口径，⛔ 不猜）：
+★ 证据定位（远端机实测定下的口径，⛔ 不猜）：
   · 跑次目录 = `${GRASPO_RUN_ROOT:-<树>/runs}/<档号>/`（`readings.json` / `derived_steps.json` /
     `exit_code` / `elapsed_sec` / `gpu/peak_mem.json` / `<档号>/v0-*/checkpoint-*/trainer_state.json` …）
   · 评测证据 = `${GRASPO_EVAL_ROOT}`（缺省 = 树根的兄弟目录 `eval-*` 里**恰好一个**含
@@ -165,7 +165,7 @@ def ensure_readings(rdir: Path, *, dry_run: bool = False,
 
     边界（⛔ 不许扩）：
       · **只有 `readings.raw.json` 在盘上才动**（那是本步的输入证据）。没有 raw 的跑次
-        （228 那类由 runner 自写 `readings.json`）⇒ 明确跳过，⛔ 不重写、⛔ 不覆盖别人的件。
+        （远端机那类由 runner 自写 `readings.json`）⇒ 明确跳过，⛔ 不重写、⛔ 不覆盖别人的件。
       · 幂等由 `scripts/mk_readings.py` 保证（先算字节再比，重复跑 `unchanged` 不写盘）。
       · `dry_run=True` ⇒ 传 `--check`（只算不写），让 `--dry-run` 全程**不落盘**。
       · 该步失败（raw 不可解析 / 档号错配 / 解释器报错）⇒ 返回 rc≠0 与**原样输出**，

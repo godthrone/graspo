@@ -123,7 +123,7 @@ def test_wrong_expected_count_fails_assertion():
 def test_gpu_sets_are_within_allowed_range():
     """★ 默认卡集合必须落在本机全卡 0–7 内，且卡数 == 该档 cards。
 
-    ★ 2026-10-17 主席令：「228 先到先得，随便用。」＋「单个作业不限制卡数。」
+    ★ 2026-10-17 主席令：「远端机先到先得，随便用。」＋「单个作业不限制卡数。」
     ⇒ 判据 = **卡号 ∈ 0–7**（存在性）与 **卡数 == cards**；⛔ 不再有"≤ 4 卡"上限、
     ⛔ 不再有"不得含 6/7"的生产锁卡判据。原用例写死 `max(gpus) <= 3` /
     `len(gpus) <= 4`，那是**默认值**的事实而非判据 —— 改为对本机允许集合断言（更强且不误伤）。
@@ -646,7 +646,7 @@ def test_dry_run_does_not_write_files():
 # LoRA target_preset 的**条件选择**（T028 阻断的配置侧修复）
 # ══════════════════════════════════════════════════════════════════════════════
 #
-# 阻断（228 实测 T028，2026-09-19）：native GRASPO 档 `lora.target_preset: language_safe`
+# 阻断（远端机实测 T028，2026-09-19）：native GRASPO 档 `lora.target_preset: language_safe`
 # ⇒ 视觉塔零可训参数 ⇒ `RuntimeError: multimodal preflight failed: no trainable visual
 # parameters found`。真因是**生成器对所有 LoRA 档硬编码语言预设**，与卡数/显存无关。
 # 修法：`lora_target_preset(tier)` 按"模型有视觉塔 且 该档数据含图"条件选择。
@@ -985,7 +985,7 @@ def test_gpu_override_keeps_cards_and_every_other_field():
 def test_gpu_override_is_fail_closed(spec: str, needle: str):
     """负向用例：越界（≥8）/ 卡数不符 / 空 / 重复 / 未知档 / 语法错 ⇒ 一律拒绝。
 
-    ★ 2026-10-17 主席令：「228 先到先得，随便用。」＋「单个作业不限制卡数。」
+    ★ 2026-10-17 主席令：「远端机先到先得，随便用。」＋「单个作业不限制卡数。」
     ⇒ 旧参数化里的 `T001=6` / `T001=7` / `T002=6,7`（断言"生产卡…永不触碰"）**旧口径已废** ⇒ 删除：
       它们现在是**合法**输入，由 `test_card_pool_caliber_*` 正向钉住。
     """
@@ -1055,7 +1055,7 @@ def test_override_manifest_records_spec_and_fingerprint():
     assert record["override_spec"] == "T001=4;T002=4,5"
     assert record["allowed_gpus"] == list(range(8))          # ★ 本机全卡 0–7（旧值 0–5 已废）
     # ★★ 旧两个键 `forbidden_production_gpus=[6,7]` 与 `max_cards_per_job=4` **随旧口径一起删除**
-    #    （2026-10-17 主席令：「228 先到先得，随便用。」＋「单个作业不限制卡数。」）
+    #    （2026-10-17 主席令：「远端机先到先得，随便用。」＋「单个作业不限制卡数。」）
     #    ⇒ 这里**断言它们不存在**（⛔ 不留空壳键，否则读件的人会以为还有这样的边界）。
     assert "forbidden_production_gpus" not in record
     assert "max_cards_per_job" not in record
@@ -1231,7 +1231,7 @@ def _load_collector():
 
 #: 假 torch：**只**实现探测脚本用到的最小面（``__version__`` + ``load``）。
 #: 为什么造假的而不是要求真 torch：探测脚本的契约是"用 torch.load 反序列化"，而
-#: 契约测试要验证的是**落盘格式与顺序**、不是 torch 的行为；宿主（开发机/228）
+#: 契约测试要验证的是**落盘格式与顺序**、不是 torch 的行为；宿主（开发机/远端机）
 #: 都**没有** torch，用真 torch 会让这条用例永远 skip（等于没有防呆）。
 #: 假 torch 让"反序列化成功 / 失败"两种形态都能精确构造（§2.1 契约即防呆）。
 _FAKE_TORCH = """__version__ = "2.11.0+cu130-fake"
@@ -1359,7 +1359,7 @@ def test_runner_contains_probe_step_in_the_required_order():
 
 # ── ★ P17（2026-09-23）：full-param 档的探测**不得空转**（虚假通过）──────────────────
 #
-# 缺陷形态（228 实测）：native 的 full-param ckpt **同时**写**空的** ``lora_state_dict``
+# 缺陷形态（远端机实测）：native 的 full-param ckpt **同时**写**空的** ``lora_state_dict``
 # （只收 ``lora_`` 名字）与真权重 ``full_param_state_dict``；旧探针按"第一个 dict"取值 ⇒
 # 命中空字典 ⇒ ``state_dict_kind=lora_state_dict``、``tensors=0`` 却 ``all_ok=True``
 # ⇒ **A3 虚假通过**（无法发现 ckpt 损坏/截断）。本区块锁死三件事：

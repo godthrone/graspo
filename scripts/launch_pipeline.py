@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """启动流水线（生成 → 护栏 → 起跑 → 监控 → 评测 → 落 json）的可测骨架。
 
-为什么有这件：228 战役里同一"护栏邻域"连踩 5 次坑（§8 断言位置错 → §7 谓词过窄 →
+为什么有这件：远端机战役里同一"护栏邻域"连踩 5 次坑（§8 断言位置错 → §7 谓词过窄 →
 护栏件未同步部署树 → 评测脚本生成顺序错 → 生成链变量为空）。根因是**启动脚本每轮临时写**。
 本模块把这条链**固化成一件可测的东西**：纯函数负责"生成前/起跑前"的全部判定与断言，
 调用方（launcher / 评测脚本）只负责执行 docker 与 await。
@@ -49,7 +49,7 @@ class Plan:
 
 
 def require_non_empty(name: str, value: str | None) -> list[str]:
-    """变量非空断言（228 实测：空 `MP` 导致 export 2 s 即失败）。"""
+    """变量非空断言（远端机实测：空 `MP` 导致 export 2 s 即失败）。"""
     if value is None or not str(value).strip():
         return [f"变量 {name} 为空 ⇒ fail-closed（变量非空断言）"]
     return []
@@ -132,7 +132,7 @@ EVAL_CONTAINER_PREFIXES = ("/evalout/", "/runs/")
 def check_merged_artifact(host_merge_dir: str, eval_container_path: str) -> list[str]:
     """§7 扩到**合并产物**：merged 目录本身要过形态谓词，且**评测配置里写的路径必须评测容器内可达**。
 
-    为什么单列：228 上 §7 的坑在"训练 checkpoint"与"合并产物"两个路径上**各踩过一次**
+    为什么单列：远端机上 §7 的坑在"训练 checkpoint"与"合并产物"两个路径上**各踩过一次**
     （T004/T005 修了前者，T024 的 `eval-t024-after.yaml` 里又出现 `checkpoint_path: /model`）。
     规则：
       · **宿主侧** `host_merge_dir` 必须存在 ∧ 过 `run_guards.detect_form_and_validate`（至少含权重）；
@@ -174,7 +174,7 @@ ELAM_HOST_DIR = os.environ.get("GRASPO_ELAM_V5_DIR") or os.path.join(
 def resolve_base_mount_source(model_path: str, host_root: str = MODEL_HOST_ROOT) -> tuple[str | None, str]:
     """把"本档基座路径"解析成**可用于 `docker run -v <src>:<dst>` 的宿主机路径**。
 
-    ★ 这是 228 上一次事故 + 一次险些事故的收口：`$MP`（本档 config 里的 `model_path`）是
+    ★ 这是远端机上一次事故 + 一次险些事故的收口：`$MP`（本档 config 里的 `model_path`）是
     **容器内路径**（如 `/models/Qwen3.8-27B`），直接当挂载源写进 `-v` 会让 docker 建空目录，
     随后 vLLM 报 `Invalid repository ID or local directory specified: '/model'`（T024 实测）。
     规则：`/models/X` ⇒ `<host_root>X`（默认 `<宿主模型根>/X`，即 `MODEL_HOST_ROOT`）并断言其存在；
@@ -216,7 +216,7 @@ def render_vllm_base_mount(model_path: str, container_dst: str = "/model", host_
 def check_card_count(selected: list[str], required: int) -> list[str]:
     """★ 卡数必须等于该档 manifest 的 `cards`（第 8 个"启动前置"类坑的收口）。
 
-    228 实测（2026-10-13 T009）：起跑脚本**写死了 `SEL=7`**（1 卡），而该档
+    远端机实测（2026-10-13 T009）：起跑脚本**写死了 `SEL=7`**（1 卡），而该档
     `nproc_per_node=4` ⇒ torchrun 起 4 个 rank、rank 1/2/3 全失败 ⇒ `exitcode=1`。
     护栏：起跑前**从 manifest 读 `cards`**，断言"选中卡数 == cards"，不匹配即 fail-closed。
     ⛔ 禁止在起跑脚本里写死卡集。
@@ -245,7 +245,7 @@ def plan_cards(available: list[str], required: int) -> tuple[list[str] | None, s
 def check_script_self_contained(script_text: str, required_vars: list[str]) -> list[str]:
     """★ 生成的启动脚本必须**自己定义**它用到的每个变量（第 9 个"启动前置"类坑）。
 
-    228 实测（2026-10-13 T024）：我用 sed 把容器名改成 `t024-export-${TS}`，**却把 `TS=` 的定义
+    远端机实测（2026-10-13 T024）：我用 sed 把容器名改成 `t024-export-${TS}`，**却把 `TS=` 的定义
     留在了外层脚本**⇒ 生成的脚本一跑到那行就 `TS: unbound variable` 而死（现象是"日志停住、
     容器已退、GPU 已空"，离真因很远）。护栏：生成后**断言每个必需变量在脚本内被赋值**。
     """
@@ -363,14 +363,14 @@ def render_eval_script(*, tier: str, tree: str, eval_dir: str, checkpoint: str, 
     return (text, f"已生成 {tier} 评测脚本（base 挂载源={src}，§8/§10 断言内嵌，容器名带 -$TS）")
 
 
-#: 部署树里脚本运行所需的依赖根（228 实测：缺它会让 gpu_idle_assert 因 pydantic 导入失败而**非零退出**）
+#: 部署树里脚本运行所需的依赖根（远端机实测：缺它会让 gpu_idle_assert 因 pydantic 导入失败而**非零退出**）
 HOSTDEPS_SUFFIX = ".hostdeps"
 
 
 def check_tooling_env(tree: str, pythonpath: str | None, require_hostdeps: bool = True) -> list[str]:
     """★ 断言"跑选卡门/护栏时 PYTHONPATH 里必须有部署树的 `.hostdeps`"。
 
-    为什么单列：228 实测（2026-10-13）—— 我把 `PYTHONPATH` 只设成 `$TREE/scripts`，
+    为什么单列：远端机实测（2026-10-13）—— 我把 `PYTHONPATH` 只设成 `$TREE/scripts`，
     `gpu_idle_assert.py` 因 **`ModuleNotFoundError: No module named 'pydantic'`** 对**每一张卡**
     非零退出 ⇒ 选卡循环读出 **"0 张空闲"** ⇒ **工具自身的失败被误读成"资源不足"**，
     这会让人以为卡不够而白白顺延。规则：**必须显式区分"工具坏了"与"卡真的不够"**。
@@ -412,7 +412,7 @@ def plan_full_cards(cards: list[dict], required: int, allow_used_mib: int = 0,
                     reserved: set[str] | None = None) -> tuple[list[str] | None, str]:
     """★ 为**大模型训练档**取卡：只接受"整卡基本空闲"的卡（第 11 个坑的收口）。
 
-    228 实测（2026-10-13 T009，27B 全参 4 卡）：卡集里混进了 **宿主 GPU2**（上面有第三方
+    远端机实测（2026-10-13 T009，27B 全参 4 卡）：卡集里混进了 **宿主 GPU2**（上面有第三方
     **13.01 GiB** 常驻）—— 旧判据"free ≥ 头寸(48 GiB) ∧ util == 0"**放行了它**，而该档实际要**接近整卡**
     ⇒ `torch.OutOfMemoryError: Tried to allocate 1.81 GiB. GPU 1 … of which 154.25 MiB is free`。
 
@@ -450,7 +450,7 @@ def plan_full_cards(cards: list[dict], required: int, allow_used_mib: int = 0,
 def check_script_mount_sources(script_text: str, host_model_prefix: str = MODEL_HOST_ROOT) -> list[str]:
     """★ 对**生成出来的脚本文本**做挂载源断言（⛔ 只校验函数输出不算数）。
 
-    228 实测（2026-10-13，T009/T007/T008/T024 共四次）：我确实调用并核对了
+    远端机实测（2026-10-13，T009/T007/T008/T024 共四次）：我确实调用并核对了
     `render_vllm_base_mount()` 的返回值，**但生成脚本时仍写成容器内变量**（如 `-v $MPB:/model:ro`
     其中 `MPB=/models/...`）⇒ 起跑后 `/model` 是空目录 ⇒ `ValidationError … params.json`。
     规则：**必须对"即将执行的脚本文本"断言** —— 文本里任何 `-v <src>:/model...` 的 `<src>`
@@ -492,7 +492,7 @@ def check_script_mount_sources(script_text: str, host_model_prefix: str = MODEL_
 def decide_eval_mode(form: str) -> tuple[str, str]:
     """★ 由 §7 形态探测结果决定评测怎么起：0=零 merge（全参直服务）/ 1=合并。
 
-    228 实测（2026-10-13 T019）：我按"LoRA ⇒ 合并"的惯性写了 export 步骤，而该档实际是
+    远端机实测（2026-10-13 T019）：我按"LoRA ⇒ 合并"的惯性写了 export 步骤，而该档实际是
     **全参/HF 形态**（`run_guards form` 已打印 `[full]`）⇒ `graspo eval export` 回执
     `checkpoint is already a servable base model — nothing to merge` ⇒ **合并产物根本不会产生**
     ⇒ `§8(post)` 正确 fail-closed（"没有产物的成功"）。规则：**先探测、再分支**，⛔ 不靠惯性。
@@ -506,7 +506,7 @@ def decide_eval_mode(form: str) -> tuple[str, str]:
     return ("unknown", f"形态未知（{form}）⇒ ⛔ 不得凭惯性选路径，须人工确认 ⇒ fail-closed")
 
 
-#: §10 的缺省安全值：228 实测 27B(Mamba) 的可用 cache blocks = 232 ⇒ 取 192
+#: §10 的缺省安全值：远端机实测 27B(Mamba) 的可用 cache blocks = 232 ⇒ 取 192
 MAMBA_SAFE_MAX_NUM_SEQS = 192
 
 

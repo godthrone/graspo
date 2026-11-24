@@ -233,7 +233,7 @@ def test_method_from_label_maps_the_four_frozen_methods():
 def test_mode_allowed_covers_every_mode_by_tuner_value():
     """★ 同文件里「必须等于 全参」与「只许是 {LoRA, full, CPT, SFT}」此前互相打架：
 
-    实测驱动 = 228 在役树 `runs/M011/tier.json` 的 `tuner_type: "full"` + 矩阵数据件里
+    实测驱动 = 远端机在役树 `runs/M011/tier.json` 的 `tuner_type: "full"` + 矩阵数据件里
     16 档 `mode="全参"`。`MODE_BY_TUNER` 能产出的取值**必须**都在 `MODE_ALLOWED` 里，
     否则全参档按 `--identity-from-config` 一律 FAIL-CLOSED（台账一格写不进去）。
     """

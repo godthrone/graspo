@@ -21,7 +21,7 @@
 
 **★ 「可表达」≠「能跑通」≠「显存可行」**：三者都不互相蕴含。
 
-**口径（主席 2026-10-17 裁定，逐字复核后为权威）**：「**228 先到先得，随便用。**」
+**口径（主席 2026-10-17 裁定，已脱敏转述，复核后为权威）**：「**远端机先到先得，随便用。**」
 ＋「**单个作业不限制卡数。**」⇒ 矩阵档位设计仍只用 1/2/4 卡，但**卡号取本机全卡
 GPU0–7（先到先得）**：⛔ 无预留卡、⛔ 无禁用卡、⛔ 无"生产锁卡"、⛔ 无"邻居卡"、
 ⛔ 无单作业卡数上限；默认 4 卡首选 {0,1,2,3} 只是**建议首选**，⛔ 不是限制。
@@ -210,7 +210,7 @@ class ManifestFieldLossError(RuntimeError):
 #:   `<training.output_dir>` 执行 `shutil.rmtree(out)`
 #:   （`src/graspo/flow/backend/native/lora/lora_io.py::prepare_output_dir`）。采样器先于 torchrun
 #:   启动，若落点在该子树内，则采样器刚建好的目录会被整棵删掉，首个 `append_jsonl`
-#:   即 ENOENT——228 真机实测首错签名：`gpu_monitor.py:621 ... '/out/T010/gpu/gpu_memory.jsonl'`
+#:   即 ENOENT——远端机真机实测首错签名：`gpu_monitor.py:621 ... '/out/T010/gpu/gpu_memory.jsonl'`
 #:   （2026-09-20，task-e6-nan-verdict 真跑日志）。落点放在 RUN_DIR 直下即与训练
 #:   输出目录**解耦**，不依赖"谁先谁后"（§2 防呆）。
 GPU_MONITOR_CONTAINER_DIR = "/out/gpu"
@@ -239,7 +239,7 @@ CONTAINER_HOME_DIR = "/tmp/graspo-runner-home"
 #: ★ 为什么必须有一张表：容器以 `--user <宿主 uid>:<gid>` 运行后，镜像里任何"写死到
 #:   root 可写路径"的缓存根都会在非 root 下变成 `PermissionError`，而训练在**数据集装载
 #:   阶段**就会写它们。`043c776` 补了 `HOME`/`XDG_CACHE_HOME`/`TORCHINDUCTOR_CACHE_DIR`/
-#:   `TRITON_CACHE_DIR`，**漏了 `MODELSCOPE_CACHE`**（228 实测确证）：镜像 ENV 把它写死成
+#:   `TRITON_CACHE_DIR`，**漏了 `MODELSCOPE_CACHE`**（远端机实测确证）：镜像 ENV 把它写死成
 #:   `/mnt/workspace/.cache/modelscope/hub`，而 `/mnt` 在镜像里是 `root:root 0755`
 #:   （FHS 标准目录；`docker/Dockerfile*` 里**没有**任何 `mkdir /mnt/workspace`）⇒ 非 root
 #:   建不出 `/mnt/workspace`。ms-swift 的 `swift/dataset/loader.py:57` 正是拿
@@ -350,7 +350,7 @@ EXPECTED_BY_BACKEND = {"ms-swift": 36, "native": 18}
 EXPECTED_BY_MODE = {"LoRA": 36, "全量": 18}
 
 #: 默认卡位 = **建议首选**（⛔ 不是限制）：4 卡首选 {0,1,2,3}（唯一全部位于 NUMA0）。
-# ★ 主席 2026-10-17：「228 先到先得，随便用。」＋「单个作业不限制卡数。」⇒ 本机全卡
+# ★ 主席 2026-10-17：「远端机先到先得，随便用。」＋「单个作业不限制卡数。」⇒ 本机全卡
 #   0–7 一律可用（⛔ 无预留/禁用/生产锁卡/邻居卡）；GPU_SETS 只是**默认建议值**——
 #   不设覆盖时逐字生效（向后兼容），设了覆盖就按覆盖走，换了别处的卡同样合法。
 GPU_SETS: dict[int, tuple[int, ...]] = {1: (0,), 2: (0, 1), 4: (0, 1, 2, 3)}
@@ -494,9 +494,9 @@ ELAM_MINI_JSONL_RELATIVE = "mini-dataset/mini-short-mm-train.jsonl"
 #: 取数来源的**运行时覆盖点**（runner 读它）。`full` 侧复用既有的 `ELAM_HOST` 口径，
 #: 不另造第二套真相源；mini 侧因落点不在容器根下，需要一个显式路径变量（§2.2 显式即防呆）。
 ELAM_MINI_JSONL_ENV = "GRASPO_ELAM_MINI_JSONL"
-#: 生成期读取**开发机本地镜像**算 sha256/行数（与 228 上那份同源、已核 sha256 一致）：
+#: 生成期读取**开发机本地镜像**算 sha256/行数（与远端机上那份同源、已核 sha256 一致）：
 #: manifest 里的摘要必须**实测算出**，不得硬编码（硬编码的摘要等于没有摘要）。
-#: 注意本地 staging 目录比 228 落点多一层 `mini/`（见 `.local/mini-dataset/mini/upload-228.md`）。
+#: 注意本地 staging 目录比远端机落点多一层 `mini/`（见 `.local/mini-dataset/`）。
 LOCAL_MINI_JSONL = PROJECT_ROOT / ".local" / "mini-dataset" / "mini" / "mini-short-mm-train.jsonl"
 
 #: 每档训练子集大小：按 §6 门槛取下限即可（用户已定"尽量省资源"，不整集跑）。
@@ -880,7 +880,7 @@ def local_mini_jsonl_digest() -> tuple[str, int]:
     """实测算出开发机本地 mini 镜像的 `(sha256, 行数)`。
 
     **fail-closed**：拿不到摘要就拒绝生成——manifest 里记一份编造的摘要比不记更糟
-    （§2.3 边界校验、§2.2 显式即防呆）。mini 与 228 上那份同源（已核 sha256 一致）。
+    （§2.3 边界校验、§2.2 显式即防呆）。mini 与远端机上那份同源（已核 sha256 一致）。
     """
     if not LOCAL_MINI_JSONL.is_file():
         raise FileNotFoundError(
@@ -1686,7 +1686,7 @@ def build_config(tier: dict[str, Any]) -> dict[str, Any]:
             "save_checkpoint_every_epoch": False,
             # ★ ckpt 保留策略（2026-09-19，用户已授权）：`save_steps` = 该档**计划总步数**
             #   ⇒ 每档只落一份 ckpt。原值 `1` ⇒ 每 step 一份 ⇒ 单档 100 份、≈25 GB/档
-            #   （228 实测，磁盘 96%）。口径与 A3 论证见 `checkpoint_save_steps()`。
+            #   （远端机实测，磁盘 96%）。口径与 A3 论证见 `checkpoint_save_steps()`。
             #   ★ native GRASPO 那 9 档的计划值**大于**可达上限（20/10/5 vs 3/2/1）⇒
             #   `save_steps` 不触发 ⇒ 只落终态 `final/`（保留策略显式承认它）。这是刻意的：
             #   native 中间段叫 `step_<N>`、保留块只清 `checkpoint-*`，压到可达上限反而会
@@ -1785,7 +1785,7 @@ def build_config(tier: dict[str, Any]) -> dict[str, Any]:
     # ★ 落点**必须**由 `GPU_MONITOR_CONTAINER_DIR` 唯一决定（= 容器内 `/out/gpu`
     #   = 宿主 `<RUN_ROOT>/<T###>/gpu/`），**不能**用 `<training.output_dir>/gpu`：
     #
-    #   2026-09-20 真机确证的缺陷（228 T010，两次真跑同一签名）：矩阵档一律
+    #   2026-09-20 真机确证的缺陷（远端机 T010，两次真跑同一签名）：矩阵档一律
     #   `overwrite_output_dir: true`，训练进程启动时
     #   `lora_io.py::prepare_output_dir(out, overwrite=True)` 对**非空**的
     #   `<training.output_dir>`（= `/out/T010`）执行 `shutil.rmtree(out)`；而采样器
@@ -1953,12 +1953,12 @@ def gpu_assignment_record(spec: str, tiers: list[dict[str, Any]]) -> dict[str, A
         "override_cli_flag": GPU_OVERRIDE_CLI_FLAG,
         "default_by_cards": {str(cards): list(gpus) for cards, gpus in sorted(GPU_SETS.items())},
         "allowed_gpus": list(GPU_ALLOWED),
-        # ★★ 2026-10-17 主席令（逐字）：「228 先到先得，随便用。」＋「单个作业不限制卡数。」
+        # ★★ 2026-10-17 主席令（已脱敏转述）：「远端机先到先得，随便用。」＋「单个作业不限制卡数。」
         #    ⇒ 旧的 `forbidden_production_gpus=[6,7]` 与 `max_cards_per_job=4` 两个键
         #    **随旧口径一起删除**（⛔ 不留空壳键，否则读件的人会以为还有这样的边界）。
         #    替代 = 下面这段自述：无预留/禁用/锁卡，无卡数上限，唯一硬要求 = 不抢占他人。
         "card_pool_caliber": (
-            "主席 2026-10-17：「228 先到先得，随便用。」＋「单个作业不限制卡数。」"
+            "主席 2026-10-17：「远端机先到先得，随便用。」＋「单个作业不限制卡数。」"
             "⇒ 本机全卡 GPU0–7 一律可用（⛔ 无预留卡、⛔ 无禁用卡、⛔ 无『生产锁卡』、"
             "⛔ 无『邻居卡』、⛔ 无单作业卡数上限）；唯一的卡号判据 = **存在性**（≥8 不存在 ⇒ 拒），"
             "唯一的卡数判据 = 该档 cards 本身。★ 保留的硬要求 =『不抢占他人』：起跑前逐卡实测空闲"
@@ -2126,7 +2126,7 @@ def build_manifest(
             "timeout_sec": TIMEOUT_SEC,
             "initial_max_prompt_length": INITIAL_MAX_PROMPT_LENGTH,
             # ── ckpt 保留策略（2026-09-19，用户已授权；主机侧 rig 照此执行，不另立口径）──
-            # 原本 `save_steps: 1` ⇒ 每 step 一份 ⇒ ≈25 GB/档（228 实测，磁盘 96%）。
+            # 原本 `save_steps: 1` ⇒ 每 step 一份 ⇒ ≈25 GB/档（远端机实测，磁盘 96%）。
             # 现策略：每档只留**一份** ckpt（A3 判据只需一份可重载的 ckpt）。
             "checkpoint_retention": {
                 "policy": "keep-latest-single-checkpoint",
@@ -2162,7 +2162,7 @@ def build_manifest(
                     "没有份数要求 ⇒ 留一份即满足 A3。"
                 ),
                 "blocked_by_env": (
-                    "checkpoint 由容器内 root 落盘，宿主普通用户删不掉（228 实测：`sudo` 需密码）"
+                    "checkpoint 由容器内 root 落盘，宿主普通用户删不掉（远端机实测：`sudo` 需密码）"
                     "⇒ 删除只能发生在容器内，故实现落在 runner 的 entry.sh。"
                 ),
             },
@@ -2462,7 +2462,7 @@ def assert_ledger(tiers: list[dict[str, Any]], expected_total: int) -> None:
         assert actual == expected, f"{tier_id}: expected {expected}, got {actual}"
 
     # GPU 集合守卫（逐档跑 `gpu_assignment.check_gpus` 这一条实现，§1.4 单一真相源）：
-    # ★★ 2026-10-17 主席令（逐字）：「228 先到先得，随便用。」＋「单个作业不限制卡数。」
+    # ★★ 2026-10-17 主席令（已脱敏转述）：「远端机先到先得，随便用。」＋「单个作业不限制卡数。」
     #    ⇒ 判据 = ① 卡号 ⊆ 本机全卡 {0..7}（存在性，⛔ 无预留/禁用/生产锁卡/邻居卡）
     #              ② 卡数 == 该档 cards（唯一卡数约束）
     #              ③ 去重、非空；越界卡（≥8）仍 fail-closed。
@@ -2594,7 +2594,7 @@ def feasibility_table(tiers: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 # ── 容器内 torch 探测脚本（A3 转正路径的**生产端**）────────────────────────────
 #
-# 背景（环境性伪否，本段要根治的）：宿主 228 **没有 torch** ⇒ collector 对 native 档
+# 背景（环境性伪否，本段要根治的）：宿主远端机 **没有 torch** ⇒ collector 对 native 档
 # 只能拿到弱证据（``structural_only:zip_crc``），A3「checkpoint 可重载」判**取证缺口**
 # ⇒ 18 个 native 档拿不到完整结论。但**跑训练的镜像自带 torch**（``graspo-msswift:4.5.3``，
 # 实测 torch 2.11.0+cu130）⇒ 证据明明可得，只是没人把它落盘。
@@ -2946,7 +2946,7 @@ if __name__ == "__main__":
 PROBE_LAYOUT_AWARE_BODY = r'''
 # ── P21：布局感知（内容级）＋"不可判定"显式落盘 ────────────────────────────────
 #
-# 缺陷（228 实测，本段要根治）：旧探针只认 native 的 ``final/rank_*.pt``；ms-swift 的
+# 缺陷（远端机实测，本段要根治）：旧探针只认 native 的 ``final/rank_*.pt``；ms-swift 的
 # HF 分片（``model.safetensors.index.json`` + ``model-0000N-of-0000M.safetensors``）与
 # LoRA 的 ``adapter_model.safetensors`` 都进不了探测 ⇒ 打印 SKIP、**不写探测文件**
 # ⇒ 上层退回"读 safetensors 头部"的**头部级**弱证据并把 A3 读成 True
@@ -3672,7 +3672,7 @@ if [ "${{GRASPO_RUNNER_LIB_ONLY:-0}}" = "1" ]; then
 fi
 
 # ══ 执行期自免疫：启动时把**自己**快照到私有副本再 exec（P19/P21 根因修复）══════
-# 缺陷（228 实测，n≥2 且跨后端 T050/T016）：bash 执行脚本是**按字节偏移顺序读**的；
+# 缺陷（远端机实测，n≥2 且跨后端 T050/T016）：bash 执行脚本是**按字节偏移顺序读**的；
 # 脚本在运行中被**就地重写**（生成器的 write_text，或同步时的 cp）⇒ bash 从陈旧偏移
 # 读到**混排内容** ⇒ `line N: 0: command not found` + `syntax error near unexpected token
 # "fi"` ⇒ **bash 自己退 2**；此时 runner 还没走到 `echo $? > exit_code`（它在 docker run
@@ -3716,9 +3716,9 @@ CONTAINER_PY="${{CONTAINER_PYTHON:-python}}"
 # ── 产物属主：容器以**宿主跑批用户**运行（唯一真相源，§1.4）──────────────────────
 # 缺陷（PG-13 / U5「产物跑完了测好了就删」执行不了）：镜像**没有 USER 指令** ⇒ 容器默认
 # uid 0 运行 ⇒ 容器写出的产物一律 root:root，而宿主跑批账号对 root 文件**无 unlink 权限**
-# ⇒ `rm` 报 Permission denied、`rmdir` 失败、228 上 `sudo -n` 要密码（228 实测：
+# ⇒ `rm` 报 Permission denied、`rmdir` 失败、远端机上 `sudo -n` 要密码（远端机实测：
 # task-f2-resync-verify §⑨ 共 20 项 / 49,133,569 B ≈ 47 MiB 删不掉；task-e4-reclaim 旧树
-# 522.7 MB 同因整树残留）。共享机上残留只增不减，而 228 磁盘已被顶到 100% 两次。
+# 522.7 MB 同因整树残留）。共享机上残留只增不减，而远端机磁盘已被顶到 100% 两次。
 # ★ 修法是**防呆**（§2），不是"事后提权去删"（那治标不治本，且需 root 权限）：
 #   让产物**从一开始**就归宿主跑批用户 —— 容器进程以宿主 uid:gid 运行。
 # ★ 单一真相源（§1.4）：uid/gid 只在这里解析**一次**，DOCKER_ARGS 只引用 $RUN_UID/$RUN_GID；
@@ -3755,7 +3755,7 @@ else
 fi
 
 # ── 容器内**可写缓存/状态根**（**单一真相源**，§1.4）────────────────────────────
-# 缺陷（228 实测确证，本包修的回归）：`043c776` 把容器改成以宿主 uid 运行，但只补了
+# 缺陷（远端机实测确证，本包修的回归）：`043c776` 把容器改成以宿主 uid 运行，但只补了
 # HOME/XDG_CACHE_HOME/TORCHINDUCTOR_CACHE_DIR/TRITON_CACHE_DIR，**漏了 MODELSCOPE_CACHE**。
 # 镜像 ENV 把它写死成 `/mnt/workspace/.cache/modelscope/hub`，而 `/mnt` 在镜像里是
 # `root:root 0755`（FHS 标准目录；docker/Dockerfile* 里没有任何 mkdir /mnt/workspace）
@@ -3840,7 +3840,7 @@ fi
 #      ① 从档配置读出 gpu_monitor.output_dir / tag / interval_sec（单一真相源）；
 #      ② 把它与取证链锚点 {GPU_MONITOR_CONTAINER_DIR}（生成期注入，见 generate_matrix.py::
 #         GPU_MONITOR_CONTAINER_DIR）比对，并**反向**断言它**不落在** training.output_dir 之内
-#         —— 落在里面就会被训练侧的 overwrite（shutil.rmtree 整棵目录）删掉（228 实测）；
+#         —— 落在里面就会被训练侧的 overwrite（shutil.rmtree 整棵目录）删掉（远端机实测）；
 #      ③ 校不过就拒绝启动，绝不"先跑起来再说"。
 #    为什么必须从档配置读、而不是在这里另写一份：产物位置与档号标签已经写在
 #    **档配置自身**里；在这里再写一遍，同一条事实就有两份描述，迟早漂移（§1.4）。
@@ -3901,7 +3901,7 @@ if [ -z "$TRAINING_OUTPUT_DIR" ]; then
 elif [ "$GPU_MONITOR_OUTPUT_DIR" != "{GPU_MONITOR_CONTAINER_DIR}" ]; then
     monitor_problems="${{monitor_problems}}gpu_monitor.output_dir='$GPU_MONITOR_OUTPUT_DIR' 与取证链锚点 {GPU_MONITOR_CONTAINER_DIR} 不一致;"
 fi
-# ★ 反向不变量（2026-09-20 真机确证的缺陷，228 两次真跑同一签名）：落点**不得**落在
+# ★ 反向不变量（2026-09-20 真机确证的缺陷，远端机两次真跑同一签名）：落点**不得**落在
 #   training.output_dir 之内 —— 训练侧 `overwrite_output_dir: true` 会对非空的该目录
 #   执行 `shutil.rmtree`，把采样器刚建好的 gpu/ 连 jsonl 一起删掉（首错
 #   `gpu_monitor.py:621 append_jsonl ... '/out/T010/gpu/gpu_memory.jsonl'`）。
@@ -4067,7 +4067,7 @@ mkdir -p "$RUN_DIR/subsets"
 # ★ B11（2026-10-12，主席批准）：**同一 tier 重跑必须先清场**。
 #   为什么：`exit_code` / `ckpt_retention.state` / `torch_probe.json` / `stdout.log`
 #   都是**跑后**才写的产物。重跑复用同一个 `$RUN_DIR` 而不清理 ⇒ 新跑次**仍在途**时
-#   读到的是**上一轮**的产物 ⇒ **假失败**（228 实测：T033 第二次起跑被第一次尝试
+#   读到的是**上一轮**的产物 ⇒ **假失败**（远端机实测：T033 第二次起跑被第一次尝试
 #   `nostalgic_lederberg` 39 s 退出留下的 `exit_code=1` 误判为失败，详见
 #   `.local/.../task-t033-diagnosis/report.md`）。
 #   语义：把上一轮这些**具名**产物**移入** `$RUN_DIR/attempt-<UTC 时间戳>/`——
@@ -4233,9 +4233,9 @@ set -o pipefail
 #   tests/e2e/generate_matrix.py::GPU_MONITOR_CONTAINER_DIR，生成期注入下面这一行。
 #   ★ 为什么必须先建出来：收口段的三处写盘点（gpu_summary.state ×2、
 #     EVIDENCE_GAP_gpu_memory_summary）都在这个目录下；目录不存在时那些登记会 ENOENT，
-#     "取证缺口"连痕迹都留不下（228 实测 entry.sh 行 197/200：没有那个文件或目录）。
+#     "取证缺口"连痕迹都留不下（远端机实测 entry.sh 行 197/200：没有那个文件或目录）。
 #   ★ 为什么落点在 RUN_DIR 直下而不在训练输出目录里：训练侧 overwrite_output_dir 会
-#     shutil.rmtree 整棵 training.output_dir（228 实测把采样器刚建好的 gpu/ 删掉）。
+#     shutil.rmtree 整棵 training.output_dir（远端机实测把采样器刚建好的 gpu/ 删掉）。
 #   ⚠ 写法约束：本段是**不加引号的 heredoc 正文** ⇒ 引用内层变量一律写 \\$VAR（外层不
 #     展开、留给容器内展开），注释里同样不得出现裸美元符/裸反引号（见下方哨兵测试）。
 GPU_EVIDENCE_DIR="{GPU_MONITOR_CONTAINER_DIR}"
@@ -4246,7 +4246,7 @@ mkdir -p "\\$GPU_EVIDENCE_DIR"
 #   为什么必须显式建：容器进程以**宿主 uid** 运行（见 runner 的「产物属主」段），
 #   镜像里 root 的 HOME 与镜像 ENV 的 MODELSCOPE_CACHE（=/mnt/workspace/.cache/modelscope/hub，
 #   而 /mnt 是 root:root 0755）对这个 uid 都**不可写** ⇒ HF datasets / modelscope 数据集缓存 /
-#   triton·inductor 编译缓存在**训练开始前**就 PermissionError（228 实测：rank0 exit 1，
+#   triton·inductor 编译缓存在**训练开始前**就 PermissionError（远端机实测：rank0 exit 1，
 #   宿主侧只看到"未找到任何 checkpoint-*"，因为训练一步都没跑）。
 #   ★ 预检的判据（本包要的"具体是哪个路径不可写"）：训练之前就把**变量名 + 路径**指名道姓
 #     地报出来（FATAL(cache-root)），而不是让 dataloader 在深处抛一个不含变量名的
@@ -4309,7 +4309,7 @@ if [ -n "\\${{GRASPO_FAKE_WORKER_RC:-}}" ]; then RC="\\$GRASPO_FAKE_WORKER_RC"; 
 # 产物放开读权限（**保留**；改用宿主 uid 运行后它从"补丁"降级为"兜底"）：
 # 历史缺陷：容器以 root 运行 ⇒ ms-swift/HF 默认落 root:0600 ⇒ 宿主侧的
 # collect_results.py（普通用户）**打不开** checkpoint 权重 ⇒ A2/A3 读不到证据
-# （228 实测踩过：A3 一度被记成"checkpoint 无法重新加载"，属方向性错误）。
+# （远端机实测踩过：A3 一度被记成"checkpoint 无法重新加载"，属方向性错误）。
 # 现在容器以**宿主 uid:gid** 运行（见 runner 的「产物属主」段）⇒ 产物属主已经正确、
 # 读权限也天然成立；本行留着覆盖两类残余情形：① 运行前目录里已有的**他人/root 旧产物**
 # （对它们 chmod 会 EPERM，故只把 stderr 丢弃、不因它们报错）；② umask 偏严的环境。
@@ -4320,10 +4320,10 @@ chmod -R a+rX /out 2>/dev/null || echo "WARN: chmod -R a+rX /out failed — 宿�
 # 且要与训练进程用**同一套** find/mtime 视角（§1.4）。容器以宿主 uid 运行后，
 # 宿主侧其实也删得掉中间段 ckpt；但放在这里仍是"落盘后立即收缩"的唯一窗口。
 # （历史背景：原实现依赖"容器内是 root ⇒ 只有这里删得掉"——宿主普通用户对 root:root
-#   文件无 unlink 权限，228 实测 sudo 需密码。该依赖已随 --user 修复消除，逻辑不变。）
+#   文件无 unlink 权限，远端机实测 sudo 需密码。该依赖已随 --user 修复消除，逻辑不变。）
 # ★ 写法约束（防呆）：本块**只使用内层 shell 自己的变量**（\\$1/\\$@/函数内局部量），
 #   不读写外层 runner 的任何变量，也不内联任何函数调用。这样"外层展开"与"内层展开"
-#   在语义上重合，不会因为外层 set -u 误判内层变量（228/本机都踩过这个坑）。
+#   在语义上重合，不会因为外层 set -u 误判内层变量（远端机/本机都踩过这个坑）。
 #   ★ 唯一的例外是档号 \\$TIER：它由**外层 docker run -e "\\$TIER" 显式注入**容器，
 #     不是"恰好未定义⇒空串"的巧合（那种隐性依赖是脆弱设计，§2 显式即防呆）。
 retain_single_checkpoint() {{
@@ -4386,7 +4386,7 @@ retain_single_checkpoint() {{
     #   （[ "\\$step" -gt "\\$newest_step" ]，**严格大于**）。同一档**第二次跑**时，
     #   上一轮 v0-*/checkpoint-160 与本轮 v1-*/checkpoint-160 步数相同 ⇒
     #   keeper 完全由 find 的 readdir 顺序决定（ext4 dir_index / overlayfs / tmpfs 各不相同）；
-    #   顺序不利时**本轮最新**被当"中间段"删除（228 实测 T043 run2：v1-*/checkpoint-160
+    #   顺序不利时**本轮最新**被当"中间段"删除（远端机实测 T043 run2：v1-*/checkpoint-160
     #   消失、last-checkpoint 断链 ⇒ 本轮的 A2/A3 证据丢失，而 ckpt_retention.state 仍报 ok）。
     #   本机复现与负向用例见工位 task-retention-xrun/evidence/。
     #   现判据 = **三元全序**，与 find 的输出顺序**无关**（同一份产物在任何文件系统上结论一致）：
@@ -4462,7 +4462,7 @@ else
 fi
 printf '%s\\n' "\\$CKPT_STATE" > /out/ckpt_retention.state
 # ══ A3 转正：容器内 torch 重载探测落盘（**收口前最后一个接触权重的步骤**）══
-#   背景（本段要根治的环境性伪否）：宿主 228 **没有 torch** ⇒ collector 对 native 档
+#   背景（本段要根治的环境性伪否）：宿主远端机 **没有 torch** ⇒ collector 对 native 档
 #   只能拿弱证据（structural_only:zip_crc），A3「checkpoint 可重载」判取证缺口。
 #   但训练镜像自带 torch（graspo-msswift:4.5.3 实测 torch 2.11.0+cu130）⇒ 证据可得。
 #   ★ 为什么**必须**插在 ckpt 保留块**之后**、收口之前（顺序是判据的一部分）：
@@ -4485,7 +4485,7 @@ printf '%s\\n' "\\$CKPT_STATE" > /out/ckpt_retention.state
 #     **不得**转义成反斜杠美元符。原因：CONTAINER_PY 的唯一真相源在**宿主侧**
 #     （本脚本第 100 行 = generate_matrix.py::CONTAINER_PY 段），它**不经** docker run 的 -e
 #     注入容器 ⇒ 一旦转义，展开推迟到容器内、变量未定义 ⇒ 空串 ⇒
-#     该行退化成「空命令名 + /out/torch_probe.py 参数」（228 实测 行 229: : 未找到命令）
+#     该行退化成「空命令名 + /out/torch_probe.py 参数」（远端机实测 行 229: : 未找到命令）
 #     ⇒ 被行尾 || true 静默吞掉 ⇒ torch_probe.json **全部从未产出**、stdout [torch-probe] 命中 0。
 #     （仅 \\$TIER 这类**由 docker run -e 显式注入**的容器内变量才该转义——见下方收口段。
 #     本段是 heredoc 正文：注释里同样不得出现裸反引号/裸美元符，否则外层会真的执行它们。）
@@ -4511,7 +4511,7 @@ printf '%s\\n' "\\$CKPT_STATE" > /out/ckpt_retention.state
 #   容器一退出，后台进程**收不到 SIGTERM**（直接随容器消失）⇒ record_gpu_memory 的
 #   finally 块（**摘要的唯一落盘点**，含 memory_used_mib_peak）**从不执行** ⇒
 #   宿主采样摘要（读入 host_sample_peak_gib 旁路——**不是** §7 峰值列的口径，该列自
-#   2026-09-21 起为二分口径、见 §9.1）**取证缺口**：228 实测全批
+#   2026-09-21 起为二分口径、见 §9.1）**取证缺口**：远端机实测全批
 #   <run>/gpu/gpu_memory_summary.json 缺失 ⇒ collect_results._read_host_sample_peak_memory
 #   拿到 None、该旁路缺值（task-r3-bulk §⑦-7）。
 #   修法：**显式** SIGTERM + **有界等待**（只等本次 run 的采样器，零 kill 他人进程）：
@@ -4524,7 +4524,7 @@ printf '%s\\n' "\\$CKPT_STATE" > /out/ckpt_retention.state
 #     \\$GPU_EVIDENCE_DIR（= 档配置 gpu_monitor.output_dir = 生成期注入的
 #     GPU_MONITOR_CONTAINER_DIR）。旧写法把取证目录路径写死 7 处，与档配置分叉：
 #     断言按旧路径永远找不到摘要、且缺口登记自身因目录不存在而 ENOENT
-#     （228 实测 entry.sh 行 197/200），属 §1.4 双真相源缺陷。
+#     （远端机实测 entry.sh 行 197/200），属 §1.4 双真相源缺陷。
 wait_for_gpu_summary() {{
     local pid="\\${{1:-}}" waited=0
     if [ -z "\\$pid" ]; then
@@ -4567,7 +4567,7 @@ wait_for_gpu_summary "\\$SAMPLER"
 # ══ 收口：把容器的退出码**逐字**交还给 torchrun 的退出码（原缺陷的修复点）══
 #   原实现捕获了 RC=\\$?（= torchrun 退出码）却**从未 exit "\\$RC"**；本脚本最后一条
 #   命令是上面的 printf（成功 ⇒ 0），于是**容器退 0**：worker 真失败（rc=1/137/124）
-#   也被宿主记成 exit_code=0（228 实测：T028/T031 stdout 里 exitcode: 1，宿主记 0）。
+#   也被宿主记成 exit_code=0（远端机实测：T028/T031 stdout 里 exitcode: 1，宿主记 0）。
 #   判据由"最后一条命令是否成功"变成"torchrun 真的成功了吗"（§2.3 边界校验不靠巧合）。
 #   ★ 优先级明确且互不掩盖（三段各自只写自己的失败语义，收口处统一表达）：
 #       1) 训练失败（RC≠0，可能是 OOM=137 / 超时=124 / 预检 rc=1/3）⇒ **原样交还**，
@@ -4606,7 +4606,7 @@ DOCKER_ARGS=(
     "${{RUN_USER_ARGS[@]}}"
     # 共享内存（**≥2 卡必需**）：torchrun 多 rank 按 fd 共享 CPU 张量，docker 默认
     # /dev/shm 仅 64 MiB ⇒ 多卡启动即 `unable to allocate shared memory(shm)` /
-    # `Resource temporarily unavailable (11)`（228 实测：4 个 rank 同抛，Train: 0%）。
+    # `Resource temporarily unavailable (11)`（远端机实测：4 个 rank 同抛，Train: 0%）。
     # 与 run.sh / tests/e2e/run_matrix.sh 的既有约定逐字一致（§1.4 单一真相源）。
     --ipc=host --shm-size=16g
     -e "NVIDIA_VISIBLE_DEVICES=$GPUS"
@@ -4621,7 +4621,7 @@ DOCKER_ARGS=(
     #   非 root 进程既写不了镜像里 root 的 /root，也写不了镜像 ENV 写死的
     #   MODELSCOPE_CACHE=/mnt/workspace/...（`/mnt` 是 root:root 0755）⇒ 必须逐个显式指到
     #   可写根，否则 modelscope 数据集缓存 / HF 缓存 / triton·inductor 编译缓存在
-    #   **训练开始前**就 PermissionError（228 实测：rank0 exit 1，训练一步没跑）。
+    #   **训练开始前**就 PermissionError（远端机实测：rank0 exit 1，训练一步没跑）。
     #   ★ 逐项由数组展开，本处**不写任何路径字面量** —— 根治"补了三个、漏了第四个"的漂移。
     #   ★ USER/LOGNAME（见 generate_matrix.py::CONTAINER_USER_NAME 的单一真相源）：
     #   镜像 /etc/passwd 里没有宿主的这个 uid ⇒ `getpass.getuser()` 落到 pwd.getpwuid 会
@@ -4699,7 +4699,7 @@ def render_all_tiers(tiers: list[dict[str, Any]]) -> list[tuple[str, str]]:
 def _atomic_write_text(path: Path, text: str, *, mode: int | None = None) -> None:
     """原子落盘：同目录临时文件 + ``os.replace``（P19/P21 根因修复）。
 
-    ★ 为什么不能就地 ``write_text``（228 实测，n≥2 跨后端）：``tests/e2e/run_matrix54.sh``
+    ★ 为什么不能就地 ``write_text``（远端机实测，n≥2 跨后端）：``tests/e2e/run_matrix54.sh``
     是**正在被 bash 执行**的脚本，而 bash 按**字节偏移顺序读**它。就地 truncate+write 会让
     执行中的 bash 从陈旧偏移读到**混排内容** ⇒ `line N: 0: command not found` +
     `syntax error near unexpected token "fi"` ⇒ **bash 自己退 2**，且它还没写 `exit_code`
@@ -4820,7 +4820,7 @@ def generate(
     deleted, preserved = clean_config_dir(CONFIG_DIR)
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     # ★ 全部原子落盘（P19/P21）：runner **正被 bash 执行**、manifest/config 也正被读取，
-    #   就地 write_text 会让并发读者读到混排内容（228 实测：runner 就地重写 ⇒ rc=2 且无
+    #   就地 write_text 会让并发读者读到混排内容（远端机实测：runner 就地重写 ⇒ rc=2 且无
     #   exit_code；容器成孤儿把训练跑完）。os.replace 换 inode ⇒ 旧读者读完旧内容。
     for name, text in rendered:
         _atomic_write_text(CONFIG_DIR / name, text)

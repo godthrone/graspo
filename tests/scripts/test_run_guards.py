@@ -169,7 +169,7 @@ def test_busy_cards_from_nvidia_visible_devices_env():
 def test_busy_cards_from_compute_apps_catches_host_processes():
     """★ 缺陷回归：**宿主进程占卡** docker 面看不见 ⇒ 必须由 compute-apps 快照判 busy。
 
-    228 实测：GPU2 上有他人在宿主直接起的推理进程（13.3 GiB、util 0 %）而无任何容器。
+    远端机实测：GPU2 上有他人在宿主直接起的推理进程（13.3 GiB、util 0 %）而无任何容器。
     """
     apps = "GPU-cbefcbab-7651-516c-da18-797296a24902, 3912182, 13326, python\n"
     umap = (

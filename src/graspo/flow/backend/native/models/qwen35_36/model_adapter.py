@@ -62,7 +62,7 @@ class Qwen35ModelAdapter(  # type: ignore[misc]  # mixin 组合点的多基类�
         full_param = self.config.effective_tuner_type == "full"
         # ★ 全参档**不解析** LoRA 正则（缺陷 N1）：``lora.target_modules`` 是 LoRA 专用键，
         #   全参档既不需要也不得要求它。旧实现在 tuner 模式分支之外无条件解析 ⇒ 全参档报
-        #   ``ValueError: lora.target_modules is required``（``core/lora.py:170``；228 实测
+        #   ``ValueError: lora.target_modules is required``（``core/lora.py:170``；远端机实测
         #   M011：9B/SFT/全参/native/1 卡，334 s 崩溃）。LoRA 档逐字不变：同一正则、
         #   同一可用域、同一 ``resolved`` 集合。
         lora_targets = (

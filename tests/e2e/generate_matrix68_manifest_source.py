@@ -51,7 +51,7 @@ FAIL = 1
 
 ROOT = Path(__file__).resolve().parents[2]
 
-#: 卡池（228：GPU 0–7 先到先得、不预留、单作业不限卡数）。**卡号集合**是环境/裁决事实，
+#: 卡池（远端机：GPU 0–7 先到先得、不预留、单作业不限卡数）。**卡号集合**是环境/裁决事实，
 #: 不是档位常量；档位数一律从数据件现读。
 GPU_POOL = tuple(range(8))
 
@@ -189,7 +189,7 @@ def criteria_summary(caliber: dict) -> list[dict]:
 def candidate_cards(index: int, cards: int) -> list[int]:
     """确定性**候选窗口**（仅用于 schema 对齐与审计；真实择卡由 runner 起跑前动态取）。
 
-    ⛔ 语义边界：本清单**不预留**卡（228 卡池先到先得、不抢占他人）。runner 读的是 `cards`
+    ⛔ 语义边界：本清单**不预留**卡（远端机卡池先到先得、不抢占他人）。runner 读的是 `cards`
     （张数），起跑前从**逐卡实测空闲**的卡里现取同样多张并断言 `len(picked) == cards`。
     """
     start = (index * max(cards, 1)) % len(GPU_POOL)
@@ -344,7 +344,7 @@ def build_tier(index: int, row: dict, *, cfg_dir: Path, subset_root: Path,
     tier_doc["cards"] = cards
     tier_doc["gpus"] = gpus
     tier_doc["gpus_semantics"] = (
-        "确定性**候选窗口**（仅用于 schema 对齐与审计）：228 卡池 GPU0–7 先到先得、不预留、"
+        "确定性**候选窗口**（仅用于 schema 对齐与审计）：远端机卡池 GPU0–7 先到先得、不预留、"
         "不抢占他人 ⇒ 真实择卡由 runner 起跑前按 §12/§13 从**逐卡实测空闲**现取，"
         "只读本档 cards（张数）并断言 len(picked)==cards。⛔ 本字段不为任何卡做预留。"
     )
@@ -542,7 +542,7 @@ def build_manifest(*, data_path: Path, cfg_dir: Path, subset_root: Path,
     ))
     head["card_assignment"] = collections.OrderedDict((
         ("policy", "dynamic"),
-        ("ruling", "228 GPU 0–7 先到先得、不预留、不抢占他人、单作业不限卡数"),
+        ("ruling", "远端机 GPU 0–7 先到先得、不预留、不抢占他人、单作业不限卡数"),
         ("gpu_pool", list(GPU_POOL)),
         ("how", "runner 逐档起跑前串三道闸门（run_guards cards-busy → gpu_lock_guard --visible → "
                 "gpu_idle_assert --visible，服务档按 util×总显存算头寸），从实测空闲卡现取 cards 张，"

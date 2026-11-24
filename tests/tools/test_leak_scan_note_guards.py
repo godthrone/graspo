@@ -48,7 +48,7 @@ def _write(tmp_path: Path, note: str, *, spec: str | None = None) -> Path:
     ("退出码 1；报错见 stdout.log:20", "日志坐标（对人不表达的定位符）"),
     ("退出码 1；源码帧 = src/graspo/core/lora.py:170", "源码 file:line 坐标（对人不表达的定位符）"),
     ("退出码 1；权重在 /workspace/graspo/out", "容器内绝对路径"),
-    ("退出码 1；数据在 /data/remote", "宿主/容器绝对路径"),
+    ("退出码 1；数据在 /data/example/out", "宿主/容器绝对路径"),
     ("退出码 1；目标匹配 ^(?:model\\.)?language_model\\..*$", "正则原文（非人读）"),
 ])
 def test_each_engineering_log_shape_is_a_leak(tmp_path, note, why):

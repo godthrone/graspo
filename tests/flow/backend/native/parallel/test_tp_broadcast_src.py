@@ -1,4 +1,4 @@
-"""TP 内 next_token 广播的边界（228 实测 `T030` DP=4/TP=1 复现，纯 CPU）。
+"""TP 内 next_token 广播的边界（远端机实测 `T030` DP=4/TP=1 复现，纯 CPU）。
 
 缺陷：``_broadcast_and_pad_finished`` 写死 ``src=0`` 且不判 TP 组大小。
 

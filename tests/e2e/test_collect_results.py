@@ -139,7 +139,7 @@ def _sitecustomize_env(tmp_path: Path, source: str) -> dict[str, str]:
 
     为什么必须这样：采集器是 ``subprocess`` 跑的独立进程，``monkeypatch`` 管不到它；
     同一个用例在"宿主有 torch"（开发机 ``.local/uv-venv`` 实测 torch 2.11）与"宿主无
-    torch"（228 采集机）上会走到**不同的证据来源**，断言只能保住一边。这里用
+    torch"（远端采集机）上会走到**不同的证据来源**，断言只能保住一边。这里用
     ``PYTHONPATH`` + ``sitecustomize`` 在子进程**启动时**决定 torch 能不能 import ——
     测试自己声明它要模拟的宿主环境。
     """
@@ -404,7 +404,7 @@ def test_collector_non_oom_failures_never_write_max_context(tmp_path):
 
 # ── F-D：ms-swift 产物布局必须可判（正向）+ 判据必须与 native 同语义 ─────────
 #
-# 夹具逐字复刻 228 上实测的 ms-swift 4.5.3 布局（T013 100 步 run 的保留产物）：
+# 夹具逐字复刻远端机上实测的 ms-swift 4.5.3 布局（T013 100 步 run 的保留产物）：
 #   <run>/exit_code, stdout.log
 #   <run>/T013/v1-<ts>/{args.json, logging.jsonl, checkpoint-<step>/adapter_model.safetensors}
 #   <run>/T013/msswift/ms_swift_sft.jsonl
@@ -689,7 +689,7 @@ def test_collector_a4_still_rejects_gross_divergence(tmp_path):
 # ── H1：A2/A3 的"环境性伪否"收口 ────────────────────────────────────────────
 #
 # 背景（T010 真机实测）：9B·SFT·LoRA·native·1 卡 训练完全成功（100/100 步、exit=0、
-# ckpt 可重载已由容器内 torch.load 独立验证），但 228 宿主**没有 torch** ⇒ 采集器
+# ckpt 可重载已由容器内 torch.load 独立验证），但远端机宿主**没有 torch** ⇒ 采集器
 # 拿不到 `rank_*.pt` 的反序列化结果 ⇒ A2/A3 双双被判 fail-closed「缺少证据」，
 # 台账上与"训练真失败"长得一模一样。要根治的是「**明明能取到却不取**」：
 #   · A2-LoRA 的正式判据（§8.1）是 `lora_norm_delta ≠ 0`，它由训练侧每步写进
@@ -782,7 +782,7 @@ def test_collector_native_lora_a2_uses_run_metrics_without_torch(tmp_path):
     台账里（§2.2），否则下游仍分不清"采集机环境"与"训练失败"。
 
     ``env`` 显式屏蔽 torch：这条用例的语义就是"**宿主无 torch**"，不能靠开发机碰巧
-    装没装 torch 来决定走哪条证据路径（否则同一用例在 228 与开发机上结论不同）。
+    装没装 torch 来决定走哪条证据路径（否则同一用例在远端机与开发机上结论不同）。
     """
     _make_native_lora_run(tmp_path / "runs", deltas=_LORA_DELTAS_OK)
 
@@ -816,7 +816,7 @@ def test_collector_native_without_torch_reports_structural_only_not_pass(tmp_pat
     "torch 能反序列化" ⇒ 不得据此判 A3 通过。它唯一的作用是把"文件好但验不了"与
     "文件坏了"分开，并在台账上标明证据等级（`structural_only:zip_crc`）。
 
-    ``env`` 显式屏蔽 torch：这条用例的语义是"宿主无 torch"（228 采集机的实测环境）。
+    ``env`` 显式屏蔽 torch：这条用例的语义是"宿主无 torch"（远端采集机的实测环境）。
     修前它靠"开发机恰好没装 torch"才成立，而开发机 ``.local/uv-venv`` 实测有 torch
     2.11 ⇒ 证据来源变成 ``host_torch_load``，断言只能靠环境碰运气（本包要修的
     "测试不封闭"）。现在由测试自己声明宿主环境。
@@ -871,7 +871,7 @@ def test_collector_native_rank_torch_load_crash_is_caught(tmp_path):
     为什么必须走"宿主有 torch"这条分支：``torch.load`` 的调用点在
     ``_require_torch()`` 之后。**宿主无 torch 时该分支根本不可达**（会先走 stdlib
     归档/CRC 那条弱证据路径），所以只有显式注入一个"有 torch"的宿主才能复现。
-    真机触发条件（228 采集机有 torch 2.x）：ckpt 损坏 + 这一档的 ``lora_norm_delta``
+    真机触发条件（远端采集机有 torch 2.x）：ckpt 损坏 + 这一档的 ``lora_norm_delta``
     读不到（指标缺文件 / 全非有限），于是 A2 回落到 checkpoint 兜底路径。
 
     修复后必须：① 采集器 rc=0 且台账照常产出；② 损坏事实**不被吞掉**——A3 判

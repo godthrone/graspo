@@ -171,7 +171,7 @@ tol = max( min( 1.5 × worst_pair,  4.675e-2 ),  1.0302e-3 )
 
 ## 9. 第 1 批实测结果（2026-09-22，1–2 卡档族）
 
-读数池：228 `runs/a4cal-b1/`（新产根，逐跑独立进程 + 各自 RUN_ROOT；清单
+读数池：远端机 `runs/a4cal-b1/`（新产根，逐跑独立进程 + 各自 RUN_ROOT；清单
 `matrix54_manifest.gpusplit-b.json` sha256 `4d88b842431a…`；镜像 `graspo:v0.28.11`）。
 每池卡集**严格等于既有 judged pair（`runs/r1`×`runs/r2`）实际用的卡集**，池与 judged pair 互斥（M1）。
 

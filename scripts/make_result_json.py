@@ -1361,7 +1361,7 @@ def crashed_tier_evidence(*, run_dir: Path, tier: str, exit_code: int | None,
                           readings: dict) -> dict:
     """D9 的**事后取证**：这档是不是「起跑即崩、一步优化都没跑」⇒ 可以按崩溃如实入表。
 
-    ★ 为什么需要（M011 实证，228 实测 2026-10-25）：native 全参档在 `_load_model` 就崩
+    ★ 为什么需要（M011 实证，远端机实测 2026-10-25）：native 全参档在 `_load_model` 就崩
       （`model_adapter.py:61` → `core/lora.py:170`），`exit_code=1`、`stdout.log` 有逐字的
       `ValueError: lora.target_modules is required…`、无任何 checkpoint、无 `trainer_state.json`。
       旧链的三条「仅失败」通道全不通（回填器无开关 / `gen_tier_json` 取值域自相矛盾 /

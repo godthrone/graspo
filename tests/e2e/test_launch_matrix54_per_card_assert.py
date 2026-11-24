@@ -1,6 +1,6 @@
 """Launcher `tests/e2e/launch_matrix54.sh` — per-card pre-flight idle assertion.
 
-Regression for the 228 defect (2026-10-12): the launcher used to hand-roll a
+Regression for the remote-host defect (2026-10-12): the launcher used to hand-roll a
 **single-card** parse of ``nvidia-smi -i <comma list>``.  For a multi-card tier
 the command returns one row per card, so the parse produced a two-line value and
 bash aborted with ``[: 81153\\n81153: integer expression expected`` -> FATAL.

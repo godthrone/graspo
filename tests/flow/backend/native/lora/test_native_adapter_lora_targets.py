@@ -1,6 +1,6 @@
 """native 适配器 LoRA 目标解析：全参档不解析 + PP stage 归属豁免（缺陷 N1/N2 回归）。
 
-**背景（228 实测，2026-10-22/27）**：
+**背景（远端机实测，2026-10-22/27）**：
 
 - **N1**：M011（9B / SFT / **全参** / native / 1 卡）334 s 崩溃，
   ``ValueError: lora.target_modules is required``（``core/lora.py:170``）。

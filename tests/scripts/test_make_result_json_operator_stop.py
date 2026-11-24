@@ -2,7 +2,7 @@
 
 ## 为什么有这条通道（实证来源，⛔ 不是凭空造的 fixture）
 
-M052（27B / GRASPO / LoRA / ms-swift / 单卡，228 实测）：
+M052（27B / GRASPO / LoRA / ms-swift / 单卡，远端机实测）：
 
 * 训练 **正常跑完**：`stdout.log` 第 190368 行
   `[INFO:swift] End time of running main: 2026-10-26 18:22:30.749935`；

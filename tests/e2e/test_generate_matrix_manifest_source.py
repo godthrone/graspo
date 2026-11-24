@@ -6,7 +6,7 @@
 
 ## 现行口径（唯一标尺，2026-10-17 主席裁定，逐字）
 
-> 「**228 先到先得，随便用。**」 ＋ 「**单个作业不限制卡数。**」
+> 「**远端机先到先得，随便用。**」 ＋ 「**单个作业不限制卡数。**」
 
 ⇒ 卡号判据只剩**存在性**：本机全卡 **0–7 一律可用**（⛔ 无预留/禁用/生产锁卡/邻居卡），
 ⛔ 无单作业卡数上限；唯一硬要求 =「**不抢占他人**」（起跑前逐卡实测：剩余 ≥ 头寸 ∧ util == 0）。
@@ -138,7 +138,7 @@ def test_card_pool_caliber_is_written_down_in_the_generator():
       故源码里也不应再有具名/角色化的第三方卡归属描述）。
     """
     src = (_HERE.parent / "generate_matrix_manifest_source.py").read_text(encoding="utf-8")
-    assert "228 先到先得，随便用。" in src          # 裁定逐字
+    assert "远端机先到先得，随便用。" in src          # 裁定（已脱敏转述）
     assert "单个作业不限制卡数。" in src            # 裁定逐字
     assert "建议首选卡位" in src                    # gpus 的现行语义
     assert "不抢占他人" in src                      # 保留的硬要求

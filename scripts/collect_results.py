@@ -826,7 +826,7 @@ def _require_torch() -> Any | None:
 # 为什么必须有这一层：A2/A3 的**判据**只有一份（§8.1），但同一判据在不同环境里
 # 能拿到的**证据来源**不同（宿主无 torch / 镜像内有 torch）。旧实现把"证据来源不可得"
 # 静默折叠成"取值 None"，台账上只剩一句"缺少证据" —— 于是**环境性伪否**（采集机缺
-# torch）与**训练真失败**在台账里长得一模一样，228 上 T010 真机踩过。
+# torch）与**训练真失败**在台账里长得一模一样，远端机上 T010 真机踩过。
 # 下面这些常量是"这条证据是哪种等级、来自哪里"的**唯一**命名处；抽取层给出标识、
 # 判定层把它写进明细、台账把它落成独立列（collect_results.run 组装）。
 #
@@ -1131,7 +1131,7 @@ def _safetensors_index(path: Path) -> tuple[dict[str, tuple[int, int]], int] | N
     """**纯 stdlib** 解析 safetensors 头部，返回 ``({张量名: (起始, 结束)}, 数据区起点)``。
 
     为什么不用 ``safetensors.safe_open``：collector 要在**没有 torch/safetensors 的宿主**
-    上跑（228 宿主实测两者都没有）。判据需要的是"权重有没有变化 / checkpoint 能不能读"，
+    上跑（远端机宿主实测两者都没有）。判据需要的是"权重有没有变化 / checkpoint 能不能读"，
     而 safetensors 的格式是公开且极简的（8 字节小端头长 + JSON 头 + 原始数据），
     因此这里直接读头部并校验每个张量的 ``data_offsets`` 落在文件范围内。
     **语义与库版本一致**：库的 ``safe_open`` 也只是解析同一份头部。
@@ -1189,7 +1189,7 @@ def _read_range(path: Path, begin: int, end: int) -> bytes | None:
 def _file_readable(path: Path) -> bool:
     """该文件对**当前进程**是否可读。
 
-    为什么必须显式区分"读不到"与"文件坏"（228 实测踩过）：容器内以 root 身份训练，
+    为什么必须显式区分"读不到"与"文件坏"（远端机实测踩过）：容器内以 root 身份训练，
     ms-swift/HF 落盘的 ``adapter_model.safetensors`` 是 ``root:0600``；宿主机上的
     collector 以普通用户运行时**打不开**它。若把 ``PermissionError`` 当成
     "checkpoint 无法重新加载"，就等于把"采集侧读不到"记成一次**训练失败**——
@@ -1580,7 +1580,7 @@ def read_torch_probe(run_dir: Path | None) -> ReloadEvidence | None:
     """读**容器内**的 torch 探测证据 ``<run_dir>/torch_probe.json``（§2.1 契约即防呆）。
 
     为什么需要它（本包要根治的环境性伪否，A3 侧）：native 的 ``rank_*.pt`` 是
-    torch 私有归档，"能不能被重新加载"只有 torch 自己说了算。宿主 228 实测无 torch，
+    torch 私有归档，"能不能被重新加载"只有 torch 自己说了算。宿主远端机实测无 torch，
     但**运行这次训练的镜像里有**（``graspo-msswift:4.5.3``）⇒ 证据明明可得。
 
     契约（runner 侧接口，本包不改 runner；见 ``report.md §⑦``）::
@@ -1599,7 +1599,7 @@ def read_torch_probe(run_dir: Path | None) -> ReloadEvidence | None:
     3. ``checked`` 非空，且每项的 ``relpath`` 相对 ``run_dir`` 解析后**必须真实存在**；
     4. ★ 每项的 ``sha256`` 必须等于该文件**当前**内容的 sha256。这条是**防陈旧证据**
        的防呆装置：同一档第二次跑会覆盖 ``final/`` 下的权重，若沿用上一次的探测结论，
-       就等于用旧 run 的证据给新 run 作证（228 实测过跨 run ckpt 错配）。
+       就等于用旧 run 的证据给新 run 作证（远端机实测过跨 run ckpt 错配）。
 
     返回 ``None`` = **没有**探测证据文件（正常退路：宿主自带的 torch 路径）。返回
     ``value is None`` 的 :class:`ReloadEvidence` = 文件在但**不可采信**（原因写进
@@ -1675,7 +1675,7 @@ def extract_checkpoint_reloadable(
     证据按**强度降序**取，每一档都在返回值里显式标注来源（§2.2）：
 
     1. **容器探测证据**（:func:`read_torch_probe`，强）：镜像内有 torch ⇒ 虽然宿主
-       228 无 torch，证据仍然可得。这是本包要根治的"明明能取到却不取"。
+       远端机无 torch，证据仍然可得。这是本包要根治的"明明能取到却不取"。
     2. **宿主 torch 反序列化**（强）：宿主自带 torch 时直接 ``torch.load``。
     3. **stdlib 归档结构 / CRC**（**弱**）：宿主无 torch 时的降级检查。它**不放行**
        A3（结构完整 ≠ 可反序列化），但能把"文件真的坏了"判成**实质失败**，并把
@@ -2227,7 +2227,7 @@ def _read_host_sample_gap_mib(run_dir: Path) -> float | None:
     """读宿主采样的**采样缺口**（MiB）——"峰值被他人作业污染"的显式证据。
 
     来源：``gpu/gpu_memory_summary.json`` 的 ``max_peak_memory_gap_mib``。缺口 > 0
-    说明采样窗口内该卡的占用含**非本档**成分（228 是共享机）：此时宿主峰值偏高，
+    说明采样窗口内该卡的占用含**非本档**成分（远端机是共享机）：此时宿主峰值偏高，
     真值应取其"平段"而非峰值。**与宿主峰值同源、同一份摘要**，不由本函数另算口径。
     """
     summary = _read_json(run_dir / "gpu" / "gpu_memory_summary.json")

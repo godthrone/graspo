@@ -1,10 +1,10 @@
 """flow.guard.containers — **容器声明的卡占用**读取（取卡判据 ③ 的设施侧）。
 
-为什么需要它（228 实测缺陷，2026-10-25）：取卡闸门此前只看 ``docker ps/inspect``
+为什么需要它（远端机实测缺陷，2026-10-25）：取卡闸门此前只看 ``docker ps/inspect``
 得到的"我方占卡台账"（``run_guards cards-busy``），而**判定"这张卡能不能用"的
 断言**（``gpu_idle_assert``）压根不读容器面 ⇒ 一张卡**显存 0 MiB、util 0**、但已被
-他人容器 ``--gpus``/``NVIDIA_VISIBLE_DEVICES`` **声明预留**（228 上 GPU7 就是
-``pf228-transform-worker-1`` 预留）时，断言会把它判成"可用"⇒ 我们起跑就撞车。
+他人容器 ``--gpus``/``NVIDIA_VISIBLE_DEVICES`` **声明预留**（远端机上 GPU7 就是
+``pf-remote-transform-worker-1`` 预留）时，断言会把它判成"可用"⇒ 我们起跑就撞车。
 
 本模块只做**读**：``docker ps`` 取名 → ``docker inspect`` 取
 ``HostConfig.DeviceRequests.DeviceIDs`` 与 ``Config.Env`` 里的
@@ -54,7 +54,7 @@ def parse_docker_inspect_stream(text: str) -> list[dict]:
 def cards_declared_by_containers(items: Iterable[dict]) -> dict[str, list[str]]:
     """从 ``docker inspect`` 的对象列表算出 ``{卡号: [容器名, ...]}``。
 
-    两类声明都要采（228 实测两种都在用）：
+    两类声明都要采（远端机实测两种都在用）：
 
     - ``HostConfig.DeviceRequests[].DeviceIDs``：``docker run --gpus '"device=6,7"'``；
     - ``Config.Env`` 里的 ``NVIDIA_VISIBLE_DEVICES=1,3,6,7``：``--runtime=nvidia -e``

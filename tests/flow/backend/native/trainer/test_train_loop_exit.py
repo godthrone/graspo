@@ -7,7 +7,7 @@
 ``c10::DistBackendError`` + SIGABRT（容器里 rank1 的 traceback 只到
 ``trainer.py`` 的 barrier，真正的首错取证链断裂）。
 
-容器的决定性证据（228 ``runs/verify-p1/r1/T035/stdout.log``）：
+容器的决定性证据（远端机 ``runs/verify-p1/r1/T035/stdout.log``）：
 
 - rank1：``last enqueued work: 3``（= barrier）、``last completed work: 2``；
   rank0：``last enqueued work: 2``、``last completed work: 2``

@@ -20,7 +20,7 @@
       --in  .local/hb-workspace/<会话>/task-matrix-html/matrix-data.json \
       --out docs/capability-matrix.data.json
 """
-import argparse, datetime, json, re, sys
+import argparse, datetime, json, re, subprocess, sys
 from pathlib import Path
 
 # ★ lr 口径的**唯一真相源**（`extract_spec.py` 与本脚本同目录）：正式机读件直接引用它，
@@ -168,14 +168,58 @@ def strip_dead_fragments(t: str) -> str:
     return _re.sub(r"\s{2,}", " ", t).strip()
 
 
+# ============================================================================
+# ★★ 主机短名词表（脱敏与扫描的**唯一来源**）
+#    设计纪律（与 `tools/gate_content.py` 的 `gate.content.org-terms` 同款，§15.2 ＋ §15.1
+#    「如果你不想它出现在 GitHub 上，它就不该出现在任何已跟踪文件中」）：把真实主机短名写成
+#    本文件的**正则字面量**，等于脱敏器自己成为泄露源。故词表只来自**本地 git config**（不入 git）：
+#        git config --local gate.content.host-terms "host-a,host-b"    # 逗号或空格分隔
+#    ⚠️ 代价（显式声明、不静默）：**词表未配置时本条既不检测也不脱敏**（失败方向是
+#    "少扫 / 少脱敏"）。也就是说：公开仓库里的这份工具**默认扫不出、也抹不掉主机短名**，
+#    只有本地配了词表才行 —— 这是为了不把主机短名写进源码而付的代价。
+#    消费方（⛔ 不各写一份）：`matrix_text_sanitize()`（脱敏）、
+#    `scan_matrix_leaks.PATTERNS`（扫描）、`enumerate_matrix` 落盘前的 fail-closed 扫描。
+# ============================================================================
+HOST_TERMS_CONFIG_KEY = "gate.content.host-terms"
+
+
+def _local_config_list(key: str) -> tuple[str, ...]:
+    """读**本地** git config 里逗号/空白分隔的词表；未配置或读不到 ⇒ 空元组。"""
+    try:
+        proc = subprocess.run(
+            ["git", "config", "--local", "--get", key],
+            cwd=Path(__file__).resolve().parents[2],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ()
+    if proc.returncode != 0:
+        return ()
+    return tuple(part for part in re.split(r"[,\s]+", proc.stdout.strip()) if part)
+
+
+#: 本地配置的主机短名（未配置 ⇒ 空元组）
+HOST_TERMS = _local_config_list(HOST_TERMS_CONFIG_KEY)
+
+#: 主机短名匹配正则源串：两侧都不是字母数字 ⇒ 独立词元（不误伤哈希 / 行号 / 字节数）；
+#: 词表为空 ⇒ None（不检测、不脱敏，见上方代价声明）。
+HOST_TERM_PATTERN = (
+    r"(?<![0-9A-Za-z])(?:" + "|".join(re.escape(t) for t in HOST_TERMS) + r")(?![0-9A-Za-z])"
+    if HOST_TERMS else None
+)
+
 def matrix_text_sanitize(t: str) -> str:
-    """★ 矩阵文本脱敏：抹除数据集存放路径与机器号（宪法 §15／§10.1 同族）。"""
+    """★ 矩阵文本脱敏：抹除数据集存放路径与主机短名（宪法 §15／§10.1 同族）。
+
+    主机短名的词表来自本地 git config（`HOST_TERMS`）；**未配置 ⇒ 不抹**（见上方代价声明）。
+    """
     import re as _re
     t = str(t or "")
     t = t.replace("/homedata/test.jsonl", "平台方自有数据集（不公开）")
     t = _re.sub(r"/homedata/[^\s，。；]*", "平台方自有数据集（不公开）", t)
     t = t.replace("test.jsonl", "平台方自有数据集（不公开）")   # ★ 裸文件名（无路径前缀）亦抹
-    t = _re.sub(r"(?<![0-9A-Za-z])228(?![0-9A-Za-z])", "<HOST>", t)
+    if HOST_TERM_PATTERN:                    # ★ 词表未配置 ⇒ 不脱敏（见上方代价声明）
+        t = _re.sub(HOST_TERM_PATTERN, "<HOST>", t)
     return t
 
 
@@ -1931,7 +1975,7 @@ def criteria_caliber(rows=None):
                 "★ 一律**以起跑断言值为锚**。",
                 "★ **native 档自动评测流程统一用 `graspo export --config`**（T029 首轮在 `eval export --eval-config` 处 fail-fast，"
                 "已改续跑脚本后成功）。",
-                "★★ **坑（务必防错位）：228 上存在两个 T010 跑次** —— `graspo-batch2-20261012/runs/T010` = **1ep/100 步**"
+                "★★ **坑（务必防错位）：远端机上存在两个 T010 跑次** —— `graspo-batch2-20261012/runs/T010` = **1ep/100 步**"
                 "（对应已作废的 1-epoch 口径）；`graspo-batch3-20261012/runs/T010` = **2ep/200 步/Δ=+13.39 pp/指纹 `e57a5701…`**"
                 "⇒ ★ **本矩阵的 T010 一律以 batch3 为准**；原 json 的 `run_path` 曾错指 batch2、"
                 "`guard_assertions.tree_fingerprint_assert` 由 `f2b0f481…` 订正为 `e57a5701…`（均已登记）。",
@@ -2207,7 +2251,7 @@ def _elapsed_num(s):
 def resolve_elapsed(row, tp_raw):
     """★ 「耗时」列取值的**唯一入口**（三层，⛔ 不编造）：
         ① 矩阵内**跑次文本**解析（`split_elapsed`）；
-        ② 228 **只读侦察**所得 `elapsed_evidence`（`status=found`）：① 为 '—' 时用它；① 已有则只**补缺标签**
+        ② 远端机 **只读侦察**所得 `elapsed_evidence`（`status=found`）：① 为 '—' 时用它；① 已有则只**补缺标签**
            （同一标签两来源数值差 >2% ⇒ **fail-closed**，⛔ 不猜、⛔ 不覆盖）；
         ③ `elapsed_evidence.status=not_found` ⇒ 写「**未取到（<具名原因>）**」（⛔ 不留空白、⛔ 不写估计值）。
     """
@@ -2228,7 +2272,7 @@ def resolve_elapsed(row, tp_raw):
                 a, b = _elapsed_num(v), _elapsed_num(parsed[k])
                 if a is not None and b is not None and abs(a - b) > 0.02 * max(abs(a), 1.0):
                     raise SystemExit(
-                        f"FAIL-CLOSED：{row.get('tier')} 「{k}」两来源冲突：跑次文本 {parsed[k]} vs 228 侦察 {v}")
+                        f"FAIL-CLOSED：{row.get('tier')} 「{k}」两来源冲突：跑次文本 {parsed[k]} vs 远端机侦察 {v}")
         merged = {k: v for k, v in parsed.items()}
         merged.update({k: v for k, v in evp.items() if k not in merged})
     else:
@@ -2780,7 +2824,7 @@ def main():
         if concluded:
             tp_raw = r.get("throughput", "—")
             r["throughput_detail"] = tp_raw        # ★ 归一化**之前**的原文（含 ≈3.9 s/step 等可核数）
-            # ★ 耗时 = 「跑次文本解析 ⊕ 228 只读侦察证据」；取不到 ⇒ 「未取到（具名原因）」（单一入口，fail-closed）
+            # ★ 耗时 = 「跑次文本解析 ⊕ 远端机只读侦察证据」；取不到 ⇒ 「未取到（具名原因）」（单一入口，fail-closed）
             r["elapsed"] = resolve_elapsed(r, tp_raw)
             r["throughput"] = split_throughput(tp_raw)
             w = window_text(r.get("runs", ""))

@@ -100,16 +100,16 @@ V1_CONFIG_DIR_REL = "samples/configs/matrix54"
 
 #: v2 子集目录名（容器内 ``/work/elam-v5/subsets-v2`` 的叶子名）。
 V2_SUBSET_DIRNAME = "subsets-v2"
-#: 228 上**三个互不重叠**的宿主路径（运行期环境信息；都可从命令行覆盖）：
+#: 远端机上**三个互不重叠**的宿主路径（运行期环境信息；都可从命令行覆盖）：
 #:   · 原始数据根（只读源）—— ``data/train.jsonl`` / ``mini-dataset/`` / ``images/``
 #:   · 预生成冻结子集目录（只读）—— ``T0NN.jsonl``
 #:   · 运行产物根（可写，runner 的 ``RUN_ROOT``）—— ``<attempt_root>/<T0NN>/...``
-#: ★ 三者在 228 上**刻意不嵌套**：冻结件永不落在运行产物根之内 ⇒
+#: ★ 三者在远端机上**刻意不嵌套**：冻结件永不落在运行产物根之内 ⇒
 #:   runner 在运行产物根里做任何清理都不会碰到冻结件（§1.4/§2.4）。
 #: ★ §15.1：清单**只存占位符**，不存宿主绝对路径（A 类/公开仓库禁止内网路径）。
 #: 运行期由 `tests/e2e/run_matrix54_source.sh` 用宿主环境展开 ``${VAR}``；
 #: 本地需要真实路径时用 ``--host-data-root/--pregen-subset-dir/--attempt-root`` 显式覆盖
-#: （覆盖值会原样写进清单 ⇒ 仅供本机/228 临时使用，⛔ 不得提交真实宿主路径）。
+#: （覆盖值会原样写进清单 ⇒ 仅供本机/远端机临时使用，⛔ 不得提交真实宿主路径）。
 DEFAULT_HOST_DATA_ROOT = "${GRASPO_ELAM_DATA_ROOT}"
 DEFAULT_PREGEN_SUBSET_DIR = "${GRASPO_PREGEN_SUBSET_DIR}"
 DEFAULT_ATTEMPT_ROOT = "${GRASPO_ATTEMPT_ROOT}"
@@ -463,7 +463,7 @@ def is_native_graspo(entry: dict) -> bool:
 
 
 #: ★ 卡池确定性映射 = **每档的「建议首选卡位」**（★ 语义变更，2026-10-17）。
-#:   ★★ 主席 2026-10-17 裁定（唯一标尺，逐字）：「**228 先到先得，随便用。**」
+#:   ★★ 主席 2026-10-17 裁定（唯一标尺，已脱敏转述）：「**远端机先到先得，随便用。**」
 #:   ＋「**单个作业不限制卡数。**」⇒
 #:     · 卡号判据只剩**存在性**：本机全卡 GPU0–7 一律可用（:data:`GPU_ALLOWED`）；
 #:       ⛔ 无预留、⛔ 不禁用、⛔ 无"生产锁卡"、⛔ 无"邻居卡"、⛔ 无单作业卡数上限；
@@ -636,7 +636,7 @@ def resolve_subset_check_dir(declared: str, repo: Path | None = None) -> "tuple[
       而在盘 ``host_dir`` = **未展开字面量** ``${GRASPO_PREGEN_SUBSET_DIR}`` ⇒ 恒 False ⇒
       **每次都静默跳过**整套行数核对（7 条 MISMATCH 就是这样漏掉的）。
     ★ 现在**三级解析**（⛔ 不许静默跳过；解析不到 ⇒ 调用方必须按"未核对"处理并 fail-closed）：
-      ① 清单里是**真实路径**且存在 ⇒ 用它（228 现场）；
+      ① 清单里是**真实路径**且存在 ⇒ 用它（远端机现场）；
       ② 仓内 ``subsets-v2/``（冻结件的**唯一真相源副本**）存在 ⇒ 用它（本机常态）；
       ③ 都不存在 ⇒ 返回 ``None`` ＋ 具名原因。
     """
@@ -672,7 +672,7 @@ def patch_tier(entry: dict, data_root: str, pregen_dir: str) -> dict:
             raise AssertionError(f"{tier_id}: 建议卡位 {_override} 含重复卡")
         # ★★ 通用断言：**卡号必须 ∈ 本机全卡 0–7**（存在性判据）。
         #    ★ 2026-10-17 语义变更：判据域由 `legal_card_set()`（= 0–7 − 生产锁卡 − 主席禁用 {0,2}，
-        #      实测 (1,3,4,5)）**放宽为** `GPU_ALLOWED`（= 0–7 全卡）——主席令「228 先到先得，随便用。」
+        #      实测 (1,3,4,5)）**放宽为** `GPU_ALLOWED`（= 0–7 全卡）——主席令「远端机先到先得，随便用。」
         #      ＋「单个作业不限制卡数。」⇒ ⛔ 不再有生产锁卡 / 邻居卡 / 禁用卡。
         #    ★ 保护强度：越界卡（≥8）仍被拒；卡数错配 / 重复卡仍被拒。被撤掉的只有
         #      "静态禁用某些**存在**的卡"这一类**与动态占用事实无关**的策略判据。
@@ -759,7 +759,7 @@ def patch_tier(entry: dict, data_root: str, pregen_dir: str) -> dict:
     #   `head -n $SUBSET <源>` 本身就把"前 N 条"再算一遍并落 <RUN_ROOT>/<T>/subsets/。
     #   让 head 的输入是**只读的原始源**（而非冻结子集）是**防呆**：即使有人把 RUN_ROOT
     #   设成数据根、导致 head 的输出路径恰好等于输入路径（shell 先清空输出再读输入 ⇒
-    #   0 行），被清空的也只是"重算得到的那份"，永不可能清空 228 上的冻结件或原始数据。
+    #   0 行），被清空的也只是"重算得到的那份"，永不可能清空远端机上的冻结件或原始数据。
     data["source_jsonl"] = host_src
     data["source_jsonl_container"] = src_rel
     data["extract_command"] = (
@@ -1064,7 +1064,7 @@ def build_v2_manifest(
             "data.extract_command / data.source_rule / data.subset_file_pregenerated / step_formula_v2",
         ],
         "gpus": (
-            "★★ 2026-10-17 主席裁定（唯一标尺，逐字）：「**228 先到先得，随便用。**」"
+            "★★ 2026-10-17 主席裁定（唯一标尺，已脱敏转述）：「**远端机先到先得，随便用。**」"
             "＋「**单个作业不限制卡数。**」⇒ `gpus`（本清单与卡池映射里的这一列）"
             "**降级为『建议首选卡位』**，⛔ **不再是合法性判据**："
             "① 卡号判据只剩**存在性** —— 本机全卡 0–7 一律可用，⛔ 无预留卡、⛔ 无禁用卡、"
@@ -1091,7 +1091,7 @@ def build_v2_manifest(
     #    （登记"卡池 ∩ 生产锁卡"的冲突）随旧口径一起**废除**：那三类静态锁卡已不存在，
     #    冲突这个概念也随之消失。
     out["gpu_card_caliber"] = {
-        "ruling": "228 先到先得，随便用。／单个作业不限制卡数。",
+        "ruling": "远端机先到先得，随便用。／单个作业不限制卡数。",
         "ruling_date": "2026-10-17",
         "gpu_allowed": list(GPU_ALLOWED),
         # ★ 四类**静态名单**（预留/禁用/生产锁/邻卡）**均已废除** ⇒ 此处恒为空数组，
@@ -1788,9 +1788,9 @@ def main(argv: list[str] | None = None) -> int:
         help="★ 显式放行「冻结子集目录解析不到 ⇒ 未核对」的 fail-closed（默认不放行；用到即打印）",
     )
     parser.add_argument("--host-data-root", default=DEFAULT_HOST_DATA_ROOT,
-                        help="228 上的 ELAM V5 原始数据根（data/、mini-dataset/、images/）")
+                        help="远端机上的 ELAM V5 原始数据根（data/、mini-dataset/、images/）")
     parser.add_argument("--pregen-subset-dir", default=DEFAULT_PREGEN_SUBSET_DIR,
-                        help="228 上的 v2 冻结子集目录（其下 T0NN.jsonl）")
+                        help="远端机上的 v2 冻结子集目录（其下 T0NN.jsonl）")
     parser.add_argument("--attempt-root", default=DEFAULT_ATTEMPT_ROOT,
                         help="runner 的 RUN_ROOT 推荐值（运行产物根；须与上面两者不嵌套）")
     parser.add_argument(

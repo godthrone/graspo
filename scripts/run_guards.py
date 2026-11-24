@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """起跑/评测护栏（§7 形态谓词 / §8 产物新鲜度 / §10 27B Mamba 并发）。
 
-三条护栏都是 228 实测事故的制度化（见 docs/run-discipline.md §7/§8/§10）：
+三条护栏都是远端机实测事故的制度化（见 docs/run-discipline.md §7/§8/§10）：
 
 §7  评测配置的 ``checkpoint_path`` 必须是**评测容器内可达**路径，且**谓词须按形态分支**：
     全参/HF ⇒ config.json ∨ model-*.safetensors；PEFT adapter ⇒ adapter_config.json ∨
@@ -72,7 +72,7 @@ def busy_cards_from_docker(names: list[str] | None = None, docker_json: str | No
         for r in reqs:
             for d in (r.get("DeviceIDs") or []):
                 gids.extend(str(d).split(","))
-        # ★ 228 实测：训练容器用 `--runtime=nvidia -e NVIDIA_VISIBLE_DEVICES=1,3,6,7` 传卡
+        # ★ 远端机实测：训练容器用 `--runtime=nvidia -e NVIDIA_VISIBLE_DEVICES=1,3,6,7` 传卡
         #   ⇒ `HostConfig.DeviceRequests` 为 **null** ⇒ 必须同时从 env 采（否则台账恒为空）
         for e in ((it.get("Config") or {}).get("Env") or []):
             if e.startswith("NVIDIA_VISIBLE_DEVICES="):
@@ -88,7 +88,7 @@ def exclude_cards_held_by_us(available: list[str], busy_cards: set[str]) -> list
     """★ 择卡硬排除：把"**我方**已占/已预约（含 loading 态）"的卡从可用集里剔除
     （⛔ 不是建议，是硬排除）。
 
-    ★ 2026-10-17 更名（原 ``include_reserved_cards``）：主席令「228 先到先得，随便用。」
+    ★ 2026-10-17 更名（原 ``include_reserved_cards``）：主席令「远端机先到先得，随便用。」
     ＋「单个作业不限制卡数。」⇒ 卡池**不存在**"预留/禁用/生产锁卡"这类静态名单
     （本仓的契约扫查 ``tests/compliance/test_gpu_contract_retired_sweep.py`` 会对该词表报红）。
     本函数的语义从来不是"预留卡"，而是"**我方自己**这些卡已经在用了 ⇒ 别自己撞自己"——
@@ -259,7 +259,7 @@ def busy_cards_from_compute_apps(
     ``cards-busy`` 的**等价输入**——宿主进程占卡从此能判 busy。
 
     为什么必须补这条：``cards-busy`` 此前只有 ``docker ps/inspect`` 一条输入 ⇒
-    **永远漏宿主进程**。228 实测：GPU2 上有他人在宿主直接起的 ``lightnav-serve``
+    **永远漏宿主进程**。远端机实测：GPU2 上有他人在宿主直接起的 ``lightnav-serve``
     （13.3 GiB、util 采样 0 %）而**没有任何容器** ⇒ 台账判它"空闲"，
     ``gpu_idle_assert``（旧判据）也放行 ⇒ 起服必撞 OOM。
 
@@ -329,7 +329,7 @@ def busy_cards_cli(
 
     ★ 两类输入是**等价输入**（都是"这张卡已经有人在用"的证据），取并集：
     容器输入覆盖"我方/他人容器已占/已预约"，进程快照覆盖"**宿主进程**直接占卡"
-    （后者正是 228 上 GPU2 的形态，docker 面完全看不见）。
+    （后者正是远端机上 GPU2 的形态，docker 面完全看不见）。
     """
     names = [l.strip() for l in (docker_ps_text or "").splitlines() if l.strip()]
     items = parse_docker_inspect_stream(docker_inspect_text)

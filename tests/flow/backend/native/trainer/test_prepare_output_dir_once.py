@@ -1,6 +1,6 @@
 """RC-3 回归用例：多 rank 不得并发 ``rmtree`` 同一个输出目录（纯 CPU，无 GPU）。
 
-缺陷（228 实测 ``T030`` run2）：每个 rank 各自 ``prepare_output_dir(overwrite=True)``
+缺陷（远端机实测 ``T030`` run2）：每个 rank 各自 ``prepare_output_dir(overwrite=True)``
 ⇒ 多个 ``shutil.rmtree`` 撞车 ⇒ ``FileNotFoundError: PosixPath('/out/T030')``。
 
 本文件验证 ``helpers.prepare_output_dir_once`` 的四条契约：

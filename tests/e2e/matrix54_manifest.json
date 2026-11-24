@@ -53,7 +53,7 @@
         "同一档内除最新一份以外的 `checkpoint-*/`（逐项具名，不用通配符展开做操作数）"
       ],
       "a3_unaffected": "A3 = checkpoint 能否重载；`scripts/collect_results.py` 的 `find_checkpoint_dirs()` 只要求**存在 ≥1 份**可解析的 `checkpoint-<step>/`，没有份数要求 ⇒ 留一份即满足 A3。",
-      "blocked_by_env": "checkpoint 由容器内 root 落盘，宿主普通用户删不掉（228 实测：`sudo` 需密码）⇒ 删除只能发生在容器内，故实现落在 runner 的 entry.sh。"
+      "blocked_by_env": "checkpoint 由容器内 root 落盘，宿主普通用户删不掉（远端机实测：`sudo` 需密码）⇒ 删除只能发生在容器内，故实现落在 runner 的 entry.sh。"
     }
   },
   "models": {

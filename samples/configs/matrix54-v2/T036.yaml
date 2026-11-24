@@ -3,7 +3,7 @@
 # 生成器: 冻结件（不可由仓库重算）；v1 基线 = tests/e2e/generate_matrix.py；v2 逐档补丁件 tests/e2e/generate_matrix_v2.py 已退役留档 .local/repo-moved-out/tests/e2e/；手改无效
 # 本档相对 v1 的改动: data.train_path: /work/elam-v5/subsets/T036.jsonl → /work/elam-v5/subsets-v2/T036.jsonl；training.save_steps: 5 → 48；训练子集条数: 20 → 192（**非 yaml 字段**，由 runner 按 manifest 的 subset_size 落盘，见 changes.md）
 # 口径: 只用 1/2/4 卡；GPU 集合取自 {0,1,2,3}；上下文长度由递增加长法实测得出，不预设档位。
-# 数据: ELAM V5 训练子集前 192 条（宿主数据根目录经 GRASPO_ELAM_HOST_ROOT 注入，见 .local/）；子集由 run_matrix54.sh 生成，图像经 ../images 解析。★ 本档 192 条 > mini（100 条）⇒ 必须从 228 正式集 data/train.jsonl（6378 条）取。
+# 数据: ELAM V5 训练子集前 192 条（宿主数据根目录经 GRASPO_ELAM_HOST_ROOT 注入，见 .local/）；子集由 run_matrix54.sh 生成，图像经 ../images 解析。★ 本档 192 条 > mini（100 条）⇒ 必须从远端机正式集 data/train.jsonl（6378 条）取。
 # ⚠️ 数据口径告警: ELAM V5 train/test 样本 id 不重叠；但**图像去重交集 752 张**（占测试图像 38.5%），且 **169/702 个测试样本的图像集是某训练样本的子集**。训练集与评测集「同源不重叠」的口径在图像层面不成立，评测结论须在对齐该口径后再下判断。
 # 可表达性: unverified
 # 显存可行性: [feasible] 估算每卡 28.8 GiB（预算 78 GiB）⇒ 可行：native 全参 PP 分片（k=8 B/param，bf16 Adam 假设）：(2+2+4)/4 B/param；激活/其他预算 12 GiB

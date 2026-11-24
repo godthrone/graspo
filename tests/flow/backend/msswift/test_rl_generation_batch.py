@@ -185,7 +185,7 @@ class TestUpstreamAlgorithmDifferential:
         )
         with pytest.raises(ValueError, match=r"must be evenly divisible by num_generations \(8\)"):
             _upstream_init_generation_batch_params(legacy)
-        # 与 228 上 T031 实测报错同一条：gbs=1、ng=8、Valid values: []
+        # 与远端机上 T031 实测报错同一条：gbs=1、ng=8、Valid values: []
         assert legacy.generation_batch_size == 1
         assert [
             n

@@ -17,7 +17,7 @@ dry-run 分支之后 ⇒ 预检把不可跑的档报成 rc=0）。
 **F-A 追加（本模块新增主线）**：挂载结构不变量。
 旧命令 `-v "$ELAM_HOST:/work/elam-v5:ro"` + `-v "$RUN_DIR/subsets:/work/elam-v5/subsets:ro"`
 把子挂载点放在只读绑定挂载之下，dockerd 无法创建嵌套 mountpoint ⇒ **rc=125，一档都起不来**
-（228 实测确证）。现在：① 挂载目标彼此互不嵌套；② 该不变量在启动前被断言（fail-closed）；
+（远端机实测确证）。现在：① 挂载目标彼此互不嵌套；② 该不变量在启动前被断言（fail-closed）；
 ③ 目的地由 `data.train_path` 反推（单一真相源）。
 
 **F-B 追加**：媒体锚点。子集只读挂到 `dirname(train_path)`，图像根只读挂到
@@ -26,7 +26,7 @@ dry-run 分支之后 ⇒ 预检把不可跑的档报成 rc=0）。
 
 **F-IPC 追加**：多卡共享内存。`DOCKER_ARGS` 必须带 `--ipc=host --shm-size=16g`，
 否则容器 `/dev/shm` 只有 docker 默认 64 MiB ⇒ **任何 ≥2 卡档位启动即 ENOSPC**
-（228 实测：4 rank 同抛 `unable to allocate shared memory(shm)`，`Train: 0%`）。
+（远端机实测：4 rank 同抛 `unable to allocate shared memory(shm)`，`Train: 0%`）。
 配一条**变异测试**证明该断言真能失败，以及一条"runner 与生成器模板逐字节一致"的不变量。
 """
 
@@ -55,7 +55,7 @@ exit 0
 """
 
 #: 假 docker（**模拟 dockerd 的 mountpoint 规则**）：某个挂载目标位于另一个**只读**
-#: 挂载之下时返回 125 —— 这正是 228 上实测的失败（`mkdirat ...: read-only file system`）。
+#: 挂载之下时返回 125 —— 这正是远端机上实测的失败（`mkdirat ...: read-only file system`）。
 #: 用它来证明"旧挂载方案会失败、新挂载方案被接受"这条判据真的能失败。
 _FAKE_DOCKER_MOUNT_RULES = """#!/bin/bash
 { printf '%s\\n' "$@"; } > "$FAKE_DOCKER_ARGV"
@@ -468,7 +468,7 @@ def _source_runner(script: str) -> subprocess.CompletedProcess[str]:
 def test_mount_invariant_rejects_a_target_nested_under_a_readonly_mount():
     """★F-A 负向：只读父挂载 + 其下子挂载 ⇒ 必须**被拒绝**并给出可操作报错。
 
-    这是 228 实测的 rc=125 场景（`mkdirat .../subsets: read-only file system`）。
+    这是远端机实测的 rc=125 场景（`mkdirat .../subsets: read-only file system`）。
     旧 runner 会让 docker 返回一个语义模糊的 125；现在由启动前断言拦下（rc=6）。
     """
     completed = _source_runner(
@@ -505,7 +505,7 @@ def test_fake_docker_with_real_mount_semantics_rejects_the_old_layout(tmp_path: 
     completed = _run(tmp_path, bin_dir, elam_root=elam_root, models_root=models_root)
     assert completed.returncode == 0, completed.stderr
 
-    # 旧组合（父 ro + 其下子挂载）⇒ 该模拟器返回 125（= 228 实测行为）。
+    # 旧组合（父 ro + 其下子挂载）⇒ 该模拟器返回 125（= 远端机实测行为）。
     old = subprocess.run(
         [
             str(fake),
@@ -575,7 +575,7 @@ def test_default_train_source_is_the_mini_dataset(tmp_path: Path):
 def test_missing_mini_dataset_is_fail_closed_before_docker(tmp_path: Path):
     """★ 负向：默认读取源缺失 ⇒ 拒绝启动（rc=3）、给出两条可操作修法、且不进 docker。
 
-    防呆目的：不能让"mini 没上传到 228"表现成训练期的数据问题（会被日志分类器误判）。
+    防呆目的：不能让"mini 没上传到远端机"表现成训练期的数据问题（会被日志分类器误判）。
     """
     bin_dir, elam_root, models_root = _make_fakes(tmp_path)  # 不 staging mini 数据集
 
@@ -747,7 +747,7 @@ def test_container_entry_runs_media_preflight_before_training(tmp_path: Path):
 def test_container_entry_makes_artifacts_host_readable(tmp_path: Path):
     """★产物必须可被**宿主侧** collect_results.py 读到：entry.sh 收尾要放开读权限。
 
-    228 实测：容器内训练以 root 运行，ms-swift/HF 落盘的 ``adapter_model.safetensors``
+    远端机实测：容器内训练以 root 运行，ms-swift/HF 落盘的 ``adapter_model.safetensors``
     是 ``root:0600`` ⇒ 宿主侧普通用户打不开 ⇒ A2/A3 读不到证据（A3 一度被记成
     "checkpoint 无法重新加载"，把采集侧缺口记成了训练失败）。故收尾必须有 chmod。
     """
@@ -765,7 +765,7 @@ def test_container_entry_makes_artifacts_host_readable(tmp_path: Path):
 
 # ── IPC/shm：多卡启动的共享内存（阻断缺陷回归 + 变异测试）──────────────────
 #
-# 缺陷（228 实测确证）：`DOCKER_ARGS` 没有 `--ipc=host` / `--shm-size` ⇒ 容器
+# 缺陷（远端机实测确证）：`DOCKER_ARGS` 没有 `--ipc=host` / `--shm-size` ⇒ 容器
 # `/dev/shm` 只有 docker 默认的 64 MiB ⇒ **任何 ≥2 卡档位启动即失败**：
 #   4 个 rank 同抛 `RuntimeError: unable to allocate shared memory(shm) for file
 #   </torch_491_*>: Resource temporarily unavailable (11)`（`Train: 0%`）。
@@ -1201,7 +1201,7 @@ def test_retention_unset_tier_still_succeeds_only_for_the_wrong_reason(tmp_path:
 
 # ── 跨 run 复跑：keeper 必须是**本轮最新**那份（2026-09-20 缺陷修复）──────────
 #
-# 缺陷（228 实测 T043 run2；本机已复现，见工位 task-retention-xrun/evidence/）：
+# 缺陷（远端机实测 T043 run2；本机已复现，见工位 task-retention-xrun/evidence/）：
 # 同一档**第二次跑**时 `find /out/$TIER` **跨 v0-*/v1-* 两个 run 目录**找 ckpt，而旧判据
 # **只比步数**且用 `-gt`（**严格大于**）⇒ 两份 `checkpoint-160` 步数相同时，keeper 完全由
 # `find` 的 readdir 顺序决定（ext4 dir_index / overlayfs / tmpfs 各不相同）；顺序不利时
@@ -1762,7 +1762,7 @@ def test_tier_config_carries_the_gpu_monitor_section(tmp_path: Path):
     矩阵档一律 `overwrite_output_dir: true`，训练进程启动时对**非空**的
     `<training.output_dir>` 执行 `shutil.rmtree`（`lora_io.prepare_output_dir`）；
     采样器先于 torchrun 起，若落点在该子树内，刚建好的 `gpu/` 会被整棵删掉 ⇒
-    首个 `append_jsonl` 即 ENOENT（228 真跑首错签名：
+    首个 `append_jsonl` 即 ENOENT（远端机真跑首错签名：
     `gpu_monitor.py:621 append_jsonl ... '/out/T010/gpu/gpu_memory.jsonl'`）。
 
     本条把两条不变量**写成代码**：① 落点 == 取证链锚点（与消费端同源）；
@@ -1788,7 +1788,7 @@ def test_tier_config_carries_the_gpu_monitor_section(tmp_path: Path):
         training_out = config["training"]["output_dir"]
         assert not monitor["output_dir"].startswith(f"{training_out}/"), (
             f"{tier_id} 的落点落在训练输出目录 {training_out} 之内 ⇒ 训练侧 "
-            f"overwrite_output_dir 的 shutil.rmtree 会删掉采样产物（228 实测）"
+            f"overwrite_output_dir 的 shutil.rmtree 会删掉采样产物（远端机实测）"
         )
         assert monitor["interval_sec"] == 2.0, f"{tier_id} 的 interval_sec 必须是 2"
 
@@ -1829,7 +1829,7 @@ def test_gpu_evidence_dir_is_one_anchor_across_producer_runner_and_collector(tmp
          `overwrite_output_dir`（对非空输出目录 `shutil.rmtree`）的删除半径 ⇒ 采样器
          刚建好的 `gpu/` 被删、首个 `append_jsonl` 即 ENOENT；
       ② 断言端 entry.sh 收口段写死另一条 `/out/gpu` ⇒ 断言找不到摘要，且缺口登记
-         自身因目录不存在而 ENOENT（228 实测 entry.sh 行 197/200）。
+         自身因目录不存在而 ENOENT（远端机实测 entry.sh 行 197/200）。
 
     本用例把四个使用点一次钉在同一个锚点上，任一漂移即失败。
 
@@ -2088,7 +2088,7 @@ def test_real_cli_rejects_the_removed_output_options(tmp_path: Path):
 # exit_code 不得假报 0：**假容器**下真跑整条 entry.sh（不碰 GPU / 不起真容器）
 # ══════════════════════════════════════════════════════════════════════════════
 #
-# 原缺陷（228 实测，T028/T031）：worker 真实 rc=1（stdout 里 `exitcode: 1`），宿主
+# 原缺陷（远端机实测，T028/T031）：worker 真实 rc=1（stdout 里 `exitcode: 1`），宿主
 # 记录的 `<RUN_ROOT>/<T###>/exit_code` 却是 **0**。根因两层：
 #   ① 容器 `entry.sh` 捕获了 `RC=$?`（torchrun 退出码）却**从未 `exit "$RC"`**，
 #      脚本最后一条是 `printf ... > /out/ckpt_retention.state`（成功 ⇒ 0）；
@@ -2196,7 +2196,7 @@ def _run_entry_sh_via_host(
 def test_entry_sh_propagates_worker_rc_one(tmp_path: Path):
     """★★核心负向用例：容器内 worker rc=1 ⇒ entry.sh 退出码必须是 1（不得是 0）。
 
-    这正是 228 实测的假通过：T028/T031 stdout 里 `exitcode: 1`，宿主 `exit_code=0`。
+    这正是远端机实测的假通过：T028/T031 stdout 里 `exitcode: 1`，宿主 `exit_code=0`。
     """
     completed, fake_out = _run_entry_sh_via_host(tmp_path, worker_rc=1)
     assert completed.returncode == 1, (
@@ -2360,7 +2360,7 @@ def _run_runner_with_fake_container(
 def test_host_exit_code_equals_worker_rc_end_to_end(tmp_path: Path):
     """★★★ 端到端负向用例（本题最关键）：worker rc=1 ⇒ 宿主 `exit_code` 文件内容 = 1。
 
-    这是 228 实测假通过（`exit_code=0`，stdout `exitcode: 1`）的直接回归。
+    这是远端机实测假通过（`exit_code=0`，stdout `exitcode: 1`）的直接回归。
     """
     completed, run_dir = _run_runner_with_fake_container(tmp_path, worker_rc=1)
     exit_code_file = run_dir / "exit_code"
@@ -2534,12 +2534,12 @@ def _gpu_assignment_fingerprint(pairs) -> str:
 
 # ── 产物属主（PG-13 / U5「产物跑完了测好了就删」）─────────────────────────────
 #
-# 缺陷（228 实测确证，两个独立现场）：镜像**没有 USER 指令** ⇒ 容器默认以 uid 0 运行
+# 缺陷（远端机实测确证，两个独立现场）：镜像**没有 USER 指令** ⇒ 容器默认以 uid 0 运行
 # ⇒ 容器写出的产物一律 ``root:root``，而宿主跑批账号对 root 文件**无 unlink 权限**
 # ⇒ ``rm`` 报 Permission denied、``rmdir`` 失败、``sudo -n`` 要密码
 # （task-f2-resync-verify §⑨：``<RUN_ROOT>/T010/`` 内 20 项 / 49,133,569 B ≈ 47 MiB
 # 删不掉；task-e4-reclaim：r2/r3/r4 因树内 root:root 残留 522.7 MB，整树删不掉）。
-# 共享机上残留只增不减，而 228 磁盘两次被顶到 100%。
+# 共享机上残留只增不减，而远端机磁盘两次被顶到 100%。
 #
 # 修法（**防呆**，§2，不是"事后提权去删"）：让产物**从一开始**就归宿主跑批用户 ——
 # ``docker run --user <宿主 uid>:<gid>``。非 root 进程写不了镜像里 root 的 ``/root``
@@ -2645,7 +2645,7 @@ def test_effective_user_has_exactly_one_source(tmp_path: Path):
 def test_container_home_and_cache_dirs_are_explicitly_writable(tmp_path: Path):
     """非 root 进程写不了镜像里 root 的 /root ⇒ HOME/缓存根必须显式给且先建出来。
 
-    ★ 回归判据（228 实测，本包修的缺陷）：镜像 ENV 把 ``MODELSCOPE_CACHE`` 写死成
+    ★ 回归判据（远端机实测，本包修的缺陷）：镜像 ENV 把 ``MODELSCOPE_CACHE`` 写死成
     ``/mnt/workspace/.cache/modelscope/hub``，而 ``/mnt`` 在镜像里是 ``root:root 0755``
     ⇒ 容器改以宿主 uid 运行后建不出 ``/mnt/workspace``，ms-swift 的 ``dataset/loader.py:57``
     拿 ``get_cache_dir()`` 当 ``datasets`` 的 ``cache_dir`` ⇒ 训练**在数据集装载阶段**就
@@ -2940,7 +2940,7 @@ def test_determinism_guard_empty_string_is_treated_as_off(tmp_path: Path, monkey
 def test_rerun_archives_the_previous_attempt_post_run_artifacts(tmp_path: Path):
     """★B11 核心回归：同一 tier 重跑 ⇒ 上一轮**跑后产物**必须先移入 ``attempt-<ts>/``。
 
-    实测事故（228，2026-10-12）：T033 第二次起跑时，第一次尝试（`nostalgic_lederberg`，
+    实测事故（远端机，2026-10-12）：T033 第二次起跑时，第一次尝试（`nostalgic_lederberg`，
     39 s 退出）留在**同一个** ``runs/T033/`` 的 ``exit_code=1`` 被读成"本次失败"。
     本用例钉住：清场发生、旧内容**逐字**进归档、新跑次写下的是**本次**的 ``exit_code``。
     """

@@ -20,7 +20,7 @@
   · §15.1 机密：账号/内网地址/宿主路径一律不写成源码字面量。
 
 新增的可配置项（链路侦察 B5：原先写死 `/tmp` + 不可关的 ssh 断言）：
-  · `--tmp-dir`（缺省 `$GRASPO_EVAL_TMP_DIR` → `/data/remote`）：脚本与 yaml 的落点；
+  · `--tmp-dir`（缺省 `$GRASPO_EVAL_TMP_DIR` → `/tmp/graspo-eval`）：脚本与 yaml 的落点；
   · `--no-ssh`：关闭远端探测（form / checkpoint / 清单读取），改由 `--checkpoint` / `--form`
     显式给出或按形态推定 —— 用于离线自检与干跑（⛔ 不用于真实评测）。
 
@@ -49,7 +49,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "tests" / "e2e" / "matrix68_manifest.json"
 
-#: 唯一真相源：§10 的安全上限（228 实测 27B(Mamba) 可用 cache blocks = 232 ⇒ 取 192）。
+#: 唯一真相源：§10 的安全上限（远端机实测 27B(Mamba) 可用 cache blocks = 232 ⇒ 取 192）。
 #: ⛔ 本文件不另写数值；需要时直接引用 `scripts/launch_pipeline.py` 的常量。
 def _mamba_safe_default() -> int:
     sys.path.insert(0, str(ROOT / "scripts"))
@@ -58,9 +58,12 @@ def _mamba_safe_default() -> int:
     return int(lp.MAMBA_SAFE_MAX_NUM_SEQS)
 
 
-#: 数据集口径里"平台方自有评测集"（正式档）——环境信息，可用环境变量覆盖。
-TEST_JSONL = "/work/elam-v5/data/test.jsonl"
-FULL_TRAIN_JSONL = "/work/elam-v5/data/train.jsonl"
+#: 数据集口径里"平台方自有评测集"（正式档）的**容器内路径**。
+#: ★ §15.1：内部数据集路径不写成源码字面量 ⇒ 缺省为空，**必须由现场用环境变量给出**。
+#: 为什么这里是"必填"而非给占位缺省：它是**输入**——一个字符的偏差就是拿错数据集评；
+#: 占位值只会把错误推迟到起跑时才以 `DatasetError` 暴露，缺省直接 fail-closed 更便宜。
+TEST_JSONL = os.environ.get("GRASPO_EVAL_TEST_JSONL", "")
+FULL_TRAIN_JSONL = os.environ.get("GRASPO_EVAL_TRAIN_JSONL", "")
 
 #: 算法（清单 `algorithm`）⇒ 判据② 冻结口径键。只是名字映射，⛔ 不含阈值数值。
 ALGO_METHOD = {"SFT": "sft", "GRASPO": "graspo", "CPT": "cpt", "OPD": "opd"}
@@ -138,6 +141,10 @@ def compute_caliber(mt: dict) -> dict:
             "train_dataset_path": train_container,
             "train_limit": str(subset_size),
         }
+    if not (TEST_JSONL and FULL_TRAIN_JSONL):
+        die("subset_size ≠ 100 的档走「平台方自有评测集」口径，而该数据集的容器内路径"
+            "不是源码字面量（§15.1）⇒ 必须显式给出："
+            "GRASPO_EVAL_TEST_JSONL / GRASPO_EVAL_TRAIN_JSONL", 2)
     return {
         "fit": False,
         "why": f"subset_size={subset_size} ≠ 100 ⇒ 平台方 702 行评测集口径",
@@ -160,7 +167,7 @@ def compute_max_num_seqs(mt: dict, blocks: int | None) -> dict:
     if blocks is None:
         return {"needed": True, "value": safe,
                 "basis": f"27B(Mamba) ⇒ 取 §10 缺省安全值 {safe}"
-                         f"（228 实测可用 cache blocks=232；未给 --blocks ⇒ 不做 ≤blocks 断言，真跑前必须给）",
+                         f"（远端机实测可用 cache blocks=232；未给 --blocks ⇒ 不做 ≤blocks 断言，真跑前必须给）",
                 "text": f"--max-num-seqs {safe}"}
     value = min(safe, int(blocks))
     return {"needed": True, "value": value,
@@ -528,8 +535,8 @@ def main(argv=None) -> int:
     ap.add_argument("--gpu", required=True, help="评测卡集（与训练分卡）")
     ap.add_argument("--port", required=True)
     ap.add_argument("--manifest", default=str(MANIFEST))
-    ap.add_argument("--tmp-dir", default=os.environ.get("GRASPO_EVAL_TMP_DIR", "/data/remote"),
-                    help="脚本与 yaml 的落点（缺省 $GRASPO_EVAL_TMP_DIR → /data/remote）")
+    ap.add_argument("--tmp-dir", default=os.environ.get("GRASPO_EVAL_TMP_DIR", "/tmp/graspo-eval"),
+                    help="脚本与 yaml 的落点（缺省 $GRASPO_EVAL_TMP_DIR → /tmp/graspo-eval）")
     ap.add_argument("--blocks", type=int, default=None,
                     help="§10 实测可用 Mamba cache blocks（27B 档给则做 ≤blocks 断言并取 min）")
     ap.add_argument("--checkpoint", default=None,

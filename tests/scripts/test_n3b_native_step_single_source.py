@@ -6,8 +6,8 @@
 
 | 档 | 机器 / 路径 | 字节 | sha256 | `grep -c global_step` | `grep -c '"step":'` |
 |----|-------------|------|--------|----------------------|---------------------|
-| M007 | 228 `…/graspo-baseline-r1-6189bd8/runs/M007/stdout.log` | 13 563 677 | `b3ae64af…` | **0** | 400 |
-| M008 | A800-33 `/data/remote/runs/M008/stdout.log` | 6 784 734 | `0c58e67b…` | **0** | 200 |
+| M007 | 远端机 `…/graspo-baseline-r1-6189bd8/runs/M007/stdout.log` | 13 563 677 | `b3ae64af…` | **0** | 400 |
+| M008 | 远端机 `<主机侧数据根>/runs/M008/stdout.log` | 6 784 734 | `0c58e67b…` | **0** | 200 |
 
 fixture 是这两份日志的**逐字节摘录**（`.txt` 而非 `.log`：仓里 `.gitignore` 忽略 `*.log`，
 这是受控 fixture，⛔ 不用 `git add -f` 绕过忽略规则）：

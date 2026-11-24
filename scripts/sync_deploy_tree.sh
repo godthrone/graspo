@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # §11 的"一条命令"：把仓内 scripts/*.py 幂等同步到部署树，并逐件冒烟。
 #
-# 为什么有这件：228 上两次在**起跑时**才发现"护栏已落仓、部署树里没有"（`ModuleNotFoundError`）。
+# 为什么有这件：远端机上两次在**起跑时**才发现"护栏已落仓、部署树里没有"（`ModuleNotFoundError`）。
 # 本脚本幂等、可重复、任一冒烟失败即非零退出，供任何一轮随时调用：
 #
 #   scripts/sync_deploy_tree.sh --tree <部署树绝对路径>
@@ -87,7 +87,7 @@ for src in "$REPO"/scripts/*.py; do
   if ! python3 -c "import sys; sys.path.insert(0, '$REPO/scripts'); import $mod" >/dev/null 2>&1; then
     echo "  OK $base（sha256 一致；仓内亦不可裸 import ⇒ 跳过 import 冒烟）"; continue
   fi
-  # 远端 import 冒烟：带上部署树的 hostdeps（228 上脚本依赖它）并在树根下执行
+  # 远端 import 冒烟：带上部署树的 hostdeps（远端机上脚本依赖它）并在树根下执行
   IMP="cd '$TREE' && PYTHONPATH='$TREE.hostdeps:$TREE/scripts' python3 -c \"import $mod\""
   if [ -n "$REMOTE" ]; then
     if ! $SSH "$IMP" >/dev/null 2>&1; then

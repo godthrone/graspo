@@ -190,7 +190,7 @@ def prepare_output_dir_once(
 ) -> Any:
     """准备输出目录：**只有 primary rank 清目录，其余 rank 等它做完**（§1.4 唯一入口）。
 
-    缺陷（228 实测 `T030` run2）：每个 rank 在 ``train()`` 开头各自调用
+    缺陷（远端机实测 `T030` run2）：每个 rank 在 ``train()`` 开头各自调用
     ``prepare_output_dir(overwrite=True)`` ⇒ 4 个 rank **并发** ``shutil.rmtree``
     同一个目录，rank3 在 ``shutil._rmtree_safe_fd`` 里 ``os.lstat`` 到已被别的
     rank 删掉的目录 ⇒ ``FileNotFoundError: PosixPath('/out/T030')``。

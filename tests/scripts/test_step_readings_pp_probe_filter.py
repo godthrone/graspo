@@ -9,7 +9,7 @@ native 的 pp-debug 会在 rollout 解码阶段逐字打：
 这里的 `step=` 是**解码/生成步**，不是训练优化步。`NATIVE_STEP_RE` 只看
 `(?<![A-Za-z0-9_])step['"]?\\s*[:=]\\s*(\\d+)`，不区分两者 ⇒ 探针行被当成 native 裸步数读数。
 
-**M019 实测（A800-33 `runs/M019/stdout.log`，3 731 999 B，2026-11-10）**：
+**M019 实测（远端机 `runs/M019/stdout.log`，3 731 999 B，2026-11-10）**：
 该档在 rollout 阶段即崩（`rank1 exitcode 86`、`error_file: <N/A>`），**一步优化都没跑**，
 但 `grep -c global_step` = **0**、无任何 `"step": N` 训练行 ⇒ 日志里**唯一**像步数的就是探针行
 ⇒ `steps_actual` 被读成 **1441**。这会把「起跑即崩」的档伪装成「跑了 1441 步」。

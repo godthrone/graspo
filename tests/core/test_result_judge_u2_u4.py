@@ -141,8 +141,8 @@ CPT_NOT_DECLINING = tuple(0.5 + 0.03 * index for index in range(20))
         (30, 3),
         (41, 4),  # round(4.1)=4
         (50, 5),  # round(5.0)=5
-        (100, 10),  # ★ 与 228 实测 CPT 档 k=10 一致
-        (200, 20),  # ★ 与 228 实测 CPT 档 k=20 一致
+        (100, 10),  # ★ 与远端机实测 CPT 档 k=10 一致
+        (200, 20),  # ★ 与远端机实测 CPT 档 k=20 一致
     ],
 )
 def test_cpt_loss_window_size_matches_the_caliber(point_count, expected):

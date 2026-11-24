@@ -60,7 +60,7 @@ def test_probe_returns_none_and_touches_no_tensor() -> None:
 
 
 def test_probe_leading_params_are_positional_only() -> None:
-    """**回归守卫**（真机事故，2026-09-22 08:43 在 228 上被有界冒烟 20 秒抓到）：
+    """**回归守卫**（真机事故，2026-09-22 08:43 在远端机上被有界冒烟 20 秒抓到）：
 
     ``_pp_probe`` 第一版是普通签名，``_pipeline_forward_hidden`` 传了
     ``label=debug_label`` ⇒ ``TypeError: got multiple values for argument 'label'``，
