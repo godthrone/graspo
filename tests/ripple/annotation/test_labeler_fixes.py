@@ -99,7 +99,11 @@ def _tc_targets() -> list[dict]:
 
 def test_param_tag_missing_gt_e_at_gt_position() -> None:
     """参数标签缺 >：换行即未闭合 → E 于"应出现 > 的位置"（参数名后首字符），
-    `<parameter=` 与参数名标 S（v3.1 用户裁定）。"""
+    `<parameter=` 与参数名标 S（v3.1 用户裁定）。
+
+    例外是工具名（B1，2026-11-24）：名字写对时是 ``VALUE(__tool_name__)``（值域 +1.0），
+    不是结构 S——所以这里逐字符核对「名字区间是 V，其余前缀是 S」。
+    """
     completion = (
         "<tool_call>\n<function=robot_atomic_control>\n"
         "<parameter=action_type\n</function>\n</tool_call>"
@@ -108,7 +112,11 @@ def test_param_tag_missing_gt_e_at_gt_position() -> None:
     e_pos = ann.find("E")
     assert e_pos >= 0
     assert completion[e_pos] == "\n"  # E 在参数名后的换行（应出现 > 处）
-    assert all(c == "S" for c in ann[:e_pos])  # 标签与参数名是正确结构
+    name_start = completion.index("<function=") + len("<function=")
+    name_end = completion.find(">", name_start)
+    assert all(c == "V" for c in ann[name_start:name_end])  # 工具名 = 值域
+    assert all(c == "S" for c in ann[:name_start])  # `<tool_call>\n<function=` 是结构
+    assert all(c == "S" for c in ann[name_end:e_pos])  # `>`、换行、`<parameter=` 与参数名是结构
     assert all(c == "D" for c in ann[e_pos + 1 :])
 
 

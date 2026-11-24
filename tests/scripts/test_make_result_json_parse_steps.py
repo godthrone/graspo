@@ -4,8 +4,8 @@
 
 `fixtures/m016_stdout_excerpt.txt` = **M016 真实 stdout.log 的逐字节摘录**：
 
-* 原件：`228:/data/remote/graspo-baseline-r1-ebd5968/runs/M016/stdout.log`
-  （19 458 449 B，sha256 `b79ed573b4f3603624bbd2763f7ee5f1fcd81ac6981e2ca88ce58440c9a572ec`）；
+* 原件：`<远端主机>:<远端部署根>/graspo-baseline-r1-ebd5968/runs/M016/stdout.log`
+  （绝对路径已脱敏为占位形态，只剩冻结点之后的相对结构；19 458 449 B，sha256 `b79ed573b4f3603624bbd2763f7ee5f1fcd81ac6981e2ca88ce58440c9a572ec`）；
 * 摘录的**物理行号**（1 起，按 `\\n` 计数，与 `grep -n` / `sed -n` 同口径）：
   `2542, 2547, 190375, 190379, 190381, 190382, 190383, 190384, 190385`；
 * 复现方式：`sed -n '2542p;2547p;190375p;190379p;190381p;190382p;190383p;190384p;190385p' stdout.log`；

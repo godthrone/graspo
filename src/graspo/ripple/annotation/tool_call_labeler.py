@@ -25,7 +25,8 @@
 修法：NAME 段不再当"结构字符"逐个比对，而按**身份字段**处理（工具名对就整段对、错就整段
 错，没有"写对前 8 个字母"的部分分）：
 
-- NAME 与 GT 一致 ⇒ 整段 S(+1.0)，与改前逐字符**相同**（既有正确样本的标注一字不变）
+- NAME 与 GT 一致 ⇒ 整段标 ``VALUE`` + ``field=TOOL_NAME_FIELD`` ⇒ ``field_score`` 判满分
+  ⇒ 该段每个 token 拿 **+1.0**（写对就是正分）。**不是** S——理由见下面 B1（2026-11-24）
 - NAME 写错 ⇒ 从**首个不匹配字符**起整段标 ``VALUE`` + ``field=TOOL_NAME_FIELD``
   ⇒ :func:`graspo.ripple.annotation.advantages.field_score` 判 0 ⇒ 该段每个 token 拿 −1.0；
   随后 ``drop_from``（「第一个错误之后扔掉」——工具名错时后面的参数没有训练意义）
@@ -43,6 +44,24 @@
 
 ⛔ 不动「第一个错误之后 drop」这条原则本身（参数/闭合标签拼错仍走它）；
 ⛔ 工具名写错**不产生 E 标签**——保住既有跨用例不变式「E 之后必须全部为 D」。
+
+## ★★ B1 修复（2026-11-24 复审）：写对的工具名也标 V —— 工具名是**值**，不是结构
+
+负责人定的划分口径是「**按模型是选错了还是写错了**分」：**写错 = 结构**（JSON/XML 语法、
+括号、引号、字段名拼写、参数名）｜**选错 = 值**（**工具名**、参数值）。
+
+P1 只改了「名字写错 ⇒ V」，名字**写对**时仍是逐字符 S ⇒ 工具名进了**结构**域。于是
+``advantages.all_correct_structure_chars``（P3：``k = 组内各条 S 字符数的最小值``，前 k 个
+S 字符的 advantage 置 0）会伸进工具名内部，把**写对的工具名**也 mask 掉。反例（一组两条）：
+好那条名字全对（20 个字符全 S）、坏那条写成 ``robot_atomic_controX``（S 字符 = 22 + 19）
+⇒ ``k = 41`` ⇒ 好那条的**工具名前 19 个字符** advantage 变成 0.0。
+
+修法：名字写对时整段标 ``VALUE`` + ``field=TOOL_NAME_FIELD``（与写错那支**标签层面完全
+同构**，只是取值 1.0 而非 0.0）⇒ 名字字符不再计入 S 字符数 ⇒ 不可能落进 P3 的「组内全对
+结构前缀」。**这不是给工具名打折**：S 与 V(raw=1.0) 的 advantage 都是 ``+1.0``，除 P3 mask
+之外任何读数都不变。
+
+⛔ 工具名前后的格式符（``<function=`` / ``>``）仍是结构 S——它们是语法，不是选择。
 """
 
 from dataclasses import dataclass
@@ -198,7 +217,11 @@ class _Annotator:
 
         P1 的落点：NAME 若走 ``match_expected``（逐字符），写错时只有首个不匹配字符吃 −1、
         其后全 D，而名字前面的结构 token 全是 +1 ⇒ 整条 completion 仍是正的（实测 +21）。
-        这里把 NAME 当身份字段：整段对 ⇒ 全 S；写错 ⇒ 写错那段整段 ``VALUE``（−1 每 token）+ drop。
+        这里把 NAME 当身份字段：整段对 ⇒ 整段 ``VALUE(__tool_name__)``（+1.0 每 token）；
+        写错 ⇒ 写错那段整段 ``VALUE``（−1 每 token）+ drop。
+
+        ⚠ 名字写对时也是 ``VALUE`` 而**不是** S（B1 修复，2026-11-24）：工具名算值，不算结构
+        ⇒ 不计入 ``all_correct_structure_chars`` 的 S 字符数 ⇒ P3 的 mask 伸不进工具名。
 
         :param pos: 当前推进位置（``<tool_call>`` 之后）
         :param gt_name: GT 工具名；``None``（targets 里没有工具名）时退回改前的逐字符比对
@@ -227,10 +250,15 @@ class _Annotator:
 
         model_name = self.text[name_start:name_end]
         if model_name == gt_name:
+            # 名字写对 ⇒ 整段 ``VALUE(__tool_name__)`` ⇒ raw 满分 ⇒ 每 token +1.0。
+            # ⛔ 不标 S（B1，2026-11-24）：工具名算**值**（选错），不是结构（写错）。
+            #   标 S 会让名字字符进入 P3 的 S 字符计数，``k`` 就可能伸进名字内部，
+            #   把**写对的工具名** mask 成 0.0（反例见模块 docstring 的 B1 段）。
             for i in range(name_start, name_end):
-                self.tags[i] = CharTag.STRUCTURE
+                self.tags[i] = CharTag.VALUE
+                self.fields[i] = TOOL_NAME_FIELD
             end = name_end + 1
-            self.tags[name_end] = CharTag.STRUCTURE  # '>' 是结构
+            self.tags[name_end] = CharTag.STRUCTURE  # '>' 是结构（语法，不是选择）
         elif "<" in model_name:
             # 名字段里出现 ``<`` ⇒ 找到的 ``>`` 不是名字的闭合，而是**后面标签**（
             # ``<parameter=…`` / ``</function>``）的 ``>`` ⇒ 名字后缺 ``>``。

@@ -24,6 +24,7 @@ from graspo.ripple.annotation.advantages import (
     compute_ripple_advantages,
     field_means,
     group_field_stats,
+    group_structure_char_counts,
 )
 from graspo.ripple.annotation.labeler import AnnotationInput, annotate
 from graspo.ripple.buffer import Experience
@@ -259,6 +260,7 @@ class RolloutMixin:
         )
         field_stats: list[dict[str, tuple[float, int]]] | None = None
         field_names: list[str] = []
+        group_min_structure_chars: list[int] | None = None
         if sharded:
             # ``μ_f`` 是组内**唯一**的跨条耦合量（`report.md` §4-③）⇒ 决策前把各卡切片的
             # `(Σraw, n)` 合并成整组统计，`_finalize_sample` 再把整组 μ 注入
@@ -285,6 +287,31 @@ class RolloutMixin:
                 field_names=field_names,
                 what="μ_f 的 (Σraw, n)",
             )
+            # ★ P3 的 ``k`` 是**整组**各条结构字符数的最小值（`ripple` 的
+            #   `all_correct_structure_chars`）。本卡切片只有 ``G//m`` 条 ⇒ 本卡 min ≥ 整组
+            #   min，直接用它会把「本卡都写对、别的卡写短了」的结构位置也置 0（过度 mask
+            #   ⇒ dp=1 与 dp≥2 读数不可比）。这里把逐条结构字符数（**整数标量**，与既有
+            #   gather 的载荷同形，⛔ 不扩契约）按既有通道会合，取整组最小值再回传
+            #   `compute_group_advantages(group_min_structure_chars=...)`。
+            #   ⛔ 本层不数 S 字符：口径（末尾 EOS / 标注）是算法层语义，重写即双真相源。
+            whole_structure_counts = gather_rollout_values(
+                self.runtime,
+                [
+                    torch.tensor(
+                        self._prompt_structure_char_counts(
+                            entry["state"], entry["generation"], entry["annotations"]
+                        ),
+                        dtype=torch.float64,
+                    )
+                    for entry in local
+                ],
+                cutoff=cutoff,
+                rollouts_per_rank=rpr,
+                what="结构字符数（P3 的 k）",
+            )
+            group_min_structure_chars = [
+                int(whole.min().item()) for whole in whole_structure_counts
+            ]
 
         records: list[AttemptRecord] = []
         for index, entry in enumerate(local):
@@ -380,6 +407,13 @@ class RolloutMixin:
                     "whole_group_content_scores": decision_content,
                     "field_stats": field_stats[index] if field_stats is not None else None,
                     "field_names": list(field_names),
+                    # ★ P3 的 k（整组结构字符数最小值）；未分卡（dp=1）时为 None ⇒
+                    #   算法层走本地 min，逐位不变。
+                    "group_min_structure_chars": (
+                        group_min_structure_chars[index]
+                        if group_min_structure_chars is not None
+                        else None
+                    ),
                     "annotations": entry["annotations"],
                     "is_padding": False,
                 }
@@ -447,6 +481,38 @@ class RolloutMixin:
             format_type=format_type,
             numeric_tolerance=float(self.reward.config.numeric_tolerance),
         )
+
+    def _prompt_structure_char_counts(
+        self, state: QueuedSample, generation: Any, annotations: list[Any]
+    ) -> list[int]:
+        """单条 prompt **本卡切片**各条 completion 的结构字符数（P3 的 ``k`` 的会合输入）。
+
+        走 ``ripple`` 的 :func:`~graspo.ripple.annotation.advantages.group_structure_char_counts`
+        —— ⛔ 本层不自己数 S 字符（末尾 EOS 后处理是算法层语义，重写即双真相源）。
+        ``truncated_by_max`` 与 ``_finalize_sample`` 共用 :meth:`_truncated_by_max`
+        ⇒ 会合出的 ``k`` 与算法层实际用的计数**同一口径**。
+        """
+        format_type = "tool_call" if state.sample.expects_tool_calls else "json"
+        return group_structure_char_counts(
+            completions=list(generation.completions),
+            annotations=list(annotations),
+            format_type=format_type,
+            truncated_by_max=self._truncated_by_max(generation),
+        )
+
+    def _truncated_by_max(self, generation: Any) -> list[bool]:
+        """逐条 completion 是否被 ``max_new_tokens`` 硬截断（★ 单一真相源）。
+
+        两处调用：attempt 阶段的结构字符统计（:meth:`_prompt_structure_char_counts`）与
+        ``_finalize_sample`` 的 advantage 计算。两者必须拿到**同一份**标志——否则末尾 EOS
+        后处理会把 S 字符改判成 E（或反之），会合出的 ``k`` 与实际用的 S 计数错位。
+        """
+        tokenizer = self.runtime._require_adapter().tokenizer
+        return [
+            len(tokenizer(text, add_special_tokens=False).input_ids)
+            >= self.config.training.max_new_tokens
+            for text in generation.completions
+        ]
 
     @staticmethod
     def _parse_error_flags(entry: dict[str, Any], rollouts_per_rank: int) -> Any:
@@ -624,16 +690,19 @@ class RolloutMixin:
             )
             for text in generation.completions
         ]
-        truncated_by_max = [
-            len(tokenizer(text, add_special_tokens=False).input_ids)
-            >= self.config.training.max_new_tokens
-            for text in generation.completions
-        ]
+        truncated_by_max = self._truncated_by_max(generation)
         # ★ rollout 分卡：`μ_f` 必须是**整组**的（跨卡合并后的 `(Σraw, n)`）。
         #   `field_mean_override=None` ⇒ 算法层走原式（**dp=1 路径逐位不变**）。
         field_mean_override = None
         if shard is not None and shard.get("field_stats") is not None:
             field_mean_override = field_means(shard["field_stats"])
+        # ★ rollout 分卡：P3 的 `k`（组内结构字符数最小值）必须是**整组**的。
+        #   本卡切片只有 `G//m` 条 ⇒ 本卡 min ≥ 整组 min ⇒ 会把「本卡都写对、别的卡写短了」
+        #   的结构位置也置 0（过度 mask，dp=1 与 dp≥2 读数不可比）。
+        #   `None`（未分卡 / dp=1）⇒ 算法层用本地 min，**逐位不变**。
+        group_min_structure_chars = (
+            shard.get("group_min_structure_chars") if shard is not None else None
+        )
         ragged_advantages = compute_group_advantages(
             completions=generation.completions,
             annotations=annotations,
@@ -643,6 +712,7 @@ class RolloutMixin:
             numeric_tolerance=float(self.reward.config.numeric_tolerance),
             truncated_by_max=truncated_by_max,
             field_mean_override=field_mean_override,
+            group_min_structure_chars=group_min_structure_chars,
         )
         advantages = compute_ripple_advantages(
             ragged_advantages,

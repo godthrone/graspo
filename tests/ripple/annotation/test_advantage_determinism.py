@@ -133,7 +133,9 @@ def test_perfect_completion_n1_value_tokens_are_plus_one():
     tags = _annotate_completion(_PERFECT_TOOL_CALL, _PERFECT_TARGETS).tags
 
     value_positions = [i for i, tag in enumerate(tags) if tag == CharTag.VALUE]
-    assert len(value_positions) == 9, "构造前提：两个值共 9 个字符标 V"
+    # 构造前提：两个值共 9 个字符 + 工具名 `robot_atomic_control` 20 个字符（B1 起名字段
+    # 也算值域：写对 ⇒ 整段 VALUE(__tool_name__)，取值 +1.0）
+    assert len(value_positions) == 29, "构造前提：两个值 9 字符 + 工具名 20 字符标 V"
     for position in value_positions:
         assert adv[position] == 1.0, f"正确的值 token@{position} 必须 +1.0，实测 {adv[position]}"
 

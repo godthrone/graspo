@@ -6,7 +6,8 @@
 
 设计（见 ``tool_call_labeler`` 模块 docstring 的 P1 段）：
 
-- 名字与 GT 一致 ⇒ 整段 S(+1.0)（与改前逐字符**相同**，回归点）
+- 名字与 GT 一致 ⇒ 整段 ``VALUE``（field=``TOOL_NAME_FIELD``）⇒ 值域满分 ⇒ 每 token +1.0
+  （B1 修复 2026-11-24：**不是 S**——工具名算值，标 S 会让 P3 的结构 mask 伸进名字内部）
 - 名字写错 ⇒ 从**首个不匹配字符**起整段 ``VALUE``（field=``TOOL_NAME_FIELD``）⇒ raw 0
   ⇒ 该段每个 token −1.0；随后 ``drop_from``（「第一个错误之后扔掉」）
 - 名字比 GT 短 ⇒ 模型在"名字该继续"处写了 ``>`` ⇒ 该处 E + drop（残缺名字，旧语义）
@@ -43,6 +44,9 @@ GOOD = ROBOT.format("逆时针旋转")
 GOOD_WITH_TYPO = GOOD.replace("robot_atomic_control", "robot_atomic_controX")
 #: 与 GT 完全不同的工具名（整段都错）
 OTHER_TOOL = GOOD.replace("robot_atomic_control", "extend_arm")
+
+#: 组内同伴：结构从第一个字符就写错（S 字符数 = 0，全 W）。见 ``_advantage`` 的说明。
+STRUCTURELESS = "从图像上看不出"
 
 
 class FakeTokenizer:
@@ -84,10 +88,15 @@ def _annotate(completion: str):
 
 
 def _advantage(completion: str) -> list[float]:
-    """同一构造给两条（P2 起 advantage 本就逐条闭合，组内条数不影响结果）。"""
+    """同一构造给两条 + 一条 STRUCTURELESS 同伴。
+
+    P2 起值 token 逐条闭合，组内条数不影响值 token；但 P3 起「组内全对的结构位置」置 0，
+    所以组里必须有一条**结构从第一个字符就写错**的同伴（S 字符数 = 0，全 W），组内公共
+    结构前缀才为空——否则本文件期望的那 22 个前导结构 +1.0 会被 P3 清零，测不到 P1 判据。
+    """
     return compute_group_advantages(
-        completions=[completion, completion],
-        annotations=[_annotate(completion), _annotate(completion)],
+        completions=[completion, completion, STRUCTURELESS],
+        annotations=[_annotate(completion), _annotate(completion), _annotate(STRUCTURELESS)],
         targets=TARGETS,
         tokenizer=FakeTokenizer(),
         format_type="tool_call",
@@ -144,14 +153,25 @@ def test_other_tool_name_whole_segment_minus_one():
         )
 
 
-def test_correct_tool_name_tokens_stay_structure_plus_one():
-    """回归点：工具名**写对**时名字段仍是结构 S(+1.0)，与改前逐字符相同。"""
+def test_correct_tool_name_tokens_are_value_plus_one():
+    """回归点（B1，2026-11-24 改口径）：工具名**写对**时名字段是 ``VALUE(__tool_name__)``，
+    取值仍是 ``+1.0``。
+
+    为什么不标 S：工具名算**值**（选错），不算结构（写错）。标 S 会让名字字符进入
+    ``all_correct_structure_chars`` 的 S 字符计数 ⇒ P3 的 mask 可能伸进写对的工具名
+    （反例见 ``test_group_structure_mask.py`` 第 3 节）。advantage 取值不变（都是 +1.0），
+    变的只是「它属于哪个域」。
+    """
     adv = _advantage(GOOD)
     name_start, name_end = _name_span(GOOD)
     for position in range(name_start, name_end):
         assert adv[position] == 1.0
-    tags = _annotate(GOOD).tags
-    assert all(tags[i] == CharTag.STRUCTURE for i in range(name_start, name_end))
+    result = _annotate(GOOD)
+    assert all(result.tags[i] == CharTag.VALUE for i in range(name_start, name_end))
+    assert all(result.fields[i] == TOOL_NAME_FIELD for i in range(name_start, name_end))
+    # 名字前后的格式符仍是结构（语法，不是选择）
+    assert result.tags[name_start - 1] == CharTag.STRUCTURE, "`<function=` 的 `=` 是结构"
+    assert result.tags[name_end] == CharTag.STRUCTURE, "名字后的 `>` 是结构"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -210,10 +230,16 @@ def test_tool_name_field_is_a_value_span_with_the_sentinel_field():
 
 
 def test_tool_name_field_does_not_collide_with_real_parameter_names():
-    """保留名不与任何真实参数名撞车（``__`` 前后包裹是保留区）。"""
+    """保留名不与任何真实参数名撞车（``__`` 前后包裹是保留区）。
+
+    名字**写对**时也走 V（B1），所以 ``TOOL_NAME_FIELD`` 出现在 fields 里是正常的——
+    但只能落在工具名区间上，不能落到参数值上。
+    """
     assert TOOL_NAME_FIELD.startswith("__") and TOOL_NAME_FIELD.endswith("__")
     result = _annotate(GOOD)
-    assert TOOL_NAME_FIELD not in {field for field in result.fields if field}
+    name_start, name_end = _name_span(GOOD)
+    marked = {i for i, field in enumerate(result.fields) if field == TOOL_NAME_FIELD}
+    assert marked == set(range(name_start, name_end)), "TOOL_NAME_FIELD 只能标在工具名区间"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -297,5 +323,7 @@ def test_gt_name_that_contains_angle_bracket_still_matches():
     )
     name_start = 22
     name_end = name_start + len("a<b")
-    assert all(result.tags[i] == CharTag.STRUCTURE for i in range(name_start, name_end))
+    assert all(result.tags[i] == CharTag.VALUE for i in range(name_start, name_end)), (
+        "名字写对 ⇒ 值域（+1.0）"
+    )
     assert result.tags[name_end] == CharTag.STRUCTURE, "名字后的 > 是结构"

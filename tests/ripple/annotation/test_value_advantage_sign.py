@@ -40,6 +40,10 @@ TARGETS = [
 GOOD_ACTION = "逆时针旋转"
 BAD_ACTION = "顺时针旋转"
 
+#: 组内同伴：结构从第一个字符就写错（S 字符数 = 0，全 W）⇒ 组内公共结构前缀为空，
+#: 被测那条的 S 位置不会被 P3（组内全对的结构位置置 0）清零。
+STRUCTURELESS = "从图像上看不出"
+
 
 class FakeTokenizer:
     """每字符一个 token，offset ``(i, i+1)``（与既有 advantage 测试同一模式）。"""
@@ -126,8 +130,8 @@ def test_all_correct_group_value_tokens_are_plus_one():
     for row in advantages:
         for token in positions["action_type"] + positions["angle_deg"]:
             assert row[token] == 1.0, f"全对组里正确 token 必须 +1.0，实测 {row[token]}"
-        # 结构 token 不动：仍是 +1.0
-        assert row[0] == 1.0
+        # 结构 token：8 条这些字符都写对 ⇒ P3 置 0（P2 的 ±1 只管值 token）
+        assert row[0] == 0.0
 
 
 def test_all_wrong_group_value_tokens_are_minus_one():
@@ -144,10 +148,13 @@ def test_all_wrong_group_value_tokens_are_minus_one():
 
 
 def test_value_advantage_does_not_depend_on_group_composition():
-    """★ 删掉 μ_f 的判据：同一条 completion 的优势，与组内其它条无关。
+    """★ 删掉 μ_f 的判据：同一条 completion 的**值 token**优势与组内其它条无关。
 
     旧式 ``raw − μ_f`` 下，「全对组的正确 token」= 0，而「有对有错组里的正确 token」
     > 0 —— 同一条 completion、同一个 token，信号随邻居变。新式必须逐条闭合。
+
+    范围限于**值 token**：P3 起「组内全对的结构位置」按定义依赖邻居（全对 ⇒ 0），
+    所以本断言只在两组的结构前缀同为全对/非全对时成立（本构造里两组都全对）。
     """
     good = ROBOT.format(GOOD_ACTION, "16.9")
     mixed = [good, good, ROBOT.format(BAD_ACTION, "40"), ROBOT.format(BAD_ACTION, "40")]
@@ -214,14 +221,18 @@ def test_numeric_within_tolerance_is_plus_one_beyond_is_minus_one():
 
 
 def test_structure_error_and_waste_tags_keep_their_old_values():
-    """★ S=+1.0 / E=−1.0 / W·T·D=0.0 三类**不参与**本次改动。"""
+    """★ S=+1.0 / E=−1.0 / W·T·D=0.0 三类**不参与**本次改动（P3 的全对位置除外）。
+
+    组里带一条 STRUCTURELESS 同伴：公共结构前缀为空 ⇒ 这里的 S 位置不是「组内全对」，
+    才测得到 S→+1.0 本身（P3 自己由 ``test_group_structure_mask.py`` 验证）。
+    """
     # 拼错闭合标签 ⇒ 前缀 S(+1)、错字符 E(−1)、其后 D(0)
     typo = (
         "<tool_call>\n<function=robot_atomic_control>\n<parameter=action_type>\n"
         "逆时针旋转\n</parametr>\n<parameter=angle_deg>\n16.9\n</parameter>\n"
         "</function>\n</tool_call>"
     )
-    row = _advantages([typo] * 2)[0]
+    row = _advantages([typo, typo, STRUCTURELESS])[0]
 
     assert row[0] == 1.0, "结构 token 仍是 +1.0"
     error_pos = typo.find("</parametr>") + "</paramet".__len__()  # 首个不匹配字符
@@ -262,7 +273,7 @@ def test_json_format_value_tokens_are_signed_too():
 
 
 def test_json_group_composition_does_not_matter():
-    """JSON 分支同样逐条闭合：同一条 completion 的优势与邻居无关。"""
+    """JSON 分支同样逐条闭合：同一条 completion 的**值 token**优势与邻居无关（P3 只管结构）。"""
     targets = [{"output": {"content": {"answer": "4"}}}]
     good = '```json\n{"answer": "4"}\n```'
     bad = '```json\n{"answer": "5"}\n```'

@@ -140,6 +140,12 @@ def _v_token_indices(completion: str, format_type: str, gt: str) -> dict[str, li
 
 GT_ROBOT = "robot_atomic_control(action_type=逆时针旋转, angle_deg=16.9)"
 
+#: 组内同伴：结构从第一个字符就写错（S 字符数 = 0，标注为全 W）。
+#: 把它放进组里，组内公共结构前缀为空 ⇒ 被测那条的 S 位置不会被 P3（组内全对的结构位置
+#: 置 0）mask 掉，这些用例才能继续验证 **per-token 映射本身**（S→+1.0 / E→−1.0 / D→0）。
+#: ⛔ P3 自己的行为由 ``test_group_structure_mask.py`` 验证，不在这里验证。
+STRUCTURELESS = "从图像上看不出"
+
 
 # ── 字段级 raw ─────────────────────────────────────────────────────────────────
 
@@ -184,7 +190,7 @@ def test_synthetic_group_per_token_value_advantage():
         ROBOT.format("逆时针旋转", "15"),  # B:action 对, angle 容差内 ⇒ 满分
         ROBOT.format("顺时针旋转", "40"),  # C:action 错, angle raw≈0.462(非满分)
     ]
-    adv = _group_adv(comps, "tool_call", GT_ROBOT)
+    adv = _group_adv([*comps, STRUCTURELESS], "tool_call", GT_ROBOT)
 
     for i, expected in [(0, 1.0), (1, 1.0), (2, -1.0)]:
         idx = _v_token_indices(comps[i], "tool_call", GT_ROBOT)
@@ -192,18 +198,22 @@ def test_synthetic_group_per_token_value_advantage():
             assert adv[i][token] == pytest.approx(expected), f"completion {i} 的 action_type"
         for token in idx["angle_deg"]:
             assert adv[i][token] == pytest.approx(expected), f"completion {i} 的 angle_deg"
-        # S token 一律 +1.0（与值评分无关）
+        # 非全对的结构位置仍是 +1.0（与值评分无关；组里的 STRUCTURELESS 使前缀非全对）
         assert adv[i][0] == 1.0
 
 
 def test_single_clean_completion_values_are_plus_one():
-    """n=1（组内只有一条）：正确值恒为 +1.0——旧式的"安全零"正是 P2 要删的信号黑洞。"""
+    """n=1（组内只有一条）：正确值恒为 +1.0——旧式的"安全零"正是 P2 要删的信号黑洞。
+
+    结构 token 是另一回事：n=1 时它写对的结构前缀构成「组内全对」⇒ P3 置 0（见
+    ``test_group_structure_mask.py``）。值 token 不受 P3 影响，仍是 +1.0。
+    """
     comp = ROBOT.format("逆时针旋转", "16.9")  # 两个字段都与 GT 一致
     adv = _group_adv([comp], "tool_call", GT_ROBOT)[0]
     idx = _v_token_indices(comp, "tool_call", GT_ROBOT)
     for token in idx["action_type"] + idx["angle_deg"]:
         assert adv[token] == 1.0, f"单条组的正确值必须 +1.0，实测 {adv[token]}"
-    assert adv[0] == 1.0
+    assert adv[0] == 0.0, "n=1 且结构全对 ⇒ P3 把结构前缀置 0"
     assert len(adv) == len(comp)
 
 
@@ -216,7 +226,8 @@ def test_all_correct_group_value_tokens_are_plus_one():
         idx = _v_token_indices(comps[i], "tool_call", GT_ROBOT)
         for token in idx["action_type"] + idx["angle_deg"]:
             assert adv[i][token] == 1.0, f"全对组里正确 token 必须 +1.0，实测 {adv[i][token]}"
-        assert adv[i][0] == 1.0
+        # 结构前缀 8 条全写对 ⇒ P3 置 0
+        assert adv[i][0] == 0.0
 
 
 # ── 标注驱动 broken ────────────────────────────────────────────────────────────
@@ -229,7 +240,7 @@ def test_broken_typo_prefix_eos_truncation():
         "逆时针旋转\n</parametr>\n<parameter=angle_deg>\n15\n</parameter>\n"
         "</function>\n</tool_call>"
     )
-    adv = _group_adv([comp], "tool_call", GT_ROBOT)[0]
+    adv = _group_adv([comp, STRUCTURELESS], "tool_call", GT_ROBOT)[0]
     # E 存在于 </parametr> 的错字符处(首个不匹配)
     e_pos = comp.find("r", comp.find("</parametr>") + 8)  # </paramet> 后
     assert adv[e_pos] == -1.0
@@ -257,7 +268,7 @@ def test_tail_eos_incomplete_tool_call():
         "逆时针旋转\n</parameter>\n<parameter=angle_deg>\n16.9\n</parameter>\n"
         "</function>"
     )
-    adv = _group_adv([comp], "tool_call", GT_ROBOT)[0]
+    adv = _group_adv([comp, STRUCTURELESS], "tool_call", GT_ROBOT)[0]
     assert adv[-1] == -1.0  # 末尾非空白字符(>)
     assert adv[0] == 1.0
 
@@ -382,6 +393,8 @@ _NON_VALUE_ADV = {"S": 1.0, "E": -1.0, "T": 0.0, "W": 0.0, "D": 0.0}
 #: ``numeric_tolerance=0.2`` 的死区判断对错），不经过 ``value_spans`` / ``field_score`` /
 #: ``gt_value_for_field``——否则就是拿实现验证实现（B3）。
 #: 只登记「完整且无错误定位」的行（else 分支）；带 E / 结构不完整的行走另一支。
+#: ⚠ 工具名写对的行（B1，2026-11-24）也有一项：名字是 ``VALUE(__tool_name__)``，与 GT 名
+#: 一致 ⇒ +1.0，排在参数值之前（模型输出的顺序）。
 _VALUE_ADV: dict[str, list[tuple[str, float]]] = {
     # JSON：数组元素没有字段名 ⇒ gt_value_for_field 取不到 GT ⇒ 0.0（无信号，不是"值错"）
     "J01": [('"9999999000001"', 0.0), ('"999999900000001"', 0.0), ('"EXMPL-APN-00000"', 0.0)],
@@ -401,22 +414,22 @@ _VALUE_ADV: dict[str, list[tuple[str, float]]] = {
     "J19": [('"hello\\nworld"', 1.0), ('"C:\\\\Users"', 1.0)],
     "J21": [('"CMIOT"', 0.0), ('"sub1"', 0.0), ('"sub2"', 0.0), ('"APN"', 0.0)],
     # tool_call：值字面与 GT 一致 ⇒ +1.0（数值在容差死区内也算对）
-    "T01": [("逆时针旋转", 1.0), ("40.0", 1.0)],
-    "T03": [("逆时针旋转", 1.0), ("40.0", 1.0)],
-    "T11": [("顺时针旋转", 1.0), ("30", 1.0)],
+    "T01": [("rotate_arm", 1.0), ("逆时针旋转", 1.0), ("40.0", 1.0)],
+    "T03": [("rotate_arm", 1.0), ("逆时针旋转", 1.0), ("40.0", 1.0)],
+    "T11": [("rotate_arm", 1.0), ("顺时针旋转", 1.0), ("30", 1.0)],
     # 工具名写错（P1）⇒ 名字段整段 VALUE ⇒ 每个字符 −1.0
     "T13": [("bot_contol", -1.0)],
-    "T15": [("顺时针旋转", 1.0), ("15", 1.0)],
-    "T16": [("40.0", 1.0), ("逆时针旋转", 1.0)],
+    "T15": [("rotate_arm", 1.0), ("顺时针旋转", 1.0), ("15", 1.0)],
+    "T16": [("rotate_arm", 1.0), ("40.0", 1.0), ("逆时针旋转", 1.0)],
     # 两个字段都与 GT 不符 ⇒ 整段 −1.0
-    "T18": [("逆时针旋转", -1.0), ("100", -1.0)],
-    "T19": [("顺时针旋转", 1.0), ("16.9", 1.0)],
-    "T27": [("45.0", 1.0)],
-    "T30": [("Beijing", 1.0)],
+    "T18": [("rotate_arm", 1.0), ("逆时针旋转", -1.0), ("100", -1.0)],
+    "T19": [("rotate_arm", 1.0), ("顺时针旋转", 1.0), ("16.9", 1.0)],
+    "T27": [("rotate_arm", 1.0), ("45.0", 1.0)],
+    "T30": [("get_weather", 1.0), ("Beijing", 1.0)],
     "T34": [("extend_arm", -1.0)],
     # 值本身含 '<'：与 GT 不符 ⇒ −1.0（值里的 '<' 不影响名字段的判据）
-    "T39": [("a<b", -1.0), ("40.0", 1.0)],
-    "T41": [("逆时针旋转", 1.0), ("40.0", 1.0)],
+    "T39": [("rotate_arm", 1.0), ("a<b", -1.0), ("40.0", 1.0)],
+    "T41": [("rotate_arm", 1.0), ("逆时针旋转", 1.0), ("40.0", 1.0)],
     # 名字写错但 '>' 在位 ⇒ P1 的名字段 V（−1.0），5 个字符
     "T46": [("think", -1.0)],
 }
@@ -459,11 +472,13 @@ def test_testset_advantages(row: dict[str, str]) -> None:
     if not completion:
         return
     truncated = cid in {"T20"}  # T20 演示 max_len 截断场景(人为)
+    # 组里带一条 STRUCTURELESS：公共结构前缀为空 ⇒ 本行的 S 位置不会被 P3 置 0，
+    # 才能按数据集 ``annotation`` 列的字面期望逐字符比对（P3 另有专门测试）。
     adv = _group_adv(
-        [completion],
+        [completion, STRUCTURELESS],
         format_type,
         row["ground_truth"],
-        truncated=[truncated],
+        truncated=[truncated, False],
         check_json_markdown=cid not in NO_FENCE_CASES,
         check_think=cid in THINK_CASES,
     )[0]

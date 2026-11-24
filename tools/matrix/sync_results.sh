@@ -24,12 +24,12 @@
 #   rc≠0（暂存区在 .local/tmp/ 下，退出时自动清理）。
 # 幂等：远端 sha 与本仓在位 sha 相同 ⇒ 直接跳过写入（不 cp、不动 mtime），因此同一状态重复跑不产生 diff。
 #
-# 退出码：0 = 校验通过且本仓已与 228 一致（含「本来就已经一致」）；1 = 校验不过 / 拉取失败（本仓未改）。
+# 退出码：0 = 校验通过且本仓已与 228 一致（含「本来就已经一致」）；1 = 校验不过 / 拉取失败（本仓未改）；2 = 用法 / 配置错误（必填变量未设置、参数不识别）。
 #
 # 可覆盖的环境变量（⛔ 不增删其它）：
-#   GRASPO_RESULT_HOST   远端 SSH 目标      缺省 user@192.0.2.10
-#   GRASPO_RESULT_PORT   远端 SSH 端口      缺省 22
-#   GRASPO_RESULT_DOCS   远端 docs 绝对路径 缺省 /data/remote/graspo-baseline-r1-ebd5968/docs
+#   GRASPO_RESULT_HOST   远端 SSH 目标（必填）     形如 <账号>@<主机>；无缺省值，未设置 ⇒ 报错退出 2
+#   GRASPO_RESULT_PORT   远端 SSH 端口（可选）     缺省 22（标准端口）
+#   GRASPO_RESULT_DOCS   远端 docs 绝对路径（必填）无缺省值，未设置 ⇒ 报错退出 2
 #   GRASPO_ROUND_DATE    轮次日期 YYYYMMDD  （同 --date；缺省 = paths.py 的今天）
 #   GRASPO_BASELINE_HTML 基准人读件路径     缺省 = 仓内基准件（仅供演练覆盖）
 #
@@ -42,9 +42,9 @@ PY="$REPO/.venv/bin/python"
 [[ -x "$PY" ]] || PY="$(command -v python3 || true)"
 [[ -n "${PY:-}" ]] || { printf '⛔ 找不到 python 解释器\n' >&2; exit 1; }
 
-HOST="${GRASPO_RESULT_HOST:-user@192.0.2.10}"
+HOST="${GRASPO_RESULT_HOST:-}"
 PORT="${GRASPO_RESULT_PORT:-22}"
-REMOTE_DOCS="${GRASPO_RESULT_DOCS:-/data/remote/graspo-baseline-r1-ebd5968/docs}"
+REMOTE_DOCS="${GRASPO_RESULT_DOCS:-}"
 SSH_COMMON=(-o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new)
 ssh() { command ssh "${SSH_COMMON[@]}" -p "$PORT" "$@"; }
 scp() { command scp "${SSH_COMMON[@]}" -P "$PORT" "$@"; }
@@ -59,6 +59,20 @@ while (($#)); do
   esac
 done
 [[ -n "$date_arg" ]] && export GRASPO_ROUND_DATE="$date_arg"
+
+# 远端身份**必填**（fail-closed）：本脚本不含任何远端地址 / 路径缺省值——写死缺省 = 把部署
+# 形态（账号 · 主机 · 部署根）固化进公开仓库；故一律由调用者显式给出，未给即退出 2。
+# 放在参数解析之后：`--help` 与 `--date` 的用法级错误先于本检查（help 不需要远端身份）。
+missing=()
+[[ -n "$HOST" ]]        || missing+=("GRASPO_RESULT_HOST   远端 SSH 目标，形如 <账号>@<主机>")
+[[ -n "$REMOTE_DOCS" ]] || missing+=("GRASPO_RESULT_DOCS   远端 docs 绝对路径，形如 /srv/example/graspo/docs")
+if ((${#missing[@]})); then
+  printf '⛔ 必须设置以下环境变量（本脚本不内置任何远端地址 / 路径缺省值）：\n' >&2
+  printf '   - %s\n' "${missing[@]}" >&2
+  printf '   例：GRASPO_RESULT_HOST=<账号>@<主机> GRASPO_RESULT_DOCS=<远端 docs 绝对路径> bash tools/matrix/sync_results.sh\n' >&2
+  exit 2
+fi
+
 eval "$("$PY" "$M/paths.py" --sh)" || { printf '⛔ paths.py 取路径失败\n' >&2; exit 1; }
 
 # ★ 2026-10-28：写范围闸门的比对基线 = **模板基线**（当前模板 + 空白种子渲染）；

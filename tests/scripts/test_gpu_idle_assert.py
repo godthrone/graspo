@@ -144,7 +144,7 @@ _228_ROWS = {
     "FAKE_SMI_ROW6": "6, 68419, 81920, 0",
     "FAKE_SMI_ROW7": "7, 0, 81920, 0",
 }
-_228_APPS = "GPU-fake2, 3912182, 13326, /data/remote/VLN/LightNav-0/.venv/bin/python\n"
+_228_APPS = "GPU-fake2, 3912182, 13326, /srv/example/VLN/LightNav-0/.venv/bin/python\n"
 _228_CONTAINERS = json.dumps(
     {
         "Name": "/pf228-transform-worker-1",

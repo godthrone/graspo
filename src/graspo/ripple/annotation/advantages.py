@@ -9,6 +9,7 @@
 4. 字段级 raw:V span 与 GT 比较(``leaf_compare_score`` / 数组存在性匹配),
    同一字段的所有 V token 共享字段分
 5. adv:``S→+1.0 / V→±1.0 / T·W·D→0 / E→−1.0``
+   （★ 例外：组内**每条都写对**的结构位置 → ``0``，见下方 P3）
 
 纯函数、零设施依赖;tokenizer 只用于 offset_mapping。
 
@@ -34,7 +35,36 @@
 ``field_mean_override`` 参数仅为调用方签名兼容而保留（传任何值都不影响输出）。
 
 ⛔ 不引入任何组内归一化（减均值 / z-score / baseline）——已被负责人明确否决。
-⛔ ``S=+1.0 / E=−1.0 / T·W·D=0`` 三类取值一字未改。
+⛔ P2 对 ``S=+1.0 / E=−1.0 / T·W·D=0`` 三类取值一字未改（P3 之后结构位置有唯一的
+   例外：组内全对 ⇒ 0，见下一节）。
+
+## ★★ P3（2026-11-23）：组内全对的结构位置不进梯度
+
+负责人裁定（唯一判据）：
+
+    「对于一个结构 token 来说，如果他是对的，那么他一定对应 ground truth 里面的某个结构
+    字符，对吧？如果这个结构字符对应的 rollout 中每个字符都对，那么这个 token 统一不再进入
+    训练……对 ground truth 里面的所有结构字符做个统计，对于那些全对的结构字符，就从最终的
+    梯度优化中去掉这些 token 样本。」
+
+「写错 = 结构 / 选错 = 值」的划分也是他定的：JSON/XML 语法、括号、引号、字段名拼写、
+参数名 = 结构；工具名、参数值 = 值。
+
+改前实测（800 条真实 rollout = 100 组 × 8 条）：每条 rollout 都无条件拿到**同一批 5 个
+恒定前缀 token ×(+1) = +5** 的正优势，与答对答错无关 ⇒ 800 条 Σadv 全为正
+（均值 +11.06），工具名叫错的 496 条净 **+3.00**。模型学到的是「写出模板前缀就赚 +5，
+工具名叫什么无所谓」——训练塌缩的直接机制。
+
+改后（同一批数据）：正优势条数 **800 → 304**（= 工具名全对的条数），工具名写错的 496 条
+Σadv **+3.00 → −2.00**。实现在 :func:`all_correct_structure_chars`（k = 组内 S 字符数最小值）。
+
+★ ``k`` 的定义域是**整组**（G 条），不是**本卡切片**：``dp>1`` 时每张卡只持 ``G//m`` 条，
+本卡切片的最小值 ≥ 整组最小值 ⇒ 会把「本卡都写对、别的卡写短了」的结构位置也置 0
+（过度 mask，dp=1 与 dp=4 读数不可比）。设施层用 :func:`group_structure_char_counts`
+得到逐条结构字符数、跨卡 ``min`` 归约后经 ``group_min_structure_chars`` 传回。
+
+⛔ 用 ``advantage = 0`` 实现，**不缩小 ``action_mask``**：loss 是「序列内 masked_mean、再按
+batch 求均值」，缩小 mask 会把其余 token 的梯度整体放大 1.21×，读数无法与历史对比。
 """
 
 import json
@@ -317,6 +347,109 @@ def field_means(stats: dict[str, tuple[float, int]]) -> dict[str, float]:
     return {f: raw_sum / n for f, (raw_sum, n) in stats.items() if n > 0}
 
 
+def structure_char_count(tags: list[CharTag]) -> int:
+    """一条 completion 上的 S 字符数（``k`` 的唯一计数口径）。"""
+    return sum(1 for tag in tags if tag is CharTag.STRUCTURE)
+
+
+def group_structure_char_counts(
+    *,
+    completions: list[str],
+    annotations: list[AnnotationResult],
+    format_type: str,
+    truncated_by_max: list[bool] | None = None,
+) -> list[int]:
+    """本卡切片各条 completion 的**结构字符数**（★ P3 的 ``k`` 的跨卡会合输入）。
+
+    ## 为什么单独成函数
+
+    :func:`all_correct_structure_chars` 的 ``k`` 是**组内**各条结构字符数的最小值。
+    ``native`` 后端在 ``dp>1`` 时每张卡只持有本卡的 ``G//m`` 条 completion
+    （``flow/backend/native/trainer/rollout.py``）⇒ 若 ``k`` 取**本卡切片**的最小值，
+    必有 ``k_shard >= k_group``，于是「本卡都写对、别的卡写短了」的结构位置也被置 0
+    （**过度 mask**）⇒ 同一算法在 dp=1 与 dp≥2 下行为不同、读数不可比。
+
+    修复只在**设施层**做一件事：把本卡切片的逐条结构字符数随既有 gather 一起做一次
+    ``min`` 归约，得到整组的 ``k`` 再传回 :func:`compute_group_advantages` 的
+    ``group_min_structure_chars``（载荷是**整数标量**，不扩 ``gather`` 契约）。
+    本函数就是那个**被会合的标量**的算法层出处 —— ⛔ 不让 flow 层自己数 S 字符
+    （末尾 EOS 后处理、标注口径都是算法层语义，重写一遍即双真相源）。
+
+    ``truncated_by_max`` 的口径与 :func:`compute_group_advantages` **同一个**
+    （被 max_len 硬截断 ⇒ 不标末尾 E ⇒ 不改 S 计数），否则会合出的 ``k`` 与算法层
+    实际用的计数不一致，仍会多 mask 或少 mask。
+
+    Returns:
+        与 ``completions`` 对齐的结构字符数列表（**已过** :func:`apply_tail_eos`）。
+
+    Raises:
+        ValueError: ``format_type`` 非法 / ``completions`` 与 ``annotations`` 不对齐。
+    """
+    if format_type not in ("tool_call", "json"):
+        raise ValueError(f"format_type must be 'tool_call' or 'json', got {format_type!r}")
+    if not completions or len(completions) != len(annotations):
+        raise ValueError("completions must be a non-empty list aligned with annotations")
+    truncated = truncated_by_max or [False] * len(completions)
+    if len(truncated) != len(completions):
+        raise ValueError("truncated_by_max must be aligned with completions")
+    return [
+        structure_char_count(apply_tail_eos(text, ann.tags, format_type, truncated_by_max=tr))
+        for text, ann, tr in zip(completions, annotations, truncated, strict=True)
+    ]
+
+
+def all_correct_structure_chars(
+    tags_list: list[list[CharTag]], *, min_structure_chars: int | None = None
+) -> list[set[int]]:
+    """组内**每条都写对**的结构字符下标集合（P3：这些位置不进梯度）。
+
+    ## 为什么是「各条 S 字符数的最小值」而不是「按 GT 位置身份对齐」
+
+    标注器（``tool_call_labeler``）的 S 标记语义是**严格前缀**：它按期望 mark 序列与模型输出
+    逐字符比对，字符相等标 S，**首个不相等字符标 E，其后全部 D**（工具名写错时该段标 V 后
+    drop）。因此一条 completion 上的 S 字符 ⟺ 「它写对的那部分结构的前缀」——S 之后的字符
+    全部没走到/写错，也就不可能被判为「写对」。
+
+    ⚠ 工具名字符**从不计入** S 字符数（P1 + B1，2026-11-24）：写对整段 ``VALUE(__tool_name__)``
+    （+1.0），写错整段 ``VALUE``（−1.0）——工具名是**值**（选错），不是结构（写错），所以
+    ``k`` 伸不进工具名内部（否则会把写对的工具名 mask 成 0.0）。
+
+    于是一个结构位置「组内每条都写对」的必要条件是：**每条都走到了这个位置**，即
+    ``位置序 < min(各条的 S 字符数)``。取 ``k = min S 字符数``，前 k 个 S 字符就是组内
+    **可能**全对的位置；而前 k 个 S 字符本身**必然**全对（公共前缀里的字符每条都写对了）。
+
+    这就是用户裁定的那句「对 ground truth 里面的所有结构字符做个统计，对于那些全对的
+    结构字符，就从最终的梯度优化中去掉这些 token 样本」。
+
+    已知的近似（实测不影响本批结果，故不做严格对齐）：参数是**无序集合**匹配，参数乱序时
+    「第 k 个 S 字符」在不同 rollout 上可能对应不同的 GT 单元身份。本批 800 条数据上两种口径
+    结果**完全一致**（都是每条 5 个 token）；严格口径要同时改 ``tool_call_labeler`` /
+    ``json_labeler`` / ``tokenize`` 并扩展跨卡 gather 契约（只允许标量+计数），代价远大于收益。
+
+    Args:
+        tags_list: 组内各条 completion 的字符标注（**已过** :func:`apply_tail_eos`）。
+        min_structure_chars: 显式给定的 ``k``（★ 分卡路径：**整组**各条结构字符数的
+            最小值，由设施层跨卡 ``min`` 归约后传回，见
+            :func:`group_structure_char_counts`）。``None`` ⇒ 用 ``tags_list`` 自己的
+            ``min``（= 单卡整组口径，dp=1 路径的行为）。
+
+    Returns:
+        与 ``tags_list`` 对齐的列表，每项是该条 completion 上「组内全对」的字符下标集合
+        （即它的前 ``k`` 个 S 字符；``k = min`` 各条 S 字符数）。
+    """
+    if min_structure_chars is not None and min_structure_chars < 0:
+        raise ValueError(f"min_structure_chars must be >= 0, got {min_structure_chars}")
+    structure_counts = [structure_char_count(tags) for tags in tags_list]
+    if not structure_counts:
+        return []
+    k = min(structure_counts) if min_structure_chars is None else int(min_structure_chars)
+    prefix: list[set[int]] = []
+    for tags in tags_list:
+        structure_positions = [i for i, tag in enumerate(tags) if tag is CharTag.STRUCTURE]
+        prefix.append(set(structure_positions[:k]))
+    return prefix
+
+
 def compute_group_advantages(
     *,
     completions: list[str],
@@ -327,6 +460,7 @@ def compute_group_advantages(
     numeric_tolerance: float = 0.2,
     truncated_by_max: list[bool] | None = None,
     field_mean_override: dict[str, float] | None = None,
+    group_min_structure_chars: int | None = None,
 ) -> list[list[float]]:
     """为一个 rollout group 计算 per-token advantage(ragged)。
 
@@ -344,10 +478,17 @@ def compute_group_advantages(
             只为不破坏 native 分卡调用方的签名（``flow/backend/native/trainer/rollout.py``
             仍在 gather 整组 ``(Σraw, n)`` 并传入）。值 token 已改为逐条闭合的 ±1，
             ``μ_f`` 没有可以作用的位置。
+        group_min_structure_chars: P3 的 ``k``（组内各条**结构字符数**的最小值）。
+            ``None`` ⇒ 用 ``completions`` 自己的 ``min``（单卡整组 = dp=1 路径的行为，
+            逐位不变）。★ **``native`` 在 ``dp>1`` 时必须传整组的 ``k``**：那时本函数的
+            ``completions`` 只是本卡切片（``G//m`` 条），本卡 ``min`` ≥ 整组 ``min`` ⇒
+            会把「本卡都写对、别的卡写短了」的结构位置也置 0（过度 mask，dp=1 与 dp=4
+            读数不可比）。取值出处见 :func:`group_structure_char_counts`。
 
     Returns:
         ragged per-token advantage,与每条 completion 的生成 token 数对齐:
-        ``S→+1.0 / V→±1.0（值对 +1、值错 −1）/ T·W·D→0 / E→−1.0``。
+        ``S→+1.0 / V→±1.0（值对 +1、值错 −1）/ T·W·D→0 / E→−1.0``；
+        **组内全对的结构位置 → 0**（P3，见 :func:`all_correct_structure_chars`）。
     """
     if format_type not in ("tool_call", "json"):
         raise ValueError(f"format_type must be 'tool_call' or 'json', got {format_type!r}")
@@ -370,6 +511,15 @@ def compute_group_advantages(
         for text, tags, ann in zip(completions, tags_list, annotations, strict=True)
     ]
 
+    # ---- 1b. 组内全对的结构位置 → 该位置的 token 不进梯度（P3）----
+    # 见 :func:`all_correct_structure_chars`：k = 组内各条 S 字符数的最小值，前 k 个 S 字符
+    # 组内每条都写对，这些位置**没有可学的信号**（永远 +1.0 的常数偏置），adv 置 0。
+    # ★ 分卡路径（dp>1）的 k 由设施层跨卡 min 归约后传入（本卡切片只持 G//m 条）；
+    #   None ⇒ 本组（= 整组）本地 min，dp=1 路径逐位不变。
+    group_correct_chars = all_correct_structure_chars(
+        tags_list, min_structure_chars=group_min_structure_chars
+    )
+
     # ---- 2. 字段级 raw:每条 completion 的 V span → 字段分 ----
     # group_spans: [completion_idx][(start, end, field, raw)]
     # ★ raw = ``None`` 表示**该字段没有 GT 可比**（例：JSON 数组元素在标注里没有字段名，
@@ -386,14 +536,14 @@ def compute_group_advantages(
             spans.append((s, e, f, raw))
         group_spans.append(spans)
 
-    # ---- 3. per-token adv（★ 逐条闭合：不看同组其它 completion） ----
+    # ---- 3. per-token adv（★ 值 token 逐条闭合；结构 token 只看组内全对，见 1b）----
     # P2（2026-11-18）：值 token 的旧式 ``raw − μ_f`` 已删除。``μ_f`` 是组内均值，属 GRPO 的
     # 组内比较：全对组 μ=1 ⇒ 正确 token 优势 0；全错组 μ=0 ⇒ 错误 token 优势 0（真实数据里
     # 32 组全错、0 组全对 ⇒ 值 token 一律没信号）。现在每个值 token 只看它自己对不对
     # ⇒ ``raw == 1.0`` 为 +1.0、否则 −1.0（:func:`value_advantage`）。
     advantages: list[list[float]] = []
-    for text, ann, labels, spans in zip(
-        completions, annotations, token_labels, group_spans, strict=True
+    for text, ann, labels, spans, prefix_chars in zip(
+        completions, annotations, token_labels, group_spans, group_correct_chars, strict=True
     ):
         enc = tokenizer(text, return_offsets_mapping=True)
         offsets = enc.get("offset_mapping")  # type: ignore[attr-defined]
@@ -404,7 +554,13 @@ def compute_group_advantages(
             tag = label.tag
             start, end = offsets[label.token_index]
             if tag == CharTag.STRUCTURE:
-                adv.append(1.0)
+                # P3：组内全对的结构位置置 0（不进梯度）。只有 token 覆盖的字符**全部**
+                # 落在全对前缀内才算；跨出前缀的 token 后半段不在「全对」范围内，按原规则
+                # 给 +1.0（少 mask 一个 token 是保守方向，绝不反过来多 mask）。
+                if all(char in prefix_chars for char in range(start, end)):
+                    adv.append(0.0)
+                else:
+                    adv.append(1.0)
             elif tag == CharTag.VALUE:
                 raw = next(
                     (r for s, e, _, r in spans if start >= s and end <= e),
@@ -435,8 +591,8 @@ def compute_ripple_advantages(
 
     Advantages come from the annotation-driven pipeline
     (:func:`graspo.ripple.annotation.advantages.compute_group_advantages`):
-    ``S→+1.0 / V→±1.0 / T·W·D→0 / E→−1.0``, no group-level normalization
-    (v0.20.0;P2 起值 token 为逐条闭合的 ±1,不含任何组内均值)。
+    ``S→+1.0 / V→±1.0 / T·W·D→0 / E→−1.0``（组内全对的结构位置为 0）,无组内归一化
+    (v0.20.0;P2 起值 token 为逐条闭合的 ±1,不含任何组内均值;P3 起全对结构位置置 0)。
 
     The ragged advantages are aligned to the ``old_log_probs`` tensor shape:
     prompt positions → 0, generated region → ragged advantages, trailing
