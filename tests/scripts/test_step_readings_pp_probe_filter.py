@@ -27,18 +27,21 @@ native 的 pp-debug 会在 rollout 解码阶段逐字打：
 
 ## 红 → 绿
 
-* 红：起点 HEAD `312e095` 的 `scan_text` 在 `_M019_PROBE_LINES` 上取到 **1441**
-  （本文件真去 `git show` 取那份实现来跑，⛔ 不手抄"期望值"）；
+* 红：**修复前**那个版本的 `scan_text` 在 `_M019_PROBE_LINES` 上取到 **1441**
+  （本文件真去跑那份旧实现来取数，⛔ 不手抄"期望值"）；
 * 绿：新实现取到 **None**（探针行整行跳过，日志里没有别的步数读数）；
 * 不误伤：**没有探针行**的常规日志（M007 / M008 / M016 三份真件摘录），
-  新实现与 HEAD 实现的候选列表 / `best_of` / `origin_of` **逐字节相同**。
+  新实现与旧实现的候选列表 / `best_of` / `origin_of` **逐字节相同**。
+
+★ 旧实现的取数方式（2026-11-24 起）：读**仓内冻结副本**
+`tests/data/golden/step_readings_pre_pp_probe_filter.py`（来源 commit 与脱敏说明见
+`tests/data/golden/README.md`），⛔ 不再 `git show <sha>` —— 全历史改写后旧 sha 的对象
+已不在对象库里，新 clone 只有 HEAD 可达的对象，那样取数必失败。
 """
 
-import importlib.util
 import pathlib
-import subprocess
 import sys
-import tempfile
+import types
 
 import pytest
 
@@ -47,8 +50,10 @@ sys.path.insert(0, str(_ROOT / "scripts"))
 import step_readings as sr  # noqa: E402
 
 FIXTURES = pathlib.Path(__file__).resolve().parent / "fixtures"
-#: 修复**前**的起点 HEAD（本包在此之上加前置过滤）。
-_HEAD_REV = "312e095"
+#: 修复**前**那个版本的实现（本包在此之上加前置过滤），已冻结在仓内 —— 见
+#: `tests/data/golden/README.md`。⛔ 不按 sha 去 git 历史里取（新 clone 取不到）。
+_GOLDEN_IMPL_PATH = (pathlib.Path(__file__).resolve().parents[1] / "data" / "golden"
+                     / "step_readings_pre_pp_probe_filter.py")
 
 #: `runs/M019/stdout.log` 逐字节原文行（物理行号 → 原文）。
 #: ⛔ 不改写、不去 `\r`、不补全省略字段：这正是"探针行长什么样"的现场。
@@ -69,25 +74,25 @@ _NORMAL_FIXTURES = [
 ]
 
 
-def _load_head_module():
-    """取出起点 HEAD 的 `scripts/step_readings.py` 原样加载 ⇒ 当"改动前"基准。
+def _load_golden_module():
+    """加载仓内冻结的**修复前**实现 ⇒ 当"改动前"基准。
 
-    ★ 为什么真去取 HEAD 那份：红必须是**旧实现**的红。手写一个"应该红"的断言
+    ★ 为什么真去跑那份旧实现：红必须是**旧实现**的红。手写一个"应该红"的断言
       只能证明我自己的预期，不能证明缺陷存在。
+    ★ 为什么用 `exec(compile(...))` 而不是 importlib：冻结副本是**数据**、不是模块，
+      按模块导入会在 `tests/data/golden/` 里留下 `__pycache__/`。
     """
-    src = subprocess.run(["git", "show", f"{_HEAD_REV}:scripts/step_readings.py"],
-                         cwd=str(_ROOT), capture_output=True, text=True, check=True).stdout
-    path = pathlib.Path(tempfile.mkdtemp()) / "head_step_readings.py"
-    path.write_text(src, encoding="utf-8")
-    spec = importlib.util.spec_from_file_location("head_step_readings_for_pp_probe", path)
-    assert spec is not None and spec.loader is not None
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = mod
-    spec.loader.exec_module(mod)
+    assert _GOLDEN_IMPL_PATH.is_file(), _GOLDEN_IMPL_PATH
+    name = "golden_step_readings_pre_pp_probe"
+    mod = types.ModuleType(name)
+    mod.__file__ = str(_GOLDEN_IMPL_PATH)
+    sys.modules[name] = mod
+    exec(compile(_GOLDEN_IMPL_PATH.read_text(encoding="utf-8"),
+                 str(_GOLDEN_IMPL_PATH), "exec"), mod.__dict__)
     return mod
 
 
-_HEAD = _load_head_module()
+_GOLDEN = _load_golden_module()
 
 
 def _probe_plus_training_text() -> str:
@@ -97,10 +102,10 @@ def _probe_plus_training_text() -> str:
 
 
 # ── ① 红：改动前的实现把探针的 `step=1441` 当成训练步读数 ─────────────────────
-def test_red_head_parser_reads_pp_probe_step_as_training_step():
-    """★红：HEAD 实现在探针行上取到 1441 —— 缺陷的**逐字**复现（M019 实测值）。"""
-    best = sr.best_of(_HEAD.scan_text(_M019_PROBE_LINES, "stdout.log"))
-    assert best is not None, "HEAD 居然没取到读数？⇒ 缺陷复现失败，先查探针行是否被改写"
+def test_red_golden_parser_reads_pp_probe_step_as_training_step():
+    """★红：修复前的实现在探针行上取到 1441 —— 缺陷的**逐字**复现（M019 实测值）。"""
+    best = sr.best_of(_GOLDEN.scan_text(_M019_PROBE_LINES, "stdout.log"))
+    assert best is not None, "旧实现居然没取到读数？⇒ 缺陷复现失败，先查探针行是否被改写"
     assert best["value"] == 1441, best
     # 而且它的形态被记成 native 训练步（`native_step`）——错的就是这个身份
     assert best["kind"] == "native_step", best
@@ -129,15 +134,15 @@ def test_probe_only_log_yields_no_reading_at_all():
 # ── ④ 不误伤：无探针行的常规日志，与改动前逐字节相同 ────────────────────────
 @pytest.mark.parametrize("fixture", _NORMAL_FIXTURES, ids=lambda p: p.stem.split("_")[0])
 def test_normal_logs_unchanged_byte_for_byte(fixture: pathlib.Path):
-    """★ 反向断言：没有探针行时，新实现与 HEAD 实现的输出**逐条相同**。"""
+    """★ 反向断言：没有探针行时，新实现与修复前实现的输出**逐条相同**。"""
     assert fixture.is_file(), fixture
     text = fixture.read_bytes().decode("utf-8", "replace")
     assert "pp-debug" not in text and "probe=" not in text, (
         f"{fixture.name} 含探针行 ⇒ 这份『常规日志』的前提没了，请换一份真件")
-    old = _HEAD.scan_text(text, fixture.name)
+    old = _GOLDEN.scan_text(text, fixture.name)
     new = sr.scan_text(text, fixture.name)
     assert new == old, f"{fixture.name}：新口径改了常规日志的读数"
     # `best_of` / provenance 也必须一致（消费者看到的是这两个）
-    assert sr.best_of(new) == _HEAD.best_of(old)
+    assert sr.best_of(new) == _GOLDEN.best_of(old)
     if old:
-        assert sr.origin_of(sr.best_of(new)) == _HEAD.origin_of(_HEAD.best_of(old))
+        assert sr.origin_of(sr.best_of(new)) == _GOLDEN.origin_of(_GOLDEN.best_of(old))

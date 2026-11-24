@@ -148,7 +148,8 @@ tag_regex = "^(?:v)?(?P<version>[0-9]+\\.[0-9]+\\.[0-9]+)$"
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-extend-exclude = ["*.jsonl"]
+# tests/data/golden/：历史实现的原样冻结副本（golden 负向断言基准），不是可维护代码。
+extend-exclude = ["*.jsonl", "tests/data/golden"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "BLE"]

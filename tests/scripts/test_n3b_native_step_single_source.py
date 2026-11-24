@@ -30,7 +30,7 @@ fixture 是这两份日志的**逐字节摘录**（`.txt` 而非 `.log`：仓里
 
 1. 真件摘录确实只有 `"step"`、老口径**必然取不到**（红是"旧口径"的红，不是 fixture 不真实）；
 2. 新口径在真件上取到**正确总值**（400 / 200）并给出**可 sed 复核**的行号；
-3. **ms-swift 四种实盘形态逐字节不变**（golden = 直接跑 `HEAD 924f01a` 那份实现，逐字比对
+3. **ms-swift 四种实盘形态逐字节不变**（golden = 直接跑**修复前**那份实现，逐字比对
    `(steps, why)` 与候选列表 —— ⛔ 不是我手抄一份"应该长这样"）；
 4. 多源并存取**最大** + provenance；一个读数都没有 ⇒ fail-closed（⛔ 不猜、不 0 兜底、
    ⛔ 不把"末条"当总步数）；像步数但不是步数的键（`max_steps` / `save_step` / `first_step`）
@@ -41,12 +41,11 @@ fixture 是这两份日志的**逐字节摘录**（`.txt` 而非 `.log`：仓里
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import pathlib
 import re
-import subprocess
 import sys
+import types
 
 import pytest
 
@@ -60,30 +59,41 @@ FIXTURES = pathlib.Path(__file__).resolve().parent / "fixtures"
 _M007 = FIXTURES / "m007_native_stdout_excerpt.txt"
 _M008 = FIXTURES / "m008_native_stdout_excerpt.txt"
 
-#: 修复前（起点 HEAD `924f01a`）的步数口径 —— 逐字取自 HEAD 的两处实现，**只用于负向断言**：
+#: 修复前的步数口径 —— 逐字取自那个版本的两处实现，**只用于负向断言**：
 #: ① `make_result_json.py::GLOBAL_STEP_RE`；② `collect_results.py::_GLOBAL_STEP`（同源第二副本）。
 _OLD_GLOBAL_STEP_RE = r"['\"]?global_step['\"]?\s*[:=]\s*['\"]?(\d+)"
 _OLD_TQDM_RE = r"(?:^|[\r\n])\s*(?:Train|Training):[^\r\n]*?\|\s*(\d+)\s*/\s*(\d+)\s*\["
-_HEAD_REV = "924f01a"
+
+#: 修复前那个版本的 `scripts/make_result_json.py`，已冻结在仓内 —— 来源 commit 与脱敏说明见
+#: `tests/data/golden/README.md`。⛔ 不按 sha 去 git 历史里取（新 clone 取不到）。
+_GOLDEN_IMPL_PATH = (pathlib.Path(__file__).resolve().parents[1] / "data" / "golden"
+                     / "make_result_json_pre_native_step.py")
 
 
-def _load_head_module(tmp_path: pathlib.Path):
-    """把**起点 HEAD** 的 `scripts/make_result_json.py` 原样取出加载 ⇒ 当 golden 基准。
+def _load_golden_module():
+    """把仓内冻结的**修复前** `make_result_json.py` 加载 ⇒ 当 golden 基准。
 
-    ★ 为什么真去取 HEAD 那份（而不是在测试里手写"期望值"）：本包的要求是
+    ★ 为什么真去跑那份旧实现（而不是在测试里手写"期望值"）：本包的要求是
       "ms-swift 四种形态**逐字节不变**" —— 只有拿旧实现跑同一份输入再逐字比对
       `(steps, why)` 与候选列表，才叫"不变"；手抄期望值就只是我自己给自己作证。
+    ★ 为什么用 `exec(compile(...))` 而不是 importlib：冻结副本是**数据**、不是模块，
+      按模块导入会在 `tests/data/golden/` 里留下 `__pycache__/`。
     """
-    src = subprocess.run(["git", "show", f"{_HEAD_REV}:scripts/make_result_json.py"],
-                         cwd=str(_ROOT), capture_output=True, text=True, check=True).stdout
-    path = tmp_path / "head_make_result_json.py"
-    path.write_text(src, encoding="utf-8")
-    spec = importlib.util.spec_from_file_location("head_make_result_json_for_n3b", path)
-    assert spec is not None and spec.loader is not None
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = mod
-    spec.loader.exec_module(mod)
+    assert _GOLDEN_IMPL_PATH.is_file(), _GOLDEN_IMPL_PATH
+    name = "golden_make_result_json_pre_native_step"
+    mod = types.ModuleType(name)
+    mod.__file__ = str(_GOLDEN_IMPL_PATH)
+    sys.modules[name] = mod
+    exec(compile(_GOLDEN_IMPL_PATH.read_text(encoding="utf-8"),
+                 str(_GOLDEN_IMPL_PATH), "exec"), mod.__dict__)
     return mod
+
+
+#: golden 基准只加载一次（旧实现在 `scripts/` 位置时 `ROOT = parents[1]` 指向仓根；
+#: 冻结副本在 `tests/data/golden/` 时指向 `tests/data` —— 只影响 CLI 默认值与
+#: 按需 `import record_checks`，**不参与** `parse_steps` / `_scan_steps_text` 的任何判定，
+#: 已用备份原件（ROOT 指向 `/`）与本副本对同一批输入逐条比对，结果相同）。
+_GOLDEN = _load_golden_module()
 
 
 def _run_dir(tmp_path: pathlib.Path, name: str, log_bytes: bytes) -> pathlib.Path:
@@ -140,20 +150,18 @@ _MS_SWIFT_FORMS = [
 
 
 @pytest.mark.parametrize("line", _MS_SWIFT_FORMS)
-def test_ms_swift_forms_are_byte_identical_to_head(tmp_path, line):
+def test_ms_swift_forms_are_byte_identical_to_golden(tmp_path, line):
     """★golden：ms-swift 七种既有写法在**新旧实现**上得到逐字节相同的 `(steps, why)`。"""
-    head = _load_head_module(tmp_path)
     log = tmp_path / "stdout.log"
     log.write_bytes(line.encode("utf-8"))
-    assert m.parse_steps(log) == head.parse_steps(log)
-    assert sr.scan_text(line, "stdout.log") == head._scan_steps_text(line, "stdout.log")
+    assert m.parse_steps(log) == _GOLDEN.parse_steps(log)
+    assert sr.scan_text(line, "stdout.log") == _GOLDEN._scan_steps_text(line, "stdout.log")
 
 
-def test_m016_real_excerpt_is_unchanged_golden(tmp_path):
+def test_m016_real_excerpt_is_unchanged_golden():
     """★golden：M016 真件摘录（D2 的 fixture）读数与 provenance **逐字不变**。"""
-    head = _load_head_module(tmp_path)
     fixture = FIXTURES / "m016_stdout_excerpt.txt"
-    assert m.parse_steps(fixture) == head.parse_steps(fixture)
+    assert m.parse_steps(fixture) == _GOLDEN.parse_steps(fixture)
     steps, why = m.parse_steps(fixture)
     assert steps == 6400 and fixture.name + ":3" in why, why
 
